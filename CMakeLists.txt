@@ -5,11 +5,8 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# DirectX 12 (Windows SDK)
-find_library(D3D12_LIB d3d12)
-find_library(DXGI_LIB dxgi)
-find_library(D3DCOMPILER_LIB d3dcompiler)
-find_library(DXGUID_LIB dxguid)
+# IXWebSocket via vcpkg
+find_package(ixwebsocket CONFIG REQUIRED)
 
 add_executable(UzEngine WIN32
     src/main.cpp
@@ -19,6 +16,7 @@ add_executable(UzEngine WIN32
     src/encoder/ffmpeg_encoder.cpp
     src/encoder/encoder_factory.cpp
     src/muxer/fmp4_muxer.cpp
+    src/network/ws_server.cpp
 )
 
 target_include_directories(UzEngine PRIVATE
@@ -34,6 +32,7 @@ target_link_libraries(UzEngine PRIVATE
     mfuuid
     mfplat
     ole32
+    ixwebsocket::ixwebsocket
 )
 
 # Enable debug layer in Debug builds
