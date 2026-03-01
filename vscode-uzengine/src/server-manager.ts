@@ -69,7 +69,8 @@ export class ServerManager implements vscode.Disposable {
         try {
             this._process = cp.spawn(exePath, [], {
                 cwd: path.dirname(exePath),
-                windowsHide: false, // show the render window
+                windowsHide: true,
+                env: { ...process.env, UZENGINE_HEADLESS: '1' },
             });
         } catch (err) {
             this._outputChannel.appendLine(`[UzEngine] Failed to start: ${String(err)}`);

@@ -7,6 +7,10 @@
         "@hivehub/rulebook@latest",
         "mcp-server"
       ]
+    },
+    "uzengine": {
+      "command": "node",
+      "args": ["tools/mcp-uzengine/index.js"]
     }
   }
 }

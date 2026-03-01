@@ -11,6 +11,7 @@
 
 #include "../common/types.h"
 #include "../common/timer.h"
+#include "scene_params.h"
 
 namespace uz {
 
@@ -62,7 +63,7 @@ struct Vertex {
 };
 
 // ---------------------------------------------------------------------------
-// DX12Renderer -- minimal DirectX 12 renderer for a spinning colored triangle.
+// DX12Renderer -- minimal DirectX 12 renderer for a spinning colored pyramid.
 //
 // Lifecycle:
 //   1. Construct
@@ -100,6 +101,15 @@ public:
     // Returns a copy of the most recently captured frame. Thread-safe via mutex.
     [[nodiscard]] FrameData getLatestFrame() const;
 
+    // Alias for getLatestFrame() -- used by IPC screenshot handler so callers
+    // do not need to know renderer internals.
+    [[nodiscard]] FrameData getLastFrameCopy() const;
+
+    // Set the external scene parameters struct.  The renderer reads from it
+    // each frame (rotation speed, background color, pause state).
+    // Pointer must remain valid for the lifetime of the renderer.
+    void setSceneParams(SceneParams* params);
+
 private:
     // Initialization sub-steps (called by init).
     void createDevice();
@@ -112,6 +122,7 @@ private:
     void createVertexBuffer();
     void createConstantBuffer();
     void createFence();
+    void createDepthBuffer();
     void createReadbackBuffer();
 
     // Perform GPU -> CPU readback of the current frame's render target.
@@ -140,6 +151,10 @@ private:
     // Descriptor heap for render-target views.
     Microsoft::WRL::ComPtr<ID3D12DescriptorHeap>    rtvHeap_;
     uint32_t rtvDescriptorSize_ = 0;
+
+    // Depth-stencil buffer and DSV heap.
+    Microsoft::WRL::ComPtr<ID3D12Resource>           depthBuffer_;
+    Microsoft::WRL::ComPtr<ID3D12DescriptorHeap>     dsvHeap_;
 
     // Pipeline state.
     Microsoft::WRL::ComPtr<ID3D12RootSignature>     rootSignature_;
@@ -185,6 +200,14 @@ private:
     DirectX::XMFLOAT4X4 worldViewProj_{};
 
     bool initialized_ = false;
+
+    // External scene parameters (set via setSceneParams, nullable).
+    SceneParams* sceneParams_ = nullptr;
+
+    // Cached clear color -- updated from sceneParams_ each frame in update().
+    float clearR_ = 0.1f;
+    float clearG_ = 0.1f;
+    float clearB_ = 0.1f;
 };
 
 } // namespace uz

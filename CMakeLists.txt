@@ -8,6 +8,9 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 # IXWebSocket via vcpkg
 find_package(ixwebsocket CONFIG REQUIRED)
 
+# nlohmann-json via vcpkg
+find_package(nlohmann_json CONFIG REQUIRED)
+
 add_executable(UzEngine WIN32
     src/main.cpp
     src/renderer/renderer.cpp
@@ -17,10 +20,15 @@ add_executable(UzEngine WIN32
     src/encoder/encoder_factory.cpp
     src/muxer/fmp4_muxer.cpp
     src/network/ws_server.cpp
+    src/common/ipc_registry.cpp
+    src/common/ipc_poller.cpp
+    src/common/stb_impl.cpp
 )
 
 target_include_directories(UzEngine PRIVATE
     ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_SOURCE_DIR}/external/stb
+    ${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/include
 )
 
 target_link_libraries(UzEngine PRIVATE
@@ -33,6 +41,7 @@ target_link_libraries(UzEngine PRIVATE
     mfplat
     ole32
     ixwebsocket::ixwebsocket
+    nlohmann_json::nlohmann_json
 )
 
 # Enable debug layer in Debug builds

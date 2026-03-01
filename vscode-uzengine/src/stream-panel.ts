@@ -324,9 +324,11 @@ export class StreamPanel {
       }
 
       function trimBuffer() {
-        if (!sourceBuffer || !video.buffered.length) { return; }
-        // Keep only the last 10 seconds behind the current playhead.
-        var keepFrom = video.currentTime - 10;
+        if (!sourceBuffer || sourceBuffer.updating || !video.buffered.length) { return; }
+        // Keep only a very short buffer behind the playhead (0.3 s) to minimise
+        // latency. The Chromium MSE player inside the webview tends to buffer
+        // ahead; trimming aggressively forces it to stay close to live edge.
+        var keepFrom = video.currentTime - 0.3;
         if (keepFrom > 0 && video.buffered.start(0) < keepFrom) {
           try {
             sourceBuffer.remove(0, keepFrom);
@@ -346,10 +348,25 @@ export class StreamPanel {
         mediaSource.addEventListener('sourceopen', function () {
           if (!mediaSource) { return; }
 
-          // H.264 Baseline profile, level 3.1 — broadest MSE compatibility.
-          var mimeType = 'video/mp4; codecs="avc1.42E01F"';
-          if (!MediaSource.isTypeSupported(mimeType)) {
-            console.error('[UzEngine] MSE codec not supported:', mimeType);
+          // Try codec strings from most to least capable.
+          // avc1.4D402A = Main@4.2 (supports 1280x720@60fps with Main profile)
+          // avc1.42E028 = Baseline@4.0 (supports 1280x720@60fps)
+          // The MF encoder may select Main or Baseline depending on the system.
+          var mimeTypeCandidates = [
+            'video/mp4; codecs="avc1.4D402A"',
+            'video/mp4; codecs="avc1.4D4028"',
+            'video/mp4; codecs="avc1.42E028"',
+          ];
+          var mimeType = '';
+          for (var i = 0; i < mimeTypeCandidates.length; i++) {
+            if (MediaSource.isTypeSupported(mimeTypeCandidates[i])) {
+              mimeType = mimeTypeCandidates[i];
+              console.log('[UzEngine] Using codec:', mimeType);
+              break;
+            }
+          }
+          if (!mimeType) {
+            console.error('[UzEngine] No supported H.264 MSE codec found');
             setStatus('Codec unsupported', 'disconnected');
             return;
           }
@@ -369,6 +386,14 @@ export class StreamPanel {
           sourceBuffer.addEventListener('updateend', function () {
             processQueue();
             trimBuffer();
+            // Live-edge seek: if we have fallen more than 0.5 s behind the
+            // buffered end, jump forward to stay close to live.
+            if (video.buffered.length && !sourceBuffer.updating) {
+              var liveEdge = video.buffered.end(video.buffered.length - 1);
+              if (liveEdge - video.currentTime > 0.5) {
+                video.currentTime = liveEdge - 0.05;
+              }
+            }
           });
 
           sourceBuffer.addEventListener('error', function (e) {

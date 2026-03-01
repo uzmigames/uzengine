@@ -11,6 +11,7 @@
 #include <mftransform.h>
 #include <mferror.h>
 #include <codecapi.h>
+#include <strmif.h>      // ICodecAPI interface
 #include <combaseapi.h>
 
 #pragma comment(lib, "mf.lib")
@@ -93,11 +94,69 @@ void safeRelease(void*& ptr) {
     return false;
 }
 
-/// Create an IMFSample containing RGBA pixel data for MF input.
+/// Convert BGRA pixel data to NV12 in-place into the destination buffer.
+/// BGRA layout: B=byte0, G=byte1, R=byte2, A=byte3 (DX12 readback format).
+/// NV12 layout: Y plane (width*height), then interleaved UV plane ((width/2)*(height/2)*2).
+/// Uses full-range BT.601 coefficients for simplicity.
+void convertBGRAtoNV12(const uint8_t* bgra, uint8_t* nv12,
+                       uint32_t width, uint32_t height) {
+    uint8_t* yPlane  = nv12;
+    uint8_t* uvPlane = nv12 + width * height;
+
+    // Y plane: one luma sample per pixel
+    for (uint32_t y = 0; y < height; ++y) {
+        for (uint32_t x = 0; x < width; ++x) {
+            const uint32_t srcIdx = (y * width + x) * 4;
+            const uint8_t b = bgra[srcIdx + 0];
+            const uint8_t g = bgra[srcIdx + 1];
+            const uint8_t r = bgra[srcIdx + 2];
+            // Y = (77*R + 150*G + 29*B) >> 8  (full range, 0..255)
+            const int32_t luma = (77 * r + 150 * g + 29 * b) >> 8;
+            yPlane[y * width + x] = static_cast<uint8_t>(std::clamp(luma, 0, 255));
+        }
+    }
+
+    // UV plane: 2x2 subsampled, interleaved U,V pairs
+    const uint32_t halfW = width / 2;
+    const uint32_t halfH = height / 2;
+    for (uint32_t y = 0; y < halfH; ++y) {
+        for (uint32_t x = 0; x < halfW; ++x) {
+            // Average the 2x2 block of source pixels
+            int32_t sumR = 0, sumG = 0, sumB = 0;
+            for (uint32_t dy = 0; dy < 2; ++dy) {
+                for (uint32_t dx = 0; dx < 2; ++dx) {
+                    const uint32_t srcIdx = ((y * 2 + dy) * width + (x * 2 + dx)) * 4;
+                    sumB += bgra[srcIdx + 0];
+                    sumG += bgra[srcIdx + 1];
+                    sumR += bgra[srcIdx + 2];
+                }
+            }
+            const int32_t avgR = sumR / 4;
+            const int32_t avgG = sumG / 4;
+            const int32_t avgB = sumB / 4;
+
+            // U = 128 + ((-43*R - 85*G + 128*B) >> 8)
+            const int32_t u = 128 + ((-43 * avgR - 85 * avgG + 128 * avgB) >> 8);
+            // V = 128 + ((128*R - 107*G - 21*B) >> 8)
+            const int32_t v = 128 + ((128 * avgR - 107 * avgG - 21 * avgB) >> 8);
+
+            const uint32_t uvIdx = (y * halfW + x) * 2;
+            uvPlane[uvIdx + 0] = static_cast<uint8_t>(std::clamp(u, 0, 255));
+            uvPlane[uvIdx + 1] = static_cast<uint8_t>(std::clamp(v, 0, 255));
+        }
+    }
+}
+
+/// Create an IMFSample containing pixel data for MF input.
+/// When useNV12 is true, converts BGRA->NV12 before filling the buffer.
+/// When useNV12 is false, swizzles RGBA->BGRA for ARGB32 input.
 [[nodiscard]] HRESULT createInputSample(const uint8_t* rgbaData, uint32_t width, uint32_t height,
-                                        int64_t timestamp, int64_t duration,
+                                        int64_t timestamp, int64_t duration, bool useNV12,
                                         IMFSample** outSample) {
-    const DWORD bufferSize = width * height * 4; // RGBA = 4 bytes/pixel
+    // NV12: width * height * 3/2;  ARGB32: width * height * 4
+    const DWORD bufferSize = useNV12
+        ? (width * height * 3 / 2)
+        : (width * height * 4);
 
     IMFMediaBuffer* buffer = nullptr;
     HRESULT hr = MFCreateMemoryBuffer(bufferSize, &buffer);
@@ -112,16 +171,15 @@ void safeRelease(void*& ptr) {
         return hr;
     }
 
-    // MF expects top-down ARGB32 (which is BGRA in memory).
-    // Our input is RGBA, so we need to swizzle R<->B.
-    const uint32_t pixelCount = width * height;
-    for (uint32_t i = 0; i < pixelCount; ++i) {
-        const uint32_t srcIdx = i * 4;
-        const uint32_t dstIdx = i * 4;
-        bufferData[dstIdx + 0] = rgbaData[srcIdx + 2]; // B <- R
-        bufferData[dstIdx + 1] = rgbaData[srcIdx + 1]; // G
-        bufferData[dstIdx + 2] = rgbaData[srcIdx + 0]; // R <- B
-        bufferData[dstIdx + 3] = rgbaData[srcIdx + 3]; // A
+    if (useNV12) {
+        // DX12 readback is BGRA. Convert to NV12 for the MF encoder.
+        convertBGRAtoNV12(rgbaData, bufferData, width, height);
+    } else {
+        // MF expects top-down ARGB32 (which is BGRA in memory).
+        // Our DX12 readback is already BGRA, so copy directly.
+        // Note: the original code swizzled R<->B assuming RGBA input, but DX12
+        // DXGI_FORMAT_B8G8R8A8_UNORM readback is already BGRA — just copy.
+        std::memcpy(bufferData, rgbaData, width * height * 4);
     }
 
     buffer->Unlock();
@@ -234,8 +292,6 @@ bool FFmpegEncoder::initialize(const EncoderConfig& config) {
 }
 
 bool FFmpegEncoder::configureEncoder(const EncoderConfig& config) {
-    auto* transform = static_cast<IMFTransform**>(&transform_);
-
     // Create the H.264 encoder MFT
     IMFTransform* mft = nullptr;
     HRESULT hr = CoCreateInstance(CLSID_CMSH264EncoderMFT, nullptr, CLSCTX_INPROC_SERVER,
@@ -263,13 +319,30 @@ bool FFmpegEncoder::configureEncoder(const EncoderConfig& config) {
     outType->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
     MFSetAttributeRatio(outType, MF_MT_PIXEL_ASPECT_RATIO, 1, 1);
 
-    // Set Baseline profile via the output media type attribute
-    outType->SetUINT32(MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_Base);
-    outType->SetUINT32(MF_MT_MPEG2_LEVEL, eAVEncH264VLevel3_1);
-
-    hr = mft->SetOutputType(0, outType, 0);
+    // Try profile/level combos from most to least capable.
+    // Main@4.2 supports 1280x720@60fps; Baseline@4.0 supports 1280x720@30fps.
+    // The MFT on some systems rejects Baseline above level 3.1, so we fall
+    // through to progressively lower settings until one is accepted.
+    struct ProfileLevel { UINT32 profile; UINT32 level; const char* name; };
+    const ProfileLevel candidates[] = {
+        { eAVEncH264VProfile_Main, eAVEncH264VLevel4_2, "Main@4.2" },
+        { eAVEncH264VProfile_Main, eAVEncH264VLevel4,   "Main@4.0" },
+        { eAVEncH264VProfile_Base, eAVEncH264VLevel4_2, "Baseline@4.2" },
+        { eAVEncH264VProfile_Base, eAVEncH264VLevel4,   "Baseline@4.0" },
+        { eAVEncH264VProfile_Base, eAVEncH264VLevel3_1, "Baseline@3.1" },
+    };
+    hr = E_FAIL;
+    for (const auto& pl : candidates) {
+        outType->SetUINT32(MF_MT_MPEG2_PROFILE, pl.profile);
+        outType->SetUINT32(MF_MT_MPEG2_LEVEL,   pl.level);
+        hr = mft->SetOutputType(0, outType, 0);
+        if (SUCCEEDED(hr)) {
+            fprintf(stderr, "[FFmpegEncoder] Using H.264 %s\n", pl.name);
+            break;
+        }
+    }
     if (FAILED(hr)) {
-        fprintf(stderr, "[FFmpegEncoder] SetOutputType failed: 0x%08lX\n", hr);
+        fprintf(stderr, "[FFmpegEncoder] SetOutputType failed all profile/level combos: 0x%08lX\n", hr);
         return false;
     }
 
@@ -293,7 +366,7 @@ bool FFmpegEncoder::configureEncoder(const EncoderConfig& config) {
 
     hr = mft->SetInputType(0, inType, 0);
     if (FAILED(hr)) {
-        fprintf(stderr, "[FFmpegEncoder] SetInputType failed: 0x%08lX\n", hr);
+        fprintf(stderr, "[FFmpegEncoder] SetInputType (ARGB32) failed: 0x%08lX, trying NV12\n", hr);
         // Try NV12 as fallback input format
         inType->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_NV12);
         inType->SetUINT32(MF_MT_DEFAULT_STRIDE, width_);
@@ -302,12 +375,13 @@ bool FFmpegEncoder::configureEncoder(const EncoderConfig& config) {
             fprintf(stderr, "[FFmpegEncoder] SetInputType (NV12 fallback) also failed: 0x%08lX\n", hr);
             return false;
         }
-        fprintf(stderr, "[FFmpegEncoder] Warning: using NV12 input — RGBA swizzle disabled\n");
+        useNV12_ = true;
+        fprintf(stderr, "[FFmpegEncoder] Using NV12 input -- BGRA->NV12 conversion enabled\n");
     }
 
     // Configure encoder via ICodecAPI (bitrate, low latency)
     ICodecAPI* codecApi = nullptr;
-    hr = mft->QueryInterface(IID_PPV_ARGS(&codecApi));
+    hr = mft->QueryInterface(__uuidof(ICodecAPI), reinterpret_cast<void**>(&codecApi));
     if (SUCCEEDED(hr)) {
         VARIANT val;
         VariantInit(&val);
@@ -362,10 +436,10 @@ bool FFmpegEncoder::encode(const uint8_t* rgbaData, uint32_t width, uint32_t hei
     auto* mft = static_cast<IMFTransform*>(transform_);
     outNALUs.clear();
 
-    // Create input sample with RGBA->BGRA swizzle
+    // Create input sample — converts BGRA->NV12 when useNV12_ is active
     const int64_t timestamp = pts_ * frameDuration_;
     IMFSample* inputSample = nullptr;
-    HRESULT hr = createInputSample(rgbaData, width, height, timestamp, frameDuration_, &inputSample);
+    HRESULT hr = createInputSample(rgbaData, width, height, timestamp, frameDuration_, useNV12_, &inputSample);
     if (FAILED(hr)) {
         fprintf(stderr, "[FFmpegEncoder] createInputSample failed: 0x%08lX\n", hr);
         return false;
@@ -538,6 +612,7 @@ void FFmpegEncoder::shutdown() {
     fps_         = 0;
     pts_         = 0;
     initialized_ = false;
+    useNV12_     = false;
     codecConfig_ = {};
 
     printf("[FFmpegEncoder] Shutdown complete\n");

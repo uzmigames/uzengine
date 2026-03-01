@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // renderer.cpp -- DX12Renderer implementation
 //
-// Renders a spinning colored triangle using Direct3D 12.
+// Renders a spinning colored pyramid using Direct3D 12.
 // The MVP matrix is passed to the vertex shader via root 32-bit constants
 // (not a constant buffer), keeping the setup minimal and low-latency.
 //
@@ -69,6 +69,7 @@ void DX12Renderer::init(HWND hwnd, uint32_t width, uint32_t height) {
     createPipelineState();
     createVertexBuffer();
     createConstantBuffer();
+    createDepthBuffer();
     createFence();
     createReadbackBuffer();
 
@@ -107,8 +108,27 @@ void DX12Renderer::init(HWND hwnd, uint32_t width, uint32_t height) {
 }
 
 void DX12Renderer::update(double totalTime) {
-    // World: rotate around Y axis over time.
-    const XMMATRIX world = XMMatrixRotationY(static_cast<float>(totalTime) * 1.5f);
+    // Read rotation speeds from IPC-controlled scene params, falling back to
+    // the original hardcoded values when no SceneParams is attached.
+    float rotYSpeed = 1.2f;
+    float rotXTilt  = 0.3f;
+    if (sceneParams_) {
+        rotYSpeed = sceneParams_->rotY.load(std::memory_order_relaxed);
+        rotXTilt  = sceneParams_->rotX.load(std::memory_order_relaxed);
+
+        // Copy background color under lock (three floats must be coherent).
+        {
+            std::lock_guard<std::mutex> lk(sceneParams_->bgMutex);
+            clearR_ = sceneParams_->bgR;
+            clearG_ = sceneParams_->bgG;
+            clearB_ = sceneParams_->bgB;
+        }
+    }
+
+    // World: rotate around Y axis, tilt around X.
+    const float t = static_cast<float>(totalTime);
+    const XMMATRIX world = XMMatrixRotationY(t * rotYSpeed)
+                         * XMMatrixRotationX(rotXTilt);
 
     // View: camera at (0, 0, -3) looking at origin.
     const XMVECTOR eye = XMVectorSet(0.0f, 0.0f, -3.0f, 1.0f);
@@ -159,9 +179,14 @@ void DX12Renderer::render() {
     D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = rtvHeap_->GetCPUDescriptorHandleForHeapStart();
     rtvHandle.ptr += static_cast<SIZE_T>(frameIndex_) * rtvDescriptorSize_;
 
-    const float clearColor[4] = { 0.1f, 0.1f, 0.1f, 1.0f };
+    const float clearColor[4] = { clearR_, clearG_, clearB_, 1.0f };
     commandList_->ClearRenderTargetView(rtvHandle, clearColor, 0, nullptr);
-    commandList_->OMSetRenderTargets(1, &rtvHandle, FALSE, nullptr);
+
+    // Clear and bind the depth-stencil view so occluded faces are discarded.
+    D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle = dsvHeap_->GetCPUDescriptorHandleForHeapStart();
+    commandList_->ClearDepthStencilView(
+        dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+    commandList_->OMSetRenderTargets(1, &rtvHandle, FALSE, &dsvHandle);
 
     // -----------------------------------------------------------------------
     // Pass the MVP matrix to the vertex shader via root 32-bit constants.
@@ -170,11 +195,16 @@ void DX12Renderer::render() {
     commandList_->SetGraphicsRoot32BitConstants(0, 16, &worldViewProj_, 0);
 
     // -----------------------------------------------------------------------
-    // Draw the triangle.
+    // Draw the pyramid (4 triangular faces = 12 vertices).
+    // When paused via IPC, skip the draw call -- the clear color still
+    // renders so the frame is not stale, and the pipeline keeps flowing.
     // -----------------------------------------------------------------------
-    commandList_->IASetVertexBuffers(0, 1, &vertexBufferView_);
-    commandList_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-    commandList_->DrawInstanced(3, 1, 0, 0);
+    const bool paused = sceneParams_ && sceneParams_->paused.load(std::memory_order_relaxed);
+    if (!paused) {
+        commandList_->IASetVertexBuffers(0, 1, &vertexBufferView_);
+        commandList_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        commandList_->DrawInstanced(12, 1, 0, 0);
+    }
 
     // -----------------------------------------------------------------------
     // Transition for readback: RENDER_TARGET -> COPY_SOURCE.
@@ -231,9 +261,9 @@ void DX12Renderer::render() {
     commandQueue_->ExecuteCommandLists(1, commandLists);
 
     // -----------------------------------------------------------------------
-    // Present with vsync (SyncInterval = 1).
+    // Present without vsync to minimize latency (~16ms saved).
     // -----------------------------------------------------------------------
-    ThrowIfFailed(swapChain_->Present(1, 0), "SwapChain::Present");
+    ThrowIfFailed(swapChain_->Present(0, 0), "SwapChain::Present");
 
     // -----------------------------------------------------------------------
     // Readback: wait for GPU copy completion, then map and copy pixels to CPU.
@@ -246,6 +276,14 @@ void DX12Renderer::render() {
 FrameData DX12Renderer::getLatestFrame() const {
     std::lock_guard<std::mutex> lock(frameMutex_);
     return latestFrame_;
+}
+
+FrameData DX12Renderer::getLastFrameCopy() const {
+    return getLatestFrame();
+}
+
+void DX12Renderer::setSceneParams(SceneParams* params) {
+    sceneParams_ = params;
 }
 
 void DX12Renderer::shutdown() {
@@ -279,6 +317,8 @@ void DX12Renderer::shutdown() {
     cbvDataBegin_ = nullptr;
 
     vertexBuffer_.Reset();
+    depthBuffer_.Reset();
+    dsvHeap_.Reset();
     pipelineState_.Reset();
     rootSignature_.Reset();
 
@@ -647,9 +687,12 @@ void DX12Renderer::createPipelineState() {
     psoDesc.BlendState.RenderTarget[0].LogicOp               = D3D12_LOGIC_OP_NOOP;
     psoDesc.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
 
-    // No depth stencil.
-    psoDesc.DepthStencilState.DepthEnable   = FALSE;
-    psoDesc.DepthStencilState.StencilEnable = FALSE;
+    // Depth testing enabled for correct 3D pyramid rendering.
+    psoDesc.DepthStencilState.DepthEnable    = TRUE;
+    psoDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+    psoDesc.DepthStencilState.DepthFunc      = D3D12_COMPARISON_FUNC_LESS;
+    psoDesc.DepthStencilState.StencilEnable  = FALSE;
+    psoDesc.DSVFormat                        = DXGI_FORMAT_D32_FLOAT;
 
     psoDesc.SampleMask            = UINT_MAX;
     psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
@@ -683,14 +726,38 @@ void DX12Renderer::createPipelineState() {
 // ===========================================================================
 
 void DX12Renderer::createVertexBuffer() {
-    // Three vertices forming a colored triangle.
-    const Vertex triangleVertices[] = {
-        { {  0.0f,  0.5f, 0.0f }, { 1.0f, 0.0f, 0.0f } },  // Top    -- red
-        { {  0.5f, -0.5f, 0.0f }, { 0.0f, 1.0f, 0.0f } },  // Right  -- green
-        { { -0.5f, -0.5f, 0.0f }, { 0.0f, 0.0f, 1.0f } },  // Left   -- blue
+    // Named reference points for readability.
+    //   Apex  : (0, 0.7, 0)       -- yellow
+    //   Base0 : (0, -0.3, 0.6)    -- red    (front)
+    //   Base1 : (-0.52, -0.3, -0.3) -- green (back-left)
+    //   Base2 : (0.52, -0.3, -0.3)  -- blue  (back-right)
+    //
+    // CullMode=BACK with FrontCounterClockwise=FALSE means front faces are
+    // clockwise when viewed from the camera.  We wind each triangle CW as
+    // seen from outside the pyramid.
+    constexpr XMFLOAT3 apex  = {  0.0f,   0.7f,  0.0f  };
+    constexpr XMFLOAT3 base0 = {  0.0f,  -0.3f,  0.6f  };
+    constexpr XMFLOAT3 base1 = { -0.52f, -0.3f, -0.3f  };
+    constexpr XMFLOAT3 base2 = {  0.52f, -0.3f, -0.3f  };
+
+    constexpr XMFLOAT3 cYellow = { 1.0f, 1.0f, 0.0f };
+    constexpr XMFLOAT3 cRed    = { 1.0f, 0.0f, 0.0f };
+    constexpr XMFLOAT3 cGreen  = { 0.0f, 1.0f, 0.0f };
+    constexpr XMFLOAT3 cBlue   = { 0.0f, 0.0f, 1.0f };
+
+    // 4 faces x 3 vertices = 12 vertices (no index buffer).
+    const Vertex pyramidVertices[] = {
+        // Front face: Apex, Base2, Base0
+        { apex,  cYellow }, { base2, cBlue }, { base0, cRed },
+        // Right face: Apex, Base0, Base1
+        { apex,  cYellow }, { base0, cRed  }, { base1, cGreen },
+        // Left face:  Apex, Base1, Base2
+        { apex,  cYellow }, { base1, cGreen }, { base2, cBlue },
+        // Bottom face: Base0, Base2, Base1
+        { base0, cRed },   { base2, cBlue },  { base1, cGreen },
     };
 
-    const UINT vertexBufferSize = sizeof(triangleVertices);
+    const UINT vertexBufferSize = sizeof(pyramidVertices);
 
     // For this small, immutable triangle an upload heap is perfectly fine.
     // A default heap + copy would only add complexity with no measurable gain.
@@ -730,13 +797,75 @@ void DX12Renderer::createVertexBuffer() {
         vertexBuffer_->Map(0, &readRange, &mappedData),
         "VertexBuffer::Map");
 
-    std::memcpy(mappedData, triangleVertices, vertexBufferSize);
+    std::memcpy(mappedData, pyramidVertices, vertexBufferSize);
     vertexBuffer_->Unmap(0, nullptr);
 
     // Vertex buffer view.
     vertexBufferView_.BufferLocation = vertexBuffer_->GetGPUVirtualAddress();
     vertexBufferView_.StrideInBytes  = sizeof(Vertex);
     vertexBufferView_.SizeInBytes    = vertexBufferSize;
+}
+
+// ===========================================================================
+// Private -- depth-stencil buffer and DSV heap
+// ===========================================================================
+
+void DX12Renderer::createDepthBuffer() {
+    // DSV descriptor heap (single descriptor).
+    D3D12_DESCRIPTOR_HEAP_DESC dsvHeapDesc{};
+    dsvHeapDesc.NumDescriptors = 1;
+    dsvHeapDesc.Type           = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
+    dsvHeapDesc.Flags          = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+    dsvHeapDesc.NodeMask       = 0;
+
+    ThrowIfFailed(
+        device_->CreateDescriptorHeap(&dsvHeapDesc, IID_PPV_ARGS(&dsvHeap_)),
+        "CreateDescriptorHeap (DSV)");
+
+    // Depth buffer resource (D32_FLOAT, same dimensions as render targets).
+    D3D12_RESOURCE_DESC depthDesc{};
+    depthDesc.Dimension          = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    depthDesc.Alignment          = 0;
+    depthDesc.Width              = width_;
+    depthDesc.Height             = height_;
+    depthDesc.DepthOrArraySize   = 1;
+    depthDesc.MipLevels          = 1;
+    depthDesc.Format             = DXGI_FORMAT_D32_FLOAT;
+    depthDesc.SampleDesc         = { 1, 0 };
+    depthDesc.Layout             = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+    depthDesc.Flags              = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+
+    D3D12_CLEAR_VALUE clearValue{};
+    clearValue.Format               = DXGI_FORMAT_D32_FLOAT;
+    clearValue.DepthStencil.Depth   = 1.0f;
+    clearValue.DepthStencil.Stencil = 0;
+
+    D3D12_HEAP_PROPERTIES heapProps{};
+    heapProps.Type                 = D3D12_HEAP_TYPE_DEFAULT;
+    heapProps.CPUPageProperty      = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+    heapProps.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+    heapProps.CreationNodeMask     = 1;
+    heapProps.VisibleNodeMask      = 1;
+
+    ThrowIfFailed(
+        device_->CreateCommittedResource(
+            &heapProps,
+            D3D12_HEAP_FLAG_NONE,
+            &depthDesc,
+            D3D12_RESOURCE_STATE_DEPTH_WRITE,
+            &clearValue,
+            IID_PPV_ARGS(&depthBuffer_)),
+        "CreateCommittedResource (depth buffer)");
+
+    // Create the DSV.
+    D3D12_DEPTH_STENCIL_VIEW_DESC dsvDesc{};
+    dsvDesc.Format        = DXGI_FORMAT_D32_FLOAT;
+    dsvDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+    dsvDesc.Flags         = D3D12_DSV_FLAG_NONE;
+
+    device_->CreateDepthStencilView(
+        depthBuffer_.Get(), &dsvDesc,
+        dsvHeap_->GetCPUDescriptorHandleForHeapStart());
 }
 
 // ===========================================================================

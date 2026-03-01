@@ -5,6 +5,7 @@
 !out/**
 !out/extension.js
 !out/stream-panel.js
+!out/server-manager.js
 
 # Keep the manifest
 !package.json

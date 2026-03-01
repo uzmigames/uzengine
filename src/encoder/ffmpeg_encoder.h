@@ -35,6 +35,7 @@ private:
     int64_t  frameDuration_ = 0; // in 100-ns units
     bool     initialized_ = false;
     bool     mfStarted_   = false;
+    bool     useNV12_     = false; // true when ARGB32 input was rejected and NV12 fallback is active
 
     CodecConfig codecConfig_;
 
