@@ -1,0 +1,39 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:chatgpt.com)",
+      "Bash(where cmake)",
+      "Bash(cmake --version)",
+      "Bash(where cl)",
+      "Bash(where clang)",
+      "Bash(where gcc)",
+      "Bash(where node)",
+      "Bash(node --version)",
+      "Bash(where npm)",
+      "Bash(npm --version)",
+      "Bash(where code)",
+      "Bash(ls \"C:/Program Files \\(x86\\)/Windows Kits/10/Include/10.0.26100.0/\")",
+      "Bash(vcpkg list)",
+      "Bash(vcpkg search websocket)",
+      "Bash(where ffmpeg)",
+      "Bash(ffmpeg -version)",
+      "Bash(where npx)",
+      "Bash(npx --version)",
+      "Bash(where yo)",
+      "Bash(nvidia-smi)",
+      "Bash(ls \"C:/Program Files \\(x86\\)/Windows Kits/10/Include/10.0.26100.0/um/\")",
+      "mcp__rulebook__rulebook_task_list",
+      "mcp__rulebook__rulebook_task_create",
+      "mcp__rulebook__rulebook_task_validate",
+      "mcp__rulebook__rulebook_memory_save",
+      "mcp__rulebook__rulebook_task_show",
+      "mcp__rulebook__rulebook_task_update",
+      "Bash(cmake -B build -G \"Visual Studio 17 2022\" -A x64)",
+      "Bash(cmake --build build --config Debug)"
+    ]
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "rulebook"
+  ]
+}

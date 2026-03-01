@@ -1,0 +1,14 @@
+{
+  "editor.formatOnSave": true,
+  "editor.codeActionsOnSave": {
+    "source.fixAll.eslint": "explicit",
+    "source.organizeImports": "explicit"
+  },
+  "editor.rulers": [
+    100
+  ],
+  "files.eol": "\n",
+  "github.copilot.enable": {
+    "*": true
+  }
+}

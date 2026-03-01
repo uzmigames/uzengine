@@ -1,0 +1,97 @@
+# =============================================================================
+# UzEngine PoC - .gitignore
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# C++ Build Artifacts
+# -----------------------------------------------------------------------------
+/build/
+/out/
+*.exe
+*.pdb
+*.obj
+*.lib
+*.dll
+*.exp
+*.ilk
+*.idb
+*.ipdb
+*.iobj
+*.tlog/
+*.log
+*.cache
+x64/
+x86/
+Debug/
+Release/
+RelWithDebInfo/
+MinSizeRel/
+.vs/
+*.vcxproj.user
+*.ncb
+*.suo
+*.sdf
+*.opensdf
+*.VC.db
+*.VC.opendb
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.cmake
+!CMakeLists.txt
+!CMakePresets.json
+
+# Compiled shader objects
+*.cso
+*.fxo
+
+# -----------------------------------------------------------------------------
+# NVENC SDK (download manually from developer.nvidia.com)
+# -----------------------------------------------------------------------------
+/external/nvidia-video-codec-sdk/
+
+# -----------------------------------------------------------------------------
+# VSCode Extension Build
+# -----------------------------------------------------------------------------
+/vscode-uzengine/out/
+/vscode-uzengine/node_modules/
+/vscode-uzengine/*.vsix
+/vscode-uzengine/.vscode-test/
+
+# -----------------------------------------------------------------------------
+# Rulebook - keep specs/tasks, ignore runtime data
+# -----------------------------------------------------------------------------
+/.rulebook/*
+!/.rulebook/specs/
+!/.rulebook/tasks/
+!/.rulebook/tasks/**
+!/.rulebook/rulebook.json
+
+# -----------------------------------------------------------------------------
+# Editor & OS
+# -----------------------------------------------------------------------------
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# -----------------------------------------------------------------------------
+# Environment & Secrets
+# -----------------------------------------------------------------------------
+.env
+.env.local
+.env.*.local
+
+# -----------------------------------------------------------------------------
+# Misc
+# -----------------------------------------------------------------------------
+*.tmp
+temp/
+tmp/
+logs/
