@@ -1,8 +1,13 @@
-.vscode/**
-.eslintrc.json
-src/**
-node_modules/**
-tsconfig.json
-**/*.map
-**/*.ts
+# Exclude everything by default, then whitelist what's needed
+**
+
+# Keep the compiled extension entry point
 !out/**
+!out/extension.js
+!out/stream-panel.js
+
+# Keep the manifest
+!package.json
+
+# Keep the README if present
+!README.md
