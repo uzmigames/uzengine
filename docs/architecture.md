@@ -2,16 +2,17 @@
 
 ## Overview
 
-UzEngine is a proof-of-concept for a 3D engine coupled to VSCode via H.264 streaming. A C++ application renders 3D content using DirectX 12 on the GPU, encodes the frames to H.264, and streams them via WebSocket as fragmented MP4. A VSCode extension receives the stream and displays it in a webview panel using Media Source Extensions (MSE).
+UzEngine is a proof-of-concept for a 3D engine coupled to VSCode via JPEG streaming. A C++ application renders 3D content using DirectX 12 on the GPU, encodes each frame to JPEG using libjpeg-turbo, and streams individual JPEG images via WebSocket. A VSCode extension receives the stream and displays it in a webview panel using data URL image tags.
 
 ## Pipeline
 
 ```
-[DX12 Render] --> [Readback GPU->CPU] --> [NVENC/MF Encode] --> [fMP4 Mux] --> [WebSocket Server]
-     |                    |                                                              |
-  Triangle           FPS Overlay                                               [VSCode Extension]
-  1280x720           (bitmap font,                                             [Webview + MSE Player]
-  30 fps             CPU blit)
+[DX12 Render] --> [Readback GPU->CPU] --> [JPEG Encode] --> [WebSocket Broadcast]
+     |                    |               (libjpeg-turbo)           |
+  Pyramid              RGBA pixels        quality 85           [VSCode Extension]
+  1280x720            row-major           TJSAMP_420          [Webview + <img> tag]
+  60 fps target       8-slot ring                          [data:image/jpeg;base64]
+                      buffer
 ```
 
 ## Threading Model
@@ -19,15 +20,16 @@ UzEngine is a proof-of-concept for a 3D engine coupled to VSCode via H.264 strea
 ```
 Main Thread (Render)          Encode Thread                  IXWebSocket Threads
 ─────────────────────         ─────────────────────          ─────────────────────
-Win32 message loop            pop() from ring buffer         accept connections
-DX12 render + readback   →    H.264 encode (MF/NVENC)   →   send init segment
-push() to RingBuffer<8>       fMP4 mux (moof+mdat)           broadcast segments
-                              WsServer::broadcast()
+Win32 message loop            pop() from ring buffer         accept WebSocket connections
+DX12 render + readback   →    JPEG encode (turbojpeg)   →   broadcast JPEG blob
+push() to RingBuffer<8>       WsServer::broadcast()          to all connected clients
+Frame-rate limiter (60fps)
 ```
 
 - **RingBuffer\<FrameData, 8\>**: lock-free SPSC, drop-oldest policy (never blocks render thread)
 - **Encode thread** sleeps 1 ms when ring is empty; no busy-wait
 - **IXWebSocket** manages its own I/O threads; `broadcast()` is mutex-protected
+- **Each WebSocket message**: one complete, self-contained JPEG image
 
 ## Component Details
 
@@ -45,70 +47,52 @@ push() to RingBuffer<8>       fMP4 mux (moof+mdat)           broadcast segments
 
 ### Encoder (`src/encoder/`)
 
-**Interface:** `IFrameEncoder` (strategy pattern)
+**Current implementation: JpegEncoder** (libjpeg-turbo TurboJPEG API)
 
-```
-initialize(EncoderConfig) → bool
-encode(rgba, w, h, outNALUs) → bool
-getCodecConfig() → CodecConfig { profileIdc, levelIdc, sps, pps }
-shutdown()
-```
-
-**Factory (`createEncoder`):** tries NVENC first, falls back to Windows MF.
-
-| Backend | Class | Status |
-|---------|-------|--------|
-| NVENC | `NvEncEncoder` | Stub — detects `nvEncodeAPI64.dll`, returns `false` from `initialize()` pending SDK headers |
-| Windows MF | `FFmpegEncoder` | Full — `CLSID_CMSH264EncoderMFT`, ARGB32→H.264 Baseline CBR, `ICodecAPI` low-latency mode |
-
-> **Note:** The `FFmpegEncoder` name is historical — the actual backend is Windows Media Foundation's built-in H.264 MFT, which requires no external dependencies on Windows 10+.
-
-**CodecConfig** carries raw SPS/PPS bytes (without start codes) extracted from the first IDR frame. These are consumed by the muxer to build the `avcC` box.
-
-### Muxer (`src/muxer/`)
-
-Hand-written ISO 14496-12 Fragmented MP4 muxer. Zero external dependencies.
-
-**Init segment** (sent once per client on WebSocket connect):
-```
-ftyp (32 bytes)  — brand: isom, compatible: isom/iso2/avc1/mp41
-moov
-  mvhd           — timescale 90000
-  trak
-    tkhd
-    mdia
-      mdhd       — timescale 90000
-      hdlr       — vide / VideoHandler
-      minf
-        vmhd
-        dinf/dref (self-contained)
-        stbl
-          stsd → avc1 → avcC (SPS+PPS)
-          stts/stsc/stsz/stco (empty — fragments handle timing)
-  mvex → trex    — default_sample_duration = 3000 ticks (90000/30fps)
+```c++
+class JpegEncoder {
+    bool encode(const uint8_t* rgba,  // RGBA pixel data
+                int width, int height,
+                int quality,           // 1-100, typically 85
+                std::vector<uint8_t>& out);  // output JPEG blob
+};
 ```
 
-**Media segment** (one per encoded frame):
-```
-moof
-  mfhd           — sequence_number (incrementing)
-  traf
-    tfhd         — flags: default-base-is-moof
-    tfdt         — version=1, 64-bit base_media_decode_time
-    trun         — flags=0x305: data-offset + first-sample-flags + duration + size
-mdat             — AVCC-format NAL units (4-byte big-endian length prefix)
-```
+**Encoding settings:**
+- **Input format**: `TJPF_RGBA` (4 bytes per pixel, row-major)
+- **Chroma subsampling**: `TJSAMP_420` (4:2:0 — good quality/size balance)
+- **Quality**: 85 (default, good trade-off for streaming)
+- **DCT method**: `TJFLAG_FASTDCT` (fast Fourier transform)
 
-**Annex B → AVCC conversion:** start codes (`00 00 01` / `00 00 00 01`) stripped, replaced with 4-byte big-endian length prefix. SPS/PPS NALs filtered out (they live in `avcC`).
+**Output:**
+- Each call to `encode()` returns a self-contained JPEG image (~40-80 KB at 1280×720, quality 85)
+- No init segment needed — each JPEG is independently decodable
+- Not thread-safe — create one instance per thread
+
+**libjpeg-turbo dependency:**
+- Installed via `vcpkg` (`x64-windows` dynamic triplet)
+- `turbojpeg.dll` is copied to output directory via `POST_BUILD` CMake command
+- Zero external build dependencies on Windows (just the DLL at runtime)
+
+### No Muxer (JPEG Era)
+
+Since each frame is encoded as a complete, self-contained JPEG image, there is no need for:
+- Init segments
+- Fragmented container format
+- Codec configuration boxes
+
+Each WebSocket message is simply the raw JPEG binary blob (~40-80 KB). The receiving end displays it directly.
 
 ### Network (`src/network/`)
 
 - **Library:** IXWebSocket (vcpkg)
-- **Port:** 9002 (default, configurable)
+- **Port:** 9002 (default)
 - **Protocol:** binary WebSocket frames
-  - First message to each client: fMP4 init segment
-  - Subsequent messages: fMP4 media segments (moof+mdat)
+  - Each message: one complete JPEG image
+  - No init segment (not needed for independent frames)
+  - No handshake or setup message
 - **Thread safety:** `std::mutex` on client set; `broadcast()` safe to call from encode thread
+- **Client lifecycle**: on connect, immediately start receiving JPEG frames
 
 ### Ring Buffer (`src/common/ring_buffer.h`)
 
@@ -122,15 +106,16 @@ Lock-free SPSC ring buffer, capacity `N` (power-of-2, default 8 slots).
 | Item | Detail |
 |------|--------|
 | Language | TypeScript, compiled with `tsc` |
-| Activation | On command `uzengine.openStreamViewer` |
+| Activation | Commands: `uzengine.openStreamViewer`, `uzengine.startServer`, `uzengine.stopServer` |
 | Panel | `WebviewPanel`, singleton, `retainContextWhenHidden: true` |
-| CSP | `connect-src ws://localhost:* wss://localhost:*; media-src blob:; script-src 'nonce-...'` |
-| MSE codec | `video/mp4; codecs="avc1.42E01F"` (H.264 Baseline 3.1) |
-| SourceBuffer mode | `sequence` — ignores timestamps, appends in arrival order |
-| Buffer trim | Keeps last 10 s behind playhead; older data removed on `updateend` |
+| CSP | `connect-src ws://localhost:*; script-src 'nonce-...'` (no media-src, img-src includes data:) |
+| Display | `<img id="stream" alt="">` with `src="data:image/jpeg;base64,..."` |
+| Rendering | Simple `img.src` assignment — no canvas API, no MSE |
+| FPS counter | Client-side, updated every 1 second |
 | Reconnection | Exponential backoff: 1 s → 2 s → 4 s → ... → 16 s cap |
 | Configuration | `uzengine.serverUrl` (VSCode setting, default `ws://localhost:9002`) |
-| Lint | ESLint 9 + `typescript-eslint` v8, flat config (`eslint.config.js`) |
+| Process mgmt | `ServerManager` spawns `UzEngine.exe`, polls port 9002, kills on exit |
+| Status bar | Shows running/stopped state, allows click-to-stop |
 
 ## Build System
 
@@ -168,11 +153,13 @@ npm run compile   # tsc
 
 ## Key Design Decisions
 
-1. **Root 32-bit constants** over constant buffers for MVP matrix — simpler, no per-frame upload heap management
-2. **Upload heap** for vertex buffer — 72 bytes of static geometry doesn't need a default heap + copy queue
-3. **Runtime shader compilation** via `D3DCompile` — no build-time `fxc` step, shaders embedded as strings
-4. **Drop-oldest ring buffer** — render thread never blocks; encoder silently skips frames when behind
-5. **Windows MF over FFmpeg** — zero external build dependencies; `CLSID_CMSH264EncoderMFT` ships with Windows 10+
-6. **Inlined webview script** — avoids webpack/bundler, keeps CSP tight, simpler build
-7. **`SourceBuffer.mode = 'sequence'`** — correct for live fMP4; browser manages timestamps automatically
-8. **NVENC stub** — project compiles and runs without NVIDIA SDK; factory falls through to MF automatically
+1. **JPEG over H.264/MSE** — Simpler pipeline (no muxing, no codec config), independent frames, zero header overhead, MSE sandbox restrictions avoided
+2. **Root 32-bit constants** over constant buffers for MVP — simpler, no per-frame upload heap management
+3. **Upload heap** for vertex buffer — static geometry, no need for default heap + copy queue
+4. **Runtime shader compilation** via `D3DCompile` — no build-time `fxc` step, shaders embedded as strings
+5. **Drop-oldest ring buffer** — render thread never blocks; encoder silently skips frames when behind
+6. **libjpeg-turbo (TurboJPEG API)** — High performance, fast DCT, quality 85 gives ~30-50 KB/frame at 1280×720
+7. **Data URL img tags** — Avoids MSE sandbox restrictions, simpler client-side code (no binary buffer management)
+8. **Inlined webview script** — no webpack, keeps CSP tight, single HTML file
+9. **60 fps render target, 30-40 fps display** — encoding frames as JPEGs takes time; drop-oldest absorbs jitter
+10. **File-based IPC** (JSON polling) — VSCode extension can restart engine without process management complexity

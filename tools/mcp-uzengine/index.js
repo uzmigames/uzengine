@@ -14,6 +14,7 @@
  *   uz_status      — read real-time engine metrics
  *   uz_read_file   — read a project file
  *   uz_write_file  — write a project file
+ *   uz_restart     — kill and restart UzEngine.exe
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -24,6 +25,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 
 import { engineCall, readStatus, waitForFile, readFile, PREVIEW_DIR } from './ipc-client.js';
+import { spawnEngine, killEngine } from './engine-process.js';
 import path from 'path';
 import { randomUUID } from 'crypto';
 
@@ -128,6 +130,28 @@ const TOOLS = [
             required: ['path', 'content'],
         },
     },
+    {
+        name: 'uz_restart',
+        description:
+            'Kill the running UzEngine.exe process and start a fresh one. ' +
+            'Use this after rebuilding the C++ project or when the engine is stuck. ' +
+            'Waits up to wait_ms for the engine to become alive again before returning.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                wait_ms: {
+                    type: 'number',
+                    description: 'Max time to wait for engine to come back online. Default: 8000.',
+                    default: 8000,
+                },
+                windowed: {
+                    type: 'boolean',
+                    description: 'Show a visible window (debug mode). Default: false (headless).',
+                    default: false,
+                },
+            },
+        },
+    },
 ];
 
 // ---------------------------------------------------------------------------
@@ -196,6 +220,42 @@ async function handleUzWriteFile(args) {
     return textResult(JSON.stringify(result, null, 2));
 }
 
+async function handleUzRestart(args) {
+    const waitMs  = args.wait_ms  ?? 8000;
+    const windowed = args.windowed ?? false;
+    const start = Date.now();
+
+    killEngine();
+
+    // Wait briefly for process to fully exit
+    await new Promise(resolve => setTimeout(resolve, 800));
+
+    const spawnResult = spawnEngine({ windowed });
+    if (!spawnResult.ok) {
+        return textResult(JSON.stringify({ ok: false, error: spawnResult.error }));
+    }
+
+    // Poll until engine becomes alive or timeout
+    const deadline = start + waitMs;
+    while (Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        const status = readStatus();
+        if (status.alive) {
+            return textResult(JSON.stringify({
+                ok: true,
+                pid: spawnResult.pid,
+                elapsed_ms: Date.now() - start,
+            }));
+        }
+    }
+
+    return textResult(JSON.stringify({
+        ok: false,
+        error: `Engine did not come online within ${waitMs}ms`,
+        pid: spawnResult.pid,
+    }));
+}
+
 function textResult(text) {
     return { content: [{ type: 'text', text }] };
 }
@@ -221,6 +281,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             case 'uz_status':     return handleUzStatus();
             case 'uz_read_file':  return await handleUzReadFile(args ?? {});
             case 'uz_write_file': return await handleUzWriteFile(args ?? {});
+            case 'uz_restart':    return await handleUzRestart(args ?? {});
             default:
                 return textResult(JSON.stringify({ error: `Unknown tool: ${name}` }));
         }

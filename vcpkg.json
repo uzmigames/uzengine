@@ -4,6 +4,7 @@
   "description": "UzEngine PoC - DX12 renderer with H.264 streaming to VSCode",
   "dependencies": [
     "ixwebsocket",
+    "libjpeg-turbo",
     "nlohmann-json",
     "zlib"
   ]

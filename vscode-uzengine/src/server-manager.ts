@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import * as cp from 'child_process';
+import * as net from 'net';
 import * as path from 'path';
 import * as fs from 'fs';
 
@@ -102,7 +103,11 @@ export class ServerManager implements vscode.Disposable {
             this._setStatus('stopped');
         });
 
-        return true;
+        const ready = await this._waitForPort(9002, 5000);
+        if (!ready) {
+            this._outputChannel.appendLine('[UzEngine] Warning: server did not become ready within 5s');
+        }
+        return this.isRunning;
     }
 
     /** Stops the server process if running. */
@@ -125,6 +130,43 @@ export class ServerManager implements vscode.Disposable {
     // -------------------------------------------------------------------------
     // Private helpers
     // -------------------------------------------------------------------------
+
+    /**
+     * Polls TCP port until connectable or timeout.
+     * Resolves true when the port accepts a connection, false on timeout.
+     */
+    private _waitForPort(port: number, timeoutMs: number): Promise<boolean> {
+        return new Promise((resolve) => {
+            const deadline = Date.now() + timeoutMs;
+
+            const attempt = () => {
+                if (!this.isRunning) {
+                    resolve(false);
+                    return;
+                }
+                const sock = new net.Socket();
+                sock.setTimeout(200);
+                sock.once('connect', () => {
+                    sock.destroy();
+                    resolve(true);
+                });
+                sock.once('error', retry);
+                sock.once('timeout', retry);
+                sock.connect(port, '127.0.0.1');
+
+                function retry() {
+                    sock.destroy();
+                    if (Date.now() >= deadline) {
+                        resolve(false);
+                    } else {
+                        setTimeout(attempt, 100);
+                    }
+                }
+            };
+
+            attempt();
+        });
+    }
 
     private _resolveExecutable(): string | undefined {
         const config = vscode.workspace.getConfiguration('uzengine');

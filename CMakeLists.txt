@@ -11,14 +11,14 @@ find_package(ixwebsocket CONFIG REQUIRED)
 # nlohmann-json via vcpkg
 find_package(nlohmann_json CONFIG REQUIRED)
 
+# libjpeg-turbo via vcpkg
+find_package(libjpeg-turbo CONFIG REQUIRED)
+
 add_executable(UzEngine WIN32
     src/main.cpp
     src/renderer/renderer.cpp
     src/renderer/fps_overlay.cpp
-    src/encoder/nvenc_encoder.cpp
-    src/encoder/ffmpeg_encoder.cpp
-    src/encoder/encoder_factory.cpp
-    src/muxer/fmp4_muxer.cpp
+    src/encoder/jpeg_encoder.cpp
     src/network/ws_server.cpp
     src/common/ipc_registry.cpp
     src/common/ipc_poller.cpp
@@ -36,12 +36,18 @@ target_link_libraries(UzEngine PRIVATE
     dxgi
     d3dcompiler
     dxguid
-    mf
-    mfuuid
-    mfplat
     ole32
     ixwebsocket::ixwebsocket
     nlohmann_json::nlohmann_json
+    $<IF:$<TARGET_EXISTS:libjpeg-turbo::turbojpeg>,libjpeg-turbo::turbojpeg,libjpeg-turbo::turbojpeg-static>
+)
+
+# Copy vcpkg DLLs to the output directory after build (Windows dynamic linking).
+add_custom_command(TARGET UzEngine POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin/turbojpeg.dll"
+        "$<TARGET_FILE_DIR:UzEngine>"
+    COMMENT "Copying turbojpeg.dll to output directory"
 )
 
 # Enable debug layer in Debug builds

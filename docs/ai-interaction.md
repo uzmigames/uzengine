@@ -1,7 +1,9 @@
 # AI Interaction Guide — UzEngine
 
 This document explains how an AI agent (Claude Code) interacts with a running
-UzEngine instance in real time via the MCP server.
+UzEngine instance in real time via the MCP (Model Context Protocol) server.
+
+**Note:** This is a quick reference. For detailed information, see [IPC and MCP](ipc-mcp.md).
 
 ## Architecture
 
@@ -157,10 +159,37 @@ never change — Skills extend capabilities without touching engine code.
 
 ---
 
+## Additional Tools
+
+### `uz_read_file(path)` & `uz_write_file(path, content)`
+
+Read/write files in the project. Useful for modifying shaders, configs, or scene definitions.
+
+**Examples:**
+```python
+# Read a shader
+code = uz_read_file({"path": "../../src/renderer/renderer.h"})
+
+# Write a shader
+uz_write_file({
+    "path": "../../shaders/custom.hlsl",
+    "content": "// HLSL code here"
+})
+```
+
+### `uz_restart(wait_ms?, windowed?)`
+
+Kill and restart UzEngine.exe. Useful for applying changes that require rebuild or recovering from hangs.
+
+```python
+uz_restart({"wait_ms": 8000, "windowed": True})  # debug mode
+```
+
+---
+
 ## Setup
 
-The MCP server starts automatically when Claude Code opens this workspace,
-via `.mcp.json` at the project root:
+The MCP server starts automatically when Claude Code opens this workspace, via `.mcp.json`:
 
 ```json
 {
@@ -173,10 +202,14 @@ via `.mcp.json` at the project root:
 }
 ```
 
-**Requirements:**
-1. Run `npm install` in `tools/mcp-uzengine/` once
-2. Open the UzEngine stream viewer in VSCode (starts UzEngine.exe)
-3. Claude Code auto-discovers the MCP server on workspace open
+**Prerequisites:**
+1. Build the C++ app: `cmake --build build --config Release`
+2. Build the extension: `cd vscode-uzengine && npm install && npm run compile`
+3. Open workspace in VSCode: `code .`
+4. Run extension: Command palette → `UzEngine: Open Stream Viewer` (starts UzEngine.exe)
+5. Claude Code auto-discovers MCP server
 
-If UzEngine is not running, `uz_status()` returns `alive: false` and
-`uz_call` returns a timeout error after 4 seconds.
+**If UzEngine is not running:**
+- `uz_status()` returns `alive: false`
+- `uz_call()` times out after 4 seconds (default)
+- Use `uz_restart()` to start it

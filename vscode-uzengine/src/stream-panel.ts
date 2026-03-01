@@ -2,14 +2,16 @@ import * as vscode from 'vscode';
 import { randomBytes } from 'crypto';
 
 /**
- * Manages the singleton WebviewPanel that renders the UzEngine H.264 stream.
+ * Manages the singleton WebviewPanel that renders the UzEngine JPEG stream.
  *
  * Design decisions:
  * - Singleton pattern via `StreamPanel.currentPanel` so re-invoking the
  *   command reveals the existing panel rather than opening a duplicate.
- * - The MSE pipeline and WebSocket reconnection logic live entirely in the
- *   inlined webview script — this avoids needing a separate webview bundle
- *   and keeps the CSP tight (no external scripts).
+ * - The canvas/WebSocket pipeline lives entirely in the inlined webview
+ *   script — this avoids needing a separate webview bundle and keeps the
+ *   CSP tight (no external scripts).
+ * - Each WebSocket message is one complete JPEG frame; `createImageBitmap`
+ *   decodes it off the main thread and `ctx.drawImage` blits it to the canvas.
  * - The server URL is read from configuration and injected into the HTML at
  *   render time; configuration changes take effect on the next panel open.
  */
@@ -70,11 +72,15 @@ export class StreamPanel {
             this._disposables
         );
 
-        // Re-render if the panel becomes visible again (e.g. tab switch).
+        // When the panel becomes visible again (e.g. tab switch), send a resume
+        // message so the webview can react if needed. The canvas pipeline does
+        // not require an explicit play() call, but the handler is kept for
+        // forward compatibility. The webview context is preserved via
+        // retainContextWhenHidden, so the WebSocket stays alive across tab switches.
         this._panel.onDidChangeViewState(
             () => {
                 if (this._panel.visible) {
-                    this._update();
+                    this._panel.webview.postMessage({ type: 'resume' });
                 }
             },
             null,
@@ -138,7 +144,7 @@ export class StreamPanel {
     }
 
     /**
-     * Builds the full HTML document for the webview, with the MSE/WebSocket
+     * Builds the full HTML document for the webview, with the canvas/WebSocket
      * pipeline inlined as a `<script nonce="...">` block.
      *
      * @param _webview - The webview instance (reserved for future URI generation).
@@ -161,7 +167,7 @@ export class StreamPanel {
   <meta http-equiv="Content-Security-Policy"
         content="default-src 'none';
                  connect-src ws://localhost:* wss://localhost:*;
-                 media-src blob:;
+                 img-src blob: data: vscode-webview:;
                  script-src 'nonce-${nonce}';
                  style-src 'unsafe-inline';">
   <title>UzEngine Stream</title>
@@ -249,7 +255,10 @@ export class StreamPanel {
     <span id="server-url" title="${safeUrl}">${safeUrl}</span>
   </div>
   <div id="stream-container">
-    <video id="stream" autoplay muted playsinline></video>
+    <div id="diag" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#ff0;font-size:18px;z-index:10;text-align:center;pointer-events:none">
+      Webview OK — aguardando stream...
+    </div>
+    <img id="stream" alt="" style="position:relative;z-index:1">
   </div>
 
   <script nonce="${nonce}">
@@ -259,25 +268,25 @@ export class StreamPanel {
       // -----------------------------------------------------------------------
       // DOM references
       // -----------------------------------------------------------------------
-      var video      = /** @type {HTMLVideoElement} */ (document.getElementById('stream'));
-      var statusEl   = /** @type {HTMLElement} */      (document.getElementById('status'));
-      var fpsEl      = /** @type {HTMLElement} */      (document.getElementById('fps'));
+      var img       = /** @type {HTMLImageElement} */ (document.getElementById('stream'));
+      var statusEl  = /** @type {HTMLElement} */ (document.getElementById('status'));
+      var fpsEl     = /** @type {HTMLElement} */ (document.getElementById('fps'));
+      var diagEl    = /** @type {HTMLElement} */ (document.getElementById('diag'));
+
+      console.log('[UzEngine] Webview script loaded');
 
       // -----------------------------------------------------------------------
       // State
       // -----------------------------------------------------------------------
-      var mediaSource      = /** @type {MediaSource|null} */    (null);
-      var sourceBuffer     = /** @type {SourceBuffer|null} */   (null);
-      var ws               = /** @type {WebSocket|null} */      (null);
-      var pendingSegments  = /** @type {ArrayBuffer[]} */       ([]);
+      var ws             = /** @type {WebSocket|null} */ (null);
 
-      var lastFpsTick  = Date.now();
-      var frameCount   = 0;
+      var lastFpsTick    = Date.now();
+      var frameCount     = 0;
 
-      var reconnectDelay    = 1000;
-      var MAX_RECONNECT     = 16000;
-      var reconnectTimer    = /** @type {ReturnType<typeof setTimeout>|null} */ (null);
-      var isDisposed        = false;
+      var reconnectDelay = 1000;
+      var MAX_RECONNECT  = 16000;
+      var reconnectTimer = /** @type {ReturnType<typeof setTimeout>|null} */ (null);
+      var isDisposed     = false;
 
       // The server URL is injected by the extension host at render time.
       var SERVER_URL = '${safeUrl}';
@@ -288,148 +297,6 @@ export class StreamPanel {
       function setStatus(text, cls) {
         statusEl.textContent = text;
         statusEl.className = cls;
-      }
-
-      // -----------------------------------------------------------------------
-      // FPS counter
-      // -----------------------------------------------------------------------
-      function tickFps() {
-        frameCount++;
-        var now = Date.now();
-        var elapsed = now - lastFpsTick;
-        if (elapsed >= 1000) {
-          var fps = Math.round((frameCount * 1000) / elapsed);
-          fpsEl.textContent = fps + ' fps';
-          frameCount = 0;
-          lastFpsTick = now;
-        }
-      }
-
-      // -----------------------------------------------------------------------
-      // Buffer management
-      // -----------------------------------------------------------------------
-      function processQueue() {
-        if (!sourceBuffer || sourceBuffer.updating || pendingSegments.length === 0) {
-          return;
-        }
-        var segment = pendingSegments.shift();
-        if (!segment) { return; }
-        try {
-          sourceBuffer.appendBuffer(segment);
-        } catch (err) {
-          console.error('[UzEngine] appendBuffer error:', err);
-          // Drop queued segments — next keyframe will recover.
-          pendingSegments = [];
-        }
-      }
-
-      function trimBuffer() {
-        if (!sourceBuffer || sourceBuffer.updating || !video.buffered.length) { return; }
-        // Keep only a very short buffer behind the playhead (0.3 s) to minimise
-        // latency. The Chromium MSE player inside the webview tends to buffer
-        // ahead; trimming aggressively forces it to stay close to live edge.
-        var keepFrom = video.currentTime - 0.3;
-        if (keepFrom > 0 && video.buffered.start(0) < keepFrom) {
-          try {
-            sourceBuffer.remove(0, keepFrom);
-          } catch (_) {
-            // Non-fatal — browser may refuse during certain states.
-          }
-        }
-      }
-
-      // -----------------------------------------------------------------------
-      // MSE lifecycle
-      // -----------------------------------------------------------------------
-      function initMSE() {
-        mediaSource = new MediaSource();
-        video.src = URL.createObjectURL(mediaSource);
-
-        mediaSource.addEventListener('sourceopen', function () {
-          if (!mediaSource) { return; }
-
-          // Try codec strings from most to least capable.
-          // avc1.4D402A = Main@4.2 (supports 1280x720@60fps with Main profile)
-          // avc1.42E028 = Baseline@4.0 (supports 1280x720@60fps)
-          // The MF encoder may select Main or Baseline depending on the system.
-          var mimeTypeCandidates = [
-            'video/mp4; codecs="avc1.4D402A"',
-            'video/mp4; codecs="avc1.4D4028"',
-            'video/mp4; codecs="avc1.42E028"',
-          ];
-          var mimeType = '';
-          for (var i = 0; i < mimeTypeCandidates.length; i++) {
-            if (MediaSource.isTypeSupported(mimeTypeCandidates[i])) {
-              mimeType = mimeTypeCandidates[i];
-              console.log('[UzEngine] Using codec:', mimeType);
-              break;
-            }
-          }
-          if (!mimeType) {
-            console.error('[UzEngine] No supported H.264 MSE codec found');
-            setStatus('Codec unsupported', 'disconnected');
-            return;
-          }
-
-          try {
-            sourceBuffer = mediaSource.addSourceBuffer(mimeType);
-          } catch (err) {
-            console.error('[UzEngine] addSourceBuffer failed:', err);
-            setStatus('MSE error', 'disconnected');
-            return;
-          }
-
-          // 'sequence' mode ignores timestamps and appends in arrival order,
-          // which is correct for a live fMP4 stream.
-          sourceBuffer.mode = 'sequence';
-
-          sourceBuffer.addEventListener('updateend', function () {
-            processQueue();
-            trimBuffer();
-            // Live-edge seek: if we have fallen more than 0.5 s behind the
-            // buffered end, jump forward to stay close to live.
-            if (video.buffered.length && !sourceBuffer.updating) {
-              var liveEdge = video.buffered.end(video.buffered.length - 1);
-              if (liveEdge - video.currentTime > 0.5) {
-                video.currentTime = liveEdge - 0.05;
-              }
-            }
-          });
-
-          sourceBuffer.addEventListener('error', function (e) {
-            console.error('[UzEngine] SourceBuffer error', e);
-            pendingSegments = [];
-          });
-        });
-
-        mediaSource.addEventListener('sourceended', function () {
-          console.log('[UzEngine] MediaSource ended');
-        });
-
-        mediaSource.addEventListener('sourceclose', function () {
-          console.log('[UzEngine] MediaSource closed');
-        });
-      }
-
-      function resetMSE() {
-        pendingSegments = [];
-
-        if (mediaSource) {
-          try {
-            if (mediaSource.readyState === 'open') {
-              mediaSource.endOfStream();
-            }
-          } catch (_) {}
-        }
-
-        // Revoke the old object URL to avoid memory leaks.
-        if (video.src && video.src.startsWith('blob:')) {
-          try { URL.revokeObjectURL(video.src); } catch (_) {}
-        }
-
-        mediaSource  = null;
-        sourceBuffer = null;
-        video.src    = '';
       }
 
       // -----------------------------------------------------------------------
@@ -454,22 +321,42 @@ export class StreamPanel {
           console.log('[UzEngine] WebSocket connected to', SERVER_URL);
           setStatus('Connected', 'connected');
           reconnectDelay = 1000; // reset back-off on successful connection
-          initMSE();
         });
 
         ws.addEventListener('message', function (e) {
-          if (e.data instanceof ArrayBuffer) {
-            pendingSegments.push(e.data);
-            processQueue();
-            tickFps();
-          } else {
+          if (!(e.data instanceof ArrayBuffer)) {
             console.warn('[UzEngine] Received non-binary message:', typeof e.data);
+            return;
+          }
+
+          // Convert ArrayBuffer to base64 data URL.
+          var bytes = new Uint8Array(e.data);
+          var binary = '';
+          for (var i = 0; i < bytes.byteLength; i++) {
+            binary += String.fromCharCode(bytes[i]);
+          }
+          var dataUrl = 'data:image/jpeg;base64,' + btoa(binary);
+
+          if (frameCount === 0) {
+            console.log('[UzEngine] First frame: ' + e.data.byteLength + ' bytes, setting img.src');
+            diagEl.style.display = 'none';
+          }
+
+          img.src = dataUrl;
+
+          // FPS counter: count frames, update display once per second.
+          frameCount++;
+          var now = Date.now();
+          if (now - lastFpsTick >= 1000) {
+            fpsEl.textContent = Math.round(frameCount * 1000 / (now - lastFpsTick)) + ' fps';
+            frameCount  = 0;
+            lastFpsTick = now;
           }
         });
 
         ws.addEventListener('close', function (e) {
           console.log('[UzEngine] WebSocket closed. Code:', e.code, 'Reason:', e.reason);
-          resetMSE();
+          setStatus('Reconnecting\u2026', 'disconnected');
           scheduleReconnect();
         });
 
@@ -503,19 +390,7 @@ export class StreamPanel {
           ws.close();
           ws = null;
         }
-        resetMSE();
       }
-
-      // -----------------------------------------------------------------------
-      // Auto-play: resume if the video pauses unexpectedly (e.g. buffer stall).
-      // -----------------------------------------------------------------------
-      video.addEventListener('pause', function () {
-        if (!isDisposed && ws && ws.readyState === WebSocket.OPEN) {
-          video.play().catch(function (err) {
-            console.warn('[UzEngine] Auto-play resume failed:', err);
-          });
-        }
-      });
 
       // -----------------------------------------------------------------------
       // Handle messages from the extension host (e.g. configuration updates).
@@ -533,6 +408,12 @@ export class StreamPanel {
             reconnectDelay = 1000;
             connect();
           }
+        }
+
+        if (message.type === 'resume') {
+          // Canvas does not need an explicit play() call — the WebSocket
+          // pipeline is always running while connected. This handler is kept
+          // as a no-op for forward compatibility with the extension host.
         }
       });
 

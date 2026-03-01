@@ -11,8 +11,7 @@
 
 #include "renderer/renderer.h"
 #include "renderer/scene_params.h"
-#include "encoder/encoder_factory.h"
-#include "muxer/fmp4_muxer.h"
+#include "encoder/jpeg_encoder.h"
 #include "network/ws_server.h"
 #include "common/timer.h"
 #include "common/types.h"
@@ -42,7 +41,7 @@ namespace {
 constexpr const wchar_t* kWindowClassName = L"UzEngineWndClass";
 constexpr const wchar_t* kWindowTitle     = L"UzEngine PoC";
 constexpr uint16_t       kWsPort          = 9002;
-constexpr std::size_t    kRingSize        = 2; // minimal buffering for low latency
+constexpr std::size_t    kRingSize        = 8; // power-of-2, absorbs encode jitter
 
 // Ring buffer shared between render thread (producer) and encode thread (consumer).
 uz::RingBuffer<uz::FrameData, kRingSize> g_frameRing;
@@ -56,86 +55,42 @@ uz::EngineMetrics g_metrics;
 
 // ---------------------------------------------------------------------------
 // Encode thread body
+// Pops RGBA frames from the ring buffer, encodes each to JPEG via
+// libjpeg-turbo, and broadcasts the raw JPEG blob over WebSocket.
+// Each WebSocket message is one self-contained, independently decodable JPEG.
 // ---------------------------------------------------------------------------
 void encodeThreadFn(uz::WsServer* server) {
-    // -- Create encoder ------------------------------------------------------
-    uz::EncoderConfig encCfg;
-    encCfg.width      = uz::kDefaultWidth;
-    encCfg.height     = uz::kDefaultHeight;
-    encCfg.fps        = uz::kTargetFPS;
-    encCfg.bitrate    = 4'000'000;
-    encCfg.preferNVENC = true;
+    uz::JpegEncoder encoder;
+    std::vector<uint8_t> jpegBlob;
 
-    auto encoder = uz::createEncoder(encCfg);
-    if (!encoder) {
-        OutputDebugStringA("[UzEngine] FATAL: no encoder available\n");
-        return;
-    }
-
-    // -- Muxer state (initialised on first IDR frame) -----------------------
-    uz::FMP4Muxer muxer;
-    bool muxerReady = false;
-    uint32_t frameCount = 0;
-
-    OutputDebugStringA("[UzEngine] Encode thread started\n");
+    OutputDebugStringA("[UzEngine] Encode thread started (JPEG mode)\n");
 
     while (g_encodeRunning.load(std::memory_order_relaxed)) {
         auto frameOpt = g_frameRing.pop();
         if (!frameOpt) {
-            // No frame available yet -- yield CPU and retry immediately.
-            std::this_thread::yield();
+            // No frame available yet — sleep briefly to avoid busy-waiting.
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
             continue;
         }
 
-        uz::FrameData& frame = *frameOpt;
+        const uz::FrameData& frame = *frameOpt;
         if (frame.pixels.empty()) {
             continue;
         }
 
-        // -- Encode frame ----------------------------------------------------
-        std::vector<uint8_t> nalus;
-        if (!encoder->encode(frame.pixels.data(),
-                              frame.width, frame.height,
-                              nalus)) {
+        jpegBlob.clear();
+        if (!encoder.encode(frame.pixels.data(),
+                             static_cast<int>(frame.width),
+                             static_cast<int>(frame.height),
+                             85,
+                             jpegBlob)) {
+            OutputDebugStringA("[UzEngine] JPEG encode failed — dropping frame\n");
             continue;
         }
 
-        if (nalus.empty()) {
-            continue;
-        }
-
-        // -- Initialize muxer on first IDR -----------------------------------
-        if (!muxerReady) {
-            const auto& cc = encoder->getCodecConfig();
-            if (!cc.sps.empty() && !cc.pps.empty()) {
-                if (muxer.initialize(cc.profileIdc, cc.levelIdc,
-                                     cc.sps, cc.pps,
-                                     frame.width, frame.height,
-                                     90000,                        // timescale
-                                     90000 / uz::kTargetFPS)) {   // ticks per frame
-                    server->setInitSegment(muxer.getInitSegment());
-                    muxerReady = true;
-                    OutputDebugStringA("[UzEngine] fMP4 muxer initialized\n");
-                }
-            }
-        }
-
-        if (!muxerReady) {
-            continue; // wait until we have SPS/PPS
-        }
-
-        // -- Mux + broadcast -------------------------------------------------
-        const bool isKeyFrame = (frameCount % uz::kTargetFPS == 0); // IDR every 1 second
-        auto segment = muxer.muxFrame(nalus, isKeyFrame);
-
-        if (!segment.empty()) {
-            server->broadcast(segment);
-        }
-
-        ++frameCount;
+        server->broadcast(jpegBlob);
     }
 
-    encoder->shutdown();
     OutputDebugStringA("[UzEngine] Encode thread stopped\n");
 }
 
@@ -192,20 +147,23 @@ int WINAPI WinMain(
         return 1;
     }
 
-    // -- Detect headless mode ------------------------------------------------
-    // When launched by the VSCode extension, UZENGINE_HEADLESS=1 is set.
+    // -- Detect headless / windowed-debug mode --------------------------------
+    // UZENGINE_HEADLESS=1  → hide window (normal VSCode extension mode)
+    // UZENGINE_WINDOWED=1  → force visible window even when headless (debug)
     wchar_t headlessEnv[4]{};
-    const bool headless = GetEnvironmentVariableW(L"UZENGINE_HEADLESS", headlessEnv, 4) > 0;
+    wchar_t windowedEnv[4]{};
+    const bool headless  = GetEnvironmentVariableW(L"UZENGINE_HEADLESS", headlessEnv, 4) > 0;
+    const bool forceWin  = GetEnvironmentVariableW(L"UZENGINE_WINDOWED", windowedEnv, 4) > 0;
+    const bool showWindow = !headless || forceWin;
 
     // -- Create the window ---------------------------------------------------
-    // In headless mode use WS_EX_TOOLWINDOW (keeps window off taskbar and
-    // Alt+Tab) + WS_POPUP (no title bar/border). The window is never passed
-    // to ShowWindow so it stays invisible. A valid HWND is still required by
-    // CreateSwapChainForHwnd.
-    DWORD exStyle = headless
+    // In headless mode use WS_EX_TOOLWINDOW + WS_EX_NOACTIVATE so the window
+    // stays off the taskbar/Alt+Tab. WS_POPUP avoids the title bar chrome.
+    // A valid HWND is always required by CreateSwapChainForHwnd.
+    DWORD exStyle = (!showWindow)
         ? (WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE)
         : 0;
-    DWORD style = headless
+    DWORD style = (!showWindow)
         ? WS_POPUP
         : WS_OVERLAPPEDWINDOW;
 
@@ -214,12 +172,15 @@ int WINAPI WinMain(
         static_cast<LONG>(uz::kDefaultHeight) };
     AdjustWindowRectEx(&windowRect, style, FALSE, exStyle);
 
+    const int winX = showWindow ? CW_USEDEFAULT : -32000;
+    const int winY = showWindow ? CW_USEDEFAULT : -32000;
+
     HWND hwnd = CreateWindowExW(
         exStyle,
         kWindowClassName,
         kWindowTitle,
         style,
-        -32000, -32000,   // off-screen position so even if shown it's invisible
+        winX, winY,
         windowRect.right  - windowRect.left,
         windowRect.bottom - windowRect.top,
         nullptr, nullptr, hInstance, nullptr);
@@ -228,7 +189,7 @@ int WINAPI WinMain(
         return 1;
     }
 
-    if (!headless) {
+    if (showWindow) {
         ShowWindow(hwnd, nCmdShow);
         UpdateWindow(hwnd);
     }
@@ -275,7 +236,7 @@ int WINAPI WinMain(
         ipcBaseDir = exeDir + "/preview";
     }
 
-    g_metrics.encoderName = "MFT";
+    g_metrics.encoderName = "JPEG";
     g_metrics.resolution  = std::to_string(uz::kDefaultWidth) + "x"
                           + std::to_string(uz::kDefaultHeight);
 
