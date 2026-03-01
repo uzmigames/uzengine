@@ -89,8 +89,10 @@ public:
     // Initialize the renderer and all GPU resources for the given window.
     void init(HWND hwnd, uint32_t width, uint32_t height);
 
-    // Update the rotation angle based on elapsed time (seconds since start).
-    void update(double totalTime);
+    // Update the rotation angle using delta-time accumulation (immune to
+    // frame-timing jitter).  totalTime is still available for effects that
+    // need wall-clock time; deltaTime drives the rotation step.
+    void update(double totalTime, double deltaTime);
 
     // Record and execute the command list, present the frame.
     void render();
@@ -198,6 +200,11 @@ private:
 
     // Current world-view-projection matrix, updated each frame by update().
     DirectX::XMFLOAT4X4 worldViewProj_{};
+
+    // Accumulated rotation angles (radians).  Updated each frame via delta-time
+    // so that animation speed is independent of frame-timing jitter.
+    float rotAngleY_ = 0.0f;
+    float rotAngleX_ = 0.0f;
 
     bool initialized_ = false;
 

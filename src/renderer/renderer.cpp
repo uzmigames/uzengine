@@ -107,7 +107,7 @@ void DX12Renderer::init(HWND hwnd, uint32_t width, uint32_t height) {
     initialized_ = true;
 }
 
-void DX12Renderer::update(double totalTime) {
+void DX12Renderer::update(double /*totalTime*/, double deltaTime) {
     // Read rotation speeds from IPC-controlled scene params, falling back to
     // the original hardcoded values when no SceneParams is attached.
     float rotYSpeed = 1.2f;
@@ -125,10 +125,17 @@ void DX12Renderer::update(double totalTime) {
         }
     }
 
+    // Accumulate rotation angles using delta time.  This makes the animation
+    // immune to frame-timing jitter: small timing errors only affect one
+    // frame's step size, they don't compound over time like the old
+    // angle = totalTime * speed formula did.
+    const float dt = static_cast<float>(deltaTime);
+    rotAngleY_ += dt * rotYSpeed;
+    rotAngleX_ += dt * rotXTilt;
+
     // World: rotate around Y axis, tilt around X.
-    const float t = static_cast<float>(totalTime);
-    const XMMATRIX world = XMMatrixRotationY(t * rotYSpeed)
-                         * XMMatrixRotationX(rotXTilt);
+    const XMMATRIX world = XMMatrixRotationY(rotAngleY_)
+                         * XMMatrixRotationX(0.3f + rotAngleX_);
 
     // View: camera at (0, 0, -3) looking at origin.
     const XMVECTOR eye = XMVectorSet(0.0f, 0.0f, -3.0f, 1.0f);

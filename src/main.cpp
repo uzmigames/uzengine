@@ -21,6 +21,9 @@
 #include "common/ipc_poller.h"
 
 #include <windows.h>
+#include <timeapi.h>
+
+#pragma comment(lib, "winmm.lib")
 
 #include <ixwebsocket/IXNetSystem.h>
 
@@ -168,6 +171,10 @@ int WINAPI WinMain(
     _In_     LPSTR     /*lpCmdLine*/,
     _In_     int       nCmdShow)
 {
+    // -- Raise Windows timer resolution to 1 ms (default ~15 ms is too coarse
+    //    for Sleep()-based frame limiting at 60 fps / 16.67 ms target).
+    timeBeginPeriod(1);
+
     // -- Initialize Winsock (required by IXWebSocket on Windows) --------------
     ix::initNetSystem();
 
@@ -478,7 +485,7 @@ int WINAPI WinMain(
             qpcLast = qpcNow;
 
             const double delta = timer.tick();
-            renderer.update(timer.elapsed());
+            renderer.update(timer.elapsed(), delta);
             renderer.render();
 
             // -- Update IPC metrics -------------------------------------------
@@ -521,6 +528,9 @@ int WINAPI WinMain(
     renderer.shutdown();
 
     ix::uninitNetSystem();
+
+    // Restore default timer resolution.
+    timeEndPeriod(1);
 
     return static_cast<int>(msg.wParam);
 }
