@@ -8,7 +8,9 @@ UzEngine is an AI-native 3D game engine that runs inside VSCode. All scene data,
 
 **Start here for requirements and goals:** [PRD.md](PRD.md) — Product Requirements Document with vision, success metrics, functional & non-functional requirements for all phases.
 
-**Implementation tasks:** [ROADMAP.md](ROADMAP.md) — 5-phase implementation plan with dependencies, complexity estimates, and "definition of done" for each task.
+**Sequential development plan:** [DEVELOPMENT-PLAN.md](DEVELOPMENT-PLAN.md) — 80 tasks organized in phases and blocks with clear deliverables, prerequisites, and task-id references. **Start here to begin development.**
+
+**Full roadmap with dependencies:** [ROADMAP.md](ROADMAP.md) — 5-phase roadmap with complexity estimates, dependency graph, and definition of done per task.
 
 ---
 
@@ -202,14 +204,14 @@ Expert reviews of current specifications against AAA-quality standards. Read the
 
 ## Phase Roadmap
 
-| Phase | Focus | Status |
-|-------|-------|--------|
-| **0** | DX12 renderer, JPEG stream, IPC/MCP | ✅ Done |
-| **1** | Scene system, editor panels, play mode, shader hot-reload, asset browser | Planned |
-| **2** | PBR renderer, GLTF/FBX import, shadow maps, texture tools, asset PAK, AI-native features | Planned |
-| **3** | Skeletal mesh, animation, ragdoll, input system, camera system, particle system | Planned |
-| **4** | Build pipeline, shipping binary, Windows installer, NavMesh, plugin system, terrain system | Planned |
-| **5** | Networking (rollback netcode), world partition / streaming, Cinemachine, Dialogue, Tilemap | Planned |
+| Phase | Tasks | Focus | Status |
+|-------|-------|-------|--------|
+| **0** | — | DX12 renderer, JPEG stream, IPC/MCP | ✅ Done |
+| **0-PRE** | 5 | Architecture design specs (Render Graph, Data-Driven, Debug, Async Streaming, Shared State) | Planned |
+| **1** | 23 | Editor funcional, Lua scripting, ECS core, render graph, crash reporting | Planned |
+| **2** | 24 | PBR rendering, glTF/FBX import, audio, UI system, asset pipeline | Planned |
+| **3** | 20 | Skeletal mesh, animation, physics, particle system, save system, GI | Planned |
+| **4** | 8 | Build pipeline, NavMesh, terrain, plugins, destructibles, cloth, virtual texturing | Planned |
 
 ---
 
@@ -217,46 +219,109 @@ Expert reviews of current specifications against AAA-quality standards. Read the
 
 Implementation tasks are tracked in `.rulebook/tasks/`. Run `rulebook task list` to see current status.
 
-| Task ID | Phase | Description |
-|---------|-------|-------------|
-| `phase1-debug-profiling` | 1 | Tracy profiler, ImGui overlay, doctest tests, ASAN, assert macros |
-| `phase1-scene-system` | 1 | Node tree, `.uzscene` parser, Scene Manager |
-| `phase1-editor-panels` | 1 | VSCode Scene Tree, Inspector, Asset Browser |
-| `phase1-play-mode` | 1 | Separate play process, status bar controls |
-| `phase1-shader-hot-reload` | 1 | DXC integration, file watcher, error display |
-| `phase1-asset-browser` | 1 | Asset browser panel, import pipeline |
-| `phase2-pbr-renderer` | 2 | G-Buffer, GGX BRDF, IBL, post-process |
-| `phase2-gltf-import` | 2 | fastgltf, meshoptimizer LODs, MeshBuffer |
-| `phase2-shadow-maps` | 2 | 3-cascade CSM, PCF 3×3, cascade blending |
-| `phase2-fbx-import` | 2 | ufbx, FBX → `.uzmesh`, model preview panel |
-| `phase2-texture-tools` | 2 | DirectXTex, BC7/BC5/BC6H, texture preview panel |
-| `phase2-asset-pak` | 2 | `.uzpak` format, zstd, VFS, CLI packer |
-| `phase3-skeletal-mesh` | 3 | GPU skinning, morph targets, physics asset |
-| `phase3-animation-system` | 3 | State machine, blending, notifies, IK |
-| `phase3-physics-system` | 3 | Jolt rigid bodies, colliders, triggers, character controller, Lua API, collision events |
-| `phase3-ragdoll` | 3 | Jolt ragdoll, active ragdoll motors |
-| `phase3-input-system` | 3 | Enhanced Input, XInput, runtime rebinding |
-| `phase3-camera-system` | 3 | SpringArm, modes, shake, DoF |
-| `phase1-timer-system` | 1 | Lua timer API: schedule_after, schedule_every, cancel_timer, schedule_next_frame |
-| `phase3-event-bus` | 3 | C++ EventBus<T>, Lua string-dispatch signals, predefined engine events |
-| `phase3-tags-groups` | 3 | Node tags, CTags ECS component, find_by_tag queries, IPC handlers |
-| `phase3-save-system` | 3 | Save/load game state, msgpack serialization, save slots, autosave, thumbnails, Lua API |
-| `phase3-localization` | 3 | CSV-based i18n, multi-language support, runtime locale switching, font fallback, hot-reload |
-| `phase4-build-pipeline` | 4 | Cook, pack, shipping binary, NSIS, platform abstraction |
-| `phase1-undo-redo` | 1 | Command pattern UndoStack, Ctrl+Z/Ctrl+Shift+Z, dirty tracking, debounce |
-| `phase1-editor-gizmos` | 1 | 3D translate/rotate/scale handles, ray-cast, drag, grid snap, node picking |
-| `phase1-multi-select` | 1 | SelectionManager, bulk Inspector, box-select, bulk delete/duplicate |
-| `phase2-prefab-edit-mode` | 2 | Prefab isolation mode, override panel, save/reload instances |
-| `phase2-shader-variants` | 2 | Shader variant/permutation system, variant keys, PSO cache, offline compilation |
-| `phase2-shader-library` | 2 | Shared HLSL include library, GlobalParams cbuffer, include dependency tracking |
-| `phase2-point-spot-shadows` | 2 | Point light dual-paraboloid + spot light perspective shadows, shadow atlases |
-| `phase2-gpu-instancing` | 2 | Dynamic GPU instancing, BatchBuilder, StructuredBuffer transforms |
-| `phase2-audio-system` | 2 | XAudio2 engine, 4-bus mixing, WAV/MP3/OGG import, CAudioSource/Listener ECS, Lua API, IPC handlers |
-| `phase2-ssao` | 2 | HBAO+ compute shader, bilateral blur, ambient lighting integration, quality levels |
-| `phase2-ai-native-features` | 2 | MCP tools: scene_generate, shader_assist, script_generate, scene_analyze, ai.context |
-| `phase3-taa` | 3 | TAA resolve, Halton jitter, velocity G-Buffer channel, variance clamping, sharpening |
-| `phase3-ssr` | 3 | Hi-Z ray march SSR, temporal reprojection, IBL fallback resolve |
-| `phase3-particle-system` | 3 | GPU compute particles, `.uzfx` format, behavior modules, VFX system, AnimNotify integration |
-| `phase4-navmesh` | 4 | Recast/Detour baking, NavMeshAgent, DetourCrowd, RVO2, dynamic obstacles, debug draw |
-| `phase4-plugin-system` | 4 | `.uzplugin` manifest, stable C ABI plugin API, VSCode extension side, DLL hot-reload |
-| `phase4-terrain-system` | 4 | `.uzterrain` + heightmap, splatmap, chunk LOD, foliage GPU instancing, water plane |
+See [DEVELOPMENT-PLAN.md](DEVELOPMENT-PLAN.md) for the full sequential implementation order.
+
+### Phase 0-PRE — Architecture Design (5 tasks)
+
+| Task ID | Description |
+|---------|-------------|
+| `phase0-render-graph-design` | Render Graph architecture spec: RgHandle, RgPass, barrier automation |
+| `phase0-data-driven-framework` | Data-driven config framework spec: `.uzevent`, `.uzphysmat`, `.uzentity`, `.uzflow` |
+| `phase0-debug-infrastructure-design` | Debug infrastructure spec: Tracy, ImGui overlay, crash reporting, structured logging |
+| `phase0-async-streaming-design` | Async streaming spec: AssetHandle<T>, IO thread pool, level streaming, memory budgets |
+| `phase0-shared-state-design` | Shared state spec: GameState store, reactive bindings, save/load serialization |
+
+### Phase 1 — Editor Funcional (23 tasks)
+
+| Task ID | Description |
+|---------|-------------|
+| `phase1-scene-system` | Node tree, `.uzscene` parser, SceneManager API, entity pooling, schema evolution |
+| `phase1-debug-profiling` | Tracy profiler, ImGui overlay, doctest tests, ASAN, assert macros |
+| `phase1-crash-reporting` | SEH handler, minidump, JSON crash log, system info, IPC integration |
+| `phase1-render-graph` | RgPass/RgTexture, automatic D3D12 barriers, transient resource aliasing, PSO cache |
+| `phase1-editor-panels` | VSCode Scene Tree, Inspector, Asset Browser, Play Controls |
+| `phase1-asset-browser` | Asset browser panel, import pipeline, thumbnail generation |
+| `phase1-editor-gizmos` | 3D translate/rotate/scale handles, ray-cast, drag, grid snap, node picking |
+| `phase1-multi-select` | SelectionManager, Ctrl+click, box-select, shared Inspector, bulk operations |
+| `phase1-undo-redo` | Command pattern UndoStack (100 entries), Ctrl+Z/Ctrl+Shift+Z, dirty tracking |
+| `phase1-console-commands` | In-game debug console (~key), command registration API (Lua + C++), auto-complete |
+| `phase1-lua-scripting` | LuaJIT per-node scripts, on_start/on_update/on_stop, sandbox, hot-reload (~60ms) |
+| `phase1-lua-coroutines` | `coroutine.yield` across C boundary, co-routine scheduler, LuaJIT NYI handling |
+| `phase1-lua-module-system` | `require()` path resolution (res://scripts/lib/), package loader, module cache |
+| `phase1-shared-state` | `ctx.shared` global store, reactive bindings for UI/Audio, change notifications |
+| `phase1-timer-system` | Lua timer API: schedule_after, schedule_every, cancel_timer, schedule_next_frame |
+| `phase1-lua-dap-server` | DAP debugger server, VSCode breakpoints, step/watches, Lua stack frames |
+| `phase1-ecs-system-scheduler` | TickGroups, system priorities, dependency DAG, parallel system execution |
+| `phase1-ecs-spatial-query` | BVH spatial index, O(log n) query_sphere/raycast, ECS integration |
+| `phase1-entity-templates` | `.uzentity` format, template instantiation with property overrides |
+| `phase1-shader-hot-reload` | DXC integration, FileWatcher, error display in VSCode, PSO recompile |
+| `phase1-play-mode` | Separate play process, start/stop/pause controls, status bar integration |
+| `phase1-ui-gamepad-navigation` | FocusManager, data-focusable attribute, d-pad/stick navigation, focus ring |
+| `phase1-ui-widget-library` | uz-button, uz-slider, uz-checkbox, uz-dropdown, uz-scroll-view, uz-modal, uz-toast |
+
+### Phase 2 — Visual + Assets + Audio (24 tasks)
+
+| Task ID | Description |
+|---------|-------------|
+| `phase2-pbr-renderer` | G-Buffer, GGX BRDF, IBL, deferred lighting, PBR material properties |
+| `phase2-shadow-maps` | 3-cascade CSM, PCF 3×3, cascade blending, depth bias |
+| `phase2-point-spot-shadows` | Point light dual-paraboloid + spot light perspective shadows, shadow atlases |
+| `phase2-ssao` | HBAO+ compute shader, bilateral blur, ambient lighting integration, quality levels |
+| `phase2-render-postprocess` | Bloom, tone mapping, auto-exposure, vignette, color LUT |
+| `phase2-deferred-decals` | DBuffer decal system, box projection, bullet holes, dirt overlays |
+| `phase2-gpu-instancing` | Dynamic GPU instancing, BatchBuilder, StructuredBuffer transforms |
+| `phase2-shader-variants` | Shader permutation system, variant keys, PSO cache, offline DXC compilation |
+| `phase2-shader-library` | Shared HLSL include library, GlobalParams cbuffer at b15, include dependency tracking |
+| `phase2-gltf-import` | fastgltf parser, meshoptimizer LODs, MeshBuffer, material conversion |
+| `phase2-fbx-import` | ufbx parser, FBX → `.uzmesh`, skeleton extraction, model preview panel |
+| `phase2-texture-tools` | DirectXTex, BC7/BC5/BC6H compression, mip generation, texture preview panel |
+| `phase2-asset-pak` | `.uzpak` format, zstd compression, VFS mount, CLI packer tool |
+| `phase2-source-asset-db` | SQLite asset database, CookKey, dependency graph, incremental import |
+| `phase2-audio-system` | XAudio2 engine, 4-bus mixing, WAV/MP3/OGG, CAudioSource/Listener ECS, Lua API |
+| `phase2-audio-event-system` | `.uzevent` data-driven audio, random variations, parameter mapping |
+| `phase2-audio-dsp-chains` | XAPO DSP chains per bus: reverb, EQ, compressor |
+| `phase2-ui-system` | uz_ui_html.dll C ABI, HTML+CSS game UI, data binding, UIRoot scene nodes |
+| `phase2-ui-animation` | Tween API (ctx.ui:tween/sequence), easing curves, page transitions |
+| `phase2-prefab-edit-mode` | Prefab isolation viewport, breadcrumb navigation, override panel (blue) |
+| `phase2-physics-materials` | `.uzphysmat` format, friction/restitution assets, surface response library |
+| `phase2-gameplay-ability-system` | AbilitySpec, cooldowns, costs, tags, EventBus integration |
+| `phase2-behavior-trees` | `.uzbt` format, Sequence/Selector/Parallel, Blackboard, tick loop |
+| `phase2-ai-native-features` | MCP tools: scene_generate, shader_assist, script_generate, scene_analyze |
+
+### Phase 3 — Gameplay Completo (20 tasks)
+
+| Task ID | Description |
+|---------|-------------|
+| `phase3-skeletal-mesh` | GPU skinning, morph targets, physics asset binding |
+| `phase3-animation-system` | State machine, blending tree, AnimNotify, FABRIK/Two-bone IK, root motion |
+| `phase3-ragdoll` | Jolt ragdoll, active ragdoll motors, blend in/out |
+| `phase3-physics-system` | Jolt rigid bodies, triggers, CharacterVirtual, CCD, Lua API, collision events |
+| `phase3-vehicle-physics` | VehicleConstraint, suspension, drivetrain, Ackermann steering |
+| `phase3-ssr` | Hi-Z ray march SSR, temporal reprojection, IBL fallback resolve |
+| `phase3-taa` | TAA resolve, Halton jitter, velocity G-Buffer channel, variance clamping |
+| `phase3-virtual-shadow-maps` | VSM atlas, page table, feedback buffer, per-object granularity |
+| `phase3-global-illumination` | DDGI probes, static lightmaps, reflection captures, hybrid blending |
+| `phase3-particle-system` | GPU compute particles, `.uzfx` format, behavior modules, AnimNotify integration |
+| `phase3-input-system` | Enhanced Input (InputAction + MappingContext), XInput, runtime rebinding |
+| `phase3-camera-system` | SpringArm, camera modes, shake, DoF, `.uzcam` presets |
+| `phase3-event-bus` | C++ EventBus<T>, Lua string-dispatch signals, predefined engine events |
+| `phase3-tags-groups` | CTags bitset<64>, TagRegistry, find_by_tag queries, Lua API |
+| `phase3-save-system` | Msgpack saves, slots 0–9 + autosave, thumbnails, Lua ctx.saves API |
+| `phase3-localization` | CSV i18n, runtime locale switch, font fallback, hot-reload |
+| `phase3-world-streaming` | Scene chunks, streaming volumes, async load/unload, memory budget |
+| `phase3-adaptive-music` | Stems synchronization, crossfade transitions, MusicClock, quantized bars |
+| `phase3-audio-occlusion` | Jolt raycast-based LPF, smooth lerp, update rate config |
+| `phase3-dialogue-system` | `.uzdialogue` format, voice acting pipeline, subtitle timing, ducking, Lua callbacks |
+
+### Phase 4 — Produção (8 tasks)
+
+| Task ID | Description |
+|---------|-------------|
+| `phase4-build-pipeline` | Cook → Pack → Stage → NSIS installer, platform abstraction |
+| `phase4-navmesh` | Recast/Detour baking, NavMeshAgent, DetourCrowd, RVO2, dynamic obstacles |
+| `phase4-terrain-system` | `.uzterrain` + heightmap, splatmap, 4-LOD chunks, foliage GPU instancing, water plane |
+| `phase4-plugin-system` | `.uzplugin` TOML manifest, stable C ABI, DLL hot-reload, IPC namespace |
+| `phase4-destructible-meshes` | Voronoi fracture, `.uzfrac` format, debris pool, DestructibleBrokenEvent |
+| `phase4-cloth-simulation` | Jolt SoftBody, skeleton blending, wind zones, cloth LOD |
+| `phase4-virtual-texturing` | Page table, tile cache, streaming feedback, shader integration |
+| `phase4-visual-scripting` | Node graph editor, Lua code generation, hot-reload integration |

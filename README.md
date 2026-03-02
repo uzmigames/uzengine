@@ -1,47 +1,46 @@
-# UzEngine PoC
+# UzEngine
 
-Proof-of-concept of a 3D engine coupled to VSCode via H.264 streaming.
-
-A C++ app renders a spinning triangle with DirectX 12, encodes each frame to H.264, and streams it as fragmented MP4 over WebSocket. A VSCode extension receives the stream and plays it in a webview using Media Source Extensions.
+An AI-native 3D game engine that runs inside VSCode. Scenes, shaders, and materials are plain-text files designed for LLM generation and editing.
 
 ```
-[DX12 Render] → [GPU Readback] → [H.264 Encode] → [fMP4 Mux] → [WebSocket :9002]
-                                                                          ↓
-                                                               [VSCode Webview MSE]
+[DX12 Render] → [GPU Readback] → [JPEG Encode] → [WebSocket :9002]
+                                                          ↓
+                                               [VSCode Webview Canvas]
 ```
+
+> **Current state:** Phase 0 complete — DX12 pyramid renderer, JPEG streaming, IPC/MCP server working.
+
+---
 
 ## Requirements
 
-**C++ App**
+**C++ Engine**
 - Windows 10/11 x64
 - Visual Studio 2022 (MSVC v143)
 - CMake 3.20+
-- vcpkg (for `ixwebsocket`)
+- vcpkg (auto-installs dependencies)
 - DirectX 12 (included in Windows SDK)
 
 **VSCode Extension**
 - Node.js 20+
 - VSCode 1.85+
 
-**Optional**
-- NVIDIA GPU + driver for NVENC hardware encoding (falls back to Windows MF software encoder automatically)
+---
 
 ## Build
 
-### C++ App
-
 ```bash
-# Clone and configure (vcpkg installs ixwebsocket automatically)
+# Configure (vcpkg installs all dependencies automatically)
 cmake -B build -G "Visual Studio 17 2022" -A x64
 
 # Build
 cmake --build build --config Release
 
 # Run
-build\Release\UzEngine.exe
+build/Release/UzEngine.exe
 ```
 
-### VSCode Extension
+**VSCode Extension**
 
 ```bash
 cd vscode-uzengine
@@ -49,88 +48,88 @@ npm install
 npm run compile
 ```
 
-Press **F5** inside `vscode-uzengine/` in VSCode to launch the Extension Development Host.
+Press **F5** inside `vscode-uzengine/` to launch the Extension Development Host.
+
+---
 
 ## Usage
 
-1. Run `UzEngine.exe` — a window opens showing the spinning triangle with FPS counter
+1. Run `UzEngine.exe` — renders a spinning triangle at 60fps
 2. Open VSCode
 3. Press `Ctrl+Shift+P` → **UzEngine: Open Stream Viewer**
-4. The webview connects to `ws://localhost:9002` and starts playing the stream
+4. The viewport connects to `ws://localhost:9002` and displays the live render
 
-To change the server URL: VSCode Settings → search `uzengine.serverUrl`.
+**IPC / MCP control** (from Claude Code or any client):
+
+```json
+{ "fn": "engine.ping" }
+{ "fn": "scene.setRotation", "args": { "speed": 2.0 } }
+{ "fn": "scene.setBackground", "args": { "r": 0.1, "g": 0.1, "b": 0.2 } }
+{ "fn": "engine.screenshot" }
+```
+
+---
 
 ## Project Structure
 
 ```
 UzEngine/
-├── CMakeLists.txt              # Build: C++20, DX12, IXWebSocket
-├── vcpkg.json                  # Dependencies: ixwebsocket
-├── CMakePresets.json
+├── CMakeLists.txt              # Build configuration
+├── vcpkg.json                  # C++ dependencies
 ├── src/
-│   ├── main.cpp                # Win32 entry, render loop, encode thread
-│   ├── common/
-│   │   ├── types.h             # FrameData, EncoderConfig, constants
-│   │   ├── timer.h             # High-res timer (QueryPerformanceCounter)
-│   │   └── ring_buffer.h       # Lock-free SPSC ring buffer
-│   ├── renderer/
-│   │   ├── renderer.h/cpp      # DX12: device, PSO, swap chain, readback
-│   │   └── fps_overlay.h/cpp   # Bitmap font FPS counter (CPU, no GPU)
-│   ├── encoder/
-│   │   ├── encoder.h           # IFrameEncoder interface + CodecConfig
-│   │   ├── nvenc_encoder.h/cpp # NVENC stub (requires NVIDIA SDK headers)
-│   │   ├── ffmpeg_encoder.h/cpp# Windows MF H.264 encoder (zero deps)
-│   │   └── encoder_factory.h/cpp# createEncoder(): NVENC > MF fallback
-│   ├── muxer/
-│   │   └── fmp4_muxer.h/cpp    # Hand-written ISO BMFF fMP4 (no deps)
-│   └── network/
-│       └── ws_server.h/cpp     # IXWebSocket server, port 9002
+│   ├── main.cpp                # Win32 entry, render loop, IPC server
+│   ├── common/                 # Shared types, timer, ring buffer
+│   ├── renderer/               # DX12 device, PSO, swap chain, GPU readback
+│   ├── encoder/                # JPEG encoder (libjpeg-turbo)
+│   └── network/                # WebSocket server (IXWebSocket)
 ├── vscode-uzengine/            # VSCode extension (TypeScript)
-│   ├── src/
-│   │   ├── extension.ts        # activate/deactivate, command registration
-│   │   └── stream-panel.ts     # WebviewPanel + inlined MSE player
-│   ├── package.json
-│   └── tsconfig.json
-└── docs/
-    └── architecture.md         # Detailed architecture and design decisions
+│   └── src/
+│       ├── extension.ts        # Activation, command registration
+│       ├── server-manager.ts   # UzEngine.exe process management
+│       └── stream-panel.ts     # WebviewPanel + Canvas JPEG renderer
+├── docs/                       # Full documentation suite (see below)
+└── .rulebook/tasks/            # 80 implementation tasks (Rulebook format)
 ```
 
-## How It Works
+---
 
-### Render → Encode → Stream
+## Documentation
 
-1. **DX12 renders** the triangle to a swap chain back buffer
-2. **GPU readback**: `CopyTextureRegion` copies pixels to a CPU-accessible buffer; fence ensures the copy is complete
-3. **FPS overlay**: the counter is rasterized directly into the RGBA pixel buffer (no GPU texture)
-4. **Ring buffer**: the render thread `push()`es the `FrameData`; the encode thread `pop()`s it
-5. **H.264 encode**: Windows MF `CLSID_CMSH264EncoderMFT` (or NVENC if available) encodes RGBA → H.264 Annex B
-6. **fMP4 mux**: Annex B NALs are converted to AVCC (length-prefixed), wrapped in `moof`+`mdat` boxes
-7. **WebSocket broadcast**: each media segment is sent as a binary frame to all connected clients
-8. **MSE playback**: the webview appends segments to a `SourceBuffer` (`sequence` mode); the `<video>` plays them
+Full documentation is in [`docs/`](docs/README.md).
 
-### Encoder Strategy
+| Document | Description |
+|----------|-------------|
+| [docs/DEVELOPMENT-PLAN.md](docs/DEVELOPMENT-PLAN.md) | **Sequential implementation plan** — 80 tasks in phases and blocks with clear deliverables. Start here. |
+| [docs/PRD.md](docs/PRD.md) | Product Requirements Document — vision, success metrics, functional/non-functional requirements |
+| [docs/ROADMAP.md](docs/ROADMAP.md) | Full roadmap with dependencies, complexity estimates, definition of done |
+| [docs/specs/](docs/specs/) | Architecture specs for all subsystems (51 documents, 9 domains) |
+| [docs/engine/](docs/engine/) | C++ architecture, patterns, ECS, scripting, audio, physics, UI |
+| [docs/guides/](docs/guides/) | Getting started, build, scene authoring, shader authoring, Lua scripting |
+| [docs/reviews/](docs/reviews/) | AAA gap analysis — 137 gaps identified across 7 domains |
 
-```
-createEncoder()
-  └── NvEncEncoder::isAvailable()?  → tries LoadLibrary("nvEncodeAPI64.dll")
-        yes → NvEncEncoder::initialize() → false (SDK headers not present)
-      FFmpegEncoder::isAvailable()?  → CoCreateInstance(CLSID_CMSH264EncoderMFT)
-        yes → FFmpegEncoder::initialize() → true  ✓
-```
+---
 
-### NVENC Support
+## Development Plan
 
-To enable full NVENC hardware encoding:
-1. Download [NVIDIA Video Codec SDK](https://developer.nvidia.com/video-codec-sdk)
-2. Place headers in `external/nvidia-video-codec-sdk/Interface/`
-3. Implement the stubbed bodies in `src/encoder/nvenc_encoder.cpp`
+80 tasks organized into 5 phases:
 
-## Configuration
+| Phase | Tasks | Focus |
+|-------|-------|-------|
+| **0** | — | DX12 renderer + JPEG stream + IPC/MCP ✅ Done |
+| **0-PRE** | 5 | Architecture design (Render Graph, Data-Driven, Shared State, Async Streaming, Debug) |
+| **1** | 23 | Editor, scene system, Lua scripting, ECS core, crash reporting |
+| **2** | 24 | PBR rendering, glTF/FBX import, audio, UI system, asset pipeline |
+| **3** | 20 | Skeletal mesh, animation, physics, particle system, save system, GI |
+| **4** | 8 | Build pipeline, NavMesh, terrain, plugins, destructibles, cloth |
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `uzengine.serverUrl` | `ws://localhost:9002` | WebSocket server URL |
+See [docs/DEVELOPMENT-PLAN.md](docs/DEVELOPMENT-PLAN.md) for the full step-by-step sequence.
+
+---
 
 ## Architecture
 
-See [docs/architecture.md](docs/architecture.md) for detailed component descriptions, threading model, fMP4 box layout, and design decisions.
+The engine streams frames to VSCode via JPEG over WebSocket. Each frame is rendered with DX12, read back to CPU, compressed with libjpeg-turbo, and sent as a binary WebSocket message. The VSCode extension draws frames onto an HTML5 Canvas.
+
+An IPC server on port 9003 handles JSON commands from Claude Code (via MCP) and the VSCode extension for scene control, screenshot capture, and engine state queries.
+
+See [docs/guides/architecture.md](docs/guides/architecture.md) for full details.
