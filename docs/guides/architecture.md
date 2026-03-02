@@ -31,6 +31,47 @@ Frame-rate limiter (60fps)
 - **IXWebSocket** manages its own I/O threads; `broadcast()` is mutex-protected
 - **Each WebSocket message**: one complete, self-contained JPEG image
 
+## Module Placements
+
+### Editor (VSCode Extension)
+| Module | Location | Purpose |
+|--------|----------|---------|
+| Scene Tree | VSCode TreeView | Edit node hierarchy |
+| Inspector | Webview Form | Edit node properties |
+| Asset Browser | VSCode TreeView | Browse/import assets |
+| Viewport | WebSocket + Canvas | Live 3D preview |
+| Shader Editor | Code + Preview | Edit/hot-reload shaders |
+| Console | VSCode OutputChannel | Logs + Lua errors |
+
+### Runtime (UzEngine.exe + game.dll)
+| Module | Location | Purpose |
+|--------|----------|---------|
+| **Scene System** | uz_engine.lib | Node tree, scene loading |
+| **Renderer** | uz_engine.lib | DX12 rendering, command lists |
+| **Asset Manager** | uz_engine.lib | Resource loading, file I/O |
+| **LuaJIT VM** | game.dll | Script execution, game logic |
+| **Physics** (Jolt) | game.dll | Rigid bodies, collision, raycast |
+| **Audio** (XAudio2) | uz_engine.lib | 3D audio, spatial sound, mastering |
+| **ECS** (entt) | game.dll | Component-based architecture |
+| **IPC Server** | uz_engine.lib | Command polling, JSON handlers |
+
+> **Key insight**: **LuaJIT is inside game.dll**, not the engine core. This means Lua scripts reload without restarting the engine. Similarly, **Jolt Physics is in game.dll** for easy experimentation. **XAudio2 is in uz_engine.lib** but driven via callbacks from game.dll (audio manager).
+
+### Build Artifacts
+```
+build/Release/
+├── UzEngine.exe          (engine runtime)
+├── game.dll              (game logic, scripts, physics)
+├── uz_engine.lib         (static, linked into .dll)
+├── turbojpeg.dll         (JPEG encoder)
+├── UzBuild.exe           (offline asset compiler)
+└── preview/              (IPC directory)
+    ├── command.json
+    └── status.json
+```
+
+---
+
 ## Component Details
 
 ### Renderer (`src/renderer/`)
@@ -150,6 +191,57 @@ npm run compile   # tsc
 # To debug: open vscode-uzengine/ in VSCode, press F5
 # To package: npm run package  (produces .vsix)
 ```
+
+## Game Loop Data Flow
+
+```
+Frame N:
+┌──────────────────────────────────────────────────────────────┐
+│ 1. Scene Update (ECS system in game.dll)                     │
+│    ├─ Lua scripts: on_update(ctx, dt)                        │
+│    ├─ Physics step: Jolt::StepSimulation()                   │
+│    └─ ECS sync: Copy physics results → components            │
+└──────────────────────────────────────────────────────────────┘
+                          ↓
+┌──────────────────────────────────────────────────────────────┐
+│ 2. Audio Update (XAudio2 callbacks in uz_engine.lib)         │
+│    ├─ Spatial audio: listener pos, sound sources             │
+│    └─ Mastering voice: final mix, volume control             │
+└──────────────────────────────────────────────────────────────┘
+                          ↓
+┌──────────────────────────────────────────────────────────────┐
+│ 3. Render (DX12 Renderer in uz_engine.lib)                   │
+│    ├─ Draw scene graph (forward rendering)                   │
+│    ├─ GPU readback to CPU                                    │
+│    └─ RGBA pixels → FrameData                                │
+└──────────────────────────────────────────────────────────────┘
+                          ↓
+┌──────────────────────────────────────────────────────────────┐
+│ 4. Encode & Stream (Encode thread)                           │
+│    ├─ JPEG encode (libjpeg-turbo)                            │
+│    ├─ WebSocket broadcast                                    │
+│    └─ VSCode webview displays frame                          │
+└──────────────────────────────────────────────────────────────┘
+                          ↓
+                    Frame Rate Limited
+                    (60 fps target)
+```
+
+## Phase Progression
+
+Which modules are active in each development phase:
+
+| Phase | Scene | Render | Physics | Audio | Lua | Editor |
+|-------|-------|--------|---------|-------|-----|--------|
+| **0** | Hardcoded | DX12 pyramid | — | — | — | VSCode viewport |
+| **1** | .uzscene format, node tree | PBR forward | — | — | — | Scene Tree, Inspector |
+| **2** | Prefabs, LODs | PBR deferred, IBL, CSM | — | — | — | Asset Browser, Shader Editor |
+| **3** | Complete | Optimized | Jolt physics | XAudio2 | LuaJIT 2.1 | Play mode, Console |
+| **4** | — | Advanced FX | Extended | Streaming | Debugging | Full IDE |
+
+> **Current status**: Phase 0 complete. Phase 1-2 planned. Phase 3+ will expand capabilities.
+
+---
 
 ## Key Design Decisions
 

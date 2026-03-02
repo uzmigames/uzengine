@@ -106,6 +106,7 @@ RENDER LOOP (Main thread, ~16.67 ms budget at 60 fps):
 │
 ├─ [Phase 1+] Drain file watcher event queue
 │   ├─ .hlsl change  → ShaderCompiler::queue_reload(path)
+│   ├─ .lua change   → LuaScriptReloader::queue_reload(path)  (Phase 3)
 │   ├─ .uzscene change → SceneManager::queue_reload(path)
 │   └─ .cpp change   → HotReloadManager::trigger_build()
 │
@@ -114,6 +115,15 @@ RENDER LOOP (Main thread, ~16.67 ms budget at 60 fps):
 │   ├─ WaitForGpu()   — ensure GPU is not using old PSO
 │   ├─ create new PSO from DXIL
 │   └─ swap PSO atomically — old PSO released via ComPtr
+│
+├─ [Phase 3] LuaScriptReloader::flush_pending()  (Phase 3)
+│   └─ For each changed .lua file:
+│       ├─ Find all entities with CScriptRef.script_id == hash(path)
+│       ├─ For each entity: call M:on_stop(L, self_ref, ctx)
+│       ├─ luaL_loadfile(L, path) — reload module
+│       ├─ lua_setglobal(L, module_key) — replace M in VM
+│       └─ For each entity: call M:on_start(L, new_ref, ctx)
+│           (total: ~60ms, no VM restart, no frame skip)
 │
 ├─ [Phase 3] game_done.acquire()
 │   └─ wait for Game Logic thread to finish its update
@@ -247,6 +257,41 @@ MAIN THREAD (Phase 0–2, simplified):
 └─ ring.push(frame)
 ```
 
+### 4.4 Physics Thread Note
+
+Physics runs on the **Game Logic thread** (same thread as `on_update()`) using a fixed 60 Hz timestep accumulator. It is **not a separate thread**. This means:
+
+- No thread synchronization needed for physics ↔ script interaction
+- Physics callbacks (collision, trigger) execute on the same thread as script `on_update()`
+- Jolt Physics state is never accessed from the render thread
+- Scene graph transforms are the authority; Jolt bodies are synced from them, not the reverse
+
+**Fixed Timestep Pattern:**
+
+```cpp
+// In game loop
+static float accumulator = 0;
+const float fixed_dt = 1.0f / 60.0f;  // 60 Hz physics
+
+accumulator += delta_time;
+while (accumulator >= fixed_dt) {
+    physics_world->update(fixed_dt);
+    systems::step_physics(ecs_world, fixed_dt);
+    accumulator -= fixed_dt;
+}
+
+// Render thread sees the physics state as stable (already finished)
+```
+
+### 4.5 Audio Thread Note
+
+XAudio2 runs on its own internal threads (managed by XAudio2 itself). `AudioEngine` methods called from the Game Logic thread are **thread-safe** — XAudio2 uses COM thread safety under the hood. This means:
+
+- Calling `audio_engine.play_sound()` from the game thread is safe
+- Internal XAudio2 worker threads handle DSP and output independently
+- Synchronization happens inside XAudio2 (we don't manage it)
+- Audio state is never modified from the render thread
+
 ---
 
 ## 5. The Synchronization Boundary (Phase 3)
@@ -356,6 +401,12 @@ WinMain()
 │
 ├─ 16. HotReloadManager::init()         — (Phase 1) shadow-copy + LoadLibraryW(game.dll)
 │       └─ game_api.on_start(ctx)       — one-time game init (runs on Main, before game thread)
+│           └─ LuaVM::create() inside game.dll on_start  (Phase 3)
+│               ├─ luajit_newstate()
+│               ├─ lua_sandbox_apply()
+│               ├─ register_bindings() (Vec3, Quat, NodeRef, Scene, InputState, etc.)
+│               ├─ Load all CScriptRef[SCRIPT_LUA] nodes → call M:on_start(ctx)
+│               └─ Drain initial timer queue
 │
 ├─ 17. [Phase 3] start Game Logic thread
 │       └─ game_ready semaphore initialized to 0 — game thread waits for first release

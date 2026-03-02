@@ -784,3 +784,464 @@ void uz_game_start(GameContext* ctx) {
 ```
 
 See [specs/lua-scripting.md](../specs/lua-scripting.md) for the full Lua API surface, sandboxing rules, and hot-reload protocol.
+
+---
+
+## 11. LuaVM Lifecycle
+
+The `LuaVM` class is created and owned by `game.dll`. It manages the LuaJIT VM lifecycle, script loading, timer scheduling, and state persistence across hot-reload.
+
+```cpp
+// game/lua_vm.h
+class LuaVM {
+public:
+    static LuaVM* create();           // luajit_newstate, openlibs, sandbox_apply, register_bindings
+    void destroy();                   // lua_close, release all VM state
+    ~LuaVM();
+
+    // Load and instantiate a script for a node
+    void load_script(const char* res_path, entt::entity entity, GameContext* ctx);
+
+    // Timer scheduling (called from Lua script via ctx.schedule_after, ctx.schedule_every, etc.)
+    uint32_t schedule_after(float delay_s, int callback_ref);   // returns timer_id
+    uint32_t schedule_every(float interval_s, int callback_ref);
+    void     cancel_timer(uint32_t timer_id);
+    void     schedule_next_frame(int callback_ref);
+
+    // Frame update: drain all expired timers and call their callbacks
+    void drain_timers(float dt);
+
+    // State persistence across game.dll hot-reload
+    void serialize_instances(Arena* out);      // msgpack all self tables to blob
+    void deserialize_instances(void* blob);    // restore self tables from blob
+
+private:
+    lua_State* L_;
+    struct LuaTimer {
+        int      callback_ref;   // lua_ref to Lua function
+        float    remaining;      // seconds until fire
+        float    interval;       // 0 = one-shot, >0 = repeating
+        bool     cancelled;
+    };
+    std::vector<LuaTimer> timers_;
+    uint32_t next_timer_id_;
+};
+```
+
+### VM Initialization (called in game.dll::uz_game_start)
+
+```cpp
+void uz_game_start(GameContext* ctx) {
+    // Create and initialize the LuaJIT VM
+    g_lua_vm = LuaVM::create();
+
+    // Register all engine bindings (Vec3, NodeRef, Scene, InputState, etc.)
+    g_lua_vm->register_bindings(L);
+
+    // Load and instantiate all Lua scripts attached to nodes
+    auto view = ctx->world->view<CScriptRef>();
+    for (auto [entity, ref] : view.each()) {
+        if (ref.kind == ScriptKind::LUA) {
+            g_lua_vm->load_script(string_id_str(ref.script_id), entity, ctx);
+            // Call M:on_start(ctx)
+        }
+    }
+
+    // Drain initial timer queue (in case any on_start callbacks scheduled timers)
+    g_lua_vm->drain_timers(0);
+}
+```
+
+---
+
+## 12. Timer System API
+
+Lua scripts can schedule callbacks to run after a delay or repeatedly. Timers are managed by the `LuaVM` and drained every frame before `on_update()`.
+
+```cpp
+// In Lua scripts (accessed via ctx binding):
+local timer_id = ctx:schedule_after(2.5, function()
+    print("2.5 seconds have passed")
+end)
+
+local repeating_id = ctx:schedule_every(0.5, function()
+    -- Called every 0.5 seconds indefinitely
+end)
+
+ctx:cancel_timer(timer_id)     -- cancel by ID
+
+ctx:schedule_next_frame(function()
+    -- Called at the start of the next on_update()
+end)
+```
+
+**C++ backing (inside game.dll):**
+
+```cpp
+struct LuaTimer {
+    int      callback_ref;     // Lua registry reference to the callback function
+    float    remaining;        // Seconds until this timer fires (decremented each frame)
+    float    interval;         // 0 = one-shot; >0 = repeating with this interval
+    bool     cancelled;        // Marked for deletion; will be removed on next drain
+};
+
+// LuaVM::drain_timers() is called BEFORE CScriptRef::on_update() every frame:
+void LuaVM::drain_timers(float dt) {
+    for (auto& timer : timers_) {
+        if (timer.cancelled) continue;
+
+        timer.remaining -= dt;
+        if (timer.remaining <= 0) {
+            lua_rawgeti(L_, LUA_REGISTRYINDEX, timer.callback_ref);
+            if (lua_pcall(L_, 0, 0, 0) != LUA_OK) {
+                log_error("[lua] timer callback error: %s", lua_tostring(L_, -1));
+                lua_pop(L_, 1);
+            }
+
+            if (timer.interval > 0) {
+                // Repeating timer: reschedule
+                timer.remaining = timer.interval;
+            } else {
+                // One-shot: mark for removal
+                timer.cancelled = true;
+            }
+        }
+    }
+
+    // Remove cancelled timers
+    timers_.erase(std::remove_if(timers_.begin(), timers_.end(),
+                                  [](const LuaTimer& t) { return t.cancelled; }),
+                  timers_.end());
+}
+```
+
+---
+
+## 13. EventBus<T> API
+
+The `EventBus<T>` template enables loose coupling between game systems. Systems can subscribe to typed events and react without knowing about each other.
+
+```cpp
+// core/event_bus.h
+template<typename T>
+class EventBus {
+public:
+    using Handle = uint32_t;
+
+    // Subscribe a callback; returns a handle for unsubscribe
+    Handle subscribe(std::function<void(const T&)> cb);
+
+    // Unsubscribe by handle
+    void unsubscribe(Handle h);
+
+    // Emit an event (safe to call from Game Logic thread only)
+    void emit(const T& event);
+
+private:
+    struct Subscription {
+        uint32_t handle;
+        std::function<void(const T&)> callback;
+    };
+    std::vector<Subscription> subscribers_;
+    uint32_t next_handle_ = 0;
+};
+
+// RAII subscription wrapper (auto-unsubscribe on destruction)
+template<typename T>
+struct AutoSub {
+    EventBus<T>& bus;
+    typename EventBus<T>::Handle handle;
+
+    AutoSub(EventBus<T>& b, std::function<void(const T&)> cb)
+        : bus(b), handle(b.subscribe(cb)) {}
+
+    ~AutoSub() { bus.unsubscribe(handle); }
+
+    AutoSub(const AutoSub&) = delete;
+    AutoSub& operator=(const AutoSub&) = delete;
+};
+```
+
+### Predefined Engine Events
+
+```cpp
+// events/engine_events.h
+struct SceneLoadedEvent {
+    std::string_view scene_path;
+};
+
+struct SceneUnloadedEvent {
+    std::string_view scene_path;
+};
+
+struct NodeAddedEvent {
+    entt::entity entity;
+    const char* node_name;
+};
+
+struct NodeRemovedEvent {
+    entt::entity entity;
+    const char* node_name;
+};
+
+struct CollisionEvent {
+    Handle<NodeBase> node_a;
+    Handle<NodeBase> node_b;
+    glm::vec3 contact_point;
+    glm::vec3 contact_normal;
+    float     impulse;           // magnitude of collision impulse
+};
+
+struct TriggerEvent {
+    Handle<NodeBase> trigger;    // the trigger volume
+    Handle<NodeBase> other;      // the object that entered/exited
+    bool             entered;    // true = entered, false = exited
+};
+```
+
+### Global Event Bus Instances
+
+```cpp
+// In game.cpp
+EventBus<SceneLoadedEvent>  g_event_scene_loaded;
+EventBus<SceneUnloadedEvent> g_event_scene_unloaded;
+EventBus<NodeAddedEvent>     g_event_node_added;
+EventBus<NodeRemovedEvent>   g_event_node_removed;
+EventBus<CollisionEvent>     g_event_collision;
+EventBus<TriggerEvent>       g_event_trigger;
+```
+
+### Usage Example
+
+```cpp
+// In a game system (e.g., enemy spawner)
+AutoSub<NodeAddedEvent> on_node_added(
+    g_event_node_added,
+    [this](const NodeAddedEvent& evt) {
+        if (strcmp(evt.node_name, "Treasure") == 0) {
+            this->on_treasure_spawned(evt.entity);
+        }
+    }
+);
+// Auto-unsubscribes when on_node_added goes out of scope
+```
+
+---
+
+## 14. TagRegistry API
+
+Tags are a lightweight way to mark nodes with string identifiers, used for queries ("find all nodes tagged 'enemy'"). Each tag is stored as a bit index in a 64-bit bitmask.
+
+```cpp
+// ecs/tag_registry.h
+class TagRegistry {
+public:
+    static TagRegistry& get();
+
+    // Register a new tag; returns bit index (0–63)
+    // Max 64 unique tags per project
+    uint8_t register_tag(std::string_view name);
+
+    // Lookup tag index by name
+    uint8_t get_index(std::string_view name) const;
+
+    // Reverse lookup: get name by index
+    std::string_view get_name(uint8_t index) const;
+
+private:
+    static constexpr size_t k_MAX_TAGS = 64;
+    std::array<std::string, k_MAX_TAGS> tag_names_;
+    std::unordered_map<std::string_view, uint8_t> tag_index_;
+    uint8_t tag_count_ = 0;
+};
+
+// Component that stores tags
+struct CTags {
+    std::bitset<64> bits;   // one bit per possible tag
+};
+```
+
+### Query Helpers
+
+```cpp
+// ecs/tag_queries.h
+void scene_find_by_tag(entt::registry& world, std::string_view tag,
+                       std::vector<entt::entity>& out);
+
+void scene_for_each_with_tag(entt::registry& world, std::string_view tag,
+                             std::function<void(entt::entity)> fn);
+
+// Usage
+std::vector<entt::entity> enemies;
+scene_find_by_tag(ctx->world, "enemy", enemies);
+for (auto e : enemies) {
+    auto* mesh = ctx->world->try_get<CMeshRenderer>(e);
+    if (mesh) mesh->cast_shadow = true;
+}
+```
+
+---
+
+## 15. SaveManager API
+
+The `SaveManager` handles serialization of game state to save slots, including scene state, node transforms, and custom game data (via callbacks in `game.dll`).
+
+```cpp
+// engine/save_system/save_manager.h
+class SaveManager {
+public:
+    static SaveManager& get();
+
+    // Write a save slot (slot -1 = autosave, with rotating buffer)
+    void write_slot(int slot, std::function<void(SaveWriter&)> fn);
+
+    // Read a save slot (returns false if save doesn't exist)
+    bool read_slot(int slot, std::function<void(SaveReader&)> fn);
+
+    // Check if a save exists
+    bool slot_exists(int slot) const;
+
+    // Delete a save
+    void delete_slot(int slot);
+
+    // Get metadata for a slot (timestamp, active scene, thumbnail)
+    SaveMetadata get_metadata(int slot) const;
+
+private:
+    // Save files stored in %APPDATA%/UzEngine/<project>/saves/
+    // Format: binary msgpack at runtime, JSON in debug mode
+};
+
+struct SaveMetadata {
+    int64_t  timestamp;           // Unix timestamp of save creation
+    char     scene_path[256];     // res:// path of active scene
+    char     thumbnail_path[256]; // path to .uzsave_N.jpg (320x180 JPEG)
+    uint32_t version;             // game version at save time
+};
+```
+
+See [specs/save-system.md](../specs/save-system.md) for the full specification including binary format, Lua API, and save slot management.
+
+---
+
+## 16. LocaleManager API
+
+Localization is managed by a central `LocaleManager` that loads translations from CSV files and provides a fallback chain (current locale → English → key itself).
+
+```cpp
+// engine/i18n/locale_manager.h
+class LocaleManager {
+public:
+    static LocaleManager& get();
+
+    // Load CSV translations (supports glob pattern, e.g., "res://locales/*.csv")
+    bool load(std::string_view csv_path);
+
+    // Set active locale (e.g., "en", "pt_br", "ja")
+    void set_locale(std::string_view code);
+
+    // Get current locale
+    std::string_view get_locale() const;
+
+    // Translate a key; fallback chain: current → "en" → key itself
+    const char* translate(std::string_view key) const;
+
+    // Formatted translation (printf-style)
+    std::string translatef(std::string_view key, ...) const;
+
+private:
+    // CSV parsed into flat hash map: "ui.menu.play" → "Play"
+    // One table per locale (locale code → key → value)
+};
+```
+
+### CSV Format Example
+
+```csv
+# res://locales/en.csv
+key,value
+ui.menu.play,Play Game
+ui.menu.settings,Settings
+ui.menu.quit,Quit
+game.objective,Reach the castle
+npc.dialog.greeting,Hello, traveler!
+
+# res://locales/pt_br.csv
+key,value
+ui.menu.play,Jogar
+ui.menu.settings,Configurações
+ui.menu.quit,Sair
+game.objective,Alcance o castelo
+npc.dialog.greeting,Olá, viajante!
+```
+
+See [specs/localization.md](../specs/localization.md) for the full specification including fallback rules, font overrides, and CSV parsing details.
+
+---
+
+## 17. ConsoleCommandRegistry API
+
+In-game console commands can be registered by game systems and executed via the editor console or in-game debug overlay.
+
+```cpp
+// engine/debug/console_command_registry.h
+class ConsoleCommandRegistry {
+public:
+    static ConsoleCommandRegistry& get();
+
+    // Register a console command
+    // fn receives argv (span of command words) and returns output string
+    void add(std::string_view name,
+             std::function<std::string(std::span<std::string_view>)> fn);
+
+    // Execute a command line (e.g., "spawn_enemy player 100")
+    std::string dispatch(std::string_view command_line);
+
+    // List all registered commands
+    std::vector<std::string_view> list_commands() const;
+
+private:
+    std::unordered_map<std::string, std::function<...>> commands_;
+};
+```
+
+### Usage Example
+
+```cpp
+// Register a command to spawn an enemy
+ConsoleCommandRegistry::get().add("spawn_enemy", [ctx](std::span<std::string_view> args) {
+    if (args.size() < 2) return "Usage: spawn_enemy <prefab> <count>";
+
+    std::string prefab = std::string(args[0]);
+    int count = std::stoi(std::string(args[1]));
+
+    for (int i = 0; i < count; ++i) {
+        ctx->scene->instantiate_prefab(prefab.c_str(), ctx->level_arena);
+    }
+
+    return fmt::format("Spawned {} enemies from {}", count, prefab);
+});
+
+// Call from debug console:
+// > spawn_enemy res://prefabs/goblin.uzscene 5
+// Output: "Spawned 5 enemies from res://prefabs/goblin.uzscene"
+```
+
+---
+
+## 18. CScriptRef — Updated Definition
+
+The `CScriptRef` component stores a reference to a script (C++ or Lua) attached to a node. It is updated to reflect both CPP and Lua script states:
+
+```cpp
+enum class ScriptKind : uint8_t { CPP, LUA };
+
+struct CScriptRef {
+    StringId    script_id;       // FNV-1a hash of res:// path (used for hot-reload matching)
+    ScriptKind  kind;            // CPP or LUA
+    void*       state;           // CPP: opaque pointer owned by game.dll
+                                 // LUA: Lua registry reference (cast from int), owned by LuaVM
+};
+```
+
+The hot-reload system uses `script_id` to match nodes with their script files during reload. When a Lua script file changes on disk, the reloader finds all nodes with a matching `script_id` and re-runs `on_start` with the new code.

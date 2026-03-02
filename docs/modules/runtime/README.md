@@ -28,10 +28,11 @@ UzEngine.exe --play   [--project <path>] [--scene <path>]
 | IPC server | Active (command.json polling) | Stripped (`UZ_SHIPPING=1`) |
 | WebSocket | Active (JPEG stream port 9002) | Stripped |
 | JPEG readback | Active (streaming) | Stripped |
-| DXC (shader compiler) | Active (hot-reload) | Pre-compiled shaders from `.uzpak` |
-| Asset importers | Active | Stripped — reads `.uzmesh`/`.dds` from `.uzpak` |
-| `game.dll` | Hot-reloadable via shadow copy | Statically linked or baked into `.uzpak` |
-| File watcher | Active | Stripped |
+| DXC (shader compiler) | Active (hot-reload, ~60ms reload) | Pre-compiled shaders from `.uzpak` |
+| Asset importers | Active (reimport on change) | Stripped — reads `.uzmesh`/`.dds`/`.uzaudio` from `.uzpak` |
+| `game.dll` | Hot-reloadable via shadow copy (~2500ms reload) | Statically linked or baked into `.uzpak` |
+| Lua script hot-reload | Active (~60ms per changed script) | Disabled — scripts are bytecode-compiled in `.uzpak` |
+| File watcher | Active (shaders, scenes, Lua scripts) | Stripped |
 
 ---
 
@@ -39,45 +40,58 @@ UzEngine.exe --play   [--project <path>] [--scene <path>]
 
 ```
 src/runtime/
-├── main.cpp              — WinMain, mode detection (--editor / --play), boot sequence
-├── game_host.h/cpp       — GameContext construction, game.dll C ABI loader
-├── hot_reload.h/cpp      — Shadow copy, save_state/load_state protocol, build trigger
+├── main.cpp              — WinMain, mode detection (--editor / --play), boot sequence, thread creation
+├── game_host.h/cpp       — GameContext construction, game.dll C ABI loader, callback dispatch
+├── hot_reload.h/cpp      — Shadow copy DLL, save_state/load_state protocol, rebuild trigger
+├── lua_script_reloader.h/cpp  — Lua script hot-reload coordinator, file watcher integration
 ├── thread_config.h       — Thread priorities, affinities, names (SetThreadDescription)
 └── ipc/
     ├── ipc_registry.h/cpp    — Handler dispatch table (read-only after setup)
     ├── ipc_poller.h/cpp      — command.json polling thread (50 ms)
     └── handlers/
-        ├── engine_handlers.cpp   — engine.ping, engine.status, engine.screenshot
-        ├── scene_handlers.cpp    — scene.addNode, scene.setProperty, scene.getTree, ...
-        ├── shader_handlers.cpp   — shader.reload, shader.getErrors, shader.list
-        ├── asset_handlers.cpp    — asset.import, asset.list
-        └── editor_handlers.cpp   — editor.selectNode, editor.getSceneTree (UZ_EDITOR only)
+        ├── engine_handlers.cpp      — engine.ping, engine.status, engine.screenshot
+        ├── scene_handlers.cpp       — scene.addNode, scene.setProperty, scene.getTree, scene.serialize, events.list_subscribers
+        ├── shader_handlers.cpp      — shader.reload, shader.getErrors, shader.list, shader.getVariants
+        ├── asset_handlers.cpp       — asset.import, asset.list, asset.reimport
+        ├── audio_handlers.cpp       — audio.play, audio.stop_all, audio.set_bus_volume (Phase 2)
+        ├── physics_handlers.cpp     — physics.raycast, physics.setDebugPhysics, physics.getStats (Phase 3)
+        ├── lua_handlers.cpp         — lua.execute, lua.getGlobals, lua.setBreakpoint (Phase 1)
+        ├── console_handlers.cpp     — console.execute, console.list_commands (Phase 1)
+        └── editor_handlers.cpp      — editor.selectNode, editor.getSceneTree, editor.undo, editor.redo (UZ_EDITOR only)
 ```
 
 ---
 
 ## Boot Sequence
 
-See [lifecycle-and-concurrency.md](../../engine/lifecycle-and-concurrency.md) for the full 18-step sequence. Summary:
+See [lifecycle-and-concurrency.md](../../engine/lifecycle-and-concurrency.md) for the full sequence. Key points:
 
 ```
 1.  Platform init (timer resolution, Winsock, DPI)
-2.  Logger
+2.  Logger + crash reporting
 3.  Permanent arena (128 MB)
-4.  ResourceManager
-5.  WsServer::start()            [--editor only]
-6.  Encode thread born
-7.  DX12Renderer::init()
-8.  ShaderCompiler::init()       [--editor only]
-9.  SceneManager::load()
-10. IpcRegistry::setup()         [--editor only]
-11. IpcPoller::start()           [--editor only]
-12. FileWatcher::start()         [--editor only]
-13. HotReloadManager::init()     [--editor only]
-     └─ game_api.on_start(ctx)
-14. Game Logic thread born       [Phase 3]
-15. → Render Loop
+4.  ResourceManager + asset import registry
+5.  D3D12 Device creation
+6.  WsServer::start() on port 9002              [--editor only]
+7.  Encode thread born (JPEG streaming)
+8.  DX12Renderer::init()
+9.  ShaderCompiler::init()                      [--editor only]
+10. SceneManager::load() + prefab expansion
+11. IpcRegistry::setup()                        [--editor only]
+12. IpcPoller::start() (50 ms poll loop)        [--editor only]
+13. FileWatcher::start() (shader, scene files)  [--editor only]
+14. HotReloadManager::init()                    [--editor only]
+15. Load game.dll, call game_api.on_start(ctx)
+     ├─ game.dll creates LuaVM
+     ├─ lua_binding registers metatables (Vec3, Quat, ctx.* APIs)
+     ├─ lua_binding registers ctx.schedule_after, ctx.events.subscribe, etc. (Phase 1+)
+     └─ game.dll calls lua_vm.load_scripts() or calls on_start from main.lua
+16. LuaScriptReloader::init()                   [--editor only, hot-reload watcher]
+17. Game Logic thread born
+18. → Main render loop (20 ms frames)
 ```
+
+**Lua VM initialization** happens in `game.dll` after `game_api.on_start()`. The VM owns `LuaTimer`, script instances, and Lua event bus state. Hot-reload in editor mode calls `lua_script_reloader.on_file_change()` to re-parse changed `.lua` files and re-attach scripts without losing Lua table state (via `on_stop` / `on_start` hooks).
 
 ---
 
@@ -99,6 +113,7 @@ All thread lifecycle is owned by `main.cpp`. No thread is created inside Engine 
 ```cpp
 // core/game_api.h — stable C ABI, never change field order
 struct GameContext {
+    // Core
     uint32_t api_version;          // must be UZ_GAME_API_VERSION
     Scene*   scene;
     entt::registry* world;
@@ -106,11 +121,32 @@ struct GameContext {
     float    delta_time;
     double   time_elapsed;
     uint64_t frame_index;
+
+    // Logging
     void   (*log_fn)(const char*);
+
+    // Resource loading
     ResourceHandle<Mesh>     (*load_mesh)(const char*);
     ResourceHandle<Material> (*load_mat)(const char*);
-    UiDocument* (*load_ui)(const char*);   // UI module hook
-    uint8_t  _reserved[128];               // always zero, for future fields
+    ResourceHandle<AudioClip> (*load_audio)(const char*);  // Phase 2
+
+    // UI module hook
+    UiDocument* (*load_ui)(const char*);
+
+    // Audio playback callbacks (Phase 2)
+    void (*audio_play_2d)(const char* clip_path, float volume);
+    void (*audio_play_3d)(const char* clip_path, Vec3 position, float volume, float max_distance);
+    void (*audio_stop)(uint32_t voice_id);
+    void (*audio_set_bus_volume)(const char* bus_name, float volume);
+
+    // Physics debug callbacks (Phase 3)
+    void (*physics_set_debug_draw)(bool enabled);
+    void (*physics_raycast)(Vec3 origin, Vec3 direction, float max_dist, uint32_t layer_mask, void (*callback)(RaycastHit));
+
+    // Console callbacks (Phase 1)
+    void (*console_execute)(const char* command);
+
+    uint8_t  _reserved[128];  // always zero, for future fields
 };
 
 typedef struct {
@@ -122,7 +158,7 @@ typedef struct {
 } game_api_t;
 ```
 
-`HotReloadManager` calls `on_save_state` before `FreeLibrary`, then `on_load_state` after the new shadow copy is loaded. State survives reload.
+**Hot-reload protocol**: `HotReloadManager` calls `on_save_state` before `FreeLibrary`, serializing game state to an Arena buffer. After the new shadow copy loads, it calls `on_load_state` with the buffer, restoring state. Timers, events, and Lua table state are re-initialized via script `on_start` hooks. No player progress is lost.
 
 ---
 
@@ -148,6 +184,18 @@ Strict reverse of boot. Key points:
 ## Related Docs
 
 - [lifecycle-and-concurrency.md](../../engine/lifecycle-and-concurrency.md) — full boot/shutdown + concurrency model
-- [hot-reload.md](../../engine/hot-reload.md) — shadow copy DLL protocol
+- [hot-reload.md](../../engine/hot-reload.md) — shadow copy DLL protocol, state persistence
 - [../engine/README.md](../engine/README.md) — subsystems initialized by Runtime
 - [../renderer/README.md](../renderer/README.md) — Renderer initialized and driven by Runtime
+- [../../specs/lua-scripting.md](../../specs/lua-scripting.md) — Lua VM lifecycle, hot-reload coordinator
+- [../../specs/audio-system.md](../../specs/audio-system.md) — Audio callbacks in GameContext
+- [../../specs/physics-system.md](../../specs/physics-system.md) — Physics query callbacks
+- [../../specs/console-commands.md](../../specs/console-commands.md) — Console command registry
+
+## Rulebook Tasks
+
+Core infrastructure: [phase1-lua-scripting](../../.rulebook/tasks/phase1-lua-scripting/), [phase1-console-commands](../../.rulebook/tasks/phase1-console-commands/), [phase1-crash-reporting](../../.rulebook/tasks/phase1-crash-reporting/), [phase1-debug-profiling](../../.rulebook/tasks/phase1-debug-profiling/)
+
+Audio system: [phase2-audio-system](../../.rulebook/tasks/phase2-audio-system/)
+
+Physics + events: [phase3-physics-system](../../.rulebook/tasks/phase3-physics-system/), [phase3-event-bus](../../.rulebook/tasks/phase3-event-bus/)

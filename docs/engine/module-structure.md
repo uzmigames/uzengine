@@ -58,6 +58,19 @@
 └─────────────────────────────────────────────────────────────────────────────────┘
 ```
 
+### New Module: uz_ui_html.dll (Standalone)
+
+```
+uz_ui_html.dll (C ABI library — no uz_engine.lib dependency)
+├── HTML+CSS document parser and renderer
+├── Webview-style layout engine (flexbox)
+├── Widget types: Button, Label, Input, Panel, etc.
+├── Stable C ABI: ui_load_document, ui_set_property, ui_tick, ui_get_draw_list, ui_deliver_input
+└── Used by: UzEngine.exe (editor panels) + game process (game UI)
+```
+
+This module is **completely standalone** and has no dependency on uz_engine.lib. It can be used independently for UI rendering in any application.
+
 ---
 
 ## 2. Module Responsibilities
@@ -272,8 +285,10 @@ on_click = "game.on_quit_clicked"
             │                                      │
             ├──► RENDERER ──► ENGINE               │
             │                                      │
-            └──► UI ─────────┤                     │
-                              └──► ENGINE          │
+            ├──► UI ─────────┤                     │
+            │                └──► ENGINE           │
+            │                                      │
+            └──► UI_HTML.DLL (standalone)         │
                                                    │
          EDITOR (TypeScript) ──► IPC/WS ──────────►┘
                                                    │
@@ -285,13 +300,14 @@ on_click = "game.on_quit_clicked"
 
 | Module | May depend on | Must NOT depend on |
 |--------|---------------|--------------------|
-| `engine` | `core`, platform OS headers | `renderer`, `ui`, `runtime`, `editor`, `build` |
-| `renderer` | `engine` | `ui`, `runtime`, `editor`, `build`, `game.dll` |
-| `ui` | `engine`, `renderer` | `runtime`, `editor`, `build`, `game.dll` internals |
-| `runtime` | `engine`, `renderer`, `ui` | `editor` C++ code, `build` |
+| `engine` | `core`, platform OS headers | `renderer`, `ui`, `ui_html`, `runtime`, `editor`, `build` |
+| `renderer` | `engine` | `ui`, `ui_html`, `runtime`, `editor`, `build`, `game.dll` |
+| `ui` | `engine`, `renderer` | `ui_html`, `runtime`, `editor`, `build`, `game.dll` internals |
+| `ui_html` | Nothing (standalone C ABI) | Any C++ module |
+| `runtime` | `engine`, `renderer`, `ui`, `ui_html` | `editor` C++ code, `build` |
 | `editor` (TS) | IPC/WebSocket only | Any C++ module directly |
-| `editor` (C++) | `engine`, `renderer` | `ui`, `runtime`, `build` |
-| `build` | `engine`, `renderer` (ShaderCompiler) | `ui`, `runtime`, `editor` |
+| `editor` (C++) | `engine`, `renderer` | `ui`, `ui_html`, `runtime`, `build` |
+| `build` | `engine`, `renderer` (ShaderCompiler) | `ui`, `ui_html`, `runtime`, `editor` |
 | `game.dll` | `core/game_api.h` only | Everything else |
 
 ---
@@ -373,6 +389,7 @@ e:\UzEngine\
 | `UzEngine.exe` | Executable | Runtime + Renderer + Engine + UI + Editor handlers | Editor preview + shipping game |
 | `UzBuild.exe` | Executable | Build + Renderer (ShaderCompiler) + Engine | CI/CD, packaging |
 | `game.dll` | Shared lib | Game logic only (C ABI) | Hot-reloaded by UzEngine.exe |
+| `uz_ui_html.dll` | Shared lib | Standalone UI HTML/CSS renderer (C ABI) | Loaded by UzEngine.exe + game for UI |
 | `uz_engine.lib` | Static lib | Engine module | Linked by UzEngine.exe + UzBuild.exe |
 | `uz_renderer.lib` | Static lib | Renderer module | Linked by UzEngine.exe + UzBuild.exe |
 | `uz_ui.lib` | Static lib | UI module | Linked by UzEngine.exe |

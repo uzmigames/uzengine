@@ -243,3 +243,136 @@ We replace GDScript with Lua (better performance, better AI tooling, industry st
 The original architecture note ("all logic in game.dll, no visual scripting") still holds for complex systems. Section 6 adds Lua as a per-node complementary layer. The design decision table in Section 1 has been updated:
 
 | **Scripting** | C# (Unity) | Blueprint/C++ (Unreal) | GDScript/C++ (Godot) | **C++ game.dll + Lua per-node** |
+
+---
+
+## 7. Audio Architecture — XAudio2 in uz_engine.lib
+
+### 7.1 Why XAudio2 (not OpenAL, not FMOD, not Wwise)
+
+| Factor | XAudio2 | OpenAL | FMOD | Wwise |
+|--------|---------|--------|------|-------|
+| **Platform** | Windows native | Cross-platform (unmaintained) | Commercial | Commercial |
+| **Distribution** | System DLL, zero external dep | Separate DLL | Separate DLL | Separate DLL |
+| **Latency** | Lowest on Windows | Good | Good | Good |
+| **3D audio** | X3DAudio built-in | Limited | Built-in | Built-in |
+| **Licensing** | Free (Windows SDK) | LGPL | Commercial | Commercial |
+| **Hot-reload** | Safe via COM | Safe | Safe | Safe |
+
+**Decision**: XAudio2 is Windows-native, has zero external dependencies (X3DAudio is built-in), and provides the lowest audio latency on Windows. For a Windows-first engine, it's the right choice.
+
+### 7.2 Why Audio in uz_engine.lib (not game.dll directly)
+
+The audio engine is owned by `UzEngine.exe`, not `game.dll`, for a critical reason:
+
+| Aspect | If in game.dll | If in uz_engine.lib |
+|--------|---|---|
+| **Hot-reload** | Entire audio system restarts on DLL reload | Audio continues playing across reload |
+| **Voice continuity** | All playing sounds stop abruptly | Sounds fade naturally |
+| **Buffer management** | Must serialize all active voices | Voice buffers persist in engine |
+| **Initialization cost** | Repeated XAudio2 device init (~100ms) | One-time init |
+
+**Pattern**: `game.dll` calls audio operations via `GameContext` callbacks:
+
+```cpp
+struct GameContext {
+    // ...
+    struct {
+        uint32_t (*play)(const char* path, bool loop);
+        void     (*stop)(uint32_t voice_handle);
+        void     (*set_volume)(uint32_t voice_handle, float vol);
+    } audio;
+};
+```
+
+When `game.dll` is reloaded, these function pointers remain valid because they point into `uz_engine.lib`, which never reloads.
+
+### 7.3 Why Fixed 64-Voice Pool
+
+The audio engine maintains a fixed pool of 64 simultaneous voices (configurable in `.uzproj`). This design avoids allocation latency:
+
+```cpp
+struct AudioConfig {
+    uint32_t max_voices = 64;  // configured in .uzproj
+};
+
+class AudioEngine {
+private:
+    std::vector<XAudio2_SubmixVoice> voices_;  // pre-allocated, never grow
+    uint32_t next_free_voice_ = 0;
+};
+```
+
+**Behavior when pool is full**: The lowest-priority playing voice is stopped to make room for the new sound.
+
+```cpp
+uint32_t play_sound(const char* path, int priority = 0) {
+    auto voice = find_free_voice();
+    if (!voice) {
+        voice = evict_lowest_priority();  // stop low-priority sound
+    }
+    voice->submit_buffer(load_audio_data(path));
+    return voice->handle;
+}
+```
+
+**Why**: Zero allocation during gameplay → zero GC pressure → guaranteed audio latency < 10ms. This is critical for interactive audio (footsteps, impacts) where latency is perceptible.
+
+---
+
+## 8. Physics Architecture — Jolt Physics in game.dll
+
+### 8.1 Why Jolt Physics (not Bullet, not PhysX, not Havok)
+
+| Criterion | Jolt | Bullet | PhysX | Havok |
+|-----------|------|--------|-------|-------|
+| **License** | MIT (ship it) | Zlib (ship it) | Proprietary | Proprietary |
+| **Performance** | Best-in-class | Good | Excellent | Excellent |
+| **Real-world usage** | Horizon Forbidden West | Many shipped titles | Unreal, Nvidia | Paid license |
+| **C++ API** | Modern, clean | Legacy (2005 API) | Complex (PxPhysics) | Complex |
+| **Documentation** | Excellent | Good | Nvidia docs | Proprietary |
+| **Active development** | Yes (recent updates) | Low maintenance | Nvidia-only | Proprietary |
+
+**Decision**: Jolt Physics is MIT-licensed, has modern C++ bindings, exceptional performance, and active development. It was the right choice for a performance-conscious, indie-friendly engine.
+
+### 8.2 Why Physics in game.dll (not uz_engine.lib)
+
+Physics state is tightly coupled to game logic — it is part of the **hot-reload unit**:
+
+| Aspect | If in uz_engine.lib | If in game.dll |
+|--------|---|---|
+| **State persistence** | Must serialize Jolt state across DLL reload | State lives in game.dll, reloads together |
+| **Script coupling** | Physics callbacks must cross C ABI | Callbacks are C++ function pointers in same DLL |
+| **Body ownership** | Engine owns bodies; game reads results | Game owns bodies; full control |
+| **Reload time** | Must restore all physics bodies | Entire physics world reloads with game.dll |
+
+**Trade-off**: Game.dll is larger (~5MB with Jolt), and reloading it takes ~2.5s instead of ~50ms for engine-only changes. But this is acceptable because it only happens when C++ game code changes, which is infrequent compared to shader/Lua iteration.
+
+### 8.3 Fixed 60 Hz Timestep Decision
+
+Physics requires a deterministic, fixed timestep. The implementation uses an **accumulator pattern**:
+
+```cpp
+// In game loop
+static float accumulator = 0;
+const float FIXED_DT = 1.0f / 60.0f;  // 60 Hz = 16.67ms per step
+
+accumulator += delta_time;
+while (accumulator >= FIXED_DT) {
+    physics_world->update(FIXED_DT);
+    accumulator -= FIXED_DT;
+}
+
+// Interpolation factor for smooth rendering between physics steps:
+float interp_factor = accumulator / FIXED_DT;  // 0..1
+```
+
+**Why fixed timestep**:
+- Physics stability depends on deterministic deltas
+- Floating-point errors accumulate differently at 30 Hz vs 60 Hz
+- Animation blend spaces assume fixed timestep
+- Reproducibility for testing and AI-driven development
+
+**Why 60 Hz**: Matches the target render frame rate and typical physics simulation rate in games. Overkill for slow-moving objects; under-kill for bullets (handled by continuous collision detection).
+
+---

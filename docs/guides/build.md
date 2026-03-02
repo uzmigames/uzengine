@@ -75,6 +75,23 @@ cmake --build build --config Release
 cmake --build build --config Release --clean-first
 ```
 
+### CMake Presets (Optional)
+
+Define build configurations in `CMakePresets.json` for convenience:
+
+```bash
+# Configure with preset
+cmake --preset release    # Shorthand for Release config + vcpkg setup
+cmake --preset debug      # Debug config
+cmake --preset test       # Test-instrumented build (phase 3+)
+cmake --preset coverage   # Coverage-instrumented build (phase 3+)
+
+# Build with preset
+cmake --build --preset release
+```
+
+**Note**: Presets are optional. Traditional cmake commands work fine.
+
 ### Build Artifacts
 
 After successful build:
@@ -109,9 +126,20 @@ If `turbojpeg.dll` is missing:
 
 ---
 
-## vcpkg Dependencies
+## vcpkg Dependencies and Manifest Mode
 
-Defined in `vcpkg.json`:
+### Understanding vcpkg.json (Manifest Mode)
+
+UzEngine uses **vcpkg manifest mode**, where `vcpkg.json` is the single source of truth for dependencies. This approach is superior to global vcpkg installations because:
+
+1. **Reproducible builds** — all developers use the exact same versions
+2. **CI/CD friendly** — version lock prevents surprises in pipelines
+3. **Per-project isolation** — multiple projects can use different versions
+4. **No global state** — no hidden dependencies installed elsewhere
+
+**Location:** `E:\UzEngine\vcpkg.json`
+
+### Defined Dependencies
 
 ```json
 {
@@ -119,7 +147,14 @@ Defined in `vcpkg.json`:
     "ixwebsocket",
     "libjpeg-turbo",
     "nlohmann-json",
-    "zlib"
+    "zlib",
+    "luajit",
+    "jolt-physics",
+    "fastgltf",
+    "meshoptimizer",
+    "ispc-texcomp",
+    "msgpack-c",
+    "zstd"
   ]
 }
 ```
@@ -132,6 +167,15 @@ Defined in `vcpkg.json`:
 | **libjpeg-turbo** | Latest | JPEG encoding | TurboJPEG API for fast RGBA→JPEG encoding |
 | **nlohmann-json** | Latest | JSON parsing | Command/response format for IPC |
 | **zlib** | Latest | Compression | Required by ixwebsocket |
+| **luajit** | 2.1 | Lua scripting VM | Phase 3; embedded in game.dll |
+| **jolt-physics** | 5.1 | Physics engine | Phase 3; Jolt Physics for rigid bodies, collision |
+| **fastgltf** | Latest | glTF 2.0 parsing | Phase 2; meshes with LODs, materials |
+| **meshoptimizer** | Latest | Mesh optimization | Phase 2; auto-generate LOD chain (4 levels) |
+| **ispc-texcomp** | Latest | Texture compression | Phase 2; BC7, BC5, BC4, BC6H compression |
+| **msgpack-c** | Latest | Binary serialization | Phase 3 save-system; msgpack format for saves |
+| **zstd** | Latest | Compression | Phase 3 save-system; .uzpak archive compression |
+
+> **Note**: Windows SDK provides **XAudio2** (no vcpkg needed). It's part of the standard Windows development kit.
 
 ### Installing/Updating vcpkg Packages
 
@@ -357,6 +401,65 @@ Key logging prefixes:
 In VS debugger, set a breakpoint in error handlers:
 - `ThrowIfFailed()` in `renderer.cpp`
 - `JpegEncoder::encode()` in `jpeg_encoder.cpp`
+
+---
+
+## Asset Building with UzBuild.exe
+
+**UzBuild.exe** is an offline asset compiler that prepares your game for distribution. It runs in the background during Phase 1+, but you should understand what it does.
+
+### Purpose
+
+UzBuild.exe:
+1. **Imports assets** — scans `assets/` and converts to engine-native formats (`.uzmesh`, `.uztex`, etc.)
+2. **Compiles shaders** — uses DXC to offline-compile all HLSL shaders
+3. **Generates LODs** — meshoptimizer creates 4 LOD levels with appropriate screen coverage
+4. **Compresses textures** — BC7/BC5/BC4 compression (optimized for distribution)
+5. **Packs assets** — creates `.uzpak` (compressed asset archive)
+
+### Usage
+
+```bash
+# Full asset pipeline
+UzBuild.exe --project res://myproject --output dist/
+  → Input: assets/ (meshes, textures, shaders)
+  → Process: import, compile, optimize, compress
+  → Output: dist/game.uzpak + dist/UzEngine.exe + runtime DLLs
+
+# Verify assets in editor
+# UzBuild runs automatically on file change via FileWatcher during Phase 1+
+```
+
+### Output Structure
+
+```
+dist/
+├── UzEngine.exe          (engine executable)
+├── game.dll              (game logic, linked against assets)
+├── game.uzpak            (all imported assets, compressed)
+├── turbojpeg.dll         (JPEG decoder for screenshots)
+└── (other runtime DLLs)
+```
+
+> **Status**: UzBuild.exe is not yet implemented. Asset import pipeline begins in Phase 2. Phase 1 focuses on scene system and basic rendering.
+
+---
+
+## game.dll Hot-Reload
+
+Once Phase 2 is implemented, you can rebuild `game.dll` while the editor is running, and it will auto-reload:
+
+```bash
+# Terminal 1: VSCode with engine running
+# Terminal 2: Rebuild game.dll
+cmake --build build --config Release
+
+# Watch the VSCode output channel → "game.dll reloaded" message
+# All Lua scripts, physics, and game logic refresh instantly
+# No editor restart needed
+```
+
+This tight iteration loop is essential for rapid AI-driven development.
 
 ---
 

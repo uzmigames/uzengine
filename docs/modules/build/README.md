@@ -120,6 +120,144 @@ cpack -G ZIP    # Simple zip
 
 ---
 
+## Asset Import Details (Phase 2+)
+
+### Mesh Import (GLTF/FBX)
+
+| Input | Processing | Output |
+|-------|-----------|--------|
+| `.glb` / `.gltf` | Parse with fastgltf; extract meshes, bones, animations | `.uzmesh` (vertex/index buffers), `.uzskel` (bone hierarchy), `.uzanim` (clips) |
+| `.fbx` | Parse with ufbx; extract meshes, armatures, takes | Same as above |
+| LOD generation | Run meshoptimizer: simplify mesh at 50% / 25% / 12.5% detail | LOD0..LOD3 in `.uzmesh` file, selectable by distance |
+
+**Output `.uzmesh` binary format**:
+```
+[HEADER]
+  version: u32
+  lod_count: u32
+[LOD_0]
+  vertex_count: u32
+  vertex_data: Vertex[] (position, normal, uv, color, bone_indices, bone_weights)
+  index_count: u32
+  index_data: u32[]
+  bounds: AABB
+[LOD_1..N] (lower detail)
+[BONE_PALETTE] (if skinned)
+  bone_count: u32
+  bone_names: string[]
+  bone_parents: u32[]
+  bone_local_transforms: mat4[]
+```
+
+### Texture Import (PNG/JPG/HDR)
+
+| Input | Format | Processing | Output |
+|-------|--------|-----------|--------|
+| `.png` (sRGB color) | RGBA/RGB | Resize to POT, mipmap, compress | `.dds` BC7_UNORM |
+| `.jpg` (sRGB color) | JPEG | Decompress, convert to PNG workflow | `.dds` BC7_UNORM |
+| `.hdr` (linear HDR) | OpenEXR/Radiance | Tonemap to LDR or keep compressed | `.dds` BC6H_UF16 (or RG16F for normals) |
+| `.png` (normal map, LINEAR) | RG/RGB (normal XY in RG) | No sRGB, preserve linear | `.dds` BC5_SNORM (RG channels) |
+
+**Mipmap generation**: DirectXTex automatic; filtering for color = linear, for normals = box (to preserve detail).
+
+### Shader Compilation (HLSL)
+
+| Source | Compilation | Output | Use case |
+|--------|-------------|--------|----------|
+| `shaders/pbr.hlsl` (VS+PS) | DXC with `/O3` + variant flags | `.dxil` bytecode | Deferred PBR pass |
+| `shaders/particle_sim.hlsl` (CS) | DXC with `/O3` | `.dxil` bytecode | Particle compute simulation |
+| `.hlsl` (pre-compiled) | DXC flags: `/fspv-reflect`, `/Zi` for debug info | `.dxil` + reflection blob | Later PSO cache key generation |
+
+**Variant compilation**: If a shader has `#if SKINNED`, `#if INSTANCED`, etc., all combinations are pre-compiled and indexed by variant flags. Offline variant list stored in `.uzpak` for build validation.
+
+### Audio Import (WAV → OGG)
+
+| Input | Processing | Output |
+|-------|-----------|--------|
+| `.wav` (any sample rate/channels) | Decode, optional resample to 44.1 kHz, re-encode to OGG Vorbis Q6 | `.uzaudio` (ogg data + metadata) |
+| `.mp3` | Decode with libmpg123, resample, re-encode to OGG | `.uzaudio` |
+| `.ogg` | Re-encode if quality differs from game standard | `.uzaudio` |
+
+**`.uzaudio` format**:
+```
+[HEADER]
+  version: u32
+  sample_rate: u32
+  channel_count: u8
+  duration_samples: u32
+[AUDIO_DATA]
+  ogg_blob: bytes (variable length)
+```
+
+---
+
+## Shader Variant System (Phase 2)
+
+During cook, all shader variants are pre-compiled and embedded in `.uzpak` with a variant lookup table.
+
+**Variant flags** defined in `src/renderer/shader_variants/variant_flags.h`:
+```cpp
+enum ShaderVariant : u32 {
+    SKINNED    = 1 << 0,    // Skeletal animation
+    INSTANCED  = 1 << 1,    // GPU instancing
+    EMISSIVE   = 1 << 2,    // Self-emissive material
+    PARALLAX   = 1 << 3,    // Parallax occlusion mapping
+    // ... more variants
+};
+```
+
+At build time:
+1. Scan all `.hlsl` files for conditional `#if SKINNED`, `#if INSTANCED`, etc.
+2. Generate all combinations: 2^N pre-compiled variants per shader
+3. Store in `.uzpak` with indexing by (shader_path, variant_flags) → `.dxil` blob
+
+At runtime (editor or shipping):
+- Material specifies variant flags
+- PSO cache key = (shader_path, variant_flags, blend_state, depth_state)
+- Lookup variant `.dxil` from `.uzpak` and compile PSO on-demand (editor) or pre-load (shipping)
+
+---
+
+## `.uzpak` Format Deep Dive
+
+The `.uzpak` is a **footer-first** archive, allowing the entire file to be memory-mapped with the directory read from the end.
+
+**Complete layout**:
+```
+Offset 0x00000000  [File 0 compressed with zstd]
+Offset 0x00001234  [File 1 compressed with zstd]
+...
+Offset 0x00ABCDEF  [File N compressed with zstd]
+Offset 0x00XXXXXX  [Directory Table]
+                   [Entry 0: {path_hash, offset, size_compressed, size_raw, crc32}]
+                   [Entry 1: ...]
+                   [Entry N: ...]
+                   [Sort order: path_hash ascending for binary search]
+Offset 0x00YYYYYY  [Footer: 16 bytes]
+                   - directory_offset: u64
+                   - entry_count: u32
+                   - magic: u32 = 0x5A504B55 ("UZPK")
+```
+
+**Lookup algorithm**:
+1. Open `.uzpak`, seek to file end
+2. Read footer (16 bytes): extract `directory_offset` and `entry_count`
+3. Seek to `directory_offset`, load directory table into memory
+4. To find `res://meshes/player.uzmesh`:
+   - Compute path_hash = xxhash3("meshes/player.uzmesh")
+   - Binary search directory by path_hash → get offset + size
+   - Seek to offset, read and decompress zstd blob
+5. Verify CRC32 of decompressed data
+
+**Advantages**:
+- Single file (no manifest, no external index)
+- Entire archive memory-mappable
+- Constant-time lookup by hash (no sequential scanning)
+- Transparent zstd compression (typically 60-70% of uncompressed size)
+- Can be streamed: footer can be downloaded first to determine chunk sizes
+
+---
+
 ## CLI Reference
 
 ```
@@ -175,5 +313,13 @@ tools/UzBuild/
 
 - [../renderer/README.md](../renderer/README.md) — `ShaderCompiler` (the only Renderer subsystem used by Build)
 - [../runtime/README.md](../runtime/README.md) — shipping Runtime reads `.uzpak` via `pak_reader`
-- [../../specs/asset-pipeline.md](../../specs/asset-pipeline.md) — full asset pipeline spec
-- [../../specs/build-system.md](../../specs/build-system.md) — full build system spec
+- [../../specs/asset-pipeline.md](../../specs/asset-pipeline.md) — full asset pipeline spec, import formats
+- [../../specs/build-system.md](../../specs/build-system.md) — full build system spec, CLI reference
+- [../../specs/shader-variants.md](../../specs/shader-variants.md) — variant flag system, PSO caching
+- [../../specs/particle-system.md](../../specs/particle-system.md) — `.uzfx` effect format cooking
+
+## Rulebook Tasks
+
+Phase 2 asset import: [phase2-gltf-import](../../.rulebook/tasks/phase2-gltf-import/), [phase2-fbx-import](../../.rulebook/tasks/phase2-fbx-import/), [phase2-texture-tools](../../.rulebook/tasks/phase2-texture-tools/), [phase2-asset-pak](../../.rulebook/tasks/phase2-asset-pak/), [phase2-shader-variants](../../.rulebook/tasks/phase2-shader-variants/)
+
+Phase 4 build infrastructure: [phase4-build-pipeline](../../.rulebook/tasks/phase4-build-pipeline/)

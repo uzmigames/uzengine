@@ -382,6 +382,8 @@ async function handleUzRestart(args) {
 
 ## Registered IPC Functions (Complete List)
 
+### Phase 0: Core (Currently Active)
+
 | Function | Args | Description |
 |----------|------|-------------|
 | `engine.ping` | — | Quick status: `{ok, fps, frame}` |
@@ -396,6 +398,111 @@ async function handleUzRestart(args) {
 | `file.write` | `{path, content}` | Write file (path traversal rejected) |
 | `file.list` | `{path}` | List directory contents |
 | `shader.reload` | `{name}` | Hot-reload shader by name (not yet implemented) |
+
+### Phase 1+: Lua Scripting (Editor-only, UZ_EDITOR)
+
+Requires scene system and Lua VM running.
+
+| Function | Args | Description |
+|----------|------|-------------|
+| `lua.eval` | `{code}` | Evaluate Lua expression, return result (JSON-serializable) |
+| `lua.reload_script` | `{path}` | Force reload a `.lua` file from disk, restart affected nodes |
+| `lua.get_errors` | — | List all Lua runtime errors with file:line, error message |
+| `lua.get_globals` | — | Dump Lua global table (_G) as JSON for inspection |
+
+**Example:**
+```json
+uz_call("lua.eval", {"code": "return math.sqrt(16)"})
+→ {"ok": true, "result": 4.0}
+
+uz_call("lua.get_errors")
+→ {"ok": true, "errors": [{"file": "game/logic.lua", "line": 42, "message": "bad argument #1"}]}
+```
+
+### Phase 2+: Audio (Editor-only, UZ_EDITOR)
+
+Requires XAudio2 audio system.
+
+| Function | Args | Description |
+|----------|------|-------------|
+| `audio.play` | `{path, volume?, pitch?}` | Test play a sound clip; volume [0..1], pitch [0.5..2.0] |
+| `audio.stop_all` | — | Stop all currently playing audio |
+| `audio.set_bus_volume` | `{bus, volume}` | Set volume of a bus (e.g., "Music", "SFX", "Voice"); volume [0..1] |
+
+**Example:**
+```json
+uz_call("audio.play", {"path": "res://assets/sounds/jump.wav", "volume": 0.8})
+uz_call("audio.set_bus_volume", {"bus": "Music", "volume": 0.5})
+```
+
+### Phase 3+: Physics (Editor-only, UZ_EDITOR)
+
+Requires Jolt Physics system.
+
+| Function | Args | Description |
+|----------|------|-------------|
+| `physics.debug_draw` | `{enabled}` | Toggle physics wireframe visualization on/off |
+| `physics.set_gravity` | `{x, y, z}` | Override gravity vector (default: [0, -9.81, 0]) |
+| `physics.ray_cast` | `{origin, direction, max_dist}` | Cast a ray; returns hit info (object, distance, position, normal) |
+
+**Example:**
+```json
+uz_call("physics.debug_draw", {"enabled": true})
+uz_call("physics.set_gravity", {"x": 0, "y": -20, "z": 0})
+uz_call("physics.ray_cast", {"origin": [0, 5, 0], "direction": [0, -1, 0], "max_dist": 100})
+```
+
+### Phase 2+: Console (Editor-only, UZ_EDITOR)
+
+Requires in-game console system.
+
+| Function | Args | Description |
+|----------|------|-------------|
+| `console.execute` | `{command}` | Execute a console command (e.g., "god_mode", "time_scale 0.5") |
+| `console.get_commands` | — | List all registered console commands with descriptions |
+| `console.get_history` | — | Last 100 console commands + their outputs |
+
+**Example:**
+```json
+uz_call("console.execute", {"command": "god_mode"})
+uz_call("console.get_commands")
+→ {"ok": true, "commands": [{"name": "god_mode", "desc": "Toggle invincibility"}, ...]}
+```
+
+### Phase 3+: Saves (Editor-only, UZ_EDITOR)
+
+Requires save/load system.
+
+| Function | Args | Description |
+|----------|------|-------------|
+| `saves.list_slots` | — | List all save slots (0-9, -1 autosave) with metadata (timestamp, playtime, thumbnail) |
+| `saves.delete_slot` | `{slot}` | Delete a save slot |
+| `saves.inspect_slot` | `{slot}` | Dump save as JSON for debugging (node tree, Lua state snapshot) |
+
+**Example:**
+```json
+uz_call("saves.list_slots")
+→ {"ok": true, "slots": [{"slot": 0, "timestamp": "2026-03-01T12:34:56", "playtime_sec": 1234}, ...]}
+
+uz_call("saves.inspect_slot", {"slot": 0})
+→ {"ok": true, "data": {... full game state as JSON ...}}
+```
+
+### Phase 2+: Localization (Editor-only, UZ_EDITOR)
+
+Requires localization system.
+
+| Function | Args | Description |
+|----------|------|-------------|
+| `locale.get_missing_keys` | — | Find keys present in one locale but missing in others (localization audit) |
+| `locale.set` | `{code}` | Change active locale for editor preview (e.g., "pt_br", "ja") |
+
+**Example:**
+```json
+uz_call("locale.set", {"code": "pt_br"})
+uz_call("locale.get_missing_keys")
+→ {"ok": true, "missing": {"en": ["ui.menu.newgame"], "pt_br": []}}
+```
 
 ---
 

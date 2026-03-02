@@ -245,6 +245,130 @@ The `<video>` element is backed by `video_decoder.h/cpp` using Win32 Media Found
 
 ---
 
+## UIRoot Scene Node (Phase 2)
+
+UI documents are attached to the scene via a special **UIRoot** node type. Multiple UIRoot nodes can coexist in a scene, layering UI documents in Z-order.
+
+**Node type**: `UIRoot` (appears as node type in `.uzscene`)
+
+**Properties**:
+| Property | Type | Purpose |
+|----------|------|---------|
+| `ui_document` | string (res:// path) | Loaded HTML file, e.g., `res://ui/hud.html` |
+| `ui_layer` | int (0–1000) | Z-order for rendering (0=behind 3D, 500=HUD, 900=modal) |
+| `ui_auto_show` | bool | Auto-load and show on scene load (default: true) |
+| `ui_modal` | bool | Consumes input; doesn't pass through to 3D (default: false) |
+
+**Example `.uzscene`**:
+```ini
+[node id=100 type=UIRoot name="HUD" parent=0]
+ui_document = "res://ui/hud.html"
+ui_layer = 500
+ui_auto_show = true
+ui_modal = false
+
+[node id=101 type=UIRoot name="PauseMenu" parent=0]
+ui_document = "res://ui/pause_menu.html"
+ui_layer = 800
+ui_auto_show = false
+ui_modal = true
+```
+
+**Multi-document rendering**: Each UIRoot node renders its document at its assigned layer. The UIPass iterates all UIRoot nodes in layer order and draws them.
+
+---
+
+## Input Routing (Phase 1+)
+
+Mouse and keyboard input flows from the Runtime's input system to UI, then to the 3D scene if not consumed.
+
+**Input chain** (in priority order):
+1. **UIRoot (modal=true)**: consume and stop propagation
+2. **UIRoot (modal=false)**: check element hit test; if hit, dispatch event and consume
+3. **3D scene**: if not consumed, dispatch to game.dll via `InputState`
+
+**Implementation**:
+```cpp
+// Main thread, before game.dll.on_update
+if (input->mouse_moved) {
+    for (UIRoot* root : scene->find_all<UIRoot>() | reversed) {
+        // Iterate in reverse Z-order (topmost first)
+        if (root->ui_modal || root->hit_test(input->mouse_pos)) {
+            ui_inject_mouse(root->document, input->mouse_x, input->mouse_y, input->mouse_buttons);
+            if (root->ui_modal) break;  // Modal blocks further dispatch
+        }
+    }
+}
+```
+
+**Modal behavior**: A modal UIRoot (e.g., pause menu) sets `ui_modal=true` to block input from reaching the 3D scene. Example: pause menu shows, input stops reaching player controller.
+
+---
+
+## Z-Order Layering System (Phase 2)
+
+UI documents are rendered at different depths via the `ui_layer` property. Standard layer ranges:
+
+| Layer Range | Purpose | Example |
+|-------------|---------|---------|
+| 0–99 | Behind 3D geometry | Minimap background, status overlays |
+| 100–499 | World-space UI | 3D HUD elements, name plates above NPCs |
+| 500–699 | HUD layer | Health bar, ammo counter, mini-map |
+| 700–899 | Popup layer | Dialog boxes, tooltips, notifications |
+| 900–999 | Modal layer | Pause menu, settings, fullscreen overlays |
+| 1000+ | Debug layer | Console, profiler overlay (editor only) |
+
+**Rendering order**: UIPass iterates UIRoot nodes sorted by `ui_layer` (ascending) and renders each document's draw list in order. Later layers overdraw earlier layers.
+
+**Editor mode**: UIPass also renders a debug overlay at layer 1000 (FPS counter, memory stats) if enabled.
+
+---
+
+## Console Overlay (Phase 1)
+
+The developer console is a special UIRoot that appears in editor mode at layer 1000, rendering command output and accepting input.
+
+**Console system** (`src/engine/console_command_registry.h/cpp`):
+- Command registry: `register_command(name, description, callback)`
+- Command history: last 50 commands (editable with ↑/↓ keys)
+- Output buffer: streaming logs + command results
+
+**UIRoot configuration for console**:
+```ini
+[node id=999 type=UIRoot name="DevConsole" parent=0]
+ui_document = "res://ui/console.html"
+ui_layer = 1000
+ui_auto_show = false
+ui_modal = false
+```
+
+**Console HTML** (`res://ui/console.html`):
+```html
+<div id="console" class="console-overlay">
+  <div id="output" class="console-output"></div>
+  <input id="input" type="text" placeholder="Command...">
+</div>
+```
+
+**Input handling**:
+- User types command, presses Enter
+- UIEvent callback dispatched: element_id=`input`, type=UI_EVENT_CHANGE
+- game.dll extracts input text, calls `ctx.console:execute(cmd_string)`
+- Console command executes, output appended to `--console-output` CSS variable
+- Next frame: `ui_set_property(console_doc, "console-output", log_lines)` updates display
+
+**Built-in commands**:
+- `help` — list available commands
+- `fps` — toggle FPS counter
+- `physics` — toggle physics debug draw
+- `quit` — exit game
+- `load_scene <path>` — hot-load new scene
+- `set_timescale <scale>` — slow-motion / fast-forward
+
+**See**: [../../specs/console-commands.md](../../specs/console-commands.md) for full command registry design.
+
+---
+
 ## Build Stage Integration
 
 During the **Cook** stage of `UzBuild.exe`:
@@ -285,7 +409,15 @@ A visual UI editor will be added to the **Editor module** as a VSCode WebviewPan
 
 ## Related Docs
 
-- [../renderer/README.md](../renderer/README.md) — UIPass sort_key=800 in RenderGraph
-- [../runtime/README.md](../runtime/README.md) — `GameContext.load_ui` hook, game.dll event callbacks
-- [../build/README.md](../build/README.md) — Cook stage: font baking, HTML validation
+- [../renderer/README.md](../renderer/README.md) — UIPass sort_key=800 in RenderGraph, G-Buffer to UIPass
+- [../runtime/README.md](../runtime/README.md) — `GameContext.load_ui` hook, input dispatch, game.dll event callbacks
+- [../build/README.md](../build/README.md) — Cook stage: font baking, HTML validation, `.uzui_cooked` format
 - [../../engine/hot-reload.md](../../engine/hot-reload.md) — `.html`/`.css` file watcher reload
+- [../../specs/ui-system.md](../../specs/ui-system.md) — full UI system design, UIRoot, layer system
+- [../../specs/console-commands.md](../../specs/console-commands.md) — console command registry, built-in commands
+
+## Rulebook Tasks
+
+Phase 2 UI system: [phase2-ui-system](../../.rulebook/tasks/phase2-ui-system/)
+
+Future visual editor: [phase3-ui-editor](../../.rulebook/tasks/phase3-ui-editor/) (planned)

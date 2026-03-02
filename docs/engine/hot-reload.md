@@ -8,10 +8,12 @@
 
 | Asset Type | Reload Target | Restart Engine? | Time |
 |-----------|--------------|-----------------|------|
-| **HLSL/GLSL shaders** | Recompile → swap PSO | No | ~500ms |
+| **HLSL/GLSL shaders** | Recompile → swap PSO | No | ~200ms |
 | **Lua scripts** (`.lua`) | Reload module in VM, re-run `on_start` | No | ~60ms |
 | **Scene files** (`.uzscene`) | Reload scene graph | No | ~100ms |
 | **Material files** (`.uzmat`) | Reload material params | No | ~50ms |
+| **Audio files** (`.wav`, `.mp3`, `.ogg`) | Re-import → invalidate handle | No | ~80ms |
+| **UI files** (`.html` / `.css`) | Reload document, re-apply styles | No | ~30ms |
 | **Game logic** (`.cpp` / DLL) | Unload DLL → rebuild → reload DLL | No | ~2500ms |
 | **Engine C++** (renderer, ECS...) | Full rebuild + engine restart | Yes (acceptable) | ~30s |
 
@@ -213,7 +215,7 @@ Only serializable values survive: `number`, `string`, `boolean`, nested `table` 
 
 When a `.uzscene` or `.uzmat` file changes on disk, the engine reloads it without stopping the render loop.
 
-### Flow
+### Scene Hot Reload Flow
 
 ```
 1. FileWatcher detects scenes/level1.uzscene changed
@@ -229,6 +231,62 @@ When a `.uzscene` or `.uzmat` file changes on disk, the engine reloads it withou
 ```
 
 **No state is lost**: objects in the scene not touched by the diff remain intact, including runtime state (physics velocities, script state, etc.).
+
+### Material Hot Reload
+
+Material files (`.uzmat`) define shader parameters for a material instance. When a `.uzmat` file changes:
+
+```
+1. FileWatcher detects materials/wood.uzmat changed
+2. ResourceManager::reload_material(path) queued
+3. Main thread applies queue at frame start:
+   - Re-parse .uzmat file → new UzMaterial struct
+   - Update asset cache entry
+   - All meshes using this material see new params next frame
+4. Shader recompile is NOT triggered unless the `shader` property itself changed
+   - Only property values (albedo, roughness, metallic, texture refs) are reloaded
+5. Affected meshes re-render with new parameters
+```
+
+**Note**: Material parameters are POD types (floats, Vec3, texture handles). Changing them never requires a DLL reload — the material instance struct is updated in-place.
+
+---
+
+## 5b. Audio File Hot Reload
+
+When audio source files change (`.wav`, `.mp3`, `.ogg`), the engine re-imports them into the engine format and invalidates the resource cache.
+
+```
+1. FileWatcher detects audio/footstep.wav changed
+2. AudioImporter::queue_reload(path)
+3. Main thread drains audio import queue:
+   - Re-import footstep.wav → footstep.uzaudio (binary)
+   - Invalidate ResourceHandle for this path
+4. Currently-playing voices continue on OLD buffer until they finish
+5. New playbacks (after reload) use NEW buffer immediately
+```
+
+**Behavior**: Audio is resilient to mid-reload playback. Voices don't cut off; they fade out naturally on the old buffer while new sounds pick up the new version.
+
+---
+
+## 5c. UI Hot Reload
+
+UI documents (`.html` / `.css`) can be reloaded without restarting the scene. Changes to layout, styling, and content are applied immediately.
+
+```
+1. FileWatcher detects ui/main_menu.html or ui/style.css changed
+2. UiHtmlReloader::queue_reload(path)
+3. Main thread applies reload:
+   - ui_load_document(path) called again
+   - New UiDocument* parsed and populated
+   - Existing UiDocument* replaced
+4. CSS custom property values (variables) preserved across reload
+   - Re-applied after document load
+5. Next frame renders with new layout/styling
+```
+
+**No script interruption**: Game logic (`game.dll`) callbacks registered on buttons/widgets remain active — they are re-wired to the new buttons after reload. No clicks are lost during the reload window.
 
 ---
 

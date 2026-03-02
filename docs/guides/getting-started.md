@@ -34,6 +34,11 @@ cd vcpkg
 **VSCode:**
 - Download from [code.visualstudio.com](https://code.visualstudio.com/)
 
+**LuaJIT (automatic via vcpkg):**
+- LuaJIT 2.1 is installed automatically by vcpkg during the C++ build
+- No manual installation needed
+- Version locked in `vcpkg.json`
+
 ---
 
 ## Build the C++ Application (10 minutes)
@@ -165,6 +170,105 @@ You should see:
   - FPS counter updating every second
 
 The engine auto-starts when you open the stream viewer.
+
+---
+
+---
+
+## Phase 0: What Works Today
+
+UzEngine is currently in **Phase 0 (Proof of Concept)**. The following features are working:
+
+**Working:**
+- DX12 rendering: 3D pyramid with smooth rotation
+- Real-time JPEG streaming: 60 fps render, 30-40 fps display
+- WebSocket server: Binary frame broadcasting
+- IPC control: `scene.setRotation`, `scene.setBackground`, `scene.setPaused`
+- VSCode extension: Live stream viewer with connection management
+- MCP server: Claude Code tool access to engine control
+
+**Not yet available (Phases 1-4):**
+- Scene system (.uzscene format, node tree)
+- Asset import (glTF, FBX, textures)
+- Physics (Jolt)
+- Audio (XAudio2)
+- Lua scripting
+- Editor panels (Scene Tree, Inspector, Asset Browser)
+- Play mode (separate process)
+- Shader hot-reload
+- And much more — see [Engine Vision](../specs/engine-vision.md) for the complete roadmap
+
+> **Note**: If you're looking to build actual game content, wait for Phase 1 (Scene System). Phase 0 is for validating the architecture and render pipeline.
+
+---
+
+## Your First Project (Phase 1 Preview)
+
+Once Phase 1 is available, you'll create projects like this:
+
+**Project structure:**
+```
+myproject/
+├── project.uzproj           # Project config (TOML)
+├── scenes/
+│   └── main.uzscene         # Scene file (INI format)
+├── res/
+│   └── game/
+│       └── hello.lua        # Lua script
+├── assets/
+│   ├── meshes/
+│   └── textures/
+└── materials/
+```
+
+**Example: `scenes/main.uzscene` (INI format)**
+```ini
+[uzscene version=1 name="Main"]
+
+[node id=1 type=Node3D name="World" parent=0]
+
+[node id=2 type=Camera name="MainCamera" parent=1]
+position = [0, 2, 5]
+fov = 75
+
+[node id=3 type=Node3D name="GameLogic" parent=1]
+script = "res://game/hello.lua"
+```
+
+**Example: `res/game/hello.lua` (Lua script)**
+```lua
+-- res://game/hello.lua
+local M = {}
+
+function M:on_start(ctx)
+    ctx.log("Hello from Lua!")
+    self.timer = 0
+end
+
+function M:on_update(ctx, dt)
+    self.timer = self.timer + dt
+    if self.timer >= 1.0 then
+        ctx.log("1 second passed!")
+        self.timer = 0
+    end
+end
+
+function M:on_stop(ctx)
+    ctx.log("Goodbye!")
+end
+
+return M
+```
+
+**Running in editor mode:**
+```powershell
+# Once Phase 1 is implemented
+.\build\Release\UzEngine.exe --editor
+```
+
+The VSCode extension will open the scene in the viewport, and the Lua script will execute in the background. Check the engine log output to see "Hello from Lua!" printed every second.
+
+> **Status**: Lua scripting is planned for Phase 2-3. Scene system comes first (Phase 1). See [Lua Scripting Guide](lua-scripting-guide.md) for detailed API reference.
 
 ---
 

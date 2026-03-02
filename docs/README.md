@@ -4,6 +4,14 @@ UzEngine is an AI-native 3D game engine that runs inside VSCode. All scene data,
 
 ---
 
+## Product Roadmap
+
+**Start here for requirements and goals:** [PRD.md](PRD.md) — Product Requirements Document with vision, success metrics, functional & non-functional requirements for all phases.
+
+**Implementation tasks:** [ROADMAP.md](ROADMAP.md) — 5-phase implementation plan with dependencies, complexity estimates, and "definition of done" for each task.
+
+---
+
 ## Engine C++ Documentation
 
 Reference documentation for the engine's C++ codebase — patterns, module structure, and systems used to build games with UzEngine.
@@ -15,6 +23,30 @@ Reference documentation for the engine's C++ codebase — patterns, module struc
 | [engine/cpp-architecture.md](engine/cpp-architecture.md) | Core layer APIs (Arena, Handle, Result, StringId), asset identity, prefab system, ECS |
 | [engine/hot-reload.md](engine/hot-reload.md) | Shader hot-reload (DXC), scene/material reload, game DLL hot-reload (shadow copy + stable C ABI) |
 | [engine/module-structure.md](engine/module-structure.md) | Six-module breakdown (Engine, Renderer, Runtime, Build, Editor, UI), source tree, dependency rules, CMake targets |
+| [engine/ecs-and-scene.md](engine/ecs-and-scene.md) | ECS architecture (EnTT), component catalog, scene graph tree, .uzscene format, prefab instantiation |
+| [engine/scripting-system.md](engine/scripting-system.md) | LuaJIT VM lifecycle, script instances, sandboxing, C++ bindings, metatables, ctx table, hot-reload state |
+| [engine/audio-system.md](engine/audio-system.md) | XAudio2 engine, 4-bus mixing, voice pool, .uzaudio format, spatial audio, Lua playback API |
+| [engine/physics-system.md](engine/physics-system.md) | Jolt Physics integration, body/collider creation, collision events, character controller, spatial queries, Lua API |
+
+---
+
+## Modules
+
+Internal module documentation describing the purpose, structure, and API of core engine subsystems.
+
+| Module | Description |
+|--------|-------------|
+| [modules/game/README.md](modules/game/README.md) | Game logic DLL (game.dll): LuaJIT VM, physics step, hot-reload container, game loop coordination |
+| [modules/audio/README.md](modules/audio/README.md) | Audio engine: XAudio2, voice pool, 4-bus mixing, 3D spatial audio, WAV/MP3/OGG import |
+| [modules/physics/README.md](modules/physics/README.md) | Physics simulation: Jolt Physics, rigid bodies, colliders, character controller, queries, collision events |
+| [modules/scripting/README.md](modules/scripting/README.md) | Lua scripting: Per-node LuaJIT VM, C++ bindings, sandboxing, hot-reload, error isolation |
+| [modules/assets/README.md](modules/assets/README.md) | Asset pipeline: Import (glTF/FBX/PNG/WAV), ResourceManager, res:// paths, .uzpak format |
+| [modules/build/README.md](modules/build/README.md) | Build system: CMake, vcpkg, UzBuild CLI tools, shader compiler integration |
+| [modules/editor/README.md](modules/editor/README.md) | VSCode editor extension: IPC server, UI panels, scene editing, asset browser, play controls |
+| [modules/engine/README.md](modules/engine/README.md) | Core engine: DX12 renderer, IPC/MCP, lifecycle management, memory, profiling |
+| [modules/renderer/README.md](modules/renderer/README.md) | Rendering: Deferred GBuffer, PBR pipeline, shadows, post-process, shader hot-reload |
+| [modules/runtime/README.md](modules/runtime/README.md) | Runtime: Scene loading, ECS iteration, physics/animation/audio step coordination |
+| [modules/ui/README.md](modules/ui/README.md) | UI system: HTML/CSS game UI, data binding, event callbacks, UIRoot nodes |
 
 ---
 
@@ -78,6 +110,11 @@ Implementation documentation for the current JPEG streaming PoC.
 | [guides/ipc-mcp.md](guides/ipc-mcp.md) | IPC protocol, MCP tools, AI agent usage |
 | [guides/vscode-extension.md](guides/vscode-extension.md) | Extension commands, ServerManager, StreamPanel |
 | [guides/ai-interaction.md](guides/ai-interaction.md) | Controlling the engine from Claude Code |
+| [guides/scene-authoring.md](guides/scene-authoring.md) | Creating and editing .uzscene files, node types, properties, prefabs |
+| [guides/shader-authoring.md](guides/shader-authoring.md) | Writing HLSL shaders, include library, hot-reload, G-Buffer layout, variants |
+| [guides/editor-workflow.md](guides/editor-workflow.md) | VSCode editor panels, gizmos, play mode, prefab editing, debug console |
+| [guides/testing-guide.md](guides/testing-guide.md) | Writing tests with Google Test, mocks, fixtures, coverage requirements (95%+) |
+| [guides/ai-development-guide.md](guides/ai-development-guide.md) | AI-assisted development with Claude, MCP tools, prompts, scene/script/shader co-authoring |
 
 ---
 

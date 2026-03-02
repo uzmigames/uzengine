@@ -108,21 +108,17 @@ Canvas size tracks the panel size. On resize: send `engine.setResolution` IPC co
 
 ## C++ IPC Handlers (`src/editor/`)
 
-These handlers are **only compiled when `UZ_EDITOR=1`**. They expose authoring-specific queries that the shipping game does not need.
+These handlers are **only compiled when `UZ_EDITOR=1`**. They expose authoring-specific queries and mutations that the shipping game does not need.
 
 ```
-src/editor/ipc_handlers/
-├── editor_handlers.cpp   — registers all editor.* handlers into IpcRegistry
+src/editor/
+├── selection_manager.h/cpp      — SelectionManager: maintain Set<NodeId> of selected
+├── undo_system.h/cpp            — UndoStack: max 100 commands, execute/undo/redo
+├── prefab_edit_mode.h/cpp       — PrefabEditMode: isolated prefab viewport, override tracking
+├── gizmo_controller.h/cpp       — Gizmo state (mode, hovered_axis), mouse ray-cast hit testing
+├── ipc_handlers.cpp             — registers all editor.* handlers into IpcRegistry
+└── outline_renderer.h/cpp       — Selected node outline, wireframe debug rendering
 ```
-
-| IPC Command | Args | Returns | Purpose |
-|------------|------|---------|---------|
-| `editor.getSceneTree` | — | JSON node tree | Populates Scene Tree panel |
-| `editor.selectNode` | `{id}` | `{ok}` | Highlights node in Scene Tree, loads Inspector |
-| `editor.getNodeProperties` | `{id}` | JSON property map | Populates Inspector form |
-| `editor.setNodeProperty` | `{id, key, value}` | `{ok}` | Live-edits a node property |
-| `editor.getLogs` | `{since_frame}` | `[{level, msg, frame}]` | Console panel polling |
-| `editor.setResolution` | `{width, height}` | `{ok}` | Resize swap chain to match panel |
 
 All scene-mutating commands go through `SceneCommand` queue (applied on Main thread, start of next frame). See [lifecycle-and-concurrency.md](../../engine/lifecycle-and-concurrency.md).
 
@@ -161,6 +157,112 @@ All scene-mutating commands go through `SceneCommand` queue (applied on Main thr
 
 ---
 
+## Phase 1+ Editor Features
+
+### Undo/Redo System (Phase 1)
+
+Full undo/redo for all scene edits via `Ctrl+Z` / `Ctrl+Shift+Z`.
+
+**C++ Side** (`src/editor/undo_system.h/cpp`):
+- `UndoStack` class: max 100 commands, LIFO with redo buffer
+- `EditorCommand` abstract base: `execute()`, `undo()`, `redo()`
+- Concrete commands: `CreateNodeCommand`, `DeleteNodeCommand`, `MoveNodeCommand`, `SetPropertyCommand`, `ParentChangeCommand`
+- Commands batched per user action (e.g., move + rotate = one undo)
+
+**TypeScript Side** (`vscode-uzengine/src/undoStack.ts`):
+- Wraps C++ undo/redo via IPC: `editor.undo`, `editor.redo`
+- `Ctrl+Z` → `editor.undo` IPC → C++ pops stack → revert property → send back scene delta
+- Keybinding: `"key": "ctrl+z"` in `package.json`
+
+**IPC Commands Added**:
+- `editor.undo` → `{success, affected_nodes}`
+- `editor.redo` → `{success, affected_nodes}`
+
+### 3D Gizmo Handles (Phase 1)
+
+Transform manipulation with mouse gizmos (translate, rotate, scale).
+
+**C++ Side** (`src/renderer/passes/gizmo_pass.h/cpp`, sort_key=900):
+- Registers as DX12 render pass (editor mode only)
+- Renders axis-aligned colored lines (red=X, green=Y, blue=Z)
+- Depth-tested against scene geometry
+- Ray-cast hit test: mouse position → world space ray → check intersection with gizmo quads
+
+**TypeScript Side** (`vscode-uzengine/src/gizmoView.ts`):
+- Detects mouse down/drag over 3D viewport
+- Sends `editor.selectNode` to set active node
+- Shows gizmo for selected node
+- Mouse drag → compute world-space delta → `editor.setNodeProperty({id, "position", new_pos})`
+- Mode selector buttons: Translate / Rotate / Scale
+
+**Key Invariant**: Gizmo rendering happens AFTER all scene geometry (sort_key=900). Gizmo state (which axis hovered) is communicated from C++ via `engine.getGizmoState` IPC.
+
+### Multi-Select (Phase 1)
+
+Select multiple nodes and apply edits to all at once.
+
+**C++ Side** (`src/editor/selection_manager.h/cpp`):
+- `SelectionManager`: maintains `Set<NodeId>` of selected nodes
+- `set_selected(node_id, append=false)` → replaces or appends selection
+- `get_selected() → Vec<NodeId>` → returned to Inspector for bulk edit UI
+
+**TypeScript Side** (`vscode-uzengine/src/selectionManager.ts`):
+- `Ctrl+click` in Scene Tree → `editor.selectNode({id, append:true})`
+- Shift+click range select (select node N to node M)
+- Scene Tree shows checkboxes for multi-selection
+- Inspector shows "Bulk Edit" mode: fields that differ across selected nodes show placeholder text
+- Moving selected group: drag one node → compute delta → apply to all via `editor.setNodeProperty` batch
+
+**Gizmo Centroid**: When multiple nodes selected, gizmo is positioned at their center of mass (computed in C++).
+
+### Prefab Edit Mode (Phase 2)
+
+Edit a prefab's template while viewing overrides against the parent.
+
+**Workflow**:
+1. Right-click instance node → "Edit Prefab"
+2. Breadcrumb trail shows: `Scenes/Level1.uzscene > PrefabInst#42 > Prefab`
+3. Viewport zooms/frames the prefab root
+4. Inspector shows two columns: "Template" (read-only) and "Overrides" (blue-highlighted)
+5. Edits to template apply to all instances; edits to overrides apply only to this instance
+6. Click "Exit Prefab Edit Mode" or press Escape → return to main scene
+
+**C++ Side** (`src/editor/prefab_edit_mode.h/cpp`):
+- `PrefabEditMode` struct: active prefab instance ID, root node, list of override nodes
+- `enter_prefab_edit(node_id)` → load prefab as isolated scene, track overrides
+- `exit_prefab_edit()` → save changes, reload instance into parent scene
+- `get_prefab_overrides(node_id) → Map<property, value>` → returns overrides for Inspector
+
+**TypeScript Side** (`vscode-uzengine/src/prefabEditMode.ts`):
+- Breadcrumb component showing hierarchy: scene > instance > prefab
+- Inspector two-column layout: "Template" and "This Instance"
+- Edits in "This Instance" create override records in `.uzscene` for that instance
+
+---
+
+## IPC Command Reference
+
+### Editor Commands (Complete Set)
+
+| Command | Phase | Args | Returns | Purpose |
+|---------|-------|------|---------|---------|
+| `editor.getSceneTree` | 0 | — | JSON node tree | Scene Tree panel population |
+| `editor.selectNode` | 0 | `{id, append?}` | `{ok}` | Select for gizmo + Inspector |
+| `editor.getNodeProperties` | 0 | `{id}` | JSON property map | Inspector form |
+| `editor.setNodeProperty` | 0 | `{id, key, value}` | `{ok, updated_value}` | Live property edit |
+| `editor.deleteNode` | 1 | `{id}` | `{ok}` | Delete node + undo-stack entry |
+| `editor.createNode` | 1 | `{parent_id, type, name}` | `{ok, node_id}` | Create child node + undo-stack entry |
+| `editor.undo` | 1 | — | `{ok, affected_node_ids}` | Pop undo stack |
+| `editor.redo` | 1 | — | `{ok, affected_node_ids}` | Pop redo stack |
+| `editor.getGizmoState` | 1 | — | `{mode, hovered_axis}` | Current gizmo interaction state |
+| `editor.enterPrefabEditMode` | 2 | `{instance_id}` | `{ok, template_root_id}` | Enter prefab editing |
+| `editor.exitPrefabEditMode` | 2 | — | `{ok}` | Exit prefab editing |
+| `editor.getPrefabOverrides` | 2 | `{node_id}` | `{overrides: Map}` | Get property overrides for Inspector |
+| `editor.setResolution` | 0 | `{width, height}` | `{ok}` | Resize viewport swap chain |
+| `editor.getLogs` | 0 | `{since_frame?}` | `[{level, msg, frame}]` | Console streaming |
+
+---
+
 ## Key Invariants
 
 1. **TypeScript never links against any C++ module.** Communication is IPC + WebSocket only.
@@ -176,3 +278,11 @@ All scene-mutating commands go through `SceneCommand` queue (applied on Main thr
 - [hot-reload.md](../../engine/hot-reload.md) — shader hot-reload diagnostics flow
 - [../runtime/README.md](../runtime/README.md) — IPC handler registration
 - [../../guides/ipc-mcp.md](../../guides/ipc-mcp.md) — full IPC protocol reference
+
+## Rulebook Tasks
+
+Phase 1 editor foundations: [phase1-editor-panels](../../.rulebook/tasks/phase1-editor-panels/), [phase1-undo-redo](../../.rulebook/tasks/phase1-undo-redo/), [phase1-editor-gizmos](../../.rulebook/tasks/phase1-editor-gizmos/), [phase1-multi-select](../../.rulebook/tasks/phase1-multi-select/)
+
+Phase 2 advanced editing: [phase2-prefab-edit-mode](../../.rulebook/tasks/phase2-prefab-edit-mode/), [phase2-ai-native-features](../../.rulebook/tasks/phase2-ai-native-features/)
+
+Phase 1 core infrastructure: [phase1-scene-system](../../.rulebook/tasks/phase1-scene-system/), [phase1-asset-browser](../../.rulebook/tasks/phase1-asset-browser/)
