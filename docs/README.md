@@ -24,9 +24,11 @@ Reference documentation for the engine's C++ codebase — patterns, module struc
 | [engine/hot-reload.md](engine/hot-reload.md) | Shader hot-reload (DXC), scene/material reload, game DLL hot-reload (shadow copy + stable C ABI) |
 | [engine/module-structure.md](engine/module-structure.md) | Six-module breakdown (Engine, Renderer, Runtime, Build, Editor, UI), source tree, dependency rules, CMake targets |
 | [engine/ecs-and-scene.md](engine/ecs-and-scene.md) | ECS architecture (EnTT), component catalog, scene graph tree, .uzscene format, prefab instantiation |
+| [engine/ecs-advanced.md](engine/ecs-advanced.md) | Advanced ECS patterns: registry context service locator, reactive systems with signals, component versioning, entity templates, prefab hierarchies, transform dirty flags, thread safety |
 | [engine/scripting-system.md](engine/scripting-system.md) | LuaJIT VM lifecycle, script instances, sandboxing, C++ bindings, metatables, ctx table, hot-reload state |
 | [engine/audio-system.md](engine/audio-system.md) | XAudio2 engine, 4-bus mixing, voice pool, .uzaudio format, spatial audio, Lua playback API |
 | [engine/physics-system.md](engine/physics-system.md) | Jolt Physics integration, body/collider creation, collision events, character controller, spatial queries, Lua API |
+| [engine/ui-architecture.md](engine/ui-architecture.md) | UI system implementation: uz_ui_html.dll C ABI, UIPass render integration, SDF font rendering, hot-reload, input routing, memory management |
 
 ---
 
@@ -52,48 +54,105 @@ Internal module documentation describing the purpose, structure, and API of core
 
 ## Specs
 
-Design and architecture specifications for all engine systems.
+Design and architecture specifications for all engine systems, organized by domain.
+
+**Overview:** [specs/engine-vision.md](specs/engine-vision.md) — Full architecture, ownership model, phase roadmap, tech stack
+
+### Rendering
 
 | Spec | Description |
 |------|-------------|
-| [specs/engine-vision.md](specs/engine-vision.md) | Full architecture, ownership model, phase roadmap, tech stack |
-| [specs/lua-scripting.md](specs/lua-scripting.md) | LuaJIT scripting per node, engine API, hot-reload (~60ms), sandboxing, shipping |
-| [specs/scene-system.md](specs/scene-system.md) | Node types, `.uzscene` format, SceneManager API, IPC handlers |
-| [specs/renderer.md](specs/renderer.md) | Deferred PBR pipeline, G-Buffer, shadows, post-process |
-| [specs/shader-system.md](specs/shader-system.md) | HLSL/GLSL pipeline, DXC, hot-reload, built-in shaders |
-| [specs/memory-system.md](specs/memory-system.md) | Arena allocators, ownership model, handle system |
-| [specs/debug-profiling.md](specs/debug-profiling.md) | Assert system, Tracy CPU/GPU profiler, ImGui overlay, doctest unit tests |
-| [specs/console-commands.md](specs/console-commands.md) | In-game debug console, command registration API (Lua + C++), IPC handlers, auto-complete |
-| [specs/crash-reporting.md](specs/crash-reporting.md) | Unhandled exception capture, minidump, crash log JSON, system info, Lua state, IPC integration |
-| [specs/ui-system.md](specs/ui-system.md) | HTML/CSS game UI authoring, data binding with CSS custom properties, event callbacks, UIRoot scene nodes |
-| [specs/editor-panels.md](specs/editor-panels.md) | Scene Tree, Inspector, Asset Browser, Play Controls |
-| [specs/asset-pipeline.md](specs/asset-pipeline.md) | FBX/GLTF import, LOD, texture compression, `.uzpak` format |
-| [specs/skeletal-mesh.md](specs/skeletal-mesh.md) | Skeleton, skinned mesh, GPU skinning, morph targets, physics asset |
-| [specs/animation-system.md](specs/animation-system.md) | AnimClip, state machine, blending, AnimNotify, IK, root motion |
-| [specs/input-system.md](specs/input-system.md) | Enhanced Input (InputAction + MappingContext), XInput, rebinding |
-| [specs/camera-system.md](specs/camera-system.md) | SpringArm, camera modes, shake, DoF, `.uzcam` presets |
-| [specs/build-system.md](specs/build-system.md) | Cook → Pack → Compile → Stage → Package pipeline, NSIS, platform abstraction |
-| [specs/timer-system.md](specs/timer-system.md) | Lua timer API: schedule_after, schedule_every, cancel_timer, schedule_next_frame |
-| [specs/event-bus.md](specs/event-bus.md) | C++ typed EventBus<T> + Lua string-dispatch signals, predefined engine events |
-| [specs/tags-groups.md](specs/tags-groups.md) | Node tags (bitset<64>), find_by_tag queries, Lua API, .uzscene format |
-| [specs/undo-redo.md](specs/undo-redo.md) | Command pattern, UndoStack, debounce, dirty tracking, Ctrl+Z/Ctrl+Shift+Z |
-| [specs/editor-gizmos.md](specs/editor-gizmos.md) | Translate/Rotate/Scale 3D handles, ray-cast hit test, drag mechanics, grid snap |
-| [specs/multi-select.md](specs/multi-select.md) | SelectionManager, Ctrl+click, range select, shared Inspector, bulk operations |
-| [specs/prefab-edit-mode.md](specs/prefab-edit-mode.md) | Prefab isolation, override panel, save/reload instances, state machine |
-| [specs/shader-variants.md](specs/shader-variants.md) | Shader permutation system: variant keys, auto-detection from materials, PSO cache, DXC compilation |
-| [specs/screen-space-effects.md](specs/screen-space-effects.md) | SSAO (HBAO+), SSR (Hi-Z ray march), TAA (temporal resolve), velocity buffer, post-process stack order |
-| [specs/shader-library.md](specs/shader-library.md) | Shared HLSL include files (BRDF, lighting, shadows, skinning, tonemapping, noise, global cbuffer) |
-| [specs/point-spot-light-shadows.md](specs/point-spot-light-shadows.md) | Point light dual-paraboloid shadows, spot light perspective shadows, shadow atlases, PCF 2x2 |
-| [specs/gpu-instancing.md](specs/gpu-instancing.md) | Dynamic GPU instancing: batch builder, StructuredBuffer transforms, SV_InstanceID |
-| [specs/audio-system.md](specs/audio-system.md) | XAudio2 audio engine, 4-bus mixing, spatial 3D audio, hot-reload, Lua/C++ playback API |
-| [specs/particle-system.md](specs/particle-system.md) | GPU compute particle simulation, `.uzfx` format, behavior modules, billboard rendering, LOD |
-| [specs/navmesh.md](specs/navmesh.md) | Recast + Detour navmesh baking, NavMeshAgent, RVO2 local avoidance, dynamic obstacles |
-| [specs/physics-system.md](specs/physics-system.md) | Jolt Physics rigid bodies, colliders, triggers, character controller, Lua physics API, collision events |
-| [specs/plugin-system.md](specs/plugin-system.md) | `.uzplugin` manifest, stable C ABI, VSCode extension side, IPC namespace, hot-reload |
-| [specs/terrain-system.md](specs/terrain-system.md) | `.uzterrain` + heightmap, splatmap, chunk LOD, foliage GPU instancing, water plane, collision |
-| [specs/ai-native-features.md](specs/ai-native-features.md) | Prompt-to-Scene, shader co-authoring, natural language property editing, scene analysis, script scaffolding |
-| [specs/save-system.md](specs/save-system.md) | Save/load game state, msgpack serialization, save slots, autosave, thumbnail capture, Lua API |
-| [specs/localization.md](specs/localization.md) | I18n via CSV, multi-language support, runtime locale switching, font fallback, hot-reload |
+| [specs/rendering/renderer.md](specs/rendering/renderer.md) | Hybrid Deferred PBR pipeline, G-Buffer, shadows, post-process |
+| [specs/rendering/render-graph.md](specs/rendering/render-graph.md) | Frame resource abstraction, pass dependencies, automatic D3D12 barrier insertion, transient resource aliasing |
+| [specs/rendering/shader-system.md](specs/rendering/shader-system.md) | HLSL/GLSL pipeline, DXC, hot-reload, built-in shaders |
+| [specs/rendering/shader-variants.md](specs/rendering/shader-variants.md) | Shader permutation system: variant keys, PSO cache, DXC compilation |
+| [specs/rendering/shader-library.md](specs/rendering/shader-library.md) | Shared HLSL include files (BRDF, lighting, shadows, skinning, tonemapping, noise) |
+| [specs/rendering/screen-space-effects.md](specs/rendering/screen-space-effects.md) | SSAO (HBAO+), SSR (Hi-Z ray march), TAA (temporal resolve), velocity buffer |
+| [specs/rendering/global-illumination.md](specs/rendering/global-illumination.md) | Hybrid GI: static lightmaps + dynamic DDGI probes + reflection captures |
+| [specs/rendering/point-spot-light-shadows.md](specs/rendering/point-spot-light-shadows.md) | Point light dual-paraboloid shadows, spot light perspective shadows, shadow atlases |
+| [specs/rendering/gpu-instancing.md](specs/rendering/gpu-instancing.md) | Dynamic GPU instancing: BatchBuilder, StructuredBuffer transforms, SV_InstanceID |
+| [specs/rendering/particle-system.md](specs/rendering/particle-system.md) | GPU compute particle simulation, `.uzfx` format, behavior modules, LOD |
+
+### Gameplay
+
+| Spec | Description |
+|------|-------------|
+| [specs/gameplay/scene-system.md](specs/gameplay/scene-system.md) | Node types, `.uzscene` format, SceneManager API, entity pooling, schema evolution |
+| [specs/gameplay/gameplay-systems.md](specs/gameplay/gameplay-systems.md) | System Scheduler (TickGroups), Gameplay Ability System, FSM, Behavior Trees |
+| [specs/gameplay/spatial-systems.md](specs/gameplay/spatial-systems.md) | BVH / Octree spatial indexing, O(log n) queries, physics broad-phase integration |
+| [specs/gameplay/event-bus.md](specs/gameplay/event-bus.md) | C++ typed EventBus<T> + Lua string-dispatch signals, predefined engine events |
+| [specs/gameplay/tags-groups.md](specs/gameplay/tags-groups.md) | Node tags (bitset<64>), find_by_tag queries, Lua API |
+| [specs/gameplay/timer-system.md](specs/gameplay/timer-system.md) | Lua timer API: schedule_after, schedule_every, cancel_timer |
+| [specs/gameplay/input-system.md](specs/gameplay/input-system.md) | Enhanced Input (InputAction + MappingContext), XInput, rebinding |
+| [specs/gameplay/camera-system.md](specs/gameplay/camera-system.md) | SpringArm, camera modes, shake, DoF, `.uzcam` presets |
+| [specs/gameplay/save-system.md](specs/gameplay/save-system.md) | Save/load game state, msgpack serialization, save slots, autosave, Lua API |
+| [specs/gameplay/localization.md](specs/gameplay/localization.md) | I18n via CSV, multi-language support, runtime locale switching, font fallback |
+| [specs/gameplay/navmesh.md](specs/gameplay/navmesh.md) | Recast + Detour navmesh baking, NavMeshAgent, RVO2 local avoidance |
+
+### Physics
+
+| Spec | Description |
+|------|-------------|
+| [specs/physics/physics-system.md](specs/physics/physics-system.md) | Jolt Physics rigid bodies, colliders, triggers, character controller, physics materials, CCD |
+| [specs/physics/vehicle-physics.md](specs/physics/vehicle-physics.md) | Multi-wheel vehicle simulation: VehicleConstraint, suspension, drivetrain, Ackermann steering |
+| [specs/physics/cloth-simulation.md](specs/physics/cloth-simulation.md) | Cloth via Jolt SoftBody: vertex constraints, skeleton blending, wind zones, LOD |
+| [specs/physics/destructibles.md](specs/physics/destructibles.md) | Destructible objects: Voronoi fracture, impulse-based breaking, debris pooling |
+| [specs/physics/terrain-system.md](specs/physics/terrain-system.md) | `.uzterrain` + heightmap, splatmap, chunk LOD, foliage GPU instancing, water plane |
+
+### Audio
+
+| Spec | Description |
+|------|-------------|
+| [specs/audio/audio-system.md](specs/audio/audio-system.md) | XAudio2 engine, 4-bus mixing, spatial 3D audio, audio events, occlusion, DSP chains |
+| [specs/audio/audio-snapshots.md](specs/audio/audio-snapshots.md) | Mixer presets, per-bus overrides, stack-based blending, state-driven transitions |
+| [specs/audio/dialogue-system.md](specs/audio/dialogue-system.md) | Dialogue trees, voice acting pipeline, subtitle timing, localized audio, Lua callbacks |
+
+### Scripting
+
+| Spec | Description |
+|------|-------------|
+| [specs/scripting/lua-scripting.md](specs/scripting/lua-scripting.md) | LuaJIT per-node scripts, coroutines, modules, shared state, hot-reload (~60ms), sandboxing |
+| [specs/scripting/shared-state.md](specs/scripting/shared-state.md) | Global game state store, reactive bindings for UI/Audio, change notifications, save/load |
+| [specs/scripting/async-streaming.md](specs/scripting/async-streaming.md) | Async asset loading, AssetHandle API, IO thread pool, streaming memory budgets, level streaming |
+| [specs/scripting/data-driven-config.md](specs/scripting/data-driven-config.md) | Unified config framework: `.uzevent`, `.uzphysmat`, `.uzentity`, `.uzflow`; hot-reload, validation |
+
+### Editor
+
+| Spec | Description |
+|------|-------------|
+| [specs/editor/editor-panels.md](specs/editor/editor-panels.md) | Scene Tree, Inspector, Asset Browser, Play Controls |
+| [specs/editor/editor-gizmos.md](specs/editor/editor-gizmos.md) | Translate/Rotate/Scale 3D handles, ray-cast hit test, drag mechanics, grid snap |
+| [specs/editor/multi-select.md](specs/editor/multi-select.md) | SelectionManager, Ctrl+click, range select, shared Inspector, bulk operations |
+| [specs/editor/prefab-edit-mode.md](specs/editor/prefab-edit-mode.md) | Prefab isolation, override panel, save/reload instances, state machine |
+| [specs/editor/undo-redo.md](specs/editor/undo-redo.md) | Command pattern, UndoStack, debounce, dirty tracking, Ctrl+Z/Ctrl+Shift+Z |
+| [specs/editor/console-commands.md](specs/editor/console-commands.md) | In-game debug console, command registration API (Lua + C++), auto-complete |
+
+### Engine Core
+
+| Spec | Description |
+|------|-------------|
+| [specs/engine/memory-system.md](specs/engine/memory-system.md) | Arena allocators, ownership model, handle system |
+| [specs/engine/debug-profiling.md](specs/engine/debug-profiling.md) | Assert system, Tracy CPU/GPU profiler, ImGui overlay, doctest unit tests |
+| [specs/engine/crash-reporting.md](specs/engine/crash-reporting.md) | Unhandled exception capture, minidump, crash log JSON, system info, IPC integration |
+| [specs/engine/build-system.md](specs/engine/build-system.md) | Cook → Pack → Compile → Stage → Package pipeline, NSIS, platform abstraction |
+| [specs/engine/plugin-system.md](specs/engine/plugin-system.md) | `.uzplugin` manifest, stable C ABI, VSCode extension side, IPC namespace, hot-reload |
+| [specs/engine/ai-native-features.md](specs/engine/ai-native-features.md) | Prompt-to-Scene, shader co-authoring, natural language property editing, script scaffolding |
+
+### UI
+
+| Spec | Description |
+|------|-------------|
+| [specs/ui/ui-system.md](specs/ui/ui-system.md) | HTML/CSS game UI, data binding, gamepad focus/navigation, localization, UIRoot nodes |
+| [specs/ui/ui-widget-library.md](specs/ui/ui-widget-library.md) | uz-button, uz-slider, uz-checkbox, uz-dropdown, uz-scroll-view, uz-modal, uz-toast, etc. |
+| [specs/ui/ui-animation.md](specs/ui/ui-animation.md) | Tweening API, easing curves, sequences, page transitions |
+
+### Assets
+
+| Spec | Description |
+|------|-------------|
+| [specs/assets/asset-pipeline.md](specs/assets/asset-pipeline.md) | FBX/GLTF import, LOD, texture compression, `.uzpak` format, source asset DB, dependency graph |
+| [specs/assets/skeletal-mesh.md](specs/assets/skeletal-mesh.md) | Skeleton, skinned mesh, GPU skinning, morph targets, physics asset |
+| [specs/assets/animation-system.md](specs/assets/animation-system.md) | AnimClip, state machine, blending, AnimNotify, IK, root motion |
 
 ---
 
@@ -104,6 +163,8 @@ Implementation documentation for the current JPEG streaming PoC.
 | Guide | Description |
 |-------|-------------|
 | [guides/getting-started.md](guides/getting-started.md) | First-run setup |
+| [guides/audio-guide.md](guides/audio-guide.md) | Audio implementation guide: playback, 3D positioning, buses, events, adaptive music, snapshots, dialogue integration |
+| [guides/gameplay-programming-guide.md](guides/gameplay-programming-guide.md) | Practical guide to building gameplay: script anatomy, coroutines for sequences, FSM for characters, Gameplay Ability System, spatial queries, EventBus patterns, common gameplay patterns (health, pickups, AI) |
 | [guides/build.md](guides/build.md) | CMake build, vcpkg dependencies |
 | [guides/architecture.md](guides/architecture.md) | Current system: DX12 + JPEG stream + VSCode |
 | [guides/streaming-pipeline.md](guides/streaming-pipeline.md) | Frame lifecycle: GPU → JPEG → WebSocket → VSCode |
@@ -115,6 +176,10 @@ Implementation documentation for the current JPEG streaming PoC.
 | [guides/editor-workflow.md](guides/editor-workflow.md) | VSCode editor panels, gizmos, play mode, prefab editing, debug console |
 | [guides/testing-guide.md](guides/testing-guide.md) | Writing tests with Google Test, mocks, fixtures, coverage requirements (95%+) |
 | [guides/ai-development-guide.md](guides/ai-development-guide.md) | AI-assisted development with Claude, MCP tools, prompts, scene/script/shader co-authoring |
+| [guides/ui-guide.md](guides/ui-guide.md) | UI development: creating HUDs and menus with HTML/CSS/Lua, data binding, widgets, animations, keyboard/gamepad navigation, world-space UI, patterns and best practices |
+| [guides/physics-advanced-guide.md](guides/physics-advanced-guide.md) | Advanced physics: vehicle setup (cars, trucks), cloth integration (capes, hair), destructible objects (crates, vases), custom constraints (doors, ropes), debugging, performance optimization |
+| [guides/rendering-guide.md](guides/rendering-guide.md) | PBR materials, lighting setup (directional/point/spot), post-processing (bloom/SSAO/SSR/TAA), global illumination, decals, performance tuning |
+| [guides/streaming-guide.md](guides/streaming-guide.md) | Async loading patterns, level streaming with chunks, memory budgets, preloading strategy, debug overlay, best practices |
 
 ---
 

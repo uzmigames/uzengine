@@ -1245,3 +1245,11 @@ struct CScriptRef {
 ```
 
 The hot-reload system uses `script_id` to match nodes with their script files during reload. When a Lua script file changes on disk, the reloader finds all nodes with a matching `script_id` and re-runs `on_start` with the new code.
+
+---
+
+## TEMPORARY: Engine Audio System
+
+> **NOTE**: This section is a placeholder. See [engine/audio-system.md](./audio-system.md) for the full audio system technical documentation.
+
+The audio system uses XAudio2 for low-latency playback, voice pooling for efficiency, and XAPO for per-bus DSP effects. See the dedicated audio-system.md document for complete architecture details, voice pool management, 3D spatial audio, virtual voice handling, and performance characteristics.
