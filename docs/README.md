@@ -118,6 +118,23 @@ Implementation documentation for the current JPEG streaming PoC.
 
 ---
 
+## Gap Analysis & Reviews
+
+Expert reviews of current specifications against AAA-quality standards. Read these to understand what's missing and why.
+
+| Review | Description |
+|--------|-------------|
+| [reviews/MASTER-GAP-ANALYSIS.md](reviews/MASTER-GAP-ANALYSIS.md) | Consolidated master analysis of 137 gaps across 7 domains. Executive summary, prioritization (P0–P2), cross-cutting concerns, architectural decisions needed before Phase 1, and recommended Rulebook tasks. Start here. |
+| [reviews/ecs-systems-review.md](reviews/ecs-systems-review.md) | 14 critical gaps in ECS and game systems (world streaming, spatial queries, entity pooling, system order, prefabs, hot-reload) |
+| [reviews/physics-review.md](reviews/physics-review.md) | 16 critical gaps in physics (materials system, CCD, constraints, vehicles, destruction, cloth, soft bodies) |
+| [reviews/audio-review.md](reviews/audio-review.md) | 18 critical gaps in audio (event system, adaptive music, DSP chains, occlusion, dialogue, middleware) |
+| [reviews/lua-scripting-review.md](reviews/lua-scripting-review.md) | 17 critical gaps in Lua (coroutines, DAP debugging, profiler, modules, serialization, type-safe bindings) |
+| [reviews/rendering-review.md](reviews/rendering-review.md) | 28 critical gaps in rendering (GI, Nanite, VSM, ray tracing, decals, bloom, DoF, volumetric fog, water, SSS, hair, eye, VRS, mesh shaders, GPU-driven rendering) |
+| [reviews/asset-pipeline-review.md](reviews/asset-pipeline-review.md) | 24 critical gaps in assets (source DB, dependency tracking, streaming, virtual texturing, cross-platform variants, atlasing) |
+| [reviews/ui-review.md](reviews/ui-review.md) | 20 critical gaps in UI (gamepad navigation, widget library, animation, binding, state machine, safe area, drag-drop, accessibility) |
+
+---
+
 ## Phase Roadmap
 
 | Phase | Focus | Status |
