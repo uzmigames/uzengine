@@ -2,17 +2,22 @@
 
 ## Overview
 
-UzEngine supports **HLSL** (primary, DX12) and **GLSL** (future, Vulkan). Shaders are plain `.hlsl` / `.glsl` files in the project directory — editable by humans, LLMs, and the VSCode shader editor. Hot-reload is instant via IPC.
+UzEngine uses **HLSL as the single shader authoring language**. Shaders are plain `.hlsl` files in the project directory — editable by humans, LLMs, and the VSCode shader editor. Hot-reload is instant via IPC.
+
+HLSL is compiled to **SPIR-V** (canonical IR) at cook time. The RHI backend then uses the appropriate IR per platform: DXIL (DX12), SPIR-V (Vulkan), or MSL (Metal). See [RHI Spec](rhi.md) for the full cross-platform pipeline.
+
+> **No direct GLSL authoring.** GLSL was previously listed as a future language. The correct approach is HLSL → SPIR-V → SPIRV-Cross → GLSL ES (for Android debug only). Game developers always write HLSL.
 
 ---
 
 ## Shader Types
 
-| Stage | HLSL entry | GLSL stage |
-|-------|-----------|-----------|
-| Vertex | `VSMain` | `main` (vert) |
-| Pixel / Fragment | `PSMain` | `main` (frag) |
-| Compute | `CSMain` | `main` (comp) |
+| Stage | HLSL entry | SPIR-V execution model |
+|-------|-----------|----------------------|
+| Vertex | `VSMain` | `Vertex` |
+| Pixel / Fragment | `PSMain` | `Fragment` |
+| Compute | `CSMain` | `GLCompute` |
+| Mesh (SM6.5+) | `MSMain` | `MeshNV` / `MeshEXT` |
 
 ---
 
@@ -75,69 +80,38 @@ float4 PSMain(VSOut i) : SV_TARGET {
 
 ---
 
-## GLSL Shader Structure (Future)
-
-```glsl
-// shaders/pbr.glsl
-#version 450
-
-// Vertex
-layout(location=0) in vec3 in_pos;
-layout(location=1) in vec3 in_normal;
-layout(location=2) in vec2 in_uv;
-
-layout(set=0, binding=0) uniform PerObject {
-    mat4 model;
-    mat4 view_proj;
-};
-
-layout(location=0) out vec3 frag_normal;
-layout(location=1) out vec2 frag_uv;
-
-void main() {
-    gl_Position = view_proj * model * vec4(in_pos, 1.0);
-    frag_normal = mat3(model) * in_normal;
-    frag_uv     = in_uv;
-}
-```
-
----
-
 ## Shader Compiler Pipeline
 
+HLSL is the only authoring language. SPIR-V is the canonical IR. See [rhi.md](rhi.md) for the full cross-platform pipeline.
+
 ```
-.hlsl file
+.hlsl (authored)
     ↓
 DXC (DirectXShaderCompiler)
-    ├── Debug build  → DXIL + PDB (shader debugging)
-    └── Release build → DXIL (stripped)
-            ↓
-    D3D12 PSO (Pipeline State Object)
-            ↓
-    Bound to draw calls
+    ├── → SPIR-V (.spv)  — canonical IR, stored in .uzpak
+    └── → DXIL (.bin)    — DX12 fast path (Windows only)
 
-.glsl file (future)
-    ↓
-glslang
-    ↓
 SPIR-V
-    ↓
-Vulkan VkShaderModule
+    ├── Vulkan backend   → used as-is
+    ├── Metal backend    → SPIRV-Cross → MSL
+    └── Android debug    → SPIRV-Cross → GLSL ES (for tooling only)
 ```
 
 ### Compilation Modes
 
-| Mode | Flags | Use |
-|------|-------|-----|
-| Debug | `-Od -Zi` | Editor / development — step debugging |
-| Release | `-O3` | Shipped game |
-| Hot-reload | Async recompile, swap on success | Editor loop |
+| Mode | DXC Flags | Output | Use |
+|------|-----------|--------|-----|
+| Debug | `-Od -Zi -spirv` | SPIR-V + PDB | Editor / development |
+| Release | `-O3 -spirv` | SPIR-V (optimized) | Shipped game |
+| Hot-reload | `-O1 -spirv` async | SPIR-V, swap on success | Editor loop |
+
+> Binding rules: always use `register(bN, space0)` notation for cross-backend compatibility. See [rhi.md § HLSL Authoring Rules](rhi.md) for the full compatibility matrix.
 
 ---
 
 ## Hot-Reload Protocol
 
-1. File watcher detects change to `.hlsl` / `.glsl`
+1. File watcher detects change to `.hlsl`
 2. OR MCP call: `shader.reload({ "path": "shaders/pbr.hlsl" })`
 3. Engine recompiles shader on background thread
 4. On success: swaps PSO atomically (no frame drop)
@@ -185,7 +159,6 @@ The engine validates parameter names against the shader's reflection data at loa
 | Hot-reload on save | File watcher in extension calls `shader.reload` IPC |
 | Compilation status | Status bar item shows "Compiling..." / "OK" / error count |
 | Preview frame | After reload, extension requests `engine.screenshot()` and shows thumbnail |
-| GLSL support | Built-in VSCode GLSL extension |
 
 ---
 
