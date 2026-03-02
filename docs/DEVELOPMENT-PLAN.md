@@ -58,10 +58,13 @@ Ordered implementation sequence. Each step has clear prerequisites and a concret
 |---|------|-------------|------------|------|
 | 1.5 | Editor panels | Scene Tree, Inspector, Asset Browser, Play Controls | 1.1 | `phase1-editor-panels` |
 | 1.6 | Asset browser | Asset visualization and import | 1.1 | `phase1-asset-browser` |
+| **1.6b** | **Asset drag & drop** | **TreeView re-parent, asset→scene, asset→viewport, OS import** | **1.5, 1.6** | `phase1-asset-drag-drop` |
 | 1.7 | 3D Gizmos | Translate/Rotate/Scale with ray cast | 1.4, 1.5 | `phase1-editor-gizmos` |
 | 1.8 | Multi-select | SelectionManager, box-select, bulk ops | 1.5 | `phase1-multi-select` |
 | 1.9 | Undo/Redo | UndoStack, Ctrl+Z/Shift+Z | 1.5 | `phase1-undo-redo` |
 | 1.10 | Debug console | `~` opens console, Lua + C++ commands | 1.5 | `phase1-console-commands` |
+
+> ⚠️ **1.6b Asset Drag & Drop** — fundamental editor UX requiring VSCode-specific workarounds. VSCode WebViews are sandboxed: TreeView→WebView DnD is not natively supported. Solution: `DragDropCoordinator` singleton + postMessage phantom drag for viewport drops; native `TreeDragAndDropController` for tree re-parenting; `FileSystemWatcher` for OS-level file import. See `docs/specs/editor/asset-drag-drop.md`.
 
 ### Block 1C — Scripting (runs in parallel with 1B, depends on 1.1)
 
@@ -93,7 +96,7 @@ Ordered implementation sequence. Each step has clear prerequisites and a concret
 
 > ⚠️ **1.20 Shader hot-reload** pipeline: FileWatcher detects `.hlsl` change → DXC recompiles HLSL → SPIR-V → `rhi_common.c` invalidates PSO cache entries → new PSO compiled on next frame via `rhi()->pipeline_create()` → VSCode notified via IPC `shader.reloaded`. No direct DX12 PSO creation outside `rhi_dx12.c`.
 
-**Phase 1 output:** Functional editor in VSCode. Open `.uzscene`, edit nodes, run Lua script, see result live.
+**Phase 1 output:** Functional editor in VSCode. Open `.uzscene`, edit nodes, drag assets into the scene, run Lua script, see result live.
 
 ---
 
@@ -237,12 +240,12 @@ Ordered implementation sequence. Each step has clear prerequisites and a concret
 
 ```
 Phase 0-PRE │  6 design tasks          │ Architecture defined (RHI port = only code)
-Phase 1     │ 23 tasks (5 blocks)      │ Functional editor, Lua running
+Phase 1     │ 24 tasks (5 blocks)      │ Functional editor, Lua running
 Phase 2     │ 24 tasks (4 blocks)      │ PBR + assets + audio + UI
 Phase 3     │ 20 tasks (5 blocks)      │ Characters + physics + GI + complete gameplay
 Phase 4     │  8 tasks                 │ Build + navmesh + terrain + plugins
 ─────────────────────────────────────────────────────────────────────────────
-Total       │ 81 tasks                 │
+Total       │ 82 tasks                 │
 ```
 
 ---

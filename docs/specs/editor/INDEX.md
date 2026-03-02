@@ -3,6 +3,7 @@
 | Spec | Description |
 |------|-------------|
 | [editor-panels.md](editor-panels.md) | Scene Tree, Inspector, Asset Browser, Play Controls — VSCode panel layout and IPC |
+| [asset-drag-drop.md](asset-drag-drop.md) | Drag & drop system — 5 scenarios, VSCode workarounds, phantom drag, FileSystemWatcher import |
 | [editor-gizmos.md](editor-gizmos.md) | Translate/Rotate/Scale 3D handles, ray-cast hit test, drag mechanics, grid snap, node picking |
 | [multi-select.md](multi-select.md) | SelectionManager, Ctrl+click, range select, rubber-band, shared Inspector, bulk operations |
 | [prefab-edit-mode.md](prefab-edit-mode.md) | Prefab isolation viewport, breadcrumb navigation, override panel (blue), save/reload instances |

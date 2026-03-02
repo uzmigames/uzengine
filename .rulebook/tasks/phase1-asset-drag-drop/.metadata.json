@@ -1,0 +1,11 @@
+{
+  "id": "phase1-asset-drag-drop",
+  "title": "Asset Drag & Drop for VSCode Editor",
+  "phase": 1,
+  "block": "1B",
+  "status": "pending",
+  "priority": "high",
+  "depends_on": ["phase1-editor-panels", "phase1-asset-browser", "phase1-scene-system", "phase1-undo-redo"],
+  "spec": "docs/specs/editor/asset-drag-drop.md",
+  "created": "2026-03-02"
+}
