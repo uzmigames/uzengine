@@ -128,6 +128,7 @@ Design and architecture specifications for all engine systems, organized by doma
 | [specs/editor/prefab-edit-mode.md](specs/editor/prefab-edit-mode.md) | Prefab isolation, override panel, save/reload instances, state machine |
 | [specs/editor/undo-redo.md](specs/editor/undo-redo.md) | Command pattern, UndoStack, debounce, dirty tracking, Ctrl+Z/Ctrl+Shift+Z |
 | [specs/editor/console-commands.md](specs/editor/console-commands.md) | In-game debug console, command registration API (Lua + C++), auto-complete |
+| [specs/vscode-syntax-highlighting.md](specs/vscode-syntax-highlighting.md) | TextMate grammars for all `.uz*` formats, HLSL, Lua, and Markdown code fence injection |
 
 ### Engine Core
 
@@ -258,6 +259,7 @@ See [DEVELOPMENT-PLAN.md](DEVELOPMENT-PLAN.md) for the full sequential implement
 | `phase1-play-mode` | Separate play process, start/stop/pause controls, status bar integration |
 | `phase1-ui-gamepad-navigation` | FocusManager, data-focusable attribute, d-pad/stick navigation, focus ring |
 | `phase1-ui-widget-library` | uz-button, uz-slider, uz-checkbox, uz-dropdown, uz-scroll-view, uz-modal, uz-toast |
+| `phase1-vscode-syntax-highlighting` | TextMate grammars for all `.uz*` formats, HLSL, Lua, and Markdown code fence injection |
 
 ### Phase 2 — Visual + Assets + Audio (24 tasks)
 
