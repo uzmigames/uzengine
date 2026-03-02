@@ -114,7 +114,22 @@
       "Bash(powershell.exe -Command \"Get-Process -Name ''UzEngine'' -ErrorAction SilentlyContinue | Select-Object Id, StartTime | Format-Table\")",
       "Bash(powershell.exe -Command \"Stop-Process -Id 232496 -Force; Stop-Process -Id 225976 -Force; Write-Host ''killed both''\")",
       "Bash(powershell.exe -Command \"Stop-Process -Name ''UzEngine'' -Force -ErrorAction SilentlyContinue; Write-Host ''done''\")",
-      "Bash(ls -la \"e:\\\\UzEngine\\\\docs\"\" 2>/dev/null || echo \"Directory does not exist yet \")"
+      "Bash(ls -la \"e:\\\\UzEngine\\\\docs\"\" 2>/dev/null || echo \"Directory does not exist yet \")",
+      "WebFetch(domain:docs.godotengine.org)",
+      "WebFetch(domain:deepwiki.com)",
+      "WebFetch(domain:dev.classmethod.jp)",
+      "WebFetch(domain:godotengine.org)",
+      "WebFetch(domain:www.rfleury.com)",
+      "WebFetch(domain:www.dgtlgrove.com)",
+      "WebFetch(domain:www.thecodedmessage.com)",
+      "WebFetch(domain:castle-engine.io)",
+      "WebFetch(domain:dev.to)",
+      "WebFetch(domain:dev.epicgames.com)",
+      "WebFetch(domain:igorcomune.medium.com)",
+      "WebFetch(domain:verdagon.dev)",
+      "Bash(xargs head -50)",
+      "Bash(ls -lh e:/UzEngine/docs/reviews/*.md)",
+      "Read(//e/UzEngine/**)"
     ]
   },
   "enableAllProjectMcpServers": true,

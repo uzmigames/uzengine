@@ -202,3 +202,318 @@
 ### README.md Update
 - Added "Gap Analysis & Reviews" section after Guides with 8 review links
 - Master doc positioned as "start here" for understanding missing features vs AAA standards
+
+## Gap-Based Spec Updates (2026-03-02 Session 3)
+
+### Updated Three Specs with Gap Findings:
+
+#### 1. audio-system.md (530 → 600+ lines)
+Added 5 new sections addressing audio gaps:
+- **Audio Event System (Data-Driven)**: `.uzevent` assets decouple sound playback from game events
+  - Supports random_no_repeat, sequential, weighted modes
+  - `ctx.audio:trigger()`, `trigger_at()`, `trigger_attached()` API
+- **Audio Occlusion and Obstruction**: Physics-based audio filtering via raycasts
+  - LPF effects based on geometry occlusion
+  - Smoothed over 100-200ms to avoid popping
+- **DSP Effect Chains Per Bus**: XAPO effects per bus (reverb, EQ, limiter)
+  - Configured in `.uzproj` TOML
+  - Runtime control via `ctx.audio:set_bus_effect()`
+- **Virtual Voices**: Voices virtualized when count exceeds max_voices (64)
+  - Tracks position in CPU memory, resumes when priority voice ends
+- **Adaptive Music System**: Multi-stem music tracks with runtime layer control
+  - Quantized transitions (beat/bar/phrase)
+  - `ctx.audio:play_music()`, `set_stem_active()`, `crossfade_music()`
+
+#### 2. lua-scripting.md (620 → 700+ lines)
+Added 5 new sections addressing Lua gaps:
+- **Coroutines and Async Primitives**: Multi-frame sequences without state machines
+  - `ctx:start_coroutine()`, `ctx.coroutine.wait()`, `wait_frames()`
+  - Note: Runs in interpreter mode (~10x slower), avoid in hot paths
+- **Module System**: `require()` for library code from `res://scripts/lib/`
+  - Cached per VM, search path configurable in `.uzproj`
+  - Dot notation for nested paths: `require("tween.ease")`
+- **Shared State**: `ctx.shared` table backed by C++ GameState
+  - Fires `GameStateChangedEvent` on changes
+  - Used by UI binding and audio snapshot systems
+- **Bytecode Cache**: `.luac` cached in `{cache_dir}/lua/{script_hash}.luac`
+  - Invalidated on file mtime or content hash change
+- **Rich Error Reporting**: Full stack traces with local variable snapshots
+  - Sent via `lua.get_errors` IPC to VSCode diagnostics
+- **Configurable Sandbox**: Three levels (strict, editor, trusted)
+  - Set in `.uzproj` `[scripting]` section
+- **Lua Test Framework**: Inline unit tests with `ctx.test` API
+  - Run via `lua.run_tests` IPC, results in VSCode
+
+#### 3. ui-system.md (800 → 900+ lines)
+Added 5 new sections addressing UI gaps:
+- **Gamepad Focus and Navigation**: FocusManager for D-pad navigation
+  - Declarative: `data-focusable="true"`, `data-focus-default="true"`, `data-focus-right="id"`
+  - C ABI: `ui_set_focus()`, `ui_get_focused_element()`
+- **Widget Library**: 11 custom HTML elements with built-in behavior
+  - `<uz-button>`, `<uz-slider>`, `<uz-checkbox>`, `<uz-dropdown>`, `<uz-scroll-view>`, etc.
+  - All expose `--uz-*` CSS variables for theming
+- **UI Animation and Tweening**: Lua API for programmatic animations
+  - `ctx.ui:tween()` for single properties
+  - `ctx.ui:sequence()` for multi-step animations
+  - Easing curves (ease-out, ease-in, etc.)
+- **UI State Machine**: `navigation_stack()` for menu hierarchy
+  - `push()`, `pop()`, `replace()`, `clear()`
+  - Restores focus on `pop()`
+- **Bidirectional Data Binding**: Elements write to `ctx.shared`
+  - `data-bind="audio.master_volume"` pattern
+  - Triggers EventBus for system updates
+- **C ABI Versioning**: Safeguards for forward compatibility
+  - `struct_size` field in `UiEvent` for extensibility
+  - Function name fix: `ui_unload_document` (not `ui_free_document`)
+- **Localization Integration**: Direct l10n key support in HTML
+  - `data-l10n-key="ui.menu.play"` pattern
+  - Hot-reload updates all documents automatically
+  - `ctx.ui:set_locale()` for runtime language switching
+
+### Pattern Consistency Verified
+- All 3 specs maintain:
+  - Status badge at top: `> **Status**: Planned (Phase N)`
+  - C++ bindings + Lua API together (both first-class)
+  - Architecture diagrams with text descriptions
+  - Configuration examples in TOML format
+  - Phase roadmap at end
+  - Related docs cross-references (relative paths)
+
+## Spec Updates from Gap Analysis (2026-03-02 Session 4)
+
+### Two Specs Updated Sequentially:
+
+#### 1. renderer.md (188 → 315+ lines)
+Added 6 new sections addressing rendering gaps from gap analysis:
+- **Render Graph**: Core infrastructure for automatic barrier insertion, resource aliasing, composable post-processes
+  - `RenderGraph` tracks frame resources, builds dependency DAG, validates pass order at compile time
+  - Lambda-based pass execution for flexibility
+  - Benefits: Automatic SRV→RTV transitions, transient texture aliasing, debug pass injection
+- **Deferred Decal System**: Box-projection decals with blend modes (additive/modulate/override)
+  - DBuffer integration after GBuffer fill
+  - Up to 256 active decals per frame, sorted by screen-space area
+- **Global Illumination (Phase 3)**: Hybrid GI approach
+  - Static: Lightmap baking for static geometry
+  - Dynamic: DDGI probe grid with quantized rays
+  - Reflection: Captures + SSR contribution
+  - Configuration via `.uzscene` INI (probe_spacing, probe_counts, rays_per_probe)
+- **Bloom and Post-Processes**: Full post-process stack (Phase 2)
+  - 6 effects: Bloom, Tone Mapping, Auto Exposure, Chromatic Aberration, Vignette, Color Grading
+  - All are render graph passes, reorderable via `.uzproj` TOML
+- **Physically Correct Light Attenuation Bug Fix**:
+  - Old: `1/(d^2 + 1)` (distorts at short range)
+  - New: `1/max(d^2, MIN_DIST^2)` (correct inverse square law)
+  - Must be applied to `shaders/include/lighting.hlsli`
+- **Documentation Error Correction**: Pipeline is Hybrid Deferred, not Forward+
+  - GBuffer pass → deferred lighting → forward transparency
+
+#### 2. asset-pipeline.md (378 → 530+ lines)
+Added 5 new sections addressing asset pipeline gaps:
+- **Source Asset Database**: SQLite tracking all source→output mappings
+  - Schema: `assets` (id, source_path, output_path, importer, cook_key, last_cooked, status)
+  - `dependencies` table for asset references
+  - Enables incremental import, dependency tracking, asset search, budget reporting
+- **Asset Dependency Graph**: Tracks which assets reference which others
+  - Topological sort for cook order
+  - On file change, marks dependents as `stale`
+  - Example: PlayerMesh.fbx → PlayerSkin.png → all materials using that texture
+- **Incremental Import — Fine-Grained**: CookKey = SHA256(source + settings + importer_version + engine_version)
+  - Settings change → only that asset re-cooked
+  - Importer upgrade → all assets of that type re-cooked
+  - Unchanged assets never re-cooked regardless of mtime
+- **Asset Redirectors**: Tombstone records for moved/renamed assets
+  - SQLite `redirectors` table (old_path → new_path)
+  - At load time, redirector table checked transparently
+  - Stale redirectors reported in validation pass
+- **Runtime Async Streaming**: Handle-based async load API
+  - `AssetHandle<T>` with state tracking (Ready/Error/Pending)
+  - Lua equivalent: `ctx.assets:load_async()` with coroutine wait
+  - Configurable IO threads and priority levels in `.uzproj`
+- **Cook Order and Cycle Detection**: Kahn's algorithm for topological sort
+  - Detects cycles, breaks at alphabetically-first edge
+  - Error logging for debugging
+
+### Update Pattern Observed
+- Both specs edited sequentially (read → single Edit call)
+- New sections added at end of files
+- Maintained consistent formatting with existing content
+- Used code blocks for C++ API examples and SQL schemas
+- Included configuration examples where applicable
+
+## Three Rendering Documents Created (2026-03-02 Session 4 — Final)
+
+### 1. Render Graph Spec (render-graph.md)
+- **File**: `e:\UzEngine\docs\specs\render-graph.md` (950+ lines)
+- **Status**: Planned (Phase 2)
+- **Core Concept**: Frame-local DAG (directed acyclic graph) of rendering passes and resources
+- **Key Components**:
+  - **RgHandle/RgTexture/RgBuffer**: Virtual resource handles (not D3D12 resources)
+  - **RgPass**: Rendering pass with read/write sets and lambda-based execution callback
+  - **RenderGraph**: Container managing resources and passes; compile() + execute()
+  - **Compile Phase**: DAG validation → topological sort → lifetime computation → aliasing → D3D12 allocation
+  - **Execution Phase**: State transitions → pass callbacks → optional debug viz
+- **Key Benefits**:
+  - Automatic D3D12 barrier insertion at resource lifetime boundaries
+  - Transient resource aliasing (saves 50-75% VRAM for overlapping lifetimes)
+  - Composable post-processes (add/remove bloom/SSAO/SSR/TAA without shader rewrites)
+  - Frame resource pooling with budget constraints
+  - Debug visualization of intermediate textures via IPC
+- **Performance**: Compile 1-5ms (negligible), execution zero overhead, aliasing scales with complexity
+- **Test Coverage**: 5 unit tests (DAG validation, execution order, aliasing, budget), 1 integration test (bloom chain)
+
+### 2. Global Illumination Spec (global-illumination.md)
+- **File**: `e:\UzEngine\docs\specs\global-illumination.md` (900+ lines)
+- **Status**: Planned (Phase 2–3)
+- **Approach**: Hybrid GI (80% static, 20% dynamic)
+- **Three Techniques**:
+  - **Static Lightmaps**: Pre-baked texture atlases, offline baking, high quality
+    - `.uzlightmap` binary format with texture + per-texel metadata
+    - UV2 unwrapping required, non-overlapping UVs in [0,1]
+    - GPU-accelerated path tracing baker (4+ bounces, 64+ samples/texel)
+  - **DDGI Probes**: Real-time dynamic GI via irradiance sampling
+    - DDGIVolume component (grid, probe spacing, ray count)
+    - Each frame: ray dispatch → radiance sampling → irradiance accumulation (circular buffer)
+    - Probe relocation for stuck geometry
+    - 2.5ms/frame cost (128 rays, 256 probes)
+  - **Reflection Captures**: Cubemap snapshots for specular reflections
+    - CReflectionCapture component (position, influence radius)
+    - Manual bake or auto-update, blends by distance
+    - 0.5ms/frame for 2-3 captures
+- **When to Use**: Lightmaps (static interiors), DDGI (dynamic scenes), captures (glossy surfaces)
+- **Shader Integration**: Combined ambient = lightmap + DDGI diffuse + reflection capture specular
+- **Test Coverage**: 3 unit tests (probe relocation, UV normalization, blending), 2 integration tests (probes update, captures affect glossy)
+
+### 3. Rendering Guide (rendering-guide.md)
+- **File**: `e:\UzEngine\docs\guides\rendering-guide.md` (1200+ lines)
+- **Audience**: Artists and technical artists
+- **Purpose**: Practical walkthrough for creating visually stunning scenes
+- **Content**:
+  - **Quick Start** (5 min): Minimal lit scene with ground, sphere, directional light
+  - **PBR Materials**: Albedo/metallic/roughness/normal/AO/emissive
+    - `.uzmat` INI format with texture references and parameter tweaks
+    - 3 example materials: concrete (matte), brushed steel (anisotropic metal), glass (transparent)
+    - Common mistakes: don't bake shadows in albedo, use linear for roughness/metallic
+  - **Lighting**: Directional (sun), Point (lanterns), Spot (flashlights)
+    - Shadow quality profiles (ultra/balanced/fast) with costs
+    - Physically-based inverse-square falloff
+    - Rotation via Euler angles (pitch/yaw)
+  - **Post-Processing**: Bloom, SSAO, SSR, TAA, Tonemap (ACES)
+    - Settings tables per quality level
+    - Presets: neutral, cinematic, dark & moody, bright & airy
+    - TAA temporal jitter, variance clamping, feedback
+  - **Decals**: Bullet holes, splatters, paint marks
+    - Projection-based, up to 50 active per scene
+    - Decal materials with alpha blending
+  - **Global Illumination**: Lightmaps (static), DDGI (dynamic), reflection captures (specular)
+    - Workflow: mesh UV2 → lightmap bake (Phase 3) OR DDGI volume + play
+    - Configuration examples in INI
+  - **Advanced**: Parallax occlusion, emission, two-sided materials
+  - **Performance Tips**: Draw call budget (1000-1500), texture memory (1-2GB), LOD, dynamic resolution scaling
+  - **Debugging**: IPC commands (show_render_target, light_heatmap, shadow_cascades, ddgi_probes, gpu_frame_time)
+  - **Complete Workflow**: 6-step scene setup from scratch
+  - **FAQ**: Brightness, shadow artifacts, light leaks, flickering, banding
+
+### README.md Updates (Sequential)
+- Added `[specs/render-graph.md](specs/render-graph.md)` after screen-space-effects
+- Added `[specs/global-illumination.md](specs/global-illumination.md)` after render-graph
+- Added `[guides/rendering-guide.md](guides/rendering-guide.md)` after ai-development-guide
+
+### Total New Documentation: ~3,050 Lines
+- render-graph.md: 950 lines
+- global-illumination.md: 900 lines
+- rendering-guide.md: 1200 lines
+
+### Consistency Maintained
+- All specs: Status badge (Planned), Owner, Purpose, Thread Safety notes
+- Architecture diagrams (ASCII + text), Core Types (C++ structs), Phase Roadmap, Related Docs
+- All guides: Audience, Prerequisites, Quick Start, Examples, Performance Tips, FAQ
+- Code examples: Proper syntax highlighting (```cpp, ```ini, ```hlsl, ```python)
+- Cross-references: Relative paths to related docs
+
+## Four Complementary Gameplay Documents Created (2026-03-02 Session 5)
+
+### 1. gameplay-systems.md (Spec)
+- **File**: `e:\UzEngine\docs\specs\gameplay-systems.md` (1100+ lines)
+- **Status**: Planned (Phase 4)
+- **Content Sections**:
+  - **System Scheduler/TickGroups**: 6 execution phases (PrePhysics → Render → PostRender) with priority ordering, dependency declarations
+  - **Gameplay Ability System (GAS)**: AbilitySpec, AbilityComponent, activation with cooldown/cost, ability tags, `.uzability` asset format
+  - **Finite State Machines**: FSM<State, Event> template, enum-based states, transitions with guards, hot-reload support
+  - **Behavior Trees**: Node types (Sequence/Selector/Parallel/Decorator/Leaf), `.uzbt` asset format, BlackboardComponent for data sharing
+  - **Hot-Reload & Profiling**: Statistics API, IPC debug endpoints
+  - **Test Coverage**: Unit + integration tests for all 4 systems
+- **Key APIs**:
+  - C++: `SystemScheduler`, `AbilitySystem`, `FSM<>`, `BehaviorTree`
+  - Lua: `ctx.gameplay:*` (grant/revoke abilities, create FSM/BT, activate abilities)
+- **Design Pattern**: Systems decoupled via registry context + EventBus
+
+### 2. spatial-systems.md (Spec)
+- **File**: `e:\UzEngine\docs\specs\spatial-systems.md` (1000+ lines)
+- **Status**: Planned (Phase 4)
+- **Content Sections**:
+  - **Problem Statement**: O(n) queries vs O(log n) spatial indexing for 10k+ entities
+  - **SpatialIndex Interface**: Generic API with multiple implementations
+  - **BVH Implementation**: Top-down construction, SAH split heuristic, sphere/AABB/ray/frustum queries
+  - **Octree Implementation**: Recursive subdivision, fixed depth, when to use vs BVH
+  - **ECS Integration**: Reactive observer pattern on CTransform, batched updates
+  - **Query API**: C++ low-level + Lua high-level (sphere/AABB/raycast/frustum)
+  - **Physics Broad-Phase Integration**: Using BVH for collision candidate filtering
+  - **Debug Visualization**: Editor wireframe of BVH/Octree structure
+  - **Performance Characteristics**: Complexity table for both implementations
+  - **Test Coverage**: BVH/Octree unit tests, spatial system integration tests
+- **Lua API**: `ctx.world:query_sphere()`, `raycast()`, `query_aabb()`, `query_frustum()`
+
+### 3. ecs-advanced.md (Engine Doc)
+- **File**: `e:\UzEngine\docs\engine\ecs-advanced.md` (1200+ lines)
+- **Status**: Reference (ongoing)
+- **Content Sections**:
+  - **Registry Context Pattern**: Service locator replacement for GameContext god object
+  - **Reactive Systems**: on_construct, on_update, on_destroy signals, use cases
+  - **Component Versioning**: __version field, migration functions for hot-reload
+  - **Entity Templates/Archetypes**: `.uzentity` INI format, template instantiation API, overrides
+  - **Prefab Deep Nesting**: Hierarchical prefabs, override propagation strategy
+  - **Transform Dirty Flags**: Cached matrices, dirty flag propagation for efficient hierarchies
+  - **Thread Safety**: Single-threaded registry, future multi-threading notes
+  - **Best Practices**: DO/DON'T list (use context, avoid polling, cache refs)
+  - **Testing**: Unit tests for registry, signals, versioning, dirty flags
+- **Key Patterns**:
+  - Service locator: `registry.ctx().emplace<System*>(this);`
+  - Reactive: `registry.on_update<Component>().connect<&System::handler>(this);`
+  - Versioning: `CComponentMigration::apply(old_version, comp);`
+
+### 4. gameplay-programming-guide.md (Guide)
+- **File**: `e:\UzEngine\docs\guides\gameplay-programming-guide.md` (1600+ lines)
+- **Audience**: Game developers writing Lua scripts
+- **Content Sections**:
+  - **Script Anatomy**: on_start/on_update/on_stop pattern with self/dt/return table
+  - **Coroutines**: Sequences without FSM, helpers (yield/yield_for/yield_until), cutscene example
+  - **Finite State Machines**: Simple player FSM (Idle/Walk/Run/Jump/Dead), guards, global transitions
+  - **Gameplay Ability System**: Grant abilities, basic attack, fireball AoE, dash with knockback
+  - **Shared State (ctx.shared)**: Inter-script communication, decoupled systems
+  - **Spatial Queries**: Finding enemies, line-of-sight raycasts, AABB overlaps
+  - **Event Bus Patterns**: Custom events, combo system example
+  - **6 Common Patterns**: Health/death, pickups, simple AI, character health, item pickups, enemy AI
+  - **Best Practices**: Event-driven, query-based, caching, frame-rate independence, unsubscribe cleanup
+  - **Performance Tips**: Query caching, allocation avoidance, batch operations
+  - **Testing**: Unit + integration tests for gameplay patterns
+- **Lua Examples**: 40+ code samples covering all patterns
+
+### README.md Updates (Sequential)
+1. Added `[engine/ecs-advanced.md]` to Engine C++ Documentation section (line 27)
+2. Added `[specs/gameplay-systems.md]` and `[specs/spatial-systems.md]` to Specs section (after data-driven-config)
+3. Added `[guides/gameplay-programming-guide.md]` to Guides section (after getting-started)
+
+### Files Created: 4
+- specs/gameplay-systems.md (1,100 lines)
+- specs/spatial-systems.md (1,000 lines)
+- engine/ecs-advanced.md (1,200 lines)
+- guides/gameplay-programming-guide.md (1,600 lines)
+- **Total**: 4,900 lines of new documentation
+
+### Content Alignment
+- All specs follow P4 status convention: `> **Status**: Planned (Phase 4)`
+- All include Architecture section with C++ types and Lua APIs
+- All include test coverage (unit + integration)
+- All include Related Docs cross-references
+- Guides follow narrative structure: anatomy → patterns → examples → best practices → testing
+- Consistent with existing project style (ctx binding pattern, INI/TOML formats, etc.)
