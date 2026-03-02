@@ -90,6 +90,7 @@ Design and architecture specifications for all engine systems, organized by doma
 | [specs/gameplay/save-system.md](specs/gameplay/save-system.md) | Save/load game state, msgpack serialization, save slots, autosave, Lua API |
 | [specs/gameplay/localization.md](specs/gameplay/localization.md) | I18n via CSV, multi-language support, runtime locale switching, font fallback |
 | [specs/gameplay/navmesh.md](specs/gameplay/navmesh.md) | Recast + Detour navmesh baking, NavMeshAgent, RVO2 local avoidance |
+| [specs/gameplay/data-tables.md](specs/gameplay/data-tables.md) | Typed row-based game data (items, enemies, abilities, loot tables); `.uztable` format, Table Editor panel, Lua API, CSV import/export, AI row generation |
 
 ### Physics
 
@@ -289,6 +290,7 @@ See [DEVELOPMENT-PLAN.md](DEVELOPMENT-PLAN.md) for the full sequential implement
 | `phase2-gameplay-ability-system` | AbilitySpec, cooldowns, costs, tags, EventBus integration |
 | `phase2-behavior-trees` | `.uzbt` format, Sequence/Selector/Parallel, Blackboard, tick loop |
 | `phase2-ai-native-features` | MCP tools: scene_generate, shader_assist, script_generate, scene_analyze |
+| `phase2-data-tables` | `.uztable` format, DataTableManager, Table Editor VSCode panel, Lua API, CSV import/export, AI row generation |
 
 ### Phase 3 — Gameplay Completo (20 tasks)
 
