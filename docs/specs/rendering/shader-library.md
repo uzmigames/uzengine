@@ -18,6 +18,7 @@ shaders/
     skinning.hlsli              # Bone matrix palette, vertex skinning
     tonemapping.hlsli           # ACES, Reinhard, Uncharted2
     noise.hlsli                 # Perlin, simplex, hash functions
+    ibl.hlsli                   # IBL sampling: Hammersley, GGX importance sampling, cube face direction
     global_cbuffer.hlsli        # GlobalParams cbuffer (b15)
   builtin/                      # Built-in shaders
     pbr.hlsl
@@ -486,6 +487,116 @@ float fbm(float3 p, int octaves, float lacunarity, float gain) {
 }
 
 #endif // UZ_NOISE_HLSLI
+```
+
+### `ibl.hlsli` -- IBL Sampling Helpers
+
+Used by the IBL prefilter pass and BRDF integration LUT generation. Requires `common.hlsli` and `brdf.hlsli`. See [IBL Pipeline spec](ibl-pipeline.md) for usage context.
+
+> **Note**: `G_Smith_IBL` is defined in `brdf.hlsli` using the IBL roughness remapping `k = roughness² / 2`, which differs from the direct lighting remapping `k = (roughness+1)² / 8`.
+
+```hlsl
+#ifndef UZ_IBL_HLSLI
+#define UZ_IBL_HLSLI
+
+#include "common.hlsli"
+#include "brdf.hlsli"
+
+// Radical inverse (Van der Corput sequence) — base-2 bit reversal
+float RadicalInverseVdC(uint bits) {
+    bits = (bits << 16u) | (bits >> 16u);
+    bits = ((bits & 0x55555555u) << 1u) | ((bits & 0xAAAAAAAAu) >> 1u);
+    bits = ((bits & 0x33333333u) << 2u) | ((bits & 0xCCCCCCCCu) >> 2u);
+    bits = ((bits & 0x0F0F0F0Fu) << 4u) | ((bits & 0xF0F0F0F0u) >> 4u);
+    bits = ((bits & 0x00FF00FFu) << 8u) | ((bits & 0xFF00FF00u) >> 8u);
+    return float(bits) * 2.3283064365386963e-10; // / 0x100000000
+}
+
+// 2D Hammersley low-discrepancy sequence for quasi-Monte Carlo integration
+// i: sample index (0-based), n: total number of samples
+float2 Hammersley(uint i, uint n) {
+    return float2(float(i) / float(n), RadicalInverseVdC(i));
+}
+
+// GGX importance sample direction based on roughness and a 2D random sample Xi.
+// Returns a microfacet normal H in world space given surface normal N.
+// Used for prefiltering the specular environment map.
+float3 ImportanceSampleGGX(float2 Xi, float roughness, float3 N) {
+    float a = roughness * roughness;
+    float phi      = TWO_PI * Xi.x;
+    float cosTheta = sqrt((1.0 - Xi.y) / (1.0 + (a * a - 1.0) * Xi.y));
+    float sinTheta = sqrt(1.0 - cosTheta * cosTheta);
+
+    // Tangent-space half-vector
+    float3 H = float3(sinTheta * cos(phi), sinTheta * sin(phi), cosTheta);
+
+    // Convert to world space using N as the "up" direction
+    float3 up    = abs(N.z) < 0.999 ? float3(0, 0, 1) : float3(1, 0, 0);
+    float3 right = normalize(cross(up, N));
+    float3 fwd   = cross(N, right);
+    return normalize(right * H.x + fwd * H.y + N * H.z);
+}
+
+// Returns the view direction for a cubemap face texel at the given UV.
+// face: 0=+X, 1=-X, 2=+Y, 3=-Y, 4=+Z, 5=-Z  (DX cubemap face order)
+// uv: [0,1] — converted to [-1,1] NDC internally
+float3 CubeFaceDirection(uint face, float2 uv) {
+    float2 ndc = uv * 2.0 - 1.0;
+    switch (face) {
+        case 0: return normalize(float3( 1.0,  ndc.y, -ndc.x)); // +X
+        case 1: return normalize(float3(-1.0,  ndc.y,  ndc.x)); // -X
+        case 2: return normalize(float3( ndc.x,  1.0, -ndc.y)); // +Y
+        case 3: return normalize(float3( ndc.x, -1.0,  ndc.y)); // -Y
+        case 4: return normalize(float3( ndc.x,  ndc.y,  1.0)); // +Z
+        case 5: return normalize(float3(-ndc.x,  ndc.y, -1.0)); // -Z
+        default: return float3(0, 1, 0);
+    }
+}
+
+// Solid angle of one sample for environment map prefiltering.
+// N: total sample count, pdf: probability density function value for this sample
+float SolidAngleSample(uint N, float pdf) {
+    return 4.0 * PI / (float(N) * pdf);
+}
+
+// Compute the environment map LOD to sample when convolving with a GGX lobe.
+// Reduces aliasing from undersampled high-frequency regions.
+// roughness: 0=mirror, 1=fully rough; envMapSize: cube face resolution; numSamples: sample count
+float ComputeEnvLOD(float roughness, float envMapSize, uint numSamples) {
+    return 0.5 * log2((envMapSize * envMapSize) / float(numSamples)) + roughness * 6.0;
+}
+
+// Compute the split-sum BRDF integration LUT value for a given (NdotV, roughness) pair.
+// Returns float2(A, B) where: specular = envSample * (F0 * A + B)
+// This is the "BRDF integration LUT" from Karis 2013 (Epic Games split-sum approximation).
+float2 IntegrateBRDF(float NdotV, float roughness) {
+    float3 V = float3(sqrt(1.0 - NdotV * NdotV), 0.0, NdotV);
+    float  A = 0.0;
+    float  B = 0.0;
+    float3 N = float3(0, 0, 1);
+
+    const uint NUM_SAMPLES = 1024u;
+    for (uint i = 0u; i < NUM_SAMPLES; ++i) {
+        float2 Xi = Hammersley(i, NUM_SAMPLES);
+        float3 H  = ImportanceSampleGGX(Xi, roughness, N);
+        float3 L  = normalize(2.0 * dot(V, H) * H - V);
+
+        float NdotL = saturate(L.z);
+        float NdotH = saturate(H.z);
+        float VdotH = saturate(dot(V, H));
+
+        if (NdotL > 0.0) {
+            float G     = G_Smith_IBL(NdotV, NdotL, roughness);
+            float G_Vis = (G * VdotH) / (NdotH * NdotV + EPSILON);
+            float Fc    = pow(1.0 - VdotH, 5.0);
+            A += (1.0 - Fc) * G_Vis;
+            B += Fc * G_Vis;
+        }
+    }
+    return float2(A, B) / float(NUM_SAMPLES);
+}
+
+#endif // UZ_IBL_HLSLI
 ```
 
 ### `global_cbuffer.hlsli` -- Global Parameters

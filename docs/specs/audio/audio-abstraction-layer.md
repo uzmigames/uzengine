@@ -212,22 +212,49 @@ struct AudioBusConfig {
 
 ## CAudioSource ECS Component
 
-```cpp
-struct CAudioSource {
-    AssetPath         clip_path;
-    std::string       bus_name     = "SFX";     // Resolved at play time
-    float             volume       = 1.0f;
-    bool              loop         = false;
-    bool              spatial      = true;
-    int               priority     = 128;
-    float             falloff_dist = 20.0f;
-    float             min_dist     = 0.5f;
+> **Single Source of Truth**: This is the canonical `CAudioSource` definition used throughout the engine. `audio-system.md` references `src/engine/audio/components.h` — do not redefine it there.
 
-    // Runtime state (not serialized)
-    AudioSourceHandle _handle      = {};
-    bool              _is_playing  = false;
+```cpp
+// src/engine/audio/components.h
+struct CAudioSource {
+    // Asset reference (serialized in .uzscene)
+    StringId          clip_id;              // e.g. "res://audio/effect.wav" — interned once at load
+
+    // Playback config (serialized)
+    float             volume        = 1.0f; // 0.0–1.0
+    float             pitch         = 1.0f; // 0.5–2.0 (affects playback speed)
+    StringId          bus_id;               // "Master", "SFX", "Music", "Voice" (default "Master")
+    bool              loop          = false;
+    bool              play_on_start = false; // auto-play when scene loads
+    bool              spatial       = false; // true = 3D positioned sound
+
+    // Spatial attenuation (used when spatial = true)
+    float             min_dist      = 1.0f;   // attenuation start (m)
+    float             max_dist      = 100.0f; // attenuation end (m)
+
+    // Voice pool priority: 0=lowest, 255=highest; higher survives voice steal
+    int               priority      = 128;
+
+    // Runtime state (NOT serialized — underscore prefix convention)
+    AudioSourceHandle _handle       = {};   // IAudioEngine source handle (invalid = inactive)
+    bool              _is_playing   = false; // mirrors IAudioEngine::is_playing() state
 };
 ```
+
+| Field | Type | Serialized | Notes |
+|-------|------|------------|-------|
+| `clip_id` | `StringId` | Yes | Resource path interned to hash |
+| `volume` | `float` | Yes | 0.0–1.0 |
+| `pitch` | `float` | Yes | 0.5–2.0 |
+| `bus_id` | `StringId` | Yes | One of Master/SFX/Music/Voice |
+| `loop` | `bool` | Yes | Repeats when true |
+| `play_on_start` | `bool` | Yes | Auto-play on scene load |
+| `spatial` | `bool` | Yes | Enables 3D positioning |
+| `min_dist` | `float` | Yes | Attenuation start (m), spatial only |
+| `max_dist` | `float` | Yes | Attenuation end (m), spatial only |
+| `priority` | `int` | Yes | Voice steal priority |
+| `_handle` | `AudioSourceHandle` | No | Set by AudioSystem |
+| `_is_playing` | `bool` | No | Mirrors IAudioEngine state |
 
 ---
 

@@ -28,13 +28,18 @@ Jolt Physics provides real-time rigid body simulation, collision detection, and 
 // game.dll — physics subsystem
 
 struct PhysicsWorld {
-    JPH::PhysicsSystem*     jph;              // Jolt's main system
-    float                   time_accumulator; // For fixed-step integration
-    Arena*                  arena;
+    JPH::PhysicsSystem          jph;              // Jolt's main system (value, not pointer)
+    JPH::TempAllocatorImpl      temp_allocator;   // Required by PhysicsSystem::Update()
+    JPH::JobSystemThreadPool    job_system;       // Thread pool for Jolt's internal jobs
+    BPLayerInterfaceImpl        bp_layer_interface;   // Maps ObjectLayer -> BroadPhaseLayer
+    ObjectLayerPairFilterImpl   object_layer_filter;  // Collision matrix lookup
+    ContactListenerImpl         contact_listener;     // Dispatches to EventBus<CollisionEvent>
+    float                       time_accumulator;     // For fixed-step integration
+    Arena*                      arena;
 };
 
-// Initialization (on game start)
-PhysicsWorld world = PhysicsWorld::create(config.gravity, config.max_bodies);
+// Initialization — see "Jolt Initialization Boilerplate" section below
+// PhysicsWorld::create() does NOT exist in Jolt; use physics_world_init()
 
 // Every frame (in on_update)
 void physics_step(PhysicsWorld& world, float dt) {
@@ -42,7 +47,12 @@ void physics_step(PhysicsWorld& world, float dt) {
 
     while (world.time_accumulator >= PHYSICS_DT) {
         // Fixed 60 Hz physics step
-        world.jph->Update(PHYSICS_DT, ...);
+        JPH::EPhysicsUpdateError err = world.jph.Update(
+            PHYSICS_DT,
+            1,                      // collision steps (1 is typical)
+            &world.temp_allocator,
+            &world.job_system
+        );
 
         // Dispatch collision events to EventBus
         process_collision_manifolds(world);
@@ -58,6 +68,186 @@ void physics_step(PhysicsWorld& world, float dt) {
 - Physics accumulator pattern handles frame rate variance
 - Up to 4 sub-steps allowed (configurable in `.uzproj`)
 
+---
+
+## Jolt Initialization Boilerplate
+
+This is the correct full initialization sequence for Jolt Physics. Every reader of the spec will need this.
+
+### Broadphase & Object Layer Setup
+
+Jolt requires two user-provided interfaces for layer-based collision filtering:
+- `BroadPhaseLayerInterface` -- maps ObjectLayer to BroadPhaseLayer (coarse grouping)
+- `ObjectLayerPairFilter` -- returns whether two ObjectLayers can collide (collision matrix)
+
+```cpp
+// --- Broadphase layers (coarse grouping: static vs dynamic) ---
+
+namespace BPLayers {
+    static constexpr JPH::BroadPhaseLayer STATIC{0};
+    static constexpr JPH::BroadPhaseLayer DYNAMIC{1};
+    static constexpr uint32_t NUM_LAYERS = 2;
+};
+
+// --- Object layers (maps to physics layers 0-15 from .uzproj) ---
+
+namespace ObjectLayers {
+    static constexpr JPH::ObjectLayer STATIC    = 0;
+    static constexpr JPH::ObjectLayer DYNAMIC   = 1;
+    static constexpr JPH::ObjectLayer PLAYER    = 2;
+    static constexpr JPH::ObjectLayer ENEMY     = 3;
+    static constexpr JPH::ObjectLayer PROJECTILE = 4;
+    static constexpr JPH::ObjectLayer TRIGGER   = 5;
+    static constexpr JPH::ObjectLayer TERRAIN   = 6;
+    // ... up to 16 layers total (loaded from .uzproj [physics.layers])
+    static constexpr JPH::ObjectLayer NUM_LAYERS = 16;
+};
+
+// --- BroadPhaseLayerInterface: maps ObjectLayer -> BroadPhaseLayer ---
+
+class BPLayerInterfaceImpl final : public JPH::BroadPhaseLayerInterface {
+public:
+    uint32_t GetNumBroadPhaseLayers() const override {
+        return BPLayers::NUM_LAYERS;
+    }
+
+    JPH::BroadPhaseLayer GetBroadPhaseLayer(JPH::ObjectLayer layer) const override {
+        // Static objects (layer 0 = STATIC, layer 6 = TERRAIN) go to STATIC broadphase
+        // Everything else goes to DYNAMIC broadphase
+        if (layer == ObjectLayers::STATIC || layer == ObjectLayers::TERRAIN)
+            return BPLayers::STATIC;
+        return BPLayers::DYNAMIC;
+    }
+};
+
+// --- ObjectLayerPairFilter: collision matrix from .uzproj ---
+
+class ObjectLayerPairFilterImpl final : public JPH::ObjectLayerPairFilter {
+public:
+    // collision_matrix[a][b] == true means layers a and b can collide
+    bool matrix[ObjectLayers::NUM_LAYERS][ObjectLayers::NUM_LAYERS] = {};
+
+    // Load from .uzproj [physics.collision_matrix] at init time
+    void load_from_config(const ProjectConfig& cfg);
+
+    bool ShouldCollide(JPH::ObjectLayer a, JPH::ObjectLayer b) const override {
+        return matrix[a][b];
+    }
+};
+```
+
+### Full Init Sequence
+
+```cpp
+void physics_world_init(PhysicsWorld* world, Vec3 gravity, uint32_t max_bodies) {
+    // 1. Register Jolt allocator and types (must be called once, before anything else)
+    JPH::RegisterDefaultAllocator();
+    JPH::Factory::sInstance = new JPH::Factory();
+    JPH::RegisterTypes();
+
+    // 2. Create temp allocator (used per-frame by PhysicsSystem::Update)
+    //    10 MB is sufficient for most games; increase for large body counts
+    world->temp_allocator = JPH::TempAllocatorImpl(10 * 1024 * 1024);
+
+    // 3. Create job system (thread pool for Jolt's parallel broadphase, etc.)
+    //    max_jobs = 2048, max_barriers = 8, num_threads = -1 (auto-detect)
+    world->job_system = JPH::JobSystemThreadPool(
+        JPH::cMaxPhysicsJobs,
+        JPH::cMaxPhysicsBarriers,
+        std::thread::hardware_concurrency() - 1
+    );
+
+    // 4. Load collision layer config from .uzproj
+    world->object_layer_filter.load_from_config(/* project config */);
+
+    // 5. Initialize the PhysicsSystem
+    world->jph.Init(
+        max_bodies,                      // maxBodies
+        0,                               // numBodyMutexes (0 = auto)
+        max_bodies,                      // maxBodyPairs
+        max_bodies / 2,                  // maxContactConstraints
+        world->bp_layer_interface,       // BroadPhaseLayerInterface
+        JPH::ObjectVsBroadPhaseLayerFilter(), // default broad vs object filter
+        world->object_layer_filter       // ObjectLayerPairFilter (collision matrix)
+    );
+
+    // 6. Set world parameters
+    world->jph.SetGravity(JPH::Vec3(gravity.x, gravity.y, gravity.z));
+    world->jph.SetContactListener(&world->contact_listener);
+
+    // 7. Init accumulator
+    world->time_accumulator = 0.0f;
+}
+```
+
+### Body Creation via BodyInterface
+
+Bodies are created through `JPH::BodyInterface`, **not** directly on `JPH::PhysicsSystem`:
+
+```cpp
+void physics_create_body(PhysicsWorld* world, CRigidBody& rb, CColliderBox& col,
+                         const CTransform& transform) {
+    JPH::BodyInterface& body_interface = world->jph.GetBodyInterface();
+
+    // Determine motion type from component data
+    JPH::EMotionType motion_type;
+    if (rb.mass <= 0.0f)      motion_type = JPH::EMotionType::Static;
+    else if (rb.is_kinematic)  motion_type = JPH::EMotionType::Kinematic;
+    else                       motion_type = JPH::EMotionType::Dynamic;
+
+    // Determine object layer
+    JPH::ObjectLayer object_layer = rb.is_static()
+        ? ObjectLayers::STATIC
+        : ObjectLayers::DYNAMIC;  // or map from rb.layer via .uzproj config
+
+    // Create shape (box example; similar pattern for sphere, capsule, mesh)
+    JPH::BoxShapeSettings shape_settings(
+        JPH::Vec3(col.half_extents.x, col.half_extents.y, col.half_extents.z)
+    );
+
+    // Create body settings
+    JPH::BodyCreationSettings body_settings(
+        shape_settings.Create().Get(),
+        JPH::RVec3(transform.position.x, transform.position.y, transform.position.z),
+        JPH::Quat(transform.rotation.x, transform.rotation.y,
+                   transform.rotation.z, transform.rotation.w),
+        motion_type,
+        object_layer
+    );
+
+    // Set physical properties
+    body_settings.mRestitution = rb.restitution;
+    body_settings.mFriction    = rb.friction;
+    body_settings.mGravityFactor = rb.gravity_scale;
+    if (rb.continuous_ccd)
+        body_settings.mMotionQuality = JPH::EMotionQuality::LinearCast;
+
+    // Create and add body (returns BodyID)
+    JPH::Body* body = body_interface.CreateBody(body_settings);
+    if (body != nullptr) {
+        body_interface.AddBody(body->GetID(), JPH::EActivation::Activate);
+        rb.jolt_body_id = body->GetID();
+    }
+}
+```
+
+### Shutdown
+
+```cpp
+void physics_world_shutdown(PhysicsWorld* world) {
+    // Remove and destroy all bodies
+    JPH::BodyInterface& bi = world->jph.GetBodyInterface();
+    // ... iterate and remove all bodies ...
+
+    // Cleanup Jolt globals (call once at game exit)
+    JPH::UnregisterTypes();
+    delete JPH::Factory::sInstance;
+    JPH::Factory::sInstance = nullptr;
+}
+```
+
+---
+
 ### Integration with ECS
 
 Rigid bodies are represented by two ECS components:
@@ -67,12 +257,14 @@ Rigid bodies are represented by two ECS components:
 struct CRigidBody {
     JPH::BodyID     jolt_body_id;      // Handle into Jolt's body set
     float           mass;              // kg (0 = static)
-    float           restitution;       // 0.0–1.0 (bounciness)
-    float           friction;          // 0.0–1.0
-    uint8_t         layer;             // Collision layer (0–15)
+    float           restitution;       // 0.0-1.0 (bounciness)
+    float           friction;          // 0.0-1.0
+    uint8_t         layer;             // Collision layer (0-15)
     bool            is_kinematic;      // Kinematics move, don't collide with dynamics
     float           gravity_scale;     // Multiplier on world gravity
     bool            continuous_ccd;    // Continuous collision detection for fast movers
+
+    bool is_static() const { return mass <= 0.0f; }
 };
 
 // Component 2: Collider shape (one per node, combined with CRigidBody)
@@ -119,8 +311,21 @@ struct CCharacterController {
 **Creation flow**:
 1. Scene loads a node with `collider = "box"` and `rigid_body_mass = 80.0`
 2. SceneManager creates the CColliderBox and CRigidBody components
-3. PhysicsWorld::on_component_added() converts them to Jolt bodies and shapes
-4. Each frame: CRigidBody.jolt_body_id is updated → node transform via `set_property` command
+3. `physics_create_body()` converts them to Jolt bodies via `BodyInterface` (see Jolt Initialization Boilerplate)
+4. Each frame: after `PhysicsSystem::Update()`, sync Jolt body transforms back to ECS:
+
+```cpp
+// Transform sync (Jolt -> ECS) — runs AFTER physics step, BEFORE script on_update
+JPH::BodyInterface& bi = world->jph.GetBodyInterface();
+for (auto [entity, rb, transform] : ecs.view<CRigidBody, CTransform>().each()) {
+    if (!rb.is_static() && !rb.is_kinematic) {
+        JPH::RVec3 pos = bi.GetPosition(rb.jolt_body_id);
+        JPH::Quat rot  = bi.GetRotation(rb.jolt_body_id);
+        transform.position = Vec3(pos.GetX(), pos.GetY(), pos.GetZ());
+        transform.rotation = Quat(rot.GetX(), rot.GetY(), rot.GetZ(), rot.GetW());
+    }
+}
+```
 
 ---
 
@@ -134,7 +339,7 @@ gravity         = [0, -9.81, 0]
 fixed_hz        = 60
 max_substeps    = 4
 
-# Define up to 16 layers (optional names; default: Layer0–Layer15)
+# Define up to 16 layers (optional names; default: Layer0-Layer15)
 [physics.layers]
 Default     = 0
 Player      = 1
@@ -164,14 +369,26 @@ PowerUp     = ["Player"]
 
 ### At Runtime
 
-PhysicsWorld loads the collision matrix during initialization:
+PhysicsWorld loads the collision matrix into `ObjectLayerPairFilterImpl` during initialization:
 
 ```cpp
-void PhysicsWorld::init_collision_matrix(const ProjectConfig& cfg) {
-    JPH::GroupFilter filter = /* build from cfg.collision_matrix */;
-    world.jph->GetPhysicsSystem()->SetGroupFilter(filter);
+void ObjectLayerPairFilterImpl::load_from_config(const ProjectConfig& cfg) {
+    // Zero out the matrix
+    memset(matrix, 0, sizeof(matrix));
+
+    // Parse [physics.collision_matrix] from .uzproj
+    for (auto& [layer_name, collides_with] : cfg.collision_matrix) {
+        uint8_t layer_a = cfg.layer_name_to_index(layer_name);
+        for (auto& other_name : collides_with) {
+            uint8_t layer_b = cfg.layer_name_to_index(other_name);
+            matrix[layer_a][layer_b] = true;
+            matrix[layer_b][layer_a] = true;  // symmetric
+        }
+    }
 }
 ```
+
+This filter is passed to `PhysicsSystem::Init()` as the `ObjectLayerPairFilter` argument. Jolt calls `ShouldCollide(a, b)` during narrowphase to decide whether two bodies interact.
 
 Nodes query their layer when adding rigid bodies:
 
@@ -188,7 +405,7 @@ rigid_body_layer = "Player"        ; resolved to layer index at load time
 
 ## ECS Component Details
 
-### `CRigidBody` — Full Reference
+### `CRigidBody` -- Full Reference
 
 | Field | Type | Default | Notes |
 |-------|------|---------|-------|
@@ -196,7 +413,7 @@ rigid_body_layer = "Player"        ; resolved to layer index at load time
 | `mass` | `float` | 1.0 | kg; 0 = static (immobile) |
 | `restitution` | `float` | 0.5 | Bounciness; 0 = no bounce, 1 = perfect |
 | `friction` | `float` | 0.5 | 0 = frictionless, 1 = high friction |
-| `layer` | `uint8_t` | 0 | Collision layer (0–15) |
+| `layer` | `uint8_t` | 0 | Collision layer (0-15) |
 | `is_kinematic` | `bool` | false | If true, body moves via `set_velocity`, not forces |
 | `gravity_scale` | `float` | 1.0 | Multiplier on world gravity; use <1 for floaty objects |
 | `continuous_ccd` | `bool` | false | Enable for fast-moving objects (bullets, etc.) |
@@ -211,7 +428,7 @@ rigid_body_layer = "Player"        ; resolved to layer index at load time
 **Box**:
 ```cpp
 struct CColliderBox { Vec3 half_extents; Vec3 offset; };
-// Usage: half_extents = [10, 0.5, 5] → box is 20×1×10 units
+// Usage: half_extents = [10, 0.5, 5] -> box is 20x1x10 units
 ```
 
 **Sphere**:
@@ -238,7 +455,7 @@ struct CColliderTerrain { StringId terrain_id; };
 // Special case: height-field collision from .uzterrain asset
 ```
 
-### `CTrigger` — Overlap Volumes
+### `CTrigger` -- Overlap Volumes
 
 ```cpp
 struct CTrigger {
@@ -258,7 +475,7 @@ trigger = true                      ; no rigid_body_mass (not a body)
 
 Triggers always fire enter/exit events regardless of layer configuration. Use physics layers to prevent unwanted overlaps.
 
-### `CCharacterController` — Special Case
+### `CCharacterController` -- Special Case
 
 ```cpp
 struct CCharacterController {
@@ -270,6 +487,29 @@ struct CCharacterController {
 ```
 
 **Purpose**: Player/NPC movement with automatic slope handling, step climbing, and ground detection.
+
+**CharacterVirtual Creation** (correct Jolt API):
+
+```cpp
+void physics_create_character(PhysicsWorld* world, CCharacterController& cc,
+                               float height, float radius, Vec3 pos) {
+    JPH::CharacterVirtualSettings settings;
+    settings.mMaxSlopeAngle = JPH::DegreesToRadians(cc.max_slope_angle);
+    settings.mMaxStrength   = 100.0f;
+    settings.mShape = JPH::RotatedTranslatedShapeSettings(
+        JPH::Vec3(0, 0.5f * height + radius, 0),
+        JPH::Quat::sIdentity(),
+        new JPH::CapsuleShape(0.5f * height, radius)
+    ).Create().Get();
+
+    cc.character = new JPH::CharacterVirtual(
+        &settings,
+        JPH::RVec3(pos.x, pos.y, pos.z),
+        JPH::Quat::sIdentity(),
+        &world->jph           // pointer to JPH::PhysicsSystem
+    );
+}
+```
 
 **Usage in `.uzscene`**:
 ```ini
@@ -286,7 +526,7 @@ character_ground_margin = 0.05
 
 ## Collision Events
 
-### `CollisionEvent` — ECS Structure
+### `CollisionEvent` -- ECS Structure
 
 Fired via `EventBus<CollisionEvent>` when two rigid bodies collide.
 
@@ -295,7 +535,7 @@ struct CollisionEvent {
     NodeHandle node_a;              // First body
     NodeHandle node_b;              // Second body
     Vec3       contact_point;       // World-space collision point
-    Vec3       contact_normal;      // Normal from A → B
+    Vec3       contact_normal;      // Normal from A -> B
     float      collision_impulse;   // Magnitude of impulse applied
     bool       is_enter;            // true = new collision, false = persistent
 };
@@ -306,7 +546,7 @@ struct CollisionEvent {
 - Events are buffered and dispatched at the start of the Game Logic thread
 - Lua scripts receive these via collision callbacks (see Lua API section)
 
-### `TriggerEvent` — ECS Structure
+### `TriggerEvent` -- ECS Structure
 
 Fired via `EventBus<TriggerEvent>` when any shape enters/exits a trigger volume.
 
@@ -330,7 +570,7 @@ All physics queries and rigid body control is exposed via `ctx.world` (injected 
 
 ### Query Functions (Raycasts & Overlaps)
 
-#### `ctx.world:raycast(origin, direction, max_dist [, layer_mask])` → result table
+#### `ctx.world:raycast(origin, direction, max_dist [, layer_mask])` -> result table
 
 Cast a ray and return the first hit.
 
@@ -360,9 +600,9 @@ end
 **Optional `layer_mask`**:
 - Integer bitmask of layers to include: `0x5 = (1 << 0) | (1 << 2) = layers 0 and 2`
 - Omit to query all layers
-- Example: `ctx.world:raycast(origin, dir, 50.0, 0x3)` — only layers 0 and 1
+- Example: `ctx.world:raycast(origin, dir, 50.0, 0x3)` -- only layers 0 and 1
 
-#### `ctx.world:linecast(from, to [, layer_mask])` → result table
+#### `ctx.world:linecast(from, to [, layer_mask])` -> result table
 
 Convenience: cast a ray from `from` to `to`. Returns same result table as `raycast`.
 
@@ -374,7 +614,7 @@ if not hit.hit then
 end
 ```
 
-#### `ctx.world:overlap_sphere(center, radius [, layer_mask])` → `NodeRef[]`
+#### `ctx.world:overlap_sphere(center, radius [, layer_mask])` -> `NodeRef[]`
 
 Return all nodes whose colliders overlap a sphere.
 
@@ -394,17 +634,17 @@ end
 **Notes**:
 - Returns a Lua array (may be empty `{}`)
 - Order is unspecified (Jolt's internal order)
-- The querying node itself may be included — filter by `node.id ~= self.id` if needed
+- The querying node itself may be included -- filter by `node.id ~= self.id` if needed
 - Returns only nodes with colliders (ignores trigger-only nodes)
 
-#### `ctx.world:overlap_box(center, half_extents [, layer_mask])` → `NodeRef[]`
+#### `ctx.world:overlap_box(center, half_extents [, layer_mask])` -> `NodeRef[]`
 
 Return all nodes whose colliders overlap an axis-aligned box.
 
 ```lua
 local items = ctx.world:overlap_box(
     self.position,
-    Vec3(1.0, 0.5, 1.0)   -- half_extents: box is 2×1×2 units
+    Vec3(1.0, 0.5, 1.0)   -- half_extents: box is 2x1x2 units
 )
 for _, item in ipairs(items) do
     if item:has_tag("pickup") then
@@ -417,7 +657,7 @@ end
 
 Called on the node's Lua script (methods available via `self`).
 
-#### `self:apply_force(force: Vec3) → nil`
+#### `self:apply_force(force: Vec3) -> nil`
 
 Apply a force (N) to the rigid body's center of mass.
 
@@ -428,9 +668,9 @@ function M:on_start(ctx)
 end
 ```
 
-#### `self:apply_impulse(impulse: Vec3) → nil`
+#### `self:apply_impulse(impulse: Vec3) -> nil`
 
-Apply an instantaneous impulse (N·s) — like `apply_force` but in a single frame.
+Apply an instantaneous impulse (N*s) -- like `apply_force` but in a single frame.
 
 ```lua
 function M:jump(ctx, power)
@@ -438,7 +678,7 @@ function M:jump(ctx, power)
 end
 ```
 
-#### `self:set_velocity(velocity: Vec3) → nil`
+#### `self:set_velocity(velocity: Vec3) -> nil`
 
 Set the linear velocity directly (m/s). Useful for kinematic bodies.
 
@@ -449,7 +689,7 @@ function M:on_update(ctx, dt)
 end
 ```
 
-#### `self:get_velocity() → Vec3`
+#### `self:get_velocity() -> Vec3`
 
 Return the current linear velocity (m/s).
 
@@ -458,11 +698,11 @@ local vel = self:get_velocity()
 ctx:log(string.format("Speed: %.1f m/s", vel:length()))
 ```
 
-#### `self:set_angular_velocity(velocity: Vec3) → nil`
+#### `self:set_angular_velocity(velocity: Vec3) -> nil`
 
 Set the rotational velocity (rad/s).
 
-#### `self:get_angular_velocity() → Vec3`
+#### `self:get_angular_velocity() -> Vec3`
 
 Return the current angular velocity.
 
@@ -470,7 +710,7 @@ Return the current angular velocity.
 
 Available only on nodes with `CCharacterController`.
 
-#### `self:move(movement: Vec3, dt: float) → nil`
+#### `self:move(movement: Vec3, dt: float) -> nil`
 
 Move the character by the given displacement, handling slope climbing and ground detection.
 
@@ -484,7 +724,7 @@ function M:on_update(ctx, dt)
 end
 ```
 
-#### `self:jump(impulse: float) → nil`
+#### `self:jump(impulse: float) -> nil`
 
 Jump with the given upward impulse, only if grounded.
 
@@ -494,7 +734,7 @@ if ctx.input:pressed("Jump") and self:is_grounded() then
 end
 ```
 
-#### `self:is_grounded() → bool`
+#### `self:is_grounded() -> bool`
 
 Return `true` if the character is in contact with the ground (or within `ground_margin`).
 
@@ -507,7 +747,7 @@ else
 end
 ```
 
-#### `self:get_ground_normal() → Vec3`
+#### `self:get_ground_normal() -> Vec3`
 
 Return the surface normal of the ground beneath the character. Useful for slope-relative movement.
 
@@ -540,7 +780,7 @@ end
 | Field | Type | Description |
 |-------|------|-------------|
 | `point` | `Vec3` | Collision point (world-space) |
-| `normal` | `Vec3` | Normal from self → other |
+| `normal` | `Vec3` | Normal from self -> other |
 | `impulse` | `float` | Magnitude of impulse applied |
 | `relative_velocity` | `Vec3` | Relative velocity at contact point |
 
@@ -672,10 +912,11 @@ Jolt Physics has a built-in debug renderer. When enabled, the engine sends debug
 
 ```cpp
 // game.dll — per-frame debug rendering
-if (UZ_EDITOR) {
+#ifdef UZ_EDITOR
+{
     JPH::DebugRenderer debug_renderer;
-    world.jph->DrawBodies(debug_renderer);  // wireframe for all bodies
-    world.jph->DrawConstraints(debug_renderer);
+    world.jph.DrawBodies(debug_renderer);  // wireframe for all bodies
+    world.jph.DrawConstraints(debug_renderer);
 
     // Send debug_renderer's primitives via IPC to VSCode
     ipc_send("physics.debug_draw", {
@@ -684,6 +925,7 @@ if (UZ_EDITOR) {
         velocities: [...]      // velocity arrows
     });
 }
+#endif
 ```
 
 ### IPC Command
@@ -691,7 +933,7 @@ if (UZ_EDITOR) {
 | Command | Args | Returns | Purpose |
 |---------|------|---------|---------|
 | `physics.debug_draw` | `bool` | `{}` | Enable/disable debug rendering |
-| `physics.get_bodies` | — | `[{name, shape, layer, ...}]` | List all bodies in scene (editor only) |
+| `physics.get_bodies` | -- | `[{name, shape, layer, ...}]` | List all bodies in scene (editor only) |
 | `physics.set_gravity` | `{gravity: Vec3}` | `{}` | Change world gravity at runtime |
 
 ### VSCode Overlay
@@ -708,7 +950,7 @@ Toggle via VSCode command: `UzEngine: Toggle Physics Debug`
 
 ## Phase Implementation Details
 
-### Phase 3 — Core Physics (this phase)
+### Phase 3 -- Core Physics (this phase)
 
 **Deliverables**:
 1. Jolt Physics integration (vcpkg)
@@ -743,7 +985,7 @@ Accumulator pattern ensures stable physics.
 
 Jolt handles thousands of bodies efficiently. Practical limits:
 - **Simple shapes** (boxes, spheres): 5,000+ bodies @ 60 FPS
-- **Convex meshes**: 1,000–2,000 bodies @ 60 FPS
+- **Convex meshes**: 1,000-2,000 bodies @ 60 FPS
 - **Terrain**: One-per-level (height-field is highly optimized)
 
 ### Sleeping
@@ -898,32 +1140,34 @@ return M
 ## C++ Source Structure
 
 ```
-src/engine/physics/
-├── physics_world.h/cpp        — PhysicsWorld singleton, body creation/deletion
-├── physics_query.h/cpp        — Raycast, overlap, shape casting
-├── physics_events.h/cpp       — CollisionEvent, TriggerEvent dispatch
-├── jolt_integration.h/cpp     — Jolt library setup, custom allocators
-├── character_controller.h/cpp — CharacterVirtual wrapper
-└── debug_draw.h/cpp           — Jolt debug renderer → IPC
+src/game/physics/
+    physics_world.h/cpp        -- PhysicsWorld singleton, init, step, body creation/deletion
+    physics_body_sync.h/cpp    -- ECS <-> Jolt body position/rotation sync
+    physics_query.h/cpp        -- Raycast, overlap, shape casting
+    physics_events.h/cpp       -- CollisionEvent, TriggerEvent dispatch
+    contact_listener.h/cpp     -- ContactListenerImpl -> EventBus<CollisionEvent>
+    jolt_layers.h/cpp          -- BPLayerInterfaceImpl, ObjectLayerPairFilterImpl
+    character_controller.h/cpp -- CharacterVirtual wrapper
+    debug_draw.h/cpp           -- Jolt debug renderer -> IPC (UZ_EDITOR only)
 
-src/engine/ecs/components.h    — CRigidBody, CCollider*, CTrigger, CCharacterController
+src/engine/ecs/components.h   -- CRigidBody, CCollider*, CTrigger, CCharacterController
 
-src/engine/scripting/          — Lua bindings
-├── lua_physics_binding.h/cpp  — ctx.world, rigid body methods, callbacks
+src/engine/scripting/
+    lua_physics_binding.h/cpp  -- ctx.world, rigid body methods, callbacks
 
 game/
-└── physics_callbacks.cpp       — Dispatch on_collision_* / on_trigger_* Lua methods
+    physics_callbacks.cpp      -- Dispatch on_collision_* / on_trigger_* Lua methods
 ```
 
 ---
 
 ## Related Documentation
 
-- [specs/scene-system.md](scene-system.md) — Node types and `.uzscene` format
-- [specs/lua-scripting.md](lua-scripting.md) — Script lifecycle, `ctx` API, hot-reload
-- [specs/event-bus.md](event-bus.md) — `EventBus<T>` pattern for collision events
-- [specs/ragdoll.md](ragdoll.md) — Physics-driven skeletal animation (Phase 3)
-- [engine/design-decisions.md](../engine/design-decisions.md) — Why Jolt over Bullet/PhysX
+- [specs/scene-system.md](scene-system.md) -- Node types and `.uzscene` format
+- [specs/lua-scripting.md](lua-scripting.md) -- Script lifecycle, `ctx` API, hot-reload
+- [specs/event-bus.md](event-bus.md) -- `EventBus<T>` pattern for collision events
+- [specs/ragdoll.md](ragdoll.md) -- Physics-driven skeletal animation (Phase 3)
+- [engine/design-decisions.md](../engine/design-decisions.md) -- Why Jolt over Bullet/PhysX
 
 ---
 

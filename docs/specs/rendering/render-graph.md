@@ -2,7 +2,7 @@
 
 > **Status**: Planned (Phase 2)
 > **Owner**: `Renderer` module (src/engine/renderer/)
-> **Purpose**: Frame resource abstraction, pass dependencies, automatic D3D12 barrier insertion, transient resource aliasing
+> **Purpose**: Frame resource abstraction, pass dependencies, automatic barrier insertion (via RHI), transient resource aliasing
 > **Thread Safety**: Single-threaded (game thread only), compiled on-frame
 > **Key Benefit**: Composable post-processes, automatic memory reuse, explicit data flow validation
 
@@ -13,7 +13,7 @@
 The render graph is a frame-local DAG (directed acyclic graph) that tracks all GPU resources and rendering passes, enabling:
 
 1. **Explicit dependencies** — Each pass declares what it reads and writes
-2. **Automatic barriers** — D3D12 state transitions inserted at resource lifetime boundaries
+2. **Automatic barriers** — Resource state transitions inserted at lifetime boundaries via `rhi()->cmd_barrier_texture()` / `rhi()->cmd_barrier_buffer()`
 3. **Resource aliasing** — Transient textures/buffers with non-overlapping lifetimes share GPU memory
 4. **Composable post-processes** — Add/remove passes without rewriting shader code
 5. **Frame resource pooling** — Reuse allocations across frames within budget constraints
@@ -24,20 +24,21 @@ Key properties:
 - **Debug visualization** — IPC command to inspect intermediate textures/buffers
 - **Integration with renderer** — Renderer sets up core passes (GBuffer, lighting, post-processes)
 - **Not a full render engine** — Just resource + dependency management; pass execution is callback-based
+- **Backend-agnostic** — Uses only RHI handles (`RhiTexture`, `RhiBuffer`, `RhiCmdList`) and `rhi()->*` calls; never includes DX12/Vulkan/Metal headers
 
 ---
 
 ## Core Architecture
 
 ```
-RenderGraph (per frame)
+RenderGraph (per frame, allocated from frame_arena)
 │
-├── Resources (virtual handles)
-│   ├── RgTexture: format, width, height, mips, usage flags
+├── Resources (virtual handles — resolved to RhiTexture/RhiBuffer at compile time)
+│   ├── RgTexture: format (RhiFormat), width, height, mips, usage flags
 │   └── RgBuffer: element type, count, stride, usage flags
 │
 ├── Passes (ordered by topological sort)
-│   ├── RgPass: name, read/write sets, execute callback
+│   ├── RgPass: name, read/write sets, execute callback (C function pointer)
 │   ├── GBufferPass
 │   ├── LightingPass
 │   ├── SSAOPass
@@ -52,7 +53,7 @@ RenderGraph (per frame)
     ├── Topological sort → execution order
     ├── Compute resource lifetimes (first write → last read)
     ├── Alias overlapping transient resources
-    └── Pre-allocate D3D12 resources
+    └── Allocate physical GPU resources via rhi()->texture_create() / rhi()->buffer_create()
 ```
 
 ### Design Goals
@@ -64,7 +65,7 @@ RenderGraph (per frame)
 
 **Performance**:
 - Compile phase runs once per frame (~1-2ms for 20-30 passes)
-- Execution phase directly dispatches D3D12 commands (no indirection)
+- Execution phase directly dispatches GPU commands via RHI (no extra indirection)
 - Resource aliasing reduces VRAM pressure (critical for editor with many textures)
 
 **AI-Native**:
@@ -80,185 +81,208 @@ RenderGraph (per frame)
 
 Virtual handle to a render graph resource (texture or buffer).
 
-```cpp
-struct RgHandle {
-    uint32_t index;     // 0 = invalid
+```c
+typedef struct RgHandle {
+    uint32_t index;       // 0 = invalid
     uint32_t generation;  // For reuse detection
-};
+} RgHandle;
 ```
 
 Used internally only; external API returns `RgTextureHandle` or `RgBufferHandle`.
 
 ### RgTextureHandle & RgTexture
 
-```cpp
-struct RgTextureHandle {
+```c
+typedef struct RgTextureHandle {
     uint32_t index;
-};
+} RgTextureHandle;
 
-struct RgTexture {
+typedef struct RgTexture {
     // Identity
     StringId name;              // "gbuffer_albedo", "bloom_temp", etc.
 
     // Format & Dimensions
-    DXGI_FORMAT format;          // DXGI_FORMAT_R8G8B8A8_UNORM, etc.
-    uint32_t width, height;      // In pixels
-    uint32_t mip_levels;         // 1 for most; >1 for downsampling chains
+    RhiFormat  format;          // RHI_FORMAT_RGBA8_UNORM, etc.
+    uint32_t   width, height;   // In pixels
+    uint32_t   mip_levels;      // 1 for most; >1 for downsampling chains
 
     // Transience
-    bool is_transient;           // True = aliased within frame
-    uint64_t created_by_pass;    // Pass index that first writes
-    uint64_t last_used_by_pass;  // Pass index that last reads (for lifetime)
+    bool     is_transient;           // True = aliased within frame
+    uint64_t created_by_pass;        // Pass index that first writes
+    uint64_t last_used_by_pass;      // Pass index that last reads (for lifetime)
 
-    // D3D12 State
-    D3D12_RESOURCE_STATES initial_state;
-    ID3D12Resource* d3d_resource;  // Allocated during compile phase
+    // RHI State
+    RhiTexture rhi_handle;           // Allocated during compile; RHI_NULL_HANDLE if not yet allocated
+    uint32_t   initial_state;        // RhiResourceState enum value (e.g., RHI_STATE_RENDER_TARGET)
 
     // Allocation
-    uint64_t heap_offset;        // For aliased resources in shared heap
-};
+    uint64_t heap_offset;            // For aliased resources in shared heap
+} RgTexture;
 ```
 
 ### RgBufferHandle & RgBuffer
 
-```cpp
-struct RgBufferHandle {
+```c
+typedef struct RgBufferHandle {
     uint32_t index;
-};
+} RgBufferHandle;
 
-struct RgBuffer {
+typedef struct RgBuffer {
     // Identity
     StringId name;              // "indirect_dispatch_args", etc.
 
     // Layout
-    uint32_t element_size;      // sizeof(T)
+    uint32_t element_size;      // sizeof(element)
     uint32_t element_count;     // For StructuredBuffer
     uint32_t total_bytes;       // = element_size * element_count
 
     // Transience
-    bool is_transient;
+    bool     is_transient;
     uint64_t created_by_pass;
     uint64_t last_used_by_pass;
 
-    // D3D12 State
-    D3D12_RESOURCE_STATES initial_state;
-    ID3D12Resource* d3d_resource;
+    // RHI State
+    RhiBuffer rhi_handle;            // Allocated during compile; RHI_NULL_HANDLE if not yet allocated
+    uint32_t  initial_state;         // RhiResourceState enum value
 
     // Allocation
     uint64_t heap_offset;
-};
+} RgBuffer;
+```
+
+### RgPassType
+
+```c
+typedef enum RgPassType {
+    RG_PASS_GRAPHICS = 0,
+    RG_PASS_COMPUTE  = 1,
+    RG_PASS_COPY     = 2,
+} RgPassType;
 ```
 
 ### RgPass
 
 Represents a single rendering pass with explicit read/write resource sets.
 
-```cpp
-struct RgPass {
+```c
+// Forward declarations
+typedef struct RgPassContext RgPassContext;
+
+// Execute callback — C function pointer, not std::function
+typedef void (*rg_execute_fn)(RgPassContext *ctx, void *user_data);
+
+typedef struct RgPass {
     // Identity
     StringId name;              // "gbuffer", "lighting", "ssao", etc.
     uint64_t pass_id;           // Unique index in graph
 
-    // Reads & Writes
-    std::vector<RgTextureHandle> reads_textures;
-    std::vector<RgBufferHandle> reads_buffers;
-    std::vector<RgTextureHandle> writes_textures;
-    std::vector<RgBufferHandle> writes_buffers;
+    // Reads & Writes (fixed-size arrays with counts)
+    RgTextureHandle read_textures[16];
+    uint32_t        read_texture_count;
+    RgTextureHandle write_textures[16];
+    uint32_t        write_texture_count;
+    RgBufferHandle  read_buffers[8];
+    uint32_t        read_buffer_count;
+    RgBufferHandle  write_buffers[8];
+    uint32_t        write_buffer_count;
 
     // Execution
-    using ExecuteCallback = std::function<void(RgPassContext&)>;
-    ExecuteCallback execute;    // Called with shader resources bound
+    rg_execute_fn execute;      // Called with resolved RHI resources
+    void         *user_data;    // Passed to execute callback
 
     // Metadata
-    enum class Type { Graphics, Compute, Copy };
-    Type type;
+    RgPassType type;
 
     // Debugging
     bool debug_visualize;       // Blit output to screen after pass
-};
+} RgPass;
 ```
 
 ### RgPassContext
 
 Passed to each `execute` callback with bound resources and utilities.
 
-```cpp
-struct RgPassContext {
+```c
+typedef struct RgPassContext {
     // Command list (pre-transitioned to required states)
-    ID3D12GraphicsCommandList* cmd_list;
+    RhiCmdList          cmd;    // RHI command list (backend-agnostic)
 
-    // Access to resources within the graph
-    ID3D12Resource* get_texture(RgTextureHandle h);
-    ID3D12Resource* get_buffer(RgBufferHandle h);
-    D3D12_GPU_DESCRIPTOR_HANDLE get_texture_srv(RgTextureHandle h);
-    D3D12_GPU_DESCRIPTOR_HANDLE get_buffer_srv(RgBufferHandle h);
+    // Back-pointers
+    struct RenderGraph  *graph; // Owning graph
+    const RgPass        *pass;  // The pass being executed
+} RgPassContext;
 
-    // Render target / UAV binding helpers
-    void set_render_target(RgTextureHandle rt, RgTextureHandle depth = {});
-    void bind_uav(uint32_t slot, RgTextureHandle uav);
-    void bind_uav(uint32_t slot, RgBufferHandle uav);
+// Helper functions (free functions, not methods):
+RhiTexture rg_ctx_get_texture(const RgPassContext *ctx, RgTextureHandle h);
+RhiBuffer  rg_ctx_get_buffer(const RgPassContext *ctx, RgBufferHandle h);
 
-    // Metadata
-    const RgPass& pass;
-    const RenderGraph& graph;
-};
+// Convenience wrappers (call through to rhi()->* internally)
+void rg_ctx_set_render_target(RgPassContext *ctx, RgTextureHandle rt, RgTextureHandle depth);
+void rg_ctx_bind_texture(RgPassContext *ctx, uint32_t slot, RgTextureHandle tex);
+void rg_ctx_bind_buffer(RgPassContext *ctx, uint32_t slot, RgBufferHandle buf);
 ```
 
 ### RenderGraph
 
 The container managing all resources and passes for one frame.
 
-```cpp
-class RenderGraph {
-public:
-    // Resource Creation (building phase, before compile)
-    RgTextureHandle create_texture(
-        StringId name,
-        DXGI_FORMAT format,
-        uint32_t width, uint32_t height,
-        uint32_t mip_levels = 1,
-        bool is_transient = true
-    );
+```c
+typedef struct RenderGraph RenderGraph;
 
-    RgBufferHandle create_buffer(
-        StringId name,
-        uint32_t element_size,
-        uint32_t element_count,
-        bool is_transient = true
-    );
+// --- Lifecycle ---
+RenderGraph *rg_create(void);
+void         rg_destroy(RenderGraph *graph);
 
-    // Pass Registration (building phase)
-    RgPass& add_pass(
-        StringId name,
-        RgPass::Type type = RgPass::Type::Graphics
-    );
-    RgPass& add_graphics_pass(StringId name);
-    RgPass& add_compute_pass(StringId name);
-    RgPass& add_copy_pass(StringId name);
+// --- Resource Creation (building phase, before compile) ---
+RgTextureHandle rg_add_texture(
+    RenderGraph *graph,
+    const char  *name,
+    RhiFormat    format,
+    uint32_t     width,
+    uint32_t     height,
+    uint32_t     mip_levels,    // 1 for most targets
+    bool         is_transient   // true = aliased within frame
+);
 
-    // Dependency Declaration (building phase)
-    void add_read(RgPass& pass, RgTextureHandle texture);
-    void add_read(RgPass& pass, RgBufferHandle buffer);
-    void add_write(RgPass& pass, RgTextureHandle texture);
-    void add_write(RgPass& pass, RgBufferHandle buffer);
+RgBufferHandle rg_add_buffer(
+    RenderGraph *graph,
+    const char  *name,
+    uint32_t     element_size,
+    uint32_t     element_count,
+    bool         is_transient
+);
 
-    // Compile (called once per frame after building)
-    struct CompileResult {
-        bool success;
-        std::string error_message;
-    };
-    CompileResult compile(ID3D12Device* device, uint64_t gpu_budget_bytes = 512 * 1024 * 1024);
+// --- Pass Registration (building phase) ---
+RgPass *rg_add_pass(RenderGraph *graph, const char *name, RgPassType type);
 
-    // Execution (called once per frame after compile)
-    void execute(ID3D12GraphicsCommandList* cmd_list);
+// Convenience wrappers:
+RgPass *rg_add_graphics_pass(RenderGraph *graph, const char *name);
+RgPass *rg_add_compute_pass(RenderGraph *graph, const char *name);
+RgPass *rg_add_copy_pass(RenderGraph *graph, const char *name);
 
-    // Debugging
-    void enable_debug_visualization(RgTextureHandle h);
-    void enable_debug_visualization(RgBufferHandle h);
-    std::vector<StringId> get_resource_names() const;
-    const RgTexture& get_texture(RgTextureHandle h) const;
-    const RgBuffer& get_buffer(RgBufferHandle h) const;
-};
+// --- Dependency Declaration (building phase) ---
+void rg_pass_read_texture(RgPass *pass, RgTextureHandle texture);
+void rg_pass_read_buffer(RgPass *pass, RgBufferHandle buffer);
+void rg_pass_write_texture(RgPass *pass, RgTextureHandle texture);
+void rg_pass_write_buffer(RgPass *pass, RgBufferHandle buffer);
+
+// --- Compile (called once per frame after building) ---
+typedef struct rg_compile_result_t {
+    bool  success;
+    char  error_message[256];   // Empty string on success
+} rg_compile_result_t;
+
+rg_compile_result_t rg_compile(RenderGraph *graph, uint64_t gpu_budget_bytes);
+
+// --- Execution (called once per frame after compile) ---
+void rg_execute(RenderGraph *graph, RhiCmdList cmd);
+
+// --- Debugging ---
+void rg_enable_debug_visualization_texture(RenderGraph *graph, RgTextureHandle h);
+void rg_enable_debug_visualization_buffer(RenderGraph *graph, RgBufferHandle h);
+
+const RgTexture *rg_get_texture(const RenderGraph *graph, RgTextureHandle h);
+const RgBuffer  *rg_get_buffer(const RenderGraph *graph, RgBufferHandle h);
 ```
 
 ---
@@ -269,14 +293,17 @@ The compile phase runs once per frame after all passes are registered.
 
 ### Step 1: DAG Validation
 
-```cpp
-struct CompileContext {
-    std::vector<RgPass> passes;
-    std::vector<RgTexture> textures;
-    std::vector<RgBuffer> buffers;
-};
+```c
+typedef struct rg_compile_context_t {
+    RgPass    *passes;
+    uint32_t   pass_count;
+    RgTexture *textures;
+    uint32_t   texture_count;
+    RgBuffer  *buffers;
+    uint32_t   buffer_count;
+} rg_compile_context_t;
 
-bool validate_dag(const CompileContext& ctx) {
+bool rg_validate_dag(const rg_compile_context_t *ctx) {
     // Check 1: No circular dependencies
     // Build adjacency list from read/write sets
     // DFS to detect cycles
@@ -296,87 +323,92 @@ bool validate_dag(const CompileContext& ctx) {
 
 ### Step 2: Topological Sort
 
-```cpp
-std::vector<uint64_t> topological_sort(const CompileContext& ctx) {
-    // Kahn's algorithm: sort passes by dependency order
-    // Passes with no dependencies run first
-    // A pass can run after all its dependencies have been satisfied
+```c
+// Kahn's algorithm: sort passes by dependency order
+// Passes with no dependencies run first
+// A pass can run after all its dependencies have been satisfied
+//
+// Result: execution_order[i] = pass index to run at step i
 
-    // Result: execution_order[i] = pass index to run at step i
-    return execution_order;
-}
+void rg_topological_sort(
+    const rg_compile_context_t *ctx,
+    uint64_t *out_execution_order,    // Caller-allocated array of ctx->pass_count elements
+    uint32_t *out_order_count
+);
 ```
 
 ### Step 3: Compute Resource Lifetimes
 
-```cpp
-struct ResourceLifetime {
+```c
+typedef struct RgResourceLifetime {
     uint64_t first_write_pass;   // When resource is first produced
     uint64_t last_read_pass;     // When resource is last consumed
-};
+} RgResourceLifetime;
 
-std::vector<ResourceLifetime> compute_lifetimes(
-    const CompileContext& ctx,
-    const std::vector<uint64_t>& execution_order
-) {
-    // For each resource, find:
-    // - first pass that writes to it (start of lifetime)
-    // - last pass that reads from it (end of lifetime)
+// For each resource, find:
+// - first pass that writes to it (start of lifetime)
+// - last pass that reads from it (end of lifetime)
+//
+// Two resources can alias if their lifetimes don't overlap:
+// resource_a.last_read < resource_b.first_write OR vice versa
 
-    // Two resources can alias if their lifetimes don't overlap:
-    // resource_a.last_read < resource_b.first_write OR vice versa
-
-    return lifetimes;
-}
+void rg_compute_lifetimes(
+    const rg_compile_context_t *ctx,
+    const uint64_t             *execution_order,
+    uint32_t                    order_count,
+    RgResourceLifetime         *out_lifetimes    // One per resource
+);
 ```
 
 ### Step 4: Resource Aliasing
 
-```cpp
-struct AliasGroup {
-    std::vector<uint32_t> resource_indices;  // Textures or buffers with same size
+```c
+typedef struct RgAliasGroup {
+    uint32_t resource_indices[16];   // Textures or buffers with same size
+    uint32_t resource_count;
     uint64_t heap_offset;
-};
+} RgAliasGroup;
 
-std::vector<AliasGroup> compute_alias_groups(
-    const std::vector<ResourceLifetime>& lifetimes,
-    const std::vector<RgTexture>& textures,
-    uint64_t total_budget
-) {
-    // Group transient resources by:
-    // 1. Type (all textures or all buffers)
-    // 2. Size (must be exactly the same to alias)
-    // 3. Non-overlapping lifetimes
+// Group transient resources by:
+// 1. Type (all textures or all buffers)
+// 2. Size (must be exactly the same to alias)
+// 3. Non-overlapping lifetimes
+//
+// Assign heap offsets to minimize peak VRAM usage
+// Validate total against gpu_budget
 
-    // Assign heap offsets to minimize peak VRAM usage
-    // Validate total against gpu_budget
-
-    return alias_groups;
-}
+uint32_t rg_compute_alias_groups(
+    const RgResourceLifetime *lifetimes,
+    const RgTexture          *textures,
+    uint32_t                  texture_count,
+    uint64_t                  total_budget,
+    RgAliasGroup             *out_groups,        // Caller-allocated
+    uint32_t                  max_groups
+);
 ```
 
-### Step 5: D3D12 Resource Allocation
+### Step 5: GPU Resource Allocation (via RHI)
 
-```cpp
-void allocate_resources(
-    CompileContext& ctx,
-    const std::vector<AliasGroup>& alias_groups,
-    ID3D12Device* device
+```c
+void rg_allocate_resources(
+    rg_compile_context_t     *ctx,
+    const RgAliasGroup       *alias_groups,
+    uint32_t                  group_count
 ) {
-    // For each alias group, create a single D3D12 heap
-    // Use D3D12_HEAP_TYPE_DEFAULT for GPU resources
-
-    // For each resource in the group, create a D3D12_PLACED_RESOURCE
-    // pointing to a heap offset
-
-    // Persistent (non-transient) resources use separate heaps
+    // For each alias group, allocate physical GPU resources via RHI:
+    //   rhi()->texture_create(&desc)  or  rhi()->buffer_create(&desc)
+    //
+    // Aliased resources within a group share the same backing allocation
+    // (heap_offset determines placement within a shared heap)
+    //
+    // Persistent (non-transient) resources use separate allocations
     // (they survive frame boundaries)
 }
 ```
 
 ### Example Compile Output
 
-```cpp
+```c
 // After compile, a typical DAG might execute:
 //
 // 0. GBufferPass
@@ -416,31 +448,36 @@ void allocate_resources(
 
 ## Execution Phase
 
-Execution runs once per frame after `compile()` succeeds.
+Execution runs once per frame after `rg_compile()` succeeds.
 
-```cpp
-void RenderGraph::execute(ID3D12GraphicsCommandList* cmd_list) {
-    for (uint64_t pass_idx : execution_order) {
-        const RgPass& pass = passes[pass_idx];
+```c
+void rg_execute(RenderGraph *graph, RhiCmdList cmd) {
+    for (uint32_t i = 0; i < graph->execution_order_count; i++) {
+        uint64_t pass_idx = graph->execution_order[i];
+        const RgPass *pass = &graph->passes[pass_idx];
 
-        // Step 1: Insert state transitions
-        for (RgTextureHandle h : pass.reads_textures) {
-            insert_barrier(cmd_list, get_texture(h),
-                          D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+        // Step 1: Insert state transitions via RHI
+        for (uint32_t t = 0; t < pass->read_texture_count; t++) {
+            RgTextureHandle h = pass->read_textures[t];
+            const RgTexture *tex = rg_get_texture(graph, h);
+            rhi()->cmd_barrier_texture(cmd, tex->rhi_handle,
+                tex->initial_state, RHI_STATE_SHADER_READ);
         }
-        for (RgTextureHandle h : pass.writes_textures) {
-            insert_barrier(cmd_list, get_texture(h),
-                          D3D12_RESOURCE_STATE_RENDER_TARGET);
+        for (uint32_t t = 0; t < pass->write_texture_count; t++) {
+            RgTextureHandle h = pass->write_textures[t];
+            const RgTexture *tex = rg_get_texture(graph, h);
+            rhi()->cmd_barrier_texture(cmd, tex->rhi_handle,
+                tex->initial_state, RHI_STATE_RENDER_TARGET);
         }
-        // ... similar for buffers
+        // ... similar for buffers via rhi()->cmd_barrier_buffer()
 
         // Step 2: Execute pass callback
-        RgPassContext ctx{cmd_list, *this, pass};
-        pass.execute(ctx);
+        RgPassContext ctx = { .cmd = cmd, .graph = graph, .pass = pass };
+        pass->execute(&ctx, pass->user_data);
 
         // Step 3: Optional debug visualization
-        if (pass.debug_visualize) {
-            blit_resource_to_screen(cmd_list, pass.writes_textures[0]);
+        if (pass->debug_visualize && pass->write_texture_count > 0) {
+            rg_blit_resource_to_screen(graph, cmd, pass->write_textures[0]);
         }
     }
 }
@@ -450,89 +487,106 @@ void RenderGraph::execute(ID3D12GraphicsCommandList* cmd_list) {
 
 ## Integration with Renderer
 
-The `Renderer` class sets up the render graph each frame.
+The renderer sets up the render graph each frame.
 
-```cpp
-class Renderer {
-private:
-    RenderGraph graph;
+```c
+void renderer_render_frame(RendererState *renderer, GameContext *game_ctx) {
+    RenderGraph *graph = rg_create();
 
-public:
-    void render_frame(GameContext& game_ctx) {
-        // 1. Create resources
-        RgTextureHandle gbuffer_albedo = graph.create_texture(
-            "gbuffer_albedo"_sid,
-            DXGI_FORMAT_R8G8B8A8_UNORM,
-            viewport_width, viewport_height
-        );
-        RgTextureHandle gbuffer_normal = graph.create_texture(
-            "gbuffer_normal"_sid,
-            DXGI_FORMAT_R10G10B10A2_UNORM,
-            viewport_width, viewport_height
-        );
-        RgTextureHandle gbuffer_depth = graph.create_texture(
-            "gbuffer_depth"_sid,
-            DXGI_FORMAT_D32_FLOAT,
-            viewport_width, viewport_height
-        );
+    // 1. Create resources
+    RgTextureHandle gbuffer_albedo = rg_add_texture(graph,
+        "gbuffer_albedo", RHI_FORMAT_RGBA8_UNORM,
+        renderer->viewport_width, renderer->viewport_height, 1, true);
 
-        // 2. Add GBuffer pass
-        RgPass& gbuffer_pass = graph.add_graphics_pass("gbuffer");
-        gbuffer_pass.writes_textures = {gbuffer_albedo, gbuffer_normal, gbuffer_depth};
-        gbuffer_pass.execute = [this, gbuffer_albedo, gbuffer_normal, gbuffer_depth]
-            (RgPassContext& ctx) {
-            render_gbuffer(ctx, gbuffer_albedo, gbuffer_normal, gbuffer_depth);
+    RgTextureHandle gbuffer_normal = rg_add_texture(graph,
+        "gbuffer_normal", RHI_FORMAT_RGB10A2_UNORM,
+        renderer->viewport_width, renderer->viewport_height, 1, true);
+
+    RgTextureHandle gbuffer_depth = rg_add_texture(graph,
+        "gbuffer_depth", RHI_FORMAT_D32_FLOAT,
+        renderer->viewport_width, renderer->viewport_height, 1, true);
+
+    // 2. Add GBuffer pass
+    RgPass *gbuffer_pass = rg_add_graphics_pass(graph, "gbuffer");
+    rg_pass_write_texture(gbuffer_pass, gbuffer_albedo);
+    rg_pass_write_texture(gbuffer_pass, gbuffer_normal);
+    rg_pass_write_texture(gbuffer_pass, gbuffer_depth);
+
+    GBufferPassData gbuffer_data = {
+        .albedo = gbuffer_albedo,
+        .normal = gbuffer_normal,
+        .depth  = gbuffer_depth,
+        .scene  = game_ctx->scene,
+    };
+    gbuffer_pass->execute   = gbuffer_pass_execute;
+    gbuffer_pass->user_data = &gbuffer_data;
+
+    // 3. Add Lighting pass
+    RgTextureHandle hdr_radiance = rg_add_texture(graph,
+        "hdr_radiance", RHI_FORMAT_RGBA16_FLOAT,
+        renderer->viewport_width, renderer->viewport_height, 1, true);
+
+    RgPass *lighting_pass = rg_add_graphics_pass(graph, "lighting");
+    rg_pass_read_texture(lighting_pass, gbuffer_albedo);
+    rg_pass_read_texture(lighting_pass, gbuffer_normal);
+    rg_pass_read_texture(lighting_pass, gbuffer_depth);
+    rg_pass_write_texture(lighting_pass, hdr_radiance);
+
+    LightingPassData lighting_data = {
+        .albedo     = gbuffer_albedo,
+        .normal     = gbuffer_normal,
+        .depth      = gbuffer_depth,
+        .hdr_output = hdr_radiance,
+        .scene      = game_ctx->scene,
+    };
+    lighting_pass->execute   = lighting_pass_execute;
+    lighting_pass->user_data = &lighting_data;
+
+    // 4. Add post-processes based on scene configuration
+    if (renderer->post_process_config.ssao_enabled) {
+        RgTextureHandle ssao_mask = rg_add_texture(graph,
+            "ssao_mask", RHI_FORMAT_R8_UNORM,
+            renderer->viewport_width / 2, renderer->viewport_height / 2,
+            1, true);  // Half-res
+
+        RgPass *ssao_pass = rg_add_compute_pass(graph, "ssao");
+        rg_pass_read_texture(ssao_pass, gbuffer_depth);
+        rg_pass_read_texture(ssao_pass, gbuffer_normal);
+        rg_pass_write_texture(ssao_pass, ssao_mask);
+
+        SSAOPassData ssao_data = {
+            .depth      = gbuffer_depth,
+            .normal     = gbuffer_normal,
+            .ssao_mask  = ssao_mask,
         };
-
-        // 3. Add Lighting pass
-        RgPass& lighting_pass = graph.add_graphics_pass("lighting");
-        lighting_pass.reads_textures = {gbuffer_albedo, gbuffer_normal, gbuffer_depth};
-        RgTextureHandle hdr_radiance = graph.create_texture(
-            "hdr_radiance"_sid,
-            DXGI_FORMAT_R16G16B16A16_FLOAT,
-            viewport_width, viewport_height
-        );
-        lighting_pass.writes_textures = {hdr_radiance};
-        lighting_pass.execute = [this, gbuffer_albedo, gbuffer_normal, gbuffer_depth, hdr_radiance]
-            (RgPassContext& ctx) {
-            render_deferred_lighting(ctx, gbuffer_albedo, gbuffer_normal, gbuffer_depth, hdr_radiance);
-        };
-
-        // 4. Add post-processes based on scene configuration
-        if (post_process_config.ssao_enabled) {
-            RgPass& ssao_pass = graph.add_compute_pass("ssao");
-            ssao_pass.reads_textures = {gbuffer_depth, gbuffer_normal};
-            RgTextureHandle ssao_mask = graph.create_texture(
-                "ssao_mask"_sid,
-                DXGI_FORMAT_R8_UNORM,
-                viewport_width / 2, viewport_height / 2  // Half-res
-            );
-            ssao_pass.writes_textures = {ssao_mask};
-            ssao_pass.execute = [this, gbuffer_depth, gbuffer_normal, ssao_mask]
-                (RgPassContext& ctx) {
-                compute_hbao(ctx, gbuffer_depth, gbuffer_normal, ssao_mask);
-            };
-        }
-
-        if (post_process_config.ssr_enabled) {
-            // Similar pattern for SSR
-        }
-
-        if (post_process_config.taa_enabled) {
-            // Similar pattern for TAA
-        }
-
-        // 5. Compile the DAG
-        auto compile_result = graph.compile(device, 512 * 1024 * 1024);  // 512 MB budget
-        if (!compile_result.success) {
-            ERROR("Render graph compilation failed: {}", compile_result.error_message);
-            return;
-        }
-
-        // 6. Execute all passes
-        graph.execute(cmd_list);
+        ssao_pass->execute   = ssao_pass_execute;
+        ssao_pass->user_data = &ssao_data;
     }
-};
+
+    if (renderer->post_process_config.ssr_enabled) {
+        // Similar pattern for SSR
+    }
+
+    if (renderer->post_process_config.taa_enabled) {
+        // Similar pattern for TAA
+    }
+
+    // 5. Compile the DAG
+    rg_compile_result_t compile_result = rg_compile(graph, 512 * 1024 * 1024);  // 512 MB budget
+    if (!compile_result.success) {
+        LOG_ERROR("Render graph compilation failed: %s", compile_result.error_message);
+        rg_destroy(graph);
+        return;
+    }
+
+    // 6. Execute all passes
+    RhiCmdList cmd = rhi()->cmd_begin();
+    rg_execute(graph, cmd);
+    rhi()->cmd_submit(cmd);
+    rhi()->swapchain_present(1);
+
+    rg_destroy(graph);
+}
 ```
 
 ---
@@ -541,51 +595,47 @@ public:
 
 ### Example 1: Bloom Post-Process
 
-```cpp
+```c
 // Input: hdr_radiance texture
 // Output: bloom effect applied to backbuffer
 
 // Downsampling chain
-RgTextureHandle bloom_down_4x = graph.create_texture(
-    "bloom_down_4x"_sid,
-    DXGI_FORMAT_R11G11B10_FLOAT,
-    viewport_width / 4, viewport_height / 4
-);
+RgTextureHandle bloom_down_4x = rg_add_texture(graph,
+    "bloom_down_4x", RHI_FORMAT_R11G11B10_FLOAT,
+    viewport_width / 4, viewport_height / 4, 1, true);
 
-RgPass& bloom_downsample = graph.add_compute_pass("bloom_downsample");
-bloom_downsample.reads_textures = {hdr_radiance};
-bloom_downsample.writes_textures = {bloom_down_4x};
-bloom_downsample.execute = [this, hdr_radiance, bloom_down_4x](RgPassContext& ctx) {
-    // Dispatch compute shader with 4x downsampling
-    // Write to bloom_down_4x
+RgPass *bloom_downsample = rg_add_compute_pass(graph, "bloom_downsample");
+rg_pass_read_texture(bloom_downsample, hdr_radiance);
+rg_pass_write_texture(bloom_downsample, bloom_down_4x);
+bloom_downsample->execute   = bloom_downsample_execute;
+bloom_downsample->user_data = &(BloomDownsampleData){
+    .input = hdr_radiance, .output = bloom_down_4x
 };
 
 // Horizontal blur
-RgTextureHandle bloom_h_blur = graph.create_texture(
-    "bloom_h_blur"_sid,
-    DXGI_FORMAT_R11G11B10_FLOAT,
-    viewport_width / 4, viewport_height / 4
-);
+RgTextureHandle bloom_h_blur = rg_add_texture(graph,
+    "bloom_h_blur", RHI_FORMAT_R11G11B10_FLOAT,
+    viewport_width / 4, viewport_height / 4, 1, true);
 
-RgPass& bloom_h = graph.add_compute_pass("bloom_blur_h");
-bloom_h.reads_textures = {bloom_down_4x};
-bloom_h.writes_textures = {bloom_h_blur};
-bloom_h.execute = [this, bloom_down_4x, bloom_h_blur](RgPassContext& ctx) {
-    compute_blur_h(ctx, bloom_down_4x, bloom_h_blur);
+RgPass *bloom_h = rg_add_compute_pass(graph, "bloom_blur_h");
+rg_pass_read_texture(bloom_h, bloom_down_4x);
+rg_pass_write_texture(bloom_h, bloom_h_blur);
+bloom_h->execute   = bloom_blur_h_execute;
+bloom_h->user_data = &(BloomBlurData){
+    .input = bloom_down_4x, .output = bloom_h_blur
 };
 
 // Vertical blur
-RgTextureHandle bloom_final = graph.create_texture(
-    "bloom_final"_sid,
-    DXGI_FORMAT_R11G11B10_FLOAT,
-    viewport_width / 4, viewport_height / 4
-);
+RgTextureHandle bloom_final = rg_add_texture(graph,
+    "bloom_final", RHI_FORMAT_R11G11B10_FLOAT,
+    viewport_width / 4, viewport_height / 4, 1, true);
 
-RgPass& bloom_v = graph.add_compute_pass("bloom_blur_v");
-bloom_v.reads_textures = {bloom_h_blur};
-bloom_v.writes_textures = {bloom_final};
-bloom_v.execute = [this, bloom_h_blur, bloom_final](RgPassContext& ctx) {
-    compute_blur_v(ctx, bloom_h_blur, bloom_final);
+RgPass *bloom_v = rg_add_compute_pass(graph, "bloom_blur_v");
+rg_pass_read_texture(bloom_v, bloom_h_blur);
+rg_pass_write_texture(bloom_v, bloom_final);
+bloom_v->execute   = bloom_blur_v_execute;
+bloom_v->user_data = &(BloomBlurData){
+    .input = bloom_h_blur, .output = bloom_final
 };
 
 // Composite: hdr_radiance + bloom_final → taa_output
@@ -594,26 +644,27 @@ bloom_v.execute = [this, bloom_h_blur, bloom_final](RgPassContext& ctx) {
 
 ### Example 2: Shadow Depth Maps
 
-```cpp
+```c
 // For directional light with cascaded shadow maps:
 //
 // Allocate shadow atlas (single large texture with multiple cascades)
-RgTextureHandle shadow_atlas = graph.create_texture(
-    "shadow_atlas"_sid,
-    DXGI_FORMAT_R32_TYPELESS,  // Depth format
+RgTextureHandle shadow_atlas = rg_add_texture(graph,
+    "shadow_atlas", RHI_FORMAT_D32_FLOAT,
     4096, 4096,               // Large atlas
     1,
-    true  // Transient (recreated each frame)
+    true                      // Transient (recreated each frame)
 );
 
 // Add shadow rendering pass
-RgPass& shadow_pass = graph.add_graphics_pass("shadow_depth");
-shadow_pass.writes_textures = {shadow_atlas};
-shadow_pass.execute = [this, shadow_atlas](RgPassContext& ctx) {
-    // Render all shadow-casting meshes to atlas
-    // 3 cascades, each to different region of atlas
-    // Uses depth format for PCF filtering
+RgPass *shadow_pass = rg_add_graphics_pass(graph, "shadow_depth");
+rg_pass_write_texture(shadow_pass, shadow_atlas);
+
+ShadowPassData shadow_data = {
+    .atlas = shadow_atlas,
+    .scene = scene,
 };
+shadow_pass->execute   = shadow_pass_execute;
+shadow_pass->user_data = &shadow_data;
 
 // Later, lighting pass reads shadow_atlas
 ```
@@ -624,36 +675,42 @@ shadow_pass.execute = [this, shadow_atlas](RgPassContext& ctx) {
 
 ### IPC Command: Inspect Intermediate Render Target
 
-```cpp
+```c
 // Editor command:
 // debug.show_render_target("ssao_mask")
 //
 // Renders specified resource to a debug visualization panel in VSCode
 
-struct DebugRenderTargetRequest {
-    std::string resource_name;  // "gbuffer_normal", "bloom_final", etc.
-};
+typedef struct DebugRenderTargetRequest {
+    const char *resource_name;  // "gbuffer_normal", "bloom_final", etc.
+} DebugRenderTargetRequest;
 
-void handle_debug_show_render_target(const DebugRenderTargetRequest& req) {
+void handle_debug_show_render_target(
+    RenderGraph *graph,
+    const DebugRenderTargetRequest *req
+) {
     // Find resource by name
-    RgTextureHandle h = graph.get_texture_handle_by_name(req.resource_name);
+    RgTextureHandle h = rg_find_texture_by_name(graph, req->resource_name);
 
-    if (!h.is_valid()) {
+    if (h.index == 0) {
         return;  // Resource not found this frame
     }
 
     // Create a temporary blit pass to copy to a readable texture
     // Stream as JPEG back to editor via IPC
 
-    uint8_t* rgba_data = read_texture_to_cpu(graph.get_texture(h));
-    std::vector<uint8_t> jpeg = encode_jpeg(rgba_data, width, height);
-    ipc_send_debug_texture(jpeg);
+    const RgTexture *tex = rg_get_texture(graph, h);
+    uint8_t *rgba_data = rg_read_texture_to_cpu(graph, tex->rhi_handle);
+    uint8_t *jpeg = NULL;
+    size_t   jpeg_size = 0;
+    encode_jpeg(rgba_data, tex->width, tex->height, &jpeg, &jpeg_size);
+    ipc_send_debug_texture(jpeg, jpeg_size);
 }
 ```
 
 ### Graph Visualization
 
-```cpp
+```c
 // For debugging complex render graphs, IPC command:
 // debug.dump_render_graph()
 //
@@ -679,7 +736,7 @@ void handle_debug_show_render_target(const DebugRenderTargetRequest& req) {
     {
       "name": "gbuffer_albedo",
       "type": "texture",
-      "format": "DXGI_FORMAT_R8G8B8A8_UNORM",
+      "format": "RHI_FORMAT_RGBA8_UNORM",
       "width": 1920,
       "height": 1080,
       "lifetime": {
@@ -706,7 +763,7 @@ Compile time is negligible vs. GPU frame time. Optimization only if profiling sh
 
 ### Memory Aliasing Savings
 
-Example: Post-process chain with multiple temporary buffers (all 1920x1080 R16G16B16A16_FLOAT):
+Example: Post-process chain with multiple temporary buffers (all 1920x1080 RHI_FORMAT_RGBA16_FLOAT):
 
 ```
 Without aliasing:
@@ -726,7 +783,7 @@ For GPU budgets on lower-end hardware (Intel Iris), this is critical.
 ### Execution Overhead
 
 - Barrier insertion: ~0.01 ms per barrier (negligible if batched)
-- Callback dispatch: Minimal (function pointers, no overhead)
+- Callback dispatch: Minimal (C function pointers, no overhead)
 - No runtime dependency resolution (compile phase handles this)
 
 ---
@@ -758,132 +815,147 @@ When taking a screenshot, a special blit pass is inserted to copy the backbuffer
 
 ### Unit Tests
 
-```cpp
+```c
 // Compile phase validation
-TEST(RenderGraphCompile, ValidatesDAG) {
-    RenderGraph graph;
+void test_render_graph_validates_dag(void) {
+    RenderGraph *graph = rg_create();
 
     // Add circular dependency
-    RgPass& pass_a = graph.add_graphics_pass("pass_a");
-    RgPass& pass_b = graph.add_graphics_pass("pass_b");
-    RgTextureHandle tex = graph.create_texture("tex", DXGI_FORMAT_R8G8B8A8_UNORM, 512, 512);
+    RgPass *pass_a = rg_add_graphics_pass(graph, "pass_a");
+    RgPass *pass_b = rg_add_graphics_pass(graph, "pass_b");
+    RgTextureHandle tex = rg_add_texture(graph, "tex",
+        RHI_FORMAT_RGBA8_UNORM, 512, 512, 1, true);
 
-    pass_a.writes_textures = {tex};
-    pass_b.reads_textures = {tex};
-    pass_b.writes_textures = {tex};  // Circular!
+    rg_pass_write_texture(pass_a, tex);
+    rg_pass_read_texture(pass_b, tex);
+    rg_pass_write_texture(pass_b, tex);  // Circular!
 
-    auto result = graph.compile(device, 512 * 1024 * 1024);
-    EXPECT_FALSE(result.success);
-    EXPECT_THAT(result.error_message, HasSubstr("circular"));
+    rg_compile_result_t result = rg_compile(graph, 512 * 1024 * 1024);
+    ASSERT_FALSE(result.success);
+    ASSERT_STR_CONTAINS(result.error_message, "circular");
+
+    rg_destroy(graph);
 }
 
-TEST(RenderGraphCompile, ComputesCorrectExecutionOrder) {
-    RenderGraph graph;
+void test_render_graph_computes_correct_execution_order(void) {
+    RenderGraph *graph = rg_create();
 
-    RgPass& pass_a = graph.add_graphics_pass("pass_a");
-    RgPass& pass_b = graph.add_graphics_pass("pass_b");
-    RgPass& pass_c = graph.add_graphics_pass("pass_c");
+    RgPass *pass_a = rg_add_graphics_pass(graph, "pass_a");
+    RgPass *pass_b = rg_add_graphics_pass(graph, "pass_b");
+    RgPass *pass_c = rg_add_graphics_pass(graph, "pass_c");
 
-    RgTextureHandle tex_ab = graph.create_texture("tex_ab", DXGI_FORMAT_R8G8B8A8_UNORM, 512, 512);
-    RgTextureHandle tex_bc = graph.create_texture("tex_bc", DXGI_FORMAT_R8G8B8A8_UNORM, 512, 512);
+    RgTextureHandle tex_ab = rg_add_texture(graph, "tex_ab",
+        RHI_FORMAT_RGBA8_UNORM, 512, 512, 1, true);
+    RgTextureHandle tex_bc = rg_add_texture(graph, "tex_bc",
+        RHI_FORMAT_RGBA8_UNORM, 512, 512, 1, true);
 
-    pass_a.writes_textures = {tex_ab};
-    pass_b.reads_textures = {tex_ab};
-    pass_b.writes_textures = {tex_bc};
-    pass_c.reads_textures = {tex_bc};
+    rg_pass_write_texture(pass_a, tex_ab);
+    rg_pass_read_texture(pass_b, tex_ab);
+    rg_pass_write_texture(pass_b, tex_bc);
+    rg_pass_read_texture(pass_c, tex_bc);
 
-    auto result = graph.compile(device, 512 * 1024 * 1024);
-    EXPECT_TRUE(result.success);
+    rg_compile_result_t result = rg_compile(graph, 512 * 1024 * 1024);
+    ASSERT_TRUE(result.success);
 
     // Verify execution order is a → b → c
-    const auto& order = graph.execution_order();
-    EXPECT_EQ(order[0], 0);  // pass_a
-    EXPECT_EQ(order[1], 1);  // pass_b
-    EXPECT_EQ(order[2], 2);  // pass_c
+    const uint64_t *order = rg_get_execution_order(graph);
+    ASSERT_EQ(order[0], 0);  // pass_a
+    ASSERT_EQ(order[1], 1);  // pass_b
+    ASSERT_EQ(order[2], 2);  // pass_c
+
+    rg_destroy(graph);
 }
 
-TEST(RenderGraphCompile, AliasesNonOverlappingResources) {
-    RenderGraph graph;
+void test_render_graph_aliases_non_overlapping_resources(void) {
+    RenderGraph *graph = rg_create();
 
-    RgPass& pass_a = graph.add_graphics_pass("pass_a");
-    RgPass& pass_b = graph.add_graphics_pass("pass_b");
+    RgPass *pass_a = rg_add_graphics_pass(graph, "pass_a");
+    RgPass *pass_b = rg_add_graphics_pass(graph, "pass_b");
 
     // Two 10 MB textures with non-overlapping lifetimes
-    RgTextureHandle tex_a = graph.create_texture("temp_a", DXGI_FORMAT_R8G8B8A8_UNORM, 1024, 1024);
-    RgTextureHandle tex_b = graph.create_texture("temp_b", DXGI_FORMAT_R8G8B8A8_UNORM, 1024, 1024);
+    RgTextureHandle tex_a = rg_add_texture(graph, "temp_a",
+        RHI_FORMAT_RGBA8_UNORM, 1024, 1024, 1, true);
+    RgTextureHandle tex_b = rg_add_texture(graph, "temp_b",
+        RHI_FORMAT_RGBA8_UNORM, 1024, 1024, 1, true);
 
-    pass_a.writes_textures = {tex_a};
-    pass_b.writes_textures = {tex_b};  // Runs after, so no overlap
+    rg_pass_write_texture(pass_a, tex_a);
+    rg_pass_write_texture(pass_b, tex_b);  // Runs after, so no overlap
 
-    auto result = graph.compile(device, 512 * 1024 * 1024);
-    EXPECT_TRUE(result.success);
+    rg_compile_result_t result = rg_compile(graph, 512 * 1024 * 1024);
+    ASSERT_TRUE(result.success);
 
     // Verify they're aliased (same heap offset)
-    const auto& tex_a_info = graph.get_texture(tex_a);
-    const auto& tex_b_info = graph.get_texture(tex_b);
-    EXPECT_EQ(tex_a_info.heap_offset, tex_b_info.heap_offset);
+    const RgTexture *tex_a_info = rg_get_texture(graph, tex_a);
+    const RgTexture *tex_b_info = rg_get_texture(graph, tex_b);
+    ASSERT_EQ(tex_a_info->heap_offset, tex_b_info->heap_offset);
+
+    rg_destroy(graph);
 }
 
-TEST(RenderGraphCompile, RejectsExceedingBudget) {
-    RenderGraph graph;
+void test_render_graph_rejects_exceeding_budget(void) {
+    RenderGraph *graph = rg_create();
 
     // Create resources totaling > 256 MB
+    char name_buf[64];
     for (int i = 0; i < 30; i++) {
-        graph.create_texture(
-            fmt::format("large_tex_{}", i),
-            DXGI_FORMAT_R16G16B16A16_FLOAT,
-            2048, 2048
-        );
+        snprintf(name_buf, sizeof(name_buf), "large_tex_%d", i);
+        rg_add_texture(graph, name_buf,
+            RHI_FORMAT_RGBA16_FLOAT, 2048, 2048, 1, true);
     }
 
-    RgPass& pass = graph.add_graphics_pass("test");
+    RgPass *pass = rg_add_graphics_pass(graph, "test");
     // Add all textures to writes (forces allocation)
 
-    auto result = graph.compile(device, 256 * 1024 * 1024);  // 256 MB budget
-    EXPECT_FALSE(result.success);
-    EXPECT_THAT(result.error_message, HasSubstr("budget"));
+    rg_compile_result_t result = rg_compile(graph, 256 * 1024 * 1024);  // 256 MB budget
+    ASSERT_FALSE(result.success);
+    ASSERT_STR_CONTAINS(result.error_message, "budget");
+
+    rg_destroy(graph);
 }
 ```
 
 ### Integration Tests
 
-```cpp
+```c
 // End-to-end render graph execution
-TEST(RenderGraphExecute, RenderSimpleBloomChain) {
-    RenderGraph graph;
+void test_render_graph_execute_simple_bloom_chain(void) {
+    RenderGraph *graph = rg_create();
 
     // Set up minimal bloom chain
-    RgTextureHandle input = create_test_hdr_texture(graph, "input", 512, 512);
-    RgTextureHandle downsampled = graph.create_texture("downsampled",
-        DXGI_FORMAT_R11G11B10_FLOAT, 256, 256);
-    RgTextureHandle blurred = graph.create_texture("blurred",
-        DXGI_FORMAT_R11G11B10_FLOAT, 256, 256);
+    RgTextureHandle input = rg_add_texture(graph, "input",
+        RHI_FORMAT_RGBA16_FLOAT, 512, 512, 1, true);
+    RgTextureHandle downsampled = rg_add_texture(graph, "downsampled",
+        RHI_FORMAT_R11G11B10_FLOAT, 256, 256, 1, true);
+    RgTextureHandle blurred = rg_add_texture(graph, "blurred",
+        RHI_FORMAT_R11G11B10_FLOAT, 256, 256, 1, true);
 
     // Downsample pass
-    RgPass& down_pass = graph.add_compute_pass("downsample");
-    down_pass.reads_textures = {input};
-    down_pass.writes_textures = {downsampled};
-    down_pass.execute = [](RgPassContext& ctx) {
-        // Dispatch downsample shader
-    };
+    RgPass *down_pass = rg_add_compute_pass(graph, "downsample");
+    rg_pass_read_texture(down_pass, input);
+    rg_pass_write_texture(down_pass, downsampled);
+    down_pass->execute   = test_downsample_execute;
+    down_pass->user_data = NULL;
 
     // Blur pass
-    RgPass& blur_pass = graph.add_compute_pass("blur");
-    blur_pass.reads_textures = {downsampled};
-    blur_pass.writes_textures = {blurred};
-    blur_pass.execute = [](RgPassContext& ctx) {
-        // Dispatch blur shader
-    };
+    RgPass *blur_pass = rg_add_compute_pass(graph, "blur");
+    rg_pass_read_texture(blur_pass, downsampled);
+    rg_pass_write_texture(blur_pass, blurred);
+    blur_pass->execute   = test_blur_execute;
+    blur_pass->user_data = NULL;
 
     // Compile and execute
-    auto result = graph.compile(device, 512 * 1024 * 1024);
-    EXPECT_TRUE(result.success);
+    rg_compile_result_t result = rg_compile(graph, 512 * 1024 * 1024);
+    ASSERT_TRUE(result.success);
 
-    graph.execute(cmd_list);
+    RhiCmdList cmd = rhi()->cmd_begin();
+    rg_execute(graph, cmd);
+    rhi()->cmd_submit(cmd);
 
     // Verify blurred texture has valid data
-    auto readback_data = read_texture_to_cpu(graph.get_texture(blurred));
-    EXPECT_FALSE(readback_data.empty());
+    const RgTexture *blurred_tex = rg_get_texture(graph, blurred);
+    ASSERT_NE(blurred_tex->rhi_handle, RHI_NULL_HANDLE);
+
+    rg_destroy(graph);
 }
 ```
 
@@ -896,7 +968,7 @@ TEST(RenderGraphExecute, RenderSimpleBloomChain) {
 - Core render graph types and compile phase
 - DAG validation and topological sort
 - Resource aliasing for transient textures/buffers
-- D3D12 integration (barriers, resource allocation)
+- RHI integration (barriers via `rhi()->cmd_barrier_texture/buffer`, resource allocation via `rhi()->texture_create/buffer_create`)
 - Basic post-process passes (bloom, SSAO, SSR, TAA)
 - IPC debug visualization
 
@@ -917,3 +989,4 @@ TEST(RenderGraphExecute, RenderSimpleBloomChain) {
 - [Screen-Space Effects](screen-space-effects.md) — SSAO, SSR, TAA technical details
 - [Point & Spot Light Shadows](point-spot-light-shadows.md) — Shadow rendering as RenderGraph passes
 - [Debug & Profiling](debug-profiling.md) — Tracy integration for per-pass GPU timing
+- [RHI](rhi.md) — Handle types, vtable, and backend abstraction used by the Render Graph

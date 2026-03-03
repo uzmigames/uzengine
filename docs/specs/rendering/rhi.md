@@ -132,6 +132,9 @@ typedef enum RhiFormat {
     RHI_FORMAT_RGBA8_UNORM,
     RHI_FORMAT_RGBA16_FLOAT,
     RHI_FORMAT_R32_FLOAT,
+    RHI_FORMAT_R8_UNORM,
+    RHI_FORMAT_R11G11B10_FLOAT,
+    RHI_FORMAT_RGB10A2_UNORM,
     RHI_FORMAT_D32_FLOAT,
     RHI_FORMAT_BC7_UNORM,
     RHI_FORMAT_BC5_UNORM,
@@ -139,12 +142,37 @@ typedef enum RhiFormat {
     // ...
 } RhiFormat;
 
+typedef enum RhiResourceState {
+    RHI_STATE_UNDEFINED                  = 0,
+    RHI_STATE_COMMON                     = 1,
+    RHI_STATE_RENDER_TARGET              = 2,
+    RHI_STATE_DEPTH_WRITE                = 3,
+    RHI_STATE_DEPTH_READ                 = 4,
+    RHI_STATE_SHADER_READ                = 5,
+    RHI_STATE_UNORDERED_ACCESS           = 6,
+    RHI_STATE_COPY_SRC                   = 7,
+    RHI_STATE_COPY_DST                   = 8,
+    RHI_STATE_PRESENT                    = 9,
+    RHI_STATE_INDIRECT_ARGUMENT          = 10,
+    RHI_STATE_VERTEX_AND_CONSTANT_BUFFER = 11,
+    RHI_STATE_INDEX_BUFFER               = 12,
+} RhiResourceState;
+
+typedef enum RhiTextureDimension {
+    RHI_TEXTURE_DIM_2D       = 0,
+    RHI_TEXTURE_DIM_3D       = 1,
+    RHI_TEXTURE_DIM_CUBE     = 2,
+    RHI_TEXTURE_DIM_2D_ARRAY = 3,
+} RhiTextureDimension;
+
 typedef struct RhiTextureDesc {
-    uint32_t   width, height, depth;
-    uint32_t   mip_levels;
-    RhiFormat  format;
-    uint32_t   usage;       // RHI_USAGE_* flags
-    const char *debug_name;
+    uint32_t            width, height, depth;
+    uint32_t            mip_levels;
+    uint32_t            array_size;   // 1 for regular textures, 6 for cube maps
+    RhiFormat           format;
+    RhiTextureDimension dimension;    // 2D, 3D, Cube, or 2D Array
+    uint32_t            usage;        // RHI_USAGE_* flags
+    const char         *debug_name;
 } RhiTextureDesc;
 
 typedef struct RhiBufferDesc {
@@ -168,6 +196,11 @@ typedef struct RhiPipelineDesc {
     // rasterizer, blend, depth-stencil state...
 } RhiPipelineDesc;
 
+typedef struct RhiComputePipelineDesc {
+    RhiShaderDesc compute_shader;
+    const char   *debug_name;
+} RhiComputePipelineDesc;
+
 // Backend vtable — the entire RHI surface
 typedef struct rhi_backend_t {
     // Lifecycle
@@ -188,6 +221,7 @@ typedef struct rhi_backend_t {
 
     // Pipelines (backed by PSO cache — keyed by SPIR-V hash)
     RhiPipeline (*pipeline_create)(const RhiPipelineDesc *desc);
+    RhiPipeline (*compute_pipeline_create)(const RhiComputePipelineDesc *desc);
     void        (*pipeline_destroy)(RhiPipeline pipeline);
 
     // Command recording
@@ -208,8 +242,8 @@ typedef struct rhi_backend_t {
     void (*cmd_dispatch)(RhiCmdList cmd, uint32_t x, uint32_t y, uint32_t z);
 
     // Barriers (explicit, maps to D3D12 barriers / Vulkan pipeline barriers / Metal hazard tracking)
-    void (*cmd_barrier_texture)(RhiCmdList cmd, RhiTexture tex, uint32_t src_state, uint32_t dst_state);
-    void (*cmd_barrier_buffer)(RhiCmdList cmd, RhiBuffer buf, uint32_t src_state, uint32_t dst_state);
+    void (*cmd_barrier_texture)(RhiCmdList cmd, RhiTexture tex, RhiResourceState src_state, RhiResourceState dst_state);
+    void (*cmd_barrier_buffer)(RhiCmdList cmd, RhiBuffer buf, RhiResourceState src_state, RhiResourceState dst_state);
 
     // Swapchain
     RhiTexture (*swapchain_backbuffer)(void);
@@ -414,3 +448,6 @@ Metal is provided by the Apple platform SDK.
 - [ ] HLSL authoring rules documented in `docs/guides/shader-authoring.md`
 - [ ] All new rendering code (Phase 2+) written against RHI only
 - [ ] CMake backend selection working for Windows (DX12), CI verified
+- [ ] `RhiResourceState` enum used in all barrier calls (no raw `uint32_t` states)
+- [ ] `RhiComputePipelineDesc` supports compute-only pipelines via `compute_pipeline_create`
+- [ ] `RhiTextureDimension` allows Cube and 3D texture creation in `RhiTextureDesc`

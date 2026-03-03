@@ -134,23 +134,7 @@ playing voices switch to new buffer (next iteration)
 
 Represents a playable sound attached to a node. Only one clip per node; for multi-layered ambient use multiple child nodes.
 
-```cpp
-// src/engine/audio/components.h
-struct CAudioSource {
-    StringId     clip_id;      // res://audio/effect.wav (resolved at load)
-    float        volume;       // 0.0 – 1.0 (default 1.0)
-    float        pitch;        // 0.5 – 2.0 (default 1.0, affects playback speed)
-    float        min_dist;     // 3D attenuation start in meters (default 1.0)
-    float        max_dist;     // 3D attenuation end in meters (default 100.0)
-    bool         loop;         // true = repeat; false = play once (default false)
-    bool         play_on_start;// true = auto-play when scene loads (default false)
-    bool         spatial;      // true = 3D positioning; false = 2D (default false)
-    StringId     bus_id;       // "Master", "SFX", "Music", "Voice" (default "Master")
-    // Runtime state (internal)
-    uint32_t     voice_id;     // XAudio2 voice handle (0 = not playing)
-    bool         is_playing;   // mirrors XAudio2 voice state
-};
-```
+> **Definition**: `src/engine/audio/components.h` — see [Audio Abstraction Layer spec](audio-abstraction-layer.md#caudioaource-ecs-component) for the canonical struct definition. The struct uses `IAudioEngine`-compatible handles (`AudioSourceHandle`) instead of raw XAudio2 voice IDs, enabling headless testing and future backend swapping.
 
 ### `CAudioListener`
 
