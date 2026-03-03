@@ -42,6 +42,96 @@ export enum ViewColumn {
 }
 
 // ---------------------------------------------------------------------------
+// TreeItemCollapsibleState enum
+// ---------------------------------------------------------------------------
+
+export enum TreeItemCollapsibleState {
+    None = 0,
+    Collapsed = 1,
+    Expanded = 2,
+}
+
+// ---------------------------------------------------------------------------
+// TreeItem class
+// ---------------------------------------------------------------------------
+
+export class TreeItem {
+    public label: string;
+    public collapsibleState: TreeItemCollapsibleState;
+    public contextValue?: string;
+    public tooltip?: string;
+    public description?: string;
+    public iconPath?: unknown;
+    public command?: { command: string; title: string; arguments?: unknown[] };
+
+    constructor(label: string, collapsibleState?: TreeItemCollapsibleState) {
+        this.label = label;
+        this.collapsibleState = collapsibleState ?? TreeItemCollapsibleState.None;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// ThemeIcon class
+// ---------------------------------------------------------------------------
+
+export class ThemeIcon {
+    constructor(public readonly id: string, public readonly color?: unknown) {}
+}
+
+// ---------------------------------------------------------------------------
+// EventEmitter class
+// ---------------------------------------------------------------------------
+
+type EventListener<T> = (e: T) => void;
+
+export class EventEmitter<T> {
+    private readonly _listeners: Set<EventListener<T>> = new Set();
+    private _disposed = false;
+
+    readonly event: (listener: EventListener<T>) => { dispose: () => void } = (listener) => {
+        if (!this._disposed) {
+            this._listeners.add(listener);
+        }
+        return {
+            dispose: () => {
+                this._listeners.delete(listener);
+            },
+        };
+    };
+
+    fire(data: T): void {
+        if (this._disposed) { return; }
+        for (const listener of this._listeners) {
+            listener(data);
+        }
+    }
+
+    dispose(): void {
+        this._disposed = true;
+        this._listeners.clear();
+    }
+}
+
+// ---------------------------------------------------------------------------
+// TreeView mock factory
+// ---------------------------------------------------------------------------
+
+export function makeMockTreeView() {
+    return {
+        selection: [] as unknown[],
+        visible: true,
+        message: undefined as string | undefined,
+        title: undefined as string | undefined,
+        dispose: jest.fn(),
+        reveal: jest.fn(),
+        onDidExpandElement: jest.fn(() => ({ dispose: jest.fn() })),
+        onDidCollapseElement: jest.fn(() => ({ dispose: jest.fn() })),
+        onDidChangeSelection: jest.fn(() => ({ dispose: jest.fn() })),
+        onDidChangeVisibility: jest.fn(() => ({ dispose: jest.fn() })),
+    };
+}
+
+// ---------------------------------------------------------------------------
 // WebviewPanel factory helpers
 // ---------------------------------------------------------------------------
 
@@ -50,12 +140,20 @@ export function makeMockWebviewPanel() {
     const listeners: {
         viewState: Array<(e: { webviewPanel: { visible: boolean; active: boolean } }) => void>;
         dispose: Array<() => void>;
-    } = { viewState: [], dispose: [] };
+        message: Array<(msg: unknown) => void>;
+    } = { viewState: [], dispose: [], message: [] };
 
     const webview = {
         html: '',
-        postMessage: jest.fn().mockResolvedValue(true),
-        onDidReceiveMessage: jest.fn(),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        postMessage: jest.fn<() => Promise<boolean>>().mockResolvedValue(true),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        onDidReceiveMessage: jest.fn((cb: (msg: unknown) => void, _thisArg?: unknown, disposables?: Disposable[]) => {
+            listeners.message.push(cb);
+            const d: Disposable = { dispose: jest.fn() };
+            if (disposables) { disposables.push(d); }
+            return d;
+        }),
         options: {},
         cspSource: 'vscode-webview:',
     };
@@ -74,9 +172,11 @@ export function makeMockWebviewPanel() {
             listeners.viewState.push(cb);
             return { dispose: jest.fn() };
         }),
-        onDidDispose: jest.fn((cb: () => void) => {
+        onDidDispose: jest.fn((cb: () => void, _thisArg?: unknown, disposables?: Disposable[]) => {
             listeners.dispose.push(cb);
-            return { dispose: jest.fn() };
+            const d: Disposable = { dispose: jest.fn() };
+            if (disposables) { disposables.push(d); }
+            return d;
         }),
         // Test helpers for simulating events
         _simulateVisibilityChange(visible: boolean) {
@@ -85,6 +185,9 @@ export function makeMockWebviewPanel() {
         },
         _simulateDispose() {
             listeners.dispose.forEach(cb => cb());
+        },
+        _simulateMessage(msg: unknown) {
+            listeners.message.forEach(cb => cb(msg));
         },
     };
 
@@ -115,16 +218,27 @@ export const window = {
         panel.title = title;
         return panel;
     }),
-    createOutputChannel: jest.fn((_name: string) => ({
+    createOutputChannel: jest.fn((name: string) => ({
+        name,
         appendLine: jest.fn(),
         append: jest.fn(),
+        replace: jest.fn(),
         clear: jest.fn(),
         show: jest.fn(),
+        hide: jest.fn(),
         dispose: jest.fn(),
     })),
-    showErrorMessage: jest.fn().mockResolvedValue(undefined),
-    showWarningMessage: jest.fn().mockResolvedValue(undefined),
-    showInformationMessage: jest.fn().mockResolvedValue(undefined),
+    createTreeView: jest.fn((_viewId: string, _options: unknown) => {
+        return makeMockTreeView();
+    }),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    showErrorMessage: jest.fn<() => Promise<any>>().mockResolvedValue(undefined),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    showWarningMessage: jest.fn<() => Promise<any>>().mockResolvedValue(undefined),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    showInformationMessage: jest.fn<() => Promise<any>>().mockResolvedValue(undefined),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    showInputBox: jest.fn<() => Promise<any>>().mockResolvedValue(undefined),
     createStatusBarItem: jest.fn(() => ({
         text: '',
         tooltip: '',
@@ -193,9 +307,10 @@ export const commands = {
         _commandHandlers.set(id, handler);
         return { dispose: jest.fn() };
     }),
-    executeCommand: jest.fn(async (id: string, ...args: unknown[]) => {
+    executeCommand: jest.fn(async (id: string, ...args: unknown[]): Promise<unknown> => {
         const handler = _commandHandlers.get(id);
         if (handler) { return handler(...args); }
+        return undefined;
     }),
     // Test helper
     __executeRegisteredCommand(id: string, ...args: unknown[]): unknown {
@@ -237,7 +352,7 @@ export const env = {
     openExternal: jest.fn(),
     clipboard: {
         writeText: jest.fn(),
-        readText: jest.fn().mockResolvedValue(''),
+        readText: jest.fn<() => Promise<string>>().mockResolvedValue(''),
     },
 };
 
@@ -259,11 +374,11 @@ export function makeMockContext(): {
         extensionPath: '/mock/extension',
         workspaceState: {
             get: jest.fn(),
-            update: jest.fn().mockResolvedValue(undefined),
+            update: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
         },
         globalState: {
             get: jest.fn(),
-            update: jest.fn().mockResolvedValue(undefined),
+            update: jest.fn<() => Promise<void>>().mockResolvedValue(undefined),
         },
     };
 }

@@ -12,6 +12,63 @@
   "activationEvents": [],
   "main": "./out/extension.js",
   "contributes": {
+    "languages": [
+      {
+        "id": "uzscene",
+        "aliases": ["UzScene", "uzscene"],
+        "extensions": [".uzscene"],
+        "configuration": "./syntaxes/uzscene-language-config.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "uzscene",
+        "scopeName": "source.uzscene",
+        "path": "./syntaxes/uzscene.tmLanguage.json"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "uzengine",
+          "title": "UzEngine",
+          "icon": "$(symbol-namespace)"
+        }
+      ]
+    },
+    "views": {
+      "uzengine": [
+        {
+          "id": "uzengine.sceneTree",
+          "name": "Scene Tree",
+          "when": "true"
+        }
+      ]
+    },
+    "menus": {
+      "view/item/context": [
+        {
+          "command": "uzengine.addNode",
+          "when": "view == uzengine.sceneTree && viewItem == sceneNode",
+          "group": "1_scene@1"
+        },
+        {
+          "command": "uzengine.duplicateNode",
+          "when": "view == uzengine.sceneTree && viewItem == sceneNode",
+          "group": "1_scene@2"
+        },
+        {
+          "command": "uzengine.renameNode",
+          "when": "view == uzengine.sceneTree && viewItem == sceneNode",
+          "group": "1_scene@3"
+        },
+        {
+          "command": "uzengine.deleteNode",
+          "when": "view == uzengine.sceneTree && viewItem == sceneNode",
+          "group": "2_destructive@1"
+        }
+      ]
+    },
     "commands": [
       {
         "command": "uzengine.openStreamViewer",
@@ -27,6 +84,53 @@
         "command": "uzengine.stopServer",
         "title": "UzEngine: Stop Server",
         "category": "UzEngine"
+      },
+      {
+        "command": "uzengine.addNode",
+        "title": "Add Child Node",
+        "category": "UzEngine",
+        "icon": "$(add)"
+      },
+      {
+        "command": "uzengine.deleteNode",
+        "title": "Delete Node",
+        "category": "UzEngine",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "uzengine.renameNode",
+        "title": "Rename Node",
+        "category": "UzEngine",
+        "icon": "$(edit)"
+      },
+      {
+        "command": "uzengine.duplicateNode",
+        "title": "Duplicate Node",
+        "category": "UzEngine",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "uzengine.selectNode",
+        "title": "Select Node",
+        "category": "UzEngine"
+      },
+      {
+        "command": "uzengine.play",
+        "title": "UzEngine: Play",
+        "category": "UzEngine",
+        "icon": "$(play)"
+      },
+      {
+        "command": "uzengine.pause",
+        "title": "UzEngine: Pause",
+        "category": "UzEngine",
+        "icon": "$(debug-pause)"
+      },
+      {
+        "command": "uzengine.stop",
+        "title": "UzEngine: Stop",
+        "category": "UzEngine",
+        "icon": "$(debug-stop)"
       }
     ],
     "configuration": {
@@ -74,7 +178,8 @@
     "roots": ["<rootDir>/src"],
     "testMatch": ["**/__tests__/**/*.test.ts"],
     "moduleNameMapper": {
-      "^vscode$": "<rootDir>/src/__mocks__/vscode.ts"
+      "^vscode$": "<rootDir>/src/__mocks__/vscode.ts",
+      "^ws$": "<rootDir>/src/__mocks__/ws.ts"
     },
     "collectCoverageFrom": [
       "src/**/*.ts",

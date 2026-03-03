@@ -57,15 +57,17 @@ function setupManager(ipcDir: string): {
     manager: ViewportManager;
     ctx: ReturnType<typeof makeMockContext>;
 } {
-    const { workspace } = jest.requireMock<typeof import('../__mocks__/vscode')>('../__mocks__/vscode');
-    workspace.__setConfig('uzengine', 'ipcDirectory', ipcDir);
-
     const ctx = makeMockContext();
     const outputChannel = vscodeWindow.createOutputChannel('test');
     const manager = ViewportManager.initialize(
-        ctx as Parameters<typeof ViewportManager.initialize>[0],
+        ctx as unknown as Parameters<typeof ViewportManager.initialize>[0],
         outputChannel
     );
+    // Patch the engineClient's baseDir directly to avoid Jest module
+    // instance mismatch between jest.requireMock('vscode') and the
+    // 'vscode' module loaded via moduleNameMapper in engine-client.ts.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (manager as any)._engineClient.baseDir = ipcDir;
     return { manager, ctx };
 }
 
@@ -112,9 +114,6 @@ beforeEach(() => {
     ViewportManager._resetForTests();
 
     ipcDir = makeTmpDir();
-
-    const { workspace } = jest.requireMock<typeof import('../__mocks__/vscode')>('../__mocks__/vscode');
-    workspace.__clearConfig();
 });
 
 afterEach(() => {
@@ -145,6 +144,17 @@ describe('ViewportManager', () => {
             expect(ViewportManager.getInstance()).toBe(manager);
         });
 
+        it('returns the existing instance when initialize() is called a second time', () => {
+            const { manager, ctx } = setupManager(ipcDir);
+            const outputChannel = vscodeWindow.createOutputChannel('test2');
+            const manager2 = ViewportManager.initialize(
+                ctx as unknown as Parameters<typeof ViewportManager.initialize>[0],
+                outputChannel
+            );
+            expect(manager2).toBe(manager);
+            manager.dispose();
+        });
+
         it('_resetForTests() clears the singleton so getInstance() throws again', () => {
             setupManager(ipcDir);
             ViewportManager._resetForTests();
@@ -162,7 +172,7 @@ describe('ViewportManager', () => {
 
             const createPromise = manager.createViewport(
                 { type: 'scene', title: 'Test', width: 1280, height: 720, targetFps: 60, jpegQuality: 85 },
-                ctx as Parameters<typeof manager.createViewport>[1]
+                ctx as unknown as Parameters<typeof manager.createViewport>[1]
             );
 
             await new Promise(r => setTimeout(r, 70));
@@ -207,7 +217,7 @@ describe('ViewportManager', () => {
 
             const createPromise = manager.createViewport(
                 { type: 'scene', title: 'Test', width: 800, height: 600 },
-                ctx as Parameters<typeof manager.createViewport>[1]
+                ctx as unknown as Parameters<typeof manager.createViewport>[1]
             );
 
             await resolveCreateViewport(ipcDir, 5);
@@ -229,7 +239,7 @@ describe('ViewportManager', () => {
 
             const panel = await manager.createViewport(
                 { type: 'material', title: 'Mat', width: 512, height: 512 },
-                ctx as Parameters<typeof manager.createViewport>[1]
+                ctx as unknown as Parameters<typeof manager.createViewport>[1]
             );
 
             // Panel has no valid ID.
@@ -248,7 +258,7 @@ describe('ViewportManager', () => {
 
             manager.createViewport(
                 { type: 'mesh', title: 'Mesh', width: 512, height: 512 },
-                ctx as Parameters<typeof manager.createViewport>[1]
+                ctx as unknown as Parameters<typeof manager.createViewport>[1]
             ).catch(() => { /* ignore timeout */ });
 
             await new Promise(r => setTimeout(r, 70));
@@ -257,6 +267,33 @@ describe('ViewportManager', () => {
             const cmd = JSON.parse(raw) as { args: Record<string, unknown> };
             expect(cmd.args.target_fps).toBe(60);
             expect(cmd.args.jpeg_quality).toBe(85);
+            manager.dispose();
+        }, 5000);
+
+        it('returns inactive panel when engine returns viewport_id=0 (invalid)', async () => {
+            const { manager, ctx } = setupManager(ipcDir);
+
+            const createPromise = manager.createViewport(
+                { type: 'scene', title: 'Invalid', width: 320, height: 240 },
+                ctx as unknown as Parameters<typeof manager.createViewport>[1]
+            );
+
+            await new Promise(r => setTimeout(r, 70));
+            const raw = fs.readFileSync(path.join(ipcDir, 'command.json'), 'utf-8');
+            const cmd = JSON.parse(raw) as { id: string };
+            // Return viewport_id: 0 (VIEWPORT_ID_INVALID).
+            writeResponse(ipcDir, {
+                id: cmd.id,
+                ok: true,
+                result: { viewport_id: 0, ws_port: 9002, vram_bytes: 0 },
+                error: null,
+                timestamp_ms: 1,
+            });
+
+            const panel = await createPromise;
+            // Since viewport_id=0 triggers an IpcError internally, the catch block
+            // returns the panel in inactive state.
+            expect(panel.viewportId).toBe(VIEWPORT_ID_INVALID);
             manager.dispose();
         }, 5000);
     });
@@ -275,7 +312,7 @@ describe('ViewportManager', () => {
 
             const createPromise = manager.createViewport(
                 { type: 'scene', title: 'T', width: 640, height: 480 },
-                ctx as Parameters<typeof manager.createViewport>[1]
+                ctx as unknown as Parameters<typeof manager.createViewport>[1]
             );
 
             await new Promise(r => setTimeout(r, 70));
@@ -391,7 +428,7 @@ describe('ViewportManager', () => {
 
         it('is a no-op for buffers shorter than 4 bytes', () => {
             const { manager } = setupManager(ipcDir);
-            const fakePanel = { receiveFrame: jest.fn() };
+            const fakePanel = { receiveFrame: jest.fn(), dispose: jest.fn(), isDisposed: false };
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             (manager as any)._panels.set(1, fakePanel);
 
@@ -421,6 +458,7 @@ describe('ViewportManager', () => {
                 state: 'suspended' as const,
                 markActive: jest.fn(),
                 markSuspended: jest.fn(),
+                dispose: jest.fn(),
             };
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             (manager as any)._panels.set(4, fakePanel);
@@ -449,6 +487,7 @@ describe('ViewportManager', () => {
                 state: 'active' as const,
                 markActive: jest.fn(),
                 markSuspended: jest.fn(),
+                dispose: jest.fn(),
             };
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             (manager as any)._panels.set(5, fakePanel);
@@ -474,6 +513,7 @@ describe('ViewportManager', () => {
                 state: 'inactive' as const,
                 markActive: jest.fn(),
                 markSuspended: jest.fn(),
+                dispose: jest.fn(),
             };
 
             // Should not write any command file.
@@ -528,10 +568,15 @@ describe('ViewportManager', () => {
 
             await new Promise(r => setTimeout(r, 70));
             const raw = fs.readFileSync(path.join(ipcDir, 'command.json'), 'utf-8');
-            const cmd = JSON.parse(raw) as { function: string; args: Record<string, unknown> };
+            const cmd = JSON.parse(raw) as { function: string; args: Record<string, unknown>; id: string };
 
             expect(cmd.function).toBe('viewport.destroy');
             expect(cmd.args.viewport_id).toBe(8);
+
+            // Write success response to cover the success log branch in _destroyViewport.
+            writeResponse(ipcDir, { id: cmd.id, ok: true, result: {}, error: null, timestamp_ms: 1 });
+            await new Promise(r => setTimeout(r, 70));
+
             manager.dispose();
         }, 5000);
     });
@@ -544,9 +589,9 @@ describe('ViewportManager', () => {
         it('suspends all active panels', async () => {
             const { manager } = setupManager(ipcDir);
 
-            const panel1 = { viewportId: 1, isDisposed: false, state: 'active' as const, markSuspended: jest.fn(), markActive: jest.fn() };
-            const panel2 = { viewportId: 2, isDisposed: false, state: 'active' as const, markSuspended: jest.fn(), markActive: jest.fn() };
-            const panel3 = { viewportId: 3, isDisposed: false, state: 'suspended' as const, markSuspended: jest.fn(), markActive: jest.fn() };
+            const panel1 = { viewportId: 1, isDisposed: false, state: 'active' as const, markSuspended: jest.fn(), markActive: jest.fn(), dispose: jest.fn() };
+            const panel2 = { viewportId: 2, isDisposed: false, state: 'active' as const, markSuspended: jest.fn(), markActive: jest.fn(), dispose: jest.fn() };
+            const panel3 = { viewportId: 3, isDisposed: false, state: 'suspended' as const, markSuspended: jest.fn(), markActive: jest.fn(), dispose: jest.fn() };
 
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             (manager as any)._panels.set(1, panel1);
@@ -594,6 +639,7 @@ describe('ViewportManager', () => {
                 isVisible: true,
                 markActive: jest.fn(),
                 markSuspended: jest.fn(),
+                dispose: jest.fn(),
             };
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             (manager as any)._panels.set(1, panel1);
@@ -619,6 +665,7 @@ describe('ViewportManager', () => {
                 isVisible: false, // Not visible — should be skipped.
                 markActive: jest.fn(),
                 markSuspended: jest.fn(),
+                dispose: jest.fn(),
             };
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             (manager as any)._panels.set(1, panel1);
@@ -689,6 +736,21 @@ describe('ViewportManager', () => {
 
             await expect(manager.resizeViewport(1, 800, 600)).resolves.toBeUndefined();
         });
+
+        it('swallows IPC error when engine is not running', async () => {
+            const { manager } = setupManager(ipcDir);
+
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const { EngineClient } = await import('../engine-client');
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (EngineClient as any).RESPONSE_TIMEOUT_MS = 80;
+
+            await expect(manager.resizeViewport(6, 640, 480)).resolves.toBeUndefined();
+
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (EngineClient as any).RESPONSE_TIMEOUT_MS = 5000;
+            manager.dispose();
+        }, 5000);
     });
 
     // -------------------------------------------------------------------------
@@ -699,8 +761,8 @@ describe('ViewportManager', () => {
         it('returns an array of all registered panels', () => {
             const { manager } = setupManager(ipcDir);
 
-            const panel1 = { viewportId: 1 };
-            const panel2 = { viewportId: 2 };
+            const panel1 = { viewportId: 1, dispose: jest.fn(), isDisposed: false };
+            const panel2 = { viewportId: 2, dispose: jest.fn(), isDisposed: false };
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             (manager as any)._panels.set(1, panel1);
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -764,5 +826,321 @@ describe('ViewportManager', () => {
 
             expect(() => ViewportManager.getInstance()).toThrow();
         });
+    });
+
+    // -------------------------------------------------------------------------
+    // engineClient getter
+    // -------------------------------------------------------------------------
+
+    describe('engineClient getter', () => {
+        it('returns the internal EngineClient instance', () => {
+            const { manager } = setupManager(ipcDir);
+
+            const client = manager.engineClient;
+            expect(client).toBeDefined();
+            expect(typeof client.call).toBe('function');
+
+            manager.dispose();
+        });
+    });
+
+    // -------------------------------------------------------------------------
+    // createViewport — additional coverage paths
+    // -------------------------------------------------------------------------
+
+    describe('createViewport() — additional branches', () => {
+        it('throws when called after dispose()', async () => {
+            const { manager, ctx } = setupManager(ipcDir);
+            manager.dispose();
+
+            await expect(
+                manager.createViewport(
+                    { type: 'scene', title: 'T', width: 100, height: 100, targetFps: 60, jpegQuality: 85 },
+                    ctx as unknown as Parameters<typeof ViewportManager.prototype.createViewport>[1]
+                )
+            ).rejects.toThrow('disposed');
+        });
+    });
+
+    // -------------------------------------------------------------------------
+    // closeViewport — panel dispose path
+    // -------------------------------------------------------------------------
+
+    describe('closeViewport() — IPC failure', () => {
+        it('swallows IPC error and still disposes the panel', async () => {
+            const { manager } = setupManager(ipcDir);
+            const panelDispose = jest.fn();
+            const fakePanel = { viewportId: 20, dispose: panelDispose, isDisposed: false };
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (manager as any)._panels.set(20, fakePanel);
+
+            // Force a very short timeout so the IPC call fails quickly.
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const { EngineClient } = await import('../engine-client');
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (EngineClient as any).RESPONSE_TIMEOUT_MS = 80;
+
+            await manager.closeViewport(20);
+
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (EngineClient as any).RESPONSE_TIMEOUT_MS = 5000;
+
+            // Panel should still be disposed even though IPC failed.
+            expect(panelDispose).toHaveBeenCalledTimes(1);
+            manager.dispose();
+        }, 5000);
+    });
+
+    describe('closeViewport() — panel dispose', () => {
+        it('disposes the panel after the IPC call settles', async () => {
+            const { manager } = setupManager(ipcDir);
+            const panelDispose = jest.fn();
+            const fakePanel = { viewportId: 10, dispose: panelDispose, isDisposed: false };
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (manager as any)._panels.set(10, fakePanel);
+
+            // Start closeViewport — it fires the IPC call then disposes the panel.
+            const closePromise = manager.closeViewport(10);
+
+            // Wait for command.json to appear, then write the response.
+            await new Promise(r => setTimeout(r, 50));
+            const raw = fs.readFileSync(path.join(ipcDir, 'command.json'), 'utf-8');
+            const cmd = JSON.parse(raw) as { id: string };
+            const tmp = path.join(ipcDir, 'response.json.tmp');
+            fs.writeFileSync(tmp, JSON.stringify({ id: cmd.id, ok: true, result: {}, error: null, timestamp_ms: 1 }), 'utf-8');
+            fs.renameSync(tmp, path.join(ipcDir, 'response.json'));
+
+            await closePromise;
+
+            expect(panelDispose).toHaveBeenCalledTimes(1);
+            manager.dispose();
+        }, 5000);
+    });
+
+    // -------------------------------------------------------------------------
+    // _setActive — disposed panel and IPC error branches
+    // -------------------------------------------------------------------------
+
+    // Tests covering the `String(err)` branch (when err is not an Error instance).
+
+    describe('non-Error thrown paths — String(err) coverage', () => {
+        it('createViewport handles non-Error throw from IPC', async () => {
+            const { manager, ctx } = setupManager(ipcDir);
+
+            // Patch call to throw a string (non-Error).
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            jest.spyOn((manager as any)._engineClient, 'call').mockRejectedValueOnce('string error');
+
+            const panel = await manager.createViewport(
+                { type: 'scene', title: 'T', width: 100, height: 100 },
+                ctx as unknown as Parameters<typeof manager.createViewport>[1]
+            );
+            expect(panel.viewportId).toBe(VIEWPORT_ID_INVALID);
+            manager.dispose();
+        });
+
+        it('closeViewport handles non-Error throw from IPC', async () => {
+            const { manager } = setupManager(ipcDir);
+            const fakePanel = { viewportId: 30, dispose: jest.fn(), isDisposed: false };
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (manager as any)._panels.set(30, fakePanel);
+
+            // Patch call to throw a string.
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            jest.spyOn((manager as any)._engineClient, 'call').mockRejectedValueOnce('string error');
+
+            await expect(manager.closeViewport(30)).resolves.toBeUndefined();
+            manager.dispose();
+        });
+
+        it('resizeViewport handles non-Error throw from IPC', async () => {
+            const { manager } = setupManager(ipcDir);
+
+            // Patch call to throw a string.
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            jest.spyOn((manager as any)._engineClient, 'call').mockRejectedValueOnce('string error');
+
+            await expect(manager.resizeViewport(6, 640, 480)).resolves.toBeUndefined();
+            manager.dispose();
+        });
+
+        it('_setActive handles non-Error throw from IPC', async () => {
+            const { manager } = setupManager(ipcDir);
+            const fakePanel = {
+                viewportId: 31, isDisposed: false, state: 'suspended' as const,
+                markActive: jest.fn(), markSuspended: jest.fn(), dispose: jest.fn(),
+            };
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (manager as any)._panels.set(31, fakePanel);
+
+            // Patch call to throw a string.
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            jest.spyOn((manager as any)._engineClient, 'call').mockRejectedValueOnce('string error');
+
+            await expect((manager as any)._setActive(31, true)).resolves.toBeUndefined();
+            manager.dispose();
+        });
+
+        it('_destroyViewport handles non-Error throw from IPC', async () => {
+            const { manager } = setupManager(ipcDir);
+
+            // Patch call to throw a string.
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            jest.spyOn((manager as any)._engineClient, 'call').mockRejectedValueOnce('string error');
+
+            await expect((manager as any)._destroyViewport(99)).resolves.toBeUndefined();
+            manager.dispose();
+        });
+    });
+
+    describe('closeViewport() — disposed guard', () => {
+        it('is a no-op when manager is disposed', async () => {
+            const { manager } = setupManager(ipcDir);
+            manager.dispose();
+
+            await expect(manager.closeViewport(99)).resolves.toBeUndefined();
+            expect(fs.existsSync(path.join(ipcDir, 'command.json'))).toBe(false);
+        });
+    });
+
+    describe('_setActive() — disposed manager guard', () => {
+        it('is a no-op when manager is disposed', async () => {
+            const { manager } = setupManager(ipcDir);
+            manager.dispose();
+
+            await (manager as any)._setActive(99, true);
+
+            expect(fs.existsSync(path.join(ipcDir, 'command.json'))).toBe(false);
+        });
+    });
+
+    describe('_setActive() — missing panel guard', () => {
+        it('is a no-op when the panel is not in the registry', async () => {
+            const { manager } = setupManager(ipcDir);
+
+            // Call _setActive with an ID that is not registered.
+            await (manager as any)._setActive(99, true);
+
+            // No IPC command should have been written.
+            expect(fs.existsSync(path.join(ipcDir, 'command.json'))).toBe(false);
+            manager.dispose();
+        });
+    });
+
+    describe('_setActive() — panel.isDisposed guard', () => {
+        it('is a no-op when the panel is disposed', async () => {
+            const { manager } = setupManager(ipcDir);
+            const markActive = jest.fn();
+            const fakePanel = {
+                viewportId: 15,
+                isDisposed: true,   // <-- disposed
+                state: 'suspended' as const,
+                markActive,
+                markSuspended: jest.fn(),
+                dispose: jest.fn(),
+            };
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (manager as any)._panels.set(15, fakePanel);
+
+            await (manager as any)._setActive(15, true);
+
+            // No IPC command should have been written.
+            expect(fs.existsSync(path.join(ipcDir, 'command.json'))).toBe(false);
+            expect(markActive).not.toHaveBeenCalled();
+            manager.dispose();
+        });
+    });
+
+    describe('_setActive() — IPC error path', () => {
+        it('swallows IPC error and logs it', async () => {
+            const { manager } = setupManager(ipcDir);
+            const markActive = jest.fn();
+            const fakePanel = {
+                viewportId: 16,
+                isDisposed: false,
+                state: 'suspended' as const,
+                markActive,
+                markSuspended: jest.fn(),
+                dispose: jest.fn(),
+            };
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (manager as any)._panels.set(16, fakePanel);
+
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const { EngineClient } = await import('../engine-client');
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (EngineClient as any).RESPONSE_TIMEOUT_MS = 80;
+
+            await expect((manager as any)._setActive(16, true)).resolves.toBeUndefined();
+            expect(markActive).not.toHaveBeenCalled();
+
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (EngineClient as any).RESPONSE_TIMEOUT_MS = 5000;
+            manager.dispose();
+        }, 5000);
+    });
+
+    // -------------------------------------------------------------------------
+    // _setActive — markSuspended branch
+    // -------------------------------------------------------------------------
+
+    describe('_setActive() — suspend (active=false)', () => {
+        it('calls markSuspended on the panel when setActive IPC returns for active=false', async () => {
+            const { manager } = setupManager(ipcDir);
+            const markSuspended = jest.fn();
+            const markActive = jest.fn();
+            const fakePanel = {
+                viewportId: 11,
+                isDisposed: false,
+                state: 'active' as const,
+                markSuspended,
+                markActive,
+                dispose: jest.fn(),
+            };
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (manager as any)._panels.set(11, fakePanel);
+
+            // Fire setActive(false) and immediately write the IPC response.
+            const setActivePromise = (manager as any)._setActive(11, false);
+            await new Promise(r => setTimeout(r, 30));
+            const raw = fs.readFileSync(path.join(ipcDir, 'command.json'), 'utf-8');
+            const cmd = JSON.parse(raw) as { id: string };
+            // Write the response so the IPC call resolves.
+            const tmp = path.join(ipcDir, 'response.json.tmp');
+            const resp = JSON.stringify({ id: cmd.id, ok: true, result: {}, error: null, timestamp_ms: 1 });
+            fs.writeFileSync(tmp, resp, 'utf-8');
+            fs.renameSync(tmp, path.join(ipcDir, 'response.json'));
+
+            await setActivePromise;
+            expect(markSuspended).toHaveBeenCalledTimes(1);
+
+            manager.dispose();
+        }, 5000);
+    });
+
+    // -------------------------------------------------------------------------
+    // _destroyViewport — error path (swallowed)
+    // -------------------------------------------------------------------------
+
+    describe('_destroyViewport() — IPC error swallowed', () => {
+        it('logs and swallows the error when viewport.destroy IPC times out', async () => {
+            const { manager } = setupManager(ipcDir);
+
+            // Use a very short timeout to trigger the timeout error quickly.
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const { EngineClient } = await import('../engine-client');
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (EngineClient as any).RESPONSE_TIMEOUT_MS = 80;
+
+            // Fire-and-forget destroy — it will time out and be swallowed.
+            const p = (manager as any)._destroyViewport(99);
+            await expect(p).resolves.toBeUndefined();
+
+            // Restore timeout.
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            (EngineClient as any).RESPONSE_TIMEOUT_MS = 5000;
+
+            manager.dispose();
+        }, 10000);
     });
 });

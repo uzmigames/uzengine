@@ -1,0 +1,50 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "UzScene",
+  "scopeName": "source.uzscene",
+  "fileTypes": [".uzscene"],
+  "patterns": [
+    { "include": "#comment" },
+    { "include": "#section" },
+    { "include": "#keyvalue" }
+  ],
+  "repository": {
+    "comment": {
+      "name": "comment.line.uzscene",
+      "match": "^\\s*[#;].*$"
+    },
+    "section": {
+      "name": "entity.name.section.uzscene",
+      "match": "^\\s*\\[([a-zA-Z_][a-zA-Z0-9_]*)\\]\\s*$",
+      "captures": {
+        "0": { "name": "entity.name.section.uzscene" }
+      }
+    },
+    "keyvalue": {
+      "match": "^\\s*([a-zA-Z_][a-zA-Z0-9_]*)\\s*(=)\\s*(.*)$",
+      "captures": {
+        "1": { "name": "keyword.other.key.uzscene" },
+        "2": { "name": "punctuation.separator.uzscene" },
+        "3": {
+          "patterns": [
+            { "include": "#node-type" },
+            { "include": "#number" },
+            { "include": "#string-value" }
+          ]
+        }
+      }
+    },
+    "node-type": {
+      "name": "support.type.node-type.uzscene",
+      "match": "\\b(Empty|Node3D|StaticMesh|DirectionalLight|PointLight|SpotLight|Camera|AudioSource|AudioListener)\\b"
+    },
+    "number": {
+      "name": "constant.numeric.uzscene",
+      "match": "-?\\b\\d+(\\.\\d+)?\\b"
+    },
+    "string-value": {
+      "name": "string.unquoted.value.uzscene",
+      "match": ".+"
+    }
+  }
+}

@@ -1,14 +1,14 @@
 ## 1. CLI Argument Parsing
 
-- [ ] 1.1 Parse `--editor`, `--play` mode flags from `argv`
-- [ ] 1.2 Parse `--project=<path>` — sets project root directory
-- [ ] 1.3 Parse `--scene=<path>` — overrides main_scene from project config
-- [ ] 1.4 Parse `--port=<n>` — WebSocket port override (default: 9002 editor, 9003 play)
-- [ ] 1.5 No args → default to `--editor` for backwards compat
+- [x] 1.1 Parse `--editor`, `--play` mode flags from `argv`
+- [x] 1.2 Parse `--project=<path>` — sets project root directory
+- [x] 1.3 Parse `--scene=<path>` — overrides main_scene from project config
+- [x] 1.4 Parse `--port=<n>` — WebSocket port override (default: 9002 editor, 9003 play)
+- [x] 1.5 No args → default to `--editor` for backwards compat
 
 ## 2. Engine Modes
 
-- [ ] 2.1 Create `src/engine/engine_mode.h` — `EngineMode` enum: `Editor`, `Play`
+- [x] 2.1 Create `src/engine/engine_mode.h` — `EngineMode` enum: `Editor`, `Play`
 - [ ] 2.2 Editor mode: IPC server active, scene manager active, render loop for viewport stream
 - [ ] 2.3 Editor mode: NO physics tick, NO script execution, NO audio
 - [ ] 2.4 Play mode: full render loop + (future) physics + (future) audio
@@ -24,11 +24,11 @@
 
 ## 4. Extension Side (play-controls.ts)
 
-- [ ] 4.1 `launchPlayMode(scenePath)` — spawn process, wait for ready signal
-- [ ] 4.2 `stopPlayMode()` — send `engine.stop` IPC, then SIGTERM if no response in 2s
-- [ ] 4.3 `pausePlayMode()` — send `engine.pause` IPC
-- [ ] 4.4 Play process exit event → auto-update status bar to idle
-- [ ] 4.5 Play process stdout/stderr → append to "UzEngine Play" output channel
+- [x] 4.1 `launchPlayMode(scenePath)` — spawn process, wait for ready signal
+- [x] 4.2 `stopPlayMode()` — send `engine.stop` IPC, then SIGTERM if no response in 2s
+- [x] 4.3 `pausePlayMode()` — send `engine.pause` IPC
+- [x] 4.4 Play process exit event → auto-update status bar to idle
+- [x] 4.5 Play process stdout/stderr → append to "UzEngine Play" output channel
 
 ## 5. Viewport Switching
 

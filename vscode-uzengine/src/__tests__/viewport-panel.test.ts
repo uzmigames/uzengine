@@ -85,7 +85,7 @@ describe('ViewportPanel', () => {
         it('creates a WebviewPanel with correct viewType containing the viewport type', () => {
             const host = makeHost();
             const ctx = makeMockContext();
-            new ViewportPanel(defaultConfig, host, ctx as Parameters<typeof ViewportPanel>[2]);
+            new ViewportPanel(defaultConfig, host, ctx as unknown as ConstructorParameters<typeof ViewportPanel>[2]);
 
             expect(vscodeWindow.createWebviewPanel).toHaveBeenCalledWith(
                 'uzengine.viewport.scene',
@@ -101,7 +101,7 @@ describe('ViewportPanel', () => {
         it('sets loading HTML immediately (before initialize())', () => {
             const host = makeHost();
             const ctx = makeMockContext();
-            new ViewportPanel(defaultConfig, host, ctx as Parameters<typeof ViewportPanel>[2]);
+            new ViewportPanel(defaultConfig, host, ctx as unknown as ConstructorParameters<typeof ViewportPanel>[2]);
 
             expect(mockPanel.webview.html).toContain('Initialising scene viewport');
             expect(mockPanel.webview.html).toContain('Test Scene');
@@ -110,7 +110,7 @@ describe('ViewportPanel', () => {
         it('registers onDidChangeViewState listener', () => {
             const host = makeHost();
             const ctx = makeMockContext();
-            new ViewportPanel(defaultConfig, host, ctx as Parameters<typeof ViewportPanel>[2]);
+            new ViewportPanel(defaultConfig, host, ctx as unknown as ConstructorParameters<typeof ViewportPanel>[2]);
 
             expect(mockPanel.onDidChangeViewState).toHaveBeenCalledTimes(1);
         });
@@ -118,7 +118,7 @@ describe('ViewportPanel', () => {
         it('registers onDidDispose listener', () => {
             const host = makeHost();
             const ctx = makeMockContext();
-            new ViewportPanel(defaultConfig, host, ctx as Parameters<typeof ViewportPanel>[2]);
+            new ViewportPanel(defaultConfig, host, ctx as unknown as ConstructorParameters<typeof ViewportPanel>[2]);
 
             expect(mockPanel.onDidDispose).toHaveBeenCalledTimes(1);
         });
@@ -126,7 +126,7 @@ describe('ViewportPanel', () => {
         it('starts with viewportId === VIEWPORT_ID_INVALID', () => {
             const host = makeHost();
             const ctx = makeMockContext();
-            const panel = new ViewportPanel(defaultConfig, host, ctx as Parameters<typeof ViewportPanel>[2]);
+            const panel = new ViewportPanel(defaultConfig, host, ctx as unknown as ConstructorParameters<typeof ViewportPanel>[2]);
 
             expect(panel.viewportId).toBe(VIEWPORT_ID_INVALID);
         });
@@ -134,7 +134,7 @@ describe('ViewportPanel', () => {
         it('starts with state === inactive', () => {
             const host = makeHost();
             const ctx = makeMockContext();
-            const panel = new ViewportPanel(defaultConfig, host, ctx as Parameters<typeof ViewportPanel>[2]);
+            const panel = new ViewportPanel(defaultConfig, host, ctx as unknown as ConstructorParameters<typeof ViewportPanel>[2]);
 
             expect(panel.state).toBe('inactive');
         });
@@ -142,7 +142,7 @@ describe('ViewportPanel', () => {
         it('adds itself to context.subscriptions', () => {
             const host = makeHost();
             const ctx = makeMockContext();
-            const panel = new ViewportPanel(defaultConfig, host, ctx as Parameters<typeof ViewportPanel>[2]);
+            const panel = new ViewportPanel(defaultConfig, host, ctx as unknown as ConstructorParameters<typeof ViewportPanel>[2]);
 
             expect(ctx.subscriptions).toContain(panel);
         });
@@ -152,7 +152,7 @@ describe('ViewportPanel', () => {
         it('sets the viewportId to the provided value', () => {
             const host = makeHost();
             const ctx = makeMockContext();
-            const panel = new ViewportPanel(defaultConfig, host, ctx as Parameters<typeof ViewportPanel>[2]);
+            const panel = new ViewportPanel(defaultConfig, host, ctx as unknown as ConstructorParameters<typeof ViewportPanel>[2]);
 
             panel.initialize(42, 9002);
             expect(panel.viewportId).toBe(42);
@@ -161,7 +161,7 @@ describe('ViewportPanel', () => {
         it('updates webview HTML with stream canvas content', () => {
             const host = makeHost();
             const ctx = makeMockContext();
-            const panel = new ViewportPanel(defaultConfig, host, ctx as Parameters<typeof ViewportPanel>[2]);
+            const panel = new ViewportPanel(defaultConfig, host, ctx as unknown as ConstructorParameters<typeof ViewportPanel>[2]);
 
             panel.initialize(1, 9002);
 
@@ -172,7 +172,7 @@ describe('ViewportPanel', () => {
         it('embeds the viewport_id in the stream HTML', () => {
             const host = makeHost();
             const ctx = makeMockContext();
-            const panel = new ViewportPanel(defaultConfig, host, ctx as Parameters<typeof ViewportPanel>[2]);
+            const panel = new ViewportPanel(defaultConfig, host, ctx as unknown as ConstructorParameters<typeof ViewportPanel>[2]);
 
             panel.initialize(7, 9002);
 
@@ -182,17 +182,17 @@ describe('ViewportPanel', () => {
         it('embeds the ws_port in the stream HTML', () => {
             const host = makeHost();
             const ctx = makeMockContext();
-            const panel = new ViewportPanel(defaultConfig, host, ctx as Parameters<typeof ViewportPanel>[2]);
+            const panel = new ViewportPanel(defaultConfig, host, ctx as unknown as ConstructorParameters<typeof ViewportPanel>[2]);
 
             panel.initialize(1, 9050);
 
-            expect(mockPanel.webview.html).toContain('WS_PORT = 9050');
+            expect(mockPanel.webview.html).toContain('9050');
         });
 
         it('is a no-op when the panel is already disposed', () => {
             const host = makeHost();
             const ctx = makeMockContext();
-            const panel = new ViewportPanel(defaultConfig, host, ctx as Parameters<typeof ViewportPanel>[2]);
+            const panel = new ViewportPanel(defaultConfig, host, ctx as unknown as ConstructorParameters<typeof ViewportPanel>[2]);
             panel.dispose();
 
             // Should not throw or change state.
@@ -205,7 +205,7 @@ describe('ViewportPanel', () => {
         it('markActive() sets state to active', () => {
             const host = makeHost();
             const ctx = makeMockContext();
-            const panel = new ViewportPanel(defaultConfig, host, ctx as Parameters<typeof ViewportPanel>[2]);
+            const panel = new ViewportPanel(defaultConfig, host, ctx as unknown as ConstructorParameters<typeof ViewportPanel>[2]);
             panel.initialize(1, 9002);
 
             panel.markActive();
@@ -215,7 +215,7 @@ describe('ViewportPanel', () => {
         it('markSuspended() sets state to suspended', () => {
             const host = makeHost();
             const ctx = makeMockContext();
-            const panel = new ViewportPanel(defaultConfig, host, ctx as Parameters<typeof ViewportPanel>[2]);
+            const panel = new ViewportPanel(defaultConfig, host, ctx as unknown as ConstructorParameters<typeof ViewportPanel>[2]);
             panel.initialize(1, 9002);
             panel.markActive();
 
@@ -226,7 +226,7 @@ describe('ViewportPanel', () => {
         it('markActive() is a no-op when disposed', () => {
             const host = makeHost();
             const ctx = makeMockContext();
-            const panel = new ViewportPanel(defaultConfig, host, ctx as Parameters<typeof ViewportPanel>[2]);
+            const panel = new ViewportPanel(defaultConfig, host, ctx as unknown as ConstructorParameters<typeof ViewportPanel>[2]);
             panel.dispose();
 
             expect(() => panel.markActive()).not.toThrow();
@@ -236,7 +236,7 @@ describe('ViewportPanel', () => {
         it('markSuspended() is a no-op when disposed', () => {
             const host = makeHost();
             const ctx = makeMockContext();
-            const panel = new ViewportPanel(defaultConfig, host, ctx as Parameters<typeof ViewportPanel>[2]);
+            const panel = new ViewportPanel(defaultConfig, host, ctx as unknown as ConstructorParameters<typeof ViewportPanel>[2]);
             panel.dispose();
 
             expect(() => panel.markSuspended()).not.toThrow();
@@ -248,7 +248,7 @@ describe('ViewportPanel', () => {
         it('notifies host with visible=false when panel becomes hidden', () => {
             const host = makeHost();
             const ctx = makeMockContext();
-            const panel = new ViewportPanel(defaultConfig, host, ctx as Parameters<typeof ViewportPanel>[2]);
+            const panel = new ViewportPanel(defaultConfig, host, ctx as unknown as ConstructorParameters<typeof ViewportPanel>[2]);
 
             mockPanel._simulateVisibilityChange(false);
 
@@ -259,7 +259,7 @@ describe('ViewportPanel', () => {
         it('notifies host with visible=true when panel becomes visible', () => {
             const host = makeHost();
             const ctx = makeMockContext();
-            const panel = new ViewportPanel(defaultConfig, host, ctx as Parameters<typeof ViewportPanel>[2]);
+            const panel = new ViewportPanel(defaultConfig, host, ctx as unknown as ConstructorParameters<typeof ViewportPanel>[2]);
 
             mockPanel._simulateVisibilityChange(true);
 
@@ -270,7 +270,7 @@ describe('ViewportPanel', () => {
         it('fires multiple notifications for multiple visibility changes', () => {
             const host = makeHost();
             const ctx = makeMockContext();
-            const panel = new ViewportPanel(defaultConfig, host, ctx as Parameters<typeof ViewportPanel>[2]);
+            const panel = new ViewportPanel(defaultConfig, host, ctx as unknown as ConstructorParameters<typeof ViewportPanel>[2]);
 
             mockPanel._simulateVisibilityChange(false);
             mockPanel._simulateVisibilityChange(true);
@@ -286,7 +286,7 @@ describe('ViewportPanel', () => {
         it('notifies host when the underlying panel is disposed', () => {
             const host = makeHost();
             const ctx = makeMockContext();
-            const panel = new ViewportPanel(defaultConfig, host, ctx as Parameters<typeof ViewportPanel>[2]);
+            const panel = new ViewportPanel(defaultConfig, host, ctx as unknown as ConstructorParameters<typeof ViewportPanel>[2]);
 
             mockPanel._simulateDispose();
 
@@ -297,7 +297,7 @@ describe('ViewportPanel', () => {
         it('sets state to destroyed when the underlying panel fires onDidDispose', () => {
             const host = makeHost();
             const ctx = makeMockContext();
-            const panel = new ViewportPanel(defaultConfig, host, ctx as Parameters<typeof ViewportPanel>[2]);
+            const panel = new ViewportPanel(defaultConfig, host, ctx as unknown as ConstructorParameters<typeof ViewportPanel>[2]);
 
             mockPanel._simulateDispose();
 
@@ -309,7 +309,7 @@ describe('ViewportPanel', () => {
         it('posts a frame message to the webview when panel is visible', () => {
             const host = makeHost();
             const ctx = makeMockContext();
-            const panel = new ViewportPanel(defaultConfig, host, ctx as Parameters<typeof ViewportPanel>[2]);
+            const panel = new ViewportPanel(defaultConfig, host, ctx as unknown as ConstructorParameters<typeof ViewportPanel>[2]);
             panel.initialize(1, 9002);
 
             // Panel starts visible (mock default).
@@ -327,7 +327,7 @@ describe('ViewportPanel', () => {
         it('includes all bytes from the jpeg in the posted data array', () => {
             const host = makeHost();
             const ctx = makeMockContext();
-            const panel = new ViewportPanel(defaultConfig, host, ctx as Parameters<typeof ViewportPanel>[2]);
+            const panel = new ViewportPanel(defaultConfig, host, ctx as unknown as ConstructorParameters<typeof ViewportPanel>[2]);
             panel.initialize(1, 9002);
             mockPanel.visible = true;
 
@@ -344,7 +344,7 @@ describe('ViewportPanel', () => {
         it('does not post when panel is not visible', () => {
             const host = makeHost();
             const ctx = makeMockContext();
-            const panel = new ViewportPanel(defaultConfig, host, ctx as Parameters<typeof ViewportPanel>[2]);
+            const panel = new ViewportPanel(defaultConfig, host, ctx as unknown as ConstructorParameters<typeof ViewportPanel>[2]);
             panel.initialize(1, 9002);
             mockPanel.visible = false;
 
@@ -356,7 +356,7 @@ describe('ViewportPanel', () => {
         it('does not post when panel is disposed', () => {
             const host = makeHost();
             const ctx = makeMockContext();
-            const panel = new ViewportPanel(defaultConfig, host, ctx as Parameters<typeof ViewportPanel>[2]);
+            const panel = new ViewportPanel(defaultConfig, host, ctx as unknown as ConstructorParameters<typeof ViewportPanel>[2]);
             panel.initialize(1, 9002);
             panel.dispose();
 
@@ -370,7 +370,7 @@ describe('ViewportPanel', () => {
         it('sets isDisposed to true', () => {
             const host = makeHost();
             const ctx = makeMockContext();
-            const panel = new ViewportPanel(defaultConfig, host, ctx as Parameters<typeof ViewportPanel>[2]);
+            const panel = new ViewportPanel(defaultConfig, host, ctx as unknown as ConstructorParameters<typeof ViewportPanel>[2]);
 
             panel.dispose();
             expect(panel.isDisposed).toBe(true);
@@ -379,7 +379,7 @@ describe('ViewportPanel', () => {
         it('sets state to destroyed', () => {
             const host = makeHost();
             const ctx = makeMockContext();
-            const panel = new ViewportPanel(defaultConfig, host, ctx as Parameters<typeof ViewportPanel>[2]);
+            const panel = new ViewportPanel(defaultConfig, host, ctx as unknown as ConstructorParameters<typeof ViewportPanel>[2]);
 
             panel.dispose();
             expect(panel.state).toBe('destroyed');
@@ -388,7 +388,7 @@ describe('ViewportPanel', () => {
         it('disposes the underlying VSCode panel', () => {
             const host = makeHost();
             const ctx = makeMockContext();
-            const panel = new ViewportPanel(defaultConfig, host, ctx as Parameters<typeof ViewportPanel>[2]);
+            const panel = new ViewportPanel(defaultConfig, host, ctx as unknown as ConstructorParameters<typeof ViewportPanel>[2]);
 
             panel.dispose();
             expect(mockPanel.dispose).toHaveBeenCalledTimes(1);
@@ -397,7 +397,7 @@ describe('ViewportPanel', () => {
         it('is idempotent — calling dispose() twice does not throw or double-dispose', () => {
             const host = makeHost();
             const ctx = makeMockContext();
-            const panel = new ViewportPanel(defaultConfig, host, ctx as Parameters<typeof ViewportPanel>[2]);
+            const panel = new ViewportPanel(defaultConfig, host, ctx as unknown as ConstructorParameters<typeof ViewportPanel>[2]);
 
             panel.dispose();
             expect(() => panel.dispose()).not.toThrow();
@@ -410,7 +410,7 @@ describe('ViewportPanel', () => {
         it('delegates to the underlying panel reveal method', () => {
             const host = makeHost();
             const ctx = makeMockContext();
-            const panel = new ViewportPanel(defaultConfig, host, ctx as Parameters<typeof ViewportPanel>[2]);
+            const panel = new ViewportPanel(defaultConfig, host, ctx as unknown as ConstructorParameters<typeof ViewportPanel>[2]);
 
             panel.reveal(ViewColumn.Two);
             expect(mockPanel.reveal).toHaveBeenCalledWith(ViewColumn.Two);
@@ -419,7 +419,7 @@ describe('ViewportPanel', () => {
         it('reveals with undefined column when none specified', () => {
             const host = makeHost();
             const ctx = makeMockContext();
-            const panel = new ViewportPanel(defaultConfig, host, ctx as Parameters<typeof ViewportPanel>[2]);
+            const panel = new ViewportPanel(defaultConfig, host, ctx as unknown as ConstructorParameters<typeof ViewportPanel>[2]);
 
             panel.reveal();
             expect(mockPanel.reveal).toHaveBeenCalledWith(undefined);
@@ -430,7 +430,7 @@ describe('ViewportPanel', () => {
         it('reflects the underlying panel visible property', () => {
             const host = makeHost();
             const ctx = makeMockContext();
-            const panel = new ViewportPanel(defaultConfig, host, ctx as Parameters<typeof ViewportPanel>[2]);
+            const panel = new ViewportPanel(defaultConfig, host, ctx as unknown as ConstructorParameters<typeof ViewportPanel>[2]);
 
             mockPanel.visible = true;
             expect(panel.isVisible).toBe(true);

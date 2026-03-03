@@ -14,8 +14,8 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import * as vscode from 'vscode';
 import { EngineClient, IpcError } from '../engine-client';
-import { window } from '../__mocks__/vscode';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -41,14 +41,34 @@ function readCommand(dir: string): { id: string; function: string; args: Record<
     return JSON.parse(raw) as { id: string; function: string; args: Record<string, unknown> };
 }
 
-/** Creates an EngineClient whose IPC directory is overridden via workspace config. */
-function makeClient(ipcDir: string): EngineClient {
-    // Patch workspace.getConfiguration to return ipcDir for 'ipcDirectory' key.
-    const { workspace } = jest.requireMock<typeof import('../__mocks__/vscode')>('../__mocks__/vscode');
-    workspace.__setConfig('uzengine', 'ipcDirectory', ipcDir);
+/** Creates a minimal mock OutputChannel for EngineClient. */
+function makeMockOutputChannel() {
+    return {
+        appendLine: jest.fn(),
+        append: jest.fn(),
+        clear: jest.fn(),
+        show: jest.fn(),
+        hide: jest.fn(),
+        dispose: jest.fn(),
+        replace: jest.fn(),
+        name: 'test',
+    };
+}
 
-    const outputChannel = window.createOutputChannel('test');
-    return new EngineClient(outputChannel);
+/** Creates an EngineClient whose IPC directory is overridden directly.
+ *
+ * We bypass workspace.getConfiguration entirely and patch the private
+ * `baseDir` property directly on the instance after construction to avoid
+ * the Jest module caching issue where jest.requireMock('vscode') and
+ * the vscode module loaded via moduleNameMapper are different instances.
+ */
+function makeClient(ipcDir: string): EngineClient {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const client = new EngineClient(makeMockOutputChannel() as any);
+    // Override the private baseDir to point to our temp directory.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (client as any).baseDir = ipcDir;
+    return client;
 }
 
 // ---------------------------------------------------------------------------
@@ -56,7 +76,8 @@ function makeClient(ipcDir: string): EngineClient {
 // ---------------------------------------------------------------------------
 
 beforeEach(() => {
-    const { workspace } = jest.requireMock<typeof import('../__mocks__/vscode')>('../__mocks__/vscode');
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { workspace } = jest.requireMock<any>('vscode');
     workspace.__clearConfig();
     jest.clearAllMocks();
 });
@@ -141,6 +162,26 @@ describe('EngineClient', () => {
             await expect(callPromise).rejects.toMatchObject({
                 message: expect.stringContaining('Invalid dimensions'),
                 functionName: 'viewport.create',
+            });
+
+            client.dispose();
+            fs.rmSync(dir, { recursive: true });
+        });
+
+        it('uses "unknown error" message when error field is null in ok=false response', async () => {
+            const dir = makeTmpDir();
+            const client = makeClient(dir);
+
+            const callPromise = client.call('engine.ping', {});
+            await new Promise(r => setTimeout(r, 60));
+            const cmd = readCommand(dir);
+
+            // error: null — triggers the `?? 'unknown error'` branch.
+            writeResponse(dir, { id: cmd.id, ok: false, result: {}, error: null, timestamp_ms: 1 });
+
+            await expect(callPromise).rejects.toBeInstanceOf(IpcError);
+            await expect(callPromise).rejects.toMatchObject({
+                message: expect.stringContaining('unknown error'),
             });
 
             client.dispose();
@@ -371,6 +412,137 @@ describe('EngineClient', () => {
             expect(err.commandId).toBe('cmd-123');
             expect(err).toBeInstanceOf(Error);
             expect(err).toBeInstanceOf(IpcError);
+        });
+    });
+
+    describe('resolveBaseDir()', () => {
+        it('returns the explicit ipcDirectory config value when set', () => {
+            const dir = makeTmpDir();
+            const client = new EngineClient(makeMockOutputChannel() as any);
+            // Set the config on the same vscode instance used by engine-client.ts.
+            (vscode.workspace as any).__setConfig('uzengine', 'ipcDirectory', '/custom/ipc/dir');
+
+            const resolved = (client as any).resolveBaseDir();
+            expect(resolved).toBe('/custom/ipc/dir');
+
+            (vscode.workspace as any).__clearConfig();
+            client.dispose();
+            fs.rmSync(dir, { recursive: true });
+        });
+
+        it('returns the first existing candidate path when no explicit config is set', () => {
+            const dir = makeTmpDir();
+            const debugPath = path.join(dir, 'build', 'Debug', 'preview');
+            fs.mkdirSync(debugPath, { recursive: true });
+
+            const client = new EngineClient(makeMockOutputChannel() as any);
+            // Override workspace folder to our temp dir.
+            const origFolders = (vscode.workspace as any).workspaceFolders;
+            (vscode.workspace as any).workspaceFolders = [{ uri: { fsPath: dir }, name: 'test', index: 0 }];
+            (vscode.workspace as any).__clearConfig();
+
+            const resolved = (client as any).resolveBaseDir();
+            // The Release path does not exist, so it should find Debug.
+            expect(resolved).toBe(path.join(dir, 'build', 'Debug', 'preview'));
+
+            (vscode.workspace as any).workspaceFolders = origFolders;
+            client.dispose();
+            fs.rmSync(dir, { recursive: true });
+        });
+
+        it('returns the Release fallback when no candidate path exists', () => {
+            const dir = makeTmpDir();
+            const client = new EngineClient(makeMockOutputChannel() as any);
+            // Override workspace folder to our temp dir (no build dirs created).
+            const origFolders = (vscode.workspace as any).workspaceFolders;
+            (vscode.workspace as any).workspaceFolders = [{ uri: { fsPath: dir }, name: 'test', index: 0 }];
+            (vscode.workspace as any).__clearConfig();
+
+            const resolved = (client as any).resolveBaseDir();
+            expect(resolved).toBe(path.join(dir, 'build', 'Release', 'preview'));
+
+            (vscode.workspace as any).workspaceFolders = origFolders;
+            client.dispose();
+            fs.rmSync(dir, { recursive: true });
+        });
+
+        it('returns a relative default path when no workspace folders are open', () => {
+            const dir = makeTmpDir();
+            const client = new EngineClient(makeMockOutputChannel() as any);
+            const origFolders = (vscode.workspace as any).workspaceFolders;
+            (vscode.workspace as any).workspaceFolders = undefined;
+            (vscode.workspace as any).__clearConfig();
+
+            const resolved = (client as any).resolveBaseDir();
+            expect(resolved).toBe(path.join('build', 'Release', 'preview'));
+
+            (vscode.workspace as any).workspaceFolders = origFolders;
+            client.dispose();
+            fs.rmSync(dir, { recursive: true });
+        });
+    });
+
+    describe('call() — mkdir failure', () => {
+        it('throws IpcError when the IPC directory cannot be created', async () => {
+            const dir = makeTmpDir();
+            const client = makeClient(dir);
+
+            // Replace the internal baseDir with a path that will cause mkdir to fail:
+            // use a path where a file exists at the parent location.
+            const blockingFile = path.join(dir, 'blocker');
+            fs.writeFileSync(blockingFile, 'x', 'utf-8');
+            // Point baseDir to a subdirectory of the file — mkdir will fail.
+            (client as any).baseDir = path.join(blockingFile, 'subdir');
+
+            await expect(client.call('engine.ping', {})).rejects.toBeInstanceOf(IpcError);
+            await expect(client.call('engine.ping', {})).rejects.toMatchObject({
+                message: expect.stringContaining('Failed to create IPC directory'),
+            });
+
+            client.dispose();
+            fs.rmSync(dir, { recursive: true });
+        });
+    });
+
+    describe('call() — disposed while polling', () => {
+        it('throws IpcError when the client is disposed while waiting for a response', async () => {
+            const dir = makeTmpDir();
+            const client = makeClient(dir);
+
+            const callPromise = client.call('engine.ping', {});
+
+            // Wait for the command to be written, then dispose mid-poll.
+            await new Promise(r => setTimeout(r, 60));
+            client.dispose();
+
+            await expect(callPromise).rejects.toBeInstanceOf(IpcError);
+            await expect(callPromise).rejects.toMatchObject({
+                message: expect.stringContaining('disposed'),
+            });
+
+            fs.rmSync(dir, { recursive: true });
+        });
+    });
+
+    describe('call() — write command.json failure', () => {
+        it('throws IpcError when writeFile fails', async () => {
+            const dir = makeTmpDir();
+            const client = makeClient(dir);
+
+            // Spy on fs.promises.writeFile to throw.
+            const writeError = new Error('ENOSPC: no space left on device');
+            const writeFileSpy = jest.spyOn(fs.promises, 'writeFile').mockRejectedValueOnce(writeError);
+
+            const callPromise = client.call('engine.ping', {});
+
+            await expect(callPromise).rejects.toBeInstanceOf(IpcError);
+            await expect(callPromise).rejects.toMatchObject({
+                message: expect.stringContaining('Failed to write command.json'),
+            });
+
+            writeFileSpy.mockRestore();
+            client.dispose();
+            fs.rmSync(dir, { recursive: true });
         });
     });
 });
