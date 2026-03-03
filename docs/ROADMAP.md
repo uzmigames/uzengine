@@ -39,55 +39,33 @@ Phase 0 established the foundational rendering and communication pipeline:
 
 ---
 
-## Phase Reorganization Notice (2026-03-02)
+## Phase Redistribution Plan (2026-03-03)
 
-The original 5-phase structure (Phase 0–4) has been expanded to **8 phases** to better reflect dependency ordering and release milestones. The full reorganization plan is documented in [`docs/reviews/PHASE-REORGANIZATION.md`](reviews/PHASE-REORGANIZATION.md).
+The original 5-phase structure has been redistributed into **10 phases + Tools track** based on dependency depth analysis. See full plan: [`docs/reviews/PHASE-REDISTRIBUTION-PLAN.md`](reviews/PHASE-REDISTRIBUTION-PLAN.md)
 
-**New phase structure:**
+> **Note**: Task folder IDs (e.g. `phase2-pbr-renderer`) are NOT renamed — they are tracking labels only. New phase numbers are in PHASE-REDISTRIBUTION-PLAN.md.
 
-| Phase | Name | Tasks | Goal |
-|-------|------|-------|------|
-| 0 | Architecture & Design | 9 | Design docs, no code |
-| 1 | Core Engine MVP | ~18 | Playable demo scene in VSCode |
-| 2 | Rendering Foundation | ~22 | Full PBR, physics, audio, asset import |
-| 3 | Engine Systems | ~28 | Animation, UI, scripting, input, save |
-| 4 | Advanced Rendering | ~20 | TAA, SSR, volumetrics, clustering, GI |
-| 5 | Gameplay Systems | ~25 | Abilities, dialogue, behaviors, vehicles |
-| 6 | World & Tools | ~28 | Terrain, WorldGen, VFX, NavMesh, build |
-| 7 | AAA & Shipping | ~22 | DXR, Nanite, DLSS, build pipeline |
-| Tools | Developer Tools | ~18 | Asset/shader/perf/level tools (parallel track) |
+| Phase | Name | Tasks | Goal | Est. Month |
+|-------|------|-------|------|-----------|
+| 1 | Engine Foundation | 18 | DX12 boots, scene loads, streams to VSCode | 1 |
+| 2 | Editor Core | 20 | Full editor workflow, Lua scripting | 2 |
+| 3 | Asset Pipeline | 18 | glTF/FBX/texture/audio import, .uzpak | 3–4 |
+| 4 | Rendering Quality | 20 | PBR shadows, post-process, UI system | 5–6 |
+| 5 | Physics & Gameplay Core | 18 | Jolt physics, audio, input, camera, save | 7–8 |
+| 6 | Characters & Animation | 20 | Skeletal mesh, animation AAA suite, VFX | 9–10 |
+| 7 | Advanced Rendering | 20 | TAA, SSR, volumetrics, GI, area lights | 11–13 |
+| 8 | Gameplay Systems | 22 | Dialogue, vehicles, accessibility, full UI | 14–15 |
+| 9 | World Systems | 20 | Terrain, NavMesh, WorldGen, build pipeline | 16–18 |
+| 10 | AAA & Stable MVP | 18 | Nanite, DLSS/FSR, tools, CI hardening | 19–22 |
+| Tools | Developer Tools | 10 | Parallel — unlock after Phase 2 | Any |
+| **Total** | | **188** | **Stable MVP** | **~22 months** |
 
-**Key changes from original structure:**
-
-- Phase 2 (53 tasks) split: rendering foundation stays Phase 2; advanced rendering moves to Phase 4; engine systems move to Phase 3
-- Phase 3 (65 tasks) split: core game systems stay Phase 3; AAA animation and rendering move to Phases 4–5; advanced gameplay moves to Phase 5
-- Phase 4 becomes AAA & Shipping; original Phase 4 content redistributed to Phases 6–7
-- New **Tools track** (parallel, non-blocking): 18 developer tooling tasks identified as missing from current task list
-
-**18 new tool tasks identified** (not yet Rulebook tasks except where noted):
-
-| Tool Task | Priority | Min Phase |
-|-----------|----------|-----------|
-| tools-content-audit | P0 | Phase 2 |
-| tools-shader-debugger | P0 | Phase 2 |
-| tools-project-packager | P0 | Phase 6 |
-| tools-draw-call-analyzer | P0 | Phase 2 |
-| tools-scene-linter | P1 | Phase 1 |
-| tools-asset-validator | P1 | Phase 2 |
-| tools-gpu-memory-viz | P1 | Phase 2 |
-| tools-uzmesh-inspector | P1 | Phase 2 |
-| tools-spline-editor | P1 | Phase 6 |
-| tools-performance-budget-enforcer | P1 | Phase 2 |
-| tools-texture-batch-processor | P2 | Phase 2 |
-| tools-mesh-optimizer-cli | P2 | Phase 2 |
-| tools-hlsl-formatter | P2 | Phase 1 |
-| tools-shader-profiler-view | P2 | Phase 2 |
-| tools-localization-export | P2 | Phase 3 |
-| tools-heightmap-converter | P2 | Phase 6 |
-| tools-level-streaming-config | P3 | Phase 6 |
-| tools-network-simulator | P3 | Future |
-
-The top 10 priority tools have `proposal.md` files at `.rulebook/tasks/tools-{name}/proposal.md`.
+### Critical Dependency Chains (summary)
+- **Foundation**: rhi-design → render-graph → pbr-renderer → bindless → gpu-driven → nanite
+- **Scene**: scene-system → lua-scripting → timer-system → gameplay-ability-system
+- **Animation**: gltf-import → skeletal-mesh → animation-system → ragdoll / motion-warping
+- **Physics**: scene-system → event-bus → physics-system → vehicle / ragdoll / buoyancy
+- **Rendering quality**: pbr-renderer → shadows → TAA → SSR → virtual-shadow-maps → DXR
 
 ---
 
