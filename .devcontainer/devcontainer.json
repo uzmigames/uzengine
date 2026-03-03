@@ -1,0 +1,83 @@
+// Dev Container for UzEngine
+// VSCode reads this as JSONC (JSON with Comments).
+{
+  "name": "UzEngine Dev",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+
+  // -----------------------------------------------------------------------
+  // Forwarded ports
+  // -----------------------------------------------------------------------
+  "forwardPorts": [9001],
+  "portsAttributes": {
+    "9001": { "label": "UzEngine IPC/WS", "onAutoForward": "silent" }
+  },
+
+  // -----------------------------------------------------------------------
+  // Volumes
+  //   - vcpkg installed packages  → persisted between rebuilds
+  //   - node_modules              → persisted between rebuilds
+  // -----------------------------------------------------------------------
+  "mounts": [
+    "source=uzengine-vcpkg-cache,target=/opt/vcpkg/installed,type=volume",
+    "source=uzengine-node-modules,target=${containerWorkspaceFolder}/vscode-uzengine/node_modules,type=volume"
+  ],
+
+  // -----------------------------------------------------------------------
+  // Environment variables
+  // -----------------------------------------------------------------------
+  "remoteEnv": {
+    "VCPKG_ROOT": "/opt/vcpkg",
+    "VCPKG_DEFAULT_TRIPLET": "x64-linux",
+    "CMAKE_TOOLCHAIN_FILE": "/opt/vcpkg/scripts/buildsystems/vcpkg.cmake",
+    "CC": "clang",
+    "CXX": "clang++"
+  },
+
+  // -----------------------------------------------------------------------
+  // Non-root user
+  // -----------------------------------------------------------------------
+  "remoteUser": "vscode",
+
+  // -----------------------------------------------------------------------
+  // VSCode extensions + settings inside the container
+  // -----------------------------------------------------------------------
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-vscode.cpptools",
+        "ms-vscode.cmake-tools",
+        "llvm-vs-code-extensions.vscode-clangd",
+        "ms-vscode.vscode-typescript-next",
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "streetsidesoftware.code-spell-checker",
+        "github.vscode-github-actions"
+      ],
+      "settings": {
+        "cmake.configureOnOpen": false,
+        "cmake.buildDirectory": "${workspaceFolder}/build-container",
+        "clangd.path": "/usr/bin/clangd",
+        "editor.formatOnSave": true,
+        "editor.defaultFormatter": "esbenp.prettier-vscode",
+        "[cpp]": { "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd" },
+        "[c]":   { "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd" }
+      }
+    }
+  },
+
+  // -----------------------------------------------------------------------
+  // Lifecycle scripts
+  // -----------------------------------------------------------------------
+
+  // postCreateCommand: runs ONCE when the container is first created.
+  // Installs Node deps, configures CMake, builds + runs tests to verify setup,
+  // and installs the Claude Code settings that enable bypassPermissions.
+  "postCreateCommand": "bash /workspaces/UzEngine/.devcontainer/post-create.sh",
+
+  // postStartCommand: runs every time the container starts.
+  // Lightweight — just syncs compile_commands.json for clangd.
+  "postStartCommand": "bash /workspaces/UzEngine/.devcontainer/post-start.sh"
+}

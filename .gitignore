@@ -6,6 +6,8 @@
 # C++ Build Artifacts
 # -----------------------------------------------------------------------------
 /build/
+/build-ninja/
+/build-container/
 /out/
 *.exe
 *.pdb
@@ -102,3 +104,4 @@ tmp/
 logs/
 
 vcpkg_installed/
+/.claude/settings.local.json
