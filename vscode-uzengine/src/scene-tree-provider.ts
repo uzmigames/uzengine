@@ -341,6 +341,29 @@ export class SceneTreeProvider
         void this._loadTree();
     }
 
+    /**
+     * Populates the tree from locally-parsed scene data (no IPC required).
+     * Called when a .uzscene file is opened in the editor.
+     *
+     * @param nodes  Root nodes from `parseUzScene().roots`.
+     */
+    loadFromFile(nodes: SceneNodeData[]): void {
+        if (this._disposed) { return; }
+        this._rootNodes = nodes;
+        this._loaded = true;
+        this._onDidChangeTreeData.fire();
+    }
+
+    /**
+     * Clears the tree (e.g., when the .uzscene file is closed).
+     */
+    clear(): void {
+        if (this._disposed) { return; }
+        this._rootNodes = [];
+        this._loaded = false;
+        this._onDidChangeTreeData.fire();
+    }
+
     // -------------------------------------------------------------------------
     // Dispose
     // -------------------------------------------------------------------------

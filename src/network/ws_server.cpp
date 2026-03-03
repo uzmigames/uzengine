@@ -30,6 +30,7 @@ struct WsServer::Impl {
     std::vector<uint8_t> initSegment;
 
     LogCallback logCb;
+    TextMessageCallback textCb;
 
     void log(const std::string& msg) {
         if (logCb) {
@@ -63,6 +64,14 @@ void WsServer::setInitSegment(std::vector<uint8_t> initSegment) {
 
 void WsServer::setLogCallback(LogCallback cb) {
     impl_->logCb = std::move(cb);
+}
+
+// ---------------------------------------------------------------------------
+// setTextMessageCallback
+// ---------------------------------------------------------------------------
+
+void WsServer::setTextMessageCallback(TextMessageCallback cb) {
+    impl_->textCb = std::move(cb);
 }
 
 // ---------------------------------------------------------------------------
@@ -127,6 +136,12 @@ bool WsServer::start(uint16_t port) {
 
                 impl_->log("Client disconnected. Total: " +
                            std::to_string(clientCount()));
+
+            } else if (msg->type == ix::WebSocketMessageType::Message) {
+                // Forward non-binary (text) messages to the registered callback.
+                if (!msg->binary && impl_->textCb) {
+                    impl_->textCb(msg->str);
+                }
 
             } else if (msg->type == ix::WebSocketMessageType::Error) {
                 impl_->log("WebSocket error: " + msg->errorInfo.reason);

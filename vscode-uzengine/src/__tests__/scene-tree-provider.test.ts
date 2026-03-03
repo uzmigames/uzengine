@@ -869,6 +869,95 @@ describe('SceneTreeProvider', () => {
         });
     });
 
+    describe('loadFromFile()', () => {
+        it('populates the tree from local data without IPC', () => {
+            const { client, request } = makeMockIpc();
+            const provider = new SceneTreeProvider(client);
+
+            const nodes = [
+                makeNode({ id: 'f1', name: 'FileRoot', type: 'Node3D' }),
+            ];
+            provider.loadFromFile(nodes);
+
+            const items = provider.getChildren(undefined) as NodeItem[];
+            expect(items).toHaveLength(1);
+            expect(items[0].nodeId).toBe('f1');
+            expect(request).not.toHaveBeenCalledWith('scene.getTree', expect.anything());
+
+            provider.dispose();
+        });
+
+        it('fires onDidChangeTreeData', () => {
+            const { client } = makeMockIpc();
+            const provider = new SceneTreeProvider(client);
+
+            const changes: number[] = [];
+            provider.onDidChangeTreeData(() => changes.push(1));
+
+            provider.loadFromFile([makeNode()]);
+            expect(changes.length).toBeGreaterThan(0);
+
+            provider.dispose();
+        });
+
+        it('does nothing when disposed', () => {
+            const { client } = makeMockIpc();
+            const provider = new SceneTreeProvider(client);
+
+            const changes: number[] = [];
+            provider.onDidChangeTreeData(() => changes.push(1));
+            provider.dispose();
+
+            const countBefore = changes.length;
+            provider.loadFromFile([makeNode()]);
+            expect(changes.length).toBe(countBefore);
+        });
+    });
+
+    describe('clear()', () => {
+        it('clears the tree and sets loaded to false', () => {
+            const { client } = makeMockIpc();
+            const provider = new SceneTreeProvider(client);
+
+            provider.loadFromFile([makeNode()]);
+            expect((provider.getChildren(undefined) as NodeItem[]).length).toBe(1);
+
+            provider.clear();
+            // After clear, _loaded=false so getChildren triggers async load and returns []
+            const items = provider.getChildren(undefined) as NodeItem[];
+            expect(items).toHaveLength(0);
+
+            provider.dispose();
+        });
+
+        it('fires onDidChangeTreeData on clear', () => {
+            const { client } = makeMockIpc();
+            const provider = new SceneTreeProvider(client);
+            provider.loadFromFile([makeNode()]);
+
+            const changes: number[] = [];
+            provider.onDidChangeTreeData(() => changes.push(1));
+            provider.clear();
+
+            expect(changes.length).toBeGreaterThan(0);
+            provider.dispose();
+        });
+
+        it('does nothing when disposed', () => {
+            const { client } = makeMockIpc();
+            const provider = new SceneTreeProvider(client);
+            provider.loadFromFile([makeNode()]);
+
+            const changes: number[] = [];
+            provider.onDidChangeTreeData(() => changes.push(1));
+            provider.dispose();
+
+            const countBefore = changes.length;
+            provider.clear();
+            expect(changes.length).toBe(countBefore);
+        });
+    });
+
     describe('dispose()', () => {
         it('unsubscribes from scene.treeChanged', () => {
             const { client, unsubscribers } = makeMockIpc();

@@ -2,7 +2,7 @@
   "name": "vscode-uzengine",
   "displayName": "UzEngine Stream Viewer",
   "description": "View UzEngine DX12 renderer stream in VSCode",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -12,12 +12,60 @@
   "activationEvents": [],
   "main": "./out/extension.js",
   "contributes": {
+    "customEditors": [
+      {
+        "viewType": "uzengine.uzsceneEditor",
+        "displayName": "UzScene Editor",
+        "selector": [{ "filenamePattern": "*.uzscene" }],
+        "priority": "default"
+      }
+    ],
     "languages": [
       {
         "id": "uzscene",
         "aliases": ["UzScene", "uzscene"],
         "extensions": [".uzscene"],
-        "configuration": "./syntaxes/uzscene-language-config.json"
+        "configuration": "./syntaxes/uzscene-language-config.json",
+        "icon": {
+          "light": "./icons/uzscene.png",
+          "dark": "./icons/uzscene.png"
+        }
+      },
+      {
+        "id": "uzmat",
+        "aliases": ["UzMat", "uzmat"],
+        "extensions": [".uzmat"],
+        "icon": {
+          "light": "./icons/uzmat.png",
+          "dark": "./icons/uzmat.png"
+        }
+      },
+      {
+        "id": "uzproj",
+        "aliases": ["UzProj", "uzproj"],
+        "extensions": [".uzproj"],
+        "icon": {
+          "light": "./icons/uzproj.png",
+          "dark": "./icons/uzproj.png"
+        }
+      },
+      {
+        "id": "uzanim",
+        "aliases": ["UzAnim", "uzanim"],
+        "extensions": [".uzanim", ".uzskel"],
+        "icon": {
+          "light": "./icons/uzanim.png",
+          "dark": "./icons/uzanim.png"
+        }
+      },
+      {
+        "id": "hlsl",
+        "aliases": ["HLSL", "hlsl"],
+        "extensions": [".hlsl", ".hlsli"],
+        "icon": {
+          "light": "./icons/hlsl.png",
+          "dark": "./icons/hlsl.png"
+        }
       }
     ],
     "grammars": [
@@ -279,7 +327,11 @@
       }]
     }
   },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
   "devDependencies": {
+    "@types/ws": "^8.5.0",
     "@types/jest": "^29.5.0",
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.85.0",

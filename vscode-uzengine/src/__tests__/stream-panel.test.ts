@@ -436,6 +436,64 @@ describe('StreamPanel.dispose() — no current panel', () => {
 });
 
 // ---------------------------------------------------------------------------
+// createOrShow() — legacy direct-connect (viewport.create IPC timed out)
+// ---------------------------------------------------------------------------
+
+describe('StreamPanel.createOrShow() — legacy mode (viewportId === 0)', () => {
+    it('calls panel.initialize(0, 9002) when viewportId is INVALID (0)', async () => {
+        StreamPanel.currentPanel = undefined;
+        workspace.__clearConfig();
+
+        const legacyPanel = { ...makeMockViewportPanel(), viewportId: 0, initialize: jest.fn() };
+        const mgr = makeManager(
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            jest.fn<any>().mockResolvedValue(legacyPanel)
+        );
+        getGetInstanceMock().mockReturnValue(mgr);
+
+        const ctx = makeMockContext();
+        await callCreateOrShow(ctx);
+
+        expect(legacyPanel.initialize).toHaveBeenCalledWith(0, 9002);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        expect(StreamPanel.currentPanel).toBe(legacyPanel as any);
+    });
+
+    it('uses custom server.wsPort from config in legacy mode', async () => {
+        StreamPanel.currentPanel = undefined;
+        workspace.__setConfig('uzengine', 'server.wsPort', 8765);
+
+        const legacyPanel = { ...makeMockViewportPanel(), viewportId: 0, initialize: jest.fn() };
+        const mgr = makeManager(
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            jest.fn<any>().mockResolvedValue(legacyPanel)
+        );
+        getGetInstanceMock().mockReturnValue(mgr);
+
+        const ctx = makeMockContext();
+        await callCreateOrShow(ctx);
+
+        expect(legacyPanel.initialize).toHaveBeenCalledWith(0, 8765);
+    });
+
+    it('does NOT call initialize when viewportId is valid (non-zero)', async () => {
+        StreamPanel.currentPanel = undefined;
+
+        const normalPanel = { ...makeMockViewportPanel(), viewportId: 1, initialize: jest.fn() };
+        const mgr = makeManager(
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            jest.fn<any>().mockResolvedValue(normalPanel)
+        );
+        getGetInstanceMock().mockReturnValue(mgr);
+
+        const ctx = makeMockContext();
+        await callCreateOrShow(ctx);
+
+        expect(normalPanel.initialize).not.toHaveBeenCalled();
+    });
+});
+
+// ---------------------------------------------------------------------------
 // Round-trip: create → dispose → create again
 // ---------------------------------------------------------------------------
 

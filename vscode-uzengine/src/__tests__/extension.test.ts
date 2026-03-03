@@ -77,6 +77,15 @@ jest.mock('../ipc-client', () => ({
     },
 }));
 
+// Mock fs — keep all real implementations, override writeFileSync/renameSync for sendSceneLoad.
+jest.mock('fs', () => {
+    const actual = jest.requireActual<typeof import('fs')>('fs');
+    return { ...actual, writeFileSync: jest.fn(), renameSync: jest.fn() };
+});
+import * as fs from 'fs';
+const mockWriteFileSync = fs.writeFileSync as jest.Mock;
+const mockRenameSync = fs.renameSync as jest.Mock;
+
 // ---------------------------------------------------------------------------
 // Setup / teardown
 // ---------------------------------------------------------------------------
@@ -210,6 +219,15 @@ describe('extension activate()', () => {
         await activateExtension();
         await (commands.__executeRegisteredCommand('uzengine.stop') as Promise<void>);
         // Stop does nothing when already idle — should not throw.
+    });
+
+    it('registers the UzSceneEditorProvider custom editor', async () => {
+        await activateExtension();
+        expect(window.registerCustomEditorProvider).toHaveBeenCalledWith(
+            'uzengine.uzsceneEditor',
+            expect.any(Object),
+            expect.objectContaining({ webviewOptions: { retainContextWhenHidden: true } })
+        );
     });
 
     it('subscribes to onDidChangeConfiguration', async () => {
@@ -476,6 +494,141 @@ describe('extension activate()', () => {
         await (commands.__executeRegisteredCommand('uzengine.openStreamViewer') as Promise<void>);
 
         expect(mockCreateOrShow).not.toHaveBeenCalled();
+    });
+});
+
+describe('extension — .uzscene file watcher', () => {
+    it('loads scene from textDocuments already open on activate', async () => {
+        workspace.textDocuments = [
+            {
+                fileName: 'test.uzscene',
+                getText: () => '[uzscene]\nname = Pre\n\n[node]\nname = World\ntype = Node3D\nparent =\n',
+            },
+        ];
+        await activateExtension();
+        // textDocuments was iterated — onDidOpenTextDocument was also registered
+        expect(workspace.onDidOpenTextDocument).toHaveBeenCalled();
+        workspace.textDocuments = [];
+    });
+
+    it('ignores non-.uzscene documents already open on activate', async () => {
+        workspace.textDocuments = [
+            { fileName: 'readme.md', getText: () => '# hello' },
+        ];
+        await expect(activateExtension()).resolves.toBeDefined();
+        workspace.textDocuments = [];
+    });
+
+    it('registers onDidOpenTextDocument, onDidChangeTextDocument, onDidCloseTextDocument', async () => {
+        await activateExtension();
+        expect(workspace.onDidOpenTextDocument).toHaveBeenCalled();
+        expect(workspace.onDidChangeTextDocument).toHaveBeenCalled();
+        expect(workspace.onDidCloseTextDocument).toHaveBeenCalled();
+    });
+
+    it('onDidOpenTextDocument callback loads .uzscene without throwing', async () => {
+        await activateExtension();
+        const openCb = (workspace.onDidOpenTextDocument as jest.Mock).mock.calls[0]?.[0] as
+            ((doc: { fileName: string; getText: () => string }) => void) | undefined;
+        expect(openCb).toBeDefined();
+
+        expect(() => openCb!({
+            fileName: 'level.uzscene',
+            getText: () => '[uzscene]\nname = L\n\n[node]\nname = R\ntype = Node3D\nparent =\n',
+        })).not.toThrow();
+    });
+
+    it('onDidOpenTextDocument callback ignores non-.uzscene files', async () => {
+        await activateExtension();
+        const openCb = (workspace.onDidOpenTextDocument as jest.Mock).mock.calls[0]?.[0] as
+            ((doc: { fileName: string; getText: () => string }) => void) | undefined;
+
+        expect(() => openCb!({ fileName: 'main.ts', getText: () => 'const x = 1;' })).not.toThrow();
+    });
+
+    it('onDidChangeTextDocument callback reloads .uzscene on edit', async () => {
+        await activateExtension();
+        const changeCb = (workspace.onDidChangeTextDocument as jest.Mock).mock.calls[0]?.[0] as
+            ((e: { document: { fileName: string; getText: () => string } }) => void) | undefined;
+        expect(changeCb).toBeDefined();
+
+        expect(() => changeCb!({
+            document: {
+                fileName: 'level.uzscene',
+                getText: () => '[uzscene]\nname = Updated\n\n[node]\nname = R\ntype = Camera\nparent =\n',
+            },
+        })).not.toThrow();
+    });
+
+    it('onDidCloseTextDocument callback clears tree for .uzscene', async () => {
+        await activateExtension();
+        const closeCb = (workspace.onDidCloseTextDocument as jest.Mock).mock.calls[0]?.[0] as
+            ((doc: { fileName: string }) => void) | undefined;
+        expect(closeCb).toBeDefined();
+
+        expect(() => closeCb!({ fileName: 'level.uzscene' })).not.toThrow();
+    });
+
+    it('onDidCloseTextDocument callback ignores non-.uzscene files', async () => {
+        await activateExtension();
+        const closeCb = (workspace.onDidCloseTextDocument as jest.Mock).mock.calls[0]?.[0] as
+            ((doc: { fileName: string }) => void) | undefined;
+
+        expect(() => closeCb!({ fileName: 'style.css' })).not.toThrow();
+    });
+
+    it('writes command.json via file-based IPC when .uzscene opens', async () => {
+        await activateExtension();
+
+        const openCb = (workspace.onDidOpenTextDocument as jest.Mock).mock.calls[0]?.[0] as
+            ((doc: { fileName: string; getText: () => string }) => void) | undefined;
+
+        openCb!({
+            fileName: 'level.uzscene',
+            getText: () => '[uzscene]\nname = L\n\n[node]\nname = World\ntype = Node3D\nparent =\n',
+        });
+
+        // Should have written command.json.tmp then renamed it.
+        expect(mockWriteFileSync).toHaveBeenCalledTimes(1);
+        const writtenContent = mockWriteFileSync.mock.calls[0][1] as string;
+        const parsed = JSON.parse(writtenContent);
+        expect(parsed.function).toBe('scene.load');
+        expect(parsed.args.nodes).toEqual([
+            expect.objectContaining({ name: 'World', type: 'Node3D' }),
+        ]);
+        expect(mockRenameSync).toHaveBeenCalledTimes(1);
+    });
+
+    it('ignores file write errors from sendSceneLoad gracefully', async () => {
+        mockWriteFileSync.mockImplementation(() => { throw new Error('ENOENT'); });
+        await activateExtension();
+
+        const openCb = (workspace.onDidOpenTextDocument as jest.Mock).mock.calls[0]?.[0] as
+            ((doc: { fileName: string; getText: () => string }) => void) | undefined;
+
+        // Should not throw even if fs.writeFileSync fails.
+        expect(() => openCb!({
+            fileName: 'level.uzscene',
+            getText: () => '[uzscene]\nname = L\n\n[node]\nname = A\ntype = Node3D\nparent =\n',
+        })).not.toThrow();
+    });
+
+    it('skips file-based IPC when no workspace folder is available', async () => {
+        const origFolders = workspace.workspaceFolders;
+        (workspace as Record<string, unknown>).workspaceFolders = undefined;
+        await activateExtension();
+
+        const openCb = (workspace.onDidOpenTextDocument as jest.Mock).mock.calls[0]?.[0] as
+            ((doc: { fileName: string; getText: () => string }) => void) | undefined;
+
+        openCb!({
+            fileName: 'level.uzscene',
+            getText: () => '[uzscene]\nname = L\n\n[node]\nname = A\ntype = Node3D\nparent =\n',
+        });
+
+        // No file writes when workspace folder is missing.
+        expect(mockWriteFileSync).not.toHaveBeenCalled();
+        (workspace as Record<string, unknown>).workspaceFolders = origFolders;
     });
 });
 

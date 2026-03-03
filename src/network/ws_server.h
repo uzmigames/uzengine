@@ -19,6 +19,9 @@ namespace uz {
 /// Callback type for log messages from the server.
 using LogCallback = std::function<void(const std::string&)>;
 
+/// Callback for incoming text (non-binary) WebSocket messages from clients.
+using TextMessageCallback = std::function<void(const std::string&)>;
+
 /// WebSocket server that streams fMP4 fragments to connected clients.
 ///
 /// Threading model:
@@ -43,6 +46,10 @@ public:
 
     /// Set optional log callback (called from IXWebSocket threads).
     void setLogCallback(LogCallback cb);
+
+    /// Set callback for incoming text (non-binary) WebSocket messages.
+    /// Called from IXWebSocket threads -- the callback must be thread-safe.
+    void setTextMessageCallback(TextMessageCallback cb);
 
     /// Start listening on the given port.
     /// Returns true if the server bound successfully.

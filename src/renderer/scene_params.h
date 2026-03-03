@@ -10,7 +10,9 @@
 // ---------------------------------------------------------------------------
 
 #include <atomic>
+#include <cstdint>
 #include <mutex>
+#include <utility>
 
 namespace uz {
 
@@ -32,6 +34,58 @@ struct SceneParams {
 
     // Geometry type: 0 = Pyramid (default), 1 = Cube (expandable).
     std::atomic<int> geometryType{0};
+
+    // -----------------------------------------------------------------------
+    // Camera input state — written by WS text message handler (network thread),
+    // read by the render thread each frame.
+    // -----------------------------------------------------------------------
+    struct CameraInput {
+        std::atomic<float> moveForward{0.0f};   // W
+        std::atomic<float> moveBack{0.0f};      // S
+        std::atomic<float> moveLeft{0.0f};      // A
+        std::atomic<float> moveRight{0.0f};     // D
+        std::atomic<float> moveUp{0.0f};        // E
+        std::atomic<float> moveDown{0.0f};      // Q
+        std::atomic<float> mouseDeltaX{0.0f};
+        std::atomic<float> mouseDeltaY{0.0f};
+        std::atomic<bool>  rightMouseDown{false};
+        std::atomic<bool>  shiftDown{false};
+        std::atomic<float> scrollDelta{0.0f};
+    } cameraInput;
+
+    // -----------------------------------------------------------------------
+    // Viewport resize request — written by WS handler, read by render thread.
+    // Packed as a single 64-bit atomic to avoid a race condition where the
+    // render thread reads width before height is stored, causing a lost resize.
+    // Upper 32 bits = width, lower 32 bits = height.  0 = no pending resize.
+    // -----------------------------------------------------------------------
+    std::atomic<uint64_t> resizePacked{0};
+
+    /// Pack width and height into a single atomic store.
+    void requestResize(int w, int h) {
+        const auto packed = (static_cast<uint64_t>(static_cast<uint32_t>(w)) << 32)
+                          |  static_cast<uint64_t>(static_cast<uint32_t>(h));
+        resizePacked.store(packed, std::memory_order_relaxed);
+    }
+
+    /// Atomically read and clear the pending resize.  Returns {0,0} if none.
+    std::pair<int,int> consumeResize() {
+        const uint64_t packed = resizePacked.exchange(0, std::memory_order_relaxed);
+        const int w = static_cast<int>(packed >> 32);
+        const int h = static_cast<int>(packed & 0xFFFFFFFF);
+        return {w, h};
+    }
+
+    // -----------------------------------------------------------------------
+    // Derived camera state — written ONLY by render thread in update().
+    // -----------------------------------------------------------------------
+    float camPosX{0.0f};
+    float camPosY{15.0f};
+    float camPosZ{-20.0f};
+    float camYaw{0.0f};            // radians, 0 = looking along +Z
+    float camPitch{-0.6f};         // radians, negative = looking down
+    float camSpeed{10.0f};         // units/sec base speed
+    float camSensitivity{0.003f};  // radians per pixel of mouse delta
 };
 
 } // namespace uz

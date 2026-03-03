@@ -28,14 +28,19 @@
  */
 
 import * as vscode from 'vscode';
+import * as fs from 'fs';
+import * as path from 'path';
+import { randomUUID } from 'crypto';
 import { StreamPanel } from './stream-panel';
 import { ServerManager } from './server-manager';
 import { ViewportManager } from './viewport-manager';
 import { IpcClient } from './ipc-client';
-import { SceneTreeProvider, NodeItem } from './scene-tree-provider';
+import { SceneTreeProvider, NodeItem, SceneNodeData } from './scene-tree-provider';
 import { InspectorPanel, InspectorViewProvider } from './inspector-panel';
 import { PlayControls } from './play-controls';
 import { ConsolePanel } from './console-panel';
+import { parseUzScene } from './uzscene-parser';
+import { UzSceneEditorProvider } from './uzscene-editor';
 
 let serverManager: ServerManager | undefined;
 
@@ -117,10 +122,10 @@ export function activate(context: vscode.ExtensionContext): void {
     const inspectorPanel = new InspectorPanel(context.extensionUri, ipcClient);
     context.subscriptions.push(inspectorPanel);
 
-    // Wire SceneTreeProvider selection → both Inspector implementations.
+    // Wire SceneTreeProvider selection → sidebar Inspector only.
+    // (InspectorPanel is the legacy floating tab — no longer auto-opened.)
     const selectionSub = sceneTreeProvider.onNodeSelected(node => {
         inspectorViewProvider.showForNode(node);
-        inspectorPanel.showForNode(node);
     });
     context.subscriptions.push(selectionSub);
 
@@ -146,6 +151,17 @@ export function activate(context: vscode.ExtensionContext): void {
         consolePanel.log(level, p.message);
     });
     context.subscriptions.push({ dispose: logUnsub });
+
+    // -------------------------------------------------------------------------
+    // 6d. UzSceneEditorProvider — custom editor for .uzscene files.
+    // -------------------------------------------------------------------------
+    context.subscriptions.push(
+        vscode.window.registerCustomEditorProvider(
+            UzSceneEditorProvider.viewType,
+            new UzSceneEditorProvider(serverManager!, context),
+            { webviewOptions: { retainContextWhenHidden: true } }
+        )
+    );
 
     // -------------------------------------------------------------------------
     // 7. PlayControls — status bar ▶ ⏸ ■ buttons.
@@ -296,6 +312,85 @@ export function activate(context: vscode.ExtensionContext): void {
         refreshSceneCommand,
         consoleClearCommand,
     );
+
+    // -------------------------------------------------------------------------
+    // 9. Local .uzscene file watcher — populate Scene Tree from disk
+    // -------------------------------------------------------------------------
+
+    function loadSceneFromDocument(doc: vscode.TextDocument): void {
+        if (!doc.fileName.endsWith('.uzscene')) { return; }
+        const parsed = parseUzScene(doc.getText());
+        sceneTreeProvider.loadFromFile(parsed.roots);
+        consolePanel.log('info', `Scene loaded: ${parsed.sceneName || doc.fileName}`);
+
+        // Send scene data to engine for 3D wireframe preview (file-based IPC).
+        const nodes = flattenSceneNodes(parsed.roots);
+        sendSceneLoad(nodes);
+    }
+
+    /**
+     * Sends a scene.load command via the engine's file-based IPC protocol.
+     * Writes command.json to build/Release/preview/ — the engine polls this file.
+     */
+    function sendSceneLoad(
+        nodes: Array<{name: string; type: string; position: number[]; rotation: number[]; scale: number[]}>,
+    ): void {
+        const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+        if (!wsRoot) { return; }
+        const commandFile = path.join(wsRoot, 'build', 'Release', 'preview', 'command.json');
+        const cmd = JSON.stringify({
+            id: randomUUID(),
+            type: 'call',
+            function: 'scene.load',
+            args: { nodes },
+        });
+        try {
+            const tmp = commandFile + '.tmp';
+            fs.writeFileSync(tmp, cmd, 'utf8');
+            fs.renameSync(tmp, commandFile);
+        } catch {
+            // Engine not running or preview dir missing — ignore.
+        }
+    }
+
+    /** Recursively flattens a scene node tree into a flat array for IPC. */
+    function flattenSceneNodes(roots: SceneNodeData[]): Array<{name: string; type: string; position: number[]; rotation: number[]; scale: number[]}> {
+        const result: Array<{name: string; type: string; position: number[]; rotation: number[]; scale: number[]}> = [];
+        function walk(nodes: SceneNodeData[]): void {
+            for (const n of nodes) {
+                result.push({
+                    name: n.name,
+                    type: n.type,
+                    position: [0, 0, 0],
+                    rotation: [0, 0, 0],
+                    scale: [1, 1, 1],
+                });
+                if (n.children) { walk(n.children); }
+            }
+        }
+        walk(roots);
+        return result;
+    }
+
+    // Load any .uzscene already open when the extension activates.
+    for (const doc of vscode.workspace.textDocuments) {
+        loadSceneFromDocument(doc);
+    }
+
+    const openDocSub = vscode.workspace.onDidOpenTextDocument(doc => {
+        loadSceneFromDocument(doc);
+    });
+
+    const changeDocSub = vscode.workspace.onDidChangeTextDocument(e => {
+        loadSceneFromDocument(e.document);
+    });
+
+    const closeDocSub = vscode.workspace.onDidCloseTextDocument(doc => {
+        if (!doc.fileName.endsWith('.uzscene')) { return; }
+        sceneTreeProvider.clear();
+    });
+
+    context.subscriptions.push(openDocSub, changeDocSub, closeDocSub);
 }
 
 /**

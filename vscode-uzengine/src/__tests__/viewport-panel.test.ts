@@ -440,3 +440,109 @@ describe('ViewportPanel', () => {
         });
     });
 });
+
+// ---------------------------------------------------------------------------
+// buildViewportStreamHtml — camera input capture tests
+// ---------------------------------------------------------------------------
+
+import { buildViewportStreamHtml } from '../viewport-panel';
+
+describe('buildViewportStreamHtml — camera input capture', () => {
+    const baseOpts = {
+        nonce: 'testnonce123',
+        title: 'Test Viewport',
+        wsPort: 9002,
+        viewportId: 1,
+    };
+
+    it('contains camera_input message type for WS send', () => {
+        const html = buildViewportStreamHtml(baseOpts);
+        expect(html).toContain('camera_input');
+    });
+
+    it('contains requestPointerLock for pointer lock on right-click', () => {
+        const html = buildViewportStreamHtml(baseOpts);
+        expect(html).toContain('requestPointerLock');
+    });
+
+    it('contains contextmenu event listener to suppress the context menu', () => {
+        const html = buildViewportStreamHtml(baseOpts);
+        expect(html).toContain('contextmenu');
+    });
+
+    it('contains pointerlockchange event listener to reset state on lock exit', () => {
+        const html = buildViewportStreamHtml(baseOpts);
+        expect(html).toContain('pointerlockchange');
+    });
+
+    it('contains wheel event listener for scroll-to-zoom input', () => {
+        const html = buildViewportStreamHtml(baseOpts);
+        expect(html).toContain('scrollDelta');
+    });
+
+    it('contains key declarations for WASD+QE fly keys', () => {
+        const html = buildViewportStreamHtml(baseOpts);
+        expect(html).toContain('w:0, a:0, s:0, d:0, q:0, e:0');
+    });
+
+    it('sends dx/dy mouse deltas in the camera_input message', () => {
+        const html = buildViewportStreamHtml(baseOpts);
+        expect(html).toContain('dx: mouseDeltaX');
+        expect(html).toContain('dy: mouseDeltaY');
+    });
+
+    it('sends shift state in the camera_input message', () => {
+        const html = buildViewportStreamHtml(baseOpts);
+        expect(html).toContain('shift: shiftDown');
+    });
+
+    it('sends rmb state in the camera_input message', () => {
+        const html = buildViewportStreamHtml(baseOpts);
+        expect(html).toContain('rmb: rightMouseDown');
+    });
+
+    it('resets mouseDeltaX and mouseDeltaY to 0 after each send', () => {
+        const html = buildViewportStreamHtml(baseOpts);
+        expect(html).toContain('mouseDeltaX = 0');
+        expect(html).toContain('mouseDeltaY = 0');
+    });
+
+    it('uses setInterval at 33ms for ~30fps input polling', () => {
+        const html = buildViewportStreamHtml(baseOpts);
+        expect(html).toContain('}, 33)');
+    });
+
+    it('skips sending when no input is active (early return guard)', () => {
+        const html = buildViewportStreamHtml(baseOpts);
+        // The guard expression checks all movement keys before sending.
+        expect(html).toContain('!keys.w && !keys.s && !keys.a && !keys.d && !keys.q && !keys.e');
+    });
+});
+
+// ---------------------------------------------------------------------------
+// buildViewportStreamHtml — ResizeObserver / viewport resize tests
+// ---------------------------------------------------------------------------
+
+describe('buildViewportStreamHtml — viewport resize', () => {
+    const baseOpts = {
+        nonce: 'testnonce123',
+        title: 'Test Viewport',
+        wsPort: 9002,
+        viewportId: 1,
+    };
+
+    it('contains viewport_resize message type for WS send', () => {
+        const html = buildViewportStreamHtml(baseOpts);
+        expect(html).toContain('viewport_resize');
+    });
+
+    it('contains ResizeObserver constructor call', () => {
+        const html = buildViewportStreamHtml(baseOpts);
+        expect(html).toContain('ResizeObserver');
+    });
+
+    it('contains devicePixelRatio for HiDPI support', () => {
+        const html = buildViewportStreamHtml(baseOpts);
+        expect(html).toContain('devicePixelRatio');
+    });
+});

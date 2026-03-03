@@ -16,6 +16,7 @@
  */
 
 import * as vscode from 'vscode';
+import { VIEWPORT_ID_INVALID } from './viewport-types';
 import { ViewportManager } from './viewport-manager';
 import { ViewportPanel } from './viewport-panel';
 
@@ -90,6 +91,15 @@ export class StreamPanel {
                 },
                 context
             );
+
+            // If viewport.create IPC timed out (engine is a PoC without the
+            // full viewport registry), fall back to legacy direct-connect mode:
+            // viewport_id=0 tells the webview to accept raw JPEG with no prefix.
+            if (panel.viewportId === VIEWPORT_ID_INVALID) {
+                const config = vscode.workspace.getConfiguration('uzengine');
+                const wsPort = config.get<number>('server.wsPort', 9002);
+                panel.initialize(VIEWPORT_ID_INVALID, wsPort);
+            }
 
             StreamPanel.currentPanel = panel;
 

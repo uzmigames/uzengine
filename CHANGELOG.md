@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- **Dynamic viewport resize**: render target adapts to VSCode panel size changes in real-time
+  - `scene_params.h` — packed `atomic<uint64_t>` for thread-safe resize requests (`requestResize()`/`consumeResize()`)
+  - `renderer.cpp` — full DX12 resize pipeline: GPU drain → release RT/depth/readback → `ResizeBuffers()` → recreate resources → update viewport/scissor
+  - `viewport-panel.ts` — `ResizeObserver` + 500ms debounce to avoid GPU stalls during drag, periodic 3s fallback
+  - `renderer.resize` and `renderer.info` IPC handlers for manual resize/debugging
+  - WebSocket `viewport_resize` text message from webview to engine
+
+- **Editor fly camera** (UE5-style): RMB+WASD/EQ navigation in the viewport
+  - `scene_params.h` — `CameraInput` struct with 11 atomic fields (move, mouse delta, scroll, RMB, shift)
+  - `renderer.cpp` — yaw/pitch look, forward/right/up movement, scroll-wheel speed adjust, Shift=3x boost
+  - `viewport-panel.ts` — `pointerlockchange` capture, keyboard state tracking, 60fps `camera_input` JSON via WS
+  - `camera.getState` and `camera.reset` IPC handlers
+
+- **Editor scene rendering**: ground grid + wireframe cubes at node positions
+  - `renderer.h` — `EditorNode` struct (position, rotation, scale, color), `loadEditorScene()` API
+  - `renderer.cpp` — line pipeline state, grid vertex buffer (21x21 lines, red Z / green X axes), wireframe cube buffer (24 lines)
+  - `scene.load` IPC handler with type-based wireframe colors (cyan=StaticMesh, yellow=Camera, amber=Light)
+  - Color multiplier via `cbuffer ColorCB : register(b1)` in vertex shader
+
+- **144fps render target**: `kTargetFPS` raised from 60 → 144 for smoother editor experience
+
+- **4-byte viewport ID framing**: JPEG frames now prefixed with `uint32_t viewport_id` for future multi-viewport demux
+
+- **VSCode extension enhancements**:
+  - `buildViewportStreamHtml()` extracted as reusable pure function for UzScene editor embedding
+  - Scene tree provider, stream panel, and extension updates for new editor features
+  - New test suites for extension, scene-tree-provider, stream-panel, viewport-panel
+
+### Fixed
+- **DX12 fence deadlock on resize** — After `ResizeBuffers()` changed the back-buffer index, `fenceValues_[]` for the old slot were stale, causing `moveToNextFrame()` to signal a fence value *lower* than the current completed value. The fence went backwards and `WaitForSingleObjectEx` hung forever. Fix: sync all `fenceValues_[i]` to `fence_->GetCompletedValue() + 1` after resize.
+- **Resize race condition** — Two separate `atomic<int>` for width/height allowed the render thread to read width before height was stored (getting `rh == 0`). Fix: packed both into a single `atomic<uint64_t>`.
+- **sendResize dedup preventing retry** — `lastSentWidth/Height` stored before checking WS open state, preventing retry on reconnect. Fix: moved storage inside the `readyState === OPEN` guard.
+- **renderer.resize() inconsistent state on failure** — `width_/height_` set before `ResizeBuffers()`, leaving wrong dimensions if it failed. Fix: set only after success.
+
 - **Engine IPC protocol** (`add-engine-ipc`): file-based IPC via `build/Release/preview/`
   - `src/common/ipc_registry.h/cpp` — function dispatch table (`string → handler`)
   - `src/common/ipc_poller.h/cpp` — dedicated thread polling `command.json` every 50ms, atomic writes via `.tmp + rename`, `status.json` updated every 1s

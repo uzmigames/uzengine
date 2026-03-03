@@ -249,6 +249,7 @@ export const window = {
         dispose: jest.fn(),
     })),
     registerWebviewViewProvider: jest.fn(() => ({ dispose: jest.fn() })),
+    registerCustomEditorProvider: jest.fn(() => ({ dispose: jest.fn() })),
     onDidChangeWindowState: jest.fn((cb: (state: { focused: boolean }) => void) => {
         _windowStateListeners.push(cb);
         return {
@@ -275,6 +276,8 @@ export const workspace = {
     workspaceFolders: [{ uri: { fsPath: '/mock/workspace' }, name: 'mock', index: 0 }] as
         Array<{ uri: { fsPath: string }; name: string; index: number }>,
 
+    textDocuments: [] as Array<{ fileName: string; getText: () => string }>,
+
     getConfiguration: jest.fn((_section?: string) => ({
         get: jest.fn(<T>(key: string, defaultValue?: T): T => {
             const fullKey = `${_section ?? ''}.${key}`;
@@ -286,6 +289,9 @@ export const workspace = {
     })),
 
     onDidChangeConfiguration: jest.fn(() => ({ dispose: jest.fn() })),
+    onDidOpenTextDocument: jest.fn(() => ({ dispose: jest.fn() })),
+    onDidChangeTextDocument: jest.fn(() => ({ dispose: jest.fn() })),
+    onDidCloseTextDocument: jest.fn(() => ({ dispose: jest.fn() })),
 
     // Test helper: set a configuration value for use in tests.
     __setConfig(section: string, key: string, value: unknown): void {

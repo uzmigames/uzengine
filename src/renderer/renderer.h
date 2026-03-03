@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <mutex>
+#include <vector>
 
 #include <d3d12.h>
 #include <dxgi1_6.h>
@@ -23,6 +24,10 @@ constexpr const char* kVertexShaderSrc = R"hlsl(
 cbuffer TransformCB : register(b0) {
     float4x4 worldViewProj;
 };
+cbuffer ColorCB : register(b1) {
+    float3 colorMul;
+    float _pad;
+};
 
 struct VSInput {
     float3 position : POSITION;
@@ -37,7 +42,7 @@ struct PSInput {
 PSInput VSMain(VSInput input) {
     PSInput output;
     output.position = mul(worldViewProj, float4(input.position, 1.0f));
-    output.color    = input.color;
+    output.color    = input.color * colorMul;
     return output;
 }
 )hlsl";
@@ -86,6 +91,14 @@ public:
     DX12Renderer(DX12Renderer&&)                 = delete;
     DX12Renderer& operator=(DX12Renderer&&)      = delete;
 
+    // Scene node descriptor for editor wireframe rendering.
+    struct EditorNode {
+        DirectX::XMFLOAT3 position{0.0f, 0.0f, 0.0f};
+        DirectX::XMFLOAT3 rotation{0.0f, 0.0f, 0.0f};  // euler angles (radians)
+        DirectX::XMFLOAT3 scale{1.0f, 1.0f, 1.0f};
+        DirectX::XMFLOAT3 color{0.8f, 0.8f, 0.8f};     // wireframe tint
+    };
+
     // Initialize the renderer and all GPU resources for the given window.
     void init(HWND hwnd, uint32_t width, uint32_t height);
 
@@ -96,6 +109,18 @@ public:
 
     // Record and execute the command list, present the frame.
     void render();
+
+    /// Resize the swap chain, render targets, depth buffer, and readback
+    /// buffers to the given dimensions.  Must be called from the render thread
+    /// (between frames, not during a render pass).  Returns true if the resize
+    /// succeeded, false if the dimensions are invalid or the GPU flush failed.
+    bool resize(int width, int height);
+
+    /// Current render target width in pixels.
+    [[nodiscard]] int getWidth() const noexcept { return static_cast<int>(width_); }
+
+    /// Current render target height in pixels.
+    [[nodiscard]] int getHeight() const noexcept { return static_cast<int>(height_); }
 
     // Drain the GPU and release all resources.  Safe to call multiple times.
     void shutdown();
@@ -112,6 +137,11 @@ public:
     // Pointer must remain valid for the lifetime of the renderer.
     void setSceneParams(SceneParams* params);
 
+    // Replace the editor scene nodes and switch to editor rendering mode.
+    // Thread-safe: may be called from the IPC thread while the render thread
+    // is running.  Returns the number of nodes loaded.
+    size_t loadEditorScene(std::vector<EditorNode> nodes);
+
 private:
     // Initialization sub-steps (called by init).
     void createDevice();
@@ -126,6 +156,11 @@ private:
     void createFence();
     void createDepthBuffer();
     void createReadbackBuffer();
+
+    // Editor-mode geometry and pipeline.
+    void createLinePipelineState();
+    void createGridVertexBuffer();
+    void createCubeWireVertexBuffer();
 
     // Perform GPU -> CPU readback of the current frame's render target.
     void performReadback();
@@ -201,6 +236,10 @@ private:
     // Current world-view-projection matrix, updated each frame by update().
     DirectX::XMFLOAT4X4 worldViewProj_{};
 
+    // Stored view-projection matrix (without world transform) so that
+    // per-node MVP can be composed during editor rendering.
+    DirectX::XMFLOAT4X4 viewProj_{};
+
     // Accumulated rotation angles (radians).  Updated each frame via delta-time
     // so that animation speed is independent of frame-timing jitter.
     float rotAngleY_ = 0.0f;
@@ -212,9 +251,35 @@ private:
     SceneParams* sceneParams_ = nullptr;
 
     // Cached clear color -- updated from sceneParams_ each frame in update().
-    float clearR_ = 0.1f;
-    float clearG_ = 0.1f;
-    float clearB_ = 0.1f;
+    // Default matches UE5 dark viewport background (~0.12).
+    float clearR_ = 0.12f;
+    float clearG_ = 0.12f;
+    float clearB_ = 0.12f;
+
+    // -----------------------------------------------------------------------
+    // Editor-mode resources
+    // -----------------------------------------------------------------------
+
+    // Line-list PSO (shared by grid and wireframe cube draws).
+    Microsoft::WRL::ComPtr<ID3D12PipelineState> linePipelineState_;
+
+    // Ground grid vertex buffer (XZ plane, Y=0).
+    Microsoft::WRL::ComPtr<ID3D12Resource> gridVertexBuffer_;
+    D3D12_VERTEX_BUFFER_VIEW              gridVertexBufferView_{};
+    uint32_t                              gridVertexCount_ = 0;
+
+    // Unit wireframe cube vertex buffer (12 edges = 24 vertices, LINE_LIST).
+    Microsoft::WRL::ComPtr<ID3D12Resource> cubeWireVertexBuffer_;
+    D3D12_VERTEX_BUFFER_VIEW              cubeWireVertexBufferView_{};
+    uint32_t                              cubeWireVertexCount_ = 0;
+
+    // Editor scene nodes (loaded via IPC, protected by mutex).
+    std::vector<EditorNode> editorNodes_;
+    mutable std::mutex      editorNodesMutex_;
+
+    // When true, render() draws the editor scene (grid + wireframe cubes)
+    // instead of the legacy spinning pyramid.
+    bool editorMode_ = true;
 };
 
 } // namespace uz

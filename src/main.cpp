@@ -88,7 +88,13 @@ void encodeThreadFn(uz::WsServer* server) {
             continue;
         }
 
-        server->broadcast(jpegBlob);
+        // Prepend 4-byte little-endian viewport_id (1 = scene viewport)
+        // so the extension can demux multiple viewports in the future.
+        constexpr uint32_t kViewportId = 1;
+        std::vector<uint8_t> framedData(4 + jpegBlob.size());
+        std::memcpy(framedData.data(), &kViewportId, 4);
+        std::memcpy(framedData.data() + 4, jpegBlob.data(), jpegBlob.size());
+        server->broadcast(framedData);
     }
 
     OutputDebugStringA("[UzEngine] Encode thread stopped\n");
@@ -201,6 +207,69 @@ int WINAPI WinMain(
     uz::WsServer wsServer;
     wsServer.setLogCallback([](const std::string& msg) {
         OutputDebugStringA(("[UzEngine/WS] " + msg + "\n").c_str());
+    });
+
+    // -- Camera input via WebSocket text messages ------------------------------
+    // The VSCode extension sends JSON text frames with camera input state.
+    // Mouse deltas and scroll are additive (accumulated until consumed by the
+    // render thread via atomic exchange).
+    wsServer.setTextMessageCallback([&](const std::string& text) {
+        try {
+            const auto j = nlohmann::json::parse(text);
+            const std::string type = j.value("type", "");
+
+            // -- Viewport resize request from webview -------------------------
+            if (type == "viewport_resize") {
+                const int w = j.value("width",  0);
+                const int h = j.value("height", 0);
+                if (w >= 64 && w <= 7680 && h >= 64 && h <= 4320) {
+                    g_scene.requestResize(w, h);
+                    char dbg[128];
+                    snprintf(dbg, sizeof(dbg),
+                             "[UzEngine] viewport_resize received: %dx%d\n", w, h);
+                    OutputDebugStringA(dbg);
+                }
+                return;
+            }
+
+            if (type != "camera_input") {
+                return;
+            }
+
+            auto& ci = g_scene.cameraInput;
+            ci.moveForward.store(j.value("w",  0.0f), std::memory_order_relaxed);
+            ci.moveBack.store(   j.value("s",  0.0f), std::memory_order_relaxed);
+            ci.moveLeft.store(   j.value("a",  0.0f), std::memory_order_relaxed);
+            ci.moveRight.store(  j.value("d",  0.0f), std::memory_order_relaxed);
+            ci.moveUp.store(     j.value("e",  0.0f), std::memory_order_relaxed);
+            ci.moveDown.store(   j.value("q",  0.0f), std::memory_order_relaxed);
+            ci.rightMouseDown.store(j.value("rmb",   false), std::memory_order_relaxed);
+            ci.shiftDown.store(     j.value("shift", false), std::memory_order_relaxed);
+
+            // Mouse deltas and scroll are additive -- accumulate until the
+            // render thread consumes them with exchange(0).
+            const float dx     = j.value("dx",     0.0f);
+            const float dy     = j.value("dy",     0.0f);
+            const float scroll = j.value("scroll", 0.0f);
+
+            if (dx != 0.0f) {
+                float prev = ci.mouseDeltaX.load(std::memory_order_relaxed);
+                while (!ci.mouseDeltaX.compare_exchange_weak(
+                    prev, prev + dx, std::memory_order_relaxed)) {}
+            }
+            if (dy != 0.0f) {
+                float prev = ci.mouseDeltaY.load(std::memory_order_relaxed);
+                while (!ci.mouseDeltaY.compare_exchange_weak(
+                    prev, prev + dy, std::memory_order_relaxed)) {}
+            }
+            if (scroll != 0.0f) {
+                float prev = ci.scrollDelta.load(std::memory_order_relaxed);
+                while (!ci.scrollDelta.compare_exchange_weak(
+                    prev, prev + scroll, std::memory_order_relaxed)) {}
+            }
+        } catch (...) {
+            // Malformed JSON -- silently ignore.
+        }
     });
 
     if (!wsServer.start(kWsPort)) {
@@ -325,6 +394,58 @@ int WINAPI WinMain(
         return {{"ok", true}, {"note", "geometry hot-swap not yet implemented, stored for future use"}};
     });
 
+    ipcRegistry.add("scene.load", [&](const nlohmann::json& args) -> nlohmann::json {
+        if (!args.contains("nodes") || !args["nodes"].is_array()) {
+            return {{"ok", false}, {"error", "missing 'nodes' array"}};
+        }
+
+        std::vector<uz::DX12Renderer::EditorNode> nodes;
+        nodes.reserve(args["nodes"].size());
+
+        for (const auto& n : args["nodes"]) {
+            uz::DX12Renderer::EditorNode node;
+
+            if (n.contains("position") && n["position"].is_array() && n["position"].size() >= 3) {
+                node.position = {
+                    n["position"][0].get<float>(),
+                    n["position"][1].get<float>(),
+                    n["position"][2].get<float>()
+                };
+            }
+            if (n.contains("rotation") && n["rotation"].is_array() && n["rotation"].size() >= 3) {
+                node.rotation = {
+                    n["rotation"][0].get<float>(),
+                    n["rotation"][1].get<float>(),
+                    n["rotation"][2].get<float>()
+                };
+            }
+            if (n.contains("scale") && n["scale"].is_array() && n["scale"].size() >= 3) {
+                node.scale = {
+                    n["scale"][0].get<float>(),
+                    n["scale"][1].get<float>(),
+                    n["scale"][2].get<float>()
+                };
+            }
+
+            // Assign wireframe color based on node type.
+            const std::string type = n.value("type", "Node3D");
+            if (type == "StaticMesh") {
+                node.color = {0.2f, 0.8f, 0.9f};    // cyan
+            } else if (type == "Camera") {
+                node.color = {0.9f, 0.9f, 0.2f};    // yellow
+            } else if (type == "DirectionalLight" || type == "PointLight") {
+                node.color = {0.9f, 0.7f, 0.2f};    // amber
+            } else {
+                node.color = {0.8f, 0.8f, 0.8f};    // default gray
+            }
+
+            nodes.push_back(node);
+        }
+
+        const size_t count = renderer.loadEditorScene(std::move(nodes));
+        return {{"ok", true}, {"count", static_cast<int>(count)}};
+    });
+
     ipcRegistry.add("scene.setParam", [&](const nlohmann::json& args) -> nlohmann::json {
         const std::string key = args.value("key", "");
         if (key.starts_with("rotation.")) {
@@ -399,6 +520,62 @@ int WINAPI WinMain(
         return {{"ok", false}, {"error", "shader hot-reload not yet implemented"}};
     });
 
+    ipcRegistry.add("camera.getState", [&](const nlohmann::json&) -> nlohmann::json {
+        return {
+            {"ok", true},
+            {"position", {g_scene.camPosX, g_scene.camPosY, g_scene.camPosZ}},
+            {"yaw",   g_scene.camYaw},
+            {"pitch", g_scene.camPitch},
+            {"speed", g_scene.camSpeed}
+        };
+    });
+
+    ipcRegistry.add("camera.reset", [&](const nlohmann::json& args) -> nlohmann::json {
+        g_scene.camPosX = args.value("x",     0.0f);
+        g_scene.camPosY = args.value("y",    15.0f);
+        g_scene.camPosZ = args.value("z",   -20.0f);
+        g_scene.camYaw   = args.value("yaw",   0.0f);
+        g_scene.camPitch = args.value("pitch", -0.6f);
+        g_scene.camSpeed = args.value("speed", 10.0f);
+
+        // Also clear any pending camera input to prevent a stale movement
+        // impulse from being applied on the next frame.
+        auto& ci = g_scene.cameraInput;
+        ci.moveForward.store(0.0f, std::memory_order_relaxed);
+        ci.moveBack.store(0.0f,    std::memory_order_relaxed);
+        ci.moveLeft.store(0.0f,    std::memory_order_relaxed);
+        ci.moveRight.store(0.0f,   std::memory_order_relaxed);
+        ci.moveUp.store(0.0f,      std::memory_order_relaxed);
+        ci.moveDown.store(0.0f,    std::memory_order_relaxed);
+        ci.mouseDeltaX.store(0.0f, std::memory_order_relaxed);
+        ci.mouseDeltaY.store(0.0f, std::memory_order_relaxed);
+        ci.scrollDelta.store(0.0f, std::memory_order_relaxed);
+        ci.rightMouseDown.store(false, std::memory_order_relaxed);
+        ci.shiftDown.store(false,      std::memory_order_relaxed);
+
+        return {{"ok", true}};
+    });
+
+    ipcRegistry.add("renderer.resize", [&](const nlohmann::json& args) -> nlohmann::json {
+        const int w = args.value("width",  0);
+        const int h = args.value("height", 0);
+        if (w < 64 || h < 64) {
+            return {{"ok", false}, {"error", "min 64x64"}};
+        }
+        g_scene.requestResize(w, h);
+        return {{"ok", true}, {"requested", {w, h}},
+                {"current", g_metrics.resolution},
+                {"ws_clients", wsServer.clientCount()}};
+    });
+
+    ipcRegistry.add("renderer.info", [&](const nlohmann::json&) -> nlohmann::json {
+        return {{"ok", true},
+                {"resolution", g_metrics.resolution},
+                {"ws_clients", wsServer.clientCount()},
+                {"renderer_w", renderer.getWidth()},
+                {"renderer_h", renderer.getHeight()}};
+    });
+
     uz::IpcPoller ipcPoller(ipcBaseDir, ipcRegistry, g_scene, g_metrics);
     ipcPoller.start();
 
@@ -448,6 +625,17 @@ int WINAPI WinMain(
             const double delta = timer.tick();
             renderer.update(timer.elapsed(), delta);
             renderer.render();
+
+            // Update the resolution metric if it changed (e.g. after a
+            // viewport resize handled inside renderer.update()).
+            {
+                const std::string currentRes =
+                    std::to_string(renderer.getWidth()) + "x"
+                    + std::to_string(renderer.getHeight());
+                if (currentRes != g_metrics.resolution) {
+                    g_metrics.resolution = currentRes;
+                }
+            }
 
             // -- Update IPC metrics -------------------------------------------
             ++fpsFrameCounter;

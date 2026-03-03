@@ -308,21 +308,48 @@ export class ViewportPanel implements vscode.Disposable {
      * for other viewports (belt-and-suspenders — routing normally happens in TS).
      */
     private _buildStreamHtml(): string {
-        const nonce = this._nonce;
-        const title = this.config.title;
-        const wsPort = this._wsPort;
-        const viewportId = this._viewportId;
+        return buildViewportStreamHtml({
+            nonce: this._nonce,
+            title: this.config.title,
+            wsPort: this._wsPort,
+            viewportId: this._viewportId,
+        });
+    }
+}
 
-        // Safe embedding of integer values — no string escaping needed.
-        const safeWsPort = String(wsPort);
-        const safeViewportId = String(viewportId);
-        const safeTitle = title
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;');
+// ---------------------------------------------------------------------------
+// Exported pure-function HTML builder — reusable by other providers
+// ---------------------------------------------------------------------------
 
-        return /* html */ `<!DOCTYPE html>
+/**
+ * Builds the full-page canvas HTML for a JPEG WebSocket viewport stream.
+ * Exported so other providers (e.g. UzSceneEditorProvider) can embed the
+ * same viewport canvas without creating a full ViewportPanel instance.
+ *
+ * @param opts.nonce       CSP nonce for the inline script.
+ * @param opts.title       Panel title shown in the toolbar.
+ * @param opts.wsPort      WebSocket port (default 9002).
+ * @param opts.viewportId  Engine viewport ID. Use 0 for legacy raw-JPEG mode
+ *                         (engine sends no 4-byte prefix).
+ */
+export function buildViewportStreamHtml(opts: {
+    nonce: string;
+    title: string;
+    wsPort: number;
+    viewportId: number;
+}): string {
+    const { nonce, title, wsPort, viewportId } = opts;
+
+    // Safe embedding of integer values — no string escaping needed.
+    const safeWsPort = String(wsPort);
+    const safeViewportId = String(viewportId);
+    const safeTitle = title
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+
+    return /* html */ `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -337,11 +364,15 @@ export class ViewportPanel implements vscode.Disposable {
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
+    html, body {
+      width: 100%;
+      height: 100%;
+    }
+
     body {
       background: #000;
       display: flex;
       flex-direction: column;
-      height: 100vh;
       overflow: hidden;
       font-family: 'Consolas', 'Courier New', monospace;
       color: #ccc;
@@ -372,19 +403,21 @@ export class ViewportPanel implements vscode.Disposable {
 
     #canvas-container {
       flex: 1;
-      display: flex;
-      align-items: center;
-      justify-content: center;
+      position: relative;
       background: #000;
       overflow: hidden;
-      position: relative;
+      min-height: 0;
     }
 
     #viewport-canvas {
-      max-width: 100%;
-      max-height: 100%;
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
       display: block;
-      image-rendering: pixelated;
+      image-rendering: auto;
+      outline: none;
     }
 
     #overlay {
@@ -405,11 +438,12 @@ export class ViewportPanel implements vscode.Disposable {
     <span class="label">UzEngine</span>
     <span id="status" class="connecting">Connecting\u2026</span>
     <span id="fps">-- fps</span>
+    <span id="dbg-size" style="color:#666;font-size:10px;"></span>
     <span id="vp-id">vp#${safeViewportId}</span>
   </div>
   <div id="canvas-container">
     <div id="overlay">Waiting for stream\u2026</div>
-    <canvas id="viewport-canvas"></canvas>
+    <canvas id="viewport-canvas" tabindex="0"></canvas>
   </div>
 
   <script nonce="${nonce}">
@@ -430,6 +464,7 @@ export class ViewportPanel implements vscode.Disposable {
       var ctx2d       = /** @type {CanvasRenderingContext2D} */ (canvas.getContext('2d'));
       var statusEl    = document.getElementById('status');
       var fpsEl       = document.getElementById('fps');
+      var dbgSizeEl   = document.getElementById('dbg-size');
       var overlayEl   = document.getElementById('overlay');
 
       // -----------------------------------------------------------------------
@@ -548,18 +583,28 @@ export class ViewportPanel implements vscode.Disposable {
         ws.addEventListener('open', function () {
           setStatus('Connected', 'connected');
           reconnectDelay = 1000;
+          // Reset dedup so the periodic checkResize() resends the current size.
+          lastSentWidth = 0;
+          lastSentHeight = 0;
         });
 
         ws.addEventListener('message', function (e) {
           if (!(e.data instanceof ArrayBuffer)) { return; }
-          if (e.data.byteLength < 4) { return; }
 
-          // Parse 4-byte little-endian viewport_id prefix.
-          var view = new DataView(e.data);
-          var vpId = view.getUint32(0, true);
-          if (vpId !== VIEWPORT_ID) { return; } // Not for this panel.
+          var jpegBytes;
+          if (VIEWPORT_ID === 0) {
+            // Legacy / PoC mode: engine sends raw JPEG with no viewport_id prefix.
+            if (e.data.byteLength < 2) { return; }
+            jpegBytes = new Uint8Array(e.data);
+          } else {
+            // Normal mode: 4-byte LE viewport_id prefix + JPEG body.
+            if (e.data.byteLength < 4) { return; }
+            var view = new DataView(e.data);
+            var vpId = view.getUint32(0, true);
+            if (vpId !== VIEWPORT_ID) { return; } // Not for this panel.
+            jpegBytes = new Uint8Array(e.data, 4);
+          }
 
-          var jpegBytes = new Uint8Array(e.data, 4);
           var blob = new Blob([jpegBytes], { type: 'image/jpeg' });
 
           createImageBitmap(blob).then(function (bmp) {
@@ -600,9 +645,152 @@ export class ViewportPanel implements vscode.Disposable {
       // -----------------------------------------------------------------------
       connect();
 
+      // -----------------------------------------------------------------------
+      // Camera input capture (UE5-style fly camera)
+      // -----------------------------------------------------------------------
+      var keys = { w:0, a:0, s:0, d:0, q:0, e:0 };
+      var shiftDown = false;
+      var rightMouseDown = false;
+      var mouseDeltaX = 0;
+      var mouseDeltaY = 0;
+      var scrollDelta = 0;
+
+      document.addEventListener('keydown', function(e) {
+        if (!rightMouseDown) return;
+        var k = e.key.toLowerCase();
+        if (k in keys) { keys[k] = 1; e.preventDefault(); }
+        if (e.key === 'Shift') { shiftDown = true; }
+      });
+      document.addEventListener('keyup', function(e) {
+        var k = e.key.toLowerCase();
+        if (k in keys) { keys[k] = 0; }
+        if (e.key === 'Shift') { shiftDown = false; }
+      });
+
+      var canvasContainer = document.getElementById('canvas-container');
+
+      canvasContainer.addEventListener('mousedown', function(e) {
+        if (e.button === 2) {
+          rightMouseDown = true;
+          canvas.focus();
+          canvas.requestPointerLock();
+          e.preventDefault();
+        }
+      });
+      document.addEventListener('mouseup', function(e) {
+        if (e.button === 2) {
+          rightMouseDown = false;
+          if (document.pointerLockElement === canvas) {
+            document.exitPointerLock();
+          }
+          keys = { w:0, a:0, s:0, d:0, q:0, e:0 };
+          shiftDown = false;
+        }
+      });
+
+      canvasContainer.addEventListener('contextmenu', function(e) {
+        e.preventDefault();
+      });
+
+      document.addEventListener('mousemove', function(e) {
+        if (rightMouseDown && document.pointerLockElement === canvas) {
+          mouseDeltaX += e.movementX;
+          mouseDeltaY += e.movementY;
+        }
+      });
+
+      canvasContainer.addEventListener('wheel', function(e) {
+        var delta = -e.deltaY;
+        if (e.deltaMode === 0) { delta /= 100; }
+        else if (e.deltaMode === 1) { delta /= 3; }
+        scrollDelta += delta;
+        e.preventDefault();
+      }, { passive: false });
+
+      document.addEventListener('pointerlockchange', function() {
+        if (document.pointerLockElement !== canvas) {
+          rightMouseDown = false;
+          keys = { w:0, a:0, s:0, d:0, q:0, e:0 };
+          shiftDown = false;
+        }
+      });
+
+      // Send input state at ~30fps via WS text messages.
+      setInterval(function() {
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        var hasInput = rightMouseDown || mouseDeltaX !== 0 || mouseDeltaY !== 0 || scrollDelta !== 0;
+        if (!hasInput && !keys.w && !keys.s && !keys.a && !keys.d && !keys.q && !keys.e) return;
+
+        ws.send(JSON.stringify({
+          type: 'camera_input',
+          w: keys.w, s: keys.s, a: keys.a, d: keys.d, q: keys.q, e: keys.e,
+          dx: mouseDeltaX, dy: mouseDeltaY,
+          rmb: rightMouseDown, shift: shiftDown,
+          scroll: scrollDelta
+        }));
+
+        mouseDeltaX = 0;
+        mouseDeltaY = 0;
+        scrollDelta = 0;
+      }, 33);
+
+      // -----------------------------------------------------------------------
+      // Viewport resize — notify engine of actual panel dimensions
+      // -----------------------------------------------------------------------
+      var lastSentWidth = 0;
+      var lastSentHeight = 0;
+
+      function sendResize(w, h) {
+        // Round to even numbers (GPU alignment).
+        w = Math.max(64, w & ~1);
+        h = Math.max(64, h & ~1);
+        if (w === lastSentWidth && h === lastSentHeight) return;
+        // Only mark as sent AFTER successful WS send.
+        // If WS is closed, the next periodic check will retry.
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'viewport_resize', width: w, height: h }));
+          lastSentWidth = w;
+          lastSentHeight = h;
+        }
+      }
+
+      var resizeTimer = /** @type {ReturnType<typeof setTimeout>|null} */ (null);
+
+      function checkResize() {
+        var cr = canvasContainer.getBoundingClientRect();
+        if (cr.width > 0 && cr.height > 0) {
+          var dpr = window.devicePixelRatio || 1;
+          var pw = Math.round(cr.width * dpr);
+          var ph = Math.round(cr.height * dpr);
+          sendResize(pw, ph);
+          // Debug: show css size, dpr, physical size sent, canvas buffer size.
+          dbgSizeEl.textContent =
+            'css:' + Math.round(cr.width) + 'x' + Math.round(cr.height) +
+            ' dpr:' + dpr.toFixed(2) +
+            ' sent:' + lastSentWidth + 'x' + lastSentHeight +
+            ' buf:' + canvas.width + 'x' + canvas.height;
+        }
+      }
+
+      // Debounced resize — wait 500ms after the LAST size change before
+      // sending to the engine.  The DX12 resize is very expensive (full GPU
+      // drain + buffer recreation), so we only fire when the user stops
+      // dragging.  CSS stretches the canvas during the drag for visual feedback.
+      function scheduleResize() {
+        if (resizeTimer) { clearTimeout(resizeTimer); }
+        resizeTimer = setTimeout(checkResize, 500);
+      }
+
+      // ResizeObserver fires on every layout change — debounced.
+      var resizeObserver = new ResizeObserver(function() { scheduleResize(); });
+      resizeObserver.observe(canvasContainer);
+
+      // Fallback: periodic check every 3s (covers edge cases where
+      // ResizeObserver doesn't fire in VSCode webviews).
+      setInterval(function() { scheduleResize(); }, 3000);
+
     }());
   </script>
 </body>
 </html>`;
-    }
 }
