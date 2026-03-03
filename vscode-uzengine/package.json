@@ -41,6 +41,21 @@
           "type": "string",
           "default": "",
           "description": "Absolute path to UzEngine.exe. Leave empty to auto-detect in build/Release or build/Debug."
+        },
+        "uzengine.ipcDirectory": {
+          "type": "string",
+          "default": "",
+          "description": "Absolute path to the IPC directory (command.json/response.json). Leave empty to auto-detect."
+        },
+        "uzengine.viewport.sceneTargetFps": {
+          "type": "number",
+          "default": 60,
+          "description": "Target frame rate for the scene viewport."
+        },
+        "uzengine.viewport.sceneJpegQuality": {
+          "type": "number",
+          "default": 85,
+          "description": "JPEG quality (75–95) for the scene viewport stream."
         }
       }
     }
@@ -49,13 +64,54 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "package": "vsce package --no-dependencies",
-    "lint": "eslint src"
+    "lint": "eslint src",
+    "test": "jest --coverage",
+    "type-check": "tsc --noEmit"
+  },
+  "jest": {
+    "preset": "ts-jest",
+    "testEnvironment": "node",
+    "roots": ["<rootDir>/src"],
+    "testMatch": ["**/__tests__/**/*.test.ts"],
+    "moduleNameMapper": {
+      "^vscode$": "<rootDir>/src/__mocks__/vscode.ts"
+    },
+    "collectCoverageFrom": [
+      "src/**/*.ts",
+      "!src/__mocks__/**",
+      "!src/__tests__/**"
+    ],
+    "coverageThreshold": {
+      "global": {
+        "branches": 80,
+        "functions": 90,
+        "lines": 90,
+        "statements": 90
+      }
+    },
+    "transform": {
+      "^.+\\.tsx?$": ["ts-jest", {
+        "tsconfig": {
+          "strict": true,
+          "esModuleInterop": true,
+          "module": "commonjs",
+          "target": "ES2020",
+          "lib": ["ES2020"],
+          "resolveJsonModule": true,
+          "noUnusedLocals": false,
+          "noUnusedParameters": false
+        }
+      }]
+    }
   },
   "devDependencies": {
+    "@types/jest": "^29.5.0",
     "@types/node": "^20.0.0",
     "@types/vscode": "^1.85.0",
     "@vscode/vsce": "^3.7.1",
     "eslint": "^9.0.0",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.1.0",
     "typescript": "^5.3.0",
     "typescript-eslint": "^8.0.0"
   }
