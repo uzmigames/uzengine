@@ -303,6 +303,9 @@ bool DX12Renderer::resize(int width, int height) {
 }
 
 void DX12Renderer::update(double /*totalTime*/, double deltaTime) {
+    // Update the FPS counter (rolling average over 60 samples).
+    fpsOverlay_.update(deltaTime);
+
     // -- Check for pending viewport resize before any rendering work. ---------
     // Always consume the pending resize (clears the atomic) but only apply
     // it if the dimensions actually changed.  The resize itself is expensive
@@ -453,7 +456,7 @@ void DX12Renderer::update(double /*totalTime*/, double deltaTime) {
     }
 }
 
-void DX12Renderer::render() {
+void DX12Renderer::render(bool readback) {
     // -----------------------------------------------------------------------
     // Reset the command allocator and command list for the current frame.
     // -----------------------------------------------------------------------
@@ -552,51 +555,65 @@ void DX12Renderer::render() {
         commandList_->DrawInstanced(12, 1, 0, 0);
     }
 
-    // -----------------------------------------------------------------------
-    // Transition for readback: RENDER_TARGET -> COPY_SOURCE.
-    // -----------------------------------------------------------------------
-    D3D12_RESOURCE_BARRIER barrierToCopySrc{};
-    barrierToCopySrc.Type                   = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-    barrierToCopySrc.Flags                  = D3D12_RESOURCE_BARRIER_FLAG_NONE;
-    barrierToCopySrc.Transition.pResource   = renderTargets_[frameIndex_].Get();
-    barrierToCopySrc.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-    barrierToCopySrc.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
-    barrierToCopySrc.Transition.StateAfter  = D3D12_RESOURCE_STATE_COPY_SOURCE;
-    commandList_->ResourceBarrier(1, &barrierToCopySrc);
+    if (readback) {
+        // -------------------------------------------------------------------
+        // Transition for readback: RENDER_TARGET -> COPY_SOURCE.
+        // -------------------------------------------------------------------
+        D3D12_RESOURCE_BARRIER barrierToCopySrc{};
+        barrierToCopySrc.Type                   = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        barrierToCopySrc.Flags                  = D3D12_RESOURCE_BARRIER_FLAG_NONE;
+        barrierToCopySrc.Transition.pResource   = renderTargets_[frameIndex_].Get();
+        barrierToCopySrc.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+        barrierToCopySrc.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+        barrierToCopySrc.Transition.StateAfter  = D3D12_RESOURCE_STATE_COPY_SOURCE;
+        commandList_->ResourceBarrier(1, &barrierToCopySrc);
 
-    // -----------------------------------------------------------------------
-    // Copy the render target into the readback buffer for CPU access.
-    // -----------------------------------------------------------------------
-    const uint32_t alignedPitch = (width_ * 4 + 255) & ~255u;
+        // -------------------------------------------------------------------
+        // Copy the render target into the readback buffer for CPU access.
+        // -------------------------------------------------------------------
+        const uint32_t alignedPitch = (width_ * 4 + 255) & ~255u;
 
-    D3D12_TEXTURE_COPY_LOCATION srcLocation{};
-    srcLocation.pResource        = renderTargets_[frameIndex_].Get();
-    srcLocation.Type             = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-    srcLocation.SubresourceIndex = 0;
+        D3D12_TEXTURE_COPY_LOCATION srcLocation{};
+        srcLocation.pResource        = renderTargets_[frameIndex_].Get();
+        srcLocation.Type             = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+        srcLocation.SubresourceIndex = 0;
 
-    D3D12_TEXTURE_COPY_LOCATION dstLocation{};
-    dstLocation.pResource                          = readbackBuffers_[frameIndex_].Get();
-    dstLocation.Type                               = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
-    dstLocation.PlacedFootprint.Offset             = 0;
-    dstLocation.PlacedFootprint.Footprint.Format   = DXGI_FORMAT_R8G8B8A8_UNORM;
-    dstLocation.PlacedFootprint.Footprint.Width    = width_;
-    dstLocation.PlacedFootprint.Footprint.Height   = height_;
-    dstLocation.PlacedFootprint.Footprint.Depth    = 1;
-    dstLocation.PlacedFootprint.Footprint.RowPitch = alignedPitch;
+        D3D12_TEXTURE_COPY_LOCATION dstLocation{};
+        dstLocation.pResource                          = readbackBuffers_[frameIndex_].Get();
+        dstLocation.Type                               = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+        dstLocation.PlacedFootprint.Offset             = 0;
+        dstLocation.PlacedFootprint.Footprint.Format   = DXGI_FORMAT_R8G8B8A8_UNORM;
+        dstLocation.PlacedFootprint.Footprint.Width    = width_;
+        dstLocation.PlacedFootprint.Footprint.Height   = height_;
+        dstLocation.PlacedFootprint.Footprint.Depth    = 1;
+        dstLocation.PlacedFootprint.Footprint.RowPitch = alignedPitch;
 
-    commandList_->CopyTextureRegion(&dstLocation, 0, 0, 0, &srcLocation, nullptr);
+        commandList_->CopyTextureRegion(&dstLocation, 0, 0, 0, &srcLocation, nullptr);
 
-    // -----------------------------------------------------------------------
-    // Transition: COPY_SOURCE -> PRESENT.
-    // -----------------------------------------------------------------------
-    D3D12_RESOURCE_BARRIER barrierToPresent{};
-    barrierToPresent.Type                   = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
-    barrierToPresent.Flags                  = D3D12_RESOURCE_BARRIER_FLAG_NONE;
-    barrierToPresent.Transition.pResource   = renderTargets_[frameIndex_].Get();
-    barrierToPresent.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
-    barrierToPresent.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE;
-    barrierToPresent.Transition.StateAfter  = D3D12_RESOURCE_STATE_PRESENT;
-    commandList_->ResourceBarrier(1, &barrierToPresent);
+        // -------------------------------------------------------------------
+        // Transition: COPY_SOURCE -> PRESENT.
+        // -------------------------------------------------------------------
+        D3D12_RESOURCE_BARRIER barrierToPresent{};
+        barrierToPresent.Type                   = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        barrierToPresent.Flags                  = D3D12_RESOURCE_BARRIER_FLAG_NONE;
+        barrierToPresent.Transition.pResource   = renderTargets_[frameIndex_].Get();
+        barrierToPresent.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+        barrierToPresent.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE;
+        barrierToPresent.Transition.StateAfter  = D3D12_RESOURCE_STATE_PRESENT;
+        commandList_->ResourceBarrier(1, &barrierToPresent);
+    } else {
+        // -------------------------------------------------------------------
+        // No readback — go directly RENDER_TARGET -> PRESENT.
+        // -------------------------------------------------------------------
+        D3D12_RESOURCE_BARRIER barrierToPresent{};
+        barrierToPresent.Type                   = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        barrierToPresent.Flags                  = D3D12_RESOURCE_BARRIER_FLAG_NONE;
+        barrierToPresent.Transition.pResource   = renderTargets_[frameIndex_].Get();
+        barrierToPresent.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+        barrierToPresent.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+        barrierToPresent.Transition.StateAfter  = D3D12_RESOURCE_STATE_PRESENT;
+        commandList_->ResourceBarrier(1, &barrierToPresent);
+    }
 
     // -----------------------------------------------------------------------
     // Close and execute.
@@ -613,8 +630,11 @@ void DX12Renderer::render() {
 
     // -----------------------------------------------------------------------
     // Readback: wait for GPU copy completion, then map and copy pixels to CPU.
+    // Only performed when readback was requested (GPU copy was recorded above).
     // -----------------------------------------------------------------------
-    performReadback();
+    if (readback) {
+        performReadback();
+    }
 
     moveToNextFrame();
 }
@@ -1378,6 +1398,10 @@ void DX12Renderer::performReadback() {
             src += alignedPitch;
             dst += actualRowBytes;
         }
+
+        // Stamp the FPS counter into the top-left corner of the pixel buffer.
+        fpsOverlay_.renderInto(latestFrame_.pixels.data(),
+                               width_, height_, actualRowBytes);
     }
 
     // Indicate we are done reading from the readback buffer.

@@ -4,6 +4,8 @@
 #include <mutex>
 #include <vector>
 
+#include "fps_overlay.h"
+
 #include <d3d12.h>
 #include <dxgi1_6.h>
 #include <d3dcompiler.h>
@@ -107,8 +109,11 @@ public:
     // need wall-clock time; deltaTime drives the rotation step.
     void update(double totalTime, double deltaTime);
 
-    // Record and execute the command list, present the frame.
-    void render();
+    /// Record and execute the command list, present the frame.
+    /// @param readback  When true, copy the rendered frame to a CPU-readable
+    ///                   buffer (for JPEG streaming).  When false, skip the
+    ///                   GPU copy + fence wait — much cheaper per frame.
+    void render(bool readback = true);
 
     /// Resize the swap chain, render targets, depth buffer, and readback
     /// buffers to the given dimensions.  Must be called from the render thread
@@ -249,6 +254,9 @@ private:
 
     // External scene parameters (set via setSceneParams, nullable).
     SceneParams* sceneParams_ = nullptr;
+
+    // CPU-side FPS overlay — stamps "FPS: XXX" into the readback pixel buffer.
+    FPSOverlay fpsOverlay_;
 
     // Cached clear color -- updated from sceneParams_ each frame in update().
     // Default matches UE5 dark viewport background (~0.12).

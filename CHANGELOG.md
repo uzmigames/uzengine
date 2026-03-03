@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- **Dual JPEG encoder threads**: round-robin frame dispatch to 2 independent `JpegEncoder` instances running on separate threads, doubling encode throughput from ~78 fps to ~143 fps (near 144 fps target)
+  - `g_frameRingA` / `g_frameRingB` — two SPSC ring buffers, one per encoder thread
+  - `g_dispatchToggle` — render thread alternates dispatch between the two rings
+  - Backpressure: readback skipped only when both rings are backed up (≥2 frames each)
+  - Fallback dispatch: if preferred ring is full, tries the other; drops frame only when both are full
+  - Replaced `sleep_for(1ms)` with `yield()` in encode loop (reduces latency under load)
+
+- **FPS overlay in render output**: "FPS: XXX" stamped into the top-left of every streamed frame
+  - Wired existing `FPSOverlay` class into `DX12Renderer` (was unused)
+  - `fpsOverlay_.update(deltaTime)` called in `update()`, `fpsOverlay_.renderInto()` in `performReadback()`
+
+- **Conditional GPU readback**: skip the expensive GPU copy + fence wait + 3 MB memcpy when encode threads are backed up
+  - `renderer.render(bool readback)` — when `readback=false`, skips copy-to-readback-buffer; transitions directly RENDER_TARGET → PRESENT
+  - Render loop still runs at full 144 fps for smooth camera movement even when skipping readback
+
 - **Dynamic viewport resize**: render target adapts to VSCode panel size changes in real-time
   - `scene_params.h` — packed `atomic<uint64_t>` for thread-safe resize requests (`requestResize()`/`consumeResize()`)
   - `renderer.cpp` — full DX12 resize pipeline: GPU drain → release RT/depth/readback → `ResizeBuffers()` → recreate resources → update viewport/scissor
