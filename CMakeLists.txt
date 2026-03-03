@@ -93,18 +93,60 @@ endif()
 enable_testing()
 find_package(GTest CONFIG REQUIRED)
 
+# nlohmann-json (needed by IPC handlers — available on all platforms via vcpkg)
+if(NOT TARGET nlohmann_json::nlohmann_json)
+    find_package(nlohmann_json CONFIG REQUIRED)
+endif()
+
 # Core + Renderer Layer tests
 add_executable(UzEngineTests
     src/engine/core/arena.cpp
     src/engine/core/string_id.cpp
+    src/engine/core/timer_system.cpp
+    src/engine/core/event_bus.cpp
     src/engine/renderer/rhi/rhi_common.c
+    src/common/ipc_registry.cpp
+    src/engine/scene/scene_manager.cpp
+    src/engine/scene/scene_loader.cpp
+    src/engine/scene/scene_saver.cpp
+    src/engine/scene/scene_handlers.cpp
+    src/engine/editor/undo_redo.cpp
+    src/engine/editor/asset_registry.cpp
+    src/engine/editor/ipc_asset_handlers.cpp
+    src/engine/editor/ipc_playmode_handlers.cpp
+    src/engine/debug/console.cpp
+    src/engine/core/platform.cpp
+    src/engine/core/file_watcher.cpp
+    src/engine/renderer/shader_manager.cpp
+    src/common/ipc_shader_handlers.cpp
+    src/engine/renderer/viewport_registry.cpp
+    src/common/ipc_viewport_handlers.cpp
+    src/engine/core/crash_reporter.cpp
+    src/engine/renderer/render_graph.cpp
     tests/core/test_arena.cpp
     tests/core/test_handle.cpp
     tests/core/test_string_id.cpp
     tests/core/test_result.cpp
     tests/core/test_math.cpp
+    tests/core/test_scene.cpp
+    tests/core/test_scene_io.cpp
+    tests/core/test_scene_handlers.cpp
+    tests/core/test_timer_system.cpp
+    tests/core/test_event_bus.cpp
+    tests/editor/test_undo_redo.cpp
+    tests/editor/test_asset_registry.cpp
+    tests/debug/test_console.cpp
+    tests/core/test_assert.cpp
+    tests/core/test_profiler.cpp
+    tests/core/test_platform.cpp
     tests/core/test_main.cpp
     tests/renderer/test_rhi_common.cpp
+    tests/core/test_file_watcher.cpp
+    tests/renderer/test_shader_manager.cpp
+    tests/renderer/test_viewport_registry.cpp
+    tests/core/test_crash_reporter.cpp
+    tests/renderer/test_render_graph.cpp
+    tests/core/test_engine_mode.cpp
 )
 
 target_include_directories(UzEngineTests PRIVATE
@@ -113,6 +155,9 @@ target_include_directories(UzEngineTests PRIVATE
 
 target_link_libraries(UzEngineTests PRIVATE
     GTest::gtest
+    nlohmann_json::nlohmann_json
+    $<$<NOT:$<BOOL:${WIN32}>>:pthread>
+    $<$<NOT:$<BOOL:${WIN32}>>:dl>
 )
 
 target_compile_definitions(UzEngineTests PRIVATE

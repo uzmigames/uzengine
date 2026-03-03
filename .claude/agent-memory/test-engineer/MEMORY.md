@@ -39,3 +39,20 @@ Google Test + Google Mock. Minimum 95% coverage. No placeholder tests.
 - DISABLED_ prefix on real tests
 - Catching exceptions silently
 - Global state leakage between tests
+
+## Actual Build / Test Commands (Linux devcontainer)
+- Configure: `cmake -B build -G "Ninja Multi-Config"` (no toolchain file needed on Linux)
+- Build: `cmake --build /workspaces/UzEngine/build --config Debug --parallel`
+- Test: `cd /workspaces/UzEngine/build && ctest -C Debug --output-on-failure`
+- Test filter: `-R "SceneLoader|SceneSaver"`
+
+## scene_loader / scene_saver patterns (tests/core/test_scene_io.cpp)
+- Scene is ~8MB — always `std::make_unique<Scene>()` + `scene_init()` after allocation
+- `scene_save_to_string(nullptr)` returns `""` (empty, not an error Result)
+- `SceneLoadResult` / `SceneSaveResult` = `Result<bool>`: use `.is_ok()`, `.is_err()`, `.error()`
+- Default flags when "active"/"visible" absent: both ON (NODE_FLAG_ACTIVE | NODE_FLAG_VISIBLE)
+- Inline default.uzscene as a `constexpr const char*` — avoids CI dependency on assets/ dir
+- Orphaned parent test: set `node->alive = false` + decrement `node_count` directly
+  (do NOT use scene_destroy_node — it cascades and kills the child too)
+- All 9 NodeTypes + unknown string → Empty fallback confirmed by node_type_from_string
+- Float round-trip tolerance: 1e-4f (saver uses %.6f format)

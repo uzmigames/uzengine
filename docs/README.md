@@ -136,7 +136,8 @@ Design and architecture specifications for all engine systems, organized by doma
 | Spec | Description |
 |------|-------------|
 | [specs/engine/memory-system.md](specs/engine/memory-system.md) | Arena allocators, ownership model, handle system |
-| [specs/engine/debug-profiling.md](specs/engine/debug-profiling.md) | Assert system, Tracy CPU/GPU profiler, ImGui overlay, doctest unit tests |
+| [specs/engine/debug-infrastructure.md](specs/engine/debug-infrastructure.md) | Unified IPC for DAP, flame profiler, hot-reload; single port multiplexing, VSCode integration |
+| [specs/engine/debug-profiling.md](specs/engine/debug-profiling.md) | Assert system, Tracy CPU/GPU profiler, ImGui overlay, doctest unit tests, IPC integration |
 | [specs/engine/crash-reporting.md](specs/engine/crash-reporting.md) | Unhandled exception capture, minidump, crash log JSON, system info, IPC integration |
 | [specs/engine/build-system.md](specs/engine/build-system.md) | Cook → Pack → Compile → Stage → Package pipeline, NSIS, platform abstraction |
 | [specs/engine/plugin-system.md](specs/engine/plugin-system.md) | `.uzplugin` manifest, stable C ABI, VSCode extension side, IPC namespace, hot-reload |

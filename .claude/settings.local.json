@@ -149,7 +149,18 @@
       "Bash(python3 -c \":*)",
       "Bash(bash /c/Users/Bolado/rename_tasks.sh)",
       "Bash(ls -d */)",
-      "Bash(ls -d phase0-*)"
+      "Bash(ls -d phase0-*)",
+      "Bash(npx rulebook task validate phase1-viewport-manager)",
+      "Bash(ninja --version)",
+      "Bash(ls /e/UzEngine/*.bat /e/UzEngine/*.ps1 /e/UzEngine/build.*)",
+      "Bash(cmake -B build -G \"Ninja Multi-Config\" -DCMAKE_TOOLCHAIN_FILE=\"C:/Users/Bolado/vcpkg/scripts/buildsystems/vcpkg.cmake\" -DVCPKG_TARGET_TRIPLET=x64-windows -DCMAKE_EXPORT_COMPILE_COMMANDS=ON)",
+      "Bash(cmake -B build-ninja -G \"Ninja Multi-Config\" -DCMAKE_TOOLCHAIN_FILE=\"C:/Users/Bolado/vcpkg/scripts/buildsystems/vcpkg.cmake\" -DVCPKG_TARGET_TRIPLET=x64-windows -DCMAKE_EXPORT_COMPILE_COMMANDS=ON)",
+      "Bash(cmake --build build-ninja --config Debug --target UzEngineTests --parallel)",
+      "Bash(ctest --test-dir build-ninja --build-config Debug --output-on-failure --parallel 4)",
+      "Bash(./build-ninja/Debug/UzEngineTests.exe --gtest_filter=\"QuatRotateVec3.NinetyDegreesAroundX_YBecomesNegZ:Mat4LookAt.LookingAlongNegZ_ForwardIsNegZ\")",
+      "Bash(cmake --build build-ninja --config Debug --parallel)",
+      "Bash(ctest --test-dir build-ninja --build-config Debug --output-on-failure --parallel 8)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(json.dumps\\({k:d.get\\(k\\) for k in [''devDependencies'',''scripts'']}, indent=2\\)\\)\")"
     ]
   },
   "enableAllProjectMcpServers": true,

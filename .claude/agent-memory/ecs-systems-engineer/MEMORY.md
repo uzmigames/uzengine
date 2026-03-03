@@ -23,3 +23,11 @@ C++23 game engine. ECS via EnTT. game.dll C ABI boundary. LuaJIT scripting.
 ## .uzscene Format
 - INI-like, res:// paths, id=0 is null/invalid, parent=0 = scene root
 - Script extension determines kind: .lua → SCRIPT_LUA, .cpp → SCRIPT_CPP
+
+## Asset Registry (phase1-asset-browser)
+- `src/engine/editor/asset_registry.h/.cpp` — AssetType, ImportStatus, AssetEntry, AssetRegistry
+- `src/engine/editor/ipc_asset_handlers.h/.cpp` — asset.list/import/getInfo/createMaterial/Scene/Shader
+- `assets/templates/` — material.uzmat, scene.uzscene, shader_unlit.hlsl (use {{NAME}} placeholder)
+- Hash: FNV-1a mix of file_size + mtime. .import.json sidecar next to source file
+- IPC pattern: capture pointer in lambda, null-check first, make_error() helper
+- Deferred: phase2-asset-importer-pipeline, phase2-vscode-asset-browser-panel

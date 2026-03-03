@@ -24,7 +24,6 @@
 *.cache
 x64/
 x86/
-Debug/
 Release/
 RelWithDebInfo/
 MinSizeRel/
@@ -105,3 +104,4 @@ logs/
 
 vcpkg_installed/
 /.claude/settings.local.json
+/.claude/worktrees

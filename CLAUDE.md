@@ -163,6 +163,50 @@ it('should throw NotFoundError when user does not exist', () => {
 4. **ALWAYS test error paths** - Exceptions, edge cases, and failure modes
 5. **ALWAYS maintain coverage** - Tests must achieve the project's coverage threshold (95%+)
 
+## 🚨 MANDATORY: Deferred Items → Tasks Rule
+
+**ABSOLUTE RULE — NO EXCEPTIONS**: Whenever a task is archived with items marked as "Deferred" or "Phase X+", you MUST immediately create Rulebook tasks for those deferred items **before archiving**.
+
+### The Deferred Items Protocol
+
+```
+❌ WRONG — defer without creating task:
+1. Archive task with "- [ ] D1. feature X — deferred Phase 4"
+   → Feature X is now forgotten forever
+
+✅ CORRECT — defer with tracking:
+1. Add "- [ ] D1. feature X — deferred Phase 4" to tasks.md
+2. Call rulebook_task_create("phase4-feature-x")
+3. Write tasks.md for the new task with full context
+4. THEN call rulebook_task_archive
+```
+
+### tasks.md Format for Archived Tasks
+
+```markdown
+## 1. Implemented Feature
+
+- [x] 1.1 Thing that was done
+- [x] 1.2 Another thing done
+
+## Deferred to Phase N (reason: dependency not ready)
+
+- [ ] D1. Feature X — deferred (reason)   ← task phase4-feature-x MUST exist
+- [ ] D2. Feature Y — deferred (reason)   ← task phaseN-feature-y MUST exist
+```
+
+### Archive Checklist (ALL must be done before `rulebook_task_archive`)
+
+```
+□ 1. tasks.md uses - [x] for implemented, - [ ] for deferred
+□ 2. Each deferred item has a "Phase N" target
+□ 3. A rulebook task exists for EVERY deferred item or group
+□ 4. The new deferred tasks have tasks.md with full context
+□ 5. THEN call rulebook_task_archive
+```
+
+---
+
 ## Critical Rules
 
 1. **ALWAYS read AGENTS.md first** - Contains all project standards and patterns
@@ -175,6 +219,7 @@ it('should throw NotFoundError when user does not exist', () => {
    - All tests passing
    - Coverage threshold met
 6. **Documentation** - Update /docs/ when implementing features
+7. **Deferred items → create tasks** - NEVER archive with deferred items without creating future tasks
 
 ## Persistent Memory
 

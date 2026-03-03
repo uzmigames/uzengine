@@ -54,7 +54,8 @@
         "dbaeumer.vscode-eslint",
         "esbenp.prettier-vscode",
         "streetsidesoftware.code-spell-checker",
-        "github.vscode-github-actions"
+        "github.vscode-github-actions",
+        "hivellm.rulebook-dashboard"
       ],
       "settings": {
         "cmake.configureOnOpen": false,

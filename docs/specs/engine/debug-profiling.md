@@ -323,6 +323,90 @@ engine.run_tests()                      run doctest suite, stream results
 
 ---
 
+## 7.1 IPC Integration
+
+In Phase 1+, Tracy profiling data and GPU timestamps are exposed via the **unified debug infrastructure** over IPC. See [debug-infrastructure.md](./debug-infrastructure.md) for the complete specification.
+
+### IPC Profiler Handlers
+
+All profiler IPC messages use the `profiler.*` category prefix and follow the unified message framing format.
+
+| Handler | Type | Purpose |
+|---------|------|---------|
+| `profiler.start` | request | Begin capturing CPU zones (Tracy) and GPU timestamp queries |
+| `profiler.stop` | request | End profiling and flush the current frame buffer |
+| `profiler.frame` | event | Emitted once per rendered frame; contains CPU zones and GPU queries |
+| `profiler.snapshot` | request | Request the last N frames of profiling data for VSCode visualization |
+
+### Tracy Integration
+
+Tracy provides per-thread CPU zone data (via `UZ_PROFILE_ZONE()` instrumentation). The `profiler.frame` event transforms this into the wire format:
+
+```cpp
+// C++ code captures zones:
+{
+    UZ_PROFILE_ZONE("Shadow Pass");
+    render_shadow(cmd_list);
+}
+
+// Emits over IPC as:
+{
+  "category": "profiler.frame",
+  "type": "event",
+  "body": {
+    "cpu_zones": [
+      {
+        "name": "Shadow Pass",
+        "thread_id": 0,
+        "start_ns": 2500000,
+        "end_ns": 5000000,
+        "depth": 1
+      }
+    ]
+  }
+}
+```
+
+### GPU Timestamp Queries
+
+DirectX 12 timestamp queries are converted to milliseconds using `ID3D12CommandQueue::GetTimestampFrequency()` and included in the same `profiler.frame` event:
+
+```json
+"gpu_queries": [
+  {
+    "name": "Shadow Pass",
+    "start_gpu_tick": 100000,
+    "end_gpu_tick": 150000,
+    "gpu_tick_freq": 1000000000
+  }
+]
+```
+
+### Frame History Buffer
+
+The engine retains a ring buffer of the last **120 frames** (~2 seconds @ 60 FPS). The `profiler.snapshot` RPC allows VSCode to retrieve the full history for visualization.
+
+```json
+{
+  "category": "profiler.snapshot",
+  "type": "request",
+  "seq": 12,
+  "body": { "num_frames": 120, "include_gpu": true }
+}
+```
+
+### VSCode Integration (Phase 2)
+
+In Phase 2, the VSCode extension provides a **Profiler panel WebView** that:
+- Receives `profiler.frame` events in real-time
+- Renders a flame chart using Canvas 2D
+- Supports zoom, pan, and search by zone name
+- Shows per-thread breakdown and frame time histogram
+
+See [debug-infrastructure.md § 4.3](./debug-infrastructure.md#43-profiler-panel-webview) for integration details.
+
+---
+
 ## 8. Dependencies
 
 | Library | vcpkg ID | License | Notes |
@@ -342,3 +426,10 @@ engine.run_tests()                      run doctest suite, stream results
 | Release | off | off | off | off | ci only |
 | Profile | off | **on** | on | off | no |
 | Shipping | off | off | off | off | no |
+
+---
+
+## Related Docs
+
+- [debug-infrastructure.md](./debug-infrastructure.md) — Unified IPC protocol for DAP, profiler, hot-reload
+- [crash-reporting.md](./crash-reporting.md) — Exception handling and minidump generation

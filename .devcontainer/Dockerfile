@@ -105,13 +105,28 @@ RUN git clone https://github.com/microsoft/vcpkg.git ${VCPKG_ROOT} \
 
 # ---------------------------------------------------------------------------
 # Non-root user 'vscode' (matches Dev Container convention)
+# Ubuntu 24.04 base image ships with uid/gid 1000 as user 'ubuntu'.
+# We rename that user/group to 'vscode' instead of trying to create new ones.
 # ---------------------------------------------------------------------------
-RUN groupadd --gid 1000 vscode \
- && useradd  --uid 1000 --gid vscode --shell /bin/bash --create-home vscode \
- && echo "vscode ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/vscode \
- && chmod 0440 /etc/sudoers.d/vscode \
- # Give vscode ownership of vcpkg so it can install packages
- && chown -R vscode:vscode ${VCPKG_ROOT}
+RUN set -e; \
+    # Rename existing group with gid 1000 (if any) to 'vscode' \
+    EXISTING_GROUP=$(getent group 1000 | cut -d: -f1 || true); \
+    if [ -n "$EXISTING_GROUP" ] && [ "$EXISTING_GROUP" != "vscode" ]; then \
+        groupmod --new-name vscode "$EXISTING_GROUP"; \
+    elif [ -z "$EXISTING_GROUP" ]; then \
+        groupadd --gid 1000 vscode; \
+    fi; \
+    # Rename existing user with uid 1000 (if any) to 'vscode' \
+    EXISTING_USER=$(getent passwd 1000 | cut -d: -f1 || true); \
+    if [ -n "$EXISTING_USER" ] && [ "$EXISTING_USER" != "vscode" ]; then \
+        usermod --login vscode --move-home --home /home/vscode --gid vscode --shell /bin/bash "$EXISTING_USER"; \
+    elif [ -z "$EXISTING_USER" ]; then \
+        useradd --uid 1000 --gid vscode --shell /bin/bash --create-home vscode; \
+    fi; \
+    mkdir -p /etc/sudoers.d; \
+    echo "vscode ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/vscode; \
+    chmod 0440 /etc/sudoers.d/vscode; \
+    chown -R vscode:vscode ${VCPKG_ROOT}
 
 # ---------------------------------------------------------------------------
 # Claude Code CLI

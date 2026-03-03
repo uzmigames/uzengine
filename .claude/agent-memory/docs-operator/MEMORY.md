@@ -517,3 +517,97 @@ Added 5 new sections addressing asset pipeline gaps:
 - All include Related Docs cross-references
 - Guides follow narrative structure: anatomy → patterns → examples → best practices → testing
 - Consistent with existing project style (ctx binding pattern, INI/TOML formats, etc.)
+
+## Session 2026-03-03: Phase 1 Shared State Design Spec
+
+### Shared State Spec (shared-state.md) - COMPLETED
+- **File**: `/workspaces/UzEngine/docs/specs/scripting/shared-state.md` (783 lines)
+- **Status**: Phase 1 design-only task, archived
+- **Deliverable**: Comprehensive spec document for global game state system
+
+#### Key Design Sections:
+1. **C++ API** (GameState class):
+   - `GameStateValue` = variant<bool, int32_t, float, string, Vec3>
+   - `get<T>(key, default)`, `set<T>(key, value)`, `has()`, `remove()`, `clear()`
+   - `keys()`, `get_all()`, `serialize()`, `deserialize()`
+   - Deferred event dispatch: events queued during set(), dispatched at frame boundary
+
+2. **Change Events**:
+   - `GameStateChangedEvent<T>`: fires when value changes (different from old)
+   - `GameStateRemovedEvent`: fires when key removed
+   - Integrated with EventBus<T> for reactive systems
+
+3. **Lua API** (ctx.shared):
+   - Direct metatable access: `ctx.shared.health = 100`
+   - Methods: `get()`, `has()`, `remove()`, `keys()`
+   - Event subscription: `on_change(key, fn)` returns sub_id
+   - Type inference: int vs float distinction preserved via Lua detection
+
+4. **Serialization**:
+   - msgpack format: flat key-value map
+   - Integration point: `GameState::serialize` in save/load path
+   - Persistent key filtering: `set_persistent(key, bool)` controls save inclusion
+   - Deferred dispatch during deserialize (no event firing during load)
+
+5. **Editor IPC Handlers**:
+   - `scene.get_shared_state` → JSON dump of all entries
+   - `scene.set_shared_state` → inject/update key at runtime
+   - `scene.shared_state_changed` → event pushed to editor (throttled 10Hz)
+
+6. **Thread Safety**:
+   - Main-thread-only (Game Logic thread)
+   - Assertions in debug builds for thread violations
+
+#### Implementation Details:
+- File structure: `src/game/game_state.h/cpp`, `src/game/lua_shared_state.h/cpp`
+- Lua metatable: `__index` → get, `__newindex` → set
+- Error handling: type mismatch warnings, corrupted load resilience
+- Key naming convention: dot notation (player.health, quest_dragon.completed)
+
+#### Test Coverage Specified:
+- Unit tests: type preservation, events, serialization, Lua inference
+- Integration tests: UI binding, save/load round-trip, hot-reload persistence
+- Example tests provided (C++ GoogleTest format)
+
+#### Phase Roadmap:
+| Phase | Deliverable |
+|-------|-------------|
+| Phase 1 | GameState class, GameStateChangedEvent, ctx.shared proxy, deferred dispatch |
+| Phase 2 | IPC handlers, inspector panel integration |
+| Phase 3 | Serialization hooks, persistent flags, save-system integration |
+| Phase 4 | Network replication, cloud save integration |
+
+#### Deferred Items (Documented for Future Phases):
+1. Network Replication (Phase 4)
+2. Cloud Save Integration (Phase 4)
+3. State Validation Schema (Phase 2)
+4. Advanced Type Support - nested tables (Phase 4)
+5. UI Binding Framework - data-bind syntax (Phase 2)
+6. Audio Snapshot Triggers (Phase 3)
+
+### Updates to Related Specs:
+1. **event-bus.md**: Added two rows to predefined events table:
+   - `GameStateChangedEvent<T>` | GameState | On shared state change (Phase 1+)
+   - `GameStateRemovedEvent` | GameState | On key removal (Phase 1+)
+
+### Related Docs Cross-References:
+- lua-scripting.md (LuaJIT VM, ctx API, script lifecycle)
+- event-bus.md (EventBus<T>, predefined engine events)
+- save-system.md (save/load, msgpack format)
+- ui-system.md (data binding to ctx.shared)
+- audio-snapshots.md (audio state driven by shared state)
+
+### Consistency Notes:
+- Follows established spec format: Status badge, Owner, Thread safety, Serialization note at top
+- C++ and Lua APIs presented as equal first-class APIs
+- Architecture diagrams, implementation details, error handling table
+- Phase roadmap and deferred items sections
+- All code examples with proper syntax highlighting
+- Cross-references use relative paths (../gameplay/event-bus.md)
+
+### Task Completion:
+- ✅ Created shared-state.md (783 lines)
+- ✅ Updated event-bus.md with predefined events
+- ✅ Marked all task items [x] in tasks.md
+- ✅ Archived phase1-shared-state-design task
+- ✅ No orphaned deferred items (all documented in spec)

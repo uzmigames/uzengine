@@ -94,6 +94,93 @@
 - **Renderer integration**: `DX12Renderer::setSceneParams()` + `getLastFrameCopy()` + background color + pause support
 - **vcpkg location on this machine**: `C:/vcpkg/vcpkg.exe` (not E:/vcpkg)
 
+## Debug/Profiling Module (src/engine/core/)
+- **assert.h**: ASSERT, ASSERT_MSG, VERIFY, ENSURE macros. `uz::detail::assert_fail[_msg]()` in debug; no-ops/eval-only in UZ_SHIPPING.
+- **profiler.h**: UZ_PROFILE_FUNCTION/ZONE/FRAME_MARK/VALUE/MESSAGE. Tracy-backed when UZ_PROFILING=1, zero-overhead no-ops otherwise.
+- **ArenaStats**: struct {used, peak, capacity, name} + `arena_get_stats()` accessor added to arena.h/.cpp.
+- Test count after phase1-debug-profiling: 811 (was 763)
+
+## Platform Abstraction Layer (src/engine/core/)
+- **platform.h**: Platform detection macros (UZ_PLATFORM_WINDOWS/LINUX/MACOS) + C++ PAL API
+  - Timing: `get_time_seconds()`, `get_time_microseconds()` (monotonic)
+  - File I/O: `path_exists()`, `file_size()`, `file_read_all()`, `file_write_all()`, `mkdir_recursive()`
+  - Threads: `thread_create/join/detach()`, `thread_current_id()`, `thread_sleep_ms()`
+  - Mutex: `mutex_create/destroy/lock/unlock/try_lock()`
+  - DynLib: `dynlib_open/close/symbol()`
+- **platform.cpp**: Full Linux impl (pthreads, dlopen, CLOCK_MONOTONIC, POSIX stat/stdio) + Windows impl (QPC, CreateThread, CriticalSection, LoadLibrary)
+- All opaque structs (Thread*, Mutex*, DynLib*) use malloc/free -- PAL objects, not gameplay data
+- Namespace: `uz::platform`
+- Linux mutex uses PTHREAD_MUTEX_ERRORCHECK for safety during development
+- CMakeLists.txt links `-lpthread -ldl` on non-Windows via generator expressions
+- Test count after phase1-platform-abstraction-layer: 870 (was 811, +59 new tests)
+
+## Shader Hot-Reload Module
+- **file_watcher.h/.cpp** (src/engine/core/): `FileWatcher` - directory monitor with per-path debounce
+  - Linux: inotify (IN_CLOSE_WRITE | IN_MOVED_TO | IN_CREATE | IN_DELETE) + pipe for stop signal
+  - Windows: ReadDirectoryChangesW with overlapped I/O + event for stop signal
+  - macOS: stub (watch() returns false)
+  - Background thread via `uz::platform::thread_create`; `thread_entry` is a static private member (avoids private-member-access issue with free functions)
+  - Debounce: per-filename timestamp map, default 200ms window
+  - PIMPL pattern with `Impl*`
+- **shader_manager.h/.cpp** (src/engine/renderer/): `ShaderManager` - in-memory shader cache
+  - `register_shader(name, vs_path, ps_path)` + `reload(path)` + `get_errors(path)` + `list()` + `get_info(name)`
+  - Thread-safe via `uz::platform::Mutex` (custom MutexGuard RAII in .cpp)
+  - Linux: no DXC compilation; reload always succeeds with is_valid=true
+  - Reload callback: `ShaderReloadCallback` invoked per affected shader under lock
+  - `list()` returns sorted names for deterministic output
+- **ipc_shader_handlers.h/.cpp** (src/common/): IPC handlers for shader.reload, shader.getErrors, shader.list, shader.getSource, shader.setSource
+  - Follows same pattern as scene_handlers.cpp (capture pointer, return JSON)
+  - shader.getSource/setSource use `uz::platform::file_read_all/file_write_all`
+- Test count after phase1-shader-hot-reload: 936 (was 870, +66 new tests)
+
+## Viewport Manager Module (src/engine/renderer/)
+- **viewport_registry.h/.cpp**: `ViewportRegistry` - manages N independent viewports with lifecycle state machine
+  - State machine: INACTIVE -> ACTIVE <-> SUSPENDED, any -> DESTROYED
+  - Hard caps: kMaxViewports=16, kMaxActiveViewports=4, kVramBudgetBytes=512MB
+  - Slot array: `ViewportInfo slots_[kMaxViewports]` with monotonic IDs
+  - VRAM enforcement: auto-suspends oldest ACTIVE (smallest frame_count) when budget exceeded
+  - Heartbeat watchdog: auto-suspends all if seconds_since_heartbeat() > 30s
+  - Thread-safe via `uz::platform::Mutex` (PIMPL + MutexGuard RAII)
+  - `ViewportSuspendCallback` invoked on auto-suspend
+- **ipc_viewport_handlers.h/.cpp** (src/common/): IPC handlers for viewport.create/destroy/setActive/resize/getStatus/list
+  - Same pattern as ipc_shader_handlers (capture pointer, return JSON)
+- **Gotcha**: nlohmann::json `is_number_unsigned()` returns false for positive signed ints like `1920`. Use `is_number_integer()` instead for JSON integer validation.
+- Test count after phase1-viewport-manager: 1022 (was 936, +86 new tests)
+
+## Crash Reporter Module (src/engine/core/)
+- **crash_reporter.h/.cpp**: `CrashReporter` - portable signal/exception handler
+  - Linux: sigaction(SA_SIGINFO | SA_RESETHAND) for SIGSEGV/SIGABRT/SIGFPE/SIGILL/SIGBUS
+  - Signal handler: async-signal-safe (open/write/close/_exit, backtrace as best-effort)
+  - Manual write_report(): stdio path with backtrace_symbols for symbolic traces
+  - Report format: [crash] (timestamp, signal, details) + [stack] + [engine] (version, build)
+  - Static state: s_output_dir[460], s_last_report_path[512], s_installed, s_pre_crash_callback
+  - install()/uninstall() for lifecycle, set_pre_crash_callback() for pre-crash hooks
+  - Windows: SetUnhandledExceptionFilter stub (Phase 2)
+- Test count after phase1-crash-reporting: 1053 (was 1022, +31 new tests)
+
+## Render Graph Module (src/engine/renderer/)
+- **render_graph.h/.cpp**: `RenderGraph` - frame-local DAG for GPU resource management and pass scheduling
+  - Resource handles: `RgTextureHandle`, `RgBufferHandle` (uint32_t indices into resources vector)
+  - `kRgHandleInvalid = UINT32_MAX`, `kRgMaxPasses = 64`, `kRgMaxResources = 128`
+  - Resource types: `RgTextureDesc`, `RgBufferDesc` with name[64] char arrays
+  - Pass types: Graphics, Compute, Copy (enum class `RgPassType`)
+  - `RgPassBuilder`: fluent API for declaring read/write deps + force_run()
+  - Compile phase: Kahn's toposort + backward dead-pass culling from "output frontier"
+  - Output frontier: force_run passes + passes writing to imported/persistent resources
+  - Liveness propagation: backward BFS through reverse adjacency
+  - Execute: iterates execution_order_, calls execute_fn(cmd_list) for live passes
+  - No DX12/Vulkan/Metal headers -- backend-agnostic via RHI handles
+  - PIMPL pattern with `Impl*` (std::vector storage, not platform::Mutex -- not thread-safe by design, frame-local)
+  - Move semantics: move ctor/assign transfer impl_ ownership
+  - Cycle detection: compile() returns false if toposort doesn't cover all passes
+- **Gotcha**: `std::strncpy` not available in `<cstring>` on Clang C++23 without explicit include. Use `#include <cstring>` or bare `strncpy`.
+- Test count after phase1-render-graph: 1086 (was 1022, +64 new tests)
+
+## Build Gotcha: PIMPL + Free Thread Functions
+- A free function (even `static` in the same TU) cannot access a private nested `Impl` struct on Clang.
+- Solution: declare the thread entry point as a `static` private member function of the class.
+  This gives it access to the private `Impl` type while still being compatible with C function pointers like `ThreadFunc = void(*)(void*)`.
+
 ## User Preferences
 - Communicates in Portuguese (BR)
 - Prefers DX12 (not DX11)

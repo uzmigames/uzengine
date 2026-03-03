@@ -72,6 +72,16 @@ void arena_restore(Arena* arena, ArenaMark mark) {
     arena->offset = mark.offset;
 }
 
+ArenaStats arena_get_stats(const Arena* arena) {
+    assert(arena != nullptr);
+    return ArenaStats{
+        .used     = arena->offset,
+        .peak     = arena->peak,
+        .capacity = arena->size,
+        .name     = arena->name,
+    };
+}
+
 // ============================================================================
 // Global arena backing memory (static arrays — no dynamic init)
 // ============================================================================

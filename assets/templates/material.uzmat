@@ -1,0 +1,11 @@
+[material]
+name = {{NAME}}
+shader = unlit
+
+[properties]
+albedo_color = 1.0 1.0 1.0 1.0
+albedo_texture =
+metallic = 0.0
+roughness = 0.5
+normal_texture =
+emissive_color = 0.0 0.0 0.0

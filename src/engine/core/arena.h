@@ -34,6 +34,17 @@ struct ArenaMark {
     size_t offset;
 };
 
+// Read-only snapshot of an arena's current state, useful for debug/profiling UIs.
+struct ArenaStats {
+    size_t      used;       // Current bytes allocated (offset)
+    size_t      peak;       // High-water mark since init
+    size_t      capacity;   // Total capacity in bytes
+    const char* name;       // Debug name (non-owning)
+};
+
+// Return a snapshot of the arena's current statistics.
+[[nodiscard]] ArenaStats arena_get_stats(const Arena* arena);
+
 // Initialize an arena with a pre-allocated memory block.
 // `memory` must remain valid for the arena's entire lifetime.
 void arena_init(Arena* arena, void* memory, size_t size, const char* name);

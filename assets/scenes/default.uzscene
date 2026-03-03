@@ -1,0 +1,33 @@
+[uzscene]
+name = Default
+version = 1
+
+[node]
+name = World
+type = Node3D
+parent =
+position = 0.000000 0.000000 0.000000
+rotation = 0.000000 0.000000 0.000000 1.000000
+scale = 1.000000 1.000000 1.000000
+active = true
+visible = true
+
+[node]
+name = Sun
+type = DirectionalLight
+parent = World
+position = 0.000000 10.000000 0.000000
+rotation = 0.000000 0.000000 0.000000 1.000000
+scale = 1.000000 1.000000 1.000000
+active = true
+visible = true
+
+[node]
+name = MainCamera
+type = Camera
+parent = World
+position = 0.000000 5.000000 -10.000000
+rotation = 0.000000 0.000000 0.000000 1.000000
+scale = 1.000000 1.000000 1.000000
+active = true
+visible = true

@@ -111,6 +111,8 @@ These events are emitted by the engine core (`uz_engine.lib`) and can be subscri
 | `SceneUnloaded` | `SceneManager` | Before scene teardown begins |
 | `NodeAdded` | `SceneManager` | After `SceneCommand::ADD_NODE` is applied |
 | `NodeRemoved` | `SceneManager` | Before node is destroyed |
+| `GameStateChangedEvent<T>` | `GameState` | When a value changes in the shared state store (Phase 1+) |
+| `GameStateRemovedEvent` | `GameState` | When a key is removed from the shared state store (Phase 1+) |
 
 ```cpp
 // Example: game.dll subscribes to SceneLoaded to run post-load setup
