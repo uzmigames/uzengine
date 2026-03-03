@@ -65,6 +65,8 @@
   - Clients stored as `set<shared_ptr<ix::WebSocket>>` with no-op deleter (lib owns socket lifetime)
   - Thread-safe: `clientsMutex` for client set, `initMutex` for init segment
   - `setInitSegment()` + `broadcast()` + `start(port)` + `stop()`
+  - `setTextMessageCallback(TextMessageCallback)` for incoming text (non-binary) WS messages
+  - Text messages handled in `setOnClientMessageCallback` lambda (checks `!msg->binary`)
 
 ## Build Gotchas
 - **ICodecAPI**: Declared in `<strmif.h>`, NOT `<codecapi.h>`. The `<codecapi.h>` only has CODECAPI_* GUIDs.
@@ -90,8 +92,15 @@
 - **stb_impl.cpp**: STB_IMAGE_WRITE_IMPLEMENTATION translation unit
 - **External dep**: `stb_image_write.h` in `external/stb/`
 - **vcpkg dep**: `nlohmann-json` (3.11.3)
-- **IPC handlers registered in main.cpp**: engine.ping, engine.getStatus, engine.screenshot, scene.setRotation, scene.setBackground, scene.setPaused, scene.setGeometry, scene.setParam, file.read, file.write, file.list, shader.reload
+- **IPC handlers registered in main.cpp**: engine.ping, engine.getStatus, engine.screenshot, scene.setRotation, scene.setBackground, scene.setPaused, scene.setGeometry, scene.setParam, file.read, file.write, file.list, shader.reload, camera.getState, camera.reset
 - **Renderer integration**: `DX12Renderer::setSceneParams()` + `getLastFrameCopy()` + background color + pause support
+- **Fly Camera**: UE5-style fly camera in editor mode (renderer.cpp update()), driven by SceneParams::CameraInput atomics
+  - WS text JSON `{"type":"camera_input", "w":1, ...}` -> camera input atomics (additive mouse/scroll via CAS loop)
+  - Scroll wheel adjusts speed (pow(1.1, scroll), clamped 0.1-500)
+  - Mouse look only when RMB held, pitch clamped +/-89 deg
+  - WASD movement along forward/right vectors, E/Q for up/down, Shift=3x boost
+  - deltaTime clamped to 0.1s max to prevent jumps
+  - Left-handed coords: +X right, +Y up, +Z forward; yaw=0 = looking along +Z
 - **vcpkg location on this machine**: `C:/vcpkg/vcpkg.exe` (not E:/vcpkg)
 
 ## Debug/Profiling Module (src/engine/core/)
@@ -175,6 +184,11 @@
   - Cycle detection: compile() returns false if toposort doesn't cover all passes
 - **Gotcha**: `std::strncpy` not available in `<cstring>` on Clang C++23 without explicit include. Use `#include <cstring>` or bare `strncpy`.
 - Test count after phase1-render-graph: 1086 (was 1022, +64 new tests)
+
+## Build Gotcha: Clang Cannot Capture Globals by Name
+- `[&g_scene]` fails on Clang: "cannot be captured because it does not have automatic storage duration"
+- Solution: use `[&]` (capture-all) which doesn't actually capture globals -- they are referenced directly
+- All lambda captures in main.cpp use `[&]` for this reason
 
 ## Build Gotcha: PIMPL + Free Thread Functions
 - A free function (even `static` in the same TU) cannot access a private nested `Impl` struct on Clang.

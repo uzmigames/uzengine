@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
+  <!-- shader / code icon -->
+  <rect fill="#CE93D8" x="1" y="2" width="14" height="12" rx="1.5"/>
+  <path fill="#fff" d="M4 6l-2 2 2 2M12 6l2 2-2 2M7 11l2-6"/>
+</svg>
