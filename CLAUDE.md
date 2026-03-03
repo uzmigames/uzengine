@@ -215,13 +215,27 @@ rulebook_memory_cleanup — Evict old memories
 ## Commands
 
 ```bash
-# Quality checks
-npm run type-check    # TypeScript type checking
-npm run lint          # Run linter
-npm test              # Run tests
-npm run build         # Build project
+# C++ build (Ninja + CMake) — run from PowerShell
+.\build.ps1                        # Debug build
+.\build.ps1 -Config Release        # Release build
+.\build.ps1 -Config Debug -Test    # Build + run all C++ tests
+.\build.ps1 -Clean -Config Release # Clean then Release build
 
-# Task management (if using Rulebook)
+# First-time configure only (manual, if build.ps1 not available):
+cmake -B build -G "Ninja Multi-Config" \
+      -DCMAKE_TOOLCHAIN_FILE=C:/Users/Bolado/vcpkg/scripts/buildsystems/vcpkg.cmake \
+      -DVCPKG_TARGET_TRIPLET=x64-windows \
+      -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+cmake --build build --config Debug --parallel
+
+# TypeScript (VSCode extension)
+cd vscode-uzengine
+npm run type-check    # TypeScript type checking
+npm run lint          # ESLint
+npm test              # Jest tests + coverage
+npm run build         # Compile extension
+
+# Task management (Rulebook)
 rulebook task list    # List tasks
 rulebook task show    # Show task details
 rulebook validate     # Validate project structure

@@ -1,9 +1,23 @@
 cmake_minimum_required(VERSION 3.20)
-project(UzEngine VERSION 0.1.0 LANGUAGES CXX)
+project(UzEngine VERSION 0.1.0 LANGUAGES C CXX)
 
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+
+# ---------------------------------------------------------------------------
+# Ninja multi-config: prefer Ninja when available for fast incremental builds.
+# Configure with:
+#   cmake -B build -G "Ninja Multi-Config" -DCMAKE_TOOLCHAIN_FILE=...
+# Build with:
+#   cmake --build build --config Release --parallel
+#   cmake --build build --config Debug   --parallel
+# ---------------------------------------------------------------------------
+if(CMAKE_GENERATOR MATCHES "Ninja")
+    message(STATUS "Generator: Ninja (parallel build enabled)")
+endif()
 
 # IXWebSocket via vcpkg
 find_package(ixwebsocket CONFIG REQUIRED)
@@ -58,3 +72,37 @@ target_compile_definitions(UzEngine PRIVATE
     NOMINMAX
     WIN32_LEAN_AND_MEAN
 )
+
+# ============================================================
+# Tests
+# ============================================================
+enable_testing()
+find_package(GTest CONFIG REQUIRED)
+
+# Core Layer tests
+add_executable(UzEngineTests
+    src/engine/core/arena.cpp
+    src/engine/core/string_id.cpp
+    tests/core/test_arena.cpp
+    tests/core/test_handle.cpp
+    tests/core/test_string_id.cpp
+    tests/core/test_result.cpp
+    tests/core/test_math.cpp
+    tests/core/test_main.cpp
+)
+
+target_include_directories(UzEngineTests PRIVATE
+    ${CMAKE_SOURCE_DIR}/src
+)
+
+target_link_libraries(UzEngineTests PRIVATE
+    GTest::gtest
+)
+
+target_compile_definitions(UzEngineTests PRIVATE
+    UZENGINE_DEBUG=1
+    UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN
+)
+
+include(GoogleTest)
+gtest_discover_tests(UzEngineTests)
