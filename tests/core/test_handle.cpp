@@ -328,7 +328,7 @@ TEST(HandlePoolStaleGet, ConstStaleHandle_GetReturnsNullptr) {
 
     auto h_old = pool.insert(55);
     pool.remove(h_old);
-    pool.insert(66);
+    (void)pool.insert(66);
 
     const TestPool& cpool = pool;
     EXPECT_EQ(cpool.get(h_old), nullptr);
@@ -362,7 +362,7 @@ TEST(HandlePoolMultipleItems, RemoveSomeItems_RemainingAreStillValid) {
     handles.reserve(10);
 
     for (int i = 0; i < 10; ++i) {
-        handles.push_back(pool.insert(i));
+        handles.push_back(pool.insert(std::move(i)));
     }
 
     // Remove even-indexed handles.
@@ -419,7 +419,7 @@ TEST(HandlePoolGenerationWrap, GenerationWrapsAt255Without_CorruptingPool) {
 
     for (int cycle = 0; cycle < 255; ++cycle) {
         pool.remove(h);
-        h = pool.insert(cycle);
+        h = pool.insert(std::move(cycle));
         ASSERT_EQ(h.index, original_idx)
             << "Slot must be reused at cycle " << cycle;
     }

@@ -644,7 +644,7 @@ TEST(QuatRotateVec3, NinetyDegreesAroundX_YBecomesNegZ) {
 
     EXPECT_NEAR(r.x, 0.0f, kTol);
     EXPECT_NEAR(r.y, 0.0f, kTol);
-    EXPECT_NEAR(r.z, -1.0f, kTol); // right-handed: Y rotated by +90° around X = -Z
+    EXPECT_NEAR(r.z, 1.0f, kTol); // right-handed: Y rotated by +90° around X = +Z
 }
 
 // ============================================================================
@@ -812,10 +812,11 @@ TEST(Mat4LookAt, LookingAlongNegZ_ForwardIsNegZ) {
     // m[2][2] = -f.z where f=(0,0,1), so m[2][2] = -1
     EXPECT_NEAR(m.m[2][2], -1.0f, kTol);
 
-    // Right direction (X) must be (1,0,0) for standard up=(0,1,0).
-    EXPECT_NEAR(m.m[0][0], 1.0f, kTol);
-    EXPECT_NEAR(m.m[0][1], 0.0f, kTol);
-    EXPECT_NEAR(m.m[0][2], 0.0f, kTol);
+    // eye={0,0,-5}, target={0,0,0}: f=+Z, r=cross(f,up)=cross(+Z,+Y)=-X
+    // So m[0][0] = r.x = -1 (right vector points -X in this view).
+    EXPECT_NEAR(m.m[0][0], -1.0f, kTol);
+    EXPECT_NEAR(m.m[0][1],  0.0f, kTol);
+    EXPECT_NEAR(m.m[0][2],  0.0f, kTol);
 }
 
 TEST(Mat4LookAt, LastColumnIsHomogeneous1) {

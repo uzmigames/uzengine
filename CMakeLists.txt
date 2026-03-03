@@ -104,5 +104,11 @@ target_compile_definitions(UzEngineTests PRIVATE
     UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN
 )
 
+# Suppress -Wunused-result inside EXPECT_DEATH macros (nodiscard on value()/error()/take()
+# is intentional in production code, but EXPECT_DEATH must call them as discarded exprs).
+target_compile_options(UzEngineTests PRIVATE
+    $<$<CXX_COMPILER_ID:Clang,AppleClang,GNU>:-Wno-unused-result>
+)
+
 include(GoogleTest)
 gtest_discover_tests(UzEngineTests)
