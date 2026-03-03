@@ -1,44 +1,25 @@
-# Phase 3 — Localization / I18n System
+# Proposal: phase3-localization
 
-## Context
+## Why
+All game text in UzEngine is currently hard-coded in C++ or Lua source files. There is no mechanism to translate UI strings, dialogue, item names, or tutorial text into any language other than the one the developer typed. This makes it impossible to release any UzEngine game outside the developer's native language market — a critical commercial limitation. The global games market is primarily non-English: Japan, Germany, France, Brazil, Korea, and China each represent hundreds of millions of players, and games that ship without localization are largely invisible in those markets.
 
-The engine currently has no internationalization support. All game text is hard-coded in C++ and Lua. There is no way to build multilingual games or change language at runtime. This task implements a complete localization system: CSV-based string storage, LocaleManager singleton, runtime locale switching, and font fallback.
+CSV string tables are the industry-standard format for game localization because they are human-readable, diffable in git, editable in Excel or Google Sheets, and trivially parseable without external library dependencies. Every major game studio (including indie teams using Unity and Godot) uses CSV or a thin wrapper over it as their primary translation workflow. The AI-friendliness of plain-text CSV is particularly valuable for UzEngine's AI-native development story — a GPT or Claude instance can translate a full CSV in a single prompt, enabling rapid localization without a dedicated translation team.
 
-## Goal
+Runtime locale switching (changing language while the game is running without a restart) is required for the in-game language settings screen that players expect. It is also required for the VSCode editor locale preview panel, where developers need to switch languages and immediately see how translated text affects UI layout — detecting overflow and truncation issues before they reach players. Font fallback for CJK (Chinese/Japanese/Korean) and BiDi (Arabic, Hebrew) scripts is not optional: these writing systems require glyphs that Latin fonts do not contain, and silently displaying empty boxes instead of characters is a showstopper bug in any CJK-targeted release.
 
-A running `UzEngine.exe --play` that can:
-- Load translation strings from CSV file (keyed by locale)
-- Change language at runtime without restarting the game
-- Support at least 6 languages: English, Portuguese (Brazil), Spanish, French, German, Japanese
-- Fall back gracefully when translations are missing (show English or key itself)
-- Load locale-specific fonts (e.g., CJK font for Japanese)
-- Provide debug inspection of missing translations via IPC
-- Support hot-reload of CSV in editor mode
+## What Changes
+- Implement `LocaleManager` singleton class in `src/locale/LocaleManager.cpp` with an in-memory translation table `std::unordered_map<std::string, std::unordered_map<std::string, std::u8string>>` (key → locale_code → translated_string); load from CSV files in `res://locale/{locale_code}.csv` format; active locale stored as a `std::string` ISO 639-1 code (e.g., `en`, `pt_BR`, `ja`, `ar`)
+- Implement a hand-written CSV parser (no external dependency): supports quoted fields with escaped commas and newlines, UTF-8 encoding, BOM stripping, and comment lines starting with `#`; CSV column format is `key,en,pt_BR,es,fr,de,ja` where the first column is the string key and subsequent columns are locale translations
+- Expose `ctx.locale` Lua API: `ctx.locale:t(key)` → translated string in current locale (falls back to `en`, then returns the key itself if missing), `ctx.locale:tf(key, ...)` → translated string with `string.format`-style substitutions, `ctx.locale:set(locale_code)` → switch active locale at runtime, `ctx.locale:list()` → array of available locale codes loaded from CSV headers
+- Implement plural rules per locale: `ctx.locale:tp(key, count)` selects between singular and plural translations based on locale-specific plural rules (English: n==1 singular, else plural; Russian: three forms; Arabic: six forms); plural variants stored as `key.one`, `key.few`, `key.many`, `key.other` CSV keys following CLDR plural category naming
+- Implement font fallback: `.uzproj` `[localization]` section maps locale codes to font paths (`ja = res://fonts/NotoSansJP.ttf`, `ar = res://fonts/NotoSansArabic.ttf`); `LocaleManager::SetLocale()` notifies the UI system to reload the active font; Latin locales fall back to the project default font; CJK and Arabic fonts loaded on demand to avoid loading all fonts at startup
+- Hot-reload CSV in editor mode: FileWatcher monitors `res://locale/*.csv`; on file change, `LocaleManager::ReloadAll()` re-parses all CSV files and fires an `OnLocaleReloaded` event that the UI system subscribes to, triggering a full UI string refresh without scene reload
+- Add VSCode locale editor panel: a webview panel listing all string keys, their translations in all loaded locales, missing-translation highlighting (red cell for empty values), and a search/filter box; panel data served via IPC `locale.get_all_strings` handler; missing keys exported via `locale.export_missing(locale_code)` which returns a JSON array of untranslated keys for the selected locale
+- Add IPC commands: `locale.set(locale_code)` for editor preview switching, `locale.get_all_strings()` → full translation table as JSON for the editor panel, `locale.export_missing(locale_code)` → keys with no translation in the specified locale, `locale.reload()` → force hot-reload of all CSV files
+- Register `LocaleManager` initialization in `EngineInit()` after the file system is ready; `LocaleManager` reads the default locale from `.uzproj` `[localization] default_locale = en`; all CSV files in `res://locale/` are parsed at startup; missing translation warnings are logged at `LOG_WARN` level with the key name and requested locale for easy diagnosis
 
-## Spec Reference
-
-[Localization Spec](../../../docs/specs/localization.md)
-
-## Approach
-
-1. Design CSV format (keyed, human-readable, AI-friendly)
-2. Implement lightweight CSV parser (hand-written, no external dependency)
-3. Implement `LocaleManager` singleton with in-memory translation table
-4. Implement C++ API: `translate()`, `translatef()`, `set_locale()`, `get_missing_keys()`
-5. Implement Lua API: `ctx.locale:t()`, `ctx.locale:tf()`, `ctx.locale:set()`
-6. Integrate font fallback: per-locale font path from `.uzproj`
-7. Add IPC handlers for editor inspection and export
-8. Implement hot-reload of CSV in editor mode (FileWatcher integration)
-
-## Out of Scope
-
-- Plural forms (Phase 4)
-- Right-to-left layout (Phase 4)
-- Binary locale archives (Phase 4)
-- Platform-specific locale detection (Windows default locale) — Phase 4
-
-## Dependencies
-
-- No external dependencies required (hand-written CSV parser)
-- Uses existing FileWatcher infrastructure for hot-reload
-- Font system must support loading per-locale fonts (existing in engine)
+## Impact
+- Affected specs: docs/specs/localization.md (primary spec — CSV format, LocaleManager API, plural rules, font fallback, VSCode panel), docs/specs/ui-system.md (font reload on locale switch integration)
+- Affected code: src/locale/LocaleManager.cpp (new), src/locale/LocaleManager.h (new), src/locale/CsvParser.cpp (new), game.dll/LuaBindings.cpp (ctx.locale API), src/ipc/IpcServer.cpp (locale IPC commands), vscode-extension/src/panels/LocaleEditorPanel.ts (new VSCode panel), src/engine/EngineInit.cpp (LocaleManager startup), CMakeLists.txt (no new deps — hand-written parser)
+- Breaking change: NO — all existing Lua scripts that use hard-coded strings continue to work unchanged; `ctx.locale:t()` is purely additive; games that do not use the locale API at all are completely unaffected; the CSV files are optional (engine starts without them)
+- User benefit: Game developers can write all UI text as `ctx.locale:t("ui.menu.start_game")` and maintain a single `en.csv` during development, then hand the CSV to translators (or a GPT API call) to produce fully localized builds for Japanese, Arabic, and Portuguese markets without any code changes — all language switching, font loading, and plural handling is managed automatically by the engine

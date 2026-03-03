@@ -1,124 +1,25 @@
-# Phase 2 — Audio System
+# Proposal: phase2-audio-system
 
-## Context
+## Why
+UzEngine currently has no audio playback capability whatsoever. Every game, even the simplest prototype, requires sound: footstep feedback, ambient environment loops, music tracks, UI click sounds. Without audio, playtest builds are completely silent and impossible to evaluate for feel, pacing, or emotional impact. Audio is not a cosmetic feature — it accounts for roughly half of a player's emotional response to a game moment, and shipping a game engine without it means UzEngine cannot be used for any real project.
 
-UzEngine currently has no audio playback capability. Games require dynamic sound playback with volume control, spatial positioning, and hot-reload support. The engine is Windows-first with a stable C ABI boundary between `UzEngine.exe` and `game.dll` that must not be crossed by complex subsystems like audio.
+XAudio2 is the correct choice for the Windows-first engine. It is a native Windows API available on all targets from Windows 7 onward with zero external dependencies, provides direct hardware audio paths with sub-10ms latency (critical for gameplay-responsive audio), and ships X3DAudio as a companion DSP library for 3D spatial positioning with distance attenuation and HRTF cone filtering. Unlike deprecated DirectSound or heavyweight third-party libraries (FMOD, Wwise), XAudio2 has a small stable API surface with no licensing costs. A 4-bus mixing architecture (Master / Music / SFX / Voice) mirrors the structure used in every AAA production tool and gives game developers the independent volume controls they expect from a professional engine.
 
-## Goal
-
-A running `UzEngine.exe` that:
-- Plays 2D and 3D spatial audio via XAudio2 (Windows native API)
-- Supports WAV, MP3, and OGG audio formats (decoded at import time)
-- Provides playback control via Lua scripts (`self:play_audio()`, `ctx.audio:play_at()`)
-- Provides playback control via C++ (`game.dll` via `GameContext` callbacks)
-- Manages 4 audio buses (Master, SFX, Music, Voice) with independent volume control
-- Hot-reloads audio assets without restart
-- Exposes test playback via IPC handlers (editor-only)
-- Maintains 95%+ test coverage
-
-## Why XAudio2?
-
-- **Windows native**: Available on all Windows targets (XP+), zero external dependencies beyond libc
-- **Low latency**: Direct GPU/hardware audio path, minimal buffering — ideal for games
-- **Spatial audio**: X3DAudio provides HRTF + attenuation without DirectSound
-- **Simple API**: Fewer states and error cases than competing APIs (OpenAL, BASS, FMOD)
-- **Hot-reload friendly**: Replace voice buffers without recreating voices
-- **Stable**: Not deprecated (unlike DirectSound); used in millions of games
-
-For cross-platform support in Phase 4+, a thin abstraction layer would allow OpenAL Soft as an alternative.
+The voice pool approach — 64 pre-created `IXAudio2SourceVoice` instances reused across play calls — avoids per-play allocation latency. Voice creation on XAudio2 is not free (it allocates DSP state on the audio thread), so pooling is mandatory for correct behavior in scenes with rapid concurrent sound triggers (explosions, crowd effects, particle-linked sounds). The ECS component model (`CAudioSource` / `CAudioListener`) integrates naturally with the existing scene system and allows sound sources to be authored in `.uzscene` files and positioned in world space without any special-casing in the renderer or physics layers.
 
 ## What Changes
-
-### New Files
-
-**C++ Engine** (`src/engine/audio/`):
-- `audio_engine.h/cpp` — XAudio2 initialization, voice pool, bus system, lifecycle
-- `audio_clip.h/cpp` — audio asset struct, PCM data storage, metadata
-- `audio_source.h/cpp` — ECS component definition
-- `audio_listener.h/cpp` — ECS component definition (Phase 3 implementation)
-- `spatial_audio.h/cpp` — X3DAudio DSP integration, 3D positioning (Phase 3)
-- `audio_format.h/cpp` — WAV/MP3/OGG decoding via stb_vorbis, libmpg123
-
-**Asset Import** (`src/build/audio_importer/`):
-- `audio_importer.h/cpp` — decode source → .uzaudio format
-
-**Asset Format**:
-- `.uzaudio` — custom binary audio format (PCM + metadata)
-
-**Documentation**:
-- `docs/specs/audio-system.md` — full architecture, ECS components, Lua API, bus system (created)
-
-**Rulebook Task**:
-- `.rulebook/tasks/phase2-audio-system/` — this task
-
-### Modified Files
-
-**CMakeLists.txt**:
-- Link `xaudio2.lib` in game.dll project
-- Add `stb_vorbis.h`, `libmpg123` to vcpkg.json
-
-**GameContext** (`game.dll` interface):
-- Add audio callbacks: `audio_play_2d`, `audio_play_3d`, `audio_stop`, `audio_set_bus_volume`
-- Callback signature: stable C ABI (void pointers, basic types only)
-
-**`.uzscene` Format**:
-- Add `audio_source`, `audio_volume`, `audio_pitch`, `audio_loop`, `audio_play_on_start`, `audio_spatial`, `audio_min_dist`, `audio_max_dist`, `audio_bus` properties
-- Add `audio_listener` property (tag component)
-
-**Scene Manager** (`src/engine/scene/`):
-- Register `CAudioSource` and `CAudioListener` component types
-
-**Lua Binding** (`game.dll`):
-- Add `self:play_audio()`, `self:stop_audio()`, `self:set_volume()`, `self:set_pitch()`, `self:is_audio_playing()` methods
-- Add `ctx.audio:play_2d()`, `ctx.audio:play_at()`, `ctx.audio:stop_all()`, `ctx.audio:set_bus_volume()` context API
-
-**IPC Handlers** (`src/engine/ipc/`):
-- Register `audio.play` — test play a clip in editor
-- Register `audio.stop_all` — stop all playback
-- Register `audio.set_bus_volume` — adjust bus volume for testing
-
-### Asset Registry
-
-- Audio import format detected as `.wav`, `.mp3`, `.ogg`
-- Importer produces `.uzaudio` artifact in `.import/` directory
-- Asset registry tracks duration, channels, sample rate, whether streaming or decoded
+- Initialize XAudio2 engine and mastering voice in `AudioEngine::Init()`; create 4 submix voices for Master, Music, SFX, and Voice buses with independent volume controls accessible via `AudioEngine::SetBusVolume(Bus, float)`; gracefully fall back to silent mode if XAudio2 init fails (headless CI environments)
+- Implement a voice pool of 64 `IXAudio2SourceVoice` instances pre-created at startup and managed by `VoicePool::Acquire()` / `VoicePool::Release()`; a `VoiceHandle` RAII wrapper auto-returns the voice to the pool on destruction; overflow (all voices in use) silently drops the lowest-priority sound
+- Support WAV, OGG, and MP3 audio source formats: WAV decoded via Win32 `MFCreateSourceReaderFromURL`, OGG via `stb_vorbis` (header-only, vcpkg), MP3 via `minimp3` (header-only, vcpkg); all formats decoded to PCM at import time and stored as `.uzaudio` binary (PCM header + raw int16 samples)
+- Implement `CAudioSource` ECS component with fields: `clip_path` (res:// path), `bus` (enum Master/Music/SFX/Voice), `volume` (float 0–1), `pitch` (float, semitone shift), `loop` (bool), `play_on_start` (bool), `spatial` (bool), `min_dist` (float metres), `max_dist` (float metres), `attenuation_model` (linear/inverse/none)
+- Implement `CAudioListener` ECS component (tag component + world transform read); `X3DAudio::Calculate()` called each frame for every active spatial `CAudioSource` relative to the listener's position and orientation, writing output to `X3DAUDIO_DSP_SETTINGS` and applying to voice output matrix
+- Expose `ctx.audio` Lua API in `game.dll`: `ctx.audio:play_2d(path, bus, volume)`, `ctx.audio:play_at(path, world_pos, bus, volume, min_dist, max_dist)`, `ctx.audio:stop_all()`, `ctx.audio:set_bus_volume(bus_name, volume)`; per-node API: `self:play_audio()`, `self:stop_audio()`, `self:set_volume(v)`, `self:set_pitch(p)`, `self:is_playing()`
+- Register IPC commands for editor testing: `audio.play` (clip path + bus), `audio.stop_all`, `audio.set_bus_volume` (bus name + float); these are stripped in `--play` mode builds
+- Add `AudioImporter` in `src/assets/AudioImporter.cpp`: detects `.wav`/`.ogg`/`.mp3` in the asset browser, decodes to PCM, writes `.uzaudio` sidecar with header `{magic, version, channels, sample_rate, sample_count, duration_ms}` followed by raw int16 PCM data; asset registry entry tracks format metadata
+- Register `CAudioSource` and `CAudioListener` in the scene system serializer: `.uzscene` INI properties `audio_source`, `audio_volume`, `audio_pitch`, `audio_loop`, `audio_play_on_start`, `audio_spatial`, `audio_min_dist`, `audio_max_dist`, `audio_bus` on any node; `audio_listener` tag on the active camera node
 
 ## Impact
-
-### Non-Breaking
-
-- Audio is **opt-in per node** — existing scenes without audio components continue unchanged
-- XAudio2 initialization failure → graceful fallback (silent, warnings only)
-- No changes to core engine interfaces (Node, Transform, ECS base)
-
-### Performance
-
-- Voice pool: 64-128 reusable voices (typical game needs <32 concurrent)
-- Memory: Decoded SFX in RAM (2 MB typical), streaming music from disk (Phase 3)
-- CPU: Minimal (XAudio2 does the work); Lua bindings negligible overhead
-- GPU: None (audio is purely CPU/hardware)
-
-### Dependencies
-
-**New external libraries** (via vcpkg):
-- `stb_vorbis` (OGG decoder, header-only)
-- `libmpg123` (MP3 decoder, optional)
-- `xaudio2` (already on Windows, part of DirectX SDK)
-
-All audio libraries are public domain or MIT; no GPL/LGPL.
-
-## Out of Scope
-
-- **Streaming** (Phase 3): Large files (>2 MB) stream from disk; Phase 2 loads all audio into RAM
-- **3D spatial audio** (Phase 3): X3DAudio integration, attenuation curves
-- **Audio effects** (Phase 4): Reverb zones, filters, echo
-- **Audio snapshots** (Phase 4): Pre-defined audio presets
-- **Procedural audio** (Phase 4): Synthesis, tone generation
-- **MIDI** (Phase 4): Sequencing, instrument banks
-- **Networking** (Phase 5): Network audio sync
-
-## Spec Reference
-
-[Audio System Spec](../../../docs/specs/audio-system.md)
-
-See the spec for detailed API signatures, `.uzaudio` format, `.uzscene` syntax, ECS component definitions, Lua API, bus architecture, and IPC handler schemas.
+- Affected specs: docs/specs/audio-system.md (primary spec, all API signatures, .uzaudio format, bus architecture), docs/specs/scene-system.md (CAudioSource/CAudioListener component serialization)
+- Affected code: src/audio/AudioEngine.cpp (new), src/audio/AudioEngine.h (new), src/audio/VoicePool.cpp (new), src/audio/SpatialAudio.cpp (new), src/assets/AudioImporter.cpp (new), src/ecs/components.h (CAudioSource and CAudioListener additions), src/ipc/IpcServer.cpp (audio IPC commands), game.dll/LuaBindings.cpp (ctx.audio API), CMakeLists.txt (xaudio2.lib, stb_vorbis, minimp3 deps)
+- Breaking change: NO — audio is opt-in per node; existing scenes without `CAudioSource` or `CAudioListener` components are completely unaffected; XAudio2 init failure is non-fatal and produces only a warning log entry
+- User benefit: Game developers can attach sound clips to any scene node and get 2D or 3D spatial audio playback driven from Lua scripts, with 4-bus mixing for independent music/SFX/voice volume control — enabling fully playable game prototypes with audio feedback from day one

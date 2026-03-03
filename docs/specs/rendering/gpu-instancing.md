@@ -287,6 +287,71 @@ Transparent objects are sorted back-to-front for correct blending. Instancing is
 
 ---
 
+## Impostor Billboard LOD (Phase 4)
+
+For open-world scenes, instanced GPU meshes are extended with a final LOD tier: the **impostor billboard**. An impostor replaces the 3D mesh with a camera-facing quad textured with a pre-baked multi-angle photograph of the mesh. At sufficient distance the visual quality difference from the 3D mesh is imperceptible, while the rendering cost drops from thousands of triangles per instance to two triangles per instance.
+
+### LOD Chain with Impostors
+
+```
+LOD0  (screen_coverage > 0.50) — Full geometry, maximum detail
+LOD1  (screen_coverage > 0.25) — 50% triangles
+LOD2  (screen_coverage > 0.10) — 25% triangles
+LOD3  (screen_coverage > 0.02) — 10% triangles
+LOD_IMPOSTOR  (screen_coverage > cull_threshold) — 2-triangle billboard quad
+CULLED        (screen_coverage <= cull_threshold) — not rendered
+```
+
+The impostor tier is activated automatically by the LOD selector when `screen_coverage` drops below the per-mesh `impostor_threshold` (derived from `impostor_distance` in `.import.json`). The 3D mesh is dropped from the `BatchBuilder` and the instance is enqueued into the `ImpostorRenderer` instead.
+
+### Impostor Atlas
+
+Each mesh with `impostor_enabled: true` bakes an atlas at build time: 8 captures at 45° azimuth intervals, packed into a `(8 * resolution) x resolution` strip (e.g., 2048×256 for 256-pixel captures). The pixel shader selects and blends between the two closest capture angles:
+
+```hlsl
+float angle_norm = (atan2(cam_dir.z, cam_dir.x) + PI) / (2.0 * PI);
+uint frame_a = uint(angle_norm * 8.0) % 8;
+uint frame_b = (frame_a + 1) % 8;
+float blend  = frac(angle_norm * 8.0);
+float4 color = lerp(
+    g_ImpostorAtlas.Sample(s, uv_for_frame(uv, frame_a)),
+    g_ImpostorAtlas.Sample(s, uv_for_frame(uv, frame_b)),
+    blend);
+clip(color.a - 0.1);  // hard alpha clip for clean silhouettes
+```
+
+### Impostor Instancing
+
+Impostor instances are batched by atlas (all trees sharing the same `oak_impostor.dds` are drawn in one call). Each instance uploads a compact `ImpostorInstance` struct:
+
+```cpp
+struct ImpostorInstance {
+    float3   world_pos;   // center of the original mesh bounding sphere
+    float    scale;       // uniform scale derived from bounding sphere radius
+    uint     flags;       // bit0=cylindrical (trees), bit1=spherical (bushes)
+};
+```
+
+The impostor vertex shader expands each instance into a camera-facing quad using the `world_pos` and `scale`, then selects the atlas frame in the pixel shader. With 50,000 distant trees sharing one atlas, this is a single `DrawIndexedInstanced(6, 50000, ...)` call — six triangle indices for a quad, 50,000 instances.
+
+### Import Setting
+
+```json
+{
+  "settings": {
+    "auto_lod":          true,
+    "impostor_enabled":  true,
+    "impostor_distance": 80.0,
+    "impostor_resolution": 256,
+    "cull_distance":     500.0
+  }
+}
+```
+
+See [impostor-billboards.md](impostor-billboards.md) for full specification including bake pipeline, cylindrical vs. spherical billboard modes, and foliage density integration.
+
+---
+
 ## IPC Handlers
 
 ```json

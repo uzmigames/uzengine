@@ -1,72 +1,28 @@
-# Phase 0 — RHI Design
+# Proposal: phase0-rhi-design
 
-## Context
+## Why
 
-UzEngine currently renders directly via DX12 with hard-coded API calls in `renderer.c`. This works for the current Windows-only PoC, but blocks cross-platform support.
+UzEngine currently calls DX12 directly in `renderer.c` with no abstraction layer. Every new rendering subsystem — PBR, shadows, post-processing, UI, particles — would need to be written once per backend (DX12, Vulkan, Metal) without a common interface, multiplying implementation work by 3x and making it structurally impossible to share renderer code across platforms.
 
-Every future rendering system (PBR, shadows, post-process, UI, particles) would need to be written per-backend (DX12 / Vulkan / Metal) without a Hardware Interface layer. That multiplies implementation complexity by 3× and makes it impossible to share code between platforms.
+The absence of an RHI also forces the existing shader system spec to list both HLSL and GLSL as authoring languages, meaning game developers would need to write every shader twice. The correct architecture uses a single authoring language (HLSL), compiled to SPIR-V as a canonical intermediate representation, then transpiled per backend by SPIRV-Cross. This is how Unreal Engine 5 and modern cross-platform engines solve the same problem.
 
-Additionally, the existing shader system spec listed both HLSL and GLSL as authoring languages. This is wrong: it means game developers would need to write every shader twice. The correct approach is a single authoring language (HLSL) compiled to a canonical IR (SPIR-V), then transpiled per backend.
+This task is a design-and-validation task, not a full implementation task. The deliverable is a finalized `rhi.h` vtable API, the existing DX12 pyramid renderer ported to use it (proving the design is workable), and stub Vulkan and Metal backends that compile cleanly. All Phase 1 and later rendering work (Render Graph, PBR, shadow maps) must be written against RHI handles, never against DX12 types directly.
 
-This is a **design task** — the output is an approved spec and a complete implementation plan. No production C code is written here, only the `rhi_dx12.c` port of the existing pyramid renderer to validate the API design.
+## What Changes
 
-## Goal
+- Create `src/engine/renderer/rhi/rhi.h` — defines opaque handle typedefs (`RhiBuffer`, `RhiTexture`, `RhiPipeline`, `RhiCmdList`, `RhiFence`), enums (`RhiFormat`, `RhiBackend`), descriptor structs (`RhiTextureDesc`, `RhiBufferDesc`, `RhiShaderDesc`, `RhiPipelineDesc`), the full `rhi_backend_t` function pointer vtable, and a `const rhi_backend_t *rhi(void)` global accessor; no platform headers included in this file
+- Move all DX12 code from `renderer.c` into `src/engine/renderer/rhi/rhi_dx12.c` — fills out every function pointer in `rhi_backend_t`; DX12 headers (`d3d12.h`, `dxgi1_6.h`) are included only in this translation unit; `renderer.c` calls only `rhi()->*` after the port
+- Create `src/engine/renderer/rhi/rhi_vulkan.c` — stub backend, all vtable entries return `false` or `0`; compiles cleanly on Windows; `#define UZ_BACKEND_VULKAN` guard in CMake controls whether it is linked
+- Create `src/engine/renderer/rhi/rhi_metal.c` — stub backend, same pattern; entire file wrapped in `#ifdef UZ_PLATFORM_MACOS` so it compiles cleanly on Windows as an empty translation unit
+- Implement PSO cache in `src/engine/renderer/rhi/rhi_common.c` — `PsoCacheKey` struct hashes VS blob + PS blob + render target formats + rasterizer/blend state with xxHash64; open-addressing hash map allocated from the permanent arena; functions `pso_cache_get`, `pso_cache_insert`, `pso_cache_invalidate`
+- Create `src/engine/renderer/rhi/spirv_transpile.c` — thin C wrapper over SPIRV-Cross C API (`spirv_cross_c.h`): `spirv_to_msl(spirv, size, out_msl)` for the Metal backend, `spirv_to_glsl_es(spirv, size, out_glsl)` for Android debug tooling; links against `spirv-cross-c` from vcpkg
+- Update CMakeLists to add `UZ_BACKEND_DX12`, `UZ_BACKEND_VULKAN`, `UZ_BACKEND_METAL` defines selected by platform; add vcpkg dependencies `directx-dxc`, `spirv-cross`, `spirv-tools`
+- Update `docs/specs/rendering/shader-system.md` — remove GLSL as an authoring language; document the canonical pipeline: HLSL source → DXC → SPIR-V → SPIRV-Cross transpile per backend; update all shader authoring examples to HLSL only
+- Validate by running `UzEngine.exe` after the port — the spinning DX12 pyramid must render identically to before; this is the acceptance criterion proving the RHI vtable design is correct before any new rendering code is written
 
-1. Finalize `docs/specs/rendering/rhi.md` — the RHI API specification
-2. Define `rhi_backend_t` vtable in `src/engine/renderer/rhi/rhi.h`
-3. Port the existing DX12 pyramid renderer to use the RHI (validates the design before any new rendering code is written)
-4. Create stub backends for Vulkan and Metal (return false/0, compile cleanly)
-5. Update `docs/specs/rendering/shader-system.md` to remove GLSL authoring, document HLSL → SPIR-V → backend pipeline
+## Impact
 
-## Spec Reference
-
-[RHI Spec](../../../docs/specs/rendering/rhi.md)
-[Shader System Spec](../../../docs/specs/rendering/shader-system.md)
-
-## Approach
-
-### 1. Define `rhi.h` header
-
-Create `src/engine/renderer/rhi/rhi.h` with:
-- Handle typedefs (`RhiBuffer`, `RhiTexture`, `RhiPipeline`, `RhiCmdList`, `RhiFence`)
-- `RhiFormat`, `RhiBackend` enums
-- `RhiTextureDesc`, `RhiBufferDesc`, `RhiShaderDesc`, `RhiPipelineDesc` structs
-- `rhi_backend_t` function pointer table (full vtable per spec)
-- `const rhi_backend_t *rhi(void)` global accessor
-
-### 2. Implement `rhi_dx12.c`
-
-Move all current DX12 code from `renderer.c` into `rhi_dx12.c`, exposing it only through the vtable. `renderer.c` must call only `rhi()->*` — no direct DX12 includes outside `rhi_dx12.c`.
-
-### 3. Create stub backends
-
-`rhi_vulkan.c` and `rhi_metal.c` — all vtable functions return `false` or `0`. Must compile cleanly on Windows (Metal stub uses `#ifdef`).
-
-### 4. PSO cache in `rhi_common.c`
-
-- `PsoCacheKey` struct (VS hash + PS hash + RT formats hash + state hash)
-- xxHash64 for key computation
-- HashMap (open addressing, power-of-2 size) from permanent arena
-- `pso_cache_get` / `pso_cache_insert` / `pso_cache_invalidate`
-
-### 5. SPIRV-Cross wrapper `spirv_transpile.c`
-
-- `spirv_to_msl(const void *spirv, size_t size, char **out_msl)` — used by Metal backend
-- `spirv_to_glsl_es(const void *spirv, size_t size, char **out_glsl)` — used for Android debug tooling
-- Thin C wrapper over the SPIRV-Cross C API (`spirv_cross_c.h`)
-
-### 6. CMake wiring
-
-- `UZ_BACKEND_DX12` / `UZ_BACKEND_VULKAN` / `UZ_BACKEND_METAL` defines based on platform
-- vcpkg dependencies: `directx-dxc`, `spirv-cross`, `spirv-tools`
-
-### 7. Validate with existing pyramid
-
-After the port, running `UzEngine.exe` must still show the spinning pyramid. This confirms the RHI abstraction is correct before any new rendering code is written.
-
-## Out of Scope
-
-- Vulkan or Metal backend implementation (stubs only in this task)
-- PBR renderer (Phase 2)
-- Render Graph implementation (Phase 1, task `phase1-render-graph` — but it must be designed to use RHI handles, not DX12 directly)
-- Shader variant permutation system (Phase 2)
+- Affected specs: `docs/specs/rendering/rhi.md`, `docs/specs/rendering/shader-system.md`
+- Affected code: `src/engine/renderer/renderer.c`, `src/engine/renderer/rhi/rhi.h`, `src/engine/renderer/rhi/rhi_dx12.c`, `src/engine/renderer/rhi/rhi_vulkan.c`, `src/engine/renderer/rhi/rhi_metal.c`, `src/engine/renderer/rhi/rhi_common.c`, `src/engine/renderer/rhi/spirv_transpile.c`, `CMakeLists.txt`
+- Breaking change: YES — `renderer.c` is refactored; any code that includes DX12 headers directly above the RHI layer must be updated
+- User benefit: All future rendering systems (PBR, shadows, particles, UI pass) are written once against the RHI vtable and work on DX12 today, with Vulkan and Metal backends unlocked later without touching renderer code; game developers write shaders in HLSL only

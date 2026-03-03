@@ -1,19 +1,26 @@
-# Phase 2 — GLTF Mesh Import
+# Proposal: phase2-gltf-import
 
-## Context
+## Why
+The engine currently renders only a single hard-coded pyramid with hand-authored vertex data. There is no way to load externally authored 3D models, making it impossible to build any real game scene. glTF 2.0 is the industry-standard interchange format supported by Blender, Maya, 3ds Max, Cinema 4D, and every major DCC tool — it has effectively become the "JPEG of 3D" and is the default export format for web, mobile, and increasingly AAA pipelines. Without a glTF importer, every piece of geometry in a UzEngine game must be written as raw vertex arrays in C++, which is not a viable content creation workflow for any team larger than one person.
 
-There are no real meshes in the engine — only the hard-coded pyramid. This task adds GLTF 2.0 import support using `fastgltf`, uploading vertex/index buffers to GPU, and exposing the mesh as a renderable `StaticMesh` node.
+Using `fastgltf` — a modern, zero-copy, C++20 glTF parser with full 2.0 spec coverage — provides a robust foundation without the maintenance burden of writing a parser from scratch. It handles both `.gltf` (JSON + external bins) and `.glb` (binary container) variants, supports all standard vertex accessors, and exposes extension data via typed variants. Pairing it with `meshoptimizer` for LOD generation and vertex cache/overdraw optimization ensures that imported meshes are GPU-ready at production quality, matching what tools like Unreal's mesh import pipeline produce automatically.
 
-## Goal
+Supporting the `KHR_draco_mesh_compression` and `KHR_texture_transform` extensions from day one prevents the common problem where game artists use Draco-compressed exports from Blender (the default for GLTF export in Blender 3.x+) and find that the engine silently drops geometry. Mapping glTF PBR material properties directly to `.uzmat` INI files means imported models are immediately editable in the VSCode Inspector without any intermediate tooling.
 
-- Load `.glb` / `.gltf` files and create GPU vertex + index buffers
-- Support vertex attributes: position, normal, tangent, texcoord0
-- LOD generation (3 levels) using `meshoptimizer`
-- Mesh registered in asset registry with `.import.json`
-- `StaticMesh` node references mesh by `res://` path
-- PBR materials from GLTF material data (mapped to `.uzmat`)
+## What Changes
+- Integrate `fastgltf` and `meshoptimizer` as vcpkg dependencies; implement `GltfImporter` class in `src/assets/GltfImporter.cpp` that loads `.glb` and `.gltf` files synchronously on an asset worker thread, extracting mesh primitives, material references, and scene node hierarchy
+- Upload interleaved vertex buffers (position `float3`, normal `float3`, tangent `float4` with handedness, texcoord0 `float2`) and 32-bit index buffers to DX12 `ID3D12Resource` DEFAULT heap via a transient upload heap staging buffer; store references in `MeshAsset` struct with `D3D12_VERTEX_BUFFER_VIEW` and `D3D12_INDEX_BUFFER_VIEW` per LOD
+- Generate 3 automatic LOD levels using `meshoptimizer` (`meshopt_simplify`): LOD0 = original, LOD1 = 50% target triangles with error threshold 0.01, LOD2 = 25% target triangles with error threshold 0.05; LOD selection at runtime driven by screen-space projected bounding sphere diameter in pixels (LOD0 >200px, LOD1 >50px, LOD2 otherwise)
+- Apply `meshoptimizer` vertex cache and overdraw optimization passes (`meshopt_optimizeVertexCache`, `meshopt_optimizeOverdraw`) on each LOD before GPU upload to improve rasterization throughput
+- Register imported meshes in the asset registry with a sidecar `.import.json` (source path, import timestamp, fastgltf version, LOD triangle counts, vertex count per LOD, bounding box min/max)
+- Map glTF PBR material properties to engine-native `.uzmat` INI files: `baseColorFactor` → `albedo_color`, `metallicFactor` / `roughnessFactor` → `metallic` / `roughness` scalars, texture indices resolved to `res://` paths for `albedo_tex`, `normal_tex`, `metallic_roughness_tex`, `emissive_tex`
+- Support `KHR_draco_mesh_compression` extension: detect presence via `fastgltf::extensions::KHR_draco_mesh_compression`, decode with the Draco C++ library (vcpkg `draco`), reconstruct standard accessor data before the normal import path
+- Support `KHR_texture_transform` extension: read UV offset/rotation/scale per texture coordinate and write them as `uv_offset`, `uv_rotation`, `uv_scale` fields into the generated `.uzmat` file, consumed by the PBR shader's texture sampling code
+- Add `CStaticMesh` ECS component (mesh `res://` path, material override array, shadow casting bool, LOD bias float) and a `StaticMesh` scene node type that serializes to `.uzscene` INI; `StaticMeshRenderer` system iterates `CStaticMesh` + `CTransform` to submit draw calls each frame
+- Add `GltfImporter` VSCode integration: dragging a `.glb`/`.gltf` file onto the Asset Browser panel triggers the import, shows a progress notification, and adds the resulting `.import.json` + `.uzmat` files to the project tree
 
-## Dependencies
-
-- **phase1-scene-system** (StaticMesh node type)
-- **phase2-pbr-renderer** (needs vertex layout with tangents)
+## Impact
+- Affected specs: docs/specs/asset-pipeline.md (mesh import section, Draco extension), docs/specs/scene-system.md (StaticMesh node type and CStaticMesh component)
+- Affected code: src/assets/GltfImporter.cpp (new), src/assets/GltfImporter.h (new), src/assets/MeshAsset.h (new), src/renderer/StaticMeshRenderer.cpp (new), src/renderer/StaticMeshRenderer.h (new), src/ecs/components.h (CStaticMesh addition), src/assets/AssetRegistry.cpp (mesh type registration), CMakeLists.txt (fastgltf, meshoptimizer, draco vcpkg deps)
+- Breaking change: NO — the existing hard-coded pyramid renderer continues to function; the StaticMesh system is purely additive and only activates for entities that have a `CStaticMesh` component
+- User benefit: 3D artists can export any model from Blender as `.glb` (including Draco-compressed exports) and drag it into the VSCode Asset Browser to immediately see it rendered in the scene with correct PBR materials, LOD switching, and shadow casting — replacing the placeholder pyramid workflow entirely

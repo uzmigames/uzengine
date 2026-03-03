@@ -1,49 +1,28 @@
-# Phase 1 — Debug Console Commands
+# Proposal: phase1-console-commands
 
-## Context
+## Why
 
-Without a debug console, developers must rely on:
-- Engine logging (slow, reactive)
-- Breakpoints in debugger (stops the world)
-- Hot-reload and manual re-testing (tedious)
+UzEngine currently has no runtime command interface. Developers who need to inspect or manipulate engine state during gameplay must stop the process, attach a debugger, set breakpoints, and restart — a workflow that breaks flow and is impossible to hand off to AI tooling. Engine logging is reactive and cannot modify state; it only observes it after the fact.
 
-A **real-time command interface** is essential for:
-- **Live inspection**: `print_scene`, `stats` → check game state without pausing
-- **Quick experiments**: `set_timescale 0.5` → slow-motion testing, `spawn <prefab>` → test spawning logic
-- **Scene manipulation**: `kill <node>`, `set_prop <node> <prop> <value>` → edit state mid-gameplay
-- **Hot-reload feedback**: `reload_shaders`, `reload_scripts` → instant feedback on changes
-- **AI-assisted debugging**: Claude can execute commands via IPC to inspect and modify game state
+A real-time debug console with a command registry solves this by giving developers a live text interface to the running engine. Commands like `print_scene`, `stats`, `set_timescale`, and `reload_scene` allow rapid iteration without restarting. This is the same workflow established by Quake, Unreal, and Unity's debug consoles, all of which are considered essential developer tooling.
 
-## Goal
+The IPC exposure of the console (`console.execute`) is equally important for AI-assisted development. Claude can issue commands to inspect and modify game state programmatically, which is a core design goal of UzEngine's AI-native architecture. Without the console, the IPC server can only read engine state, not drive it.
 
-Implement a **debug console** with:
-- **~-key toggle**: Open/close console overlay in-game (debug builds only)
-- **Command registry**: `ConsoleCommandRegistry` singleton in `game.dll`
-- **Lua registration**: Game code registers commands via `ctx.console:register()`
-- **C++ registration**: Optional C++ API for built-in commands
-- **Built-in commands**: `help`, `quit`, `reload_scene`, `reload_shaders`, `set_timescale`, `stats`, `spawn`, `kill`, `set_prop`, etc.
-- **Auto-complete**: Tab key completes command names and prefab paths
-- **Command history**: Up/Down arrows navigate previous commands
-- **IPC exposure**: `console.execute`, `console.get_commands`, `console.get_history` for editor access
-- **Rich output**: Commands return formatted strings (plain text or JSON)
+## What Changes
 
-## Why Phase 1?
+- Add `ConsoleCommandRegistry` singleton in `src/engine/console/console_registry.c` — stores command name, description, handler function pointer, and completion callback; backed by a hash map in the permanent arena
+- Implement `~`-key toggle in `src/engine/input/input.c` — opens and closes the overlay; restricted to Debug and Development builds via `#ifdef UZ_BUILD_DEBUG`
+- Add console overlay render pass in `src/engine/renderer/console_pass.c` — semi-transparent background quad, scrollable output log (last 256 lines), input line at bottom; rendered as a DX12 overlay after the main scene pass
+- Implement Tab autocomplete in `src/engine/console/console_input.c` — queries `ConsoleCommandRegistry` for prefix matches, cycles through candidates; also completes asset paths for commands that take a file argument
+- Implement Up/Down arrow command history in `src/engine/console/console_input.c` — circular buffer of 64 entries; persisted to `%APPDATA%/UzEngine/console_history.txt` on shutdown
+- Register built-in commands in `src/engine/console/console_builtins.c`: `help`, `quit`, `reload_scene`, `set_cvar`, `list_cvars`, `stats`, `spawn`, `kill`, `set_prop`, `reload_shaders`, `reload_scripts`
+- Add `ctx.console` Lua API in `src/engine/scripting/lua_console.c` — `ctx.console:register("name", fn)`, `ctx.console:execute("cmd")`, `ctx.console:print("text")`, `ctx.console:clear()`
+- Expose console via IPC in `src/engine/ipc/ipc_handlers.c` — add `console.execute`, `console.get_commands`, `console.get_history` handlers so the VSCode extension and Claude can drive the console remotely
+- Add CVar system in `src/engine/console/cvar.c` — `CVar` struct with name, value (string), description, flags (`CVAR_CHEAT`, `CVAR_READONLY`); `set_cvar` and `list_cvars` built-in commands use this registry
 
-Console is a **development prerequisite** for all phases:
-- Phase 1 developers need to inspect/manipulate scenes during development
-- Phase 2+ rendering work requires quick testing (toggle debug visualizations)
-- Game developers using UzEngine will want console commands for their own projects
-- AI-assisted debugging (Claude running commands via IPC) requires console early
+## Impact
 
-## Dependencies
-
-- **Phase 0** (IPC/MCP server): ✅ Already has basic primitives
-- **Phase 1** (Scene system, Lua scripting): 🔄 In progress
-  - Scene must exist for `print_scene`, `kill`, `set_prop` commands
-  - Lua must be initialized for `ctx.console` API
-- **External libs**: None (just C++ STL)
-
-## Spec
-
-[docs/specs/console-commands.md](../../../docs/specs/console-commands.md)
-
+- Affected specs: `docs/specs/console-commands.md`
+- Affected code: `src/engine/console/`, `src/engine/input/input.c`, `src/engine/renderer/console_pass.c`, `src/engine/scripting/lua_console.c`, `src/engine/ipc/ipc_handlers.c`
+- Breaking change: NO
+- User benefit: Developers can inspect and modify live game state without stopping the engine; Claude can drive the engine via IPC console commands for AI-assisted debugging and scene authoring

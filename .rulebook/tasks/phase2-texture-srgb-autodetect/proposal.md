@@ -1,0 +1,28 @@
+# Proposal: phase2-texture-srgb-autodetect
+
+## Why
+
+The sRGB texture misconfiguration bug is one of the most common and costly rendering errors in production game development. The error is subtle: a roughness map stored as sRGB appears visually correct at a glance but causes PBR lighting to produce wrong results for every material that uses it. A roughness value of 0.2 (a fairly smooth surface) read from an sRGB-flagged texture gets gamma-expanded to approximately 0.73 (a very rough surface). The surface looks wrong but not obviously broken — it requires a trained eye and a reference comparison to catch.
+
+In Unreal Engine, the root cause is that sRGB is enabled by default for all imported textures. Artists must remember to manually disable sRGB for every non-albedo texture: normal maps, roughness maps, metallic maps, AO maps, height maps, emissive maps, and packed ORM maps. With 6+ texture types requiring manual action, and dozens of textures imported per asset pack, misconfiguration is near-inevitable. Production projects routinely ship with roughness or normal maps incorrectly flagged as sRGB, producing subtly wrong specular highlights across hundreds of materials.
+
+Substance Painter, the industry-standard texturing tool, uses rigorous and consistent file naming conventions in its export presets. The filename always encodes the texture type: `hero_BaseColor.png`, `hero_Normal.png`, `hero_Roughness.png`. UzEngine must exploit this convention to automatically determine the correct sRGB setting at import time, with no developer action required for the common case. The result: zero sRGB misconfiguration errors for Substance Painter outputs, and dramatically fewer errors for any source following standard naming patterns.
+
+## What Changes
+
+- **`src/asset/importer/srgb_detector.cpp`**: New file. Implements `SRGBDetector::detect(filename) -> SRGBResult { srgb: bool, source: enum, confidence: float }`. Matches base filename (without extension, case-insensitive) against two pattern lists: sRGB-true patterns (albedo, diffuse, basecolor, base_color, col, color, _d suffix) and sRGB-false patterns (normal, nrm, nor, normalmap, bump, roughness, rough, rgh, metallic, metal, met, ao, ambient_occlusion, occlusion, cavity, height, displacement, disp, emissive, emit, glow, mask, opacity, alpha, packed, orm, rma). Source values: `filename_pattern`, `fallback`. Confidence: 1.0 for pattern match, 0.5 for fallback.
+- **`src/asset/importer/alpha_analyzer.cpp`** (shared with phase2-texture-bulk-optimizer): `AlphaAnalyzer::analyze(image) -> AlphaResult { has_alpha: bool, min_alpha: uint8, max_alpha: uint8 }`. Scans full image; short-circuit returns `has_alpha: true` on first sub-255 alpha pixel found.
+- **`src/asset/importer/texture_importer.cpp`**: Integrate `SRGBDetector` and `AlphaAnalyzer` into the import pipeline. Priority order: (1) explicit `srgb` override in `.import.json`, (2) filename pattern detection, (3) alpha analysis heuristic, (4) fallback sRGB=true. Write `srgb_source` and `has_alpha` to `.import.json`.
+- **`.import.json` schema**: Add `srgb: bool`, `srgb_source: string` (filename_pattern | user_override | fallback), `has_alpha: bool`, `has_alpha_source: string` (analysis | user_override).
+- **VSCode Texture Inspector**: Show `sRGB: YES [source: filename_pattern]` badge in the metadata strip. When source is `fallback`, show a yellow warning badge with tooltip "sRGB was not auto-detected. Click to verify." Clicking opens a confirm/override dialog that sets `srgb_source: user_override`.
+- **Linter rule**: VSCode extension lints all `.import.json` files and emits a warning for any texture with `srgb_source: fallback` and `srgb: true` — these are potential misconfiguration candidates (engine could not determine from filename, defaulted to sRGB=true, which is wrong for non-color data).
+- **Substance Painter convention table**: Document the full mapping table in `docs/specs/engine/optimization-systems.md` and `docs/guides/asset-pipeline-guide.md`. Include Unity convention mapping (identical to SP) and Quixel Megascans convention mapping (uses `_Albedo`, `_Normal`, `_Roughness`, `_Cavity`, `_Displacement` — all covered by existing patterns).
+- **Tests**: Unit test `SRGBDetector` with 30+ filename samples. Verify: all Substance Painter standard suffixes detected correctly, all Quixel Megascans suffixes detected correctly, ambiguous filenames (`texture001.png`) return fallback with confidence 0.5. Unit test `AlphaAnalyzer` with a fully-opaque PNG (has_alpha=false), a fully-transparent PNG, and a partially-transparent PNG.
+- **Documentation**: Update `docs/specs/assets/asset-pipeline.md` texture section with sRGB auto-detection algorithm. Update `docs/specs/engine/optimization-systems.md` section 3.
+
+## Impact
+
+- **Affected specs**: `docs/specs/assets/asset-pipeline.md`, `docs/specs/engine/optimization-systems.md`
+- **Affected code**: `src/asset/importer/srgb_detector.cpp` (new), `src/asset/importer/alpha_analyzer.cpp` (new), `src/asset/importer/texture_importer.cpp`, `src/vscode_ext/panels/texture_inspector.ts`
+- **Breaking change**: NO for new imports. For existing projects re-importing textures, the new sRGB detection may change the sRGB flag on previously imported textures — this is a correctness fix, not a regression. Artists should audit any `.import.json` where `srgb_source` changed from the previous value.
+- **User benefit**: Zero sRGB misconfiguration for standard Substance Painter and Quixel Megascans workflows. PBR lighting is correct by default. Eliminates a class of subtle rendering bugs that can take hours to diagnose.

@@ -1,43 +1,25 @@
-# Phase 3 — Save/Load System
+# Proposal: phase3-save-system
 
-## Context
+## Why
+The engine can load and play scenes, but has no persistence layer. Players have no way to save their progress, which means any game built on UzEngine is limited to single-session experiences. This is a hard blocker for shipping any RPG, adventure, simulation, or strategy title — genres that collectively represent the majority of commercial indie releases. Without a save system, the engine is only suitable for arcade-style games where progress is not expected to persist.
 
-The engine can load and render scenes, but has no persistence. There is no way for players to save game progress. This task implements a complete save/load system: binary msgpack serialization, slot management, metadata tracking, and integration with game.dll state callbacks.
+msgpack binary serialization is the right choice for game saves. It is compact (smaller than JSON, comparable to raw binary), self-describing (schema-free, enabling forward compatibility), and has a mature C++ vcpkg library with zero-copy parsing. The alternative — writing a bespoke binary format — produces maintenance burden and versioning fragility without significant benefits. Pairing msgpack with optional zstd compression allows large open-world saves (hundreds of serialized entity states) to compress down to kilobyte-range files while keeping the implementation straightforward.
 
-## Goal
+Save thumbnails captured from the backbuffer are a quality-of-life feature that distinguishes professional engine save systems from hobby implementations. Every major commercial game (Zelda, Elden Ring, The Sims) shows a screenshot on the load screen so players can recognize which save slot corresponds to which game moment at a glance. Capturing a JPEG thumbnail from the existing libjpeg-turbo pipeline at save time costs minimal CPU and produces ~8KB images that store well inside the save file. Async save (offloaded to a background thread) prevents the frame hitch that would otherwise occur during msgpack serialization + disk write — a mandatory requirement for saves triggered mid-gameplay without a loading screen.
 
-A running `UzEngine.exe --play` that can:
-- Save game state to numbered slots (0–9) + autosave slot via Lua API
-- Load saved state back into memory, restoring all scene transforms and script state
-- Store save metadata (timestamp, scene name, thumbnail JPEG)
-- Provide debug inspection of save file contents via IPC
-- Support autosave on scene transitions
+## What Changes
+- Implement `SaveManager` singleton class in `src/save/SaveManager.cpp` with methods `WriteSlot(int slot)`, `ReadSlot(int slot)`, `DeleteSlot(int slot)`, `ListSlots()` returning `std::vector<SaveSlotMeta>`; slot range is 0–9 plus a dedicated autosave slot (index -1); save files written to `{project}/saves/slot_{N}.uzsave`
+- Define `.uzsave` binary format: 16-byte magic header `UZ_SAVE\x00` + version uint16 + slot uint8 + flags uint8, followed by a JSON metadata block (timestamp ISO8601, scene_name, playtime_seconds, engine_version) and a zstd-compressed msgpack blob containing the full entity component state snapshot
+- Implement async save path: `SaveManager::WriteSlotAsync(int slot)` dispatches a `std::jthread` that serializes entity state on the calling thread (under a brief ECS read-lock), then writes to disk off the main thread; a `SaveManager::IsSaving()` poll and a `OnSaveDone` callback allow game scripts to show a save indicator UI without blocking the frame
+- Implement save data versioning: save file header includes `schema_version` uint32; `SaveReader` maintains a migration table `std::map<uint32_t, MigrationFn>`; missing fields after migration are filled with component defaults, allowing saves from older engine builds to load cleanly without crashing
+- Capture save thumbnail by reading the backbuffer at save time using the existing DX12 readback path (same mechanism as the JPEG streaming pipeline), downscaling to 320×180 via a bilinear blit, encoding to JPEG at quality 75 with libjpeg-turbo, and embedding the raw JPEG bytes in the `.uzsave` metadata block
+- Expose `ctx.saves` Lua API in `game.dll`: `ctx.saves:save(slot)` (sync), `ctx.saves:save_async(slot, callback)`, `ctx.saves:load(slot)`, `ctx.saves:delete(slot)`, `ctx.saves:exists(slot)` → bool, `ctx.saves:get_meta(slot)` → table with `{timestamp, scene_name, playtime_sec, thumbnail_jpeg_b64}`; autosave via `ctx.saves:autosave()`
+- Add `uz_game_save_state` / `uz_game_load_state` callbacks to the `game.dll` C ABI stable interface; `uz_game_save_state` receives a `msgpack_packer*` and is expected to call `msgpack_pack_*` functions to serialize game-specific state (inventory, quest flags, player stats) that the engine itself does not know about; `uz_game_load_state` receives a `msgpack_unpacker*` and restores that state
+- Add IPC debug handlers (editor-only, stripped in `--play` shipping builds): `saves.list_slots` → JSON array of slot metadata, `saves.inspect_slot` (slot int) → full decoded msgpack as JSON for the editor's save inspector panel, `saves.delete_slot` (slot int)
+- Support autosave trigger on scene transitions: `SceneManager::LoadScene()` checks a `.uzproj` config flag `autosave_on_transition = true` and calls `SaveManager::WriteSlot(-1)` (autosave slot) before unloading the current scene; configurable via `.uzproj` `[saves]` section
 
-## Spec Reference
-
-[Save System Spec](../../../docs/specs/save-system.md)
-
-## Approach
-
-1. Define `SaveManager` singleton class and `SaveWriter`/`SaveReader` interfaces
-2. Integrate msgpack-c++ from vcpkg (lightweight serialization)
-3. Implement binary save file format with header + compressed msgpack blob
-4. Implement C++ API: `write_slot()`, `read_slot()`, `delete_slot()`, `list_slots()`
-5. Implement Lua API: `ctx.saves:save(slot)`, `ctx.saves:load(slot)`, etc.
-6. Add `uz_game_save_state` / `uz_game_load_state` callbacks to game.dll C ABI
-7. Capture viewport JPEG as save thumbnail
-8. Add IPC debug handlers: `saves.list_slots`, `saves.inspect_slot`, etc.
-9. Update `.uzproj` config schema to support save-related settings
-
-## Out of Scope
-
-- Cloud saves (Steam Cloud) — Phase 4
-- Save versioning / migration — Phase 4
-- Encrypted saves — Future
-- Cross-platform cloud sync — Future
-
-## Dependencies
-
-- msgpack-c++: Lightweight binary serialization
-- zstd: Optional save file compression
-- libjpeg-turbo: Already available, used for thumbnails
+## Impact
+- Affected specs: docs/specs/save-system.md (primary spec — SaveManager API, .uzsave format, versioning/migration, Lua API, async pattern, thumbnail capture)
+- Affected code: src/save/SaveManager.cpp (new), src/save/SaveManager.h (new), src/save/SaveReader.cpp (new), src/save/SaveWriter.cpp (new), game.dll/LuaBindings.cpp (ctx.saves Lua API), src/ipc/IpcServer.cpp (save debug IPC commands), src/scene/SceneManager.cpp (autosave on transition hook), CMakeLists.txt (msgpack-c++, zstd vcpkg deps)
+- Breaking change: NO — the save system is entirely opt-in; existing games that do not call `ctx.saves:save()` are completely unaffected; no existing interfaces are modified
+- User benefit: Game developers can implement a complete save/load flow in Lua in under 10 lines of code, with async saves that do not hitch the frame, versioned save files that survive engine updates, and screenshot thumbnails on the load screen — features that previously required significant custom engine work

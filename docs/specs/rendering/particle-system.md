@@ -459,4 +459,20 @@ public:
     void spawn_at_bone(const std::string& path, const Skeleton& sk,
                        uint16_t bone_idx, glm::vec3 offset);
 };
+
+---
+
+## 11. Evolution: VFX Graph System (Phase 4)
+
+The Phase 3 particle system (`.uzfx` v1 INI format) is the foundation for the Phase 4 VFX
+Graph System described in `docs/specs/rendering/vfx-system-ai.md`. The v2 graph format is
+backwards-compatible: existing `.uzfx` v1 files continue to work and are auto-converted to
+the graph representation at load time.
+
+Key upgrades in Phase 4:
+- JSON graph format with named emitters and typed module nodes
+- CustomHLSL modules for artist-authored simulation code
+- AI generation via `vfx_generate` MCP tool (Claude API + Nano Banana sprites)
+- Physically-based lighting for particles (GBuffer write, subsurface scatter)
+- VSCode Webview node graph editor
 ```

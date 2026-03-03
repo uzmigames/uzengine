@@ -1,0 +1,32 @@
+# Proposal: phase4-impostor-billboards
+
+## Why
+
+Open-world games face a rendering paradox: the world must appear populated and detailed at all distances, but rendering full 3D geometry for thousands of background trees, buildings, and rock formations is not feasible. A forest with 50,000 oak trees visible on a mountain ridge is completely reasonable from a design perspective; rendering each oak at LOD3 (10% of base triangles, say 2,000 tris) would still cost 100 million triangles per frame from the forest alone.
+
+The industry solution, used in virtually every open-world game since the mid-2000s, is the impostor billboard: at a sufficient distance, the 3D mesh is replaced by a quad (two triangles) textured with a pre-baked image of the mesh photographed from multiple angles. An oak tree impostor is a flat quad that always faces the camera, displaying a photograph of the oak from whichever of 8 capture angles is closest to the current view direction. From a distance, this is visually indistinguishable from the 3D mesh. The quad costs two triangles, independent of the original mesh complexity.
+
+Unreal Engine 5 provides "Imposter LOD" as a Nanite fallback, but it is difficult to configure, the capture process is buried in the Nanite settings, and the resulting atlas format is not transparent. SpeedTree has shipped impostor systems for vegetation since SpeedTree 8. The pattern is mature and well-understood.
+
+UzEngine's impostor system is designed to be transparent and automatable: any static mesh with `impostor_enabled: true` in its `.import.json` automatically generates an 8-angle impostor atlas at build time using a render-to-texture pass. The resulting impostor atlas is stored alongside the mesh and referenced automatically by the LOD system. No manual configuration per mesh is required beyond the initial opt-in.
+
+## What Changes
+
+- **`src/asset/tools/impostor_baker.cpp`**: New file. `ImpostorBaker::bake(mesh, material, output_resolution, num_angles)`. For each angle in [0°, 45°, ..., 315°] (8 angles at 45° intervals): (1) position a camera at the specified azimuth angle, elevated at 15° (standard foliage capture angle) at a distance that fills the frame, (2) render the mesh to an off-screen `output_resolution x output_resolution` render target capturing albedo + alpha, (3) pack the 8 captures into a `(num_angles * output_resolution) x output_resolution` atlas strip. Also captures a normal-direction atlas for per-pixel normal-based impostor lighting. Writes `{mesh_name}_impostor.dds` and `{mesh_name}_impostor_normal.dds`.
+- **`src/asset/importer/mesh_importer.cpp`**: If `impostor_enabled: true` in import settings and mesh is a StaticMesh, trigger `ImpostorBaker::bake` after standard LOD generation. Store impostor atlas path in `.import.json` under `impostor_atlas` and `impostor_normal_atlas`.
+- **`.import.json` additions**: `impostor_enabled: bool` (default `false`), `impostor_distance: float` (distance at which impostor activates, default `80.0`), `impostor_resolution: int` (per-angle resolution, default `256`; atlas will be `2048x256`), `impostor_num_angles: int` (default `8`).
+- **`src/shaders/impostor/impostor.hlsl`**: New HLSL shader for impostor quad rendering. Vertex shader: expands a point (or unit quad) into a camera-facing billboard quad in world space (cylindrical billboard for trees: Y-axis locked; spherical for compact objects). Pixel shader: computes `angle_to_camera`, selects `frame_a` and `frame_b` atlas columns, blends between them using `frac(angle_normalized * num_angles)`. Alpha-clips below 0.1 for clean silhouettes.
+- **`src/renderer/impostor_renderer.cpp`**: New file. Manages impostor draw calls. Per frame, for each visible entity in `IMPOSTOR` rendering state: enqueue an impostor instance (position + scale + orientation) into an `ImpostorBatch`. After all entities processed, issue one `DrawIndexedInstanced` per unique impostor atlas (same atlas = same batch). Each instance reads from a `StructuredBuffer<ImpostorInstance>` containing world position, scale, and angle to camera.
+- **`src/renderer/lod_selector.cpp`**: Add `LOD_IMPOSTOR` level. After LOD3, before distance-cull: if `coverage < impostor_threshold` AND `impostor_atlas` is valid, mark entity as `LOD_IMPOSTOR`. Entity rendered by `ImpostorRenderer` instead of standard draw path.
+- **Foliage integration**: The foliage density system (phase4-terrain-system) uses impostors as the last foliage representation tier before full cull. Foliage tiles beyond 60m render as impostor clusters.
+- **Editor integration**: In the Model Preview panel, add `[Preview Impostor]` button for meshes with `impostor_enabled: true`. Shows the impostor billboard rotating through all 8 angles for artist review before committing.
+- **IPC handler**: `asset.bakeImpostor { mesh_path, resolution?, num_angles? } -> { ok, atlas_path, normal_atlas_path }`. Can be called from VSCode to force a re-bake without full reimport.
+- **Documentation**: Add impostor system to `docs/specs/rendering/gpu-instancing.md` as the LOD_IMPOSTOR tier. Create `docs/specs/rendering/impostor-billboards.md` (full standalone spec). Update `docs/specs/engine/optimization-systems.md` section 7.
+- **Tests**: Integration test: bake impostor for a test sphere mesh (simple, deterministic geometry). Verify atlas has 8 columns at correct resolution. Verify that at `impostor_distance * 1.1`, the LOD selector returns `LOD_IMPOSTOR` for that mesh. Verify that ImpostorRenderer issues one draw call for 100 impostor instances sharing the same atlas.
+
+## Impact
+
+- **Affected specs**: `docs/specs/rendering/gpu-instancing.md`, `docs/specs/assets/asset-pipeline.md`, `docs/specs/engine/optimization-systems.md`
+- **Affected code**: `src/asset/tools/impostor_baker.cpp` (new), `src/shaders/impostor/impostor.hlsl` (new), `src/renderer/impostor_renderer.cpp` (new), `src/renderer/lod_selector.cpp`, `src/asset/importer/mesh_importer.cpp`
+- **Breaking change**: NO — additive. Opt-in per mesh via `impostor_enabled: true`. LOD selection for meshes without impostors is unchanged.
+- **User benefit**: Forests with 50,000 trees visible on a mountain horizon cost approximately 200,000 triangles (50,000 quads × 2 tris × 2 for back-face) instead of 250 million (50,000 trees × 5,000 LOD3 tris). Open-world environments achieve visual density at infinite scale. This is a prerequisite for any serious open-world game.

@@ -39,6 +39,58 @@ Phase 0 established the foundational rendering and communication pipeline:
 
 ---
 
+## Phase Reorganization Notice (2026-03-02)
+
+The original 5-phase structure (Phase 0–4) has been expanded to **8 phases** to better reflect dependency ordering and release milestones. The full reorganization plan is documented in [`docs/reviews/PHASE-REORGANIZATION.md`](reviews/PHASE-REORGANIZATION.md).
+
+**New phase structure:**
+
+| Phase | Name | Tasks | Goal |
+|-------|------|-------|------|
+| 0 | Architecture & Design | 9 | Design docs, no code |
+| 1 | Core Engine MVP | ~18 | Playable demo scene in VSCode |
+| 2 | Rendering Foundation | ~22 | Full PBR, physics, audio, asset import |
+| 3 | Engine Systems | ~28 | Animation, UI, scripting, input, save |
+| 4 | Advanced Rendering | ~20 | TAA, SSR, volumetrics, clustering, GI |
+| 5 | Gameplay Systems | ~25 | Abilities, dialogue, behaviors, vehicles |
+| 6 | World & Tools | ~28 | Terrain, WorldGen, VFX, NavMesh, build |
+| 7 | AAA & Shipping | ~22 | DXR, Nanite, DLSS, build pipeline |
+| Tools | Developer Tools | ~18 | Asset/shader/perf/level tools (parallel track) |
+
+**Key changes from original structure:**
+
+- Phase 2 (53 tasks) split: rendering foundation stays Phase 2; advanced rendering moves to Phase 4; engine systems move to Phase 3
+- Phase 3 (65 tasks) split: core game systems stay Phase 3; AAA animation and rendering move to Phases 4–5; advanced gameplay moves to Phase 5
+- Phase 4 becomes AAA & Shipping; original Phase 4 content redistributed to Phases 6–7
+- New **Tools track** (parallel, non-blocking): 18 developer tooling tasks identified as missing from current task list
+
+**18 new tool tasks identified** (not yet Rulebook tasks except where noted):
+
+| Tool Task | Priority | Min Phase |
+|-----------|----------|-----------|
+| tools-content-audit | P0 | Phase 2 |
+| tools-shader-debugger | P0 | Phase 2 |
+| tools-project-packager | P0 | Phase 6 |
+| tools-draw-call-analyzer | P0 | Phase 2 |
+| tools-scene-linter | P1 | Phase 1 |
+| tools-asset-validator | P1 | Phase 2 |
+| tools-gpu-memory-viz | P1 | Phase 2 |
+| tools-uzmesh-inspector | P1 | Phase 2 |
+| tools-spline-editor | P1 | Phase 6 |
+| tools-performance-budget-enforcer | P1 | Phase 2 |
+| tools-texture-batch-processor | P2 | Phase 2 |
+| tools-mesh-optimizer-cli | P2 | Phase 2 |
+| tools-hlsl-formatter | P2 | Phase 1 |
+| tools-shader-profiler-view | P2 | Phase 2 |
+| tools-localization-export | P2 | Phase 3 |
+| tools-heightmap-converter | P2 | Phase 6 |
+| tools-level-streaming-config | P3 | Phase 6 |
+| tools-network-simulator | P3 | Future |
+
+The top 10 priority tools have `proposal.md` files at `.rulebook/tasks/tools-{name}/proposal.md`.
+
+---
+
 ## Phase 1: MVP Editor (Target: Functional Development Environment)
 
 **Goal**: Developers can open a project, edit scenes visually in VSCode, attach Lua scripts to nodes, hot-reload scripts and shaders in ~60ms, run gameplay in a separate process, and see shader/script errors annotated in the editor.
@@ -788,19 +840,181 @@ Phase 0 established the foundational rendering and communication pipeline:
 - **Description**: Cook (scene/asset processing), Pack (`.uzpak` creation), Compile (DXC shaders), Stage (output directory), Package (NSIS installer). Shipping builds optimize for size/performance.
 
 #### 2. NavMesh
+- **Rulebook Task**: [phase4-navmesh](../.rulebook/tasks/phase4-navmesh/)
 - **Complexity**: L (2–3 weeks)
 - **Dependencies**: Physics System, Terrain System (for baking)
 - **Description**: Recast + Detour navmesh baking, NavMeshAgent component, RVO2 local avoidance, dynamic obstacles. Pathfinding queries return waypoint paths.
 
 #### 3. Plugin System
+- **Rulebook Task**: [phase4-plugin-system](../.rulebook/tasks/phase4-plugin-system/)
 - **Complexity**: L (2–3 weeks)
 - **Dependencies**: All Phase 3 (stable C ABI)
 - **Description**: `.uzplugin` manifest (C++ plugin interface), stable C ABI for cross-version compatibility, VSCode extension plugins, DLL hot-reload.
 
 #### 4. Terrain System
+- **Rulebook Task**: [phase4-terrain-system](../.rulebook/tasks/phase4-terrain-system/)
 - **Complexity**: XL (4+ weeks)
 - **Dependencies**: Physics System, GPU Instancing
 - **Description**: `.uzterrain` asset with heightmap, splatmap (multi-layer texture blending), chunk-based LOD, procedural foliage GPU instancing, water plane, physics collision.
+
+#### 5. DXR Ray Tracing RHI Extension
+- **Rulebook Task**: [phase4-dxr-ray-tracing-rhi](../.rulebook/tasks/phase4-dxr-ray-tracing-rhi/)
+- **Complexity**: XL (4+ weeks)
+- **Dependencies**: Bindless Resources, Render Graph
+- **Description**: Extends RHI with DXR acceleration structures (BLAS + TLAS), ray tracing pipeline (RGS + Miss + HitGroup shaders), DX12 `DispatchRays()`. Enables raytraced reflections, shadows, AO, and GI as optional passes.
+
+#### 6. GPU-Driven Rendering
+- **Rulebook Task**: [phase4-gpu-driven-rendering](../.rulebook/tasks/phase4-gpu-driven-rendering/)
+- **Complexity**: XL (4+ weeks)
+- **Dependencies**: Bindless Resources, HZB Occlusion, Job System
+- **Description**: Per-frame InstanceDataBuffer with all entity transforms, GPU occlusion cull compute shader writing to DrawIndirectBuffer, `ExecuteIndirect` replaces per-entity draw loop. Enables 10,000+ object scenes at 60fps.
+
+#### 7. Temporal Upsampling (DLSS/FSR/XeSS)
+- **Rulebook Task**: [phase4-temporal-upsampling-dlss-fsr](../.rulebook/tasks/phase4-temporal-upsampling-dlss-fsr/)
+- **Complexity**: L (2–3 weeks)
+- **Dependencies**: TAA (motion vectors required), Render Graph
+- **Description**: DLSS 3 (NVIDIA), FSR 3 (AMD open source), XeSS (Intel) integration. Render at 50-75% resolution, upscale to target. Doubles performance at 4K with near-native quality.
+
+#### 8. Nanite-like Virtual Geometry
+- **Rulebook Task**: [phase4-nanite-virtual-geometry](../.rulebook/tasks/phase4-nanite-virtual-geometry/)
+- **Complexity**: XL (4+ weeks)
+- **Dependencies**: GPU-Driven Rendering, Bindless Resources
+- **Description**: Meshlet-based geometry pipeline, cluster BVH hierarchical culling, software rasterizer for small triangles, visibility buffer rendering. Removes LOD authoring burden for static geometry.
+
+#### 9. Advanced Physics
+- **Rulebook Tasks**: [phase4-rope-chain-simulation](../.rulebook/tasks/phase4-rope-chain-simulation/), [phase4-soft-body-physics](../.rulebook/tasks/phase4-soft-body-physics/), [phase4-buoyancy-system](../.rulebook/tasks/phase4-buoyancy-system/), [phase4-wind-system-unified](../.rulebook/tasks/phase4-wind-system-unified/), [phase4-convex-decomposition-vhacd](../.rulebook/tasks/phase4-convex-decomposition-vhacd/)
+- **Complexity**: M–L each
+- **Dependencies**: Physics System
+- **Description**: Rope/chain via Jolt distance constraints, soft body via Jolt v4.0 SoftBody, buoyancy (Archimedes force on submerged volumes), unified wind system (single authoritative wind field for vegetation/cloth/particles), VHACD convex decomposition for arbitrary mesh physics.
+
+---
+
+## Phase 0 Architecture Design Tasks
+
+> These design tasks must be completed **before** implementation of dependent phases. No code is produced — only specs, API designs, and architectural decisions.
+
+| Task | Description | Blocks |
+|------|-------------|--------|
+| [phase0-job-system-design](../.rulebook/tasks/phase0-job-system-design/) | JobDispatcher API, work-stealing scheduler, enkiTS evaluation | All multi-threaded systems |
+| [phase0-audio-abstraction-layer](../.rulebook/tasks/phase0-audio-abstraction-layer/) | IAudioEngine interface + NullAudioEngine + backend selection | Phase 2 audio system |
+| [phase0-platform-abstraction-layer](../.rulebook/tasks/phase0-platform-abstraction-layer/) | IPlatform interface for filesystem/threads/timers | CI + cross-platform |
+| [phase0-render-graph-design](../.rulebook/tasks/phase0-render-graph-design/) | Render graph DAG + barrier scheduling design | Phase 2 renderer |
+| [phase0-rhi-design](../.rulebook/tasks/phase0-rhi-design/) | RHI vtable for DX12/Vulkan/Metal | All rendering |
+
+---
+
+## New Tasks Added by AAA Gap Analysis (V2)
+
+> The following tasks were identified in [MASTER-GAP-ANALYSIS-V2.md](../reviews/MASTER-GAP-ANALYSIS-V2.md) as gaps compared to AAA engine standards. They are organized by phase.
+
+### New Phase 1 Tasks
+
+| Task | Description | Complexity |
+|------|-------------|------------|
+| [phase1-script-execution-safety](../.rulebook/tasks/phase1-script-execution-safety/) | Watchdog thread + instruction budget — prevents `while true do end` freeze | M |
+| [phase1-ecs-spatial-query](../.rulebook/tasks/phase1-ecs-spatial-query/) | Sphere/AABB overlap queries on ECS registry | S |
+| [phase1-ecs-system-scheduler](../.rulebook/tasks/phase1-ecs-system-scheduler/) | Parallel ECS system groups (reads/writes non-overlapping) | M |
+| [phase1-entity-templates](../.rulebook/tasks/phase1-entity-templates/) | Prefab-lite entity templates for quick spawning | S |
+| [phase1-lua-coroutines](../.rulebook/tasks/phase1-lua-coroutines/) | LuaJIT coroutine support for async-style game logic | S |
+| [phase1-lua-module-system](../.rulebook/tasks/phase1-lua-module-system/) | `require()` path resolution for Lua modules | S |
+| [phase1-lua-dap-server](../.rulebook/tasks/phase1-lua-dap-server/) | DAP debugger server — breakpoints in Lua scripts | L |
+| [phase1-vscode-syntax-highlighting](../.rulebook/tasks/phase1-vscode-syntax-highlighting/) | TextMate grammar for `.uzscene`, `.uzmat`, `.uzproj` | S |
+
+### New Phase 2 Tasks
+
+| Task | Description | Complexity |
+|------|-------------|------------|
+| [phase2-bindless-resources](../.rulebook/tasks/phase2-bindless-resources/) | **P0** Descriptor heap bindless architecture — prerequisite for GPU-driven rendering | XL |
+| [phase2-ibl-pipeline](../.rulebook/tasks/phase2-ibl-pipeline/) | **P0** IBL compute bakers — ambient lighting for PBR (metallic surfaces currently black) | L |
+| [phase2-render-graph-async-compute](../.rulebook/tasks/phase2-render-graph-async-compute/) | Async compute queue utilization in render graph | M |
+| [phase2-occlusion-culling-hzb](../.rulebook/tasks/phase2-occlusion-culling-hzb/) | Hierarchical Z-Buffer GPU occlusion culling | L |
+| [phase2-auto-exposure-color-grading](../.rulebook/tasks/phase2-auto-exposure-color-grading/) | Histogram auto-exposure + LUT color grading + tone mapping | M |
+| [phase2-physics-multithreading](../.rulebook/tasks/phase2-physics-multithreading/) | Jolt `JPH::JobSystemThreadPool` configuration | S |
+| [phase2-simd-math-optimization](../.rulebook/tasks/phase2-simd-math-optimization/) | DirectXMath SIMD Vec3/Mat4 for transform/culling loops | M |
+| [phase2-memory-profiler](../.rulebook/tasks/phase2-memory-profiler/) | Per-arena allocation tracking + Tracy + VSCode panel | M |
+| [phase2-cvar-developer-config-system](../.rulebook/tasks/phase2-cvar-developer-config-system/) | `CVar<T>` runtime config — no recompile for engine parameters | M |
+| [phase2-frame-pacing-vsync-modes](../.rulebook/tasks/phase2-frame-pacing-vsync-modes/) | DXGI flip model + VRR/G-Sync + frame pacing | M |
+| [phase2-asset-hot-reload-textures-meshes](../.rulebook/tasks/phase2-asset-hot-reload-textures-meshes/) | FileWatcher + GPU in-place resource update | M |
+| [phase2-sdf-font-atlas](../.rulebook/tasks/phase2-sdf-font-atlas/) | msdf-atlas-gen baking + MSDF shader for crisp text | M |
+| [phase2-profiler-instrumentation-api](../.rulebook/tasks/phase2-profiler-instrumentation-api/) | `UZ_PROFILE_SCOPE()` macro + Lua profiler API | S |
+| [phase2-audio-profiler-metering](../.rulebook/tasks/phase2-audio-profiler-metering/) | Voice pool + DSP CPU + bus VU meters | M |
+| [phase2-audio-bus-dynamic-graph](../.rulebook/tasks/phase2-audio-bus-dynamic-graph/) | Data-driven bus DAG — designers add buses without code changes | M |
+| [phase2-script-intellisense-lsp](../.rulebook/tasks/phase2-script-intellisense-lsp/) | LuaLS + generated `ctx.d.lua` type defs | M |
+| [phase2-script-linting-static-analysis](../.rulebook/tasks/phase2-script-linting-static-analysis/) | luacheck + custom UzEngine rules in VSCode | S |
+| [phase2-ui-profiler-devtools](../.rulebook/tasks/phase2-ui-profiler-devtools/) | UIPass timing + element count + VSCode DevTools panel | M |
+| [phase2-ui-hot-reload-stable](../.rulebook/tasks/phase2-ui-hot-reload-stable/) | Diff-based CSS/HTML patch — no white flash on reload | M |
+| [phase2-ui-testing-framework](../.rulebook/tasks/phase2-ui-testing-framework/) | Screenshot pixel-diff UI regression tests | L |
+| [phase2-ui-reference-resolution](../.rulebook/tasks/phase2-ui-reference-resolution/) | Scale matrix for 1920×1080 reference resolution | S |
+| [phase2-ui-rich-text](../.rulebook/tasks/phase2-ui-rich-text/) | BBCode-like markup for bold/color/icon inline text | M |
+| [phase2-ui-text-input-fields](../.rulebook/tasks/phase2-ui-text-input-fields/) | `<uz-input>` keyboard capture + IME + selection | M |
+| [phase2-ui-state-machine-nav-stack](../.rulebook/tasks/phase2-ui-state-machine-nav-stack/) | UIScreenManager push/pop with transition animations | M |
+| [phase2-ui-theme-system](../.rulebook/tasks/phase2-ui-theme-system/) | CSS design token theme files + runtime switching | M |
+
+### New Phase 3 Tasks
+
+| Task | Description | Complexity |
+|------|-------------|------------|
+| [phase3-motion-warping](../.rulebook/tasks/phase3-motion-warping/) | Root motion trajectory warping for ledge grab / door reach | L |
+| [phase3-aim-offset](../.rulebook/tasks/phase3-aim-offset/) | 2D additive pose offset for weapon/head aiming | M |
+| [phase3-procedural-foot-placement](../.rulebook/tasks/phase3-procedural-foot-placement/) | 2-bone IK foot placement on uneven terrain | M |
+| [phase3-sync-markers-inertialization](../.rulebook/tasks/phase3-sync-markers-inertialization/) | Gait sync markers + inertial blending (no more transition pops) | L |
+| [phase3-animation-compression](../.rulebook/tasks/phase3-animation-compression/) | ACL library — 8:1 animation compression | M |
+| [phase3-jiggle-bones-secondary-anim](../.rulebook/tasks/phase3-jiggle-bones-secondary-anim/) | Spring-damper secondary physics on bones (hair, capes) | M |
+| [phase3-animation-lod](../.rulebook/tasks/phase3-animation-lod/) | Bone count reduction at distance (4 LOD levels) | M |
+| [phase3-distance-matching](../.rulebook/tasks/phase3-distance-matching/) | Playback rate adjustment for footstep sync | M |
+| [phase3-stride-orientation-warping](../.rulebook/tasks/phase3-stride-orientation-warping/) | Hip rotation + stride deformation for omnidirectional movement | M |
+| [phase3-mirror-animation](../.rulebook/tasks/phase3-mirror-animation/) | Flip poses L/R — halves directional animation authoring | S |
+| [phase3-volumetric-fog-froxel](../.rulebook/tasks/phase3-volumetric-fog-froxel/) | Froxel scatter/transmittance — godray shafts and haze | L |
+| [phase3-sky-atmosphere-bruneton](../.rulebook/tasks/phase3-sky-atmosphere-bruneton/) | Bruneton precomputed atmospheric scattering | L |
+| [phase3-subsurface-scattering](../.rulebook/tasks/phase3-subsurface-scattering/) | Jimenez separable SSS for skin/wax/leaves | M |
+| [phase3-clustered-shading-3d](../.rulebook/tasks/phase3-clustered-shading-3d/) | 3D frustum cluster grid for 200+ point lights | L |
+| [phase3-motion-blur](../.rulebook/tasks/phase3-motion-blur/) | Per-object velocity buffer + radial blur pass | M |
+| [phase3-area-lights-ltc](../.rulebook/tasks/phase3-area-lights-ltc/) | LTC area lights (rect/tube/disk) | L |
+| [phase3-virtual-shadow-maps](../.rulebook/tasks/phase3-virtual-shadow-maps/) | Virtual shadow map cache — stable cascade shadows | L |
+| [phase3-physics-batch-queries](../.rulebook/tasks/phase3-physics-batch-queries/) | Parallel raycast batches via job system | M |
+| [phase3-compound-colliders](../.rulebook/tasks/phase3-compound-colliders/) | Multi-shape Jolt compound collider per entity | M |
+| [phase3-physics-regions-gravity-zones](../.rulebook/tasks/phase3-physics-regions-gravity-zones/) | Per-volume gravity/damping override | M |
+| [phase3-explosion-radial-force](../.rulebook/tasks/phase3-explosion-radial-force/) | Radial impulse API for explosions | S |
+| [phase3-physics-debug-profiler](../.rulebook/tasks/phase3-physics-debug-profiler/) | Jolt stats + body overlay visualization | S |
+| [phase3-audio-hrtf-binaural](../.rulebook/tasks/phase3-audio-hrtf-binaural/) | OpenAL Soft HRTF for headphone 3D audio | M |
+| [phase3-audio-reverb-zones](../.rulebook/tasks/phase3-audio-reverb-zones/) | XAudio2 reverb submix per zone volume | M |
+| [phase3-audio-lod](../.rulebook/tasks/phase3-audio-lod/) | 4-tier audio quality reduction at distance | M |
+| [phase3-audio-animation-sync](../.rulebook/tasks/phase3-audio-animation-sync/) | AnimNotify audio events — frame-accurate footsteps | M |
+| [phase3-audio-occlusion](../.rulebook/tasks/phase3-audio-occlusion/) | Physics raycasts for geometry-based audio muffling | M |
+| [phase3-accessibility-framework](../.rulebook/tasks/phase3-accessibility-framework/) | Colorblind modes, subtitles, reduced motion, high contrast | L |
+| [phase3-controller-haptics](../.rulebook/tasks/phase3-controller-haptics/) | XInput rumble API with presets and fade envelopes | S |
+| [phase3-game-mode-state-machine](../.rulebook/tasks/phase3-game-mode-state-machine/) | GameModeManager push/pop stack with lifecycle callbacks | M |
+| [phase3-day-night-cycle](../.rulebook/tasks/phase3-day-night-cycle/) | Time-of-day system with keyframe light/sky curves | M |
+| [phase3-time-dilation](../.rulebook/tasks/phase3-time-dilation/) | Global time scale for slow-motion effects | S |
+| [phase3-seeded-rng](../.rulebook/tasks/phase3-seeded-rng/) | Deterministic xorshift64 RNG for replay systems | S |
+| [phase3-game-settings-framework](../.rulebook/tasks/phase3-game-settings-framework/) | Typed settings + quality presets + JSON persistence | M |
+| [phase3-ktx2-basis-universal](../.rulebook/tasks/phase3-ktx2-basis-universal/) | Universal texture compression — one file for all GPU formats | L |
+| [phase3-normal-map-baking](../.rulebook/tasks/phase3-normal-map-baking/) | GPU compute high-poly → low-poly normal baking | L |
+| [phase3-auto-uv-unwrap](../.rulebook/tasks/phase3-auto-uv-unwrap/) | xatlas auto-unwrap for lightmap UV channel | M |
+| [phase3-opus-audio-codec](../.rulebook/tasks/phase3-opus-audio-codec/) | libopus — 40% smaller audio vs OGG at same quality | M |
+| [phase3-ui-drag-drop](../.rulebook/tasks/phase3-ui-drag-drop/) | Inventory drag-and-drop with ghost element | M |
+| [phase3-ui-world-space-billboards](../.rulebook/tasks/phase3-ui-world-space-billboards/) | 3D world-space HTML UI attached to entities | L |
+| [phase3-ui-minimap-widget](../.rulebook/tasks/phase3-ui-minimap-widget/) | `<uz-minimap>` with icons, zoom, fog-of-war | L |
+| [phase3-ui-accessibility](../.rulebook/tasks/phase3-ui-accessibility/) | ARIA roles, screen reader, high contrast, focus rings | M |
+| [phase3-font-fallback-cjk](../.rulebook/tasks/phase3-font-fallback-cjk/) | CJK font fallback chain with Noto fonts | M |
+
+### New Phase 4 Tasks
+
+| Task | Description | Complexity |
+|------|-------------|------------|
+| [phase4-dxr-ray-tracing-rhi](../.rulebook/tasks/phase4-dxr-ray-tracing-rhi/) | RHI DXR extension — BLAS/TLAS + ray pipeline | XL |
+| [phase4-gpu-driven-rendering](../.rulebook/tasks/phase4-gpu-driven-rendering/) | GPU-generated draw calls via ExecuteIndirect | XL |
+| [phase4-temporal-upsampling-dlss-fsr](../.rulebook/tasks/phase4-temporal-upsampling-dlss-fsr/) | DLSS 3 + FSR 3 + XeSS temporal upsampling | L |
+| [phase4-nanite-virtual-geometry](../.rulebook/tasks/phase4-nanite-virtual-geometry/) | Meshlet cluster LOD — eliminates LOD authoring | XL |
+| [phase4-rope-chain-simulation](../.rulebook/tasks/phase4-rope-chain-simulation/) | Jolt constraint chain + tube renderer | M |
+| [phase4-soft-body-physics](../.rulebook/tasks/phase4-soft-body-physics/) | Jolt v4 SoftBody — capes, flags, deformable props | L |
+| [phase4-buoyancy-system](../.rulebook/tasks/phase4-buoyancy-system/) | Archimedes buoyancy force for water gameplay | M |
+| [phase4-wind-system-unified](../.rulebook/tasks/phase4-wind-system-unified/) | Global wind field used by vegetation/cloth/particles/hair | M |
+| [phase4-convex-decomposition-vhacd](../.rulebook/tasks/phase4-convex-decomposition-vhacd/) | V-HACD auto-decomposition for arbitrary mesh physics | M |
+| [phase4-virtual-texturing](../.rulebook/tasks/phase4-virtual-texturing/) | Sparse virtual textures for unlimited texture resolution | XL |
+| [phase4-cloth-simulation](../.rulebook/tasks/phase4-cloth-simulation/) | Jolt/GPU cloth simulation for garments | L |
+| [phase4-destructible-meshes](../.rulebook/tasks/phase4-destructible-meshes/) | Voronoi fracture + debris physics | L |
+| [phase4-visual-scripting](../.rulebook/tasks/phase4-visual-scripting/) | Node graph visual scripting as Lua alternative | XL |
 
 ---
 
@@ -814,7 +1028,10 @@ Ideas beyond Phase 4 for future development:
 - **Dialogue System**: Conversation trees, branching dialogue, character voice mapping, subtitles
 - **Tilemap 2D Mode**: 2D gameplay support, tileset painting, physics for 2D
 - **Console/Mobile Platform Support**: Switch, PS5, iOS/Android builds, platform-specific optimizations
-- **Advanced Rendering**: Real-time global illumination, ray-tracing, GPU-driven rendering
+- **Motion Matching**: Database-driven animation selection for natural locomotion
+- **Global Illumination**: Lumen-style probe-based dynamic GI
+- **Vehicle Physics**: Wheel suspension, drivetrain, aerodynamics
+- **Adaptive Music**: Beat-synchronized dynamic music with layer mixing
 
 ---
 

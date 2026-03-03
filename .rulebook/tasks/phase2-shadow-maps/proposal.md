@@ -1,17 +1,24 @@
-# Phase 2 — Cascaded Shadow Maps
+# Proposal: phase2-shadow-maps
 
-## Context
+## Why
+Every light source in the engine currently illuminates geometry without casting any shadows, making all rendered scenes look flat and physically incorrect. A scene with a sun overhead and no ground shadows is immediately recognizable as unfinished to any player. Shadow maps are the foundational visibility technique for all real-time lighting and are a hard prerequisite for the engine to be usable in any serious game project — outdoor environments, architectural walkthroughs, and cinematic scenes all depend on directional shadows to read correctly.
 
-Part of the PBR renderer phase. Separated into its own task because CSM is complex enough to warrant independent tracking. DirectionalLight nodes cast shadows via 3-cascade shadow maps rendered to a shared atlas.
+Cascaded Shadow Maps (CSM) with Parallel-Split Shadow Maps (PSSM) are the industry-standard solution for directional light shadows in AAA games. A single shadow map cannot cover both close-up detail and far-distance coverage at acceptable resolution; splitting the camera frustum into 4 cascades and assigning a dedicated shadow map to each allows near geometry to receive sharp, high-resolution shadows while distant terrain still receives coverage. This is the same approach used in Unreal Engine, Unity HDRP, and every modern AAA renderer.
 
-## Goal
+Directional lights (sun, moon, skylight fill) are the primary shadow-casting lights in the vast majority of game scenes. Implementing CSM for `CDirectionalLight` before tackling point and spot light shadows (a separate task) delivers the highest visual impact per engineering hour. PCF soft shadow filtering on top of the CSM base further elevates perceived quality and makes shadow edges read as physically plausible rather than aliased pixel edges.
 
-- 3-cascade CSM for DirectionalLight
-- Shadow atlas 2048×2048 (D32_FLOAT)
-- PCF 3×3 kernel for soft shadows
-- No shadow acne (depth bias tuned)
-- Cascade debug overlay (toggle via IPC)
+## What Changes
+- Implement 4-cascade PSSM for `CDirectionalLight`: per-frame frustum split using logarithmic-uniform blending (lambda 0.7), computing per-cascade view-projection matrices from light direction and camera frustum corners each frame; cascade split distances stored in a `float4 g_CascadeSplits` constant buffer entry
+- Render each of the 4 cascades as a depth-only pass into a shared 4096x2048 `D32_FLOAT` shadow atlas (cascades tiled 2×2: cascade 0 top-left 2048×1024, cascade 1 top-right, cascade 2 bottom-left, cascade 3 bottom-right), using a dedicated `ShadowPass` render graph node scheduled before the GBuffer pass
+- Sample shadows in the deferred lighting HLSL pass using PCF 3×3 kernel (9 jittered samples, Poisson disk offsets scaled to 1 shadow-map texel) to produce soft shadow edges; cascade selection by linear view-space depth comparison against `g_CascadeSplits`
+- Apply slope-scaled depth bias per cascade via `D3D12_RASTERIZER_DESC.SlopeScaledDepthBias` (tuned values: C0=1.0/C1=1.5/C2=2.0/C3=2.5) and a constant bias (`DepthBias=100`) to eliminate shadow acne without visible peter-panning on flat surfaces
+- Implement shadow fade: blend shadow contribution to 1.0 (fully lit) over the last 10% of `shadow_distance` using a smooth fade factor, preventing a hard shadow pop-out at the far cascade boundary
+- Add `CDirectionalLight` ECS component with fields: `intensity` (float, lux), `color` (float3), `cast_shadows` (bool), `shadow_distance` (float, metres), `cascade_lambda` (float 0–1), `cascade_distances[4]` (optional manual override), `depth_bias` (float), `slope_bias` (float)
+- Add cascade debug overlay: IPC command `renderer.toggleCascadeVis` tints each cascade region with a distinct color (red/green/blue/yellow) directly in the lighting output for diagnostic tuning; toggled off in shipping builds via `#ifdef UZ_EDITOR`
+- Expose HLSL shadow sampling as a shared include `shaders/include/ShadowSampling.hlsli` with `SampleShadowCascades(float3 worldPos, float viewDepth)` returning a scalar shadow factor 0–1, consumable by both the deferred lighting pass and any future forward-rendered materials
 
-## Dependencies
-
-- **phase2-pbr-renderer** (deferred lighting pass consumes shadows)
+## Impact
+- Affected specs: docs/specs/renderer.md (shadow maps section), docs/specs/point-spot-light-shadows.md (shared atlas layout conventions)
+- Affected code: src/renderer/passes/ShadowPass.cpp (new), src/renderer/passes/ShadowPass.h (new), shaders/shadow.hlsl (depth-only VS), shaders/include/ShadowSampling.hlsli (new shared include), shaders/lighting.hlsl (PCF sampling call), src/ecs/components.h (CDirectionalLight fields), src/ipc/IpcServer.cpp (cascade debug toggle command)
+- Breaking change: NO — shadow rendering activates automatically for any `CDirectionalLight` with `cast_shadows = true`; existing scenes without a directional light are completely unaffected; the new component fields are optional with sensible defaults
+- User benefit: Outdoor scenes immediately gain physically correct ground shadows from the sun/moon light; the 4-cascade PSSM approach delivers sharp near shadows and full-distance coverage without resolution compromise; the cascade debug overlay and per-component bias controls let developers tune shadow quality vs. performance without guesswork

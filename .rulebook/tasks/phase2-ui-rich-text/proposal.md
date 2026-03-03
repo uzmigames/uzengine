@@ -1,0 +1,26 @@
+# Proposal: phase2-ui-rich-text
+
+## Why
+UI text elements currently only support plain string content. Game UIs routinely require inline formatting — skill tooltips with bold stat values, damage numbers in red, item names in rarity colors, inline icons within ability descriptions. Without rich text support, developers must build these displays from multiple separate DOM elements, producing fragile layouts that break when text length varies and require complex Lua logic to keep synchronized.
+
+The multi-element workaround is more than inconvenient — it actively breaks localisation. A tooltip string like "Deals [value] damage to [element] enemies" cannot be expressed as a single translatable string if the `[value]` and `[element]` parts live in separate DOM elements with different styles. Translators must work with fragmented strings that lose context, and right-to-left language support becomes essentially impossible since the browser cannot reorder DOM elements based on text direction. Rich text expressed as a single marked-up string keeps the entire sentence as a single translatable unit and lets the browser handle BiDi text correctly.
+
+Security is a first-class concern: game UI content frequently comes from user-generated or server-provided data (player names, item descriptions, chat messages). Injecting that data as raw HTML would enable stored XSS within the game client. The rich text system must operate on a strict allow-list of safe tags, with all content sanitised at the C++ parser level before reaching the browser DOM, ensuring that no user-controlled content can inject `<script>`, `<style>`, or event handler attributes.
+
+## What Changes
+- Define a BBCode-like markup language for UzEngine rich text: `[b]text[/b]`, `[i]text[/i]`, `[u]text[/u]`, `[s]text[/s]`, `[color=#rrggbb]text[/color]`, `[size=N]text[/size]` (N in reference-resolution pixels), `[font=name]text[/font]`, `[img src="asset://icon.png" w=16 h=16/]`, `[shadow dx=1 dy=1 color=#000000]text[/shadow]`, `[outline width=1 color=#000000]text[/outline]`; the tag set is a closed allow-list — no arbitrary tags or attributes permitted
+- Implement `RichTextParser` in `src/ui/RichTextParser.cpp`: a hand-written recursive-descent parser (no regex, O(n) in input length) that converts markup to a safe HTML fragment using only `<span>` elements with inline CSS styles and `<img>` elements with sanitised `src` attributes; any unrecognised tag is emitted as escaped literal text
+- Add gradient fill support: `[gradient from=#ff0000 to=#0000ff angle=90]text[/gradient]` is implemented by wrapping text in a `<span>` with `-webkit-background-clip: text` and `background-image: linear-gradient(...)`, which is supported in Chromium-based embedded browsers
+- Integrate with the asset pipeline: `[img src="asset://..."]` paths are resolved by the `AssetManager` at parse time and converted to data URIs (base64-encoded PNG/JPEG) to avoid cross-origin restrictions in the embedded browser; resolution is cached by asset path to avoid redundant base64 encoding
+- Add emoji support: emoji code points in the input string are passed through unmodified and rendered by the embedded browser's built-in emoji font; add `[emoji size=N]U+1F525[/emoji]` syntax for explicit sizing
+- Add text measurement API: IPC handler `ui.measure_rich_text` accepts an element ID and returns `{width, height, line_count, baseline_y}` using the browser's `getBoundingClientRect()` after injection, enabling Lua-driven tooltip positioning
+- Add Lua API: `ctx.ui:set_rich_text(element_id, markup)` (applies parsed HTML to element innerHTML), `ctx.ui:get_rich_text(element_id)` (returns the original markup string stored server-side, not the DOM HTML), and `ctx.ui:measure_rich_text(element_id)` returning the bounding rect table
+- Integrate with the localisation system: `ctx.locale:t(key)` returns a plain string; `ctx.ui:set_rich_text(id, ctx.locale:t("tooltip.fire_damage"))` allows the localised string to contain markup, so translators author rich-formatted strings in the CSV without any Lua changes
+- Add a VSCode rich text preview pane in the UIEditorPanel: a text input field accepting markup, a live-rendered preview using an embedded webview, and an error display for malformed markup with the character position highlighted
+- Write unit tests in `tests/ui/rich_text_parser_test.cpp` covering: all supported tags, nested tags, colour format validation, asset path sanitisation, XSS injection attempts (script tags, event handlers, data: URIs), empty input, and malformed (unclosed) tags
+
+## Impact
+- Affected specs: `docs/specs/ui-system.md`, `docs/specs/asset-pipeline.md`, `docs/specs/localization.md`
+- Affected code: `src/ui/uz_ui_html.dll`, `src/ui/RichTextParser.h`, `src/ui/RichTextParser.cpp`, `src/ipc/IpcServer.cpp`, `vscode-ext/src/panels/UIEditorPanel.ts`
+- Breaking change: NO — existing `ctx.ui:set_text(id, plain_string)` continues to work; `set_rich_text` is an additive API; plain strings with no markup tags pass through the parser unchanged
+- User benefit: Developers express complex formatted text as a single string value, making tooltips and HUD text trivially localisable; BiDi language support is correct because the browser sees a single text node; markup is sanitised at the C++ layer so user-generated content cannot inject script into the UI

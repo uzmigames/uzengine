@@ -73,6 +73,10 @@ Use **ufbx** for `.fbx` and **fastgltf** for `.glb`/`.gltf`. Both normalize to t
     "generate_lods":    true,
     "lod_ratios":       [1.0, 0.5, 0.25, 0.1],
     "lod_errors":       [0.0, 0.01, 0.05, 0.15],
+    "auto_lod":         true,
+    "lod_screen_sizes": [0.50, 0.25, 0.10, 0.02],
+    "nanite_fallback":  false,
+    "nanite_threshold_triangles": 100000,
     "max_bone_influences": 4,
     "import_animations": true,
     "animation_bake_fps": 30
@@ -133,6 +137,31 @@ else                  → LOD3 (or cull)
 ## 4. Texture Compression (BC7 / BC5 / BC6H)
 
 **Library**: DirectXTex (MIT, vcpkg) for DDS I/O and mip generation + **bc7enc_rdo** for fast BC7 encoding with RDO (better PAK compression ratios).
+
+### sRGB Auto-Detection
+
+The importer automatically determines the correct sRGB setting by matching the source filename (case-insensitive) against known texture-type patterns. This prevents the common bug where roughness/normal maps are incorrectly marked sRGB, which destroys PBR lighting values.
+
+**sRGB = TRUE** (gamma-encoded color data): patterns `albedo`, `diffuse`, `basecolor`, `base_color`, `col`, `color`, `_d` (suffix).
+
+**sRGB = FALSE** (linear data, must not be gamma-expanded): patterns `normal`, `nrm`, `nor`, `normalmap`, `bump`, `roughness`, `rough`, `rgh`, `metallic`, `metal`, `met`, `ao`, `ambient_occlusion`, `occlusion`, `cavity`, `height`, `displacement`, `disp`, `emissive`, `emit`, `glow`, `mask`, `opacity`, `alpha`, `packed`, `orm`, `rma`.
+
+When no pattern matches, the importer defaults to sRGB=true and records `srgb_source: "fallback"` in `.import.json`. A VSCode linter warning is emitted for all fallback-detected textures so artists can audit and confirm. Explicit override: set `srgb: false` and `srgb_source: "user_override"` in `.import.json`.
+
+Substance Painter convention mapping (auto-detected by filename patterns above):
+
+| Substance Painter Suffix | sRGB | Format |
+|--------------------------|------|--------|
+| `_BaseColor` | YES | BC7 UNORM_SRGB |
+| `_Normal` | NO | BC5 UNORM |
+| `_Roughness` | NO | BC4 UNORM |
+| `_Metallic` | NO | BC4 UNORM |
+| `_AmbientOcclusion` | NO | BC4 UNORM |
+| `_Emissive` | NO | BC7 UNORM |
+| `_Opacity` | NO | BC4 UNORM |
+| `_Height` | NO | BC4 UNORM |
+
+Additionally, the importer scans the alpha channel. If all pixels have alpha=255, `has_alpha: false` is recorded in `.import.json`, allowing the compressor to skip the alpha channel and use a more efficient format.
 
 ### Compression Rules
 

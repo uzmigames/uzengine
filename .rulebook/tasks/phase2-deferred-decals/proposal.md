@@ -1,22 +1,24 @@
 # Proposal: phase2-deferred-decals
 
 ## Why
+Games routinely need to stamp dynamic surface details — bullet holes, blood splatter, scorch marks, graffiti, wet surface patches — onto arbitrary scene geometry at runtime. Without a dedicated decal system, each effect either requires a separate mesh placed precisely on the surface (fragile, high triangle cost) or must be baked into the texture set (inflexible, cannot be spawned dynamically). Deferred decals solve this by projecting a texture box onto the GBuffer in screen space after geometry is rendered, writing albedo, normal, and roughness overrides into a composited DBuffer before the lighting pass — no mesh modification required.
 
-Games need to place dynamic surface details — bullet holes, blood splatter, scorch marks, graffiti — on arbitrary geometry at runtime without modifying mesh UVs or creating unique texture sets. Deferred decals solve this by projecting a texture box onto the GBuffer in screen space, writing albedo/normal/roughness into a separate DBuffer that is composited before the lighting pass.
+In a PBR deferred pipeline the cost of a decal is entirely independent of how complex the underlying geometry is. A bullet hole projected onto a dense character mesh costs exactly the same GPU time as one projected onto a flat wall — only the pixels inside the decal's screen-space footprint are shaded. This makes the system suitable for spawning dozens of simultaneous impact effects in a combat scenario without a proportional CPU or GPU budget spike.
 
-The render graph makes deferred decals straightforward: a `DecalPass` reads the depth buffer, reconstructs world position, tests against `CDecal` component bounding boxes, and writes to `DBuffer` render targets. No geometry modification required.
+Supporting decals also unlocks a class of world-building workflows that are otherwise unachievable without content pipeline work. Level designers can paint tire tracks, puddles, or graffiti directly in the editor by placing CDecal nodes, see the result in real-time in the viewport, and iterate without exporting any new texture atlases or modifying mesh UVs. This is the industry-standard approach used in Unreal Engine's DBuffer decal system and id Software's deferred decal pass.
 
 ## What Changes
-
-- **`ecs/components.h`** — `CDecal` component: `material_path`, `projection_box` (half-extents), `blend_mode` enum, `fade_distance`
-- **`src/engine/renderer/passes/decal_pass.h/cpp`** — `DecalPass` `RgPass`: reads depth, writes to DBuffer (albedo, normal, roughness mask)
-- **`shaders/decal.hlsl`** — decal projection shader
-- **`src/engine/renderer/renderer.cpp`** — DBuffer RTs registered; lighting pass reads DBuffer
-- **Tests** — decal projection correctness, blend modes, overdraw ordering, editor gizmo
+- Add a `CDecal` ECS component with fields: `material_path` (string), `projection_box` (OBB half-extents as float3), `blend_mode` enum (Translucent / Additive / Modulate), `normal_blend_weight` float, `fade_near_distance` float, `fade_far_distance` float, and `sort_order` int; scene supports a maximum of 256 simultaneous active decals per view
+- Implement a `DecalPass` render graph node that reads the GBuffer depth buffer and three DBuffer render targets (RT0: albedo+opacity, RT1: packed world-space normal+blend, RT2: roughness+metallic+mask); the pass runs after the GBuffer pass and before the lighting accumulation pass
+- Write `shaders/decal.hlsl`: linearise the GBuffer depth value, reconstruct world-space position using the stored inverse view-projection matrix from `GlobalParams` cbuffer at `b15`, transform into the decal's OBB local space, discard pixels outside [-1,1]^3, compute decal UV as `(local.xz * 0.5 + 0.5)`, sample the decal material textures, and write to DBuffer targets with per-channel blend masks
+- Add a CPU-side `DecalCuller` that performs frustum + distance culling on all `CDecal` components each frame and uploads a sorted `StructuredBuffer<DecalData>` (transform, material index, blend mode) to the GPU; the DecalPass iterates this buffer as a full-screen loop with early-out per pixel
+- Update `RendererConfig` and the render graph in `renderer.cpp` to allocate the three DBuffer `R8G8B8A8_UNORM` render targets at half resolution with bilateral upsampling, matching the pattern established by the SSAO pass; make DBuffer allocation conditional on `renderer.decals_enabled` so projects that do not use decals pay zero VRAM cost
+- Add `.uzmat` support for decal materials: a decal material must declare `blend_target = "dbuffer"` in its header section; the asset pipeline rejects non-decal materials assigned to `CDecal` components at load time with a descriptive error
+- Expose a Lua API: `ctx.scene:spawn_decal(material_id, transform, half_extents, blend_mode)` returning a `DecalHandle`, `ctx.scene:remove_decal(handle)`, `ctx.scene:set_decal_material(handle, material_id)`, and `ctx.scene:set_decal_fade(handle, near, far)` for distance-based fade-out
+- Add editor gizmo support in `EditorOverlayPass`: selected `CDecal` components render their OBB as a dashed wireframe box using the existing gizmo line renderer; the projection direction is shown as a downward arrow in the centre of the box
 
 ## Impact
-
-- Affected specs: `docs/specs/renderer.md` (DBuffer section)
-- Dependencies: `phase1-render-graph` (RgPass API), `phase2-pbr-renderer` (GBuffer layout known)
-- Breaking change: NO — decals are opt-in via `CDecal` component
-- User benefit: runtime surface detail without mesh modifications; bullet holes, puddles, graffiti all via one system
+- Affected specs: `docs/specs/renderer.md` (DBuffer targets, DecalPass node, render graph order), `docs/specs/scene-system.md` (CDecal component definition), `docs/specs/lua-scripting.md` (decal Lua API), `docs/specs/shader-library.md` (decal.hlsl and GlobalParams interaction), `docs/specs/editor-gizmos.md` (CDecal OBB wireframe gizmo)
+- Affected code: `src/renderer/passes/DecalPass.cpp` (new file), `src/renderer/DecalCuller.cpp` (new file), `shaders/decal.hlsl` (new file), `src/ecs/components.h` (CDecal struct), `src/renderer/renderer.cpp` (DBuffer allocation, pass ordering), `src/assets/MaterialLoader.cpp` (dbuffer blend_target validation), `src/editor/EditorOverlayPass.cpp` (OBB gizmo)
+- Breaking change: NO — decals are entirely opt-in via the CDecal component; existing scenes and the GBuffer/lighting pipeline are unaffected when no decals are present
+- User benefit: Bullet holes, puddles, blood, and surface weathering can be spawned and removed dynamically at runtime with a single Lua call, with no per-mesh UV work and no triangle cost beyond the screen-space decal pass; level designers can paint decals directly in the editor viewport with immediate visual feedback
