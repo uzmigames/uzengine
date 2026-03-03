@@ -1,24 +1,24 @@
 {
-  "version": "3.4.2",
-  "installedAt": "2026-03-01T12:00:14.548Z",
-  "updatedAt": "2026-03-01T12:00:14.550Z",
-  "projectId": "13fba389-8a9e-41e5-8fa1-5e457fcd5c3e",
+  "version": "4.1.0",
+  "installedAt": "2026-03-01T12:00:14.655Z",
+  "updatedAt": "2026-03-03T17:07:27.076Z",
+  "projectId": "UzEngine",
   "mode": "full",
   "features": {
-    "watcher": true,
-    "agent": true,
+    "watcher": false,
+    "agent": false,
     "logging": true,
-    "telemetry": true,
+    "telemetry": false,
     "notifications": false,
     "dryRun": false,
     "gitHooks": false,
     "repl": false,
-    "templates": false,
-    "context": false,
-    "health": false,
+    "templates": true,
+    "context": true,
+    "health": true,
     "plugins": false,
-    "parallel": false,
-    "smartContinue": false
+    "parallel": true,
+    "smartContinue": true
   },
   "coverageThreshold": 95,
   "language": "en",
@@ -41,16 +41,17 @@
     "enabled": true,
     "maxIterations": 10,
     "tool": "claude",
-    "maxContextLoss": 3
+    "maxContextLoss": 3,
+    "parallel": {
+      "enabled": false,
+      "maxWorkers": 3
+    },
+    "planCheckpoint": {
+      "enabled": false,
+      "autoApproveAfterSeconds": 0,
+      "requireApprovalForStories": "all"
+    }
   },
-  "languages": [
-    "c"
-  ],
-  "frameworks": [],
-  "modules": [],
-  "services": [],
-  "modular": true,
-  "rulebookDir": ".rulebook",
   "skills": {
     "enabled": [
       "languages/c",

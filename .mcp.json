@@ -5,12 +5,16 @@
       "args": [
         "-y",
         "@hivehub/rulebook@latest",
-        "mcp-server"
+        "mcp-server",
+        "--project-root",
+        "E:\\UzEngine"
       ]
     },
     "uzengine": {
       "command": "node",
-      "args": ["tools/mcp-uzengine/index.js"]
+      "args": [
+        "tools/mcp-uzengine/index.js"
+      ]
     }
   }
 }

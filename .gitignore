@@ -68,11 +68,7 @@ Makefile
 # -----------------------------------------------------------------------------
 # Rulebook - keep specs/tasks, ignore runtime data
 # -----------------------------------------------------------------------------
-/.rulebook/*
-!/.rulebook/specs/
-!/.rulebook/tasks/
 !/.rulebook/tasks/**
-!/.rulebook/rulebook.json
 
 # -----------------------------------------------------------------------------
 # Editor & OS
@@ -105,3 +101,10 @@ logs/
 vcpkg_installed/
 /.claude/settings.local.json
 /.claude/worktrees
+
+# Rulebook - ignore runtime data, keep specs and tasks
+/.rulebook/*
+!/.rulebook/specs/
+!/.rulebook/tasks/
+!/.rulebook/tasks/**/*.md
+!/.rulebook/rulebook.json
