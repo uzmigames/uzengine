@@ -26,14 +26,14 @@
 
 ## 4. TypeScript — GizmoController
 
-- [ ] 4.1 Create `src/editor/gizmoController.ts` — class that manages gizmo state: `mode`, `constraint`, `space`, `isDragging`
-- [ ] 4.2 Implement `screenToWorldRay(px, py, width, height, viewMatrix, projMatrix): Ray` using inverse VP matrix
-- [ ] 4.3 Implement `hitTestAxis(ray, gizmoOrigin, axisDir, hitRadius): boolean` using nearest-point-between-two-lines
-- [ ] 4.4 Implement `hitTestPlane(ray, planeOrigin, planeNormal): Vec3 | null` using ray-plane intersection
-- [ ] 4.5 Implement translate drag: project ray onto constrained axis/plane; compute world-space delta; send `editor.setNodeTransformLive`
-- [ ] 4.6 Implement rotate drag: compute signed angle around axis from mouse position on rotation plane; send `editor.setNodeTransformLive`
-- [ ] 4.7 Implement scale drag: accumulate signed drag distance along screen-projected axis; send `editor.setNodeTransformLive`
-- [ ] 4.8 Implement grid snap: `Math.round(value / gridSize) * gridSize`; read `gridSize` from project config; activate when `Ctrl` is held
+- [x] 4.1 Create `src/editor/gizmoController.ts` — class that manages gizmo state: `mode`, `constraint`, `space`, `isDragging`
+- [x] 4.2 Implement `screenToWorldRay(px, py, width, height, viewMatrix, projMatrix): Ray` using inverse VP matrix
+- [x] 4.3 Implement `hitTestAxis(ray, gizmoOrigin, axisDir, hitRadius): boolean` using nearest-point-between-two-lines
+- [x] 4.4 Implement `hitTestPlane(ray, planeOrigin, planeNormal): Vec3 | null` using ray-plane intersection
+- [x] 4.5 Implement translate drag: project ray onto constrained axis/plane; compute world-space delta; send `editor.setNodeTransformLive`
+- [x] 4.6 Implement rotate drag: compute signed angle around axis from mouse position on rotation plane; send `editor.setNodeTransformLive`
+- [x] 4.7 Implement scale drag: accumulate signed drag distance along screen-projected axis; send `editor.setNodeTransformLive`
+- [x] 4.8 Implement grid snap: `Math.round(value / gridSize) * gridSize`; read `gridSize` from project config; activate when `Ctrl` is held
 
 ## 5. TypeScript — Viewport Canvas Events
 
@@ -62,14 +62,14 @@
 
 ## 8. Testing (TypeScript)
 
-- [ ] 8.1 Unit test `screenToWorldRay` — known camera setup, verify ray direction matches expected world vector
-- [ ] 8.2 Unit test `hitTestAxis` — parallel ray (should not hit), perpendicular near ray (should hit), far ray (should not hit)
-- [ ] 8.3 Unit test translate drag — mock IPC, verify `setNodeTransformLive` called with correct position delta
-- [ ] 8.4 Unit test grid snap — value 0.37 with gridSize 0.25 snaps to 0.25; value 0.38 snaps to 0.5
-- [ ] 8.5 Unit test rotate drag — 90-degree drag around Y produces rotation delta of π/2
-- [ ] 8.6 Unit test `TransformCommand` — execute and undo call IPC with correct old/new transforms
-- [ ] 8.7 Integration test: mousedown + mousemove + mouseup sequence creates exactly one undo entry
-- [ ] 8.8 Test `editor.pickNode` returns `null` when clicking empty space; returns node ID when clicking object
+- [x] 8.1 Unit test `screenToWorldRay` — known camera setup, verify ray direction matches expected world vector
+- [x] 8.2 Unit test `hitTestAxis` — parallel ray (should not hit), perpendicular near ray (should hit), far ray (should not hit)
+- [x] 8.3 Unit test translate drag — mock IPC, verify `setNodeTransformLive` called with correct position delta
+- [x] 8.4 Unit test grid snap — value 0.37 with gridSize 0.25 snaps to 0.25; value 0.38 snaps to 0.5
+- [x] 8.5 Unit test rotate drag — 90-degree drag around Y produces rotation delta of π/2
+- [x] 8.6 Unit test `TransformCommand` — execute and undo call IPC with correct old/new transforms
+- [x] 8.7 Integration test: mousedown + mousemove + mouseup sequence creates exactly one undo entry
+- [x] 8.8 Test `editor.pickNode` returns `null` when clicking empty space; returns node ID when clicking object
 
 ## 9. Documentation
 
