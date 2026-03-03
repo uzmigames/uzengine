@@ -71,19 +71,54 @@ expect(capturedValidator!('')).toBe('Node name cannot be empty');
 ### Error Branch Coverage (instanceof Error ternary)
 Test by rejecting IPC calls with plain strings: `ipc.request.mockRejectedValue('plain string error')`
 
-## Coverage Status (after this session)
-- `inspector-panel.ts`: 100%/100%/100%/100% ✅
+## Coverage Status (current)
+- `console-panel.ts`: 100%/100%/100%/100% ✅
+- `inspector-panel.ts`: 100%/100%/100%/100% ✅ (InspectorPanel + InspectorViewProvider)
 - `play-controls.ts`: 100%/100%/100%/100% ✅
 - `scene-tree-provider.ts`: 98.11%/97.77%/100%/98.92% ✅
 - `ipc-client.ts`: 100%/100%/96.29%/100% ✅
 - `server-manager.ts`: 100%/100%/100%/100% ✅
 - `stream-panel.ts`: 100%/100%/100%/100% ✅
-- Pre-existing failures: `engine-client.test.ts` (EACCES /mock) and `viewport-manager.test.ts` (ENOENT command.json)
+- Global: 98.66% stmts / 95.76% branch / 97.24% funcs / 98.96% lines ✅
+- Total: 641 tests across 16 suites (all passing)
+
+## WebviewView Mock Pattern (inline — no shared mock exists)
+For WebviewViewProvider tests, create an inline mock (not in vscode.ts):
+```typescript
+function makeMockWebviewView() {
+    const messageHandlers: Array<(msg: unknown) => void> = [];
+    const webview = {
+        options: {} as { enableScripts?: boolean },
+        html: '',
+        postMessage: jest.fn().mockResolvedValue(true),
+        onDidReceiveMessage: jest.fn((cb: (msg: unknown) => void) => {
+            messageHandlers.push(cb);
+            return { dispose: jest.fn() };
+        }),
+        cspSource: '',
+    };
+    return {
+        webview,
+        _triggerMessage(msg: unknown) { messageHandlers.forEach(h => h(msg)); },
+    };
+}
+```
+Cast to `view as unknown as import('vscode').WebviewView` when calling resolveWebviewView.
+
+## vscode mock — window stubs added
+- `window.registerWebviewViewProvider` — added stub `jest.fn(() => ({ dispose: jest.fn() }))`
+  Extension.ts uses this for InspectorViewProvider and ConsolePanel.
+
+## jest.fn() type parameter restriction
+- `jest.fn<() => Promise<T>>()` causes TS2743 in test files with this project's ts-jest config.
+- Use `jest.fn().mockResolvedValue(...)` without type parameters instead.
+- The vscode mock file itself uses the 1-arg form — it works there due to its own tsconfig context.
 
 ## Key Source Files
 - `src/ipc-client.ts` — WebSocket IPC client, auto-reconnect, request/response correlation
 - `src/scene-tree-provider.ts` — VSCode TreeDataProvider for scene nodes
-- `src/inspector-panel.ts` — WebviewPanel for node property editing
+- `src/inspector-panel.ts` — InspectorPanel (WebviewPanel) + InspectorViewProvider (WebviewViewProvider)
+- `src/console-panel.ts` — ConsolePanel (WebviewViewProvider, LogLevel/LogEntry, MAX_ENTRIES=500)
 - `src/play-controls.ts` — Status bar play/pause/stop controls
 - `src/server-manager.ts` — ServerManager (process spawn, port wait, status bar)
 - `src/stream-panel.ts` — StreamPanel (singleton webview panel via ViewportManager)

@@ -33,8 +33,9 @@ import { ServerManager } from './server-manager';
 import { ViewportManager } from './viewport-manager';
 import { IpcClient } from './ipc-client';
 import { SceneTreeProvider, NodeItem } from './scene-tree-provider';
-import { InspectorPanel } from './inspector-panel';
+import { InspectorPanel, InspectorViewProvider } from './inspector-panel';
 import { PlayControls } from './play-controls';
+import { ConsolePanel } from './console-panel';
 
 let serverManager: ServerManager | undefined;
 
@@ -101,16 +102,50 @@ export function activate(context: vscode.ExtensionContext): void {
     context.subscriptions.push(treeView);
 
     // -------------------------------------------------------------------------
-    // 6. InspectorPanel — opens when a scene node is selected.
+    // 6a. InspectorViewProvider — fixed sidebar view (Unity/Godot style).
     // -------------------------------------------------------------------------
+    const inspectorViewProvider = new InspectorViewProvider(ipcClient);
+    context.subscriptions.push(inspectorViewProvider);
+    context.subscriptions.push(
+        vscode.window.registerWebviewViewProvider(
+            InspectorViewProvider.viewType,
+            inspectorViewProvider
+        )
+    );
+
+    // 6b. InspectorPanel — legacy floating tab (kept for compatibility).
     const inspectorPanel = new InspectorPanel(context.extensionUri, ipcClient);
     context.subscriptions.push(inspectorPanel);
 
-    // Wire SceneTreeProvider selection → InspectorPanel.
+    // Wire SceneTreeProvider selection → both Inspector implementations.
     const selectionSub = sceneTreeProvider.onNodeSelected(node => {
+        inspectorViewProvider.showForNode(node);
         inspectorPanel.showForNode(node);
     });
     context.subscriptions.push(selectionSub);
+
+    // -------------------------------------------------------------------------
+    // 6c. ConsolePanel — sidebar console view.
+    // -------------------------------------------------------------------------
+    const consolePanel = new ConsolePanel();
+    context.subscriptions.push(consolePanel);
+    context.subscriptions.push(
+        vscode.window.registerWebviewViewProvider(
+            ConsolePanel.viewType,
+            consolePanel
+        )
+    );
+
+    // Forward engine.log push events from IPC to the console panel.
+    const logUnsub = ipcClient.on('engine.log', (payload: unknown) => {
+        const p = payload as { level?: string; message?: string } | null;
+        if (!p || typeof p.message !== 'string') { return; }
+        const level = p.level === 'warning' ? 'warning'
+                    : p.level === 'error'   ? 'error'
+                    : 'info';
+        consolePanel.log(level, p.message);
+    });
+    context.subscriptions.push({ dispose: logUnsub });
 
     // -------------------------------------------------------------------------
     // 7. PlayControls — status bar ▶ ⏸ ■ buttons.
@@ -213,6 +248,38 @@ export function activate(context: vscode.ExtensionContext): void {
         }
     );
 
+    // Scene: Save Scene
+    const saveSceneCommand = vscode.commands.registerCommand(
+        'uzengine.saveScene',
+        async () => {
+            try {
+                await ipcClient.request('scene.save', {});
+                consolePanel.log('info', 'Scene saved.');
+            } catch (err) {
+                vscode.window.showErrorMessage(
+                    `UzEngine: Failed to save scene — ` +
+                    `${err instanceof Error ? err.message : String(err)}`
+                );
+            }
+        }
+    );
+
+    // Scene: Refresh Scene Tree
+    const refreshSceneCommand = vscode.commands.registerCommand(
+        'uzengine.refreshScene',
+        () => {
+            sceneTreeProvider.refresh();
+        }
+    );
+
+    // Console: Clear
+    const consoleClearCommand = vscode.commands.registerCommand(
+        'uzengine.consoleClear',
+        () => {
+            consolePanel.clear();
+        }
+    );
+
     context.subscriptions.push(
         openCommand,
         startCommand,
@@ -225,6 +292,9 @@ export function activate(context: vscode.ExtensionContext): void {
         playCommand,
         pauseCommand,
         stopPlayCommand,
+        saveSceneCommand,
+        refreshSceneCommand,
+        consoleClearCommand,
     );
 }
 

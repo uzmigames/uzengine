@@ -18,6 +18,7 @@ import { jest } from '@jest/globals';
 import * as cp from 'child_process';
 import * as fs from 'fs';
 import * as net from 'net';
+import * as path from 'path';
 
 // ---------------------------------------------------------------------------
 // Module mocks — declared before any imports of the module under test
@@ -129,6 +130,17 @@ function mockShowErrorMessage(value: any) {
 // ---------------------------------------------------------------------------
 
 import { ServerManager } from '../server-manager';
+
+// ---------------------------------------------------------------------------
+// Helper: construct a ServerManager with an injected existsSync
+// ---------------------------------------------------------------------------
+
+function makeServerManager(existsSyncImpl?: (p: string) => boolean): ServerManager {
+    return new ServerManager(existsSyncImpl ? { existsSync: existsSyncImpl } : undefined);
+}
+
+// Workspace root used by the mock (matches vscode mock's workspaceFolders[0].uri.fsPath)
+const WORKSPACE_ROOT = '/mock/workspace';
 
 // ---------------------------------------------------------------------------
 // Setup / teardown
@@ -768,8 +780,7 @@ describe('_resolveExecutable()', () => {
     });
 
     it('falls through to candidates when explicit path does not exist', async () => {
-        const releasePath = '/mock/workspace/build/Release/UzEngine.exe';
-        (fs.existsSync as jest.Mock).mockImplementation((p: unknown) => p === releasePath);
+        const releasePath = path.join(WORKSPACE_ROOT, 'build', 'Release', 'UzEngine.exe');
         workspace.__setConfig('uzengine', 'serverExecutable', '/nonexistent/UzEngine.exe');
 
         const mockProc = makeMockProcess(null);
@@ -778,7 +789,7 @@ describe('_resolveExecutable()', () => {
         const mockSocket = makeMockSocket();
         mockNetSocket(mockSocket);
 
-        const sm = new ServerManager();
+        const sm = makeServerManager((p) => p === releasePath);
         const startPromise = sm.start();
         mockSocket._trigger('connect');
         await startPromise;
@@ -828,8 +839,7 @@ describe('_resolveExecutable()', () => {
     });
 
     it('uses build/Debug/UzEngine.exe when Release does not exist', async () => {
-        const debugPath = '/mock/workspace/build/Debug/UzEngine.exe';
-        (fs.existsSync as jest.Mock).mockImplementation((p: unknown) => p === debugPath);
+        const debugPath = path.join(WORKSPACE_ROOT, 'build', 'Debug', 'UzEngine.exe');
 
         const mockProc = makeMockProcess(null);
         (cp.spawn as jest.Mock).mockReturnValue(mockProc);
@@ -837,7 +847,7 @@ describe('_resolveExecutable()', () => {
         const mockSocket = makeMockSocket();
         mockNetSocket(mockSocket);
 
-        const sm = new ServerManager();
+        const sm = makeServerManager((p) => p === debugPath);
         const startPromise = sm.start();
         mockSocket._trigger('connect');
         await startPromise;
@@ -847,8 +857,7 @@ describe('_resolveExecutable()', () => {
     });
 
     it('uses build/UzEngine.exe when Release and Debug do not exist', async () => {
-        const buildPath = '/mock/workspace/build/UzEngine.exe';
-        (fs.existsSync as jest.Mock).mockImplementation((p: unknown) => p === buildPath);
+        const buildPath = path.join(WORKSPACE_ROOT, 'build', 'UzEngine.exe');
 
         const mockProc = makeMockProcess(null);
         (cp.spawn as jest.Mock).mockReturnValue(mockProc);
@@ -856,7 +865,7 @@ describe('_resolveExecutable()', () => {
         const mockSocket = makeMockSocket();
         mockNetSocket(mockSocket);
 
-        const sm = new ServerManager();
+        const sm = makeServerManager((p) => p === buildPath);
         const startPromise = sm.start();
         mockSocket._trigger('connect');
         await startPromise;
@@ -866,8 +875,7 @@ describe('_resolveExecutable()', () => {
     });
 
     it('uses root UzEngine.exe when all build candidates do not exist', async () => {
-        const rootPath = '/mock/workspace/UzEngine.exe';
-        (fs.existsSync as jest.Mock).mockImplementation((p: unknown) => p === rootPath);
+        const rootPath = path.join(WORKSPACE_ROOT, 'UzEngine.exe');
 
         const mockProc = makeMockProcess(null);
         (cp.spawn as jest.Mock).mockReturnValue(mockProc);
@@ -875,7 +883,7 @@ describe('_resolveExecutable()', () => {
         const mockSocket = makeMockSocket();
         mockNetSocket(mockSocket);
 
-        const sm = new ServerManager();
+        const sm = makeServerManager((p) => p === rootPath);
         const startPromise = sm.start();
         mockSocket._trigger('connect');
         await startPromise;
@@ -899,8 +907,7 @@ describe('_resolveExecutable()', () => {
     it('handles empty string explicit path (falls through)', async () => {
         // explicit = '' (default) → trim is '' → not truthy → skip to candidates
         workspace.__setConfig('uzengine', 'serverExecutable', '');
-        const releasePath = '/mock/workspace/build/Release/UzEngine.exe';
-        (fs.existsSync as jest.Mock).mockImplementation((p: unknown) => p === releasePath);
+        const releasePath = path.join(WORKSPACE_ROOT, 'build', 'Release', 'UzEngine.exe');
 
         const mockProc = makeMockProcess(null);
         (cp.spawn as jest.Mock).mockReturnValue(mockProc);
@@ -908,7 +915,7 @@ describe('_resolveExecutable()', () => {
         const mockSocket = makeMockSocket();
         mockNetSocket(mockSocket);
 
-        const sm = new ServerManager();
+        const sm = makeServerManager((p) => p === releasePath);
         const startPromise = sm.start();
         mockSocket._trigger('connect');
         await startPromise;
@@ -996,9 +1003,7 @@ describe('_setStatus()', () => {
     });
 
     it('shows basename of candidate exe in running status text', async () => {
-        (fs.existsSync as jest.Mock).mockImplementation((p: unknown) =>
-            p === '/mock/workspace/build/Release/UzEngine.exe'
-        );
+        const releasePath = path.join(WORKSPACE_ROOT, 'build', 'Release', 'UzEngine.exe');
         workspace.__clearConfig();
 
         const mockProc = makeMockProcess(null);
@@ -1007,7 +1012,7 @@ describe('_setStatus()', () => {
         const mockSocket = makeMockSocket();
         mockNetSocket(mockSocket);
 
-        const sm = new ServerManager();
+        const sm = makeServerManager((p) => p === releasePath);
         const startPromise = sm.start();
         mockSocket._trigger('connect');
         await startPromise;

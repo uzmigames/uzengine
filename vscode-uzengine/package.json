@@ -2,7 +2,7 @@
   "name": "vscode-uzengine",
   "displayName": "UzEngine Stream Viewer",
   "description": "View UzEngine DX12 renderer stream in VSCode",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -42,10 +42,59 @@
           "id": "uzengine.sceneTree",
           "name": "Scene Tree",
           "when": "true"
+        },
+        {
+          "id": "uzengine.inspector",
+          "name": "Inspector",
+          "type": "webview",
+          "when": "true"
+        },
+        {
+          "id": "uzengine.console",
+          "name": "Console",
+          "type": "webview",
+          "when": "true"
         }
       ]
     },
     "menus": {
+      "view/title": [
+        {
+          "command": "uzengine.addNode",
+          "when": "view == uzengine.sceneTree",
+          "group": "navigation@1"
+        },
+        {
+          "command": "uzengine.saveScene",
+          "when": "view == uzengine.sceneTree",
+          "group": "navigation@2"
+        },
+        {
+          "command": "uzengine.refreshScene",
+          "when": "view == uzengine.sceneTree",
+          "group": "navigation@3"
+        },
+        {
+          "command": "uzengine.play",
+          "when": "view == uzengine.sceneTree && !uzengine.isPlaying",
+          "group": "playmode@1"
+        },
+        {
+          "command": "uzengine.pause",
+          "when": "view == uzengine.sceneTree && uzengine.isPlaying && !uzengine.isPaused",
+          "group": "playmode@2"
+        },
+        {
+          "command": "uzengine.stop",
+          "when": "view == uzengine.sceneTree && uzengine.isPlaying",
+          "group": "playmode@3"
+        },
+        {
+          "command": "uzengine.consoleClear",
+          "when": "view == uzengine.console",
+          "group": "navigation@1"
+        }
+      ],
       "view/item/context": [
         {
           "command": "uzengine.addNode",
@@ -72,22 +121,25 @@
     "commands": [
       {
         "command": "uzengine.openStreamViewer",
-        "title": "UzEngine: Open Stream Viewer",
-        "category": "UzEngine"
+        "title": "UzEngine: Open Scene Viewport",
+        "category": "UzEngine",
+        "icon": "$(open-preview)"
       },
       {
         "command": "uzengine.startServer",
         "title": "UzEngine: Start Server",
-        "category": "UzEngine"
+        "category": "UzEngine",
+        "icon": "$(debug-start)"
       },
       {
         "command": "uzengine.stopServer",
         "title": "UzEngine: Stop Server",
-        "category": "UzEngine"
+        "category": "UzEngine",
+        "icon": "$(debug-stop)"
       },
       {
         "command": "uzengine.addNode",
-        "title": "Add Child Node",
+        "title": "Add Node",
         "category": "UzEngine",
         "icon": "$(add)"
       },
@@ -115,22 +167,40 @@
         "category": "UzEngine"
       },
       {
+        "command": "uzengine.saveScene",
+        "title": "Save Scene",
+        "category": "UzEngine",
+        "icon": "$(save)"
+      },
+      {
+        "command": "uzengine.refreshScene",
+        "title": "Refresh Scene",
+        "category": "UzEngine",
+        "icon": "$(refresh)"
+      },
+      {
         "command": "uzengine.play",
-        "title": "UzEngine: Play",
+        "title": "Play",
         "category": "UzEngine",
         "icon": "$(play)"
       },
       {
         "command": "uzengine.pause",
-        "title": "UzEngine: Pause",
+        "title": "Pause",
         "category": "UzEngine",
         "icon": "$(debug-pause)"
       },
       {
         "command": "uzengine.stop",
-        "title": "UzEngine: Stop",
+        "title": "Stop",
         "category": "UzEngine",
         "icon": "$(debug-stop)"
+      },
+      {
+        "command": "uzengine.consoleClear",
+        "title": "Clear Console",
+        "category": "UzEngine",
+        "icon": "$(clear-all)"
       }
     ],
     "configuration": {

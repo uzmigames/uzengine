@@ -25,7 +25,7 @@ import {
     Quat,
     Ray,
     NodeTransform,
-    GizmoConstraint,
+    // GizmoConstraint imported via type but not directly referenced in tests
     vec3Add,
     vec3Sub,
     vec3Scale,

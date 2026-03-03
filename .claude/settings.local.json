@@ -160,7 +160,21 @@
       "Bash(./build-ninja/Debug/UzEngineTests.exe --gtest_filter=\"QuatRotateVec3.NinetyDegreesAroundX_YBecomesNegZ:Mat4LookAt.LookingAlongNegZ_ForwardIsNegZ\")",
       "Bash(cmake --build build-ninja --config Debug --parallel)",
       "Bash(ctest --test-dir build-ninja --build-config Debug --output-on-failure --parallel 8)",
-      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(json.dumps\\({k:d.get\\(k\\) for k in [''devDependencies'',''scripts'']}, indent=2\\)\\)\")"
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(json.dumps\\({k:d.get\\(k\\) for k in [''devDependencies'',''scripts'']}, indent=2\\)\\)\")",
+      "Bash(npm run type-check)",
+      "Bash(npm test)",
+      "Bash(npm test -- --testPathPattern=\"server-manager|play-mode-controller\")",
+      "Bash(node -e \"const path = require\\(''path''\\); console.log\\(path.join\\(''/mock/workspace'', ''build'', ''Release'', ''UzEngine.exe''\\)\\);\")",
+      "Bash(npm test -- --testPathPattern=\"play-mode-controller\")",
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(json.dumps\\(d.get\\(''contributes'',{}\\), indent=2\\)\\)\")",
+      "Bash(npm test -- --testPathPattern=\"console-panel|inspector-view-provider\")",
+      "Bash(npm test -- --coverage --testPathPattern=\"extension.test.ts\")",
+      "Bash(npm test -- --coverage)",
+      "Bash(npm run lint)",
+      "Bash(npx tsc --noEmit)",
+      "Bash(npx eslint src/console-panel.ts src/play-controls.ts src/extension.ts src/viewport-panel.ts)",
+      "Bash(npx eslint src/console-panel.ts)",
+      "Bash(npx eslint src/console-panel.ts src/inspector-panel.ts src/play-controls.ts src/extension.ts src/viewport-panel.ts)"
     ]
   },
   "enableAllProjectMcpServers": true,

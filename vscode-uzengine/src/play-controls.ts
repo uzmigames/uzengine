@@ -131,6 +131,7 @@ export class PlayControls implements vscode.Disposable {
             await this._ipc.request('playmode.start', {});
             this._state = 'playing';
             this._applyState();
+            this._updateContextKeys();
         } catch (err) {
             vscode.window.showErrorMessage(
                 `UzEngine: Failed to start play mode — ` +
@@ -150,6 +151,7 @@ export class PlayControls implements vscode.Disposable {
             await this._ipc.request('engine.pause', {});
             this._state = 'paused';
             this._applyState();
+            this._updateContextKeys();
         } catch (err) {
             vscode.window.showErrorMessage(
                 `UzEngine: Failed to pause — ` +
@@ -174,6 +176,7 @@ export class PlayControls implements vscode.Disposable {
         this._state = 'idle';
         this._fps = 0;
         this._applyState();
+        this._updateContextKeys();
     }
 
     dispose(): void {
@@ -249,6 +252,19 @@ export class PlayControls implements vscode.Disposable {
         this._stopItem.text = text;
         this._stopItem.tooltip = tooltip;
         this._stopItem.backgroundColor = undefined;
+    }
+
+    /**
+     * Syncs the VSCode context keys `uzengine.isPlaying` and `uzengine.isPaused`
+     * so that `when` clauses in package.json menus can show/hide toolbar buttons.
+     */
+    private _updateContextKeys(): void {
+        void vscode.commands.executeCommand(
+            'setContext', 'uzengine.isPlaying', this._state !== 'idle'
+        );
+        void vscode.commands.executeCommand(
+            'setContext', 'uzengine.isPaused', this._state === 'paused'
+        );
     }
 
     private _updateInfo(): void {

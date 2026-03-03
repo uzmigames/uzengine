@@ -143,7 +143,7 @@ describe('PlayControls', () => {
 
     describe('play()', () => {
         it('sends playmode.start IPC and transitions to playing', async () => {
-            const items = captureStatusBarItems();
+            captureStatusBarItems();
             const { client, request } = makeMockIpc();
             const controls = new PlayControls(client);
 

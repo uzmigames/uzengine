@@ -248,6 +248,7 @@ export const window = {
         hide: jest.fn(),
         dispose: jest.fn(),
     })),
+    registerWebviewViewProvider: jest.fn(() => ({ dispose: jest.fn() })),
     onDidChangeWindowState: jest.fn((cb: (state: { focused: boolean }) => void) => {
         _windowStateListeners.push(cb);
         return {

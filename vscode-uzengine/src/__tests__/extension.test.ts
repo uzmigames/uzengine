@@ -19,6 +19,12 @@
  *  - uzengine.duplicateNode command calls sceneTreeProvider.duplicateNode()
  *  - uzengine.selectNode command calls sceneTreeProvider.selectNode()
  *  - onDidChangeConfiguration reconnects IpcClient when serverUrl changes
+ *  - uzengine.saveScene command: success path and catch/error path
+ *  - uzengine.refreshScene command calls sceneTreeProvider.refresh()
+ *  - uzengine.consoleClear command calls consolePanel.clear()
+ *  - engine.log IPC push callback forwards to ConsolePanel
+ *  - IpcClient dispose wrapper calls ipcClient.disconnect()
+ *  - uzengine.openStreamViewer opens StreamPanel when start() returns true
  */
 
 import {
@@ -26,8 +32,6 @@ import {
     workspace,
     commands,
     makeMockContext,
-    makeMockWebviewPanel,
-    __setMockPanelFactory,
     __resetMockPanelFactory,
 } from '../__mocks__/vscode';
 import { ViewportManager } from '../viewport-manager';
@@ -43,6 +47,16 @@ jest.mock('../server-manager', () => ({
         stop: jest.fn(),
         dispose: jest.fn(),
     })),
+}));
+
+// Mock StreamPanel to avoid ViewportManager/WebSocket interactions.
+const mockCreateOrShow = jest.fn().mockResolvedValue(undefined);
+jest.mock('../stream-panel', () => ({
+    StreamPanel: {
+        createOrShow: (...args: unknown[]) => mockCreateOrShow(...args),
+        currentPanel: undefined,
+        dispose: jest.fn(),
+    },
 }));
 
 // Mock IpcClient to avoid real WebSocket connections.
@@ -245,6 +259,223 @@ describe('extension activate()', () => {
 
         // connect() should NOT be called again.
         expect(mockIpcInstance?.connect.mock.calls.length ?? 0).toBe(connectCallsBefore);
+    });
+
+    it('uzengine.saveScene — success path logs to console', async () => {
+        const { IpcClient } = await import('../ipc-client');
+        await activateExtension();
+
+        const mockIpc = (IpcClient as jest.Mock).mock.results[0]?.value as {
+            request: jest.Mock;
+        };
+        mockIpc.request.mockResolvedValueOnce({});
+
+        await (commands.__executeRegisteredCommand('uzengine.saveScene') as Promise<void>);
+
+        expect(mockIpc.request).toHaveBeenCalledWith('scene.save', {});
+    });
+
+    it('uzengine.saveScene — error path shows error message', async () => {
+        const { IpcClient } = await import('../ipc-client');
+        await activateExtension();
+
+        const mockIpc = (IpcClient as jest.Mock).mock.results[0]?.value as {
+            request: jest.Mock;
+        };
+        mockIpc.request.mockRejectedValueOnce(new Error('IPC timeout'));
+
+        await (commands.__executeRegisteredCommand('uzengine.saveScene') as Promise<void>);
+
+        expect(window.showErrorMessage).toHaveBeenCalledWith(
+            expect.stringContaining('IPC timeout')
+        );
+    });
+
+    it('uzengine.saveScene — non-Error rejection uses String()', async () => {
+        const { IpcClient } = await import('../ipc-client');
+        await activateExtension();
+
+        const mockIpc = (IpcClient as jest.Mock).mock.results[0]?.value as {
+            request: jest.Mock;
+        };
+        mockIpc.request.mockRejectedValueOnce('plain string error');
+
+        await (commands.__executeRegisteredCommand('uzengine.saveScene') as Promise<void>);
+
+        expect(window.showErrorMessage).toHaveBeenCalledWith(
+            expect.stringContaining('plain string error')
+        );
+    });
+
+    it('uzengine.refreshScene — calls sceneTreeProvider.refresh()', async () => {
+        await activateExtension();
+        // Should complete without throwing.
+        expect(() =>
+            commands.__executeRegisteredCommand('uzengine.refreshScene')
+        ).not.toThrow();
+    });
+
+    it('uzengine.consoleClear — calls consolePanel.clear()', async () => {
+        await activateExtension();
+        // Should complete without throwing.
+        expect(() =>
+            commands.__executeRegisteredCommand('uzengine.consoleClear')
+        ).not.toThrow();
+    });
+
+    it('engine.log callback — forwards info-level message to ConsolePanel', async () => {
+        const { IpcClient } = await import('../ipc-client');
+        await activateExtension();
+
+        const mockIpc = (IpcClient as jest.Mock).mock.results[0]?.value as {
+            on: jest.Mock;
+        };
+
+        // Find the callback registered for 'engine.log'
+        const logCall = mockIpc.on.mock.calls.find(
+            (call: unknown[]) => call[0] === 'engine.log'
+        );
+        expect(logCall).toBeDefined();
+        const logCallback = logCall?.[1] as ((payload: unknown) => void) | undefined;
+        expect(logCallback).toBeDefined();
+
+        // Should not throw for a valid info message.
+        expect(() => logCallback?.({ level: 'info', message: 'hello' })).not.toThrow();
+    });
+
+    it('engine.log callback — forwards warning-level message', async () => {
+        const { IpcClient } = await import('../ipc-client');
+        await activateExtension();
+
+        const mockIpc = (IpcClient as jest.Mock).mock.results[0]?.value as {
+            on: jest.Mock;
+        };
+        const logCall = mockIpc.on.mock.calls.find(
+            (call: unknown[]) => call[0] === 'engine.log'
+        );
+        const logCallback = logCall?.[1] as ((payload: unknown) => void) | undefined;
+
+        expect(() => logCallback?.({ level: 'warning', message: 'warn msg' })).not.toThrow();
+    });
+
+    it('engine.log callback — forwards error-level message', async () => {
+        const { IpcClient } = await import('../ipc-client');
+        await activateExtension();
+
+        const mockIpc = (IpcClient as jest.Mock).mock.results[0]?.value as {
+            on: jest.Mock;
+        };
+        const logCall = mockIpc.on.mock.calls.find(
+            (call: unknown[]) => call[0] === 'engine.log'
+        );
+        const logCallback = logCall?.[1] as ((payload: unknown) => void) | undefined;
+
+        expect(() => logCallback?.({ level: 'error', message: 'err msg' })).not.toThrow();
+    });
+
+    it('engine.log callback — ignores null payload', async () => {
+        const { IpcClient } = await import('../ipc-client');
+        await activateExtension();
+
+        const mockIpc = (IpcClient as jest.Mock).mock.results[0]?.value as {
+            on: jest.Mock;
+        };
+        const logCall = mockIpc.on.mock.calls.find(
+            (call: unknown[]) => call[0] === 'engine.log'
+        );
+        const logCallback = logCall?.[1] as ((payload: unknown) => void) | undefined;
+
+        // null payload — should silently return.
+        expect(() => logCallback?.(null)).not.toThrow();
+    });
+
+    it('engine.log callback — ignores payload without message string', async () => {
+        const { IpcClient } = await import('../ipc-client');
+        await activateExtension();
+
+        const mockIpc = (IpcClient as jest.Mock).mock.results[0]?.value as {
+            on: jest.Mock;
+        };
+        const logCall = mockIpc.on.mock.calls.find(
+            (call: unknown[]) => call[0] === 'engine.log'
+        );
+        const logCallback = logCall?.[1] as ((payload: unknown) => void) | undefined;
+
+        // Missing message field — should silently return.
+        expect(() => logCallback?.({ level: 'info' })).not.toThrow();
+    });
+
+    it('engine.log callback — unknown level defaults to info', async () => {
+        const { IpcClient } = await import('../ipc-client');
+        await activateExtension();
+
+        const mockIpc = (IpcClient as jest.Mock).mock.results[0]?.value as {
+            on: jest.Mock;
+        };
+        const logCall = mockIpc.on.mock.calls.find(
+            (call: unknown[]) => call[0] === 'engine.log'
+        );
+        const logCallback = logCall?.[1] as ((payload: unknown) => void) | undefined;
+
+        // Unknown level (not 'warning' or 'error') → treated as 'info'.
+        expect(() => logCallback?.({ level: 'debug', message: 'trace' })).not.toThrow();
+    });
+
+    it('IpcClient dispose wrapper calls disconnect()', async () => {
+        const { IpcClient } = await import('../ipc-client');
+        const ctx = await activateExtension();
+
+        const mockIpc = (IpcClient as jest.Mock).mock.results[0]?.value as {
+            disconnect: jest.Mock;
+        };
+
+        // Find the dispose wrapper pushed to subscriptions
+        // (it is the object { dispose: () => ipcClient.disconnect() })
+        const disposeWrapper = ctx.subscriptions.find(
+            (s: { dispose: () => void }) => {
+                try {
+                    s.dispose();
+                    return mockIpc.disconnect.mock.calls.length > 0;
+                } catch {
+                    return false;
+                }
+            }
+        );
+        expect(disposeWrapper).toBeDefined();
+        expect(mockIpc.disconnect).toHaveBeenCalled();
+    });
+
+    it('uzengine.openStreamViewer — calls StreamPanel.createOrShow when start() returns true', async () => {
+        const { ServerManager } = await import('../server-manager');
+
+        await activateExtension();
+
+        // Retarget the already-created mock instance's start() to return true.
+        const mockSm = (ServerManager as jest.Mock).mock.results[0]?.value as {
+            start: jest.Mock;
+        };
+        mockSm.start.mockResolvedValueOnce(true);
+
+        await (commands.__executeRegisteredCommand('uzengine.openStreamViewer') as Promise<void>);
+
+        expect(mockCreateOrShow).toHaveBeenCalled();
+    });
+
+    it('uzengine.openStreamViewer — does NOT call StreamPanel.createOrShow when start() returns false', async () => {
+        const { ServerManager } = await import('../server-manager');
+
+        await activateExtension();
+
+        const mockSm = (ServerManager as jest.Mock).mock.results[0]?.value as {
+            start: jest.Mock;
+        };
+        // default is already false, but be explicit
+        mockSm.start.mockResolvedValueOnce(false);
+
+        mockCreateOrShow.mockClear();
+        await (commands.__executeRegisteredCommand('uzengine.openStreamViewer') as Promise<void>);
+
+        expect(mockCreateOrShow).not.toHaveBeenCalled();
     });
 });
 

@@ -14,9 +14,12 @@
 
 import { EventEmitter } from 'events';
 import { jest } from '@jest/globals';
+import * as path from 'path';
 import { PlayModeController } from '../play-mode-controller';
 import type { PlayModeControllerOptions } from '../play-mode-controller';
 import { window, workspace } from '../__mocks__/vscode';
+
+const WORKSPACE_ROOT = '/mock/workspace';
 
 // ---------------------------------------------------------------------------
 // Mock types
@@ -469,9 +472,8 @@ describe('PlayModeController', () => {
         });
 
         it('falls back to workspace candidates if explicit path does not exist', () => {
-            const existsSync = jest.fn((p: string) =>
-                p === '/mock/workspace/build/Debug/UzEngine.exe'
-            );
+            const debugPath = path.join(WORKSPACE_ROOT, 'build', 'Debug', 'UzEngine.exe');
+            const existsSync = jest.fn((p: string) => p === debugPath);
             const { controller, spawnFn } = makeController({
                 options: { executablePath: '/nonexistent/UzEngine.exe' },
                 existsSync,
@@ -479,7 +481,7 @@ describe('PlayModeController', () => {
 
             controller.launchPlay('test.uzscene');
             const [exe] = spawnFn.mock.calls[0] as [string];
-            expect(exe).toBe('/mock/workspace/build/Debug/UzEngine.exe');
+            expect(exe).toBe(debugPath);
             controller.dispose();
         });
 
@@ -499,10 +501,9 @@ describe('PlayModeController', () => {
         });
 
         it('resolves build/Release candidate first', () => {
-            const existsSync = jest.fn((p: string) =>
-                p === '/mock/workspace/build/Release/UzEngine.exe' ||
-                p === '/mock/workspace/build/Debug/UzEngine.exe'
-            );
+            const releasePath = path.join(WORKSPACE_ROOT, 'build', 'Release', 'UzEngine.exe');
+            const debugPath = path.join(WORKSPACE_ROOT, 'build', 'Debug', 'UzEngine.exe');
+            const existsSync = jest.fn((p: string) => p === releasePath || p === debugPath);
             const { controller, spawnFn } = makeController({
                 options: { executablePath: '' },
                 existsSync,
@@ -510,14 +511,13 @@ describe('PlayModeController', () => {
 
             controller.launchPlay('test.uzscene');
             const [exe] = spawnFn.mock.calls[0] as [string];
-            expect(exe).toBe('/mock/workspace/build/Release/UzEngine.exe');
+            expect(exe).toBe(releasePath);
             controller.dispose();
         });
 
         it('tries all candidates in order', () => {
-            const existsSync = jest.fn((p: string) =>
-                p === '/mock/workspace/UzEngine.exe'
-            );
+            const rootPath = path.join(WORKSPACE_ROOT, 'UzEngine.exe');
+            const existsSync = jest.fn((p: string) => p === rootPath);
             const { controller, spawnFn } = makeController({
                 options: { executablePath: '' },
                 existsSync,
@@ -525,14 +525,13 @@ describe('PlayModeController', () => {
 
             controller.launchPlay('test.uzscene');
             const [exe] = spawnFn.mock.calls[0] as [string];
-            expect(exe).toBe('/mock/workspace/UzEngine.exe');
+            expect(exe).toBe(rootPath);
             controller.dispose();
         });
 
         it('ignores empty explicit path', () => {
-            const existsSync = jest.fn((p: string) =>
-                p === '/mock/workspace/build/Release/UzEngine.exe'
-            );
+            const releasePath = path.join(WORKSPACE_ROOT, 'build', 'Release', 'UzEngine.exe');
+            const existsSync = jest.fn((p: string) => p === releasePath);
             const { controller, spawnFn } = makeController({
                 options: { executablePath: '  ' },
                 existsSync,
@@ -540,7 +539,7 @@ describe('PlayModeController', () => {
 
             controller.launchPlay('test.uzscene');
             const [exe] = spawnFn.mock.calls[0] as [string];
-            expect(exe).toBe('/mock/workspace/build/Release/UzEngine.exe');
+            expect(exe).toBe(releasePath);
             controller.dispose();
         });
     });
@@ -741,7 +740,7 @@ describe('PlayModeController', () => {
 
     describe('_waitForExit when process already null', () => {
         it('stopPlay resolves immediately when process becomes null during IPC', async () => {
-            const { controller, mockProc, mockClient } = makeController();
+            const { controller, mockClient } = makeController();
             controller.launchPlay('test.uzscene');
 
             mockClient.call.mockImplementation(async () => {

@@ -1,9 +1,13 @@
 /**
- * inspector-panel.ts — VSCode WebviewPanel for editing scene node properties.
+ * inspector-panel.ts — Inspector for scene node properties.
  *
- * The InspectorPanel renders a property editor for the currently selected
- * scene node. It opens or refreshes when the SceneTreeProvider fires
- * `onNodeSelected`.
+ * Exports two classes:
+ *
+ *   InspectorPanel       — legacy floating WebviewPanel (kept for compatibility)
+ *   InspectorViewProvider — WebviewViewProvider that renders the Inspector as a
+ *                           fixed sidebar view (uzengine.inspector), matching the
+ *                           Unity/Godot/Unreal layout where Inspector is always
+ *                           visible in the side panel.
  *
  * Supported property widget types:
  *  - string   → text input
@@ -13,8 +17,6 @@
  *  - vec3     → three number inputs (X, Y, Z)
  *
  * Property changes are sent immediately via `scene.setProperty` IPC.
- * The panel uses `retainContextWhenHidden: true` so it does not re-render
- * every time the user switches tabs.
  */
 
 import * as vscode from 'vscode';
@@ -462,6 +464,272 @@ export class InspectorPanel implements vscode.Disposable {
             await this._ipc.request('scene.setProperty', {
                 nodeId: message.nodeId,
                 key: message.key,
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+                value: message.value,
+            });
+        } catch (err) {
+            vscode.window.showErrorMessage(
+                `UzEngine: Failed to set property "${message.key}" — ` +
+                `${err instanceof Error ? err.message : String(err)}`
+            );
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// InspectorViewProvider — sidebar WebviewView (fixed, always visible)
+// ---------------------------------------------------------------------------
+
+/**
+ * Provides the `uzengine.inspector` sidebar webview view.
+ *
+ * This is the recommended way to use the inspector — it appears as a fixed
+ * panel in the UzEngine sidebar, below the Scene Tree, matching Unity/Godot
+ * layout. Call `showForNode()` whenever the selection changes.
+ *
+ * Usage:
+ * ```typescript
+ * const provider = new InspectorViewProvider(ipcClient);
+ * context.subscriptions.push(
+ *   vscode.window.registerWebviewViewProvider('uzengine.inspector', provider)
+ * );
+ * sceneTree.onNodeSelected(node => provider.showForNode(node));
+ * ```
+ */
+export class InspectorViewProvider implements vscode.WebviewViewProvider, vscode.Disposable {
+    static readonly viewType = 'uzengine.inspector';
+
+    private _view: vscode.WebviewView | undefined;
+    private _currentNode: NodeItem | undefined;
+    private _disposed = false;
+
+    constructor(private readonly _ipc: IpcClient) {}
+
+    // -------------------------------------------------------------------------
+    // WebviewViewProvider implementation
+    // -------------------------------------------------------------------------
+
+    resolveWebviewView(
+        webviewView: vscode.WebviewView,
+        _context: vscode.WebviewViewResolveContext,
+        _token: vscode.CancellationToken
+    ): void {
+        this._view = webviewView;
+
+        webviewView.webview.options = {
+            enableScripts: true,
+        };
+
+        webviewView.webview.onDidReceiveMessage(
+            (msg: unknown) => { void this._handleMessage(msg); }
+        );
+
+        this._render();
+    }
+
+    // -------------------------------------------------------------------------
+    // Public API
+    // -------------------------------------------------------------------------
+
+    /**
+     * Updates the inspector to display the given node, or shows the
+     * "no selection" placeholder when `node` is undefined.
+     */
+    showForNode(node: NodeItem | undefined): void {
+        if (this._disposed) { return; }
+        this._currentNode = node;
+        this._render();
+    }
+
+    /** Returns the node currently shown in the inspector. */
+    get currentNode(): NodeItem | undefined {
+        return this._currentNode;
+    }
+
+    dispose(): void {
+        this._disposed = true;
+    }
+
+    // -------------------------------------------------------------------------
+    // Private helpers — delegate to shared InspectorPanel rendering logic
+    // -------------------------------------------------------------------------
+
+    private _render(): void {
+        if (!this._view) { return; }
+
+        const node = this._currentNode;
+        if (!node) {
+            this._view.webview.html = this._renderNoSelection();
+            return;
+        }
+
+        const properties = this._buildProperties(node);
+        this._view.webview.html = this._renderProperties(node, properties);
+    }
+
+    private _buildProperties(node: NodeItem): PropertyDescriptor[] {
+        return [
+            { key: 'name',     label: 'Name',     type: 'string', value: node.nodeName,  group: 'Node' },
+            { key: 'type',     label: 'Type',     type: 'string', value: node.nodeType,  group: 'Node' },
+            { key: 'id',       label: 'ID',       type: 'string', value: node.nodeId,    group: 'Node' },
+            { key: 'visible',  label: 'Visible',  type: 'bool',   value: true,           group: 'Node' },
+            { key: 'position', label: 'Position', type: 'vec3',   value: { x: 0, y: 0, z: 0 }, group: 'Transform' },
+            { key: 'rotation', label: 'Rotation', type: 'vec3',   value: { x: 0, y: 0, z: 0 }, group: 'Transform' },
+            { key: 'scale',    label: 'Scale',    type: 'vec3',   value: { x: 1, y: 1, z: 1 }, group: 'Transform' },
+            { key: 'lod_bias', label: 'LOD Bias', type: 'float',  value: 0.0,            group: 'Rendering' },
+            { key: 'layer',    label: 'Layer',    type: 'int',    value: 0,              group: 'Rendering' },
+        ];
+    }
+
+    private _renderWidget(prop: PropertyDescriptor, nodeId: string): string {
+        const esc = (v: string) => v
+            .replace(/&/g, '&amp;')
+            .replace(/"/g, '&quot;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+
+        const onChange = `onPropertyChange('${esc(nodeId)}', '${esc(prop.key)}', this)`;
+
+        switch (prop.type) {
+            case 'string':
+                return `<input type="text" class="prop-input prop-string"
+                    value="${esc(String(prop.value))}"
+                    data-key="${esc(prop.key)}"
+                    ${prop.key === 'id' || prop.key === 'type' ? 'readonly' : ''}
+                    onchange="${onChange}" />`;
+            case 'float':
+                return `<input type="number" step="0.01" class="prop-input prop-float"
+                    value="${String(Number(prop.value))}"
+                    data-key="${esc(prop.key)}"
+                    onchange="${onChange}" />`;
+            case 'int':
+                return `<input type="number" step="1" class="prop-input prop-int"
+                    value="${String(Math.round(Number(prop.value)))}"
+                    data-key="${esc(prop.key)}"
+                    onchange="${onChange}" />`;
+            case 'bool': {
+                const checked = prop.value ? 'checked' : '';
+                return `<input type="checkbox" class="prop-checkbox"
+                    data-key="${esc(prop.key)}"
+                    ${checked}
+                    onchange="${onChange}" />`;
+            }
+            case 'vec3': {
+                const v = prop.value as { x: number; y: number; z: number } ?? { x: 0, y: 0, z: 0 };
+                return `<span class="vec3-group">
+                    <label class="vec3-label">X</label>
+                    <input type="number" step="0.01" class="prop-input prop-float vec3-x"
+                        value="${String(v.x)}" data-key="${esc(prop.key)}" data-component="x"
+                        onchange="onVec3Change('${esc(nodeId)}', '${esc(prop.key)}', this)" />
+                    <label class="vec3-label">Y</label>
+                    <input type="number" step="0.01" class="prop-input prop-float vec3-y"
+                        value="${String(v.y)}" data-key="${esc(prop.key)}" data-component="y"
+                        onchange="onVec3Change('${esc(nodeId)}', '${esc(prop.key)}', this)" />
+                    <label class="vec3-label">Z</label>
+                    <input type="number" step="0.01" class="prop-input prop-float vec3-z"
+                        value="${String(v.z)}" data-key="${esc(prop.key)}" data-component="z"
+                        onchange="onVec3Change('${esc(nodeId)}', '${esc(prop.key)}', this)" />
+                </span>`;
+            }
+        }
+    }
+
+    private _renderProperties(node: NodeItem, properties: PropertyDescriptor[]): string {
+        const groups = new Map<string, PropertyDescriptor[]>();
+        for (const prop of properties) {
+            if (!groups.has(prop.group)) { groups.set(prop.group, []); }
+            groups.get(prop.group)!.push(prop);
+        }
+
+        let groupHtml = '';
+        for (const [groupName, props] of groups) {
+            const rows = props.map(prop => `
+                <tr class="prop-row">
+                    <td class="prop-label">${this._esc(prop.label)}</td>
+                    <td class="prop-value">${this._renderWidget(prop, node.nodeId)}</td>
+                </tr>`).join('');
+            groupHtml += `
+            <details class="prop-group" open>
+                <summary class="prop-group-header">${this._esc(groupName)}</summary>
+                <table class="prop-table"><tbody>${rows}</tbody></table>
+            </details>`;
+        }
+
+        return this._wrapHtml(`
+            <div class="inspector-header">
+                <span class="node-icon">${this._esc(node.nodeType)}</span>
+                <span class="node-name">${this._esc(node.nodeName)}</span>
+            </div>
+            ${groupHtml}`);
+    }
+
+    private _renderNoSelection(): string {
+        return this._wrapHtml(
+            `<div class="no-selection"><p>Select a node in the Scene Tree.</p></div>`
+        );
+    }
+
+    private _esc(v: string): string {
+        return v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    private _wrapHtml(inner: string): string {
+        return `<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
+<style>
+body{font-family:var(--vscode-font-family,sans-serif);font-size:var(--vscode-font-size,13px);color:var(--vscode-foreground,#ccc);background:var(--vscode-editor-background,#1e1e1e);margin:0;padding:8px;}
+.inspector-header{display:flex;align-items:center;gap:6px;padding:6px 0 10px;border-bottom:1px solid var(--vscode-panel-border,#444);margin-bottom:8px;}
+.node-icon{font-size:1.1em;}.node-name{font-weight:600;font-size:1.05em;}
+.prop-group{margin-bottom:6px;border:1px solid var(--vscode-panel-border,#333);border-radius:3px;}
+.prop-group-header{padding:4px 8px;background:var(--vscode-sideBar-background,#252526);cursor:pointer;font-weight:600;user-select:none;list-style:none;}
+.prop-table{width:100%;border-collapse:collapse;padding:4px;}
+.prop-row{border-bottom:1px solid var(--vscode-panel-border,#2d2d2d);}
+.prop-row:last-child{border-bottom:none;}
+.prop-label{width:35%;padding:4px 8px;color:var(--vscode-descriptionForeground,#aaa);font-size:.9em;white-space:nowrap;}
+.prop-value{padding:2px 4px;}
+.prop-input{width:100%;box-sizing:border-box;background:var(--vscode-input-background,#3c3c3c);color:var(--vscode-input-foreground,#ccc);border:1px solid var(--vscode-input-border,#555);border-radius:2px;padding:2px 4px;font-size:.9em;}
+.prop-input:focus{outline:1px solid var(--vscode-focusBorder,#007fd4);}
+.prop-input[readonly]{opacity:.6;cursor:default;}
+.vec3-group{display:flex;align-items:center;gap:4px;}
+.vec3-label{font-size:.8em;color:var(--vscode-descriptionForeground,#aaa);min-width:12px;}
+.vec3-group .prop-input{width:60px;}
+.prop-checkbox{cursor:pointer;}
+.no-selection{padding:20px;text-align:center;color:var(--vscode-descriptionForeground,#888);}
+</style></head><body>
+${inner}
+<script>
+const vscode=acquireVsCodeApi();
+function onPropertyChange(nodeId,key,el){
+  let value;
+  if(el.type==='checkbox'){value=el.checked;}
+  else if(el.type==='number'){value=parseFloat(el.value);if(isNaN(value))return;}
+  else{value=el.value;}
+  vscode.postMessage({command:'propertyChanged',nodeId,key,value});
+}
+function onVec3Change(nodeId,key,el){
+  const row=el.closest('.vec3-group');
+  const x=parseFloat(row.querySelector('.vec3-x').value)||0;
+  const y=parseFloat(row.querySelector('.vec3-y').value)||0;
+  const z=parseFloat(row.querySelector('.vec3-z').value)||0;
+  vscode.postMessage({command:'propertyChanged',nodeId,key,value:{x,y,z}});
+}
+</script></body></html>`;
+    }
+
+    private async _handleMessage(msg: unknown): Promise<void> {
+        if (this._disposed) { return; }
+        if (typeof msg !== 'object' || msg === null) { return; }
+        const message = msg as PropertyChangeMessage;
+        if (message.command !== 'propertyChanged') { return; }
+        try {
+            await this._ipc.request('scene.setProperty', {
+                nodeId: message.nodeId,
+                key: message.key,
+                // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
                 value: message.value,
             });
         } catch (err) {

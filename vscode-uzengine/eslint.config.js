@@ -23,8 +23,12 @@ module.exports = tseslint.config(
             'eqeqeq': ['warn', 'always'],
             'no-throw-literal': 'off',
             '@typescript-eslint/only-throw-error': 'warn',
-            'semi': 'off',
-            '@typescript-eslint/semi': ['warn', 'always'],
+            'semi': ['warn', 'always'],
+            '@typescript-eslint/no-unused-vars': ['error', {
+                argsIgnorePattern: '^_',
+                varsIgnorePattern: '^_',
+                caughtErrorsIgnorePattern: '^_',
+            }],
         },
     }
 );

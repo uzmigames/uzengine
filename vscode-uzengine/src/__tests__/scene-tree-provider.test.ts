@@ -810,7 +810,7 @@ describe('SceneTreeProvider', () => {
 
     describe('_loadTree() — disposed during async fetch', () => {
         it('does not update state when disposed while IPC is in-flight', async () => {
-            const { client, request, triggerEvent } = makeMockIpc();
+            const { client, request } = makeMockIpc();
 
             // Make the IPC hang long enough that we can dispose mid-flight
             let resolveIpc!: (v: unknown) => void;

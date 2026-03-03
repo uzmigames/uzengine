@@ -21,10 +21,14 @@ export class ServerManager implements vscode.Disposable {
     private _outputChannel: vscode.OutputChannel;
     private _statusBar: vscode.StatusBarItem;
 
-    constructor() {
+    /** Injected file system check for testability. */
+    private readonly _existsSyncFn: (p: string) => boolean;
+
+    constructor(deps?: { existsSync?: (p: string) => boolean }) {
         this._outputChannel = vscode.window.createOutputChannel('UzEngine Server');
         this._statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 10);
         this._statusBar.command = 'uzengine.stopServer';
+        this._existsSyncFn = deps?.existsSync ?? fs.existsSync;
         this._setStatus('stopped');
         this._statusBar.show();
     }
@@ -171,7 +175,7 @@ export class ServerManager implements vscode.Disposable {
     private _resolveExecutable(): string | undefined {
         const config = vscode.workspace.getConfiguration('uzengine');
         const explicit = config.get<string>('serverExecutable', '').trim();
-        if (explicit && fs.existsSync(explicit)) {
+        if (explicit && this._existsSyncFn(explicit)) {
             return explicit;
         }
 
@@ -189,7 +193,7 @@ export class ServerManager implements vscode.Disposable {
         ];
 
         for (const candidate of candidates) {
-            if (fs.existsSync(candidate)) {
+            if (this._existsSyncFn(candidate)) {
                 return candidate;
             }
         }

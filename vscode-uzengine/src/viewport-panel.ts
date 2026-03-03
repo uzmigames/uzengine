@@ -92,7 +92,7 @@ export class ViewportPanel implements vscode.Disposable {
      */
     constructor(
         public readonly config: ViewportConfig,
-        private readonly host: ViewportPanelHost,
+        private readonly _host: ViewportPanelHost,
         context: vscode.ExtensionContext
     ) {
         this._nonce = randomBytes(16).toString('base64');
@@ -117,7 +117,7 @@ export class ViewportPanel implements vscode.Disposable {
         // Tab visibility → suspend/resume.
         this._panel.onDidChangeViewState(
             (e: vscode.WebviewPanelOnDidChangeViewStateEvent) => {
-                host.onPanelVisibilityChanged(this, e.webviewPanel.visible);
+                this._host.onPanelVisibilityChanged(this, e.webviewPanel.visible);
             },
             null,
             this._disposables
@@ -127,7 +127,7 @@ export class ViewportPanel implements vscode.Disposable {
         this._panel.onDidDispose(
             () => {
                 this._state = 'destroyed';
-                host.onPanelDisposed(this);
+                this._host.onPanelDisposed(this);
             },
             null,
             this._disposables
