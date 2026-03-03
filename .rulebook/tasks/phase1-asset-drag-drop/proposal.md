@@ -1,6 +1,6 @@
 # phase1-asset-drag-drop — Asset Drag & Drop for VSCode Editor
 
-## Context
+## Why
 
 UzEngine's editor runs entirely inside VSCode. The engine renders to a WebviewPanel via JPEG streaming; the Asset Browser and Scene Tree are native `TreeDataProvider` views. This architecture creates a fundamental UX challenge: **drag & drop from the asset explorer to the scene viewport is the primary workflow in every commercial engine** (Unity, Godot, Unreal), but VSCode's sandboxing prevents native DnD from TreeViews into WebViews.
 

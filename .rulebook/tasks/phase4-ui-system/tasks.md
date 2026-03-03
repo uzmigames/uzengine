@@ -8,7 +8,7 @@
 - UIRoot scene node type — attach UI documents to scenes in `.uzscene`
 - `docs/specs/ui-system.md` — design spec (completed in Phase 1)
 - Hot-reload support — `.html` and `.css` file watching
-- Test coverage: 85%+
+- Test coverage: 95%+
 
 ---
 
@@ -93,7 +93,7 @@
 - Input hit testing works for buttons and interactive elements
 - Video playback decodes frames correctly (H.264/H.265)
 - All public C ABI functions exported without mangling
-- 85% unit test coverage
+- 95% unit test coverage
 - Performance: Document load < 20ms, `ui_tick()` < 1ms
 
 ---
@@ -224,7 +224,7 @@
 - Properties bindable and readable back
 - Event callbacks fire in Lua with correct arguments
 - Document handles don't leak memory
-- 85% test coverage
+- 95% test coverage
 
 ---
 
@@ -337,7 +337,7 @@
 
 ### 7. Testing
 
-**Test coverage target**: 85%+
+**Test coverage target**: 95%+
 
 **Test types**:
 
@@ -371,7 +371,7 @@
 - Golden images for regression testing
 
 **Acceptance criteria**:
-- 85%+ line coverage
+- 95%+ line coverage
 - All tests pass on main branch
 - No performance regressions
 - Load time reasonable for Cook time
@@ -415,7 +415,7 @@
 - [ ] Lua `ctx.ui` API fully functional
 - [ ] UIRoot scene nodes work end-to-end
 - [ ] Hot-reload works for `.html` and `.css` files
-- [ ] 85%+ test coverage
+- [ ] 95%+ test coverage
 - [ ] 2+ example projects using UI system
 - [ ] No GPU memory leaks over 1 hour runtime
 - [ ] Tutorial documentation complete
