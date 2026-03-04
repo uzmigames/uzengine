@@ -1206,3 +1206,135 @@ TEST(SceneSaverTest, SaveFile_BadPath_ReturnsErr) {
     EXPECT_TRUE(result.is_err());
     EXPECT_FALSE(result.error().empty());
 }
+
+// ============================================================================
+// Editor section — saver
+// ============================================================================
+
+TEST(SceneSaverTest, EditorSection_WritesEditorCameraState) {
+    auto scene = make_scene("EditorTest");
+
+    // Set editor camera state.
+    scene->editor_state.cam_pos_x = 5.5f;
+    scene->editor_state.cam_pos_y = 12.3f;
+    scene->editor_state.cam_pos_z = -15.7f;
+    scene->editor_state.cam_yaw   = 0.45f;
+    scene->editor_state.cam_pitch = -0.6f;
+    scene->editor_state.cam_speed = 20.0f;
+    scene->editor_state.valid     = true;
+
+    std::string text = scene_save_to_string(scene.get());
+
+    // The [editor] section must be present.
+    EXPECT_NE(text.find("[editor]"), std::string::npos)
+        << "Saved text must contain [editor] section";
+    EXPECT_NE(text.find("camera_position"), std::string::npos)
+        << "Saved text must contain camera_position";
+    EXPECT_NE(text.find("camera_yaw"), std::string::npos)
+        << "Saved text must contain camera_yaw";
+    EXPECT_NE(text.find("camera_pitch"), std::string::npos)
+        << "Saved text must contain camera_pitch";
+    EXPECT_NE(text.find("camera_speed"), std::string::npos)
+        << "Saved text must contain camera_speed";
+    EXPECT_NE(text.find("5.500000"), std::string::npos)
+        << "cam_pos_x value must appear in output";
+}
+
+// ============================================================================
+// Editor section — loader
+// ============================================================================
+
+TEST(SceneLoaderTest, EditorSection_ParsedCorrectly) {
+    auto scene = make_scene();
+    const char* text =
+        "[uzscene]\nname = T\n"
+        "[node]\nname = Root\ntype = Node3D\nparent =\n"
+        "[editor]\n"
+        "camera_position = 5.5 12.3 -15.7\n"
+        "camera_yaw = 0.45\n"
+        "camera_pitch = -0.6\n"
+        "camera_speed = 20.0\n";
+    ASSERT_TRUE(scene_load_from_string(scene.get(), text).is_ok());
+    EXPECT_EQ(scene->node_count, 1u);
+
+    // Check that EditorState was populated.
+    EXPECT_TRUE(scene->editor_state.valid);
+    EXPECT_TRUE(near_f(scene->editor_state.cam_pos_x, 5.5f));
+    EXPECT_TRUE(near_f(scene->editor_state.cam_pos_y, 12.3f));
+    EXPECT_TRUE(near_f(scene->editor_state.cam_pos_z, -15.7f));
+    EXPECT_TRUE(near_f(scene->editor_state.cam_yaw, 0.45f));
+    EXPECT_TRUE(near_f(scene->editor_state.cam_pitch, -0.6f));
+    EXPECT_TRUE(near_f(scene->editor_state.cam_speed, 20.0f));
+}
+
+TEST(SceneLoaderTest, EditorSection_MissingIsOk) {
+    // Old .uzscene files without [editor] should load fine with defaults.
+    auto scene = make_scene();
+    const char* text =
+        "[uzscene]\nname = T\n"
+        "[node]\nname = Root\ntype = Node3D\nparent =\n";
+    ASSERT_TRUE(scene_load_from_string(scene.get(), text).is_ok());
+    EXPECT_EQ(scene->node_count, 1u);
+    // EditorState should NOT be marked as valid (no [editor] section).
+    EXPECT_FALSE(scene->editor_state.valid);
+}
+
+TEST(SceneLoaderTest, EditorSection_UnknownKeysIgnored) {
+    auto scene = make_scene();
+    const char* text =
+        "[uzscene]\nname = T\n"
+        "[node]\nname = Root\ntype = Node3D\nparent =\n"
+        "[editor]\n"
+        "camera_position = 1.0 2.0 3.0\n"
+        "future_key = 42\n"
+        "another_new_setting = true\n";
+    auto result = scene_load_from_string(scene.get(), text);
+    ASSERT_TRUE(result.is_ok()) << "Unknown editor keys must be silently ignored";
+    EXPECT_TRUE(scene->editor_state.valid);
+    EXPECT_TRUE(near_f(scene->editor_state.cam_pos_x, 1.0f));
+}
+
+TEST(SceneLoaderTest, EditorSection_RoundTrip) {
+    // Save a scene with editor state, load it back, verify camera values.
+    auto scene = make_scene("RoundTrip");
+    scene_create_node(scene.get(), "Root", NodeType::Node3D);
+    scene->editor_state.cam_pos_x = 7.0f;
+    scene->editor_state.cam_pos_y = 3.5f;
+    scene->editor_state.cam_pos_z = -9.2f;
+    scene->editor_state.cam_yaw   = 1.2f;
+    scene->editor_state.cam_pitch = -0.3f;
+    scene->editor_state.cam_speed = 15.0f;
+    scene->editor_state.valid     = true;
+
+    std::string text = scene_save_to_string(scene.get());
+
+    // Load into a fresh scene.
+    auto scene2 = make_scene();
+    ASSERT_TRUE(scene_load_from_string(scene2.get(), text.c_str()).is_ok());
+
+    EXPECT_TRUE(scene2->editor_state.valid);
+    EXPECT_TRUE(near_f(scene2->editor_state.cam_pos_x, 7.0f));
+    EXPECT_TRUE(near_f(scene2->editor_state.cam_pos_y, 3.5f));
+    EXPECT_TRUE(near_f(scene2->editor_state.cam_pos_z, -9.2f));
+    EXPECT_TRUE(near_f(scene2->editor_state.cam_yaw, 1.2f));
+    EXPECT_TRUE(near_f(scene2->editor_state.cam_pitch, -0.3f));
+    EXPECT_TRUE(near_f(scene2->editor_state.cam_speed, 15.0f));
+}
+
+TEST(SceneLoaderTest, SourcePath_PreservedOnLoad) {
+    // Write a temp file, load it, verify source_path is set.
+    const std::string path = "/tmp/uz_test_source_path.uzscene";
+    {
+        std::ofstream f(path);
+        ASSERT_TRUE(f.is_open());
+        f << "[uzscene]\nname = SP\n"
+          << "[node]\nname = N\ntype = Node3D\nparent =\n";
+    }
+
+    auto scene = make_scene();
+    auto result = scene_load_file(scene.get(), path.c_str());
+    ASSERT_TRUE(result.is_ok()) << result.error();
+    EXPECT_STREQ(scene->source_path, path.c_str());
+
+    std::filesystem::remove(path);
+}

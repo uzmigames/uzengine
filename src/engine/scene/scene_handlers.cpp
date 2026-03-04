@@ -7,10 +7,12 @@
 #include "engine/scene/scene_handlers.h"
 #include "engine/scene/scene_loader.h"
 #include "engine/scene/scene_saver.h"
+#include "renderer/scene_params.h"
 
 #include <nlohmann/json.hpp>
 
 #include <cstdint>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -39,7 +41,7 @@ static nlohmann::json make_ok() {
 // scene_register_handlers
 // ============================================================================
 
-void scene_register_handlers(IpcRegistry& registry, Scene* scene) {
+void scene_register_handlers(IpcRegistry& registry, Scene* scene, SceneParams* params) {
 
     // ----------------------------------------------------------------
     // scene.getTree
@@ -287,13 +289,28 @@ void scene_register_handlers(IpcRegistry& registry, Scene* scene) {
     // ----------------------------------------------------------------
     // scene.load
     // ----------------------------------------------------------------
-    registry.add("scene.load", [scene](const nlohmann::json& args) -> nlohmann::json {
+    registry.add("scene.load", [scene, params](const nlohmann::json& args) -> nlohmann::json {
         if (!scene) {
             return make_error("no scene");
         }
 
         if (!args.contains("path") || !args["path"].is_string()) {
             return make_error("missing or invalid 'path'");
+        }
+
+        // Auto-save the current scene before loading the new one.
+        if (scene->source_path[0] != '\0') {
+            // Snapshot editor camera into scene before saving.
+            if (params) {
+                scene->editor_state.cam_pos_x = params->camPosX;
+                scene->editor_state.cam_pos_y = params->camPosY;
+                scene->editor_state.cam_pos_z = params->camPosZ;
+                scene->editor_state.cam_yaw   = params->camYaw;
+                scene->editor_state.cam_pitch = params->camPitch;
+                scene->editor_state.cam_speed = params->camSpeed;
+                scene->editor_state.valid     = true;
+            }
+            (void)scene_save_file(scene, scene->source_path);
         }
 
         const std::string path = args["path"].get<std::string>();
@@ -303,13 +320,23 @@ void scene_register_handlers(IpcRegistry& registry, Scene* scene) {
             return make_error(result.error());
         }
 
+        // Restore editor camera from the loaded scene's [editor] section.
+        if (params && scene->editor_state.valid) {
+            params->camPosX = scene->editor_state.cam_pos_x;
+            params->camPosY = scene->editor_state.cam_pos_y;
+            params->camPosZ = scene->editor_state.cam_pos_z;
+            params->camYaw   = scene->editor_state.cam_yaw;
+            params->camPitch = scene->editor_state.cam_pitch;
+            params->camSpeed = scene->editor_state.cam_speed;
+        }
+
         return make_ok();
     });
 
     // ----------------------------------------------------------------
     // scene.save
     // ----------------------------------------------------------------
-    registry.add("scene.save", [scene](const nlohmann::json& args) -> nlohmann::json {
+    registry.add("scene.save", [scene, params](const nlohmann::json& args) -> nlohmann::json {
         if (!scene) {
             return make_error("no scene");
         }
@@ -318,12 +345,27 @@ void scene_register_handlers(IpcRegistry& registry, Scene* scene) {
             return make_error("missing or invalid 'path'");
         }
 
+        // Snapshot editor camera state before saving.
+        if (params) {
+            scene->editor_state.cam_pos_x = params->camPosX;
+            scene->editor_state.cam_pos_y = params->camPosY;
+            scene->editor_state.cam_pos_z = params->camPosZ;
+            scene->editor_state.cam_yaw   = params->camYaw;
+            scene->editor_state.cam_pitch = params->camPitch;
+            scene->editor_state.cam_speed = params->camSpeed;
+            scene->editor_state.valid     = true;
+        }
+
         const std::string path = args["path"].get<std::string>();
         auto result = scene_save_file(scene, path.c_str());
 
         if (result.is_err()) {
             return make_error(result.error());
         }
+
+        // Update source_path so auto-save knows where to write.
+        std::strncpy(scene->source_path, path.c_str(), sizeof(scene->source_path) - 1);
+        scene->source_path[sizeof(scene->source_path) - 1] = '\0';
 
         return make_ok();
     });

@@ -10,8 +10,11 @@
 
 namespace uz {
 
+struct SceneParams;
+
 /// Register all scene.* handlers into the given registry.
 /// scene must remain valid for the lifetime of the registry.
-void scene_register_handlers(IpcRegistry& registry, Scene* scene);
+/// params may be null if editor camera persistence is not needed.
+void scene_register_handlers(IpcRegistry& registry, Scene* scene, SceneParams* params = nullptr);
 
 } // namespace uz

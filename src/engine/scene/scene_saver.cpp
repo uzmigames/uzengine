@@ -4,6 +4,8 @@
 // Output is round-trip safe with scene_loader.
 
 #include "engine/scene/scene_saver.h"
+#include "engine/scene/component_data.h"
+#include "engine/scene/component_store.h"
 
 #include <cstdio>
 #include <cstring>
@@ -92,6 +94,60 @@ std::string scene_save_to_string(const Scene* scene) {
 
         // Visible.
         out += (node.flags & NODE_FLAG_VISIBLE) ? "visible = true\n" : "visible = false\n";
+
+        // Component-specific properties.
+        if (node.type == NodeType::Camera) {
+            const CameraData* cd = component_get<CameraData>(&scene->components, node.id);
+            if (cd) {
+                std::snprintf(buf, sizeof(buf), "fov = %.6f\n",
+                               static_cast<double>(cd->fov_y));
+                out += buf;
+                std::snprintf(buf, sizeof(buf), "near = %.6f\n",
+                               static_cast<double>(cd->near_plane));
+                out += buf;
+                std::snprintf(buf, sizeof(buf), "far = %.6f\n",
+                               static_cast<double>(cd->far_plane));
+                out += buf;
+            }
+        }
+
+        if (node.type == NodeType::DirectionalLight) {
+            const DirectionalLightData* ld = component_get<DirectionalLightData>(&scene->components, node.id);
+            if (ld) {
+                std::snprintf(buf, sizeof(buf), "light_color = %.6f %.6f %.6f\n",
+                               static_cast<double>(ld->color.x),
+                               static_cast<double>(ld->color.y),
+                               static_cast<double>(ld->color.z));
+                out += buf;
+                std::snprintf(buf, sizeof(buf), "light_intensity = %.6f\n",
+                               static_cast<double>(ld->intensity));
+                out += buf;
+            }
+        }
+    }
+
+    // ---- [editor] section (camera state for the editor) ----
+    {
+        const EditorState& es = scene->editor_state;
+        out += "\n[editor]\n";
+
+        std::snprintf(buf, sizeof(buf), "camera_position = %.6f %.6f %.6f\n",
+                       static_cast<double>(es.cam_pos_x),
+                       static_cast<double>(es.cam_pos_y),
+                       static_cast<double>(es.cam_pos_z));
+        out += buf;
+
+        std::snprintf(buf, sizeof(buf), "camera_yaw = %.6f\n",
+                       static_cast<double>(es.cam_yaw));
+        out += buf;
+
+        std::snprintf(buf, sizeof(buf), "camera_pitch = %.6f\n",
+                       static_cast<double>(es.cam_pitch));
+        out += buf;
+
+        std::snprintf(buf, sizeof(buf), "camera_speed = %.6f\n",
+                       static_cast<double>(es.cam_speed));
+        out += buf;
     }
 
     return out;

@@ -1,0 +1,53 @@
+#pragma once
+
+// gizmo_registry.h — Maps NodeType → GizmoRenderer.
+//
+// The registry owns all gizmo instances and provides O(1) lookup by
+// NodeType enum value. To add a new gizmo for a new NodeType, just
+// register it — no changes to EditorComponent needed.
+
+#include "renderer/gizmos/gizmo_renderer.h"
+
+#include <array>
+#include <cstdint>
+#include <memory>
+
+#include <d3d12.h>
+
+namespace uz {
+
+// Maximum NodeType enum value we support (from scene_node.h: Count = 9).
+inline constexpr uint16_t kMaxNodeType = 16;
+
+class GizmoRegistry {
+public:
+    GizmoRegistry()  = default;
+    ~GizmoRegistry() = default;
+
+    // Non-copyable.
+    GizmoRegistry(const GizmoRegistry&)            = delete;
+    GizmoRegistry& operator=(const GizmoRegistry&) = delete;
+
+    /// Register a gizmo for a given NodeType. Takes ownership.
+    void registerGizmo(uint16_t nodeType, std::unique_ptr<GizmoRenderer> gizmo);
+
+    /// Set the fallback gizmo used when no type-specific gizmo is registered.
+    void setDefaultGizmo(std::unique_ptr<GizmoRenderer> gizmo);
+
+    /// Initialize all registered gizmos (called during EditorComponent::init).
+    void initAll(ID3D12Device* device);
+
+    /// Shutdown all registered gizmos.
+    void shutdownAll();
+
+    /// Get the gizmo for a given NodeType. Returns the default gizmo if
+    /// no type-specific one is registered. Never returns nullptr (as long
+    /// as setDefaultGizmo was called).
+    GizmoRenderer* get(uint16_t nodeType) const;
+
+private:
+    std::array<std::unique_ptr<GizmoRenderer>, kMaxNodeType> gizmos_{};
+    std::unique_ptr<GizmoRenderer> default_;
+};
+
+} // namespace uz

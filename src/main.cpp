@@ -19,6 +19,13 @@
 #include "common/ipc_registry.h"
 #include "common/ipc_poller.h"
 
+#include "engine/scene/scene.h"
+#include "engine/scene/scene_node.h"
+#include "engine/scene/component_data.h"
+#include "engine/scene/component_store.h"
+#include "engine/scene/scene_loader.h"
+#include "engine/scene/scene_saver.h"
+
 #include <windows.h>
 #include <timeapi.h>
 
@@ -57,6 +64,10 @@ std::atomic<bool> g_encodeRunning{false};
 // IPC-controlled scene parameters and live engine metrics.
 uz::SceneParams  g_scene;
 uz::EngineMetrics g_metrics;
+
+// Heap-allocated Scene for real scene data with ComponentStore.
+// Scene is ~8 MB, too large for the stack.
+std::unique_ptr<uz::Scene> g_sceneData;
 
 // ---------------------------------------------------------------------------
 // Encode thread body
@@ -307,6 +318,90 @@ int WINAPI WinMain(
     renderer.init(hwnd, uz::kDefaultWidth, uz::kDefaultHeight);
     renderer.setSceneParams(&g_scene);
 
+    // -- Auto-load the default scene from disk --------------------------------
+    // Resolve the scene path relative to the executable directory.
+    {
+        char exePath[MAX_PATH]{};
+        GetModuleFileNameA(nullptr, exePath, MAX_PATH);
+        std::string exeDir(exePath);
+        auto lastSlash = exeDir.find_last_of("\\/");
+        if (lastSlash != std::string::npos) {
+            exeDir = exeDir.substr(0, lastSlash);
+        }
+        // The executable is in build/Release/, assets are at project root.
+        const std::string scenePath = exeDir + "/../../assets/scenes/default.uzscene";
+
+        g_sceneData = std::make_unique<uz::Scene>();
+        uz::scene_init(g_sceneData.get(), "DefaultScene");
+
+        auto loadResult = uz::scene_load_file(g_sceneData.get(), scenePath.c_str());
+        if (loadResult.is_ok()) {
+            // Update world transforms so light/camera components can read them.
+            uz::scene_update_world_transforms(g_sceneData.get());
+
+            // Convert Scene nodes into EditorNodes for the editor rendering.
+            std::vector<uz::DX12Renderer::EditorNode> editorNodes;
+            for (uint32_t i = 1; i < g_sceneData->next_id; ++i) {
+                const uz::SceneNode& sn = g_sceneData->nodes[i];
+                if (!sn.alive) continue;
+
+                uz::DX12Renderer::EditorNode edNode;
+                edNode.position = {
+                    sn.local_transform.position.x,
+                    sn.local_transform.position.y,
+                    sn.local_transform.position.z
+                };
+                edNode.rotation = {0.0f, 0.0f, 0.0f}; // Euler approximation not needed for gizmos
+                edNode.scale = {
+                    sn.local_transform.scale.x,
+                    sn.local_transform.scale.y,
+                    sn.local_transform.scale.z
+                };
+                edNode.nodeType = static_cast<uint16_t>(sn.type);
+
+                // Assign gizmo colors by node type.
+                switch (sn.type) {
+                    case uz::NodeType::Camera:
+                        edNode.color = {0.9f, 0.9f, 0.2f}; break;
+                    case uz::NodeType::DirectionalLight:
+                    case uz::NodeType::PointLight:
+                        edNode.color = {0.9f, 0.7f, 0.2f}; break;
+                    case uz::NodeType::StaticMesh:
+                        edNode.color = {0.2f, 0.8f, 0.9f}; break;
+                    default:
+                        edNode.color = {0.8f, 0.8f, 0.8f}; break;
+                }
+                editorNodes.push_back(edNode);
+            }
+
+            renderer.setScene(g_sceneData.get());  // scene integration ENABLED
+            renderer.loadEditorScene(std::move(editorNodes));
+
+            // Restore editor camera from the [editor] section (if present).
+            if (g_sceneData->editor_state.valid) {
+                g_scene.camPosX  = g_sceneData->editor_state.cam_pos_x;
+                g_scene.camPosY  = g_sceneData->editor_state.cam_pos_y;
+                g_scene.camPosZ  = g_sceneData->editor_state.cam_pos_z;
+                g_scene.camYaw   = g_sceneData->editor_state.cam_yaw;
+                g_scene.camPitch = g_sceneData->editor_state.cam_pitch;
+                g_scene.camSpeed = g_sceneData->editor_state.cam_speed;
+            }
+
+            char dbg[256];
+            snprintf(dbg, sizeof(dbg),
+                     "[UzEngine] Auto-loaded default scene: %s (%u nodes)\n",
+                     scenePath.c_str(),
+                     static_cast<unsigned>(g_sceneData->next_id - 1));
+            OutputDebugStringA(dbg);
+        } else {
+            char dbg[256];
+            snprintf(dbg, sizeof(dbg),
+                     "[UzEngine] WARNING: Could not load default scene: %s\n",
+                     scenePath.c_str());
+            OutputDebugStringA(dbg);
+        }
+    }
+
     // -- IPC setup -----------------------------------------------------------
     // Compute the IPC base directory (build/preview relative to the exe).
     std::string ipcBaseDir;
@@ -416,50 +511,137 @@ int WINAPI WinMain(
             return {{"ok", false}, {"error", "missing 'nodes' array"}};
         }
 
-        std::vector<uz::DX12Renderer::EditorNode> nodes;
-        nodes.reserve(args["nodes"].size());
+        // ------------------------------------------------------------------
+        // Auto-save the current scene before loading the new one.
+        // ------------------------------------------------------------------
+        if (g_sceneData && g_sceneData->source_path[0] != '\0') {
+            // Snapshot editor camera into scene before saving.
+            g_sceneData->editor_state.cam_pos_x = g_scene.camPosX;
+            g_sceneData->editor_state.cam_pos_y = g_scene.camPosY;
+            g_sceneData->editor_state.cam_pos_z = g_scene.camPosZ;
+            g_sceneData->editor_state.cam_yaw   = g_scene.camYaw;
+            g_sceneData->editor_state.cam_pitch = g_scene.camPitch;
+            g_sceneData->editor_state.cam_speed = g_scene.camSpeed;
+            g_sceneData->editor_state.valid     = true;
+            (void)uz::scene_save_file(g_sceneData.get(), g_sceneData->source_path);
+        }
+
+        // ------------------------------------------------------------------
+        // Create / reset the real Scene with ComponentStore.
+        // ------------------------------------------------------------------
+        if (!g_sceneData) {
+            g_sceneData = std::make_unique<uz::Scene>();
+            uz::scene_init(g_sceneData.get(), "IPCScene");
+        } else {
+            uz::scene_clear(g_sceneData.get());
+        }
+
+        std::vector<uz::DX12Renderer::EditorNode> editorNodes;
+        editorNodes.reserve(args["nodes"].size());
 
         for (const auto& n : args["nodes"]) {
-            uz::DX12Renderer::EditorNode node;
+            // Determine NodeType.
+            const std::string typeStr = n.value("type", "Node3D");
+            uz::NodeType nodeType = uz::node_type_from_string(typeStr.c_str());
+            const std::string nodeName = n.value("name", "Unnamed");
+
+            // Create the SceneNode.
+            uz::NodeId id = uz::scene_create_node(
+                g_sceneData.get(), nodeName.c_str(), nodeType);
+
+            if (id == uz::kNodeIdInvalid) continue;
+
+            uz::SceneNode* node = uz::scene_get_node(g_sceneData.get(), id);
+            if (!node) continue;
+
+            // Parse transform.
+            float px = 0, py = 0, pz = 0;
+            float rx = 0, ry = 0, rz = 0;
+            float sx = 1, sy = 1, sz = 1;
 
             if (n.contains("position") && n["position"].is_array() && n["position"].size() >= 3) {
-                node.position = {
-                    n["position"][0].get<float>(),
-                    n["position"][1].get<float>(),
-                    n["position"][2].get<float>()
-                };
+                px = n["position"][0].get<float>();
+                py = n["position"][1].get<float>();
+                pz = n["position"][2].get<float>();
+                node->local_transform.position = {px, py, pz, 0.0f};
             }
             if (n.contains("rotation") && n["rotation"].is_array() && n["rotation"].size() >= 3) {
-                node.rotation = {
-                    n["rotation"][0].get<float>(),
-                    n["rotation"][1].get<float>(),
-                    n["rotation"][2].get<float>()
+                rx = n["rotation"][0].get<float>();
+                ry = n["rotation"][1].get<float>();
+                rz = n["rotation"][2].get<float>();
+                // Store as euler angles in the quaternion fields for now.
+                // Build a rotation quaternion from euler angles (Y * X * Z).
+                const float cy = std::cos(ry * 0.5f), sy2 = std::sin(ry * 0.5f);
+                const float cp = std::cos(rx * 0.5f), sp  = std::sin(rx * 0.5f);
+                const float cr = std::cos(rz * 0.5f), sr  = std::sin(rz * 0.5f);
+                node->local_transform.rotation = {
+                    cr * sp * cy + sr * cp * sy2,
+                    cr * cp * sy2 - sr * sp * cy,
+                    sr * cp * cy - cr * sp * sy2,
+                    cr * cp * cy + sr * sp * sy2
                 };
             }
             if (n.contains("scale") && n["scale"].is_array() && n["scale"].size() >= 3) {
-                node.scale = {
-                    n["scale"][0].get<float>(),
-                    n["scale"][1].get<float>(),
-                    n["scale"][2].get<float>()
-                };
+                sx = n["scale"][0].get<float>();
+                sy = n["scale"][1].get<float>();
+                sz = n["scale"][2].get<float>();
+                node->local_transform.scale = {sx, sy, sz, 0.0f};
             }
 
-            // Assign wireframe color based on node type.
-            const std::string type = n.value("type", "Node3D");
-            if (type == "StaticMesh") {
-                node.color = {0.2f, 0.8f, 0.9f};    // cyan
-            } else if (type == "Camera") {
-                node.color = {0.9f, 0.9f, 0.2f};    // yellow
-            } else if (type == "DirectionalLight" || type == "PointLight") {
-                node.color = {0.9f, 0.7f, 0.2f};    // amber
+            // -- Add component data to ComponentStore. ---------------------
+            if (nodeType == uz::NodeType::Camera) {
+                uz::CameraData* cd = uz::component_add<uz::CameraData>(
+                    &g_sceneData->components, id);
+                if (cd) {
+                    cd->fov_y      = n.value("fov",  45.0f);
+                    cd->near_plane = n.value("near", 0.1f);
+                    cd->far_plane  = n.value("far",  500.0f);
+                }
+            }
+            if (nodeType == uz::NodeType::DirectionalLight) {
+                uz::DirectionalLightData* ld = uz::component_add<uz::DirectionalLightData>(
+                    &g_sceneData->components, id);
+                if (ld) {
+                    if (n.contains("light_color") && n["light_color"].is_array()
+                        && n["light_color"].size() >= 3) {
+                        ld->color = {
+                            n["light_color"][0].get<float>(),
+                            n["light_color"][1].get<float>(),
+                            n["light_color"][2].get<float>(),
+                            0.0f
+                        };
+                    }
+                    ld->intensity = n.value("light_intensity", 1.0f);
+                }
+            }
+
+            // -- Build EditorNode for wireframe rendering. ------------------
+            uz::DX12Renderer::EditorNode edNode;
+            edNode.position = {px, py, pz};
+            edNode.rotation = {rx, ry, rz};
+            edNode.scale    = {sx, sy, sz};
+            edNode.nodeType = static_cast<uint16_t>(nodeType);
+
+            if (typeStr == "StaticMesh") {
+                edNode.color = {0.2f, 0.8f, 0.9f};
+            } else if (typeStr == "Camera") {
+                edNode.color = {0.9f, 0.9f, 0.2f};
+            } else if (typeStr == "DirectionalLight" || typeStr == "PointLight") {
+                edNode.color = {0.9f, 0.7f, 0.2f};
             } else {
-                node.color = {0.8f, 0.8f, 0.8f};    // default gray
+                edNode.color = {0.8f, 0.8f, 0.8f};
             }
-
-            nodes.push_back(node);
+            editorNodes.push_back(edNode);
         }
 
-        const size_t count = renderer.loadEditorScene(std::move(nodes));
+        // Update world transforms so light/camera components can read them.
+        uz::scene_update_world_transforms(g_sceneData.get());
+
+        // Pass the real Scene to the renderer (for camera + lighting).
+        renderer.setScene(g_sceneData.get());  // scene integration ENABLED
+
+        // Load editor wireframe nodes.
+        const size_t count = renderer.loadEditorScene(std::move(editorNodes));
         return {{"ok", true}, {"count", static_cast<int>(count)}};
     });
 

@@ -5,6 +5,9 @@
 #include <vector>
 
 #include "fps_overlay.h"
+#include "components/editor_component.h"
+#include "components/camera_component.h"
+#include "components/light_component.h"
 
 #include <d3d12.h>
 #include <dxgi1_6.h>
@@ -30,6 +33,12 @@ cbuffer ColorCB : register(b1) {
     float3 colorMul;
     float _pad;
 };
+cbuffer LightCB : register(b2) {
+    float3 lightDir;
+    float  lightIntensity;
+    float3 lightColor;
+    float  _lightPad;
+};
 
 struct VSInput {
     float3 position : POSITION;
@@ -39,24 +48,39 @@ struct VSInput {
 struct PSInput {
     float4 position : SV_POSITION;
     float3 color    : COLOR;
+    float3 normal   : NORMAL;
 };
 
 PSInput VSMain(VSInput input) {
     PSInput output;
     output.position = mul(worldViewProj, float4(input.position, 1.0f));
     output.color    = input.color * colorMul;
+    // Use object-space position as a proxy normal for wireframe/cube shading.
+    output.normal   = normalize(input.position);
     return output;
 }
 )hlsl";
 
 constexpr const char* kPixelShaderSrc = R"hlsl(
+cbuffer LightCB : register(b2) {
+    float3 lightDir;
+    float  lightIntensity;
+    float3 lightColor;
+    float  _lightPad;
+};
+
 struct PSInput {
     float4 position : SV_POSITION;
     float3 color    : COLOR;
+    float3 normal   : NORMAL;
 };
 
 float4 PSMain(PSInput input) : SV_TARGET {
-    return float4(input.color, 1.0f);
+    // Ambient + directional N·L diffuse.
+    float ambient = 0.35;
+    float ndl     = max(dot(normalize(input.normal), -normalize(lightDir)), 0.0);
+    float3 lit    = input.color * (ambient + (1.0 - ambient) * ndl * lightIntensity * lightColor);
+    return float4(lit, 1.0f);
 }
 )hlsl";
 
@@ -93,13 +117,8 @@ public:
     DX12Renderer(DX12Renderer&&)                 = delete;
     DX12Renderer& operator=(DX12Renderer&&)      = delete;
 
-    // Scene node descriptor for editor wireframe rendering.
-    struct EditorNode {
-        DirectX::XMFLOAT3 position{0.0f, 0.0f, 0.0f};
-        DirectX::XMFLOAT3 rotation{0.0f, 0.0f, 0.0f};  // euler angles (radians)
-        DirectX::XMFLOAT3 scale{1.0f, 1.0f, 1.0f};
-        DirectX::XMFLOAT3 color{0.8f, 0.8f, 0.8f};     // wireframe tint
-    };
+    // EditorNode is now defined in EditorComponent.
+    using EditorNode = EditorComponent::EditorNode;
 
     // Initialize the renderer and all GPU resources for the given window.
     void init(HWND hwnd, uint32_t width, uint32_t height);
@@ -142,6 +161,10 @@ public:
     // Pointer must remain valid for the lifetime of the renderer.
     void setSceneParams(SceneParams* params);
 
+    // Set the scene pointer for scene-driven camera and lighting.
+    // The scene must remain valid for the lifetime of the renderer.
+    void setScene(Scene* scene);
+
     // Replace the editor scene nodes and switch to editor rendering mode.
     // Thread-safe: may be called from the IPC thread while the render thread
     // is running.  Returns the number of nodes loaded.
@@ -162,10 +185,7 @@ private:
     void createDepthBuffer();
     void createReadbackBuffer();
 
-    // Editor-mode geometry and pipeline.
-    void createLinePipelineState();
-    void createGridVertexBuffer();
-    void createCubeWireVertexBuffer();
+    // Editor-mode geometry and pipeline (delegated to EditorComponent).
 
     // Perform GPU -> CPU readback of the current frame's render target.
     void performReadback();
@@ -255,6 +275,12 @@ private:
     // External scene parameters (set via setSceneParams, nullable).
     SceneParams* sceneParams_ = nullptr;
 
+    // External scene pointer (set via setScene, nullable).
+    Scene* scene_ = nullptr;
+
+    // Cached light state (updated each frame from scene_ via light_collect_primary).
+    LightState cachedLight_;
+
     // CPU-side FPS overlay — stamps "FPS: XXX" into the readback pixel buffer.
     FPSOverlay fpsOverlay_;
 
@@ -265,25 +291,10 @@ private:
     float clearB_ = 0.12f;
 
     // -----------------------------------------------------------------------
-    // Editor-mode resources
+    // Render components (modular subsystems)
     // -----------------------------------------------------------------------
 
-    // Line-list PSO (shared by grid and wireframe cube draws).
-    Microsoft::WRL::ComPtr<ID3D12PipelineState> linePipelineState_;
-
-    // Ground grid vertex buffer (XZ plane, Y=0).
-    Microsoft::WRL::ComPtr<ID3D12Resource> gridVertexBuffer_;
-    D3D12_VERTEX_BUFFER_VIEW              gridVertexBufferView_{};
-    uint32_t                              gridVertexCount_ = 0;
-
-    // Unit wireframe cube vertex buffer (12 edges = 24 vertices, LINE_LIST).
-    Microsoft::WRL::ComPtr<ID3D12Resource> cubeWireVertexBuffer_;
-    D3D12_VERTEX_BUFFER_VIEW              cubeWireVertexBufferView_{};
-    uint32_t                              cubeWireVertexCount_ = 0;
-
-    // Editor scene nodes (loaded via IPC, protected by mutex).
-    std::vector<EditorNode> editorNodes_;
-    mutable std::mutex      editorNodesMutex_;
+    EditorComponent editor_;   // Editor-only rendering (grid, wireframe cubes)
 
     // When true, render() draws the editor scene (grid + wireframe cubes)
     // instead of the legacy spinning pyramid.

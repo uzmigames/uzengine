@@ -33,10 +33,10 @@
  *  - Message arriving after dispose() does not call IPC
  */
 
-import { InspectorViewProvider } from '../inspector-panel';
-import { NodeItem } from '../scene-tree-provider';
-import { IpcClient } from '../ipc-client';
 import { window as vscodeWindow } from '../__mocks__/vscode';
+import { InspectorViewProvider } from '../inspector-panel';
+import { IpcClient } from '../ipc-client';
+import { NodeItem } from '../scene-tree-provider';
 
 // ---------------------------------------------------------------------------
 // Inline WebviewView mock (no existing mock for WebviewView)
@@ -69,7 +69,7 @@ function makeMockWebviewView() {
 function makeMockIpc() {
     return {
         request: jest.fn().mockResolvedValue({}),
-        on: jest.fn().mockReturnValue(() => {}),
+        on: jest.fn().mockReturnValue(() => { }),
         connect: jest.fn(),
         disconnect: jest.fn(),
         dispose: jest.fn(),
@@ -211,7 +211,7 @@ describe('InspectorViewProvider', () => {
             expect(view.webview.html).toContain('Select a node');
         });
 
-        it('renders node HTML immediately when node was set before resolveWebviewView', () => {
+        it('sends postMessage with node data when node was set before resolveWebviewView', () => {
             const ipc = makeMockIpc();
             const provider = new InspectorViewProvider(ipc as unknown as IpcClient);
             const view = makeMockWebviewView();
@@ -225,8 +225,13 @@ describe('InspectorViewProvider', () => {
                 stubToken
             );
 
-            expect(view.webview.html).toContain('PreBoundNode');
-            expect(view.webview.html).toContain('Camera');
+            expect(view.webview.postMessage).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    command: 'updateNode',
+                    nodeName: 'PreBoundNode',
+                    nodeType: 'Camera',
+                })
+            );
         });
     });
 
@@ -285,7 +290,7 @@ describe('InspectorViewProvider', () => {
             expect(view.webview.html).toContain('Select a node');
         });
 
-        it('showForNode(node) after resolveWebviewView renders node name in HTML', () => {
+        it('showForNode(node) after resolveWebviewView posts updateNode with node name', () => {
             const ipc = makeMockIpc();
             const provider = new InspectorViewProvider(ipc as unknown as IpcClient);
             const view = makeMockWebviewView();
@@ -298,10 +303,12 @@ describe('InspectorViewProvider', () => {
 
             provider.showForNode(makeNode('n1', 'PlayerMesh', 'StaticMesh'));
 
-            expect(view.webview.html).toContain('PlayerMesh');
+            expect(view.webview.postMessage).toHaveBeenCalledWith(
+                expect.objectContaining({ command: 'updateNode', nodeName: 'PlayerMesh' })
+            );
         });
 
-        it('showForNode(node) after resolveWebviewView renders node type in HTML', () => {
+        it('showForNode(node) after resolveWebviewView posts updateNode with node type', () => {
             const ipc = makeMockIpc();
             const provider = new InspectorViewProvider(ipc as unknown as IpcClient);
             const view = makeMockWebviewView();
@@ -314,10 +321,12 @@ describe('InspectorViewProvider', () => {
 
             provider.showForNode(makeNode('n1', 'SomeNode', 'Camera'));
 
-            expect(view.webview.html).toContain('Camera');
+            expect(view.webview.postMessage).toHaveBeenCalledWith(
+                expect.objectContaining({ command: 'updateNode', nodeType: 'Camera' })
+            );
         });
 
-        it('switching from node to undefined clears node name from HTML', () => {
+        it('switching from node to undefined sends clearNode message', () => {
             const ipc = makeMockIpc();
             const provider = new InspectorViewProvider(ipc as unknown as IpcClient);
             const view = makeMockWebviewView();
@@ -329,11 +338,14 @@ describe('InspectorViewProvider', () => {
             );
 
             provider.showForNode(makeNode('n1', 'OldNode', 'Node3D'));
-            expect(view.webview.html).toContain('OldNode');
+            expect(view.webview.postMessage).toHaveBeenCalledWith(
+                expect.objectContaining({ command: 'updateNode', nodeName: 'OldNode' })
+            );
 
             provider.showForNode(undefined);
-            expect(view.webview.html).not.toContain('OldNode');
-            expect(view.webview.html).toContain('Select a node');
+            expect(view.webview.postMessage).toHaveBeenCalledWith(
+                expect.objectContaining({ command: 'clearNode' })
+            );
         });
     });
 
@@ -391,22 +403,39 @@ describe('InspectorViewProvider', () => {
             expect(view.webview.html).toContain('Node');
         });
 
-        it('renders Transform group', () => {
+        it('posts properties with Transform group', () => {
             const { view } = resolveWithNode();
-            expect(view.webview.html).toContain('Transform');
+            expect(view.webview.postMessage).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    command: 'updateNode',
+                    properties: expect.arrayContaining([
+                        expect.objectContaining({ group: 'Transform' }),
+                    ]),
+                })
+            );
         });
 
-        it('renders Rendering group with LOD Bias and Layer labels', () => {
+        it('posts properties with Rendering group (LOD Bias and Layer)', () => {
             const { view } = resolveWithNode();
-            expect(view.webview.html).toContain('Rendering');
-            expect(view.webview.html).toContain('LOD Bias');
-            expect(view.webview.html).toContain('Layer');
+            expect(view.webview.postMessage).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    command: 'updateNode',
+                    properties: expect.arrayContaining([
+                        expect.objectContaining({ group: 'Rendering', label: 'LOD Bias' }),
+                        expect.objectContaining({ group: 'Rendering', label: 'Layer' }),
+                    ]),
+                })
+            );
         });
 
-        it('HTML escapes special characters in node name', () => {
+        it('posts node name with special characters unmodified in message', () => {
             const { view } = resolveWithNode('<xss>"name"');
-            expect(view.webview.html).not.toContain('<xss>');
-            expect(view.webview.html).toContain('&lt;xss&gt;');
+            expect(view.webview.postMessage).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    command: 'updateNode',
+                    nodeName: '<xss>"name"',
+                })
+            );
         });
 
         it('marks id and type fields as readonly', () => {
@@ -436,33 +465,52 @@ describe('InspectorViewProvider', () => {
     // HTML rendering — private branch coverage via cast
     // -------------------------------------------------------------------------
 
-    describe('_renderWidget branch coverage', () => {
-        it('bool false renders checkbox without checked attribute', () => {
+    describe('_buildProperties coverage', () => {
+        it('posts properties with bool visible=true', () => {
             const ipc = makeMockIpc();
             const provider = new InspectorViewProvider(ipc as unknown as IpcClient);
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const p = provider as any;
-            const html = p._renderWidget(
-                { key: 'myBool', label: 'My Bool', type: 'bool', value: false, group: 'Test' },
-                'node-id'
-            ) as string;
+            const view = makeMockWebviewView();
 
-            expect(html).toContain('type="checkbox"');
-            expect(html).not.toContain('checked');
+            provider.resolveWebviewView(
+                view as unknown as import('vscode').WebviewView,
+                stubContext,
+                stubToken
+            );
+
+            provider.showForNode(makeNode('n1', 'TestNode', 'Node3D'));
+
+            expect(view.webview.postMessage).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    command: 'updateNode',
+                    properties: expect.arrayContaining([
+                        expect.objectContaining({ key: 'visible', type: 'bool', value: true }),
+                    ]),
+                })
+            );
         });
 
-        it('vec3 with null value uses default {x:0,y:0,z:0}', () => {
+        it('posts vec3 properties with default values', () => {
             const ipc = makeMockIpc();
             const provider = new InspectorViewProvider(ipc as unknown as IpcClient);
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const p = provider as any;
-            const html = p._renderWidget(
-                { key: 'pos', label: 'Position', type: 'vec3', value: null, group: 'Transform' },
-                'node-id'
-            ) as string;
+            const view = makeMockWebviewView();
 
-            expect(html).toContain('vec3-group');
-            expect(html).toContain('value="0"');
+            provider.resolveWebviewView(
+                view as unknown as import('vscode').WebviewView,
+                stubContext,
+                stubToken
+            );
+
+            provider.showForNode(makeNode('n1', 'TestNode', 'Node3D'));
+
+            expect(view.webview.postMessage).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    command: 'updateNode',
+                    properties: expect.arrayContaining([
+                        expect.objectContaining({ key: 'position', type: 'vec3', value: { x: 0, y: 0, z: 0 } }),
+                        expect.objectContaining({ key: 'scale', type: 'vec3', value: { x: 1, y: 1, z: 1 } }),
+                    ]),
+                })
+            );
         });
 
         it('_render() returns early without throwing when _view is not set', () => {

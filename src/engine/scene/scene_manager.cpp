@@ -10,6 +10,8 @@
 // No heap allocations. All data lives in the flat Scene::nodes[] array.
 
 #include "engine/scene/scene.h"
+#include "engine/scene/component_data.h"
+#include "engine/scene/component_store.h"
 
 #include <cstring>
 
@@ -62,13 +64,18 @@ void scene_init(Scene* scene, const char* name) {
     scene->next_id = 1;
     // node_count is already 0 from memset.
     // All node slots have alive=false from memset.
+
+    // Initialize the component store and register known component types.
+    scene->components.init();
+    component_store_register<CameraData>(&scene->components);
+    component_store_register<DirectionalLightData>(&scene->components);
 }
 
 void scene_clear(Scene* scene) {
-    // Mark every slot as dead. We only need to touch slots up to next_id since
-    // slots beyond that are already zeroed/dead.
+    // Mark every slot as dead and remove components.
     for (uint32_t i = 1; i < scene->next_id; ++i) {
         scene->nodes[i].alive = false;
+        scene->components.remove_all(i);
     }
     scene->node_count = 0;
     scene->next_id = 1;
@@ -154,6 +161,9 @@ void scene_destroy_node(Scene* scene, NodeId id) {
         && scene->nodes[node->parent_id].alive) {
         remove_child_from_parent(&scene->nodes[node->parent_id], id);
     }
+
+    // Remove all components for this node.
+    scene->components.remove_all(id);
 
     // Mark slot as dead.
     node->alive = false;

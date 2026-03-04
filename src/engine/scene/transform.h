@@ -113,18 +113,18 @@ struct Transform {
 
 /// Check if two transforms are approximately equal within tolerance.
 [[nodiscard]] inline bool transform_approx_equal(const Transform& a, const Transform& b, float tol = kEpsilon) noexcept {
-    auto near = [tol](float x, float y) { return std::abs(x - y) <= tol; };
+    auto approx = [tol](float x, float y) { return std::abs(x - y) <= tol; };
 
-    return near(a.position.x, b.position.x)
-        && near(a.position.y, b.position.y)
-        && near(a.position.z, b.position.z)
-        && near(a.rotation.x, b.rotation.x)
-        && near(a.rotation.y, b.rotation.y)
-        && near(a.rotation.z, b.rotation.z)
-        && near(a.rotation.w, b.rotation.w)
-        && near(a.scale.x, b.scale.x)
-        && near(a.scale.y, b.scale.y)
-        && near(a.scale.z, b.scale.z);
+    return approx(a.position.x, b.position.x)
+        && approx(a.position.y, b.position.y)
+        && approx(a.position.z, b.position.z)
+        && approx(a.rotation.x, b.rotation.x)
+        && approx(a.rotation.y, b.rotation.y)
+        && approx(a.rotation.z, b.rotation.z)
+        && approx(a.rotation.w, b.rotation.w)
+        && approx(a.scale.x, b.scale.x)
+        && approx(a.scale.y, b.scale.y)
+        && approx(a.scale.z, b.scale.z);
 }
 
 } // namespace uz

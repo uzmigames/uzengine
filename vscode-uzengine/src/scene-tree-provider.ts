@@ -229,6 +229,11 @@ export class SceneTreeProvider
     async selectNode(item: NodeItem | undefined): Promise<void> {
         if (this._disposed) { return; }
 
+        // Fire UI event immediately so the inspector updates without waiting
+        // for the IPC round-trip.
+        this._onNodeSelected.fire(item);
+
+        // Notify the engine in the background (fire-and-forget).
         if (item) {
             try {
                 await this._ipc.request('scene.selectNode', { id: item.nodeId });
@@ -236,8 +241,6 @@ export class SceneTreeProvider
                 // Swallow — engine may not be connected; selection still reflected in UI.
             }
         }
-
-        this._onNodeSelected.fire(item);
     }
 
     // -------------------------------------------------------------------------

@@ -45,6 +45,18 @@ if(WIN32)
         src/main.cpp
         src/renderer/renderer.cpp
         src/renderer/fps_overlay.cpp
+        src/renderer/components/camera_component.cpp
+        src/renderer/components/light_component.cpp
+        src/renderer/components/editor_component.cpp
+        src/renderer/gizmos/gizmo_registry.cpp
+        src/renderer/gizmos/gizmo_cube.cpp
+        src/renderer/gizmos/gizmo_camera.cpp
+        src/renderer/gizmos/gizmo_directional_light.cpp
+        src/renderer/gizmos/gizmo_point_light.cpp
+        src/engine/scene/scene_manager.cpp
+        src/engine/scene/scene_loader.cpp
+        src/engine/scene/scene_saver.cpp
+        src/engine/scene/component_store.cpp
         src/encoder/jpeg_encoder.cpp
         src/network/ws_server.cpp
         src/common/ipc_registry.cpp
@@ -110,6 +122,7 @@ add_executable(UzEngineTests
     src/engine/scene/scene_loader.cpp
     src/engine/scene/scene_saver.cpp
     src/engine/scene/scene_handlers.cpp
+    src/engine/scene/component_store.cpp
     src/engine/editor/undo_redo.cpp
     src/engine/editor/asset_registry.cpp
     src/engine/editor/ipc_asset_handlers.cpp

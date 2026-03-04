@@ -75,10 +75,8 @@ void DX12Renderer::init(HWND hwnd, uint32_t width, uint32_t height) {
     createFence();
     createReadbackBuffer();
 
-    // Editor-mode geometry and pipeline (grid + wireframe cube).
-    createLinePipelineState();
-    createGridVertexBuffer();
-    createCubeWireVertexBuffer();
+    // Editor-mode rendering component (grid + wireframe cubes).
+    editor_.init(device_.Get(), rootSignature_.Get());
 
     // -----------------------------------------------------------------------
     // Viewport covers the full render area.
@@ -341,100 +339,17 @@ void DX12Renderer::update(double /*totalTime*/, double deltaTime) {
 
     if (editorMode_) {
         // -----------------------------------------------------------------
-        // Unreal Engine 5-style fly camera controller.
-        // Input is written by the network thread (WS text messages) into
-        // sceneParams_->cameraInput atomics.  Camera state lives in the
-        // sceneParams_ plain floats (written ONLY here on the render thread).
+        // Editor fly-cam via camera_component.
         // -----------------------------------------------------------------
         const float dt = std::min(static_cast<float>(deltaTime), 0.1f);
 
-        if (sceneParams_) {
-            auto& ci  = sceneParams_->cameraInput;
-            auto& sp  = *sceneParams_;
+        CameraState camState = camera_update_fly(sceneParams_, aspect, dt);
 
-            // -- Scroll wheel → adjust camera speed (multiplicative) ------
-            const float scroll = ci.scrollDelta.exchange(0.0f, std::memory_order_relaxed);
-            if (scroll != 0.0f) {
-                sp.camSpeed *= std::pow(1.1f, scroll);
-                sp.camSpeed  = std::clamp(sp.camSpeed, 0.1f, 500.0f);
-            }
-
-            // -- Mouse look (only when RMB held) --------------------------
-            const float mdx = ci.mouseDeltaX.exchange(0.0f, std::memory_order_relaxed);
-            const float mdy = ci.mouseDeltaY.exchange(0.0f, std::memory_order_relaxed);
-            const bool  rmb = ci.rightMouseDown.load(std::memory_order_relaxed);
-
-            if (rmb) {
-                sp.camYaw   += mdx * sp.camSensitivity;
-                sp.camPitch -= mdy * sp.camSensitivity;  // Inverted Y (UE5 convention)
-
-                // Clamp pitch to +/-89 degrees to avoid gimbal lock at the poles.
-                constexpr float kMaxPitch = 89.0f * (XM_PI / 180.0f);
-                sp.camPitch = std::clamp(sp.camPitch, -kMaxPitch, kMaxPitch);
-            }
-            // When RMB is not held, deltas were already consumed (exchanged to 0)
-            // so they won't accumulate.
-
-            // -- Forward / right / up vectors from yaw + pitch ------------
-            // Left-handed coordinate system: +X right, +Y up, +Z forward.
-            // Yaw 0 = looking along +Z, pitch 0 = horizontal.
-            const float cosYaw   = std::cos(sp.camYaw);
-            const float sinYaw   = std::sin(sp.camYaw);
-            const float cosPitch = std::cos(sp.camPitch);
-            const float sinPitch = std::sin(sp.camPitch);
-
-            const XMVECTOR forward = XMVectorSet(
-                sinYaw * cosPitch,   // X
-                sinPitch,            // Y (negative pitch = looking down)
-                cosYaw * cosPitch,   // Z
-                0.0f);
-
-            const XMVECTOR worldUp = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
-            const XMVECTOR right   = XMVector3Normalize(XMVector3Cross(worldUp, forward));
-
-            // -- WASD + EQ movement (only when RMB held) ------------------
-            if (rmb) {
-                const float fwd    = ci.moveForward.load(std::memory_order_relaxed)
-                                   - ci.moveBack.load(std::memory_order_relaxed);
-                const float strafe = ci.moveRight.load(std::memory_order_relaxed)
-                                   - ci.moveLeft.load(std::memory_order_relaxed);
-                const float vert   = ci.moveUp.load(std::memory_order_relaxed)
-                                   - ci.moveDown.load(std::memory_order_relaxed);
-
-                const float boost = ci.shiftDown.load(std::memory_order_relaxed) ? 3.0f : 1.0f;
-                const float speed = sp.camSpeed * boost * dt;
-
-                // Accumulate position along each axis.
-                const XMVECTOR movement = forward * fwd * speed
-                                        + right   * strafe * speed
-                                        + worldUp * vert   * speed;
-
-                sp.camPosX += XMVectorGetX(movement);
-                sp.camPosY += XMVectorGetY(movement);
-                sp.camPosZ += XMVectorGetZ(movement);
-            }
-
-            // -- Build view matrix ----------------------------------------
-            const XMVECTOR eye = XMVectorSet(sp.camPosX, sp.camPosY, sp.camPosZ, 1.0f);
-            const XMVECTOR at  = XMVectorAdd(eye, forward);
-            const XMMATRIX view = XMMatrixLookAtLH(eye, at, worldUp);
-            const XMMATRIX proj = XMMatrixPerspectiveFovLH(XM_PIDIV4, aspect, 0.1f, 500.0f);
-
-            const XMMATRIX vp = view * proj;
-            XMStoreFloat4x4(&viewProj_, vp);
-            XMStoreFloat4x4(&worldViewProj_, vp);
-        } else {
-            // No scene params attached -- use default static camera.
-            const XMVECTOR eye = XMVectorSet(0.0f, 15.0f, -20.0f, 1.0f);
-            const XMVECTOR at  = XMVectorSet(0.0f, 0.0f,   0.0f, 1.0f);
-            const XMVECTOR up  = XMVectorSet(0.0f, 1.0f,   0.0f, 0.0f);
-            const XMMATRIX view = XMMatrixLookAtLH(eye, at, up);
-            const XMMATRIX proj = XMMatrixPerspectiveFovLH(XM_PIDIV4, aspect, 0.1f, 500.0f);
-
-            const XMMATRIX vp = view * proj;
-            XMStoreFloat4x4(&viewProj_, vp);
-            XMStoreFloat4x4(&worldViewProj_, vp);
-        }
+        static_assert(sizeof(Mat4) == sizeof(XMFLOAT4X4), "Mat4/XMFLOAT4X4 size mismatch");
+        XMFLOAT4X4 vp4x4;
+        std::memcpy(&vp4x4, &camState.view_proj, sizeof(Mat4));
+        viewProj_      = vp4x4;
+        worldViewProj_ = vp4x4;
     } else {
         // Legacy pyramid spinning camera.
         const float dt = static_cast<float>(deltaTime);
@@ -454,6 +369,9 @@ void DX12Renderer::update(double /*totalTime*/, double deltaTime) {
         XMStoreFloat4x4(&viewProj_, vp);
         XMStoreFloat4x4(&worldViewProj_, world * vp);
     }
+
+    // -- Collect primary directional light from the scene. ------------------
+    cachedLight_ = light_collect_primary(scene_);
 }
 
 void DX12Renderer::render(bool readback) {
@@ -506,45 +424,43 @@ void DX12Renderer::render(bool readback) {
     const bool paused = sceneParams_ && sceneParams_->paused.load(std::memory_order_relaxed);
 
     if (editorMode_) {
-        // -- Ground grid --
-        commandList_->SetPipelineState(linePipelineState_.Get());
-        commandList_->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_LINELIST);
+        // Upload light data to root param 2 (b2) before editor draw.
+        struct LightCBData {
+            float dir[3];
+            float intensity;
+            float color[3];
+            float _pad;
+        } lightCB;
+        lightCB.dir[0]    = cachedLight_.direction.x;
+        lightCB.dir[1]    = cachedLight_.direction.y;
+        lightCB.dir[2]    = cachedLight_.direction.z;
+        lightCB.intensity = cachedLight_.intensity;
+        lightCB.color[0]  = cachedLight_.color.x;
+        lightCB.color[1]  = cachedLight_.color.y;
+        lightCB.color[2]  = cachedLight_.color.z;
+        lightCB._pad      = 0.0f;
+        commandList_->SetGraphicsRoot32BitConstants(2, 8, &lightCB, 0);
 
-        // Grid uses identity world, so worldViewProj_ already equals viewProj_.
-        commandList_->SetGraphicsRoot32BitConstants(0, 16, &worldViewProj_, 0);
-
-        // Grid vertex colors are baked; pass white (1,1,1) as the color multiplier.
-        const float white[4] = {1.0f, 1.0f, 1.0f, 0.0f};
-        commandList_->SetGraphicsRoot32BitConstants(1, 4, white, 0);
-
-        commandList_->IASetVertexBuffers(0, 1, &gridVertexBufferView_);
-        commandList_->DrawInstanced(gridVertexCount_, 1, 0, 0);
-
-        // -- Wireframe cubes at each editor node --
-        commandList_->IASetVertexBuffers(0, 1, &cubeWireVertexBufferView_);
-        {
-            std::lock_guard<std::mutex> lk(editorNodesMutex_);
-            const XMMATRIX vp = XMLoadFloat4x4(&viewProj_);
-
-            for (const auto& node : editorNodes_) {
-                const XMMATRIX nodeWorld =
-                    XMMatrixScaling(node.scale.x, node.scale.y, node.scale.z)
-                    * XMMatrixRotationRollPitchYaw(node.rotation.x, node.rotation.y, node.rotation.z)
-                    * XMMatrixTranslation(node.position.x, node.position.y, node.position.z);
-                const XMMATRIX nodeMVP = nodeWorld * vp;
-
-                XMFLOAT4X4 mvp;
-                XMStoreFloat4x4(&mvp, nodeMVP);
-                commandList_->SetGraphicsRoot32BitConstants(0, 16, &mvp, 0);
-
-                const float col[4] = {node.color.x, node.color.y, node.color.z, 0.0f};
-                commandList_->SetGraphicsRoot32BitConstants(1, 4, col, 0);
-
-                commandList_->DrawInstanced(cubeWireVertexCount_, 1, 0, 0);
-            }
-        }
+        // Delegate editor drawing to the EditorComponent.
+        editor_.draw(commandList_.Get(), viewProj_);
     } else if (!paused) {
-        // Legacy pyramid draw.
+        // Legacy pyramid draw — upload light data for shading.
+        struct LightCBData {
+            float dir[3];
+            float intensity;
+            float color[3];
+            float _pad;
+        } lightCB;
+        lightCB.dir[0]    = cachedLight_.direction.x;
+        lightCB.dir[1]    = cachedLight_.direction.y;
+        lightCB.dir[2]    = cachedLight_.direction.z;
+        lightCB.intensity = cachedLight_.intensity;
+        lightCB.color[0]  = cachedLight_.color.x;
+        lightCB.color[1]  = cachedLight_.color.y;
+        lightCB.color[2]  = cachedLight_.color.z;
+        lightCB._pad      = 0.0f;
+        commandList_->SetGraphicsRoot32BitConstants(2, 8, &lightCB, 0);
+
         commandList_->SetGraphicsRoot32BitConstants(0, 16, &worldViewProj_, 0);
 
         const float white[4] = {1.0f, 1.0f, 1.0f, 0.0f};
@@ -677,9 +593,7 @@ void DX12Renderer::shutdown() {
     }
 
     // Release editor-mode resources.
-    cubeWireVertexBuffer_.Reset();
-    gridVertexBuffer_.Reset();
-    linePipelineState_.Reset();
+    editor_.shutdown();
 
     // Release all COM resources in reverse-creation order.
     fence_.Reset();
@@ -896,7 +810,8 @@ void DX12Renderer::createRenderTargets() {
 void DX12Renderer::createRootSignature() {
     // Root parameter 0: MVP matrix (16 x 32-bit constants at b0).
     // Root parameter 1: Color multiplier (4 x 32-bit constants at b1).
-    D3D12_ROOT_PARAMETER rootParams[2]{};
+    // Root parameter 2: Light data (8 x 32-bit constants at b2).
+    D3D12_ROOT_PARAMETER rootParams[3]{};
 
     rootParams[0].ParameterType             = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
     rootParams[0].Constants.ShaderRegister  = 0;    // b0
@@ -910,8 +825,14 @@ void DX12Renderer::createRootSignature() {
     rootParams[1].Constants.Num32BitValues  = 4;    // float3 + padding
     rootParams[1].ShaderVisibility          = D3D12_SHADER_VISIBILITY_VERTEX;
 
+    rootParams[2].ParameterType             = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+    rootParams[2].Constants.ShaderRegister  = 2;    // b2
+    rootParams[2].Constants.RegisterSpace   = 0;
+    rootParams[2].Constants.Num32BitValues  = 8;    // float3 dir + intensity + float3 color + pad
+    rootParams[2].ShaderVisibility          = D3D12_SHADER_VISIBILITY_ALL;
+
     D3D12_ROOT_SIGNATURE_DESC rootSigDesc{};
-    rootSigDesc.NumParameters     = 2;
+    rootSigDesc.NumParameters     = 3;
     rootSigDesc.pParameters       = rootParams;
     rootSigDesc.NumStaticSamplers = 0;
     rootSigDesc.pStaticSamplers   = nullptr;
@@ -1459,324 +1380,13 @@ void DX12Renderer::moveToNextFrame() {
 // ===========================================================================
 
 size_t DX12Renderer::loadEditorScene(std::vector<EditorNode> nodes) {
-    const size_t count = nodes.size();
-    {
-        std::lock_guard<std::mutex> lk(editorNodesMutex_);
-        editorNodes_ = std::move(nodes);
-    }
+    const size_t count = editor_.loadNodes(std::move(nodes));
     editorMode_ = true;
     return count;
 }
 
-// ===========================================================================
-// Private -- line-list PSO (for grid and wireframe rendering)
-// ===========================================================================
-
-void DX12Renderer::createLinePipelineState() {
-    // Compile the same shaders used by the triangle PSO -- the colorMul
-    // constant buffer is shared.
-    UINT compileFlags = 0;
-#ifdef UZENGINE_DEBUG
-    compileFlags = D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
-#endif
-
-    ComPtr<ID3DBlob> vertexShader;
-    ComPtr<ID3DBlob> pixelShader;
-    ComPtr<ID3DBlob> errors;
-
-    HRESULT hr = D3DCompile(
-        kVertexShaderSrc,
-        strlen(kVertexShaderSrc),
-        "VertexShader",
-        nullptr, nullptr,
-        "VSMain", "vs_5_0",
-        compileFlags, 0,
-        &vertexShader, &errors);
-
-    if (FAILED(hr)) {
-        std::string msg = "Line VS compilation failed";
-        if (errors) {
-            msg += ": ";
-            msg += static_cast<const char*>(errors->GetBufferPointer());
-        }
-        throw std::runtime_error(msg);
-    }
-
-    errors.Reset();
-
-    hr = D3DCompile(
-        kPixelShaderSrc,
-        strlen(kPixelShaderSrc),
-        "PixelShader",
-        nullptr, nullptr,
-        "PSMain", "ps_5_0",
-        compileFlags, 0,
-        &pixelShader, &errors);
-
-    if (FAILED(hr)) {
-        std::string msg = "Line PS compilation failed";
-        if (errors) {
-            msg += ": ";
-            msg += static_cast<const char*>(errors->GetBufferPointer());
-        }
-        throw std::runtime_error(msg);
-    }
-
-    // Input layout identical to the triangle PSO.
-    D3D12_INPUT_ELEMENT_DESC inputLayout[] = {
-        { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0,
-          D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
-        { "COLOR", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, sizeof(XMFLOAT3),
-          D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 }
-    };
-
-    D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc{};
-    psoDesc.InputLayout    = { inputLayout, _countof(inputLayout) };
-    psoDesc.pRootSignature = rootSignature_.Get();
-    psoDesc.VS             = { vertexShader->GetBufferPointer(), vertexShader->GetBufferSize() };
-    psoDesc.PS             = { pixelShader->GetBufferPointer(),  pixelShader->GetBufferSize()  };
-
-    // Wireframe rasterizer, no back-face culling (lines have no faces).
-    psoDesc.RasterizerState.FillMode              = D3D12_FILL_MODE_WIREFRAME;
-    psoDesc.RasterizerState.CullMode              = D3D12_CULL_MODE_NONE;
-    psoDesc.RasterizerState.FrontCounterClockwise = FALSE;
-    psoDesc.RasterizerState.DepthBias             = D3D12_DEFAULT_DEPTH_BIAS;
-    psoDesc.RasterizerState.DepthBiasClamp        = D3D12_DEFAULT_DEPTH_BIAS_CLAMP;
-    psoDesc.RasterizerState.SlopeScaledDepthBias  = D3D12_DEFAULT_SLOPE_SCALED_DEPTH_BIAS;
-    psoDesc.RasterizerState.DepthClipEnable       = TRUE;
-    psoDesc.RasterizerState.MultisampleEnable     = FALSE;
-    psoDesc.RasterizerState.AntialiasedLineEnable = FALSE;
-    psoDesc.RasterizerState.ForcedSampleCount     = 0;
-    psoDesc.RasterizerState.ConservativeRaster    = D3D12_CONSERVATIVE_RASTERIZATION_MODE_OFF;
-
-    // Opaque blend.
-    psoDesc.BlendState.AlphaToCoverageEnable  = FALSE;
-    psoDesc.BlendState.IndependentBlendEnable = FALSE;
-    psoDesc.BlendState.RenderTarget[0].BlendEnable           = FALSE;
-    psoDesc.BlendState.RenderTarget[0].LogicOpEnable         = FALSE;
-    psoDesc.BlendState.RenderTarget[0].SrcBlend              = D3D12_BLEND_ONE;
-    psoDesc.BlendState.RenderTarget[0].DestBlend             = D3D12_BLEND_ZERO;
-    psoDesc.BlendState.RenderTarget[0].BlendOp               = D3D12_BLEND_OP_ADD;
-    psoDesc.BlendState.RenderTarget[0].SrcBlendAlpha         = D3D12_BLEND_ONE;
-    psoDesc.BlendState.RenderTarget[0].DestBlendAlpha        = D3D12_BLEND_ZERO;
-    psoDesc.BlendState.RenderTarget[0].BlendOpAlpha          = D3D12_BLEND_OP_ADD;
-    psoDesc.BlendState.RenderTarget[0].LogicOp               = D3D12_LOGIC_OP_NOOP;
-    psoDesc.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
-
-    // Depth testing enabled for correct layering of grid and cubes.
-    psoDesc.DepthStencilState.DepthEnable    = TRUE;
-    psoDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
-    psoDesc.DepthStencilState.DepthFunc      = D3D12_COMPARISON_FUNC_LESS;
-    psoDesc.DepthStencilState.StencilEnable  = FALSE;
-    psoDesc.DSVFormat                        = DXGI_FORMAT_D32_FLOAT;
-
-    psoDesc.SampleMask            = UINT_MAX;
-    psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE;
-    psoDesc.NumRenderTargets      = 1;
-    psoDesc.RTVFormats[0]         = DXGI_FORMAT_R8G8B8A8_UNORM;
-    psoDesc.SampleDesc            = { 1, 0 };
-
-    ThrowIfFailed(
-        device_->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&linePipelineState_)),
-        "CreateGraphicsPipelineState (line)");
-}
-
-// ===========================================================================
-// Private -- ground grid vertex buffer (XZ plane, Y=0)
-// ===========================================================================
-
-void DX12Renderer::createGridVertexBuffer() {
-    // UE5-style viewport grid on the XZ plane (Y=0).
-    //
-    // - Minor lines every 1 unit:  subtle dark gray (blends into background)
-    // - Major lines every 10 units: slightly brighter gray (structural cues)
-    // - X-axis (i==0, Z-parallel): red   -- world "right" direction
-    // - Z-axis (i==0, X-parallel): green -- world "forward" direction
-    //
-    // Grid extends from -100 to +100 on both axes.
-    // 201 lines per axis x 2 axes = 402 lines = 804 vertices.
-    constexpr int   kHalfExtent = 100;
-    constexpr int   kLineCount  = 2 * kHalfExtent + 1;   // 201 per axis
-    constexpr int   kTotalVerts = kLineCount * 2 * 2;     // 804
-
-    Vertex gridVerts[kTotalVerts];
-    uint32_t idx = 0;
-
-    const float extent = static_cast<float>(kHalfExtent);
-
-    // Color palette matching UE5 viewport appearance.
-    const XMFLOAT3 kMinorColor = {0.12f, 0.12f, 0.12f};   // barely visible
-    const XMFLOAT3 kMajorColor = {0.25f, 0.25f, 0.25f};   // every 10 units
-    const XMFLOAT3 kAxisX      = {0.55f, 0.10f, 0.10f};   // red (X axis)
-    const XMFLOAT3 kAxisZ      = {0.10f, 0.55f, 0.10f};   // green (Z axis, Y-up engine)
-
-    // Lines parallel to the Z axis (varying X).
-    for (int i = -kHalfExtent; i <= kHalfExtent; ++i) {
-        const float x = static_cast<float>(i);
-
-        // Pick color: axis > major > minor.
-        XMFLOAT3 col;
-        if (i == 0) {
-            col = kAxisX;           // X-axis highlight (red)
-        } else if (i % 10 == 0) {
-            col = kMajorColor;      // every 10th line
-        } else {
-            col = kMinorColor;      // every 1-unit line
-        }
-
-        gridVerts[idx++] = { {x, 0.0f, -extent}, col };
-        gridVerts[idx++] = { {x, 0.0f,  extent}, col };
-    }
-
-    // Lines parallel to the X axis (varying Z).
-    for (int i = -kHalfExtent; i <= kHalfExtent; ++i) {
-        const float z = static_cast<float>(i);
-
-        XMFLOAT3 col;
-        if (i == 0) {
-            col = kAxisZ;           // Z-axis highlight (green)
-        } else if (i % 10 == 0) {
-            col = kMajorColor;
-        } else {
-            col = kMinorColor;
-        }
-
-        gridVerts[idx++] = { {-extent, 0.0f, z}, col };
-        gridVerts[idx++] = { { extent, 0.0f, z}, col };
-    }
-
-    gridVertexCount_ = idx;
-
-    const UINT bufferSize = sizeof(Vertex) * gridVertexCount_;
-
-    D3D12_HEAP_PROPERTIES heapProps{};
-    heapProps.Type                 = D3D12_HEAP_TYPE_UPLOAD;
-    heapProps.CPUPageProperty      = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
-    heapProps.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
-    heapProps.CreationNodeMask     = 1;
-    heapProps.VisibleNodeMask      = 1;
-
-    D3D12_RESOURCE_DESC bufferDesc{};
-    bufferDesc.Dimension          = D3D12_RESOURCE_DIMENSION_BUFFER;
-    bufferDesc.Alignment          = 0;
-    bufferDesc.Width              = bufferSize;
-    bufferDesc.Height             = 1;
-    bufferDesc.DepthOrArraySize   = 1;
-    bufferDesc.MipLevels          = 1;
-    bufferDesc.Format             = DXGI_FORMAT_UNKNOWN;
-    bufferDesc.SampleDesc         = { 1, 0 };
-    bufferDesc.Layout             = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-    bufferDesc.Flags              = D3D12_RESOURCE_FLAG_NONE;
-
-    ThrowIfFailed(
-        device_->CreateCommittedResource(
-            &heapProps,
-            D3D12_HEAP_FLAG_NONE,
-            &bufferDesc,
-            D3D12_RESOURCE_STATE_GENERIC_READ,
-            nullptr,
-            IID_PPV_ARGS(&gridVertexBuffer_)),
-        "CreateCommittedResource (grid VB)");
-
-    void* mappedData = nullptr;
-    D3D12_RANGE readRange{ 0, 0 };
-    ThrowIfFailed(
-        gridVertexBuffer_->Map(0, &readRange, &mappedData),
-        "GridVertexBuffer::Map");
-
-    std::memcpy(mappedData, gridVerts, bufferSize);
-    gridVertexBuffer_->Unmap(0, nullptr);
-
-    gridVertexBufferView_.BufferLocation = gridVertexBuffer_->GetGPUVirtualAddress();
-    gridVertexBufferView_.StrideInBytes  = sizeof(Vertex);
-    gridVertexBufferView_.SizeInBytes    = bufferSize;
-}
-
-// ===========================================================================
-// Private -- unit wireframe cube vertex buffer (12 edges, LINE_LIST)
-// ===========================================================================
-
-void DX12Renderer::createCubeWireVertexBuffer() {
-    // Unit cube centered at origin: corners from (-0.5,-0.5,-0.5) to (0.5,0.5,0.5).
-    // 12 edges x 2 vertices per edge = 24 vertices.
-    constexpr float h = 0.5f;
-    const XMFLOAT3 white = {1.0f, 1.0f, 1.0f};
-
-    // 8 corner positions.
-    const XMFLOAT3 corners[8] = {
-        {-h, -h, -h},  // 0: left-bottom-back
-        { h, -h, -h},  // 1: right-bottom-back
-        { h,  h, -h},  // 2: right-top-back
-        {-h,  h, -h},  // 3: left-top-back
-        {-h, -h,  h},  // 4: left-bottom-front
-        { h, -h,  h},  // 5: right-bottom-front
-        { h,  h,  h},  // 6: right-top-front
-        {-h,  h,  h},  // 7: left-top-front
-    };
-
-    // 12 edges defined by pairs of corner indices.
-    constexpr int edges[12][2] = {
-        // Back face
-        {0,1}, {1,2}, {2,3}, {3,0},
-        // Front face
-        {4,5}, {5,6}, {6,7}, {7,4},
-        // Connecting edges
-        {0,4}, {1,5}, {2,6}, {3,7},
-    };
-
-    constexpr uint32_t kVertCount = 24;
-    Vertex cubeVerts[kVertCount];
-
-    for (int e = 0; e < 12; ++e) {
-        cubeVerts[e * 2 + 0] = { corners[edges[e][0]], white };
-        cubeVerts[e * 2 + 1] = { corners[edges[e][1]], white };
-    }
-
-    cubeWireVertexCount_ = kVertCount;
-
-    const UINT bufferSize = sizeof(Vertex) * kVertCount;
-
-    D3D12_HEAP_PROPERTIES heapProps{};
-    heapProps.Type                 = D3D12_HEAP_TYPE_UPLOAD;
-    heapProps.CPUPageProperty      = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
-    heapProps.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
-    heapProps.CreationNodeMask     = 1;
-    heapProps.VisibleNodeMask      = 1;
-
-    D3D12_RESOURCE_DESC bufferDesc{};
-    bufferDesc.Dimension          = D3D12_RESOURCE_DIMENSION_BUFFER;
-    bufferDesc.Alignment          = 0;
-    bufferDesc.Width              = bufferSize;
-    bufferDesc.Height             = 1;
-    bufferDesc.DepthOrArraySize   = 1;
-    bufferDesc.MipLevels          = 1;
-    bufferDesc.Format             = DXGI_FORMAT_UNKNOWN;
-    bufferDesc.SampleDesc         = { 1, 0 };
-    bufferDesc.Layout             = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-    bufferDesc.Flags              = D3D12_RESOURCE_FLAG_NONE;
-
-    ThrowIfFailed(
-        device_->CreateCommittedResource(
-            &heapProps,
-            D3D12_HEAP_FLAG_NONE,
-            &bufferDesc,
-            D3D12_RESOURCE_STATE_GENERIC_READ,
-            nullptr,
-            IID_PPV_ARGS(&cubeWireVertexBuffer_)),
-        "CreateCommittedResource (cube wire VB)");
-
-    void* mappedData = nullptr;
-    D3D12_RANGE readRange{ 0, 0 };
-    ThrowIfFailed(
-        cubeWireVertexBuffer_->Map(0, &readRange, &mappedData),
-        "CubeWireVertexBuffer::Map");
-
-    std::memcpy(mappedData, cubeVerts, bufferSize);
-    cubeWireVertexBuffer_->Unmap(0, nullptr);
-
-    cubeWireVertexBufferView_.BufferLocation = cubeWireVertexBuffer_->GetGPUVirtualAddress();
-    cubeWireVertexBufferView_.StrideInBytes  = sizeof(Vertex);
-    cubeWireVertexBufferView_.SizeInBytes    = bufferSize;
+void DX12Renderer::setScene(Scene* scene) {
+    scene_ = scene;
 }
 
 } // namespace uz

@@ -17,6 +17,7 @@
 // Game Logic thread (same thread that owns the scene).
 
 #include "engine/scene/scene_node.h"
+#include "engine/scene/component_store.h"
 #include "engine/core/math.h"
 
 #include <cstdint>
@@ -45,12 +46,36 @@ struct Frustum {
 // Scene
 // ============================================================================
 
+/// Editor-only state persisted in the [editor] section of .uzscene files.
+/// This lets the editor camera position survive scene save/load cycles.
+struct EditorState {
+    float cam_pos_x   = 0.0f;
+    float cam_pos_y   = 15.0f;
+    float cam_pos_z   = -20.0f;
+    float cam_yaw     = 0.0f;
+    float cam_pitch   = -0.6f;
+    float cam_speed   = 10.0f;
+    bool  valid       = false;   ///< true if populated from a loaded file
+};
+
 struct Scene {
     char        name[kNodeNameMaxLen];   // Scene name
     uint32_t    version;                 // Format version (currently 1)
     SceneNode   nodes[kSceneMaxNodes];   // Flat node array (slot 0 reserved)
     uint32_t    node_count;              // Number of alive nodes (not counting slot 0)
     uint32_t    next_id;                 // Next ID to assign (monotonically increasing)
+
+    /// Generic component storage (keyed by NodeId + ComponentTypeId).
+    /// Must be initialized via scene_init() before use.
+    ComponentStore components;
+
+    /// Path of the .uzscene file this scene was loaded from.
+    /// Empty if the scene was created programmatically (not from a file).
+    char source_path[512];
+
+    /// Editor camera state loaded from the [editor] section. Populated by
+    /// scene_load_file / scene_load_from_string when an [editor] section exists.
+    EditorState editor_state;
 };
 
 // ============================================================================

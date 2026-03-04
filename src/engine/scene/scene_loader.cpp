@@ -4,6 +4,8 @@
 // See scene_loader.h for format documentation.
 
 #include "engine/scene/scene_loader.h"
+#include "engine/scene/component_data.h"
+#include "engine/scene/component_store.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -106,6 +108,20 @@ struct PendingNode {
     bool  has_active;
     bool  has_visible;
 
+    // Camera component data.
+    float fov_y;
+    float near_plane;
+    float far_plane;
+    bool  has_fov;
+    bool  has_near;
+    bool  has_far;
+
+    // DirectionalLight component data.
+    float light_color[3];
+    float light_intensity;
+    bool  has_light_color;
+    bool  has_light_intensity;
+
     void reset() {
         name.clear();
         type_str.clear();
@@ -120,6 +136,16 @@ struct PendingNode {
         visible      = true;
         has_active   = false;
         has_visible  = false;
+        fov_y         = 45.0f;
+        near_plane    = 0.1f;
+        far_plane     = 500.0f;
+        has_fov       = false;
+        has_near      = false;
+        has_far       = false;
+        light_color[0] = 1.0f; light_color[1] = 1.0f; light_color[2] = 1.0f;
+        light_intensity = 1.0f;
+        has_light_color     = false;
+        has_light_intensity = false;
     }
 };
 
@@ -190,6 +216,31 @@ static std::string flush_node(Scene* scene, const PendingNode& pending) {
 
     node->flags = flags;
 
+    // Apply component-specific data via ComponentStore.
+    if (type == NodeType::Camera) {
+        CameraData* cd = component_add<CameraData>(&scene->components, id);
+        if (cd) {
+            if (pending.has_fov)  cd->fov_y      = pending.fov_y;
+            if (pending.has_near) cd->near_plane  = pending.near_plane;
+            if (pending.has_far)  cd->far_plane   = pending.far_plane;
+        }
+    }
+
+    if (type == NodeType::DirectionalLight) {
+        DirectionalLightData* ld = component_add<DirectionalLightData>(&scene->components, id);
+        if (ld) {
+            if (pending.has_light_color) {
+                ld->color = {
+                    pending.light_color[0], pending.light_color[1],
+                    pending.light_color[2], 0.0f
+                };
+            }
+            if (pending.has_light_intensity) {
+                ld->intensity = pending.light_intensity;
+            }
+        }
+    }
+
     return {};
 }
 
@@ -210,7 +261,7 @@ SceneLoadResult scene_load_from_string(Scene* scene, const char* text) {
     std::istringstream stream(text);
     std::string line;
 
-    enum class Section { None, UzScene, Node };
+    enum class Section { None, UzScene, Node, Editor };
     Section current_section = Section::None;
 
     PendingNode pending;
@@ -255,6 +306,8 @@ SceneLoadResult scene_load_from_string(Scene* scene, const char* text) {
                 current_section = Section::Node;
                 pending.reset();
                 has_pending_node = true;
+            } else if (trimmed == "[editor]") {
+                current_section = Section::Editor;
             } else {
                 // Unknown section — silently skip (forward-compatible).
                 current_section = Section::None;
@@ -332,8 +385,78 @@ SceneLoadResult scene_load_from_string(Scene* scene, const char* text) {
             } else if (key == "visible") {
                 pending.visible     = parse_bool(value);
                 pending.has_visible = true;
+            } else if (key == "fov") {
+                char* endptr = nullptr;
+                float v = std::strtof(value.c_str(), &endptr);
+                if (endptr != value.c_str()) {
+                    pending.fov_y   = v;
+                    pending.has_fov = true;
+                }
+            } else if (key == "near") {
+                char* endptr = nullptr;
+                float v = std::strtof(value.c_str(), &endptr);
+                if (endptr != value.c_str()) {
+                    pending.near_plane = v;
+                    pending.has_near   = true;
+                }
+            } else if (key == "far") {
+                char* endptr = nullptr;
+                float v = std::strtof(value.c_str(), &endptr);
+                if (endptr != value.c_str()) {
+                    pending.far_plane = v;
+                    pending.has_far   = true;
+                }
+            } else if (key == "light_color") {
+                float vals[3];
+                if (parse_floats(value.c_str(), vals, 3)) {
+                    pending.light_color[0]  = vals[0];
+                    pending.light_color[1]  = vals[1];
+                    pending.light_color[2]  = vals[2];
+                    pending.has_light_color = true;
+                }
+            } else if (key == "light_intensity") {
+                char* endptr = nullptr;
+                float v = std::strtof(value.c_str(), &endptr);
+                if (endptr != value.c_str()) {
+                    pending.light_intensity   = v;
+                    pending.has_light_intensity = true;
+                }
             }
             // Unknown keys are silently ignored (forward-compatible).
+        } else if (current_section == Section::Editor) {
+            // Parse editor-only keys into scene->editor_state.
+            EditorState& es = scene->editor_state;
+            if (key == "camera_position") {
+                float vals[3];
+                if (parse_floats(value.c_str(), vals, 3)) {
+                    es.cam_pos_x = vals[0];
+                    es.cam_pos_y = vals[1];
+                    es.cam_pos_z = vals[2];
+                    es.valid = true;
+                }
+            } else if (key == "camera_yaw") {
+                char* endptr = nullptr;
+                float v = std::strtof(value.c_str(), &endptr);
+                if (endptr != value.c_str()) {
+                    es.cam_yaw = v;
+                    es.valid = true;
+                }
+            } else if (key == "camera_pitch") {
+                char* endptr = nullptr;
+                float v = std::strtof(value.c_str(), &endptr);
+                if (endptr != value.c_str()) {
+                    es.cam_pitch = v;
+                    es.valid = true;
+                }
+            } else if (key == "camera_speed") {
+                char* endptr = nullptr;
+                float v = std::strtof(value.c_str(), &endptr);
+                if (endptr != value.c_str()) {
+                    es.cam_speed = v;
+                    es.valid = true;
+                }
+            }
+            // Unknown editor keys are silently ignored (forward-compatible).
         }
         // Properties outside any known section are silently ignored.
     }
@@ -388,7 +511,13 @@ SceneLoadResult scene_load_file(Scene* scene, const char* path) {
             std::string("scene_load_file: failed to read file: ") + path);
     }
 
-    return scene_load_from_string(scene, contents.c_str());
+    auto result = scene_load_from_string(scene, contents.c_str());
+    if (result.is_ok()) {
+        // Record the source path so auto-save can write back to this file.
+        std::strncpy(scene->source_path, path, sizeof(scene->source_path) - 1);
+        scene->source_path[sizeof(scene->source_path) - 1] = '\0';
+    }
+    return result;
 }
 
 } // namespace uz
