@@ -6,8 +6,76 @@ This file provides guidance to Claude Code when working with this repository.
 
 This project uses @hivehub/rulebook standards. All code generation should follow the rules defined in AGENTS.md.
 
-**Languages**: C
+**Languages**: C (RHI backends), C++23 (engine systems), TypeScript (VSCode extension)
 **Coverage Threshold**: 95%
+
+---
+
+## 🚨 ENGINE ARCHITECTURE RULES (READ BEFORE WRITING ANY RENDERING OR COMPONENT CODE)
+
+These rules are derived from analysis of Unreal Engine 5, Unity, and Godot architectures.
+Full specifications are in `/docs/architecture/`. Violations will be rejected in code review.
+
+### Rule 1: THE RHI BOUNDARY IS ABSOLUTE
+
+`<d3d12.h>`, `<vulkan/vulkan.h>`, `<Metal/Metal.h>`, `Microsoft::WRL::ComPtr`,
+and `DirectX::XM*` types MUST NEVER appear in any file outside these three:
+- `src/engine/renderer/rhi/rhi_dx12.c`
+- `src/engine/renderer/rhi/rhi_vulkan.c`
+- `src/engine/renderer/rhi/rhi_metal.c`
+
+Above the RHI: use `RhiBuffer`, `RhiTexture`, `RhiPipeline`, `RhiCmdList` (all `uint64_t` handles).
+
+**Reference**: `docs/architecture/rhi-abstraction.md`
+
+### Rule 2: NO SWITCH-ON-NODETYPE IN RENDERING/PHYSICS/AUDIO
+
+`switch(node.type)` and `if(node.type == NodeType::X)` are FORBIDDEN in rendering,
+physics, audio, or any behavioral system. They are ONLY allowed in serialization
+helpers (`node_type_to_string()`). Use component-presence queries or virtual dispatch.
+
+**Reference**: `docs/architecture/component-interface.md`
+
+### Rule 3: NO NEW FILES IN src/renderer/ (LEGACY DIRECTORY)
+
+`src/renderer/` is deprecated and being migrated to `src/engine/renderer/`.
+Create all new rendering code in `src/engine/renderer/`. Do not extend legacy files.
+
+**Reference**: `docs/architecture/module-boundaries.md`
+
+### Rule 4: SCENE KNOWS NOTHING ABOUT THE RENDERER
+
+`src/engine/scene/` headers MUST NOT include `rhi.h`, `render_graph.h`, or any
+DX12/Vulkan/Metal header. Scene component data structs have NO GPU handles.
+
+### Rule 5: MATH TYPES — NEVER DirectXMath
+
+Use `uz::Vec3`, `uz::Mat4`, `uz::Quat` from `src/engine/core/math.h`.
+`DirectX::XMFLOAT3`, `DirectX::XMFLOAT4X4` etc. are FORBIDDEN outside `rhi_dx12.c`.
+
+### Rule 6: SHADERS ARE FILES, NOT STRING LITERALS
+
+HLSL source embedded in C++ strings (`R"hlsl(...)hlsl"`) is FORBIDDEN.
+Shaders go in `shaders/*.hlsl` files and are compiled offline by DXC.
+
+### Rule 7: NO EXCEPTIONS, NO RTTI
+
+Zero exceptions allowed. Use `uz::Result<T,E>` for fallible operations.
+`dynamic_cast` and `typeid` are FORBIDDEN. Use virtual dispatch or `Handle<T>`.
+
+---
+
+### Architecture Reference Documents
+
+| Document | Rules | When to read |
+|----------|-------|-------------|
+| `docs/architecture/rhi-abstraction.md` | RHI-1 to RHI-9 | Before ANY rendering code |
+| `docs/architecture/component-interface.md` | COMP-1 to COMP-5 | Before adding ANY component |
+| `docs/architecture/module-boundaries.md` | MOD-1 to MOD-8 | Before adding ANY file |
+| `docs/architecture/render-pipeline.md` | PIPE-1 to PIPE-8 | Before adding ANY render pass |
+| `docs/architecture/coding-standards.md` | CS-1 to CS-20 | Every code change |
+
+---
 
 ## 🚨 MANDATORY: Test-First Implementation Gate
 

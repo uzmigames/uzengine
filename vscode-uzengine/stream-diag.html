@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>UzEngine Stream Diagnostic</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #0d1117; color: #e0e0e0;
+      font-family: 'Segoe UI', 'Consolas', monospace;
+      display: flex; flex-direction: column; height: 100vh;
+    }
+    #toolbar {
+      display: flex; align-items: center; gap: 12px;
+      padding: 6px 12px; background: #161b22; border-bottom: 1px solid #30363d;
+      font-size: 12px; flex-shrink: 0;
+    }
+    .label { color: #58a6ff; font-weight: bold; }
+    #status { font-weight: bold; }
+    #status.connected { color: #3fb950; }
+    #status.disconnected { color: #f85149; }
+    #status.connecting { color: #d29922; }
+    .metric { color: #8b949e; }
+    .metric span { color: #58a6ff; font-weight: bold; }
+    input {
+      background: #21262d; color: #e0e0e0; border: 1px solid #30363d;
+      padding: 3px 8px; width: 70px; border-radius: 3px; font-size: 12px;
+    }
+    button {
+      background: #238636; color: #fff; border: none;
+      padding: 4px 12px; border-radius: 3px; cursor: pointer; font-size: 12px;
+    }
+    button:hover { background: #2ea043; }
+    #canvas-container {
+      flex: 1; position: relative; background: #000; overflow: hidden; min-height: 0;
+    }
+    canvas {
+      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+      image-rendering: auto;
+    }
+    #diag {
+      padding: 6px 12px; background: #161b22; border-top: 1px solid #30363d;
+      font-size: 11px; color: #8b949e; flex-shrink: 0;
+      display: flex; gap: 16px; flex-wrap: wrap;
+    }
+    #diag .val { color: #58a6ff; }
+  </style>
+</head>
+<body>
+  <div id="toolbar">
+    <span class="label">UzEngine Stream Diag</span>
+    <span id="status" class="connecting">Disconnected</span>
+    <span class="metric">FPS: <span id="fps">--</span></span>
+    <span class="metric">Decode: <span id="decodeTime">--</span> ms</span>
+    <span class="metric">Frame: <span id="frameSize">--</span> KB</span>
+    <span class="metric">Method: <span id="decodeMethod">--</span></span>
+    |
+    <label>Port: <input id="portInput" type="number" value="9002"></label>
+    <button onclick="startConnection()">Connect</button>
+    <label><input type="checkbox" id="useWebCodecs" checked> WebCodecs</label>
+  </div>
+  <div id="canvas-container">
+    <canvas id="viewport-canvas"></canvas>
+  </div>
+  <div id="diag">
+    <span>Frames received: <span class="val" id="totalFrames">0</span></span>
+    <span>Frames dropped: <span class="val" id="droppedFrames">0</span></span>
+    <span>Avg decode: <span class="val" id="avgDecode">--</span> ms</span>
+    <span>P95 decode: <span class="val" id="p95Decode">--</span> ms</span>
+    <span>Avg frame size: <span class="val" id="avgSize">--</span> KB</span>
+    <span>WS latency: <span class="val" id="wsLatency">--</span></span>
+    <span>rAF rate: <span class="val" id="rafRate">--</span> fps</span>
+    <span>Canvas: <span class="val" id="canvasSize">--</span></span>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('viewport-canvas');
+    const ctx2d = canvas.getContext('2d');
+    const fpsEl = document.getElementById('fps');
+    const decodeTimeEl = document.getElementById('decodeTime');
+    const frameSizeEl = document.getElementById('frameSize');
+    const decodeMethodEl = document.getElementById('decodeMethod');
+    const statusEl = document.getElementById('status');
+
+    let ws = null;
+    let pendingBitmap = null;
+    let rafScheduled = false;
+
+    // Metrics
+    let frameCount = 0;
+    let lastFpsTick = Date.now();
+    let totalFramesReceived = 0;
+    let droppedFrames = 0;
+    let decodeTimes = [];
+    let frameSizes = [];
+
+    // rAF rate measurement
+    let rafCount = 0;
+    let lastRafTick = Date.now();
+
+    const hasImageDecoder = typeof ImageDecoder !== 'undefined';
+    decodeMethodEl.textContent = hasImageDecoder ? 'ImageDecoder ✓' : 'createImageBitmap (fallback)';
+
+    function setStatus(text, cls) {
+      statusEl.textContent = text;
+      statusEl.className = cls;
+    }
+
+    // Measure rAF rate independently
+    function measureRaf() {
+      rafCount++;
+      const now = Date.now();
+      if (now - lastRafTick >= 1000) {
+        document.getElementById('rafRate').textContent =
+          Math.round(rafCount * 1000 / (now - lastRafTick));
+        rafCount = 0;
+        lastRafTick = now;
+      }
+      requestAnimationFrame(measureRaf);
+    }
+    requestAnimationFrame(measureRaf);
+
+    function scheduleRender() {
+      if (rafScheduled) return;
+      rafScheduled = true;
+      requestAnimationFrame(renderFrame);
+    }
+
+    function renderFrame() {
+      rafScheduled = false;
+      if (!pendingBitmap) return;
+
+      const bmp = pendingBitmap;
+      pendingBitmap = null;
+
+      const bmpW = bmp.displayWidth || bmp.width;
+      const bmpH = bmp.displayHeight || bmp.height;
+
+      if (canvas.width !== bmpW || canvas.height !== bmpH) {
+        canvas.width = bmpW;
+        canvas.height = bmpH;
+        document.getElementById('canvasSize').textContent = bmpW + '×' + bmpH;
+      }
+
+      ctx2d.drawImage(bmp, 0, 0);
+      bmp.close();
+
+      frameCount++;
+      const now = Date.now();
+      if (now - lastFpsTick >= 1000) {
+        fpsEl.textContent = Math.round(frameCount * 1000 / (now - lastFpsTick));
+        frameCount = 0;
+        lastFpsTick = now;
+
+        // Update aggregate metrics
+        document.getElementById('totalFrames').textContent = totalFramesReceived;
+        document.getElementById('droppedFrames').textContent = droppedFrames;
+
+        if (decodeTimes.length > 0) {
+          const avg = decodeTimes.reduce((a, b) => a + b, 0) / decodeTimes.length;
+          document.getElementById('avgDecode').textContent = avg.toFixed(2);
+          const sorted = [...decodeTimes].sort((a, b) => a - b);
+          document.getElementById('p95Decode').textContent =
+            sorted[Math.floor(sorted.length * 0.95)].toFixed(2);
+        }
+        if (frameSizes.length > 0) {
+          const avg = frameSizes.reduce((a, b) => a + b, 0) / frameSizes.length;
+          document.getElementById('avgSize').textContent = (avg / 1024).toFixed(1);
+        }
+
+        // Keep last 200 samples
+        if (decodeTimes.length > 200) decodeTimes = decodeTimes.slice(-200);
+        if (frameSizes.length > 200) frameSizes = frameSizes.slice(-200);
+      }
+    }
+
+    function onFrameDecoded(imageSource) {
+      if (pendingBitmap) {
+        pendingBitmap.close();
+        droppedFrames++;
+      }
+      pendingBitmap = imageSource;
+      scheduleRender();
+    }
+
+    function decodeJpeg(jpegBytes) {
+      const t0 = performance.now();
+      const useWC = document.getElementById('useWebCodecs').checked && hasImageDecoder;
+
+      if (useWC) {
+        const decoder = new ImageDecoder({ type: 'image/jpeg', data: jpegBytes });
+        decoder.decode().then(result => {
+          const dt = performance.now() - t0;
+          decodeTimes.push(dt);
+          decodeTimeEl.textContent = dt.toFixed(1);
+          onFrameDecoded(result.image);
+          decoder.close();
+        }).catch(err => {
+          decoder.close();
+          console.warn('ImageDecoder failed:', err);
+          decodeFallback(jpegBytes, t0);
+        });
+      } else {
+        decodeFallback(jpegBytes, t0);
+      }
+    }
+
+    function decodeFallback(jpegBytes, t0) {
+      const blob = new Blob([jpegBytes], { type: 'image/jpeg' });
+      createImageBitmap(blob).then(bmp => {
+        const dt = performance.now() - t0;
+        decodeTimes.push(dt);
+        decodeTimeEl.textContent = dt.toFixed(1);
+        onFrameDecoded(bmp);
+      }).catch(err => console.warn('createImageBitmap failed:', err));
+    }
+
+    function startConnection() {
+      if (ws) {
+        ws.close();
+        ws = null;
+      }
+
+      const port = document.getElementById('portInput').value || '9002';
+      const url = 'ws://localhost:' + port;
+      setStatus('Connecting…', 'connecting');
+
+      try {
+        ws = new WebSocket(url);
+      } catch (err) {
+        setStatus('Failed', 'disconnected');
+        return;
+      }
+
+      ws.binaryType = 'arraybuffer';
+
+      ws.addEventListener('open', () => {
+        setStatus('Connected', 'connected');
+        totalFramesReceived = 0;
+        droppedFrames = 0;
+        decodeTimes = [];
+        frameSizes = [];
+      });
+
+      ws.addEventListener('message', e => {
+        if (!(e.data instanceof ArrayBuffer)) return;
+        if (e.data.byteLength < 2) return;
+
+        totalFramesReceived++;
+        frameSizes.push(e.data.byteLength);
+        frameSizeEl.textContent = (e.data.byteLength / 1024).toFixed(1);
+
+        // Engine sends: [4-byte viewport_id LE] [JPEG data]
+        // Detect by checking for JPEG SOI marker (0xFF 0xD8) at offset 0 or 4.
+        var raw = new Uint8Array(e.data);
+        var jpegBytes;
+        if (raw[0] === 0xFF && raw[1] === 0xD8) {
+          // No prefix — raw JPEG.
+          jpegBytes = raw;
+        } else if (raw.length > 4 && raw[4] === 0xFF && raw[5] === 0xD8) {
+          // 4-byte viewport_id prefix — strip it.
+          jpegBytes = new Uint8Array(e.data, 4);
+        } else {
+          // Unknown format.
+          console.warn('[Diag] Unknown frame format, first bytes:', raw[0], raw[1], raw[2], raw[3], raw[4], raw[5]);
+          return;
+        }
+        decodeJpeg(jpegBytes);
+      });
+
+      ws.addEventListener('close', () => {
+        setStatus('Disconnected', 'disconnected');
+      });
+
+      ws.addEventListener('error', () => {});
+    }
+
+    // Auto-connect on load
+    startConnection();
+  </script>
+</body>
+</html>

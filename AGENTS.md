@@ -274,6 +274,162 @@ For detailed Ralph documentation, see `templates/skills/workflows/ralph/SKILL.md
 
 <!-- RULEBOOK:END -->
 
+---
+
+## 🚨 ENGINE ARCHITECTURE RULES (HIGHEST PRECEDENCE AFTER RULEBOOK)
+
+> These rules were derived from deep analysis of Unreal Engine 5, Unity, and Godot
+> source code and applied to UzEngine's specific architecture.
+> See `/docs/architecture/` for full specifications with code examples.
+> **These rules override any conflicting AI agent default behaviors.**
+
+---
+
+### §RHI-BOUNDARY — Render Hardware Interface Boundary
+
+**ABSOLUTE RULE: No DX12/Vulkan/Metal types above `src/engine/renderer/rhi/rhi.h`.**
+
+The RHI vtable (`rhi_backend_t` in `rhi.h`) is the ONLY file that may reference
+backend-specific headers. All code above this boundary is backend-agnostic.
+
+```
+FORBIDDEN in any file except rhi_dx12.c / rhi_vulkan.c / rhi_metal.c:
+  #include <d3d12.h>          ← NEVER
+  #include <vulkan/vulkan.h>  ← NEVER
+  #include <Metal/Metal.h>    ← NEVER
+  ID3D12Device*               ← NEVER
+  ComPtr<anything>            ← NEVER
+  DirectX::XM*                ← NEVER (use uz::Vec3, uz::Mat4 from math.h)
+  VkDevice, VkBuffer, etc.    ← NEVER
+```
+
+**Correct patterns above the RHI:**
+```cpp
+// ✅ Resource creation:   rhi()->buffer_create(&desc)
+// ✅ GPU commands:        rhi()->cmd_draw(cmd, ...)
+// ✅ Resource handles:    RhiBuffer, RhiTexture, RhiPipeline (uint64_t opaque)
+// ✅ State transitions:   rhi()->cmd_barrier_texture(cmd, tex, from, to)
+```
+
+**Full spec**: `docs/architecture/rhi-abstraction.md`
+
+**Validation grep (must return zero results):**
+```bash
+grep -rn "#include.*d3d12\|ComPtr<\|DirectX::" src/ --include="*.h" --include="*.cpp" | grep -v rhi_dx12
+```
+
+---
+
+### §COMP-INTERFACE — Component Interface Design (No Switch-on-Type)
+
+**ABSOLUTE RULE: Never switch on NodeType or component type in rendering, physics, or audio code paths.**
+
+```cpp
+// ❌ FORBIDDEN — anywhere in the codebase:
+switch (node.type) { ... }
+if (node.type == NodeType::Camera) { ... }
+if (node.type == NodeType::StaticMesh) { ... }
+
+// ✅ CORRECT — component-presence dispatch:
+const CameraData* cd = component_get<CameraData>(&store, id);
+if (cd) { /* process camera */ }
+
+// ✅ CORRECT — ECS query (when using EnTT):
+for (auto [entity, transform, mesh] : registry.view<Transform, StaticMeshData>().each()) { ... }
+
+// ✅ CORRECT — virtual dispatch via ISceneProxy:
+for (ISceneProxy* proxy : proxies) { proxy->execute(cmd, fc); }
+```
+
+**Allowed exceptions** (serialization/display only, NOT behavioral dispatch):
+- `node_type_to_string()` / `node_type_from_string()` in scene loader/saver
+- Editor UI: icons, display names
+
+**Every new renderable component type MUST**:
+1. Add a plain data struct to `src/engine/scene/component_data.h` (no GPU types)
+2. Implement `ISceneProxy` in `src/engine/renderer/proxies/`
+3. Register its proxy factory — NOT modify any existing switch statement
+
+**Full spec**: `docs/architecture/component-interface.md`
+
+---
+
+### §MODULE-BOUNDARY — Module Dependency Rules
+
+**ABSOLUTE RULES — forbidden include chains:**
+
+```
+engine/core/    MUST NOT depend on: engine/scene/, engine/renderer/, any external lib
+engine/scene/   MUST NOT depend on: engine/renderer/, rhi.h, d3d12.h, vulkan.h
+engine/scene/   MUST NOT contain:   RhiBuffer, RhiTexture, or any GPU handle types
+src/renderer/   IS LEGACY — no new files allowed. All new code → src/engine/renderer/
+```
+
+**Module hierarchy (arrows = "may depend on"):**
+```
+engine/renderer/ → engine/scene/ → engine/core/
+                                 → [external: EnTT]
+                → engine/renderer/rhi/ (rhi.h only)
+```
+
+**The src/renderer/ directory is deprecated** — it exists only during migration.
+Never create new files there. The migration to `src/engine/renderer/` is in progress.
+
+**Full spec**: `docs/architecture/module-boundaries.md`
+
+---
+
+### §RENDER-PIPELINE — Render Pipeline Rules
+
+**Key rules for the rendering pipeline:**
+
+1. **Scene → Proxy → RenderGraph → RHI** — data flows DOWN only, never up
+2. **Passes communicate via RenderGraph resources** — never via shared member variables
+3. **Frame constants are uploaded ONCE per frame** — no per-pass re-upload
+4. **New passes are self-contained** — declare read/write deps, never hardcode order
+5. **HDR from GBuffer to Tonemap** — all intermediate targets use RGBA16F
+6. **Proxy destruction/creation between frames** — never during execute() callbacks
+
+**Full spec**: `docs/architecture/render-pipeline.md`
+
+---
+
+### §CODING-STANDARDS — C/C++ Code Standards
+
+**Key non-negotiable standards:**
+
+1. **Math types**: ALWAYS `uz::Vec3`, `uz::Mat4`, `uz::Quat` — NEVER `DirectX::XM*`, `glm::*`
+2. **GPU data structs**: Use `float[16]`, `float[4]` for explicit GPU layout control
+3. **Error handling**: Use `uz::Result<T,E>` — NO exceptions (zero exceptions in codebase)
+4. **No RTTI**: `dynamic_cast` and `typeid` are FORBIDDEN — use virtual dispatch or `Handle<T>`
+5. **Memory**: Frame/level data → arena allocators; GPU resources → RHI handles
+6. **Shaders**: In `shaders/*.hlsl` files — NEVER as C++ string literals
+7. **Naming**: Types=`PascalCase`, functions=`snake_case`, members=`snake_case_`, macros=`UZ_SCREAMING`
+
+**Full spec**: `docs/architecture/coding-standards.md`
+
+---
+
+### §MIGRATION-STATUS — Current Technical Debt (Phase 1 Priority)
+
+The following files are **KNOWN VIOLATIONS** that are being actively migrated.
+Do NOT copy their patterns into new code. Do NOT extend them — refactor them:
+
+| File | Violations | Priority |
+|------|-----------|----------|
+| `src/renderer/renderer.h` | 20+ DX12 types, embedded HLSL shaders | 🔴 P0 — migrate first |
+| `src/renderer/renderer.cpp` | Direct DX12 command recording | 🔴 P0 |
+| `src/renderer/components/editor_component.h` | DX12 types in public interface | 🔴 P0 |
+| `src/renderer/gizmos/gizmo_renderer.h` | DX12 in virtual interface | 🔴 P0 |
+| `src/renderer/gizmos/*.h` | DX12 ComPtr members | 🔴 P0 |
+| `src/engine/scene/scene_loader.cpp` | if-chain on NodeType | 🟡 P1 |
+| `src/engine/scene/scene_saver.cpp` | if-chain on NodeType | 🟡 P1 |
+| `src/main.cpp` | switch(NodeType) for colors, 40+ includes | 🟡 P1 |
+
+**When working on any task that touches these files**: Migrate the violation, don't extend it.
+
+---
+
 ## Language-Specific Rules
 
 The following languages are configured for this project. For detailed rules, see the corresponding files in `/.rulebook/specs/`:

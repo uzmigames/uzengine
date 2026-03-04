@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>JPEG Decode Benchmark — UzEngine</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #1a1a2e; color: #e0e0e0;
+      font-family: 'Segoe UI', 'Consolas', monospace;
+      padding: 24px; min-height: 100vh;
+    }
+    h1 { color: #4ec9b0; margin-bottom: 8px; font-size: 22px; }
+    h2 { color: #569cd6; margin: 20px 0 8px; font-size: 16px; }
+    .subtitle { color: #888; font-size: 13px; margin-bottom: 20px; }
+    .controls {
+      display: flex; gap: 12px; align-items: center;
+      margin: 12px 0; flex-wrap: wrap;
+    }
+    button {
+      background: #264f78; color: #fff; border: none;
+      padding: 8px 16px; border-radius: 4px; cursor: pointer;
+      font-size: 13px; transition: background 0.15s;
+    }
+    button:hover { background: #365f88; }
+    button:disabled { opacity: 0.4; cursor: not-allowed; }
+    button.run { background: #16825d; }
+    button.run:hover { background: #1a9a70; }
+    label { font-size: 13px; color: #aaa; }
+    input[type=number] {
+      background: #252540; color: #e0e0e0; border: 1px solid #444;
+      padding: 4px 8px; width: 80px; border-radius: 3px; font-size: 13px;
+    }
+    select {
+      background: #252540; color: #e0e0e0; border: 1px solid #444;
+      padding: 4px 8px; border-radius: 3px; font-size: 13px;
+    }
+    .results-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 16px; margin: 16px 0;
+    }
+    .card {
+      background: #16213e; border: 1px solid #333; border-radius: 8px;
+      padding: 16px; position: relative;
+    }
+    .card.winner { border-color: #4ec9b0; box-shadow: 0 0 12px rgba(78,201,176,0.15); }
+    .card h3 { color: #dcdcaa; font-size: 14px; margin-bottom: 6px; }
+    .card .api { color: #666; font-size: 11px; margin-bottom: 10px; }
+    .metric { display: flex; justify-content: space-between; margin: 4px 0; font-size: 13px; }
+    .metric .label { color: #888; }
+    .metric .value { color: #4ec9b0; font-weight: bold; }
+    .metric .value.bad { color: #f48771; }
+    .badge {
+      position: absolute; top: 10px; right: 10px; font-size: 10px;
+      background: #4ec9b0; color: #000; padding: 2px 8px; border-radius: 10px;
+      font-weight: bold;
+    }
+    .bar-row { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+    .bar-label { width: 160px; font-size: 12px; color: #aaa; text-align: right; }
+    .bar-bg { flex: 1; height: 20px; background: #252540; border-radius: 3px; overflow: hidden; }
+    .bar-fill { height: 100%; border-radius: 3px; transition: width 0.5s ease; }
+    .bar-value { width: 70px; font-size: 12px; color: #4ec9b0; }
+    #log {
+      background: #0d1117; border: 1px solid #333; border-radius: 4px;
+      padding: 10px; font-size: 11px; max-height: 200px;
+      overflow-y: auto; white-space: pre-wrap; color: #888;
+      margin-top: 12px;
+    }
+    canvas.preview {
+      border: 1px solid #333; border-radius: 4px; margin-top: 8px;
+      max-width: 100%; height: auto;
+    }
+    .status { font-size: 12px; color: #dcdcaa; margin: 4px 0; }
+    .progress-bar {
+      width: 100%; height: 4px; background: #252540; border-radius: 2px;
+      margin: 6px 0; overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%; background: #4ec9b0; width: 0%; transition: width 0.1s;
+    }
+  </style>
+</head>
+<body>
+  <h1>🎯 JPEG Decode Benchmark</h1>
+  <p class="subtitle">Compara 3 métodos de decodificação JPEG para otimizar o streaming do UzEngine no VSCode</p>
+
+  <div class="controls">
+    <label>Iterações: <input type="number" id="iterations" value="200" min="10" max="2000"></label>
+    <label>Tamanho JPEG:
+      <select id="jpegSize">
+        <option value="small">Pequeno (~20KB - câmera perto)</option>
+        <option value="medium" selected>Médio (~80KB - câmera média)</option>
+        <option value="large">Grande (~200KB - câmera longe / grid)</option>
+      </select>
+    </label>
+    <label>Res.:
+      <select id="resolution">
+        <option value="720">1280×720</option>
+        <option value="1080" selected>1920×1080</option>
+        <option value="1440">2560×1440</option>
+      </select>
+    </label>
+    <button class="run" id="btnRun" onclick="runBenchmark()">▶ Executar Benchmark</button>
+  </div>
+
+  <div class="status" id="statusText">Pronto para iniciar</div>
+  <div class="progress-bar"><div class="progress-fill" id="progress"></div></div>
+
+  <div class="results-grid" id="results"></div>
+
+  <h2>📊 Comparação Visual</h2>
+  <div class="results-grid" id="bars"></div>
+
+  <h2>📋 Log</h2>
+  <div id="log"></div>
+
+  <script>
+    // -----------------------------------------------------------------------
+    // Synthetic JPEG generation (creates a proper JPEG via canvas)
+    // -----------------------------------------------------------------------
+    async function generateTestJPEG(sizeProfile, resolution) {
+      const resMap = { '720': [1280,720], '1080': [1920,1080], '1440': [2560,1440] };
+      const [w, h] = resMap[resolution] || [1920, 1080];
+      const qualityMap = { small: 0.3, medium: 0.65, large: 0.92 };
+      const quality = qualityMap[sizeProfile] || 0.65;
+
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext('2d');
+
+      // Draw a grid pattern (simulates the UzEngine grid that causes larger frames)
+      ctx.fillStyle = '#1a1a2e';
+      ctx.fillRect(0, 0, w, h);
+
+      // Grid lines (more = larger JPEG due to high-frequency detail)
+      ctx.strokeStyle = '#333344';
+      ctx.lineWidth = 1;
+      const gridSize = sizeProfile === 'large' ? 20 : sizeProfile === 'medium' ? 40 : 80;
+      for (let x = 0; x < w; x += gridSize) {
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+      }
+      for (let y = 0; y < h; y += gridSize) {
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+      }
+
+      // Axis lines
+      ctx.strokeStyle = '#ff4444'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(w/2, 0); ctx.lineTo(w/2, h); ctx.stroke();
+      ctx.strokeStyle = '#44ff44';
+      ctx.beginPath(); ctx.moveTo(0, h/2); ctx.lineTo(w, h/2); ctx.stroke();
+
+      // Some colored boxes (simulates objects in scene)
+      const boxColors = ['#ff6b35', '#4ec9b0', '#569cd6', '#dcdcaa', '#c586c0'];
+      for (let i = 0; i < 5; i++) {
+        ctx.fillStyle = boxColors[i];
+        const bx = w * 0.3 + Math.cos(i * 1.2) * w * 0.15;
+        const by = h * 0.3 + Math.sin(i * 1.2) * h * 0.15;
+        ctx.fillRect(bx, by, 60, 60);
+      }
+
+      // Add noise for large size to increase JPEG complexity
+      if (sizeProfile === 'large') {
+        const imgData = ctx.getImageData(0, 0, w, h);
+        const d = imgData.data;
+        for (let i = 0; i < d.length; i += 4) {
+          d[i]     += (Math.random() - 0.5) * 8;
+          d[i + 1] += (Math.random() - 0.5) * 8;
+          d[i + 2] += (Math.random() - 0.5) * 8;
+        }
+        ctx.putImageData(imgData, 0, 0);
+      }
+
+      const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', quality));
+      const buffer = await blob.arrayBuffer();
+      return { bytes: new Uint8Array(buffer), width: w, height: h };
+    }
+
+    // -----------------------------------------------------------------------
+    // Logging
+    // -----------------------------------------------------------------------
+    const logEl = document.getElementById('log');
+    function log(msg) {
+      const ts = new Date().toISOString().split('T')[1].replace('Z','');
+      logEl.textContent += `[${ts}] ${msg}\n`;
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    function setStatus(msg) {
+      document.getElementById('statusText').textContent = msg;
+    }
+    function setProgress(pct) {
+      document.getElementById('progress').style.width = pct + '%';
+    }
+
+    // -----------------------------------------------------------------------
+    // Method A: Blob → createImageBitmap (current baseline)
+    // -----------------------------------------------------------------------
+    async function decodeA(jpegBytes) {
+      const blob = new Blob([jpegBytes], { type: 'image/jpeg' });
+      const bmp = await createImageBitmap(blob);
+      bmp.close();
+    }
+
+    // -----------------------------------------------------------------------
+    // Method B: WebCodecs ImageDecoder (hardware-accelerated in Chromium)
+    // -----------------------------------------------------------------------
+    async function decodeB(jpegBytes) {
+      if (typeof ImageDecoder === 'undefined') {
+        throw new Error('ImageDecoder API not available');
+      }
+      const decoder = new ImageDecoder({
+        type: 'image/jpeg',
+        data: jpegBytes,
+      });
+      const result = await decoder.decode();
+      result.image.close();
+      decoder.close();
+    }
+
+    // Method B2: Reusable ImageDecoder with ReadableStream (amortized setup)
+    let streamDecoderController = null;
+    let streamDecoder = null;
+
+    async function decodeBStream(jpegBytes) {
+      if (typeof ImageDecoder === 'undefined') {
+        throw new Error('ImageDecoder API not available');
+      }
+      // Create a new decoder with a writable stream for each frame
+      const decoder = new ImageDecoder({
+        type: 'image/jpeg',
+        data: jpegBytes,
+      });
+      const result = await decoder.decode();
+      result.image.close();
+      decoder.close();
+    }
+
+    // -----------------------------------------------------------------------
+    // Method C: Pure JS decoder (jpeg-js-like baseline for WASM comparison)
+    // We use OffscreenCanvas + createImageBitmap as a faster variant
+    // -----------------------------------------------------------------------
+    let offscreenCanvas = null;
+    let offscreenCtx = null;
+
+    async function decodeC_OffscreenCanvas(jpegBytes) {
+      const blob = new Blob([jpegBytes], { type: 'image/jpeg' });
+      const bmp = await createImageBitmap(blob);
+      if (!offscreenCanvas) {
+        offscreenCanvas = new OffscreenCanvas(bmp.width, bmp.height);
+        offscreenCtx = offscreenCanvas.getContext('2d');
+      }
+      if (offscreenCanvas.width !== bmp.width || offscreenCanvas.height !== bmp.height) {
+        offscreenCanvas.width = bmp.width;
+        offscreenCanvas.height = bmp.height;
+      }
+      offscreenCtx.drawImage(bmp, 0, 0);
+      bmp.close();
+    }
+
+    // Method C2: Full pipeline (decode + render to canvas) — simulates real usage
+    let renderCanvas = null;
+    let renderCtx = null;
+
+    async function decodeC_FullPipeline(jpegBytes) {
+      const blob = new Blob([jpegBytes], { type: 'image/jpeg' });
+      const bmp = await createImageBitmap(blob);
+      if (!renderCanvas) {
+        renderCanvas = document.createElement('canvas');
+        renderCtx = renderCanvas.getContext('2d');
+      }
+      if (renderCanvas.width !== bmp.width || renderCanvas.height !== bmp.height) {
+        renderCanvas.width = bmp.width;
+        renderCanvas.height = bmp.height;
+      }
+      renderCtx.drawImage(bmp, 0, 0);
+      bmp.close();
+    }
+
+    // Method D: WebCodecs ImageDecoder with full pipeline
+    async function decodeD_WebCodecsFullPipeline(jpegBytes) {
+      if (typeof ImageDecoder === 'undefined') {
+        throw new Error('ImageDecoder API not available');
+      }
+      const decoder = new ImageDecoder({
+        type: 'image/jpeg',
+        data: jpegBytes,
+      });
+      const result = await decoder.decode();
+      if (!renderCanvas) {
+        renderCanvas = document.createElement('canvas');
+        renderCtx = renderCanvas.getContext('2d');
+      }
+      const frame = result.image;
+      if (renderCanvas.width !== frame.displayWidth || renderCanvas.height !== frame.displayHeight) {
+        renderCanvas.width = frame.displayWidth;
+        renderCanvas.height = frame.displayHeight;
+      }
+      renderCtx.drawImage(frame, 0, 0);
+      frame.close();
+      decoder.close();
+    }
+
+    // -----------------------------------------------------------------------
+    // Benchmark runner
+    // -----------------------------------------------------------------------
+    async function benchmarkMethod(name, fn, jpegBytes, iterations) {
+      // Warmup
+      try {
+        for (let i = 0; i < 5; i++) await fn(jpegBytes);
+      } catch (e) {
+        return { name, error: e.message, times: [] };
+      }
+
+      const times = [];
+      for (let i = 0; i < iterations; i++) {
+        const t0 = performance.now();
+        await fn(jpegBytes);
+        times.push(performance.now() - t0);
+      }
+
+      times.sort((a, b) => a - b);
+      const sum = times.reduce((a, b) => a + b, 0);
+      const avg = sum / times.length;
+      const p50 = times[Math.floor(times.length * 0.50)];
+      const p95 = times[Math.floor(times.length * 0.95)];
+      const p99 = times[Math.floor(times.length * 0.99)];
+      const min = times[0];
+      const max = times[times.length - 1];
+      const fps = 1000 / avg;
+
+      return { name, avg, p50, p95, p99, min, max, fps, times, error: null };
+    }
+
+    // -----------------------------------------------------------------------
+    // Main
+    // -----------------------------------------------------------------------
+    async function runBenchmark() {
+      const btn = document.getElementById('btnRun');
+      btn.disabled = true;
+
+      const iterations = parseInt(document.getElementById('iterations').value) || 200;
+      const sizeProfile = document.getElementById('jpegSize').value;
+      const resolution = document.getElementById('resolution').value;
+
+      logEl.textContent = '';
+      document.getElementById('results').innerHTML = '';
+      document.getElementById('bars').innerHTML = '';
+
+      log(`Gerando JPEG sintético (perfil: ${sizeProfile}, res: ${resolution})...`);
+      setStatus('Gerando JPEG de teste...');
+      setProgress(5);
+
+      const { bytes: jpegBytes, width, height } = await generateTestJPEG(sizeProfile, resolution);
+      log(`JPEG gerado: ${(jpegBytes.length / 1024).toFixed(1)} KB, ${width}×${height}`);
+
+      const methods = [
+        { name: 'A: Blob → createImageBitmap', api: 'Web API (atual)', fn: decodeA },
+        { name: 'B: WebCodecs ImageDecoder', api: 'WebCodecs API', fn: decodeB },
+        { name: 'C: OffscreenCanvas pipeline', api: 'OffscreenCanvas + createImageBitmap', fn: decodeC_OffscreenCanvas },
+        { name: 'D: createImageBitmap + drawImage', api: 'Full render pipeline (baseline)', fn: decodeC_FullPipeline },
+        { name: 'E: WebCodecs + drawImage', api: 'WebCodecs full pipeline', fn: decodeD_WebCodecsFullPipeline },
+      ];
+
+      const results = [];
+      for (let i = 0; i < methods.length; i++) {
+        const m = methods[i];
+        setStatus(`Testando ${m.name} (${i+1}/${methods.length})...`);
+        setProgress(10 + (i / methods.length) * 80);
+        log(`Benchmarking: ${m.name} (${iterations} iterações)...`);
+
+        const result = await benchmarkMethod(m.name, m.fn, jpegBytes, iterations);
+        result.api = m.api;
+        results.push(result);
+
+        if (result.error) {
+          log(`  ❌ ${m.name}: ${result.error}`);
+        } else {
+          log(`  ✅ ${m.name}: avg=${result.avg.toFixed(2)}ms p50=${result.p50.toFixed(2)}ms p95=${result.p95.toFixed(2)}ms fps=${result.fps.toFixed(0)}`);
+        }
+      }
+
+      setStatus('Renderizando resultados...');
+      setProgress(95);
+
+      // Find winner (lowest avg among non-error results)
+      const valid = results.filter(r => !r.error);
+      const winnerAvg = valid.length > 0 ? Math.min(...valid.map(r => r.avg)) : Infinity;
+
+      // Render result cards
+      const resultsEl = document.getElementById('results');
+      resultsEl.innerHTML = results.map(r => {
+        if (r.error) {
+          return `<div class="card">
+            <h3>${r.name}</h3>
+            <div class="api">${r.api}</div>
+            <div class="metric"><span class="label">Status</span><span class="value bad">❌ ${r.error}</span></div>
+          </div>`;
+        }
+        const isWinner = r.avg === winnerAvg;
+        return `<div class="card ${isWinner ? 'winner' : ''}">
+          ${isWinner ? '<span class="badge">🏆 VENCEDOR</span>' : ''}
+          <h3>${r.name}</h3>
+          <div class="api">${r.api}</div>
+          <div class="metric"><span class="label">Avg</span><span class="value">${r.avg.toFixed(2)} ms</span></div>
+          <div class="metric"><span class="label">P50</span><span class="value">${r.p50.toFixed(2)} ms</span></div>
+          <div class="metric"><span class="label">P95</span><span class="value">${r.p95.toFixed(2)} ms</span></div>
+          <div class="metric"><span class="label">P99</span><span class="value">${r.p99.toFixed(2)} ms</span></div>
+          <div class="metric"><span class="label">Min / Max</span><span class="value">${r.min.toFixed(2)} / ${r.max.toFixed(2)} ms</span></div>
+          <div class="metric"><span class="label">Throughput</span><span class="value">${r.fps.toFixed(0)} fps</span></div>
+          <div class="metric"><span class="label">vs Baseline</span><span class="value">${valid[0] ? ((1 - r.avg / valid[0].avg) * 100).toFixed(1) + '%' : 'N/A'}</span></div>
+        </div>`;
+      }).join('');
+
+      // Render bar chart
+      const maxAvg = Math.max(...valid.map(r => r.avg));
+      const barsEl = document.getElementById('bars');
+      barsEl.innerHTML = '<div class="card" style="grid-column: 1 / -1;">' +
+        '<h3>Tempo médio de decode (menor = melhor)</h3>' +
+        valid.map(r => {
+          const pct = (r.avg / maxAvg * 100).toFixed(1);
+          const color = r.avg === winnerAvg ? '#4ec9b0' : '#569cd6';
+          return `<div class="bar-row">
+            <span class="bar-label">${r.name}</span>
+            <div class="bar-bg"><div class="bar-fill" style="width:${pct}%;background:${color}"></div></div>
+            <span class="bar-value">${r.avg.toFixed(2)} ms</span>
+          </div>`;
+        }).join('') +
+        '</div>';
+
+      setStatus(`Concluído! ${valid.length} métodos testados, ${iterations} iterações cada. JPEG: ${(jpegBytes.length/1024).toFixed(0)}KB`);
+      setProgress(100);
+      log(`\n=== BENCHMARK COMPLETO ===`);
+      log(`JPEG: ${(jpegBytes.length/1024).toFixed(1)} KB | Resolução: ${width}×${height} | Iterações: ${iterations}`);
+      if (valid.length > 0) {
+        const winner = valid.find(r => r.avg === winnerAvg);
+        log(`🏆 Vencedor: ${winner.name} (${winner.avg.toFixed(2)}ms avg, ${winner.fps.toFixed(0)} fps)`);
+      }
+
+      btn.disabled = false;
+    }
+  </script>
+</body>
+</html>

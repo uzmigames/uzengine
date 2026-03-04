@@ -15,12 +15,12 @@
  */
 
 import {
-    window as vscodeWindow,
     ViewColumn,
+    __resetMockPanelFactory,
+    __setMockPanelFactory,
     makeMockContext,
     makeMockWebviewPanel,
-    __setMockPanelFactory,
-    __resetMockPanelFactory,
+    window as vscodeWindow,
 } from '../__mocks__/vscode';
 import { ViewportPanel, ViewportPanelHost } from '../viewport-panel';
 import { VIEWPORT_ID_INVALID, ViewportConfig } from '../viewport-types';
@@ -320,7 +320,7 @@ describe('ViewportPanel', () => {
 
             expect(mockPanel.webview.postMessage).toHaveBeenCalledWith({
                 type: 'frame',
-                data: expect.any(Array),
+                data: expect.any(Uint8Array),
             });
         });
 
@@ -336,9 +336,9 @@ describe('ViewportPanel', () => {
 
             const call = (mockPanel.webview.postMessage as jest.Mock).mock.calls[0][0] as {
                 type: string;
-                data: number[];
+                data: Uint8Array;
             };
-            expect(call.data).toEqual([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]);
+            expect(Array.from(call.data)).toEqual([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]);
         });
 
         it('does not post when panel is not visible', () => {

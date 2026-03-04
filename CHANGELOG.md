@@ -2,7 +2,36 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [0.3.0] — 2026-03-04
+
+### Added
+- **Multi-instance engine architecture**: each scene preview spawns its own `UzEngine.exe` process with dedicated WebSocket port and IPC directory
+  - `engine-instance-manager.ts` — manages lifecycle of multiple engine instances
+  - `engine-instance.ts` — per-scene engine process with independent port allocation
+  - `--ws-port` and `--scene` CLI arguments for per-instance configuration
+  - Scene-specific IPC directories under `build/Release/preview/<scene>/`
+
+- **Component-based renderer with gizmo system**:
+  - Data-oriented component storage with type-erased pools and O(1) access
+  - Light gizmo rendering (downward-pointing cone, adjustable thickness)
+  - Camera gizmo with frustum wireframe visualization
+  - Type-based wireframe colors (cyan=StaticMesh, yellow=Camera, amber=Light)
+
+- **Scene state persistence**: save and restore camera positions, node transforms, and editor state across scene switches
+  - JSON-based `.uzscene` format with full node hierarchy serialization
+  - Editor camera state preservation on scene switch
+
+- **Stream performance optimization**: broadcast busy-flag per encode thread to reduce backpressure stalls
+  - `g_broadcastBusyA` / `g_broadcastBusyB` — per-thread atomic flags tracking WebSocket broadcast state
+  - Prevents readback skip when broadcast (not encode) is the bottleneck
+
+### Changed
+- Light gizmo points downward with raised base position and thicker lines for better visibility
+- Code formatting standardized to 2-space indentation in `viewport-panel.ts`
+
+---
+
+## [0.2.0] — 2026-03-03
 
 ### Added
 - **Dual JPEG encoder threads**: round-robin frame dispatch to 2 independent `JpegEncoder` instances running on separate threads, doubling encode throughput from ~78 fps to ~143 fps (near 144 fps target)
