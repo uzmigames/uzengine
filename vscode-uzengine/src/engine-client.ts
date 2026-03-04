@@ -15,10 +15,10 @@
  * responses due to rapid file overwrites.
  */
 
+import { randomBytes } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { randomBytes } from 'crypto';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -101,9 +101,9 @@ export class EngineClient implements vscode.Disposable {
 
     private readonly outputChannel: vscode.OutputChannel;
 
-    constructor(outputChannel: vscode.OutputChannel) {
+    constructor(outputChannel: vscode.OutputChannel, baseDirOverride?: string) {
         this.outputChannel = outputChannel;
-        this.baseDir = this.resolveBaseDir();
+        this.baseDir = baseDirOverride ?? this.resolveBaseDir();
     }
 
     dispose(): void {

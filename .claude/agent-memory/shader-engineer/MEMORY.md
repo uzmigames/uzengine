@@ -136,6 +136,33 @@
 - **Lua API**: `ctx.render:get_cvar()`, `set_cvar()`, `apply_scalability_preset()`, `save_user_settings()`
 - **C++ classes**: CVarRegistry, CVar<T>, ScalabilityManager, ConfigParser, GPUProfiler, ScreenshotSystem
 
+## Module Violation Analysis (2026-03-04)
+- Two competing `renderer/` dirs: `src/renderer/` (DX12Renderer) vs `src/engine/renderer/` (rhi, render_graph)
+- `renderer.h` includes `<d3d12.h>` directly -- DX12 types in public API
+- HLSL shaders are C++ string literals in `renderer.h` -- blocks hot-reload/permutations
+- `editor_component.h` includes `<d3d12.h>` -- should use RHI
+- `main.cpp` is god file (41 includes, owns everything)
+- `rhi.h`, `render_graph.h`, `shader_manager.h` all exist but DX12Renderer ignores them
+- Full analysis: see `ue5-module-analysis.md` in this directory
+
+## UE5 Shader Patterns (from W:\UE_5.6_Source, 2026-03-04)
+- **Auto-registration**: IMPLEMENT_GLOBAL_SHADER -> static FShaderTypeRegistration -> linked list at startup
+- **No switch/case**: Shader map indexed by FShaderType* pointer (hash map)
+- **Permutation domain**: TShaderPermutationDomain<Dim...>, compile-time count, flat int32 ID
+- **Declarative params**: BEGIN_SHADER_PARAMETER_STRUCT generates struct + metadata, DXC reflection binding
+- **Layer cake**: Renderer -> RenderCore -> RHI -> Core (never upward)
+- **Dynamic backend**: RHI dynamically loads D3D12RHI/VulkanRHI (DynamicallyLoadedModuleNames)
+- **Key files**: GlobalShader.h:341-416, Shader.h:1260-1842, ShaderPermutation.h, ShaderParameterStruct.h
+
+## Target UzEngine Module Hierarchy
+```
+core/ -> platform/ -> rhi/ -> render_core/ -> renderer/ -> scene/ -> editor/ -> app/
+```
+- `rhi/`: pure C header, all DX12 confined to rhi/dx12/
+- `render_core/`: shader types, render graph, params -- MUST NOT depend on renderer/
+- `renderer/`: render passes -- NEVER includes d3d12.h
+- `scene/`: pure data -- MUST NOT depend on any rendering module
+
 ## See Also
 - `docs/specs/shader-variants.md` - variant/permutation system
 - `docs/specs/shader-library.md` - shared HLSL includes

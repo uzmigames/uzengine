@@ -4,17 +4,31 @@
  *
  * Tests cover:
  *  - resolveCustomTextEditor shows viewport canvas HTML immediately
- *  - serverManager.start() is called (fire-and-forget)
- *  - start() rejects: no error message shown, canvas still displayed
+ *  - EngineInstanceManager.createInstance() is called for the scene
  *  - buildLoadingHtml exports the file name in the HTML
+ *  - Panel title is set from scene name
+ *  - onDidDispose destroys the engine instance
  */
 
 import { jest } from '@jest/globals';
 
-const mockStart = jest.fn<() => Promise<boolean>>();
+// Mock EngineInstanceManager 
+const mockCreateInstance = jest.fn<() => Promise<{ id: string; wsPort: number; isDisposed: boolean }>>().mockResolvedValue({
+    id: 'test-instance-id',
+    wsPort: 9002,
+    isDisposed: false,
+});
+const mockDestroyInstance = jest.fn();
+const mockSetActiveInstance = jest.fn();
 
-jest.mock('../server-manager', () => ({
-    ServerManager: jest.fn(),
+jest.mock('../engine-instance-manager', () => ({
+    EngineInstanceManager: {
+        getInstance: jest.fn(() => ({
+            createInstance: mockCreateInstance,
+            destroyInstance: mockDestroyInstance,
+            setActiveInstance: mockSetActiveInstance,
+        })),
+    },
 }));
 
 jest.mock('../viewport-panel', () => ({
@@ -25,9 +39,9 @@ jest.mock('../viewport-panel', () => ({
 }));
 
 import {
+    makeMockWebviewPanel,
     window,
     workspace,
-    makeMockWebviewPanel,
 } from '../__mocks__/vscode';
 
 import { UzSceneEditorProvider, buildLoadingHtml } from '../uzscene-editor';
@@ -36,20 +50,16 @@ import { buildViewportStreamHtml } from '../viewport-panel';
 beforeEach(() => {
     jest.clearAllMocks();
     workspace.__clearConfig();
+    mockCreateInstance.mockResolvedValue({
+        id: 'test-instance-id',
+        wsPort: 9002,
+        isDisposed: false,
+    });
 });
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function makeServerManager(startResult: boolean | Error = true): import('../server-manager').ServerManager {
-    if (startResult instanceof Error) {
-        mockStart.mockRejectedValue(startResult);
-    } else {
-        mockStart.mockResolvedValue(startResult);
-    }
-    return { start: mockStart, isRunning: false, dispose: jest.fn() } as unknown as import('../server-manager').ServerManager;
-}
 
 const dummyContext = {
     extensionUri: { fsPath: '/ext', scheme: 'file', path: '/ext' },
@@ -58,7 +68,7 @@ const dummyContext = {
 
 function makeDocument(text: string, uri = 'file:///test.uzscene'): import('vscode').TextDocument {
     return {
-        getText:  () => text,
+        getText: () => text,
         fileName: uri,
         uri: { toString: () => uri, fsPath: uri, scheme: 'file', path: uri },
     } as unknown as import('vscode').TextDocument;
@@ -112,9 +122,9 @@ describe('buildLoadingHtml()', () => {
 
 describe('UzSceneEditorProvider — engine launch', () => {
     it('shows viewport canvas HTML immediately', async () => {
-        const provider = new UzSceneEditorProvider(makeServerManager(true), dummyContext);
-        const panel    = makeMockWebviewPanel();
-        const doc      = makeDocument(SIMPLE_SCENE);
+        const provider = new UzSceneEditorProvider(dummyContext);
+        const panel = makeMockWebviewPanel();
+        const doc = makeDocument(SIMPLE_SCENE);
 
         await provider.resolveCustomTextEditor(doc, panel as unknown as import('vscode').WebviewPanel, dummyToken);
 
@@ -122,24 +132,31 @@ describe('UzSceneEditorProvider — engine launch', () => {
         expect(panel.webview.html).toContain('VIEWPORT');
     });
 
-    it('calls serverManager.start()', async () => {
-        const provider = new UzSceneEditorProvider(makeServerManager(true), dummyContext);
-        const panel    = makeMockWebviewPanel();
-        await provider.resolveCustomTextEditor(makeDocument(SIMPLE_SCENE), panel as unknown as import('vscode').WebviewPanel, dummyToken);
-        expect(mockStart).toHaveBeenCalledTimes(1);
+    it('calls EngineInstanceManager.createInstance() with the scene path', async () => {
+        const provider = new UzSceneEditorProvider(dummyContext);
+        const panel = makeMockWebviewPanel();
+        const doc = makeDocument(SIMPLE_SCENE);
+        await provider.resolveCustomTextEditor(doc, panel as unknown as import('vscode').WebviewPanel, dummyToken);
+        expect(mockCreateInstance).toHaveBeenCalledWith('file:///test.uzscene');
     });
 
-    it('shows canvas even when start() returns false', async () => {
-        const provider = new UzSceneEditorProvider(makeServerManager(false), dummyContext);
-        const panel    = makeMockWebviewPanel();
+    it('uses the instance wsPort for the viewport stream', async () => {
+        mockCreateInstance.mockResolvedValue({
+            id: 'test-id',
+            wsPort: 9005,
+            isDisposed: false,
+        });
+        const provider = new UzSceneEditorProvider(dummyContext);
+        const panel = makeMockWebviewPanel();
         await provider.resolveCustomTextEditor(makeDocument(SIMPLE_SCENE), panel as unknown as import('vscode').WebviewPanel, dummyToken);
-        expect(buildViewportStreamHtml).toHaveBeenCalledTimes(1);
-        expect(panel.webview.html).toContain('VIEWPORT');
+        expect(buildViewportStreamHtml).toHaveBeenCalledWith(
+            expect.objectContaining({ wsPort: 9005 })
+        );
     });
 
     it('passes viewportId=1 for multiplexed mode', async () => {
-        const provider = new UzSceneEditorProvider(makeServerManager(true), dummyContext);
-        const panel    = makeMockWebviewPanel();
+        const provider = new UzSceneEditorProvider(dummyContext);
+        const panel = makeMockWebviewPanel();
         await provider.resolveCustomTextEditor(makeDocument(SIMPLE_SCENE), panel as unknown as import('vscode').WebviewPanel, dummyToken);
         expect(buildViewportStreamHtml).toHaveBeenCalledWith(
             expect.objectContaining({ viewportId: 1 })
@@ -148,32 +165,41 @@ describe('UzSceneEditorProvider — engine launch', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Engine start failure (fire-and-forget)
+// Instance lifecycle
 // ---------------------------------------------------------------------------
 
-describe('UzSceneEditorProvider — engine start failure', () => {
-    it('does not show error message when start() throws (fire-and-forget)', async () => {
-        const provider = new UzSceneEditorProvider(makeServerManager(new Error('exe not found')), dummyContext);
-        const panel    = makeMockWebviewPanel();
+describe('UzSceneEditorProvider — instance lifecycle', () => {
+    it('registers onDidDispose to destroy the engine instance', async () => {
+        const provider = new UzSceneEditorProvider(dummyContext);
+        const panel = makeMockWebviewPanel();
         await provider.resolveCustomTextEditor(makeDocument(SIMPLE_SCENE), panel as unknown as import('vscode').WebviewPanel, dummyToken);
-        expect(window.showErrorMessage).not.toHaveBeenCalled();
-    });
 
-    it('still shows viewport canvas when start() throws', async () => {
-        const provider = new UzSceneEditorProvider(makeServerManager(new Error('fail')), dummyContext);
-        const panel    = makeMockWebviewPanel();
+        // Simulate tab close — the onDidDispose callback should destroy the instance.
+        panel._simulateDispose();
+
+        expect(mockDestroyInstance).toHaveBeenCalledWith('test-instance-id');
+    });
+});
+
+// ---------------------------------------------------------------------------
+// EngineInstanceManager not initialised
+// ---------------------------------------------------------------------------
+
+describe('UzSceneEditorProvider — EngineInstanceManager not initialised', () => {
+    it('shows error message when getInstance throws', async () => {
+        // Override the mock to throw (not initialised).
+        const { EngineInstanceManager } = await import('../engine-instance-manager');
+        (EngineInstanceManager.getInstance as jest.Mock).mockImplementationOnce(() => {
+            throw new Error('not initialised');
+        });
+
+        const provider = new UzSceneEditorProvider(dummyContext);
+        const panel = makeMockWebviewPanel();
         await provider.resolveCustomTextEditor(makeDocument(SIMPLE_SCENE), panel as unknown as import('vscode').WebviewPanel, dummyToken);
-        expect(buildViewportStreamHtml).toHaveBeenCalledTimes(1);
-    });
 
-    it('handles non-Error thrown value from start()', async () => {
-        mockStart.mockRejectedValue('string error');
-        const sm = { start: mockStart, isRunning: false, dispose: jest.fn() } as unknown as import('../server-manager').ServerManager;
-        const provider = new UzSceneEditorProvider(sm, dummyContext);
-        const panel    = makeMockWebviewPanel();
-        await expect(
-            provider.resolveCustomTextEditor(makeDocument(SIMPLE_SCENE), panel as unknown as import('vscode').WebviewPanel, dummyToken)
-        ).resolves.not.toThrow();
+        expect(window.showErrorMessage).toHaveBeenCalledWith(
+            expect.stringContaining('EngineInstanceManager is not initialised')
+        );
     });
 });
 
@@ -183,8 +209,8 @@ describe('UzSceneEditorProvider — engine start failure', () => {
 
 describe('UzSceneEditorProvider — panel title (engine test)', () => {
     it('sets panel title from scene name', async () => {
-        const provider = new UzSceneEditorProvider(makeServerManager(true), dummyContext);
-        const panel    = makeMockWebviewPanel();
+        const provider = new UzSceneEditorProvider(dummyContext);
+        const panel = makeMockWebviewPanel();
         await provider.resolveCustomTextEditor(makeDocument(SIMPLE_SCENE), panel as unknown as import('vscode').WebviewPanel, dummyToken);
         expect(panel.title).toBe('TestScene — UzScene');
     });

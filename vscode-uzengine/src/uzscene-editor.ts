@@ -5,20 +5,21 @@
  * the editor tab (full-page canvas, 60 fps JPEG over WebSocket).
  *
  * Responsibilities:
- *  1. Starts UzEngine.exe (via ServerManager) if not already running.
+ *  1. Spawns an independent UzEngine.exe instance (via EngineInstanceManager)
+ *     for this scene file, with a unique WebSocket port and IPC directory.
  *  2. Replaces the loading page with the JPEG streaming canvas once the
- *     engine is up, using viewport_id=0 (legacy raw-JPEG mode — no 4-byte
- *     prefix on the wire).
+ *     engine is up.
  *  3. Updates the tab title from the scene name in the .uzscene file.
+ *  4. Disposes the engine instance when the editor tab is closed.
  *
  * The Scene Tree is shown in the "SCENE" side-panel (SceneTreeProvider),
  * not inside this editor tab.
  */
 
-import * as vscode from 'vscode';
 import { randomBytes } from 'crypto';
+import * as vscode from 'vscode';
+import { EngineInstanceManager } from './engine-instance-manager';
 import { parseUzScene } from './uzscene-parser';
-import { ServerManager } from './server-manager';
 import { buildViewportStreamHtml } from './viewport-panel';
 
 // ---------------------------------------------------------------------------
@@ -93,11 +94,14 @@ export function buildLoadingHtml(fileName: string): string {
 /**
  * CustomTextEditorProvider that opens .uzscene files as a live 3D render.
  *
+ * Each .uzscene tab spawns its own independent UzEngine.exe instance via
+ * EngineInstanceManager, ensuring fully isolated rendering per scene.
+ *
  * Registration in extension.ts:
  * ```ts
  * vscode.window.registerCustomEditorProvider(
  *   UzSceneEditorProvider.viewType,
- *   new UzSceneEditorProvider(serverManager, context),
+ *   new UzSceneEditorProvider(context),
  *   { webviewOptions: { retainContextWhenHidden: true } }
  * )
  * ```
@@ -108,9 +112,8 @@ export class UzSceneEditorProvider implements vscode.CustomTextEditorProvider {
     public static readonly viewType = 'uzengine.uzsceneEditor';
 
     constructor(
-        private readonly _serverManager: ServerManager,
         _context: vscode.ExtensionContext,
-    ) {}
+    ) { }
 
     // -------------------------------------------------------------------------
     // CustomTextEditorProvider implementation
@@ -118,10 +121,10 @@ export class UzSceneEditorProvider implements vscode.CustomTextEditorProvider {
 
     /**
      * Called by VSCode when a .uzscene file is opened.
-     * 1. Shows a loading splash immediately.
-     * 2. Starts UzEngine.exe.
-     * 3. Swaps the webview to the live JPEG viewport canvas.
-     * 4. Updates the tab title from the scene name.
+     * 1. Spawns an independent UzEngine.exe instance for this scene.
+     * 2. Shows the live JPEG viewport canvas connected to the instance's port.
+     * 3. Updates the tab title from the scene name.
+     * 4. Cleans up the instance when the tab is closed.
      */
     async resolveCustomTextEditor(
         document: vscode.TextDocument,
@@ -134,22 +137,55 @@ export class UzSceneEditorProvider implements vscode.CustomTextEditorProvider {
         // Update title from scene name (best-effort, non-blocking).
         this._updateTitle(document, webviewPanel);
 
-        // Show the viewport canvas immediately — the webview JS has a WebSocket
-        // reconnect loop, so it connects as soon as the engine is up on ws://localhost:<port>.
-        const config = vscode.workspace.getConfiguration('uzengine');
-        const wsPort = config.get<number>('server.wsPort', 9002);
-        const nonce  = randomBytes(16).toString('base64');
+        // Get or create an independent engine instance for this scene.
+        let instanceMgr: EngineInstanceManager;
+        try {
+            instanceMgr = EngineInstanceManager.getInstance();
+        } catch {
+            vscode.window.showErrorMessage(
+                'UzEngine: EngineInstanceManager is not initialised. ' +
+                'Make sure the extension activated correctly.'
+            );
+            return;
+        }
 
-        webviewPanel.webview.html = buildViewportStreamHtml({
-            nonce,
-            title:      document.fileName.split(/[\\/]/).pop() || 'UzScene',
-            wsPort,
-            viewportId: 1, // default scene viewport (engine prefixes frames with this ID)
-        });
+        try {
+            const instance = await instanceMgr.createInstance(document.uri.fsPath);
 
-        // Fire-and-forget: try to start engine if it's not already running.
-        // If it fails (e.g. exe not found), the canvas stays black — no crash.
-        this._serverManager.start().catch(() => { /* best-effort */ });
+            if (!instance.isRunning) {
+                const sceneName = document.fileName.split(/[\\/]/).pop() || 'scene';
+                vscode.window.showWarningMessage(
+                    `UzEngine: Engine for "${sceneName}" failed to start ` +
+                    `(port ${instance.wsPort}). Check Output → UzEngine for details.`
+                );
+            }
+
+            const wsPort = instance.wsPort;
+            const nonce = randomBytes(16).toString('base64');
+
+            webviewPanel.webview.html = buildViewportStreamHtml({
+                nonce,
+                title: document.fileName.split(/[\\/]/).pop() || 'UzScene',
+                wsPort,
+                viewportId: 1,
+            });
+
+            // Set this as the active instance when the tab gains focus.
+            webviewPanel.onDidChangeViewState(() => {
+                if (webviewPanel.visible) {
+                    instanceMgr.setActiveInstance(instance.id);
+                }
+            });
+
+            // Destroy the engine instance when the tab is closed.
+            webviewPanel.onDidDispose(() => {
+                instanceMgr.destroyInstance(instance.id);
+            });
+
+        } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            vscode.window.showErrorMessage(`UzEngine: Failed to open scene — ${message}`);
+        }
     }
 
     // -------------------------------------------------------------------------

@@ -11,25 +11,29 @@ jest.mock('../uzscene-parser', () => ({
     parseUzScene: jest.fn(),
 }));
 
-jest.mock('../server-manager', () => ({ ServerManager: jest.fn() }));
+jest.mock('../engine-instance-manager', () => ({
+    EngineInstanceManager: {
+        getInstance: jest.fn(() => ({
+            createInstance: jest.fn<() => Promise<{ id: string; wsPort: number; isDisposed: boolean }>>().mockResolvedValue({
+                id: 'test-id',
+                wsPort: 9002,
+                isDisposed: false,
+            }),
+            destroyInstance: jest.fn(),
+            setActiveInstance: jest.fn(),
+        })),
+    },
+}));
 
 jest.mock('../viewport-panel', () => ({
     buildViewportStreamHtml: jest.fn(() => '<html>VIEWPORT</html>'),
 }));
 
-import { parseUzScene } from '../uzscene-parser';
 import { makeMockWebviewPanel, workspace } from '../__mocks__/vscode';
 import { UzSceneEditorProvider } from '../uzscene-editor';
+import { parseUzScene } from '../uzscene-parser';
 
 const mockParseUzScene = parseUzScene as jest.MockedFunction<typeof parseUzScene>;
-
-function makeMockServerManager(): import('../server-manager').ServerManager {
-    return {
-        start: jest.fn().mockImplementation(() => Promise.resolve(true)),
-        isRunning: false,
-        dispose: jest.fn(),
-    } as unknown as import('../server-manager').ServerManager;
-}
 
 const dummyContext = {
     extensionUri: { fsPath: '/ext', scheme: 'file', path: '/ext' },
@@ -67,9 +71,9 @@ describe('UzSceneEditorProvider — _updateTitle edge cases', () => {
             roots: [],
         });
 
-        const provider = new UzSceneEditorProvider(makeMockServerManager(), dummyContext);
-        const panel    = makeMockWebviewPanel();
-        const doc      = makeDocument('dummy');
+        const provider = new UzSceneEditorProvider(dummyContext);
+        const panel = makeMockWebviewPanel();
+        const doc = makeDocument('dummy');
 
         await provider.resolveCustomTextEditor(
             doc,
@@ -86,9 +90,9 @@ describe('UzSceneEditorProvider — _updateTitle edge cases', () => {
             roots: [],
         });
 
-        const provider = new UzSceneEditorProvider(makeMockServerManager(), dummyContext);
-        const panel    = makeMockWebviewPanel();
-        const doc      = makeDocument('dummy');
+        const provider = new UzSceneEditorProvider(dummyContext);
+        const panel = makeMockWebviewPanel();
+        const doc = makeDocument('dummy');
 
         await provider.resolveCustomTextEditor(
             doc,
@@ -105,9 +109,9 @@ describe('UzSceneEditorProvider — _updateTitle edge cases', () => {
             roots: [],
         });
 
-        const provider = new UzSceneEditorProvider(makeMockServerManager(), dummyContext);
-        const panel    = makeMockWebviewPanel();
-        const doc      = makeDocument('dummy');
+        const provider = new UzSceneEditorProvider(dummyContext);
+        const panel = makeMockWebviewPanel();
+        const doc = makeDocument('dummy');
 
         await expect(
             provider.resolveCustomTextEditor(
@@ -125,9 +129,9 @@ describe('UzSceneEditorProvider — _updateTitle edge cases', () => {
             throw new Error('parse error');
         });
 
-        const provider = new UzSceneEditorProvider(makeMockServerManager(), dummyContext);
-        const panel    = makeMockWebviewPanel();
-        const doc      = makeDocument('dummy');
+        const provider = new UzSceneEditorProvider(dummyContext);
+        const panel = makeMockWebviewPanel();
+        const doc = makeDocument('dummy');
 
         await expect(
             provider.resolveCustomTextEditor(

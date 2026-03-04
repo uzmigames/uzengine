@@ -28,11 +28,11 @@
  */
 
 import {
-    window,
-    workspace,
+    __resetMockPanelFactory,
     commands,
     makeMockContext,
-    __resetMockPanelFactory,
+    window,
+    workspace,
 } from '../__mocks__/vscode';
 import { ViewportManager } from '../viewport-manager';
 
@@ -40,13 +40,38 @@ import { ViewportManager } from '../viewport-manager';
 // Mock dependencies that have side effects
 // ---------------------------------------------------------------------------
 
-// Mock ServerManager to avoid file-system / process interactions.
+// Mock ServerManager (still imported in the module but no longer instantiated).
 jest.mock('../server-manager', () => ({
     ServerManager: jest.fn().mockImplementation(() => ({
         start: jest.fn().mockResolvedValue(false),
         stop: jest.fn(),
         dispose: jest.fn(),
     })),
+}));
+
+// Mock EngineInstanceManager — single mock instance with onActiveChanged.
+const mockGetActiveInstance = jest.fn().mockReturnValue(undefined);
+const mockGetAllInstances = jest.fn().mockReturnValue([]);
+const mockDestroyInstance = jest.fn();
+let mockOnActiveChangedListener: ((inst: unknown) => void) | undefined;
+
+jest.mock('../engine-instance-manager', () => ({
+    EngineInstanceManager: {
+        initialize: jest.fn().mockReturnValue({
+            getActiveInstance: mockGetActiveInstance,
+            getAllInstances: mockGetAllInstances,
+            destroyInstance: mockDestroyInstance,
+            onActiveChanged: jest.fn((listener: (inst: unknown) => void) => {
+                mockOnActiveChangedListener = listener;
+                return { dispose: jest.fn() };
+            }),
+        }),
+        getInstance: jest.fn().mockReturnValue({
+            getActiveInstance: mockGetActiveInstance,
+            getAllInstances: mockGetAllInstances,
+            destroyInstance: mockDestroyInstance,
+        }),
+    },
 }));
 
 // Mock StreamPanel to avoid ViewportManager/WebSocket interactions.
@@ -65,7 +90,7 @@ jest.mock('../ipc-client', () => ({
         connect: jest.fn(),
         disconnect: jest.fn(),
         request: jest.fn().mockResolvedValue({}),
-        on: jest.fn().mockReturnValue(() => {}),
+        on: jest.fn().mockReturnValue(() => { }),
         isConnected: false,
         state: 'disconnected',
     })),
@@ -77,14 +102,12 @@ jest.mock('../ipc-client', () => ({
     },
 }));
 
-// Mock fs — keep all real implementations, override writeFileSync/renameSync for sendSceneLoad.
+// Mock fs — keep all real implementations.
 jest.mock('fs', () => {
     const actual = jest.requireActual<typeof import('fs')>('fs');
-    return { ...actual, writeFileSync: jest.fn(), renameSync: jest.fn() };
+    return { ...actual };
 });
-import * as fs from 'fs';
-const mockWriteFileSync = fs.writeFileSync as jest.Mock;
-const mockRenameSync = fs.renameSync as jest.Mock;
+
 
 // ---------------------------------------------------------------------------
 // Setup / teardown
@@ -96,6 +119,7 @@ beforeEach(() => {
     commands.__clearHandlers();
     workspace.__clearConfig();
     ViewportManager._resetForTests();
+    mockOnActiveChangedListener = undefined;
 });
 
 afterEach(() => {
@@ -230,12 +254,12 @@ describe('extension activate()', () => {
         );
     });
 
-    it('subscribes to onDidChangeConfiguration', async () => {
+    it('subscribes to onActiveChanged for dynamic IpcClient reconnection', async () => {
         await activateExtension();
-        expect(workspace.onDidChangeConfiguration).toHaveBeenCalled();
+        expect(mockOnActiveChangedListener).toBeDefined();
     });
 
-    it('reconnects IpcClient when uzengine.serverUrl configuration changes', async () => {
+    it('reconnects IpcClient when active engine instance changes', async () => {
         const { IpcClient } = await import('../ipc-client');
         await activateExtension();
 
@@ -243,40 +267,11 @@ describe('extension activate()', () => {
             connect: jest.Mock;
         };
 
-        // Simulate configuration change event.
-        const configChangeHandler = (workspace.onDidChangeConfiguration as jest.Mock).mock.calls[0]?.[0] as
-            ((e: { affectsConfiguration: (key: string) => boolean }) => void) | undefined;
+        // Simulate an active instance appearing.
+        mockGetActiveInstance.mockReturnValueOnce({ wsPort: 9005, isRunning: true });
+        mockOnActiveChangedListener?.({ wsPort: 9005, isRunning: true });
 
-        expect(configChangeHandler).toBeDefined();
-
-        // Trigger a change that affects uzengine.serverUrl.
-        const connectCallsBefore = mockIpcInstance?.connect.mock.calls.length ?? 0;
-        configChangeHandler?.({
-            affectsConfiguration: (key: string) => key === 'uzengine.serverUrl',
-        });
-
-        // connect() should be called again with the new URL.
-        expect(mockIpcInstance?.connect.mock.calls.length ?? 0).toBeGreaterThan(connectCallsBefore);
-    });
-
-    it('does NOT reconnect when an unrelated configuration changes', async () => {
-        const { IpcClient } = await import('../ipc-client');
-        await activateExtension();
-
-        const mockIpcInstance = (IpcClient as jest.Mock).mock.results[0]?.value as {
-            connect: jest.Mock;
-        };
-
-        const configChangeHandler = (workspace.onDidChangeConfiguration as jest.Mock).mock.calls[0]?.[0] as
-            ((e: { affectsConfiguration: (key: string) => boolean }) => void) | undefined;
-
-        const connectCallsBefore = mockIpcInstance?.connect.mock.calls.length ?? 0;
-        configChangeHandler?.({
-            affectsConfiguration: () => false,
-        });
-
-        // connect() should NOT be called again.
-        expect(mockIpcInstance?.connect.mock.calls.length ?? 0).toBe(connectCallsBefore);
+        expect(mockIpcInstance?.connect).toHaveBeenCalledWith('ws://localhost:9005');
     });
 
     it('uzengine.saveScene — success path logs to console', async () => {
@@ -463,37 +458,28 @@ describe('extension activate()', () => {
         expect(mockIpc.disconnect).toHaveBeenCalled();
     });
 
-    it('uzengine.openStreamViewer — calls StreamPanel.createOrShow when start() returns true', async () => {
-        const { ServerManager } = await import('../server-manager');
-
+    it('uzengine.openStreamViewer — opens StreamPanel when active instance exists', async () => {
         await activateExtension();
 
-        // Retarget the already-created mock instance's start() to return true.
-        const mockSm = (ServerManager as jest.Mock).mock.results[0]?.value as {
-            start: jest.Mock;
-        };
-        mockSm.start.mockResolvedValueOnce(true);
+        // Simulate an active instance.
+        mockGetActiveInstance.mockReturnValueOnce({ wsPort: 9002, isRunning: true });
 
         await (commands.__executeRegisteredCommand('uzengine.openStreamViewer') as Promise<void>);
 
         expect(mockCreateOrShow).toHaveBeenCalled();
     });
 
-    it('uzengine.openStreamViewer — does NOT call StreamPanel.createOrShow when start() returns false', async () => {
-        const { ServerManager } = await import('../server-manager');
-
+    it('uzengine.openStreamViewer — shows info when no active instance', async () => {
         await activateExtension();
 
-        const mockSm = (ServerManager as jest.Mock).mock.results[0]?.value as {
-            start: jest.Mock;
-        };
-        // default is already false, but be explicit
-        mockSm.start.mockResolvedValueOnce(false);
+        // No active instance.
+        mockGetActiveInstance.mockReturnValueOnce(undefined);
 
         mockCreateOrShow.mockClear();
         await (commands.__executeRegisteredCommand('uzengine.openStreamViewer') as Promise<void>);
 
         expect(mockCreateOrShow).not.toHaveBeenCalled();
+        expect(window.showInformationMessage).toHaveBeenCalled();
     });
 });
 
@@ -503,7 +489,8 @@ describe('extension — .uzscene file watcher', () => {
             {
                 fileName: 'test.uzscene',
                 getText: () => '[uzscene]\nname = Pre\n\n[node]\nname = World\ntype = Node3D\nparent =\n',
-            },
+                uri: { fsPath: 'test.uzscene' },
+            } as any, // eslint-disable-line @typescript-eslint/no-explicit-any
         ];
         await activateExtension();
         // textDocuments was iterated — onDidOpenTextDocument was also registered
@@ -529,19 +516,20 @@ describe('extension — .uzscene file watcher', () => {
     it('onDidOpenTextDocument callback loads .uzscene without throwing', async () => {
         await activateExtension();
         const openCb = (workspace.onDidOpenTextDocument as jest.Mock).mock.calls[0]?.[0] as
-            ((doc: { fileName: string; getText: () => string }) => void) | undefined;
+            ((doc: { fileName: string; getText: () => string; uri?: { fsPath: string } }) => void) | undefined;
         expect(openCb).toBeDefined();
 
         expect(() => openCb!({
             fileName: 'level.uzscene',
             getText: () => '[uzscene]\nname = L\n\n[node]\nname = R\ntype = Node3D\nparent =\n',
+            uri: { fsPath: 'level.uzscene' },
         })).not.toThrow();
     });
 
     it('onDidOpenTextDocument callback ignores non-.uzscene files', async () => {
         await activateExtension();
         const openCb = (workspace.onDidOpenTextDocument as jest.Mock).mock.calls[0]?.[0] as
-            ((doc: { fileName: string; getText: () => string }) => void) | undefined;
+            ((doc: { fileName: string; getText: () => string; uri?: { fsPath: string } }) => void) | undefined;
 
         expect(() => openCb!({ fileName: 'main.ts', getText: () => 'const x = 1;' })).not.toThrow();
     });
@@ -549,13 +537,14 @@ describe('extension — .uzscene file watcher', () => {
     it('onDidChangeTextDocument callback reloads .uzscene on edit', async () => {
         await activateExtension();
         const changeCb = (workspace.onDidChangeTextDocument as jest.Mock).mock.calls[0]?.[0] as
-            ((e: { document: { fileName: string; getText: () => string } }) => void) | undefined;
+            ((e: { document: { fileName: string; getText: () => string; uri?: { fsPath: string } } }) => void) | undefined;
         expect(changeCb).toBeDefined();
 
         expect(() => changeCb!({
             document: {
                 fileName: 'level.uzscene',
                 getText: () => '[uzscene]\nname = Updated\n\n[node]\nname = R\ntype = Camera\nparent =\n',
+                uri: { fsPath: 'level.uzscene' },
             },
         })).not.toThrow();
     });
@@ -577,58 +566,18 @@ describe('extension — .uzscene file watcher', () => {
         expect(() => closeCb!({ fileName: 'style.css' })).not.toThrow();
     });
 
-    it('writes command.json via file-based IPC when .uzscene opens', async () => {
+    it('onDidOpenTextDocument callback loads .uzscene without triggering IPC', async () => {
         await activateExtension();
 
         const openCb = (workspace.onDidOpenTextDocument as jest.Mock).mock.calls[0]?.[0] as
-            ((doc: { fileName: string; getText: () => string }) => void) | undefined;
+            ((doc: { fileName: string; getText: () => string; uri?: { fsPath: string } }) => void) | undefined;
 
-        openCb!({
-            fileName: 'level.uzscene',
-            getText: () => '[uzscene]\nname = L\n\n[node]\nname = World\ntype = Node3D\nparent =\n',
-        });
-
-        // Should have written command.json.tmp then renamed it.
-        expect(mockWriteFileSync).toHaveBeenCalledTimes(1);
-        const writtenContent = mockWriteFileSync.mock.calls[0][1] as string;
-        const parsed = JSON.parse(writtenContent);
-        expect(parsed.function).toBe('scene.load');
-        expect(parsed.args.nodes).toEqual([
-            expect.objectContaining({ name: 'World', type: 'Node3D' }),
-        ]);
-        expect(mockRenameSync).toHaveBeenCalledTimes(1);
-    });
-
-    it('ignores file write errors from sendSceneLoad gracefully', async () => {
-        mockWriteFileSync.mockImplementation(() => { throw new Error('ENOENT'); });
-        await activateExtension();
-
-        const openCb = (workspace.onDidOpenTextDocument as jest.Mock).mock.calls[0]?.[0] as
-            ((doc: { fileName: string; getText: () => string }) => void) | undefined;
-
-        // Should not throw even if fs.writeFileSync fails.
+        // Should not throw — and should NOT write any files (IPC removed).
         expect(() => openCb!({
             fileName: 'level.uzscene',
-            getText: () => '[uzscene]\nname = L\n\n[node]\nname = A\ntype = Node3D\nparent =\n',
+            getText: () => '[uzscene]\nname = L\n\n[node]\nname = World\ntype = Node3D\nparent =\n',
+            uri: { fsPath: 'level.uzscene' },
         })).not.toThrow();
-    });
-
-    it('skips file-based IPC when no workspace folder is available', async () => {
-        const origFolders = workspace.workspaceFolders;
-        (workspace as Record<string, unknown>).workspaceFolders = undefined;
-        await activateExtension();
-
-        const openCb = (workspace.onDidOpenTextDocument as jest.Mock).mock.calls[0]?.[0] as
-            ((doc: { fileName: string; getText: () => string }) => void) | undefined;
-
-        openCb!({
-            fileName: 'level.uzscene',
-            getText: () => '[uzscene]\nname = L\n\n[node]\nname = A\ntype = Node3D\nparent =\n',
-        });
-
-        // No file writes when workspace folder is missing.
-        expect(mockWriteFileSync).not.toHaveBeenCalled();
-        (workspace as Record<string, unknown>).workspaceFolders = origFolders;
     });
 });
 

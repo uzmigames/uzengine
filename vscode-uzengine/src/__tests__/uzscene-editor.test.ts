@@ -5,16 +5,19 @@
  * canvas over WebSocket) in the editor tab immediately — no waiting for
  * the engine to start.  The webview JS has a reconnect loop.
  *
+ * Updated for multi-instance architecture: each scene now gets its own
+ * EngineInstance via EngineInstanceManager.
+ *
  * Coverage targets (≥95% line + branch):
  *  1.  viewType static constant is 'uzengine.uzsceneEditor'
  *  2.  resolveCustomTextEditor sets webview.html to viewport canvas immediately
- *  3.  Viewport canvas HTML contains WS_PORT and VIEWPORT_ID=1
+ *  3.  Viewport canvas HTML contains VIEWPORT_ID=1
  *  4.  Panel title set from scene name (sceneName present)
  *  5.  Panel title set to 'UzScene Editor' when sceneName absent
  *  6.  Panel title left unchanged when parseUzScene throws
- *  7.  Custom server.wsPort config is injected into the canvas HTML
+ *  7.  Instance wsPort is used for the viewport stream
  *  8.  Title falls back to 'UzScene' when fileName is empty
- *  9.  start() is called fire-and-forget (errors silently caught)
+ *  9.  createInstance() is called with the scene path
  *  10. dispose() on provider does not throw
  *  11. dispose() is idempotent
  *  12. webview.options not overridden by provider
@@ -26,8 +29,22 @@ import { jest } from '@jest/globals';
 // Mocks — must be declared before imports
 // ---------------------------------------------------------------------------
 
-jest.mock('../server-manager', () => ({
-    ServerManager: jest.fn(),
+const mockCreateInstance = jest.fn<() => Promise<{ id: string; wsPort: number; isDisposed: boolean }>>().mockResolvedValue({
+    id: 'test-instance-id',
+    wsPort: 9002,
+    isDisposed: false,
+});
+const mockDestroyInstance = jest.fn();
+const mockSetActiveInstance = jest.fn();
+
+jest.mock('../engine-instance-manager', () => ({
+    EngineInstanceManager: {
+        getInstance: jest.fn(() => ({
+            createInstance: mockCreateInstance,
+            destroyInstance: mockDestroyInstance,
+            setActiveInstance: mockSetActiveInstance,
+        })),
+    },
 }));
 
 jest.mock('../viewport-panel', () => ({
@@ -42,10 +59,10 @@ jest.mock('../viewport-panel', () => ({
 // ---------------------------------------------------------------------------
 
 import {
+    makeMockContext,
+    makeMockWebviewPanel,
     window,
     workspace,
-    makeMockWebviewPanel,
-    makeMockContext,
 } from '../__mocks__/vscode';
 
 import { UzSceneEditorProvider, buildLoadingHtml } from '../uzscene-editor';
@@ -75,15 +92,6 @@ const dummyToken: import('vscode').CancellationToken = {
     onCancellationRequested: jest.fn(() => ({ dispose: jest.fn() })),
 };
 
-/** Minimal ServerManager stub — start() resolves true by default. */
-function makeMockServerManager(startResult: Promise<boolean> = Promise.resolve(true)) {
-    return {
-        start:     jest.fn().mockReturnValue(startResult),
-        isRunning: false,
-        dispose:   jest.fn(),
-    } as unknown as import('../server-manager').ServerManager;
-}
-
 const SIMPLE_SCENE = `[uzscene]
 name = TestScene
 
@@ -100,6 +108,11 @@ parent =
 beforeEach(() => {
     jest.clearAllMocks();
     workspace.__clearConfig();
+    mockCreateInstance.mockResolvedValue({
+        id: 'test-instance-id',
+        wsPort: 9002,
+        isDisposed: false,
+    });
 });
 
 // ---------------------------------------------------------------------------
@@ -151,9 +164,9 @@ describe('buildLoadingHtml()', () => {
 
 describe('UzSceneEditorProvider.resolveCustomTextEditor() — viewport canvas', () => {
     it('calls buildViewportStreamHtml immediately', async () => {
-        const provider = new UzSceneEditorProvider(makeMockServerManager(), makeMockContext() as unknown as import('vscode').ExtensionContext);
-        const panel    = makeMockWebviewPanel();
-        const doc      = makeDocument(SIMPLE_SCENE);
+        const provider = new UzSceneEditorProvider(makeMockContext() as unknown as import('vscode').ExtensionContext);
+        const panel = makeMockWebviewPanel();
+        const doc = makeDocument(SIMPLE_SCENE);
 
         await provider.resolveCustomTextEditor(doc, panel as unknown as import('vscode').WebviewPanel, dummyToken);
 
@@ -161,9 +174,9 @@ describe('UzSceneEditorProvider.resolveCustomTextEditor() — viewport canvas', 
     });
 
     it('calls buildViewportStreamHtml with viewportId=1 (multiplexed mode)', async () => {
-        const provider = new UzSceneEditorProvider(makeMockServerManager(), makeMockContext() as unknown as import('vscode').ExtensionContext);
-        const panel    = makeMockWebviewPanel();
-        const doc      = makeDocument(SIMPLE_SCENE);
+        const provider = new UzSceneEditorProvider(makeMockContext() as unknown as import('vscode').ExtensionContext);
+        const panel = makeMockWebviewPanel();
+        const doc = makeDocument(SIMPLE_SCENE);
 
         await provider.resolveCustomTextEditor(doc, panel as unknown as import('vscode').WebviewPanel, dummyToken);
 
@@ -172,11 +185,10 @@ describe('UzSceneEditorProvider.resolveCustomTextEditor() — viewport canvas', 
         );
     });
 
-    it('uses default wsPort=9002 when not configured', async () => {
-        workspace.__clearConfig();
-        const provider = new UzSceneEditorProvider(makeMockServerManager(), makeMockContext() as unknown as import('vscode').ExtensionContext);
-        const panel    = makeMockWebviewPanel();
-        const doc      = makeDocument(SIMPLE_SCENE);
+    it('uses instance wsPort (default 9002)', async () => {
+        const provider = new UzSceneEditorProvider(makeMockContext() as unknown as import('vscode').ExtensionContext);
+        const panel = makeMockWebviewPanel();
+        const doc = makeDocument(SIMPLE_SCENE);
 
         await provider.resolveCustomTextEditor(doc, panel as unknown as import('vscode').WebviewPanel, dummyToken);
 
@@ -185,11 +197,15 @@ describe('UzSceneEditorProvider.resolveCustomTextEditor() — viewport canvas', 
         );
     });
 
-    it('uses custom server.wsPort from config', async () => {
-        workspace.__setConfig('uzengine', 'server.wsPort', 8080);
-        const provider = new UzSceneEditorProvider(makeMockServerManager(), makeMockContext() as unknown as import('vscode').ExtensionContext);
-        const panel    = makeMockWebviewPanel();
-        const doc      = makeDocument(SIMPLE_SCENE);
+    it('uses custom wsPort from instance', async () => {
+        mockCreateInstance.mockResolvedValue({
+            id: 'custom-port-id',
+            wsPort: 8080,
+            isDisposed: false,
+        });
+        const provider = new UzSceneEditorProvider(makeMockContext() as unknown as import('vscode').ExtensionContext);
+        const panel = makeMockWebviewPanel();
+        const doc = makeDocument(SIMPLE_SCENE);
 
         await provider.resolveCustomTextEditor(doc, panel as unknown as import('vscode').WebviewPanel, dummyToken);
 
@@ -199,9 +215,9 @@ describe('UzSceneEditorProvider.resolveCustomTextEditor() — viewport canvas', 
     });
 
     it('passes a non-empty nonce string', async () => {
-        const provider = new UzSceneEditorProvider(makeMockServerManager(), makeMockContext() as unknown as import('vscode').ExtensionContext);
-        const panel    = makeMockWebviewPanel();
-        const doc      = makeDocument(SIMPLE_SCENE);
+        const provider = new UzSceneEditorProvider(makeMockContext() as unknown as import('vscode').ExtensionContext);
+        const panel = makeMockWebviewPanel();
+        const doc = makeDocument(SIMPLE_SCENE);
 
         await provider.resolveCustomTextEditor(doc, panel as unknown as import('vscode').WebviewPanel, dummyToken);
 
@@ -211,9 +227,9 @@ describe('UzSceneEditorProvider.resolveCustomTextEditor() — viewport canvas', 
     });
 
     it('passes the file base name as title', async () => {
-        const provider = new UzSceneEditorProvider(makeMockServerManager(), makeMockContext() as unknown as import('vscode').ExtensionContext);
-        const panel    = makeMockWebviewPanel();
-        const doc      = makeDocument(SIMPLE_SCENE, 'file:///some/path/MyLevel.uzscene');
+        const provider = new UzSceneEditorProvider(makeMockContext() as unknown as import('vscode').ExtensionContext);
+        const panel = makeMockWebviewPanel();
+        const doc = makeDocument(SIMPLE_SCENE, 'file:///some/path/MyLevel.uzscene');
 
         await provider.resolveCustomTextEditor(doc, panel as unknown as import('vscode').WebviewPanel, dummyToken);
 
@@ -223,9 +239,9 @@ describe('UzSceneEditorProvider.resolveCustomTextEditor() — viewport canvas', 
     });
 
     it('falls back to "UzScene" when fileName is empty (|| branch)', async () => {
-        const provider = new UzSceneEditorProvider(makeMockServerManager(), makeMockContext() as unknown as import('vscode').ExtensionContext);
-        const panel    = makeMockWebviewPanel();
-        const doc      = makeDocument(SIMPLE_SCENE, '');
+        const provider = new UzSceneEditorProvider(makeMockContext() as unknown as import('vscode').ExtensionContext);
+        const panel = makeMockWebviewPanel();
+        const doc = makeDocument(SIMPLE_SCENE, '');
 
         await provider.resolveCustomTextEditor(doc, panel as unknown as import('vscode').WebviewPanel, dummyToken);
 
@@ -235,9 +251,9 @@ describe('UzSceneEditorProvider.resolveCustomTextEditor() — viewport canvas', 
     });
 
     it('sets webview.html to the result of buildViewportStreamHtml', async () => {
-        const provider = new UzSceneEditorProvider(makeMockServerManager(), makeMockContext() as unknown as import('vscode').ExtensionContext);
-        const panel    = makeMockWebviewPanel();
-        const doc      = makeDocument(SIMPLE_SCENE);
+        const provider = new UzSceneEditorProvider(makeMockContext() as unknown as import('vscode').ExtensionContext);
+        const panel = makeMockWebviewPanel();
+        const doc = makeDocument(SIMPLE_SCENE);
 
         await provider.resolveCustomTextEditor(doc, panel as unknown as import('vscode').WebviewPanel, dummyToken);
 
@@ -247,68 +263,72 @@ describe('UzSceneEditorProvider.resolveCustomTextEditor() — viewport canvas', 
 });
 
 // ---------------------------------------------------------------------------
-// start() is fire-and-forget
+// Instance lifecycle via EngineInstanceManager
 // ---------------------------------------------------------------------------
 
-describe('UzSceneEditorProvider — fire-and-forget start()', () => {
-    it('calls serverManager.start()', async () => {
-        const sm = makeMockServerManager();
-        const provider = new UzSceneEditorProvider(sm, makeMockContext() as unknown as import('vscode').ExtensionContext);
-        const panel    = makeMockWebviewPanel();
-        const doc      = makeDocument(SIMPLE_SCENE);
+describe('UzSceneEditorProvider — engine instance management', () => {
+    it('calls createInstance() with the scene file path', async () => {
+        const provider = new UzSceneEditorProvider(makeMockContext() as unknown as import('vscode').ExtensionContext);
+        const panel = makeMockWebviewPanel();
+        const doc = makeDocument(SIMPLE_SCENE, 'file:///my/scene.uzscene');
 
         await provider.resolveCustomTextEditor(doc, panel as unknown as import('vscode').WebviewPanel, dummyToken);
 
-        expect(sm.start).toHaveBeenCalledTimes(1);
+        expect(mockCreateInstance).toHaveBeenCalledWith('file:///my/scene.uzscene');
     });
 
-    it('does not throw when start() rejects (error is silently caught)', async () => {
-        const sm = makeMockServerManager(Promise.reject(new Error('spawn failed')));
-        const provider = new UzSceneEditorProvider(sm, makeMockContext() as unknown as import('vscode').ExtensionContext);
-        const panel    = makeMockWebviewPanel();
-        const doc      = makeDocument(SIMPLE_SCENE);
-
-        // Should not throw — error is swallowed by .catch().
-        await expect(
-            provider.resolveCustomTextEditor(doc, panel as unknown as import('vscode').WebviewPanel, dummyToken)
-        ).resolves.not.toThrow();
-
-        // Canvas is still shown regardless.
-        expect(buildViewportStreamHtml).toHaveBeenCalledTimes(1);
-    });
-
-    it('does not throw when start() rejects with a non-Error value', async () => {
-        const sm = makeMockServerManager(Promise.reject('string error'));
-        const provider = new UzSceneEditorProvider(sm, makeMockContext() as unknown as import('vscode').ExtensionContext);
-        const panel    = makeMockWebviewPanel();
-        const doc      = makeDocument(SIMPLE_SCENE);
-
-        await expect(
-            provider.resolveCustomTextEditor(doc, panel as unknown as import('vscode').WebviewPanel, dummyToken)
-        ).resolves.not.toThrow();
-    });
-
-    it('does not show error message when start() fails', async () => {
-        const sm = makeMockServerManager(Promise.reject(new Error('spawn failed')));
-        const provider = new UzSceneEditorProvider(sm, makeMockContext() as unknown as import('vscode').ExtensionContext);
-        const panel    = makeMockWebviewPanel();
-        const doc      = makeDocument(SIMPLE_SCENE);
+    it('destroys the instance when the panel is disposed', async () => {
+        const provider = new UzSceneEditorProvider(makeMockContext() as unknown as import('vscode').ExtensionContext);
+        const panel = makeMockWebviewPanel();
+        const doc = makeDocument(SIMPLE_SCENE);
 
         await provider.resolveCustomTextEditor(doc, panel as unknown as import('vscode').WebviewPanel, dummyToken);
 
-        // Fire-and-forget — no error message shown.
-        expect(window.showErrorMessage).not.toHaveBeenCalled();
+        // Simulate tab close.
+        panel._simulateDispose();
+
+        expect(mockDestroyInstance).toHaveBeenCalledWith('test-instance-id');
     });
 
-    it('shows viewport canvas even when start() returns false', async () => {
-        const sm = makeMockServerManager(Promise.resolve(false));
-        const provider = new UzSceneEditorProvider(sm, makeMockContext() as unknown as import('vscode').ExtensionContext);
-        const panel    = makeMockWebviewPanel();
-        const doc      = makeDocument(SIMPLE_SCENE);
+    it('shows error when createInstance throws (max instances)', async () => {
+        mockCreateInstance.mockRejectedValue(new Error('Maximum engine instances reached'));
+        const provider = new UzSceneEditorProvider(makeMockContext() as unknown as import('vscode').ExtensionContext);
+        const panel = makeMockWebviewPanel();
+        const doc = makeDocument(SIMPLE_SCENE);
 
         await provider.resolveCustomTextEditor(doc, panel as unknown as import('vscode').WebviewPanel, dummyToken);
 
-        // Canvas shown regardless of start() result.
+        expect(window.showErrorMessage).toHaveBeenCalledWith(
+            expect.stringContaining('Maximum engine instances reached')
+        );
+    });
+
+    it('shows error when EngineInstanceManager is not initialised', async () => {
+        const { EngineInstanceManager } = await import('../engine-instance-manager');
+        (EngineInstanceManager.getInstance as jest.Mock).mockImplementationOnce(() => {
+            throw new Error('not initialised');
+        });
+
+        const provider = new UzSceneEditorProvider(makeMockContext() as unknown as import('vscode').ExtensionContext);
+        const panel = makeMockWebviewPanel();
+        const doc = makeDocument(SIMPLE_SCENE);
+
+        await provider.resolveCustomTextEditor(doc, panel as unknown as import('vscode').WebviewPanel, dummyToken);
+
+        expect(window.showErrorMessage).toHaveBeenCalledWith(
+            expect.stringContaining('EngineInstanceManager is not initialised')
+        );
+    });
+
+    it('shows viewport canvas even when createInstance returns false-start', async () => {
+        // Instance is created but its process didn't start — viewport canvas still shown.
+        const provider = new UzSceneEditorProvider(makeMockContext() as unknown as import('vscode').ExtensionContext);
+        const panel = makeMockWebviewPanel();
+        const doc = makeDocument(SIMPLE_SCENE);
+
+        await provider.resolveCustomTextEditor(doc, panel as unknown as import('vscode').WebviewPanel, dummyToken);
+
+        // Canvas shown regardless.
         expect(buildViewportStreamHtml).toHaveBeenCalledTimes(1);
         expect(panel.webview.html).toContain('VIEWPORT');
     });
@@ -320,9 +340,9 @@ describe('UzSceneEditorProvider — fire-and-forget start()', () => {
 
 describe('UzSceneEditorProvider — panel title', () => {
     it('sets panel title to "sceneName — UzScene" when sceneName is present', async () => {
-        const provider = new UzSceneEditorProvider(makeMockServerManager(), makeMockContext() as unknown as import('vscode').ExtensionContext);
-        const panel    = makeMockWebviewPanel();
-        const doc      = makeDocument(SIMPLE_SCENE);
+        const provider = new UzSceneEditorProvider(makeMockContext() as unknown as import('vscode').ExtensionContext);
+        const panel = makeMockWebviewPanel();
+        const doc = makeDocument(SIMPLE_SCENE);
 
         await provider.resolveCustomTextEditor(doc, panel as unknown as import('vscode').WebviewPanel, dummyToken);
 
@@ -330,8 +350,8 @@ describe('UzSceneEditorProvider — panel title', () => {
     });
 
     it('sets panel title to "UzScene Editor" when sceneName is absent', async () => {
-        const provider = new UzSceneEditorProvider(makeMockServerManager(), makeMockContext() as unknown as import('vscode').ExtensionContext);
-        const panel    = makeMockWebviewPanel();
+        const provider = new UzSceneEditorProvider(makeMockContext() as unknown as import('vscode').ExtensionContext);
+        const panel = makeMockWebviewPanel();
         const noNameScene = `[node]
 name = Root
 type = Node3D
@@ -345,13 +365,13 @@ parent =
     });
 
     it('does not throw when parseUzScene throws inside _updateTitle', async () => {
-        const provider = new UzSceneEditorProvider(makeMockServerManager(), makeMockContext() as unknown as import('vscode').ExtensionContext);
-        const panel    = makeMockWebviewPanel();
+        const provider = new UzSceneEditorProvider(makeMockContext() as unknown as import('vscode').ExtensionContext);
+        const panel = makeMockWebviewPanel();
 
         const badDoc = {
-            getText:  () => { throw new Error('bad parse'); },
+            getText: () => { throw new Error('bad parse'); },
             fileName: 'bad.uzscene',
-            uri:      { toString: () => 'file:///bad.uzscene', fsPath: 'file:///bad.uzscene', scheme: 'file', path: 'file:///bad.uzscene' },
+            uri: { toString: () => 'file:///bad.uzscene', fsPath: 'file:///bad.uzscene', scheme: 'file', path: 'file:///bad.uzscene' },
         } as unknown as import('vscode').TextDocument;
 
         await expect(
@@ -366,9 +386,9 @@ parent =
 
 describe('UzSceneEditorProvider — webview options', () => {
     it('enables scripts on the webview', async () => {
-        const provider = new UzSceneEditorProvider(makeMockServerManager(), makeMockContext() as unknown as import('vscode').ExtensionContext);
-        const panel    = makeMockWebviewPanel();
-        const doc      = makeDocument(SIMPLE_SCENE);
+        const provider = new UzSceneEditorProvider(makeMockContext() as unknown as import('vscode').ExtensionContext);
+        const panel = makeMockWebviewPanel();
+        const doc = makeDocument(SIMPLE_SCENE);
 
         await provider.resolveCustomTextEditor(doc, panel as unknown as import('vscode').WebviewPanel, dummyToken);
 
@@ -382,12 +402,12 @@ describe('UzSceneEditorProvider — webview options', () => {
 
 describe('UzSceneEditorProvider.dispose()', () => {
     it('does not throw', () => {
-        const provider = new UzSceneEditorProvider(makeMockServerManager(), makeMockContext() as unknown as import('vscode').ExtensionContext);
+        const provider = new UzSceneEditorProvider(makeMockContext() as unknown as import('vscode').ExtensionContext);
         expect(() => provider.dispose()).not.toThrow();
     });
 
     it('is idempotent', () => {
-        const provider = new UzSceneEditorProvider(makeMockServerManager(), makeMockContext() as unknown as import('vscode').ExtensionContext);
+        const provider = new UzSceneEditorProvider(makeMockContext() as unknown as import('vscode').ExtensionContext);
         expect(() => { provider.dispose(); provider.dispose(); }).not.toThrow();
     });
 });

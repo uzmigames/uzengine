@@ -42,12 +42,59 @@
 #include <thread>
 
 #include <stb_image_write.h>
+#include <io.h>
+#include <fcntl.h>
 
 namespace {
 
 constexpr const wchar_t* kWindowClassName = L"UzEngineWndClass";
 constexpr const wchar_t* kWindowTitle     = L"UzEngine PoC";
-constexpr uint16_t       kWsPort          = 9002;
+constexpr uint16_t       kDefaultWsPort   = 9002;
+
+// ---------------------------------------------------------------------------
+// Command-line argument helpers
+// ---------------------------------------------------------------------------
+
+/// Parses the raw lpCmdLine string into a vector of argument strings.
+std::vector<std::string> parseCmdLine(const char* cmdLine) {
+    std::vector<std::string> args;
+    if (!cmdLine || !*cmdLine) return args;
+    std::string current;
+    bool inQuote = false;
+    for (const char* p = cmdLine; *p; ++p) {
+        if (*p == '"') {
+            inQuote = !inQuote;
+        } else if (*p == ' ' && !inQuote) {
+            if (!current.empty()) {
+                args.push_back(current);
+                current.clear();
+            }
+        } else {
+            current += *p;
+        }
+    }
+    if (!current.empty()) args.push_back(current);
+    return args;
+}
+
+/// Returns the value of a named argument (e.g. --ws-port 9003), or defaultVal.
+std::string getCmdArg(const std::vector<std::string>& args,
+                      const std::string& name,
+                      const std::string& defaultVal) {
+    for (size_t i = 0; i + 1 < args.size(); ++i) {
+        if (args[i] == name) return args[i + 1];
+    }
+    return defaultVal;
+}
+
+uint16_t getCmdArgU16(const std::vector<std::string>& args,
+                     const std::string& name,
+                     uint16_t defaultVal) {
+    std::string val = getCmdArg(args, name, "");
+    if (val.empty()) return defaultVal;
+    try { return static_cast<uint16_t>(std::stoi(val)); }
+    catch (...) { return defaultVal; }
+}
 constexpr std::size_t    kRingSize        = 8; // power-of-2, absorbs encode jitter
 
 // Two SPSC ring buffers -- one per encoder thread.  The render thread dispatches
@@ -156,9 +203,51 @@ LRESULT CALLBACK windowProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 int WINAPI WinMain(
     _In_     HINSTANCE hInstance,
     _In_opt_ HINSTANCE /*hPrevInstance*/,
-    _In_     LPSTR     /*lpCmdLine*/,
+    _In_     LPSTR     lpCmdLine,
     _In_     int       nCmdShow)
 {
+    // -- Redirect stdout/stderr to inherited pipe handles ---------------------
+    // When spawned by Node.js cp.spawn(), the child process inherits pipe
+    // handles for stdin/stdout/stderr.  GUI apps (WinMain) don't automatically
+    // connect the C runtime FILE streams to these handles.  We re-open them so
+    // fprintf(stderr, ...) and printf() work — the extension can then read the
+    // engine's diagnostic output.
+    {
+        HANDLE hStdOut = GetStdHandle(STD_OUTPUT_HANDLE);
+        HANDLE hStdErr = GetStdHandle(STD_ERROR_HANDLE);
+        if (hStdOut && hStdOut != INVALID_HANDLE_VALUE) {
+            int fdOut = _open_osfhandle(reinterpret_cast<intptr_t>(hStdOut), 0);
+            if (fdOut >= 0) {
+                FILE* fOut = _fdopen(fdOut, "w");
+                if (fOut) { *stdout = *fOut; setvbuf(stdout, nullptr, _IONBF, 0); }
+            }
+        }
+        if (hStdErr && hStdErr != INVALID_HANDLE_VALUE) {
+            int fdErr = _open_osfhandle(reinterpret_cast<intptr_t>(hStdErr), 0);
+            if (fdErr >= 0) {
+                FILE* fErr = _fdopen(fdErr, "w");
+                if (fErr) { *stderr = *fErr; setvbuf(stderr, nullptr, _IONBF, 0); }
+            }
+        }
+    }
+
+    // -- Parse command-line arguments -----------------------------------------
+    const auto cmdArgs = parseCmdLine(lpCmdLine);
+    const uint16_t wsPort = getCmdArgU16(cmdArgs, "--ws-port", kDefaultWsPort);
+    const std::string cmdIpcDir  = getCmdArg(cmdArgs, "--ipc-dir", "");
+    const std::string cmdScene   = getCmdArg(cmdArgs, "--scene",   "");
+
+    // -- Log parsed arguments for diagnostics ---------------------------------
+    fprintf(stderr, "[UzEngine] lpCmdLine: \"%s\"\n", lpCmdLine ? lpCmdLine : "(null)");
+    fprintf(stderr, "[UzEngine] Parsed %zu args:", cmdArgs.size());
+    for (size_t i = 0; i < cmdArgs.size(); ++i) {
+        fprintf(stderr, " [%zu]=\"%s\"", i, cmdArgs[i].c_str());
+    }
+    fprintf(stderr, "\n");
+    fprintf(stderr, "[UzEngine] wsPort=%u ipcDir=\"%s\" scene=\"%s\"\n",
+            static_cast<unsigned>(wsPort), cmdIpcDir.c_str(), cmdScene.c_str());
+    fflush(stderr);
+
     // -- Raise Windows timer resolution to 1 ms (default ~15 ms is too coarse
     //    for Sleep()-based frame limiting at 60 fps / 16.67 ms target).
     timeBeginPeriod(1);
@@ -299,9 +388,23 @@ int WINAPI WinMain(
         }
     });
 
-    if (!wsServer.start(kWsPort)) {
-        OutputDebugStringA("[UzEngine] WARNING: WebSocket server failed to start\n");
+    if (!wsServer.start(wsPort)) {
+        char dbgWs[128];
+        snprintf(dbgWs, sizeof(dbgWs),
+                 "[UzEngine] WARNING: WebSocket server failed to start on port %u\n",
+                 static_cast<unsigned>(wsPort));
+        OutputDebugStringA(dbgWs);
+        fprintf(stderr, "%s", dbgWs);
+        fflush(stderr);
         // Continue rendering even without streaming.
+    } else {
+        char dbgWs[128];
+        snprintf(dbgWs, sizeof(dbgWs),
+                 "[UzEngine] WebSocket server started on port %u\n",
+                 static_cast<unsigned>(wsPort));
+        OutputDebugStringA(dbgWs);
+        fprintf(stderr, "%s", dbgWs);
+        fflush(stderr);
     }
 
     // -- Encode thread -------------------------------------------------------
@@ -328,8 +431,10 @@ int WINAPI WinMain(
         if (lastSlash != std::string::npos) {
             exeDir = exeDir.substr(0, lastSlash);
         }
-        // The executable is in build/Release/, assets are at project root.
-        const std::string scenePath = exeDir + "/../../assets/scenes/default.uzscene";
+        // Use --scene arg if provided, otherwise default.
+        const std::string scenePath = cmdScene.empty()
+            ? (exeDir + "/../../assets/scenes/default.uzscene")
+            : cmdScene;
 
         g_sceneData = std::make_unique<uz::Scene>();
         uz::scene_init(g_sceneData.get(), "DefaultScene");
@@ -403,12 +508,13 @@ int WINAPI WinMain(
     }
 
     // -- IPC setup -----------------------------------------------------------
-    // Compute the IPC base directory (build/preview relative to the exe).
+    // Use --ipc-dir arg if provided, otherwise compute from exe directory.
     std::string ipcBaseDir;
-    {
+    if (!cmdIpcDir.empty()) {
+        ipcBaseDir = cmdIpcDir;
+    } else {
         char exePath[MAX_PATH]{};
         GetModuleFileNameA(nullptr, exePath, MAX_PATH);
-        // Strip the exe filename to get the directory.
         std::string exeDir(exePath);
         auto lastSlash = exeDir.find_last_of("\\/");
         if (lastSlash != std::string::npos) {

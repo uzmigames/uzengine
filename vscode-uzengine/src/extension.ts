@@ -28,21 +28,19 @@
  */
 
 import * as vscode from 'vscode';
-import * as fs from 'fs';
-import * as path from 'path';
-import { randomUUID } from 'crypto';
-import { StreamPanel } from './stream-panel';
-import { ServerManager } from './server-manager';
-import { ViewportManager } from './viewport-manager';
-import { IpcClient } from './ipc-client';
-import { SceneTreeProvider, NodeItem, SceneNodeData } from './scene-tree-provider';
-import { InspectorPanel, InspectorViewProvider } from './inspector-panel';
-import { PlayControls } from './play-controls';
 import { ConsolePanel } from './console-panel';
-import { parseUzScene } from './uzscene-parser';
+import { EngineInstanceManager } from './engine-instance-manager';
+import { InspectorPanel, InspectorViewProvider } from './inspector-panel';
+import { IpcClient } from './ipc-client';
+import { PlayControls } from './play-controls';
+import { NodeItem, SceneTreeProvider } from './scene-tree-provider';
+import { StreamPanel } from './stream-panel';
 import { UzSceneEditorProvider } from './uzscene-editor';
+import { parseUzScene } from './uzscene-parser';
+import { ViewportManager } from './viewport-manager';
 
-let serverManager: ServerManager | undefined;
+// ServerManager removed — each scene now manages its own UzEngine.exe
+// via EngineInstanceManager.
 
 /**
  * Called by VSCode when the extension is activated.
@@ -51,16 +49,17 @@ let serverManager: ServerManager | undefined;
  */
 export function activate(context: vscode.ExtensionContext): void {
     // -------------------------------------------------------------------------
-    // 1. Shared output channel (used by ServerManager + ViewportManager + EngineClient)
+    // 1. Shared output channel (used by EngineInstanceManager + ViewportManager)
     // -------------------------------------------------------------------------
     const outputChannel = vscode.window.createOutputChannel('UzEngine');
     context.subscriptions.push(outputChannel);
 
     // -------------------------------------------------------------------------
-    // 2. Server manager — manages UzEngine.exe child process lifecycle
+    // 2. EngineInstanceManager — manages per-scene engine instances.
+    //    Each .uzscene editor tab spawns its own independent UzEngine.exe
+    //    with a unique WebSocket port and IPC directory.
     // -------------------------------------------------------------------------
-    serverManager = new ServerManager();
-    context.subscriptions.push(serverManager);
+    const instanceMgr = EngineInstanceManager.initialize(context, outputChannel);
 
     // -------------------------------------------------------------------------
     // 3. ViewportManager singleton — manages all open viewport panels.
@@ -72,26 +71,29 @@ export function activate(context: vscode.ExtensionContext): void {
 
     // -------------------------------------------------------------------------
     // 4. IpcClient — WebSocket-based IPC for editor panel communication.
-    //    Reads the server URL from settings; auto-reconnects every 5 seconds.
+    //    Dynamically connects to the ACTIVE engine instance's WS port.
+    //    Reconnects whenever the active instance changes.
     // -------------------------------------------------------------------------
-    const ipcConfig = vscode.workspace.getConfiguration('uzengine');
-    const serverUrl = ipcConfig.get<string>('serverUrl', 'ws://localhost:9002');
-
     const ipcClient = new IpcClient();
-    ipcClient.connect(serverUrl);
     context.subscriptions.push({
         dispose: () => ipcClient.disconnect(),
     });
 
-    // Reconnect when the server URL setting changes.
-    const configSub = vscode.workspace.onDidChangeConfiguration(e => {
-        if (e.affectsConfiguration('uzengine.serverUrl')) {
-            const newConfig = vscode.workspace.getConfiguration('uzengine');
-            const newUrl = newConfig.get<string>('serverUrl', 'ws://localhost:9002');
-            ipcClient.connect(newUrl);
+    // Reconnect IpcClient when the active engine instance changes.
+    function reconnectIpcToActive(): void {
+        try {
+            const active = instanceMgr.getActiveInstance();
+            if (active && active.isRunning) {
+                ipcClient.connect(`ws://localhost:${active.wsPort}`);
+            }
+        } catch {
+            // EngineInstanceManager not ready yet — ignore.
         }
+    }
+    const activeChangedSub = instanceMgr.onActiveChanged(() => {
+        reconnectIpcToActive();
     });
-    context.subscriptions.push(configSub);
+    context.subscriptions.push(activeChangedSub);
 
     // -------------------------------------------------------------------------
     // 5. SceneTreeProvider — populates the uzengine.sceneTree TreeView.
@@ -146,8 +148,8 @@ export function activate(context: vscode.ExtensionContext): void {
         const p = payload as { level?: string; message?: string } | null;
         if (!p || typeof p.message !== 'string') { return; }
         const level = p.level === 'warning' ? 'warning'
-                    : p.level === 'error'   ? 'error'
-                    : 'info';
+            : p.level === 'error' ? 'error'
+                : 'info';
         consolePanel.log(level, p.message);
     });
     context.subscriptions.push({ dispose: logUnsub });
@@ -158,7 +160,7 @@ export function activate(context: vscode.ExtensionContext): void {
     context.subscriptions.push(
         vscode.window.registerCustomEditorProvider(
             UzSceneEditorProvider.viewType,
-            new UzSceneEditorProvider(serverManager!, context),
+            new UzSceneEditorProvider(context),
             { webviewOptions: { retainContextWhenHidden: true } }
         )
     );
@@ -173,30 +175,39 @@ export function activate(context: vscode.ExtensionContext): void {
     // 8. Commands
     // -------------------------------------------------------------------------
 
-    // Legacy: uzengine.openStreamViewer — start server + open scene viewport
+    // uzengine.openStreamViewer — open the legacy stream panel (uses active instance)
     const openCommand = vscode.commands.registerCommand(
         'uzengine.openStreamViewer',
         async () => {
-            const started = await serverManager!.start();
-            if (started) {
+            // Ensure at least one instance is running.
+            const active = instanceMgr.getActiveInstance();
+            if (active) {
                 await StreamPanel.createOrShow(context.extensionUri, context);
+            } else {
+                vscode.window.showInformationMessage(
+                    'UzEngine: Open a .uzscene file first to start the engine.'
+                );
             }
         }
     );
 
-    // Legacy: uzengine.startServer — start server without opening a panel
+    // uzengine.startServer — no-op hint (engines are per-scene now)
     const startCommand = vscode.commands.registerCommand(
         'uzengine.startServer',
-        async () => {
-            await serverManager!.start();
+        () => {
+            vscode.window.showInformationMessage(
+                'UzEngine: Engines are now started automatically when you open a .uzscene file.'
+            );
         }
     );
 
-    // Legacy: uzengine.stopServer — kill the server process
+    // uzengine.stopServer — stop all per-scene engine instances
     const stopCommand = vscode.commands.registerCommand(
         'uzengine.stopServer',
         () => {
-            serverManager!.stop();
+            for (const inst of instanceMgr.getAllInstances()) {
+                instanceMgr.destroyInstance(inst.id);
+            }
         }
     );
 
@@ -315,74 +326,29 @@ export function activate(context: vscode.ExtensionContext): void {
 
     // -------------------------------------------------------------------------
     // 9. Local .uzscene file watcher — populate Scene Tree from disk
+    //    NOTE: We no longer send scene.load IPC here. Each UzEngine.exe
+    //    auto-loads its scene via the --scene command-line argument.
+    //    This section only updates the Scene Tree sidebar.
     // -------------------------------------------------------------------------
 
-    function loadSceneFromDocument(doc: vscode.TextDocument): void {
+    function loadSceneTreeFromDocument(doc: vscode.TextDocument): void {
         if (!doc.fileName.endsWith('.uzscene')) { return; }
         const parsed = parseUzScene(doc.getText());
         sceneTreeProvider.loadFromFile(parsed.roots);
         consolePanel.log('info', `Scene loaded: ${parsed.sceneName || doc.fileName}`);
-
-        // Send scene data to engine for 3D wireframe preview (file-based IPC).
-        const nodes = flattenSceneNodes(parsed.roots);
-        sendSceneLoad(nodes);
-    }
-
-    /**
-     * Sends a scene.load command via the engine's file-based IPC protocol.
-     * Writes command.json to build/Release/preview/ — the engine polls this file.
-     */
-    function sendSceneLoad(
-        nodes: Array<{name: string; type: string; position: number[]; rotation: number[]; scale: number[]}>,
-    ): void {
-        const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-        if (!wsRoot) { return; }
-        const commandFile = path.join(wsRoot, 'build', 'Release', 'preview', 'command.json');
-        const cmd = JSON.stringify({
-            id: randomUUID(),
-            type: 'call',
-            function: 'scene.load',
-            args: { nodes },
-        });
-        try {
-            const tmp = commandFile + '.tmp';
-            fs.writeFileSync(tmp, cmd, 'utf8');
-            fs.renameSync(tmp, commandFile);
-        } catch {
-            // Engine not running or preview dir missing — ignore.
-        }
-    }
-
-    /** Recursively flattens a scene node tree into a flat array for IPC. */
-    function flattenSceneNodes(roots: SceneNodeData[]): Array<{name: string; type: string; position: number[]; rotation: number[]; scale: number[]}> {
-        const result: Array<{name: string; type: string; position: number[]; rotation: number[]; scale: number[]}> = [];
-        function walk(nodes: SceneNodeData[]): void {
-            for (const n of nodes) {
-                result.push({
-                    name: n.name,
-                    type: n.type,
-                    position: [0, 0, 0],
-                    rotation: [0, 0, 0],
-                    scale: [1, 1, 1],
-                });
-                if (n.children) { walk(n.children); }
-            }
-        }
-        walk(roots);
-        return result;
     }
 
     // Load any .uzscene already open when the extension activates.
     for (const doc of vscode.workspace.textDocuments) {
-        loadSceneFromDocument(doc);
+        loadSceneTreeFromDocument(doc);
     }
 
     const openDocSub = vscode.workspace.onDidOpenTextDocument(doc => {
-        loadSceneFromDocument(doc);
+        loadSceneTreeFromDocument(doc);
     });
 
     const changeDocSub = vscode.workspace.onDidChangeTextDocument(e => {
-        loadSceneFromDocument(e.document);
+        loadSceneTreeFromDocument(e.document);
     });
 
     const closeDocSub = vscode.workspace.onDidCloseTextDocument(doc => {

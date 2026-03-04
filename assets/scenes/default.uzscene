@@ -38,7 +38,7 @@ near = 0.100000
 far = 500.000000
 
 [editor]
-camera_position = -4.532386 1.769795 5.876347
-camera_yaw = 2.462999
-camera_pitch = -0.318000
+camera_position = -6.429574 2.901255 4.052699
+camera_yaw = 8.123997
+camera_pitch = -0.210000
 camera_speed = 10.000000

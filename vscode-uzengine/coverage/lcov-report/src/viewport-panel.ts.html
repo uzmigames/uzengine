@@ -842,7 +842,24 @@
 <a name='L777'></a><a href='#L777'>777</a>
 <a name='L778'></a><a href='#L778'>778</a>
 <a name='L779'></a><a href='#L779'>779</a>
-<a name='L780'></a><a href='#L780'>780</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<a name='L780'></a><a href='#L780'>780</a>
+<a name='L781'></a><a href='#L781'>781</a>
+<a name='L782'></a><a href='#L782'>782</a>
+<a name='L783'></a><a href='#L783'>783</a>
+<a name='L784'></a><a href='#L784'>784</a>
+<a name='L785'></a><a href='#L785'>785</a>
+<a name='L786'></a><a href='#L786'>786</a>
+<a name='L787'></a><a href='#L787'>787</a>
+<a name='L788'></a><a href='#L788'>788</a>
+<a name='L789'></a><a href='#L789'>789</a>
+<a name='L790'></a><a href='#L790'>790</a>
+<a name='L791'></a><a href='#L791'>791</a>
+<a name='L792'></a><a href='#L792'>792</a>
+<a name='L793'></a><a href='#L793'>793</a>
+<a name='L794'></a><a href='#L794'>794</a>
+<a name='L795'></a><a href='#L795'>795</a>
+<a name='L796'></a><a href='#L796'>796</a>
+<a name='L797'></a><a href='#L797'>797</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -1194,6 +1211,23 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-yes">28x</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -2061,6 +2095,7 @@ export function buildViewportStreamHtml(opts: {
     &lt;span class="label"&gt;UzEngine&lt;/span&gt;
     &lt;span id="status" class="connecting"&gt;Connecting\u2026&lt;/span&gt;
     &lt;span id="fps"&gt;-- fps&lt;/span&gt;
+    &lt;span id="dbg-size" style="color:#666;font-size:10px;"&gt;&lt;/span&gt;
     &lt;span id="vp-id"&gt;vp#${safeViewportId}&lt;/span&gt;
   &lt;/div&gt;
   &lt;div id="canvas-container"&gt;
@@ -2086,6 +2121,7 @@ export function buildViewportStreamHtml(opts: {
       var ctx2d       = /** @type {CanvasRenderingContext2D} */ (canvas.getContext('2d'));
       var statusEl    = document.getElementById('status');
       var fpsEl       = document.getElementById('fps');
+      var dbgSizeEl   = document.getElementById('dbg-size');
       var overlayEl   = document.getElementById('overlay');
 &nbsp;
       // -----------------------------------------------------------------------
@@ -2204,17 +2240,9 @@ export function buildViewportStreamHtml(opts: {
         ws.addEventListener('open', function () {
           setStatus('Connected', 'connected');
           reconnectDelay = 1000;
-&nbsp;
-          // Send current viewport size immediately on connect so the engine
-          // renders at the correct resolution from the first frame.
-          var cr = canvasContainer.getBoundingClientRect();
-          var dpr = window.devicePixelRatio || 1;
-          var w = Math.round(cr.width * dpr);
-          var h = Math.round(cr.height * dpr);
-          if (w &gt; 0 &amp;&amp; h &gt; 0) {
-            lastSentWidth = 0; lastSentHeight = 0; // Force re-send.
-            sendResize(w, h);
-          }
+          // Reset dedup so the periodic checkResize() resends the current size.
+          lastSentWidth = 0;
+          lastSentHeight = 0;
         });
 &nbsp;
         ws.addEventListener('message', function (e) {
@@ -2374,26 +2402,49 @@ export function buildViewportStreamHtml(opts: {
         w = Math.max(64, w &amp; ~1);
         h = Math.max(64, h &amp; ~1);
         if (w === lastSentWidth &amp;&amp; h === lastSentHeight) return;
-        lastSentWidth = w;
-        lastSentHeight = h;
+        // Only mark as sent AFTER successful WS send.
+        // If WS is closed, the next periodic check will retry.
         if (ws &amp;&amp; ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: 'viewport_resize', width: w, height: h }));
+          lastSentWidth = w;
+          lastSentHeight = h;
         }
       }
 &nbsp;
-      var resizeObserver = new ResizeObserver(function(entries) {
-        for (var i = 0; i &lt; entries.length; i++) {
-          var cr = entries[i].contentRect;
-          // Use devicePixelRatio for crisp rendering on HiDPI displays.
+      var resizeTimer = /** @type {ReturnType&lt;typeof setTimeout&gt;|null} */ (null);
+&nbsp;
+      function checkResize() {
+        var cr = canvasContainer.getBoundingClientRect();
+        if (cr.width &gt; 0 &amp;&amp; cr.height &gt; 0) {
           var dpr = window.devicePixelRatio || 1;
-          sendResize(Math.round(cr.width * dpr), Math.round(cr.height * dpr));
+          var pw = Math.round(cr.width * dpr);
+          var ph = Math.round(cr.height * dpr);
+          sendResize(pw, ph);
+          // Debug: show css size, dpr, physical size sent, canvas buffer size.
+          dbgSizeEl.textContent =
+            'css:' + Math.round(cr.width) + 'x' + Math.round(cr.height) +
+            ' dpr:' + dpr.toFixed(2) +
+            ' sent:' + lastSentWidth + 'x' + lastSentHeight +
+            ' buf:' + canvas.width + 'x' + canvas.height;
         }
-      });
+      }
+&nbsp;
+      // Debounced resize — wait 500ms after the LAST size change before
+      // sending to the engine.  The DX12 resize is very expensive (full GPU
+      // drain + buffer recreation), so we only fire when the user stops
+      // dragging.  CSS stretches the canvas during the drag for visual feedback.
+      function scheduleResize() {
+        if (resizeTimer) { clearTimeout(resizeTimer); }
+        resizeTimer = setTimeout(checkResize, 500);
+      }
+&nbsp;
+      // ResizeObserver fires on every layout change — debounced.
+      var resizeObserver = new ResizeObserver(function() { scheduleResize(); });
       resizeObserver.observe(canvasContainer);
 &nbsp;
-      // The open handler in connect() sends the initial viewport size.
-      // No additional reconnect hook needed since the open handler fires
-      // on every (re)connect and always force-sends the current size.
+      // Fallback: periodic check every 3s (covers edge cases where
+      // ResizeObserver doesn't fire in VSCode webviews).
+      setInterval(function() { scheduleResize(); }, 3000);
 &nbsp;
     }());
   &lt;/script&gt;
@@ -2407,7 +2458,7 @@ export function buildViewportStreamHtml(opts: {
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-03-03T20:48:39.707Z
+                at 2026-03-04T12:19:18.387Z
             </div>
         <script src="../prettify.js"></script>
         <script>
