@@ -105,13 +105,13 @@ export class NodeItem extends vscode.TreeItem {
      */
     static iconForType(type: NodeType): vscode.ThemeIcon {
         switch (type) {
-            case 'Node3D':         return new vscode.ThemeIcon('symbol-namespace');
-            case 'StaticMesh':     return new vscode.ThemeIcon('symbol-field');
+            case 'Node3D': return new vscode.ThemeIcon('symbol-namespace');
+            case 'StaticMesh': return new vscode.ThemeIcon('symbol-field');
             case 'DirectionalLight': return new vscode.ThemeIcon('symbol-event');
-            case 'PointLight':     return new vscode.ThemeIcon('symbol-event');
-            case 'Camera':         return new vscode.ThemeIcon('device-camera');
-            case 'AudioSource':    return new vscode.ThemeIcon('unmute');
-            default:               return new vscode.ThemeIcon('symbol-misc');
+            case 'PointLight': return new vscode.ThemeIcon('symbol-event');
+            case 'Camera': return new vscode.ThemeIcon('device-camera');
+            case 'AudioSource': return new vscode.ThemeIcon('unmute');
+            default: return new vscode.ThemeIcon('symbol-misc');
         }
     }
 }
@@ -241,6 +241,40 @@ export class SceneTreeProvider
                 // Swallow — engine may not be connected; selection still reflected in UI.
             }
         }
+    }
+
+    /**
+     * Selects a node by its numeric ID (from viewport pick).
+     * Searches the cached tree recursively and calls selectNode() if found.
+     * Passing null/undefined clears the selection.
+     */
+    async selectNodeById(nodeId: number | null): Promise<void> {
+        if (this._disposed) { return; }
+
+        if (nodeId === null || nodeId === undefined) {
+            await this.selectNode(undefined);
+            return;
+        }
+
+        const idStr = String(nodeId);
+        const found = this._findNodeById(this._rootNodes, idStr);
+        if (found) {
+            await this.selectNode(new NodeItem(found));
+        }
+    }
+
+    /**
+     * Recursively searches the cached tree for a node with the given string ID.
+     */
+    private _findNodeById(nodes: SceneNodeData[], id: string): SceneNodeData | undefined {
+        for (const node of nodes) {
+            if (node.id === id) { return node; }
+            if (node.children) {
+                const found = this._findNodeById(node.children, id);
+                if (found) { return found; }
+            }
+        }
+        return undefined;
     }
 
     // -------------------------------------------------------------------------

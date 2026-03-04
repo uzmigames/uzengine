@@ -61,6 +61,16 @@ T* arena_alloc_t(Arena* arena, size_t count = 1) {
     return static_cast<T*>(arena_alloc(arena, sizeof(T) * count, alignof(T)));
 }
 
+// Typed allocation + construction — allocates one T on the arena and calls its
+// constructor with the forwarded arguments. Destructors are NOT called automatically;
+// the caller must call them manually before arena reset if T has non-trivial dtor.
+template<typename T, typename... Args>
+T* arena_new(Arena* arena, Args&&... args) {
+    void* mem = arena_alloc(arena, sizeof(T), alignof(T));
+    if (!mem) return nullptr;
+    return new (mem) T(static_cast<Args&&>(args)...);
+}
+
 // Reset the arena to its initial state. All prior allocations are invalidated.
 void arena_reset(Arena* arena);
 
@@ -70,6 +80,81 @@ void arena_reset(Arena* arena);
 // Restore the arena to a previously saved position. All allocations made after
 // that mark are invalidated. `mark` must have been obtained from the same arena.
 void arena_restore(Arena* arena, ArenaMark mark);
+
+// ============================================================================
+// ArenaScopeGuard — RAII restore-on-exit for temporary allocations
+// ============================================================================
+
+struct ArenaScopeGuard {
+    Arena*    arena;
+    ArenaMark mark;
+
+    explicit ArenaScopeGuard(Arena* a) : arena(a), mark(arena_mark(a)) {}
+    ~ArenaScopeGuard() { arena_restore(arena, mark); }
+
+    ArenaScopeGuard(const ArenaScopeGuard&) = delete;
+    ArenaScopeGuard& operator=(const ArenaScopeGuard&) = delete;
+};
+
+// ============================================================================
+// SmallVec<T, N> — inline small vector with dynamic spillover
+// ============================================================================
+//
+// Stores up to N elements inline (stack). Beyond N, spills to heap via
+// std::vector. Designed for frame-local arrays where N is tuned to the
+// typical case. T must be trivially copyable for inline storage.
+
+template<typename T, size_t N>
+struct SmallVec {
+    T      inline_buf[N];
+    T*     data_ptr = inline_buf;
+    size_t count    = 0;
+    size_t cap      = N;
+    bool   spilled  = false;
+
+    SmallVec() = default;
+
+    ~SmallVec() {
+        if (spilled) {
+            delete[] data_ptr;
+        }
+    }
+
+    // Non-copyable (move-only if needed, currently deleted for simplicity).
+    SmallVec(const SmallVec&) = delete;
+    SmallVec& operator=(const SmallVec&) = delete;
+
+    void push_back(const T& val) {
+        if (count >= cap) {
+            grow();
+        }
+        data_ptr[count++] = val;
+    }
+
+    [[nodiscard]] T&       operator[](size_t i)       { assert(i < count); return data_ptr[i]; }
+    [[nodiscard]] const T& operator[](size_t i) const { assert(i < count); return data_ptr[i]; }
+    [[nodiscard]] size_t   size() const { return count; }
+    [[nodiscard]] bool     empty() const { return count == 0; }
+    [[nodiscard]] T*       data() { return data_ptr; }
+    [[nodiscard]] const T* data() const { return data_ptr; }
+    [[nodiscard]] T*       begin() { return data_ptr; }
+    [[nodiscard]] T*       end()   { return data_ptr + count; }
+    [[nodiscard]] const T* begin() const { return data_ptr; }
+    [[nodiscard]] const T* end()   const { return data_ptr + count; }
+
+    void clear() { count = 0; }
+
+private:
+    void grow() {
+        size_t new_cap = cap * 2;
+        T* new_buf = new T[new_cap];
+        std::memcpy(new_buf, data_ptr, count * sizeof(T));
+        if (spilled) delete[] data_ptr;
+        data_ptr = new_buf;
+        cap      = new_cap;
+        spilled  = true;
+    }
+};
 
 // ============================================================================
 // Global arenas — backing memory defined in arena.cpp

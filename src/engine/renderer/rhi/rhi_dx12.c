@@ -1147,8 +1147,9 @@ static void dx12_texture_upload(RhiTexture tex, const void *data, size_t size) {
      * Assumes tightly packed row data for subresource 0.
      * TODO Phase 2: Multi-mip, multi-array-slice upload.
      */
-    D3D12_RESOURCE_DESC rd = ID3D12Resource_GetDesc(
-        s_dx12.textures[slot].resource);
+    D3D12_RESOURCE_DESC rd;
+    memset(&rd, 0, sizeof(rd));
+    ID3D12Resource_GetDesc(s_dx12.textures[slot].resource, &rd);
 
     /* Get required upload size */
     UINT64 required_size = 0;

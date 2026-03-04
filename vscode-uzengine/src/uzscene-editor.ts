@@ -111,6 +111,27 @@ export class UzSceneEditorProvider implements vscode.CustomTextEditorProvider {
     /** View type string that must match package.json `customEditors[].viewType`. */
     public static readonly viewType = 'uzengine.uzsceneEditor';
 
+    /** Tracks all active webview panels for postMessage forwarding. */
+    private static readonly _activePanels = new Set<vscode.WebviewPanel>();
+
+    /**
+     * Forward a message to all visible uzscene editor webviews.
+     * Used by extension.ts gizmo commands to sync the toolbar state.
+     */
+    static postToActiveWebview(message: unknown): void {
+        for (const panel of UzSceneEditorProvider._activePanels) {
+            if (panel.visible) {
+                void panel.webview.postMessage(message);
+            }
+        }
+    }
+
+    /**
+     * Static callback invoked when the engine returns a pick result from the viewport.
+     * Set this from extension.ts to wire up to the SceneTreeProvider.selectNodeById().
+     */
+    static onPickResult: ((nodeId: number | null) => void) | null = null;
+
     constructor(
         _context: vscode.ExtensionContext,
     ) { }
@@ -136,6 +157,13 @@ export class UzSceneEditorProvider implements vscode.CustomTextEditorProvider {
 
         // Update title from scene name (best-effort, non-blocking).
         this._updateTitle(document, webviewPanel);
+
+        // Listen for messages from the webview (e.g. pickResult from engine).
+        webviewPanel.webview.onDidReceiveMessage((message: { type: string; nodeId?: number | null }) => {
+            if (message.type === 'pickResult' && UzSceneEditorProvider.onPickResult) {
+                UzSceneEditorProvider.onPickResult(message.nodeId ?? null);
+            }
+        });
 
         // Get or create an independent engine instance for this scene.
         let instanceMgr: EngineInstanceManager;
@@ -179,8 +207,12 @@ export class UzSceneEditorProvider implements vscode.CustomTextEditorProvider {
 
             // Destroy the engine instance when the tab is closed.
             webviewPanel.onDidDispose(() => {
+                UzSceneEditorProvider._activePanels.delete(webviewPanel);
                 instanceMgr.destroyInstance(instance.id);
             });
+
+            // Track this panel for postMessage forwarding.
+            UzSceneEditorProvider._activePanels.add(webviewPanel);
 
         } catch (err) {
             const message = err instanceof Error ? err.message : String(err);

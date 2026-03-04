@@ -13,6 +13,11 @@
 #include <cstring>
 #include <string>
 #include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#include <io.h>
+#include <fcntl.h>
+#endif
 
 namespace pal = uz::platform;
 
@@ -27,6 +32,25 @@ struct TempFile {
     std::string path;
 
     explicit TempFile(const char* suffix = "") {
+#ifdef _WIN32
+        char tmp[MAX_PATH];
+        GetTempPathA(MAX_PATH, tmp);
+        std::string tmpl = std::string(tmp) + "uz_pal_test_XXXXXX";
+        if (_mktemp_s(tmpl.data(), tmpl.size() + 1) == 0) {
+            // Create the file
+            FILE* f = fopen(tmpl.c_str(), "wb");
+            if (f) {
+                fclose(f);
+                if (suffix && suffix[0] != '\0') {
+                    std::string newPath = tmpl + suffix;
+                    rename(tmpl.c_str(), newPath.c_str());
+                    path = newPath;
+                } else {
+                    path = tmpl;
+                }
+            }
+        }
+#else
         std::string tmpl = "/tmp/uz_pal_test_XXXXXX";
         // mkstemp needs a mutable char buffer.
         std::vector<char> buf(tmpl.begin(), tmpl.end());
@@ -41,6 +65,7 @@ struct TempFile {
                 path = newPath;
             }
         }
+#endif
     }
 
     ~TempFile() {
@@ -59,6 +84,16 @@ struct TempDir {
     std::string path;
 
     TempDir() {
+#ifdef _WIN32
+        char tmp[MAX_PATH];
+        GetTempPathA(MAX_PATH, tmp);
+        std::string tmpl = std::string(tmp) + "uz_pal_test_dir_XXXXXX";
+        if (_mktemp_s(tmpl.data(), tmpl.size() + 1) == 0) {
+            if (CreateDirectoryA(tmpl.c_str(), nullptr)) {
+                path = tmpl;
+            }
+        }
+#else
         std::string tmpl = "/tmp/uz_pal_test_dir_XXXXXX";
         std::vector<char> buf(tmpl.begin(), tmpl.end());
         buf.push_back('\0');
@@ -66,12 +101,17 @@ struct TempDir {
         if (result) {
             path = result;
         }
+#endif
     }
 
     ~TempDir() {
         if (!path.empty()) {
+#ifdef _WIN32
+            std::string cmd = "rmdir /s /q \"" + path + "\"";
+#else
             // Best-effort recursive removal via system command.
             std::string cmd = "rm -rf \"" + path + "\"";
+#endif
             (void)system(cmd.c_str());
         }
     }

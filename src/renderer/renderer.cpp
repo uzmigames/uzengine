@@ -442,7 +442,14 @@ void DX12Renderer::render(bool readback) {
         commandList_->SetGraphicsRoot32BitConstants(2, 8, &lightCB, 0);
 
         // Delegate editor drawing to the EditorComponent.
-        editor_.draw(commandList_.Get(), viewProj_);
+        uint32_t selNode = sceneParams_ ? sceneParams_->selectedNodeId.load(std::memory_order_relaxed) : 0;
+        int gizMode = sceneParams_ ? sceneParams_->gizmoMode.load(std::memory_order_relaxed) : 0;
+        int gizAxis = sceneParams_ ? sceneParams_->gizmoActiveAxis.load(std::memory_order_relaxed) : -1;
+        // When not dragging, use the hover axis for visual highlight
+        if (gizAxis < 0 && sceneParams_) {
+            gizAxis = sceneParams_->gizmoHoverAxis.load(std::memory_order_relaxed);
+        }
+        editor_.draw(commandList_.Get(), viewProj_, selNode, gizMode, gizAxis);
     } else if (!paused) {
         // Legacy pyramid draw — upload light data for shading.
         struct LightCBData {

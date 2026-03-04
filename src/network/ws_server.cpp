@@ -178,6 +178,19 @@ void WsServer::broadcast(const std::vector<uint8_t>& data) {
 }
 
 // ---------------------------------------------------------------------------
+// broadcastText
+// ---------------------------------------------------------------------------
+
+void WsServer::broadcastText(const std::string& text) {
+    if (text.empty()) return;
+
+    std::lock_guard<std::mutex> lock(impl_->clientsMutex);
+    for (auto& client : impl_->clients) {
+        client->sendText(text);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // stop
 // ---------------------------------------------------------------------------
 

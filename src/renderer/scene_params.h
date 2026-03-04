@@ -86,6 +86,23 @@ struct SceneParams {
     float camPitch{-0.6f};         // radians, negative = looking down
     float camSpeed{10.0f};         // units/sec base speed
     float camSensitivity{0.003f};  // radians per pixel of mouse delta
+
+    // -----------------------------------------------------------------------
+    // Gizmo interaction state — written by WS handler, read by render thread.
+    // -----------------------------------------------------------------------
+    std::atomic<uint32_t> selectedNodeId{0};  // 0 = nothing selected
+    std::atomic<int>      gizmoMode{0};       // 0=translate, 1=rotate, 2=scale
+    std::atomic<int>      gizmoSpace{0};      // 0=world, 1=local
+    std::atomic<int>      gizmoActiveAxis{-1}; // -1=none, 0=X, 1=Y, 2=Z
+    std::atomic<int>      gizmoHoverAxis{-1};  // axis under mouse cursor (-1=none)
+    std::atomic<bool>     gizmoDragging{false};
+    // Drag origin in screen space (set on beginDrag)
+    std::atomic<float>    gizmoDragStartX{0.0f};
+    std::atomic<float>    gizmoDragStartY{0.0f};
+    // Node transform at drag start (for applying deltas)
+    float gizmoDragOrigPos[3]{0.0f, 0.0f, 0.0f};
+    float gizmoDragOrigRot[3]{0.0f, 0.0f, 0.0f};
+    float gizmoDragOrigScale[3]{1.0f, 1.0f, 1.0f};
 };
 
 } // namespace uz

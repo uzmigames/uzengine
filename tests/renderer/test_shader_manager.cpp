@@ -23,6 +23,10 @@
 #include <string>
 #include <thread>
 #include <vector>
+#ifdef _WIN32
+#include <windows.h>
+#include <io.h>
+#endif
 
 using json = nlohmann::json;
 
@@ -35,6 +39,16 @@ namespace {
 struct TempDir {
     std::string path;
     TempDir() {
+#ifdef _WIN32
+        char tmp[MAX_PATH];
+        GetTempPathA(MAX_PATH, tmp);
+        std::string tmpl = std::string(tmp) + "uz_sm_test_XXXXXX";
+        if (_mktemp_s(tmpl.data(), tmpl.size() + 1) == 0) {
+            if (CreateDirectoryA(tmpl.c_str(), nullptr)) {
+                path = tmpl;
+            }
+        }
+#else
         std::string tmpl = "/tmp/uz_sm_test_XXXXXX";
         std::vector<char> buf(tmpl.begin(), tmpl.end());
         buf.push_back('\0');
@@ -42,10 +56,15 @@ struct TempDir {
         if (result) {
             path = result;
         }
+#endif
     }
     ~TempDir() {
         if (!path.empty()) {
+#ifdef _WIN32
+            std::string cmd = "rmdir /s /q \"" + path + "\"";
+#else
             std::string cmd = "rm -rf \"" + path + "\"";
+#endif
             (void)system(cmd.c_str());
         }
     }

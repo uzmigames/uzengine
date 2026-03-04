@@ -7,7 +7,7 @@ namespace uz {
 
 constexpr uint32_t kDefaultWidth  = 1280;
 constexpr uint32_t kDefaultHeight = 720;
-constexpr uint32_t kTargetFPS     = 144;
+constexpr uint32_t kTargetFPS     = 244;
 constexpr uint32_t kFrameCount    = 2; // double buffering
 
 struct FrameData {

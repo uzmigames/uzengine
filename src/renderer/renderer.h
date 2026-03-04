@@ -170,6 +170,12 @@ public:
     // is running.  Returns the number of nodes loaded.
     size_t loadEditorScene(std::vector<EditorNode> nodes);
 
+    // Returns a copy of the current editor nodes. Thread-safe.
+    std::vector<EditorNode> getEditorNodes() const { return editor_.getNodes(); }
+
+    // Replace editor nodes (thread-safe delegate). For gizmo drag updates.
+    void loadEditorNodes(std::vector<EditorNode> nodes) { editor_.loadNodes(std::move(nodes)); }
+
 private:
     // Initialization sub-steps (called by init).
     void createDevice();

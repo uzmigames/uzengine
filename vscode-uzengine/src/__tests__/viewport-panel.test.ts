@@ -517,6 +517,31 @@ describe('buildViewportStreamHtml — camera input capture', () => {
         // The guard expression checks all movement keys before sending.
         expect(html).toContain('!keys.w && !keys.s && !keys.a && !keys.d && !keys.q && !keys.e');
     });
+
+    it('tracks canvasFocused via focus/blur events on the canvas element', () => {
+        const html = buildViewportStreamHtml(baseOpts);
+        expect(html).toContain('canvasFocused');
+        expect(html).toContain("canvas.addEventListener('focus'");
+        expect(html).toContain("canvas.addEventListener('blur'");
+    });
+
+    it('guards gizmo hotkeys behind canvasFocused check', () => {
+        const html = buildViewportStreamHtml(baseOpts);
+        expect(html).toContain('else if (canvasFocused)');
+    });
+
+    it('contains editor.pickNode message for click-to-select', () => {
+        const html = buildViewportStreamHtml(baseOpts);
+        expect(html).toContain('editor.pickNode');
+        expect(html).toContain('screen_x');
+        expect(html).toContain('screen_y');
+    });
+
+    it('auto-focuses canvas on left-click for subsequent hotkeys', () => {
+        const html = buildViewportStreamHtml(baseOpts);
+        // The click handler should call canvas.focus()
+        expect(html).toContain('canvas.focus()');
+    });
 });
 
 // ---------------------------------------------------------------------------

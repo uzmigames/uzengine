@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>UzEngine Viewport Test</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #0d1117; color: #e0e0e0;
+      font-family: 'Segoe UI', 'Consolas', monospace;
+      display: flex; flex-direction: column; height: 100vh;
+      overflow: hidden;
+    }
+
+    /* ---- Top Toolbar ---- */
+    #toolbar {
+      display: flex; align-items: center; gap: 8px;
+      padding: 4px 10px; background: #161b22; border-bottom: 1px solid #30363d;
+      font-size: 12px; flex-shrink: 0;
+    }
+    .tool-group {
+      display: flex; gap: 2px;
+      border: 1px solid #30363d; border-radius: 4px; overflow: hidden;
+    }
+    .tool-btn {
+      background: #21262d; color: #8b949e; border: none;
+      padding: 5px 10px; cursor: pointer; font-size: 12px;
+      font-family: inherit; transition: all 0.15s;
+    }
+    .tool-btn:hover { background: #30363d; color: #e0e0e0; }
+    .tool-btn.active { background: #388bfd33; color: #58a6ff; border-color: #388bfd; }
+    .separator { width: 1px; background: #30363d; margin: 0 6px; }
+    .label { color: #58a6ff; font-weight: bold; font-size: 11px; }
+    #status { font-weight: bold; font-size: 11px; }
+    #status.connected { color: #3fb950; }
+    #status.disconnected { color: #f85149; }
+    #status.connecting { color: #d29922; }
+    .metric { color: #8b949e; font-size: 11px; }
+    .metric span { color: #58a6ff; font-weight: bold; }
+    input[type=number] {
+      background: #21262d; color: #e0e0e0; border: 1px solid #30363d;
+      padding: 3px 6px; width: 60px; border-radius: 3px; font-size: 11px;
+    }
+    .connect-btn {
+      background: #238636; color: #fff; border: none;
+      padding: 4px 10px; border-radius: 3px; cursor: pointer; font-size: 11px;
+    }
+    .connect-btn:hover { background: #2ea043; }
+
+    /* ---- Canvas ---- */
+    #canvas-container {
+      flex: 1; position: relative; background: #000; overflow: hidden; min-height: 0;
+      cursor: crosshair;
+    }
+    canvas {
+      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+      image-rendering: auto;
+    }
+
+    /* ---- Bottom Panel ---- */
+    #bottom-panel {
+      display: flex; flex-direction: column; flex-shrink: 0;
+      border-top: 1px solid #30363d;
+    }
+    #info-bar {
+      display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+      padding: 3px 10px; background: #161b22; font-size: 11px; color: #8b949e;
+    }
+    #info-bar .val { color: #58a6ff; }
+    #log-panel {
+      height: 140px; overflow-y: auto;
+      padding: 4px 10px; background: #0d1117;
+      font-size: 10px; color: #8b949e;
+      font-family: 'Consolas', 'Courier New', monospace;
+    }
+    .log-entry { padding: 1px 0; }
+    .log-entry.send { color: #d29922; }
+    .log-entry.recv { color: #3fb950; }
+    .log-entry.miss { color: #f85149; }
+    .log-entry.ws { color: #58a6ff; }
+    .log-entry.cam { color: #8b949e; }
+    .log-entry.gizmo { color: #bc8cff; }
+    .axis-x { color: #f85149; font-weight: bold; }
+    .axis-y { color: #3fb950; font-weight: bold; }
+    .axis-z { color: #58a6ff; font-weight: bold; }
+    .log-entry.info { color: #6e7681; }
+
+    /* ---- Selected Node Overlay ---- */
+    #selection-info {
+      position: absolute; top: 8px; right: 8px;
+      background: rgba(22,27,34,0.9); border: 1px solid #30363d; border-radius: 6px;
+      padding: 6px 10px; font-size: 11px; color: #e0e0e0; pointer-events: none;
+      z-index: 10;
+    }
+    #selection-info .node-label { color: #58a6ff; font-weight: bold; }
+
+    /* ---- Hotkey hint overlay ---- */
+    #hotkey-hint {
+      position: absolute; bottom: 8px; left: 8px;
+      background: rgba(22,27,34,0.8); border-radius: 4px;
+      padding: 4px 8px; font-size: 10px; color: #6e7681; pointer-events: none;
+      z-index: 10;
+    }
+    kbd {
+      background: #30363d; border: 1px solid #484f58; border-radius: 3px;
+      padding: 0 4px; font-size: 10px; color: #e0e0e0;
+    }
+  </style>
+</head>
+<body>
+  <!-- Toolbar -->
+  <div id="toolbar">
+    <span class="label">UzEngine</span>
+    <span id="status" class="connecting">Disconnected</span>
+    <div class="separator"></div>
+
+    <!-- Gizmo Mode -->
+    <div class="tool-group">
+      <button class="tool-btn active" id="btn-translate" title="Translate (W)">⬍ Move</button>
+      <button class="tool-btn" id="btn-rotate" title="Rotate (E)">⟳ Rotate</button>
+      <button class="tool-btn" id="btn-scale" title="Scale (R)">⬡ Scale</button>
+    </div>
+
+    <!-- Gizmo Space -->
+    <div class="tool-group">
+      <button class="tool-btn active" id="btn-world" title="World Space">World</button>
+      <button class="tool-btn" id="btn-local" title="Local Space">Local</button>
+    </div>
+
+    <div class="separator"></div>
+    <button class="tool-btn" id="btn-focus" title="Focus on selected (F)" style="background:#238636;color:#fff">⊕ Focus</button>
+    <div class="separator"></div>
+    <span class="metric">FPS: <span id="fps">--</span></span>
+    <span class="metric">Picked: <span id="lastPick">--</span></span>
+    <span class="metric">Axis: <span id="activeAxis">--</span></span>
+    <span class="metric">Canvas: <span id="canvasSize">--</span></span>
+    <div class="separator"></div>
+    <label style="color:#8b949e;font-size:11px">Port: <input id="portInput" type="number" value="9002"></label>
+    <button class="connect-btn" onclick="startConnection()">Connect</button>
+  </div>
+
+  <!-- Viewport Canvas -->
+  <div id="canvas-container">
+    <canvas id="viewport-canvas"></canvas>
+    <div id="selection-info" style="display:none">
+      Selected: <span class="node-label" id="selected-node">--</span>
+    </div>
+    <div id="hotkey-hint">
+      <kbd>W</kbd> Move  <kbd>E</kbd> Rotate  <kbd>R</kbd> Scale  <kbd>F</kbd> Focus  |
+      <kbd>RMB</kbd>+Drag: Orbit  <kbd>WASD</kbd>: Move  <kbd>Scroll</kbd>: Zoom  |
+      <kbd>LMB</kbd>: Select / Drag Gizmo
+    </div>
+  </div>
+
+  <!-- Bottom Panel -->
+  <div id="bottom-panel">
+    <div id="info-bar">
+      <span>Frames: <span class="val" id="totalFrames">0</span></span>
+      <span>Picks: <span class="val" id="picksSent">0</span>/<span class="val" id="picksReceived">0</span></span>
+      <span>Camera sends: <span class="val" id="camSends">0</span></span>
+      <span>Gizmo: <span class="val" id="gizmoInfo">translate / world</span></span>
+      <span>Resize: <span class="val" id="resizeInfo">--</span></span>
+      <span style="margin-left:auto;cursor:pointer;color:#58a6ff" onclick="clearLog()">Clear Log</span>
+    </div>
+    <div id="log-panel">
+      <div class="log-entry info">Viewport test — click objects to select, RMB+drag to orbit, WASD to move, scroll to zoom.</div>
+    </div>
+  </div>
+
+  <script>
+    // =========================================================================
+    // DOM refs
+    // =========================================================================
+    var canvas = document.getElementById('viewport-canvas');
+    var ctx2d = canvas.getContext('2d');
+    var canvasContainer = document.getElementById('canvas-container');
+    var statusEl = document.getElementById('status');
+    var logPanel = document.getElementById('log-panel');
+
+    // =========================================================================
+    // State
+    // =========================================================================
+    var ws = null;
+    var pendingBitmap = null;
+    var rafScheduled = false;
+    var frameCount = 0;
+    var lastFpsTick = Date.now();
+    var totalFramesReceived = 0;
+    var picksSent = 0;
+    var picksReceived = 0;
+    var camSends = 0;
+
+    // Camera input state
+    var rightMouseDown = false;
+    var mouseDeltaX = 0, mouseDeltaY = 0;
+    var scrollDelta = 0;
+    var shiftDown = false;
+    var keys = { w:0, a:0, s:0, d:0, q:0, e:0 };
+    var canvasFocused = false;
+
+    // Gizmo state
+    var currentGizmoMode = 'translate';
+    var currentGizmoSpace = 'world';
+    var gizmoDragging = false;
+    var gizmoActiveAxis = null;
+    var selectedNodeId = null;
+    var justFinishedDrag = false;  // prevent click event after drag
+    var lastDragSendTime = 0;     // throttle drag sends
+
+    // Resize tracking
+    var lastSentWidth = 0, lastSentHeight = 0;
+
+    // =========================================================================
+    // Logging
+    // =========================================================================
+    function log(msg, cls) {
+      var entry = document.createElement('div');
+      entry.className = 'log-entry ' + (cls || 'info');
+      var ts = new Date().toLocaleTimeString('en-US', { hour12: false, fractionalSecondDigits: 2 });
+      entry.textContent = '[' + ts + '] ' + msg;
+      logPanel.appendChild(entry);
+      // Keep max 200 entries
+      while (logPanel.children.length > 200) logPanel.removeChild(logPanel.firstChild);
+      logPanel.scrollTop = logPanel.scrollHeight;
+    }
+    function clearLog() { logPanel.innerHTML = ''; log('Log cleared.', 'info'); }
+
+    function setStatus(text, cls) {
+      statusEl.textContent = text;
+      statusEl.className = cls;
+    }
+
+    // =========================================================================
+    // Gizmo Mode / Space
+    // =========================================================================
+    var gizmoHotkeys = { w: 'translate', e: 'rotate', r: 'scale' };
+
+    function setGizmoMode(mode) {
+      if (mode === currentGizmoMode) return;
+      currentGizmoMode = mode;
+      document.getElementById('btn-translate').classList.toggle('active', mode === 'translate');
+      document.getElementById('btn-rotate').classList.toggle('active', mode === 'rotate');
+      document.getElementById('btn-scale').classList.toggle('active', mode === 'scale');
+      document.getElementById('gizmoInfo').textContent = mode + ' / ' + currentGizmoSpace;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'gizmo_mode', mode: mode }));
+      }
+      log('Gizmo mode: ' + mode, 'info');
+    }
+
+    function setGizmoSpace(space) {
+      if (space === currentGizmoSpace) return;
+      currentGizmoSpace = space;
+      document.getElementById('btn-world').classList.toggle('active', space === 'world');
+      document.getElementById('btn-local').classList.toggle('active', space === 'local');
+      document.getElementById('gizmoInfo').textContent = currentGizmoMode + ' / ' + space;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'gizmo_space', space: space }));
+      }
+      log('Gizmo space: ' + space, 'info');
+    }
+
+    // Button handlers
+    document.getElementById('btn-translate').addEventListener('click', function() { setGizmoMode('translate'); });
+    document.getElementById('btn-rotate').addEventListener('click', function() { setGizmoMode('rotate'); });
+    document.getElementById('btn-scale').addEventListener('click', function() { setGizmoMode('scale'); });
+    document.getElementById('btn-world').addEventListener('click', function() { setGizmoSpace('world'); });
+    document.getElementById('btn-local').addEventListener('click', function() { setGizmoSpace('local'); });
+
+    // Focus on selected node
+    function focusOnSelected() {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      if (!selectedNodeId) {
+        log('No node selected to focus on', 'miss');
+        return;
+      }
+      ws.send(JSON.stringify({ type: 'editor.focusNode', nodeId: selectedNodeId }));
+      log('SEND focusNode: #' + selectedNodeId, 'send');
+    }
+    document.getElementById('btn-focus').addEventListener('click', focusOnSelected);
+
+    // =========================================================================
+    // Frame rendering
+    // =========================================================================
+    function scheduleRender() {
+      if (rafScheduled) return;
+      rafScheduled = true;
+      requestAnimationFrame(renderFrame);
+    }
+
+    function renderFrame() {
+      rafScheduled = false;
+      if (!pendingBitmap) return;
+      var bmp = pendingBitmap;
+      pendingBitmap = null;
+
+      var bmpW = bmp.displayWidth || bmp.width;
+      var bmpH = bmp.displayHeight || bmp.height;
+      if (canvas.width !== bmpW || canvas.height !== bmpH) {
+        canvas.width = bmpW;
+        canvas.height = bmpH;
+        document.getElementById('canvasSize').textContent = bmpW + '×' + bmpH;
+      }
+      ctx2d.drawImage(bmp, 0, 0);
+      bmp.close();
+
+      frameCount++;
+      totalFramesReceived++;
+      var now = Date.now();
+      if (now - lastFpsTick >= 1000) {
+        document.getElementById('fps').textContent = Math.round(frameCount * 1000 / (now - lastFpsTick));
+        frameCount = 0;
+        lastFpsTick = now;
+        document.getElementById('totalFrames').textContent = totalFramesReceived;
+      }
+    }
+
+    // =========================================================================
+    // Canvas focus tracking
+    // =========================================================================
+    canvas.setAttribute('tabindex', '0');
+    canvas.addEventListener('focus', function() { canvasFocused = true; });
+    canvas.addEventListener('blur', function() { canvasFocused = false; });
+
+    // =========================================================================
+    // Keyboard — Camera WASD + Gizmo W/E/R
+    // =========================================================================
+    document.addEventListener('keydown', function(e) {
+      var k = e.key.toLowerCase();
+      if (e.key === 'Shift') { shiftDown = true; return; }
+
+      if (rightMouseDown) {
+        // Camera mode — WASD/QE for movement
+        if (k in keys) { keys[k] = 1; e.preventDefault(); }
+      } else if (canvasFocused) {
+        // Editor mode — W/E/R for gizmo switching, F for focus
+        if (k in gizmoHotkeys) {
+          setGizmoMode(gizmoHotkeys[k]);
+          e.preventDefault();
+        }
+        if (k === 'f') {
+          focusOnSelected();
+          e.preventDefault();
+        }
+      }
+    });
+    document.addEventListener('keyup', function(e) {
+      var k = e.key.toLowerCase();
+      if (k in keys) { keys[k] = 0; }
+      if (e.key === 'Shift') { shiftDown = false; }
+    });
+
+    // =========================================================================
+    // Mouse — Right-click orbit, Left-click pick/gizmo drag
+    // =========================================================================
+    function getCanvasCoords(e) {
+      var rect = canvasContainer.getBoundingClientRect();
+      var scaleX = canvas.width / rect.width;
+      var scaleY = canvas.height / rect.height;
+      return {
+        sx: Math.round((e.clientX - rect.left) * scaleX),
+        sy: Math.round((e.clientY - rect.top) * scaleY)
+      };
+    }
+
+    canvasContainer.addEventListener('mousedown', function(e) {
+      if (e.button === 2) {
+        rightMouseDown = true;
+        canvas.focus();
+        canvas.requestPointerLock();
+        e.preventDefault();
+        return;
+      }
+
+      if (e.button === 0) {
+        canvas.focus();
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+        var coords = getCanvasCoords(e);
+
+        // If a node is selected, try to begin gizmo drag first
+        if (selectedNodeId) {
+          ws.send(JSON.stringify({
+            type: 'editor.gizmoBeginDrag',
+            screen_x: coords.sx, screen_y: coords.sy
+          }));
+          log('SEND gizmoBeginDrag: (' + coords.sx + ', ' + coords.sy + ')', 'gizmo');
+          // We'll wait for gizmoState response to know if an axis was hit.
+          // Store coords so click handler can pick if no axis was hit.
+          e._gizmoAttempted = true;
+          e._pickCoords = coords;
+        } else {
+          // No node selected — do a pick directly
+          ws.send(JSON.stringify({
+            type: 'editor.pickNode', screen_x: coords.sx, screen_y: coords.sy
+          }));
+          picksSent++;
+          document.getElementById('picksSent').textContent = picksSent;
+          log('SEND pickNode: (' + coords.sx + ', ' + coords.sy + ')', 'send');
+        }
+        e.preventDefault();
+      }
+    });
+
+    document.addEventListener('mouseup', function(e) {
+      if (e.button === 2) {
+        rightMouseDown = false;
+        if (document.pointerLockElement === canvas) {
+          document.exitPointerLock();
+        }
+        keys = { w:0, a:0, s:0, d:0, q:0, e:0 };
+        shiftDown = false;
+      }
+
+      if (e.button === 0 && gizmoDragging) {
+        gizmoDragging = false;
+        gizmoActiveAxis = null;
+        justFinishedDrag = true;  // suppress the upcoming click event
+        setTimeout(function() { justFinishedDrag = false; }, 50);
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'editor.gizmoEndDrag' }));
+          log('SEND gizmoEndDrag', 'gizmo');
+        }
+        document.getElementById('activeAxis').textContent = '--';
+        canvasContainer.style.cursor = 'crosshair';
+      }
+    });
+
+    canvasContainer.addEventListener('contextmenu', function(e) { e.preventDefault(); });
+
+    document.addEventListener('mousemove', function(e) {
+      if (rightMouseDown && document.pointerLockElement === canvas) {
+        mouseDeltaX += e.movementX;
+        mouseDeltaY += e.movementY;
+        return;
+      }
+
+      if (gizmoDragging && ws && ws.readyState === WebSocket.OPEN) {
+        var now = performance.now();
+        if (now - lastDragSendTime < 16) return; // throttle to ~60fps
+        lastDragSendTime = now;
+        var coords = getCanvasCoords(e);
+        ws.send(JSON.stringify({
+          type: 'editor.gizmoDrag',
+          screen_x: coords.sx, screen_y: coords.sy
+        }));
+      }
+    });
+
+    canvasContainer.addEventListener('wheel', function(e) {
+      var delta = -e.deltaY;
+      if (e.deltaMode === 0) { delta /= 100; }
+      else if (e.deltaMode === 1) { delta /= 3; }
+      scrollDelta += delta;
+      e.preventDefault();
+    }, { passive: false });
+
+    // Left-click to select (only when not dragging gizmo)
+    canvasContainer.addEventListener('click', function(e) {
+      if (e.button !== 0) return;
+      if (gizmoDragging) return;
+      if (justFinishedDrag) return;  // suppress click that follows drag mouseup
+
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        log('Cannot pick — WS not connected', 'miss');
+        return;
+      }
+
+      // If gizmoBeginDrag was sent and no axis was hit, the gizmoState handler
+      // will fire a pick. We send the pick here as fallback.
+      if (!selectedNodeId) {
+        // Already sent by mousedown handler
+        return;
+      }
+      // If we have a selected node but gizmo wasn't dragging, send pick to potentially change selection
+      var coords = getCanvasCoords(e);
+      ws.send(JSON.stringify({
+        type: 'editor.pickNode', screen_x: coords.sx, screen_y: coords.sy
+      }));
+      picksSent++;
+      document.getElementById('picksSent').textContent = picksSent;
+      log('SEND pickNode: (' + coords.sx + ', ' + coords.sy + ')', 'send');
+    });
+
+    document.addEventListener('pointerlockchange', function() {
+      if (document.pointerLockElement !== canvas) {
+        rightMouseDown = false;
+        keys = { w:0, a:0, s:0, d:0, q:0, e:0 };
+        shiftDown = false;
+      }
+    });
+
+    // =========================================================================
+    // Camera input send loop (~30fps)
+    // =========================================================================
+    setInterval(function() {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      var hasInput = rightMouseDown || mouseDeltaX !== 0 || mouseDeltaY !== 0 || scrollDelta !== 0;
+      if (!hasInput && !keys.w && !keys.s && !keys.a && !keys.d && !keys.q && !keys.e) return;
+
+      ws.send(JSON.stringify({
+        type: 'camera_input',
+        w: keys.w, s: keys.s, a: keys.a, d: keys.d, q: keys.q, e: keys.e,
+        dx: mouseDeltaX, dy: mouseDeltaY,
+        rmb: rightMouseDown, shift: shiftDown,
+        scroll: scrollDelta
+      }));
+
+      camSends++;
+      document.getElementById('camSends').textContent = camSends;
+      mouseDeltaX = 0;
+      mouseDeltaY = 0;
+      scrollDelta = 0;
+    }, 33);
+
+    // =========================================================================
+    // Viewport resize — notify engine
+    // =========================================================================
+    function sendResize(w, h) {
+      w = Math.max(64, w & ~1);
+      h = Math.max(64, h & ~1);
+      if (w === lastSentWidth && h === lastSentHeight) return;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'viewport_resize', width: w, height: h }));
+        lastSentWidth = w;
+        lastSentHeight = h;
+        document.getElementById('resizeInfo').textContent = w + '×' + h;
+        log('Resize sent: ' + w + '×' + h, 'info');
+      }
+    }
+
+    var resizeTimer = null;
+    function checkResize() {
+      var cr = canvasContainer.getBoundingClientRect();
+      if (cr.width > 0 && cr.height > 0) {
+        var dpr = window.devicePixelRatio || 1;
+        sendResize(Math.round(cr.width * dpr), Math.round(cr.height * dpr));
+      }
+    }
+    function scheduleResize() {
+      if (resizeTimer) clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(checkResize, 500);
+    }
+    var resizeObserver = new ResizeObserver(function() { scheduleResize(); });
+    resizeObserver.observe(canvasContainer);
+    setInterval(scheduleResize, 3000);
+
+    // =========================================================================
+    // WebSocket connection
+    // =========================================================================
+    function startConnection() {
+      if (ws) { ws.close(); ws = null; }
+
+      var port = document.getElementById('portInput').value || '9002';
+      var url = 'ws://localhost:' + port;
+      setStatus('Connecting…', 'connecting');
+      log('Connecting to ' + url + '…', 'ws');
+
+      try { ws = new WebSocket(url); }
+      catch (err) { setStatus('Failed', 'disconnected'); log('WS error: ' + err, 'miss'); return; }
+
+      ws.binaryType = 'arraybuffer';
+
+      ws.addEventListener('open', function() {
+        setStatus('Connected', 'connected');
+        log('Connected to ' + url, 'ws');
+        totalFramesReceived = 0; picksSent = 0; picksReceived = 0; camSends = 0;
+        lastSentWidth = 0; lastSentHeight = 0;
+        // Send initial resize
+        setTimeout(checkResize, 300);
+      });
+
+      ws.addEventListener('message', function(e) {
+        // --- Text messages (pickResult, etc.) ---
+        if (typeof e.data === 'string') {
+          try {
+            var parsed = JSON.parse(e.data);
+            if (parsed.type === 'pickResult') {
+              picksReceived++;
+              document.getElementById('picksReceived').textContent = picksReceived;
+              if (parsed.nodeId !== null && parsed.nodeId !== undefined) {
+                selectedNodeId = parsed.nodeId;
+                document.getElementById('lastPick').textContent = 'Node #' + parsed.nodeId;
+                document.getElementById('selected-node').textContent = 'Node #' + parsed.nodeId;
+                document.getElementById('selection-info').style.display = '';
+                log('✅ PICK HIT: nodeId=' + parsed.nodeId, 'recv');
+              } else {
+                selectedNodeId = null;
+                document.getElementById('lastPick').textContent = '(empty)';
+                document.getElementById('selection-info').style.display = 'none';
+                log('❌ PICK MISS: no node at position', 'miss');
+              }
+            } else if (parsed.type === 'selectionChanged') {
+              selectedNodeId = parsed.nodeId;
+              if (parsed.nodeId) {
+                document.getElementById('selected-node').textContent = 'Node #' + parsed.nodeId;
+                document.getElementById('selection-info').style.display = '';
+              } else {
+                document.getElementById('selection-info').style.display = 'none';
+              }
+            } else if (parsed.type === 'gizmoState') {
+              if (parsed.axis) {
+                gizmoDragging = true;
+                gizmoActiveAxis = parsed.axis;
+                var axisClass = parsed.axis === 'x' ? 'axis-x' : (parsed.axis === 'y' ? 'axis-y' : 'axis-z');
+                document.getElementById('activeAxis').innerHTML = '<span class="' + axisClass + '">' + parsed.axis.toUpperCase() + '</span>';
+                canvasContainer.style.cursor = 'grabbing';
+                log('🎯 Gizmo axis: ' + parsed.axis.toUpperCase() + ' — drag to transform', 'gizmo');
+              } else {
+                // No axis hit — if we were trying to begin drag, fall back to pick
+                if (!gizmoDragging && selectedNodeId) {
+                  var coords = getCanvasCoords(event || window.event || {clientX:0,clientY:0});
+                  // Send a pick
+                }
+                gizmoDragging = false;
+                gizmoActiveAxis = null;
+                document.getElementById('activeAxis').textContent = '--';
+                canvasContainer.style.cursor = 'crosshair';
+              }
+            } else if (parsed.type === 'transformUpdate') {
+              if (parsed.position) {
+                log('📐 Transform: pos=[' + parsed.position.map(function(v){return v.toFixed(2)}).join(', ') + ']', 'gizmo');
+              } else if (parsed.rotation) {
+                log('📐 Transform: rot=[' + parsed.rotation.map(function(v){return v.toFixed(2)}).join(', ') + ']', 'gizmo');
+              } else if (parsed.scale) {
+                log('📐 Transform: scale=[' + parsed.scale.map(function(v){return v.toFixed(2)}).join(', ') + ']', 'gizmo');
+              }
+            } else if (parsed.type === 'cameraFocused') {
+              log('📷 Camera focused on Node #' + parsed.nodeId + ' at [' + parsed.position.map(function(v){return v.toFixed(1)}).join(', ') + ']', 'ws');
+            } else {
+              log('RECV: ' + e.data, 'recv');
+            }
+          } catch (ex) { log('JSON parse error: ' + ex, 'miss'); }
+          return;
+        }
+
+        // --- Binary messages (JPEG frames) ---
+        if (!(e.data instanceof ArrayBuffer)) return;
+        if (e.data.byteLength < 2) return;
+
+        var raw = new Uint8Array(e.data);
+        var jpegBytes;
+        if (raw[0] === 0xFF && raw[1] === 0xD8) {
+          jpegBytes = raw;
+        } else if (raw.length > 4 && raw[4] === 0xFF && raw[5] === 0xD8) {
+          jpegBytes = new Uint8Array(e.data, 4);
+        } else { return; }
+
+        var blob = new Blob([jpegBytes], { type: 'image/jpeg' });
+        createImageBitmap(blob).then(function(bmp) {
+          if (pendingBitmap) { pendingBitmap.close(); }
+          pendingBitmap = bmp;
+          scheduleRender();
+        });
+      });
+
+      ws.addEventListener('close', function() {
+        setStatus('Disconnected', 'disconnected');
+        log('WS disconnected', 'ws');
+      });
+      ws.addEventListener('error', function() { log('WS error', 'miss'); });
+    }
+
+    // =========================================================================
+    // Init: read ?port= and auto-connect
+    // =========================================================================
+    var urlParams = new URLSearchParams(window.location.search);
+    var urlPort = urlParams.get('port');
+    if (urlPort) document.getElementById('portInput').value = urlPort;
+    startConnection();
+  </script>
+</body>
+</html>

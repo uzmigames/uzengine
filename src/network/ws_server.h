@@ -59,6 +59,9 @@ public:
     /// Thread-safe. No-op if no clients are connected.
     void broadcast(const std::vector<uint8_t>& data);
 
+    /// Broadcast a text message to all connected clients. Thread-safe.
+    void broadcastText(const std::string& text);
+
     /// Stop accepting connections and close all existing ones.
     void stop();
 

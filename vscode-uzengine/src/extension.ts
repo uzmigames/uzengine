@@ -165,6 +165,11 @@ export function activate(context: vscode.ExtensionContext): void {
         )
     );
 
+    // Wire viewport click-to-select → SceneTreeProvider node selection.
+    UzSceneEditorProvider.onPickResult = (nodeId: number | null) => {
+        void sceneTreeProvider.selectNodeById(nodeId);
+    };
+
     // -------------------------------------------------------------------------
     // 7. PlayControls — status bar ▶ ⏸ ■ buttons.
     // -------------------------------------------------------------------------
@@ -307,6 +312,38 @@ export function activate(context: vscode.ExtensionContext): void {
         }
     );
 
+    // Gizmo: Translate (W)
+    const gizmoTranslateCmd = vscode.commands.registerCommand(
+        'uzengine.gizmoTranslate',
+        () => {
+            UzSceneEditorProvider.postToActiveWebview({ type: 'set_gizmo_mode', mode: 'translate' });
+        }
+    );
+
+    // Gizmo: Rotate (E)
+    const gizmoRotateCmd = vscode.commands.registerCommand(
+        'uzengine.gizmoRotate',
+        () => {
+            UzSceneEditorProvider.postToActiveWebview({ type: 'set_gizmo_mode', mode: 'rotate' });
+        }
+    );
+
+    // Gizmo: Scale (R)
+    const gizmoScaleCmd = vscode.commands.registerCommand(
+        'uzengine.gizmoScale',
+        () => {
+            UzSceneEditorProvider.postToActiveWebview({ type: 'set_gizmo_mode', mode: 'scale' });
+        }
+    );
+
+    // Gizmo: Toggle Local/World
+    const gizmoSpaceCmd = vscode.commands.registerCommand(
+        'uzengine.gizmoSpaceToggle',
+        () => {
+            UzSceneEditorProvider.postToActiveWebview({ type: 'toggle_gizmo_space' });
+        }
+    );
+
     context.subscriptions.push(
         openCommand,
         startCommand,
@@ -322,6 +359,10 @@ export function activate(context: vscode.ExtensionContext): void {
         saveSceneCommand,
         refreshSceneCommand,
         consoleClearCommand,
+        gizmoTranslateCmd,
+        gizmoRotateCmd,
+        gizmoScaleCmd,
+        gizmoSpaceCmd,
     );
 
     // -------------------------------------------------------------------------

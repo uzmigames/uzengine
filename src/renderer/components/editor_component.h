@@ -16,6 +16,7 @@
 #include <wrl/client.h>
 
 #include "renderer/gizmos/gizmo_registry.h"
+#include "renderer/gizmos/gizmo_transform.h"
 
 namespace uz {
 
@@ -34,6 +35,7 @@ public:
         DirectX::XMFLOAT3 scale{1.0f, 1.0f, 1.0f};
         DirectX::XMFLOAT3 color{0.8f, 0.8f, 0.8f};     // wireframe tint
         uint16_t          nodeType{1};                   // NodeType enum value
+        uint32_t          nodeId{0};                     // scene node ID for picking
     };
 
     EditorComponent()  = default;
@@ -49,7 +51,10 @@ public:
 
     /// Record draw commands for the editor overlay (grid + per-node gizmos).
     void draw(ID3D12GraphicsCommandList* cmdList,
-              const DirectX::XMFLOAT4X4& viewProj);
+              const DirectX::XMFLOAT4X4& viewProj,
+              uint32_t selectedNodeId = 0,
+              int gizmoMode = 0,
+              int gizmoActiveAxis = -1);
 
     /// Release all GPU resources.
     void shutdown();
@@ -57,12 +62,19 @@ public:
     /// Replace the editor scene nodes. Thread-safe.
     size_t loadNodes(std::vector<EditorNode> nodes);
 
+    /// Returns a copy of the current editor nodes. Thread-safe.
+    std::vector<EditorNode> getNodes() const;
+
 private:
     void createLinePipelineState(ID3D12Device* device, ID3D12RootSignature* rootSig);
+    void createSolidPipelineState(ID3D12Device* device, ID3D12RootSignature* rootSig);
     void createGridVertexBuffer(ID3D12Device* device);
 
     // Line-list PSO (shared by grid and all gizmo draws).
     Microsoft::WRL::ComPtr<ID3D12PipelineState> linePipelineState_;
+
+    // Solid triangle PSO (for transform gizmo handles — cones, cylinders, cubes).
+    Microsoft::WRL::ComPtr<ID3D12PipelineState> solidPipelineState_;
 
     // Ground grid vertex buffer.
     Microsoft::WRL::ComPtr<ID3D12Resource> gridVertexBuffer_;
@@ -71,6 +83,7 @@ private:
 
     // Gizmo registry — owns all gizmo renderers, keyed by NodeType.
     GizmoRegistry gizmoRegistry_;
+    GizmoTransform transformGizmo_;
 
     // Editor scene nodes (loaded via IPC, protected by mutex).
     std::vector<EditorNode> editorNodes_;

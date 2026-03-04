@@ -152,6 +152,57 @@ struct HandlePool {
         const Slot& slot = slots[h.index];
         return slot.occupied && slot.generation == h.generation;
     }
+
+    /// Returns the number of currently occupied slots.
+    [[nodiscard]] size_t alive_count() const {
+        size_t n = 0;
+        for (size_t i = 1; i < slots.size(); ++i) {  // Skip null sentinel at 0
+            if (slots[i].occupied) ++n;
+        }
+        return n;
+    }
+
+    /// Returns the total capacity (including the null sentinel).
+    [[nodiscard]] size_t capacity() const { return slots.size(); }
+};
+
+// ============================================================================
+// EntityStorage<T, Tag> — entity-oriented wrapper around HandlePool
+// ============================================================================
+
+/// EntityStorage provides a cleaner create/destroy API for entity-like objects,
+/// and tracks the alive count efficiently.
+template<typename T, typename Tag>
+struct EntityStorage {
+    HandlePool<T, Tag> pool;
+    size_t             alive = 0;
+
+    /// Create a new entity with the given value. Returns a handle to it.
+    [[nodiscard]] Handle<Tag> create(T&& value) {
+        auto h = pool.insert(static_cast<T&&>(value));
+        ++alive;
+        return h;
+    }
+
+    /// Destroy an entity by handle. The handle becomes stale.
+    void destroy(Handle<Tag> h) {
+        if (pool.is_valid(h)) {
+            pool.remove(h);
+            --alive;
+        }
+    }
+
+    /// Get a mutable pointer to the entity, or nullptr if handle is stale/null.
+    [[nodiscard]] T* get(Handle<Tag> h) { return pool.get(h); }
+
+    /// Get a const pointer to the entity, or nullptr if handle is stale/null.
+    [[nodiscard]] const T* get(Handle<Tag> h) const { return pool.get(h); }
+
+    /// Check if a handle is still valid.
+    [[nodiscard]] bool is_valid(Handle<Tag> h) const { return pool.is_valid(h); }
+
+    /// Returns the number of alive entities.
+    [[nodiscard]] size_t alive_count() const { return alive; }
 };
 
 } // namespace uz

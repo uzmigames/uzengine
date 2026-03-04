@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>UzEngine Pick Diagnostic</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #0d1117; color: #e0e0e0;
+      font-family: 'Segoe UI', 'Consolas', monospace;
+      display: flex; flex-direction: column; height: 100vh;
+    }
+    #toolbar {
+      display: flex; align-items: center; gap: 12px;
+      padding: 6px 12px; background: #161b22; border-bottom: 1px solid #30363d;
+      font-size: 12px; flex-shrink: 0;
+    }
+    .label { color: #58a6ff; font-weight: bold; }
+    #status { font-weight: bold; }
+    #status.connected { color: #3fb950; }
+    #status.disconnected { color: #f85149; }
+    #status.connecting { color: #d29922; }
+    .metric { color: #8b949e; }
+    .metric span { color: #58a6ff; font-weight: bold; }
+    input {
+      background: #21262d; color: #e0e0e0; border: 1px solid #30363d;
+      padding: 3px 8px; width: 70px; border-radius: 3px; font-size: 12px;
+    }
+    button {
+      background: #238636; color: #fff; border: none;
+      padding: 4px 12px; border-radius: 3px; cursor: pointer; font-size: 12px;
+    }
+    button:hover { background: #2ea043; }
+    #canvas-container {
+      flex: 1; position: relative; background: #000; overflow: hidden; min-height: 0;
+      cursor: crosshair;
+    }
+    canvas {
+      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+      image-rendering: auto;
+    }
+    #click-marker {
+      position: absolute; width: 20px; height: 20px;
+      border: 2px solid #ff4444; border-radius: 50%;
+      pointer-events: none; display: none;
+      transform: translate(-50%, -50%);
+    }
+    #log-panel {
+      height: 180px; overflow-y: auto;
+      padding: 6px 12px; background: #161b22; border-top: 1px solid #30363d;
+      font-size: 11px; color: #8b949e; flex-shrink: 0;
+      font-family: 'Consolas', monospace;
+    }
+    #log-panel .log-entry { padding: 1px 0; border-bottom: 1px solid #21262d; }
+    #log-panel .log-entry.pick-req { color: #d29922; }
+    #log-panel .log-entry.pick-res { color: #3fb950; }
+    #log-panel .log-entry.pick-miss { color: #f85149; }
+    #log-panel .log-entry.ws-msg { color: #58a6ff; }
+    #log-panel .log-entry.info { color: #8b949e; }
+    #diag {
+      padding: 4px 12px; background: #0d1117; border-top: 1px solid #30363d;
+      font-size: 11px; color: #8b949e; flex-shrink: 0;
+      display: flex; gap: 16px; flex-wrap: wrap;
+    }
+    #diag .val { color: #58a6ff; }
+  </style>
+</head>
+<body>
+  <div id="toolbar">
+    <span class="label">🎯 Pick Diagnostic</span>
+    <span id="status" class="connecting">Disconnected</span>
+    <span class="metric">FPS: <span id="fps">--</span></span>
+    <span class="metric">Picked: <span id="lastPick">--</span></span>
+    |
+    <label>Port: <input id="portInput" type="number" value="9002"></label>
+    <button onclick="startConnection()">Connect</button>
+    <button onclick="clearLog()">Clear Log</button>
+  </div>
+  <div id="canvas-container">
+    <canvas id="viewport-canvas"></canvas>
+    <div id="click-marker"></div>
+  </div>
+  <div id="diag">
+    <span>Frames: <span class="val" id="totalFrames">0</span></span>
+    <span>Picks sent: <span class="val" id="picksSent">0</span></span>
+    <span>Picks received: <span class="val" id="picksReceived">0</span></span>
+    <span>WS text msgs: <span class="val" id="textMsgs">0</span></span>
+    <span>Canvas: <span class="val" id="canvasSize">--</span></span>
+  </div>
+  <div id="log-panel">
+    <div class="log-entry info">Click on the viewport to send editor.pickNode. Engine responses appear here.</div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('viewport-canvas');
+    const ctx2d = canvas.getContext('2d');
+    const statusEl = document.getElementById('status');
+    const logPanel = document.getElementById('log-panel');
+    const clickMarker = document.getElementById('click-marker');
+    const canvasContainer = document.getElementById('canvas-container');
+
+    let ws = null;
+    let pendingBitmap = null;
+    let rafScheduled = false;
+    let frameCount = 0;
+    let lastFpsTick = Date.now();
+    let totalFramesReceived = 0;
+    let picksSent = 0;
+    let picksReceived = 0;
+    let textMsgsReceived = 0;
+
+    function setStatus(text, cls) {
+      statusEl.textContent = text;
+      statusEl.className = cls;
+    }
+
+    function log(msg, cls) {
+      const entry = document.createElement('div');
+      entry.className = 'log-entry ' + (cls || 'info');
+      const ts = new Date().toLocaleTimeString('en-US', { hour12: false, fractionalSecondDigits: 3 });
+      entry.textContent = '[' + ts + '] ' + msg;
+      logPanel.appendChild(entry);
+      logPanel.scrollTop = logPanel.scrollHeight;
+    }
+
+    function clearLog() {
+      logPanel.innerHTML = '';
+      log('Log cleared.', 'info');
+    }
+
+    // -----------------------------------------------------------------------
+    // Click-to-pick handler
+    // -----------------------------------------------------------------------
+    canvasContainer.addEventListener('click', function(e) {
+      if (!ws || ws.readyState !== WebSocket.OPEN) {
+        log('Cannot pick — WS not connected', 'pick-miss');
+        return;
+      }
+
+      const rect = canvasContainer.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+
+      // Compute click position relative to the actual canvas pixel size
+      const scaleX = canvas.width / rect.width;
+      const scaleY = canvas.height / rect.height;
+      const sx = Math.round((e.clientX - rect.left) * scaleX);
+      const sy = Math.round((e.clientY - rect.top) * scaleY);
+
+      // Show click marker
+      clickMarker.style.left = e.clientX - rect.left + 'px';
+      clickMarker.style.top = e.clientY - rect.top + 'px';
+      clickMarker.style.display = 'block';
+      setTimeout(function() { clickMarker.style.display = 'none'; }, 1000);
+
+      const msg = { type: 'editor.pickNode', screen_x: sx, screen_y: sy };
+      const jsonStr = JSON.stringify(msg);
+      ws.send(jsonStr);
+      picksSent++;
+      document.getElementById('picksSent').textContent = picksSent;
+      log('SEND: ' + jsonStr + '  (container: ' + Math.round(rect.width) + '×' + Math.round(rect.height) + ', canvas: ' + canvas.width + '×' + canvas.height + ', scale: ' + scaleX.toFixed(2) + '×' + scaleY.toFixed(2) + ')', 'pick-req');
+    });
+
+    // -----------------------------------------------------------------------
+    // Frame rendering (same as stream-diag)
+    // -----------------------------------------------------------------------
+    function scheduleRender() {
+      if (rafScheduled) return;
+      rafScheduled = true;
+      requestAnimationFrame(renderFrame);
+    }
+
+    function renderFrame() {
+      rafScheduled = false;
+      if (!pendingBitmap) return;
+      const bmp = pendingBitmap;
+      pendingBitmap = null;
+
+      const bmpW = bmp.displayWidth || bmp.width;
+      const bmpH = bmp.displayHeight || bmp.height;
+      if (canvas.width !== bmpW || canvas.height !== bmpH) {
+        canvas.width = bmpW;
+        canvas.height = bmpH;
+        document.getElementById('canvasSize').textContent = bmpW + '×' + bmpH;
+      }
+      ctx2d.drawImage(bmp, 0, 0);
+      bmp.close();
+
+      frameCount++;
+      totalFramesReceived++;
+      const now = Date.now();
+      if (now - lastFpsTick >= 1000) {
+        document.getElementById('fps').textContent = Math.round(frameCount * 1000 / (now - lastFpsTick));
+        frameCount = 0;
+        lastFpsTick = now;
+        document.getElementById('totalFrames').textContent = totalFramesReceived;
+      }
+    }
+
+    // -----------------------------------------------------------------------
+    // WS connection
+    // -----------------------------------------------------------------------
+    function startConnection() {
+      if (ws) { ws.close(); ws = null; }
+
+      const port = document.getElementById('portInput').value || '9002';
+      const url = 'ws://localhost:' + port;
+      setStatus('Connecting…', 'connecting');
+      log('Connecting to ' + url + '…', 'info');
+
+      try {
+        ws = new WebSocket(url);
+      } catch (err) {
+        setStatus('Failed', 'disconnected');
+        log('WebSocket constructor failed: ' + err, 'pick-miss');
+        return;
+      }
+
+      ws.binaryType = 'arraybuffer';
+
+      ws.addEventListener('open', function() {
+        setStatus('Connected', 'connected');
+        log('WebSocket connected to ' + url, 'ws-msg');
+        totalFramesReceived = 0;
+        picksSent = 0;
+        picksReceived = 0;
+        textMsgsReceived = 0;
+      });
+
+      ws.addEventListener('message', function(e) {
+        // --- TEXT messages (pickResult from engine) ---
+        if (typeof e.data === 'string') {
+          textMsgsReceived++;
+          document.getElementById('textMsgs').textContent = textMsgsReceived;
+
+          log('RECV TEXT: ' + e.data, 'ws-msg');
+
+          try {
+            var parsed = JSON.parse(e.data);
+            if (parsed.type === 'pickResult') {
+              picksReceived++;
+              document.getElementById('picksReceived').textContent = picksReceived;
+              if (parsed.nodeId !== null && parsed.nodeId !== undefined) {
+                document.getElementById('lastPick').textContent = 'Node #' + parsed.nodeId;
+                log('✅ PICK HIT: nodeId=' + parsed.nodeId, 'pick-res');
+              } else {
+                document.getElementById('lastPick').textContent = '(empty)';
+                log('❌ PICK MISS: no node at click position', 'pick-miss');
+              }
+            }
+          } catch (ex) {
+            log('Failed to parse JSON: ' + ex, 'pick-miss');
+          }
+          return;
+        }
+
+        // --- BINARY messages (JPEG frames) ---
+        if (!(e.data instanceof ArrayBuffer)) return;
+        if (e.data.byteLength < 2) return;
+
+        var raw = new Uint8Array(e.data);
+        var jpegBytes;
+        if (raw[0] === 0xFF && raw[1] === 0xD8) {
+          jpegBytes = raw;
+        } else if (raw.length > 4 && raw[4] === 0xFF && raw[5] === 0xD8) {
+          jpegBytes = new Uint8Array(e.data, 4);
+        } else {
+          return;
+        }
+
+        var blob = new Blob([jpegBytes], { type: 'image/jpeg' });
+        createImageBitmap(blob).then(function(bmp) {
+          if (pendingBitmap) { pendingBitmap.close(); }
+          pendingBitmap = bmp;
+          scheduleRender();
+        });
+      });
+
+      ws.addEventListener('close', function() {
+        setStatus('Disconnected', 'disconnected');
+        log('WebSocket disconnected', 'info');
+      });
+
+      ws.addEventListener('error', function() {
+        log('WebSocket error', 'pick-miss');
+      });
+    }
+
+    // Read ?port= from URL params
+    var urlParams = new URLSearchParams(window.location.search);
+    var urlPort = urlParams.get('port');
+    if (urlPort) {
+      document.getElementById('portInput').value = urlPort;
+    }
+
+    // Auto-connect
+    startConnection();
+  </script>
+</body>
+</html>

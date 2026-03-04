@@ -249,6 +249,46 @@
         "title": "Clear Console",
         "category": "UzEngine",
         "icon": "$(clear-all)"
+      },
+      {
+        "command": "uzengine.gizmoTranslate",
+        "title": "Gizmo: Translate (W)",
+        "category": "UzEngine",
+        "icon": "$(move)"
+      },
+      {
+        "command": "uzengine.gizmoRotate",
+        "title": "Gizmo: Rotate (E)",
+        "category": "UzEngine",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "uzengine.gizmoScale",
+        "title": "Gizmo: Scale (R)",
+        "category": "UzEngine",
+        "icon": "$(screen-full)"
+      },
+      {
+        "command": "uzengine.gizmoSpaceToggle",
+        "title": "Gizmo: Toggle Local/World",
+        "category": "UzEngine"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "uzengine.gizmoTranslate",
+        "key": "w",
+        "when": "activeCustomEditorId == 'uzengine.uzsceneEditor'"
+      },
+      {
+        "command": "uzengine.gizmoRotate",
+        "key": "e",
+        "when": "activeCustomEditorId == 'uzengine.uzsceneEditor'"
+      },
+      {
+        "command": "uzengine.gizmoScale",
+        "key": "r",
+        "when": "activeCustomEditorId == 'uzengine.uzsceneEditor'"
       }
     ],
     "configuration": {

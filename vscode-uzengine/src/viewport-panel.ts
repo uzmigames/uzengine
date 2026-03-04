@@ -360,6 +360,7 @@ export function buildViewportStreamHtml(opts: {
         content="default-src 'none';
                  connect-src ws://localhost:* wss://localhost:*;
                  img-src blob: data:;
+                 worker-src blob:;
                  script-src 'nonce-${nonce}';
                  style-src 'unsafe-inline';">
   <title>${safeTitle}</title>
@@ -403,6 +404,32 @@ export function buildViewportStreamHtml(opts: {
     #fps { color: #888; min-width: 55px; }
     #vp-id { color: #888; font-size: 10px; }
 
+    /* ── Gizmo toolbar buttons ── */
+    .tb-sep {
+      width: 1px; height: 16px;
+      background: #555; margin: 0 2px;
+      flex-shrink: 0;
+    }
+    .tb {
+      display: inline-flex; align-items: center; gap: 3px;
+      padding: 2px 7px; border: 1px solid transparent;
+      border-radius: 3px; background: transparent;
+      color: #bbb; font-size: 11px; cursor: pointer;
+      font-family: inherit; transition: all 0.12s;
+      user-select: none; line-height: 1;
+    }
+    .tb:hover { background: #3c3c3c; color: #e0e0e0; }
+    .tb.active {
+      background: #264f78; border-color: #569cd6;
+      color: #fff;
+    }
+    .tb .hk {
+      font-size: 9px; color: #888;
+      border: 1px solid #555; border-radius: 2px;
+      padding: 0 3px; margin-left: 1px;
+    }
+    .tb.active .hk { color: #9cdcfe; border-color: #569cd6; }
+
     #canvas-container {
       flex: 1;
       position: relative;
@@ -442,6 +469,15 @@ export function buildViewportStreamHtml(opts: {
     <span id="fps">-- fps</span>
     <span id="dbg-size" style="color:#666;font-size:10px;"></span>
     <span id="vp-id">vp#${safeViewportId}</span>
+    <span class="tb-sep"></span>
+    <button id="btn-translate" class="tb active" data-mode="translate" title="Translate (W)">\u229E Move <span class="hk">W</span></button>
+    <button id="btn-rotate" class="tb" data-mode="rotate" title="Rotate (E)">\u27F3 Rotate <span class="hk">E</span></button>
+    <button id="btn-scale" class="tb" data-mode="scale" title="Scale (R)">\u2922 Scale <span class="hk">R</span></button>
+    <span class="tb-sep"></span>
+    <button id="btn-world" class="tb active" data-space="world" title="World Space">World</button>
+    <button id="btn-local" class="tb" data-space="local" title="Local Space">Local</button>
+    <span class="tb-sep"></span>
+    <button id="btn-focus" class="tb" title="Focus on selected (F)" style="background:#238636;color:#fff;border-color:#2ea043;">\u2295 Focus</button>
   </div>
   <div id="canvas-container">
     <div id="overlay">Waiting for stream\u2026</div>
@@ -463,7 +499,6 @@ export function buildViewportStreamHtml(opts: {
       // DOM refs
       // -----------------------------------------------------------------------
       var canvas      = /** @type {HTMLCanvasElement} */ (document.getElementById('viewport-canvas'));
-      var ctx2d       = /** @type {CanvasRenderingContext2D} */ (canvas.getContext('2d'));
       var statusEl    = document.getElementById('status');
       var fpsEl       = document.getElementById('fps');
       var dbgSizeEl   = document.getElementById('dbg-size');
@@ -478,14 +513,6 @@ export function buildViewportStreamHtml(opts: {
       var reconnectTimer = /** @type {ReturnType<typeof setTimeout>|null} */ (null);
       var isDisposed     = false;
 
-      // Frame pipeline state
-      var pendingBitmap  = /** @type {ImageBitmap|null} */ (null);
-      var rafScheduled   = false;
-
-      // FPS counter
-      var frameCount    = 0;
-      var lastFpsTick   = Date.now();
-
       // -----------------------------------------------------------------------
       // Status helpers
       // -----------------------------------------------------------------------
@@ -495,94 +522,259 @@ export function buildViewportStreamHtml(opts: {
       }
 
       // -----------------------------------------------------------------------
-      // Render loop (rAF-driven, 60 fps cap from browser)
+      // Render Worker — decode + draw on a separate thread via OffscreenCanvas.
+      // The main thread is fully free for input handling (camera controls).
+      //
+      // Architecture:
+      //   Main thread:  WS/postMessage → transfer JPEG bytes → Worker
+      //   Worker:       Decode JPEG → drawImage on OffscreenCanvas → postMessage fps
+      //   Main thread:  Update FPS display from worker messages
+      //
+      // Uses an inline Blob URL worker because VSCode webview CSP blocks
+      // external worker script URLs.
       // -----------------------------------------------------------------------
+      var supportsOffscreen = typeof canvas.transferControlToOffscreen === 'function';
+      var renderWorker = null;
+
+      if (supportsOffscreen) {
+        // -- Worker source (runs in a separate thread) --
+        // Built as an array of strings joined with newlines because this code
+        // lives inside an outer template literal (backticks can't nest).
+        var workerSource = [
+          'var offscreen=null,ctx=null,pendingBitmap=null,rafScheduled=false;',
+          'var frameCount=0,lastFpsTick=Date.now();',
+          'var hasImageDecoder=typeof ImageDecoder!=="undefined";',
+          'function scheduleRender(){',
+          '  if(rafScheduled)return;rafScheduled=true;',
+          '  requestAnimationFrame(renderFrame);',
+          '}',
+          'function renderFrame(){',
+          '  rafScheduled=false;',
+          '  if(!pendingBitmap)return;',
+          '  var bmp=pendingBitmap;pendingBitmap=null;',
+          '  var bmpW=bmp.displayWidth||bmp.width;',
+          '  var bmpH=bmp.displayHeight||bmp.height;',
+          '  if(offscreen.width!==bmpW||offscreen.height!==bmpH){',
+          '    offscreen.width=bmpW;offscreen.height=bmpH;',
+          '  }',
+          '  ctx.drawImage(bmp,0,0);bmp.close();',
+          '  frameCount++;',
+          '  var now=Date.now();',
+          '  if(now-lastFpsTick>=1000){',
+          '    self.postMessage({type:"fps",fps:Math.round(frameCount*1000/(now-lastFpsTick))});',
+          '    frameCount=0;lastFpsTick=now;',
+          '  }',
+          '}',
+          'function decodeJpeg(data){',
+          '  var bytes=new Uint8Array(data);',
+          '  if(hasImageDecoder){',
+          '    var d=new ImageDecoder({type:"image/jpeg",data:bytes});',
+          '    d.decode().then(function(r){onDecoded(r.image);d.close();}).catch(function(){',
+          '      d.close();hasImageDecoder=false;decodeFB(bytes);',
+          '    });',
+          '  }else{decodeFB(bytes);}',
+          '}',
+          'function decodeFB(bytes){',
+          '  createImageBitmap(new Blob([bytes],{type:"image/jpeg"})).then(function(b){',
+          '    onDecoded(b);',
+          '  }).catch(function(){});',
+          '}',
+          'function onDecoded(img){',
+          '  self.postMessage({type:"firstFrame"});',
+          '  if(pendingBitmap)pendingBitmap.close();',
+          '  pendingBitmap=img;scheduleRender();',
+          '}',
+          'self.onmessage=function(e){',
+          '  var m=e.data;',
+          '  if(m.type==="init"){offscreen=m.canvas;ctx=offscreen.getContext("2d");}',
+          '  else if(m.type==="jpeg"){decodeJpeg(m.data);}',
+          '};'
+        ].join('\\n');
+
+        var wBlob = new Blob([workerSource], { type: 'application/javascript' });
+        var blobUrl = URL.createObjectURL(wBlob);
+        renderWorker = new Worker(blobUrl);
+        URL.revokeObjectURL(blobUrl);
+
+        // Transfer canvas control to the worker.
+        var offscreen = canvas.transferControlToOffscreen();
+        renderWorker.postMessage({ type: 'init', canvas: offscreen }, [offscreen]);
+
+        // Listen for worker messages (FPS updates, first frame).
+        var firstFrameReceived = false;
+        renderWorker.onmessage = function(e) {
+          var msg = e.data;
+          if (msg.type === 'fps') {
+            fpsEl.textContent = msg.fps + ' fps';
+          } else if (msg.type === 'firstFrame' && !firstFrameReceived) {
+            firstFrameReceived = true;
+            if (overlayEl) overlayEl.classList.add('hidden');
+          }
+        };
+      }
+
+      // -----------------------------------------------------------------------
+      // Fallback: main-thread decode+draw (if OffscreenCanvas unavailable).
+      // -----------------------------------------------------------------------
+      var ctx2d = supportsOffscreen ? null : canvas.getContext('2d');
+      var pendingBitmap = null;
+      var rafScheduled = false;
+      var frameCount = 0;
+      var lastFpsTick = Date.now();
+
       function scheduleRender() {
-        if (rafScheduled) { return; }
+        if (rafScheduled) return;
         rafScheduled = true;
         requestAnimationFrame(renderFrame);
       }
 
       function renderFrame() {
         rafScheduled = false;
-        if (!pendingBitmap) { return; }
-
+        if (!pendingBitmap) return;
         var bmp = pendingBitmap;
         pendingBitmap = null;
-
-        // Both ImageBitmap and VideoFrame (from WebCodecs) support drawImage().
-        // VideoFrame uses displayWidth/displayHeight, ImageBitmap uses width/height.
         var bmpW = bmp.displayWidth || bmp.width;
         var bmpH = bmp.displayHeight || bmp.height;
-
-        // Resize canvas to match bitmap on first frame or size change.
         if (canvas.width !== bmpW || canvas.height !== bmpH) {
-          canvas.width  = bmpW;
+          canvas.width = bmpW;
           canvas.height = bmpH;
         }
-
         ctx2d.drawImage(bmp, 0, 0);
-        bmp.close(); // Release GPU memory immediately.
-
-        // FPS display (updated once per second).
+        bmp.close();
         frameCount++;
         var now = Date.now();
         if (now - lastFpsTick >= 1000) {
           fpsEl.textContent = Math.round(frameCount * 1000 / (now - lastFpsTick)) + ' fps';
-          frameCount  = 0;
+          frameCount = 0;
           lastFpsTick = now;
         }
       }
 
-      // -----------------------------------------------------------------------
-      // JPEG decode — WebCodecs ImageDecoder with createImageBitmap fallback
-      // -----------------------------------------------------------------------
-      // WebCodecs ImageDecoder is ~2x faster than Blob+createImageBitmap for
-      // JPEG decode (benchmarked: 4ms vs 8ms at 95KB, 5ms vs 9ms at 330KB).
-      // The ImageDecoder API is available in Chromium 94+ (VSCode's Electron).
-      var hasImageDecoder = typeof ImageDecoder !== 'undefined';
+      var hasImageDecoder = supportsOffscreen ? false : (typeof ImageDecoder !== 'undefined');
 
-      function decodeJpeg(jpegBytes) {
+      function decodeJpegFallback(jpegBytes) {
         if (hasImageDecoder) {
-          // WebCodecs path — hardware-accelerated, ~2x faster.
-          var decoder = new ImageDecoder({
-            type: 'image/jpeg',
-            data: jpegBytes,
-          });
-          decoder.decode().then(function (result) {
+          var decoder = new ImageDecoder({ type: 'image/jpeg', data: jpegBytes });
+          decoder.decode().then(function(result) {
             onFrameDecoded(result.image);
             decoder.close();
-          }).catch(function (err) {
+          }).catch(function() {
             decoder.close();
-            // Fall back to createImageBitmap if ImageDecoder fails.
-            console.warn('[UzEngine] ImageDecoder failed, falling back:', err);
             hasImageDecoder = false;
-            decodeFallback(jpegBytes);
+            decodeViaBlob(jpegBytes);
           });
         } else {
-          decodeFallback(jpegBytes);
+          decodeViaBlob(jpegBytes);
         }
       }
 
-      function decodeFallback(jpegBytes) {
-        var blob = new Blob([jpegBytes], { type: 'image/jpeg' });
-        createImageBitmap(blob).then(function (bmp) {
+      function decodeViaBlob(jpegBytes) {
+        createImageBitmap(new Blob([jpegBytes], { type: 'image/jpeg' })).then(function(bmp) {
           onFrameDecoded(bmp);
-        }).catch(function (err) {
-          console.warn('[UzEngine] createImageBitmap failed:', err);
-        });
+        }).catch(function() {});
       }
 
       function onFrameDecoded(imageSource) {
         if (overlayEl && !overlayEl.classList.contains('hidden')) {
           overlayEl.classList.add('hidden');
         }
-        // Drop the previous pending frame if the rAF hasn't fired yet
-        // (frame rate from engine may exceed 60 fps briefly).
-        if (pendingBitmap) { pendingBitmap.close(); }
+        if (pendingBitmap) pendingBitmap.close();
         pendingBitmap = imageSource;
         scheduleRender();
       }
+
+      // -----------------------------------------------------------------------
+      // Unified frame dispatch — route JPEG bytes to worker or fallback.
+      // -----------------------------------------------------------------------
+      function handleJpegFrame(jpegBytes) {
+        if (renderWorker) {
+          // Transfer the ArrayBuffer to the worker (zero-copy).
+          var buf = jpegBytes.buffer.slice(
+            jpegBytes.byteOffset,
+            jpegBytes.byteOffset + jpegBytes.byteLength
+          );
+          renderWorker.postMessage({ type: 'jpeg', data: buf }, [buf]);
+        } else {
+          decodeJpegFallback(jpegBytes);
+        }
+      }
+
+      // -----------------------------------------------------------------------
+      // Gizmo toolbar — mode & space buttons
+      // -----------------------------------------------------------------------
+      var vscodeApi = (typeof acquireVsCodeApi === 'function') ? acquireVsCodeApi() : null;
+
+      var modeButtons = {
+        translate: document.getElementById('btn-translate'),
+        rotate:    document.getElementById('btn-rotate'),
+        scale:     document.getElementById('btn-scale')
+      };
+      var spaceButtons = {
+        world: document.getElementById('btn-world'),
+        local: document.getElementById('btn-local')
+      };
+      var currentGizmoMode = 'translate';
+      var currentGizmoSpace = 'world';
+
+      // Gizmo interaction state
+      var selectedNodeId = null;
+      var gizmoDragging = false;
+      var gizmoActiveAxis = null;
+      var gizmoHoverAxis = null;
+      var justFinishedDrag = false;
+      var lastDragSendTime = 0;
+      var lastHoverSendTime = 0;
+
+      function setGizmoMode(mode) {
+        if (mode === currentGizmoMode) return;
+        currentGizmoMode = mode;
+        for (var k in modeButtons) {
+          if (modeButtons[k]) modeButtons[k].classList.toggle('active', k === mode);
+        }
+        // Notify the extension host
+        if (vscodeApi) vscodeApi.postMessage({ type: 'gizmo_mode', mode: mode });
+        // Also send via WS for engine-direct IPC
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'gizmo_mode', mode: mode }));
+        }
+      }
+
+      function setGizmoSpace(space) {
+        if (space === currentGizmoSpace) return;
+        currentGizmoSpace = space;
+        for (var k in spaceButtons) {
+          if (spaceButtons[k]) spaceButtons[k].classList.toggle('active', k === space);
+        }
+        if (vscodeApi) vscodeApi.postMessage({ type: 'gizmo_space', space: space });
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'gizmo_space', space: space }));
+        }
+      }
+
+      // Button click handlers
+      for (var m in modeButtons) {
+        (function(mode) {
+          if (modeButtons[mode]) {
+            modeButtons[mode].addEventListener('click', function() { setGizmoMode(mode); });
+          }
+        })(m);
+      }
+      for (var s in spaceButtons) {
+        (function(space) {
+          if (spaceButtons[space]) {
+            spaceButtons[space].addEventListener('click', function() { setGizmoSpace(space); });
+          }
+        })(s);
+      }
+
+      // Focus on selected node
+      function focusOnSelected() {
+        if (!ws || ws.readyState !== WebSocket.OPEN) return;
+        if (!selectedNodeId) return;
+        ws.send(JSON.stringify({ type: 'editor.focusNode', nodeId: selectedNodeId }));
+      }
+      var btnFocus = document.getElementById('btn-focus');
+      if (btnFocus) btnFocus.addEventListener('click', focusOnSelected);
 
       // -----------------------------------------------------------------------
       // Frame ingestion from the extension host (postMessage path)
@@ -592,12 +784,10 @@ export function buildViewportStreamHtml(opts: {
         if (!msg || typeof msg !== 'object') { return; }
 
         if (msg.type === 'frame' && msg.data) {
-          // msg.data arrives as a Uint8Array (or ArrayBuffer) from the
-          // extension host — no more O(n) Array.from() / number[] overhead.
           var bytes = msg.data instanceof Uint8Array
             ? msg.data
             : new Uint8Array(msg.data);
-          decodeJpeg(bytes);
+          handleJpegFrame(bytes);
 
         } else if (msg.type === 'suspend') {
           setStatus('Suspended', 'suspended');
@@ -605,6 +795,15 @@ export function buildViewportStreamHtml(opts: {
 
         } else if (msg.type === 'resume') {
           setStatus('Active', 'connected');
+
+        } else if (msg.type === 'set_gizmo_mode' && msg.mode) {
+          // Sync from extension host (e.g. VSCode keybinding)
+          currentGizmoMode = '';
+          setGizmoMode(msg.mode);
+
+        } else if (msg.type === 'set_gizmo_space' && msg.space) {
+          currentGizmoSpace = '';
+          setGizmoSpace(msg.space);
         }
       });
 
@@ -614,7 +813,7 @@ export function buildViewportStreamHtml(opts: {
       // -----------------------------------------------------------------------
       function connect() {
         if (isDisposed) { return; }
-        setStatus('Connecting\u2026', 'connecting');
+        setStatus('Connecting\\u2026', 'connecting');
 
         try {
           ws = new WebSocket(WS_URL);
@@ -629,29 +828,69 @@ export function buildViewportStreamHtml(opts: {
         ws.addEventListener('open', function () {
           setStatus('Connected', 'connected');
           reconnectDelay = 1000;
-          // Reset dedup so the periodic checkResize() resends the current size.
           lastSentWidth = 0;
           lastSentHeight = 0;
         });
 
         ws.addEventListener('message', function (e) {
+          // Handle text messages (JSON responses from engine)
+          if (typeof e.data === 'string') {
+            try {
+              var parsed = JSON.parse(e.data);
+              if (parsed.type === 'pickResult') {
+                selectedNodeId = parsed.nodeId || null;
+                if (vscodeApi) vscodeApi.postMessage({ type: 'pickResult', nodeId: parsed.nodeId });
+              } else if (parsed.type === 'selectionChanged') {
+                selectedNodeId = parsed.nodeId || null;
+              } else if (parsed.type === 'gizmoState') {
+                if (parsed.axis != null) {
+                  gizmoDragging = true;
+                  gizmoActiveAxis = parsed.axis;
+                } else {
+                  // No axis hit — if we were trying to begin drag, fall back to pick
+                  if (!gizmoDragging && selectedNodeId) {
+                    // beginDrag returned no axis — do a pickNode instead
+                    var fallbackCoords = getCanvasCoords(lastMouseEvent);
+                    if (fallbackCoords) {
+                      ws.send(JSON.stringify({
+                        type: 'editor.pickNode',
+                        screen_x: fallbackCoords.sx, screen_y: fallbackCoords.sy
+                      }));
+                    }
+                  }
+                  gizmoDragging = false;
+                  gizmoActiveAxis = null;
+                }
+              } else if (parsed.type === 'transformUpdate') {
+                // Transform applied by gizmo drag — could update properties panel
+                if (vscodeApi) vscodeApi.postMessage({ type: 'transformUpdate', data: parsed });
+              } else if (parsed.type === 'cameraFocused') {
+                console.log('[UzEngine] Camera focused on node', parsed.nodeId);
+              } else if (parsed.type === 'gizmoHover') {
+                gizmoHoverAxis = parsed.axis || null;
+                if (canvasContainer) {
+                  canvasContainer.style.cursor = gizmoHoverAxis ? 'grab' : 'crosshair';
+                }
+              }
+            } catch (ex) { console.warn('[UzEngine] JSON parse error:', ex); }
+            return;
+          }
+
           if (!(e.data instanceof ArrayBuffer)) { return; }
 
           var jpegBytes;
           if (VIEWPORT_ID === 0) {
-            // Legacy / PoC mode: engine sends raw JPEG with no viewport_id prefix.
             if (e.data.byteLength < 2) { return; }
             jpegBytes = new Uint8Array(e.data);
           } else {
-            // Normal mode: 4-byte LE viewport_id prefix + JPEG body.
             if (e.data.byteLength < 4) { return; }
             var view = new DataView(e.data);
             var vpId = view.getUint32(0, true);
-            if (vpId !== VIEWPORT_ID) { return; } // Not for this panel.
+            if (vpId !== VIEWPORT_ID) { return; }
             jpegBytes = new Uint8Array(e.data, 4);
           }
 
-          decodeJpeg(jpegBytes);
+          handleJpegFrame(jpegBytes);
         });
 
         ws.addEventListener('close', function (e) {
@@ -690,11 +929,34 @@ export function buildViewportStreamHtml(opts: {
       var mouseDeltaY = 0;
       var scrollDelta = 0;
 
+      // Track canvas focus — gizmo hotkeys only fire when the viewport
+      // canvas is focused, so they don't intercept typing in VSCode's
+      // chat, search bar, or other input fields.
+      var canvasFocused = false;
+      canvas.addEventListener('focus', function() { canvasFocused = true; });
+      canvas.addEventListener('blur',  function() { canvasFocused = false; });
+
+      // Gizmo hotkey map (only active when canvas is focused and NOT in right-click camera mode)
+      var gizmoHotkeys = { w: 'translate', e: 'rotate', r: 'scale' };
+
       document.addEventListener('keydown', function(e) {
-        if (!rightMouseDown) return;
         var k = e.key.toLowerCase();
-        if (k in keys) { keys[k] = 1; e.preventDefault(); }
         if (e.key === 'Shift') { shiftDown = true; }
+
+        if (rightMouseDown) {
+          // Camera mode — WASD/QE for movement
+          if (k in keys) { keys[k] = 1; e.preventDefault(); }
+        } else if (canvasFocused) {
+          // Editor mode — W/E/R for gizmo mode switching, F for focus
+          if (k in gizmoHotkeys) {
+            setGizmoMode(gizmoHotkeys[k]);
+            e.preventDefault();
+          }
+          if (k === 'f') {
+            focusOnSelected();
+            e.preventDefault();
+          }
+        }
       });
       document.addEventListener('keyup', function(e) {
         var k = e.key.toLowerCase();
@@ -703,6 +965,19 @@ export function buildViewportStreamHtml(opts: {
       });
 
       var canvasContainer = document.getElementById('canvas-container');
+      var lastMouseEvent = null;
+
+      // Helper: convert mouse event to engine screen coordinates
+      function getCanvasCoords(e) {
+        if (!e) return null;
+        var rect = canvasContainer.getBoundingClientRect();
+        var scaleX = canvas.width / rect.width;
+        var scaleY = canvas.height / rect.height;
+        return {
+          sx: Math.round((e.clientX - rect.left) * scaleX),
+          sy: Math.round((e.clientY - rect.top) * scaleY)
+        };
+      }
 
       canvasContainer.addEventListener('mousedown', function(e) {
         if (e.button === 2) {
@@ -710,8 +985,32 @@ export function buildViewportStreamHtml(opts: {
           canvas.focus();
           canvas.requestPointerLock();
           e.preventDefault();
+          return;
+        }
+
+        // Left click — try gizmo drag first, then fall back to pick
+        if (e.button === 0) {
+          canvas.focus();
+          lastMouseEvent = e;
+          var coords = getCanvasCoords(e);
+          if (!coords || !ws || ws.readyState !== WebSocket.OPEN) return;
+
+          if (selectedNodeId) {
+            // Try to grab a gizmo axis
+            ws.send(JSON.stringify({
+              type: 'editor.gizmoBeginDrag',
+              screen_x: coords.sx, screen_y: coords.sy
+            }));
+          } else {
+            // No node selected — pick
+            ws.send(JSON.stringify({
+              type: 'editor.pickNode',
+              screen_x: coords.sx, screen_y: coords.sy
+            }));
+          }
         }
       });
+
       document.addEventListener('mouseup', function(e) {
         if (e.button === 2) {
           rightMouseDown = false;
@@ -720,6 +1019,18 @@ export function buildViewportStreamHtml(opts: {
           }
           keys = { w:0, a:0, s:0, d:0, q:0, e:0 };
           shiftDown = false;
+        }
+
+        // End gizmo drag on left mouse up
+        if (e.button === 0 && gizmoDragging) {
+          gizmoDragging = false;
+          gizmoActiveAxis = null;
+          justFinishedDrag = true;
+          setTimeout(function() { justFinishedDrag = false; }, 50);
+          if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'editor.gizmoEndDrag' }));
+          }
+          canvasContainer.style.cursor = 'crosshair';
         }
       });
 
@@ -731,6 +1042,36 @@ export function buildViewportStreamHtml(opts: {
         if (rightMouseDown && document.pointerLockElement === canvas) {
           mouseDeltaX += e.movementX;
           mouseDeltaY += e.movementY;
+          return;
+        }
+
+        // Gizmo drag
+        if (gizmoDragging && ws && ws.readyState === WebSocket.OPEN) {
+          var now = performance.now();
+          if (now - lastDragSendTime < 16) return;
+          lastDragSendTime = now;
+          var coords = getCanvasCoords(e);
+          if (coords) {
+            ws.send(JSON.stringify({
+              type: 'editor.gizmoDrag',
+              screen_x: coords.sx, screen_y: coords.sy
+            }));
+          }
+          return;
+        }
+
+        // Gizmo hover (throttled to ~15fps)
+        if (!gizmoDragging && selectedNodeId && ws && ws.readyState === WebSocket.OPEN) {
+          var now2 = performance.now();
+          if (now2 - lastHoverSendTime < 66) return;
+          lastHoverSendTime = now2;
+          var hcoords = getCanvasCoords(e);
+          if (hcoords) {
+            ws.send(JSON.stringify({
+              type: 'editor.gizmoHover',
+              screen_x: hcoords.sx, screen_y: hcoords.sy
+            }));
+          }
         }
       });
 
@@ -741,6 +1082,27 @@ export function buildViewportStreamHtml(opts: {
         scrollDelta += delta;
         e.preventDefault();
       }, { passive: false });
+
+      // -----------------------------------------------------------------------
+      // Left-click to select (only when NOT finishing a gizmo drag)
+      // -----------------------------------------------------------------------
+      canvasContainer.addEventListener('click', function(e) {
+        if (e.button !== 0) return;
+        if (gizmoDragging) return;
+        if (justFinishedDrag) return;
+
+        canvas.focus();
+        var coords = getCanvasCoords(e);
+        if (!coords || !ws || ws.readyState !== WebSocket.OPEN) return;
+
+        // Only send pickNode if no node is selected (gizmoBeginDrag handles the selected case)
+        if (!selectedNodeId) {
+          ws.send(JSON.stringify({
+            type: 'editor.pickNode',
+            screen_x: coords.sx, screen_y: coords.sy
+          }));
+        }
+      });
 
       document.addEventListener('pointerlockchange', function() {
         if (document.pointerLockElement !== canvas) {

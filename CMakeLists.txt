@@ -41,27 +41,42 @@ if(WIN32)
     # libjpeg-turbo via vcpkg
     find_package(libjpeg-turbo CONFIG REQUIRED)
 
+    # -----------------------------------------------------------------------
+    # Auto-discover source files (UE5-style: drop a .cpp and it compiles).
+    # CONFIGURE_DEPENDS makes Ninja re-run CMake when files are added/removed.
+    # -----------------------------------------------------------------------
+    file(GLOB_RECURSE UZENGINE_RENDERER_LEGACY CONFIGURE_DEPENDS
+        src/renderer/*.cpp
+    )
+    file(GLOB_RECURSE UZENGINE_ENGINE CONFIGURE_DEPENDS
+        src/engine/scene/*.cpp
+        src/engine/core/*.cpp
+        src/engine/editor/*.cpp
+        src/engine/debug/*.cpp
+        src/engine/renderer/*.cpp
+    )
+    file(GLOB_RECURSE UZENGINE_COMMON CONFIGURE_DEPENDS
+        src/common/*.cpp
+    )
+    file(GLOB_RECURSE UZENGINE_ENCODER CONFIGURE_DEPENDS
+        src/encoder/*.cpp
+    )
+    file(GLOB_RECURSE UZENGINE_NETWORK CONFIGURE_DEPENDS
+        src/network/*.cpp
+    )
+    # RHI C backend (DX12 for Windows)
+    file(GLOB_RECURSE UZENGINE_RHI_C CONFIGURE_DEPENDS
+        src/engine/renderer/rhi/*.c
+    )
+
     add_executable(UzEngine WIN32
         src/main.cpp
-        src/renderer/renderer.cpp
-        src/renderer/fps_overlay.cpp
-        src/renderer/components/camera_component.cpp
-        src/renderer/components/light_component.cpp
-        src/renderer/components/editor_component.cpp
-        src/renderer/gizmos/gizmo_registry.cpp
-        src/renderer/gizmos/gizmo_cube.cpp
-        src/renderer/gizmos/gizmo_camera.cpp
-        src/renderer/gizmos/gizmo_directional_light.cpp
-        src/renderer/gizmos/gizmo_point_light.cpp
-        src/engine/scene/scene_manager.cpp
-        src/engine/scene/scene_loader.cpp
-        src/engine/scene/scene_saver.cpp
-        src/engine/scene/component_store.cpp
-        src/encoder/jpeg_encoder.cpp
-        src/network/ws_server.cpp
-        src/common/ipc_registry.cpp
-        src/common/ipc_poller.cpp
-        src/common/stb_impl.cpp
+        ${UZENGINE_RENDERER_LEGACY}
+        ${UZENGINE_ENGINE}
+        ${UZENGINE_COMMON}
+        ${UZENGINE_ENCODER}
+        ${UZENGINE_NETWORK}
+        ${UZENGINE_RHI_C}
     )
 
     target_include_directories(UzEngine PRIVATE
@@ -110,56 +125,38 @@ if(NOT TARGET nlohmann_json::nlohmann_json)
     find_package(nlohmann_json CONFIG REQUIRED)
 endif()
 
-# Core + Renderer Layer tests
+# -----------------------------------------------------------------------
+# Auto-discover test sources (UE5-style: drop a .cpp and it compiles).
+# CONFIGURE_DEPENDS re-runs CMake when files are added/removed.
+# -----------------------------------------------------------------------
+# Engine sources (no legacy renderer, no DX12 backend for tests).
+file(GLOB_RECURSE TEST_ENGINE_SOURCES CONFIGURE_DEPENDS
+    src/engine/core/*.cpp
+    src/engine/scene/*.cpp
+    src/engine/editor/*.cpp
+    src/engine/debug/*.cpp
+    src/engine/renderer/*.cpp        # ShaderManager, RenderGraph, ViewportRegistry, etc.
+)
+# Common sources — exclude stb_impl.cpp (needs external/stb) and ipc_poller.cpp (needs ixwebsocket)
+file(GLOB_RECURSE TEST_COMMON_SOURCES CONFIGURE_DEPENDS
+    src/common/*.cpp
+)
+list(FILTER TEST_COMMON_SOURCES EXCLUDE REGEX "stb_impl\\.cpp$")
+list(FILTER TEST_COMMON_SOURCES EXCLUDE REGEX "ipc_poller\\.cpp$")
+
+# RHI common (C) — platform-agnostic only, NOT the DX12 backend
+set(TEST_RHI_C_SOURCES src/engine/renderer/rhi/rhi_common.c)
+
+# Test sources
+file(GLOB_RECURSE TEST_TEST_SOURCES CONFIGURE_DEPENDS
+    tests/*.cpp
+)
+
 add_executable(UzEngineTests
-    src/engine/core/arena.cpp
-    src/engine/core/string_id.cpp
-    src/engine/core/timer_system.cpp
-    src/engine/core/event_bus.cpp
-    src/engine/renderer/rhi/rhi_common.c
-    src/common/ipc_registry.cpp
-    src/engine/scene/scene_manager.cpp
-    src/engine/scene/scene_loader.cpp
-    src/engine/scene/scene_saver.cpp
-    src/engine/scene/scene_handlers.cpp
-    src/engine/scene/component_store.cpp
-    src/engine/editor/undo_redo.cpp
-    src/engine/editor/asset_registry.cpp
-    src/engine/editor/ipc_asset_handlers.cpp
-    src/engine/editor/ipc_playmode_handlers.cpp
-    src/engine/debug/console.cpp
-    src/engine/core/platform.cpp
-    src/engine/core/file_watcher.cpp
-    src/engine/renderer/shader_manager.cpp
-    src/common/ipc_shader_handlers.cpp
-    src/engine/renderer/viewport_registry.cpp
-    src/common/ipc_viewport_handlers.cpp
-    src/engine/core/crash_reporter.cpp
-    src/engine/renderer/render_graph.cpp
-    tests/core/test_arena.cpp
-    tests/core/test_handle.cpp
-    tests/core/test_string_id.cpp
-    tests/core/test_result.cpp
-    tests/core/test_math.cpp
-    tests/core/test_scene.cpp
-    tests/core/test_scene_io.cpp
-    tests/core/test_scene_handlers.cpp
-    tests/core/test_timer_system.cpp
-    tests/core/test_event_bus.cpp
-    tests/editor/test_undo_redo.cpp
-    tests/editor/test_asset_registry.cpp
-    tests/debug/test_console.cpp
-    tests/core/test_assert.cpp
-    tests/core/test_profiler.cpp
-    tests/core/test_platform.cpp
-    tests/core/test_main.cpp
-    tests/renderer/test_rhi_common.cpp
-    tests/core/test_file_watcher.cpp
-    tests/renderer/test_shader_manager.cpp
-    tests/renderer/test_viewport_registry.cpp
-    tests/core/test_crash_reporter.cpp
-    tests/renderer/test_render_graph.cpp
-    tests/core/test_engine_mode.cpp
+    ${TEST_ENGINE_SOURCES}
+    ${TEST_COMMON_SOURCES}
+    ${TEST_RHI_C_SOURCES}
+    ${TEST_TEST_SOURCES}
 )
 
 target_include_directories(UzEngineTests PRIVATE
