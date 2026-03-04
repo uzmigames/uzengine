@@ -22,67 +22,11 @@
 namespace uz {
 
 // ---------------------------------------------------------------------------
-// Embedded HLSL shaders -- compiled at runtime via D3DCompile.
+// Shaders are in standalone .hlsl files per Rule 6 / CS-15:
+//   shaders/builtin/basic.vs.hlsl   (vertex shader)
+//   shaders/builtin/basic.ps.hlsl   (pixel shader)
+// Compiled at runtime via D3DCompileFromFile() in createPipelineState().
 // ---------------------------------------------------------------------------
-
-constexpr const char* kVertexShaderSrc = R"hlsl(
-cbuffer TransformCB : register(b0) {
-    float4x4 worldViewProj;
-};
-cbuffer ColorCB : register(b1) {
-    float3 colorMul;
-    float _pad;
-};
-cbuffer LightCB : register(b2) {
-    float3 lightDir;
-    float  lightIntensity;
-    float3 lightColor;
-    float  _lightPad;
-};
-
-struct VSInput {
-    float3 position : POSITION;
-    float3 color    : COLOR;
-};
-
-struct PSInput {
-    float4 position : SV_POSITION;
-    float3 color    : COLOR;
-    float3 normal   : NORMAL;
-};
-
-PSInput VSMain(VSInput input) {
-    PSInput output;
-    output.position = mul(worldViewProj, float4(input.position, 1.0f));
-    output.color    = input.color * colorMul;
-    // Use object-space position as a proxy normal for wireframe/cube shading.
-    output.normal   = normalize(input.position);
-    return output;
-}
-)hlsl";
-
-constexpr const char* kPixelShaderSrc = R"hlsl(
-cbuffer LightCB : register(b2) {
-    float3 lightDir;
-    float  lightIntensity;
-    float3 lightColor;
-    float  _lightPad;
-};
-
-struct PSInput {
-    float4 position : SV_POSITION;
-    float3 color    : COLOR;
-    float3 normal   : NORMAL;
-};
-
-float4 PSMain(PSInput input) : SV_TARGET {
-    // Ambient + directional N·L diffuse.
-    float ambient = 0.35;
-    float ndl     = max(dot(normalize(input.normal), -normalize(lightDir)), 0.0);
-    float3 lit    = input.color * (ambient + (1.0 - ambient) * ndl * lightIntensity * lightColor);
-    return float4(lit, 1.0f);
-}
-)hlsl";
 
 // ---------------------------------------------------------------------------
 // Vertex layout for the colored triangle.
@@ -92,6 +36,7 @@ struct Vertex {
     DirectX::XMFLOAT3 position;
     DirectX::XMFLOAT3 color;
 };
+
 
 // ---------------------------------------------------------------------------
 // DX12Renderer -- minimal DirectX 12 renderer for a spinning colored pyramid.

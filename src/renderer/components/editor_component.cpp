@@ -6,7 +6,7 @@
 
 #include "editor_component.h"
 
-#include "renderer/renderer.h"  // For Vertex struct and HLSL shader sources
+#include "renderer/renderer.h"  // For Vertex struct
 
 // Gizmo types — each is a self-contained GizmoRenderer implementation.
 #include "renderer/gizmos/gizmo_cube.h"
@@ -33,6 +33,24 @@ inline void ThrowIfFailed(HRESULT hr, const char* context = nullptr) {
     msg += hex;
     if (context) { msg += " ("; msg += context; msg += ")"; }
     throw std::runtime_error(msg);
+}
+
+// Resolve the shader directory relative to the executable.
+inline std::string getShaderDir() {
+    char exePath[MAX_PATH]{};
+    GetModuleFileNameA(nullptr, exePath, MAX_PATH);
+    std::string dir(exePath);
+    auto slash = dir.find_last_of("\\/");
+    if (slash != std::string::npos) dir = dir.substr(0, slash);
+    return dir + "/../../shaders/builtin/";
+}
+
+inline std::wstring toWide(const std::string& s) {
+    if (s.empty()) return {};
+    int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
+    std::wstring ws(len - 1, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, ws.data(), len);
+    return ws;
 }
 
 } // anonymous namespace
@@ -182,17 +200,19 @@ void EditorComponent::createLinePipelineState(ID3D12Device* device,
     ComPtr<ID3DBlob> pixelShader;
     ComPtr<ID3DBlob> errors;
 
-    HRESULT hr = D3DCompile(
-        kVertexShaderSrc,
-        strlen(kVertexShaderSrc),
-        "VertexShader",
+    const std::string shaderDir = getShaderDir();
+    const std::wstring vsPath = toWide(shaderDir + "basic.vs.hlsl");
+    const std::wstring psPath = toWide(shaderDir + "basic.ps.hlsl");
+
+    HRESULT hr = D3DCompileFromFile(
+        vsPath.c_str(),
         nullptr, nullptr,
         "VSMain", "vs_5_0",
         compileFlags, 0,
         &vertexShader, &errors);
 
     if (FAILED(hr)) {
-        std::string msg = "Line VS compilation failed";
+        std::string msg = "Line VS compilation failed (" + shaderDir + "basic.vs.hlsl)";
         if (errors) {
             msg += ": ";
             msg += static_cast<const char*>(errors->GetBufferPointer());
@@ -202,17 +222,15 @@ void EditorComponent::createLinePipelineState(ID3D12Device* device,
 
     errors.Reset();
 
-    hr = D3DCompile(
-        kPixelShaderSrc,
-        strlen(kPixelShaderSrc),
-        "PixelShader",
+    hr = D3DCompileFromFile(
+        psPath.c_str(),
         nullptr, nullptr,
         "PSMain", "ps_5_0",
         compileFlags, 0,
         &pixelShader, &errors);
 
     if (FAILED(hr)) {
-        std::string msg = "Line PS compilation failed";
+        std::string msg = "Line PS compilation failed (" + shaderDir + "basic.ps.hlsl)";
         if (errors) {
             msg += ": ";
             msg += static_cast<const char*>(errors->GetBufferPointer());
@@ -290,25 +308,27 @@ void EditorComponent::createSolidPipelineState(ID3D12Device* device,
     ComPtr<ID3DBlob> pixelShader;
     ComPtr<ID3DBlob> errors;
 
-    HRESULT hr = D3DCompile(
-        kVertexShaderSrc, strlen(kVertexShaderSrc),
-        "GizmoVS", nullptr, nullptr,
+    const std::string shaderDir = getShaderDir();
+    const std::wstring vsPath = toWide(shaderDir + "basic.vs.hlsl");
+    const std::wstring psPath = toWide(shaderDir + "basic.ps.hlsl");
+
+    HRESULT hr = D3DCompileFromFile(
+        vsPath.c_str(), nullptr, nullptr,
         "VSMain", "vs_5_0", compileFlags, 0,
         &vertexShader, &errors);
     if (FAILED(hr)) {
-        std::string msg = "Solid VS compilation failed";
+        std::string msg = "Solid VS compilation failed (" + shaderDir + "basic.vs.hlsl)";
         if (errors) { msg += ": "; msg += static_cast<const char*>(errors->GetBufferPointer()); }
         throw std::runtime_error(msg);
     }
     errors.Reset();
 
-    hr = D3DCompile(
-        kPixelShaderSrc, strlen(kPixelShaderSrc),
-        "GizmoPS", nullptr, nullptr,
+    hr = D3DCompileFromFile(
+        psPath.c_str(), nullptr, nullptr,
         "PSMain", "ps_5_0", compileFlags, 0,
         &pixelShader, &errors);
     if (FAILED(hr)) {
-        std::string msg = "Solid PS compilation failed";
+        std::string msg = "Solid PS compilation failed (" + shaderDir + "basic.ps.hlsl)";
         if (errors) { msg += ": "; msg += static_cast<const char*>(errors->GetBufferPointer()); }
         throw std::runtime_error(msg);
     }

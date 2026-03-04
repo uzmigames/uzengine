@@ -881,21 +881,42 @@ void DX12Renderer::createRootSignature() {
 
 void DX12Renderer::createPipelineState() {
     // -----------------------------------------------------------------
-    // Compile shaders from the embedded HLSL source strings.
+    // Compile shaders from standalone .hlsl files (Rule 6 / CS-15).
+    // Shader paths are resolved relative to the executable directory.
     // -----------------------------------------------------------------
     UINT compileFlags = 0;
 #ifdef UZENGINE_DEBUG
     compileFlags = D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
 #endif
 
+    // Resolve shader directory: <exe_dir>/../../shaders/builtin/
+    char exePathBuf[MAX_PATH]{};
+    GetModuleFileNameA(nullptr, exePathBuf, MAX_PATH);
+    std::string exeDir(exePathBuf);
+    auto lastSlash = exeDir.find_last_of("\\/");
+    if (lastSlash != std::string::npos) {
+        exeDir = exeDir.substr(0, lastSlash);
+    }
+    const std::string shaderDir = exeDir + "/../../shaders/builtin/";
+
+    // Convert to wide strings for D3DCompileFromFile.
+    auto toWide = [](const std::string& s) -> std::wstring {
+        if (s.empty()) return {};
+        int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, nullptr, 0);
+        std::wstring ws(len - 1, L'\0');
+        MultiByteToWideChar(CP_UTF8, 0, s.c_str(), -1, ws.data(), len);
+        return ws;
+    };
+
+    const std::wstring vsPath = toWide(shaderDir + "basic.vs.hlsl");
+    const std::wstring psPath = toWide(shaderDir + "basic.ps.hlsl");
+
     ComPtr<ID3DBlob> vertexShader;
     ComPtr<ID3DBlob> pixelShader;
     ComPtr<ID3DBlob> errors;
 
-    HRESULT hr = D3DCompile(
-        kVertexShaderSrc,
-        strlen(kVertexShaderSrc),
-        "VertexShader",  // Source name for diagnostics.
+    HRESULT hr = D3DCompileFromFile(
+        vsPath.c_str(),
         nullptr,         // No defines.
         nullptr,         // No includes.
         "VSMain",
@@ -906,7 +927,7 @@ void DX12Renderer::createPipelineState() {
         &errors);
 
     if (FAILED(hr)) {
-        std::string msg = "Vertex shader compilation failed";
+        std::string msg = "Vertex shader compilation failed (" + shaderDir + "basic.vs.hlsl)";
         if (errors) {
             msg += ": ";
             msg += static_cast<const char*>(errors->GetBufferPointer());
@@ -916,10 +937,8 @@ void DX12Renderer::createPipelineState() {
 
     errors.Reset();
 
-    hr = D3DCompile(
-        kPixelShaderSrc,
-        strlen(kPixelShaderSrc),
-        "PixelShader",
+    hr = D3DCompileFromFile(
+        psPath.c_str(),
         nullptr,
         nullptr,
         "PSMain",
@@ -930,7 +949,7 @@ void DX12Renderer::createPipelineState() {
         &errors);
 
     if (FAILED(hr)) {
-        std::string msg = "Pixel shader compilation failed";
+        std::string msg = "Pixel shader compilation failed (" + shaderDir + "basic.ps.hlsl)";
         if (errors) {
             msg += ": ";
             msg += static_cast<const char*>(errors->GetBufferPointer());
