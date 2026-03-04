@@ -63,6 +63,30 @@ Shaders go in `shaders/*.hlsl` files and are compiled offline by DXC.
 Zero exceptions allowed. Use `uz::Result<T,E>` for fallible operations.
 `dynamic_cast` and `typeid` are FORBIDDEN. Use virtual dispatch or `Handle<T>`.
 
+### Rule 8: MAX 1500 LINES PER FILE
+
+No source file (`.h`, `.cpp`, `.c`, `.ts`) may exceed **1500 lines**.
+Files above this limit MUST be split into logical submodules.
+
+```
+❌ WRONG — monolithic file:
+  renderer.cpp (1400 lines)  ← approaching limit, split proactively
+  extension.ts (2800 lines)  ← VIOLATION, must be split NOW
+
+✅ CORRECT — split by responsibility:
+  renderer_init.cpp       (200 lines)
+  renderer_passes.cpp     (400 lines)
+  renderer_resources.cpp  (300 lines)
+  renderer_commands.cpp   (350 lines)
+```
+
+When splitting, prefer splitting by **logical responsibility** (init, update, render,
+shutdown) rather than arbitrary line counts. Each resulting file should have a clear
+single purpose.
+
+Existing files that exceed 1500 lines are **technical debt** and must be split during
+the next refactor that touches them.
+
 ---
 
 ### Architecture Reference Documents

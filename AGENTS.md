@@ -430,6 +430,26 @@ Do NOT copy their patterns into new code. Do NOT extend them — refactor them:
 
 ---
 
+### §FILE-SIZE-LIMIT — Maximum File Size
+
+**ABSOLUTE RULE: No source file may exceed 1500 lines.**
+
+Any `.h`, `.cpp`, `.c`, or `.ts` file that exceeds **1500 lines** MUST be split into
+logical submodules. Split by **responsibility** (init, update, render, shutdown, etc.),
+not by arbitrary line count.
+
+**Known violations (must be split when next refactored):**
+- `src/renderer/renderer.cpp` (1400 lines — approaching limit)
+- `src/engine/renderer/rhi/rhi_dx12.c` (2108 lines — **VIOLATION**)
+- `vscode-uzengine/src/extension.ts` (if over limit)
+
+**Validation grep:**
+```bash
+find src/ vscode-uzengine/src/ -name "*.h" -o -name "*.cpp" -o -name "*.c" -o -name "*.ts" | xargs wc -l | awk '$1 > 1500 { print "VIOLATION:", $0 }'
+```
+
+---
+
 ## Language-Specific Rules
 
 The following languages are configured for this project. For detailed rules, see the corresponding files in `/.rulebook/specs/`:

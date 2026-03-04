@@ -242,6 +242,12 @@ void       dx12_cmd_barrier_texture(RhiCmdList cmd, RhiTexture tex,
 void       dx12_cmd_barrier_buffer(RhiCmdList cmd, RhiBuffer buf,
                                     RhiResourceState src_state,
                                     RhiResourceState dst_state);
+void       dx12_cmd_set_root_constants(RhiCmdList cmd, uint32_t slot,
+                                        const void *data, uint32_t count_32bit,
+                                        uint32_t offset_32bit);
+void       dx12_cmd_copy_texture_to_buffer(RhiCmdList cmd, RhiTexture src,
+                                            RhiBuffer dst,
+                                            const RhiTextureFootprint *footprint);
 
 /* =======================================================================
  * Swapchain (defined in rhi_dx12_commands.c)

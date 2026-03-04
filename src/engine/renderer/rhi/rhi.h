@@ -289,6 +289,16 @@ typedef struct RhiPipelineDesc {
     const char          *debug_name;
 } RhiPipelineDesc;
 
+/* Footprint for texture-to-buffer copy (readback) */
+typedef struct RhiTextureFootprint {
+    uint32_t width;
+    uint32_t height;
+    uint32_t depth;
+    uint32_t row_pitch;    /* bytes per row, 256-byte aligned on DX12 */
+    uint64_t offset;       /* byte offset into the destination buffer */
+    RhiFormat format;
+} RhiTextureFootprint;
+
 typedef struct RhiComputePipelineDesc {
     RhiShaderDesc compute_shader;
     const char   *debug_name;
@@ -362,6 +372,16 @@ typedef struct rhi_backend_t {
                              uint32_t instance_count, uint32_t first_index,
                              int32_t vertex_offset, uint32_t first_instance);
     void (*cmd_dispatch)(RhiCmdList cmd, uint32_t x, uint32_t y, uint32_t z);
+
+    /* --- Root constants (inline 32-bit values) ------------------------ */
+    void (*cmd_set_root_constants)(RhiCmdList cmd, uint32_t slot,
+                                   const void *data, uint32_t count_32bit,
+                                   uint32_t offset_32bit);
+
+    /* --- Copy commands ------------------------------------------------ */
+    void (*cmd_copy_texture_to_buffer)(RhiCmdList cmd, RhiTexture src,
+                                       RhiBuffer dst,
+                                       const RhiTextureFootprint *footprint);
 
     /* --- Clear commands ----------------------------------------------- */
     void (*cmd_clear_render_target)(RhiCmdList cmd, RhiTexture rt,

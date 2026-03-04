@@ -1,5 +1,11 @@
 #pragma once
 
+// renderer.h -- Renderer using the RHI abstraction layer
+//
+// All GPU work goes through rhi()->* calls.  No direct DX12 / Vulkan / Metal
+// includes leak into this header.  EditorComponent still uses raw DX12 as a
+// temporary measure and will be ported in a follow-up phase.
+
 #include <cstdint>
 #include <mutex>
 #include <vector>
@@ -9,15 +15,19 @@
 #include "components/camera_component.h"
 #include "components/light_component.h"
 
+// DX12 types still needed temporarily for EditorComponent bridge and math
 #include <d3d12.h>
-#include <dxgi1_6.h>
-#include <d3dcompiler.h>
 #include <DirectXMath.h>
 #include <wrl/client.h>
 
 #include "../common/types.h"
 #include "../common/timer.h"
 #include "scene_params.h"
+
+// RHI abstraction
+extern "C" {
+#include "engine/renderer/rhi/rhi.h"
+}
 
 namespace uz {
 
@@ -37,9 +47,10 @@ struct Vertex {
     DirectX::XMFLOAT3 color;
 };
 
+// Frame count for double/triple buffering.
 
-// ---------------------------------------------------------------------------
-// DX12Renderer -- minimal DirectX 12 renderer for a spinning colored pyramid.
+// Frame count from common/types.h is used for readback buffer dimensions.
+// DX12Renderer -- Renderer using the RHI abstraction layer.
 //
 // Lifecycle:
 //   1. Construct
@@ -47,7 +58,7 @@ struct Vertex {
 //   3. Loop: update(totalTime) -> render()
 //   4. shutdown()
 //
-// The renderer owns all GPU resources via ComPtr / RAII.  shutdown() performs
+// All GPU resources are managed through RHI handles.  shutdown() performs
 // an explicit GPU drain so that destruction order is safe.
 // ---------------------------------------------------------------------------
 
@@ -68,21 +79,16 @@ public:
     // Initialize the renderer and all GPU resources for the given window.
     void init(HWND hwnd, uint32_t width, uint32_t height);
 
-    // Update the rotation angle using delta-time accumulation (immune to
-    // frame-timing jitter).  totalTime is still available for effects that
-    // need wall-clock time; deltaTime drives the rotation step.
+    // Update the rotation angle using delta-time accumulation.
     void update(double totalTime, double deltaTime);
 
     /// Record and execute the command list, present the frame.
     /// @param readback  When true, copy the rendered frame to a CPU-readable
-    ///                   buffer (for JPEG streaming).  When false, skip the
-    ///                   GPU copy + fence wait — much cheaper per frame.
+    ///                   buffer (for JPEG streaming).
     void render(bool readback = true);
 
     /// Resize the swap chain, render targets, depth buffer, and readback
-    /// buffers to the given dimensions.  Must be called from the render thread
-    /// (between frames, not during a render pass).  Returns true if the resize
-    /// succeeded, false if the dimensions are invalid or the GPU flush failed.
+    /// buffers to the given dimensions.
     bool resize(int width, int height);
 
     /// Current render target width in pixels.
@@ -97,22 +103,16 @@ public:
     // Returns a copy of the most recently captured frame. Thread-safe via mutex.
     [[nodiscard]] FrameData getLatestFrame() const;
 
-    // Alias for getLatestFrame() -- used by IPC screenshot handler so callers
-    // do not need to know renderer internals.
+    // Alias for getLatestFrame().
     [[nodiscard]] FrameData getLastFrameCopy() const;
 
-    // Set the external scene parameters struct.  The renderer reads from it
-    // each frame (rotation speed, background color, pause state).
-    // Pointer must remain valid for the lifetime of the renderer.
+    // Set the external scene parameters struct.
     void setSceneParams(SceneParams* params);
 
     // Set the scene pointer for scene-driven camera and lighting.
-    // The scene must remain valid for the lifetime of the renderer.
     void setScene(Scene* scene);
 
     // Replace the editor scene nodes and switch to editor rendering mode.
-    // Thread-safe: may be called from the IPC thread while the render thread
-    // is running.  Returns the number of nodes loaded.
     size_t loadEditorScene(std::vector<EditorNode> nodes);
 
     // Returns a copy of the current editor nodes. Thread-safe.
@@ -123,74 +123,32 @@ public:
 
 private:
     // Initialization sub-steps (called by init).
-    void createDevice();
-    void createCommandQueue();
-    void createSwapChain(HWND hwnd);
-    void createRTVHeap();
-    void createRenderTargets();
-    void createRootSignature();
     void createPipelineState();
     void createVertexBuffer();
-    void createConstantBuffer();
-    void createFence();
     void createDepthBuffer();
-    void createReadbackBuffer();
-
-    // Editor-mode geometry and pipeline (delegated to EditorComponent).
+    void createReadbackBuffers();
 
     // Perform GPU -> CPU readback of the current frame's render target.
     void performReadback();
 
-    // GPU synchronization -- block until the current frame's GPU work is done.
-    void waitForGpu();
+    // -----------------------------------------------------------------------
+    // RHI resource handles
+    // -----------------------------------------------------------------------
+    RhiPipeline rhiPipeline_  = RHI_NULL;    // Main triangle PSO
+    RhiBuffer   rhiVertexBuf_ = RHI_NULL;    // Vertex buffer (upload heap)
+    RhiTexture  rhiDepthBuf_  = RHI_NULL;    // Depth-stencil texture
+    RhiFence    rhiReadbackFence_ = RHI_NULL; // Readback synchronization
+    RhiBuffer   rhiReadbackBufs_[kFrameCount] = {};  // Per-frame readback
 
-    // Advance to the next frame and wait for its fence value.
-    void moveToNextFrame();
+    uint64_t    readbackFenceValue_ = 0;
 
     // -----------------------------------------------------------------------
-    // Pipeline objects
+    // Legacy DX12 members (kept temporarily for EditorComponent bridge)
     // -----------------------------------------------------------------------
-    Microsoft::WRL::ComPtr<IDXGIFactory6>           factory_;
-    Microsoft::WRL::ComPtr<ID3D12Device>            device_;
-    Microsoft::WRL::ComPtr<ID3D12CommandQueue>       commandQueue_;
-    Microsoft::WRL::ComPtr<IDXGISwapChain3>         swapChain_;
-
-    // Per-frame resources (double buffered).
-    Microsoft::WRL::ComPtr<ID3D12CommandAllocator>   commandAllocators_[kFrameCount];
-    Microsoft::WRL::ComPtr<ID3D12Resource>           renderTargets_[kFrameCount];
-
-    Microsoft::WRL::ComPtr<ID3D12GraphicsCommandList> commandList_;
-
-    // Descriptor heap for render-target views.
-    Microsoft::WRL::ComPtr<ID3D12DescriptorHeap>    rtvHeap_;
-    uint32_t rtvDescriptorSize_ = 0;
-
-    // Depth-stencil buffer and DSV heap.
-    Microsoft::WRL::ComPtr<ID3D12Resource>           depthBuffer_;
-    Microsoft::WRL::ComPtr<ID3D12DescriptorHeap>     dsvHeap_;
-
-    // Pipeline state.
-    Microsoft::WRL::ComPtr<ID3D12RootSignature>     rootSignature_;
-    Microsoft::WRL::ComPtr<ID3D12PipelineState>     pipelineState_;
-
-    // Geometry.
-    Microsoft::WRL::ComPtr<ID3D12Resource>          vertexBuffer_;
-    D3D12_VERTEX_BUFFER_VIEW                        vertexBufferView_{};
-
-    // Constant buffer (upload heap) for the MVP matrix.
-    Microsoft::WRL::ComPtr<ID3D12Resource>          constantBuffer_;
-    uint8_t*                                        cbvDataBegin_ = nullptr;
-
-    // Synchronization.
-    Microsoft::WRL::ComPtr<ID3D12Fence>             fence_;
-    uint64_t                                        fenceValues_[kFrameCount]{};
-    HANDLE                                          fenceEvent_ = nullptr;
-
-    // Frame readback (double-buffered: one GPU-filling, one CPU-reading).
-    Microsoft::WRL::ComPtr<ID3D12Resource> readbackBuffers_[kFrameCount];
-    Microsoft::WRL::ComPtr<ID3D12Fence>    readbackFence_;
-    uint64_t                               readbackFenceValue_ = 0;
-    HANDLE                                 readbackEvent_      = nullptr;
+    // EditorComponent still needs raw DX12 device + root signature.
+    // These are retrieved from the RHI internal state during init().
+    ID3D12Device*        legacyDevice_    = nullptr;  // borrowed, NOT owned
+    ID3D12RootSignature* legacyRootSig_   = nullptr;  // borrowed from pipeline slot
 
     // Latest captured frame (protected by mutex for cross-thread access).
     mutable std::mutex frameMutex_;
@@ -205,19 +163,13 @@ private:
     uint32_t width_  = 0;
     uint32_t height_ = 0;
 
-    // Viewport and scissor rect (set once during init, reused every frame).
-    D3D12_VIEWPORT viewport_{};
-    D3D12_RECT     scissorRect_{};
-
     // Current world-view-projection matrix, updated each frame by update().
     DirectX::XMFLOAT4X4 worldViewProj_{};
 
-    // Stored view-projection matrix (without world transform) so that
-    // per-node MVP can be composed during editor rendering.
+    // Stored view-projection matrix (without world transform).
     DirectX::XMFLOAT4X4 viewProj_{};
 
-    // Accumulated rotation angles (radians).  Updated each frame via delta-time
-    // so that animation speed is independent of frame-timing jitter.
+    // Accumulated rotation angles (radians).
     float rotAngleY_ = 0.0f;
     float rotAngleX_ = 0.0f;
 
@@ -229,14 +181,13 @@ private:
     // External scene pointer (set via setScene, nullable).
     Scene* scene_ = nullptr;
 
-    // Cached light state (updated each frame from scene_ via light_collect_primary).
+    // Cached light state.
     LightState cachedLight_;
 
-    // CPU-side FPS overlay — stamps "FPS: XXX" into the readback pixel buffer.
+    // CPU-side FPS overlay.
     FPSOverlay fpsOverlay_;
 
     // Cached clear color -- updated from sceneParams_ each frame in update().
-    // Default matches UE5 dark viewport background (~0.12).
     float clearR_ = 0.12f;
     float clearG_ = 0.12f;
     float clearB_ = 0.12f;
@@ -245,10 +196,9 @@ private:
     // Render components (modular subsystems)
     // -----------------------------------------------------------------------
 
-    EditorComponent editor_;   // Editor-only rendering (grid, wireframe cubes)
+    EditorComponent editor_;
 
-    // When true, render() draws the editor scene (grid + wireframe cubes)
-    // instead of the legacy spinning pyramid.
+    // When true, render() draws the editor scene.
     bool editorMode_ = true;
 };
 

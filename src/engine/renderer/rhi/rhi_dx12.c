@@ -1171,6 +1171,28 @@ bool dx12_fence_wait(RhiFence fence, uint64_t value,
     return (result == WAIT_OBJECT_0);
 }
 
+/* =======================================================================
+ * TEMPORARY bridge API (see rhi_dx12.h)
+ * ======================================================================= */
+
+ID3D12Device* rhi_dx12_get_device(void) {
+    assert(s_dx12.initialized);
+    return s_dx12.device;
+}
+
+ID3D12RootSignature* rhi_dx12_get_pipeline_root_sig(RhiPipeline pipeline) {
+    if (pipeline == RHI_NULL) return NULL;
+    uint32_t slot = (uint32_t)pipeline;
+    assert(slot < DX12_MAX_PIPELINES && s_dx12.pipelines[slot].occupied);
+    return s_dx12.pipelines[slot].root_sig;
+}
+
+ID3D12GraphicsCommandList* rhi_dx12_get_cmd_list(RhiCmdList cmd) {
+    if (cmd == RHI_NULL) return NULL;
+    uint32_t slot = (uint32_t)cmd;
+    assert(slot < DX12_MAX_CMD_LISTS && s_dx12.cmd_lists[slot].occupied);
+    return s_dx12.cmd_lists[slot].list;
+}
 
 /* =======================================================================
  * Backend vtable instance
@@ -1214,6 +1236,12 @@ const rhi_backend_t rhi_dx12_backend = {
     .cmd_draw                = dx12_cmd_draw,
     .cmd_draw_indexed        = dx12_cmd_draw_indexed,
     .cmd_dispatch            = dx12_cmd_dispatch,
+
+    /* Root constants */
+    .cmd_set_root_constants  = dx12_cmd_set_root_constants,
+
+    /* Copy */
+    .cmd_copy_texture_to_buffer = dx12_cmd_copy_texture_to_buffer,
 
     /* Clear */
     .cmd_clear_render_target = dx12_cmd_clear_render_target,

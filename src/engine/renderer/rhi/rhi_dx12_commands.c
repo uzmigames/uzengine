@@ -358,6 +358,58 @@ void dx12_cmd_barrier_buffer(RhiCmdList cmd, RhiBuffer buf,
 }
 
 /* =======================================================================
+ * Root constants (inline 32-bit values)
+ * ======================================================================= */
+
+void dx12_cmd_set_root_constants(RhiCmdList cmd, uint32_t slot,
+                                  const void *data, uint32_t count_32bit,
+                                  uint32_t offset_32bit) {
+    if (cmd == RHI_NULL || !data || count_32bit == 0) return;
+    uint32_t cmd_slot = (uint32_t)cmd;
+    assert(cmd_slot < DX12_MAX_CMD_LISTS && s_dx12.cmd_lists[cmd_slot].occupied);
+
+    ID3D12GraphicsCommandList_SetGraphicsRoot32BitConstants(
+        s_dx12.cmd_lists[cmd_slot].list,
+        slot, count_32bit, data, offset_32bit);
+}
+
+/* =======================================================================
+ * Copy commands
+ * ======================================================================= */
+
+void dx12_cmd_copy_texture_to_buffer(RhiCmdList cmd, RhiTexture src,
+                                      RhiBuffer dst,
+                                      const RhiTextureFootprint *footprint) {
+    if (cmd == RHI_NULL || src == RHI_NULL || dst == RHI_NULL || !footprint) return;
+    uint32_t cmd_slot = (uint32_t)cmd;
+    uint32_t tex_slot = (uint32_t)src;
+    uint32_t buf_slot = (uint32_t)dst;
+    assert(tex_slot < DX12_MAX_RESOURCES && s_dx12.textures[tex_slot].occupied);
+    assert(buf_slot < DX12_MAX_BUFFERS && s_dx12.buffers[buf_slot].occupied);
+
+    D3D12_TEXTURE_COPY_LOCATION src_loc;
+    memset(&src_loc, 0, sizeof(src_loc));
+    src_loc.pResource        = s_dx12.textures[tex_slot].resource;
+    src_loc.Type             = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+    src_loc.SubresourceIndex = 0;
+
+    D3D12_TEXTURE_COPY_LOCATION dst_loc;
+    memset(&dst_loc, 0, sizeof(dst_loc));
+    dst_loc.pResource                          = s_dx12.buffers[buf_slot].resource;
+    dst_loc.Type                               = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+    dst_loc.PlacedFootprint.Offset             = footprint->offset;
+    dst_loc.PlacedFootprint.Footprint.Format   = to_dxgi_format(footprint->format);
+    dst_loc.PlacedFootprint.Footprint.Width    = footprint->width;
+    dst_loc.PlacedFootprint.Footprint.Height   = footprint->height;
+    dst_loc.PlacedFootprint.Footprint.Depth    = footprint->depth ? footprint->depth : 1;
+    dst_loc.PlacedFootprint.Footprint.RowPitch = footprint->row_pitch;
+
+    ID3D12GraphicsCommandList_CopyTextureRegion(
+        s_dx12.cmd_lists[cmd_slot].list,
+        &dst_loc, 0, 0, 0, &src_loc, NULL);
+}
+
+/* =======================================================================
  * Swapchain
  * ======================================================================= */
 

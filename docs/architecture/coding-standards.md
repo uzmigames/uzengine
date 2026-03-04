@@ -373,3 +373,28 @@ bool rhi_dx12_init(void* window_handle, uint32_t w, uint32_t h);
 // ❌ WRONG — void, failure is silent
 void rhi_dx12_init(void* window_handle, uint32_t w, uint32_t h);
 ```
+
+---
+
+## 11. File Size Limits
+
+### RULE CS-21: Maximum 1500 lines per source file
+
+No `.h`, `.cpp`, `.c`, or `.ts` file may exceed **1500 lines**. Files approaching this
+limit must be proactively split by logical responsibility.
+
+```
+✅ CORRECT — split by responsibility:
+  renderer_init.cpp       (200 lines)  — device/swapchain creation
+  renderer_passes.cpp     (400 lines)  — render pass execution
+  renderer_resources.cpp  (300 lines)  — buffer/texture management
+  renderer_commands.cpp   (350 lines)  — command recording
+
+❌ WRONG — monolithic file:
+  renderer.cpp            (2000 lines) — everything in one file
+```
+
+Known violations to fix:
+- `src/renderer/renderer.cpp` (1400 lines)
+- `src/engine/renderer/rhi/rhi_dx12.c` (2108 lines)
+
