@@ -6,7 +6,7 @@
 #include <windows.h>
 
 namespace uz {
-    class DX12Renderer;
+    class Renderer;
     class IpcPoller;
     struct SceneParams;
     struct EngineMetrics;
@@ -15,7 +15,7 @@ namespace uz {
 
 /// Run the Win32 message pump + render loop.  Returns the app exit code.
 int runMainLoop(HWND hwnd,
-                uz::DX12Renderer& renderer,
+                uz::Renderer& renderer,
                 uz::Timer& timer,
                 uz::SceneParams& sceneParams,
                 uz::EngineMetrics& metrics,

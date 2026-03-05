@@ -39,7 +39,7 @@ namespace {
 uz::SceneParams   g_scene;
 uz::EngineMetrics g_metrics;
 std::unique_ptr<uz::Scene> g_sceneData;
-uz::DX12Renderer* g_renderer = nullptr;
+uz::Renderer* g_renderer = nullptr;
 
 constexpr uint16_t kDefaultWsPort = 9002;
 
@@ -82,13 +82,13 @@ int WINAPI WinMain(
     wsServer.setTextMessageCallback([&](const std::string& text) {
         handleWsTextMessage(text, g_scene, g_renderer, g_sceneData.get(), wsServer);
     });
-    wsServer.start(wsPort);
+    (void)wsServer.start(wsPort);
 
     // -- Stream threads ------------------------------------------------------
     startEncodeThreads(&wsServer);
 
     // -- Renderer ------------------------------------------------------------
-    uz::DX12Renderer renderer;
+    uz::Renderer renderer;
     uz::Timer timer;
     if (!renderer.init(hwnd, uz::kDefaultWidth, uz::kDefaultHeight)) {
         DIAG("FATAL: renderer.init() failed!");

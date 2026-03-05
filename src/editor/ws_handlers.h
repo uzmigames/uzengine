@@ -13,7 +13,7 @@
 // Forward declarations — avoid pulling in heavy headers.
 namespace uz {
     struct SceneParams;
-    class  DX12Renderer;
+    class  Renderer;
     class  WsServer;
     struct Scene;
 }
@@ -22,6 +22,6 @@ namespace uz {
 /// Called from the wsServer text callback in main.cpp.
 void handleWsTextMessage(const std::string& text,
                          uz::SceneParams& scene,
-                         uz::DX12Renderer* renderer,
+                         uz::Renderer* renderer,
                          uz::Scene* sceneData,
                          uz::WsServer& wsServer);

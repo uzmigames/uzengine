@@ -11,15 +11,15 @@
 
 #include <cstdio>
 
-std::vector<uz::DX12Renderer::EditorNode> buildEditorNodes(const uz::Scene* scene) {
-    std::vector<uz::DX12Renderer::EditorNode> editorNodes;
+std::vector<uz::Renderer::EditorNode> buildEditorNodes(const uz::Scene* scene) {
+    std::vector<uz::Renderer::EditorNode> editorNodes;
     if (!scene) return editorNodes;
 
     for (uint32_t i = 1; i < scene->next_id; ++i) {
         const uz::SceneNode& sn = scene->nodes[i];
         if (!sn.alive) continue;
 
-        uz::DX12Renderer::EditorNode edNode;
+        uz::Renderer::EditorNode edNode;
         edNode.position = {
             sn.local_transform.position.x,
             sn.local_transform.position.y,
@@ -57,7 +57,7 @@ std::vector<uz::DX12Renderer::EditorNode> buildEditorNodes(const uz::Scene* scen
 }
 
 void loadSceneFile(std::unique_ptr<uz::Scene>& sceneData,
-                   uz::DX12Renderer& renderer,
+                   uz::Renderer& renderer,
                    uz::SceneParams& sceneParams,
                    const std::string& scenePath) {
     // Resolve scene path.

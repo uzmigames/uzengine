@@ -9,7 +9,7 @@
 namespace uz {
     class IpcRegistry;
     class WsServer;
-    class DX12Renderer;
+    class Renderer;
     struct SceneParams;
     struct EngineMetrics;
     struct Scene;
@@ -19,7 +19,7 @@ namespace uz {
 void registerIpcHandlers(uz::IpcRegistry& registry,
                          uz::SceneParams& sceneParams,
                          uz::EngineMetrics& metrics,
-                         uz::DX12Renderer& renderer,
+                         uz::Renderer& renderer,
                          std::unique_ptr<uz::Scene>& sceneData,
                          uz::WsServer& wsServer,
                          const std::string& ipcBaseDir);

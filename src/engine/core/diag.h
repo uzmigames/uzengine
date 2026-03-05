@@ -32,10 +32,11 @@ static inline void diag_log(const char* msg) {
         while (*p) { if (*p == '\\' || *p == '/') last = p; p++; }
         /* Replace filename with crash_log.txt */
         last[1] = '\0';
-        strcat(s_log_path, "crash_log.txt");
+        strcat_s(s_log_path, sizeof(s_log_path), "crash_log.txt");
     }
-    FILE* f = fopen(s_log_path, "a");
-    if (f) {
+    FILE* f = NULL;
+    if (fopen_s(&f, s_log_path, "a") != 0 || !f) return;
+    {
         /* Millisecond timestamp since process start */
         LARGE_INTEGER freq, now;
         QueryPerformanceFrequency(&freq);

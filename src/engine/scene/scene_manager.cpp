@@ -13,7 +13,7 @@
 #include "engine/scene/component_data.h"
 #include "engine/scene/component_store.h"
 
-#include <cstring>
+#include "common/safe_string.h"
 
 namespace uz {
 
@@ -56,8 +56,7 @@ void scene_init(Scene* scene, const char* name) {
 
     // Copy the scene name, safely truncating.
     if (name) {
-        std::strncpy(scene->name, name, kNodeNameMaxLen - 1);
-        scene->name[kNodeNameMaxLen - 1] = '\0';
+        uz::str_copy(scene->name, sizeof(scene->name), name);
     }
 
     scene->version = 1;

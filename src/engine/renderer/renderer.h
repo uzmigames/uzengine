@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "fps_overlay.h"
+#include "render_graph.h"
 #include "components/editor_component.h"
 #include "components/camera_component.h"
 #include "components/light_component.h"
@@ -48,7 +49,7 @@ struct Vertex {
 };
 
 // ---------------------------------------------------------------------------
-// DX12Renderer -- Renderer using the RHI abstraction layer.
+// Renderer -- Backend-agnostic renderer using the RHI abstraction layer.
 //
 // Lifecycle:
 //   1. Construct
@@ -60,16 +61,16 @@ struct Vertex {
 // an explicit GPU drain so that destruction order is safe.
 // ---------------------------------------------------------------------------
 
-class DX12Renderer {
+class Renderer {
 public:
-    DX12Renderer()  = default;
-    ~DX12Renderer() = default;
+    Renderer()  = default;
+    ~Renderer() = default;
 
     // Non-copyable, non-movable.
-    DX12Renderer(const DX12Renderer&)            = delete;
-    DX12Renderer& operator=(const DX12Renderer&) = delete;
-    DX12Renderer(DX12Renderer&&)                 = delete;
-    DX12Renderer& operator=(DX12Renderer&&)      = delete;
+    Renderer(const Renderer&)            = delete;
+    Renderer& operator=(const Renderer&) = delete;
+    Renderer(Renderer&&)                 = delete;
+    Renderer& operator=(Renderer&&)      = delete;
 
     // EditorNode is now defined in EditorComponent.
     using EditorNode = EditorComponent::EditorNode;
@@ -123,7 +124,6 @@ public:
 private:
     // Initialization sub-steps (called by init).
     bool createPipelineState();
-    bool createVertexBuffer();
     bool createDepthBuffer();
     bool createReadbackBuffers();
 
@@ -134,7 +134,6 @@ private:
     // RHI resource handles
     // -----------------------------------------------------------------------
     RhiPipeline rhiPipeline_  = RHI_NULL;
-    RhiBuffer   rhiVertexBuf_ = RHI_NULL;
     RhiTexture  rhiDepthBuf_  = RHI_NULL;
     RhiFence    rhiReadbackFence_ = RHI_NULL;
     RhiBuffer   rhiReadbackBufs_[kFrameCount] = {};
@@ -145,7 +144,9 @@ private:
     mutable std::mutex frameMutex_;
     FrameData          latestFrame_;
     uint32_t           frameNumber_       = 0;
-    uint64_t           streamStartMicros_ = 0;
+
+    // Stream timer — started on init(), used for frame timestamps.
+    Timer              streamTimer_;
 
     // Frame tracking.
     uint32_t frameIndex_ = 0;
@@ -154,14 +155,9 @@ private:
     uint32_t width_  = 0;
     uint32_t height_ = 0;
 
-    // Current world-view-projection matrix, updated each frame by update().
+    // Current view-projection matrix, updated each frame by update().
     // Uses engine math types (RULE CS-2).
-    Mat4 worldViewProj_ = Mat4::identity();
-    Mat4 viewProj_      = Mat4::identity();
-
-    // Accumulated rotation angles (radians).
-    float rotAngleY_ = 0.0f;
-    float rotAngleX_ = 0.0f;
+    Mat4 viewProj_ = Mat4::identity();
 
     bool initialized_ = false;
 
@@ -187,8 +183,8 @@ private:
     // -----------------------------------------------------------------------
     EditorComponent editor_;
 
-    // When true, render() draws the editor scene.
-    bool editorMode_ = true;
+    // Frame-local render graph (reset each frame).
+    RenderGraph renderGraph_;
 };
 
 } // namespace uz

@@ -9,7 +9,7 @@
 
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
+#include "common/safe_string.h"
 #include <string>
 #include <sstream>
 
@@ -328,8 +328,7 @@ SceneLoadResult scene_load_from_string(Scene* scene, const char* text) {
 
         if (current_section == Section::UzScene) {
             if (key == "name") {
-                std::strncpy(scene->name, value.c_str(), kNodeNameMaxLen - 1);
-                scene->name[kNodeNameMaxLen - 1] = '\0';
+                uz::str_copy(scene->name, sizeof(scene->name), value.c_str());
             } else if (key == "version") {
                 char* endptr = nullptr;
                 long v = std::strtol(value.c_str(), &endptr, 10);
@@ -484,7 +483,7 @@ SceneLoadResult scene_load_file(Scene* scene, const char* path) {
         return SceneLoadResult::Err("scene_load_file: path is null");
     }
 
-    FILE* f = std::fopen(path, "rb");
+    FILE* f = uz::file_open(path, "rb");
     if (!f) {
         return SceneLoadResult::Err(
             std::string("scene_load_file: cannot open file: ") + path);
@@ -514,8 +513,7 @@ SceneLoadResult scene_load_file(Scene* scene, const char* path) {
     auto result = scene_load_from_string(scene, contents.c_str());
     if (result.is_ok()) {
         // Record the source path so auto-save can write back to this file.
-        std::strncpy(scene->source_path, path, sizeof(scene->source_path) - 1);
-        scene->source_path[sizeof(scene->source_path) - 1] = '\0';
+        uz::str_copy(scene->source_path, sizeof(scene->source_path), path);
     }
     return result;
 }

@@ -12,7 +12,7 @@
 #include <nlohmann/json.hpp>
 
 #include <cstdint>
-#include <cstring>
+#include "common/safe_string.h"
 #include <string>
 #include <vector>
 
@@ -364,8 +364,7 @@ void scene_register_handlers(IpcRegistry& registry, Scene* scene, SceneParams* p
         }
 
         // Update source_path so auto-save knows where to write.
-        std::strncpy(scene->source_path, path.c_str(), sizeof(scene->source_path) - 1);
-        scene->source_path[sizeof(scene->source_path) - 1] = '\0';
+        uz::str_copy(scene->source_path, sizeof(scene->source_path), path.c_str());
 
         return make_ok();
     });

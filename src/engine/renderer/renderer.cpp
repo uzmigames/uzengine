@@ -1,8 +1,7 @@
 // ---------------------------------------------------------------------------
-// renderer.cpp -- DX12Renderer implementation using the RHI abstraction layer
+// renderer.cpp -- Renderer implementation using the RHI abstraction layer
 //
-// All GPU work goes through rhi()->* calls.  Direct DX12 usage is limited to:
-//   1. Shader compilation via D3DCompileFromFile — will move into RHI in P3
+// All GPU work goes through rhi()->* calls.  Zero backend-specific includes.
 //
 // RULE RHI-1: No backend types stored above rhi.h
 // RULE RHI-2: No DirectXMath above rhi.h — uses uz::Mat4
@@ -11,27 +10,19 @@
 
 #include "renderer.h"
 
+// Only need the backend vtable symbol for rhi_set_backend() in init().
 extern "C" {
-#include "engine/renderer/rhi/rhi_dx12.h"
+extern const rhi_backend_t rhi_dx12_backend;
 }
+
 #include <string>
 #include <algorithm>
 #include <cmath>
 #include <cstring>
 
+#include "common/safe_string.h"
+
 #include "engine/core/diag.h"
-
-
-
-// D3DCompileFromFile for shader compilation (temporary — will move to RHI)
-#include <d3dcompiler.h>
-#include <wrl/client.h>
-#pragma comment(lib, "d3dcompiler.lib")
-
-using Microsoft::WRL::ComPtr;
-
-// Platform timer (Windows-specific for now).
-#include <windows.h>
 
 namespace {
 
@@ -54,61 +45,6 @@ std::wstring toWide(const std::string& s) {
     return ws;
 }
 
-// Left-handed look-at matrix matching DX12 convention.
-// We build this in row-major layout (Mat4.m[row][col] when uploaded as
-// 16 floats via root constants).  This matches what the legacy shaders expect.
-uz::Mat4 mat4_look_at_lh(uz::Vec3 eye, uz::Vec3 target, uz::Vec3 up) {
-    using namespace uz;
-    const Vec3 f = vec3_normalize(target - eye);   // Forward (+Z)
-    const Vec3 r = vec3_normalize(vec3_cross(up, f)); // Right
-    const Vec3 u = vec3_cross(f, r);               // True up
-
-    Mat4 result = {};
-    result.m[0][0] = r.x;  result.m[0][1] = u.x;  result.m[0][2] = f.x;  result.m[0][3] = 0.0f;
-    result.m[1][0] = r.y;  result.m[1][1] = u.y;  result.m[1][2] = f.y;  result.m[1][3] = 0.0f;
-    result.m[2][0] = r.z;  result.m[2][1] = u.z;  result.m[2][2] = f.z;  result.m[2][3] = 0.0f;
-    result.m[3][0] = -vec3_dot(r, eye);
-    result.m[3][1] = -vec3_dot(u, eye);
-    result.m[3][2] = -vec3_dot(f, eye);
-    result.m[3][3] = 1.0f;
-    return result;
-}
-
-// Left-handed perspective projection, depth [0..1], row-major.
-uz::Mat4 mat4_perspective_fov_lh(float fov_y, float aspect, float near_z, float far_z) {
-    const float h = 1.0f / std::tan(fov_y * 0.5f);
-    const float w = h / aspect;
-    const float q = far_z / (far_z - near_z);
-
-    uz::Mat4 result = {};
-    result.m[0][0] = w;
-    result.m[1][1] = h;
-    result.m[2][2] = q;
-    result.m[2][3] = 1.0f;
-    result.m[3][2] = -near_z * q;
-    return result;
-}
-
-// Rotation around Y axis (row-major).
-uz::Mat4 mat4_rotation_y(float angle) {
-    const float c = std::cos(angle);
-    const float s = std::sin(angle);
-    uz::Mat4 r = uz::Mat4::identity();
-    r.m[0][0] =  c;  r.m[0][2] = s;
-    r.m[2][0] = -s;  r.m[2][2] = c;
-    return r;
-}
-
-// Rotation around X axis (row-major).
-uz::Mat4 mat4_rotation_x(float angle) {
-    const float c = std::cos(angle);
-    const float s = std::sin(angle);
-    uz::Mat4 r = uz::Mat4::identity();
-    r.m[1][1] =  c;  r.m[1][2] = s;
-    r.m[2][1] = -s;  r.m[2][2] = c;
-    return r;
-}
-
 } // anonymous namespace
 
 namespace uz {
@@ -117,7 +53,7 @@ namespace uz {
 // Public API
 // ===========================================================================
 
-bool DX12Renderer::init(void* window_handle, uint32_t width, uint32_t height) {
+bool Renderer::init(void* window_handle, uint32_t width, uint32_t height) {
     if (initialized_) return true;
 
     width_  = width;
@@ -143,11 +79,6 @@ bool DX12Renderer::init(void* window_handle, uint32_t width, uint32_t height) {
     }
     DIAG("createPipelineState() OK");
 
-    DIAG("createVertexBuffer()...");
-    if (!createVertexBuffer()) {
-        DIAG("FATAL: createVertexBuffer() failed");
-        return false;
-    }
 
     DIAG("createDepthBuffer()...");
     if (!createDepthBuffer()) {
@@ -165,25 +96,18 @@ bool DX12Renderer::init(void* window_handle, uint32_t width, uint32_t height) {
     DIAG("editor_.init()...");
     editor_.init();
 
-    // Engine-math identity matrices.
-    worldViewProj_ = Mat4::identity();
-    viewProj_      = Mat4::identity();
+    // Engine-math identity matrix.
+    viewProj_ = Mat4::identity();
 
     // Record the stream start time.
-    {
-        LARGE_INTEGER freq, now;
-        QueryPerformanceFrequency(&freq);
-        QueryPerformanceCounter(&now);
-        streamStartMicros_ = static_cast<uint64_t>(
-            now.QuadPart * 1'000'000 / freq.QuadPart);
-    }
+    streamTimer_.reset();
 
     DIAG("=== renderer.init COMPLETE ===");
     initialized_ = true;
     return true;
 }
 
-bool DX12Renderer::resize(int width, int height) {
+bool Renderer::resize(int width, int height) {
     if (width < 64 || width > 7680 || height < 64 || height > 4320)
         return false;
     if (!initialized_)
@@ -218,7 +142,7 @@ bool DX12Renderer::resize(int width, int height) {
     return true;
 }
 
-void DX12Renderer::update(double /*totalTime*/, double deltaTime) {
+void Renderer::update(double /*totalTime*/, double deltaTime) {
     fpsOverlay_.update(deltaTime);
 
     // Check for pending viewport resize.
@@ -231,13 +155,7 @@ void DX12Renderer::update(double /*totalTime*/, double deltaTime) {
         }
     }
 
-    // Rotation speeds from IPC-controlled scene params.
-    float rotYSpeed = 1.2f;
-    float rotXTilt  = 0.3f;
     if (sceneParams_) {
-        rotYSpeed = sceneParams_->rotY.load(std::memory_order_relaxed);
-        rotXTilt  = sceneParams_->rotX.load(std::memory_order_relaxed);
-
         std::lock_guard<std::mutex> lk(sceneParams_->bgMutex);
         clearR_ = sceneParams_->bgR;
         clearG_ = sceneParams_->bgG;
@@ -246,144 +164,156 @@ void DX12Renderer::update(double /*totalTime*/, double deltaTime) {
 
     const float aspect = static_cast<float>(width_) / static_cast<float>(height_);
 
-    if (editorMode_) {
-        // Editor fly-cam uses engine math types (camera_component.h).
-        const float dt = std::min(static_cast<float>(deltaTime), 0.1f);
-        CameraState camState = camera_update_fly(sceneParams_, aspect, dt);
-        viewProj_      = camState.view_proj;
-        worldViewProj_ = camState.view_proj;
-    } else {
-        // Legacy pyramid spinning camera — uses engine math (uz::Mat4).
-        const float dt = static_cast<float>(deltaTime);
-        rotAngleY_ += dt * rotYSpeed;
-        rotAngleX_ += dt * rotXTilt;
-
-        const Mat4 world = mat4_rotation_y(rotAngleY_)
-                         * mat4_rotation_x(0.3f + rotAngleX_);
-
-        const Vec3 eye    = {0.0f, 0.0f, -3.0f, 0.0f};
-        const Vec3 target = {0.0f, 0.0f,  0.0f, 0.0f};
-        const Vec3 up     = {0.0f, 1.0f,  0.0f, 0.0f};
-
-        const Mat4 view = mat4_look_at_lh(eye, target, up);
-        const Mat4 proj = mat4_perspective_fov_lh(kHalfPi * 0.5f, aspect, 0.1f, 100.0f);
-        const Mat4 vp   = view * proj;
-
-        viewProj_      = vp;
-        worldViewProj_ = world * vp;
-    }
+    // Editor fly-cam uses engine math types (camera_component.h).
+    const float dt = std::min(static_cast<float>(deltaTime), 0.1f);
+    CameraState camState = camera_update_fly(sceneParams_, aspect, dt);
+    viewProj_ = camState.view_proj;
 
     // Collect primary directional light from the scene.
     cachedLight_ = light_collect_primary(scene_);
 }
 
-void DX12Renderer::render(bool readback) {
+void Renderer::render(bool readback) {
     RhiCmdList cmd = rhi()->cmd_begin();
     if (cmd == RHI_NULL) return;
 
-    rhi()->cmd_set_pipeline(cmd, rhiPipeline_);
+    // -----------------------------------------------------------------------
+    // Build the frame-local render graph (§RENDER-PIPELINE)
+    // -----------------------------------------------------------------------
+    renderGraph_.reset();
 
-    rhi()->cmd_set_viewport(cmd, 0.0f, 0.0f,
-                           static_cast<float>(width_),
-                           static_cast<float>(height_),
-                           0.0f, 1.0f);
-    rhi()->cmd_set_scissor(cmd, 0, 0, width_, height_);
-
+    // Import external (persistent) resources into the graph.
     RhiTexture backbuffer = rhi()->swapchain_backbuffer();
+    auto rgBackbuffer = renderGraph_.import_texture("backbuffer", backbuffer);
+    auto rgDepth      = renderGraph_.import_texture("depth",      rhiDepthBuf_);
 
-    rhi()->cmd_barrier_texture(cmd, backbuffer,
-                               RHI_STATE_PRESENT, RHI_STATE_RENDER_TARGET);
+    // --- Pass 1: Scene Draw ------------------------------------------------
+    // Clears and draws the scene into the backbuffer + depth.
+    renderGraph_.add_pass("scene_draw", RgPassType::Graphics,
+        [&](RgPassBuilder& builder) {
+            builder.write(rgBackbuffer);
+            builder.write(rgDepth);
+            builder.force_run();
+        },
+        [this](RhiCmdList cmd) {
+            rhi()->cmd_set_pipeline(cmd, rhiPipeline_);
 
-    rhi()->cmd_clear_render_target(cmd, backbuffer,
-                                   clearR_, clearG_, clearB_, 1.0f);
-    rhi()->cmd_clear_depth_stencil(cmd, rhiDepthBuf_, 1.0f, 0);
+            rhi()->cmd_set_viewport(cmd, 0.0f, 0.0f,
+                                   static_cast<float>(width_),
+                                   static_cast<float>(height_),
+                                   0.0f, 1.0f);
+            rhi()->cmd_set_scissor(cmd, 0, 0, width_, height_);
 
-    rhi()->cmd_set_render_targets(cmd, &backbuffer, 1, rhiDepthBuf_);
+            RhiTexture bb = rhi()->swapchain_backbuffer();
 
-    // --- Draw scene ---
-    const bool paused = sceneParams_ &&
-        sceneParams_->paused.load(std::memory_order_relaxed);
+            rhi()->cmd_barrier_texture(cmd, bb,
+                                       RHI_STATE_PRESENT, RHI_STATE_RENDER_TARGET);
 
-    // Light data via root constants.
-    struct {
-        float dir[3]; float intensity;
-        float color[3]; float _pad;
-    } lightCB;
-    lightCB.dir[0]    = cachedLight_.direction.x;
-    lightCB.dir[1]    = cachedLight_.direction.y;
-    lightCB.dir[2]    = cachedLight_.direction.z;
-    lightCB.intensity = cachedLight_.intensity;
-    lightCB.color[0]  = cachedLight_.color.x;
-    lightCB.color[1]  = cachedLight_.color.y;
-    lightCB.color[2]  = cachedLight_.color.z;
-    lightCB._pad      = 0.0f;
-    rhi()->cmd_set_root_constants(cmd, 2, &lightCB, 8, 0);
+            rhi()->cmd_clear_render_target(cmd, bb,
+                                           clearR_, clearG_, clearB_, 1.0f);
+            rhi()->cmd_clear_depth_stencil(cmd, rhiDepthBuf_, 1.0f, 0);
 
-    if (editorMode_) {
-        // EditorComponent — fully RHI, uses RhiCmdList directly.
-        uint32_t selNode = sceneParams_
-            ? sceneParams_->selectedNodeId.load(std::memory_order_relaxed) : 0;
-        int gizMode = sceneParams_
-            ? sceneParams_->gizmoMode.load(std::memory_order_relaxed) : 0;
-        int gizAxis = sceneParams_
-            ? sceneParams_->gizmoActiveAxis.load(std::memory_order_relaxed) : -1;
-        if (gizAxis < 0 && sceneParams_)
-            gizAxis = sceneParams_->gizmoHoverAxis.load(std::memory_order_relaxed);
+            rhi()->cmd_set_render_targets(cmd, &bb, 1, rhiDepthBuf_);
 
-        // Camera position for gizmo distance scaling
-        Float3 camPos{0.0f, 0.0f, 0.0f};
-        if (sceneParams_) {
-            camPos = {sceneParams_->camPosX, sceneParams_->camPosY, sceneParams_->camPosZ};
-        }
+            // Light data via root constants.
+            struct {
+                float dir[3]; float intensity;
+                float color[3]; float _pad;
+            } lightCB;
+            lightCB.dir[0]    = cachedLight_.direction.x;
+            lightCB.dir[1]    = cachedLight_.direction.y;
+            lightCB.dir[2]    = cachedLight_.direction.z;
+            lightCB.intensity = cachedLight_.intensity;
+            lightCB.color[0]  = cachedLight_.color.x;
+            lightCB.color[1]  = cachedLight_.color.y;
+            lightCB.color[2]  = cachedLight_.color.z;
+            lightCB._pad      = 0.0f;
+            rhi()->cmd_set_root_constants(cmd, 2, &lightCB, 8, 0);
 
-        // Multi-select pivot (task 7.2)
-        bool usePivot = false;
-        Float3 pivotPos{0.0f, 0.0f, 0.0f};
-        if (sceneParams_) {
-            usePivot = sceneParams_->useGizmoPivot.load(std::memory_order_relaxed);
-            if (usePivot) {
-                std::lock_guard<std::mutex> lk(sceneParams_->gizmoPivotMutex);
-                pivotPos = {sceneParams_->gizmoPivotX, sceneParams_->gizmoPivotY, sceneParams_->gizmoPivotZ};
+            {
+                uint32_t selNode = sceneParams_
+                    ? sceneParams_->selectedNodeId.load(std::memory_order_relaxed) : 0;
+                int gizMode = sceneParams_
+                    ? sceneParams_->gizmoMode.load(std::memory_order_relaxed) : 0;
+                int gizAxis = sceneParams_
+                    ? sceneParams_->gizmoActiveAxis.load(std::memory_order_relaxed) : -1;
+                if (gizAxis < 0 && sceneParams_)
+                    gizAxis = sceneParams_->gizmoHoverAxis.load(std::memory_order_relaxed);
+
+                Float3 camPos{0.0f, 0.0f, 0.0f};
+                if (sceneParams_) {
+                    camPos = {sceneParams_->camPosX, sceneParams_->camPosY, sceneParams_->camPosZ};
+                }
+
+                bool usePivot = false;
+                Float3 pivotPos{0.0f, 0.0f, 0.0f};
+                if (sceneParams_) {
+                    usePivot = sceneParams_->useGizmoPivot.load(std::memory_order_relaxed);
+                    if (usePivot) {
+                        std::lock_guard<std::mutex> lk(sceneParams_->gizmoPivotMutex);
+                        pivotPos = {sceneParams_->gizmoPivotX, sceneParams_->gizmoPivotY, sceneParams_->gizmoPivotZ};
+                    }
+                }
+
+                editor_.draw(cmd, viewProj_, camPos, selNode, gizMode, gizAxis, usePivot, pivotPos);
             }
-        }
+        });
 
-        editor_.draw(cmd, viewProj_, camPos, selNode, gizMode, gizAxis, usePivot, pivotPos);
-    } else if (!paused) {
-        // Legacy pyramid draw.
-        rhi()->cmd_set_root_constants(cmd, 0, &worldViewProj_, 16, 0);
-
-        const float white[4] = {1.0f, 1.0f, 1.0f, 0.0f};
-        rhi()->cmd_set_root_constants(cmd, 1, white, 4, 0);
-
-        rhi()->cmd_set_vertex_buffer(cmd, 0, rhiVertexBuf_, 0,
-                                     static_cast<uint32_t>(sizeof(Vertex)));
-        rhi()->cmd_draw(cmd, 12, 1, 0, 0);
-    }
-
-    // --- Readback path ---
+    // --- Pass 2: Readback --------------------------------------------------
+    // Copies the rendered backbuffer to a CPU-readable staging buffer.
     if (readback) {
-        rhi()->cmd_barrier_texture(cmd, backbuffer,
-                                   RHI_STATE_RENDER_TARGET, RHI_STATE_COPY_SRC);
+        renderGraph_.add_pass("readback", RgPassType::Copy,
+            [&](RgPassBuilder& builder) {
+                builder.read(rgBackbuffer);
+                builder.force_run();
+            },
+            [this](RhiCmdList cmd) {
+                RhiTexture bb = rhi()->swapchain_backbuffer();
 
-        const uint32_t alignedPitch = (width_ * 4 + 255u) & ~255u;
-        RhiTextureFootprint footprint{};
-        footprint.width     = width_;
-        footprint.height    = height_;
-        footprint.depth     = 1;
-        footprint.row_pitch = alignedPitch;
-        footprint.offset    = 0;
-        footprint.format    = RHI_FORMAT_RGBA8_UNORM;
+                rhi()->cmd_barrier_texture(cmd, bb,
+                                           RHI_STATE_RENDER_TARGET, RHI_STATE_COPY_SRC);
 
-        rhi()->cmd_copy_texture_to_buffer(cmd, backbuffer,
-                                          rhiReadbackBufs_[frameIndex_],
-                                          &footprint);
+                const uint32_t alignedPitch = (width_ * 4 + 255u) & ~255u;
+                RhiTextureFootprint footprint{};
+                footprint.width     = width_;
+                footprint.height    = height_;
+                footprint.depth     = 1;
+                footprint.row_pitch = alignedPitch;
+                footprint.offset    = 0;
+                footprint.format    = RHI_FORMAT_RGBA8_UNORM;
 
-        rhi()->cmd_barrier_texture(cmd, backbuffer,
-                                   RHI_STATE_COPY_SRC, RHI_STATE_PRESENT);
+                rhi()->cmd_copy_texture_to_buffer(cmd, bb,
+                                                  rhiReadbackBufs_[frameIndex_],
+                                                  &footprint);
+
+                rhi()->cmd_barrier_texture(cmd, bb,
+                                           RHI_STATE_COPY_SRC, RHI_STATE_PRESENT);
+            });
     } else {
-        rhi()->cmd_barrier_texture(cmd, backbuffer,
-                                   RHI_STATE_RENDER_TARGET, RHI_STATE_PRESENT);
+        // No readback — still need the present barrier.
+        renderGraph_.add_pass("present_barrier", RgPassType::Copy,
+            [&](RgPassBuilder& builder) {
+                builder.read(rgBackbuffer);
+                builder.force_run();
+            },
+            [](RhiCmdList cmd) {
+                RhiTexture bb = rhi()->swapchain_backbuffer();
+                rhi()->cmd_barrier_texture(cmd, bb,
+                                           RHI_STATE_RENDER_TARGET, RHI_STATE_PRESENT);
+            });
     }
+
+    // -----------------------------------------------------------------------
+    // Compile and execute the render graph
+    // -----------------------------------------------------------------------
+    if (!renderGraph_.compile()) {
+        // Graph has a cycle or is invalid — skip execution, still present.
+        rhi()->cmd_end(cmd);
+        rhi()->cmd_submit(cmd);
+        rhi()->swapchain_present(0);
+        return;
+    }
+    renderGraph_.execute(cmd);
 
     rhi()->cmd_end(cmd);
     rhi()->cmd_submit(cmd);
@@ -394,20 +324,20 @@ void DX12Renderer::render(bool readback) {
     }
 }
 
-FrameData DX12Renderer::getLatestFrame() const {
+FrameData Renderer::getLatestFrame() const {
     std::lock_guard<std::mutex> lock(frameMutex_);
     return latestFrame_;
 }
 
-FrameData DX12Renderer::getLastFrameCopy() const {
+FrameData Renderer::getLastFrameCopy() const {
     return getLatestFrame();
 }
 
-void DX12Renderer::setSceneParams(SceneParams* params) {
+void Renderer::setSceneParams(SceneParams* params) {
     sceneParams_ = params;
 }
 
-void DX12Renderer::shutdown() {
+void Renderer::shutdown() {
     if (!initialized_) return;
 
     editor_.shutdown();
@@ -426,10 +356,7 @@ void DX12Renderer::shutdown() {
         rhi()->texture_destroy(rhiDepthBuf_);
         rhiDepthBuf_ = RHI_NULL;
     }
-    if (rhiVertexBuf_ != RHI_NULL) {
-        rhi()->buffer_destroy(rhiVertexBuf_);
-        rhiVertexBuf_ = RHI_NULL;
-    }
+
     if (rhiPipeline_ != RHI_NULL) {
         rhi()->pipeline_destroy(rhiPipeline_);
         rhiPipeline_ = RHI_NULL;
@@ -443,7 +370,7 @@ void DX12Renderer::shutdown() {
 // Private -- pipeline state via RHI
 // ===========================================================================
 
-bool DX12Renderer::createPipelineState() {
+bool Renderer::createPipelineState() {
     const std::string shaderDir = getShaderDir();
     DIAG_FMT("Shader dir: %s", shaderDir.c_str());
 
@@ -454,7 +381,7 @@ bool DX12Renderer::createPipelineState() {
     const std::string psPath = shaderDir + "basic.ps.hlsl";
 
     auto readFile = [](const std::string& path) -> std::string {
-        FILE* f = fopen(path.c_str(), "rb");
+        FILE* f = uz::file_open(path.c_str(), "rb");
         if (!f) return {};
         fseek(f, 0, SEEK_END);
         long sz = ftell(f);
@@ -519,48 +446,12 @@ bool DX12Renderer::createPipelineState() {
     return rhiPipeline_ != RHI_NULL;
 }
 
-// ===========================================================================
-// Private -- vertex buffer via RHI
-// ===========================================================================
-
-bool DX12Renderer::createVertexBuffer() {
-    // Pyramid vertices — plain float arrays per CS-3.
-    const Vertex pyramidVertices[] = {
-        // Front face: Apex, Base2, Base0
-        {{0.0f, 0.7f, 0.0f},   {1.0f, 1.0f, 0.0f}},   // apex, yellow
-        {{0.52f, -0.3f, -0.3f}, {0.0f, 0.0f, 1.0f}},   // base2, blue
-        {{0.0f, -0.3f, 0.6f},  {1.0f, 0.0f, 0.0f}},    // base0, red
-        // Right face: Apex, Base0, Base1
-        {{0.0f, 0.7f, 0.0f},    {1.0f, 1.0f, 0.0f}},
-        {{0.0f, -0.3f, 0.6f},   {1.0f, 0.0f, 0.0f}},
-        {{-0.52f, -0.3f, -0.3f},{0.0f, 1.0f, 0.0f}},   // base1, green
-        // Left face: Apex, Base1, Base2
-        {{0.0f, 0.7f, 0.0f},    {1.0f, 1.0f, 0.0f}},
-        {{-0.52f, -0.3f, -0.3f},{0.0f, 1.0f, 0.0f}},
-        {{0.52f, -0.3f, -0.3f}, {0.0f, 0.0f, 1.0f}},
-        // Bottom face: Base0, Base2, Base1
-        {{0.0f, -0.3f, 0.6f},   {1.0f, 0.0f, 0.0f}},
-        {{0.52f, -0.3f, -0.3f}, {0.0f, 0.0f, 1.0f}},
-        {{-0.52f, -0.3f, -0.3f},{0.0f, 1.0f, 0.0f}},
-    };
-
-    RhiBufferDesc bufDesc{};
-    bufDesc.size       = sizeof(pyramidVertices);
-    bufDesc.usage      = RHI_BUFFER_USAGE_VERTEX | RHI_BUFFER_USAGE_UPLOAD;
-    bufDesc.debug_name = "PyramidVB";
-
-    rhiVertexBuf_ = rhi()->buffer_create(&bufDesc);
-    if (rhiVertexBuf_ == RHI_NULL) return false;
-
-    rhi()->buffer_upload(rhiVertexBuf_, pyramidVertices, sizeof(pyramidVertices));
-    return true;
-}
 
 // ===========================================================================
 // Private -- depth buffer via RHI
 // ===========================================================================
 
-bool DX12Renderer::createDepthBuffer() {
+bool Renderer::createDepthBuffer() {
     RhiTextureDesc desc{};
     desc.width      = width_;
     desc.height     = height_;
@@ -580,7 +471,7 @@ bool DX12Renderer::createDepthBuffer() {
 // Private -- readback buffers via RHI
 // ===========================================================================
 
-bool DX12Renderer::createReadbackBuffers() {
+bool Renderer::createReadbackBuffers() {
     const uint32_t alignedPitch = (width_ * 4 + 255u) & ~255u;
     const uint64_t bufSize = static_cast<uint64_t>(alignedPitch) * height_;
 
@@ -605,7 +496,7 @@ bool DX12Renderer::createReadbackBuffers() {
 // Private -- GPU -> CPU readback
 // ===========================================================================
 
-void DX12Renderer::performReadback() {
+void Renderer::performReadback() {
     ++readbackFenceValue_;
     rhi()->fence_signal(rhiReadbackFence_, readbackFenceValue_);
     rhi()->fence_wait(rhiReadbackFence_, readbackFenceValue_, UINT64_MAX);
@@ -616,11 +507,7 @@ void DX12Renderer::performReadback() {
     void* mappedData = rhi()->buffer_map(rhiReadbackBufs_[frameIndex_]);
     if (!mappedData) return;
 
-    LARGE_INTEGER freq, now;
-    QueryPerformanceFrequency(&freq);
-    QueryPerformanceCounter(&now);
-    const uint64_t currentMicros = static_cast<uint64_t>(
-        now.QuadPart * 1'000'000 / freq.QuadPart);
+    const uint64_t timestamp = streamTimer_.elapsedMicros();
 
     {
         std::lock_guard<std::mutex> lock(frameMutex_);
@@ -628,7 +515,7 @@ void DX12Renderer::performReadback() {
         latestFrame_.width       = width_;
         latestFrame_.height      = height_;
         latestFrame_.frameNumber = ++frameNumber_;
-        latestFrame_.timestamp   = currentMicros - streamStartMicros_;
+        latestFrame_.timestamp   = timestamp;
 
         latestFrame_.pixels.resize(
             static_cast<size_t>(actualRowBytes) * height_);
@@ -653,13 +540,12 @@ void DX12Renderer::performReadback() {
 // Public -- editor scene loading
 // ===========================================================================
 
-size_t DX12Renderer::loadEditorScene(std::vector<EditorNode> nodes) {
+size_t Renderer::loadEditorScene(std::vector<EditorNode> nodes) {
     const size_t count = editor_.loadNodes(std::move(nodes));
-    editorMode_ = true;
     return count;
 }
 
-void DX12Renderer::setScene(Scene* scene) {
+void Renderer::setScene(Scene* scene) {
     scene_ = scene;
 }
 

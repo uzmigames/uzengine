@@ -20,7 +20,7 @@
 #include <nlohmann/json.hpp>
 
 #include <atomic>
-#include <cstring>
+#include "common/safe_string.h"
 #include <string>
 #include <thread>
 #include <vector>
@@ -93,7 +93,7 @@ TEST_F(ViewportRegistryTest, Create_RegistryFull_ReturnsInvalid) {
 
 TEST_F(ViewportRegistryTest, Create_DebugName_Preserved) {
     uz::ViewportDesc desc;
-    std::strncpy(desc.debug_name, "TestVP", sizeof(desc.debug_name) - 1);
+    uz::str_copy(desc.debug_name, sizeof(desc.debug_name), "TestVP");
     uz::ViewportId id = reg_.create(desc);
 
     uz::ViewportStatus status;

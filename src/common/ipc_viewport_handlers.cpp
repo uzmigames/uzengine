@@ -19,7 +19,7 @@
 
 #include <nlohmann/json.hpp>
 
-#include <cstring>
+#include "common/safe_string.h"
 #include <string>
 
 namespace uz {
@@ -116,8 +116,7 @@ void viewport_register_handlers(IpcRegistry& registry, ViewportRegistry* reg) {
         if (args.contains("debug_name") && args["debug_name"].is_string()) {
             std::string name = args["debug_name"].get<std::string>();
             // Safe copy into fixed-size buffer.
-            std::strncpy(desc.debug_name, name.c_str(), sizeof(desc.debug_name) - 1);
-            desc.debug_name[sizeof(desc.debug_name) - 1] = '\0';
+            uz::str_copy(desc.debug_name, sizeof(desc.debug_name), name.c_str());
         }
 
         const ViewportId id = reg->create(desc);

@@ -16,7 +16,7 @@
 #include "engine/scene/transform.h"
 
 #include <cstdint>
-#include <cstring>
+#include "common/safe_string.h"
 
 namespace uz {
 
@@ -122,8 +122,7 @@ struct SceneNode {
             name[0] = '\0';
             return;
         }
-        std::strncpy(name, n, kNodeNameMaxLen - 1);
-        name[kNodeNameMaxLen - 1] = '\0';
+        uz::str_copy(name, sizeof(name), n);
     }
 };
 

@@ -8,7 +8,7 @@
 #include "engine/scene/component_store.h"
 
 #include <cstdio>
-#include <cstring>
+#include "common/safe_string.h"
 #include <string>
 
 namespace uz {
@@ -167,7 +167,7 @@ SceneSaveResult scene_save_file(const Scene* scene, const char* path) {
 
     std::string text = scene_save_to_string(scene);
 
-    FILE* f = std::fopen(path, "wb");
+    FILE* f = uz::file_open(path, "wb");
     if (!f) {
         return SceneSaveResult::Err(
             std::string("scene_save_file: cannot open file for writing: ") + path);

@@ -28,7 +28,7 @@
 
 void handleWsTextMessage(const std::string& text,
                          uz::SceneParams& g_scene,
-                         uz::DX12Renderer* g_renderer,
+                         uz::Renderer* g_renderer,
                          uz::Scene* g_sceneData,
                          uz::WsServer& wsServer) {
     try {
@@ -58,7 +58,7 @@ void handleWsTextMessage(const std::string& text,
 
         // Get the current view-projection matrix from the renderer.
         auto nodes = g_renderer ? g_renderer->getEditorNodes()
-            : std::vector<uz::DX12Renderer::EditorNode>{};
+            : std::vector<uz::Renderer::EditorNode>{};
 
         // Project each node to screen space, find nearest to click.
         int bestNodeId = -1;

@@ -16,7 +16,7 @@
 #include "engine/renderer/render_graph.h"
 
 #include <atomic>
-#include <cstring>
+#include "common/safe_string.h"
 #include <string>
 #include <vector>
 
@@ -56,7 +56,7 @@ TEST_F(RenderGraphTest, ExecutionOrder_EmptyGraph_ReturnsNull) {
 
 TEST_F(RenderGraphTest, CreateTexture_ReturnsValidHandle) {
     uz::RgTextureDesc desc;
-    std::strncpy(desc.name, "color", sizeof(desc.name) - 1);
+    uz::str_copy(desc.name, sizeof(desc.name), "color");
     auto h = rg_.create_texture(desc);
     EXPECT_NE(h, uz::kRgHandleInvalid);
     EXPECT_EQ(rg_.texture_count(), 1u);
@@ -73,7 +73,7 @@ TEST_F(RenderGraphTest, CreateTexture_MultipleUniqueHandles) {
 TEST_F(RenderGraphTest, CreateBuffer_ReturnsValidHandle) {
     uz::RgBufferDesc desc;
     desc.byte_size = 1024;
-    std::strncpy(desc.name, "constants", sizeof(desc.name) - 1);
+    uz::str_copy(desc.name, sizeof(desc.name), "constants");
     auto h = rg_.create_buffer(desc);
     EXPECT_NE(h, uz::kRgHandleInvalid);
     EXPECT_EQ(rg_.buffer_count(), 1u);
@@ -692,7 +692,7 @@ TEST_F(RenderGraphTest, TextureDescFields_Preserved) {
     td.is_render_target = true;
     td.is_depth_stencil = false;
     td.is_uav           = true;
-    std::strncpy(td.name, "hdr_color", sizeof(td.name) - 1);
+    uz::str_copy(td.name, sizeof(td.name), "hdr_color");
 
     auto h = rg_.create_texture(td);
     EXPECT_NE(h, uz::kRgHandleInvalid);
@@ -705,7 +705,7 @@ TEST_F(RenderGraphTest, BufferDescFields_Preserved) {
     bd.stride     = 16;
     bd.is_uav     = true;
     bd.persistent = true;
-    std::strncpy(bd.name, "structured_buf", sizeof(bd.name) - 1);
+    uz::str_copy(bd.name, sizeof(bd.name), "structured_buf");
 
     auto h = rg_.create_buffer(bd);
     EXPECT_NE(h, uz::kRgHandleInvalid);
@@ -791,7 +791,7 @@ TEST_F(RenderGraphTest, PassWritesToPersistentTransient_StaysAlive) {
     // its writer alive even if nobody else reads it.
     uz::RgTextureDesc td;
     td.persistent = true;
-    std::strncpy(td.name, "persistent_rt", sizeof(td.name) - 1);
+    uz::str_copy(td.name, sizeof(td.name), "persistent_rt");
     auto tex = rg_.create_texture(td);
 
     rg_.add_pass("writer", uz::RgPassType::Graphics,

@@ -7,7 +7,7 @@
 #include "engine/core/platform.h"
 
 #include <cstdlib>
-#include <cstring>
+#include "common/safe_string.h"
 #include <cstdio>
 
 // ---------------------------------------------------------------------------
@@ -218,8 +218,7 @@ Thread* thread_create(ThreadFunc fn, void* user_data, const char* name) noexcept
     if (name && name[0] != '\0') {
         // pthread_setname_np requires the name to be <= 15 chars + NUL.
         char truncated[16];
-        std::strncpy(truncated, name, 15);
-        truncated[15] = '\0';
+        uz::str_copy(truncated, sizeof(truncated), name);
         pthread_setname_np(t->handle, truncated);
     }
 #else

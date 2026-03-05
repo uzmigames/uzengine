@@ -15,7 +15,7 @@
 
 #include <algorithm>
 #include <cassert>
-#include <cstring>
+#include "common/safe_string.h"
 #include <queue>
 #include <vector>
 
@@ -175,7 +175,7 @@ RgTextureHandle RenderGraph::create_texture(const RgTextureDesc& desc) {
     res.persistent = desc.persistent;
     res.tex_desc   = desc;
     res.rhi_texture = RHI_NULL;
-    std::strncpy(res.name, desc.name, sizeof(res.name) - 1);
+    uz::str_copy(res.name, sizeof(res.name), desc.name);
     res.name[sizeof(res.name) - 1] = '\0';
 
     impl_->resources.push_back(res);
@@ -193,7 +193,7 @@ RgBufferHandle RenderGraph::create_buffer(const RgBufferDesc& desc) {
     res.persistent = desc.persistent;
     res.buf_desc   = desc;
     res.rhi_buffer = RHI_NULL;
-    std::strncpy(res.name, desc.name, sizeof(res.name) - 1);
+    uz::str_copy(res.name, sizeof(res.name), desc.name);
     res.name[sizeof(res.name) - 1] = '\0';
 
     impl_->resources.push_back(res);
@@ -212,7 +212,7 @@ RgTextureHandle RenderGraph::import_texture(const char* name,
     res.persistent  = true;
     res.rhi_texture = handle;
     if (name) {
-        std::strncpy(res.name, name, sizeof(res.name) - 1);
+        uz::str_copy(res.name, sizeof(res.name), name);
         res.name[sizeof(res.name) - 1] = '\0';
     }
 
@@ -231,7 +231,7 @@ RgBufferHandle RenderGraph::import_buffer(const char* name, RhiBuffer handle) {
     res.persistent = true;
     res.rhi_buffer = handle;
     if (name) {
-        std::strncpy(res.name, name, sizeof(res.name) - 1);
+        uz::str_copy(res.name, sizeof(res.name), name);
         res.name[sizeof(res.name) - 1] = '\0';
     }
 
@@ -256,7 +256,7 @@ RgPassBuilder& RenderGraph::add_pass(
 
     RgPass pass;
     if (name) {
-        std::strncpy(pass.name, name, sizeof(pass.name) - 1);
+        uz::str_copy(pass.name, sizeof(pass.name), name);
         pass.name[sizeof(pass.name) - 1] = '\0';
     }
     pass.type       = type;

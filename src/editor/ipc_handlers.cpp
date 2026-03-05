@@ -30,7 +30,7 @@
 void registerIpcHandlers(uz::IpcRegistry& ipcRegistry,
                          uz::SceneParams& g_scene,
                          uz::EngineMetrics& g_metrics,
-                         uz::DX12Renderer& renderer,
+                         uz::Renderer& renderer,
                          std::unique_ptr<uz::Scene>& g_sceneData,
                          uz::WsServer& wsServer,
                          const std::string& ipcBaseDir) {
@@ -138,7 +138,7 @@ void registerIpcHandlers(uz::IpcRegistry& ipcRegistry,
             uz::scene_clear(g_sceneData.get());
         }
 
-        std::vector<uz::DX12Renderer::EditorNode> editorNodes;
+        std::vector<uz::Renderer::EditorNode> editorNodes;
         editorNodes.reserve(args["nodes"].size());
 
         for (const auto& n : args["nodes"]) {
@@ -212,7 +212,7 @@ void registerIpcHandlers(uz::IpcRegistry& ipcRegistry,
             }
 
             // Build EditorNode for wireframe rendering.
-            uz::DX12Renderer::EditorNode edNode;
+            uz::Renderer::EditorNode edNode;
             edNode.position = {px, py, pz};
             edNode.rotation = {rx, ry, rz};
             edNode.rotationQuat = {

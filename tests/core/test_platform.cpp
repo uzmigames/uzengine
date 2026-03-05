@@ -10,7 +10,7 @@
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
+#include "common/safe_string.h"
 #include <string>
 #include <vector>
 #ifdef _WIN32
@@ -38,7 +38,7 @@ struct TempFile {
         std::string tmpl = std::string(tmp) + "uz_pal_test_XXXXXX";
         if (_mktemp_s(tmpl.data(), tmpl.size() + 1) == 0) {
             // Create the file
-            FILE* f = fopen(tmpl.c_str(), "wb");
+            FILE* f = uz::file_open(tmpl.c_str(), "wb");
             if (f) {
                 fclose(f);
                 if (suffix && suffix[0] != '\0') {

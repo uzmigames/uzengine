@@ -13,7 +13,7 @@
 #include <string>
 
 int runMainLoop(HWND /*hwnd*/,
-                uz::DX12Renderer& renderer,
+                uz::Renderer& renderer,
                 uz::Timer& timer,
                 uz::SceneParams& /*sceneParams*/,
                 uz::EngineMetrics& g_metrics,

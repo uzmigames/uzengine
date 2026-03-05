@@ -11,7 +11,7 @@
 
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
+#include "common/safe_string.h"
 #include <ctime>
 
 #if defined(UZ_PLATFORM_LINUX) || defined(UZ_PLATFORM_MACOS)
@@ -99,7 +99,7 @@ std::string write_report_stdio(const char* reason, const char* details) {
     std::snprintf(filepath, sizeof(filepath), "%s/crash_%s.txt",
                   s_output_dir, time_part);
 
-    FILE* f = std::fopen(filepath, "w");
+    FILE* f = uz::file_open(filepath, "w");
     if (!f) return {};
 
     // [crash] section
@@ -148,8 +148,7 @@ std::string write_report_stdio(const char* reason, const char* details) {
     std::fclose(f);
 
     // Record last report path.
-    std::strncpy(s_last_report_path, filepath, kMaxPathLen - 1);
-    s_last_report_path[kMaxPathLen - 1] = '\0';
+    uz::str_copy(s_last_report_path, kMaxPathLen, filepath);
 
     return std::string(filepath);
 }
@@ -426,8 +425,7 @@ namespace uz {
 
 void CrashReporter::set_output_dir(const char* dir) {
     if (!dir) return;
-    std::strncpy(s_output_dir, dir, kMaxDirLen - 1);
-    s_output_dir[kMaxDirLen - 1] = '\0';
+    uz::str_copy(s_output_dir, kMaxDirLen, dir);
 }
 
 const char* CrashReporter::output_dir() {
