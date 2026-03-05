@@ -478,10 +478,13 @@ export function buildViewportStreamHtml(opts: {
     <button id="btn-local" class="tb" data-space="local" title="Local Space">Local</button>
     <span class="tb-sep"></span>
     <button id="btn-focus" class="tb" title="Focus on selected (F)" style="background:#238636;color:#fff;border-color:#2ea043;">\u2295 Focus</button>
+    <span id="snap-indicator" style="display:none;color:#f0c040;font-size:10px;margin-left:6px;">[Snap: 0.25m]</span>
   </div>
   <div id="canvas-container">
     <div id="overlay">Waiting for stream\u2026</div>
     <canvas id="viewport-canvas" tabindex="0"></canvas>
+    <div id="box-select-rect" style="display:none;position:absolute;border:1px dashed rgba(255,255,255,0.8);background:rgba(255,255,255,0.08);pointer-events:none;box-sizing:border-box;"></div>
+    <div id="dbg-hittest" style="position:absolute;top:2px;right:4px;color:#0f0;font-size:10px;pointer-events:none;font-family:monospace;z-index:999;white-space:pre;"></div>
   </div>
 
   <script nonce="${nonce}">
@@ -725,6 +728,393 @@ export function buildViewportStreamHtml(opts: {
       var lastDragSendTime = 0;
       var lastHoverSendTime = 0;
 
+      // Task 7.1-7.4: Multi-select state
+      // selectedNodeIds: all box-picked node IDs ([] = nothing / single select)
+      var selectedNodeIds = /** @type {number[]} */ ([]);
+      // selectedNodeTransforms: map nodeId → {position, rotation, scale}
+      var selectedNodeTransforms = /** @type {Object.<number, Object>} */ ({});
+      // pendingTransformFetches: count of commitTransform requests in-flight for pivot setup
+      var pendingTransformFetches = 0;
+      // Simple undo stack for bulk transforms: [{type:'bulk', transforms:{nodeId: oldTransform}}]
+      var undoStack = /** @type {Array} */ ([]);
+
+      // Task 5.7 — Camera matrix cache (column-major, updated by editor.getCamera poll)
+      var camViewMatrix  = null;   // 16-element array or null
+      var camProjMatrix  = null;   // 16-element array or null
+      var camWorldPos    = null;   // {x,y,z} or null
+      // Drag start state (task 5.2 — needed to compute live deltas)
+      var dragStartTransform = null;  // {position,rotation,scale} at beginDrag
+      var dragStartHitPoint  = null;  // {x,y,z} world-space hit at beginDrag
+      var dragConstraintAxis = null;  // 'x'|'y'|'z' for current drag
+      // Rotation drag state
+      var rotVStart          = null;  // {x,y,z} initial direction vector at drag start (on rotation plane)
+      var rotVPrev           = null;  // {x,y,z} previous direction (for near-parallel freeze only)
+      var rotTotalAngle      = 0;     // total angle from vStart (recomputed each frame, NOT accumulated)
+      var rotDragMode        = null;  // 'axis' | 'free' | null
+      var rotAxisWorld       = null;  // {x,y,z} locked world-space rotation axis for entire drag
+      var rotPivotWorld      = null;  // {x,y,z} locked pivot world position for entire drag
+      var rotArcballStart    = null;  // {x,y,z} arcball start vector (free rotation)
+      var rotArcballPivotSX  = 0;     // projected pivot screen X (free rotation)
+      var rotArcballPivotSY  = 0;     // projected pivot screen Y (free rotation)
+      var rotArcballRadiusPx = 80;    // arcball sphere radius in pixels
+
+      // -----------------------------------------------------------------------
+      // Task 5.7 — Inline gizmo math (ported from gizmoController.ts)
+      // -----------------------------------------------------------------------
+
+      // Row-major 4x4 multiply: C = A * B, arr[r*4+c] = element(row r, col c)
+      function mat4Mul16(a, b) {
+        var out = new Array(16).fill(0);
+        for (var r = 0; r < 4; r++) {
+          for (var c = 0; c < 4; c++) {
+            var sum = 0;
+            for (var k = 0; k < 4; k++) { sum += a[r*4+k] * b[k*4+c]; }
+            out[r*4+c] = sum;
+          }
+        }
+        return out;
+      }
+
+      // Transpose a 4x4 matrix (swap row-major ↔ column-major)
+      function mat4Transpose16(m) {
+        return [
+          m[0],m[4],m[8],m[12],
+          m[1],m[5],m[9],m[13],
+          m[2],m[6],m[10],m[14],
+          m[3],m[7],m[11],m[15]
+        ];
+      }
+
+      // Invert a 4x4 matrix stored in COLUMN-MAJOR order.
+      function mat4Invert16_colmaj(m) {
+        var inv = new Array(16).fill(0);
+        inv[0]  =  m[5]*m[10]*m[15]-m[5]*m[11]*m[14]-m[9]*m[6]*m[15]+m[9]*m[7]*m[14]+m[13]*m[6]*m[11]-m[13]*m[7]*m[10];
+        inv[4]  = -m[4]*m[10]*m[15]+m[4]*m[11]*m[14]+m[8]*m[6]*m[15]-m[8]*m[7]*m[14]-m[12]*m[6]*m[11]+m[12]*m[7]*m[10];
+        inv[8]  =  m[4]*m[9]*m[15] -m[4]*m[11]*m[13]-m[8]*m[5]*m[15]+m[8]*m[7]*m[13]+m[12]*m[5]*m[11]-m[12]*m[7]*m[9];
+        inv[12] = -m[4]*m[9]*m[14] +m[4]*m[10]*m[13]+m[8]*m[5]*m[14]-m[8]*m[6]*m[13]-m[12]*m[5]*m[10]+m[12]*m[6]*m[9];
+        inv[1]  = -m[1]*m[10]*m[15]+m[1]*m[11]*m[14]+m[9]*m[2]*m[15]-m[9]*m[3]*m[14]-m[13]*m[2]*m[11]+m[13]*m[3]*m[10];
+        inv[5]  =  m[0]*m[10]*m[15]-m[0]*m[11]*m[14]-m[8]*m[2]*m[15]+m[8]*m[3]*m[14]+m[12]*m[2]*m[11]-m[12]*m[3]*m[10];
+        inv[9]  = -m[0]*m[9]*m[15] +m[0]*m[11]*m[13]+m[8]*m[1]*m[15]-m[8]*m[3]*m[13]-m[12]*m[1]*m[11]+m[12]*m[3]*m[9];
+        inv[13] =  m[0]*m[9]*m[14] -m[0]*m[10]*m[13]-m[8]*m[1]*m[14]+m[8]*m[2]*m[13]+m[12]*m[1]*m[10]-m[12]*m[2]*m[9];
+        inv[2]  =  m[1]*m[6]*m[15] -m[1]*m[7]*m[14] -m[5]*m[2]*m[15]+m[5]*m[3]*m[14]+m[13]*m[2]*m[7] -m[13]*m[3]*m[6];
+        inv[6]  = -m[0]*m[6]*m[15] +m[0]*m[7]*m[14] +m[4]*m[2]*m[15]-m[4]*m[3]*m[14]-m[12]*m[2]*m[7] +m[12]*m[3]*m[6];
+        inv[10] =  m[0]*m[5]*m[15] -m[0]*m[7]*m[13] -m[4]*m[1]*m[15]+m[4]*m[3]*m[13]+m[12]*m[1]*m[7] -m[12]*m[3]*m[5];
+        inv[14] = -m[0]*m[5]*m[14] +m[0]*m[6]*m[13] +m[4]*m[1]*m[14]-m[4]*m[2]*m[13]-m[12]*m[1]*m[6] +m[12]*m[2]*m[5];
+        inv[3]  = -m[1]*m[6]*m[11] +m[1]*m[7]*m[10] +m[5]*m[2]*m[11]-m[5]*m[3]*m[10]-m[9]*m[2]*m[7]  +m[9]*m[3]*m[6];
+        inv[7]  =  m[0]*m[6]*m[11] -m[0]*m[7]*m[10] -m[4]*m[2]*m[11]+m[4]*m[3]*m[10]+m[8]*m[2]*m[7]  -m[8]*m[3]*m[6];
+        inv[11] = -m[0]*m[5]*m[11] +m[0]*m[7]*m[9]  +m[4]*m[1]*m[11]-m[4]*m[3]*m[9] -m[8]*m[1]*m[7]  +m[8]*m[3]*m[5];
+        inv[15] =  m[0]*m[5]*m[10] -m[0]*m[6]*m[9]  -m[4]*m[1]*m[10]+m[4]*m[2]*m[9] +m[8]*m[1]*m[6]  -m[8]*m[2]*m[5];
+        var det = m[0]*inv[0]+m[1]*inv[4]+m[2]*inv[8]+m[3]*inv[12];
+        if (Math.abs(det) < 1e-12) return null;
+        var id = 1/det; for (var i=0;i<16;i++) inv[i]*=id; return inv;
+      }
+
+      // Matrices from C++ are DX row-major: arr[row*4+col].
+      // DX convention: clip_row = pos_row * View * Proj.
+      // VP = View * Proj (row-major multiply).
+
+      // Unproject screen pixel → world-space ray {origin:{x,y,z}, dir:{x,y,z}}
+      function screenToRay(px, py, vpW, vpH) {
+        if (!camViewMatrix || !camProjMatrix) return null;
+        var vp = mat4Mul16(camViewMatrix, camProjMatrix); // V * P row-major
+        // Invert: transpose to col-major, invert, transpose back
+        var vpColMaj = mat4Transpose16(vp);
+        var vpInvCol = mat4Invert16_colmaj(vpColMaj);
+        if (!vpInvCol) return null;
+        var vpInv = mat4Transpose16(vpInvCol); // back to row-major
+        // Unproject: ndc_row * VP^{-1} → world
+        var ndcX = (px/vpW)*2-1, ndcY = 1-(py/vpH)*2;
+        function unproj(ndcZ) {
+          // world = ndc_row * vpInv  →  world[c] = Σ ndc[k] * vpInv[k*4+c]
+          var cx=ndcX*vpInv[0]+ndcY*vpInv[4]+ndcZ*vpInv[8]+1*vpInv[12];
+          var cy=ndcX*vpInv[1]+ndcY*vpInv[5]+ndcZ*vpInv[9]+1*vpInv[13];
+          var cz=ndcX*vpInv[2]+ndcY*vpInv[6]+ndcZ*vpInv[10]+1*vpInv[14];
+          var cw=ndcX*vpInv[3]+ndcY*vpInv[7]+ndcZ*vpInv[11]+1*vpInv[15];
+          var wi=1/cw; return {x:cx*wi,y:cy*wi,z:cz*wi};
+        }
+        var near=unproj(0), far=unproj(1); // DX NDC Z range [0,1]
+        var dx=far.x-near.x,dy=far.y-near.y,dz=far.z-near.z;
+        var len=Math.sqrt(dx*dx+dy*dy+dz*dz);
+        if(len<1e-12) return null;
+        return {origin:near, dir:{x:dx/len,y:dy/len,z:dz/len}};
+      }
+
+      // Project world-space point to screen-space (px, py)
+      // DX: clip = pos_row * VP  →  clip[c] = Σ pos[k] * VP[k*4+c]
+      function worldToScreen(wp, vpW, vpH) {
+        if (!camViewMatrix || !camProjMatrix) return null;
+        var vp = mat4Mul16(camViewMatrix, camProjMatrix); // V * P row-major
+        var cx=wp.x*vp[0]+wp.y*vp[4]+wp.z*vp[8]+vp[12];
+        var cy=wp.x*vp[1]+wp.y*vp[5]+wp.z*vp[9]+vp[13];
+        var cw=wp.x*vp[3]+wp.y*vp[7]+wp.z*vp[11]+vp[15];
+        if(Math.abs(cw)<1e-12) return null;
+        var ndcX=cx/cw, ndcY=cy/cw;
+        return {sx:(ndcX*0.5+0.5)*vpW, sy:(1-(ndcY*0.5+0.5))*vpH};
+      }
+
+      // Dot product
+      function dot3(a,b){return a.x*b.x+a.y*b.y+a.z*b.z;}
+      function sub3(a,b){return {x:a.x-b.x,y:a.y-b.y,z:a.z-b.z};}
+      function scale3(v,s){return {x:v.x*s,y:v.y*s,z:v.z*s};}
+      function add3(a,b){return {x:a.x+b.x,y:a.y+b.y,z:a.z+b.z};}
+      function len3(v){return Math.sqrt(v.x*v.x+v.y*v.y+v.z*v.z);}
+      function cross3(a,b){return{x:a.y*b.z-a.z*b.y,y:a.z*b.x-a.x*b.z,z:a.x*b.y-a.y*b.x};}
+      function norm3(v){var l=len3(v);if(l<1e-12)return{x:0,y:0,z:0};return scale3(v,1/l);}
+
+      // Hit-test ray against axis cylinder — returns hit point or null
+      function hitTestAxisRay(ray, origin, axisDir, axisLen, hitRadius) {
+        var w0=sub3(ray.origin,origin);
+        var a=dot3(ray.dir,ray.dir),b=dot3(ray.dir,axisDir);
+        var c=dot3(axisDir,axisDir),d=dot3(ray.dir,w0),e=dot3(axisDir,w0);
+        var denom=a*c-b*b;
+        var t,s;
+        if(Math.abs(denom)<1e-10){
+          return null;
+        }
+        t=(b*e-c*d)/denom; s=(a*e-b*d)/denom;
+        if(s<0||s>axisLen||t<0) return null;
+        var closestRay=add3(ray.origin,scale3(ray.dir,t));
+        var closestAxis=add3(origin,scale3(axisDir,s));
+        var dist=len3(sub3(closestRay,closestAxis));
+        if(dist>hitRadius) return null;
+        return closestRay;
+      }
+
+      // Hit-test ray against plane — returns hit point or null
+      function hitTestPlaneRay(ray, planeOrigin, planeNormal) {
+        var denom=dot3(planeNormal,ray.dir);
+        if(Math.abs(denom)<1e-10) return null;
+        var t=dot3(planeNormal,sub3(planeOrigin,ray.origin))/denom;
+        if(t<0) return null;
+        return add3(ray.origin,scale3(ray.dir,t));
+      }
+
+      // Returns axis index 0/1/2 for hit, or -1 for no hit.
+      // Uses the same scale factor as the renderer (task 1.5).
+      function hitTestGizmoAxes(px, py) {
+        if (!camWorldPos || !selectedNodeId) return -1;
+        var vpW = canvas.width, vpH = canvas.height;
+        var ray = screenToRay(px, py, vpW, vpH);
+        if (!ray) return -1;
+
+        // gizmoScale = max(dist * 0.1, 0.1) — matches renderer
+        var nodePos = _gizmoNodePos;
+        if (!nodePos) return -1;
+        var dx=nodePos.x-camWorldPos.x, dy=nodePos.y-camWorldPos.y, dz=nodePos.z-camWorldPos.z;
+        var dist=Math.sqrt(dx*dx+dy*dy+dz*dz);
+        var gScale=Math.max(dist*0.1, 0.1);
+        var axisLen=2.5*gScale, hitRadius=0.15*gScale;
+
+        var axisDirs = [{x:1,y:0,z:0},{x:0,y:1,z:0},{x:0,y:0,z:1}];
+        var origin = nodePos;
+
+        if (currentGizmoMode === 'rotate') {
+          // For rotate rings, test closest-approach to circle arc per axis
+          var circleRad = 1.8*gScale;
+          var kSegs = 32;
+          var bestAxis = -1;
+          var bestDist = Infinity;
+          for (var a=0;a<3;a++) {
+            for (var s=0;s<kSegs;s++) {
+              var ang0=(s/kSegs)*Math.PI*2, ang1=((s+1)/kSegs)*Math.PI*2;
+              var p0,p1;
+              if(a===0){p0={x:origin.x,y:origin.y+Math.cos(ang0)*circleRad,z:origin.z+Math.sin(ang0)*circleRad};p1={x:origin.x,y:origin.y+Math.cos(ang1)*circleRad,z:origin.z+Math.sin(ang1)*circleRad};}
+              else if(a===1){p0={x:origin.x+Math.cos(ang0)*circleRad,y:origin.y,z:origin.z+Math.sin(ang0)*circleRad};p1={x:origin.x+Math.cos(ang1)*circleRad,y:origin.y,z:origin.z+Math.sin(ang1)*circleRad};}
+              else{p0={x:origin.x+Math.cos(ang0)*circleRad,y:origin.y+Math.sin(ang0)*circleRad,z:origin.z};p1={x:origin.x+Math.cos(ang1)*circleRad,y:origin.y+Math.sin(ang1)*circleRad,z:origin.z};}
+              // Project ring segment endpoints to screen and test pixel distance
+              var sp0 = worldToScreen(p0, vpW, vpH);
+              var sp1 = worldToScreen(p1, vpW, vpH);
+              if (!sp0 || !sp1) continue;
+              // Point-to-segment distance in screen pixels
+              var sdx = sp1.sx-sp0.sx, sdy = sp1.sy-sp0.sy;
+              var slen2 = sdx*sdx+sdy*sdy;
+              var t2 = slen2 > 0 ? Math.max(0, Math.min(1, ((px-sp0.sx)*sdx+(py-sp0.sy)*sdy)/slen2)) : 0;
+              var cpx = sp0.sx+t2*sdx, cpy = sp0.sy+t2*sdy;
+              var pxDist = Math.sqrt((px-cpx)*(px-cpx)+(py-cpy)*(py-cpy));
+              if (pxDist < 10 && pxDist < bestDist) {
+                bestDist = pxDist;
+                bestAxis = a;
+              }
+            }
+          }
+          // Axis rings have priority over free ring
+          if (bestAxis >= 0) return bestAxis;
+          // Free ring: screen-space circle test (index 3)
+          var scrPos = worldToScreen(origin, vpW, vpH);
+          if (scrPos) {
+            var freeRadPx = 2.0 * gScale; // world radius
+            // Convert world free radius to screen pixels (approximate)
+            var offsetPt = add3(origin, scale3(norm3(sub3(camWorldPos, origin)), freeRadPx));
+            var scrOff = worldToScreen(offsetPt, vpW, vpH);
+            if (scrOff) {
+              var freeScreenRad = Math.sqrt(
+                (scrOff.sx-scrPos.sx)*(scrOff.sx-scrPos.sx) +
+                (scrOff.sy-scrPos.sy)*(scrOff.sy-scrPos.sy)
+              );
+              if (freeScreenRad < 10) freeScreenRad = 80; // fallback
+              var cursorDist = Math.sqrt((px-scrPos.sx)*(px-scrPos.sx) + (py-scrPos.sy)*(py-scrPos.sy));
+              if (Math.abs(cursorDist - freeScreenRad) < 10) return 3; // free ring
+            }
+          }
+          return -1;
+        }
+
+        // Translate / scale — axis cylinders
+        for (var ai=0;ai<3;ai++) {
+          var hit2=hitTestAxisRay(ray,origin,axisDirs[ai],axisLen,hitRadius);
+          if(hit2) return ai;
+        }
+        return -1;
+      }
+
+      // Current node world position and full transform (kept in sync with selection/transform)
+      var _gizmoNodePos = null;
+      // Full transform cache: {position:{x,y,z}, rotation:{w,x,y,z}, scale:{x,y,z}}
+      var _selectedNodeTransform = null;
+
+      // -----------------------------------------------------------------------
+      // Task 5.2 — Additional math helpers for world-space drag
+      // -----------------------------------------------------------------------
+
+      // Get world-space axis direction for a constraint ('x'|'y'|'z')
+      function getAxisDir(axis) {
+        if (axis === 'x') return {x:1,y:0,z:0};
+        if (axis === 'y') return {x:0,y:1,z:0};
+        return {x:0,y:0,z:1};
+      }
+
+      // Snap a float to a grid
+      function snapVal(v, grid) { return Math.round(v / grid) * grid; }
+      function snapVec3(v, grid) { return {x:snapVal(v.x,grid),y:snapVal(v.y,grid),z:snapVal(v.z,grid)}; }
+
+      // Quaternion helpers (w,x,y,z convention — matches GizmoController.ts)
+      function quatFromAxisAngle(axis, angle) {
+        var half=angle/2, s=Math.sin(half);
+        return {w:Math.cos(half),x:axis.x*s,y:axis.y*s,z:axis.z*s};
+      }
+      function quatMul(q1, q2) {
+        return {
+          w: q1.w*q2.w - q1.x*q2.x - q1.y*q2.y - q1.z*q2.z,
+          x: q1.w*q2.x + q1.x*q2.w + q1.y*q2.z - q1.z*q2.y,
+          y: q1.w*q2.y - q1.x*q2.z + q1.y*q2.w + q1.z*q2.x,
+          z: q1.w*q2.z + q1.x*q2.y - q1.y*q2.x + q1.z*q2.w
+        };
+      }
+      function quatNorm(q) {
+        var l=Math.sqrt(q.w*q.w+q.x*q.x+q.y*q.y+q.z*q.z);
+        if(l<1e-12) return {w:1,x:0,y:0,z:0};
+        return {w:q.w/l,x:q.x/l,y:q.y/l,z:q.z/l};
+      }
+      // Rotate a vec3 by a unit quaternion: v' = q * v * q^-1
+      function quatRotateVec3(q, v) {
+        // Optimized: t = 2 * cross(q.xyz, v); result = v + q.w * t + cross(q.xyz, t)
+        var tx = 2*(q.y*v.z - q.z*v.y);
+        var ty = 2*(q.z*v.x - q.x*v.z);
+        var tz = 2*(q.x*v.y - q.y*v.x);
+        return {
+          x: v.x + q.w*tx + (q.y*tz - q.z*ty),
+          y: v.y + q.w*ty + (q.z*tx - q.x*tz),
+          z: v.z + q.w*tz + (q.x*ty - q.y*tx)
+        };
+      }
+
+      // Convert a pixel radius to world-space radius at the depth of worldPos
+      function pixelsToWorldRadius(worldPos, pixelRadius) {
+        if (!camViewMatrix || !camProjMatrix) return 0.1;
+        // Row-major VP: clip = pos * V * P → cw = pos_row * VP_col3
+        var vp = mat4Mul16(camViewMatrix, camProjMatrix);
+        var cw = worldPos.x*vp[3] + worldPos.y*vp[7] + worldPos.z*vp[11] + vp[15];
+        if (Math.abs(cw) < 1e-12) return 0.1;
+        // Row-major proj: element(0,0) = camProjMatrix[0]
+        var focalX = camProjMatrix[0];
+        if (Math.abs(focalX) < 1e-12) return 0.1;
+        var vpW = canvas.width;
+        var ndcRadius = pixelRadius / (vpW * 0.5);
+        return ndcRadius * Math.abs(cw) / Math.abs(focalX);
+      }
+
+      // Signed angle from v0 to v1 around planeNormal (radians)
+      function signedAngleOnPlane(v0, v1, planeNormal) {
+        var c = cross3(v0, v1);
+        var sinA = dot3(planeNormal, c);
+        var cosA = dot3(v0, v1);
+        return Math.atan2(sinA, cosA);
+      }
+
+      // Ray-plane intersection returning {t, point} or null
+      function rayPlaneIntersect(ray, planeOrigin, planeNormal) {
+        var denom = dot3(planeNormal, ray.dir);
+        if (Math.abs(denom) < 1e-10) return null;
+        var t = dot3(planeNormal, sub3(planeOrigin, ray.origin)) / denom;
+        if (t < 0) return null;
+        return {t: t, point: add3(ray.origin, scale3(ray.dir, t))};
+      }
+
+      // Map mouse pixel to arcball virtual sphere. Returns normalized {x,y,z}.
+      function mapToArcball(mx, my, pivotSX, pivotSY, radiusPx) {
+        var x = (mx - pivotSX) / radiusPx;
+        var y = (my - pivotSY) / radiusPx;
+        var s = x*x + y*y;
+        if (s <= 1.0) {
+          return {x: x, y: -y, z: Math.sqrt(1.0 - s)}; // -y: screen Y flipped
+        } else {
+          var invL = 1.0 / Math.sqrt(s);
+          return {x: x * invL, y: -y * invL, z: 0};
+        }
+      }
+
+      // Quaternion that rotates unit vector a to unit vector b
+      function quatFromVectors(a, b) {
+        var c = cross3(a, b);
+        var d = dot3(a, b);
+        // Handle near-180-degree case
+        if (d < -0.999999) {
+          // Pick arbitrary perpendicular axis
+          var perp = Math.abs(a.x) < 0.9 ? cross3(a, {x:1,y:0,z:0}) : cross3(a, {x:0,y:1,z:0});
+          perp = norm3(perp);
+          return {w: 0, x: perp.x, y: perp.y, z: perp.z};
+        }
+        var w = 1.0 + d;
+        var l = Math.sqrt(w*w + c.x*c.x + c.y*c.y + c.z*c.z);
+        return {w: w/l, x: c.x/l, y: c.y/l, z: c.z/l};
+      }
+
+      // Build the drag-start state: compute hit point for the axis/plane at the current mouse pos.
+      // Returns {hitPoint:{x,y,z}, planeNormal:{x,y,z}} or null.
+      function computeDragStart(px, py) {
+        if (!camWorldPos || !_gizmoNodePos || !dragConstraintAxis) return null;
+        var ray = screenToRay(px, py, canvas.width, canvas.height);
+        if (!ray) return null;
+        var origin = _gizmoNodePos;
+        var axisDir = getAxisDir(dragConstraintAxis);
+        // For rotate: intersect ray with rotation plane, compute initial direction vector
+        if (currentGizmoMode === 'rotate') {
+          // Lock axis and pivot for the entire drag (WORLD mode: constant world axis)
+          rotAxisWorld = axisDir;
+          rotPivotWorld = {x: origin.x, y: origin.y, z: origin.z};
+          var rpi = rayPlaneIntersect(ray, origin, axisDir);
+          if (rpi) {
+            var v0 = norm3(sub3(rpi.point, origin));
+            if (len3(v0) > 1e-6) {
+              rotVStart = v0;
+              rotVPrev = v0;
+              rotTotalAngle = 0;
+              rotDragMode = 'axis';
+            }
+          }
+          return {hitPoint: rpi ? rpi.point : origin, planeNormal: axisDir};
+        }
+        // For translate/scale: build a plane containing the axis that faces the camera
+        var toCamera = norm3(sub3(camWorldPos, origin));
+        var cross1 = cross3(axisDir, toCamera);
+        var planeNormal = len3(cross1) > 1e-6 ? norm3(cross3(axisDir, cross1)) : toCamera;
+        var hit2 = hitTestPlaneRay(ray, origin, planeNormal);
+        return hit2 ? {hitPoint:hit2, planeNormal:planeNormal} : null;
+      }
+
+      // Cached drag-start plane normal (set at beginDrag, used throughout)
+      var _dragPlaneNormal = null;
+
       function setGizmoMode(mode) {
         if (mode === currentGizmoMode) return;
         currentGizmoMode = mode;
@@ -733,8 +1123,11 @@ export function buildViewportStreamHtml(opts: {
         }
         // Notify the extension host
         if (vscodeApi) vscodeApi.postMessage({ type: 'gizmo_mode', mode: mode });
-        // Also send via WS for engine-direct IPC
         if (ws && ws.readyState === WebSocket.OPEN) {
+          // Task 3.1: editor.setGizmo with active nodeId + mode
+          if (selectedNodeId) {
+            ws.send(JSON.stringify({ type: 'editor.setGizmo', nodeId: selectedNodeId, mode: mode }));
+          }
           ws.send(JSON.stringify({ type: 'gizmo_mode', mode: mode }));
         }
       }
@@ -839,9 +1232,37 @@ export function buildViewportStreamHtml(opts: {
               var parsed = JSON.parse(e.data);
               if (parsed.type === 'pickResult') {
                 selectedNodeId = parsed.nodeId || null;
+                selectedNodeIds = []; // clear multi-select on single pick
+                selectedNodeTransforms = {};
+                pendingTransformFetches = 0;
+                if (!selectedNodeId) {
+                  _gizmoNodePos = null;
+                  _selectedNodeTransform = null;
+                } else {
+                  // Try to get position immediately from debug_projNodes
+                  if (parsed.debug_projNodes) {
+                    for (var pni = 0; pni < parsed.debug_projNodes.length; pni++) {
+                      var pn = parsed.debug_projNodes[pni];
+                      if (pn.id === selectedNodeId && pn.worldPos) {
+                        _gizmoNodePos = {x: pn.worldPos[0], y: pn.worldPos[1], z: pn.worldPos[2]};
+                        break;
+                      }
+                    }
+                  }
+                  // Also fetch full transform for rotation/scale operations
+                  if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ type: 'editor.commitTransform', nodeId: selectedNodeId }));
+                  }
+                }
                 if (vscodeApi) vscodeApi.postMessage({ type: 'pickResult', nodeId: parsed.nodeId });
               } else if (parsed.type === 'selectionChanged') {
                 selectedNodeId = parsed.nodeId || null;
+                if (!selectedNodeId) {
+                  _gizmoNodePos = null;
+                } else if (ws && ws.readyState === WebSocket.OPEN) {
+                  // Fetch initial node position for hit testing
+                  ws.send(JSON.stringify({ type: 'editor.commitTransform', nodeId: selectedNodeId }));
+                }
               } else if (parsed.type === 'gizmoState') {
                 if (parsed.axis != null) {
                   gizmoDragging = true;
@@ -862,8 +1283,90 @@ export function buildViewportStreamHtml(opts: {
                   gizmoActiveAxis = null;
                 }
               } else if (parsed.type === 'transformUpdate') {
-                // Transform applied by gizmo drag — could update properties panel
+                // Transform applied by gizmo drag — update cached node position
+                if (parsed.position && selectedNodeId) {
+                  _gizmoNodePos = {x: parsed.position[0], y: parsed.position[1], z: parsed.position[2]};
+                }
                 if (vscodeApi) vscodeApi.postMessage({ type: 'transformUpdate', data: parsed });
+              } else if (parsed.type === 'commitTransformResult') {
+                // Authoritative transform — update cached node position and full transform
+                if (parsed.transform) {
+                  // Task 7.1: multi-select centroid accumulation
+                  var respNodeId = parsed.nodeId || null;
+                  if (pendingTransformFetches > 0 && respNodeId && selectedNodeIds.indexOf(respNodeId) >= 0) {
+                    selectedNodeTransforms[respNodeId] = parsed.transform;
+                    pendingTransformFetches--;
+                    if (pendingTransformFetches <= 0) {
+                      // All transforms received — compute centroid and set gizmo pivot
+                      var cx = 0, cy = 0, cz = 0;
+                      var cCount = 0;
+                      for (var cId in selectedNodeTransforms) {
+                        var cT = selectedNodeTransforms[cId];
+                        if (cT && cT.position) {
+                          cx += cT.position.x; cy += cT.position.y; cz += cT.position.z;
+                          cCount++;
+                        }
+                      }
+                      if (cCount > 0) {
+                        cx /= cCount; cy /= cCount; cz /= cCount;
+                        _gizmoNodePos = {x: cx, y: cy, z: cz};
+                        // Task 7.2: send setGizmo with pivot centroid
+                        if (ws && ws.readyState === WebSocket.OPEN) {
+                          ws.send(JSON.stringify({
+                            type: 'editor.setGizmo',
+                            nodeId: selectedNodeIds[0],
+                            mode: currentGizmoMode,
+                            pivot: [cx, cy, cz]
+                          }));
+                        }
+                      }
+                    }
+                  } else {
+                    // Single-select: update primary cached transform
+                    _selectedNodeTransform = parsed.transform;
+                    if (parsed.transform.position) {
+                      var pos2 = parsed.transform.position;
+                      _gizmoNodePos = {x: pos2.x, y: pos2.y, z: pos2.z};
+                    }
+                  }
+                }
+                if (vscodeApi) vscodeApi.postMessage({ type: 'commitTransformResult', data: parsed });
+              } else if (parsed.type === 'cameraMatrices') {
+                // Task 5.7 — cache camera matrices for TS-side hit testing
+                camViewMatrix = parsed.view || null;
+                camProjMatrix = parsed.proj || null;
+                if (parsed.position && parsed.position.length >= 3) {
+                  camWorldPos = {x: parsed.position[0], y: parsed.position[1], z: parsed.position[2]};
+                }
+              } else if (parsed.type === 'boxPickResult') {
+                // Task 5.5 / 7.1: box-pick result
+                var boxNodeIds = parsed.nodeIds || [];
+                if (vscodeApi) vscodeApi.postMessage({ type: 'boxPickResult', nodeIds: boxNodeIds });
+                console.log('[UzEngine] boxPickResult:', boxNodeIds);
+
+                // Task 7.1: when 2+ nodes selected, fetch transforms to compute centroid
+                if (boxNodeIds.length >= 2 && ws && ws.readyState === WebSocket.OPEN) {
+                  selectedNodeIds = boxNodeIds.slice();
+                  selectedNodeTransforms = {};
+                  selectedNodeId = boxNodeIds[0]; // primary for gizmo mode/hover
+                  pendingTransformFetches = boxNodeIds.length;
+                  for (var bni = 0; bni < boxNodeIds.length; bni++) {
+                    ws.send(JSON.stringify({ type: 'editor.commitTransform', nodeId: boxNodeIds[bni] }));
+                  }
+                } else if (boxNodeIds.length === 1) {
+                  // Single node: treat as regular pick
+                  selectedNodeIds = [];
+                  selectedNodeId = boxNodeIds[0];
+                  if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ type: 'editor.setGizmo', nodeId: boxNodeIds[0], mode: currentGizmoMode }));
+                    ws.send(JSON.stringify({ type: 'editor.commitTransform', nodeId: boxNodeIds[0] }));
+                  }
+                } else {
+                  // Empty: clear selection
+                  selectedNodeIds = [];
+                  selectedNodeId = null;
+                  _gizmoNodePos = null;
+                }
               } else if (parsed.type === 'cameraFocused') {
                 console.log('[UzEngine] Camera focused on node', parsed.nodeId);
               } else if (parsed.type === 'gizmoHover') {
@@ -938,23 +1441,119 @@ export function buildViewportStreamHtml(opts: {
 
       // Gizmo hotkey map (only active when canvas is focused and NOT in right-click camera mode)
       var gizmoHotkeys = { w: 'translate', e: 'rotate', r: 'scale' };
+      // Task 6.3: snap via Ctrl key
+      var ctrlHeld = false;
+      // Task 5.6: axis constraint hotkeys during drag
+      var axisConstraintHotkeys = { x: 'x', y: 'y', z: 'z' };
+      // Task 5.5: box-select state
+      var boxSelecting = false;
+      var boxStartSX = 0; var boxStartSY = 0;
+      var boxSelectRect = document.getElementById('box-select-rect');
+
+      function updateSnapIndicator() {
+        var snapEl = document.getElementById('snap-indicator');
+        if (snapEl) { snapEl.style.display = ctrlHeld ? 'inline' : 'none'; }
+      }
 
       document.addEventListener('keydown', function(e) {
         var k = e.key.toLowerCase();
         if (e.key === 'Shift') { shiftDown = true; }
+        if (e.key === 'Control') {
+          ctrlHeld = true;
+          updateSnapIndicator();
+        }
 
         if (rightMouseDown) {
           // Camera mode — WASD/QE for movement
           if (k in keys) { keys[k] = 1; e.preventDefault(); }
         } else if (canvasFocused) {
-          // Editor mode — W/E/R for gizmo mode switching, F for focus
-          if (k in gizmoHotkeys) {
-            setGizmoMode(gizmoHotkeys[k]);
+          // Task 5.6: X/Y/Z switch axis constraint mid-drag
+          if (gizmoDragging && e.key === 'Escape') {
+            // Cancel drag — revert to dragStartTransform
+            if (dragStartTransform && ws && ws.readyState === WebSocket.OPEN) {
+              if (selectedNodeIds.length >= 2) {
+                for (var ci = 0; ci < selectedNodeIds.length; ci++) {
+                  var cId = selectedNodeIds[ci];
+                  var cOrig = selectedNodeTransforms[cId];
+                  if (cOrig) {
+                    ws.send(JSON.stringify({
+                      type: 'editor.setNodeTransformLive', nodeId: cId,
+                      transform: { position: cOrig.position, rotation: cOrig.rotation, scale: cOrig.scale }
+                    }));
+                  }
+                }
+              } else {
+                ws.send(JSON.stringify({
+                  type: 'editor.setNodeTransformLive', nodeId: selectedNodeId,
+                  transform: dragStartTransform
+                }));
+              }
+            }
+            gizmoDragging = false;
+            rotDragMode = null;
+            rotVStart = null;
+            rotVPrev = null;
+            rotTotalAngle = 0;
+            rotAxisWorld = null;
+            rotPivotWorld = null;
+            gizmoActiveAxis = null;
+            if (canvasContainer) canvasContainer.style.cursor = 'crosshair';
             e.preventDefault();
-          }
-          if (k === 'f') {
-            focusOnSelected();
+          } else if (gizmoDragging && k in axisConstraintHotkeys) {
+            dragConstraintAxis = axisConstraintHotkeys[k];
+            gizmoActiveAxis = dragConstraintAxis;
+            // Reset rotation state for new axis
+            if (currentGizmoMode === 'rotate' && rotDragMode === 'axis') {
+              // Commit current rotation delta (rot + position orbit) into dragStartTransform
+              if (rotAxisWorld && rotPivotWorld && dragStartTransform && rotTotalAngle !== 0) {
+                var switchDeltaQ = quatFromAxisAngle(rotAxisWorld, rotTotalAngle);
+                var swOff = sub3(dragStartTransform.position, rotPivotWorld);
+                var swRotOff = quatRotateVec3(switchDeltaQ, swOff);
+                var swNewPos = add3(rotPivotWorld, swRotOff);
+                dragStartTransform = {
+                  position: swNewPos,
+                  rotation: quatNorm(quatMul(switchDeltaQ, dragStartTransform.rotation)),
+                  scale: dragStartTransform.scale
+                };
+              }
+              var newAxis = getAxisDir(dragConstraintAxis);
+              rotAxisWorld = newAxis;
+              rotPivotWorld = _gizmoNodePos ? {x: _gizmoNodePos.x, y: _gizmoNodePos.y, z: _gizmoNodePos.z} : rotPivotWorld;
+              rotVStart = null;
+              rotVPrev = null;
+              rotTotalAngle = 0;
+              // Re-compute initial vector on new axis plane
+              if (lastMouseEvent) {
+                var acCoords = getCanvasCoords(lastMouseEvent);
+                if (acCoords && rotPivotWorld) {
+                  var acRay = screenToRay(acCoords.sx, acCoords.sy, canvas.width, canvas.height);
+                  if (acRay) {
+                    var acHit = rayPlaneIntersect(acRay, rotPivotWorld, newAxis);
+                    if (acHit) {
+                      var acV = norm3(sub3(acHit.point, rotPivotWorld));
+                      if (len3(acV) > 1e-6) {
+                        rotVStart = acV;
+                        rotVPrev = acV;
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            if (ws && ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: 'editor.setGizmoHover', axis: dragConstraintAxis }));
+            }
             e.preventDefault();
+          } else if (!gizmoDragging) {
+            // Editor mode — W/E/R for gizmo mode switching, F for focus
+            if (k in gizmoHotkeys) {
+              setGizmoMode(gizmoHotkeys[k]);
+              e.preventDefault();
+            }
+            if (k === 'f') {
+              focusOnSelected();
+              e.preventDefault();
+            }
           }
         }
       });
@@ -962,6 +1561,7 @@ export function buildViewportStreamHtml(opts: {
         var k = e.key.toLowerCase();
         if (k in keys) { keys[k] = 0; }
         if (e.key === 'Shift') { shiftDown = false; }
+        if (e.key === 'Control') { ctrlHeld = false; updateSnapIndicator(); }
       });
 
       var canvasContainer = document.getElementById('canvas-container');
@@ -988,25 +1588,75 @@ export function buildViewportStreamHtml(opts: {
           return;
         }
 
-        // Left click — try gizmo drag first, then fall back to pick
+        // Left click — hit-test gizmo axes (TS-side), then fall back to pick
         if (e.button === 0) {
           canvas.focus();
           lastMouseEvent = e;
           var coords = getCanvasCoords(e);
           if (!coords || !ws || ws.readyState !== WebSocket.OPEN) return;
 
-          if (selectedNodeId) {
-            // Try to grab a gizmo axis
-            ws.send(JSON.stringify({
-              type: 'editor.gizmoBeginDrag',
-              screen_x: coords.sx, screen_y: coords.sy
-            }));
+          if (selectedNodeId && camViewMatrix) {
+            // Task 5.1: TS-side hit testing
+            var hitAxis = hitTestGizmoAxes(coords.sx, coords.sy);
+            if (hitAxis >= 0) {
+              var axisNames = ['x','y','z','free'];
+              gizmoActiveAxis = axisNames[hitAxis];
+              gizmoDragging = true;
+              dragConstraintAxis = hitAxis < 3 ? gizmoActiveAxis : null;
+              // Capture drag start transform and world-space hit point
+              dragStartTransform = _selectedNodeTransform
+                ? JSON.parse(JSON.stringify(_selectedNodeTransform))
+                : null;
+              if (hitAxis === 3 && currentGizmoMode === 'rotate') {
+                // Free rotation: arcball init
+                rotDragMode = 'free';
+                var pivotScr = worldToScreen(_gizmoNodePos, canvas.width, canvas.height);
+                if (pivotScr) {
+                  rotArcballPivotSX = pivotScr.sx;
+                  rotArcballPivotSY = pivotScr.sy;
+                  // Estimate screen radius from gizmo scale
+                  var gDist = len3(sub3(_gizmoNodePos, camWorldPos));
+                  var gScl = Math.max(gDist * 0.1, 0.1);
+                  var offsetPt2 = add3(_gizmoNodePos, scale3(norm3(sub3(camWorldPos, _gizmoNodePos)), 2.0 * gScl));
+                  var scrOff2 = worldToScreen(offsetPt2, canvas.width, canvas.height);
+                  rotArcballRadiusPx = scrOff2 ? Math.sqrt(
+                    (scrOff2.sx-pivotScr.sx)*(scrOff2.sx-pivotScr.sx) +
+                    (scrOff2.sy-pivotScr.sy)*(scrOff2.sy-pivotScr.sy)
+                  ) : 80;
+                  if (rotArcballRadiusPx < 10) rotArcballRadiusPx = 80;
+                  rotArcballStart = mapToArcball(coords.sx, coords.sy, rotArcballPivotSX, rotArcballPivotSY, rotArcballRadiusPx);
+                }
+                rotTotalAngle = 0;
+              } else {
+                var dsResult = computeDragStart(coords.sx, coords.sy);
+                dragStartHitPoint = dsResult ? dsResult.hitPoint : null;
+                _dragPlaneNormal  = dsResult ? dsResult.planeNormal : null;
+              }
+              // Notify engine of mode + hover axis
+              ws.send(JSON.stringify({ type: 'editor.setGizmo', nodeId: selectedNodeId, mode: currentGizmoMode }));
+              ws.send(JSON.stringify({ type: 'editor.setGizmoHover', axis: hitAxis < 3 ? gizmoActiveAxis : null }));
+              // Also initialize server drag state (needed for editor.gizmoDrag fallback)
+              ws.send(JSON.stringify({ type: 'editor.gizmoBeginDrag', screen_x: coords.sx, screen_y: coords.sy }));
+              canvasContainer.style.cursor = 'grabbing';
+            } else {
+              // No gizmo hit — box-select (Ctrl) or single pick
+              if (ctrlHeld) {
+                // Task 5.5: Ctrl+click on empty area starts box-select
+                boxSelecting = true;
+                boxStartSX = coords.sx; boxStartSY = coords.sy;
+              } else {
+                ws.send(JSON.stringify({ type: 'editor.pickNode', screen_x: coords.sx, screen_y: coords.sy }));
+              }
+            }
+          } else if (selectedNodeId) {
+            // No cached camera — fall back to server-side hit test only
+            ws.send(JSON.stringify({ type: 'editor.gizmoBeginDrag', screen_x: coords.sx, screen_y: coords.sy }));
+          } else if (ctrlHeld) {
+            // Task 5.5: Ctrl+click on empty canvas starts box-select
+            boxSelecting = true;
+            boxStartSX = coords.sx; boxStartSY = coords.sy;
           } else {
-            // No node selected — pick
-            ws.send(JSON.stringify({
-              type: 'editor.pickNode',
-              screen_x: coords.sx, screen_y: coords.sy
-            }));
+            ws.send(JSON.stringify({ type: 'editor.pickNode', screen_x: coords.sx, screen_y: coords.sy }));
           }
         }
       });
@@ -1021,13 +1671,60 @@ export function buildViewportStreamHtml(opts: {
           shiftDown = false;
         }
 
+        // End box-select on left mouse up
+        if (e.button === 0 && boxSelecting) {
+          boxSelecting = false;
+          if (boxSelectRect) { boxSelectRect.style.display = 'none'; }
+          var upCoords = getCanvasCoords(e);
+          if (upCoords && ws && ws.readyState === WebSocket.OPEN) {
+            var bx = Math.min(boxStartSX, upCoords.sx);
+            var by = Math.min(boxStartSY, upCoords.sy);
+            var bw = Math.abs(upCoords.sx - boxStartSX);
+            var bh = Math.abs(upCoords.sy - boxStartSY);
+            if (bw > 2 && bh > 2) {
+              ws.send(JSON.stringify({ type: 'editor.boxPick', x: bx, y: by, width: bw, height: bh }));
+            }
+          }
+        }
+
         // End gizmo drag on left mouse up
         if (e.button === 0 && gizmoDragging) {
           gizmoDragging = false;
           gizmoActiveAxis = null;
+          dragConstraintAxis = null;
+          rotDragMode = null;
+          rotVStart = null;
+          rotVPrev = null;
+          rotTotalAngle = 0;
+          rotAxisWorld = null;
+          rotPivotWorld = null;
+          rotArcballStart = null;
           justFinishedDrag = true;
           setTimeout(function() { justFinishedDrag = false; }, 50);
           if (ws && ws.readyState === WebSocket.OPEN) {
+            // Task 7.4: push BulkPropertyCommand to undo stack for multi-select
+            if (selectedNodeIds.length >= 2) {
+              // Snapshot old transforms before committing (they were stored at drag start)
+              var undoEntry = { type: 'bulk', transforms: {} };
+              for (var uni = 0; uni < selectedNodeIds.length; uni++) {
+                var unId = selectedNodeIds[uni];
+                undoEntry.transforms[unId] = selectedNodeTransforms[unId]
+                  ? JSON.parse(JSON.stringify(selectedNodeTransforms[unId]))
+                  : null;
+              }
+              undoStack.push(undoEntry);
+              // Commit all nodes and refresh their transforms
+              for (var cni = 0; cni < selectedNodeIds.length; cni++) {
+                ws.send(JSON.stringify({ type: 'editor.commitTransform', nodeId: selectedNodeIds[cni] }));
+              }
+              ws.send(JSON.stringify({ type: 'editor.setGizmoHover', axis: null }));
+            } else {
+              // Task 5.3: single-node commit transform + clear hover
+              if (selectedNodeId) {
+                ws.send(JSON.stringify({ type: 'editor.commitTransform', nodeId: selectedNodeId }));
+                ws.send(JSON.stringify({ type: 'editor.setGizmoHover', axis: null }));
+              }
+            }
             ws.send(JSON.stringify({ type: 'editor.gizmoEndDrag' }));
           }
           canvasContainer.style.cursor = 'crosshair';
@@ -1045,32 +1742,275 @@ export function buildViewportStreamHtml(opts: {
           return;
         }
 
-        // Gizmo drag
+        // Task 5.5: update rubber-band rectangle during box-select
+        if (boxSelecting && boxSelectRect && canvasContainer) {
+          var bCoords = getCanvasCoords(e);
+          if (bCoords) {
+            var cRect = canvasContainer.getBoundingClientRect();
+            var x0 = Math.min(boxStartSX, bCoords.sx);
+            var y0 = Math.min(boxStartSY, bCoords.sy);
+            var x1 = Math.max(boxStartSX, bCoords.sx);
+            var y1 = Math.max(boxStartSY, bCoords.sy);
+            // Convert back to container-relative display coords
+            var scaleX = (cRect.width  / canvas.width)  || 1;
+            var scaleY = (cRect.height / canvas.height) || 1;
+            boxSelectRect.style.display = 'block';
+            boxSelectRect.style.left   = (x0 * scaleX) + 'px';
+            boxSelectRect.style.top    = (y0 * scaleY) + 'px';
+            boxSelectRect.style.width  = ((x1 - x0) * scaleX) + 'px';
+            boxSelectRect.style.height = ((y1 - y0) * scaleY) + 'px';
+          }
+          return;
+        }
+
+        // Task 5.2: Gizmo drag — world-space computation via setNodeTransformLive
         if (gizmoDragging && ws && ws.readyState === WebSocket.OPEN) {
           var now = performance.now();
           if (now - lastDragSendTime < 16) return;
           lastDragSendTime = now;
           var coords = getCanvasCoords(e);
-          if (coords) {
-            ws.send(JSON.stringify({
-              type: 'editor.gizmoDrag',
-              screen_x: coords.sx, screen_y: coords.sy
-            }));
+          if (!coords) { return; }
+
+          // Free rotation (arcball) — handle before axis-constrained check
+          if (rotDragMode === 'free' && rotArcballStart && camViewMatrix && dragStartTransform) {
+            var abCur = mapToArcball(coords.sx, coords.sy, rotArcballPivotSX, rotArcballPivotSY, rotArcballRadiusPx);
+            // Compute quaternion from start to current in screen/camera space
+            var abDeltaQ = quatFromVectors(rotArcballStart, abCur);
+            // Transform from camera space to world space
+            // Camera basis: right = viewMatrix column 0, up = column 1, fwd = -column 2
+            // Row-major DX view: right=(m[0],m[4],m[8]), up=(m[1],m[5],m[9]), fwd=(m[2],m[6],m[10])
+            var camRight = {x: camViewMatrix[0], y: camViewMatrix[4], z: camViewMatrix[8]};
+            var camUp    = {x: camViewMatrix[1], y: camViewMatrix[5], z: camViewMatrix[9]};
+            var camFwdAB = {x:-camViewMatrix[2], y:-camViewMatrix[6], z:-camViewMatrix[10]};
+            // Transform arcball delta axis from camera space to world space
+            // axis_world = axis.x * camRight + axis.y * camUp + axis.z * camFwd
+            var abAxis = {
+              x: abDeltaQ.x * camRight.x + abDeltaQ.y * camUp.x + abDeltaQ.z * camFwdAB.x,
+              y: abDeltaQ.x * camRight.y + abDeltaQ.y * camUp.y + abDeltaQ.z * camFwdAB.y,
+              z: abDeltaQ.x * camRight.z + abDeltaQ.y * camUp.z + abDeltaQ.z * camFwdAB.z
+            };
+            var worldDeltaQ = {w: abDeltaQ.w, x: abAxis.x, y: abAxis.y, z: abAxis.z};
+            worldDeltaQ = quatNorm(worldDeltaQ);
+
+            // Snapping for free rotation: extract angle, snap, recompose
+            if (ctrlHeld) {
+              var abAngle = 2 * Math.acos(Math.min(1, Math.abs(worldDeltaQ.w)));
+              var snapStep = shiftDown ? Math.PI / 180 : Math.PI / 36;
+              var snappedAngle = snapVal(abAngle, snapStep);
+              if (abAngle > 1e-6) {
+                var abAxisNorm = norm3({x: worldDeltaQ.x, y: worldDeltaQ.y, z: worldDeltaQ.z});
+                worldDeltaQ = quatFromAxisAngle(abAxisNorm, snappedAngle);
+              }
+            }
+
+            var freeNewRot = quatNorm(quatMul(worldDeltaQ, dragStartTransform.rotation));
+            // World-pivot sandwich for arcball: pivot is object origin (_gizmoNodePos)
+            var freePivot = _gizmoNodePos || dragStartTransform.position;
+            if (selectedNodeIds.length >= 2) {
+              for (var fni = 0; fni < selectedNodeIds.length; fni++) {
+                var fnId = selectedNodeIds[fni];
+                var fnOrig = selectedNodeTransforms[fnId];
+                if (fnOrig && fnOrig.rotation) {
+                  var fnNewRot = quatNorm(quatMul(worldDeltaQ, fnOrig.rotation));
+                  var fnOff = sub3(fnOrig.position, freePivot);
+                  var fnRotOff = quatRotateVec3(worldDeltaQ, fnOff);
+                  var fnNewPos = add3(freePivot, fnRotOff);
+                  ws.send(JSON.stringify({
+                    type: 'editor.setNodeTransformLive', nodeId: fnId,
+                    transform: { position: fnNewPos, rotation: fnNewRot, scale: fnOrig.scale }
+                  }));
+                }
+              }
+            } else {
+              // Single object: pivot == object origin, so offset is 0 and position unchanged
+              ws.send(JSON.stringify({
+                type: 'editor.setNodeTransformLive', nodeId: selectedNodeId,
+                transform: { position: dragStartTransform.position, rotation: freeNewRot, scale: dragStartTransform.scale }
+              }));
+            }
+          }
+
+          // Use world-space drag when we have camera + start transform + start hit
+          else if (camViewMatrix && dragStartTransform && dragStartHitPoint && _dragPlaneNormal && dragConstraintAxis) {
+            var dragRay = screenToRay(coords.sx, coords.sy, canvas.width, canvas.height);
+            if (dragRay) {
+              var dOrigin = dragStartTransform.position;
+              var dAxis   = getAxisDir(dragConstraintAxis);
+              var currentHit = hitTestPlaneRay(dragRay, dOrigin, _dragPlaneNormal);
+
+              if (currentHit && currentGizmoMode === 'translate') {
+                // Project start and current hit onto constraint axis → compute delta
+                var startOffset   = dot3(sub3(dragStartHitPoint, dOrigin), dAxis);
+                var currentOffset = dot3(sub3(currentHit, dOrigin), dAxis);
+                var delta = currentOffset - startOffset;
+                var newPos = {
+                  x: dOrigin.x + dAxis.x * delta,
+                  y: dOrigin.y + dAxis.y * delta,
+                  z: dOrigin.z + dAxis.z * delta
+                };
+                if (ctrlHeld) { newPos = snapVec3(newPos, 0.25); }
+                _gizmoNodePos = newPos;
+
+                // Task 7.3: apply same delta to ALL selected nodes during multi-select drag
+                if (selectedNodeIds.length >= 2) {
+                  for (var mni = 0; mni < selectedNodeIds.length; mni++) {
+                    var mnId = selectedNodeIds[mni];
+                    var mnOrig = selectedNodeTransforms[mnId];
+                    if (mnOrig && mnOrig.position) {
+                      var mnPos = {
+                        x: mnOrig.position.x + dAxis.x * delta,
+                        y: mnOrig.position.y + dAxis.y * delta,
+                        z: mnOrig.position.z + dAxis.z * delta
+                      };
+                      if (ctrlHeld) { mnPos = snapVec3(mnPos, 0.25); }
+                      ws.send(JSON.stringify({
+                        type: 'editor.setNodeTransformLive',
+                        nodeId: mnId,
+                        transform: { position: mnPos, rotation: mnOrig.rotation, scale: mnOrig.scale }
+                      }));
+                    }
+                  }
+                } else {
+                  ws.send(JSON.stringify({
+                    type: 'editor.setNodeTransformLive',
+                    nodeId: selectedNodeId,
+                    transform: {
+                      position: newPos,
+                      rotation: dragStartTransform.rotation,
+                      scale:    dragStartTransform.scale
+                    }
+                  }));
+                }
+
+              } else if (currentGizmoMode === 'rotate' && rotDragMode === 'axis' && rotVStart && rotAxisWorld && rotPivotWorld) {
+                // World-axis rotation: locked axis + absolute angle from vStart
+                var rotPlaneNormal = rotAxisWorld; // constant for entire drag
+                var rpi2 = rayPlaneIntersect(dragRay, rotPivotWorld, rotPlaneNormal);
+                if (rpi2) {
+                  var vCur = norm3(sub3(rpi2.point, rotPivotWorld));
+                  if (len3(vCur) > 1e-6) {
+                    // Near-parallel check: freeze if ray is nearly parallel to plane
+                    var parallelCheck = Math.abs(dot3(dragRay.dir, rotPlaneNormal));
+                    if (parallelCheck > 0.01) {
+                      // Absolute angle from vStart to vCur (NO accumulation)
+                      rotTotalAngle = signedAngleOnPlane(rotVStart, vCur, rotPlaneNormal);
+                      // Precision mode: Shift reduces sensitivity 10x
+                      if (shiftDown && !ctrlHeld) {
+                        rotTotalAngle *= 0.1;
+                      }
+                      rotVPrev = vCur; // kept for compatibility, not used for angle
+                    }
+                  }
+                }
+                // Snapping: applied to totalAngle
+                var appliedAngle = rotTotalAngle;
+                if (ctrlHeld && shiftDown) {
+                  appliedAngle = snapVal(rotTotalAngle, Math.PI / 180); // 1-deg snap
+                } else if (ctrlHeld) {
+                  appliedAngle = snapVal(rotTotalAngle, Math.PI / 36); // 5-deg snap
+                }
+
+                // Build delta quaternion around the LOCKED WORLD axis
+                var deltaQuat = quatFromAxisAngle(rotAxisWorld, appliedAngle);
+
+                // World-pivot sandwich: newPos = P + Q*(startPos - P), newRot = Q*startRot
+                if (selectedNodeIds.length >= 2) {
+                  for (var rni = 0; rni < selectedNodeIds.length; rni++) {
+                    var rnId = selectedNodeIds[rni];
+                    var rnOrig = selectedNodeTransforms[rnId];
+                    if (rnOrig && rnOrig.rotation) {
+                      var rnNewRot = quatNorm(quatMul(deltaQuat, rnOrig.rotation));
+                      var rnOffset = sub3(rnOrig.position, rotPivotWorld);
+                      var rnRotOffset = quatRotateVec3(deltaQuat, rnOffset);
+                      var rnNewPos = add3(rotPivotWorld, rnRotOffset);
+                      ws.send(JSON.stringify({
+                        type: 'editor.setNodeTransformLive',
+                        nodeId: rnId,
+                        transform: { position: rnNewPos, rotation: rnNewRot, scale: rnOrig.scale }
+                      }));
+                    }
+                  }
+                } else {
+                  var dRot = dragStartTransform.rotation;
+                  var newRot = quatNorm(quatMul(deltaQuat, dRot));
+                  // Orbit position around world pivot
+                  var pivotOffset = sub3(dragStartTransform.position, rotPivotWorld);
+                  var rotatedOffset = quatRotateVec3(deltaQuat, pivotOffset);
+                  var newPos = add3(rotPivotWorld, rotatedOffset);
+                  ws.send(JSON.stringify({
+                    type: 'editor.setNodeTransformLive',
+                    nodeId: selectedNodeId,
+                    transform: {
+                      position: newPos,
+                      rotation: newRot,
+                      scale:    dragStartTransform.scale
+                    }
+                  }));
+                }
+
+              } else if (currentHit && currentGizmoMode === 'scale') {
+                // Project onto axis, compute ratio
+                var startD   = dot3(sub3(dragStartHitPoint, dOrigin), dAxis);
+                var currentD = dot3(sub3(currentHit, dOrigin), dAxis);
+                var ratio = Math.abs(startD) > 1e-6 ? currentD / startD : 1.0;
+                ratio = Math.max(0.01, ratio);
+                var dScl = dragStartTransform.scale;
+                var newScale = {
+                  x: dragConstraintAxis === 'x' ? dScl.x * ratio : dScl.x,
+                  y: dragConstraintAxis === 'y' ? dScl.y * ratio : dScl.y,
+                  z: dragConstraintAxis === 'z' ? dScl.z * ratio : dScl.z
+                };
+                ws.send(JSON.stringify({
+                  type: 'editor.setNodeTransformLive',
+                  nodeId: selectedNodeId,
+                  transform: {
+                    position: dragStartTransform.position,
+                    rotation: dragStartTransform.rotation,
+                    scale:    newScale
+                  }
+                }));
+              } else {
+                // Plane miss — fallback to old system
+                ws.send(JSON.stringify({ type: 'editor.gizmoDrag', screen_x: coords.sx, screen_y: coords.sy }));
+              }
+            }
+          } else {
+            // No camera/transform cache — fall back to old server-side drag
+            ws.send(JSON.stringify({ type: 'editor.gizmoDrag', screen_x: coords.sx, screen_y: coords.sy }));
           }
           return;
         }
 
-        // Gizmo hover (throttled to ~15fps)
+        // Task 5.4: Gizmo hover — TS-side hit test + editor.setGizmoHover (throttled ~15fps)
         if (!gizmoDragging && selectedNodeId && ws && ws.readyState === WebSocket.OPEN) {
           var now2 = performance.now();
           if (now2 - lastHoverSendTime < 66) return;
           lastHoverSendTime = now2;
           var hcoords = getCanvasCoords(e);
           if (hcoords) {
-            ws.send(JSON.stringify({
-              type: 'editor.gizmoHover',
-              screen_x: hcoords.sx, screen_y: hcoords.sy
-            }));
+            if (camViewMatrix) {
+              // TS-side hit test: send pre-computed axis
+              var hAxis = hitTestGizmoAxes(hcoords.sx, hcoords.sy);
+              var hAxisName = hAxis >= 0 && hAxis < 3 ? ['x','y','z'][hAxis] : (hAxis === 3 ? 'free' : null);
+              // Debug overlay (temporary)
+              var dbgEl = document.getElementById('dbg-hittest');
+              if (dbgEl) {
+                var dbgScr = _gizmoNodePos ? worldToScreen(_gizmoNodePos, canvas.width, canvas.height) : null;
+                dbgEl.textContent = 'mode:' + currentGizmoMode + ' hit:' + hAxis
+                  + ' scrPos:' + (dbgScr ? dbgScr.sx.toFixed(0)+','+dbgScr.sy.toFixed(0) : 'NULL')
+                  + ' mouse:' + hcoords.sx + ',' + hcoords.sy;
+              }
+              if (hAxisName !== gizmoHoverAxis) {
+                gizmoHoverAxis = hAxisName;
+                ws.send(JSON.stringify({ type: 'editor.setGizmoHover', axis: hAxisName === 'free' ? null : hAxisName }));
+                if (canvasContainer) {
+                  canvasContainer.style.cursor = hAxisName ? 'grab' : 'crosshair';
+                }
+              }
+            } else {
+              // No cached camera — fall back to server-side hover
+              ws.send(JSON.stringify({ type: 'editor.gizmoHover', screen_x: hcoords.sx, screen_y: hcoords.sy }));
+            }
           }
         }
       });
@@ -1111,6 +2051,13 @@ export function buildViewportStreamHtml(opts: {
           shiftDown = false;
         }
       });
+
+      // Task 5.7: Poll camera matrices every 200ms for TS-side hit testing.
+      setInterval(function() {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'editor.getCamera' }));
+        }
+      }, 200);
 
       // Send input state at ~30fps via WS text messages.
       setInterval(function() {

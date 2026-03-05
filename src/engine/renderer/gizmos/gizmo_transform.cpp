@@ -157,7 +157,8 @@ static void addSolidCube(std::vector<Vertex>& out,
 // ============================================================================
 
 static void buildTranslateVerts(std::vector<Vertex>& out, uint32_t axisStart[3], uint32_t axisCount[3]) {
-    const XMFLOAT3 cols[3] = {{0.9f,0.15f,0.15f}, {0.15f,0.85f,0.15f}, {0.25f,0.45f,0.95f}};
+    // Task 1.4: spec colors X=#CC2222, Y=#22CC22, Z=#2222CC
+    const XMFLOAT3 cols[3] = {{0.80f,0.133f,0.133f}, {0.133f,0.80f,0.133f}, {0.133f,0.133f,0.80f}};
     const XMFLOAT3 dirs[3] = {{1,0,0}, {0,1,0}, {0,0,1}};
     float shaftEnd = kAxisLen - kConeLen;
 
@@ -172,7 +173,8 @@ static void buildTranslateVerts(std::vector<Vertex>& out, uint32_t axisStart[3],
 }
 
 static void buildRotateVerts(std::vector<Vertex>& out, uint32_t axisStart[3], uint32_t axisCount[3]) {
-    const XMFLOAT3 cols[3] = {{0.9f,0.15f,0.15f}, {0.15f,0.85f,0.15f}, {0.25f,0.45f,0.95f}};
+    // Task 1.4: spec colors X=#CC2222, Y=#22CC22, Z=#2222CC
+    const XMFLOAT3 cols[3] = {{0.80f,0.133f,0.133f}, {0.133f,0.80f,0.133f}, {0.133f,0.133f,0.80f}};
 
     for (int a = 0; a < 3; ++a) {
         axisStart[a] = static_cast<uint32_t>(out.size());
@@ -197,7 +199,8 @@ static void buildRotateVerts(std::vector<Vertex>& out, uint32_t axisStart[3], ui
 }
 
 static void buildScaleVerts(std::vector<Vertex>& out, uint32_t axisStart[3], uint32_t axisCount[3]) {
-    const XMFLOAT3 cols[3] = {{0.9f,0.15f,0.15f}, {0.15f,0.85f,0.15f}, {0.25f,0.45f,0.95f}};
+    // Task 1.4: spec colors X=#CC2222, Y=#22CC22, Z=#2222CC
+    const XMFLOAT3 cols[3] = {{0.80f,0.133f,0.133f}, {0.133f,0.80f,0.133f}, {0.133f,0.133f,0.80f}};
     const XMFLOAT3 dirs[3] = {{1,0,0}, {0,1,0}, {0,0,1}};
 
     for (int a = 0; a < 3; ++a) {

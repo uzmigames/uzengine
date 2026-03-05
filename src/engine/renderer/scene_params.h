@@ -103,6 +103,17 @@ struct SceneParams {
     float gizmoDragOrigPos[3]{0.0f, 0.0f, 0.0f};
     float gizmoDragOrigRot[3]{0.0f, 0.0f, 0.0f};
     float gizmoDragOrigScale[3]{1.0f, 1.0f, 1.0f};
+
+    // -----------------------------------------------------------------------
+    // Multi-select gizmo pivot — when useGizmoPivot is true, the transform
+    // gizmo is rendered at the centroid rather than at the selected node.
+    // Written by WS handler (IPC thread), read by render thread.
+    // -----------------------------------------------------------------------
+    std::atomic<bool> useGizmoPivot{false};
+    std::mutex        gizmoPivotMutex;
+    float             gizmoPivotX{0.0f};
+    float             gizmoPivotY{0.0f};
+    float             gizmoPivotZ{0.0f};
 };
 
 } // namespace uz
