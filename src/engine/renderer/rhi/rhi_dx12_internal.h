@@ -91,6 +91,7 @@ typedef struct Dx12FenceSlot {
 typedef struct Dx12CmdListSlot {
     ID3D12GraphicsCommandList *list;
     ID3D12CommandAllocator    *allocator;
+    D3D12_PRIMITIVE_TOPOLOGY   topology;  /* current IA topology */
     bool                       recording;
     bool                       occupied;
 } Dx12CmdListSlot;
@@ -208,6 +209,7 @@ RhiCmdList dx12_cmd_begin(void);
 void       dx12_cmd_end(RhiCmdList cmd);
 void       dx12_cmd_submit(RhiCmdList cmd);
 void       dx12_cmd_set_pipeline(RhiCmdList cmd, RhiPipeline pipeline);
+void       dx12_cmd_set_topology(RhiCmdList cmd, RhiTopology topology);
 void       dx12_cmd_set_render_targets(RhiCmdList cmd, const RhiTexture *rts,
                                         uint32_t count, RhiTexture depth);
 void       dx12_cmd_set_viewport(RhiCmdList cmd, float x, float y,

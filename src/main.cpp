@@ -26,6 +26,8 @@
 #include "engine/scene/scene_loader.h"
 #include "engine/scene/scene_saver.h"
 
+#include "engine/core/diag.h"
+
 #include <windows.h>
 #include <timeapi.h>
 
@@ -46,6 +48,73 @@
 #include <fcntl.h>
 
 namespace {
+
+// ---- Projection math helpers (uz:: engine math, left-handed DX convention) ----
+
+uz::Mat4 buildLookAtLH(uz::Vec3 eye, uz::Vec3 target, uz::Vec3 up) {
+    using namespace uz;
+    const Vec3 f = vec3_normalize(target - eye);
+    const Vec3 r = vec3_normalize(vec3_cross(up, f));
+    const Vec3 u = vec3_cross(f, r);
+    Mat4 m = {};
+    m.m[0][0]=r.x;  m.m[0][1]=u.x;  m.m[0][2]=f.x;  m.m[0][3]=0;
+    m.m[1][0]=r.y;  m.m[1][1]=u.y;  m.m[1][2]=f.y;  m.m[1][3]=0;
+    m.m[2][0]=r.z;  m.m[2][1]=u.z;  m.m[2][2]=f.z;  m.m[2][3]=0;
+    m.m[3][0]=-vec3_dot(r,eye); m.m[3][1]=-vec3_dot(u,eye);
+    m.m[3][2]=-vec3_dot(f,eye); m.m[3][3]=1;
+    return m;
+}
+
+uz::Mat4 buildPerspLH(float fovY, float aspect, float nearZ, float farZ) {
+    float h = 1.0f / std::tan(fovY * 0.5f);
+    float w = h / aspect;
+    float q = farZ / (farZ - nearZ);
+    uz::Mat4 m = {};
+    m.m[0][0]=w; m.m[1][1]=h;
+    m.m[2][2]=q; m.m[2][3]=1;
+    m.m[3][2]=-nearZ*q;
+    return m;
+}
+
+/// Project a world position through a VP matrix. Returns false if behind camera.
+bool projectWorldToScreen(const uz::Mat4& vp, float wx, float wy, float wz,
+                          int vpW, int vpH, float& outSx, float& outSy) {
+    // Mat4 * (wx,wy,wz,1) — manual 4-component transform
+    float cx = vp.m[0][0]*wx + vp.m[1][0]*wy + vp.m[2][0]*wz + vp.m[3][0];
+    float cy = vp.m[0][1]*wx + vp.m[1][1]*wy + vp.m[2][1]*wz + vp.m[3][1];
+    float cz = vp.m[0][2]*wx + vp.m[1][2]*wy + vp.m[2][2]*wz + vp.m[3][2];  // unused
+    float cw = vp.m[0][3]*wx + vp.m[1][3]*wy + vp.m[2][3]*wz + vp.m[3][3];
+    (void)cz;
+    if (cw <= 0.001f) return false;
+    float ndcX = cx / cw;
+    float ndcY = cy / cw;
+    outSx = (ndcX * 0.5f + 0.5f) * vpW;
+    outSy = (1.0f - (ndcY * 0.5f + 0.5f)) * vpH;
+    return true;
+}
+
+/// Build a VP matrix from camera yaw/pitch/position (matching camera_component fly-cam).
+uz::Mat4 buildCameraVP(float yaw, float pitch,
+                       float camX, float camY, float camZ,
+                       int vpW, int vpH) {
+    float cosPitch = cosf(pitch), sinPitch = sinf(pitch);
+    float cosYaw   = cosf(yaw),   sinYaw   = cosf(yaw); // intentional: match camera_component
+    // Correct: sinYaw for the forward direction
+    uz::Vec3 camPos = {camX, camY, camZ, 0.0f};
+    uz::Vec3 forward = {
+        cosf(pitch) * sinf(yaw),
+        sinf(pitch),
+        cosf(pitch) * cosf(yaw),
+        0.0f
+    };
+    uz::Vec3 target = camPos + forward;
+    uz::Vec3 up = {0.0f, 1.0f, 0.0f, 0.0f};
+
+    float aspect = (vpW > 0 && vpH > 0) ? (float)vpW / (float)vpH : 1.0f;
+    uz::Mat4 view = buildLookAtLH(camPos, target, up);
+    uz::Mat4 proj = buildPerspLH(uz::kHalfPi * 0.5f, aspect, 0.1f, 500.0f);
+    return proj * view;  // reversed: row-major data in col-major multiply (matches camera_component)
+}
 
 constexpr const wchar_t* kWindowClassName = L"UzEngineWndClass";
 constexpr const wchar_t* kWindowTitle     = L"UzEngine PoC";
@@ -288,8 +357,12 @@ int WINAPI WinMain(
     //    for Sleep()-based frame limiting at 60 fps / 16.67 ms target).
     timeBeginPeriod(1);
 
-    // -- Initialize Winsock (required by IXWebSocket on Windows) --------------
+    DIAG("=== UzEngine main START ===");
+    DIAG_FMT("wsPort=%u scene=%s", (unsigned)wsPort, cmdScene.c_str());
+
+    DIAG("Initializing Winsock...");
     ix::initNetSystem();
+    DIAG("Winsock OK");
 
     // -- Register window class -----------------------------------------------
 
@@ -301,6 +374,7 @@ int WINAPI WinMain(
     wc.hCursor       = LoadCursorW(nullptr, IDC_ARROW);
     wc.lpszClassName = kWindowClassName;
 
+    DIAG("Registering window class...");
     if (!RegisterClassExW(&wc)) {
         return 1;
     }
@@ -333,6 +407,7 @@ int WINAPI WinMain(
     const int winX = showWindow ? CW_USEDEFAULT : -32000;
     const int winY = showWindow ? CW_USEDEFAULT : -32000;
 
+    DIAG("Creating window...");
     HWND hwnd = CreateWindowExW(
         exStyle,
         kWindowClassName,
@@ -354,8 +429,9 @@ int WINAPI WinMain(
     // In headless mode we intentionally never call ShowWindow — the HWND
     // exists solely for the DX12 swap chain.
 
+    DIAG("Window created OK");
     // -- WebSocket server ----------------------------------------------------
-
+    DIAG("Creating WS server...");
     uz::WsServer wsServer;
     wsServer.setLogCallback([](const std::string& msg) {
         OutputDebugStringA(("[UzEngine/WS] " + msg + "\n").c_str());
@@ -401,47 +477,17 @@ int WINAPI WinMain(
 
                 // We need the VP matrix — get it from scene params (camera).
                 // Build the same VP matrix the renderer uses.
-                using namespace DirectX;
-
                 const float yaw   = g_scene.camYaw;
                 const float pitch = g_scene.camPitch;
-                const float camX  = g_scene.camPosX;
-                const float camY  = g_scene.camPosY;
-                const float camZ  = g_scene.camPosZ;
-
-                XMVECTOR camPos = XMVectorSet(camX, camY, camZ, 1.0f);
-                // Forward = yaw/pitch direction.
-                float cosPitch = cosf(pitch), sinPitch = sinf(pitch);
-                float cosYaw   = cosf(yaw),   sinYaw   = sinf(yaw);
-                XMVECTOR forward = XMVectorSet(
-                    cosPitch * sinYaw,
-                    sinPitch,
-                    cosPitch * cosYaw,
-                    0.0f);
-                XMVECTOR target = XMVectorAdd(camPos, forward);
-                XMVECTOR up     = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
-
-                XMMATRIX view = XMMatrixLookAtLH(camPos, target, up);
-                XMMATRIX proj = XMMatrixPerspectiveFovLH(
-                    XM_PIDIV4,  // 45° — must match camera_component.cpp
-                    (vpW > 0 && vpH > 0) ? (float)vpW / (float)vpH : 1.0f,
-                    0.1f, 500.0f);
-                XMMATRIX vp = view * proj;
+                const uz::Mat4 vp = buildCameraVP(yaw, pitch,
+                    g_scene.camPosX, g_scene.camPosY, g_scene.camPosZ,
+                    vpW, vpH);
 
                 for (const auto& node : nodes) {
-                    XMVECTOR worldPos = XMVectorSet(
-                        node.position.x, node.position.y, node.position.z, 1.0f);
-                    XMVECTOR clip = XMVector4Transform(worldPos, vp);
-
-                    float w = XMVectorGetW(clip);
-                    if (w <= 0.001f) continue;  // behind camera
-
-                    float ndcX = XMVectorGetX(clip) / w;
-                    float ndcY = XMVectorGetY(clip) / w;
-
-                    // NDC to screen pixel.
-                    float screenX = (ndcX * 0.5f + 0.5f) * vpW;
-                    float screenY = (1.0f - (ndcY * 0.5f + 0.5f)) * vpH;
+                    float screenX, screenY;
+                    if (!projectWorldToScreen(vp, node.position.x, node.position.y,
+                                             node.position.z, vpW, vpH, screenX, screenY))
+                        continue;
 
                     float dx = screenX - sx;
                     float dy = screenY - sy;
@@ -479,15 +525,10 @@ int WINAPI WinMain(
                 // Include projected positions of all nodes for debugging
                 nlohmann::json projNodes = nlohmann::json::array();
                 for (const auto& node : nodes) {
-                    XMVECTOR worldPos = XMVectorSet(
-                        node.position.x, node.position.y, node.position.z, 1.0f);
-                    XMVECTOR clip = XMVector4Transform(worldPos, vp);
-                    float w = XMVectorGetW(clip);
-                    if (w <= 0.001f) continue;
-                    float ndcX = XMVectorGetX(clip) / w;
-                    float ndcY = XMVectorGetY(clip) / w;
-                    float screenX = (ndcX * 0.5f + 0.5f) * vpW;
-                    float screenY = (1.0f - (ndcY * 0.5f + 0.5f)) * vpH;
+                    float screenX, screenY;
+                    if (!projectWorldToScreen(vp, node.position.x, node.position.y,
+                                             node.position.z, vpW, vpH, screenX, screenY))
+                        continue;
                     projNodes.push_back({
                         {"id", (int)node.nodeId},
                         {"sx", (int)screenX}, {"sy", (int)screenY},
@@ -567,7 +608,6 @@ int WINAPI WinMain(
 
             // -- Gizmo begin drag — hit test axis handles ---------------------------
             if (type == "editor.gizmoBeginDrag") {
-                using namespace DirectX;
                 const float msx = j.value("screen_x", 0.0f);
                 const float msy = j.value("screen_y", 0.0f);
 
@@ -582,9 +622,9 @@ int WINAPI WinMain(
 
                 // Find selected node's full transform
                 auto eNodes = g_renderer->getEditorNodes();
-                XMFLOAT3 selPos{0,0,0};
-                XMFLOAT3 selRot{0,0,0};
-                XMFLOAT3 selScale{1,1,1};
+                uz::Float3 selPos{0,0,0};
+                uz::Float3 selRot{0,0,0};
+                uz::Float3 selScale{1,1,1};
                 bool found = false;
                 for (const auto& n : eNodes) {
                     if (n.nodeId == selId) {
@@ -605,33 +645,17 @@ int WINAPI WinMain(
 
                 const int vpW = g_renderer->getWidth();
                 const int vpH = g_renderer->getHeight();
-                const float yaw   = g_scene.camYaw;
-                const float pitch = g_scene.camPitch;
-                const float camX  = g_scene.camPosX;
-                const float camY  = g_scene.camPosY;
-                const float camZ  = g_scene.camPosZ;
-
-                XMVECTOR camPos = XMVectorSet(camX, camY, camZ, 1.0f);
-                float cosPitch = cosf(pitch), sinPitch = sinf(pitch);
-                float cosYaw   = cosf(yaw),   sinYaw   = sinf(yaw);
-                XMVECTOR forward = XMVectorSet(
-                    cosPitch * sinYaw, sinPitch, cosPitch * cosYaw, 0.0f);
-                XMVECTOR target = XMVectorAdd(camPos, forward);
-                XMVECTOR up     = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
-
-                XMMATRIX view = XMMatrixLookAtLH(camPos, target, up);
-                XMMATRIX proj = XMMatrixPerspectiveFovLH(
-                    XM_PIDIV4,
-                    (vpW > 0 && vpH > 0) ? (float)vpW / (float)vpH : 1.0f,
-                    0.1f, 500.0f);
-                XMMATRIX vpMat = view * proj;
+                const uz::Mat4 vpMat = buildCameraVP(
+                    g_scene.camYaw, g_scene.camPitch,
+                    g_scene.camPosX, g_scene.camPosY, g_scene.camPosZ,
+                    vpW, vpH);
 
                 // Scale hit-test radii by camera distance (matches renderer task 1.5).
                 // Base constants match gizmo_transform.cpp kAxisLen / kCircleRad.
                 const float gizmoDistBD = sqrtf(
-                    (selPos.x-camX)*(selPos.x-camX) +
-                    (selPos.y-camY)*(selPos.y-camY) +
-                    (selPos.z-camZ)*(selPos.z-camZ));
+                    (selPos.x-g_scene.camPosX)*(selPos.x-g_scene.camPosX) +
+                    (selPos.y-g_scene.camPosY)*(selPos.y-g_scene.camPosY) +
+                    (selPos.z-g_scene.camPosZ)*(selPos.z-g_scene.camPosZ));
                 const float gizmoScaleBD = std::max(gizmoDistBD * 0.1f, 0.1f);
                 const float kAxisLen    = 2.5f * gizmoScaleBD;
                 const float kCircleRad  = 1.8f * gizmoScaleBD;
@@ -644,12 +668,7 @@ int WINAPI WinMain(
 
                 // Helper lambda: project world point to screen
                 auto projectToScreen = [&](float wx, float wy, float wz, float& outSx, float& outSy) -> bool {
-                    XMVECTOR c = XMVector4Transform(XMVectorSet(wx, wy, wz, 1), vpMat);
-                    float w = XMVectorGetW(c);
-                    if (w <= 0.001f) return false;
-                    outSx = (XMVectorGetX(c)/w * 0.5f + 0.5f) * vpW;
-                    outSy = (1.0f - (XMVectorGetY(c)/w * 0.5f + 0.5f)) * vpH;
-                    return true;
+                    return projectWorldToScreen(vpMat, wx, wy, wz, vpW, vpH, outSx, outSy);
                 };
 
                 // Helper: point-to-line-segment distance squared
@@ -706,7 +725,7 @@ int WINAPI WinMain(
                     }
                 } else {
                     // --- TRANSLATE / SCALE MODE: check distance to axis line segments ---
-                    XMFLOAT3 axisEndpoints[3] = {
+                    uz::Float3 axisEndpoints[3] = {
                         {selPos.x + kAxisLen, selPos.y, selPos.z},
                         {selPos.x, selPos.y + kAxisLen, selPos.z},
                         {selPos.x, selPos.y, selPos.z + kAxisLen}
@@ -761,7 +780,6 @@ int WINAPI WinMain(
                 if (!g_scene.gizmoDragging.load(std::memory_order_relaxed)) return;
                 if (!g_renderer) return;
 
-                using namespace DirectX;
                 const float msx = j.value("screen_x", 0.0f);
                 const float msy = j.value("screen_y", 0.0f);
                 const int axis = g_scene.gizmoActiveAxis.load(std::memory_order_relaxed);
@@ -774,50 +792,28 @@ int WINAPI WinMain(
 
                 const int vpW = g_renderer->getWidth();
                 const int vpH = g_renderer->getHeight();
-                const float yaw   = g_scene.camYaw;
-                const float pitch = g_scene.camPitch;
-                const float camX  = g_scene.camPosX;
-                const float camY  = g_scene.camPosY;
-                const float camZ  = g_scene.camPosZ;
-
-                XMVECTOR camPos = XMVectorSet(camX, camY, camZ, 1.0f);
-                float cosPitch = cosf(pitch), sinPitch = sinf(pitch);
-                float cosYaw   = cosf(yaw),   sinYaw   = sinf(yaw);
-                XMVECTOR fwd = XMVectorSet(
-                    cosPitch * sinYaw, sinPitch, cosPitch * cosYaw, 0.0f);
-                XMVECTOR tgt = XMVectorAdd(camPos, fwd);
-                XMVECTOR upV = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
-
-                XMMATRIX viewM = XMMatrixLookAtLH(camPos, tgt, upV);
-                XMMATRIX projM = XMMatrixPerspectiveFovLH(
-                    XM_PIDIV4,
-                    (vpW > 0 && vpH > 0) ? (float)vpW / (float)vpH : 1.0f,
-                    0.1f, 500.0f);
-                XMMATRIX vpMat = viewM * projM;
+                const uz::Mat4 vpMat = buildCameraVP(
+                    g_scene.camYaw, g_scene.camPitch,
+                    g_scene.camPosX, g_scene.camPosY, g_scene.camPosZ,
+                    vpW, vpH);
 
                 // Project the axis direction to screen space to determine
                 // how screen movement maps to world movement.
-                XMFLOAT3 origPos = {g_scene.gizmoDragOrigPos[0],
+                uz::Float3 origPos = {g_scene.gizmoDragOrigPos[0],
                                     g_scene.gizmoDragOrigPos[1],
                                     g_scene.gizmoDragOrigPos[2]};
 
-                XMFLOAT3 axisDir[3] = {{1,0,0},{0,1,0},{0,0,1}};
-                XMFLOAT3 axisEnd = {
-                    origPos.x + axisDir[axis].x,
-                    origPos.y + axisDir[axis].y,
-                    origPos.z + axisDir[axis].z
+                uz::Float3 axisDirArr[3] = {{1,0,0},{0,1,0},{0,0,1}};
+                uz::Float3 axisEnd = {
+                    origPos.x + axisDirArr[axis].x,
+                    origPos.y + axisDirArr[axis].y,
+                    origPos.z + axisDirArr[axis].z
                 };
 
                 // Project origin and axis endpoint
-                XMVECTOR cpO = XMVector4Transform(XMVectorSet(origPos.x, origPos.y, origPos.z, 1), vpMat);
-                XMVECTOR cpE = XMVector4Transform(XMVectorSet(axisEnd.x, axisEnd.y, axisEnd.z, 1), vpMat);
-                float wO = XMVectorGetW(cpO), wE = XMVectorGetW(cpE);
-                if (wO <= 0.001f || wE <= 0.001f) return;
-
-                float sOx = (XMVectorGetX(cpO)/wO * 0.5f + 0.5f) * vpW;
-                float sOy = (1.0f - (XMVectorGetY(cpO)/wO * 0.5f + 0.5f)) * vpH;
-                float sEx = (XMVectorGetX(cpE)/wE * 0.5f + 0.5f) * vpW;
-                float sEy = (1.0f - (XMVectorGetY(cpE)/wE * 0.5f + 0.5f)) * vpH;
+                float sOx, sOy, sEx, sEy;
+                if (!projectWorldToScreen(vpMat, origPos.x, origPos.y, origPos.z, vpW, vpH, sOx, sOy)) return;
+                if (!projectWorldToScreen(vpMat, axisEnd.x, axisEnd.y, axisEnd.z, vpW, vpH, sEx, sEy)) return;
 
                 // Screen-space axis direction
                 float sDx = sEx - sOx;
@@ -877,8 +873,10 @@ int WINAPI WinMain(
                         if (eNodes[i].nodeId == selId) {
                             eNodes[i].rotation = {newRot[0], newRot[1], newRot[2]};
                             // Also update quaternion from euler for consistent rendering
-                            XMVECTOR q = XMQuaternionRotationRollPitchYaw(newRot[0], newRot[1], newRot[2]);
-                            XMStoreFloat4(&eNodes[i].rotationQuat, q);
+                            uz::Quat qx = uz::quat_from_axis_angle({1,0,0,0}, newRot[0]);
+                            uz::Quat qy = uz::quat_from_axis_angle({0,1,0,0}, newRot[1]);
+                            uz::Quat qz = uz::quat_from_axis_angle({0,0,1,0}, newRot[2]);
+                            eNodes[i].rotationQuat = uz::quat_mul(uz::quat_mul(qz, qy), qx);
                             break;
                         }
                     }
@@ -939,7 +937,7 @@ int WINAPI WinMain(
                 if (!g_renderer) return;
                 if (g_scene.gizmoDragging.load(std::memory_order_relaxed)) return;
 
-                using namespace DirectX;
+                using namespace uz;
                 const float msx = j.value("screen_x", 0.0f);
                 const float msy = j.value("screen_y", 0.0f);
 
@@ -950,7 +948,7 @@ int WINAPI WinMain(
                 }
 
                 auto eNodes = g_renderer->getEditorNodes();
-                XMFLOAT3 selPos{0,0,0};
+                Float3 selPos{0,0,0};
                 bool found = false;
                 for (const auto& n : eNodes) {
                     if (n.nodeId == selId) { selPos = n.position; found = true; break; }
@@ -962,17 +960,10 @@ int WINAPI WinMain(
 
                 const int vpW = g_renderer->getWidth();
                 const int vpH = g_renderer->getHeight();
-                const float yaw   = g_scene.camYaw;
-                const float pitch = g_scene.camPitch;
-                XMVECTOR camPos = XMVectorSet(g_scene.camPosX, g_scene.camPosY, g_scene.camPosZ, 1.0f);
-                XMVECTOR fwd = XMVectorSet(
-                    cosf(pitch)*sinf(yaw), sinf(pitch), cosf(pitch)*cosf(yaw), 0.0f);
-                XMMATRIX viewM = XMMatrixLookAtLH(camPos, XMVectorAdd(camPos, fwd), XMVectorSet(0,1,0,0));
-                XMMATRIX projM = XMMatrixPerspectiveFovLH(
-                    XM_PIDIV4,
-                    (vpW > 0 && vpH > 0) ? (float)vpW/(float)vpH : 1.0f,
-                    0.1f, 500.0f);
-                XMMATRIX vpMat = viewM * projM;
+                const Mat4 vpMat = buildCameraVP(
+                    g_scene.camYaw, g_scene.camPitch,
+                    g_scene.camPosX, g_scene.camPosY, g_scene.camPosZ,
+                    vpW, vpH);
 
                 // Scale hit-test radii by camera distance (matches renderer task 1.5).
                 const float gizmoDistHV = sqrtf(
@@ -990,12 +981,7 @@ int WINAPI WinMain(
                 float bestDist = 50.0f * 50.0f;
 
                 auto projectToScreen = [&](float wx, float wy, float wz, float& outSx, float& outSy) -> bool {
-                    XMVECTOR c = XMVector4Transform(XMVectorSet(wx, wy, wz, 1), vpMat);
-                    float w = XMVectorGetW(c);
-                    if (w <= 0.001f) return false;
-                    outSx = (XMVectorGetX(c)/w * 0.5f + 0.5f) * vpW;
-                    outSy = (1.0f - (XMVectorGetY(c)/w * 0.5f + 0.5f)) * vpH;
-                    return true;
+                    return projectWorldToScreen(vpMat, wx, wy, wz, vpW, vpH, outSx, outSy);
                 };
                 auto ptSegDistSq = [](float px, float py, float ax, float ay, float bx, float by) -> float {
                     float dx = bx-ax, dy = by-ay;
@@ -1024,7 +1010,7 @@ int WINAPI WinMain(
                         }
                     }
                 } else {
-                    XMFLOAT3 axisEnd[3] = {
+                    uz::Float3 axisEnd[3] = {
                         {selPos.x+kAxisLen,selPos.y,selPos.z},
                         {selPos.x,selPos.y+kAxisLen,selPos.z},
                         {selPos.x,selPos.y,selPos.z+kAxisLen}
@@ -1175,45 +1161,29 @@ int WINAPI WinMain(
 
             // -- Task 3.6: editor.getCamera — return view/proj matrices + position --
             if (type == "editor.getCamera") {
-                using namespace DirectX;
                 if (!g_renderer) return;
 
                 const int vpW = g_renderer->getWidth();
                 const int vpH = g_renderer->getHeight();
-                const float yaw   = g_scene.camYaw;
-                const float pitch = g_scene.camPitch;
                 const float camX  = g_scene.camPosX;
                 const float camY  = g_scene.camPosY;
                 const float camZ  = g_scene.camPosZ;
 
-                XMVECTOR camPos = XMVectorSet(camX, camY, camZ, 1.0f);
-                float cosPitch = cosf(pitch), sinPitch = sinf(pitch);
-                float cosYaw   = cosf(yaw),   sinYaw   = sinf(yaw);
-                XMVECTOR fwd = XMVectorSet(
-                    cosPitch * sinYaw, sinPitch, cosPitch * cosYaw, 0.0f);
-                XMMATRIX viewM = XMMatrixLookAtLH(
-                    camPos, XMVectorAdd(camPos, fwd), XMVectorSet(0,1,0,0));
-                XMMATRIX projM = XMMatrixPerspectiveFovLH(
-                    XM_PIDIV4,
-                    (vpW > 0 && vpH > 0) ? (float)vpW / (float)vpH : 1.0f,
-                    0.1f, 500.0f);
+                // Build view and projection using the same helper as pickNode.
+                const uz::Mat4 vpMat = buildCameraVP(
+                    g_scene.camYaw, g_scene.camPitch,
+                    camX, camY, camZ, vpW, vpH);
 
-                // Send as DX row-major (matches pickNode projection convention).
-                XMFLOAT4X4 viewF, projF;
-                XMStoreFloat4x4(&viewF, viewM);
-                XMStoreFloat4x4(&projF, projM);
-
-                std::vector<float> viewArr(16), projArr(16);
+                // Send the combined VP as a flat 16-float array (row-major).
+                std::vector<float> vpArr(16);
                 for (int r = 0; r < 4; ++r)
-                    for (int c = 0; c < 4; ++c) {
-                        viewArr[r * 4 + c] = viewF.m[r][c];
-                        projArr[r * 4 + c] = projF.m[r][c];
-                    }
+                    for (int c = 0; c < 4; ++c)
+                        vpArr[r * 4 + c] = vpMat.m[r][c];
 
                 nlohmann::json resp;
                 resp["type"]     = "cameraMatrices";
-                resp["view"]     = viewArr;
-                resp["proj"]     = projArr;
+                resp["view"]     = vpArr;  // combined VP for now
+                resp["proj"]     = vpArr;  // combined VP for now
                 resp["position"] = {camX, camY, camZ};
                 wsServer.broadcastText(resp.dump());
                 return;
@@ -1221,7 +1191,6 @@ int WINAPI WinMain(
 
             // -- Focus camera on node --------------------------------------------------
             if (type == "editor.focusNode") {
-                using namespace DirectX;
                 uint32_t nodeId = j.value("nodeId", 0u);
                 if (nodeId == 0) {
                     nodeId = g_scene.selectedNodeId.load(std::memory_order_relaxed);
@@ -1229,7 +1198,7 @@ int WINAPI WinMain(
                 if (nodeId == 0 || !g_renderer) return;
 
                 auto eNodes = g_renderer->getEditorNodes();
-                XMFLOAT3 nodePos{0,0,0};
+                uz::Float3 nodePos{0,0,0};
                 bool found = false;
                 for (const auto& n : eNodes) {
                     if (n.nodeId == nodeId) {
@@ -1346,10 +1315,16 @@ int WINAPI WinMain(
 
     // -- DX12 Renderer -------------------------------------------------------
 
+    DIAG("Creating renderer...");
     uz::DX12Renderer renderer;
     uz::Timer timer;
 
-    renderer.init(hwnd, uz::kDefaultWidth, uz::kDefaultHeight);
+    DIAG("Calling renderer.init()...");
+    if (!renderer.init(hwnd, uz::kDefaultWidth, uz::kDefaultHeight)) {
+        DIAG("FATAL: renderer.init() returned false!");
+        return 1;
+    }
+    DIAG("renderer.init() done OK");
     renderer.setSceneParams(&g_scene);
     g_renderer = &renderer;  // allow WS handler to access renderer
 
@@ -1368,11 +1343,13 @@ int WINAPI WinMain(
             ? (exeDir + "/../../assets/scenes/default.uzscene")
             : cmdScene;
 
+        DIAG_FMT("Loading scene: %s", scenePath.c_str());
         g_sceneData = std::make_unique<uz::Scene>();
         uz::scene_init(g_sceneData.get(), "DefaultScene");
 
         auto loadResult = uz::scene_load_file(g_sceneData.get(), scenePath.c_str());
         if (loadResult.is_ok()) {
+            DIAG("Scene loaded OK, building editor nodes...");
             // Update world transforms so light/camera components can read them.
             uz::scene_update_world_transforms(g_sceneData.get());
 

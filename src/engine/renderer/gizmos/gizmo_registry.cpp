@@ -14,13 +14,13 @@ void GizmoRegistry::setDefaultGizmo(std::unique_ptr<GizmoRenderer> gizmo) {
     default_ = std::move(gizmo);
 }
 
-void GizmoRegistry::initAll(ID3D12Device* device) {
+void GizmoRegistry::initAll() {
     if (default_) {
-        default_->init(device);
+        default_->init();
     }
     for (auto& g : gizmos_) {
         if (g) {
-            g->init(device);
+            g->init();
         }
     }
 }

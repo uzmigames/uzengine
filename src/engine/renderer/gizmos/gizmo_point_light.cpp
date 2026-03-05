@@ -8,12 +8,11 @@
 
 #include <cmath>
 
-using namespace DirectX;
 
 namespace uz {
 
-void GizmoPointLight::init(ID3D12Device* device) {
-    const XMFLOAT3 white = {1.0f, 1.0f, 1.0f};
+bool GizmoPointLight::init() {
+    const Float3 white = {1.0f, 1.0f, 1.0f};
 
     constexpr int   kSegs   = 24;
     constexpr float kRadius = 0.5f;
@@ -50,16 +49,17 @@ void GizmoPointLight::init(ID3D12Device* device) {
     }
 
     vertCount_ = idx;
-    gizmo_upload_vb(device, verts, idx, vb_, vbView_, "GizmoPointLight VB");
+    vb_ = gizmo_upload_vb(verts, idx, "GizmoPointLight VB");
+    return vb_ != RHI_NULL;
 }
 
-void GizmoPointLight::draw(ID3D12GraphicsCommandList* cmdList) {
-    cmdList->IASetVertexBuffers(0, 1, &vbView_);
-    cmdList->DrawInstanced(vertCount_, 1, 0, 0);
+void GizmoPointLight::draw(RhiCmdList cmd) {
+    rhi()->cmd_set_vertex_buffer(cmd, 0, vb_, 0, sizeof(Vertex));
+    rhi()->cmd_draw(cmd, vertCount_, 1, 0, 0);
 }
 
 void GizmoPointLight::shutdown() {
-    vb_.Reset();
+    if (vb_ != RHI_NULL) { rhi()->buffer_destroy(vb_); vb_ = RHI_NULL; }
 }
 
 } // namespace uz

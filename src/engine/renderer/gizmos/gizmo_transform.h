@@ -9,13 +9,12 @@
 //
 // Unlike other GizmoRenderers (which are per-node-type), this is drawn
 // ONLY for the currently selected node, overlaid on top of everything.
+//
+// RULE RHI-1: No backend types above rhi.h — uses RHI handles only.
 
 #include "engine/renderer/gizmos/gizmo_renderer.h"
 
 #include <cstdint>
-
-#include <d3d12.h>
-#include <wrl/client.h>
 
 namespace uz {
 
@@ -24,42 +23,39 @@ public:
     GizmoTransform()  = default;
     ~GizmoTransform() override = default;
 
-    void init(ID3D12Device* device) override;
-    void draw(ID3D12GraphicsCommandList* cmdList) override;
+    bool init() override;
+    void draw(RhiCmdList cmd) override;
     void shutdown() override;
 
     /// Draw the translate handles: 3 axis arrows.
-    void drawTranslate(ID3D12GraphicsCommandList* cmdList);
+    void drawTranslate(RhiCmdList cmd);
 
     /// Draw the rotate handles: 3 axis circles.
-    void drawRotate(ID3D12GraphicsCommandList* cmdList);
+    void drawRotate(RhiCmdList cmd);
 
     /// Draw the scale handles: 3 axis lines with cubes.
-    void drawScale(ID3D12GraphicsCommandList* cmdList);
+    void drawScale(RhiCmdList cmd);
 
     /// Draw a specific mode. Called by EditorComponent.
     /// mode: 0=translate, 1=rotate, 2=scale
     /// activeAxis: -1=none, 0=X, 1=Y, 2=Z (highlighted)
-    void drawMode(ID3D12GraphicsCommandList* cmdList, int mode, int activeAxis);
+    void drawMode(RhiCmdList cmd, int mode, int activeAxis);
 
 private:
     // Translate: 3 axis arrows
-    Microsoft::WRL::ComPtr<ID3D12Resource> translateVB_;
-    D3D12_VERTEX_BUFFER_VIEW translateVBView_{};
+    RhiBuffer translateVB_ = RHI_NULL;
     uint32_t translateVertCount_ = 0;
-    uint32_t translateAxisStart_[3]{0,0,0};  // per-axis vertex start
-    uint32_t translateAxisCount_[3]{0,0,0};  // per-axis vertex count
+    uint32_t translateAxisStart_[3]{0,0,0};
+    uint32_t translateAxisCount_[3]{0,0,0};
 
     // Rotate: 3 axis circles
-    Microsoft::WRL::ComPtr<ID3D12Resource> rotateVB_;
-    D3D12_VERTEX_BUFFER_VIEW rotateVBView_{};
+    RhiBuffer rotateVB_ = RHI_NULL;
     uint32_t rotateVertCount_ = 0;
     uint32_t rotateAxisStart_[3]{0,0,0};
     uint32_t rotateAxisCount_[3]{0,0,0};
 
     // Scale: 3 axis lines + cubes
-    Microsoft::WRL::ComPtr<ID3D12Resource> scaleVB_;
-    D3D12_VERTEX_BUFFER_VIEW scaleVBView_{};
+    RhiBuffer scaleVB_ = RHI_NULL;
     uint32_t scaleVertCount_ = 0;
     uint32_t scaleAxisStart_[3]{0,0,0};
     uint32_t scaleAxisCount_[3]{0,0,0};

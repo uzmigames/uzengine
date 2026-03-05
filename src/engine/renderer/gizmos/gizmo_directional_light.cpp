@@ -8,7 +8,6 @@
 #include "gizmo_utils.h"
 #include "engine/renderer/renderer.h"
 
-using namespace DirectX;
 
 namespace uz {
 
@@ -17,7 +16,7 @@ namespace {
 // Helper: push a line segment with 3 parallel copies (offsets in X and Z)
 // to simulate thicker lines.
 inline void pushThickLine(Vertex* verts, uint32_t& idx,
-                          XMFLOAT3 a, XMFLOAT3 b, const XMFLOAT3& col) {
+                          Float3 a, Float3 b, const Float3& col) {
     constexpr float kT = 0.008f; // offset for thickness
 
     // Center line.
@@ -33,8 +32,8 @@ inline void pushThickLine(Vertex* verts, uint32_t& idx,
 
 } // anonymous namespace
 
-void GizmoDirectionalLight::init(ID3D12Device* device) {
-    const XMFLOAT3 col = {1.0f, 1.0f, 1.0f};
+bool GizmoDirectionalLight::init() {
+    const Float3 col = {1.0f, 1.0f, 1.0f};
 
     // 3 rays × 5 line-segments × 3 copies + sun symbol (8 lines × 3 copies)
     // = 45 + 24 = 69 line-segments × 2 verts = 414 max (use 512 for safety).
@@ -85,16 +84,17 @@ void GizmoDirectionalLight::init(ID3D12Device* device) {
     }
 
     vertCount_ = idx;
-    gizmo_upload_vb(device, verts, idx, vb_, vbView_, "GizmoDirectionalLight VB");
+    vb_ = gizmo_upload_vb(verts, idx, "GizmoDirectionalLight VB");
+    return vb_ != RHI_NULL;
 }
 
-void GizmoDirectionalLight::draw(ID3D12GraphicsCommandList* cmdList) {
-    cmdList->IASetVertexBuffers(0, 1, &vbView_);
-    cmdList->DrawInstanced(vertCount_, 1, 0, 0);
+void GizmoDirectionalLight::draw(RhiCmdList cmd) {
+    rhi()->cmd_set_vertex_buffer(cmd, 0, vb_, 0, sizeof(Vertex));
+    rhi()->cmd_draw(cmd, vertCount_, 1, 0, 0);
 }
 
 void GizmoDirectionalLight::shutdown() {
-    vb_.Reset();
+    if (vb_ != RHI_NULL) { rhi()->buffer_destroy(vb_); vb_ = RHI_NULL; }
 }
 
 } // namespace uz

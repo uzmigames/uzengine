@@ -7,28 +7,27 @@
 #include "gizmo_utils.h"
 #include "engine/renderer/renderer.h"
 
-using namespace DirectX;
 
 namespace uz {
 
-void GizmoCamera::init(ID3D12Device* device) {
-    const XMFLOAT3 white = {1.0f, 1.0f, 1.0f};
+bool GizmoCamera::init() {
+    const Float3 white = {1.0f, 1.0f, 1.0f};
 
     // Near plane corners (small, at z=0.2).
     const float nw = 0.15f, nh = 0.1f, nz = 0.2f;
-    const XMFLOAT3 n0 = {-nw, -nh, nz};
-    const XMFLOAT3 n1 = { nw, -nh, nz};
-    const XMFLOAT3 n2 = { nw,  nh, nz};
-    const XMFLOAT3 n3 = {-nw,  nh, nz};
+    const Float3 n0 = {-nw, -nh, nz};
+    const Float3 n1 = { nw, -nh, nz};
+    const Float3 n2 = { nw,  nh, nz};
+    const Float3 n3 = {-nw,  nh, nz};
 
     // Far plane corners (larger, at z=1.2).
     const float fw = 0.6f, fh = 0.4f, fz = 1.2f;
-    const XMFLOAT3 f0 = {-fw, -fh, fz};
-    const XMFLOAT3 f1 = { fw, -fh, fz};
-    const XMFLOAT3 f2 = { fw,  fh, fz};
-    const XMFLOAT3 f3 = {-fw,  fh, fz};
+    const Float3 f0 = {-fw, -fh, fz};
+    const Float3 f1 = { fw, -fh, fz};
+    const Float3 f2 = { fw,  fh, fz};
+    const Float3 f3 = {-fw,  fh, fz};
 
-    const XMFLOAT3 origin = {0.0f, 0.0f, 0.0f};
+    const Float3 origin = {0.0f, 0.0f, 0.0f};
 
     Vertex verts[40];
     uint32_t idx = 0;
@@ -52,24 +51,25 @@ void GizmoCamera::init(ID3D12Device* device) {
     verts[idx++] = {origin, white}; verts[idx++] = {f3, white};
 
     // "Up" indicator triangle on top of the near plane.
-    const XMFLOAT3 upL = {-0.1f, nh,         nz};
-    const XMFLOAT3 upR = { 0.1f, nh,         nz};
-    const XMFLOAT3 upT = { 0.0f, nh + 0.12f, nz};
+    const Float3 upL = {-0.1f, nh,         nz};
+    const Float3 upR = { 0.1f, nh,         nz};
+    const Float3 upT = { 0.0f, nh + 0.12f, nz};
     verts[idx++] = {upL, white}; verts[idx++] = {upR, white};
     verts[idx++] = {upR, white}; verts[idx++] = {upT, white};
     verts[idx++] = {upT, white}; verts[idx++] = {upL, white};
 
     vertCount_ = idx;
-    gizmo_upload_vb(device, verts, idx, vb_, vbView_, "GizmoCamera VB");
+    vb_ = gizmo_upload_vb(verts, idx, "GizmoCamera VB");
+    return vb_ != RHI_NULL;
 }
 
-void GizmoCamera::draw(ID3D12GraphicsCommandList* cmdList) {
-    cmdList->IASetVertexBuffers(0, 1, &vbView_);
-    cmdList->DrawInstanced(vertCount_, 1, 0, 0);
+void GizmoCamera::draw(RhiCmdList cmd) {
+    rhi()->cmd_set_vertex_buffer(cmd, 0, vb_, 0, sizeof(Vertex));
+    rhi()->cmd_draw(cmd, vertCount_, 1, 0, 0);
 }
 
 void GizmoCamera::shutdown() {
-    vb_.Reset();
+    if (vb_ != RHI_NULL) { rhi()->buffer_destroy(vb_); vb_ = RHI_NULL; }
 }
 
 } // namespace uz

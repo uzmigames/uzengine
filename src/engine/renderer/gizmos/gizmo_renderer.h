@@ -5,12 +5,11 @@
 // Each gizmo type implements this interface with its own geometry and
 // GPU resources. The GizmoRegistry maps NodeType → GizmoRenderer so
 // EditorComponent can draw any gizmo without hardcoded switches.
+//
+// RULE RHI-1: No backend types above rhi.h — uses RHI handles only.
 
 #include <cstdint>
-
-#include <d3d12.h>
-#include <DirectXMath.h>
-#include <wrl/client.h>
+#include "engine/renderer/rhi/rhi.h"
 
 namespace uz {
 
@@ -26,12 +25,12 @@ public:
 
     /// Create GPU resources (vertex buffers, etc).
     /// Called once during EditorComponent::init().
-    virtual void init(ID3D12Device* device) = 0;
+    virtual bool init() = 0;
 
     /// Draw this gizmo. The command list already has the line PSO set,
     /// the MVP matrix in root param 0, and the color in root param 1.
     /// The gizmo just needs to bind its VB and issue the draw call.
-    virtual void draw(ID3D12GraphicsCommandList* cmdList) = 0;
+    virtual void draw(RhiCmdList cmd) = 0;
 
     /// Release GPU resources. Safe to call multiple times.
     virtual void shutdown() = 0;

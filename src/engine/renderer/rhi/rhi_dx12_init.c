@@ -8,6 +8,7 @@
 #ifdef _WIN32
 
 #include "rhi_dx12_internal.h"
+#include "engine/core/diag.h"
 
 /* =======================================================================
  * Lifecycle: init
@@ -16,6 +17,7 @@
 bool dx12_init(void *window_handle, uint32_t width, uint32_t height) {
     HRESULT hr;
 
+    DIAG("=== dx12_init START ===");
     assert(!s_dx12.initialized);
     memset(&s_dx12, 0, sizeof(s_dx12));
     s_dx12.width  = width;
@@ -40,8 +42,9 @@ bool dx12_init(void *window_handle, uint32_t width, uint32_t height) {
 #endif
         hr = CreateDXGIFactory2(flags, &IID_IDXGIFactory6,
                                 (void **)&s_dx12.factory);
+        DIAG_HR("CreateDXGIFactory2", hr);
         if (FAILED(hr)) {
-            OutputDebugStringA("RHI DX12: CreateDXGIFactory2 failed\n");
+            DIAG("FATAL: CreateDXGIFactory2 failed");
             return false;
         }
     }
@@ -74,16 +77,18 @@ bool dx12_init(void *window_handle, uint32_t width, uint32_t height) {
         }
     }
     if (!adapter) {
-        OutputDebugStringA("RHI DX12: No suitable DX12 adapter found\n");
+        DIAG("FATAL: No suitable DX12 adapter found");
         return false;
     }
+    DIAG("Adapter found OK");
 
     /* ------ Device ------ */
     hr = D3D12CreateDevice((IUnknown *)adapter, D3D_FEATURE_LEVEL_12_0,
                            &IID_ID3D12Device, (void **)&s_dx12.device);
     IDXGIAdapter1_Release(adapter);
+    DIAG_HR("D3D12CreateDevice", hr);
     if (FAILED(hr)) {
-        OutputDebugStringA("RHI DX12: D3D12CreateDevice failed\n");
+        DIAG("FATAL: D3D12CreateDevice failed");
         return false;
     }
 
@@ -98,8 +103,9 @@ bool dx12_init(void *window_handle, uint32_t width, uint32_t height) {
         hr = ID3D12Device_CreateCommandQueue(s_dx12.device, &qd,
                                              &IID_ID3D12CommandQueue,
                                              (void **)&s_dx12.cmd_queue);
+        DIAG_HR("CreateCommandQueue", hr);
         if (FAILED(hr)) {
-            OutputDebugStringA("RHI DX12: CreateCommandQueue failed\n");
+            DIAG("FATAL: CreateCommandQueue failed");
             return false;
         }
     }
@@ -127,16 +133,18 @@ bool dx12_init(void *window_handle, uint32_t width, uint32_t height) {
             (IUnknown *)s_dx12.cmd_queue,
             (HWND)window_handle,
             &sd, NULL, NULL, &sc1);
+        DIAG_HR("CreateSwapChainForHwnd", hr);
         if (FAILED(hr)) {
-            OutputDebugStringA("RHI DX12: CreateSwapChainForHwnd failed\n");
+            DIAG("FATAL: CreateSwapChainForHwnd failed");
             return false;
         }
 
         hr = IDXGISwapChain1_QueryInterface(sc1, &IID_IDXGISwapChain3,
                                             (void **)&s_dx12.swap_chain);
         IDXGISwapChain1_Release(sc1);
+        DIAG_HR("SwapChain3 QI", hr);
         if (FAILED(hr)) {
-            OutputDebugStringA("RHI DX12: QueryInterface for SwapChain3 failed\n");
+            DIAG("FATAL: SwapChain3 QI failed");
             return false;
         }
 
@@ -207,6 +215,8 @@ bool dx12_init(void *window_handle, uint32_t width, uint32_t height) {
         assert(s_dx12.frame_fence_event != NULL);
     }
 
+    DIAG("Descriptor heaps + fence OK");
+
     /* ------ Acquire swapchain backbuffers ------ */
     dx12_acquire_backbuffers();
     s_dx12.current_backbuffer = IDXGISwapChain3_GetCurrentBackBufferIndex(
@@ -216,6 +226,7 @@ bool dx12_init(void *window_handle, uint32_t width, uint32_t height) {
     rhi_pso_cache_init();
 
     s_dx12.initialized = true;
+    DIAG("=== dx12_init COMPLETE ===");
     return true;
 }
 

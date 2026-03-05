@@ -351,6 +351,7 @@ typedef struct rhi_backend_t {
     void       (*cmd_submit)(RhiCmdList cmd);
 
     void (*cmd_set_pipeline)(RhiCmdList cmd, RhiPipeline pipeline);
+    void (*cmd_set_topology)(RhiCmdList cmd, RhiTopology topology);
     void (*cmd_set_render_targets)(RhiCmdList cmd, const RhiTexture *rts,
                                    uint32_t count, RhiTexture depth);
     void (*cmd_set_viewport)(RhiCmdList cmd, float x, float y, float w,

@@ -5,14 +5,14 @@
 // The registry owns all gizmo instances and provides O(1) lookup by
 // NodeType enum value. To add a new gizmo for a new NodeType, just
 // register it — no changes to EditorComponent needed.
+//
+// RULE RHI-1: No backend types above rhi.h — uses RHI handles only.
 
 #include "engine/renderer/gizmos/gizmo_renderer.h"
 
 #include <array>
 #include <cstdint>
 #include <memory>
-
-#include <d3d12.h>
 
 namespace uz {
 
@@ -35,7 +35,7 @@ public:
     void setDefaultGizmo(std::unique_ptr<GizmoRenderer> gizmo);
 
     /// Initialize all registered gizmos (called during EditorComponent::init).
-    void initAll(ID3D12Device* device);
+    void initAll();
 
     /// Shutdown all registered gizmos.
     void shutdownAll();

@@ -4,15 +4,14 @@
 #include "gizmo_utils.h"
 #include "engine/renderer/renderer.h"  // Vertex
 
-using namespace DirectX;
 
 namespace uz {
 
-void GizmoCube::init(ID3D12Device* device) {
+bool GizmoCube::init() {
     constexpr float h = 0.5f;
-    const XMFLOAT3 white = {1.0f, 1.0f, 1.0f};
+    const Float3 white = {1.0f, 1.0f, 1.0f};
 
-    const XMFLOAT3 corners[8] = {
+    const Float3 corners[8] = {
         {-h, -h, -h}, { h, -h, -h}, { h,  h, -h}, {-h,  h, -h},
         {-h, -h,  h}, { h, -h,  h}, { h,  h,  h}, {-h,  h,  h},
     };
@@ -32,16 +31,17 @@ void GizmoCube::init(ID3D12Device* device) {
     }
 
     vertCount_ = kVertCount;
-    gizmo_upload_vb(device, verts, kVertCount, vb_, vbView_, "GizmoCube VB");
+    vb_ = gizmo_upload_vb(verts, kVertCount, "GizmoCube VB");
+    return vb_ != RHI_NULL;
 }
 
-void GizmoCube::draw(ID3D12GraphicsCommandList* cmdList) {
-    cmdList->IASetVertexBuffers(0, 1, &vbView_);
-    cmdList->DrawInstanced(vertCount_, 1, 0, 0);
+void GizmoCube::draw(RhiCmdList cmd) {
+    rhi()->cmd_set_vertex_buffer(cmd, 0, vb_, 0, sizeof(Vertex));
+    rhi()->cmd_draw(cmd, vertCount_, 1, 0, 0);
 }
 
 void GizmoCube::shutdown() {
-    vb_.Reset();
+    if (vb_ != RHI_NULL) { rhi()->buffer_destroy(vb_); vb_ = RHI_NULL; }
 }
 
 } // namespace uz

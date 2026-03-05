@@ -1,31 +1,37 @@
 // ---------------------------------------------------------------------------
 // renderer.cpp -- DX12Renderer implementation using the RHI abstraction layer
 //
-// All GPU work goes through rhi()->* calls.  Direct DX12 usage is limited to
-// the EditorComponent bridge (temporary) and shader compilation via
-// D3DCompileFromFile (will move into the RHI in Phase 2).
+// All GPU work goes through rhi()->* calls.  Direct DX12 usage is limited to:
+//   1. Shader compilation via D3DCompileFromFile — will move into RHI in P3
+//
+// RULE RHI-1: No backend types stored above rhi.h
+// RULE RHI-2: No DirectXMath above rhi.h — uses uz::Mat4
+// RULE CS-7:  No exceptions — returns bool for fallible operations
 // ---------------------------------------------------------------------------
 
 #include "renderer.h"
 
-#include <stdexcept>
+extern "C" {
+#include "engine/renderer/rhi/rhi_dx12.h"
+}
 #include <string>
 #include <algorithm>
 #include <cmath>
 #include <cstring>
 
-// DX12 bridge (temporary) for EditorComponent
-extern "C" {
-#include "engine/renderer/rhi/rhi_dx12.h"
-}
+#include "engine/core/diag.h"
 
-// D3DCompileFromFile for shader compilation (kept until RHI handles this)
+
+
+// D3DCompileFromFile for shader compilation (temporary — will move to RHI)
 #include <d3dcompiler.h>
 #include <wrl/client.h>
 #pragma comment(lib, "d3dcompiler.lib")
 
 using Microsoft::WRL::ComPtr;
-using namespace DirectX;
+
+// Platform timer (Windows-specific for now).
+#include <windows.h>
 
 namespace {
 
@@ -48,6 +54,61 @@ std::wstring toWide(const std::string& s) {
     return ws;
 }
 
+// Left-handed look-at matrix matching DX12 convention.
+// We build this in row-major layout (Mat4.m[row][col] when uploaded as
+// 16 floats via root constants).  This matches what the legacy shaders expect.
+uz::Mat4 mat4_look_at_lh(uz::Vec3 eye, uz::Vec3 target, uz::Vec3 up) {
+    using namespace uz;
+    const Vec3 f = vec3_normalize(target - eye);   // Forward (+Z)
+    const Vec3 r = vec3_normalize(vec3_cross(up, f)); // Right
+    const Vec3 u = vec3_cross(f, r);               // True up
+
+    Mat4 result = {};
+    result.m[0][0] = r.x;  result.m[0][1] = u.x;  result.m[0][2] = f.x;  result.m[0][3] = 0.0f;
+    result.m[1][0] = r.y;  result.m[1][1] = u.y;  result.m[1][2] = f.y;  result.m[1][3] = 0.0f;
+    result.m[2][0] = r.z;  result.m[2][1] = u.z;  result.m[2][2] = f.z;  result.m[2][3] = 0.0f;
+    result.m[3][0] = -vec3_dot(r, eye);
+    result.m[3][1] = -vec3_dot(u, eye);
+    result.m[3][2] = -vec3_dot(f, eye);
+    result.m[3][3] = 1.0f;
+    return result;
+}
+
+// Left-handed perspective projection, depth [0..1], row-major.
+uz::Mat4 mat4_perspective_fov_lh(float fov_y, float aspect, float near_z, float far_z) {
+    const float h = 1.0f / std::tan(fov_y * 0.5f);
+    const float w = h / aspect;
+    const float q = far_z / (far_z - near_z);
+
+    uz::Mat4 result = {};
+    result.m[0][0] = w;
+    result.m[1][1] = h;
+    result.m[2][2] = q;
+    result.m[2][3] = 1.0f;
+    result.m[3][2] = -near_z * q;
+    return result;
+}
+
+// Rotation around Y axis (row-major).
+uz::Mat4 mat4_rotation_y(float angle) {
+    const float c = std::cos(angle);
+    const float s = std::sin(angle);
+    uz::Mat4 r = uz::Mat4::identity();
+    r.m[0][0] =  c;  r.m[0][2] = s;
+    r.m[2][0] = -s;  r.m[2][2] = c;
+    return r;
+}
+
+// Rotation around X axis (row-major).
+uz::Mat4 mat4_rotation_x(float angle) {
+    const float c = std::cos(angle);
+    const float s = std::sin(angle);
+    uz::Mat4 r = uz::Mat4::identity();
+    r.m[1][1] =  c;  r.m[1][2] = s;
+    r.m[2][1] = -s;  r.m[2][2] = c;
+    return r;
+}
+
 } // anonymous namespace
 
 namespace uz {
@@ -56,33 +117,57 @@ namespace uz {
 // Public API
 // ===========================================================================
 
-void DX12Renderer::init(HWND hwnd, uint32_t width, uint32_t height) {
-    if (initialized_) return;
+bool DX12Renderer::init(void* window_handle, uint32_t width, uint32_t height) {
+    if (initialized_) return true;
 
     width_  = width;
     height_ = height;
 
+    // Register the DX12 backend before using rhi().
+    rhi_set_backend(&rhi_dx12_backend);
+    DIAG("=== renderer.init START ===");
+
     // Initialize the RHI backend (device, swapchain, heaps, cmd queue).
-    if (!rhi()->init((void*)hwnd, width, height)) {
-        throw std::runtime_error("RHI init failed");
+    DIAG("rhi()->init()...");
+    if (!rhi()->init(window_handle, width, height)) {
+        DIAG("FATAL: rhi()->init() returned false");
+        return false;
     }
+    DIAG("rhi()->init() OK");
 
     // Create renderer-specific resources via RHI.
-    createPipelineState();
-    createVertexBuffer();
-    createDepthBuffer();
-    createReadbackBuffers();
+    DIAG("createPipelineState()...");
+    if (!createPipelineState()) {
+        DIAG("FATAL: createPipelineState() failed");
+        return false;
+    }
+    DIAG("createPipelineState() OK");
 
-    // Retrieve legacy DX12 pointers for EditorComponent bridge.
-    legacyDevice_  = rhi_dx12_get_device();
-    legacyRootSig_ = rhi_dx12_get_pipeline_root_sig(rhiPipeline_);
+    DIAG("createVertexBuffer()...");
+    if (!createVertexBuffer()) {
+        DIAG("FATAL: createVertexBuffer() failed");
+        return false;
+    }
 
-    // Editor-mode rendering component (grid + wireframe cubes).
-    editor_.init(legacyDevice_, legacyRootSig_);
+    DIAG("createDepthBuffer()...");
+    if (!createDepthBuffer()) {
+        DIAG("FATAL: createDepthBuffer() failed");
+        return false;
+    }
 
-    // Identity matrix as a safe default before the first update().
-    XMStoreFloat4x4(&worldViewProj_, XMMatrixIdentity());
-    XMStoreFloat4x4(&viewProj_, XMMatrixIdentity());
+    DIAG("createReadbackBuffers()...");
+    if (!createReadbackBuffers()) {
+        DIAG("FATAL: createReadbackBuffers() failed");
+        return false;
+    }
+
+    // EditorComponent — now fully RHI, no bridge needed.
+    DIAG("editor_.init()...");
+    editor_.init();
+
+    // Engine-math identity matrices.
+    worldViewProj_ = Mat4::identity();
+    viewProj_      = Mat4::identity();
 
     // Record the stream start time.
     {
@@ -93,7 +178,9 @@ void DX12Renderer::init(HWND hwnd, uint32_t width, uint32_t height) {
             now.QuadPart * 1'000'000 / freq.QuadPart);
     }
 
+    DIAG("=== renderer.init COMPLETE ===");
     initialized_ = true;
+    return true;
 }
 
 bool DX12Renderer::resize(int width, int height) {
@@ -120,13 +207,11 @@ bool DX12Renderer::resize(int width, int height) {
         }
     }
 
-    // Let the RHI handle the swap chain resize.
     rhi()->resize(newW, newH);
 
     width_  = newW;
     height_ = newH;
 
-    // Recreate depth buffer and readback at new dimensions.
     createDepthBuffer();
     createReadbackBuffers();
 
@@ -134,7 +219,6 @@ bool DX12Renderer::resize(int width, int height) {
 }
 
 void DX12Renderer::update(double /*totalTime*/, double deltaTime) {
-    // Update the FPS counter (rolling average over 60 samples).
     fpsOverlay_.update(deltaTime);
 
     // Check for pending viewport resize.
@@ -163,29 +247,30 @@ void DX12Renderer::update(double /*totalTime*/, double deltaTime) {
     const float aspect = static_cast<float>(width_) / static_cast<float>(height_);
 
     if (editorMode_) {
+        // Editor fly-cam uses engine math types (camera_component.h).
         const float dt = std::min(static_cast<float>(deltaTime), 0.1f);
         CameraState camState = camera_update_fly(sceneParams_, aspect, dt);
-
-        static_assert(sizeof(Mat4) == sizeof(XMFLOAT4X4), "Mat4/XMFLOAT4X4 size mismatch");
-        XMFLOAT4X4 vp4x4;
-        std::memcpy(&vp4x4, &camState.view_proj, sizeof(Mat4));
-        viewProj_      = vp4x4;
-        worldViewProj_ = vp4x4;
+        viewProj_      = camState.view_proj;
+        worldViewProj_ = camState.view_proj;
     } else {
+        // Legacy pyramid spinning camera — uses engine math (uz::Mat4).
         const float dt = static_cast<float>(deltaTime);
         rotAngleY_ += dt * rotYSpeed;
         rotAngleX_ += dt * rotXTilt;
 
-        const XMMATRIX world = XMMatrixRotationY(rotAngleY_)
-                             * XMMatrixRotationX(0.3f + rotAngleX_);
-        const XMVECTOR eye = XMVectorSet(0.0f, 0.0f, -3.0f, 1.0f);
-        const XMVECTOR at  = XMVectorSet(0.0f, 0.0f,  0.0f, 1.0f);
-        const XMVECTOR up  = XMVectorSet(0.0f, 1.0f,  0.0f, 0.0f);
-        const XMMATRIX view = XMMatrixLookAtLH(eye, at, up);
-        const XMMATRIX proj = XMMatrixPerspectiveFovLH(XM_PIDIV4, aspect, 0.1f, 100.0f);
-        const XMMATRIX vp = view * proj;
-        XMStoreFloat4x4(&viewProj_, vp);
-        XMStoreFloat4x4(&worldViewProj_, world * vp);
+        const Mat4 world = mat4_rotation_y(rotAngleY_)
+                         * mat4_rotation_x(0.3f + rotAngleX_);
+
+        const Vec3 eye    = {0.0f, 0.0f, -3.0f, 0.0f};
+        const Vec3 target = {0.0f, 0.0f,  0.0f, 0.0f};
+        const Vec3 up     = {0.0f, 1.0f,  0.0f, 0.0f};
+
+        const Mat4 view = mat4_look_at_lh(eye, target, up);
+        const Mat4 proj = mat4_perspective_fov_lh(kHalfPi * 0.5f, aspect, 0.1f, 100.0f);
+        const Mat4 vp   = view * proj;
+
+        viewProj_      = vp;
+        worldViewProj_ = world * vp;
     }
 
     // Collect primary directional light from the scene.
@@ -193,41 +278,34 @@ void DX12Renderer::update(double /*totalTime*/, double deltaTime) {
 }
 
 void DX12Renderer::render(bool readback) {
-    // --- Begin command recording ---
     RhiCmdList cmd = rhi()->cmd_begin();
     if (cmd == RHI_NULL) return;
 
-    // Set pipeline (binds PSO + root signature).
     rhi()->cmd_set_pipeline(cmd, rhiPipeline_);
 
-    // Viewport and scissor.
     rhi()->cmd_set_viewport(cmd, 0.0f, 0.0f,
                            static_cast<float>(width_),
                            static_cast<float>(height_),
                            0.0f, 1.0f);
     rhi()->cmd_set_scissor(cmd, 0, 0, width_, height_);
 
-    // Get current backbuffer texture.
     RhiTexture backbuffer = rhi()->swapchain_backbuffer();
 
-    // Transition: PRESENT -> RENDER_TARGET.
     rhi()->cmd_barrier_texture(cmd, backbuffer,
                                RHI_STATE_PRESENT, RHI_STATE_RENDER_TARGET);
 
-    // Clear render target and depth.
     rhi()->cmd_clear_render_target(cmd, backbuffer,
                                    clearR_, clearG_, clearB_, 1.0f);
     rhi()->cmd_clear_depth_stencil(cmd, rhiDepthBuf_, 1.0f, 0);
 
-    // Bind render target + depth.
     rhi()->cmd_set_render_targets(cmd, &backbuffer, 1, rhiDepthBuf_);
 
     // --- Draw scene ---
     const bool paused = sceneParams_ &&
         sceneParams_->paused.load(std::memory_order_relaxed);
 
-    // Light data (shared between editor and legacy modes).
-    struct LightCBData {
+    // Light data via root constants.
+    struct {
         float dir[3]; float intensity;
         float color[3]; float _pad;
     } lightCB;
@@ -242,8 +320,7 @@ void DX12Renderer::render(bool readback) {
     rhi()->cmd_set_root_constants(cmd, 2, &lightCB, 8, 0);
 
     if (editorMode_) {
-        // EditorComponent still uses raw DX12 command list (temporary bridge).
-        ID3D12GraphicsCommandList* rawCmdList = rhi_dx12_get_cmd_list(cmd);
+        // EditorComponent — fully RHI, uses RhiCmdList directly.
         uint32_t selNode = sceneParams_
             ? sceneParams_->selectedNodeId.load(std::memory_order_relaxed) : 0;
         int gizMode = sceneParams_
@@ -253,7 +330,24 @@ void DX12Renderer::render(bool readback) {
         if (gizAxis < 0 && sceneParams_)
             gizAxis = sceneParams_->gizmoHoverAxis.load(std::memory_order_relaxed);
 
-        editor_.draw(rawCmdList, viewProj_, selNode, gizMode, gizAxis);
+        // Camera position for gizmo distance scaling
+        Float3 camPos{0.0f, 0.0f, 0.0f};
+        if (sceneParams_) {
+            camPos = {sceneParams_->camPosX, sceneParams_->camPosY, sceneParams_->camPosZ};
+        }
+
+        // Multi-select pivot (task 7.2)
+        bool usePivot = false;
+        Float3 pivotPos{0.0f, 0.0f, 0.0f};
+        if (sceneParams_) {
+            usePivot = sceneParams_->useGizmoPivot.load(std::memory_order_relaxed);
+            if (usePivot) {
+                std::lock_guard<std::mutex> lk(sceneParams_->gizmoPivotMutex);
+                pivotPos = {sceneParams_->gizmoPivotX, sceneParams_->gizmoPivotY, sceneParams_->gizmoPivotZ};
+            }
+        }
+
+        editor_.draw(cmd, viewProj_, camPos, selNode, gizMode, gizAxis, usePivot, pivotPos);
     } else if (!paused) {
         // Legacy pyramid draw.
         rhi()->cmd_set_root_constants(cmd, 0, &worldViewProj_, 16, 0);
@@ -268,11 +362,9 @@ void DX12Renderer::render(bool readback) {
 
     // --- Readback path ---
     if (readback) {
-        // RENDER_TARGET -> COPY_SOURCE.
         rhi()->cmd_barrier_texture(cmd, backbuffer,
                                    RHI_STATE_RENDER_TARGET, RHI_STATE_COPY_SRC);
 
-        // Copy texture to readback buffer.
         const uint32_t alignedPitch = (width_ * 4 + 255u) & ~255u;
         RhiTextureFootprint footprint{};
         footprint.width     = width_;
@@ -286,29 +378,20 @@ void DX12Renderer::render(bool readback) {
                                           rhiReadbackBufs_[frameIndex_],
                                           &footprint);
 
-        // COPY_SOURCE -> PRESENT.
         rhi()->cmd_barrier_texture(cmd, backbuffer,
                                    RHI_STATE_COPY_SRC, RHI_STATE_PRESENT);
     } else {
-        // RENDER_TARGET -> PRESENT.
         rhi()->cmd_barrier_texture(cmd, backbuffer,
                                    RHI_STATE_RENDER_TARGET, RHI_STATE_PRESENT);
     }
 
-    // --- Close & submit ---
     rhi()->cmd_end(cmd);
     rhi()->cmd_submit(cmd);
-
-    // --- Present ---
     rhi()->swapchain_present(0);
 
-    // --- Readback: wait and copy pixels ---
     if (readback) {
         performReadback();
     }
-
-    // Frame index tracks which backbuffer we'll render to next.
-    // The RHI's swapchain_present() handles fence signaling and waiting.
 }
 
 FrameData DX12Renderer::getLatestFrame() const {
@@ -327,10 +410,8 @@ void DX12Renderer::setSceneParams(SceneParams* params) {
 void DX12Renderer::shutdown() {
     if (!initialized_) return;
 
-    // Editor resources.
     editor_.shutdown();
 
-    // Destroy renderer-owned RHI resources.
     if (rhiReadbackFence_ != RHI_NULL) {
         rhi()->fence_destroy(rhiReadbackFence_);
         rhiReadbackFence_ = RHI_NULL;
@@ -354,12 +435,7 @@ void DX12Renderer::shutdown() {
         rhiPipeline_ = RHI_NULL;
     }
 
-    legacyDevice_  = nullptr;
-    legacyRootSig_ = nullptr;
-
-    // Shut down the RHI (releases device, swapchain, heaps, etc).
     rhi()->shutdown();
-
     initialized_ = false;
 }
 
@@ -367,46 +443,49 @@ void DX12Renderer::shutdown() {
 // Private -- pipeline state via RHI
 // ===========================================================================
 
-void DX12Renderer::createPipelineState() {
-    // Compile shaders from standalone .hlsl files.
+bool DX12Renderer::createPipelineState() {
     const std::string shaderDir = getShaderDir();
+    DIAG_FMT("Shader dir: %s", shaderDir.c_str());
 
-    UINT compileFlags = 0;
-#ifdef UZENGINE_DEBUG
-    compileFlags = D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
-#endif
+    // Read HLSL source files as raw text.
+    // The RHI's pipeline_create compiles them internally (Phase 1 convention:
+    // spirv_data holds HLSL source, not SPIR-V bytecode).
+    const std::string vsPath = shaderDir + "basic.vs.hlsl";
+    const std::string psPath = shaderDir + "basic.ps.hlsl";
 
-    const std::wstring vsPath = toWide(shaderDir + "basic.vs.hlsl");
-    const std::wstring psPath = toWide(shaderDir + "basic.ps.hlsl");
+    auto readFile = [](const std::string& path) -> std::string {
+        FILE* f = fopen(path.c_str(), "rb");
+        if (!f) return {};
+        fseek(f, 0, SEEK_END);
+        long sz = ftell(f);
+        fseek(f, 0, SEEK_SET);
+        std::string data(sz, '\0');
+        fread(data.data(), 1, sz, f);
+        fclose(f);
+        return data;
+    };
 
-    ComPtr<ID3DBlob> vertexShader, pixelShader, errors;
+    std::string vsSource = readFile(vsPath);
+    std::string psSource = readFile(psPath);
 
-    HRESULT hr = D3DCompileFromFile(vsPath.c_str(), nullptr, nullptr,
-        "VSMain", "vs_5_0", compileFlags, 0, &vertexShader, &errors);
-    if (FAILED(hr)) {
-        std::string msg = "VS compile failed: " + shaderDir + "basic.vs.hlsl";
-        if (errors) msg += std::string(": ") +
-            static_cast<const char*>(errors->GetBufferPointer());
-        throw std::runtime_error(msg);
+    DIAG_FMT("VS source: %zu bytes from %s", vsSource.size(), vsPath.c_str());
+    DIAG_FMT("PS source: %zu bytes from %s", psSource.size(), psPath.c_str());
+
+    if (vsSource.empty()) {
+        DIAG_FMT("FATAL: Cannot read vertex shader: %s", vsPath.c_str());
+        return false;
+    }
+    if (psSource.empty()) {
+        DIAG_FMT("FATAL: Cannot read pixel shader: %s", psPath.c_str());
+        return false;
     }
 
-    errors.Reset();
-    hr = D3DCompileFromFile(psPath.c_str(), nullptr, nullptr,
-        "PSMain", "ps_5_0", compileFlags, 0, &pixelShader, &errors);
-    if (FAILED(hr)) {
-        std::string msg = "PS compile failed: " + shaderDir + "basic.ps.hlsl";
-        if (errors) msg += std::string(": ") +
-            static_cast<const char*>(errors->GetBufferPointer());
-        throw std::runtime_error(msg);
-    }
-
-    // Build pipeline through RHI.
     RhiPipelineDesc desc{};
-    desc.vertex_shader.spirv_data  = vertexShader->GetBufferPointer();
-    desc.vertex_shader.spirv_size  = vertexShader->GetBufferSize();
+    desc.vertex_shader.spirv_data  = vsSource.data();
+    desc.vertex_shader.spirv_size  = vsSource.size();
     desc.vertex_shader.entry_point = "VSMain";
-    desc.pixel_shader.spirv_data   = pixelShader->GetBufferPointer();
-    desc.pixel_shader.spirv_size   = pixelShader->GetBufferSize();
+    desc.pixel_shader.spirv_data   = psSource.data();
+    desc.pixel_shader.spirv_size   = psSource.size();
     desc.pixel_shader.entry_point  = "PSMain";
 
     // Vertex layout: POSITION (float3) + COLOR (float3).
@@ -416,7 +495,7 @@ void DX12Renderer::createPipelineState() {
     };
     desc.vertex_layout.attribs[1] = {
         "COLOR", 0, RHI_VERTEX_FORMAT_FLOAT3,
-        static_cast<uint32_t>(sizeof(XMFLOAT3)), 0
+        3 * sizeof(float), 0   // 12 bytes offset after POSITION
     };
 
     desc.rt_count      = 1;
@@ -432,35 +511,37 @@ void DX12Renderer::createPipelineState() {
     desc.depth_stencil.depth_func   = RHI_COMPARE_LESS;
 
     desc.blend.render_targets[0].write_mask = 0xF;
-
     desc.debug_name = "MainTrianglePSO";
 
+    DIAG("pipeline_create()...");
     rhiPipeline_ = rhi()->pipeline_create(&desc);
-    if (rhiPipeline_ == RHI_NULL) {
-        throw std::runtime_error("RHI pipeline_create failed");
-    }
+    DIAG_FMT("pipeline_create => handle=%llu", (unsigned long long)rhiPipeline_);
+    return rhiPipeline_ != RHI_NULL;
 }
 
 // ===========================================================================
 // Private -- vertex buffer via RHI
 // ===========================================================================
 
-void DX12Renderer::createVertexBuffer() {
-    constexpr XMFLOAT3 apex  = {  0.0f,   0.7f,  0.0f  };
-    constexpr XMFLOAT3 base0 = {  0.0f,  -0.3f,  0.6f  };
-    constexpr XMFLOAT3 base1 = { -0.52f, -0.3f, -0.3f  };
-    constexpr XMFLOAT3 base2 = {  0.52f, -0.3f, -0.3f  };
-
-    constexpr XMFLOAT3 cYellow = { 1.0f, 1.0f, 0.0f };
-    constexpr XMFLOAT3 cRed    = { 1.0f, 0.0f, 0.0f };
-    constexpr XMFLOAT3 cGreen  = { 0.0f, 1.0f, 0.0f };
-    constexpr XMFLOAT3 cBlue   = { 0.0f, 0.0f, 1.0f };
-
+bool DX12Renderer::createVertexBuffer() {
+    // Pyramid vertices — plain float arrays per CS-3.
     const Vertex pyramidVertices[] = {
-        { apex,  cYellow }, { base2, cBlue }, { base0, cRed },
-        { apex,  cYellow }, { base0, cRed  }, { base1, cGreen },
-        { apex,  cYellow }, { base1, cGreen }, { base2, cBlue },
-        { base0, cRed },   { base2, cBlue },  { base1, cGreen },
+        // Front face: Apex, Base2, Base0
+        {{0.0f, 0.7f, 0.0f},   {1.0f, 1.0f, 0.0f}},   // apex, yellow
+        {{0.52f, -0.3f, -0.3f}, {0.0f, 0.0f, 1.0f}},   // base2, blue
+        {{0.0f, -0.3f, 0.6f},  {1.0f, 0.0f, 0.0f}},    // base0, red
+        // Right face: Apex, Base0, Base1
+        {{0.0f, 0.7f, 0.0f},    {1.0f, 1.0f, 0.0f}},
+        {{0.0f, -0.3f, 0.6f},   {1.0f, 0.0f, 0.0f}},
+        {{-0.52f, -0.3f, -0.3f},{0.0f, 1.0f, 0.0f}},   // base1, green
+        // Left face: Apex, Base1, Base2
+        {{0.0f, 0.7f, 0.0f},    {1.0f, 1.0f, 0.0f}},
+        {{-0.52f, -0.3f, -0.3f},{0.0f, 1.0f, 0.0f}},
+        {{0.52f, -0.3f, -0.3f}, {0.0f, 0.0f, 1.0f}},
+        // Bottom face: Base0, Base2, Base1
+        {{0.0f, -0.3f, 0.6f},   {1.0f, 0.0f, 0.0f}},
+        {{0.52f, -0.3f, -0.3f}, {0.0f, 0.0f, 1.0f}},
+        {{-0.52f, -0.3f, -0.3f},{0.0f, 1.0f, 0.0f}},
     };
 
     RhiBufferDesc bufDesc{};
@@ -469,17 +550,17 @@ void DX12Renderer::createVertexBuffer() {
     bufDesc.debug_name = "PyramidVB";
 
     rhiVertexBuf_ = rhi()->buffer_create(&bufDesc);
-    if (rhiVertexBuf_ == RHI_NULL)
-        throw std::runtime_error("RHI buffer_create (VB) failed");
+    if (rhiVertexBuf_ == RHI_NULL) return false;
 
     rhi()->buffer_upload(rhiVertexBuf_, pyramidVertices, sizeof(pyramidVertices));
+    return true;
 }
 
 // ===========================================================================
 // Private -- depth buffer via RHI
 // ===========================================================================
 
-void DX12Renderer::createDepthBuffer() {
+bool DX12Renderer::createDepthBuffer() {
     RhiTextureDesc desc{};
     desc.width      = width_;
     desc.height     = height_;
@@ -492,15 +573,14 @@ void DX12Renderer::createDepthBuffer() {
     desc.debug_name = "DepthBuffer";
 
     rhiDepthBuf_ = rhi()->texture_create(&desc);
-    if (rhiDepthBuf_ == RHI_NULL)
-        throw std::runtime_error("RHI texture_create (depth) failed");
+    return rhiDepthBuf_ != RHI_NULL;
 }
 
 // ===========================================================================
 // Private -- readback buffers via RHI
 // ===========================================================================
 
-void DX12Renderer::createReadbackBuffers() {
+bool DX12Renderer::createReadbackBuffers() {
     const uint32_t alignedPitch = (width_ * 4 + 255u) & ~255u;
     const uint64_t bufSize = static_cast<uint64_t>(alignedPitch) * height_;
 
@@ -511,16 +591,14 @@ void DX12Renderer::createReadbackBuffers() {
         desc.debug_name = "ReadbackBuf";
 
         rhiReadbackBufs_[i] = rhi()->buffer_create(&desc);
-        if (rhiReadbackBufs_[i] == RHI_NULL)
-            throw std::runtime_error("RHI buffer_create (readback) failed");
+        if (rhiReadbackBufs_[i] == RHI_NULL) return false;
     }
 
-    // Readback fence for CPU/GPU sync.
     rhiReadbackFence_ = rhi()->fence_create();
-    if (rhiReadbackFence_ == RHI_NULL)
-        throw std::runtime_error("RHI fence_create (readback) failed");
+    if (rhiReadbackFence_ == RHI_NULL) return false;
 
     readbackFenceValue_ = 0;
+    return true;
 }
 
 // ===========================================================================
@@ -528,22 +606,16 @@ void DX12Renderer::createReadbackBuffers() {
 // ===========================================================================
 
 void DX12Renderer::performReadback() {
-    // Signal the readback fence.
     ++readbackFenceValue_;
     rhi()->fence_signal(rhiReadbackFence_, readbackFenceValue_);
+    rhi()->fence_wait(rhiReadbackFence_, readbackFenceValue_, UINT64_MAX);
 
-    // Wait for the GPU to complete the copy.
-    rhi()->fence_wait(rhiReadbackFence_, readbackFenceValue_,
-                      UINT64_MAX);
-
-    // Map the readback buffer and copy pixel data row-by-row.
     const uint32_t actualRowBytes = width_ * 4;
     const uint32_t alignedPitch   = (actualRowBytes + 255u) & ~255u;
 
     void* mappedData = rhi()->buffer_map(rhiReadbackBufs_[frameIndex_]);
     if (!mappedData) return;
 
-    // Capture timestamp.
     LARGE_INTEGER freq, now;
     QueryPerformanceFrequency(&freq);
     QueryPerformanceCounter(&now);

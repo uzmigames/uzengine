@@ -3,8 +3,12 @@
 // renderer.h -- Renderer using the RHI abstraction layer
 //
 // All GPU work goes through rhi()->* calls.  No direct DX12 / Vulkan / Metal
-// includes leak into this header.  EditorComponent still uses raw DX12 as a
-// temporary measure and will be ported in a follow-up phase.
+// includes leak into this header.
+//
+// RULE RHI-1: No backend types above rhi.h
+// RULE RHI-2: No DirectXMath / GLM above rhi.h
+// RULE CS-2:  Use engine math types (uz::Vec3, uz::Mat4)
+// RULE CS-3:  Plain float arrays for GPU-uploaded data
 
 #include <cstdint>
 #include <mutex>
@@ -15,11 +19,7 @@
 #include "components/camera_component.h"
 #include "components/light_component.h"
 
-// DX12 types still needed temporarily for EditorComponent bridge and math
-#include <d3d12.h>
-#include <DirectXMath.h>
-#include <wrl/client.h>
-
+#include "engine/core/math.h"
 #include "common/types.h"
 #include "common/timer.h"
 #include "scene_params.h"
@@ -35,21 +35,19 @@ namespace uz {
 // Shaders are in standalone .hlsl files per Rule 6 / CS-15:
 //   shaders/builtin/basic.vs.hlsl   (vertex shader)
 //   shaders/builtin/basic.ps.hlsl   (pixel shader)
-// Compiled at runtime via D3DCompileFromFile() in createPipelineState().
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// Vertex layout for the colored triangle.
+// Vertex layout for GPU upload (RULE CS-3: plain floats for GPU data).
+// Float3 is defined in engine/core/math.h (12-byte POD, no padding).
 // ---------------------------------------------------------------------------
 
 struct Vertex {
-    DirectX::XMFLOAT3 position;
-    DirectX::XMFLOAT3 color;
+    Float3 position;
+    Float3 color;
 };
 
-// Frame count for double/triple buffering.
-
-// Frame count from common/types.h is used for readback buffer dimensions.
+// ---------------------------------------------------------------------------
 // DX12Renderer -- Renderer using the RHI abstraction layer.
 //
 // Lifecycle:
@@ -67,7 +65,7 @@ public:
     DX12Renderer()  = default;
     ~DX12Renderer() = default;
 
-    // Non-copyable, non-movable -- GPU resource handles are not trivially relocatable.
+    // Non-copyable, non-movable.
     DX12Renderer(const DX12Renderer&)            = delete;
     DX12Renderer& operator=(const DX12Renderer&) = delete;
     DX12Renderer(DX12Renderer&&)                 = delete;
@@ -77,7 +75,8 @@ public:
     using EditorNode = EditorComponent::EditorNode;
 
     // Initialize the renderer and all GPU resources for the given window.
-    void init(HWND hwnd, uint32_t width, uint32_t height);
+    // window_handle is an opaque HWND (cast to void* for platform neutrality).
+    bool init(void* window_handle, uint32_t width, uint32_t height);
 
     // Update the rotation angle using delta-time accumulation.
     void update(double totalTime, double deltaTime);
@@ -123,10 +122,10 @@ public:
 
 private:
     // Initialization sub-steps (called by init).
-    void createPipelineState();
-    void createVertexBuffer();
-    void createDepthBuffer();
-    void createReadbackBuffers();
+    bool createPipelineState();
+    bool createVertexBuffer();
+    bool createDepthBuffer();
+    bool createReadbackBuffers();
 
     // Perform GPU -> CPU readback of the current frame's render target.
     void performReadback();
@@ -134,21 +133,13 @@ private:
     // -----------------------------------------------------------------------
     // RHI resource handles
     // -----------------------------------------------------------------------
-    RhiPipeline rhiPipeline_  = RHI_NULL;    // Main triangle PSO
-    RhiBuffer   rhiVertexBuf_ = RHI_NULL;    // Vertex buffer (upload heap)
-    RhiTexture  rhiDepthBuf_  = RHI_NULL;    // Depth-stencil texture
-    RhiFence    rhiReadbackFence_ = RHI_NULL; // Readback synchronization
-    RhiBuffer   rhiReadbackBufs_[kFrameCount] = {};  // Per-frame readback
+    RhiPipeline rhiPipeline_  = RHI_NULL;
+    RhiBuffer   rhiVertexBuf_ = RHI_NULL;
+    RhiTexture  rhiDepthBuf_  = RHI_NULL;
+    RhiFence    rhiReadbackFence_ = RHI_NULL;
+    RhiBuffer   rhiReadbackBufs_[kFrameCount] = {};
 
     uint64_t    readbackFenceValue_ = 0;
-
-    // -----------------------------------------------------------------------
-    // Legacy DX12 members (kept temporarily for EditorComponent bridge)
-    // -----------------------------------------------------------------------
-    // EditorComponent still needs raw DX12 device + root signature.
-    // These are retrieved from the RHI internal state during init().
-    ID3D12Device*        legacyDevice_    = nullptr;  // borrowed, NOT owned
-    ID3D12RootSignature* legacyRootSig_   = nullptr;  // borrowed from pipeline slot
 
     // Latest captured frame (protected by mutex for cross-thread access).
     mutable std::mutex frameMutex_;
@@ -164,10 +155,9 @@ private:
     uint32_t height_ = 0;
 
     // Current world-view-projection matrix, updated each frame by update().
-    DirectX::XMFLOAT4X4 worldViewProj_{};
-
-    // Stored view-projection matrix (without world transform).
-    DirectX::XMFLOAT4X4 viewProj_{};
+    // Uses engine math types (RULE CS-2).
+    Mat4 worldViewProj_ = Mat4::identity();
+    Mat4 viewProj_      = Mat4::identity();
 
     // Accumulated rotation angles (radians).
     float rotAngleY_ = 0.0f;
@@ -195,7 +185,6 @@ private:
     // -----------------------------------------------------------------------
     // Render components (modular subsystems)
     // -----------------------------------------------------------------------
-
     EditorComponent editor_;
 
     // When true, render() draws the editor scene.

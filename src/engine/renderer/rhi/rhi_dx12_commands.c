@@ -231,6 +231,22 @@ void dx12_cmd_set_texture(RhiCmdList cmd, uint32_t slot_idx,
         s_dx12.cmd_lists[cmd_slot].list, 2, gpu_handle);
 }
 
+static D3D12_PRIMITIVE_TOPOLOGY rhi_topology_to_dx12(RhiTopology t) {
+    switch (t) {
+        case RHI_TOPOLOGY_TRIANGLE_STRIP: return D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP;
+        case RHI_TOPOLOGY_LINE_LIST:      return D3D_PRIMITIVE_TOPOLOGY_LINELIST;
+        case RHI_TOPOLOGY_LINE_STRIP:     return D3D_PRIMITIVE_TOPOLOGY_LINESTRIP;
+        case RHI_TOPOLOGY_POINT_LIST:     return D3D_PRIMITIVE_TOPOLOGY_POINTLIST;
+        default:                          return D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+    }
+}
+
+void dx12_cmd_set_topology(RhiCmdList cmd, RhiTopology topology) {
+    if (cmd == RHI_NULL) return;
+    uint32_t cmd_slot = (uint32_t)cmd;
+    s_dx12.cmd_lists[cmd_slot].topology = rhi_topology_to_dx12(topology);
+}
+
 void dx12_cmd_draw(RhiCmdList cmd, uint32_t vertex_count,
                            uint32_t instance_count, uint32_t first_vertex,
                            uint32_t first_instance) {
@@ -238,8 +254,9 @@ void dx12_cmd_draw(RhiCmdList cmd, uint32_t vertex_count,
     uint32_t cmd_slot = (uint32_t)cmd;
 
     ID3D12GraphicsCommandList *cl = s_dx12.cmd_lists[cmd_slot].list;
-    ID3D12GraphicsCommandList_IASetPrimitiveTopology(
-        cl, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    D3D12_PRIMITIVE_TOPOLOGY topo = s_dx12.cmd_lists[cmd_slot].topology;
+    if (topo == 0) topo = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+    ID3D12GraphicsCommandList_IASetPrimitiveTopology(cl, topo);
     ID3D12GraphicsCommandList_DrawInstanced(
         cl, vertex_count, instance_count, first_vertex, first_instance);
 }
@@ -253,8 +270,9 @@ void dx12_cmd_draw_indexed(RhiCmdList cmd, uint32_t index_count,
     uint32_t cmd_slot = (uint32_t)cmd;
 
     ID3D12GraphicsCommandList *cl = s_dx12.cmd_lists[cmd_slot].list;
-    ID3D12GraphicsCommandList_IASetPrimitiveTopology(
-        cl, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    D3D12_PRIMITIVE_TOPOLOGY topo = s_dx12.cmd_lists[cmd_slot].topology;
+    if (topo == 0) topo = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+    ID3D12GraphicsCommandList_IASetPrimitiveTopology(cl, topo);
     ID3D12GraphicsCommandList_DrawIndexedInstanced(
         cl, index_count, instance_count, first_index,
         vertex_offset, first_instance);

@@ -13,6 +13,7 @@
 #ifdef _WIN32
 
 #include "rhi_dx12_internal.h"
+#include "engine/core/diag.h"
 
 /* Backend state (shared across TUs via rhi_dx12_internal.h) */
 Dx12State s_dx12;
@@ -810,6 +811,7 @@ void dx12_texture_upload(RhiTexture tex, const void *data, size_t size) {
 
 RhiPipeline dx12_pipeline_create(const RhiPipelineDesc *desc) {
     assert(s_dx12.initialized && desc);
+    DIAG("dx12_pipeline_create START");
 
     /* Check PSO cache first */
     RhiPsoCacheKey cache_key = rhi_make_pso_cache_key(desc);
@@ -843,12 +845,15 @@ RhiPipeline dx12_pipeline_create(const RhiPipelineDesc *desc) {
             &vs_blob, &err_blob);
         if (FAILED(hr)) {
             if (err_blob) {
+                DIAG_FMT("VS compile error: %s", (const char *)ID3D10Blob_GetBufferPointer(err_blob));
                 OutputDebugStringA((const char *)ID3D10Blob_GetBufferPointer(err_blob));
                 ID3D10Blob_Release(err_blob);
             }
+            DIAG("FATAL: VS D3DCompile failed");
             s_dx12.pipelines[slot].occupied = false;
             return RHI_NULL;
         }
+        DIAG("VS compiled OK");
         if (err_blob) ID3D10Blob_Release(err_blob);
         err_blob = NULL;
     }
@@ -864,45 +869,55 @@ RhiPipeline dx12_pipeline_create(const RhiPipelineDesc *desc) {
             &ps_blob, &err_blob);
         if (FAILED(hr)) {
             if (err_blob) {
+                DIAG_FMT("PS compile error: %s", (const char *)ID3D10Blob_GetBufferPointer(err_blob));
                 OutputDebugStringA((const char *)ID3D10Blob_GetBufferPointer(err_blob));
                 ID3D10Blob_Release(err_blob);
             }
+            DIAG("FATAL: PS D3DCompile failed");
             if (vs_blob) ID3D10Blob_Release(vs_blob);
             s_dx12.pipelines[slot].occupied = false;
             return RHI_NULL;
         }
+        DIAG("PS compiled OK");
         if (err_blob) ID3D10Blob_Release(err_blob);
         err_blob = NULL;
     }
 
     /*
-     * Phase 1: Create a simple root signature with:
-     *   - 1 root CBV at b0 (per-frame constants)
-     *   - 1 root CBV at b1 (per-object constants)
-     *   - 1 descriptor table for SRVs (t0..tN)
-     *   - 1 static sampler at s0
-     *
-     * TODO Phase 2: Root signature derived from shader reflection or
-     * from the pipeline desc. Bindless resource support.
+     * Root signature with root constants matching the shader cbuffers:
+     *   Param 0: 16 x 32-bit constants at b0 (worldViewProj 4x4 matrix)
+     *   Param 1:  4 x 32-bit constants at b1 (colorMul float3 + pad)
+     *   Param 2:  8 x 32-bit constants at b2 (lightDir, intensity, color, pad)
+     *   Param 3: SRV descriptor table for textures (t0..tN)
+     *   Static sampler at s0
      */
     ID3D12RootSignature *root_sig = NULL;
     {
-        D3D12_ROOT_PARAMETER root_params[3];
+        D3D12_ROOT_PARAMETER root_params[4];
         memset(root_params, 0, sizeof(root_params));
 
-        /* Param 0: CBV at b0 */
-        root_params[0].ParameterType             = D3D12_ROOT_PARAMETER_TYPE_CBV;
-        root_params[0].Descriptor.ShaderRegister = 0;
-        root_params[0].Descriptor.RegisterSpace  = 0;
+        /* Param 0: Root constants at b0 -- 16 DWORDs (4x4 matrix) */
+        root_params[0].ParameterType             = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+        root_params[0].Constants.ShaderRegister  = 0;
+        root_params[0].Constants.RegisterSpace   = 0;
+        root_params[0].Constants.Num32BitValues  = 16;
         root_params[0].ShaderVisibility          = D3D12_SHADER_VISIBILITY_ALL;
 
-        /* Param 1: CBV at b1 */
-        root_params[1].ParameterType             = D3D12_ROOT_PARAMETER_TYPE_CBV;
-        root_params[1].Descriptor.ShaderRegister = 1;
-        root_params[1].Descriptor.RegisterSpace  = 0;
+        /* Param 1: Root constants at b1 -- 4 DWORDs (color + pad) */
+        root_params[1].ParameterType             = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+        root_params[1].Constants.ShaderRegister  = 1;
+        root_params[1].Constants.RegisterSpace   = 0;
+        root_params[1].Constants.Num32BitValues  = 4;
         root_params[1].ShaderVisibility          = D3D12_SHADER_VISIBILITY_ALL;
 
-        /* Param 2: SRV descriptor table */
+        /* Param 2: Root constants at b2 -- 8 DWORDs (light data) */
+        root_params[2].ParameterType             = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+        root_params[2].Constants.ShaderRegister  = 2;
+        root_params[2].Constants.RegisterSpace   = 0;
+        root_params[2].Constants.Num32BitValues  = 8;
+        root_params[2].ShaderVisibility          = D3D12_SHADER_VISIBILITY_ALL;
+
+        /* Param 3: SRV descriptor table */
         D3D12_DESCRIPTOR_RANGE srv_range;
         memset(&srv_range, 0, sizeof(srv_range));
         srv_range.RangeType          = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
@@ -911,10 +926,10 @@ RhiPipeline dx12_pipeline_create(const RhiPipelineDesc *desc) {
         srv_range.RegisterSpace      = 0;
         srv_range.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
 
-        root_params[2].ParameterType    = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-        root_params[2].DescriptorTable.NumDescriptorRanges = 1;
-        root_params[2].DescriptorTable.pDescriptorRanges   = &srv_range;
-        root_params[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+        root_params[3].ParameterType    = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+        root_params[3].DescriptorTable.NumDescriptorRanges = 1;
+        root_params[3].DescriptorTable.pDescriptorRanges   = &srv_range;
+        root_params[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
         D3D12_STATIC_SAMPLER_DESC static_sampler;
         memset(&static_sampler, 0, sizeof(static_sampler));
@@ -934,7 +949,7 @@ RhiPipeline dx12_pipeline_create(const RhiPipelineDesc *desc) {
 
         D3D12_ROOT_SIGNATURE_DESC rs_desc;
         memset(&rs_desc, 0, sizeof(rs_desc));
-        rs_desc.NumParameters     = 3;
+        rs_desc.NumParameters     = 4;
         rs_desc.pParameters       = root_params;
         rs_desc.NumStaticSamplers = 1;
         rs_desc.pStaticSamplers   = &static_sampler;
@@ -947,7 +962,7 @@ RhiPipeline dx12_pipeline_create(const RhiPipelineDesc *desc) {
                                          &sig_blob, &sig_err);
         if (FAILED(hr)) {
             if (sig_err) {
-                OutputDebugStringA((const char *)ID3D10Blob_GetBufferPointer(sig_err));
+                DIAG_FMT("Root sig serialize error: %s", (const char *)ID3D10Blob_GetBufferPointer(sig_err));
                 ID3D10Blob_Release(sig_err);
             }
             if (vs_blob) ID3D10Blob_Release(vs_blob);
@@ -955,6 +970,7 @@ RhiPipeline dx12_pipeline_create(const RhiPipelineDesc *desc) {
             s_dx12.pipelines[slot].occupied = false;
             return RHI_NULL;
         }
+        DIAG("Root signature serialized OK");
         if (sig_err) ID3D10Blob_Release(sig_err);
 
         hr = ID3D12Device_CreateRootSignature(
@@ -963,6 +979,7 @@ RhiPipeline dx12_pipeline_create(const RhiPipelineDesc *desc) {
             ID3D10Blob_GetBufferSize(sig_blob),
             &IID_ID3D12RootSignature, (void **)&root_sig);
         ID3D10Blob_Release(sig_blob);
+        DIAG_HR("CreateRootSignature", hr);
         if (FAILED(hr)) {
             if (vs_blob) ID3D10Blob_Release(vs_blob);
             if (ps_blob) ID3D10Blob_Release(ps_blob);
@@ -1063,11 +1080,14 @@ RhiPipeline dx12_pipeline_create(const RhiPipelineDesc *desc) {
     if (vs_blob) ID3D10Blob_Release(vs_blob);
     if (ps_blob) ID3D10Blob_Release(ps_blob);
 
+    DIAG("CreateGraphicsPipelineState...");
     if (FAILED(hr)) {
+        DIAG_HR("CreateGraphicsPipelineState", hr);
         ID3D12RootSignature_Release(root_sig);
         s_dx12.pipelines[slot].occupied = false;
         return RHI_NULL;
     }
+    DIAG("PSO created OK");
 
     s_dx12.pipelines[slot].pso      = pso;
     s_dx12.pipelines[slot].root_sig = root_sig;
@@ -1226,6 +1246,7 @@ const rhi_backend_t rhi_dx12_backend = {
     .cmd_end                 = dx12_cmd_end,
     .cmd_submit              = dx12_cmd_submit,
     .cmd_set_pipeline        = dx12_cmd_set_pipeline,
+    .cmd_set_topology        = dx12_cmd_set_topology,
     .cmd_set_render_targets  = dx12_cmd_set_render_targets,
     .cmd_set_viewport        = dx12_cmd_set_viewport,
     .cmd_set_scissor         = dx12_cmd_set_scissor,

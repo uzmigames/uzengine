@@ -12,7 +12,6 @@
 #include <cmath>
 #include <vector>
 
-using namespace DirectX;
 
 namespace uz {
 
@@ -34,23 +33,22 @@ static constexpr float kPI2 = 6.28318530718f;
 // ============================================================================
 
 static void addCylinder(std::vector<Vertex>& out,
-                        XMFLOAT3 start, XMFLOAT3 end,
-                        float radius, int segs, XMFLOAT3 color) {
+                        Float3 start, Float3 end,
+                        float radius, int segs, Float3 color) {
     float dx = end.x - start.x, dy = end.y - start.y, dz = end.z - start.z;
     float len = sqrtf(dx*dx + dy*dy + dz*dz);
     if (len < 0.0001f) return;
 
-    XMVECTOR dir = XMVector3Normalize(XMVectorSet(dx, dy, dz, 0));
-    XMVECTOR up = fabsf(dy/len) > 0.9f ?
-        XMVectorSet(1,0,0,0) : XMVectorSet(0,1,0,0);
-    XMVECTOR right = XMVector3Normalize(XMVector3Cross(up, dir));
-    XMVECTOR actualUp = XMVector3Cross(dir, right);
+    Vec3 dirV = vec3_normalize({dx, dy, dz, 0.0f});
+    Vec3 up = (fabsf(dy/len) > 0.9f)
+        ? Vec3{1,0,0,0} : Vec3{0,1,0,0};
+    Vec3 right = vec3_normalize(vec3_cross(up, dirV));
+    Vec3 actualUp = vec3_cross(dirV, right);
 
-    XMFLOAT3 r3, u3;
-    XMStoreFloat3(&r3, right);
-    XMStoreFloat3(&u3, actualUp);
+    Float3 r3 = {right.x, right.y, right.z};
+    Float3 u3 = {actualUp.x, actualUp.y, actualUp.z};
 
-    std::vector<XMFLOAT3> ringStart(segs), ringEnd(segs);
+    std::vector<Float3> ringStart(segs), ringEnd(segs);
     for (int i = 0; i < segs; ++i) {
         float angle = (float)i / segs * kPI2;
         float c = cosf(angle) * radius, s = sinf(angle) * radius;
@@ -82,23 +80,22 @@ static void addCylinder(std::vector<Vertex>& out,
 // ============================================================================
 
 static void addCone(std::vector<Vertex>& out,
-                    XMFLOAT3 base, XMFLOAT3 tip,
-                    float radius, int segs, XMFLOAT3 color) {
+                    Float3 base, Float3 tip,
+                    float radius, int segs, Float3 color) {
     float dx = tip.x - base.x, dy = tip.y - base.y, dz = tip.z - base.z;
     float len = sqrtf(dx*dx + dy*dy + dz*dz);
     if (len < 0.0001f) return;
 
-    XMVECTOR dir = XMVector3Normalize(XMVectorSet(dx, dy, dz, 0));
-    XMVECTOR up = fabsf(dy/len) > 0.9f ?
-        XMVectorSet(1,0,0,0) : XMVectorSet(0,1,0,0);
-    XMVECTOR right = XMVector3Normalize(XMVector3Cross(up, dir));
-    XMVECTOR actualUp = XMVector3Cross(dir, right);
+    Vec3 dirV = vec3_normalize({dx, dy, dz, 0.0f});
+    Vec3 up = (fabsf(dy/len) > 0.9f)
+        ? Vec3{1,0,0,0} : Vec3{0,1,0,0};
+    Vec3 right = vec3_normalize(vec3_cross(up, dirV));
+    Vec3 actualUp = vec3_cross(dirV, right);
 
-    XMFLOAT3 r3, u3;
-    XMStoreFloat3(&r3, right);
-    XMStoreFloat3(&u3, actualUp);
+    Float3 r3 = {right.x, right.y, right.z};
+    Float3 u3 = {actualUp.x, actualUp.y, actualUp.z};
 
-    std::vector<XMFLOAT3> ring(segs);
+    std::vector<Float3> ring(segs);
     for (int i = 0; i < segs; ++i) {
         float angle = (float)i / segs * kPI2;
         float c = cosf(angle) * radius, s = sinf(angle) * radius;
@@ -129,9 +126,9 @@ static void addCone(std::vector<Vertex>& out,
 
 static void addSolidCube(std::vector<Vertex>& out,
                          float cx, float cy, float cz,
-                         float halfSize, XMFLOAT3 color) {
+                         float halfSize, Float3 color) {
     float s = halfSize;
-    XMFLOAT3 corners[8] = {
+    Float3 corners[8] = {
         {cx-s, cy-s, cz-s}, {cx+s, cy-s, cz-s},
         {cx+s, cy+s, cz-s}, {cx-s, cy+s, cz-s},
         {cx-s, cy-s, cz+s}, {cx+s, cy-s, cz+s},
@@ -158,14 +155,14 @@ static void addSolidCube(std::vector<Vertex>& out,
 
 static void buildTranslateVerts(std::vector<Vertex>& out, uint32_t axisStart[3], uint32_t axisCount[3]) {
     // Task 1.4: spec colors X=#CC2222, Y=#22CC22, Z=#2222CC
-    const XMFLOAT3 cols[3] = {{0.80f,0.133f,0.133f}, {0.133f,0.80f,0.133f}, {0.133f,0.133f,0.80f}};
-    const XMFLOAT3 dirs[3] = {{1,0,0}, {0,1,0}, {0,0,1}};
+    const Float3 cols[3] = {{0.80f,0.133f,0.133f}, {0.133f,0.80f,0.133f}, {0.133f,0.133f,0.80f}};
+    const Float3 dirs[3] = {{1,0,0}, {0,1,0}, {0,0,1}};
     float shaftEnd = kAxisLen - kConeLen;
 
     for (int a = 0; a < 3; ++a) {
         axisStart[a] = static_cast<uint32_t>(out.size());
-        XMFLOAT3 sEnd = {dirs[a].x * shaftEnd, dirs[a].y * shaftEnd, dirs[a].z * shaftEnd};
-        XMFLOAT3 cEnd = {dirs[a].x * kAxisLen, dirs[a].y * kAxisLen, dirs[a].z * kAxisLen};
+        Float3 sEnd = {dirs[a].x * shaftEnd, dirs[a].y * shaftEnd, dirs[a].z * shaftEnd};
+        Float3 cEnd = {dirs[a].x * kAxisLen, dirs[a].y * kAxisLen, dirs[a].z * kAxisLen};
         addCylinder(out, {0,0,0}, sEnd, kShaftRad, kShaftSegs, cols[a]);
         addCone(out, sEnd, cEnd, kConeRad, kShaftSegs, cols[a]);
         axisCount[a] = static_cast<uint32_t>(out.size()) - axisStart[a];
@@ -174,14 +171,14 @@ static void buildTranslateVerts(std::vector<Vertex>& out, uint32_t axisStart[3],
 
 static void buildRotateVerts(std::vector<Vertex>& out, uint32_t axisStart[3], uint32_t axisCount[3]) {
     // Task 1.4: spec colors X=#CC2222, Y=#22CC22, Z=#2222CC
-    const XMFLOAT3 cols[3] = {{0.80f,0.133f,0.133f}, {0.133f,0.80f,0.133f}, {0.133f,0.133f,0.80f}};
+    const Float3 cols[3] = {{0.80f,0.133f,0.133f}, {0.133f,0.80f,0.133f}, {0.133f,0.133f,0.80f}};
 
     for (int a = 0; a < 3; ++a) {
         axisStart[a] = static_cast<uint32_t>(out.size());
         for (int i = 0; i < kCircleSegs; ++i) {
             float a0 = (float)i / kCircleSegs * kPI2;
             float a1 = (float)(i + 1) / kCircleSegs * kPI2;
-            XMFLOAT3 c0, c1;
+            Float3 c0, c1;
             if (a == 0) { // YZ plane
                 c0 = {0, cosf(a0)*kCircleRad, sinf(a0)*kCircleRad};
                 c1 = {0, cosf(a1)*kCircleRad, sinf(a1)*kCircleRad};
@@ -200,12 +197,12 @@ static void buildRotateVerts(std::vector<Vertex>& out, uint32_t axisStart[3], ui
 
 static void buildScaleVerts(std::vector<Vertex>& out, uint32_t axisStart[3], uint32_t axisCount[3]) {
     // Task 1.4: spec colors X=#CC2222, Y=#22CC22, Z=#2222CC
-    const XMFLOAT3 cols[3] = {{0.80f,0.133f,0.133f}, {0.133f,0.80f,0.133f}, {0.133f,0.133f,0.80f}};
-    const XMFLOAT3 dirs[3] = {{1,0,0}, {0,1,0}, {0,0,1}};
+    const Float3 cols[3] = {{0.80f,0.133f,0.133f}, {0.133f,0.80f,0.133f}, {0.133f,0.133f,0.80f}};
+    const Float3 dirs[3] = {{1,0,0}, {0,1,0}, {0,0,1}};
 
     for (int a = 0; a < 3; ++a) {
         axisStart[a] = static_cast<uint32_t>(out.size());
-        XMFLOAT3 sEnd = {dirs[a].x * kAxisLen, dirs[a].y * kAxisLen, dirs[a].z * kAxisLen};
+        Float3 sEnd = {dirs[a].x * kAxisLen, dirs[a].y * kAxisLen, dirs[a].z * kAxisLen};
         addCylinder(out, {0,0,0}, sEnd, kShaftRad, kShaftSegs, cols[a]);
         addSolidCube(out, sEnd.x, sEnd.y, sEnd.z, kCubeSize, cols[a]);
         axisCount[a] = static_cast<uint32_t>(out.size()) - axisStart[a];
@@ -216,89 +213,90 @@ static void buildScaleVerts(std::vector<Vertex>& out, uint32_t axisStart[3], uin
 // GizmoTransform implementation
 // ============================================================================
 
-void GizmoTransform::init(ID3D12Device* device) {
+bool GizmoTransform::init() {
     {
         std::vector<Vertex> verts;
         buildTranslateVerts(verts, translateAxisStart_, translateAxisCount_);
         translateVertCount_ = static_cast<uint32_t>(verts.size());
-        gizmo_upload_vb(device, verts.data(), translateVertCount_,
-                        translateVB_, translateVBView_, "GizmoTransform_Translate");
+        translateVB_ = gizmo_upload_vb(verts.data(), translateVertCount_,
+                        "GizmoTransform_Translate");
     }
     {
         std::vector<Vertex> verts;
         buildRotateVerts(verts, rotateAxisStart_, rotateAxisCount_);
         rotateVertCount_ = static_cast<uint32_t>(verts.size());
-        gizmo_upload_vb(device, verts.data(), rotateVertCount_,
-                        rotateVB_, rotateVBView_, "GizmoTransform_Rotate");
+        rotateVB_ = gizmo_upload_vb(verts.data(), rotateVertCount_,
+                        "GizmoTransform_Rotate");
     }
     {
         std::vector<Vertex> verts;
         buildScaleVerts(verts, scaleAxisStart_, scaleAxisCount_);
         scaleVertCount_ = static_cast<uint32_t>(verts.size());
-        gizmo_upload_vb(device, verts.data(), scaleVertCount_,
-                        scaleVB_, scaleVBView_, "GizmoTransform_Scale");
+        scaleVB_ = gizmo_upload_vb(verts.data(), scaleVertCount_,
+                        "GizmoTransform_Scale");
     }
+    return translateVB_ != RHI_NULL && rotateVB_ != RHI_NULL && scaleVB_ != RHI_NULL;
 }
 
-void GizmoTransform::draw(ID3D12GraphicsCommandList* cmdList) {
-    drawTranslate(cmdList);
+void GizmoTransform::draw(RhiCmdList cmd) {
+    drawTranslate(cmd);
 }
 
-void GizmoTransform::drawTranslate(ID3D12GraphicsCommandList* cmdList) {
-    cmdList->IASetVertexBuffers(0, 1, &translateVBView_);
-    cmdList->DrawInstanced(translateVertCount_, 1, 0, 0);
+void GizmoTransform::drawTranslate(RhiCmdList cmd) {
+    rhi()->cmd_set_vertex_buffer(cmd, 0, translateVB_, 0, sizeof(Vertex));
+    rhi()->cmd_draw(cmd, translateVertCount_, 1, 0, 0);
 }
 
-void GizmoTransform::drawRotate(ID3D12GraphicsCommandList* cmdList) {
-    cmdList->IASetVertexBuffers(0, 1, &rotateVBView_);
-    cmdList->DrawInstanced(rotateVertCount_, 1, 0, 0);
+void GizmoTransform::drawRotate(RhiCmdList cmd) {
+    rhi()->cmd_set_vertex_buffer(cmd, 0, rotateVB_, 0, sizeof(Vertex));
+    rhi()->cmd_draw(cmd, rotateVertCount_, 1, 0, 0);
 }
 
-void GizmoTransform::drawScale(ID3D12GraphicsCommandList* cmdList) {
-    cmdList->IASetVertexBuffers(0, 1, &scaleVBView_);
-    cmdList->DrawInstanced(scaleVertCount_, 1, 0, 0);
+void GizmoTransform::drawScale(RhiCmdList cmd) {
+    rhi()->cmd_set_vertex_buffer(cmd, 0, scaleVB_, 0, sizeof(Vertex));
+    rhi()->cmd_draw(cmd, scaleVertCount_, 1, 0, 0);
 }
 
-void GizmoTransform::drawMode(ID3D12GraphicsCommandList* cmdList,
+void GizmoTransform::drawMode(RhiCmdList cmd,
                                int mode, int activeAxis) {
     // Choose the right VB and per-axis ranges
-    D3D12_VERTEX_BUFFER_VIEW* vbView;
+    RhiBuffer vb;
     uint32_t* axisStarts;
     uint32_t* axisCounts;
     uint32_t totalVerts;
 
     switch (mode) {
         case 0:
-            vbView = &translateVBView_;
+            vb = translateVB_;
             axisStarts = translateAxisStart_;
             axisCounts = translateAxisCount_;
             totalVerts = translateVertCount_;
             break;
         case 1:
-            vbView = &rotateVBView_;
+            vb = rotateVB_;
             axisStarts = rotateAxisStart_;
             axisCounts = rotateAxisCount_;
             totalVerts = rotateVertCount_;
             break;
         case 2:
-            vbView = &scaleVBView_;
+            vb = scaleVB_;
             axisStarts = scaleAxisStart_;
             axisCounts = scaleAxisCount_;
             totalVerts = scaleVertCount_;
             break;
         default:
-            vbView = &translateVBView_;
+            vb = translateVB_;
             axisStarts = translateAxisStart_;
             axisCounts = translateAxisCount_;
             totalVerts = translateVertCount_;
             break;
     }
 
-    cmdList->IASetVertexBuffers(0, 1, vbView);
+    rhi()->cmd_set_vertex_buffer(cmd, 0, vb, 0, sizeof(Vertex));
 
     if (activeAxis < 0 || activeAxis > 2) {
         // No highlight — draw everything in one call
-        cmdList->DrawInstanced(totalVerts, 1, 0, 0);
+        rhi()->cmd_draw(cmd, totalVerts, 1, 0, 0);
     } else {
         // Draw each axis separately: non-highlighted at normal brightness,
         // highlighted axis at boosted brightness via root constant color.
@@ -308,26 +306,26 @@ void GizmoTransform::drawMode(ID3D12GraphicsCommandList* cmdList,
             if (a == activeAxis) {
                 // Highlight: set bright white color multiplier
                 const float bright[4] = {1.8f, 1.8f, 1.8f, 0.0f};
-                cmdList->SetGraphicsRoot32BitConstants(1, 4, bright, 0);
+                rhi()->cmd_set_root_constants(cmd, 1, bright, 4, 0);
             } else {
                 // Normal: vertex colors pass through (multiplied by 1.0)
                 const float normal[4] = {1.0f, 1.0f, 1.0f, 0.0f};
-                cmdList->SetGraphicsRoot32BitConstants(1, 4, normal, 0);
+                rhi()->cmd_set_root_constants(cmd, 1, normal, 4, 0);
             }
 
-            cmdList->DrawInstanced(axisCounts[a], 1, axisStarts[a], 0);
+            rhi()->cmd_draw(cmd, axisCounts[a], 1, axisStarts[a], 0);
         }
 
         // Reset to normal
         const float reset[4] = {1.0f, 1.0f, 1.0f, 0.0f};
-        cmdList->SetGraphicsRoot32BitConstants(1, 4, reset, 0);
+        rhi()->cmd_set_root_constants(cmd, 1, reset, 4, 0);
     }
 }
 
 void GizmoTransform::shutdown() {
-    translateVB_.Reset();
-    rotateVB_.Reset();
-    scaleVB_.Reset();
+    if (translateVB_ != RHI_NULL) { rhi()->buffer_destroy(translateVB_); translateVB_ = RHI_NULL; }
+    if (rotateVB_ != RHI_NULL) { rhi()->buffer_destroy(rotateVB_); rotateVB_ = RHI_NULL; }
+    if (scaleVB_ != RHI_NULL) { rhi()->buffer_destroy(scaleVB_); scaleVB_ = RHI_NULL; }
 }
 
 } // namespace uz

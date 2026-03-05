@@ -70,6 +70,19 @@ struct alignas(8) Vec2 {
 }
 
 // ============================================================================
+// Float3 — 12-byte packed POD for GPU vertex data (no SIMD padding)
+//
+// Use Float3 for vertex attributes, GPU constant buffers, and serialization.
+// Use Vec3 for engine math (SIMD-aligned, has padding).
+// ============================================================================
+
+struct Float3 {
+    float x, y, z;
+};
+
+static_assert(sizeof(Float3) == 12, "Float3 must be 12 bytes (3 floats, no padding)");
+
+// ============================================================================
 // Vec3 — padded to 16 bytes for SIMD alignment
 // ============================================================================
 
