@@ -15,8 +15,8 @@
 #include <DirectXMath.h>
 #include <wrl/client.h>
 
-#include "renderer/gizmos/gizmo_registry.h"
-#include "renderer/gizmos/gizmo_transform.h"
+#include "engine/renderer/gizmos/gizmo_registry.h"
+#include "engine/renderer/gizmos/gizmo_transform.h"
 
 namespace uz {
 

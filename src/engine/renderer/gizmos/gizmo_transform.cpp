@@ -7,7 +7,7 @@
 // issue separate draw calls per axis for hover highlight feedback.
 
 #include "gizmo_transform.h"
-#include "renderer/gizmos/gizmo_utils.h"
+#include "engine/renderer/gizmos/gizmo_utils.h"
 
 #include <cmath>
 #include <vector>

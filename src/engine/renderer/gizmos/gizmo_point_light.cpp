@@ -4,7 +4,7 @@
 
 #include "gizmo_point_light.h"
 #include "gizmo_utils.h"
-#include "renderer/renderer.h"
+#include "engine/renderer/renderer.h"
 
 #include <cmath>
 

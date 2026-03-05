@@ -6,7 +6,7 @@
 // NodeType enum value. To add a new gizmo for a new NodeType, just
 // register it — no changes to EditorComponent needed.
 
-#include "renderer/gizmos/gizmo_renderer.h"
+#include "engine/renderer/gizmos/gizmo_renderer.h"
 
 #include <array>
 #include <cstdint>

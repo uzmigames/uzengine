@@ -6,13 +6,13 @@
 
 #include "editor_component.h"
 
-#include "renderer/renderer.h"  // For Vertex struct
+#include "engine/renderer/renderer.h"  // For Vertex struct
 
 // Gizmo types — each is a self-contained GizmoRenderer implementation.
-#include "renderer/gizmos/gizmo_cube.h"
-#include "renderer/gizmos/gizmo_camera.h"
-#include "renderer/gizmos/gizmo_directional_light.h"
-#include "renderer/gizmos/gizmo_point_light.h"
+#include "engine/renderer/gizmos/gizmo_cube.h"
+#include "engine/renderer/gizmos/gizmo_camera.h"
+#include "engine/renderer/gizmos/gizmo_directional_light.h"
+#include "engine/renderer/gizmos/gizmo_point_light.h"
 
 #include <cstring>
 #include <stdexcept>

@@ -5,7 +5,7 @@
 
 #include "gizmo_camera.h"
 #include "gizmo_utils.h"
-#include "renderer/renderer.h"
+#include "engine/renderer/renderer.h"
 
 using namespace DirectX;
 

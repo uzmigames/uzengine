@@ -1,15 +1,16 @@
 #pragma once
 
-// gizmo_camera.h — Camera frustum wireframe gizmo.
+// gizmo_cube.h — Default wireframe cube gizmo for generic nodes.
 
-#include "renderer/gizmos/gizmo_renderer.h"
+#include "engine/renderer/gizmos/gizmo_renderer.h"
 
 #include <d3d12.h>
+#include <DirectXMath.h>
 #include <wrl/client.h>
 
 namespace uz {
 
-class GizmoCamera final : public GizmoRenderer {
+class GizmoCube final : public GizmoRenderer {
 public:
     void init(ID3D12Device* device) override;
     void draw(ID3D12GraphicsCommandList* cmdList) override;

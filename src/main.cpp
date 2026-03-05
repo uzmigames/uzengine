@@ -9,8 +9,8 @@
 // The WebSocket server runs IXWebSocket's internal threads.
 // ---------------------------------------------------------------------------
 
-#include "renderer/renderer.h"
-#include "renderer/scene_params.h"
+#include "engine/renderer/renderer.h"
+#include "engine/renderer/scene_params.h"
 #include "encoder/jpeg_encoder.h"
 #include "network/ws_server.h"
 #include "common/timer.h"

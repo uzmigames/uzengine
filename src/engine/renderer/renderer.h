@@ -20,8 +20,8 @@
 #include <DirectXMath.h>
 #include <wrl/client.h>
 
-#include "../common/types.h"
-#include "../common/timer.h"
+#include "common/types.h"
+#include "common/timer.h"
 #include "scene_params.h"
 
 // RHI abstraction

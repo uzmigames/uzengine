@@ -1,15 +1,15 @@
 #pragma once
 
-// gizmo_directional_light.h — Directional light gizmo (rays + arrowheads).
+// gizmo_point_light.h — Point light gizmo (3 orthogonal wireframe circles).
 
-#include "renderer/gizmos/gizmo_renderer.h"
+#include "engine/renderer/gizmos/gizmo_renderer.h"
 
 #include <d3d12.h>
 #include <wrl/client.h>
 
 namespace uz {
 
-class GizmoDirectionalLight final : public GizmoRenderer {
+class GizmoPointLight final : public GizmoRenderer {
 public:
     void init(ID3D12Device* device) override;
     void draw(ID3D12GraphicsCommandList* cmdList) override;

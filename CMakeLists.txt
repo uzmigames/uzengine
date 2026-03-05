@@ -45,9 +45,8 @@ if(WIN32)
     # Auto-discover source files (UE5-style: drop a .cpp and it compiles).
     # CONFIGURE_DEPENDS makes Ninja re-run CMake when files are added/removed.
     # -----------------------------------------------------------------------
-    file(GLOB_RECURSE UZENGINE_RENDERER_LEGACY CONFIGURE_DEPENDS
-        src/renderer/*.cpp
-    )
+    # Legacy renderer glob removed — all renderer files are now under
+    # src/engine/renderer/ and discovered by UZENGINE_ENGINE.
     file(GLOB_RECURSE UZENGINE_ENGINE CONFIGURE_DEPENDS
         src/engine/scene/*.cpp
         src/engine/core/*.cpp
@@ -71,7 +70,6 @@ if(WIN32)
 
     add_executable(UzEngine WIN32
         src/main.cpp
-        ${UZENGINE_RENDERER_LEGACY}
         ${UZENGINE_ENGINE}
         ${UZENGINE_COMMON}
         ${UZENGINE_ENCODER}
@@ -137,6 +135,11 @@ file(GLOB_RECURSE TEST_ENGINE_SOURCES CONFIGURE_DEPENDS
     src/engine/debug/*.cpp
     src/engine/renderer/*.cpp        # ShaderManager, RenderGraph, ViewportRegistry, etc.
 )
+# Exclude DX12-dependent renderer files from test builds.
+list(FILTER TEST_ENGINE_SOURCES EXCLUDE REGEX "engine/renderer/renderer\\.cpp$")
+list(FILTER TEST_ENGINE_SOURCES EXCLUDE REGEX "engine/renderer/fps_overlay\\.cpp$")
+list(FILTER TEST_ENGINE_SOURCES EXCLUDE REGEX "engine/renderer/components/")
+list(FILTER TEST_ENGINE_SOURCES EXCLUDE REGEX "engine/renderer/gizmos/")
 # Common sources — exclude stb_impl.cpp (needs external/stb) and ipc_poller.cpp (needs ixwebsocket)
 file(GLOB_RECURSE TEST_COMMON_SOURCES CONFIGURE_DEPENDS
     src/common/*.cpp

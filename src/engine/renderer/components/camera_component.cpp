@@ -5,7 +5,7 @@
 
 #include "camera_component.h"
 
-#include "renderer/scene_params.h"
+#include "engine/renderer/scene_params.h"
 #include "engine/scene/scene.h"
 #include "engine/scene/scene_node.h"
 #include "engine/scene/component_data.h"

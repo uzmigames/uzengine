@@ -10,7 +10,7 @@
 // Unlike other GizmoRenderers (which are per-node-type), this is drawn
 // ONLY for the currently selected node, overlaid on top of everything.
 
-#include "renderer/gizmos/gizmo_renderer.h"
+#include "engine/renderer/gizmos/gizmo_renderer.h"
 
 #include <cstdint>
 

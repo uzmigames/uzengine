@@ -2,7 +2,7 @@
 
 // gizmo_utils.h — Shared utilities for gizmo GPU resource creation.
 
-#include "renderer/renderer.h"  // For Vertex struct
+#include "engine/renderer/renderer.h"  // For Vertex struct
 
 #include <cstdint>
 #include <cstring>
