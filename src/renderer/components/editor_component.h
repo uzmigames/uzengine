@@ -31,7 +31,8 @@ public:
     /// Scene node descriptor for gizmo rendering in the editor viewport.
     struct EditorNode {
         DirectX::XMFLOAT3 position{0.0f, 0.0f, 0.0f};
-        DirectX::XMFLOAT3 rotation{0.0f, 0.0f, 0.0f};  // euler angles (radians)
+        DirectX::XMFLOAT3 rotation{0.0f, 0.0f, 0.0f};  // euler angles (legacy, kept for compat)
+        DirectX::XMFLOAT4 rotationQuat{0.0f, 0.0f, 0.0f, 1.0f}; // quaternion (x,y,z,w) — authoritative
         DirectX::XMFLOAT3 scale{1.0f, 1.0f, 1.0f};
         DirectX::XMFLOAT3 color{0.8f, 0.8f, 0.8f};     // wireframe tint
         uint16_t          nodeType{1};                   // NodeType enum value
@@ -50,11 +51,17 @@ public:
     void init(ID3D12Device* device, ID3D12RootSignature* rootSig);
 
     /// Record draw commands for the editor overlay (grid + per-node gizmos).
+    /// cameraPos is the world-space eye position used to scale the gizmo by distance.
+    /// When usePivot is true, the transform gizmo is positioned at pivotPos instead
+    /// of the selected node's position (used for multi-select centroid gizmo, task 7.2).
     void draw(ID3D12GraphicsCommandList* cmdList,
               const DirectX::XMFLOAT4X4& viewProj,
+              DirectX::XMFLOAT3 cameraPos,
               uint32_t selectedNodeId = 0,
               int gizmoMode = 0,
-              int gizmoActiveAxis = -1);
+              int gizmoActiveAxis = -1,
+              bool usePivot = false,
+              DirectX::XMFLOAT3 pivotPos = {0.0f, 0.0f, 0.0f});
 
     /// Release all GPU resources.
     void shutdown();
@@ -68,13 +75,17 @@ public:
 private:
     void createLinePipelineState(ID3D12Device* device, ID3D12RootSignature* rootSig);
     void createSolidPipelineState(ID3D12Device* device, ID3D12RootSignature* rootSig);
+    void createGizmoNoDepthPSO(ID3D12Device* device, ID3D12RootSignature* rootSig);
     void createGridVertexBuffer(ID3D12Device* device);
 
     // Line-list PSO (shared by grid and all gizmo draws).
     Microsoft::WRL::ComPtr<ID3D12PipelineState> linePipelineState_;
 
-    // Solid triangle PSO (for transform gizmo handles — cones, cylinders, cubes).
+    // Solid triangle PSO (scene-depth tested — for node-type gizmos like cubes/lights).
     Microsoft::WRL::ComPtr<ID3D12PipelineState> solidPipelineState_;
+
+    // No-depth PSO for the interactive transform gizmo — always renders on top.
+    Microsoft::WRL::ComPtr<ID3D12PipelineState> gizmoNoDepthPSO_;
 
     // Ground grid vertex buffer.
     Microsoft::WRL::ComPtr<ID3D12Resource> gridVertexBuffer_;

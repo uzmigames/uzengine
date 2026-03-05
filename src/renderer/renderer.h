@@ -176,6 +176,16 @@ public:
     // Replace editor nodes (thread-safe delegate). For gizmo drag updates.
     void loadEditorNodes(std::vector<EditorNode> nodes) { editor_.loadNodes(std::move(nodes)); }
 
+#ifdef UZ_EDITOR
+    /// Return the scene-node ID at screen pixel (x, y), or 0 if no node.
+    /// Uses the pick buffer rendered during the previous frame (1-frame latency).
+    [[nodiscard]] uint32_t pickNodeAtScreen(int x, int y) const;
+
+    /// Return all unique node IDs whose pixels fall within the screen rectangle.
+    /// Rect is (left, top, width, height) in screen pixels.
+    [[nodiscard]] std::vector<uint32_t> boxPickNodes(int x, int y, int w, int h) const;
+#endif
+
 private:
     // Initialization sub-steps (called by init).
     void createDevice();
@@ -271,6 +281,10 @@ private:
     // per-node MVP can be composed during editor rendering.
     DirectX::XMFLOAT4X4 viewProj_{};
 
+    // Camera world-space eye position, updated each frame — passed to
+    // EditorComponent::draw() for gizmo distance scaling (task 1.5).
+    DirectX::XMFLOAT3 camEyePos_{0.0f, 0.0f, 0.0f};
+
     // Accumulated rotation angles (radians).  Updated each frame via delta-time
     // so that animation speed is independent of frame-timing jitter.
     float rotAngleY_ = 0.0f;
@@ -305,6 +319,30 @@ private:
     // When true, render() draws the editor scene (grid + wireframe cubes)
     // instead of the legacy spinning pyramid.
     bool editorMode_ = true;
+
+#ifdef UZ_EDITOR
+    // -----------------------------------------------------------------------
+    // Pick buffer — 1/4-resolution RGBA8 render target for node-ID picking.
+    // Each pixel encodes the node ID as RGB bytes (A=1); nodeId 0 = empty.
+    // Updated every frame alongside JPEG readback.
+    // -----------------------------------------------------------------------
+    void createPickBuffer();
+    void renderPickBuffer(ID3D12GraphicsCommandList* cmd);
+    void performPickReadback();
+
+    Microsoft::WRL::ComPtr<ID3D12Resource>       pickRT_;       // 1/4-res RGBA8 pick render target
+    Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> pickRTVHeap_;
+    Microsoft::WRL::ComPtr<ID3D12Resource>       pickDepth_;    // 1/4-res D32 depth for pick pass
+    Microsoft::WRL::ComPtr<ID3D12DescriptorHeap> pickDSVHeap_;
+    Microsoft::WRL::ComPtr<ID3D12Resource>       pickReadback_; // CPU-readable staging buffer
+    Microsoft::WRL::ComPtr<ID3D12PipelineState>  pickPSO_;      // Flat-color pick PSO
+    Microsoft::WRL::ComPtr<ID3D12Resource>       pickCubeVB_;   // 36-vertex solid unit cube
+    D3D12_VERTEX_BUFFER_VIEW                     pickCubeVBView_{};
+    uint32_t             pickW_ = 0;  // pick buffer width  (= width_  / 4)
+    uint32_t             pickH_ = 0;  // pick buffer height (= height_ / 4)
+    mutable std::mutex   pickMutex_;
+    std::vector<uint8_t> pickData_;   // pickW_ * pickH_ * 4 bytes (RGBA, CPU copy)
+#endif
 };
 
 } // namespace uz

@@ -453,6 +453,16 @@ int WINAPI WinMain(
                     }
                 }
 
+                // Prefer GPU pick buffer (pixel-accurate) when available.
+#ifdef UZ_EDITOR
+                if (g_renderer) {
+                    uint32_t gpuId = g_renderer->pickNodeAtScreen(static_cast<int>(sx), static_cast<int>(sy));
+                    if (gpuId != 0) {
+                        bestNodeId = static_cast<int>(gpuId);
+                    }
+                }
+#endif
+
                 // Send response back via WS text message.
                 nlohmann::json resp;
                 resp["type"] = "pickResult";
@@ -501,6 +511,29 @@ int WINAPI WinMain(
                 } else {
                     g_scene.selectedNodeId.store(0, std::memory_order_relaxed);
                 }
+                return;
+            }
+
+            // -- Task 2.5: box-pick — return all node IDs within a screen rect ----
+            if (type == "editor.boxPick") {
+                const int bx = j.value("x", 0);
+                const int by = j.value("y", 0);
+                const int bw = j.value("width", 0);
+                const int bh = j.value("height", 0);
+
+                nlohmann::json resp;
+                resp["type"] = "boxPickResult";
+#ifdef UZ_EDITOR
+                if (g_renderer) {
+                    auto ids = g_renderer->boxPickNodes(bx, by, bw, bh);
+                    resp["nodeIds"] = ids;
+                } else {
+                    resp["nodeIds"] = nlohmann::json::array();
+                }
+#else
+                resp["nodeIds"] = nlohmann::json::array();
+#endif
+                wsServer.broadcastText(resp.dump());
                 return;
             }
 
@@ -593,11 +626,16 @@ int WINAPI WinMain(
                     0.1f, 500.0f);
                 XMMATRIX vpMat = view * proj;
 
-                // Gizmo axis handle length (must match gizmo_transform.cpp kAxisLen)
-                constexpr float kAxisLen = 2.5f;
-                // Rotation circle radius (must match gizmo_transform.cpp kCircleRad)
-                constexpr float kCircleRad = 1.8f;
-                constexpr int   kCircleSamples = 16; // points to sample per arc
+                // Scale hit-test radii by camera distance (matches renderer task 1.5).
+                // Base constants match gizmo_transform.cpp kAxisLen / kCircleRad.
+                const float gizmoDistBD = sqrtf(
+                    (selPos.x-camX)*(selPos.x-camX) +
+                    (selPos.y-camY)*(selPos.y-camY) +
+                    (selPos.z-camZ)*(selPos.z-camZ));
+                const float gizmoScaleBD = std::max(gizmoDistBD * 0.1f, 0.1f);
+                const float kAxisLen    = 2.5f * gizmoScaleBD;
+                const float kCircleRad  = 1.8f * gizmoScaleBD;
+                constexpr int kCircleSamples = 16;
 
                 int gMode = g_scene.gizmoMode.load(std::memory_order_relaxed);
 
@@ -838,6 +876,9 @@ int WINAPI WinMain(
                     for (size_t i = 0; i < eNodes.size(); ++i) {
                         if (eNodes[i].nodeId == selId) {
                             eNodes[i].rotation = {newRot[0], newRot[1], newRot[2]};
+                            // Also update quaternion from euler for consistent rendering
+                            XMVECTOR q = XMQuaternionRotationRollPitchYaw(newRot[0], newRot[1], newRot[2]);
+                            XMStoreFloat4(&eNodes[i].rotationQuat, q);
                             break;
                         }
                     }
@@ -933,9 +974,15 @@ int WINAPI WinMain(
                     0.1f, 500.0f);
                 XMMATRIX vpMat = viewM * projM;
 
-                constexpr float kAxisLen = 2.5f;
-                constexpr float kCircleRad = 1.8f;
-                constexpr int   kCircleSamples = 16;
+                // Scale hit-test radii by camera distance (matches renderer task 1.5).
+                const float gizmoDistHV = sqrtf(
+                    (selPos.x-g_scene.camPosX)*(selPos.x-g_scene.camPosX) +
+                    (selPos.y-g_scene.camPosY)*(selPos.y-g_scene.camPosY) +
+                    (selPos.z-g_scene.camPosZ)*(selPos.z-g_scene.camPosZ));
+                const float gizmoScaleHV = std::max(gizmoDistHV * 0.1f, 0.1f);
+                const float kAxisLen    = 2.5f * gizmoScaleHV;
+                const float kCircleRad  = 1.8f * gizmoScaleHV;
+                constexpr int kCircleSamples = 16;
                 constexpr float kPI2 = 6.28318530718f;
                 int gMode = g_scene.gizmoMode.load(std::memory_order_relaxed);
 
@@ -1004,6 +1051,171 @@ int WINAPI WinMain(
                     hresp["axis"] = nullptr;
                 }
                 wsServer.broadcastText(hresp.dump());
+                return;
+            }
+
+            // -- Task 3.1: editor.setGizmo — set active node + gizmo mode ------------
+            if (type == "editor.setGizmo") {
+                uint32_t nodeId = j.value("nodeId", 0u);
+                std::string mode = j.value("mode", "translate");
+                g_scene.selectedNodeId.store(nodeId, std::memory_order_relaxed);
+                int modeInt = 0;
+                if      (mode == "rotate") modeInt = 1;
+                else if (mode == "scale")  modeInt = 2;
+                g_scene.gizmoMode.store(modeInt, std::memory_order_relaxed);
+
+                // Task 7.2: accept optional pivot for multi-select centroid gizmo.
+                if (j.contains("pivot") && j["pivot"].is_array() && j["pivot"].size() >= 3) {
+                    std::lock_guard<std::mutex> lk(g_scene.gizmoPivotMutex);
+                    g_scene.gizmoPivotX = j["pivot"][0].get<float>();
+                    g_scene.gizmoPivotY = j["pivot"][1].get<float>();
+                    g_scene.gizmoPivotZ = j["pivot"][2].get<float>();
+                    g_scene.useGizmoPivot.store(true, std::memory_order_relaxed);
+                } else {
+                    g_scene.useGizmoPivot.store(false, std::memory_order_relaxed);
+                }
+                return;
+            }
+
+            // -- Task 3.2: editor.setGizmoHover — store pre-computed hovered axis ---
+            if (type == "editor.setGizmoHover") {
+                std::string axis = j.value("axis", "");
+                int axisInt = -1;
+                if      (axis == "x") axisInt = 0;
+                else if (axis == "y") axisInt = 1;
+                else if (axis == "z") axisInt = 2;
+                g_scene.gizmoHoverAxis.store(axisInt, std::memory_order_relaxed);
+                return;
+            }
+
+            // -- Task 3.3: editor.setGizmoSpace — local/world toggle ---------------
+            if (type == "editor.setGizmoSpace") {
+                std::string space = j.value("space", "world");
+                g_scene.gizmoSpace.store(space == "local" ? 1 : 0, std::memory_order_relaxed);
+                return;
+            }
+
+            // -- Task 3.4: editor.setNodeTransformLive — apply live transform -------
+            if (type == "editor.setNodeTransformLive") {
+                if (!g_renderer) return;
+                uint32_t nodeId = j.value("nodeId", 0u);
+                if (nodeId == 0) return;
+
+                auto xform = j.value("transform", nlohmann::json::object());
+                auto pos   = xform.value("position", nlohmann::json::object());
+                auto rot   = xform.value("rotation", nlohmann::json::object());
+                auto scl   = xform.value("scale",    nlohmann::json::object());
+
+                const float px = pos.value("x", 0.0f);
+                const float py = pos.value("y", 0.0f);
+                const float pz = pos.value("z", 0.0f);
+                const float rw = rot.value("w", 1.0f);
+                const float rx = rot.value("x", 0.0f);
+                const float ry = rot.value("y", 0.0f);
+                const float rz = rot.value("z", 0.0f);
+                const float sx = scl.value("x", 1.0f);
+                const float sy = scl.value("y", 1.0f);
+                const float sz = scl.value("z", 1.0f);
+
+                // Update EditorNode (renderer visualization).
+                // Store quaternion directly — no lossy euler conversion.
+                auto eNodes = g_renderer->getEditorNodes();
+                for (auto& n : eNodes) {
+                    if (n.nodeId == nodeId) {
+                        n.position = {px, py, pz};
+                        // XMMatrixRotationQuaternion expects XMFLOAT4 as (x,y,z,w)
+                        n.rotationQuat = {rx, ry, rz, rw};
+                        n.scale = {sx, sy, sz};
+                        break;
+                    }
+                }
+                g_renderer->loadEditorNodes(std::move(eNodes));
+
+                // Update authoritative scene node.
+                if (g_sceneData) {
+                    uz::SceneNode* node = uz::scene_get_node(g_sceneData.get(), nodeId);
+                    if (node) {
+                        node->local_transform.position = {px, py, pz, 0.0f};
+                        node->local_transform.rotation = {rx, ry, rz, rw};  // uz Quat = (x,y,z,w)
+                        node->local_transform.scale    = {sx, sy, sz, 0.0f};
+                    }
+                }
+                return;
+            }
+
+            // -- Task 3.5: editor.commitTransform — finalize and return transform ---
+            if (type == "editor.commitTransform") {
+                uint32_t nodeId = j.value("nodeId", 0u);
+                nlohmann::json resp;
+                resp["type"]   = "commitTransformResult";
+                resp["nodeId"] = nodeId;   // Task 7.1: multi-select transform tracking
+
+                if (nodeId == 0 || !g_sceneData) {
+                    resp["transform"] = nullptr;
+                    wsServer.broadcastText(resp.dump());
+                    return;
+                }
+
+                const uz::SceneNode* node = uz::scene_get_node(g_sceneData.get(), nodeId);
+                if (!node) {
+                    resp["transform"] = nullptr;
+                    wsServer.broadcastText(resp.dump());
+                    return;
+                }
+
+                const auto& t = node->local_transform;
+                resp["transform"] = {
+                    {"position", {{"x", t.position.x}, {"y", t.position.y}, {"z", t.position.z}}},
+                    {"rotation", {{"w", t.rotation.w}, {"x", t.rotation.x}, {"y", t.rotation.y}, {"z", t.rotation.z}}},
+                    {"scale",    {{"x", t.scale.x},    {"y", t.scale.y},    {"z", t.scale.z}}}
+                };
+                wsServer.broadcastText(resp.dump());
+                return;
+            }
+
+            // -- Task 3.6: editor.getCamera — return view/proj matrices + position --
+            if (type == "editor.getCamera") {
+                using namespace DirectX;
+                if (!g_renderer) return;
+
+                const int vpW = g_renderer->getWidth();
+                const int vpH = g_renderer->getHeight();
+                const float yaw   = g_scene.camYaw;
+                const float pitch = g_scene.camPitch;
+                const float camX  = g_scene.camPosX;
+                const float camY  = g_scene.camPosY;
+                const float camZ  = g_scene.camPosZ;
+
+                XMVECTOR camPos = XMVectorSet(camX, camY, camZ, 1.0f);
+                float cosPitch = cosf(pitch), sinPitch = sinf(pitch);
+                float cosYaw   = cosf(yaw),   sinYaw   = sinf(yaw);
+                XMVECTOR fwd = XMVectorSet(
+                    cosPitch * sinYaw, sinPitch, cosPitch * cosYaw, 0.0f);
+                XMMATRIX viewM = XMMatrixLookAtLH(
+                    camPos, XMVectorAdd(camPos, fwd), XMVectorSet(0,1,0,0));
+                XMMATRIX projM = XMMatrixPerspectiveFovLH(
+                    XM_PIDIV4,
+                    (vpW > 0 && vpH > 0) ? (float)vpW / (float)vpH : 1.0f,
+                    0.1f, 500.0f);
+
+                // Send as DX row-major (matches pickNode projection convention).
+                XMFLOAT4X4 viewF, projF;
+                XMStoreFloat4x4(&viewF, viewM);
+                XMStoreFloat4x4(&projF, projM);
+
+                std::vector<float> viewArr(16), projArr(16);
+                for (int r = 0; r < 4; ++r)
+                    for (int c = 0; c < 4; ++c) {
+                        viewArr[r * 4 + c] = viewF.m[r][c];
+                        projArr[r * 4 + c] = projF.m[r][c];
+                    }
+
+                nlohmann::json resp;
+                resp["type"]     = "cameraMatrices";
+                resp["view"]     = viewArr;
+                resp["proj"]     = projArr;
+                resp["position"] = {camX, camY, camZ};
+                wsServer.broadcastText(resp.dump());
                 return;
             }
 
@@ -1176,7 +1388,14 @@ int WINAPI WinMain(
                     sn.local_transform.position.y,
                     sn.local_transform.position.z
                 };
-                edNode.rotation = {0.0f, 0.0f, 0.0f}; // Euler approximation not needed for gizmos
+                edNode.rotation = {0.0f, 0.0f, 0.0f}; // legacy euler (unused)
+                // Store quaternion from scene node (x,y,z,w)
+                edNode.rotationQuat = {
+                    sn.local_transform.rotation.x,
+                    sn.local_transform.rotation.y,
+                    sn.local_transform.rotation.z,
+                    sn.local_transform.rotation.w
+                };
                 edNode.scale = {
                     sn.local_transform.scale.x,
                     sn.local_transform.scale.y,
@@ -1445,7 +1664,14 @@ int WINAPI WinMain(
             // -- Build EditorNode for wireframe rendering. ------------------
             uz::DX12Renderer::EditorNode edNode;
             edNode.position = {px, py, pz};
-            edNode.rotation = {rx, ry, rz};
+            edNode.rotation = {rx, ry, rz}; // legacy euler
+            // Store quaternion from the scene node (already converted from euler above)
+            edNode.rotationQuat = {
+                node->local_transform.rotation.x,
+                node->local_transform.rotation.y,
+                node->local_transform.rotation.z,
+                node->local_transform.rotation.w
+            };
             edNode.scale    = {sx, sy, sz};
             edNode.nodeType = static_cast<uint16_t>(nodeType);
             edNode.nodeId   = static_cast<uint32_t>(id);

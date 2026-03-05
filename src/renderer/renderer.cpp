@@ -46,6 +46,42 @@ inline void ThrowIfFailed(HRESULT hr, const char* context = nullptr) {
     throw std::runtime_error(msg);
 }
 
+#ifdef UZ_EDITOR
+// Pick pass — minimal VS (same root signature) and flat-color PS.
+static constexpr const char* kPickVSSrc = R"hlsl(
+cbuffer TransformCB : register(b0) { float4x4 worldViewProj; };
+struct VSIn { float3 pos : POSITION; float3 col : COLOR; };
+float4 VSPick(VSIn i) : SV_POSITION { return mul(worldViewProj, float4(i.pos, 1.0)); }
+)hlsl";
+
+static constexpr const char* kPickPSSrc = R"hlsl(
+cbuffer ColorCB : register(b1) { float3 colorMul; float _pad; };
+float4 PSPick(float4 pos : SV_POSITION) : SV_TARGET { return float4(colorMul, 1.0); }
+)hlsl";
+
+// 36-vertex solid unit cube (centered at origin) for pick geometry.
+static const uz::Vertex kPickCubeVerts[36] = {
+    // +X
+    {{ 0.5f,-0.5f,-0.5f},{0,0,0}}, {{ 0.5f, 0.5f,-0.5f},{0,0,0}}, {{ 0.5f, 0.5f, 0.5f},{0,0,0}},
+    {{ 0.5f,-0.5f,-0.5f},{0,0,0}}, {{ 0.5f, 0.5f, 0.5f},{0,0,0}}, {{ 0.5f,-0.5f, 0.5f},{0,0,0}},
+    // -X
+    {{-0.5f,-0.5f, 0.5f},{0,0,0}}, {{-0.5f, 0.5f, 0.5f},{0,0,0}}, {{-0.5f, 0.5f,-0.5f},{0,0,0}},
+    {{-0.5f,-0.5f, 0.5f},{0,0,0}}, {{-0.5f, 0.5f,-0.5f},{0,0,0}}, {{-0.5f,-0.5f,-0.5f},{0,0,0}},
+    // +Y
+    {{-0.5f, 0.5f,-0.5f},{0,0,0}}, {{-0.5f, 0.5f, 0.5f},{0,0,0}}, {{ 0.5f, 0.5f, 0.5f},{0,0,0}},
+    {{-0.5f, 0.5f,-0.5f},{0,0,0}}, {{ 0.5f, 0.5f, 0.5f},{0,0,0}}, {{ 0.5f, 0.5f,-0.5f},{0,0,0}},
+    // -Y
+    {{-0.5f,-0.5f, 0.5f},{0,0,0}}, {{-0.5f,-0.5f,-0.5f},{0,0,0}}, {{ 0.5f,-0.5f,-0.5f},{0,0,0}},
+    {{-0.5f,-0.5f, 0.5f},{0,0,0}}, {{ 0.5f,-0.5f,-0.5f},{0,0,0}}, {{ 0.5f,-0.5f, 0.5f},{0,0,0}},
+    // +Z
+    {{-0.5f,-0.5f, 0.5f},{0,0,0}}, {{ 0.5f,-0.5f, 0.5f},{0,0,0}}, {{ 0.5f, 0.5f, 0.5f},{0,0,0}},
+    {{-0.5f,-0.5f, 0.5f},{0,0,0}}, {{ 0.5f, 0.5f, 0.5f},{0,0,0}}, {{-0.5f, 0.5f, 0.5f},{0,0,0}},
+    // -Z
+    {{ 0.5f,-0.5f,-0.5f},{0,0,0}}, {{-0.5f,-0.5f,-0.5f},{0,0,0}}, {{-0.5f, 0.5f,-0.5f},{0,0,0}},
+    {{ 0.5f,-0.5f,-0.5f},{0,0,0}}, {{-0.5f, 0.5f,-0.5f},{0,0,0}}, {{ 0.5f, 0.5f,-0.5f},{0,0,0}},
+};
+#endif // UZ_EDITOR
+
 } // anonymous namespace
 
 namespace uz {
@@ -77,6 +113,10 @@ void DX12Renderer::init(HWND hwnd, uint32_t width, uint32_t height) {
 
     // Editor-mode rendering component (grid + wireframe cubes).
     editor_.init(device_.Get(), rootSignature_.Get());
+
+#ifdef UZ_EDITOR
+    createPickBuffer();
+#endif
 
     // -----------------------------------------------------------------------
     // Viewport covers the full render area.
@@ -284,6 +324,15 @@ bool DX12Renderer::resize(int width, int height) {
         }
     }
 
+#ifdef UZ_EDITOR
+    // Recreate pick buffer resources at the new dimensions.
+    pickRT_.Reset();    pickRTVHeap_.Reset();
+    pickDepth_.Reset(); pickDSVHeap_.Reset();
+    pickReadback_.Reset();
+    pickPSO_.Reset();   pickCubeVB_.Reset();
+    createPickBuffer();
+#endif
+
     // Update viewport and scissor rect to match the new dimensions.
     viewport_.TopLeftX = 0.0f;
     viewport_.TopLeftY = 0.0f;
@@ -350,6 +399,7 @@ void DX12Renderer::update(double /*totalTime*/, double deltaTime) {
         std::memcpy(&vp4x4, &camState.view_proj, sizeof(Mat4));
         viewProj_      = vp4x4;
         worldViewProj_ = vp4x4;
+        camEyePos_ = { camState.eye_pos.x, camState.eye_pos.y, camState.eye_pos.z };
     } else {
         // Legacy pyramid spinning camera.
         const float dt = static_cast<float>(deltaTime);
@@ -441,7 +491,9 @@ void DX12Renderer::render(bool readback) {
         lightCB._pad      = 0.0f;
         commandList_->SetGraphicsRoot32BitConstants(2, 8, &lightCB, 0);
 
-        // Delegate editor drawing to the EditorComponent.
+#ifdef UZ_EDITOR
+        // Delegate editor drawing to the EditorComponent (gizmo render pass).
+        // Executed after main scene pass, before JPEG capture.
         uint32_t selNode = sceneParams_ ? sceneParams_->selectedNodeId.load(std::memory_order_relaxed) : 0;
         int gizMode = sceneParams_ ? sceneParams_->gizmoMode.load(std::memory_order_relaxed) : 0;
         int gizAxis = sceneParams_ ? sceneParams_->gizmoActiveAxis.load(std::memory_order_relaxed) : -1;
@@ -449,7 +501,18 @@ void DX12Renderer::render(bool readback) {
         if (gizAxis < 0 && sceneParams_) {
             gizAxis = sceneParams_->gizmoHoverAxis.load(std::memory_order_relaxed);
         }
-        editor_.draw(commandList_.Get(), viewProj_, selNode, gizMode, gizAxis);
+        // Task 7.2: read multi-select pivot from SceneParams if set.
+        bool usePivot = sceneParams_ && sceneParams_->useGizmoPivot.load(std::memory_order_relaxed);
+        DirectX::XMFLOAT3 pivotPos{0.0f, 0.0f, 0.0f};
+        if (usePivot && sceneParams_) {
+            std::lock_guard<std::mutex> lk(sceneParams_->gizmoPivotMutex);
+            pivotPos = {sceneParams_->gizmoPivotX, sceneParams_->gizmoPivotY, sceneParams_->gizmoPivotZ};
+        }
+        editor_.draw(commandList_.Get(), viewProj_, camEyePos_, selNode, gizMode, gizAxis, usePivot, pivotPos);
+
+        // Task 2.1-2.2: Render pick buffer and copy to CPU-readable staging.
+        renderPickBuffer(commandList_.Get());
+#endif // UZ_EDITOR
     } else if (!paused) {
         // Legacy pyramid draw — upload light data for shading.
         struct LightCBData {
@@ -598,6 +661,15 @@ void DX12Renderer::shutdown() {
     for (uint32_t i = 0; i < kFrameCount; ++i) {
         readbackBuffers_[i].Reset();
     }
+
+#ifdef UZ_EDITOR
+    // Release pick buffer resources.
+    pickPSO_.Reset();
+    pickCubeVB_.Reset();
+    pickReadback_.Reset();
+    pickDepth_.Reset();  pickDSVHeap_.Reset();
+    pickRT_.Reset();     pickRTVHeap_.Reset();
+#endif
 
     // Release editor-mode resources.
     editor_.shutdown();
@@ -830,7 +902,7 @@ void DX12Renderer::createRootSignature() {
     rootParams[1].Constants.ShaderRegister  = 1;    // b1
     rootParams[1].Constants.RegisterSpace   = 0;
     rootParams[1].Constants.Num32BitValues  = 4;    // float3 + padding
-    rootParams[1].ShaderVisibility          = D3D12_SHADER_VISIBILITY_VERTEX;
+    rootParams[1].ShaderVisibility          = D3D12_SHADER_VISIBILITY_ALL;
 
     rootParams[2].ParameterType             = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
     rootParams[2].Constants.ShaderRegister  = 2;    // b2
@@ -1335,6 +1407,11 @@ void DX12Renderer::performReadback() {
     // Indicate we are done reading from the readback buffer.
     D3D12_RANGE writeRange{ 0, 0 };
     readbackBuffers_[frameIndex_]->Unmap(0, &writeRange);
+
+#ifdef UZ_EDITOR
+    // Task 2.2: Read pick buffer data alongside the JPEG readback.
+    performPickReadback();
+#endif
 }
 
 // ===========================================================================
@@ -1395,5 +1472,366 @@ size_t DX12Renderer::loadEditorScene(std::vector<EditorNode> nodes) {
 void DX12Renderer::setScene(Scene* scene) {
     scene_ = scene;
 }
+
+#ifdef UZ_EDITOR
+// ===========================================================================
+// Pick buffer — Tasks 2.1-2.3
+// ===========================================================================
+
+void DX12Renderer::createPickBuffer() {
+    pickW_ = std::max(1u, width_  / 4);
+    pickH_ = std::max(1u, height_ / 4);
+
+    D3D12_HEAP_PROPERTIES hp{};
+    hp.Type                 = D3D12_HEAP_TYPE_DEFAULT;
+    hp.CPUPageProperty      = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+    hp.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+    hp.CreationNodeMask     = 1;
+    hp.VisibleNodeMask      = 1;
+
+    // --- Pick render target (R8G8B8A8_UNORM, 1/4 resolution) ---
+    {
+        D3D12_RESOURCE_DESC d{};
+        d.Dimension          = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+        d.Width              = pickW_;
+        d.Height             = pickH_;
+        d.DepthOrArraySize   = 1;
+        d.MipLevels          = 1;
+        d.Format             = DXGI_FORMAT_R8G8B8A8_UNORM;
+        d.SampleDesc         = {1, 0};
+        d.Layout             = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+        d.Flags              = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+
+        D3D12_CLEAR_VALUE cv{};
+        cv.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+
+        ThrowIfFailed(
+            device_->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d,
+                D3D12_RESOURCE_STATE_RENDER_TARGET, &cv, IID_PPV_ARGS(&pickRT_)),
+            "CreateCommittedResource (pick RT)");
+
+        D3D12_DESCRIPTOR_HEAP_DESC dhd{};
+        dhd.Type           = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+        dhd.NumDescriptors = 1;
+        ThrowIfFailed(
+            device_->CreateDescriptorHeap(&dhd, IID_PPV_ARGS(&pickRTVHeap_)),
+            "CreateDescriptorHeap (pick RTV)");
+
+        device_->CreateRenderTargetView(
+            pickRT_.Get(), nullptr, pickRTVHeap_->GetCPUDescriptorHandleForHeapStart());
+    }
+
+    // --- Pick depth buffer (D32_FLOAT, 1/4 resolution) ---
+    {
+        D3D12_RESOURCE_DESC d{};
+        d.Dimension          = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+        d.Width              = pickW_;
+        d.Height             = pickH_;
+        d.DepthOrArraySize   = 1;
+        d.MipLevels          = 1;
+        d.Format             = DXGI_FORMAT_D32_FLOAT;
+        d.SampleDesc         = {1, 0};
+        d.Layout             = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+        d.Flags              = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+
+        D3D12_CLEAR_VALUE cv{};
+        cv.Format                  = DXGI_FORMAT_D32_FLOAT;
+        cv.DepthStencil.Depth      = 1.0f;
+        cv.DepthStencil.Stencil    = 0;
+
+        ThrowIfFailed(
+            device_->CreateCommittedResource(&hp, D3D12_HEAP_FLAG_NONE, &d,
+                D3D12_RESOURCE_STATE_DEPTH_WRITE, &cv, IID_PPV_ARGS(&pickDepth_)),
+            "CreateCommittedResource (pick depth)");
+
+        D3D12_DESCRIPTOR_HEAP_DESC dhd{};
+        dhd.Type           = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
+        dhd.NumDescriptors = 1;
+        ThrowIfFailed(
+            device_->CreateDescriptorHeap(&dhd, IID_PPV_ARGS(&pickDSVHeap_)),
+            "CreateDescriptorHeap (pick DSV)");
+
+        D3D12_DEPTH_STENCIL_VIEW_DESC dsvd{};
+        dsvd.Format        = DXGI_FORMAT_D32_FLOAT;
+        dsvd.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+        dsvd.Flags         = D3D12_DSV_FLAG_NONE;
+        device_->CreateDepthStencilView(
+            pickDepth_.Get(), &dsvd, pickDSVHeap_->GetCPUDescriptorHandleForHeapStart());
+    }
+
+    // --- Readback buffer (CPU-readable staging, aligned pitch) ---
+    {
+        const uint32_t ap =
+            (pickW_ * 4 + D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1)
+            & ~(D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1);
+
+        D3D12_HEAP_PROPERTIES rhp = hp;
+        rhp.Type = D3D12_HEAP_TYPE_READBACK;
+
+        D3D12_RESOURCE_DESC bd{};
+        bd.Dimension          = D3D12_RESOURCE_DIMENSION_BUFFER;
+        bd.Width              = static_cast<uint64_t>(ap) * pickH_;
+        bd.Height             = 1;
+        bd.DepthOrArraySize   = 1;
+        bd.MipLevels          = 1;
+        bd.Format             = DXGI_FORMAT_UNKNOWN;
+        bd.SampleDesc         = {1, 0};
+        bd.Layout             = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+        ThrowIfFailed(
+            device_->CreateCommittedResource(&rhp, D3D12_HEAP_FLAG_NONE, &bd,
+                D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&pickReadback_)),
+            "CreateCommittedResource (pick readback)");
+    }
+
+    // --- Pick PSO (flat-color, depth-tested) ---
+    {
+        ComPtr<ID3DBlob> vs, ps, err;
+
+        if (FAILED(D3DCompile(kPickVSSrc, strlen(kPickVSSrc), nullptr, nullptr, nullptr,
+                "VSPick", "vs_5_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &vs, &err))) {
+            OutputDebugStringA("[UzEngine] Pick VS compile failed\n");
+            if (err) OutputDebugStringA(static_cast<const char*>(err->GetBufferPointer()));
+            return;
+        }
+        if (FAILED(D3DCompile(kPickPSSrc, strlen(kPickPSSrc), nullptr, nullptr, nullptr,
+                "PSPick", "ps_5_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &ps, &err))) {
+            OutputDebugStringA("[UzEngine] Pick PS compile failed\n");
+            if (err) OutputDebugStringA(static_cast<const char*>(err->GetBufferPointer()));
+            return;
+        }
+
+        D3D12_INPUT_ELEMENT_DESC layout[] = {
+            {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0,  D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+            {"COLOR",    0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0},
+        };
+
+        D3D12_GRAPHICS_PIPELINE_STATE_DESC psd{};
+        psd.pRootSignature                          = rootSignature_.Get();
+        psd.VS                                      = {vs->GetBufferPointer(), vs->GetBufferSize()};
+        psd.PS                                      = {ps->GetBufferPointer(), ps->GetBufferSize()};
+        psd.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+        psd.RasterizerState.FillMode                = D3D12_FILL_MODE_SOLID;
+        psd.RasterizerState.CullMode                = D3D12_CULL_MODE_BACK;
+        psd.DepthStencilState.DepthEnable           = TRUE;
+        psd.DepthStencilState.DepthWriteMask        = D3D12_DEPTH_WRITE_MASK_ALL;
+        psd.DepthStencilState.DepthFunc             = D3D12_COMPARISON_FUNC_LESS;
+        psd.InputLayout                             = {layout, 2};
+        psd.PrimitiveTopologyType                   = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+        psd.NumRenderTargets                        = 1;
+        psd.RTVFormats[0]                           = DXGI_FORMAT_R8G8B8A8_UNORM;
+        psd.DSVFormat                               = DXGI_FORMAT_D32_FLOAT;
+        psd.SampleDesc                              = {1, 0};
+        psd.SampleMask                              = UINT_MAX;
+
+        ThrowIfFailed(
+            device_->CreateGraphicsPipelineState(&psd, IID_PPV_ARGS(&pickPSO_)),
+            "CreateGraphicsPipelineState (pick)");
+    }
+
+    // --- Solid unit-cube vertex buffer (upload heap, static) ---
+    {
+        const UINT sz = sizeof(kPickCubeVerts);
+
+        D3D12_HEAP_PROPERTIES uhp = hp;
+        uhp.Type = D3D12_HEAP_TYPE_UPLOAD;
+
+        D3D12_RESOURCE_DESC bd{};
+        bd.Dimension          = D3D12_RESOURCE_DIMENSION_BUFFER;
+        bd.Width              = sz;
+        bd.Height             = 1;
+        bd.DepthOrArraySize   = 1;
+        bd.MipLevels          = 1;
+        bd.Format             = DXGI_FORMAT_UNKNOWN;
+        bd.SampleDesc         = {1, 0};
+        bd.Layout             = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+        ThrowIfFailed(
+            device_->CreateCommittedResource(&uhp, D3D12_HEAP_FLAG_NONE, &bd,
+                D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&pickCubeVB_)),
+            "CreateCommittedResource (pick cube VB)");
+
+        void* mapped = nullptr;
+        D3D12_RANGE r{0, 0};
+        ThrowIfFailed(pickCubeVB_->Map(0, &r, &mapped), "pick cube VB map");
+        std::memcpy(mapped, kPickCubeVerts, sz);
+        pickCubeVB_->Unmap(0, nullptr);
+
+        pickCubeVBView_.BufferLocation = pickCubeVB_->GetGPUVirtualAddress();
+        pickCubeVBView_.StrideInBytes  = sizeof(Vertex);
+        pickCubeVBView_.SizeInBytes    = sz;
+    }
+}
+
+void DX12Renderer::renderPickBuffer(ID3D12GraphicsCommandList* cmd) {
+    if (!pickRT_ || !pickPSO_ || !pickCubeVB_) return;
+
+    const D3D12_CPU_DESCRIPTOR_HANDLE pickRTV =
+        pickRTVHeap_->GetCPUDescriptorHandleForHeapStart();
+    const D3D12_CPU_DESCRIPTOR_HANDLE pickDSV =
+        pickDSVHeap_->GetCPUDescriptorHandleForHeapStart();
+
+    // Clear pick RT (black = nodeId 0 = empty) and depth.
+    const float black[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    cmd->ClearRenderTargetView(pickRTV, black, 0, nullptr);
+    cmd->ClearDepthStencilView(pickDSV, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+    cmd->OMSetRenderTargets(1, &pickRTV, FALSE, &pickDSV);
+
+    D3D12_VIEWPORT vp{};
+    vp.Width    = static_cast<float>(pickW_);
+    vp.Height   = static_cast<float>(pickH_);
+    vp.MinDepth = 0.0f;
+    vp.MaxDepth = 1.0f;
+    D3D12_RECT sc{0, 0, static_cast<LONG>(pickW_), static_cast<LONG>(pickH_)};
+    cmd->RSSetViewports(1, &vp);
+    cmd->RSSetScissorRects(1, &sc);
+
+    cmd->SetPipelineState(pickPSO_.Get());
+    cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    cmd->IASetVertexBuffers(0, 1, &pickCubeVBView_);
+
+    const XMMATRIX vpMat = XMLoadFloat4x4(&viewProj_);
+    auto nodes = editor_.getNodes();
+
+    for (const auto& node : nodes) {
+        if (node.nodeId == 0) continue;
+
+        // Build same TRS matrix as EditorComponent::draw() — using quaternion directly.
+        XMVECTOR rotQ2 = XMLoadFloat4(&node.rotationQuat);
+        if (XMVectorGetX(XMVector4LengthSq(rotQ2)) < 1e-12f)
+            rotQ2 = XMQuaternionIdentity();
+        const XMMATRIX world =
+            XMMatrixScaling(node.scale.x, node.scale.y, node.scale.z)
+            * XMMatrixRotationQuaternion(rotQ2)
+            * XMMatrixTranslation(node.position.x, node.position.y, node.position.z);
+
+        XMFLOAT4X4 mvp;
+        XMStoreFloat4x4(&mvp, world * vpMat);
+        cmd->SetGraphicsRoot32BitConstants(0, 16, &mvp, 0);
+
+        // Encode nodeId as RGB: R=bits[0:7], G=bits[8:15], B=bits[16:23].
+        const float r = static_cast<float>((node.nodeId      ) & 0xFF) / 255.0f;
+        const float g = static_cast<float>((node.nodeId >>  8) & 0xFF) / 255.0f;
+        const float b = static_cast<float>((node.nodeId >> 16) & 0xFF) / 255.0f;
+        const float col[4] = {r, g, b, 0.0f};
+        cmd->SetGraphicsRoot32BitConstants(1, 4, col, 0);
+
+        cmd->DrawInstanced(36, 1, 0, 0);
+    }
+
+    // Transition pickRT_ RENDER_TARGET → COPY_SOURCE, copy to readback buffer.
+    D3D12_RESOURCE_BARRIER toSrc{};
+    toSrc.Type                   = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+    toSrc.Transition.pResource   = pickRT_.Get();
+    toSrc.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    toSrc.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+    toSrc.Transition.StateAfter  = D3D12_RESOURCE_STATE_COPY_SOURCE;
+    cmd->ResourceBarrier(1, &toSrc);
+
+    const uint32_t ap =
+        (pickW_ * 4 + D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1)
+        & ~(D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1);
+
+    D3D12_TEXTURE_COPY_LOCATION srcLoc{};
+    srcLoc.pResource        = pickRT_.Get();
+    srcLoc.Type             = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+    srcLoc.SubresourceIndex = 0;
+
+    D3D12_TEXTURE_COPY_LOCATION dstLoc{};
+    dstLoc.pResource                          = pickReadback_.Get();
+    dstLoc.Type                               = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+    dstLoc.PlacedFootprint.Offset             = 0;
+    dstLoc.PlacedFootprint.Footprint.Format   = DXGI_FORMAT_R8G8B8A8_UNORM;
+    dstLoc.PlacedFootprint.Footprint.Width    = pickW_;
+    dstLoc.PlacedFootprint.Footprint.Height   = pickH_;
+    dstLoc.PlacedFootprint.Footprint.Depth    = 1;
+    dstLoc.PlacedFootprint.Footprint.RowPitch = ap;
+    cmd->CopyTextureRegion(&dstLoc, 0, 0, 0, &srcLoc, nullptr);
+
+    // Transition pick RT back to RENDER_TARGET for next frame.
+    D3D12_RESOURCE_BARRIER toRT = toSrc;
+    toRT.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_SOURCE;
+    toRT.Transition.StateAfter  = D3D12_RESOURCE_STATE_RENDER_TARGET;
+    cmd->ResourceBarrier(1, &toRT);
+}
+
+void DX12Renderer::performPickReadback() {
+    if (!pickReadback_ || pickW_ == 0 || pickH_ == 0) return;
+
+    const uint32_t ap =
+        (pickW_ * 4 + D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1)
+        & ~(D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1);
+    const SIZE_T readSize = static_cast<SIZE_T>(ap) * pickH_;
+
+    void* mapped = nullptr;
+    D3D12_RANGE readRange{0, readSize};
+    if (FAILED(pickReadback_->Map(0, &readRange, &mapped))) return;
+
+    const uint32_t rowBytes = pickW_ * 4;
+    std::vector<uint8_t> tmp(static_cast<size_t>(rowBytes) * pickH_);
+    const auto* src = static_cast<const uint8_t*>(mapped);
+    uint8_t*    dst = tmp.data();
+
+    for (uint32_t row = 0; row < pickH_; ++row) {
+        std::memcpy(dst, src, rowBytes);
+        src += ap;
+        dst += rowBytes;
+    }
+
+    D3D12_RANGE wr{0, 0};
+    pickReadback_->Unmap(0, &wr);
+
+    {
+        std::lock_guard<std::mutex> lk(pickMutex_);
+        pickData_ = std::move(tmp);
+    }
+}
+
+uint32_t DX12Renderer::pickNodeAtScreen(int x, int y) const {
+    std::lock_guard<std::mutex> lk(pickMutex_);
+    if (pickData_.empty() || pickW_ == 0 || pickH_ == 0) return 0;
+
+    const int px = std::clamp(x / 4, 0, static_cast<int>(pickW_) - 1);
+    const int py = std::clamp(y / 4, 0, static_cast<int>(pickH_) - 1);
+
+    const size_t idx = static_cast<size_t>(py) * pickW_ + px;
+    if (idx * 4 + 2 >= pickData_.size()) return 0;
+
+    const uint32_t r = pickData_[idx * 4 + 0];
+    const uint32_t g = pickData_[idx * 4 + 1];
+    const uint32_t b = pickData_[idx * 4 + 2];
+    return r | (g << 8) | (b << 16);
+}
+
+std::vector<uint32_t> DX12Renderer::boxPickNodes(int x, int y, int w, int h) const {
+    std::lock_guard<std::mutex> lk(pickMutex_);
+    if (pickData_.empty() || pickW_ == 0 || pickH_ == 0) return {};
+
+    const int x0 = std::clamp(x       / 4, 0, static_cast<int>(pickW_));
+    const int y0 = std::clamp(y       / 4, 0, static_cast<int>(pickH_));
+    const int x1 = std::clamp((x + w) / 4, 0, static_cast<int>(pickW_));
+    const int y1 = std::clamp((y + h) / 4, 0, static_cast<int>(pickH_));
+
+    std::vector<uint32_t> result;
+    for (int py = y0; py < y1; ++py) {
+        for (int px = x0; px < x1; ++px) {
+            const size_t idx = static_cast<size_t>(py) * pickW_ + px;
+            if (idx * 4 + 2 >= pickData_.size()) continue;
+
+            const uint32_t r  = pickData_[idx * 4 + 0];
+            const uint32_t g  = pickData_[idx * 4 + 1];
+            const uint32_t b  = pickData_[idx * 4 + 2];
+            const uint32_t id = r | (g << 8) | (b << 16);
+            if (id == 0) continue;
+
+            bool found = false;
+            for (uint32_t ex : result) { if (ex == id) { found = true; break; } }
+            if (!found) result.push_back(id);
+        }
+    }
+    return result;
+}
+
+#endif // UZ_EDITOR
 
 } // namespace uz

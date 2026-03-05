@@ -59,6 +59,7 @@ void EditorComponent::init(ID3D12Device* device, ID3D12RootSignature* rootSig) {
     transformGizmo_.init(device);
 
     createSolidPipelineState(device, rootSig);
+    createGizmoNoDepthPSO(device, rootSig);
 }
 
 // ============================================================================
@@ -67,9 +68,12 @@ void EditorComponent::init(ID3D12Device* device, ID3D12RootSignature* rootSig) {
 
 void EditorComponent::draw(ID3D12GraphicsCommandList* cmdList,
                            const XMFLOAT4X4& viewProj,
+                           XMFLOAT3 cameraPos,
                            uint32_t selectedNodeId,
                            int gizmoMode,
-                           int gizmoActiveAxis) {
+                           int gizmoActiveAxis,
+                           bool usePivot,
+                           XMFLOAT3 pivotPos) {
     // -- Ground grid --
     cmdList->SetPipelineState(linePipelineState_.Get());
     cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_LINELIST);
@@ -90,9 +94,13 @@ void EditorComponent::draw(ID3D12GraphicsCommandList* cmdList,
         const XMMATRIX vp = XMLoadFloat4x4(&viewProj);
 
         for (const auto& node : editorNodes_) {
+            XMVECTOR rotQ = XMLoadFloat4(&node.rotationQuat);
+            // Guard: if quaternion is zero/degenerate (uninitialized), use identity
+            if (XMVectorGetX(XMVector4LengthSq(rotQ)) < 1e-12f)
+                rotQ = XMQuaternionIdentity();
             const XMMATRIX nodeWorld =
                 XMMatrixScaling(node.scale.x, node.scale.y, node.scale.z)
-                * XMMatrixRotationRollPitchYaw(node.rotation.x, node.rotation.y, node.rotation.z)
+                * XMMatrixRotationQuaternion(rotQ)
                 * XMMatrixTranslation(node.position.x, node.position.y, node.position.z);
 
             XMFLOAT4X4 mvp;
@@ -116,21 +124,39 @@ void EditorComponent::draw(ID3D12GraphicsCommandList* cmdList,
         }
     }
 
-    // -- Transform gizmo for selected node (using SOLID PSO) --
-    if (foundSelected && selectedNodeId > 0) {
-        cmdList->SetPipelineState(solidPipelineState_.Get());
+    // -- Transform gizmo for selected node (no-depth PSO: always on top) --
+    // Task 7.2: When usePivot is true, draw gizmo at pivot (multi-select centroid)
+    // even if we didn't find a selectedNode in editorNodes_ (because the selection
+    // may span nodes not in the current editorNodes_ list). In that case we draw
+    // at the supplied pivotPos as long as selectedNodeId > 0.
+    bool drawGizmo = (foundSelected && selectedNodeId > 0)
+                  || (usePivot && selectedNodeId > 0);
+    if (drawGizmo) {
+        XMFLOAT3 gizmoOrigin = usePivot ? pivotPos : selectedPos;
+
+        // Task 1.3: Use depth-disabled PSO so gizmo is never occluded by scene.
+        cmdList->SetPipelineState(gizmoNoDepthPSO_.Get());
         cmdList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
         const XMMATRIX vp = XMLoadFloat4x4(&viewProj);
-        // Position gizmo at selected node, no rotation (world space gizmo)
-        const XMMATRIX gizmoWorld = XMMatrixTranslation(
-            selectedPos.x, selectedPos.y, selectedPos.z);
+
+        // Task 1.5: Scale gizmo proportional to camera distance so it stays
+        // a constant apparent size regardless of how far the camera is.
+        float dx = gizmoOrigin.x - cameraPos.x;
+        float dy = gizmoOrigin.y - cameraPos.y;
+        float dz = gizmoOrigin.z - cameraPos.z;
+        float dist = sqrtf(dx*dx + dy*dy + dz*dz);
+        float gizmoScale = std::max(dist * 0.1f, 0.1f);
+
+        // Position at gizmo origin, uniform scale by camera distance.
+        const XMMATRIX gizmoWorld =
+            XMMatrixScaling(gizmoScale, gizmoScale, gizmoScale)
+            * XMMatrixTranslation(gizmoOrigin.x, gizmoOrigin.y, gizmoOrigin.z);
 
         XMFLOAT4X4 mvp;
         XMStoreFloat4x4(&mvp, gizmoWorld * vp);
         cmdList->SetGraphicsRoot32BitConstants(0, 16, &mvp, 0);
 
-        // The vertex colors encode axis colors (R=X, G=Y, B=Z)
         const float gizmoCol[4] = {1.0f, 1.0f, 1.0f, 0.0f};
         cmdList->SetGraphicsRoot32BitConstants(1, 4, gizmoCol, 0);
 
@@ -278,6 +304,83 @@ void EditorComponent::createLinePipelineState(ID3D12Device* device,
 // ============================================================================
 // Private — Solid triangle PSO for transform gizmo handles
 // ============================================================================
+
+// Same shaders as solid PSO but depth test disabled — gizmo always on top.
+void EditorComponent::createGizmoNoDepthPSO(ID3D12Device* device,
+                                             ID3D12RootSignature* rootSig) {
+    UINT compileFlags = 0;
+#ifdef UZENGINE_DEBUG
+    compileFlags = D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
+#endif
+
+    ComPtr<ID3DBlob> vertexShader, pixelShader, errors;
+
+    HRESULT hr = D3DCompile(kVertexShaderSrc, strlen(kVertexShaderSrc),
+        "GizmoVS", nullptr, nullptr, "VSMain", "vs_5_0", compileFlags, 0,
+        &vertexShader, &errors);
+    if (FAILED(hr)) {
+        std::string msg = "GizmoNoDepth VS failed";
+        if (errors) { msg += ": "; msg += static_cast<const char*>(errors->GetBufferPointer()); }
+        throw std::runtime_error(msg);
+    }
+    errors.Reset();
+
+    hr = D3DCompile(kPixelShaderSrc, strlen(kPixelShaderSrc),
+        "GizmoPS", nullptr, nullptr, "PSMain", "ps_5_0", compileFlags, 0,
+        &pixelShader, &errors);
+    if (FAILED(hr)) {
+        std::string msg = "GizmoNoDepth PS failed";
+        if (errors) { msg += ": "; msg += static_cast<const char*>(errors->GetBufferPointer()); }
+        throw std::runtime_error(msg);
+    }
+
+    D3D12_INPUT_ELEMENT_DESC inputLayout[] = {
+        { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0,
+          D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+        { "COLOR", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, sizeof(XMFLOAT3),
+          D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 }
+    };
+
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc{};
+    psoDesc.InputLayout    = { inputLayout, _countof(inputLayout) };
+    psoDesc.pRootSignature = rootSig;
+    psoDesc.VS             = { vertexShader->GetBufferPointer(), vertexShader->GetBufferSize() };
+    psoDesc.PS             = { pixelShader->GetBufferPointer(),  pixelShader->GetBufferSize()  };
+
+    psoDesc.RasterizerState.FillMode              = D3D12_FILL_MODE_SOLID;
+    psoDesc.RasterizerState.CullMode              = D3D12_CULL_MODE_NONE;
+    psoDesc.RasterizerState.FrontCounterClockwise = FALSE;
+    psoDesc.RasterizerState.DepthClipEnable       = FALSE;
+
+    psoDesc.BlendState.AlphaToCoverageEnable  = FALSE;
+    psoDesc.BlendState.IndependentBlendEnable = FALSE;
+    psoDesc.BlendState.RenderTarget[0].BlendEnable           = FALSE;
+    psoDesc.BlendState.RenderTarget[0].LogicOpEnable         = FALSE;
+    psoDesc.BlendState.RenderTarget[0].SrcBlend              = D3D12_BLEND_ONE;
+    psoDesc.BlendState.RenderTarget[0].DestBlend             = D3D12_BLEND_ZERO;
+    psoDesc.BlendState.RenderTarget[0].BlendOp               = D3D12_BLEND_OP_ADD;
+    psoDesc.BlendState.RenderTarget[0].SrcBlendAlpha         = D3D12_BLEND_ONE;
+    psoDesc.BlendState.RenderTarget[0].DestBlendAlpha        = D3D12_BLEND_ZERO;
+    psoDesc.BlendState.RenderTarget[0].BlendOpAlpha          = D3D12_BLEND_OP_ADD;
+    psoDesc.BlendState.RenderTarget[0].LogicOp               = D3D12_LOGIC_OP_NOOP;
+    psoDesc.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+
+    // Depth test disabled — gizmo renders on top of all scene geometry.
+    psoDesc.DepthStencilState.DepthEnable    = FALSE;
+    psoDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+    psoDesc.DepthStencilState.StencilEnable  = FALSE;
+    psoDesc.DSVFormat                        = DXGI_FORMAT_D32_FLOAT;
+
+    psoDesc.SampleMask            = UINT_MAX;
+    psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+    psoDesc.NumRenderTargets      = 1;
+    psoDesc.RTVFormats[0]         = DXGI_FORMAT_R8G8B8A8_UNORM;
+    psoDesc.SampleDesc            = { 1, 0 };
+
+    ThrowIfFailed(
+        device->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&gizmoNoDepthPSO_)),
+        "CreateGraphicsPipelineState (gizmo no-depth)");
+}
 
 void EditorComponent::createSolidPipelineState(ID3D12Device* device,
                                                 ID3D12RootSignature* rootSig) {

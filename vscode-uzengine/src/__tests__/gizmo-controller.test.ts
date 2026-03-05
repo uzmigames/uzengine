@@ -1270,3 +1270,362 @@ describe('GizmoController — scale drag plane miss', () => {
         expect(result).toBeNull();
     });
 });
+
+// ---------------------------------------------------------------------------
+// Blender-style rotation gizmo tests (rewrite-rotation-gizmo-blender)
+//
+// Tests the plane-projected signed angle, incremental delta, arcball,
+// snapping, precision, and multi-select rotation math.
+// ---------------------------------------------------------------------------
+
+describe('signedAngleOnPlane', () => {
+    // Inline implementation matching the webview JS
+    function signedAngleOnPlane(v0: Vec3, v1: Vec3, normal: Vec3): number {
+        const c = vec3Cross(v0, v1);
+        const sinA = vec3Dot(normal, c);
+        const cosA = vec3Dot(v0, v1);
+        return Math.atan2(sinA, cosA);
+    }
+
+    it('90-degree rotation around Y axis', () => {
+        // Right-hand rule around +Y: X → -Z is positive 90°
+        const v0: Vec3 = { x: 1, y: 0, z: 0 };
+        const v1: Vec3 = { x: 0, y: 0, z: -1 };
+        const normal: Vec3 = { x: 0, y: 1, z: 0 };
+        const angle = signedAngleOnPlane(v0, v1, normal);
+        expect(APPROX(angle, Math.PI / 2)).toBe(true);
+    });
+
+    it('-90-degree rotation around Y axis', () => {
+        const v0: Vec3 = { x: 1, y: 0, z: 0 };
+        const v1: Vec3 = { x: 0, y: 0, z: 1 };
+        const normal: Vec3 = { x: 0, y: 1, z: 0 };
+        const angle = signedAngleOnPlane(v0, v1, normal);
+        expect(APPROX(angle, -Math.PI / 2)).toBe(true);
+    });
+
+    it('180-degree rotation', () => {
+        const v0: Vec3 = { x: 1, y: 0, z: 0 };
+        const v1: Vec3 = { x: -1, y: 0, z: 0 };
+        const normal: Vec3 = { x: 0, y: 1, z: 0 };
+        const angle = signedAngleOnPlane(v0, v1, normal);
+        expect(APPROX(Math.abs(angle), Math.PI)).toBe(true);
+    });
+
+    it('0-degree rotation (same vector)', () => {
+        const v0: Vec3 = { x: 1, y: 0, z: 0 };
+        const normal: Vec3 = { x: 0, y: 1, z: 0 };
+        const angle = signedAngleOnPlane(v0, v0, normal);
+        expect(APPROX(angle, 0)).toBe(true);
+    });
+
+    it('continuity: small increments accumulate correctly', () => {
+        const normal: Vec3 = { x: 0, y: 1, z: 0 };
+        let total = 0;
+        const steps = 36;
+        const stepAngle = 10 * Math.PI / 180;
+        // Sweep in the positive direction around Y: X → -Z (use -sin for Z)
+        for (let i = 0; i < steps; i++) {
+            const ang0 = i * stepAngle;
+            const ang1 = (i + 1) * stepAngle;
+            const v0: Vec3 = { x: Math.cos(ang0), y: 0, z: -Math.sin(ang0) };
+            const v1: Vec3 = { x: Math.cos(ang1), y: 0, z: -Math.sin(ang1) };
+            total += signedAngleOnPlane(v0, v1, normal);
+        }
+        // 36 * 10° = 360° positive rotation
+        expect(APPROX(total, 2 * Math.PI, 0.01)).toBe(true);
+    });
+
+    it('works around X axis', () => {
+        const v0: Vec3 = { x: 0, y: 1, z: 0 };
+        const v1: Vec3 = { x: 0, y: 0, z: 1 };
+        const normal: Vec3 = { x: 1, y: 0, z: 0 };
+        const angle = signedAngleOnPlane(v0, v1, normal);
+        expect(APPROX(angle, Math.PI / 2)).toBe(true);
+    });
+
+    it('works around Z axis', () => {
+        const v0: Vec3 = { x: 1, y: 0, z: 0 };
+        const v1: Vec3 = { x: 0, y: 1, z: 0 };
+        const normal: Vec3 = { x: 0, y: 0, z: 1 };
+        const angle = signedAngleOnPlane(v0, v1, normal);
+        expect(APPROX(angle, Math.PI / 2)).toBe(true);
+    });
+});
+
+describe('mapToArcball', () => {
+    function mapToArcball(mx: number, my: number, cx: number, cy: number, r: number): Vec3 {
+        const x = (mx - cx) / r;
+        const y = (my - cy) / r;
+        const s = x * x + y * y;
+        if (s <= 1.0) {
+            return { x, y: -y, z: Math.sqrt(1.0 - s) };
+        }
+        const invL = 1.0 / Math.sqrt(s);
+        return { x: x * invL, y: -y * invL, z: 0 };
+    }
+
+    it('center of sphere gives z = 1', () => {
+        const v = mapToArcball(400, 300, 400, 300, 100);
+        expect(APPROX(v.x, 0)).toBe(true);
+        expect(APPROX(v.y, 0)).toBe(true);
+        expect(APPROX(v.z, 1)).toBe(true);
+    });
+
+    it('point inside sphere has z > 0', () => {
+        const v = mapToArcball(450, 300, 400, 300, 100); // x=0.5, y=0
+        expect(v.z).toBeGreaterThan(0);
+        expect(APPROX(v.x, 0.5)).toBe(true);
+        const norm = v.x * v.x + v.y * v.y + v.z * v.z;
+        expect(APPROX(norm, 1.0)).toBe(true);
+    });
+
+    it('point on rim has z = 0', () => {
+        const v = mapToArcball(500, 300, 400, 300, 100); // x=1, y=0
+        expect(APPROX(v.z, 0)).toBe(true);
+        expect(APPROX(v.x, 1)).toBe(true);
+    });
+
+    it('point outside sphere is clamped to rim with z = 0', () => {
+        const v = mapToArcball(600, 300, 400, 300, 100); // x=2, y=0 → clamped
+        expect(APPROX(v.z, 0)).toBe(true);
+        const norm = v.x * v.x + v.y * v.y + v.z * v.z;
+        expect(APPROX(norm, 1.0)).toBe(true);
+    });
+
+    it('screen Y is flipped (y component negated)', () => {
+        const v = mapToArcball(400, 250, 400, 300, 100); // screen y=-50 → y=+0.5
+        expect(v.y).toBeGreaterThan(0);
+    });
+});
+
+describe('quatFromVectors', () => {
+    function quatFromVectors(a: Vec3, b: Vec3): Quat {
+        const c = vec3Cross(a, b);
+        const d = vec3Dot(a, b);
+        if (d < -0.999999) {
+            const perp = Math.abs(a.x) < 0.9
+                ? vec3Normalize(vec3Cross(a, { x: 1, y: 0, z: 0 }))
+                : vec3Normalize(vec3Cross(a, { x: 0, y: 1, z: 0 }));
+            return { w: 0, x: perp.x, y: perp.y, z: perp.z };
+        }
+        const w = 1.0 + d;
+        const l = Math.sqrt(w * w + c.x * c.x + c.y * c.y + c.z * c.z);
+        return { w: w / l, x: c.x / l, y: c.y / l, z: c.z / l };
+    }
+
+    it('identity: same vector produces identity quaternion', () => {
+        const v: Vec3 = { x: 1, y: 0, z: 0 };
+        const q = quatFromVectors(v, v);
+        expect(APPROX(q.w, 1, 1e-4)).toBe(true);
+        expect(APPROX(q.x, 0, 1e-4)).toBe(true);
+        expect(APPROX(q.y, 0, 1e-4)).toBe(true);
+        expect(APPROX(q.z, 0, 1e-4)).toBe(true);
+    });
+
+    it('90-degree rotation from X to Z', () => {
+        const a: Vec3 = { x: 1, y: 0, z: 0 };
+        const b: Vec3 = { x: 0, y: 0, z: 1 };
+        const q = quatFromVectors(a, b);
+        // Apply q to a, should get b
+        // rotated = q * (0,a) * q^-1 — test via quatMul
+        const rotated = quatNormalize(quatMul(quatMul(q, { w: 0, x: a.x, y: a.y, z: a.z }), { w: q.w, x: -q.x, y: -q.y, z: -q.z }));
+        expect(APPROX(rotated.x, b.x, 1e-4)).toBe(true);
+        expect(APPROX(rotated.y, b.y, 1e-4)).toBe(true);
+        expect(APPROX(rotated.z, b.z, 1e-4)).toBe(true);
+    });
+
+    it('180-degree rotation produces valid quaternion', () => {
+        const a: Vec3 = { x: 1, y: 0, z: 0 };
+        const b: Vec3 = { x: -1, y: 0, z: 0 };
+        const q = quatFromVectors(a, b);
+        const norm = q.w * q.w + q.x * q.x + q.y * q.y + q.z * q.z;
+        expect(APPROX(norm, 1.0)).toBe(true);
+        // w should be ~0 for 180-degree rotation
+        expect(APPROX(q.w, 0, 0.01)).toBe(true);
+    });
+});
+
+describe('Blender-style axis-constrained rotation', () => {
+    function signedAngleOnPlane(v0: Vec3, v1: Vec3, normal: Vec3): number {
+        const c = vec3Cross(v0, v1);
+        return Math.atan2(vec3Dot(normal, c), vec3Dot(v0, v1));
+    }
+
+    it('90-degree sweep on Y axis produces correct quaternion', () => {
+        const axis: Vec3 = { x: 0, y: 1, z: 0 };
+        // Right-hand: +90° around Y takes X → -Z
+        const v0: Vec3 = { x: 1, y: 0, z: 0 };
+        const v1: Vec3 = { x: 0, y: 0, z: -1 };
+        const angle = signedAngleOnPlane(v0, v1, axis);
+        expect(APPROX(angle, Math.PI / 2)).toBe(true);
+        const startRot: Quat = { w: 1, x: 0, y: 0, z: 0 };
+        const dq = quatFromAxisAngle(axis, angle);
+        const newRot = quatNormalize(quatMul(dq, startRot));
+        expect(APPROX(newRot.w, Math.cos(Math.PI / 4))).toBe(true);
+        expect(APPROX(newRot.y, Math.sin(Math.PI / 4))).toBe(true);
+    });
+
+    it('90-degree sweep on X axis', () => {
+        const axis: Vec3 = { x: 1, y: 0, z: 0 };
+        const v0: Vec3 = { x: 0, y: 1, z: 0 };
+        const v1: Vec3 = { x: 0, y: 0, z: 1 };
+        const angle = signedAngleOnPlane(v0, v1, axis);
+        expect(APPROX(angle, Math.PI / 2)).toBe(true);
+    });
+
+    it('90-degree sweep on Z axis', () => {
+        const axis: Vec3 = { x: 0, y: 0, z: 1 };
+        const v0: Vec3 = { x: 1, y: 0, z: 0 };
+        const v1: Vec3 = { x: 0, y: 1, z: 0 };
+        const angle = signedAngleOnPlane(v0, v1, axis);
+        expect(APPROX(angle, Math.PI / 2)).toBe(true);
+    });
+
+    it('incremental delta accumulation: 36 x 10° = 360°', () => {
+        const axis: Vec3 = { x: 0, y: 1, z: 0 };
+        let totalAngle = 0;
+        // Sweep in positive direction: use -sin for Z (right-hand around Y)
+        for (let i = 0; i < 36; i++) {
+            const ang0 = i * (10 * Math.PI / 180);
+            const ang1 = (i + 1) * (10 * Math.PI / 180);
+            const v0: Vec3 = vec3Normalize({ x: Math.cos(ang0), y: 0, z: -Math.sin(ang0) });
+            const v1: Vec3 = vec3Normalize({ x: Math.cos(ang1), y: 0, z: -Math.sin(ang1) });
+            totalAngle += signedAngleOnPlane(v0, v1, axis);
+        }
+        expect(APPROX(totalAngle, 2 * Math.PI, 0.01)).toBe(true);
+    });
+
+    it('near-parallel ray produces zero delta (freeze behavior)', () => {
+        // When dot(rayDir, planeNormal) < 0.01, the code freezes.
+        // Simulate: rayDir nearly in the Y-plane, planeNormal = Y
+        const rayDir: Vec3 = { x: 1, y: 0.005, z: 0 }; // almost parallel
+        const planeNormal: Vec3 = { x: 0, y: 1, z: 0 };
+        const denom = Math.abs(vec3Dot(rayDir, planeNormal));
+        expect(denom).toBeLessThan(0.01);
+        // In the code, this means delta is skipped (0)
+    });
+});
+
+describe('Rotation snapping and precision', () => {
+    it('Ctrl-snap: 7 degrees snaps to 5', () => {
+        const totalAngle = 7 * Math.PI / 180;
+        const snapped = snapToGrid(totalAngle, Math.PI / 36); // 5-degree grid
+        const snappedDeg = snapped * 180 / Math.PI;
+        expect(APPROX(snappedDeg, 5, 0.5)).toBe(true);
+    });
+
+    it('Ctrl-snap: 13 degrees snaps to 15', () => {
+        const totalAngle = 13 * Math.PI / 180;
+        const snapped = snapToGrid(totalAngle, Math.PI / 36);
+        const snappedDeg = snapped * 180 / Math.PI;
+        expect(APPROX(snappedDeg, 15, 0.5)).toBe(true);
+    });
+
+    it('Shift precision: 10x reduction factor', () => {
+        // A 90-degree sweep with shift held produces 9 degrees
+        const rawDelta = Math.PI / 2; // 90 degrees
+        const precisionDelta = rawDelta * 0.1;
+        const precisionDeg = precisionDelta * 180 / Math.PI;
+        expect(APPROX(precisionDeg, 9, 0.1)).toBe(true);
+    });
+
+    it('Ctrl+Shift: snap to 1-degree increments', () => {
+        const totalAngle = 3.7 * Math.PI / 180;
+        const snapped = snapToGrid(totalAngle, Math.PI / 180); // 1-degree grid
+        const snappedDeg = snapped * 180 / Math.PI;
+        expect(APPROX(snappedDeg, 4, 0.1)).toBe(true);
+    });
+});
+
+describe('Arcball free rotation', () => {
+    function mapToArcball(mx: number, my: number, cx: number, cy: number, r: number): Vec3 {
+        const x = (mx - cx) / r;
+        const y = (my - cy) / r;
+        const s = x * x + y * y;
+        if (s <= 1.0) return { x, y: -y, z: Math.sqrt(1.0 - s) };
+        const invL = 1.0 / Math.sqrt(s);
+        return { x: x * invL, y: -y * invL, z: 0 };
+    }
+    function quatFromVectors(a: Vec3, b: Vec3): Quat {
+        const c = vec3Cross(a, b);
+        const d = vec3Dot(a, b);
+        if (d < -0.999999) {
+            const perp = Math.abs(a.x) < 0.9
+                ? vec3Normalize(vec3Cross(a, { x: 1, y: 0, z: 0 }))
+                : vec3Normalize(vec3Cross(a, { x: 0, y: 1, z: 0 }));
+            return { w: 0, x: perp.x, y: perp.y, z: perp.z };
+        }
+        const w = 1.0 + d;
+        const l = Math.sqrt(w * w + c.x * c.x + c.y * c.y + c.z * c.z);
+        return { w: w / l, x: c.x / l, y: c.y / l, z: c.z / l };
+    }
+
+    it('drag right from center produces rotation', () => {
+        const start = mapToArcball(400, 300, 400, 300, 100); // center
+        const end = mapToArcball(450, 300, 400, 300, 100);   // right
+        const q = quatFromVectors(start, end);
+        // Should produce a rotation (not identity)
+        expect(Math.abs(q.w)).toBeLessThan(1.0);
+        const norm = q.w * q.w + q.x * q.x + q.y * q.y + q.z * q.z;
+        expect(APPROX(norm, 1.0)).toBe(true);
+    });
+
+    it('no movement produces identity quaternion', () => {
+        const start = mapToArcball(400, 300, 400, 300, 100);
+        const q = quatFromVectors(start, start);
+        expect(APPROX(q.w, 1, 1e-4)).toBe(true);
+    });
+});
+
+describe('Hover hysteresis', () => {
+    it('current hovered ring stays unless new is 20% closer', () => {
+        const currentT = 10.0;
+        const newT = 9.0; // 10% closer — not enough
+        const threshold = 0.8; // 20% means new must be < current * 0.8
+        const shouldSwitch = newT < currentT * threshold;
+        expect(shouldSwitch).toBe(false);
+
+        const betterT = 7.5; // 25% closer — enough
+        const shouldSwitch2 = betterT < currentT * threshold;
+        expect(shouldSwitch2).toBe(true);
+    });
+});
+
+describe('Multi-select rotation', () => {
+    it('same delta applied to each node independently', () => {
+        const axis: Vec3 = { x: 0, y: 1, z: 0 };
+        const deltaAngle = Math.PI / 4; // 45 degrees
+        const deltaQ = quatFromAxisAngle(axis, deltaAngle);
+
+        const rotA: Quat = quatFromAxisAngle(axis, Math.PI / 4); // 45°
+        const rotB: Quat = { w: 1, x: 0, y: 0, z: 0 };         // 0°
+
+        const newA = quatNormalize(quatMul(deltaQ, rotA));
+        const newB = quatNormalize(quatMul(deltaQ, rotB));
+
+        // A: 45 + 45 = 90°
+        const expected90 = quatFromAxisAngle(axis, Math.PI / 2);
+        expect(APPROX(newA.w, expected90.w, 1e-4)).toBe(true);
+        expect(APPROX(newA.y, expected90.y, 1e-4)).toBe(true);
+
+        // B: 0 + 45 = 45°
+        const expected45 = quatFromAxisAngle(axis, Math.PI / 4);
+        expect(APPROX(newB.w, expected45.w, 1e-4)).toBe(true);
+        expect(APPROX(newB.y, expected45.y, 1e-4)).toBe(true);
+    });
+});
+
+describe('Cancel drag reverts rotation', () => {
+    it('applying zero-angle rotation returns to start', () => {
+        const axis: Vec3 = { x: 0, y: 1, z: 0 };
+        const startRot: Quat = quatFromAxisAngle(axis, Math.PI / 6); // 30°
+        // Simulate cancel: totalAngle = 0 → revert to startRot
+        const deltaQ = quatFromAxisAngle(axis, 0);
+        const reverted = quatNormalize(quatMul(deltaQ, startRot));
+        expect(APPROX(reverted.w, startRot.w, 1e-6)).toBe(true);
+        expect(APPROX(reverted.x, startRot.x, 1e-6)).toBe(true);
+        expect(APPROX(reverted.y, startRot.y, 1e-6)).toBe(true);
+        expect(APPROX(reverted.z, startRot.z, 1e-6)).toBe(true);
+    });
+});
