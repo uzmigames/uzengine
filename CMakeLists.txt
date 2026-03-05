@@ -63,6 +63,9 @@ if(WIN32)
     file(GLOB_RECURSE UZENGINE_NETWORK CONFIGURE_DEPENDS
         src/network/*.cpp
     )
+    file(GLOB_RECURSE UZENGINE_EDITOR_APP CONFIGURE_DEPENDS
+        src/editor/*.cpp
+    )
     # RHI C backend (DX12 for Windows)
     file(GLOB_RECURSE UZENGINE_RHI_C CONFIGURE_DEPENDS
         src/engine/renderer/rhi/*.c
@@ -74,6 +77,7 @@ if(WIN32)
         ${UZENGINE_COMMON}
         ${UZENGINE_ENCODER}
         ${UZENGINE_NETWORK}
+        ${UZENGINE_EDITOR_APP}
         ${UZENGINE_RHI_C}
     )
 
@@ -89,6 +93,7 @@ if(WIN32)
         d3dcompiler
         dxguid
         ole32
+        winmm
         ixwebsocket::ixwebsocket
         nlohmann_json::nlohmann_json
         $<IF:$<TARGET_EXISTS:libjpeg-turbo::turbojpeg>,libjpeg-turbo::turbojpeg,libjpeg-turbo::turbojpeg-static>
