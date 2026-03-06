@@ -31,12 +31,22 @@ struct MeshProxy : public ISceneProxy {
     Mat4      transform = Mat4::identity();
     uz::Aabb  bounds_    = uz::Aabb::empty();
     uint32_t  render_flags_ = RENDER_LAYER_OPAQUE;
+    uint32_t  node_id     = 0;  // Scene node ID for selection matching
 
     // Pre-cached material values (set once via cache_material()).
-    float cached_albedo[3]    = {0.8f, 0.8f, 0.8f};
-    float cached_metallic     = 0.0f;
-    float cached_roughness    = 0.5f;
-    RhiTexture cached_albedo_tex = RHI_NULL;
+    float cached_albedo[3]      = {0.8f, 0.8f, 0.8f};
+    float cached_metallic       = 0.0f;
+    float cached_roughness      = 0.5f;
+    float cached_ao             = 1.0f;
+    float cached_emission[3]    = {0.0f, 0.0f, 0.0f};
+    float cached_emission_energy = 1.0f;
+
+    RhiTexture cached_albedo_tex    = RHI_NULL;
+    RhiTexture cached_normal_tex    = RHI_NULL;
+    RhiTexture cached_metallic_tex  = RHI_NULL;
+    RhiTexture cached_roughness_tex = RHI_NULL;
+    RhiTexture cached_ao_tex        = RHI_NULL;
+    RhiTexture cached_emission_tex  = RHI_NULL;
 };
 
 } // namespace uz

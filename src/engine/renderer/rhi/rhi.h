@@ -231,11 +231,31 @@ typedef struct RhiBlendState {
     RhiRenderTargetBlend render_targets[8];
 } RhiBlendState;
 
+typedef enum RhiStencilOp {
+    RHI_STENCIL_OP_KEEP      = 0,
+    RHI_STENCIL_OP_ZERO      = 1,
+    RHI_STENCIL_OP_REPLACE   = 2,
+    RHI_STENCIL_OP_INCR_SAT  = 3,
+    RHI_STENCIL_OP_DECR_SAT  = 4,
+    RHI_STENCIL_OP_INVERT    = 5,
+} RhiStencilOp;
+
+typedef struct RhiStencilOpDesc {
+    RhiStencilOp    fail_op;       /* stencil test fails */
+    RhiStencilOp    depth_fail_op; /* stencil passes, depth fails */
+    RhiStencilOp    pass_op;       /* both pass */
+    RhiCompareFunc  func;
+} RhiStencilOpDesc;
+
 typedef struct RhiDepthStencilState {
-    bool           depth_enable;
-    bool           depth_write;
-    RhiCompareFunc depth_func;
-    /* TODO Phase 2: stencil state */
+    bool              depth_enable;
+    bool              depth_write;
+    RhiCompareFunc    depth_func;
+    bool              stencil_enable;
+    uint8_t           stencil_read_mask;   /* default: 0xFF */
+    uint8_t           stencil_write_mask;  /* default: 0xFF */
+    RhiStencilOpDesc  front_face;
+    RhiStencilOpDesc  back_face;
 } RhiDepthStencilState;
 
 /* -----------------------------------------------------------------------
@@ -390,6 +410,9 @@ typedef struct rhi_backend_t {
     void (*cmd_clear_depth_stencil)(RhiCmdList cmd, RhiTexture ds,
                                     float depth, uint8_t stencil);
 
+    /* --- Stencil -------------------------------------------------------- */
+    void (*cmd_set_stencil_ref)(RhiCmdList cmd, uint8_t ref);
+
     /* --- Barriers ----------------------------------------------------- */
     void (*cmd_barrier_texture)(RhiCmdList cmd, RhiTexture tex,
                                 RhiResourceState src_state,
@@ -413,6 +436,25 @@ typedef struct rhi_backend_t {
     void (*set_debug_name)(uint64_t handle, const char *name);
     void (*begin_event)(RhiCmdList cmd, const char *name);
     void (*end_event)(RhiCmdList cmd);
+
+    /* --- GPU Timestamps (§6.4) ---------------------------------------- */
+    /* Create a GPU timestamp query heap with `count` query slots. */
+    uint64_t (*timestamp_query_heap_create)(uint32_t count);
+    /* Destroy a timestamp query heap. */
+    void     (*timestamp_query_heap_destroy)(uint64_t heap);
+    /* Record a GPU timestamp at slot `index` in the query heap. */
+    void     (*cmd_timestamp_write)(RhiCmdList cmd, uint64_t heap,
+                                    uint32_t index);
+    /* Resolve timestamp queries to a CPU-readable buffer. Returns
+     * the GPU timestamp frequency (ticks/second), or 0 on failure. */
+    uint64_t (*timestamp_readback)(uint64_t heap, uint64_t *out_ticks,
+                                   uint32_t first, uint32_t count);
+
+    /* --- GPU Memory Info (§6.3) --------------------------------------- */
+    /* Query GPU memory usage. Returns false if not supported. */
+    bool (*gpu_memory_info)(uint64_t *out_total_bytes,
+                            uint64_t *out_used_bytes,
+                            uint64_t *out_budget_bytes);
 } rhi_backend_t;
 
 /* -----------------------------------------------------------------------

@@ -17,6 +17,7 @@ struct VSInput {
     float3 position : POSITION;
     float3 normal   : NORMAL;
     float2 texcoord : TEXCOORD;
+    float4 tangent  : TANGENT; // xyz=tangent, w=sign
 };
 
 struct VSOutput {
@@ -24,6 +25,8 @@ struct VSOutput {
     float3 worldPos : TEXCOORD0;
     float3 normal   : TEXCOORD1;
     float2 texcoord : TEXCOORD2;
+    float3 tangent  : TEXCOORD3;
+    float3 bitangent: TEXCOORD4;
 };
 
 VSOutput VSMain(VSInput input) {
@@ -36,8 +39,13 @@ VSOutput VSMain(VSInput input) {
     // Transform position to screen space
     output.position = mul(viewProj, worldPos);
     
-    // Transform normal to world space (assumes no non-uniform scale)
-    output.normal = normalize(mul((float3x3)world, input.normal));
+    // Transform normal and tangent to world space
+    float3x3 normalMatrix = (float3x3)world;
+    output.normal = normalize(mul(normalMatrix, input.normal));
+    output.tangent = normalize(mul(normalMatrix, input.tangent.xyz));
+    
+    // Calculate bitangent
+    output.bitangent = normalize(cross(output.normal, output.tangent) * input.tangent.w);
     
     output.texcoord = input.texcoord;
     

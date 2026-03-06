@@ -20,16 +20,18 @@ struct alignas(16) FrameConstants {
     Vec2    inv_resolution;    // [280..287]
     float   time;              // [288..291]
     float   delta_time;        // [292..295]
-    RhiTexture white_texture;  // [296..303] (8 bytes on 64-bit)
+    RhiTexture white_texture;  // [296..303]
+    RhiTexture black_texture;  // [304..311]
+    RhiTexture normal_texture; // [312..319]
 
     // Directional light
-    Vec3    light_dir;         // [304..319]
-    Vec3    light_color;       // [320..335]
-    float   light_intensity;   // [336..339]
-    float   _pad2[3];          // [340..351]
+    Vec3    light_dir;         // [320..335]
+    Vec3    light_color;       // [336..351]
+    float   light_intensity;   // [352..355]
+    float   _pad2[3];          // [356..367]
 };
 
-static_assert(sizeof(FrameConstants) == 352, "FrameConstants size mismatch");
+static_assert(sizeof(FrameConstants) == 368, "FrameConstants size mismatch");
 static_assert(sizeof(FrameConstants) % 16 == 0, "FrameConstants must be 16-byte aligned for GPU upload");
 
 // ============================================================================

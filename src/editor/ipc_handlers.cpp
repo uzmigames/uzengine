@@ -9,6 +9,8 @@
 #include "common/ipc_registry.h"
 #include "common/ipc_poller.h"
 #include "common/types.h"
+#include "engine/core/crash_reporter.h"
+#include "engine/core/log_streamer.h"
 #include "engine/renderer/core/renderer.h"
 #include "engine/renderer/scene/scene_params.h"
 #include "engine/scene/scene.h"
@@ -405,4 +407,153 @@ void registerIpcHandlers(uz::IpcRegistry& ipcRegistry,
                 {"renderer_w", renderer.getWidth()},
                 {"renderer_h", renderer.getHeight()}};
     });
+
+    ipcRegistry.add("engine.getCrashReport", [](const nlohmann::json&) -> nlohmann::json {
+        std::string report = uz::CrashReporter::read_latest_report();
+        if (report.empty()) {
+            return {{"ok", false}, {"error", "no crash report found"}};
+        }
+        // Parse the JSON string into a nlohmann::json object.
+        try {
+            auto parsed = nlohmann::json::parse(report);
+            return {{"ok", true}, {"report", parsed}};
+        } catch (const std::exception& e) {
+            return {{"ok", false}, {"error", std::string("failed to parse crash report: ") + e.what()},
+                    {"raw", report}};
+        }
+    });
+
+    ipcRegistry.add("engine.getDredReport", [](const nlohmann::json&) -> nlohmann::json {
+        // Read DRED report from the crash reports directory.
+        std::string dred_dir = uz::CrashReporter::output_dir();
+        std::string dred_path = std::string(dred_dir) + "/dred_report.json";
+
+        std::ifstream f(dred_path);
+        if (!f) {
+            return {{"ok", false}, {"error", "no DRED report found (no GPU crash occurred)"}};
+        }
+
+        std::string content((std::istreambuf_iterator<char>(f)),
+                             std::istreambuf_iterator<char>());
+        try {
+            auto parsed = nlohmann::json::parse(content);
+            return {{"ok", true}, {"report", parsed}};
+        } catch (const std::exception& e) {
+            return {{"ok", false}, {"error", std::string("failed to parse DRED report: ") + e.what()},
+                    {"raw", content}};
+        }
+    });
+
+    ipcRegistry.add("subscribe_logs", [](const nlohmann::json& args) -> nlohmann::json {
+        std::string level_str = args.value("level", "INFO");
+        auto min_level = uz::log_level_from_string(level_str);
+
+        std::vector<std::string> systems;
+        if (args.contains("systems") && args["systems"].is_array()) {
+            for (const auto& s : args["systems"]) {
+                if (s.is_string()) systems.push_back(s.get<std::string>());
+            }
+        }
+
+        std::string id = uz::LogStreamer::subscribe(min_level, systems);
+        return {{"ok", true}, {"subscription_id", id}};
+    });
+
+    ipcRegistry.add("unsubscribe_logs", [](const nlohmann::json& args) -> nlohmann::json {
+        std::string id = args.value("id", "");
+        if (id.empty()) {
+            return {{"ok", false}, {"error", "missing 'id' parameter"}};
+        }
+        uz::LogStreamer::unsubscribe(id);
+        return {{"ok", true}};
+    });
+
+    ipcRegistry.add("get_error_buffer", [](const nlohmann::json&) -> nlohmann::json {
+        std::string buf = uz::LogStreamer::get_error_buffer_json();
+        try {
+            auto parsed = nlohmann::json::parse(buf);
+            return {{"ok", true}, {"errors", parsed}};
+        } catch (...) {
+            return {{"ok", true}, {"errors", nlohmann::json::array()}};
+        }
+    });
+
+    // §2: GPU Resource Introspection — query render target list.
+    ipcRegistry.add("query_render_targets", [&renderer](const nlohmann::json&) -> nlohmann::json {
+        // Return the known render targets from the deferred pipeline.
+        nlohmann::json targets = nlohmann::json::array();
+        const char* rt_names[] = {
+            "GBuffer_Albedo", "GBuffer_Normal", "GBuffer_MetalRough",
+            "GBuffer_Depth", "LightingResult", "FinalComposite"
+        };
+        const char* rt_formats[] = {
+            "R8G8B8A8_UNORM", "R16G16B16A16_FLOAT", "R8G8B8A8_UNORM",
+            "D32_FLOAT", "R16G16B16A16_FLOAT", "R8G8B8A8_UNORM"
+        };
+        for (int i = 0; i < 6; ++i) {
+            targets.push_back({
+                {"name", rt_names[i]},
+                {"format", rt_formats[i]},
+                {"width", renderer.getWidth()},
+                {"height", renderer.getHeight()},
+            });
+        }
+        return {{"ok", true}, {"render_targets", targets}};
+    });
+
+    // §2: GPU Resource Introspection — request texture readback (stub).
+    ipcRegistry.add("request_texture", [](const nlohmann::json& args) -> nlohmann::json {
+        std::string name = args.value("name", "");
+        if (name.empty()) {
+            return {{"ok", false}, {"error", "missing 'name' parameter"}};
+        }
+        // TODO: Implement actual RHI readback via RHITexture::readback().
+        // For now, return a stub acknowledging the request.
+        return {{"ok", false},
+                {"error", "texture readback not yet implemented (requires RHI readback support)"},
+                {"requested", name}};
+    });
+
+    // §6: RenderGraph Introspection — query render graph structure.
+    ipcRegistry.add("query_render_graph", [&renderer](const nlohmann::json&) -> nlohmann::json {
+        // Return the known render passes from the deferred pipeline.
+        nlohmann::json passes = nlohmann::json::array();
+
+        struct PassInfo { const char* name; const char* inputs; const char* outputs; };
+        PassInfo graph[] = {
+            {"GBufferPass",    "Scene Geometry",        "GBuffer_Albedo, GBuffer_Normal, GBuffer_MetalRough, GBuffer_Depth"},
+            {"LightingPass",   "GBuffer_*, Shadow Maps", "LightingResult"},
+            {"SkyboxPass",     "GBuffer_Depth",          "LightingResult (blend)"},
+            {"GizmoPass",      "GBuffer_Depth",          "FinalComposite"},
+            {"CompositePass",  "LightingResult",         "FinalComposite"},
+        };
+
+        for (const auto& p : graph) {
+            passes.push_back({
+                {"name", p.name},
+                {"inputs", p.inputs},
+                {"outputs", p.outputs},
+                {"resolution", std::to_string(renderer.getWidth()) + "x" + std::to_string(renderer.getHeight())},
+            });
+        }
+
+        return {{"ok", true},
+                {"passes", passes},
+                {"pass_count", passes.size()}};
+    });
+
+    // §6.3: GPU Memory query.
+    ipcRegistry.add("query_gpu_memory", [](const nlohmann::json&) -> nlohmann::json {
+        uint64_t total = 0, used = 0, budget = 0;
+        if (rhi()->gpu_memory_info && rhi()->gpu_memory_info(&total, &used, &budget)) {
+            return {{"ok", true},
+                    {"total_bytes", total},
+                    {"used_bytes", used},
+                    {"budget_bytes", budget},
+                    {"used_mb", used / (1024 * 1024)},
+                    {"budget_mb", budget / (1024 * 1024)}};
+        }
+        return {{"ok", false}, {"error", "GPU memory info not supported"}};
+    });
 }
+

@@ -24,6 +24,7 @@ import {
     ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 
+import { execSync } from 'child_process';
 import { randomUUID } from 'crypto';
 import path from 'path';
 import { killEngine, spawnEngine } from './engine-process.js';
@@ -157,6 +158,29 @@ const TOOLS = [
             },
         },
     },
+    {
+        name: 'uz_build',
+        description:
+            'Build the UzEngine C++ project and return structured results. ' +
+            'Returns {success, errors[], warnings_count, build_time_ms}. ' +
+            'Use this to verify code changes compile successfully. ' +
+            'Supports automatic retries on build failure.',
+        inputSchema: {
+            type: 'object',
+            properties: {
+                config: {
+                    type: 'string',
+                    description: 'Build configuration: Release or Debug. Default: Release.',
+                    default: 'Release',
+                },
+                max_retries: {
+                    type: 'number',
+                    description: 'Max retry attempts on build failure. Default: 1, Max: 3.',
+                    default: 1,
+                },
+            },
+        },
+    },
 ];
 
 // ---------------------------------------------------------------------------
@@ -262,6 +286,57 @@ async function handleUzRestart(args) {
     }));
 }
 
+function handleUzBuild(args) {
+    const config = args.config ?? 'Release';
+    const maxRetries = Math.min(Math.max(args.max_retries ?? 1, 1), 3);
+    const projectRoot = path.resolve(PREVIEW_DIR, '..', '..', '..');
+    const scriptPath = path.join(projectRoot, 'tools', 'build_and_report.ps1');
+
+    let lastResult = null;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            const output = execSync(
+                `pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "${scriptPath}" -Config "${config}"`,
+                {
+                    cwd: projectRoot,
+                    timeout: 300_000, // 5 min build timeout
+                    encoding: 'utf8',
+                    stdio: ['pipe', 'pipe', 'pipe'],
+                }
+            );
+            try {
+                lastResult = JSON.parse(output.trim());
+            } catch {
+                lastResult = { success: true, raw_output: output.trim() };
+            }
+            lastResult.attempt = attempt;
+            lastResult.max_retries = maxRetries;
+            return textResult(JSON.stringify(lastResult, null, 2));
+        } catch (err) {
+            const stdout = err.stdout?.toString() ?? '';
+            try {
+                lastResult = JSON.parse(stdout.trim());
+            } catch {
+                lastResult = {
+                    success: false,
+                    errors: [{ severity: 'error', code: 'BUILD_EXEC_FAILED', message: err.message }],
+                    warnings_count: 0,
+                    build_time_ms: 0,
+                };
+            }
+            lastResult.attempt = attempt;
+            lastResult.max_retries = maxRetries;
+
+            if (attempt < maxRetries) {
+                // Will retry
+                continue;
+            }
+        }
+    }
+
+    return textResult(JSON.stringify(lastResult, null, 2));
+}
+
 function textResult(text) {
     return { content: [{ type: 'text', text }] };
 }
@@ -288,6 +363,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             case 'uz_read_file': return await handleUzReadFile(args ?? {});
             case 'uz_write_file': return await handleUzWriteFile(args ?? {});
             case 'uz_restart': return await handleUzRestart(args ?? {});
+            case 'uz_build': return handleUzBuild(args ?? {});
             default:
                 return textResult(JSON.stringify({ error: `Unknown tool: ${name}` }));
         }

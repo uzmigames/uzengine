@@ -2,6 +2,44 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0] — 2026-03-06
+
+### Added
+- **AI Debug Pipeline** — comprehensive debugging and telemetry infrastructure for AI-assisted development:
+  - **Crash Reporting**: `CrashReporter` with SEH handler, `StackWalk64` symbolication, minidump generation, structured `latest.json` and `latest.dmp` under `.uzengine/crash_reports/`
+  - **Crash Enrichment**: command-line args, memory stats (`GlobalMemoryStatusEx`), loaded modules with versions, custom metadata KV pairs (`set_metadata`/`clear_metadata`), crash GUID deduplication, archived reports
+  - **Structured Assertions**: `UZ_CHECK` (fatal) / `UZ_ENSURE` (non-fatal) macros with crash report integration
+  - **DX12 DRED**: auto-breadcrumbs + page fault capture on `DXGI_ERROR_DEVICE_REMOVED`, active RenderGraph pass name via `rg_get_active_pass_name()`, serialized to `dred_report.json`
+  - **Log Streaming**: `LogStreamer` with severity levels (TRACE–FATAL), IPC subscribe/unsubscribe, system filtering, rate limiting (100 msg/sec/subscription), error/fatal buffer
+  - **RenderGraph Introspection**: IPC commands `query_render_graph` (pass names, dependencies, formats), `query_render_targets` (6 known RTs), `query_gpu_memory` (DXGI `QueryVideoMemoryInfo`)
+  - **GPU Timestamp API**: RHI vtable entries for `timestamp_query_heap_create/destroy`, `cmd_timestamp_write`, `timestamp_readback`
+  - **RenderGraph Diagnostics**: `active_pass_name()` for crash-safe pass tracking, `texture_desc()` for resource queries
+  - **Golden Image Testing**: `tools/golden_test.ps1` with SSIM comparison via ImageMagick, baseline directory structure, diff image generation
+  - **Build Verification**: `tools/build_and_report.ps1` wrapping CMake with structured JSON error parsing, MCP `uz_build` tool with retry
+  - **VS Code Extension**: crash detection on disconnect, `uzengine.diagnoseCrash` / `uzengine.analyzeFrame` commands, auto ERROR/FATAL log subscription, error buffer feeding
+  - **Agent Rules**: `AGENTS.md` updated with DEBUG-1 through DEBUG-6 rules for AI-assisted debugging workflow
+  - **Documentation**: `docs/architecture/ai-debug-pipeline.md`, `docs/guides/golden-tests.md`
+
+- **PBR Material Rendering**:
+  - Static mesh rendering with material binding (albedo, normal, metallic, roughness, AO textures)
+  - Scene proxy system with mesh proxy pooling and dirty-flag updates
+  - Outline shader pass for selected objects (`outline.vs.hlsl`, `outline.ps.hlsl`)
+
+- **Third-party Header Organization**: `thirdparty/` directory for cgltf and stb headers (moved from `src/common/`)
+
+### Changed
+- `scene_clear()` now resets `source_path` to prevent auto-save overwriting files during scene load
+- Test binary (`UzEngineTests`) no longer defines `NDEBUG` — enables `assert()`-based death tests in Release builds
+- RHI DX12 backend: added `dx12_gpu_memory_info` implementation using `IDXGIAdapter3::QueryVideoMemoryInfo`
+
+### Fixed
+- **7 death tests failing in Release** (Arena, Result, UndoStack) — `NDEBUG` was disabling `assert()` while `UZENGINE_DEBUG=1` expected them to fire. Removed `NDEBUG` from test target
+- **SceneHandlersTest.RoundTrip_SaveLoad** — `scene_clear()` didn't reset `source_path`, causing the load handler to auto-save an empty scene over the test file before loading it
+- **CrashReporterTest.WriteReportContainsEngineVersion** — version string updated to match `0.3.0`
+- All **1332 tests passing**, 0 failures, 2 skipped (Linux-only DynLib tests)
+
+---
+
 ## [0.3.0] — 2026-03-04
 
 ### Added

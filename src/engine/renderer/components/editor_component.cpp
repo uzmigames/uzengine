@@ -257,7 +257,7 @@ bool EditorComponent::createLinePipelineState() {
     // Render targets
     desc.rt_count      = 1;
     desc.rt_formats[0] = RHI_FORMAT_RGBA8_UNORM;
-    desc.ds_format     = RHI_FORMAT_D32_FLOAT;
+    desc.ds_format     = RHI_FORMAT_D24_UNORM_S8_UINT;
 
     // States
     desc.rasterizer.fill_mode = RHI_FILL_WIREFRAME;
@@ -319,7 +319,7 @@ bool EditorComponent::createSolidPipelineState() {
 
     desc.rt_count      = 1;
     desc.rt_formats[0] = RHI_FORMAT_RGBA8_UNORM;
-    desc.ds_format     = RHI_FORMAT_D32_FLOAT;
+    desc.ds_format     = RHI_FORMAT_D24_UNORM_S8_UINT;
 
     desc.rasterizer.fill_mode = RHI_FILL_SOLID;
     desc.rasterizer.cull_mode = RHI_CULL_NONE;
@@ -380,7 +380,7 @@ bool EditorComponent::createGizmoNoDepthPSO() {
 
     desc.rt_count      = 1;
     desc.rt_formats[0] = RHI_FORMAT_RGBA8_UNORM;
-    desc.ds_format     = RHI_FORMAT_D32_FLOAT;
+    desc.ds_format     = RHI_FORMAT_D24_UNORM_S8_UINT;
 
     desc.rasterizer.fill_mode     = RHI_FILL_SOLID;
     desc.rasterizer.cull_mode     = RHI_CULL_NONE;

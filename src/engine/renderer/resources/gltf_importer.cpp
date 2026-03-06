@@ -11,7 +11,7 @@
 #include "gltf_importer.h"
 
 #define CGLTF_IMPLEMENTATION
-#include "common/cgltf/cgltf.h"
+#include <cgltf.h>
 
 #include <cstring>
 #include <algorithm>

@@ -147,6 +147,52 @@ export class EngineInstance implements vscode.Disposable {
                 `[UzEngine:${this.id.slice(0, 8)}] Exited — code: ${String(code)} signal: ${String(signal)}`
             );
             this._process = undefined;
+
+            // --- Crash detection (§8.1/8.2) ---
+            if (code !== 0 && code !== null) {
+                const exeDir = path.dirname(exePath);
+                const crashDir = path.join(exeDir, '.uzengine', 'crash_reports');
+                const crashReportPath = path.join(crashDir, 'latest.json');
+                const dredReportPath = path.join(crashDir, 'dred_report.json');
+
+                let crashType = `exit code ${code}`;
+                let reportContent = '';
+
+                try {
+                    if (fs.existsSync(crashReportPath)) {
+                        reportContent = fs.readFileSync(crashReportPath, 'utf-8');
+                        try {
+                            const parsed = JSON.parse(reportContent);
+                            crashType = parsed.crash_type || crashType;
+                        } catch { /* use raw content */ }
+                    }
+                } catch { /* ignore read errors */ }
+
+                this._outputChannel.appendLine(
+                    `[UzEngine:${this.id.slice(0, 8)}] ⚠️ CRASH DETECTED: ${crashType}`
+                );
+                if (reportContent) {
+                    this._outputChannel.appendLine(
+                        `[UzEngine:${this.id.slice(0, 8)}] Crash report: ${crashReportPath}`
+                    );
+                }
+
+                // Show notification with action buttons.
+                vscode.window.showErrorMessage(
+                    `Engine crashed: ${crashType} (scene: ${path.basename(this.scenePath)})`,
+                    'Show Report',
+                    'Show DRED Report',
+                    'Dismiss'
+                ).then(choice => {
+                    if (choice === 'Show Report' && fs.existsSync(crashReportPath)) {
+                        vscode.workspace.openTextDocument(vscode.Uri.file(crashReportPath))
+                            .then(doc => vscode.window.showTextDocument(doc));
+                    } else if (choice === 'Show DRED Report' && fs.existsSync(dredReportPath)) {
+                        vscode.workspace.openTextDocument(vscode.Uri.file(dredReportPath))
+                            .then(doc => vscode.window.showTextDocument(doc));
+                    }
+                });
+            }
         });
 
         this._process.on('error', (err) => {

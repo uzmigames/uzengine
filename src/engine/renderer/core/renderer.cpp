@@ -101,23 +101,37 @@ bool Renderer::init(void* window_handle, uint32_t width, uint32_t height) {
     MeshData sphereData = generate_sphere(32, 16, 1.0f);
     sphereMesh_ = create_gpu_mesh(sphereData);
 
-    // Create 1x1 white fallback texture
-    const uint32_t whitePixel = 0xFFFFFFFF;
+    // Create fallback textures
     RhiTextureDesc texDesc{};
-    texDesc.width = 1;
-    texDesc.height = 1;
     texDesc.depth = 1;
     texDesc.mip_levels = 1;
     texDesc.array_size = 1;
     texDesc.format = RHI_FORMAT_RGBA8_UNORM;
     texDesc.dimension = RHI_TEXTURE_DIM_2D;
     texDesc.usage = RHI_TEXTURE_USAGE_SHADER_READ | RHI_TEXTURE_USAGE_COPY_DST;
-    texDesc.debug_name = "Renderer_WhiteTex";
-    
+
+    const uint32_t whitePixel = 0xFFFFFFFF;
+    texDesc.width = 1; texDesc.height = 1; texDesc.debug_name = "Renderer_WhiteTex";
     whiteTex_ = rhi()->texture_create(&texDesc);
     if (whiteTex_ != RHI_NULL) {
         rhi()->texture_upload(whiteTex_, &whitePixel, sizeof(uint32_t));
         frameConstants_.white_texture = whiteTex_;
+    }
+
+    const uint32_t blackPixel = 0xFF000000;
+    texDesc.debug_name = "Renderer_BlackTex";
+    blackTex_ = rhi()->texture_create(&texDesc);
+    if (blackTex_ != RHI_NULL) {
+        rhi()->texture_upload(blackTex_, &blackPixel, sizeof(uint32_t));
+        frameConstants_.black_texture = blackTex_;
+    }
+
+    const uint32_t normalPixel = 0xFFFF8080; // (128, 128, 255)
+    texDesc.debug_name = "Renderer_NormalTex";
+    normalTex_ = rhi()->texture_create(&texDesc);
+    if (normalTex_ != RHI_NULL) {
+        rhi()->texture_upload(normalTex_, &normalPixel, sizeof(uint32_t));
+        frameConstants_.normal_texture = normalTex_;
     }
 
     DIAG("=== renderer.init COMPLETE ===");
@@ -286,6 +300,7 @@ void Renderer::update(double /*totalTime*/, double deltaTime) {
 
                 proxy->transform = scene_get_world_transform(scene_, i);
 
+                proxy->node_id = i;
                 proxies_.push_back(proxy);
                 proxy_node_ids_.push_back(i);
             }
@@ -376,6 +391,79 @@ void Renderer::render(bool readback) {
             lightCB._pad      = 0.0f;
             rhi()->cmd_set_root_constants(cmd, 2, &lightCB, 8, 0);
 
+            // --- Draw PBR meshes FIRST (UE5/Godot pattern) ---
+            // Meshes must render before editor overlays so gizmos
+            // draw on top (transform gizmo uses no-depth PSO).
+            rhi()->cmd_set_topology(cmd, RHI_TOPOLOGY_TRIANGLE_LIST);
+
+            // Draw PBR meshes (spheres with materials).
+            meshRenderer_.draw(cmd, viewProj_);
+
+            // Draw new Scene Proxies
+            if (rhiPbrPipeline_ != RHI_NULL) {
+                rhi()->cmd_set_pipeline(cmd, rhiPbrPipeline_);
+                for (auto* proxy : proxies_) {
+                    proxy->execute(cmd, frameConstants_);
+                }
+            }
+
+            // --- Selection Outline (stencil mark + inflated mesh) ---
+            {
+                uint32_t selNode = sceneParams_
+                    ? sceneParams_->selectedNodeId.load(std::memory_order_relaxed) : 0;
+
+                if (selNode != 0 && rhiStencilMarkPSO_ != RHI_NULL && rhiOutlinePSO_ != RHI_NULL) {
+                    // Find the proxy matching the selected node
+                    MeshProxy* selProxy = nullptr;
+                    for (auto* proxy : proxies_) {
+                        auto* mp = static_cast<MeshProxy*>(proxy);
+                        if (mp->node_id == selNode) {
+                            selProxy = mp;
+                            break;
+                        }
+                    }
+
+                    if (selProxy && selProxy->mesh && selProxy->mesh->vertex_buffer != RHI_NULL) {
+                        // Pass 1: Stencil Mark — write 1 to stencil, no color output
+                        rhi()->cmd_set_pipeline(cmd, rhiStencilMarkPSO_);
+                        rhi()->cmd_set_stencil_ref(cmd, 1);
+                        rhi()->cmd_set_vertex_buffer(cmd, 0, selProxy->mesh->vertex_buffer, 0, selProxy->mesh->vertex_stride);
+                        rhi()->cmd_set_index_buffer(cmd, selProxy->mesh->index_buffer, 0, true);
+                        rhi()->cmd_set_root_constants(cmd, 0, &selProxy->transform, 16, 0);
+                        rhi()->cmd_set_root_constants(cmd, 3, &frameConstants_.view_proj, 16, 0);
+                        for (const auto& sub : selProxy->mesh->submeshes) {
+                            rhi()->cmd_draw_indexed(cmd, sub.index_count, 1, sub.index_offset, 0, 0);
+                        }
+
+                        // Pass 2: Outline Draw — inflated mesh, stencil test != 1
+                        rhi()->cmd_set_pipeline(cmd, rhiOutlinePSO_);
+                        rhi()->cmd_set_stencil_ref(cmd, 1);
+
+                        // b0: world matrix
+                        rhi()->cmd_set_root_constants(cmd, 0, &selProxy->transform, 16, 0);
+
+                        // b1: outline params — color (slot 0-3) + width (slot 4-7)
+                        float outlineCB[12] = {
+                            1.0f, 0.55f, 0.0f, 1.0f,  // Outline color: orange #FF8C00
+                            0.03f, 0.0f, 0.0f, 0.0f,  // Outline width (model space units)
+                            0.0f, 0.0f, 0.0f, 0.0f
+                        };
+                        rhi()->cmd_set_root_constants(cmd, 1, outlineCB, 12, 0);
+
+                        // b3: viewProj
+                        rhi()->cmd_set_root_constants(cmd, 3, &frameConstants_.view_proj, 16, 0);
+
+                        for (const auto& sub : selProxy->mesh->submeshes) {
+                            rhi()->cmd_draw_indexed(cmd, sub.index_count, 1, sub.index_offset, 0, 0);
+                        }
+
+                        // Restore PBR pipeline for subsequent draws
+                        rhi()->cmd_set_pipeline(cmd, rhiPbrPipeline_);
+                    }
+                }
+            }
+
+            // --- Editor overlays AFTER scene geometry ---
             {
                 uint32_t selNode = sceneParams_
                     ? sceneParams_->selectedNodeId.load(std::memory_order_relaxed) : 0;
@@ -402,20 +490,6 @@ void Renderer::render(bool readback) {
                 }
 
                 editor_.draw(cmd, viewProj_, camPos, selNode, gizMode, gizAxis, usePivot, pivotPos);
-            }
-
-            // Restore solid triangle topology (Editor may have set it to lines)
-            rhi()->cmd_set_topology(cmd, RHI_TOPOLOGY_TRIANGLE_LIST);
-
-            // Draw PBR meshes (spheres with materials).
-            meshRenderer_.draw(cmd, viewProj_);
-
-            // Draw new Scene Proxies
-            if (rhiPbrPipeline_ != RHI_NULL) {
-                rhi()->cmd_set_pipeline(cmd, rhiPbrPipeline_);
-                for (auto* proxy : proxies_) {
-                    proxy->execute(cmd, frameConstants_);
-                }
             }
         });
 
@@ -512,6 +586,14 @@ void Renderer::shutdown() {
         rhi()->texture_destroy(whiteTex_);
         whiteTex_ = RHI_NULL;
     }
+    if (blackTex_ != RHI_NULL) {
+        rhi()->texture_destroy(blackTex_);
+        blackTex_ = RHI_NULL;
+    }
+    if (normalTex_ != RHI_NULL) {
+        rhi()->texture_destroy(normalTex_);
+        normalTex_ = RHI_NULL;
+    }
 
     if (rhiReadbackFence_ != RHI_NULL) {
         rhi()->fence_destroy(rhiReadbackFence_);
@@ -558,7 +640,7 @@ bool Renderer::createPipelineStates() {
 
     desc.rt_count      = 1;
     desc.rt_formats[0] = RHI_FORMAT_RGBA8_UNORM;
-    desc.ds_format     = RHI_FORMAT_D32_FLOAT;
+    desc.ds_format     = RHI_FORMAT_D24_UNORM_S8_UINT;
     desc.topology      = RHI_TOPOLOGY_TRIANGLE_LIST;
 
     desc.rasterizer.fill_mode = RHI_FILL_SOLID;
@@ -576,14 +658,52 @@ bool Renderer::createPipelineStates() {
 
     // PBR PSO for Scene Proxies
     RhiPipelineDesc pbrDesc = desc; // Start with basic and adjust
-    pbrDesc.vertex_layout.attrib_count = 3;
+    pbrDesc.vertex_layout.attrib_count = 4;
     pbrDesc.vertex_layout.attribs[0] = { "POSITION", 0, RHI_VERTEX_FORMAT_FLOAT3, 0, 0 };
     pbrDesc.vertex_layout.attribs[1] = { "NORMAL",   0, RHI_VERTEX_FORMAT_FLOAT3, 12, 0 };
     pbrDesc.vertex_layout.attribs[2] = { "TEXCOORD", 0, RHI_VERTEX_FORMAT_FLOAT2, 24, 0 };
+    pbrDesc.vertex_layout.attribs[3] = { "TANGENT",  0, RHI_VERTEX_FORMAT_FLOAT4, 32, 0 };
     pbrDesc.debug_name = "PBR_PSO";
     
     rhiPbrPipeline_ = shaderLib_.get_or_create_pipeline("pbr", pbrDesc);
     DIAG_FMT("pbr PSO => handle=%llu", (unsigned long long)rhiPbrPipeline_);
+
+    // ---- Stencil Mark PSO (writes 1 to stencil, no color) ----
+    {
+        RhiPipelineDesc stDesc = pbrDesc;  // Same vertex layout as PBR
+        stDesc.depth_stencil.stencil_enable    = true;
+        stDesc.depth_stencil.stencil_read_mask  = 0xFF;
+        stDesc.depth_stencil.stencil_write_mask = 0xFF;
+        stDesc.depth_stencil.front_face.fail_op       = RHI_STENCIL_OP_KEEP;
+        stDesc.depth_stencil.front_face.depth_fail_op = RHI_STENCIL_OP_KEEP;
+        stDesc.depth_stencil.front_face.pass_op       = RHI_STENCIL_OP_REPLACE;
+        stDesc.depth_stencil.front_face.func          = RHI_COMPARE_ALWAYS;
+        stDesc.depth_stencil.back_face = stDesc.depth_stencil.front_face;
+        stDesc.blend.render_targets[0].write_mask = 0; // No color output
+        stDesc.debug_name = "StencilMark_PSO";
+        rhiStencilMarkPSO_ = shaderLib_.get_or_create_pipeline("pbr", stDesc);
+        DIAG_FMT("stencil mark PSO => handle=%llu", (unsigned long long)rhiStencilMarkPSO_);
+    }
+
+    // ---- Outline PSO (inflated mesh, stencil test != 1, cull front) ----
+    {
+        RhiPipelineDesc olDesc = pbrDesc;
+        olDesc.rasterizer.cull_mode = RHI_CULL_FRONT; // Cull front faces for inflation
+        olDesc.depth_stencil.depth_enable = false;
+        olDesc.depth_stencil.depth_write  = false;
+        olDesc.depth_stencil.stencil_enable     = true;
+        olDesc.depth_stencil.stencil_read_mask  = 0xFF;
+        olDesc.depth_stencil.stencil_write_mask = 0x00;
+        olDesc.depth_stencil.front_face.fail_op       = RHI_STENCIL_OP_KEEP;
+        olDesc.depth_stencil.front_face.depth_fail_op = RHI_STENCIL_OP_KEEP;
+        olDesc.depth_stencil.front_face.pass_op       = RHI_STENCIL_OP_KEEP;
+        olDesc.depth_stencil.front_face.func          = RHI_COMPARE_NOT_EQUAL;
+        olDesc.depth_stencil.back_face = olDesc.depth_stencil.front_face;
+        olDesc.blend.render_targets[0].write_mask = 0xF;
+        olDesc.debug_name = "Outline_PSO";
+        rhiOutlinePSO_ = shaderLib_.get_or_create_pipeline("outline", olDesc);
+        DIAG_FMT("outline PSO => handle=%llu", (unsigned long long)rhiOutlinePSO_);
+    }
 
     return rhiPipeline_ != RHI_NULL && rhiPbrPipeline_ != RHI_NULL;
 }
@@ -600,7 +720,7 @@ bool Renderer::createDepthBuffer() {
     desc.depth      = 1;
     desc.mip_levels = 1;
     desc.array_size = 1;
-    desc.format     = RHI_FORMAT_D32_FLOAT;
+    desc.format     = RHI_FORMAT_D24_UNORM_S8_UINT;
     desc.dimension  = RHI_TEXTURE_DIM_2D;
     desc.usage      = RHI_TEXTURE_USAGE_DEPTH_STENCIL;
     desc.debug_name = "DepthBuffer";

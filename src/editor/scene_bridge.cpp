@@ -5,6 +5,7 @@
 
 #include "engine/scene/scene_loader.h"
 #include "engine/scene/scene_node.h"
+#include "engine/core/crash_reporter.h"
 #include "engine/core/diag.h"
 
 #include <windows.h>
@@ -97,6 +98,11 @@ void loadSceneFile(std::unique_ptr<uz::Scene>& sceneData,
         snprintf(dbg, sizeof(dbg), "[UzEngine] Auto-loaded scene: %s (%u nodes)\n",
                  resolvedPath.c_str(), static_cast<unsigned>(sceneData->next_id - 1));
         OutputDebugStringA(dbg);
+
+        // Set crash metadata for scene context.
+        uz::CrashReporter::set_metadata("active_scene", resolvedPath);
+        uz::CrashReporter::set_metadata("scene_node_count",
+                                         std::to_string(sceneData->next_id - 1));
     } else {
         char dbg[256];
         snprintf(dbg, sizeof(dbg), "[UzEngine] WARNING: Could not load scene: %s\n",

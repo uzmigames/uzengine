@@ -82,6 +82,7 @@ void scene_clear(Scene* scene) {
     }
     scene->node_count = 0;
     scene->next_id = 1;
+    scene->source_path[0] = '\0';
 }
 
 // ============================================================================

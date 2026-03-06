@@ -166,6 +166,7 @@ D3D12_COMPARISON_FUNC     to_dx12_compare(RhiCompareFunc f);
 D3D12_FILL_MODE           to_dx12_fill(RhiFillMode m);
 D3D12_CULL_MODE           to_dx12_cull(RhiCullMode m);
 DXGI_FORMAT               to_dx12_vertex_format(RhiVertexFormat f);
+D3D12_STENCIL_OP          to_dx12_stencil_op(RhiStencilOp op);
 
 /* =======================================================================
  * Internal helpers (defined in rhi_dx12.c)
@@ -238,6 +239,7 @@ void       dx12_cmd_clear_render_target(RhiCmdList cmd, RhiTexture rt,
                                          float r, float g, float b, float a);
 void       dx12_cmd_clear_depth_stencil(RhiCmdList cmd, RhiTexture ds,
                                          float depth, uint8_t stencil);
+void       dx12_cmd_set_stencil_ref(RhiCmdList cmd, uint8_t ref);
 void       dx12_cmd_barrier_texture(RhiCmdList cmd, RhiTexture tex,
                                      RhiResourceState src_state,
                                      RhiResourceState dst_state);
@@ -274,6 +276,12 @@ bool     dx12_fence_wait(RhiFence fence, uint64_t value, uint64_t timeout_ns);
 void dx12_set_debug_name(uint64_t handle, const char *name);
 void dx12_begin_event(RhiCmdList cmd, const char *name);
 void dx12_end_event(RhiCmdList cmd);
+
+/* =======================================================================
+ * DRED — Device Removed Extended Data (defined in rhi_dx12_commands.c)
+ * ======================================================================= */
+
+void dx12_write_dred_report(HRESULT removal_reason);
 
 #endif /* _WIN32 */
 #endif /* RHI_DX12_INTERNAL_H */

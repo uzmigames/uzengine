@@ -22,12 +22,20 @@ struct MeshInstance {
     GpuMesh     mesh;
 
     // PBR material params.
-    float albedo[3]  = {0.8f, 0.8f, 0.8f};
-    float metallic   = 0.0f;
-    float roughness  = 0.5f;
+    float albedo[3]     = {0.8f, 0.8f, 0.8f};
+    float metallic      = 0.0f;
+    float roughness     = 0.5f;
+    float ao            = 1.0f;
+    float emission[3]   = {0.0f, 0.0f, 0.0f};
+    float emission_energy = 1.0f;
 
-    // Optional albedo texture (RHI_NULL = use solid albedo color).
-    RhiTexture albedo_tex = RHI_NULL;
+    // Optional PBR textures.
+    RhiTexture albedo_tex    = RHI_NULL;
+    RhiTexture normal_tex    = RHI_NULL;
+    RhiTexture metallic_tex  = RHI_NULL;
+    RhiTexture roughness_tex = RHI_NULL;
+    RhiTexture ao_tex        = RHI_NULL;
+    RhiTexture emission_tex  = RHI_NULL;
 };
 
 class StaticMeshRenderer {
@@ -53,6 +61,8 @@ public:
 private:
     RhiPipeline pbrPipeline_ = RHI_NULL;
     RhiTexture  whiteTex_    = RHI_NULL;
+    RhiTexture  blackTex_    = RHI_NULL;
+    RhiTexture  normalTex_   = RHI_NULL;
     std::vector<MeshInstance> instances_;
 };
 

@@ -9,6 +9,7 @@
 #ifdef _WIN32
 
 #include "rhi_dx12_internal.h"
+#include "engine/core/diag.h"
 
 /* =======================================================================
  * Command recording
@@ -325,6 +326,15 @@ void dx12_cmd_clear_depth_stencil(RhiCmdList cmd, RhiTexture ds,
         depth, stencil, 0, NULL);
 }
 
+void dx12_cmd_set_stencil_ref(RhiCmdList cmd, uint8_t ref) {
+    if (cmd == RHI_NULL) return;
+    uint32_t cmd_slot = (uint32_t)cmd;
+    assert(cmd_slot < DX12_MAX_CMD_LISTS && s_dx12.cmd_lists[cmd_slot].occupied);
+
+    ID3D12GraphicsCommandList_OMSetStencilRef(
+        s_dx12.cmd_lists[cmd_slot].list, (UINT)ref);
+}
+
 /* =======================================================================
  * Barriers
  * ======================================================================= */
@@ -440,7 +450,15 @@ RhiTexture dx12_swapchain_backbuffer(void) {
 
 void dx12_swapchain_present(uint32_t sync_interval) {
     assert(s_dx12.initialized);
-    IDXGISwapChain3_Present(s_dx12.swap_chain, sync_interval, 0);
+    HRESULT hr = IDXGISwapChain3_Present(s_dx12.swap_chain, sync_interval, 0);
+
+    /* Check for device removal (TDR / GPU crash) */
+    if (hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET) {
+        HRESULT reason = ID3D12Device_GetDeviceRemovedReason(s_dx12.device);
+        DIAG_FMT("FATAL: Device Removed! Reason=0x%08X", (unsigned)reason);
+        dx12_write_dred_report(reason);
+        return; /* Don't signal fence — device is gone */
+    }
 
     /* Signal fence for this frame and advance */
     s_dx12.frame_fence_value++;
@@ -490,4 +508,149 @@ void dx12_end_event(RhiCmdList cmd) {
     /* TODO Phase 2: PIXEndEvent */
 }
 
+/* =======================================================================
+ * DRED — Device Removed Extended Data report
+ * ======================================================================= */
+
+void dx12_write_dred_report(HRESULT removal_reason) {
+    /* Build the output path next to the executable */
+    char exe_path[MAX_PATH] = {};
+    GetModuleFileNameA(NULL, exe_path, MAX_PATH);
+    char *last_slash = exe_path;
+    for (char *p = exe_path; *p; ++p) {
+        if (*p == '\\' || *p == '/') last_slash = p;
+    }
+    last_slash[1] = '\0';
+
+    char crash_dir[MAX_PATH] = {};
+    snprintf(crash_dir, sizeof(crash_dir), "%s.uzengine/crash_reports", exe_path);
+    CreateDirectoryA(crash_dir, NULL);
+
+    char dred_path[MAX_PATH] = {};
+    snprintf(dred_path, sizeof(dred_path), "%s/dred_report.json", crash_dir);
+
+    FILE *f = NULL;
+    fopen_s(&f, dred_path, "w");
+    if (!f) {
+        DIAG("Failed to open dred_report.json for writing");
+        return;
+    }
+
+    fprintf(f, "{\n");
+    fprintf(f, "  \"removal_reason\": \"0x%08X\",\n", (unsigned)removal_reason);
+
+    /* §4.5: Active RenderGraph pass at time of crash */
+    {
+        extern const char* rg_get_active_pass_name(void);
+        const char* active_pass = rg_get_active_pass_name();
+        if (active_pass && active_pass[0]) {
+            fprintf(f, "  \"active_render_pass\": \"%s\",\n", active_pass);
+            DIAG_FMT("DRED: Active render pass at crash: %s", active_pass);
+        } else {
+            fprintf(f, "  \"active_render_pass\": null,\n");
+        }
+    }
+
+    /* Try to query DRED interface */
+    ID3D12DeviceRemovedExtendedData *dred = NULL;
+    HRESULT hr = ID3D12Device_QueryInterface(
+        s_dx12.device,
+        &IID_ID3D12DeviceRemovedExtendedData,
+        (void **)&dred);
+
+    if (SUCCEEDED(hr) && dred) {
+        /* Auto-breadcrumbs */
+        D3D12_DRED_AUTO_BREADCRUMBS_OUTPUT breadcrumbs = {};
+        hr = ID3D12DeviceRemovedExtendedData_GetAutoBreadcrumbsOutput(
+            dred, &breadcrumbs);
+
+        if (SUCCEEDED(hr) && breadcrumbs.pHeadAutoBreadcrumbNode) {
+            fprintf(f, "  \"auto_breadcrumbs\": [\n");
+            const D3D12_AUTO_BREADCRUMB_NODE *node =
+                breadcrumbs.pHeadAutoBreadcrumbNode;
+            int bc_count = 0;
+            while (node) {
+                if (bc_count > 0) fprintf(f, ",\n");
+
+                /* Convert command list name */
+                char cmd_name[256] = "unknown";
+                if (node->pCommandListDebugNameW) {
+                    WideCharToMultiByte(CP_UTF8, 0,
+                        node->pCommandListDebugNameW, -1,
+                        cmd_name, sizeof(cmd_name), NULL, NULL);
+                }
+
+                fprintf(f, "    {\"command_list\": \"%s\"", cmd_name);
+                fprintf(f, ", \"breadcrumb_count\": %u", node->BreadcrumbCount);
+
+                /* Last completed breadcrumb index */
+                if (node->pLastBreadcrumbValue) {
+                    fprintf(f, ", \"last_completed\": %u",
+                            *node->pLastBreadcrumbValue);
+                }
+
+                fprintf(f, "}");
+                node = node->pNext;
+                bc_count++;
+                if (bc_count > 32) break; /* Safety limit */
+            }
+            fprintf(f, "\n  ],\n");
+
+            DIAG_FMT("DRED: %d auto-breadcrumb node(s) captured", bc_count);
+        } else {
+            fprintf(f, "  \"auto_breadcrumbs\": null,\n");
+            DIAG("DRED: No auto-breadcrumbs available");
+        }
+
+        /* Page fault output */
+        D3D12_DRED_PAGE_FAULT_OUTPUT page_fault = {};
+        hr = ID3D12DeviceRemovedExtendedData_GetPageFaultAllocationOutput(
+            dred, &page_fault);
+
+        if (SUCCEEDED(hr)) {
+            fprintf(f, "  \"page_fault\": {\n");
+            fprintf(f, "    \"virtual_address\": \"0x%llX\",\n",
+                    (unsigned long long)page_fault.PageFaultVA);
+
+            /* List allocations near the faulting address */
+            fprintf(f, "    \"allocations\": [\n");
+            const D3D12_DRED_ALLOCATION_NODE *alloc =
+                page_fault.pHeadExistingAllocationNode;
+            int alloc_count = 0;
+            while (alloc && alloc_count < 16) {
+                if (alloc_count > 0) fprintf(f, ",\n");
+                char alloc_name[256] = "unnamed";
+                if (alloc->ObjectNameW) {
+                    WideCharToMultiByte(CP_UTF8, 0,
+                        alloc->ObjectNameW, -1,
+                        alloc_name, sizeof(alloc_name), NULL, NULL);
+                }
+                fprintf(f, "      {\"name\": \"%s\", \"type\": %d}",
+                        alloc_name, (int)alloc->AllocationType);
+                alloc = alloc->pNext;
+                alloc_count++;
+            }
+            fprintf(f, "\n    ]\n");
+            fprintf(f, "  }\n");
+
+            DIAG_FMT("DRED: Page fault at VA=0x%llX, %d allocation(s)",
+                      (unsigned long long)page_fault.PageFaultVA, alloc_count);
+        } else {
+            fprintf(f, "  \"page_fault\": null\n");
+        }
+
+        ID3D12DeviceRemovedExtendedData_Release(dred);
+    } else {
+        fprintf(f, "  \"auto_breadcrumbs\": null,\n");
+        fprintf(f, "  \"page_fault\": null\n");
+        DIAG("DRED interface not available — no GPU telemetry captured");
+    }
+
+    fprintf(f, "}\n");
+    fclose(f);
+
+    DIAG_FMT("DRED report written to: %s", dred_path);
+}
+
 #endif /* _WIN32 */
+

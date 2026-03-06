@@ -88,6 +88,33 @@ void handleWsTextMessage(const std::string& text,
             }
         }
 
+        // Also pick StaticMesh scene nodes (not in EditorNodes list).
+        if (g_sceneData) {
+            for (uint32_t i = 1; i < uz::kSceneMaxNodes; ++i) {
+                const auto& sn = g_sceneData->nodes[i];
+                if (!sn.alive) continue;
+                if (sn.type != uz::NodeType::StaticMesh) continue;
+
+                // World position from world_transform column 3 (translation)
+                float wx = sn.world_transform.m[3][0];
+                float wy = sn.world_transform.m[3][1];
+                float wz = sn.world_transform.m[3][2];
+
+                float screenX, screenY;
+                if (!projectWorldToScreen(vp, wx, wy, wz, vpW, vpH, screenX, screenY))
+                    continue;
+
+                float dx = screenX - sx;
+                float dy = screenY - sy;
+                float distSq = dx * dx + dy * dy;
+
+                if (distSq < bestDist) {
+                    bestDist   = distSq;
+                    bestNodeId = static_cast<int>(sn.id);
+                }
+            }
+        }
+
         // Prefer GPU pick buffer (pixel-accurate) when available.
 #ifdef UZ_EDITOR
         if (g_renderer) {

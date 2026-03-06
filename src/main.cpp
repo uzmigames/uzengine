@@ -22,6 +22,8 @@
 #include "common/ipc_poller.h"
 #include "engine/scene/scene.h"
 #include "engine/core/diag.h"
+#include "engine/core/crash_reporter.h"
+#include "engine/core/log_streamer.h"
 
 #include <windows.h>
 #include <timeapi.h>
@@ -68,6 +70,28 @@ int WINAPI WinMain(
     // -- Timer resolution & networking ---------------------------------------
     timeBeginPeriod(1);
     DIAG("=== UzEngine main START ===");
+
+    // -- Crash reporter (install early, before renderer) --------------------
+    {
+        char exePath[MAX_PATH]{};
+        GetModuleFileNameA(nullptr, exePath, MAX_PATH);
+        std::string exeDir(exePath);
+        auto ls = exeDir.find_last_of("\\/");
+        if (ls != std::string::npos) exeDir = exeDir.substr(0, ls);
+        std::string crashDir = exeDir + "/.uzengine/crash_reports";
+        uz::CrashReporter::install(crashDir.c_str());
+
+        // Pre-crash callback: log the crash event to DIAG.
+        uz::CrashReporter::set_pre_crash_callback([]() {
+            DIAG("!!! PRE-CRASH CALLBACK: flushing diagnostics !!!");
+        });
+
+        // Set initial metadata.
+        uz::CrashReporter::set_metadata("pid", std::to_string(GetCurrentProcessId()));
+
+        DIAG_FMT("CrashReporter installed -> %s", crashDir.c_str());
+    }
+
     ix::initNetSystem();
 
     // -- Window --------------------------------------------------------------
@@ -83,6 +107,11 @@ int WINAPI WinMain(
         handleWsTextMessage(text, g_scene, g_renderer, g_sceneData.get(), wsServer);
     });
     (void)wsServer.start(wsPort);
+
+    // Initialize log streaming (broadcasts via WebSocket).
+    uz::LogStreamer::init([&wsServer](const std::string& msg) {
+        wsServer.broadcastText(msg);
+    });
 
     // -- Stream threads ------------------------------------------------------
     startEncodeThreads(&wsServer);

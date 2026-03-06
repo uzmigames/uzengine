@@ -80,11 +80,25 @@ export function activate(context: vscode.ExtensionContext): void {
     });
 
     // Reconnect IpcClient when the active engine instance changes.
+    // Also auto-subscribe to ERROR/FATAL logs (§8.5).
+    const errorLogBuffer: Array<{ level: string; system: string; message: string; timestamp: number }> = [];
+    const MAX_ERROR_BUFFER = 50;
+
     function reconnectIpcToActive(): void {
         try {
             const active = instanceMgr.getActiveInstance();
             if (active && active.isRunning) {
                 ipcClient.connect(`ws://localhost:${active.wsPort}`);
+
+                // Auto-subscribe to ERROR+ logs after a short delay (wait for WS open).
+                setTimeout(async () => {
+                    try {
+                        await ipcClient.request('subscribe_logs', { level: 'ERROR', systems: [] });
+                        outputChannel.appendLine('[UzEngine] Auto-subscribed to ERROR/FATAL logs.');
+                    } catch {
+                        // Engine may not support subscribe_logs yet — ignore.
+                    }
+                }, 500);
             }
         } catch {
             // EngineInstanceManager not ready yet — ignore.
@@ -94,6 +108,38 @@ export function activate(context: vscode.ExtensionContext): void {
         reconnectIpcToActive();
     });
     context.subscriptions.push(activeChangedSub);
+
+    // §8.6: Buffer error/fatal log entries and show notification for AI.
+    const errorLogUnsub = ipcClient.on('engine.log', (payload: unknown) => {
+        const p = payload as { level?: string; system?: string; message?: string; timestamp_ms?: number } | null;
+        if (!p || typeof p.message !== 'string') { return; }
+        if (p.level === 'ERROR' || p.level === 'FATAL') {
+            errorLogBuffer.push({
+                level: p.level,
+                system: p.system || '',
+                message: p.message,
+                timestamp: p.timestamp_ms || Date.now(),
+            });
+            while (errorLogBuffer.length > MAX_ERROR_BUFFER) {
+                errorLogBuffer.shift();
+            }
+
+            // Show notification for FATAL errors.
+            if (p.level === 'FATAL') {
+                vscode.window.showErrorMessage(
+                    `Engine FATAL: ${p.message.slice(0, 100)}`,
+                    'Show Error Log'
+                ).then(choice => {
+                    if (choice === 'Show Error Log') {
+                        const content = JSON.stringify(errorLogBuffer, null, 2);
+                        vscode.workspace.openTextDocument({ content, language: 'json' })
+                            .then(doc => vscode.window.showTextDocument(doc));
+                    }
+                });
+            }
+        }
+    });
+    context.subscriptions.push({ dispose: errorLogUnsub });
 
     // -------------------------------------------------------------------------
     // 5. SceneTreeProvider — populates the uzengine.sceneTree TreeView.
@@ -344,6 +390,78 @@ export function activate(context: vscode.ExtensionContext): void {
         }
     );
 
+    // AI Debug: Diagnose Crash — reads latest.json and opens it for AI analysis.
+    const diagnoseCrashCmd = vscode.commands.registerCommand(
+        'uzengine.diagnoseCrash',
+        async () => {
+            const active = instanceMgr.getActiveInstance();
+            if (!active) {
+                vscode.window.showWarningMessage('No active engine instance.');
+                return;
+            }
+            try {
+                const result = await active.engineClient.call('engine.getCrashReport', {});
+                if (result.ok && result.report) {
+                    const doc = await vscode.workspace.openTextDocument({
+                        content: JSON.stringify(result.report, null, 2),
+                        language: 'json',
+                    });
+                    await vscode.window.showTextDocument(doc);
+                    consolePanel.log('info', 'Crash report opened for analysis.');
+                } else {
+                    vscode.window.showInformationMessage(
+                        'No crash report found. The engine has not crashed recently.'
+                    );
+                }
+            } catch (err) {
+                // Engine may be dead — try reading the file directly.
+                const fs = await import('fs');
+                const path = await import('path');
+                const exePath = (await import('./engine-instance')).EngineInstance.resolveExecutable();
+                if (exePath) {
+                    const crashPath = path.join(
+                        path.dirname(exePath), '.uzengine', 'crash_reports', 'latest.json'
+                    );
+                    if (fs.existsSync(crashPath)) {
+                        const doc = await vscode.workspace.openTextDocument(vscode.Uri.file(crashPath));
+                        await vscode.window.showTextDocument(doc);
+                        consolePanel.log('info', 'Crash report opened from file (engine offline).');
+                        return;
+                    }
+                }
+                vscode.window.showErrorMessage(
+                    `Failed to read crash report: ${err instanceof Error ? err.message : String(err)}`
+                );
+            }
+        }
+    );
+
+    // AI Debug: Analyze Frame — captures a screenshot for AI visual analysis.
+    const analyzeFrameCmd = vscode.commands.registerCommand(
+        'uzengine.analyzeFrame',
+        async () => {
+            const active = instanceMgr.getActiveInstance();
+            if (!active || !active.isRunning) {
+                vscode.window.showWarningMessage('No running engine instance.');
+                return;
+            }
+            try {
+                const result = await active.engineClient.call('engine.screenshot', {});
+                if (result.path) {
+                    const uri = vscode.Uri.file(result.path as string);
+                    await vscode.commands.executeCommand('vscode.open', uri);
+                    consolePanel.log('info', `Frame captured: ${result.path}`);
+                } else {
+                    vscode.window.showInformationMessage('Screenshot captured (no file path returned).');
+                }
+            } catch (err) {
+                vscode.window.showErrorMessage(
+                    `Failed to capture frame: ${err instanceof Error ? err.message : String(err)}`
+                );
+            }
+        }
+    );
+
     context.subscriptions.push(
         openCommand,
         startCommand,
@@ -363,6 +481,8 @@ export function activate(context: vscode.ExtensionContext): void {
         gizmoRotateCmd,
         gizmoScaleCmd,
         gizmoSpaceCmd,
+        diagnoseCrashCmd,
+        analyzeFrameCmd,
     );
 
     // -------------------------------------------------------------------------

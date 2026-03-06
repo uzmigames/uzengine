@@ -266,7 +266,7 @@ TEST_F(CrashReporterTest, WriteReportContainsEngineVersion) {
     ASSERT_FALSE(path.empty());
 
     const std::string content = read_file(path.c_str());
-    EXPECT_NE(content.find("version = 0.1.0"), std::string::npos)
+    EXPECT_NE(content.find("version = 0.3.0"), std::string::npos)
         << "Report should contain engine version. Content:\n" << content;
 }
 

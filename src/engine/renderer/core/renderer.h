@@ -138,8 +138,10 @@ private:
     // -----------------------------------------------------------------------
     // RHI resource handles
     // -----------------------------------------------------------------------
-    RhiPipeline rhiPipeline_     = RHI_NULL;
-    RhiPipeline rhiPbrPipeline_  = RHI_NULL;
+    RhiPipeline rhiPipeline_        = RHI_NULL;
+    RhiPipeline rhiPbrPipeline_     = RHI_NULL;
+    RhiPipeline rhiStencilMarkPSO_  = RHI_NULL;  // Stencil write, no color
+    RhiPipeline rhiOutlinePSO_      = RHI_NULL;  // Outline draw, stencil test
 
     // Shader library (named shader registry + PSO cache).
     ShaderLibrary shaderLib_;
@@ -208,6 +210,8 @@ private:
     FrameConstants          frameConstants_;
     GpuMesh                 sphereMesh_;
     RhiTexture              whiteTex_ = RHI_NULL;
+    RhiTexture              blackTex_ = RHI_NULL;
+    RhiTexture              normalTex_ = RHI_NULL;
 };
 
 } // namespace uz

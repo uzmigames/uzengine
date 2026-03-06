@@ -79,6 +79,10 @@ if(WIN32)
     file(GLOB_RECURSE UZENGINE_RHI_C CONFIGURE_DEPENDS
         src/engine/renderer/rhi/*.c
     )
+    # Third-party implementation files (stb_impl.cpp etc.)
+    file(GLOB_RECURSE UZENGINE_THIRDPARTY CONFIGURE_DEPENDS
+        thirdparty/*.cpp
+    )
 
     add_executable(UzEngine WIN32
         src/main.cpp
@@ -88,6 +92,7 @@ if(WIN32)
         ${UZENGINE_NETWORK}
         ${UZENGINE_EDITOR_APP}
         ${UZENGINE_RHI_C}
+        ${UZENGINE_THIRDPARTY}
     )
 
     # Output as render.exe (not UzEngine.exe).
@@ -95,8 +100,8 @@ if(WIN32)
 
     target_include_directories(UzEngine PRIVATE
         ${CMAKE_SOURCE_DIR}/src
-        ${CMAKE_SOURCE_DIR}/src/common/stb
-        ${CMAKE_SOURCE_DIR}/src/common/cgltf
+        ${CMAKE_SOURCE_DIR}/thirdparty/stb
+        ${CMAKE_SOURCE_DIR}/thirdparty/cgltf
         ${CMAKE_BINARY_DIR}/generated
         ${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/include
     )
@@ -108,6 +113,7 @@ if(WIN32)
         dxguid
         ole32
         winmm
+        dbghelp
         ixwebsocket::ixwebsocket
         nlohmann_json::nlohmann_json
         $<IF:$<TARGET_EXISTS:libjpeg-turbo::turbojpeg>,libjpeg-turbo::turbojpeg,libjpeg-turbo::turbojpeg-static>
@@ -157,8 +163,9 @@ file(GLOB_RECURSE TEST_ENGINE_SOURCES CONFIGURE_DEPENDS
 # Exclude DX12/RHI-dependent renderer files from test builds.
 # The renderer directory is organized into subdirectories:
 #   core/     — renderer.cpp, fps_overlay.cpp (RHI-dependent)
-#   resources/ — mesh.cpp, texture.cpp, gltf_importer.cpp (RHI-dependent)
+#   resources/ — mesh.cpp, texture.cpp, gltf_importer.cpp, mesh_manager.cpp (RHI-dependent)
 #   components/ — all RHI-dependent (editor, camera, light, static mesh)
+#   proxies/  — all RHI-dependent (mesh_proxy)
 #   gizmos/   — all RHI-dependent
 list(FILTER TEST_ENGINE_SOURCES EXCLUDE REGEX "engine/renderer/core/renderer\\.cpp$")
 list(FILTER TEST_ENGINE_SOURCES EXCLUDE REGEX "engine/renderer/core/fps_overlay\\.cpp$")
@@ -166,7 +173,9 @@ list(FILTER TEST_ENGINE_SOURCES EXCLUDE REGEX "engine/renderer/resources/mesh\\.
 list(FILTER TEST_ENGINE_SOURCES EXCLUDE REGEX "engine/renderer/resources/texture\\.cpp$")
 list(FILTER TEST_ENGINE_SOURCES EXCLUDE REGEX "engine/renderer/resources/gltf_importer\\.cpp$")
 list(FILTER TEST_ENGINE_SOURCES EXCLUDE REGEX "engine/renderer/resources/mesh_primitives\\.cpp$")
+list(FILTER TEST_ENGINE_SOURCES EXCLUDE REGEX "engine/renderer/resources/mesh_manager\\.cpp$")
 list(FILTER TEST_ENGINE_SOURCES EXCLUDE REGEX "engine/renderer/components/")
+list(FILTER TEST_ENGINE_SOURCES EXCLUDE REGEX "engine/renderer/proxies/")
 list(FILTER TEST_ENGINE_SOURCES EXCLUDE REGEX "engine/renderer/gizmos/")
 # Common sources — exclude stb_impl.cpp (needs external/stb) and ipc_poller.cpp (needs ixwebsocket)
 file(GLOB_RECURSE TEST_COMMON_SOURCES CONFIGURE_DEPENDS
@@ -207,6 +216,12 @@ target_compile_definitions(UzEngineTests PRIVATE
     NOMINMAX
     $<$<BOOL:${WIN32}>:UNICODE _UNICODE WIN32_LEAN_AND_MEAN>
 )
+
+# Remove NDEBUG so that assert() fires even in Release builds.
+# Our death tests (EXPECT_DEATH) rely on assertions in arena, result, undo_redo.
+string(REPLACE "/DNDEBUG" "" CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE}")
+string(REPLACE "-DNDEBUG" "" CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE}")
+target_compile_definitions(UzEngineTests PRIVATE "$<$<CONFIG:Release>:_DISABLE_NDEBUG>")
 
 # Suppress -Wunused-result inside EXPECT_DEATH macros (nodiscard on value()/error()/take()
 # is intentional in production code, but EXPECT_DEATH must call them as discarded exprs).

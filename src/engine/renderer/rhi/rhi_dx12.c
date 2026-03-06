@@ -239,6 +239,18 @@ D3D12_CULL_MODE to_dx12_cull(RhiCullMode m) {
     }
 }
 
+D3D12_STENCIL_OP to_dx12_stencil_op(RhiStencilOp op) {
+    switch (op) {
+    case RHI_STENCIL_OP_KEEP:      return D3D12_STENCIL_OP_KEEP;
+    case RHI_STENCIL_OP_ZERO:      return D3D12_STENCIL_OP_ZERO;
+    case RHI_STENCIL_OP_REPLACE:   return D3D12_STENCIL_OP_REPLACE;
+    case RHI_STENCIL_OP_INCR_SAT:  return D3D12_STENCIL_OP_INCR_SAT;
+    case RHI_STENCIL_OP_DECR_SAT:  return D3D12_STENCIL_OP_DECR_SAT;
+    case RHI_STENCIL_OP_INVERT:    return D3D12_STENCIL_OP_INVERT;
+    default:                       return D3D12_STENCIL_OP_KEEP;
+    }
+}
+
 /* =======================================================================
  * Vertex format conversion
  * ======================================================================= */
@@ -1070,6 +1082,41 @@ RhiPipeline dx12_pipeline_create(const RhiPipelineDesc *desc) {
         ? D3D12_DEPTH_WRITE_MASK_ALL : D3D12_DEPTH_WRITE_MASK_ZERO;
     pso_desc.DepthStencilState.DepthFunc      = to_dx12_compare(desc->depth_stencil.depth_func);
 
+    /* Stencil state — apply sane defaults for zero-initialized structs */
+    pso_desc.DepthStencilState.StencilEnable    = desc->depth_stencil.stencil_enable ? TRUE : FALSE;
+
+    /* When masks are 0 (zero-init default), use D3D12 standard defaults */
+    uint8_t rmask = desc->depth_stencil.stencil_read_mask;
+    uint8_t wmask = desc->depth_stencil.stencil_write_mask;
+    if (rmask == 0 && wmask == 0 && !desc->depth_stencil.stencil_enable) {
+        rmask = 0xFF;
+        wmask = 0xFF;
+    }
+    pso_desc.DepthStencilState.StencilReadMask  = rmask;
+    pso_desc.DepthStencilState.StencilWriteMask = wmask;
+
+    /* Default stencil ops: KEEP/KEEP/KEEP/ALWAYS when zero-initialized */
+    D3D12_DEPTH_STENCILOP_DESC default_op;
+    default_op.StencilFailOp      = D3D12_STENCIL_OP_KEEP;
+    default_op.StencilDepthFailOp = D3D12_STENCIL_OP_KEEP;
+    default_op.StencilPassOp      = D3D12_STENCIL_OP_KEEP;
+    default_op.StencilFunc        = D3D12_COMPARISON_FUNC_ALWAYS;
+
+    if (desc->depth_stencil.stencil_enable) {
+        pso_desc.DepthStencilState.FrontFace.StencilFailOp      = to_dx12_stencil_op(desc->depth_stencil.front_face.fail_op);
+        pso_desc.DepthStencilState.FrontFace.StencilDepthFailOp = to_dx12_stencil_op(desc->depth_stencil.front_face.depth_fail_op);
+        pso_desc.DepthStencilState.FrontFace.StencilPassOp      = to_dx12_stencil_op(desc->depth_stencil.front_face.pass_op);
+        pso_desc.DepthStencilState.FrontFace.StencilFunc        = to_dx12_compare(desc->depth_stencil.front_face.func);
+
+        pso_desc.DepthStencilState.BackFace.StencilFailOp      = to_dx12_stencil_op(desc->depth_stencil.back_face.fail_op);
+        pso_desc.DepthStencilState.BackFace.StencilDepthFailOp = to_dx12_stencil_op(desc->depth_stencil.back_face.depth_fail_op);
+        pso_desc.DepthStencilState.BackFace.StencilPassOp      = to_dx12_stencil_op(desc->depth_stencil.back_face.pass_op);
+        pso_desc.DepthStencilState.BackFace.StencilFunc        = to_dx12_compare(desc->depth_stencil.back_face.func);
+    } else {
+        pso_desc.DepthStencilState.FrontFace = default_op;
+        pso_desc.DepthStencilState.BackFace  = default_op;
+    }
+
     /* Sample mask */
     pso_desc.SampleMask = UINT_MAX;
     pso_desc.SampleDesc.Count   = 1;
@@ -1229,6 +1276,38 @@ ID3D12GraphicsCommandList* rhi_dx12_get_cmd_list(RhiCmdList cmd) {
 }
 
 /* =======================================================================
+ * GPU Memory Info (§6.3)
+ * ======================================================================= */
+
+bool dx12_gpu_memory_info(uint64_t *out_total, uint64_t *out_used,
+                          uint64_t *out_budget) {
+    if (!s_dx12.initialized || !s_dx12.factory) return false;
+
+    IDXGIAdapter1 *adapter1 = NULL;
+    HRESULT hr = IDXGIFactory6_EnumAdapters1(s_dx12.factory, 0, &adapter1);
+    if (FAILED(hr) || !adapter1) return false;
+
+    IDXGIAdapter3 *adapter3 = NULL;
+    hr = IDXGIAdapter1_QueryInterface(
+        adapter1, &IID_IDXGIAdapter3, (void **)&adapter3);
+    IDXGIAdapter1_Release(adapter1);
+    if (FAILED(hr) || !adapter3) return false;
+
+    DXGI_QUERY_VIDEO_MEMORY_INFO info;
+    memset(&info, 0, sizeof(info));
+    hr = IDXGIAdapter3_QueryVideoMemoryInfo(
+        adapter3, 0, DXGI_MEMORY_SEGMENT_GROUP_LOCAL, &info);
+    IDXGIAdapter3_Release(adapter3);
+
+    if (FAILED(hr)) return false;
+
+    if (out_total)  *out_total  = info.Budget;
+    if (out_used)   *out_used   = info.CurrentUsage;
+    if (out_budget) *out_budget = info.Budget;
+    return true;
+}
+
+/* =======================================================================
  * Backend vtable instance
  * ======================================================================= */
 
@@ -1282,6 +1361,9 @@ const rhi_backend_t rhi_dx12_backend = {
     .cmd_clear_render_target = dx12_cmd_clear_render_target,
     .cmd_clear_depth_stencil = dx12_cmd_clear_depth_stencil,
 
+    /* Stencil */
+    .cmd_set_stencil_ref     = dx12_cmd_set_stencil_ref,
+
     /* Barriers */
     .cmd_barrier_texture     = dx12_cmd_barrier_texture,
     .cmd_barrier_buffer      = dx12_cmd_barrier_buffer,
@@ -1300,6 +1382,15 @@ const rhi_backend_t rhi_dx12_backend = {
     .set_debug_name          = dx12_set_debug_name,
     .begin_event             = dx12_begin_event,
     .end_event               = dx12_end_event,
+
+    /* GPU Timestamps — stubs (requires query heap infrastructure) */
+    .timestamp_query_heap_create  = NULL,
+    .timestamp_query_heap_destroy = NULL,
+    .cmd_timestamp_write          = NULL,
+    .timestamp_readback           = NULL,
+
+    /* GPU Memory Info */
+    .gpu_memory_info         = dx12_gpu_memory_info,
 };
 
 #endif /* _WIN32 */

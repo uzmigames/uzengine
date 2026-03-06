@@ -10,39 +10,58 @@ void MeshProxy::setup(RgPassBuilder& builder) {
 }
 
 void MeshProxy::cache_material() {
-    // Extract values from Material's unordered_maps ONCE so that
-    // execute() never touches a hash-map.
+    // Default values
     cached_albedo[0] = 0.8f; cached_albedo[1] = 0.8f; cached_albedo[2] = 0.8f;
     cached_metallic  = 0.0f;
     cached_roughness = 0.5f;
-    cached_albedo_tex = RHI_NULL;
+    cached_ao        = 1.0f;
+    cached_emission[0] = 0.0f; cached_emission[1] = 0.0f; cached_emission[2] = 0.0f;
+    cached_emission_energy = 1.0f;
 
-    if (!material) {
-        fprintf(stderr, "[MeshProxy] cache_material: NO MATERIAL\n");
-        return;
-    }
+    cached_albedo_tex    = RHI_NULL;
+    cached_normal_tex    = RHI_NULL;
+    cached_metallic_tex  = RHI_NULL;
+    cached_roughness_tex = RHI_NULL;
+    cached_ao_tex        = RHI_NULL;
+    cached_emission_tex  = RHI_NULL;
 
-    auto it_alb = material->vec_parameters.find("albedo");
-    if (it_alb != material->vec_parameters.end() && it_alb->second.size() >= 3) {
-        cached_albedo[0] = it_alb->second[0];
-        cached_albedo[1] = it_alb->second[1];
-        cached_albedo[2] = it_alb->second[2];
-    }
+    if (!material) return;
 
-    auto it_met = material->parameters.find("metallic");
-    if (it_met != material->parameters.end()) {
-        cached_metallic = it_met->second;
-    }
+    // Helper for float params
+    auto get_float = [&](const char* name, float& val) {
+        auto it = material->parameters.find(name);
+        if (it != material->parameters.end()) val = it->second;
+    };
 
-    auto it_rou = material->parameters.find("roughness");
-    if (it_rou != material->parameters.end()) {
-        cached_roughness = it_rou->second;
-    }
+    // Helper for vec3 params
+    auto get_vec3 = [&](const char* name, float* val) {
+        auto it = material->vec_parameters.find(name);
+        if (it != material->vec_parameters.end() && it->second.size() >= 3) {
+            val[0] = it->second[0];
+            val[1] = it->second[1];
+            val[2] = it->second[2];
+        }
+    };
 
-    auto it_tex = material->texture_handles.find("albedo_texture");
-    if (it_tex != material->texture_handles.end()) {
-        cached_albedo_tex = it_tex->second;
-    }
+    // Helper for textures
+    auto get_tex = [&](const char* name, RhiTexture& val) {
+        auto it = material->texture_handles.find(name);
+        if (it != material->texture_handles.end()) val = it->second;
+    };
+
+    get_vec3("albedo", cached_albedo);
+    get_float("metallic", cached_metallic);
+    get_float("roughness", cached_roughness);
+    get_float("ao", cached_ao);
+    get_vec3("emission", cached_emission);
+    get_float("emission_energy", cached_emission_energy);
+
+    get_tex("albedo_texture", cached_albedo_tex);
+    get_tex("normal_texture", cached_normal_tex);
+    get_tex("metallic_texture", cached_metallic_tex);
+    get_tex("roughness_texture", cached_roughness_tex);
+    get_tex("ao_texture", cached_ao_tex);
+    get_tex("emission_texture", cached_emission_tex);
 }
 
 void MeshProxy::execute(RhiCmdList cmd, const FrameConstants& fc) {
@@ -52,35 +71,46 @@ void MeshProxy::execute(RhiCmdList cmd, const FrameConstants& fc) {
     rhi()->cmd_set_vertex_buffer(cmd, 0, mesh->vertex_buffer, 0, mesh->vertex_stride);
     rhi()->cmd_set_index_buffer(cmd, mesh->index_buffer, 0, true);
 
-    // 2. Slot b0: World Matrix (16 DWORDs) — raw transform, NOT pre-multiplied
+    // 2. Slot b0: World Matrix
     rhi()->cmd_set_root_constants(cmd, 0, &transform, 16, 0);
 
-    // 3. Slot b1: MaterialCB (8 DWORDs) — albedo(3) + metallic + roughness + ao + pad(2)
-    float matCB[8] = {
-        cached_albedo[0], cached_albedo[1], cached_albedo[2], cached_metallic,
-        cached_roughness, 1.0f, 0.0f, 0.0f  // roughness, ao, pad, pad
+    // 3. Slot b1: MaterialCB (12 floats)
+    float matCB[12] = {
+        cached_albedo[0], cached_albedo[1], cached_albedo[2], 1.0f,
+        cached_metallic, cached_roughness, cached_ao, cached_emission_energy,
+        cached_emission[0], cached_emission[1], cached_emission[2], 0.0f
     };
-    rhi()->cmd_set_root_constants(cmd, 1, matCB, 8, 0);
+    rhi()->cmd_set_root_constants(cmd, 1, matCB, 12, 0);
 
-    // 4. Slot b2: LightCamCB (16 DWORDs) — dir(3)+intensity + color(3)+pad + camPos(3)+time
-    float lightCamCB[16] = {
-        fc.light_dir.x, fc.light_dir.y, fc.light_dir.z, fc.light_intensity,
-        fc.light_color.x, fc.light_color.y, fc.light_color.z, 0.0f,
-        fc.camera_world_pos.x, fc.camera_world_pos.y, fc.camera_world_pos.z, fc.time,
-        0.0f, 0.0f, 0.0f, 0.0f
-    };
-    rhi()->cmd_set_root_constants(cmd, 2, lightCamCB, 16, 0);
+    // 4. Slot b2: LightFrameCB (102 floats)
+    float lightFrameCB[128] = { 0 }; 
+    // Light 0: Directional light from FrameConstants
+    lightFrameCB[0] = 0.0f; lightFrameCB[1] = 0.0f; lightFrameCB[2] = 0.0f; // pos
+    lightFrameCB[3] = fc.light_intensity;
+    lightFrameCB[4] = fc.light_color.x; lightFrameCB[5] = fc.light_color.y; lightFrameCB[6] = fc.light_color.z;
+    lightFrameCB[7] = 0.0f; // range
+    lightFrameCB[8] = fc.light_dir.x; lightFrameCB[9] = fc.light_dir.y; lightFrameCB[10] = fc.light_dir.z;
+    lightFrameCB[11] = 0.0f; // type (0=Dir)
+    
+    uint32_t lightCount = 1;
+    memcpy(&lightFrameCB[96], &lightCount, 4);
+    memcpy(&lightFrameCB[97], &fc.camera_world_pos, 12);
+    memcpy(&lightFrameCB[100], &fc.time, 4);
+    float envInt = 1.0f;
+    memcpy(&lightFrameCB[101], &envInt, 4);
 
-    // 5. Slot b3: FrameCB (16 DWORDs) — viewProj matrix
+    rhi()->cmd_set_root_constants(cmd, 2, lightFrameCB, 102, 0);
+
+    // 5. Slot b3: FrameCB
     rhi()->cmd_set_root_constants(cmd, 3, &fc.view_proj, 16, 0);
 
-    // 6. Textures t0-t4: Albedo + fallback white for Normal/Metallic/Roughness/AO
-    RhiTexture albedoTex = (cached_albedo_tex != RHI_NULL)
-                               ? cached_albedo_tex : fc.white_texture;
-    rhi()->cmd_set_texture(cmd, 0, albedoTex);
-    for (int i = 1; i < 5; i++) {
-        rhi()->cmd_set_texture(cmd, i, fc.white_texture);
-    }
+    // 6. Textures t0-t5
+    rhi()->cmd_set_texture(cmd, 0, (cached_albedo_tex != RHI_NULL) ? cached_albedo_tex : fc.white_texture);
+    rhi()->cmd_set_texture(cmd, 1, (cached_normal_tex != RHI_NULL) ? cached_normal_tex : fc.normal_texture);
+    rhi()->cmd_set_texture(cmd, 2, (cached_metallic_tex != RHI_NULL) ? cached_metallic_tex : fc.black_texture);
+    rhi()->cmd_set_texture(cmd, 3, (cached_roughness_tex != RHI_NULL) ? cached_roughness_tex : fc.white_texture);
+    rhi()->cmd_set_texture(cmd, 4, (cached_ao_tex != RHI_NULL) ? cached_ao_tex : fc.white_texture);
+    // Slot 5 (emission_tex) removed — root signature Phase 1 only supports t0-t4
 
     // 7. Draw Submeshes
     for (const auto& sub : mesh->submeshes) {

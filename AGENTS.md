@@ -450,6 +450,26 @@ find src/ vscode-uzengine/src/ -name "*.h" -o -name "*.cpp" -o -name "*.c" -o -n
 
 ---
 
+### §AI-DEBUGGING — Automated Debugging Workflow
+
+**ABSOLUTE RULES for diagnosing engine issues:**
+
+* **RULE DEBUG-1 (Visual Introspection)**: When encountering a rendering issue, do NOT ask the user for a screenshot. Use `uz_screenshot` (MCP) or `tools/capture_frame.ps1` (CLI) to capture and analyze the frame yourself.
+
+* **RULE DEBUG-2 (Crash Reports)**: If the engine crashes, immediately read `.uzengine/crash_reports/latest.json` (via `engine.getCrashReport` IPC or file read) before attempting any fix. The report contains symbolicated stack traces, engine state, and log tail.
+
+* **RULE DEBUG-3 (Shader Errors)**: When a shader fails compilation, read the structured error from the `shader.reload` IPC response before editing the `.hlsl` file. Do not guess at shader errors.
+
+* **RULE DEBUG-4 (Fix Verification)**: After any rendering fix, capture a frame via `uz_screenshot` and compare with the previous state to verify the fix worked. Never consider a rendering fix complete without visual verification.
+
+* **RULE DEBUG-5 (GPU Crashes)**: Never attempt a blind fix for a GPU crash (TDR / Device Removed). Always consult DRED telemetry first (`latest.json` → `gpu_telemetry`). DRED auto-breadcrumbs are enabled in debug builds.
+
+* **RULE DEBUG-6 (Build Verification)**: When the C++ build fails, use `uz_build` (MCP) or `tools/build_and_report.ps1` to get structured errors with file/line/code. Max 3 retry iterations before escalating to user.
+
+**Full spec**: `docs/architecture/ai-debug-pipeline.md`
+
+---
+
 ## Language-Specific Rules
 
 The following languages are configured for this project. For detailed rules, see the corresponding files in `/.rulebook/specs/`:

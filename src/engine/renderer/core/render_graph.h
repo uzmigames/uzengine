@@ -179,6 +179,13 @@ public:
     // Diagnostics: returns a description of why a pass was culled, or empty.
     [[nodiscard]] std::string cull_reason(uint32_t pass_index) const;
 
+    // §4.5: Returns the name of the currently executing pass (set during
+    // execute()). Returns "" outside of execute(). Thread-safe read.
+    [[nodiscard]] const char* active_pass_name() const;
+
+    // §6: Returns the texture descriptor for a given handle.
+    [[nodiscard]] const RgTextureDesc* texture_desc(RgTextureHandle h) const;
+
     friend struct RgPassBuilder;
 
 private:

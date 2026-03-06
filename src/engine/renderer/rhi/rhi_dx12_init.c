@@ -32,6 +32,26 @@ bool dx12_init(void *window_handle, uint32_t width, uint32_t height) {
             s_dx12.debug_controller = debug;
         }
     }
+
+    /* ------ DRED (Device Removed Extended Data) ------ */
+    /* Enable auto-breadcrumbs and page fault reporting so that if
+       a TDR / device removal occurs, the crash reporter can read
+       structured GPU-side telemetry via ID3D12DeviceRemovedExtendedData. */
+    {
+        ID3D12DeviceRemovedExtendedDataSettings *dred = NULL;
+        if (SUCCEEDED(D3D12GetDebugInterface(
+                &IID_ID3D12DeviceRemovedExtendedDataSettings,
+                (void **)&dred))) {
+            ID3D12DeviceRemovedExtendedDataSettings_SetAutoBreadcrumbsEnablement(
+                dred, D3D12_DRED_ENABLEMENT_FORCED_ON);
+            ID3D12DeviceRemovedExtendedDataSettings_SetPageFaultEnablement(
+                dred, D3D12_DRED_ENABLEMENT_FORCED_ON);
+            ID3D12DeviceRemovedExtendedDataSettings_Release(dred);
+            DIAG("DRED auto-breadcrumbs + page-fault enabled");
+        } else {
+            DIAG("DRED not available on this system (Windows 10 1903+ required)");
+        }
+    }
 #endif
 
     /* ------ DXGI Factory ------ */

@@ -7,7 +7,7 @@
 
 #include "texture.h"
 
-#include "common/stb/stb_image.h"
+#include <stb_image.h>
 
 #include "engine/core/diag.h"
 #include "engine/core/platform.h"

@@ -20,6 +20,20 @@
 #include <vector>
 
 namespace uz {
+// Forward-declared so the file re-enters uz:: below.
+} // namespace uz
+
+// §4.5: Global active render pass name for crash diagnostics (DRED).
+// Set during RenderGraph::execute(), readable from C code via rg_get_active_pass_name().
+static volatile const char* g_active_render_pass = "";
+
+extern "C" {
+    const char* rg_get_active_pass_name(void) {
+        return const_cast<const char*>(g_active_render_pass);
+    }
+}
+
+namespace uz {
 
 // ---------------------------------------------------------------------------
 // Internal resource / pass structures
@@ -83,6 +97,10 @@ struct RenderGraph::Impl {
     // Compile output
     bool                  compiled = false;
     std::vector<uint32_t> execution_order;
+
+    // §4.5: Active pass name (set during execute, read by DRED handler).
+    // Uses a volatile pointer for crash-safe reading.
+    volatile const char* active_pass_name = "";
 
     // Separate counters for texture/buffer handles so they don't alias
     // Textures use handle range [0, tex_count), buffers use [tex_offset, ...)
@@ -512,10 +530,15 @@ void RenderGraph::execute(RhiCmdList cmd_list) {
 
     for (uint32_t pi : impl_->execution_order) {
         const auto& pass = impl_->passes[pi];
+        // §4.5: Track active pass name for DRED crash diagnostics.
+        impl_->active_pass_name = pass.name;
+        g_active_render_pass = pass.name;
         if (pass.execute_fn) {
             pass.execute_fn(cmd_list);
         }
     }
+    impl_->active_pass_name = "";
+    g_active_render_pass = "";
 }
 
 // ---------------------------------------------------------------------------
@@ -578,6 +601,21 @@ std::string RenderGraph::cull_reason(uint32_t pass_index) const {
         return "invalid pass index";
     }
     return impl_->passes[pass_index].cull_reason;
+}
+
+const char* RenderGraph::active_pass_name() const {
+    return const_cast<const char*>(impl_->active_pass_name);
+}
+
+const RgTextureDesc* RenderGraph::texture_desc(RgTextureHandle h) const {
+    if (h >= static_cast<uint32_t>(impl_->resources.size())) {
+        return nullptr;
+    }
+    const auto& res = impl_->resources[h];
+    if (res.kind != RgResourceKind::Texture) {
+        return nullptr;
+    }
+    return &res.tex_desc;
 }
 
 } // namespace uz

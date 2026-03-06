@@ -5,28 +5,30 @@
 //
 // Usage:
 //   CrashReporter::install();   // Call once at engine startup
-//   CrashReporter::set_output_dir("/tmp/crashes"); // optional
+//   CrashReporter::set_output_dir(".uzengine/crash_reports");
 //
 // On Linux: installs handlers for SIGSEGV, SIGABRT, SIGFPE, SIGILL, SIGBUS.
 // On Windows: sets a top-level SEH exception filter via SetUnhandledExceptionFilter.
 //
-// The crash report format is plain-text:
-//   [crash]
-//   timestamp = 2026-03-03T12:00:00Z
-//   signal = SIGSEGV
-//   address = 0x0000000000000000
-//   [stack]
-//   0x00007f1234567890  (symbolic if available)
-//   ...
-//   [engine]
-//   version = 0.1.0
-//   build = Debug
+// On crash, generates:
+//   latest.json -- Machine-readable structured JSON report (stack, GPU state, etc.)
+//   latest.dmp  -- Windows MiniDump for offline debugging.
 
 #include <cstdint>
 #include <functional>
 #include <string>
 
 namespace uz {
+
+/// Snapshot of engine state, set periodically so crash reports have context.
+struct EngineStateSnapshot {
+    char scene_path[260]   = {};
+    float camera_pos[3]    = {};
+    float camera_yaw       = 0.0f;
+    float camera_pitch     = 0.0f;
+    uint64_t frame_number  = 0;
+    char selected_node[128] = {};
+};
 
 class CrashReporter {
 public:
@@ -41,6 +43,10 @@ public:
 
     // Returns the directory where crash reports are written.
     [[nodiscard]] static const char* output_dir();
+
+    // Update the engine state snapshot (called from main loop or on scene change).
+    // This data is included in crash reports for context.
+    static void update_engine_state(const EngineStateSnapshot& state);
 
     // Write a crash report manually (e.g. for caught exceptions).
     // Returns path to the written file, or empty string on failure.
@@ -58,6 +64,17 @@ public:
 
     // Returns path of the last written crash report (empty if none).
     [[nodiscard]] static std::string last_report_path();
+
+    // Read the latest.json crash report and return its contents as a string.
+    // Returns empty string if no report exists.
+    [[nodiscard]] static std::string read_latest_report();
+
+    // Set custom metadata key-value pair for crash context (à la UE5 SetGameData).
+    // Thread-safe. Data is included in crash reports under "metadata".
+    static void set_metadata(const std::string& key, const std::string& value);
+
+    // Clear all custom metadata.
+    static void clear_metadata();
 };
 
 } // namespace uz
