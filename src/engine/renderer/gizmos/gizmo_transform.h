@@ -38,8 +38,12 @@ public:
 
     /// Draw a specific mode. Called by EditorComponent.
     /// mode: 0=translate, 1=rotate, 2=scale
-    /// activeAxis: -1=none, 0=X, 1=Y, 2=Z (highlighted)
+    /// activeAxis: -1=none, 0=X, 1=Y, 2=Z, 3=free (highlighted)
     void drawMode(RhiCmdList cmd, int mode, int activeAxis);
+
+    /// Draw the free rotation ring (billboarded circle facing camera).
+    /// Must be called with a billboard MVP already set via root constants.
+    void drawFreeRing(RhiCmdList cmd, bool highlighted);
 
 private:
     // Translate: 3 axis arrows
@@ -59,6 +63,10 @@ private:
     uint32_t scaleVertCount_ = 0;
     uint32_t scaleAxisStart_[3]{0,0,0};
     uint32_t scaleAxisCount_[3]{0,0,0};
+
+    // Free rotation ring (XY plane circle, billboarded at draw time)
+    RhiBuffer freeRingVB_ = RHI_NULL;
+    uint32_t freeRingVertCount_ = 0;
 };
 
 } // namespace uz

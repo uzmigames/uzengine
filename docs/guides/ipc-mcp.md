@@ -382,6 +382,261 @@ async function handleUzRestart(args) {
 
 ## Registered IPC Functions (Complete List)
 
+### Editor (UZ_EDITOR only)
+
+Requires engine running in `--editor` mode with the scene system.
+
+#### `editor.setGizmo`
+
+Set the active node and gizmo mode for transformation handles.
+
+**Args:**
+```json
+{
+  "nodeId": 5,
+  "mode": "translate"
+}
+```
+
+**Parameters:**
+- `nodeId` (uint32): Scene node ID to attach gizmo to; `null` to hide gizmo
+- `mode` (string): `"translate"` | `"rotate"` | `"scale"` | `"none"`
+
+**Returns:**
+```json
+{ "ok": true }
+```
+
+**Example:**
+```json
+uz_call("editor.setGizmo", {"nodeId": 5, "mode": "translate"})
+uz_call("editor.setGizmo", {"nodeId": null, "mode": "none"})
+```
+
+---
+
+#### `editor.setGizmoHover`
+
+Highlight a specific axis or plane on the active gizmo (hover feedback).
+
+**Args:**
+```json
+{
+  "axis": "x"
+}
+```
+
+**Parameters:**
+- `axis` (string): `"x"` | `"y"` | `"z"` | `"xy"` | `"xz"` | `"yz"` | `"center"` | `null`
+  - `"x"`, `"y"`, `"z"`: single axis (arrow or arc or line)
+  - `"xy"`, `"xz"`, `"yz"`: plane quads
+  - `"center"`: uniform scale cube or ring
+  - `null`: clear all highlights
+
+**Returns:**
+```json
+{ "ok": true }
+```
+
+**Color Scheme:**
+- X: `#CC2222` (red) → hover `#FFFFFF` (white)
+- Y: `#22CC22` (green) → hover `#FFFFFF` (white)
+- Z: `#2222CC` (blue) → hover `#FFFFFF` (white)
+- Center: `#CCCC22` (yellow) → hover `#FFFFFF` (white)
+
+---
+
+#### `editor.setGizmoSpace`
+
+Toggle between local (node-relative) and world (global) coordinate frames.
+
+**Args:**
+```json
+{
+  "space": "world"
+}
+```
+
+**Parameters:**
+- `space` (string): `"world"` | `"local"`
+  - `"world"`: gizmo arrows align with global X/Y/Z axes
+  - `"local"`: gizmo arrows align with the node's rotation
+
+**Returns:**
+```json
+{ "ok": true }
+```
+
+---
+
+#### `editor.setNodeTransformLive`
+
+Apply a live transform during drag (updates in real-time, no undo entry yet).
+
+**Args:**
+```json
+{
+  "nodeId": 5,
+  "position": [1.0, 0.0, 0.5],
+  "rotation": [0.707, 0.0, 0.0, 0.707],
+  "scale": [1.0, 1.0, 1.0]
+}
+```
+
+**Parameters:**
+- `nodeId` (uint32): Scene node to transform
+- `position` (array, optional): `[x, y, z]` world position
+- `rotation` (array, optional): `[w, x, y, z]` quaternion (w is scalar)
+- `scale` (array, optional): `[x, y, z]` per-axis scale
+
+**Returns:**
+```json
+{ "ok": true }
+```
+
+**Notes:**
+- All transform components are optional — omit any not being modified
+- Called frequently during mouse drag (up to 60 times/sec)
+- No undo entry created — used for live feedback only
+
+---
+
+#### `editor.commitTransform`
+
+Finalize a drag operation. The engine returns the authoritative final transform (after any clamping/rounding) for undo stack registration.
+
+**Args:**
+```json
+{
+  "nodeId": 5
+}
+```
+
+**Returns:**
+```json
+{
+  "ok": true,
+  "transform": {
+    "position": [1.0, 0.0, 0.5],
+    "rotation": [0.707, 0.0, 0.0, 0.707],
+    "scale": [1.0, 1.0, 1.0]
+  }
+}
+```
+
+**Notes:**
+- Called on `mouseup` to finalize the drag
+- The returned `transform` is the engine's authoritative state
+- Extension uses the returned transform as `newValue` when pushing `TransformCommand` to undo stack
+- This ensures undo/redo stays synchronized with engine state
+
+---
+
+#### `editor.getCamera`
+
+Fetch the current camera matrices and position for ray unprojection and gizmo scale computation.
+
+**Args:**
+```json
+{}
+```
+
+**Returns:**
+```json
+{
+  "ok": true,
+  "view": [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+  "proj": [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0],
+  "position": [0.0, 5.0, 10.0]
+}
+```
+
+**Matrix Format:**
+- `view` (array[16]): Column-major view matrix (transposed from DX12's row-major)
+- `proj` (array[16]): Column-major projection matrix
+- `position` (array[3]): Camera world position `[x, y, z]`
+
+**Usage:**
+```typescript
+// Unproject screen coordinates to world ray
+const ndcX = (px / canvasWidth) * 2 - 1;
+const ndcY = 1 - (py / canvasHeight) * 2;
+const invVP = mat4Invert(mat4Multiply(proj, view));
+const nearPoint = mat4TransformPoint(invVP, [ndcX, ndcY, -1]);
+const farPoint  = mat4TransformPoint(invVP, [ndcX, ndcY,  1]);
+const direction = vec3Normalize(vec3Subtract(farPoint, nearPoint));
+
+// Compute gizmo scale based on distance
+const distance = vec3Length(vec3Subtract(gizmoOrigin, cameraPos));
+const gizmoScale = distance * 0.1;
+```
+
+---
+
+#### `editor.pickNode`
+
+GPU-accelerated picking: read the pick buffer at screen coordinates to determine which node (if any) is under the cursor.
+
+**Args:**
+```json
+{
+  "screen_x": 512,
+  "screen_y": 300
+}
+```
+
+**Returns:**
+```json
+{ "nodeId": 5 }
+```
+
+or if clicking empty space:
+
+```json
+{ "nodeId": null }
+```
+
+**Notes:**
+- Uses the pre-rendered pick buffer (R8G8B8A8_UNORM, 1/4 resolution)
+- Each pixel encodes a 24-bit node ID as RGB bytes
+- Call this on left-click to determine selection
+
+---
+
+#### `editor.boxPick`
+
+GPU-accelerated multi-select: read the pick buffer within a screen-space rectangle to get all nodes in the selection.
+
+**Args:**
+```json
+{
+  "x": 100,
+  "y": 50,
+  "width": 200,
+  "height": 150
+}
+```
+
+**Returns:**
+```json
+{
+  "nodeIds": [5, 12, 8]
+}
+```
+
+or if no nodes in rect:
+
+```json
+{ "nodeIds": [] }
+```
+
+**Notes:**
+- Scans all pixels within the rectangle and returns unique node IDs
+- Used for Ctrl+drag box-select operations
+- Returns a deduplicated list
+
+---
+
 ### Phase 0: Core (Currently Active)
 
 | Function | Args | Description |

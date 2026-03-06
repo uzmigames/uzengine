@@ -920,3 +920,227 @@ TEST(Mat4Rotate, Quaternion90AroundZ_MatchesExpectedMatrix) {
     EXPECT_NEAR(m.m[1][1],  0.0f, kTol);
     EXPECT_NEAR(m.m[1][2],  0.0f, kTol);
 }
+
+// ============================================================================
+// mat4_inverse
+// ============================================================================
+
+TEST(Mat4Inverse, Identity_ReturnsIdentity) {
+    const Mat4 inv = mat4_inverse(Mat4::identity());
+    for (int c = 0; c < 4; ++c)
+        for (int r = 0; r < 4; ++r)
+            EXPECT_NEAR(inv.m[c][r], (c == r) ? 1.0f : 0.0f, kTol);
+}
+
+TEST(Mat4Inverse, Translation_InvertCorrectly) {
+    const Mat4 t = Mat4::translate({5.0f, -3.0f, 7.0f, 0.0f});
+    const Mat4 inv = mat4_inverse(t);
+    const Mat4 product = t * inv;
+    for (int c = 0; c < 4; ++c)
+        for (int r = 0; r < 4; ++r)
+            EXPECT_NEAR(product.m[c][r], (c == r) ? 1.0f : 0.0f, kTol);
+}
+
+TEST(Mat4Inverse, Rotation_InvertCorrectly) {
+    const Quat q = quat_from_axis_angle({0.0f, 0.0f, 1.0f, 0.0f}, kHalfPi);
+    const Mat4 r = Mat4::rotate(q);
+    const Mat4 inv = mat4_inverse(r);
+    const Mat4 product = r * inv;
+    for (int c = 0; c < 4; ++c)
+        for (int r2 = 0; r2 < 4; ++r2)
+            EXPECT_NEAR(product.m[c][r2], (c == r2) ? 1.0f : 0.0f, kTol);
+}
+
+TEST(Mat4Inverse, TRS_InvertCorrectly) {
+    const Mat4 t = Mat4::translate({10.0f, 20.0f, 30.0f, 0.0f});
+    const Quat q = quat_from_axis_angle({0.0f, 1.0f, 0.0f, 0.0f}, 0.7f);
+    const Mat4 r = Mat4::rotate(q);
+    const Mat4 s = Mat4::scale({2.0f, 3.0f, 0.5f, 0.0f});
+    const Mat4 trs = t * r * s; // column-major: scale first, rotate, translate
+    const Mat4 inv = mat4_inverse(trs);
+    const Mat4 product = trs * inv;
+    for (int c = 0; c < 4; ++c)
+        for (int r2 = 0; r2 < 4; ++r2)
+            EXPECT_NEAR(product.m[c][r2], (c == r2) ? 1.0f : 0.0f, 1e-4f);
+}
+
+// ============================================================================
+// mat4_get_translation
+// ============================================================================
+
+TEST(Mat4GetTranslation, ExtractsColumn3) {
+    Mat4 m = Mat4::identity();
+    m.m[3][0] = 5.0f; m.m[3][1] = -3.0f; m.m[3][2] = 7.0f;
+    const Vec3 t = mat4_get_translation(m);
+    EXPECT_NEAR(t.x, 5.0f, kTol);
+    EXPECT_NEAR(t.y, -3.0f, kTol);
+    EXPECT_NEAR(t.z, 7.0f, kTol);
+}
+
+// ============================================================================
+// World-Pivot Rotation: Test A — No parent, orbit around Z
+// ============================================================================
+//
+// Setup: Object at world (10,0,0), identity rotation, identity scale.
+//        Pivot at origin (0,0,0). Axis = world Z. Angle = +90deg.
+//
+// Convention proof:
+//   Column-major, LH. quat_from_axis_angle(+Z, +90deg) with column-major
+//   Mat4::rotate produces a CCW rotation when looking down +Z.
+//   Point (10,0,0) rotated +90deg CCW around Z → (0,10,0).
+//
+//   Formula: worldNew = T(P) * R(Q) * T(-P) * worldStart
+//   P = (0,0,0), so T(P) and T(-P) are identity.
+//   worldNew = R(Q) * worldStart
+//   worldStart = T(10,0,0)
+//   worldNew.translation = R * (10,0,0) = (0,10,0)
+
+TEST(WorldPivotRotation, TestA_NoParent_OrbitZ90) {
+    // Object at (10,0,0), identity rotation/scale
+    const Mat4 worldStart = Mat4::translate({10.0f, 0.0f, 0.0f, 0.0f});
+
+    // Pivot at origin
+    const Vec3 pivot = {0.0f, 0.0f, 0.0f, 0.0f};
+
+    // +90 degrees around world Z
+    const Quat delta = quat_from_axis_angle({0.0f, 0.0f, 1.0f, 0.0f}, kHalfPi);
+
+    // Parent = identity (root node)
+    const auto result = apply_world_pivot_rotation(
+        Mat4::identity(), worldStart, pivot, delta);
+
+    // Extract new world position
+    const Vec3 newPos = mat4_get_translation(result.world_new);
+
+    // CCW +90deg around Z: (10,0,0) → (0,10,0)
+    EXPECT_NEAR(newPos.x,  0.0f, kTol);
+    EXPECT_NEAR(newPos.y, 10.0f, kTol);
+    EXPECT_NEAR(newPos.z,  0.0f, kTol);
+
+    // Distance from pivot must be preserved: |newPos - pivot| = 10
+    const float dist = std::sqrt(newPos.x*newPos.x + newPos.y*newPos.y + newPos.z*newPos.z);
+    EXPECT_NEAR(dist, 10.0f, kTol);
+
+    // local_new == world_new (identity parent)
+    for (int c = 0; c < 4; ++c)
+        for (int r = 0; r < 4; ++r)
+            EXPECT_NEAR(result.local_new.m[c][r], result.world_new.m[c][r], kTol);
+}
+
+// Verify pivot NOT at origin also works
+TEST(WorldPivotRotation, TestA_OffOriginPivot_OrbitZ90) {
+    // Object at (15,0,0). Pivot at (5,0,0). Offset = (10,0,0).
+    const Mat4 worldStart = Mat4::translate({15.0f, 0.0f, 0.0f, 0.0f});
+    const Vec3 pivot = {5.0f, 0.0f, 0.0f, 0.0f};
+    const Quat delta = quat_from_axis_angle({0.0f, 0.0f, 1.0f, 0.0f}, kHalfPi);
+
+    const auto result = apply_world_pivot_rotation(
+        Mat4::identity(), worldStart, pivot, delta);
+
+    const Vec3 newPos = mat4_get_translation(result.world_new);
+
+    // Offset (10,0,0) rotated +90deg CCW → (0,10,0), plus pivot (5,0,0) → (5,10,0)
+    EXPECT_NEAR(newPos.x, 5.0f, kTol);
+    EXPECT_NEAR(newPos.y, 10.0f, kTol);
+    EXPECT_NEAR(newPos.z, 0.0f, kTol);
+
+    // Distance from pivot preserved: 10
+    const float dx = newPos.x - pivot.x;
+    const float dy = newPos.y - pivot.y;
+    const float dz = newPos.z - pivot.z;
+    EXPECT_NEAR(std::sqrt(dx*dx + dy*dy + dz*dz), 10.0f, kTol);
+}
+
+// ============================================================================
+// World-Pivot Rotation: Test B — With parent, world sandwich + local
+// ============================================================================
+//
+// Setup:
+//   Parent world: translate(100,0,0) * rotate(45deg Z)
+//   Child local: translate(10,0,0)
+//   Child world start = parentWorld * childLocal
+//   Pivot = child world position
+//   Rotation: +90deg around world Z
+//
+// Verify:
+//   1. childWorldNew = T(P)*R(Q)*T(-P)*childWorldStart
+//   2. childLocalNew = inv(parentWorld) * childWorldNew
+//   3. Recompose: parentWorld * childLocalNew == childWorldNew
+
+TEST(WorldPivotRotation, TestB_WithParent_WorldToLocal) {
+    // Parent: translate(100,0,0) then rotate 45deg around Z
+    const Mat4 parentT = Mat4::translate({100.0f, 0.0f, 0.0f, 0.0f});
+    const Quat parentQ = quat_from_axis_angle({0.0f, 0.0f, 1.0f, 0.0f}, kPi / 4.0f);
+    const Mat4 parentR = Mat4::rotate(parentQ);
+    const Mat4 parentWorld = parentT * parentR; // translate then rotate = T*R in col-major
+
+    // Child local: just translation (10,0,0)
+    const Mat4 childLocal = Mat4::translate({10.0f, 0.0f, 0.0f, 0.0f});
+
+    // Child world = parentWorld * childLocal
+    const Mat4 childWorldStart = parentWorld * childLocal;
+    const Vec3 childWorldPos = mat4_get_translation(childWorldStart);
+
+    // Pivot = child world position (rotate in place)
+    const Vec3 pivot = childWorldPos;
+
+    // +90deg around world Z
+    const Quat delta = quat_from_axis_angle({0.0f, 0.0f, 1.0f, 0.0f}, kHalfPi);
+
+    const auto result = apply_world_pivot_rotation(
+        parentWorld, childWorldStart, pivot, delta);
+
+    // Since pivot == child world pos, position should NOT change
+    const Vec3 newWorldPos = mat4_get_translation(result.world_new);
+    EXPECT_NEAR(newWorldPos.x, childWorldPos.x, kTol);
+    EXPECT_NEAR(newWorldPos.y, childWorldPos.y, kTol);
+    EXPECT_NEAR(newWorldPos.z, childWorldPos.z, kTol);
+
+    // Recompose: parentWorld * localNew must equal worldNew
+    const Mat4 recomposed = parentWorld * result.local_new;
+    for (int c = 0; c < 4; ++c)
+        for (int r = 0; r < 4; ++r)
+            EXPECT_NEAR(recomposed.m[c][r], result.world_new.m[c][r], 1e-3f);
+}
+
+// Test B variant: pivot NOT at child → child orbits around pivot
+TEST(WorldPivotRotation, TestB_WithParent_OrbitAroundExternalPivot) {
+    // Parent: translate(100,0,0)
+    const Mat4 parentWorld = Mat4::translate({100.0f, 0.0f, 0.0f, 0.0f});
+
+    // Child local: translate(10,0,0) → child world = (110,0,0)
+    const Mat4 childLocal = Mat4::translate({10.0f, 0.0f, 0.0f, 0.0f});
+    const Mat4 childWorldStart = parentWorld * childLocal;
+
+    // Pivot at parent origin (100,0,0). Offset = (10,0,0).
+    const Vec3 pivot = {100.0f, 0.0f, 0.0f, 0.0f};
+
+    // +90deg around Z: offset(10,0,0) → (0,10,0)
+    // New world pos = (100,0,0) + (0,10,0) = (100,10,0)
+    const Quat delta = quat_from_axis_angle({0.0f, 0.0f, 1.0f, 0.0f}, kHalfPi);
+
+    const auto result = apply_world_pivot_rotation(
+        parentWorld, childWorldStart, pivot, delta);
+
+    const Vec3 newWorldPos = mat4_get_translation(result.world_new);
+    EXPECT_NEAR(newWorldPos.x, 100.0f, kTol);
+    EXPECT_NEAR(newWorldPos.y,  10.0f, kTol);
+    EXPECT_NEAR(newWorldPos.z,   0.0f, kTol);
+
+    // Distance from pivot preserved: 10
+    const float dx = newWorldPos.x - pivot.x;
+    const float dy = newWorldPos.y - pivot.y;
+    EXPECT_NEAR(std::sqrt(dx*dx + dy*dy), 10.0f, kTol);
+
+    // Recompose must match
+    const Mat4 recomposed = parentWorld * result.local_new;
+    for (int c = 0; c < 4; ++c)
+        for (int r = 0; r < 4; ++r)
+            EXPECT_NEAR(recomposed.m[c][r], result.world_new.m[c][r], 1e-3f);
+
+    // Local new position should be (0,10,0) relative to parent at (100,0,0)
+    const Vec3 localPos = mat4_get_translation(result.local_new);
+    EXPECT_NEAR(localPos.x,  0.0f, kTol);
+    EXPECT_NEAR(localPos.y, 10.0f, kTol);
+    EXPECT_NEAR(localPos.z,  0.0f, kTol);
+}

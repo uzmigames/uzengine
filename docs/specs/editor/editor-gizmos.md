@@ -42,7 +42,7 @@ The extension tells the engine which node to show the gizmo for, and what mode t
 { "fn": "editor.setGizmo", "args": { "nodeId": null, "mode": "none" } }
 ```
 
-The engine renders the gizmo at the node's world position each frame. No per-frame IPC is needed for gizmo rendering — the engine keeps the state until told otherwise.
+The engine renders the gizmo at the node's world position each frame. No per-frame IPC is needed for gizmo rendering — the engine keeps the state until told otherwise. The gizmo is rendered in a dedicated editor-only pass using a no-depth pipeline state, ensuring it always appears on top of scene geometry.
 
 ### 2.3 Color Scheme
 
@@ -171,34 +171,52 @@ function projectOntoAxis(ray: Ray, axisOrigin: Vec3, axisDir: Vec3): number {
 }
 ```
 
-### 4.2 Rotate
+### 4.2 Rotate (Axis-Constrained)
+
+Rotation uses **plane-projected signed angle** (Blender-style): the mouse ray is intersected with the rotation plane (normal = constrained axis), and the signed angle between the initial and current direction vectors determines the rotation amount. This reproduces Blender's exact rotation behavior.
 
 ```
-mousedown → record dragStartAngle = atan2 of mouse projected onto rotation plane
-mousemove → recompute angle from updated mouse position
-         → delta = currentAngle - startAngle
-         → newRotation = startRotation + (axisVector * delta)
+mousedown → intersect mouse ray with rotation plane (normal = worldAxis)
+         → vPrev = normalize(hitPoint - pivot)
+         → totalAngle = 0
+mousemove → intersect current ray with rotation plane
+         → vCur = normalize(hitPoint - pivot)
+         → if |dot(rayDir, planeNormal)| < 0.01: freeze (skip frame)
+         → frameDelta = signedAngleOnPlane(vPrev, vCur, axis)
+         → if Shift held: frameDelta *= 0.1 (precision mode)
+         → totalAngle += frameDelta; vPrev = vCur
+         → appliedAngle = totalAngle
+         → if Ctrl held: appliedAngle = snap(totalAngle, 5°)
+         → if Ctrl+Shift: appliedAngle = snap(totalAngle, 1°)
+         → newRotation = quatNorm(quatMul(quatFromAxisAngle(axis, appliedAngle), startRot))
          → IPC: editor.setNodeTransformLive({nodeId, rotation: newRotation})
 mouseup   → IPC: editor.commitTransform({nodeId})
-         → Extension creates TransformCommand
+Escape    → revert to dragStartRotation, cancel drag
 ```
 
-Signed angle around Y axis example:
+Key properties:
+- Uses **incremental delta** (vPrev → vCur each frame) for continuous rotation beyond 360°
+- **Near-parallel ray freeze**: when ray is almost parallel to rotation plane, delta is skipped to avoid wild values
+- The rotation axis is always **world-space** (never the object's local axis)
+- Rotation continues smoothly even if cursor moves far from the ring
+- **Escape** or right-click cancels drag and reverts to original rotation
 
-```typescript
-function signedAngleOnPlane(
-  ray: Ray, origin: Vec3, planeNormal: Vec3, referenceDir: Vec3
-): number {
-  const t = planeCast(ray, origin, planeNormal);
-  const hitOnPlane = vec3Add(ray.origin, vec3Scale(ray.direction, t));
-  const radial = vec3Normalize(vec3Subtract(hitOnPlane, origin));
-  const angle = Math.atan2(
-    vec3Dot(vec3Cross(referenceDir, radial), planeNormal),
-    vec3Dot(referenceDir, radial)
-  );
-  return angle;
-}
+### 4.2.1 Free Rotation (Trackball / Arcball)
+
+An outer white circle (billboarded to face camera) provides **Shoemake arcball** free rotation:
+
 ```
+mousedown → project pivot to screen, compute arcball start vector
+         → map cursor to virtual sphere: z = sqrt(1 - x² - y²) inside, z=0 on rim
+mousemove → compute current arcball vector
+         → deltaQ = quatFromVectors(startVec, curVec) in camera space
+         → transform deltaQ to world space via camera basis vectors
+         → newRotation = quatNorm(quatMul(worldDeltaQ, startRotation))
+```
+
+- No gimbal lock — quaternion-based throughout
+- Stable near center, controlled near edge of the sphere
+- Axis rings have picking priority over the free ring
 
 ### 4.3 Scale
 
@@ -221,7 +239,9 @@ Center cube drag produces uniform scale (all three axes multiplied by `scaleFact
 - Default grid size: read from `project.uzproj` `[editor] grid_size = 0.25` (metres).
 - **Enabled**: hold `Ctrl` during drag.
 - Snap formula: `snapped = Math.round(value / gridSize) * gridSize`
-- Snap applies per axis independently for translate; to nearest degree step (default 15°) for rotate; to nearest 0.1 for scale.
+- Snap applies per axis independently for translate; to nearest 5° for rotate (Ctrl), 1° for rotate (Ctrl+Shift); to nearest 0.1 for scale.
+- **Shift** (no Ctrl): precision mode — reduces rotation sensitivity by 10x.
+- **Ctrl+Shift**: snap to 1-degree increments with precision sensitivity.
 - The viewport toolbar shows `[Snap: 0.25m]` when snap is active.
 
 ---
@@ -269,6 +289,7 @@ The engine is told via:
 | `editor.commitTransform` | Extension → Engine | Drag ended; engine confirms final state |
 | `editor.getCamera` | Extension → Engine | Fetch current view + proj matrices |
 | `editor.pickNode` | Extension → Engine | GPU pick at screen coords |
+| `editor.boxPick` | Extension → Engine | GPU pick multiple nodes in rect |
 
 ### `editor.setNodeTransformLive`
 
@@ -303,17 +324,49 @@ The response returns the engine's authoritative final transform (after any serve
 // Response: { "nodeId": 5 }  or  { "nodeId": null }  (clicked empty space)
 ```
 
-The engine renders a separate pick buffer (each pixel encodes the node's integer ID) and reads back the pixel at the requested screen coordinate.
+The engine reads the pick buffer at the requested screen coordinate and returns the encoded node ID.
+
+### `editor.boxPick`
+
+```jsonc
+{ "fn": "editor.boxPick", "args": { "x": 100, "y": 50, "width": 200, "height": 150 } }
+// Response: { "nodeIds": [5, 12, 8] }  or  { "nodeIds": [] }  (empty selection)
+```
+
+The engine reads all pixels within the screen-space rectangle and returns a list of unique node IDs found within the selection. Useful for rectangular multi-select / box-select operations.
 
 ---
 
 ## 9. Node Picking
 
-- **Left-click** on viewport: pick node at cursor; replace selection with that node.
-- **Ctrl+left-click**: add/remove node from multi-selection (see multi-select spec).
-- **Click empty space**: deselect all.
-- Picking is independent of the active gizmo mode — it works in all modes.
-- The pick buffer is rendered at 1/4 resolution for performance.
+### 9.1 Pick Buffer
+
+The engine maintains a dedicated **pick buffer** for GPU-accelerated node picking:
+
+- **Format**: R8G8B8A8_UNORM, 1/4 resolution (e.g., 320×180 for a 1280×720 viewport)
+- **Content**: Each pixel encodes the node ID as RGB bytes. The node ID is a 24-bit value (max 16.7 million nodes per scene).
+- **Update frequency**: Updated every frame to match current scene node positions
+- **Compilation**: Guarded by `#ifdef UZ_EDITOR` — excluded from shipping builds
+
+### 9.2 Picking Workflow
+
+- **Left-click** on viewport: `editor.pickNode` reads the pick buffer at screen coordinates; returns the nodeId (or null if empty space)
+- **Ctrl+left-click**: add/remove node from multi-selection (see multi-select spec)
+- **Click empty space**: deselect all
+- **Picking is independent** of the active gizmo mode — it works in all modes
+- **Box-select (Ctrl+drag)**: Call `editor.boxPick` with screen rect to get all nodeIds within the selection rectangle
+
+### 9.3 Public Methods on DX12Renderer
+
+```cpp
+// Pick a single node at screen coordinates
+uint32_t pickNodeAtScreen(int x, int y) const;
+
+// Pick multiple nodes within a screen-space rectangle
+std::vector<uint32_t> boxPickNodes(int x, int y, int w, int h) const;
+```
+
+Both methods are thread-safe and use the most recent pick buffer frame.
 
 ---
 
@@ -323,7 +376,9 @@ When multiple nodes are selected:
 
 - Gizmo origin is placed at the **centroid** of all selected nodes' world positions: `centroid = sum(positions) / count`.
 - Translate drag moves all selected nodes by the same world-space delta.
-- Rotate and Scale are applied relative to the centroid.
+- Rotate drag (axis-constrained) applies the same incremental signed-angle delta to each node individually around the world axis (each node's rotation is updated from its own starting quaternion).
+- Rotate drag (free/arcball) applies the same world-space delta quaternion to each node.
+- Scale is applied relative to the centroid.
 - A single `BulkPropertyCommand` is created on mouseup (see undo-redo spec).
 
 ---

@@ -212,6 +212,18 @@ private:
     RhiTexture              whiteTex_ = RHI_NULL;
     RhiTexture              blackTex_ = RHI_NULL;
     RhiTexture              normalTex_ = RHI_NULL;
+
+#ifdef UZ_EDITOR
+public:
+    [[nodiscard]] uint32_t pickNodeAtScreen(int x, int y) const;
+    [[nodiscard]] std::vector<uint32_t> boxPickNodes(int x, int y, int w, int h) const;
+
+private:
+    uint32_t             pickW_ = 0;
+    uint32_t             pickH_ = 0;
+    mutable std::mutex   pickMutex_;
+    std::vector<uint8_t> pickData_;
+#endif
 };
 
 } // namespace uz

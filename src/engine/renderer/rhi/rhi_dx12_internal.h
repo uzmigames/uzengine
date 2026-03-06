@@ -32,6 +32,19 @@
 #include <windows.h>
 
 #include <assert.h>
+
+/* Debug-friendly assert: prints to stderr before aborting so we can see
+   which assertion triggers in background/headless runs. */
+#ifdef NDEBUG
+  #define RHI_ASSERT(expr) ((void)0)
+#else
+  #define RHI_ASSERT(expr) \
+    do { if (!(expr)) { \
+        fprintf(stderr, "RHI ASSERT FAILED: %s  at %s:%d\n", #expr, __FILE__, __LINE__); \
+        fflush(stderr); \
+        assert(expr); \
+    } } while(0)
+#endif
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
