@@ -74,32 +74,21 @@ void MeshProxy::execute(RhiCmdList cmd, const FrameConstants& fc) {
     // 2. Slot b0: World Matrix
     rhi()->cmd_set_root_constants(cmd, 0, &transform, 16, 0);
 
-    // 3. Slot b1: MaterialCB (12 floats)
-    float matCB[12] = {
-        cached_albedo[0], cached_albedo[1], cached_albedo[2], 1.0f,
-        cached_metallic, cached_roughness, cached_ao, cached_emission_energy,
-        cached_emission[0], cached_emission[1], cached_emission[2], 0.0f
+    // 3. Slot b1: MaterialCB (8 DWORDs)
+    float matCB[8] = {
+        cached_albedo[0], cached_albedo[1], cached_albedo[2], cached_metallic,
+        cached_roughness, cached_ao, 0.0f, 0.0f
     };
-    rhi()->cmd_set_root_constants(cmd, 1, matCB, 12, 0);
+    rhi()->cmd_set_root_constants(cmd, 1, matCB, 8, 0);
 
-    // 4. Slot b2: LightFrameCB (102 floats)
-    float lightFrameCB[128] = { 0 }; 
-    // Light 0: Directional light from FrameConstants
-    lightFrameCB[0] = 0.0f; lightFrameCB[1] = 0.0f; lightFrameCB[2] = 0.0f; // pos
-    lightFrameCB[3] = fc.light_intensity;
-    lightFrameCB[4] = fc.light_color.x; lightFrameCB[5] = fc.light_color.y; lightFrameCB[6] = fc.light_color.z;
-    lightFrameCB[7] = 0.0f; // range
-    lightFrameCB[8] = fc.light_dir.x; lightFrameCB[9] = fc.light_dir.y; lightFrameCB[10] = fc.light_dir.z;
-    lightFrameCB[11] = 0.0f; // type (0=Dir)
-    
-    uint32_t lightCount = 1;
-    memcpy(&lightFrameCB[96], &lightCount, 4);
-    memcpy(&lightFrameCB[97], &fc.camera_world_pos, 12);
-    memcpy(&lightFrameCB[100], &fc.time, 4);
-    float envInt = 1.0f;
-    memcpy(&lightFrameCB[101], &envInt, 4);
-
-    rhi()->cmd_set_root_constants(cmd, 2, lightFrameCB, 102, 0);
+    // 4. Slot b2: LightFrameCB (16 DWORDs — compact single directional light)
+    float lightFrameCB[16] = {
+        fc.light_dir.x, fc.light_dir.y, fc.light_dir.z, fc.light_intensity,
+        fc.light_color.x, fc.light_color.y, fc.light_color.z, 0.0f,
+        fc.camera_world_pos.x, fc.camera_world_pos.y, fc.camera_world_pos.z, fc.time,
+        1.0f, 0.0f, 0.0f, 0.0f  // envIntensity, pad, pad, pad
+    };
+    rhi()->cmd_set_root_constants(cmd, 2, lightFrameCB, 16, 0);
 
     // 5. Slot b3: FrameCB
     rhi()->cmd_set_root_constants(cmd, 3, &fc.view_proj, 16, 0);

@@ -6,13 +6,18 @@
  * degrade gracefully (uz_status returns alive:false, uz_call times out).
  */
 
+import { randomUUID } from 'crypto';
 import fs from 'fs';
 import path from 'path';
-import { randomUUID } from 'crypto';
 
-// Resolve the preview directory relative to the workspace root.
-// When invoked via npx from the project root, process.cwd() is the workspace.
-const PREVIEW_DIR = path.join(process.cwd(), 'build', 'Release', 'preview');
+// Resolve the preview directory relative to this script's location.
+// Script lives at <project>/tools/mcp-uzengine/ipc-client.js
+// so we go up 3 levels to reach the project root.
+import { fileURLToPath } from 'url';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
+const PREVIEW_DIR = path.join(PROJECT_ROOT, 'build', 'Release', 'preview');
 const COMMAND_FILE = path.join(PREVIEW_DIR, 'command.json');
 const RESPONSE_FILE = path.join(PREVIEW_DIR, 'response.json');
 const STATUS_FILE = path.join(PREVIEW_DIR, 'status.json');

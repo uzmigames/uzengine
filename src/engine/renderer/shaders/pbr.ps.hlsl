@@ -11,29 +11,29 @@ cbuffer ObjectCB : register(b0) {
     float4x4 world;
 };
 
-struct Light {
-    float3 position;
-    float  intensity;
-    float3 color;
-    float  range;
-    float3 direction;
-    float  type; // 0=Dir, 1=Point, 2=Spot
-};
+// Light struct removed — using single directional light in compact LightFrameCB
 
+// Compact MaterialCB — 8 DWORDs to fit root constant budget
 cbuffer MaterialCB : register(b1) {
-    float4 materialAlbedo;      // rgb=color, a=unused
-    float4 materialParams;      // x=metallic, y=roughness, z=ao, w=emission_energy
-    float3 materialEmission;    // rgb=emission color
-    float  _pad0;
+    float3 materialAlbedo;      // rgb=color
+    float  materialMetallic;    // metallic
+    float  materialRoughness;   // roughness
+    float  materialAO;          // ambient occlusion
+    float2 _matPad;
 };
 
-#define MAX_LIGHTS 8
+// Compact LightFrameCB — fits in 16 root constant DWORDs
+// Layout: lightDir[3] + intensity + lightColor[3] + _pad +
+//         cameraWorldPos[3] + time + envIntensity + _pad[3]
 cbuffer LightFrameCB : register(b2) {
-    Light  lights[MAX_LIGHTS];
-    uint   lightCount;
+    float3 lightDir;
+    float  lightIntensity;
+    float3 lightColor;
+    float  _lightPad;
     float3 cameraWorldPos;
     float  time;
     float  envIntensity;
+    float3 _framePad;
 };
 
 cbuffer FrameCB : register(b3) {
@@ -108,11 +108,10 @@ float3 FresnelSchlickRoughness(float cosTheta, float3 F0, float roughness) {
 
 float4 PSMain(PSInput input) : SV_TARGET {
     // 1. Unpack material properties
-    float3 albedo   = materialAlbedo.rgb * albedoTex.Sample(linearSampler, input.texcoord).rgb;
-    float  metallic = materialParams.x * metallicTex.Sample(linearSampler, input.texcoord).r;
-    float  roughness = materialParams.y * roughnessTex.Sample(linearSampler, input.texcoord).r;
-    float  ao       = materialParams.z * aoTex.Sample(linearSampler, input.texcoord).r;
-    float3 emission = materialEmission * materialParams.w;
+    float3 albedo    = materialAlbedo * albedoTex.Sample(linearSampler, input.texcoord).rgb;
+    float  metallic  = materialMetallic * metallicTex.Sample(linearSampler, input.texcoord).r;
+    float  roughness = materialRoughness * roughnessTex.Sample(linearSampler, input.texcoord).r;
+    float  ao        = materialAO * aoTex.Sample(linearSampler, input.texcoord).r;
 
     // 2. TBN Normal Mapping
     float3 tangentNormal = normalTex.Sample(linearSampler, input.texcoord).xyz * 2.0 - 1.0;
@@ -130,32 +129,10 @@ float4 PSMain(PSInput input) : SV_TARGET {
     float3 F0 = float3(0.04, 0.04, 0.04); 
     F0 = lerp(F0, albedo, metallic);
 
-    // 5. Direct Lighting (Multiple Lights)
+    // 5. Direct Lighting (Single Directional Light — compact root constants)
     float3 Lo = float3(0.0, 0.0, 0.0);
-    for(uint i = 0; i < lightCount; ++i) {
-        float3 L;
-        float attenuation = 1.0;
-        
-        if (lights[i].type == 0.0) { // Directional
-            L = normalize(-lights[i].direction);
-        } else { // Point or Spot
-            float3 lightVec = lights[i].position - input.worldPos;
-            float distance = length(lightVec);
-            L = normalize(lightVec);
-            attenuation = 1.0 / (distance * distance);
-            
-            // Range cutoff
-            if (lights[i].range > 0.0) {
-                attenuation *= saturate(1.0 - pow(distance / lights[i].range, 4.0));
-            }
-            
-            if (lights[i].type == 2.0) { // Spot
-                float theta = dot(L, normalize(-lights[i].direction));
-                // Basic spot falloff
-                attenuation *= saturate((theta - 0.5) / (0.9 - 0.5));
-            }
-        }
-
+    {
+        float3 L = normalize(-lightDir);
         float3 H = normalize(V + L);
         float  NdotL = max(dot(worldNormal, L), 0.0);
         
@@ -171,7 +148,7 @@ float4 PSMain(PSInput input) : SV_TARGET {
         float3 kS = F;
         float3 kD = (float3(1.0, 1.0, 1.0) - kS) * (1.0 - metallic);
         
-        Lo += (kD * albedo / PI + specular) * lights[i].color * lights[i].intensity * attenuation * NdotL;
+        Lo += (kD * albedo / PI + specular) * lightColor * lightIntensity * NdotL;
     }
 
     // 6. Ambient / IBL (Phase 2 simplified)
@@ -191,8 +168,8 @@ float4 PSMain(PSInput input) : SV_TARGET {
         ambient = (kD * diffuse + ambientSpecular) * ao * envIntensity;
     }
 
-    // 7. Final Color Assembly
-    float3 color = ambient + Lo + emission;
+    // 7. Final Color Assembly (emission deferred to Phase 2)
+    float3 color = ambient + Lo;
 
     // 8. Tonemapping (ACES approximation)
     float a = 2.51;

@@ -920,7 +920,7 @@ RhiPipeline dx12_pipeline_create(const RhiPipelineDesc *desc) {
         root_params[0].Constants.Num32BitValues  = 16;
         root_params[0].ShaderVisibility          = D3D12_SHADER_VISIBILITY_ALL;
 
-        /* Param 1: b1 -- 8 DWORDs (Material) */
+        /* Param 1: b1 -- 8 DWORDs (MaterialCB: albedo[3]+metallic+roughness+ao+pad[2]) */
         root_params[1].ParameterType             = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
         root_params[1].Constants.ShaderRegister  = 1;
         root_params[1].Constants.RegisterSpace   = 0;

@@ -17,6 +17,8 @@
 #include "shaders/basic_ps_hlsl.h"
 #include "shaders/pbr_vs_hlsl.h"
 #include "shaders/pbr_ps_hlsl.h"
+#include "shaders/outline_vs_hlsl.h"
+#include "shaders/outline_ps_hlsl.h"
 
 namespace uz {
 
@@ -60,6 +62,16 @@ void ShaderLibrary::register_builtin_shaders() {
         .vs_size   = sizeof(k_pbr_vs_hlsl) - 1,
         .ps_source = k_pbr_ps_hlsl,
         .ps_size   = sizeof(k_pbr_ps_hlsl) - 1,
+        .vs_entry  = "VSMain",
+        .ps_entry  = "PSMain",
+    });
+
+    // outline — selection outline (inflated mesh, stencil test)
+    register_shader("outline", ShaderProgram{
+        .vs_source = k_outline_vs_hlsl,
+        .vs_size   = sizeof(k_outline_vs_hlsl) - 1,
+        .ps_source = k_outline_ps_hlsl,
+        .ps_size   = sizeof(k_outline_ps_hlsl) - 1,
         .vs_entry  = "VSMain",
         .ps_entry  = "PSMain",
     });

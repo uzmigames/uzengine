@@ -61,15 +61,31 @@ void loadSceneFile(std::unique_ptr<uz::Scene>& sceneData,
                    uz::Renderer& renderer,
                    uz::SceneParams& sceneParams,
                    const std::string& scenePath) {
-    // Resolve scene path.
+    // Resolve scene path — handle relative paths from the project root.
+    char exePath[MAX_PATH]{};
+    GetModuleFileNameA(nullptr, exePath, MAX_PATH);
+    std::string exeDir(exePath);
+    auto lastSlash = exeDir.find_last_of("\\/");
+    if (lastSlash != std::string::npos) exeDir = exeDir.substr(0, lastSlash);
+    std::string projectRoot = exeDir + "/../../";
+
     std::string resolvedPath = scenePath;
     if (resolvedPath.empty()) {
-        char exePath[MAX_PATH]{};
-        GetModuleFileNameA(nullptr, exePath, MAX_PATH);
-        std::string exeDir(exePath);
-        auto lastSlash = exeDir.find_last_of("\\/");
-        if (lastSlash != std::string::npos) exeDir = exeDir.substr(0, lastSlash);
-        resolvedPath = exeDir + "/../../assets/scenes/default.uzscene";
+        resolvedPath = projectRoot + "assets/scenes/default.uzscene";
+    } else {
+        // If the path doesn't exist as-is, try resolving from the project root.
+        FILE* test = fopen(resolvedPath.c_str(), "r");
+        if (!test) {
+            std::string tryRoot = projectRoot + resolvedPath;
+            FILE* test2 = fopen(tryRoot.c_str(), "r");
+            if (test2) {
+                fclose(test2);
+                resolvedPath = tryRoot;
+                DIAG_FMT("Scene path resolved via project root: %s", resolvedPath.c_str());
+            }
+        } else {
+            fclose(test);
+        }
     }
 
     DIAG_FMT("Loading scene: %s", resolvedPath.c_str());
