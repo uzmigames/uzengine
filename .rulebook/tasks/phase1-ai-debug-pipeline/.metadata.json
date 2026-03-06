@@ -1,6 +1,7 @@
 {
-  "status": "pending",
+  "status": "done",
   "priority": "critical",
   "createdAt": "2026-03-06T03:09:10.000Z",
-  "updatedAt": "2026-03-06T03:09:10.000Z"
+  "updatedAt": "2026-03-06T04:40:10.000Z",
+  "completedAt": "2026-03-06T04:40:10.000Z"
 }
