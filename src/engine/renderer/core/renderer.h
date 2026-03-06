@@ -185,9 +185,9 @@ private:
     FPSOverlay fpsOverlay_;
 
     // Cached clear color -- updated from sceneParams_ each frame in update().
-    float clearR_ = 0.12f;
-    float clearG_ = 0.12f;
-    float clearB_ = 0.12f;
+    float clearR_ = 0.16f;
+    float clearG_ = 0.16f;
+    float clearB_ = 0.16f;
 
     // -----------------------------------------------------------------------
     // Render components (modular subsystems)

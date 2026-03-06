@@ -14,9 +14,9 @@ far = 1000
 [node]
 name = Sun
 type = DirectionalLight
-rotation = -0.577 -0.577 0.577 0
-light_color = 1.0 0.95 0.8
-light_intensity = 3.0
+rotation = -0.5 -0.65 0.5 0
+light_color = 1.0 0.96 0.90
+light_intensity = 4.0
 
 # --- Row 1: Real Materials (y=2, z=0) ---
 [node]

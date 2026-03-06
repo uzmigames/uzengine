@@ -1,0 +1,33 @@
+[uzscene]
+name = PBR Test
+version = 1
+
+[node]
+name = Main Camera
+type = Camera
+position = 0 2 -4
+rotation = 0 0 0 1
+fov = 45
+near = 0.1
+far = 1000
+
+[node]
+name = Sun
+type = DirectionalLight
+rotation = -0.4 -0.5 0.3 0
+light_color = 1.0 0.95 0.88
+light_intensity = 3.0
+
+[node]
+name = Test Sphere
+type = StaticMesh
+position = 0 2 0
+scale = 2 2 2
+mesh = assets/meshes/sphere.gltf
+material = assets/materials/stonebricks.uzmat
+
+[editor]
+camera_position = 0 2 -4
+camera_yaw = 0
+camera_pitch = 0
+camera_speed = 5.0

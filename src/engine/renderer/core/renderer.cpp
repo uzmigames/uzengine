@@ -445,7 +445,7 @@ void Renderer::render(bool readback) {
                         // b1: outline params — color (slot 0-3) + width (slot 4-7)
                         float outlineCB[12] = {
                             1.0f, 0.55f, 0.0f, 1.0f,  // Outline color: orange #FF8C00
-                            0.03f, 0.0f, 0.0f, 0.0f,  // Outline width (model space units)
+                            0.08f, 0.0f, 0.0f, 0.0f,  // Outline width (model space units)
                             0.0f, 0.0f, 0.0f, 0.0f
                         };
                         rhi()->cmd_set_root_constants(cmd, 1, outlineCB, 12, 0);
@@ -644,7 +644,7 @@ bool Renderer::createPipelineStates() {
     desc.topology      = RHI_TOPOLOGY_TRIANGLE_LIST;
 
     desc.rasterizer.fill_mode = RHI_FILL_SOLID;
-    desc.rasterizer.cull_mode = RHI_CULL_BACK;
+    desc.rasterizer.cull_mode = RHI_CULL_NONE;  // TEMP: disable culling to diagnose sphere winding
 
     desc.depth_stencil.depth_enable = true;
     desc.depth_stencil.depth_write  = true;
@@ -685,12 +685,13 @@ bool Renderer::createPipelineStates() {
         DIAG_FMT("stencil mark PSO => handle=%llu", (unsigned long long)rhiStencilMarkPSO_);
     }
 
-    // ---- Outline PSO (inflated mesh, stencil test != 1, cull front) ----
+    // ---- Outline PSO (inflated mesh, stencil test != 1, no cull) ----
     {
         RhiPipelineDesc olDesc = pbrDesc;
-        olDesc.rasterizer.cull_mode = RHI_CULL_FRONT; // Cull front faces for inflation
-        olDesc.depth_stencil.depth_enable = false;
-        olDesc.depth_stencil.depth_write  = false;
+        olDesc.rasterizer.cull_mode = RHI_CULL_NONE;  // No culling — inflated silhouette needs both faces
+        olDesc.depth_stencil.depth_enable = true;      // Read depth so outline respects scene occlusion
+        olDesc.depth_stencil.depth_write  = false;     // Don't pollute depth buffer
+        olDesc.depth_stencil.depth_func   = RHI_COMPARE_LESS_EQUAL;
         olDesc.depth_stencil.stencil_enable     = true;
         olDesc.depth_stencil.stencil_read_mask  = 0xFF;
         olDesc.depth_stencil.stencil_write_mask = 0x00;

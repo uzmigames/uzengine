@@ -1,0 +1,11 @@
+[material]
+name = StoneBricks
+shader = pbr
+albedo = [1.0, 1.0, 1.0]
+metallic = 0.0
+roughness = 1.0
+ao = 1.0
+albedo_texture = assets/textures/stonebricks_albedo.jpg
+normal_texture = assets/textures/stonebricks_normal.jpg
+roughness_texture = assets/textures/stonebricks_roughness.jpg
+ao_texture = assets/textures/stonebricks_ao.jpg
