@@ -40,9 +40,19 @@ static Mat4 mat4_perspective_lh(float fov_y_rad, float aspect, float near_z, flo
 // ============================================================================
 
 static Mat4 mat4_look_at_lh(Vec3 eye, Vec3 target, Vec3 up) {
-    Vec3 zaxis = vec3_normalize({target.x - eye.x, target.y - eye.y,
-                                 target.z - eye.z, 0.0f});
-    Vec3 xaxis = vec3_normalize(vec3_cross(up, zaxis));
+    Vec3 diff = {target.x - eye.x, target.y - eye.y, target.z - eye.z, 0.0f};
+    float diffLen = vec3_len(diff);
+    if (diffLen < kEpsilon) return Mat4::identity();
+    Vec3 zaxis = diff * (1.0f / diffLen);
+    Vec3 crossResult = vec3_cross(up, zaxis);
+    float crossLen = vec3_len(crossResult);
+    if (crossLen < kEpsilon) {
+        Vec3 altUp = (std::abs(zaxis.y) > 0.99f) ? Vec3{1,0,0,0} : Vec3{0,1,0,0};
+        crossResult = vec3_cross(altUp, zaxis);
+        crossLen = vec3_len(crossResult);
+        if (crossLen < kEpsilon) return Mat4::identity();
+    }
+    Vec3 xaxis = crossResult * (1.0f / crossLen);
     Vec3 yaxis = vec3_cross(zaxis, xaxis);
 
     // NOTE: This builds the matrix in DirectXMath's row-major memory layout
@@ -118,7 +128,11 @@ CameraState camera_update_fly(SceneParams* params, float aspect, float dt) {
 
     const Vec3 forward = {sinYaw * cosPitch, sinPitch, cosYaw * cosPitch, 0.0f};
     const Vec3 worldUp = {0.0f, 1.0f, 0.0f, 0.0f};
-    const Vec3 right   = vec3_normalize(vec3_cross(worldUp, forward));
+    Vec3 rightCross = vec3_cross(worldUp, forward);
+    float rightLen = vec3_len(rightCross);
+    const Vec3 right = (rightLen > kEpsilon)
+        ? rightCross * (1.0f / rightLen)
+        : Vec3{1.0f, 0.0f, 0.0f, 0.0f};
 
     // WASD + EQ movement (only when RMB held).
     if (rmb) {
@@ -196,8 +210,12 @@ CameraState camera_update_from_scene(const Scene* scene, float aspect) {
     // Extract from world transform.
     const Mat4& wt = camNode.world_transform;
     const Vec3 eye = {wt.m[3][0], wt.m[3][1], wt.m[3][2], 0.0f};
-    const Vec3 fwd = vec3_normalize({wt.m[2][0], wt.m[2][1], wt.m[2][2], 0.0f});
-    const Vec3 up  = vec3_normalize({wt.m[1][0], wt.m[1][1], wt.m[1][2], 0.0f});
+    Vec3 fwdRaw = {wt.m[2][0], wt.m[2][1], wt.m[2][2], 0.0f};
+    float fwdLen = vec3_len(fwdRaw);
+    const Vec3 fwd = (fwdLen > kEpsilon) ? fwdRaw * (1.0f / fwdLen) : Vec3{0,0,1,0};
+    Vec3 upRaw = {wt.m[1][0], wt.m[1][1], wt.m[1][2], 0.0f};
+    float upLen = vec3_len(upRaw);
+    const Vec3 up = (upLen > kEpsilon) ? upRaw * (1.0f / upLen) : Vec3{0,1,0,0};
     const Vec3 at  = {eye.x + fwd.x, eye.y + fwd.y, eye.z + fwd.z, 0.0f};
 
     Mat4 view = mat4_look_at_lh(eye, at, up);

@@ -114,6 +114,7 @@ if(WIN32)
         ole32
         winmm
         dbghelp
+        Bcrypt
         ixwebsocket::ixwebsocket
         nlohmann_json::nlohmann_json
         $<IF:$<TARGET_EXISTS:libjpeg-turbo::turbojpeg>,libjpeg-turbo::turbojpeg,libjpeg-turbo::turbojpeg-static>
@@ -130,6 +131,7 @@ if(WIN32)
     # Enable debug layer in Debug builds
     target_compile_definitions(UzEngine PRIVATE
         $<$<CONFIG:Debug>:UZENGINE_DEBUG=1>
+        UZ_EDITOR=1
         UNICODE
         _UNICODE
         NOMINMAX

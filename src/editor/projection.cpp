@@ -10,8 +10,19 @@
 
 uz::Mat4 buildLookAtLH(uz::Vec3 eye, uz::Vec3 target, uz::Vec3 up) {
     using namespace uz;
-    const Vec3 f = vec3_normalize(target - eye);
-    const Vec3 r = vec3_normalize(vec3_cross(up, f));
+    const Vec3 diff = target - eye;
+    const float diffLen = vec3_len(diff);
+    if (diffLen < kEpsilon) return Mat4::identity();
+    const Vec3 f = diff * (1.0f / diffLen);
+    Vec3 crossUpF = vec3_cross(up, f);
+    float crossLen = vec3_len(crossUpF);
+    if (crossLen < kEpsilon) {
+        Vec3 altUp = (std::abs(f.y) > 0.99f) ? Vec3{1,0,0,0} : Vec3{0,1,0,0};
+        crossUpF = vec3_cross(altUp, f);
+        crossLen = vec3_len(crossUpF);
+        if (crossLen < kEpsilon) return Mat4::identity();
+    }
+    const Vec3 r = crossUpF * (1.0f / crossLen);
     const Vec3 u = vec3_cross(f, r);
     Mat4 m = {};
     m.m[0][0]=r.x;  m.m[0][1]=u.x;  m.m[0][2]=f.x;  m.m[0][3]=0;

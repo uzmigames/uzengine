@@ -25,6 +25,8 @@ static constexpr float kCircleRad = 1.8f;   // Rotation circle radius
 static constexpr float kTorusRad  = 0.05f;  // Torus tube radius
 static constexpr int   kTorusSegs = 6;      // Segments around torus tube
 static constexpr float kCubeSize  = 0.15f;  // Scale cube half-size
+static constexpr float kFreeRingRad = 2.0f;  // Free rotation ring radius (slightly larger than axis rings)
+static constexpr float kFreeRingTubeRad = 0.03f; // Free ring tube radius (thinner than axis rings)
 
 static constexpr float kPI2 = 6.28318530718f;
 
@@ -210,6 +212,22 @@ static void buildScaleVerts(std::vector<Vertex>& out, uint32_t axisStart[3], uin
 }
 
 // ============================================================================
+// Helper: build a free rotation ring (circle in XY plane, billboarded at draw)
+// ============================================================================
+
+static void buildFreeRingVerts(std::vector<Vertex>& out) {
+    const Float3 col = {0.80f, 0.80f, 0.80f}; // light grey (#CCCCCC)
+    for (int i = 0; i < kCircleSegs; ++i) {
+        float a0 = (float)i / kCircleSegs * kPI2;
+        float a1 = (float)(i + 1) / kCircleSegs * kPI2;
+        // Circle in XY plane (will be billboarded via MVP at draw time)
+        Float3 c0 = {cosf(a0) * kFreeRingRad, sinf(a0) * kFreeRingRad, 0};
+        Float3 c1 = {cosf(a1) * kFreeRingRad, sinf(a1) * kFreeRingRad, 0};
+        addCylinder(out, c0, c1, kFreeRingTubeRad, kTorusSegs, col);
+    }
+}
+
+// ============================================================================
 // GizmoTransform implementation
 // ============================================================================
 
@@ -235,7 +253,15 @@ bool GizmoTransform::init() {
         scaleVB_ = gizmo_upload_vb(verts.data(), scaleVertCount_,
                         "GizmoTransform_Scale");
     }
-    return translateVB_ != RHI_NULL && rotateVB_ != RHI_NULL && scaleVB_ != RHI_NULL;
+    {
+        std::vector<Vertex> verts;
+        buildFreeRingVerts(verts);
+        freeRingVertCount_ = static_cast<uint32_t>(verts.size());
+        freeRingVB_ = gizmo_upload_vb(verts.data(), freeRingVertCount_,
+                        "GizmoTransform_FreeRing");
+    }
+    return translateVB_ != RHI_NULL && rotateVB_ != RHI_NULL
+        && scaleVB_ != RHI_NULL && freeRingVB_ != RHI_NULL;
 }
 
 void GizmoTransform::draw(RhiCmdList cmd) {
@@ -322,10 +348,30 @@ void GizmoTransform::drawMode(RhiCmdList cmd,
     }
 }
 
+void GizmoTransform::drawFreeRing(RhiCmdList cmd, bool highlighted) {
+    if (freeRingVB_ == RHI_NULL || freeRingVertCount_ == 0) return;
+
+    if (highlighted) {
+        const float bright[4] = {1.8f, 1.8f, 1.8f, 0.0f};
+        rhi()->cmd_set_root_constants(cmd, 1, bright, 4, 0);
+    } else {
+        const float normal[4] = {1.0f, 1.0f, 1.0f, 0.0f};
+        rhi()->cmd_set_root_constants(cmd, 1, normal, 4, 0);
+    }
+
+    rhi()->cmd_set_vertex_buffer(cmd, 0, freeRingVB_, 0, sizeof(Vertex));
+    rhi()->cmd_draw(cmd, freeRingVertCount_, 1, 0, 0);
+
+    // Reset color multiplier
+    const float reset[4] = {1.0f, 1.0f, 1.0f, 0.0f};
+    rhi()->cmd_set_root_constants(cmd, 1, reset, 4, 0);
+}
+
 void GizmoTransform::shutdown() {
     if (translateVB_ != RHI_NULL) { rhi()->buffer_destroy(translateVB_); translateVB_ = RHI_NULL; }
     if (rotateVB_ != RHI_NULL) { rhi()->buffer_destroy(rotateVB_); rotateVB_ = RHI_NULL; }
     if (scaleVB_ != RHI_NULL) { rhi()->buffer_destroy(scaleVB_); scaleVB_ = RHI_NULL; }
+    if (freeRingVB_ != RHI_NULL) { rhi()->buffer_destroy(freeRingVB_); freeRingVB_ = RHI_NULL; }
 }
 
 } // namespace uz
