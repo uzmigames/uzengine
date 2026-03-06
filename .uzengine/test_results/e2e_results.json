@@ -1,0 +1,103 @@
+﻿{
+    "steps":  [
+                  {
+                      "message":  "E:\\UzEngine\\build\\Release\\render.exe",
+                      "pass":  true,
+                      "name":  "Binary exists"
+                  },
+                  {
+                      "message":  "",
+                      "pass":  true,
+                      "name":  "CrashReporter unit tests"
+                  },
+                  {
+                      "message":  "",
+                      "pass":  true,
+                      "name":  "LogStreamer unit tests"
+                  },
+                  {
+                      "message":  "",
+                      "pass":  true,
+                      "name":  "DRED report unit tests"
+                  },
+                  {
+                      "message":  "",
+                      "pass":  true,
+                      "name":  "RenderGraph unit tests"
+                  },
+                  {
+                      "message":  "",
+                      "pass":  true,
+                      "name":  "Extension source exists"
+                  },
+                  {
+                      "message":  "",
+                      "pass":  true,
+                      "name":  "diagnoseCrash command registered"
+                  },
+                  {
+                      "message":  "",
+                      "pass":  true,
+                      "name":  "Log subscription on connect"
+                  },
+                  {
+                      "message":  "",
+                      "pass":  true,
+                      "name":  "Rule DEBUG-1"
+                  },
+                  {
+                      "message":  "",
+                      "pass":  true,
+                      "name":  "Rule DEBUG-2"
+                  },
+                  {
+                      "message":  "",
+                      "pass":  true,
+                      "name":  "Rule DEBUG-3"
+                  },
+                  {
+                      "message":  "",
+                      "pass":  true,
+                      "name":  "Rule DEBUG-4"
+                  },
+                  {
+                      "message":  "",
+                      "pass":  true,
+                      "name":  "Rule DEBUG-5"
+                  },
+                  {
+                      "message":  "",
+                      "pass":  true,
+                      "name":  "Rule DEBUG-6"
+                  },
+                  {
+                      "message":  "",
+                      "pass":  true,
+                      "name":  "golden_test.ps1 exists"
+                  },
+                  {
+                      "message":  "",
+                      "pass":  true,
+                      "name":  "run_golden_tests.ps1 exists"
+                  },
+                  {
+                      "message":  "",
+                      "pass":  true,
+                      "name":  "Golden test docs exist"
+                  },
+                  {
+                      "message":  "",
+                      "pass":  true,
+                      "name":  "build_and_report.ps1 exists"
+                  },
+                  {
+                      "message":  "",
+                      "pass":  true,
+                      "name":  "MCP uz_build tool"
+                  }
+              ],
+    "passed":  19,
+    "timestamp":  "2026-03-06T01:38:30Z",
+    "failed":  0,
+    "total":  19
+}

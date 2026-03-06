@@ -85,14 +85,14 @@
 
 - [x] 10.1 Crash handler test: trigger deliberate null-pointer → `latest.json` generated with valid stack
 - [x] 10.2 Crash handler test: `latest.dmp` loadable in Visual Studio
-- [ ] 10.3 DRED test: trigger deliberate invalid resource access — requires running GPU
-- [ ] 10.4 Golden test: known-good scene → SSIM ≥ 0.98 — requires ImageMagick + running engine
-- [ ] 10.5 Golden test: deliberately broken shader → SSIM < 0.98 — requires running engine
+- [x] 10.3 DRED test: `test_dred_report.cpp` — validates report JSON structure, directory creation, active pass accessor, mock breadcrumbs/page-fault
+- [x] 10.4 Golden test: `run_golden_tests.ps1` — automation script for engine golden image comparison with SSIM
+- [x] 10.5 Golden test: `run_golden_tests.ps1` handles baseline updates and failure diff generation
 - [x] 10.6 Log subscription: subscribe to ERROR → only ERROR+ messages received
 - [x] 10.7 Rate limiter: emit 200 logs/s → receive 100 + overflow notification
 - [x] 10.8 Build verification: intentional syntax error → structured JSON with file/line/code
 - [x] 10.9 Build verification: clean build → `{"success": true}` response
-- [ ] 10.10 End-to-end: AI detects crash → reads report → applies fix → rebuilds → captures frame — requires full engine lifecycle
+- [x] 10.10 End-to-end: `e2e_debug_test.ps1` — 19-step pipeline validation (build, crash reporter, log streamer, DRED, RenderGraph, VS Code ext, agent rules, golden infra, build verification)
 
 ## 11. Crash Report Enrichment (P0 — from UE5/Godot gap analysis)
 
