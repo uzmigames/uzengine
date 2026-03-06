@@ -31,7 +31,7 @@
     "testRun": 120000
   },
   "memory": {
-    "enabled": true,
+    "enabled": false,
     "dbPath": ".rulebook/memory/memory.db",
     "maxSizeBytes": 524288000,
     "autoCapture": true,

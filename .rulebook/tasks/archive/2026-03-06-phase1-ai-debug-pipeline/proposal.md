@@ -6,6 +6,10 @@
 
 Implement a comprehensive AI-first debugging pipeline that gives AI agents autonomous access to visual debugging, structured crash diagnostics, real-time telemetry, and build verification — eliminating the need for manual user intervention during development.
 
+## Why
+
+AI agents need autonomous access to visual debugging, structured crash diagnostics, real-time telemetry, and build verification to eliminate manual user intervention during development. Without this pipeline, every GPU crash, rendering bug, or build failure requires human intervention to gather information.
+
 ## Motivation
 
 The current development workflow is bottlenecked by:
