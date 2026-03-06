@@ -885,51 +885,65 @@ RhiPipeline dx12_pipeline_create(const RhiPipelineDesc *desc) {
 
     /*
      * Root signature with root constants matching the shader cbuffers:
-     *   Param 0: 16 x 32-bit constants at b0 (worldViewProj 4x4 matrix)
-     *   Param 1:  4 x 32-bit constants at b1 (colorMul float3 + pad)
-     *   Param 2:  8 x 32-bit constants at b2 (lightDir, intensity, color, pad)
-     *   Param 3: SRV descriptor table for textures (t0..tN)
+     *   Param 0: 16 x 32-bit constants at b0 (Object: world matrix)
+     *   Param 1:  8 x 32-bit constants at b1 (Material: albedo, metallic, rough, ao)
+     *   Param 2: 16 x 32-bit constants at b2 (Light + Camera: dir, color, intensity, camPos, time)
+     *   Param 3: 16 x 32-bit constants at b3 (Frame: viewProj matrix)
+     *   Param 4: SRV descriptor table for t0 (Albedo)
+     *   Param 5: SRV descriptor table for t1 (Normal)
+     *   Param 6: SRV descriptor table for t2 (Metallic)
+     *   Param 7: SRV descriptor table for t3 (Roughness)
+     *   Param 8: SRV descriptor table for t4 (AO)
      *   Static sampler at s0
      */
     ID3D12RootSignature *root_sig = NULL;
     {
-        D3D12_ROOT_PARAMETER root_params[4];
+        D3D12_ROOT_PARAMETER root_params[9];
         memset(root_params, 0, sizeof(root_params));
 
-        /* Param 0: Root constants at b0 -- 16 DWORDs (4x4 matrix) */
+        /* Param 0: b0 -- 16 DWORDs (World) */
         root_params[0].ParameterType             = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
         root_params[0].Constants.ShaderRegister  = 0;
         root_params[0].Constants.RegisterSpace   = 0;
         root_params[0].Constants.Num32BitValues  = 16;
         root_params[0].ShaderVisibility          = D3D12_SHADER_VISIBILITY_ALL;
 
-        /* Param 1: Root constants at b1 -- 4 DWORDs (color + pad) */
+        /* Param 1: b1 -- 8 DWORDs (Material) */
         root_params[1].ParameterType             = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
         root_params[1].Constants.ShaderRegister  = 1;
         root_params[1].Constants.RegisterSpace   = 0;
-        root_params[1].Constants.Num32BitValues  = 4;
+        root_params[1].Constants.Num32BitValues  = 8;
         root_params[1].ShaderVisibility          = D3D12_SHADER_VISIBILITY_ALL;
 
-        /* Param 2: Root constants at b2 -- 8 DWORDs (light data) */
+        /* Param 2: b2 -- 16 DWORDs (Light + Camera) */
         root_params[2].ParameterType             = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
         root_params[2].Constants.ShaderRegister  = 2;
         root_params[2].Constants.RegisterSpace   = 0;
-        root_params[2].Constants.Num32BitValues  = 8;
+        root_params[2].Constants.Num32BitValues  = 16;
         root_params[2].ShaderVisibility          = D3D12_SHADER_VISIBILITY_ALL;
 
-        /* Param 3: SRV descriptor table */
-        D3D12_DESCRIPTOR_RANGE srv_range;
-        memset(&srv_range, 0, sizeof(srv_range));
-        srv_range.RangeType          = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-        srv_range.NumDescriptors     = 16;
-        srv_range.BaseShaderRegister = 0;
-        srv_range.RegisterSpace      = 0;
-        srv_range.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+        /* Param 3: b3 -- 16 DWORDs (ViewProj) */
+        root_params[3].ParameterType             = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+        root_params[3].Constants.ShaderRegister  = 3;
+        root_params[3].Constants.RegisterSpace   = 0;
+        root_params[3].Constants.Num32BitValues  = 16;
+        root_params[3].ShaderVisibility          = D3D12_SHADER_VISIBILITY_ALL;
 
-        root_params[3].ParameterType    = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-        root_params[3].DescriptorTable.NumDescriptorRanges = 1;
-        root_params[3].DescriptorTable.pDescriptorRanges   = &srv_range;
-        root_params[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+        /* Param 4-8: Descriptor tables for t0..t4 */
+        D3D12_DESCRIPTOR_RANGE srv_ranges[5];
+        for (int i = 0; i < 5; i++) {
+            memset(&srv_ranges[i], 0, sizeof(srv_ranges[i]));
+            srv_ranges[i].RangeType          = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+            srv_ranges[i].NumDescriptors     = 1;
+            srv_ranges[i].BaseShaderRegister = (UINT)i;
+            srv_ranges[i].RegisterSpace      = 0;
+            srv_ranges[i].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+            root_params[4 + i].ParameterType    = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+            root_params[4 + i].DescriptorTable.NumDescriptorRanges = 1;
+            root_params[4 + i].DescriptorTable.pDescriptorRanges   = &srv_ranges[i];
+            root_params[4 + i].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+        }
 
         D3D12_STATIC_SAMPLER_DESC static_sampler;
         memset(&static_sampler, 0, sizeof(static_sampler));
@@ -949,7 +963,7 @@ RhiPipeline dx12_pipeline_create(const RhiPipelineDesc *desc) {
 
         D3D12_ROOT_SIGNATURE_DESC rs_desc;
         memset(&rs_desc, 0, sizeof(rs_desc));
-        rs_desc.NumParameters     = 4;
+        rs_desc.NumParameters     = 9;
         rs_desc.pParameters       = root_params;
         rs_desc.NumStaticSamplers = 1;
         rs_desc.pStaticSamplers   = &static_sampler;

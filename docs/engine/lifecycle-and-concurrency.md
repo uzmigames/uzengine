@@ -1,6 +1,6 @@
 # UzEngine — Lifecycle & Concurrency
 
-> **Scope**: This document describes the complete lifecycle of the `UzEngine.exe` process and its concurrency model. It makes a clear distinction between two independent loops: the **Render Loop** (GPU, readback, JPEG streaming) and the **Game Loop** (input, scripts, physics, ECS). These are separate concerns that run at different rates and have different ownership rules.
+> **Scope**: This document describes the complete lifecycle of the `render.exe` process and its concurrency model. It makes a clear distinction between two independent loops: the **Render Loop** (GPU, readback, JPEG streaming) and the **Game Loop** (input, scripts, physics, ECS). These are separate concerns that run at different rates and have different ownership rules.
 
 ---
 
@@ -25,7 +25,7 @@ The Render Loop reads a **stable snapshot** of game state. It never waits on gam
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────┐
-│  UzEngine.exe                                                                   │
+│  render.exe                                                                   │
 │                                                                                 │
 │  ┌─────────────────────────────────────────────────────────────────────────┐   │
 │  │  RENDER LOOP THREADS                                                    │   │

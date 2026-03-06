@@ -36,7 +36,7 @@ game.dll
   lua_binding.cpp — ctx.audio Lua table, node audio methods
 ```
 
-**Key rule**: Audio engine lives in `uz_engine.lib`. game.dll drives it via `GameContext` callbacks. UzEngine.exe knows nothing about audio details.
+**Key rule**: Audio engine lives in `uz_engine.lib`. game.dll drives it via `GameContext` callbacks. render.exe knows nothing about audio details.
 
 ## Key Spec (read before implementing)
 

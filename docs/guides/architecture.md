@@ -43,7 +43,7 @@ Frame-rate limiter (60fps)
 | Shader Editor | Code + Preview | Edit/hot-reload shaders |
 | Console | VSCode OutputChannel | Logs + Lua errors |
 
-### Runtime (UzEngine.exe + game.dll)
+### Runtime (render.exe + game.dll)
 | Module | Location | Purpose |
 |--------|----------|---------|
 | **Scene System** | uz_engine.lib | Node tree, scene loading |
@@ -60,7 +60,7 @@ Frame-rate limiter (60fps)
 ### Build Artifacts
 ```
 build/Release/
-├── UzEngine.exe          (engine runtime)
+├── render.exe          (engine runtime)
 ├── game.dll              (game logic, scripts, physics)
 ├── uz_engine.lib         (static, linked into .dll)
 ├── turbojpeg.dll         (JPEG encoder)
@@ -155,7 +155,7 @@ Lock-free SPSC ring buffer, capacity `N` (power-of-2, default 8 slots).
 | FPS counter | Client-side, updated every 1 second |
 | Reconnection | Exponential backoff: 1 s → 2 s → 4 s → ... → 16 s cap |
 | Configuration | `uzengine.serverUrl` (VSCode setting, default `ws://localhost:9002`) |
-| Process mgmt | `ServerManager` spawns `UzEngine.exe`, polls port 9002, kills on exit |
+| Process mgmt | `ServerManager` spawns `render.exe`, polls port 9002, kills on exit |
 | Status bar | Shows running/stopped state, allows click-to-stop |
 
 ## Build System
@@ -178,7 +178,7 @@ cmake --build build --config Debug
 cmake --build build --config Release
 
 # Run
-./build/Debug/UzEngine.exe
+./build/Debug/render.exe
 ```
 
 ### Build Commands (VSCode Extension)

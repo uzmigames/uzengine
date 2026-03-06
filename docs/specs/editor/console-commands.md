@@ -158,7 +158,7 @@ help
   └───────────────────────────────────────────────────┘
 
 quit
-  Exit the game (close UzEngine.exe).
+  Exit the game (close render.exe).
 
   Usage: quit
 

@@ -17,8 +17,10 @@ ComponentRegistry& ComponentRegistry::instance() {
 // register_type
 // ============================================================================
 
-void ComponentRegistry::register_type(StringId type_id, const char* type_name,
-                                       ComponentFactory factory) {
+void ComponentRegistry::register_type(StringId type_id,
+                                       const char* type_name,
+                                       ComponentFactory factory,
+                                       ProxyFactory proxy_factory) {
     assert(type_name != nullptr && "ComponentRegistry: type_name must not be null");
     assert(factory != nullptr && "ComponentRegistry: factory must not be null");
 
@@ -28,7 +30,12 @@ void ComponentRegistry::register_type(StringId type_id, const char* type_name,
                      type_name, type_id.hash);
     }
 
-    types_[type_id.hash] = ComponentTypeInfo{type_id, type_name, std::move(factory)};
+    types_[type_id.hash] = ComponentTypeInfo{
+        type_id,
+        type_name,
+        std::move(factory),
+        std::move(proxy_factory)
+    };
 }
 
 // ============================================================================
@@ -41,6 +48,18 @@ IComponent* ComponentRegistry::create(StringId type_id) const {
         return nullptr;
     }
     return it->second.factory();
+}
+
+// ============================================================================
+// create_proxy
+// ============================================================================
+
+ISceneProxy* ComponentRegistry::create_proxy(StringId type_id) const {
+    auto it = types_.find(type_id.hash);
+    if (it == types_.end() || !it->second.proxy_factory) {
+        return nullptr;
+    }
+    return it->second.proxy_factory();
 }
 
 // ============================================================================

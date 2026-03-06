@@ -1,0 +1,6 @@
+[material]
+name = Grid M=1 R=0.75
+shader = pbr
+albedo = [1.0, 1.0, 1.0]
+metallic = 1
+roughness = 0.75

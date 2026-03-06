@@ -16,7 +16,7 @@ The Animation Editor is a professional-grade toolset embedded inside the UzEngin
 ### Design Principles
 
 1. **VSCode-native** -- all panels are WebviewPanels inside VSCode, no external windows
-2. **Engine-rendered preview** -- the 3D viewport streams JPEG frames from `UzEngine.exe --editor`, identical to the scene viewport
+2. **Engine-rendered preview** -- the 3D viewport streams JPEG frames from `render.exe --editor`, identical to the scene viewport
 3. **Text-first file formats** -- `.uzanim`, `.uzfsm`, `.uzblend`, `.uzmontage` are INI-like plain text, version-controllable and AI-friendly
 4. **Non-destructive** -- original imported animation data is never modified; edits layer on top
 5. **game.dll integration** -- the animation runtime lives in `game.dll`; the editor communicates via IPC to preview state machines and blends in real time

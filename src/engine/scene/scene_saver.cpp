@@ -124,6 +124,20 @@ std::string scene_save_to_string(const Scene* scene) {
                 out += buf;
             }
         }
+
+        if (node.type == NodeType::StaticMesh) {
+            const StaticMeshData* smd = component_get<StaticMeshData>(&scene->components, node.id);
+            if (smd) {
+                if (smd->mesh_path[0] != '\0') {
+                    std::snprintf(buf, sizeof(buf), "mesh = %s\n", smd->mesh_path);
+                    out += buf;
+                }
+                if (smd->material_path[0] != '\0') {
+                    std::snprintf(buf, sizeof(buf), "material = %s\n", smd->material_path);
+                    out += buf;
+                }
+            }
+        }
     }
 
     // ---- [editor] section (camera state for the editor) ----

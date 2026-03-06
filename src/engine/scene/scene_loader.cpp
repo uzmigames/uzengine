@@ -122,6 +122,12 @@ struct PendingNode {
     bool  has_light_color;
     bool  has_light_intensity;
 
+    // StaticMesh component data.
+    std::string mesh_path;
+    std::string material_path;
+    bool has_mesh;
+    bool has_material;
+
     void reset() {
         name.clear();
         type_str.clear();
@@ -146,6 +152,10 @@ struct PendingNode {
         light_intensity = 1.0f;
         has_light_color     = false;
         has_light_intensity = false;
+        mesh_path.clear();
+        material_path.clear();
+        has_mesh = false;
+        has_material = false;
     }
 };
 
@@ -237,6 +247,18 @@ static std::string flush_node(Scene* scene, const PendingNode& pending) {
             }
             if (pending.has_light_intensity) {
                 ld->intensity = pending.light_intensity;
+            }
+        }
+    }
+
+    if (type == NodeType::StaticMesh) {
+        StaticMeshData* smd = component_add<StaticMeshData>(&scene->components, id);
+        if (smd) {
+            if (pending.has_mesh) {
+                uz::str_copy(smd->mesh_path, sizeof(smd->mesh_path), pending.mesh_path.c_str());
+            }
+            if (pending.has_material) {
+                uz::str_copy(smd->material_path, sizeof(smd->material_path), pending.material_path.c_str());
             }
         }
     }
@@ -420,6 +442,12 @@ SceneLoadResult scene_load_from_string(Scene* scene, const char* text) {
                     pending.light_intensity   = v;
                     pending.has_light_intensity = true;
                 }
+            } else if (key == "mesh") {
+                pending.mesh_path = value;
+                pending.has_mesh = true;
+            } else if (key == "material") {
+                pending.material_path = value;
+                pending.has_material = true;
             }
             // Unknown keys are silently ignored (forward-compatible).
         } else if (current_section == Section::Editor) {

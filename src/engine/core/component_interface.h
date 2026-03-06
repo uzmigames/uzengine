@@ -20,6 +20,7 @@ namespace uz {
 struct IRenderable;
 struct IPhysicsBody;
 struct IAudioSource;
+struct ISceneProxy;
 
 // ============================================================================
 // IComponent — base class for all components
@@ -60,6 +61,10 @@ struct IComponent {
 
 struct IRenderable {
     virtual ~IRenderable() = default;
+
+    /// Create a new render-thread proxy for this component.
+    /// The proxy must be a snapshot of the component's state.
+    [[nodiscard]] virtual ISceneProxy* create_proxy() = 0;
 
     /// Returns true if this component has visible geometry this frame.
     [[nodiscard]] virtual bool is_visible() const { return true; }

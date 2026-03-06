@@ -1,0 +1,96 @@
+[uzscene]
+name = Materials Showcase
+version = 1
+
+[node]
+name = Main Camera
+type = Camera
+position = 0 8 -25
+rotation = 0 0 0 1
+fov = 50
+near = 0.1
+far = 1000
+
+[node]
+name = Sun
+type = DirectionalLight
+rotation = -0.577 -0.577 0.577 0
+light_color = 1.0 0.95 0.8
+light_intensity = 3.0
+
+# --- Row 1: Real Materials (y=2, z=0) ---
+[node]
+name = Titanium Sphere
+type = StaticMesh
+position = -18 2 0
+mesh = assets/meshes/sphere.gltf
+material = assets/materials/titanium.uzmat
+
+[node]
+name = Silver Sphere
+type = StaticMesh
+position = -14 2 0
+mesh = assets/meshes/sphere.gltf
+material = assets/materials/silver.uzmat
+
+[node]
+name = Gold Sphere
+type = StaticMesh
+position = -10 2 0
+mesh = assets/meshes/sphere.gltf
+material = assets/materials/gold.uzmat
+
+[node]
+name = Copper Sphere
+type = StaticMesh
+position = -6 2 0
+mesh = assets/meshes/sphere.gltf
+material = assets/materials/copper.uzmat
+
+[node]
+name = Rust Sphere
+type = StaticMesh
+position = -2 2 0
+mesh = assets/meshes/sphere.gltf
+material = assets/materials/rust.uzmat
+
+[node]
+name = Marble Sphere
+type = StaticMesh
+position = 2 2 0
+mesh = assets/meshes/sphere.gltf
+material = assets/materials/marble.uzmat
+
+[node]
+name = Wood Sphere
+type = StaticMesh
+position = 6 2 0
+mesh = assets/meshes/sphere.gltf
+material = assets/materials/wood.uzmat
+
+[node]
+name = Concrete Sphere
+type = StaticMesh
+position = 10 2 0
+mesh = assets/meshes/sphere.gltf
+material = assets/materials/concrete.uzmat
+
+[node]
+name = Chrome Sphere
+type = StaticMesh
+position = 14 2 0
+mesh = assets/meshes/sphere.gltf
+material = assets/materials/chrome.uzmat
+
+[node]
+name = Iron Sphere
+type = StaticMesh
+position = 18 2 0
+mesh = assets/meshes/sphere.gltf
+material = assets/materials/iron.uzmat
+
+[editor]
+camera_position = 0 8 -30
+camera_yaw = 0
+camera_pitch = -0.3
+camera_speed = 10.0

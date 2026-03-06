@@ -53,7 +53,7 @@ bool ui_deliver_input(UiDocument* doc, const UiInputEvent* event);
 void ui_free_document(UiDocument* doc);
 ```
 
-**Why a separate DLL?** `uz_ui_html.dll` is shared between `UzEngine.exe` (for editor panels) and the game process. It can be updated independently. It uses a C ABI so it doesn't depend on a specific C++ runtime version.
+**Why a separate DLL?** `uz_ui_html.dll` is shared between `render.exe` (for editor panels) and the game process. It can be updated independently. It uses a C ABI so it doesn't depend on a specific C++ runtime version.
 
 ## UIRoot Scene Node
 

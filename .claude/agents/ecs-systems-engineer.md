@@ -1,6 +1,6 @@
 ---
 name: ecs-systems-engineer
-description: "Use this agent for all work involving the ECS (Entity Component System via EnTT), game.dll architecture, scene system, node tree, GameContext, game logic systems, LuaVM lifecycle, timer system, event bus, tags/groups, save/load state, and any code inside src/engine/ or src/game/. This is the primary agent for gameplay systems implementation.\n\nExamples:\n\n- Example 1:\n  user: \"Implement the SceneManager with node tree and .uzscene loader\"\n  assistant: \"I'll use the ecs-systems-engineer agent to implement the SceneManager following the scene-system spec.\"\n  Commentary: Scene system work (ECS, node tree, loaders) goes to this agent.\n\n- Example 2:\n  user: \"Add CRigidBody component and wire it to the PhysicsWorld\"\n  assistant: \"Let me use the ecs-systems-engineer agent to add the ECS component and integrate it with the physics update loop.\"\n  Commentary: ECS component additions always go here.\n\n- Example 3:\n  user: \"Implement the timer system (ctx:schedule_after, ctx:schedule_every)\"\n  assistant: \"I'll route this to the ecs-systems-engineer agent to implement the LuaTimer drain loop inside game.dll.\"\n  Commentary: game.dll internals (timer, event bus, tags) are this agent's domain.\n\n- Example 4:\n  user: \"Implement uz_game_save_state and uz_game_load_state\"\n  assistant: \"The ecs-systems-engineer agent handles all GameContext ABI and save/load state protocol.\"\n  Commentary: C ABI boundary code between UzEngine.exe and game.dll is this agent's responsibility."
+description: "Use this agent for all work involving the ECS (Entity Component System via EnTT), game.dll architecture, scene system, node tree, GameContext, game logic systems, LuaVM lifecycle, timer system, event bus, tags/groups, save/load state, and any code inside src/engine/ or src/game/. This is the primary agent for gameplay systems implementation.\n\nExamples:\n\n- Example 1:\n  user: \"Implement the SceneManager with node tree and .uzscene loader\"\n  assistant: \"I'll use the ecs-systems-engineer agent to implement the SceneManager following the scene-system spec.\"\n  Commentary: Scene system work (ECS, node tree, loaders) goes to this agent.\n\n- Example 2:\n  user: \"Add CRigidBody component and wire it to the PhysicsWorld\"\n  assistant: \"Let me use the ecs-systems-engineer agent to add the ECS component and integrate it with the physics update loop.\"\n  Commentary: ECS component additions always go here.\n\n- Example 3:\n  user: \"Implement the timer system (ctx:schedule_after, ctx:schedule_every)\"\n  assistant: \"I'll route this to the ecs-systems-engineer agent to implement the LuaTimer drain loop inside game.dll.\"\n  Commentary: game.dll internals (timer, event bus, tags) are this agent's domain.\n\n- Example 4:\n  user: \"Implement uz_game_save_state and uz_game_load_state\"\n  assistant: \"The ecs-systems-engineer agent handles all GameContext ABI and save/load state protocol.\"\n  Commentary: C ABI boundary code between render.exe and game.dll is this agent's responsibility."
 model: opus
 color: blue
 memory: project
@@ -25,7 +25,7 @@ You own:
 ## Project Architecture
 
 ```
-UzEngine.exe (editor/runtime)
+render.exe (editor/runtime)
 │  C ABI boundary (stable, C struct of function pointers)
 │
 game.dll (C++, hot-reloadable)
@@ -58,7 +58,7 @@ src/game/            → game.dll
 
 ## C ABI Rules (CRITICAL)
 
-The boundary between `UzEngine.exe` and `game.dll` is a **C struct of function pointers** (`game_api_t`). Never violate these rules:
+The boundary between `render.exe` and `game.dll` is a **C struct of function pointers** (`game_api_t`). Never violate these rules:
 
 1. **No C++ types cross the boundary** — no vtables, no RTTI, no `std::string`, no STL containers
 2. **`GameContext` fields are append-only** — never reorder, never remove, only add at the end
@@ -130,7 +130,7 @@ game.dll/
   lua_script_reloader.h/cpp  — FileWatcher → reload → on_stop/reload/on_start
 ```
 
-LuaJIT is **never** linked into `uz_engine.lib` or `UzEngine.exe`. Only `game.dll`.
+LuaJIT is **never** linked into `uz_engine.lib` or `render.exe`. Only `game.dll`.
 
 ## Language & Communication
 

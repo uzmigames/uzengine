@@ -1,0 +1,10 @@
+[material]
+name = Copper
+shader = pbr
+albedo = [0.95, 0.64, 0.54]
+metallic = 1.0
+roughness = 0.2
+albedo_texture = assets/textures/copper_albedo.png
+normal_texture = assets/textures/copper_normal.png
+roughness_texture = assets/textures/copper_roughness.png
+ao_texture = assets/textures/copper_ao.png

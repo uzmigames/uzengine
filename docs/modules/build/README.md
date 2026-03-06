@@ -20,7 +20,7 @@ UzBuild.exe --project ./mygame --config Release --output ./dist
 
 Stage 1: COOK    ─── import source assets → engine-native formats
 Stage 2: PACK    ─── assemble all cooked outputs → game.uzpak
-Stage 3: COMPILE ─── build UzEngine.exe with UZ_SHIPPING=1
+Stage 3: COMPILE ─── build render.exe with UZ_SHIPPING=1
 Stage 4: STAGE   ─── assemble the release directory
 Stage 5: PACKAGE ─── (optional) NSIS installer or zip archive
 ```
@@ -86,7 +86,7 @@ src/build/pack/
 
 ### Stage 3: Compile
 
-Build `UzEngine.exe` with shipping flags.
+Build `render.exe` with shipping flags.
 
 ```cmake
 cmake --build . --config Shipping --target UzEngine
@@ -100,7 +100,7 @@ Assemble the release directory with everything needed to run on a user machine.
 
 ```
 dist/
-├── UzGame.exe                  ← renamed from UzEngine.exe
+├── UzGame.exe                  ← renamed from render.exe
 ├── game.uzpak
 ├── vcredist_x64/               ← MSVC runtime redistributable
 └── install_manifest.sha256     ← SHA256 of every file (for update diffing)

@@ -82,7 +82,7 @@ The original 5-phase structure has been redistributed into **10 phases + Tools t
 **Exit Criteria**:
 - `.uzscene` files open and edit visually in Scene Tree panel
 - Lua scripts attach to nodes, execute at runtime, hot-reload in ~60ms
-- Play mode spawns separate `UzEngine.exe --play` process
+- Play mode spawns separate `render.exe --play` process
 - Shader compilation errors annotated inline in VSCode with line numbers
 - Unhandled exceptions captured in crash reporter with minidump
 - Developers can author complete Lua-driven game logic
@@ -214,7 +214,7 @@ The original 5-phase structure has been redistributed into **10 phases + Tools t
 - **Description**: CLI argument `--editor` (viewport in VSCode) vs. `--play` (separate game window). Play process spawned by editor, receives scene over IPC, runs independently. Editor shows "Play" button in status bar; click stops process.
 - **Definition of Done**:
   - [x] Editor-mode engine runs at 60 FPS, streams viewport to VSCode
-  - [x] Play-mode spawns separate `UzEngine.exe --play` process
+  - [x] Play-mode spawns separate `render.exe --play` process
   - [x] Scene loaded in play process, all systems active
   - [x] Play process window shows game viewport (full control/input)
   - [x] Status bar: Play/Stop buttons, FPS counter

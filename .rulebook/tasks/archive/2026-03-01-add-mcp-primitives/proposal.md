@@ -13,7 +13,7 @@ Claude Code
   ↓ calls MCP tools (stable, never changes)
 tools/mcp-uzengine/ (MCP server, Node.js stdio)
   ↓ writes/reads files in build/preview/
-UzEngine.exe IPC (add-engine-ipc)
+render.exe IPC (add-engine-ipc)
   ↓ reads SceneParams, executes handlers
 
 Skills = recipe documentation

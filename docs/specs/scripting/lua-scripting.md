@@ -2,7 +2,7 @@
 
 > **Status**: Planned (Phase 1)
 > **Runtime**: LuaJIT 2.1 (JIT + interpreter)
-> **VM owner**: `game.dll` (not `UzEngine.exe`)
+> **VM owner**: `game.dll` (not `render.exe`)
 > **Authoring**: Plain `.lua` files under `res://`
 
 ---
@@ -26,7 +26,7 @@ Lua does not replace C++. It extends it.
 ## Architecture
 
 ```
-UzEngine.exe
+render.exe
 │  knows nothing about Lua
 │  C ABI boundary (game_api_t) unchanged
 │
@@ -55,9 +55,9 @@ res://game/
 
 ### Why LuaJIT Lives Inside `game.dll`
 
-The stable C ABI boundary (`game_api_t`) between `UzEngine.exe` and `game.dll` must never be crossed by Lua types. Placing LuaJIT inside `game.dll` means:
+The stable C ABI boundary (`game_api_t`) between `render.exe` and `game.dll` must never be crossed by Lua types. Placing LuaJIT inside `game.dll` means:
 
-- `UzEngine.exe` never includes `<lua.h>` — zero coupling
+- `render.exe` never includes `<lua.h>` — zero coupling
 - `lua_State*` never crosses the DLL boundary
 - When `game.dll` hot-reloads, LuaJIT is torn down and rebuilt — all Lua state is cleanly reset (or preserved via `on_save_state`)
 - Build tool can strip LuaJIT to interpreter-only for shipping without touching the engine
@@ -413,7 +413,7 @@ src/engine/scripting/
                                called once after luajit_newstate()
 ```
 
-These files are compiled into `uz_engine.lib`. LuaJIT itself (`libluajit.lib`) is linked only into `game.dll` — never into `UzEngine.exe`.
+These files are compiled into `uz_engine.lib`. LuaJIT itself (`libluajit.lib`) is linked only into `game.dll` — never into `render.exe`.
 
 ---
 

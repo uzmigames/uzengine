@@ -333,7 +333,7 @@ UzEngine solves these problems by embracing plain text:
 | **NFR-030** | All new code MUST achieve ≥ 95% line coverage via unit tests | Code reliability |
 | **NFR-031** | All C++ headers MUST compile with zero warnings under `-Wall -Wextra -Wpedantic` | Code quality |
 | **NFR-032** | All public APIs MUST be documented in `/docs/` specs or code comments | Maintainability |
-| **NFR-033** | C ABI between `UzEngine.exe` and `game.dll` MUST be backward-compatible (fields append-only) | Forward compatibility |
+| **NFR-033** | C ABI between `render.exe` and `game.dll` MUST be backward-compatible (fields append-only) | Forward compatibility |
 | **NFR-034** | All architectural decisions MUST be documented in `/docs/engine/design-decisions.md` | Knowledge preservation |
 
 ---

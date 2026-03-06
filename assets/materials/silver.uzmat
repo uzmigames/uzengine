@@ -1,0 +1,6 @@
+[material]
+name = Silver
+shader = pbr
+albedo = [0.97, 0.96, 0.91]
+metallic = 1.0
+roughness = 0.1

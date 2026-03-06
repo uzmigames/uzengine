@@ -37,7 +37,7 @@ VSCode Extension (TypeScript)
 │  onDidChangeViewState → active/inactive → IPC: viewport.setActive(id, bool)
 │
 ▼
-UzEngine.exe (C++)
+render.exe (C++)
 │
 ├── ViewportRegistry                    ← tracks N viewports
 │   ├── Viewport {id, state, surface}

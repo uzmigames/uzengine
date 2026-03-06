@@ -4,8 +4,9 @@
 
 param(
     [int]$DelayMs = 3000,   # Wait time for engine to render first frames
-    [string]$ExePath = "$PSScriptRoot\..\build\Release\UzEngine.exe",
-    [string]$OutPath = "$PSScriptRoot\preview_capture.png"
+    [string]$ExePath = "$PSScriptRoot\..\build\Release\render.exe",
+    [string]$OutPath = "$PSScriptRoot\preview_capture.png",
+    [string]$Args = ""
 )
 
 Add-Type -AssemblyName System.Windows.Forms
@@ -18,12 +19,19 @@ if (!(Test-Path $OutDir)) { New-Item -ItemType Directory -Path $OutDir -Force | 
 
 # Kill any existing UzEngine
 Stop-Process -Name UzEngine -Force -ErrorAction SilentlyContinue
+Stop-Process -Name render -Force -ErrorAction SilentlyContinue
 Start-Sleep -Milliseconds 500
 
 # Launch in windowed mode
 $env:UZENGINE_WINDOWED = "1"
 $env:UZENGINE_HEADLESS = ""
-$proc = Start-Process -FilePath $ExePath -PassThru
+if ($Args) {
+    # Split args by space so Start-Process passes them individually
+    $ArgArray = $Args -split ' '
+    $proc = Start-Process -FilePath $ExePath -ArgumentList $ArgArray -PassThru
+} else {
+    $proc = Start-Process -FilePath $ExePath -PassThru
+}
 Write-Host "[preview] Launched UzEngine (PID $($proc.Id)), waiting ${DelayMs}ms..."
 Start-Sleep -Milliseconds $DelayMs
 

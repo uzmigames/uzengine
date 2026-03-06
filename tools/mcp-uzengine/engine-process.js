@@ -36,12 +36,13 @@ export function getEngineExePath() {
 
 /**
  * Spawn UzEngine.exe.
- * @param {{ windowed?: boolean }} [opts]
+ * @param {{ windowed?: boolean, scene?: string }} [opts]
  *   windowed=true  → sets UZENGINE_WINDOWED=1 so a visible debug window appears
+ *   scene          → path to .uzscene file (passed as --scene argument)
  * No-op if already running.
  * @returns {{ ok: boolean, pid?: number, error?: string }}
  */
-export function spawnEngine({ windowed = false } = {}) {
+export function spawnEngine({ windowed = false, scene = '' } = {}) {
     if (engineProcess && engineProcess.exitCode === null) {
         return { ok: true, pid: engineProcess.pid, note: 'already running' };
     }
@@ -54,8 +55,11 @@ export function spawnEngine({ windowed = false } = {}) {
     const env = { ...process.env, UZENGINE_HEADLESS: '1' };
     if (windowed) env.UZENGINE_WINDOWED = '1';
 
+    const args = [];
+    if (scene) args.push('--scene', scene);
+
     try {
-        engineProcess = spawn(exePath, [], {
+        engineProcess = spawn(exePath, args, {
             cwd: path.dirname(exePath),
             detached: false,
             windowsHide: false,

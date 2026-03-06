@@ -3,8 +3,8 @@
 // ---------------------------------------------------------------------------
 #pragma once
 
-#include "engine/renderer/renderer.h"
-#include "engine/renderer/scene_params.h"
+#include "engine/renderer/core/renderer.h"
+#include "engine/renderer/scene/scene_params.h"
 #include "engine/scene/scene.h"
 
 #include <memory>

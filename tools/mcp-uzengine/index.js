@@ -24,10 +24,10 @@ import {
     ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 
-import { engineCall, readStatus, waitForFile, readFile, PREVIEW_DIR } from './ipc-client.js';
-import { spawnEngine, killEngine } from './engine-process.js';
-import path from 'path';
 import { randomUUID } from 'crypto';
+import path from 'path';
+import { killEngine, spawnEngine } from './engine-process.js';
+import { engineCall, PREVIEW_DIR, readFile, readStatus, waitForFile } from './ipc-client.js';
 
 // ---------------------------------------------------------------------------
 // Tool definitions
@@ -149,6 +149,11 @@ const TOOLS = [
                     description: 'Show a visible window (debug mode). Default: false (headless).',
                     default: false,
                 },
+                scene: {
+                    type: 'string',
+                    description: 'Path to .uzscene file to load on startup (e.g. "assets/scenes/materials.uzscene").',
+                    default: '',
+                },
             },
         },
     },
@@ -221,8 +226,9 @@ async function handleUzWriteFile(args) {
 }
 
 async function handleUzRestart(args) {
-    const waitMs  = args.wait_ms  ?? 8000;
+    const waitMs = args.wait_ms ?? 8000;
     const windowed = args.windowed ?? false;
+    const scene = args.scene ?? '';
     const start = Date.now();
 
     killEngine();
@@ -230,7 +236,7 @@ async function handleUzRestart(args) {
     // Wait briefly for process to fully exit
     await new Promise(resolve => setTimeout(resolve, 800));
 
-    const spawnResult = spawnEngine({ windowed });
+    const spawnResult = spawnEngine({ windowed, scene });
     if (!spawnResult.ok) {
         return textResult(JSON.stringify({ ok: false, error: spawnResult.error }));
     }
@@ -276,12 +282,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     try {
         switch (name) {
-            case 'uz_call':       return await handleUzCall(args ?? {});
+            case 'uz_call': return await handleUzCall(args ?? {});
             case 'uz_screenshot': return await handleUzScreenshot(args ?? {});
-            case 'uz_status':     return handleUzStatus();
-            case 'uz_read_file':  return await handleUzReadFile(args ?? {});
+            case 'uz_status': return handleUzStatus();
+            case 'uz_read_file': return await handleUzReadFile(args ?? {});
             case 'uz_write_file': return await handleUzWriteFile(args ?? {});
-            case 'uz_restart':    return await handleUzRestart(args ?? {});
+            case 'uz_restart': return await handleUzRestart(args ?? {});
             default:
                 return textResult(JSON.stringify({ error: `Unknown tool: ${name}` }));
         }

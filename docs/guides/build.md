@@ -61,13 +61,13 @@ cmake --preset release
 **Debug build:**
 ```bash
 cmake --build build --config Debug
-# Output: build/Debug/UzEngine.exe
+# Output: build/Debug/render.exe
 ```
 
 **Release build (recommended for distribution):**
 ```bash
 cmake --build build --config Release
-# Output: build/Release/UzEngine.exe
+# Output: build/Release/render.exe
 ```
 
 **Clean build:**
@@ -98,7 +98,7 @@ After successful build:
 
 ```
 build/Release/
-├── UzEngine.exe
+├── render.exe
 ├── turbojpeg.dll          ← Copied by POST_BUILD step
 ├── ixwebsocket.dll        ← (if using dynamic vcpkg triplet)
 ├── CMakeFiles/
@@ -262,13 +262,13 @@ npm run package  # automatically installs vsce
 
 ```bash
 set UZENGINE_WINDOWED=1
-.\build\Release\UzEngine.exe
+.\build\Release\render.exe
 ```
 
 Or:
 ```bash
 $env:UZENGINE_WINDOWED='1'
-& '.\build\Release\UzEngine.exe'  # PowerShell
+& '.\build\Release\render.exe'  # PowerShell
 ```
 
 Window title: "UzEngine PoC"
@@ -279,7 +279,7 @@ Press **ESC** to close the window.
 
 ```bash
 set UZENGINE_HEADLESS=1
-.\build\Release\UzEngine.exe
+.\build\Release\render.exe
 ```
 
 No window appears. The HWND still exists (required for DX12 swap chain) but is hidden off-screen.
@@ -290,7 +290,7 @@ No window appears. The HWND still exists (required for DX12 swap chain) but is h
 2. Open VSCode command palette: `Ctrl+Shift+P`
 3. Run: `UzEngine: Open Stream Viewer`
 4. Extension automatically:
-   - Starts `UzEngine.exe` (headless mode)
+   - Starts `render.exe` (headless mode)
    - Opens webview panel with live JPEG stream
    - Shows status bar indicator
 
@@ -309,7 +309,7 @@ To stop the server:
    ```bash
    cmake --build build --config Release
    ```
-   - Relinks UzEngine.exe
+   - Relinks render.exe
    - `POST_BUILD` step re-copies turbojpeg.dll
 3. **Stop current server** (if running):
    ```bash
@@ -319,7 +319,7 @@ To stop the server:
 4. **Restart:**
    ```bash
    # VSCode: run "UzEngine: Open Stream Viewer"
-   # Or manually: .\build\Release\UzEngine.exe
+   # Or manually: .\build\Release\render.exe
    ```
 
 ### Editing Shaders
@@ -364,7 +364,7 @@ Changes to `src/` are compiled on save (esbuild watch).
 ```bash
 set UZENGINE_WINDOWED=1
 set UZENGINE_DEBUG=1
-.\build\Release\UzEngine.exe
+.\build\Release\render.exe
 ```
 
 ---
@@ -382,7 +382,7 @@ start build/UzEngine.sln
 **Or debug from command line:**
 ```bash
 # With Visual Studio debugger attached
-devenv /debugexe .\build\Release\UzEngine.exe
+devenv /debugexe .\build\Release\render.exe
 ```
 
 ### Logging
@@ -424,7 +424,7 @@ UzBuild.exe:
 UzBuild.exe --project res://myproject --output dist/
   → Input: assets/ (meshes, textures, shaders)
   → Process: import, compile, optimize, compress
-  → Output: dist/game.uzpak + dist/UzEngine.exe + runtime DLLs
+  → Output: dist/game.uzpak + dist/render.exe + runtime DLLs
 
 # Verify assets in editor
 # UzBuild runs automatically on file change via FileWatcher during Phase 1+
@@ -434,7 +434,7 @@ UzBuild.exe --project res://myproject --output dist/
 
 ```
 dist/
-├── UzEngine.exe          (engine executable)
+├── render.exe          (engine executable)
 ├── game.dll              (game logic, linked against assets)
 ├── game.uzpak            (all imported assets, compressed)
 ├── turbojpeg.dll         (JPEG decoder for screenshots)

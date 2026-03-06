@@ -450,4 +450,33 @@ static_assert(sizeof(Mat4) == 64, "Mat4 must be 64 bytes (4x4 floats)");
     };
 }
 
+// ============================================================================
+// Aabb — Axis-Aligned Bounding Box
+// ============================================================================
+
+struct Aabb {
+    Vec3 min;
+    Vec3 max;
+
+    [[nodiscard]] static constexpr Aabb empty() noexcept {
+        return {
+            { 1e30f,  1e30f,  1e30f, 0.0f},
+            {-1e30f, -1e30f, -1e30f, 0.0f}
+        };
+    }
+
+    [[nodiscard]] bool is_empty() const noexcept {
+        return min.x > max.x || min.y > max.y || min.z > max.z;
+    }
+
+    void merge(Vec3 p) noexcept {
+        if (p.x < min.x) min.x = p.x;
+        if (p.y < min.y) min.y = p.y;
+        if (p.z < min.z) min.z = p.z;
+        if (p.x > max.x) max.x = p.x;
+        if (p.y > max.y) max.y = p.y;
+        if (p.z > max.z) max.z = p.z;
+    }
+};
+
 } // namespace uz

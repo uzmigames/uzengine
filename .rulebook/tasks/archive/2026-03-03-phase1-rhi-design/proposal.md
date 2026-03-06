@@ -18,7 +18,7 @@ This task is a design-and-validation task, not a full implementation task. The d
 - Create `src/engine/renderer/rhi/spirv_transpile.c` — thin C wrapper over SPIRV-Cross C API (`spirv_cross_c.h`): `spirv_to_msl(spirv, size, out_msl)` for the Metal backend, `spirv_to_glsl_es(spirv, size, out_glsl)` for Android debug tooling; links against `spirv-cross-c` from vcpkg
 - Update CMakeLists to add `UZ_BACKEND_DX12`, `UZ_BACKEND_VULKAN`, `UZ_BACKEND_METAL` defines selected by platform; add vcpkg dependencies `directx-dxc`, `spirv-cross`, `spirv-tools`
 - Update `docs/specs/rendering/shader-system.md` — remove GLSL as an authoring language; document the canonical pipeline: HLSL source → DXC → SPIR-V → SPIRV-Cross transpile per backend; update all shader authoring examples to HLSL only
-- Validate by running `UzEngine.exe` after the port — the spinning DX12 pyramid must render identically to before; this is the acceptance criterion proving the RHI vtable design is correct before any new rendering code is written
+- Validate by running `render.exe` after the port — the spinning DX12 pyramid must render identically to before; this is the acceptance criterion proving the RHI vtable design is correct before any new rendering code is written
 
 ## Impact
 

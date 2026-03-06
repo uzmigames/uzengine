@@ -9,7 +9,7 @@
 
 ## Overview
 
-Jolt Physics provides real-time rigid body simulation, collision detection, and character control for UzEngine. The physics engine runs entirely inside `game.dll` (not in `UzEngine.exe`) to maintain the clean C ABI boundary.
+Jolt Physics provides real-time rigid body simulation, collision detection, and character control for UzEngine. The physics engine runs entirely inside `game.dll` (not in `render.exe`) to maintain the clean C ABI boundary.
 
 **Key principles**:
 - Single `PhysicsWorld` singleton in `game.dll` updated at fixed 60 Hz (independent of frame rate)

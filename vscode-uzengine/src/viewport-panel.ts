@@ -1436,8 +1436,14 @@ export function buildViewportStreamHtml(opts: {
       // canvas is focused, so they don't intercept typing in VSCode's
       // chat, search bar, or other input fields.
       var canvasFocused = false;
-      canvas.addEventListener('focus', function() { canvasFocused = true; });
-      canvas.addEventListener('blur',  function() { canvasFocused = false; });
+      canvas.addEventListener('focus', function() {
+        canvasFocused = true;
+        if (vscodeApi) vscodeApi.postMessage({ type: 'viewport_focus', focused: true });
+      });
+      canvas.addEventListener('blur',  function() {
+        canvasFocused = false;
+        if (vscodeApi) vscodeApi.postMessage({ type: 'viewport_focus', focused: false });
+      });
 
       // Gizmo hotkey map (only active when canvas is focused and NOT in right-click camera mode)
       var gizmoHotkeys = { w: 'translate', e: 'rotate', r: 'scale' };

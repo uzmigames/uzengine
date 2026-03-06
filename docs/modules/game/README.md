@@ -12,7 +12,7 @@
 The Game module encapsulates all game-specific functionality in a separate DLL that can be hot-reloaded without restarting the entire engine. This separation provides three critical capabilities:
 
 1. **Hot-reload stability**: Save game state → unload game.dll → recompile → reload game.dll → restore state (~300ms)
-2. **Scripting isolation**: LuaJIT VM lives here exclusively; never linked into uz_engine.lib or UzEngine.exe
+2. **Scripting isolation**: LuaJIT VM lives here exclusively; never linked into uz_engine.lib or render.exe
 3. **Physics ownership**: Jolt Physics simulation state tied to game logic; resets cleanly with game reload
 
 The game.dll exposes a minimal C ABI contract (`game_api_t` function pointers) to the engine. All outbound communication flows via callbacks in `GameContext`, preserving the stable interface across reloads.
@@ -166,7 +166,7 @@ Target reload time: **~300ms** (save + unload + load + restore).
 
 ## Key Invariants
 
-1. **LuaJIT links ONLY here** — game.dll is the sole consumer of luajit.lib. uz_engine.lib and UzEngine.exe never link LuaJIT.
+1. **LuaJIT links ONLY here** — game.dll is the sole consumer of luajit.lib. uz_engine.lib and render.exe never link LuaJIT.
 
 2. **Jolt Physics links ONLY here** — physics state and lifetime tied to game logic; clean reset on reload.
 

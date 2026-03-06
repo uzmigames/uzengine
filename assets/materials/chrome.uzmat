@@ -1,0 +1,6 @@
+[material]
+name = Chrome
+shader = pbr
+albedo = [0.77, 0.78, 0.78]
+metallic = 1.0
+roughness = 0.05

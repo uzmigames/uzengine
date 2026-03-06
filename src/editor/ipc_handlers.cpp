@@ -9,8 +9,8 @@
 #include "common/ipc_registry.h"
 #include "common/ipc_poller.h"
 #include "common/types.h"
-#include "engine/renderer/renderer.h"
-#include "engine/renderer/scene_params.h"
+#include "engine/renderer/core/renderer.h"
+#include "engine/renderer/scene/scene_params.h"
 #include "engine/scene/scene.h"
 #include "engine/scene/scene_node.h"
 #include "engine/scene/component_data.h"
@@ -242,6 +242,42 @@ void registerIpcHandlers(uz::IpcRegistry& ipcRegistry,
 
         const size_t count = renderer.loadEditorScene(std::move(editorNodes));
         return {{"ok", true}, {"count", static_cast<int>(count)}};
+    });
+
+    ipcRegistry.add("scene.loadFile", [&](const nlohmann::json& args) -> nlohmann::json {
+        const std::string scenePath = args.value("path", "");
+        if (scenePath.empty()) {
+            return {{"ok", false}, {"error", "missing 'path' argument"}};
+        }
+
+        // Auto-save current scene before loading new one.
+        if (g_sceneData && g_sceneData->source_path[0] != '\0') {
+            g_sceneData->editor_state.cam_pos_x = g_scene.camPosX;
+            g_sceneData->editor_state.cam_pos_y = g_scene.camPosY;
+            g_sceneData->editor_state.cam_pos_z = g_scene.camPosZ;
+            g_sceneData->editor_state.cam_yaw   = g_scene.camYaw;
+            g_sceneData->editor_state.cam_pitch = g_scene.camPitch;
+            g_sceneData->editor_state.cam_speed = g_scene.camSpeed;
+            g_sceneData->editor_state.valid     = true;
+            (void)uz::scene_save_file(g_sceneData.get(), g_sceneData->source_path);
+        }
+
+        // Load the new scene file (syncs editor camera state into SceneParams).
+        loadSceneFile(g_sceneData, renderer, g_scene, scenePath);
+
+        if (!g_sceneData) {
+            return {{"ok", false}, {"error", "failed to load scene file"}};
+        }
+
+        return {{"ok", true},
+                {"scene", g_sceneData->name},
+                {"nodes", static_cast<int>(g_sceneData->next_id - 1)},
+                {"camera", {
+                    {"position", {g_scene.camPosX, g_scene.camPosY, g_scene.camPosZ}},
+                    {"yaw", g_scene.camYaw},
+                    {"pitch", g_scene.camPitch},
+                    {"speed", g_scene.camSpeed}
+                }}};
     });
 
     ipcRegistry.add("scene.setParam", [&](const nlohmann::json& args) -> nlohmann::json {

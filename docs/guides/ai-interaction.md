@@ -12,7 +12,7 @@ Claude Code
   ↓ calls MCP tools (5 stable primitives)
 @uzmigames/uzengine-mcp  (node tools/mcp-uzengine/index.js)
   ↓ reads/writes build/Release/preview/*.json
-UzEngine.exe  (IPC poller thread — 50ms poll)
+render.exe  (IPC poller thread — 50ms poll)
   ↓ executes registered handlers
 SceneParams / DX12Renderer / file system
 ```
@@ -179,7 +179,7 @@ uz_write_file({
 
 ### `uz_restart(wait_ms?, windowed?)`
 
-Kill and restart UzEngine.exe. Useful for applying changes that require rebuild or recovering from hangs.
+Kill and restart render.exe. Useful for applying changes that require rebuild or recovering from hangs.
 
 ```python
 uz_restart({"wait_ms": 8000, "windowed": True})  # debug mode
@@ -206,7 +206,7 @@ The MCP server starts automatically when Claude Code opens this workspace, via `
 1. Build the C++ app: `cmake --build build --config Release`
 2. Build the extension: `cd vscode-uzengine && npm install && npm run compile`
 3. Open workspace in VSCode: `code .`
-4. Run extension: Command palette → `UzEngine: Open Stream Viewer` (starts UzEngine.exe)
+4. Run extension: Command palette → `UzEngine: Open Stream Viewer` (starts render.exe)
 5. Claude Code auto-discovers MCP server
 
 **If UzEngine is not running:**

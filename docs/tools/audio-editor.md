@@ -10,7 +10,7 @@
 
 ## 1. Overview & Goals
 
-The Audio Editor is a suite of integrated tools inside VSCode that gives sound designers and game designers full control over audio assets, mixing, spatial placement, and adaptive music — without leaving the editor. It connects directly to the running `UzEngine.exe` process via the existing IPC/MCP channel, enabling real-time preview and parameter tweaking.
+The Audio Editor is a suite of integrated tools inside VSCode that gives sound designers and game designers full control over audio assets, mixing, spatial placement, and adaptive music — without leaving the editor. It connects directly to the running `render.exe` process via the existing IPC/MCP channel, enabling real-time preview and parameter tweaking.
 
 ### Design Goals
 
@@ -1278,7 +1278,7 @@ VSCode Extension Host (TypeScript)
     ↕ postMessage / onDidReceiveMessage
 WebView (React)
     ↕ WebSocket (ws://localhost:PORT/audio)
-UzEngine.exe IPC server
+render.exe IPC server
     ↕ function call (in-process)
 XAudio2 audio engine (uz_engine.lib)
 ```

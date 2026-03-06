@@ -24,7 +24,7 @@ The Crash Reporting system captures unhandled exceptions, fatal errors, and engi
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│ Main Game Loop (UzEngine.exe)                       │
+│ Main Game Loop (render.exe)                       │
 │                                                     │
 │  while running:                                     │
 │    try:                                             │
@@ -158,7 +158,7 @@ Each `.zip` contains:
   "callstack": [
     {
       "address": "0x7FF8A2C3D410",
-      "module": "UzEngine.exe",
+      "module": "render.exe",
       "symbol": "Renderer::render_shadow_pass",
       "file": "src/renderer/shadow_pass.cpp",
       "line": 142,
@@ -166,7 +166,7 @@ Each `.zip` contains:
     },
     {
       "address": "0x7FF8A1F5A2E0",
-      "module": "UzEngine.exe",
+      "module": "render.exe",
       "symbol": "Renderer::render_frame",
       "file": "src/renderer/renderer.cpp",
       "line": 89,
@@ -174,7 +174,7 @@ Each `.zip` contains:
     },
     {
       "address": "0x7FF8A0C2B100",
-      "module": "UzEngine.exe",
+      "module": "render.exe",
       "symbol": "main_loop",
       "file": "src/core/main.cpp",
       "line": 156,

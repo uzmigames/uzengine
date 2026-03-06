@@ -10,7 +10,7 @@ Jolt Physics (MIT) targeted for Phase 3. Lives entirely inside game.dll.
 - `src/engine/ecs/components.h` -- CRigidBody, CCollider*, CTrigger, CCharacterController
 
 ## Architecture Rules
-- Jolt ONLY in game.dll -- never UzEngine.exe or uz_engine.lib
+- Jolt ONLY in game.dll -- never render.exe or uz_engine.lib
 - Fixed 60 Hz timestep with accumulator pattern (not frame-rate dependent)
 - Transform sync: AFTER physics step, BEFORE script on_update
 - ContactListener dispatches to EventBus queue, drained on game thread

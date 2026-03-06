@@ -1,0 +1,10 @@
+[material]
+name = Concrete
+shader = pbr
+albedo = [0.55, 0.55, 0.52]
+metallic = 0.0
+roughness = 0.9
+albedo_texture = assets/textures/concrete_albedo.png
+normal_texture = assets/textures/concrete_normal.png
+roughness_texture = assets/textures/concrete_roughness.png
+ao_texture = assets/textures/concrete_ao.png

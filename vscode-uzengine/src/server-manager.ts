@@ -5,16 +5,16 @@ import * as path from 'path';
 import * as fs from 'fs';
 
 /**
- * Manages the UzEngine.exe child process lifecycle.
+ * Manages the render.exe child process lifecycle.
  *
  * The extension starts the server automatically when the stream viewer opens,
  * and stops it when VSCode is deactivated or the user runs "Stop Server".
  *
  * The executable is located by searching in order:
  *   1. uzengine.serverExecutable setting (absolute path)
- *   2. <workspace>/build/Release/UzEngine.exe
- *   3. <workspace>/build/Debug/UzEngine.exe
- *   4. <workspace>/build/UzEngine.exe
+ *   2. <workspace>/build/Release/render.exe
+ *   3. <workspace>/build/Debug/render.exe
+ *   4. <workspace>/build/render.exe
  */
 export class ServerManager implements vscode.Disposable {
     private _process: cp.ChildProcess | undefined;
@@ -54,7 +54,7 @@ export class ServerManager implements vscode.Disposable {
         const exePath = this._resolveExecutable();
         if (!exePath) {
             const choice = await vscode.window.showErrorMessage(
-                'UzEngine.exe not found. Build the project first or set uzengine.serverExecutable.',
+                'render.exe not found. Build the project first or set uzengine.serverExecutable.',
                 'Open Settings',
                 'Dismiss'
             );
@@ -186,10 +186,10 @@ export class ServerManager implements vscode.Disposable {
 
         const root = workspaceFolders[0].uri.fsPath;
         const candidates = [
-            path.join(root, 'build', 'Release', 'UzEngine.exe'),
-            path.join(root, 'build', 'Debug', 'UzEngine.exe'),
-            path.join(root, 'build', 'UzEngine.exe'),
-            path.join(root, 'UzEngine.exe'),
+            path.join(root, 'build', 'Release', 'render.exe'),
+            path.join(root, 'build', 'Debug', 'render.exe'),
+            path.join(root, 'build', 'render.exe'),
+            path.join(root, 'render.exe'),
         ];
 
         for (const candidate of candidates) {
@@ -203,7 +203,7 @@ export class ServerManager implements vscode.Disposable {
 
     private _setStatus(state: 'running' | 'stopped', exePath?: string): void {
         if (state === 'running') {
-            const name = exePath ? path.basename(exePath) : 'UzEngine.exe';
+            const name = exePath ? path.basename(exePath) : 'render.exe';
             this._statusBar.text = `$(debug-stop) UzEngine: ${name}`;
             this._statusBar.tooltip = `UzEngine server running — click to stop\n${exePath ?? ''}`;
             this._statusBar.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');

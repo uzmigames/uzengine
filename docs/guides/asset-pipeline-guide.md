@@ -340,7 +340,7 @@ UzBuild.exe --project E:\UzEngine\myproject --output dist/
 
 ```
 dist/
-├── UzEngine.exe
+├── render.exe
 ├── game.dll
 ├── game.uzpak          ← All imported assets, compressed
 ├── turbojpeg.dll
@@ -535,7 +535,7 @@ UzBuild.exe --project myproject --output release/
 
 # Ship these files
 release/
-├── UzEngine.exe
+├── render.exe
 ├── game.dll
 ├── game.uzpak
 ├── turbojpeg.dll

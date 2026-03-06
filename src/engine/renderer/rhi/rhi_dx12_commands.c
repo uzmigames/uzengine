@@ -219,16 +219,16 @@ void dx12_cmd_set_texture(RhiCmdList cmd, uint32_t slot_idx,
     uint32_t cmd_slot = (uint32_t)cmd;
     uint32_t tex_slot = (uint32_t)tex;
     assert(tex_slot < DX12_MAX_RESOURCES && s_dx12.textures[tex_slot].occupied);
-
-    (void)slot_idx; /* Phase 1: always use descriptor at tex_slot index */
+    assert(slot_idx < 5 && "Only slots 0-4 supported in Phase 1 root signature");
 
     D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle;
     ID3D12DescriptorHeap_GetGPUDescriptorHandleForHeapStart(
         s_dx12.cbv_srv_uav_heap, &gpu_handle);
     gpu_handle.ptr += (UINT64)tex_slot * s_dx12.cbv_srv_uav_desc_size;
 
+    /* Param 4 is the start of SRV descriptor tables (t0..t4) */
     ID3D12GraphicsCommandList_SetGraphicsRootDescriptorTable(
-        s_dx12.cmd_lists[cmd_slot].list, 2, gpu_handle);
+        s_dx12.cmd_lists[cmd_slot].list, 4 + slot_idx, gpu_handle);
 }
 
 static D3D12_PRIMITIVE_TOPOLOGY rhi_topology_to_dx12(RhiTopology t) {

@@ -12,7 +12,7 @@
 //                   viewport.resize, viewport.getStatus, viewport.list
 
 #include <gtest/gtest.h>
-#include "engine/renderer/viewport_registry.h"
+#include "engine/renderer/core/viewport_registry.h"
 #include "engine/core/platform.h"
 #include "common/ipc_viewport_handlers.h"
 #include "common/ipc_registry.h"

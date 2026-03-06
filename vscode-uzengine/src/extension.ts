@@ -2,7 +2,7 @@
  * extension.ts — VSCode extension entry point.
  *
  * Activation responsibilities:
- *  1. Start the ServerManager (manages UzEngine.exe child process).
+ *  1. Start the ServerManager (manages render.exe child process).
  *  2. Initialise the ViewportManager singleton (manages all open viewport tabs).
  *  3. Subscribe to `vscode.window.onDidChangeWindowState` so all viewports are
  *     suspended when the developer switches to another application.
@@ -39,7 +39,7 @@ import { UzSceneEditorProvider } from './uzscene-editor';
 import { parseUzScene } from './uzscene-parser';
 import { ViewportManager } from './viewport-manager';
 
-// ServerManager removed — each scene now manages its own UzEngine.exe
+// ServerManager removed — each scene now manages its own render.exe
 // via EngineInstanceManager.
 
 /**
@@ -56,7 +56,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
     // -------------------------------------------------------------------------
     // 2. EngineInstanceManager — manages per-scene engine instances.
-    //    Each .uzscene editor tab spawns its own independent UzEngine.exe
+    //    Each .uzscene editor tab spawns its own independent render.exe
     //    with a unique WebSocket port and IPC directory.
     // -------------------------------------------------------------------------
     const instanceMgr = EngineInstanceManager.initialize(context, outputChannel);
@@ -367,7 +367,7 @@ export function activate(context: vscode.ExtensionContext): void {
 
     // -------------------------------------------------------------------------
     // 9. Local .uzscene file watcher — populate Scene Tree from disk
-    //    NOTE: We no longer send scene.load IPC here. Each UzEngine.exe
+    //    NOTE: We no longer send scene.load IPC here. Each render.exe
     //    auto-loads its scene via the --scene command-line argument.
     //    This section only updates the Scene Tree sidebar.
     // -------------------------------------------------------------------------

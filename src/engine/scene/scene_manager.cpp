@@ -54,6 +54,9 @@ static bool add_child_to_parent(SceneNode* parent, NodeId child_id) noexcept {
 void scene_init(Scene* scene, const char* name) {
     std::memset(scene, 0, sizeof(Scene));
 
+    // Re-apply EditorState defaults that memset destroyed.
+    scene->editor_state = EditorState{};
+
     // Copy the scene name, safely truncating.
     if (name) {
         uz::str_copy(scene->name, sizeof(scene->name), name);
@@ -68,6 +71,7 @@ void scene_init(Scene* scene, const char* name) {
     scene->components.init();
     component_store_register<CameraData>(&scene->components);
     component_store_register<DirectionalLightData>(&scene->components);
+    component_store_register<StaticMeshData>(&scene->components);
 }
 
 void scene_clear(Scene* scene) {

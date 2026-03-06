@@ -2,7 +2,7 @@
 
 ## Overview
 
-All editor UI lives inside VSCode as extension panels. There is no separate editor window. The engine process (`UzEngine.exe --editor`) handles scene state and rendering; the VSCode extension handles all user interaction.
+All editor UI lives inside VSCode as extension panels. There is no separate editor window. The engine process (`render.exe --editor`) handles scene state and rendering; the VSCode extension handles all user interaction.
 
 ---
 
@@ -252,7 +252,7 @@ Click ▶ Play
     ↓
 Extension checks for unsaved changes → auto-save or prompt
     ↓
-Extension spawns: UzEngine.exe --play --project=./ --scene=main.uzscene
+Extension spawns: render.exe --play --project=./ --scene=main.uzscene
     ↓
 Viewport switches to play process stream
     ↓

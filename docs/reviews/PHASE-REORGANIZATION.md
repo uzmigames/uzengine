@@ -53,7 +53,7 @@ The remaining 4 Phase 0 tasks are documented in `.rulebook/tasks/phase0-*`.
 **Exit criteria**:
 - `.uzscene` opens and displays visually in Scene Tree + viewport
 - Lua scripts attach to nodes and execute OnInit/OnUpdate
-- Play mode spawns a separate `UzEngine.exe --play` process
+- Play mode spawns a separate `render.exe --play` process
 - Shader compilation errors annotated inline in VSCode
 - Crash reporter captures SEH exceptions with minidump
 

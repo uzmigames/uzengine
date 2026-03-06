@@ -1871,7 +1871,7 @@ Applied scalability preset: High (47 CVars changed)
 CVars can be set from the command line when launching the engine:
 
 ```bash
-UzEngine.exe --cvar r.VSync=0 --cvar r.Shadow.Quality=4 --cvar r.Debug.ShowStats=1
+render.exe --cvar r.VSync=0 --cvar r.Shadow.Quality=4 --cvar r.Debug.ShowStats=1
 ```
 
 This is useful for automated testing, benchmarks, and CI pipelines. Command-line overrides have the highest priority and cannot be overwritten by config files.

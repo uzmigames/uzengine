@@ -1,7 +1,7 @@
 # Module: Runtime
 
 > **Location**: `src/runtime/`
-> **Output**: `UzEngine.exe`
+> **Output**: `render.exe`
 > **Language**: C++23
 > **Role**: Entry point. Wires all modules together. Owns all threads.
 
@@ -18,8 +18,8 @@ The Runtime module is the **executable**. It creates the process, boots subsyste
 Selected via CLI flag at launch. The VSCode extension spawns Runtime with `--editor`; the shipped game runs with `--play`.
 
 ```
-UzEngine.exe --editor [--project <path>] [--scene <path>] [--port <n>]
-UzEngine.exe --play   [--project <path>] [--scene <path>]
+render.exe --editor [--project <path>] [--scene <path>] [--port <n>]
+render.exe --play   [--project <path>] [--scene <path>]
 ```
 
 | Aspect | `--editor` mode | `--play` mode |

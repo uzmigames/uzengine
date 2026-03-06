@@ -2,7 +2,7 @@
 
 > **Status**: Planned (Phase 1)
 > **Priority**: P0 — Safety Blocker
-> **Rationale**: `while true do end` in any Lua script freezes UzEngine.exe entirely — the game logic thread stalls, the IPC server becomes unresponsive, and the editor appears to crash. This is the #1 complaint in any scripting system. Must be fixed before Lua scripting ships to users.
+> **Rationale**: `while true do end` in any Lua script freezes render.exe entirely — the game logic thread stalls, the IPC server becomes unresponsive, and the editor appears to crash. This is the #1 complaint in any scripting system. Must be fixed before Lua scripting ships to users.
 
 ---
 

@@ -5,7 +5,7 @@
  * the editor tab (full-page canvas, 60 fps JPEG over WebSocket).
  *
  * Responsibilities:
- *  1. Spawns an independent UzEngine.exe instance (via EngineInstanceManager)
+ *  1. Spawns an independent render.exe instance (via EngineInstanceManager)
  *     for this scene file, with a unique WebSocket port and IPC directory.
  *  2. Replaces the loading page with the JPEG streaming canvas once the
  *     engine is up.
@@ -94,7 +94,7 @@ export function buildLoadingHtml(fileName: string): string {
 /**
  * CustomTextEditorProvider that opens .uzscene files as a live 3D render.
  *
- * Each .uzscene tab spawns its own independent UzEngine.exe instance via
+ * Each .uzscene tab spawns its own independent render.exe instance via
  * EngineInstanceManager, ensuring fully isolated rendering per scene.
  *
  * Registration in extension.ts:
@@ -142,7 +142,7 @@ export class UzSceneEditorProvider implements vscode.CustomTextEditorProvider {
 
     /**
      * Called by VSCode when a .uzscene file is opened.
-     * 1. Spawns an independent UzEngine.exe instance for this scene.
+     * 1. Spawns an independent render.exe instance for this scene.
      * 2. Shows the live JPEG viewport canvas connected to the instance's port.
      * 3. Updates the tab title from the scene name.
      * 4. Cleans up the instance when the tab is closed.
@@ -159,9 +159,14 @@ export class UzSceneEditorProvider implements vscode.CustomTextEditorProvider {
         this._updateTitle(document, webviewPanel);
 
         // Listen for messages from the webview (e.g. pickResult from engine).
-        webviewPanel.webview.onDidReceiveMessage((message: { type: string; nodeId?: number | null }) => {
+        webviewPanel.webview.onDidReceiveMessage((message: { type: string; nodeId?: number | null; focused?: boolean }) => {
             if (message.type === 'pickResult' && UzSceneEditorProvider.onPickResult) {
                 UzSceneEditorProvider.onPickResult(message.nodeId ?? null);
+            }
+            if (message.type === 'viewport_focus') {
+                void vscode.commands.executeCommand(
+                    'setContext', 'uzengine.viewportFocused', !!message.focused
+                );
             }
         });
 
@@ -209,6 +214,7 @@ export class UzSceneEditorProvider implements vscode.CustomTextEditorProvider {
             webviewPanel.onDidDispose(() => {
                 UzSceneEditorProvider._activePanels.delete(webviewPanel);
                 instanceMgr.destroyInstance(instance.id);
+                void vscode.commands.executeCommand('setContext', 'uzengine.viewportFocused', false);
             });
 
             // Track this panel for postMessage forwarding.

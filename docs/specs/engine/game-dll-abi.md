@@ -1,8 +1,8 @@
 # Spec: game.dll C ABI Boundary
 
 > **Status**: Phase 1 (Must exist before game.dll implementation)
-> **Owner**: Interface between `UzEngine.exe` and `game.dll`
-> **Purpose**: Define the stable C ABI that game.dll must export and UzEngine.exe must call. This is the only communication channel between the host process and the game module.
+> **Owner**: Interface between `render.exe` and `game.dll`
+> **Purpose**: Define the stable C ABI that game.dll must export and render.exe must call. This is the only communication channel between the host process and the game module.
 
 ---
 
@@ -10,18 +10,18 @@
 
 1. **Pure C ABI** — No C++ types, no STL, no virtual functions across the boundary
 2. **Stable** — `game_api_t` is versioned; old game.dlls can load in new engine builds
-3. **Hot-reload safe** — `UzEngine.exe` can unload/reload `game.dll` without restarting
+3. **Hot-reload safe** — `render.exe` can unload/reload `game.dll` without restarting
 4. **No shared globals** — All state is passed through `GameContext*`; no extern globals shared across the boundary
 
 ---
 
-## What UzEngine.exe Provides to game.dll
+## What render.exe Provides to game.dll
 
-`UzEngine.exe` fills a `GameContext` struct and passes it to `game_dll_on_start()`. This struct contains function pointers that game.dll calls to interact with the engine.
+`render.exe` fills a `GameContext` struct and passes it to `game_dll_on_start()`. This struct contains function pointers that game.dll calls to interact with the engine.
 
 ```c
 // src/engine/game_context.h
-// This header is shared between UzEngine.exe and game.dll
+// This header is shared between render.exe and game.dll
 
 #pragma once
 #ifdef __cplusplus
@@ -53,7 +53,7 @@ typedef struct GameContext {
     uint32_t version;  // Current: 1
 
     // ECS registry (game.dll uses EnTT C++ API directly via this pointer)
-    // NOTE: UzEngine.exe and game.dll MUST be compiled with the same EnTT version
+    // NOTE: render.exe and game.dll MUST be compiled with the same EnTT version
     entt_registry* registry;
 
     // Frame arenas (game.dll should use these for per-frame scratch)
@@ -111,7 +111,7 @@ typedef struct GameContext {
 game.dll must export these four functions with C linkage:
 
 ```c
-// game_dll_api.h — exported by game.dll, called by UzEngine.exe
+// game_dll_api.h — exported by game.dll, called by render.exe
 
 #ifdef __cplusplus
 extern "C" {
@@ -159,7 +159,7 @@ bool game_dll_on_start(GameContext* ctx) {
 ## Hot-Reload Protocol
 
 ```
-1. UzEngine.exe detects game.dll change (FileWatcher)
+1. render.exe detects game.dll change (FileWatcher)
 2. Serialize current game state to level_arena scratch buffer
 3. Call game_dll_on_stop() on old DLL
 4. FreeLibrary(old_game_dll)
@@ -175,8 +175,8 @@ bool game_dll_on_start(GameContext* ctx) {
 
 ```
 src/engine/
-├── game_context.h      ← Shared between UzEngine.exe and game.dll (no C++)
-├── game_dll_loader.h   ← UzEngine.exe: LoadLibrary, GetProcAddress, hot-reload
+├── game_context.h      ← Shared between render.exe and game.dll (no C++)
+├── game_dll_loader.h   ← render.exe: LoadLibrary, GetProcAddress, hot-reload
 ├── game_dll_loader.cpp ← Implementation
 game.dll project:
 ├── game_dll_api.h      ← Exported functions declaration

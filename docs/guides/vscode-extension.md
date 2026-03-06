@@ -20,7 +20,7 @@ Opens the stream viewer and starts the server if not running.
 
 **Flow:**
 1. Check if server is already running
-2. If not, spawn `UzEngine.exe` (headless mode)
+2. If not, spawn `render.exe` (headless mode)
 3. Poll port 9002 until reachable (5 second timeout)
 4. Create/show the webview panel
 5. Panel connects to WebSocket and displays stream
@@ -37,7 +37,7 @@ Starts the server without opening the panel.
 
 ### uzengine.stopServer
 
-Kills the `UzEngine.exe` process.
+Kills the `render.exe` process.
 
 **Effect:** Webview disconnects from WebSocket; shows "Disconnected" status.
 
@@ -64,17 +64,17 @@ WebSocket URL of the running engine.
 
 ### uzengine.serverExecutable
 
-Absolute path to `UzEngine.exe`. Auto-discovered if not set.
+Absolute path to `render.exe`. Auto-discovered if not set.
 
 **Default:** Auto-search in:
-1. `<workspace>/build/Release/UzEngine.exe`
-2. `<workspace>/build/Debug/UzEngine.exe`
-3. `<workspace>/build/UzEngine.exe`
+1. `<workspace>/build/Release/render.exe`
+2. `<workspace>/build/Debug/render.exe`
+3. `<workspace>/build/render.exe`
 
 **Example configuration (settings.json):**
 ```json
 {
-  "uzengine.serverExecutable": "C:\\custom\\path\\UzEngine.exe"
+  "uzengine.serverExecutable": "C:\\custom\\path\\render.exe"
 }
 ```
 
@@ -86,7 +86,7 @@ Absolute path to `UzEngine.exe`. Auto-discovered if not set.
 
 ### Server Manager (src/server-manager.ts)
 
-Manages the `UzEngine.exe` child process lifecycle.
+Manages the `render.exe` child process lifecycle.
 
 ```typescript
 export class ServerManager implements vscode.Disposable {
@@ -118,7 +118,7 @@ private _waitForPort(port: number, timeoutMs: number): Promise<boolean> {
 ```
 
 **Status bar:**
-- **Running:** `$(debug-stop) UzEngine: Release/UzEngine.exe` (clickable, toggles stop)
+- **Running:** `$(debug-stop) UzEngine: Release/render.exe` (clickable, toggles stop)
 - **Stopped:** `$(play) UzEngine: stopped`
 
 ### Stream Panel (src/stream-panel.ts)
@@ -328,7 +328,7 @@ VSCode automatically calls `dispose()` on all registered subscriptions, killing 
           "uzengine.serverExecutable": {
             "type": "string",
             "default": "",
-            "description": "Absolute path to UzEngine.exe (auto-discovered if empty)"
+            "description": "Absolute path to render.exe (auto-discovered if empty)"
           }
         }
       }
@@ -387,14 +387,14 @@ After editing source:
 
 The extension creates an output channel named "UzEngine Server" showing:
 - Process startup messages
-- stdout/stderr from `UzEngine.exe`
+- stdout/stderr from `render.exe`
 - Process exit status
 
 **View:** VSCode → Output panel → select "UzEngine Server"
 
 **Example log:**
 ```
-[UzEngine] Starting: C:\path\to\build\Release\UzEngine.exe
+[UzEngine] Starting: C:\path\to\build\Release\render.exe
 [UzEngine/WS] WebSocket server listening on port 9002
 [UzEngine] Server exited — code: 0 signal: null
 ```
@@ -417,7 +417,7 @@ cd vscode-uzengine
 npm run compile  # Check for TypeScript errors
 ```
 
-### "UzEngine.exe not found"
+### "render.exe not found"
 
 **Cause:** Executable not in expected location.
 
@@ -430,12 +430,12 @@ npm run compile  # Check for TypeScript errors
 **Cause:** Engine not running or listening on wrong port.
 
 **Check:**
-1. Is UzEngine.exe running? (Check Task Manager)
+1. Is render.exe running? (Check Task Manager)
 2. Is port 9002 open? (`netstat -ano | findstr :9002`)
 3. Check UzEngine server output channel
 
 **Fix:**
-- Manually start engine: `.\build\Release\UzEngine.exe` (with `UZENGINE_WINDOWED=1`)
+- Manually start engine: `.\build\Release\render.exe` (with `UZENGINE_WINDOWED=1`)
 - Check firewall (localhost should not require firewall rule)
 
 ### Webview blank / showing "Disconnected"

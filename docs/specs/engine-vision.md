@@ -46,7 +46,7 @@ The editor runs **inside VSCode** (via extension), with no separate window. The 
               │ WebSocket + JSON IPC
               ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│  UzEngine.exe (C++ Runtime)                                         │
+│  render.exe (C++ Runtime)                                         │
 │  ┌──────────────────────────────────────────────────────────────┐  │
 │  │  Scene System      │  Renderer (DX12)   │  Asset System      │  │
 │  │  Node Tree         │  Forward+ pipeline │  Resource Manager  │  │
@@ -220,9 +220,9 @@ JPEG encode → WebSocket → VSCode Viewport
 ```
 Editor Mode                        Play Mode
 ────────────                       ──────────
-VSCode Extension                   UzEngine.exe --play --project=./
+VSCode Extension                   render.exe --play --project=./
     ↕ IPC (editor commands)            ↑
-UzEngine.exe --editor                  spawned by the extension
+render.exe --editor                  spawned by the extension
     (no game loop, editor only)        runs the full game loop
     (scene tree, inspector, etc.)      streams frames to the viewport
 ```
@@ -230,7 +230,7 @@ UzEngine.exe --editor                  spawned by the extension
 Flow:
 1. User clicks ▶ Play in VSCode status bar
 2. Extension saves the current scene (if dirty)
-3. Extension spawns `UzEngine.exe --play --scene=main.uzscene`
+3. Extension spawns `render.exe --play --scene=main.uzscene`
 4. Viewport switches to streaming from the play process
 5. User clicks ■ Stop → extension kills the play process
 

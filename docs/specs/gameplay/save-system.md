@@ -23,7 +23,7 @@ The system is designed for **AI-driven game development** — save/load is AI-re
 ## Architecture
 
 ```
-UzEngine.exe (--play mode)
+render.exe (--play mode)
 │  knows nothing about save format
 │
 game.dll  (C++, owns all save data)

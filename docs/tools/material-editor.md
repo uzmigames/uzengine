@@ -1260,7 +1260,7 @@ The Material Editor runs as a VSCode WebView panel with three communication chan
 
 ```
 +---------------------------+          +-------------------+
-|   VSCode Extension        |   IPC    |   UzEngine.exe    |
+|   VSCode Extension        |   IPC    |   render.exe    |
 |                           |<-------->|                   |
 |  Material Editor WebView  |          |  DX12 Renderer    |
 |  (HTML/CSS/TypeScript)    |          |  MaterialRegistry |

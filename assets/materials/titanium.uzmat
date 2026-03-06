@@ -1,0 +1,6 @@
+[material]
+name = Titanium
+shader = pbr
+albedo = [0.54, 0.50, 0.47]
+metallic = 1.0
+roughness = 0.3

@@ -13,7 +13,7 @@
 //   - Diagnostics (cull_reason, pass_name)
 
 #include <gtest/gtest.h>
-#include "engine/renderer/render_graph.h"
+#include "engine/renderer/core/render_graph.h"
 
 #include <atomic>
 #include "common/safe_string.h"

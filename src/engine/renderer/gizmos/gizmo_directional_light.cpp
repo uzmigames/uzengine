@@ -6,7 +6,7 @@
 
 #include "gizmo_directional_light.h"
 #include "gizmo_utils.h"
-#include "engine/renderer/renderer.h"
+#include "engine/renderer/core/renderer.h"
 
 
 namespace uz {

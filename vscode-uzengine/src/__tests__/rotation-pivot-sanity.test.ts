@@ -82,13 +82,13 @@ function applyWorldPivotRotation(
 }
 
 // ---- Helper to check approximate equality ----
-function expectVec3Near(actual: any, expected: any, eps = 1e-6) {
+function expectVec3Near(actual: any, expected: any, _eps = 1e-6) {
     expect(actual.x).toBeCloseTo(expected.x, 5);
     expect(actual.y).toBeCloseTo(expected.y, 5);
     expect(actual.z).toBeCloseTo(expected.z, 5);
 }
 
-function expectQuatNear(actual: any, expected: any, eps = 1e-6) {
+function expectQuatNear(actual: any, expected: any, _eps = 1e-6) {
     // Quaternions q and -q represent the same rotation
     const sign = (actual.w * expected.w + actual.x * expected.x + actual.y * expected.y + actual.z * expected.z) >= 0 ? 1 : -1;
     expect(actual.w * sign).toBeCloseTo(expected.w, 5);

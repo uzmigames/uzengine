@@ -17,7 +17,7 @@
 #include <nlohmann/json.hpp>
 
 #include "ipc_registry.h"
-#include "engine/renderer/scene_params.h"
+#include "engine/renderer/scene/scene_params.h"
 
 namespace uz {
 

@@ -39,7 +39,7 @@ The NavMesh Editor provides a complete visual authoring and debugging environmen
 
 ## 2. Editor Layout
 
-The NavMesh Editor activates when the user opens the **NavMesh** tab in the VSCode editor sidebar or presses the `NavMesh` toolbar button in the 3D viewport. All panels are implemented as VSCode webview panels communicating with `UzEngine.exe --editor` via IPC.
+The NavMesh Editor activates when the user opens the **NavMesh** tab in the VSCode editor sidebar or presses the `NavMesh` toolbar button in the 3D viewport. All panels are implemented as VSCode webview panels communicating with `render.exe --editor` via IPC.
 
 ### Layout Diagram
 

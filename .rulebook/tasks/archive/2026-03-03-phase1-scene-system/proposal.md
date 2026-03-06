@@ -18,7 +18,7 @@ The `.uzscene` INI-like file format is deliberately plain text and human-readabl
 - Replace the hard-coded pyramid draw call with a scene-driven render loop: `SceneManager` iterates `StaticMesh` nodes, submits their geometry and world transform matrix to the DX12 renderer, and dispatches `DirectionalLight` parameters to the lighting constant buffer
 - Register IPC command handlers in `src/ipc/scene_handlers.cpp`: `scene.get_tree` (returns full node hierarchy as JSON), `scene.create_node` (creates node, returns new handle), `scene.delete_node`, `scene.set_property` (sets any property on a node by name/value), `scene.get_property`, `scene.reparent_node`, `scene.save`, `scene.load`
 - Add `ArenaAllocator` infrastructure in `src/core/arena.h` with three arena instances: frame arena (reset each frame), level arena (reset on scene unload), and permanent arena (never reset); `SceneManager` allocates node pool from the level arena
-- Add `project.uzproj` TOML config loader that reads the startup scene path, project name, and asset directory root; `UzEngine.exe` accepts `--project <path>` CLI argument
+- Add `project.uzproj` TOML config loader that reads the startup scene path, project name, and asset directory root; `render.exe` accepts `--project <path>` CLI argument
 - Emit push events over WebSocket on scene mutation: `scene.node_created`, `scene.node_deleted`, `scene.node_changed` with the affected node's JSON snapshot so connected editor panels stay in sync without polling
 
 ## Impact

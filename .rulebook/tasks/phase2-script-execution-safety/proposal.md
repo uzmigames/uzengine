@@ -2,7 +2,7 @@
 
 ## Why
 
-`while true do end` written in any Lua `on_update` function freezes UzEngine.exe entirely. The game logic thread stalls, the IPC server becomes unresponsive, the editor viewport freezes, and the user must force-kill the process. This is a guaranteed Day 1 issue — every new Lua user makes this mistake.
+`while true do end` written in any Lua `on_update` function freezes render.exe entirely. The game logic thread stalls, the IPC server becomes unresponsive, the editor viewport freezes, and the user must force-kill the process. This is a guaranteed Day 1 issue — every new Lua user makes this mistake.
 
 LuaJIT compiles hot loops to native code, bypassing standard Lua instruction hooks. Both a CPU instruction budget AND a watchdog thread are required. Without this, Lua scripting is unsafe for production and developer use.
 

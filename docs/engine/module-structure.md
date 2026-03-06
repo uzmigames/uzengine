@@ -66,7 +66,7 @@ uz_ui_html.dll (C ABI library — no uz_engine.lib dependency)
 ├── Webview-style layout engine (flexbox)
 ├── Widget types: Button, Label, Input, Panel, etc.
 ├── Stable C ABI: ui_load_document, ui_set_property, ui_tick, ui_get_draw_list, ui_deliver_input
-└── Used by: UzEngine.exe (editor panels) + game process (game UI)
+└── Used by: render.exe (editor panels) + game process (game UI)
 ```
 
 This module is **completely standalone** and has no dependency on uz_engine.lib. It can be used independently for UI rendering in any application.
@@ -180,7 +180,7 @@ The **offline pipeline** that transforms raw project files into a self-contained
                xxhash3 directory (O(log n) lookup by path hash)
                footer-at-end layout (memory-mappable, no seek)
 
-3. Compile    — compile UzEngine.exe in Shipping configuration
+3. Compile    — compile render.exe in Shipping configuration
                UZ_SHIPPING=1: strips IPC, DXC, importers, asset browser
                links against game.uzpak VFS, not filesystem directly
 
@@ -211,7 +211,7 @@ The **authoring environment** built on top of VSCode. Has two parts:
 
 **TypeScript side (`vscode-uzengine/src/`):**
 - VSCode extension activation, command registration
-- `ServerManager`: spawns/kills `UzEngine.exe --editor`, health-check, reconnect
+- `ServerManager`: spawns/kills `render.exe --editor`, health-check, reconnect
 - `StreamPanel`: WebviewPanel displaying JPEG frames from WebSocket
 - `SceneTreeProvider`: `TreeDataProvider` for the Scene Tree panel (native VSCode)
 - `InspectorPanel`: Webview (Webview UI Toolkit) for selected node properties
@@ -386,13 +386,13 @@ e:\UzEngine\
 
 | Output | Type | Modules | When used |
 |--------|------|---------|-----------|
-| `UzEngine.exe` | Executable | Runtime + Renderer + Engine + UI + Editor handlers | Editor preview + shipping game |
+| `render.exe` | Executable | Runtime + Renderer + Engine + UI + Editor handlers | Editor preview + shipping game |
 | `UzBuild.exe` | Executable | Build + Renderer (ShaderCompiler) + Engine | CI/CD, packaging |
-| `game.dll` | Shared lib | Game logic only (C ABI) | Hot-reloaded by UzEngine.exe |
-| `uz_ui_html.dll` | Shared lib | Standalone UI HTML/CSS renderer (C ABI) | Loaded by UzEngine.exe + game for UI |
-| `uz_engine.lib` | Static lib | Engine module | Linked by UzEngine.exe + UzBuild.exe |
-| `uz_renderer.lib` | Static lib | Renderer module | Linked by UzEngine.exe + UzBuild.exe |
-| `uz_ui.lib` | Static lib | UI module | Linked by UzEngine.exe |
+| `game.dll` | Shared lib | Game logic only (C ABI) | Hot-reloaded by render.exe |
+| `uz_ui_html.dll` | Shared lib | Standalone UI HTML/CSS renderer (C ABI) | Loaded by render.exe + game for UI |
+| `uz_engine.lib` | Static lib | Engine module | Linked by render.exe + UzBuild.exe |
+| `uz_renderer.lib` | Static lib | Renderer module | Linked by render.exe + UzBuild.exe |
+| `uz_ui.lib` | Static lib | UI module | Linked by render.exe |
 
 ---
 

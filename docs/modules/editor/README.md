@@ -3,7 +3,7 @@
 > **TypeScript**: `vscode-uzengine/src/`
 > **C++ handlers**: `src/editor/` (compiled only when `UZ_EDITOR=1`)
 > **Language**: TypeScript (VSCode extension) + C++23 (IPC handlers)
-> **Runtime dependency**: Communicates with `UzEngine.exe --editor` via IPC and WebSocket only
+> **Runtime dependency**: Communicates with `render.exe --editor` via IPC and WebSocket only
 
 ---
 
@@ -11,7 +11,7 @@
 
 The Editor module is the **authoring environment** built on top of VSCode. It has no direct C++ dependency on any other module — it communicates exclusively via JSON over IPC (file-based) and receives rendered frames via WebSocket (JPEG stream).
 
-The C++ side (`src/editor/`) is a thin layer of IPC handlers that expose editor-specific queries (scene tree, node selection, property editing) that are not needed in shipping. These handlers are compiled into `UzEngine.exe` only when `UZ_EDITOR=1`.
+The C++ side (`src/editor/`) is a thin layer of IPC handlers that expose editor-specific queries (scene tree, node selection, property editing) that are not needed in shipping. These handlers are compiled into `render.exe` only when `UZ_EDITOR=1`.
 
 ---
 
@@ -36,14 +36,14 @@ VSCode (TypeScript Extension)
 │  Status bar:      ▶ Play  ⏸ Pause  ■ Stop  |  fps  |  Engine: running/stopped
 │
 │  IPC (JSON files)
-│  ├── write: command.json  → UzEngine.exe reads, executes, writes response.json
+│  ├── write: command.json  → render.exe reads, executes, writes response.json
 │  └── read:  response.json ← result of the command
 │
 │  WebSocket (port 9002)
 │  └── receives binary JPEG frames → draws to Canvas in Viewport panel
 │
 ▼
-UzEngine.exe --editor  (C++ Runtime + Engine + Renderer)
+render.exe --editor  (C++ Runtime + Engine + Renderer)
 ```
 
 ---
@@ -53,7 +53,7 @@ UzEngine.exe --editor  (C++ Runtime + Engine + Renderer)
 ```
 vscode-uzengine/src/
 ├── extension.ts               — activation, command registration, StatusBar
-├── server-manager.ts          — spawn/kill UzEngine.exe, health-check, reconnect
+├── server-manager.ts          — spawn/kill render.exe, health-check, reconnect
 ├── stream-panel.ts            — WebviewPanel: Canvas + WebSocket JPEG display
 ├── scene-tree-provider.ts     — TreeDataProvider for Scene Tree panel
 │                                calls: editor.getSceneTree via IPC
@@ -76,7 +76,7 @@ vscode-uzengine/src/
 ```
 Extension activates
     └─ ServerManager.start()
-        ├─ spawn UzEngine.exe --editor --project <workspace>
+        ├─ spawn render.exe --editor --project <workspace>
         ├─ wait for engine.ping → ok  (health-check, 5s timeout)
         ├─ connect WebSocket to ws://localhost:9002
         └─ notify all panels: "engine ready"
@@ -151,7 +151,7 @@ All scene-mutating commands go through `SceneCommand` queue (applied on Main thr
 [▶ Play]  [⏸ Pause]  [■ Stop]  |  60 fps  |  ● Engine running
 ```
 
-- ▶ Play: saves dirty scenes → spawns `UzEngine.exe --play --scene current.uzscene`
+- ▶ Play: saves dirty scenes → spawns `render.exe --play --scene current.uzscene`
 - ⏸ Pause: sends `scene.setPaused({paused: true})`
 - ■ Stop: kills the `--play` process, resumes `--editor` preview stream
 

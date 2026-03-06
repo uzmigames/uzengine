@@ -12,7 +12,7 @@
 
 ## Overview
 
-The audio system provides dynamic sound playback with spatial 3D positioning, bus-based volume mixing, and hot-reload support. Audio is primarily driven from `game.dll` (via `GameContext` function pointers and Lua scripts), not directly from `UzEngine.exe`. This maintains the clean C ABI boundary and allows audio state to survive game DLL hot-reloads.
+The audio system provides dynamic sound playback with spatial 3D positioning, bus-based volume mixing, and hot-reload support. Audio is primarily driven from `game.dll` (via `GameContext` function pointers and Lua scripts), not directly from `render.exe`. This maintains the clean C ABI boundary and allows audio state to survive game DLL hot-reloads.
 
 Three playback paths exist:
 
@@ -33,7 +33,7 @@ The engine supports four **audio buses** with independent volume control:
 ## Architecture
 
 ```
-UzEngine.exe
+render.exe
 │  knows nothing about audio
 │
 game.dll  (C++, links XAudio2)

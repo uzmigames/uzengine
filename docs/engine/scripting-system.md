@@ -29,7 +29,7 @@ The Lua scripting system is designed for **game logic authoring** with tight eng
 └─────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────┐
-│ UzEngine.exe (Headless runtime)                     │
+│ render.exe (Headless runtime)                     │
 │  - Does not use Lua (headless mode)                 │
 │  - Calls game.dll functions via C ABI              │
 └─────────────────────────────────────────────────────┘

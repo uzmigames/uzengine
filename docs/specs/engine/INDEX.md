@@ -3,7 +3,7 @@
 | Spec | Description |
 |------|-------------|
 | [core-layer.md](core-layer.md) | Foundational types: Arena allocators, Handle<T>, StringId, Result<T,E>, Vec2/Vec3/Vec4/Mat4/Quat |
-| [game-dll-abi.md](game-dll-abi.md) | Stable C ABI boundary between UzEngine.exe and game.dll: GameContext, exports, hot-reload protocol |
+| [game-dll-abi.md](game-dll-abi.md) | Stable C ABI boundary between render.exe and game.dll: GameContext, exports, hot-reload protocol |
 | [memory-system.md](memory-system.md) | Arena allocators (frame/level/permanent), ownership model, Handle<T>, unique_ptr for GPU |
 | [debug-profiling.md](debug-profiling.md) | Assert system, Tracy CPU/GPU profiler, ImGui overlay, doctest unit tests, ASAN |
 | [crash-reporting.md](crash-reporting.md) | SEH unhandled exception capture, minidump, crash log JSON, system info, Lua state, IPC integration |

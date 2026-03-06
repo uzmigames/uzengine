@@ -7,7 +7,7 @@
 - [ ] 1.3 Implement voice pool: allocate/release 64 `IXAudio2SourceVoice` instances
 - [ ] 1.4 Implement bus system: 4 `IXAudio2SubmixVoice` (Master, SFX, Music, Voice)
 - [ ] 1.5 Implement `shutdown()` method (release all voices, SubmixVoices, IXAudio2 instance)
-- [ ] 1.6 Audio engine lives in `uz_engine.lib`, not in UzEngine.exe or game.dll
+- [ ] 1.6 Audio engine lives in `uz_engine.lib`, not in render.exe or game.dll
 - [ ] 1.7 Unit tests: engine init/shutdown, no memory leaks, graceful failure if XAudio2 unavailable
 
 ## 2. Audio Clip Asset Format & Decoding

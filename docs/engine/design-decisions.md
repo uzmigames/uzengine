@@ -59,7 +59,7 @@ This makes iterating with AI significantly safer: an AI agent can delete and rec
 
 **Problem observed in Godot (GDExtension)**: Callables store C++ function pointers that become invalid after the extension DLL is reloaded, causing crash-on-editor-exit.
 
-**Decision**: The only boundary between `UzEngine.exe` and `game.dll` is a **C struct of function pointers** (`game_api_t`). No C++ types cross the boundary. No vtables. No RTTI. The ABI is stable because:
+**Decision**: The only boundary between `render.exe` and `game.dll` is a **C struct of function pointers** (`game_api_t`). No C++ types cross the boundary. No vtables. No RTTI. The ABI is stable because:
 
 - C function pointers have a stable calling convention (`__cdecl`)
 - `GameContext*` is a versioned C struct (add fields only at end)
@@ -75,7 +75,7 @@ This is the same approach used by id Software (Quake), Casey Muratori (Handmade 
 
 **Problem observed in Unity**: Similar — the Unity editor and the game runtime are the same process (with a domain boundary). A crash in game code can corrupt editor state.
 
-**Decision**: VSCode is the editor UI. `UzEngine.exe` is the runtime. They communicate over IPC (file-based JSON) and WebSocket. If the engine crashes:
+**Decision**: VSCode is the editor UI. `render.exe` is the runtime. They communicate over IPC (file-based JSON) and WebSocket. If the engine crashes:
 
 - VSCode keeps running
 - The extension shows a "disconnected" status
@@ -263,7 +263,7 @@ The original architecture note ("all logic in game.dll, no visual scripting") st
 
 ### 7.2 Why Audio in uz_engine.lib (not game.dll directly)
 
-The audio engine is owned by `UzEngine.exe`, not `game.dll`, for a critical reason:
+The audio engine is owned by `render.exe`, not `game.dll`, for a critical reason:
 
 | Aspect | If in game.dll | If in uz_engine.lib |
 |--------|---|---|

@@ -3,7 +3,7 @@
 // gizmo_utils.h — Shared utilities for gizmo GPU resource creation.
 // RULE RHI-1: No backend types above rhi.h — uses RHI API only.
 
-#include "engine/renderer/renderer.h"  // For Vertex struct
+#include "engine/renderer/core/renderer.h"  // For Vertex struct
 #include "engine/renderer/rhi/rhi.h"
 
 #include <cstdint>

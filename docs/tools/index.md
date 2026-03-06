@@ -114,7 +114,7 @@ Every tool produces one or more plain-text files that can be read and written by
                     └────────────────┬────────────────┘
                                      │ IPC / MCP
                     ┌────────────────▼────────────────┐
-                    │         UzEngine.exe             │
+                    │         render.exe             │
                     │       (editor mode, DX12)        │
                     └──┬──────┬──────┬──────┬─────────┘
                        │      │      │      │
@@ -129,7 +129,7 @@ Every tool produces one or more plain-text files that can be read and written by
               └────────────────────────────────────┘
 ```
 
-All tools communicate with `UzEngine.exe --editor` via the IPC file protocol or MCP server. The engine renders previews to DX12 offscreen targets, encodes as JPEG, and streams over WebSocket to the VSCode WebView.
+All tools communicate with `render.exe --editor` via the IPC file protocol or MCP server. The engine renders previews to DX12 offscreen targets, encodes as JPEG, and streams over WebSocket to the VSCode WebView.
 
 ---
 

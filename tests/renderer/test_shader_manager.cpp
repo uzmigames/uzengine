@@ -8,7 +8,7 @@
 //                   shader.getSource, shader.setSource
 
 #include <gtest/gtest.h>
-#include "engine/renderer/shader_manager.h"
+#include "engine/renderer/resources/shader_manager.h"
 #include "engine/core/platform.h"
 #include "common/ipc_shader_handlers.h"
 #include "common/ipc_registry.h"

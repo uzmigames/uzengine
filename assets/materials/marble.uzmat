@@ -1,0 +1,10 @@
+[material]
+name = Marble
+shader = pbr
+albedo = [0.93, 0.90, 0.87]
+metallic = 0.0
+roughness = 0.1
+albedo_texture = assets/textures/marble_albedo.png
+normal_texture = assets/textures/marble_normal.png
+roughness_texture = assets/textures/marble_roughness.png
+ao_texture = assets/textures/marble_ao.png

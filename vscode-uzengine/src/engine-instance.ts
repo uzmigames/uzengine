@@ -1,8 +1,8 @@
 /**
- * engine-instance.ts — Represents a single UzEngine.exe process instance.
+ * engine-instance.ts — Represents a single render.exe process instance.
  *
  * Each EngineInstance owns:
- *   - A child process (UzEngine.exe)
+ *   - A child process (render.exe)
  *   - A unique WebSocket port
  *   - A unique IPC directory (temp directory)
  *   - An EngineClient pointed at that IPC directory
@@ -87,7 +87,7 @@ export class EngineInstance implements vscode.Disposable {
     // -------------------------------------------------------------------------
 
     /**
-     * Starts the UzEngine.exe process for this instance.
+     * Starts the render.exe process for this instance.
      * @returns true if the process started successfully.
      */
     async start(): Promise<boolean> {
@@ -98,7 +98,7 @@ export class EngineInstance implements vscode.Disposable {
         const exePath = EngineInstance.resolveExecutable(this._existsSyncFn);
         if (!exePath) {
             const choice = await vscode.window.showErrorMessage(
-                'UzEngine.exe not found. Build the project first or set uzengine.serverExecutable.',
+                'render.exe not found. Build the project first or set uzengine.serverExecutable.',
                 'Open Settings',
                 'Dismiss'
             );
@@ -205,13 +205,13 @@ export class EngineInstance implements vscode.Disposable {
     // -------------------------------------------------------------------------
 
     /**
-     * Resolves the UzEngine.exe executable path.
+     * Resolves the render.exe executable path.
      * Searches in order:
      *   1. uzengine.serverExecutable setting (absolute path)
-     *   2. <workspace>/build/Release/UzEngine.exe
-     *   3. <workspace>/build/Debug/UzEngine.exe
-     *   4. <workspace>/build/UzEngine.exe
-     *   5. <workspace>/UzEngine.exe
+     *   2. <workspace>/build/Release/render.exe
+     *   3. <workspace>/build/Debug/render.exe
+     *   4. <workspace>/build/render.exe
+     *   5. <workspace>/render.exe
      */
     static resolveExecutable(existsSyncFn: (p: string) => boolean = fs.existsSync): string | undefined {
         const config = vscode.workspace.getConfiguration('uzengine');
@@ -227,10 +227,10 @@ export class EngineInstance implements vscode.Disposable {
 
         const root = workspaceFolders[0].uri.fsPath;
         const candidates = [
-            path.join(root, 'build', 'Release', 'UzEngine.exe'),
-            path.join(root, 'build', 'Debug', 'UzEngine.exe'),
-            path.join(root, 'build', 'UzEngine.exe'),
-            path.join(root, 'UzEngine.exe'),
+            path.join(root, 'build', 'Release', 'render.exe'),
+            path.join(root, 'build', 'Debug', 'render.exe'),
+            path.join(root, 'build', 'render.exe'),
+            path.join(root, 'render.exe'),
         ];
 
         for (const candidate of candidates) {

@@ -37,7 +37,7 @@ The editor operates on **plain `.html` and `.css` files** — the same files con
 │                    │ MCP IPC                                     │
 │                    ▼                                             │
 │  ┌─────────────────────────────────────────────────────────┐   │
-│  │ UIEditorServer (runs inside UzEngine.exe --editor)      │   │
+│  │ UIEditorServer (runs inside render.exe --editor)      │   │
 │  │  - Loads HTML file via uz_ui_html.dll (headless)        │   │
 │  │  - Renders to offscreen target → JPEG → WebSocket       │   │
 │  │  - Accepts edit commands: move, resize, style, add, del │   │
@@ -54,7 +54,7 @@ The editor operates on **plain `.html` and `.css` files** — the same files con
 | Component | Location | Responsibility |
 |-----------|----------|---------------|
 | `UIEditorPanel` | VSCode extension TypeScript | WebviewPanel UI: canvas, panels, toolbar, input |
-| `UIEditorServer` | `UzEngine.exe --editor` | Headless render, file I/O, edit command execution |
+| `UIEditorServer` | `render.exe --editor` | Headless render, file I/O, edit command execution |
 | `uz_ui_html.dll` | Shared DLL | HTML/CSS parsing, layout, SDF font rendering |
 | `UIPass` (headless) | `src/ui/ui_pass.h` | DX12 offscreen render to JPEG for preview |
 
@@ -519,7 +519,7 @@ res://ui/hud.css        ← external stylesheet, written by visual editor
 
 ## UzEngine Integration Points
 
-### MCP Server (`UzEngine.exe --editor`)
+### MCP Server (`render.exe --editor`)
 
 The editor mode exposes the following new MCP tools:
 

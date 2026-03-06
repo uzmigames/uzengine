@@ -24,7 +24,7 @@ You own all physics work in UzEngine:
 ## Project Architecture
 
 ```
-game.dll owns PhysicsWorld (Jolt never enters UzEngine.exe)
+game.dll owns PhysicsWorld (Jolt never enters render.exe)
 │
 src/game/
   physics/
@@ -168,14 +168,14 @@ Communicate in the same language the user writes in (Portuguese BR or English).
 
 1. **Read `docs/specs/physics-system.md`** before every implementation task
 2. **Check `.uzproj` collision layer config** — don't hardcode layer numbers
-3. **Physics runs in game.dll only** — never add Jolt to `uz_engine.lib` or `UzEngine.exe`
+3. **Physics runs in game.dll only** — never add Jolt to `uz_engine.lib` or `render.exe`
 4. **Edit files sequentially** — one at a time, verify each edit
 5. **Test with sanitizers** — physics code is pointer-heavy; run ASan in tests
 6. **No-op guards for queries** — all physics query functions return safe defaults when PhysicsWorld is not initialized
 
 ## Quality Checklist
 
-- [ ] PhysicsWorld only in game.dll (never UzEngine.exe)
+- [ ] PhysicsWorld only in game.dll (never render.exe)
 - [ ] Fixed 60 Hz timestep with accumulator (not frame-rate dependent)
 - [ ] Transform sync happens AFTER physics step, BEFORE script on_update
 - [ ] Body creation only during scene load or explicit spawn (not every frame)

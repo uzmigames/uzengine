@@ -61,7 +61,7 @@ AAA:
 
 **Goal**: DX12 engine boots, scene loads, streams JPEG to VSCode, IPC works, crash safety.
 **Milestone**: "Lights on" — Month 1
-**Exit criteria**: `UzEngine.exe --editor` streams viewport; .uzscene loads; crash reporter active.
+**Exit criteria**: `render.exe --editor` streams viewport; .uzscene loads; crash reporter active.
 
 | # | Task ID | Depends On | Notes |
 |---|---------|-----------|-------|

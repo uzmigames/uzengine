@@ -30,7 +30,7 @@ using json = nlohmann::json;
 class ArgvBuilder {
 public:
     ArgvBuilder() {
-        add("UzEngine.exe");
+        add("render.exe");
     }
 
     void add(const char* arg) {

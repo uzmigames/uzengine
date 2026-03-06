@@ -12,7 +12,7 @@ C++23 game engine. ECS via EnTT. game.dll C ABI boundary. LuaJIT scripting.
 ## Architecture Rules
 - game.dll C ABI: never cross boundary with C++ types (vtables, STL, RTTI)
 - GameContext._reserved[128] must always be zeroed
-- LuaJIT linked ONLY in game.dll — never uz_engine.lib or UzEngine.exe
+- LuaJIT linked ONLY in game.dll — never uz_engine.lib or render.exe
 - Timer drain happens BEFORE node script on_update each frame
 - EventBus events dispatched on Game Logic thread only
 

@@ -182,7 +182,7 @@ The pattern: maintain identity in a layer that does NOT participate in the reloa
 
 UzEngine's game.dll hot-reload protocol (spec: `game-dll-abi.md`) already follows a similar pattern:
 
-1. ECS registry (EnTT) lives in `UzEngine.exe` and survives across `FreeLibrary`/`LoadLibrary`
+1. ECS registry (EnTT) lives in `render.exe` and survives across `FreeLibrary`/`LoadLibrary`
 2. `game_dll_on_stop()` is called before unload (analogous to `beforeAssemblyReload`)
 3. `game_dll_on_start()` is called after reload (analogous to `afterAssemblyReload`)
 

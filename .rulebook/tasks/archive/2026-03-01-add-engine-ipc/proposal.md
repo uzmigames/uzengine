@@ -1,7 +1,7 @@
 # Proposal: add-engine-ipc
 
 ## Why
-To enable AI and external tools to communicate with UzEngine.exe in real time, a stable low-level
+To enable AI and external tools to communicate with render.exe in real time, a stable low-level
 IPC (Inter-Process Communication) protocol is required. This IPC layer is the **transport layer**
 on which all AI capabilities are built — it knows nothing about "VFX" or "camera", it only
 exposes primitives that higher layers consume.

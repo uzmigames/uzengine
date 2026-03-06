@@ -16,7 +16,7 @@ $ErrorActionPreference = 'Stop'
 
 $Root     = Split-Path $PSScriptRoot -Parent
 $BuildDir = Join-Path $Root 'build'
-$Exe      = Join-Path $BuildDir "$Config\UzEngine.exe"
+$Exe      = Join-Path $BuildDir "$Config\render.exe"
 
 Write-Host "[UzEngine] Config: $Config"
 

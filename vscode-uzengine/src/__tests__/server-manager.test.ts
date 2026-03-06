@@ -205,7 +205,7 @@ describe('ServerManager.isRunning', () => {
         const mockProc = makeMockProcess(null);
         (cp.spawn as jest.Mock).mockReturnValue(mockProc);
         (fs.existsSync as jest.Mock).mockReturnValue(true);
-        workspace.__setConfig('uzengine', 'serverExecutable', '/mock/UzEngine.exe');
+        workspace.__setConfig('uzengine', 'serverExecutable', '/mock/render.exe');
 
         const mockSocket = makeMockSocket();
         mockNetSocket(mockSocket);
@@ -226,7 +226,7 @@ describe('ServerManager.isRunning', () => {
         const mockProc = makeMockProcess(1); // Already exited
         (cp.spawn as jest.Mock).mockReturnValue(mockProc);
         (fs.existsSync as jest.Mock).mockReturnValue(true);
-        workspace.__setConfig('uzengine', 'serverExecutable', '/mock/UzEngine.exe');
+        workspace.__setConfig('uzengine', 'serverExecutable', '/mock/render.exe');
 
         const mockSocket = makeMockSocket();
         mockNetSocket(mockSocket);
@@ -253,7 +253,7 @@ describe('start() when already running', () => {
         const mockProc = makeMockProcess(null);
         (cp.spawn as jest.Mock).mockReturnValue(mockProc);
         (fs.existsSync as jest.Mock).mockReturnValue(true);
-        workspace.__setConfig('uzengine', 'serverExecutable', '/mock/UzEngine.exe');
+        workspace.__setConfig('uzengine', 'serverExecutable', '/mock/render.exe');
 
         const mockSocket = makeMockSocket();
         mockNetSocket(mockSocket);
@@ -291,7 +291,7 @@ describe('start() when no executable found', () => {
 
         expect(result).toBe(false);
         expect(vscodeWindow.showErrorMessage).toHaveBeenCalledWith(
-            expect.stringContaining('UzEngine.exe not found'),
+            expect.stringContaining('render.exe not found'),
             'Open Settings',
             'Dismiss'
         );
@@ -330,7 +330,7 @@ describe('start() when no executable found', () => {
 describe('start() when cp.spawn throws', () => {
     it('returns false and logs the error', async () => {
         (fs.existsSync as jest.Mock).mockReturnValue(true);
-        workspace.__setConfig('uzengine', 'serverExecutable', '/mock/UzEngine.exe');
+        workspace.__setConfig('uzengine', 'serverExecutable', '/mock/render.exe');
         (cp.spawn as jest.Mock).mockImplementation(() => {
             throw new Error('spawn ENOENT');
         });
@@ -362,7 +362,7 @@ describe('start() process event handlers', () => {
         mockProc = makeMockProcess(null);
         (cp.spawn as jest.Mock).mockReturnValue(mockProc);
         (fs.existsSync as jest.Mock).mockReturnValue(true);
-        workspace.__setConfig('uzengine', 'serverExecutable', '/mock/UzEngine.exe');
+        workspace.__setConfig('uzengine', 'serverExecutable', '/mock/render.exe');
 
         const mockSocket = makeMockSocket();
         mockNetSocket(mockSocket);
@@ -429,7 +429,7 @@ describe('start() _waitForPort when process already not running', () => {
         const mockProc = makeMockProcess(1);
         (cp.spawn as jest.Mock).mockReturnValue(mockProc);
         (fs.existsSync as jest.Mock).mockReturnValue(true);
-        workspace.__setConfig('uzengine', 'serverExecutable', '/mock/UzEngine.exe');
+        workspace.__setConfig('uzengine', 'serverExecutable', '/mock/render.exe');
 
         const socketsCreated: ReturnType<typeof makeMockSocket>[] = [];
         (net.Socket as unknown as jest.Mock).mockImplementation(() => {
@@ -458,7 +458,7 @@ describe('start() _waitForPort socket connect success', () => {
         const mockProc = makeMockProcess(null);
         (cp.spawn as jest.Mock).mockReturnValue(mockProc);
         (fs.existsSync as jest.Mock).mockReturnValue(true);
-        workspace.__setConfig('uzengine', 'serverExecutable', '/mock/UzEngine.exe');
+        workspace.__setConfig('uzengine', 'serverExecutable', '/mock/render.exe');
 
         const mockSocket = makeMockSocket();
         mockNetSocket(mockSocket);
@@ -491,7 +491,7 @@ describe('start() _waitForPort retry on error within deadline', () => {
         const mockProc = makeMockProcess(null);
         (cp.spawn as jest.Mock).mockReturnValue(mockProc);
         (fs.existsSync as jest.Mock).mockReturnValue(true);
-        workspace.__setConfig('uzengine', 'serverExecutable', '/mock/UzEngine.exe');
+        workspace.__setConfig('uzengine', 'serverExecutable', '/mock/render.exe');
 
         const socketsCreated: ReturnType<typeof makeMockSocket>[] = [];
         (net.Socket as unknown as jest.Mock).mockImplementation(() => {
@@ -533,7 +533,7 @@ describe('start() _waitForPort retry on error within deadline', () => {
         const mockProc = makeMockProcess(null);
         (cp.spawn as jest.Mock).mockReturnValue(mockProc);
         (fs.existsSync as jest.Mock).mockReturnValue(true);
-        workspace.__setConfig('uzengine', 'serverExecutable', '/mock/UzEngine.exe');
+        workspace.__setConfig('uzengine', 'serverExecutable', '/mock/render.exe');
 
         const socketsCreated: ReturnType<typeof makeMockSocket>[] = [];
         (net.Socket as unknown as jest.Mock).mockImplementation(() => {
@@ -579,7 +579,7 @@ describe('start() _waitForPort deadline exceeded', () => {
         const mockProc = makeMockProcess(null);
         (cp.spawn as jest.Mock).mockReturnValue(mockProc);
         (fs.existsSync as jest.Mock).mockReturnValue(true);
-        workspace.__setConfig('uzengine', 'serverExecutable', '/mock/UzEngine.exe');
+        workspace.__setConfig('uzengine', 'serverExecutable', '/mock/render.exe');
 
         const socketsCreated: ReturnType<typeof makeMockSocket>[] = [];
         (net.Socket as unknown as jest.Mock).mockImplementation(() => {
@@ -637,7 +637,7 @@ describe('stop()', () => {
         const mockProc = makeMockProcess(null);
         (cp.spawn as jest.Mock).mockReturnValue(mockProc);
         (fs.existsSync as jest.Mock).mockReturnValue(true);
-        workspace.__setConfig('uzengine', 'serverExecutable', '/mock/UzEngine.exe');
+        workspace.__setConfig('uzengine', 'serverExecutable', '/mock/render.exe');
 
         const mockSocket = makeMockSocket();
         mockNetSocket(mockSocket);
@@ -659,7 +659,7 @@ describe('stop()', () => {
         const mockProc = makeMockProcess(null);
         (cp.spawn as jest.Mock).mockReturnValue(mockProc);
         (fs.existsSync as jest.Mock).mockReturnValue(true);
-        workspace.__setConfig('uzengine', 'serverExecutable', '/mock/UzEngine.exe');
+        workspace.__setConfig('uzengine', 'serverExecutable', '/mock/render.exe');
 
         const mockSocket = makeMockSocket();
         mockNetSocket(mockSocket);
@@ -684,7 +684,7 @@ describe('stop()', () => {
         const mockProc = makeMockProcess(null);
         (cp.spawn as jest.Mock).mockReturnValue(mockProc);
         (fs.existsSync as jest.Mock).mockReturnValue(true);
-        workspace.__setConfig('uzengine', 'serverExecutable', '/mock/UzEngine.exe');
+        workspace.__setConfig('uzengine', 'serverExecutable', '/mock/render.exe');
 
         const mockSocket = makeMockSocket();
         mockNetSocket(mockSocket);
@@ -715,7 +715,7 @@ describe('dispose()', () => {
         const mockProc = makeMockProcess(null);
         (cp.spawn as jest.Mock).mockReturnValue(mockProc);
         (fs.existsSync as jest.Mock).mockReturnValue(true);
-        workspace.__setConfig('uzengine', 'serverExecutable', '/mock/UzEngine.exe');
+        workspace.__setConfig('uzengine', 'serverExecutable', '/mock/render.exe');
 
         const mockSocket = makeMockSocket();
         mockNetSocket(mockSocket);
@@ -756,9 +756,9 @@ describe('dispose()', () => {
 describe('_resolveExecutable()', () => {
     it('uses explicit path when set and exists', async () => {
         (fs.existsSync as jest.Mock).mockImplementation((p: unknown) =>
-            p === '/explicit/UzEngine.exe'
+            p === '/explicit/render.exe'
         );
-        workspace.__setConfig('uzengine', 'serverExecutable', '/explicit/UzEngine.exe');
+        workspace.__setConfig('uzengine', 'serverExecutable', '/explicit/render.exe');
 
         const mockProc = makeMockProcess(null);
         (cp.spawn as jest.Mock).mockReturnValue(mockProc);
@@ -772,7 +772,7 @@ describe('_resolveExecutable()', () => {
         await startPromise;
 
         expect(cp.spawn).toHaveBeenCalledWith(
-            '/explicit/UzEngine.exe',
+            '/explicit/render.exe',
             expect.anything(),
             expect.anything()
         );
@@ -780,8 +780,8 @@ describe('_resolveExecutable()', () => {
     });
 
     it('falls through to candidates when explicit path does not exist', async () => {
-        const releasePath = path.join(WORKSPACE_ROOT, 'build', 'Release', 'UzEngine.exe');
-        workspace.__setConfig('uzengine', 'serverExecutable', '/nonexistent/UzEngine.exe');
+        const releasePath = path.join(WORKSPACE_ROOT, 'build', 'Release', 'render.exe');
+        workspace.__setConfig('uzengine', 'serverExecutable', '/nonexistent/render.exe');
 
         const mockProc = makeMockProcess(null);
         (cp.spawn as jest.Mock).mockReturnValue(mockProc);
@@ -838,8 +838,8 @@ describe('_resolveExecutable()', () => {
         sm.dispose();
     });
 
-    it('uses build/Debug/UzEngine.exe when Release does not exist', async () => {
-        const debugPath = path.join(WORKSPACE_ROOT, 'build', 'Debug', 'UzEngine.exe');
+    it('uses build/Debug/render.exe when Release does not exist', async () => {
+        const debugPath = path.join(WORKSPACE_ROOT, 'build', 'Debug', 'render.exe');
 
         const mockProc = makeMockProcess(null);
         (cp.spawn as jest.Mock).mockReturnValue(mockProc);
@@ -856,8 +856,8 @@ describe('_resolveExecutable()', () => {
         sm.dispose();
     });
 
-    it('uses build/UzEngine.exe when Release and Debug do not exist', async () => {
-        const buildPath = path.join(WORKSPACE_ROOT, 'build', 'UzEngine.exe');
+    it('uses build/render.exe when Release and Debug do not exist', async () => {
+        const buildPath = path.join(WORKSPACE_ROOT, 'build', 'render.exe');
 
         const mockProc = makeMockProcess(null);
         (cp.spawn as jest.Mock).mockReturnValue(mockProc);
@@ -874,8 +874,8 @@ describe('_resolveExecutable()', () => {
         sm.dispose();
     });
 
-    it('uses root UzEngine.exe when all build candidates do not exist', async () => {
-        const rootPath = path.join(WORKSPACE_ROOT, 'UzEngine.exe');
+    it('uses root render.exe when all build candidates do not exist', async () => {
+        const rootPath = path.join(WORKSPACE_ROOT, 'render.exe');
 
         const mockProc = makeMockProcess(null);
         (cp.spawn as jest.Mock).mockReturnValue(mockProc);
@@ -907,7 +907,7 @@ describe('_resolveExecutable()', () => {
     it('handles empty string explicit path (falls through)', async () => {
         // explicit = '' (default) → trim is '' → not truthy → skip to candidates
         workspace.__setConfig('uzengine', 'serverExecutable', '');
-        const releasePath = path.join(WORKSPACE_ROOT, 'build', 'Release', 'UzEngine.exe');
+        const releasePath = path.join(WORKSPACE_ROOT, 'build', 'Release', 'render.exe');
 
         const mockProc = makeMockProcess(null);
         (cp.spawn as jest.Mock).mockReturnValue(mockProc);
@@ -974,7 +974,7 @@ describe('_setStatus()', () => {
         const mockProc = makeMockProcess(null);
         (cp.spawn as jest.Mock).mockReturnValue(mockProc);
         (fs.existsSync as jest.Mock).mockReturnValue(true);
-        workspace.__setConfig('uzengine', 'serverExecutable', '/mock/UzEngine.exe');
+        workspace.__setConfig('uzengine', 'serverExecutable', '/mock/render.exe');
 
         const mockSocket = makeMockSocket();
         mockNetSocket(mockSocket);
@@ -1003,7 +1003,7 @@ describe('_setStatus()', () => {
     });
 
     it('shows basename of candidate exe in running status text', async () => {
-        const releasePath = path.join(WORKSPACE_ROOT, 'build', 'Release', 'UzEngine.exe');
+        const releasePath = path.join(WORKSPACE_ROOT, 'build', 'Release', 'render.exe');
         workspace.__clearConfig();
 
         const mockProc = makeMockProcess(null);
@@ -1020,14 +1020,14 @@ describe('_setStatus()', () => {
         const mockBar = (vscodeWindow.createStatusBarItem as jest.Mock).mock.results[0].value as {
             text: string;
         };
-        expect(mockBar.text).toContain('UzEngine.exe');
+        expect(mockBar.text).toContain('render.exe');
 
         sm.dispose();
     });
 
-    it('uses "UzEngine.exe" default name and empty tooltip suffix when exePath is undefined', () => {
+    it('uses "render.exe" default name and empty tooltip suffix when exePath is undefined', () => {
         // Directly invoke the private _setStatus method with no exePath argument
-        // to cover the ternary false branch: exePath ? basename : 'UzEngine.exe'
+        // to cover the ternary false branch: exePath ? basename : 'render.exe'
         // and the nullish coalescing false branch: exePath ?? ''
         const sm = new ServerManager();
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1037,7 +1037,7 @@ describe('_setStatus()', () => {
             text: string;
             tooltip: string;
         };
-        expect(mockBar.text).toContain('UzEngine.exe');
+        expect(mockBar.text).toContain('render.exe');
         expect(mockBar.tooltip).toContain('running');
         // The tooltip ends with an empty string (exePath ?? '')
         expect(mockBar.tooltip).toMatch(/\n$/);
@@ -1053,7 +1053,7 @@ describe('_setStatus()', () => {
 describe('start() output channel setup', () => {
     it('clears and shows the output channel when starting', async () => {
         (fs.existsSync as jest.Mock).mockReturnValue(true);
-        workspace.__setConfig('uzengine', 'serverExecutable', '/mock/UzEngine.exe');
+        workspace.__setConfig('uzengine', 'serverExecutable', '/mock/render.exe');
 
         const mockProc = makeMockProcess(null);
         (cp.spawn as jest.Mock).mockReturnValue(mockProc);
@@ -1088,7 +1088,7 @@ describe('start() output channel setup', () => {
 describe('start() spawn environment', () => {
     it('passes UZENGINE_HEADLESS=1 in env', async () => {
         (fs.existsSync as jest.Mock).mockReturnValue(true);
-        workspace.__setConfig('uzengine', 'serverExecutable', '/mock/UzEngine.exe');
+        workspace.__setConfig('uzengine', 'serverExecutable', '/mock/render.exe');
 
         const mockProc = makeMockProcess(null);
         (cp.spawn as jest.Mock).mockReturnValue(mockProc);
@@ -1109,7 +1109,7 @@ describe('start() spawn environment', () => {
 
     it('sets cwd to directory of executable', async () => {
         (fs.existsSync as jest.Mock).mockReturnValue(true);
-        workspace.__setConfig('uzengine', 'serverExecutable', '/some/dir/UzEngine.exe');
+        workspace.__setConfig('uzengine', 'serverExecutable', '/some/dir/render.exe');
 
         const mockProc = makeMockProcess(null);
         (cp.spawn as jest.Mock).mockReturnValue(mockProc);

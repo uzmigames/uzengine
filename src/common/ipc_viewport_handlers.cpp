@@ -15,7 +15,7 @@
 
 #include "common/ipc_viewport_handlers.h"
 #include "common/ipc_registry.h"
-#include "engine/renderer/viewport_registry.h"
+#include "engine/renderer/core/viewport_registry.h"
 
 #include <nlohmann/json.hpp>
 

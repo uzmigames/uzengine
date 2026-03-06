@@ -1,0 +1,170 @@
+// ---------------------------------------------------------------------------
+// shader_library.cpp -- Named shader registry with PSO caching
+//
+// RULE CS-7:  No exceptions — returns RHI_NULL on failure
+// RULE RHI-1: No backend types above rhi.h
+// ---------------------------------------------------------------------------
+
+#include "shader_library.h"
+
+#include <algorithm>
+#include <cstring>
+
+#include "engine/core/diag.h"
+
+// Embedded shader sources (generated at build-time from .hlsl files).
+#include "shaders/basic_vs_hlsl.h"
+#include "shaders/basic_ps_hlsl.h"
+#include "shaders/pbr_vs_hlsl.h"
+#include "shaders/pbr_ps_hlsl.h"
+
+namespace uz {
+
+// ===========================================================================
+// Lifecycle
+// ===========================================================================
+
+ShaderLibrary::~ShaderLibrary() {
+    shutdown();
+}
+
+void ShaderLibrary::shutdown() {
+    for (auto& [name, entry] : shaders_) {
+        for (auto& [hash, pso] : entry.pipelines) {
+            if (pso != RHI_NULL) {
+                rhi()->pipeline_destroy(pso);
+            }
+        }
+        entry.pipelines.clear();
+    }
+}
+
+// ===========================================================================
+// Registration
+// ===========================================================================
+
+void ShaderLibrary::register_builtin_shaders() {
+    // basic — editor geometry (cubes, grid, gizmos)
+    register_shader("basic", ShaderProgram{
+        .vs_source = k_basic_vs_hlsl,
+        .vs_size   = sizeof(k_basic_vs_hlsl) - 1,
+        .ps_source = k_basic_ps_hlsl,
+        .ps_size   = sizeof(k_basic_ps_hlsl) - 1,
+        .vs_entry  = "VSMain",
+        .ps_entry  = "PSMain",
+    });
+
+    // pbr — PBR lit rendering (Cook-Torrance BRDF)
+    register_shader("pbr", ShaderProgram{
+        .vs_source = k_pbr_vs_hlsl,
+        .vs_size   = sizeof(k_pbr_vs_hlsl) - 1,
+        .ps_source = k_pbr_ps_hlsl,
+        .ps_size   = sizeof(k_pbr_ps_hlsl) - 1,
+        .vs_entry  = "VSMain",
+        .ps_entry  = "PSMain",
+    });
+
+    DIAG_FMT("ShaderLibrary: registered %zu builtin shaders", shaders_.size());
+}
+
+void ShaderLibrary::register_shader(const std::string& name,
+                                     const ShaderProgram& program) {
+    shaders_[name] = Entry{program, {}};
+}
+
+// ===========================================================================
+// Lookup
+// ===========================================================================
+
+const ShaderProgram* ShaderLibrary::get(const std::string& name) const {
+    auto it = shaders_.find(name);
+    if (it == shaders_.end()) return nullptr;
+    return &it->second.program;
+}
+
+std::vector<std::string> ShaderLibrary::list() const {
+    std::vector<std::string> result;
+    result.reserve(shaders_.size());
+    for (const auto& [name, _] : shaders_) {
+        result.push_back(name);
+    }
+    std::sort(result.begin(), result.end());
+    return result;
+}
+
+// ===========================================================================
+// Pipeline creation + caching
+// ===========================================================================
+
+uint64_t ShaderLibrary::hash_pipeline_desc(const RhiPipelineDesc& desc) {
+    // Hash everything in the desc EXCEPT the shader fields (vs/ps source).
+    // This ensures same shader + different rasterizer state = different PSO.
+    uint64_t h = 0;
+
+    // Vertex layout
+    h ^= rhi_hash_bytes(&desc.vertex_layout,
+                         sizeof(RhiVertexLayout));
+
+    // Render target formats
+    h ^= rhi_hash_bytes(desc.rt_formats,
+                         sizeof(RhiFormat) * desc.rt_count);
+    h ^= static_cast<uint64_t>(desc.rt_count) * 0x9e3779b97f4a7c15ULL;
+
+    // Depth format
+    h ^= static_cast<uint64_t>(desc.ds_format) * 0x517cc1b727220a95ULL;
+
+    // Rasterizer state
+    h ^= rhi_hash_bytes(&desc.rasterizer, sizeof(RhiRasterizerState));
+
+    // Blend state
+    h ^= rhi_hash_bytes(&desc.blend, sizeof(RhiBlendState));
+
+    // Depth-stencil state
+    h ^= rhi_hash_bytes(&desc.depth_stencil, sizeof(RhiDepthStencilState));
+
+    // Topology
+    h ^= static_cast<uint64_t>(desc.topology) * 0xd6e8feb86659fd93ULL;
+
+    return h;
+}
+
+RhiPipeline ShaderLibrary::get_or_create_pipeline(const std::string& shader_name,
+                                                    RhiPipelineDesc desc) {
+    auto it = shaders_.find(shader_name);
+    if (it == shaders_.end()) {
+        DIAG_FMT("ShaderLibrary: unknown shader '%s'", shader_name.c_str());
+        return RHI_NULL;
+    }
+
+    Entry& entry = it->second;
+
+    // Fill shader fields from the registered program.
+    desc.vertex_shader.spirv_data  = entry.program.vs_source;
+    desc.vertex_shader.spirv_size  = entry.program.vs_size;
+    desc.vertex_shader.entry_point = entry.program.vs_entry;
+    desc.pixel_shader.spirv_data   = entry.program.ps_source;
+    desc.pixel_shader.spirv_size   = entry.program.ps_size;
+    desc.pixel_shader.entry_point  = entry.program.ps_entry;
+
+    // Check cache.
+    const uint64_t key = hash_pipeline_desc(desc);
+    auto cached = entry.pipelines.find(key);
+    if (cached != entry.pipelines.end() && cached->second != RHI_NULL) {
+        return cached->second;
+    }
+
+    // Create new PSO.
+    DIAG_FMT("ShaderLibrary: creating PSO for '%s' (hash=%llx)",
+             shader_name.c_str(), (unsigned long long)key);
+    RhiPipeline pso = rhi()->pipeline_create(&desc);
+    if (pso == RHI_NULL) {
+        DIAG_FMT("ShaderLibrary: pipeline_create FAILED for '%s'",
+                 shader_name.c_str());
+        return RHI_NULL;
+    }
+
+    entry.pipelines[key] = pso;
+    return pso;
+}
+
+} // namespace uz

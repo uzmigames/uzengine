@@ -18,7 +18,7 @@ This allows both AI agents and external tools to control scene parameters, trigg
 ```
 build/
 ├── Release/
-│   ├── UzEngine.exe
+│   ├── render.exe
 │   ├── turbojpeg.dll
 │   └── preview/          ← IPC base directory
 │       ├── command.json  ← external commands written here
@@ -649,7 +649,7 @@ async def call_with_backoff(fn, args, max_retries=3):
 
 ### "Engine not running" (uz_status returns alive: false)
 
-- Check that UzEngine.exe was started (VSCode extension opens the stream viewer)
+- Check that render.exe was started (VSCode extension opens the stream viewer)
 - Check that `build/Release/preview/` directory exists
 - Restart the engine via `uz_restart()`
 

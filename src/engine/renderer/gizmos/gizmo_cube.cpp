@@ -2,7 +2,7 @@
 
 #include "gizmo_cube.h"
 #include "gizmo_utils.h"
-#include "engine/renderer/renderer.h"  // Vertex
+#include "engine/renderer/core/renderer.h"  // Vertex
 
 
 namespace uz {

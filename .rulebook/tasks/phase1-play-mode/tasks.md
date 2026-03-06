@@ -39,8 +39,8 @@
 
 ## 6. Testing
 
-- [ ] 6.1 `UzEngine.exe --editor` starts, serves IPC on 9002, streams viewport
-- [ ] 6.2 `UzEngine.exe --play --scene=default.uzscene` starts, streams on 9003
+- [ ] 6.1 `render.exe --editor` starts, serves IPC on 9002, streams viewport
+- [ ] 6.2 `render.exe --play --scene=default.uzscene` starts, streams on 9003
 - [ ] 6.3 Extension ▶ Play spawns play process, viewport switches to game stream
 - [ ] 6.4 Extension ■ Stop kills play process, viewport returns to editor stream
 - [ ] 6.5 Play process crash does not crash editor process

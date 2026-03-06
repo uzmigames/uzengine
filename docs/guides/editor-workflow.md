@@ -6,10 +6,10 @@ This guide covers using the UzEngine editor — a VSCode extension paired with a
 
 ## Overview
 
-The UzEngine editor is **VSCode + UzEngine.exe** running as separate processes communicating via IPC:
+The UzEngine editor is **VSCode + render.exe** running as separate processes communicating via IPC:
 
 - **VSCode**: UI panels (Scene Tree, Inspector, Asset Browser, Play Controls)
-- **UzEngine.exe**: Renders the viewport, handles physics/scripts, responds to edits
+- **render.exe**: Renders the viewport, handles physics/scripts, responds to edits
 - **IPC Bridge**: JSON-based command/response communication
 
 This architecture allows **live editing** — change a property, see it update in real-time.
@@ -33,7 +33,7 @@ Ctrl+Shift+P → UzEngine: Start Editor
 ```
 
 This launches:
-- `UzEngine.exe --editor` (separate process, spawned by extension)
+- `render.exe --editor` (separate process, spawned by extension)
 - VSCode panels appear automatically
 - Viewport initializes with first scene in project
 
@@ -43,13 +43,13 @@ From PowerShell:
 
 ```powershell
 $env:UZENGINE_PROJECT = "e:\UzEngine"
-.\build\Release\UzEngine.exe --editor
+.\build\Release\render.exe --editor
 ```
 
 Or from VSCode integrated terminal:
 
 ```bash
-./build/Release/UzEngine.exe --editor
+./build/Release/render.exe --editor
 ```
 
 ---
@@ -456,7 +456,7 @@ Entities: 42
 Memory: 128 MB
 ```
 
-A **separate process** (`UzEngine.exe --play`) is launched:
+A **separate process** (`render.exe --play`) is launched:
 - Fully isolated from editor
 - No UI overlays (pure game experience)
 - Reads same scene file

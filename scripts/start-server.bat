@@ -7,15 +7,15 @@ setlocal EnableDelayedExpansion
 
 set "ROOT=%~dp0.."
 set "BUILD_DIR=%ROOT%\build"
-set "EXE_RELEASE=%BUILD_DIR%\Release\UzEngine.exe"
-set "EXE_DEBUG=%BUILD_DIR%\Debug\UzEngine.exe"
+set "EXE_RELEASE=%BUILD_DIR%\Release\render.exe"
+set "EXE_DEBUG=%BUILD_DIR%\Debug\render.exe"
 set "CONFIG=Release"
 
 :: Allow overriding config: start-server.bat Debug
 if /I "%~1"=="Debug" set "CONFIG=Debug"
 if /I "%~1"=="Release" set "CONFIG=Release"
 
-set "EXE=%BUILD_DIR%\%CONFIG%\UzEngine.exe"
+set "EXE=%BUILD_DIR%\%CONFIG%\render.exe"
 
 echo [UzEngine] Config: %CONFIG%
 

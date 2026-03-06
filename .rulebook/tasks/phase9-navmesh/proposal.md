@@ -7,7 +7,7 @@ The engine has no AI pathfinding capability. NPCs cannot navigate environments b
 ## What Changes
 
 - **Recast+Detour+DetourCrowd** integrated as vcpkg dependencies; `NavMeshSystem` owns the `dtNavMesh` and `dtCrowd` instances per scene
-- **Offline baking** — `UzEngine.exe --cook` voxelizes static geometry with Recast and writes `.uznavmesh` alongside the level; bake parameters (cell size, agent radius, agent height, max slope) configurable in `.uzscene` `[navmesh]` section
+- **Offline baking** — `render.exe --cook` voxelizes static geometry with Recast and writes `.uznavmesh` alongside the level; bake parameters (cell size, agent radius, agent height, max slope) configurable in `.uzscene` `[navmesh]` section
 - **Runtime baking** — `NavMeshSystem::bake_async()` for procedurally generated levels; background thread, signals completion via EventBus `navmesh.ready` event
 - **`CNavMeshAgent` ECS component** — stores `dtCrowdAgentIndex`, target position, arrival threshold, max speed, and separation weight; `NavMeshSystem::update()` calls `dtCrowd::update()` and writes result velocity into `CCharacterController` or `CRigidBody`
 - **`CNavObstacle` ECS component** — registers a `dtObstacleRef` with the tilecache for box or cylinder dynamic obstacles; automatically added/removed when the entity is activated/destroyed

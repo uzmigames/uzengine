@@ -8,7 +8,7 @@
 
 #include "editor_component.h"
 
-#include "engine/renderer/renderer.h"  // For Vertex struct
+#include "engine/renderer/core/renderer.h"  // For Vertex struct
 
 // Gizmo types — each is a self-contained GizmoRenderer implementation.
 #include "engine/renderer/gizmos/gizmo_cube.h"
@@ -33,7 +33,8 @@ inline std::string getShaderDir() {
     std::string dir(exePath);
     auto slash = dir.find_last_of("\\/");
     if (slash != std::string::npos) dir = dir.substr(0, slash);
-    return dir + "/../../shaders/builtin/";
+    // Path relative to build/Debug/ or build/Release/
+    return dir + "/../../src/engine/renderer/shaders/";
 }
 
 // Read an entire file into a string. Returns empty on failure.

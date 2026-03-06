@@ -1,0 +1,10 @@
+[material]
+name = Gold
+shader = pbr
+albedo = [1.0, 0.85, 0.5]
+metallic = 1.0
+roughness = 0.1
+albedo_texture = assets/textures/gold_albedo.png
+normal_texture = assets/textures/gold_normal.png
+roughness_texture = assets/textures/gold_roughness.png
+ao_texture = assets/textures/gold_ao.png

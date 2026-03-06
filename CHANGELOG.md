@@ -5,7 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [0.3.0] — 2026-03-04
 
 ### Added
-- **Multi-instance engine architecture**: each scene preview spawns its own `UzEngine.exe` process with dedicated WebSocket port and IPC directory
+- **Multi-instance engine architecture**: each scene preview spawns its own `render.exe` process with dedicated WebSocket port and IPC directory
   - `engine-instance-manager.ts` — manages lifecycle of multiple engine instances
   - `engine-instance.ts` — per-scene engine process with independent port allocation
   - `--ws-port` and `--scene` CLI arguments for per-instance configuration
@@ -123,7 +123,7 @@ All notable changes to this project will be documented in this file.
   - `ShowWindow` never called in headless mode — zero taskbar presence, zero Alt+Tab
 
 - **VSCode extension**:
-  - Extension starts UzEngine.exe automatically when stream viewer opens
+  - Extension starts render.exe automatically when stream viewer opens
   - MSE codec string updated: tries `Main@4.2 → Main@4.0 → Baseline@4.0` in order
   - Buffer trim reduced to 0.3s + live-edge seek when >0.5s behind buffered end
   - `.vscodeignore` fix: `server-manager.js` now included in `.vsix`

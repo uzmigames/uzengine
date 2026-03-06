@@ -17,7 +17,7 @@
 | **Game logic** (`.cpp` / DLL) | Unload DLL → rebuild → reload DLL | No | ~2500ms |
 | **Engine C++** (renderer, ECS...) | Full rebuild + engine restart | Yes (acceptable) | ~30s |
 
-The key insight: **game logic** lives in a separate `game.dll`. The engine is a host that loads it. Editing game code recompiles only `game.dll` (< 5s for typical projects), while the engine process (renderer, IPC, WebSocket) keeps running. VSCode never crashes because it never loads the DLL — only `UzEngine.exe` does.
+The key insight: **game logic** lives in a separate `game.dll`. The engine is a host that loads it. Editing game code recompiles only `game.dll` (< 5s for typical projects), while the engine process (renderer, IPC, WebSocket) keeps running. VSCode never crashes because it never loads the DLL — only `render.exe` does.
 
 ---
 
@@ -25,7 +25,7 @@ The key insight: **game logic** lives in a separate `game.dll`. The engine is a 
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│  UzEngine.exe (host — never rebuilt during session)          │
+│  render.exe (host — never rebuilt during session)          │
 │                                                              │
 │  ┌─────────────────────────────────────────────────────┐    │
 │  │  HotReloadManager                                   │    │

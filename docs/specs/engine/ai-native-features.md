@@ -34,7 +34,7 @@ All features are Phase 2 additions to the MCP server — they require no changes
                       │ JSON IPC (WebSocket)
                       ▼
 ┌──────────────────────────────────────────────────────────────┐
-│  UzEngine.exe Runtime                                        │
+│  render.exe Runtime                                        │
 │  IPC handlers: scene.*, ai.context, ai.suggest,             │
 │  editor.analyzeScene                                         │
 └──────────────────────────────────────────────────────────────┘

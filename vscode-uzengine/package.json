@@ -278,17 +278,17 @@
       {
         "command": "uzengine.gizmoTranslate",
         "key": "w",
-        "when": "activeCustomEditorId == 'uzengine.uzsceneEditor'"
+        "when": "activeCustomEditorId == 'uzengine.uzsceneEditor' && uzengine.viewportFocused"
       },
       {
         "command": "uzengine.gizmoRotate",
         "key": "e",
-        "when": "activeCustomEditorId == 'uzengine.uzsceneEditor'"
+        "when": "activeCustomEditorId == 'uzengine.uzsceneEditor' && uzengine.viewportFocused"
       },
       {
         "command": "uzengine.gizmoScale",
         "key": "r",
-        "when": "activeCustomEditorId == 'uzengine.uzsceneEditor'"
+        "when": "activeCustomEditorId == 'uzengine.uzsceneEditor' && uzengine.viewportFocused"
       }
     ],
     "configuration": {
@@ -302,7 +302,7 @@
         "uzengine.serverExecutable": {
           "type": "string",
           "default": "",
-          "description": "Absolute path to UzEngine.exe. Leave empty to auto-detect in build/Release or build/Debug."
+          "description": "Absolute path to render.exe. Leave empty to auto-detect in build/Release or build/Debug."
         },
         "uzengine.ipcDirectory": {
           "type": "string",

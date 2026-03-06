@@ -77,7 +77,7 @@ Build succeeded.
 
 **Verify the executable:**
 ```powershell
-ls build/Release/UzEngine.exe
+ls build/Release/render.exe
 ls build/Release/turbojpeg.dll  # Should be copied by POST_BUILD
 ```
 
@@ -89,7 +89,7 @@ ls build/Release/turbojpeg.dll  # Should be copied by POST_BUILD
 
 ```powershell
 $env:UZENGINE_WINDOWED = '1'
-.\build\Release\UzEngine.exe
+.\build\Release\render.exe
 ```
 
 You should see:
@@ -263,7 +263,7 @@ return M
 **Running in editor mode:**
 ```powershell
 # Once Phase 1 is implemented
-.\build\Release\UzEngine.exe --editor
+.\build\Release\render.exe --editor
 ```
 
 The VSCode extension will open the scene in the viewport, and the Lua script will execute in the background. Check the engine log output to see "Hello from Lua!" printed every second.
@@ -309,14 +309,14 @@ Start with [Architecture Overview](architecture.md), then explore:
 
 ## Troubleshooting
 
-### "UzEngine.exe not found"
+### "render.exe not found"
 
 **Error in VSCode:**
-> UzEngine.exe not found. Build the project first or set uzengine.serverExecutable.
+> render.exe not found. Build the project first or set uzengine.serverExecutable.
 
 **Fix:**
 1. Build the C++ app: `cmake --build build --config Release`
-2. Verify: `ls build/Release/UzEngine.exe`
+2. Verify: `ls build/Release/render.exe`
 
 ### turbojpeg.dll not found
 
@@ -338,7 +338,7 @@ cmake --build build --config Release
 **Webview shows "Disconnected"**
 
 **Check:**
-1. Is UzEngine.exe running? (Check Task Manager)
+1. Is render.exe running? (Check Task Manager)
 2. Is port 9002 open?
    ```powershell
    netstat -ano | findstr :9002

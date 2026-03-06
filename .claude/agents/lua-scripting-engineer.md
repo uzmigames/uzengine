@@ -200,7 +200,7 @@ Communicate in the same language the user writes in (Portuguese BR or English).
 
 ## Quality Checklist
 
-- [ ] LuaJIT only linked into `game.dll`, never `uz_engine.lib` or `UzEngine.exe`
+- [ ] LuaJIT only linked into `game.dll`, never `uz_engine.lib` or `render.exe`
 - [ ] `lua_sandbox_apply` called immediately after `luaL_openlibs`
 - [ ] All script dispatch via `lua_pcall` with error handler
 - [ ] Error in script → node disabled, engine continues (no crash)

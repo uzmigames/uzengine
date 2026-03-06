@@ -29,6 +29,15 @@ else()
 endif()
 
 # ---------------------------------------------------------------------------
+# Embedded shaders: generate C headers from .hlsl source files
+# ---------------------------------------------------------------------------
+include(cmake/embed_shaders.cmake)
+embed_shaders(
+    SOURCE_DIR  "${CMAKE_SOURCE_DIR}/src/engine/renderer/shaders"
+    OUTPUT_DIR  "${CMAKE_BINARY_DIR}/generated/shaders"
+)
+
+# ---------------------------------------------------------------------------
 # Windows-only: UzEngine executable (DX12 renderer)
 # ---------------------------------------------------------------------------
 if(WIN32)
@@ -81,9 +90,14 @@ if(WIN32)
         ${UZENGINE_RHI_C}
     )
 
+    # Output as render.exe (not UzEngine.exe).
+    set_target_properties(UzEngine PROPERTIES OUTPUT_NAME "render")
+
     target_include_directories(UzEngine PRIVATE
         ${CMAKE_SOURCE_DIR}/src
-        ${CMAKE_SOURCE_DIR}/external/stb
+        ${CMAKE_SOURCE_DIR}/src/common/stb
+        ${CMAKE_SOURCE_DIR}/src/common/cgltf
+        ${CMAKE_BINARY_DIR}/generated
         ${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/include
     )
 
@@ -140,9 +154,18 @@ file(GLOB_RECURSE TEST_ENGINE_SOURCES CONFIGURE_DEPENDS
     src/engine/debug/*.cpp
     src/engine/renderer/*.cpp        # ShaderManager, RenderGraph, ViewportRegistry, etc.
 )
-# Exclude DX12-dependent renderer files from test builds.
-list(FILTER TEST_ENGINE_SOURCES EXCLUDE REGEX "engine/renderer/renderer\\.cpp$")
-list(FILTER TEST_ENGINE_SOURCES EXCLUDE REGEX "engine/renderer/fps_overlay\\.cpp$")
+# Exclude DX12/RHI-dependent renderer files from test builds.
+# The renderer directory is organized into subdirectories:
+#   core/     — renderer.cpp, fps_overlay.cpp (RHI-dependent)
+#   resources/ — mesh.cpp, texture.cpp, gltf_importer.cpp (RHI-dependent)
+#   components/ — all RHI-dependent (editor, camera, light, static mesh)
+#   gizmos/   — all RHI-dependent
+list(FILTER TEST_ENGINE_SOURCES EXCLUDE REGEX "engine/renderer/core/renderer\\.cpp$")
+list(FILTER TEST_ENGINE_SOURCES EXCLUDE REGEX "engine/renderer/core/fps_overlay\\.cpp$")
+list(FILTER TEST_ENGINE_SOURCES EXCLUDE REGEX "engine/renderer/resources/mesh\\.cpp$")
+list(FILTER TEST_ENGINE_SOURCES EXCLUDE REGEX "engine/renderer/resources/texture\\.cpp$")
+list(FILTER TEST_ENGINE_SOURCES EXCLUDE REGEX "engine/renderer/resources/gltf_importer\\.cpp$")
+list(FILTER TEST_ENGINE_SOURCES EXCLUDE REGEX "engine/renderer/resources/mesh_primitives\\.cpp$")
 list(FILTER TEST_ENGINE_SOURCES EXCLUDE REGEX "engine/renderer/components/")
 list(FILTER TEST_ENGINE_SOURCES EXCLUDE REGEX "engine/renderer/gizmos/")
 # Common sources — exclude stb_impl.cpp (needs external/stb) and ipc_poller.cpp (needs ixwebsocket)
@@ -169,6 +192,7 @@ add_executable(UzEngineTests
 
 target_include_directories(UzEngineTests PRIVATE
     ${CMAKE_SOURCE_DIR}/src
+    ${CMAKE_BINARY_DIR}/generated
 )
 
 target_link_libraries(UzEngineTests PRIVATE

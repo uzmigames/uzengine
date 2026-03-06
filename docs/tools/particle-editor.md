@@ -1883,7 +1883,7 @@ private:
 
 ```
 +-----------------+       IPC (JSON)        +------------------+
-|  VSCode         | <---------------------> |  UzEngine.exe    |
+|  VSCode         | <---------------------> |  render.exe    |
 |  VFX Editor     |                         |  --editor        |
 |  WebView panels |                         |                  |
 +-----------------+                         +------------------+

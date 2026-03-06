@@ -29,4 +29,14 @@ struct DirectionalLightData {
     float intensity = 1.0f;                        // Light intensity multiplier
 };
 
+// ============================================================================
+// StaticMeshData — properties for NodeType::StaticMesh
+// ============================================================================
+
+struct StaticMeshData {
+    char mesh_path[256]     = "";   // res://meshes/cube.glb
+    char material_path[256] = "";   // res://materials/default.uzmat
+    Aabb local_bounds       = Aabb::empty();
+};
+
 } // namespace uz

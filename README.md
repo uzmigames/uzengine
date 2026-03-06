@@ -42,7 +42,7 @@ cmake -B build -G "Visual Studio 17 2022" -A x64
 cmake --build build --config Release
 
 # Run
-build/Release/UzEngine.exe
+build/Release/render.exe
 ```
 
 **VSCode Extension**
@@ -108,7 +108,7 @@ UzEngine/
 │   └── src/
 │       ├── extension.ts              # Activation, commands, keybindings
 │       ├── viewport-panel.ts         # Webview viewport with canvas, camera, picking, gizmos
-│       ├── engine-instance-manager.ts # Multi-instance UzEngine.exe lifecycle
+│       ├── engine-instance-manager.ts # Multi-instance render.exe lifecycle
 │       ├── engine-instance.ts        # Per-scene engine process management
 │       ├── scene-tree-provider.ts    # Tree view of scene nodes
 │       ├── inspector-panel.ts        # Property inspector (webview sidebar)
@@ -152,7 +152,7 @@ UzEngine/
 - **Inspector panel** with per-node property editing
 - **Console panel** for engine output
 - **Play/Pause/Stop** mode with state snapshot and restore
-- **Multi-instance engine** — each scene preview spawns its own `UzEngine.exe`
+- **Multi-instance engine** — each scene preview spawns its own `render.exe`
 
 ### AI Integration
 - **MCP server** (`tools/mcp-uzengine/`) with 5 tools: `uz_call`, `uz_screenshot`, `uz_status`, `uz_read_file`, `uz_write_file`
@@ -179,10 +179,10 @@ Full documentation is in [`docs/`](docs/README.md).
 
 ## Architecture
 
-Each `.uzscene` file opened in VSCode spawns an independent `UzEngine.exe` process. The engine renders frames with DX12, compresses them via dual JPEG threads, and streams them over WebSocket. The extension draws frames on a Canvas and sends user input back.
+Each `.uzscene` file opened in VSCode spawns an independent `render.exe` process. The engine renders frames with DX12, compresses them via dual JPEG threads, and streams them over WebSocket. The extension draws frames on a Canvas and sends user input back.
 
 ```
-┌─ UzEngine.exe (per scene) ─────────────────────────────────────────────────┐
+┌─ render.exe (per scene) ─────────────────────────────────────────────────┐
 │                                                                            │
 │   Scene Graph ──→ Component Store ──→ Gizmo Registry                       │
 │       │                                    │                               │
@@ -218,7 +218,7 @@ Each `.uzscene` file opened in VSCode spawns an independent `UzEngine.exe` proce
 │   │  · Viewport resize             │  │  Console · Play/Pause/Stop    │  │
 │   └─────────────────────────────────┘  └────────────────────────────────┘  │
 │                                                                            │
-│   Engine Instance Manager — spawns one UzEngine.exe per .uzscene           │
+│   Engine Instance Manager — spawns one render.exe per .uzscene           │
 │                                                                            │
 └────────────────────────────────────────────────────────────────────────────┘
 ```

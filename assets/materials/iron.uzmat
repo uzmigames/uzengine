@@ -1,0 +1,6 @@
+[material]
+name = Iron
+shader = pbr
+albedo = [0.56, 0.57, 0.58]
+metallic = 1.0
+roughness = 0.4

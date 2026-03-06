@@ -1,12 +1,12 @@
 /**
  * play-mode-controller.ts — Controls the UzEngine play-mode process lifecycle.
  *
- * Manages spawning UzEngine.exe in --play mode, sending pause/resume/stop
+ * Manages spawning render.exe in --play mode, sending pause/resume/stop
  * IPC commands, and monitoring the process for crashes. The play process
  * runs on a separate IPC port (default 9003) from the editor (9002).
  *
  * Key responsibilities:
- *   - launchPlay(scenePath)  — spawn UzEngine.exe --play --scene=<path>
+ *   - launchPlay(scenePath)  — spawn render.exe --play --scene=<path>
  *   - stopPlay()             — send playmode.stop IPC, SIGTERM fallback
  *   - pausePlay()            — send engine.pause IPC
  *   - resumePlay()           — send engine.resume IPC
@@ -120,7 +120,7 @@ export class PlayModeController implements vscode.Disposable {
     }
 
     /**
-     * Launches UzEngine.exe in --play mode with the given scene.
+     * Launches render.exe in --play mode with the given scene.
      *
      * @param scenePath  Path to the .uzscene file to load.
      * @throws Error if already running, disposed, or executable not found.
@@ -306,10 +306,10 @@ export class PlayModeController implements vscode.Disposable {
 
         const root = folders[0].uri.fsPath;
         const candidates = [
-            path.join(root, 'build', 'Release', 'UzEngine.exe'),
-            path.join(root, 'build', 'Debug', 'UzEngine.exe'),
-            path.join(root, 'build', 'UzEngine.exe'),
-            path.join(root, 'UzEngine.exe'),
+            path.join(root, 'build', 'Release', 'render.exe'),
+            path.join(root, 'build', 'Debug', 'render.exe'),
+            path.join(root, 'build', 'render.exe'),
+            path.join(root, 'render.exe'),
         ];
 
         for (const candidate of candidates) {

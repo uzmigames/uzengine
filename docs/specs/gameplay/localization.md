@@ -38,7 +38,7 @@ res://locale/
 │  └── strings.csv
 │     (keyed translation table)
 │
-UzEngine.exe
+render.exe
 │  └── LocaleManager (singleton)
 │       ├── Load CSV on startup
 │       ├── resolve(key, locale) → translated string

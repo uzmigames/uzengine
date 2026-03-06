@@ -8,7 +8,7 @@
 
 ## Overview
 
-The Timer system gives Lua scripts a way to schedule callbacks after a delay or at a regular interval without writing manual countdown logic in `on_update`. Timers are stored entirely inside `game.dll` — the engine core (`UzEngine.exe`) knows nothing about them.
+The Timer system gives Lua scripts a way to schedule callbacks after a delay or at a regular interval without writing manual countdown logic in `on_update`. Timers are stored entirely inside `game.dll` — the engine core (`render.exe`) knows nothing about them.
 
 This is the most common scripting quality-of-life feature and dramatically reduces boilerplate in NPC behavior, trigger delays, cooldown systems, and repeating world events.
 

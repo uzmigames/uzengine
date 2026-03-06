@@ -22,15 +22,17 @@
 
 namespace uz {
 
-// Forward declaration — components inherit from IComponent (defined in
+// Forward declarations — components inherit from IComponent (defined in
 // component_interface.h). The registry only needs the opaque pointer.
 struct IComponent;
+struct ISceneProxy;
 
 // ============================================================================
 // ComponentFactory — function pointer that creates a component instance
 // ============================================================================
 
 using ComponentFactory = std::function<IComponent*()>;
+using ProxyFactory     = std::function<ISceneProxy*()>;
 
 // ============================================================================
 // ComponentTypeInfo — metadata stored per registered component type
@@ -40,6 +42,7 @@ struct ComponentTypeInfo {
     StringId         type_id;       // Hashed type name
     const char*      type_name;     // Human-readable name (non-owning)
     ComponentFactory factory;       // Creates a new instance (caller owns)
+    ProxyFactory     proxy_factory; // Creates a new render proxy (optional)
 };
 
 // ============================================================================
@@ -51,13 +54,20 @@ public:
     /// Get the global singleton instance.
     [[nodiscard]] static ComponentRegistry& instance();
 
-    /// Register a component type with its factory. Duplicate registration
+    /// Register a component type with its factories. Duplicate registration
     /// (same StringId) logs a warning and overwrites the previous entry.
-    void register_type(StringId type_id, const char* type_name, ComponentFactory factory);
+    void register_type(StringId type_id,
+                       const char* type_name,
+                       ComponentFactory factory,
+                       ProxyFactory proxy_factory = nullptr);
 
     /// Create a new component instance by type name hash.
     /// Returns nullptr if the type is not registered.
     [[nodiscard]] IComponent* create(StringId type_id) const;
+
+    /// Create a new render proxy by type name hash.
+    /// Returns nullptr if the type is not registered or doesn't have a proxy.
+    [[nodiscard]] ISceneProxy* create_proxy(StringId type_id) const;
 
     /// Look up type info by StringId. Returns nullptr if not found.
     [[nodiscard]] const ComponentTypeInfo* find(StringId type_id) const;
@@ -98,6 +108,21 @@ private:
             ::uz::string_id(Type::kTypeName),                                      \
             Type::kTypeName,                                                       \
             [] () -> ::uz::IComponent* { return new Type(); }                      \
+        );                                                                         \
+        return true;                                                               \
+    }()
+
+/// Use in the .cpp file of each component that produces a render proxy.
+/// Example:
+///   UZENGINE_REGISTER_COMPONENT(MeshComponent, []() { return new MeshProxy(); })
+///
+#define UZENGINE_REGISTER_COMPONENT(Type, ProxyFactoryFn)                          \
+    static bool uz_auto_register_##Type = [] {                                     \
+        ::uz::ComponentRegistry::instance().register_type(                         \
+            ::uz::string_id(Type::kTypeName),                                      \
+            Type::kTypeName,                                                       \
+            [] () -> ::uz::IComponent* { return new Type(); },                     \
+            ProxyFactoryFn                                                         \
         );                                                                         \
         return true;                                                               \
     }()

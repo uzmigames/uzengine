@@ -10,7 +10,7 @@ LuaJIT 2.1 embedded inside game.dll. Per-node .lua scripts. ~60ms hot-reload.
 - `src/game/lua_script_reloader.h/cpp` — FileWatcher hot-reload
 
 ## Architecture Rules
-- LuaJIT linked ONLY in game.dll — never uz_engine.lib or UzEngine.exe
+- LuaJIT linked ONLY in game.dll — never uz_engine.lib or render.exe
 - Always use lua_pcall for script dispatch — never lua_call
 - lua_sandbox_apply() called immediately after luaL_openlibs()
 - Error in script → node disabled, log warning, engine continues (no crash)

@@ -94,7 +94,7 @@ export class EngineInstanceManager implements vscode.Disposable {
     /**
      * Creates or returns an existing engine instance for the given scene file.
      * If an instance already exists for this scene, returns it.
-     * Otherwise, spawns a new UzEngine.exe process.
+     * Otherwise, spawns a new render.exe process.
      */
     async createInstance(scenePath: string): Promise<EngineInstance> {
         // Check if an instance already exists for this scene.

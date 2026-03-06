@@ -55,7 +55,7 @@ void playmode_register_handlers(IpcRegistry& registry,
             if (mode == EngineMode::Play) {
                 return make_error("already in play mode");
             }
-            // Editor mode: the extension will spawn a new UzEngine.exe --play process.
+            // Editor mode: the extension will spawn a new render.exe --play process.
             // Return the port the play process should use.
             return {{"ok", true}, {"port", 9003}};
         });

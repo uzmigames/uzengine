@@ -7,7 +7,7 @@
 #include "engine/scene/scene_handlers.h"
 #include "engine/scene/scene_loader.h"
 #include "engine/scene/scene_saver.h"
-#include "engine/renderer/scene_params.h"
+#include "engine/renderer/scene/scene_params.h"
 
 #include <nlohmann/json.hpp>
 

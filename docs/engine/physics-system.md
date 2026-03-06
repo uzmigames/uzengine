@@ -41,7 +41,7 @@ The physics system is built on **Jolt Physics**, a modern rigid-body physics eng
 └───────────────────────────────────────────────────┘
 ```
 
-**Key Point**: Jolt is linked **only** in `game.dll`. UzEngine.exe (editor/headless) does not link physics.
+**Key Point**: Jolt is linked **only** in `game.dll`. render.exe (editor/headless) does not link physics.
 
 ---
 

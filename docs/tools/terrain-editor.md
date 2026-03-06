@@ -1277,7 +1277,7 @@ NavMesh invalidation is triggered after physics rebuild completes. The editor sh
 
 The Terrain Editor VSCode extension contributes:
 
-1. **Terrain Editor Panel** (`uzengine.terrain.editor`): Full-screen WebView hosting the tool panels, layer stack, world map, and status bar. Communicates via IPC to `UzEngine.exe --editor`.
+1. **Terrain Editor Panel** (`uzengine.terrain.editor`): Full-screen WebView hosting the tool panels, layer stack, world map, and status bar. Communicates via IPC to `render.exe --editor`.
 2. **Layer Stack WebView**: HTML list of splatmap layers with thumbnail swatches (updated via `terrain.getLayerThumbnails` IPC response).
 3. **World Map WebView**: HTML canvas mosaic of tile thumbnails; click navigates the DX12 camera to that tile.
 4. **Heightmap Preview WebView**: 256×256 canvas updated via `terrain.getHeightmapThumb` (returns 256×256 grayscale PNG as base64).
