@@ -232,6 +232,84 @@ SceneLoadResult scene_load_from_string(Scene* scene, const char* text) {
                 char* ep = nullptr;
                 long v = std::strtol(value.c_str(), &ep, 10);
                 if (ep != value.c_str()) scene->version = static_cast<uint32_t>(v);
+            } else if (key == "render_path") {
+                if (value == "forward")       scene->render_path = 0;
+                else if (value == "deferred") scene->render_path = 1;
+            } else if (key == "ao_radius") {
+                char* ep = nullptr; float v = std::strtof(value.c_str(), &ep);
+                if (ep != value.c_str()) scene->ao_radius = v;
+            } else if (key == "ao_intensity") {
+                char* ep = nullptr; float v = std::strtof(value.c_str(), &ep);
+                if (ep != value.c_str()) scene->ao_intensity = v;
+            } else if (key == "contact_shadows") {
+                scene->contact_shadows = parse_bool(value);
+            } else if (key == "contact_shadow_length") {
+                char* ep = nullptr; float v = std::strtof(value.c_str(), &ep);
+                if (ep != value.c_str()) scene->contact_shadow_length = v;
+            } else if (key == "taa_enabled") {
+                scene->taa_enabled = parse_bool(value);
+            } else if (key == "exposure_mode") {
+                if (value == "auto")        scene->exposure_mode = 0;
+                else if (value == "manual") scene->exposure_mode = 1;
+            } else if (key == "exposure_value") {
+                char* ep = nullptr; float v = std::strtof(value.c_str(), &ep);
+                if (ep != value.c_str()) scene->exposure_value = v;
+            } else if (key == "ssr_enabled") {
+                scene->ssr_enabled = parse_bool(value);
+            } else if (key == "ssr_max_roughness") {
+                char* ep = nullptr; float v = std::strtof(value.c_str(), &ep);
+                if (ep != value.c_str()) scene->ssr_max_roughness = v;
+            } else if (key == "color_temperature") {
+                char* ep = nullptr; float v = std::strtof(value.c_str(), &ep);
+                if (ep != value.c_str()) scene->color_temperature = v;
+            } else if (key == "color_tint") {
+                char* ep = nullptr; float v = std::strtof(value.c_str(), &ep);
+                if (ep != value.c_str()) scene->color_tint = v;
+            } else if (key == "color_saturation") {
+                char* ep = nullptr; float v = std::strtof(value.c_str(), &ep);
+                if (ep != value.c_str()) scene->color_saturation = v;
+            } else if (key == "color_contrast") {
+                char* ep = nullptr; float v = std::strtof(value.c_str(), &ep);
+                if (ep != value.c_str()) scene->color_contrast = v;
+            } else if (key == "chromatic_aberration") {
+                char* ep = nullptr; float v = std::strtof(value.c_str(), &ep);
+                if (ep != value.c_str()) scene->chromatic_aberration = v;
+            } else if (key == "vignette_intensity") {
+                char* ep = nullptr; float v = std::strtof(value.c_str(), &ep);
+                if (ep != value.c_str()) scene->vignette_intensity = v;
+            } else if (key == "vignette_falloff") {
+                char* ep = nullptr; float v = std::strtof(value.c_str(), &ep);
+                if (ep != value.c_str()) scene->vignette_falloff = v;
+            } else if (key == "film_grain_strength") {
+                char* ep = nullptr; float v = std::strtof(value.c_str(), &ep);
+                if (ep != value.c_str()) scene->film_grain_strength = v;
+            } else if (key == "dof_focus_distance") {
+                char* ep = nullptr; float v = std::strtof(value.c_str(), &ep);
+                if (ep != value.c_str()) scene->dof_focus_distance = v;
+            } else if (key == "dof_aperture") {
+                char* ep = nullptr; float v = std::strtof(value.c_str(), &ep);
+                if (ep != value.c_str()) scene->dof_aperture = v;
+            } else if (key == "dof_focal_length") {
+                char* ep = nullptr; float v = std::strtof(value.c_str(), &ep);
+                if (ep != value.c_str()) scene->dof_focal_length = v;
+            } else if (key == "fog_density") {
+                char* ep = nullptr; float v = std::strtof(value.c_str(), &ep);
+                if (ep != value.c_str()) scene->fog_density = v;
+            } else if (key == "fog_color") {
+                float vals[3];
+                if (parse_floats(value.c_str(), vals, 3)) {
+                    scene->fog_color[0] = vals[0]; scene->fog_color[1] = vals[1];
+                    scene->fog_color[2] = vals[2];
+                }
+            } else if (key == "fog_height_falloff") {
+                char* ep = nullptr; float v = std::strtof(value.c_str(), &ep);
+                if (ep != value.c_str()) scene->fog_height_falloff = v;
+            } else if (key == "fog_base_height") {
+                char* ep = nullptr; float v = std::strtof(value.c_str(), &ep);
+                if (ep != value.c_str()) scene->fog_base_height = v;
+            } else if (key == "fog_max_opacity") {
+                char* ep = nullptr; float v = std::strtof(value.c_str(), &ep);
+                if (ep != value.c_str()) scene->fog_max_opacity = v;
             }
 
         } else if (current_section == Section::Node) {

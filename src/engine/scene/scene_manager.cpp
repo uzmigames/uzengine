@@ -65,6 +65,34 @@ void scene_init(Scene* scene, const char* name) {
 
     scene->version = 1;
     scene->next_id = 1;
+    scene->render_path = 1;  // Default: Deferred
+
+    // Post-process defaults (memset wiped the struct defaults).
+    scene->ao_radius            = 0.5f;
+    scene->ao_intensity         = 1.5f;
+    scene->contact_shadows      = true;
+    scene->contact_shadow_length = 0.1f;
+    scene->taa_enabled          = true;
+    scene->exposure_mode        = 0;    // auto
+    scene->exposure_value       = 1.0f;
+    scene->ssr_enabled          = true;
+    scene->ssr_max_roughness    = 0.5f;
+    scene->color_temperature    = 0.0f;
+    scene->color_tint           = 0.0f;
+    scene->color_saturation     = 1.0f;
+    scene->color_contrast       = 1.0f;
+    scene->chromatic_aberration = 0.0f;
+    scene->vignette_intensity   = 0.0f;
+    scene->vignette_falloff     = 2.0f;
+    scene->film_grain_strength  = 0.0f;
+    scene->dof_focus_distance   = 0.0f;
+    scene->dof_aperture         = 5.6f;
+    scene->dof_focal_length     = 50.0f;
+    scene->fog_density          = 0.0f;
+    scene->fog_color[0] = 0.5f; scene->fog_color[1] = 0.6f; scene->fog_color[2] = 0.7f;
+    scene->fog_height_falloff   = 0.5f;
+    scene->fog_base_height      = 0.0f;
+    scene->fog_max_opacity      = 0.95f;
     // node_count is already 0 from memset.
     // All node slots have alive=false from memset.
 

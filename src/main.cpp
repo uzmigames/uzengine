@@ -1841,11 +1841,26 @@ int WINAPI WinMain(
     });
 
     ipcRegistry.add("renderer.info", [&](const nlohmann::json&) -> nlohmann::json {
+        const char* pathName = renderer.getRenderPath() == uz::RenderPath::Forward
+            ? "forward" : "deferred";
         return {{"ok", true},
                 {"resolution", g_metrics.resolution},
                 {"ws_clients", wsServer.clientCount()},
                 {"renderer_w", renderer.getWidth()},
-                {"renderer_h", renderer.getHeight()}};
+                {"renderer_h", renderer.getHeight()},
+                {"render_path", pathName}};
+    });
+
+    ipcRegistry.add("renderer.setPath", [&](const nlohmann::json& args) -> nlohmann::json {
+        const std::string path = args.value("path", "");
+        if (path == "forward") {
+            renderer.setRenderPath(uz::RenderPath::Forward);
+            return {{"ok", true}, {"render_path", "forward"}};
+        } else if (path == "deferred") {
+            renderer.setRenderPath(uz::RenderPath::Deferred);
+            return {{"ok", true}, {"render_path", "deferred"}};
+        }
+        return {{"ok", false}, {"error", "invalid path, use 'forward' or 'deferred'"}};
     });
 
     uz::IpcPoller ipcPoller(ipcBaseDir, ipcRegistry, g_scene, g_metrics);

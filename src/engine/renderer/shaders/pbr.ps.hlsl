@@ -33,7 +33,15 @@ cbuffer MaterialCB : register(b1) {
     // -- Extended params (DWORDs 16-19, fills root sig to 64/64) --
     float  selfShadowStrength;  // heightmap self-shadow intensity: 0=off, 1=default (default 1.0)
     float  cavityStrength;      // cavity ambient darkening: 0=off, 0.35=default (default 0.35)
-    float2 _matPad;             // reserved for future use
+    float  anisotropy;          // anisotropy strength: 0=isotropic, -1..1=anisotropic (default 0)
+    float  anisotropyRotation;  // rotation angle in radians for anisotropy direction (default 0)
+};
+
+// Punctual light structure: 12 floats per light (3 float4 rows)
+struct PunctualLight {
+    float3 position;    float radius;
+    float3 color;       float intensity;
+    float3 direction;   float spotParams;  // packed: x=cosInner, encoded for spot; 0 for point
 };
 
 cbuffer LightFrameCB : register(b2) {
@@ -44,10 +52,13 @@ cbuffer LightFrameCB : register(b2) {
     float3 cameraWorldPos;
     float  time;
     float  envIntensity;
-    // Shadow params packed in former padding slots (stays within 16-DWORD b2 budget)
-    float  shadowBias;       // depth bias to avoid shadow acne
-    float  shadowOrthoSize;  // orthographic half-size (world units, = 8)
-    float  shadowLightDist;  // light eye distance from scene center (= 20)
+    float  shadowBias;
+    float  shadowOrthoSize;
+    float  shadowLightDist;
+    // Punctual lights (after 16 DWORDs of directional data)
+    uint   punctualLightCount;  // 0..8
+    float3 _plPad;
+    PunctualLight punctualLights[8];
 };
 
 cbuffer FrameCB : register(b3) {
@@ -220,11 +231,11 @@ float SampleShadow(float3 worldPos, float3 worldNormal) {
     float shadowFar    = shadowLightDist * 2.0;
     float currentDepth = (lz - 0.1) / (shadowFar - 0.1);
 
-    // PCF — Poisson disk 16-tap (UE5-style soft contact shadows).
-    // Disk radius scales with distance from shadow caster for natural penumbra.
-    // Close to caster: tight/sharp. Far away: wider/softer.
+    // CSM: map shadow UV into cascade 0 quadrant (top-left 1024x1024 of 4096 atlas)
+    shadowUV = shadowUV * 0.5;  // Scale to quarter of atlas
+    // texel size relative to cascade region within the atlas
     float shadow = 0.0;
-    float2 texelSize = 1.0 / float2(2048.0, 2048.0);
+    float2 texelSize = 1.0 / float2(4096.0, 4096.0);
 
     // Poisson disk offsets (unit circle, 16 taps, hand-picked for good distribution)
     static const float2 poissonDisk[16] = {
@@ -269,6 +280,14 @@ float D_GGX(float a2, float NoH) {
     return a2 / (PI * d * d);                  // 4 mul, 1 rcp
 }
 
+// Anisotropic GGX NDF
+// [Burley 2012, "Physically-Based Shading at Disney"]
+// Source: UE5 ShadingModels.ush D_GGXaniso, Filament material_anisotropy.glsl
+float D_GGX_Anisotropic(float ax, float ay, float NoH, float XoH, float YoH) {
+    float d = (XoH * XoH) / (ax * ax) + (YoH * YoH) / (ay * ay) + NoH * NoH;
+    return 1.0 / (PI * ax * ay * d * d);
+}
+
 // Approximation of joint Smith term for GGX
 // [Heitz 2014, "Understanding the Masking-Shadowing Function in Microfacet-Based BRDFs"]
 // Source: UE5 BRDF.ush Vis_SmithJointApprox — returns G / (4*NoL*NoV) directly
@@ -277,6 +296,15 @@ float Vis_SmithJointApprox(float a2, float NoV, float NoL) {
     float Vis_SmithV = NoL * (NoV * (1.0 - a) + a);
     float Vis_SmithL = NoV * (NoL * (1.0 - a) + a);
     return 0.5 / (Vis_SmithV + Vis_SmithL + 1e-5);
+}
+
+// Anisotropic Smith-GGX visibility (height-correlated)
+// [Heitz 2014] — anisotropic extension of Vis_SmithJoint
+float Vis_SmithJoint_Anisotropic(float ax, float ay, float NoV, float NoL,
+                                  float XoV, float XoL, float YoV, float YoL) {
+    float lambdaV = NoL * sqrt(ax * ax * XoV * XoV + ay * ay * YoV * YoV + NoV * NoV);
+    float lambdaL = NoV * sqrt(ax * ax * XoL * XoL + ay * ay * YoL * YoL + NoL * NoL);
+    return 0.5 / (lambdaV + lambdaL + 1e-5);
 }
 
 // Schlick Fresnel
@@ -335,7 +363,8 @@ float SpecularOcclusion(float NoV, float ao, float roughness) {
 float3 EvaluateDirectLight(
     float3 N, float3 V, float NoV,
     float3 DiffuseColor, float3 F0, float a2, float roughness,
-    float3 lightDirection, float3 lColor, float lIntensity)
+    float3 lightDirection, float3 lColor, float lIntensity,
+    float3 anisoT, float3 anisoB, float anisoAx, float anisoAy)
 {
     float3 L = normalize(-lightDirection);
     float  NoL = max(dot(N, L), 0.0);
@@ -345,9 +374,22 @@ float3 EvaluateDirectLight(
     float  NoH = saturate(dot(N, H));
     float  VoH = saturate(dot(V, H));
 
-    // Specular: D * Vis * F (UE5 pattern: f = D * Vis * F)
-    float  D   = D_GGX(a2, NoH);
-    float  Vis = Vis_SmithJointApprox(a2, NoV, NoL);
+    // Specular: D * Vis * F — anisotropic path when ax != ay
+    float  D, Vis;
+    [branch]
+    if (abs(anisoAx - anisoAy) > 0.001) {
+        float XoH = dot(anisoT, H);
+        float YoH = dot(anisoB, H);
+        float XoV = dot(anisoT, V);
+        float YoV = dot(anisoB, V);
+        float XoL = dot(anisoT, L);
+        float YoL = dot(anisoB, L);
+        D   = D_GGX_Anisotropic(anisoAx, anisoAy, NoH, XoH, YoH);
+        Vis = Vis_SmithJoint_Anisotropic(anisoAx, anisoAy, NoV, NoL, XoV, XoL, YoV, YoL);
+    } else {
+        D   = D_GGX(a2, NoH);
+        Vis = Vis_SmithJointApprox(a2, NoV, NoL);
+    }
     float3 F   = F_Schlick(F0, VoH);
     float3 specular = D * Vis * F;
 
@@ -426,6 +468,22 @@ float4 PSMain(PSInput input) : SV_TARGET {
     // DiffuseColor: non-metals reflect diffusely, metals do not
     float3 DiffuseColor = baseColor * (1.0 - metallic);
 
+    // Anisotropy: rotate tangent/bitangent and compute per-axis roughness
+    // [Burley 2012] anisotropic roughness: ax = alpha*(1+aniso), ay = alpha*(1-aniso)
+    float3 anisoT = T;
+    float3 anisoB = B;
+    float anisoAx = alpha;
+    float anisoAy = alpha;
+    [branch]
+    if (abs(anisotropy) > 0.001) {
+        float cosRot = cos(anisotropyRotation);
+        float sinRot = sin(anisotropyRotation);
+        anisoT = cosRot * T + sinRot * B;
+        anisoB = -sinRot * T + cosRot * B;
+        anisoAx = max(alpha * (1.0 + anisotropy), 0.001);
+        anisoAy = max(alpha * (1.0 - anisotropy), 0.001);
+    }
+
     // ===================================================================
     // 5. Direct Lighting — scene directional sun only (outdoor PBR)
     //    Studio fill/rim lights removed: UE5 and Godot use sky ambient
@@ -440,22 +498,52 @@ float4 PSMain(PSInput input) : SV_TARGET {
     float shadowFactor = SampleShadow(input.worldPos, N);
 
     // Sun / directional light — modulated by PCF shadow, micro-shadow, and specular multiplier
+    float specScale = lerp(1.0, specularMultiplier, metallic * 0.5 + 0.5);
     {
         float3 directLight = EvaluateDirectLight(N, V, NoV, DiffuseColor, F0, a2, roughness,
-                                                  lightDir, lightColor, lightIntensity);
-        // specularMultiplier scales direct specular response (metals benefit from > 1.0)
-        // For metals (metallic~1), diffuse is ~0 so this scales everything correctly.
-        // For dielectrics, specular is a small portion so effect is subtle.
-        float specScale = lerp(1.0, specularMultiplier, metallic * 0.5 + 0.5);
+                                                  lightDir, lightColor, lightIntensity,
+                                                  anisoT, anisoB, anisoAx, anisoAy);
 
-        // Micro-shadow [Jimenez 2016, "Practical Realtime Strategies for Accurate Indirect Occlusion"]
-        // AO map modulates direct light for sub-texel self-shadowing that shadow maps
-        // can't resolve (sand ripples, brick mortar joints, fabric weave).
-        // Formula: saturate(NoL + 2*ao² - 1) → ao=1: no effect, ao=0: full shadow.
+        // Micro-shadow [Jimenez 2016]: AO modulates direct light for sub-texel self-shadowing
         float NoL_direct = saturate(dot(N, normalize(-lightDir)));
         float microShadow = saturate(NoL_direct + 2.0 * ao * ao - 1.0);
 
         Lo += directLight * specScale * shadowFactor * microShadow;
+    }
+
+    // Punctual lights (point + spot) — inverse-square attenuation with radius falloff
+    [loop]
+    for (uint li = 0; li < min(punctualLightCount, 8u); ++li) {
+        PunctualLight pl = punctualLights[li];
+        float3 toLight = pl.position - input.worldPos;
+        float dist2 = dot(toLight, toLight);
+        float dist  = sqrt(dist2);
+        float3 L_pl = toLight / max(dist, 0.001);
+
+        // UE5-style inverse-square attenuation with smooth radius falloff
+        // GetLocalLightAttenuation: 1/(1+d²) * saturate(1 - (d/r)^4)^2
+        float distRatio = dist / max(pl.radius, 0.001);
+        float falloff4  = saturate(1.0 - distRatio * distRatio * distRatio * distRatio);
+        float atten = (falloff4 * falloff4) / (dist2 + 1.0);
+
+        // Spot cone attenuation (smooth between inner and outer cone)
+        if (pl.spotParams > 0.001) {
+            float cosAngle = dot(-L_pl, normalize(pl.direction));
+            // spotParams encodes cosOuter + (cosInner - cosOuter) range
+            // We use a simpler approach: spotParams = cosOuter, compute smoothstep
+            float cosOuter = pl.spotParams;
+            float cosInner = cosOuter + 0.1; // ~6 degree inner cone offset
+            atten *= saturate((cosAngle - cosOuter) / max(cosInner - cosOuter, 0.001));
+        }
+
+        if (atten > 0.0001) {
+            // Evaluate BRDF for this punctual light (direction is from surface TO light)
+            float3 plDir = -L_pl; // EvaluateDirectLight expects lightDir (from light TO surface)
+            float3 plResult = EvaluateDirectLight(N, V, NoV, DiffuseColor, F0, a2, roughness,
+                                                   plDir, pl.color, pl.intensity * atten,
+                                                   anisoT, anisoB, anisoAx, anisoAy);
+            Lo += plResult * specScale;
+        }
     }
 
     // ===================================================================

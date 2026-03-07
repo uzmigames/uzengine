@@ -33,6 +33,15 @@
 #include "shaders/gtao_ps_hlsl.h"
 #include "shaders/gbuffer_write_ps_hlsl.h"
 #include "shaders/deferred_lighting_ps_hlsl.h"
+#include "shaders/auto_exposure_ps_hlsl.h"
+#include "shaders/hiz_generate_ps_hlsl.h"
+#include "shaders/ssr_ps_hlsl.h"
+#include "shaders/color_grading_ps_hlsl.h"
+#include "shaders/dof_coc_ps_hlsl.h"
+#include "shaders/dof_blur_ps_hlsl.h"
+#include "shaders/volumetric_apply_ps_hlsl.h"
+#include "shaders/sss_blur_ps_hlsl.h"
+#include "shaders/decal_ps_hlsl.h"
 
 namespace uz {
 
@@ -206,6 +215,96 @@ void ShaderLibrary::register_builtin_shaders() {
         .vs_size   = sizeof(k_fullscreen_vs_hlsl) - 1,
         .ps_source = k_deferred_lighting_ps_hlsl,
         .ps_size   = sizeof(k_deferred_lighting_ps_hlsl) - 1,
+        .vs_entry  = "VSMain",
+        .ps_entry  = "PSMain",
+    });
+
+    // auto_exposure — scene luminance metering + temporal adaptation
+    register_shader("auto_exposure", ShaderProgram{
+        .vs_source = k_fullscreen_vs_hlsl,
+        .vs_size   = sizeof(k_fullscreen_vs_hlsl) - 1,
+        .ps_source = k_auto_exposure_ps_hlsl,
+        .ps_size   = sizeof(k_auto_exposure_ps_hlsl) - 1,
+        .vs_entry  = "VSMain",
+        .ps_entry  = "PSMain",
+    });
+
+    // hiz_generate — Hi-Z depth mip chain (min reduction)
+    register_shader("hiz_generate", ShaderProgram{
+        .vs_source = k_fullscreen_vs_hlsl,
+        .vs_size   = sizeof(k_fullscreen_vs_hlsl) - 1,
+        .ps_source = k_hiz_generate_ps_hlsl,
+        .ps_size   = sizeof(k_hiz_generate_ps_hlsl) - 1,
+        .vs_entry  = "VSMain",
+        .ps_entry  = "PSMain",
+    });
+
+    // ssr — screen-space reflections (Hi-Z ray march)
+    register_shader("ssr", ShaderProgram{
+        .vs_source = k_fullscreen_vs_hlsl,
+        .vs_size   = sizeof(k_fullscreen_vs_hlsl) - 1,
+        .ps_source = k_ssr_ps_hlsl,
+        .ps_size   = sizeof(k_ssr_ps_hlsl) - 1,
+        .vs_entry  = "VSMain",
+        .ps_entry  = "PSMain",
+    });
+
+    // color_grading — 3D LUT + temp/tint/contrast/saturation
+    register_shader("color_grading", ShaderProgram{
+        .vs_source = k_fullscreen_vs_hlsl,
+        .vs_size   = sizeof(k_fullscreen_vs_hlsl) - 1,
+        .ps_source = k_color_grading_ps_hlsl,
+        .ps_size   = sizeof(k_color_grading_ps_hlsl) - 1,
+        .vs_entry  = "VSMain",
+        .ps_entry  = "PSMain",
+    });
+
+    // dof_coc — circle of confusion from depth
+    register_shader("dof_coc", ShaderProgram{
+        .vs_source = k_fullscreen_vs_hlsl,
+        .vs_size   = sizeof(k_fullscreen_vs_hlsl) - 1,
+        .ps_source = k_dof_coc_ps_hlsl,
+        .ps_size   = sizeof(k_dof_coc_ps_hlsl) - 1,
+        .vs_entry  = "VSMain",
+        .ps_entry  = "PSMain",
+    });
+
+    // dof_blur — separable DoF Gaussian blur
+    register_shader("dof_blur", ShaderProgram{
+        .vs_source = k_fullscreen_vs_hlsl,
+        .vs_size   = sizeof(k_fullscreen_vs_hlsl) - 1,
+        .ps_source = k_dof_blur_ps_hlsl,
+        .ps_size   = sizeof(k_dof_blur_ps_hlsl) - 1,
+        .vs_entry  = "VSMain",
+        .ps_entry  = "PSMain",
+    });
+
+    // volumetric_apply — height fog + inscattering application
+    register_shader("volumetric_apply", ShaderProgram{
+        .vs_source = k_fullscreen_vs_hlsl,
+        .vs_size   = sizeof(k_fullscreen_vs_hlsl) - 1,
+        .ps_source = k_volumetric_apply_ps_hlsl,
+        .ps_size   = sizeof(k_volumetric_apply_ps_hlsl) - 1,
+        .vs_entry  = "VSMain",
+        .ps_entry  = "PSMain",
+    });
+
+    // sss_blur — separable subsurface scattering blur
+    register_shader("sss_blur", ShaderProgram{
+        .vs_source = k_fullscreen_vs_hlsl,
+        .vs_size   = sizeof(k_fullscreen_vs_hlsl) - 1,
+        .ps_source = k_sss_blur_ps_hlsl,
+        .ps_size   = sizeof(k_sss_blur_ps_hlsl) - 1,
+        .vs_entry  = "VSMain",
+        .ps_entry  = "PSMain",
+    });
+
+    // decal — screen-space decal projection
+    register_shader("decal", ShaderProgram{
+        .vs_source = k_fullscreen_vs_hlsl,
+        .vs_size   = sizeof(k_fullscreen_vs_hlsl) - 1,
+        .ps_source = k_decal_ps_hlsl,
+        .ps_size   = sizeof(k_decal_ps_hlsl) - 1,
         .vs_entry  = "VSMain",
         .ps_entry  = "PSMain",
     });

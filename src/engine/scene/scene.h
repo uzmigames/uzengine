@@ -69,6 +69,41 @@ struct Scene {
     /// Must be initialized via scene_init() before use.
     ComponentStore components;
 
+    /// Preferred render path: 0 = Forward, 1 = Deferred (default: 1).
+    /// Renderer-agnostic integer to avoid including render headers.
+    uint8_t render_path = 1;
+
+    /// Post-process rendering settings (renderer-agnostic, plain floats).
+    /// Parsed from [uzscene] section keys. Applied by scene_bridge.
+    float   ao_radius           = 0.5f;
+    float   ao_intensity        = 1.5f;
+    bool    contact_shadows     = true;
+    float   contact_shadow_length = 0.1f;
+    bool    taa_enabled         = true;
+    uint8_t exposure_mode       = 0;       ///< 0 = auto, 1 = manual
+    float   exposure_value      = 1.0f;    ///< manual exposure multiplier
+    bool    ssr_enabled         = true;
+    float   ssr_max_roughness   = 0.5f;    ///< SSR max roughness threshold
+    float   color_temperature   = 0.0f;    ///< white balance temperature (-1..1)
+    float   color_tint          = 0.0f;    ///< white balance tint (-1..1)
+    float   color_saturation    = 1.0f;    ///< saturation multiplier (0..2)
+    float   color_contrast      = 1.0f;    ///< contrast multiplier (0..2)
+    // Cinematic post-process
+    float   chromatic_aberration = 0.0f;   ///< radial CA intensity (0=off)
+    float   vignette_intensity  = 0.0f;    ///< vignette darkness (0=off)
+    float   vignette_falloff    = 2.0f;    ///< vignette falloff power
+    float   film_grain_strength = 0.0f;    ///< noise overlay (0=off)
+    // Depth of Field
+    float   dof_focus_distance  = 0.0f;    ///< 0=disabled
+    float   dof_aperture        = 5.6f;    ///< f-stop
+    float   dof_focal_length    = 50.0f;   ///< mm
+    // Volumetric Fog
+    float   fog_density         = 0.0f;    ///< 0=disabled
+    float   fog_color[3]        = {0.5f, 0.6f, 0.7f};
+    float   fog_height_falloff  = 0.5f;
+    float   fog_base_height     = 0.0f;
+    float   fog_max_opacity     = 0.95f;
+
     /// Path of the .uzscene file this scene was loaded from.
     /// Empty if the scene was created programmatically (not from a file).
     char source_path[512];

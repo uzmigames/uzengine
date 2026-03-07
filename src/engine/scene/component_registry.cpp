@@ -202,14 +202,60 @@ static void register_directional_light() {
 }
 
 // ============================================================================
-// Built-in type: PointLight (no component data yet — reserve slot for future)
+// Built-in type: PointLight
 // ============================================================================
+
+static ComponentProperty kPointLightProps[] = {
+    {
+        "light_color",
+        [](void* d, const char* v) {
+            auto* l = static_cast<PointLightData*>(d);
+            float f[3] = {1,1,1};
+            parse_f3(v, f);
+            l->color = {f[0], f[1], f[2], 0.0f};
+        },
+        [](const void* d, std::string& out) {
+            const auto* l = static_cast<const PointLightData*>(d);
+            char buf[128];
+            std::snprintf(buf, sizeof(buf), "light_color = %.6f %.6f %.6f\n",
+                          static_cast<double>(l->color.x),
+                          static_cast<double>(l->color.y),
+                          static_cast<double>(l->color.z));
+            out += buf;
+        }
+    },
+    {
+        "light_intensity",
+        [](void* d, const char* v) { static_cast<PointLightData*>(d)->intensity = pf(v); },
+        [](const void* d, std::string& out) {
+            char buf[64];
+            std::snprintf(buf, sizeof(buf), "light_intensity = %.6f\n",
+                          static_cast<double>(static_cast<const PointLightData*>(d)->intensity));
+            out += buf;
+        }
+    },
+    {
+        "light_radius",
+        [](void* d, const char* v) { static_cast<PointLightData*>(d)->radius = pf(v); },
+        [](const void* d, std::string& out) {
+            char buf[64];
+            std::snprintf(buf, sizeof(buf), "light_radius = %.6f\n",
+                          static_cast<double>(static_cast<const PointLightData*>(d)->radius));
+            out += buf;
+        }
+    },
+};
 
 static void register_point_light() {
     NodeTypeDef def{};
     std::strncpy(def.name, "PointLight", 64);
     def.editor_color[0] = 0.9f; def.editor_color[1] = 0.7f; def.editor_color[2] = 0.2f;
-    def.comp_count = 0;
+    def.comps[0] = {
+        detail::component_type_id<PointLightData>(), sizeof(PointLightData),
+        [](void* p) { new(p) PointLightData{}; },
+        kPointLightProps, 3
+    };
+    def.comp_count = 1;
     ComponentRegistry::reg(def);
 }
 
@@ -217,11 +263,95 @@ static void register_point_light() {
 // Built-in type: SpotLight
 // ============================================================================
 
+static ComponentProperty kSpotLightProps[] = {
+    {
+        "light_color",
+        [](void* d, const char* v) {
+            auto* l = static_cast<SpotLightData*>(d);
+            float f[3] = {1,1,1};
+            parse_f3(v, f);
+            l->color = {f[0], f[1], f[2], 0.0f};
+        },
+        [](const void* d, std::string& out) {
+            const auto* l = static_cast<const SpotLightData*>(d);
+            char buf[128];
+            std::snprintf(buf, sizeof(buf), "light_color = %.6f %.6f %.6f\n",
+                          static_cast<double>(l->color.x),
+                          static_cast<double>(l->color.y),
+                          static_cast<double>(l->color.z));
+            out += buf;
+        }
+    },
+    {
+        "light_intensity",
+        [](void* d, const char* v) { static_cast<SpotLightData*>(d)->intensity = pf(v); },
+        [](const void* d, std::string& out) {
+            char buf[64];
+            std::snprintf(buf, sizeof(buf), "light_intensity = %.6f\n",
+                          static_cast<double>(static_cast<const SpotLightData*>(d)->intensity));
+            out += buf;
+        }
+    },
+    {
+        "light_radius",
+        [](void* d, const char* v) { static_cast<SpotLightData*>(d)->radius = pf(v); },
+        [](const void* d, std::string& out) {
+            char buf[64];
+            std::snprintf(buf, sizeof(buf), "light_radius = %.6f\n",
+                          static_cast<double>(static_cast<const SpotLightData*>(d)->radius));
+            out += buf;
+        }
+    },
+    {
+        "inner_angle",
+        [](void* d, const char* v) { static_cast<SpotLightData*>(d)->inner_angle = pf(v); },
+        [](const void* d, std::string& out) {
+            char buf[64];
+            std::snprintf(buf, sizeof(buf), "inner_angle = %.6f\n",
+                          static_cast<double>(static_cast<const SpotLightData*>(d)->inner_angle));
+            out += buf;
+        }
+    },
+    {
+        "outer_angle",
+        [](void* d, const char* v) { static_cast<SpotLightData*>(d)->outer_angle = pf(v); },
+        [](const void* d, std::string& out) {
+            char buf[64];
+            std::snprintf(buf, sizeof(buf), "outer_angle = %.6f\n",
+                          static_cast<double>(static_cast<const SpotLightData*>(d)->outer_angle));
+            out += buf;
+        }
+    },
+    {
+        "light_direction",
+        [](void* d, const char* v) {
+            auto* l = static_cast<SpotLightData*>(d);
+            float f[3] = {0,-1,0};
+            parse_f3(v, f);
+            l->direction = {f[0], f[1], f[2], 0.0f};
+        },
+        [](const void* d, std::string& out) {
+            const auto* l = static_cast<const SpotLightData*>(d);
+            char buf[128];
+            std::snprintf(buf, sizeof(buf), "light_direction = %.6f %.6f %.6f\n",
+                          static_cast<double>(l->direction.x),
+                          static_cast<double>(l->direction.y),
+                          static_cast<double>(l->direction.z));
+            out += buf;
+        }
+    },
+};
+
 static void register_spot_light() {
     NodeTypeDef def{};
     std::strncpy(def.name, "SpotLight", 64);
     def.editor_color[0] = 0.9f; def.editor_color[1] = 0.7f; def.editor_color[2] = 0.3f;
-    def.comp_count = 0;
+    def.comps[0] = {
+        detail::component_type_id<SpotLightData>(), sizeof(SpotLightData),
+        [](void* p) { new(p) SpotLightData{}; },
+        kSpotLightProps, 6
+    };
+    def.comp_count = 1;
     ComponentRegistry::reg(def);
 }
 

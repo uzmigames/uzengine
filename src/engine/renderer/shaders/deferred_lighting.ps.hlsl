@@ -19,6 +19,20 @@ cbuffer DeferredLightingCB : register(b0) {
     float4x4 invViewProj;
 };
 
+// b1: PunctualLightsCB (CBV — punctual light array from LightFrameCBV)
+struct PunctualLight {
+    float3 position;    float radius;
+    float3 color;       float intensity;
+    float3 direction;   float spotParams;
+};
+
+cbuffer PunctualLightsCB : register(b1) {
+    float4 _plDirectional[4];     // skip directional data (16 DWORDs, same layout as LightFrameCB)
+    uint   punctualLightCount;
+    float3 _plPad;
+    PunctualLight punctualLights[8];
+};
+
 // b3: LightParamsCB (16 root constants)
 cbuffer LightParamsCB : register(b3) {
     float3 lightDir;
@@ -159,8 +173,10 @@ float SampleShadow(float3 worldPos, float3 worldNormal) {
     float shadowFar    = shadowLightDist * 2.0;
     float currentDepth = (lz - 0.1) / (shadowFar - 0.1);
 
+    // CSM: map shadow UV into cascade 0 quadrant (top-left 1024x1024 of 4096 atlas)
+    shadowUV = shadowUV * 0.5;
     float shadow = 0.0;
-    float2 texelSize = 1.0 / float2(2048.0, 2048.0);
+    float2 texelSize = 1.0 / float2(4096.0, 4096.0);
 
     static const float2 poissonDisk[16] = {
         float2(-0.94201624, -0.39906216), float2( 0.94558609, -0.76890725),
@@ -238,13 +254,41 @@ float4 PSMain(PSInput input) : SV_TARGET {
     float3 Lo = float3(0.0, 0.0, 0.0);
     float shadowFactor = SampleShadow(worldPos, N);
 
+    float sScale = lerp(1.0, specMul, metallic * 0.5 + 0.5);
     {
         float3 directLight = EvaluateDirectLight(N, V, NoV, DiffuseColor, F0, a2, roughness,
                                                   lightDir, lightColor, lightIntensity);
-        float sScale = lerp(1.0, specMul, metallic * 0.5 + 0.5);
         float NoL_direct = saturate(dot(N, normalize(-lightDir)));
         float microShadow = saturate(NoL_direct + 2.0 * ao * ao - 1.0);
         Lo += directLight * sScale * shadowFactor * microShadow;
+    }
+
+    // Punctual lights (point + spot)
+    [loop]
+    for (uint li = 0; li < min(punctualLightCount, 8u); ++li) {
+        PunctualLight pl = punctualLights[li];
+        float3 toLight = pl.position - worldPos;
+        float dist2 = dot(toLight, toLight);
+        float dist  = sqrt(dist2);
+        float3 L_pl = toLight / max(dist, 0.001);
+
+        float distRatio = dist / max(pl.radius, 0.001);
+        float falloff4  = saturate(1.0 - distRatio * distRatio * distRatio * distRatio);
+        float atten = (falloff4 * falloff4) / (dist2 + 1.0);
+
+        if (pl.spotParams > 0.001) {
+            float cosAngle = dot(-L_pl, normalize(pl.direction));
+            float cosOuter = pl.spotParams;
+            float cosInner = cosOuter + 0.1;
+            atten *= saturate((cosAngle - cosOuter) / max(cosInner - cosOuter, 0.001));
+        }
+
+        if (atten > 0.0001) {
+            float3 plDir = -L_pl;
+            float3 plResult = EvaluateDirectLight(N, V, NoV, DiffuseColor, F0, a2, roughness,
+                                                   plDir, pl.color, pl.intensity * atten);
+            Lo += plResult * sScale;
+        }
     }
 
     // ===================================================================

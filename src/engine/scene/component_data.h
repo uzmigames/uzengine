@@ -30,6 +30,29 @@ struct DirectionalLightData {
 };
 
 // ============================================================================
+// PointLightData — properties for "PointLight" nodes
+// ============================================================================
+
+struct PointLightData {
+    Vec3  color     = {1.0f, 1.0f, 1.0f, 0.0f};  // Light color (RGB)
+    float intensity = 10.0f;                       // Luminous intensity (candela)
+    float radius    = 10.0f;                       // Attenuation radius (world units)
+};
+
+// ============================================================================
+// SpotLightData — properties for "SpotLight" nodes
+// ============================================================================
+
+struct SpotLightData {
+    Vec3  color       = {1.0f, 1.0f, 1.0f, 0.0f}; // Light color (RGB)
+    float intensity   = 10.0f;                      // Luminous intensity (candela)
+    float radius      = 15.0f;                      // Attenuation radius
+    float inner_angle = 25.0f;                      // Inner cone half-angle (degrees)
+    float outer_angle = 35.0f;                      // Outer cone half-angle (degrees)
+    Vec3  direction   = {0.0f, -1.0f, 0.0f, 0.0f}; // Light direction (local space)
+};
+
+// ============================================================================
 // StaticMeshData — properties for "StaticMesh" nodes
 // ============================================================================
 

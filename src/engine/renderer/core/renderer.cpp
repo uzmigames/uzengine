@@ -32,6 +32,7 @@ extern const rhi_backend_t rhi_dx12_backend;
 #include "engine/renderer/proxies/mesh_proxy.h"
 #include "engine/scene/scene.h"
 #include "engine/scene/component_data.h"
+#include "engine/scene/component_store.h"
 
 namespace uz {
 
@@ -152,25 +153,25 @@ bool Renderer::init(void* window_handle, uint32_t width, uint32_t height) {
     DIAG("createShadowMap()...");
     {
         RhiTextureDesc smDesc{};
-        smDesc.width      = kShadowMapSize;
-        smDesc.height     = kShadowMapSize;
+        smDesc.width      = kShadowAtlasSize;
+        smDesc.height     = kShadowAtlasSize;
         smDesc.depth      = 1;
         smDesc.mip_levels = 1;
         smDesc.array_size = 1;
         smDesc.format     = RHI_FORMAT_D32_FLOAT;
         smDesc.dimension  = RHI_TEXTURE_DIM_2D;
         smDesc.usage      = RHI_TEXTURE_USAGE_DEPTH_STENCIL | RHI_TEXTURE_USAGE_SHADER_READ;
-        smDesc.debug_name = "ShadowMap";
+        smDesc.debug_name = "ShadowAtlas_CSM";
         shadowMap_ = rhi()->texture_create(&smDesc);
         if (shadowMap_ == RHI_NULL)
             DIAG("WARNING: shadowMap creation failed — shadows disabled");
     }
 
     // Create per-frame CBVs (b1 and b2 are root CBVs).
-    // 256 bytes = D3D12 CBV minimum alignment.
+    // 512 bytes = extended LightFrameCB (directional + 8 punctual lights). D3D12 CBV 256-aligned.
     {
         RhiBufferDesc cbvDesc{};
-        cbvDesc.size       = 256;
+        cbvDesc.size       = 512;
         cbvDesc.usage      = RHI_BUFFER_USAGE_CONSTANT | RHI_BUFFER_USAGE_UPLOAD;
 
         cbvDesc.debug_name = "LightFrameCBV";
@@ -267,6 +268,7 @@ void Renderer::update(double totalTime, double deltaTime) {
     prevViewProj_ = viewProjUnjittered_;
 
     fpsOverlay_.update(deltaTime);
+    lastDeltaTime_ = std::min(static_cast<float>(deltaTime), 0.1f);
 
     const float aspect = static_cast<float>(width_) / static_cast<float>(height_);
 
@@ -522,17 +524,39 @@ void Renderer::update(double totalTime, double deltaTime) {
     frameConstants_.irradiance_cube   = irradianceCube_;
     frameConstants_.prefiltered_cube  = prefilteredCube_;
 
+    // Gather punctual lights from scene into CPU buffer
+    gatherPunctualLights();
+
     // Upload LightFrameCB to GPU constant buffer (b2 root CBV)
+    // Layout: 16 DWORDs directional + 4 DWORDs (count+pad) + 12*8 DWORDs punctual = 116 floats
     if (lightFrameCBV_ != RHI_NULL) {
-        float lightFrameData[16] = {
-            frameConstants_.light_dir.x, frameConstants_.light_dir.y, frameConstants_.light_dir.z, frameConstants_.light_intensity,
-            frameConstants_.light_color.x, frameConstants_.light_color.y, frameConstants_.light_color.z, 0.0f,
-            frameConstants_.camera_world_pos.x, frameConstants_.camera_world_pos.y, frameConstants_.camera_world_pos.z, frameConstants_.time,
-            0.65f, // envIntensity: reduced from 1.0 to let direct light dominate (more NdotL contrast)
-            frameConstants_.shadow_bias,
-            frameConstants_.shadow_ortho_size,
-            frameConstants_.shadow_light_dist
-        };
+        float lightFrameData[128] = {};  // 512 bytes, zero-init
+        // DWORDs 0-15: directional light + camera + env
+        lightFrameData[0]  = frameConstants_.light_dir.x;
+        lightFrameData[1]  = frameConstants_.light_dir.y;
+        lightFrameData[2]  = frameConstants_.light_dir.z;
+        lightFrameData[3]  = frameConstants_.light_intensity;
+        lightFrameData[4]  = frameConstants_.light_color.x;
+        lightFrameData[5]  = frameConstants_.light_color.y;
+        lightFrameData[6]  = frameConstants_.light_color.z;
+        lightFrameData[7]  = 0.0f;
+        lightFrameData[8]  = frameConstants_.camera_world_pos.x;
+        lightFrameData[9]  = frameConstants_.camera_world_pos.y;
+        lightFrameData[10] = frameConstants_.camera_world_pos.z;
+        lightFrameData[11] = frameConstants_.time;
+        lightFrameData[12] = 0.65f;  // envIntensity
+        lightFrameData[13] = frameConstants_.shadow_bias;
+        lightFrameData[14] = frameConstants_.shadow_ortho_size;
+        lightFrameData[15] = frameConstants_.shadow_light_dist;
+        // DWORDs 16-19: punctual light count + padding
+        uint32_t plCount = punctualLightCount_;
+        std::memcpy(&lightFrameData[16], &plCount, sizeof(uint32_t));
+        lightFrameData[17] = 0.0f;
+        lightFrameData[18] = 0.0f;
+        lightFrameData[19] = 0.0f;
+        // DWORDs 20+: punctual light data (12 floats per light)
+        std::memcpy(&lightFrameData[20], punctualLights_,
+                     punctualLightCount_ * sizeof(GpuPunctualLight));
         rhi()->buffer_upload(lightFrameCBV_, lightFrameData, sizeof(lightFrameData));
     }
 
@@ -642,55 +666,74 @@ void Renderer::update(double totalTime, double deltaTime) {
         }
     }
 
-    // Build light-space matrix for shadow pass (orthographic from directional light).
-    // Light "camera" positioned above the scene looking along the light direction.
+    // Build CSM cascade light-space VP matrices (PSSM split scheme, lambda=0.75).
+    // 4 cascades rendered into 4096x4096 atlas (2x2 grid of 1024x1024).
     {
-        Vec3 ld = cachedLight_.direction;  // Points FROM light TO scene
-
-        // Light view: position scene_center offset back along -ld.
-        // kShadowLightDist MUST match frameConstants_.shadow_light_dist (25.0f)
-        // — the shader reconstructs light-space using the same distance.
-        constexpr float kShadowLightDist = 25.0f;  // MUST match frameConstants_.shadow_light_dist
-        Vec3 sceneCenter = {0.0f, 0.0f, 0.0f, 0.0f};  // matches shader's implicit sceneCenter=0
-        Vec3 lightEye = {
-            sceneCenter.x - ld.x * kShadowLightDist,
-            sceneCenter.y - ld.y * kShadowLightDist,
-            sceneCenter.z - ld.z * kShadowLightDist,
-            0.0f
-        };
-
-        // Build look-at view for light (LH, same convention as camera)
+        Vec3 ld = cachedLight_.direction;
         Vec3 lightFwd = vec3_normalize({ld.x, ld.y, ld.z, 0.0f});
         Vec3 worldUp  = {0.0f, 1.0f, 0.0f, 0.0f};
         float upDotL  = std::abs(lightFwd.x*worldUp.x + lightFwd.y*worldUp.y + lightFwd.z*worldUp.z);
         Vec3 refUp2   = (upDotL > 0.99f) ? Vec3{1.0f, 0.0f, 0.0f, 0.0f} : worldUp;
-
         Vec3 lightRight = vec3_normalize(vec3_cross(refUp2, lightFwd));
         Vec3 lightUp    = vec3_cross(lightFwd, lightRight);
 
-        // View matrix (row vectors in row-major DX style)
-        Mat4 lightView{};
-        lightView.m[0][0] = lightRight.x; lightView.m[1][0] = lightRight.y; lightView.m[2][0] = lightRight.z;
-        lightView.m[0][1] = lightUp.x;    lightView.m[1][1] = lightUp.y;    lightView.m[2][1] = lightUp.z;
-        lightView.m[0][2] = lightFwd.x;   lightView.m[1][2] = lightFwd.y;   lightView.m[2][2] = lightFwd.z;
-        lightView.m[3][0] = -(lightRight.x*lightEye.x + lightRight.y*lightEye.y + lightRight.z*lightEye.z);
-        lightView.m[3][1] = -(lightUp.x*lightEye.x    + lightUp.y*lightEye.y    + lightUp.z*lightEye.z);
-        lightView.m[3][2] = -(lightFwd.x*lightEye.x   + lightFwd.y*lightEye.y   + lightFwd.z*lightEye.z);
-        lightView.m[3][3] = 1.0f;
+        // PSSM split distances (lambda=0.75 blending log/linear, near=0.5, far=100)
+        constexpr float kNear = 0.5f;
+        constexpr float kFar  = 100.0f;
+        constexpr float kLambda = 0.75f;
+        float splits[kCascadeCount + 1];
+        splits[0] = kNear;
+        for (uint32_t i = 1; i <= kCascadeCount; ++i) {
+            float p = static_cast<float>(i) / kCascadeCount;
+            float logSplit = kNear * std::pow(kFar / kNear, p);
+            float linSplit = kNear + (kFar - kNear) * p;
+            splits[i] = kLambda * logSplit + (1.0f - kLambda) * linSplit;
+        }
 
-        // Orthographic projection (left-handed, DX NDC: x∈[-1,1], y∈[-1,1], z∈[0,1])
-        // kOrthoSize must match frameConstants_.shadow_ortho_size
-        constexpr float kOrthoSize = 12.0f;  // ±12 world units — covers sphere + ground
-        constexpr float kNear = 0.1f;
-        constexpr float kFar  = 50.0f;  // shadowLightDist(25) * 2
-        Mat4 lightProj{};
-        lightProj.m[0][0] = 1.0f / kOrthoSize;
-        lightProj.m[1][1] = 1.0f / kOrthoSize;
-        lightProj.m[2][2] = 1.0f / (kFar - kNear);
-        lightProj.m[3][2] = -kNear / (kFar - kNear);
-        lightProj.m[3][3] = 1.0f;
+        // Camera position for cascade centering
+        Vec3 camPos = frameConstants_.camera_world_pos;
 
-        lightSpaceMat_ = lightProj * lightView;
+        for (uint32_t c = 0; c < kCascadeCount; ++c) {
+            cascadeSplitDist_[c] = splits[c + 1];
+
+            // Ortho size grows per cascade (tightest at cascade 0)
+            float orthoSize = splits[c + 1] * 1.2f;  // 120% of far split for margin
+            float shadowDist = orthoSize * 2.5f;      // light distance from center
+
+            // Light eye positioned above camera looking along light direction
+            Vec3 lightEye = {
+                camPos.x - ld.x * shadowDist,
+                camPos.y - ld.y * shadowDist,
+                camPos.z - ld.z * shadowDist,
+                0.0f
+            };
+
+            // Light view matrix
+            Mat4 lightView{};
+            lightView.m[0][0] = lightRight.x; lightView.m[1][0] = lightRight.y; lightView.m[2][0] = lightRight.z;
+            lightView.m[0][1] = lightUp.x;    lightView.m[1][1] = lightUp.y;    lightView.m[2][1] = lightUp.z;
+            lightView.m[0][2] = lightFwd.x;   lightView.m[1][2] = lightFwd.y;   lightView.m[2][2] = lightFwd.z;
+            lightView.m[3][0] = -(lightRight.x*lightEye.x + lightRight.y*lightEye.y + lightRight.z*lightEye.z);
+            lightView.m[3][1] = -(lightUp.x*lightEye.x    + lightUp.y*lightEye.y    + lightUp.z*lightEye.z);
+            lightView.m[3][2] = -(lightFwd.x*lightEye.x   + lightFwd.y*lightEye.y   + lightFwd.z*lightEye.z);
+            lightView.m[3][3] = 1.0f;
+
+            // Ortho projection per cascade
+            Mat4 lightProj{};
+            lightProj.m[0][0] = 1.0f / orthoSize;
+            lightProj.m[1][1] = 1.0f / orthoSize;
+            lightProj.m[2][2] = 1.0f / (shadowDist * 2.0f);
+            lightProj.m[3][2] = -0.1f / (shadowDist * 2.0f);
+            lightProj.m[3][3] = 1.0f;
+
+            cascadeVP_[c] = lightProj * lightView;
+        }
+        // Backward compat: cascade 0 = primary shadow matrix
+        lightSpaceMat_ = cascadeVP_[0];
+
+        // frameConstants shadow params: use cascade 0 dimensions
+        frameConstants_.shadow_ortho_size = splits[1] * 1.2f;
+        frameConstants_.shadow_light_dist = frameConstants_.shadow_ortho_size * 2.5f;
     }
 }
 
@@ -710,8 +753,7 @@ void Renderer::render(bool readback) {
     auto rgDepth      = renderGraph_.import_texture("depth",      rhiDepthBuf_);
     auto rgShadowMap  = renderGraph_.import_texture("shadow_map", shadowMap_);
 
-    // --- Pass 0: Shadow Depth ----------------------------------------------
-    // Renders scene depth from the directional light's perspective.
+    // --- Pass 0: CSM Shadow Depth (4 cascades into atlas quadrants) ---------
     if (shadowMap_ != RHI_NULL && rhiShadowPipeline_ != RHI_NULL) {
         renderGraph_.add_pass("shadow_depth", RgPassType::Graphics,
             [&](RgPassBuilder& builder) {
@@ -723,27 +765,35 @@ void Renderer::render(bool readback) {
                                            RHI_STATE_SHADER_READ, RHI_STATE_DEPTH_WRITE);
 
                 rhi()->cmd_set_pipeline(cmd, rhiShadowPipeline_);
-                rhi()->cmd_set_viewport(cmd, 0.0f, 0.0f,
-                                       static_cast<float>(kShadowMapSize),
-                                       static_cast<float>(kShadowMapSize),
-                                       0.0f, 1.0f);
-                rhi()->cmd_set_scissor(cmd, 0, 0, kShadowMapSize, kShadowMapSize);
                 rhi()->cmd_clear_depth_stencil(cmd, shadowMap_, 1.0f, 0);
                 rhi()->cmd_set_render_targets(cmd, nullptr, 0, shadowMap_);
                 rhi()->cmd_set_topology(cmd, RHI_TOPOLOGY_TRIANGLE_LIST);
 
-                // b3 = LightSpaceCB (16 DWORDs)
-                rhi()->cmd_set_root_constants(cmd, 3, &lightSpaceMat_, 16, 0);
+                // Atlas layout: 2x2 grid, each cascade = kCascadeSize x kCascadeSize
+                // [0][1]
+                // [2][3]
+                static const uint32_t offX[4] = { 0, kCascadeSize, 0, kCascadeSize };
+                static const uint32_t offY[4] = { 0, 0, kCascadeSize, kCascadeSize };
 
-                // Draw each proxy with POSITION-only vertex layout
-                for (auto* proxy : proxies_) {
-                    auto* mp = static_cast<MeshProxy*>(proxy);
-                    if (!mp->mesh || mp->mesh->vertex_buffer == RHI_NULL) continue;
-                    rhi()->cmd_set_root_constants(cmd, 0, &mp->transform, 16, 0);
-                    rhi()->cmd_set_vertex_buffer(cmd, 0, mp->mesh->vertex_buffer, 0, mp->mesh->vertex_stride);
-                    rhi()->cmd_set_index_buffer(cmd, mp->mesh->index_buffer, 0, true);
-                    for (const auto& sub : mp->mesh->submeshes) {
-                        rhi()->cmd_draw_indexed(cmd, sub.index_count, 1, sub.index_offset, 0, 0);
+                for (uint32_t c = 0; c < kCascadeCount; ++c) {
+                    rhi()->cmd_set_viewport(cmd,
+                        static_cast<float>(offX[c]), static_cast<float>(offY[c]),
+                        static_cast<float>(kCascadeSize), static_cast<float>(kCascadeSize),
+                        0.0f, 1.0f);
+                    rhi()->cmd_set_scissor(cmd, offX[c], offY[c], kCascadeSize, kCascadeSize);
+
+                    // b3 = cascade VP matrix (16 DWORDs)
+                    rhi()->cmd_set_root_constants(cmd, 3, &cascadeVP_[c], 16, 0);
+
+                    for (auto* proxy : proxies_) {
+                        auto* mp = static_cast<MeshProxy*>(proxy);
+                        if (!mp->mesh || mp->mesh->vertex_buffer == RHI_NULL) continue;
+                        rhi()->cmd_set_root_constants(cmd, 0, &mp->transform, 16, 0);
+                        rhi()->cmd_set_vertex_buffer(cmd, 0, mp->mesh->vertex_buffer, 0, mp->mesh->vertex_stride);
+                        rhi()->cmd_set_index_buffer(cmd, mp->mesh->index_buffer, 0, true);
+                        for (const auto& sub : mp->mesh->submeshes) {
+                            rhi()->cmd_draw_indexed(cmd, sub.index_count, 1, sub.index_offset, 0, 0);
+                        }
                     }
                 }
 
@@ -754,6 +804,15 @@ void Renderer::render(bool readback) {
 
     // --- Pass 1: Scene Draw (Forward or Deferred) ----------------------------
     auto rgHdr = renderGraph_.import_texture("hdr_rt", hdrRT_);
+
+    // Lazy creation of deferred resources (triggered by setRenderPath from IPC thread).
+    if (renderPath_ == RenderPath::Deferred && (gbufferPSO_ == RHI_NULL || gbufferRT_[0] == RHI_NULL)) {
+        if (gbufferRT_[0] == RHI_NULL) {
+            destroyPostProcessTargets();
+            createPostProcessTargets();
+        }
+        if (gbufferPSO_ == RHI_NULL) createPipelineStates();
+    }
 
     if (renderPath_ == RenderPath::Deferred && gbufferPSO_ != RHI_NULL && deferredLightPSO_ != RHI_NULL) {
         // =================================================================
@@ -797,9 +856,14 @@ void Renderer::render(bool readback) {
                 builder.force_run();
             },
             [this](RhiCmdList cmd) {
+                // First frame: G-Buffer textures are in COMMON state (just created).
+                // Subsequent frames: they're in SHADER_READ from the previous frame's end.
+                const RhiResourceState gbBefore = gbufferReady_
+                    ? RHI_STATE_SHADER_READ : RHI_STATE_COMMON;
                 for (uint32_t i = 0; i < kGBufferCount; ++i)
                     rhi()->cmd_barrier_texture(cmd, gbufferRT_[i],
-                                               RHI_STATE_SHADER_READ, RHI_STATE_RENDER_TARGET);
+                                               gbBefore, RHI_STATE_RENDER_TARGET);
+                gbufferReady_ = true;
 
                 rhi()->cmd_set_viewport(cmd, 0, 0, (float)width_, (float)height_, 0, 1);
                 rhi()->cmd_set_scissor(cmd, 0, 0, width_, height_);
@@ -844,6 +908,11 @@ void Renderer::render(bool readback) {
                 // b0: invViewProj (16 DWORDs)
                 Mat4 invVP = mat4_inverse(viewProj_);
                 rhi()->cmd_set_root_constants(cmd, 0, &invVP, 16, 0);
+
+                // b1: punctual light CBV (same buffer as forward path LightFrameCBV)
+                if (lightFrameCBV_ != RHI_NULL) {
+                    rhi()->cmd_set_constant_buffer(cmd, 1, lightFrameCBV_);
+                }
 
                 // b3: light params (16 DWORDs) — matches LightParamsCB in deferred_lighting.ps.hlsl
                 float lightParams[16] = {
@@ -1019,10 +1088,10 @@ void Renderer::render(bool readback) {
         taaWriteIdx_ = 1 - taaWriteIdx_;
     }
 
-    // --- Pass 2: SSAO --------------------------------------------------------
+    // --- Pass 2: GTAO (Ground Truth Ambient Occlusion + Contact Shadows) ------
     auto rgSsao = renderGraph_.import_texture("ssao_rt", ssaoRT_);
-    const bool useGTAO = false;
-    const RhiPipeline aoPSO = ssaoPSO_;
+    const bool useGTAO = true;
+    const RhiPipeline aoPSO = (gtaoPSO_ != RHI_NULL) ? gtaoPSO_ : ssaoPSO_;
     if (aoPSO != RHI_NULL && ssaoRT_ != RHI_NULL) {
         renderGraph_.add_pass("ssao", RgPassType::Graphics,
             [&](RgPassBuilder& builder) {
@@ -1059,10 +1128,10 @@ void Renderer::render(bool readback) {
                         float aoB1[12] = {
                             static_cast<float>(width_), static_cast<float>(height_),
                             0.1f, 500.0f,
-                            0.5f, 1.5f, 2.0f,
+                            aoRadius_, aoIntensity_, 2.0f,
                             static_cast<float>(frameNumber_),
                             ldvX, ldvY, ldvZ,
-                            0.0f  // contactShadowLen (disabled — needs proper tuning)
+                            contactShadowsEnabled_ ? contactShadowLength_ : 0.0f
                         };
                         rhi()->buffer_upload(ssaoB1CBV_, aoB1, sizeof(aoB1));
                     } else {
@@ -1070,7 +1139,7 @@ void Renderer::render(bool readback) {
                         float aoB1[8] = {
                             static_cast<float>(width_), static_cast<float>(height_),
                             0.1f, 500.0f,
-                            0.5f, 1.5f, 0.025f, 0.0f
+                            aoRadius_, aoIntensity_, 0.025f, 0.0f
                         };
                         rhi()->buffer_upload(ssaoB1CBV_, aoB1, sizeof(aoB1));
                     }
@@ -1122,6 +1191,90 @@ void Renderer::render(bool readback) {
     const RhiTexture compositeColorSrc = (taaEnabled_ && taaHistory_[taaWriteIdx] != RHI_NULL)
         ? taaHistory_[taaWriteIdx]
         : hdrRT_;
+
+    // --- Pass 3.5: Hi-Z Mip Chain Generation ---------------------------------
+    if (hizPSO_ != RHI_NULL && hizMips_[0] != RHI_NULL) {
+        renderGraph_.add_pass("hiz_generate", RgPassType::Graphics,
+            [&](RgPassBuilder& builder) {
+                builder.read(rgDepth);
+                builder.force_run();
+            },
+            [this](RhiCmdList cmd) {
+                rhi()->cmd_set_pipeline(cmd, hizPSO_);
+                rhi()->cmd_set_topology(cmd, RHI_TOPOLOGY_TRIANGLE_LIST);
+
+                RhiTexture srcTex = rhiDepthBuf_;
+                uint32_t srcW = width_, srcH = height_;
+
+                for (uint32_t i = 0; i < kHiZMips; ++i) {
+                    uint32_t dstW = std::max(srcW / 2, 1u);
+                    uint32_t dstH = std::max(srcH / 2, 1u);
+
+                    rhi()->cmd_barrier_texture(cmd, hizMips_[i],
+                                               RHI_STATE_SHADER_READ, RHI_STATE_RENDER_TARGET);
+                    rhi()->cmd_set_viewport(cmd, 0, 0, (float)dstW, (float)dstH, 0, 1);
+                    rhi()->cmd_set_scissor(cmd, 0, 0, dstW, dstH);
+                    rhi()->cmd_set_render_targets(cmd, &hizMips_[i], 1, RHI_NULL);
+
+                    float params[4] = { 1.0f / srcW, 1.0f / srcH, 0.0f, 0.0f };
+                    rhi()->cmd_set_root_constants(cmd, 0, params, 4, 0);
+                    rhi()->cmd_set_texture(cmd, 0, srcTex);
+                    rhi()->cmd_draw(cmd, 3, 1, 0, 0);
+
+                    rhi()->cmd_barrier_texture(cmd, hizMips_[i],
+                                               RHI_STATE_RENDER_TARGET, RHI_STATE_SHADER_READ);
+
+                    srcTex = hizMips_[i];
+                    srcW = dstW;
+                    srcH = dstH;
+                }
+            });
+    }
+
+    // --- Pass 3.6: Screen-Space Reflections ----------------------------------
+    if (ssrEnabled_ && ssrPSO_ != RHI_NULL && ssrRT_ != RHI_NULL
+        && ssrCBV_ != RHI_NULL && renderPath_ == RenderPath::Deferred) {
+        renderGraph_.add_pass("ssr", RgPassType::Graphics,
+            [&](RgPassBuilder& builder) {
+                builder.read(rgDepth);
+                builder.read(rgHdr);
+                builder.force_run();
+            },
+            [this, compositeColorSrc](RhiCmdList cmd) {
+                rhi()->cmd_barrier_texture(cmd, ssrRT_,
+                                           RHI_STATE_SHADER_READ, RHI_STATE_RENDER_TARGET);
+
+                rhi()->cmd_set_pipeline(cmd, ssrPSO_);
+                rhi()->cmd_set_viewport(cmd, 0, 0, (float)width_, (float)height_, 0, 1);
+                rhi()->cmd_set_scissor(cmd, 0, 0, width_, height_);
+                rhi()->cmd_set_render_targets(cmd, &ssrRT_, 1, RHI_NULL);
+
+                // Root constants: invProj-related params, screen size, max roughness
+                float ssrParams[16] = {};
+                ssrParams[0] = 1.0f / width_;      // texelWidth
+                ssrParams[1] = 1.0f / height_;     // texelHeight
+                ssrParams[2] = (float)width_;       // screenWidth
+                ssrParams[3] = (float)height_;      // screenHeight
+                ssrParams[4] = ssrMaxRoughness_;    // maxRoughness
+                ssrParams[5] = 0.1f;                // nearPlane
+                ssrParams[6] = 1000.0f;             // farPlane
+                ssrParams[7] = (float)frameNumber_; // frameIndex for temporal jitter
+                // ssrParams[8..15] reserved for invProj row data
+                rhi()->cmd_set_root_constants(cmd, 0, ssrParams, 16, 0);
+
+                rhi()->cmd_set_texture(cmd, 0, rhiDepthBuf_);      // depth
+                rhi()->cmd_set_texture(cmd, 1, gbufferRT_[1]);     // G-Buffer normals
+                rhi()->cmd_set_texture(cmd, 2, compositeColorSrc); // HDR scene color
+                rhi()->cmd_set_texture(cmd, 3, gbufferRT_[2]);     // metallic/roughness
+                rhi()->cmd_set_texture(cmd, 4, hizMips_[0]);       // Hi-Z mip 0
+
+                rhi()->cmd_set_topology(cmd, RHI_TOPOLOGY_TRIANGLE_LIST);
+                rhi()->cmd_draw(cmd, 3, 1, 0, 0);
+
+                rhi()->cmd_barrier_texture(cmd, ssrRT_,
+                                           RHI_STATE_RENDER_TARGET, RHI_STATE_SHADER_READ);
+            });
+    }
 
     // --- Pass 4: Bloom Downsample Chain --------------------------------------
     // When TAA is active, bloom reads the TAA-resolved output for temporal stability.
@@ -1210,6 +1363,49 @@ void Renderer::render(bool readback) {
             });
     }
 
+    // --- Pass 5.5: Auto Exposure (meter scene luminance → 1x1 R16_FLOAT) -----
+    const uint32_t expWriteIdx = exposureWriteIdx_;
+    const uint32_t expReadIdx  = 1 - expWriteIdx;
+    if (autoExposurePSO_ != RHI_NULL && autoExposureEnabled_
+        && exposureRT_[0] != RHI_NULL && exposureCBV_ != RHI_NULL) {
+        renderGraph_.add_pass("auto_exposure", RgPassType::Graphics,
+            [&](RgPassBuilder& builder) {
+                builder.read(rgHdr);
+                builder.force_run();
+            },
+            [this, compositeColorSrc, expWriteIdx, expReadIdx](RhiCmdList cmd) {
+                RhiTexture dst = exposureRT_[expWriteIdx];
+                RhiTexture prev = exposureRT_[expReadIdx];
+
+                rhi()->cmd_barrier_texture(cmd, dst,
+                                           RHI_STATE_SHADER_READ, RHI_STATE_RENDER_TARGET);
+
+                rhi()->cmd_set_pipeline(cmd, autoExposurePSO_);
+                rhi()->cmd_set_viewport(cmd, 0, 0, 1.0f, 1.0f, 0, 1);
+                rhi()->cmd_set_scissor(cmd, 0, 0, 1, 1);
+                rhi()->cmd_set_render_targets(cmd, &dst, 1, RHI_NULL);
+
+                // Upload ExposureParams CBV (b0 via b1 slot — we use root CBV at slot 1)
+                float expParams[8] = {
+                    -8.0f, 4.0f,     // minLogLum, maxLogLum
+                    3.0f, 1.0f,      // adaptSpeedUp, adaptSpeedDown
+                    lastDeltaTime_, 0.0f,  // deltaTime, targetExposure (0=auto)
+                    0.1f, 0.98f      // lowPercentile, highPercentile
+                };
+                rhi()->cmd_set_root_constants(cmd, 0, expParams, 8, 0);
+
+                rhi()->cmd_set_texture(cmd, 0, compositeColorSrc);  // HDR scene
+                rhi()->cmd_set_texture(cmd, 1, prev);                // previous exposure
+
+                rhi()->cmd_set_topology(cmd, RHI_TOPOLOGY_TRIANGLE_LIST);
+                rhi()->cmd_draw(cmd, 3, 1, 0, 0);
+
+                rhi()->cmd_barrier_texture(cmd, dst,
+                                           RHI_STATE_RENDER_TARGET, RHI_STATE_SHADER_READ);
+            });
+        exposureWriteIdx_ = 1 - exposureWriteIdx_;
+    }
+
     // --- Pass 6: Composite (HDR + SSAO + Bloom → Tonemap → Backbuffer) -------
     renderGraph_.add_pass("composite", RgPassType::Graphics,
         [&](RgPassBuilder& builder) {
@@ -1219,7 +1415,7 @@ void Renderer::render(bool readback) {
             builder.write(rgBackbuffer);
             builder.force_run();
         },
-        [this, compositeColorSrc](RhiCmdList cmd) {
+        [this, compositeColorSrc, expWriteIdx](RhiCmdList cmd) {
             RhiTexture bb = rhi()->swapchain_backbuffer();
             rhi()->cmd_barrier_texture(cmd, bb,
                                        RHI_STATE_PRESENT, RHI_STATE_RENDER_TARGET);
@@ -1230,8 +1426,29 @@ void Renderer::render(bool readback) {
             rhi()->cmd_set_scissor(cmd, 0, 0, width_, height_);
             rhi()->cmd_set_render_targets(cmd, &bb, 1, RHI_NULL);
 
-            float compParams[4] = { 1.0f, 0.04f, 2.2f, 0.3f }; // exposure, bloomStrength, gamma, sharpenStrength
-            rhi()->cmd_set_root_constants(cmd, 0, compParams, 4, 0);
+            // When auto exposure is off, exposure constant = manualExposure, exposureTex = white (1.0).
+            // When auto exposure is on, exposure constant = 1.0, exposureTex = auto-adapted value.
+            float exposureVal = autoExposureEnabled_ ? 1.0f : manualExposure_;
+            float compParams[16] = {};
+            compParams[0]  = exposureVal;           // exposure
+            compParams[1]  = 0.04f;                 // bloomIntensity
+            compParams[2]  = 2.2f;                  // gamma
+            compParams[3]  = 0.3f;                  // sharpenStrength
+            compParams[4]  = colorTemperature_;      // temperature
+            compParams[5]  = colorTint_;             // tint
+            compParams[6]  = colorSaturation_;       // saturation
+            compParams[7]  = colorContrast_;         // contrast
+            // Cinematic post (slots 8-11)
+            compParams[8]  = chromaticAberration_;
+            compParams[9]  = vignetteIntensity_;
+            compParams[10] = vignetteFalloff_;
+            compParams[11] = filmGrainStrength_;
+            // DoF params (slots 12-15)
+            compParams[12] = dofFocusDistance_;
+            compParams[13] = dofAperture_;
+            compParams[14] = dofFocalLength_;
+            compParams[15] = 0.0f;
+            rhi()->cmd_set_root_constants(cmd, 0, compParams, 16, 0);
 
             rhi()->cmd_set_texture(cmd, 0, compositeColorSrc);
             // When TAA is active, AO is already baked into the TAA signal (t4),
@@ -1239,6 +1456,13 @@ void Renderer::render(bool readback) {
             rhi()->cmd_set_texture(cmd, 1,
                 (taaEnabled_ || ssaoBlurRT_ == RHI_NULL) ? whiteTex_ : ssaoBlurRT_);
             rhi()->cmd_set_texture(cmd, 2, (bloomMips_[0] != RHI_NULL) ? bloomMips_[0] : blackTex_);
+            // t3: Auto exposure adapted value (1x1 R16F), or white when disabled
+            rhi()->cmd_set_texture(cmd, 3,
+                (autoExposureEnabled_ && exposureRT_[expWriteIdx] != RHI_NULL)
+                    ? exposureRT_[expWriteIdx] : whiteTex_);
+            // t4: SSR reflections (RGBA16F), or black when disabled/unavailable
+            rhi()->cmd_set_texture(cmd, 4,
+                (ssrEnabled_ && ssrRT_ != RHI_NULL) ? ssrRT_ : blackTex_);
 
             rhi()->cmd_set_topology(cmd, RHI_TOPOLOGY_TRIANGLE_LIST);
             rhi()->cmd_draw(cmd, 3, 1, 0, 0);
@@ -1409,6 +1633,16 @@ FrameData Renderer::getLastFrameCopy() const {
 
 void Renderer::setSceneParams(SceneParams* params) {
     sceneParams_ = params;
+}
+
+void Renderer::setRenderPath(RenderPath path) {
+    if (path == renderPath_) return;
+    renderPath_ = path;
+    // Mark that deferred resources need (re)creation on the render thread.
+    // The render() method will lazily create G-Buffer targets + PSOs when
+    // it detects they're missing (gbufferPSO_ == RHI_NULL check already exists).
+    DIAG_FMT("Render path set to %s (lazy resource creation on next frame)",
+             path == RenderPath::Forward ? "Forward" : "Deferred");
 }
 
 void Renderer::shutdown() {
@@ -1686,6 +1920,36 @@ bool Renderer::createPipelineStates() {
         DIAG_FMT("gtao PSO => handle=%llu", (unsigned long long)gtaoPSO_);
     }
 
+    // ---- Auto Exposure PSO — 1x1 R16_FLOAT output ----
+    {
+        auto d = makePostProcDesc(RHI_FORMAT_R16_FLOAT);
+        d.debug_name = "AutoExposure_PSO";
+        autoExposurePSO_ = shaderLib_.get_or_create_pipeline("auto_exposure", d);
+        DIAG_FMT("auto_exposure PSO => handle=%llu", (unsigned long long)autoExposurePSO_);
+    }
+
+    // ---- SSR PSO — R11G11B10_FLOAT output ----
+    {
+        auto d = makePostProcDesc(RHI_FORMAT_R11G11B10_FLOAT);
+        d.debug_name = "SSR_PSO";
+        ssrPSO_ = shaderLib_.get_or_create_pipeline("ssr", d);
+        DIAG_FMT("ssr PSO => handle=%llu", (unsigned long long)ssrPSO_);
+    }
+    // ---- Hi-Z generation PSO — R32_FLOAT depth reduction ----
+    {
+        auto d = makePostProcDesc(RHI_FORMAT_R32_FLOAT);
+        d.debug_name = "HiZ_PSO";
+        hizPSO_ = shaderLib_.get_or_create_pipeline("hiz_generate", d);
+        DIAG_FMT("hiz PSO => handle=%llu", (unsigned long long)hizPSO_);
+    }
+    // ---- Color Grading PSO — RGBA8 output (final pass) ----
+    {
+        auto d = makePostProcDesc(RHI_FORMAT_RGBA8_UNORM);
+        d.debug_name = "ColorGrading_PSO";
+        colorGradingPSO_ = shaderLib_.get_or_create_pipeline("color_grading", d);
+        DIAG_FMT("color_grading PSO => handle=%llu", (unsigned long long)colorGradingPSO_);
+    }
+
     // ---- Deferred Shading PSOs ----
     if (renderPath_ == RenderPath::Deferred) {
         // G-Buffer write PSO — same vertex layout as PBR, 4 MRT outputs, depth write
@@ -1779,6 +2043,17 @@ void Renderer::destroyPostProcessTargets() {
     for (auto& h : taaHistory_) destroy(h);
     for (auto& m : bloomMips_) destroy(m);
     for (auto& g : gbufferRT_) destroy(g);
+    for (auto& e : exposureRT_) destroy(e);
+    destroy(ssrRT_);
+    for (auto& h : hizMips_) destroy(h);
+    if (exposureCBV_ != RHI_NULL) {
+        rhi()->buffer_destroy(exposureCBV_);
+        exposureCBV_ = RHI_NULL;
+    }
+    if (ssrCBV_ != RHI_NULL) {
+        rhi()->buffer_destroy(ssrCBV_);
+        ssrCBV_ = RHI_NULL;
+    }
     if (deferredLightCBV_ != RHI_NULL) {
         rhi()->buffer_destroy(deferredLightCBV_);
         deferredLightCBV_ = RHI_NULL;
@@ -1873,6 +2148,70 @@ bool Renderer::createPostProcessTargets() {
         bh /= 2;
     }
 
+    // Auto Exposure targets — 1x1 R16_FLOAT ping-pong pair
+    for (uint32_t i = 0; i < kExposureHistoryCount; ++i) {
+        RhiTextureDesc d{};
+        d.width = 1; d.height = 1; d.depth = 1;
+        d.mip_levels = 1; d.array_size = 1;
+        d.format    = RHI_FORMAT_R16_FLOAT;
+        d.dimension = RHI_TEXTURE_DIM_2D;
+        d.usage     = RHI_TEXTURE_USAGE_RENDER_TARGET | RHI_TEXTURE_USAGE_SHADER_READ;
+        d.debug_name = (i == 0) ? "Exposure_0" : "Exposure_1";
+        exposureRT_[i] = rhi()->texture_create(&d);
+        if (exposureRT_[i] == RHI_NULL) return false;
+    }
+    exposureWriteIdx_ = 0;
+
+    // Exposure CBV (for auto_exposure pass params)
+    if (exposureCBV_ == RHI_NULL) {
+        RhiBufferDesc cbvDesc{};
+        cbvDesc.size       = 256;
+        cbvDesc.usage      = RHI_BUFFER_USAGE_CONSTANT | RHI_BUFFER_USAGE_UPLOAD;
+        cbvDesc.debug_name = "ExposureCBV";
+        exposureCBV_ = rhi()->buffer_create(&cbvDesc);
+    }
+
+    // SSR render target — full resolution, RGBA16F (reflection color + confidence)
+    {
+        RhiTextureDesc d{};
+        d.width = width_; d.height = height_; d.depth = 1;
+        d.mip_levels = 1; d.array_size = 1;
+        d.format    = RHI_FORMAT_RGBA16_FLOAT;
+        d.dimension = RHI_TEXTURE_DIM_2D;
+        d.usage     = RHI_TEXTURE_USAGE_RENDER_TARGET | RHI_TEXTURE_USAGE_SHADER_READ;
+        d.debug_name = "SSR_RT";
+        ssrRT_ = rhi()->texture_create(&d);
+        if (ssrRT_ == RHI_NULL) return false;
+    }
+
+    // SSR CBV (for SSR pass params)
+    if (ssrCBV_ == RHI_NULL) {
+        RhiBufferDesc cbvDesc{};
+        cbvDesc.size       = 256;
+        cbvDesc.usage      = RHI_BUFFER_USAGE_CONSTANT | RHI_BUFFER_USAGE_UPLOAD;
+        cbvDesc.debug_name = "SSR_CBV";
+        ssrCBV_ = rhi()->buffer_create(&cbvDesc);
+    }
+
+    // Hi-Z mip chain — each mip is half the previous, min-depth reduction
+    {
+        uint32_t hw = width_;
+        uint32_t hh = height_;
+        for (uint32_t i = 0; i < kHiZMips; ++i) {
+            hw = std::max(hw / 2, 1u);
+            hh = std::max(hh / 2, 1u);
+            RhiTextureDesc d{};
+            d.width = hw; d.height = hh; d.depth = 1;
+            d.mip_levels = 1; d.array_size = 1;
+            d.format    = RHI_FORMAT_R32_FLOAT;
+            d.dimension = RHI_TEXTURE_DIM_2D;
+            d.usage     = RHI_TEXTURE_USAGE_RENDER_TARGET | RHI_TEXTURE_USAGE_SHADER_READ;
+            d.debug_name = "HiZ_Mip";
+            hizMips_[i] = rhi()->texture_create(&d);
+            if (hizMips_[i] == RHI_NULL) return false;
+        }
+    }
+
     // G-Buffer render targets (deferred path)
     if (renderPath_ == RenderPath::Deferred) {
         static const RhiFormat gbFormats[kGBufferCount] = {
@@ -1905,6 +2244,7 @@ bool Renderer::createPostProcessTargets() {
             deferredLightCBV_ = rhi()->buffer_create(&cbvDesc);
         }
 
+        gbufferReady_ = false;  // Reset barrier tracking after (re)creation
         DIAG_FMT("G-Buffer targets created: %ux%u (4 RTs)", width_, height_);
     }
 
@@ -1965,6 +2305,62 @@ void Renderer::performReadback() {
 size_t Renderer::loadEditorScene(std::vector<EditorNode> nodes) {
     const size_t count = editor_.loadNodes(std::move(nodes));
     return count;
+}
+
+void Renderer::gatherPunctualLights() {
+    punctualLightCount_ = 0;
+    if (!scene_) return;
+
+    for (uint32_t i = 1; i < scene_->next_id && punctualLightCount_ < kMaxPunctualLights; ++i) {
+        const SceneNode& sn = scene_->nodes[i];
+        if (!sn.alive) continue;
+
+        if (std::strcmp(sn.type_name, "PointLight") == 0) {
+            const auto* data = component_get<PointLightData>(&scene_->components, i);
+            if (!data) continue;
+
+            auto& gpu = punctualLights_[punctualLightCount_++];
+            gpu.posX = sn.world_transform.m[3][0];
+            gpu.posY = sn.world_transform.m[3][1];
+            gpu.posZ = sn.world_transform.m[3][2];
+            gpu.radius = data->radius;
+            gpu.colR = data->color.x;
+            gpu.colG = data->color.y;
+            gpu.colB = data->color.z;
+            gpu.intensity = data->intensity;
+            gpu.dirX = 0.0f; gpu.dirY = -1.0f; gpu.dirZ = 0.0f;
+            gpu.spotParams = 0.0f;  // point light: no spot cone
+        }
+        else if (std::strcmp(sn.type_name, "SpotLight") == 0) {
+            const auto* data = component_get<SpotLightData>(&scene_->components, i);
+            if (!data) continue;
+
+            auto& gpu = punctualLights_[punctualLightCount_++];
+            gpu.posX = sn.world_transform.m[3][0];
+            gpu.posY = sn.world_transform.m[3][1];
+            gpu.posZ = sn.world_transform.m[3][2];
+            gpu.radius = data->radius;
+            gpu.colR = data->color.x;
+            gpu.colG = data->color.y;
+            gpu.colB = data->color.z;
+            gpu.intensity = data->intensity;
+            // Transform light direction by world rotation
+            gpu.dirX = sn.world_transform.m[2][0] * data->direction.x
+                     + sn.world_transform.m[2][1] * data->direction.y
+                     + sn.world_transform.m[2][2] * data->direction.z;
+            gpu.dirY = sn.world_transform.m[1][0] * data->direction.x
+                     + sn.world_transform.m[1][1] * data->direction.y
+                     + sn.world_transform.m[1][2] * data->direction.z;
+            gpu.dirZ = sn.world_transform.m[0][0] * data->direction.x
+                     + sn.world_transform.m[0][1] * data->direction.y
+                     + sn.world_transform.m[0][2] * data->direction.z;
+            // Normalize direction
+            float len = std::sqrt(gpu.dirX*gpu.dirX + gpu.dirY*gpu.dirY + gpu.dirZ*gpu.dirZ);
+            if (len > 0.001f) { gpu.dirX /= len; gpu.dirY /= len; gpu.dirZ /= len; }
+            // spotParams = cos(outerAngle) — used for cone attenuation
+            gpu.spotParams = std::cos(data->outer_angle * 3.14159265f / 180.0f);
+        }
+    }
 }
 
 void Renderer::invalidateMaterialCache() {

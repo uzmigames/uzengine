@@ -3,6 +3,7 @@
 // ---------------------------------------------------------------------------
 #include "scene_bridge.h"
 
+#include "engine/renderer/core/render_path.h"
 #include "engine/scene/scene_loader.h"
 #include "engine/scene/scene_node.h"
 #include "engine/scene/component_registry.h"
@@ -170,6 +171,24 @@ void applyPendingScene(PendingSceneLoad& pending,
 
     // Swap scene ownership to the main scene pointer.
     sceneData = std::move(pending.scene);
+
+    // Apply render path from scene file (0 = Forward, 1 = Deferred).
+    renderer.setRenderPath(sceneData->render_path == 0
+        ? uz::RenderPath::Forward : uz::RenderPath::Deferred);
+
+    // Apply post-process settings from scene.
+    renderer.setAoParams(sceneData->ao_radius, sceneData->ao_intensity);
+    renderer.setContactShadows(sceneData->contact_shadows, sceneData->contact_shadow_length);
+    renderer.setTaaEnabled(sceneData->taa_enabled);
+    renderer.setAutoExposure(sceneData->exposure_mode == 0, sceneData->exposure_value);
+    renderer.setSsr(sceneData->ssr_enabled, sceneData->ssr_max_roughness);
+    renderer.setColorGrading(sceneData->color_temperature, sceneData->color_tint,
+                              sceneData->color_saturation, sceneData->color_contrast);
+    renderer.setCinematicPost(sceneData->chromatic_aberration, sceneData->vignette_intensity,
+                               sceneData->vignette_falloff, sceneData->film_grain_strength);
+    renderer.setDof(sceneData->dof_focus_distance, sceneData->dof_aperture, sceneData->dof_focal_length);
+    renderer.setFog(sceneData->fog_density, sceneData->fog_color,
+                     sceneData->fog_height_falloff, sceneData->fog_base_height, sceneData->fog_max_opacity);
 
     // GPU work: setScene does IBL cubemap generation + baking.
     // This is safe here because we're on the main render thread.

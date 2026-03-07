@@ -133,6 +133,31 @@ public:
     // Replace editor nodes (thread-safe delegate). For gizmo drag updates.
     void loadEditorNodes(std::vector<EditorNode> nodes) { editor_.loadNodes(std::move(nodes)); }
 
+    // Render path configuration (Forward or Deferred).
+    [[nodiscard]] RenderPath getRenderPath() const noexcept { return renderPath_; }
+    void setRenderPath(RenderPath path);
+
+    // Post-process tuning (set from scene properties or IPC).
+    void setAoParams(float radius, float intensity) { aoRadius_ = radius; aoIntensity_ = intensity; }
+    void setContactShadows(bool enabled, float length) { contactShadowsEnabled_ = enabled; contactShadowLength_ = length; }
+    void setTaaEnabled(bool e) { taaEnabled_ = e; }
+    void setAutoExposure(bool enabled, float manual) { autoExposureEnabled_ = enabled; manualExposure_ = manual; }
+    void setSsr(bool enabled, float maxRoughness) { ssrEnabled_ = enabled; ssrMaxRoughness_ = maxRoughness; }
+    void setColorGrading(float temp, float tint, float sat, float contrast) {
+        colorTemperature_ = temp; colorTint_ = tint; colorSaturation_ = sat; colorContrast_ = contrast;
+    }
+    void setCinematicPost(float ca, float vig, float vigFall, float grain) {
+        chromaticAberration_ = ca; vignetteIntensity_ = vig; vignetteFalloff_ = vigFall; filmGrainStrength_ = grain;
+    }
+    void setDof(float focus, float aperture, float focalLength) {
+        dofFocusDistance_ = focus; dofAperture_ = aperture; dofFocalLength_ = focalLength;
+    }
+    void setFog(float density, const float* color, float heightFalloff, float baseHeight, float maxOpacity) {
+        fogDensity_ = density;
+        fogColor_[0] = color[0]; fogColor_[1] = color[1]; fogColor_[2] = color[2];
+        fogHeightFalloff_ = heightFalloff; fogBaseHeight_ = baseHeight; fogMaxOpacity_ = maxOpacity;
+    }
+
     // Material Instance management (editor dynamic materials).
     MaterialInstanceManager& materialInstances() { return materialInstanceManager_; }
     MaterialManager&         materials()         { return materialManager_; }
@@ -199,12 +224,18 @@ private:
         {0.20f, 0.18f, 0.15f}, 0.0f,  // ground: dark neutral
     };
 
-    // Shadow map resources
-    RhiTexture  shadowMap_           = RHI_NULL;  // 2048×2048 D32 shadow depth
-    static constexpr uint32_t kShadowMapSize = 2048;
+    // CSM shadow atlas — 4 cascades in 4096x4096 atlas (1024x1024 per cascade)
+    RhiTexture  shadowMap_           = RHI_NULL;
+    static constexpr uint32_t kShadowAtlasSize = 4096;
+    static constexpr uint32_t kShadowMapSize   = 2048;  // backward compat constant
+    static constexpr uint32_t kCascadeCount    = 4;
+    static constexpr uint32_t kCascadeSize     = 1024;   // kShadowAtlasSize / 2
 
-    // Light-space matrix for shadow pass (orthographic, updated in update())
-    Mat4 lightSpaceMat_ = Mat4::identity();
+    // Per-cascade: light-space VP matrix + split distance
+    Mat4  cascadeVP_[kCascadeCount]      = {};
+    float cascadeSplitDist_[kCascadeCount] = {};
+    Mat4  lightSpaceMat_ = Mat4::identity();  // cascade 0 for backward compat
+    RhiBuffer cascadeCBV_ = RHI_NULL;         // CBV holding cascade VP matrices + splits
 
     // Shader library (named shader registry + PSO cache).
     ShaderLibrary shaderLib_;
@@ -246,6 +277,7 @@ private:
 
     // CPU-side FPS overlay.
     FPSOverlay fpsOverlay_;
+    float      lastDeltaTime_ = 0.016f;  // previous frame's delta (for auto exposure)
 
     // Cached clear color -- updated from sceneParams_ each frame in update().
     float clearR_ = 0.16f;
@@ -292,12 +324,64 @@ private:
     float lastSunDir_[3]     = {-1.f, -1.f, -1.f};
 
     // Render path selection (Forward or Deferred)
-    RenderPath renderPath_ = RenderPath::Forward;
+    RenderPath renderPath_ = RenderPath::Deferred;
+
+    // GTAO + Contact Shadows tuning (per-scene, set by scene loader / IPC)
+    float aoRadius_            = 0.5f;
+    float aoIntensity_         = 1.5f;
+    bool  contactShadowsEnabled_ = true;
+    float contactShadowLength_ = 0.1f;
+
+    // Auto Exposure state
+    RhiPipeline autoExposurePSO_  = RHI_NULL;
+    static constexpr uint32_t kExposureHistoryCount = 2;  // ping-pong
+    RhiTexture exposureRT_[kExposureHistoryCount] = {};   // 1x1 R16_FLOAT
+    uint32_t   exposureWriteIdx_ = 0;
+    bool       autoExposureEnabled_ = true;
+    float      manualExposure_      = 1.0f;  // used when auto exposure is off
+    RhiBuffer  exposureCBV_         = RHI_NULL;
+
+    // SSR state
+    RhiPipeline ssrPSO_         = RHI_NULL;
+    RhiPipeline hizPSO_         = RHI_NULL;
+    RhiTexture  ssrRT_          = RHI_NULL;  // Full-res R11G11B10_FLOAT SSR result
+    static constexpr uint32_t kHiZMips = 8;
+    RhiTexture  hizMips_[kHiZMips] = {};     // Hi-Z depth mip chain (R32_FLOAT)
+    RhiBuffer   ssrCBV_         = RHI_NULL;
+    bool        ssrEnabled_     = true;
+    float       ssrMaxRoughness_ = 0.5f;
+
+    // Color Grading state
+    RhiPipeline colorGradingPSO_ = RHI_NULL;
+    RhiTexture  identityLUT_     = RHI_NULL;  // 32x32x32 identity 3D LUT
+    float       colorTemperature_ = 0.0f;
+    float       colorTint_        = 0.0f;
+    float       colorSaturation_  = 1.0f;
+    float       colorContrast_    = 1.0f;
+
+    // Cinematic post state
+    float       chromaticAberration_ = 0.0f;
+    float       vignetteIntensity_ = 0.0f;
+    float       vignetteFalloff_   = 2.0f;
+    float       filmGrainStrength_ = 0.0f;
+
+    // DoF state
+    float       dofFocusDistance_ = 0.0f;   // 0 = disabled
+    float       dofAperture_     = 5.6f;
+    float       dofFocalLength_  = 50.0f;
+
+    // Volumetric fog state
+    float       fogDensity_       = 0.0f;   // 0 = disabled
+    float       fogColor_[3]      = {0.5f, 0.6f, 0.7f};
+    float       fogHeightFalloff_ = 0.5f;
+    float       fogBaseHeight_    = 0.0f;
+    float       fogMaxOpacity_    = 0.95f;
 
     // G-Buffer render targets (deferred path only)
     static constexpr uint32_t kGBufferCount = 4;
     RhiTexture gbufferRT_[kGBufferCount] = {};  // 0=AlbedoAO, 1=Normal, 2=Material, 3=Emission
     RhiBuffer  deferredLightCBV_ = RHI_NULL;    // Per-frame CBV for deferred lighting params
+    bool       gbufferReady_     = false;        // First-frame barrier state tracking
 
     // Post-process render targets
     RhiTexture hdrRT_         = RHI_NULL;  // Full-res R11G11B10_FLOAT scene color
@@ -329,6 +413,18 @@ private:
     bool       taaEnabled_  = true;                    // toggle
     float      taaJitterX_  = 0.0f;                   // current jitter in UV space
     float      taaJitterY_  = 0.0f;
+
+    // Punctual light buffer (uploaded to LightFrameCB alongside directional light data)
+    static constexpr uint32_t kMaxPunctualLights = 8;
+    struct GpuPunctualLight {
+        float posX, posY, posZ, radius;
+        float colR, colG, colB, intensity;
+        float dirX, dirY, dirZ, spotParams;  // spotParams=cosOuter for spot, 0 for point
+    };
+    uint32_t        punctualLightCount_ = 0;
+    GpuPunctualLight punctualLights_[kMaxPunctualLights] = {};
+
+    void gatherPunctualLights();  // Collects point/spot lights from activeScene_
 
 #ifdef UZ_EDITOR
 public:

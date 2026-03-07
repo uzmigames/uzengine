@@ -6,6 +6,78 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **Screen-Space Reflections (SSR)** — deferred-only Hi-Z accelerated ray marching
+  - Hi-Z depth mip chain generation (8 mips, R32_FLOAT, iterative min-depth reduction)
+  - 32-step ray march with 4-step binary refinement, Fresnel weighting, screen-edge fade
+  - SSR result composited additively in composite pass (t4 binding, weighted by confidence alpha)
+  - Per-scene toggle: `ssr_enabled`, `ssr_max_roughness` (default 0.5)
+  - New shaders: `ssr.ps.hlsl`, `hiz_generate.ps.hlsl`
+
+- **Cascaded Shadow Maps (CSM)** — 4-cascade PSSM directional shadow atlas
+  - 4096x4096 shadow atlas (2x2 grid of 1024x1024 quadrants)
+  - PSSM split scheme (lambda=0.75 log/linear blend) computed per frame
+  - Per-cascade orthographic view-projection matrices
+  - Shadow depth pass renders all 4 cascades with separate viewport/scissor rects
+  - PCF sampling maps into cascade 0 quadrant (16-tap Poisson with distance-based penumbra)
+
+- **Point + Spot Lights** — up to 8 punctual lights per scene
+  - `PointLightData` component: color, intensity (10.0), radius (10.0)
+  - `SpotLightData` component: color, intensity, radius, inner/outer cone angles, direction
+  - UE5-style inverse-square attenuation with smooth radius falloff: `saturate(1-(d/r)^4)^2 / (d²+1)`
+  - Spot cone smoothstep attenuation between inner and outer angles
+  - Extended LightFrameCB (512 bytes): 16 DWORDs directional + 4 count/pad + 96 punctual
+  - Full ComponentRegistry integration with property parsing
+  - `gatherPunctualLights()` traverses scene nodes via ComponentStore
+
+- **Color Grading** — post-tonemap color adjustments in composite pass
+  - White balance (temperature/tint approximation)
+  - Contrast adjustment (centered on 0.18 mid-gray)
+  - Saturation control (luminance-preserving)
+  - Per-scene properties: `color_temperature`, `color_tint`, `color_saturation`, `color_contrast`
+
+- **Cinematic Post-Process** — film-quality effects in composite pass
+  - Chromatic aberration: per-channel radial UV offset
+  - Vignette: smooth radial darkening with configurable intensity + falloff
+  - Film grain: pseudo-random noise overlay
+  - Per-scene properties: `chromatic_aberration`, `vignette_intensity`, `vignette_falloff`, `film_grain_strength`
+
+- **Depth of Field (DoF)** — thin lens model CoC + variable blur
+  - Circle of Confusion shader (`dof_coc.ps.hlsl`): signed CoC in pixels from depth
+  - Variable-width separable Gaussian blur (`dof_blur.ps.hlsl`) weighted by CoC
+  - Bilateral filtering prevents sharp/blurred bleeding across depth edges
+  - Per-scene properties: `dof_focus_distance`, `dof_aperture`, `dof_focal_length`
+
+- **Volumetric Fog** — height-based exponential + distance fog
+  - Beer-Lambert distance extinction + exponential height falloff
+  - Directional light inscattering (Henyey-Greenstein phase function, g=0.7)
+  - World position reconstruction from depth via invViewProj
+  - Per-scene properties: `fog_density`, `fog_color`, `fog_height_falloff`, `fog_base_height`, `fog_max_opacity`
+  - New shader: `volumetric_apply.ps.hlsl`
+
+- **Anisotropic Materials** — directional roughness for brushed metal/carbon fiber
+  - `D_GGX_Anisotropic` NDF (Burley 2012): separate ax/ay roughness
+  - `Vis_SmithJoint_Anisotropic` visibility (Heitz 2014 height-correlated)
+  - MaterialCB fields: `anisotropy` (-1..1) and `anisotropyRotation` (radians)
+  - Tangent direction rotation in PSMain, branch in EvaluateDirectLight
+  - Applied to both directional and punctual light evaluation
+
+- **Subsurface Scattering Blur** — shader infrastructure for skin/wax/marble
+  - Separable SSS blur (`sss_blur.ps.hlsl`) based on Jimenez 2015
+  - Burley normalized profile kernel (5 samples per side)
+  - Bilateral depth weighting to prevent bleeding across depth edges
+
+- **Screen-Space Decals** — shader infrastructure for deferred decal projection
+  - Decal projection shader (`decal.ps.hlsl`): depth reconstruct + OBB volume test
+  - Outputs albedo/normal/material modifications to G-Buffer MRT
+
+- **Extended Composite Pass** — 16-DWORD CompositeParams cbuffer
+  - Exposure (4 DWORDs) + color grading (4) + cinematic (4) + DoF (4)
+  - SSR blending via t4 texture binding
+
+- **Scene Properties** — all new rendering features exposed as scene-level properties
+  - SSR, color grading, cinematic, DoF, fog properties parsed in scene_loader.cpp
+  - Default initialization in scene_manager.cpp after memset
+
 - **Deferred Shading Pipeline** — configurable Forward/Deferred render path (UE5/Godot-style)
   - `RenderPath` enum (`Forward` / `Deferred`) — selectable at init time, forward default
   - G-Buffer write pass (`gbuffer_write.ps.hlsl`): 4 MRT outputs — AlbedoAO (RGBA8), OctNormal (RGB10A2), Material (RGBA8), Emission (R11G11B10F) — 16 bytes/pixel
