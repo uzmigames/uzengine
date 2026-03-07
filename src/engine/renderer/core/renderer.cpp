@@ -476,10 +476,21 @@ void Renderer::update(double totalTime, double deltaTime) {
                     if (!proxy->material_slots_[0].instance &&
                         data->material_path[0] != '\0') {
                         std::string resolved = resolve_path(data->material_path);
-                        proxy->material_slots_[0].material = materialManager_.load(resolved);
-                        if (!proxy->material_slots_[0].material) {
-                            DIAG_FMT("Renderer: FAILED to load material '%s' (resolved='%s')",
-                                     data->material_path, resolved.c_str());
+                        if (is_graph_material_path(resolved)) {
+                            // Shader graph material: compile .uzshader → HLSL → Material.
+                            std::string graph_path = strip_graph_prefix(resolved);
+                            proxy->material_slots_[0].material =
+                                graphLoader_.load_graph_material(graph_path, shaderLib_, materialManager_);
+                            if (!proxy->material_slots_[0].material) {
+                                DIAG_FMT("Renderer: FAILED to load graph material '%s'",
+                                         data->material_path);
+                            }
+                        } else {
+                            proxy->material_slots_[0].material = materialManager_.load(resolved);
+                            if (!proxy->material_slots_[0].material) {
+                                DIAG_FMT("Renderer: FAILED to load material '%s' (resolved='%s')",
+                                         data->material_path, resolved.c_str());
+                            }
                         }
                     }
                 }

@@ -1,0 +1,65 @@
+[uzscene]
+name = Shader Graph Demo
+version = 1
+
+[node]
+name = Sky
+type = SkyAtmosphere
+sky_zenith  = 0.02 0.05 0.35
+sky_horizon = 0.18 0.38 0.78
+sky_haze    = 0.50 0.40 0.28
+sky_ground  = 0.15 0.13 0.11
+fog_density = 0.0
+
+[node]
+name = Camera
+type = Camera
+position = 0 2.5 -6
+fov = 45
+near = 0.1
+far = 500
+
+[node]
+name = Sun
+type = DirectionalLight
+rotation = 0.3 0.2 0.0 0.93
+light_color = 1.0 0.97 0.92
+light_intensity = 3.5
+
+[node]
+name = Demo Sphere
+type = StaticMesh
+position = 0 1.5 0
+scale = 1.5 1.5 1.5
+mesh = assets/meshes/sphere.gltf
+material = graph:assets/shader_graphs/demo_material.uzshader
+
+[node]
+name = Demo Cube
+type = StaticMesh
+position = -3 1.0 0
+scale = 1.2 1.2 1.2
+mesh = assets/meshes/cube.gltf
+material = assets/materials/gold.uzmat
+
+[node]
+name = Demo Cube 2
+type = StaticMesh
+position = 3 1.0 0
+scale = 1.2 1.2 1.2
+mesh = assets/meshes/cube.gltf
+material = assets/materials/iron.uzmat
+
+[node]
+name = Ground
+type = StaticMesh
+position = 0 0.01 0
+scale = 1 1 1
+mesh = assets/meshes/plane.gltf
+material = assets/materials/checker.uzmat
+
+[editor]
+camera_position = 0 3.0 -8
+camera_yaw = 0.0
+camera_pitch = -0.15
+camera_speed = 5.0

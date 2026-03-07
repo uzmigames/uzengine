@@ -36,6 +36,10 @@
 #ifdef UZ_EDITOR
 #include "engine/editor/asset_registry.h"
 #include "engine/editor/ipc_asset_handlers.h"
+#include "engine/editor/ipc_shader_cmd_handlers.h"
+#include "engine/renderer/shader_graph/shader_graph.h"
+#include "engine/renderer/shader_graph/graph_ops.h"
+#include "engine/renderer/shader_graph/commands/command_executor.h"
 #endif
 
 #include <windows.h>
@@ -2033,6 +2037,12 @@ int WINAPI WinMain(
         OutputDebugStringA(dbg);
     }
     uz::asset_register_handlers(ipcRegistry, &assetRegistry);
+
+    // -- Shader Graph Command Interface (editor only) -------------------------
+    uz::sg::ShaderGraph shaderGraph;
+    uz::sg::GraphOps shaderGraphOps(shaderGraph);
+    uz::sg::CommandExecutor shaderCmdExecutor(shaderGraphOps);
+    uz::shader_cmd_register_handlers(ipcRegistry, &shaderCmdExecutor);
 #endif
 
     uz::IpcPoller ipcPoller(ipcBaseDir, ipcRegistry, g_scene, g_metrics);

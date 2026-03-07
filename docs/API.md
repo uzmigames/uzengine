@@ -229,7 +229,26 @@ All responses include `ok: bool`.
 |---------|------|----------|-------------|
 | `shader.reload` | `name: string` | `ok` | Hot-reload shader (stub) |
 
-### 2.7 Diagnostics & Logging
+### 2.7 Shader Graph Commands
+
+| Command | Args | Response | Description |
+|---------|------|----------|-------------|
+| `shader_cmd.execute` | `type: string, params: object` | `ok, data?, error?, events?` | Execute a single shader graph command (ADD_NODE, DELETE_NODE, CONNECT, DISCONNECT, SET_PARAM, INSERT_BETWEEN, REPLACE_NODE, EXPOSE_PARAM, COMPILE, QUERY) |
+| `shader_cmd.batch` | `commands: [{type, params}]` | `ok, results?, error?, events?` | Execute a batch of commands with rollback on failure. Supports `$0`/`$1` variable references to previous batch result nodeIds |
+| `shader_cmd.query` | `query: string, ...params` | `ok, data?, error?` | Convenience wrapper for QUERY commands. query: "graph", "node", "findNodes", "nodeTypes", "connection" |
+
+### 2.8 Shader Graph Preview
+
+| Command | Args | Response | Description |
+|---------|------|----------|-------------|
+| `shader_graph.preview` | `width?, height?` | `ok, viewportId` | Get preview status/viewport ID |
+| `shader_graph.stopPreview` | _(none)_ | `ok` | Stop the preview viewport |
+| `shader_graph.setPreviewMesh` | `mesh: "sphere"\|"cube"\|"plane"` | `ok` | Change preview geometry |
+| `shader_graph.setPreviewCamera` | `yaw?, pitch?, distance?, autoRotate?` | `ok` | Control preview camera |
+| `shader_graph.setPreviewParam` | `name: string, value: number\|number[]\|string` | `ok` | Update material parameter without recompilation |
+| `shader_graph.compile` | _(none)_ | `ok, vertexHlsl?, pixelHlsl?, errors?` | Manual compilation trigger, returns generated HLSL |
+
+### 2.9 Diagnostics & Logging
 
 | Command | Args | Response | Description |
 |---------|------|----------|-------------|
@@ -237,7 +256,7 @@ All responses include `ok: bool`.
 | `unsubscribe_logs` | `id: string` | `ok` | Unsubscribe from logs |
 | `get_error_buffer` | _(none)_ | `errors: [...]` | Get buffered errors |
 
-### 2.8 GPU Introspection
+### 2.10 GPU Introspection
 
 | Command | Args | Response | Description |
 |---------|------|----------|-------------|

@@ -21,6 +21,7 @@
 #include "engine/renderer/resources/material_instance.h"
 #include "engine/renderer/resources/mesh_manager.h"
 #include "engine/renderer/resources/ibl_baker.h"
+#include "engine/renderer/resources/graph_material_loader.h"
 #include "engine/renderer/scene/scene_proxy.h"
 #include "engine/renderer/components/editor_component.h"
 #include "engine/renderer/components/camera_component.h"
@@ -309,6 +310,7 @@ private:
     // Material and Proxy management
     MaterialManager         materialManager_;
     MaterialInstanceManager materialInstanceManager_;
+    GraphMaterialLoader     graphLoader_;  // Shader graph → Material bridge
     MeshManager             meshManager_;
     std::vector<ISceneProxy*> proxies_;
     std::vector<uint32_t>   proxy_node_ids_;   // node ID per proxy

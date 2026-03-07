@@ -199,6 +199,9 @@ list(FILTER TEST_ENGINE_SOURCES EXCLUDE REGEX "engine/renderer/resources/materia
 list(FILTER TEST_ENGINE_SOURCES EXCLUDE REGEX "engine/renderer/components/")
 list(FILTER TEST_ENGINE_SOURCES EXCLUDE REGEX "engine/renderer/proxies/")
 list(FILTER TEST_ENGINE_SOURCES EXCLUDE REGEX "engine/renderer/gizmos/")
+list(FILTER TEST_ENGINE_SOURCES EXCLUDE REGEX "engine/renderer/preview/")
+# shader_graph_manager.cpp re-included — only depends on platform.h + nlohmann/json (both in test binary)
+list(FILTER TEST_ENGINE_SOURCES EXCLUDE REGEX "engine/editor/ipc_preview_handlers\\.cpp$")
 # Common sources — exclude stb_impl.cpp (needs external/stb) and ipc_poller.cpp (needs ixwebsocket)
 file(GLOB_RECURSE TEST_COMMON_SOURCES CONFIGURE_DEPENDS
     src/common/*.cpp

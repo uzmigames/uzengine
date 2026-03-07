@@ -589,6 +589,61 @@ code --uninstall-extension uzmigames.uzengine
 
 ---
 
+## Shader Graph Commands
+
+The extension can interact with the shader graph system via IPC. These commands
+create, edit, and compile node-based shader graphs without writing HLSL.
+
+### IPC Handlers
+
+| Handler | Description |
+|---------|-------------|
+| `shader_cmd.execute` | Execute a single graph command |
+| `shader_cmd.batch` | Execute multiple commands with rollback on failure |
+| `shader_cmd.query` | Query graph state (nodes, connections, types) |
+
+### Example: Create and Compile a Graph
+
+```typescript
+// Via IPC client
+await ipcClient.send('shader_cmd.batch', {
+  commands: [
+    { type: 'ADD_NODE', params: { nodeType: 'MaterialOutput' } },
+    { type: 'ADD_NODE', params: { nodeType: 'Constant3' } },
+    { type: 'SET_PARAM', params: { nodeId: '$1', key: 'value', value: [1.0, 0.0, 0.0] } },
+    { type: 'CONNECT', params: { fromNode: '$1', fromOutput: 0, toNode: '$0', toInput: 0 } },
+    { type: 'COMPILE' }
+  ]
+});
+```
+
+`$0`/`$1` are variable references resolving to `nodeId` from earlier batch results.
+
+### Preview Controls
+
+| Handler | Description |
+|---------|-------------|
+| `shader_graph.preview` | Get preview viewport status |
+| `shader_graph.stopPreview` | Stop preview viewport |
+| `shader_graph.setPreviewMesh` | Set preview mesh (sphere/cube/plane) |
+| `shader_graph.setPreviewCamera` | Control preview orbit camera |
+| `shader_graph.setPreviewParam` | Update material parameter without recompile |
+| `shader_graph.compile` | Manual compilation trigger |
+
+### Available Node Types
+
+Constants: `Constant1`, `Constant3`, `Constant4`
+Parameters: `ScalarParam`, `VectorParam`, `TextureParam`
+Math: `Add`, `Subtract`, `Multiply`, `Divide`, `Lerp`, `Dot`, `Normalize`, `Power`
+Texture: `TextureSample`
+Utility: `Append`, `ComponentMask`, `Time`, `UV`
+Output: `MaterialOutput` (8 PBR inputs)
+
+See [Shader Editor Usage Guide](shader-editor-usage.md) for detailed recipes and the
+full command reference in [API Reference](../API.md#27-shader-graph-commands).
+
+---
+
 ## Further Reading
 
 - [VSCode Extension API](https://code.visualstudio.com/api)

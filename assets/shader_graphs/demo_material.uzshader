@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "output_node_id": 1,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "MaterialOutput",
+      "x": 600.0,
+      "y": 200.0,
+      "inputs": []
+    },
+    {
+      "id": 2,
+      "type": "Constant3",
+      "x": 100.0,
+      "y": 100.0,
+      "inputs": [],
+      "params": {
+        "value": [0.8, 0.2, 0.1]
+      }
+    },
+    {
+      "id": 3,
+      "type": "ScalarParam",
+      "x": 100.0,
+      "y": 250.0,
+      "inputs": [],
+      "params": {
+        "param_name": "Metallic",
+        "default": 0.9
+      }
+    },
+    {
+      "id": 4,
+      "type": "ScalarParam",
+      "x": 100.0,
+      "y": 350.0,
+      "inputs": [],
+      "params": {
+        "param_name": "Roughness",
+        "default": 0.3
+      }
+    },
+    {
+      "id": 5,
+      "type": "TextureParam",
+      "x": -100.0,
+      "y": 500.0,
+      "inputs": [],
+      "params": {
+        "param_name": "NoiseTex",
+        "default_path": "assets/textures/Noise/perlin_256.png"
+      }
+    },
+    {
+      "id": 6,
+      "type": "TextureSample",
+      "x": 100.0,
+      "y": 500.0,
+      "inputs": []
+    },
+    {
+      "id": 7,
+      "type": "Constant3",
+      "x": 100.0,
+      "y": 650.0,
+      "inputs": [],
+      "params": {
+        "value": [0.1, 0.4, 1.0]
+      }
+    },
+    {
+      "id": 8,
+      "type": "Multiply",
+      "x": 300.0,
+      "y": 550.0,
+      "inputs": []
+    }
+  ],
+  "connections": [
+    { "from": 2, "fromOutput": 0, "to": 1, "toInput": 0 },
+    { "from": 3, "fromOutput": 0, "to": 1, "toInput": 1 },
+    { "from": 4, "fromOutput": 0, "to": 1, "toInput": 2 },
+    { "from": 5, "fromOutput": 0, "to": 6, "toInput": 0 },
+    { "from": 6, "fromOutput": 1, "to": 8, "toInput": 0 },
+    { "from": 7, "fromOutput": 0, "to": 8, "toInput": 1 },
+    { "from": 8, "fromOutput": 0, "to": 1, "toInput": 4 }
+  ]
+}
