@@ -116,6 +116,8 @@ void MeshProxy::cache_slot(MaterialSlot& slot, const DefaultMaterialSlot* defaul
         slot.specular_multiplier = get_float("specular_multiplier", slot.specular_multiplier);
         slot.self_shadow_strength = get_float("self_shadow_strength", slot.self_shadow_strength);
         slot.cavity_strength     = get_float("cavity_strength", slot.cavity_strength);
+        slot.anisotropy          = get_float("anisotropy", slot.anisotropy);
+        slot.anisotropy_rotation = get_float("anisotropy_rotation", slot.anisotropy_rotation);
 
         // UV tiling
         slot.uv_tiling[0] = get_float("uv_tiling", slot.uv_tiling[0]);
@@ -167,6 +169,8 @@ void MeshProxy::cache_slot(MaterialSlot& slot, const DefaultMaterialSlot* defaul
         get_float("specular_multiplier", slot.specular_multiplier);
         get_float("self_shadow_strength", slot.self_shadow_strength);
         get_float("cavity_strength", slot.cavity_strength);
+        get_float("anisotropy", slot.anisotropy);
+        get_float("anisotropy_rotation", slot.anisotropy_rotation);
 
         // UV tiling: single float sets both U and V; vec2 sets independently
         auto tiling_it = slot.material->parameters.find("uv_tiling");
@@ -195,7 +199,7 @@ void MeshProxy::upload_slot_cbv(MaterialSlot& slot) {
         slot.roughness, slot.ao, slot.parallax_scale, slot.emission_energy,
         slot.emission[0], slot.emission[1], slot.emission[2], slot.env_multiplier,
         slot.normal_strength, slot.specular_multiplier, slot.uv_tiling[0], slot.uv_tiling[1],
-        slot.self_shadow_strength, slot.cavity_strength, 0.0f, 0.0f
+        slot.self_shadow_strength, slot.cavity_strength, slot.anisotropy, slot.anisotropy_rotation
     };
     if (slot.cbv == RHI_NULL) {
         RhiBufferDesc cbvDesc{};

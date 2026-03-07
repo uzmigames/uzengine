@@ -31,6 +31,8 @@ struct MaterialSlot {
     float uv_tiling[2]        = {1.0f, 1.0f};
     float self_shadow_strength = 1.0f;
     float cavity_strength      = 0.35f;
+    float anisotropy           = 0.0f;
+    float anisotropy_rotation  = 0.0f;
 
     // Cached texture handles.
     RhiTexture albedo_tex       = RHI_NULL;

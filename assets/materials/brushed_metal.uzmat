@@ -1,0 +1,8 @@
+[material]
+name = BrushedMetal
+shader = pbr
+albedo = [0.72, 0.72, 0.72]
+metallic = 1.0
+roughness = 0.25
+anisotropy = 0.8
+anisotropy_rotation = 0.0

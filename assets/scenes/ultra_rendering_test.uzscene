@@ -1,0 +1,341 @@
+[uzscene]
+name = Ultra Rendering Test
+version = 1
+
+# ──────────────────────────────────────────────────────────────────────────────
+# RENDER PATH
+# ──────────────────────────────────────────────────────────────────────────────
+render_path = forward
+
+# ──────────────────────────────────────────────────────────────────────────────
+# SCREEN-SPACE REFLECTIONS
+# ──────────────────────────────────────────────────────────────────────────────
+ssr_enabled = true
+ssr_max_roughness = 0.4
+
+# ──────────────────────────────────────────────────────────────────────────────
+# COLOR GRADING
+# ──────────────────────────────────────────────────────────────────────────────
+color_temperature = 6500
+color_tint = 0.0
+color_saturation = 1.15
+color_contrast = 1.05
+
+# ──────────────────────────────────────────────────────────────────────────────
+# CINEMATIC POST-PROCESS
+# ──────────────────────────────────────────────────────────────────────────────
+chromatic_aberration = 0.004
+vignette_intensity = 0.35
+vignette_falloff = 2.5
+film_grain_strength = 0.02
+
+# ──────────────────────────────────────────────────────────────────────────────
+# DEPTH OF FIELD
+# Focus at 6 m (center of the scene), aperture f/2.0, 35 mm lens
+# ──────────────────────────────────────────────────────────────────────────────
+dof_focus_distance = 6.0
+dof_aperture = 2.0
+dof_focal_length = 35.0
+
+# ──────────────────────────────────────────────────────────────────────────────
+# VOLUMETRIC FOG
+# Thin morning-haze fog rising from ground level
+# ──────────────────────────────────────────────────────────────────────────────
+fog_density = 0.018
+fog_color = 0.75 0.82 0.92
+fog_height_falloff = 0.18
+fog_base_height = -0.5
+fog_max_opacity = 0.55
+
+# ──────────────────────────────────────────────────────────────────────────────
+# TAA
+# ──────────────────────────────────────────────────────────────────────────────
+taa_enabled = true
+
+# ──────────────────────────────────────────────────────────────────────────────
+# SCENE NODES
+# ──────────────────────────────────────────────────────────────────────────────
+
+# ── Sky ────────────────────────────────────────────────────────────────────────
+[node]
+name = Sky Atmosphere
+type = SkyAtmosphere
+sky_zenith  = 0.04 0.08 0.30
+sky_horizon = 0.35 0.55 0.85
+sky_haze    = 0.75 0.65 0.45
+sky_ground  = 0.22 0.20 0.18
+fog_density = 0.0
+
+# ── Camera ─────────────────────────────────────────────────────────────────────
+[node]
+name = Main Camera
+type = Camera
+position = 0 2.2 -11
+rotation = 0 0 0 1
+fov = 55
+near = 0.1
+far = 300
+
+# ── Directional Sun (CSM 4-cascade) ───────────────────────────────────────────
+[node]
+name = Sun
+type = DirectionalLight
+rotation = 0.28 0.12 0.0 0.952
+light_color = 1.0 0.95 0.82
+light_intensity = 4.0
+
+# ── Point Lights (punctual light showcase) ────────────────────────────────────
+[node]
+name = RedPointLight
+type = PointLight
+position = -4.5 2.5 0
+light_color = 1.0 0.15 0.05
+light_intensity = 30.0
+light_radius = 6.0
+
+[node]
+name = BluePointLight
+type = PointLight
+position = 4.5 2.5 0
+light_color = 0.05 0.25 1.0
+light_intensity = 30.0
+light_radius = 6.0
+
+[node]
+name = GreenPointLight
+type = PointLight
+position = 0 2.5 3.5
+light_color = 0.1 1.0 0.2
+light_intensity = 20.0
+light_radius = 5.0
+
+# ── Spot Light ────────────────────────────────────────────────────────────────
+[node]
+name = SpotLight
+type = SpotLight
+position = 0 6.0 -2.0
+light_color = 1.0 0.92 0.75
+light_intensity = 80.0
+light_radius = 10.0
+inner_angle = 20.0
+outer_angle = 35.0
+light_direction = 0 -1 0.3
+
+# ──────────────────────────────────────────────────────────────────────────────
+# MATERIAL SHOWCASE ROW 1 — Metals (shows SSR, CSM shadows, punctual lights)
+#   chrome, gold, copper, iron, silver, titanium
+# ──────────────────────────────────────────────────────────────────────────────
+[node]
+name = Chrome Sphere
+type = StaticMesh
+position = -6.25 1.2 0
+scale = 1.1 1.1 1.1
+mesh = assets/meshes/sphere.gltf
+material = assets/materials/chrome.uzmat
+
+[node]
+name = Gold Sphere
+type = StaticMesh
+position = -3.75 1.2 0
+scale = 1.1 1.1 1.1
+mesh = assets/meshes/sphere.gltf
+material = assets/materials/gold.uzmat
+
+[node]
+name = Copper Sphere
+type = StaticMesh
+position = -1.25 1.2 0
+scale = 1.1 1.1 1.1
+mesh = assets/meshes/sphere.gltf
+material = assets/materials/copper.uzmat
+
+[node]
+name = Iron Sphere
+type = StaticMesh
+position = 1.25 1.2 0
+scale = 1.1 1.1 1.1
+mesh = assets/meshes/sphere.gltf
+material = assets/materials/iron.uzmat
+
+[node]
+name = Silver Sphere
+type = StaticMesh
+position = 3.75 1.2 0
+scale = 1.1 1.1 1.1
+mesh = assets/meshes/sphere.gltf
+material = assets/materials/silver.uzmat
+
+[node]
+name = Titanium Sphere
+type = StaticMesh
+position = 6.25 1.2 0
+scale = 1.1 1.1 1.1
+mesh = assets/meshes/sphere.gltf
+material = assets/materials/titanium.uzmat
+
+# ──────────────────────────────────────────────────────────────────────────────
+# MATERIAL SHOWCASE ROW 2 — Dielectrics / textured (POM, shadows)
+#   marble, stonebricks, concrete, wood, rust, sand
+# ──────────────────────────────────────────────────────────────────────────────
+[node]
+name = Marble Sphere
+type = StaticMesh
+position = -6.25 3.6 2.0
+scale = 1.1 1.1 1.1
+mesh = assets/meshes/sphere.gltf
+material = assets/materials/marble.uzmat
+
+[node]
+name = StoneBricks Sphere
+type = StaticMesh
+position = -3.75 3.6 2.0
+scale = 1.1 1.1 1.1
+mesh = assets/meshes/sphere.gltf
+material = assets/materials/stonebricks.uzmat
+
+[node]
+name = Concrete Sphere
+type = StaticMesh
+position = -1.25 3.6 2.0
+scale = 1.1 1.1 1.1
+mesh = assets/meshes/sphere.gltf
+material = assets/materials/concrete.uzmat
+
+[node]
+name = Wood Sphere
+type = StaticMesh
+position = 1.25 3.6 2.0
+scale = 1.1 1.1 1.1
+mesh = assets/meshes/sphere.gltf
+material = assets/materials/wood.uzmat
+
+[node]
+name = Rust Sphere
+type = StaticMesh
+position = 3.75 3.6 2.0
+scale = 1.1 1.1 1.1
+mesh = assets/meshes/sphere.gltf
+material = assets/materials/rust.uzmat
+
+[node]
+name = Sand Sphere
+type = StaticMesh
+position = 6.25 3.6 2.0
+scale = 1.1 1.1 1.1
+mesh = assets/meshes/sphere.gltf
+material = assets/materials/sand.uzmat
+
+# ──────────────────────────────────────────────────────────────────────────────
+# ANISOTROPIC MATERIAL SHOWCASE
+# 3 brushed-metal spheres with different anisotropy_rotation angles
+# to show the directional specular highlight "grain" clearly
+# ──────────────────────────────────────────────────────────────────────────────
+[node]
+name = BrushedMetal 0deg
+type = StaticMesh
+position = -2.0 6.0 3.5
+scale = 1.2 1.2 1.2
+mesh = assets/meshes/sphere.gltf
+material = assets/materials/brushed_metal.uzmat
+
+[node]
+name = BrushedMetal 45deg
+type = StaticMesh
+position = 0 6.0 3.5
+scale = 1.2 1.2 1.2
+mesh = assets/meshes/sphere.gltf
+material = assets/materials/brushed_metal.uzmat
+
+[node]
+name = BrushedMetal 90deg
+type = StaticMesh
+position = 2.0 6.0 3.5
+scale = 1.2 1.2 1.2
+mesh = assets/meshes/sphere.gltf
+material = assets/materials/brushed_metal.uzmat
+
+# ──────────────────────────────────────────────────────────────────────────────
+# EMISSIVE OBJECTS (bloom source)
+# ──────────────────────────────────────────────────────────────────────────────
+[node]
+name = NeonOrange Sphere
+type = StaticMesh
+position = -5.5 1.2 4.5
+scale = 0.7 0.7 0.7
+mesh = assets/meshes/sphere.gltf
+material = assets/materials/chrome.uzmat
+
+[node]
+name = NeonBlue Sphere
+type = StaticMesh
+position = 5.5 1.2 4.5
+scale = 0.7 0.7 0.7
+mesh = assets/meshes/sphere.gltf
+material = assets/materials/chrome.uzmat
+
+# ──────────────────────────────────────────────────────────────────────────────
+# GROUND PLANE (SSR reflections, CSM shadow receiver)
+# Wide reflective checker floor to show SSR working
+# ──────────────────────────────────────────────────────────────────────────────
+[node]
+name = Ground
+type = StaticMesh
+position = 0 0 0
+scale = 1 1 1
+mesh = assets/meshes/plane.gltf
+material = assets/materials/checker.uzmat
+
+# ──────────────────────────────────────────────────────────────────────────────
+# BACK WALL (near-far depth variation for DoF/fog)
+# ──────────────────────────────────────────────────────────────────────────────
+[node]
+name = Back Wall Left
+type = StaticMesh
+position = -8.0 3.0 12.0
+scale = 0.8 0.8 0.8
+mesh = assets/meshes/sphere.gltf
+material = assets/materials/concrete.uzmat
+
+[node]
+name = Back Wall Right
+type = StaticMesh
+position = 8.0 3.0 12.0
+scale = 0.8 0.8 0.8
+mesh = assets/meshes/sphere.gltf
+material = assets/materials/stonebricks.uzmat
+
+[node]
+name = Back Wall Center
+type = StaticMesh
+position = 0 3.0 14.0
+scale = 1.0 1.0 1.0
+mesh = assets/meshes/sphere.gltf
+material = assets/materials/marble.uzmat
+
+# ──────────────────────────────────────────────────────────────────────────────
+# FOREGROUND CLOSE OBJECTS (DoF near blur)
+# ──────────────────────────────────────────────────────────────────────────────
+[node]
+name = Foreground Left
+type = StaticMesh
+position = -3.0 1.2 -8.0
+scale = 0.6 0.6 0.6
+mesh = assets/meshes/sphere.gltf
+material = assets/materials/gold_paint.uzmat
+
+[node]
+name = Foreground Right
+type = StaticMesh
+position = 3.0 1.2 -8.0
+scale = 0.6 0.6 0.6
+mesh = assets/meshes/sphere.gltf
+material = assets/materials/metal_corroded.uzmat
+
+# ──────────────────────────────────────────────────────────────────────────────
+# EDITOR CAMERA STATE
+# ──────────────────────────────────────────────────────────────────────────────
+[editor]
+camera_position = 0 3.5 -14
+camera_yaw = 0.0
+camera_pitch = -0.12
+camera_speed = 6.0
