@@ -196,41 +196,11 @@ bool Renderer::init(void* window_handle, uint32_t width, uint32_t height) {
             DIAG("WARNING: BRDF LUT generation failed — IBL specular disabled");
     }
 
-    // Generate sky IBL cubemaps (env → GPU compute irradiance + prefiltered).
-    DIAG("generate_sky_cubemaps() + GPU IBL bake...");
-    {
-        SkyCubemapParams skyParams{};
-        skyParams.sky_zenith[0]  = 0.18f; skyParams.sky_zenith[1]  = 0.40f; skyParams.sky_zenith[2]  = 0.95f;
-        skyParams.sky_horizon[0] = 0.75f; skyParams.sky_horizon[1] = 0.85f; skyParams.sky_horizon[2] = 1.05f;
-        skyParams.sky_ground[0]  = 0.06f; skyParams.sky_ground[1]  = 0.05f; skyParams.sky_ground[2]  = 0.04f;
-        skyParams.sun_dir[0]     = 0.3f;  skyParams.sun_dir[1]     = 0.8f;  skyParams.sun_dir[2]     = 0.3f;
-        skyParams.sun_intensity  = 5.0f;
-        SkyCubemapResult skyResult;
-        {
-            UZ_PROFILE_ZONE("init/sky_cubemap_gen");
-            skyResult = generate_sky_cubemaps(skyParams);
-        }
-        envCubemap_ = skyResult.env_cubemap;
-
-        IblBakeResult bakeResult;
-        {
-            UZ_PROFILE_ZONE("init/ibl_bake");
-            bakeResult = iblBaker_.bake(envCubemap_, 256);
-        }
-        if (bakeResult.irradiance_cube != RHI_NULL && bakeResult.prefiltered_cube != RHI_NULL) {
-            irradianceCube_  = bakeResult.irradiance_cube;
-            prefilteredCube_ = bakeResult.prefiltered_cube;
-        } else {
-            // GPU bake failed — fall back to slow CPU convolution
-            DIAG("WARNING: GPU IBL bake failed, falling back to CPU convolution...");
-            UZ_PROFILE_ZONE("init/sky_cubemap_cpu_fallback");
-            SkyCubemapResult cpuResult = generate_sky_cubemaps_full(skyParams);
-            irradianceCube_  = cpuResult.irradiance_cube;
-            prefilteredCube_ = cpuResult.prefiltered_cube;
-            if (cpuResult.env_cubemap != RHI_NULL)
-                rhi()->texture_destroy(cpuResult.env_cubemap);
-        }
-    }
+    // IBL cubemaps are deferred to setScene() which is called immediately after
+    // init(). This avoids generating them twice (init defaults + scene values).
+    // envCubemap_, irradianceCube_, prefilteredCube_ remain RHI_NULL until then;
+    // the PBR shader handles RHI_NULL IBL textures gracefully (no IBL contribution).
+    DIAG("IBL cubemaps deferred to setScene() — skipping init bake");
 
     // Create post-process render targets (HDR, SSAO, bloom chain)
     DIAG("createPostProcessTargets()...");
@@ -442,18 +412,12 @@ void Renderer::update(double /*totalTime*/, double deltaTime) {
 
     // -----------------------------------------------------------------------
     // Incremental texture loading — decode + upload up to 4 textures/frame.
-    // When new textures arrive, refresh material handles and re-cache proxies
-    // so they pick up the newly loaded texture RHI handles.
+    // Poll async texture loading — texture_replace() swaps resources in-place,
+    // so materials auto-see updated textures (zero rebinding needed).
     // -----------------------------------------------------------------------
     {
         UZ_PROFILE_ZONE("update/texture_tick");
-        if (texture_tick(4)) {
-            if (materialManager_.refresh_textures()) {
-                for (auto* p : proxies_) {
-                    static_cast<MeshProxy*>(p)->cache_material();
-                }
-            }
-        }
+        texture_tick(4);
     }
 
     // Update FrameConstants
@@ -1543,10 +1507,10 @@ void Renderer::setScene(Scene* scene) {
     // whenever the scene changes, the IBL must reflect the actual sky colors.
     if (scene_) {
         SkyCubemapParams skyParams{};
-        // Defaults (same as init fallback)
-        skyParams.sky_zenith[0]  = 0.18f; skyParams.sky_zenith[1]  = 0.40f; skyParams.sky_zenith[2]  = 0.95f;
-        skyParams.sky_horizon[0] = 0.75f; skyParams.sky_horizon[1] = 0.85f; skyParams.sky_horizon[2] = 1.05f;
-        skyParams.sky_ground[0]  = 0.06f; skyParams.sky_ground[1]  = 0.05f; skyParams.sky_ground[2]  = 0.04f;
+        // Defaults (UE5-style vibrant blue sky)
+        skyParams.sky_zenith[0]  = 0.03f; skyParams.sky_zenith[1]  = 0.07f; skyParams.sky_zenith[2]  = 0.45f;
+        skyParams.sky_horizon[0] = 0.40f; skyParams.sky_horizon[1] = 0.65f; skyParams.sky_horizon[2] = 1.10f;
+        skyParams.sky_ground[0]  = 0.08f; skyParams.sky_ground[1]  = 0.07f; skyParams.sky_ground[2]  = 0.06f;
         skyParams.sun_dir[0]     = 0.3f;  skyParams.sun_dir[1]     = 0.8f;  skyParams.sun_dir[2]     = 0.3f;
         skyParams.sun_intensity  = 5.0f;
 

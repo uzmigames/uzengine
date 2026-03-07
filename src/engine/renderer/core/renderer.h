@@ -177,10 +177,10 @@ private:
         float skyHaze[3];    float _sc2;       // warm atmospheric haze below horizon
         float skyGround[3];  float fogDensity; // muted earth / height fog
     } skyColorsCB_{
-        {0.08f, 0.22f, 0.65f}, 0.0f,
-        {0.52f, 0.72f, 0.90f}, 0.0f,
-        {0.28f, 0.22f, 0.16f}, 0.0f,
-        {0.16f, 0.12f, 0.08f}, 0.0f,
+        {0.03f, 0.07f, 0.45f}, 0.0f,  // zenith: deep saturated blue
+        {0.22f, 0.42f, 0.82f}, 0.0f,  // horizon: vivid sky blue
+        {0.55f, 0.45f, 0.32f}, 0.0f,  // haze: warm golden scatter
+        {0.20f, 0.18f, 0.15f}, 0.0f,  // ground: dark neutral
     };
 
     // Shadow map resources

@@ -1,20 +1,19 @@
-// sky.ps.hlsl -- Physically-inspired atmospheric gradient sky
+// sky.ps.hlsl -- UE5-style atmospheric sky with Rayleigh/Mie approximation
 //
 // Reconstructs world-space ray direction from NDC + camera basis vectors.
 // Sky colors are configurable per-scene via SkyColorsCB (b0).
-// Colors are in linear space before gamma correction.
+// Colors are in linear space; gamma correction applied at the end.
 //
 // Root constants:
-//   b0: SkyColorsCB  — 4 sky gradient colors + fog density (16 DWORDs)
-//   b3: SkyCB        — camera basis vectors + sun direction (16 DWORDs)
+//   b0: SkyColorsCB  -- 4 sky gradient colors + fog density (16 DWORDs)
+//   b3: SkyCB        -- camera basis vectors + sun direction (16 DWORDs)
 
-// Sky gradient colors — set from SkyAtmosphere scene component.
-// Defaults match the original hardcoded UE5-inspired palette.
+// Sky gradient colors -- set from SkyAtmosphere scene component.
 cbuffer SkyColorsCB : register(b0) {
-    float3 skyZenith;   float _sc0;  // deep azure zenith (straight up)
-    float3 skyHorizon;  float _sc1;  // pale bright sky-blue at horizon
+    float3 skyZenith;   float _sc0;  // deep blue zenith (straight up)
+    float3 skyHorizon;  float _sc1;  // bright sky-blue at horizon
     float3 skyHaze;     float _sc2;  // warm atmospheric haze below horizon
-    float3 skyGround;   float fogDensity;  // muted earth / height fog density
+    float3 skyGround;   float fogDensity;  // ground color / height fog density
 };
 
 cbuffer SkyCB : register(b3) {
@@ -37,40 +36,54 @@ float4 PSMain(PSInput input) : SV_TARGET {
         + camUp    * (input.ndc.y * tanHalfFovY)
     );
 
-    // Elevation blend: 0 = straight down, 1 = straight up
-    float t = worldDir.y * 0.5 + 0.5;
+    float elevation = worldDir.y;  // -1 (down) to +1 (up)
 
-    // Sky gradient: 4 configurable stops from SkyColorsCB.
-    // skyGround → skyHaze → skyHorizon → skyZenith
+    // === Upper hemisphere: horizon -> zenith ===
+    // UE5-style: strong blue saturation with smooth power curve
     float3 color;
-    if (t > 0.5) {
-        // Upper hemisphere: horizon → zenith (quadratic blend for natural falloff)
-        float u  = (t - 0.5) * 2.0;  // 0 at horizon, 1 at zenith
-        color = lerp(skyHorizon, skyZenith, u * u);
-    } else if (t > 0.40) {
-        // Transition band just below horizon: haze → horizon
-        float u = (t - 0.40) / 0.10;
-        color = lerp(skyHaze, skyHorizon, u * u);
+    if (elevation >= 0.0) {
+        // Cubic blend gives deep blue at zenith, bright at horizon (like UE5 SkyAtmosphere)
+        float u = saturate(elevation);
+        float blend = 1.0 - pow(1.0 - u, 3.0);
+        color = lerp(skyHorizon, skyZenith, blend);
+
+        // Rayleigh-inspired: boost blue channel slightly toward zenith
+        color.b += u * u * 0.08;
     } else {
-        // Lower sky: ground → haze
-        float u = t / 0.40;
-        color = lerp(skyGround, skyHaze, u);
+        // Below horizon: haze -> ground
+        float d = saturate(-elevation);
+        if (d < 0.15) {
+            // Narrow haze band just below horizon
+            float u = d / 0.15;
+            color = lerp(skyHorizon, skyHaze, u * u);
+        } else {
+            float u = saturate((d - 0.15) / 0.85);
+            color = lerp(skyHaze, skyGround, u);
+        }
     }
 
-    // Subtle warm glow right at the horizon (Rayleigh scatter effect)
-    float horizonGlow = exp(-abs(worldDir.y) * 10.0);
-    color += float3(0.55, 0.40, 0.20) * horizonGlow * horizonGlow * 0.12;
+    // === Mie scattering halo around sun (warm glow at horizon) ===
+    float3 sunDirN = normalize(-sunDir);
+    float sunCosAngle = dot(worldDir, sunDirN);
 
-    // Sun disk + soft corona (uses scene directional light direction)
-    float sunAlignment = dot(worldDir, normalize(-sunDir));
-    float sunDisk   = smoothstep(0.9998, 1.0, sunAlignment);
-    float sunCorona = exp(-max(0.0, 1.0 - sunAlignment) * 80.0) * 0.35;
-    float3 sunColor = float3(1.20, 1.05, 0.80) * sunIntensity;
-    color += sunDisk * sunColor * 4.0;
+    // Horizon glow: warm orange scattered light, strongest at low sun angles
+    float horizonFactor = exp(-abs(elevation) * 6.0);
+    float miePhaseFn = pow(saturate(sunCosAngle * 0.5 + 0.5), 8.0);
+    float3 mieColor = float3(1.0, 0.75, 0.42);
+    color += mieColor * horizonFactor * miePhaseFn * 0.15 * sunIntensity;
+
+    // Subtle overall horizon brightening (atmospheric path length effect)
+    color += skyHorizon * horizonFactor * horizonFactor * 0.06;
+
+    // === Sun disk + corona ===
+    float sunDisk   = smoothstep(0.9997, 0.99995, sunCosAngle);
+    float sunCorona = exp(-max(0.0, 1.0 - sunCosAngle) * 120.0) * 0.25;
+    float sunBloom  = exp(-max(0.0, 1.0 - sunCosAngle) * 30.0) * 0.08;
+    float3 sunColor = float3(1.3, 1.1, 0.85) * sunIntensity;
+    color += sunDisk * sunColor * 5.0;
     color += sunCorona * sunColor;
+    color += sunBloom * float3(1.0, 0.85, 0.6) * sunIntensity;
 
-    // Gamma correction (linear -> sRGB)
-    color = pow(max(color, 0.001), 1.0 / 2.2);
-
-    return float4(color, 1.0);
+    // Output linear HDR — tonemap + gamma applied in composite post-process pass.
+    return float4(max(color, 0.0), 1.0);
 }

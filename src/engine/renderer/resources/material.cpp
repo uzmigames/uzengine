@@ -45,11 +45,12 @@ static std::vector<float> parse_vector(const std::string& s) {
 // TextureManager — Async texture loading with worker thread decode
 //
 // Architecture (based on Godot 4 + UE5 patterns):
-//   1. get_or_queue() returns placeholder handle immediately (not RHI_NULL)
+//   1. get_or_queue() creates a unique handle per path (1x1 placeholder)
 //   2. tick() polls AsyncTextureLoader workers for completed decodes
-//   3. tick() creates GPU textures + batch uploads in one submission
-//   4. refresh_textures() patches real handles into materials
-//   5. Zero stbi_load on main thread — all CPU decode on workers
+//   3. tick() calls texture_replace() to swap resource in same slot
+//   4. tick() batch-uploads real pixel data in one GPU submission
+//   5. Materials auto-see updated textures (zero rebinding, no refresh)
+//   6. Zero stbi_load on main thread — all CPU decode on workers
 //
 // Placeholder textures (Godot DEFAULT_RD_TEXTURE pattern):
 //   - WHITE  (1x1 RGBA 255,255,255,255) — albedo, metallic, roughness, AO
@@ -171,32 +172,59 @@ public:
     }
 
     // -----------------------------------------------------------------------
-    // get_or_queue — NON-BLOCKING: returns cached handle or placeholder.
-    // If not cached, queues path for async decode on worker threads and
-    // returns a placeholder texture so materials render immediately
-    // (Godot DEFAULT_RD_TEXTURE pattern — no black flash on load).
+    // get_or_queue — NON-BLOCKING: returns a unique handle per path.
+    // If not cached, creates a 1x1 placeholder texture with its own handle,
+    // queues path for async decode, and returns that handle. When the real
+    // texture loads, tick() calls texture_replace() on the same handle —
+    // materials auto-see updated data with zero rebinding.
     // -----------------------------------------------------------------------
     RhiTexture get_or_queue(const std::string& path) {
         std::lock_guard<std::mutex> lock(mutex_);
 
-        // Already loaded?
+        // Already loaded (or has a pending placeholder handle)?
         auto it = cache_.find(path);
         if (it != cache_.end()) {
             return it->second.handle;
         }
 
-        // Return placeholder for already-queued paths.
-        RhiTexture ph = placeholders_ready_
-            ? placeholder(guess_placeholder(path)) : RHI_NULL;
+        if (!rhi()) return RHI_NULL;
 
-        if (queued_set_.count(path)) {
-            return ph;
+        // Create a unique 1x1 texture for this path (placeholder content).
+        PlaceholderType pt = guess_placeholder(path);
+        uint8_t pixel[4];
+        switch (pt) {
+        case PlaceholderType::Normal: pixel[0]=128; pixel[1]=128; pixel[2]=255; pixel[3]=255; break;
+        case PlaceholderType::Black:  pixel[0]=0;   pixel[1]=0;   pixel[2]=0;   pixel[3]=255; break;
+        default:                      pixel[0]=255; pixel[1]=255; pixel[2]=255; pixel[3]=255; break;
         }
 
-        // Submit directly to async worker threads (no main-thread queue).
+        RhiTextureDesc desc{};
+        desc.width      = 1;
+        desc.height     = 1;
+        desc.depth      = 1;
+        desc.mip_levels = 1;
+        desc.array_size = 1;
+        desc.format     = RHI_FORMAT_RGBA8_UNORM;
+        desc.dimension  = RHI_TEXTURE_DIM_2D;
+        desc.usage      = RHI_TEXTURE_USAGE_SHADER_READ | RHI_TEXTURE_USAGE_COPY_DST;
+        desc.debug_name = path.c_str();
+
+        RhiTexture handle = rhi()->texture_create(&desc);
+        if (handle == RHI_NULL) return RHI_NULL;
+
+        rhi()->texture_upload(handle, pixel, 4);
+
+        GpuTexture gpu_tex;
+        gpu_tex.handle = handle;
+        gpu_tex.width  = 1;
+        gpu_tex.height = 1;
+        gpu_tex.format = RHI_FORMAT_RGBA8_UNORM;
+        cache_[path] = gpu_tex;
+
+        // Queue for async decode on worker threads.
         queued_set_.insert(path);
         loader_.submit(path);
-        return ph;
+        return handle;
     }
 
     // -----------------------------------------------------------------------
@@ -209,49 +237,49 @@ public:
     }
 
     // -----------------------------------------------------------------------
-    // tick — poll async worker results + batch upload to GPU.
-    // Returns true if any textures were loaded (callers should re-cache).
+    // tick — poll async worker results, replace placeholders, batch upload.
+    // Returns true if any textures were replaced with real data.
     // Call once per frame from the main render thread.
     //
-    // ZERO stbi_load on this thread — all CPU decode happens on workers.
-    // Budget parameter limits GPU texture_create calls per frame to avoid
-    // stalling the render thread with too many resource creations at once.
+    // Flow: texture_replace() swaps the D3D12 resource in the existing slot
+    // (same RhiTexture handle), then batch-uploads real pixel data. Materials
+    // auto-see updated textures — zero rebinding, zero refresh_textures().
     // -----------------------------------------------------------------------
     bool tick(int budget) {
         UZ_PROFILE_ZONE("TextureManager::tick");
 
         // Poll completed decodes from worker threads.
         auto results = loader_.poll_completed();
-        if (results.empty()) return false;
+        if (results.empty() && deferred_results_.empty()) return false;
 
         int processed = 0;
         {
             std::lock_guard<std::mutex> lock(mutex_);
 
-            for (auto& r : results) {
+            auto process_result = [&](DecodeResult& r) -> bool {
                 if (processed >= budget) {
-                    // Re-submit excess results back to completed (they're already
-                    // decoded, just defer GPU creation to next frame).
-                    // We can't re-submit to the loader, so stash them locally.
                     deferred_results_.push_back(std::move(r));
-                    continue;
+                    return false;
                 }
 
                 queued_set_.erase(r.path);
 
-                // Skip if already loaded (race with duplicate submissions).
-                if (cache_.count(r.path)) {
-                    if (r.pixels) free_decoded_texture_pixels(r.pixels);
-                    continue;
-                }
-
                 if (!r.pixels) {
                     DIAG_FMT("TextureManager: async decode failed '%s'",
                              r.path.c_str());
-                    continue;
+                    return false;
                 }
 
-                // Create GPU texture (main thread only — GPU resource creation).
+                // Find the placeholder handle (created by get_or_queue).
+                auto it = cache_.find(r.path);
+                if (it == cache_.end()) {
+                    free_decoded_texture_pixels(r.pixels);
+                    return false;
+                }
+
+                RhiTexture handle = it->second.handle;
+
+                // Replace the 1x1 placeholder resource with real dimensions.
                 RhiTextureDesc desc{};
                 desc.width      = r.width;
                 desc.height     = r.height;
@@ -264,79 +292,41 @@ public:
                                 | RHI_TEXTURE_USAGE_COPY_DST;
                 desc.debug_name = r.path.c_str();
 
-                RhiTexture handle = rhi()->texture_create(&desc);
-                if (handle == RHI_NULL) {
+                if (!rhi()->texture_replace(handle, &desc)) {
                     free_decoded_texture_pixels(r.pixels);
-                    continue;
+                    return false;
                 }
 
-                GpuTexture gpu_tex;
-                gpu_tex.handle = handle;
-                gpu_tex.width  = r.width;
-                gpu_tex.height = r.height;
-                gpu_tex.format = RHI_FORMAT_RGBA8_UNORM;
-                cache_[r.path] = gpu_tex;
+                // Update cache metadata.
+                it->second.width  = r.width;
+                it->second.height = r.height;
 
                 pending_.push_back({handle, r.pixels, r.pixel_size});
                 ++processed;
+                return true;
+            };
+
+            for (auto& r : results) {
+                process_result(r);
             }
 
             // Also process any deferred results from previous frames.
             if (processed < budget && !deferred_results_.empty()) {
                 auto deferred = std::move(deferred_results_);
                 deferred_results_.clear();
-
                 for (auto& r : deferred) {
-                    if (processed >= budget) {
-                        deferred_results_.push_back(std::move(r));
-                        continue;
-                    }
-
-                    queued_set_.erase(r.path);
-                    if (cache_.count(r.path)) {
-                        if (r.pixels) free_decoded_texture_pixels(r.pixels);
-                        continue;
-                    }
-                    if (!r.pixels) continue;
-
-                    RhiTextureDesc desc{};
-                    desc.width      = r.width;
-                    desc.height     = r.height;
-                    desc.depth      = 1;
-                    desc.mip_levels = 1;
-                    desc.array_size = 1;
-                    desc.format     = RHI_FORMAT_RGBA8_UNORM;
-                    desc.dimension  = RHI_TEXTURE_DIM_2D;
-                    desc.usage      = RHI_TEXTURE_USAGE_SHADER_READ
-                                    | RHI_TEXTURE_USAGE_COPY_DST;
-                    desc.debug_name = r.path.c_str();
-
-                    RhiTexture handle = rhi()->texture_create(&desc);
-                    if (handle == RHI_NULL) {
-                        free_decoded_texture_pixels(r.pixels);
-                        continue;
-                    }
-
-                    GpuTexture gpu_tex;
-                    gpu_tex.handle = handle;
-                    gpu_tex.width  = r.width;
-                    gpu_tex.height = r.height;
-                    gpu_tex.format = RHI_FORMAT_RGBA8_UNORM;
-                    cache_[r.path] = gpu_tex;
-
-                    pending_.push_back({handle, r.pixels, r.pixel_size});
-                    ++processed;
+                    process_result(r);
                 }
             }
 
-            // Batch-upload all decoded textures in one GPU submission.
+            // Batch-upload all replaced textures in one GPU submission.
             if (!pending_.empty()) {
                 flush_pending_locked();
             }
         }
 
         if (processed > 0) {
-            DIAG_FMT("TextureManager: loaded %d textures (async, %zu pending)",
+            DIAG_FMT("TextureManager: replaced %d textures (async, %zu pending)",
                      processed, loader_.pending_count() + deferred_results_.size());
         }
         return processed > 0;
@@ -538,18 +528,11 @@ bool MaterialManager::reload(const std::string& path) {
 }
 
 bool MaterialManager::refresh_textures() {
-    std::lock_guard<std::mutex> lock(impl_->mutex);
-    bool any_updated = false;
-    for (auto& [path, mat] : impl_->materials) {
-        for (auto& [name, tex_path] : mat.textures) {
-            RhiTexture cached = g_texture_manager.lookup(tex_path);
-            if (cached != RHI_NULL && mat.texture_handles[name] != cached) {
-                mat.texture_handles[name] = cached;
-                any_updated = true;
-            }
-        }
-    }
-    return any_updated;
+    // No-op: texture_replace() swaps resources in-place via the same
+    // RhiTexture handle. Materials auto-see updated textures with zero
+    // rebinding. Kept for backward compatibility.
+    (void)impl_;
+    return false;
 }
 
 void MaterialManager::clear() {
@@ -572,6 +555,10 @@ bool texture_tick(int budget) {
 
 bool texture_has_queued() {
     return g_texture_manager.has_queued();
+}
+
+void texture_clear_all() {
+    g_texture_manager.clear();
 }
 
 } // namespace uz

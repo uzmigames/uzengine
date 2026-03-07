@@ -30,12 +30,17 @@ static void mock_texture_upload(RhiTexture tex, const void* data, size_t size) {
 static void mock_texture_upload_batch(const RhiTextureUploadItem* items, uint32_t count) {
     (void)items; (void)count;
 }
+static bool mock_texture_replace(RhiTexture tex, const RhiTextureDesc* desc) {
+    (void)tex; (void)desc;
+    return true;
+}
 
 void setup_mock_rhi() {
     g_mock_rhi.texture_create = mock_texture_create;
     g_mock_rhi.texture_destroy = mock_texture_destroy;
     g_mock_rhi.texture_upload = mock_texture_upload;
     g_mock_rhi.texture_upload_batch = mock_texture_upload_batch;
+    g_mock_rhi.texture_replace = mock_texture_replace;
     rhi_set_backend(&g_mock_rhi);
 }
 
@@ -108,6 +113,7 @@ protected:
     }
 
     void TearDown() override {
+        manager_.clear();
         remove("test_tex.png");
         remove("test.uzmat");
         rhi_set_backend(nullptr);
@@ -147,10 +153,10 @@ TEST_F(MaterialSystemTest, LoadMaterial_ResolvesTextures) {
     ASSERT_TRUE(mat->textures.count("base_tex"));
     EXPECT_EQ(mat->textures.at("base_tex"), "test_tex.png");
 
-    // Texture handle is RHI_NULL initially because textures load asynchronously.
-    // The handle becomes valid after texture_tick() processes the async decode.
+    // Texture handle is non-null: get_or_queue() creates a unique 1x1 placeholder
+    // per path. texture_replace() swaps the resource when the real texture loads.
     ASSERT_TRUE(mat->texture_handles.count("base_tex"));
-    EXPECT_EQ(mat->texture_handles.at("base_tex"), RHI_NULL);
+    EXPECT_NE(mat->texture_handles.at("base_tex"), RHI_NULL);
 }
 
 TEST_F(MaterialSystemTest, LoadMaterial_CachesInstances) {

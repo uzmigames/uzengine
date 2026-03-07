@@ -785,6 +785,86 @@ void dx12_texture_destroy(RhiTexture tex) {
     memset(&s_dx12.textures[slot], 0, sizeof(Dx12TextureSlot));
 }
 
+/* -----------------------------------------------------------------------
+ * texture_replace -- swap the underlying D3D12 resource for an existing
+ * texture slot.  The RhiTexture handle stays the same, so all materials
+ * referencing it automatically see the new resource (zero rebinding).
+ *
+ * Used by the async texture pipeline: placeholder 1x1 textures are
+ * created at load time, then replaced with the real decoded texture
+ * once the worker thread finishes decoding.
+ *
+ * Only supports SHADER_READ 2D textures (the common case for materials).
+ * ----------------------------------------------------------------------- */
+bool dx12_texture_replace(RhiTexture tex, const RhiTextureDesc *desc) {
+    if (tex == RHI_NULL || !desc) return false;
+
+    uint32_t slot = (uint32_t)tex;
+    RHI_ASSERT(slot < DX12_MAX_RESOURCES && s_dx12.textures[slot].occupied);
+    if (!s_dx12.textures[slot].occupied) return false;
+    if (s_dx12.textures[slot].is_swapchain) return false;
+
+    /* Release old resource */
+    if (s_dx12.textures[slot].resource) {
+        ID3D12Resource_Release(s_dx12.textures[slot].resource);
+        s_dx12.textures[slot].resource = NULL;
+    }
+
+    /* Create new committed resource with the real dimensions */
+    D3D12_RESOURCE_DESC rd;
+    memset(&rd, 0, sizeof(rd));
+    rd.Dimension          = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    rd.Format             = to_dxgi_format(desc->format);
+    rd.Width              = desc->width;
+    rd.Height             = desc->height;
+    rd.DepthOrArraySize   = 1;
+    rd.MipLevels          = (UINT16)(desc->mip_levels ? desc->mip_levels : 1);
+    rd.SampleDesc.Count   = 1;
+    rd.SampleDesc.Quality = 0;
+    rd.Layout             = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+    rd.Flags              = D3D12_RESOURCE_FLAG_NONE;
+
+    D3D12_HEAP_PROPERTIES hp;
+    memset(&hp, 0, sizeof(hp));
+    hp.Type = D3D12_HEAP_TYPE_DEFAULT;
+
+    ID3D12Resource *resource = NULL;
+    HRESULT hr = ID3D12Device_CreateCommittedResource(
+        s_dx12.device, &hp, D3D12_HEAP_FLAG_NONE,
+        &rd, D3D12_RESOURCE_STATE_COMMON, NULL,
+        &IID_ID3D12Resource, (void **)&resource);
+
+    if (FAILED(hr)) return false;
+
+    s_dx12.textures[slot].resource = resource;
+
+    /* Re-create SRV at the same heap position */
+    if (desc->usage & RHI_TEXTURE_USAGE_SHADER_READ) {
+        D3D12_CPU_DESCRIPTOR_HANDLE srv;
+        ID3D12DescriptorHeap_GetCPUDescriptorHandleForHeapStart(
+            s_dx12.cbv_srv_uav_heap, &srv);
+        srv.ptr += (SIZE_T)slot * s_dx12.cbv_srv_uav_desc_size;
+
+        D3D12_SHADER_RESOURCE_VIEW_DESC srv_desc;
+        memset(&srv_desc, 0, sizeof(srv_desc));
+        srv_desc.Format                    = rd.Format;
+        srv_desc.Shader4ComponentMapping   = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        srv_desc.ViewDimension             = D3D12_SRV_DIMENSION_TEXTURE2D;
+        srv_desc.Texture2D.MipLevels       = rd.MipLevels;
+
+        ID3D12Device_CreateShaderResourceView(s_dx12.device, resource,
+                                              &srv_desc, srv);
+    }
+
+    if (desc->debug_name) {
+        wchar_t wname[256];
+        MultiByteToWideChar(CP_UTF8, 0, desc->debug_name, -1, wname, 256);
+        ID3D12Resource_SetName(resource, wname);
+    }
+
+    return true;
+}
+
 void dx12_texture_upload(RhiTexture tex, const void *data, size_t size) {
     if (tex == RHI_NULL || !data || size == 0) return;
     uint32_t slot = (uint32_t)tex;
@@ -2029,6 +2109,7 @@ const rhi_backend_t rhi_dx12_backend = {
     .texture_upload          = dx12_texture_upload,
     .texture_upload_subresource = dx12_texture_upload_subresource,
     .texture_upload_batch    = dx12_texture_upload_batch,
+    .texture_replace         = dx12_texture_replace,
 
     /* Pipelines */
     .pipeline_create         = dx12_pipeline_create,

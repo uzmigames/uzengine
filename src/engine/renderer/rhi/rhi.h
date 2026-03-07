@@ -377,6 +377,7 @@ typedef struct rhi_backend_t {
                                              const void *data, size_t size);
     void       (*texture_upload_batch)(const RhiTextureUploadItem *items,
                                        uint32_t count);
+    bool       (*texture_replace)(RhiTexture tex, const RhiTextureDesc *desc);
 
     /* --- Pipelines (backed by PSO cache) ------------------------------ */
     RhiPipeline (*pipeline_create)(const RhiPipelineDesc *desc);

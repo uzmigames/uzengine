@@ -6,12 +6,25 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **Zero-Rebinding Texture Replace** — `texture_replace()` RHI function swaps D3D12 resource in existing slot
+  - Materials auto-see updated textures via same handle — zero refresh_textures() scan
+  - `get_or_queue()` creates unique 1x1 placeholder handle per path (not shared)
+  - `tick()` calls `texture_replace()` + batch upload when async decode completes
+  - Eliminated O(N) `refresh_textures()` material re-scan from renderer loop
+  - `texture_clear_all()` free function for clean test isolation
+
+- **UE5-Style Atmospheric Sky** — complete sky shader rewrite
+  - Cubic blend zenith→horizon with Rayleigh-inspired blue boost
+  - Mie scattering halo around sun with warm orange glow
+  - Sun disk + corona + bloom in linear HDR (fixed double gamma correction)
+  - Configurable SkyAtmosphere component with vibrant default palette
+
 - **Incremental Texture Loading** — zero-stall streaming of textures across frames
   - `TextureLoader`: async decode queue + per-frame budget (4 textures/frame default)
   - `Dx12StagingRing`: pre-allocated ring of 8×4MB persistently-mapped UPLOAD blocks (32MB total)
   - `texture_upload_batch()` RHI function: records all texture copies in a single command list, submits once
   - 1×1 placeholder textures (white/normal/black) render immediately while real textures stream in
-  - `texture_tick()` in render loop: decode + upload budget, `refresh_textures()` propagates to material handles
+  - `texture_tick()` in render loop: async decode + replace + batch upload pipeline
   - Staging ring sub-allocator with 512-byte alignment, frame-tracked block recycling (Godot pattern)
 
 - **Production Profiler** — scoped timer with per-scope statistics
@@ -81,6 +94,18 @@ All notable changes to this project will be documented in this file.
 - **Tools** — `tools/gen_checker.py` (procedural checker texture), `tools/gen_plane.py` (plane mesh generator)
 
 ### Changed
+
+- **`refresh_textures()` → no-op**: materials now hold stable handles from `get_or_queue()`; `texture_replace()` swaps resources in-place; renderer loop simplified to single `texture_tick(4)` call
+- **Sky defaults**: SkyAtmosphere colors tuned to UE5-style vibrant blue (zenith 0.03/0.07/0.45, horizon 0.22/0.42/0.82)
+- **Utility scripts**: `open.bat` and `open-antigravity.bat` moved from project root to `scripts/`
+
+### Fixed
+
+- **Gray/washed-out sky** — sky shader applied `pow(color, 1/2.2)` but composite pass already applies ACES tonemap + gamma → double correction. Fixed: sky outputs linear HDR like PBR shader
+- **Slow scene startup** — `init()` and `setScene()` both generated sky cubemaps + IBL bake, doubling startup time. Fixed: deferred all IBL work to `setScene()` (startup 8.4ms vs several seconds)
+- **Missing SkyAtmosphere in default.uzscene** — added node so sky renders with proper colors
+
+### Changed (previous)
 
 - **Root signature (graphics)**: expanded from 9 to 14 params — b1 from 8 to 20 DWORDs (MaterialCB), b2 from root constants to root CBV (LightFrameCB), 10 SRV tables (t0–t9), 2 static samplers (s0 wrap, s1 clamp)
 - **NodeType enum removed** — replaced with `type_name` string field on `SceneNode`; `node_type_to_string()` and `node_type_from_string()` deleted

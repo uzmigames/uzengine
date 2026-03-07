@@ -74,4 +74,7 @@ bool texture_tick(int budget);
 /// Returns true if there are textures queued for loading.
 bool texture_has_queued();
 
+/// Clear all cached textures and pending work. For testing.
+void texture_clear_all();
+
 } // namespace uz

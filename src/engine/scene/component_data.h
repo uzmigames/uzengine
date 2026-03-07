@@ -48,10 +48,10 @@ struct StaticMeshData {
 // ============================================================================
 
 struct SkyAtmosphereData {
-    float sky_zenith[3]  = {0.08f, 0.22f, 0.65f};  // deep azure zenith
-    float sky_horizon[3] = {0.52f, 0.72f, 0.90f};  // pale bright sky-blue at horizon
-    float sky_haze[3]    = {0.28f, 0.22f, 0.16f};  // warm atmospheric haze below horizon
-    float sky_ground[3]  = {0.16f, 0.12f, 0.08f};  // muted earth well below horizon
+    float sky_zenith[3]  = {0.03f, 0.07f, 0.45f};  // deep saturated blue zenith
+    float sky_horizon[3] = {0.22f, 0.42f, 0.82f};  // vivid sky blue at horizon
+    float sky_haze[3]    = {0.55f, 0.45f, 0.32f};  // warm golden scatter below horizon
+    float sky_ground[3]  = {0.20f, 0.18f, 0.15f};  // dark neutral ground
     float fog_density    = 0.0f;                    // height fog density (0 = disabled)
 };
 

@@ -255,6 +255,7 @@ void        dx12_texture_destroy(RhiTexture tex);
 void        dx12_texture_upload(RhiTexture tex, const void *data, size_t size);
 void        dx12_texture_upload_batch(const RhiTextureUploadItem *items,
                                        uint32_t count);
+bool        dx12_texture_replace(RhiTexture tex, const RhiTextureDesc *desc);
 
 /* Staging ring lifecycle (called from rhi_dx12_init.c) */
 bool dx12_staging_ring_init(void);

@@ -3,6 +3,15 @@ name = DefaultScene
 version = 1
 
 [node]
+name = Sky Atmosphere
+type = SkyAtmosphere
+sky_zenith  = 0.03 0.07 0.45
+sky_horizon = 0.22 0.42 0.82
+sky_haze    = 0.55 0.45 0.32
+sky_ground  = 0.20 0.18 0.15
+fog_density = 0.0
+
+[node]
 name = World
 type = Node3D
 parent =
@@ -21,8 +30,8 @@ rotation = 0.000000 0.000000 0.000000 1.000000
 scale = 1.000000 1.000000 1.000000
 active = true
 visible = true
-light_color = 1.000000 1.000000 1.000000
-light_intensity = 1.000000
+light_color = 1.000000 0.960000 0.900000
+light_intensity = 3.200000
 
 [node]
 name = MainCamera
