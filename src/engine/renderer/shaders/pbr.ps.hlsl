@@ -232,7 +232,8 @@ float SampleShadow(float3 worldPos, float3 worldNormal) {
     float currentDepth = (lz - 0.1) / (shadowFar - 0.1);
 
     // CSM: map shadow UV into cascade 0 quadrant (top-left 1024x1024 of 4096 atlas)
-    shadowUV = shadowUV * 0.5;  // Scale to quarter of atlas
+    // Scale = kCascadeSize / kShadowAtlasSize = 1024 / 4096 = 0.25
+    shadowUV = shadowUV * 0.25;
     // texel size relative to cascade region within the atlas
     float shadow = 0.0;
     float2 texelSize = 1.0 / float2(4096.0, 4096.0);

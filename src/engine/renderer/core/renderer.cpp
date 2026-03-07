@@ -1134,10 +1134,10 @@ void Renderer::render(bool readback) {
         taaWriteIdx_ = 1 - taaWriteIdx_;
     }
 
-    // --- Pass 2: GTAO (Ground Truth Ambient Occlusion + Contact Shadows) ------
+    // --- Pass 2: SSAO (Screen-Space Ambient Occlusion + Contact Shadows) ------
     auto rgSsao = renderGraph_.import_texture("ssao_rt", ssaoRT_);
-    const bool useGTAO = true;
-    const RhiPipeline aoPSO = (gtaoPSO_ != RHI_NULL) ? gtaoPSO_ : ssaoPSO_;
+    const bool useGTAO = false;   // GTAO disabled: over-darkens with aoIntensity>1
+    const RhiPipeline aoPSO = (ssaoPSO_ != RHI_NULL) ? ssaoPSO_ : RHI_NULL;
     if (aoPSO != RHI_NULL && ssaoRT_ != RHI_NULL) {
         renderGraph_.add_pass("ssao", RgPassType::Graphics,
             [&](RgPassBuilder& builder) {
