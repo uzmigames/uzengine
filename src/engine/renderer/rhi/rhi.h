@@ -336,6 +336,20 @@ typedef struct RhiPsoCacheKey {
 } RhiPsoCacheKey;
 
 /* -----------------------------------------------------------------------
+ * Batched texture upload descriptor
+ *
+ * Upload multiple textures in a single batched command list submission,
+ * eliminating per-texture GPU stalls and command allocator churn.
+ * ----------------------------------------------------------------------- */
+
+typedef struct RhiTextureUploadItem {
+    RhiTexture  texture;       /* destination texture handle */
+    uint32_t    subresource;   /* mip level / array slice (0 for full upload) */
+    const void *data;          /* source pixel data (CPU memory) */
+    size_t      size;          /* byte count of data */
+} RhiTextureUploadItem;
+
+/* -----------------------------------------------------------------------
  * Backend vtable -- the entire RHI surface
  *
  * Engine code calls through rhi()->fn_name(...).  Backends populate this
@@ -361,6 +375,8 @@ typedef struct rhi_backend_t {
     void       (*texture_upload)(RhiTexture tex, const void *data, size_t size);
     void       (*texture_upload_subresource)(RhiTexture tex, uint32_t subresource,
                                              const void *data, size_t size);
+    void       (*texture_upload_batch)(const RhiTextureUploadItem *items,
+                                       uint32_t count);
 
     /* --- Pipelines (backed by PSO cache) ------------------------------ */
     RhiPipeline (*pipeline_create)(const RhiPipelineDesc *desc);

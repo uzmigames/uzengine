@@ -982,6 +982,359 @@ void dx12_texture_upload_subresource(RhiTexture tex, uint32_t subresource,
 }
 
 /* =======================================================================
+ * Staging ring buffer — init, alloc, shutdown, batch upload
+ *
+ * Pre-allocates a ring of persistently mapped UPLOAD heap blocks.
+ * texture_upload_batch() records all copies in one cmd list, submits once.
+ * ======================================================================= */
+
+bool dx12_staging_ring_init(void) {
+    Dx12StagingRing *ring = &s_dx12.staging_ring;
+    memset(ring, 0, sizeof(*ring));
+
+    /* Create staging blocks (UPLOAD heap, persistently mapped) */
+    D3D12_HEAP_PROPERTIES heap_props;
+    memset(&heap_props, 0, sizeof(heap_props));
+    heap_props.Type = D3D12_HEAP_TYPE_UPLOAD;
+
+    D3D12_RESOURCE_DESC buf_desc;
+    memset(&buf_desc, 0, sizeof(buf_desc));
+    buf_desc.Dimension        = D3D12_RESOURCE_DIMENSION_BUFFER;
+    buf_desc.Width            = DX12_STAGING_BLOCK_SIZE;
+    buf_desc.Height           = 1;
+    buf_desc.DepthOrArraySize = 1;
+    buf_desc.MipLevels        = 1;
+    buf_desc.Format           = DXGI_FORMAT_UNKNOWN;
+    buf_desc.SampleDesc.Count = 1;
+    buf_desc.Layout           = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+    for (uint32_t i = 0; i < DX12_STAGING_BLOCK_COUNT; i++) {
+        HRESULT hr = ID3D12Device_CreateCommittedResource(
+            s_dx12.device, &heap_props, D3D12_HEAP_FLAG_NONE,
+            &buf_desc, D3D12_RESOURCE_STATE_GENERIC_READ,
+            NULL, &IID_ID3D12Resource, (void **)&ring->blocks[i].resource);
+        if (FAILED(hr) || !ring->blocks[i].resource) {
+            DIAG_FMT("staging_ring_init: block %u create failed (0x%08X)", i, hr);
+            dx12_staging_ring_shutdown();
+            return false;
+        }
+
+        /* Persistently map */
+        D3D12_RANGE read_range = { 0, 0 };
+        hr = ID3D12Resource_Map(ring->blocks[i].resource, 0, &read_range,
+                                (void **)&ring->blocks[i].mapped_ptr);
+        if (FAILED(hr)) {
+            DIAG_FMT("staging_ring_init: block %u map failed", i);
+            dx12_staging_ring_shutdown();
+            return false;
+        }
+        ring->blocks[i].fill_amount = 0;
+    }
+
+    /* Reusable command allocator + list for batch uploads */
+    HRESULT hr = ID3D12Device_CreateCommandAllocator(
+        s_dx12.device, D3D12_COMMAND_LIST_TYPE_DIRECT,
+        &IID_ID3D12CommandAllocator, (void **)&ring->cmd_alloc);
+    if (FAILED(hr)) {
+        dx12_staging_ring_shutdown();
+        return false;
+    }
+
+    hr = ID3D12Device_CreateCommandList(
+        s_dx12.device, 0, D3D12_COMMAND_LIST_TYPE_DIRECT,
+        ring->cmd_alloc, NULL, &IID_ID3D12GraphicsCommandList,
+        (void **)&ring->cmd_list);
+    if (FAILED(hr)) {
+        dx12_staging_ring_shutdown();
+        return false;
+    }
+    /* Close immediately — will be reset before each batch */
+    ID3D12GraphicsCommandList_Close(ring->cmd_list);
+
+    /* Fence for batch completion */
+    hr = ID3D12Device_CreateFence(
+        s_dx12.device, 0, D3D12_FENCE_FLAG_NONE,
+        &IID_ID3D12Fence, (void **)&ring->fence);
+    if (FAILED(hr)) {
+        dx12_staging_ring_shutdown();
+        return false;
+    }
+    ring->fence_event = CreateEventW(NULL, FALSE, FALSE, NULL);
+    ring->fence_value = 0;
+
+    ring->current = 0;
+    ring->initialized = true;
+    DIAG_FMT("staging_ring_init: %u blocks x %u KB = %u MB",
+             DX12_STAGING_BLOCK_COUNT, DX12_STAGING_BLOCK_SIZE / 1024,
+             (DX12_STAGING_BLOCK_COUNT * DX12_STAGING_BLOCK_SIZE) / (1024 * 1024));
+    return true;
+}
+
+void dx12_staging_ring_shutdown(void) {
+    Dx12StagingRing *ring = &s_dx12.staging_ring;
+
+    if (ring->fence) {
+        /* Wait for any pending batch to complete */
+        if (ring->fence_value > 0) {
+            UINT64 completed = ID3D12Fence_GetCompletedValue(ring->fence);
+            if (completed < ring->fence_value) {
+                ID3D12Fence_SetEventOnCompletion(ring->fence, ring->fence_value,
+                                                  ring->fence_event);
+                WaitForSingleObject(ring->fence_event, 5000);
+            }
+        }
+        ID3D12Fence_Release(ring->fence);
+    }
+    if (ring->fence_event) CloseHandle(ring->fence_event);
+    if (ring->cmd_list)    ID3D12GraphicsCommandList_Release(ring->cmd_list);
+    if (ring->cmd_alloc)   ID3D12CommandAllocator_Release(ring->cmd_alloc);
+
+    for (uint32_t i = 0; i < DX12_STAGING_BLOCK_COUNT; i++) {
+        if (ring->blocks[i].resource) {
+            ID3D12Resource_Unmap(ring->blocks[i].resource, 0, NULL);
+            ID3D12Resource_Release(ring->blocks[i].resource);
+        }
+    }
+    memset(ring, 0, sizeof(*ring));
+}
+
+void dx12_staging_ring_begin_frame(uint64_t frame_number) {
+    Dx12StagingRing *ring = &s_dx12.staging_ring;
+    if (!ring->initialized) return;
+    ring->current_frame = frame_number;
+}
+
+/*
+ * Sub-allocate from the staging ring.
+ * Returns a mapped pointer within a block and sets *out_resource, *out_offset.
+ * Advances to the next block if the current one is full.
+ * Uses frame tracking (Godot pattern): blocks from frame N-2 are safe to
+ * recycle without GPU synchronization.
+ * Returns NULL if the allocation doesn't fit in any single block.
+ */
+static uint8_t *staging_ring_alloc(uint32_t size, uint32_t alignment,
+                                   ID3D12Resource **out_resource,
+                                   uint64_t *out_offset) {
+    Dx12StagingRing *ring = &s_dx12.staging_ring;
+
+    /* Align the offset */
+    uint32_t aligned_offset = (ring->blocks[ring->current].fill_amount
+                               + alignment - 1) & ~(alignment - 1);
+
+    /* If it doesn't fit in current block, advance to next */
+    if (aligned_offset + size > DX12_STAGING_BLOCK_SIZE) {
+        uint32_t next = (ring->current + 1) % DX12_STAGING_BLOCK_COUNT;
+
+        /* Frame tracking: only recycle blocks from frame N-2 or older.
+         * If the next block was used recently, the GPU may still be reading. */
+        if (ring->blocks[next].frame_used > 0 &&
+            ring->current_frame - ring->blocks[next].frame_used < 2) {
+            /* Block still in-flight — try to find an older one */
+            bool found = false;
+            for (uint32_t attempt = 0; attempt < DX12_STAGING_BLOCK_COUNT - 1; attempt++) {
+                uint32_t candidate = (next + attempt) % DX12_STAGING_BLOCK_COUNT;
+                if (ring->current_frame - ring->blocks[candidate].frame_used >= 2 ||
+                    ring->blocks[candidate].frame_used == 0) {
+                    next = candidate;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                /* All blocks in-flight — fall back to waiting */
+                next = (ring->current + 1) % DX12_STAGING_BLOCK_COUNT;
+            }
+        }
+
+        ring->current = next;
+        ring->blocks[ring->current].fill_amount = 0;
+        aligned_offset = 0;
+    }
+
+    /* If it still doesn't fit (single alloc > block size), return NULL */
+    if (size > DX12_STAGING_BLOCK_SIZE) {
+        return NULL;
+    }
+
+    Dx12StagingBlock *block = &ring->blocks[ring->current];
+    block->frame_used = ring->current_frame;
+    *out_resource = block->resource;
+    *out_offset   = aligned_offset;
+
+    block->fill_amount = aligned_offset + size;
+    return block->mapped_ptr + aligned_offset;
+}
+
+void dx12_texture_upload_batch(const RhiTextureUploadItem *items,
+                                uint32_t count) {
+    if (!items || count == 0) return;
+    Dx12StagingRing *ring = &s_dx12.staging_ring;
+
+    /* Fallback: if staging ring not initialized, use legacy per-texture path */
+    if (!ring->initialized) {
+        for (uint32_t i = 0; i < count; i++) {
+            if (items[i].subresource == 0) {
+                dx12_texture_upload(items[i].texture, items[i].data,
+                                    items[i].size);
+            } else {
+                dx12_texture_upload_subresource(items[i].texture,
+                    items[i].subresource, items[i].data, items[i].size);
+            }
+        }
+        return;
+    }
+
+    /* Wait for any previous batch to complete before reusing ring */
+    if (ring->fence_value > 0) {
+        UINT64 completed = ID3D12Fence_GetCompletedValue(ring->fence);
+        if (completed < ring->fence_value) {
+            ID3D12Fence_SetEventOnCompletion(ring->fence, ring->fence_value,
+                                              ring->fence_event);
+            WaitForSingleObject(ring->fence_event, INFINITE);
+        }
+    }
+
+    /* Reset all blocks for this batch */
+    for (uint32_t i = 0; i < DX12_STAGING_BLOCK_COUNT; i++) {
+        ring->blocks[i].fill_amount = 0;
+    }
+    ring->current = 0;
+
+    /* Reset and open the command list */
+    ID3D12CommandAllocator_Reset(ring->cmd_alloc);
+    ID3D12GraphicsCommandList_Reset(ring->cmd_list, ring->cmd_alloc, NULL);
+
+    uint32_t copies_recorded = 0;
+
+    for (uint32_t i = 0; i < count; i++) {
+        RhiTexture tex = items[i].texture;
+        if (tex == RHI_NULL || !items[i].data || items[i].size == 0) continue;
+
+        uint32_t slot = (uint32_t)tex;
+        RHI_ASSERT(slot < DX12_MAX_RESOURCES && s_dx12.textures[slot].occupied);
+
+        D3D12_RESOURCE_DESC rd;
+        memset(&rd, 0, sizeof(rd));
+        ID3D12Resource_GetDesc(s_dx12.textures[slot].resource, &rd);
+
+        uint32_t subresource = items[i].subresource;
+
+        UINT64 required_size = 0;
+        D3D12_PLACED_SUBRESOURCE_FOOTPRINT layout;
+        UINT num_rows = 0;
+        UINT64 row_size = 0;
+        ID3D12Device_GetCopyableFootprints(s_dx12.device, &rd, subresource, 1, 0,
+                                           &layout, &num_rows, &row_size,
+                                           &required_size);
+
+        /* Sub-allocate from staging ring (D3D12_TEXTURE_DATA_PLACEMENT_ALIGNMENT=512) */
+        ID3D12Resource *staging_res = NULL;
+        uint64_t staging_offset = 0;
+        uint8_t *mapped = staging_ring_alloc((uint32_t)required_size, 512,
+                                             &staging_res, &staging_offset);
+
+        if (!mapped) {
+            /* Alloc too large for a single block — fall back to legacy */
+            DIAG_FMT("upload_batch: item %u too large (%llu), legacy fallback",
+                     i, (unsigned long long)required_size);
+            /* Flush what we have so far, then do legacy upload */
+            if (copies_recorded > 0) {
+                ID3D12GraphicsCommandList_Close(ring->cmd_list);
+                ID3D12CommandList *lists[] = {
+                    (ID3D12CommandList *)ring->cmd_list };
+                ID3D12CommandQueue_ExecuteCommandLists(s_dx12.cmd_queue, 1,
+                                                       lists);
+                ring->fence_value++;
+                ID3D12CommandQueue_Signal(s_dx12.cmd_queue, ring->fence,
+                                          ring->fence_value);
+                ID3D12Fence_SetEventOnCompletion(ring->fence,
+                                                  ring->fence_value,
+                                                  ring->fence_event);
+                WaitForSingleObject(ring->fence_event, INFINITE);
+                copies_recorded = 0;
+                /* Re-open cmd list */
+                ID3D12CommandAllocator_Reset(ring->cmd_alloc);
+                ID3D12GraphicsCommandList_Reset(ring->cmd_list,
+                                                ring->cmd_alloc, NULL);
+            }
+            if (subresource == 0) {
+                dx12_texture_upload(tex, items[i].data, items[i].size);
+            } else {
+                dx12_texture_upload_subresource(tex, subresource,
+                    items[i].data, items[i].size);
+            }
+            continue;
+        }
+
+        /* Update layout offset to reflect sub-allocation within the block */
+        layout.Offset = staging_offset;
+
+        /* Copy row by row (handles pitch mismatch) */
+        const uint8_t *src = (const uint8_t *)items[i].data;
+        size_t src_row_pitch = (size_t)row_size;
+        for (UINT row = 0; row < num_rows; row++) {
+            size_t src_off = (size_t)row * src_row_pitch;
+            if (src_off + src_row_pitch > items[i].size) break;
+            memcpy(mapped + (size_t)row * layout.Footprint.RowPitch,
+                   src + src_off, src_row_pitch);
+        }
+
+        /* Transition to COPY_DEST */
+        D3D12_RESOURCE_BARRIER barrier;
+        memset(&barrier, 0, sizeof(barrier));
+        barrier.Type  = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        barrier.Transition.pResource   = s_dx12.textures[slot].resource;
+        barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COMMON;
+        barrier.Transition.StateAfter  = D3D12_RESOURCE_STATE_COPY_DEST;
+        barrier.Transition.Subresource = subresource;
+        ID3D12GraphicsCommandList_ResourceBarrier(ring->cmd_list, 1, &barrier);
+
+        /* Record copy */
+        D3D12_TEXTURE_COPY_LOCATION dst_loc;
+        memset(&dst_loc, 0, sizeof(dst_loc));
+        dst_loc.pResource        = s_dx12.textures[slot].resource;
+        dst_loc.Type             = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+        dst_loc.SubresourceIndex = subresource;
+
+        D3D12_TEXTURE_COPY_LOCATION src_loc;
+        memset(&src_loc, 0, sizeof(src_loc));
+        src_loc.pResource       = staging_res;
+        src_loc.Type            = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+        src_loc.PlacedFootprint = layout;
+
+        ID3D12GraphicsCommandList_CopyTextureRegion(ring->cmd_list, &dst_loc,
+                                                     0, 0, 0, &src_loc, NULL);
+
+        /* Transition back to COMMON */
+        barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+        barrier.Transition.StateAfter  = D3D12_RESOURCE_STATE_COMMON;
+        ID3D12GraphicsCommandList_ResourceBarrier(ring->cmd_list, 1, &barrier);
+
+        copies_recorded++;
+    }
+
+    /* Submit the single command list with all copies */
+    if (copies_recorded > 0) {
+        ID3D12GraphicsCommandList_Close(ring->cmd_list);
+        ID3D12CommandList *lists[] = { (ID3D12CommandList *)ring->cmd_list };
+        ID3D12CommandQueue_ExecuteCommandLists(s_dx12.cmd_queue, 1, lists);
+
+        ring->fence_value++;
+        ID3D12CommandQueue_Signal(s_dx12.cmd_queue, ring->fence,
+                                  ring->fence_value);
+
+        /* Wait for this batch to complete before returning
+         * (caller expects textures to be usable immediately) */
+        ID3D12Fence_SetEventOnCompletion(ring->fence, ring->fence_value,
+                                          ring->fence_event);
+        WaitForSingleObject(ring->fence_event, INFINITE);
+    }
+
+    DIAG_FMT("texture_upload_batch: %u textures, %u copies in 1 submit",
+             count, copies_recorded);
+}
+
+/* =======================================================================
  * Pipelines
  * ======================================================================= */
 
@@ -1675,6 +2028,7 @@ const rhi_backend_t rhi_dx12_backend = {
     .texture_destroy         = dx12_texture_destroy,
     .texture_upload          = dx12_texture_upload,
     .texture_upload_subresource = dx12_texture_upload_subresource,
+    .texture_upload_batch    = dx12_texture_upload_batch,
 
     /* Pipelines */
     .pipeline_create         = dx12_pipeline_create,

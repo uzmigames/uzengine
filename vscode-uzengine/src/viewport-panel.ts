@@ -2066,10 +2066,12 @@ export function buildViewportStreamHtml(opts: {
       }, 200);
 
       // Send input state at ~30fps via WS text messages.
+      // IMPORTANT: always send, even when all-zero.  The previous guard
+      // (skip if no keys/mouse) caused "stuck key" bugs — after releasing
+      // RMB the zero-state was never sent, so the engine kept moving.
+      // Cost is negligible (~200 bytes/33ms vs 100KB+ JPEG frames at 60fps).
       setInterval(function() {
         if (!ws || ws.readyState !== WebSocket.OPEN) return;
-        var hasInput = rightMouseDown || mouseDeltaX !== 0 || mouseDeltaY !== 0 || scrollDelta !== 0;
-        if (!hasInput && !keys.w && !keys.s && !keys.a && !keys.d && !keys.q && !keys.e) return;
 
         ws.send(JSON.stringify({
           type: 'camera_input',

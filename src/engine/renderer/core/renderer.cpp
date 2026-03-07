@@ -23,8 +23,10 @@ extern const rhi_backend_t rhi_dx12_backend;
 #include "common/safe_string.h"
 
 #include "engine/core/diag.h"
+#include "engine/core/profiler.h"
 #include "engine/renderer/resources/mesh_primitives.h"
 #include "engine/renderer/resources/texture.h"
+#include "engine/renderer/resources/material.h"
 #include "engine/renderer/resources/brdf_lut.h"
 #include "engine/renderer/resources/sky_cubemap.h"
 #include "engine/renderer/proxies/mesh_proxy.h"
@@ -38,6 +40,7 @@ namespace uz {
 // ===========================================================================
 
 bool Renderer::init(void* window_handle, uint32_t width, uint32_t height) {
+    UZ_PROFILE_ZONE("Renderer::init");
     if (initialized_) return true;
 
     width_  = width;
@@ -49,15 +52,24 @@ bool Renderer::init(void* window_handle, uint32_t width, uint32_t height) {
 
     // Initialize the RHI backend (device, swapchain, heaps, cmd queue).
     DIAG("rhi()->init()...");
-    if (!rhi()->init(window_handle, width, height)) {
-        DIAG("FATAL: rhi()->init() returned false");
-        return false;
+    {
+        UZ_PROFILE_ZONE("init/rhi_init");
+        if (!rhi()->init(window_handle, width, height)) {
+            DIAG("FATAL: rhi()->init() returned false");
+            return false;
+        }
     }
     DIAG("rhi()->init() OK");
 
+    // Create 1x1 placeholder textures so materials render immediately.
+    texture_init_placeholders();
+
     // Initialize shader library with builtin shaders.
     DIAG("shaderLib_.register_builtin_shaders()...");
-    shaderLib_.register_builtin_shaders();
+    {
+        UZ_PROFILE_ZONE("init/register_shaders");
+        shaderLib_.register_builtin_shaders();
+    }
 
     // Create pipelines via shader library.
     DIAG("createPipelineStates()...");
@@ -172,14 +184,17 @@ bool Renderer::init(void* window_handle, uint32_t width, uint32_t height) {
         DIAG("WARNING: IblBaker init failed — falling back to CPU IBL");
 
     // Generate BRDF integration LUT (256x256 RG16F, environment-independent).
-    DIAG("bake_brdf_lut()...");
-    brdfLut_ = iblBaker_.bake_brdf_lut();
-    if (brdfLut_ == RHI_NULL) {
-        DIAG("WARNING: GPU BRDF LUT failed, trying CPU fallback");
-        brdfLut_ = generate_brdf_lut();
+    {
+        UZ_PROFILE_ZONE("init/brdf_lut");
+        DIAG("bake_brdf_lut()...");
+        brdfLut_ = iblBaker_.bake_brdf_lut();
+        if (brdfLut_ == RHI_NULL) {
+            DIAG("WARNING: GPU BRDF LUT failed, trying CPU fallback");
+            brdfLut_ = generate_brdf_lut();
+        }
+        if (brdfLut_ == RHI_NULL)
+            DIAG("WARNING: BRDF LUT generation failed — IBL specular disabled");
     }
-    if (brdfLut_ == RHI_NULL)
-        DIAG("WARNING: BRDF LUT generation failed — IBL specular disabled");
 
     // Generate sky IBL cubemaps (env → GPU compute irradiance + prefiltered).
     DIAG("generate_sky_cubemaps() + GPU IBL bake...");
@@ -190,24 +205,30 @@ bool Renderer::init(void* window_handle, uint32_t width, uint32_t height) {
         skyParams.sky_ground[0]  = 0.06f; skyParams.sky_ground[1]  = 0.05f; skyParams.sky_ground[2]  = 0.04f;
         skyParams.sun_dir[0]     = 0.3f;  skyParams.sun_dir[1]     = 0.8f;  skyParams.sun_dir[2]     = 0.3f;
         skyParams.sun_intensity  = 5.0f;
-        SkyCubemapResult skyResult = generate_sky_cubemaps(skyParams);
+        SkyCubemapResult skyResult;
+        {
+            UZ_PROFILE_ZONE("init/sky_cubemap_gen");
+            skyResult = generate_sky_cubemaps(skyParams);
+        }
         envCubemap_ = skyResult.env_cubemap;
 
-        // GPU compute convolution from env cubemap
-        IblBakeResult bakeResult = iblBaker_.bake(envCubemap_, 256);
+        IblBakeResult bakeResult;
+        {
+            UZ_PROFILE_ZONE("init/ibl_bake");
+            bakeResult = iblBaker_.bake(envCubemap_, 256);
+        }
         if (bakeResult.irradiance_cube != RHI_NULL && bakeResult.prefiltered_cube != RHI_NULL) {
-            // GPU path succeeded — destroy CPU-convolved cubemaps, use GPU ones
-            if (skyResult.irradiance_cube != RHI_NULL)
-                rhi()->texture_destroy(skyResult.irradiance_cube);
-            if (skyResult.prefiltered_cube != RHI_NULL)
-                rhi()->texture_destroy(skyResult.prefiltered_cube);
             irradianceCube_  = bakeResult.irradiance_cube;
             prefilteredCube_ = bakeResult.prefiltered_cube;
         } else {
-            // GPU bake failed — fall back to CPU-convolved cubemaps
-            DIAG("WARNING: GPU IBL bake failed, using CPU cubemaps");
-            irradianceCube_  = skyResult.irradiance_cube;
-            prefilteredCube_ = skyResult.prefiltered_cube;
+            // GPU bake failed — fall back to slow CPU convolution
+            DIAG("WARNING: GPU IBL bake failed, falling back to CPU convolution...");
+            UZ_PROFILE_ZONE("init/sky_cubemap_cpu_fallback");
+            SkyCubemapResult cpuResult = generate_sky_cubemaps_full(skyParams);
+            irradianceCube_  = cpuResult.irradiance_cube;
+            prefilteredCube_ = cpuResult.prefiltered_cube;
+            if (cpuResult.env_cubemap != RHI_NULL)
+                rhi()->texture_destroy(cpuResult.env_cubemap);
         }
     }
 
@@ -315,6 +336,7 @@ void Renderer::update(double /*totalTime*/, double deltaTime) {
     // Sync Scene Proxies (§COMPONENT-INTERFACE) — Incremental Strategy
     // -----------------------------------------------------------------------
     if (scene_) {
+        UZ_PROFILE_ZONE("update/proxy_sync");
         // Detect if the proxy list needs a full rebuild.
         // Triggers: first time, node count changed, or explicit dirty flag.
         const uint32_t current_count = scene_->node_count;
@@ -418,6 +440,21 @@ void Renderer::update(double /*totalTime*/, double deltaTime) {
         }
     }
 
+    // -----------------------------------------------------------------------
+    // Incremental texture loading — decode + upload up to 4 textures/frame.
+    // When new textures arrive, refresh material handles and re-cache proxies
+    // so they pick up the newly loaded texture RHI handles.
+    // -----------------------------------------------------------------------
+    {
+        UZ_PROFILE_ZONE("update/texture_tick");
+        if (texture_tick(4)) {
+            if (materialManager_.refresh_textures()) {
+                for (auto* p : proxies_) {
+                    static_cast<MeshProxy*>(p)->cache_material();
+                }
+            }
+        }
+    }
 
     // Update FrameConstants
     frameConstants_.view = Mat4::identity(); // TODO: get from camState
@@ -549,20 +586,10 @@ void Renderer::update(double /*totalTime*/, double deltaTime) {
                 envCubemap_ = skyResult.env_cubemap;
 
                 IblBakeResult bakeResult = iblBaker_.bake(envCubemap_, 256);
-                if (bakeResult.irradiance_cube != RHI_NULL) {
-                    if (skyResult.irradiance_cube != RHI_NULL)
-                        rhi()->texture_destroy(skyResult.irradiance_cube);
+                if (bakeResult.irradiance_cube != RHI_NULL)
                     irradianceCube_ = bakeResult.irradiance_cube;
-                } else if (skyResult.irradiance_cube != RHI_NULL) {
-                    irradianceCube_ = skyResult.irradiance_cube;
-                }
-                if (bakeResult.prefiltered_cube != RHI_NULL) {
-                    if (skyResult.prefiltered_cube != RHI_NULL)
-                        rhi()->texture_destroy(skyResult.prefiltered_cube);
+                if (bakeResult.prefiltered_cube != RHI_NULL)
                     prefilteredCube_ = bakeResult.prefiltered_cube;
-                } else if (skyResult.prefiltered_cube != RHI_NULL) {
-                    prefilteredCube_ = skyResult.prefiltered_cube;
-                }
             }
             break;
         }
@@ -621,6 +648,7 @@ void Renderer::update(double /*totalTime*/, double deltaTime) {
 }
 
 void Renderer::render(bool readback) {
+    UZ_PROFILE_ZONE("Renderer::render");
     RhiCmdList cmd = rhi()->cmd_begin();
     if (cmd == RHI_NULL) return;
 
@@ -916,8 +944,9 @@ void Renderer::render(bool readback) {
     // --- Pass 7: Editor Overlays (on backbuffer, after tonemap) ---------------
     renderGraph_.add_pass("editor_overlays", RgPassType::Graphics,
         [&](RgPassBuilder& builder) {
+            builder.read(rgBackbuffer);   // run after composite
             builder.write(rgBackbuffer);
-            builder.write(rgDepth);
+            // NOTE: depth is reused but NOT declared to avoid cycle with SSAO.
             builder.force_run();
         },
         [this](RhiCmdList cmd) {
@@ -1153,6 +1182,7 @@ void Renderer::shutdown() {
 // ===========================================================================
 
 bool Renderer::createPipelineStates() {
+    UZ_PROFILE_ZONE("init/createPipelineStates");
     // Pipeline desc: vertex layout + render state.
     // Shader source is filled by the ShaderLibrary.
     RhiPipelineDesc desc{};
@@ -1454,6 +1484,7 @@ bool Renderer::createPostProcessTargets() {
 // ===========================================================================
 
 void Renderer::performReadback() {
+    UZ_PROFILE_ZONE("render/readback");
     ++readbackFenceValue_;
     rhi()->fence_signal(rhiReadbackFence_, readbackFenceValue_);
     rhi()->fence_wait(rhiReadbackFence_, readbackFenceValue_, UINT64_MAX);
@@ -1503,6 +1534,7 @@ size_t Renderer::loadEditorScene(std::vector<EditorNode> nodes) {
 }
 
 void Renderer::setScene(Scene* scene) {
+    UZ_PROFILE_ZONE("Renderer::setScene");
     scene_ = scene;
     scene_dirty_ = true;
 
@@ -1553,25 +1585,28 @@ void Renderer::setScene(Scene* scene) {
         }
 
         DIAG("Regenerating IBL cubemaps from scene sky/light (GPU compute)...");
-        SkyCubemapResult skyResult = generate_sky_cubemaps(skyParams);
+        SkyCubemapResult skyResult;
+        {
+            UZ_PROFILE_ZONE("setScene/sky_cubemap_gen");
+            skyResult = generate_sky_cubemaps(skyParams);
+        }
         if (envCubemap_ != RHI_NULL)
             rhi()->texture_destroy(envCubemap_);
         envCubemap_ = skyResult.env_cubemap;
 
-        IblBakeResult bakeResult = iblBaker_.bake(envCubemap_, 256);
+        IblBakeResult bakeResult;
+        {
+            UZ_PROFILE_ZONE("setScene/ibl_bake");
+            bakeResult = iblBaker_.bake(envCubemap_, 256);
+        }
         if (bakeResult.irradiance_cube != RHI_NULL) {
-            if (skyResult.irradiance_cube != RHI_NULL)
-                rhi()->texture_destroy(skyResult.irradiance_cube);
             irradianceCube_ = bakeResult.irradiance_cube;
-        } else if (skyResult.irradiance_cube != RHI_NULL) {
-            irradianceCube_ = skyResult.irradiance_cube;
         }
         if (bakeResult.prefiltered_cube != RHI_NULL) {
-            if (skyResult.prefiltered_cube != RHI_NULL)
-                rhi()->texture_destroy(skyResult.prefiltered_cube);
             prefilteredCube_ = bakeResult.prefiltered_cube;
-        } else if (skyResult.prefiltered_cube != RHI_NULL) {
-            prefilteredCube_ = skyResult.prefiltered_cube;
+        }
+        if (bakeResult.irradiance_cube == RHI_NULL || bakeResult.prefiltered_cube == RHI_NULL) {
+            DIAG("WARNING: GPU IBL bake failed on setScene, IBL may be incomplete");
         }
     }
 }

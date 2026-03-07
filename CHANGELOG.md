@@ -6,6 +6,14 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **Batched Texture Upload Pipeline** — eliminates per-texture GPU stalls during scene load
+  - `Dx12StagingRing`: pre-allocated ring of 8×4MB persistently-mapped UPLOAD blocks (32MB total)
+  - `texture_upload_batch()` RHI function: records all texture copies in a single command list, submits once, signals one fence — replaces 50 individual GPU stalls with 1
+  - `DecodedTexture` + `decode_texture_from_file()`: CPU decode separated from GPU upload for deferred batching
+  - `TextureManager` rewritten with two-phase approach: `get_or_prepare()` (CPU decode + texture_create) then `flush_pending()` (batched GPU upload)
+  - Staging ring sub-allocator with 512-byte alignment, automatic block advancement, fallback to legacy path for oversized textures
+  - Based on Unreal Engine 5 (FD3D12UploadHeapAllocator, FD3D12CopyScope) and Godot 4 (StagingBufferBlock ring) patterns
+
 - **GPU Compute IBL Pipeline** — `IblBaker` class with 3 compute shaders replacing CPU-side IBL convolution
   - `ibl_brdf_lut.cs.hlsl`: 256×256 RG16F BRDF integration LUT (1024 Hammersley samples)
   - `ibl_irradiance.cs.hlsl`: cosine-weighted irradiance cubemap (32×32, 1024 hemisphere samples)

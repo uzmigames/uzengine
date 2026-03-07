@@ -27,6 +27,8 @@
 #include "engine/scene/scene_saver.h"
 
 #include "engine/core/diag.h"
+#include "engine/core/profiler.h"
+#include "editor/scene_bridge.h"
 
 #include <windows.h>
 #include <timeapi.h>
@@ -36,6 +38,7 @@
 #include <ixwebsocket/IXNetSystem.h>
 
 #include <atomic>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -1286,6 +1289,13 @@ int WINAPI WinMain(
             ci.rightMouseDown.store(j.value("rmb",   false), std::memory_order_relaxed);
             ci.shiftDown.store(     j.value("shift", false), std::memory_order_relaxed);
 
+            // Timestamp for staleness detection — fly-cam zeroes movement
+            // if no message arrives for >200ms (handles focus loss, WS drop).
+            ci.lastMessageUs.store(
+                std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch()).count(),
+                std::memory_order_relaxed);
+
             // Mouse deltas and scroll are additive -- accumulate until the
             // render thread consumes them with exchange(0).
             const float dx     = j.value("dx",     0.0f);
@@ -1355,6 +1365,8 @@ int WINAPI WinMain(
     // -- Auto-load the default scene from disk --------------------------------
     // Resolve the scene path relative to the executable directory.
     {
+        UZ_PROFILE_ZONE("startup/scene_load_total");
+
         char exePath[MAX_PATH]{};
         GetModuleFileNameA(nullptr, exePath, MAX_PATH);
         std::string exeDir(exePath);
@@ -1371,7 +1383,10 @@ int WINAPI WinMain(
         g_sceneData = std::make_unique<uz::Scene>();
         uz::scene_init(g_sceneData.get(), "DefaultScene");
 
-        auto loadResult = uz::scene_load_file(g_sceneData.get(), scenePath.c_str());
+        auto loadResult = [&] {
+            UZ_PROFILE_ZONE("startup/scene_parse");
+            return uz::scene_load_file(g_sceneData.get(), scenePath.c_str());
+        }();
         if (loadResult.is_ok()) {
             DIAG("Scene loaded OK, building editor nodes...");
             // Update world transforms so light/camera components can read them.
@@ -1420,7 +1435,10 @@ int WINAPI WinMain(
                 editorNodes.push_back(edNode);
             }
 
-            renderer.setScene(g_sceneData.get());  // scene integration ENABLED
+            {
+                UZ_PROFILE_ZONE("startup/renderer_setScene");
+                renderer.setScene(g_sceneData.get());
+            }
             renderer.loadEditorScene(std::move(editorNodes));
 
             // Restore editor camera from the [editor] section (if present).
@@ -1446,6 +1464,8 @@ int WINAPI WinMain(
                      scenePath.c_str());
             OutputDebugStringA(dbg);
         }
+        uz::profiler_dump();
+        uz::profiler_reset();
     }
 
     // -- IPC setup -----------------------------------------------------------
@@ -1560,9 +1580,10 @@ int WINAPI WinMain(
 
         // ------------------------------------------------------------------
         // Auto-save the current scene before loading the new one.
+        // NOTE: reading cam floats from IPC thread is a benign race —
+        // at worst the saved camera is one frame stale.
         // ------------------------------------------------------------------
         if (g_sceneData && g_sceneData->source_path[0] != '\0') {
-            // Snapshot editor camera into scene before saving.
             g_sceneData->editor_state.cam_pos_x = g_scene.camPosX;
             g_sceneData->editor_state.cam_pos_y = g_scene.camPosY;
             g_sceneData->editor_state.cam_pos_z = g_scene.camPosZ;
@@ -1574,33 +1595,28 @@ int WINAPI WinMain(
         }
 
         // ------------------------------------------------------------------
-        // Create / reset the real Scene with ComponentStore.
+        // Build scene on IPC thread (CPU-only). NO renderer calls here —
+        // renderer.setScene() does IBL baking (GPU compute dispatch) which
+        // MUST NOT run concurrently with the main render thread.
         // ------------------------------------------------------------------
-        if (!g_sceneData) {
-            g_sceneData = std::make_unique<uz::Scene>();
-            uz::scene_init(g_sceneData.get(), "IPCScene");
-        } else {
-            uz::scene_clear(g_sceneData.get());
-        }
+        auto pending = std::make_unique<PendingSceneLoad>();
+        pending->scene = std::make_unique<uz::Scene>();
+        uz::scene_init(pending->scene.get(), "IPCScene");
 
         std::vector<uz::Renderer::EditorNode> editorNodes;
         editorNodes.reserve(args["nodes"].size());
 
         for (const auto& n : args["nodes"]) {
-            // Determine node type (string-based, no enum).
             const std::string typeStr = n.value("type", "Node3D");
             const std::string nodeName = n.value("name", "Unnamed");
 
-            // Create the SceneNode.
             uz::NodeId id = uz::scene_create_node(
-                g_sceneData.get(), nodeName.c_str(), typeStr.c_str());
-
+                pending->scene.get(), nodeName.c_str(), typeStr.c_str());
             if (id == uz::kNodeIdInvalid) continue;
 
-            uz::SceneNode* node = uz::scene_get_node(g_sceneData.get(), id);
+            uz::SceneNode* node = uz::scene_get_node(pending->scene.get(), id);
             if (!node) continue;
 
-            // Parse transform.
             float px = 0, py = 0, pz = 0;
             float rx = 0, ry = 0, rz = 0;
             float sx = 1, sy = 1, sz = 1;
@@ -1615,8 +1631,6 @@ int WINAPI WinMain(
                 rx = n["rotation"][0].get<float>();
                 ry = n["rotation"][1].get<float>();
                 rz = n["rotation"][2].get<float>();
-                // Store as euler angles in the quaternion fields for now.
-                // Build a rotation quaternion from euler angles (Y * X * Z).
                 const float cy = std::cos(ry * 0.5f), sy2 = std::sin(ry * 0.5f);
                 const float cp = std::cos(rx * 0.5f), sp  = std::sin(rx * 0.5f);
                 const float cr = std::cos(rz * 0.5f), sr  = std::sin(rz * 0.5f);
@@ -1634,10 +1648,9 @@ int WINAPI WinMain(
                 node->local_transform.scale = {sx, sy, sz, 0.0f};
             }
 
-            // -- Add component data to ComponentStore. ---------------------
             if (typeStr == "Camera") {
                 uz::CameraData* cd = uz::component_add<uz::CameraData>(
-                    &g_sceneData->components, id);
+                    &pending->scene->components, id);
                 if (cd) {
                     cd->fov_y      = n.value("fov",  45.0f);
                     cd->near_plane = n.value("near", 0.1f);
@@ -1646,7 +1659,7 @@ int WINAPI WinMain(
             }
             if (typeStr == "DirectionalLight") {
                 uz::DirectionalLightData* ld = uz::component_add<uz::DirectionalLightData>(
-                    &g_sceneData->components, id);
+                    &pending->scene->components, id);
                 if (ld) {
                     if (n.contains("light_color") && n["light_color"].is_array()
                         && n["light_color"].size() >= 3) {
@@ -1661,11 +1674,9 @@ int WINAPI WinMain(
                 }
             }
 
-            // -- Build EditorNode for wireframe rendering. ------------------
             uz::Renderer::EditorNode edNode;
             edNode.position = {px, py, pz};
-            edNode.rotation = {rx, ry, rz}; // legacy euler
-            // Store quaternion from the scene node (already converted from euler above)
+            edNode.rotation = {rx, ry, rz};
             edNode.rotationQuat = {
                 node->local_transform.rotation.x,
                 node->local_transform.rotation.y,
@@ -1673,7 +1684,7 @@ int WINAPI WinMain(
                 node->local_transform.rotation.w
             };
             edNode.scale    = {sx, sy, sz};
-            edNode.nodeType = 0; // legacy field
+            edNode.nodeType = 0;
             edNode.nodeId   = static_cast<uint32_t>(id);
 
             if (typeStr == "StaticMesh") {
@@ -1688,15 +1699,13 @@ int WINAPI WinMain(
             editorNodes.push_back(edNode);
         }
 
-        // Update world transforms so light/camera components can read them.
-        uz::scene_update_world_transforms(g_sceneData.get());
+        uz::scene_update_world_transforms(pending->scene.get());
+        pending->editor_nodes = std::move(editorNodes);
+        int count = static_cast<int>(pending->scene->next_id - 1);
 
-        // Pass the real Scene to the renderer (for camera + lighting).
-        renderer.setScene(g_sceneData.get());  // scene integration ENABLED
-
-        // Load editor wireframe nodes.
-        const size_t count = renderer.loadEditorScene(std::move(editorNodes));
-        return {{"ok", true}, {"count", static_cast<int>(count)}};
+        // Queue for main thread — GPU work (setScene/IBL) happens there.
+        enqueuePendingScene(std::move(pending));
+        return {{"ok", true}, {"count", count}};
     });
 
     ipcRegistry.add("scene.setParam", [&](const nlohmann::json& args) -> nlohmann::json {
@@ -1875,15 +1884,37 @@ int WINAPI WinMain(
             }
             qpcLast = qpcNow;
 
+            // ---------------------------------------------------------------
+            // Apply pending scene load (queued by IPC thread).
+            // MUST happen on the main thread — renderer.setScene() does
+            // IBL baking (GPU compute) which cannot run concurrently with
+            // renderer.render().
+            // ---------------------------------------------------------------
+            UZ_PROFILE_FRAME_MARK();
+
+            {
+                auto pending = dequeuePendingScene();
+                if (pending) {
+                    UZ_PROFILE_ZONE("apply_pending_scene");
+                    applyPendingScene(*pending, g_sceneData, renderer, g_scene);
+                }
+            }
+
             const double delta = timer.tick();
-            renderer.update(timer.elapsed(), delta);
+            {
+                UZ_PROFILE_ZONE("renderer_update");
+                renderer.update(timer.elapsed(), delta);
+            }
 
             // Only perform the expensive GPU readback (GPU copy + fence wait +
             // 3 MB memcpy) when at least one encoder has room for a new frame.
             // On skipped frames the render still runs at full speed for smooth
             // camera movement — we just don't copy pixels to CPU.
             const bool needReadback = g_frameRingA.size() < 2 || g_frameRingB.size() < 2;
-            renderer.render(needReadback);
+            {
+                UZ_PROFILE_ZONE("renderer_render");
+                renderer.render(needReadback);
+            }
 
             // Update the resolution metric if it changed (e.g. after a
             // viewport resize handled inside renderer.update()).

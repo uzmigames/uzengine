@@ -115,6 +115,38 @@ typedef struct Dx12CmdListSlot {
 } Dx12CmdListSlot;
 
 /* =======================================================================
+ * Staging ring buffer for batched texture uploads
+ *
+ * Instead of creating/destroying a staging buffer + cmd list per texture,
+ * we pre-allocate a ring of persistently-mapped UPLOAD blocks.
+ * Sub-allocate from the ring, record all copies in one cmd list, flush once.
+ * ======================================================================= */
+
+#define DX12_STAGING_BLOCK_SIZE  (4u * 1024u * 1024u)  /* 4 MB per block */
+#define DX12_STAGING_BLOCK_COUNT 8u                     /* 32 MB total ring */
+
+typedef struct Dx12StagingBlock {
+    ID3D12Resource *resource;      /* UPLOAD heap committed resource */
+    uint8_t        *mapped_ptr;    /* persistently mapped base pointer */
+    uint32_t        fill_amount;   /* bytes used so far in this block */
+    uint64_t        frame_used;    /* frame number when last allocated from
+                                    * (Godot pattern: safe to recycle when
+                                    * current_frame - frame_used >= 2) */
+} Dx12StagingBlock;
+
+typedef struct Dx12StagingRing {
+    Dx12StagingBlock             blocks[DX12_STAGING_BLOCK_COUNT];
+    uint32_t                     current;       /* current block index */
+    uint64_t                     current_frame; /* advanced by begin_frame() */
+    ID3D12CommandAllocator      *cmd_alloc;     /* reusable for batch uploads */
+    ID3D12GraphicsCommandList   *cmd_list;      /* reusable for batch uploads */
+    ID3D12Fence                 *fence;         /* fence for batch completion */
+    HANDLE                       fence_event;
+    uint64_t                     fence_value;
+    bool                         initialized;
+} Dx12StagingRing;
+
+/* =======================================================================
  * Backend state (defined in rhi_dx12.c, shared across TUs)
  * ======================================================================= */
 
@@ -153,6 +185,9 @@ typedef struct Dx12State {
 
     /* UAV descriptor bump allocator (starts at DX12_MAX_RESOURCES) */
     uint32_t                next_uav_offset;
+
+    /* Staging ring buffer for batched uploads */
+    Dx12StagingRing         staging_ring;
 
     /* Dimensions */
     uint32_t                width;
@@ -218,6 +253,13 @@ void        dx12_buffer_upload(RhiBuffer buf, const void *data, size_t size);
 RhiTexture  dx12_texture_create(const RhiTextureDesc *desc);
 void        dx12_texture_destroy(RhiTexture tex);
 void        dx12_texture_upload(RhiTexture tex, const void *data, size_t size);
+void        dx12_texture_upload_batch(const RhiTextureUploadItem *items,
+                                       uint32_t count);
+
+/* Staging ring lifecycle (called from rhi_dx12_init.c) */
+bool dx12_staging_ring_init(void);
+void dx12_staging_ring_shutdown(void);
+void dx12_staging_ring_begin_frame(uint64_t frame_number);
 
 RhiPipeline dx12_pipeline_create(const RhiPipelineDesc *desc);
 RhiPipeline dx12_compute_pipeline_create(const RhiComputePipelineDesc *desc);

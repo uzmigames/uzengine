@@ -246,6 +246,11 @@ bool dx12_init(void *window_handle, uint32_t width, uint32_t height) {
     /* ------ PSO cache ------ */
     rhi_pso_cache_init();
 
+    /* ------ Staging ring buffer for batched texture uploads ------ */
+    if (!dx12_staging_ring_init()) {
+        DIAG("WARNING: staging ring init failed, falling back to per-upload staging");
+    }
+
     s_dx12.initialized = true;
     DIAG("=== dx12_init COMPLETE ===");
     return true;
@@ -260,6 +265,7 @@ void dx12_shutdown(void) {
 
     dx12_wait_for_gpu();
 
+    dx12_staging_ring_shutdown();
     rhi_pso_cache_shutdown();
 
     /* Release command lists */

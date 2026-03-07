@@ -27,10 +27,15 @@ static void mock_texture_upload(RhiTexture tex, const void* data, size_t size) {
     (void)tex; (void)data; (void)size;
 }
 
+static void mock_texture_upload_batch(const RhiTextureUploadItem* items, uint32_t count) {
+    (void)items; (void)count;
+}
+
 void setup_mock_rhi() {
     g_mock_rhi.texture_create = mock_texture_create;
     g_mock_rhi.texture_destroy = mock_texture_destroy;
     g_mock_rhi.texture_upload = mock_texture_upload;
+    g_mock_rhi.texture_upload_batch = mock_texture_upload_batch;
     rhi_set_backend(&g_mock_rhi);
 }
 
@@ -50,6 +55,26 @@ namespace uz {
 
     void destroy_texture(GpuTexture& tex) {
         tex.handle = RHI_NULL;
+    }
+
+    DecodedTexture decode_texture_from_file(const char* path) {
+        (void)path;
+        DecodedTexture d;
+        d.width = 128;
+        d.height = 128;
+        d.pixel_size = 128 * 128 * 4;
+        d.pixels = static_cast<uint8_t*>(malloc(d.pixel_size));
+        if (d.pixels) memset(d.pixels, 0xFF, d.pixel_size);
+        return d;
+    }
+
+    void free_decoded_texture(DecodedTexture& decoded) {
+        free(decoded.pixels);
+        decoded.pixels = nullptr;
+    }
+
+    void free_decoded_texture_pixels(uint8_t* pixels) {
+        free(pixels);
     }
 }
 
@@ -118,12 +143,14 @@ TEST_F(MaterialSystemTest, LoadMaterial_ParsesParameters) {
 TEST_F(MaterialSystemTest, LoadMaterial_ResolvesTextures) {
     Material* mat = manager_.load("test.uzmat");
     ASSERT_NE(mat, nullptr);
-    
+
     ASSERT_TRUE(mat->textures.count("base_tex"));
     EXPECT_EQ(mat->textures.at("base_tex"), "test_tex.png");
-    
+
+    // Texture handle is RHI_NULL initially because textures load asynchronously.
+    // The handle becomes valid after texture_tick() processes the async decode.
     ASSERT_TRUE(mat->texture_handles.count("base_tex"));
-    EXPECT_NE(mat->texture_handles.at("base_tex"), RHI_NULL);
+    EXPECT_EQ(mat->texture_handles.at("base_tex"), RHI_NULL);
 }
 
 TEST_F(MaterialSystemTest, LoadMaterial_CachesInstances) {
@@ -228,13 +255,12 @@ TEST_F(PBRMaterialTest, ParsesDisplacementAndParallaxScale) {
     EXPECT_FLOAT_EQ(alb[1], 0.75f);
     EXPECT_FLOAT_EQ(alb[2], 0.65f);
 
-    // All 5 PBR textures resolved
+    // All 5 PBR textures queued for async loading
     EXPECT_TRUE(mat->texture_handles.count("albedo_texture"));
     EXPECT_TRUE(mat->texture_handles.count("normal_texture"));
     EXPECT_TRUE(mat->texture_handles.count("roughness_texture"));
     EXPECT_TRUE(mat->texture_handles.count("ao_texture"));
     EXPECT_TRUE(mat->texture_handles.count("displacement_texture"));
-    EXPECT_NE(mat->texture_handles.at("displacement_texture"), RHI_NULL);
 }
 
 TEST_F(PBRMaterialTest, ParsesPerMaterialShaderParams) {
@@ -294,9 +320,8 @@ TEST_F(PBRMaterialTest, ParsesEmissionParams) {
     ASSERT_TRUE(mat->parameters.count("emission_energy"));
     EXPECT_FLOAT_EQ(mat->parameters.at("emission_energy"), 5.0f);
 
-    // Emission texture
+    // Emission texture queued for async loading
     EXPECT_TRUE(mat->texture_handles.count("emission_texture"));
-    EXPECT_NE(mat->texture_handles.at("emission_texture"), RHI_NULL);
 }
 
 TEST_F(PBRMaterialTest, ParsesUVTilingScalar) {

@@ -13,12 +13,6 @@ cbuffer ColorCB : register(b1) {
     float3 cameraWorldPos;  // camera world position for distance fade
     float  gridFadeEnd;     // XZ distance where lines are fully transparent (0 = no fade)
 };
-cbuffer LightCB : register(b2) {
-    float3 lightDir;
-    float  lightIntensity;
-    float3 lightColor;
-    float  _lightPad;
-};
 
 struct VSInput {
     float3 position : POSITION;

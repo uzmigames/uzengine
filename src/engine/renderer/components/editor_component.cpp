@@ -93,6 +93,8 @@ void EditorComponent::draw(RhiCmdList cmd,
                            bool usePivot,
                            Float3 pivotPos) {
     // -- Ground grid --
+    if (linePipeline_ == RHI_NULL || gridVertexBuffer_ == RHI_NULL || gridVertexCount_ == 0)
+        return;
     rhi()->cmd_set_pipeline(cmd, linePipeline_);
     rhi()->cmd_set_topology(cmd, RHI_TOPOLOGY_LINE_LIST);
 
@@ -473,8 +475,8 @@ bool EditorComponent::createGridVertexBuffer() {
 
     const float extent = static_cast<float>(kHalfExtent);
 
-    const Float3 kMinorColor = {0.12f, 0.12f, 0.12f};
-    const Float3 kMajorColor = {0.25f, 0.25f, 0.25f};
+    const Float3 kMinorColor = {0.22f, 0.22f, 0.22f};
+    const Float3 kMajorColor = {0.45f, 0.45f, 0.45f};
     const Float3 kAxisX      = {0.55f, 0.10f, 0.10f};
     const Float3 kAxisZ      = {0.10f, 0.55f, 0.10f};
 

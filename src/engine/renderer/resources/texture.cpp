@@ -102,4 +102,51 @@ void destroy_texture(GpuTexture& tex) {
     tex.height = 0;
 }
 
+DecodedTexture decode_texture_from_file(const char* path) {
+    DecodedTexture decoded;
+
+    if (!path) return decoded;
+
+    size_t file_size = 0;
+    char* file_data = platform::file_read_all(path, &file_size);
+    if (!file_data || file_size == 0) {
+        DIAG_FMT("decode_texture_from_file: cannot read '%s'", path);
+        return decoded;
+    }
+
+    int w = 0, h = 0, channels = 0;
+    uint8_t* pixels = stbi_load_from_memory(
+        reinterpret_cast<const uint8_t*>(file_data),
+        static_cast<int>(file_size), &w, &h, &channels, 4);
+    free(file_data);
+
+    if (!pixels) {
+        DIAG_FMT("decode_texture_from_file: stbi decode failed '%s': %s",
+                 path, stbi_failure_reason());
+        return decoded;
+    }
+
+    decoded.pixels     = pixels;
+    decoded.width      = static_cast<uint32_t>(w);
+    decoded.height     = static_cast<uint32_t>(h);
+    decoded.pixel_size = static_cast<size_t>(w) * h * 4;
+    return decoded;
+}
+
+void free_decoded_texture(DecodedTexture& decoded) {
+    if (decoded.pixels) {
+        stbi_image_free(decoded.pixels);
+        decoded.pixels = nullptr;
+    }
+    decoded.width  = 0;
+    decoded.height = 0;
+    decoded.pixel_size = 0;
+}
+
+void free_decoded_texture_pixels(uint8_t* pixels) {
+    if (pixels) {
+        stbi_image_free(pixels);
+    }
+}
+
 } // namespace uz

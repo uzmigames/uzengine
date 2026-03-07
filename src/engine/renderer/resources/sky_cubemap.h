@@ -26,15 +26,13 @@ struct SkyCubemapResult {
     RhiTexture prefiltered_cube;  // 128x128 RGBA16F specular prefiltered (5 mip levels)
 };
 
-// Generate all IBL cubemaps from procedural sky parameters.
-// Creates three cubemap textures:
-//   1) Source environment cubemap (256x256 per face, 1 mip)
-//   2) Irradiance cubemap (32x32 per face, 1 mip) -- diffuse hemisphere integral
-//   3) Prefiltered environment cubemap (128x128 per face, 5 mips) -- specular split-sum
-//
-// NOTE: The current RHI texture_upload() only writes subresource 0 (face 0, mip 0).
-// Full cubemap upload requires RHI extension (texture_upload_subresource).
-// Until then, the generated CPU pixel data is correct but only face 0 is GPU-resident.
+// Generate ONLY the source env cubemap (fast — ~50ms).
+// irradiance_cube and prefiltered_cube are RHI_NULL.
+// Use IblBaker::bake() for GPU-accelerated convolution (~1ms).
 SkyCubemapResult generate_sky_cubemaps(const SkyCubemapParams& params);
+
+// Full CPU fallback: env cubemap + CPU-convolved irradiance + prefiltered (~1300ms).
+// Only use when GPU IBL bake is unavailable.
+SkyCubemapResult generate_sky_cubemaps_full(const SkyCubemapParams& params);
 
 } // namespace uz

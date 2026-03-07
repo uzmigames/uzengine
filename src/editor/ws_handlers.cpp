@@ -22,6 +22,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -902,6 +903,13 @@ void handleWsTextMessage(const std::string& text,
     ci.moveDown.store(   j.value("q",  0.0f), std::memory_order_relaxed);
     ci.rightMouseDown.store(j.value("rmb",   false), std::memory_order_relaxed);
     ci.shiftDown.store(     j.value("shift", false), std::memory_order_relaxed);
+
+    // Timestamp for staleness detection — fly-cam zeroes movement
+    // if no message arrives for >200ms (handles focus loss, WS drop).
+    ci.lastMessageUs.store(
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count(),
+        std::memory_order_relaxed);
 
     // Mouse deltas and scroll are additive -- accumulate until the
     // render thread consumes them with exchange(0).

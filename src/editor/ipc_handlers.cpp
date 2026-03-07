@@ -133,13 +133,11 @@ void registerIpcHandlers(uz::IpcRegistry& ipcRegistry,
             (void)uz::scene_save_file(g_sceneData.get(), g_sceneData->source_path);
         }
 
-        // Create / reset the real Scene.
-        if (!g_sceneData) {
-            g_sceneData = std::make_unique<uz::Scene>();
-            uz::scene_init(g_sceneData.get(), "IPCScene");
-        } else {
-            uz::scene_clear(g_sceneData.get());
-        }
+        // Build the scene on the IPC thread (CPU-only work).
+        // NO renderer calls here — GPU work deferred to main thread.
+        auto pending = std::make_unique<PendingSceneLoad>();
+        pending->scene = std::make_unique<uz::Scene>();
+        uz::scene_init(pending->scene.get(), "IPCScene");
 
         std::vector<uz::Renderer::EditorNode> editorNodes;
         editorNodes.reserve(args["nodes"].size());
@@ -149,10 +147,10 @@ void registerIpcHandlers(uz::IpcRegistry& ipcRegistry,
             const std::string nodeName = n.value("name", "Unnamed");
 
             uz::NodeId id = uz::scene_create_node(
-                g_sceneData.get(), nodeName.c_str(), typeStr.c_str());
+                pending->scene.get(), nodeName.c_str(), typeStr.c_str());
             if (id == uz::kNodeIdInvalid) continue;
 
-            uz::SceneNode* node = uz::scene_get_node(g_sceneData.get(), id);
+            uz::SceneNode* node = uz::scene_get_node(pending->scene.get(), id);
             if (!node) continue;
 
             float px = 0, py = 0, pz = 0;
@@ -186,16 +184,13 @@ void registerIpcHandlers(uz::IpcRegistry& ipcRegistry,
                 node->local_transform.scale = {sx, sy, sz, 0.0f};
             }
 
-            // Component data — data-driven via ComponentRegistry.
-            // The registry already attached default components in scene_create_node.
-            // Apply any JSON overrides for well-known props.
-            uz::CameraData* cd = uz::component_get<uz::CameraData>(&g_sceneData->components, id);
+            uz::CameraData* cd = uz::component_get<uz::CameraData>(&pending->scene->components, id);
             if (cd) {
                 cd->fov_y      = n.value("fov",  cd->fov_y);
                 cd->near_plane = n.value("near", cd->near_plane);
                 cd->far_plane  = n.value("far",  cd->far_plane);
             }
-            uz::DirectionalLightData* ld = uz::component_get<uz::DirectionalLightData>(&g_sceneData->components, id);
+            uz::DirectionalLightData* ld = uz::component_get<uz::DirectionalLightData>(&pending->scene->components, id);
             if (ld) {
                 if (n.contains("light_color") && n["light_color"].is_array()
                     && n["light_color"].size() >= 3) {
@@ -209,7 +204,6 @@ void registerIpcHandlers(uz::IpcRegistry& ipcRegistry,
                 ld->intensity = n.value("light_intensity", ld->intensity);
             }
 
-            // Build EditorNode for wireframe rendering.
             uz::Renderer::EditorNode edNode;
             edNode.position = {px, py, pz};
             edNode.rotation = {rx, ry, rz};
@@ -233,11 +227,12 @@ void registerIpcHandlers(uz::IpcRegistry& ipcRegistry,
             editorNodes.push_back(edNode);
         }
 
-        uz::scene_update_world_transforms(g_sceneData.get());
-        renderer.setScene(g_sceneData.get());
+        uz::scene_update_world_transforms(pending->scene.get());
+        pending->editor_nodes = std::move(editorNodes);
+        int count = static_cast<int>(pending->scene->next_id - 1);
 
-        const size_t count = renderer.loadEditorScene(std::move(editorNodes));
-        return {{"ok", true}, {"count", static_cast<int>(count)}};
+        enqueuePendingScene(std::move(pending));
+        return {{"ok", true}, {"count", count}};
     });
 
     ipcRegistry.add("scene.loadFile", [&](const nlohmann::json& args) -> nlohmann::json {
@@ -247,6 +242,8 @@ void registerIpcHandlers(uz::IpcRegistry& ipcRegistry,
         }
 
         // Auto-save current scene before loading new one.
+        // NOTE: reading cam floats from IPC thread is a benign race —
+        // at worst the saved camera is one frame stale.
         if (g_sceneData && g_sceneData->source_path[0] != '\0') {
             g_sceneData->editor_state.cam_pos_x = g_scene.camPosX;
             g_sceneData->editor_state.cam_pos_y = g_scene.camPosY;
@@ -258,22 +255,17 @@ void registerIpcHandlers(uz::IpcRegistry& ipcRegistry,
             (void)uz::scene_save_file(g_sceneData.get(), g_sceneData->source_path);
         }
 
-        // Load the new scene file (syncs editor camera state into SceneParams).
-        loadSceneFile(g_sceneData, renderer, g_scene, scenePath);
+        // CPU-only scene parsing + enqueue for main thread.
+        // No renderer calls here — GPU work happens on the main thread.
+        auto result = loadSceneFileDeferred(scenePath);
 
-        if (!g_sceneData) {
+        if (result.name.empty()) {
             return {{"ok", false}, {"error", "failed to load scene file"}};
         }
 
         return {{"ok", true},
-                {"scene", g_sceneData->name},
-                {"nodes", static_cast<int>(g_sceneData->next_id - 1)},
-                {"camera", {
-                    {"position", {g_scene.camPosX, g_scene.camPosY, g_scene.camPosZ}},
-                    {"yaw", g_scene.camYaw},
-                    {"pitch", g_scene.camPitch},
-                    {"speed", g_scene.camSpeed}
-                }}};
+                {"scene", result.name},
+                {"nodes", result.node_count}};
     });
 
     ipcRegistry.add("scene.setParam", [&](const nlohmann::json& args) -> nlohmann::json {

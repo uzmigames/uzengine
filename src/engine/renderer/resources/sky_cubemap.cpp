@@ -573,48 +573,51 @@ static std::vector<uint16_t> prefilter_specular(
 // =======================================================================
 
 SkyCubemapResult generate_sky_cubemaps(const SkyCubemapParams& params) {
-    DIAG("Generating sky IBL cubemaps...");
+    DIAG("Generating sky env cubemap...");
 
     SkyCubemapResult result{};
     result.env_cubemap      = RHI_NULL;
     result.irradiance_cube  = RHI_NULL;
     result.prefiltered_cube = RHI_NULL;
 
-    // --- Step 1: Source environment cubemap ---
-    DIAG("  [1/3] Generating source environment cubemap (256x256)...");
+    // Generate source environment cubemap (256x256 per face).
+    // GPU compute IBL bake (IblBaker) handles irradiance + prefiltered specular
+    // in ~1ms, so CPU convolution (Steps 2+3) is skipped entirely.
+    // The caller's GPU bake path consumes env_cubemap and produces the IBL maps.
+    // If GPU bake fails, irradiance/prefiltered remain RHI_NULL and the shader
+    // falls back gracefully (no IBL contribution).
     std::vector<uint16_t> env_pixels = generate_env_pixels(params);
 
     result.env_cubemap = create_cubemap_texture(env_pixels, kEnvSize, 1,
                                                  "Sky_EnvCubemap");
     if (result.env_cubemap == RHI_NULL) {
         DIAG("WARNING: Sky env cubemap creation failed");
-        return result;
     }
 
-    // --- Step 2: Irradiance cubemap ---
-    DIAG("  [2/3] Convolving irradiance cubemap (32x32, 1024 samples)...");
-    std::vector<uint16_t> irr_pixels = convolve_irradiance(env_pixels);
+    return result;
+}
 
+SkyCubemapResult generate_sky_cubemaps_full(const SkyCubemapParams& params) {
+    DIAG("Generating sky IBL cubemaps (CPU fallback)...");
+
+    SkyCubemapResult result = generate_sky_cubemaps(params);
+    if (result.env_cubemap == RHI_NULL) return result;
+
+    // CPU convolution fallback — only used if GPU IBL bake is unavailable.
+    std::vector<uint16_t> env_pixels = generate_env_pixels(params);
+
+    DIAG("  Convolving irradiance cubemap (32x32, 1024 samples)...");
+    std::vector<uint16_t> irr_pixels = convolve_irradiance(env_pixels);
     result.irradiance_cube = create_cubemap_texture(irr_pixels, kIrrSize, 1,
                                                      "Sky_IrradianceCube");
-    if (result.irradiance_cube == RHI_NULL) {
-        DIAG("WARNING: Sky irradiance cubemap creation failed");
-        return result;
-    }
 
-    // --- Step 3: Prefiltered specular cubemap ---
-    DIAG("  [3/3] Prefiltering specular cubemap (128x128, 5 mips, 256 samples)...");
+    DIAG("  Prefiltering specular cubemap (128x128, 5 mips, 256 samples)...");
     std::vector<uint16_t> prefilt_pixels = prefilter_specular(env_pixels);
-
     result.prefiltered_cube = create_cubemap_texture(prefilt_pixels, kPrefiltSize,
                                                       kPrefiltMips,
                                                       "Sky_PrefilteredCube");
-    if (result.prefiltered_cube == RHI_NULL) {
-        DIAG("WARNING: Sky prefiltered cubemap creation failed");
-        return result;
-    }
 
-    DIAG("Sky IBL cubemaps generated OK");
+    DIAG("Sky IBL cubemaps generated OK (CPU)");
     return result;
 }
 

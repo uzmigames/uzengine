@@ -12,6 +12,7 @@
 #include "engine/scene/component_store.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 
 namespace uz {
@@ -100,24 +101,43 @@ CameraState camera_update_fly(SceneParams* params, float aspect, float dt) {
     auto& ci = params->cameraInput;
     auto& sp = *params;
 
-    // Scroll wheel → adjust camera speed.
-    const float scroll = ci.scrollDelta.exchange(0.0f, std::memory_order_relaxed);
-    if (scroll != 0.0f) {
-        sp.camSpeed *= std::pow(1.1f, scroll);
-        sp.camSpeed  = std::clamp(sp.camSpeed, 0.1f, 500.0f);
+    // -----------------------------------------------------------------------
+    // Input staleness detection: if no camera_input message has arrived for
+    // >200ms, treat all keys as released.  This handles WebView focus loss,
+    // WebSocket disconnection, and the "stuck key" bug where keyup events
+    // never arrive because the render thread was blocked during scene load.
+    // -----------------------------------------------------------------------
+    bool inputStale = false;
+    {
+        using Clock = std::chrono::steady_clock;
+        const int64_t nowUs = std::chrono::duration_cast<std::chrono::microseconds>(
+            Clock::now().time_since_epoch()).count();
+        const int64_t lastUs = ci.lastMessageUs.load(std::memory_order_relaxed);
+        // 200ms timeout. lastUs == 0 means no message ever received yet.
+        inputStale = (lastUs == 0) || (nowUs - lastUs > 200'000);
     }
 
-    // Mouse look (only when RMB held).
-    const float mdx = ci.mouseDeltaX.exchange(0.0f, std::memory_order_relaxed);
-    const float mdy = ci.mouseDeltaY.exchange(0.0f, std::memory_order_relaxed);
-    const bool  rmb = ci.rightMouseDown.load(std::memory_order_relaxed);
+    // Always consume accumulated deltas to prevent build-up.
+    const float scroll = ci.scrollDelta.exchange(0.0f, std::memory_order_relaxed);
+    const float mdx    = ci.mouseDeltaX.exchange(0.0f, std::memory_order_relaxed);
+    const float mdy    = ci.mouseDeltaY.exchange(0.0f, std::memory_order_relaxed);
 
-    if (rmb) {
-        sp.camYaw   += mdx * sp.camSensitivity;
-        sp.camPitch -= mdy * sp.camSensitivity;
+    if (!inputStale) {
+        // Scroll wheel → adjust camera speed.
+        if (scroll != 0.0f) {
+            sp.camSpeed *= std::pow(1.1f, scroll);
+            sp.camSpeed  = std::clamp(sp.camSpeed, 0.1f, 500.0f);
+        }
 
-        constexpr float kMaxPitch = 89.0f * kDeg2Rad;
-        sp.camPitch = std::clamp(sp.camPitch, -kMaxPitch, kMaxPitch);
+        // Mouse look (only when RMB held).
+        const bool rmb = ci.rightMouseDown.load(std::memory_order_relaxed);
+        if (rmb) {
+            sp.camYaw   += mdx * sp.camSensitivity;
+            sp.camPitch -= mdy * sp.camSensitivity;
+
+            constexpr float kMaxPitch = 89.0f * kDeg2Rad;
+            sp.camPitch = std::clamp(sp.camPitch, -kMaxPitch, kMaxPitch);
+        }
     }
 
     // Forward / right / up vectors from yaw + pitch.
@@ -134,21 +154,24 @@ CameraState camera_update_fly(SceneParams* params, float aspect, float dt) {
         ? rightCross * (1.0f / rightLen)
         : Vec3{1.0f, 0.0f, 0.0f, 0.0f};
 
-    // WASD + EQ movement (only when RMB held).
-    if (rmb) {
-        const float fwd    = ci.moveForward.load(std::memory_order_relaxed)
-                           - ci.moveBack.load(std::memory_order_relaxed);
-        const float strafe = ci.moveRight.load(std::memory_order_relaxed)
-                           - ci.moveLeft.load(std::memory_order_relaxed);
-        const float vert   = ci.moveUp.load(std::memory_order_relaxed)
-                           - ci.moveDown.load(std::memory_order_relaxed);
+    // WASD + EQ movement (only when RMB held AND input is fresh).
+    if (!inputStale) {
+        const bool rmb = ci.rightMouseDown.load(std::memory_order_relaxed);
+        if (rmb) {
+            const float fwd    = ci.moveForward.load(std::memory_order_relaxed)
+                               - ci.moveBack.load(std::memory_order_relaxed);
+            const float strafe = ci.moveRight.load(std::memory_order_relaxed)
+                               - ci.moveLeft.load(std::memory_order_relaxed);
+            const float vert   = ci.moveUp.load(std::memory_order_relaxed)
+                               - ci.moveDown.load(std::memory_order_relaxed);
 
-        const float boost = ci.shiftDown.load(std::memory_order_relaxed) ? 3.0f : 1.0f;
-        const float speed = sp.camSpeed * boost * dt;
+            const float boost = ci.shiftDown.load(std::memory_order_relaxed) ? 3.0f : 1.0f;
+            const float speed = sp.camSpeed * boost * dt;
 
-        sp.camPosX += forward.x * fwd * speed + right.x * strafe * speed;
-        sp.camPosY += forward.y * fwd * speed + worldUp.y * vert * speed;
-        sp.camPosZ += forward.z * fwd * speed + right.z * strafe * speed;
+            sp.camPosX += forward.x * fwd * speed + right.x * strafe * speed;
+            sp.camPosY += forward.y * fwd * speed + worldUp.y * vert * speed;
+            sp.camPosZ += forward.z * fwd * speed + right.z * strafe * speed;
+        }
     }
 
     // Build view/projection matrices.

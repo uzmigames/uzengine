@@ -508,6 +508,9 @@ void dx12_swapchain_present(uint32_t sync_interval) {
     ID3D12CommandQueue_Signal(s_dx12.cmd_queue, s_dx12.frame_fence,
                              s_dx12.frame_fence_value);
 
+    /* Advance staging ring frame counter for upload recycling */
+    dx12_staging_ring_begin_frame(s_dx12.frame_fence_value);
+
     /* Wait for the oldest frame in flight (simple approach for Phase 1) */
     if (ID3D12Fence_GetCompletedValue(s_dx12.frame_fence)
         < s_dx12.frame_fence_value - (DX12_BACKBUFFER_COUNT - 1)) {

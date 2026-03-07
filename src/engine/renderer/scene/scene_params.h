@@ -51,6 +51,11 @@ struct SceneParams {
         std::atomic<bool>  rightMouseDown{false};
         std::atomic<bool>  shiftDown{false};
         std::atomic<float> scrollDelta{0.0f};
+
+        // Staleness detection: timestamp of the last camera_input message.
+        // If no message arrives for >200ms, the fly-cam zeroes all movement
+        // (handles WebView focus loss, WebSocket disconnection, key stuck).
+        std::atomic<int64_t> lastMessageUs{0};
     } cameraInput;
 
     // -----------------------------------------------------------------------

@@ -52,9 +52,26 @@ public:
     /// Unload all materials and textures.
     void clear();
 
+    /// Re-resolve texture handles from the texture cache.
+    /// Returns true if any material's handles were updated.
+    bool refresh_textures();
+
 private:
     struct Impl;
     Impl* impl_ = nullptr;
 };
+
+// ============================================================================
+// Free functions — incremental texture loading (called by renderer each frame)
+// ============================================================================
+
+/// Create 1x1 placeholder textures. Call once after RHI init.
+void texture_init_placeholders();
+
+/// Decode + upload up to `budget` queued textures. Returns true if any loaded.
+bool texture_tick(int budget);
+
+/// Returns true if there are textures queued for loading.
+bool texture_has_queued();
 
 } // namespace uz
