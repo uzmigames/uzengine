@@ -36,10 +36,16 @@ void GizmoRegistry::shutdownAll() {
     }
 }
 
+void GizmoRegistry::suppressGizmo(uint16_t nodeType) {
+    if (nodeType < kMaxNodeType)
+        suppressed_[nodeType] = true;
+}
+
 GizmoRenderer* GizmoRegistry::get(uint16_t nodeType) const {
-    if (nodeType < kMaxNodeType && gizmos_[nodeType]) {
+    if (nodeType < kMaxNodeType && suppressed_[nodeType])
+        return nullptr;
+    if (nodeType < kMaxNodeType && gizmos_[nodeType])
         return gizmos_[nodeType].get();
-    }
     return default_.get();
 }
 

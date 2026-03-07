@@ -12,9 +12,6 @@
 
 // Gizmo types — each is a self-contained GizmoRenderer implementation.
 #include "engine/renderer/gizmos/gizmo_cube.h"
-#include "engine/renderer/gizmos/gizmo_camera.h"
-#include "engine/renderer/gizmos/gizmo_directional_light.h"
-#include "engine/renderer/gizmos/gizmo_point_light.h"
 
 #include "engine/scene/component_registry.h"
 
@@ -36,7 +33,7 @@ inline std::string getShaderDir() {
     auto slash = dir.find_last_of("\\/");
     if (slash != std::string::npos) dir = dir.substr(0, slash);
     // Path relative to build/Debug/ or build/Release/
-    return dir + "/../../src/engine/renderer/shaders/";
+    return dir + "/../../src/engine/renderer/shaders/geometry/";
 }
 
 // Read an entire file into a string. Returns empty on failure.
@@ -82,13 +79,16 @@ bool EditorComponent::init() {
     // type_index is assigned at registration time in component_registry.cpp.
     // Using the registry ensures new types registered by plugins work automatically.
     gizmoRegistry_.setDefaultGizmo(std::make_unique<GizmoCube>());
-    auto regGizmo = [&](const char* typeName, std::unique_ptr<GizmoRenderer> g) {
+
+    // Suppress gizmos for non-renderable component types.
+    auto suppress = [&](const char* typeName) {
         const NodeTypeDef* def = ComponentRegistry::find(typeName);
-        if (def) gizmoRegistry_.registerGizmo(def->type_index, std::move(g));
+        if (def) gizmoRegistry_.suppressGizmo(def->type_index);
     };
-    regGizmo("DirectionalLight", std::make_unique<GizmoDirectionalLight>());
-    regGizmo("PointLight",       std::make_unique<GizmoPointLight>());
-    regGizmo("Camera",           std::make_unique<GizmoCamera>());
+    suppress("Camera");
+    suppress("DirectionalLight");
+    suppress("PointLight");
+    suppress("SkyAtmosphere");
 
     gizmoRegistry_.initAll();
     transformGizmo_.init();
@@ -173,10 +173,10 @@ void EditorComponent::draw(RhiCmdList cmd,
             }
 
             // Lookup and draw the correct gizmo for this node type.
+            // Returns nullptr for suppressed types (Camera, lights, SkyAtmosphere).
             GizmoRenderer* gizmo = gizmoRegistry_.get(node.nodeType);
-            if (gizmo) {
-                gizmo->draw(cmd);
-            }
+            if (!gizmo) continue;
+            gizmo->draw(cmd);
 
             // Track selected node position
             if (selectedNodeId > 0 && node.nodeId == selectedNodeId) {

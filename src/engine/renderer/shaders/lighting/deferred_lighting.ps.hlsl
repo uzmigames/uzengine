@@ -31,6 +31,8 @@ cbuffer PunctualLightsCB : register(b1) {
     uint   punctualLightCount;
     float3 _plPad;
     PunctualLight punctualLights[8];
+    // Shadow VP matrix for cascade 0 (DWORDs 116-131, uploaded from renderer.cpp)
+    float4x4 shadowVP;
 };
 
 // b3: LightParamsCB (16 root constants)
@@ -144,8 +146,9 @@ float3 OctDecode(float2 f) {
     return normalize(n);
 }
 
-// PCF Shadow
+// PCF Shadow — project into light clip space using cascade 0 VP matrix.
 float SampleShadow(float3 worldPos, float3 worldNormal) {
+    // Normal-offset bias: push along surface normal to prevent self-shadowing
     float3 lightFwd = normalize(lightDir);
     float3 L_dir    = normalize(-lightFwd);
     float  NdotL_s  = saturate(dot(worldNormal, L_dir));
@@ -154,27 +157,23 @@ float SampleShadow(float3 worldPos, float3 worldNormal) {
     float  normalOffsetScale = clamp(tanTheta * 0.015, 0.0, 0.04);
     worldPos = worldPos + worldNormal * normalOffsetScale;
 
-    float3 refUp  = (abs(lightFwd.y) > 0.99) ? float3(1, 0, 0) : float3(0, 1, 0);
-    float3 lRight = normalize(cross(refUp, lightFwd));
-    float3 lUp    = cross(lightFwd, lRight);
+    // Project into light clip space using cascade 0 VP matrix (exact CPU match).
+    float4 shadowClip = mul(shadowVP, float4(worldPos, 1.0));
+    float2 shadowNDC = shadowClip.xy;
+    float  shadowZ   = shadowClip.z;
 
-    float3 lightEye = -lightFwd * shadowLightDist;
-    float3 relPos   = worldPos - lightEye;
+    // NDC [-1,+1] -> UV [0,1]
+    float2 shadowUV = shadowNDC * 0.5 + 0.5;
+    shadowUV.y = 1.0 - shadowUV.y;  // DX UV: top=0, NDC top=+1
 
-    float lx = dot(relPos, lRight);
-    float ly = dot(relPos, lUp);
-    float lz = dot(relPos, lightFwd);
-
-    float2 shadowUV = float2(lx, -ly) / shadowOrthoSize * 0.5 + 0.5;
     if (shadowUV.x < 0.0 || shadowUV.x > 1.0 ||
         shadowUV.y < 0.0 || shadowUV.y > 1.0)
         return 1.0;
 
-    float shadowFar    = shadowLightDist * 2.0;
-    float currentDepth = (lz - 0.1) / (shadowFar - 0.1);
+    float currentDepth = shadowZ;
 
-    // CSM: map shadow UV into cascade 0 quadrant (top-left 1024x1024 of 4096 atlas)
-    shadowUV = shadowUV * 0.5;
+    // CSM: map UV into cascade 0 quadrant (top-left 1024x1024 of 4096 atlas)
+    shadowUV = shadowUV * 0.25;
     float shadow = 0.0;
     float2 texelSize = 1.0 / float2(4096.0, 4096.0);
 

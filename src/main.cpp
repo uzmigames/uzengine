@@ -25,6 +25,7 @@
 #include "engine/scene/component_store.h"
 #include "engine/scene/scene_loader.h"
 #include "engine/scene/scene_saver.h"
+#include "engine/scene/component_registry.h"
 
 #include "engine/core/diag.h"
 #include "engine/core/profiler.h"
@@ -1421,20 +1422,16 @@ int WINAPI WinMain(
                     sn.local_transform.scale.y,
                     sn.local_transform.scale.z
                 };
-                edNode.nodeType = 0; // legacy field
                 edNode.nodeId   = i;
 
-                // Assign gizmo colors by node type string.
-                const char* tn = sn.type_name;
-                if (std::strcmp(tn, "Camera") == 0) {
-                    edNode.color = {0.9f, 0.9f, 0.2f};
-                } else if (std::strcmp(tn, "DirectionalLight") == 0 ||
-                           std::strcmp(tn, "PointLight") == 0) {
-                    edNode.color = {0.9f, 0.7f, 0.2f};
-                } else if (std::strcmp(tn, "StaticMesh") == 0) {
-                    edNode.color = {0.2f, 0.8f, 0.9f};
+                // Resolve type_index + color from ComponentRegistry.
+                const uz::NodeTypeDef* def = uz::ComponentRegistry::find(sn.type_name);
+                if (def) {
+                    edNode.nodeType = def->type_index;
+                    edNode.color    = {def->editor_color[0], def->editor_color[1], def->editor_color[2]};
                 } else {
-                    edNode.color = {0.8f, 0.8f, 0.8f};
+                    edNode.nodeType = 0;
+                    edNode.color    = {0.8f, 0.8f, 0.8f};
                 }
                 editorNodes.push_back(edNode);
             }
@@ -1712,17 +1709,16 @@ int WINAPI WinMain(
                 node->local_transform.rotation.w
             };
             edNode.scale    = {sx, sy, sz};
-            edNode.nodeType = 0;
             edNode.nodeId   = static_cast<uint32_t>(id);
 
-            if (typeStr == "StaticMesh") {
-                edNode.color = {0.2f, 0.8f, 0.9f};
-            } else if (typeStr == "Camera") {
-                edNode.color = {0.9f, 0.9f, 0.2f};
-            } else if (typeStr == "DirectionalLight" || typeStr == "PointLight") {
-                edNode.color = {0.9f, 0.7f, 0.2f};
+            // Resolve type_index + color from ComponentRegistry.
+            const uz::NodeTypeDef* def = uz::ComponentRegistry::find(typeStr.c_str());
+            if (def) {
+                edNode.nodeType = def->type_index;
+                edNode.color    = {def->editor_color[0], def->editor_color[1], def->editor_color[2]};
             } else {
-                edNode.color = {0.8f, 0.8f, 0.8f};
+                edNode.nodeType = 0;
+                edNode.color    = {0.8f, 0.8f, 0.8f};
             }
             editorNodes.push_back(edNode);
         }

@@ -22,7 +22,7 @@ function(embed_shaders)
 
     file(MAKE_DIRECTORY "${ES_OUTPUT_DIR}")
 
-    file(GLOB SHADER_FILES "${ES_SOURCE_DIR}/*.hlsl")
+    file(GLOB_RECURSE SHADER_FILES "${ES_SOURCE_DIR}/*.hlsl")
 
     set(CHUNK_LIMIT 14000)
 

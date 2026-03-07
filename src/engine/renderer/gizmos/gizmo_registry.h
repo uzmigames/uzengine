@@ -40,13 +40,16 @@ public:
     /// Shutdown all registered gizmos.
     void shutdownAll();
 
-    /// Get the gizmo for a given NodeType. Returns the default gizmo if
-    /// no type-specific one is registered. Never returns nullptr (as long
-    /// as setDefaultGizmo was called).
+    /// Suppress gizmo drawing for a given NodeType (returns nullptr from get).
+    void suppressGizmo(uint16_t nodeType);
+
+    /// Get the gizmo for a given NodeType. Returns nullptr if suppressed,
+    /// the type-specific gizmo if registered, or the default gizmo otherwise.
     GizmoRenderer* get(uint16_t nodeType) const;
 
 private:
     std::array<std::unique_ptr<GizmoRenderer>, kMaxNodeType> gizmos_{};
+    std::array<bool, kMaxNodeType> suppressed_{};
     std::unique_ptr<GizmoRenderer> default_;
 };
 

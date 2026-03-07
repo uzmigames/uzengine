@@ -168,10 +168,10 @@ bool Renderer::init(void* window_handle, uint32_t width, uint32_t height) {
     }
 
     // Create per-frame CBVs (b1 and b2 are root CBVs).
-    // 512 bytes = extended LightFrameCB (directional + 8 punctual lights). D3D12 CBV 256-aligned.
+    // 768 bytes = LightFrameCB (directional + 8 punctual + shadowVP). D3D12 CBV 256-aligned.
     {
         RhiBufferDesc cbvDesc{};
-        cbvDesc.size       = 512;
+        cbvDesc.size       = 768;
         cbvDesc.usage      = RHI_BUFFER_USAGE_CONSTANT | RHI_BUFFER_USAGE_UPLOAD;
 
         cbvDesc.debug_name = "LightFrameCBV";
@@ -528,9 +528,9 @@ void Renderer::update(double totalTime, double deltaTime) {
     gatherPunctualLights();
 
     // Upload LightFrameCB to GPU constant buffer (b2 root CBV)
-    // Layout: 16 DWORDs directional + 4 DWORDs (count+pad) + 12*8 DWORDs punctual = 116 floats
+    // Layout: 16 DWORDs directional + 4 DWORDs (count+pad) + 12*8 punctual + 16 shadowVP
     if (lightFrameCBV_ != RHI_NULL) {
-        float lightFrameData[128] = {};  // 512 bytes, zero-init
+        float lightFrameData[192] = {};  // 768 bytes, zero-init
         // DWORDs 0-15: directional light + camera + env
         lightFrameData[0]  = frameConstants_.light_dir.x;
         lightFrameData[1]  = frameConstants_.light_dir.y;
@@ -554,9 +554,11 @@ void Renderer::update(double totalTime, double deltaTime) {
         lightFrameData[17] = 0.0f;
         lightFrameData[18] = 0.0f;
         lightFrameData[19] = 0.0f;
-        // DWORDs 20+: punctual light data (12 floats per light)
+        // DWORDs 20-115: punctual light data (12 floats per light)
         std::memcpy(&lightFrameData[20], punctualLights_,
                      punctualLightCount_ * sizeof(GpuPunctualLight));
+        // DWORDs 116-131: cascade 0 shadow VP matrix
+        std::memcpy(&lightFrameData[116], &cascadeVP_[0], sizeof(Mat4));
         rhi()->buffer_upload(lightFrameCBV_, lightFrameData, sizeof(lightFrameData));
     }
 

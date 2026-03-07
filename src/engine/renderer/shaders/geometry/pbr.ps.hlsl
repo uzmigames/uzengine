@@ -59,6 +59,8 @@ cbuffer LightFrameCB : register(b2) {
     uint   punctualLightCount;  // 0..8
     float3 _plPad;
     PunctualLight punctualLights[8];
+    // Shadow VP matrix for cascade 0 (DWORDs 116-131)
+    float4x4 shadowVP;
 };
 
 cbuffer FrameCB : register(b3) {
@@ -199,40 +201,32 @@ float HeightmapSelfShadow(float2 uv, float3 L_ts, float scale, float h0)
 float SampleShadow(float3 worldPos, float3 worldNormal) {
     // Normal-offset bias: push the query point along the surface normal to prevent
     // self-shadowing on flat surfaces at grazing light angles (e.g. floor).
-    // Scale: larger offset when NdotL is small (grazing angle).
     float3 lightFwd = normalize(lightDir);
     float3 L_dir    = normalize(-lightFwd);
     float  NdotL_s  = saturate(dot(worldNormal, L_dir));
-    // UE5-style normal offset: offsetScale grows as sin(theta)/cos(theta) = tan(theta)
     float  sinTheta = sqrt(saturate(1.0 - NdotL_s * NdotL_s));
     float  tanTheta = sinTheta / max(NdotL_s, 1e-3);
     float  normalOffsetScale = clamp(tanTheta * 0.015, 0.0, 0.04);
     worldPos = worldPos + worldNormal * normalOffsetScale;
-    float3 refUp    = (abs(lightFwd.y) > 0.99) ? float3(1, 0, 0) : float3(0, 1, 0);
-    float3 lRight   = normalize(cross(refUp, lightFwd));  // matches CPU lightRight
-    float3 lUp      = cross(lightFwd, lRight);             // matches CPU lightUp
 
-    // Light eye: sceneCenter(0) - lightFwd * dist  (matches CPU: -ld * shadowLightDist)
-    float3 lightEye = -lightFwd * shadowLightDist;
-    float3 relPos   = worldPos - lightEye;
+    // Project into light clip space using cascade 0 VP matrix (exact CPU match).
+    // mul(matrix, vector) — same convention as shadow_depth.vs.hlsl and pbr.vs.hlsl.
+    float4 shadowClip = mul(shadowVP, float4(worldPos, 1.0));
+    // Orthographic: w=1, so clip.xyz = NDC directly
+    float2 shadowNDC = shadowClip.xy;
+    float  shadowZ   = shadowClip.z;
 
-    // Project into light space (matches CPU view matrix dot products)
-    float lx = dot(relPos, lRight);
-    float ly = dot(relPos, lUp);
-    float lz = dot(relPos, lightFwd);
+    // NDC [-1,+1] → UV [0,1]
+    float2 shadowUV = shadowNDC * 0.5 + 0.5;
+    shadowUV.y = 1.0 - shadowUV.y;  // DX UV: top=0, NDC top=+1
 
-    // Orthographic UV: shadowOrthoSize = half-extent → maps [-size,+size] to [0,1]
-    float2 shadowUV = float2(lx, -ly) / shadowOrthoSize * 0.5 + 0.5;
     if (shadowUV.x < 0.0 || shadowUV.x > 1.0 ||
         shadowUV.y < 0.0 || shadowUV.y > 1.0)
         return 1.0;  // Outside shadow frustum — fully lit
 
-    // Linear depth in [0,1] (near=0.1, far=shadowLightDist*2)
-    float shadowFar    = shadowLightDist * 2.0;
-    float currentDepth = (lz - 0.1) / (shadowFar - 0.1);
+    float currentDepth = shadowZ;
 
-    // CSM: map shadow UV into cascade 0 quadrant (top-left 1024x1024 of 4096 atlas)
-    // Scale = kCascadeSize / kShadowAtlasSize = 1024 / 4096 = 0.25
+    // CSM: map UV into cascade 0 quadrant (top-left 1024x1024 of 4096 atlas)
     shadowUV = shadowUV * 0.25;
     // texel size relative to cascade region within the atlas
     float shadow = 0.0;
