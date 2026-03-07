@@ -6,13 +6,17 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
-- **Batched Texture Upload Pipeline** — eliminates per-texture GPU stalls during scene load
+- **Incremental Texture Loading** — zero-stall streaming of textures across frames
+  - `TextureLoader`: async decode queue + per-frame budget (4 textures/frame default)
   - `Dx12StagingRing`: pre-allocated ring of 8×4MB persistently-mapped UPLOAD blocks (32MB total)
-  - `texture_upload_batch()` RHI function: records all texture copies in a single command list, submits once, signals one fence — replaces 50 individual GPU stalls with 1
-  - `DecodedTexture` + `decode_texture_from_file()`: CPU decode separated from GPU upload for deferred batching
-  - `TextureManager` rewritten with two-phase approach: `get_or_prepare()` (CPU decode + texture_create) then `flush_pending()` (batched GPU upload)
-  - Staging ring sub-allocator with 512-byte alignment, automatic block advancement, fallback to legacy path for oversized textures
-  - Based on Unreal Engine 5 (FD3D12UploadHeapAllocator, FD3D12CopyScope) and Godot 4 (StagingBufferBlock ring) patterns
+  - `texture_upload_batch()` RHI function: records all texture copies in a single command list, submits once
+  - 1×1 placeholder textures (white/normal/black) render immediately while real textures stream in
+  - `texture_tick()` in render loop: decode + upload budget, `refresh_textures()` propagates to material handles
+  - Staging ring sub-allocator with 512-byte alignment, frame-tracked block recycling (Godot pattern)
+
+- **Production Profiler** — scoped timer with per-scope statistics
+  - `UZ_PROFILE_ZONE("name")` macro: min/max/avg/total/call count, printed on shutdown
+  - Instrumented: `Renderer::init`, `render`, `readback`, `proxy_sync`, `texture_tick`, `setScene`, `createPipelineStates`
 
 - **GPU Compute IBL Pipeline** — `IblBaker` class with 3 compute shaders replacing CPU-side IBL convolution
   - `ibl_brdf_lut.cs.hlsl`: 256×256 RG16F BRDF integration LUT (1024 Hammersley samples)
@@ -72,7 +76,7 @@ All notable changes to this project will be documented in this file.
 
 - **12 new PBRMaterialTest cases** — displacement parsing, per-material shader params, emission, UV tiling (scalar+vector), minimal defaults, comments, error paths, clear, full sand material round-trip
 
-- **Editor Grid Improvements** — distance-based alpha fade (UE5-style), camera world position passed to basic.ps.hlsl via `ColorCB`
+- **Editor Grid Improvements** — distance-based alpha fade (UE5-style), camera world position passed to basic.ps.hlsl via `ColorCB`, brighter grid colors (0.22/0.45), null-handle early return guard in `EditorComponent::draw()`
 
 - **Tools** — `tools/gen_checker.py` (procedural checker texture), `tools/gen_plane.py` (plane mesh generator)
 
@@ -82,6 +86,8 @@ All notable changes to this project will be documented in this file.
 - **NodeType enum removed** — replaced with `type_name` string field on `SceneNode`; `node_type_to_string()` and `node_type_from_string()` deleted
 - **Scene loader/saver rewritten** — fully data-driven via ComponentRegistry; zero code changes needed for new node types
 - **IBL convolution** runs on GPU compute with automatic CPU fallback if compute init fails
+- **Editor shaders** (`basic.vs/ps.hlsl`): removed unused `LightCB` (register b2), replaced N·L directional lighting with self-lit hemisphere lighting — editor geometry no longer depends on scene light state
+- **Sky cubemap CPU fallback** optimized: `generate_sky_cubemaps()` for env-only (~10ms), `generate_sky_cubemaps_full()` for full CPU convolution (~10ms, down from ~1300ms)
 - **CBV/SRV/UAV descriptor heap** expanded from 4096 to 8192 (SRV 0..4095, UAV 4096+)
 - `scene_create_node()` signature changed: `NodeType type` → `const char* type_name`
 - `pbr_test.uzscene` expanded with 10 material spheres + ground plane, SkyAtmosphere node
@@ -92,6 +98,7 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- **Editor grid invisible** — render graph `editor_overlays` pass had no read dependency on backbuffer, giving it `in_degree=0` in Kahn's toposort. It executed before the composite pass which then overwrote it. Fix: added `builder.read(rgBackbuffer)` to enforce correct ordering (composite → editor_overlays → readback)
 - **Metallic fallback texture** was BLACK → forced `metallic=0` for all untextured materials. Fixed to WHITE so material `metallic` parameter actually controls the value. All fallback textures now WHITE except normal (flat blue `0x8080FF`) and displacement (BLACK = no offset)
 
 ---
