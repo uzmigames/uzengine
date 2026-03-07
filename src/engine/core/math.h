@@ -64,7 +64,7 @@ struct alignas(8) Vec2 {
 
 [[nodiscard]] inline Vec2 vec2_normalize(Vec2 v) noexcept {
     const float len = vec2_len(v);
-    assert(len > kEpsilon && "Cannot normalize zero-length Vec2");
+    if (len <= kEpsilon) return {1.0f, 0.0f};
     const float inv = 1.0f / len;
     return {v.x * inv, v.y * inv};
 }
@@ -111,7 +111,7 @@ static_assert(sizeof(Vec3) == 16, "Vec3 must be 16 bytes (padded for SIMD alignm
 
 [[nodiscard]] inline Vec3 vec3_normalize(Vec3 v) noexcept {
     const float len = vec3_len(v);
-    assert(len > kEpsilon && "Cannot normalize zero-length Vec3");
+    if (len <= kEpsilon) return {0.0f, 0.0f, 1.0f, 0.0f};
     const float inv = 1.0f / len;
     return {v.x * inv, v.y * inv, v.z * inv, 0.0f};
 }
@@ -197,7 +197,7 @@ static_assert(sizeof(Quat) == 16, "Quat must be 16 bytes");
 /// Normalize a quaternion to unit length.
 [[nodiscard]] inline Quat quat_normalize(Quat q) noexcept {
     const float len = std::sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
-    assert(len > kEpsilon && "Cannot normalize zero-length Quat");
+    if (len <= kEpsilon) return {0.0f, 0.0f, 0.0f, 1.0f};
     const float inv = 1.0f / len;
     return {q.x * inv, q.y * inv, q.z * inv, q.w * inv};
 }
@@ -414,9 +414,90 @@ struct alignas(16) Mat4 {
 
 static_assert(sizeof(Mat4) == 64, "Mat4 must be 64 bytes (4x4 floats)");
 
+/// General 4x4 matrix inverse (Cramer's rule). Returns identity if singular.
+[[nodiscard]] inline Mat4 mat4_inverse(const Mat4& m) noexcept {
+    // Flatten column-major: c[col*4+row]
+    const float* c = &m.m[0][0];
+    float inv[16];
+
+    inv[0]  =  c[5]*c[10]*c[15] - c[5]*c[11]*c[14] - c[9]*c[6]*c[15] + c[9]*c[7]*c[14] + c[13]*c[6]*c[11] - c[13]*c[7]*c[10];
+    inv[4]  = -c[4]*c[10]*c[15] + c[4]*c[11]*c[14] + c[8]*c[6]*c[15] - c[8]*c[7]*c[14] - c[12]*c[6]*c[11] + c[12]*c[7]*c[10];
+    inv[8]  =  c[4]*c[9]*c[15]  - c[4]*c[11]*c[13] - c[8]*c[5]*c[15] + c[8]*c[7]*c[13] + c[12]*c[5]*c[11] - c[12]*c[7]*c[9];
+    inv[12] = -c[4]*c[9]*c[14]  + c[4]*c[10]*c[13] + c[8]*c[5]*c[14] - c[8]*c[6]*c[13] - c[12]*c[5]*c[10] + c[12]*c[6]*c[9];
+
+    float det = c[0]*inv[0] + c[1]*inv[4] + c[2]*inv[8] + c[3]*inv[12];
+    if (std::abs(det) < kEpsilon) return Mat4::identity();
+
+    inv[1]  = -c[1]*c[10]*c[15] + c[1]*c[11]*c[14] + c[9]*c[2]*c[15] - c[9]*c[3]*c[14] - c[13]*c[2]*c[11] + c[13]*c[3]*c[10];
+    inv[5]  =  c[0]*c[10]*c[15] - c[0]*c[11]*c[14] - c[8]*c[2]*c[15] + c[8]*c[3]*c[14] + c[12]*c[2]*c[11] - c[12]*c[3]*c[10];
+    inv[9]  = -c[0]*c[9]*c[15]  + c[0]*c[11]*c[13] + c[8]*c[1]*c[15] - c[8]*c[3]*c[13] - c[12]*c[1]*c[11] + c[12]*c[3]*c[9];
+    inv[13] =  c[0]*c[9]*c[14]  - c[0]*c[10]*c[13] - c[8]*c[1]*c[14] + c[8]*c[2]*c[13] + c[12]*c[1]*c[10] - c[12]*c[2]*c[9];
+
+    inv[2]  =  c[1]*c[6]*c[15]  - c[1]*c[7]*c[14]  - c[5]*c[2]*c[15] + c[5]*c[3]*c[14] + c[13]*c[2]*c[7]  - c[13]*c[3]*c[6];
+    inv[6]  = -c[0]*c[6]*c[15]  + c[0]*c[7]*c[14]  + c[4]*c[2]*c[15] - c[4]*c[3]*c[14] - c[12]*c[2]*c[7]  + c[12]*c[3]*c[6];
+    inv[10] =  c[0]*c[5]*c[15]  - c[0]*c[7]*c[13]  - c[4]*c[1]*c[15] + c[4]*c[3]*c[13] + c[12]*c[1]*c[7]  - c[12]*c[3]*c[5];
+    inv[14] = -c[0]*c[5]*c[14]  + c[0]*c[6]*c[13]  + c[4]*c[1]*c[14] - c[4]*c[2]*c[13] - c[12]*c[1]*c[6]  + c[12]*c[2]*c[5];
+
+    inv[3]  = -c[1]*c[6]*c[11]  + c[1]*c[7]*c[10]  + c[5]*c[2]*c[11] - c[5]*c[3]*c[10] - c[9]*c[2]*c[7]   + c[9]*c[3]*c[6];
+    inv[7]  =  c[0]*c[6]*c[11]  - c[0]*c[7]*c[10]  - c[4]*c[2]*c[11] + c[4]*c[3]*c[10] + c[8]*c[2]*c[7]   - c[8]*c[3]*c[6];
+    inv[11] = -c[0]*c[5]*c[11]  + c[0]*c[7]*c[9]   + c[4]*c[1]*c[11] - c[4]*c[3]*c[9]  - c[8]*c[1]*c[7]   + c[8]*c[3]*c[5];
+    inv[15] =  c[0]*c[5]*c[10]  - c[0]*c[6]*c[9]   - c[4]*c[1]*c[10] + c[4]*c[2]*c[9]  + c[8]*c[1]*c[6]   - c[8]*c[2]*c[5];
+
+    float invDet = 1.0f / det;
+    Mat4 result;
+    for (int i = 0; i < 16; ++i)
+        reinterpret_cast<float*>(&result)[i] = inv[i] * invDet;
+    return result;
+}
+
 /// Convert a unit quaternion to a rotation matrix.
 [[nodiscard]] inline Mat4 quat_to_mat4(Quat q) noexcept {
     return Mat4::rotate(q);
+}
+
+// ============================================================================
+// World-pivot rotation (authoritative transform function)
+// ============================================================================
+
+/// Apply a world-space rotation around a world-space pivot to a world matrix.
+///
+/// Formula (column-major, column-vector convention):
+///   worldNew = T(pivot) * R(deltaQuat) * T(-pivot) * worldStart
+///
+/// If parentWorld is not identity (has a parent), converts result to local:
+///   localNew = inverse(parentWorld) * worldNew
+///
+/// Returns worldNew if parentWorld is identity, otherwise localNew.
+///
+/// This is the ONLY function that should apply rotation in the editor.
+/// No decompose/recompose. No partial position/rotation updates. Full matrix.
+struct PivotRotationResult {
+    Mat4 world_new;   // Always set: the resulting world matrix
+    Mat4 local_new;   // = inverse(parentWorld) * world_new
+};
+
+[[nodiscard]] inline PivotRotationResult apply_world_pivot_rotation(
+    const Mat4& parent_world,    // identity if root node
+    const Mat4& world_start,     // object's world matrix at drag start
+    Vec3        pivot_world,     // world-space pivot (constant during drag)
+    Quat        world_delta      // rotation delta (total from start, NOT incremental)
+) noexcept {
+    // worldNew = T(P) * R(Q) * T(-P) * worldStart
+    const Mat4 tPos  = Mat4::translate(pivot_world);
+    const Mat4 tNeg  = Mat4::translate({-pivot_world.x, -pivot_world.y, -pivot_world.z, 0.0f});
+    const Mat4 rot   = Mat4::rotate(world_delta);
+
+    // Column-major: rightmost applied first
+    // worldNew = tPos * rot * tNeg * worldStart
+    const Mat4 world_new = tPos * rot * tNeg * world_start;
+    const Mat4 local_new = mat4_inverse(parent_world) * world_new;
+
+    return {world_new, local_new};
+}
+
+/// Extract translation (column 3) from a column-major Mat4.
+[[nodiscard]] inline constexpr Vec3 mat4_get_translation(const Mat4& m) noexcept {
+    return {m.m[3][0], m.m[3][1], m.m[3][2], 0.0f};
 }
 
 // ============================================================================

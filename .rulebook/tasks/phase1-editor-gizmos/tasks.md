@@ -1,28 +1,28 @@
 ## 1. Engine — Gizmo Render Pass (C++)
 
-- [ ] 1.1 Add `#ifdef UZ_EDITOR` gizmo render pass in `src/renderer/renderer.cpp` — executed after main scene pass, before JPEG capture
-- [ ] 1.2 Create gizmo geometry builder: arrow cones + shafts for translate, arc rings for rotate, box handles for scale (< 500 triangles per component)
-- [ ] 1.3 Implement gizmo depth buffer: gizmos depth-test against each other but not against the scene depth buffer
-- [ ] 1.4 Implement per-axis color constants: X=`#CC2222`, Y=`#22CC22`, Z=`#2222CC`, center=`#CCCC22`, hover=`#FFFFFF`
-- [ ] 1.5 Implement gizmo scale with camera distance: `gizmoScale = distance(cameraPos, gizmoOrigin) * 0.1`
-- [ ] 1.6 Implement hover highlight: when `editor.setGizmoHover` is received, re-color the specified axis to white
+- [x] 1.1 Add `#ifdef UZ_EDITOR` gizmo render pass in `src/renderer/renderer.cpp` — executed after main scene pass, before JPEG capture
+- [x] 1.2 Create gizmo geometry builder: arrow cones + shafts for translate, arc rings for rotate, box handles for scale (< 500 triangles per component)
+- [x] 1.3 Implement gizmo depth buffer: gizmos depth-test against each other but not against the scene depth buffer
+- [x] 1.4 Implement per-axis color constants: X=`#CC2222`, Y=`#22CC22`, Z=`#2222CC`, center=`#CCCC22`, hover=`#FFFFFF`
+- [x] 1.5 Implement gizmo scale with camera distance: `gizmoScale = distance(cameraPos, gizmoOrigin) * 0.1`
+- [x] 1.6 Implement hover highlight: when `editor.setGizmoHover` is received, re-color the specified axis to white (via root constant brightness multiplier in `drawMode`)
 
 ## 2. Engine — Node Picking (C++)
 
-- [ ] 2.1 Implement pick buffer render pass: render scene to a 1/4-resolution buffer where each pixel encodes the node's integer ID as an RGBA value
-- [ ] 2.2 Implement CPU readback of pick buffer pixel at given screen coordinates
-- [ ] 2.3 Implement box pick readback: find all unique node IDs within a screen rectangle
-- [ ] 2.4 Register `editor.pickNode` IPC handler — reads pick buffer at `{screen_x, screen_y}`, returns `{nodeId: N}` or `{nodeId: null}`
-- [ ] 2.5 Register `editor.boxPick` IPC handler — reads pick buffer within `{x, y, width, height}`, returns `{nodeIds: [...]}`
+- [x] 2.1 Implement pick buffer render pass: render scene to a 1/4-resolution buffer where each pixel encodes the node's integer ID as an RGBA value
+- [x] 2.2 Implement CPU readback of pick buffer pixel at given screen coordinates
+- [x] 2.3 Implement box pick readback: find all unique node IDs within a screen rectangle
+- [x] 2.4 Register `editor.pickNode` IPC handler — reads pick buffer at `{screen_x, screen_y}`, returns `{nodeId: N}` or `{nodeId: null}`
+- [x] 2.5 Register `editor.boxPick` IPC handler — reads pick buffer within `{x, y, width, height}`, returns `{nodeIds: [...]}`
 
 ## 3. Engine — Transform IPC Handlers (C++)
 
-- [ ] 3.1 Register `editor.setGizmo` — stores active node ID and gizmo mode; triggers gizmo redraw
-- [ ] 3.2 Register `editor.setGizmoHover` — stores hovered axis; updates gizmo color on next frame
-- [ ] 3.3 Register `editor.setGizmoSpace` — toggles local vs world coordinate frame for gizmo rendering
-- [ ] 3.4 Register `editor.setNodeTransformLive` — applies position/rotation/scale to node without creating undo entry; triggers re-render
-- [ ] 3.5 Register `editor.commitTransform` — marks transform as final; returns authoritative `{transform: {...}}` to extension
-- [ ] 3.6 Register `editor.getCamera` — returns `{view: [16], proj: [16], position: [3]}` for the editor camera
+- [x] 3.1 Register `editor.setGizmo` — stores active node ID and gizmo mode; triggers gizmo redraw
+- [x] 3.2 Register `editor.setGizmoHover` — stores hovered axis; updates gizmo color on next frame
+- [x] 3.3 Register `editor.setGizmoSpace` — toggles local vs world coordinate frame for gizmo rendering
+- [x] 3.4 Register `editor.setNodeTransformLive` — applies position/rotation/scale to node without creating undo entry; triggers re-render
+- [x] 3.5 Register `editor.commitTransform` — marks transform as final; returns authoritative `{transform: {...}}` to extension
+- [x] 3.6 Register `editor.getCamera` — returns `{view: [16], proj: [16], position: [3]}` for the editor camera
 
 ## 4. TypeScript — GizmoController
 
@@ -37,28 +37,28 @@
 
 ## 5. TypeScript — Viewport Canvas Events
 
-- [ ] 5.1 Wire `mousedown` on canvas: hit-test gizmo axes first; if no hit, call `editor.pickNode` for node selection
-- [ ] 5.2 Wire `mousemove` on canvas: if dragging, compute and send `editor.setNodeTransformLive` (throttled to 60 calls/sec via `requestAnimationFrame` loop)
-- [ ] 5.3 Wire `mouseup` on canvas: end drag, call `editor.commitTransform`, push `TransformCommand` to `UndoStack`
-- [ ] 5.4 Wire `mousemove` (no drag): call `hitTestAxis` for hover; send `editor.setGizmoHover` with result
-- [ ] 5.5 Handle `Ctrl+mousedown` drag on empty canvas area as box-select start: draw rubber-band rectangle, on mouseup call `editor.boxPick`
-- [ ] 5.6 Handle axis constraint hotkeys during drag: `X`, `Y`, `Z` keys switch constraint mid-drag without restarting
-- [ ] 5.7 Fetch and cache camera matrices every frame via `editor.getCamera`; refresh cache on viewport resize
+- [x] 5.1 Wire `mousedown` on canvas: hit-test gizmo axes first (TS-side using cached camera matrices); if no hit, call `editor.pickNode` for node selection
+- [x] 5.2 Wire `mousemove` on canvas: if dragging, compute and send `editor.setNodeTransformLive` (throttled to 60 calls/sec via `requestAnimationFrame` loop)
+- [x] 5.3 Wire `mouseup` on canvas: end drag, call `editor.commitTransform`, push `TransformCommand` to `UndoStack`
+- [x] 5.4 Wire `mousemove` (no drag): call `hitTestAxis` for hover (TS-side); send `editor.setGizmoHover` with result
+- [x] 5.5 Handle `Ctrl+mousedown` drag on empty canvas area as box-select start: draw rubber-band rectangle, on mouseup call `editor.boxPick`
+- [x] 5.6 Handle axis constraint hotkeys during drag: `X`, `Y`, `Z` keys switch constraint mid-drag without restarting
+- [x] 5.7 Fetch and cache camera matrices every 200ms via `editor.getCamera`; refresh cache on viewport resize
 
 ## 6. TypeScript — Toolbar Integration
 
-- [ ] 6.1 Add gizmo mode buttons to viewport webview toolbar: Move (W), Rotate (E), Scale (R); clicking sends `editor.setGizmo`
-- [ ] 6.2 Add Local/World toggle button; clicking sends `editor.setGizmoSpace`
-- [ ] 6.3 Show snap indicator in toolbar: `[Snap: 0.25m]` when `Ctrl` is held during drag
-- [ ] 6.4 Register VSCode keybindings `W`, `E`, `R` with `when: uzengine.viewportFocused` to switch gizmo mode
-- [ ] 6.5 Register `F` key (frame selection): call `editor.frameNode({nodeId})` IPC to center camera on selection
+- [x] 6.1 Add gizmo mode buttons to viewport webview toolbar: Move (W), Rotate (E), Scale (R); clicking sends `editor.setGizmo`
+- [x] 6.2 Add Local/World toggle button; clicking sends `editor.setGizmoSpace`
+- [x] 6.3 Show snap indicator in toolbar: `[Snap: 0.25m]` when `Ctrl` is held during drag
+- [x] 6.4 Register VSCode keybindings `W`, `E`, `R` with `when: uzengine.viewportFocused` to switch gizmo mode
+- [x] 6.5 Register `F` key (frame selection): call `editor.focusNode({nodeId})` IPC to center camera on selection
 
 ## 7. Multi-Select Gizmo
 
-- [ ] 7.1 When `SelectionManager.count > 1`, compute centroid of all selected node world positions
-- [ ] 7.2 Send `editor.setGizmo` with `{nodeIds: [...], pivot: [cx, cy, cz]}` to position gizmo at centroid
-- [ ] 7.3 On translate drag, apply the same world-space delta to each selected node via individual `editor.setNodeTransformLive` calls
-- [ ] 7.4 On mouseup, push a single `BulkPropertyCommand` covering all moved nodes to `UndoStack`
+- [x] 7.1 When `SelectionManager.count > 1`, compute centroid of all selected node world positions
+- [x] 7.2 Send `editor.setGizmo` with `{nodeIds: [...], pivot: [cx, cy, cz]}` to position gizmo at centroid
+- [x] 7.3 On translate drag, apply the same world-space delta to each selected node via individual `editor.setNodeTransformLive` calls
+- [x] 7.4 On mouseup, push a single `BulkPropertyCommand` covering all moved nodes to `UndoStack`
 
 ## 8. Testing (TypeScript)
 
@@ -73,6 +73,6 @@
 
 ## 9. Documentation
 
-- [ ] 9.1 Verify `docs/specs/editor-gizmos.md` matches implementation
-- [ ] 9.2 Document all new `editor.*` IPC handlers in `docs/guides/ipc-mcp.md`
-- [ ] 9.3 Add gizmo usage (W/E/R, Ctrl snap, Local/World) to `docs/guides/getting-started.md`
+- [x] 9.1 Verify `docs/specs/editor-gizmos.md` matches implementation
+- [x] 9.2 Document all new `editor.*` IPC handlers in `docs/guides/ipc-mcp.md`
+- [x] 9.3 Add gizmo usage (W/E/R, Ctrl snap, Local/World) to `docs/guides/getting-started.md`

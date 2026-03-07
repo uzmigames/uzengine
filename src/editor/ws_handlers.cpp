@@ -801,21 +801,30 @@ void handleWsTextMessage(const std::string& text,
         const float camY  = g_scene.camPosY;
         const float camZ  = g_scene.camPosZ;
 
-        // Build view and projection using the same helper as pickNode.
-        const uz::Mat4 vpMat = buildCameraVP(
-            g_scene.camYaw, g_scene.camPitch,
-            camX, camY, camZ, vpW, vpH);
+        // Build separate view and projection matrices.
+        uz::Vec3 camPos = {camX, camY, camZ, 0.0f};
+        uz::Vec3 forward = {
+            cosf(g_scene.camPitch) * sinf(g_scene.camYaw),
+            sinf(g_scene.camPitch),
+            cosf(g_scene.camPitch) * cosf(g_scene.camYaw),
+            0.0f
+        };
+        uz::Vec3 target = camPos + forward;
+        uz::Vec3 up = {0.0f, 1.0f, 0.0f, 0.0f};
+        float aspect = (vpW > 0 && vpH > 0) ? (float)vpW / (float)vpH : 1.0f;
+        uz::Mat4 viewMat = buildLookAtLH(camPos, target, up);
+        uz::Mat4 projMat = buildPerspLH(uz::kHalfPi * 0.5f, aspect, 0.1f, 500.0f);
 
-        // Send the combined VP as a flat 16-float array (row-major).
-        std::vector<float> vpArr(16);
-        for (int r = 0; r < 4; ++r)
-            for (int c = 0; c < 4; ++c)
-                vpArr[r * 4 + c] = vpMat.m[r][c];
+        auto mat4ToArr = [](const uz::Mat4& m) {
+            std::vector<float> arr(16);
+            std::memcpy(arr.data(), &m, 16 * sizeof(float));
+            return arr;
+        };
 
         nlohmann::json resp;
         resp["type"]     = "cameraMatrices";
-        resp["view"]     = vpArr;  // combined VP for now
-        resp["proj"]     = vpArr;  // combined VP for now
+        resp["view"]     = mat4ToArr(viewMat);
+        resp["proj"]     = mat4ToArr(projMat);
         resp["position"] = {camX, camY, camZ};
         wsServer.broadcastText(resp.dump());
         return;

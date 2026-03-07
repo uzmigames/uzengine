@@ -281,6 +281,18 @@ private:
 
     // Projection matrix (for SSAO depth reconstruction), updated in update()
     Mat4 projMatrix_ = Mat4::identity();
+
+#ifdef UZ_EDITOR
+public:
+    [[nodiscard]] uint32_t pickNodeAtScreen(int x, int y) const;
+    [[nodiscard]] std::vector<uint32_t> boxPickNodes(int x, int y, int w, int h) const;
+
+private:
+    uint32_t             pickW_ = 0;
+    uint32_t             pickH_ = 0;
+    mutable std::mutex   pickMutex_;
+    std::vector<uint8_t> pickData_;
+#endif
 };
 
 } // namespace uz

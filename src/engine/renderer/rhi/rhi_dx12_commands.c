@@ -16,7 +16,7 @@
  * ======================================================================= */
 
 RhiCmdList dx12_cmd_begin(void) {
-    assert(s_dx12.initialized);
+    RHI_ASSERT(s_dx12.initialized);
 
     uint64_t slot = dx12_alloc_cmd_list_slot();
     if (slot == RHI_NULL) return RHI_NULL;
@@ -69,8 +69,8 @@ RhiCmdList dx12_cmd_begin(void) {
 void dx12_cmd_end(RhiCmdList cmd) {
     if (cmd == RHI_NULL) return;
     uint32_t slot = (uint32_t)cmd;
-    assert(slot < DX12_MAX_CMD_LISTS && s_dx12.cmd_lists[slot].occupied);
-    assert(s_dx12.cmd_lists[slot].recording);
+    RHI_ASSERT(slot < DX12_MAX_CMD_LISTS && s_dx12.cmd_lists[slot].occupied);
+    RHI_ASSERT(s_dx12.cmd_lists[slot].recording);
 
     ID3D12GraphicsCommandList_Close(s_dx12.cmd_lists[slot].list);
     s_dx12.cmd_lists[slot].recording = false;
@@ -79,8 +79,8 @@ void dx12_cmd_end(RhiCmdList cmd) {
 void dx12_cmd_submit(RhiCmdList cmd) {
     if (cmd == RHI_NULL) return;
     uint32_t slot = (uint32_t)cmd;
-    assert(slot < DX12_MAX_CMD_LISTS && s_dx12.cmd_lists[slot].occupied);
-    assert(!s_dx12.cmd_lists[slot].recording); /* Must be ended first */
+    RHI_ASSERT(slot < DX12_MAX_CMD_LISTS && s_dx12.cmd_lists[slot].occupied);
+    RHI_ASSERT(!s_dx12.cmd_lists[slot].recording); /* Must be ended first */
 
     ID3D12CommandList *lists[] = {
         (ID3D12CommandList *)s_dx12.cmd_lists[slot].list
@@ -95,8 +95,8 @@ void dx12_cmd_set_pipeline(RhiCmdList cmd, RhiPipeline pipeline) {
     if (cmd == RHI_NULL || pipeline == RHI_NULL) return;
     uint32_t cmd_slot = (uint32_t)cmd;
     uint32_t pso_slot = (uint32_t)pipeline;
-    assert(cmd_slot < DX12_MAX_CMD_LISTS && s_dx12.cmd_lists[cmd_slot].occupied);
-    assert(pso_slot < DX12_MAX_PIPELINES && s_dx12.pipelines[pso_slot].occupied);
+    RHI_ASSERT(cmd_slot < DX12_MAX_CMD_LISTS && s_dx12.cmd_lists[cmd_slot].occupied);
+    RHI_ASSERT(pso_slot < DX12_MAX_PIPELINES && s_dx12.pipelines[pso_slot].occupied);
 
     ID3D12GraphicsCommandList *cl = s_dx12.cmd_lists[cmd_slot].list;
     ID3D12GraphicsCommandList_SetPipelineState(cl, s_dx12.pipelines[pso_slot].pso);
@@ -115,14 +115,14 @@ void dx12_cmd_set_render_targets(RhiCmdList cmd, const RhiTexture *rts,
                                         uint32_t count, RhiTexture depth) {
     if (cmd == RHI_NULL) return;
     uint32_t cmd_slot = (uint32_t)cmd;
-    assert(cmd_slot < DX12_MAX_CMD_LISTS && s_dx12.cmd_lists[cmd_slot].occupied);
+    RHI_ASSERT(cmd_slot < DX12_MAX_CMD_LISTS && s_dx12.cmd_lists[cmd_slot].occupied);
 
     ID3D12GraphicsCommandList *cl = s_dx12.cmd_lists[cmd_slot].list;
 
     D3D12_CPU_DESCRIPTOR_HANDLE rtv_handles[8];
     for (uint32_t i = 0; i < count && i < 8; i++) {
         uint32_t tex_slot = (uint32_t)rts[i];
-        assert(tex_slot < DX12_MAX_RESOURCES && s_dx12.textures[tex_slot].occupied);
+        RHI_ASSERT(tex_slot < DX12_MAX_RESOURCES && s_dx12.textures[tex_slot].occupied);
         ID3D12DescriptorHeap_GetCPUDescriptorHandleForHeapStart(
             s_dx12.rtv_heap, &rtv_handles[i]);
         rtv_handles[i].ptr += (SIZE_T)tex_slot * s_dx12.rtv_desc_size;
@@ -132,7 +132,7 @@ void dx12_cmd_set_render_targets(RhiCmdList cmd, const RhiTexture *rts,
     D3D12_CPU_DESCRIPTOR_HANDLE *p_dsv = NULL;
     if (depth != RHI_NULL) {
         uint32_t ds_slot = (uint32_t)depth;
-        assert(ds_slot < DX12_MAX_RESOURCES && s_dx12.textures[ds_slot].occupied);
+        RHI_ASSERT(ds_slot < DX12_MAX_RESOURCES && s_dx12.textures[ds_slot].occupied);
         ID3D12DescriptorHeap_GetCPUDescriptorHandleForHeapStart(
             s_dx12.dsv_heap, &dsv_handle);
         dsv_handle.ptr += (SIZE_T)ds_slot * s_dx12.dsv_desc_size;
@@ -179,7 +179,7 @@ void dx12_cmd_set_vertex_buffer(RhiCmdList cmd, uint32_t slot_idx,
     if (cmd == RHI_NULL || buf == RHI_NULL) return;
     uint32_t cmd_slot = (uint32_t)cmd;
     uint32_t buf_slot = (uint32_t)buf;
-    assert(buf_slot < DX12_MAX_BUFFERS && s_dx12.buffers[buf_slot].occupied);
+    RHI_ASSERT(buf_slot < DX12_MAX_BUFFERS && s_dx12.buffers[buf_slot].occupied);
 
     D3D12_VERTEX_BUFFER_VIEW view;
     view.BufferLocation = ID3D12Resource_GetGPUVirtualAddress(
@@ -196,7 +196,7 @@ void dx12_cmd_set_index_buffer(RhiCmdList cmd, RhiBuffer buf,
     if (cmd == RHI_NULL || buf == RHI_NULL) return;
     uint32_t cmd_slot = (uint32_t)cmd;
     uint32_t buf_slot = (uint32_t)buf;
-    assert(buf_slot < DX12_MAX_BUFFERS && s_dx12.buffers[buf_slot].occupied);
+    RHI_ASSERT(buf_slot < DX12_MAX_BUFFERS && s_dx12.buffers[buf_slot].occupied);
 
     D3D12_INDEX_BUFFER_VIEW view;
     view.BufferLocation = ID3D12Resource_GetGPUVirtualAddress(
@@ -213,9 +213,9 @@ void dx12_cmd_set_constant_buffer(RhiCmdList cmd, uint32_t slot_idx,
     if (cmd == RHI_NULL || buf == RHI_NULL) return;
     uint32_t cmd_slot = (uint32_t)cmd;
     uint32_t buf_slot = (uint32_t)buf;
-    assert(buf_slot < DX12_MAX_BUFFERS && s_dx12.buffers[buf_slot].occupied);
+    RHI_ASSERT(buf_slot < DX12_MAX_BUFFERS && s_dx12.buffers[buf_slot].occupied);
 
-    assert(slot_idx < 4 && "Root CBV slots 0-3 (b0-b3)");
+    RHI_ASSERT(slot_idx < 4 && "Root CBV slots 0-3 (b0-b3)");
     D3D12_GPU_VIRTUAL_ADDRESS addr = ID3D12Resource_GetGPUVirtualAddress(
         s_dx12.buffers[buf_slot].resource);
     ID3D12GraphicsCommandList_SetGraphicsRootConstantBufferView(
@@ -227,7 +227,7 @@ void dx12_cmd_set_texture(RhiCmdList cmd, uint32_t slot_idx,
     if (cmd == RHI_NULL || tex == RHI_NULL) return;
     uint32_t cmd_slot = (uint32_t)cmd;
     uint32_t tex_slot = (uint32_t)tex;
-    assert(tex_slot < DX12_MAX_RESOURCES && s_dx12.textures[tex_slot].occupied);
+    RHI_ASSERT(tex_slot < DX12_MAX_RESOURCES && s_dx12.textures[tex_slot].occupied);
 
     D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle;
     ID3D12DescriptorHeap_GetGPUDescriptorHandleForHeapStart(
@@ -367,7 +367,7 @@ void dx12_cmd_clear_depth_stencil(RhiCmdList cmd, RhiTexture ds,
 void dx12_cmd_set_stencil_ref(RhiCmdList cmd, uint8_t ref) {
     if (cmd == RHI_NULL) return;
     uint32_t cmd_slot = (uint32_t)cmd;
-    assert(cmd_slot < DX12_MAX_CMD_LISTS && s_dx12.cmd_lists[cmd_slot].occupied);
+    RHI_ASSERT(cmd_slot < DX12_MAX_CMD_LISTS && s_dx12.cmd_lists[cmd_slot].occupied);
 
     ID3D12GraphicsCommandList_OMSetStencilRef(
         s_dx12.cmd_lists[cmd_slot].list, (UINT)ref);
@@ -385,7 +385,7 @@ void dx12_cmd_barrier_texture(RhiCmdList cmd, RhiTexture tex,
 
     uint32_t cmd_slot = (uint32_t)cmd;
     uint32_t tex_slot = (uint32_t)tex;
-    assert(tex_slot < DX12_MAX_RESOURCES && s_dx12.textures[tex_slot].occupied);
+    RHI_ASSERT(tex_slot < DX12_MAX_RESOURCES && s_dx12.textures[tex_slot].occupied);
 
     D3D12_RESOURCE_BARRIER barrier;
     memset(&barrier, 0, sizeof(barrier));
@@ -408,7 +408,7 @@ void dx12_cmd_barrier_buffer(RhiCmdList cmd, RhiBuffer buf,
 
     uint32_t cmd_slot = (uint32_t)cmd;
     uint32_t buf_slot = (uint32_t)buf;
-    assert(buf_slot < DX12_MAX_BUFFERS && s_dx12.buffers[buf_slot].occupied);
+    RHI_ASSERT(buf_slot < DX12_MAX_BUFFERS && s_dx12.buffers[buf_slot].occupied);
 
     D3D12_RESOURCE_BARRIER barrier;
     memset(&barrier, 0, sizeof(barrier));
@@ -432,7 +432,7 @@ void dx12_cmd_set_root_constants(RhiCmdList cmd, uint32_t slot,
                                   uint32_t offset_32bit) {
     if (cmd == RHI_NULL || !data || count_32bit == 0) return;
     uint32_t cmd_slot = (uint32_t)cmd;
-    assert(cmd_slot < DX12_MAX_CMD_LISTS && s_dx12.cmd_lists[cmd_slot].occupied);
+    RHI_ASSERT(cmd_slot < DX12_MAX_CMD_LISTS && s_dx12.cmd_lists[cmd_slot].occupied);
 
     ID3D12GraphicsCommandList *cl = s_dx12.cmd_lists[cmd_slot].list;
     if (s_dx12.cmd_lists[cmd_slot].is_compute_bound) {
@@ -455,8 +455,8 @@ void dx12_cmd_copy_texture_to_buffer(RhiCmdList cmd, RhiTexture src,
     uint32_t cmd_slot = (uint32_t)cmd;
     uint32_t tex_slot = (uint32_t)src;
     uint32_t buf_slot = (uint32_t)dst;
-    assert(tex_slot < DX12_MAX_RESOURCES && s_dx12.textures[tex_slot].occupied);
-    assert(buf_slot < DX12_MAX_BUFFERS && s_dx12.buffers[buf_slot].occupied);
+    RHI_ASSERT(tex_slot < DX12_MAX_RESOURCES && s_dx12.textures[tex_slot].occupied);
+    RHI_ASSERT(buf_slot < DX12_MAX_BUFFERS && s_dx12.buffers[buf_slot].occupied);
 
     D3D12_TEXTURE_COPY_LOCATION src_loc;
     memset(&src_loc, 0, sizeof(src_loc));
@@ -485,14 +485,14 @@ void dx12_cmd_copy_texture_to_buffer(RhiCmdList cmd, RhiTexture src,
  * ======================================================================= */
 
 RhiTexture dx12_swapchain_backbuffer(void) {
-    assert(s_dx12.initialized);
+    RHI_ASSERT(s_dx12.initialized);
     s_dx12.current_backbuffer = IDXGISwapChain3_GetCurrentBackBufferIndex(
         s_dx12.swap_chain);
     return (RhiTexture)s_dx12.backbuffer_indices[s_dx12.current_backbuffer];
 }
 
 void dx12_swapchain_present(uint32_t sync_interval) {
-    assert(s_dx12.initialized);
+    RHI_ASSERT(s_dx12.initialized);
     HRESULT hr = IDXGISwapChain3_Present(s_dx12.swap_chain, sync_interval, 0);
 
     /* Check for device removal (TDR / GPU crash) */

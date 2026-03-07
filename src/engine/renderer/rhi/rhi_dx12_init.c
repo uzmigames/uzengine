@@ -18,7 +18,7 @@ bool dx12_init(void *window_handle, uint32_t width, uint32_t height) {
     HRESULT hr;
 
     DIAG("=== dx12_init START ===");
-    assert(!s_dx12.initialized);
+    RHI_ASSERT(!s_dx12.initialized);
     memset(&s_dx12, 0, sizeof(s_dx12));
     s_dx12.width  = width;
     s_dx12.height = height;
@@ -187,7 +187,7 @@ bool dx12_init(void *window_handle, uint32_t width, uint32_t height) {
         hr = ID3D12Device_CreateDescriptorHeap(s_dx12.device, &hd,
                                                &IID_ID3D12DescriptorHeap,
                                                (void **)&s_dx12.rtv_heap);
-        assert(SUCCEEDED(hr));
+        RHI_ASSERT(SUCCEEDED(hr));
 
         /* DSV heap */
         hd.Type           = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
@@ -195,7 +195,7 @@ bool dx12_init(void *window_handle, uint32_t width, uint32_t height) {
         hr = ID3D12Device_CreateDescriptorHeap(s_dx12.device, &hd,
                                                &IID_ID3D12DescriptorHeap,
                                                (void **)&s_dx12.dsv_heap);
-        assert(SUCCEEDED(hr));
+        RHI_ASSERT(SUCCEEDED(hr));
 
         /* CBV/SRV/UAV heap (shader-visible) */
         hd.Type           = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
@@ -204,7 +204,7 @@ bool dx12_init(void *window_handle, uint32_t width, uint32_t height) {
         hr = ID3D12Device_CreateDescriptorHeap(s_dx12.device, &hd,
                                                &IID_ID3D12DescriptorHeap,
                                                (void **)&s_dx12.cbv_srv_uav_heap);
-        assert(SUCCEEDED(hr));
+        RHI_ASSERT(SUCCEEDED(hr));
 
         /* Sampler heap */
         hd.Type           = D3D12_DESCRIPTOR_HEAP_TYPE_SAMPLER;
@@ -213,7 +213,7 @@ bool dx12_init(void *window_handle, uint32_t width, uint32_t height) {
         hr = ID3D12Device_CreateDescriptorHeap(s_dx12.device, &hd,
                                                &IID_ID3D12DescriptorHeap,
                                                (void **)&s_dx12.sampler_heap);
-        assert(SUCCEEDED(hr));
+        RHI_ASSERT(SUCCEEDED(hr));
 
         /* Cache descriptor sizes */
         s_dx12.rtv_desc_size = ID3D12Device_GetDescriptorHandleIncrementSize(
@@ -230,10 +230,10 @@ bool dx12_init(void *window_handle, uint32_t width, uint32_t height) {
                                       D3D12_FENCE_FLAG_NONE,
                                       &IID_ID3D12Fence,
                                       (void **)&s_dx12.frame_fence);
-        assert(SUCCEEDED(hr));
+        RHI_ASSERT(SUCCEEDED(hr));
         s_dx12.frame_fence_value = 0;
         s_dx12.frame_fence_event = CreateEventW(NULL, FALSE, FALSE, NULL);
-        assert(s_dx12.frame_fence_event != NULL);
+        RHI_ASSERT(s_dx12.frame_fence_event != NULL);
     }
 
     DIAG("Descriptor heaps + fence OK");
@@ -348,7 +348,7 @@ void dx12_resize(uint32_t width, uint32_t height) {
         width, height,
         DXGI_FORMAT_R8G8B8A8_UNORM,
         0);
-    assert(SUCCEEDED(hr));
+    RHI_ASSERT(SUCCEEDED(hr));
     (void)hr;
 
     s_dx12.width  = width;

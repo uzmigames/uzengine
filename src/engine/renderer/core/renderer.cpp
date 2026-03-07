@@ -1576,6 +1576,58 @@ void Renderer::setScene(Scene* scene) {
     }
 }
 
+// ===========================================================================
+// Pick buffer queries (UZ_EDITOR only)
+// ===========================================================================
+#ifdef UZ_EDITOR
+
+uint32_t Renderer::pickNodeAtScreen(int x, int y) const {
+    std::lock_guard<std::mutex> lk(pickMutex_);
+    if (pickData_.empty() || pickW_ == 0 || pickH_ == 0) return 0;
+
+    const int px = std::clamp(x / 4, 0, static_cast<int>(pickW_) - 1);
+    const int py = std::clamp(y / 4, 0, static_cast<int>(pickH_) - 1);
+
+    const size_t idx = static_cast<size_t>(py) * pickW_ + px;
+    if (idx * 4 + 2 >= pickData_.size()) return 0;
+
+    const uint32_t r = pickData_[idx * 4 + 0];
+    const uint32_t g = pickData_[idx * 4 + 1];
+    const uint32_t b = pickData_[idx * 4 + 2];
+    return r | (g << 8) | (b << 16);
+}
+
+std::vector<uint32_t> Renderer::boxPickNodes(int x, int y, int w, int h) const {
+    std::lock_guard<std::mutex> lk(pickMutex_);
+    if (pickData_.empty() || pickW_ == 0 || pickH_ == 0) return {};
+
+    const int x0 = std::clamp(x       / 4, 0, static_cast<int>(pickW_));
+    const int y0 = std::clamp(y       / 4, 0, static_cast<int>(pickH_));
+    const int x1 = std::clamp((x + w) / 4, 0, static_cast<int>(pickW_));
+    const int y1 = std::clamp((y + h) / 4, 0, static_cast<int>(pickH_));
+
+    std::vector<uint32_t> result;
+    for (int row = y0; row < y1; ++row) {
+        for (int col = x0; col < x1; ++col) {
+            const size_t idx = static_cast<size_t>(row) * pickW_ + col;
+            if (idx * 4 + 2 >= pickData_.size()) continue;
+
+            const uint32_t r  = pickData_[idx * 4 + 0];
+            const uint32_t g  = pickData_[idx * 4 + 1];
+            const uint32_t b  = pickData_[idx * 4 + 2];
+            const uint32_t id = r | (g << 8) | (b << 16);
+            if (id == 0) continue;
+
+            bool found = false;
+            for (uint32_t ex : result) { if (ex == id) { found = true; break; } }
+            if (!found) result.push_back(id);
+        }
+    }
+    return result;
+}
+
+#endif // UZ_EDITOR
+
 } // namespace uz
 
 // ===========================================================================

@@ -173,6 +173,67 @@ The engine auto-starts when you open the stream viewer.
 
 ---
 
+## Gizmo Controls
+
+Once you have a scene with selected nodes, use these keyboard shortcuts and mouse controls to manipulate the gizmo and transform nodes:
+
+### Gizmo Modes (Transform Types)
+
+| Key | Mode | Gizmo Type |
+|-----|------|-----------|
+| **W** | Translate | Three colored arrows (X=red, Y=green, Z=blue) |
+| **E** | Rotate | Three colored rotation arcs |
+| **R** | Scale | Three colored lines with cube handles |
+
+### Interaction
+
+**Mouse drag on gizmo handle:**
+- Drag an **axis arrow/arc/line** to constrain motion to that single axis
+- Drag a **plane quad** (where two arrows meet) to move in that plane
+- Drag the **center cube** (translate) or **center ring** (rotate) for uniform/free motion
+- During drag, the hovered axis is highlighted in **white**
+
+**Axis Constraint Override (mid-drag):**
+- While dragging, press **X**, **Y**, or **Z** to switch the constraint axis mid-drag
+- Release the key to continue with the new constraint
+
+**Grid Snap:**
+- Hold **Ctrl** during drag to snap to grid
+- Default grid size: **0.25 meters** (configurable in `project.uzproj`)
+- Snapping applies per-axis independently for translate, to nearest degree for rotate, to nearest 0.1 for scale
+
+### Coordinate Space
+
+| Control | Action |
+|---------|--------|
+| **Local** button in toolbar | Gizmo arrows align with node's local rotation |
+| **World** button in toolbar | Gizmo arrows align with global X/Y/Z axes (default) |
+
+### Camera
+
+**Focus on selected node:**
+- Press **F** to frame the camera on the currently selected node
+
+**Pan / Orbit (see viewport panel docs for full camera controls)**
+- Right-click drag to orbit camera around gizmo origin
+- Middle-click drag (or Shift+right-click) to pan
+- Scroll wheel to zoom in/out
+
+### Multi-Select with Box Selection
+
+**Start box selection:**
+- Hold **Ctrl** and click-drag on empty canvas to start a rubber-band selection
+- Drag to define the selection rectangle
+
+**Complete box selection:**
+- Release mouse to call `editor.boxPick` with the final rectangle
+- All nodes within the rectangle are added to selection
+
+**Clear selection:**
+- Click on empty space (without Ctrl) to deselect all
+
+---
+
 ---
 
 ## Phase 0: What Works Today

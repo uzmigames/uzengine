@@ -129,9 +129,11 @@ void EditorComponent::draw(RhiCmdList cmd,
             const Mat4 s = Mat4::scale({node.scale.x, node.scale.y, node.scale.z, 0.0f});
             const Mat4 r = Mat4::rotate(rotQ);
             const Mat4 t = Mat4::translate({node.position.x, node.position.y, node.position.z, 0.0f});
-            const Mat4 nodeWorld = s * r * t;
+            // Column-major: rightmost applied first → scale, then rotate, then translate
+            const Mat4 nodeWorld = t * r * s;
 
-            const Mat4 mvp = nodeWorld * viewProj;
+            // Column-major: viewProj applied after nodeWorld → correct clip space
+            const Mat4 mvp = viewProj * nodeWorld;
             rhi()->cmd_set_root_constants(cmd, 0, &mvp, 16, 0);
 
             // 8 DWORDs: colorMul + alphaMult + cameraWorldPos + gridFadeEnd=0 (no fade)
@@ -180,15 +182,45 @@ void EditorComponent::draw(RhiCmdList cmd,
         // Position at gizmo origin, uniform scale by camera distance.
         const Mat4 gS = Mat4::scale({gizmoScale, gizmoScale, gizmoScale, 0.0f});
         const Mat4 gT = Mat4::translate({gizmoOrigin.x, gizmoOrigin.y, gizmoOrigin.z, 0.0f});
-        const Mat4 gizmoWorld = gS * gT;
+        // Column-major: translate then scale (gizmo at origin, scaled)
+        const Mat4 gizmoWorld = gT * gS;
 
-        const Mat4 mvp = gizmoWorld * viewProj;
+        const Mat4 mvp = viewProj * gizmoWorld;
         rhi()->cmd_set_root_constants(cmd, 0, &mvp, 16, 0);
 
         const float gizmoCol[8] = {1.0f, 1.0f, 1.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f};
         rhi()->cmd_set_root_constants(cmd, 1, gizmoCol, 8, 0);
 
         transformGizmo_.drawMode(cmd, gizmoMode, gizmoActiveAxis);
+
+        // Draw free rotation ring (billboarded) when in rotate mode
+        if (gizmoMode == 1 && dist > kEpsilon) {
+            // Build billboard rotation: ring is in XY plane, rotate so Z faces camera
+            Vec3 toCamera = {dx / dist, dy / dist, dz / dist, 0.0f};
+            // Build orthonormal basis with toCamera as the new Z
+            Vec3 worldUp = (fabsf(toCamera.y) > 0.99f)
+                ? Vec3{1.0f, 0.0f, 0.0f, 0.0f}
+                : Vec3{0.0f, 1.0f, 0.0f, 0.0f};
+            Vec3 bbCross = vec3_cross(worldUp, toCamera);
+            float bbCrossLen = vec3_len(bbCross);
+            if (bbCrossLen > kEpsilon) {
+                Vec3 bbRight = bbCross * (1.0f / bbCrossLen);
+                Vec3 bbUp = vec3_cross(toCamera, bbRight);
+
+                // Row-major billboard rotation matrix
+                Mat4 bbRot = Mat4::identity();
+                bbRot.m[0][0] = bbRight.x;   bbRot.m[0][1] = bbRight.y;   bbRot.m[0][2] = bbRight.z;
+                bbRot.m[1][0] = bbUp.x;      bbRot.m[1][1] = bbUp.y;      bbRot.m[1][2] = bbUp.z;
+                bbRot.m[2][0] = toCamera.x;  bbRot.m[2][1] = toCamera.y;  bbRot.m[2][2] = toCamera.z;
+
+                // Column-major: translate, then billboard-rotate, then scale
+                const Mat4 bbWorld = gT * bbRot * gS;
+                const Mat4 bbMvp = viewProj * bbWorld;
+                rhi()->cmd_set_root_constants(cmd, 0, &bbMvp, 16, 0);
+
+                transformGizmo_.drawFreeRing(cmd, gizmoActiveAxis == 3);
+            }
+        }
     }
 }
 

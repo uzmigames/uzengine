@@ -32,7 +32,7 @@ uint64_t dx12_alloc_texture_slot(void) {
             return (uint64_t)i;
         }
     }
-    assert(0 && "Texture slot pool exhausted");
+    RHI_ASSERT(0 && "Texture slot pool exhausted");
     return RHI_NULL;
 }
 
@@ -43,7 +43,7 @@ uint64_t dx12_alloc_buffer_slot(void) {
             return (uint64_t)i;
         }
     }
-    assert(0 && "Buffer slot pool exhausted");
+    RHI_ASSERT(0 && "Buffer slot pool exhausted");
     return RHI_NULL;
 }
 
@@ -54,7 +54,7 @@ uint64_t dx12_alloc_pipeline_slot(void) {
             return (uint64_t)i;
         }
     }
-    assert(0 && "Pipeline slot pool exhausted");
+    RHI_ASSERT(0 && "Pipeline slot pool exhausted");
     return RHI_NULL;
 }
 
@@ -65,7 +65,7 @@ uint64_t dx12_alloc_fence_slot(void) {
             return (uint64_t)i;
         }
     }
-    assert(0 && "Fence slot pool exhausted");
+    RHI_ASSERT(0 && "Fence slot pool exhausted");
     return RHI_NULL;
 }
 
@@ -76,7 +76,7 @@ uint64_t dx12_alloc_cmd_list_slot(void) {
             return (uint64_t)i;
         }
     }
-    assert(0 && "Command list slot pool exhausted");
+    RHI_ASSERT(0 && "Command list slot pool exhausted");
     return RHI_NULL;
 }
 
@@ -299,13 +299,13 @@ void dx12_wait_for_gpu(void) {
 void dx12_acquire_backbuffers(void) {
     for (uint32_t i = 0; i < DX12_BACKBUFFER_COUNT; i++) {
         uint64_t slot = dx12_alloc_texture_slot();
-        assert(slot != RHI_NULL);
+        RHI_ASSERT(slot != RHI_NULL);
         s_dx12.backbuffer_indices[i] = (uint32_t)slot;
 
         ID3D12Resource *bb = NULL;
         HRESULT hr = IDXGISwapChain3_GetBuffer(
             s_dx12.swap_chain, i, &IID_ID3D12Resource, (void **)&bb);
-        assert(SUCCEEDED(hr));
+        RHI_ASSERT(SUCCEEDED(hr));
         (void)hr;
 
         s_dx12.textures[slot].resource     = bb;
@@ -338,7 +338,7 @@ void dx12_release_backbuffers(void) {
  * ======================================================================= */
 
 RhiBuffer dx12_buffer_create(const RhiBufferDesc *desc) {
-    assert(s_dx12.initialized && desc);
+    RHI_ASSERT(s_dx12.initialized && desc);
 
     uint64_t slot = dx12_alloc_buffer_slot();
     if (slot == RHI_NULL) return RHI_NULL;
@@ -410,7 +410,7 @@ RhiBuffer dx12_buffer_create(const RhiBufferDesc *desc) {
 void dx12_buffer_destroy(RhiBuffer buf) {
     if (buf == RHI_NULL) return;
     uint32_t slot = (uint32_t)buf;
-    assert(slot < DX12_MAX_BUFFERS && s_dx12.buffers[slot].occupied);
+    RHI_ASSERT(slot < DX12_MAX_BUFFERS && s_dx12.buffers[slot].occupied);
 
     if (s_dx12.buffers[slot].resource) {
         ID3D12Resource_Release(s_dx12.buffers[slot].resource);
@@ -421,10 +421,10 @@ void dx12_buffer_destroy(RhiBuffer buf) {
 void *dx12_buffer_map(RhiBuffer buf) {
     if (buf == RHI_NULL) return NULL;
     uint32_t slot = (uint32_t)buf;
-    assert(slot < DX12_MAX_BUFFERS && s_dx12.buffers[slot].occupied);
+    RHI_ASSERT(slot < DX12_MAX_BUFFERS && s_dx12.buffers[slot].occupied);
 
     /* Only upload and readback buffers can be mapped */
-    assert(s_dx12.buffers[slot].usage &
+    RHI_ASSERT(s_dx12.buffers[slot].usage &
            (RHI_BUFFER_USAGE_UPLOAD | RHI_BUFFER_USAGE_READBACK));
 
     if (s_dx12.buffers[slot].mapped_ptr) {
@@ -456,7 +456,7 @@ void *dx12_buffer_map(RhiBuffer buf) {
 void dx12_buffer_unmap(RhiBuffer buf) {
     if (buf == RHI_NULL) return;
     uint32_t slot = (uint32_t)buf;
-    assert(slot < DX12_MAX_BUFFERS && s_dx12.buffers[slot].occupied);
+    RHI_ASSERT(slot < DX12_MAX_BUFFERS && s_dx12.buffers[slot].occupied);
 
     if (!s_dx12.buffers[slot].mapped_ptr) return;
 
@@ -476,7 +476,7 @@ void dx12_buffer_unmap(RhiBuffer buf) {
 void dx12_buffer_upload(RhiBuffer buf, const void *data, size_t size) {
     if (buf == RHI_NULL || !data || size == 0) return;
     uint32_t slot = (uint32_t)buf;
-    assert(slot < DX12_MAX_BUFFERS && s_dx12.buffers[slot].occupied);
+    RHI_ASSERT(slot < DX12_MAX_BUFFERS && s_dx12.buffers[slot].occupied);
 
     /*
      * For upload heap buffers, map and memcpy directly.
@@ -548,7 +548,7 @@ void dx12_buffer_upload(RhiBuffer buf, const void *data, size_t size) {
  * ======================================================================= */
 
 RhiTexture dx12_texture_create(const RhiTextureDesc *desc) {
-    assert(s_dx12.initialized && desc);
+    RHI_ASSERT(s_dx12.initialized && desc);
 
     uint64_t slot = dx12_alloc_texture_slot();
     if (slot == RHI_NULL) return RHI_NULL;
@@ -772,7 +772,7 @@ RhiTexture dx12_texture_create(const RhiTextureDesc *desc) {
 void dx12_texture_destroy(RhiTexture tex) {
     if (tex == RHI_NULL) return;
     uint32_t slot = (uint32_t)tex;
-    assert(slot < DX12_MAX_RESOURCES && s_dx12.textures[slot].occupied);
+    RHI_ASSERT(slot < DX12_MAX_RESOURCES && s_dx12.textures[slot].occupied);
 
     if (s_dx12.textures[slot].is_swapchain) {
         /* Swapchain backbuffers are managed by dx12_release_backbuffers() */
@@ -788,7 +788,7 @@ void dx12_texture_destroy(RhiTexture tex) {
 void dx12_texture_upload(RhiTexture tex, const void *data, size_t size) {
     if (tex == RHI_NULL || !data || size == 0) return;
     uint32_t slot = (uint32_t)tex;
-    assert(slot < DX12_MAX_RESOURCES && s_dx12.textures[slot].occupied);
+    RHI_ASSERT(slot < DX12_MAX_RESOURCES && s_dx12.textures[slot].occupied);
 
     /*
      * Phase 1: Simple single-subresource upload via staging buffer.
@@ -986,7 +986,7 @@ void dx12_texture_upload_subresource(RhiTexture tex, uint32_t subresource,
  * ======================================================================= */
 
 RhiPipeline dx12_pipeline_create(const RhiPipelineDesc *desc) {
-    assert(s_dx12.initialized && desc);
+    RHI_ASSERT(s_dx12.initialized && desc);
     DIAG("dx12_pipeline_create START");
 
     /* Check PSO cache first */
@@ -1345,7 +1345,7 @@ RhiPipeline dx12_pipeline_create(const RhiPipelineDesc *desc) {
 }
 
 RhiPipeline dx12_compute_pipeline_create(const RhiComputePipelineDesc *desc) {
-    assert(s_dx12.initialized && desc);
+    RHI_ASSERT(s_dx12.initialized && desc);
     HRESULT hr;
 
     uint64_t slot = dx12_alloc_pipeline_slot();
@@ -1522,7 +1522,7 @@ RhiPipeline dx12_compute_pipeline_create(const RhiComputePipelineDesc *desc) {
 void dx12_pipeline_destroy(RhiPipeline pipeline) {
     if (pipeline == RHI_NULL) return;
     uint32_t slot = (uint32_t)pipeline;
-    assert(slot < DX12_MAX_PIPELINES && s_dx12.pipelines[slot].occupied);
+    RHI_ASSERT(slot < DX12_MAX_PIPELINES && s_dx12.pipelines[slot].occupied);
 
     if (s_dx12.pipelines[slot].pso)
         ID3D12PipelineState_Release(s_dx12.pipelines[slot].pso);
@@ -1537,7 +1537,7 @@ void dx12_pipeline_destroy(RhiPipeline pipeline) {
  * ======================================================================= */
 
 RhiFence dx12_fence_create(void) {
-    assert(s_dx12.initialized);
+    RHI_ASSERT(s_dx12.initialized);
 
     uint64_t slot = dx12_alloc_fence_slot();
     if (slot == RHI_NULL) return RHI_NULL;
@@ -1563,7 +1563,7 @@ RhiFence dx12_fence_create(void) {
 void dx12_fence_destroy(RhiFence fence) {
     if (fence == RHI_NULL) return;
     uint32_t slot = (uint32_t)fence;
-    assert(slot < DX12_MAX_FENCES && s_dx12.fences[slot].occupied);
+    RHI_ASSERT(slot < DX12_MAX_FENCES && s_dx12.fences[slot].occupied);
 
     if (s_dx12.fences[slot].fence) ID3D12Fence_Release(s_dx12.fences[slot].fence);
     if (s_dx12.fences[slot].event) CloseHandle(s_dx12.fences[slot].event);
@@ -1573,7 +1573,7 @@ void dx12_fence_destroy(RhiFence fence) {
 void dx12_fence_signal(RhiFence fence, uint64_t value) {
     if (fence == RHI_NULL) return;
     uint32_t slot = (uint32_t)fence;
-    assert(slot < DX12_MAX_FENCES && s_dx12.fences[slot].occupied);
+    RHI_ASSERT(slot < DX12_MAX_FENCES && s_dx12.fences[slot].occupied);
 
     ID3D12CommandQueue_Signal(s_dx12.cmd_queue,
                              s_dx12.fences[slot].fence, value);
@@ -1583,7 +1583,7 @@ bool dx12_fence_wait(RhiFence fence, uint64_t value,
                             uint64_t timeout_ns) {
     if (fence == RHI_NULL) return false;
     uint32_t slot = (uint32_t)fence;
-    assert(slot < DX12_MAX_FENCES && s_dx12.fences[slot].occupied);
+    RHI_ASSERT(slot < DX12_MAX_FENCES && s_dx12.fences[slot].occupied);
 
     if (ID3D12Fence_GetCompletedValue(s_dx12.fences[slot].fence) >= value) {
         return true; /* Already signaled */
@@ -1603,21 +1603,21 @@ bool dx12_fence_wait(RhiFence fence, uint64_t value,
  * ======================================================================= */
 
 ID3D12Device* rhi_dx12_get_device(void) {
-    assert(s_dx12.initialized);
+    RHI_ASSERT(s_dx12.initialized);
     return s_dx12.device;
 }
 
 ID3D12RootSignature* rhi_dx12_get_pipeline_root_sig(RhiPipeline pipeline) {
     if (pipeline == RHI_NULL) return NULL;
     uint32_t slot = (uint32_t)pipeline;
-    assert(slot < DX12_MAX_PIPELINES && s_dx12.pipelines[slot].occupied);
+    RHI_ASSERT(slot < DX12_MAX_PIPELINES && s_dx12.pipelines[slot].occupied);
     return s_dx12.pipelines[slot].root_sig;
 }
 
 ID3D12GraphicsCommandList* rhi_dx12_get_cmd_list(RhiCmdList cmd) {
     if (cmd == RHI_NULL) return NULL;
     uint32_t slot = (uint32_t)cmd;
-    assert(slot < DX12_MAX_CMD_LISTS && s_dx12.cmd_lists[slot].occupied);
+    RHI_ASSERT(slot < DX12_MAX_CMD_LISTS && s_dx12.cmd_lists[slot].occupied);
     return s_dx12.cmd_lists[slot].list;
 }
 
