@@ -1,6 +1,7 @@
 [uzscene]
 name = DefaultScene
 version = 1
+clouds_enabled = true
 
 [node]
 name = World

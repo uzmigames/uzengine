@@ -51,7 +51,7 @@ fog_max_opacity = 0.55
 # VOLUMETRIC CLOUDS
 # Scattered cumulus over the test scene, drifting north-east
 # ──────────────────────────────────────────────────────────────────────────────
-clouds_enabled = true
+clouds_enabled = false
 cloud_coverage = 0.55
 cloud_density = 0.12
 cloud_base = 800.0

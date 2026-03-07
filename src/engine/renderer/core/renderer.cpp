@@ -1002,6 +1002,30 @@ void Renderer::render(bool readback) {
     // --- Pass 1b: Volumetric Clouds ------------------------------------------
     // Alpha-blend procedural clouds over the sky. Runs after all geometry so
     // the depth buffer is fully written — cloud shader skips solid-geometry pixels.
+    // Lazy-init clouds PSO on first use (saves ~2300ms startup)
+    if (cloudsEnabled_ && cloudsPSO_ == RHI_NULL) {
+        UZ_PROFILE_ZONE("pso/clouds");
+        RhiPipelineDesc cd{};
+        cd.vertex_layout.attrib_count = 0;
+        cd.rt_count      = 1;
+        cd.rt_formats[0] = RHI_FORMAT_RGBA16_FLOAT;
+        cd.ds_format     = RHI_FORMAT_UNKNOWN;
+        cd.topology      = RHI_TOPOLOGY_TRIANGLE_LIST;
+        cd.rasterizer.fill_mode = RHI_FILL_SOLID;
+        cd.rasterizer.cull_mode = RHI_CULL_NONE;
+        cd.depth_stencil.depth_enable = false;
+        cd.depth_stencil.depth_write  = false;
+        cd.blend.render_targets[0].write_mask      = 0xF;
+        cd.blend.render_targets[0].blend_enable    = true;
+        cd.blend.render_targets[0].src_blend       = RHI_BLEND_SRC_ALPHA;
+        cd.blend.render_targets[0].dst_blend       = RHI_BLEND_INV_SRC_ALPHA;
+        cd.blend.render_targets[0].blend_op        = RHI_BLEND_OP_ADD;
+        cd.blend.render_targets[0].src_blend_alpha = RHI_BLEND_ONE;
+        cd.blend.render_targets[0].dst_blend_alpha = RHI_BLEND_INV_SRC_ALPHA;
+        cd.blend.render_targets[0].blend_op_alpha  = RHI_BLEND_OP_ADD;
+        cd.debug_name = "Clouds_PSO";
+        cloudsPSO_ = shaderLib_.get_or_create_pipeline("clouds", cd);
+    }
     if (cloudsEnabled_ && cloudsPSO_ != RHI_NULL && hdrRT_ != RHI_NULL) {
         renderGraph_.add_pass("clouds", RgPassType::Graphics,
             [&](RgPassBuilder& builder) {
@@ -1021,7 +1045,7 @@ void Renderer::render(bool readback) {
                 float cp[16] = {
                     cloudCoverage_, cloudDensity_, cloudBase_, cloudTop_,
                     cloudWindSpeed_, cloudWindDir_[0], cloudWindDir_[1], cloudAbsorption_,
-                    cloudAmbient_, 0.0f, 0.0f, 0.0f,
+                    cloudAmbient_, static_cast<float>(frameNumber_ % 8), 0.0f, 0.0f,
                     0.0f, 0.0f, 0.0f, 0.0f
                 };
                 rhi()->cmd_set_root_constants(cmd, 0, cp, 16, 0);
@@ -1810,7 +1834,8 @@ bool Renderer::createPipelineStates() {
     desc.blend.render_targets[0].write_mask = 0xF;
     desc.debug_name = "BasicPSO";
 
-    rhiPipeline_ = shaderLib_.get_or_create_pipeline("basic", desc);
+    { UZ_PROFILE_ZONE("pso/basic");
+      rhiPipeline_ = shaderLib_.get_or_create_pipeline("basic", desc); }
     DIAG_FMT("basic PSO => handle=%llu", (unsigned long long)rhiPipeline_);
 
     // PBR PSO for Scene Proxies — renders to HDR intermediate RT (R11G11B10_FLOAT)
@@ -1823,7 +1848,8 @@ bool Renderer::createPipelineStates() {
     pbrDesc.vertex_layout.attribs[3] = { "TANGENT",  0, RHI_VERTEX_FORMAT_FLOAT4, 32, 0 };
     pbrDesc.debug_name = "PBR_PSO";
     
-    rhiPbrPipeline_ = shaderLib_.get_or_create_pipeline("pbr", pbrDesc);
+    { UZ_PROFILE_ZONE("pso/pbr");
+      rhiPbrPipeline_ = shaderLib_.get_or_create_pipeline("pbr", pbrDesc); }
     DIAG_FMT("pbr PSO => handle=%llu", (unsigned long long)rhiPbrPipeline_);
 
     // ---- Stencil Mark PSO (writes 1 to stencil, no color) ----
@@ -1839,7 +1865,8 @@ bool Renderer::createPipelineStates() {
         stDesc.depth_stencil.back_face = stDesc.depth_stencil.front_face;
         stDesc.blend.render_targets[0].write_mask = 0; // No color output
         stDesc.debug_name = "StencilMark_PSO";
-        rhiStencilMarkPSO_ = shaderLib_.get_or_create_pipeline("pbr", stDesc);
+        { UZ_PROFILE_ZONE("pso/stencil_mark");
+          rhiStencilMarkPSO_ = shaderLib_.get_or_create_pipeline("pbr", stDesc); }
         DIAG_FMT("stencil mark PSO => handle=%llu", (unsigned long long)rhiStencilMarkPSO_);
     }
 
@@ -1860,7 +1887,8 @@ bool Renderer::createPipelineStates() {
         olDesc.depth_stencil.back_face = olDesc.depth_stencil.front_face;
         olDesc.blend.render_targets[0].write_mask = 0xF;
         olDesc.debug_name = "Outline_PSO";
-        rhiOutlinePSO_ = shaderLib_.get_or_create_pipeline("outline", olDesc);
+        { UZ_PROFILE_ZONE("pso/outline");
+          rhiOutlinePSO_ = shaderLib_.get_or_create_pipeline("outline", olDesc); }
         DIAG_FMT("outline PSO => handle=%llu", (unsigned long long)rhiOutlinePSO_);
     }
 
@@ -1878,7 +1906,8 @@ bool Renderer::createPipelineStates() {
         shadowDesc.depth_stencil.depth_write  = true;
         shadowDesc.depth_stencil.depth_func   = RHI_COMPARE_LESS;
         shadowDesc.debug_name = "ShadowDepth_PSO";
-        rhiShadowPipeline_ = shaderLib_.get_or_create_pipeline("shadow_depth", shadowDesc);
+        { UZ_PROFILE_ZONE("pso/shadow_depth");
+          rhiShadowPipeline_ = shaderLib_.get_or_create_pipeline("shadow_depth", shadowDesc); }
         DIAG_FMT("shadow depth PSO => handle=%llu", (unsigned long long)rhiShadowPipeline_);
     }
 
@@ -1897,7 +1926,8 @@ bool Renderer::createPipelineStates() {
         skyDesc.depth_stencil.depth_write  = false;
         skyDesc.blend.render_targets[0].write_mask = 0xF;
         skyDesc.debug_name = "Sky_PSO";
-        rhiSkyPipeline_ = shaderLib_.get_or_create_pipeline("sky", skyDesc);
+        { UZ_PROFILE_ZONE("pso/sky");
+          rhiSkyPipeline_ = shaderLib_.get_or_create_pipeline("sky", skyDesc); }
         DIAG_FMT("sky PSO => handle=%llu", (unsigned long long)rhiSkyPipeline_);
     }
 
@@ -1920,57 +1950,61 @@ bool Renderer::createPipelineStates() {
     {
         auto d = makePostProcDesc(RHI_FORMAT_R8_UNORM);
         d.debug_name = "SSAO_PSO";
-        ssaoPSO_ = shaderLib_.get_or_create_pipeline("ssao", d);
+        { UZ_PROFILE_ZONE("pso/ssao");
+          ssaoPSO_ = shaderLib_.get_or_create_pipeline("ssao", d); }
         DIAG_FMT("ssao PSO => handle=%llu", (unsigned long long)ssaoPSO_);
     }
     {
         auto d = makePostProcDesc(RHI_FORMAT_R8_UNORM);
         d.debug_name = "SSAO_Blur_PSO";
-        ssaoBlurPSO_ = shaderLib_.get_or_create_pipeline("ssao_blur", d);
+        { UZ_PROFILE_ZONE("pso/ssao_blur");
+          ssaoBlurPSO_ = shaderLib_.get_or_create_pipeline("ssao_blur", d); }
         DIAG_FMT("ssao_blur PSO => handle=%llu", (unsigned long long)ssaoBlurPSO_);
     }
     {
         auto d = makePostProcDesc(RHI_FORMAT_R11G11B10_FLOAT);
         d.debug_name = "Bloom_Down_PSO";
-        bloomDownPSO_ = shaderLib_.get_or_create_pipeline("bloom_down", d);
+        { UZ_PROFILE_ZONE("pso/bloom_down");
+          bloomDownPSO_ = shaderLib_.get_or_create_pipeline("bloom_down", d); }
         DIAG_FMT("bloom_down PSO => handle=%llu", (unsigned long long)bloomDownPSO_);
     }
     {
         auto d = makePostProcDesc(RHI_FORMAT_R11G11B10_FLOAT);
         d.debug_name = "Bloom_Up_PSO";
-        bloomUpPSO_ = shaderLib_.get_or_create_pipeline("bloom_up", d);
+        { UZ_PROFILE_ZONE("pso/bloom_up");
+          bloomUpPSO_ = shaderLib_.get_or_create_pipeline("bloom_up", d); }
         DIAG_FMT("bloom_up PSO => handle=%llu", (unsigned long long)bloomUpPSO_);
     }
     {
         auto d = makePostProcDesc(RHI_FORMAT_RGBA8_UNORM);
         d.debug_name = "Composite_PSO";
-        compositePSO_ = shaderLib_.get_or_create_pipeline("composite", d);
+        { UZ_PROFILE_ZONE("pso/composite");
+          compositePSO_ = shaderLib_.get_or_create_pipeline("composite", d); }
         DIAG_FMT("composite PSO => handle=%llu", (unsigned long long)compositePSO_);
     }
     {
         auto d = makePostProcDesc(RHI_FORMAT_RG16_FLOAT);
         d.debug_name = "Velocity_PSO";
-        velocityPSO_ = shaderLib_.get_or_create_pipeline("velocity", d);
+        { UZ_PROFILE_ZONE("pso/velocity");
+          velocityPSO_ = shaderLib_.get_or_create_pipeline("velocity", d); }
         DIAG_FMT("velocity PSO => handle=%llu", (unsigned long long)velocityPSO_);
     }
     {
         auto d = makePostProcDesc(RHI_FORMAT_R11G11B10_FLOAT);
         d.debug_name = "TAA_PSO";
-        taaPSO_ = shaderLib_.get_or_create_pipeline("taa", d);
+        { UZ_PROFILE_ZONE("pso/taa");
+          taaPSO_ = shaderLib_.get_or_create_pipeline("taa", d); }
         DIAG_FMT("taa PSO => handle=%llu", (unsigned long long)taaPSO_);
     }
-    {
-        auto d = makePostProcDesc(RHI_FORMAT_R8_UNORM);
-        d.debug_name = "GTAO_PSO";
-        gtaoPSO_ = shaderLib_.get_or_create_pipeline("gtao", d);
-        DIAG_FMT("gtao PSO => handle=%llu", (unsigned long long)gtaoPSO_);
-    }
+    // GTAO PSO — deferred to first use (lazy init, saves ~600ms startup)
+    // gtaoPSO_ compiled on demand in ensureGtaoPSO()
 
     // ---- Auto Exposure PSO — 1x1 R16_FLOAT output ----
     {
         auto d = makePostProcDesc(RHI_FORMAT_R16_FLOAT);
         d.debug_name = "AutoExposure_PSO";
-        autoExposurePSO_ = shaderLib_.get_or_create_pipeline("auto_exposure", d);
+        { UZ_PROFILE_ZONE("pso/auto_exposure");
+          autoExposurePSO_ = shaderLib_.get_or_create_pipeline("auto_exposure", d); }
         DIAG_FMT("auto_exposure PSO => handle=%llu", (unsigned long long)autoExposurePSO_);
     }
 
@@ -1978,39 +2012,29 @@ bool Renderer::createPipelineStates() {
     {
         auto d = makePostProcDesc(RHI_FORMAT_R11G11B10_FLOAT);
         d.debug_name = "SSR_PSO";
-        ssrPSO_ = shaderLib_.get_or_create_pipeline("ssr", d);
+        { UZ_PROFILE_ZONE("pso/ssr");
+          ssrPSO_ = shaderLib_.get_or_create_pipeline("ssr", d); }
         DIAG_FMT("ssr PSO => handle=%llu", (unsigned long long)ssrPSO_);
     }
     // ---- Hi-Z generation PSO — R32_FLOAT depth reduction ----
     {
         auto d = makePostProcDesc(RHI_FORMAT_R32_FLOAT);
         d.debug_name = "HiZ_PSO";
-        hizPSO_ = shaderLib_.get_or_create_pipeline("hiz_generate", d);
+        { UZ_PROFILE_ZONE("pso/hiz");
+          hizPSO_ = shaderLib_.get_or_create_pipeline("hiz_generate", d); }
         DIAG_FMT("hiz PSO => handle=%llu", (unsigned long long)hizPSO_);
     }
     // ---- Color Grading PSO — RGBA8 output (final pass) ----
     {
         auto d = makePostProcDesc(RHI_FORMAT_RGBA8_UNORM);
         d.debug_name = "ColorGrading_PSO";
-        colorGradingPSO_ = shaderLib_.get_or_create_pipeline("color_grading", d);
+        { UZ_PROFILE_ZONE("pso/color_grading");
+          colorGradingPSO_ = shaderLib_.get_or_create_pipeline("color_grading", d); }
         DIAG_FMT("color_grading PSO => handle=%llu", (unsigned long long)colorGradingPSO_);
     }
 
-    // ---- Volumetric Clouds PSO — RGBA16F, alpha blending over sky ----
-    {
-        RhiPipelineDesc cd = makePostProcDesc(RHI_FORMAT_RGBA16_FLOAT);
-        cd.debug_name = "Clouds_PSO";
-        // Alpha blend: cloud color composited over sky (src_alpha, 1-src_alpha)
-        cd.blend.render_targets[0].blend_enable    = true;
-        cd.blend.render_targets[0].src_blend       = RHI_BLEND_SRC_ALPHA;
-        cd.blend.render_targets[0].dst_blend       = RHI_BLEND_INV_SRC_ALPHA;
-        cd.blend.render_targets[0].blend_op        = RHI_BLEND_OP_ADD;
-        cd.blend.render_targets[0].src_blend_alpha = RHI_BLEND_ONE;
-        cd.blend.render_targets[0].dst_blend_alpha = RHI_BLEND_INV_SRC_ALPHA;
-        cd.blend.render_targets[0].blend_op_alpha  = RHI_BLEND_OP_ADD;
-        cloudsPSO_ = shaderLib_.get_or_create_pipeline("clouds", cd);
-        DIAG_FMT("clouds PSO => handle=%llu", (unsigned long long)cloudsPSO_);
-    }
+    // Volumetric Clouds PSO — deferred to first use (lazy init, saves ~2300ms startup)
+    // cloudsPSO_ compiled on demand in ensureCloudsPSO()
 
     // ---- Deferred Shading PSOs ----
     if (renderPath_ == RenderPath::Deferred) {
@@ -2028,7 +2052,8 @@ bool Renderer::createPipelineStates() {
                 gbDesc.blend.render_targets[i].write_mask = 0xF;
             }
             gbDesc.debug_name = "GBuffer_PSO";
-            gbufferPSO_ = shaderLib_.get_or_create_pipeline("gbuffer_write", gbDesc);
+            { UZ_PROFILE_ZONE("pso/gbuffer_write");
+              gbufferPSO_ = shaderLib_.get_or_create_pipeline("gbuffer_write", gbDesc); }
             DIAG_FMT("gbuffer PSO => handle=%llu", (unsigned long long)gbufferPSO_);
         }
 
@@ -2036,7 +2061,8 @@ bool Renderer::createPipelineStates() {
         {
             auto d = makePostProcDesc(RHI_FORMAT_R11G11B10_FLOAT);
             d.debug_name = "DeferredLighting_PSO";
-            deferredLightPSO_ = shaderLib_.get_or_create_pipeline("deferred_lighting", d);
+            { UZ_PROFILE_ZONE("pso/deferred_lighting");
+              deferredLightPSO_ = shaderLib_.get_or_create_pipeline("deferred_lighting", d); }
             DIAG_FMT("deferred lighting PSO => handle=%llu", (unsigned long long)deferredLightPSO_);
         }
     }

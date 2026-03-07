@@ -1,6 +1,7 @@
 [uzscene]
 name = Materials Showcase
 version = 1
+clouds_enabled = true
 
 [node]
 name = Main Camera

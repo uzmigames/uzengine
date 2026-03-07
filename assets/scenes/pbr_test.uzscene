@@ -1,6 +1,7 @@
 [uzscene]
 name = PBR Test
 version = 1
+clouds_enabled = false
 
 [node]
 name = Sky Atmosphere

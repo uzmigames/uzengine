@@ -1439,6 +1439,24 @@ int WINAPI WinMain(
                 editorNodes.push_back(edNode);
             }
 
+            // Apply scene-level settings to renderer before setScene (same as scene_bridge).
+            renderer.setAoParams(g_sceneData->ao_radius, g_sceneData->ao_intensity);
+            renderer.setContactShadows(g_sceneData->contact_shadows, g_sceneData->contact_shadow_length);
+            renderer.setTaaEnabled(g_sceneData->taa_enabled);
+            renderer.setAutoExposure(g_sceneData->exposure_mode == 0, g_sceneData->exposure_value);
+            renderer.setSsr(g_sceneData->ssr_enabled, g_sceneData->ssr_max_roughness);
+            renderer.setColorGrading(g_sceneData->color_temperature, g_sceneData->color_tint,
+                                      g_sceneData->color_saturation, g_sceneData->color_contrast);
+            renderer.setCinematicPost(g_sceneData->chromatic_aberration, g_sceneData->vignette_intensity,
+                                       g_sceneData->vignette_falloff, g_sceneData->film_grain_strength);
+            renderer.setDof(g_sceneData->dof_focus_distance, g_sceneData->dof_aperture, g_sceneData->dof_focal_length);
+            renderer.setFog(g_sceneData->fog_density, g_sceneData->fog_color,
+                             g_sceneData->fog_height_falloff, g_sceneData->fog_base_height, g_sceneData->fog_max_opacity);
+            renderer.setClouds(g_sceneData->clouds_enabled, g_sceneData->cloud_coverage,
+                               g_sceneData->cloud_density, g_sceneData->cloud_base, g_sceneData->cloud_top,
+                               g_sceneData->cloud_wind_speed, g_sceneData->cloud_wind_dir_x,
+                               g_sceneData->cloud_wind_dir_z, g_sceneData->cloud_absorption,
+                               g_sceneData->cloud_ambient);
             {
                 UZ_PROFILE_ZONE("startup/renderer_setScene");
                 renderer.setScene(g_sceneData.get());
