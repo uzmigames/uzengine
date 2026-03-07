@@ -1,9 +1,10 @@
 // ---------------------------------------------------------------------------
 // stream.h -- JPEG streaming infrastructure for the editor viewport.
 //
-// Extracts the dual-threaded JPEG encode pipeline from main.cpp.
-// Two encoder threads drain SPSC ring buffers in round-robin,
-// encoding RGBA frames to JPEG and broadcasting via WebSocket.
+// Single encode thread drains an SPSC ring buffer, rate-limited to
+// kStreamTargetFPS, encoding RGBA frames to JPEG and broadcasting via
+// WebSocket.  The engine renders freely at its native FPS; only
+// kStreamTargetFPS frames/s are actually transmitted to the WebView.
 // ---------------------------------------------------------------------------
 #pragma once
 
@@ -15,18 +16,19 @@
 
 namespace uz { class WsServer; }
 
-// Ring buffer sizing.
-constexpr std::size_t kStreamRingSize = 8;  // power-of-2, absorbs encode jitter
+// Ring buffer sizing (single ring, encode thread drains quickly).
+constexpr std::size_t kStreamRingSize = 4;
 
-// Global ring buffers — render thread pushes, encode threads pop.
-extern uz::RingBuffer<uz::FrameData, kStreamRingSize> g_frameRingA;
-extern uz::RingBuffer<uz::FrameData, kStreamRingSize> g_frameRingB;
+// Maximum frames per second transmitted to the WebView.
+// Keeping this at 60 prevents the Chromium WebSocket receive handler from
+// being flooded, which was the root cause of the 17 FPS VSCode viewport.
+constexpr int kStreamTargetFPS = 60;
 
-// Round-robin dispatch toggle (written only by the render thread).
-extern bool g_dispatchToggle;
+// Global ring buffer — render thread pushes, encode thread pops.
+extern uz::RingBuffer<uz::FrameData, kStreamRingSize> g_frameRing;
 
-/// Start the dual JPEG encode threads.  Call once after wsServer.start().
-void startEncodeThreads(uz::WsServer* server);
+/// Start the JPEG encode thread.  Call once after wsServer.start().
+void startEncodeThread(uz::WsServer* server);
 
-/// Signal encode threads to stop and join them. Call before shutdown.
-void stopEncodeThreads();
+/// Signal the encode thread to stop and join it.  Call before shutdown.
+void stopEncodeThread();

@@ -16,6 +16,8 @@
 #include "engine/renderer/gizmos/gizmo_directional_light.h"
 #include "engine/renderer/gizmos/gizmo_point_light.h"
 
+#include "engine/scene/component_registry.h"
+
 #include <cstring>
 #include <cstdio>
 #include <cmath>
@@ -58,13 +60,17 @@ bool EditorComponent::init() {
     if (!createLinePipelineState()) return false;
     if (!createGridVertexBuffer()) return false;
 
-    // -- Register gizmos by NodeType. ----------------------------------------
-    // NodeType enum values (from scene_node.h):
-    //   DirectionalLight = 3, PointLight = 4, Camera = 6
+    // -- Register gizmos keyed by ComponentRegistry type_index. ---------------
+    // type_index is assigned at registration time in component_registry.cpp.
+    // Using the registry ensures new types registered by plugins work automatically.
     gizmoRegistry_.setDefaultGizmo(std::make_unique<GizmoCube>());
-    gizmoRegistry_.registerGizmo(3, std::make_unique<GizmoDirectionalLight>());
-    gizmoRegistry_.registerGizmo(4, std::make_unique<GizmoPointLight>());
-    gizmoRegistry_.registerGizmo(6, std::make_unique<GizmoCamera>());
+    auto regGizmo = [&](const char* typeName, std::unique_ptr<GizmoRenderer> g) {
+        const NodeTypeDef* def = ComponentRegistry::find(typeName);
+        if (def) gizmoRegistry_.registerGizmo(def->type_index, std::move(g));
+    };
+    regGizmo("DirectionalLight", std::make_unique<GizmoDirectionalLight>());
+    regGizmo("PointLight",       std::make_unique<GizmoPointLight>());
+    regGizmo("Camera",           std::make_unique<GizmoCamera>());
 
     gizmoRegistry_.initAll();
     transformGizmo_.init();
@@ -92,8 +98,13 @@ void EditorComponent::draw(RhiCmdList cmd,
 
     rhi()->cmd_set_root_constants(cmd, 0, &viewProj, 16, 0);
 
-    const float white[4] = {1.0f, 1.0f, 1.0f, 0.0f};
-    rhi()->cmd_set_root_constants(cmd, 1, white, 4, 0);
+    // Pass 8 DWORDs: colorMul(3) + alphaMult(1) + cameraWorldPos(3) + gridFadeEnd(1)
+    // gridFadeEnd=50 → grid fades from 15 units to 50 units (UE5-style horizon fade).
+    const float gridCB[8] = {
+        1.0f, 1.0f, 1.0f, 1.0f,                          // colorMul + alphaMult
+        cameraPos.x, cameraPos.y, cameraPos.z, 50.0f     // cameraWorldPos + gridFadeEnd
+    };
+    rhi()->cmd_set_root_constants(cmd, 1, gridCB, 8, 0);
 
     rhi()->cmd_set_vertex_buffer(cmd, 0, gridVertexBuffer_, 0, sizeof(Vertex));
     rhi()->cmd_draw(cmd, gridVertexCount_, 1, 0, 0);
@@ -123,8 +134,12 @@ void EditorComponent::draw(RhiCmdList cmd,
             const Mat4 mvp = nodeWorld * viewProj;
             rhi()->cmd_set_root_constants(cmd, 0, &mvp, 16, 0);
 
-            const float col[4] = {node.color.x, node.color.y, node.color.z, 0.0f};
-            rhi()->cmd_set_root_constants(cmd, 1, col, 4, 0);
+            // 8 DWORDs: colorMul + alphaMult + cameraWorldPos + gridFadeEnd=0 (no fade)
+            const float col[8] = {
+                node.color.x, node.color.y, node.color.z, 1.0f,
+                0.0f, 0.0f, 0.0f, 0.0f   // gridFadeEnd=0 disables distance fade
+            };
+            rhi()->cmd_set_root_constants(cmd, 1, col, 8, 0);
 
             // Lookup and draw the correct gizmo for this node type.
             GizmoRenderer* gizmo = gizmoRegistry_.get(node.nodeType);
@@ -170,8 +185,8 @@ void EditorComponent::draw(RhiCmdList cmd,
         const Mat4 mvp = gizmoWorld * viewProj;
         rhi()->cmd_set_root_constants(cmd, 0, &mvp, 16, 0);
 
-        const float gizmoCol[4] = {1.0f, 1.0f, 1.0f, 0.0f};
-        rhi()->cmd_set_root_constants(cmd, 1, gizmoCol, 4, 0);
+        const float gizmoCol[8] = {1.0f, 1.0f, 1.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+        rhi()->cmd_set_root_constants(cmd, 1, gizmoCol, 8, 0);
 
         transformGizmo_.drawMode(cmd, gizmoMode, gizmoActiveAxis);
     }
@@ -265,8 +280,18 @@ bool EditorComponent::createLinePipelineState() {
     desc.rasterizer.front_ccw = false;
 
     desc.depth_stencil.depth_enable = true;
-    desc.depth_stencil.depth_write  = true;
+    desc.depth_stencil.depth_write  = false;  // transparent lines must not occlude scene
     desc.depth_stencil.depth_func   = RHI_COMPARE_LESS;
+
+    // Alpha blend: src_alpha / inv_src_alpha — enables UE5-style grid horizon fade
+    desc.blend.render_targets[0].blend_enable     = true;
+    desc.blend.render_targets[0].src_blend        = RHI_BLEND_SRC_ALPHA;
+    desc.blend.render_targets[0].dst_blend        = RHI_BLEND_INV_SRC_ALPHA;
+    desc.blend.render_targets[0].blend_op         = RHI_BLEND_OP_ADD;
+    desc.blend.render_targets[0].src_blend_alpha  = RHI_BLEND_ONE;
+    desc.blend.render_targets[0].dst_blend_alpha  = RHI_BLEND_ZERO;
+    desc.blend.render_targets[0].blend_op_alpha   = RHI_BLEND_OP_ADD;
+    desc.blend.render_targets[0].write_mask       = 0xF;
 
     desc.topology    = RHI_TOPOLOGY_LINE_LIST;
     desc.debug_name  = "EditorLinePSO";

@@ -60,8 +60,10 @@ int runMainLoop(HWND /*hwnd*/,
             const double delta = timer.tick();
             renderer.update(timer.elapsed(), delta);
 
-            // Only readback when encoders have room.
-            const bool needReadback = g_frameRingA.size() < 2 || g_frameRingB.size() < 2;
+            // Only readback when the ring has room.  The encode thread drains
+            // quickly (pops + drops rate-limited frames), so the ring stays
+            // near-empty and readback fires on almost every render loop tick.
+            const bool needReadback = g_frameRing.size() < kStreamRingSize;
             renderer.render(needReadback);
 
             // Update resolution metric.
@@ -93,19 +95,13 @@ int runMainLoop(HWND /*hwnd*/,
                 }
             }
 
-            // Dispatch frame to encoder threads.
+            // Dispatch frame to the encode ring.  The ring has kStreamRingSize
+            // slots; push only when there is room (already guaranteed by the
+            // needReadback gate above, but double-checked for safety).
             if (needReadback) {
                 uz::FrameData frame = renderer.getLatestFrame();
-                if (!frame.pixels.empty()) {
-                    auto* preferred = g_dispatchToggle ? &g_frameRingA : &g_frameRingB;
-                    auto* fallback  = g_dispatchToggle ? &g_frameRingB : &g_frameRingA;
-                    g_dispatchToggle = !g_dispatchToggle;
-
-                    if (preferred->size() < 2) {
-                        preferred->push(std::move(frame));
-                    } else if (fallback->size() < 2) {
-                        fallback->push(std::move(frame));
-                    }
+                if (!frame.pixels.empty() && g_frameRing.size() < kStreamRingSize) {
+                    g_frameRing.push(std::move(frame));
                 }
             }
         }

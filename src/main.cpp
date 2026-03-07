@@ -113,8 +113,8 @@ int WINAPI WinMain(
         wsServer.broadcastText(msg);
     });
 
-    // -- Stream threads ------------------------------------------------------
-    startEncodeThreads(&wsServer);
+    // -- Stream thread (single, rate-limited to kStreamTargetFPS) -----------
+    startEncodeThread(&wsServer);
 
     // -- Renderer ------------------------------------------------------------
     uz::Renderer renderer;
@@ -155,7 +155,7 @@ int WINAPI WinMain(
     int exitCode = runMainLoop(hwnd, renderer, timer, g_scene, g_metrics, ipcPoller);
 
     // -- Cleanup -------------------------------------------------------------
-    stopEncodeThreads();
+    stopEncodeThread();
     wsServer.stop();
     renderer.shutdown();
     ix::uninitNetSystem();

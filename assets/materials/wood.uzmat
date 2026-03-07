@@ -6,5 +6,6 @@ metallic = 0.0
 roughness = 0.5
 albedo_texture = assets/textures/wood_albedo.png
 normal_texture = assets/textures/wood_normal.png
+metallic_texture = assets/textures/wood_metallic.png
 roughness_texture = assets/textures/wood_roughness.png
 ao_texture = assets/textures/wood_ao.png

@@ -17,6 +17,7 @@
 #include "engine/scene/scene_node.h"
 #include "engine/scene/component_data.h"
 #include "engine/scene/component_store.h"
+#include "engine/scene/component_registry.h"
 #include "engine/scene/scene_saver.h"
 #include "network/ws_server.h"
 
@@ -145,11 +146,10 @@ void registerIpcHandlers(uz::IpcRegistry& ipcRegistry,
 
         for (const auto& n : args["nodes"]) {
             const std::string typeStr = n.value("type", "Node3D");
-            uz::NodeType nodeType = uz::node_type_from_string(typeStr.c_str());
             const std::string nodeName = n.value("name", "Unnamed");
 
             uz::NodeId id = uz::scene_create_node(
-                g_sceneData.get(), nodeName.c_str(), nodeType);
+                g_sceneData.get(), nodeName.c_str(), typeStr.c_str());
             if (id == uz::kNodeIdInvalid) continue;
 
             uz::SceneNode* node = uz::scene_get_node(g_sceneData.get(), id);
@@ -186,31 +186,27 @@ void registerIpcHandlers(uz::IpcRegistry& ipcRegistry,
                 node->local_transform.scale = {sx, sy, sz, 0.0f};
             }
 
-            // Component data.
-            if (nodeType == uz::NodeType::Camera) {
-                uz::CameraData* cd = uz::component_add<uz::CameraData>(
-                    &g_sceneData->components, id);
-                if (cd) {
-                    cd->fov_y      = n.value("fov",  45.0f);
-                    cd->near_plane = n.value("near", 0.1f);
-                    cd->far_plane  = n.value("far",  500.0f);
-                }
+            // Component data — data-driven via ComponentRegistry.
+            // The registry already attached default components in scene_create_node.
+            // Apply any JSON overrides for well-known props.
+            uz::CameraData* cd = uz::component_get<uz::CameraData>(&g_sceneData->components, id);
+            if (cd) {
+                cd->fov_y      = n.value("fov",  cd->fov_y);
+                cd->near_plane = n.value("near", cd->near_plane);
+                cd->far_plane  = n.value("far",  cd->far_plane);
             }
-            if (nodeType == uz::NodeType::DirectionalLight) {
-                uz::DirectionalLightData* ld = uz::component_add<uz::DirectionalLightData>(
-                    &g_sceneData->components, id);
-                if (ld) {
-                    if (n.contains("light_color") && n["light_color"].is_array()
-                        && n["light_color"].size() >= 3) {
-                        ld->color = {
-                            n["light_color"][0].get<float>(),
-                            n["light_color"][1].get<float>(),
-                            n["light_color"][2].get<float>(),
-                            0.0f
-                        };
-                    }
-                    ld->intensity = n.value("light_intensity", 1.0f);
+            uz::DirectionalLightData* ld = uz::component_get<uz::DirectionalLightData>(&g_sceneData->components, id);
+            if (ld) {
+                if (n.contains("light_color") && n["light_color"].is_array()
+                    && n["light_color"].size() >= 3) {
+                    ld->color = {
+                        n["light_color"][0].get<float>(),
+                        n["light_color"][1].get<float>(),
+                        n["light_color"][2].get<float>(),
+                        0.0f
+                    };
                 }
+                ld->intensity = n.value("light_intensity", ld->intensity);
             }
 
             // Build EditorNode for wireframe rendering.
@@ -223,18 +219,16 @@ void registerIpcHandlers(uz::IpcRegistry& ipcRegistry,
                 node->local_transform.rotation.z,
                 node->local_transform.rotation.w
             };
-            edNode.scale    = {sx, sy, sz};
-            edNode.nodeType = static_cast<uint16_t>(nodeType);
-            edNode.nodeId   = static_cast<uint32_t>(id);
+            edNode.scale  = {sx, sy, sz};
+            edNode.nodeId = static_cast<uint32_t>(id);
 
-            if (typeStr == "StaticMesh") {
-                edNode.color = {0.2f, 0.8f, 0.9f};
-            } else if (typeStr == "Camera") {
-                edNode.color = {0.9f, 0.9f, 0.2f};
-            } else if (typeStr == "DirectionalLight" || typeStr == "PointLight") {
-                edNode.color = {0.9f, 0.7f, 0.2f};
+            const uz::NodeTypeDef* def = uz::ComponentRegistry::find(typeStr.c_str());
+            if (def) {
+                edNode.nodeType = def->type_index;
+                edNode.color    = {def->editor_color[0], def->editor_color[1], def->editor_color[2]};
             } else {
-                edNode.color = {0.8f, 0.8f, 0.8f};
+                edNode.nodeType = 0;
+                edNode.color    = {0.8f, 0.8f, 0.8f};
             }
             editorNodes.push_back(edNode);
         }

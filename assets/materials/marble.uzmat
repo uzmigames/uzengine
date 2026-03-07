@@ -1,10 +1,13 @@
 [material]
-name = Marble
+name = StoneQuartzite
 shader = pbr
-albedo = [0.93, 0.90, 0.87]
+albedo = [1.0, 1.0, 1.0]
 metallic = 0.0
-roughness = 0.1
-albedo_texture = assets/textures/marble_albedo.png
-normal_texture = assets/textures/marble_normal.png
-roughness_texture = assets/textures/marble_roughness.png
-ao_texture = assets/textures/marble_ao.png
+roughness = 1.0
+ao = 1.0
+albedo_texture = assets/textures/StoneQuartzite/Poliigon_StoneQuartzite_8060_BaseColor.jpg
+normal_texture = assets/textures/StoneQuartzite/Poliigon_StoneQuartzite_8060_Normal.png
+metallic_texture = assets/textures/StoneQuartzite/Poliigon_StoneQuartzite_8060_Metallic.jpg
+roughness_texture = assets/textures/StoneQuartzite/Poliigon_StoneQuartzite_8060_Roughness.jpg
+ao_texture = assets/textures/StoneQuartzite/Poliigon_StoneQuartzite_8060_AmbientOcclusion.jpg
+uv_tiling = 2.0

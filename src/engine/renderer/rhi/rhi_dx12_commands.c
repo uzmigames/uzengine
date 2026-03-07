@@ -100,7 +100,15 @@ void dx12_cmd_set_pipeline(RhiCmdList cmd, RhiPipeline pipeline) {
 
     ID3D12GraphicsCommandList *cl = s_dx12.cmd_lists[cmd_slot].list;
     ID3D12GraphicsCommandList_SetPipelineState(cl, s_dx12.pipelines[pso_slot].pso);
-    ID3D12GraphicsCommandList_SetGraphicsRootSignature(cl, s_dx12.pipelines[pso_slot].root_sig);
+
+    bool is_compute = s_dx12.pipelines[pso_slot].is_compute;
+    s_dx12.cmd_lists[cmd_slot].is_compute_bound = is_compute;
+
+    if (is_compute) {
+        ID3D12GraphicsCommandList_SetComputeRootSignature(cl, s_dx12.pipelines[pso_slot].root_sig);
+    } else {
+        ID3D12GraphicsCommandList_SetGraphicsRootSignature(cl, s_dx12.pipelines[pso_slot].root_sig);
+    }
 }
 
 void dx12_cmd_set_render_targets(RhiCmdList cmd, const RhiTexture *rts,
@@ -207,7 +215,7 @@ void dx12_cmd_set_constant_buffer(RhiCmdList cmd, uint32_t slot_idx,
     uint32_t buf_slot = (uint32_t)buf;
     assert(buf_slot < DX12_MAX_BUFFERS && s_dx12.buffers[buf_slot].occupied);
 
-    assert(slot_idx < 2);
+    assert(slot_idx < 4 && "Root CBV slots 0-3 (b0-b3)");
     D3D12_GPU_VIRTUAL_ADDRESS addr = ID3D12Resource_GetGPUVirtualAddress(
         s_dx12.buffers[buf_slot].resource);
     ID3D12GraphicsCommandList_SetGraphicsRootConstantBufferView(
@@ -220,16 +228,46 @@ void dx12_cmd_set_texture(RhiCmdList cmd, uint32_t slot_idx,
     uint32_t cmd_slot = (uint32_t)cmd;
     uint32_t tex_slot = (uint32_t)tex;
     assert(tex_slot < DX12_MAX_RESOURCES && s_dx12.textures[tex_slot].occupied);
-    assert(slot_idx < 5 && "Only slots 0-4 supported in Phase 1 root signature");
 
     D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle;
     ID3D12DescriptorHeap_GetGPUDescriptorHandleForHeapStart(
         s_dx12.cbv_srv_uav_heap, &gpu_handle);
     gpu_handle.ptr += (UINT64)tex_slot * s_dx12.cbv_srv_uav_desc_size;
 
-    /* Param 4 is the start of SRV descriptor tables (t0..t4) */
-    ID3D12GraphicsCommandList_SetGraphicsRootDescriptorTable(
-        s_dx12.cmd_lists[cmd_slot].list, 4 + slot_idx, gpu_handle);
+    ID3D12GraphicsCommandList *cl = s_dx12.cmd_lists[cmd_slot].list;
+    if (s_dx12.cmd_lists[cmd_slot].is_compute_bound) {
+        /* Compute root sig: param 1 = t0, param 2 = t1 */
+        assert(slot_idx < 2 && "Compute pipeline supports t0..t1");
+        ID3D12GraphicsCommandList_SetComputeRootDescriptorTable(
+            cl, 1 + slot_idx, gpu_handle);
+    } else {
+        /* Graphics root sig: param 4 = t0 .. param 13 = t9 */
+        assert(slot_idx < 10 && "Only slots 0-9 supported (t0..t9)");
+        ID3D12GraphicsCommandList_SetGraphicsRootDescriptorTable(
+            cl, 4 + slot_idx, gpu_handle);
+    }
+}
+
+void dx12_cmd_set_uav(RhiCmdList cmd, uint32_t slot_idx,
+                             RhiTexture tex, uint32_t mip_level) {
+    if (cmd == RHI_NULL || tex == RHI_NULL) return;
+    uint32_t cmd_slot = (uint32_t)cmd;
+    uint32_t tex_slot = (uint32_t)tex;
+    assert(tex_slot < DX12_MAX_RESOURCES && s_dx12.textures[tex_slot].occupied);
+    assert(s_dx12.textures[tex_slot].has_uav && "Texture needs RHI_TEXTURE_USAGE_UNORDERED");
+    assert(mip_level < s_dx12.textures[tex_slot].uav_mip_count && "mip_level out of range");
+    assert(slot_idx < 2 && "Compute pipeline supports u0..u1");
+
+    /* Per-mip UAV descriptor at heap[uav_heap_base + mip_level] */
+    D3D12_GPU_DESCRIPTOR_HANDLE gpu_handle;
+    ID3D12DescriptorHeap_GetGPUDescriptorHandleForHeapStart(
+        s_dx12.cbv_srv_uav_heap, &gpu_handle);
+    gpu_handle.ptr += (UINT64)(s_dx12.textures[tex_slot].uav_heap_base + mip_level)
+                    * s_dx12.cbv_srv_uav_desc_size;
+
+    /* Compute root sig: param 3 = u0, param 4 = u1 */
+    ID3D12GraphicsCommandList_SetComputeRootDescriptorTable(
+        s_dx12.cmd_lists[cmd_slot].list, 3 + slot_idx, gpu_handle);
 }
 
 static D3D12_PRIMITIVE_TOPOLOGY rhi_topology_to_dx12(RhiTopology t) {
@@ -396,9 +434,14 @@ void dx12_cmd_set_root_constants(RhiCmdList cmd, uint32_t slot,
     uint32_t cmd_slot = (uint32_t)cmd;
     assert(cmd_slot < DX12_MAX_CMD_LISTS && s_dx12.cmd_lists[cmd_slot].occupied);
 
-    ID3D12GraphicsCommandList_SetGraphicsRoot32BitConstants(
-        s_dx12.cmd_lists[cmd_slot].list,
-        slot, count_32bit, data, offset_32bit);
+    ID3D12GraphicsCommandList *cl = s_dx12.cmd_lists[cmd_slot].list;
+    if (s_dx12.cmd_lists[cmd_slot].is_compute_bound) {
+        ID3D12GraphicsCommandList_SetComputeRoot32BitConstants(
+            cl, slot, count_32bit, data, offset_32bit);
+    } else {
+        ID3D12GraphicsCommandList_SetGraphicsRoot32BitConstants(
+            cl, slot, count_32bit, data, offset_32bit);
+    }
 }
 
 /* =======================================================================

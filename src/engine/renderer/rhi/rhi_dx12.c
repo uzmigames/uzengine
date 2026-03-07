@@ -553,9 +553,24 @@ RhiTexture dx12_texture_create(const RhiTextureDesc *desc) {
     uint64_t slot = dx12_alloc_texture_slot();
     if (slot == RHI_NULL) return RHI_NULL;
 
+    /* For depth textures that also need SRV access, use typeless resource format.
+     * D3D12 requires typeless to allow both DSV and SRV views.
+     * D32_FLOAT  -> R32_TYPELESS   (SRV: R32_FLOAT)
+     * D24S8      -> R24G8_TYPELESS (SRV: R24_UNORM_X8_TYPELESS) */
+    int is_depth_d32_srv = (desc->usage & RHI_TEXTURE_USAGE_DEPTH_STENCIL)
+                        && (desc->usage & RHI_TEXTURE_USAGE_SHADER_READ)
+                        && (desc->format == RHI_FORMAT_D32_FLOAT);
+    int is_depth_d24_srv = (desc->usage & RHI_TEXTURE_USAGE_DEPTH_STENCIL)
+                        && (desc->usage & RHI_TEXTURE_USAGE_SHADER_READ)
+                        && (desc->format == RHI_FORMAT_D24_UNORM_S8_UINT);
+    int is_depth_srv = is_depth_d32_srv || is_depth_d24_srv;
+
     D3D12_RESOURCE_DESC rd;
     memset(&rd, 0, sizeof(rd));
-    rd.Format             = to_dxgi_format(desc->format);
+    DXGI_FORMAT resource_fmt = to_dxgi_format(desc->format);
+    if (is_depth_d32_srv) resource_fmt = DXGI_FORMAT_R32_TYPELESS;
+    if (is_depth_d24_srv) resource_fmt = DXGI_FORMAT_R24G8_TYPELESS;
+    rd.Format             = resource_fmt;
     rd.Width              = desc->width;
     rd.Height             = desc->height;
     rd.MipLevels          = (UINT16)(desc->mip_levels ? desc->mip_levels : 1);
@@ -613,7 +628,10 @@ RhiTexture dx12_texture_create(const RhiTextureDesc *desc) {
         clear_val.Color[3] = 1.0f;
         p_clear = &clear_val;
     } else if (desc->usage & RHI_TEXTURE_USAGE_DEPTH_STENCIL) {
-        clear_val.Format               = rd.Format;
+        /* Typeless resource needs the typed depth format for the clear value */
+        clear_val.Format               = is_depth_d32_srv ? DXGI_FORMAT_D32_FLOAT
+                                       : is_depth_d24_srv ? DXGI_FORMAT_D24_UNORM_S8_UINT
+                                       : rd.Format;
         clear_val.DepthStencil.Depth   = 1.0f;
         clear_val.DepthStencil.Stencil = 0;
         p_clear = &clear_val;
@@ -648,7 +666,17 @@ RhiTexture dx12_texture_create(const RhiTextureDesc *desc) {
         ID3D12DescriptorHeap_GetCPUDescriptorHandleForHeapStart(
             s_dx12.dsv_heap, &dsv);
         dsv.ptr += (SIZE_T)slot * s_dx12.dsv_desc_size;
-        ID3D12Device_CreateDepthStencilView(s_dx12.device, resource, NULL, dsv);
+        if (is_depth_srv) {
+            /* Typeless resource needs an explicit typed DSV */
+            D3D12_DEPTH_STENCIL_VIEW_DESC dsv_desc;
+            memset(&dsv_desc, 0, sizeof(dsv_desc));
+            dsv_desc.Format        = is_depth_d24_srv ? DXGI_FORMAT_D24_UNORM_S8_UINT
+                                                      : DXGI_FORMAT_D32_FLOAT;
+            dsv_desc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+            ID3D12Device_CreateDepthStencilView(s_dx12.device, resource, &dsv_desc, dsv);
+        } else {
+            ID3D12Device_CreateDepthStencilView(s_dx12.device, resource, NULL, dsv);
+        }
     }
 
     /* Create SRV if shader-readable */
@@ -660,7 +688,10 @@ RhiTexture dx12_texture_create(const RhiTextureDesc *desc) {
 
         D3D12_SHADER_RESOURCE_VIEW_DESC srv_desc;
         memset(&srv_desc, 0, sizeof(srv_desc));
-        srv_desc.Format                  = rd.Format;
+        /* For typeless depth resources, use the appropriate SRV format */
+        srv_desc.Format                  = is_depth_d32_srv ? DXGI_FORMAT_R32_FLOAT
+                                         : is_depth_d24_srv ? DXGI_FORMAT_R24_UNORM_X8_TYPELESS
+                                         : rd.Format;
         srv_desc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 
         switch (desc->dimension) {
@@ -685,6 +716,48 @@ RhiTexture dx12_texture_create(const RhiTextureDesc *desc) {
 
         ID3D12Device_CreateShaderResourceView(s_dx12.device, resource,
                                               &srv_desc, srv);
+    }
+
+    /* Create per-mip UAV descriptors if unordered access is requested */
+    if (desc->usage & RHI_TEXTURE_USAGE_UNORDERED) {
+        uint32_t mip_count = rd.MipLevels;
+        uint32_t base = s_dx12.next_uav_offset;
+        assert(base + mip_count <= DX12_CBV_SRV_UAV_HEAP_SIZE);
+
+        D3D12_CPU_DESCRIPTOR_HANDLE heap_start;
+        ID3D12DescriptorHeap_GetCPUDescriptorHandleForHeapStart(
+            s_dx12.cbv_srv_uav_heap, &heap_start);
+
+        for (uint32_t mip = 0; mip < mip_count; ++mip) {
+            D3D12_CPU_DESCRIPTOR_HANDLE uav_handle = heap_start;
+            uav_handle.ptr += (SIZE_T)(base + mip) * s_dx12.cbv_srv_uav_desc_size;
+
+            D3D12_UNORDERED_ACCESS_VIEW_DESC uav_desc;
+            memset(&uav_desc, 0, sizeof(uav_desc));
+            uav_desc.Format = rd.Format;
+
+            switch (desc->dimension) {
+            case RHI_TEXTURE_DIM_2D_ARRAY:
+            case RHI_TEXTURE_DIM_CUBE:
+                uav_desc.ViewDimension                  = D3D12_UAV_DIMENSION_TEXTURE2DARRAY;
+                uav_desc.Texture2DArray.MipSlice        = mip;
+                uav_desc.Texture2DArray.FirstArraySlice = 0;
+                uav_desc.Texture2DArray.ArraySize       = rd.DepthOrArraySize;
+                break;
+            default:
+                uav_desc.ViewDimension          = D3D12_UAV_DIMENSION_TEXTURE2D;
+                uav_desc.Texture2D.MipSlice     = mip;
+                break;
+            }
+
+            ID3D12Device_CreateUnorderedAccessView(s_dx12.device, resource,
+                                                    NULL, &uav_desc, uav_handle);
+        }
+
+        s_dx12.textures[slot].has_uav       = true;
+        s_dx12.textures[slot].uav_heap_base = base;
+        s_dx12.textures[slot].uav_mip_count = mip_count;
+        s_dx12.next_uav_offset += mip_count;
     }
 
     if (desc->debug_name) {
@@ -817,6 +890,97 @@ void dx12_texture_upload(RhiTexture tex, const void *data, size_t size) {
     dx12_buffer_destroy(staging);
 }
 
+void dx12_texture_upload_subresource(RhiTexture tex, uint32_t subresource,
+                                      const void *data, size_t size) {
+    if (tex == RHI_NULL || !data || size == 0) return;
+    uint32_t slot = (uint32_t)tex;
+    assert(slot < DX12_MAX_RESOURCES && s_dx12.textures[slot].occupied);
+
+    D3D12_RESOURCE_DESC rd;
+    memset(&rd, 0, sizeof(rd));
+    ID3D12Resource_GetDesc(s_dx12.textures[slot].resource, &rd);
+
+    UINT64 required_size = 0;
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT layout;
+    UINT num_rows = 0;
+    UINT64 row_size = 0;
+    ID3D12Device_GetCopyableFootprints(s_dx12.device, &rd, subresource, 1, 0,
+                                       &layout, &num_rows, &row_size,
+                                       &required_size);
+
+    RhiBufferDesc staging_desc;
+    memset(&staging_desc, 0, sizeof(staging_desc));
+    staging_desc.size  = required_size;
+    staging_desc.usage = RHI_BUFFER_USAGE_UPLOAD;
+    RhiBuffer staging = dx12_buffer_create(&staging_desc);
+    if (staging == RHI_NULL) return;
+
+    uint8_t *mapped = (uint8_t *)dx12_buffer_map(staging);
+    if (mapped) {
+        const uint8_t *src = (const uint8_t *)data;
+        uint8_t *dst = mapped + layout.Offset;
+        size_t src_row_pitch = (size_t)row_size;
+        for (UINT row = 0; row < num_rows; row++) {
+            size_t src_offset = (size_t)row * src_row_pitch;
+            if (src_offset + src_row_pitch > size) break;
+            memcpy(dst + (size_t)row * layout.Footprint.RowPitch,
+                   src + src_offset, src_row_pitch);
+        }
+        dx12_buffer_unmap(staging);
+    }
+
+    ID3D12CommandAllocator *alloc = NULL;
+    ID3D12GraphicsCommandList *cmd = NULL;
+    ID3D12Device_CreateCommandAllocator(
+        s_dx12.device, D3D12_COMMAND_LIST_TYPE_DIRECT,
+        &IID_ID3D12CommandAllocator, (void **)&alloc);
+    ID3D12Device_CreateCommandList(
+        s_dx12.device, 0, D3D12_COMMAND_LIST_TYPE_DIRECT,
+        alloc, NULL, &IID_ID3D12GraphicsCommandList, (void **)&cmd);
+
+    if (cmd && alloc) {
+        uint32_t staging_slot = (uint32_t)staging;
+
+        D3D12_TEXTURE_COPY_LOCATION dst_loc;
+        memset(&dst_loc, 0, sizeof(dst_loc));
+        dst_loc.pResource        = s_dx12.textures[slot].resource;
+        dst_loc.Type             = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+        dst_loc.SubresourceIndex = subresource;
+
+        D3D12_TEXTURE_COPY_LOCATION src_loc;
+        memset(&src_loc, 0, sizeof(src_loc));
+        src_loc.pResource       = s_dx12.buffers[staging_slot].resource;
+        src_loc.Type            = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+        src_loc.PlacedFootprint = layout;
+
+        D3D12_RESOURCE_BARRIER barrier;
+        memset(&barrier, 0, sizeof(barrier));
+        barrier.Type  = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+        barrier.Transition.pResource   = s_dx12.textures[slot].resource;
+        barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COMMON;
+        barrier.Transition.StateAfter  = D3D12_RESOURCE_STATE_COPY_DEST;
+        barrier.Transition.Subresource = subresource;
+        ID3D12GraphicsCommandList_ResourceBarrier(cmd, 1, &barrier);
+
+        ID3D12GraphicsCommandList_CopyTextureRegion(cmd, &dst_loc,
+                                                     0, 0, 0,
+                                                     &src_loc, NULL);
+
+        barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_COPY_DEST;
+        barrier.Transition.StateAfter  = D3D12_RESOURCE_STATE_COMMON;
+        ID3D12GraphicsCommandList_ResourceBarrier(cmd, 1, &barrier);
+
+        ID3D12GraphicsCommandList_Close(cmd);
+        ID3D12CommandList *lists[] = { (ID3D12CommandList *)cmd };
+        ID3D12CommandQueue_ExecuteCommandLists(s_dx12.cmd_queue, 1, lists);
+        dx12_wait_for_gpu();
+    }
+
+    if (cmd)   ID3D12GraphicsCommandList_Release(cmd);
+    if (alloc) ID3D12CommandAllocator_Release(alloc);
+    dx12_buffer_destroy(staging);
+}
+
 /* =======================================================================
  * Pipelines
  * ======================================================================= */
@@ -901,16 +1065,22 @@ RhiPipeline dx12_pipeline_create(const RhiPipelineDesc *desc) {
      *   Param 1:  8 x 32-bit constants at b1 (Material: albedo, metallic, rough, ao)
      *   Param 2: 16 x 32-bit constants at b2 (Light + Camera: dir, color, intensity, camPos, time)
      *   Param 3: 16 x 32-bit constants at b3 (Frame: viewProj matrix)
-     *   Param 4: SRV descriptor table for t0 (Albedo)
-     *   Param 5: SRV descriptor table for t1 (Normal)
-     *   Param 6: SRV descriptor table for t2 (Metallic)
-     *   Param 7: SRV descriptor table for t3 (Roughness)
-     *   Param 8: SRV descriptor table for t4 (AO)
-     *   Static sampler at s0
+     *   Param 4:  SRV descriptor table for t0 (Albedo)
+     *   Param 5:  SRV descriptor table for t1 (Normal)
+     *   Param 6:  SRV descriptor table for t2 (Metallic)
+     *   Param 7:  SRV descriptor table for t3 (Roughness)
+     *   Param 8:  SRV descriptor table for t4 (AO)
+     *   Param 9:  SRV descriptor table for t5 (Displacement)
+     *   Param 10: SRV descriptor table for t6 (Shadow map)
+     *   Param 11: SRV descriptor table for t7 (BRDF LUT)
+     *   Param 12: SRV descriptor table for t8 (Irradiance cubemap)
+     *   Param 13: SRV descriptor table for t9 (Prefiltered env cubemap)
+     *   Static sampler s0 (linear wrap), s1 (linear clamp)
+     *   Root sig cost: 16+8+16 = 40 constants + 1 CBV(2) + 10 desc tables = 52/64 DWORDs
      */
     ID3D12RootSignature *root_sig = NULL;
     {
-        D3D12_ROOT_PARAMETER root_params[9];
+        D3D12_ROOT_PARAMETER root_params[14];
         memset(root_params, 0, sizeof(root_params));
 
         /* Param 0: b0 -- 16 DWORDs (World) */
@@ -920,18 +1090,17 @@ RhiPipeline dx12_pipeline_create(const RhiPipelineDesc *desc) {
         root_params[0].Constants.Num32BitValues  = 16;
         root_params[0].ShaderVisibility          = D3D12_SHADER_VISIBILITY_ALL;
 
-        /* Param 1: b1 -- 8 DWORDs (MaterialCB: albedo[3]+metallic+roughness+ao+pad[2]) */
+        /* Param 1: b1 -- 20 DWORDs (MaterialCB: albedo+met+rough+ao+parallax+emEnergy+em[3]+envMul+normStr+specMul+uvTiling+selfShadow+cavity+pad[2]) */
         root_params[1].ParameterType             = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
         root_params[1].Constants.ShaderRegister  = 1;
         root_params[1].Constants.RegisterSpace   = 0;
-        root_params[1].Constants.Num32BitValues  = 8;
+        root_params[1].Constants.Num32BitValues  = 20;
         root_params[1].ShaderVisibility          = D3D12_SHADER_VISIBILITY_ALL;
 
-        /* Param 2: b2 -- 16 DWORDs (Light + Camera) */
-        root_params[2].ParameterType             = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-        root_params[2].Constants.ShaderRegister  = 2;
-        root_params[2].Constants.RegisterSpace   = 0;
-        root_params[2].Constants.Num32BitValues  = 16;
+        /* Param 2: b2 -- Root CBV (LightFrameCB, 2 DWORDs -- saves 14 vs root constants) */
+        root_params[2].ParameterType             = D3D12_ROOT_PARAMETER_TYPE_CBV;
+        root_params[2].Descriptor.ShaderRegister = 2;
+        root_params[2].Descriptor.RegisterSpace  = 0;
         root_params[2].ShaderVisibility          = D3D12_SHADER_VISIBILITY_ALL;
 
         /* Param 3: b3 -- 16 DWORDs (ViewProj) */
@@ -941,9 +1110,9 @@ RhiPipeline dx12_pipeline_create(const RhiPipelineDesc *desc) {
         root_params[3].Constants.Num32BitValues  = 16;
         root_params[3].ShaderVisibility          = D3D12_SHADER_VISIBILITY_ALL;
 
-        /* Param 4-8: Descriptor tables for t0..t4 */
-        D3D12_DESCRIPTOR_RANGE srv_ranges[5];
-        for (int i = 0; i < 5; i++) {
+        /* Param 4-13: Descriptor tables for t0..t9 */
+        D3D12_DESCRIPTOR_RANGE srv_ranges[10];
+        for (int i = 0; i < 10; i++) {
             memset(&srv_ranges[i], 0, sizeof(srv_ranges[i]));
             srv_ranges[i].RangeType          = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
             srv_ranges[i].NumDescriptors     = 1;
@@ -957,28 +1126,44 @@ RhiPipeline dx12_pipeline_create(const RhiPipelineDesc *desc) {
             root_params[4 + i].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
         }
 
-        D3D12_STATIC_SAMPLER_DESC static_sampler;
-        memset(&static_sampler, 0, sizeof(static_sampler));
-        static_sampler.Filter           = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
-        static_sampler.AddressU         = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
-        static_sampler.AddressV         = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
-        static_sampler.AddressW         = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
-        static_sampler.MipLODBias       = 0.0f;
-        static_sampler.MaxAnisotropy    = 1;
-        static_sampler.ComparisonFunc   = D3D12_COMPARISON_FUNC_NEVER;
-        static_sampler.BorderColor      = D3D12_STATIC_BORDER_COLOR_OPAQUE_BLACK;
-        static_sampler.MinLOD           = 0.0f;
-        static_sampler.MaxLOD           = D3D12_FLOAT32_MAX;
-        static_sampler.ShaderRegister   = 0;
-        static_sampler.RegisterSpace    = 0;
-        static_sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+        /* s0: linear wrap (textures) */
+        D3D12_STATIC_SAMPLER_DESC static_samplers[2];
+        memset(static_samplers, 0, sizeof(static_samplers));
+        static_samplers[0].Filter           = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+        static_samplers[0].AddressU         = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+        static_samplers[0].AddressV         = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+        static_samplers[0].AddressW         = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+        static_samplers[0].MipLODBias       = 0.0f;
+        static_samplers[0].MaxAnisotropy    = 1;
+        static_samplers[0].ComparisonFunc   = D3D12_COMPARISON_FUNC_NEVER;
+        static_samplers[0].BorderColor      = D3D12_STATIC_BORDER_COLOR_OPAQUE_BLACK;
+        static_samplers[0].MinLOD           = 0.0f;
+        static_samplers[0].MaxLOD           = D3D12_FLOAT32_MAX;
+        static_samplers[0].ShaderRegister   = 0;
+        static_samplers[0].RegisterSpace    = 0;
+        static_samplers[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+        /* s1: linear clamp (BRDF LUT, environment maps) */
+        static_samplers[1].Filter           = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+        static_samplers[1].AddressU         = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+        static_samplers[1].AddressV         = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+        static_samplers[1].AddressW         = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+        static_samplers[1].MipLODBias       = 0.0f;
+        static_samplers[1].MaxAnisotropy    = 1;
+        static_samplers[1].ComparisonFunc   = D3D12_COMPARISON_FUNC_NEVER;
+        static_samplers[1].BorderColor      = D3D12_STATIC_BORDER_COLOR_OPAQUE_BLACK;
+        static_samplers[1].MinLOD           = 0.0f;
+        static_samplers[1].MaxLOD           = D3D12_FLOAT32_MAX;
+        static_samplers[1].ShaderRegister   = 1;
+        static_samplers[1].RegisterSpace    = 0;
+        static_samplers[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
         D3D12_ROOT_SIGNATURE_DESC rs_desc;
         memset(&rs_desc, 0, sizeof(rs_desc));
-        rs_desc.NumParameters     = 9;
+        rs_desc.NumParameters     = 14;
         rs_desc.pParameters       = root_params;
-        rs_desc.NumStaticSamplers = 1;
-        rs_desc.pStaticSamplers   = &static_sampler;
+        rs_desc.NumStaticSamplers = 2;
+        rs_desc.pStaticSamplers   = static_samplers;
         rs_desc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
 
         ID3DBlob *sig_blob = NULL;
@@ -996,7 +1181,7 @@ RhiPipeline dx12_pipeline_create(const RhiPipelineDesc *desc) {
             s_dx12.pipelines[slot].occupied = false;
             return RHI_NULL;
         }
-        DIAG("Root signature serialized OK");
+        DIAG_FMT("Root signature serialized OK (blob size=%zu)", ID3D10Blob_GetBufferSize(sig_blob));
         if (sig_err) ID3D10Blob_Release(sig_err);
 
         hr = ID3D12Device_CreateRootSignature(
@@ -1161,16 +1346,177 @@ RhiPipeline dx12_pipeline_create(const RhiPipelineDesc *desc) {
 
 RhiPipeline dx12_compute_pipeline_create(const RhiComputePipelineDesc *desc) {
     assert(s_dx12.initialized && desc);
+    HRESULT hr;
 
-    /* TODO Phase 2: Implement compute pipeline creation.
-     * Requires:
-     *   - Compute-only root signature
-     *   - D3D12_COMPUTE_PIPELINE_STATE_DESC
-     *   - CS blob compilation (cs_5_0 / cs_6_0)
+    uint64_t slot = dx12_alloc_pipeline_slot();
+    if (slot == RHI_NULL) return RHI_NULL;
+
+    /* Compile compute shader from HLSL source via D3DCompile */
+    ID3DBlob *cs_blob  = NULL;
+    ID3DBlob *err_blob = NULL;
+
+    if (!desc->compute_shader.spirv_data || desc->compute_shader.spirv_size == 0) {
+        DIAG("compute_pipeline_create: no shader data");
+        s_dx12.pipelines[slot].occupied = false;
+        return RHI_NULL;
+    }
+
+    hr = D3DCompile(
+        desc->compute_shader.spirv_data,
+        desc->compute_shader.spirv_size,
+        NULL, NULL, NULL,
+        desc->compute_shader.entry_point ? desc->compute_shader.entry_point : "CSMain",
+        "cs_5_0",
+        D3DCOMPILE_OPTIMIZATION_LEVEL3, 0,
+        &cs_blob, &err_blob);
+    if (FAILED(hr)) {
+        if (err_blob) {
+            OutputDebugStringA("CS compile error: ");
+            OutputDebugStringA((const char *)ID3D10Blob_GetBufferPointer(err_blob));
+            ID3D10Blob_Release(err_blob);
+        }
+        DIAG("FATAL: CS D3DCompile failed");
+        s_dx12.pipelines[slot].occupied = false;
+        return RHI_NULL;
+    }
+    if (err_blob) ID3D10Blob_Release(err_blob);
+
+    /* Build a standard compute root signature:
+     *   Param 0: 16 root constants at b0 (16 DWORDs)
+     *   Param 1: SRV descriptor table for t0
+     *   Param 2: SRV descriptor table for t1
+     *   Param 3: UAV descriptor table for u0
+     *   Param 4: UAV descriptor table for u1
+     *   Static sampler s0: linear clamp
      */
-    (void)desc;
-    OutputDebugStringA("RHI DX12: compute_pipeline_create not yet implemented (Phase 2)\n");
-    return RHI_NULL;
+    ID3D12RootSignature *root_sig = NULL;
+    {
+        D3D12_ROOT_PARAMETER root_params[5];
+        memset(root_params, 0, sizeof(root_params));
+
+        /* Param 0: b0 -- 16 DWORDs root constants */
+        root_params[0].ParameterType            = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+        root_params[0].Constants.ShaderRegister = 0;
+        root_params[0].Constants.RegisterSpace  = 0;
+        root_params[0].Constants.Num32BitValues = 16;
+        root_params[0].ShaderVisibility         = D3D12_SHADER_VISIBILITY_ALL;
+
+        /* Params 1-2: SRV tables for t0, t1 */
+        D3D12_DESCRIPTOR_RANGE srv_ranges[2];
+        memset(srv_ranges, 0, sizeof(srv_ranges));
+        for (int i = 0; i < 2; i++) {
+            srv_ranges[i].RangeType          = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+            srv_ranges[i].NumDescriptors     = 1;
+            srv_ranges[i].BaseShaderRegister = (UINT)i;
+            srv_ranges[i].RegisterSpace      = 0;
+            srv_ranges[i].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+            root_params[1 + i].ParameterType    = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+            root_params[1 + i].DescriptorTable.NumDescriptorRanges = 1;
+            root_params[1 + i].DescriptorTable.pDescriptorRanges   = &srv_ranges[i];
+            root_params[1 + i].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+        }
+
+        /* Params 3-4: UAV tables for u0, u1 */
+        D3D12_DESCRIPTOR_RANGE uav_ranges[2];
+        memset(uav_ranges, 0, sizeof(uav_ranges));
+        for (int i = 0; i < 2; i++) {
+            uav_ranges[i].RangeType          = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
+            uav_ranges[i].NumDescriptors     = 1;
+            uav_ranges[i].BaseShaderRegister = (UINT)i;
+            uav_ranges[i].RegisterSpace      = 0;
+            uav_ranges[i].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+            root_params[3 + i].ParameterType    = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+            root_params[3 + i].DescriptorTable.NumDescriptorRanges = 1;
+            root_params[3 + i].DescriptorTable.pDescriptorRanges   = &uav_ranges[i];
+            root_params[3 + i].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+        }
+
+        /* s0: linear clamp sampler */
+        D3D12_STATIC_SAMPLER_DESC static_sampler;
+        memset(&static_sampler, 0, sizeof(static_sampler));
+        static_sampler.Filter           = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+        static_sampler.AddressU         = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+        static_sampler.AddressV         = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+        static_sampler.AddressW         = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+        static_sampler.MipLODBias       = 0.0f;
+        static_sampler.MaxAnisotropy    = 1;
+        static_sampler.ComparisonFunc   = D3D12_COMPARISON_FUNC_NEVER;
+        static_sampler.BorderColor      = D3D12_STATIC_BORDER_COLOR_OPAQUE_BLACK;
+        static_sampler.MinLOD           = 0.0f;
+        static_sampler.MaxLOD           = D3D12_FLOAT32_MAX;
+        static_sampler.ShaderRegister   = 0;
+        static_sampler.RegisterSpace    = 0;
+        static_sampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+        D3D12_ROOT_SIGNATURE_DESC rs_desc;
+        memset(&rs_desc, 0, sizeof(rs_desc));
+        rs_desc.NumParameters     = 5;
+        rs_desc.pParameters       = root_params;
+        rs_desc.NumStaticSamplers = 1;
+        rs_desc.pStaticSamplers   = &static_sampler;
+        rs_desc.Flags             = D3D12_ROOT_SIGNATURE_FLAG_NONE;
+
+        ID3DBlob *sig_blob = NULL;
+        ID3DBlob *sig_err  = NULL;
+        hr = D3D12SerializeRootSignature(&rs_desc,
+                                         D3D_ROOT_SIGNATURE_VERSION_1_0,
+                                         &sig_blob, &sig_err);
+        if (FAILED(hr)) {
+            if (sig_err) {
+                DIAG_FMT("Compute root sig error: %s",
+                         (const char *)ID3D10Blob_GetBufferPointer(sig_err));
+                ID3D10Blob_Release(sig_err);
+            }
+            ID3D10Blob_Release(cs_blob);
+            s_dx12.pipelines[slot].occupied = false;
+            return RHI_NULL;
+        }
+        if (sig_err) ID3D10Blob_Release(sig_err);
+
+        hr = ID3D12Device_CreateRootSignature(
+            s_dx12.device, 0,
+            ID3D10Blob_GetBufferPointer(sig_blob),
+            ID3D10Blob_GetBufferSize(sig_blob),
+            &IID_ID3D12RootSignature, (void **)&root_sig);
+        ID3D10Blob_Release(sig_blob);
+        if (FAILED(hr)) {
+            DIAG_HR("CreateRootSignature (compute)", hr);
+            ID3D10Blob_Release(cs_blob);
+            s_dx12.pipelines[slot].occupied = false;
+            return RHI_NULL;
+        }
+    }
+
+    /* Create compute PSO */
+    D3D12_COMPUTE_PIPELINE_STATE_DESC cpso_desc;
+    memset(&cpso_desc, 0, sizeof(cpso_desc));
+    cpso_desc.pRootSignature = root_sig;
+    cpso_desc.CS.pShaderBytecode = ID3D10Blob_GetBufferPointer(cs_blob);
+    cpso_desc.CS.BytecodeLength  = ID3D10Blob_GetBufferSize(cs_blob);
+
+    ID3D12PipelineState *pso = NULL;
+    hr = ID3D12Device_CreateComputePipelineState(
+        s_dx12.device, &cpso_desc, &IID_ID3D12PipelineState, (void **)&pso);
+
+    ID3D10Blob_Release(cs_blob);
+
+    if (FAILED(hr)) {
+        DIAG_HR("CreateComputePipelineState", hr);
+        ID3D12RootSignature_Release(root_sig);
+        s_dx12.pipelines[slot].occupied = false;
+        return RHI_NULL;
+    }
+
+    s_dx12.pipelines[slot].pso        = pso;
+    s_dx12.pipelines[slot].root_sig   = root_sig;
+    s_dx12.pipelines[slot].is_compute = true;
+
+    DIAG_FMT("Compute PSO created => handle=%llu name=%s",
+             (unsigned long long)slot, desc->debug_name ? desc->debug_name : "(unnamed)");
+
+    return (RhiPipeline)slot;
 }
 
 void dx12_pipeline_destroy(RhiPipeline pipeline) {
@@ -1328,6 +1674,7 @@ const rhi_backend_t rhi_dx12_backend = {
     .texture_create          = dx12_texture_create,
     .texture_destroy         = dx12_texture_destroy,
     .texture_upload          = dx12_texture_upload,
+    .texture_upload_subresource = dx12_texture_upload_subresource,
 
     /* Pipelines */
     .pipeline_create         = dx12_pipeline_create,
@@ -1349,6 +1696,7 @@ const rhi_backend_t rhi_dx12_backend = {
     .cmd_set_texture         = dx12_cmd_set_texture,
     .cmd_draw                = dx12_cmd_draw,
     .cmd_draw_indexed        = dx12_cmd_draw_indexed,
+    .cmd_set_uav             = dx12_cmd_set_uav,
     .cmd_dispatch            = dx12_cmd_dispatch,
 
     /* Root constants */

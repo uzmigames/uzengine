@@ -173,7 +173,7 @@ CameraState camera_update_from_scene(const Scene* scene, float aspect) {
     NodeId cam_id = kNodeIdInvalid;
     for (uint32_t i = 1; i < scene->next_id; ++i) {
         const SceneNode& node = scene->nodes[i];
-        if (node.alive && node.type == NodeType::Camera &&
+        if (node.alive && component_has<CameraData>(&scene->components, i) &&
             (node.flags & NODE_FLAG_ACTIVE)) {
             cam_id = i;
             break;

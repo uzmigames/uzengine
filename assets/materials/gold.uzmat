@@ -1,10 +1,11 @@
 [material]
-name = Gold
+name = GalvanizedMetal
 shader = pbr
-albedo = [1.0, 0.85, 0.5]
+albedo = [1.0, 1.0, 1.0]
 metallic = 1.0
-roughness = 0.1
-albedo_texture = assets/textures/gold_albedo.png
-normal_texture = assets/textures/gold_normal.png
-roughness_texture = assets/textures/gold_roughness.png
-ao_texture = assets/textures/gold_ao.png
+roughness = 1.0
+albedo_texture = assets/textures/Metal/MetalGalvanizedSteelWorn001_COL_2K_METALNESS.jpg
+normal_texture = assets/textures/Metal/MetalGalvanizedSteelWorn001_NRM_2K_METALNESS.jpg
+metallic_texture = assets/textures/Metal/MetalGalvanizedSteelWorn001_METALNESS_2K_METALNESS.jpg
+roughness_texture = assets/textures/Metal/MetalGalvanizedSteelWorn001_ROUGHNESS_2K_METALNESS.jpg
+uv_tiling = 2.0

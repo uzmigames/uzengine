@@ -19,6 +19,7 @@
 #include "engine/renderer/resources/shader_library.h"
 #include "engine/renderer/resources/material.h"
 #include "engine/renderer/resources/mesh_manager.h"
+#include "engine/renderer/resources/ibl_baker.h"
 #include "engine/renderer/scene/scene_proxy.h"
 #include "engine/renderer/components/editor_component.h"
 #include "engine/renderer/components/camera_component.h"
@@ -101,6 +102,11 @@ public:
     /// Current render target height in pixels.
     [[nodiscard]] int getHeight() const noexcept { return static_cast<int>(height_); }
 
+    /// Stream (JPEG) resolution — currently matches render resolution.
+    /// Used by ws_handlers if stream differs from render size.
+    [[nodiscard]] uint32_t streamWidth()  const noexcept { return width_; }
+    [[nodiscard]] uint32_t streamHeight() const noexcept { return height_; }
+
     // Drain the GPU and release all resources.  Safe to call multiple times.
     void shutdown();
 
@@ -130,6 +136,8 @@ private:
     bool createPipelineStates();
     bool createDepthBuffer();
     bool createReadbackBuffers();
+    bool createPostProcessTargets();
+    void destroyPostProcessTargets();
     void setupTestScene();
 
     // Perform GPU -> CPU readback of the current frame's render target.
@@ -142,6 +150,45 @@ private:
     RhiPipeline rhiPbrPipeline_     = RHI_NULL;
     RhiPipeline rhiStencilMarkPSO_  = RHI_NULL;  // Stencil write, no color
     RhiPipeline rhiOutlinePSO_      = RHI_NULL;  // Outline draw, stencil test
+    RhiPipeline rhiSkyPipeline_     = RHI_NULL;  // Fullscreen sky gradient
+    RhiPipeline rhiShadowPipeline_  = RHI_NULL;  // Depth-only shadow pass
+
+    // Post-process pipeline states
+    RhiPipeline ssaoPSO_            = RHI_NULL;  // SSAO generation
+    RhiPipeline ssaoBlurPSO_        = RHI_NULL;  // SSAO bilateral blur
+    RhiPipeline bloomDownPSO_       = RHI_NULL;  // Bloom downsample
+    RhiPipeline bloomUpPSO_         = RHI_NULL;  // Bloom upsample (additive)
+    RhiPipeline compositePSO_       = RHI_NULL;  // Final composite (tonemap+gamma)
+
+    // Sky CB data — updated in update(), consumed in render()
+    struct SkyCB {
+        float camForward[3]; float tanHalfFovY;
+        float camRight[3];   float aspect;
+        float camUp[3];      float _pad;
+        float sunDir[3];     float sunIntensity;  // directional light for sun disk
+    } skyCB_{};
+
+    // Sky colors CB — sourced from SkyAtmosphere scene component, or hardcoded defaults.
+    // Bound at b0 in the sky pass (b0 is unused for world matrix in that draw).
+    // Defaults match the original UE5-inspired hardcoded palette.
+    struct SkyColorsCB {
+        float skyZenith[3];  float _sc0;       // deep azure zenith
+        float skyHorizon[3]; float _sc1;       // pale bright sky-blue at horizon
+        float skyHaze[3];    float _sc2;       // warm atmospheric haze below horizon
+        float skyGround[3];  float fogDensity; // muted earth / height fog
+    } skyColorsCB_{
+        {0.08f, 0.22f, 0.65f}, 0.0f,
+        {0.52f, 0.72f, 0.90f}, 0.0f,
+        {0.28f, 0.22f, 0.16f}, 0.0f,
+        {0.16f, 0.12f, 0.08f}, 0.0f,
+    };
+
+    // Shadow map resources
+    RhiTexture  shadowMap_           = RHI_NULL;  // 2048×2048 D32 shadow depth
+    static constexpr uint32_t kShadowMapSize = 2048;
+
+    // Light-space matrix for shadow pass (orthographic, updated in update())
+    Mat4 lightSpaceMat_ = Mat4::identity();
 
     // Shader library (named shader registry + PSO cache).
     ShaderLibrary shaderLib_;
@@ -212,6 +259,28 @@ private:
     RhiTexture              whiteTex_ = RHI_NULL;
     RhiTexture              blackTex_ = RHI_NULL;
     RhiTexture              normalTex_ = RHI_NULL;
+    RhiTexture              brdfLut_  = RHI_NULL;
+    RhiBuffer               lightFrameCBV_ = RHI_NULL;  // Per-frame CBV for LightFrameCB (b2)
+    RhiTexture              irradianceCube_ = RHI_NULL;
+    RhiTexture              prefilteredCube_ = RHI_NULL;
+    RhiTexture              envCubemap_ = RHI_NULL;     // Source env cubemap for GPU IBL rebake
+    IblBaker                iblBaker_;                    // GPU compute IBL pipeline
+
+    // Sky IBL dirty tracking — regenerate cubemaps when SkyAtmosphere params change.
+    float lastSkyZenith_[3]  = {-1.f, -1.f, -1.f};
+    float lastSkyHorizon_[3] = {-1.f, -1.f, -1.f};
+    float lastSkyGround_[3]  = {-1.f, -1.f, -1.f};
+    float lastSunDir_[3]     = {-1.f, -1.f, -1.f};
+
+    // Post-process render targets
+    RhiTexture hdrRT_         = RHI_NULL;  // Full-res R11G11B10_FLOAT scene color
+    RhiTexture ssaoRT_        = RHI_NULL;  // Half-res R8_UNORM SSAO
+    RhiTexture ssaoBlurRT_    = RHI_NULL;  // Half-res R8_UNORM SSAO (blurred)
+    static constexpr uint32_t kBloomMips = 5;
+    RhiTexture bloomMips_[kBloomMips] = {};  // Progressively halved bloom chain
+
+    // Projection matrix (for SSAO depth reconstruction), updated in update()
+    Mat4 projMatrix_ = Mat4::identity();
 };
 
 } // namespace uz

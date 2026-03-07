@@ -359,6 +359,8 @@ typedef struct rhi_backend_t {
     RhiTexture (*texture_create)(const RhiTextureDesc *desc);
     void       (*texture_destroy)(RhiTexture tex);
     void       (*texture_upload)(RhiTexture tex, const void *data, size_t size);
+    void       (*texture_upload_subresource)(RhiTexture tex, uint32_t subresource,
+                                             const void *data, size_t size);
 
     /* --- Pipelines (backed by PSO cache) ------------------------------ */
     RhiPipeline (*pipeline_create)(const RhiPipelineDesc *desc);
@@ -392,6 +394,7 @@ typedef struct rhi_backend_t {
     void (*cmd_draw_indexed)(RhiCmdList cmd, uint32_t index_count,
                              uint32_t instance_count, uint32_t first_index,
                              int32_t vertex_offset, uint32_t first_instance);
+    void (*cmd_set_uav)(RhiCmdList cmd, uint32_t slot, RhiTexture tex, uint32_t mip_level);
     void (*cmd_dispatch)(RhiCmdList cmd, uint32_t x, uint32_t y, uint32_t z);
 
     /* --- Root constants (inline 32-bit values) ------------------------ */

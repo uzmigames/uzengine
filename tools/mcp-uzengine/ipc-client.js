@@ -17,10 +17,22 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
-const PREVIEW_DIR = path.join(PROJECT_ROOT, 'build', 'Release', 'preview');
-const COMMAND_FILE = path.join(PREVIEW_DIR, 'command.json');
-const RESPONSE_FILE = path.join(PREVIEW_DIR, 'response.json');
-const STATUS_FILE = path.join(PREVIEW_DIR, 'status.json');
+const BUILD_RELEASE = path.join(PROJECT_ROOT, 'build', 'Release');
+
+/**
+ * Resolve the IPC preview directory for a given port.
+ * Port 9002 (default) maps to the legacy "preview/" for backward compat.
+ * Any other port maps to "preview-PORT/".
+ * @param {number} [port=9002]
+ * @returns {string} Absolute path to the preview directory for this port.
+ */
+export function getPreviewDir(port = 9002) {
+    const dirName = port === 9002 ? 'preview' : `preview-${port}`;
+    return path.join(BUILD_RELEASE, dirName);
+}
+
+// Default preview dir — kept for PREVIEW_DIR export (used by index.js for screenshot path).
+const PREVIEW_DIR = getPreviewDir(9002);
 
 const DEFAULT_TIMEOUT_MS = 4000;
 const POLL_INTERVAL_MS = 50;
@@ -30,23 +42,31 @@ const POLL_INTERVAL_MS = 50;
  * @param {string} fn - Engine function name (e.g. "engine.ping")
  * @param {object} args - Arguments object
  * @param {number} timeoutMs - Max wait in milliseconds
+ * @param {number} [port=9002] - Engine instance port (selects IPC directory)
  * @returns {Promise<object>} Parsed response result field
  */
-export async function engineCall(fn, args = {}, timeoutMs = DEFAULT_TIMEOUT_MS) {
+export async function engineCall(fn, args = {}, timeoutMs = DEFAULT_TIMEOUT_MS, port = 9002) {
+    const previewDir = getPreviewDir(port);
+    const commandFile = path.join(previewDir, 'command.json');
+    const responseFile = path.join(previewDir, 'response.json');
+
     const id = randomUUID();
     const command = JSON.stringify({ id, type: 'call', function: fn, args });
 
+    // Ensure directory exists (new instances may not have created it yet)
+    fs.mkdirSync(previewDir, { recursive: true });
+
     // Write command atomically via temp file
-    const tmpPath = COMMAND_FILE + '.tmp';
+    const tmpPath = commandFile + '.tmp';
     fs.writeFileSync(tmpPath, command, 'utf8');
-    fs.renameSync(tmpPath, COMMAND_FILE);
+    fs.renameSync(tmpPath, commandFile);
 
     // Poll response.json for matching ID
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
         await sleep(POLL_INTERVAL_MS);
         try {
-            const raw = fs.readFileSync(RESPONSE_FILE, 'utf8');
+            const raw = fs.readFileSync(responseFile, 'utf8');
             const resp = JSON.parse(raw);
             if (resp.id === id) {
                 if (!resp.ok) {
@@ -64,11 +84,13 @@ export async function engineCall(fn, args = {}, timeoutMs = DEFAULT_TIMEOUT_MS) 
 
 /**
  * Read status.json and return its contents, or a degraded status if unavailable.
+ * @param {number} [port=9002] - Engine instance port (selects IPC directory)
  * @returns {object}
  */
-export function readStatus() {
+export function readStatus(port = 9002) {
+    const statusFile = path.join(getPreviewDir(port), 'status.json');
     try {
-        const raw = fs.readFileSync(STATUS_FILE, 'utf8');
+        const raw = fs.readFileSync(statusFile, 'utf8');
         return JSON.parse(raw);
     } catch {
         return { alive: false, error: 'status.json not found — is UzEngine running?' };

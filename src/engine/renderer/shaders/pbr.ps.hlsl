@@ -1,6 +1,7 @@
 // pbr.ps.hlsl — Physically-Based pixel shader
 // BRDF: D_GGX + Vis_SmithJointApprox (UE5) + F_Schlick (f90 clamp) + Burley Diffuse
-// Ambient: EnvBRDFApprox (Lazarov 2013) + Hemisphere Sky + 3-Point Studio Lighting
+// IBL: Cubemap irradiance (diffuse) + Prefiltered env + BRDF LUT (specular split-sum)
+// Displacement: Parallax Occlusion Mapping (POM) -- steep loop (8-32 layers) + linear interp
 //
 // References:
 //   UE5 — Engine/Shaders/Private/BRDF.ush, ShadingModels.ush
@@ -22,7 +23,17 @@ cbuffer MaterialCB : register(b1) {
     float  materialMetallic;
     float  materialRoughness;
     float  materialAO;
-    float2 _matPad;
+    float  parallaxScale;       // > 0 enables POM; 0 = no-op
+    float  emissionEnergy;      // multiplier for emission color (0 = no emission)
+    float3 emissionColor;       // HDR emission color
+    float  envMultiplier;       // per-material IBL intensity (default 1.0)
+    float  normalStrength;      // normal map intensity: 0=flat, 1=full (default 1.0)
+    float  specularMultiplier;  // direct specular intensity (default 1.0)
+    float2 uvTiling;            // UV tiling multiplier (default 1,1)
+    // -- Extended params (DWORDs 16-19, fills root sig to 64/64) --
+    float  selfShadowStrength;  // heightmap self-shadow intensity: 0=off, 1=default (default 1.0)
+    float  cavityStrength;      // cavity ambient darkening: 0=off, 0.35=default (default 0.35)
+    float2 _matPad;             // reserved for future use
 };
 
 cbuffer LightFrameCB : register(b2) {
@@ -33,20 +44,29 @@ cbuffer LightFrameCB : register(b2) {
     float3 cameraWorldPos;
     float  time;
     float  envIntensity;
-    float3 _framePad;
+    // Shadow params packed in former padding slots (stays within 16-DWORD b2 budget)
+    float  shadowBias;       // depth bias to avoid shadow acne
+    float  shadowOrthoSize;  // orthographic half-size (world units, = 8)
+    float  shadowLightDist;  // light eye distance from scene center (= 20)
 };
 
 cbuffer FrameCB : register(b3) {
     float4x4 viewProj;
 };
 
-Texture2D    albedoTex    : register(t0);
-Texture2D    normalTex    : register(t1);
-Texture2D    metallicTex  : register(t2);
-Texture2D    roughnessTex : register(t3);
-Texture2D    aoTex        : register(t4);
+Texture2D    albedoTex      : register(t0);
+Texture2D    normalTex      : register(t1);
+Texture2D    metallicTex    : register(t2);
+Texture2D    roughnessTex   : register(t3);
+Texture2D    aoTex          : register(t4);
+Texture2D    displacementTex: register(t5);  // Heightmap: 1=high, 0=low
+Texture2D    shadowMap      : register(t6);  // Directional shadow depth map (R32_FLOAT)
+Texture2D    brdfLUT        : register(t7);  // 256x256 RG16F split-sum BRDF integration LUT
+TextureCube  irradianceMap  : register(t8);  // 32x32 diffuse irradiance cubemap
+TextureCube  prefilteredMap : register(t9);  // 128x128 specular prefiltered cubemap (5 mips)
 
 SamplerState linearSampler : register(s0);
+SamplerState clampSampler  : register(s1);   // Linear clamp for BRDF LUT / env maps
 
 struct PSInput {
     float4 position : SV_POSITION;
@@ -58,6 +78,178 @@ struct PSInput {
 };
 
 static const float PI = 3.14159265359;
+
+// ============================================================================
+// Parallax Occlusion Mapping
+// ============================================================================
+// V_ts : view vector in tangent space (z > 0 toward camera)
+// scale: height scale (0.02-0.08 for stone; 0 = no-op, skips the loop)
+// Layer count: 8 at NdotV=1 (normal incidence), 32 at NdotV~0 (grazing angle)
+// ============================================================================
+float2 ParallaxOcclusionMapping(float2 uv, float3 V_ts, float scale)
+{
+    [branch]
+    if (scale <= 0.0) return uv;
+
+    float NdotV = saturate(abs(V_ts.z));
+
+    // Skip POM at extreme grazing angles and degenerate tangent space (sphere poles).
+    // At poles, UV derivatives converge → V_ts is garbage → ray marching explodes.
+    // NdotV < 0.05 means view is nearly tangent to surface; no perceptible parallax.
+    [branch]
+    if (NdotV < 0.05) return uv;
+
+    float numLayers  = lerp(32.0, 8.0, NdotV);
+    float layerDepth = 1.0 / numLayers;
+
+    // Clamp V_ts.z to prevent UV step explosion at sphere poles / grazing angles.
+    // Without this, V_ts.z≈0 at poles makes uvStep → ∞, causing black artifact patches.
+    float safeVtsZ = max(abs(V_ts.z), 0.15);
+    float2 uvStep = -(V_ts.xy / safeVtsZ) * scale * layerDepth;
+
+    float2 currentUV    = uv;
+    float  currentDepth = 0.0;
+    // height: 1 = raised (brick face), 0 = recessed (mortar joint)
+    float  height = displacementTex.SampleLevel(linearSampler, currentUV, 0).r;
+
+    // Steep parallax: march until ray depth >= surface depth (1 - height)
+    [loop]
+    for (int i = 0; i < 32; ++i) {
+        if (currentDepth >= 1.0 - height) break;
+        currentUV    += uvStep;
+        height        = displacementTex.SampleLevel(linearSampler, currentUV, 0).r;
+        currentDepth += layerDepth;
+    }
+
+    // Linear interpolation between last two steps for accurate intersection
+    float2 prevUV     = currentUV - uvStep;
+    float  prevHeight = displacementTex.SampleLevel(linearSampler, prevUV, 0).r;
+    float  afterDepth  = (1.0 - height)     - currentDepth;
+    float  beforeDepth = (1.0 - prevHeight) - (currentDepth - layerDepth);
+    float  weight      = afterDepth / (afterDepth - beforeDepth + 1e-5);
+
+    return lerp(currentUV, prevUV, weight);
+}
+
+
+// ============================================================================
+// Heightmap Self-Shadow — trace light direction on displacement for contact shadows
+// ============================================================================
+// [Policarpo 2005, "Real-Time Relief Mapping on Arbitrary Polygonal Surfaces"]
+// Traces 4 steps along the light direction in UV space. If a neighboring
+// heightmap sample is above the light ray, the current pixel is shadowed.
+// This creates the visible ridge→valley shadows that sand ripples, brick
+// mortar, and woven fabric need — far too small for the shadow map to resolve.
+//
+// L_ts : light direction in tangent space (z > 0 = light above surface)
+// scale: same parallaxScale used for POM (> 0 enables; 0 = no-op)
+// h0   : heightmap value at current (POM-offset) UV
+// ============================================================================
+float HeightmapSelfShadow(float2 uv, float3 L_ts, float scale, float h0)
+{
+    [branch]
+    if (scale <= 0.0) return 1.0;
+    [branch]
+    if (L_ts.z < 0.01) return 0.3;  // nearly tangent light → partially shadowed
+
+    float safeLz = max(L_ts.z, 0.12);
+    float2 uvStep = L_ts.xy / safeLz * scale * 0.25;
+
+    // Accumulate occlusion (soft average) instead of max (hard binary).
+    // This produces smooth gradients instead of harsh dark patches.
+    float shadow = 0.0;
+    float2 sUV = uv;
+    [unroll]
+    for (int i = 1; i <= 6; ++i) {
+        sUV += uvStep;
+        float h = displacementTex.SampleLevel(linearSampler, sUV, 0).r;
+        float rayH = h0 + float(i) * 0.08;
+        // Closer taps weighted more (1.0 → 0.4 across 6 steps).
+        float weight = 1.0 - float(i - 1) * 0.12;
+        shadow += max(0.0, (h - rayH) * weight);
+    }
+    shadow /= 3.0;  // normalize: divide by half the tap count for gentle curve
+
+    // Floor at 0.25 so recesses are never pitch-black; smooth falloff.
+    return lerp(0.25, 1.0, saturate(1.0 - shadow * 8.0));
+}
+
+
+// ============================================================================
+// PCF Shadow Sampling — 3×3 kernel, orthographic light-space reconstruction
+// ============================================================================
+// Returns shadow factor: 1.0 = fully lit, 0.0 = fully shadowed.
+// Reconstructs light-space from lightDir + shadowOrthoSize + shadowLightDist
+// (matches the CPU computation in renderer.cpp — no matrix needed in root sig).
+//
+// worldNormal: surface normal, used for normal-offset anti self-shadow bias.
+// Low-angle surfaces (floor at grazing light) need a larger offset than
+// steep surfaces (sphere top) — proportional to sqrt(1 - NdotL²) / NdotL.
+float SampleShadow(float3 worldPos, float3 worldNormal) {
+    // Normal-offset bias: push the query point along the surface normal to prevent
+    // self-shadowing on flat surfaces at grazing light angles (e.g. floor).
+    // Scale: larger offset when NdotL is small (grazing angle).
+    float3 lightFwd = normalize(lightDir);
+    float3 L_dir    = normalize(-lightFwd);
+    float  NdotL_s  = saturate(dot(worldNormal, L_dir));
+    // UE5-style normal offset: offsetScale grows as sin(theta)/cos(theta) = tan(theta)
+    float  sinTheta = sqrt(saturate(1.0 - NdotL_s * NdotL_s));
+    float  tanTheta = sinTheta / max(NdotL_s, 1e-3);
+    float  normalOffsetScale = clamp(tanTheta * 0.015, 0.0, 0.04);
+    worldPos = worldPos + worldNormal * normalOffsetScale;
+    float3 refUp    = (abs(lightFwd.y) > 0.99) ? float3(1, 0, 0) : float3(0, 1, 0);
+    float3 lRight   = normalize(cross(refUp, lightFwd));  // matches CPU lightRight
+    float3 lUp      = cross(lightFwd, lRight);             // matches CPU lightUp
+
+    // Light eye: sceneCenter(0) - lightFwd * dist  (matches CPU: -ld * shadowLightDist)
+    float3 lightEye = -lightFwd * shadowLightDist;
+    float3 relPos   = worldPos - lightEye;
+
+    // Project into light space (matches CPU view matrix dot products)
+    float lx = dot(relPos, lRight);
+    float ly = dot(relPos, lUp);
+    float lz = dot(relPos, lightFwd);
+
+    // Orthographic UV: shadowOrthoSize = half-extent → maps [-size,+size] to [0,1]
+    float2 shadowUV = float2(lx, -ly) / shadowOrthoSize * 0.5 + 0.5;
+    if (shadowUV.x < 0.0 || shadowUV.x > 1.0 ||
+        shadowUV.y < 0.0 || shadowUV.y > 1.0)
+        return 1.0;  // Outside shadow frustum — fully lit
+
+    // Linear depth in [0,1] (near=0.1, far=shadowLightDist*2)
+    float shadowFar    = shadowLightDist * 2.0;
+    float currentDepth = (lz - 0.1) / (shadowFar - 0.1);
+
+    // PCF — Poisson disk 16-tap (UE5-style soft contact shadows).
+    // Disk radius scales with distance from shadow caster for natural penumbra.
+    // Close to caster: tight/sharp. Far away: wider/softer.
+    float shadow = 0.0;
+    float2 texelSize = 1.0 / float2(2048.0, 2048.0);
+
+    // Poisson disk offsets (unit circle, 16 taps, hand-picked for good distribution)
+    static const float2 poissonDisk[16] = {
+        float2(-0.94201624, -0.39906216), float2( 0.94558609, -0.76890725),
+        float2(-0.09418410, -0.92938870), float2( 0.34495938,  0.29387760),
+        float2(-0.91588581,  0.45771432), float2(-0.81544232, -0.87912464),
+        float2(-0.38277543,  0.27676845), float2( 0.97484398,  0.75648379),
+        float2( 0.44323325, -0.97511554), float2( 0.53742981, -0.47373420),
+        float2(-0.26496911, -0.41893023), float2( 0.79197514,  0.19090188),
+        float2(-0.24188840,  0.99706507), float2(-0.81409955,  0.91437590),
+        float2( 0.19984126,  0.78641367), float2( 0.14383161, -0.14100790)
+    };
+
+    // Penumbra size: proportional to how far receiver is from caster in shadow space.
+    // Clamped to [0.5, 2.5] texels to avoid over-blurring or aliasing.
+    float penumbra = clamp(currentDepth * 3.5, 0.5, 2.5);
+
+    [unroll]
+    for (int i = 0; i < 16; ++i) {
+        float closestDepth = shadowMap.Sample(linearSampler,
+            shadowUV + poissonDisk[i] * texelSize * penumbra).r;
+        shadow += (currentDepth - shadowBias > closestDepth) ? 0.0 : 1.0;
+    }
+    return shadow / 16.0;
+}
 
 // ============================================================================
 // BRDF Functions — matched to UE5 BRDF.ush and Godot's forward lights
@@ -129,6 +321,14 @@ float3 EnvBRDFApprox(float3 SpecularColor, float Roughness, float NoV) {
     return SpecularColor * AB.x + f90 * AB.y;
 }
 
+// Specular Occlusion — [Lagarde 2014, Jimenez 2016]
+// Used by UE5 (GetSpecularOcclusion) and Filament.
+// Dims specular IBL at grazing angles and in occluded crevices.
+// Prevents the bright white fresnel ring around smooth spheres.
+float SpecularOcclusion(float NoV, float ao, float roughness) {
+    return saturate(pow(NoV + ao, exp2(-16.0 * roughness - 1.0)) - 1.0 + ao);
+}
+
 // ============================================================================
 // Evaluate a single analytical light — full Cook-Torrance with Burley diffuse
 // ============================================================================
@@ -165,28 +365,58 @@ float3 EvaluateDirectLight(
 // ============================================================================
 
 float4 PSMain(PSInput input) : SV_TARGET {
-    // 1. Unpack material properties
-    float3 baseColor = materialAlbedo * albedoTex.Sample(linearSampler, input.texcoord).rgb;
-    float  metallic  = materialMetallic * metallicTex.Sample(linearSampler, input.texcoord).r;
-    float  roughness = materialRoughness * roughnessTex.Sample(linearSampler, input.texcoord).r;
-    float  ao        = materialAO * aoTex.Sample(linearSampler, input.texcoord).r;
+    // 1. TBN -- built first so V_ts is available for POM
+    float3 N_geo = normalize(input.normal);
+
+    // Degenerate tangent space check: at UV sphere poles and mesh UV seams,
+    // adjacent triangles have tangents pointing in opposite directions. After
+    // rasterizer linear interpolation the tangent length collapses toward zero
+    // → normalizing gives garbage TBN.
+    // Use a SMOOTH FADE rather than a hard cutoff so the seam transition is invisible:
+    // smoothstep(0.05, 0.25) gives a gradual POM fade-in/out at seams/poles.
+    float tLen = length(input.tangent);
+    float bLen = length(input.bitangent);
+    float3 T   = (tLen > 0.001f) ? (input.tangent   / tLen) : float3(1.0f, 0.0f, 0.0f);
+    float3 B   = (bLen > 0.001f) ? (input.bitangent / bLen) : cross(N_geo, T);
+    float3x3 TBN = float3x3(T, B, N_geo);
+
+    // 2. View vector + tangent-space view for POM, light for self-shadow
+    float3 V    = normalize(cameraWorldPos - input.worldPos);
+    float3 V_ts = normalize(float3(dot(V, T), dot(V, B), dot(V, N_geo)));
+    float3 L_world = normalize(-lightDir);
+    float3 L_ts = normalize(float3(dot(L_world, T), dot(L_world, B), dot(L_world, N_geo)));
+
+    // 3. Parallax Occlusion Mapping -- offset UV before ALL texture samples.
+    // tangentQ smoothly fades POM to 0 near UV seams instead of a hard cutoff,
+    // hiding the seam transition that would otherwise appear as a sharp line.
+    float tangentQ = smoothstep(0.03f, 0.30f, min(tLen, bLen));
+    // UV tiling: scale texture coordinates before POM and all texture samples.
+    float2 tiledUV = input.texcoord * uvTiling;
+
+    float pomScale = parallaxScale * tangentQ;
+    float2 uv = ParallaxOcclusionMapping(tiledUV, V_ts, pomScale);
+    // Fade POM offset at grazing view angles to prevent artifacts at sphere silhouette edges.
+    // When geometric NdotV is low, the POM ray march is unreliable — blend back to flat UV.
+    uv = lerp(tiledUV, uv, smoothstep(0.08, 0.25, dot(N_geo, V)));
+
+    // 4. Unpack material properties (POM-offset UV)
+    float3 baseColor = materialAlbedo * albedoTex.Sample(linearSampler, uv).rgb;
+    float  metallic  = materialMetallic * metallicTex.Sample(linearSampler, uv).r;
+    float  roughness = materialRoughness * roughnessTex.Sample(linearSampler, uv).r;
+    float  ao        = materialAO * aoTex.Sample(linearSampler, uv).r;
 
     // Clamp roughness to avoid singularities (UE5 does min 0.002)
     roughness = max(roughness, 0.04);
     float alpha = roughness * roughness;  // Both UE5 and Godot use alpha = roughness²
     float a2    = alpha * alpha;          // a² for D_GGX
 
-    // 2. TBN Normal Mapping
-    float3 tangentNormal = normalTex.Sample(linearSampler, input.texcoord).xyz * 2.0 - 1.0;
-    float3 N = normalize(input.normal);
-    float3 T = normalize(input.tangent);
-    float3 B = normalize(input.bitangent);
-    float3x3 TBN = float3x3(T, B, N);
-    N = normalize(mul(tangentNormal, TBN));
-
-    // 3. View vector
-    float3 V    = normalize(cameraWorldPos - input.worldPos);
-    float  NoV  = max(dot(N, V), 1e-4);  // UE5/Godot: abs(NoV) + 1e-5 or max(dot, 1e-4)
+    // 5. Normal map (POM-offset UV; TBN already built in step 1)
+    //    normalStrength: 0=flat (use geometric normal), 1=full normal map
+    float3 tangentNormal = normalTex.Sample(linearSampler, uv).xyz * 2.0 - 1.0;
+    tangentNormal.xy *= normalStrength;
+    tangentNormal = normalize(tangentNormal);
+    float3 N = normalize(mul(tangentNormal, TBN));
+    float  NoV = max(dot(N, V), 1e-4);
 
     // 4. F0 — specular reflectance at normal incidence
     // UE5: F0 = lerp(DielectricSpecular, BaseColor, Metallic)  (DielectricSpecular = 0.04)
@@ -197,78 +427,112 @@ float4 PSMain(PSInput input) : SV_TARGET {
     float3 DiffuseColor = baseColor * (1.0 - metallic);
 
     // ===================================================================
-    // 5. Direct Lighting — 3-Point Studio Setup
+    // 5. Direct Lighting — scene directional sun only (outdoor PBR)
+    //    Studio fill/rim lights removed: UE5 and Godot use sky ambient
+    //    instead of artificial fill lights for outdoor scenes.
     // ===================================================================
     float3 Lo = float3(0.0, 0.0, 0.0);
 
-    // Key light (scene-driven directional)
-    Lo += EvaluateDirectLight(N, V, NoV, DiffuseColor, F0, a2, roughness,
-                              lightDir, lightColor, lightIntensity);
+    // PCF shadow factor for sun (light-space reconstructed in SampleShadow)
+    // Pass surface normal for normal-offset bias (prevents floor self-shadow).
+    float shadowFactor = SampleShadow(input.worldPos, N);
 
-    // Fill light — cool, from opposite side (15% of key)
-    Lo += EvaluateDirectLight(N, V, NoV, DiffuseColor, F0, a2, roughness,
-                              normalize(float3(0.6, -0.2, -0.75)),
-                              float3(0.50, 0.55, 0.65), lightIntensity * 0.15);
+    // Sun / directional light — modulated by PCF shadow, micro-shadow, and specular multiplier
+    {
+        float3 directLight = EvaluateDirectLight(N, V, NoV, DiffuseColor, F0, a2, roughness,
+                                                  lightDir, lightColor, lightIntensity);
+        // specularMultiplier scales direct specular response (metals benefit from > 1.0)
+        // For metals (metallic~1), diffuse is ~0 so this scales everything correctly.
+        // For dielectrics, specular is a small portion so effect is subtle.
+        float specScale = lerp(1.0, specularMultiplier, metallic * 0.5 + 0.5);
 
-    // Rim / back light — warm, from behind (10% of key)
-    Lo += EvaluateDirectLight(N, V, NoV, DiffuseColor, F0, a2, roughness,
-                              normalize(float3(-0.3, -0.6, 0.7)),
-                              float3(0.85, 0.70, 0.50), lightIntensity * 0.10);
+        // Micro-shadow [Jimenez 2016, "Practical Realtime Strategies for Accurate Indirect Occlusion"]
+        // AO map modulates direct light for sub-texel self-shadowing that shadow maps
+        // can't resolve (sand ripples, brick mortar joints, fabric weave).
+        // Formula: saturate(NoL + 2*ao² - 1) → ao=1: no effect, ao=0: full shadow.
+        float NoL_direct = saturate(dot(N, normalize(-lightDir)));
+        float microShadow = saturate(NoL_direct + 2.0 * ao * ao - 1.0);
+
+        Lo += directLight * specScale * shadowFactor * microShadow;
+    }
 
     // ===================================================================
-    // 6. Ambient / IBL — EnvBRDFApprox + Hemisphere Sky
+    // 6. Ambient / IBL — Cubemap irradiance + split-sum specular
+    //    Reference: UE5 SkyLightCommon.ush, Karis 2013 "Real Shading in UE4"
+    //    Diffuse: sample irradiance cubemap with surface normal
+    //    Specular: sample prefiltered env with reflection + BRDF LUT
     // ===================================================================
     float3 ambient;
     {
-        // Hemisphere sky irradiance — warmer tones for stone/outdoor
-        float3 skyColor    = float3(0.20, 0.22, 0.30);
-        float3 groundColor = float3(0.12, 0.10, 0.08);
-        float3 equatorColor = float3(0.16, 0.14, 0.12);
-        float  skyBlend = N.y * 0.5 + 0.5;
+        // Diffuse IBL: irradiance cubemap pre-convolved with cosine lobe
+        float3 irradiance = irradianceMap.Sample(clampSampler, N).rgb;
 
-        float3 irradiance;
-        if (skyBlend < 0.5) {
-            irradiance = lerp(groundColor, equatorColor, skyBlend * 2.0);
-        } else {
-            irradiance = lerp(equatorColor, skyColor, (skyBlend - 0.5) * 2.0);
-        }
-
-        // Diffuse ambient
         float3 kS_env = F_SchlickRoughness(F0, NoV, roughness);
         float3 kD_env = (1.0 - kS_env) * (1.0 - metallic);
         float3 diffuseAmbient = kD_env * irradiance * baseColor;
 
-        // Specular ambient — EnvBRDFApprox (UE5 Lazarov 2013)
-        // Modulated by approximate environment reflection color
+        // Specular IBL: prefiltered env cubemap + BRDF LUT (split-sum)
+        // Mip level = roughness * (maxMipLevels - 1); prefiltered has 5 mips (0..4)
         float3 R = reflect(-V, N);
-        float  rBlend = saturate(R.y * 0.5 + 0.5);
-        float3 envColor = lerp(groundColor * 1.5, skyColor * 1.5, rBlend);
-        float  horizonFade = saturate(1.0 + dot(R, N));
+        float  mipLevel = roughness * 4.0;
+        float3 prefilteredColor = prefilteredMap.SampleLevel(clampSampler, R, mipLevel).rgb;
 
-        float3 envBRDF = EnvBRDFApprox(F0, roughness, NoV);
-        float3 specularAmbient = envColor * envBRDF * horizonFade;
+        float2 envBRDF = brdfLUT.Sample(clampSampler, float2(NoV, roughness)).rg;
+        float3 specularAmbient = prefilteredColor * (F0 * envBRDF.x + envBRDF.y);
 
-        // Strong AO for deep crevice shadows (cubed for stone materials)
-        float aoFinal = ao * ao * ao;
-        ambient = (diffuseAmbient + specularAmbient) * aoFinal * envIntensity;
+        // Horizon occlusion: fade specular IBL when reflection points below surface.
+        // [Marmoset 2016] — prevents bright specular leaking from below the hemisphere.
+        float horizon = saturate(1.0 + dot(R, N));
+        specularAmbient *= horizon * horizon;
+
+        // Multi-scattering energy compensation [Kulla & Conty 2017, Fdez-Aguera 2019].
+        // The single-scattering split-sum loses energy at high roughness. Recover it:
+        // Ems = 1 - (scale + bias) from BRDF LUT, FmsEms approximates the missing bounces.
+        // Scaled by 0.5 to avoid over-brightening with a simple procedural sky (no HDR HDRI).
+        float3 FssEss = F0 * envBRDF.x + envBRDF.y;
+        float  Ess    = envBRDF.x + envBRDF.y;
+        float  Ems    = 1.0 - Ess;
+        float3 Favg   = F0 + (1.0 - F0) / 21.0;  // average Fresnel
+        float3 FmsEms = Ems * FssEss * Favg / (1.0 - Favg * Ems);
+        float3 multiScatter = FmsEms * irradiance * 0.5;
+        specularAmbient += multiScatter;
+
+        // Specular occlusion [Lagarde 2014]: dims IBL specular at grazing angles
+        // and in occluded crevices. Prevents the bright white fresnel ring around
+        // smooth spheres that the basic kS_env * prefilteredColor path produces.
+        float specOcc = SpecularOcclusion(NoV, ao, roughness);
+        specularAmbient *= specOcc;
+
+        // AO for ambient: linear for diffuse (specular already has specOcc applied).
+        float3 ambientOccluded = diffuseAmbient * ao + specularAmbient;
+        ambient = ambientOccluded * envIntensity * envMultiplier;
     }
 
-    // 7. Final assembly — apply AO to direct lighting for micro-occlusion
-    float microAO = lerp(1.0, ao, 0.5); // subtle direct light AO
-    float3 color = ambient + Lo * microAO;
+    // 7. Final assembly.
+    //    AO is applied ONLY to indirect/ambient (step 6) — this matches UE5 ShadingModels.ush:
+    //    GBufferAO modulates SkyLightDiffuse, never AccumulateDynamicLighting (direct light).
+    //    Direct light (Lo) is modulated only by shadow maps (already in shadowFactor).
+    //
+    //    Heightmap self-shadow: traces light direction on displacement map to create
+    //    contact shadows in ripple valleys, mortar joints, fabric weave — detail too
+    //    fine for the shadow map. Subsumes the old simple cavity term.
+    //    Cavity (height-based darkening) is blended in for ambient micro-contact shadow.
+    //    GUARD: without displacement (parallaxScale=0), both are 1.0 (no-op).
+    float height = displacementTex.Sample(linearSampler, uv).r;
+    float selfShadowRaw = HeightmapSelfShadow(uv, L_ts, pomScale, height);
+    // Auto-scale: parallaxScale drives intensity (0.03→0.6, 0.08→1.0).
+    // Small displacement = subtle shadow, large displacement = strong shadow.
+    // selfShadowStrength is the per-material override (default 1.0).
+    float ssAuto = saturate(parallaxScale * 20.0) * selfShadowStrength;
+    float selfShadow = lerp(1.0, selfShadowRaw, ssAuto);
+    // cavityStrength: per-material control of ambient cavity darkening (0=off, 0.35=default)
+    float cavity = (parallaxScale > 0.0) ? lerp(1.0, height, cavityStrength) : 1.0;
+    // Self-shadow: full on direct, subtle 20% on ambient (avoids over-darkening valleys).
+    float3 color = ambient * cavity * lerp(1.0, selfShadow, 0.2) + Lo * selfShadow;
 
-    // 8. Tonemapping — ACES (Narkowicz fit)
-    {
-        float a = 2.51;
-        float b = 0.03;
-        float c = 2.43;
-        float d = 0.59;
-        float e = 0.14;
-        color = saturate((color * (a * color + b)) / (color * (c * color + d) + e));
-    }
+    // 7b. Emission — additive HDR, unaffected by AO or shadows (self-illuminating).
+    color += emissionColor * emissionEnergy;
 
-    // 9. Gamma correction (linear → sRGB)
-    color = pow(color, 1.0 / 2.2);
-
-    return float4(color, 1.0);
+    // Output linear HDR — tonemap + gamma are applied in the composite post-process pass.
+    return float4(max(color, 0.0), 1.0);
 }

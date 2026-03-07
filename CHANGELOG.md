@@ -2,6 +2,92 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- **GPU Compute IBL Pipeline** — `IblBaker` class with 3 compute shaders replacing CPU-side IBL convolution
+  - `ibl_brdf_lut.cs.hlsl`: 256×256 RG16F BRDF integration LUT (1024 Hammersley samples)
+  - `ibl_irradiance.cs.hlsl`: cosine-weighted irradiance cubemap (32×32, 1024 hemisphere samples)
+  - `ibl_prefilter.cs.hlsl`: GGX importance-sampled prefiltered env map (128×128, 5 mip levels, 256 samples)
+  - CPU fallback via `brdf_lut.cpp` and `sky_cubemap.cpp` when GPU compute init fails
+
+- **Post-Process Stack** — full HDR rendering pipeline with 3 post-process passes
+  - `hdrRT_`: full-resolution R11G11B10_FLOAT scene color render target
+  - `ssao.ps.hlsl` + `ssao_blur.ps.hlsl`: half-resolution SSAO with bilateral blur (hemisphere sampling, depth reconstruction from projection matrix)
+  - `bloom_down.ps.hlsl` + `bloom_up.ps.hlsl`: 5-mip progressive downsample/upsample bloom chain
+  - `composite.ps.hlsl`: final tonemap (ACES filmic) + gamma correction + SSAO/bloom compositing
+  - `fullscreen.vs.hlsl`: shared fullscreen triangle vertex shader for all post-process passes
+  - Post-process targets auto-recreated on viewport resize
+
+- **Shadow Mapping** — directional light shadow pass
+  - 2048×2048 D32_FLOAT shadow depth texture with SRV access for PCF sampling
+  - `shadow_depth.vs.hlsl`: depth-only vertex shader with light-space matrix
+  - Poisson-disk 16-tap PCF with distance-based penumbra softening
+  - Orthographic light projection, bias/orthoSize/lightDist configurable per-frame
+
+- **Procedural Sky Shader** — fullscreen sky background with atmosphere
+  - `sky.vs.hlsl` + `sky.ps.hlsl`: ray-direction reconstruction from camera basis + perspective params
+  - Zenith/horizon/haze/ground gradient blending with exponential falloff
+  - Sun disk rendering (angular falloff + corona bloom from directional light)
+  - `SkyAtmosphereData` component: per-scene sky colors + fog density, driven from `.uzscene`
+
+- **PBR Shader Enhancements** — `pbr.ps.hlsl` expanded from ~100 to ~400+ lines
+  - Parallax Occlusion Mapping (POM): steep ray march (8–32 layers based on NdotV) + linear interpolation, with grazing-angle and sphere-pole guards
+  - Heightmap self-shadow: 6-tap light-direction trace on displacement map → contact shadows in mortar/ripples/weave
+  - IBL split-sum specular: cubemap irradiance (diffuse) + prefiltered env + BRDF LUT (specular)
+  - Emission support: HDR emission color × energy multiplier
+  - Per-material shader params: `envMultiplier`, `normalStrength`, `specularMultiplier`, `selfShadowStrength`, `cavityStrength`, `uvTiling`
+  - Texture slots expanded from 5 (t0–t4) to 10 (t0–t9): +displacement, +shadow map, +BRDF LUT, +irradiance cubemap, +prefiltered env cubemap
+
+- **Material System Expansion** — `MaterialCB` expanded from 8 to 20 DWORDs
+  - New `.uzmat` keys: `parallax_scale`, `emission`, `emission_energy`, `emission_texture`, `env_multiplier`, `normal_strength`, `specular_multiplier`, `uv_tiling`, `self_shadow_strength`, `cavity_strength`, `displacement_texture`
+  - 5 new materials: `checker`, `gold_paint`, `metal_corroded`, `rattan`, `sand`
+  - Updated existing materials (`concrete`, `copper`, `gold`, `iron`, `marble`, `rust`, `stonebricks`, `wood`) with new Poliigon texture paths and PBR params
+
+- **ComponentRegistry** — data-driven node type registry (Godot ClassDB pattern)
+  - `component_registry.h/cpp`: string-keyed type registration with property descriptors (`PropParseFn`/`PropSerFn`)
+  - New types are registered by a single call — no modification of loader, saver, or renderer
+  - `SkyAtmosphereData` registered with 5 property descriptors (sky_zenith, sky_horizon, sky_haze, sky_ground, fog_density)
+
+- **RHI Compute Pipeline** — full GPU compute support in `rhi_dx12.c`
+  - `compute_pipeline_create`: dedicated compute root signature (b0 root constants, t0+t1 SRV, u0+u1 UAV, s0 static sampler), D3DCompile cs_5_0
+  - `cmd_set_uav(cmd, slot, tex, mip_level)`: per-mip UAV binding via bump allocator in heap region 4096+
+  - Compute vs graphics command routing via `is_compute_bound` flag on command list slots
+  - `texture_upload_subresource`: per-subresource upload for cubemap face data
+  - Typeless depth textures (R32_TYPELESS) for simultaneous DSV + SRV access (shadow map)
+
+- **Texture Asset Reorganization** — per-material directories under `assets/textures/`
+  - New Poliigon texture sets: `Concrete/`, `Gold/`, `Grass/`, `Metal/`, `MetalCorroded/`, `RattanWeave/`, `Sand/`, `StoneQuartzite/`, `Stonebricks/`
+  - `checker.png` procedural checker pattern (via `tools/gen_checker.py`)
+  - Removed flat loose textures (concrete_*.png, copper_*.png, gold_*.png, marble_*.png, rust_*.png, wood_*.png)
+
+- **12 new PBRMaterialTest cases** — displacement parsing, per-material shader params, emission, UV tiling (scalar+vector), minimal defaults, comments, error paths, clear, full sand material round-trip
+
+- **Editor Grid Improvements** — distance-based alpha fade (UE5-style), camera world position passed to basic.ps.hlsl via `ColorCB`
+
+- **Tools** — `tools/gen_checker.py` (procedural checker texture), `tools/gen_plane.py` (plane mesh generator)
+
+### Changed
+
+- **Root signature (graphics)**: expanded from 9 to 14 params — b1 from 8 to 20 DWORDs (MaterialCB), b2 from root constants to root CBV (LightFrameCB), 10 SRV tables (t0–t9), 2 static samplers (s0 wrap, s1 clamp)
+- **NodeType enum removed** — replaced with `type_name` string field on `SceneNode`; `node_type_to_string()` and `node_type_from_string()` deleted
+- **Scene loader/saver rewritten** — fully data-driven via ComponentRegistry; zero code changes needed for new node types
+- **IBL convolution** runs on GPU compute with automatic CPU fallback if compute init fails
+- **CBV/SRV/UAV descriptor heap** expanded from 4096 to 8192 (SRV 0..4095, UAV 4096+)
+- `scene_create_node()` signature changed: `NodeType type` → `const char* type_name`
+- `pbr_test.uzscene` expanded with 10 material spheres + ground plane, SkyAtmosphere node
+- `sphere.gltf` and `plane.gltf` regenerated with proper normals/tangents/UVs
+- `renderer.md` IBL section updated with GPU compute pipeline documentation
+- Stream module refactored (`stream.h/cpp`): broadcast busy flags, encode thread cleanup
+- MCP server (`tools/mcp-uzengine/`): updated IPC handlers, engine process management
+
+### Fixed
+
+- **Metallic fallback texture** was BLACK → forced `metallic=0` for all untextured materials. Fixed to WHITE so material `metallic` parameter actually controls the value. All fallback textures now WHITE except normal (flat blue `0x8080FF`) and displacement (BLACK = no offset)
+
+---
+
 ## [0.4.0] — 2026-03-06
 
 ### Added

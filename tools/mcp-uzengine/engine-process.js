@@ -9,9 +9,13 @@ import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
+import { getPreviewDir } from './ipc-client.js';
+
 const WORKSPACE = process.cwd();
 
 const EXE_CANDIDATES = [
+    path.join(WORKSPACE, 'build', 'Release', 'render.exe'),
+    path.join(WORKSPACE, 'build', 'Debug', 'render.exe'),
     path.join(WORKSPACE, 'build', 'Release', 'UzEngine.exe'),
     path.join(WORKSPACE, 'build', 'Debug', 'UzEngine.exe'),
     path.join(WORKSPACE, 'build', 'UzEngine.exe'),
@@ -36,13 +40,15 @@ export function getEngineExePath() {
 
 /**
  * Spawn UzEngine.exe.
- * @param {{ windowed?: boolean, scene?: string }} [opts]
+ * @param {{ windowed?: boolean, scene?: string, port?: number }} [opts]
  *   windowed=true  → sets UZENGINE_WINDOWED=1 so a visible debug window appears
  *   scene          → path to .uzscene file (passed as --scene argument)
+ *   port           → WebSocket port for this instance (default: 9002).
+ *                    Also determines the IPC directory (preview-PORT/ or preview/ for 9002).
  * No-op if already running.
  * @returns {{ ok: boolean, pid?: number, error?: string }}
  */
-export function spawnEngine({ windowed = false, scene = '' } = {}) {
+export function spawnEngine({ windowed = false, scene = '', port = 9002 } = {}) {
     if (engineProcess && engineProcess.exitCode === null) {
         return { ok: true, pid: engineProcess.pid, note: 'already running' };
     }
@@ -55,7 +61,11 @@ export function spawnEngine({ windowed = false, scene = '' } = {}) {
     const env = { ...process.env, UZENGINE_HEADLESS: '1' };
     if (windowed) env.UZENGINE_WINDOWED = '1';
 
-    const args = [];
+    // Resolve the IPC directory for this port and ensure it exists.
+    const ipcDir = getPreviewDir(port);
+    fs.mkdirSync(ipcDir, { recursive: true });
+
+    const args = ['--ws-port', String(port), '--ipc-dir', ipcDir];
     if (scene) args.push('--scene', scene);
 
     try {

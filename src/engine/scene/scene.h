@@ -95,9 +95,12 @@ void scene_clear(Scene* scene);
 
 /// Create a new node in the scene.
 /// Returns the new node's ID, or kNodeIdInvalid if the scene is full.
-/// The node is initialized with an identity transform and the given type.
+/// type_name is stored on the node for editor display and serialization.
+/// Component data is attached separately via component_add<T>().
 /// If parent_id is kNodeIdInvalid (0), the node is a root-level child.
-[[nodiscard]] NodeId scene_create_node(Scene* scene, const char* name, NodeType type, NodeId parent_id = kNodeIdInvalid);
+[[nodiscard]] NodeId scene_create_node(Scene* scene, const char* name,
+                                       const char* type_name = "Node3D",
+                                       NodeId parent_id = kNodeIdInvalid);
 
 /// Destroy a node and all its descendants recursively.
 /// Removes the node from its parent's child list.

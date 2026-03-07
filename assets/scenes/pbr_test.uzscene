@@ -3,6 +3,15 @@ name = PBR Test
 version = 1
 
 [node]
+name = Sky Atmosphere
+type = SkyAtmosphere
+sky_zenith  = 0.08 0.22 0.65
+sky_horizon = 0.52 0.72 0.90
+sky_haze    = 0.28 0.22 0.16
+sky_ground  = 0.16 0.12 0.08
+fog_density = 0.0
+
+[node]
 name = Main Camera
 type = Camera
 position = 0 2 -4
@@ -14,20 +23,92 @@ far = 1000
 [node]
 name = Sun
 type = DirectionalLight
-rotation = -0.4 -0.5 0.3 0
+rotation = 0.3 0.3 0.0 0.906
 light_color = 1.0 0.95 0.88
-light_intensity = 3.0
+light_intensity = 3.2
 
 [node]
-name = Test Sphere
+name = Quartzite Sphere
 type = StaticMesh
-position = 0 2 0
-scale = 2 2 2
+position = -4.5 1.2 0
+scale = 1.1 1.1 1.1
+mesh = assets/meshes/sphere.gltf
+material = assets/materials/marble.uzmat
+
+[node]
+name = StoneBricks Sphere
+type = StaticMesh
+position = -2.2 1.2 0
+scale = 1.1 1.1 1.1
 mesh = assets/meshes/sphere.gltf
 material = assets/materials/stonebricks.uzmat
 
+[node]
+name = Galvanized Metal Sphere
+type = StaticMesh
+position = 0 1.2 0
+scale = 1.1 1.1 1.1
+mesh = assets/meshes/sphere.gltf
+material = assets/materials/gold.uzmat
+
+[node]
+name = Concrete Sphere
+type = StaticMesh
+position = 2.2 1.2 0
+scale = 1.1 1.1 1.1
+mesh = assets/meshes/sphere.gltf
+material = assets/materials/copper.uzmat
+
+[node]
+name = Grass Sphere
+type = StaticMesh
+position = 4.5 1.2 0
+scale = 1.1 1.1 1.1
+mesh = assets/meshes/sphere.gltf
+material = assets/materials/iron.uzmat
+
+[node]
+name = Gold Paint Sphere
+type = StaticMesh
+position = -3.3 3.6 2.0
+scale = 1.1 1.1 1.1
+mesh = assets/meshes/sphere.gltf
+material = assets/materials/gold_paint.uzmat
+
+[node]
+name = Corroded Metal Sphere
+type = StaticMesh
+position = -1.1 3.6 2.0
+scale = 1.1 1.1 1.1
+mesh = assets/meshes/sphere.gltf
+material = assets/materials/metal_corroded.uzmat
+
+[node]
+name = Rattan Sphere
+type = StaticMesh
+position = 1.1 3.6 2.0
+scale = 1.1 1.1 1.1
+mesh = assets/meshes/sphere.gltf
+material = assets/materials/rattan.uzmat
+
+[node]
+name = Sand Sphere
+type = StaticMesh
+position = 3.3 3.6 2.0
+scale = 1.1 1.1 1.1
+mesh = assets/meshes/sphere.gltf
+material = assets/materials/sand.uzmat
+
+[node]
+name = Ground
+type = StaticMesh
+position = 0 0.01 0
+scale = 1 1 1
+mesh = assets/meshes/plane.gltf
+material = assets/materials/checker.uzmat
+
 [editor]
-camera_position = 0 2 -4
-camera_yaw = 0
-camera_pitch = 0
+camera_position = 0 3.5 -12
+camera_yaw = 0.0
+camera_pitch = -0.1
 camera_speed = 5.0

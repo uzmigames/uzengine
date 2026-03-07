@@ -55,7 +55,7 @@
 
 #define DX12_RTV_HEAP_SIZE      256
 #define DX12_DSV_HEAP_SIZE      64
-#define DX12_CBV_SRV_UAV_HEAP_SIZE 4096
+#define DX12_CBV_SRV_UAV_HEAP_SIZE 8192  /* 0..4095 SRV, 4096..8191 UAV */
 #define DX12_SAMPLER_HEAP_SIZE  128
 
 /* =======================================================================
@@ -65,7 +65,10 @@
 typedef struct Dx12TextureSlot {
     ID3D12Resource *resource;
     bool            is_swapchain;
+    bool            has_uav;       /* has UAV descriptors in heap */
     bool            occupied;
+    uint32_t        uav_heap_base; /* first UAV descriptor offset in CBV/SRV/UAV heap */
+    uint32_t        uav_mip_count; /* number of per-mip UAV descriptors */
 } Dx12TextureSlot;
 
 typedef struct Dx12BufferSlot {
@@ -79,6 +82,7 @@ typedef struct Dx12BufferSlot {
 typedef struct Dx12PipelineSlot {
     ID3D12PipelineState *pso;
     ID3D12RootSignature *root_sig;
+    bool                 is_compute;
     bool                 occupied;
 } Dx12PipelineSlot;
 
@@ -92,6 +96,7 @@ typedef struct Dx12CmdListSlot {
     ID3D12GraphicsCommandList *list;
     ID3D12CommandAllocator    *allocator;
     D3D12_PRIMITIVE_TOPOLOGY   topology;  /* current IA topology */
+    bool                       is_compute_bound; /* true when compute PSO is active */
     bool                       recording;
     bool                       occupied;
 } Dx12CmdListSlot;
@@ -132,6 +137,9 @@ typedef struct Dx12State {
     Dx12PipelineSlot        pipelines[DX12_MAX_PIPELINES];
     Dx12FenceSlot           fences[DX12_MAX_FENCES];
     Dx12CmdListSlot         cmd_lists[DX12_MAX_CMD_LISTS];
+
+    /* UAV descriptor bump allocator (starts at DX12_MAX_RESOURCES) */
+    uint32_t                next_uav_offset;
 
     /* Dimensions */
     uint32_t                width;
@@ -233,6 +241,8 @@ void       dx12_cmd_draw_indexed(RhiCmdList cmd, uint32_t index_count,
                                   uint32_t instance_count, uint32_t first_index,
                                   int32_t vertex_offset,
                                   uint32_t first_instance);
+void       dx12_cmd_set_uav(RhiCmdList cmd, uint32_t slot_idx,
+                             RhiTexture tex, uint32_t mip_level);
 void       dx12_cmd_dispatch(RhiCmdList cmd, uint32_t x, uint32_t y,
                               uint32_t z);
 void       dx12_cmd_clear_render_target(RhiCmdList cmd, RhiTexture rt,

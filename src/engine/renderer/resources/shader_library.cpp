@@ -19,6 +19,15 @@
 #include "shaders/pbr_ps_hlsl.h"
 #include "shaders/outline_vs_hlsl.h"
 #include "shaders/outline_ps_hlsl.h"
+#include "shaders/sky_vs_hlsl.h"
+#include "shaders/sky_ps_hlsl.h"
+#include "shaders/shadow_depth_vs_hlsl.h"
+#include "shaders/fullscreen_vs_hlsl.h"
+#include "shaders/ssao_ps_hlsl.h"
+#include "shaders/ssao_blur_ps_hlsl.h"
+#include "shaders/bloom_down_ps_hlsl.h"
+#include "shaders/bloom_up_ps_hlsl.h"
+#include "shaders/composite_ps_hlsl.h"
 
 namespace uz {
 
@@ -72,6 +81,76 @@ void ShaderLibrary::register_builtin_shaders() {
         .vs_size   = sizeof(k_outline_vs_hlsl) - 1,
         .ps_source = k_outline_ps_hlsl,
         .ps_size   = sizeof(k_outline_ps_hlsl) - 1,
+        .vs_entry  = "VSMain",
+        .ps_entry  = "PSMain",
+    });
+
+    // shadow_depth — depth-only pass for directional shadow map (VS only, no PS)
+    register_shader("shadow_depth", ShaderProgram{
+        .vs_source = k_shadow_depth_vs_hlsl,
+        .vs_size   = sizeof(k_shadow_depth_vs_hlsl) - 1,
+        .ps_source = nullptr,
+        .ps_size   = 0,
+        .vs_entry  = "VSMain",
+        .ps_entry  = nullptr,
+    });
+
+    // sky — fullscreen atmospheric gradient sky (no vertex buffer)
+    register_shader("sky", ShaderProgram{
+        .vs_source = k_sky_vs_hlsl,
+        .vs_size   = sizeof(k_sky_vs_hlsl) - 1,
+        .ps_source = k_sky_ps_hlsl,
+        .ps_size   = sizeof(k_sky_ps_hlsl) - 1,
+        .vs_entry  = "VSMain",
+        .ps_entry  = "PSMain",
+    });
+
+    // ssao — screen-space ambient occlusion (fullscreen VS + SSAO PS)
+    register_shader("ssao", ShaderProgram{
+        .vs_source = k_fullscreen_vs_hlsl,
+        .vs_size   = sizeof(k_fullscreen_vs_hlsl) - 1,
+        .ps_source = k_ssao_ps_hlsl,
+        .ps_size   = sizeof(k_ssao_ps_hlsl) - 1,
+        .vs_entry  = "VSMain",
+        .ps_entry  = "PSMain",
+    });
+
+    // ssao_blur — bilateral blur for SSAO
+    register_shader("ssao_blur", ShaderProgram{
+        .vs_source = k_fullscreen_vs_hlsl,
+        .vs_size   = sizeof(k_fullscreen_vs_hlsl) - 1,
+        .ps_source = k_ssao_blur_ps_hlsl,
+        .ps_size   = sizeof(k_ssao_blur_ps_hlsl) - 1,
+        .vs_entry  = "VSMain",
+        .ps_entry  = "PSMain",
+    });
+
+    // bloom_down — bloom downsample (13-tap + Karis)
+    register_shader("bloom_down", ShaderProgram{
+        .vs_source = k_fullscreen_vs_hlsl,
+        .vs_size   = sizeof(k_fullscreen_vs_hlsl) - 1,
+        .ps_source = k_bloom_down_ps_hlsl,
+        .ps_size   = sizeof(k_bloom_down_ps_hlsl) - 1,
+        .vs_entry  = "VSMain",
+        .ps_entry  = "PSMain",
+    });
+
+    // bloom_up — bloom upsample (tent filter)
+    register_shader("bloom_up", ShaderProgram{
+        .vs_source = k_fullscreen_vs_hlsl,
+        .vs_size   = sizeof(k_fullscreen_vs_hlsl) - 1,
+        .ps_source = k_bloom_up_ps_hlsl,
+        .ps_size   = sizeof(k_bloom_up_ps_hlsl) - 1,
+        .vs_entry  = "VSMain",
+        .ps_entry  = "PSMain",
+    });
+
+    // composite — final post-process (SSAO + bloom + tonemap + gamma)
+    register_shader("composite", ShaderProgram{
+        .vs_source = k_fullscreen_vs_hlsl,
+        .vs_size   = sizeof(k_fullscreen_vs_hlsl) - 1,
+        .ps_source = k_composite_ps_hlsl,
+        .ps_size   = sizeof(k_composite_ps_hlsl) - 1,
         .vs_entry  = "VSMain",
         .ps_entry  = "PSMain",
     });

@@ -22,6 +22,7 @@ bool dx12_init(void *window_handle, uint32_t width, uint32_t height) {
     memset(&s_dx12, 0, sizeof(s_dx12));
     s_dx12.width  = width;
     s_dx12.height = height;
+    s_dx12.next_uav_offset = DX12_MAX_RESOURCES; /* UAVs start after SRV region */
 
     /* ------ Debug layer (debug builds only) ------ */
 #if defined(_DEBUG) || defined(DEBUG)

@@ -224,3 +224,21 @@ Each `.uzscene` file opened in VSCode spawns an independent `render.exe` process
 ```
 
 See [docs/guides/architecture.md](docs/guides/architecture.md) for full details.
+
+---
+
+## Third-Party Assets
+
+### Poliigon Textures (Free License)
+
+PBR test textures in `assets/textures/` are free assets from [Poliigon](https://www.poliigon.com), used under the Poliigon Free License:
+
+| Texture Set | Source |
+|-------------|--------|
+| MetalGalvanizedSteelWorn001 | [Poliigon - Galvanized Metal](https://www.poliigon.com/texture/lightly-worn-galvanised-metal-texture/3129) |
+| StoneBricksSplitface001 | [Poliigon - Stone Bricks](https://www.poliigon.com) |
+| Poliigon_ConcreteWorn_8690 | [Poliigon - Concrete Worn](https://www.poliigon.com) |
+| Poliigon_GrassPatchyGround_4585 | [Poliigon - Grass Patchy](https://www.poliigon.com) |
+| Poliigon_StoneQuartzite_8060 | [Poliigon - Stone Quartzite](https://www.poliigon.com) |
+
+License: Free for personal and commercial use. See [Poliigon License](https://www.poliigon.com/texture/lightly-worn-galvanised-metal-texture/3129#license-info) for full terms.

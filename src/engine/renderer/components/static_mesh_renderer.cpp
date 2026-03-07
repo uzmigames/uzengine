@@ -74,7 +74,7 @@ void StaticMeshRenderer::add_instance(MeshInstance instance) {
     instances_.push_back(std::move(instance));
 }
 
-void StaticMeshRenderer::draw(RhiCmdList cmd, const Mat4& view_proj) {
+void StaticMeshRenderer::draw(RhiCmdList cmd, const Mat4& view_proj, RhiBuffer light_cbv) {
     if (pbrPipeline_ == RHI_NULL || instances_.empty()) return;
 
     rhi()->cmd_set_pipeline(cmd, pbrPipeline_);
@@ -91,35 +91,19 @@ void StaticMeshRenderer::draw(RhiCmdList cmd, const Mat4& view_proj) {
         // Slot 0: World Matrix
         rhi()->cmd_set_root_constants(cmd, 0, &inst.transform, 16, 0);
 
-        // Slot 1: MaterialCB (12 floats)
-        float matCB[12] = {
-            inst.albedo[0], inst.albedo[1], inst.albedo[2], 1.0f,            // albedo (rgb), pad
-            inst.metallic, inst.roughness, inst.ao, inst.emission_energy,  // params (met, rough, ao, energy)
-            inst.emission[0], inst.emission[1], inst.emission[2], 0.0f     // emission (rgb), pad
+        // Slot 1: MaterialCB (20 floats — must match pbr.ps.hlsl layout)
+        float matCB[20] = {
+            inst.albedo[0], inst.albedo[1], inst.albedo[2], inst.metallic,
+            inst.roughness, inst.ao, 0.0f /*parallaxScale*/, inst.emission_energy,
+            inst.emission[0], inst.emission[1], inst.emission[2], 1.0f /*envMul*/,
+            1.0f /*normalStr*/, 1.0f /*specMul*/, 1.0f /*uvTileU*/, 1.0f /*uvTileV*/,
+            1.0f /*selfShadowStr*/, 0.35f /*cavityStr*/, 0.0f, 0.0f
         };
-        rhi()->cmd_set_root_constants(cmd, 1, matCB, 12, 0);
+        rhi()->cmd_set_root_constants(cmd, 1, matCB, 20, 0);
 
-        // Slot 2: LightFrameCB (simplified for now)
-        // struct Light: pos(3), int(1), color(3), range(1), dir(3), type(1) = 12 floats
-        float lightFrameCB[128] = { 0 }; 
-        // Light 0: Directional light
-        lightFrameCB[0] = 0.0f; lightFrameCB[1] = 0.0f; lightFrameCB[2] = 0.0f; // pos
-        lightFrameCB[3] = 1.0f;                                                 // intensity
-        lightFrameCB[4] = 1.0f; lightFrameCB[5] = 1.0f; lightFrameCB[6] = 1.0f; // color
-        lightFrameCB[7] = 0.0f;                                                 // range
-        lightFrameCB[8] = 0.3f; lightFrameCB[9] = -0.8f; lightFrameCB[10] = 0.5f;// direction
-        lightFrameCB[11] = 0.0f;                                                // type (0=Dir)
-        
-        uint32_t lightCount = 1;
-        memcpy(&lightFrameCB[96], &lightCount, 4);
-        float cameraPos[3] = {0, 0, 0}; // Should be passed from renderer
-        memcpy(&lightFrameCB[97], cameraPos, 12);
-        float timeVal = 0.0f;
-        memcpy(&lightFrameCB[100], &timeVal, 4);
-        float envInt = 1.0f;
-        memcpy(&lightFrameCB[101], &envInt, 4);
-
-        rhi()->cmd_set_root_constants(cmd, 2, lightFrameCB, 102, 0);
+        // Slot 2: LightFrameCB (root CBV -- data uploaded once per frame by Renderer)
+        if (light_cbv != RHI_NULL)
+            rhi()->cmd_set_constant_buffer(cmd, 2, light_cbv);
 
         // Slot 3: ViewProj
         rhi()->cmd_set_root_constants(cmd, 3, &view_proj, 16, 0);
@@ -127,7 +111,7 @@ void StaticMeshRenderer::draw(RhiCmdList cmd, const Mat4& view_proj) {
         // Textures
         rhi()->cmd_set_texture(cmd, 0, (inst.albedo_tex != RHI_NULL) ? inst.albedo_tex : whiteTex_);
         rhi()->cmd_set_texture(cmd, 1, (inst.normal_tex != RHI_NULL) ? inst.normal_tex : normalTex_);
-        rhi()->cmd_set_texture(cmd, 2, (inst.metallic_tex != RHI_NULL) ? inst.metallic_tex : blackTex_);
+        rhi()->cmd_set_texture(cmd, 2, (inst.metallic_tex != RHI_NULL) ? inst.metallic_tex : whiteTex_);
         rhi()->cmd_set_texture(cmd, 3, (inst.roughness_tex != RHI_NULL) ? inst.roughness_tex : whiteTex_);
         rhi()->cmd_set_texture(cmd, 4, (inst.ao_tex != RHI_NULL) ? inst.ao_tex : whiteTex_);
         // Slot 5 (emission_tex) removed — root signature Phase 1 only supports t0-t4

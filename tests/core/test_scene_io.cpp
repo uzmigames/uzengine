@@ -177,7 +177,7 @@ TEST(SceneLoaderTest, LoadFromString_NodeTypeStaticMesh_Correct) {
     ASSERT_TRUE(scene_load_from_string(scene.get(), text).is_ok());
     NodeId id = scene_find_by_name(scene.get(), "Mesh");
     ASSERT_NE(id, kNodeIdInvalid);
-    EXPECT_EQ(scene_get_node(scene.get(), id)->type, NodeType::StaticMesh);
+    EXPECT_STREQ(scene_get_node(scene.get(), id)->type_name, "StaticMesh");
 }
 
 TEST(SceneLoaderTest, LoadFromString_NodeTypeCamera_Correct) {
@@ -188,7 +188,7 @@ TEST(SceneLoaderTest, LoadFromString_NodeTypeCamera_Correct) {
     ASSERT_TRUE(scene_load_from_string(scene.get(), text).is_ok());
     NodeId id = scene_find_by_name(scene.get(), "Cam");
     ASSERT_NE(id, kNodeIdInvalid);
-    EXPECT_EQ(scene_get_node(scene.get(), id)->type, NodeType::Camera);
+    EXPECT_STREQ(scene_get_node(scene.get(), id)->type_name, "Camera");
 }
 
 TEST(SceneLoaderTest, LoadFromString_NodeTypeDirectionalLight_Correct) {
@@ -199,11 +199,12 @@ TEST(SceneLoaderTest, LoadFromString_NodeTypeDirectionalLight_Correct) {
     ASSERT_TRUE(scene_load_from_string(scene.get(), text).is_ok());
     NodeId id = scene_find_by_name(scene.get(), "Sun");
     ASSERT_NE(id, kNodeIdInvalid);
-    EXPECT_EQ(scene_get_node(scene.get(), id)->type, NodeType::DirectionalLight);
+    EXPECT_STREQ(scene_get_node(scene.get(), id)->type_name, "DirectionalLight");
 }
 
-TEST(SceneLoaderTest, LoadFromString_NodeType_UnknownType_FallsBackToEmpty) {
-    // node_type_from_string returns NodeType::Empty for unknown strings.
+TEST(SceneLoaderTest, LoadFromString_NodeType_UnknownType_PreservedVerbatim) {
+    // Unknown types are stored verbatim — the registry is open to plugins.
+    // A type registered later will find its data intact.
     auto scene = make_scene();
     const char* text =
         "[uzscene]\nname = T\n"
@@ -211,7 +212,7 @@ TEST(SceneLoaderTest, LoadFromString_NodeType_UnknownType_FallsBackToEmpty) {
     ASSERT_TRUE(scene_load_from_string(scene.get(), text).is_ok());
     NodeId id = scene_find_by_name(scene.get(), "N");
     ASSERT_NE(id, kNodeIdInvalid);
-    EXPECT_EQ(scene_get_node(scene.get(), id)->type, NodeType::Empty);
+    EXPECT_STREQ(scene_get_node(scene.get(), id)->type_name, "FooBarBaz");
 }
 
 // ============================================================================
@@ -679,9 +680,9 @@ TEST(SceneLoaderTest, LoadFromString_ClearsSceneBeforeParsing) {
     // Pre-populate with 3 nodes, then load a 1-node file.
     // After loading, only 1 node must exist.
     auto scene = make_scene();
-    scene_create_node(scene.get(), "Old1", NodeType::Node3D);
-    scene_create_node(scene.get(), "Old2", NodeType::Node3D);
-    scene_create_node(scene.get(), "Old3", NodeType::Node3D);
+    scene_create_node(scene.get(), "Old1", "Node3D");
+    scene_create_node(scene.get(), "Old2", "Node3D");
+    scene_create_node(scene.get(), "Old3", "Node3D");
     ASSERT_EQ(scene->node_count, 3u);
 
     const char* text =
@@ -730,9 +731,9 @@ TEST(SceneLoaderTest, LoadFromString_DefaultUzscene_LoadsThreeNodes) {
     ASSERT_NE(sun_id,   kNodeIdInvalid);
     ASSERT_NE(cam_id,   kNodeIdInvalid);
 
-    EXPECT_EQ(scene_get_node(scene.get(), world_id)->type, NodeType::Node3D);
-    EXPECT_EQ(scene_get_node(scene.get(), sun_id)->type,   NodeType::DirectionalLight);
-    EXPECT_EQ(scene_get_node(scene.get(), cam_id)->type,   NodeType::Camera);
+    EXPECT_STREQ(scene_get_node(scene.get(), world_id)->type_name, "Node3D");
+    EXPECT_STREQ(scene_get_node(scene.get(), sun_id)->type_name,   "DirectionalLight");
+    EXPECT_STREQ(scene_get_node(scene.get(), cam_id)->type_name,   "Camera");
 
     // Sun and MainCamera must be parented to World.
     EXPECT_EQ(scene_get_node(scene.get(), sun_id)->parent_id,  world_id);
@@ -789,7 +790,7 @@ TEST(SceneLoaderTest, LoadFile_ValidTempFile_LoadsCorrectly) {
 
     NodeId id = scene_find_by_name(scene.get(), "FileNode");
     ASSERT_NE(id, kNodeIdInvalid);
-    EXPECT_EQ(scene_get_node(scene.get(), id)->type, NodeType::Camera);
+    EXPECT_STREQ(scene_get_node(scene.get(), id)->type_name, "Camera");
     EXPECT_TRUE(near_f(scene_get_node(scene.get(), id)->local_transform.position.x, 10.0f));
     EXPECT_TRUE(near_f(scene_get_node(scene.get(), id)->local_transform.position.y, 20.0f));
     EXPECT_TRUE(near_f(scene_get_node(scene.get(), id)->local_transform.position.z, 30.0f));
@@ -841,7 +842,7 @@ TEST(SceneSaverTest, SaveToString_EmptyScene_NoNodeSections) {
 
 TEST(SceneSaverTest, SaveToString_SingleNode_ContainsNodeSection) {
     auto scene = make_scene();
-    scene_create_node(scene.get(), "Root", NodeType::Node3D);
+    scene_create_node(scene.get(), "Root", "Node3D");
     std::string out = scene_save_to_string(scene.get());
     EXPECT_NE(out.find("[node]"), std::string::npos)
         << "Output for a scene with one node must contain [node]";
@@ -856,7 +857,7 @@ TEST(SceneSaverTest, SaveToString_SceneName_WrittenCorrectly) {
 
 TEST(SceneSaverTest, SaveToString_NodeName_WrittenCorrectly) {
     auto scene = make_scene();
-    scene_create_node(scene.get(), "SpecialNode", NodeType::Node3D);
+    scene_create_node(scene.get(), "SpecialNode", "Node3D");
     std::string out = scene_save_to_string(scene.get());
     EXPECT_NE(out.find("name = SpecialNode"), std::string::npos)
         << "Node name must appear in the [node] section";
@@ -864,7 +865,7 @@ TEST(SceneSaverTest, SaveToString_NodeName_WrittenCorrectly) {
 
 TEST(SceneSaverTest, SaveToString_NodeType_WrittenCorrectly) {
     auto scene = make_scene();
-    scene_create_node(scene.get(), "Cam", NodeType::Camera);
+    scene_create_node(scene.get(), "Cam", "Camera");
     std::string out = scene_save_to_string(scene.get());
     EXPECT_NE(out.find("type = Camera"), std::string::npos)
         << "Node type must appear as 'type = Camera'";
@@ -872,7 +873,7 @@ TEST(SceneSaverTest, SaveToString_NodeType_WrittenCorrectly) {
 
 TEST(SceneSaverTest, SaveToString_RootNode_ParentIsEmpty) {
     auto scene = make_scene();
-    scene_create_node(scene.get(), "Root", NodeType::Node3D);
+    scene_create_node(scene.get(), "Root", "Node3D");
     std::string out = scene_save_to_string(scene.get());
     // Root nodes have parent = (empty).
     EXPECT_NE(out.find("parent =\n"), std::string::npos)
@@ -881,8 +882,8 @@ TEST(SceneSaverTest, SaveToString_RootNode_ParentIsEmpty) {
 
 TEST(SceneSaverTest, SaveToString_ChildNode_ParentNameWritten) {
     auto scene = make_scene();
-    NodeId parent_id = scene_create_node(scene.get(), "TheParent", NodeType::Node3D);
-    scene_create_node(scene.get(), "TheChild", NodeType::Node3D, parent_id);
+    NodeId parent_id = scene_create_node(scene.get(), "TheParent", "Node3D");
+    scene_create_node(scene.get(), "TheChild", "Node3D", parent_id);
     std::string out = scene_save_to_string(scene.get());
     EXPECT_NE(out.find("parent = TheParent"), std::string::npos)
         << "Child node must be saved with 'parent = TheParent'";
@@ -890,7 +891,7 @@ TEST(SceneSaverTest, SaveToString_ChildNode_ParentNameWritten) {
 
 TEST(SceneSaverTest, SaveToString_ActiveFalse_WrittenCorrectly) {
     auto scene = make_scene();
-    NodeId id = scene_create_node(scene.get(), "Hidden", NodeType::Node3D);
+    NodeId id = scene_create_node(scene.get(), "Hidden", "Node3D");
     scene_get_node(scene.get(), id)->flags &= ~static_cast<uint16_t>(NODE_FLAG_ACTIVE);
     std::string out = scene_save_to_string(scene.get());
     EXPECT_NE(out.find("active = false"), std::string::npos)
@@ -899,7 +900,7 @@ TEST(SceneSaverTest, SaveToString_ActiveFalse_WrittenCorrectly) {
 
 TEST(SceneSaverTest, SaveToString_VisibleFalse_WrittenCorrectly) {
     auto scene = make_scene();
-    NodeId id = scene_create_node(scene.get(), "Invis", NodeType::Node3D);
+    NodeId id = scene_create_node(scene.get(), "Invis", "Node3D");
     scene_get_node(scene.get(), id)->flags &= ~static_cast<uint16_t>(NODE_FLAG_VISIBLE);
     std::string out = scene_save_to_string(scene.get());
     EXPECT_NE(out.find("visible = false"), std::string::npos)
@@ -908,14 +909,14 @@ TEST(SceneSaverTest, SaveToString_VisibleFalse_WrittenCorrectly) {
 
 TEST(SceneSaverTest, SaveToString_ActiveTrue_WrittenCorrectly) {
     auto scene = make_scene();
-    scene_create_node(scene.get(), "Active", NodeType::Node3D);
+    scene_create_node(scene.get(), "Active", "Node3D");
     std::string out = scene_save_to_string(scene.get());
     EXPECT_NE(out.find("active = true"), std::string::npos);
 }
 
 TEST(SceneSaverTest, SaveToString_VisibleTrue_WrittenCorrectly) {
     auto scene = make_scene();
-    scene_create_node(scene.get(), "Vis", NodeType::Node3D);
+    scene_create_node(scene.get(), "Vis", "Node3D");
     std::string out = scene_save_to_string(scene.get());
     EXPECT_NE(out.find("visible = true"), std::string::npos);
 }
@@ -924,8 +925,8 @@ TEST(SceneSaverTest, SaveToString_ParentWithOrphanedParentId_WritesEmptyParent) 
     // When the stored parent_id does not resolve to a live node, the saver
     // must fall back to writing "parent =" (empty), not crash.
     auto scene = make_scene();
-    NodeId parent_id = scene_create_node(scene.get(), "Doomed", NodeType::Node3D);
-    NodeId child_id  = scene_create_node(scene.get(), "Orphan", NodeType::Node3D, parent_id);
+    NodeId parent_id = scene_create_node(scene.get(), "Doomed", "Node3D");
+    NodeId child_id  = scene_create_node(scene.get(), "Orphan", "Node3D", parent_id);
     // Kill the parent slot directly without going through scene_destroy_node
     // so the child's parent_id still points to a dead slot.
     scene_get_node(scene.get(), parent_id)->alive = false;
@@ -947,7 +948,7 @@ TEST(SceneSaverTest, SaveToString_ParentWithOrphanedParentId_WritesEmptyParent) 
 
 TEST(SceneSaverTest, SaveToString_Position_RoundTripAccurate) {
     auto scene_a = make_scene();
-    NodeId id = scene_create_node(scene_a.get(), "N", NodeType::Node3D);
+    NodeId id = scene_create_node(scene_a.get(), "N", "Node3D");
     scene_get_node(scene_a.get(), id)->local_transform.position = {1.5f, 2.5f, 3.5f, 0.0f};
 
     std::string text = scene_save_to_string(scene_a.get());
@@ -968,7 +969,7 @@ TEST(SceneSaverTest, SaveToString_Position_RoundTripAccurate) {
 
 TEST(SceneSaverTest, SaveToString_Rotation_RoundTripAccurate) {
     auto scene_a = make_scene();
-    NodeId id = scene_create_node(scene_a.get(), "N", NodeType::Node3D);
+    NodeId id = scene_create_node(scene_a.get(), "N", "Node3D");
     // 45° rotation around Z: (0, 0, 0.3827, 0.9239)
     scene_get_node(scene_a.get(), id)->local_transform.rotation = {0.0f, 0.0f, 0.3827f, 0.9239f};
 
@@ -988,7 +989,7 @@ TEST(SceneSaverTest, SaveToString_Rotation_RoundTripAccurate) {
 
 TEST(SceneSaverTest, SaveToString_Scale_RoundTripAccurate) {
     auto scene_a = make_scene();
-    NodeId id = scene_create_node(scene_a.get(), "N", NodeType::Node3D);
+    NodeId id = scene_create_node(scene_a.get(), "N", "Node3D");
     scene_get_node(scene_a.get(), id)->local_transform.scale = {0.5f, 2.0f, 3.14159f, 0.0f};
 
     std::string text = scene_save_to_string(scene_a.get());
@@ -1010,7 +1011,7 @@ TEST(SceneSaverTest, SaveToString_Scale_RoundTripAccurate) {
 
 TEST(SceneSaverTest, RoundTrip_SingleNode_IdenticalScene) {
     auto scene_a = make_scene("RoundTrip");
-    NodeId id_a = scene_create_node(scene_a.get(), "Solo", NodeType::StaticMesh);
+    NodeId id_a = scene_create_node(scene_a.get(), "Solo", "StaticMesh");
     scene_get_node(scene_a.get(), id_a)->local_transform.position = {7.0f, -3.0f, 2.0f, 0.0f};
 
     std::string text = scene_save_to_string(scene_a.get());
@@ -1025,7 +1026,7 @@ TEST(SceneSaverTest, RoundTrip_SingleNode_IdenticalScene) {
     ASSERT_NE(id_b, kNodeIdInvalid);
     const SceneNode* nb = scene_get_node(scene_b.get(), id_b);
     ASSERT_NE(nb, nullptr);
-    EXPECT_EQ(nb->type, NodeType::StaticMesh);
+    EXPECT_STREQ(nb->type_name, "StaticMesh");
     EXPECT_TRUE(near_f(nb->local_transform.position.x,  7.0f));
     EXPECT_TRUE(near_f(nb->local_transform.position.y, -3.0f));
     EXPECT_TRUE(near_f(nb->local_transform.position.z,  2.0f));
@@ -1033,8 +1034,8 @@ TEST(SceneSaverTest, RoundTrip_SingleNode_IdenticalScene) {
 
 TEST(SceneSaverTest, RoundTrip_TwoNodesWithParent_IdenticalHierarchy) {
     auto scene_a = make_scene("Hierarchy");
-    NodeId parent_a = scene_create_node(scene_a.get(), "TopNode", NodeType::Node3D);
-    NodeId child_a  = scene_create_node(scene_a.get(), "BotNode", NodeType::Node3D, parent_a);
+    NodeId parent_a = scene_create_node(scene_a.get(), "TopNode", "Node3D");
+    NodeId child_a  = scene_create_node(scene_a.get(), "BotNode", "Node3D", parent_a);
     (void)child_a;
 
     std::string text = scene_save_to_string(scene_a.get());
@@ -1057,16 +1058,16 @@ TEST(SceneSaverTest, RoundTrip_TwoNodesWithParent_IdenticalHierarchy) {
 TEST(SceneSaverTest, RoundTrip_AllNodeTypes_Preserved) {
     auto scene_a = make_scene("Types");
     // One of each type.
-    const struct { const char* name; NodeType type; } types[] = {
-        { "E",  NodeType::Empty          },
-        { "N",  NodeType::Node3D         },
-        { "SM", NodeType::StaticMesh     },
-        { "DL", NodeType::DirectionalLight},
-        { "PL", NodeType::PointLight     },
-        { "SL", NodeType::SpotLight      },
-        { "CA", NodeType::Camera         },
-        { "AS", NodeType::AudioSource    },
-        { "AL", NodeType::AudioListener  },
+    const struct { const char* name; const char* type; } types[] = {
+        { "E",  "Node3D"           },
+        { "N",  "Node3D"           },
+        { "SM", "StaticMesh"       },
+        { "DL", "DirectionalLight" },
+        { "PL", "PointLight"       },
+        { "SL", "SpotLight"        },
+        { "CA", "Camera"           },
+        { "AS", "AudioSource"      },
+        { "AL", "AudioListener"    },
     };
     for (const auto& t : types) {
         scene_create_node(scene_a.get(), t.name, t.type);
@@ -1081,14 +1082,14 @@ TEST(SceneSaverTest, RoundTrip_AllNodeTypes_Preserved) {
     for (const auto& t : types) {
         NodeId id = scene_find_by_name(scene_b.get(), t.name);
         ASSERT_NE(id, kNodeIdInvalid) << "Missing node: " << t.name;
-        EXPECT_EQ(scene_get_node(scene_b.get(), id)->type, t.type)
+        EXPECT_STREQ(scene_get_node(scene_b.get(), id)->type_name, t.type)
             << "Type mismatch for node: " << t.name;
     }
 }
 
 TEST(SceneSaverTest, RoundTrip_ActiveFalse_Preserved) {
     auto scene_a = make_scene();
-    NodeId id_a = scene_create_node(scene_a.get(), "Inactive", NodeType::Node3D);
+    NodeId id_a = scene_create_node(scene_a.get(), "Inactive", "Node3D");
     // Turn off active.
     scene_get_node(scene_a.get(), id_a)->flags &= ~static_cast<uint16_t>(NODE_FLAG_ACTIVE);
     // Keep visible on so we can verify only active was stored.
@@ -1110,7 +1111,7 @@ TEST(SceneSaverTest, RoundTrip_ActiveFalse_Preserved) {
 
 TEST(SceneSaverTest, RoundTrip_VisibleFalse_Preserved) {
     auto scene_a = make_scene();
-    NodeId id_a = scene_create_node(scene_a.get(), "Invisible", NodeType::Node3D);
+    NodeId id_a = scene_create_node(scene_a.get(), "Invisible", "Node3D");
     scene_get_node(scene_a.get(), id_a)->flags |=  NODE_FLAG_ACTIVE;
     scene_get_node(scene_a.get(), id_a)->flags &= ~static_cast<uint16_t>(NODE_FLAG_VISIBLE);
 
@@ -1149,9 +1150,9 @@ TEST(SceneSaverTest, RoundTrip_DefaultUzscene_ThreeNodesPreserved) {
     ASSERT_NE(sun_b,   kNodeIdInvalid);
     ASSERT_NE(cam_b,   kNodeIdInvalid);
 
-    EXPECT_EQ(scene_get_node(scene_b.get(), world_b)->type, NodeType::Node3D);
-    EXPECT_EQ(scene_get_node(scene_b.get(), sun_b)->type,   NodeType::DirectionalLight);
-    EXPECT_EQ(scene_get_node(scene_b.get(), cam_b)->type,   NodeType::Camera);
+    EXPECT_STREQ(scene_get_node(scene_b.get(), world_b)->type_name, "Node3D");
+    EXPECT_STREQ(scene_get_node(scene_b.get(), sun_b)->type_name,   "DirectionalLight");
+    EXPECT_STREQ(scene_get_node(scene_b.get(), cam_b)->type_name,   "Camera");
 
     // Hierarchy must be preserved.
     EXPECT_EQ(scene_get_node(scene_b.get(), sun_b)->parent_id,  world_b);
@@ -1167,7 +1168,7 @@ TEST(SceneSaverTest, SaveFile_WritesToDisk_CanBeReadBack) {
     const std::string path = "/tmp/uz_test_save_disk.uzscene";
 
     auto scene_a = make_scene("DiskSave");
-    NodeId id_a = scene_create_node(scene_a.get(), "DiskNode", NodeType::PointLight);
+    NodeId id_a = scene_create_node(scene_a.get(), "DiskNode", "PointLight");
     scene_get_node(scene_a.get(), id_a)->local_transform.position = {11.0f, 22.0f, 33.0f, 0.0f};
 
     auto save_result = scene_save_file(scene_a.get(), path.c_str());
@@ -1188,7 +1189,7 @@ TEST(SceneSaverTest, SaveFile_WritesToDisk_CanBeReadBack) {
     ASSERT_NE(id_b, kNodeIdInvalid);
     const SceneNode* nb = scene_get_node(scene_b.get(), id_b);
     ASSERT_NE(nb, nullptr);
-    EXPECT_EQ(nb->type, NodeType::PointLight);
+    EXPECT_STREQ(nb->type_name, "PointLight");
     EXPECT_TRUE(near_f(nb->local_transform.position.x, 11.0f));
     EXPECT_TRUE(near_f(nb->local_transform.position.y, 22.0f));
     EXPECT_TRUE(near_f(nb->local_transform.position.z, 33.0f));
@@ -1199,7 +1200,7 @@ TEST(SceneSaverTest, SaveFile_WritesToDisk_CanBeReadBack) {
 TEST(SceneSaverTest, SaveFile_BadPath_ReturnsErr) {
     // Attempt to save to a directory that doesn't exist.
     auto scene = make_scene();
-    scene_create_node(scene.get(), "N", NodeType::Node3D);
+    scene_create_node(scene.get(), "N", "Node3D");
     auto result = scene_save_file(
         scene.get(),
         "/tmp/uz_nonexistent_dir_xyz/scene.uzscene");
@@ -1297,7 +1298,7 @@ TEST(SceneLoaderTest, EditorSection_UnknownKeysIgnored) {
 TEST(SceneLoaderTest, EditorSection_RoundTrip) {
     // Save a scene with editor state, load it back, verify camera values.
     auto scene = make_scene("RoundTrip");
-    scene_create_node(scene.get(), "Root", NodeType::Node3D);
+    scene_create_node(scene.get(), "Root", "Node3D");
     scene->editor_state.cam_pos_x = 7.0f;
     scene->editor_state.cam_pos_y = 3.5f;
     scene->editor_state.cam_pos_z = -9.2f;

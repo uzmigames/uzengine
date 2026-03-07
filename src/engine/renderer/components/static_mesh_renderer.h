@@ -50,7 +50,7 @@ public:
     void add_instance(MeshInstance instance);
 
     /// Draw all instances.
-    void draw(RhiCmdList cmd, const Mat4& view_proj);
+    void draw(RhiCmdList cmd, const Mat4& view_proj, RhiBuffer light_cbv = RHI_NULL);
 
     /// Get mutable instances for scene setup.
     std::vector<MeshInstance>& instances() { return instances_; }

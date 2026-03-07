@@ -4,7 +4,7 @@
 // Output is round-trip safe with scene_loader.
 
 #include "engine/scene/scene_saver.h"
-#include "engine/scene/component_data.h"
+#include "engine/scene/component_registry.h"
 #include "engine/scene/component_store.h"
 
 #include <cstdio>
@@ -50,8 +50,9 @@ std::string scene_save_to_string(const Scene* scene) {
         std::snprintf(buf, sizeof(buf), "name = %s\n", node.name);
         out += buf;
 
-        // Type.
-        std::snprintf(buf, sizeof(buf), "type = %s\n", node_type_to_string(node.type));
+        // Type (string name — no central enum needed).
+        std::snprintf(buf, sizeof(buf), "type = %s\n",
+                      node.type_name[0] != '\0' ? node.type_name : "Node3D");
         out += buf;
 
         // Parent: empty string if kNodeIdInvalid, otherwise the parent's name.
@@ -95,46 +96,19 @@ std::string scene_save_to_string(const Scene* scene) {
         // Visible.
         out += (node.flags & NODE_FLAG_VISIBLE) ? "visible = true\n" : "visible = false\n";
 
-        // Component-specific properties.
-        if (node.type == NodeType::Camera) {
-            const CameraData* cd = component_get<CameraData>(&scene->components, node.id);
-            if (cd) {
-                std::snprintf(buf, sizeof(buf), "fov = %.6f\n",
-                               static_cast<double>(cd->fov_y));
-                out += buf;
-                std::snprintf(buf, sizeof(buf), "near = %.6f\n",
-                               static_cast<double>(cd->near_plane));
-                out += buf;
-                std::snprintf(buf, sizeof(buf), "far = %.6f\n",
-                               static_cast<double>(cd->far_plane));
-                out += buf;
-            }
-        }
-
-        if (node.type == NodeType::DirectionalLight) {
-            const DirectionalLightData* ld = component_get<DirectionalLightData>(&scene->components, node.id);
-            if (ld) {
-                std::snprintf(buf, sizeof(buf), "light_color = %.6f %.6f %.6f\n",
-                               static_cast<double>(ld->color.x),
-                               static_cast<double>(ld->color.y),
-                               static_cast<double>(ld->color.z));
-                out += buf;
-                std::snprintf(buf, sizeof(buf), "light_intensity = %.6f\n",
-                               static_cast<double>(ld->intensity));
-                out += buf;
-            }
-        }
-
-        if (node.type == NodeType::StaticMesh) {
-            const StaticMeshData* smd = component_get<StaticMeshData>(&scene->components, node.id);
-            if (smd) {
-                if (smd->mesh_path[0] != '\0') {
-                    std::snprintf(buf, sizeof(buf), "mesh = %s\n", smd->mesh_path);
-                    out += buf;
-                }
-                if (smd->material_path[0] != '\0') {
-                    std::snprintf(buf, sizeof(buf), "material = %s\n", smd->material_path);
-                    out += buf;
+        // Component-specific properties — data-driven via ComponentRegistry.
+        // Adding a new type requires zero changes here.
+        {
+            const NodeTypeDef* def = ComponentRegistry::find(node.type_name);
+            if (def) {
+                for (uint32_t ci = 0; ci < def->comp_count; ++ci) {
+                    const NodeComponentDef& cd = def->comps[ci];
+                    const void* data = scene->components.get(node.id, cd.type_id);
+                    if (!data) continue;
+                    for (uint32_t pi = 0; pi < cd.prop_count; ++pi) {
+                        if (cd.props[pi].serialize)
+                            cd.props[pi].serialize(data, out);
+                    }
                 }
             }
         }

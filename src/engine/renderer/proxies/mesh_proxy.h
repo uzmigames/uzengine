@@ -41,12 +41,20 @@ struct MeshProxy : public ISceneProxy {
     float cached_emission[3]    = {0.0f, 0.0f, 0.0f};
     float cached_emission_energy = 1.0f;
 
-    RhiTexture cached_albedo_tex    = RHI_NULL;
-    RhiTexture cached_normal_tex    = RHI_NULL;
-    RhiTexture cached_metallic_tex  = RHI_NULL;
-    RhiTexture cached_roughness_tex = RHI_NULL;
-    RhiTexture cached_ao_tex        = RHI_NULL;
-    RhiTexture cached_emission_tex  = RHI_NULL;
+    RhiTexture cached_albedo_tex       = RHI_NULL;
+    RhiTexture cached_normal_tex       = RHI_NULL;
+    RhiTexture cached_metallic_tex     = RHI_NULL;
+    RhiTexture cached_roughness_tex    = RHI_NULL;
+    RhiTexture cached_ao_tex           = RHI_NULL;
+    RhiTexture cached_emission_tex     = RHI_NULL;
+    RhiTexture cached_displacement_tex = RHI_NULL;
+    float      cached_parallax_scale   = 0.0f;
+    float      cached_env_multiplier   = 1.0f;
+    float      cached_normal_strength  = 1.0f;
+    float      cached_specular_multiplier = 1.0f;
+    float      cached_uv_tiling[2]     = {1.0f, 1.0f};
+    float      cached_self_shadow_strength = 1.0f;
+    float      cached_cavity_strength  = 0.35f;
 };
 
 } // namespace uz

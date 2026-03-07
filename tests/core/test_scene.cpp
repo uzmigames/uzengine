@@ -126,8 +126,8 @@ TEST(SceneTest, Init_LongName_TruncatedAt63Chars) {
 
 TEST(SceneTest, Clear_AfterAddingNodes_ResetsNodeCountToZero) {
     auto s = make_scene();
-    scene_create_node(s.get(), "A", NodeType::Node3D);
-    scene_create_node(s.get(), "B", NodeType::Node3D);
+    scene_create_node(s.get(), "A", "Node3D");
+    scene_create_node(s.get(), "B", "Node3D");
     ASSERT_EQ(s->node_count, 2u);
 
     scene_clear(s.get());
@@ -137,8 +137,8 @@ TEST(SceneTest, Clear_AfterAddingNodes_ResetsNodeCountToZero) {
 
 TEST(SceneTest, Clear_ResetsNextIdToOne) {
     auto s = make_scene();
-    scene_create_node(s.get(), "A", NodeType::Node3D);
-    scene_create_node(s.get(), "B", NodeType::Node3D);
+    scene_create_node(s.get(), "A", "Node3D");
+    scene_create_node(s.get(), "B", "Node3D");
 
     scene_clear(s.get());
 
@@ -147,8 +147,8 @@ TEST(SceneTest, Clear_ResetsNextIdToOne) {
 
 TEST(SceneTest, Clear_MarksPreviouslyAliveSlotsDead) {
     auto s = make_scene();
-    NodeId id1 = scene_create_node(s.get(), "A", NodeType::Node3D);
-    NodeId id2 = scene_create_node(s.get(), "B", NodeType::Node3D);
+    NodeId id1 = scene_create_node(s.get(), "A", "Node3D");
+    NodeId id2 = scene_create_node(s.get(), "B", "Node3D");
     ASSERT_GT(id1, 0u);
     ASSERT_GT(id2, 0u);
 
@@ -173,13 +173,13 @@ TEST(SceneTest, Clear_EmptyScene_IsNoopAndDoesNotCrash) {
 
 TEST(SceneTest, CreateNode_SingleRootNode_ReturnsValidId) {
     auto s = make_scene();
-    NodeId id = scene_create_node(s.get(), "Root", NodeType::Node3D);
+    NodeId id = scene_create_node(s.get(), "Root", "Node3D");
     EXPECT_GT(id, kNodeIdInvalid);
 }
 
 TEST(SceneTest, CreateNode_SetsNameCorrectly) {
     auto s = make_scene();
-    NodeId id = scene_create_node(s.get(), "Mesh01", NodeType::StaticMesh);
+    NodeId id = scene_create_node(s.get(), "Mesh01", "StaticMesh");
     SceneNode* n = scene_get_node(s.get(), id);
     ASSERT_NE(n, nullptr);
     EXPECT_STREQ(n->name, "Mesh01");
@@ -187,15 +187,15 @@ TEST(SceneTest, CreateNode_SetsNameCorrectly) {
 
 TEST(SceneTest, CreateNode_SetsTypeCorrectly) {
     auto s = make_scene();
-    NodeId id = scene_create_node(s.get(), "Cam", NodeType::Camera);
+    NodeId id = scene_create_node(s.get(), "Cam", "Camera");
     SceneNode* n = scene_get_node(s.get(), id);
     ASSERT_NE(n, nullptr);
-    EXPECT_EQ(n->type, NodeType::Camera);
+    EXPECT_STREQ(n->type_name, "Camera");
 }
 
 TEST(SceneTest, CreateNode_RootNode_HasInvalidParentId) {
     auto s = make_scene();
-    NodeId id = scene_create_node(s.get(), "Root", NodeType::Node3D);
+    NodeId id = scene_create_node(s.get(), "Root", "Node3D");
     SceneNode* n = scene_get_node(s.get(), id);
     ASSERT_NE(n, nullptr);
     EXPECT_EQ(n->parent_id, kNodeIdInvalid);
@@ -203,8 +203,8 @@ TEST(SceneTest, CreateNode_RootNode_HasInvalidParentId) {
 
 TEST(SceneTest, CreateNode_WithParent_SetsParentIdCorrectly) {
     auto s = make_scene();
-    NodeId parent = scene_create_node(s.get(), "Parent", NodeType::Node3D);
-    NodeId child  = scene_create_node(s.get(), "Child", NodeType::Node3D, parent);
+    NodeId parent = scene_create_node(s.get(), "Parent", "Node3D");
+    NodeId child  = scene_create_node(s.get(), "Child", "Node3D", parent);
     SceneNode* cn = scene_get_node(s.get(), child);
     ASSERT_NE(cn, nullptr);
     EXPECT_EQ(cn->parent_id, parent);
@@ -212,8 +212,8 @@ TEST(SceneTest, CreateNode_WithParent_SetsParentIdCorrectly) {
 
 TEST(SceneTest, CreateNode_WithParent_AddsToParentChildList) {
     auto s = make_scene();
-    NodeId parent = scene_create_node(s.get(), "Parent", NodeType::Node3D);
-    NodeId child  = scene_create_node(s.get(), "Child", NodeType::Node3D, parent);
+    NodeId parent = scene_create_node(s.get(), "Parent", "Node3D");
+    NodeId child  = scene_create_node(s.get(), "Child", "Node3D", parent);
 
     SceneNode* pn = scene_get_node(s.get(), parent);
     ASSERT_NE(pn, nullptr);
@@ -223,7 +223,7 @@ TEST(SceneTest, CreateNode_WithParent_AddsToParentChildList) {
 
 TEST(SceneTest, CreateNode_HasIdentityLocalTransform) {
     auto s = make_scene();
-    NodeId id = scene_create_node(s.get(), "Node", NodeType::Node3D);
+    NodeId id = scene_create_node(s.get(), "Node", "Node3D");
     SceneNode* n = scene_get_node(s.get(), id);
     ASSERT_NE(n, nullptr);
 
@@ -244,7 +244,7 @@ TEST(SceneTest, CreateNode_HasIdentityLocalTransform) {
 
 TEST(SceneTest, CreateNode_HasActiveAndVisibleFlags) {
     auto s = make_scene();
-    NodeId id = scene_create_node(s.get(), "Node", NodeType::Node3D);
+    NodeId id = scene_create_node(s.get(), "Node", "Node3D");
     SceneNode* n = scene_get_node(s.get(), id);
     ASSERT_NE(n, nullptr);
     EXPECT_TRUE(n->flags & NODE_FLAG_ACTIVE);
@@ -255,13 +255,13 @@ TEST(SceneTest, CreateNode_NodeCountIncrementsOnEachCreate) {
     auto s = make_scene();
     EXPECT_EQ(s->node_count, 0u);
 
-    scene_create_node(s.get(), "A", NodeType::Node3D);
+    scene_create_node(s.get(), "A", "Node3D");
     EXPECT_EQ(s->node_count, 1u);
 
-    scene_create_node(s.get(), "B", NodeType::Node3D);
+    scene_create_node(s.get(), "B", "Node3D");
     EXPECT_EQ(s->node_count, 2u);
 
-    scene_create_node(s.get(), "C", NodeType::Node3D);
+    scene_create_node(s.get(), "C", "Node3D");
     EXPECT_EQ(s->node_count, 3u);
 }
 
@@ -272,7 +272,7 @@ TEST(SceneTest, CreateNode_SceneFull_ReturnsInvalidId) {
     s->node_count = kSceneMaxNodes - 1;
     s->next_id    = kSceneMaxNodes;
 
-    NodeId id = scene_create_node(s.get(), "Overflow", NodeType::Node3D);
+    NodeId id = scene_create_node(s.get(), "Overflow", "Node3D");
     EXPECT_EQ(id, kNodeIdInvalid);
 }
 
@@ -284,20 +284,20 @@ TEST(SceneTest, CreateNode_SceneFullViaNodeCount_ReturnsInvalidId) {
     // then hits the next_id >= kSceneMaxNodes guard.
     s->next_id = kSceneMaxNodes;
 
-    NodeId id = scene_create_node(s.get(), "X", NodeType::Node3D);
+    NodeId id = scene_create_node(s.get(), "X", "Node3D");
     EXPECT_EQ(id, kNodeIdInvalid);
 }
 
 TEST(SceneTest, CreateNode_SlotReuseAfterDestroy) {
     auto s = make_scene();
-    NodeId id1 = scene_create_node(s.get(), "A", NodeType::Node3D);
+    NodeId id1 = scene_create_node(s.get(), "A", "Node3D");
     ASSERT_GT(id1, kNodeIdInvalid);
 
     scene_destroy_node(s.get(), id1);
     EXPECT_EQ(s->node_count, 0u);
 
     // Create a second node — it should reclaim the dead slot at id1.
-    NodeId id2 = scene_create_node(s.get(), "B", NodeType::Node3D);
+    NodeId id2 = scene_create_node(s.get(), "B", "Node3D");
     EXPECT_EQ(id2, id1) << "Expected slot reuse: id2 should equal id1";
     EXPECT_EQ(s->node_count, 1u);
 }
@@ -308,7 +308,7 @@ TEST(SceneTest, CreateNode_SlotReuseAfterDestroy) {
 
 TEST(SceneTest, DestroyNode_DecrementsNodeCount) {
     auto s = make_scene();
-    NodeId id = scene_create_node(s.get(), "Node", NodeType::Node3D);
+    NodeId id = scene_create_node(s.get(), "Node", "Node3D");
     ASSERT_EQ(s->node_count, 1u);
 
     scene_destroy_node(s.get(), id);
@@ -318,7 +318,7 @@ TEST(SceneTest, DestroyNode_DecrementsNodeCount) {
 
 TEST(SceneTest, DestroyNode_MarksSlotDead) {
     auto s = make_scene();
-    NodeId id = scene_create_node(s.get(), "Node", NodeType::Node3D);
+    NodeId id = scene_create_node(s.get(), "Node", "Node3D");
     scene_destroy_node(s.get(), id);
 
     EXPECT_EQ(scene_get_node(s.get(), id), nullptr);
@@ -326,8 +326,8 @@ TEST(SceneTest, DestroyNode_MarksSlotDead) {
 
 TEST(SceneTest, DestroyNode_RemovesFromParentChildList) {
     auto s = make_scene();
-    NodeId parent = scene_create_node(s.get(), "Parent", NodeType::Node3D);
-    NodeId child  = scene_create_node(s.get(), "Child",  NodeType::Node3D, parent);
+    NodeId parent = scene_create_node(s.get(), "Parent", "Node3D");
+    NodeId child  = scene_create_node(s.get(), "Child",  "Node3D", parent);
 
     {
         SceneNode* pn = scene_get_node(s.get(), parent);
@@ -345,9 +345,9 @@ TEST(SceneTest, DestroyNode_RemovesFromParentChildList) {
 
 TEST(SceneTest, DestroyNode_RecursivelyDestroysChildren) {
     auto s = make_scene();
-    NodeId root   = scene_create_node(s.get(), "Root",  NodeType::Node3D);
-    NodeId child  = scene_create_node(s.get(), "Child", NodeType::Node3D, root);
-    NodeId grchild= scene_create_node(s.get(), "GC",    NodeType::Node3D, child);
+    NodeId root   = scene_create_node(s.get(), "Root",  "Node3D");
+    NodeId child  = scene_create_node(s.get(), "Child", "Node3D", root);
+    NodeId grchild= scene_create_node(s.get(), "GC",    "Node3D", child);
     ASSERT_EQ(s->node_count, 3u);
 
     scene_destroy_node(s.get(), root);
@@ -374,7 +374,7 @@ TEST(SceneTest, DestroyNode_IdOutOfBounds_DoesNotCrash) {
 
 TEST(SceneTest, DestroyNode_AlreadyDeadSlot_DoesNotCrash_CountUnchanged) {
     auto s = make_scene();
-    NodeId id = scene_create_node(s.get(), "Node", NodeType::Node3D);
+    NodeId id = scene_create_node(s.get(), "Node", "Node3D");
     scene_destroy_node(s.get(), id);
     ASSERT_EQ(s->node_count, 0u);
 
@@ -385,10 +385,10 @@ TEST(SceneTest, DestroyNode_AlreadyDeadSlot_DoesNotCrash_CountUnchanged) {
 
 TEST(SceneTest, DestroyNode_MultipleChildren_AllRemovedFromParentList) {
     auto s = make_scene();
-    NodeId parent = scene_create_node(s.get(), "P", NodeType::Node3D);
-    NodeId c1     = scene_create_node(s.get(), "C1", NodeType::Node3D, parent);
-    NodeId c2     = scene_create_node(s.get(), "C2", NodeType::Node3D, parent);
-    NodeId c3     = scene_create_node(s.get(), "C3", NodeType::Node3D, parent);
+    NodeId parent = scene_create_node(s.get(), "P", "Node3D");
+    NodeId c1     = scene_create_node(s.get(), "C1", "Node3D", parent);
+    NodeId c2     = scene_create_node(s.get(), "C2", "Node3D", parent);
+    NodeId c3     = scene_create_node(s.get(), "C3", "Node3D", parent);
     ASSERT_EQ(s->node_count, 4u);
 
     // Destroy middle child c2 individually.
@@ -408,9 +408,9 @@ TEST(SceneTest, DestroyNode_MultipleChildren_AllRemovedFromParentList) {
 
 TEST(SceneTest, SetParent_ReparentsBetweenTwoParents) {
     auto s = make_scene();
-    NodeId pa = scene_create_node(s.get(), "ParentA", NodeType::Node3D);
-    NodeId pb = scene_create_node(s.get(), "ParentB", NodeType::Node3D);
-    NodeId ch = scene_create_node(s.get(), "Child",   NodeType::Node3D, pa);
+    NodeId pa = scene_create_node(s.get(), "ParentA", "Node3D");
+    NodeId pb = scene_create_node(s.get(), "ParentB", "Node3D");
+    NodeId ch = scene_create_node(s.get(), "Child",   "Node3D", pa);
 
     {
         SceneNode* pan = scene_get_node(s.get(), pa);
@@ -433,8 +433,8 @@ TEST(SceneTest, SetParent_ReparentsBetweenTwoParents) {
 
 TEST(SceneTest, SetParent_ToInvalid_MakesNodeRoot) {
     auto s = make_scene();
-    NodeId parent = scene_create_node(s.get(), "Parent", NodeType::Node3D);
-    NodeId child  = scene_create_node(s.get(), "Child",  NodeType::Node3D, parent);
+    NodeId parent = scene_create_node(s.get(), "Parent", "Node3D");
+    NodeId child  = scene_create_node(s.get(), "Child",  "Node3D", parent);
 
     bool ok = scene_set_parent(s.get(), child, kNodeIdInvalid);
     EXPECT_TRUE(ok);
@@ -460,7 +460,7 @@ TEST(SceneTest, SetParent_IdOutOfBounds_ReturnsFalse) {
 
 TEST(SceneTest, SetParent_DeadNode_ReturnsFalse) {
     auto s = make_scene();
-    NodeId id = scene_create_node(s.get(), "Node", NodeType::Node3D);
+    NodeId id = scene_create_node(s.get(), "Node", "Node3D");
     scene_destroy_node(s.get(), id);
 
     bool ok = scene_set_parent(s.get(), id, kNodeIdInvalid);
@@ -469,7 +469,7 @@ TEST(SceneTest, SetParent_DeadNode_ReturnsFalse) {
 
 TEST(SceneTest, SetParent_InvalidNewParent_ReturnsFalse) {
     auto s = make_scene();
-    NodeId id = scene_create_node(s.get(), "Node", NodeType::Node3D);
+    NodeId id = scene_create_node(s.get(), "Node", "Node3D");
 
     // A non-zero new_parent that is out of bounds must fail.
     bool ok = scene_set_parent(s.get(), id, kSceneMaxNodes);
@@ -478,8 +478,8 @@ TEST(SceneTest, SetParent_InvalidNewParent_ReturnsFalse) {
 
 TEST(SceneTest, SetParent_DeadNewParent_ReturnsFalse) {
     auto s = make_scene();
-    NodeId id      = scene_create_node(s.get(), "Node",  NodeType::Node3D);
-    NodeId dead_p  = scene_create_node(s.get(), "DeadP", NodeType::Node3D);
+    NodeId id      = scene_create_node(s.get(), "Node",  "Node3D");
+    NodeId dead_p  = scene_create_node(s.get(), "DeadP", "Node3D");
     scene_destroy_node(s.get(), dead_p);
 
     bool ok = scene_set_parent(s.get(), id, dead_p);
@@ -488,7 +488,7 @@ TEST(SceneTest, SetParent_DeadNewParent_ReturnsFalse) {
 
 TEST(SceneTest, SetParent_SelfParent_ReturnsFalse) {
     auto s = make_scene();
-    NodeId id = scene_create_node(s.get(), "Node", NodeType::Node3D);
+    NodeId id = scene_create_node(s.get(), "Node", "Node3D");
 
     bool ok = scene_set_parent(s.get(), id, id);
     EXPECT_FALSE(ok);
@@ -497,9 +497,9 @@ TEST(SceneTest, SetParent_SelfParent_ReturnsFalse) {
 TEST(SceneTest, SetParent_WouldCreateCycle_ReturnsFalse) {
     // parent -> child -> grandchild; try to make parent a child of grandchild.
     auto s = make_scene();
-    NodeId root = scene_create_node(s.get(), "Root", NodeType::Node3D);
-    NodeId mid  = scene_create_node(s.get(), "Mid",  NodeType::Node3D, root);
-    NodeId leaf = scene_create_node(s.get(), "Leaf", NodeType::Node3D, mid);
+    NodeId root = scene_create_node(s.get(), "Root", "Node3D");
+    NodeId mid  = scene_create_node(s.get(), "Mid",  "Node3D", root);
+    NodeId leaf = scene_create_node(s.get(), "Leaf", "Node3D", mid);
 
     // Setting root's parent to leaf would make root a descendant of leaf,
     // which is already a descendant of root — a cycle.
@@ -509,8 +509,8 @@ TEST(SceneTest, SetParent_WouldCreateCycle_ReturnsFalse) {
 
 TEST(SceneTest, SetParent_SameParent_ReturnsTrueIsNoop) {
     auto s = make_scene();
-    NodeId parent = scene_create_node(s.get(), "P", NodeType::Node3D);
-    NodeId child  = scene_create_node(s.get(), "C", NodeType::Node3D, parent);
+    NodeId parent = scene_create_node(s.get(), "P", "Node3D");
+    NodeId child  = scene_create_node(s.get(), "C", "Node3D", parent);
 
     // Reparenting to the same parent is a documented no-op that returns true.
     bool ok = scene_set_parent(s.get(), child, parent);
@@ -529,7 +529,7 @@ TEST(SceneTest, SetParent_SameParent_ReturnsTrueIsNoop) {
 
 TEST(SceneTest, GetNode_ValidAliveNode_ReturnsNonNull) {
     auto s = make_scene();
-    NodeId id = scene_create_node(s.get(), "Node", NodeType::Node3D);
+    NodeId id = scene_create_node(s.get(), "Node", "Node3D");
 
     SceneNode* n = scene_get_node(s.get(), id);
     ASSERT_NE(n, nullptr);
@@ -555,7 +555,7 @@ TEST(SceneTest, GetNode_IdAtOrAboveMaxNodes_ReturnsNull) {
 
 TEST(SceneTest, GetNode_DeadSlot_ReturnsNull) {
     auto s = make_scene();
-    NodeId id = scene_create_node(s.get(), "Node", NodeType::Node3D);
+    NodeId id = scene_create_node(s.get(), "Node", "Node3D");
     scene_destroy_node(s.get(), id);
 
     EXPECT_EQ(scene_get_node(s.get(), id), nullptr);
@@ -563,7 +563,7 @@ TEST(SceneTest, GetNode_DeadSlot_ReturnsNull) {
 
 TEST(SceneTest, GetNode_ConstOverload_ValidNode_ReturnsNonNull) {
     auto s = make_scene();
-    NodeId id = scene_create_node(s.get(), "Node", NodeType::Node3D);
+    NodeId id = scene_create_node(s.get(), "Node", "Node3D");
 
     const Scene* cs = s.get();
     const SceneNode* n = scene_get_node(cs, id);
@@ -581,7 +581,7 @@ TEST(SceneTest, GetNode_ConstOverload_InvalidId_ReturnsNull) {
 
 TEST(SceneTest, GetNode_ConstOverload_DeadSlot_ReturnsNull) {
     auto s = make_scene();
-    NodeId id = scene_create_node(s.get(), "Node", NodeType::Node3D);
+    NodeId id = scene_create_node(s.get(), "Node", "Node3D");
     scene_destroy_node(s.get(), id);
 
     const Scene* cs = s.get();
@@ -594,7 +594,7 @@ TEST(SceneTest, GetNode_ConstOverload_DeadSlot_ReturnsNull) {
 
 TEST(SceneTest, FindByName_ExistingNode_ReturnsItsId) {
     auto s = make_scene();
-    NodeId id = scene_create_node(s.get(), "PlayerSpawn", NodeType::Node3D);
+    NodeId id = scene_create_node(s.get(), "PlayerSpawn", "Node3D");
 
     NodeId found = scene_find_by_name(s.get(), "PlayerSpawn");
     EXPECT_EQ(found, id);
@@ -602,7 +602,7 @@ TEST(SceneTest, FindByName_ExistingNode_ReturnsItsId) {
 
 TEST(SceneTest, FindByName_NonexistentName_ReturnsInvalid) {
     auto s = make_scene();
-    scene_create_node(s.get(), "Alpha", NodeType::Node3D);
+    scene_create_node(s.get(), "Alpha", "Node3D");
 
     NodeId found = scene_find_by_name(s.get(), "Beta");
     EXPECT_EQ(found, kNodeIdInvalid);
@@ -615,14 +615,14 @@ TEST(SceneTest, FindByName_EmptyScene_ReturnsInvalid) {
 
 TEST(SceneTest, FindByName_NullName_ReturnsInvalid) {
     auto s = make_scene();
-    scene_create_node(s.get(), "Node", NodeType::Node3D);
+    scene_create_node(s.get(), "Node", "Node3D");
     EXPECT_EQ(scene_find_by_name(s.get(), nullptr), kNodeIdInvalid);
 }
 
 TEST(SceneTest, FindByName_MultipleNodesShareName_DoesNotCrash_ReturnsOneOfThem) {
     auto s = make_scene();
-    NodeId id1 = scene_create_node(s.get(), "Duplicate", NodeType::Node3D);
-    NodeId id2 = scene_create_node(s.get(), "Duplicate", NodeType::Node3D);
+    NodeId id1 = scene_create_node(s.get(), "Duplicate", "Node3D");
+    NodeId id2 = scene_create_node(s.get(), "Duplicate", "Node3D");
     (void)id2; // Both exist; we just verify no crash and that one is returned.
 
     NodeId found = scene_find_by_name(s.get(), "Duplicate");
@@ -632,7 +632,7 @@ TEST(SceneTest, FindByName_MultipleNodesShareName_DoesNotCrash_ReturnsOneOfThem)
 
 TEST(SceneTest, FindByName_AfterDestroy_DoesNotFindDeadNode) {
     auto s = make_scene();
-    NodeId id = scene_create_node(s.get(), "Temp", NodeType::Node3D);
+    NodeId id = scene_create_node(s.get(), "Temp", "Node3D");
     scene_destroy_node(s.get(), id);
 
     EXPECT_EQ(scene_find_by_name(s.get(), "Temp"), kNodeIdInvalid);
@@ -644,9 +644,9 @@ TEST(SceneTest, FindByName_AfterDestroy_DoesNotFindDeadNode) {
 
 TEST(SceneTest, IterChildren_IteratesDirectChildrenOnly_NotGrandchildren) {
     auto s = make_scene();
-    NodeId root  = scene_create_node(s.get(), "Root",  NodeType::Node3D);
-    NodeId child = scene_create_node(s.get(), "Child", NodeType::Node3D, root);
-    /* NodeId gc = */ scene_create_node(s.get(), "GC", NodeType::Node3D, child);
+    NodeId root  = scene_create_node(s.get(), "Root",  "Node3D");
+    NodeId child = scene_create_node(s.get(), "Child", "Node3D", root);
+    /* NodeId gc = */ scene_create_node(s.get(), "GC", "Node3D", child);
 
     ChildAccum acc;
     scene_iter_children(s.get(), root, accum_fn, &acc);
@@ -657,10 +657,10 @@ TEST(SceneTest, IterChildren_IteratesDirectChildrenOnly_NotGrandchildren) {
 
 TEST(SceneTest, IterChildren_ParentInvalid_IteratesRootLevelNodes) {
     auto s = make_scene();
-    NodeId r1 = scene_create_node(s.get(), "R1", NodeType::Node3D);
-    NodeId r2 = scene_create_node(s.get(), "R2", NodeType::Node3D);
+    NodeId r1 = scene_create_node(s.get(), "R1", "Node3D");
+    NodeId r2 = scene_create_node(s.get(), "R2", "Node3D");
     // Child under r1 should NOT appear.
-    scene_create_node(s.get(), "R1Child", NodeType::Node3D, r1);
+    scene_create_node(s.get(), "R1Child", "Node3D", r1);
 
     ChildAccum acc;
     scene_iter_children(s.get(), kNodeIdInvalid, accum_fn, &acc);
@@ -678,10 +678,10 @@ TEST(SceneTest, IterChildren_ParentInvalid_IteratesRootLevelNodes) {
 
 TEST(SceneTest, IterChildren_CallsFnForEachChild) {
     auto s = make_scene();
-    NodeId parent = scene_create_node(s.get(), "P", NodeType::Node3D);
-    NodeId c1 = scene_create_node(s.get(), "C1", NodeType::Node3D, parent);
-    NodeId c2 = scene_create_node(s.get(), "C2", NodeType::Node3D, parent);
-    NodeId c3 = scene_create_node(s.get(), "C3", NodeType::Node3D, parent);
+    NodeId parent = scene_create_node(s.get(), "P", "Node3D");
+    NodeId c1 = scene_create_node(s.get(), "C1", "Node3D", parent);
+    NodeId c2 = scene_create_node(s.get(), "C2", "Node3D", parent);
+    NodeId c3 = scene_create_node(s.get(), "C3", "Node3D", parent);
 
     ChildAccum acc;
     scene_iter_children(s.get(), parent, accum_fn, &acc);
@@ -700,10 +700,10 @@ TEST(SceneTest, IterChildren_CallsFnForEachChild) {
 
 TEST(SceneTest, IterChildren_StopsEarlyWhenFnReturnsFalse) {
     auto s = make_scene();
-    NodeId parent = scene_create_node(s.get(), "P", NodeType::Node3D);
-    scene_create_node(s.get(), "C1", NodeType::Node3D, parent);
-    scene_create_node(s.get(), "C2", NodeType::Node3D, parent);
-    scene_create_node(s.get(), "C3", NodeType::Node3D, parent);
+    NodeId parent = scene_create_node(s.get(), "P", "Node3D");
+    scene_create_node(s.get(), "C1", "Node3D", parent);
+    scene_create_node(s.get(), "C2", "Node3D", parent);
+    scene_create_node(s.get(), "C3", "Node3D", parent);
 
     ChildAccum acc;
     acc.stop_after_first = true;
@@ -714,8 +714,8 @@ TEST(SceneTest, IterChildren_StopsEarlyWhenFnReturnsFalse) {
 
 TEST(SceneTest, IterChildren_NullFn_DoesNotCrash) {
     auto s = make_scene();
-    NodeId parent = scene_create_node(s.get(), "P", NodeType::Node3D);
-    scene_create_node(s.get(), "C", NodeType::Node3D, parent);
+    NodeId parent = scene_create_node(s.get(), "P", "Node3D");
+    scene_create_node(s.get(), "C", "Node3D", parent);
     // Passing null fn must be a silent no-op.
     scene_iter_children(s.get(), parent, nullptr, nullptr);
     EXPECT_EQ(s->node_count, 2u);
@@ -734,7 +734,7 @@ TEST(SceneTest, IterChildren_EmptyScene_NoCrash_ZeroCallbacks) {
 
 TEST(SceneTest, GetWorldTransform_IdentityNode_ReturnsIdentityMatrix) {
     auto s = make_scene();
-    NodeId id = scene_create_node(s.get(), "Node", NodeType::Node3D);
+    NodeId id = scene_create_node(s.get(), "Node", "Node3D");
 
     Mat4 wt = scene_get_world_transform(s.get(), id);
     Mat4 expected = Mat4::identity();
@@ -745,7 +745,7 @@ TEST(SceneTest, GetWorldTransform_IdentityNode_ReturnsIdentityMatrix) {
 
 TEST(SceneTest, GetWorldTransform_NodeWithTranslation_TranslationAppearsInMatrix) {
     auto s = make_scene();
-    NodeId id = scene_create_node(s.get(), "Translated", NodeType::Node3D);
+    NodeId id = scene_create_node(s.get(), "Translated", "Node3D");
 
     SceneNode* n = scene_get_node(s.get(), id);
     ASSERT_NE(n, nullptr);
@@ -761,8 +761,8 @@ TEST(SceneTest, GetWorldTransform_NodeWithTranslation_TranslationAppearsInMatrix
 
 TEST(SceneTest, GetWorldTransform_ChildWorldTransform_IncludesParentTranslation) {
     auto s = make_scene();
-    NodeId parent = scene_create_node(s.get(), "Parent", NodeType::Node3D);
-    NodeId child  = scene_create_node(s.get(), "Child",  NodeType::Node3D, parent);
+    NodeId parent = scene_create_node(s.get(), "Parent", "Node3D");
+    NodeId child  = scene_create_node(s.get(), "Child",  "Node3D", parent);
 
     {
         SceneNode* pn = scene_get_node(s.get(), parent);
@@ -796,7 +796,7 @@ TEST(SceneTest, GetWorldTransform_IdBeyondNextId_ReturnsIdentity) {
 
 TEST(SceneTest, GetWorldTransform_DeadSlot_ReturnsIdentity) {
     auto s = make_scene();
-    NodeId id = scene_create_node(s.get(), "Node", NodeType::Node3D);
+    NodeId id = scene_create_node(s.get(), "Node", "Node3D");
     scene_destroy_node(s.get(), id);
 
     Mat4 wt = scene_get_world_transform(s.get(), id);
@@ -809,7 +809,7 @@ TEST(SceneTest, GetWorldTransform_DeadSlot_ReturnsIdentity) {
 
 TEST(SceneTest, UpdateWorldTransforms_AliveRootNode_WorldEqualsLocalMat) {
     auto s = make_scene();
-    NodeId id = scene_create_node(s.get(), "Root", NodeType::Node3D);
+    NodeId id = scene_create_node(s.get(), "Root", "Node3D");
 
     SceneNode* n = scene_get_node(s.get(), id);
     ASSERT_NE(n, nullptr);
@@ -823,8 +823,8 @@ TEST(SceneTest, UpdateWorldTransforms_AliveRootNode_WorldEqualsLocalMat) {
 
 TEST(SceneTest, UpdateWorldTransforms_ChildWorldEqualsParentWorldTimesLocalMat) {
     auto s = make_scene();
-    NodeId parent = scene_create_node(s.get(), "Parent", NodeType::Node3D);
-    NodeId child  = scene_create_node(s.get(), "Child",  NodeType::Node3D, parent);
+    NodeId parent = scene_create_node(s.get(), "Parent", "Node3D");
+    NodeId child  = scene_create_node(s.get(), "Child",  "Node3D", parent);
 
     {
         SceneNode* pn = scene_get_node(s.get(), parent);
@@ -852,9 +852,9 @@ TEST(SceneTest, UpdateWorldTransforms_ChildWorldEqualsParentWorldTimesLocalMat) 
 
 TEST(SceneTest, UpdateWorldTransforms_ThreeLevelsDeep_GrandchildCorrect) {
     auto s = make_scene();
-    NodeId grand = scene_create_node(s.get(), "GP",    NodeType::Node3D);
-    NodeId mid   = scene_create_node(s.get(), "Mid",   NodeType::Node3D, grand);
-    NodeId leaf  = scene_create_node(s.get(), "Leaf",  NodeType::Node3D, mid);
+    NodeId grand = scene_create_node(s.get(), "GP",    "Node3D");
+    NodeId mid   = scene_create_node(s.get(), "Mid",   "Node3D", grand);
+    NodeId leaf  = scene_create_node(s.get(), "Leaf",  "Node3D", mid);
 
     scene_get_node(s.get(), grand)->local_transform.position = {1.0f, 0.0f, 0.0f, 0.0f};
     scene_get_node(s.get(), mid  )->local_transform.position = {2.0f, 0.0f, 0.0f, 0.0f};
@@ -880,7 +880,7 @@ TEST(SceneTest, UpdateWorldTransforms_EmptyScene_DoesNotCrash) {
 
 TEST(SceneTest, CollectVisible_NodeAtOrigin_IsInsideBoxFrustum) {
     auto s = make_scene();
-    NodeId id = scene_create_node(s.get(), "Origin", NodeType::Node3D);
+    NodeId id = scene_create_node(s.get(), "Origin", "Node3D");
     scene_update_world_transforms(s.get());
 
     Frustum f = make_box_frustum(10.0f);
@@ -893,8 +893,8 @@ TEST(SceneTest, CollectVisible_NodeAtOrigin_IsInsideBoxFrustum) {
 
 TEST(SceneTest, CollectVisible_NodeFarOutside_IsNotCollected) {
     auto s = make_scene();
-    NodeId in_node  = scene_create_node(s.get(), "Inside",  NodeType::Node3D);
-    NodeId out_node = scene_create_node(s.get(), "Outside", NodeType::Node3D);
+    NodeId in_node  = scene_create_node(s.get(), "Inside",  "Node3D");
+    NodeId out_node = scene_create_node(s.get(), "Outside", "Node3D");
 
     // Move 'out_node' far outside the frustum.
     scene_get_node(s.get(), out_node)->local_transform.position = {100.0f, 0.0f, 0.0f, 0.0f};
@@ -911,7 +911,7 @@ TEST(SceneTest, CollectVisible_NodeFarOutside_IsNotCollected) {
 TEST(SceneTest, CollectVisible_RespectsMaxCountLimit) {
     auto s = make_scene();
     for (int i = 0; i < 5; ++i) {
-        scene_create_node(s.get(), "N", NodeType::Node3D);
+        scene_create_node(s.get(), "N", "Node3D");
     }
     scene_update_world_transforms(s.get());
 
@@ -925,7 +925,7 @@ TEST(SceneTest, CollectVisible_RespectsMaxCountLimit) {
 
 TEST(SceneTest, CollectVisible_InvisibleNode_IsNotCollected) {
     auto s = make_scene();
-    NodeId id = scene_create_node(s.get(), "Hidden", NodeType::Node3D);
+    NodeId id = scene_create_node(s.get(), "Hidden", "Node3D");
     // Clear the VISIBLE flag.
     scene_get_node(s.get(), id)->flags &= ~static_cast<uint16_t>(NODE_FLAG_VISIBLE);
     scene_update_world_transforms(s.get());
@@ -947,7 +947,7 @@ TEST(SceneTest, CollectVisible_EmptyScene_ReturnsZero) {
 
 TEST(SceneTest, CollectVisible_NullOutNodes_ReturnsZero_NoCrash) {
     auto s = make_scene();
-    scene_create_node(s.get(), "Node", NodeType::Node3D);
+    scene_create_node(s.get(), "Node", "Node3D");
     scene_update_world_transforms(s.get());
 
     Frustum f = make_box_frustum(10.0f);
@@ -957,7 +957,7 @@ TEST(SceneTest, CollectVisible_NullOutNodes_ReturnsZero_NoCrash) {
 
 TEST(SceneTest, CollectVisible_MaxCountZero_ReturnsZero_NoCrash) {
     auto s = make_scene();
-    scene_create_node(s.get(), "Node", NodeType::Node3D);
+    scene_create_node(s.get(), "Node", "Node3D");
     scene_update_world_transforms(s.get());
 
     Frustum f = make_box_frustum(10.0f);
@@ -969,7 +969,7 @@ TEST(SceneTest, CollectVisible_MaxCountZero_ReturnsZero_NoCrash) {
 TEST(SceneTest, CollectVisible_NodeOnFrustumBoundary_IsInside) {
     // Node at exactly x=10 — the plane equation: 1*10 + 10 = 20 >= 0 (inside).
     auto s = make_scene();
-    NodeId id = scene_create_node(s.get(), "Boundary", NodeType::Node3D);
+    NodeId id = scene_create_node(s.get(), "Boundary", "Node3D");
     scene_get_node(s.get(), id)->local_transform.position = {10.0f, 0.0f, 0.0f, 0.0f};
     scene_update_world_transforms(s.get());
 
@@ -987,32 +987,32 @@ TEST(SceneTest, CollectVisible_NodeOnFrustumBoundary_IsInside) {
 
 TEST(SceneTest, IsDescendantOf_DirectChild_IsDescendantOfParent) {
     auto s = make_scene();
-    NodeId parent = scene_create_node(s.get(), "P", NodeType::Node3D);
-    NodeId child  = scene_create_node(s.get(), "C", NodeType::Node3D, parent);
+    NodeId parent = scene_create_node(s.get(), "P", "Node3D");
+    NodeId child  = scene_create_node(s.get(), "C", "Node3D", parent);
 
     EXPECT_TRUE(scene_is_descendant_of(s.get(), child, parent));
 }
 
 TEST(SceneTest, IsDescendantOf_Grandchild_IsDescendantOfGrandparent) {
     auto s = make_scene();
-    NodeId gp   = scene_create_node(s.get(), "GP",    NodeType::Node3D);
-    NodeId mid  = scene_create_node(s.get(), "Mid",   NodeType::Node3D, gp);
-    NodeId leaf = scene_create_node(s.get(), "Leaf",  NodeType::Node3D, mid);
+    NodeId gp   = scene_create_node(s.get(), "GP",    "Node3D");
+    NodeId mid  = scene_create_node(s.get(), "Mid",   "Node3D", gp);
+    NodeId leaf = scene_create_node(s.get(), "Leaf",  "Node3D", mid);
 
     EXPECT_TRUE(scene_is_descendant_of(s.get(), leaf, gp));
 }
 
 TEST(SceneTest, IsDescendantOf_NodeIsNotDescendantOfItself) {
     auto s = make_scene();
-    NodeId id = scene_create_node(s.get(), "Node", NodeType::Node3D);
+    NodeId id = scene_create_node(s.get(), "Node", "Node3D");
 
     EXPECT_FALSE(scene_is_descendant_of(s.get(), id, id));
 }
 
 TEST(SceneTest, IsDescendantOf_UnrelatedNodes_ReturnsFalse) {
     auto s = make_scene();
-    NodeId a = scene_create_node(s.get(), "A", NodeType::Node3D);
-    NodeId b = scene_create_node(s.get(), "B", NodeType::Node3D);
+    NodeId a = scene_create_node(s.get(), "A", "Node3D");
+    NodeId b = scene_create_node(s.get(), "B", "Node3D");
 
     EXPECT_FALSE(scene_is_descendant_of(s.get(), a, b));
     EXPECT_FALSE(scene_is_descendant_of(s.get(), b, a));
@@ -1020,22 +1020,22 @@ TEST(SceneTest, IsDescendantOf_UnrelatedNodes_ReturnsFalse) {
 
 TEST(SceneTest, IsDescendantOf_ParentIsNotDescendantOfChild) {
     auto s = make_scene();
-    NodeId parent = scene_create_node(s.get(), "P", NodeType::Node3D);
-    NodeId child  = scene_create_node(s.get(), "C", NodeType::Node3D, parent);
+    NodeId parent = scene_create_node(s.get(), "P", "Node3D");
+    NodeId child  = scene_create_node(s.get(), "C", "Node3D", parent);
 
     EXPECT_FALSE(scene_is_descendant_of(s.get(), parent, child));
 }
 
 TEST(SceneTest, IsDescendantOf_InvalidDescendantId_ReturnsFalse) {
     auto s = make_scene();
-    NodeId id = scene_create_node(s.get(), "Node", NodeType::Node3D);
+    NodeId id = scene_create_node(s.get(), "Node", "Node3D");
 
     EXPECT_FALSE(scene_is_descendant_of(s.get(), kNodeIdInvalid, id));
 }
 
 TEST(SceneTest, IsDescendantOf_InvalidAncestorId_ReturnsFalse) {
     auto s = make_scene();
-    NodeId id = scene_create_node(s.get(), "Node", NodeType::Node3D);
+    NodeId id = scene_create_node(s.get(), "Node", "Node3D");
 
     EXPECT_FALSE(scene_is_descendant_of(s.get(), id, kNodeIdInvalid));
 }
@@ -1047,22 +1047,22 @@ TEST(SceneTest, IsDescendantOf_BothInvalid_ReturnsFalse) {
 
 TEST(SceneTest, IsDescendantOf_AncestorOutOfBounds_ReturnsFalse) {
     auto s = make_scene();
-    NodeId id = scene_create_node(s.get(), "Node", NodeType::Node3D);
+    NodeId id = scene_create_node(s.get(), "Node", "Node3D");
 
     EXPECT_FALSE(scene_is_descendant_of(s.get(), id, kSceneMaxNodes));
 }
 
 TEST(SceneTest, IsDescendantOf_DescendantOutOfBounds_ReturnsFalse) {
     auto s = make_scene();
-    NodeId id = scene_create_node(s.get(), "Node", NodeType::Node3D);
+    NodeId id = scene_create_node(s.get(), "Node", "Node3D");
 
     EXPECT_FALSE(scene_is_descendant_of(s.get(), kSceneMaxNodes, id));
 }
 
 TEST(SceneTest, IsDescendantOf_DeadAncestor_ReturnsFalse) {
     auto s = make_scene();
-    NodeId ancestor   = scene_create_node(s.get(), "A", NodeType::Node3D);
-    NodeId descendant = scene_create_node(s.get(), "D", NodeType::Node3D, ancestor);
+    NodeId ancestor   = scene_create_node(s.get(), "A", "Node3D");
+    NodeId descendant = scene_create_node(s.get(), "D", "Node3D", ancestor);
     scene_destroy_node(s.get(), ancestor);
 
     // ancestor is dead, descendant is also dead (recursive destroy).
@@ -1075,12 +1075,12 @@ TEST(SceneTest, IsDescendantOf_DeadAncestor_ReturnsFalse) {
 
 TEST(SceneTest, Integration_CreateDestroyCreateReusesSlot_FindByNameWorks) {
     auto s = make_scene();
-    NodeId first = scene_create_node(s.get(), "Temp", NodeType::Node3D);
+    NodeId first = scene_create_node(s.get(), "Temp", "Node3D");
     ASSERT_GT(first, kNodeIdInvalid);
     scene_destroy_node(s.get(), first);
 
     // Slot should be reused.
-    NodeId second = scene_create_node(s.get(), "Reborn", NodeType::Node3D);
+    NodeId second = scene_create_node(s.get(), "Reborn", "Node3D");
     EXPECT_EQ(second, first);
     EXPECT_EQ(scene_find_by_name(s.get(), "Reborn"), second);
     EXPECT_EQ(scene_find_by_name(s.get(), "Temp"),   kNodeIdInvalid);
@@ -1088,9 +1088,9 @@ TEST(SceneTest, Integration_CreateDestroyCreateReusesSlot_FindByNameWorks) {
 
 TEST(SceneTest, Integration_SetParentAndGetWorldTransform_Consistent) {
     auto s = make_scene();
-    NodeId pa = scene_create_node(s.get(), "PA", NodeType::Node3D);
-    NodeId pb = scene_create_node(s.get(), "PB", NodeType::Node3D);
-    NodeId ch = scene_create_node(s.get(), "Ch", NodeType::Node3D, pa);
+    NodeId pa = scene_create_node(s.get(), "PA", "Node3D");
+    NodeId pb = scene_create_node(s.get(), "PB", "Node3D");
+    NodeId ch = scene_create_node(s.get(), "Ch", "Node3D", pa);
 
     // Give PA a non-trivial translation.
     scene_get_node(s.get(), pa)->local_transform.position = {4.0f, 0.0f, 0.0f, 0.0f};
@@ -1121,8 +1121,8 @@ TEST(SceneTest, Integration_SetParentAndGetWorldTransform_Consistent) {
 
 TEST(SceneTest, Integration_ClearThenRecreateNodesFromScratch) {
     auto s = make_scene("Level01");
-    NodeId id1 = scene_create_node(s.get(), "Node1", NodeType::Node3D);
-    NodeId id2 = scene_create_node(s.get(), "Node2", NodeType::Node3D, id1);
+    NodeId id1 = scene_create_node(s.get(), "Node1", "Node3D");
+    NodeId id2 = scene_create_node(s.get(), "Node2", "Node3D", id1);
     (void)id2;
     ASSERT_EQ(s->node_count, 2u);
 
@@ -1131,11 +1131,11 @@ TEST(SceneTest, Integration_ClearThenRecreateNodesFromScratch) {
     EXPECT_EQ(s->next_id,    1u);
 
     // After clear the scene is reusable.
-    NodeId fresh = scene_create_node(s.get(), "Fresh", NodeType::Camera);
+    NodeId fresh = scene_create_node(s.get(), "Fresh", "Camera");
     EXPECT_EQ(fresh, 1u) << "First node after clear should be at slot 1";
     EXPECT_EQ(s->node_count, 1u);
     SceneNode* fn = scene_get_node(s.get(), fresh);
     ASSERT_NE(fn, nullptr);
-    EXPECT_EQ(fn->type, NodeType::Camera);
+    EXPECT_STREQ(fn->type_name, "Camera");
     EXPECT_STREQ(fn->name, "Fresh");
 }

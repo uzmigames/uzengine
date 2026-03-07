@@ -26,7 +26,7 @@ LightState light_collect_primary(const Scene* scene) {
     // Find the first active DirectionalLight node.
     for (uint32_t i = 1; i < scene->next_id; ++i) {
         const SceneNode& node = scene->nodes[i];
-        if (!node.alive || node.type != NodeType::DirectionalLight) continue;
+        if (!node.alive || !component_has<DirectionalLightData>(&scene->components, i)) continue;
         if (!(node.flags & NODE_FLAG_ACTIVE)) continue;
 
         // Extract forward direction from world transform (Z column in LH).

@@ -15,6 +15,7 @@
 #include "engine/scene/scene_node.h"
 #include "engine/scene/component_data.h"
 #include "engine/scene/component_store.h"
+#include "engine/scene/component_registry.h"
 
 #include <nlohmann/json.hpp>
 
@@ -25,6 +26,21 @@
 #include <cstdio>
 #include <cstring>
 #include <vector>
+
+// Scale WebView screen coordinates to engine render resolution.
+// The JPEG stream is 2:1 downsampled (performReadback), so the WebView canvas
+// and all mouse coordinates are in half-resolution "stream space".  The engine's
+// projection / picking math works in full render space → scale up by 2×.
+static float scaleScreenX(float x, const uz::Renderer* r) {
+    if (!r) return x;
+    const uint32_t sw = r->streamWidth();
+    return sw > 0 ? x * static_cast<float>(r->getWidth()) / static_cast<float>(sw) : x;
+}
+static float scaleScreenY(float y, const uz::Renderer* r) {
+    if (!r) return y;
+    const uint32_t sh = r->streamHeight();
+    return sh > 0 ? y * static_cast<float>(r->getHeight()) / static_cast<float>(sh) : y;
+}
 
 void handleWsTextMessage(const std::string& text,
                          uz::SceneParams& g_scene,
@@ -51,8 +67,8 @@ void handleWsTextMessage(const std::string& text,
 
     // -- Node picking via screen-space distance -------------------------
     if (type == "editor.pickNode") {
-        const float sx = j.value("screen_x", 0.0f);
-        const float sy = j.value("screen_y", 0.0f);
+        const float sx = scaleScreenX(j.value("screen_x", 0.0f), g_renderer);
+        const float sy = scaleScreenY(j.value("screen_y", 0.0f), g_renderer);
         const int vpW  = g_renderer ? g_renderer->getWidth()  : 0;
         const int vpH  = g_renderer ? g_renderer->getHeight() : 0;
 
@@ -93,7 +109,7 @@ void handleWsTextMessage(const std::string& text,
             for (uint32_t i = 1; i < uz::kSceneMaxNodes; ++i) {
                 const auto& sn = g_sceneData->nodes[i];
                 if (!sn.alive) continue;
-                if (sn.type != uz::NodeType::StaticMesh) continue;
+                if (!uz::component_has<uz::StaticMeshData>(&g_sceneData->components, i)) continue;
 
                 // World position from world_transform column 3 (translation)
                 float wx = sn.world_transform.m[3][0];
@@ -224,8 +240,8 @@ void handleWsTextMessage(const std::string& text,
 
     // -- Gizmo begin drag — hit test axis handles ---------------------------
     if (type == "editor.gizmoBeginDrag") {
-        const float msx = j.value("screen_x", 0.0f);
-        const float msy = j.value("screen_y", 0.0f);
+        const float msx = scaleScreenX(j.value("screen_x", 0.0f), g_renderer);
+        const float msy = scaleScreenY(j.value("screen_y", 0.0f), g_renderer);
 
         const uint32_t selId = g_scene.selectedNodeId.load(std::memory_order_relaxed);
         if (selId == 0 || !g_renderer) {
@@ -396,8 +412,8 @@ void handleWsTextMessage(const std::string& text,
         if (!g_scene.gizmoDragging.load(std::memory_order_relaxed)) return;
         if (!g_renderer) return;
 
-        const float msx = j.value("screen_x", 0.0f);
-        const float msy = j.value("screen_y", 0.0f);
+        const float msx = scaleScreenX(j.value("screen_x", 0.0f), g_renderer);
+        const float msy = scaleScreenY(j.value("screen_y", 0.0f), g_renderer);
         const int axis = g_scene.gizmoActiveAxis.load(std::memory_order_relaxed);
         if (axis < 0 || axis > 2) return;
 
@@ -554,8 +570,8 @@ void handleWsTextMessage(const std::string& text,
         if (g_scene.gizmoDragging.load(std::memory_order_relaxed)) return;
 
         using namespace uz;
-        const float msx = j.value("screen_x", 0.0f);
-        const float msy = j.value("screen_y", 0.0f);
+        const float msx = scaleScreenX(j.value("screen_x", 0.0f), g_renderer);
+        const float msy = scaleScreenY(j.value("screen_y", 0.0f), g_renderer);
 
         uint32_t selId = g_scene.selectedNodeId.load(std::memory_order_relaxed);
         if (selId == 0) {

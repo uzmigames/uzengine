@@ -37,8 +37,20 @@ fov = 45.000000
 near = 0.100000
 far = 500.000000
 
+[node]
+name = StoneSphere
+type = StaticMesh
+parent =
+position = 0.000000 1.500000 0.000000
+rotation = 0.000000 0.000000 0.000000 1.000000
+scale = 1.000000 1.000000 1.000000
+active = true
+visible = true
+mesh = assets/meshes/sphere.gltf
+material = assets/materials/stonebricks.uzmat
+
 [editor]
-camera_position = -6.429574 2.901255 4.052699
-camera_yaw = 8.123997
-camera_pitch = -0.210000
+camera_position = 0.0 3.0 -5.0
+camera_yaw = 0.0
+camera_pitch = -0.300000
 camera_speed = 10.000000

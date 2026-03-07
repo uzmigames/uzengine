@@ -2,28 +2,40 @@
 
 ## Overview
 
-UzEngine uses **DirectX 12** as the primary render API. The render pipeline is **Forward+** (forward rendering with a light list built by a compute pre-pass), supporting PBR materials, cascaded shadow maps, and a post-process stack. The renderer outputs frames via the existing JPEG+WebSocket streaming pipeline for display in the VSCode viewport.
+UzEngine uses **DirectX 12** as the primary render API behind an RHI abstraction layer
+(`rhi.h`). The render pipeline is **Forward** with a single directional light, PBR materials,
+shadow mapping, IBL, and a multi-pass post-process stack. The renderer outputs frames via the
+JPEG+WebSocket streaming pipeline for display in the VSCode viewport.
+
+All rendering code lives in `src/engine/renderer/`. No DX12 types appear above the RHI layer
+(Rule RHI-1).
 
 ---
 
-## Pipeline Overview
+## Pipeline Overview (Actual Implementation)
 
 ```
 Per Frame:
 ────────────────────────────────────────────────────────────────────
-1. Frustum Cull          CPU — reject nodes outside camera frustum
-2. Build Draw Lists      CPU — sort opaque / transparent / shadow
-3. Shadow Pass           GPU — render shadow cascades (3 cascades)
-4. Depth Prepass         GPU — fill depth buffer, no color output
-5. Light Culling         GPU compute — tile-based light list (16x16 tiles)
-6. G-Buffer Pass         GPU — albedo, normal, roughness/metallic
-7. Deferred Lighting     GPU — PBR shading using G-Buffer + light list
-8. Forward Transparent   GPU — alpha-blended objects (sorted back-to-front)
-9. Skybox                GPU — cubemap sky rendered last (depth test = EQUAL)
-10. Post-Process         GPU — bloom, SSAO, tonemapping (ACEFilm)
-11. Readback             GPU→CPU — copy back buffer to CPU for JPEG encode
-12. JPEG Encode          CPU — libjpeg-turbo
-13. WebSocket Broadcast  CPU — send to VSCode extension
+CPU:
+  1. Scene Sync         — collect proxies, sync SkyAtmosphere, light
+  2. Light Collect      — light_collect_primary() from scene Sun node
+  3. IBL Dirty Check    — regenerate cubemaps if SkyAtmosphere changed
+
+GPU (via RenderGraph):
+  Pass 0: Shadow Depth    — depth-only from light perspective (2048x2048)
+  Pass 1: Scene HDR       — sky + PBR meshes into R11G11B10_FLOAT RT
+  Pass 2: SSAO            — 12-sample hemisphere, half-res
+  Pass 3: SSAO Blur       — bilateral blur (8-tap)
+  Pass 4: Bloom Down      — 5-mip progressive downsample
+  Pass 5: Bloom Up        — additive upsample chain
+  Pass 6: Composite       — HDR + SSAO + Bloom → ACES tonemap → backbuffer
+  Pass 7: Editor Overlays — grid, gizmos, selection outlines (stencil)
+  Pass 8: Readback        — copy backbuffer → CPU staging buffer
+
+CPU:
+  9. JPEG Encode        — libjpeg-turbo (quality=85, 4:2:0)
+ 10. WebSocket Send     — binary frame to VSCode extension
 ```
 
 ---
@@ -31,149 +43,239 @@ Per Frame:
 ## Frame Graph (Simplified)
 
 ```
-[Scene Nodes]
+[Scene Proxies]
      │
      ▼
-[Frustum Cull] → DrawList{opaque, transparent, shadow}
+[Light Collect] ──▶ LightState (direction, color, intensity, cameraPos)
      │
-     ├──▶ [Shadow Pass]          ShadowAtlas (2048×2048, 3 cascades)
-     │         │
-     ├──▶ [Depth Prepass]        DepthTarget (1280×720, D32_FLOAT)
-     │         │
-     ├──▶ [Light Cull Compute]   LightListBuffer
-     │         │
-     ├──▶ [G-Buffer Pass]        ─── GBuffer0: RGBA8 (albedo+ao)
-     │                           ─── GBuffer1: RGBA16F (normal)
-     │                           ─── GBuffer2: RGBA8 (roughness/metallic)
+     ├──▶ [Pass 0: Shadow Depth]  ShadowMap (2048x2048, D32_FLOAT)
      │
-     ├──▶ [Deferred Lighting]    HDR RenderTarget (R11G11B10F)
+     ├──▶ [Pass 1: Scene HDR]     HDR RT (R11G11B10_FLOAT) + Depth (D32_FLOAT)
+     │       │── Sky (procedural gradient + sun disk)
+     │       └── PBR Meshes (Cook-Torrance + IBL + POM + shadows)
      │
-     ├──▶ [Transparent Pass]     blended into HDR target
+     ├──▶ [Pass 2: SSAO]          SSAO RT (R8_UNORM, half-res)
+     ├──▶ [Pass 3: SSAO Blur]     SSAO Blur RT (R8_UNORM, half-res)
      │
-     ├──▶ [Skybox]               into HDR target
+     ├──▶ [Pass 4: Bloom Down]    Bloom mip chain (5 mips, R11G11B10_FLOAT)
+     ├──▶ [Pass 5: Bloom Up]      Additive upsample through mip chain
      │
-     ├──▶ [Post-Process]         → Bloom → SSAO → Tonemapping → LDR (RGBA8)
+     ├──▶ [Pass 6: Composite]     Backbuffer (RGBA8_UNORM)
+     │       └── ACES tonemap + gamma + bloom blend + SSAO multiply
      │
-     └──▶ [Readback]             → JPEG Encode → WebSocket
+     ├──▶ [Pass 7: Editor]        Backbuffer (selection outline, grid)
+     │
+     └──▶ [Pass 8: Readback]      → JPEG Encode → WebSocket
 ```
 
 ---
 
-## Resource Layout
+## Root Signature Layout
 
-### Descriptor Heaps
+The root signature uses 14 parameters totaling **64/64 DWORDs** (completely full).
 
-| Heap | Type | Size | Contents |
-|------|------|------|----------|
-| `cbv_srv_uav` | CBV_SRV_UAV | 4096 | Textures, CBVs, UAVs |
-| `dsv` | DSV | 16 | Depth targets |
-| `rtv` | RTV | 64 | Color render targets |
-| `sampler` | SAMPLER | 32 | Texture samplers |
+| Slot | Register | Type | DWORDs | Contents |
+|------|----------|------|--------|----------|
+| 0 | `b0` | Root Constants | 16 | World matrix (4x4 float) |
+| 1 | `b1` | Root Constants | 20 | MaterialCB (albedo, metallic, roughness, ao, emission, parallaxScale, normalStrength, etc.) |
+| 2 | `b2` | Root CBV | 2 | LightFrameCB (direction, color, intensity, shadow VP, cameraPos) |
+| 3 | `b3` | Root Constants | 16 | ViewProjection matrix (4x4 float) |
+| 4 | `t0` | Descriptor Table | 1 | Albedo texture |
+| 5 | `t1` | Descriptor Table | 1 | Normal texture |
+| 6 | `t2` | Descriptor Table | 1 | Metallic texture |
+| 7 | `t3` | Descriptor Table | 1 | Roughness texture |
+| 8 | `t4` | Descriptor Table | 1 | AO texture |
+| 9 | `t5` | Descriptor Table | 1 | Displacement texture |
+| 10 | `t6` | Descriptor Table | 1 | Shadow map |
+| 11 | `t7` | Descriptor Table | 1 | Irradiance cubemap (IBL) |
+| 12 | `t8` | Descriptor Table | 1 | Prefiltered specular cubemap (IBL) |
+| 13 | `t9` | Descriptor Table | 1 | BRDF LUT (IBL) |
 
-### Root Signature Layout
-
-Slot 0: `b0` — Per-Object CBV (model matrix, material index)
-Slot 1: `b1` — Per-Frame CBV (view, proj, camera pos, time, light count)
-Slot 2: Descriptor table — SRVs t0..t7 (albedo, normal, roughness, metallic, shadow, etc.)
-Slot 3: Descriptor table — Samplers s0..s3
+**Budget**: 16 + 20 + 2 + 16 + 10×1 = **64 DWORDs** (max allowed by D3D12).
+No new SRV slots or root constants can be added without restructuring (see phase3 prerequisites).
 
 ---
 
 ## Material System (PBR)
 
-### PBR Parameters
+### Material File Format (`.uzmat`)
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `albedo` | `float3` | `[1,1,1]` | Base color (linear) |
-| `albedo_texture` | `Texture2D` | white | Multiplied with `albedo` |
-| `roughness` | `float` | `0.5` | 0=mirror, 1=fully rough |
-| `metallic` | `float` | `0.0` | 0=dielectric, 1=metal |
-| `normal_texture` | `Texture2D` | flat | Tangent-space normal map |
-| `ao_texture` | `Texture2D` | white | Ambient occlusion |
-| `emission` | `float3` | `[0,0,0]` | Emissive color (HDR) |
-| `emission_texture` | `Texture2D` | black | Emissive mask |
-| `alpha_mode` | enum | `OPAQUE` | OPAQUE / MASK / BLEND |
-| `alpha_cutoff` | `float` | `0.5` | Used for MASK mode |
+Materials use an INI-like format parsed by `MaterialManager` (`material.cpp`).
+Values are auto-classified by the parser:
 
-### BRDF: GGX Cook-Torrance
+- **Texture**: contains `.png`, `.jpg`, or `.dds` extension → stored in `textures` map
+- **Vector**: contains `[` bracket → parsed as comma-separated floats
+- **Scalar**: everything else → parsed as `float`
 
-```hlsl
-float3 PBR_DirectLight(float3 N, float3 V, float3 L, float3 radiance,
-                       float3 albedo, float roughness, float metallic)
-{
-    float3 H  = normalize(V + L);
-    float  a  = roughness * roughness;
+```ini
+[material]
+name = StoneBricks
+shader = pbr
 
-    // Distribution (GGX Trowbridge-Reitz)
-    float NdH = saturate(dot(N, H));
-    float D   = a*a / (PI * pow(NdH*NdH*(a*a - 1.0) + 1.0, 2.0));
+; --- Scalar PBR parameters (populate MaterialCB root constants) ---
+metallic = 0.0
+roughness = 1.0
+ao = 1.0
 
-    // Geometry (Smith GGX)
-    float k   = (roughness + 1.0) * (roughness + 1.0) / 8.0;
-    float G   = G_SchlickGGX(dot(N,V), k) * G_SchlickGGX(dot(N,L), k);
+; --- Vector parameters ---
+albedo = [1.0, 1.0, 1.0]
 
-    // Fresnel (Schlick)
-    float3 F0 = lerp(0.04, albedo, metallic);
-    float3 F  = F0 + (1.0 - F0) * pow(1.0 - saturate(dot(H,V)), 5.0);
+; --- Texture slots (resolved to RHI handles at load time) ---
+albedo_texture = assets/textures/Stonebricks/stonebricks_albedo.jpg
+normal_texture = assets/textures/Stonebricks/stonebricks_normal.jpg
+roughness_texture = assets/textures/Stonebricks/stonebricks_roughness.jpg
+ao_texture = assets/textures/Stonebricks/stonebricks_ao.jpg
+displacement_texture = assets/textures/Stonebricks/stonebricks_disp.jpg
 
-    // Specular
-    float3 spec = D * G * F / max(4.0 * dot(N,V) * dot(N,L), 0.001);
+; --- POM displacement ---
+parallax_scale = 0.05
 
-    // Diffuse (Lambertian, metals have no diffuse)
-    float3 kD   = (1.0 - F) * (1.0 - metallic);
-    float3 diff = kD * albedo / PI;
-
-    return (diff + spec) * radiance * saturate(dot(N, L));
-}
+; --- Per-material shader parameters ---
+normal_strength = 1.3
+self_shadow_strength = 1.0
+cavity_strength = 0.4
+uv_tiling = 3.0
 ```
 
----
+### Supported Material Keys
 
-## Shadow System (CSM)
+| Key | Type | Default | Register | Description |
+|-----|------|---------|----------|-------------|
+| `name` | string | — | — | Display name |
+| `shader` | string | `pbr` | — | Shader to use |
+| `albedo` | vec3 | `[1,1,1]` | b1 | Base color multiplier (linear) |
+| `metallic` | float | `0.0` | b1 | 0=dielectric, 1=metal |
+| `roughness` | float | `0.5` | b1 | 0=mirror, 1=fully rough |
+| `ao` | float | `1.0` | b1 | Ambient occlusion multiplier |
+| `emission` | vec3 | `[0,0,0]` | b1 | Emissive color (HDR) |
+| `emission_energy` | float | `0.0` | b1 | Emission intensity multiplier |
+| `parallax_scale` | float | `0.0` | b1 | POM height scale (0 = disabled) |
+| `normal_strength` | float | `1.0` | b1 | Normal map intensity |
+| `self_shadow_strength` | float | `0.5` | b1 | POM self-shadow intensity |
+| `cavity_strength` | float | `0.3` | b1 | POM cavity darkening |
+| `env_multiplier` | float | `1.0` | b1 | IBL environment contribution |
+| `specular_multiplier` | float | `1.0` | b1 | Specular highlight intensity |
+| `uv_tiling` | float/vec2 | `1.0` | b1 | UV repeat factor |
+| `albedo_texture` | path | white | t0 | Base color map |
+| `normal_texture` | path | flat blue | t1 | Tangent-space normal map |
+| `metallic_texture` | path | white | t2 | Metallic map |
+| `roughness_texture` | path | white | t3 | Roughness map |
+| `ao_texture` | path | white | t4 | Ambient occlusion map |
+| `displacement_texture` | path | black | t5 | Height map for POM |
 
-3 cascades covering:
-- Cascade 0: 0–20m (high resolution)
-- Cascade 1: 20–80m (medium resolution)
-- Cascade 2: 80–300m (low resolution)
+### Fallback Textures
 
-Each cascade is a 2048×2048 shadow map tile within a 2048×6144 atlas. PCF 3×3 kernel for soft shadows.
+When a material omits a texture slot, a 1x1 fallback is bound:
 
----
+| Slot | Fallback Color | Rationale |
+|------|---------------|-----------|
+| albedo (t0) | white (1,1,1,1) | Tinted by albedo vec3 parameter |
+| normal (t1) | flat blue (0.5, 0.5, 1.0, 1.0) | No perturbation |
+| metallic (t2) | white (1,1,1,1) | Controlled by scalar metallic param |
+| roughness (t3) | white (1,1,1,1) | Controlled by scalar roughness param |
+| ao (t4) | white (1,1,1,1) | No occlusion |
+| displacement (t5) | black (0,0,0,0) | No offset (POM disabled) |
 
-## Post-Process Stack
+### MaterialCB Layout (b1, 20 DWORDs)
 
-| Effect | Method | Toggle |
-|--------|--------|--------|
-| SSAO | Screen-Space Ambient Occlusion (16 samples) | `renderer.ssao` |
-| Bloom | Dual-threshold downsample + additive upsample | `renderer.bloom` |
-| Tonemapping | ACES filmic | always on |
-| Vignette | Analytical, edge darkening | `renderer.vignette` |
-| Color grading | 16×16×16 LUT texture | `renderer.color_grading` |
-| TAA | Temporal Anti-Aliasing (Phase 2) | `renderer.taa` |
-
----
-
-## IPC Handlers (renderer.*)
-
-```json
-renderer.setResolution  { "width": 1280, "height": 720 }
-renderer.setMSAA        { "samples": 4 }
-renderer.setSSAO        { "enabled": true, "radius": 0.5 }
-renderer.setBloom       { "enabled": true, "threshold": 1.0, "strength": 0.5 }
-renderer.setShadows     { "enabled": true, "atlas_size": 2048, "cascades": 3 }
-renderer.screenshot     {}  → JPEG binary
-renderer.stats          {}  → { "fps": 60, "draw_calls": 128, "triangles": 240000 }
 ```
+DWORD  0-2:  albedo (float3)
+DWORD  3:    metallic (float)
+DWORD  4:    roughness (float)
+DWORD  5:    ao (float)
+DWORD  6:    parallaxScale (float)
+DWORD  7:    normalStrength (float)
+DWORD  8-10: emission (float3)
+DWORD 11:    emissionEnergy (float)
+DWORD 12:    selfShadowStrength (float)
+DWORD 13:    cavityStrength (float)
+DWORD 14:    envMultiplier (float)
+DWORD 15:    specularMultiplier (float)
+DWORD 16-17: uvTiling (float2)
+DWORD 18-19: _pad (reserved)
+```
+
+### BRDF Model
+
+The PBR shader (`pbr.ps.hlsl`) implements:
+
+- **Distribution**: GGX (Trowbridge-Reitz) NDF
+- **Geometry**: UE5 Vis_SmithJointApprox (height-correlated)
+- **Fresnel**: Schlick approximation with F0 from metallic workflow
+- **Diffuse**: Burley (Disney) diffuse (roughness-dependent, replaces Lambertian)
+- **IBL**: Split-sum approximation (irradiance + prefiltered specular + BRDF LUT)
+- **Multi-scatter**: Fdez-Aguera energy compensation term
+- **POM**: Steep parallax (8-32 layers by NdotV) + linear interpolation + cavity + self-shadow
+
+---
+
+## Image-Based Lighting (IBL)
+
+Hybrid pipeline: CPU generates the source environment cubemap, GPU compute shaders
+perform the convolution (with CPU fallback if compute init fails).
+
+1. **Environment Cubemap** (256x256 per face) — CPU procedural sky from SkyAtmosphere params (`sky_cubemap.cpp`)
+2. **BRDF LUT** (256x256, RG16F) — GPU compute: `ibl_brdf_lut.cs.hlsl`, 1024 Hammersley samples (`IblBaker::bake_brdf_lut()`)
+3. **Irradiance Cubemap** (32x32 per face, RGBA16F) — GPU compute: `ibl_irradiance.cs.hlsl`, 1024 cosine-weighted hemisphere samples
+4. **Prefiltered Specular** (128x128, 5 mip levels, RGBA16F) — GPU compute: `ibl_prefilter.cs.hlsl`, 256 GGX importance samples per mip
+
+### Compute Pipeline
+
+`IblBaker` (`ibl_baker.cpp`) manages 3 compute PSOs with a dedicated compute root signature
+(separate from the graphics root signature, no DWORD budget conflict):
+
+| Param | Register | Type | Contents |
+|-------|----------|------|----------|
+| 0 | `b0` | Root Constants (16 DWORDs) | Shader parameters (size, roughness, etc.) |
+| 1 | `t0` | Descriptor Table | Source environment cubemap (SRV) |
+| 2 | `t1` | Descriptor Table | Secondary SRV (reserved) |
+| 3 | `u0` | Descriptor Table | Output UAV (per-mip) |
+| 4 | `u1` | Descriptor Table | Secondary UAV (reserved) |
+
+Per-mip UAV descriptors are allocated via a bump allocator in the CBV/SRV/UAV heap
+(region 4096+), enabling the prefilter shader to write each mip level independently.
+
+IBL cubemaps are regenerated when SkyAtmosphere parameters change (dirty-flag tracking in
+`Renderer::update()`). Parameters compared: `sky_zenith`, `sky_horizon`, `sky_ground`, sun
+direction (epsilon 1e-4f per channel).
+
+---
+
+## Shadow System
+
+Single directional light shadow map:
+
+| Property | Value |
+|----------|-------|
+| Resolution | 2048x2048 |
+| Format | D32_FLOAT |
+| Filter | 16-tap Poisson disk PCF |
+| Penumbra | Distance-based (blocker search) |
+| Bias | Depth bias + slope-scaled bias |
+| Self-shadow | POM heightmap self-shadow (Jimenez 2016) |
+
+The shadow view-projection matrix is computed from the directional light's direction,
+fitting the scene AABB. Bound to `t6` for sampling in `pbr.ps.hlsl`.
+
+---
+
+## Post-Process Stack (Implemented)
+
+| Pass | Effect | Method | Shader |
+|------|--------|--------|--------|
+| 2-3 | SSAO | 12-sample hemisphere + bilateral blur | `ssao.ps.hlsl`, `ssao_blur.ps.hlsl` |
+| 4-5 | Bloom | 5-mip downsample + additive upsample | `bloom_down.ps.hlsl`, `bloom_up.ps.hlsl` |
+| 6 | Composite | ACES tonemap + gamma 2.2 + bloom blend + SSAO | `composite.ps.hlsl` |
+
+All post-process passes use a fullscreen triangle (3 vertices, no VB) via `fullscreen.vs.hlsl`.
+Exposure is currently hardcoded to 1.0 in the composite pass.
 
 ---
 
 ## Streaming (JPEG → WebSocket)
 
-Same pipeline as current PoC, unchanged:
-
 ```
-DX12 Readback Buffer (RGBA8, 1280×720)
+DX12 Readback Buffer (RGBA8, render resolution)
     ↓
 RingBuffer<FrameData, 8>  (lock-free SPSC)
     ↓
@@ -184,135 +286,27 @@ WebSocket Broadcast (binary frame = raw JPEG bytes)
 VSCode Webview: <canvas> drawImage on blob URL
 ```
 
-This is already implemented and working. The renderer upgrade adds the deferred pipeline, PBR, and shadows on top.
-
 ---
 
-## Render Graph
+## Planned Features (Phase 3+)
 
-The render graph tracks frame resources (textures, buffers) and pass dependencies explicitly, enabling automatic barrier insertion, resource aliasing, and composable post-processes.
+The following are documented in `.rulebook/tasks/phase3-ultra-realistic-rendering/` and are
+**not yet implemented**:
 
-### Frame Resources
+- **TAA** — Temporal Anti-Aliasing (Halton jitter, velocity buffer, history clamping)
+- **GTAO** — Ground Truth AO (replaces current hemisphere SSAO)
+- **Contact Shadows** — screen-space ray march along light direction
+- **Auto Exposure** — luminance histogram compute shader
+- **SSR** — Screen-Space Reflections (Hi-Z ray march)
+- **CSM** — Cascaded Shadow Maps (4 cascades, replaces single shadow map)
+- **Point/Spot Lights** — clustered forward light culling
+- **Volumetric Fog** — froxel-based inscattering
+- **Depth of Field** — CoC-based blur
+- **Color Grading** — 3D LUT
+- **SSS** — Subsurface Scattering (separable screen-space)
+- **Anisotropic Materials** — directional GGX
+- **Area Lights** — Linearly Transformed Cosines (Heitz 2016)
+- **Decals** — deferred projection into GBuffer (requires deferred pipeline)
+- **Reflection Probes** — localized cubemap captures
 
-```cpp
-struct RgTexture {
-    RgResourceHandle handle;
-    DXGI_FORMAT      format;
-    uint32_t         width, height, mips;
-    D3D12_RESOURCE_STATES initial_state;
-};
-
-struct RgPass {
-    std::string            name;
-    std::vector<RgTexture> reads;
-    std::vector<RgTexture> writes;
-    std::function<void(RgPassContext&)> execute;
-};
-```
-
-### Usage
-
-```cpp
-RenderGraph rg;
-
-auto gbuffer_albedo   = rg.create_texture("gbuffer_albedo",   DXGI_FORMAT_R8G8B8A8_UNORM, w, h);
-auto gbuffer_normal   = rg.create_texture("gbuffer_normal",   DXGI_FORMAT_R16G16B16A16_FLOAT, w, h);
-auto depth_stencil    = rg.create_texture("depth_stencil",    DXGI_FORMAT_D32_FLOAT, w, h);
-auto lighting_output  = rg.create_texture("lighting_output",  DXGI_FORMAT_R16G16B16A16_FLOAT, w, h);
-
-rg.add_pass("GBuffer", {}, {gbuffer_albedo, gbuffer_normal, depth_stencil}, draw_gbuffer);
-rg.add_pass("Lighting", {gbuffer_albedo, gbuffer_normal, depth_stencil}, {lighting_output}, draw_lighting);
-rg.add_pass("PostProcess", {lighting_output}, {backbuffer}, draw_postprocess);
-
-rg.compile();  // validates, inserts barriers, aliases transient resources
-rg.execute(cmd_list);
-```
-
-### Benefits
-- All resource transitions (SRV → RTV, etc.) are automatic
-- Transient textures are aliased to reduce VRAM usage
-- Pass order is validated at compile time
-- Debug visualization inserts cleanly as additional passes
-- Post-processes are composable without C++ changes
-
-> **Note**: Current `renderer.md` describes pipeline as "Forward+" — this is a documentation error. The actual pipeline is **Hybrid Deferred** (GBuffer pass → deferred lighting → forward transparency). All future documentation should use "Hybrid Deferred."
-
----
-
-## Deferred Decal System
-
-Decals project texture/material overrides onto geometry using a DBuffer (Decal Buffer):
-
-```cpp
-struct CDecal {
-    glm::vec3  half_extent;   // box projection volume
-    AssetPath  albedo_path;
-    AssetPath  normal_path;
-    float      roughness_override;
-    float      metallic_override;
-    float      fade_distance;
-    DecalBlendMode blend_mode;  // additive | modulate | override
-};
-```
-
-The decal pass renders after GBuffer fill, projecting into GBuffer textures within the decal box volume. Up to 256 active decals per frame; sorted by screen-space area.
-
----
-
-## Global Illumination (Planned — Phase 3)
-
-GI uses a hybrid approach:
-1. **Static GI**: Lightmap baking for static geometry (offline tool)
-2. **Dynamic GI**: DDGI (Dynamic Diffuse GI) using probe grid for real-time indirect lighting
-3. **Reflection GI**: Reflection captures (cubemaps) + SSR for screen-space contribution
-
-Probe grid parameters in `.uzscene`:
-```ini
-[DDGIVolume]
-position = 0 5 0
-probe_spacing = 2.0 2.0 2.0
-probe_counts = 8 4 8
-rays_per_probe = 256
-```
-
----
-
-## Bloom and Post-Processes
-
-Post-process stack (Phase 2):
-
-| Effect | Description |
-|--------|-------------|
-| **Bloom** | Dual-filter Kawase bloom with threshold and intensity |
-| **Tone Mapping** | ACES filmic tonemapper (replaces linear) |
-| **Auto Exposure** | Histogram-based eye adaptation |
-| **Chromatic Aberration** | Barrel distortion offset per channel |
-| **Vignette** | Edge darkening with configurable radius |
-| **Color Grading** | LUT-based grading (3D texture) |
-
-All post-processes are render graph passes and can be reordered or disabled via `.uzproj`:
-```toml
-[post_process]
-bloom_enabled = true
-bloom_threshold = 1.0
-bloom_intensity = 0.5
-tonemapper = "aces"
-auto_exposure = true
-```
-
----
-
-## Physically Correct Light Attenuation
-
-**Bug fix**: Current lighting uses `1/(d^2 + 1)` which distorts the falloff curve at short range. The correct formula is:
-
-```hlsl
-// Incorrect (old):
-float attenuation = 1.0 / (distance * distance + 1.0);
-
-// Correct (new):
-static const float MIN_DIST = 0.01;
-float attenuation = 1.0 / max(distance * distance, MIN_DIST * MIN_DIST);
-```
-
-This fix must be applied to `shaders/include/lighting.hlsli`.
+See the phase3 task's `proposal.md` for full details on each feature.

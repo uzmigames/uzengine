@@ -28,7 +28,7 @@ import { execSync } from 'child_process';
 import { randomUUID } from 'crypto';
 import path from 'path';
 import { killEngine, spawnEngine } from './engine-process.js';
-import { engineCall, PREVIEW_DIR, readFile, readStatus, waitForFile } from './ipc-client.js';
+import { engineCall, getPreviewDir, readFile, readStatus, waitForFile } from './ipc-client.js';
 
 // ---------------------------------------------------------------------------
 // Tool definitions
@@ -61,6 +61,11 @@ const TOOLS = [
                     description: 'Max wait time in milliseconds. Default: 4000.',
                     default: 4000,
                 },
+                port: {
+                    type: 'number',
+                    description: 'WebSocket port of the target engine instance. Default: 9002.',
+                    default: 9002,
+                },
             },
             required: ['function'],
         },
@@ -79,6 +84,11 @@ const TOOLS = [
                     description: 'Max time to wait for PNG to be written. Default: 4000.',
                     default: 4000,
                 },
+                port: {
+                    type: 'number',
+                    description: 'WebSocket port of the target engine instance. Default: 9002.',
+                    default: 9002,
+                },
             },
         },
     },
@@ -90,7 +100,13 @@ const TOOLS = [
             'Returns {alive:false} if UzEngine is not running.',
         inputSchema: {
             type: 'object',
-            properties: {},
+            properties: {
+                port: {
+                    type: 'number',
+                    description: 'WebSocket port of the target engine instance. Default: 9002.',
+                    default: 9002,
+                },
+            },
         },
     },
     {
@@ -155,6 +171,11 @@ const TOOLS = [
                     description: 'Path to .uzscene file to load on startup (e.g. "assets/scenes/materials.uzscene").',
                     default: '',
                 },
+                port: {
+                    type: 'number',
+                    description: 'WebSocket port for this engine instance. Default: 9002.',
+                    default: 9002,
+                },
             },
         },
     },
@@ -191,19 +212,22 @@ async function handleUzCall(args) {
     const fn = args.function;
     const fnArgs = args.args ?? {};
     const timeoutMs = args.timeout_ms ?? 4000;
+    const port = args.port ?? 9002;
 
-    const result = await engineCall(fn, fnArgs, timeoutMs);
+    const result = await engineCall(fn, fnArgs, timeoutMs, port);
     return textResult(JSON.stringify(result, null, 2));
 }
 
 async function handleUzScreenshot(args) {
     const waitMs = args.wait_ms ?? 4000;
+    const port = args.port ?? 9002;
     const id = randomUUID();
-    const pngPath = path.join(PREVIEW_DIR, `frame_${id}.png`);
+    const previewDir = getPreviewDir(port);
+    const pngPath = path.join(previewDir, `frame_${id}.png`);
     const before = Date.now();
 
     // Ask engine to save the screenshot
-    const callResult = await engineCall('engine.screenshot', { id }, waitMs);
+    const callResult = await engineCall('engine.screenshot', { id }, waitMs, port);
     if (!callResult.ok) {
         return textResult(JSON.stringify({ ok: false, error: callResult.error }));
     }
@@ -234,8 +258,9 @@ async function handleUzScreenshot(args) {
     };
 }
 
-function handleUzStatus() {
-    const status = readStatus();
+function handleUzStatus(args) {
+    const port = args.port ?? 9002;
+    const status = readStatus(port);
     return textResult(JSON.stringify(status, null, 2));
 }
 
@@ -253,6 +278,7 @@ async function handleUzRestart(args) {
     const waitMs = args.wait_ms ?? 8000;
     const windowed = args.windowed ?? false;
     const scene = args.scene ?? '';
+    const port = args.port ?? 9002;
     const start = Date.now();
 
     killEngine();
@@ -260,7 +286,7 @@ async function handleUzRestart(args) {
     // Wait briefly for process to fully exit
     await new Promise(resolve => setTimeout(resolve, 800));
 
-    const spawnResult = spawnEngine({ windowed, scene });
+    const spawnResult = spawnEngine({ windowed, scene, port });
     if (!spawnResult.ok) {
         return textResult(JSON.stringify({ ok: false, error: spawnResult.error }));
     }
@@ -269,7 +295,7 @@ async function handleUzRestart(args) {
     const deadline = start + waitMs;
     while (Date.now() < deadline) {
         await new Promise(resolve => setTimeout(resolve, 500));
-        const status = readStatus();
+        const status = readStatus(port);
         if (status.alive) {
             return textResult(JSON.stringify({
                 ok: true,
@@ -359,7 +385,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         switch (name) {
             case 'uz_call': return await handleUzCall(args ?? {});
             case 'uz_screenshot': return await handleUzScreenshot(args ?? {});
-            case 'uz_status': return handleUzStatus();
+            case 'uz_status': return handleUzStatus(args ?? {});
             case 'uz_read_file': return await handleUzReadFile(args ?? {});
             case 'uz_write_file': return await handleUzWriteFile(args ?? {});
             case 'uz_restart': return await handleUzRestart(args ?? {});

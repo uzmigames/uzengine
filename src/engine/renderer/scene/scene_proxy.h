@@ -28,10 +28,25 @@ struct alignas(16) FrameConstants {
     Vec3    light_dir;         // [320..335]
     Vec3    light_color;       // [336..351]
     float   light_intensity;   // [352..355]
-    float   _pad2[3];          // [356..367]
+    // Shadow params (packed into former _pad2 to stay within 64-DWORD root sig budget)
+    float   shadow_bias;       // [356..359] bias to avoid shadow acne
+    float   shadow_ortho_size; // [360..363] orthographic half-size (world units)
+    float   shadow_light_dist; // [364..367] light eye distance from scene center
+
+    // CPU-side texture handles (bound via cmd_set_texture, not uploaded to GPU)
+    RhiTexture  shadow_map;    // [368..375] handle to 2048x2048 D32 depth texture
+    RhiTexture  brdf_lut;      // [376..383] 256x256 RG16F split-sum BRDF LUT
+
+    // Per-frame CBV handle for LightFrameCB (b2 refactored from root constants to root CBV)
+    RhiBuffer   light_frame_cbv;   // [384..391] GPU constant buffer for b2
+
+    // IBL cubemap handles (bound via cmd_set_texture at t8, t9)
+    RhiTexture  irradiance_cube;   // [392..399] 32x32 diffuse irradiance cubemap
+    RhiTexture  prefiltered_cube;  // [400..407] 128x128 specular prefiltered cubemap (5 mips)
+    uint64_t    _ibl_pad;          // [408..415] alignment padding
 };
 
-static_assert(sizeof(FrameConstants) == 368, "FrameConstants size mismatch");
+static_assert(sizeof(FrameConstants) == 416, "FrameConstants size mismatch");
 static_assert(sizeof(FrameConstants) % 16 == 0, "FrameConstants must be 16-byte aligned for GPU upload");
 
 // ============================================================================

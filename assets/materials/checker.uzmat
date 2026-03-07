@@ -1,0 +1,9 @@
+[material]
+name = Checker
+shader = pbr
+albedo = [1.0, 1.0, 1.0]
+metallic = 0.0
+roughness = 0.9
+ao = 1.0
+albedo_texture = assets/textures/checker.png
+parallax_scale = 0.0

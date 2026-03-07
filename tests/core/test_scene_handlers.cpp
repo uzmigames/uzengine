@@ -54,8 +54,8 @@ TEST_F(SceneHandlersTest, GetTree_EmptyScene_ReturnsEmptyArray) {
 }
 
 TEST_F(SceneHandlersTest, GetTree_WithNodes_ReturnsAllAlive) {
-    scene_create_node(scene_.get(), "Root", NodeType::Node3D);
-    scene_create_node(scene_.get(), "Child", NodeType::Camera, 1);
+    scene_create_node(scene_.get(), "Root", "Node3D");
+    scene_create_node(scene_.get(), "Child", "Camera", 1);
 
     auto result = call("scene.getTree");
     ASSERT_TRUE(result.is_array());
@@ -80,8 +80,8 @@ TEST_F(SceneHandlersTest, GetTree_WithNodes_ReturnsAllAlive) {
 }
 
 TEST_F(SceneHandlersTest, GetTree_SkipsDeadNodes) {
-    NodeId n1 = scene_create_node(scene_.get(), "A", NodeType::Node3D);
-    scene_create_node(scene_.get(), "B", NodeType::Node3D);
+    NodeId n1 = scene_create_node(scene_.get(), "A", "Node3D");
+    scene_create_node(scene_.get(), "B", "Node3D");
     scene_destroy_node(scene_.get(), n1);
 
     auto result = call("scene.getTree");
@@ -91,7 +91,7 @@ TEST_F(SceneHandlersTest, GetTree_SkipsDeadNodes) {
 }
 
 TEST_F(SceneHandlersTest, GetTree_ShowsInactiveInvisible) {
-    NodeId n1 = scene_create_node(scene_.get(), "Node", NodeType::Node3D);
+    NodeId n1 = scene_create_node(scene_.get(), "Node", "Node3D");
     SceneNode* node = scene_get_node(scene_.get(), n1);
     node->flags = NODE_FLAG_NONE;
 
@@ -110,7 +110,7 @@ TEST_F(SceneHandlersTest, GetTree_NullScene_ReturnsError) {
 }
 
 TEST_F(SceneHandlersTest, GetTree_ShowsCustomTransform) {
-    NodeId n1 = scene_create_node(scene_.get(), "Moved", NodeType::Node3D);
+    NodeId n1 = scene_create_node(scene_.get(), "Moved", "Node3D");
     SceneNode* node = scene_get_node(scene_.get(), n1);
     node->local_transform.position = {1.0f, 2.0f, 3.0f, 0.0f};
     node->local_transform.rotation = {0.1f, 0.2f, 0.3f, 0.9f};
@@ -143,11 +143,11 @@ TEST_F(SceneHandlersTest, AddNode_Basic) {
     const SceneNode* node = scene_get_node(scene_.get(), 1);
     ASSERT_NE(node, nullptr);
     EXPECT_STREQ(node->name, "MyNode");
-    EXPECT_EQ(node->type, NodeType::Node3D);
+    EXPECT_STREQ(node->type_name, "Node3D");
 }
 
 TEST_F(SceneHandlersTest, AddNode_WithParent) {
-    scene_create_node(scene_.get(), "Parent", NodeType::Node3D);
+    scene_create_node(scene_.get(), "Parent", "Node3D");
     auto result = call("scene.addNode", {{"name", "Child"}, {"type", "Camera"}, {"parent_id", 1}});
     EXPECT_EQ(result["ok"], true);
     EXPECT_EQ(result["id"], 2u);
@@ -155,7 +155,7 @@ TEST_F(SceneHandlersTest, AddNode_WithParent) {
     const SceneNode* node = scene_get_node(scene_.get(), 2);
     ASSERT_NE(node, nullptr);
     EXPECT_EQ(node->parent_id, 1u);
-    EXPECT_EQ(node->type, NodeType::Camera);
+    EXPECT_STREQ(node->type_name, "Camera");
 }
 
 TEST_F(SceneHandlersTest, AddNode_DefaultTypeIsNode3D) {
@@ -164,7 +164,7 @@ TEST_F(SceneHandlersTest, AddNode_DefaultTypeIsNode3D) {
 
     const SceneNode* node = scene_get_node(scene_.get(), result["id"].get<uint32_t>());
     ASSERT_NE(node, nullptr);
-    EXPECT_EQ(node->type, NodeType::Node3D);
+    EXPECT_STREQ(node->type_name, "Node3D");
 }
 
 TEST_F(SceneHandlersTest, AddNode_DefaultParentIsRoot) {
@@ -212,7 +212,7 @@ TEST_F(SceneHandlersTest, AddNode_AllNodeTypes) {
 // ============================================================================
 
 TEST_F(SceneHandlersTest, RemoveNode_Basic) {
-    scene_create_node(scene_.get(), "ToDelete", NodeType::Node3D);
+    scene_create_node(scene_.get(), "ToDelete", "Node3D");
     auto result = call("scene.removeNode", {{"id", 1}});
     EXPECT_EQ(result["ok"], true);
 
@@ -251,14 +251,14 @@ TEST_F(SceneHandlersTest, RemoveNode_NullScene_Error) {
 // ============================================================================
 
 TEST_F(SceneHandlersTest, SetProperty_Name) {
-    scene_create_node(scene_.get(), "Old", NodeType::Node3D);
+    scene_create_node(scene_.get(), "Old", "Node3D");
     auto result = call("scene.setProperty", {{"id", 1}, {"key", "name"}, {"value", "New"}});
     EXPECT_EQ(result["ok"], true);
     EXPECT_STREQ(scene_get_node(scene_.get(), 1)->name, "New");
 }
 
 TEST_F(SceneHandlersTest, SetProperty_Position) {
-    scene_create_node(scene_.get(), "N", NodeType::Node3D);
+    scene_create_node(scene_.get(), "N", "Node3D");
     auto result = call("scene.setProperty", {{"id", 1}, {"key", "position"}, {"value", {1.0, 2.0, 3.0}}});
     EXPECT_EQ(result["ok"], true);
 
@@ -270,7 +270,7 @@ TEST_F(SceneHandlersTest, SetProperty_Position) {
 }
 
 TEST_F(SceneHandlersTest, SetProperty_Rotation) {
-    scene_create_node(scene_.get(), "N", NodeType::Node3D);
+    scene_create_node(scene_.get(), "N", "Node3D");
     auto result = call("scene.setProperty", {{"id", 1}, {"key", "rotation"}, {"value", {0.1, 0.2, 0.3, 0.9}}});
     EXPECT_EQ(result["ok"], true);
 
@@ -282,7 +282,7 @@ TEST_F(SceneHandlersTest, SetProperty_Rotation) {
 }
 
 TEST_F(SceneHandlersTest, SetProperty_Scale) {
-    scene_create_node(scene_.get(), "N", NodeType::Node3D);
+    scene_create_node(scene_.get(), "N", "Node3D");
     auto result = call("scene.setProperty", {{"id", 1}, {"key", "scale"}, {"value", {2.0, 3.0, 4.0}}});
     EXPECT_EQ(result["ok"], true);
 
@@ -294,7 +294,7 @@ TEST_F(SceneHandlersTest, SetProperty_Scale) {
 }
 
 TEST_F(SceneHandlersTest, SetProperty_Active_True) {
-    scene_create_node(scene_.get(), "N", NodeType::Node3D);
+    scene_create_node(scene_.get(), "N", "Node3D");
     SceneNode* node = scene_get_node(scene_.get(), 1);
     node->flags = NODE_FLAG_NONE;
 
@@ -304,7 +304,7 @@ TEST_F(SceneHandlersTest, SetProperty_Active_True) {
 }
 
 TEST_F(SceneHandlersTest, SetProperty_Active_False) {
-    scene_create_node(scene_.get(), "N", NodeType::Node3D);
+    scene_create_node(scene_.get(), "N", "Node3D");
     SceneNode* node = scene_get_node(scene_.get(), 1);
     ASSERT_TRUE(node->flags & NODE_FLAG_ACTIVE);
 
@@ -314,7 +314,7 @@ TEST_F(SceneHandlersTest, SetProperty_Active_False) {
 }
 
 TEST_F(SceneHandlersTest, SetProperty_Visible_True) {
-    scene_create_node(scene_.get(), "N", NodeType::Node3D);
+    scene_create_node(scene_.get(), "N", "Node3D");
     SceneNode* node = scene_get_node(scene_.get(), 1);
     node->flags = NODE_FLAG_NONE;
 
@@ -324,7 +324,7 @@ TEST_F(SceneHandlersTest, SetProperty_Visible_True) {
 }
 
 TEST_F(SceneHandlersTest, SetProperty_Visible_False) {
-    scene_create_node(scene_.get(), "N", NodeType::Node3D);
+    scene_create_node(scene_.get(), "N", "Node3D");
     SceneNode* node = scene_get_node(scene_.get(), 1);
     ASSERT_TRUE(node->flags & NODE_FLAG_VISIBLE);
 
@@ -340,52 +340,52 @@ TEST_F(SceneHandlersTest, SetProperty_NodeNotFound) {
 }
 
 TEST_F(SceneHandlersTest, SetProperty_UnknownKey) {
-    scene_create_node(scene_.get(), "N", NodeType::Node3D);
+    scene_create_node(scene_.get(), "N", "Node3D");
     auto result = call("scene.setProperty", {{"id", 1}, {"key", "color"}, {"value", "red"}});
     EXPECT_EQ(result["ok"], false);
     EXPECT_TRUE(result["error"].get<std::string>().find("unknown key") != std::string::npos);
 }
 
 TEST_F(SceneHandlersTest, SetProperty_NameWrongType) {
-    scene_create_node(scene_.get(), "N", NodeType::Node3D);
+    scene_create_node(scene_.get(), "N", "Node3D");
     auto result = call("scene.setProperty", {{"id", 1}, {"key", "name"}, {"value", 42}});
     EXPECT_EQ(result["ok"], false);
     EXPECT_TRUE(result["error"].get<std::string>().find("string") != std::string::npos);
 }
 
 TEST_F(SceneHandlersTest, SetProperty_PositionWrongSize) {
-    scene_create_node(scene_.get(), "N", NodeType::Node3D);
+    scene_create_node(scene_.get(), "N", "Node3D");
     auto result = call("scene.setProperty", {{"id", 1}, {"key", "position"}, {"value", {1.0, 2.0}}});
     EXPECT_EQ(result["ok"], false);
 }
 
 TEST_F(SceneHandlersTest, SetProperty_PositionNotArray) {
-    scene_create_node(scene_.get(), "N", NodeType::Node3D);
+    scene_create_node(scene_.get(), "N", "Node3D");
     auto result = call("scene.setProperty", {{"id", 1}, {"key", "position"}, {"value", "nope"}});
     EXPECT_EQ(result["ok"], false);
 }
 
 TEST_F(SceneHandlersTest, SetProperty_RotationWrongSize) {
-    scene_create_node(scene_.get(), "N", NodeType::Node3D);
+    scene_create_node(scene_.get(), "N", "Node3D");
     auto result = call("scene.setProperty", {{"id", 1}, {"key", "rotation"}, {"value", {1.0, 2.0, 3.0}}});
     EXPECT_EQ(result["ok"], false);
 }
 
 TEST_F(SceneHandlersTest, SetProperty_ScaleWrongSize) {
-    scene_create_node(scene_.get(), "N", NodeType::Node3D);
+    scene_create_node(scene_.get(), "N", "Node3D");
     auto result = call("scene.setProperty", {{"id", 1}, {"key", "scale"}, {"value", {1.0}}});
     EXPECT_EQ(result["ok"], false);
 }
 
 TEST_F(SceneHandlersTest, SetProperty_ActiveWrongType) {
-    scene_create_node(scene_.get(), "N", NodeType::Node3D);
+    scene_create_node(scene_.get(), "N", "Node3D");
     auto result = call("scene.setProperty", {{"id", 1}, {"key", "active"}, {"value", 1}});
     EXPECT_EQ(result["ok"], false);
     EXPECT_TRUE(result["error"].get<std::string>().find("boolean") != std::string::npos);
 }
 
 TEST_F(SceneHandlersTest, SetProperty_VisibleWrongType) {
-    scene_create_node(scene_.get(), "N", NodeType::Node3D);
+    scene_create_node(scene_.get(), "N", "Node3D");
     auto result = call("scene.setProperty", {{"id", 1}, {"key", "visible"}, {"value", "yes"}});
     EXPECT_EQ(result["ok"], false);
     EXPECT_TRUE(result["error"].get<std::string>().find("boolean") != std::string::npos);
@@ -398,14 +398,14 @@ TEST_F(SceneHandlersTest, SetProperty_MissingId_Error) {
 }
 
 TEST_F(SceneHandlersTest, SetProperty_MissingKey_Error) {
-    scene_create_node(scene_.get(), "N", NodeType::Node3D);
+    scene_create_node(scene_.get(), "N", "Node3D");
     auto result = call("scene.setProperty", {{"id", 1}, {"value", "X"}});
     EXPECT_EQ(result["ok"], false);
     EXPECT_TRUE(result["error"].get<std::string>().find("key") != std::string::npos);
 }
 
 TEST_F(SceneHandlersTest, SetProperty_MissingValue_Error) {
-    scene_create_node(scene_.get(), "N", NodeType::Node3D);
+    scene_create_node(scene_.get(), "N", "Node3D");
     auto result = call("scene.setProperty", {{"id", 1}, {"key", "name"}});
     EXPECT_EQ(result["ok"], false);
     EXPECT_TRUE(result["error"].get<std::string>().find("value") != std::string::npos);
@@ -424,14 +424,14 @@ TEST_F(SceneHandlersTest, SetProperty_NullScene_Error) {
 // ============================================================================
 
 TEST_F(SceneHandlersTest, GetProperty_Name) {
-    scene_create_node(scene_.get(), "Hello", NodeType::Node3D);
+    scene_create_node(scene_.get(), "Hello", "Node3D");
     auto result = call("scene.getProperty", {{"id", 1}, {"key", "name"}});
     EXPECT_EQ(result["ok"], true);
     EXPECT_EQ(result["value"], "Hello");
 }
 
 TEST_F(SceneHandlersTest, GetProperty_Position) {
-    scene_create_node(scene_.get(), "N", NodeType::Node3D);
+    scene_create_node(scene_.get(), "N", "Node3D");
     scene_get_node(scene_.get(), 1)->local_transform.position = {5.0f, 6.0f, 7.0f, 0.0f};
 
     auto result = call("scene.getProperty", {{"id", 1}, {"key", "position"}});
@@ -442,7 +442,7 @@ TEST_F(SceneHandlersTest, GetProperty_Position) {
 }
 
 TEST_F(SceneHandlersTest, GetProperty_Rotation) {
-    scene_create_node(scene_.get(), "N", NodeType::Node3D);
+    scene_create_node(scene_.get(), "N", "Node3D");
     scene_get_node(scene_.get(), 1)->local_transform.rotation = {0.5f, 0.5f, 0.5f, 0.5f};
 
     auto result = call("scene.getProperty", {{"id", 1}, {"key", "rotation"}});
@@ -455,7 +455,7 @@ TEST_F(SceneHandlersTest, GetProperty_Rotation) {
 }
 
 TEST_F(SceneHandlersTest, GetProperty_Scale) {
-    scene_create_node(scene_.get(), "N", NodeType::Node3D);
+    scene_create_node(scene_.get(), "N", "Node3D");
     scene_get_node(scene_.get(), 1)->local_transform.scale = {2.0f, 3.0f, 4.0f, 0.0f};
 
     auto result = call("scene.getProperty", {{"id", 1}, {"key", "scale"}});
@@ -467,7 +467,7 @@ TEST_F(SceneHandlersTest, GetProperty_Scale) {
 }
 
 TEST_F(SceneHandlersTest, GetProperty_Active) {
-    scene_create_node(scene_.get(), "N", NodeType::Node3D);
+    scene_create_node(scene_.get(), "N", "Node3D");
     auto result = call("scene.getProperty", {{"id", 1}, {"key", "active"}});
     EXPECT_EQ(result["ok"], true);
     EXPECT_EQ(result["value"], true);
@@ -480,7 +480,7 @@ TEST_F(SceneHandlersTest, GetProperty_Active) {
 }
 
 TEST_F(SceneHandlersTest, GetProperty_Visible) {
-    scene_create_node(scene_.get(), "N", NodeType::Node3D);
+    scene_create_node(scene_.get(), "N", "Node3D");
     auto result = call("scene.getProperty", {{"id", 1}, {"key", "visible"}});
     EXPECT_EQ(result["ok"], true);
     EXPECT_EQ(result["value"], true);
@@ -499,7 +499,7 @@ TEST_F(SceneHandlersTest, GetProperty_NodeNotFound) {
 }
 
 TEST_F(SceneHandlersTest, GetProperty_UnknownKey) {
-    scene_create_node(scene_.get(), "N", NodeType::Node3D);
+    scene_create_node(scene_.get(), "N", "Node3D");
     auto result = call("scene.getProperty", {{"id", 1}, {"key", "color"}});
     EXPECT_EQ(result["ok"], false);
     EXPECT_TRUE(result["error"].get<std::string>().find("unknown key") != std::string::npos);
@@ -512,7 +512,7 @@ TEST_F(SceneHandlersTest, GetProperty_MissingId_Error) {
 }
 
 TEST_F(SceneHandlersTest, GetProperty_MissingKey_Error) {
-    scene_create_node(scene_.get(), "N", NodeType::Node3D);
+    scene_create_node(scene_.get(), "N", "Node3D");
     auto result = call("scene.getProperty", {{"id", 1}});
     EXPECT_EQ(result["ok"], false);
     EXPECT_TRUE(result["error"].get<std::string>().find("key") != std::string::npos);
@@ -562,7 +562,7 @@ TEST_F(SceneHandlersTest, Load_NullScene_Error) {
 // ============================================================================
 
 TEST_F(SceneHandlersTest, Save_ValidFile) {
-    scene_create_node(scene_.get(), "Root", NodeType::Node3D);
+    scene_create_node(scene_.get(), "Root", "Node3D");
 
     // Save to a temp file.
     const std::string path = "/tmp/test_scene_handlers_save.uzscene";
@@ -608,7 +608,7 @@ TEST_F(SceneHandlersTest, Save_NullScene_Error) {
 // ============================================================================
 
 TEST_F(SceneHandlersTest, SelectNode_ValidNode) {
-    scene_create_node(scene_.get(), "Target", NodeType::Node3D);
+    scene_create_node(scene_.get(), "Target", "Node3D");
     auto result = call("scene.selectNode", {{"id", 1}});
     EXPECT_EQ(result["ok"], true);
     EXPECT_EQ(result["id"], 1u);
@@ -715,8 +715,8 @@ TEST_F(SceneHandlersTest, RoundTrip_AddSetGet) {
 
 TEST_F(SceneHandlersTest, RoundTrip_SaveLoad) {
     // Set up a small scene.
-    scene_create_node(scene_.get(), "Root", NodeType::Node3D);
-    NodeId child = scene_create_node(scene_.get(), "Child", NodeType::Camera, 1);
+    scene_create_node(scene_.get(), "Root", "Node3D");
+    NodeId child = scene_create_node(scene_.get(), "Child", "Camera", 1);
     scene_get_node(scene_.get(), child)->local_transform.position = {1.0f, 2.0f, 3.0f, 0.0f};
 
     const std::string path = "/tmp/test_scene_handlers_roundtrip.uzscene";

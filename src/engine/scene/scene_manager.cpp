@@ -12,6 +12,7 @@
 #include "engine/scene/scene.h"
 #include "engine/scene/component_data.h"
 #include "engine/scene/component_store.h"
+#include "engine/scene/component_registry.h"
 
 #include "common/safe_string.h"
 
@@ -67,11 +68,12 @@ void scene_init(Scene* scene, const char* name) {
     // node_count is already 0 from memset.
     // All node slots have alive=false from memset.
 
-    // Initialize the component store and register known component types.
+    // Register all built-in node types (idempotent after first call).
+    ComponentRegistry::register_builtins();
+
+    // Initialize the component store and ensure pools exist for all registered types.
     scene->components.init();
-    component_store_register<CameraData>(&scene->components);
-    component_store_register<DirectionalLightData>(&scene->components);
-    component_store_register<StaticMeshData>(&scene->components);
+    ComponentRegistry::init_store(scene->components);
 }
 
 void scene_clear(Scene* scene) {
@@ -89,7 +91,7 @@ void scene_clear(Scene* scene) {
 // Node creation / destruction
 // ============================================================================
 
-NodeId scene_create_node(Scene* scene, const char* name, NodeType type, NodeId parent_id) {
+NodeId scene_create_node(Scene* scene, const char* name, const char* type_name, NodeId parent_id) {
     // Scene is full if we have used kSceneMaxNodes-1 slots (slot 0 is reserved).
     if (scene->node_count >= kSceneMaxNodes - 1) {
         return kNodeIdInvalid;
@@ -119,7 +121,7 @@ NodeId scene_create_node(Scene* scene, const char* name, NodeType type, NodeId p
 
     node->id             = slot;
     node->parent_id      = parent_id;
-    node->type           = type;
+    uz::str_copy(node->type_name, sizeof(node->type_name), type_name ? type_name : "Node3D");
     node->flags          = NODE_FLAG_ACTIVE | NODE_FLAG_VISIBLE;
     node->local_transform = Transform::identity();
     node->world_transform = Mat4::identity();

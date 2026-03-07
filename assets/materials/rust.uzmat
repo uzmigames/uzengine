@@ -6,5 +6,6 @@ metallic = 0.0
 roughness = 1.0
 albedo_texture = assets/textures/rust_albedo.png
 normal_texture = assets/textures/rust_normal.png
+metallic_texture = assets/textures/rust_metallic.png
 roughness_texture = assets/textures/rust_roughness.png
 ao_texture = assets/textures/rust_ao.png

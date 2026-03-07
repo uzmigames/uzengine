@@ -1,6 +1,13 @@
 [material]
-name = Iron
+name = GrassPatchyGround
 shader = pbr
-albedo = [0.56, 0.57, 0.58]
-metallic = 1.0
-roughness = 0.4
+albedo = [1.0, 1.0, 1.0]
+metallic = 0.0
+roughness = 1.0
+ao = 1.0
+albedo_texture = assets/textures/Grass/Poliigon_GrassPatchyGround_4585_BaseColor.jpg
+normal_texture = assets/textures/Grass/Poliigon_GrassPatchyGround_4585_Normal.png
+metallic_texture = assets/textures/Grass/Poliigon_GrassPatchyGround_4585_Metallic.jpg
+roughness_texture = assets/textures/Grass/Poliigon_GrassPatchyGround_4585_Roughness.jpg
+ao_texture = assets/textures/Grass/Poliigon_GrassPatchyGround_4585_AmbientOcclusion.jpg
+uv_tiling = 2.0

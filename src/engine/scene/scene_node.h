@@ -30,53 +30,17 @@ using NodeId = uint32_t;
 inline constexpr NodeId kNodeIdInvalid = 0;
 
 // ============================================================================
-// NodeType — discriminator for node behavior
+// Node type — string name, not an enum
+//
+// The type of a node is stored as a plain string (e.g. "StaticMesh",
+// "Camera", "SkyAtmosphere"). There is no central enum — new types are
+// registered in ComponentRegistry without touching this header.
+//
+// For dispatch in rendering/physics/audio, use component_has<T>() instead
+// of comparing type_name strings (Rule 2).  The type_name is used only for:
+//   - Editor display (scene tree icon/color via ComponentRegistry::find())
+//   - Serialization (written as "type = X" in .uzscene files)
 // ============================================================================
-
-enum class NodeType : uint16_t {
-    Empty           = 0,    // Named container, no transform
-    Node3D          = 1,    // 3D node with local transform
-    StaticMesh      = 2,    // Renderable static mesh
-    DirectionalLight = 3,   // Directional light
-    PointLight      = 4,    // Point light
-    SpotLight       = 5,    // Spot light
-    Camera          = 6,    // Camera node
-    AudioSource     = 7,    // Audio emitter
-    AudioListener   = 8,    // Audio receiver
-
-    Count                   // Sentinel — not a valid type
-};
-
-/// Convert a NodeType to its string name. Returns "Unknown" for invalid types.
-[[nodiscard]] inline const char* node_type_to_string(NodeType type) noexcept {
-    switch (type) {
-        case NodeType::Empty:            return "Empty";
-        case NodeType::Node3D:           return "Node3D";
-        case NodeType::StaticMesh:       return "StaticMesh";
-        case NodeType::DirectionalLight: return "DirectionalLight";
-        case NodeType::PointLight:       return "PointLight";
-        case NodeType::SpotLight:        return "SpotLight";
-        case NodeType::Camera:           return "Camera";
-        case NodeType::AudioSource:      return "AudioSource";
-        case NodeType::AudioListener:    return "AudioListener";
-        default:                         return "Unknown";
-    }
-}
-
-/// Parse a string to a NodeType. Returns NodeType::Empty if unrecognized.
-[[nodiscard]] inline NodeType node_type_from_string(const char* str) noexcept {
-    if (!str) return NodeType::Empty;
-    if (std::strcmp(str, "Empty") == 0)            return NodeType::Empty;
-    if (std::strcmp(str, "Node3D") == 0)            return NodeType::Node3D;
-    if (std::strcmp(str, "StaticMesh") == 0)        return NodeType::StaticMesh;
-    if (std::strcmp(str, "DirectionalLight") == 0)  return NodeType::DirectionalLight;
-    if (std::strcmp(str, "PointLight") == 0)        return NodeType::PointLight;
-    if (std::strcmp(str, "SpotLight") == 0)          return NodeType::SpotLight;
-    if (std::strcmp(str, "Camera") == 0)            return NodeType::Camera;
-    if (std::strcmp(str, "AudioSource") == 0)        return NodeType::AudioSource;
-    if (std::strcmp(str, "AudioListener") == 0)      return NodeType::AudioListener;
-    return NodeType::Empty;
-}
 
 // ============================================================================
 // NodeFlags — per-node bitflags
@@ -104,7 +68,7 @@ inline constexpr uint32_t kNodeNameMaxLen = 64;
 struct SceneNode {
     NodeId      id;                         // This node's ID (1-based)
     NodeId      parent_id;                  // Parent node ID (0 = scene root)
-    NodeType    type;                       // Node type discriminator
+    char        type_name[kNodeNameMaxLen]; // Node type string, e.g. "StaticMesh"
     uint16_t    flags;                      // NodeFlags bitfield
     char        name[kNodeNameMaxLen];       // Null-terminated name
 

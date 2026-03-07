@@ -1,0 +1,13 @@
+[material]
+name = MetalCorroded
+shader = pbr
+albedo = [1.0, 1.0, 1.0]
+metallic = 1.0
+roughness = 1.0
+albedo_texture = assets/textures/MetalCorroded/MetalCorrodedHeavy001_COL_2K_METALNESS.jpg
+normal_texture = assets/textures/MetalCorroded/MetalCorrodedHeavy001_NRM_2K_METALNESS.jpg
+metallic_texture = assets/textures/MetalCorroded/MetalCorrodedHeavy001_METALNESS_2K_METALNESS.jpg
+roughness_texture = assets/textures/MetalCorroded/MetalCorrodedHeavy001_ROUGHNESS_2K_METALNESS.jpg
+displacement_texture = assets/textures/MetalCorroded/MetalCorrodedHeavy001_DISP_2K_METALNESS.jpg
+parallax_scale = 0.03
+uv_tiling = 2.0

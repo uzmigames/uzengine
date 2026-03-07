@@ -62,7 +62,7 @@ void scene_register_handlers(IpcRegistry& registry, Scene* scene, SceneParams* p
             result.push_back({
                 {"id",        node.id},
                 {"name",      node.name},
-                {"type",      node_type_to_string(node.type)},
+                {"type",      node.type_name},
                 {"parent_id", node.parent_id},
                 {"active",    static_cast<bool>(node.flags & NODE_FLAG_ACTIVE)},
                 {"visible",   static_cast<bool>(node.flags & NODE_FLAG_VISIBLE)},
@@ -97,9 +97,9 @@ void scene_register_handlers(IpcRegistry& registry, Scene* scene, SceneParams* p
         const std::string name = args["name"].get<std::string>();
 
         // Type defaults to Node3D if not specified.
-        NodeType type = NodeType::Node3D;
+        std::string typeStr = "Node3D";
         if (args.contains("type") && args["type"].is_string()) {
-            type = node_type_from_string(args["type"].get<std::string>().c_str());
+            typeStr = args["type"].get<std::string>();
         }
 
         // Parent defaults to kNodeIdInvalid (root-level).
@@ -108,7 +108,7 @@ void scene_register_handlers(IpcRegistry& registry, Scene* scene, SceneParams* p
             parent_id = args["parent_id"].get<uint32_t>();
         }
 
-        const NodeId new_id = scene_create_node(scene, name.c_str(), type, parent_id);
+        const NodeId new_id = scene_create_node(scene, name.c_str(), typeStr.c_str(), parent_id);
         if (new_id == kNodeIdInvalid) {
             return make_error("scene full");
         }

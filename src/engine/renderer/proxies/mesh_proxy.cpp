@@ -18,12 +18,21 @@ void MeshProxy::cache_material() {
     cached_emission[0] = 0.0f; cached_emission[1] = 0.0f; cached_emission[2] = 0.0f;
     cached_emission_energy = 1.0f;
 
-    cached_albedo_tex    = RHI_NULL;
-    cached_normal_tex    = RHI_NULL;
-    cached_metallic_tex  = RHI_NULL;
-    cached_roughness_tex = RHI_NULL;
-    cached_ao_tex        = RHI_NULL;
-    cached_emission_tex  = RHI_NULL;
+    cached_albedo_tex       = RHI_NULL;
+    cached_normal_tex       = RHI_NULL;
+    cached_metallic_tex     = RHI_NULL;
+    cached_roughness_tex    = RHI_NULL;
+    cached_ao_tex           = RHI_NULL;
+    cached_emission_tex     = RHI_NULL;
+    cached_displacement_tex = RHI_NULL;
+    cached_parallax_scale   = 0.0f;
+    cached_env_multiplier   = 1.0f;
+    cached_normal_strength  = 1.0f;
+    cached_specular_multiplier = 1.0f;
+    cached_uv_tiling[0]     = 1.0f;
+    cached_uv_tiling[1]     = 1.0f;
+    cached_self_shadow_strength = 1.0f;
+    cached_cavity_strength  = 0.35f;
 
     if (!material) return;
 
@@ -62,6 +71,25 @@ void MeshProxy::cache_material() {
     get_tex("roughness_texture", cached_roughness_tex);
     get_tex("ao_texture", cached_ao_tex);
     get_tex("emission_texture", cached_emission_tex);
+    get_tex("displacement_texture", cached_displacement_tex);
+    get_float("parallax_scale", cached_parallax_scale);
+    get_float("env_multiplier", cached_env_multiplier);
+    get_float("normal_strength", cached_normal_strength);
+    get_float("specular_multiplier", cached_specular_multiplier);
+    get_float("self_shadow_strength", cached_self_shadow_strength);
+    get_float("cavity_strength", cached_cavity_strength);
+
+    // UV tiling: single float sets both U and V; vec2 sets independently
+    auto tiling_it = material->parameters.find("uv_tiling");
+    if (tiling_it != material->parameters.end()) {
+        cached_uv_tiling[0] = tiling_it->second;
+        cached_uv_tiling[1] = tiling_it->second;
+    }
+    auto tiling_vec_it = material->vec_parameters.find("uv_tiling");
+    if (tiling_vec_it != material->vec_parameters.end() && tiling_vec_it->second.size() >= 2) {
+        cached_uv_tiling[0] = tiling_vec_it->second[0];
+        cached_uv_tiling[1] = tiling_vec_it->second[1];
+    }
 }
 
 void MeshProxy::execute(RhiCmdList cmd, const FrameConstants& fc) {
@@ -74,32 +102,34 @@ void MeshProxy::execute(RhiCmdList cmd, const FrameConstants& fc) {
     // 2. Slot b0: World Matrix
     rhi()->cmd_set_root_constants(cmd, 0, &transform, 16, 0);
 
-    // 3. Slot b1: MaterialCB (8 DWORDs)
-    float matCB[8] = {
+    // 3. Slot b1: MaterialCB (20 DWORDs — fills root sig to 64/64)
+    float matCB[20] = {
         cached_albedo[0], cached_albedo[1], cached_albedo[2], cached_metallic,
-        cached_roughness, cached_ao, 0.0f, 0.0f
+        cached_roughness, cached_ao, cached_parallax_scale, cached_emission_energy,
+        cached_emission[0], cached_emission[1], cached_emission[2], cached_env_multiplier,
+        cached_normal_strength, cached_specular_multiplier, cached_uv_tiling[0], cached_uv_tiling[1],
+        cached_self_shadow_strength, cached_cavity_strength, 0.0f, 0.0f  // pad to 20
     };
-    rhi()->cmd_set_root_constants(cmd, 1, matCB, 8, 0);
+    rhi()->cmd_set_root_constants(cmd, 1, matCB, 20, 0);
 
-    // 4. Slot b2: LightFrameCB (16 DWORDs — compact single directional light)
-    float lightFrameCB[16] = {
-        fc.light_dir.x, fc.light_dir.y, fc.light_dir.z, fc.light_intensity,
-        fc.light_color.x, fc.light_color.y, fc.light_color.z, 0.0f,
-        fc.camera_world_pos.x, fc.camera_world_pos.y, fc.camera_world_pos.z, fc.time,
-        1.0f, 0.0f, 0.0f, 0.0f  // envIntensity, pad, pad, pad
-    };
-    rhi()->cmd_set_root_constants(cmd, 2, lightFrameCB, 16, 0);
+    // 4. Slot b2: LightFrameCB (root CBV -- data uploaded once per frame by Renderer)
+    if (fc.light_frame_cbv != RHI_NULL)
+        rhi()->cmd_set_constant_buffer(cmd, 2, fc.light_frame_cbv);
 
     // 5. Slot b3: FrameCB
     rhi()->cmd_set_root_constants(cmd, 3, &fc.view_proj, 16, 0);
 
-    // 6. Textures t0-t5
+    // 6. Textures t0-t9
     rhi()->cmd_set_texture(cmd, 0, (cached_albedo_tex != RHI_NULL) ? cached_albedo_tex : fc.white_texture);
     rhi()->cmd_set_texture(cmd, 1, (cached_normal_tex != RHI_NULL) ? cached_normal_tex : fc.normal_texture);
-    rhi()->cmd_set_texture(cmd, 2, (cached_metallic_tex != RHI_NULL) ? cached_metallic_tex : fc.black_texture);
+    rhi()->cmd_set_texture(cmd, 2, (cached_metallic_tex != RHI_NULL) ? cached_metallic_tex : fc.white_texture);
     rhi()->cmd_set_texture(cmd, 3, (cached_roughness_tex != RHI_NULL) ? cached_roughness_tex : fc.white_texture);
     rhi()->cmd_set_texture(cmd, 4, (cached_ao_tex != RHI_NULL) ? cached_ao_tex : fc.white_texture);
-    // Slot 5 (emission_tex) removed — root signature Phase 1 only supports t0-t4
+    rhi()->cmd_set_texture(cmd, 5, (cached_displacement_tex != RHI_NULL) ? cached_displacement_tex : fc.black_texture);
+    rhi()->cmd_set_texture(cmd, 6, (fc.shadow_map != RHI_NULL) ? fc.shadow_map : fc.white_texture);
+    rhi()->cmd_set_texture(cmd, 7, (fc.brdf_lut != RHI_NULL) ? fc.brdf_lut : fc.white_texture);
+    rhi()->cmd_set_texture(cmd, 8, (fc.irradiance_cube != RHI_NULL) ? fc.irradiance_cube : fc.white_texture);
+    rhi()->cmd_set_texture(cmd, 9, (fc.prefiltered_cube != RHI_NULL) ? fc.prefiltered_cube : fc.white_texture);
 
     // 7. Draw Submeshes
     for (const auto& sub : mesh->submeshes) {

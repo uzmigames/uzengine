@@ -25,6 +25,8 @@ extern const rhi_backend_t rhi_dx12_backend;
 #include "engine/core/diag.h"
 #include "engine/renderer/resources/mesh_primitives.h"
 #include "engine/renderer/resources/texture.h"
+#include "engine/renderer/resources/brdf_lut.h"
+#include "engine/renderer/resources/sky_cubemap.h"
 #include "engine/renderer/proxies/mesh_proxy.h"
 #include "engine/scene/scene.h"
 #include "engine/scene/component_data.h"
@@ -134,6 +136,86 @@ bool Renderer::init(void* window_handle, uint32_t width, uint32_t height) {
         frameConstants_.normal_texture = normalTex_;
     }
 
+    // Create shadow map texture (D32_FLOAT, shader-readable for PCF sampling)
+    DIAG("createShadowMap()...");
+    {
+        RhiTextureDesc smDesc{};
+        smDesc.width      = kShadowMapSize;
+        smDesc.height     = kShadowMapSize;
+        smDesc.depth      = 1;
+        smDesc.mip_levels = 1;
+        smDesc.array_size = 1;
+        smDesc.format     = RHI_FORMAT_D32_FLOAT;
+        smDesc.dimension  = RHI_TEXTURE_DIM_2D;
+        smDesc.usage      = RHI_TEXTURE_USAGE_DEPTH_STENCIL | RHI_TEXTURE_USAGE_SHADER_READ;
+        smDesc.debug_name = "ShadowMap";
+        shadowMap_ = rhi()->texture_create(&smDesc);
+        if (shadowMap_ == RHI_NULL)
+            DIAG("WARNING: shadowMap creation failed — shadows disabled");
+    }
+
+    // Create per-frame CBV for LightFrameCB (b2 refactored from root constants to root CBV).
+    // 256 bytes = D3D12 CBV minimum alignment; actual data is 16 floats = 64 bytes.
+    {
+        RhiBufferDesc cbvDesc{};
+        cbvDesc.size       = 256;
+        cbvDesc.usage      = RHI_BUFFER_USAGE_CONSTANT;
+        cbvDesc.debug_name = "LightFrameCBV";
+        lightFrameCBV_ = rhi()->buffer_create(&cbvDesc);
+        if (lightFrameCBV_ == RHI_NULL)
+            DIAG("WARNING: LightFrameCBV creation failed");
+    }
+
+    // Initialize GPU compute IBL pipeline.
+    DIAG("IblBaker::init()...");
+    if (!iblBaker_.init())
+        DIAG("WARNING: IblBaker init failed — falling back to CPU IBL");
+
+    // Generate BRDF integration LUT (256x256 RG16F, environment-independent).
+    DIAG("bake_brdf_lut()...");
+    brdfLut_ = iblBaker_.bake_brdf_lut();
+    if (brdfLut_ == RHI_NULL) {
+        DIAG("WARNING: GPU BRDF LUT failed, trying CPU fallback");
+        brdfLut_ = generate_brdf_lut();
+    }
+    if (brdfLut_ == RHI_NULL)
+        DIAG("WARNING: BRDF LUT generation failed — IBL specular disabled");
+
+    // Generate sky IBL cubemaps (env → GPU compute irradiance + prefiltered).
+    DIAG("generate_sky_cubemaps() + GPU IBL bake...");
+    {
+        SkyCubemapParams skyParams{};
+        skyParams.sky_zenith[0]  = 0.18f; skyParams.sky_zenith[1]  = 0.40f; skyParams.sky_zenith[2]  = 0.95f;
+        skyParams.sky_horizon[0] = 0.75f; skyParams.sky_horizon[1] = 0.85f; skyParams.sky_horizon[2] = 1.05f;
+        skyParams.sky_ground[0]  = 0.06f; skyParams.sky_ground[1]  = 0.05f; skyParams.sky_ground[2]  = 0.04f;
+        skyParams.sun_dir[0]     = 0.3f;  skyParams.sun_dir[1]     = 0.8f;  skyParams.sun_dir[2]     = 0.3f;
+        skyParams.sun_intensity  = 5.0f;
+        SkyCubemapResult skyResult = generate_sky_cubemaps(skyParams);
+        envCubemap_ = skyResult.env_cubemap;
+
+        // GPU compute convolution from env cubemap
+        IblBakeResult bakeResult = iblBaker_.bake(envCubemap_, 256);
+        if (bakeResult.irradiance_cube != RHI_NULL && bakeResult.prefiltered_cube != RHI_NULL) {
+            // GPU path succeeded — destroy CPU-convolved cubemaps, use GPU ones
+            if (skyResult.irradiance_cube != RHI_NULL)
+                rhi()->texture_destroy(skyResult.irradiance_cube);
+            if (skyResult.prefiltered_cube != RHI_NULL)
+                rhi()->texture_destroy(skyResult.prefiltered_cube);
+            irradianceCube_  = bakeResult.irradiance_cube;
+            prefilteredCube_ = bakeResult.prefiltered_cube;
+        } else {
+            // GPU bake failed — fall back to CPU-convolved cubemaps
+            DIAG("WARNING: GPU IBL bake failed, using CPU cubemaps");
+            irradianceCube_  = skyResult.irradiance_cube;
+            prefilteredCube_ = skyResult.prefiltered_cube;
+        }
+    }
+
+    // Create post-process render targets (HDR, SSAO, bloom chain)
+    DIAG("createPostProcessTargets()...");
+    if (!createPostProcessTargets())
+        DIAG("WARNING: post-process targets failed — falling back to no post-processing");
+
     DIAG("=== renderer.init COMPLETE ===");
     initialized_ = true;
     return true;
@@ -170,6 +252,8 @@ bool Renderer::resize(int width, int height) {
 
     createDepthBuffer();
     createReadbackBuffers();
+    destroyPostProcessTargets();
+    createPostProcessTargets();
 
     return true;
 }
@@ -209,6 +293,21 @@ void Renderer::update(double /*totalTime*/, double deltaTime) {
     CameraState camState = camera_update_fly(sceneParams_, aspect, dt);
     viewProj_ = camState.view_proj;
 
+    // Build projection matrix for SSAO depth reconstruction
+    // Matches camera_update_fly: fov = pi/4, near = 0.1, far = 500
+    {
+        constexpr float fov  = 3.14159265f / 4.0f;
+        constexpr float zn   = 0.1f;
+        constexpr float zf   = 500.0f;
+        const float tanHalf  = std::tan(fov * 0.5f);
+        projMatrix_ = Mat4{};
+        projMatrix_.m[0][0] = 1.0f / (aspect * tanHalf);
+        projMatrix_.m[1][1] = 1.0f / tanHalf;
+        projMatrix_.m[2][2] = zf / (zf - zn);
+        projMatrix_.m[2][3] = 1.0f;
+        projMatrix_.m[3][2] = -(zn * zf) / (zf - zn);
+    }
+
     // Collect primary directional light from the scene.
     cachedLight_ = light_collect_primary(scene_);
 
@@ -224,8 +323,6 @@ void Renderer::update(double /*totalTime*/, double deltaTime) {
             for (auto* p : proxies_) delete p;
             proxies_.clear();
             proxy_node_ids_.clear();
-
-            component_store_register<StaticMeshData>(&scene_->components);
 
             // Derive project base directory from scene source path.
             // Scene path is e.g. "E:/UzEngine/assets/scenes/materials.uzscene"
@@ -332,6 +429,195 @@ void Renderer::update(double /*totalTime*/, double deltaTime) {
     frameConstants_.light_dir = cachedLight_.direction;
     frameConstants_.light_color = cachedLight_.color;
     frameConstants_.light_intensity = cachedLight_.intensity;
+    frameConstants_.shadow_bias       = 0.003f;  // slope-based bias for soft shadow edges
+    frameConstants_.shadow_ortho_size = 12.0f;  // ±12 world units — covers sphere + ground area
+    frameConstants_.shadow_light_dist = 25.0f;  // light eye 25 units from scene center
+    frameConstants_.shadow_map        = shadowMap_;
+    frameConstants_.brdf_lut          = brdfLut_;
+    frameConstants_.light_frame_cbv   = lightFrameCBV_;
+    frameConstants_.irradiance_cube   = irradianceCube_;
+    frameConstants_.prefiltered_cube  = prefilteredCube_;
+
+    // Upload LightFrameCB to GPU constant buffer (b2 root CBV)
+    if (lightFrameCBV_ != RHI_NULL) {
+        float lightFrameData[16] = {
+            frameConstants_.light_dir.x, frameConstants_.light_dir.y, frameConstants_.light_dir.z, frameConstants_.light_intensity,
+            frameConstants_.light_color.x, frameConstants_.light_color.y, frameConstants_.light_color.z, 0.0f,
+            frameConstants_.camera_world_pos.x, frameConstants_.camera_world_pos.y, frameConstants_.camera_world_pos.z, frameConstants_.time,
+            0.65f, // envIntensity: reduced from 1.0 to let direct light dominate (more NdotL contrast)
+            frameConstants_.shadow_bias,
+            frameConstants_.shadow_ortho_size,
+            frameConstants_.shadow_light_dist
+        };
+        rhi()->buffer_upload(lightFrameCBV_, lightFrameData, sizeof(lightFrameData));
+    }
+
+    // Build sky CB — camera basis vectors + perspective params for ray reconstruction.
+    // World-space up is always (0,1,0) for the fly-cam.
+    {
+        Vec3 fwd = camState.forward;
+        Vec3 worldUp = {0.0f, 1.0f, 0.0f, 0.0f};
+
+        // Guard against degenerate forward (looking straight up/down)
+        float upDot = std::abs(fwd.x * worldUp.x + fwd.y * worldUp.y + fwd.z * worldUp.z);
+        Vec3 refUp = (upDot > 0.99f)
+            ? Vec3{0.0f, 0.0f, 1.0f, 0.0f}
+            : worldUp;
+
+        Vec3 right = vec3_normalize(vec3_cross(refUp, fwd));
+        Vec3 up    = vec3_cross(fwd, right);
+
+        // tan(fov/2) — camera always uses kPiDiv4 = 45 deg, so half-fov = 22.5 deg
+        constexpr float kTanHalfFov45 = 0.41421356f; // tan(pi/8)
+        const float aspectF = static_cast<float>(width_) / static_cast<float>(height_);
+
+        skyCB_.camForward[0] = fwd.x;   skyCB_.camForward[1] = fwd.y;   skyCB_.camForward[2] = fwd.z;
+        skyCB_.tanHalfFovY   = kTanHalfFov45;
+        skyCB_.camRight[0]   = right.x; skyCB_.camRight[1]   = right.y; skyCB_.camRight[2]   = right.z;
+        skyCB_.aspect        = aspectF;
+        skyCB_.camUp[0]      = up.x;    skyCB_.camUp[1]      = up.y;    skyCB_.camUp[2]      = up.z;
+        skyCB_._pad          = 0.0f;
+        // Sun direction + intensity for sky disk/corona (matches directional light)
+        skyCB_.sunDir[0]     = frameConstants_.light_dir.x;
+        skyCB_.sunDir[1]     = frameConstants_.light_dir.y;
+        skyCB_.sunDir[2]     = frameConstants_.light_dir.z;
+        skyCB_.sunIntensity  = frameConstants_.light_intensity * 0.25f;  // scaled for corona
+    }
+
+    // Sync SkyAtmosphere component from scene (if present).
+    // Looks for the first node with a SkyAtmosphereData component and copies its colors.
+    if (scene_) {
+        for (uint32_t i = 1; i < scene_->next_id; ++i) {
+            SceneNode* n = scene_get_node(scene_, i);
+            if (!n || !n->alive) continue;
+            if (!component_has<SkyAtmosphereData>(&scene_->components, i)) continue;
+            auto* sky = component_get<SkyAtmosphereData>(&scene_->components, i);
+            if (!sky) break;
+            skyColorsCB_.skyZenith[0]  = sky->sky_zenith[0];
+            skyColorsCB_.skyZenith[1]  = sky->sky_zenith[1];
+            skyColorsCB_.skyZenith[2]  = sky->sky_zenith[2];
+            skyColorsCB_.skyHorizon[0] = sky->sky_horizon[0];
+            skyColorsCB_.skyHorizon[1] = sky->sky_horizon[1];
+            skyColorsCB_.skyHorizon[2] = sky->sky_horizon[2];
+            skyColorsCB_.skyHaze[0]    = sky->sky_haze[0];
+            skyColorsCB_.skyHaze[1]    = sky->sky_haze[1];
+            skyColorsCB_.skyHaze[2]    = sky->sky_haze[2];
+            skyColorsCB_.skyGround[0]  = sky->sky_ground[0];
+            skyColorsCB_.skyGround[1]  = sky->sky_ground[1];
+            skyColorsCB_.skyGround[2]  = sky->sky_ground[2];
+            skyColorsCB_.fogDensity    = sky->fog_density;
+
+            // Dirty-flag: regenerate IBL cubemaps when sky colors or sun direction change.
+            // Compare against last-known values; skip the expensive reconvolution if unchanged.
+            float curSunDir[3] = {
+                frameConstants_.light_dir.x,
+                frameConstants_.light_dir.y,
+                frameConstants_.light_dir.z
+            };
+            bool skyDirty = false;
+            for (int c = 0; c < 3; ++c) {
+                if (std::abs(sky->sky_zenith[c]  - lastSkyZenith_[c])  > 1e-4f) skyDirty = true;
+                if (std::abs(sky->sky_horizon[c] - lastSkyHorizon_[c]) > 1e-4f) skyDirty = true;
+                if (std::abs(sky->sky_ground[c]  - lastSkyGround_[c])  > 1e-4f) skyDirty = true;
+                if (std::abs(curSunDir[c]        - lastSunDir_[c])     > 1e-4f) skyDirty = true;
+            }
+            if (skyDirty) {
+                for (int c = 0; c < 3; ++c) {
+                    lastSkyZenith_[c]  = sky->sky_zenith[c];
+                    lastSkyHorizon_[c] = sky->sky_horizon[c];
+                    lastSkyGround_[c]  = sky->sky_ground[c];
+                    lastSunDir_[c]     = curSunDir[c];
+                }
+                SkyCubemapParams skyParams{};
+                skyParams.sky_zenith[0]  = sky->sky_zenith[0];
+                skyParams.sky_zenith[1]  = sky->sky_zenith[1];
+                skyParams.sky_zenith[2]  = sky->sky_zenith[2];
+                skyParams.sky_horizon[0] = sky->sky_horizon[0];
+                skyParams.sky_horizon[1] = sky->sky_horizon[1];
+                skyParams.sky_horizon[2] = sky->sky_horizon[2];
+                skyParams.sky_ground[0]  = sky->sky_ground[0];
+                skyParams.sky_ground[1]  = sky->sky_ground[1];
+                skyParams.sky_ground[2]  = sky->sky_ground[2];
+                skyParams.sun_dir[0]     = curSunDir[0];
+                skyParams.sun_dir[1]     = curSunDir[1];
+                skyParams.sun_dir[2]     = curSunDir[2];
+                skyParams.sun_intensity  = frameConstants_.light_intensity * 5.0f;
+                DIAG("SkyAtmosphere changed — regenerating IBL cubemaps (GPU compute)...");
+                SkyCubemapResult skyResult = generate_sky_cubemaps(skyParams);
+                if (envCubemap_ != RHI_NULL)
+                    rhi()->texture_destroy(envCubemap_);
+                envCubemap_ = skyResult.env_cubemap;
+
+                IblBakeResult bakeResult = iblBaker_.bake(envCubemap_, 256);
+                if (bakeResult.irradiance_cube != RHI_NULL) {
+                    if (skyResult.irradiance_cube != RHI_NULL)
+                        rhi()->texture_destroy(skyResult.irradiance_cube);
+                    irradianceCube_ = bakeResult.irradiance_cube;
+                } else if (skyResult.irradiance_cube != RHI_NULL) {
+                    irradianceCube_ = skyResult.irradiance_cube;
+                }
+                if (bakeResult.prefiltered_cube != RHI_NULL) {
+                    if (skyResult.prefiltered_cube != RHI_NULL)
+                        rhi()->texture_destroy(skyResult.prefiltered_cube);
+                    prefilteredCube_ = bakeResult.prefiltered_cube;
+                } else if (skyResult.prefiltered_cube != RHI_NULL) {
+                    prefilteredCube_ = skyResult.prefiltered_cube;
+                }
+            }
+            break;
+        }
+    }
+
+    // Build light-space matrix for shadow pass (orthographic from directional light).
+    // Light "camera" positioned above the scene looking along the light direction.
+    {
+        Vec3 ld = cachedLight_.direction;  // Points FROM light TO scene
+
+        // Light view: position scene_center offset back along -ld.
+        // kShadowLightDist MUST match frameConstants_.shadow_light_dist (25.0f)
+        // — the shader reconstructs light-space using the same distance.
+        constexpr float kShadowLightDist = 25.0f;  // MUST match frameConstants_.shadow_light_dist
+        Vec3 sceneCenter = {0.0f, 0.0f, 0.0f, 0.0f};  // matches shader's implicit sceneCenter=0
+        Vec3 lightEye = {
+            sceneCenter.x - ld.x * kShadowLightDist,
+            sceneCenter.y - ld.y * kShadowLightDist,
+            sceneCenter.z - ld.z * kShadowLightDist,
+            0.0f
+        };
+
+        // Build look-at view for light (LH, same convention as camera)
+        Vec3 lightFwd = vec3_normalize({ld.x, ld.y, ld.z, 0.0f});
+        Vec3 worldUp  = {0.0f, 1.0f, 0.0f, 0.0f};
+        float upDotL  = std::abs(lightFwd.x*worldUp.x + lightFwd.y*worldUp.y + lightFwd.z*worldUp.z);
+        Vec3 refUp2   = (upDotL > 0.99f) ? Vec3{1.0f, 0.0f, 0.0f, 0.0f} : worldUp;
+
+        Vec3 lightRight = vec3_normalize(vec3_cross(refUp2, lightFwd));
+        Vec3 lightUp    = vec3_cross(lightFwd, lightRight);
+
+        // View matrix (row vectors in row-major DX style)
+        Mat4 lightView{};
+        lightView.m[0][0] = lightRight.x; lightView.m[1][0] = lightRight.y; lightView.m[2][0] = lightRight.z;
+        lightView.m[0][1] = lightUp.x;    lightView.m[1][1] = lightUp.y;    lightView.m[2][1] = lightUp.z;
+        lightView.m[0][2] = lightFwd.x;   lightView.m[1][2] = lightFwd.y;   lightView.m[2][2] = lightFwd.z;
+        lightView.m[3][0] = -(lightRight.x*lightEye.x + lightRight.y*lightEye.y + lightRight.z*lightEye.z);
+        lightView.m[3][1] = -(lightUp.x*lightEye.x    + lightUp.y*lightEye.y    + lightUp.z*lightEye.z);
+        lightView.m[3][2] = -(lightFwd.x*lightEye.x   + lightFwd.y*lightEye.y   + lightFwd.z*lightEye.z);
+        lightView.m[3][3] = 1.0f;
+
+        // Orthographic projection (left-handed, DX NDC: x∈[-1,1], y∈[-1,1], z∈[0,1])
+        // kOrthoSize must match frameConstants_.shadow_ortho_size
+        constexpr float kOrthoSize = 12.0f;  // ±12 world units — covers sphere + ground
+        constexpr float kNear = 0.1f;
+        constexpr float kFar  = 50.0f;  // shadowLightDist(25) * 2
+        Mat4 lightProj{};
+        lightProj.m[0][0] = 1.0f / kOrthoSize;
+        lightProj.m[1][1] = 1.0f / kOrthoSize;
+        lightProj.m[2][2] = 1.0f / (kFar - kNear);
+        lightProj.m[3][2] = -kNear / (kFar - kNear);
+        lightProj.m[3][3] = 1.0f;
+
+        lightSpaceMat_ = lightProj * lightView;
+    }
 }
 
 void Renderer::render(bool readback) {
@@ -347,17 +633,63 @@ void Renderer::render(bool readback) {
     RhiTexture backbuffer = rhi()->swapchain_backbuffer();
     auto rgBackbuffer = renderGraph_.import_texture("backbuffer", backbuffer);
     auto rgDepth      = renderGraph_.import_texture("depth",      rhiDepthBuf_);
+    auto rgShadowMap  = renderGraph_.import_texture("shadow_map", shadowMap_);
 
-    // --- Pass 1: Scene Draw ------------------------------------------------
-    // Clears and draws the scene into the backbuffer + depth.
-    renderGraph_.add_pass("scene_draw", RgPassType::Graphics,
+    // --- Pass 0: Shadow Depth ----------------------------------------------
+    // Renders scene depth from the directional light's perspective.
+    if (shadowMap_ != RHI_NULL && rhiShadowPipeline_ != RHI_NULL) {
+        renderGraph_.add_pass("shadow_depth", RgPassType::Graphics,
+            [&](RgPassBuilder& builder) {
+                builder.write(rgShadowMap);
+                builder.force_run();
+            },
+            [this](RhiCmdList cmd) {
+                rhi()->cmd_barrier_texture(cmd, shadowMap_,
+                                           RHI_STATE_SHADER_READ, RHI_STATE_DEPTH_WRITE);
+
+                rhi()->cmd_set_pipeline(cmd, rhiShadowPipeline_);
+                rhi()->cmd_set_viewport(cmd, 0.0f, 0.0f,
+                                       static_cast<float>(kShadowMapSize),
+                                       static_cast<float>(kShadowMapSize),
+                                       0.0f, 1.0f);
+                rhi()->cmd_set_scissor(cmd, 0, 0, kShadowMapSize, kShadowMapSize);
+                rhi()->cmd_clear_depth_stencil(cmd, shadowMap_, 1.0f, 0);
+                rhi()->cmd_set_render_targets(cmd, nullptr, 0, shadowMap_);
+                rhi()->cmd_set_topology(cmd, RHI_TOPOLOGY_TRIANGLE_LIST);
+
+                // b3 = LightSpaceCB (16 DWORDs)
+                rhi()->cmd_set_root_constants(cmd, 3, &lightSpaceMat_, 16, 0);
+
+                // Draw each proxy with POSITION-only vertex layout
+                for (auto* proxy : proxies_) {
+                    auto* mp = static_cast<MeshProxy*>(proxy);
+                    if (!mp->mesh || mp->mesh->vertex_buffer == RHI_NULL) continue;
+                    rhi()->cmd_set_root_constants(cmd, 0, &mp->transform, 16, 0);
+                    rhi()->cmd_set_vertex_buffer(cmd, 0, mp->mesh->vertex_buffer, 0, mp->mesh->vertex_stride);
+                    rhi()->cmd_set_index_buffer(cmd, mp->mesh->index_buffer, 0, true);
+                    for (const auto& sub : mp->mesh->submeshes) {
+                        rhi()->cmd_draw_indexed(cmd, sub.index_count, 1, sub.index_offset, 0, 0);
+                    }
+                }
+
+                rhi()->cmd_barrier_texture(cmd, shadowMap_,
+                                           RHI_STATE_DEPTH_WRITE, RHI_STATE_SHADER_READ);
+            });
+    }
+
+    // --- Pass 1: Scene HDR Draw ---------------------------------------------
+    // Draws sky + PBR meshes into the HDR intermediate render target.
+    // Tonemap + gamma are deferred to the composite post-process pass.
+    auto rgHdr = renderGraph_.import_texture("hdr_rt", hdrRT_);
+    renderGraph_.add_pass("scene_hdr", RgPassType::Graphics,
         [&](RgPassBuilder& builder) {
-            builder.write(rgBackbuffer);
+            builder.write(rgHdr);
             builder.write(rgDepth);
             builder.force_run();
         },
         [this](RhiCmdList cmd) {
-            rhi()->cmd_set_pipeline(cmd, rhiPipeline_);
+            rhi()->cmd_barrier_texture(cmd, hdrRT_,
+                                       RHI_STATE_SHADER_READ, RHI_STATE_RENDER_TARGET);
 
             rhi()->cmd_set_viewport(cmd, 0.0f, 0.0f,
                                    static_cast<float>(width_),
@@ -365,41 +697,25 @@ void Renderer::render(bool readback) {
                                    0.0f, 1.0f);
             rhi()->cmd_set_scissor(cmd, 0, 0, width_, height_);
 
-            RhiTexture bb = rhi()->swapchain_backbuffer();
-
-            rhi()->cmd_barrier_texture(cmd, bb,
-                                       RHI_STATE_PRESENT, RHI_STATE_RENDER_TARGET);
-
-            rhi()->cmd_clear_render_target(cmd, bb,
-                                           clearR_, clearG_, clearB_, 1.0f);
+            rhi()->cmd_clear_render_target(cmd, hdrRT_, 0.0f, 0.0f, 0.0f, 1.0f);
             rhi()->cmd_clear_depth_stencil(cmd, rhiDepthBuf_, 1.0f, 0);
+            rhi()->cmd_set_render_targets(cmd, &hdrRT_, 1, rhiDepthBuf_);
 
-            rhi()->cmd_set_render_targets(cmd, &bb, 1, rhiDepthBuf_);
+            // Sky pass → HDR RT
+            if (rhiSkyPipeline_ != RHI_NULL) {
+                rhi()->cmd_set_pipeline(cmd, rhiSkyPipeline_);
+                rhi()->cmd_set_root_constants(cmd, 0, &skyColorsCB_, 16, 0);
+                rhi()->cmd_set_root_constants(cmd, 3, &skyCB_, 16, 0);
+                rhi()->cmd_set_topology(cmd, RHI_TOPOLOGY_TRIANGLE_LIST);
+                rhi()->cmd_draw(cmd, 3, 1, 0, 0);
+            }
 
-            // Light data via root constants.
-            struct {
-                float dir[3]; float intensity;
-                float color[3]; float _pad;
-            } lightCB;
-            lightCB.dir[0]    = cachedLight_.direction.x;
-            lightCB.dir[1]    = cachedLight_.direction.y;
-            lightCB.dir[2]    = cachedLight_.direction.z;
-            lightCB.intensity = cachedLight_.intensity;
-            lightCB.color[0]  = cachedLight_.color.x;
-            lightCB.color[1]  = cachedLight_.color.y;
-            lightCB.color[2]  = cachedLight_.color.z;
-            lightCB._pad      = 0.0f;
-            rhi()->cmd_set_root_constants(cmd, 2, &lightCB, 8, 0);
+            if (lightFrameCBV_ != RHI_NULL)
+                rhi()->cmd_set_constant_buffer(cmd, 2, lightFrameCBV_);
 
-            // --- Draw PBR meshes FIRST (UE5/Godot pattern) ---
-            // Meshes must render before editor overlays so gizmos
-            // draw on top (transform gizmo uses no-depth PSO).
             rhi()->cmd_set_topology(cmd, RHI_TOPOLOGY_TRIANGLE_LIST);
+            meshRenderer_.draw(cmd, viewProj_, lightFrameCBV_);
 
-            // Draw PBR meshes (spheres with materials).
-            meshRenderer_.draw(cmd, viewProj_);
-
-            // Draw new Scene Proxies
             if (rhiPbrPipeline_ != RHI_NULL) {
                 rhi()->cmd_set_pipeline(cmd, rhiPbrPipeline_);
                 for (auto* proxy : proxies_) {
@@ -407,63 +723,253 @@ void Renderer::render(bool readback) {
                 }
             }
 
-            // --- Selection Outline (stencil mark + inflated mesh) ---
+            rhi()->cmd_barrier_texture(cmd, hdrRT_,
+                                       RHI_STATE_RENDER_TARGET, RHI_STATE_SHADER_READ);
+            rhi()->cmd_barrier_texture(cmd, rhiDepthBuf_,
+                                       RHI_STATE_DEPTH_WRITE, RHI_STATE_SHADER_READ);
+        });
+
+    // --- Pass 2: SSAO --------------------------------------------------------
+    auto rgSsao = renderGraph_.import_texture("ssao_rt", ssaoRT_);
+    if (ssaoPSO_ != RHI_NULL && ssaoRT_ != RHI_NULL) {
+        renderGraph_.add_pass("ssao", RgPassType::Graphics,
+            [&](RgPassBuilder& builder) {
+                builder.read(rgDepth);
+                builder.write(rgSsao);
+                builder.force_run();
+            },
+            [this](RhiCmdList cmd) {
+                uint32_t hw = width_ / 2, hh = height_ / 2;
+                rhi()->cmd_barrier_texture(cmd, ssaoRT_,
+                                           RHI_STATE_SHADER_READ, RHI_STATE_RENDER_TARGET);
+                rhi()->cmd_set_pipeline(cmd, ssaoPSO_);
+                rhi()->cmd_set_viewport(cmd, 0, 0, (float)hw, (float)hh, 0, 1);
+                rhi()->cmd_set_scissor(cmd, 0, 0, hw, hh);
+                rhi()->cmd_set_render_targets(cmd, &ssaoRT_, 1, RHI_NULL);
+
+                // b0: projMatrix (16 DWORDs)
+                float ssaoParams[16];
+                std::memcpy(ssaoParams, &projMatrix_, 64);
+                rhi()->cmd_set_root_constants(cmd, 0, ssaoParams, 16, 0);
+                // b1: SSAOParams (8 DWORDs: screenSize, near, far, aoRadius, aoIntensity, aoBias, pad)
+                float ssaoB1[8] = {
+                    static_cast<float>(width_), static_cast<float>(height_),
+                    0.1f, 500.0f,
+                    0.5f, 1.5f, 0.025f, 0.0f
+                };
+                rhi()->cmd_set_root_constants(cmd, 1, ssaoB1, 8, 0);
+
+                rhi()->cmd_set_texture(cmd, 0, rhiDepthBuf_);
+                rhi()->cmd_set_topology(cmd, RHI_TOPOLOGY_TRIANGLE_LIST);
+                rhi()->cmd_draw(cmd, 3, 1, 0, 0);
+
+                rhi()->cmd_barrier_texture(cmd, ssaoRT_,
+                                           RHI_STATE_RENDER_TARGET, RHI_STATE_SHADER_READ);
+            });
+    }
+
+    // --- Pass 3: SSAO Blur ---------------------------------------------------
+    auto rgSsaoBlur = renderGraph_.import_texture("ssao_blur_rt", ssaoBlurRT_);
+    if (ssaoBlurPSO_ != RHI_NULL && ssaoBlurRT_ != RHI_NULL) {
+        renderGraph_.add_pass("ssao_blur", RgPassType::Graphics,
+            [&](RgPassBuilder& builder) {
+                builder.read(rgSsao);
+                builder.read(rgDepth);
+                builder.write(rgSsaoBlur);
+                builder.force_run();
+            },
+            [this](RhiCmdList cmd) {
+                uint32_t hw = width_ / 2, hh = height_ / 2;
+                rhi()->cmd_barrier_texture(cmd, ssaoBlurRT_,
+                                           RHI_STATE_SHADER_READ, RHI_STATE_RENDER_TARGET);
+                rhi()->cmd_set_pipeline(cmd, ssaoBlurPSO_);
+                rhi()->cmd_set_viewport(cmd, 0, 0, (float)hw, (float)hh, 0, 1);
+                rhi()->cmd_set_scissor(cmd, 0, 0, hw, hh);
+                rhi()->cmd_set_render_targets(cmd, &ssaoBlurRT_, 1, RHI_NULL);
+
+                float blurParams[4] = { 1.0f / hw, 1.0f / hh, 0.05f, 0.0f };
+                rhi()->cmd_set_root_constants(cmd, 0, blurParams, 4, 0);
+                rhi()->cmd_set_texture(cmd, 0, ssaoRT_);
+                rhi()->cmd_set_texture(cmd, 1, rhiDepthBuf_);
+                rhi()->cmd_set_topology(cmd, RHI_TOPOLOGY_TRIANGLE_LIST);
+                rhi()->cmd_draw(cmd, 3, 1, 0, 0);
+
+                rhi()->cmd_barrier_texture(cmd, ssaoBlurRT_,
+                                           RHI_STATE_RENDER_TARGET, RHI_STATE_SHADER_READ);
+            });
+    }
+
+    // --- Pass 4: Bloom Downsample Chain --------------------------------------
+    if (bloomDownPSO_ != RHI_NULL && bloomMips_[0] != RHI_NULL) {
+        renderGraph_.add_pass("bloom_down", RgPassType::Graphics,
+            [&](RgPassBuilder& builder) {
+                builder.read(rgHdr);
+                builder.force_run();
+            },
+            [this](RhiCmdList cmd) {
+                rhi()->cmd_set_pipeline(cmd, bloomDownPSO_);
+                rhi()->cmd_set_topology(cmd, RHI_TOPOLOGY_TRIANGLE_LIST);
+
+                uint32_t srcW = width_, srcH = height_;
+                RhiTexture srcTex = hdrRT_;
+
+                for (uint32_t i = 0; i < kBloomMips; ++i) {
+                    uint32_t dstW = std::max(srcW / 2, 1u);
+                    uint32_t dstH = std::max(srcH / 2, 1u);
+
+                    rhi()->cmd_barrier_texture(cmd, bloomMips_[i],
+                                               RHI_STATE_SHADER_READ, RHI_STATE_RENDER_TARGET);
+                    rhi()->cmd_set_viewport(cmd, 0, 0, (float)dstW, (float)dstH, 0, 1);
+                    rhi()->cmd_set_scissor(cmd, 0, 0, dstW, dstH);
+                    rhi()->cmd_set_render_targets(cmd, &bloomMips_[i], 1, RHI_NULL);
+
+                    float params[4] = {
+                        1.0f / srcW, 1.0f / srcH,
+                        1.0f,   // bloom threshold
+                        (i == 0) ? 1.0f : 0.0f  // isFirstMip
+                    };
+                    rhi()->cmd_set_root_constants(cmd, 0, params, 4, 0);
+                    rhi()->cmd_set_texture(cmd, 0, srcTex);
+                    rhi()->cmd_draw(cmd, 3, 1, 0, 0);
+
+                    rhi()->cmd_barrier_texture(cmd, bloomMips_[i],
+                                               RHI_STATE_RENDER_TARGET, RHI_STATE_SHADER_READ);
+                    srcTex = bloomMips_[i];
+                    srcW = dstW;
+                    srcH = dstH;
+                }
+            });
+    }
+
+    // --- Pass 5: Bloom Upsample Chain ----------------------------------------
+    if (bloomUpPSO_ != RHI_NULL && bloomMips_[0] != RHI_NULL && kBloomMips >= 2) {
+        renderGraph_.add_pass("bloom_up", RgPassType::Graphics,
+            [&](RgPassBuilder& builder) {
+                builder.force_run();
+            },
+            [this](RhiCmdList cmd) {
+                rhi()->cmd_set_pipeline(cmd, bloomUpPSO_);
+                rhi()->cmd_set_topology(cmd, RHI_TOPOLOGY_TRIANGLE_LIST);
+
+                // Upsample from smallest mip back to mip 0
+                for (int i = static_cast<int>(kBloomMips) - 2; i >= 0; --i) {
+                    RhiTexture srcTex = bloomMips_[i + 1];
+                    RhiTexture dstTex = bloomMips_[i];
+
+                    // Calculate dst dimensions (same as what createPostProcessTargets made)
+                    uint32_t dstW = width_ / 2, dstH = height_ / 2;
+                    for (int j = 0; j < i; ++j) { dstW /= 2; dstH /= 2; }
+                    dstW = std::max(dstW, 1u);
+                    dstH = std::max(dstH, 1u);
+
+                    // src dimensions
+                    uint32_t srcW = std::max(dstW / 2, 1u);
+                    uint32_t srcH = std::max(dstH / 2, 1u);
+
+                    rhi()->cmd_barrier_texture(cmd, dstTex,
+                                               RHI_STATE_SHADER_READ, RHI_STATE_RENDER_TARGET);
+                    rhi()->cmd_set_viewport(cmd, 0, 0, (float)dstW, (float)dstH, 0, 1);
+                    rhi()->cmd_set_scissor(cmd, 0, 0, dstW, dstH);
+                    rhi()->cmd_set_render_targets(cmd, &dstTex, 1, RHI_NULL);
+
+                    float params[4] = { 1.0f / srcW, 1.0f / srcH, 0.7f, 0.0f };
+                    rhi()->cmd_set_root_constants(cmd, 0, params, 4, 0);
+                    rhi()->cmd_set_texture(cmd, 0, srcTex);
+                    rhi()->cmd_draw(cmd, 3, 1, 0, 0);
+
+                    rhi()->cmd_barrier_texture(cmd, dstTex,
+                                               RHI_STATE_RENDER_TARGET, RHI_STATE_SHADER_READ);
+                }
+            });
+    }
+
+    // --- Pass 6: Composite (HDR + SSAO + Bloom → Tonemap → Backbuffer) -------
+    renderGraph_.add_pass("composite", RgPassType::Graphics,
+        [&](RgPassBuilder& builder) {
+            builder.read(rgHdr);
+            builder.read(rgSsaoBlur);
+            builder.write(rgBackbuffer);
+            builder.force_run();
+        },
+        [this](RhiCmdList cmd) {
+            RhiTexture bb = rhi()->swapchain_backbuffer();
+            rhi()->cmd_barrier_texture(cmd, bb,
+                                       RHI_STATE_PRESENT, RHI_STATE_RENDER_TARGET);
+            rhi()->cmd_clear_render_target(cmd, bb, 0, 0, 0, 1);
+
+            rhi()->cmd_set_pipeline(cmd, compositePSO_);
+            rhi()->cmd_set_viewport(cmd, 0, 0, (float)width_, (float)height_, 0, 1);
+            rhi()->cmd_set_scissor(cmd, 0, 0, width_, height_);
+            rhi()->cmd_set_render_targets(cmd, &bb, 1, RHI_NULL);
+
+            float compParams[4] = { 1.0f, 0.04f, 2.2f, 0.0f }; // exposure, bloomStrength, gamma
+            rhi()->cmd_set_root_constants(cmd, 0, compParams, 4, 0);
+
+            rhi()->cmd_set_texture(cmd, 0, hdrRT_);
+            rhi()->cmd_set_texture(cmd, 1, (ssaoBlurRT_ != RHI_NULL) ? ssaoBlurRT_ : whiteTex_);
+            rhi()->cmd_set_texture(cmd, 2, (bloomMips_[0] != RHI_NULL) ? bloomMips_[0] : blackTex_);
+
+            rhi()->cmd_set_topology(cmd, RHI_TOPOLOGY_TRIANGLE_LIST);
+            rhi()->cmd_draw(cmd, 3, 1, 0, 0);
+        });
+
+    // --- Pass 7: Editor Overlays (on backbuffer, after tonemap) ---------------
+    renderGraph_.add_pass("editor_overlays", RgPassType::Graphics,
+        [&](RgPassBuilder& builder) {
+            builder.write(rgBackbuffer);
+            builder.write(rgDepth);
+            builder.force_run();
+        },
+        [this](RhiCmdList cmd) {
+            RhiTexture bb = rhi()->swapchain_backbuffer();
+
+            // Restore depth for stencil outline + editor depth testing
+            rhi()->cmd_barrier_texture(cmd, rhiDepthBuf_,
+                                       RHI_STATE_SHADER_READ, RHI_STATE_DEPTH_WRITE);
+
+            rhi()->cmd_set_viewport(cmd, 0, 0, (float)width_, (float)height_, 0, 1);
+            rhi()->cmd_set_scissor(cmd, 0, 0, width_, height_);
+            rhi()->cmd_set_render_targets(cmd, &bb, 1, rhiDepthBuf_);
+
+            // Selection outline
             {
                 uint32_t selNode = sceneParams_
                     ? sceneParams_->selectedNodeId.load(std::memory_order_relaxed) : 0;
 
                 if (selNode != 0 && rhiStencilMarkPSO_ != RHI_NULL && rhiOutlinePSO_ != RHI_NULL) {
-                    // Find the proxy matching the selected node
                     MeshProxy* selProxy = nullptr;
                     for (auto* proxy : proxies_) {
                         auto* mp = static_cast<MeshProxy*>(proxy);
-                        if (mp->node_id == selNode) {
-                            selProxy = mp;
-                            break;
-                        }
+                        if (mp->node_id == selNode) { selProxy = mp; break; }
                     }
 
                     if (selProxy && selProxy->mesh && selProxy->mesh->vertex_buffer != RHI_NULL) {
-                        // Pass 1: Stencil Mark — write 1 to stencil, no color output
                         rhi()->cmd_set_pipeline(cmd, rhiStencilMarkPSO_);
                         rhi()->cmd_set_stencil_ref(cmd, 1);
                         rhi()->cmd_set_vertex_buffer(cmd, 0, selProxy->mesh->vertex_buffer, 0, selProxy->mesh->vertex_stride);
                         rhi()->cmd_set_index_buffer(cmd, selProxy->mesh->index_buffer, 0, true);
                         rhi()->cmd_set_root_constants(cmd, 0, &selProxy->transform, 16, 0);
                         rhi()->cmd_set_root_constants(cmd, 3, &frameConstants_.view_proj, 16, 0);
-                        for (const auto& sub : selProxy->mesh->submeshes) {
+                        for (const auto& sub : selProxy->mesh->submeshes)
                             rhi()->cmd_draw_indexed(cmd, sub.index_count, 1, sub.index_offset, 0, 0);
-                        }
 
-                        // Pass 2: Outline Draw — inflated mesh, stencil test != 1
                         rhi()->cmd_set_pipeline(cmd, rhiOutlinePSO_);
                         rhi()->cmd_set_stencil_ref(cmd, 1);
-
-                        // b0: world matrix
                         rhi()->cmd_set_root_constants(cmd, 0, &selProxy->transform, 16, 0);
-
-                        // b1: outline params — color (slot 0-3) + width (slot 4-7)
                         float outlineCB[12] = {
-                            1.0f, 0.55f, 0.0f, 1.0f,  // Outline color: orange #FF8C00
-                            0.08f, 0.0f, 0.0f, 0.0f,  // Outline width (model space units)
+                            1.0f, 0.55f, 0.0f, 1.0f,
+                            0.08f, 0.0f, 0.0f, 0.0f,
                             0.0f, 0.0f, 0.0f, 0.0f
                         };
                         rhi()->cmd_set_root_constants(cmd, 1, outlineCB, 12, 0);
-
-                        // b3: viewProj
                         rhi()->cmd_set_root_constants(cmd, 3, &frameConstants_.view_proj, 16, 0);
-
-                        for (const auto& sub : selProxy->mesh->submeshes) {
+                        for (const auto& sub : selProxy->mesh->submeshes)
                             rhi()->cmd_draw_indexed(cmd, sub.index_count, 1, sub.index_offset, 0, 0);
-                        }
-
-                        // Restore PBR pipeline for subsequent draws
-                        rhi()->cmd_set_pipeline(cmd, rhiPbrPipeline_);
                     }
                 }
             }
 
-            // --- Editor overlays AFTER scene geometry ---
+            // Editor gizmos + grid
             {
                 uint32_t selNode = sceneParams_
                     ? sceneParams_->selectedNodeId.load(std::memory_order_relaxed) : 0;
@@ -475,9 +981,8 @@ void Renderer::render(bool readback) {
                     gizAxis = sceneParams_->gizmoHoverAxis.load(std::memory_order_relaxed);
 
                 Float3 camPos{0.0f, 0.0f, 0.0f};
-                if (sceneParams_) {
+                if (sceneParams_)
                     camPos = {sceneParams_->camPosX, sceneParams_->camPosY, sceneParams_->camPosZ};
-                }
 
                 bool usePivot = false;
                 Float3 pivotPos{0.0f, 0.0f, 0.0f};
@@ -574,6 +1079,7 @@ void Renderer::setSceneParams(SceneParams* params) {
 void Renderer::shutdown() {
     if (!initialized_) return;
 
+    iblBaker_.shutdown();
     editor_.shutdown();
     meshRenderer_.shutdown();
 
@@ -593,6 +1099,15 @@ void Renderer::shutdown() {
     if (normalTex_ != RHI_NULL) {
         rhi()->texture_destroy(normalTex_);
         normalTex_ = RHI_NULL;
+    }
+    if (envCubemap_ != RHI_NULL) {
+        rhi()->texture_destroy(envCubemap_);
+        envCubemap_ = RHI_NULL;
+    }
+
+    if (lightFrameCBV_ != RHI_NULL) {
+        rhi()->buffer_destroy(lightFrameCBV_);
+        lightFrameCBV_ = RHI_NULL;
     }
 
     if (rhiReadbackFence_ != RHI_NULL) {
@@ -614,6 +1129,20 @@ void Renderer::shutdown() {
         rhi()->pipeline_destroy(rhiPipeline_);
         rhiPipeline_ = RHI_NULL;
     }
+    if (rhiSkyPipeline_ != RHI_NULL) {
+        rhi()->pipeline_destroy(rhiSkyPipeline_);
+        rhiSkyPipeline_ = RHI_NULL;
+    }
+    if (rhiShadowPipeline_ != RHI_NULL) {
+        rhi()->pipeline_destroy(rhiShadowPipeline_);
+        rhiShadowPipeline_ = RHI_NULL;
+    }
+    if (shadowMap_ != RHI_NULL) {
+        rhi()->texture_destroy(shadowMap_);
+        shadowMap_ = RHI_NULL;
+    }
+
+    destroyPostProcessTargets();
 
     rhi()->shutdown();
     initialized_ = false;
@@ -656,8 +1185,9 @@ bool Renderer::createPipelineStates() {
     rhiPipeline_ = shaderLib_.get_or_create_pipeline("basic", desc);
     DIAG_FMT("basic PSO => handle=%llu", (unsigned long long)rhiPipeline_);
 
-    // PBR PSO for Scene Proxies
-    RhiPipelineDesc pbrDesc = desc; // Start with basic and adjust
+    // PBR PSO for Scene Proxies — renders to HDR intermediate RT (R11G11B10_FLOAT)
+    RhiPipelineDesc pbrDesc = desc;
+    pbrDesc.rt_formats[0] = RHI_FORMAT_R11G11B10_FLOAT; // HDR output
     pbrDesc.vertex_layout.attrib_count = 4;
     pbrDesc.vertex_layout.attribs[0] = { "POSITION", 0, RHI_VERTEX_FORMAT_FLOAT3, 0, 0 };
     pbrDesc.vertex_layout.attribs[1] = { "NORMAL",   0, RHI_VERTEX_FORMAT_FLOAT3, 12, 0 };
@@ -706,6 +1236,90 @@ bool Renderer::createPipelineStates() {
         DIAG_FMT("outline PSO => handle=%llu", (unsigned long long)rhiOutlinePSO_);
     }
 
+    // ---- Shadow depth PSO — POSITION-only VS, no PS, D32 depth ----
+    {
+        RhiPipelineDesc shadowDesc{};
+        shadowDesc.vertex_layout.attrib_count = 1;
+        shadowDesc.vertex_layout.attribs[0] = { "POSITION", 0, RHI_VERTEX_FORMAT_FLOAT3, 0, 0 };
+        shadowDesc.rt_count      = 0;  // Depth only — no render targets
+        shadowDesc.ds_format     = RHI_FORMAT_D32_FLOAT;
+        shadowDesc.topology      = RHI_TOPOLOGY_TRIANGLE_LIST;
+        shadowDesc.rasterizer.fill_mode = RHI_FILL_SOLID;
+        shadowDesc.rasterizer.cull_mode = RHI_CULL_BACK;  // Back-face culling avoids peter-panning
+        shadowDesc.depth_stencil.depth_enable = true;
+        shadowDesc.depth_stencil.depth_write  = true;
+        shadowDesc.depth_stencil.depth_func   = RHI_COMPARE_LESS;
+        shadowDesc.debug_name = "ShadowDepth_PSO";
+        rhiShadowPipeline_ = shaderLib_.get_or_create_pipeline("shadow_depth", shadowDesc);
+        DIAG_FMT("shadow depth PSO => handle=%llu", (unsigned long long)rhiShadowPipeline_);
+    }
+
+    // ---- Sky PSO — fullscreen triangle, no vertex buffer, depth disabled ----
+    // Renders to HDR intermediate RT (R11G11B10_FLOAT).
+    {
+        RhiPipelineDesc skyDesc{};
+        skyDesc.vertex_layout.attrib_count = 0;
+        skyDesc.rt_count      = 1;
+        skyDesc.rt_formats[0] = RHI_FORMAT_R11G11B10_FLOAT;
+        skyDesc.ds_format     = RHI_FORMAT_D24_UNORM_S8_UINT;
+        skyDesc.topology      = RHI_TOPOLOGY_TRIANGLE_LIST;
+        skyDesc.rasterizer.fill_mode = RHI_FILL_SOLID;
+        skyDesc.rasterizer.cull_mode = RHI_CULL_NONE;
+        skyDesc.depth_stencil.depth_enable = false;
+        skyDesc.depth_stencil.depth_write  = false;
+        skyDesc.blend.render_targets[0].write_mask = 0xF;
+        skyDesc.debug_name = "Sky_PSO";
+        rhiSkyPipeline_ = shaderLib_.get_or_create_pipeline("sky", skyDesc);
+        DIAG_FMT("sky PSO => handle=%llu", (unsigned long long)rhiSkyPipeline_);
+    }
+
+    // ---- Post-process PSOs — all fullscreen triangles, no vertex buffer, no depth ----
+    auto makePostProcDesc = [](RhiFormat rtFormat) {
+        RhiPipelineDesc d{};
+        d.vertex_layout.attrib_count = 0;
+        d.rt_count      = 1;
+        d.rt_formats[0] = rtFormat;
+        d.ds_format     = RHI_FORMAT_UNKNOWN;
+        d.topology      = RHI_TOPOLOGY_TRIANGLE_LIST;
+        d.rasterizer.fill_mode = RHI_FILL_SOLID;
+        d.rasterizer.cull_mode = RHI_CULL_NONE;
+        d.depth_stencil.depth_enable = false;
+        d.depth_stencil.depth_write  = false;
+        d.blend.render_targets[0].write_mask = 0xF;
+        return d;
+    };
+
+    {
+        auto d = makePostProcDesc(RHI_FORMAT_R8_UNORM);
+        d.debug_name = "SSAO_PSO";
+        ssaoPSO_ = shaderLib_.get_or_create_pipeline("ssao", d);
+        DIAG_FMT("ssao PSO => handle=%llu", (unsigned long long)ssaoPSO_);
+    }
+    {
+        auto d = makePostProcDesc(RHI_FORMAT_R8_UNORM);
+        d.debug_name = "SSAO_Blur_PSO";
+        ssaoBlurPSO_ = shaderLib_.get_or_create_pipeline("ssao_blur", d);
+        DIAG_FMT("ssao_blur PSO => handle=%llu", (unsigned long long)ssaoBlurPSO_);
+    }
+    {
+        auto d = makePostProcDesc(RHI_FORMAT_R11G11B10_FLOAT);
+        d.debug_name = "Bloom_Down_PSO";
+        bloomDownPSO_ = shaderLib_.get_or_create_pipeline("bloom_down", d);
+        DIAG_FMT("bloom_down PSO => handle=%llu", (unsigned long long)bloomDownPSO_);
+    }
+    {
+        auto d = makePostProcDesc(RHI_FORMAT_R11G11B10_FLOAT);
+        d.debug_name = "Bloom_Up_PSO";
+        bloomUpPSO_ = shaderLib_.get_or_create_pipeline("bloom_up", d);
+        DIAG_FMT("bloom_up PSO => handle=%llu", (unsigned long long)bloomUpPSO_);
+    }
+    {
+        auto d = makePostProcDesc(RHI_FORMAT_RGBA8_UNORM);
+        d.debug_name = "Composite_PSO";
+        compositePSO_ = shaderLib_.get_or_create_pipeline("composite", d);
+        DIAG_FMT("composite PSO => handle=%llu", (unsigned long long)compositePSO_);
+    }
+
     return rhiPipeline_ != RHI_NULL && rhiPbrPipeline_ != RHI_NULL;
 }
 
@@ -723,7 +1337,7 @@ bool Renderer::createDepthBuffer() {
     desc.array_size = 1;
     desc.format     = RHI_FORMAT_D24_UNORM_S8_UINT;
     desc.dimension  = RHI_TEXTURE_DIM_2D;
-    desc.usage      = RHI_TEXTURE_USAGE_DEPTH_STENCIL;
+    desc.usage      = RHI_TEXTURE_USAGE_DEPTH_STENCIL | RHI_TEXTURE_USAGE_SHADER_READ;
     desc.debug_name = "DepthBuffer";
 
     rhiDepthBuf_ = rhi()->texture_create(&desc);
@@ -756,6 +1370,86 @@ bool Renderer::createReadbackBuffers() {
 }
 
 // ===========================================================================
+// Private -- post-process render targets
+// ===========================================================================
+
+void Renderer::destroyPostProcessTargets() {
+    auto destroy = [](RhiTexture& t) {
+        if (t != RHI_NULL) { rhi()->texture_destroy(t); t = RHI_NULL; }
+    };
+    destroy(hdrRT_);
+    destroy(ssaoRT_);
+    destroy(ssaoBlurRT_);
+    for (auto& m : bloomMips_) destroy(m);
+}
+
+bool Renderer::createPostProcessTargets() {
+    destroyPostProcessTargets();
+
+    // HDR scene color — full resolution, R11G11B10_FLOAT
+    {
+        RhiTextureDesc d{};
+        d.width = width_; d.height = height_; d.depth = 1;
+        d.mip_levels = 1; d.array_size = 1;
+        d.format    = RHI_FORMAT_R11G11B10_FLOAT;
+        d.dimension = RHI_TEXTURE_DIM_2D;
+        d.usage     = RHI_TEXTURE_USAGE_RENDER_TARGET | RHI_TEXTURE_USAGE_SHADER_READ;
+        d.debug_name = "HDR_RT";
+        hdrRT_ = rhi()->texture_create(&d);
+        if (hdrRT_ == RHI_NULL) return false;
+    }
+
+    // SSAO — half resolution, R8
+    {
+        RhiTextureDesc d{};
+        d.width = width_ / 2; d.height = height_ / 2; d.depth = 1;
+        d.mip_levels = 1; d.array_size = 1;
+        d.format    = RHI_FORMAT_R8_UNORM;
+        d.dimension = RHI_TEXTURE_DIM_2D;
+        d.usage     = RHI_TEXTURE_USAGE_RENDER_TARGET | RHI_TEXTURE_USAGE_SHADER_READ;
+        d.debug_name = "SSAO_RT";
+        ssaoRT_ = rhi()->texture_create(&d);
+        if (ssaoRT_ == RHI_NULL) return false;
+    }
+
+    // SSAO blur — same size as SSAO
+    {
+        RhiTextureDesc d{};
+        d.width = width_ / 2; d.height = height_ / 2; d.depth = 1;
+        d.mip_levels = 1; d.array_size = 1;
+        d.format    = RHI_FORMAT_R8_UNORM;
+        d.dimension = RHI_TEXTURE_DIM_2D;
+        d.usage     = RHI_TEXTURE_USAGE_RENDER_TARGET | RHI_TEXTURE_USAGE_SHADER_READ;
+        d.debug_name = "SSAO_Blur_RT";
+        ssaoBlurRT_ = rhi()->texture_create(&d);
+        if (ssaoBlurRT_ == RHI_NULL) return false;
+    }
+
+    // Bloom mip chain — progressively halved from half-res
+    uint32_t bw = width_ / 2;
+    uint32_t bh = height_ / 2;
+    for (uint32_t i = 0; i < kBloomMips; ++i) {
+        bw = std::max(bw, 1u);
+        bh = std::max(bh, 1u);
+        RhiTextureDesc d{};
+        d.width = bw; d.height = bh; d.depth = 1;
+        d.mip_levels = 1; d.array_size = 1;
+        d.format    = RHI_FORMAT_R11G11B10_FLOAT;
+        d.dimension = RHI_TEXTURE_DIM_2D;
+        d.usage     = RHI_TEXTURE_USAGE_RENDER_TARGET | RHI_TEXTURE_USAGE_SHADER_READ;
+        d.debug_name = "BloomMip";
+        bloomMips_[i] = rhi()->texture_create(&d);
+        if (bloomMips_[i] == RHI_NULL) return false;
+        bw /= 2;
+        bh /= 2;
+    }
+
+    DIAG_FMT("Post-process targets created: HDR %ux%u, SSAO %ux%u, Bloom %u mips",
+             width_, height_, width_ / 2, height_ / 2, kBloomMips);
+    return true;
+}
+
+// ===========================================================================
 // Private -- GPU -> CPU readback
 // ===========================================================================
 
@@ -764,13 +1458,14 @@ void Renderer::performReadback() {
     rhi()->fence_signal(rhiReadbackFence_, readbackFenceValue_);
     rhi()->fence_wait(rhiReadbackFence_, readbackFenceValue_, UINT64_MAX);
 
-    const uint32_t actualRowBytes = width_ * 4;
-    const uint32_t alignedPitch   = (actualRowBytes + 255u) & ~255u;
+    const uint32_t alignedPitch = (width_ * 4 + 255u) & ~255u;
 
     void* mappedData = rhi()->buffer_map(rhiReadbackBufs_[frameIndex_]);
     if (!mappedData) return;
 
     const uint64_t timestamp = streamTimer_.elapsedMicros();
+
+    const uint32_t rowBytes = width_ * 4;
 
     {
         std::lock_guard<std::mutex> lock(frameMutex_);
@@ -780,20 +1475,19 @@ void Renderer::performReadback() {
         latestFrame_.frameNumber = ++frameNumber_;
         latestFrame_.timestamp   = timestamp;
 
-        latestFrame_.pixels.resize(
-            static_cast<size_t>(actualRowBytes) * height_);
+        latestFrame_.pixels.resize(static_cast<size_t>(rowBytes) * height_);
 
         const auto* src = static_cast<const uint8_t*>(mappedData);
         uint8_t*    dst = latestFrame_.pixels.data();
 
-        for (uint32_t row = 0; row < height_; ++row) {
-            std::memcpy(dst, src, actualRowBytes);
-            src += alignedPitch;
-            dst += actualRowBytes;
+        for (uint32_t y = 0; y < height_; ++y) {
+            std::memcpy(dst + y * rowBytes,
+                        src + y * alignedPitch,
+                        rowBytes);
         }
 
         fpsOverlay_.renderInto(latestFrame_.pixels.data(),
-                               width_, height_, actualRowBytes);
+                               width_, height_, rowBytes);
     }
 
     rhi()->buffer_unmap(rhiReadbackBufs_[frameIndex_]);
@@ -811,6 +1505,75 @@ size_t Renderer::loadEditorScene(std::vector<EditorNode> nodes) {
 void Renderer::setScene(Scene* scene) {
     scene_ = scene;
     scene_dirty_ = true;
+
+    // Regenerate IBL cubemaps from the scene's SkyAtmosphere + DirectionalLight.
+    // Matches UE5 SkyLight::RecaptureSky() / Godot Sky radiance_dirty pattern:
+    // whenever the scene changes, the IBL must reflect the actual sky colors.
+    if (scene_) {
+        SkyCubemapParams skyParams{};
+        // Defaults (same as init fallback)
+        skyParams.sky_zenith[0]  = 0.18f; skyParams.sky_zenith[1]  = 0.40f; skyParams.sky_zenith[2]  = 0.95f;
+        skyParams.sky_horizon[0] = 0.75f; skyParams.sky_horizon[1] = 0.85f; skyParams.sky_horizon[2] = 1.05f;
+        skyParams.sky_ground[0]  = 0.06f; skyParams.sky_ground[1]  = 0.05f; skyParams.sky_ground[2]  = 0.04f;
+        skyParams.sun_dir[0]     = 0.3f;  skyParams.sun_dir[1]     = 0.8f;  skyParams.sun_dir[2]     = 0.3f;
+        skyParams.sun_intensity  = 5.0f;
+
+        // Read SkyAtmosphereData from scene (first node that has it)
+        for (uint32_t i = 1; i < scene_->next_id; ++i) {
+            SceneNode* n = scene_get_node(scene_, i);
+            if (!n || !n->alive) continue;
+            if (!component_has<SkyAtmosphereData>(&scene_->components, i)) continue;
+            auto* sky = component_get<SkyAtmosphereData>(&scene_->components, i);
+            if (!sky) break;
+            skyParams.sky_zenith[0]  = sky->sky_zenith[0];
+            skyParams.sky_zenith[1]  = sky->sky_zenith[1];
+            skyParams.sky_zenith[2]  = sky->sky_zenith[2];
+            skyParams.sky_horizon[0] = sky->sky_horizon[0];
+            skyParams.sky_horizon[1] = sky->sky_horizon[1];
+            skyParams.sky_horizon[2] = sky->sky_horizon[2];
+            skyParams.sky_ground[0]  = sky->sky_ground[0];
+            skyParams.sky_ground[1]  = sky->sky_ground[1];
+            skyParams.sky_ground[2]  = sky->sky_ground[2];
+            break;
+        }
+
+        // Read sun direction from DirectionalLight (first node with rotation)
+        for (uint32_t i = 1; i < scene_->next_id; ++i) {
+            SceneNode* n = scene_get_node(scene_, i);
+            if (!n || !n->alive) continue;
+            if (!component_has<DirectionalLightData>(&scene_->components, i)) continue;
+            auto* light = component_get<DirectionalLightData>(&scene_->components, i);
+            if (!light) break;
+            // Use node's forward direction as sun direction
+            skyParams.sun_dir[0] = n->world_transform.m[2][0];
+            skyParams.sun_dir[1] = n->world_transform.m[2][1];
+            skyParams.sun_dir[2] = n->world_transform.m[2][2];
+            skyParams.sun_intensity = light->intensity * 5.0f;
+            break;
+        }
+
+        DIAG("Regenerating IBL cubemaps from scene sky/light (GPU compute)...");
+        SkyCubemapResult skyResult = generate_sky_cubemaps(skyParams);
+        if (envCubemap_ != RHI_NULL)
+            rhi()->texture_destroy(envCubemap_);
+        envCubemap_ = skyResult.env_cubemap;
+
+        IblBakeResult bakeResult = iblBaker_.bake(envCubemap_, 256);
+        if (bakeResult.irradiance_cube != RHI_NULL) {
+            if (skyResult.irradiance_cube != RHI_NULL)
+                rhi()->texture_destroy(skyResult.irradiance_cube);
+            irradianceCube_ = bakeResult.irradiance_cube;
+        } else if (skyResult.irradiance_cube != RHI_NULL) {
+            irradianceCube_ = skyResult.irradiance_cube;
+        }
+        if (bakeResult.prefiltered_cube != RHI_NULL) {
+            if (skyResult.prefiltered_cube != RHI_NULL)
+                rhi()->texture_destroy(skyResult.prefiltered_cube);
+            prefilteredCube_ = bakeResult.prefiltered_cube;
+        } else if (skyResult.prefiltered_cube != RHI_NULL) {
+            prefilteredCube_ = skyResult.prefiltered_cube;
+        }
+    }
 }
 
 } // namespace uz

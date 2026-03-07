@@ -5,6 +5,7 @@
 
 #include "engine/scene/scene_loader.h"
 #include "engine/scene/scene_node.h"
+#include "engine/scene/component_registry.h"
 #include "engine/core/crash_reporter.h"
 #include "engine/core/diag.h"
 
@@ -38,19 +39,16 @@ std::vector<uz::Renderer::EditorNode> buildEditorNodes(const uz::Scene* scene) {
             sn.local_transform.scale.y,
             sn.local_transform.scale.z
         };
-        edNode.nodeType = static_cast<uint16_t>(sn.type);
         edNode.nodeId   = i;
 
-        switch (sn.type) {
-            case uz::NodeType::Camera:
-                edNode.color = {0.9f, 0.9f, 0.2f}; break;
-            case uz::NodeType::DirectionalLight:
-            case uz::NodeType::PointLight:
-                edNode.color = {0.9f, 0.7f, 0.2f}; break;
-            case uz::NodeType::StaticMesh:
-                edNode.color = {0.2f, 0.8f, 0.9f}; break;
-            default:
-                edNode.color = {0.8f, 0.8f, 0.8f}; break;
+        // Look up type metadata from the registry — zero hardcoded switch arms.
+        const uz::NodeTypeDef* def = uz::ComponentRegistry::find(sn.type_name);
+        if (def) {
+            edNode.nodeType = def->type_index;
+            edNode.color    = {def->editor_color[0], def->editor_color[1], def->editor_color[2]};
+        } else {
+            edNode.nodeType = 0;
+            edNode.color    = {0.8f, 0.8f, 0.8f};
         }
         editorNodes.push_back(edNode);
     }
