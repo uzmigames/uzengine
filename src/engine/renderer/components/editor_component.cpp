@@ -80,15 +80,12 @@ bool EditorComponent::init() {
     // Using the registry ensures new types registered by plugins work automatically.
     gizmoRegistry_.setDefaultGizmo(std::make_unique<GizmoCube>());
 
-    // Suppress gizmos for non-renderable component types.
-    auto suppress = [&](const char* typeName) {
-        const NodeTypeDef* def = ComponentRegistry::find(typeName);
-        if (def) gizmoRegistry_.suppressGizmo(def->type_index);
-    };
-    suppress("Camera");
-    suppress("DirectionalLight");
-    suppress("PointLight");
-    suppress("SkyAtmosphere");
+    // Suppress gizmos for types that declare suppress_gizmo in their NodeTypeDef.
+    for (uint32_t i = 0; i < ComponentRegistry::count(); ++i) {
+        const NodeTypeDef& def = ComponentRegistry::get_at(i);
+        if (def.suppress_gizmo)
+            gizmoRegistry_.suppressGizmo(def.type_index);
+    }
 
     gizmoRegistry_.initAll();
     transformGizmo_.init();

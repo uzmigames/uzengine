@@ -1427,6 +1427,7 @@ int WINAPI WinMain(
                 // Resolve type_index + color from ComponentRegistry.
                 const uz::NodeTypeDef* def = uz::ComponentRegistry::find(sn.type_name);
                 if (def) {
+                    if (def->suppress_gizmo) continue; // No gizmo/shadow for this type.
                     edNode.nodeType = def->type_index;
                     edNode.color    = {def->editor_color[0], def->editor_color[1], def->editor_color[2]};
                 } else {
@@ -1714,6 +1715,7 @@ int WINAPI WinMain(
             // Resolve type_index + color from ComponentRegistry.
             const uz::NodeTypeDef* def = uz::ComponentRegistry::find(typeStr.c_str());
             if (def) {
+                if (def->suppress_gizmo) continue; // No gizmo/shadow for this type.
                 edNode.nodeType = def->type_index;
                 edNode.color    = {def->editor_color[0], def->editor_color[1], def->editor_color[2]};
             } else {

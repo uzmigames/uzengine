@@ -524,6 +524,73 @@ void Renderer::update(double totalTime, double deltaTime) {
     frameConstants_.irradiance_cube   = irradianceCube_;
     frameConstants_.prefiltered_cube  = prefilteredCube_;
 
+    // Build CSM cascade light-space VP matrices (PSSM split scheme, lambda=0.75).
+    // 4 cascades rendered into 4096x4096 atlas (2x2 grid of 1024x1024).
+    // IMPORTANT: Must run before CBV upload so cascadeVP_[0] in the CBV matches
+    // the root-constant matrix used by the shadow depth pass this frame.
+    {
+        Vec3 ld = cachedLight_.direction;
+        Vec3 lightFwd = vec3_normalize({ld.x, ld.y, ld.z, 0.0f});
+        Vec3 worldUp  = {0.0f, 1.0f, 0.0f, 0.0f};
+        float upDotL  = std::abs(lightFwd.x*worldUp.x + lightFwd.y*worldUp.y + lightFwd.z*worldUp.z);
+        Vec3 refUp2   = (upDotL > 0.99f) ? Vec3{1.0f, 0.0f, 0.0f, 0.0f} : worldUp;
+        Vec3 lightRight = vec3_normalize(vec3_cross(refUp2, lightFwd));
+        Vec3 lightUp    = vec3_cross(lightFwd, lightRight);
+
+        // PSSM split distances (lambda=0.3 blending log/linear, near=0.5, far=200)
+        // Lower lambda = more linear → cascade 0 covers a wider area (~40 units).
+        // Note: currently only cascade 0 is sampled by the lighting shader.
+        constexpr float kNear = 0.5f;
+        constexpr float kFar  = 200.0f;
+        constexpr float kLambda = 0.3f;
+        float splits[kCascadeCount + 1];
+        splits[0] = kNear;
+        for (uint32_t i = 1; i <= kCascadeCount; ++i) {
+            float p = static_cast<float>(i) / kCascadeCount;
+            float logSplit = kNear * std::pow(kFar / kNear, p);
+            float linSplit = kNear + (kFar - kNear) * p;
+            splits[i] = kLambda * logSplit + (1.0f - kLambda) * linSplit;
+        }
+
+        // Camera position for cascade centering
+        Vec3 camPos = frameConstants_.camera_world_pos;
+
+        for (uint32_t c = 0; c < kCascadeCount; ++c) {
+            cascadeSplitDist_[c] = splits[c + 1];
+
+            float orthoSize = splits[c + 1] * 1.2f;
+            float shadowDist = orthoSize * 2.5f;
+
+            Vec3 lightEye = {
+                camPos.x - ld.x * shadowDist,
+                camPos.y - ld.y * shadowDist,
+                camPos.z - ld.z * shadowDist,
+                0.0f
+            };
+
+            Mat4 lightView{};
+            lightView.m[0][0] = lightRight.x; lightView.m[1][0] = lightRight.y; lightView.m[2][0] = lightRight.z;
+            lightView.m[0][1] = lightUp.x;    lightView.m[1][1] = lightUp.y;    lightView.m[2][1] = lightUp.z;
+            lightView.m[0][2] = lightFwd.x;   lightView.m[1][2] = lightFwd.y;   lightView.m[2][2] = lightFwd.z;
+            lightView.m[3][0] = -(lightRight.x*lightEye.x + lightRight.y*lightEye.y + lightRight.z*lightEye.z);
+            lightView.m[3][1] = -(lightUp.x*lightEye.x    + lightUp.y*lightEye.y    + lightUp.z*lightEye.z);
+            lightView.m[3][2] = -(lightFwd.x*lightEye.x   + lightFwd.y*lightEye.y   + lightFwd.z*lightEye.z);
+            lightView.m[3][3] = 1.0f;
+
+            Mat4 lightProj{};
+            lightProj.m[0][0] = 1.0f / orthoSize;
+            lightProj.m[1][1] = 1.0f / orthoSize;
+            lightProj.m[2][2] = 1.0f / (shadowDist * 2.0f);
+            lightProj.m[3][2] = -0.1f / (shadowDist * 2.0f);
+            lightProj.m[3][3] = 1.0f;
+
+            cascadeVP_[c] = lightProj * lightView;
+        }
+        lightSpaceMat_ = cascadeVP_[0];
+        frameConstants_.shadow_ortho_size = splits[1] * 1.2f;
+        frameConstants_.shadow_light_dist = frameConstants_.shadow_ortho_size * 2.5f;
+    }
+
     // Gather punctual lights from scene into CPU buffer
     gatherPunctualLights();
 
@@ -671,75 +738,6 @@ void Renderer::update(double totalTime, double deltaTime) {
         }
     }
 
-    // Build CSM cascade light-space VP matrices (PSSM split scheme, lambda=0.75).
-    // 4 cascades rendered into 4096x4096 atlas (2x2 grid of 1024x1024).
-    {
-        Vec3 ld = cachedLight_.direction;
-        Vec3 lightFwd = vec3_normalize({ld.x, ld.y, ld.z, 0.0f});
-        Vec3 worldUp  = {0.0f, 1.0f, 0.0f, 0.0f};
-        float upDotL  = std::abs(lightFwd.x*worldUp.x + lightFwd.y*worldUp.y + lightFwd.z*worldUp.z);
-        Vec3 refUp2   = (upDotL > 0.99f) ? Vec3{1.0f, 0.0f, 0.0f, 0.0f} : worldUp;
-        Vec3 lightRight = vec3_normalize(vec3_cross(refUp2, lightFwd));
-        Vec3 lightUp    = vec3_cross(lightFwd, lightRight);
-
-        // PSSM split distances (lambda=0.75 blending log/linear, near=0.5, far=100)
-        constexpr float kNear = 0.5f;
-        constexpr float kFar  = 100.0f;
-        constexpr float kLambda = 0.75f;
-        float splits[kCascadeCount + 1];
-        splits[0] = kNear;
-        for (uint32_t i = 1; i <= kCascadeCount; ++i) {
-            float p = static_cast<float>(i) / kCascadeCount;
-            float logSplit = kNear * std::pow(kFar / kNear, p);
-            float linSplit = kNear + (kFar - kNear) * p;
-            splits[i] = kLambda * logSplit + (1.0f - kLambda) * linSplit;
-        }
-
-        // Camera position for cascade centering
-        Vec3 camPos = frameConstants_.camera_world_pos;
-
-        for (uint32_t c = 0; c < kCascadeCount; ++c) {
-            cascadeSplitDist_[c] = splits[c + 1];
-
-            // Ortho size grows per cascade (tightest at cascade 0)
-            float orthoSize = splits[c + 1] * 1.2f;  // 120% of far split for margin
-            float shadowDist = orthoSize * 2.5f;      // light distance from center
-
-            // Light eye positioned above camera looking along light direction
-            Vec3 lightEye = {
-                camPos.x - ld.x * shadowDist,
-                camPos.y - ld.y * shadowDist,
-                camPos.z - ld.z * shadowDist,
-                0.0f
-            };
-
-            // Light view matrix
-            Mat4 lightView{};
-            lightView.m[0][0] = lightRight.x; lightView.m[1][0] = lightRight.y; lightView.m[2][0] = lightRight.z;
-            lightView.m[0][1] = lightUp.x;    lightView.m[1][1] = lightUp.y;    lightView.m[2][1] = lightUp.z;
-            lightView.m[0][2] = lightFwd.x;   lightView.m[1][2] = lightFwd.y;   lightView.m[2][2] = lightFwd.z;
-            lightView.m[3][0] = -(lightRight.x*lightEye.x + lightRight.y*lightEye.y + lightRight.z*lightEye.z);
-            lightView.m[3][1] = -(lightUp.x*lightEye.x    + lightUp.y*lightEye.y    + lightUp.z*lightEye.z);
-            lightView.m[3][2] = -(lightFwd.x*lightEye.x   + lightFwd.y*lightEye.y   + lightFwd.z*lightEye.z);
-            lightView.m[3][3] = 1.0f;
-
-            // Ortho projection per cascade
-            Mat4 lightProj{};
-            lightProj.m[0][0] = 1.0f / orthoSize;
-            lightProj.m[1][1] = 1.0f / orthoSize;
-            lightProj.m[2][2] = 1.0f / (shadowDist * 2.0f);
-            lightProj.m[3][2] = -0.1f / (shadowDist * 2.0f);
-            lightProj.m[3][3] = 1.0f;
-
-            cascadeVP_[c] = lightProj * lightView;
-        }
-        // Backward compat: cascade 0 = primary shadow matrix
-        lightSpaceMat_ = cascadeVP_[0];
-
-        // frameConstants shadow params: use cascade 0 dimensions
-        frameConstants_.shadow_ortho_size = splits[1] * 1.2f;
-        frameConstants_.shadow_light_dist = frameConstants_.shadow_ortho_size * 2.5f;
-    }
 }
 
 void Renderer::render(bool readback) {

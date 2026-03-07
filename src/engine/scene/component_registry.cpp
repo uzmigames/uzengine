@@ -191,6 +191,7 @@ static ComponentProperty kDirLightProps[] = {
 static void register_directional_light() {
     NodeTypeDef def{};
     std::strncpy(def.name, "DirectionalLight", 64);
+    def.suppress_gizmo = true;
     def.editor_color[0] = 0.9f; def.editor_color[1] = 0.7f; def.editor_color[2] = 0.2f;
     def.comps[0] = {
         detail::component_type_id<DirectionalLightData>(), sizeof(DirectionalLightData),
@@ -249,6 +250,7 @@ static ComponentProperty kPointLightProps[] = {
 static void register_point_light() {
     NodeTypeDef def{};
     std::strncpy(def.name, "PointLight", 64);
+    def.suppress_gizmo = true;
     def.editor_color[0] = 0.9f; def.editor_color[1] = 0.7f; def.editor_color[2] = 0.2f;
     def.comps[0] = {
         detail::component_type_id<PointLightData>(), sizeof(PointLightData),
@@ -345,6 +347,7 @@ static ComponentProperty kSpotLightProps[] = {
 static void register_spot_light() {
     NodeTypeDef def{};
     std::strncpy(def.name, "SpotLight", 64);
+    def.suppress_gizmo = true;
     def.editor_color[0] = 0.9f; def.editor_color[1] = 0.7f; def.editor_color[2] = 0.3f;
     def.comps[0] = {
         detail::component_type_id<SpotLightData>(), sizeof(SpotLightData),
@@ -395,6 +398,7 @@ static ComponentProperty kCameraProps[] = {
 static void register_camera() {
     NodeTypeDef def{};
     std::strncpy(def.name, "Camera", 64);
+    def.suppress_gizmo = true;
     def.editor_color[0] = 0.9f; def.editor_color[1] = 0.9f; def.editor_color[2] = 0.2f;
     def.comps[0] = {
         detail::component_type_id<CameraData>(), sizeof(CameraData),
@@ -498,6 +502,7 @@ static ComponentProperty kSkyProps[] = {
 static void register_sky_atmosphere() {
     NodeTypeDef def{};
     std::strncpy(def.name, "SkyAtmosphere", 64);
+    def.suppress_gizmo = true;
     def.editor_color[0] = 0.4f; def.editor_color[1] = 0.7f; def.editor_color[2] = 1.0f;
     def.comps[0] = {
         detail::component_type_id<SkyAtmosphereData>(), sizeof(SkyAtmosphereData),

@@ -16,7 +16,7 @@ ssr_max_roughness = 0.4
 # ──────────────────────────────────────────────────────────────────────────────
 # COLOR GRADING
 # ──────────────────────────────────────────────────────────────────────────────
-color_temperature = 6500
+color_temperature = 0.0
 color_tint = 0.0
 color_saturation = 1.15
 color_contrast = 1.05

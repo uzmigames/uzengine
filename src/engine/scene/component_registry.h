@@ -72,6 +72,7 @@ inline constexpr uint32_t kMaxComponentsPerType = 4;
 struct NodeTypeDef {
     char             name[64];              // type name, e.g. "StaticMesh"
     uint16_t         type_index;            // auto-assigned index (stable after registration)
+    bool             suppress_gizmo;        // true = no editor gizmo / no shadow for this type
     float            editor_color[3];       // RGB tint for editor tree / gizmo
     NodeComponentDef comps[kMaxComponentsPerType];
     uint32_t         comp_count;
