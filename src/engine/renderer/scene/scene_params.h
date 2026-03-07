@@ -9,10 +9,13 @@
 // components must update atomically as a group.
 // ---------------------------------------------------------------------------
 
+#include "engine/gameplay/camera_system.h"
+
 #include <atomic>
 #include <cstdint>
 #include <mutex>
 #include <utility>
+#include <vector>
 
 namespace uz {
 
@@ -120,11 +123,30 @@ struct SceneParams {
     // gizmo is rendered at the centroid rather than at the selected node.
     // Written by WS handler (IPC thread), read by render thread.
     // -----------------------------------------------------------------------
+    // -----------------------------------------------------------------------
+    // Multi-select node IDs — written by WS handler (editor.setSelection),
+    // read by render thread for gizmo centroid computation.
+    // -----------------------------------------------------------------------
+    std::mutex              selectedNodesMutex;
+    std::vector<uint32_t>   selectedNodeIds;
+
+    // -----------------------------------------------------------------------
+    // Multi-select gizmo pivot — when useGizmoPivot is true, the transform
+    // gizmo is rendered at the centroid rather than at the selected node.
+    // Written by WS handler (IPC thread), read by render thread.
+    // -----------------------------------------------------------------------
     std::atomic<bool> useGizmoPivot{false};
     std::mutex        gizmoPivotMutex;
     float             gizmoPivotX{0.0f};
     float             gizmoPivotY{0.0f};
     float             gizmoPivotZ{0.0f};
+
+    // -----------------------------------------------------------------------
+    // Camera System — game camera modes, FOV, shake, DoF, spring arm.
+    // Written by IPC thread (camera.* handlers), read by render thread.
+    // -----------------------------------------------------------------------
+    std::mutex         cameraSysMutex;
+    CameraSystemState  cameraSys;
 };
 
 } // namespace uz

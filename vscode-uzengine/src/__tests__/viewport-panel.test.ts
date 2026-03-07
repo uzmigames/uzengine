@@ -439,6 +439,170 @@ describe('ViewportPanel', () => {
             expect(panel.isVisible).toBe(false);
         });
     });
+
+    describe('onAssetDropped event', () => {
+        it('fires with {x, y} when webview sends assetDropped message', () => {
+            const host = makeHost();
+            const ctx = makeMockContext();
+            const panel = new ViewportPanel(defaultConfig, host, ctx as unknown as ConstructorParameters<typeof ViewportPanel>[2]);
+
+            const received: Array<{ x: number; y: number }> = [];
+            panel.onAssetDropped(ev => received.push(ev));
+
+            mockPanel._simulateMessage({ type: 'assetDropped', x: 100, y: 200 });
+
+            expect(received).toEqual([{ x: 100, y: 200 }]);
+        });
+
+        it('defaults x/y to 0 when not provided', () => {
+            const host = makeHost();
+            const ctx = makeMockContext();
+            const panel = new ViewportPanel(defaultConfig, host, ctx as unknown as ConstructorParameters<typeof ViewportPanel>[2]);
+
+            const received: Array<{ x: number; y: number }> = [];
+            panel.onAssetDropped(ev => received.push(ev));
+
+            mockPanel._simulateMessage({ type: 'assetDropped' });
+
+            expect(received).toEqual([{ x: 0, y: 0 }]);
+        });
+
+        it('does not fire for other message types', () => {
+            const host = makeHost();
+            const ctx = makeMockContext();
+            const panel = new ViewportPanel(defaultConfig, host, ctx as unknown as ConstructorParameters<typeof ViewportPanel>[2]);
+
+            const received: Array<{ x: number; y: number }> = [];
+            panel.onAssetDropped(ev => received.push(ev));
+
+            mockPanel._simulateMessage({ type: 'pickResult', nodeId: 5 });
+
+            expect(received).toHaveLength(0);
+        });
+    });
+
+    describe('onDragCancelled event', () => {
+        it('fires when webview sends dragCancelled message', () => {
+            const host = makeHost();
+            const ctx = makeMockContext();
+            const panel = new ViewportPanel(defaultConfig, host, ctx as unknown as ConstructorParameters<typeof ViewportPanel>[2]);
+
+            let fired = 0;
+            panel.onDragCancelled(() => fired++);
+
+            mockPanel._simulateMessage({ type: 'dragCancelled' });
+
+            expect(fired).toBe(1);
+        });
+
+        it('does not fire for other message types', () => {
+            const host = makeHost();
+            const ctx = makeMockContext();
+            const panel = new ViewportPanel(defaultConfig, host, ctx as unknown as ConstructorParameters<typeof ViewportPanel>[2]);
+
+            let fired = 0;
+            panel.onDragCancelled(() => fired++);
+
+            mockPanel._simulateMessage({ type: 'assetDropped', x: 0, y: 0 });
+
+            expect(fired).toBe(0);
+        });
+    });
+
+    describe('onNodePicked event', () => {
+        it('fires with nodeId and ctrlKey when webview sends pickResult', () => {
+            const host = makeHost();
+            const ctx = makeMockContext();
+            const panel = new ViewportPanel(defaultConfig, host, ctx as unknown as ConstructorParameters<typeof ViewportPanel>[2]);
+
+            const received: Array<{ nodeId: number | null; ctrlKey: boolean }> = [];
+            panel.onNodePicked(ev => received.push(ev));
+
+            mockPanel._simulateMessage({ type: 'pickResult', nodeId: 42, ctrlKey: true });
+
+            expect(received).toEqual([{ nodeId: 42, ctrlKey: true }]);
+        });
+
+        it('returns null nodeId when not a number', () => {
+            const host = makeHost();
+            const ctx = makeMockContext();
+            const panel = new ViewportPanel(defaultConfig, host, ctx as unknown as ConstructorParameters<typeof ViewportPanel>[2]);
+
+            const received: Array<{ nodeId: number | null; ctrlKey: boolean }> = [];
+            panel.onNodePicked(ev => received.push(ev));
+
+            mockPanel._simulateMessage({ type: 'pickResult' });
+
+            expect(received).toEqual([{ nodeId: null, ctrlKey: false }]);
+        });
+    });
+
+    describe('onBoxPicked event', () => {
+        it('fires with nodeIds array when webview sends boxPickResult', () => {
+            const host = makeHost();
+            const ctx = makeMockContext();
+            const panel = new ViewportPanel(defaultConfig, host, ctx as unknown as ConstructorParameters<typeof ViewportPanel>[2]);
+
+            const received: Array<{ nodeIds: number[]; ctrlKey: boolean }> = [];
+            panel.onBoxPicked(ev => received.push(ev));
+
+            mockPanel._simulateMessage({ type: 'boxPickResult', nodeIds: [1, 2, 3], ctrlKey: false });
+
+            expect(received).toEqual([{ nodeIds: [1, 2, 3], ctrlKey: false }]);
+        });
+
+        it('returns empty array when nodeIds is not an array', () => {
+            const host = makeHost();
+            const ctx = makeMockContext();
+            const panel = new ViewportPanel(defaultConfig, host, ctx as unknown as ConstructorParameters<typeof ViewportPanel>[2]);
+
+            const received: Array<{ nodeIds: number[]; ctrlKey: boolean }> = [];
+            panel.onBoxPicked(ev => received.push(ev));
+
+            mockPanel._simulateMessage({ type: 'boxPickResult' });
+
+            expect(received).toEqual([{ nodeIds: [], ctrlKey: false }]);
+        });
+    });
+
+    describe('postDragState()', () => {
+        it('sends dragStarted message when active is true', () => {
+            const host = makeHost();
+            const ctx = makeMockContext();
+            const panel = new ViewportPanel(defaultConfig, host, ctx as unknown as ConstructorParameters<typeof ViewportPanel>[2]);
+
+            panel.postDragState(true);
+
+            expect(mockPanel.webview.postMessage).toHaveBeenCalledWith({
+                type: 'dragStarted',
+            });
+        });
+
+        it('sends dragEnded message when active is false', () => {
+            const host = makeHost();
+            const ctx = makeMockContext();
+            const panel = new ViewportPanel(defaultConfig, host, ctx as unknown as ConstructorParameters<typeof ViewportPanel>[2]);
+
+            panel.postDragState(false);
+
+            expect(mockPanel.webview.postMessage).toHaveBeenCalledWith({
+                type: 'dragEnded',
+            });
+        });
+
+        it('is a no-op when panel is disposed', () => {
+            const host = makeHost();
+            const ctx = makeMockContext();
+            const panel = new ViewportPanel(defaultConfig, host, ctx as unknown as ConstructorParameters<typeof ViewportPanel>[2]);
+
+            panel.dispose();
+            (mockPanel.webview.postMessage as jest.Mock).mockClear();
+
+            panel.postDragState(true);
+
+            expect(mockPanel.webview.postMessage).not.toHaveBeenCalled();
+        });
+    });
 });
 
 // ---------------------------------------------------------------------------
@@ -512,10 +676,12 @@ describe('buildViewportStreamHtml — camera input capture', () => {
         expect(html).toContain('}, 33)');
     });
 
-    it('skips sending when no input is active (early return guard)', () => {
+    it('always sends input state (no early-return guard — prevents stuck-key bugs)', () => {
         const html = buildViewportStreamHtml(baseOpts);
-        // The guard expression checks all movement keys before sending.
-        expect(html).toContain('!keys.w && !keys.s && !keys.a && !keys.d && !keys.q && !keys.e');
+        // The input loop always sends state even when all-zero to avoid stuck keys.
+        // It only guards on WS readyState, not on key/mouse state.
+        expect(html).toContain("ws.readyState !== WebSocket.OPEN");
+        expect(html).not.toContain('!keys.w && !keys.s');
     });
 
     it('tracks canvasFocused via focus/blur events on the canvas element', () => {
@@ -569,5 +735,215 @@ describe('buildViewportStreamHtml — viewport resize', () => {
     it('contains devicePixelRatio for HiDPI support', () => {
         const html = buildViewportStreamHtml(baseOpts);
         expect(html).toContain('devicePixelRatio');
+    });
+});
+
+// ---------------------------------------------------------------------------
+// switchPort() — play mode ↔ editor mode port switching
+// ---------------------------------------------------------------------------
+
+describe('ViewportPanel — switchPort()', () => {
+    let mockPanelLocal: ReturnType<typeof makeMockWebviewPanel>;
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        __resetMockPanelFactory();
+        mockPanelLocal = makeMockWebviewPanel();
+        __setMockPanelFactory(() => mockPanelLocal);
+    });
+
+    afterEach(() => {
+        __resetMockPanelFactory();
+    });
+
+    it('posts switchPort message to webview with the new port', () => {
+        const host = makeHost();
+        const ctx = makeMockContext();
+        const panel = new ViewportPanel(defaultConfig, host, ctx as any);
+        panel.initialize(1, 9002);
+
+        panel.switchPort(9003);
+
+        expect(mockPanelLocal.webview.postMessage).toHaveBeenCalledWith({
+            type: 'switchPort',
+            port: 9003,
+        });
+    });
+
+    it('switches from play port back to editor port', () => {
+        const host = makeHost();
+        const ctx = makeMockContext();
+        const panel = new ViewportPanel(defaultConfig, host, ctx as any);
+        panel.initialize(1, 9003);
+
+        panel.switchPort(9002);
+
+        expect(mockPanelLocal.webview.postMessage).toHaveBeenCalledWith({
+            type: 'switchPort',
+            port: 9002,
+        });
+    });
+
+    it('is a no-op when the panel is disposed', () => {
+        const host = makeHost();
+        const ctx = makeMockContext();
+        const panel = new ViewportPanel(defaultConfig, host, ctx as any);
+        panel.initialize(1, 9002);
+
+        panel.dispose();
+        jest.clearAllMocks();
+
+        panel.switchPort(9003);
+
+        expect(mockPanelLocal.webview.postMessage).not.toHaveBeenCalled();
+    });
+
+    it('can be called multiple times (toggle between ports)', () => {
+        const host = makeHost();
+        const ctx = makeMockContext();
+        const panel = new ViewportPanel(defaultConfig, host, ctx as any);
+        panel.initialize(1, 9002);
+
+        panel.switchPort(9003);
+        panel.switchPort(9002);
+        panel.switchPort(9003);
+
+        const calls = (mockPanelLocal.webview.postMessage as jest.Mock).mock.calls;
+        const switchCalls = calls.filter((c: any[]) => c[0]?.type === 'switchPort');
+        expect(switchCalls).toHaveLength(3);
+        expect(switchCalls[0][0].port).toBe(9003);
+        expect(switchCalls[1][0].port).toBe(9002);
+        expect(switchCalls[2][0].port).toBe(9003);
+    });
+});
+
+// ---------------------------------------------------------------------------
+// buildViewportStreamHtml — switchPort handler in webview JS
+// ---------------------------------------------------------------------------
+
+describe('buildViewportStreamHtml — switchPort handler', () => {
+    const baseOpts = {
+        nonce: 'test-nonce-123',
+        title: 'Test Viewport',
+        wsPort: 9002,
+        viewportId: 1,
+    };
+
+    it('contains switchPort message handler', () => {
+        const html = buildViewportStreamHtml(baseOpts);
+        expect(html).toContain("msg.type === 'switchPort'");
+    });
+
+    it('updates WS_PORT variable on switchPort', () => {
+        const html = buildViewportStreamHtml(baseOpts);
+        expect(html).toContain('WS_PORT = msg.port');
+    });
+
+    it('updates WS_URL variable on switchPort', () => {
+        const html = buildViewportStreamHtml(baseOpts);
+        expect(html).toContain("WS_URL = 'ws://localhost:' + WS_PORT");
+    });
+
+    it('closes existing WebSocket before reconnecting', () => {
+        const html = buildViewportStreamHtml(baseOpts);
+        // The handler should close existing ws before reconnecting
+        expect(html).toContain('ws.close()');
+    });
+
+    it('calls connect() after updating port', () => {
+        const html = buildViewportStreamHtml(baseOpts);
+        // After switchPort updates port, it calls connect() to reconnect
+        expect(html).toContain('connect()');
+    });
+
+    it('resets reconnectDelay to 1000 on switchPort', () => {
+        const html = buildViewportStreamHtml(baseOpts);
+        expect(html).toContain('reconnectDelay = 1000');
+    });
+
+    it('shows Reconnecting status on switchPort', () => {
+        const html = buildViewportStreamHtml(baseOpts);
+        expect(html).toContain("setStatus('Reconnecting...'");
+    });
+
+    it('updates mode badge text on switchPort', () => {
+        const html = buildViewportStreamHtml(baseOpts);
+        expect(html).toContain("modeBadgeEl.textContent");
+    });
+});
+
+// ---------------------------------------------------------------------------
+// buildViewportStreamHtml — mode badge (Editor/Play indicator)
+// ---------------------------------------------------------------------------
+
+describe('buildViewportStreamHtml — mode badge', () => {
+    const baseOpts = {
+        nonce: 'test-nonce-123',
+        title: 'Test Viewport',
+        wsPort: 9002,
+        viewportId: 1,
+    };
+
+    it('contains mode-badge element in HTML', () => {
+        const html = buildViewportStreamHtml(baseOpts);
+        expect(html).toContain('id="mode-badge"');
+    });
+
+    it('defaults to Editor text', () => {
+        const html = buildViewportStreamHtml(baseOpts);
+        expect(html).toContain('>Editor</span>');
+    });
+
+    it('references modeBadgeEl DOM element', () => {
+        const html = buildViewportStreamHtml(baseOpts);
+        expect(html).toContain("getElementById('mode-badge')");
+    });
+});
+
+// ---------------------------------------------------------------------------
+// buildViewportStreamHtml — hover pick (node name overlay)
+// ---------------------------------------------------------------------------
+
+describe('buildViewportStreamHtml — hover pick overlay', () => {
+    const baseOpts = {
+        nonce: 'test-nonce-123',
+        title: 'Test Viewport',
+        wsPort: 9002,
+        viewportId: 1,
+    };
+
+    it('contains hover-label element in HTML', () => {
+        const html = buildViewportStreamHtml(baseOpts);
+        expect(html).toContain('id="hover-label"');
+    });
+
+    it('sends editor.hoverPick message on mousemove', () => {
+        const html = buildViewportStreamHtml(baseOpts);
+        expect(html).toContain("'editor.hoverPick'");
+    });
+
+    it('handles hoverPickResult response type', () => {
+        const html = buildViewportStreamHtml(baseOpts);
+        expect(html).toContain("parsed.type === 'hoverPickResult'");
+    });
+
+    it('displays nodeName in hover label', () => {
+        const html = buildViewportStreamHtml(baseOpts);
+        expect(html).toContain('parsed.nodeName');
+    });
+
+    it('hides hover label when no node is hovered', () => {
+        const html = buildViewportStreamHtml(baseOpts);
+        expect(html).toContain("hoverLabel.style.display = 'none'");
+    });
+
+    it('hides hover label on mouseleave', () => {
+        const html = buildViewportStreamHtml(baseOpts);
+        expect(html).toContain("'mouseleave'");
+    });
+
+    it('throttles hover pick at 200ms interval', () => {
+        const html = buildViewportStreamHtml(baseOpts);
+        expect(html).toContain('lastHoverPickTime > 200');
     });
 });

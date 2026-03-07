@@ -5,6 +5,7 @@
 
 #include "camera_component.h"
 
+#include "engine/gameplay/camera_system.h"
 #include "engine/renderer/scene/scene_params.h"
 #include "engine/scene/scene.h"
 #include "engine/scene/scene_node.h"
@@ -85,6 +86,8 @@ static constexpr float kDeg2Rad  = kPi / 180.0f;
 CameraState camera_update_fly(SceneParams* params, float aspect, float dt) {
     CameraState state{};
     dt = std::min(dt, 0.1f);
+
+    state.fov_degrees = 45.0f;
 
     if (!params) {
         const Vec3 eye = {0.0f, 15.0f, -20.0f, 0.0f};
@@ -225,8 +228,10 @@ CameraState camera_update_orbit(float totalTime, float aspect) {
 // Scene-driven camera
 // ============================================================================
 
-CameraState camera_update_from_scene(const Scene* scene, float aspect) {
+CameraState camera_update_from_scene(const Scene* scene, float aspect,
+                                     CameraSystemState* cameraSys, float dt) {
     CameraState state{};
+    state.fov_degrees = 45.0f;
 
     auto make_default = [&]() {
         const Vec3 eye = {0.0f, 5.0f, -10.0f, 0.0f};
@@ -264,23 +269,57 @@ CameraState camera_update_from_scene(const Scene* scene, float aspect) {
         far_p  = cd->far_plane;
     }
 
+    // Apply camera system FOV animation if available.
+    if (cameraSys && dt > 0.0f) {
+        float target_fov = cameraSys->is_aiming ? cameraSys->fov_settings.ads_fov
+                         : cameraSys->is_sprinting ? cameraSys->fov_settings.sprint_fov
+                         : cameraSys->fov_settings.default_fov;
+        cameraSys->current_fov = fov_lerp(cameraSys->current_fov, target_fov,
+                                          cameraSys->fov_settings.interp_speed, dt);
+        fov_y = cameraSys->current_fov;
+    }
+
     // Extract from world transform.
     const Mat4& wt = camNode.world_transform;
-    const Vec3 eye = {wt.m[3][0], wt.m[3][1], wt.m[3][2], 0.0f};
+    Vec3 eye = {wt.m[3][0], wt.m[3][1], wt.m[3][2], 0.0f};
     Vec3 fwdRaw = {wt.m[2][0], wt.m[2][1], wt.m[2][2], 0.0f};
     float fwdLen = vec3_len(fwdRaw);
-    const Vec3 fwd = (fwdLen > kEpsilon) ? fwdRaw * (1.0f / fwdLen) : Vec3{0,0,1,0};
+    Vec3 fwd = (fwdLen > kEpsilon) ? fwdRaw * (1.0f / fwdLen) : Vec3{0,0,1,0};
     Vec3 upRaw = {wt.m[1][0], wt.m[1][1], wt.m[1][2], 0.0f};
     float upLen = vec3_len(upRaw);
-    const Vec3 up = (upLen > kEpsilon) ? upRaw * (1.0f / upLen) : Vec3{0,1,0,0};
+    Vec3 up = (upLen > kEpsilon) ? upRaw * (1.0f / upLen) : Vec3{0,1,0,0};
+
+    // Apply camera shake offset (pitch/yaw in degrees).
+    if (cameraSys && !cameraSys->active_shakes.empty()) {
+        Vec2 shakeOffset = shakes_accumulate(cameraSys->active_shakes, dt);
+        // Apply shake as small rotation offsets to the forward direction.
+        const float pitchRad = radians(shakeOffset.x);
+        const float yawRad   = radians(shakeOffset.y);
+        // Compute right vector.
+        Vec3 right = vec3_cross(up, fwd);
+        float rightLen = vec3_len(right);
+        if (rightLen > kEpsilon) right = right * (1.0f / rightLen);
+        // Rotate forward by pitch (around right) and yaw (around up).
+        // Small angle approximation: fwd += right * pitch + up * yaw.
+        fwd = {
+            fwd.x + right.x * pitchRad + up.x * yawRad,
+            fwd.y + right.y * pitchRad + up.y * yawRad,
+            fwd.z + right.z * pitchRad + up.z * yawRad,
+            0.0f
+        };
+        float newLen = vec3_len(fwd);
+        if (newLen > kEpsilon) fwd = fwd * (1.0f / newLen);
+    }
+
     const Vec3 at  = {eye.x + fwd.x, eye.y + fwd.y, eye.z + fwd.z, 0.0f};
 
     Mat4 view = mat4_look_at_lh(eye, at, up);
     Mat4 proj = mat4_perspective_lh(fov_y * kDeg2Rad, aspect, near_p, far_p);
 
-    state.view_proj = proj * view;  // reversed: row-major data in col-major multiply
-    state.eye_pos   = eye;
-    state.forward   = fwd;
+    state.view_proj   = proj * view;  // reversed: row-major data in col-major multiply
+    state.eye_pos     = eye;
+    state.forward     = fwd;
+    state.fov_degrees = fov_y;
 
     return state;
 }

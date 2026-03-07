@@ -180,6 +180,7 @@ private:
     bool createReadbackBuffers();
     bool createPostProcessTargets();
     void destroyPostProcessTargets();
+    bool createPickBufferResources();
     void setupTestScene();
 
     // Perform GPU -> CPU readback of the current frame's render target.
@@ -244,6 +245,8 @@ private:
     float cascadeSplitDist_[kCascadeCount] = {};
     Mat4  lightSpaceMat_ = Mat4::identity();  // cascade 0 for backward compat
     RhiBuffer cascadeCBV_ = RHI_NULL;         // CBV holding cascade VP matrices + splits
+
+    RhiPipeline rhiPickPSO_         = RHI_NULL;  // Pick buffer (node ID as RGB)
 
     // Shader library (named shader registry + PSO cache).
     ShaderLibrary shaderLib_;
@@ -452,7 +455,18 @@ public:
     [[nodiscard]] uint32_t pickNodeAtScreen(int x, int y) const;
     [[nodiscard]] std::vector<uint32_t> boxPickNodes(int x, int y, int w, int h) const;
 
+    /// Test-only: inject pick buffer data for unit testing without GPU.
+    void setPickDataForTest(uint32_t w, uint32_t h, std::vector<uint8_t> data) {
+        std::lock_guard<std::mutex> lk(pickMutex_);
+        pickW_ = w;
+        pickH_ = h;
+        pickData_ = std::move(data);
+    }
+
 private:
+    RhiTexture  pickRT_        = RHI_NULL;  // 1/4 res RGBA8 RT
+    RhiTexture  pickDepth_     = RHI_NULL;  // 1/4 res depth buffer
+    RhiBuffer   pickReadback_  = RHI_NULL;  // CPU-readable staging buffer
     uint32_t             pickW_ = 0;
     uint32_t             pickH_ = 0;
     mutable std::mutex   pickMutex_;

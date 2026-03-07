@@ -2,7 +2,7 @@
 
 ## Overview
 
-The UzEngine VSCode extension manages the engine process lifecycle and displays the live JPEG stream in a webview panel.
+The UzEngine VSCode extension provides a full editor UI for the engine: scene tree, inspector, viewport streaming, asset browser, play controls, and gizmo interaction. It communicates with the engine via WebSocket (real-time) and file-based IPC (request/response).
 
 **Location:** `vscode-uzengine/`
 
@@ -10,38 +10,140 @@ The UzEngine VSCode extension manages the engine process lifecycle and displays 
 
 ---
 
+## Editor Panels
+
+### Scene Tree Panel (`src/scene-tree-provider.ts`)
+
+TreeDataProvider displaying the scene hierarchy with drag-and-drop support.
+
+**Features:**
+- `NodeItem` with id, name, type, icon (per NodeType), collapsible state
+- `getChildren(item)` calls `scene.getTree` IPC on root, cached tree for children
+- Refreshes on `scene.treeChanged` IPC push event
+- Context menu: Add Child, Duplicate, Delete, Rename
+- Clicking a node sends `scene.selectNode` IPC and refreshes Inspector
+- Drag-and-drop reparenting via `TreeDragAndDropController` (`application/vnd.uzengine.scenetree`)
+- Asset drop from Asset Browser (`application/vnd.uzengine.asset`) calls `scene.assignAsset`
+- Multi-select via `canSelectMany: true` (Ctrl+click, Shift+click)
+- `getFlatTree()` returns depth-first node list for SelectionManager range selection
+
+**Node type icons:** Node3D, StaticMesh, Light, Camera, etc.
+
+### Inspector Panel (`src/inspector-panel.ts`)
+
+WebviewPanel showing editable properties of the selected node(s).
+
+**Features:**
+- Opens/refreshes when scene tree selection changes
+- Property groups: Node, Transform, Rendering
+- Property types: float (`<input type="number">`), Vec3 (XYZ inputs), bool (checkbox), string
+- Live editing: `scene.setProperty` IPC on change
+- `retainContextWhenHidden: true`
+- Multi-select: shows intersection of common properties (`commonProperties()`)
+- Mixed values display `"--"` (MIXED_VALUE sentinel)
+- Header shows "N nodes selected" for multi-select
+- Asset picker buttons `[...]` for resource fields (opens QuickPick filtered by asset type)
+
+### Asset Browser Panel (`src/asset-browser-provider.ts`)
+
+TreeDataProvider with asset groups (Scene, Mesh, Texture, Material, Shader, Audio).
+
+**Features:**
+- Groups populated via `asset.list` IPC
+- Drag source: `AssetBrowserDragController` serializes `AssetDragPayload` as `application/vnd.uzengine.asset`
+- Context menu: Reimport, Assign to Selected, Import Here
+- Toolbar: Refresh, New Material/Scene/Shader, Import Files
+- Import triggers `asset.import` IPC
+
+### Viewport Panel (`src/viewport-panel.ts`)
+
+WebviewPanel with live JPEG stream from the engine over WebSocket.
+
+**Features:**
+- Canvas-based JPEG rendering with WS binary frames
+- Camera input: WASD+QE fly, mouse look (right-click), scroll zoom
+- Node picking: left-click sends `editor.pickNode`, result fires `onNodePicked` event
+- Box select: rubber-band rectangle sends `editor.boxPick`, fires `onBoxPicked` event
+- Gizmo interaction: `editor.gizmoBeginDrag`/`gizmoDrag`/`gizmoEndDrag` WS messages
+- Hover pick: `editor.hoverPick` shows node name overlay (200ms throttle)
+- Asset drop zone: green border when dragging from Asset Browser
+- Mode badge: Editor/Play indicator
+- `switchPort(port)`: reconnects WS to play port (9003) or editor port (9002)
+- ResizeObserver sends `viewport_resize` for dynamic resolution
+
+### Play Controls (`src/play-controls.ts`)
+
+Status bar items for Play/Pause/Stop.
+
+**States:** idle, playing, paused
+
+**Commands:**
+- Play: spawns `render.exe --play` via `PlayModeController`, viewport switches to port 9003
+- Stop: sends `engine.stop` IPC, then SIGTERM if no response in 2s
+- Pause: sends `engine.pause` IPC
+
+### Console Panel (`src/console-panel.ts`)
+
+Output channel for engine log messages received via `engine.log` IPC push.
+
+---
+
 ## Commands
 
-### uzengine.openStreamViewer
+### Scene Tree
+| Command | Description |
+|---------|-------------|
+| `uzengine.addNode` | Add child node (prompts for type) |
+| `uzengine.deleteNode` | Delete selected node |
+| `uzengine.renameNode` | Rename node (inline input box) |
+| `uzengine.duplicateNode` | Duplicate selected node |
+| `uzengine.selectNode` | Select a node programmatically |
+| `uzengine.selectAll` | Select all nodes (Ctrl+A) |
+| `uzengine.clearSelection` | Clear selection (Escape) |
+| `uzengine.deleteSelected` | Delete all selected nodes (Delete) |
+| `uzengine.duplicateSelected` | Duplicate all selected (Ctrl+D) |
 
-Opens the stream viewer and starts the server if not running.
+### Scene
+| Command | Description |
+|---------|-------------|
+| `uzengine.saveScene` | Save current scene to disk |
+| `uzengine.refreshScene` | Refresh scene tree from engine |
 
-**Activation:** Command palette or keybinding
+### Play Mode
+| Command | Description |
+|---------|-------------|
+| `uzengine.play` | Start play mode |
+| `uzengine.pause` | Pause play mode |
+| `uzengine.stop` | Stop play mode |
 
-**Flow:**
-1. Check if server is already running
-2. If not, spawn `render.exe` (headless mode)
-3. Poll port 9002 until reachable (5 second timeout)
-4. Create/show the webview panel
-5. Panel connects to WebSocket and displays stream
+### Gizmo
+| Command | Description |
+|---------|-------------|
+| `uzengine.gizmoTranslate` | Switch to translate gizmo (W) |
+| `uzengine.gizmoRotate` | Switch to rotate gizmo (E) |
+| `uzengine.gizmoScale` | Switch to scale gizmo (R) |
+| `uzengine.gizmoSpaceToggle` | Toggle world/local space |
 
-**Keyboard shortcut:** (configurable in `keybindings.json`)
+### Asset Browser
+| Command | Description |
+|---------|-------------|
+| `uzengine.assetBrowser.refresh` | Refresh asset list |
+| `uzengine.assetBrowser.reimport` | Re-import selected asset |
+| `uzengine.assetBrowser.newMaterial` | Create new .uzmat |
+| `uzengine.assetBrowser.newScene` | Create new .uzscene |
+| `uzengine.assetBrowser.newShader` | Create new .hlsl from template |
+| `uzengine.assetBrowser.importFiles` | Import files via OS dialog |
+| `uzengine.assetBrowser.importHere` | Import files into asset group |
+| `uzengine.assetBrowser.assignToSelected` | Assign asset to selected node |
+| `uzengine.assetBrowser.reveal` | Reveal asset in OS file explorer |
 
-### uzengine.startServer
-
-Starts the server without opening the panel.
-
-**Use case:** Prepare engine for external tools or pre-warm before opening panel
-
-**If already running:** No-op
-
-### uzengine.stopServer
-
-Kills the `render.exe` process.
-
-**Effect:** Webview disconnects from WebSocket; shows "Disconnected" status.
-
-**Manual restart:** Run `uzengine.openStreamViewer` again
+### Server
+| Command | Description |
+|---------|-------------|
+| `uzengine.openStreamViewer` | Open viewport and start engine |
+| `uzengine.startServer` | Start engine without opening viewport |
+| `uzengine.stopServer` | Kill engine process |
+| `uzengine.consoleClear` | Clear console output |
 
 ---
 

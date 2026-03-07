@@ -817,4 +817,651 @@ describe('InspectorViewProvider', () => {
             expect(provider.currentNode).toBe(node2);
         });
     });
+
+    // -------------------------------------------------------------------------
+    // Resource browse message handling
+    // -------------------------------------------------------------------------
+
+    describe('resourceBrowse message handling', () => {
+        it('opens file dialog and sends IPC on resourceBrowse', async () => {
+            const ipc = makeMockIpc();
+            const provider = new InspectorViewProvider(ipc as unknown as IpcClient);
+            const mockView = makeMockWebviewView();
+            provider.resolveWebviewView(
+                mockView as unknown as import('vscode').WebviewView,
+                stubContext, stubToken
+            );
+
+            vscodeWindow.showOpenDialog.mockResolvedValueOnce([
+                { fsPath: '/path/to/mat.uzmat' },
+            ]);
+
+            mockView._triggerMessage({
+                command: 'resourceBrowse',
+                nodeId: 'n1',
+                key: 'material',
+            });
+
+            await new Promise(r => setTimeout(r, 10));
+
+            expect(vscodeWindow.showOpenDialog).toHaveBeenCalledWith(
+                expect.objectContaining({ canSelectMany: false })
+            );
+
+            expect(mockView.webview.postMessage).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    command: 'resourcePathSelected',
+                    key: 'material',
+                    path: '/path/to/mat.uzmat',
+                })
+            );
+
+            expect(ipc.request).toHaveBeenCalledWith('scene.setProperty', {
+                nodeId: 'n1',
+                key: 'material',
+                value: '/path/to/mat.uzmat',
+            });
+        });
+
+        it('does nothing when user cancels file dialog', async () => {
+            const ipc = makeMockIpc();
+            const provider = new InspectorViewProvider(ipc as unknown as IpcClient);
+            const mockView = makeMockWebviewView();
+            provider.resolveWebviewView(
+                mockView as unknown as import('vscode').WebviewView,
+                stubContext, stubToken
+            );
+
+            vscodeWindow.showOpenDialog.mockResolvedValueOnce(undefined);
+
+            mockView._triggerMessage({
+                command: 'resourceBrowse',
+                nodeId: 'n1',
+                key: 'material',
+            });
+
+            await new Promise(r => setTimeout(r, 10));
+
+            expect(ipc.request).not.toHaveBeenCalled();
+        });
+
+        it('does nothing when file dialog returns empty array', async () => {
+            const ipc = makeMockIpc();
+            const provider = new InspectorViewProvider(ipc as unknown as IpcClient);
+            const mockView = makeMockWebviewView();
+            provider.resolveWebviewView(
+                mockView as unknown as import('vscode').WebviewView,
+                stubContext, stubToken
+            );
+
+            vscodeWindow.showOpenDialog.mockResolvedValueOnce([]);
+
+            mockView._triggerMessage({
+                command: 'resourceBrowse',
+                nodeId: 'n1',
+                key: 'material',
+            });
+
+            await new Promise(r => setTimeout(r, 10));
+
+            expect(ipc.request).not.toHaveBeenCalled();
+        });
+
+        it('shows error when IPC fails on resource browse', async () => {
+            const ipc = makeMockIpc();
+            ipc.request.mockRejectedValue(new Error('Engine crashed'));
+            const provider = new InspectorViewProvider(ipc as unknown as IpcClient);
+            const mockView = makeMockWebviewView();
+            provider.resolveWebviewView(
+                mockView as unknown as import('vscode').WebviewView,
+                stubContext, stubToken
+            );
+
+            vscodeWindow.showOpenDialog.mockResolvedValueOnce([
+                { fsPath: '/path/to/mat.uzmat' },
+            ]);
+
+            mockView._triggerMessage({
+                command: 'resourceBrowse',
+                nodeId: 'n1',
+                key: 'material',
+            });
+
+            await new Promise(r => setTimeout(r, 10));
+
+            expect(vscodeWindow.showErrorMessage).toHaveBeenCalledWith(
+                expect.stringContaining('Engine crashed')
+            );
+        });
+
+        it('shows non-Error exception message on resource browse failure', async () => {
+            const ipc = makeMockIpc();
+            ipc.request.mockRejectedValue('plain string error');
+            const provider = new InspectorViewProvider(ipc as unknown as IpcClient);
+            const mockView = makeMockWebviewView();
+            provider.resolveWebviewView(
+                mockView as unknown as import('vscode').WebviewView,
+                stubContext, stubToken
+            );
+
+            vscodeWindow.showOpenDialog.mockResolvedValueOnce([
+                { fsPath: '/path/to/mat.uzmat' },
+            ]);
+
+            mockView._triggerMessage({
+                command: 'resourceBrowse',
+                nodeId: 'n1',
+                key: 'material',
+            });
+
+            await new Promise(r => setTimeout(r, 10));
+
+            expect(vscodeWindow.showErrorMessage).toHaveBeenCalledWith(
+                expect.stringContaining('plain string error')
+            );
+        });
+    });
+
+    // -------------------------------------------------------------------------
+    // Color and resource widgets in shell HTML
+    // -------------------------------------------------------------------------
+
+    describe('shell HTML includes color/resource widgets', () => {
+        it('shell HTML contains color and resource widget JS functions', () => {
+            const ipc = makeMockIpc();
+            const provider = new InspectorViewProvider(ipc as unknown as IpcClient);
+            const mockView = makeMockWebviewView();
+            provider.resolveWebviewView(
+                mockView as unknown as import('vscode').WebviewView,
+                stubContext, stubToken
+            );
+
+            expect(mockView.webview.html).toContain('onColorChange');
+            expect(mockView.webview.html).toContain('onResourceBrowse');
+            expect(mockView.webview.html).toContain('resourcePathSelected');
+        });
+
+        it('shell HTML contains color/resource CSS', () => {
+            const ipc = makeMockIpc();
+            const provider = new InspectorViewProvider(ipc as unknown as IpcClient);
+            const mockView = makeMockWebviewView();
+            provider.resolveWebviewView(
+                mockView as unknown as import('vscode').WebviewView,
+                stubContext, stubToken
+            );
+
+            expect(mockView.webview.html).toContain('.prop-color');
+            expect(mockView.webview.html).toContain('.resource-group');
+            expect(mockView.webview.html).toContain('.resource-browse');
+        });
+
+        it('shell renderWidget handles color type', () => {
+            const ipc = makeMockIpc();
+            const provider = new InspectorViewProvider(ipc as unknown as IpcClient);
+            const mockView = makeMockWebviewView();
+            provider.resolveWebviewView(
+                mockView as unknown as import('vscode').WebviewView,
+                stubContext, stubToken
+            );
+
+            // Show node to trigger postMessage with properties including color
+            provider.showForNode(makeNode());
+
+            // The postMessage should include albedo_color property
+            expect(mockView.webview.postMessage).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    command: 'updateNode',
+                    properties: expect.arrayContaining([
+                        expect.objectContaining({
+                            key: 'albedo_color',
+                            type: 'color',
+                        }),
+                    ]),
+                })
+            );
+        });
+
+        it('shell renderWidget handles resource type', () => {
+            const ipc = makeMockIpc();
+            const provider = new InspectorViewProvider(ipc as unknown as IpcClient);
+            const mockView = makeMockWebviewView();
+            provider.resolveWebviewView(
+                mockView as unknown as import('vscode').WebviewView,
+                stubContext, stubToken
+            );
+
+            provider.showForNode(makeNode());
+
+            expect(mockView.webview.postMessage).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    command: 'updateNode',
+                    properties: expect.arrayContaining([
+                        expect.objectContaining({
+                            key: 'material',
+                            type: 'resource',
+                            assetType: 'Material',
+                        }),
+                    ]),
+                })
+            );
+        });
+    });
+
+    describe('asset picker — openAssetPicker message', () => {
+        it('handles openAssetPicker with QuickPick selection and calls scene.assignAsset', async () => {
+            const ipc = makeMockIpc();
+            const provider = new InspectorViewProvider(ipc as unknown as IpcClient);
+            const mockView = makeMockWebviewView();
+            provider.resolveWebviewView(
+                mockView as unknown as import('vscode').WebviewView,
+                stubContext, stubToken
+            );
+            provider.showForNode(makeNode('7', 'TestNode'));
+
+            ipc.request.mockResolvedValueOnce({
+                assets: [
+                    { path: 'res://materials/wood.uzmat', type: 'Material', status: 'Fresh' },
+                ],
+            });
+
+            vscodeWindow.showQuickPick.mockResolvedValueOnce({
+                label: 'wood.uzmat',
+                description: 'res://materials/wood.uzmat',
+                detail: 'Material — Fresh',
+            });
+
+            mockView._triggerMessage({
+                command: 'openAssetPicker',
+                nodeId: '7',
+                key: 'material',
+                assetType: 'Material',
+            });
+
+            await new Promise(r => setTimeout(r, 0));
+
+            expect(ipc.request).toHaveBeenCalledWith('asset.list', {});
+            expect(ipc.request).toHaveBeenCalledWith('scene.assignAsset', {
+                nodeId: 7,
+                resPath: 'res://materials/wood.uzmat',
+                assetType: 'Material',
+            });
+
+            expect(mockView.webview.postMessage).toHaveBeenCalledWith({
+                command: 'resourcePathSelected',
+                key: 'material',
+                path: 'res://materials/wood.uzmat',
+            });
+        });
+
+        it('shows info when no matching assets are found', async () => {
+            const ipc = makeMockIpc();
+            const provider = new InspectorViewProvider(ipc as unknown as IpcClient);
+            const mockView = makeMockWebviewView();
+            provider.resolveWebviewView(
+                mockView as unknown as import('vscode').WebviewView,
+                stubContext, stubToken
+            );
+            provider.showForNode(makeNode());
+
+            ipc.request.mockResolvedValueOnce({ assets: [] });
+
+            mockView._triggerMessage({
+                command: 'openAssetPicker',
+                nodeId: '1',
+                key: 'material',
+                assetType: 'Material',
+            });
+
+            await new Promise(r => setTimeout(r, 0));
+
+            expect(vscodeWindow.showInformationMessage).toHaveBeenCalledWith(
+                'No Material found in registry.'
+            );
+        });
+
+        it('does nothing when QuickPick is cancelled', async () => {
+            const ipc = makeMockIpc();
+            const provider = new InspectorViewProvider(ipc as unknown as IpcClient);
+            const mockView = makeMockWebviewView();
+            provider.resolveWebviewView(
+                mockView as unknown as import('vscode').WebviewView,
+                stubContext, stubToken
+            );
+            provider.showForNode(makeNode());
+
+            ipc.request.mockResolvedValueOnce({
+                assets: [{ path: 'res://mat/a.uzmat', type: 'Material', status: 'Fresh' }],
+            });
+            vscodeWindow.showQuickPick.mockResolvedValueOnce(undefined);
+
+            mockView._triggerMessage({
+                command: 'openAssetPicker',
+                nodeId: '1',
+                key: 'material',
+                assetType: 'Material',
+            });
+
+            await new Promise(r => setTimeout(r, 0));
+
+            expect(ipc.request).not.toHaveBeenCalledWith('scene.assignAsset', expect.anything());
+        });
+
+        it('shows error when scene.assignAsset fails', async () => {
+            const ipc = makeMockIpc();
+            const provider = new InspectorViewProvider(ipc as unknown as IpcClient);
+            const mockView = makeMockWebviewView();
+            provider.resolveWebviewView(
+                mockView as unknown as import('vscode').WebviewView,
+                stubContext, stubToken
+            );
+            provider.showForNode(makeNode());
+
+            ipc.request
+                .mockResolvedValueOnce({ assets: [{ path: 'res://a.uzmat', type: 'Material', status: 'Fresh' }] })
+                .mockRejectedValueOnce(new Error('assign failed'));
+
+            vscodeWindow.showQuickPick.mockResolvedValueOnce({
+                label: 'a.uzmat',
+                description: 'res://a.uzmat',
+                detail: 'Material — Fresh',
+            });
+
+            mockView._triggerMessage({
+                command: 'openAssetPicker',
+                nodeId: '1',
+                key: 'material',
+                assetType: 'Material',
+            });
+
+            await new Promise(r => setTimeout(r, 0));
+
+            expect(vscodeWindow.showErrorMessage).toHaveBeenCalledWith(
+                expect.stringContaining('assign failed')
+            );
+        });
+
+        it('shows error with non-Error exception from assignAsset', async () => {
+            const ipc = makeMockIpc();
+            const provider = new InspectorViewProvider(ipc as unknown as IpcClient);
+            const mockView = makeMockWebviewView();
+            provider.resolveWebviewView(
+                mockView as unknown as import('vscode').WebviewView,
+                stubContext, stubToken
+            );
+            provider.showForNode(makeNode());
+
+            ipc.request
+                .mockResolvedValueOnce({ assets: [{ path: 'res://a.uzmat', type: 'Material', status: 'Fresh' }] })
+                .mockRejectedValueOnce('string error');
+
+            vscodeWindow.showQuickPick.mockResolvedValueOnce({
+                label: 'a.uzmat',
+                description: 'res://a.uzmat',
+                detail: 'Material — Fresh',
+            });
+
+            mockView._triggerMessage({
+                command: 'openAssetPicker',
+                nodeId: '1',
+                key: 'material',
+                assetType: 'Material',
+            });
+
+            await new Promise(r => setTimeout(r, 0));
+
+            expect(vscodeWindow.showErrorMessage).toHaveBeenCalledWith(
+                expect.stringContaining('string error')
+            );
+        });
+
+        it('handles asset.list IPC failure gracefully', async () => {
+            const ipc = makeMockIpc();
+            const provider = new InspectorViewProvider(ipc as unknown as IpcClient);
+            const mockView = makeMockWebviewView();
+            provider.resolveWebviewView(
+                mockView as unknown as import('vscode').WebviewView,
+                stubContext, stubToken
+            );
+            provider.showForNode(makeNode());
+
+            ipc.request.mockRejectedValueOnce(new Error('IPC down'));
+
+            mockView._triggerMessage({
+                command: 'openAssetPicker',
+                nodeId: '1',
+                key: 'material',
+                assetType: 'Material',
+            });
+
+            await new Promise(r => setTimeout(r, 0));
+
+            expect(vscodeWindow.showInformationMessage).toHaveBeenCalledWith(
+                'No Material found in registry.'
+            );
+        });
+
+        it('shows generic "assets" when assetType is empty and no assets found', async () => {
+            const ipc = makeMockIpc();
+            const provider = new InspectorViewProvider(ipc as unknown as IpcClient);
+            const mockView = makeMockWebviewView();
+            provider.resolveWebviewView(
+                mockView as unknown as import('vscode').WebviewView,
+                stubContext, stubToken
+            );
+            provider.showForNode(makeNode());
+
+            ipc.request.mockResolvedValueOnce({ assets: [] });
+
+            mockView._triggerMessage({
+                command: 'openAssetPicker',
+                nodeId: '1',
+                key: 'material',
+                assetType: '',
+            });
+
+            await new Promise(r => setTimeout(r, 0));
+
+            expect(vscodeWindow.showInformationMessage).toHaveBeenCalledWith(
+                'No assets found in registry.'
+            );
+        });
+
+        it('handles QuickPick item without description field', async () => {
+            const ipc = makeMockIpc();
+            const provider = new InspectorViewProvider(ipc as unknown as IpcClient);
+            const mockView = makeMockWebviewView();
+            provider.resolveWebviewView(
+                mockView as unknown as import('vscode').WebviewView,
+                stubContext, stubToken
+            );
+            provider.showForNode(makeNode('10'));
+
+            ipc.request.mockResolvedValueOnce({
+                assets: [{ path: 'res://mat/a.uzmat', type: 'Material', status: 'Fresh' }],
+            });
+
+            vscodeWindow.showQuickPick.mockResolvedValueOnce({
+                label: 'a.uzmat',
+                // No description — tests the ?? '' fallback.
+            });
+
+            mockView._triggerMessage({
+                command: 'openAssetPicker',
+                nodeId: '10',
+                key: 'material',
+                assetType: 'Material',
+            });
+
+            await new Promise(r => setTimeout(r, 0));
+
+            expect(ipc.request).toHaveBeenCalledWith('scene.assignAsset', {
+                nodeId: 10,
+                resPath: '',
+                assetType: 'Material',
+            });
+        });
+
+        it('uses generic placeholder when assetType is empty', async () => {
+            const ipc = makeMockIpc();
+            const provider = new InspectorViewProvider(ipc as unknown as IpcClient);
+            const mockView = makeMockWebviewView();
+            provider.resolveWebviewView(
+                mockView as unknown as import('vscode').WebviewView,
+                stubContext, stubToken
+            );
+            provider.showForNode(makeNode());
+
+            ipc.request.mockResolvedValueOnce({
+                assets: [{ path: 'res://a.glb', type: 'Mesh', status: 'Fresh' }],
+            });
+            vscodeWindow.showQuickPick.mockResolvedValueOnce(undefined);
+
+            mockView._triggerMessage({
+                command: 'openAssetPicker',
+                nodeId: '1',
+                key: 'material',
+                assetType: '',
+            });
+
+            await new Promise(r => setTimeout(r, 0));
+
+            expect(vscodeWindow.showQuickPick).toHaveBeenCalledWith(
+                expect.anything(),
+                expect.objectContaining({ placeHolder: 'Select asset for "material"' })
+            );
+        });
+
+        it('does not handle openAssetPicker after dispose', async () => {
+            const ipc = makeMockIpc();
+            const provider = new InspectorViewProvider(ipc as unknown as IpcClient);
+            const mockView = makeMockWebviewView();
+            provider.resolveWebviewView(
+                mockView as unknown as import('vscode').WebviewView,
+                stubContext, stubToken
+            );
+            provider.showForNode(makeNode());
+            provider.dispose();
+
+            mockView._triggerMessage({
+                command: 'openAssetPicker',
+                nodeId: '1',
+                key: 'material',
+                assetType: 'Material',
+            });
+
+            await new Promise(r => setTimeout(r, 0));
+
+            // asset.list should not have been called.
+            expect(ipc.request).not.toHaveBeenCalledWith('asset.list', expect.anything());
+        });
+    });
+
+    describe('shell HTML — asset picker', () => {
+        it('includes asset-picker CSS class in shell HTML', () => {
+            const ipc = makeMockIpc();
+            const provider = new InspectorViewProvider(ipc as unknown as IpcClient);
+            const mockView = makeMockWebviewView();
+            provider.resolveWebviewView(
+                mockView as unknown as import('vscode').WebviewView,
+                stubContext, stubToken
+            );
+
+            expect(mockView.webview.html).toContain('.asset-picker');
+            expect(mockView.webview.html).toContain('onAssetPicker');
+        });
+    });
+
+    // -------------------------------------------------------------------------
+    // showForNodes (multi-select)
+    // -------------------------------------------------------------------------
+
+    describe('showForNodes()', () => {
+        it('sends updateMultiSelect message with count and common properties', () => {
+            const ipc = makeMockIpc();
+            const provider = new InspectorViewProvider(ipc as unknown as IpcClient);
+            const mockView = makeMockWebviewView();
+            provider.resolveWebviewView(
+                mockView as unknown as import('vscode').WebviewView,
+                stubContext, stubToken
+            );
+
+            const nodeA = new NodeItem({ id: '1', name: 'A', type: 'Node3D' });
+            const nodeB = new NodeItem({ id: '2', name: 'B', type: 'StaticMesh' });
+            provider.showForNodes([nodeA, nodeB]);
+
+            expect(mockView.webview.postMessage).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    command: 'updateMultiSelect',
+                    count: 2,
+                    properties: expect.any(Array),
+                })
+            );
+        });
+
+        it('falls back to showForNode when given one node', () => {
+            const ipc = makeMockIpc();
+            const provider = new InspectorViewProvider(ipc as unknown as IpcClient);
+            const mockView = makeMockWebviewView();
+            provider.resolveWebviewView(
+                mockView as unknown as import('vscode').WebviewView,
+                stubContext, stubToken
+            );
+
+            const nodeA = new NodeItem({ id: '1', name: 'A', type: 'Node3D' });
+            provider.showForNodes([nodeA]);
+
+            expect(mockView.webview.postMessage).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    command: 'updateNode',
+                    nodeId: '1',
+                })
+            );
+        });
+
+        it('clears when given empty array', () => {
+            const ipc = makeMockIpc();
+            const provider = new InspectorViewProvider(ipc as unknown as IpcClient);
+            const mockView = makeMockWebviewView();
+            provider.resolveWebviewView(
+                mockView as unknown as import('vscode').WebviewView,
+                stubContext, stubToken
+            );
+
+            provider.showForNodes([]);
+
+            expect(mockView.webview.postMessage).toHaveBeenCalledWith(
+                expect.objectContaining({ command: 'clearNode' })
+            );
+        });
+
+        it('does nothing when disposed', () => {
+            const ipc = makeMockIpc();
+            const provider = new InspectorViewProvider(ipc as unknown as IpcClient);
+            const mockView = makeMockWebviewView();
+            provider.resolveWebviewView(
+                mockView as unknown as import('vscode').WebviewView,
+                stubContext, stubToken
+            );
+            provider.dispose();
+            mockView.webview.postMessage.mockClear();
+
+            const node = new NodeItem({ id: '1', name: 'A', type: 'Node3D' });
+            provider.showForNodes([node, node]);
+
+            expect(mockView.webview.postMessage).not.toHaveBeenCalled();
+        });
+
+        it('includes mixed-value CSS class in shell HTML', () => {
+            const ipc = makeMockIpc();
+            const provider = new InspectorViewProvider(ipc as unknown as IpcClient);
+            const mockView = makeMockWebviewView();
+            provider.resolveWebviewView(
+                mockView as unknown as import('vscode').WebviewView,
+                stubContext, stubToken
+            );
+
+            expect(mockView.webview.html).toContain('.mixed-value');
+            expect(mockView.webview.html).toContain('updateMultiSelect');
+        });
+    });
 });

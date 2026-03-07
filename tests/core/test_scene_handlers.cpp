@@ -17,6 +17,9 @@
 #include "engine/scene/scene.h"
 #include "engine/scene/scene_loader.h"
 #include "engine/scene/scene_saver.h"
+#include "engine/scene/component_data.h"
+#include "engine/scene/component_store.h"
+#include "engine/renderer/scene/scene_params.h"
 #include "common/ipc_registry.h"
 
 using namespace uz;
@@ -656,6 +659,7 @@ TEST_F(SceneHandlersTest, AllHandlersRegistered) {
     EXPECT_TRUE(registry_->has("scene.load"));
     EXPECT_TRUE(registry_->has("scene.save"));
     EXPECT_TRUE(registry_->has("scene.selectNode"));
+    EXPECT_TRUE(registry_->has("scene.reparentNode"));
 }
 
 TEST_F(SceneHandlersTest, UnknownHandler_Error) {
@@ -739,4 +743,383 @@ TEST_F(SceneHandlersTest, RoundTrip_SaveLoad) {
     EXPECT_EQ(tree[0]["name"], "Root");
     EXPECT_EQ(tree[1]["name"], "Child");
     EXPECT_EQ(tree[1]["type"], "Camera");
+}
+
+// ============================================================================
+// scene.reparentNode
+// ============================================================================
+
+TEST_F(SceneHandlersTest, ReparentNode_Basic) {
+    // Create: Root (1) and Child (2) at root level.
+    scene_create_node(scene_.get(), "Root", "Node3D");
+    scene_create_node(scene_.get(), "Child", "Node3D");
+
+    // Verify Child is at root.
+    ASSERT_EQ(scene_get_node(scene_.get(), 2)->parent_id, kNodeIdInvalid);
+
+    // Reparent Child under Root.
+    auto result = call("scene.reparentNode", {{"id", 2}, {"newParentId", 1}});
+    EXPECT_EQ(result["ok"], true);
+
+    // Verify parent changed.
+    EXPECT_EQ(scene_get_node(scene_.get(), 2)->parent_id, 1u);
+}
+
+TEST_F(SceneHandlersTest, ReparentNode_ToRoot) {
+    // Root (1) with Child (2).
+    scene_create_node(scene_.get(), "Root", "Node3D");
+    scene_create_node(scene_.get(), "Child", "Node3D", 1);
+    ASSERT_EQ(scene_get_node(scene_.get(), 2)->parent_id, 1u);
+
+    // Move Child to root level.
+    auto result = call("scene.reparentNode", {{"id", 2}, {"newParentId", 0}});
+    EXPECT_EQ(result["ok"], true);
+    EXPECT_EQ(scene_get_node(scene_.get(), 2)->parent_id, kNodeIdInvalid);
+}
+
+TEST_F(SceneHandlersTest, ReparentNode_CircularReference_Fails) {
+    // A (1) -> B (2) -> C (3). Try to reparent A under C → should fail.
+    scene_create_node(scene_.get(), "A", "Node3D");
+    scene_create_node(scene_.get(), "B", "Node3D", 1);
+    scene_create_node(scene_.get(), "C", "Node3D", 2);
+
+    auto result = call("scene.reparentNode", {{"id", 1}, {"newParentId", 3}});
+    EXPECT_EQ(result["ok"], false);
+    EXPECT_TRUE(result["error"].get<std::string>().find("circular") != std::string::npos ||
+                result["error"].get<std::string>().find("reparent failed") != std::string::npos);
+}
+
+TEST_F(SceneHandlersTest, ReparentNode_InvalidNodeId_Fails) {
+    auto result = call("scene.reparentNode", {{"id", 999}, {"newParentId", 0}});
+    EXPECT_EQ(result["ok"], false);
+}
+
+TEST_F(SceneHandlersTest, ReparentNode_InvalidParentId_Fails) {
+    scene_create_node(scene_.get(), "A", "Node3D");
+    auto result = call("scene.reparentNode", {{"id", 1}, {"newParentId", 999}});
+    EXPECT_EQ(result["ok"], false);
+}
+
+TEST_F(SceneHandlersTest, ReparentNode_MissingId_Error) {
+    auto result = call("scene.reparentNode", {{"newParentId", 0}});
+    EXPECT_EQ(result["ok"], false);
+    EXPECT_TRUE(result["error"].get<std::string>().find("id") != std::string::npos);
+}
+
+TEST_F(SceneHandlersTest, ReparentNode_MissingNewParentId_Error) {
+    scene_create_node(scene_.get(), "A", "Node3D");
+    auto result = call("scene.reparentNode", {{"id", 1}});
+    EXPECT_EQ(result["ok"], false);
+    EXPECT_TRUE(result["error"].get<std::string>().find("newParentId") != std::string::npos);
+}
+
+TEST_F(SceneHandlersTest, ReparentNode_NullScene_Error) {
+    IpcRegistry reg;
+    scene_register_handlers(reg, nullptr);
+    auto result = reg.call("scene.reparentNode", {{"id", 1}, {"newParentId", 0}});
+    EXPECT_EQ(result["ok"], false);
+    EXPECT_EQ(result["error"], "no scene");
+}
+
+TEST_F(SceneHandlersTest, ReparentNode_IsRegistered) {
+    EXPECT_TRUE(registry_->has("scene.reparentNode"));
+}
+
+// ============================================================================
+// scene.assignAsset
+// ============================================================================
+
+TEST_F(SceneHandlersTest, AssignAsset_Mesh_CreatesStaticMeshComponent) {
+    scene_create_node(scene_.get(), "Box", "Node3D");
+    auto result = call("scene.assignAsset", {
+        {"nodeId", 1}, {"assetPath", "res://meshes/cube.glb"}, {"assetType", "Mesh"}
+    });
+    EXPECT_EQ(result["ok"], true);
+    EXPECT_EQ(result["componentAdded"], "StaticMeshData");
+
+    // Verify the node type changed.
+    auto* node = scene_get_node(scene_.get(), 1);
+    ASSERT_NE(node, nullptr);
+    EXPECT_STREQ(node->type_name, "StaticMesh");
+
+    // Verify mesh_path is set.
+    auto* mesh = component_get<StaticMeshData>(&scene_->components, 1);
+    ASSERT_NE(mesh, nullptr);
+    EXPECT_STREQ(mesh->mesh_path, "res://meshes/cube.glb");
+}
+
+TEST_F(SceneHandlersTest, AssignAsset_Mesh_ExistingStaticMesh_UpdatesPath) {
+    scene_create_node(scene_.get(), "Mesh", "Node3D");
+
+    // First call creates the component.
+    auto first = call("scene.assignAsset", {
+        {"nodeId", 1}, {"assetPath", "old.glb"}, {"assetType", "Mesh"}
+    });
+    ASSERT_EQ(first["ok"], true);
+    ASSERT_EQ(first["componentAdded"], "StaticMeshData");
+
+    // Second call updates the existing component — no new component added.
+    auto result = call("scene.assignAsset", {
+        {"nodeId", 1}, {"assetPath", "res://meshes/new.glb"}, {"assetType", "Mesh"}
+    });
+    EXPECT_EQ(result["ok"], true);
+    EXPECT_TRUE(result["componentAdded"].is_null());
+}
+
+TEST_F(SceneHandlersTest, AssignAsset_Material_SetsPath) {
+    NodeId id = scene_create_node(scene_.get(), "Box", "Node3D");
+
+    // First assign a mesh so the component exists.
+    auto setup = call("scene.assignAsset", {
+        {"nodeId", id}, {"assetPath", "res://meshes/box.glb"}, {"assetType", "Mesh"}
+    });
+    ASSERT_EQ(setup["ok"], true);
+
+    // Now assign a material — should update the existing component.
+    auto result = call("scene.assignAsset", {
+        {"nodeId", id}, {"assetPath", "res://materials/stone.uzmat"}, {"assetType", "Material"}
+    });
+    EXPECT_EQ(result["ok"], true);
+}
+
+TEST_F(SceneHandlersTest, AssignAsset_Material_CreatesComponent) {
+    scene_create_node(scene_.get(), "Empty", "Node3D");
+    auto result = call("scene.assignAsset", {
+        {"nodeId", 1}, {"assetPath", "res://mat.uzmat"}, {"assetType", "Material"}
+    });
+    EXPECT_EQ(result["ok"], true);
+    EXPECT_EQ(result["componentAdded"], "StaticMeshData");
+
+    auto* node = scene_get_node(scene_.get(), 1);
+    EXPECT_STREQ(node->type_name, "StaticMesh");
+}
+
+TEST_F(SceneHandlersTest, AssignAsset_Texture_Acknowledged) {
+    scene_create_node(scene_.get(), "N", "Node3D");
+    auto result = call("scene.assignAsset", {
+        {"nodeId", 1}, {"assetPath", "res://tex.png"}, {"assetType", "Texture"}
+    });
+    EXPECT_EQ(result["ok"], true);
+}
+
+TEST_F(SceneHandlersTest, AssignAsset_UnsupportedType_Error) {
+    scene_create_node(scene_.get(), "N", "Node3D");
+    auto result = call("scene.assignAsset", {
+        {"nodeId", 1}, {"assetPath", "res://x"}, {"assetType", "AudioClip"}
+    });
+    EXPECT_EQ(result["ok"], false);
+    EXPECT_TRUE(result["error"].get<std::string>().find("unsupported") != std::string::npos);
+}
+
+TEST_F(SceneHandlersTest, AssignAsset_InvalidNodeId_Error) {
+    auto result = call("scene.assignAsset", {
+        {"nodeId", 999}, {"assetPath", "res://x"}, {"assetType", "Mesh"}
+    });
+    EXPECT_EQ(result["ok"], false);
+    EXPECT_EQ(result["error"], "node not found");
+}
+
+TEST_F(SceneHandlersTest, AssignAsset_MissingNodeId_Error) {
+    auto result = call("scene.assignAsset", {
+        {"assetPath", "res://x"}, {"assetType", "Mesh"}
+    });
+    EXPECT_EQ(result["ok"], false);
+}
+
+TEST_F(SceneHandlersTest, AssignAsset_MissingAssetPath_Error) {
+    auto result = call("scene.assignAsset", {
+        {"nodeId", 1}, {"assetType", "Mesh"}
+    });
+    EXPECT_EQ(result["ok"], false);
+}
+
+TEST_F(SceneHandlersTest, AssignAsset_MissingAssetType_Error) {
+    auto result = call("scene.assignAsset", {
+        {"nodeId", 1}, {"assetPath", "res://x"}
+    });
+    EXPECT_EQ(result["ok"], false);
+}
+
+TEST_F(SceneHandlersTest, AssignAsset_NullScene_Error) {
+    IpcRegistry nullReg;
+    scene_register_handlers(nullReg, nullptr);
+    auto result = nullReg.call("scene.assignAsset", {
+        {"nodeId", 1}, {"assetPath", "res://x"}, {"assetType", "Mesh"}
+    });
+    EXPECT_EQ(result["ok"], false);
+    EXPECT_EQ(result["error"], "no scene");
+}
+
+TEST_F(SceneHandlersTest, AssignAsset_IsRegistered) {
+    EXPECT_TRUE(registry_->has("scene.assignAsset"));
+}
+
+// ============================================================================
+// editor.placeAsset
+// ============================================================================
+
+class PlaceAssetTest : public ::testing::Test {
+protected:
+    void SetUp() override {
+        scene_ = std::make_unique<Scene>();
+        scene_init(scene_.get(), "TestScene");
+        params_ = std::make_unique<SceneParams>();
+        params_->camPosX = 0.0f;
+        params_->camPosY = 5.0f;
+        params_->camPosZ = 0.0f;
+        params_->camYaw  = 0.0f;
+        params_->camPitch = 0.0f;
+        registry_ = std::make_unique<IpcRegistry>();
+        scene_register_handlers(*registry_, scene_.get(), params_.get());
+    }
+
+    json call(const std::string& name, const json& args = json::object()) {
+        return registry_->call(name, args);
+    }
+
+    std::unique_ptr<Scene>       scene_;
+    std::unique_ptr<SceneParams> params_;
+    std::unique_ptr<IpcRegistry> registry_;
+};
+
+TEST_F(PlaceAssetTest, IsRegistered) {
+    EXPECT_TRUE(registry_->has("editor.placeAsset"));
+}
+
+TEST_F(PlaceAssetTest, PlaceMesh_CreatesNodeWithMeshComponent) {
+    auto result = call("editor.placeAsset", {
+        {"resPath", "res://meshes/cube.glb"},
+        {"assetType", "Mesh"}
+    });
+    EXPECT_EQ(result["ok"], true);
+    EXPECT_TRUE(result.contains("nodeId"));
+    EXPECT_TRUE(result.contains("worldPos"));
+
+    NodeId id = result["nodeId"].get<uint32_t>();
+    EXPECT_NE(id, kNodeIdInvalid);
+
+    // Verify node was created.
+    const SceneNode* node = scene_get_node(scene_.get(), id);
+    ASSERT_NE(node, nullptr);
+    EXPECT_STREQ(node->type_name, "StaticMesh");
+
+    // Verify mesh_path was set.
+    const auto* mesh = component_get<StaticMeshData>(&scene_->components, id);
+    ASSERT_NE(mesh, nullptr);
+    EXPECT_STREQ(mesh->mesh_path, "res://meshes/cube.glb");
+}
+
+TEST_F(PlaceAssetTest, PlaceMaterial_SetsMaterialPath) {
+    auto result = call("editor.placeAsset", {
+        {"resPath", "res://materials/metal.uzmat"},
+        {"assetType", "Material"}
+    });
+    EXPECT_EQ(result["ok"], true);
+
+    NodeId id = result["nodeId"].get<uint32_t>();
+    const auto* mesh = component_get<StaticMeshData>(&scene_->components, id);
+    ASSERT_NE(mesh, nullptr);
+    EXPECT_STREQ(mesh->material_path, "res://materials/metal.uzmat");
+}
+
+TEST_F(PlaceAssetTest, PlacementPosition_CameraForwardTimesFive) {
+    // Camera at (0,5,0), yaw=0, pitch=0 → forward is (0,0,1) → placement at (0,5,5).
+    auto result = call("editor.placeAsset", {
+        {"resPath", "res://meshes/box.glb"},
+        {"assetType", "Mesh"}
+    });
+    EXPECT_EQ(result["ok"], true);
+
+    auto wp = result["worldPos"];
+    ASSERT_TRUE(wp.is_array());
+    EXPECT_NEAR(wp[0].get<float>(), 0.0f, 0.01f);
+    EXPECT_NEAR(wp[1].get<float>(), 5.0f, 0.01f);
+    EXPECT_NEAR(wp[2].get<float>(), 5.0f, 0.01f);
+
+    // Also verify the node's position matches.
+    NodeId id = result["nodeId"].get<uint32_t>();
+    const SceneNode* node = scene_get_node(scene_.get(), id);
+    ASSERT_NE(node, nullptr);
+    EXPECT_NEAR(node->local_transform.position.x, 0.0f, 0.01f);
+    EXPECT_NEAR(node->local_transform.position.y, 5.0f, 0.01f);
+    EXPECT_NEAR(node->local_transform.position.z, 5.0f, 0.01f);
+}
+
+TEST_F(PlaceAssetTest, DisplayName_ExtractedFromResPath) {
+    auto result = call("editor.placeAsset", {
+        {"resPath", "res://meshes/my_house.glb"},
+        {"assetType", "Mesh"}
+    });
+    NodeId id = result["nodeId"].get<uint32_t>();
+    const SceneNode* node = scene_get_node(scene_.get(), id);
+    ASSERT_NE(node, nullptr);
+    EXPECT_STREQ(node->name, "my_house");
+}
+
+TEST_F(PlaceAssetTest, MissingResPath_Error) {
+    auto result = call("editor.placeAsset", {
+        {"assetType", "Mesh"}
+    });
+    EXPECT_EQ(result["ok"], false);
+    EXPECT_TRUE(result.contains("error"));
+}
+
+TEST_F(PlaceAssetTest, MissingAssetType_Error) {
+    auto result = call("editor.placeAsset", {
+        {"resPath", "res://meshes/x.glb"}
+    });
+    EXPECT_EQ(result["ok"], false);
+}
+
+TEST_F(PlaceAssetTest, EmptyResPath_Error) {
+    auto result = call("editor.placeAsset", {
+        {"resPath", ""},
+        {"assetType", "Mesh"}
+    });
+    EXPECT_EQ(result["ok"], false);
+}
+
+TEST_F(PlaceAssetTest, NullScene_Error) {
+    IpcRegistry reg;
+    scene_register_handlers(reg, nullptr);
+    auto result = reg.call("editor.placeAsset", {
+        {"resPath", "res://x.glb"},
+        {"assetType", "Mesh"}
+    });
+    EXPECT_EQ(result["ok"], false);
+    EXPECT_EQ(result["error"], "no scene");
+}
+
+TEST_F(PlaceAssetTest, NoParams_PlacesAtOrigin) {
+    // Register without params → position should be (0,0,0).
+    IpcRegistry reg;
+    auto scene2 = std::make_unique<Scene>();
+    scene_init(scene2.get(), "TestScene2");
+    scene_register_handlers(reg, scene2.get(), nullptr);
+
+    auto result = reg.call("editor.placeAsset", {
+        {"resPath", "res://meshes/cube.glb"},
+        {"assetType", "Mesh"}
+    });
+    EXPECT_EQ(result["ok"], true);
+
+    auto wp = result["worldPos"];
+    EXPECT_NEAR(wp[0].get<float>(), 0.0f, 0.01f);
+    EXPECT_NEAR(wp[1].get<float>(), 0.0f, 0.01f);
+    EXPECT_NEAR(wp[2].get<float>(), 0.0f, 0.01f);
+}
+
+TEST_F(PlaceAssetTest, UnsupportedType_CreatesNodeWithoutComponent) {
+    auto result = call("editor.placeAsset", {
+        {"resPath", "res://audio/hit.wav"},
+        {"assetType", "Audio"}
+    });
+    EXPECT_EQ(result["ok"], true);
+
+    NodeId id = result["nodeId"].get<uint32_t>();
+    const SceneNode* node = scene_get_node(scene_.get(), id);
+    ASSERT_NE(node, nullptr);
+    // No StaticMeshData for Audio type.
+    const auto* mesh = component_get<StaticMeshData>(&scene_->components, id);
+    EXPECT_EQ(mesh, nullptr);
 }

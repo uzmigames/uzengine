@@ -29,8 +29,14 @@
 
 #include "engine/core/diag.h"
 #include "engine/core/profiler.h"
+#include "engine/core/engine_mode.h"
 #include "engine/scripting/script_runner.h"
 #include "editor/scene_bridge.h"
+
+#ifdef UZ_EDITOR
+#include "engine/editor/asset_registry.h"
+#include "engine/editor/ipc_asset_handlers.h"
+#endif
 
 #include <windows.h>
 #include <timeapi.h>
@@ -362,6 +368,14 @@ int WINAPI WinMain(
     const std::string cmdIpcDir  = getCmdArg(cmdArgs, "--ipc-dir", "");
     const std::string cmdScene   = getCmdArg(cmdArgs, "--scene",   "");
 
+    // Detect engine mode from --editor / --play flags.
+    uz::EngineMode engineMode = uz::EngineMode::Editor;
+    for (const auto& a : cmdArgs) {
+        if (a == "--play")   { engineMode = uz::EngineMode::Play; }
+        if (a == "--editor") { engineMode = uz::EngineMode::Editor; }
+    }
+    const bool isPlayMode = (engineMode == uz::EngineMode::Play);
+
     // -- Log parsed arguments for diagnostics ---------------------------------
     fprintf(stderr, "[UzEngine] lpCmdLine: \"%s\"\n", lpCmdLine ? lpCmdLine : "(null)");
     fprintf(stderr, "[UzEngine] Parsed %zu args:", cmdArgs.size());
@@ -369,7 +383,8 @@ int WINAPI WinMain(
         fprintf(stderr, " [%zu]=\"%s\"", i, cmdArgs[i].c_str());
     }
     fprintf(stderr, "\n");
-    fprintf(stderr, "[UzEngine] wsPort=%u ipcDir=\"%s\" scene=\"%s\"\n",
+    fprintf(stderr, "[UzEngine] mode=%s wsPort=%u ipcDir=\"%s\" scene=\"%s\"\n",
+            isPlayMode ? "play" : "editor",
             static_cast<unsigned>(wsPort), cmdIpcDir.c_str(), cmdScene.c_str());
     fflush(stderr);
 
@@ -1221,6 +1236,84 @@ int WINAPI WinMain(
                 return;
             }
 
+            // -- editor.placeAsset — create a node at camera-forward placement -----------
+            if (type == "editor.placeAsset") {
+                if (!g_sceneData) return;
+
+                const std::string resPath   = j.value("resPath",   std::string{});
+                const std::string assetType = j.value("assetType", std::string{});
+
+                if (resPath.empty() || assetType.empty()) {
+                    nlohmann::json err;
+                    err["type"]  = "placeAssetResult";
+                    err["ok"]    = false;
+                    err["error"] = "missing resPath or assetType";
+                    wsServer.broadcastText(err.dump());
+                    return;
+                }
+
+                // Determine placement position: camera_pos + forward * 5.0
+                const float yaw   = g_scene.camYaw;
+                const float pitch = g_scene.camPitch;
+                const float dist  = 5.0f;
+                const float fx = cosf(pitch) * sinf(yaw);
+                const float fy = sinf(pitch);
+                const float fz = cosf(pitch) * cosf(yaw);
+                const float px = g_scene.camPosX + fx * dist;
+                const float py = g_scene.camPosY + fy * dist;
+                const float pz = g_scene.camPosZ + fz * dist;
+
+                // Extract display name from resPath (e.g. "res://meshes/cube.glb" → "cube")
+                std::string displayName = resPath;
+                auto lastSlash = displayName.find_last_of('/');
+                if (lastSlash != std::string::npos) {
+                    displayName = displayName.substr(lastSlash + 1);
+                }
+                auto dot = displayName.find_last_of('.');
+                if (dot != std::string::npos) {
+                    displayName = displayName.substr(0, dot);
+                }
+
+                uz::NodeId nodeId = uz::scene_create_node(
+                    g_sceneData.get(), displayName.c_str(), "Node3D");
+                if (nodeId == uz::kNodeIdInvalid) {
+                    nlohmann::json err;
+                    err["type"]  = "placeAssetResult";
+                    err["ok"]    = false;
+                    err["error"] = "scene full";
+                    wsServer.broadcastText(err.dump());
+                    return;
+                }
+
+                // Set position on the new node.
+                auto* node = uz::scene_get_node(g_sceneData.get(), nodeId);
+                if (node) {
+                    node->local_transform.position = {px, py, pz, 0.0f};
+                }
+
+                // Assign the asset (Mesh/Material type handling).
+                if (assetType == "Mesh" || assetType == "Material") {
+                    if (node) { uz::str_copy(node->type_name, sizeof(node->type_name), "StaticMesh"); }
+                    auto* mesh = uz::component_add<uz::StaticMeshData>(
+                        &g_sceneData->components, nodeId);
+                    if (mesh) {
+                        if (assetType == "Mesh") {
+                            uz::str_copy(mesh->mesh_path, sizeof(mesh->mesh_path), resPath.c_str());
+                        } else {
+                            uz::str_copy(mesh->material_path, sizeof(mesh->material_path), resPath.c_str());
+                        }
+                    }
+                }
+
+                nlohmann::json resp;
+                resp["type"]     = "placeAssetResult";
+                resp["ok"]       = true;
+                resp["nodeId"]   = nodeId;
+                resp["worldPos"] = {px, py, pz};
+                wsServer.broadcastText(resp.dump());
+                return;
+            }
+
             // -- Focus camera on node --------------------------------------------------
             if (type == "editor.focusNode") {
                 uint32_t nodeId = j.value("nodeId", 0u);
@@ -1472,10 +1565,13 @@ int WINAPI WinMain(
             }
 
             // Initialize Lua scripting and scan scene for ScriptData components.
+            // In editor mode, scripts are loaded but NOT ticked (no simulation).
             g_scriptRunner.init();
             g_scriptRunner.set_scene(g_sceneData.get());
             g_scriptRunner.set_scene_params(&g_scene);
-            g_scriptRunner.scan_scene();
+            if (isPlayMode) {
+                g_scriptRunner.scan_scene();
+            }
 
             char dbg[256];
             snprintf(dbg, sizeof(dbg),
@@ -1539,6 +1635,7 @@ int WINAPI WinMain(
             {"frame", g_metrics.frameCount.load()},
             {"encoder", g_metrics.encoderName},
             {"resolution", g_metrics.resolution},
+            {"mode", isPlayMode ? "play" : "editor"},
             {"scene", {
                 {"rotation_speed", {g_scene.rotX.load(), g_scene.rotY.load(), g_scene.rotZ.load()}},
                 {"background", {bgR, bgG, bgB}},
@@ -1546,6 +1643,49 @@ int WINAPI WinMain(
                 {"paused", g_scene.paused.load()}
             }}
         };
+    });
+
+    // -- Play mode IPC handlers ------------------------------------------------
+    ipcRegistry.add("engine.pause", [&](const nlohmann::json&) -> nlohmann::json {
+        g_scene.paused.store(true);
+        return {{"ok", true}};
+    });
+
+    ipcRegistry.add("engine.resume", [&](const nlohmann::json&) -> nlohmann::json {
+        g_scene.paused.store(false);
+        return {{"ok", true}};
+    });
+
+    // engine.stop: request a clean shutdown via WM_QUIT.
+    ipcRegistry.add("engine.stop", [&](const nlohmann::json&) -> nlohmann::json {
+        PostQuitMessage(0);
+        return {{"ok", true}};
+    });
+
+    // engine.status — reports mode, ready state, scene info for extension polling.
+    ipcRegistry.add("engine.status", [&](const nlohmann::json&) -> nlohmann::json {
+        const bool hasScene = (g_sceneData != nullptr && g_sceneData->next_id > 1);
+        return {
+            {"ok", true},
+            {"mode", isPlayMode ? "play" : "editor"},
+            {"ready", true},
+            {"paused", g_scene.paused.load(std::memory_order_relaxed)},
+            {"hasScene", hasScene},
+            {"port", wsPort}
+        };
+    });
+
+    // playmode.start — sent by PlayControls on the editor side.
+    // In a single-process setup this is a no-op; play mode is handled by
+    // spawning a separate process via PlayModeController.
+    ipcRegistry.add("playmode.start", [&](const nlohmann::json&) -> nlohmann::json {
+        return {{"ok", true}, {"mode", isPlayMode ? "play" : "editor"}};
+    });
+
+    // playmode.stop — request clean shutdown (same as engine.stop).
+    ipcRegistry.add("playmode.stop", [&](const nlohmann::json&) -> nlohmann::json {
+        PostQuitMessage(0);
+        return {{"ok", true}};
     });
 
     ipcRegistry.add("engine.screenshot", [&](const nlohmann::json& args) -> nlohmann::json {
@@ -1879,6 +2019,22 @@ int WINAPI WinMain(
         return {{"ok", false}, {"error", "invalid path, use 'forward' or 'deferred'"}};
     });
 
+    // -- Asset Registry (editor only) ----------------------------------------
+#ifdef UZ_EDITOR
+    uz::AssetRegistry assetRegistry;
+    {
+        // Use the IPC base dir as project root for asset scanning.
+        std::string projectRoot = ipcBaseDir + "/";
+        const uint32_t assetCount = assetRegistry.scan(projectRoot);
+        char dbg[256];
+        snprintf(dbg, sizeof(dbg),
+                 "[UzEngine] AssetRegistry: scanned %u assets in '%s'\n",
+                 assetCount, projectRoot.c_str());
+        OutputDebugStringA(dbg);
+    }
+    uz::asset_register_handlers(ipcRegistry, &assetRegistry);
+#endif
+
     uz::IpcPoller ipcPoller(ipcBaseDir, ipcRegistry, g_scene, g_metrics);
     ipcPoller.start();
 
@@ -1939,9 +2095,12 @@ int WINAPI WinMain(
                     UZ_PROFILE_ZONE("apply_pending_scene");
                     applyPendingScene(*pending, g_sceneData, renderer, g_scene);
                     // Re-attach scripts for the newly loaded scene.
+                    // Only scan scripts in play mode (editor mode: no simulation).
                     g_scriptRunner.clear();
                     g_scriptRunner.set_scene(g_sceneData.get());
-                    g_scriptRunner.scan_scene();
+                    if (isPlayMode) {
+                        g_scriptRunner.scan_scene();
+                    }
                 }
             }
 
@@ -1949,7 +2108,8 @@ int WINAPI WinMain(
 
             // Tick Lua scripts before renderer update so scripts can modify
             // camera, transforms, etc. that the renderer will consume this frame.
-            {
+            // Editor mode: NO script execution (task 2.3).
+            if (isPlayMode && !g_scene.paused.load(std::memory_order_relaxed)) {
                 UZ_PROFILE_ZONE("script_tick");
                 g_scriptRunner.tick(static_cast<float>(delta),
                                    static_cast<float>(timer.elapsed()));

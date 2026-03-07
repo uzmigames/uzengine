@@ -23,16 +23,16 @@
         <div class='clearfix'>
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">84.78% </span>
+                <span class="strong">81.63% </span>
                 <span class="quiet">Statements</span>
-                <span class='fraction'>39/46</span>
+                <span class='fraction'>40/49</span>
             </div>
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">55.55% </span>
+                <span class="strong">52.63% </span>
                 <span class="quiet">Branches</span>
-                <span class='fraction'>10/18</span>
+                <span class='fraction'>10/19</span>
             </div>
         
             
@@ -44,9 +44,9 @@
         
             
             <div class='fl pad1y space-right2'>
-                <span class="strong">84.78% </span>
+                <span class="strong">81.63% </span>
                 <span class="quiet">Lines</span>
-                <span class='fraction'>39/46</span>
+                <span class='fraction'>40/49</span>
             </div>
         
             
@@ -304,7 +304,13 @@
 <a name='L239'></a><a href='#L239'>239</a>
 <a name='L240'></a><a href='#L240'>240</a>
 <a name='L241'></a><a href='#L241'>241</a>
-<a name='L242'></a><a href='#L242'>242</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
+<a name='L242'></a><a href='#L242'>242</a>
+<a name='L243'></a><a href='#L243'>243</a>
+<a name='L244'></a><a href='#L244'>244</a>
+<a name='L245'></a><a href='#L245'>245</a>
+<a name='L246'></a><a href='#L246'>246</a>
+<a name='L247'></a><a href='#L247'>247</a>
+<a name='L248'></a><a href='#L248'>248</a></td><td class="line-coverage quiet"><span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -468,6 +474,11 @@
 <span class="cline-any cline-yes">28x</span>
 <span class="cline-any cline-no">&nbsp;</span>
 <span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-no">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
+<span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -513,6 +524,7 @@
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
 <span class="cline-any cline-yes">25x</span>
+<span class="cline-any cline-yes">2x</span>
 <span class="cline-any cline-yes">2x</span>
 <span class="cline-any cline-yes">2x</span>
 <span class="cline-any cline-neutral">&nbsp;</span>
@@ -552,7 +564,7 @@
  * the editor tab (full-page canvas, 60 fps JPEG over WebSocket).
  *
  * Responsibilities:
- *  1. Spawns an independent UzEngine.exe instance (via EngineInstanceManager)
+ *  1. Spawns an independent render.exe instance (via EngineInstanceManager)
  *     for this scene file, with a unique WebSocket port and IPC directory.
  *  2. Replaces the loading page with the JPEG streaming canvas once the
  *     engine is up.
@@ -641,7 +653,7 @@ export function buildLoadingHtml(fileName: string): string {
 /**
  * CustomTextEditorProvider that opens .uzscene files as a live 3D render.
  *
- * Each .uzscene tab spawns its own independent UzEngine.exe instance via
+ * Each .uzscene tab spawns its own independent render.exe instance via
  * EngineInstanceManager, ensuring fully isolated rendering per scene.
  *
  * Registration in extension.ts:
@@ -689,7 +701,7 @@ export class UzSceneEditorProvider implements vscode.CustomTextEditorProvider {
 &nbsp;
     /**
      * Called by VSCode when a .uzscene file is opened.
-     * 1. Spawns an independent UzEngine.exe instance for this scene.
+     * 1. Spawns an independent render.exe instance for this scene.
      * 2. Shows the live JPEG viewport canvas connected to the instance's port.
      * 3. Updates the tab title from the scene name.
      * 4. Cleans up the instance when the tab is closed.
@@ -706,9 +718,14 @@ export class UzSceneEditorProvider implements vscode.CustomTextEditorProvider {
         this._updateTitle(document, webviewPanel);
 &nbsp;
         // Listen for messages from the webview (e.g. pickResult from engine).
-        webviewPanel.webview.onDidReceiveMessage(<span class="fstat-no" title="function not covered" >(m</span>essage: { type: string; nodeId?: number | null }) =&gt; {
+        webviewPanel.webview.onDidReceiveMessage(<span class="fstat-no" title="function not covered" >(m</span>essage: { type: string; nodeId?: number | null; focused?: boolean }) =&gt; {
 <span class="cstat-no" title="statement not covered" >            <span class="missing-if-branch" title="if path not taken" >I</span>if (message.type === 'pickResult' &amp;&amp; UzSceneEditorProvider.onPickResult) {</span>
 <span class="cstat-no" title="statement not covered" >                UzSceneEditorProvider.onPickResult(message.nodeId ?? null);</span>
+            }
+<span class="cstat-no" title="statement not covered" >            <span class="missing-if-branch" title="if path not taken" >I</span>if (message.type === 'viewport_focus') {</span>
+<span class="cstat-no" title="statement not covered" >                void vscode.commands.executeCommand(</span>
+                    'setContext', 'uzengine.viewportFocused', !!message.focused
+                );
             }
         });
 &nbsp;
@@ -756,6 +773,7 @@ export class UzSceneEditorProvider implements vscode.CustomTextEditorProvider {
             webviewPanel.onDidDispose(() =&gt; {
                 UzSceneEditorProvider._activePanels.delete(webviewPanel);
                 instanceMgr.destroyInstance(instance.id);
+                void vscode.commands.executeCommand('setContext', 'uzengine.viewportFocused', false);
             });
 &nbsp;
             // Track this panel for postMessage forwarding.
@@ -793,7 +811,7 @@ export class UzSceneEditorProvider implements vscode.CustomTextEditorProvider {
             <div class='footer quiet pad2 space-top1 center small'>
                 Code coverage generated by
                 <a href="https://istanbul.js.org/" target="_blank" rel="noopener noreferrer">istanbul</a>
-                at 2026-03-05T15:40:49.073Z
+                at 2026-03-07T16:50:56.255Z
             </div>
         <script src="../prettify.js"></script>
         <script>

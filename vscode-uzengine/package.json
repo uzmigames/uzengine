@@ -117,6 +117,11 @@
           "when": "true"
         },
         {
+          "id": "uzengine.assetBrowser",
+          "name": "Asset Browser",
+          "when": "true"
+        },
+        {
           "id": "uzengine.console",
           "name": "Console",
           "type": "webview",
@@ -157,6 +162,31 @@
           "group": "playmode@3"
         },
         {
+          "command": "uzengine.assetBrowser.refresh",
+          "when": "view == uzengine.assetBrowser",
+          "group": "navigation@1"
+        },
+        {
+          "command": "uzengine.assetBrowser.newMaterial",
+          "when": "view == uzengine.assetBrowser",
+          "group": "navigation@2"
+        },
+        {
+          "command": "uzengine.assetBrowser.newScene",
+          "when": "view == uzengine.assetBrowser",
+          "group": "navigation@3"
+        },
+        {
+          "command": "uzengine.assetBrowser.newShader",
+          "when": "view == uzengine.assetBrowser",
+          "group": "navigation@4"
+        },
+        {
+          "command": "uzengine.assetBrowser.importFiles",
+          "when": "view == uzengine.assetBrowser",
+          "group": "navigation@5"
+        },
+        {
           "command": "uzengine.consoleClear",
           "when": "view == uzengine.console",
           "group": "navigation@1"
@@ -182,6 +212,21 @@
           "command": "uzengine.deleteNode",
           "when": "view == uzengine.sceneTree && viewItem == sceneNode",
           "group": "2_destructive@1"
+        },
+        {
+          "command": "uzengine.assetBrowser.reimport",
+          "when": "view == uzengine.assetBrowser && viewItem == assetItem",
+          "group": "1_asset@1"
+        },
+        {
+          "command": "uzengine.assetBrowser.assignToSelected",
+          "when": "view == uzengine.assetBrowser && viewItem == assetItem",
+          "group": "1_asset@2"
+        },
+        {
+          "command": "uzengine.assetBrowser.importHere",
+          "when": "view == uzengine.assetBrowser && viewItem == assetGroup",
+          "group": "1_asset@1"
         }
       ]
     },
@@ -291,6 +336,81 @@
         "command": "uzengine.gizmoSpaceToggle",
         "title": "Gizmo: Toggle Local/World",
         "category": "UzEngine"
+      },
+      {
+        "command": "uzengine.assetBrowser.refresh",
+        "title": "Refresh Assets",
+        "category": "UzEngine",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "uzengine.assetBrowser.reimport",
+        "title": "Reimport Asset",
+        "category": "UzEngine",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "uzengine.assetBrowser.newMaterial",
+        "title": "New Material",
+        "category": "UzEngine",
+        "icon": "$(symbol-color)"
+      },
+      {
+        "command": "uzengine.assetBrowser.newScene",
+        "title": "New Scene",
+        "category": "UzEngine",
+        "icon": "$(file-code)"
+      },
+      {
+        "command": "uzengine.assetBrowser.newShader",
+        "title": "New Shader",
+        "category": "UzEngine",
+        "icon": "$(code)"
+      },
+      {
+        "command": "uzengine.assetBrowser.reveal",
+        "title": "Reveal Asset",
+        "category": "UzEngine"
+      },
+      {
+        "command": "uzengine.assetBrowser.assignToSelected",
+        "title": "Assign to Selected Node",
+        "category": "UzEngine",
+        "icon": "$(arrow-right)"
+      },
+      {
+        "command": "uzengine.assetBrowser.importFiles",
+        "title": "Import Files...",
+        "category": "UzEngine",
+        "icon": "$(folder-opened)"
+      },
+      {
+        "command": "uzengine.assetBrowser.importHere",
+        "title": "Import Asset Here...",
+        "category": "UzEngine",
+        "icon": "$(add)"
+      },
+      {
+        "command": "uzengine.selectAll",
+        "title": "Select All Nodes",
+        "category": "UzEngine"
+      },
+      {
+        "command": "uzengine.clearSelection",
+        "title": "Clear Selection",
+        "category": "UzEngine"
+      },
+      {
+        "command": "uzengine.deleteSelected",
+        "title": "Delete Selected",
+        "category": "UzEngine",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "uzengine.duplicateSelected",
+        "title": "Duplicate Selected",
+        "category": "UzEngine",
+        "icon": "$(copy)"
       }
     ],
     "keybindings": [
@@ -308,6 +428,26 @@
         "command": "uzengine.gizmoScale",
         "key": "r",
         "when": "activeCustomEditorId == 'uzengine.uzsceneEditor' && uzengine.viewportFocused"
+      },
+      {
+        "command": "uzengine.selectAll",
+        "key": "ctrl+a",
+        "when": "focusedView == 'uzengine.sceneTree'"
+      },
+      {
+        "command": "uzengine.clearSelection",
+        "key": "escape",
+        "when": "focusedView == 'uzengine.sceneTree'"
+      },
+      {
+        "command": "uzengine.deleteSelected",
+        "key": "delete",
+        "when": "focusedView == 'uzengine.sceneTree'"
+      },
+      {
+        "command": "uzengine.duplicateSelected",
+        "key": "ctrl+d",
+        "when": "focusedView == 'uzengine.sceneTree'"
       }
     ],
     "configuration": {

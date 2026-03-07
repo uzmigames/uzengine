@@ -15,6 +15,8 @@
  *  - int      → number input (integers only)
  *  - bool     → checkbox
  *  - vec3     → three number inputs (X, Y, Z)
+ *  - color    → color picker (hex ↔ float {r,g,b})
+ *  - resource → read-only path + Browse button
  *
  * Property changes are sent immediately via `scene.setProperty` IPC.
  */
@@ -28,7 +30,7 @@ import { NodeItem } from './scene-tree-provider';
 // ---------------------------------------------------------------------------
 
 /** Supported property value types rendered in the Inspector. */
-export type PropertyType = 'string' | 'float' | 'int' | 'bool' | 'vec3';
+export type PropertyType = 'string' | 'float' | 'int' | 'bool' | 'vec3' | 'color' | 'resource';
 
 /** A single property descriptor for a scene node. */
 export interface PropertyDescriptor {
@@ -38,6 +40,53 @@ export interface PropertyDescriptor {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     readonly value: any;
     readonly group: string;
+    /** For resource-type properties, the asset type filter for the picker. */
+    readonly assetType?: string;
+}
+
+/** Sentinel value for mixed property values across multi-select. */
+export const MIXED_VALUE = '--';
+
+/**
+ * Computes the intersection of property descriptors across multiple nodes.
+ * Properties that exist in all nodes (same key + same type) are included.
+ * Values that differ across nodes are replaced with MIXED_VALUE.
+ */
+export function commonProperties(
+    allNodeProps: PropertyDescriptor[][],
+): PropertyDescriptor[] {
+    if (allNodeProps.length === 0) { return []; }
+    if (allNodeProps.length === 1) { return allNodeProps[0]; }
+
+    const first = allNodeProps[0];
+    const result: PropertyDescriptor[] = [];
+
+    for (const prop of first) {
+        let allHave = true;
+        let allSame = true;
+
+        for (let i = 1; i < allNodeProps.length; i++) {
+            const match = allNodeProps[i].find(
+                p => p.key === prop.key && p.type === prop.type
+            );
+            if (!match) {
+                allHave = false;
+                break;
+            }
+            if (allSame && JSON.stringify(match.value) !== JSON.stringify(prop.value)) {
+                allSame = false;
+            }
+        }
+
+        if (allHave) {
+            result.push(allSame ? prop : {
+                ...prop,
+                value: MIXED_VALUE,
+            });
+        }
+    }
+
+    return result;
 }
 
 /** The message sent from the webview to the extension host when a property changes. */
@@ -47,6 +96,37 @@ interface PropertyChangeMessage {
     readonly key: string;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     readonly value: any;
+}
+
+// ---------------------------------------------------------------------------
+// Asset QuickPick helper
+// ---------------------------------------------------------------------------
+
+/** Fetches assets from the engine and returns QuickPickItems filtered by type. */
+export async function fetchAssetQuickPickItems(
+    ipc: IpcClient,
+    assetType: string,
+): Promise<vscode.QuickPickItem[]> {
+    try {
+        const result = await ipc.request('asset.list', {}) as {
+            assets?: Array<{ path: string; type: string; status: string }>;
+        };
+        const assets = result.assets ?? [];
+        const filtered = assetType
+            ? assets.filter(a => a.type === assetType)
+            : assets;
+
+        return filtered.map(a => {
+            const name = a.path.split(/[\\/]/).pop() ?? a.path;
+            return {
+                label: name,
+                description: a.path,
+                detail: `${a.type} — ${a.status}`,
+            };
+        });
+    } catch {
+        return [];
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -197,6 +277,9 @@ export class InspectorPanel implements vscode.Disposable {
             // Rendering group
             { key: 'lod_bias', label: 'LOD Bias', type: 'float', value: 0.0, group: 'Rendering' },
             { key: 'layer', label: 'Layer', type: 'int', value: 0, group: 'Rendering' },
+            // Material group
+            { key: 'albedo_color', label: 'Albedo Color', type: 'color', value: { r: 1.0, g: 1.0, b: 1.0 }, group: 'Material' },
+            { key: 'material', label: 'Material', type: 'resource', value: '', group: 'Material', assetType: 'Material' },
         ];
 
         return props;
@@ -260,6 +343,33 @@ export class InspectorPanel implements vscode.Disposable {
                         value="${String(v.z)}"
                         data-key="${esc(prop.key)}" data-component="z"
                         onchange="onVec3Change('${esc(nodeId)}', '${esc(prop.key)}', this)" />
+                </span>`;
+            }
+
+            case 'color': {
+                const c = prop.value as { r: number; g: number; b: number } ?? { r: 0, g: 0, b: 0 };
+                const hex = '#' + [c.r, c.g, c.b].map(v =>
+                    Math.max(0, Math.min(255, Math.round(v * 255)))
+                        .toString(16).padStart(2, '0')
+                ).join('');
+                return `<input type="color" class="prop-input prop-color"
+                    value="${hex}"
+                    data-key="${esc(prop.key)}"
+                    onchange="onColorChange('${esc(nodeId)}', '${esc(prop.key)}', this)" />`;
+            }
+
+            case 'resource': {
+                const path = String(prop.value ?? '');
+                const assetType = prop.assetType ?? '';
+                return `<span class="resource-group">
+                    <input type="text" class="prop-input prop-resource" readonly
+                        value="${esc(path)}"
+                        data-key="${esc(prop.key)}" />
+                    <button class="asset-picker"
+                        onclick="onAssetPicker('${esc(nodeId)}', '${esc(prop.key)}', '${esc(assetType)}')"
+                        title="Pick from asset registry">[...]</button>
+                    <button class="resource-browse"
+                        onclick="onResourceBrowse('${esc(nodeId)}', '${esc(prop.key)}')">Browse...</button>
                 </span>`;
             }
         }
@@ -403,6 +513,46 @@ export class InspectorPanel implements vscode.Disposable {
         }
         .vec3-group .prop-input { width: 60px; }
         .prop-checkbox { cursor: pointer; }
+        .prop-color {
+            width: 40px;
+            height: 24px;
+            padding: 1px 2px;
+            cursor: pointer;
+            border: 1px solid var(--vscode-input-border, #555);
+        }
+        .resource-group {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .resource-group .prop-input { flex: 1; }
+        .resource-browse {
+            background: var(--vscode-button-background, #0e639c);
+            color: var(--vscode-button-foreground, #fff);
+            border: none;
+            border-radius: 2px;
+            padding: 2px 8px;
+            cursor: pointer;
+            font-size: 0.85em;
+            white-space: nowrap;
+        }
+        .resource-browse:hover {
+            background: var(--vscode-button-hoverBackground, #1177bb);
+        }
+        .asset-picker {
+            background: var(--vscode-button-secondaryBackground, #3a3d41);
+            color: var(--vscode-button-secondaryForeground, #fff);
+            border: none;
+            border-radius: 2px;
+            padding: 2px 6px;
+            cursor: pointer;
+            font-size: 0.85em;
+            font-family: monospace;
+            white-space: nowrap;
+        }
+        .asset-picker:hover {
+            background: var(--vscode-button-secondaryHoverBackground, #505357);
+        }
         .no-selection {
             padding: 20px;
             text-align: center;
@@ -435,6 +585,30 @@ export class InspectorPanel implements vscode.Disposable {
             const z = parseFloat(row.querySelector('.vec3-z').value) || 0;
             vscode.postMessage({ command: 'propertyChanged', nodeId, key, value: { x, y, z } });
         }
+
+        function onColorChange(nodeId, key, el) {
+            const hex = el.value;
+            const r = parseInt(hex.slice(1, 3), 16) / 255;
+            const g = parseInt(hex.slice(3, 5), 16) / 255;
+            const b = parseInt(hex.slice(5, 7), 16) / 255;
+            vscode.postMessage({ command: 'propertyChanged', nodeId, key, value: { r, g, b } });
+        }
+
+        function onResourceBrowse(nodeId, key) {
+            vscode.postMessage({ command: 'resourceBrowse', nodeId, key });
+        }
+
+        function onAssetPicker(nodeId, key, assetType) {
+            vscode.postMessage({ command: 'openAssetPicker', nodeId, key, assetType });
+        }
+
+        window.addEventListener('message', function(event) {
+            const msg = event.data;
+            if (msg.command === 'resourcePathSelected') {
+                const input = document.querySelector('input.prop-resource[data-key="' + msg.key + '"]');
+                if (input) { input.value = msg.path; }
+            }
+        });
     </script>
 </body>
 </html>`;
@@ -457,19 +631,99 @@ export class InspectorPanel implements vscode.Disposable {
         if (this._disposed) { return; }
         if (typeof msg !== 'object' || msg === null) { return; }
 
-        const message = msg as PropertyChangeMessage;
+        const message = msg as Record<string, unknown>;
+        if (message.command === 'resourceBrowse') {
+            await this._handleResourceBrowse(message as { nodeId: string; key: string });
+            return;
+        }
+        if (message.command === 'openAssetPicker') {
+            await this._handleAssetPicker(
+                message as { nodeId: string; key: string; assetType: string }
+            );
+            return;
+        }
+
         if (message.command !== 'propertyChanged') { return; }
 
+        const propMsg = message as unknown as PropertyChangeMessage;
         try {
             await this._ipc.request('scene.setProperty', {
-                nodeId: message.nodeId,
-                key: message.key,
+                nodeId: propMsg.nodeId,
+                key: propMsg.key,
                 // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-                value: message.value,
+                value: propMsg.value,
             });
         } catch (err) {
             vscode.window.showErrorMessage(
-                `UzEngine: Failed to set property "${message.key}" — ` +
+                `UzEngine: Failed to set property "${propMsg.key}" — ` +
+                `${err instanceof Error ? err.message : String(err)}`
+            );
+        }
+    }
+
+    private async _handleAssetPicker(msg: { nodeId: string; key: string; assetType: string }): Promise<void> {
+        const items = await fetchAssetQuickPickItems(this._ipc, msg.assetType);
+        if (items.length === 0) {
+            vscode.window.showInformationMessage(`No ${msg.assetType || 'assets'} found in registry.`);
+            return;
+        }
+
+        const picked = await vscode.window.showQuickPick(items, {
+            placeHolder: `Select ${msg.assetType || 'asset'} for "${msg.key}"`,
+        });
+        if (!picked) { return; }
+
+        const selectedPath = picked.description ?? '';
+        // Update webview display.
+        if (this._panel) {
+            void this._panel.webview.postMessage({
+                command: 'resourcePathSelected',
+                key: msg.key,
+                path: selectedPath,
+            });
+        }
+        // Assign via IPC.
+        try {
+            await this._ipc.request('scene.assignAsset', {
+                nodeId: Number(msg.nodeId),
+                resPath: selectedPath,
+                assetType: msg.assetType,
+            });
+        } catch (err) {
+            vscode.window.showErrorMessage(
+                `UzEngine: Failed to assign asset "${msg.key}" — ` +
+                `${err instanceof Error ? err.message : String(err)}`
+            );
+        }
+    }
+
+    private async _handleResourceBrowse(msg: { nodeId: string; key: string }): Promise<void> {
+        const result = await vscode.window.showOpenDialog({
+            canSelectMany: false,
+            filters: { 'Assets': ['uzmat', 'hlsl', 'uzscene', 'png', 'jpg', 'tga', 'obj', 'fbx'] },
+        });
+
+        if (!result || result.length === 0) { return; }
+
+        const selectedPath = result[0].fsPath;
+        // Update the webview input
+        if (this._panel) {
+            void this._panel.webview.postMessage({
+                command: 'resourcePathSelected',
+                key: msg.key,
+                path: selectedPath,
+            });
+        }
+        // Send IPC to engine
+        try {
+            await this._ipc.request('scene.setProperty', {
+                nodeId: msg.nodeId,
+                key: msg.key,
+                value: selectedPath,
+            });
+        } catch (err) {
+            vscode.window.showErrorMessage(
+                `UzEngine: Failed to set resource "${msg.key}" — ` +
                 `${err instanceof Error ? err.message : String(err)}`
             );
         }
@@ -547,6 +801,24 @@ export class InspectorViewProvider implements vscode.WebviewViewProvider, vscode
         this._render();
     }
 
+    /**
+     * Updates the inspector for multi-node selection.
+     * Shows common properties with mixed values displayed as "--".
+     */
+    showForNodes(nodes: NodeItem[]): void {
+        if (this._disposed) { return; }
+        if (nodes.length === 0) {
+            this.showForNode(undefined);
+            return;
+        }
+        if (nodes.length === 1) {
+            this.showForNode(nodes[0]);
+            return;
+        }
+        this._currentNode = undefined;
+        this._renderMultiSelect(nodes);
+    }
+
     /** Returns the node currently shown in the inspector. */
     get currentNode(): NodeItem | undefined {
         return this._currentNode;
@@ -579,6 +851,19 @@ export class InspectorViewProvider implements vscode.WebviewViewProvider, vscode
         });
     }
 
+    private _renderMultiSelect(nodes: NodeItem[]): void {
+        if (!this._view || !this._shellReady) { return; }
+
+        const allProps = nodes.map(n => this._buildProperties(n));
+        const common = commonProperties(allProps);
+
+        void this._view.webview.postMessage({
+            command: 'updateMultiSelect',
+            count: nodes.length,
+            properties: common,
+        });
+    }
+
     private _buildProperties(node: NodeItem): PropertyDescriptor[] {
         return [
             { key: 'name', label: 'Name', type: 'string', value: node.nodeName, group: 'Node' },
@@ -590,6 +875,8 @@ export class InspectorViewProvider implements vscode.WebviewViewProvider, vscode
             { key: 'scale', label: 'Scale', type: 'vec3', value: { x: 1, y: 1, z: 1 }, group: 'Transform' },
             { key: 'lod_bias', label: 'LOD Bias', type: 'float', value: 0.0, group: 'Rendering' },
             { key: 'layer', label: 'Layer', type: 'int', value: 0, group: 'Rendering' },
+            { key: 'albedo_color', label: 'Albedo Color', type: 'color', value: { r: 1.0, g: 1.0, b: 1.0 }, group: 'Material' },
+            { key: 'material', label: 'Material', type: 'resource', value: '', group: 'Material', assetType: 'Material' },
         ];
     }
 
@@ -621,7 +908,15 @@ body{font-family:var(--vscode-font-family,sans-serif);font-size:var(--vscode-fon
 .vec3-label{font-size:.8em;color:var(--vscode-descriptionForeground,#aaa);min-width:12px;}
 .vec3-group .prop-input{width:60px;}
 .prop-checkbox{cursor:pointer;}
+.prop-color{width:40px;height:24px;padding:1px 2px;cursor:pointer;border:1px solid var(--vscode-input-border,#555);}
+.resource-group{display:flex;align-items:center;gap:4px;}
+.resource-group .prop-input{flex:1;}
+.resource-browse{background:var(--vscode-button-background,#0e639c);color:var(--vscode-button-foreground,#fff);border:none;border-radius:2px;padding:2px 8px;cursor:pointer;font-size:.85em;white-space:nowrap;}
+.resource-browse:hover{background:var(--vscode-button-hoverBackground,#1177bb);}
+.asset-picker{background:var(--vscode-button-secondaryBackground,#3a3d41);color:var(--vscode-button-secondaryForeground,#fff);border:none;border-radius:2px;padding:2px 6px;cursor:pointer;font-size:.85em;font-family:monospace;white-space:nowrap;}
+.asset-picker:hover{background:var(--vscode-button-secondaryHoverBackground,#505357);}
 .no-selection{padding:20px;text-align:center;color:var(--vscode-descriptionForeground,#888);}
+.mixed-value{color:var(--vscode-descriptionForeground,#888);font-style:italic;}
 </style></head><body>
 <div id="root"><div class="no-selection"><p>Select a node in the Scene Tree.</p></div></div>
 <script>
@@ -651,6 +946,16 @@ function renderWidget(prop, nodeId) {
         '<label class="vec3-label">Z</label><input type="number" step="0.01" class="prop-input prop-float vec3-z" value="'+v.z+'" data-key="'+key+'" data-component="z" onchange="'+v3Ch+'" />'+
         '</span>';
     }
+    case 'color': {
+      const c = prop.value || {r:0,g:0,b:0};
+      const hex = '#' + [c.r,c.g,c.b].map(function(v){return Math.max(0,Math.min(255,Math.round(v*255))).toString(16).padStart(2,'0');}).join('');
+      return '<input type="color" class="prop-input prop-color" value="'+hex+'" data-key="'+key+'" onchange="onColorChange(\''+esc(nodeId)+'\',\''+key+'\',this)" />';
+    }
+    case 'resource': {
+      const path = String(prop.value || '');
+      const aType = esc(prop.assetType || '');
+      return '<span class="resource-group"><input type="text" class="prop-input prop-resource" readonly value="'+esc(path)+'" data-key="'+key+'" /><button class="asset-picker" onclick="onAssetPicker(\''+esc(nodeId)+'\',\''+key+'\',\''+aType+'\')" title="Pick from asset registry">[...]</button><button class="resource-browse" onclick="onResourceBrowse(\''+esc(nodeId)+'\',\''+key+'\')">Browse...</button></span>';
+    }
   }
   return '';
 }
@@ -669,6 +974,19 @@ function onVec3Change(nodeId,key,el){
   const z=parseFloat(row.querySelector('.vec3-z').value)||0;
   vscode.postMessage({command:'propertyChanged',nodeId,key,value:{x,y,z}});
 }
+function onColorChange(nodeId,key,el){
+  const hex=el.value;
+  const r=parseInt(hex.slice(1,3),16)/255;
+  const g=parseInt(hex.slice(3,5),16)/255;
+  const b=parseInt(hex.slice(5,7),16)/255;
+  vscode.postMessage({command:'propertyChanged',nodeId,key,value:{r,g,b}});
+}
+function onResourceBrowse(nodeId,key){
+  vscode.postMessage({command:'resourceBrowse',nodeId,key});
+}
+function onAssetPicker(nodeId,key,assetType){
+  vscode.postMessage({command:'openAssetPicker',nodeId,key,assetType});
+}
 
 window.addEventListener('message', function(event) {
   const msg = event.data;
@@ -677,6 +995,39 @@ window.addEventListener('message', function(event) {
 
   if (msg.command === 'clearNode') {
     root.innerHTML = '<div class="no-selection"><p>Select a node in the Scene Tree.</p></div>';
+    return;
+  }
+
+  if (msg.command === 'resourcePathSelected') {
+    const input = document.querySelector('input.prop-resource[data-key="'+msg.key+'"]');
+    if (input) { input.value = msg.path; }
+    return;
+  }
+
+  if (msg.command === 'updateMultiSelect') {
+    let html = '<div class="inspector-header"><span class="node-name">'+esc(msg.count+' nodes selected')+'</span></div>';
+    if (!msg.properties || msg.properties.length === 0) {
+      html += '<div class="no-selection"><p>No common properties.</p></div>';
+    } else {
+      const groups = {};
+      for (const prop of msg.properties) {
+        if (!groups[prop.group]) groups[prop.group] = [];
+        groups[prop.group].push(prop);
+      }
+      for (const groupName in groups) {
+        const props = groups[groupName];
+        let rows = '';
+        for (const prop of props) {
+          if (prop.value === '--') {
+            rows += '<tr class="prop-row"><td class="prop-label">'+esc(prop.label)+'</td><td class="prop-value"><span class="mixed-value">--</span></td></tr>';
+          } else {
+            rows += '<tr class="prop-row"><td class="prop-label">'+esc(prop.label)+'</td><td class="prop-value">'+renderWidget(prop, 'multi')+'</td></tr>';
+          }
+        }
+        html += '<details class="prop-group" open><summary class="prop-group-header">'+esc(groupName)+'</summary><table class="prop-table"><tbody>'+rows+'</tbody></table></details>';
+      }
+    }
+    root.innerHTML = html;
     return;
   }
 
@@ -708,18 +1059,95 @@ window.addEventListener('message', function(event) {
     private async _handleMessage(msg: unknown): Promise<void> {
         if (this._disposed) { return; }
         if (typeof msg !== 'object' || msg === null) { return; }
-        const message = msg as PropertyChangeMessage;
+
+        const message = msg as Record<string, unknown>;
+        if (message.command === 'resourceBrowse') {
+            await this._handleResourceBrowse(message as { nodeId: string; key: string });
+            return;
+        }
+        if (message.command === 'openAssetPicker') {
+            await this._handleAssetPicker(
+                message as { nodeId: string; key: string; assetType: string }
+            );
+            return;
+        }
+
         if (message.command !== 'propertyChanged') { return; }
+        const propMsg = message as unknown as PropertyChangeMessage;
         try {
             await this._ipc.request('scene.setProperty', {
-                nodeId: message.nodeId,
-                key: message.key,
+                nodeId: propMsg.nodeId,
+                key: propMsg.key,
                 // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-                value: message.value,
+                value: propMsg.value,
             });
         } catch (err) {
             vscode.window.showErrorMessage(
-                `UzEngine: Failed to set property "${message.key}" — ` +
+                `UzEngine: Failed to set property "${propMsg.key}" — ` +
+                `${err instanceof Error ? err.message : String(err)}`
+            );
+        }
+    }
+
+    private async _handleAssetPicker(msg: { nodeId: string; key: string; assetType: string }): Promise<void> {
+        const items = await fetchAssetQuickPickItems(this._ipc, msg.assetType);
+        if (items.length === 0) {
+            vscode.window.showInformationMessage(`No ${msg.assetType || 'assets'} found in registry.`);
+            return;
+        }
+
+        const picked = await vscode.window.showQuickPick(items, {
+            placeHolder: `Select ${msg.assetType || 'asset'} for "${msg.key}"`,
+        });
+        if (!picked) { return; }
+
+        const selectedPath = picked.description ?? '';
+        if (this._view) {
+            void this._view.webview.postMessage({
+                command: 'resourcePathSelected',
+                key: msg.key,
+                path: selectedPath,
+            });
+        }
+        try {
+            await this._ipc.request('scene.assignAsset', {
+                nodeId: Number(msg.nodeId),
+                resPath: selectedPath,
+                assetType: msg.assetType,
+            });
+        } catch (err) {
+            vscode.window.showErrorMessage(
+                `UzEngine: Failed to assign asset "${msg.key}" — ` +
+                `${err instanceof Error ? err.message : String(err)}`
+            );
+        }
+    }
+
+    private async _handleResourceBrowse(msg: { nodeId: string; key: string }): Promise<void> {
+        const result = await vscode.window.showOpenDialog({
+            canSelectMany: false,
+            filters: { 'Assets': ['uzmat', 'hlsl', 'uzscene', 'png', 'jpg', 'tga', 'obj', 'fbx'] },
+        });
+
+        if (!result || result.length === 0) { return; }
+
+        const selectedPath = result[0].fsPath;
+        if (this._view) {
+            void this._view.webview.postMessage({
+                command: 'resourcePathSelected',
+                key: msg.key,
+                path: selectedPath,
+            });
+        }
+        try {
+            await this._ipc.request('scene.setProperty', {
+                nodeId: msg.nodeId,
+                key: msg.key,
+                value: selectedPath,
+            });
+        } catch (err) {
+            vscode.window.showErrorMessage(
+                `UzEngine: Failed to set resource "${msg.key}" — ` +
                 `${err instanceof Error ? err.message : String(err)}`
             );
         }

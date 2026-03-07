@@ -654,6 +654,60 @@ or if no nodes in rect:
 | `file.list` | `{path}` | List directory contents |
 | `shader.reload` | `{name}` | Hot-reload shader by name (not yet implemented) |
 
+### Phase 0.5: Scene Editor (Editor-only, UZ_EDITOR)
+
+Registered in `src/engine/scene/scene_handlers.cpp` via `scene_register_handlers()`.
+
+| Function | Args | Description |
+|----------|------|-------------|
+| `scene.getTree` | — | Returns full scene hierarchy as JSON tree |
+| `scene.addNode` | `{parentId, type, name?}` | Create child node under parent |
+| `scene.deleteNode` | `{id}` | Delete node by ID |
+| `scene.renameNode` | `{id, name}` | Rename node |
+| `scene.duplicateNode` | `{id}` | Duplicate node (deep copy) |
+| `scene.selectNode` | `{id}` | Set selected node (updates gizmo) |
+| `scene.getProperty` | `{nodeId, key}` | Get property value (position, rotation, scale, etc.) |
+| `scene.setProperty` | `{nodeId, key, value}` | Set property value (live editing) |
+| `scene.reparentNode` | `{id, newParentId}` | Move node to new parent (validates no cycles) |
+| `scene.assignAsset` | `{nodeId, resPath, assetType}` | Assign mesh/material to node (auto-creates StaticMeshData) |
+| `scene.load` | `{path}` | Load .uzscene file from disk |
+| `scene.save` | `{path}` | Save scene to .uzscene file |
+
+**Push events** (broadcast via WebSocket text frames):
+
+| Event | Fields | Description |
+|-------|--------|-------------|
+| `scene.treeChanged` | — | Scene hierarchy changed (add/delete/reparent) |
+| `selectionChanged` | `nodeId` | Selected node changed |
+| `pickResult` | `nodeId, ctrlKey` | Node pick result from viewport click |
+| `boxPickResult` | `nodeIds, ctrlKey` | Box select result |
+| `transformUpdate` | `nodeId, position/rotation/scale` | Node transform changed via gizmo |
+
+### Phase 0.5: Play Mode IPC
+
+| Function | Args | Description |
+|----------|------|-------------|
+| `engine.status` | — | Returns `{mode, ready, paused, hasScene, port}` |
+| `engine.pause` | — | Pause game simulation |
+| `engine.resume` | — | Resume game simulation |
+| `engine.stop` | — | Clean engine shutdown |
+| `playmode.start` | — | Acknowledge play mode start (editor spawns process) |
+| `playmode.stop` | — | Request play process shutdown |
+| `playmode.status` | — | Returns `{mode, scene, paused}` |
+| `editor.placeAsset` | `{resPath, assetType, x?, y?}` | Create node with asset at camera-forward position |
+| `editor.setSelection` | `{nodeIds: []}` | Set multi-selection for gizmo centroid |
+
+### Phase 0.5: Asset Management
+
+| Function | Args | Description |
+|----------|------|-------------|
+| `asset.list` | `{type?}` | List assets, optionally filtered by type |
+| `asset.import` | `{path}` | Import asset file into engine registry |
+| `asset.getInfo` | `{path}` | Get asset metadata (type, status, size) |
+| `asset.createMaterial` | `{name}` | Create new .uzmat file from template |
+| `asset.createScene` | `{name}` | Create new .uzscene file from template |
+| `asset.createShader` | `{name}` | Create new .hlsl file from template |
+
 ### Phase 1+: Lua Scripting (Editor-only, UZ_EDITOR)
 
 Requires scene system and Lua VM running.

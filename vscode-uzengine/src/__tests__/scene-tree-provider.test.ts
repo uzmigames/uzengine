@@ -4,7 +4,7 @@
  * Tests cover:
  *  - NodeItem construction: label, contextValue, tooltip, description, icon
  *  - NodeItem icons for all NodeType values
- *  - NodeItem command property
+ *  - NodeItem has no command (multi-select via TreeView)
  *  - NodeItem children from SceneNodeData
  *  - Collapsible state: collapsed when has children, none when leaf
  *  - getTreeItem() returns the element unchanged
@@ -158,10 +158,9 @@ describe('NodeItem', () => {
         expect(item.children[0]).toBe(childData);
     });
 
-    it('has command uzengine.selectNode with the item as argument', () => {
+    it('has no command (selection handled by TreeView.onDidChangeSelection)', () => {
         const item = new NodeItem(makeNode());
-        expect(item.command?.command).toBe('uzengine.selectNode');
-        expect(item.command?.arguments?.[0]).toBe(item);
+        expect(item.command).toBeUndefined();
     });
 
     describe('iconForType()', () => {
@@ -955,6 +954,38 @@ describe('SceneTreeProvider', () => {
             const countBefore = changes.length;
             provider.clear();
             expect(changes.length).toBe(countBefore);
+        });
+    });
+
+    describe('getFlatTree()', () => {
+        it('returns depth-first flat list of node IDs', () => {
+            const { client } = makeMockIpc();
+            const provider = new SceneTreeProvider(client);
+
+            provider.loadFromFile([
+                makeNode({
+                    id: '1', name: 'Root', type: 'Node3D', children: [
+                        makeNode({ id: '2', name: 'Child1', type: 'StaticMesh' }),
+                        makeNode({
+                            id: '3', name: 'Child2', type: 'Node3D', children: [
+                                makeNode({ id: '4', name: 'GrandChild', type: 'Camera' }),
+                            ],
+                        }),
+                    ],
+                }),
+            ]);
+
+            const flat = provider.getFlatTree();
+            expect(flat.map(n => n.id)).toEqual([1, 2, 3, 4]);
+
+            provider.dispose();
+        });
+
+        it('returns empty array when no tree loaded', () => {
+            const { client } = makeMockIpc();
+            const provider = new SceneTreeProvider(client);
+            expect(provider.getFlatTree()).toEqual([]);
+            provider.dispose();
         });
     });
 

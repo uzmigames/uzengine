@@ -21,6 +21,76 @@ The asset pipeline converts source files (FBX, GLTF, PNG, WAV) into engine-optim
 
 ---
 
+## 1b. Editor Importer (`uz::Importer`)
+
+The editor-time importer (`src/engine/editor/importer.h`) provides fast preview-quality imports during development. It does NOT perform compression (BC7, meshoptimizer LOD) — that is deferred to UzBuild offline.
+
+### Supported Operations
+
+| Source | Output Dir | Sidecar Settings |
+|--------|-----------|-----------------|
+| `.glb` / `.gltf` | `.import/meshes/` | `scale`, `generate_normals`, `generate_tangents` |
+| `.png` | `.import/textures/` | `width`, `height`, `channels`, `srgb`, `generate_mipmaps` |
+
+### Usage
+
+```cpp
+uz::Importer importer("/path/to/project");
+auto result = importer.import_asset("assets/hero.glb", uz::AssetType::Mesh);
+if (result.success) {
+    // result.output_path → ".import/meshes/hero.glb"
+    // Sidecar at ".import/meshes/hero.glb.import.json"
+}
+```
+
+### PNG Header Parsing
+
+`Importer::read_png_header()` extracts width, height, and channel count from the first 33 bytes of a PNG file (the IHDR chunk). Color type mapping:
+
+| PNG Color Type | Value | Channels |
+|---------------|-------|----------|
+| Greyscale | 0 | 1 |
+| RGB | 2 | 3 |
+| Indexed | 3 | 3 |
+| Greyscale+Alpha | 4 | 2 |
+| RGBA | 6 | 4 |
+
+### Sidecar Format (Mesh)
+
+```json
+{
+  "source": "/absolute/path/to/mesh.glb",
+  "type": "Mesh",
+  "settings": {
+    "scale": 1.0,
+    "generate_normals": true,
+    "generate_tangents": true
+  }
+}
+```
+
+### Sidecar Format (Texture)
+
+```json
+{
+  "source": "/absolute/path/to/texture.png",
+  "type": "Texture",
+  "settings": {
+    "width": 1024,
+    "height": 1024,
+    "channels": 4,
+    "srgb": true,
+    "generate_mipmaps": true
+  }
+}
+```
+
+### Atomic Writes
+
+Sidecars are written atomically: data is written to a `.tmp` file first, then renamed to the final `.import.json` path. This prevents corrupt sidecars from a crash during write.
+
+---
+
 ## 2. FBX Import (ufbx)
 
 Library: **ufbx** (MIT/public domain) — two-file, C99/C++11, 5–20× faster than Autodesk FBX SDK. Adopted by Blender in 2025.

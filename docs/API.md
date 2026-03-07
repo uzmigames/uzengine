@@ -157,6 +157,13 @@ All responses include `ok: bool`.
 | `engine.screenshot` | `id?: string` | `path: string` | Save frame to PNG |
 | `engine.getCrashReport` | _(none)_ | `report: {...}` | Latest crash report JSON |
 | `engine.getDredReport` | _(none)_ | `report: {...}` | Latest DX12 DRED GPU crash report |
+| `engine.status` | _(none)_ | `mode, ready, paused, hasScene, port` | Engine mode and ready state for extension polling |
+| `engine.pause` | _(none)_ | `ok` | Pause game simulation (scripts stop ticking) |
+| `engine.resume` | _(none)_ | `ok` | Resume game simulation |
+| `engine.stop` | _(none)_ | `ok` | Request clean engine shutdown (PostQuitMessage) |
+| `playmode.start` | _(none)_ | `ok, mode` | No-op acknowledgment (extension spawns play process separately) |
+| `playmode.stop` | _(none)_ | `ok` | Request clean shutdown (same as engine.stop) |
+| `playmode.status` | _(none)_ | `ok, mode, scene, paused` | Play mode state query |
 
 ### 2.2 Scene
 

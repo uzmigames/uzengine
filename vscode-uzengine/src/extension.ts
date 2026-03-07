@@ -28,7 +28,11 @@
  */
 
 import * as vscode from 'vscode';
+import { AssetBrowserProvider, AssetGroupItem, AssetGroupKey, AssetItem } from './asset-browser-provider';
+import { AssetWatcher } from './asset-watcher';
 import { ConsolePanel } from './console-panel';
+import { DragDropCoordinator } from './editor/dragDropCoordinator';
+import { SelectionManager } from './editor/selectionManager';
 import { EngineInstanceManager } from './engine-instance-manager';
 import { InspectorPanel, InspectorViewProvider } from './inspector-panel';
 import { IpcClient } from './ipc-client';
@@ -41,6 +45,19 @@ import { ViewportManager } from './viewport-manager';
 
 // ServerManager removed — each scene now manages its own render.exe
 // via EngineInstanceManager.
+
+/** File type filters for the "Import Asset Here..." context menu command. */
+function groupImportFilters(group: AssetGroupKey): Record<string, string[]> | null {
+    switch (group) {
+        case 'Mesh':     return { 'Meshes': ['glb', 'gltf', 'fbx', 'obj'] };
+        case 'Texture':  return { 'Textures': ['png', 'jpg', 'jpeg', 'tga', 'bmp', 'hdr'] };
+        case 'Audio':    return { 'Audio': ['wav', 'ogg', 'mp3'] };
+        case 'Material': return { 'Materials': ['uzmat'] };
+        case 'Shader':   return { 'Shaders': ['hlsl'] };
+        case 'Scene':    return { 'Scenes': ['uzscene'] };
+        default:         return null;
+    }
+}
 
 /**
  * Called by VSCode when the extension is activated.
@@ -150,7 +167,8 @@ export function activate(context: vscode.ExtensionContext): void {
     const treeView = vscode.window.createTreeView('uzengine.sceneTree', {
         treeDataProvider: sceneTreeProvider,
         showCollapseAll: true,
-        canSelectMany: false,
+        canSelectMany: true,
+        dragAndDropController: sceneTreeProvider.dragController,
     });
     context.subscriptions.push(treeView);
 
@@ -170,12 +188,151 @@ export function activate(context: vscode.ExtensionContext): void {
     const inspectorPanel = new InspectorPanel(context.extensionUri, ipcClient);
     context.subscriptions.push(inspectorPanel);
 
-    // Wire SceneTreeProvider selection → sidebar Inspector only.
-    // (InspectorPanel is the legacy floating tab — no longer auto-opened.)
-    const selectionSub = sceneTreeProvider.onNodeSelected(node => {
-        inspectorViewProvider.showForNode(node);
+    // -------------------------------------------------------------------------
+    // 6b2. SelectionManager — multi-node selection state.
+    // -------------------------------------------------------------------------
+    const selectionManager = new SelectionManager();
+    context.subscriptions.push(selectionManager);
+
+    // Guard to prevent feedback loops between TreeView ↔ SelectionManager.
+    let _syncingFromTree = false;
+    let _syncingToTree = false;
+
+    // Wire TreeView native multi-select → SelectionManager.
+    // VSCode handles Ctrl+click (toggle) and Shift+click (range) natively
+    // when canSelectMany is true. onDidChangeSelection fires with the
+    // complete selection list after each click.
+    const treeSelectionSub = treeView.onDidChangeSelection((e) => {
+        if (_syncingToTree) { return; }
+        _syncingFromTree = true;
+        try {
+            const ids = e.selection.map(item => parseInt(item.nodeId, 10));
+            if (ids.length === 0) {
+                selectionManager.clear();
+            } else if (ids.length === 1) {
+                selectionManager.selectOnly(ids[0]);
+            } else {
+                selectionManager.selectMany(ids);
+            }
+            // Update flat tree cache for range selection from other sources.
+            selectionManager.setFlatTree(sceneTreeProvider.getFlatTree());
+        } finally {
+            _syncingFromTree = false;
+        }
     });
-    context.subscriptions.push(selectionSub);
+    context.subscriptions.push(treeSelectionSub);
+
+    // Reverse sync: SelectionManager → TreeView reveal (for viewport picks).
+    selectionManager.onChanged((_selected) => {
+        if (_syncingFromTree) { return; }
+        // Reveal primary node in the tree so the user can see it.
+        if (selectionManager.primaryId !== undefined) {
+            const nodeItem = sceneTreeProvider.findNodeById(
+                String(selectionManager.primaryId)
+            );
+            if (nodeItem) {
+                _syncingToTree = true;
+                treeView.reveal(nodeItem, { select: true, focus: false })
+                    .then(() => { _syncingToTree = false; },
+                          () => { _syncingToTree = false; });
+            }
+        }
+    });
+
+    // -------------------------------------------------------------------------
+    // 6b3. DragDropCoordinator — cross-panel drag-and-drop state.
+    // -------------------------------------------------------------------------
+    const dragDropCoordinator = new DragDropCoordinator(ipcClient);
+    context.subscriptions.push(dragDropCoordinator);
+    // Export for Scene Tree drag controller.
+    sceneTreeProvider.setDragDropCoordinator(dragDropCoordinator);
+
+    // -------------------------------------------------------------------------
+    // 6b4. AssetBrowserProvider — asset browser tree view.
+    // -------------------------------------------------------------------------
+    const assetBrowserProvider = new AssetBrowserProvider(ipcClient);
+    context.subscriptions.push(assetBrowserProvider);
+    assetBrowserProvider.setDragDropCoordinator(dragDropCoordinator);
+
+    const assetBrowserView = vscode.window.createTreeView('uzengine.assetBrowser', {
+        treeDataProvider: assetBrowserProvider,
+        showCollapseAll: true,
+        canSelectMany: false,
+        dragAndDropController: assetBrowserProvider.dragController,
+    });
+    context.subscriptions.push(assetBrowserView);
+
+    // Auto-refresh asset browser when IPC reconnects.
+    const assetRefreshSub = instanceMgr.onActiveChanged(() => {
+        // Small delay to let IPC connect first.
+        setTimeout(() => void assetBrowserProvider.refresh(), 600);
+    });
+    context.subscriptions.push(assetRefreshSub);
+
+    // Wire viewport pick events → SelectionManager + asset drop.
+    ViewportManager.onViewportCreated((panel) => {
+        panel.onNodePicked((ev) => {
+            if (ev.nodeId === null) {
+                selectionManager.clear();
+            } else if (ev.ctrlKey) {
+                selectionManager.toggle(ev.nodeId);
+            } else {
+                selectionManager.selectOnly(ev.nodeId);
+            }
+        });
+        panel.onBoxPicked((ev) => {
+            if (ev.nodeIds.length === 0) {
+                selectionManager.clear();
+            } else if (ev.ctrlKey) {
+                selectionManager.addMany(ev.nodeIds);
+            } else {
+                selectionManager.selectMany(ev.nodeIds);
+            }
+        });
+        // Asset drop on viewport → DragDropCoordinator.handleViewportDrop.
+        panel.onAssetDropped(async (ev) => {
+            const result = await dragDropCoordinator.handleViewportDrop(ev.x, ev.y);
+            if (result.ok && result.nodeId) {
+                selectionManager.selectOnly(result.nodeId);
+                void sceneTreeProvider.refresh();
+            } else if (!result.ok && result.error) {
+                vscode.window.showErrorMessage(`Place asset failed: ${result.error}`);
+            }
+        });
+
+        // Cancel drag on Escape key press in the viewport.
+        panel.onDragCancelled(() => {
+            dragDropCoordinator.endDrag();
+        });
+
+        // Relay DragDropCoordinator state changes to viewport panels.
+        dragDropCoordinator.onStateChanged((state) => {
+            panel.postDragState(state === 'dragging');
+        });
+    });
+
+    // SelectionManager → Inspector sync + engine IPC.
+    selectionManager.onChanged((selected) => {
+        if (selected.size === 0) {
+            inspectorViewProvider.showForNode(undefined);
+        } else if (selected.size === 1) {
+            const nodeId = [...selected][0];
+            const nodeItem = sceneTreeProvider.findNodeById(String(nodeId));
+            if (nodeItem) {
+                inspectorViewProvider.showForNode(nodeItem);
+            }
+        } else {
+            // Multi-select: show common properties with mixed values.
+            const nodes = [...selected]
+                .map(id => sceneTreeProvider.findNodeById(String(id)))
+                .filter((n): n is NodeItem => n !== undefined);
+            inspectorViewProvider.showForNodes(nodes);
+        }
+        // Task 3.5 / 4.1: send selection to engine so gizmo updates.
+        void ipcClient.request('editor.setSelection', {
+            nodeIds: [...selected],
+        });
+    });
 
     // -------------------------------------------------------------------------
     // 6c. ConsolePanel — sidebar console view.
@@ -262,10 +419,11 @@ export function activate(context: vscode.ExtensionContext): void {
         }
     );
 
-    // Scene tree: internal selection command (fired by NodeItem.command)
+    // Scene tree: programmatic selection command.
     const selectNodeCommand = vscode.commands.registerCommand(
         'uzengine.selectNode',
         async (item: NodeItem) => {
+            selectionManager.selectOnly(parseInt(item.nodeId, 10));
             await sceneTreeProvider.selectNode(item);
         }
     );
@@ -302,11 +460,14 @@ export function activate(context: vscode.ExtensionContext): void {
         }
     );
 
-    // Play Controls: ▶ Play
+    // Play Controls: ▶ Play — switch viewport to play port (9003).
     const playCommand = vscode.commands.registerCommand(
         'uzengine.play',
         async () => {
             await playControls.play();
+            for (const panel of ViewportManager.getInstance().getAllPanels()) {
+                panel.switchPort(9003);
+            }
         }
     );
 
@@ -318,11 +479,14 @@ export function activate(context: vscode.ExtensionContext): void {
         }
     );
 
-    // Play Controls: ■ Stop
+    // Play Controls: ■ Stop — switch viewport back to editor port (9002).
     const stopPlayCommand = vscode.commands.registerCommand(
         'uzengine.stop',
         async () => {
             await playControls.stop();
+            for (const panel of ViewportManager.getInstance().getAllPanels()) {
+                panel.switchPort(9002);
+            }
         }
     );
 
@@ -389,6 +553,114 @@ export function activate(context: vscode.ExtensionContext): void {
             UzSceneEditorProvider.postToActiveWebview({ type: 'toggle_gizmo_space' });
         }
     );
+
+    // Asset Browser: Refresh
+    const assetRefreshCmd = vscode.commands.registerCommand(
+        'uzengine.assetBrowser.refresh',
+        () => void assetBrowserProvider.refresh(),
+    );
+
+    // Asset Browser: Reimport
+    const assetReimportCmd = vscode.commands.registerCommand(
+        'uzengine.assetBrowser.reimport',
+        async (item: AssetItem) => {
+            await assetBrowserProvider.reimportAsset(item);
+        },
+    );
+
+    // Asset Browser: New Material
+    const assetNewMaterialCmd = vscode.commands.registerCommand(
+        'uzengine.assetBrowser.newMaterial',
+        async () => void assetBrowserProvider.createMaterial(),
+    );
+
+    // Asset Browser: New Scene
+    const assetNewSceneCmd = vscode.commands.registerCommand(
+        'uzengine.assetBrowser.newScene',
+        async () => void assetBrowserProvider.createScene(),
+    );
+
+    // Asset Browser: New Shader
+    const assetNewShaderCmd = vscode.commands.registerCommand(
+        'uzengine.assetBrowser.newShader',
+        async () => void assetBrowserProvider.createShader(),
+    );
+
+    // Asset Browser: Reveal (no-op placeholder — click handler).
+    const assetRevealCmd = vscode.commands.registerCommand(
+        'uzengine.assetBrowser.reveal',
+        () => { /* TreeItem click — no action needed. */ },
+    );
+
+    // Asset Browser: Assign to selected node.
+    const assetAssignCmd = vscode.commands.registerCommand(
+        'uzengine.assetBrowser.assignToSelected',
+        async (item: AssetItem) => {
+            const selected = [...selectionManager.selected];
+            if (selected.length !== 1) {
+                vscode.window.showWarningMessage('Select exactly one node in the Scene Tree first.');
+                return;
+            }
+            const nodeId = selected[0];
+            try {
+                await ipcClient.request('scene.assignAsset', {
+                    nodeId: Number(nodeId),
+                    resPath: item.assetPath,
+                    assetType: item.assetType,
+                });
+                vscode.window.showInformationMessage(
+                    `Assigned ${item.assetPath} to node ${nodeId}.`
+                );
+            } catch (err) {
+                vscode.window.showErrorMessage(
+                    `Failed to assign asset: ${err instanceof Error ? err.message : String(err)}`
+                );
+            }
+        },
+    );
+    context.subscriptions.push(assetAssignCmd);
+
+    // Asset Browser: Import files from OS.
+    const assetImportCmd = vscode.commands.registerCommand(
+        'uzengine.assetBrowser.importFiles',
+        async () => void assetBrowserProvider.importFiles(),
+    );
+    context.subscriptions.push(assetImportCmd);
+
+    // Asset Browser: Import asset into specific group (context menu on group items).
+    const assetImportHereCmd = vscode.commands.registerCommand(
+        'uzengine.assetBrowser.importHere',
+        async (item: AssetGroupItem) => {
+            const filters = groupImportFilters(item.groupKey);
+            if (!filters) { return; }
+            const uris = await vscode.window.showOpenDialog({
+                canSelectMany: true,
+                openLabel: 'Import',
+                filters,
+            });
+            if (!uris || uris.length === 0) { return; }
+            const wsFolder = vscode.workspace.workspaceFolders?.[0];
+            if (!wsFolder) { return; }
+            for (const uri of uris) {
+                const fileName = uri.fsPath.split(/[\\/]/).pop() || 'asset';
+                const destUri = vscode.Uri.joinPath(wsFolder.uri, 'assets', fileName);
+                try {
+                    await vscode.workspace.fs.copy(uri, destUri, { overwrite: true });
+                    await ipcClient.request('asset.import', { path: destUri.fsPath });
+                } catch (e) {
+                    vscode.window.showErrorMessage(
+                        `Import failed for ${fileName}: ${e instanceof Error ? e.message : String(e)}`
+                    );
+                }
+            }
+            await assetBrowserProvider.refresh();
+        },
+    );
+    context.subscriptions.push(assetImportHereCmd);
+
+    // AssetWatcher — auto-import when files are added to assets/.
+    const assetWatcher = new AssetWatcher(ipcClient, () => void assetBrowserProvider.refresh());
+    context.subscriptions.push(assetWatcher);
 
     // AI Debug: Diagnose Crash — reads latest.json and opens it for AI analysis.
     const diagnoseCrashCmd = vscode.commands.registerCommand(
@@ -462,6 +734,56 @@ export function activate(context: vscode.ExtensionContext): void {
         }
     );
 
+    // Multi-select: Select All (Ctrl+A)
+    const selectAllCmd = vscode.commands.registerCommand(
+        'uzengine.selectAll',
+        () => {
+            const flat = sceneTreeProvider.getFlatTree();
+            if (flat.length > 0) {
+                selectionManager.selectMany(flat.map(n => n.id));
+            }
+        }
+    );
+
+    // Multi-select: Clear Selection (Escape)
+    const clearSelectionCmd = vscode.commands.registerCommand(
+        'uzengine.clearSelection',
+        () => {
+            selectionManager.clear();
+        }
+    );
+
+    // Multi-select: Delete Selected (Delete key)
+    const deleteSelectedCmd = vscode.commands.registerCommand(
+        'uzengine.deleteSelected',
+        async () => {
+            const ids = selectionManager.ids;
+            if (ids.length === 0) { return; }
+            for (const id of ids) {
+                const item = sceneTreeProvider.findNodeById(String(id));
+                if (item) {
+                    await sceneTreeProvider.deleteNode(item);
+                }
+            }
+            selectionManager.clear();
+        }
+    );
+
+    // Multi-select: Duplicate Selected (Ctrl+D)
+    const duplicateSelectedCmd = vscode.commands.registerCommand(
+        'uzengine.duplicateSelected',
+        async () => {
+            const ids = selectionManager.ids;
+            if (ids.length === 0) { return; }
+            for (const id of ids) {
+                const item = sceneTreeProvider.findNodeById(String(id));
+                if (item) {
+                    await sceneTreeProvider.duplicateNode(item);
+                }
+            }
+        }
+    );
+
     context.subscriptions.push(
         openCommand,
         startCommand,
@@ -483,6 +805,16 @@ export function activate(context: vscode.ExtensionContext): void {
         gizmoSpaceCmd,
         diagnoseCrashCmd,
         analyzeFrameCmd,
+        selectAllCmd,
+        clearSelectionCmd,
+        deleteSelectedCmd,
+        duplicateSelectedCmd,
+        assetRefreshCmd,
+        assetReimportCmd,
+        assetNewMaterialCmd,
+        assetNewSceneCmd,
+        assetNewShaderCmd,
+        assetRevealCmd,
     );
 
     // -------------------------------------------------------------------------

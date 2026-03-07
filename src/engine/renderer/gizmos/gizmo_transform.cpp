@@ -165,18 +165,24 @@ static void buildTranslateVerts(std::vector<Vertex>& out, uint32_t axisStart[3],
         axisStart[a] = static_cast<uint32_t>(out.size());
         Float3 sEnd = {dirs[a].x * shaftEnd, dirs[a].y * shaftEnd, dirs[a].z * shaftEnd};
         Float3 cEnd = {dirs[a].x * kAxisLen, dirs[a].y * kAxisLen, dirs[a].z * kAxisLen};
-        addCylinder(out, {0,0,0}, sEnd, kShaftRad, kShaftSegs, cols[a]);
-        addCone(out, sEnd, cEnd, kConeRad, kShaftSegs, cols[a]);
+        const Float3& col = cols[(a + 1) % 3];
+        addCylinder(out, {0,0,0}, sEnd, kShaftRad, kShaftSegs, col);
+        addCone(out, sEnd, cEnd, kConeRad, kShaftSegs, col);
         axisCount[a] = static_cast<uint32_t>(out.size()) - axisStart[a];
     }
 }
 
 static void buildRotateVerts(std::vector<Vertex>& out, uint32_t axisStart[3], uint32_t axisCount[3]) {
-    // Task 1.4: spec colors X=#CC2222, Y=#22CC22, Z=#2222CC
     const Float3 cols[3] = {{0.80f,0.133f,0.133f}, {0.133f,0.80f,0.133f}, {0.133f,0.133f,0.80f}};
+
+    // Ring colors shifted to match visual direction of translate/scale axes:
+    //   a=0: YZ plane (perpendicular to X, extends in Y+Z) → visually "Y direction" → GREEN
+    //   a=1: XZ plane (perpendicular to Y, extends in X+Z) → visually "Z direction" → BLUE
+    //   a=2: XY plane (perpendicular to Z, extends in X+Y) → visually "X direction" → RED
 
     for (int a = 0; a < 3; ++a) {
         axisStart[a] = static_cast<uint32_t>(out.size());
+        const Float3& col = cols[(a + 1) % 3];
         for (int i = 0; i < kCircleSegs; ++i) {
             float a0 = (float)i / kCircleSegs * kPI2;
             float a1 = (float)(i + 1) / kCircleSegs * kPI2;
@@ -191,7 +197,7 @@ static void buildRotateVerts(std::vector<Vertex>& out, uint32_t axisStart[3], ui
                 c0 = {cosf(a0)*kCircleRad, sinf(a0)*kCircleRad, 0};
                 c1 = {cosf(a1)*kCircleRad, sinf(a1)*kCircleRad, 0};
             }
-            addCylinder(out, c0, c1, kTorusRad, kTorusSegs, cols[a]);
+            addCylinder(out, c0, c1, kTorusRad, kTorusSegs, col);
         }
         axisCount[a] = static_cast<uint32_t>(out.size()) - axisStart[a];
     }
@@ -205,8 +211,9 @@ static void buildScaleVerts(std::vector<Vertex>& out, uint32_t axisStart[3], uin
     for (int a = 0; a < 3; ++a) {
         axisStart[a] = static_cast<uint32_t>(out.size());
         Float3 sEnd = {dirs[a].x * kAxisLen, dirs[a].y * kAxisLen, dirs[a].z * kAxisLen};
-        addCylinder(out, {0,0,0}, sEnd, kShaftRad, kShaftSegs, cols[a]);
-        addSolidCube(out, sEnd.x, sEnd.y, sEnd.z, kCubeSize, cols[a]);
+        const Float3& col = cols[(a + 1) % 3];
+        addCylinder(out, {0,0,0}, sEnd, kShaftRad, kShaftSegs, col);
+        addSolidCube(out, sEnd.x, sEnd.y, sEnd.z, kCubeSize, col);
         axisCount[a] = static_cast<uint32_t>(out.size()) - axisStart[a];
     }
 }

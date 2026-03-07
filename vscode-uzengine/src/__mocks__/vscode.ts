@@ -27,6 +27,10 @@ export interface Disposable {
 export const Uri = {
     file: (fsPath: string) => ({ fsPath, scheme: 'file', path: fsPath }),
     parse: (uriString: string) => ({ fsPath: uriString, scheme: 'file', path: uriString }),
+    joinPath: (base: { fsPath: string }, ...parts: string[]) => {
+        const joined = [base.fsPath, ...parts].join('/');
+        return { fsPath: joined, scheme: 'file', path: joined };
+    },
 };
 
 // ---------------------------------------------------------------------------
@@ -110,6 +114,43 @@ export class EventEmitter<T> {
         this._disposed = true;
         this._listeners.clear();
     }
+}
+
+// ---------------------------------------------------------------------------
+// DataTransfer / DataTransferItem for drag-and-drop tests
+// ---------------------------------------------------------------------------
+
+export class DataTransferItem {
+    constructor(public readonly value: unknown) {}
+    asString(): Promise<string> {
+        return Promise.resolve(typeof this.value === 'string' ? this.value : JSON.stringify(this.value));
+    }
+}
+
+export class DataTransfer {
+    private readonly _items = new Map<string, DataTransferItem>();
+
+    get(mimeType: string): DataTransferItem | undefined {
+        return this._items.get(mimeType);
+    }
+
+    set(mimeType: string, item: DataTransferItem): void {
+        this._items.set(mimeType, item);
+    }
+
+    forEach(callback: (item: DataTransferItem, mimeType: string) => void): void {
+        this._items.forEach(callback);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// CancellationToken stub
+// ---------------------------------------------------------------------------
+
+export class CancellationTokenSource {
+    readonly token = { isCancellationRequested: false, onCancellationRequested: jest.fn() };
+    cancel(): void { /* no-op */ }
+    dispose(): void { /* no-op */ }
 }
 
 // ---------------------------------------------------------------------------
@@ -239,6 +280,10 @@ export const window = {
     showInformationMessage: jest.fn<() => Promise<any>>().mockResolvedValue(undefined),
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     showInputBox: jest.fn<() => Promise<any>>().mockResolvedValue(undefined),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    showQuickPick: jest.fn<() => Promise<any>>().mockResolvedValue(undefined),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    showOpenDialog: jest.fn<() => Promise<any>>().mockResolvedValue(undefined),
     createStatusBarItem: jest.fn(() => ({
         text: '',
         tooltip: '',
@@ -292,6 +337,24 @@ export const workspace = {
     onDidOpenTextDocument: jest.fn(() => ({ dispose: jest.fn() })),
     onDidChangeTextDocument: jest.fn(() => ({ dispose: jest.fn() })),
     onDidCloseTextDocument: jest.fn(() => ({ dispose: jest.fn() })),
+
+    createFileSystemWatcher: jest.fn(() => ({
+        onDidCreate: jest.fn(() => ({ dispose: jest.fn() })),
+        onDidChange: jest.fn(() => ({ dispose: jest.fn() })),
+        onDidDelete: jest.fn(() => ({ dispose: jest.fn() })),
+        dispose: jest.fn(),
+    })),
+
+    fs: {
+        copy: jest.fn(),
+        readFile: jest.fn(),
+        writeFile: jest.fn(),
+        delete: jest.fn(),
+        stat: jest.fn(),
+        readDirectory: jest.fn(),
+        createDirectory: jest.fn(),
+        rename: jest.fn(),
+    },
 
     // Test helper: set a configuration value for use in tests.
     __setConfig(section: string, key: string, value: unknown): void {

@@ -58,6 +58,10 @@ export class ViewportManager implements vscode.Disposable, ViewportPanelHost {
     /** Disposables owned by the manager (window focus subscription, etc.). */
     private readonly _disposables: vscode.Disposable[] = [];
 
+    /** Emits when a new viewport panel is created. */
+    private static readonly _onViewportCreated = new vscode.EventEmitter<ViewportPanel>();
+    static readonly onViewportCreated: vscode.Event<ViewportPanel> = ViewportManager._onViewportCreated.event;
+
     // -------------------------------------------------------------------------
     // Singleton access
     // -------------------------------------------------------------------------
@@ -184,6 +188,9 @@ export class ViewportManager implements vscode.Disposable, ViewportPanelHost {
             this._panels.set(viewportId, panel);
 
             this._log(`Viewport created: id=${viewportId} type=${config.type} ${config.width}x${config.height}`);
+
+            // Notify listeners (e.g. SelectionManager wiring in extension.ts).
+            ViewportManager._onViewportCreated.fire(panel);
 
             // Activate immediately if visible.
             if (panel.isVisible) {

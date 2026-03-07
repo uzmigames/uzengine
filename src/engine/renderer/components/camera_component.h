@@ -15,6 +15,7 @@ namespace uz {
 
 struct SceneParams;
 struct Scene;
+struct CameraSystemState;
 
 // ============================================================================
 // CameraState — output of the camera update step (RHI-agnostic)
@@ -24,6 +25,7 @@ struct CameraState {
     Mat4 view_proj;       // Combined view × projection matrix
     Vec3 eye_pos;         // World-space eye position
     Vec3 forward;         // World-space forward direction (normalized)
+    float fov_degrees;    // Current FOV in degrees (for UI display)
 };
 
 // ============================================================================
@@ -40,6 +42,9 @@ CameraState camera_update_orbit(float totalTime, float aspect);
 
 /// Scene-driven camera — finds the first active Camera node in the scene,
 /// reads its world transform and CameraData from the ComponentStore.
-CameraState camera_update_from_scene(const Scene* scene, float aspect);
+/// Applies CameraSystemState effects (FOV animation, shake).
+CameraState camera_update_from_scene(const Scene* scene, float aspect,
+                                     CameraSystemState* cameraSys = nullptr,
+                                     float dt = 0.0f);
 
 } // namespace uz

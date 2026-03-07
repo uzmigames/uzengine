@@ -17,8 +17,6 @@
 #include "shaders/basic_ps_hlsl.h"
 #include "shaders/pbr_vs_hlsl.h"
 #include "shaders/pbr_ps_hlsl.h"
-#include "shaders/outline_vs_hlsl.h"
-#include "shaders/outline_ps_hlsl.h"
 #include "shaders/sky_vs_hlsl.h"
 #include "shaders/sky_ps_hlsl.h"
 #include "shaders/shadow_depth_vs_hlsl.h"
@@ -43,6 +41,8 @@
 #include "shaders/sss_blur_ps_hlsl.h"
 #include "shaders/decal_ps_hlsl.h"
 #include "shaders/clouds_ps_hlsl.h"
+#include "shaders/pick_vs_hlsl.h"
+#include "shaders/pick_ps_hlsl.h"
 
 namespace uz {
 
@@ -90,12 +90,12 @@ void ShaderLibrary::register_builtin_shaders() {
         .ps_entry  = "PSMain",
     });
 
-    // outline — selection outline (inflated mesh, stencil test)
-    register_shader("outline", ShaderProgram{
-        .vs_source = k_outline_vs_hlsl,
-        .vs_size   = sizeof(k_outline_vs_hlsl) - 1,
-        .ps_source = k_outline_ps_hlsl,
-        .ps_size   = sizeof(k_outline_ps_hlsl) - 1,
+    // pick — GPU pick buffer (node ID as RGB)
+    register_shader("pick", ShaderProgram{
+        .vs_source = k_pick_vs_hlsl,
+        .vs_size   = sizeof(k_pick_vs_hlsl) - 1,
+        .ps_source = k_pick_ps_hlsl,
+        .ps_size   = sizeof(k_pick_ps_hlsl) - 1,
         .vs_entry  = "VSMain",
         .ps_entry  = "PSMain",
     });

@@ -53,6 +53,7 @@ jest.mock('../server-manager', () => ({
 const mockGetActiveInstance = jest.fn().mockReturnValue(undefined);
 const mockGetAllInstances = jest.fn().mockReturnValue([]);
 const mockDestroyInstance = jest.fn();
+const mockOnActiveChangedListeners: Array<(inst: unknown) => void> = [];
 let mockOnActiveChangedListener: ((inst: unknown) => void) | undefined;
 
 jest.mock('../engine-instance-manager', () => ({
@@ -62,6 +63,7 @@ jest.mock('../engine-instance-manager', () => ({
             getAllInstances: mockGetAllInstances,
             destroyInstance: mockDestroyInstance,
             onActiveChanged: jest.fn((listener: (inst: unknown) => void) => {
+                mockOnActiveChangedListeners.push(listener);
                 mockOnActiveChangedListener = listener;
                 return { dispose: jest.fn() };
             }),
@@ -120,6 +122,7 @@ beforeEach(() => {
     workspace.__clearConfig();
     ViewportManager._resetForTests();
     mockOnActiveChangedListener = undefined;
+    mockOnActiveChangedListeners.length = 0;
 });
 
 afterEach(() => {
@@ -233,6 +236,32 @@ describe('extension activate()', () => {
         // Should call IPC request for playmode.start.
     });
 
+    it('uzengine.play switches all viewport panels to play port (9003)', async () => {
+        await activateExtension();
+
+        const mockPanel = { switchPort: jest.fn() };
+        const mgr = ViewportManager.getInstance();
+        jest.spyOn(mgr, 'getAllPanels').mockReturnValue([mockPanel as any]);
+
+        await (commands.__executeRegisteredCommand('uzengine.play') as Promise<void>);
+
+        expect(mockPanel.switchPort).toHaveBeenCalledWith(9003);
+    });
+
+    it('uzengine.play switches multiple viewport panels to play port', async () => {
+        await activateExtension();
+
+        const mockPanel1 = { switchPort: jest.fn() };
+        const mockPanel2 = { switchPort: jest.fn() };
+        const mgr = ViewportManager.getInstance();
+        jest.spyOn(mgr, 'getAllPanels').mockReturnValue([mockPanel1 as any, mockPanel2 as any]);
+
+        await (commands.__executeRegisteredCommand('uzengine.play') as Promise<void>);
+
+        expect(mockPanel1.switchPort).toHaveBeenCalledWith(9003);
+        expect(mockPanel2.switchPort).toHaveBeenCalledWith(9003);
+    });
+
     it('registers uzengine.pause command', async () => {
         await activateExtension();
         await (commands.__executeRegisteredCommand('uzengine.pause') as Promise<void>);
@@ -243,6 +272,18 @@ describe('extension activate()', () => {
         await activateExtension();
         await (commands.__executeRegisteredCommand('uzengine.stop') as Promise<void>);
         // Stop does nothing when already idle — should not throw.
+    });
+
+    it('uzengine.stop switches all viewport panels back to editor port (9002)', async () => {
+        await activateExtension();
+
+        const mockPanel = { switchPort: jest.fn() };
+        const mgr = ViewportManager.getInstance();
+        jest.spyOn(mgr, 'getAllPanels').mockReturnValue([mockPanel as any]);
+
+        await (commands.__executeRegisteredCommand('uzengine.stop') as Promise<void>);
+
+        expect(mockPanel.switchPort).toHaveBeenCalledWith(9002);
     });
 
     it('registers the UzSceneEditorProvider custom editor', async () => {
@@ -267,9 +308,11 @@ describe('extension activate()', () => {
             connect: jest.Mock;
         };
 
-        // Simulate an active instance appearing.
+        // Simulate an active instance appearing — fire all onActiveChanged listeners.
         mockGetActiveInstance.mockReturnValueOnce({ wsPort: 9005, isRunning: true });
-        mockOnActiveChangedListener?.({ wsPort: 9005, isRunning: true });
+        for (const listener of mockOnActiveChangedListeners) {
+            listener({ wsPort: 9005, isRunning: true });
+        }
 
         expect(mockIpcInstance?.connect).toHaveBeenCalledWith('ws://localhost:9005');
     });

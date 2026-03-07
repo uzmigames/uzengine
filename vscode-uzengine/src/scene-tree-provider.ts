@@ -13,6 +13,8 @@
  */
 
 import * as vscode from 'vscode';
+import { DragDropCoordinator } from './editor/dragDropCoordinator';
+import { MIME_ASSET, MIME_SCENE_TREE } from './editor/dragDropTypes';
 import { IpcClient } from './ipc-client';
 
 // ---------------------------------------------------------------------------
@@ -88,13 +90,6 @@ export class NodeItem extends vscode.TreeItem {
 
         // Icon based on node type.
         this.iconPath = NodeItem.iconForType(data.type);
-
-        // Command that fires when the user clicks the item.
-        this.command = {
-            command: 'uzengine.selectNode',
-            title: 'Select Node',
-            arguments: [this],
-        };
     }
 
     /**
@@ -173,11 +168,37 @@ export class SceneTreeProvider
     /** Disposables owned by this provider. */
     private readonly _disposables: vscode.Disposable[] = [];
 
+    /** Optional DragDropCoordinator for reparenting via drag-and-drop. */
+    private _coordinator: DragDropCoordinator | null = null;
+
+    /** TreeDragAndDropController for scene tree re-parenting. */
+    readonly dragController: SceneTreeDragController;
+
     constructor(private readonly _ipc: IpcClient) {
+        this.dragController = new SceneTreeDragController(this);
         // Subscribe to push events from the engine.
         this._unsubTreeChanged = this._ipc.on('scene.treeChanged', () => {
             void this._loadTree();
         });
+    }
+
+    // -------------------------------------------------------------------------
+    // Drag-and-drop coordinator
+    // -------------------------------------------------------------------------
+
+    /** Injects the DragDropCoordinator (called from extension.ts activate). */
+    setDragDropCoordinator(coordinator: DragDropCoordinator): void {
+        this._coordinator = coordinator;
+    }
+
+    /** Returns the current coordinator (used by SceneTreeDragController). */
+    getCoordinator(): DragDropCoordinator | null {
+        return this._coordinator;
+    }
+
+    /** Returns the IPC client (used by SceneTreeDragController). */
+    getIpc(): IpcClient {
+        return this._ipc;
     }
 
     // -------------------------------------------------------------------------
@@ -261,6 +282,14 @@ export class SceneTreeProvider
         if (found) {
             await this.selectNode(new NodeItem(found));
         }
+    }
+
+    /**
+     * Public lookup: returns a NodeItem for the given string ID, or undefined.
+     */
+    findNodeById(id: string): NodeItem | undefined {
+        const data = this._findNodeById(this._rootNodes, id);
+        return data ? new NodeItem(data) : undefined;
     }
 
     /**
@@ -392,6 +421,22 @@ export class SceneTreeProvider
     }
 
     /**
+     * Returns a flat depth-first list of all node IDs in the cached tree.
+     * Used by SelectionManager for Shift+click range selection.
+     */
+    getFlatTree(): { id: number }[] {
+        const result: { id: number }[] = [];
+        const walk = (nodes: SceneNodeData[]): void => {
+            for (const n of nodes) {
+                result.push({ id: parseInt(n.id, 10) });
+                if (n.children) { walk(n.children); }
+            }
+        };
+        walk(this._rootNodes);
+        return result;
+    }
+
+    /**
      * Clears the tree (e.g., when the .uzscene file is closed).
      */
     clear(): void {
@@ -442,6 +487,100 @@ export class SceneTreeProvider
                 this._rootNodes = [];
                 this._loaded = true;
                 this._onDidChangeTreeData.fire();
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// SceneTreeDragController
+// ---------------------------------------------------------------------------
+
+/**
+ * Implements TreeDragAndDropController for scene tree re-parenting.
+ *
+ * Drag: serialises the dragged NodeItem's nodeId into DataTransfer.
+ * Drop: calls `scene.reparentNode` IPC via DragDropCoordinator.
+ *
+ * Accepts both scene tree nodes (re-parent) and asset payloads (assign asset).
+ */
+export class SceneTreeDragController
+    implements vscode.TreeDragAndDropController<NodeItem> {
+
+    readonly dropMimeTypes: readonly string[] = [MIME_SCENE_TREE, MIME_ASSET];
+    readonly dragMimeTypes: readonly string[] = [MIME_SCENE_TREE];
+
+    constructor(private readonly _provider: SceneTreeProvider) {}
+
+    handleDrag(
+        source: readonly NodeItem[],
+        dataTransfer: vscode.DataTransfer,
+        _token: vscode.CancellationToken,
+    ): void {
+        if (source.length === 0) { return; }
+        const ids = source.map(item => item.nodeId);
+        dataTransfer.set(
+            MIME_SCENE_TREE,
+            new vscode.DataTransferItem(JSON.stringify(ids)),
+        );
+    }
+
+    async handleDrop(
+        target: NodeItem | undefined,
+        dataTransfer: vscode.DataTransfer,
+        _token: vscode.CancellationToken,
+    ): Promise<void> {
+        // Scene tree re-parenting.
+        const sceneData = dataTransfer.get(MIME_SCENE_TREE);
+        if (sceneData) {
+            const raw = typeof sceneData.value === 'string'
+                ? sceneData.value
+                : await sceneData.asString();
+            let nodeIds: string[];
+            try {
+                nodeIds = JSON.parse(raw) as string[];
+            } catch {
+                return;
+            }
+
+            const newParentId = target?.nodeId ?? '0';
+            const coordinator = this._provider.getCoordinator();
+
+            for (const nodeId of nodeIds) {
+                if (nodeId === newParentId) { continue; }
+                if (coordinator) {
+                    const result = await coordinator.reparentNode(nodeId, newParentId);
+                    if (!result.ok) {
+                        vscode.window.showErrorMessage(
+                            `UzEngine: Failed to re-parent node — ${result.error ?? 'unknown error'}`,
+                        );
+                    }
+                }
+            }
+
+            this._provider.refresh();
+            return;
+        }
+
+        // Asset assignment (future: Asset Browser → Scene Tree).
+        const assetData = dataTransfer.get(MIME_ASSET);
+        if (assetData && target) {
+            const raw = typeof assetData.value === 'string'
+                ? assetData.value
+                : await assetData.asString();
+            try {
+                const payload = JSON.parse(raw) as { resPath: string; type: string };
+                const ipc = this._provider.getIpc();
+                await ipc.request('scene.assignAsset', {
+                    nodeId: parseInt(target.nodeId, 10),
+                    assetPath: payload.resPath,
+                    assetType: payload.type,
+                });
+                this._provider.refresh();
+            } catch (err) {
+                vscode.window.showErrorMessage(
+                    `UzEngine: Failed to assign asset — ${err instanceof Error ? err.message : String(err)}`,
+                );
             }
         }
     }

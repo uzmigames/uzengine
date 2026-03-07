@@ -9,6 +9,7 @@
 // ---------------------------------------------------------------------------
 
 #include "renderer.h"
+#include "pick_buffer.h"
 
 // Only need the backend vtable symbol for rhi_set_backend() in init().
 extern "C" {
@@ -92,6 +93,13 @@ bool Renderer::init(void* window_handle, uint32_t width, uint32_t height) {
         DIAG("FATAL: createReadbackBuffers() failed");
         return false;
     }
+
+#ifdef UZ_EDITOR
+    DIAG("createPickBufferResources()...");
+    if (!createPickBufferResources()) {
+        DIAG("WARNING: createPickBufferResources() failed — GPU picking disabled");
+    }
+#endif
 
     // EditorComponent — now fully RHI, no bridge needed.
     DIAG("editor_.init()...");
@@ -258,6 +266,13 @@ bool Renderer::resize(int width, int height) {
     createReadbackBuffers();
     destroyPostProcessTargets();
     createPostProcessTargets();
+
+#ifdef UZ_EDITOR
+    if (pickRT_ != RHI_NULL)       { rhi()->texture_destroy(pickRT_);     pickRT_ = RHI_NULL; }
+    if (pickDepth_ != RHI_NULL)    { rhi()->texture_destroy(pickDepth_);  pickDepth_ = RHI_NULL; }
+    if (pickReadback_ != RHI_NULL) { rhi()->buffer_destroy(pickReadback_); pickReadback_ = RHI_NULL; }
+    createPickBufferResources();
+#endif
 
     return true;
 }
@@ -1632,7 +1647,95 @@ void Renderer::render(bool readback) {
             }
         });
 
-    // --- Pass 2: Readback --------------------------------------------------
+    // --- Pass 2: Pick Buffer Draw (UZ_EDITOR only) -------------------------
+    // Render all scene proxies into the 1/4-res pick RT with node IDs as RGB.
+#ifdef UZ_EDITOR
+    if (false && pickRT_ != RHI_NULL && pickDepth_ != RHI_NULL && rhiPickPSO_ != RHI_NULL && !proxies_.empty()) {
+        auto rgPickRT    = renderGraph_.import_texture("pickRT",    pickRT_);
+        auto rgPickDepth = renderGraph_.import_texture("pickDepth", pickDepth_);
+
+        // Pass 2a: Draw node IDs into pick RT
+        renderGraph_.add_pass("pick_draw", RgPassType::Graphics,
+            [&](RgPassBuilder& builder) {
+                builder.write(rgPickRT);
+                builder.write(rgPickDepth);
+                builder.force_run();
+            },
+            [this](RhiCmdList cmd) {
+                // Transition pick RT & depth to writable states
+                rhi()->cmd_barrier_texture(cmd, pickRT_,
+                                           RHI_STATE_COMMON, RHI_STATE_RENDER_TARGET);
+                rhi()->cmd_barrier_texture(cmd, pickDepth_,
+                                           RHI_STATE_COMMON, RHI_STATE_DEPTH_WRITE);
+
+                rhi()->cmd_set_pipeline(cmd, rhiPickPSO_);
+                rhi()->cmd_set_viewport(cmd, 0.0f, 0.0f,
+                                       static_cast<float>(pickW_),
+                                       static_cast<float>(pickH_),
+                                       0.0f, 1.0f);
+                rhi()->cmd_set_scissor(cmd, 0, 0, pickW_, pickH_);
+
+                rhi()->cmd_clear_render_target(cmd, pickRT_, 0.0f, 0.0f, 0.0f, 0.0f);
+                rhi()->cmd_clear_depth_stencil(cmd, pickDepth_, 1.0f, 0);
+                rhi()->cmd_set_render_targets(cmd, &pickRT_, 1, pickDepth_);
+                rhi()->cmd_set_topology(cmd, RHI_TOPOLOGY_TRIANGLE_LIST);
+
+                // viewProj in slot b3
+                rhi()->cmd_set_root_constants(cmd, 3, &frameConstants_.view_proj, 16, 0);
+
+                for (auto* proxy : proxies_) {
+                    auto* mp = static_cast<MeshProxy*>(proxy);
+                    if (!mp->mesh || mp->mesh->vertex_buffer == RHI_NULL) continue;
+
+                    // b0: world matrix
+                    rhi()->cmd_set_root_constants(cmd, 0, &mp->transform, 16, 0);
+
+                    // b1: nodeId in first DWORD, padded to 8 DWORDs (MaterialCB size)
+                    uint32_t matCB[8] = {};
+                    matCB[0] = mp->node_id;
+                    rhi()->cmd_set_root_constants(cmd, 1, matCB, 8, 0);
+
+                    rhi()->cmd_set_vertex_buffer(cmd, 0, mp->mesh->vertex_buffer, 0, mp->mesh->vertex_stride);
+                    rhi()->cmd_set_index_buffer(cmd, mp->mesh->index_buffer, 0, true);
+
+                    for (const auto& sub : mp->mesh->submeshes) {
+                        rhi()->cmd_draw_indexed(cmd, sub.index_count, 1, sub.index_offset, 0, 0);
+                    }
+                }
+
+                // Transition pick RT for copy, depth back to common
+                rhi()->cmd_barrier_texture(cmd, pickRT_,
+                                           RHI_STATE_RENDER_TARGET, RHI_STATE_COPY_SRC);
+                rhi()->cmd_barrier_texture(cmd, pickDepth_,
+                                           RHI_STATE_DEPTH_WRITE, RHI_STATE_COMMON);
+            });
+
+        // Pass 2b: Copy pick RT to CPU readback buffer (separate Copy pass)
+        renderGraph_.add_pass("pick_readback", RgPassType::Copy,
+            [&](RgPassBuilder& builder) {
+                builder.read(rgPickRT);
+                builder.force_run();
+            },
+            [this](RhiCmdList cmd) {
+                const uint32_t alignedPitch = (pickW_ * 4 + 255u) & ~255u;
+                RhiTextureFootprint footprint{};
+                footprint.width     = pickW_;
+                footprint.height    = pickH_;
+                footprint.depth     = 1;
+                footprint.row_pitch = alignedPitch;
+                footprint.offset    = 0;
+                footprint.format    = RHI_FORMAT_RGBA8_UNORM;
+
+                rhi()->cmd_copy_texture_to_buffer(cmd, pickRT_,
+                                                  pickReadback_, &footprint);
+
+                rhi()->cmd_barrier_texture(cmd, pickRT_,
+                                           RHI_STATE_COPY_SRC, RHI_STATE_COMMON);
+            });
+    }
+#endif
+
+    // --- Pass 3: Readback --------------------------------------------------
     // Copies the rendered backbuffer to a CPU-readable staging buffer.
     if (readback) {
         renderGraph_.add_pass("readback", RgPassType::Copy,
@@ -1766,6 +1869,12 @@ void Renderer::shutdown() {
         postProcessCBV_ = RHI_NULL;
     }
 
+#ifdef UZ_EDITOR
+    if (pickRT_ != RHI_NULL)       { rhi()->texture_destroy(pickRT_);      pickRT_ = RHI_NULL; }
+    if (pickDepth_ != RHI_NULL)    { rhi()->texture_destroy(pickDepth_);   pickDepth_ = RHI_NULL; }
+    if (pickReadback_ != RHI_NULL) { rhi()->buffer_destroy(pickReadback_); pickReadback_ = RHI_NULL; }
+#endif
+
     if (rhiReadbackFence_ != RHI_NULL) {
         rhi()->fence_destroy(rhiReadbackFence_);
         rhiReadbackFence_ = RHI_NULL;
@@ -1857,7 +1966,7 @@ bool Renderer::createPipelineStates() {
       rhiPbrPipeline_ = shaderLib_.get_or_create_pipeline("pbr", pbrDesc); }
     DIAG_FMT("pbr PSO => handle=%llu", (unsigned long long)rhiPbrPipeline_);
 
-    // ---- Stencil Mark PSO (writes 1 to stencil, no color) ----
+    // ---- Pick Buffer PSO (node ID as RGB, depth test, no stencil) ----
     {
         RhiPipelineDesc stDesc = pbrDesc;  // Same vertex layout as PBR
         stDesc.depth_stencil.stencil_enable    = true;
@@ -1895,6 +2004,20 @@ bool Renderer::createPipelineStates() {
         { UZ_PROFILE_ZONE("pso/outline");
           rhiOutlinePSO_ = shaderLib_.get_or_create_pipeline("outline", olDesc); }
         DIAG_FMT("outline PSO => handle=%llu", (unsigned long long)rhiOutlinePSO_);
+    }
+
+    // ---- Pick Buffer PSO (node ID as RGB, depth test, no stencil) ----
+    {
+        RhiPipelineDesc pickDesc = pbrDesc;
+        pickDesc.rasterizer.cull_mode = RHI_CULL_BACK;
+        pickDesc.depth_stencil.depth_enable = true;
+        pickDesc.depth_stencil.depth_write  = true;
+        pickDesc.depth_stencil.depth_func   = RHI_COMPARE_LESS;
+        pickDesc.depth_stencil.stencil_enable = false;
+        pickDesc.blend.render_targets[0].write_mask = 0xF;
+        pickDesc.debug_name = "Pick_PSO";
+        rhiPickPSO_ = shaderLib_.get_or_create_pipeline("pick", pickDesc);
+        DIAG_FMT("pick PSO => handle=%llu", (unsigned long long)rhiPickPSO_);
     }
 
     // ---- Shadow depth PSO — POSITION-only VS, no PS, D32 depth ----
@@ -2347,6 +2470,73 @@ bool Renderer::createPostProcessTargets() {
 }
 
 // ===========================================================================
+// Private -- pick buffer resources (UZ_EDITOR only)
+// ===========================================================================
+
+bool Renderer::createPickBufferResources() {
+#ifdef UZ_EDITOR
+    pickW_ = std::max(1u, width_  / 4);
+    pickH_ = std::max(1u, height_ / 4);
+
+    // 1/4-resolution RGBA8 render target for node-ID pick
+    RhiTextureDesc rtDesc{};
+    rtDesc.width      = pickW_;
+    rtDesc.height     = pickH_;
+    rtDesc.depth      = 1;
+    rtDesc.mip_levels = 1;
+    rtDesc.array_size = 1;
+    rtDesc.format     = RHI_FORMAT_RGBA8_UNORM;
+    rtDesc.dimension  = RHI_TEXTURE_DIM_2D;
+    rtDesc.usage      = RHI_TEXTURE_USAGE_RENDER_TARGET | RHI_TEXTURE_USAGE_COPY_SRC;
+    rtDesc.debug_name = "PickRT";
+
+    pickRT_ = rhi()->texture_create(&rtDesc);
+    if (pickRT_ == RHI_NULL) {
+        DIAG("createPickBufferResources: pickRT_ creation failed");
+        return false;
+    }
+
+    // Matching depth buffer (D24S8) at 1/4 resolution
+    RhiTextureDesc depthDesc{};
+    depthDesc.width      = pickW_;
+    depthDesc.height     = pickH_;
+    depthDesc.depth      = 1;
+    depthDesc.mip_levels = 1;
+    depthDesc.array_size = 1;
+    depthDesc.format     = RHI_FORMAT_D24_UNORM_S8_UINT;
+    depthDesc.dimension  = RHI_TEXTURE_DIM_2D;
+    depthDesc.usage      = RHI_TEXTURE_USAGE_DEPTH_STENCIL;
+    depthDesc.debug_name = "PickDepth";
+
+    pickDepth_ = rhi()->texture_create(&depthDesc);
+    if (pickDepth_ == RHI_NULL) {
+        DIAG("createPickBufferResources: pickDepth_ creation failed");
+        return false;
+    }
+
+    // Readback buffer sized for aligned pitch
+    const uint32_t alignedPitch = (pickW_ * 4 + 255u) & ~255u;
+    const uint64_t bufSize = static_cast<uint64_t>(alignedPitch) * pickH_;
+
+    RhiBufferDesc bufDesc{};
+    bufDesc.size       = bufSize;
+    bufDesc.usage      = RHI_BUFFER_USAGE_READBACK;
+    bufDesc.debug_name = "PickReadback";
+
+    pickReadback_ = rhi()->buffer_create(&bufDesc);
+    if (pickReadback_ == RHI_NULL) {
+        DIAG("createPickBufferResources: pickReadback_ creation failed");
+        return false;
+    }
+
+    DIAG_FMT("Pick buffer: %ux%u (readback %llu bytes)", pickW_, pickH_, (unsigned long long)bufSize);
+    return true;
+#else
+    return false;
+#endif
+}
+
+// ===========================================================================
 // Private -- GPU -> CPU readback
 // ===========================================================================
 
@@ -2389,6 +2579,31 @@ void Renderer::performReadback() {
     }
 
     rhi()->buffer_unmap(rhiReadbackBufs_[frameIndex_]);
+
+#ifdef UZ_EDITOR
+    // Pick buffer readback — copy GPU staging to CPU pickData_
+    if (pickReadback_ != RHI_NULL && pickW_ > 0 && pickH_ > 0) {
+        void* pickMap = rhi()->buffer_map(pickReadback_);
+        if (pickMap) {
+            const uint32_t pickRowBytes   = pickW_ * 4;
+            const uint32_t pickAlignPitch = (pickRowBytes + 255u) & ~255u;
+
+            std::lock_guard<std::mutex> lk(pickMutex_);
+            pickData_.resize(static_cast<size_t>(pickRowBytes) * pickH_);
+
+            const auto* psrc = static_cast<const uint8_t*>(pickMap);
+            uint8_t*    pdst = pickData_.data();
+
+            for (uint32_t row = 0; row < pickH_; ++row) {
+                std::memcpy(pdst, psrc, pickRowBytes);
+                psrc += pickAlignPitch;
+                pdst += pickRowBytes;
+            }
+
+            rhi()->buffer_unmap(pickReadback_);
+        }
+    }
+#endif
 }
 
 // ===========================================================================
@@ -2548,47 +2763,12 @@ void Renderer::setScene(Scene* scene) {
 
 uint32_t Renderer::pickNodeAtScreen(int x, int y) const {
     std::lock_guard<std::mutex> lk(pickMutex_);
-    if (pickData_.empty() || pickW_ == 0 || pickH_ == 0) return 0;
-
-    const int px = std::clamp(x / 4, 0, static_cast<int>(pickW_) - 1);
-    const int py = std::clamp(y / 4, 0, static_cast<int>(pickH_) - 1);
-
-    const size_t idx = static_cast<size_t>(py) * pickW_ + px;
-    if (idx * 4 + 2 >= pickData_.size()) return 0;
-
-    const uint32_t r = pickData_[idx * 4 + 0];
-    const uint32_t g = pickData_[idx * 4 + 1];
-    const uint32_t b = pickData_[idx * 4 + 2];
-    return r | (g << 8) | (b << 16);
+    return pick_node_at_screen(pickData_.data(), pickData_.size(), pickW_, pickH_, x, y);
 }
 
 std::vector<uint32_t> Renderer::boxPickNodes(int x, int y, int w, int h) const {
     std::lock_guard<std::mutex> lk(pickMutex_);
-    if (pickData_.empty() || pickW_ == 0 || pickH_ == 0) return {};
-
-    const int x0 = std::clamp(x       / 4, 0, static_cast<int>(pickW_));
-    const int y0 = std::clamp(y       / 4, 0, static_cast<int>(pickH_));
-    const int x1 = std::clamp((x + w) / 4, 0, static_cast<int>(pickW_));
-    const int y1 = std::clamp((y + h) / 4, 0, static_cast<int>(pickH_));
-
-    std::vector<uint32_t> result;
-    for (int row = y0; row < y1; ++row) {
-        for (int col = x0; col < x1; ++col) {
-            const size_t idx = static_cast<size_t>(row) * pickW_ + col;
-            if (idx * 4 + 2 >= pickData_.size()) continue;
-
-            const uint32_t r  = pickData_[idx * 4 + 0];
-            const uint32_t g  = pickData_[idx * 4 + 1];
-            const uint32_t b  = pickData_[idx * 4 + 2];
-            const uint32_t id = r | (g << 8) | (b << 16);
-            if (id == 0) continue;
-
-            bool found = false;
-            for (uint32_t ex : result) { if (ex == id) { found = true; break; } }
-            if (!found) result.push_back(id);
-        }
-    }
-    return result;
+    return box_pick_nodes(pickData_.data(), pickData_.size(), pickW_, pickH_, x, y, w, h);
 }
 
 #endif // UZ_EDITOR

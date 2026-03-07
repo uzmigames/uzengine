@@ -54,18 +54,18 @@
 
 ## 6. Viewport Enhancements
 
-- [ ] D4. 6.1 Add toolbar: [Editor] [Play Preview] mode switch — deferred Phase 2
-- [ ] D4. 6.2 Show node name overlay when hovering in editor mode (uses `editor.pick` IPC) — deferred Phase 2
-- [ ] D4. 6.3 Gizmo buttons in viewport overlay: [Move] [Rotate] [Scale] [World/Local] — deferred Phase 2
-- [ ] D4. 6.4 Click in viewport → pick node → sync selection to Scene Tree + Inspector — deferred Phase 2
-- [ ] D4. 6.5 Camera navigation input sent to engine via `editor.cameraMove` IPC — deferred Phase 2
+- [x] D4. 6.1 Add toolbar: [Editor] [Play Preview] mode switch — mode badge in viewport toolbar
+- [x] D4. 6.2 Show node name overlay when hovering in editor mode (uses `editor.hoverPick` IPC)
+- [x] D4. 6.3 Gizmo buttons in viewport overlay: [Move] [Rotate] [Scale] [World/Local] — implemented in phase1-editor-gizmos
+- [x] D4. 6.4 Click in viewport → pick node → sync selection to Scene Tree + Inspector — implemented in phase1-editor-gizmos
+- [x] D4. 6.5 Camera navigation input sent to engine via `camera_input` WS message — implemented in phase1-editor-gizmos
 
 ## 7. Integration & Testing
 
 - [x] 7.1 Scene tree populates on extension activation when engine is running
 - [x] 7.2 Selecting node in Scene Tree updates Inspector within 100ms
 - [x] 7.3 Editing property in Inspector updates engine viewport within 100ms
-- [ ] D5. 7.4 Clicking viewport picks node and syncs to Scene Tree + Inspector — deferred Phase 2
+- [x] D5. 7.4 Clicking viewport picks node and syncs to Scene Tree + Inspector — implemented in phase1-editor-gizmos
 - [ ] D2. 7.5 Asset browser lists all `.uzscene`, `.uzmat`, `.hlsl` files in project — deferred Phase 2
 - [ ] D3. 7.6 ▶ Play spawns play process, viewport shows game stream — deferred phase1-play-mode
 - [ ] D3. 7.7 ■ Stop kills process, viewport returns to editor stream — deferred phase1-play-mode

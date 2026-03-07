@@ -66,83 +66,85 @@ void handleWsTextMessage(const std::string& text,
         return;
     }
 
-    // -- Node picking via screen-space distance -------------------------
+    // -- Node picking: GPU pick buffer (primary) + origin fallback ------
     if (type == "editor.pickNode") {
         const float sx = scaleScreenX(j.value("screen_x", 0.0f), g_renderer);
         const float sy = scaleScreenY(j.value("screen_y", 0.0f), g_renderer);
         const int vpW  = g_renderer ? g_renderer->getWidth()  : 0;
         const int vpH  = g_renderer ? g_renderer->getHeight() : 0;
 
-        // Get the current view-projection matrix from the renderer.
-        auto nodes = g_renderer ? g_renderer->getEditorNodes()
-            : std::vector<uz::Renderer::EditorNode>{};
-
-        // Project each node to screen space, find nearest to click.
         int bestNodeId = -1;
-        float bestDist = 50.0f * 50.0f;  // max pick radius = 50 px
-
-        // We need the VP matrix — get it from scene params (camera).
-        // Build the same VP matrix the renderer uses.
-        const float yaw   = g_scene.camYaw;
-        const float pitch = g_scene.camPitch;
-        const uz::Mat4 vp = buildCameraVP(yaw, pitch,
-            g_scene.camPosX, g_scene.camPosY, g_scene.camPosZ,
-            vpW, vpH);
-
-        for (const auto& node : nodes) {
-            float screenX, screenY;
-            if (!projectWorldToScreen(vp, node.position.x, node.position.y,
-                                     node.position.z, vpW, vpH, screenX, screenY))
-                continue;
-
-            float dx = screenX - sx;
-            float dy = screenY - sy;
-            float distSq = dx * dx + dy * dy;
-
-            if (distSq < bestDist) {
-                bestDist   = distSq;
-                bestNodeId = static_cast<int>(node.nodeId);
-            }
-        }
-
-        // Also pick StaticMesh scene nodes (not in EditorNodes list).
-        if (g_sceneData) {
-            for (uint32_t i = 1; i < uz::kSceneMaxNodes; ++i) {
-                const auto& sn = g_sceneData->nodes[i];
-                if (!sn.alive) continue;
-                if (!uz::component_has<uz::StaticMeshData>(&g_sceneData->components, i)) continue;
-
-                // World position from world_transform column 3 (translation)
-                float wx = sn.world_transform.m[3][0];
-                float wy = sn.world_transform.m[3][1];
-                float wz = sn.world_transform.m[3][2];
-
-                float screenX, screenY;
-                if (!projectWorldToScreen(vp, wx, wy, wz, vpW, vpH, screenX, screenY))
-                    continue;
-
-                float dx = screenX - sx;
-                float dy = screenY - sy;
-                float distSq = dx * dx + dy * dy;
-
-                if (distSq < bestDist) {
-                    bestDist   = distSq;
-                    bestNodeId = static_cast<int>(sn.id);
-                }
-            }
-        }
 
         // Prefer GPU pick buffer (pixel-accurate) when available.
 #ifdef UZ_EDITOR
         if (g_renderer) {
-            uint32_t gpuId = g_renderer->pickNodeAtScreen(static_cast<int>(sx), static_cast<int>(sy));
+            uint32_t gpuId = g_renderer->pickNodeAtScreen(
+                static_cast<int>(sx), static_cast<int>(sy));
             if (gpuId != 0) {
                 bestNodeId = static_cast<int>(gpuId);
             }
         }
 #endif
 
-        // Send response back via WS text message.
+        // Layer 2: Origin-distance fallback (non-mesh nodes: lights, cameras, etc.)
+        if (bestNodeId < 0) {
+            auto nodes = g_renderer ? g_renderer->getEditorNodes()
+                : std::vector<uz::Renderer::EditorNode>{};
+
+            const float yaw   = g_scene.camYaw;
+            const float pitch = g_scene.camPitch;
+            const uz::Mat4 vp = buildCameraVP(yaw, pitch,
+                g_scene.camPosX, g_scene.camPosY, g_scene.camPosZ,
+                vpW, vpH);
+
+            float bestDistSq = 50.0f * 50.0f;  // max pick radius = 50 px
+
+            for (const auto& node : nodes) {
+                float screenX, screenY;
+                if (!projectWorldToScreen(vp, node.position.x, node.position.y,
+                                         node.position.z, vpW, vpH, screenX, screenY))
+                    continue;
+
+                float dx = screenX - sx;
+                float dy = screenY - sy;
+                float distSq = dx * dx + dy * dy;
+
+                if (distSq < bestDistSq) {
+                    bestDistSq = distSq;
+                    bestNodeId = static_cast<int>(node.nodeId);
+                }
+            }
+
+            // Also check StaticMesh scene nodes (origin fallback for meshes
+            // that may not have rendered into the pick buffer yet).
+            if (g_sceneData) {
+                for (uint32_t i = 1; i < uz::kSceneMaxNodes; ++i) {
+                    const auto& sn = g_sceneData->nodes[i];
+                    if (!sn.alive) continue;
+                    if (strcmp(sn.type_name, "StaticMesh") != 0) continue;
+
+                    float wx = sn.world_transform.m[3][0];
+                    float wy = sn.world_transform.m[3][1];
+                    float wz = sn.world_transform.m[3][2];
+
+                    float screenX, screenY;
+                    if (!projectWorldToScreen(vp, wx, wy, wz, vpW, vpH, screenX, screenY))
+                        continue;
+
+                    float dx = screenX - sx;
+                    float dy = screenY - sy;
+                    float distSq = dx * dx + dy * dy;
+
+                    if (distSq < bestDistSq) {
+                        bestDistSq = distSq;
+                        bestNodeId = static_cast<int>(sn.id);
+                    }
+                }
+            }
+
+        }
+
+        // Send response
         nlohmann::json resp;
         resp["type"] = "pickResult";
         if (bestNodeId >= 0) {
@@ -150,41 +152,62 @@ void handleWsTextMessage(const std::string& text,
         } else {
             resp["nodeId"] = nullptr;
         }
-        resp["debug_nodeCount"] = (int)nodes.size();
-        resp["debug_vpSize"] = std::to_string(vpW) + "x" + std::to_string(vpH);
-        resp["debug_click"] = std::to_string((int)sx) + "," + std::to_string((int)sy);
-        resp["debug_bestDist"] = bestDist < 50.0f * 50.0f ? std::sqrt(bestDist) : -1.0f;
-
-        // Include projected positions of all nodes for debugging
-        nlohmann::json projNodes = nlohmann::json::array();
-        for (const auto& node : nodes) {
-            float screenX, screenY;
-            if (!projectWorldToScreen(vp, node.position.x, node.position.y,
-                                     node.position.z, vpW, vpH, screenX, screenY))
-                continue;
-            projNodes.push_back({
-                {"id", (int)node.nodeId},
-                {"sx", (int)screenX}, {"sy", (int)screenY},
-                {"worldPos", {node.position.x, node.position.y, node.position.z}}
-            });
-        }
-        resp["debug_projNodes"] = projNodes;
 
         wsServer.broadcastText(resp.dump());
 
         char dbg[256];
         snprintf(dbg, sizeof(dbg),
-                 "[UzEngine] pickNode at (%.0f,%.0f) vp=%dx%d nodes=%d -> id=%d\n",
-                 sx, sy, vpW, vpH, (int)nodes.size(), bestNodeId);
+                 "[UzEngine] pickNode at (%.0f,%.0f) vp=%dx%d -> id=%d\n",
+                 sx, sy, vpW, vpH, bestNodeId);
         OutputDebugStringA(dbg);
 
-        // Auto-select the picked node
+        // Auto-select the picked node (or deselect on empty space)
         if (bestNodeId >= 0) {
             g_scene.selectedNodeId.store(static_cast<uint32_t>(bestNodeId),
                                           std::memory_order_relaxed);
         } else {
             g_scene.selectedNodeId.store(0, std::memory_order_relaxed);
         }
+        return;
+    }
+
+    // -- Hover pick — lightweight pick that returns node name without changing selection
+    if (type == "editor.hoverPick") {
+        const float sx = scaleScreenX(j.value("screen_x", 0.0f), g_renderer);
+        const float sy = scaleScreenY(j.value("screen_y", 0.0f), g_renderer);
+
+        uint32_t hitId = 0;
+#ifdef UZ_EDITOR
+        if (g_renderer) {
+            hitId = g_renderer->pickNodeAtScreen(
+                static_cast<int>(sx), static_cast<int>(sy));
+        }
+#endif
+
+        nlohmann::json resp;
+        resp["type"] = "hoverPickResult";
+        if (hitId != 0 && g_sceneData) {
+            // Look up node name from scene data.
+            bool found = false;
+            for (uint32_t i = 1; i < uz::kSceneMaxNodes; ++i) {
+                const auto& sn = g_sceneData->nodes[i];
+                if (!sn.alive) continue;
+                if (sn.id == hitId) {
+                    resp["nodeId"]   = hitId;
+                    resp["nodeName"] = std::string(sn.name);
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                resp["nodeId"]   = nullptr;
+                resp["nodeName"] = nullptr;
+            }
+        } else {
+            resp["nodeId"]   = nullptr;
+            resp["nodeName"] = nullptr;
+        }
+        wsServer.broadcastText(resp.dump());
         return;
     }
 
@@ -802,31 +825,78 @@ void handleWsTextMessage(const std::string& text,
         const float camY  = g_scene.camPosY;
         const float camZ  = g_scene.camPosZ;
 
-        // Build separate view and projection matrices.
-        uz::Vec3 camPos = {camX, camY, camZ, 0.0f};
-        uz::Vec3 forward = {
-            cosf(g_scene.camPitch) * sinf(g_scene.camYaw),
-            sinf(g_scene.camPitch),
-            cosf(g_scene.camPitch) * cosf(g_scene.camYaw),
-            0.0f
-        };
-        uz::Vec3 target = camPos + forward;
-        uz::Vec3 up = {0.0f, 1.0f, 0.0f, 0.0f};
-        float aspect = (vpW > 0 && vpH > 0) ? (float)vpW / (float)vpH : 1.0f;
-        uz::Mat4 viewMat = buildLookAtLH(camPos, target, up);
-        uz::Mat4 projMat = buildPerspLH(uz::kHalfPi * 0.5f, aspect, 0.1f, 500.0f);
+        // Build view and projection using the same helper as pickNode.
+        const uz::Mat4 vpMat = buildCameraVP(
+            g_scene.camYaw, g_scene.camPitch,
+            camX, camY, camZ, vpW, vpH);
 
-        auto mat4ToArr = [](const uz::Mat4& m) {
-            std::vector<float> arr(16);
-            std::memcpy(arr.data(), &m, 16 * sizeof(float));
-            return arr;
-        };
+        // Send the combined VP as a flat 16-float array (row-major).
+        std::vector<float> vpArr(16);
+        for (int r = 0; r < 4; ++r)
+            for (int c = 0; c < 4; ++c)
+                vpArr[r * 4 + c] = vpMat.m[r][c];
 
         nlohmann::json resp;
         resp["type"]     = "cameraMatrices";
-        resp["view"]     = mat4ToArr(viewMat);
-        resp["proj"]     = mat4ToArr(projMat);
+        resp["view"]     = vpArr;  // combined VP for now
+        resp["proj"]     = vpArr;  // combined VP for now
         resp["position"] = {camX, camY, camZ};
+        wsServer.broadcastText(resp.dump());
+        return;
+    }
+
+    // -- Task 4.1: editor.setSelection — store multi-select node IDs --------
+    if (type == "editor.setSelection") {
+        auto nodeIdsJson = j.value("nodeIds", nlohmann::json::array());
+        std::vector<uint32_t> ids;
+        ids.reserve(nodeIdsJson.size());
+        for (const auto& v : nodeIdsJson) {
+            if (v.is_number_unsigned() || v.is_number_integer()) {
+                uint32_t id = v.get<uint32_t>();
+                if (id != 0) ids.push_back(id);
+            }
+        }
+
+        // Store selected node IDs and keep a local copy for centroid computation.
+        std::vector<uint32_t> localIds = ids;
+        {
+            std::lock_guard<std::mutex> lk(g_scene.selectedNodesMutex);
+            g_scene.selectedNodeIds = std::move(ids);
+        }
+
+        // Update single-select selectedNodeId for backward compat (gizmo pass).
+        if (localIds.size() == 1) {
+            g_scene.selectedNodeId.store(localIds[0], std::memory_order_relaxed);
+            g_scene.useGizmoPivot.store(false, std::memory_order_relaxed);
+        } else if (localIds.size() > 1 && g_sceneData) {
+            // Compute centroid of all selected nodes for gizmo pivot.
+            g_scene.selectedNodeId.store(localIds[0], std::memory_order_relaxed);
+            float cx = 0.0f, cy = 0.0f, cz = 0.0f;
+            int count = 0;
+            for (uint32_t nid : localIds) {
+                const uz::SceneNode* node = uz::scene_get_node(g_sceneData, nid);
+                if (node) {
+                    cx += node->local_transform.position.x;
+                    cy += node->local_transform.position.y;
+                    cz += node->local_transform.position.z;
+                    ++count;
+                }
+            }
+            if (count > 0) {
+                std::lock_guard<std::mutex> lk(g_scene.gizmoPivotMutex);
+                g_scene.gizmoPivotX = cx / static_cast<float>(count);
+                g_scene.gizmoPivotY = cy / static_cast<float>(count);
+                g_scene.gizmoPivotZ = cz / static_cast<float>(count);
+                g_scene.useGizmoPivot.store(true, std::memory_order_relaxed);
+            }
+        } else {
+            g_scene.selectedNodeId.store(0, std::memory_order_relaxed);
+            g_scene.useGizmoPivot.store(false, std::memory_order_relaxed);
+        }
+
+        nlohmann::json resp;
+        resp["type"] = "selectionChanged";
+        resp["count"] = static_cast<int>(localIds.size());
         wsServer.broadcastText(resp.dump());
         return;
     }

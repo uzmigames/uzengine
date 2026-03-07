@@ -7,10 +7,13 @@
 #include "engine/scene/scene_handlers.h"
 #include "engine/scene/scene_loader.h"
 #include "engine/scene/scene_saver.h"
+#include "engine/scene/component_data.h"
+#include "engine/scene/component_store.h"
 #include "engine/renderer/scene/scene_params.h"
 
 #include <nlohmann/json.hpp>
 
+#include <cmath>
 #include <cstdint>
 #include "common/safe_string.h"
 #include <string>
@@ -394,6 +397,168 @@ void scene_register_handlers(IpcRegistry& registry, Scene* scene, SceneParams* p
         }
 
         return {{"ok", true}, {"id", id}, {"name", node->name}};
+    });
+
+    // ----------------------------------------------------------------
+    // scene.reparentNode
+    // ----------------------------------------------------------------
+    registry.add("scene.reparentNode", [scene](const nlohmann::json& args) -> nlohmann::json {
+        if (!scene) {
+            return make_error("no scene");
+        }
+
+        if (!args.contains("id") || !args["id"].is_number_integer()) {
+            return make_error("missing or invalid 'id'");
+        }
+        if (!args.contains("newParentId") || !args["newParentId"].is_number_integer()) {
+            return make_error("missing or invalid 'newParentId'");
+        }
+
+        const NodeId id = args["id"].get<uint32_t>();
+        const NodeId new_parent = args["newParentId"].get<uint32_t>();
+
+        if (!scene_set_parent(scene, id, new_parent)) {
+            return make_error("reparent failed (invalid node, invalid parent, or circular reference)");
+        }
+
+        return make_ok();
+    });
+
+    // ----------------------------------------------------------------
+    // scene.assignAsset
+    // ----------------------------------------------------------------
+    registry.add("scene.assignAsset", [scene](const nlohmann::json& args) -> nlohmann::json {
+        if (!scene) {
+            return make_error("no scene");
+        }
+
+        if (!args.contains("nodeId") || !args["nodeId"].is_number_integer()) {
+            return make_error("missing or invalid 'nodeId'");
+        }
+        if (!args.contains("assetPath") || !args["assetPath"].is_string()) {
+            return make_error("missing or invalid 'assetPath'");
+        }
+        if (!args.contains("assetType") || !args["assetType"].is_string()) {
+            return make_error("missing or invalid 'assetType'");
+        }
+
+        const NodeId id = args["nodeId"].get<uint32_t>();
+        const std::string asset_path = args["assetPath"].get<std::string>();
+        const std::string asset_type = args["assetType"].get<std::string>();
+
+        SceneNode* node = scene_get_node(scene, id);
+        if (!node) {
+            return make_error("node not found");
+        }
+
+        bool component_added = false;
+
+        if (asset_type == "Mesh") {
+            // Ensure node is a StaticMesh with a StaticMeshData component.
+            if (strcmp(node->type_name, "StaticMesh") != 0) {
+                uz::str_copy(node->type_name, sizeof(node->type_name), "StaticMesh");
+            }
+            StaticMeshData* mesh = component_get<StaticMeshData>(&scene->components, id);
+            if (!mesh) {
+                mesh = component_add<StaticMeshData>(&scene->components, id);
+                component_added = true;
+            }
+            if (mesh) {
+                uz::str_copy(mesh->mesh_path, sizeof(mesh->mesh_path), asset_path.c_str());
+            }
+        } else if (asset_type == "Material") {
+            // Assign material path to an existing or new StaticMeshData component.
+            StaticMeshData* mesh = component_get<StaticMeshData>(&scene->components, id);
+            if (!mesh) {
+                if (strcmp(node->type_name, "StaticMesh") != 0) {
+                    uz::str_copy(node->type_name, sizeof(node->type_name), "StaticMesh");
+                }
+                mesh = component_add<StaticMeshData>(&scene->components, id);
+                component_added = true;
+            }
+            if (mesh) {
+                uz::str_copy(mesh->material_path, sizeof(mesh->material_path), asset_path.c_str());
+            }
+        } else if (asset_type == "Texture") {
+            // Textures are assigned to the material — store as material reference.
+            // For now, just acknowledge the assignment (no dedicated texture component yet).
+            return {{"ok", true}, {"componentAdded", nullptr}};
+        } else {
+            return make_error("unsupported asset type: " + asset_type);
+        }
+
+        nlohmann::json result = {{"ok", true}};
+        result["componentAdded"] = component_added
+            ? nlohmann::json("StaticMeshData")
+            : nlohmann::json(nullptr);
+        return result;
+    });
+
+    // ----------------------------------------------------------------
+    // editor.placeAsset
+    // ----------------------------------------------------------------
+    registry.add("editor.placeAsset", [scene, params](const nlohmann::json& args) -> nlohmann::json {
+        if (!scene) {
+            return make_error("no scene");
+        }
+
+        const std::string resPath   = args.value("resPath",   std::string{});
+        const std::string assetType = args.value("assetType", std::string{});
+
+        if (resPath.empty() || assetType.empty()) {
+            return make_error("missing resPath or assetType");
+        }
+
+        // Placement position: camera_pos + forward * 5.0 (or origin if no params).
+        float px = 0.0f, py = 0.0f, pz = 0.0f;
+        if (params) {
+            const float yaw   = params->camYaw;
+            const float pitch = params->camPitch;
+            constexpr float dist = 5.0f;
+            const float fx = std::cos(pitch) * std::sin(yaw);
+            const float fy = std::sin(pitch);
+            const float fz = std::cos(pitch) * std::cos(yaw);
+            px = params->camPosX + fx * dist;
+            py = params->camPosY + fy * dist;
+            pz = params->camPosZ + fz * dist;
+        }
+
+        // Extract display name from resPath (e.g. "res://meshes/cube.glb" → "cube").
+        std::string displayName = resPath;
+        auto lastSlash = displayName.find_last_of('/');
+        if (lastSlash != std::string::npos) {
+            displayName = displayName.substr(lastSlash + 1);
+        }
+        auto dot = displayName.find_last_of('.');
+        if (dot != std::string::npos) {
+            displayName = displayName.substr(0, dot);
+        }
+
+        NodeId nodeId = scene_create_node(scene, displayName.c_str(), "Node3D");
+        if (nodeId == kNodeIdInvalid) {
+            return make_error("scene full");
+        }
+
+        // Set position.
+        SceneNode* node = scene_get_node(scene, nodeId);
+        if (node) {
+            node->local_transform.position = {px, py, pz, 0.0f};
+        }
+
+        // Assign asset.
+        if (assetType == "Mesh" || assetType == "Material") {
+            if (node) { str_copy(node->type_name, sizeof(node->type_name), "StaticMesh"); }
+            auto* mesh = component_add<StaticMeshData>(&scene->components, nodeId);
+            if (mesh) {
+                if (assetType == "Mesh") {
+                    str_copy(mesh->mesh_path, sizeof(mesh->mesh_path), resPath.c_str());
+                } else {
+                    str_copy(mesh->material_path, sizeof(mesh->material_path), resPath.c_str());
+                }
+            }
+        }
+
+        return {{"ok", true}, {"nodeId", nodeId}, {"worldPos", {px, py, pz}}};
     });
 }
 

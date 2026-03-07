@@ -57,6 +57,22 @@ export interface ViewportPanelHost {
  *
  * Lifecycle: construct → `initialize()` → show → [suspend/resume] → dispose.
  */
+/** Data emitted when the viewport picks a node. */
+export interface PickEvent {
+  /** The picked node ID, or null if empty space was clicked. */
+  readonly nodeId: number | null;
+  /** Whether Ctrl was held during the pick. */
+  readonly ctrlKey: boolean;
+}
+
+/** Data emitted when a box-select completes. */
+export interface BoxPickEvent {
+  /** Node IDs within the box region. */
+  readonly nodeIds: number[];
+  /** Whether Ctrl was held during the box drag. */
+  readonly ctrlKey: boolean;
+}
+
 export class ViewportPanel implements vscode.Disposable {
   /** The engine-assigned ID. VIEWPORT_ID_INVALID until `initialize()` succeeds. */
   private _viewportId: ViewportId = VIEWPORT_ID_INVALID;
@@ -78,6 +94,21 @@ export class ViewportPanel implements vscode.Disposable {
 
   /** The WebSocket port to connect to (set after initialize()). */
   private _wsPort = 9002;
+
+  // -- Selection events (extension host ← webview) --
+  private readonly _onNodePicked = new vscode.EventEmitter<PickEvent>();
+  readonly onNodePicked: vscode.Event<PickEvent> = this._onNodePicked.event;
+
+  private readonly _onBoxPicked = new vscode.EventEmitter<BoxPickEvent>();
+  readonly onBoxPicked: vscode.Event<BoxPickEvent> = this._onBoxPicked.event;
+
+  /** Fired when the user clicks the viewport while in asset drop mode. */
+  private readonly _onAssetDropped = new vscode.EventEmitter<{ x: number; y: number }>();
+  readonly onAssetDropped: vscode.Event<{ x: number; y: number }> = this._onAssetDropped.event;
+
+  /** Fired when the user presses Escape during asset drop mode. */
+  private readonly _onDragCancelled = new vscode.EventEmitter<void>();
+  readonly onDragCancelled: vscode.Event<void> = this._onDragCancelled.event;
 
   // -------------------------------------------------------------------------
   // Construction
@@ -118,6 +149,33 @@ export class ViewportPanel implements vscode.Disposable {
     this._panel.onDidChangeViewState(
       (e: vscode.WebviewPanelOnDidChangeViewStateEvent) => {
         this._host.onPanelVisibilityChanged(this, e.webviewPanel.visible);
+      },
+      null,
+      this._disposables
+    );
+
+    // Webview → extension host message handler (pick results, etc.)
+    this._panel.webview.onDidReceiveMessage(
+      (msg: unknown) => {
+        const m = msg as Record<string, unknown>;
+        if (m.type === 'pickResult') {
+          this._onNodePicked.fire({
+            nodeId: typeof m.nodeId === 'number' ? m.nodeId : null,
+            ctrlKey: !!m.ctrlKey,
+          });
+        } else if (m.type === 'boxPickResult') {
+          this._onBoxPicked.fire({
+            nodeIds: Array.isArray(m.nodeIds) ? m.nodeIds as number[] : [],
+            ctrlKey: !!m.ctrlKey,
+          });
+        } else if (m.type === 'assetDropped') {
+          this._onAssetDropped.fire({
+            x: typeof m.x === 'number' ? m.x : 0,
+            y: typeof m.y === 'number' ? m.y : 0,
+          });
+        } else if (m.type === 'dragCancelled') {
+          this._onDragCancelled.fire();
+        }
       },
       null,
       this._disposables
@@ -229,6 +287,31 @@ export class ViewportPanel implements vscode.Disposable {
     this._panel.reveal(column);
   }
 
+  /**
+   * Notify the webview of asset drag state changes.
+   * When `active` is true, the viewport shows a green border and copy cursor.
+   */
+  postDragState(active: boolean): void {
+    if (this._disposed) { return; }
+    void this._panel.webview.postMessage({
+      type: active ? 'dragStarted' : 'dragEnded',
+    });
+  }
+
+  /**
+   * Switch the WebSocket port used by the viewport stream.
+   * Closes the current connection and reconnects to the new port.
+   * Used when entering/exiting play mode.
+   */
+  switchPort(newPort: number): void {
+    if (this._disposed) { return; }
+    this._wsPort = newPort;
+    void this._panel.webview.postMessage({
+      type: 'switchPort',
+      port: newPort,
+    });
+  }
+
   // -------------------------------------------------------------------------
   // Disposal
   // -------------------------------------------------------------------------
@@ -244,6 +327,10 @@ export class ViewportPanel implements vscode.Disposable {
     this._disposed = true;
     this._state = 'destroyed';
 
+    this._onNodePicked.dispose();
+    this._onBoxPicked.dispose();
+    this._onAssetDropped.dispose();
+    this._onDragCancelled.dispose();
     this._panel.dispose();
 
     for (const d of this._disposables) {
@@ -460,6 +547,23 @@ export function buildViewportStreamHtml(opts: {
       transition: opacity 0.3s;
     }
     #overlay.hidden { opacity: 0; }
+
+    /* Drop-mode indicator (asset drag from Asset Browser) */
+    #canvas-container.drop-active {
+      outline: 2px solid #4caf50;
+      outline-offset: -2px;
+    }
+    #canvas-container.drop-active::after {
+      content: 'Drop to place asset';
+      position: absolute;
+      bottom: 8px;
+      left: 50%;
+      transform: translateX(-50%);
+      color: #4caf50;
+      font-size: 12px;
+      pointer-events: none;
+      z-index: 100;
+    }
   </style>
 </head>
 <body>
@@ -479,12 +583,15 @@ export function buildViewportStreamHtml(opts: {
     <span class="tb-sep"></span>
     <button id="btn-focus" class="tb" title="Focus on selected (F)" style="background:#238636;color:#fff;border-color:#2ea043;">\u2295 Focus</button>
     <span id="snap-indicator" style="display:none;color:#f0c040;font-size:10px;margin-left:6px;">[Snap: 0.25m]</span>
+    <span class="tb-sep"></span>
+    <span id="mode-badge" class="tb active" style="pointer-events:none;font-size:10px;padding:1px 8px;">Editor</span>
   </div>
   <div id="canvas-container">
     <div id="overlay">Waiting for stream\u2026</div>
     <canvas id="viewport-canvas" tabindex="0"></canvas>
     <div id="box-select-rect" style="display:none;position:absolute;border:1px dashed rgba(255,255,255,0.8);background:rgba(255,255,255,0.08);pointer-events:none;box-sizing:border-box;"></div>
     <div id="dbg-hittest" style="position:absolute;top:2px;right:4px;color:#0f0;font-size:10px;pointer-events:none;font-family:monospace;z-index:999;white-space:pre;"></div>
+    <div id="hover-label" style="display:none;position:absolute;background:rgba(30,30,30,0.85);color:#ddd;font-size:11px;padding:2px 8px;border-radius:3px;pointer-events:none;z-index:100;font-family:inherit;white-space:nowrap;border:1px solid #555;"></div>
   </div>
 
   <script nonce="${nonce}">
@@ -502,10 +609,13 @@ export function buildViewportStreamHtml(opts: {
       // DOM refs
       // -----------------------------------------------------------------------
       var canvas      = /** @type {HTMLCanvasElement} */ (document.getElementById('viewport-canvas'));
+      var canvasCont  = document.getElementById('canvas-container');
       var statusEl    = document.getElementById('status');
       var fpsEl       = document.getElementById('fps');
       var dbgSizeEl   = document.getElementById('dbg-size');
       var overlayEl   = document.getElementById('overlay');
+      var modeBadgeEl = document.getElementById('mode-badge');
+      var hoverLabel  = document.getElementById('hover-label');
 
       // -----------------------------------------------------------------------
       // State
@@ -515,6 +625,13 @@ export function buildViewportStreamHtml(opts: {
       var MAX_RECONNECT  = 16000;
       var reconnectTimer = /** @type {ReturnType<typeof setTimeout>|null} */ (null);
       var isDisposed     = false;
+      var dropModeActive = false;
+
+      // Hover-pick state: throttled node name on cursor hover.
+      var lastHoverPickTime = 0;
+      var hoverPickPending  = false;
+      var lastHoverX = 0;
+      var lastHoverY = 0;
 
       // -----------------------------------------------------------------------
       // Status helpers
@@ -1198,6 +1315,35 @@ export function buildViewportStreamHtml(opts: {
         } else if (msg.type === 'set_gizmo_space' && msg.space) {
           currentGizmoSpace = '';
           setGizmoSpace(msg.space);
+
+        } else if (msg.type === 'switchPort') {
+          // Switch WebSocket port (play mode ↔ editor mode).
+          if (ws) {
+            ws.close();
+            ws = null;
+          }
+          WS_PORT = msg.port;
+          WS_URL = 'ws://localhost:' + WS_PORT;
+          setStatus('Reconnecting...', 'connecting');
+          reconnectDelay = 1000;
+          // Update mode badge (9003 = Play, otherwise Editor).
+          if (modeBadgeEl) {
+            var isPlay = WS_PORT === 9003;
+            modeBadgeEl.textContent = isPlay ? 'Play' : 'Editor';
+            modeBadgeEl.style.background = isPlay ? '#6a3d9a' : '';
+            modeBadgeEl.style.borderColor = isPlay ? '#9b59b6' : '';
+          }
+          connect();
+
+        } else if (msg.type === 'dragStarted') {
+          dropModeActive = true;
+          if (canvasCont) { canvasCont.classList.add('drop-active'); }
+          canvas.style.cursor = 'copy';
+
+        } else if (msg.type === 'dragEnded') {
+          dropModeActive = false;
+          if (canvasCont) { canvasCont.classList.remove('drop-active'); }
+          canvas.style.cursor = '';
         }
       });
 
@@ -1277,7 +1423,7 @@ export function buildViewportStreamHtml(opts: {
                     ws.send(JSON.stringify({ type: 'editor.commitTransform', nodeId: selectedNodeId }));
                   }
                 }
-                if (vscodeApi) vscodeApi.postMessage({ type: 'pickResult', nodeId: parsed.nodeId });
+                if (vscodeApi) vscodeApi.postMessage({ type: 'pickResult', nodeId: parsed.nodeId, ctrlKey: ctrlHeld });
               } else if (parsed.type === 'selectionChanged') {
                 selectedNodeId = parsed.nodeId || null;
                 if (!selectedNodeId) {
@@ -1364,7 +1510,7 @@ export function buildViewportStreamHtml(opts: {
               } else if (parsed.type === 'boxPickResult') {
                 // Task 5.5 / 7.1: box-pick result
                 var boxNodeIds = parsed.nodeIds || [];
-                if (vscodeApi) vscodeApi.postMessage({ type: 'boxPickResult', nodeIds: boxNodeIds });
+                if (vscodeApi) vscodeApi.postMessage({ type: 'boxPickResult', nodeIds: boxNodeIds, ctrlKey: ctrlHeld });
                 console.log('[UzEngine] boxPickResult:', boxNodeIds);
 
                 // Task 7.1: when 2+ nodes selected, fetch transforms to compute centroid
@@ -1396,6 +1542,23 @@ export function buildViewportStreamHtml(opts: {
                 gizmoHoverAxis = parsed.axis || null;
                 if (canvasContainer) {
                   canvasContainer.style.cursor = gizmoHoverAxis ? 'grab' : 'crosshair';
+                }
+              } else if (parsed.type === 'hoverPickResult') {
+                // Show node name tooltip near cursor.
+                if (hoverLabel && hoverPickPending) {
+                  hoverPickPending = false;
+                  if (parsed.nodeName && parsed.nodeId) {
+                    hoverLabel.textContent = parsed.nodeName;
+                    hoverLabel.style.display = 'block';
+                    // Position relative to canvas container.
+                    if (canvasContainer) {
+                      var hpRect = canvasContainer.getBoundingClientRect();
+                      hoverLabel.style.left = (lastHoverX - hpRect.left + 14) + 'px';
+                      hoverLabel.style.top  = (lastHoverY - hpRect.top  - 10) + 'px';
+                    }
+                  } else {
+                    hoverLabel.style.display = 'none';
+                  }
                 }
               }
             } catch (ex) { console.warn('[UzEngine] JSON parse error:', ex); }
@@ -1473,6 +1636,16 @@ export function buildViewportStreamHtml(opts: {
         if (e.key === 'Control') {
           ctrlHeld = true;
           updateSnapIndicator();
+        }
+
+        // Escape cancels asset drop mode.
+        if (dropModeActive && e.key === 'Escape') {
+          dropModeActive = false;
+          if (canvasCont) { canvasCont.classList.remove('drop-active'); }
+          canvas.style.cursor = '';
+          if (vscodeApi) { vscodeApi.postMessage({ type: 'dragCancelled' }); }
+          e.preventDefault();
+          return;
         }
 
         if (rightMouseDown) {
@@ -1592,6 +1765,22 @@ export function buildViewportStreamHtml(opts: {
       }
 
       canvasContainer.addEventListener('mousedown', function(e) {
+        // Asset drop mode: left click places the asset.
+        if (dropModeActive && e.button === 0 && vscodeApi) {
+          e.preventDefault();
+          e.stopPropagation();
+          var rect = canvas.getBoundingClientRect();
+          vscodeApi.postMessage({
+            type: 'assetDropped',
+            x: e.clientX - rect.left,
+            y: e.clientY - rect.top
+          });
+          dropModeActive = false;
+          if (canvasCont) { canvasCont.classList.remove('drop-active'); }
+          canvas.style.cursor = '';
+          return;
+        }
+
         if (e.button === 2) {
           rightMouseDown = true;
           canvas.focus();
@@ -1661,8 +1850,8 @@ export function buildViewportStreamHtml(opts: {
               }
             }
           } else if (selectedNodeId) {
-            // No cached camera — fall back to server-side hit test only
-            ws.send(JSON.stringify({ type: 'editor.gizmoBeginDrag', screen_x: coords.sx, screen_y: coords.sy }));
+            // No cached camera — send pickNode (GPU pick works without TS camera)
+            ws.send(JSON.stringify({ type: 'editor.pickNode', screen_x: coords.sx, screen_y: coords.sy }));
           } else if (ctrlHeld) {
             // Task 5.5: Ctrl+click on empty canvas starts box-select
             boxSelecting = true;
@@ -1993,6 +2182,25 @@ export function buildViewportStreamHtml(opts: {
           return;
         }
 
+        // Hover pick — show node name tooltip (throttled ~5fps, 200ms)
+        if (!gizmoDragging && !boxSelecting && ws && ws.readyState === WebSocket.OPEN) {
+          var hpNow = performance.now();
+          if (hpNow - lastHoverPickTime > 200) {
+            lastHoverPickTime = hpNow;
+            var hpCoords = getCanvasCoords(e);
+            if (hpCoords) {
+              lastHoverX = e.clientX;
+              lastHoverY = e.clientY;
+              hoverPickPending = true;
+              ws.send(JSON.stringify({
+                type: 'editor.hoverPick',
+                screen_x: hpCoords.sx,
+                screen_y: hpCoords.sy
+              }));
+            }
+          }
+        }
+
         // Task 5.4: Gizmo hover — TS-side hit test + editor.setGizmoHover (throttled ~15fps)
         if (!gizmoDragging && selectedNodeId && ws && ws.readyState === WebSocket.OPEN) {
           var now2 = performance.now();
@@ -2025,6 +2233,11 @@ export function buildViewportStreamHtml(opts: {
             }
           }
         }
+      });
+
+      canvasContainer.addEventListener('mouseleave', function() {
+        if (hoverLabel) hoverLabel.style.display = 'none';
+        hoverPickPending = false;
       });
 
       canvasContainer.addEventListener('wheel', function(e) {

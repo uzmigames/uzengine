@@ -23,7 +23,7 @@
  *  - _renderWidget float, int, bool(false) branches
  */
 
-import { InspectorPanel } from '../inspector-panel';
+import { InspectorPanel, fetchAssetQuickPickItems, commonProperties, MIXED_VALUE, PropertyDescriptor } from '../inspector-panel';
 import { NodeItem } from '../scene-tree-provider';
 import { IpcClient } from '../ipc-client';
 import { window, makeMockWebviewPanel, __setMockPanelFactory, __resetMockPanelFactory } from '../__mocks__/vscode';
@@ -546,5 +546,722 @@ describe('InspectorPanel', () => {
             expect(() => panel._updateContent()).not.toThrow();
             inspector.dispose();
         });
+    });
+
+    describe('color widget', () => {
+        it('renders color input with hex value derived from float RGB', () => {
+            const { inspector, mockPanel } = makeInspector();
+            inspector.showForNode(makeNodeItem());
+
+            // albedo_color defaults to {r:1, g:1, b:1} → #ffffff
+            expect(mockPanel.webview.html).toContain('type="color"');
+            expect(mockPanel.webview.html).toContain('prop-color');
+            expect(mockPanel.webview.html).toContain('#ffffff');
+            inspector.dispose();
+        });
+
+        it('_renderWidget — color with custom RGB values', () => {
+            const { inspector } = makeInspector();
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const panel = inspector as any;
+            const html = panel._renderWidget(
+                { key: 'col', label: 'Color', type: 'color', value: { r: 1.0, g: 0.0, b: 0.5 }, group: 'Test' },
+                'node-id'
+            ) as string;
+            expect(html).toContain('type="color"');
+            // r=1.0→ff, g=0.0→00, b=0.5→80
+            expect(html).toContain('#ff0080');
+        });
+
+        it('_renderWidget — color with null value uses black default', () => {
+            const { inspector } = makeInspector();
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const panel = inspector as any;
+            const html = panel._renderWidget(
+                { key: 'col', label: 'Color', type: 'color', value: null, group: 'Test' },
+                'node-id'
+            ) as string;
+            expect(html).toContain('#000000');
+        });
+
+        it('_renderWidget — color clamps out-of-range values', () => {
+            const { inspector } = makeInspector();
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const panel = inspector as any;
+            const html = panel._renderWidget(
+                { key: 'col', label: 'Color', type: 'color', value: { r: 2.0, g: -1.0, b: 0.5 }, group: 'Test' },
+                'node-id'
+            ) as string;
+            // r=2.0→clamped to 255→ff, g=-1.0→clamped to 0→00, b=0.5→80
+            expect(html).toContain('#ff0080');
+        });
+
+        it('renders Material group with Albedo Color label', () => {
+            const { inspector, mockPanel } = makeInspector();
+            inspector.showForNode(makeNodeItem());
+
+            expect(mockPanel.webview.html).toContain('Material');
+            expect(mockPanel.webview.html).toContain('Albedo Color');
+            inspector.dispose();
+        });
+
+        it('includes onColorChange function in script', () => {
+            const { inspector, mockPanel } = makeInspector();
+            inspector.showForNode(makeNodeItem());
+
+            expect(mockPanel.webview.html).toContain('onColorChange');
+            inspector.dispose();
+        });
+    });
+
+    describe('resource widget', () => {
+        it('renders resource input with Browse button', () => {
+            const { inspector, mockPanel } = makeInspector();
+            inspector.showForNode(makeNodeItem());
+
+            expect(mockPanel.webview.html).toContain('prop-resource');
+            expect(mockPanel.webview.html).toContain('resource-browse');
+            expect(mockPanel.webview.html).toContain('Browse...');
+            inspector.dispose();
+        });
+
+        it('_renderWidget — resource with path value', () => {
+            const { inspector } = makeInspector();
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const panel = inspector as any;
+            const html = panel._renderWidget(
+                { key: 'mat', label: 'Material', type: 'resource', value: 'assets/stone.uzmat', group: 'Test' },
+                'node-id'
+            ) as string;
+            expect(html).toContain('prop-resource');
+            expect(html).toContain('resource-browse');
+            expect(html).toContain('assets/stone.uzmat');
+            expect(html).toContain('readonly');
+        });
+
+        it('_renderWidget — resource with null/empty value', () => {
+            const { inspector } = makeInspector();
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const panel = inspector as any;
+            const html = panel._renderWidget(
+                { key: 'mat', label: 'Material', type: 'resource', value: null, group: 'Test' },
+                'node-id'
+            ) as string;
+            expect(html).toContain('resource-group');
+            expect(html).toContain('value=""');
+        });
+
+        it('includes onResourceBrowse function in script', () => {
+            const { inspector, mockPanel } = makeInspector();
+            inspector.showForNode(makeNodeItem());
+
+            expect(mockPanel.webview.html).toContain('onResourceBrowse');
+            inspector.dispose();
+        });
+    });
+
+    describe('resourceBrowse message handling', () => {
+        it('opens file dialog and sends IPC on resourceBrowse message', async () => {
+            const { inspector, ipc, mockPanel } = makeInspector();
+            inspector.showForNode(makeNodeItem({ id: 'n1' }));
+
+            // Mock showOpenDialog to return a file
+            window.showOpenDialog.mockResolvedValueOnce([
+                { fsPath: '/path/to/material.uzmat' },
+            ]);
+
+            mockPanel._simulateMessage({
+                command: 'resourceBrowse',
+                nodeId: 'n1',
+                key: 'material',
+            });
+
+            await new Promise(r => setTimeout(r, 10));
+
+            expect(window.showOpenDialog).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    canSelectMany: false,
+                    filters: expect.objectContaining({ 'Assets': expect.any(Array) }),
+                })
+            );
+
+            // Sends resourcePathSelected to webview
+            expect(mockPanel.webview.postMessage).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    command: 'resourcePathSelected',
+                    key: 'material',
+                    path: '/path/to/material.uzmat',
+                })
+            );
+
+            // Sends IPC to engine
+            expect(ipc.request).toHaveBeenCalledWith('scene.setProperty', {
+                nodeId: 'n1',
+                key: 'material',
+                value: '/path/to/material.uzmat',
+            });
+
+            inspector.dispose();
+        });
+
+        it('does nothing when user cancels file dialog', async () => {
+            const { inspector, ipc, mockPanel } = makeInspector();
+            inspector.showForNode(makeNodeItem({ id: 'n1' }));
+
+            // Mock showOpenDialog to return undefined (cancelled)
+            window.showOpenDialog.mockResolvedValueOnce(undefined);
+
+            mockPanel._simulateMessage({
+                command: 'resourceBrowse',
+                nodeId: 'n1',
+                key: 'material',
+            });
+
+            await new Promise(r => setTimeout(r, 10));
+
+            expect(window.showOpenDialog).toHaveBeenCalled();
+            expect(ipc.request).not.toHaveBeenCalled();
+
+            inspector.dispose();
+        });
+
+        it('does nothing when file dialog returns empty array', async () => {
+            const { inspector, ipc, mockPanel } = makeInspector();
+            inspector.showForNode(makeNodeItem({ id: 'n1' }));
+
+            window.showOpenDialog.mockResolvedValueOnce([]);
+
+            mockPanel._simulateMessage({
+                command: 'resourceBrowse',
+                nodeId: 'n1',
+                key: 'material',
+            });
+
+            await new Promise(r => setTimeout(r, 10));
+
+            expect(ipc.request).not.toHaveBeenCalled();
+            inspector.dispose();
+        });
+
+        it('shows error when IPC fails on resource browse', async () => {
+            const { inspector, ipc, mockPanel } = makeInspector();
+            ipc.request.mockRejectedValue(new Error('Engine down'));
+            inspector.showForNode(makeNodeItem({ id: 'n1' }));
+
+            window.showOpenDialog.mockResolvedValueOnce([
+                { fsPath: '/path/to/mat.uzmat' },
+            ]);
+
+            mockPanel._simulateMessage({
+                command: 'resourceBrowse',
+                nodeId: 'n1',
+                key: 'material',
+            });
+
+            await new Promise(r => setTimeout(r, 10));
+
+            expect(window.showErrorMessage).toHaveBeenCalledWith(
+                expect.stringContaining('Engine down')
+            );
+
+            inspector.dispose();
+        });
+
+        it('shows non-Error exception message on resource browse failure', async () => {
+            const { inspector, ipc, mockPanel } = makeInspector();
+            ipc.request.mockRejectedValue('string error');
+            inspector.showForNode(makeNodeItem({ id: 'n1' }));
+
+            window.showOpenDialog.mockResolvedValueOnce([
+                { fsPath: '/path/to/mat.uzmat' },
+            ]);
+
+            mockPanel._simulateMessage({
+                command: 'resourceBrowse',
+                nodeId: 'n1',
+                key: 'material',
+            });
+
+            await new Promise(r => setTimeout(r, 10));
+
+            expect(window.showErrorMessage).toHaveBeenCalledWith(
+                expect.stringContaining('string error')
+            );
+
+            inspector.dispose();
+        });
+    });
+
+    describe('CSS styles', () => {
+        it('includes color picker CSS', () => {
+            const { inspector, mockPanel } = makeInspector();
+            inspector.showForNode(makeNodeItem());
+
+            expect(mockPanel.webview.html).toContain('.prop-color');
+            inspector.dispose();
+        });
+
+        it('includes resource widget CSS', () => {
+            const { inspector, mockPanel } = makeInspector();
+            inspector.showForNode(makeNodeItem());
+
+            expect(mockPanel.webview.html).toContain('.resource-group');
+            expect(mockPanel.webview.html).toContain('.resource-browse');
+            inspector.dispose();
+        });
+
+        it('includes asset picker CSS', () => {
+            const { inspector, mockPanel } = makeInspector();
+            inspector.showForNode(makeNodeItem());
+
+            expect(mockPanel.webview.html).toContain('.asset-picker');
+            inspector.dispose();
+        });
+    });
+
+    describe('asset picker — [...]  button', () => {
+        it('renders [...] button next to resource fields', () => {
+            const { inspector, mockPanel } = makeInspector();
+            inspector.showForNode(makeNodeItem());
+
+            expect(mockPanel.webview.html).toContain('[...]');
+            expect(mockPanel.webview.html).toContain('onAssetPicker');
+            inspector.dispose();
+        });
+
+        it('handles openAssetPicker message with QuickPick selection', async () => {
+            const { inspector, ipc, mockPanel } = makeInspector();
+            const node = makeNodeItem({ id: '42' });
+            inspector.showForNode(node);
+
+            // Mock asset.list IPC response.
+            ipc.request.mockResolvedValueOnce({
+                assets: [
+                    { path: 'res://materials/wood.uzmat', type: 'Material', status: 'Fresh' },
+                    { path: 'res://materials/metal.uzmat', type: 'Material', status: 'Fresh' },
+                ],
+            });
+
+            // Mock QuickPick selection.
+            const { window: vscodeWindow } = await import('../__mocks__/vscode');
+            vscodeWindow.showQuickPick.mockResolvedValueOnce({
+                label: 'wood.uzmat',
+                description: 'res://materials/wood.uzmat',
+                detail: 'Material — Fresh',
+            });
+
+            // Simulate the webview message.
+            mockPanel._simulateMessage({
+                command: 'openAssetPicker',
+                nodeId: '42',
+                key: 'material',
+                assetType: 'Material',
+            });
+
+            // Flush async operations.
+            await new Promise(r => setTimeout(r, 0));
+
+            // Should have called asset.list and scene.assignAsset.
+            expect(ipc.request).toHaveBeenCalledWith('asset.list', {});
+            expect(ipc.request).toHaveBeenCalledWith('scene.assignAsset', {
+                nodeId: 42,
+                resPath: 'res://materials/wood.uzmat',
+                assetType: 'Material',
+            });
+
+            // Should update the webview.
+            expect(mockPanel.webview.postMessage).toHaveBeenCalledWith({
+                command: 'resourcePathSelected',
+                key: 'material',
+                path: 'res://materials/wood.uzmat',
+            });
+
+            inspector.dispose();
+        });
+
+        it('shows info message when no assets found', async () => {
+            const { inspector, ipc, mockPanel } = makeInspector();
+            inspector.showForNode(makeNodeItem());
+
+            ipc.request.mockResolvedValueOnce({ assets: [] });
+
+            mockPanel._simulateMessage({
+                command: 'openAssetPicker',
+                nodeId: '1',
+                key: 'material',
+                assetType: 'Material',
+            });
+
+            await new Promise(r => setTimeout(r, 0));
+
+            const { window: vscodeWindow } = await import('../__mocks__/vscode');
+            expect(vscodeWindow.showInformationMessage).toHaveBeenCalledWith(
+                'No Material found in registry.'
+            );
+            inspector.dispose();
+        });
+
+        it('shows generic "assets" when assetType is empty and no assets found', async () => {
+            const { inspector, ipc, mockPanel } = makeInspector();
+            inspector.showForNode(makeNodeItem());
+
+            ipc.request.mockResolvedValueOnce({ assets: [] });
+
+            mockPanel._simulateMessage({
+                command: 'openAssetPicker',
+                nodeId: '1',
+                key: 'material',
+                assetType: '',
+            });
+
+            await new Promise(r => setTimeout(r, 0));
+
+            const { window: vscodeWindow } = await import('../__mocks__/vscode');
+            expect(vscodeWindow.showInformationMessage).toHaveBeenCalledWith(
+                'No assets found in registry.'
+            );
+            inspector.dispose();
+        });
+
+        it('handles QuickPick item without description', async () => {
+            const { inspector, ipc, mockPanel } = makeInspector();
+            inspector.showForNode(makeNodeItem({ id: '10' }));
+
+            ipc.request.mockResolvedValueOnce({
+                assets: [{ path: 'res://mat/a.uzmat', type: 'Material', status: 'Fresh' }],
+            });
+
+            const { window: vscodeWindow } = await import('../__mocks__/vscode');
+            vscodeWindow.showQuickPick.mockResolvedValueOnce({
+                label: 'a.uzmat',
+                // No description field — tests the ?? '' fallback.
+            });
+
+            mockPanel._simulateMessage({
+                command: 'openAssetPicker',
+                nodeId: '10',
+                key: 'material',
+                assetType: 'Material',
+            });
+
+            await new Promise(r => setTimeout(r, 0));
+
+            // Should still call assignAsset with empty resPath.
+            expect(ipc.request).toHaveBeenCalledWith('scene.assignAsset', {
+                nodeId: 10,
+                resPath: '',
+                assetType: 'Material',
+            });
+            inspector.dispose();
+        });
+
+        it('does nothing when QuickPick is cancelled', async () => {
+            const { inspector, ipc, mockPanel } = makeInspector();
+            inspector.showForNode(makeNodeItem());
+
+            ipc.request.mockResolvedValueOnce({
+                assets: [
+                    { path: 'res://materials/wood.uzmat', type: 'Material', status: 'Fresh' },
+                ],
+            });
+
+            const { window: vscodeWindow } = await import('../__mocks__/vscode');
+            vscodeWindow.showQuickPick.mockResolvedValueOnce(undefined);
+
+            mockPanel._simulateMessage({
+                command: 'openAssetPicker',
+                nodeId: '1',
+                key: 'material',
+                assetType: 'Material',
+            });
+
+            await new Promise(r => setTimeout(r, 0));
+
+            // scene.assignAsset should NOT have been called.
+            expect(ipc.request).not.toHaveBeenCalledWith('scene.assignAsset', expect.anything());
+            inspector.dispose();
+        });
+
+        it('shows error when scene.assignAsset IPC fails', async () => {
+            const { inspector, ipc, mockPanel } = makeInspector();
+            inspector.showForNode(makeNodeItem({ id: '5' }));
+
+            ipc.request
+                .mockResolvedValueOnce({
+                    assets: [{ path: 'res://mat/a.uzmat', type: 'Material', status: 'Fresh' }],
+                })
+                .mockRejectedValueOnce(new Error('assign failed'));
+
+            const { window: vscodeWindow } = await import('../__mocks__/vscode');
+            vscodeWindow.showQuickPick.mockResolvedValueOnce({
+                label: 'a.uzmat',
+                description: 'res://mat/a.uzmat',
+                detail: 'Material — Fresh',
+            });
+
+            mockPanel._simulateMessage({
+                command: 'openAssetPicker',
+                nodeId: '5',
+                key: 'material',
+                assetType: 'Material',
+            });
+
+            await new Promise(r => setTimeout(r, 0));
+
+            expect(vscodeWindow.showErrorMessage).toHaveBeenCalledWith(
+                expect.stringContaining('assign failed')
+            );
+            inspector.dispose();
+        });
+
+        it('shows error with non-Error exception from assignAsset', async () => {
+            const { inspector, ipc, mockPanel } = makeInspector();
+            inspector.showForNode(makeNodeItem({ id: '5' }));
+
+            ipc.request
+                .mockResolvedValueOnce({
+                    assets: [{ path: 'res://mat/a.uzmat', type: 'Material', status: 'Fresh' }],
+                })
+                .mockRejectedValueOnce('string error');
+
+            const { window: vscodeWindow } = await import('../__mocks__/vscode');
+            vscodeWindow.showQuickPick.mockResolvedValueOnce({
+                label: 'a.uzmat',
+                description: 'res://mat/a.uzmat',
+                detail: 'Material — Fresh',
+            });
+
+            mockPanel._simulateMessage({
+                command: 'openAssetPicker',
+                nodeId: '5',
+                key: 'material',
+                assetType: 'Material',
+            });
+
+            await new Promise(r => setTimeout(r, 0));
+
+            expect(vscodeWindow.showErrorMessage).toHaveBeenCalledWith(
+                expect.stringContaining('string error')
+            );
+            inspector.dispose();
+        });
+
+        it('handles IPC failure in asset.list gracefully', async () => {
+            const { inspector, ipc, mockPanel } = makeInspector();
+            inspector.showForNode(makeNodeItem());
+
+            ipc.request.mockRejectedValueOnce(new Error('IPC down'));
+
+            mockPanel._simulateMessage({
+                command: 'openAssetPicker',
+                nodeId: '1',
+                key: 'material',
+                assetType: 'Material',
+            });
+
+            await new Promise(r => setTimeout(r, 0));
+
+            // Should show "no assets found" since the fetch returned [].
+            const { window: vscodeWindow } = await import('../__mocks__/vscode');
+            expect(vscodeWindow.showInformationMessage).toHaveBeenCalledWith(
+                'No Material found in registry.'
+            );
+            inspector.dispose();
+        });
+
+        it('filters assets by type when assetType is provided', async () => {
+            const { inspector, ipc, mockPanel } = makeInspector();
+            inspector.showForNode(makeNodeItem());
+
+            ipc.request.mockResolvedValueOnce({
+                assets: [
+                    { path: 'res://meshes/cube.glb', type: 'Mesh', status: 'Fresh' },
+                    { path: 'res://materials/wood.uzmat', type: 'Material', status: 'Fresh' },
+                ],
+            });
+
+            const { window: vscodeWindow } = await import('../__mocks__/vscode');
+            // Will be called with only Material items.
+            vscodeWindow.showQuickPick.mockResolvedValueOnce(undefined); // cancel
+
+            mockPanel._simulateMessage({
+                command: 'openAssetPicker',
+                nodeId: '1',
+                key: 'material',
+                assetType: 'Material',
+            });
+
+            await new Promise(r => setTimeout(r, 0));
+
+            // QuickPick should have been called with only the Material item.
+            expect(vscodeWindow.showQuickPick).toHaveBeenCalledWith(
+                [expect.objectContaining({ label: 'wood.uzmat' })],
+                expect.anything()
+            );
+            inspector.dispose();
+        });
+
+        it('shows all assets when assetType is empty string', async () => {
+            const { inspector, ipc, mockPanel } = makeInspector();
+            inspector.showForNode(makeNodeItem());
+
+            ipc.request.mockResolvedValueOnce({
+                assets: [
+                    { path: 'res://meshes/cube.glb', type: 'Mesh', status: 'Fresh' },
+                    { path: 'res://materials/wood.uzmat', type: 'Material', status: 'Fresh' },
+                ],
+            });
+
+            const { window: vscodeWindow } = await import('../__mocks__/vscode');
+            vscodeWindow.showQuickPick.mockResolvedValueOnce(undefined);
+
+            mockPanel._simulateMessage({
+                command: 'openAssetPicker',
+                nodeId: '1',
+                key: 'material',
+                assetType: '',
+            });
+
+            await new Promise(r => setTimeout(r, 0));
+
+            // Both items should be shown (no filtering).
+            expect(vscodeWindow.showQuickPick).toHaveBeenCalledWith(
+                expect.arrayContaining([
+                    expect.objectContaining({ label: 'cube.glb' }),
+                    expect.objectContaining({ label: 'wood.uzmat' }),
+                ]),
+                expect.anything()
+            );
+            inspector.dispose();
+        });
+    });
+});
+
+// ---------------------------------------------------------------------------
+// fetchAssetQuickPickItems — direct tests
+// ---------------------------------------------------------------------------
+
+describe('fetchAssetQuickPickItems', () => {
+    it('returns empty array when IPC fails', async () => {
+        const ipc = { request: jest.fn().mockRejectedValue(new Error('down')) } as unknown as IpcClient;
+        const result = await fetchAssetQuickPickItems(ipc, 'Material');
+        expect(result).toEqual([]);
+    });
+
+    it('returns empty array when assets field is missing', async () => {
+        const ipc = { request: jest.fn().mockResolvedValue({}) } as unknown as IpcClient;
+        const result = await fetchAssetQuickPickItems(ipc, 'Material');
+        expect(result).toEqual([]);
+    });
+
+    it('returns all assets when assetType is empty', async () => {
+        const ipc = {
+            request: jest.fn().mockResolvedValue({
+                assets: [
+                    { path: 'res://a.glb', type: 'Mesh', status: 'Fresh' },
+                    { path: 'res://b.uzmat', type: 'Material', status: 'Stale' },
+                ],
+            }),
+        } as unknown as IpcClient;
+        const result = await fetchAssetQuickPickItems(ipc, '');
+        expect(result).toHaveLength(2);
+        expect(result[0].label).toBe('a.glb');
+        expect(result[1].label).toBe('b.uzmat');
+    });
+
+    it('filters by assetType when provided', async () => {
+        const ipc = {
+            request: jest.fn().mockResolvedValue({
+                assets: [
+                    { path: 'res://a.glb', type: 'Mesh', status: 'Fresh' },
+                    { path: 'res://b.uzmat', type: 'Material', status: 'Fresh' },
+                ],
+            }),
+        } as unknown as IpcClient;
+        const result = await fetchAssetQuickPickItems(ipc, 'Mesh');
+        expect(result).toHaveLength(1);
+        expect(result[0].label).toBe('a.glb');
+        expect(result[0].description).toBe('res://a.glb');
+        expect(result[0].detail).toBe('Mesh — Fresh');
+    });
+
+    it('extracts filename from path for label', async () => {
+        const ipc = {
+            request: jest.fn().mockResolvedValue({
+                assets: [{ path: 'res://meshes/deep/cube.glb', type: 'Mesh', status: 'Fresh' }],
+            }),
+        } as unknown as IpcClient;
+        const result = await fetchAssetQuickPickItems(ipc, '');
+        expect(result[0].label).toBe('cube.glb');
+    });
+});
+
+// ---------------------------------------------------------------------------
+// commonProperties
+// ---------------------------------------------------------------------------
+
+describe('commonProperties', () => {
+    const makeProp = (
+        key: string, type: PropertyDescriptor['type'], value: unknown, group = 'Test'
+    ): PropertyDescriptor => ({ key, label: key, type, value, group });
+
+    it('returns empty array when given empty input', () => {
+        expect(commonProperties([])).toEqual([]);
+    });
+
+    it('returns the single node props unchanged when only one node', () => {
+        const props = [makeProp('intensity', 'float', 1.0)];
+        expect(commonProperties([props])).toBe(props);
+    });
+
+    it('returns intersection of properties shared by all nodes', () => {
+        const a = [makeProp('intensity', 'float', 1.0), makeProp('name', 'string', 'A')];
+        const b = [makeProp('intensity', 'float', 1.0)]; // missing 'name'
+        const result = commonProperties([a, b]);
+        expect(result).toHaveLength(1);
+        expect(result[0].key).toBe('intensity');
+    });
+
+    it('shows same value when all nodes agree', () => {
+        const a = [makeProp('intensity', 'float', 2.0)];
+        const b = [makeProp('intensity', 'float', 2.0)];
+        const c = [makeProp('intensity', 'float', 2.0)];
+        const result = commonProperties([a, b, c]);
+        expect(result[0].value).toBe(2.0);
+    });
+
+    it('shows MIXED_VALUE when nodes disagree on value', () => {
+        const a = [makeProp('intensity', 'float', 1.0)];
+        const b = [makeProp('intensity', 'float', 2.0)];
+        const result = commonProperties([a, b]);
+        expect(result[0].value).toBe(MIXED_VALUE);
+    });
+
+    it('excludes properties with mismatched types', () => {
+        const a = [makeProp('value', 'float', 1.0)];
+        const b = [makeProp('value', 'string', '1.0')];
+        const result = commonProperties([a, b]);
+        expect(result).toHaveLength(0);
+    });
+
+    it('handles vec3 mixed values', () => {
+        const a = [makeProp('pos', 'vec3', { x: 0, y: 0, z: 0 })];
+        const b = [makeProp('pos', 'vec3', { x: 1, y: 0, z: 0 })];
+        const result = commonProperties([a, b]);
+        expect(result[0].value).toBe(MIXED_VALUE);
+    });
+
+    it('handles vec3 same values', () => {
+        const a = [makeProp('pos', 'vec3', { x: 1, y: 2, z: 3 })];
+        const b = [makeProp('pos', 'vec3', { x: 1, y: 2, z: 3 })];
+        const result = commonProperties([a, b]);
+        expect(result[0].value).toEqual({ x: 1, y: 2, z: 3 });
+    });
+
+    it('preserves group metadata', () => {
+        const a = [makeProp('intensity', 'float', 1.0, 'Rendering')];
+        const b = [makeProp('intensity', 'float', 1.0, 'Rendering')];
+        const result = commonProperties([a, b]);
+        expect(result[0].group).toBe('Rendering');
     });
 });

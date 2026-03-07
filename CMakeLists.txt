@@ -61,6 +61,7 @@ if(WIN32)
         src/engine/core/*.cpp
         src/engine/editor/*.cpp
         src/engine/debug/*.cpp
+        src/engine/gameplay/*.cpp
         src/engine/renderer/*.cpp
         src/engine/scripting/*.cpp
     )
@@ -174,6 +175,7 @@ file(GLOB_RECURSE TEST_ENGINE_SOURCES CONFIGURE_DEPENDS
     src/engine/scene/*.cpp
     src/engine/editor/*.cpp
     src/engine/debug/*.cpp
+    src/engine/gameplay/*.cpp
     src/engine/renderer/*.cpp        # ShaderManager, RenderGraph, ViewportRegistry, etc.
 )
 # Exclude DX12/RHI-dependent renderer files from test builds.
