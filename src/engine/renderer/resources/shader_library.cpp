@@ -31,6 +31,8 @@
 #include "shaders/velocity_ps_hlsl.h"
 #include "shaders/taa_ps_hlsl.h"
 #include "shaders/gtao_ps_hlsl.h"
+#include "shaders/gbuffer_write_ps_hlsl.h"
+#include "shaders/deferred_lighting_ps_hlsl.h"
 
 namespace uz {
 
@@ -184,6 +186,26 @@ void ShaderLibrary::register_builtin_shaders() {
         .vs_size   = sizeof(k_fullscreen_vs_hlsl) - 1,
         .ps_source = k_gtao_ps_hlsl,
         .ps_size   = sizeof(k_gtao_ps_hlsl) - 1,
+        .vs_entry  = "VSMain",
+        .ps_entry  = "PSMain",
+    });
+
+    // gbuffer_write — G-Buffer write pass (deferred shading, 4 MRT outputs)
+    register_shader("gbuffer_write", ShaderProgram{
+        .vs_source = k_pbr_vs_hlsl,
+        .vs_size   = sizeof(k_pbr_vs_hlsl) - 1,
+        .ps_source = k_gbuffer_write_ps_hlsl,
+        .ps_size   = sizeof(k_gbuffer_write_ps_hlsl) - 1,
+        .vs_entry  = "VSMain",
+        .ps_entry  = "PSMain",
+    });
+
+    // deferred_lighting — Fullscreen deferred lighting pass (reads G-Buffer)
+    register_shader("deferred_lighting", ShaderProgram{
+        .vs_source = k_fullscreen_vs_hlsl,
+        .vs_size   = sizeof(k_fullscreen_vs_hlsl) - 1,
+        .ps_source = k_deferred_lighting_ps_hlsl,
+        .ps_size   = sizeof(k_deferred_lighting_ps_hlsl) - 1,
         .vs_entry  = "VSMain",
         .ps_entry  = "PSMain",
     });

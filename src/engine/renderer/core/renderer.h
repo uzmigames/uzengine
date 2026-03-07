@@ -292,7 +292,7 @@ private:
     float lastSunDir_[3]     = {-1.f, -1.f, -1.f};
 
     // Render path selection (Forward or Deferred)
-    RenderPath renderPath_ = RenderPath::Deferred;
+    RenderPath renderPath_ = RenderPath::Forward;
 
     // G-Buffer render targets (deferred path only)
     static constexpr uint32_t kGBufferCount = 4;

@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Deferred Shading Pipeline** — configurable Forward/Deferred render path (UE5/Godot-style)
+  - `RenderPath` enum (`Forward` / `Deferred`) — selectable at init time, forward default
+  - G-Buffer write pass (`gbuffer_write.ps.hlsl`): 4 MRT outputs — AlbedoAO (RGBA8), OctNormal (RGB10A2), Material (RGBA8), Emission (R11G11B10F) — 16 bytes/pixel
+  - Deferred lighting pass (`deferred_lighting.ps.hlsl`): fullscreen quad, reconstructs world pos from depth + invViewProj, applies identical PBR lighting as forward (Cook-Torrance + IBL split-sum + Kulla-Conty multi-scattering + PCF shadows)
+  - Shared BRDF include (`brdf_common.hlsli`): D_GGX, Vis_SmithJointApprox, F_Schlick, Diffuse_Burley, EvaluateDirectLight, OctEncode/Decode, SampleShadowCommon
+  - G-Buffer render targets created/destroyed with post-process targets (resize-safe)
+  - Deferred render graph: 3 sub-passes (sky_draw → gbuffer_write → deferred_lighting) feeding into existing post-process chain (TAA, SSAO, bloom, composite)
+  - POM (Parallax Occlusion Mapping) supported in G-Buffer pass with approximate view direction
+  - Note: Deferred path defaults to `Forward` pending GPU barrier state fix for first-frame G-Buffer initialization
+
 ### Fixed
 
 - **TAA shadow trembling at silhouette edges** — eliminated sub-pixel jitter oscillation in AO/shadow regions

@@ -6,6 +6,17 @@
 - [x] 0.2 Create shared PostProcessCB root CBV for TAA/SSR/DoF/exposure params
 - [x] 0.3 Add velocity buffer render target (R16G16_FLOAT) to renderer — writes per-pixel motion vectors
 - [x] 0.4 Add previous-frame viewProj storage for velocity/reprojection
+- [x] 0.5 Deferred Shading Pipeline (Forward + Deferred configurable, like UE5/Godot)
+  - [x] 0.5.1 `RenderPath` enum (Forward/Deferred) in `render_path.h`
+  - [x] 0.5.2 Shared BRDF include (`brdf_common.hlsli`) — D_GGX, Vis_Smith, F_Schlick, Burley diffuse, OctEncode/Decode, PCF shadow
+  - [x] 0.5.3 G-Buffer write shader (`gbuffer_write.ps.hlsl`) — 4 MRT: AlbedoAO, OctNormal, Material, Emission HDR
+  - [x] 0.5.4 Deferred lighting shader (`deferred_lighting.ps.hlsl`) — fullscreen pass, reads G-Buffer + depth, same PBR as forward
+  - [x] 0.5.5 G-Buffer render targets (RGBA8 + RGB10A2 + RGBA8 + R11G11B10F = 16 bytes/pixel)
+  - [x] 0.5.6 PSO creation for gbuffer_write (4 MRT, PBR vertex layout) and deferred_lighting (fullscreen)
+  - [x] 0.5.7 Render path branching in `render()` — Deferred: sky_draw + gbuffer_write + deferred_lighting; Forward: unchanged
+  - [x] 0.5.8 Shader registration in ShaderLibrary (gbuffer_write, deferred_lighting)
+  - [ ] 0.5.9 Fix deferred path GPU hang (initial G-Buffer barrier states) — WIP
+  - [ ] 0.5.10 WS command `renderer.set_path` for runtime switching + `.uzscene` config
 
 ---
 
