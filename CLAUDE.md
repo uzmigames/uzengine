@@ -11,6 +11,54 @@ This project uses @hivehub/rulebook standards. All code generation should follow
 
 ---
 
+## 🚨 AAA GAME ENGINE DIRECTIVE (APPLIES TO ALL CODE)
+
+**UzEngine is a tool designed for AAA realistic games.** Every implementation decision
+MUST prioritize **performance** and **visual quality** above convenience or simplicity.
+
+### Performance Rules
+
+1. **GPU-bound by default** — assume every frame has a 16.6ms budget (60 FPS minimum,
+   target 144+ FPS). Never add a feature that drops below this without profiling data.
+2. **Zero unnecessary allocations in hot paths** — use arena allocators, pre-allocated
+   pools, and stack memory for per-frame data. `new`/`malloc` in render or update loops
+   is FORBIDDEN.
+3. **Cache-friendly data layout** — prefer SoA (Structure of Arrays) over AoS when
+   iterating large datasets. Minimize pointer chasing. Keep hot data contiguous.
+4. **Batch and instance** — never submit one draw call per object when batching or
+   GPU instancing is viable. Minimize CPU-GPU round trips.
+5. **Async and parallel** — use compute shaders for GPU work (IBL baking, culling,
+   particle simulation). Use job system for CPU parallelism. Never block the render
+   thread on disk I/O.
+6. **Profile before optimizing** — use GPU/CPU profiler zones (`PROFILER_ZONE`).
+   Optimization without measurement is guessing.
+
+### Visual Quality Rules
+
+1. **Physically-based rendering is mandatory** — all new materials must use PBR
+   (GGX specular, energy-conserving diffuse, correct Fresnel). No ad-hoc lighting models.
+2. **HDR pipeline end-to-end** — render in linear HDR (RGBA16F minimum), tonemap
+   at the end (ACES or better). Never clamp colors before tonemapping.
+3. **IBL for ambient lighting** — environment maps with prefiltered specular and
+   irradiance convolution. No flat ambient terms.
+4. **Shadow quality** — PCF or better filtering, stable cascades for directional lights,
+   appropriate resolution (2048+ for primary shadows).
+5. **Post-processing stack** — SSAO, bloom, tonemapping are baseline. SSR, TAA,
+   motion blur, volumetric effects as features are added.
+6. **Texture quality** — BC7/BC5 compression for runtime, full mip chains, anisotropic
+   filtering. Never ship uncompressed RGBA8 textures in production.
+7. **Reference AAA standards** — when implementing a rendering feature, reference how
+   Unreal Engine 5, Frostbite, or id Tech implement it. Match or exceed their quality.
+
+### Decision Framework
+
+When facing a trade-off:
+- **Performance vs. code simplicity** → choose performance (with clean API surface)
+- **Visual quality vs. implementation speed** → choose visual quality
+- **Correctness vs. approximation** → choose correctness unless profiling proves it's too expensive, then use the best approximation from published research
+
+---
+
 ## 🚨 ENGINE ARCHITECTURE RULES (READ BEFORE WRITING ANY RENDERING OR COMPONENT CODE)
 
 These rules are derived from analysis of Unreal Engine 5, Unity, and Godot architectures.
