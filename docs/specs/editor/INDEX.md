@@ -9,3 +9,4 @@
 | [prefab-edit-mode.md](prefab-edit-mode.md) | Prefab isolation viewport, breadcrumb navigation, override panel (blue), save/reload instances |
 | [undo-redo.md](undo-redo.md) | EditorCommand pattern, UndoStack (100 entries), debounce, dirty tracking, Ctrl+Z/Ctrl+Shift+Z |
 | [console-commands.md](console-commands.md) | In-game debug console (~key), command registration API (Lua + C++), IPC handlers, auto-complete |
+| [shader-editor.md](shader-editor.md) | Node-based shader graph system — prompt-driven, HLSL compilation, live preview, 8 subsystems |

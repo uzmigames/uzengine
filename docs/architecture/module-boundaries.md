@@ -94,6 +94,13 @@ main.cpp
     │
     ├──► engine/scene/     ──► engine/core/
     │
+    ├──► engine/renderer/shader_graph/ ──► engine/core/
+    │                                 ──► nlohmann/json
+    │                                 ──► [NO rhi.h, NO scene/, NO renderer/resources/]
+    │
+    ├──► engine/renderer/preview/ ──► engine/renderer/ (rhi.h, ShaderLibrary)
+    │                             ──► engine/renderer/shader_graph/
+    │
     ├──► engine/editor/    ──► engine/scene/
     │                      ──► engine/core/
     │
@@ -236,6 +243,51 @@ class GBufferPass {
 Once all files are migrated, `src/renderer/` is deleted. No symlinks, no "compat shims",
 no re-exports. Clean deletion.
 
+### RULE MOD-9: engine/renderer/shader_graph/ is GPU-agnostic — no RHI, no scene
+
+`engine/renderer/shader_graph/` MUST NOT include:
+- `engine/renderer/rhi/rhi.h`
+- Any DX12/Vulkan/Metal headers or GPU handle types
+- `engine/scene/` headers
+- `engine/renderer/resources/shader_library.h`
+
+The shader graph module depends only on:
+- `engine/core/` (math types, result types)
+- `nlohmann/json` (serialization)
+- C++ standard library
+
+```cpp
+// ❌ WRONG — shader graph including GPU types
+// engine/renderer/shader_graph/shader_graph.h
+#include "engine/renderer/rhi/rhi.h"    // FORBIDDEN
+#include "engine/renderer/resources/shader_library.h"  // FORBIDDEN
+
+class ShaderGraph {
+    RhiPipeline cached_pso_;  // FORBIDDEN — GPU handle in graph data
+};
+
+// ✅ CORRECT — shader graph outputs text, preview layer compiles it
+// engine/renderer/shader_graph/compiler/hlsl_translator.h
+#include "engine/core/result.h"
+#include <string>
+#include <vector>
+
+struct CompileResult {
+    bool ok;
+    std::string vertex_hlsl;   // Text — no GPU types
+    std::string pixel_hlsl;    // Text — no GPU types
+    std::vector<std::string> errors;
+};
+```
+
+The boundary between graph and GPU:
+```
+shader_graph/        → outputs HLSL text strings (CompileResult)
+renderer/preview/    → receives HLSL text, compiles via ShaderLibrary, creates PSO
+```
+
+This ensures the entire shader graph system is testable without GPU hardware.
+
 ---
 
 ## 6. Adding a New Module
@@ -279,6 +331,12 @@ grep -rn "#include.*engine/renderer\|#include.*render_graph\|#include.*rhi.h" \
 # No engine/core/ including anything above it
 grep -rn "#include.*engine/scene\|#include.*engine/renderer\|#include.*engine/editor" \
      src/engine/core/ \
+     --include="*.h" --include="*.cpp"
+# Must produce zero output
+
+# No shader_graph/ including RHI, scene, or renderer resources
+grep -rn "#include.*rhi.h\|#include.*engine/scene\|#include.*shader_library\|#include.*material" \
+     src/engine/renderer/shader_graph/ \
      --include="*.h" --include="*.cpp"
 # Must produce zero output
 ```
