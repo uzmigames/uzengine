@@ -262,9 +262,9 @@ bool Renderer::resize(int width, int height) {
 }
 
 void Renderer::update(double totalTime, double deltaTime) {
-    // Store previous-frame viewProj BEFORE computing new one (prerequisite 0.4).
-    // Used by velocity buffer pass for per-pixel motion vectors (TAA, GTAO, SSR).
-    prevViewProj_ = viewProj_;
+    // Store previous-frame UNJITTERED viewProj for velocity buffer pass.
+    // Velocity must capture real motion only, not TAA jitter difference (UE4/UE5 approach).
+    prevViewProj_ = viewProjUnjittered_;
 
     fpsOverlay_.update(deltaTime);
 
@@ -320,6 +320,9 @@ void Renderer::update(double totalTime, double deltaTime) {
     // Extract view matrix: viewProj = proj * view (column-major)
     // → view = inv(proj) * viewProj.  Done BEFORE jitter so view matrix is clean.
     viewMatrix_ = mat4_inverse(projMatrix_) * viewProj_;
+
+    // Save unjittered viewProj for velocity buffer (must exclude TAA jitter).
+    viewProjUnjittered_ = viewProj_;
 
     // Apply Halton 2,3 jitter to projection for TAA sub-pixel sampling.
     // Jitter must be applied to the projection matrix (not the combined viewProj)
@@ -819,8 +822,8 @@ void Renderer::render(bool readback) {
                 rhi()->cmd_set_scissor(cmd, 0, 0, width_, height_);
                 rhi()->cmd_set_render_targets(cmd, &velocityRT_, 1, RHI_NULL);
 
-                // b0: invViewProj (16 DWORDs)
-                Mat4 invVP = mat4_inverse(viewProj_);
+                // b0: invViewProj (16 DWORDs) — unjittered to match prevViewProj
+                Mat4 invVP = mat4_inverse(viewProjUnjittered_);
                 rhi()->cmd_set_root_constants(cmd, 0, &invVP, 16, 0);
                 // b3: prevViewProj (16 DWORDs)
                 rhi()->cmd_set_root_constants(cmd, 3, &prevViewProj_, 16, 0);
@@ -886,8 +889,8 @@ void Renderer::render(bool readback) {
 
     // --- Pass 2: SSAO --------------------------------------------------------
     auto rgSsao = renderGraph_.import_texture("ssao_rt", ssaoRT_);
-    // Use GTAO if available, fall back to old SSAO
-    const RhiPipeline aoPSO = (gtaoPSO_ != RHI_NULL) ? gtaoPSO_ : ssaoPSO_;
+    const bool useGTAO = (gtaoPSO_ != RHI_NULL);
+    const RhiPipeline aoPSO = useGTAO ? gtaoPSO_ : ssaoPSO_;
     if (aoPSO != RHI_NULL && ssaoRT_ != RHI_NULL) {
         renderGraph_.add_pass("ssao", RgPassType::Graphics,
             [&](RgPassBuilder& builder) {
@@ -895,7 +898,7 @@ void Renderer::render(bool readback) {
                 builder.write(rgSsao);
                 builder.force_run();
             },
-            [this, aoPSO](RhiCmdList cmd) {
+            [this, aoPSO, useGTAO](RhiCmdList cmd) {
                 uint32_t hw = width_ / 2, hh = height_ / 2;
                 rhi()->cmd_barrier_texture(cmd, ssaoRT_,
                                            RHI_STATE_SHADER_READ, RHI_STATE_RENDER_TARGET);
@@ -908,26 +911,37 @@ void Renderer::render(bool readback) {
                 float ssaoParams[16];
                 std::memcpy(ssaoParams, &projMatrix_, 64);
                 rhi()->cmd_set_root_constants(cmd, 0, ssaoParams, 16, 0);
-                // b1: GTAOParams (root CBV) — includes contact shadow params
-                if (ssaoB1CBV_ != RHI_NULL) {
-                    // Transform light direction to view space for contact shadows
-                    Vec3 ld = frameConstants_.light_dir;
-                    // viewMatrix_ * lightDir (3x3 rotation part only)
-                    float ldvX = viewMatrix_.m[0][0]*ld.x + viewMatrix_.m[1][0]*ld.y + viewMatrix_.m[2][0]*ld.z;
-                    float ldvY = viewMatrix_.m[0][1]*ld.x + viewMatrix_.m[1][1]*ld.y + viewMatrix_.m[2][1]*ld.z;
-                    float ldvZ = viewMatrix_.m[0][2]*ld.x + viewMatrix_.m[1][2]*ld.y + viewMatrix_.m[2][2]*ld.z;
-                    float ldvLen = std::sqrt(ldvX*ldvX + ldvY*ldvY + ldvZ*ldvZ);
-                    if (ldvLen > 0.001f) { ldvX/=ldvLen; ldvY/=ldvLen; ldvZ/=ldvLen; }
 
-                    float aoB1[12] = {
-                        static_cast<float>(width_), static_cast<float>(height_),
-                        0.1f, 500.0f,
-                        0.3f, 1.0f, 2.0f,  // aoRadius, aoIntensity, aoFalloff
-                        static_cast<float>(frameNumber_),  // frameCount
-                        ldvX, ldvY, ldvZ,  // lightDirView
-                        0.1f               // contactShadowLen
-                    };
-                    rhi()->buffer_upload(ssaoB1CBV_, aoB1, sizeof(aoB1));
+                // b1: AO params — different layout for SSAO vs GTAO
+                if (ssaoB1CBV_ != RHI_NULL) {
+                    if (useGTAO) {
+                        // GTAO cbuffer: screenSize, near, far, aoRadius, aoIntensity,
+                        //               aoFalloff, frameCount, lightDirView(3), contactShadowLen
+                        Vec3 ld = frameConstants_.light_dir;
+                        float ldvX = viewMatrix_.m[0][0]*ld.x + viewMatrix_.m[1][0]*ld.y + viewMatrix_.m[2][0]*ld.z;
+                        float ldvY = viewMatrix_.m[0][1]*ld.x + viewMatrix_.m[1][1]*ld.y + viewMatrix_.m[2][1]*ld.z;
+                        float ldvZ = viewMatrix_.m[0][2]*ld.x + viewMatrix_.m[1][2]*ld.y + viewMatrix_.m[2][2]*ld.z;
+                        float ldvLen = std::sqrt(ldvX*ldvX + ldvY*ldvY + ldvZ*ldvZ);
+                        if (ldvLen > 0.001f) { ldvX/=ldvLen; ldvY/=ldvLen; ldvZ/=ldvLen; }
+
+                        float aoB1[12] = {
+                            static_cast<float>(width_), static_cast<float>(height_),
+                            0.1f, 500.0f,
+                            0.5f, 1.5f, 2.0f,
+                            static_cast<float>(frameNumber_),
+                            ldvX, ldvY, ldvZ,
+                            0.0f  // contactShadowLen (disabled — needs proper tuning)
+                        };
+                        rhi()->buffer_upload(ssaoB1CBV_, aoB1, sizeof(aoB1));
+                    } else {
+                        // Old SSAO cbuffer: screenSize, near, far, aoRadius, aoIntensity, aoBias, pad
+                        float aoB1[8] = {
+                            static_cast<float>(width_), static_cast<float>(height_),
+                            0.1f, 500.0f,
+                            0.5f, 1.5f, 0.025f, 0.0f
+                        };
+                        rhi()->buffer_upload(ssaoB1CBV_, aoB1, sizeof(aoB1));
+                    }
                     rhi()->cmd_set_constant_buffer(cmd, 1, ssaoB1CBV_);
                 }
 

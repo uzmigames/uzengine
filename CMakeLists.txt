@@ -108,9 +108,12 @@ if(WIN32)
         ${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/include/luajit
     )
 
-    # LuaJIT — no CMake config, link directly
-    find_library(LUAJIT_LIB lua51
+    # LuaJIT — no CMake config, link directly via generator expression for Debug/Release
+    find_library(LUAJIT_LIB_RELEASE lua51
         PATHS ${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/lib
+        NO_DEFAULT_PATH)
+    find_library(LUAJIT_LIB_DEBUG lua51
+        PATHS ${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/debug/lib
         NO_DEFAULT_PATH)
 
     target_link_libraries(UzEngine PRIVATE
@@ -125,7 +128,7 @@ if(WIN32)
         ixwebsocket::ixwebsocket
         nlohmann_json::nlohmann_json
         $<IF:$<TARGET_EXISTS:libjpeg-turbo::turbojpeg>,libjpeg-turbo::turbojpeg,libjpeg-turbo::turbojpeg-static>
-        ${LUAJIT_LIB}
+        $<IF:$<CONFIG:Debug>,${LUAJIT_LIB_DEBUG},${LUAJIT_LIB_RELEASE}>
     )
 
     # Copy vcpkg DLLs to the output directory after build (Windows dynamic linking).

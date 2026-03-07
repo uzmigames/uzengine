@@ -199,7 +199,8 @@
       "Bash(npm test -- --testPathPattern=\"server-manager\" --coverage --coverageReporters=text)",
       "Bash(npm test -- --testPathPattern=\"uzscene-editor.test\")",
       "Bash(npm test -- --testPathPattern=\"uzscene-editor.test\" --coverage --coverageReporters=text)",
-      "WebSearch"
+      "WebSearch",
+      "mcp__uzengine__uz_build"
     ]
   },
   "enableAllProjectMcpServers": true,

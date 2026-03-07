@@ -7,6 +7,7 @@
 #include "engine/scene/scene_loader.h"
 #include "engine/scene/component_registry.h"
 #include "engine/scene/component_store.h"
+#include "engine/scene/component_data.h"
 
 #include <cstdio>
 #include <cstdlib>

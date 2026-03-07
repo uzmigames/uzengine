@@ -17,6 +17,11 @@
   - Tile data: packed BC7 tile blobs
 - [ ] 2.4 Register `.uvtex` in `AssetImporterRegistry` for cook pipeline
 - [ ] 2.5 Source textures above `vt_min_resolution` (default 4096) automatically cooked as virtual texture
+- [ ] 2.6 UDIM support: detect UDIM naming convention (`texture.1001.png` .. `texture.1099.png`) during cook
+  - Map UDIM tile ID to UV offset: `u = (id - 1001) % 10`, `v = (id - 1001) / 10`
+  - Composite UDIM tiles into a single virtual texture address space (each tile = 1×1 UV square)
+  - Write combined `.uvtex` with correct virtual dimensions (e.g. 3×2 UDIM layout = 3x width, 2x height)
+- [ ] 2.7 UDIM auto-detection in `AssetImporterRegistry`: glob `<name>.<1001-1099>.<ext>` → single `.uvtex` asset
 
 ## 3. Physical Tile Cache
 
@@ -60,6 +65,7 @@
   - Sample `tile_cache` at `physical_uv`
   - Apply mip transition blend (fade between mip levels to hide page loading)
 - [ ] 7.3 Handle unloaded page: fall back to nearest loaded parent mip (always available — mip 0 guaranteed loaded)
+- [ ] 7.4 UDIM UV wrapping: `SampleVirtualTexture` accepts UV beyond [0,1] — virtual address space maps multi-tile UDIM layouts transparently (no shader change needed if cook composites correctly)
 
 ## 8. Renderer Integration
 
@@ -75,6 +81,8 @@
 - [ ] 9.4 Unit test: unloaded page fallback — returns parent mip color (not black/error)
 - [ ] 9.5 Integration test: place `CVirtualTexture` on terrain mesh — tiles stream in, surface shows correct detail within 1 second
 - [ ] 9.6 Performance test: 4096-tile cache, feedback processing completes in < 0.5ms CPU per frame
+- [ ] 9.7 Unit test: UDIM cook — 6 UDIM tiles (1001-1003, 1011-1013) produce `.uvtex` with 3×2 virtual layout
+- [ ] 9.8 Integration test: UDIM mesh — character model with UDIM UV layout renders correctly across all tiles
 
 ## 10. Documentation
 

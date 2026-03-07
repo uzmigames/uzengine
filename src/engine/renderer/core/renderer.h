@@ -298,7 +298,9 @@ private:
     // View matrix — needed for contact shadows (lightDir world→view transform)
     Mat4 viewMatrix_ = Mat4::identity();
 
-    // Previous-frame viewProj for velocity/reprojection (Phase 3 prerequisite 0.4)
+    // Unjittered viewProj — used for velocity buffer (jitter must NOT appear in motion vectors)
+    Mat4 viewProjUnjittered_ = Mat4::identity();
+    // Previous-frame unjittered viewProj for velocity/reprojection
     Mat4 prevViewProj_ = Mat4::identity();
 
     // Velocity buffer (R16G16_FLOAT) for TAA/GTAO/SSR motion vectors (prerequisite 0.3)

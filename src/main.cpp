@@ -1907,6 +1907,10 @@ int WINAPI WinMain(
                 if (pending) {
                     UZ_PROFILE_ZONE("apply_pending_scene");
                     applyPendingScene(*pending, g_sceneData, renderer, g_scene);
+                    // Re-attach scripts for the newly loaded scene.
+                    g_scriptRunner.clear();
+                    g_scriptRunner.set_scene(g_sceneData.get());
+                    g_scriptRunner.scan_scene();
                 }
             }
 

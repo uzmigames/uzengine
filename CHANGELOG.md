@@ -6,6 +6,53 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **XeGTAO Shader Rewrite** — Faithful reimplementation of Intel XeGTAO algorithm replacing ad-hoc hemisphere SSAO approach
+  - Per-slice normal projection to compute signed tangent angle `n` (XeGTAO eq.)
+  - Dual-direction horizon search with `max(horizonCos0/1)` tracking viewVec cos instead of surface-normal dot
+  - Correct visibility integral: `(-cos(2h-n) + cosN + 2h*sinN) / 4` per slice, summed and normalized
+  - Thin-object heuristic: `lerp(horizonCos, shc, falloff)` blends toward current horizon to prevent haloing
+  - `FastACos` approximation (XeGTAO style, max error ~0.07 rad) replacing `acos()` in hot loop
+  - 8 steps per direction (was 6), 4 slice directions — matches Intel's recommended quality preset
+  - Contact shadow simplified to hard binary cutoff; disabled by default (`contactShadowLen=0`) pending tuning
+  - GTAO params retuned: `aoRadius=0.5`, `aoIntensity=1.5`, Y-axis flip on `sliceDir` for correct screen-UV orientation
+
+- **Unjittered ViewProj for Velocity Buffer** — fixed ghost artifacts in TAA/motion-vector-dependent passes
+  - `viewProjUnjittered_` stored before TAA Halton jitter is applied each frame
+  - `prevViewProj_` now copies `viewProjUnjittered_` (not jittered) so motion vectors capture real motion only
+  - `invVP` in velocity pass uses `viewProjUnjittered_` — matches UE4/UE5 approach
+
+- **SSAO/GTAO cbuffer separation** — renderer now selects correct upload layout per active AO shader variant
+  - GTAO path: 12 floats (screenSize, near/far, aoRadius, aoIntensity, aoFalloff, frameCount, lightDirView×3, contactShadowLen)
+  - SSAO path: 8 floats (screenSize, near/far, aoRadius, aoIntensity, aoBias, pad)
+
+- **Lua Scripting System** — Full LuaJIT 2.1 integration for per-node runtime scripts
+  - `LuaVM` class: sandboxed Lua state with restricted standard library (no os.execute, io, etc.)
+  - `LuaScriptInstance`: loads `.lua` files, executes `on_start()`, `on_update(dt)`, `on_stop()` callbacks
+  - Node script binding: `.uzscene` files accept `script = assets/scripts/example.lua` property
+  - Script environment isolation: each script instance gets its own Lua table with access to `NODE_ID` constant
+  - Demo scripts: `rotate_node.lua` (continuous Y rotation), `camera_orbit.lua` (orbiting camera)
+  - `uz.log()` — log messages with newline
+  - `uz.scene.get_rotation(node_id)` — returns rx, ry, rz in degrees
+  - `uz.scene.set_rotation(node_id, rx, ry, rz)` — set node rotation
+  - `uz.camera.set_position(x, y, z)` — set camera position
+  - `uz.camera.look_at(x, y, z)` — point camera at target
+  - `uz.delta_time()` — frame delta time in seconds
+  - `uz.total_time()` — total elapsed time in seconds
+  - Full Lua standard library (math, string, table, etc.) available in scripts
+
+### Fixed
+
+- **Large shader MSVC string literal limit** — `embed_shaders.cmake` now splits shaders >14000 chars into concatenated raw string literals to stay under MSVC's 16380-char limit; `gtao.ps.hlsl` (244 lines) was hitting this
+- **LuaJIT Debug/Release linkage** — `CMakeLists.txt` uses generator expression `$<IF:$<CONFIG:Debug>,...>` to pick `debug/lib/lua51.lib` in Debug and `lib/lua51.lib` in Release (was always using Release lib)
+- **Script re-attach after scene reload** — `main.cpp` calls `g_scriptRunner.clear()` + `scan_scene()` after `applyPendingScene()` so Lua scripts activate for newly loaded scene nodes
+- **Missing include in scene_loader.cpp** — added `#include "engine/scene/component_data.h"`
+
+### Changed
+
+- **GTAO AO params tuning** — `aoRadius` 0.3→0.5, `aoIntensity` 1.0→1.5 for stronger and more physically accurate AO; `contactShadowLen` set to 0 (disabled) until proper tuning pass
+
+---
+
 - **Zero-Rebinding Texture Replace** — `texture_replace()` RHI function swaps D3D12 resource in existing slot
   - Materials auto-see updated textures via same handle — zero refresh_textures() scan
   - `get_or_queue()` creates unique 1x1 placeholder handle per path (not shared)

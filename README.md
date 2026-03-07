@@ -12,7 +12,7 @@ An AI-native 3D game engine that runs inside VSCode. Scenes, shaders, and materi
                                               · Scene tree + Inspector
 ```
 
-> **Current state:** v0.3.0 — Component-based renderer, scene system with persistence, multi-instance engine, gizmo system, editor fly camera, 144fps JPEG streaming with dual-threaded encoding.
+> **Current state:** v0.4.0+ — PBR renderer with IBL pipeline, Lua scripting system, component-based architecture, scene system with persistence, multi-instance engine, gizmo system, editor fly camera, 144fps JPEG streaming with dual-threaded encoding.
 
 ---
 
@@ -94,6 +94,7 @@ UzEngine/
 │   │   │                             #   crash reporter, file watcher, platform, math, string IDs
 │   │   ├── scene/                    # Scene graph, node transforms, component store,
 │   │   │                             #   scene loader/saver (.uzscene), scene manager
+│   │   ├── scripting/                # Lua VM, LuaScriptInstance, script bindings
 │   │   ├── editor/                   # Editor-specific logic
 │   │   └── debug/                    # Debug utilities
 │   ├── renderer/
@@ -104,6 +105,10 @@ UzEngine/
 │   │   └── gizmos/                   # Transform, camera, light gizmos + registry
 │   ├── encoder/                      # JPEG encoder (libjpeg-turbo), dual-thread pipeline
 │   └── network/                      # WebSocket server (IXWebSocket)
+├── assets/
+│   ├── textures/                     # PBR material textures (organized by material)
+│   ├── scripts/                      # Lua script examples (rotate_node.lua, camera_orbit.lua)
+│   └── scenes/                       # Pre-made test scenes (.uzscene)
 ├── vscode-uzengine/                  # VSCode extension (TypeScript)
 │   └── src/
 │       ├── extension.ts              # Activation, commands, keybindings
@@ -144,6 +149,14 @@ UzEngine/
 - **Transform gizmos** — Translate, Rotate, Scale with W/E/R hotkeys
 - **Component gizmos** — Camera frustum wireframe, directional/point light visualization
 - **Gizmo registry** for extensible gizmo types
+
+### Scripting
+- **Lua scripting** — Per-node runtime scripts with `on_start()`, `on_update(dt)`, `on_stop()` callbacks
+- **Sandboxed Lua VM** — Full Lua 5.1 standard library with restricted dangerous functions
+- **Scene API** — `uz.scene.get_rotation()`, `uz.scene.set_rotation()` for node control
+- **Camera API** — `uz.camera.set_position()`, `uz.camera.look_at()` for runtime camera movement
+- **Timing API** — `uz.delta_time()`, `uz.total_time()` for frame-aware updates
+- **Script isolation** — each script instance has its own environment with `NODE_ID` constant
 
 ### Editor
 - **Fly camera** — RMB + WASD/EQ with scroll-wheel speed, Shift boost (UE5-style)
