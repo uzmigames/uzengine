@@ -330,6 +330,7 @@ private:
     float lastSkyHorizon_[3] = {-1.f, -1.f, -1.f};
     float lastSkyGround_[3]  = {-1.f, -1.f, -1.f};
     float lastSunDir_[3]     = {-1.f, -1.f, -1.f};
+    double iblLastBakeTime_  = -999.0;  // cooldown to prevent per-frame rebake
 
     // Render path selection (Forward or Deferred)
     RenderPath renderPath_ = RenderPath::Deferred;

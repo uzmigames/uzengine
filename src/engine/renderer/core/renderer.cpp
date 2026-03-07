@@ -616,20 +616,23 @@ void Renderer::update(double totalTime, double deltaTime) {
             skyColorsCB_.fogDensity    = sky->fog_density;
 
             // Dirty-flag: regenerate IBL cubemaps when sky colors or sun direction change.
-            // Compare against last-known values; skip the expensive reconvolution if unchanged.
+            // Tolerance raised to 1e-2 to avoid thrashing from float rounding noise.
+            // Cooldown: at most one rebake per 0.5s to prevent per-frame GPU stalls.
             float curSunDir[3] = {
                 frameConstants_.light_dir.x,
                 frameConstants_.light_dir.y,
                 frameConstants_.light_dir.z
             };
             bool skyDirty = false;
+            constexpr float kIblTolerance = 1e-2f;
             for (int c = 0; c < 3; ++c) {
-                if (std::abs(sky->sky_zenith[c]  - lastSkyZenith_[c])  > 1e-4f) skyDirty = true;
-                if (std::abs(sky->sky_horizon[c] - lastSkyHorizon_[c]) > 1e-4f) skyDirty = true;
-                if (std::abs(sky->sky_ground[c]  - lastSkyGround_[c])  > 1e-4f) skyDirty = true;
-                if (std::abs(curSunDir[c]        - lastSunDir_[c])     > 1e-4f) skyDirty = true;
+                if (std::abs(sky->sky_zenith[c]  - lastSkyZenith_[c])  > kIblTolerance) skyDirty = true;
+                if (std::abs(sky->sky_horizon[c] - lastSkyHorizon_[c]) > kIblTolerance) skyDirty = true;
+                if (std::abs(sky->sky_ground[c]  - lastSkyGround_[c])  > kIblTolerance) skyDirty = true;
+                if (std::abs(curSunDir[c]        - lastSunDir_[c])     > kIblTolerance) skyDirty = true;
             }
-            if (skyDirty) {
+            if (skyDirty && (totalTime - iblLastBakeTime_) > 0.5) {
+                iblLastBakeTime_ = totalTime;
                 for (int c = 0; c < 3; ++c) {
                     lastSkyZenith_[c]  = sky->sky_zenith[c];
                     lastSkyHorizon_[c] = sky->sky_horizon[c];
@@ -1575,7 +1578,7 @@ void Renderer::render(bool readback) {
                         rhi()->cmd_set_vertex_buffer(cmd, 0, selProxy->mesh->vertex_buffer, 0, selProxy->mesh->vertex_stride);
                         rhi()->cmd_set_index_buffer(cmd, selProxy->mesh->index_buffer, 0, true);
                         rhi()->cmd_set_root_constants(cmd, 0, &selProxy->transform, 16, 0);
-                        rhi()->cmd_set_root_constants(cmd, 3, &frameConstants_.view_proj, 16, 0);
+                        rhi()->cmd_set_root_constants(cmd, 3, &viewProjUnjittered_, 16, 0);
                         for (const auto& sub : selProxy->mesh->submeshes)
                             rhi()->cmd_draw_indexed(cmd, sub.index_count, 1, sub.index_offset, 0, 0);
 
@@ -1591,7 +1594,7 @@ void Renderer::render(bool readback) {
                             rhi()->buffer_upload(outlineCBV_, outlineData, sizeof(outlineData));
                             rhi()->cmd_set_constant_buffer(cmd, 1, outlineCBV_);
                         }
-                        rhi()->cmd_set_root_constants(cmd, 3, &frameConstants_.view_proj, 16, 0);
+                        rhi()->cmd_set_root_constants(cmd, 3, &viewProjUnjittered_, 16, 0);
                         for (const auto& sub : selProxy->mesh->submeshes)
                             rhi()->cmd_draw_indexed(cmd, sub.index_count, 1, sub.index_offset, 0, 0);
                     }
@@ -1623,7 +1626,9 @@ void Renderer::render(bool readback) {
                     }
                 }
 
-                editor_.draw(cmd, viewProj_, camPos, selNode, gizMode, gizAxis, usePivot, pivotPos);
+                // Use unjittered viewProj — TAA jitter causes sub-pixel shimmer
+                // on grid lines and gizmo geometry each frame.
+                editor_.draw(cmd, viewProjUnjittered_, camPos, selNode, gizMode, gizAxis, usePivot, pivotPos);
             }
         });
 
