@@ -30,6 +30,7 @@
 #include "engine/core/math.h"
 #include "common/types.h"
 #include "common/timer.h"
+#include "engine/renderer/core/render_path.h"
 #include "engine/renderer/scene/scene_params.h"
 
 // RHI abstraction
@@ -171,6 +172,10 @@ private:
     RhiPipeline taaPSO_             = RHI_NULL;  // TAA resolve
     RhiPipeline gtaoPSO_            = RHI_NULL;  // GTAO (replaces SSAO)
 
+    // Deferred shading PSOs
+    RhiPipeline gbufferPSO_         = RHI_NULL;  // G-Buffer write (MRT)
+    RhiPipeline deferredLightPSO_   = RHI_NULL;  // Deferred lighting (fullscreen)
+
     // Sky CB data — updated in update(), consumed in render()
     struct SkyCB {
         float camForward[3]; float tanHalfFovY;
@@ -285,6 +290,14 @@ private:
     float lastSkyHorizon_[3] = {-1.f, -1.f, -1.f};
     float lastSkyGround_[3]  = {-1.f, -1.f, -1.f};
     float lastSunDir_[3]     = {-1.f, -1.f, -1.f};
+
+    // Render path selection (Forward or Deferred)
+    RenderPath renderPath_ = RenderPath::Deferred;
+
+    // G-Buffer render targets (deferred path only)
+    static constexpr uint32_t kGBufferCount = 4;
+    RhiTexture gbufferRT_[kGBufferCount] = {};  // 0=AlbedoAO, 1=Normal, 2=Material, 3=Emission
+    RhiBuffer  deferredLightCBV_ = RHI_NULL;    // Per-frame CBV for deferred lighting params
 
     // Post-process render targets
     RhiTexture hdrRT_         = RHI_NULL;  // Full-res R11G11B10_FLOAT scene color

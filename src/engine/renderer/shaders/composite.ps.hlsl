@@ -1,17 +1,19 @@
 // composite.ps.hlsl -- Final post-process composite
 //
-// Combines: HDR scene * SSAO + Bloom -> Auto Exposure -> ACES Tonemap -> Gamma
+// Combines: HDR scene * SSAO + Bloom -> Exposure -> CAS Sharpen ->
+//           ACES Tonemap -> Gamma
 //
 // References:
 //   [Narkowicz 2015] "ACES Filmic Tone Mapping Curve"
 //   [TheRealMJP] "BakingLab/ACES.hlsl"
+//   [AMD 2019] "FidelityFX Contrast Adaptive Sharpening"
 //   UE5 — Engine/Shaders/Private/PostProcessCombineLUTs.usf
 
 cbuffer CompositeParams : register(b0) {
     float  exposure;        // EV100 exposure multiplier (default 1.0)
     float  bloomStrength;   // bloom mix factor (default 0.04)
     float  gamma;           // gamma value (default 2.2)
-    float  _compPad;
+    float  sharpenStrength; // CAS sharpening (0 = off, 0.4 = subtle, 0.8 = strong)
 };
 
 Texture2D    hdrTex       : register(t0);   // HDR scene (linear, pre-tonemap)
@@ -25,18 +27,44 @@ struct PSInput {
 };
 
 float4 PSMain(PSInput input) : SV_TARGET {
-    float3 hdr  = hdrTex.Sample(linearClamp, input.texcoord).rgb;
+    int2 pc = int2(input.position.xy);
+
+    float3 hdr  = hdrTex.Load(int3(pc, 0)).rgb;
     float  ao   = ssaoTex.Sample(linearClamp, input.texcoord).r;
     float3 bloom = bloomTex.Sample(linearClamp, input.texcoord).rgb;
 
-    // Apply SSAO to scene
+    // Apply SSAO + bloom + exposure
     float3 color = hdr * ao;
-
-    // Add bloom
     color = lerp(color, color + bloom, bloomStrength);
-
-    // Apply exposure
     color *= exposure;
+
+    // -----------------------------------------------------------------------
+    // Contrast Adaptive Sharpening (simplified AMD FidelityFX CAS)
+    // Applied in post-exposure HDR space before tonemap.
+    // Counteracts TAA softening without ringing on high-contrast edges.
+    // -----------------------------------------------------------------------
+    if (sharpenStrength > 0.001) {
+        // 5-tap cross neighbors (post-exposure HDR)
+        float3 cN = hdrTex.Load(int3(pc + int2( 0, -1), 0)).rgb * ao * exposure;
+        float3 cS = hdrTex.Load(int3(pc + int2( 0,  1), 0)).rgb * ao * exposure;
+        float3 cW = hdrTex.Load(int3(pc + int2(-1,  0), 0)).rgb * ao * exposure;
+        float3 cE = hdrTex.Load(int3(pc + int2( 1,  0), 0)).rgb * ao * exposure;
+
+        // Per-channel min/max of the 5-tap cross
+        float3 mnRGB = min(color, min(min(cN, cS), min(cW, cE)));
+        float3 mxRGB = max(color, max(max(cN, cS), max(cW, cE)));
+
+        // Adaptive weight: sqrt(min/max) — flat areas get more sharpening,
+        // high-contrast edges get less (prevents ringing)
+        float3 ampRGB = saturate(sqrt(mnRGB * rcp(mxRGB + 1e-5)));
+
+        // Peak sharpening weight: -1/lerp(8,5,s) from AMD CAS
+        float3 peak = -rcp(lerp(8.0, 5.0, saturate(sharpenStrength)));
+        float3 wN = ampRGB * peak;
+        float3 wD = 1.0 + 4.0 * wN;
+
+        color = max((color + (cN + cS + cW + cE) * wN) / wD, 0.0);
+    }
 
     // ACES Tonemapper (BakingLab reference -- TheRealMJP, MIT License)
     {

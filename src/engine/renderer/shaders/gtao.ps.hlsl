@@ -1,21 +1,18 @@
 // gtao.ps.hlsl -- Ground Truth Ambient Occlusion
 //
-// Faithful reimplementation of XeGTAO (Intel, MIT license) algorithm:
-//   - Per-slice normal projection to compute tangent angle 'n'
-//   - Horizon search tracking max cos(theta) with viewVec
-//   - Correct visibility integral: (-cos(2h-n) + cosN + 2h*sinN) / 4
-//   - Thin-object heuristic via distance-weighted lerp
+// Horizon-search AO with contact shadows.
+// Traces screen-space depth along 2-4 slice directions per pixel,
+// finds horizon angle, integrates visible solid angle vs surface normal.
 //
-// References:
-//   [Jimenez 2016] "Practical Real-Time Strategies for Accurate Indirect Occlusion"
-//   Intel XeGTAO — github.com/GameTechDev/XeGTAO
+// IMPORTANT: This pass runs at HALF resolution but samples the FULL-res
+// depth buffer. All depthTex reads use UV-derived full-res coordinates.
 
 cbuffer ProjCB : register(b0) {
     float4x4 projMatrix;
 };
 
 cbuffer GTAOParams : register(b1) {
-    float2   screenSize;
+    float2   screenSize;       // FULL resolution (width, height)
     float    nearPlane;
     float    farPlane;
     float    aoRadius;
@@ -33,11 +30,10 @@ struct PSInput {
     float2 texcoord : TEXCOORD0;
 };
 
-static const float PI      = 3.14159265359;
-static const float HALF_PI = 1.57079632679;
+static const float PI = 3.14159265359;
 
 static const int NUM_DIRECTIONS = 4;
-static const int NUM_STEPS      = 8;
+static const int NUM_STEPS      = 6;
 
 float LinearizeDepth(float d) {
     return nearPlane * farPlane / (farPlane - d * (farPlane - nearPlane));
@@ -52,160 +48,120 @@ float3 ReconstructViewPos(float2 uv, float depth) {
     return float3(x, y, z);
 }
 
-// Fast arccos approximation (XeGTAO style, max error ~0.07 rad)
-float FastACos(float x) {
-    float res = -0.156583 * abs(x) + HALF_PI;
-    res *= sqrt(1.0 - abs(x));
-    return (x >= 0) ? res : PI - res;
-}
-
 float4 PSMain(PSInput input) : SV_TARGET {
-    int2 pixelCoord = int2(input.position.xy);
+    float2 uv = input.texcoord;
     float2 texelSize = 1.0 / screenSize;
+
+    // CRITICAL: derive full-res pixel coords from UV, NOT from SV_POSITION
+    // (this pass renders at half-res but depthTex is full-res)
+    int2 pixelCoord = int2(uv * screenSize);
 
     float centerDepthRaw = depthTex.Load(int3(pixelCoord, 0)).r;
     if (centerDepthRaw >= 0.9999)
         return float4(1.0, 1.0, 1.0, 1.0);
 
-    float3 viewPos = ReconstructViewPos(input.texcoord, centerDepthRaw);
+    float3 viewPos = ReconstructViewPos(uv, centerDepthRaw);
     float centerZ  = viewPos.z;
 
-    // viewVec: from pixel toward camera (camera at origin in view space)
-    float3 viewVec = normalize(-viewPos);
-
-    // Reconstruct normal from depth cross products
+    // Reconstruct normal from depth via cross products
     float depthL = depthTex.Load(int3(pixelCoord + int2(-1, 0), 0)).r;
     float depthR = depthTex.Load(int3(pixelCoord + int2( 1, 0), 0)).r;
     float depthU = depthTex.Load(int3(pixelCoord + int2(0, -1), 0)).r;
     float depthD = depthTex.Load(int3(pixelCoord + int2(0,  1), 0)).r;
 
-    float3 posL = ReconstructViewPos(input.texcoord + float2(-texelSize.x, 0), depthL);
-    float3 posR = ReconstructViewPos(input.texcoord + float2( texelSize.x, 0), depthR);
-    float3 posU = ReconstructViewPos(input.texcoord + float2(0, -texelSize.y), depthU);
-    float3 posD = ReconstructViewPos(input.texcoord + float2(0,  texelSize.y), depthD);
+    float3 posL = ReconstructViewPos(uv + float2(-texelSize.x, 0), depthL);
+    float3 posR = ReconstructViewPos(uv + float2( texelSize.x, 0), depthR);
+    float3 posU = ReconstructViewPos(uv + float2(0, -texelSize.y), depthU);
+    float3 posD = ReconstructViewPos(uv + float2(0,  texelSize.y), depthD);
 
     float3 dPdx = (abs(posR.z - centerZ) < abs(posL.z - centerZ)) ? (posR - viewPos) : (viewPos - posL);
     float3 dPdy = (abs(posD.z - centerZ) < abs(posU.z - centerZ)) ? (posD - viewPos) : (viewPos - posU);
     float3 viewNormal = normalize(cross(dPdx, dPdy));
 
-    // Temporal rotation to reduce banding
-    float rotAngle = (PI / float(NUM_DIRECTIONS)) * float((pixelCoord.x ^ pixelCoord.y) & 3)
+    // Temporal rotation: rotate slice directions per frame to reduce banding
+    float rotAngle = (PI / NUM_DIRECTIONS) * ((pixelCoord.x ^ pixelCoord.y) & 3)
                    + (PI / 8.0) * fmod(frameCount, 8.0);
 
-    // Screen-space search radius
+    // Scale search radius to screen space
     float radiusPixels = aoRadius * projMatrix[0][0] / centerZ;
     radiusPixels = max(radiusPixels, 3.0);
-    float stepSize = radiusPixels / float(NUM_STEPS);
+    float stepSize = radiusPixels / NUM_STEPS;
 
-    float totalVisibility = 0.0;
+    float totalAO = 0.0;
 
     [unroll]
     for (int dir = 0; dir < NUM_DIRECTIONS; ++dir) {
-        float phi = (PI / float(NUM_DIRECTIONS)) * float(dir) + rotAngle;
-        float cosPhi = cos(phi);
-        float sinPhi = sin(phi);
+        float angle = (PI / NUM_DIRECTIONS) * dir + rotAngle;
+        float2 sliceDir = float2(cos(angle), sin(angle));
 
-        // Screen UV has +V = down, but view space has +Y = up.
-        // XeGTAO: directionVec = (cosPhi, sinPhi, 0) in view space,
-        //         omega = (cosPhi, -sinPhi) for screen-space stepping (Y flipped).
-        float3 dirVS = float3(cosPhi, sinPhi, 0.0);
-        float2 sliceDir = float2(cosPhi, -sinPhi);  // Y flipped for screen UV
+        // Positive direction: track max horizon angle
+        float horizonCos = -1.0;
 
-        // Orthogonal decomposition in slice plane
-        // orthoDir: component of dirVS perpendicular to viewVec (NOT normalized, like XeGTAO)
-        float3 orthoDir = dirVS - dot(dirVS, viewVec) * viewVec;
-
-        // axisVec: normal to the slice plane
-        float3 axisVec = normalize(cross(dirVS, viewVec));
-
-        // Project surface normal onto slice plane
-        float3 projN = viewNormal - axisVec * dot(viewNormal, axisVec);
-        float projNLen = length(projN);
-
-        // Signed angle of projected normal from viewVec
-        float signN = sign(dot(orthoDir, projN));
-        float cosN = saturate(dot(projN / max(projNLen, 1e-6), viewVec));
-        float n = signN * FastACos(cosN);
-        float sinN = sin(n);
-
-        // Initialize horizon cos at tangent plane boundaries (fully open = no occlusion)
-        // cos(n + pi/2) = -sin(n) for positive search direction
-        // cos(n - pi/2) =  sin(n) for negative search direction
-        float horizonCos0 = -sinN;  // cos(n + HALF_PI)
-        float horizonCos1 =  sinN;  // cos(n - HALF_PI)
-
-        // Combined horizon search: both directions per step
         [unroll]
         for (int step = 1; step <= NUM_STEPS; ++step) {
-            float stepF = float(step);
+            float2 offset = sliceDir * step * stepSize * texelSize;
+            float2 sampleUV = uv + offset;
 
-            // Positive direction
-            {
-                float2 sampleUV = input.texcoord + sliceDir * stepF * stepSize * texelSize;
-                if (sampleUV.x >= 0.0 && sampleUV.x <= 1.0 &&
-                    sampleUV.y >= 0.0 && sampleUV.y <= 1.0) {
-                    int2 sc = int2(sampleUV * screenSize);
-                    float sd = depthTex.Load(int3(sc, 0)).r;
-                    float3 sp = ReconstructViewPos(sampleUV, sd);
-                    float3 hv = sp - viewPos;
-                    float hd = length(hv);
-                    if (hd > 0.001) {
-                        float shc = dot(hv / hd, viewVec);
-                        // Distance falloff (squared, within aoRadius)
-                        float falloff = saturate(1.0 - (hd / aoRadius) * (hd / aoRadius));
-                        // Thin object heuristic: blend toward current horizon when far
-                        shc = lerp(horizonCos0, shc, falloff);
-                        horizonCos0 = max(horizonCos0, shc);
-                    }
-                }
-            }
+            if (sampleUV.x < 0.0 || sampleUV.x > 1.0 || sampleUV.y < 0.0 || sampleUV.y > 1.0)
+                break;
 
-            // Negative direction
-            {
-                float2 sampleUV = input.texcoord - sliceDir * stepF * stepSize * texelSize;
-                if (sampleUV.x >= 0.0 && sampleUV.x <= 1.0 &&
-                    sampleUV.y >= 0.0 && sampleUV.y <= 1.0) {
-                    int2 sc = int2(sampleUV * screenSize);
-                    float sd = depthTex.Load(int3(sc, 0)).r;
-                    float3 sp = ReconstructViewPos(sampleUV, sd);
-                    float3 hv = sp - viewPos;
-                    float hd = length(hv);
-                    if (hd > 0.001) {
-                        float shc = dot(hv / hd, viewVec);
-                        float falloff = saturate(1.0 - (hd / aoRadius) * (hd / aoRadius));
-                        shc = lerp(horizonCos1, shc, falloff);
-                        horizonCos1 = max(horizonCos1, shc);
-                    }
-                }
+            int2 sampleCoord = int2(sampleUV * screenSize);
+            float sampleDepthRaw = depthTex.Load(int3(sampleCoord, 0)).r;
+            float3 samplePos = ReconstructViewPos(sampleUV, sampleDepthRaw);
+
+            float3 horizonVec = samplePos - viewPos;
+            float horizonDist = length(horizonVec);
+
+            if (horizonDist > 0.001) {
+                float3 horizonDir = horizonVec / horizonDist;
+                float cosBetween = dot(viewNormal, horizonDir);
+
+                float falloff = saturate(1.0 - (horizonDist / aoRadius) * (horizonDist / aoRadius));
+
+                float weightedCos = cosBetween * falloff;
+                horizonCos = max(horizonCos, weightedCos);
             }
         }
 
-        // Convert tracked cos to horizon angles (XeGTAO convention)
-        // Positive search → negative angle; negative search → positive angle
-        float h0 = -FastACos(horizonCos0);
-        float h1 =  FastACos(horizonCos1);
+        // Negative direction
+        float horizonCosNeg = -1.0;
+        [unroll]
+        for (int step2 = 1; step2 <= NUM_STEPS; ++step2) {
+            float2 offset = -sliceDir * step2 * stepSize * texelSize;
+            float2 sampleUV = uv + offset;
 
-        // Clamp to normal hemisphere
-        h0 = n + max(h0 - n, -HALF_PI);
-        h1 = n + min(h1 - n,  HALF_PI);
+            if (sampleUV.x < 0.0 || sampleUV.x > 1.0 || sampleUV.y < 0.0 || sampleUV.y > 1.0)
+                break;
 
-        // Visibility integral (Jimenez 2016, eq. from XeGTAO)
-        float iarc0 = (-cos(2.0 * h0 - n) + cosN + 2.0 * h0 * sinN) * 0.25;
-        float iarc1 = (-cos(2.0 * h1 - n) + cosN + 2.0 * h1 * sinN) * 0.25;
+            int2 sampleCoord = int2(sampleUV * screenSize);
+            float sampleDepthRaw2 = depthTex.Load(int3(sampleCoord, 0)).r;
+            float3 samplePos = ReconstructViewPos(sampleUV, sampleDepthRaw2);
 
-        totalVisibility += projNLen * (iarc0 + iarc1);
+            float3 horizonVec = samplePos - viewPos;
+            float horizonDist = length(horizonVec);
+
+            if (horizonDist > 0.001) {
+                float3 horizonDir = horizonVec / horizonDist;
+                float cosBetween = dot(viewNormal, horizonDir);
+                float falloff = saturate(1.0 - (horizonDist / aoRadius) * (horizonDist / aoRadius));
+                float weightedCos = cosBetween * falloff;
+                horizonCosNeg = max(horizonCosNeg, weightedCos);
+            }
+        }
+
+        float aoContribPos = saturate(0.5 + 0.5 * horizonCos);
+        float aoContribNeg = saturate(0.5 + 0.5 * horizonCosNeg);
+        totalAO += (aoContribPos + aoContribNeg) * 0.5;
     }
 
-    totalVisibility /= float(NUM_DIRECTIONS);
-    totalVisibility = saturate(totalVisibility);
+    totalAO /= NUM_DIRECTIONS;
 
-    // Apply intensity: 1.0 = fully visible, 0.0 = fully occluded
-    float ao = 1.0 - (1.0 - totalVisibility) * aoIntensity;
-    ao = saturate(ao);
+    float visibility = 1.0 - totalAO * aoIntensity;
+    visibility = saturate(visibility);
 
     // Multi-bounce approximation (Jimenez 2016)
-    ao = ao + ao * (1.0 - ao) * 0.2;
-    ao = saturate(ao);
+    visibility = visibility + visibility * (1.0 - visibility) * 0.2;
+    visibility = saturate(visibility);
 
     // ========================================================================
     // Screen-Space Contact Shadows
@@ -246,6 +202,6 @@ float4 PSMain(PSInput input) : SV_TARGET {
         contactShadow = lerp(1.0, contactShadow, distFade);
     }
 
-    float result = ao * contactShadow;
+    float result = visibility * contactShadow;
     return float4(result, result, result, 1.0);
 }

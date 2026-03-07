@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **TAA shadow trembling at silhouette edges** — eliminated sub-pixel jitter oscillation in AO/shadow regions
+  - Bake SSAO into TAA input (t4 texture): AO is now temporally accumulated instead of applied per-frame, killing shadow flicker
+  - Depth dilation expanded to UE5's 2-pixel X-pattern (was 1-pixel 3×3) — catches correct foreground motion vectors at object silhouettes
+  - Composite pass uses AO=1.0 (whiteTex) when TAA is active to prevent double-applying occlusion
+  - Variance AABB uses uniform weights (1/9) instead of jitter-weighted — stabilizes neighborhood clamping across frames
+  - Anti-flicker: Godot-style luminance-diff suppression replaces broken flickerFloor that forced blend=0.5 on static scenes
+  - Fixed gamma: `lerp(1.25, 0.75, smoothstep(0..8px))` matches UE5 default (was velocity-dependent widening)
+  - CAS sharpening in composite counteracts TAA softening (AMD FidelityFX CAS, strength 0.3)
+
 ### Added
 
 - **XeGTAO Shader Rewrite** — Faithful reimplementation of Intel XeGTAO algorithm replacing ad-hoc hemisphere SSAO approach

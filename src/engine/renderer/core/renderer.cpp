@@ -752,57 +752,183 @@ void Renderer::render(bool readback) {
             });
     }
 
-    // --- Pass 1: Scene HDR Draw ---------------------------------------------
-    // Draws sky + PBR meshes into the HDR intermediate render target.
-    // Tonemap + gamma are deferred to the composite post-process pass.
+    // --- Pass 1: Scene Draw (Forward or Deferred) ----------------------------
     auto rgHdr = renderGraph_.import_texture("hdr_rt", hdrRT_);
-    renderGraph_.add_pass("scene_hdr", RgPassType::Graphics,
-        [&](RgPassBuilder& builder) {
-            builder.write(rgHdr);
-            builder.write(rgDepth);
-            builder.force_run();
-        },
-        [this](RhiCmdList cmd) {
-            rhi()->cmd_barrier_texture(cmd, hdrRT_,
-                                       RHI_STATE_SHADER_READ, RHI_STATE_RENDER_TARGET);
 
-            rhi()->cmd_set_viewport(cmd, 0.0f, 0.0f,
-                                   static_cast<float>(width_),
-                                   static_cast<float>(height_),
-                                   0.0f, 1.0f);
-            rhi()->cmd_set_scissor(cmd, 0, 0, width_, height_);
+    if (renderPath_ == RenderPath::Deferred && gbufferPSO_ != RHI_NULL && deferredLightPSO_ != RHI_NULL) {
+        // =================================================================
+        // DEFERRED PATH: Sky → G-Buffer write → Deferred lighting
+        // =================================================================
 
-            rhi()->cmd_clear_render_target(cmd, hdrRT_, 0.0f, 0.0f, 0.0f, 1.0f);
-            rhi()->cmd_clear_depth_stencil(cmd, rhiDepthBuf_, 1.0f, 0);
-            rhi()->cmd_set_render_targets(cmd, &hdrRT_, 1, rhiDepthBuf_);
+        // Pass 1a: Clear HDR + depth + draw sky (into hdrRT_)
+        renderGraph_.add_pass("sky_draw", RgPassType::Graphics,
+            [&](RgPassBuilder& builder) {
+                builder.write(rgHdr);
+                builder.write(rgDepth);
+                builder.force_run();
+            },
+            [this](RhiCmdList cmd) {
+                rhi()->cmd_barrier_texture(cmd, hdrRT_,
+                                           RHI_STATE_SHADER_READ, RHI_STATE_RENDER_TARGET);
 
-            // Sky pass → HDR RT
-            if (rhiSkyPipeline_ != RHI_NULL) {
-                rhi()->cmd_set_pipeline(cmd, rhiSkyPipeline_);
-                rhi()->cmd_set_root_constants(cmd, 0, &skyColorsCB_, 16, 0);
-                rhi()->cmd_set_root_constants(cmd, 3, &skyCB_, 16, 0);
+                rhi()->cmd_set_viewport(cmd, 0, 0, (float)width_, (float)height_, 0, 1);
+                rhi()->cmd_set_scissor(cmd, 0, 0, width_, height_);
+
+                rhi()->cmd_clear_render_target(cmd, hdrRT_, 0.0f, 0.0f, 0.0f, 1.0f);
+                rhi()->cmd_clear_depth_stencil(cmd, rhiDepthBuf_, 1.0f, 0);
+                rhi()->cmd_set_render_targets(cmd, &hdrRT_, 1, rhiDepthBuf_);
+
+                if (rhiSkyPipeline_ != RHI_NULL) {
+                    rhi()->cmd_set_pipeline(cmd, rhiSkyPipeline_);
+                    rhi()->cmd_set_root_constants(cmd, 0, &skyColorsCB_, 16, 0);
+                    rhi()->cmd_set_root_constants(cmd, 3, &skyCB_, 16, 0);
+                    rhi()->cmd_set_topology(cmd, RHI_TOPOLOGY_TRIANGLE_LIST);
+                    rhi()->cmd_draw(cmd, 3, 1, 0, 0);
+                }
+
+                rhi()->cmd_barrier_texture(cmd, hdrRT_,
+                                           RHI_STATE_RENDER_TARGET, RHI_STATE_SHADER_READ);
+            });
+
+        // Pass 1b: G-Buffer write (opaque geometry → 4 MRT + depth)
+        renderGraph_.add_pass("gbuffer_write", RgPassType::Graphics,
+            [&](RgPassBuilder& builder) {
+                builder.write(rgDepth);
+                builder.force_run();
+            },
+            [this](RhiCmdList cmd) {
+                for (uint32_t i = 0; i < kGBufferCount; ++i)
+                    rhi()->cmd_barrier_texture(cmd, gbufferRT_[i],
+                                               RHI_STATE_SHADER_READ, RHI_STATE_RENDER_TARGET);
+
+                rhi()->cmd_set_viewport(cmd, 0, 0, (float)width_, (float)height_, 0, 1);
+                rhi()->cmd_set_scissor(cmd, 0, 0, width_, height_);
+
+                for (uint32_t i = 0; i < kGBufferCount; ++i)
+                    rhi()->cmd_clear_render_target(cmd, gbufferRT_[i], 0.0f, 0.0f, 0.0f, 0.0f);
+
+                rhi()->cmd_set_render_targets(cmd, gbufferRT_, kGBufferCount, rhiDepthBuf_);
+                rhi()->cmd_set_pipeline(cmd, gbufferPSO_);
                 rhi()->cmd_set_topology(cmd, RHI_TOPOLOGY_TRIANGLE_LIST);
-                rhi()->cmd_draw(cmd, 3, 1, 0, 0);
-            }
 
-            if (lightFrameCBV_ != RHI_NULL)
-                rhi()->cmd_set_constant_buffer(cmd, 2, lightFrameCBV_);
+                if (lightFrameCBV_ != RHI_NULL)
+                    rhi()->cmd_set_constant_buffer(cmd, 2, lightFrameCBV_);
 
-            rhi()->cmd_set_topology(cmd, RHI_TOPOLOGY_TRIANGLE_LIST);
-            meshRenderer_.draw(cmd, viewProj_, lightFrameCBV_);
-
-            if (rhiPbrPipeline_ != RHI_NULL) {
-                rhi()->cmd_set_pipeline(cmd, rhiPbrPipeline_);
                 for (auto* proxy : proxies_) {
                     proxy->execute(cmd, frameConstants_);
                 }
-            }
 
-            rhi()->cmd_barrier_texture(cmd, hdrRT_,
-                                       RHI_STATE_RENDER_TARGET, RHI_STATE_SHADER_READ);
-            rhi()->cmd_barrier_texture(cmd, rhiDepthBuf_,
-                                       RHI_STATE_DEPTH_WRITE, RHI_STATE_SHADER_READ);
-        });
+                for (uint32_t i = 0; i < kGBufferCount; ++i)
+                    rhi()->cmd_barrier_texture(cmd, gbufferRT_[i],
+                                               RHI_STATE_RENDER_TARGET, RHI_STATE_SHADER_READ);
+                rhi()->cmd_barrier_texture(cmd, rhiDepthBuf_,
+                                           RHI_STATE_DEPTH_WRITE, RHI_STATE_SHADER_READ);
+            });
+
+        // Pass 1c: Deferred Lighting (fullscreen — reads G-Buffer + depth → hdrRT_)
+        renderGraph_.add_pass("deferred_lighting", RgPassType::Graphics,
+            [&](RgPassBuilder& builder) {
+                builder.read(rgDepth);
+                builder.write(rgHdr);
+                builder.force_run();
+            },
+            [this](RhiCmdList cmd) {
+                rhi()->cmd_barrier_texture(cmd, hdrRT_,
+                                           RHI_STATE_SHADER_READ, RHI_STATE_RENDER_TARGET);
+
+                rhi()->cmd_set_pipeline(cmd, deferredLightPSO_);
+                rhi()->cmd_set_viewport(cmd, 0, 0, (float)width_, (float)height_, 0, 1);
+                rhi()->cmd_set_scissor(cmd, 0, 0, width_, height_);
+                rhi()->cmd_set_render_targets(cmd, &hdrRT_, 1, RHI_NULL);
+
+                // b0: invViewProj (16 DWORDs)
+                Mat4 invVP = mat4_inverse(viewProj_);
+                rhi()->cmd_set_root_constants(cmd, 0, &invVP, 16, 0);
+
+                // b3: light params (16 DWORDs) — matches LightParamsCB in deferred_lighting.ps.hlsl
+                float lightParams[16] = {
+                    frameConstants_.light_dir.x, frameConstants_.light_dir.y, frameConstants_.light_dir.z,
+                    frameConstants_.light_intensity,
+                    frameConstants_.light_color.x, frameConstants_.light_color.y, frameConstants_.light_color.z,
+                    0.0f,
+                    frameConstants_.camera_world_pos.x, frameConstants_.camera_world_pos.y, frameConstants_.camera_world_pos.z,
+                    0.65f,  // envIntensity (matches forward path LightFrameCB upload)
+                    frameConstants_.shadow_bias,
+                    frameConstants_.shadow_ortho_size,
+                    frameConstants_.shadow_light_dist,
+                    0.0f
+                };
+                rhi()->cmd_set_root_constants(cmd, 3, lightParams, 16, 0);
+
+                // t0-t4: G-Buffer + depth
+                for (uint32_t i = 0; i < kGBufferCount; ++i)
+                    rhi()->cmd_set_texture(cmd, i, gbufferRT_[i]);
+                rhi()->cmd_set_texture(cmd, 4, rhiDepthBuf_);
+
+                // t5-t8: shadow, BRDF LUT, irradiance, prefiltered
+                rhi()->cmd_set_texture(cmd, 5, (shadowMap_ != RHI_NULL)       ? shadowMap_       : whiteTex_);
+                rhi()->cmd_set_texture(cmd, 6, (brdfLut_ != RHI_NULL)         ? brdfLut_         : whiteTex_);
+                rhi()->cmd_set_texture(cmd, 7, (irradianceCube_ != RHI_NULL)  ? irradianceCube_  : whiteTex_);
+                rhi()->cmd_set_texture(cmd, 8, (prefilteredCube_ != RHI_NULL) ? prefilteredCube_ : whiteTex_);
+
+                rhi()->cmd_set_topology(cmd, RHI_TOPOLOGY_TRIANGLE_LIST);
+                rhi()->cmd_draw(cmd, 3, 1, 0, 0);
+
+                rhi()->cmd_barrier_texture(cmd, hdrRT_,
+                                           RHI_STATE_RENDER_TARGET, RHI_STATE_SHADER_READ);
+            });
+
+    } else {
+        // =================================================================
+        // FORWARD PATH: Sky + PBR meshes in one pass → hdrRT_
+        // =================================================================
+        renderGraph_.add_pass("scene_hdr", RgPassType::Graphics,
+            [&](RgPassBuilder& builder) {
+                builder.write(rgHdr);
+                builder.write(rgDepth);
+                builder.force_run();
+            },
+            [this](RhiCmdList cmd) {
+                rhi()->cmd_barrier_texture(cmd, hdrRT_,
+                                           RHI_STATE_SHADER_READ, RHI_STATE_RENDER_TARGET);
+
+                rhi()->cmd_set_viewport(cmd, 0.0f, 0.0f,
+                                       static_cast<float>(width_),
+                                       static_cast<float>(height_),
+                                       0.0f, 1.0f);
+                rhi()->cmd_set_scissor(cmd, 0, 0, width_, height_);
+
+                rhi()->cmd_clear_render_target(cmd, hdrRT_, 0.0f, 0.0f, 0.0f, 1.0f);
+                rhi()->cmd_clear_depth_stencil(cmd, rhiDepthBuf_, 1.0f, 0);
+                rhi()->cmd_set_render_targets(cmd, &hdrRT_, 1, rhiDepthBuf_);
+
+                if (rhiSkyPipeline_ != RHI_NULL) {
+                    rhi()->cmd_set_pipeline(cmd, rhiSkyPipeline_);
+                    rhi()->cmd_set_root_constants(cmd, 0, &skyColorsCB_, 16, 0);
+                    rhi()->cmd_set_root_constants(cmd, 3, &skyCB_, 16, 0);
+                    rhi()->cmd_set_topology(cmd, RHI_TOPOLOGY_TRIANGLE_LIST);
+                    rhi()->cmd_draw(cmd, 3, 1, 0, 0);
+                }
+
+                if (lightFrameCBV_ != RHI_NULL)
+                    rhi()->cmd_set_constant_buffer(cmd, 2, lightFrameCBV_);
+
+                rhi()->cmd_set_topology(cmd, RHI_TOPOLOGY_TRIANGLE_LIST);
+                meshRenderer_.draw(cmd, viewProj_, lightFrameCBV_);
+
+                if (rhiPbrPipeline_ != RHI_NULL) {
+                    rhi()->cmd_set_pipeline(cmd, rhiPbrPipeline_);
+                    for (auto* proxy : proxies_) {
+                        proxy->execute(cmd, frameConstants_);
+                    }
+                }
+
+                rhi()->cmd_barrier_texture(cmd, hdrRT_,
+                                           RHI_STATE_RENDER_TARGET, RHI_STATE_SHADER_READ);
+                rhi()->cmd_barrier_texture(cmd, rhiDepthBuf_,
+                                           RHI_STATE_DEPTH_WRITE, RHI_STATE_SHADER_READ);
+            });
+    }
 
     // --- Pass 1b: Velocity Buffer --------------------------------------------
     // Depth-based per-pixel motion vectors for TAA, GTAO, SSR.
@@ -868,15 +994,21 @@ void Renderer::render(bool readback) {
                     static_cast<float>(width_), static_cast<float>(height_),
                     1.0f / static_cast<float>(width_), 1.0f / static_cast<float>(height_),
                     taaJitterX_, taaJitterY_,
-                    0.05f,  // blendFactor
+                    0.04f,  // blendFactor (UE5 default: 4% current frame)
                     0.0f    // _pad
                 };
                 rhi()->cmd_set_root_constants(cmd, 0, taaParams, 8, 0);
 
-                // t0: current HDR (jittered), t1: history, t2: velocity
+                // t0: current HDR (jittered), t1: history, t2: velocity, t3: depth
+                // t4: SSAO (prev frame, half-res) — baked into TAA so AO is
+                //     temporally accumulated. Frame 0: whiteTex (AO=1, safe).
                 rhi()->cmd_set_texture(cmd, 0, hdrRT_);
                 rhi()->cmd_set_texture(cmd, 1, src);
                 rhi()->cmd_set_texture(cmd, 2, velocityRT_);
+                rhi()->cmd_set_texture(cmd, 3, rhiDepthBuf_);
+                rhi()->cmd_set_texture(cmd, 4,
+                    (ssaoBlurRT_ != RHI_NULL && frameNumber_ > 0)
+                        ? ssaoBlurRT_ : whiteTex_);
                 rhi()->cmd_set_topology(cmd, RHI_TOPOLOGY_TRIANGLE_LIST);
                 rhi()->cmd_draw(cmd, 3, 1, 0, 0);
 
@@ -889,8 +1021,8 @@ void Renderer::render(bool readback) {
 
     // --- Pass 2: SSAO --------------------------------------------------------
     auto rgSsao = renderGraph_.import_texture("ssao_rt", ssaoRT_);
-    const bool useGTAO = (gtaoPSO_ != RHI_NULL);
-    const RhiPipeline aoPSO = useGTAO ? gtaoPSO_ : ssaoPSO_;
+    const bool useGTAO = false;
+    const RhiPipeline aoPSO = ssaoPSO_;
     if (aoPSO != RHI_NULL && ssaoRT_ != RHI_NULL) {
         renderGraph_.add_pass("ssao", RgPassType::Graphics,
             [&](RgPassBuilder& builder) {
@@ -1098,11 +1230,14 @@ void Renderer::render(bool readback) {
             rhi()->cmd_set_scissor(cmd, 0, 0, width_, height_);
             rhi()->cmd_set_render_targets(cmd, &bb, 1, RHI_NULL);
 
-            float compParams[4] = { 1.0f, 0.04f, 2.2f, 0.0f }; // exposure, bloomStrength, gamma
+            float compParams[4] = { 1.0f, 0.04f, 2.2f, 0.3f }; // exposure, bloomStrength, gamma, sharpenStrength
             rhi()->cmd_set_root_constants(cmd, 0, compParams, 4, 0);
 
             rhi()->cmd_set_texture(cmd, 0, compositeColorSrc);
-            rhi()->cmd_set_texture(cmd, 1, (ssaoBlurRT_ != RHI_NULL) ? ssaoBlurRT_ : whiteTex_);
+            // When TAA is active, AO is already baked into the TAA signal (t4),
+            // so bind white (AO=1) to avoid double-applying occlusion.
+            rhi()->cmd_set_texture(cmd, 1,
+                (taaEnabled_ || ssaoBlurRT_ == RHI_NULL) ? whiteTex_ : ssaoBlurRT_);
             rhi()->cmd_set_texture(cmd, 2, (bloomMips_[0] != RHI_NULL) ? bloomMips_[0] : blackTex_);
 
             rhi()->cmd_set_topology(cmd, RHI_TOPOLOGY_TRIANGLE_LIST);
@@ -1551,6 +1686,35 @@ bool Renderer::createPipelineStates() {
         DIAG_FMT("gtao PSO => handle=%llu", (unsigned long long)gtaoPSO_);
     }
 
+    // ---- Deferred Shading PSOs ----
+    if (renderPath_ == RenderPath::Deferred) {
+        // G-Buffer write PSO — same vertex layout as PBR, 4 MRT outputs, depth write
+        {
+            RhiPipelineDesc gbDesc = pbrDesc;  // inherit PBR vertex layout
+            gbDesc.rt_count = 4;
+            gbDesc.rt_formats[0] = RHI_FORMAT_RGBA8_UNORM;      // Albedo+AO
+            gbDesc.rt_formats[1] = RHI_FORMAT_RGB10A2_UNORM;    // Normal (oct)
+            gbDesc.rt_formats[2] = RHI_FORMAT_RGBA8_UNORM;      // Material
+            gbDesc.rt_formats[3] = RHI_FORMAT_R11G11B10_FLOAT;  // Emission HDR
+            gbDesc.blend.independent_blend = false;
+            for (int i = 0; i < 4; ++i) {
+                gbDesc.blend.render_targets[i].blend_enable = false;
+                gbDesc.blend.render_targets[i].write_mask = 0xF;
+            }
+            gbDesc.debug_name = "GBuffer_PSO";
+            gbufferPSO_ = shaderLib_.get_or_create_pipeline("gbuffer_write", gbDesc);
+            DIAG_FMT("gbuffer PSO => handle=%llu", (unsigned long long)gbufferPSO_);
+        }
+
+        // Deferred lighting PSO — fullscreen triangle, reads G-Buffer, outputs to hdrRT_
+        {
+            auto d = makePostProcDesc(RHI_FORMAT_R11G11B10_FLOAT);
+            d.debug_name = "DeferredLighting_PSO";
+            deferredLightPSO_ = shaderLib_.get_or_create_pipeline("deferred_lighting", d);
+            DIAG_FMT("deferred lighting PSO => handle=%llu", (unsigned long long)deferredLightPSO_);
+        }
+    }
+
     return rhiPipeline_ != RHI_NULL && rhiPbrPipeline_ != RHI_NULL;
 }
 
@@ -1614,6 +1778,11 @@ void Renderer::destroyPostProcessTargets() {
     destroy(velocityRT_);
     for (auto& h : taaHistory_) destroy(h);
     for (auto& m : bloomMips_) destroy(m);
+    for (auto& g : gbufferRT_) destroy(g);
+    if (deferredLightCBV_ != RHI_NULL) {
+        rhi()->buffer_destroy(deferredLightCBV_);
+        deferredLightCBV_ = RHI_NULL;
+    }
 }
 
 bool Renderer::createPostProcessTargets() {
@@ -1702,6 +1871,41 @@ bool Renderer::createPostProcessTargets() {
         if (bloomMips_[i] == RHI_NULL) return false;
         bw /= 2;
         bh /= 2;
+    }
+
+    // G-Buffer render targets (deferred path)
+    if (renderPath_ == RenderPath::Deferred) {
+        static const RhiFormat gbFormats[kGBufferCount] = {
+            RHI_FORMAT_RGBA8_UNORM,      // 0: Albedo (RGB) + AO (A)
+            RHI_FORMAT_RGB10A2_UNORM,    // 1: Octahedral Normal (RG10) + flags (A2)
+            RHI_FORMAT_RGBA8_UNORM,      // 2: Metallic (R) + Roughness (G) + EmissionScale (B) + flags (A)
+            RHI_FORMAT_R11G11B10_FLOAT,  // 3: Emission HDR (RGB)
+        };
+        static const char* gbNames[kGBufferCount] = {
+            "GBuffer0_AlbedoAO", "GBuffer1_Normal", "GBuffer2_Material", "GBuffer3_Emission"
+        };
+        for (uint32_t i = 0; i < kGBufferCount; ++i) {
+            RhiTextureDesc d{};
+            d.width = width_; d.height = height_; d.depth = 1;
+            d.mip_levels = 1; d.array_size = 1;
+            d.format     = gbFormats[i];
+            d.dimension  = RHI_TEXTURE_DIM_2D;
+            d.usage      = RHI_TEXTURE_USAGE_RENDER_TARGET | RHI_TEXTURE_USAGE_SHADER_READ;
+            d.debug_name = gbNames[i];
+            gbufferRT_[i] = rhi()->texture_create(&d);
+            if (gbufferRT_[i] == RHI_NULL) return false;
+        }
+
+        // Deferred lighting CBV (for invViewProj, reused each frame)
+        if (deferredLightCBV_ == RHI_NULL) {
+            RhiBufferDesc cbvDesc{};
+            cbvDesc.size       = 256;
+            cbvDesc.usage      = RHI_BUFFER_USAGE_CONSTANT | RHI_BUFFER_USAGE_UPLOAD;
+            cbvDesc.debug_name = "DeferredLightCBV";
+            deferredLightCBV_ = rhi()->buffer_create(&cbvDesc);
+        }
+
+        DIAG_FMT("G-Buffer targets created: %ux%u (4 RTs)", width_, height_);
     }
 
     DIAG_FMT("Post-process targets created: HDR %ux%u, SSAO %ux%u, Bloom %u mips",
