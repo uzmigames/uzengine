@@ -93,6 +93,16 @@ void scene_init(Scene* scene, const char* name) {
     scene->fog_height_falloff   = 0.5f;
     scene->fog_base_height      = 0.0f;
     scene->fog_max_opacity      = 0.95f;
+    scene->clouds_enabled       = false;
+    scene->cloud_coverage       = 0.5f;
+    scene->cloud_density        = 0.15f;
+    scene->cloud_base           = 800.0f;
+    scene->cloud_top            = 2500.0f;
+    scene->cloud_wind_speed     = 8.0f;
+    scene->cloud_wind_dir_x     = 1.0f;
+    scene->cloud_wind_dir_z     = 0.0f;
+    scene->cloud_absorption     = 0.85f;
+    scene->cloud_ambient        = 0.5f;
     // node_count is already 0 from memset.
     // All node slots have alive=false from memset.
 

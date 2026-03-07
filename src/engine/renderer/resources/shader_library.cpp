@@ -42,6 +42,7 @@
 #include "shaders/volumetric_apply_ps_hlsl.h"
 #include "shaders/sss_blur_ps_hlsl.h"
 #include "shaders/decal_ps_hlsl.h"
+#include "shaders/clouds_ps_hlsl.h"
 
 namespace uz {
 
@@ -305,6 +306,16 @@ void ShaderLibrary::register_builtin_shaders() {
         .vs_size   = sizeof(k_fullscreen_vs_hlsl) - 1,
         .ps_source = k_decal_ps_hlsl,
         .ps_size   = sizeof(k_decal_ps_hlsl) - 1,
+        .vs_entry  = "VSMain",
+        .ps_entry  = "PSMain",
+    });
+
+    // clouds — volumetric cloud raymarching (Beer-Lambert + HG phase + procedural noise)
+    register_shader("clouds", ShaderProgram{
+        .vs_source = k_fullscreen_vs_hlsl,
+        .vs_size   = sizeof(k_fullscreen_vs_hlsl) - 1,
+        .ps_source = k_clouds_ps_hlsl,
+        .ps_size   = sizeof(k_clouds_ps_hlsl) - 1,
         .vs_entry  = "VSMain",
         .ps_entry  = "PSMain",
     });

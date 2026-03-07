@@ -189,6 +189,11 @@ void applyPendingScene(PendingSceneLoad& pending,
     renderer.setDof(sceneData->dof_focus_distance, sceneData->dof_aperture, sceneData->dof_focal_length);
     renderer.setFog(sceneData->fog_density, sceneData->fog_color,
                      sceneData->fog_height_falloff, sceneData->fog_base_height, sceneData->fog_max_opacity);
+    renderer.setClouds(sceneData->clouds_enabled, sceneData->cloud_coverage,
+                       sceneData->cloud_density, sceneData->cloud_base, sceneData->cloud_top,
+                       sceneData->cloud_wind_speed, sceneData->cloud_wind_dir_x,
+                       sceneData->cloud_wind_dir_z, sceneData->cloud_absorption,
+                       sceneData->cloud_ambient);
 
     // GPU work: setScene does IBL cubemap generation + baking.
     // This is safe here because we're on the main render thread.

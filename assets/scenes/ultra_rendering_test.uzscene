@@ -48,6 +48,21 @@ fog_base_height = -0.5
 fog_max_opacity = 0.55
 
 # ──────────────────────────────────────────────────────────────────────────────
+# VOLUMETRIC CLOUDS
+# Scattered cumulus over the test scene, drifting north-east
+# ──────────────────────────────────────────────────────────────────────────────
+clouds_enabled = true
+cloud_coverage = 0.55
+cloud_density = 0.12
+cloud_base = 800.0
+cloud_top = 2400.0
+cloud_wind_speed = 10.0
+cloud_wind_dir_x = 0.85
+cloud_wind_dir_z = 0.35
+cloud_absorption = 0.88
+cloud_ambient = 0.45
+
+# ──────────────────────────────────────────────────────────────────────────────
 # TAA
 # ──────────────────────────────────────────────────────────────────────────────
 taa_enabled = true

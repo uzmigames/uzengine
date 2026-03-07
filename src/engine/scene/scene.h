@@ -103,6 +103,17 @@ struct Scene {
     float   fog_height_falloff  = 0.5f;
     float   fog_base_height     = 0.0f;
     float   fog_max_opacity     = 0.95f;
+    // Volumetric Clouds
+    bool    clouds_enabled      = false;
+    float   cloud_coverage      = 0.5f;    ///< sky coverage [0..1]
+    float   cloud_density       = 0.15f;   ///< extinction coefficient multiplier
+    float   cloud_base          = 800.0f;  ///< cloud layer bottom (meters)
+    float   cloud_top           = 2500.0f; ///< cloud layer top (meters)
+    float   cloud_wind_speed    = 8.0f;    ///< drift speed (m/s)
+    float   cloud_wind_dir_x    = 1.0f;    ///< wind direction X (normalized)
+    float   cloud_wind_dir_z    = 0.0f;    ///< wind direction Z (normalized)
+    float   cloud_absorption    = 0.85f;   ///< single-scattering albedo
+    float   cloud_ambient       = 0.5f;    ///< ambient sky contribution
 
     /// Path of the .uzscene file this scene was loaded from.
     /// Empty if the scene was created programmatically (not from a file).

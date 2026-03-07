@@ -157,6 +157,14 @@ public:
         fogColor_[0] = color[0]; fogColor_[1] = color[1]; fogColor_[2] = color[2];
         fogHeightFalloff_ = heightFalloff; fogBaseHeight_ = baseHeight; fogMaxOpacity_ = maxOpacity;
     }
+    void setClouds(bool enabled, float coverage, float density,
+                   float base, float top, float windSpeed,
+                   float windDirX, float windDirZ, float absorption, float ambient) {
+        cloudsEnabled_ = enabled; cloudCoverage_ = coverage; cloudDensity_ = density;
+        cloudBase_ = base; cloudTop_ = top; cloudWindSpeed_ = windSpeed;
+        cloudWindDir_[0] = windDirX; cloudWindDir_[1] = windDirZ;
+        cloudAbsorption_ = absorption; cloudAmbient_ = ambient;
+    }
 
     // Material Instance management (editor dynamic materials).
     MaterialInstanceManager& materialInstances() { return materialInstanceManager_; }
@@ -376,6 +384,18 @@ private:
     float       fogHeightFalloff_ = 0.5f;
     float       fogBaseHeight_    = 0.0f;
     float       fogMaxOpacity_    = 0.95f;
+
+    // Volumetric clouds state
+    RhiPipeline cloudsPSO_        = RHI_NULL;  // Blended fullscreen cloud pass
+    bool        cloudsEnabled_    = false;
+    float       cloudCoverage_    = 0.5f;       // [0..1] sky coverage
+    float       cloudDensity_     = 0.15f;      // extinction coefficient
+    float       cloudBase_        = 800.0f;     // cloud layer bottom (m)
+    float       cloudTop_         = 2500.0f;    // cloud layer top (m)
+    float       cloudWindSpeed_   = 8.0f;       // drift speed (m/s)
+    float       cloudWindDir_[2]  = {1.0f, 0.0f};  // XZ wind direction (normalized)
+    float       cloudAbsorption_  = 0.85f;      // single-scattering albedo
+    float       cloudAmbient_     = 0.5f;       // ambient sky contribution
 
     // G-Buffer render targets (deferred path only)
     static constexpr uint32_t kGBufferCount = 4;

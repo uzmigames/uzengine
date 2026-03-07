@@ -999,7 +999,53 @@ void Renderer::render(bool readback) {
             });
     }
 
-    // --- Pass 1b: Velocity Buffer --------------------------------------------
+    // --- Pass 1b: Volumetric Clouds ------------------------------------------
+    // Alpha-blend procedural clouds over the sky. Runs after all geometry so
+    // the depth buffer is fully written — cloud shader skips solid-geometry pixels.
+    if (cloudsEnabled_ && cloudsPSO_ != RHI_NULL && hdrRT_ != RHI_NULL) {
+        renderGraph_.add_pass("clouds", RgPassType::Graphics,
+            [&](RgPassBuilder& builder) {
+                builder.read(rgDepth);
+                builder.write(rgHdr);
+                builder.force_run();
+            },
+            [this](RhiCmdList cmd) {
+                rhi()->cmd_barrier_texture(cmd, hdrRT_,
+                                           RHI_STATE_SHADER_READ, RHI_STATE_RENDER_TARGET);
+                rhi()->cmd_set_pipeline(cmd, cloudsPSO_);
+                rhi()->cmd_set_viewport(cmd, 0, 0, (float)width_, (float)height_, 0, 1);
+                rhi()->cmd_set_scissor(cmd, 0, 0, width_, height_);
+                rhi()->cmd_set_render_targets(cmd, &hdrRT_, 1, RHI_NULL);
+
+                // b0: cloud params (16 root constants)
+                float cp[16] = {
+                    cloudCoverage_, cloudDensity_, cloudBase_, cloudTop_,
+                    cloudWindSpeed_, cloudWindDir_[0], cloudWindDir_[1], cloudAbsorption_,
+                    cloudAmbient_, 0.0f, 0.0f, 0.0f,
+                    0.0f, 0.0f, 0.0f, 0.0f
+                };
+                rhi()->cmd_set_root_constants(cmd, 0, cp, 16, 0);
+
+                // b2: LightFrameCB (sun dir/color, camera pos, time)
+                if (lightFrameCBV_ != RHI_NULL)
+                    rhi()->cmd_set_constant_buffer(cmd, 2, lightFrameCBV_);
+
+                // b3: invViewProj — unjittered for stable cloud positions
+                Mat4 invVP = mat4_inverse(viewProjUnjittered_);
+                rhi()->cmd_set_root_constants(cmd, 3, &invVP, 16, 0);
+
+                // t0: depth buffer for geometry occlusion masking
+                rhi()->cmd_set_texture(cmd, 0, rhiDepthBuf_);
+
+                rhi()->cmd_set_topology(cmd, RHI_TOPOLOGY_TRIANGLE_LIST);
+                rhi()->cmd_draw(cmd, 3, 1, 0, 0);
+
+                rhi()->cmd_barrier_texture(cmd, hdrRT_,
+                                           RHI_STATE_RENDER_TARGET, RHI_STATE_SHADER_READ);
+            });
+    }
+
+    // --- Pass 1c: Velocity Buffer --------------------------------------------
     // Depth-based per-pixel motion vectors for TAA, GTAO, SSR.
     auto rgVelocity = renderGraph_.import_texture("velocity_rt", velocityRT_);
     if (velocityPSO_ != RHI_NULL && velocityRT_ != RHI_NULL && taaEnabled_) {
@@ -1948,6 +1994,22 @@ bool Renderer::createPipelineStates() {
         d.debug_name = "ColorGrading_PSO";
         colorGradingPSO_ = shaderLib_.get_or_create_pipeline("color_grading", d);
         DIAG_FMT("color_grading PSO => handle=%llu", (unsigned long long)colorGradingPSO_);
+    }
+
+    // ---- Volumetric Clouds PSO — RGBA16F, alpha blending over sky ----
+    {
+        RhiPipelineDesc cd = makePostProcDesc(RHI_FORMAT_RGBA16_FLOAT);
+        cd.debug_name = "Clouds_PSO";
+        // Alpha blend: cloud color composited over sky (src_alpha, 1-src_alpha)
+        cd.blend.render_targets[0].blend_enable    = true;
+        cd.blend.render_targets[0].src_blend       = RHI_BLEND_SRC_ALPHA;
+        cd.blend.render_targets[0].dst_blend       = RHI_BLEND_INV_SRC_ALPHA;
+        cd.blend.render_targets[0].blend_op        = RHI_BLEND_OP_ADD;
+        cd.blend.render_targets[0].src_blend_alpha = RHI_BLEND_ONE;
+        cd.blend.render_targets[0].dst_blend_alpha = RHI_BLEND_INV_SRC_ALPHA;
+        cd.blend.render_targets[0].blend_op_alpha  = RHI_BLEND_OP_ADD;
+        cloudsPSO_ = shaderLib_.get_or_create_pipeline("clouds", cd);
+        DIAG_FMT("clouds PSO => handle=%llu", (unsigned long long)cloudsPSO_);
     }
 
     // ---- Deferred Shading PSOs ----

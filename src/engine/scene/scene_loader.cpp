@@ -310,6 +310,35 @@ SceneLoadResult scene_load_from_string(Scene* scene, const char* text) {
             } else if (key == "fog_max_opacity") {
                 char* ep = nullptr; float v = std::strtof(value.c_str(), &ep);
                 if (ep != value.c_str()) scene->fog_max_opacity = v;
+            } else if (key == "clouds_enabled") {
+                scene->clouds_enabled = parse_bool(value);
+            } else if (key == "cloud_coverage") {
+                char* ep = nullptr; float v = std::strtof(value.c_str(), &ep);
+                if (ep != value.c_str()) scene->cloud_coverage = v;
+            } else if (key == "cloud_density") {
+                char* ep = nullptr; float v = std::strtof(value.c_str(), &ep);
+                if (ep != value.c_str()) scene->cloud_density = v;
+            } else if (key == "cloud_base") {
+                char* ep = nullptr; float v = std::strtof(value.c_str(), &ep);
+                if (ep != value.c_str()) scene->cloud_base = v;
+            } else if (key == "cloud_top") {
+                char* ep = nullptr; float v = std::strtof(value.c_str(), &ep);
+                if (ep != value.c_str()) scene->cloud_top = v;
+            } else if (key == "cloud_wind_speed") {
+                char* ep = nullptr; float v = std::strtof(value.c_str(), &ep);
+                if (ep != value.c_str()) scene->cloud_wind_speed = v;
+            } else if (key == "cloud_wind_dir_x") {
+                char* ep = nullptr; float v = std::strtof(value.c_str(), &ep);
+                if (ep != value.c_str()) scene->cloud_wind_dir_x = v;
+            } else if (key == "cloud_wind_dir_z") {
+                char* ep = nullptr; float v = std::strtof(value.c_str(), &ep);
+                if (ep != value.c_str()) scene->cloud_wind_dir_z = v;
+            } else if (key == "cloud_absorption") {
+                char* ep = nullptr; float v = std::strtof(value.c_str(), &ep);
+                if (ep != value.c_str()) scene->cloud_absorption = v;
+            } else if (key == "cloud_ambient") {
+                char* ep = nullptr; float v = std::strtof(value.c_str(), &ep);
+                if (ep != value.c_str()) scene->cloud_ambient = v;
             }
 
         } else if (current_section == Section::Node) {
