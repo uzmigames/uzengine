@@ -56,7 +56,25 @@ namespace uz {
 // Initialization
 // ============================================================================
 
+RhiBuffer EditorComponent::allocAndUploadCBV(const void* data, size_t size) {
+    if (cbvPoolNext_ >= kCBVPoolSize) return RHI_NULL;
+    RhiBuffer cbv = cbvPool_[cbvPoolNext_++];
+    if (cbv != RHI_NULL && data && size > 0)
+        rhi()->buffer_upload(cbv, data, size);
+    return cbv;
+}
+
 bool EditorComponent::init() {
+    // Create CBV pool for per-draw b1 bindings.
+    {
+        RhiBufferDesc cbvDesc{};
+        cbvDesc.size  = 256;
+        cbvDesc.usage = RHI_BUFFER_USAGE_CONSTANT | RHI_BUFFER_USAGE_UPLOAD;
+        cbvDesc.debug_name = "EditorCBV";
+        for (uint32_t i = 0; i < kCBVPoolSize; ++i)
+            cbvPool_[i] = rhi()->buffer_create(&cbvDesc);
+    }
+
     if (!createLinePipelineState()) return false;
     if (!createGridVertexBuffer()) return false;
 
@@ -95,6 +113,9 @@ void EditorComponent::draw(RhiCmdList cmd,
     // -- Ground grid --
     if (linePipeline_ == RHI_NULL || gridVertexBuffer_ == RHI_NULL || gridVertexCount_ == 0)
         return;
+
+    cbvPoolNext_ = 0;  // Reset pool each frame.
+
     rhi()->cmd_set_pipeline(cmd, linePipeline_);
     rhi()->cmd_set_topology(cmd, RHI_TOPOLOGY_LINE_LIST);
 
@@ -102,11 +123,14 @@ void EditorComponent::draw(RhiCmdList cmd,
 
     // Pass 8 DWORDs: colorMul(3) + alphaMult(1) + cameraWorldPos(3) + gridFadeEnd(1)
     // gridFadeEnd=50 → grid fades from 15 units to 50 units (UE5-style horizon fade).
-    const float gridCB[8] = {
-        1.0f, 1.0f, 1.0f, 1.0f,                          // colorMul + alphaMult
-        cameraPos.x, cameraPos.y, cameraPos.z, 50.0f     // cameraWorldPos + gridFadeEnd
-    };
-    rhi()->cmd_set_root_constants(cmd, 1, gridCB, 8, 0);
+    {
+        const float gridCB[8] = {
+            1.0f, 1.0f, 1.0f, 1.0f,
+            cameraPos.x, cameraPos.y, cameraPos.z, 50.0f
+        };
+        RhiBuffer cbv = allocAndUploadCBV(gridCB, sizeof(gridCB));
+        if (cbv != RHI_NULL) rhi()->cmd_set_constant_buffer(cmd, 1, cbv);
+    }
 
     rhi()->cmd_set_vertex_buffer(cmd, 0, gridVertexBuffer_, 0, sizeof(Vertex));
     rhi()->cmd_draw(cmd, gridVertexCount_, 1, 0, 0);
@@ -139,11 +163,14 @@ void EditorComponent::draw(RhiCmdList cmd,
             rhi()->cmd_set_root_constants(cmd, 0, &mvp, 16, 0);
 
             // 8 DWORDs: colorMul + alphaMult + cameraWorldPos + gridFadeEnd=0 (no fade)
-            const float col[8] = {
-                node.color.x, node.color.y, node.color.z, 1.0f,
-                0.0f, 0.0f, 0.0f, 0.0f   // gridFadeEnd=0 disables distance fade
-            };
-            rhi()->cmd_set_root_constants(cmd, 1, col, 8, 0);
+            {
+                const float col[8] = {
+                    node.color.x, node.color.y, node.color.z, 1.0f,
+                    0.0f, 0.0f, 0.0f, 0.0f
+                };
+                RhiBuffer cbv = allocAndUploadCBV(col, sizeof(col));
+                if (cbv != RHI_NULL) rhi()->cmd_set_constant_buffer(cmd, 1, cbv);
+            }
 
             // Lookup and draw the correct gizmo for this node type.
             GizmoRenderer* gizmo = gizmoRegistry_.get(node.nodeType);
@@ -190,8 +217,11 @@ void EditorComponent::draw(RhiCmdList cmd,
         const Mat4 mvp = viewProj * gizmoWorld;
         rhi()->cmd_set_root_constants(cmd, 0, &mvp, 16, 0);
 
-        const float gizmoCol[8] = {1.0f, 1.0f, 1.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f};
-        rhi()->cmd_set_root_constants(cmd, 1, gizmoCol, 8, 0);
+        {
+            const float gizmoCol[8] = {1.0f, 1.0f, 1.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+            RhiBuffer cbv = allocAndUploadCBV(gizmoCol, sizeof(gizmoCol));
+            if (cbv != RHI_NULL) rhi()->cmd_set_constant_buffer(cmd, 1, cbv);
+        }
 
         transformGizmo_.drawMode(cmd, gizmoMode, gizmoActiveAxis);
 
@@ -251,6 +281,9 @@ std::vector<EditorComponent::EditorNode> EditorComponent::getNodes() const {
 void EditorComponent::shutdown() {
     gizmoRegistry_.shutdownAll();
     transformGizmo_.shutdown();
+    for (uint32_t i = 0; i < kCBVPoolSize; ++i) {
+        if (cbvPool_[i] != RHI_NULL) { rhi()->buffer_destroy(cbvPool_[i]); cbvPool_[i] = RHI_NULL; }
+    }
     if (gridVertexBuffer_ != RHI_NULL)      { rhi()->buffer_destroy(gridVertexBuffer_); gridVertexBuffer_ = RHI_NULL; }
     if (linePipeline_ != RHI_NULL)          { rhi()->pipeline_destroy(linePipeline_); linePipeline_ = RHI_NULL; }
     if (solidPipeline_ != RHI_NULL)         { rhi()->pipeline_destroy(solidPipeline_); solidPipeline_ = RHI_NULL; }

@@ -1495,8 +1495,8 @@ RhiPipeline dx12_pipeline_create(const RhiPipelineDesc *desc) {
     /*
      * Root signature with root constants matching the shader cbuffers:
      *   Param 0: 16 x 32-bit constants at b0 (Object: world matrix)
-     *   Param 1:  8 x 32-bit constants at b1 (Material: albedo, metallic, rough, ao)
-     *   Param 2: 16 x 32-bit constants at b2 (Light + Camera: dir, color, intensity, camPos, time)
+     *   Param 1:  Root CBV at b1 (MaterialCB — 2 DWORDs, data in GPU buffer)
+     *   Param 2:  Root CBV at b2 (LightFrameCB — 2 DWORDs)
      *   Param 3: 16 x 32-bit constants at b3 (Frame: viewProj matrix)
      *   Param 4:  SRV descriptor table for t0 (Albedo)
      *   Param 5:  SRV descriptor table for t1 (Normal)
@@ -1509,7 +1509,7 @@ RhiPipeline dx12_pipeline_create(const RhiPipelineDesc *desc) {
      *   Param 12: SRV descriptor table for t8 (Irradiance cubemap)
      *   Param 13: SRV descriptor table for t9 (Prefiltered env cubemap)
      *   Static sampler s0 (linear wrap), s1 (linear clamp)
-     *   Root sig cost: 16+8+16 = 40 constants + 1 CBV(2) + 10 desc tables = 52/64 DWORDs
+     *   Root sig cost: 16 constants + 2 CBVs(4) + 16 constants + 10 desc tables = 46/64 DWORDs
      */
     ID3D12RootSignature *root_sig = NULL;
     {
@@ -1523,11 +1523,10 @@ RhiPipeline dx12_pipeline_create(const RhiPipelineDesc *desc) {
         root_params[0].Constants.Num32BitValues  = 16;
         root_params[0].ShaderVisibility          = D3D12_SHADER_VISIBILITY_ALL;
 
-        /* Param 1: b1 -- 20 DWORDs (MaterialCB: albedo+met+rough+ao+parallax+emEnergy+em[3]+envMul+normStr+specMul+uvTiling+selfShadow+cavity+pad[2]) */
-        root_params[1].ParameterType             = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
-        root_params[1].Constants.ShaderRegister  = 1;
-        root_params[1].Constants.RegisterSpace   = 0;
-        root_params[1].Constants.Num32BitValues  = 20;
+        /* Param 1: b1 -- Root CBV (MaterialCB: moved from 20 root constants to CBV, frees 18 DWORDs) */
+        root_params[1].ParameterType             = D3D12_ROOT_PARAMETER_TYPE_CBV;
+        root_params[1].Descriptor.ShaderRegister = 1;
+        root_params[1].Descriptor.RegisterSpace  = 0;
         root_params[1].ShaderVisibility          = D3D12_SHADER_VISIBILITY_ALL;
 
         /* Param 2: b2 -- Root CBV (LightFrameCB, 2 DWORDs -- saves 14 vs root constants) */

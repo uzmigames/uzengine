@@ -1,0 +1,29 @@
+{
+  "scopeName": "markdown.lua.codeblock",
+  "injectionSelector": "L:text.html.markdown",
+  "patterns": [
+    {
+      "include": "#lua-fenced-code-block"
+    }
+  ],
+  "repository": {
+    "lua-fenced-code-block": {
+      "begin": "(^|\\G)(\\s*)((`{3,})\\s*(?i:(lua))(\\s+[^`]*)?\\s*)$",
+      "end": "(^|\\G)(\\2|\\s{0,3})(\\4)\\s*$",
+      "beginCaptures": {
+        "4": { "name": "punctuation.definition.markdown" },
+        "5": { "name": "fenced_code.block.language.markdown" }
+      },
+      "endCaptures": {
+        "3": { "name": "punctuation.definition.markdown" }
+      },
+      "name": "markup.fenced_code.block.markdown",
+      "contentName": "meta.embedded.block.lua",
+      "patterns": [
+        {
+          "include": "source.lua"
+        }
+      ]
+    }
+  }
+}

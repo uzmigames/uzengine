@@ -67,6 +67,10 @@ private:
     // Free rotation ring (XY plane circle, billboarded at draw time)
     RhiBuffer freeRingVB_ = RHI_NULL;
     uint32_t freeRingVertCount_ = 0;
+
+    // Pre-created CBVs for axis highlight/normal colors (b1 root CBV).
+    RhiBuffer brightCBV_ = RHI_NULL;  // {1.8, 1.8, 1.8, 0}
+    RhiBuffer normalCBV_ = RHI_NULL;  // {1.0, 1.0, 1.0, 0}
 };
 
 } // namespace uz

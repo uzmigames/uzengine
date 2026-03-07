@@ -36,6 +36,7 @@ struct DirectionalLightData {
 struct StaticMeshData {
     char mesh_path[256]     = "";   // res://meshes/cube.glb
     char material_path[256] = "";   // res://materials/default.uzmat
+    uint32_t material_instance_id = 0; // 0 = use material_path directly
     Aabb local_bounds       = Aabb::empty();
 };
 
@@ -53,6 +54,14 @@ struct SkyAtmosphereData {
     float sky_haze[3]    = {0.55f, 0.45f, 0.32f};  // warm golden scatter below horizon
     float sky_ground[3]  = {0.20f, 0.18f, 0.15f};  // dark neutral ground
     float fog_density    = 0.0f;                    // height fog density (0 = disabled)
+};
+
+// ============================================================================
+// ScriptData -- properties for nodes with Lua scripts attached
+// ============================================================================
+
+struct ScriptData {
+    char script_path[512] = "";  // Path to .lua script file
 };
 
 } // namespace uz

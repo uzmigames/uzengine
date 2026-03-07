@@ -28,6 +28,7 @@
 
 #include "engine/core/diag.h"
 #include "engine/core/profiler.h"
+#include "engine/scripting/script_runner.h"
 #include "editor/scene_bridge.h"
 
 #include <windows.h>
@@ -202,6 +203,9 @@ std::unique_ptr<uz::Scene> g_sceneData;
 
 // Pointer to the renderer — set after init so the WS text callback can access it.
 uz::Renderer* g_renderer = nullptr;
+
+// Lua script runner — ticks all active scripts each frame.
+uz::ScriptRunner g_scriptRunner;
 
 // ---------------------------------------------------------------------------
 // Encode thread body
@@ -1451,6 +1455,12 @@ int WINAPI WinMain(
                 g_scene.camSpeed = g_sceneData->editor_state.cam_speed;
             }
 
+            // Initialize Lua scripting and scan scene for ScriptData components.
+            g_scriptRunner.init();
+            g_scriptRunner.set_scene(g_sceneData.get());
+            g_scriptRunner.set_scene_params(&g_scene);
+            g_scriptRunner.scan_scene();
+
             char dbg[256];
             snprintf(dbg, sizeof(dbg),
                      "[UzEngine] Auto-loaded default scene: %s (%u nodes)\n",
@@ -1901,6 +1911,15 @@ int WINAPI WinMain(
             }
 
             const double delta = timer.tick();
+
+            // Tick Lua scripts before renderer update so scripts can modify
+            // camera, transforms, etc. that the renderer will consume this frame.
+            {
+                UZ_PROFILE_ZONE("script_tick");
+                g_scriptRunner.tick(static_cast<float>(delta),
+                                   static_cast<float>(timer.elapsed()));
+            }
+
             {
                 UZ_PROFILE_ZONE("renderer_update");
                 renderer.update(timer.elapsed(), delta);
@@ -1972,6 +1991,7 @@ int WINAPI WinMain(
     // -- Cleanup -------------------------------------------------------------
 
     ipcPoller.stop();
+    g_scriptRunner.shutdown();
 
     g_encodeRunning.store(false, std::memory_order_relaxed);
     if (encodeThreadA.joinable()) { encodeThreadA.join(); }

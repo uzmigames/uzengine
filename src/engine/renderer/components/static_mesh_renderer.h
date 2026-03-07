@@ -36,6 +36,9 @@ struct MeshInstance {
     RhiTexture roughness_tex = RHI_NULL;
     RhiTexture ao_tex        = RHI_NULL;
     RhiTexture emission_tex  = RHI_NULL;
+
+    // GPU constant buffer for MaterialCB (b1 root CBV).
+    RhiBuffer  material_cbv  = RHI_NULL;
 };
 
 class StaticMeshRenderer {

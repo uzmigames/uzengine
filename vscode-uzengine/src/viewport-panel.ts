@@ -568,8 +568,8 @@ export function buildViewportStreamHtml(opts: {
           '    frameCount=0;lastFpsTick=now;',
           '  }',
           '}',
-          'function decodeJpeg(data){',
-          '  var bytes=new Uint8Array(data);',
+          'function decodeJpeg(data,offset,length){',
+          '  var bytes=new Uint8Array(data,offset,length);',
           '  if(hasImageDecoder){',
           '    var d=new ImageDecoder({type:"image/jpeg",data:bytes});',
           '    d.decode().then(function(r){onDecoded(r.image);d.close();}).catch(function(){',
@@ -590,7 +590,7 @@ export function buildViewportStreamHtml(opts: {
           'self.onmessage=function(e){',
           '  var m=e.data;',
           '  if(m.type==="init"){offscreen=m.canvas;ctx=offscreen.getContext("2d");}',
-          '  else if(m.type==="jpeg"){decodeJpeg(m.data);}',
+          '  else if(m.type==="jpeg"){decodeJpeg(m.data,m.offset||0,m.length||m.data.byteLength);}',
           '};'
         ].join('\\n');
 
@@ -691,12 +691,13 @@ export function buildViewportStreamHtml(opts: {
       // -----------------------------------------------------------------------
       function handleJpegFrame(jpegBytes) {
         if (renderWorker) {
-          // Transfer the ArrayBuffer to the worker (zero-copy).
-          var buf = jpegBytes.buffer.slice(
-            jpegBytes.byteOffset,
-            jpegBytes.byteOffset + jpegBytes.byteLength
+          // Transfer the underlying ArrayBuffer to the worker (true zero-copy).
+          // Pass byteOffset+byteLength so the worker can reconstruct the view.
+          var ab = jpegBytes.buffer;
+          renderWorker.postMessage(
+            { type: 'jpeg', data: ab, offset: jpegBytes.byteOffset, length: jpegBytes.byteLength },
+            [ab]
           );
-          renderWorker.postMessage({ type: 'jpeg', data: buf }, [buf]);
         } else {
           decodeJpegFallback(jpegBytes);
         }
@@ -1226,10 +1227,32 @@ export function buildViewportStreamHtml(opts: {
         });
 
         ws.addEventListener('message', function (e) {
-          // Handle text messages (JSON responses from engine)
-          if (typeof e.data === 'string') {
+          // Binary frames (JPEG) get priority — process immediately.
+          // Text messages (JSON) are deferred to avoid blocking frame rendering.
+          if (typeof e.data !== 'string') {
+            if (!(e.data instanceof ArrayBuffer)) { return; }
+
+            var jpegBytes;
+            if (VIEWPORT_ID === 0) {
+              if (e.data.byteLength < 2) { return; }
+              jpegBytes = new Uint8Array(e.data);
+            } else {
+              if (e.data.byteLength < 4) { return; }
+              var view = new DataView(e.data);
+              var vpId = view.getUint32(0, true);
+              if (vpId !== VIEWPORT_ID) { return; }
+              jpegBytes = new Uint8Array(e.data, 4);
+            }
+
+            handleJpegFrame(jpegBytes);
+            return;
+          }
+
+          // Defer JSON processing so it never blocks the current frame delivery.
+          var textData = e.data;
+          queueMicrotask(function () {
             try {
-              var parsed = JSON.parse(e.data);
+              var parsed = JSON.parse(textData);
               if (parsed.type === 'pickResult') {
                 selectedNodeId = parsed.nodeId || null;
                 selectedNodeIds = []; // clear multi-select on single pick
@@ -1376,24 +1399,7 @@ export function buildViewportStreamHtml(opts: {
                 }
               }
             } catch (ex) { console.warn('[UzEngine] JSON parse error:', ex); }
-            return;
-          }
-
-          if (!(e.data instanceof ArrayBuffer)) { return; }
-
-          var jpegBytes;
-          if (VIEWPORT_ID === 0) {
-            if (e.data.byteLength < 2) { return; }
-            jpegBytes = new Uint8Array(e.data);
-          } else {
-            if (e.data.byteLength < 4) { return; }
-            var view = new DataView(e.data);
-            var vpId = view.getUint32(0, true);
-            if (vpId !== VIEWPORT_ID) { return; }
-            jpegBytes = new Uint8Array(e.data, 4);
-          }
-
-          handleJpegFrame(jpegBytes);
+          });
         });
 
         ws.addEventListener('close', function (e) {

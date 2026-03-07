@@ -177,6 +177,71 @@ ImportedModel import_gltf(const char* path) {
         }
     }
 
+    // Extract per-material PBR data.
+    for (cgltf_size i = 0; i < data->materials_count; ++i) {
+        const cgltf_material& gmat = data->materials[i];
+        ImportedMaterial mat;
+
+        if (gmat.name) mat.name = gmat.name;
+
+        if (gmat.has_pbr_metallic_roughness) {
+            const auto& pbr = gmat.pbr_metallic_roughness;
+            mat.albedo[0] = pbr.base_color_factor[0];
+            mat.albedo[1] = pbr.base_color_factor[1];
+            mat.albedo[2] = pbr.base_color_factor[2];
+            mat.metallic  = pbr.metallic_factor;
+            mat.roughness = pbr.roughness_factor;
+
+            if (pbr.base_color_texture.texture &&
+                pbr.base_color_texture.texture->image &&
+                pbr.base_color_texture.texture->image->uri) {
+                mat.albedo_texture = pbr.base_color_texture.texture->image->uri;
+            }
+            if (pbr.metallic_roughness_texture.texture &&
+                pbr.metallic_roughness_texture.texture->image &&
+                pbr.metallic_roughness_texture.texture->image->uri) {
+                mat.metallic_roughness_texture =
+                    pbr.metallic_roughness_texture.texture->image->uri;
+            }
+        }
+
+        if (gmat.normal_texture.texture &&
+            gmat.normal_texture.texture->image &&
+            gmat.normal_texture.texture->image->uri) {
+            mat.normal_texture = gmat.normal_texture.texture->image->uri;
+        }
+
+        if (gmat.occlusion_texture.texture &&
+            gmat.occlusion_texture.texture->image &&
+            gmat.occlusion_texture.texture->image->uri) {
+            mat.ao_texture = gmat.occlusion_texture.texture->image->uri;
+        }
+
+        if (gmat.emissive_texture.texture &&
+            gmat.emissive_texture.texture->image &&
+            gmat.emissive_texture.texture->image->uri) {
+            mat.emission_texture = gmat.emissive_texture.texture->image->uri;
+        }
+
+        mat.emission[0] = gmat.emissive_factor[0];
+        mat.emission[1] = gmat.emissive_factor[1];
+        mat.emission[2] = gmat.emissive_factor[2];
+
+        // glTF emissive_strength extension (KHR_materials_emissive_strength)
+        if (gmat.has_emissive_strength) {
+            mat.emission_energy = gmat.emissive_strength.emissive_strength;
+        }
+
+        model.materials.push_back(std::move(mat));
+        DIAG_FMT("  material[%zu]: '%s' (albedo=[%.2f,%.2f,%.2f] metal=%.2f rough=%.2f)",
+                 i, model.materials.back().name.c_str(),
+                 model.materials.back().albedo[0],
+                 model.materials.back().albedo[1],
+                 model.materials.back().albedo[2],
+                 model.materials.back().metallic,
+                 model.materials.back().roughness);
+    }
+
     // Import meshes.
     for (cgltf_size m = 0; m < data->meshes_count; ++m) {
         const cgltf_mesh& gltf_mesh = data->meshes[m];

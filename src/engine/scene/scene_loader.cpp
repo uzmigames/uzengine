@@ -75,12 +75,15 @@ struct PendingNode {
     bool  has_active  = false;
     bool  has_visible = false;
 
+    std::string script_path;  // Cross-cutting: any node can have a Lua script
+
     // All component-specific properties accumulated as raw strings.
     // Dispatched to ComponentRegistry::find()->comps[i].props[j].parse() in flush_node().
     std::vector<std::pair<std::string, std::string>> raw_props;
 
     void reset() {
         name.clear(); type_str.clear(); parent_name.clear();
+        script_path.clear();
         position[0] = 0; position[1] = 0; position[2] = 0;
         rotation[0] = 0; rotation[1] = 0; rotation[2] = 0; rotation[3] = 1;
         scale_val[0] = 1; scale_val[1] = 1; scale_val[2] = 1;
@@ -149,6 +152,14 @@ static std::string flush_node(Scene* scene, const PendingNode& p) {
         }
     }
     // Unknown type: node created with no components — just a named transform node.
+
+    // Attach ScriptData if the node has a script property.
+    if (!p.script_path.empty()) {
+        auto* sd = component_add<ScriptData>(&scene->components, id);
+        if (sd) {
+            str_copy(sd->script_path, sizeof(sd->script_path), p.script_path.c_str());
+        }
+    }
 
     return {};
 }
@@ -256,6 +267,8 @@ SceneLoadResult scene_load_from_string(Scene* scene, const char* text) {
                 pending.active = parse_bool(value); pending.has_active = true;
             } else if (key == "visible") {
                 pending.visible = parse_bool(value); pending.has_visible = true;
+            } else if (key == "script") {
+                pending.script_path = value;
             } else {
                 // All other keys go to raw_props for registry dispatch.
                 pending.raw_props.emplace_back(key, value);

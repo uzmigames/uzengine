@@ -28,6 +28,9 @@
 #include "shaders/bloom_down_ps_hlsl.h"
 #include "shaders/bloom_up_ps_hlsl.h"
 #include "shaders/composite_ps_hlsl.h"
+#include "shaders/velocity_ps_hlsl.h"
+#include "shaders/taa_ps_hlsl.h"
+#include "shaders/gtao_ps_hlsl.h"
 
 namespace uz {
 
@@ -151,6 +154,36 @@ void ShaderLibrary::register_builtin_shaders() {
         .vs_size   = sizeof(k_fullscreen_vs_hlsl) - 1,
         .ps_source = k_composite_ps_hlsl,
         .ps_size   = sizeof(k_composite_ps_hlsl) - 1,
+        .vs_entry  = "VSMain",
+        .ps_entry  = "PSMain",
+    });
+
+    // velocity — depth-based per-pixel motion vectors (TAA/GTAO/SSR)
+    register_shader("velocity", ShaderProgram{
+        .vs_source = k_fullscreen_vs_hlsl,
+        .vs_size   = sizeof(k_fullscreen_vs_hlsl) - 1,
+        .ps_source = k_velocity_ps_hlsl,
+        .ps_size   = sizeof(k_velocity_ps_hlsl) - 1,
+        .vs_entry  = "VSMain",
+        .ps_entry  = "PSMain",
+    });
+
+    // taa — temporal anti-aliasing resolve (reproject + YCoCg clamp + blend)
+    register_shader("taa", ShaderProgram{
+        .vs_source = k_fullscreen_vs_hlsl,
+        .vs_size   = sizeof(k_fullscreen_vs_hlsl) - 1,
+        .ps_source = k_taa_ps_hlsl,
+        .ps_size   = sizeof(k_taa_ps_hlsl) - 1,
+        .vs_entry  = "VSMain",
+        .ps_entry  = "PSMain",
+    });
+
+    // gtao — ground truth ambient occlusion (replaces hemisphere SSAO)
+    register_shader("gtao", ShaderProgram{
+        .vs_source = k_fullscreen_vs_hlsl,
+        .vs_size   = sizeof(k_fullscreen_vs_hlsl) - 1,
+        .ps_source = k_gtao_ps_hlsl,
+        .ps_size   = sizeof(k_gtao_ps_hlsl) - 1,
         .vs_entry  = "VSMain",
         .ps_entry  = "PSMain",
     });

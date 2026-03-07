@@ -38,6 +38,39 @@ GpuMesh* MeshManager::load(const std::string& path) {
         return nullptr;
     }
 
+    // Populate default material slots from imported glTF materials.
+    for (const auto& imat : model.materials) {
+        DefaultMaterialSlot slot;
+        slot.name = imat.name;
+        slot.albedo[0] = imat.albedo[0];
+        slot.albedo[1] = imat.albedo[1];
+        slot.albedo[2] = imat.albedo[2];
+        slot.metallic  = imat.metallic;
+        slot.roughness = imat.roughness;
+        slot.emission[0] = imat.emission[0];
+        slot.emission[1] = imat.emission[1];
+        slot.emission[2] = imat.emission[2];
+        slot.emission_energy = imat.emission_energy;
+
+        // Resolve texture paths relative to source file directory.
+        auto resolve = [&](const std::string& rel) -> std::string {
+            if (rel.empty()) return {};
+            if (rel.size() >= 2 && rel[1] == ':') return rel;
+            return model.base_dir + rel;
+        };
+        slot.albedo_texture             = resolve(imat.albedo_texture);
+        slot.normal_texture             = resolve(imat.normal_texture);
+        slot.metallic_roughness_texture = resolve(imat.metallic_roughness_texture);
+        slot.ao_texture                 = resolve(imat.ao_texture);
+        slot.emission_texture           = resolve(imat.emission_texture);
+
+        gpuMesh.default_materials.push_back(std::move(slot));
+    }
+
+    DIAG_FMT("MeshManager: loaded '%s' (%u verts, %zu submeshes, %zu material slots)",
+             path.c_str(), gpuMesh.vertex_count,
+             gpuMesh.submeshes.size(), gpuMesh.default_materials.size());
+
     impl_->cache[path] = std::move(gpuMesh);
     return &impl_->cache[path];
 }

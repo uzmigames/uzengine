@@ -119,11 +119,12 @@ void encodeThreadFn(uz::WsServer* server)
 
         jpegBlob.insert(jpegBlob.end(), encodedJpeg.begin(), encodedJpeg.end());
 
-        // Record timestamp BEFORE broadcast so encode time counts toward
-        // the interval, preventing drift at the upper bound.
-        lastBroadcast = now;
-
         server->broadcast(jpegBlob);
+
+        // Record timestamp AFTER broadcast so the next interval is measured
+        // from delivery, not from encode start. This prevents frame pacing
+        // jitter caused by variable encode times (5-8ms).
+        lastBroadcast = Clock::now();
     }
 
     OutputDebugStringA("[UzEngine] EncodeThread stopped\n");

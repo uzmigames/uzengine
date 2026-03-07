@@ -71,6 +71,25 @@ bool StaticMeshRenderer::init(ShaderLibrary& shader_lib) {
 }
 
 void StaticMeshRenderer::add_instance(MeshInstance instance) {
+    // Create material CBV for the instance.
+    if (instance.material_cbv == RHI_NULL) {
+        RhiBufferDesc cbvDesc{};
+        cbvDesc.size       = 256;
+        cbvDesc.usage      = RHI_BUFFER_USAGE_CONSTANT | RHI_BUFFER_USAGE_UPLOAD;
+        cbvDesc.debug_name = "MeshInst_MaterialCBV";
+        instance.material_cbv = rhi()->buffer_create(&cbvDesc);
+    }
+    // Upload initial material data.
+    if (instance.material_cbv != RHI_NULL) {
+        float matCB[20] = {
+            instance.albedo[0], instance.albedo[1], instance.albedo[2], instance.metallic,
+            instance.roughness, instance.ao, 0.0f, instance.emission_energy,
+            instance.emission[0], instance.emission[1], instance.emission[2], 1.0f,
+            1.0f, 1.0f, 1.0f, 1.0f,
+            1.0f, 0.35f, 0.0f, 0.0f
+        };
+        rhi()->buffer_upload(instance.material_cbv, matCB, sizeof(matCB));
+    }
     instances_.push_back(std::move(instance));
 }
 
@@ -91,15 +110,9 @@ void StaticMeshRenderer::draw(RhiCmdList cmd, const Mat4& view_proj, RhiBuffer l
         // Slot 0: World Matrix
         rhi()->cmd_set_root_constants(cmd, 0, &inst.transform, 16, 0);
 
-        // Slot 1: MaterialCB (20 floats — must match pbr.ps.hlsl layout)
-        float matCB[20] = {
-            inst.albedo[0], inst.albedo[1], inst.albedo[2], inst.metallic,
-            inst.roughness, inst.ao, 0.0f /*parallaxScale*/, inst.emission_energy,
-            inst.emission[0], inst.emission[1], inst.emission[2], 1.0f /*envMul*/,
-            1.0f /*normalStr*/, 1.0f /*specMul*/, 1.0f /*uvTileU*/, 1.0f /*uvTileV*/,
-            1.0f /*selfShadowStr*/, 0.35f /*cavityStr*/, 0.0f, 0.0f
-        };
-        rhi()->cmd_set_root_constants(cmd, 1, matCB, 20, 0);
+        // Slot 1: MaterialCB (root CBV — data uploaded in add_instance)
+        if (inst.material_cbv != RHI_NULL)
+            rhi()->cmd_set_constant_buffer(cmd, 1, inst.material_cbv);
 
         // Slot 2: LightFrameCB (root CBV -- data uploaded once per frame by Renderer)
         if (light_cbv != RHI_NULL)
@@ -125,8 +138,13 @@ void StaticMeshRenderer::draw(RhiCmdList cmd, const Mat4& view_proj, RhiBuffer l
 }
 
 void StaticMeshRenderer::shutdown() {
-    for (auto& inst : instances_)
+    for (auto& inst : instances_) {
         destroy_gpu_mesh(inst.mesh);
+        if (inst.material_cbv != RHI_NULL) {
+            rhi()->buffer_destroy(inst.material_cbv);
+            inst.material_cbv = RHI_NULL;
+        }
+    }
     instances_.clear();
 
     if (whiteTex_ != RHI_NULL) { rhi()->texture_destroy(whiteTex_); whiteTex_ = RHI_NULL; }

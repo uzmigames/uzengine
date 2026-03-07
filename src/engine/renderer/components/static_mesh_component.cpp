@@ -6,12 +6,14 @@ namespace uz {
 
 ISceneProxy* StaticMeshComponent::create_proxy() {
     auto* proxy = new MeshProxy();
-    proxy->mesh      = mesh;
-    proxy->material  = material;
-    proxy->bounds_   = mesh ? mesh->bounds : Aabb::empty();
-    
-    // In a real scenario, we'd also pass the transform, but for now
-    // the proxy's sync_from_component() would handle that during frame update.
+    proxy->mesh    = mesh;
+    proxy->bounds_ = mesh ? mesh->bounds : Aabb::empty();
+
+    // Set slot 0 material from the component.
+    proxy->material_slots_.resize(1);
+    proxy->material_slots_[0].material = material;
+
+    proxy->cache_materials();
     return proxy;
 }
 

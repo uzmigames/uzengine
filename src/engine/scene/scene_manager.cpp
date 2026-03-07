@@ -74,6 +74,7 @@ void scene_init(Scene* scene, const char* name) {
     // Initialize the component store and ensure pools exist for all registered types.
     scene->components.init();
     ComponentRegistry::init_store(scene->components);
+    ComponentRegistry::init_script_pool(scene->components);
 }
 
 void scene_clear(Scene* scene) {

@@ -3,16 +3,58 @@
 #include "engine/renderer/scene/scene_proxy.h"
 #include "engine/renderer/resources/mesh.h"
 #include "engine/renderer/resources/material.h"
+#include "engine/renderer/resources/material_instance.h"
 
 namespace uz {
 
 // ============================================================================
+// MaterialSlot — cached PBR parameters + GPU CBV for one material assignment.
+//
+// Each submesh references a slot via SubMesh::material_index.
+// ============================================================================
+
+struct MaterialSlot {
+    Material*         material = nullptr;
+    MaterialInstance* instance = nullptr;
+
+    // Cached PBR scalar values.
+    float albedo[3]            = {0.8f, 0.8f, 0.8f};
+    float metallic             = 0.0f;
+    float roughness            = 0.5f;
+    float ao                   = 1.0f;
+    float emission[3]          = {0.0f, 0.0f, 0.0f};
+    float emission_energy      = 1.0f;
+    float parallax_scale       = 0.0f;
+    float env_multiplier       = 1.0f;
+    float normal_strength      = 1.0f;
+    float specular_multiplier  = 1.0f;
+    float uv_tiling[2]        = {1.0f, 1.0f};
+    float self_shadow_strength = 1.0f;
+    float cavity_strength      = 0.35f;
+
+    // Cached texture handles.
+    RhiTexture albedo_tex       = RHI_NULL;
+    RhiTexture normal_tex       = RHI_NULL;
+    RhiTexture metallic_tex     = RHI_NULL;
+    RhiTexture roughness_tex    = RHI_NULL;
+    RhiTexture ao_tex           = RHI_NULL;
+    RhiTexture emission_tex     = RHI_NULL;
+    RhiTexture displacement_tex = RHI_NULL;
+
+    // GPU constant buffer for MaterialCB (b1 root CBV, 256 bytes upload heap).
+    RhiBuffer  cbv              = RHI_NULL;
+};
+
+// ============================================================================
 // MeshProxy — Render Thread representation of a StaticMeshComponent.
+//
+// Supports multi-material meshes: each SubMesh::material_index maps into
+// material_slots_. If only one material is used, material_slots_ has one entry.
 // ============================================================================
 
 struct MeshProxy : public ISceneProxy {
     MeshProxy() = default;
-    virtual ~MeshProxy() = default;
+    ~MeshProxy() override;
 
     // ISceneProxy implementation
     void setup(RgPassBuilder& builder) override;
@@ -21,40 +63,27 @@ struct MeshProxy : public ISceneProxy {
     [[nodiscard]] uint32_t render_flags() const override { return render_flags_; }
     void sync_from_component(const void* component_data) override;
 
-    /// Pre-cache flat material values from the Material* maps.
-    /// Call once after setting `material`.
-    void cache_material();
+    /// Build cached material data for all slots.
+    /// Call after populating material_slots_.
+    void cache_materials();
 
     // Proxy-local data
-    GpuMesh*  mesh      = nullptr;
-    Material* material  = nullptr;
-    Mat4      transform = Mat4::identity();
-    uz::Aabb  bounds_    = uz::Aabb::empty();
-    uint32_t  render_flags_ = RENDER_LAYER_OPAQUE;
-    uint32_t  node_id     = 0;  // Scene node ID for selection matching
+    GpuMesh*          mesh              = nullptr;
+    Mat4              transform         = Mat4::identity();
+    uz::Aabb          bounds_           = uz::Aabb::empty();
+    uint32_t          render_flags_     = RENDER_LAYER_OPAQUE;
+    uint32_t          node_id           = 0;
 
-    // Pre-cached material values (set once via cache_material()).
-    float cached_albedo[3]      = {0.8f, 0.8f, 0.8f};
-    float cached_metallic       = 0.0f;
-    float cached_roughness      = 0.5f;
-    float cached_ao             = 1.0f;
-    float cached_emission[3]    = {0.0f, 0.0f, 0.0f};
-    float cached_emission_energy = 1.0f;
+    // Multi-material slots. Index matches SubMesh::material_index.
+    // Slot 0 is the "primary" material (backward compatible with single-material).
+    std::vector<MaterialSlot> material_slots_;
 
-    RhiTexture cached_albedo_tex       = RHI_NULL;
-    RhiTexture cached_normal_tex       = RHI_NULL;
-    RhiTexture cached_metallic_tex     = RHI_NULL;
-    RhiTexture cached_roughness_tex    = RHI_NULL;
-    RhiTexture cached_ao_tex           = RHI_NULL;
-    RhiTexture cached_emission_tex     = RHI_NULL;
-    RhiTexture cached_displacement_tex = RHI_NULL;
-    float      cached_parallax_scale   = 0.0f;
-    float      cached_env_multiplier   = 1.0f;
-    float      cached_normal_strength  = 1.0f;
-    float      cached_specular_multiplier = 1.0f;
-    float      cached_uv_tiling[2]     = {1.0f, 1.0f};
-    float      cached_self_shadow_strength = 1.0f;
-    float      cached_cavity_strength  = 0.35f;
+private:
+    /// Cache a single slot from its Material/MaterialInstance/DefaultMaterialSlot.
+    void cache_slot(MaterialSlot& slot, const DefaultMaterialSlot* defaults);
+
+    /// Upload MaterialCB to GPU for a single slot.
+    void upload_slot_cbv(MaterialSlot& slot);
 };
 
 } // namespace uz

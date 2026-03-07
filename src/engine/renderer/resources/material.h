@@ -77,4 +77,9 @@ bool texture_has_queued();
 /// Clear all cached textures and pending work. For testing.
 void texture_clear_all();
 
+/// Queue a texture for async loading and return its handle (placeholder until
+/// the real data arrives). Same handle is reused if already cached.
+/// Used by MaterialInstance for texture overrides.
+RhiTexture texture_get_or_queue(const std::string& path);
+
 } // namespace uz

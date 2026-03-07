@@ -116,6 +116,9 @@ public:
     /// Call this in scene_init() after component_store.init().
     static void init_store(ComponentStore& store);
 
+    /// Ensure ScriptData pool exists in the store (cross-cutting component).
+    static void init_script_pool(ComponentStore& store);
+
     // -----------------------------------------------------------------------
     // Iteration (for editor type picker, etc.)
     // -----------------------------------------------------------------------

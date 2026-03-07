@@ -99,6 +99,15 @@ private:
     // Editor scene nodes (loaded via IPC, protected by mutex).
     std::vector<EditorNode> editorNodes_;
     mutable std::mutex      editorNodesMutex_;
+
+    // Pool of CBV buffers for per-draw b1 bindings (grid, per-node, gizmo).
+    // Each draw with different b1 data needs its own UPLOAD-heap buffer.
+    static constexpr uint32_t kCBVPoolSize = 64;
+    RhiBuffer cbvPool_[kCBVPoolSize] = {};
+    uint32_t  cbvPoolNext_ = 0;
+
+    // Allocate a CBV from the pool, upload data, return handle.
+    RhiBuffer allocAndUploadCBV(const void* data, size_t size);
 };
 
 } // namespace uz

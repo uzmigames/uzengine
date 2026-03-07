@@ -66,6 +66,12 @@
           "light": "./icons/hlsl.png",
           "dark": "./icons/hlsl.png"
         }
+      },
+      {
+        "id": "lua",
+        "aliases": ["Lua", "lua"],
+        "extensions": [".lua"],
+        "configuration": "./syntaxes/lua-language-config.json"
       }
     ],
     "grammars": [
@@ -73,6 +79,19 @@
         "language": "uzscene",
         "scopeName": "source.uzscene",
         "path": "./syntaxes/uzscene.tmLanguage.json"
+      },
+      {
+        "language": "lua",
+        "scopeName": "source.lua",
+        "path": "./syntaxes/lua.tmLanguage.json"
+      },
+      {
+        "scopeName": "markdown.lua.codeblock",
+        "path": "./syntaxes/lua-markdown-injection.json",
+        "injectTo": ["text.html.markdown"],
+        "embeddedLanguages": {
+          "meta.embedded.block.lua": "lua"
+        }
       }
     ],
     "viewsContainers": {

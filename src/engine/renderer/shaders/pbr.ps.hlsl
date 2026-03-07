@@ -435,6 +435,8 @@ float4 PSMain(PSInput input) : SV_TARGET {
 
     // PCF shadow factor for sun (light-space reconstructed in SampleShadow)
     // Pass surface normal for normal-offset bias (prevents floor self-shadow).
+    // NOTE: Screen-space contact shadows are computed in the GTAO pass (has depth buffer access)
+    // and folded into the AO term, which modulates the composite pass output.
     float shadowFactor = SampleShadow(input.worldPos, N);
 
     // Sun / directional light — modulated by PCF shadow, micro-shadow, and specular multiplier

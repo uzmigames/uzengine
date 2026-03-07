@@ -831,6 +831,224 @@ void handleWsTextMessage(const std::string& text,
         return;
     }
 
+    // =========================================================================
+    // Material Instance — dynamic material creation and parameter editing
+    // =========================================================================
+
+    // Create a new material instance from a parent .uzmat path.
+    // { type: "material.createInstance", name: "Gold_Worn", parent: "assets/materials/gold.uzmat" }
+    if (type == "material.createInstance") {
+        if (!g_renderer) return;
+        std::string name   = j.value("name", "");
+        std::string parent = j.value("parent", "");
+        if (name.empty()) {
+            nlohmann::json err;
+            err["type"]  = "material.error";
+            err["error"] = "name is required";
+            wsServer.broadcastText(err.dump());
+            return;
+        }
+
+        uz::Material* parentMat = nullptr;
+        if (!parent.empty()) {
+            parentMat = g_renderer->materials().load(parent);
+        }
+
+        auto* inst = g_renderer->materialInstances().create(name, parentMat);
+
+        nlohmann::json resp;
+        resp["type"] = "material.instanceCreated";
+        resp["id"]   = inst->id;
+        resp["name"] = inst->name;
+        resp["parent"] = parent;
+        wsServer.broadcastText(resp.dump());
+        return;
+    }
+
+    // Set scalar parameter override on a material instance.
+    // { type: "material.setScalar", id: 1, key: "roughness", value: 0.3 }
+    if (type == "material.setScalar") {
+        if (!g_renderer) return;
+        uint32_t id      = j.value("id", 0u);
+        std::string key  = j.value("key", "");
+        float value      = j.value("value", 0.0f);
+
+        auto* inst = g_renderer->materialInstances().get(id);
+        if (!inst || key.empty()) return;
+
+        inst->set_scalar(key, value);
+        g_renderer->invalidateMaterialCache();
+
+        nlohmann::json resp;
+        resp["type"] = "material.scalarSet";
+        resp["id"]   = id;
+        resp["key"]  = key;
+        resp["value"] = value;
+        wsServer.broadcastText(resp.dump());
+        return;
+    }
+
+    // Set vector parameter override on a material instance.
+    // { type: "material.setVector", id: 1, key: "albedo", value: [1.0, 0.8, 0.2] }
+    if (type == "material.setVector") {
+        if (!g_renderer) return;
+        uint32_t id     = j.value("id", 0u);
+        std::string key = j.value("key", "");
+
+        auto* inst = g_renderer->materialInstances().get(id);
+        if (!inst || key.empty()) return;
+
+        std::vector<float> vec;
+        if (j.contains("value") && j["value"].is_array()) {
+            for (auto& v : j["value"]) {
+                vec.push_back(v.get<float>());
+            }
+        }
+
+        inst->set_vector(key, std::move(vec));
+        g_renderer->invalidateMaterialCache();
+
+        nlohmann::json resp;
+        resp["type"] = "material.vectorSet";
+        resp["id"]   = id;
+        resp["key"]  = key;
+        wsServer.broadcastText(resp.dump());
+        return;
+    }
+
+    // Set texture override on a material instance.
+    // { type: "material.setTexture", id: 1, key: "albedo_texture", path: "assets/textures/worn.png" }
+    if (type == "material.setTexture") {
+        if (!g_renderer) return;
+        uint32_t id     = j.value("id", 0u);
+        std::string key = j.value("key", "");
+        std::string path = j.value("path", "");
+
+        auto* inst = g_renderer->materialInstances().get(id);
+        if (!inst || key.empty()) return;
+
+        g_renderer->materialInstances().set_texture_override(inst, key, path);
+        g_renderer->invalidateMaterialCache();
+
+        nlohmann::json resp;
+        resp["type"] = "material.textureSet";
+        resp["id"]   = id;
+        resp["key"]  = key;
+        resp["path"] = path;
+        wsServer.broadcastText(resp.dump());
+        return;
+    }
+
+    // Clear a parameter override (revert to parent value).
+    // { type: "material.clearOverride", id: 1, key: "roughness", paramType: "scalar" }
+    if (type == "material.clearOverride") {
+        if (!g_renderer) return;
+        uint32_t id      = j.value("id", 0u);
+        std::string key  = j.value("key", "");
+        std::string ptype = j.value("paramType", "scalar");
+
+        auto* inst = g_renderer->materialInstances().get(id);
+        if (!inst || key.empty()) return;
+
+        if (ptype == "scalar")       inst->clear_scalar(key);
+        else if (ptype == "vector")  inst->clear_vector(key);
+        else if (ptype == "texture") inst->clear_texture(key);
+
+        g_renderer->invalidateMaterialCache();
+
+        nlohmann::json resp;
+        resp["type"] = "material.overrideCleared";
+        resp["id"]   = id;
+        resp["key"]  = key;
+        wsServer.broadcastText(resp.dump());
+        return;
+    }
+
+    // Assign a material instance to a scene node.
+    // { type: "material.assignToNode", id: 1, nodeId: 3 }
+    if (type == "material.assignToNode") {
+        if (!g_renderer || !g_sceneData) return;
+        uint32_t instId = j.value("id", 0u);
+        uint32_t nodeId = j.value("nodeId", 0u);
+        if (nodeId == 0) return;
+
+        auto* data = uz::component_get<uz::StaticMeshData>(
+            &g_sceneData->components, nodeId);
+        if (!data) return;
+
+        data->material_instance_id = instId;
+
+        // Force proxy rebuild to pick up the new instance.
+        g_renderer->setScene(g_sceneData);
+
+        nlohmann::json resp;
+        resp["type"]   = "material.assignedToNode";
+        resp["id"]     = instId;
+        resp["nodeId"] = nodeId;
+        wsServer.broadcastText(resp.dump());
+        return;
+    }
+
+    // List all material instances.
+    // { type: "material.listInstances" }
+    if (type == "material.listInstances") {
+        if (!g_renderer) return;
+        nlohmann::json resp;
+        resp["type"] = "material.instanceList";
+        resp["instances"] = nlohmann::json::array();
+
+        for (auto& [id, inst] : g_renderer->materialInstances().all()) {
+            nlohmann::json entry;
+            entry["id"]     = inst->id;
+            entry["name"]   = inst->name;
+            entry["parent"] = inst->parent ? inst->parent->name : "";
+
+            // List overrides
+            nlohmann::json scalars = nlohmann::json::object();
+            for (auto& [k, v] : inst->scalar_overrides) scalars[k] = v;
+            entry["scalarOverrides"] = scalars;
+
+            nlohmann::json vectors = nlohmann::json::object();
+            for (auto& [k, v] : inst->vector_overrides) vectors[k] = v;
+            entry["vectorOverrides"] = vectors;
+
+            nlohmann::json textures = nlohmann::json::object();
+            for (auto& [k, v] : inst->texture_overrides) textures[k] = v;
+            entry["textureOverrides"] = textures;
+
+            resp["instances"].push_back(entry);
+        }
+        wsServer.broadcastText(resp.dump());
+        return;
+    }
+
+    // Destroy a material instance.
+    // { type: "material.destroyInstance", id: 1 }
+    if (type == "material.destroyInstance") {
+        if (!g_renderer) return;
+        uint32_t id = j.value("id", 0u);
+
+        // Unassign from any nodes using this instance.
+        if (g_sceneData) {
+            for (uint32_t i = 1; i < g_sceneData->next_id; ++i) {
+                auto* data = uz::component_get<uz::StaticMeshData>(
+                    &g_sceneData->components, i);
+                if (data && data->material_instance_id == id) {
+                    data->material_instance_id = 0;
+                }
+            }
+        }
+
+        g_renderer->materialInstances().destroy(id);
+        g_renderer->setScene(g_sceneData);
+
+        nlohmann::json resp;
+        resp["type"] = "material.instanceDestroyed";
+        resp["id"]   = id;
+        wsServer.broadcastText(resp.dump());
+        return;
+    }
+
     // -- Focus camera on node --------------------------------------------------
     if (type == "editor.focusNode") {
         uint32_t nodeId = j.value("nodeId", 0u);
@@ -887,6 +1105,22 @@ void handleWsTextMessage(const std::string& text,
                  "[UzEngine] focusNode %u -> cam(%.1f,%.1f,%.1f)\n",
                  nodeId, g_scene.camPosX, g_scene.camPosY, g_scene.camPosZ);
         OutputDebugStringA(dbg);
+        return;
+    }
+
+    // -- Benchmark orbit camera toggle ----------------------------------------
+    if (type == "benchmark.orbit") {
+        const bool enable = j.value("enable", true);
+        g_scene.benchmarkOrbit.store(enable, std::memory_order_relaxed);
+
+        nlohmann::json resp;
+        resp["type"] = "benchmark.orbit";
+        resp["enabled"] = enable;
+        wsServer.broadcastText(resp.dump());
+
+        OutputDebugStringA(enable
+            ? "[UzEngine] benchmark orbit ON\n"
+            : "[UzEngine] benchmark orbit OFF\n");
         return;
     }
 

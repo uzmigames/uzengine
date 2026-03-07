@@ -8,6 +8,7 @@
 // RULE RHI-1: No backend types above rhi.h
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include "engine/core/math.h"
@@ -48,6 +49,26 @@ struct MeshData {
 };
 
 // ---------------------------------------------------------------------------
+// DefaultMaterialSlot — CPU-side PBR defaults extracted from import (glTF).
+// No GPU handles — resolved at proxy creation time via texture_get_or_queue.
+// ---------------------------------------------------------------------------
+struct DefaultMaterialSlot {
+    std::string name;
+    float albedo[3]       = {0.8f, 0.8f, 0.8f};
+    float metallic        = 0.0f;
+    float roughness       = 0.5f;
+    float emission[3]     = {0.0f, 0.0f, 0.0f};
+    float emission_energy = 1.0f;
+
+    // Texture paths (absolute, resolved at import time).
+    std::string albedo_texture;
+    std::string normal_texture;
+    std::string metallic_roughness_texture;
+    std::string ao_texture;
+    std::string emission_texture;
+};
+
+// ---------------------------------------------------------------------------
 // GpuMesh — GPU-resident mesh with RHI buffer handles.
 // ---------------------------------------------------------------------------
 struct GpuMesh {
@@ -58,6 +79,10 @@ struct GpuMesh {
     uint32_t   vertex_stride = sizeof(MeshVertex);
     std::vector<SubMesh> submeshes;
     Aabb       bounds;
+
+    // Per-slot default materials from import (glTF material data).
+    // SubMesh::material_index indexes into this vector.
+    std::vector<DefaultMaterialSlot> default_materials;
 };
 
 /// Create GPU buffers from CPU mesh data. Returns a GpuMesh with valid handles

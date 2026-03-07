@@ -402,6 +402,13 @@ void ComponentRegistry::register_builtins() {
     register_camera();           // index 5
     register_audio_types();      // index 6, 7
     register_sky_atmosphere();   // index 8
+
+    // Ensure ScriptData has a type ID allocated (cross-cutting — any node can have a script).
+    (void)detail::component_type_id<ScriptData>();
+}
+
+void ComponentRegistry::init_script_pool(ComponentStore& store) {
+    component_store_register<ScriptData>(&store);
 }
 
 } // namespace uz

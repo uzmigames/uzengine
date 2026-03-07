@@ -18,6 +18,7 @@
 #include "engine/renderer/core/render_graph.h"
 #include "engine/renderer/resources/shader_library.h"
 #include "engine/renderer/resources/material.h"
+#include "engine/renderer/resources/material_instance.h"
 #include "engine/renderer/resources/mesh_manager.h"
 #include "engine/renderer/resources/ibl_baker.h"
 #include "engine/renderer/scene/scene_proxy.h"
@@ -131,6 +132,13 @@ public:
     // Replace editor nodes (thread-safe delegate). For gizmo drag updates.
     void loadEditorNodes(std::vector<EditorNode> nodes) { editor_.loadNodes(std::move(nodes)); }
 
+    // Material Instance management (editor dynamic materials).
+    MaterialInstanceManager& materialInstances() { return materialInstanceManager_; }
+    MaterialManager&         materials()         { return materialManager_; }
+
+    // Force re-cache material params for all proxies (after instance override changes).
+    void invalidateMaterialCache();
+
 private:
     // Initialization sub-steps (called by init).
     bool createPipelineStates();
@@ -159,6 +167,9 @@ private:
     RhiPipeline bloomDownPSO_       = RHI_NULL;  // Bloom downsample
     RhiPipeline bloomUpPSO_         = RHI_NULL;  // Bloom upsample (additive)
     RhiPipeline compositePSO_       = RHI_NULL;  // Final composite (tonemap+gamma)
+    RhiPipeline velocityPSO_        = RHI_NULL;  // Depth-based velocity buffer
+    RhiPipeline taaPSO_             = RHI_NULL;  // TAA resolve
+    RhiPipeline gtaoPSO_            = RHI_NULL;  // GTAO (replaces SSAO)
 
     // Sky CB data — updated in update(), consumed in render()
     struct SkyCB {
@@ -249,6 +260,7 @@ private:
 
     // Material and Proxy management
     MaterialManager         materialManager_;
+    MaterialInstanceManager materialInstanceManager_;
     MeshManager             meshManager_;
     std::vector<ISceneProxy*> proxies_;
     std::vector<uint32_t>   proxy_node_ids_;   // node ID per proxy
@@ -261,6 +273,8 @@ private:
     RhiTexture              normalTex_ = RHI_NULL;
     RhiTexture              brdfLut_  = RHI_NULL;
     RhiBuffer               lightFrameCBV_ = RHI_NULL;  // Per-frame CBV for LightFrameCB (b2)
+    RhiBuffer               ssaoB1CBV_     = RHI_NULL;  // Per-frame CBV for SSAO params (b1)
+    RhiBuffer               outlineCBV_    = RHI_NULL;  // Per-frame CBV for outline params (b1)
     RhiTexture              irradianceCube_ = RHI_NULL;
     RhiTexture              prefilteredCube_ = RHI_NULL;
     RhiTexture              envCubemap_ = RHI_NULL;     // Source env cubemap for GPU IBL rebake
@@ -281,6 +295,25 @@ private:
 
     // Projection matrix (for SSAO depth reconstruction), updated in update()
     Mat4 projMatrix_ = Mat4::identity();
+    // View matrix — needed for contact shadows (lightDir world→view transform)
+    Mat4 viewMatrix_ = Mat4::identity();
+
+    // Previous-frame viewProj for velocity/reprojection (Phase 3 prerequisite 0.4)
+    Mat4 prevViewProj_ = Mat4::identity();
+
+    // Velocity buffer (R16G16_FLOAT) for TAA/GTAO/SSR motion vectors (prerequisite 0.3)
+    RhiTexture velocityRT_ = RHI_NULL;
+
+    // PostProcessCB — shared constant buffer for TAA/SSR/DoF/exposure params (prerequisite 0.2)
+    RhiBuffer postProcessCBV_ = RHI_NULL;
+
+    // TAA state
+    static constexpr uint32_t kTAAHistoryCount = 2;  // ping-pong
+    RhiTexture taaHistory_[kTAAHistoryCount] = {};    // R11G11B10_FLOAT, full-res
+    uint32_t   taaWriteIdx_ = 0;                      // alternates 0/1 each frame
+    bool       taaEnabled_  = true;                    // toggle
+    float      taaJitterX_  = 0.0f;                   // current jitter in UV space
+    float      taaJitterY_  = 0.0f;
 
 #ifdef UZ_EDITOR
 public:

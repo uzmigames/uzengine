@@ -188,6 +188,40 @@ CameraState camera_update_fly(SceneParams* params, float aspect, float dt) {
 }
 
 // ============================================================================
+// Benchmark orbit camera — auto-rotates, no user input needed
+// ============================================================================
+
+CameraState camera_update_orbit(float totalTime, float aspect) {
+    CameraState state{};
+
+    // Orbit parameters — sized for the PBR test scene (spheres at +-4.5 X, 1-4 Y)
+    constexpr float kOrbitRadius  = 12.0f;  // distance from center
+    constexpr float kOrbitHeight  = 4.5f;   // camera Y
+    constexpr float kOrbitSpeed   = 0.4f;   // radians/sec (full circle ~15.7s)
+
+    const float angle = totalTime * kOrbitSpeed;
+    const Vec3 eye = {
+        std::cos(angle) * kOrbitRadius,
+        kOrbitHeight,
+        std::sin(angle) * kOrbitRadius,
+        0.0f
+    };
+    const Vec3 at  = {0.0f, 2.0f, 0.0f, 0.0f};  // look at scene center (between rows)
+    const Vec3 up  = {0.0f, 1.0f, 0.0f, 0.0f};
+
+    Mat4 view = mat4_look_at_lh(eye, at, up);
+    Mat4 proj = mat4_perspective_lh(kPiDiv4, aspect, 0.1f, 500.0f);
+
+    state.view_proj = proj * view;
+    state.eye_pos   = eye;
+    Vec3 diff = {at.x - eye.x, at.y - eye.y, at.z - eye.z, 0.0f};
+    float len = vec3_len(diff);
+    state.forward = (len > kEpsilon) ? diff * (1.0f / len) : Vec3{0,0,1,0};
+
+    return state;
+}
+
+// ============================================================================
 // Scene-driven camera
 // ============================================================================
 

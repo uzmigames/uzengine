@@ -34,6 +34,10 @@ struct CameraState {
 /// updates the camera position/rotation, and produces the CameraState.
 CameraState camera_update_fly(SceneParams* params, float aspect, float dt);
 
+/// Benchmark orbit camera — auto-rotates around a center point.
+/// Used to test pure render smoothness without user input.
+CameraState camera_update_orbit(float totalTime, float aspect);
+
 /// Scene-driven camera — finds the first active Camera node in the scene,
 /// reads its world transform and CameraData from the ComponentStore.
 CameraState camera_update_from_scene(const Scene* scene, float aspect);

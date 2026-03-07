@@ -260,6 +260,27 @@ bool GizmoTransform::init() {
         freeRingVB_ = gizmo_upload_vb(verts.data(), freeRingVertCount_,
                         "GizmoTransform_FreeRing");
     }
+    // Create fixed CBVs for axis highlight colors (b1 root CBV).
+    {
+        RhiBufferDesc cbvDesc{};
+        cbvDesc.size  = 256;
+        cbvDesc.usage = RHI_BUFFER_USAGE_CONSTANT | RHI_BUFFER_USAGE_UPLOAD;
+
+        cbvDesc.debug_name = "GizmoBrightCBV";
+        brightCBV_ = rhi()->buffer_create(&cbvDesc);
+        if (brightCBV_ != RHI_NULL) {
+            const float bright[8] = {1.8f, 1.8f, 1.8f, 0.0f, 0,0,0,0};
+            rhi()->buffer_upload(brightCBV_, bright, sizeof(bright));
+        }
+
+        cbvDesc.debug_name = "GizmoNormalCBV";
+        normalCBV_ = rhi()->buffer_create(&cbvDesc);
+        if (normalCBV_ != RHI_NULL) {
+            const float normal[8] = {1.0f, 1.0f, 1.0f, 0.0f, 0,0,0,0};
+            rhi()->buffer_upload(normalCBV_, normal, sizeof(normal));
+        }
+    }
+
     return translateVB_ != RHI_NULL && rotateVB_ != RHI_NULL
         && scaleVB_ != RHI_NULL && freeRingVB_ != RHI_NULL;
 }
@@ -325,46 +346,36 @@ void GizmoTransform::drawMode(RhiCmdList cmd,
         rhi()->cmd_draw(cmd, totalVerts, 1, 0, 0);
     } else {
         // Draw each axis separately: non-highlighted at normal brightness,
-        // highlighted axis at boosted brightness via root constant color.
+        // highlighted axis at boosted brightness via CBV color.
         for (int a = 0; a < 3; ++a) {
             if (axisCounts[a] == 0) continue;
 
-            if (a == activeAxis) {
-                // Highlight: set bright white color multiplier
-                const float bright[4] = {1.8f, 1.8f, 1.8f, 0.0f};
-                rhi()->cmd_set_root_constants(cmd, 1, bright, 4, 0);
-            } else {
-                // Normal: vertex colors pass through (multiplied by 1.0)
-                const float normal[4] = {1.0f, 1.0f, 1.0f, 0.0f};
-                rhi()->cmd_set_root_constants(cmd, 1, normal, 4, 0);
-            }
+            RhiBuffer cbv = (a == activeAxis) ? brightCBV_ : normalCBV_;
+            if (cbv != RHI_NULL)
+                rhi()->cmd_set_constant_buffer(cmd, 1, cbv);
 
             rhi()->cmd_draw(cmd, axisCounts[a], 1, axisStarts[a], 0);
         }
 
         // Reset to normal
-        const float reset[4] = {1.0f, 1.0f, 1.0f, 0.0f};
-        rhi()->cmd_set_root_constants(cmd, 1, reset, 4, 0);
+        if (normalCBV_ != RHI_NULL)
+            rhi()->cmd_set_constant_buffer(cmd, 1, normalCBV_);
     }
 }
 
 void GizmoTransform::drawFreeRing(RhiCmdList cmd, bool highlighted) {
     if (freeRingVB_ == RHI_NULL || freeRingVertCount_ == 0) return;
 
-    if (highlighted) {
-        const float bright[4] = {1.8f, 1.8f, 1.8f, 0.0f};
-        rhi()->cmd_set_root_constants(cmd, 1, bright, 4, 0);
-    } else {
-        const float normal[4] = {1.0f, 1.0f, 1.0f, 0.0f};
-        rhi()->cmd_set_root_constants(cmd, 1, normal, 4, 0);
-    }
+    RhiBuffer cbv = highlighted ? brightCBV_ : normalCBV_;
+    if (cbv != RHI_NULL)
+        rhi()->cmd_set_constant_buffer(cmd, 1, cbv);
 
     rhi()->cmd_set_vertex_buffer(cmd, 0, freeRingVB_, 0, sizeof(Vertex));
     rhi()->cmd_draw(cmd, freeRingVertCount_, 1, 0, 0);
 
     // Reset color multiplier
-    const float reset[4] = {1.0f, 1.0f, 1.0f, 0.0f};
-    rhi()->cmd_set_root_constants(cmd, 1, reset, 4, 0);
+    if (normalCBV_ != RHI_NULL)
+        rhi()->cmd_set_constant_buffer(cmd, 1, normalCBV_);
 }
 
 void GizmoTransform::shutdown() {
@@ -372,6 +383,8 @@ void GizmoTransform::shutdown() {
     if (rotateVB_ != RHI_NULL) { rhi()->buffer_destroy(rotateVB_); rotateVB_ = RHI_NULL; }
     if (scaleVB_ != RHI_NULL) { rhi()->buffer_destroy(scaleVB_); scaleVB_ = RHI_NULL; }
     if (freeRingVB_ != RHI_NULL) { rhi()->buffer_destroy(freeRingVB_); freeRingVB_ = RHI_NULL; }
+    if (brightCBV_ != RHI_NULL) { rhi()->buffer_destroy(brightCBV_); brightCBV_ = RHI_NULL; }
+    if (normalCBV_ != RHI_NULL) { rhi()->buffer_destroy(normalCBV_); normalCBV_ = RHI_NULL; }
 }
 
 } // namespace uz

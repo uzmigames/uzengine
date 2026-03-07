@@ -62,6 +62,7 @@ if(WIN32)
         src/engine/editor/*.cpp
         src/engine/debug/*.cpp
         src/engine/renderer/*.cpp
+        src/engine/scripting/*.cpp
     )
     file(GLOB_RECURSE UZENGINE_COMMON CONFIGURE_DEPENDS
         src/common/*.cpp
@@ -104,7 +105,13 @@ if(WIN32)
         ${CMAKE_SOURCE_DIR}/thirdparty/cgltf
         ${CMAKE_BINARY_DIR}/generated
         ${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/include
+        ${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/include/luajit
     )
+
+    # LuaJIT — no CMake config, link directly
+    find_library(LUAJIT_LIB lua51
+        PATHS ${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/lib
+        NO_DEFAULT_PATH)
 
     target_link_libraries(UzEngine PRIVATE
         d3d12
@@ -118,6 +125,7 @@ if(WIN32)
         ixwebsocket::ixwebsocket
         nlohmann_json::nlohmann_json
         $<IF:$<TARGET_EXISTS:libjpeg-turbo::turbojpeg>,libjpeg-turbo::turbojpeg,libjpeg-turbo::turbojpeg-static>
+        ${LUAJIT_LIB}
     )
 
     # Copy vcpkg DLLs to the output directory after build (Windows dynamic linking).
@@ -125,7 +133,10 @@ if(WIN32)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin/turbojpeg.dll"
             "$<TARGET_FILE_DIR:UzEngine>"
-        COMMENT "Copying turbojpeg.dll to output directory"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin/lua51.dll"
+            "$<TARGET_FILE_DIR:UzEngine>"
+        COMMENT "Copying turbojpeg.dll and lua51.dll to output directory"
     )
 
     # Enable debug layer in Debug builds
@@ -179,6 +190,7 @@ list(FILTER TEST_ENGINE_SOURCES EXCLUDE REGEX "engine/renderer/resources/mesh_ma
 list(FILTER TEST_ENGINE_SOURCES EXCLUDE REGEX "engine/renderer/resources/brdf_lut\\.cpp$")
 list(FILTER TEST_ENGINE_SOURCES EXCLUDE REGEX "engine/renderer/resources/sky_cubemap\\.cpp$")
 list(FILTER TEST_ENGINE_SOURCES EXCLUDE REGEX "engine/renderer/resources/ibl_baker\\.cpp$")
+list(FILTER TEST_ENGINE_SOURCES EXCLUDE REGEX "engine/renderer/resources/material_instance\\.cpp$")
 list(FILTER TEST_ENGINE_SOURCES EXCLUDE REGEX "engine/renderer/components/")
 list(FILTER TEST_ENGINE_SOURCES EXCLUDE REGEX "engine/renderer/proxies/")
 list(FILTER TEST_ENGINE_SOURCES EXCLUDE REGEX "engine/renderer/gizmos/")

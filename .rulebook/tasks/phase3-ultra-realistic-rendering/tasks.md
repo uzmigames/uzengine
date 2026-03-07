@@ -2,10 +2,10 @@
 
 ## 0. Prerequisites
 
-- [ ] 0.1 Move MaterialCB (b1) from 20 root constants to root CBV (frees 18 DWORDs for new features)
-- [ ] 0.2 Create shared PostProcessCB root CBV for TAA/SSR/DoF/exposure params
-- [ ] 0.3 Add velocity buffer render target (R16G16_FLOAT) to renderer — writes per-pixel motion vectors
-- [ ] 0.4 Add previous-frame viewProj storage for velocity/reprojection
+- [x] 0.1 Move MaterialCB (b1) from 20 root constants to root CBV (frees 18 DWORDs for new features)
+- [x] 0.2 Create shared PostProcessCB root CBV for TAA/SSR/DoF/exposure params
+- [x] 0.3 Add velocity buffer render target (R16G16_FLOAT) to renderer — writes per-pixel motion vectors
+- [x] 0.4 Add previous-frame viewProj storage for velocity/reprojection
 
 ---
 
@@ -13,15 +13,15 @@
 
 ### 1. Temporal Anti-Aliasing (TAA)
 
-- [ ] 1.1 Halton 2,3 jitter sequence (8-frame cycle) applied to projection matrix
-- [ ] 1.2 Velocity buffer pass: write (current - previous) screen-space motion per pixel
-- [ ] 1.3 History buffer (R11G11B10_FLOAT, ping-pong double buffer)
-- [ ] 1.4 TAA resolve shader (`taa.ps.hlsl`): sample history at reprojected UV
-- [ ] 1.5 Neighborhood clamping: 3x3 YCoCg AABB clamp to prevent ghosting
-- [ ] 1.6 Velocity rejection: disoccluded pixels fall back to current frame
-- [ ] 1.7 Sharpening pass (optional): subtle CAS or RCAS after TAA to recover detail
-- [ ] 1.8 Wire TAA into post-process chain (after HDR scene, before bloom)
-- [ ] 1.9 Toggle: per-scene `taa_enabled = true` (default on)
+- [x] 1.1 Halton 2,3 jitter sequence (8-frame cycle) applied to projection matrix
+- [x] 1.2 Velocity buffer pass: write (current - previous) screen-space motion per pixel
+- [x] 1.3 History buffer (R11G11B10_FLOAT, ping-pong double buffer)
+- [x] 1.4 TAA resolve shader (`taa.ps.hlsl`): sample history at reprojected UV
+- [x] 1.5 Neighborhood clamping: 3x3 YCoCg AABB clamp to prevent ghosting
+- [x] 1.6 Velocity rejection: disoccluded pixels fall back to current frame
+- [ ] 1.7 Sharpening pass (optional): subtle CAS or RCAS after TAA to recover detail — deferred
+- [x] 1.8 Wire TAA into post-process chain (after HDR scene, before bloom)
+- [x] 1.9 Toggle: per-scene `taa_enabled = true` (default on)
 
 ### 2. GTAO (Ground Truth Ambient Occlusion — replaces current SSAO)
 

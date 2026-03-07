@@ -6,6 +6,7 @@
 #include "engine/scene/scene_saver.h"
 #include "engine/scene/component_registry.h"
 #include "engine/scene/component_store.h"
+#include "engine/scene/component_data.h"
 
 #include <cstdio>
 #include "common/safe_string.h"
@@ -95,6 +96,16 @@ std::string scene_save_to_string(const Scene* scene) {
 
         // Visible.
         out += (node.flags & NODE_FLAG_VISIBLE) ? "visible = true\n" : "visible = false\n";
+
+        // Script property (cross-cutting — any node can have a script).
+        {
+            const auto* sd = component_get<ScriptData>(&scene->components, node.id);
+            if (sd && sd->script_path[0] != '\0') {
+                out += "script = ";
+                out += sd->script_path;
+                out += "\n";
+            }
+        }
 
         // Component-specific properties — data-driven via ComponentRegistry.
         // Adding a new type requires zero changes here.

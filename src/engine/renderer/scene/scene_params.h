@@ -95,6 +95,12 @@ struct SceneParams {
     // -----------------------------------------------------------------------
     // Gizmo interaction state — written by WS handler, read by render thread.
     // -----------------------------------------------------------------------
+    // -----------------------------------------------------------------------
+    // Benchmark orbit camera — auto-rotates around scene center.
+    // Toggled via WS command "benchmark.orbit".
+    // -----------------------------------------------------------------------
+    std::atomic<bool> benchmarkOrbit{false};
+
     std::atomic<uint32_t> selectedNodeId{0};  // 0 = nothing selected
     std::atomic<int>      gizmoMode{0};       // 0=translate, 1=rotate, 2=scale
     std::atomic<int>      gizmoSpace{0};      // 0=world, 1=local

@@ -166,16 +166,28 @@ bool Renderer::init(void* window_handle, uint32_t width, uint32_t height) {
             DIAG("WARNING: shadowMap creation failed — shadows disabled");
     }
 
-    // Create per-frame CBV for LightFrameCB (b2 refactored from root constants to root CBV).
-    // 256 bytes = D3D12 CBV minimum alignment; actual data is 16 floats = 64 bytes.
+    // Create per-frame CBVs (b1 and b2 are root CBVs).
+    // 256 bytes = D3D12 CBV minimum alignment.
     {
         RhiBufferDesc cbvDesc{};
         cbvDesc.size       = 256;
-        cbvDesc.usage      = RHI_BUFFER_USAGE_CONSTANT;
+        cbvDesc.usage      = RHI_BUFFER_USAGE_CONSTANT | RHI_BUFFER_USAGE_UPLOAD;
+
         cbvDesc.debug_name = "LightFrameCBV";
         lightFrameCBV_ = rhi()->buffer_create(&cbvDesc);
         if (lightFrameCBV_ == RHI_NULL)
             DIAG("WARNING: LightFrameCBV creation failed");
+
+        cbvDesc.debug_name = "SSAO_B1_CBV";
+        ssaoB1CBV_ = rhi()->buffer_create(&cbvDesc);
+
+        cbvDesc.debug_name = "Outline_B1_CBV";
+        outlineCBV_ = rhi()->buffer_create(&cbvDesc);
+
+        cbvDesc.debug_name = "PostProcessCBV";
+        postProcessCBV_ = rhi()->buffer_create(&cbvDesc);
+        if (postProcessCBV_ == RHI_NULL)
+            DIAG("WARNING: PostProcessCBV creation failed");
     }
 
     // Initialize GPU compute IBL pipeline.
@@ -249,7 +261,11 @@ bool Renderer::resize(int width, int height) {
     return true;
 }
 
-void Renderer::update(double /*totalTime*/, double deltaTime) {
+void Renderer::update(double totalTime, double deltaTime) {
+    // Store previous-frame viewProj BEFORE computing new one (prerequisite 0.4).
+    // Used by velocity buffer pass for per-pixel motion vectors (TAA, GTAO, SSR).
+    prevViewProj_ = viewProj_;
+
     fpsOverlay_.update(deltaTime);
 
     const float aspect = static_cast<float>(width_) / static_cast<float>(height_);
@@ -276,12 +292,14 @@ void Renderer::update(double /*totalTime*/, double deltaTime) {
         clearB_ = sceneParams_->bgB;
     }
 
-    // Use fly-cam by default for editor control.
+    // Camera mode: orbit benchmark overrides fly-cam when active.
     const float dt = std::min(static_cast<float>(deltaTime), 0.1f);
-    
-    // Fly-cam reads position/yaw/pitch from sceneParams_, which is pre-synced
-    // from the [editor] section of the .uzscene file by scene_bridge.cpp.
-    CameraState camState = camera_update_fly(sceneParams_, aspect, dt);
+    const bool orbitMode = sceneParams_ &&
+        sceneParams_->benchmarkOrbit.load(std::memory_order_relaxed);
+
+    CameraState camState = orbitMode
+        ? camera_update_orbit(static_cast<float>(totalTime), aspect)
+        : camera_update_fly(sceneParams_, aspect, dt);
     viewProj_ = camState.view_proj;
 
     // Build projection matrix for SSAO depth reconstruction
@@ -297,6 +315,45 @@ void Renderer::update(double /*totalTime*/, double deltaTime) {
         projMatrix_.m[2][2] = zf / (zf - zn);
         projMatrix_.m[2][3] = 1.0f;
         projMatrix_.m[3][2] = -(zn * zf) / (zf - zn);
+    }
+
+    // Extract view matrix: viewProj = proj * view (column-major)
+    // → view = inv(proj) * viewProj.  Done BEFORE jitter so view matrix is clean.
+    viewMatrix_ = mat4_inverse(projMatrix_) * viewProj_;
+
+    // Apply Halton 2,3 jitter to projection for TAA sub-pixel sampling.
+    // Jitter must be applied to the projection matrix (not the combined viewProj)
+    // because column 2 of proj maps view-space z to the NDC offset.
+    // projMatrix_ stays unjittered (SSAO needs it clean for depth reconstruction).
+    if (taaEnabled_) {
+        // Halton sequence base-2 and base-3, 8-frame cycle
+        auto halton = [](uint32_t index, uint32_t base) -> float {
+            float f = 1.0f, result = 0.0f;
+            uint32_t i = index;
+            while (i > 0) {
+                f /= static_cast<float>(base);
+                result += f * static_cast<float>(i % base);
+                i /= base;
+            }
+            return result;
+        };
+        const uint32_t jitterIdx = (frameNumber_ % 8) + 1;  // 1-based for non-zero first sample
+        const float jx = halton(jitterIdx, 2) - 0.5f;  // center around 0 [-0.5, 0.5)
+        const float jy = halton(jitterIdx, 3) - 0.5f;
+
+        // Store jitter in UV space for TAA resolve shader
+        taaJitterX_ = jx / static_cast<float>(width_);
+        taaJitterY_ = jy / static_cast<float>(height_);
+
+        // Apply sub-pixel offset to projection column 2, then recompute viewProj.
+        // proj[2][0] += jitterX * 2 / width adds jitter * viewZ to clip.x
+        Mat4 jitteredProj = projMatrix_;
+        jitteredProj.m[2][0] += jx * 2.0f / static_cast<float>(width_);
+        jitteredProj.m[2][1] += jy * 2.0f / static_cast<float>(height_);
+        viewProj_ = jitteredProj * viewMatrix_;
+    } else {
+        taaJitterX_ = 0.0f;
+        taaJitterY_ = 0.0f;
     }
 
     // Collect primary directional light from the scene.
@@ -360,16 +417,7 @@ void Renderer::update(double /*totalTime*/, double deltaTime) {
                     return path;
                 };
 
-                // Load material and mesh ONCE at proxy creation.
-                if (data->material_path[0] != '\0') {
-                    std::string resolved = resolve_path(data->material_path);
-                    proxy->material = materialManager_.load(resolved);
-                    if (!proxy->material) {
-                        DIAG_FMT("Renderer: FAILED to load material '%s' (resolved='%s')",
-                                 data->material_path, resolved.c_str());
-                    }
-                }
-
+                // Load mesh first (needed to determine material slot count).
                 if (data->mesh_path[0] != '\0') {
                     std::string resolved = resolve_path(data->mesh_path);
                     proxy->mesh = meshManager_.load(resolved);
@@ -384,8 +432,40 @@ void Renderer::update(double /*totalTime*/, double deltaTime) {
                     proxy->mesh = &sphereMesh_;
                 }
 
-                // Cache material parameters into flat fields (no map lookups per frame).
-                proxy->cache_material();
+                // Populate material slots from mesh default materials.
+                // Each submesh's material_index maps into this vector.
+                {
+                    uint32_t slot_count = 1;
+                    if (proxy->mesh) {
+                        for (const auto& sub : proxy->mesh->submeshes) {
+                            if (sub.material_index + 1 > slot_count)
+                                slot_count = sub.material_index + 1;
+                        }
+                    }
+                    proxy->material_slots_.resize(slot_count);
+
+                    // Slot 0 override: scene material_path or MaterialInstance.
+                    if (data->material_instance_id != 0) {
+                        proxy->material_slots_[0].instance =
+                            materialInstanceManager_.get(data->material_instance_id);
+                        if (proxy->material_slots_[0].instance) {
+                            proxy->material_slots_[0].material =
+                                proxy->material_slots_[0].instance->parent;
+                        }
+                    }
+                    if (!proxy->material_slots_[0].instance &&
+                        data->material_path[0] != '\0') {
+                        std::string resolved = resolve_path(data->material_path);
+                        proxy->material_slots_[0].material = materialManager_.load(resolved);
+                        if (!proxy->material_slots_[0].material) {
+                            DIAG_FMT("Renderer: FAILED to load material '%s' (resolved='%s')",
+                                     data->material_path, resolved.c_str());
+                        }
+                    }
+                }
+
+                // Cache all material slot parameters (no map lookups per frame).
+                proxy->cache_materials();
 
                 proxy->transform = scene_get_world_transform(scene_, i);
 
@@ -721,20 +801,105 @@ void Renderer::render(bool readback) {
                                        RHI_STATE_DEPTH_WRITE, RHI_STATE_SHADER_READ);
         });
 
+    // --- Pass 1b: Velocity Buffer --------------------------------------------
+    // Depth-based per-pixel motion vectors for TAA, GTAO, SSR.
+    auto rgVelocity = renderGraph_.import_texture("velocity_rt", velocityRT_);
+    if (velocityPSO_ != RHI_NULL && velocityRT_ != RHI_NULL && taaEnabled_) {
+        renderGraph_.add_pass("velocity", RgPassType::Graphics,
+            [&](RgPassBuilder& builder) {
+                builder.read(rgDepth);
+                builder.write(rgVelocity);
+                builder.force_run();
+            },
+            [this](RhiCmdList cmd) {
+                rhi()->cmd_barrier_texture(cmd, velocityRT_,
+                                           RHI_STATE_SHADER_READ, RHI_STATE_RENDER_TARGET);
+                rhi()->cmd_set_pipeline(cmd, velocityPSO_);
+                rhi()->cmd_set_viewport(cmd, 0, 0, (float)width_, (float)height_, 0, 1);
+                rhi()->cmd_set_scissor(cmd, 0, 0, width_, height_);
+                rhi()->cmd_set_render_targets(cmd, &velocityRT_, 1, RHI_NULL);
+
+                // b0: invViewProj (16 DWORDs)
+                Mat4 invVP = mat4_inverse(viewProj_);
+                rhi()->cmd_set_root_constants(cmd, 0, &invVP, 16, 0);
+                // b3: prevViewProj (16 DWORDs)
+                rhi()->cmd_set_root_constants(cmd, 3, &prevViewProj_, 16, 0);
+                // t0: depth buffer
+                rhi()->cmd_set_texture(cmd, 0, rhiDepthBuf_);
+                rhi()->cmd_set_topology(cmd, RHI_TOPOLOGY_TRIANGLE_LIST);
+                rhi()->cmd_draw(cmd, 3, 1, 0, 0);
+
+                rhi()->cmd_barrier_texture(cmd, velocityRT_,
+                                           RHI_STATE_RENDER_TARGET, RHI_STATE_SHADER_READ);
+            });
+    }
+
+    // --- Pass 1c: TAA Resolve ------------------------------------------------
+    // Reproject history, YCoCg neighborhood clamp, temporal blend.
+    const uint32_t taaWriteIdx = taaWriteIdx_;
+    const uint32_t taaReadIdx  = 1 - taaWriteIdx;
+    auto rgTaaWrite = renderGraph_.import_texture("taa_write", taaHistory_[taaWriteIdx]);
+    if (taaPSO_ != RHI_NULL && taaEnabled_ &&
+        taaHistory_[0] != RHI_NULL && taaHistory_[1] != RHI_NULL) {
+        renderGraph_.add_pass("taa_resolve", RgPassType::Graphics,
+            [&](RgPassBuilder& builder) {
+                builder.read(rgHdr);
+                builder.read(rgVelocity);
+                builder.write(rgTaaWrite);
+                builder.force_run();
+            },
+            [this, taaWriteIdx, taaReadIdx](RhiCmdList cmd) {
+                RhiTexture dst = taaHistory_[taaWriteIdx];
+                RhiTexture src = taaHistory_[taaReadIdx];
+
+                rhi()->cmd_barrier_texture(cmd, dst,
+                                           RHI_STATE_SHADER_READ, RHI_STATE_RENDER_TARGET);
+
+                rhi()->cmd_set_pipeline(cmd, taaPSO_);
+                rhi()->cmd_set_viewport(cmd, 0, 0, (float)width_, (float)height_, 0, 1);
+                rhi()->cmd_set_scissor(cmd, 0, 0, width_, height_);
+                rhi()->cmd_set_render_targets(cmd, &dst, 1, RHI_NULL);
+
+                // b0: TAAParams (8 floats)
+                float taaParams[8] = {
+                    static_cast<float>(width_), static_cast<float>(height_),
+                    1.0f / static_cast<float>(width_), 1.0f / static_cast<float>(height_),
+                    taaJitterX_, taaJitterY_,
+                    0.05f,  // blendFactor
+                    0.0f    // _pad
+                };
+                rhi()->cmd_set_root_constants(cmd, 0, taaParams, 8, 0);
+
+                // t0: current HDR (jittered), t1: history, t2: velocity
+                rhi()->cmd_set_texture(cmd, 0, hdrRT_);
+                rhi()->cmd_set_texture(cmd, 1, src);
+                rhi()->cmd_set_texture(cmd, 2, velocityRT_);
+                rhi()->cmd_set_topology(cmd, RHI_TOPOLOGY_TRIANGLE_LIST);
+                rhi()->cmd_draw(cmd, 3, 1, 0, 0);
+
+                rhi()->cmd_barrier_texture(cmd, dst,
+                                           RHI_STATE_RENDER_TARGET, RHI_STATE_SHADER_READ);
+            });
+        // Advance ping-pong for next frame
+        taaWriteIdx_ = 1 - taaWriteIdx_;
+    }
+
     // --- Pass 2: SSAO --------------------------------------------------------
     auto rgSsao = renderGraph_.import_texture("ssao_rt", ssaoRT_);
-    if (ssaoPSO_ != RHI_NULL && ssaoRT_ != RHI_NULL) {
+    // Use GTAO if available, fall back to old SSAO
+    const RhiPipeline aoPSO = (gtaoPSO_ != RHI_NULL) ? gtaoPSO_ : ssaoPSO_;
+    if (aoPSO != RHI_NULL && ssaoRT_ != RHI_NULL) {
         renderGraph_.add_pass("ssao", RgPassType::Graphics,
             [&](RgPassBuilder& builder) {
                 builder.read(rgDepth);
                 builder.write(rgSsao);
                 builder.force_run();
             },
-            [this](RhiCmdList cmd) {
+            [this, aoPSO](RhiCmdList cmd) {
                 uint32_t hw = width_ / 2, hh = height_ / 2;
                 rhi()->cmd_barrier_texture(cmd, ssaoRT_,
                                            RHI_STATE_SHADER_READ, RHI_STATE_RENDER_TARGET);
-                rhi()->cmd_set_pipeline(cmd, ssaoPSO_);
+                rhi()->cmd_set_pipeline(cmd, aoPSO);
                 rhi()->cmd_set_viewport(cmd, 0, 0, (float)hw, (float)hh, 0, 1);
                 rhi()->cmd_set_scissor(cmd, 0, 0, hw, hh);
                 rhi()->cmd_set_render_targets(cmd, &ssaoRT_, 1, RHI_NULL);
@@ -743,13 +908,28 @@ void Renderer::render(bool readback) {
                 float ssaoParams[16];
                 std::memcpy(ssaoParams, &projMatrix_, 64);
                 rhi()->cmd_set_root_constants(cmd, 0, ssaoParams, 16, 0);
-                // b1: SSAOParams (8 DWORDs: screenSize, near, far, aoRadius, aoIntensity, aoBias, pad)
-                float ssaoB1[8] = {
-                    static_cast<float>(width_), static_cast<float>(height_),
-                    0.1f, 500.0f,
-                    0.5f, 1.5f, 0.025f, 0.0f
-                };
-                rhi()->cmd_set_root_constants(cmd, 1, ssaoB1, 8, 0);
+                // b1: GTAOParams (root CBV) — includes contact shadow params
+                if (ssaoB1CBV_ != RHI_NULL) {
+                    // Transform light direction to view space for contact shadows
+                    Vec3 ld = frameConstants_.light_dir;
+                    // viewMatrix_ * lightDir (3x3 rotation part only)
+                    float ldvX = viewMatrix_.m[0][0]*ld.x + viewMatrix_.m[1][0]*ld.y + viewMatrix_.m[2][0]*ld.z;
+                    float ldvY = viewMatrix_.m[0][1]*ld.x + viewMatrix_.m[1][1]*ld.y + viewMatrix_.m[2][1]*ld.z;
+                    float ldvZ = viewMatrix_.m[0][2]*ld.x + viewMatrix_.m[1][2]*ld.y + viewMatrix_.m[2][2]*ld.z;
+                    float ldvLen = std::sqrt(ldvX*ldvX + ldvY*ldvY + ldvZ*ldvZ);
+                    if (ldvLen > 0.001f) { ldvX/=ldvLen; ldvY/=ldvLen; ldvZ/=ldvLen; }
+
+                    float aoB1[12] = {
+                        static_cast<float>(width_), static_cast<float>(height_),
+                        0.1f, 500.0f,
+                        0.3f, 1.0f, 2.0f,  // aoRadius, aoIntensity, aoFalloff
+                        static_cast<float>(frameNumber_),  // frameCount
+                        ldvX, ldvY, ldvZ,  // lightDirView
+                        0.1f               // contactShadowLen
+                    };
+                    rhi()->buffer_upload(ssaoB1CBV_, aoB1, sizeof(aoB1));
+                    rhi()->cmd_set_constant_buffer(cmd, 1, ssaoB1CBV_);
+                }
 
                 rhi()->cmd_set_texture(cmd, 0, rhiDepthBuf_);
                 rhi()->cmd_set_topology(cmd, RHI_TOPOLOGY_TRIANGLE_LIST);
@@ -791,19 +971,28 @@ void Renderer::render(bool readback) {
             });
     }
 
+    // --- Determine composite/bloom color source (TAA-resolved or raw HDR) ---
+    // taaWriteIdx captured the WRITE target index before the flip, so resolved is there.
+    const RhiTexture compositeColorSrc = (taaEnabled_ && taaHistory_[taaWriteIdx] != RHI_NULL)
+        ? taaHistory_[taaWriteIdx]
+        : hdrRT_;
+
     // --- Pass 4: Bloom Downsample Chain --------------------------------------
+    // When TAA is active, bloom reads the TAA-resolved output for temporal stability.
+    const RhiTexture bloomSrcTex = compositeColorSrc;
     if (bloomDownPSO_ != RHI_NULL && bloomMips_[0] != RHI_NULL) {
         renderGraph_.add_pass("bloom_down", RgPassType::Graphics,
             [&](RgPassBuilder& builder) {
                 builder.read(rgHdr);
+                if (taaEnabled_) builder.read(rgTaaWrite);
                 builder.force_run();
             },
-            [this](RhiCmdList cmd) {
+            [this, bloomSrcTex](RhiCmdList cmd) {
                 rhi()->cmd_set_pipeline(cmd, bloomDownPSO_);
                 rhi()->cmd_set_topology(cmd, RHI_TOPOLOGY_TRIANGLE_LIST);
 
                 uint32_t srcW = width_, srcH = height_;
-                RhiTexture srcTex = hdrRT_;
+                RhiTexture srcTex = bloomSrcTex;
 
                 for (uint32_t i = 0; i < kBloomMips; ++i) {
                     uint32_t dstW = std::max(srcW / 2, 1u);
@@ -879,11 +1068,12 @@ void Renderer::render(bool readback) {
     renderGraph_.add_pass("composite", RgPassType::Graphics,
         [&](RgPassBuilder& builder) {
             builder.read(rgHdr);
+            if (taaEnabled_) builder.read(rgTaaWrite);
             builder.read(rgSsaoBlur);
             builder.write(rgBackbuffer);
             builder.force_run();
         },
-        [this](RhiCmdList cmd) {
+        [this, compositeColorSrc](RhiCmdList cmd) {
             RhiTexture bb = rhi()->swapchain_backbuffer();
             rhi()->cmd_barrier_texture(cmd, bb,
                                        RHI_STATE_PRESENT, RHI_STATE_RENDER_TARGET);
@@ -897,7 +1087,7 @@ void Renderer::render(bool readback) {
             float compParams[4] = { 1.0f, 0.04f, 2.2f, 0.0f }; // exposure, bloomStrength, gamma
             rhi()->cmd_set_root_constants(cmd, 0, compParams, 4, 0);
 
-            rhi()->cmd_set_texture(cmd, 0, hdrRT_);
+            rhi()->cmd_set_texture(cmd, 0, compositeColorSrc);
             rhi()->cmd_set_texture(cmd, 1, (ssaoBlurRT_ != RHI_NULL) ? ssaoBlurRT_ : whiteTex_);
             rhi()->cmd_set_texture(cmd, 2, (bloomMips_[0] != RHI_NULL) ? bloomMips_[0] : blackTex_);
 
@@ -949,12 +1139,15 @@ void Renderer::render(bool readback) {
                         rhi()->cmd_set_pipeline(cmd, rhiOutlinePSO_);
                         rhi()->cmd_set_stencil_ref(cmd, 1);
                         rhi()->cmd_set_root_constants(cmd, 0, &selProxy->transform, 16, 0);
-                        float outlineCB[12] = {
-                            1.0f, 0.55f, 0.0f, 1.0f,
-                            0.08f, 0.0f, 0.0f, 0.0f,
-                            0.0f, 0.0f, 0.0f, 0.0f
-                        };
-                        rhi()->cmd_set_root_constants(cmd, 1, outlineCB, 12, 0);
+                        if (outlineCBV_ != RHI_NULL) {
+                            float outlineData[12] = {
+                                1.0f, 0.55f, 0.0f, 1.0f,
+                                0.08f, 0.0f, 0.0f, 0.0f,
+                                0.0f, 0.0f, 0.0f, 0.0f
+                            };
+                            rhi()->buffer_upload(outlineCBV_, outlineData, sizeof(outlineData));
+                            rhi()->cmd_set_constant_buffer(cmd, 1, outlineCBV_);
+                        }
                         rhi()->cmd_set_root_constants(cmd, 3, &frameConstants_.view_proj, 16, 0);
                         for (const auto& sub : selProxy->mesh->submeshes)
                             rhi()->cmd_draw_indexed(cmd, sub.index_count, 1, sub.index_offset, 0, 0);
@@ -1101,6 +1294,18 @@ void Renderer::shutdown() {
     if (lightFrameCBV_ != RHI_NULL) {
         rhi()->buffer_destroy(lightFrameCBV_);
         lightFrameCBV_ = RHI_NULL;
+    }
+    if (ssaoB1CBV_ != RHI_NULL) {
+        rhi()->buffer_destroy(ssaoB1CBV_);
+        ssaoB1CBV_ = RHI_NULL;
+    }
+    if (outlineCBV_ != RHI_NULL) {
+        rhi()->buffer_destroy(outlineCBV_);
+        outlineCBV_ = RHI_NULL;
+    }
+    if (postProcessCBV_ != RHI_NULL) {
+        rhi()->buffer_destroy(postProcessCBV_);
+        postProcessCBV_ = RHI_NULL;
     }
 
     if (rhiReadbackFence_ != RHI_NULL) {
@@ -1313,6 +1518,24 @@ bool Renderer::createPipelineStates() {
         compositePSO_ = shaderLib_.get_or_create_pipeline("composite", d);
         DIAG_FMT("composite PSO => handle=%llu", (unsigned long long)compositePSO_);
     }
+    {
+        auto d = makePostProcDesc(RHI_FORMAT_RG16_FLOAT);
+        d.debug_name = "Velocity_PSO";
+        velocityPSO_ = shaderLib_.get_or_create_pipeline("velocity", d);
+        DIAG_FMT("velocity PSO => handle=%llu", (unsigned long long)velocityPSO_);
+    }
+    {
+        auto d = makePostProcDesc(RHI_FORMAT_R11G11B10_FLOAT);
+        d.debug_name = "TAA_PSO";
+        taaPSO_ = shaderLib_.get_or_create_pipeline("taa", d);
+        DIAG_FMT("taa PSO => handle=%llu", (unsigned long long)taaPSO_);
+    }
+    {
+        auto d = makePostProcDesc(RHI_FORMAT_R8_UNORM);
+        d.debug_name = "GTAO_PSO";
+        gtaoPSO_ = shaderLib_.get_or_create_pipeline("gtao", d);
+        DIAG_FMT("gtao PSO => handle=%llu", (unsigned long long)gtaoPSO_);
+    }
 
     return rhiPipeline_ != RHI_NULL && rhiPbrPipeline_ != RHI_NULL;
 }
@@ -1374,6 +1597,8 @@ void Renderer::destroyPostProcessTargets() {
     destroy(hdrRT_);
     destroy(ssaoRT_);
     destroy(ssaoBlurRT_);
+    destroy(velocityRT_);
+    for (auto& h : taaHistory_) destroy(h);
     for (auto& m : bloomMips_) destroy(m);
 }
 
@@ -1418,6 +1643,33 @@ bool Renderer::createPostProcessTargets() {
         ssaoBlurRT_ = rhi()->texture_create(&d);
         if (ssaoBlurRT_ == RHI_NULL) return false;
     }
+
+    // Velocity buffer — full resolution, R16G16_FLOAT (motion vectors for TAA/GTAO/SSR)
+    {
+        RhiTextureDesc d{};
+        d.width = width_; d.height = height_; d.depth = 1;
+        d.mip_levels = 1; d.array_size = 1;
+        d.format    = RHI_FORMAT_RG16_FLOAT;
+        d.dimension = RHI_TEXTURE_DIM_2D;
+        d.usage     = RHI_TEXTURE_USAGE_RENDER_TARGET | RHI_TEXTURE_USAGE_SHADER_READ;
+        d.debug_name = "Velocity_RT";
+        velocityRT_ = rhi()->texture_create(&d);
+        if (velocityRT_ == RHI_NULL) return false;
+    }
+
+    // TAA history buffers — full resolution, R11G11B10_FLOAT, ping-pong pair
+    for (uint32_t i = 0; i < kTAAHistoryCount; ++i) {
+        RhiTextureDesc d{};
+        d.width = width_; d.height = height_; d.depth = 1;
+        d.mip_levels = 1; d.array_size = 1;
+        d.format    = RHI_FORMAT_R11G11B10_FLOAT;
+        d.dimension = RHI_TEXTURE_DIM_2D;
+        d.usage     = RHI_TEXTURE_USAGE_RENDER_TARGET | RHI_TEXTURE_USAGE_SHADER_READ;
+        d.debug_name = (i == 0) ? "TAA_History_0" : "TAA_History_1";
+        taaHistory_[i] = rhi()->texture_create(&d);
+        if (taaHistory_[i] == RHI_NULL) return false;
+    }
+    taaWriteIdx_ = 0;
 
     // Bloom mip chain — progressively halved from half-res
     uint32_t bw = width_ / 2;
@@ -1495,6 +1747,13 @@ void Renderer::performReadback() {
 size_t Renderer::loadEditorScene(std::vector<EditorNode> nodes) {
     const size_t count = editor_.loadNodes(std::move(nodes));
     return count;
+}
+
+void Renderer::invalidateMaterialCache() {
+    for (auto* proxy : proxies_) {
+        auto* mp = static_cast<MeshProxy*>(proxy);
+        mp->cache_materials();
+    }
 }
 
 void Renderer::setScene(Scene* scene) {

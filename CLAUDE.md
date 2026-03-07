@@ -135,6 +135,14 @@ single purpose.
 Existing files that exceed 1500 lines are **technical debt** and must be split during
 the next refactor that touches them.
 
+### Rule 9: DOCUMENT ALL IPC/WS/MCP COMMANDS
+
+When adding a **new WebSocket handler**, **IPC command**, or **MCP tool**, you MUST
+update `docs/API.md` with the command name, arguments, response fields, and description.
+Undocumented commands will be rejected in code review.
+
+**Reference**: `docs/API.md`
+
 ---
 
 ### Architecture Reference Documents
@@ -146,6 +154,7 @@ the next refactor that touches them.
 | `docs/architecture/module-boundaries.md` | MOD-1 to MOD-8 | Before adding ANY file |
 | `docs/architecture/render-pipeline.md` | PIPE-1 to PIPE-8 | Before adding ANY render pass |
 | `docs/architecture/coding-standards.md` | CS-1 to CS-20 | Every code change |
+| `docs/API.md` | Rule 9 | Before adding ANY WS/IPC/MCP command |
 
 ---
 

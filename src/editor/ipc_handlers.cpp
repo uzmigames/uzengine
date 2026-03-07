@@ -68,6 +68,12 @@ void registerIpcHandlers(uz::IpcRegistry& ipcRegistry,
         };
     });
 
+    ipcRegistry.add("benchmark.orbit", [&](const nlohmann::json& args) -> nlohmann::json {
+        const bool enable = args.value("enable", true);
+        g_scene.benchmarkOrbit.store(enable, std::memory_order_relaxed);
+        return {{"ok", true}, {"enabled", enable}};
+    });
+
     ipcRegistry.add("engine.screenshot", [&](const nlohmann::json& args) -> nlohmann::json {
         const std::string id = args.value("id", "screenshot");
         uz::FrameData frame = renderer.getLastFrameCopy();

@@ -561,4 +561,8 @@ void texture_clear_all() {
     g_texture_manager.clear();
 }
 
+RhiTexture texture_get_or_queue(const std::string& path) {
+    return g_texture_manager.get_or_queue(path);
+}
+
 } // namespace uz
