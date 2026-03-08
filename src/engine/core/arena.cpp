@@ -25,6 +25,11 @@ void arena_init(Arena* arena, void* memory, size_t size, const char* name) {
     arena->offset = 0;
     arena->peak   = 0;
     arena->name   = name;
+
+#ifdef UZ_MEMORY_PROFILING
+    arena->total_alloc_count = 0;
+    arena->reset_count       = 0;
+#endif
 }
 
 void* arena_alloc(Arena* arena, size_t n, size_t align) {
@@ -52,12 +57,20 @@ void* arena_alloc(Arena* arena, size_t n, size_t align) {
         arena->peak = arena->offset;
     }
 
+#ifdef UZ_MEMORY_PROFILING
+    ++arena->total_alloc_count;
+#endif
+
     return reinterpret_cast<void*>(aligned);
 }
 
 void arena_reset(Arena* arena) {
     assert(arena != nullptr);
     arena->offset = 0;
+
+#ifdef UZ_MEMORY_PROFILING
+    ++arena->reset_count;
+#endif
 }
 
 ArenaMark arena_mark(const Arena* arena) {

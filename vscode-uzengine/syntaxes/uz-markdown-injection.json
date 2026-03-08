@@ -1,0 +1,127 @@
+{
+  "scopeName": "markdown.uzengine.codeblock",
+  "injectionSelector": "L:text.html.markdown",
+  "patterns": [
+    { "include": "#uzmat-fenced-code-block" },
+    { "include": "#uzfx-fenced-code-block" },
+    { "include": "#uzbt-fenced-code-block" },
+    { "include": "#uzcam-fenced-code-block" },
+    { "include": "#uzterrain-fenced-code-block" },
+    { "include": "#uzproj-fenced-code-block" },
+    { "include": "#uzplugin-fenced-code-block" }
+  ],
+  "repository": {
+    "uzmat-fenced-code-block": {
+      "begin": "(^|\\G)(\\s*)((`{3,})\\s*(?i:(uzmat))(\\s+[^`]*)?\\s*)$",
+      "end": "(^|\\G)(\\2|\\s{0,3})(\\4)\\s*$",
+      "beginCaptures": {
+        "4": { "name": "punctuation.definition.markdown" },
+        "5": { "name": "fenced_code.block.language.markdown" }
+      },
+      "endCaptures": {
+        "3": { "name": "punctuation.definition.markdown" }
+      },
+      "name": "markup.fenced_code.block.markdown",
+      "contentName": "meta.embedded.block.uzmat",
+      "patterns": [
+        { "include": "source.uzmat" }
+      ]
+    },
+    "uzfx-fenced-code-block": {
+      "begin": "(^|\\G)(\\s*)((`{3,})\\s*(?i:(uzfx))(\\s+[^`]*)?\\s*)$",
+      "end": "(^|\\G)(\\2|\\s{0,3})(\\4)\\s*$",
+      "beginCaptures": {
+        "4": { "name": "punctuation.definition.markdown" },
+        "5": { "name": "fenced_code.block.language.markdown" }
+      },
+      "endCaptures": {
+        "3": { "name": "punctuation.definition.markdown" }
+      },
+      "name": "markup.fenced_code.block.markdown",
+      "contentName": "meta.embedded.block.uzfx",
+      "patterns": [
+        { "include": "source.uzfx" }
+      ]
+    },
+    "uzbt-fenced-code-block": {
+      "begin": "(^|\\G)(\\s*)((`{3,})\\s*(?i:(uzbt))(\\s+[^`]*)?\\s*)$",
+      "end": "(^|\\G)(\\2|\\s{0,3})(\\4)\\s*$",
+      "beginCaptures": {
+        "4": { "name": "punctuation.definition.markdown" },
+        "5": { "name": "fenced_code.block.language.markdown" }
+      },
+      "endCaptures": {
+        "3": { "name": "punctuation.definition.markdown" }
+      },
+      "name": "markup.fenced_code.block.markdown",
+      "contentName": "meta.embedded.block.uzbt",
+      "patterns": [
+        { "include": "source.uzbt" }
+      ]
+    },
+    "uzcam-fenced-code-block": {
+      "begin": "(^|\\G)(\\s*)((`{3,})\\s*(?i:(uzcam))(\\s+[^`]*)?\\s*)$",
+      "end": "(^|\\G)(\\2|\\s{0,3})(\\4)\\s*$",
+      "beginCaptures": {
+        "4": { "name": "punctuation.definition.markdown" },
+        "5": { "name": "fenced_code.block.language.markdown" }
+      },
+      "endCaptures": {
+        "3": { "name": "punctuation.definition.markdown" }
+      },
+      "name": "markup.fenced_code.block.markdown",
+      "contentName": "meta.embedded.block.uzcam",
+      "patterns": [
+        { "include": "source.uzcam" }
+      ]
+    },
+    "uzterrain-fenced-code-block": {
+      "begin": "(^|\\G)(\\s*)((`{3,})\\s*(?i:(uzterrain))(\\s+[^`]*)?\\s*)$",
+      "end": "(^|\\G)(\\2|\\s{0,3})(\\4)\\s*$",
+      "beginCaptures": {
+        "4": { "name": "punctuation.definition.markdown" },
+        "5": { "name": "fenced_code.block.language.markdown" }
+      },
+      "endCaptures": {
+        "3": { "name": "punctuation.definition.markdown" }
+      },
+      "name": "markup.fenced_code.block.markdown",
+      "contentName": "meta.embedded.block.uzterrain",
+      "patterns": [
+        { "include": "source.uzterrain" }
+      ]
+    },
+    "uzproj-fenced-code-block": {
+      "begin": "(^|\\G)(\\s*)((`{3,})\\s*(?i:(uzproj))(\\s+[^`]*)?\\s*)$",
+      "end": "(^|\\G)(\\2|\\s{0,3})(\\4)\\s*$",
+      "beginCaptures": {
+        "4": { "name": "punctuation.definition.markdown" },
+        "5": { "name": "fenced_code.block.language.markdown" }
+      },
+      "endCaptures": {
+        "3": { "name": "punctuation.definition.markdown" }
+      },
+      "name": "markup.fenced_code.block.markdown",
+      "contentName": "meta.embedded.block.uzproj",
+      "patterns": [
+        { "include": "source.uzproj" }
+      ]
+    },
+    "uzplugin-fenced-code-block": {
+      "begin": "(^|\\G)(\\s*)((`{3,})\\s*(?i:(uzplugin))(\\s+[^`]*)?\\s*)$",
+      "end": "(^|\\G)(\\2|\\s{0,3})(\\4)\\s*$",
+      "beginCaptures": {
+        "4": { "name": "punctuation.definition.markdown" },
+        "5": { "name": "fenced_code.block.language.markdown" }
+      },
+      "endCaptures": {
+        "3": { "name": "punctuation.definition.markdown" }
+      },
+      "name": "markup.fenced_code.block.markdown",
+      "contentName": "meta.embedded.block.uzplugin",
+      "patterns": [
+        { "include": "source.uzplugin" }
+      ]
+    }
+  }
+}

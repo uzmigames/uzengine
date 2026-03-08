@@ -1,0 +1,78 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "UzProj",
+  "scopeName": "source.uzproj",
+  "fileTypes": [".uzproj"],
+  "patterns": [
+    { "include": "#comment" },
+    { "include": "#section" },
+    { "include": "#keyvalue" }
+  ],
+  "repository": {
+    "comment": {
+      "name": "comment.line.number-sign.uzproj",
+      "match": "^\\s*#.*$"
+    },
+    "section": {
+      "name": "entity.name.section.uzproj",
+      "match": "^\\s*\\[([a-zA-Z_][a-zA-Z0-9_\\.]*)\\]\\s*$",
+      "captures": {
+        "0": { "name": "entity.name.section.uzproj" }
+      }
+    },
+    "keyvalue": {
+      "match": "^\\s*([a-zA-Z_][a-zA-Z0-9_]*)\\s*(=)\\s*(.*)$",
+      "captures": {
+        "1": { "name": "variable.other.key.uzproj" },
+        "2": { "name": "punctuation.separator.key-value.uzproj" },
+        "3": {
+          "patterns": [
+            { "include": "#project-keyword" },
+            { "include": "#boolean" },
+            { "include": "#number" },
+            { "include": "#string-quoted" },
+            { "include": "#array" },
+            { "include": "#string-unquoted" }
+          ]
+        }
+      }
+    },
+    "project-keyword": {
+      "name": "support.type.property.uzproj",
+      "match": "\\b(name|version|description|author|license|engine_version|target_platform|build_config|output_dir|source_dir|asset_dir|plugin|plugins|default_scene|startup_scene|physics_backend|renderer_backend|audio_backend|scripting_backend|compression|texture_quality|shadow_quality|lod_bias|max_fps|vsync|fullscreen|resolution|render_scale)\\b"
+    },
+    "boolean": {
+      "name": "constant.language.boolean.uzproj",
+      "match": "\\b(true|false|True|False|TRUE|FALSE)\\b"
+    },
+    "number": {
+      "name": "constant.numeric.uzproj",
+      "match": "-?\\b\\d+(\\.\\d+)?\\b"
+    },
+    "string-quoted": {
+      "name": "string.quoted.double.uzproj",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.uzproj",
+          "match": "\\\\."
+        }
+      ]
+    },
+    "array": {
+      "name": "meta.array.uzproj",
+      "begin": "\\[",
+      "end": "\\]",
+      "patterns": [
+        { "include": "#string-quoted" },
+        { "include": "#boolean" },
+        { "include": "#number" }
+      ]
+    },
+    "string-unquoted": {
+      "name": "string.unquoted.value.uzproj",
+      "match": "[^\\[\\]#=]+"
+    }
+  }
+}

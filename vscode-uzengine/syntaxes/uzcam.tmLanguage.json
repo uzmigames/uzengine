@@ -1,0 +1,77 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "UzCam",
+  "scopeName": "source.uzcam",
+  "fileTypes": [".uzcam"],
+  "patterns": [
+    { "include": "#comment" },
+    { "include": "#section" },
+    { "include": "#keyvalue" }
+  ],
+  "repository": {
+    "comment": {
+      "name": "comment.line.uzcam",
+      "match": "^\\s*[#;].*$"
+    },
+    "section": {
+      "name": "entity.name.section.uzcam",
+      "match": "^\\s*\\[([a-zA-Z_][a-zA-Z0-9_\\.]*)\\]\\s*$",
+      "captures": {
+        "0": { "name": "entity.name.section.uzcam" }
+      }
+    },
+    "keyvalue": {
+      "match": "^\\s*([a-zA-Z_][a-zA-Z0-9_]*)\\s*(=)\\s*(.*)$",
+      "captures": {
+        "1": { "name": "keyword.other.key.uzcam" },
+        "2": { "name": "punctuation.separator.uzcam" },
+        "3": {
+          "patterns": [
+            { "include": "#camera-mode" },
+            { "include": "#camera-property" },
+            { "include": "#boolean" },
+            { "include": "#vec3" },
+            { "include": "#number" },
+            { "include": "#string-quoted" },
+            { "include": "#string-unquoted" }
+          ]
+        }
+      }
+    },
+    "camera-mode": {
+      "name": "support.constant.camera-mode.uzcam",
+      "match": "\\b(Perspective|Ortho|Orthographic|FirstPerson|ThirdPerson|Cinematic|Fly|Orbit|Fixed|Dolly)\\b"
+    },
+    "camera-property": {
+      "name": "support.type.property.uzcam",
+      "match": "\\b(fov|fov_v|near_clip|far_clip|aspect_ratio|mode|exposure|aperture|shutter_speed|iso|focal_length|focus_distance|depth_of_field|bloom|motion_blur|vignette|chromatic_aberration|film_grain|lens_flare|post_process|priority|target|offset|lag|lag_speed|rotation_lag|shake_amplitude|shake_frequency|orthographic_size)\\b"
+    },
+    "boolean": {
+      "name": "constant.language.boolean.uzcam",
+      "match": "\\b(true|false|True|False|TRUE|FALSE)\\b"
+    },
+    "vec3": {
+      "name": "constant.numeric.vec3.uzcam",
+      "match": "-?\\b\\d+(\\.\\d+)?\\b\\s*,\\s*-?\\b\\d+(\\.\\d+)?\\b\\s*,\\s*-?\\b\\d+(\\.\\d+)?\\b"
+    },
+    "number": {
+      "name": "constant.numeric.uzcam",
+      "match": "-?\\b\\d+(\\.\\d+)?\\b"
+    },
+    "string-quoted": {
+      "name": "string.quoted.double.uzcam",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.uzcam",
+          "match": "\\\\."
+        }
+      ]
+    },
+    "string-unquoted": {
+      "name": "string.unquoted.value.uzcam",
+      "match": ".+"
+    }
+  }
+}

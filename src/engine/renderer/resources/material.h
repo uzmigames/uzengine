@@ -7,6 +7,8 @@
 
 namespace uz {
 
+struct CompiledGraphShader;  // Forward declaration for graph material support.
+
 // ============================================================================
 // Material — properties and shader assignment for a renderable surface.
 // ============================================================================
@@ -24,6 +26,11 @@ struct Material {
 
     // Resolved RHI handles (populated by MaterialManager).
     std::unordered_map<std::string, RhiTexture> texture_handles;
+
+    // Shader graph material support.
+    RhiPipeline graph_pso = RHI_NULL;  // Graph-specific PSO (RHI_NULL for standard materials).
+    const CompiledGraphShader* graph_compiled = nullptr;  // Cbuffer layout metadata.
+    bool is_graph_material() const { return graph_pso != RHI_NULL; }
 };
 
 // ============================================================================

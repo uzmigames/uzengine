@@ -1,4 +1,6 @@
 #include "engine/scripting/lua_vm.h"
+#include "engine/scripting/script_execution_safety.h"
+#include "engine/scripting/lua_module_loader.h"
 #include "engine/scene/scene.h"
 #include "engine/scene/scene_node.h"
 #include "engine/scene/component_data.h"
@@ -290,6 +292,22 @@ void LuaVM::apply_sandbox() {
 }
 
 // ---------------------------------------------------------------------------
+// Module system
+// ---------------------------------------------------------------------------
+
+void LuaVM::set_project_root(const char* root) {
+    if (L_ && root) {
+        lua_module_loader_install(L_, root);
+    }
+}
+
+void LuaVM::invalidate_module(const char* module_name) {
+    if (L_ && module_name) {
+        lua_module_loader_invalidate(L_, module_name);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // LuaVM lifecycle
 // ---------------------------------------------------------------------------
 
@@ -300,17 +318,41 @@ LuaVM::~LuaVM() {
 }
 
 bool LuaVM::init() {
+    return init(ScriptingConfig{});
+}
+
+bool LuaVM::init(const ScriptingConfig& config) {
     if (L_) return true;
 
-    L_ = luaL_newstate();
+    config_ = config;
+
+    // Configure memory allocator
+    allocator_.limit = static_cast<size_t>(config_.memory_limit_mb) * 1024 * 1024;
+    allocator_.used.store(0, std::memory_order_relaxed);
+
+    // Create state with custom allocator
+    L_ = lua_newstate(LuaAllocator::alloc, &allocator_);
     if (!L_) return false;
 
     luaL_openlibs(L_);
     apply_sandbox();
     register_bindings();
 
-    DIAG_FMT("[LuaVM] Initialized (LuaJIT)");
+    // Install instruction budget hook
+    lua_reset_instruction_hook(L_, config_.instruction_budget);
+
+    // Install global guard (__newindex on _G)
+    lua_install_global_guard(L_, &config_);
+
+    DIAG_FMT("[LuaVM] Initialized (LuaJIT, budget=%d, mem=%dMB)",
+             config_.instruction_budget, config_.memory_limit_mb);
     return true;
+}
+
+void LuaVM::reset_instruction_hook() {
+    if (L_) {
+        lua_reset_instruction_hook(L_, config_.instruction_budget);
+    }
 }
 
 void LuaVM::shutdown() {

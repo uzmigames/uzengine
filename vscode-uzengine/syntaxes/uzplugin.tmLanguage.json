@@ -1,0 +1,78 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "UzPlugin",
+  "scopeName": "source.uzplugin",
+  "fileTypes": [".uzplugin"],
+  "patterns": [
+    { "include": "#comment" },
+    { "include": "#section" },
+    { "include": "#keyvalue" }
+  ],
+  "repository": {
+    "comment": {
+      "name": "comment.line.number-sign.uzplugin",
+      "match": "^\\s*#.*$"
+    },
+    "section": {
+      "name": "entity.name.section.uzplugin",
+      "match": "^\\s*\\[([a-zA-Z_][a-zA-Z0-9_\\.]*)\\]\\s*$",
+      "captures": {
+        "0": { "name": "entity.name.section.uzplugin" }
+      }
+    },
+    "keyvalue": {
+      "match": "^\\s*([a-zA-Z_][a-zA-Z0-9_]*)\\s*(=)\\s*(.*)$",
+      "captures": {
+        "1": { "name": "variable.other.key.uzplugin" },
+        "2": { "name": "punctuation.separator.key-value.uzplugin" },
+        "3": {
+          "patterns": [
+            { "include": "#plugin-keyword" },
+            { "include": "#boolean" },
+            { "include": "#number" },
+            { "include": "#string-quoted" },
+            { "include": "#array" },
+            { "include": "#string-unquoted" }
+          ]
+        }
+      }
+    },
+    "plugin-keyword": {
+      "name": "support.type.property.uzplugin",
+      "match": "\\b(name|version|description|author|license|engine_version|api_version|category|tags|dependencies|entry_point|source_dir|include_dir|lib_dir|enabled|auto_load|load_order|platform|platforms|editor_only|runtime_only|experimental)\\b"
+    },
+    "boolean": {
+      "name": "constant.language.boolean.uzplugin",
+      "match": "\\b(true|false|True|False|TRUE|FALSE)\\b"
+    },
+    "number": {
+      "name": "constant.numeric.uzplugin",
+      "match": "-?\\b\\d+(\\.\\d+)?\\b"
+    },
+    "string-quoted": {
+      "name": "string.quoted.double.uzplugin",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.uzplugin",
+          "match": "\\\\."
+        }
+      ]
+    },
+    "array": {
+      "name": "meta.array.uzplugin",
+      "begin": "\\[",
+      "end": "\\]",
+      "patterns": [
+        { "include": "#string-quoted" },
+        { "include": "#boolean" },
+        { "include": "#number" }
+      ]
+    },
+    "string-unquoted": {
+      "name": "string.unquoted.value.uzplugin",
+      "match": "[^\\[\\]#=]+"
+    }
+  }
+}

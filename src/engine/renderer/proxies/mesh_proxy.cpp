@@ -1,7 +1,10 @@
 #include "engine/renderer/proxies/mesh_proxy.h"
 #include "engine/renderer/resources/shader_library.h"
+#include "engine/renderer/resources/graph_material_loader.h"
 #include "engine/renderer/core/renderer.h"
 #include "engine/renderer/components/static_mesh_component.h"
+
+#include <cstring>
 
 namespace uz {
 
@@ -194,13 +197,6 @@ void MeshProxy::cache_slot(MaterialSlot& slot, const DefaultMaterialSlot* defaul
 // ---------------------------------------------------------------------------
 
 void MeshProxy::upload_slot_cbv(MaterialSlot& slot) {
-    float matCB[20] = {
-        slot.albedo[0], slot.albedo[1], slot.albedo[2], slot.metallic,
-        slot.roughness, slot.ao, slot.parallax_scale, slot.emission_energy,
-        slot.emission[0], slot.emission[1], slot.emission[2], slot.env_multiplier,
-        slot.normal_strength, slot.specular_multiplier, slot.uv_tiling[0], slot.uv_tiling[1],
-        slot.self_shadow_strength, slot.cavity_strength, slot.anisotropy, slot.anisotropy_rotation
-    };
     if (slot.cbv == RHI_NULL) {
         RhiBufferDesc cbvDesc{};
         cbvDesc.size       = 256;
@@ -208,6 +204,24 @@ void MeshProxy::upload_slot_cbv(MaterialSlot& slot) {
         cbvDesc.debug_name = "MaterialCBV";
         slot.cbv = rhi()->buffer_create(&cbvDesc);
     }
+
+    // Graph material: fill cbuffer from compiled layout instead of PBR layout.
+    if (slot.material && slot.material->graph_compiled) {
+        alignas(16) uint8_t buf[256] = {};
+        slot.material->graph_compiled->fill_cbuffer(*slot.material, buf, 256);
+        if (slot.cbv != RHI_NULL)
+            rhi()->buffer_upload(slot.cbv, buf, 256);
+        return;
+    }
+
+    // PBR layout (20 floats = 80 bytes).
+    float matCB[20] = {
+        slot.albedo[0], slot.albedo[1], slot.albedo[2], slot.metallic,
+        slot.roughness, slot.ao, slot.parallax_scale, slot.emission_energy,
+        slot.emission[0], slot.emission[1], slot.emission[2], slot.env_multiplier,
+        slot.normal_strength, slot.specular_multiplier, slot.uv_tiling[0], slot.uv_tiling[1],
+        slot.self_shadow_strength, slot.cavity_strength, slot.anisotropy, slot.anisotropy_rotation
+    };
     if (slot.cbv != RHI_NULL)
         rhi()->buffer_upload(slot.cbv, matCB, sizeof(matCB));
 }

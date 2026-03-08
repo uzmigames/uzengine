@@ -1,0 +1,82 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "UzFX",
+  "scopeName": "source.uzfx",
+  "fileTypes": [".uzfx"],
+  "patterns": [
+    { "include": "#comment" },
+    { "include": "#section" },
+    { "include": "#keyvalue" }
+  ],
+  "repository": {
+    "comment": {
+      "name": "comment.line.uzfx",
+      "match": "^\\s*[#;].*$"
+    },
+    "section": {
+      "name": "entity.name.section.uzfx",
+      "match": "^\\s*\\[([a-zA-Z_][a-zA-Z0-9_\\.]*)\\]\\s*$",
+      "captures": {
+        "0": { "name": "entity.name.section.uzfx" }
+      }
+    },
+    "keyvalue": {
+      "match": "^\\s*([a-zA-Z_][a-zA-Z0-9_]*)\\s*(=)\\s*(.*)$",
+      "captures": {
+        "1": { "name": "keyword.other.key.uzfx" },
+        "2": { "name": "punctuation.separator.uzfx" },
+        "3": {
+          "patterns": [
+            { "include": "#emitter-type" },
+            { "include": "#particle-property" },
+            { "include": "#blend-mode" },
+            { "include": "#boolean" },
+            { "include": "#vec3" },
+            { "include": "#number" },
+            { "include": "#string-quoted" },
+            { "include": "#string-unquoted" }
+          ]
+        }
+      }
+    },
+    "emitter-type": {
+      "name": "support.type.emitter.uzfx",
+      "match": "\\b(Sprite|Mesh|Ribbon|Beam|GPU|CPU|Trail|Ring|Cone|Sphere|Box|Point|Burst|Continuous|OneShot)\\b"
+    },
+    "particle-property": {
+      "name": "support.type.property.uzfx",
+      "match": "\\b(spawn_rate|max_particles|lifetime|lifetime_random|initial_velocity|velocity_random|gravity|drag|size|size_random|size_over_life|color|color_over_life|rotation|rotation_rate|emitter_type|material|texture|loop|auto_play|warmup_time|sort_mode|collision|depth_fade|soft_particle_distance|emitter_radius|emitter_half_extent|spawn_shape|sub_emitter|lod_distance|simulation_space|world_space|local_space)\\b"
+    },
+    "blend-mode": {
+      "name": "support.constant.blend-mode.uzfx",
+      "match": "\\b(Opaque|Masked|Translucent|Additive|AlphaBlend)\\b"
+    },
+    "boolean": {
+      "name": "constant.language.boolean.uzfx",
+      "match": "\\b(true|false|True|False|TRUE|FALSE)\\b"
+    },
+    "vec3": {
+      "name": "constant.numeric.vec3.uzfx",
+      "match": "-?\\b\\d+(\\.\\d+)?\\b\\s*,\\s*-?\\b\\d+(\\.\\d+)?\\b\\s*,\\s*-?\\b\\d+(\\.\\d+)?\\b"
+    },
+    "number": {
+      "name": "constant.numeric.uzfx",
+      "match": "-?\\b\\d+(\\.\\d+)?\\b"
+    },
+    "string-quoted": {
+      "name": "string.quoted.double.uzfx",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.uzfx",
+          "match": "\\\\."
+        }
+      ]
+    },
+    "string-unquoted": {
+      "name": "string.unquoted.value.uzfx",
+      "match": ".+"
+    }
+  }
+}

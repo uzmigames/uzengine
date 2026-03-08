@@ -185,17 +185,19 @@
 - **Gotcha**: `std::strncpy` not available in `<cstring>` on Clang C++23 without explicit include. Use `#include <cstring>` or bare `strncpy`.
 - Test count after phase1-render-graph: 1086 (was 1022, +64 new tests)
 
-## Build Gotcha: Clang Cannot Capture Globals by Name
-- `[&g_scene]` fails on Clang: "cannot be captured because it does not have automatic storage duration"
-- Solution: use `[&]` (capture-all) which doesn't actually capture globals -- they are referenced directly
-- All lambda captures in main.cpp use `[&]` for this reason
-
-## Build Gotcha: PIMPL + Free Thread Functions
-- A free function (even `static` in the same TU) cannot access a private nested `Impl` struct on Clang.
-- Solution: declare the thread entry point as a `static` private member function of the class.
-  This gives it access to the private `Impl` type while still being compatible with C function pointers like `ThreadFunc = void(*)(void*)`.
+## Lua Scripting Module (src/engine/scripting/)
+- **lua_vm.h/.cpp**: `LuaVM` - LuaJIT wrapper with sandbox (strips os/io/debug/require/etc.)
+  - Bindings: uz.delta_time(), uz.total_time(), uz.log(), uz.scene.*, uz.camera.*
+  - VM pointer stored in Lua registry for binding callbacks
+- **script_runner.h/.cpp**: `ScriptRunner` - manages script instances, ticks each frame
+  - init/shutdown, attach_script/detach_scripts, clear, scan_scene, find_nodes_by_script_path
+- **lua_script_instance.h/.cpp**: Per-script Lua env (isolated table with __index=_G)
+  - NODE_ID available in script env, on_start/on_update/on_stop lifecycle
+- **lua_script_reloader.h/.cpp**: Hot-reload — on_file_changed(path) detaches+reattaches
+- **Test count**: 108 tests in tests/scripting/test_lua_scripting.cpp
+- **Build**: LuaJIT linked to both UzEngine and UzEngineTests, lua51.dll copied to output dirs
+- **Gotcha**: Scene struct is ~26MB (65536 SceneNodes) — NEVER stack-allocate, always heap
 
 ## User Preferences
 - Communicates in Portuguese (BR)
 - Prefers DX12 (not DX11)
-- NVENC primary + FFmpeg fallback for encoding pipeline

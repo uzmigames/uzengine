@@ -475,17 +475,31 @@ void Renderer::update(double totalTime, double deltaTime) {
                     }
                     if (!proxy->material_slots_[0].instance &&
                         data->material_path[0] != '\0') {
-                        std::string resolved = resolve_path(data->material_path);
-                        if (is_graph_material_path(resolved)) {
+                        // Check graph: prefix BEFORE resolve_path (which prepends base_dir).
+                        std::string raw_path(data->material_path);
+                        if (is_graph_material_path(raw_path)) {
                             // Shader graph material: compile .uzshader → HLSL → Material.
-                            std::string graph_path = strip_graph_prefix(resolved);
-                            proxy->material_slots_[0].material =
-                                graphLoader_.load_graph_material(graph_path, shaderLib_, materialManager_);
-                            if (!proxy->material_slots_[0].material) {
+                            std::string graph_path = resolve_path(
+                                strip_graph_prefix(raw_path).c_str());
+                            Material* gmat = graphLoader_.load_graph_material(
+                                graph_path, shaderLib_, materialManager_);
+                            proxy->material_slots_[0].material = gmat;
+                            if (!gmat) {
                                 DIAG_FMT("Renderer: FAILED to load graph material '%s'",
                                          data->material_path);
+                            } else if (gmat->graph_pso == RHI_NULL &&
+                                       gbufferPipeDesc_.rt_count > 0) {
+                                // Create a graph-specific PSO using the G-Buffer desc.
+                                RhiPipelineDesc gd = gbufferPipeDesc_;
+                                gd.debug_name = "GraphMat_PSO";
+                                gmat->graph_pso = shaderLib_.get_or_create_pipeline(
+                                    gmat->shader_name, gd);
+                                DIAG_FMT("Renderer: graph PSO for '%s' => %llu",
+                                         gmat->shader_name.c_str(),
+                                         (unsigned long long)gmat->graph_pso);
                             }
                         } else {
+                            std::string resolved = resolve_path(data->material_path);
                             proxy->material_slots_[0].material = materialManager_.load(resolved);
                             if (!proxy->material_slots_[0].material) {
                                 DIAG_FMT("Renderer: FAILED to load material '%s' (resolved='%s')",
@@ -907,7 +921,20 @@ void Renderer::render(bool readback) {
                 if (lightFrameCBV_ != RHI_NULL)
                     rhi()->cmd_set_constant_buffer(cmd, 2, lightFrameCBV_);
 
+                RhiPipeline activePSO = gbufferPSO_;
                 for (auto* proxy : proxies_) {
+                    // Switch PSO for graph materials.
+                    auto* mp = static_cast<MeshProxy*>(proxy);
+                    RhiPipeline needed = gbufferPSO_;
+                    if (!mp->material_slots_.empty() &&
+                        mp->material_slots_[0].material &&
+                        mp->material_slots_[0].material->is_graph_material()) {
+                        needed = mp->material_slots_[0].material->graph_pso;
+                    }
+                    if (needed != activePSO) {
+                        rhi()->cmd_set_pipeline(cmd, needed);
+                        activePSO = needed;
+                    }
                     proxy->execute(cmd, frameConstants_);
                 }
 
@@ -1530,7 +1557,7 @@ void Renderer::render(bool readback) {
             float exposureVal = autoExposureEnabled_ ? 1.0f : manualExposure_;
             float compParams[16] = {};
             compParams[0]  = exposureVal;           // exposure
-            compParams[1]  = 0.04f;                 // bloomIntensity
+            compParams[1]  = 0.3f;                  // bloomIntensity
             compParams[2]  = 2.2f;                  // gamma
             compParams[3]  = 0.3f;                  // sharpenStrength
             compParams[4]  = colorTemperature_;      // temperature
@@ -2191,6 +2218,7 @@ bool Renderer::createPipelineStates() {
                 gbDesc.blend.render_targets[i].write_mask = 0xF;
             }
             gbDesc.debug_name = "GBuffer_PSO";
+            gbufferPipeDesc_ = gbDesc;  // Cache for graph material PSO creation.
             { UZ_PROFILE_ZONE("pso/gbuffer_write");
               gbufferPSO_ = shaderLib_.get_or_create_pipeline("gbuffer_write", gbDesc); }
             DIAG_FMT("gbuffer PSO => handle=%llu", (unsigned long long)gbufferPSO_);

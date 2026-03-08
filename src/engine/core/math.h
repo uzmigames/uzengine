@@ -17,6 +17,10 @@
 #include <cmath>
 #include <cstdint>
 
+#if defined(UZ_SIMD)
+#include "engine/core/simd_math.h"
+#endif
+
 namespace uz {
 
 // ============================================================================
@@ -141,10 +145,33 @@ static_assert(sizeof(Vec3) == 16, "Vec3 must be 16 bytes (padded for SIMD alignm
 struct alignas(16) Vec4 {
     float x, y, z, w;
 
+#if defined(UZ_SIMD)
+    [[nodiscard]] Vec4 operator+(Vec4 o) const noexcept {
+        Vec4 r;
+        simd::store_aligned(&r.x, simd::vec4_add(simd::load_aligned(&x), simd::load_aligned(&o.x)));
+        return r;
+    }
+    [[nodiscard]] Vec4 operator-(Vec4 o) const noexcept {
+        Vec4 r;
+        simd::store_aligned(&r.x, simd::vec4_sub(simd::load_aligned(&x), simd::load_aligned(&o.x)));
+        return r;
+    }
+    [[nodiscard]] Vec4 operator*(float s) const noexcept {
+        Vec4 r;
+        simd::store_aligned(&r.x, simd::vec4_scale(simd::load_aligned(&x), s));
+        return r;
+    }
+    [[nodiscard]] Vec4 operator-() const noexcept {
+        Vec4 r;
+        simd::store_aligned(&r.x, simd::vec4_negate(simd::load_aligned(&x)));
+        return r;
+    }
+#else
     [[nodiscard]] constexpr Vec4 operator+(Vec4 o) const noexcept { return {x + o.x, y + o.y, z + o.z, w + o.w}; }
     [[nodiscard]] constexpr Vec4 operator-(Vec4 o) const noexcept { return {x - o.x, y - o.y, z - o.z, w - o.w}; }
     [[nodiscard]] constexpr Vec4 operator*(float s) const noexcept { return {x * s, y * s, z * s, w * s}; }
     [[nodiscard]] constexpr Vec4 operator-() const noexcept { return {-x, -y, -z, -w}; }
+#endif
 
     [[nodiscard]] constexpr bool operator==(Vec4 o) const noexcept { return x == o.x && y == o.y && z == o.z && w == o.w; }
     [[nodiscard]] constexpr bool operator!=(Vec4 o) const noexcept { return !(*this == o); }
@@ -152,9 +179,15 @@ struct alignas(16) Vec4 {
 
 static_assert(sizeof(Vec4) == 16, "Vec4 must be 16 bytes");
 
+#if defined(UZ_SIMD)
+[[nodiscard]] inline float vec4_dot(Vec4 a, Vec4 b) noexcept {
+    return simd::extract_x(simd::vec4_dot(simd::load_aligned(&a.x), simd::load_aligned(&b.x)));
+}
+#else
 [[nodiscard]] inline constexpr float vec4_dot(Vec4 a, Vec4 b) noexcept {
     return a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w;
 }
+#endif
 
 // ============================================================================
 // Quat — unit quaternion (x, y, z, w) where w is the scalar part
@@ -185,6 +218,13 @@ static_assert(sizeof(Quat) == 16, "Quat must be 16 bytes");
 }
 
 /// Hamilton product of two quaternions.
+#if defined(UZ_SIMD)
+[[nodiscard]] inline Quat quat_mul(Quat a, Quat b) noexcept {
+    Quat r;
+    simd::store_aligned(&r.x, simd::quat_mul(simd::load_aligned(&a.x), simd::load_aligned(&b.x)));
+    return r;
+}
+#else
 [[nodiscard]] inline constexpr Quat quat_mul(Quat a, Quat b) noexcept {
     return {
         a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
@@ -193,17 +233,34 @@ static_assert(sizeof(Quat) == 16, "Quat must be 16 bytes");
         a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z
     };
 }
+#endif
 
 /// Normalize a quaternion to unit length.
+#if defined(UZ_SIMD)
+[[nodiscard]] inline Quat quat_normalize(Quat q) noexcept {
+    Quat r;
+    simd::store_aligned(&r.x, simd::quat_normalize(simd::load_aligned(&q.x)));
+    return r;
+}
+#else
 [[nodiscard]] inline Quat quat_normalize(Quat q) noexcept {
     const float len = std::sqrt(q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w);
     if (len <= kEpsilon) return {0.0f, 0.0f, 0.0f, 1.0f};
     const float inv = 1.0f / len;
     return {q.x * inv, q.y * inv, q.z * inv, q.w * inv};
 }
+#endif
 
 /// Spherical linear interpolation between two quaternions.
 /// Takes the shortest path (flips b if the dot product is negative).
+#if defined(UZ_SIMD)
+[[nodiscard]] inline Quat quat_slerp(Quat a, Quat b, float t) noexcept {
+    Quat r;
+    simd::store_aligned(&r.x, simd::quat_slerp(
+        simd::load_aligned(&a.x), simd::load_aligned(&b.x), t));
+    return r;
+}
+#else
 [[nodiscard]] inline Quat quat_slerp(Quat a, Quat b, float t) noexcept {
     float dot = a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w;
 
@@ -240,6 +297,7 @@ static_assert(sizeof(Quat) == 16, "Quat must be 16 bytes");
         a.w * s0 + b.w * s1
     };
 }
+#endif
 
 /// Rotate a vector by a unit quaternion.
 /// Uses the optimized formula: v' = v + 2 * cross(q.xyz, cross(q.xyz, v) + q.w * v)
@@ -397,6 +455,13 @@ struct alignas(16) Mat4 {
 
     /// Matrix multiplication (this * o). Column-major: result = A * B means
     /// transform by B first, then A.
+#if defined(UZ_SIMD)
+    [[nodiscard]] Mat4 operator*(const Mat4& o) const noexcept {
+        Mat4 result;
+        simd::mat4_mul(&m[0][0], &o.m[0][0], &result.m[0][0]);
+        return result;
+    }
+#else
     [[nodiscard]] constexpr Mat4 operator*(const Mat4& o) const noexcept {
         Mat4 result = {};
         for (int col = 0; col < 4; ++col) {
@@ -410,11 +475,19 @@ struct alignas(16) Mat4 {
         }
         return result;
     }
+#endif
 };
 
 static_assert(sizeof(Mat4) == 64, "Mat4 must be 64 bytes (4x4 floats)");
 
 /// General 4x4 matrix inverse (Cramer's rule). Returns identity if singular.
+#if defined(UZ_SIMD)
+[[nodiscard]] inline Mat4 mat4_inverse(const Mat4& m) noexcept {
+    Mat4 result;
+    simd::mat4_inverse(&m.m[0][0], &result.m[0][0]);
+    return result;
+}
+#else
 [[nodiscard]] inline Mat4 mat4_inverse(const Mat4& m) noexcept {
     // Flatten column-major: c[col*4+row]
     const float* c = &m.m[0][0];
@@ -449,6 +522,7 @@ static_assert(sizeof(Mat4) == 64, "Mat4 must be 64 bytes (4x4 floats)");
         reinterpret_cast<float*>(&result)[i] = inv[i] * invDet;
     return result;
 }
+#endif
 
 /// Convert a unit quaternion to a rotation matrix.
 [[nodiscard]] inline Mat4 quat_to_mat4(Quat q) noexcept {

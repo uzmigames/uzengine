@@ -27,6 +27,12 @@ struct Arena {
     size_t      offset;     // Current allocation cursor
     size_t      peak;       // High-water mark for profiling
     const char* name;       // Debug name (non-owning pointer)
+
+#ifdef UZ_MEMORY_PROFILING
+    // Profiling counters — arenas are single-threaded, no atomics needed.
+    uint64_t    total_alloc_count;  // Cumulative number of arena_alloc() calls
+    uint32_t    reset_count;        // Number of arena_reset() calls
+#endif
 };
 
 // Saved allocation position for temporary sub-allocations.

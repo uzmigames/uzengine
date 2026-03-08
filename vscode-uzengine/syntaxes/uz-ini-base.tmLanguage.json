@@ -1,0 +1,67 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "UzIniBase",
+  "scopeName": "source.uz-ini-base",
+  "fileTypes": [],
+  "patterns": [
+    { "include": "#comment" },
+    { "include": "#section" },
+    { "include": "#keyvalue" }
+  ],
+  "repository": {
+    "comment": {
+      "name": "comment.line.uz-ini",
+      "match": "^\\s*[#;].*$"
+    },
+    "section": {
+      "name": "entity.name.section.uz-ini",
+      "match": "^\\s*\\[([a-zA-Z_][a-zA-Z0-9_\\.]*)\\]\\s*$",
+      "captures": {
+        "0": { "name": "entity.name.section.uz-ini" }
+      }
+    },
+    "keyvalue": {
+      "match": "^\\s*([a-zA-Z_][a-zA-Z0-9_]*)\\s*(=)\\s*(.*)$",
+      "captures": {
+        "1": { "name": "variable.other.key.uz-ini" },
+        "2": { "name": "punctuation.separator.uz-ini" },
+        "3": {
+          "patterns": [
+            { "include": "#boolean" },
+            { "include": "#vec3" },
+            { "include": "#number" },
+            { "include": "#string-quoted" },
+            { "include": "#string-unquoted" }
+          ]
+        }
+      }
+    },
+    "boolean": {
+      "name": "constant.language.boolean.uz-ini",
+      "match": "\\b(true|false|True|False|TRUE|FALSE)\\b"
+    },
+    "vec3": {
+      "name": "constant.numeric.vec3.uz-ini",
+      "match": "-?\\b\\d+(\\.\\d+)?\\b\\s*,\\s*-?\\b\\d+(\\.\\d+)?\\b\\s*,\\s*-?\\b\\d+(\\.\\d+)?\\b"
+    },
+    "number": {
+      "name": "constant.numeric.uz-ini",
+      "match": "-?\\b\\d+(\\.\\d+)?\\b"
+    },
+    "string-quoted": {
+      "name": "string.quoted.double.uz-ini",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.uz-ini",
+          "match": "\\\\."
+        }
+      ]
+    },
+    "string-unquoted": {
+      "name": "string.unquoted.value.uz-ini",
+      "match": ".+"
+    }
+  }
+}

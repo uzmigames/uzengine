@@ -11,6 +11,7 @@
 //   runner.tick(delta_time, total_time);
 
 #include "engine/scripting/lua_vm.h"
+#include "engine/scripting/lua_coroutine_scheduler.h"
 #include "engine/scripting/script_instance.h"
 
 #include <cstdint>
@@ -29,6 +30,9 @@ public:
 
     /// Initialize the Lua VM. Call once at startup.
     bool init();
+
+    /// Initialize with explicit scripting configuration.
+    bool init(const ScriptingConfig& config);
 
     /// Shut down all scripts and the Lua VM.
     void shutdown();
@@ -58,8 +62,31 @@ public:
     /// Number of active script instances.
     uint32_t script_count() const { return static_cast<uint32_t>(scripts_.size()); }
 
+    /// Collect all node IDs whose script matches the given path.
+    /// Writes up to max_out entries into out_node_ids. Returns the number written.
+    uint32_t find_nodes_by_script_path(const char* path,
+                                       uint32_t* out_node_ids,
+                                       uint32_t max_out) const;
+
+    /// Access the coroutine scheduler (for testing/diagnostics).
+    LuaCoroutineScheduler& coroutine_scheduler() { return scheduler_; }
+    const LuaCoroutineScheduler& coroutine_scheduler() const { return scheduler_; }
+
+    /// Access the underlying LuaVM (for testing/diagnostics).
+    LuaVM& vm() { return vm_; }
+    const LuaVM& vm() const { return vm_; }
+
+    /// Get the number of scripts currently in ERRORED state.
+    uint32_t errored_script_count() const;
+
+    /// Get a script instance by index (for testing).
+    ScriptInstance* script_at(uint32_t index) const {
+        return index < scripts_.size() ? scripts_[index].get() : nullptr;
+    }
+
 private:
     LuaVM vm_;
+    LuaCoroutineScheduler scheduler_;
     std::vector<std::unique_ptr<ScriptInstance>> scripts_;
     bool initialized_ = false;
 };

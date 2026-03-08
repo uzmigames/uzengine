@@ -7,6 +7,7 @@
 // ============================================================================
 
 #include "engine/core/profiler.h"
+#include "engine/core/profiler_ring_buffer.h"
 
 // Skip implementation when using Tracy
 #if !(defined(UZ_PROFILING) && UZ_PROFILING && __has_include(<tracy/Tracy.hpp>))
@@ -16,9 +17,14 @@
 #include <cstdio>
 #include <cstring>
 #include <mutex>
+#include <thread>
 
+#ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #include <windows.h>
 
 namespace uz {
@@ -236,6 +242,158 @@ bool profiler_dump_if_slow(double threshold_ms) {
         }
     }
     return false;
+}
+
+// ============================================================================
+// ProfilerCollector implementation — frame-oriented zone collection.
+// ============================================================================
+
+// Per-thread open zone tracking. Each thread can have up to kMaxOpenZones
+// simultaneously nested zones. We use thread_local storage to avoid locks.
+static constexpr int kMaxOpenZones = 64;
+
+struct OpenZone {
+    const char* name     = nullptr;
+    int64_t     start_us = 0;
+};
+
+struct ThreadZoneStack {
+    OpenZone zones[kMaxOpenZones] = {};
+    int      depth                = 0;
+};
+
+static thread_local ThreadZoneStack tls_zone_stack;
+
+// Global state for ProfilerCollector.
+static ProfileRingBuffer           g_ring;
+static std::atomic<bool>           g_collector_enabled{false};
+static std::atomic<uint32_t>       g_current_frame{0};
+
+// Frame history: circular buffer of frames, each storing its records.
+static constexpr int kMaxFrameRecords = ProfileRingBuffer::kDefaultCapacity;
+
+struct FrameHistory {
+    ProfileZoneRecord records[kMaxFrameRecords] = {};
+    uint32_t          count    = 0;
+    uint32_t          frame_id = 0;
+};
+
+static FrameHistory g_frame_history[ProfilerCollector::kMaxFrames];
+static int          g_frame_write_idx = 0; // next slot to write into
+
+// Convert QPC ticks to microseconds.
+static int64_t ticks_to_us(int64_t ticks) {
+    // get_qpc_freq() is defined above in this TU.
+    return static_cast<int64_t>(
+        static_cast<double>(ticks) / static_cast<double>(get_qpc_freq()) * 1000000.0);
+}
+
+static uint32_t get_current_thread_id() {
+    // Use std::hash of thread::id for a portable thread identifier.
+    const auto id = std::this_thread::get_id();
+    return static_cast<uint32_t>(std::hash<std::thread::id>{}(id));
+}
+
+void ProfilerCollector::begin_zone(const char* name) noexcept {
+    if (!g_collector_enabled.load(std::memory_order_relaxed)) return;
+    if (!name) return;
+
+    auto& stack = tls_zone_stack;
+    if (stack.depth >= kMaxOpenZones) return; // overflow guard
+
+    stack.zones[stack.depth].name     = name;
+    stack.zones[stack.depth].start_us = ticks_to_us(profiler_now());
+    stack.depth++;
+}
+
+void ProfilerCollector::end_zone(const char* name) noexcept {
+    if (!g_collector_enabled.load(std::memory_order_relaxed)) return;
+    if (!name) return;
+
+    const int64_t end_us = ticks_to_us(profiler_now());
+    auto& stack = tls_zone_stack;
+
+    // Search backward for the matching zone name (supports nesting).
+    for (int i = stack.depth - 1; i >= 0; --i) {
+        if (stack.zones[i].name == name ||
+            (stack.zones[i].name && std::strcmp(stack.zones[i].name, name) == 0))
+        {
+            ProfileZoneRecord rec;
+            rec.name       = name;
+            rec.thread_id  = get_current_thread_id();
+            rec.start_us   = stack.zones[i].start_us;
+            rec.end_us     = end_us;
+            rec.call_count = 1;
+            rec.frame_id   = g_current_frame.load(std::memory_order_relaxed);
+
+            g_ring.push(rec);
+
+            // Remove the zone by shifting remaining open zones down.
+            for (int j = i; j < stack.depth - 1; ++j) {
+                stack.zones[j] = stack.zones[j + 1];
+            }
+            stack.depth--;
+            return;
+        }
+    }
+    // No matching begin found — silently ignore (caller may log a warning).
+}
+
+uint32_t ProfilerCollector::flush_frame(uint32_t frame_id) noexcept {
+    auto& frame = g_frame_history[g_frame_write_idx % kMaxFrames];
+    frame.frame_id = frame_id;
+    frame.count = g_ring.drain(frame.records, kMaxFrameRecords);
+
+    g_frame_write_idx++;
+    g_current_frame.store(frame_id + 1, std::memory_order_relaxed);
+
+    return frame.count;
+}
+
+uint32_t ProfilerCollector::get_frame_data(ProfileZoneRecord* out,
+                                            uint32_t max_count,
+                                            int num_frames) noexcept {
+    if (num_frames <= 0 || num_frames > kMaxFrames) return 0;
+    if (!out || max_count == 0) return 0;
+
+    uint32_t written = 0;
+
+    // Read the most recent num_frames from the frame history (oldest first).
+    const int start_idx = g_frame_write_idx - num_frames;
+    for (int f = 0; f < num_frames && written < max_count; ++f) {
+        int idx = start_idx + f;
+        if (idx < 0) continue; // not enough frames recorded yet
+
+        const auto& frame = g_frame_history[idx % kMaxFrames];
+        for (uint32_t r = 0; r < frame.count && written < max_count; ++r) {
+            out[written++] = frame.records[r];
+        }
+    }
+
+    return written;
+}
+
+void ProfilerCollector::set_enabled(bool enabled) noexcept {
+    g_collector_enabled.store(enabled, std::memory_order_relaxed);
+}
+
+bool ProfilerCollector::is_enabled() noexcept {
+    return g_collector_enabled.load(std::memory_order_relaxed);
+}
+
+void ProfilerCollector::reset() noexcept {
+    g_collector_enabled.store(false, std::memory_order_relaxed);
+    g_ring.clear();
+    g_current_frame.store(0, std::memory_order_relaxed);
+    g_frame_write_idx = 0;
+    for (int i = 0; i < kMaxFrames; ++i) {
+        g_frame_history[i].count = 0;
+        g_frame_history[i].frame_id = 0;
+    }
+}
+
+ProfileRingBuffer& ProfilerCollector::ring_buffer() noexcept {
+    return g_ring;
 }
 
 } // namespace uz

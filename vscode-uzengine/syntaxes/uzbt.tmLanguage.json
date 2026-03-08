@@ -1,0 +1,72 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "UzBT",
+  "scopeName": "source.uzbt",
+  "fileTypes": [".uzbt"],
+  "patterns": [
+    { "include": "#comment" },
+    { "include": "#section" },
+    { "include": "#keyvalue" }
+  ],
+  "repository": {
+    "comment": {
+      "name": "comment.line.uzbt",
+      "match": "^\\s*[#;].*$"
+    },
+    "section": {
+      "name": "entity.name.section.uzbt",
+      "match": "^\\s*\\[([a-zA-Z_][a-zA-Z0-9_\\.]*)\\]\\s*$",
+      "captures": {
+        "0": { "name": "entity.name.section.uzbt" }
+      }
+    },
+    "keyvalue": {
+      "match": "^\\s*([a-zA-Z_][a-zA-Z0-9_]*)\\s*(=)\\s*(.*)$",
+      "captures": {
+        "1": { "name": "keyword.other.key.uzbt" },
+        "2": { "name": "punctuation.separator.uzbt" },
+        "3": {
+          "patterns": [
+            { "include": "#node-type" },
+            { "include": "#node-status" },
+            { "include": "#boolean" },
+            { "include": "#number" },
+            { "include": "#string-quoted" },
+            { "include": "#string-unquoted" }
+          ]
+        }
+      }
+    },
+    "node-type": {
+      "name": "support.type.node-type.uzbt",
+      "match": "\\b(Sequence|Selector|Condition|Action|Parallel|Decorator|Inverter|Repeater|Retry|Cooldown|Timeout|Wait|BlackboardCheck|BlackboardSet|RunBehavior|SubTree|AlwaysSucceed|AlwaysFail|ForceSuccess|ForceFailure)\\b"
+    },
+    "node-status": {
+      "name": "support.constant.status.uzbt",
+      "match": "\\b(Success|Failure|Running|Invalid|Aborted)\\b"
+    },
+    "boolean": {
+      "name": "constant.language.boolean.uzbt",
+      "match": "\\b(true|false|True|False|TRUE|FALSE)\\b"
+    },
+    "number": {
+      "name": "constant.numeric.uzbt",
+      "match": "-?\\b\\d+(\\.\\d+)?\\b"
+    },
+    "string-quoted": {
+      "name": "string.quoted.double.uzbt",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.uzbt",
+          "match": "\\\\."
+        }
+      ]
+    },
+    "string-unquoted": {
+      "name": "string.unquoted.value.uzbt",
+      "match": ".+"
+    }
+  }
+}

@@ -34,11 +34,26 @@ inline std::string strip_graph_prefix(const std::string& path) {
     return path.substr(kGraphPrefixLen);
 }
 
+/// One entry in the graph shader's cbuffer layout.
+struct GraphCbufferEntry {
+    std::string name;
+    uint32_t offset = 0;       // Byte offset in cbuffer.
+    uint32_t size   = 4;       // 4 = float, 8 = float2, 12 = float3, 16 = float4.
+    float    default_val[4] = {0.f, 0.f, 0.f, 0.f};
+};
+
 /// Compiled HLSL source with stable string storage.
 struct CompiledGraphShader {
     std::string vs_hlsl;
     std::string ps_hlsl;
     std::string shader_name;  // Unique name for ShaderLibrary registration.
+
+    // Cbuffer layout metadata (sorted alphabetically, matches HLSL).
+    std::vector<GraphCbufferEntry> cbuffer_layout;
+    uint32_t cbuffer_size = 0;
+
+    /// Fill a cbuffer data buffer from Material params. Returns byte count.
+    uint32_t fill_cbuffer(const Material& mat, void* dst, uint32_t max_bytes) const;
 };
 
 class GraphMaterialLoader {
@@ -76,6 +91,10 @@ private:
 
     /// Extract material parameters from the shader graph nodes.
     void extract_params(const sg::ShaderGraph& graph, Material& mat) const;
+
+    /// Build cbuffer layout metadata from graph param nodes.
+    void build_cbuffer_layout(const sg::ShaderGraph& graph,
+                              CompiledGraphShader& compiled) const;
 
     /// Generate a unique shader name from the file path.
     static std::string make_shader_name(const std::string& graph_path);

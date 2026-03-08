@@ -1,0 +1,20 @@
+# UzEngine Project Configuration
+# This file defines the project metadata and default renderer settings.
+# Format: TOML (https://toml.io)
+
+[project]
+name = "UzEngine"
+version = "0.1.0"
+# Path to the scene loaded on startup (relative to project root).
+main_scene = "scenes/main.uzscene"
+
+[renderer]
+# Enable vertical sync. When false, the renderer runs uncapped.
+vsync = true
+# Target frames per second (used when vsync is off or for fixed timestep).
+target_fps = 60
+
+[renderer.resolution]
+# Default viewport resolution in pixels.
+width = 1920
+height = 1080

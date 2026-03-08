@@ -1,5 +1,6 @@
 #include "engine/scripting/lua_script_instance.h"
 #include "engine/scripting/lua_vm.h"
+#include "engine/scripting/script_execution_safety.h"
 #include "engine/core/diag.h"
 #include "common/safe_string.h"
 
@@ -9,7 +10,50 @@ extern "C" {
 #include <lualib.h>
 }
 
+#include <cstring>
+#include <string>
+
 namespace uz {
+
+// ---------------------------------------------------------------------------
+// Helper: parse Lua error "file:line: message" into ScriptErrorInfo
+// ---------------------------------------------------------------------------
+
+static ScriptErrorInfo parse_lua_error(const char* err, const char* script_path) {
+    ScriptErrorInfo info;
+    if (!err) {
+        info.message = "unknown error";
+        info.file = script_path ? script_path : "";
+        return info;
+    }
+
+    info.message = err;
+    info.file = script_path ? script_path : "";
+
+    // Lua errors are typically: "filename:line: message"
+    // Try to extract line number
+    const char* colon1 = std::strchr(err, ':');
+    if (colon1) {
+        const char* colon2 = std::strchr(colon1 + 1, ':');
+        if (colon2) {
+            // Try to parse the number between the colons
+            std::string line_str(colon1 + 1, colon2);
+            try {
+                info.line = std::stoi(line_str);
+            } catch (...) {
+                info.line = 0;
+            }
+        }
+    }
+
+    // Detect timeout errors
+    if (std::strstr(err, "instruction budget") ||
+        std::strstr(err, "wall-clock timeout")) {
+        info.is_timeout = true;
+    }
+
+    return info;
+}
 
 LuaScriptInstance::LuaScriptInstance(LuaVM* vm) : vm_(vm) {}
 
@@ -109,8 +153,13 @@ bool LuaScriptInstance::call_func(const char* name, int nargs) {
     }
 
     if (lua_pcall(L, nargs, 0, 0) != 0) {
+        const char* err = lua_tostring(L, -1);
         DIAG_FMT("[LuaScript] Error in %s:'%s': %s",
-                 script_path_, name, lua_tostring(L, -1));
+                 script_path_, name, err ? err : "(null)");
+
+        // Set error state — ScriptRunner will skip this instance
+        set_error(parse_lua_error(err, script_path_));
+
         lua_pop(L, 1);
         return false;
     }
@@ -118,13 +167,17 @@ bool LuaScriptInstance::call_func(const char* name, int nargs) {
 }
 
 void LuaScriptInstance::on_start() {
-    if (!has_start_ || started_) return;
+    if (!has_start_ || started_ || state_ == ScriptState::ERRORED) return;
     started_ = true;
     call_func("on_start");
 }
 
 void LuaScriptInstance::on_update(float dt) {
-    if (!has_update_) return;
+    if (!has_update_ || state_ == ScriptState::ERRORED) return;
+
+    // Reset instruction hook budget before each on_update call
+    vm_->reset_instruction_hook();
+
     lua_State* L = vm_->L();
     lua_pushnumber(L, dt);
     call_func("on_update", 1);

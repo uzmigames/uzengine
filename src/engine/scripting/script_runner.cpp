@@ -1,11 +1,17 @@
 #include "engine/scripting/script_runner.h"
 #include "engine/scripting/script_instance.h"
 #include "engine/scripting/lua_script_instance.h"
+#include "engine/scripting/lua_coroutine_scheduler.h"
 #include "engine/scene/scene.h"
 #include "engine/scene/scene_node.h"
 #include "engine/scene/component_data.h"
 #include "engine/scene/component_store.h"
 #include "engine/core/diag.h"
+
+extern "C" {
+#include <lua.h>
+#include <lauxlib.h>
+}
 
 #include <algorithm>
 #include <cstring>
@@ -20,13 +26,22 @@ ScriptRunner::~ScriptRunner() {
 bool ScriptRunner::init() {
     if (initialized_) return true;
     if (!vm_.init()) return false;
+
+    // Initialize coroutine scheduler and register uz.coroutine.* API
+    scheduler_.init(vm_.L());
+    lua_getglobal(vm_.L(), "uz");
+    scheduler_.register_lua_api(vm_.L());
+    lua_pop(vm_.L(), 1);  // pop uz table
+
     initialized_ = true;
     DIAG_FMT("[ScriptRunner] Initialized");
     return true;
 }
 
 void ScriptRunner::shutdown() {
+    scheduler_.cancel_all();
     clear();
+    scheduler_.shutdown();
     vm_.shutdown();
     initialized_ = false;
 }
@@ -45,9 +60,20 @@ void ScriptRunner::tick(float delta_time, float total_time) {
     vm_.set_frame_time(delta_time, total_time);
 
     for (auto& script : scripts_) {
+        // Set current node_id so uz.coroutine.spawn knows which node is active
+        lua_pushinteger(vm_.L(), static_cast<lua_Integer>(script->node_id));
+        lua_setfield(vm_.L(), LUA_REGISTRYINDEX, "uz_current_node_id");
+
         script->on_start();   // no-op after first call
         script->on_update(delta_time);
     }
+
+    // Reset node_id
+    lua_pushnil(vm_.L());
+    lua_setfield(vm_.L(), LUA_REGISTRYINDEX, "uz_current_node_id");
+
+    // Drain coroutines after all on_update calls
+    scheduler_.drain(delta_time);
 }
 
 bool ScriptRunner::attach_script(const char* path, uint32_t node_id) {
@@ -76,6 +102,20 @@ void ScriptRunner::detach_scripts(uint32_t node_id) {
 
 void ScriptRunner::clear() {
     scripts_.clear();
+}
+
+uint32_t ScriptRunner::find_nodes_by_script_path(const char* path,
+                                                  uint32_t* out_node_ids,
+                                                  uint32_t max_out) const {
+    if (!path || !out_node_ids || max_out == 0) return 0;
+    uint32_t count = 0;
+    for (const auto& s : scripts_) {
+        if (std::strcmp(s->script_path(), path) == 0) {
+            out_node_ids[count++] = s->node_id;
+            if (count >= max_out) break;
+        }
+    }
+    return count;
 }
 
 void ScriptRunner::scan_scene() {

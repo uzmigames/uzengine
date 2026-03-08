@@ -210,6 +210,7 @@ private:
     // Deferred shading PSOs
     RhiPipeline gbufferPSO_         = RHI_NULL;  // G-Buffer write (MRT)
     RhiPipeline deferredLightPSO_   = RHI_NULL;  // Deferred lighting (fullscreen)
+    RhiPipelineDesc gbufferPipeDesc_{};           // Cached for graph material PSO creation
 
     // Sky CB data — updated in update(), consumed in render()
     struct SkyCB {

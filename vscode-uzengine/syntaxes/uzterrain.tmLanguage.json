@@ -1,0 +1,82 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "UzTerrain",
+  "scopeName": "source.uzterrain",
+  "fileTypes": [".uzterrain"],
+  "patterns": [
+    { "include": "#comment" },
+    { "include": "#section" },
+    { "include": "#keyvalue" }
+  ],
+  "repository": {
+    "comment": {
+      "name": "comment.line.uzterrain",
+      "match": "^\\s*[#;].*$"
+    },
+    "section": {
+      "name": "entity.name.section.uzterrain",
+      "match": "^\\s*\\[([a-zA-Z_][a-zA-Z0-9_\\.]*)\\]\\s*$",
+      "captures": {
+        "0": { "name": "entity.name.section.uzterrain" }
+      }
+    },
+    "keyvalue": {
+      "match": "^\\s*([a-zA-Z_][a-zA-Z0-9_]*)\\s*(=)\\s*(.*)$",
+      "captures": {
+        "1": { "name": "keyword.other.key.uzterrain" },
+        "2": { "name": "punctuation.separator.uzterrain" },
+        "3": {
+          "patterns": [
+            { "include": "#terrain-section-keyword" },
+            { "include": "#terrain-property" },
+            { "include": "#boolean" },
+            { "include": "#map-path" },
+            { "include": "#vec3" },
+            { "include": "#number" },
+            { "include": "#string-quoted" },
+            { "include": "#string-unquoted" }
+          ]
+        }
+      }
+    },
+    "terrain-section-keyword": {
+      "name": "support.type.section.uzterrain",
+      "match": "\\b(Heightmap|SplatMap|Foliage|Layer|LOD|Collision|Navmesh|Water|Grass|Decal|Road|Spline)\\b"
+    },
+    "terrain-property": {
+      "name": "support.type.property.uzterrain",
+      "match": "\\b(heightmap|splat_map|splat_map_0|splat_map_1|splat_map_2|splat_map_3|width|height|depth|resolution|height_scale|uv_scale|lod_levels|lod_distances|collision_layer|collision_mask|material|layer_material|layer_albedo|layer_normal|layer_roughness|layer_metallic|layer_weight|grass_density|grass_distance|foliage_density|foliage_distance|chunk_size|vertex_spacing|normal_map|occlusion_map|water_level|tessellation|tessellation_factor|shadow_bias|cast_shadow)\\b"
+    },
+    "boolean": {
+      "name": "constant.language.boolean.uzterrain",
+      "match": "\\b(true|false|True|False|TRUE|FALSE)\\b"
+    },
+    "map-path": {
+      "name": "string.other.map-path.uzterrain",
+      "match": "[a-zA-Z0-9_/\\.\\-]+\\.(?:png|jpg|r16|raw|tga|dds|exr|hdr)"
+    },
+    "vec3": {
+      "name": "constant.numeric.vec3.uzterrain",
+      "match": "-?\\b\\d+(\\.\\d+)?\\b\\s*,\\s*-?\\b\\d+(\\.\\d+)?\\b\\s*,\\s*-?\\b\\d+(\\.\\d+)?\\b"
+    },
+    "number": {
+      "name": "constant.numeric.uzterrain",
+      "match": "-?\\b\\d+(\\.\\d+)?\\b"
+    },
+    "string-quoted": {
+      "name": "string.quoted.double.uzterrain",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {
+          "name": "constant.character.escape.uzterrain",
+          "match": "\\\\."
+        }
+      ]
+    },
+    "string-unquoted": {
+      "name": "string.unquoted.value.uzterrain",
+      "match": ".+"
+    }
+  }
+}

@@ -6,8 +6,44 @@
 #include "engine/core/profiler.h"
 
 #include <algorithm>
+#include <cstring>
 
 namespace uz {
+
+// ---------------------------------------------------------------------------
+// CompiledGraphShader::fill_cbuffer
+// ---------------------------------------------------------------------------
+
+uint32_t CompiledGraphShader::fill_cbuffer(
+    const Material& mat, void* dst, uint32_t max_bytes) const
+{
+    if (cbuffer_size == 0 || !dst) return 0;
+    uint32_t bytes = std::min(cbuffer_size, max_bytes);
+    std::memset(dst, 0, bytes);
+
+    for (const auto& entry : cbuffer_layout) {
+        if (entry.offset + entry.size > bytes) continue;
+
+        auto* out = static_cast<uint8_t*>(dst) + entry.offset;
+
+        if (entry.size == 4) {
+            // Scalar.
+            auto it = mat.parameters.find(entry.name);
+            float val = (it != mat.parameters.end()) ? it->second : entry.default_val[0];
+            std::memcpy(out, &val, 4);
+        } else {
+            // Vector (8, 12, or 16 bytes).
+            auto it = mat.vec_parameters.find(entry.name);
+            if (it != mat.vec_parameters.end()) {
+                uint32_t count = std::min(entry.size / 4, (uint32_t)it->second.size());
+                std::memcpy(out, it->second.data(), count * 4);
+            } else {
+                std::memcpy(out, entry.default_val, entry.size);
+            }
+        }
+    }
+    return bytes;
+}
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -39,8 +75,8 @@ Material* GraphMaterialLoader::load_graph_material(
     program.vs_size   = compiled.vs_hlsl.size();
     program.ps_source = compiled.ps_hlsl.c_str();
     program.ps_size   = compiled.ps_hlsl.size();
-    program.vs_entry  = "VSMain";
-    program.ps_entry  = "PSMain";
+    program.vs_entry  = "main";
+    program.ps_entry  = "main";
     shader_lib.register_shader(compiled.shader_name, program);
 
     DIAG_FMT("GraphMaterialLoader: registered shader '%s' (VS: %zu bytes, PS: %zu bytes)",
@@ -59,13 +95,9 @@ Material* GraphMaterialLoader::load_graph_material(
         extract_params(*managed->graph, mat);
     }
 
-    // Insert into MaterialManager's cache using the graph: prefixed key.
-    // We use the internal load_or_insert mechanism — since MaterialManager::load
-    // only parses .uzmat files, we insert directly via get().
-    // For now, we use a direct approach: the renderer will hold this Material.
-    // TODO: Add MaterialManager::insert() for non-file materials.
-    // For the MVP, return from our internal cache.
+    // Store in internal cache and link to compiled shader data.
     compiled_materials_[mat_key] = std::move(mat);
+    compiled_materials_[mat_key].graph_compiled = &compiled_[graph_path];
     return &compiled_materials_[mat_key];
 }
 
@@ -132,6 +164,10 @@ bool GraphMaterialLoader::compile_graph(const std::string& graph_path) {
     compiled.vs_hlsl = std::move(result.vertex_hlsl);
     compiled.ps_hlsl = std::move(result.pixel_hlsl);
     compiled.shader_name = make_shader_name(graph_path);
+
+    // Build cbuffer layout metadata (matches HlslTranslator's sorted output).
+    build_cbuffer_layout(*managed->graph, compiled);
+
     compiled_[graph_path] = std::move(compiled);
 
     DIAG_FMT("GraphMaterialLoader: compiled '%s' -> shader '%s'",
@@ -164,6 +200,87 @@ void GraphMaterialLoader::extract_params(
             mat.textures[tex->param_name] = "";
         }
     }
+}
+
+void GraphMaterialLoader::build_cbuffer_layout(
+    const sg::ShaderGraph& graph, CompiledGraphShader& compiled) const
+{
+    compiled.cbuffer_layout.clear();
+    compiled.cbuffer_size = 0;
+
+    // Collect scalar and vector param nodes, matching HlslTranslator's sort order:
+    // scalars sorted alphabetically first, then vectors sorted alphabetically.
+    struct ScalarInfo { std::string name; float default_val; };
+    struct VectorInfo { std::string name; float default_val[4]; uint32_t count; };
+    std::vector<ScalarInfo> scalars;
+    std::vector<VectorInfo> vectors;
+
+    for (const auto& node : graph.nodes()) {
+        if (!node) continue;
+        if (node->type_name == "ScalarParam") {
+            auto* s = static_cast<const sg::ScalarParamNode*>(node.get());
+            scalars.push_back({s->param_name, s->default_val});
+        } else if (node->type_name == "VectorParam") {
+            auto* v = static_cast<const sg::VectorParamNode*>(node.get());
+            uint32_t count = 4; // VectorParam always emits float4 in default usage.
+            // Determine actual component count from connections (default to 4).
+            VectorInfo vi{};
+            vi.name = v->param_name;
+            std::memcpy(vi.default_val, v->default_val, 16);
+            vi.count = count;
+            vectors.push_back(std::move(vi));
+        }
+    }
+
+    std::sort(scalars.begin(), scalars.end(),
+              [](const auto& a, const auto& b) { return a.name < b.name; });
+    std::sort(vectors.begin(), vectors.end(),
+              [](const auto& a, const auto& b) { return a.name < b.name; });
+
+    // HLSL cbuffer struct packing: members cannot straddle 16-byte boundaries.
+    uint32_t offset = 0;
+
+    auto align_to = [](uint32_t off, uint32_t alignment) -> uint32_t {
+        return (off + alignment - 1) & ~(alignment - 1);
+    };
+
+    // Scalars first (each is float = 4 bytes).
+    for (const auto& s : scalars) {
+        // A float can straddle a 16-byte boundary only if it would cross one.
+        uint32_t row_start = (offset / 16) * 16;
+        if (offset + 4 > row_start + 16) {
+            offset = row_start + 16; // Pad to next row.
+        }
+        GraphCbufferEntry entry;
+        entry.name = s.name;
+        entry.offset = offset;
+        entry.size = 4;
+        entry.default_val[0] = s.default_val;
+        compiled.cbuffer_layout.push_back(std::move(entry));
+        offset += 4;
+    }
+
+    // Vectors next.
+    for (const auto& v : vectors) {
+        uint32_t elem_size = v.count * 4;
+        uint32_t align = (v.count >= 3) ? 16 : (v.count * 4);
+        // HLSL rule: vector cannot straddle a 16-byte boundary.
+        uint32_t row_start = (offset / 16) * 16;
+        if (offset + elem_size > row_start + 16) {
+            offset = row_start + 16;
+        }
+        offset = align_to(offset, 4); // At minimum 4-byte aligned.
+        GraphCbufferEntry entry;
+        entry.name = v.name;
+        entry.offset = offset;
+        entry.size = elem_size;
+        std::memcpy(entry.default_val, v.default_val, 16);
+        compiled.cbuffer_layout.push_back(std::move(entry));
+        offset += elem_size;
+    }
+
+    // Round up to 16-byte alignment for cbuffer total size.
+    compiled.cbuffer_size = align_to(offset, 16);
 }
 
 std::string GraphMaterialLoader::make_shader_name(const std::string& graph_path) {
