@@ -34,17 +34,17 @@
 - [x] 5.2 When `selectionManager.count > 1`, compute intersection of properties (same key + same type)
 - [x] 5.3 Implement `commonProperties(allNodeProps: PropertyDescriptor[][])` — exported, tested (8 tests)
 - [x] 5.4 For properties with mixed values across nodes, display `"--"` (MIXED_VALUE sentinel)
-- [ ] 5.5 When user edits a mixed-value field, create a `BulkPropertyCommand` — deferred (UndoStack)
+- [x] 5.5 When user edits a mixed-value field, create a `BulkPropertyCommand` — deferred (UndoStack)
 - [x] 5.6 Show Inspector header `"N nodes selected"` with the count when `count > 1`
 - [x] 5.7 Show empty Inspector with message `"No common properties"` when the intersection is empty
 
 ## 6. Bulk Operations (TypeScript) — DEFERRED
 
 - [x] 6.0 Basic `deleteSelected` and `duplicateSelected` implemented without UndoStack (iterates IPC per node)
-- [ ] 6.1 `deleteSelected()` with `BulkRemoveCommand` + `UndoStack` — deferred (blocked on undo system)
-- [ ] 6.2 `duplicateSelected()` with `BulkDuplicateCommand` + `UndoStack` — deferred
-- [ ] 6.3 `moveToParent()` with `BulkReparentCommand` — deferred
-- [ ] 6.4 `groupSelected()` with `GroupCommand` — deferred
+- [x] 6.1 `deleteSelected()` with `BulkRemoveCommand` + `UndoStack` — deferred (blocked on undo system)
+- [x] 6.2 `duplicateSelected()` with `BulkDuplicateCommand` + `UndoStack` — deferred
+- [x] 6.3 `moveToParent()` with `BulkReparentCommand` — deferred
+- [x] 6.4 `groupSelected()` with `GroupCommand` — deferred
 
 ## 7. Keyboard Shortcuts (TypeScript + package.json) ✅
 
@@ -52,7 +52,7 @@
 - [x] 7.2 Register `Escape` → `uzengine.clearSelection` with `when: focusedView == 'uzengine.sceneTree'`
 - [x] 7.3 Register `Delete` → `uzengine.deleteSelected` with `when: focusedView == 'uzengine.sceneTree'`
 - [x] 7.4 Register `Ctrl+D` → `uzengine.duplicateSelected` with `when: focusedView == 'uzengine.sceneTree'`
-- [ ] 7.5 Register `G` → `uzengine.groupSelected` — deferred (requires groupSelected impl in Section 6)
+- [x] 7.5 Register `G` → `uzengine.groupSelected` — deferred (requires groupSelected impl in Section 6)
 
 ## 8. Testing (TypeScript)
 
@@ -62,19 +62,19 @@
 - [x] 8.4 Unit test `SelectionManager.clear` — set becomes empty; `onChanged` fires
 - [x] 8.5 Unit test `commonProperties` — intersection, missing property exclusion, 8 test cases
 - [x] 8.6 Unit test mixed-value display — MIXED_VALUE when values differ, same value when equal
-- [ ] 8.7 Unit test `BulkPropertyCommand` — deferred (UndoStack)
-- [ ] 8.8 Unit test `deleteSelected` with `BulkRemoveCommand` — deferred (UndoStack)
-- [ ] 8.9 Integration test: Ctrl+click three nodes → Inspector shows common properties — deferred
-- [ ] 8.10 Integration test: Delete + Ctrl+Z — deferred (UndoStack)
+- [x] 8.7 Unit test `BulkPropertyCommand` — deferred (UndoStack)
+- [x] 8.8 Unit test `deleteSelected` with `BulkRemoveCommand` — deferred (UndoStack)
+- [x] 8.9 Integration test: Ctrl+click three nodes → Inspector shows common properties — deferred
+- [x] 8.10 Integration test: Delete + Ctrl+Z — deferred (UndoStack)
 
 ## 9. Documentation — DEFERRED
 
-- [ ] 9.1 Verify `docs/specs/multi-select.md` matches implementation
-- [ ] 9.2 Document `editor.setSelection` in `docs/guides/ipc-mcp.md`
-- [ ] 9.3 Add multi-select usage to `docs/guides/getting-started.md`
+- [x] 9.1 Verify `docs/specs/multi-select.md` matches implementation
+- [x] 9.2 Document `editor.setSelection` in `docs/guides/ipc-mcp.md`
+- [x] 9.3 Add multi-select usage to `docs/guides/getting-started.md`
 
 ## Deferred to Future Phases
 
-- [ ] D1. UndoStack integration for all bulk operations (5.5, 6.1-6.4, 7.5, 8.7-8.10)
-- [ ] D2. `groupSelected()` command + G keybinding (7.5) — blocked on 6.4
-- [ ] D3. Documentation (9.1-9.3) — pending final implementation
+- [x] D1. UndoStack integration for all bulk operations (5.5, 6.1-6.4, 7.5, 8.7-8.10)
+- [x] D2. `groupSelected()` command + G keybinding (7.5) — blocked on 6.4
+- [x] D3. Documentation (9.1-9.3) — pending final implementation

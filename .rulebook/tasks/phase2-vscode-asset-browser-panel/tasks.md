@@ -18,7 +18,7 @@
 
 ## 3. Documentation
 
-- [ ] 3.1 Update `docs/specs/editor-panels.md` with asset browser details
+- [x] 3.1 Update `docs/specs/editor-panels.md` with asset browser details
 
 ## 4. C++ Engine Wiring
 

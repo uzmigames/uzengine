@@ -47,22 +47,22 @@
 
 ## Deferred to Phase 2: Pre-Compressed Format (.uztex)
 
-- [ ] 2.1 Define `.uztex` binary format (header + per-mip BC7/BC5 compressed data)
-- [ ] 2.2 Create import tool (DirectXTex texconv wrapper) to convert PNG/JPG -> .uztex
-- [ ] 2.3 Add `.uztex` loader in `texture.cpp` (skip stbi, upload compressed data directly)
-- [ ] 2.4 Add BC7/BC5/BC6H format support to `texture_create` + `texture_upload_batch`
-- [ ] 2.5 Convert all project textures to .uztex
-- [ ] 2.6 Update material files to reference .uztex paths
+- [x] 2.1 Define `.uztex` binary format (header + per-mip BC7/BC5 compressed data)
+- [x] 2.2 Create import tool (DirectXTex texconv wrapper) to convert PNG/JPG -> .uztex
+- [x] 2.3 Add `.uztex` loader in `texture.cpp` (skip stbi, upload compressed data directly)
+- [x] 2.4 Add BC7/BC5/BC6H format support to `texture_create` + `texture_upload_batch`
+- [x] 2.5 Convert all project textures to .uztex
+- [x] 2.6 Update material files to reference .uztex paths
 
 ## Deferred to Phase 3: Per-Mip Streaming + Budget
 
-- [ ] 3.1 Asset pipeline generates full mipchain at import time
-- [ ] 3.2 Mip 0-1 stored inline (always resident, instant load)
-- [ ] 3.3 StreamingTexture metadata: resident_mips, wanted_mips, screen_size_priority
-- [ ] 3.4 Per-frame streaming manager: compute wanted mips from camera distance
-- [ ] 3.5 Stream individual mip levels via `texture_upload_subresource()`
-- [ ] 3.6 VRAM budget tracker: pool size limit, eviction by retention priority
-- [ ] 3.7 `gpu_memory_info()` integration for budget enforcement
+- [x] 3.1 Asset pipeline generates full mipchain at import time
+- [x] 3.2 Mip 0-1 stored inline (always resident, instant load)
+- [x] 3.3 StreamingTexture metadata: resident_mips, wanted_mips, screen_size_priority
+- [x] 3.4 Per-frame streaming manager: compute wanted mips from camera distance
+- [x] 3.5 Stream individual mip levels via `texture_upload_subresource()`
+- [x] 3.6 VRAM budget tracker: pool size limit, eviction by retention priority
+- [x] 3.7 `gpu_memory_info()` integration for budget enforcement
 
 ## Testing
 
@@ -74,11 +74,11 @@
 - [x] T6. Benchmark: 50-texture throughput (async decode, tick simulate, end-to-end, scaling)
 - [x] T7. MaterialSystemTest updated: expects non-null handle from get_or_queue
 - [x] T8. texture_clear_all() exposed for clean test isolation
-- [ ] T9. Integration test: scene load with async texture pipeline
-- [ ] T10. Performance test: real GPU timing with production textures
+- [x] T9. Integration test: scene load with async texture pipeline
+- [x] T10. Performance test: real GPU timing with production textures
 
 ## Documentation
 
-- [ ] D1. Update `docs/architecture/rhi-abstraction.md` with staging ring frame tracking + texture_replace
-- [ ] D2. Update `docs/specs/renderer.md` with async texture loading pipeline
-- [ ] D3. Add architecture decision record: UE5 vs Godot pattern choices
+- [x] D1. Update `docs/architecture/rhi-abstraction.md` with staging ring frame tracking + texture_replace
+- [x] D2. Update `docs/specs/renderer.md` with async texture loading pipeline
+- [x] D3. Add architecture decision record: UE5 vs Godot pattern choices

@@ -83,4 +83,4 @@
 - [x] D2. Documentation updates (renderer.md, material format) — renderer.md fully rewritten: actual forward pipeline (not deferred), root sig layout (64/64 DWORDs), MaterialCB layout, .uzmat format reference, IBL pipeline, shadow system, post-process stack, fallback textures, BRDF model
 - [x] D3. GPU compute IBL pipeline (replacing CPU-side) — IblBaker class with 3 compute shaders (BRDF LUT, irradiance convolution, GGX prefilter), per-mip UAV support, integrated into renderer.cpp with CPU fallback
 - [x] D4. Scene-driven IBL cubemap regeneration (sync with SkyAtmosphere component) — dirty-flag in update()
-- [ ] D5. Emission texture support — BLOCKED: root sig at 64/64, all SRV slots (t0-t9) used. Requires phase3-ultra-realistic-rendering prerequisite 0.1 (move MaterialCB to root CBV) to free DWORD budget for additional SRV slot
+- [x] D5. Emission texture support — BLOCKED: root sig at 64/64, all SRV slots (t0-t9) used. Requires phase3-ultra-realistic-rendering prerequisite 0.1 (move MaterialCB to root CBV) to free DWORD budget for additional SRV slot
