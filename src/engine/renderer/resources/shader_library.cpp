@@ -41,6 +41,7 @@
 #include "shaders/sss_blur_ps_hlsl.h"
 #include "shaders/decal_ps_hlsl.h"
 #include "shaders/clouds_ps_hlsl.h"
+#include "shaders/clouds_temporal_ps_hlsl.h"
 #include "shaders/pick_vs_hlsl.h"
 #include "shaders/pick_ps_hlsl.h"
 
@@ -316,6 +317,16 @@ void ShaderLibrary::register_builtin_shaders() {
         .vs_size   = sizeof(k_fullscreen_vs_hlsl) - 1,
         .ps_source = k_clouds_ps_hlsl,
         .ps_size   = sizeof(k_clouds_ps_hlsl) - 1,
+        .vs_entry  = "VSMain",
+        .ps_entry  = "PSMain",
+    });
+
+    // clouds_temporal — temporal accumulation for volumetric clouds
+    register_shader("clouds_temporal", ShaderProgram{
+        .vs_source = k_fullscreen_vs_hlsl,
+        .vs_size   = sizeof(k_fullscreen_vs_hlsl) - 1,
+        .ps_source = k_clouds_temporal_ps_hlsl,
+        .ps_size   = sizeof(k_clouds_temporal_ps_hlsl) - 1,
         .vs_entry  = "VSMain",
         .ps_entry  = "PSMain",
     });

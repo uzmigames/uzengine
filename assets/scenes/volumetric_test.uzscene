@@ -1,0 +1,69 @@
+[scene]
+name = Volumetric Cloud & Fog Test
+clear_color = 0.0 0.0 0.0
+
+; Sky atmosphere
+sky_zenith   = 0.03 0.07 0.45
+sky_horizon  = 0.22 0.42 0.82
+sky_haze     = 0.55 0.45 0.32
+sky_ground   = 0.20 0.18 0.15
+
+; Volumetric Fog — analytical height fog (Frostbite 2014)
+fog_density = 0.015
+fog_color = 0.65 0.72 0.85
+fog_height_falloff = 0.2
+fog_base_height = 0.0
+fog_max_opacity = 0.6
+
+; Volumetric Clouds — full pipeline
+clouds_enabled = true
+cloud_coverage = 0.55
+cloud_density = 0.12
+cloud_base = 800.0
+cloud_top = 2400.0
+cloud_wind_speed = 10.0
+cloud_wind_dir_x = 0.85
+cloud_wind_dir_z = 0.35
+cloud_absorption = 0.88
+cloud_ambient = 0.45
+cloud_quality = HIGH
+cloud_temporal = true
+
+; Rendering
+ao_radius = 0.5
+ao_intensity = 1.5
+contact_shadows_enabled = true
+contact_shadows_length = 0.1
+ssr_enabled = true
+ssr_max_roughness = 0.4
+auto_exposure_enabled = true
+
+; Color grading
+color_temperature = 0.0
+color_tint = 0.0
+color_saturation = 1.05
+color_contrast = 1.05
+
+[editor]
+cam_x = 0.0
+cam_y = 50.0
+cam_z = -100.0
+cam_yaw = 0.0
+cam_pitch = 5.0
+
+; --- Directional Light (Sun) ---
+[node]
+name = Sun
+type = DirectionalLight
+direction = -0.4 -0.8 0.3
+color = 1.0 0.95 0.85
+intensity = 3.5
+
+; --- Ground Plane ---
+[node]
+name = Ground
+type = StaticMesh
+mesh = res://meshes/plane.glb
+material = res://materials/default.uzmat
+position = 0.0 0.0 0.0
+scale = 100.0 1.0 100.0

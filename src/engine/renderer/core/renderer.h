@@ -166,6 +166,12 @@ public:
         cloudWindDir_[0] = windDirX; cloudWindDir_[1] = windDirZ;
         cloudAbsorption_ = absorption; cloudAmbient_ = ambient;
     }
+    void setCloudQuality(uint32_t q) {
+        auto newQ = static_cast<CloudQuality>(q < 4 ? q : 2);
+        if (newQ != cloudQuality_) { cloudQuality_ = newQ; cloudHistoryValid_ = false; }
+    }
+    void setCloudTemporal(bool enabled) { cloudTemporalEnabled_ = enabled; }
+    void setCloudDebug(uint32_t mode) { cloudDebugMode_ = mode < 5 ? mode : 0; }
 
     // Material Instance management (editor dynamic materials).
     MaterialInstanceManager& materialInstances() { return materialInstanceManager_; }
@@ -393,16 +399,29 @@ private:
     float       fogMaxOpacity_    = 0.95f;
 
     // Volumetric clouds state
-    RhiPipeline cloudsPSO_        = RHI_NULL;  // Blended fullscreen cloud pass
-    bool        cloudsEnabled_    = false;
-    float       cloudCoverage_    = 0.5f;       // [0..1] sky coverage
-    float       cloudDensity_     = 0.15f;      // extinction coefficient
-    float       cloudBase_        = 800.0f;     // cloud layer bottom (m)
-    float       cloudTop_         = 2500.0f;    // cloud layer top (m)
-    float       cloudWindSpeed_   = 8.0f;       // drift speed (m/s)
-    float       cloudWindDir_[2]  = {1.0f, 0.0f};  // XZ wind direction (normalized)
-    float       cloudAbsorption_  = 0.85f;      // single-scattering albedo
-    float       cloudAmbient_     = 0.5f;       // ambient sky contribution
+    RhiPipeline cloudsPSO_           = RHI_NULL;  // Blended fullscreen cloud pass
+    RhiPipeline cloudsTemporalPSO_   = RHI_NULL;  // Temporal accumulation resolve
+    bool        cloudsEnabled_       = false;
+    float       cloudCoverage_       = 0.5f;       // [0..1] sky coverage
+    float       cloudDensity_        = 0.15f;      // extinction coefficient
+    float       cloudBase_           = 800.0f;     // cloud layer bottom (m)
+    float       cloudTop_            = 2500.0f;    // cloud layer top (m)
+    float       cloudWindSpeed_      = 8.0f;       // drift speed (m/s)
+    float       cloudWindDir_[2]     = {1.0f, 0.0f};  // XZ wind direction (normalized)
+    float       cloudAbsorption_     = 0.85f;      // single-scattering albedo
+    float       cloudAmbient_        = 0.5f;       // ambient sky contribution
+
+    // Cloud quality scalability
+    enum class CloudQuality : uint32_t { LOW = 0, MEDIUM = 1, HIGH = 2, CINEMATIC = 3 };
+    CloudQuality cloudQuality_       = CloudQuality::HIGH;
+    bool         cloudTemporalEnabled_ = true;
+    uint32_t     cloudDebugMode_     = 0;  // 0=off, 1=density, 2=steps, 3=transmittance, 4=lighting
+
+    // Temporal accumulation targets (double-buffered)
+    static constexpr uint32_t kCloudHistoryCount = 2;
+    RhiTexture cloudHistoryRT_[kCloudHistoryCount] = {};  // RGBA16F, full-res
+    uint32_t   cloudHistoryWriteIdx_ = 0;
+    bool       cloudHistoryValid_    = false;
 
     // G-Buffer render targets (deferred path only)
     static constexpr uint32_t kGBufferCount = 4;

@@ -2,6 +2,8 @@
 name = DefaultScene
 version = 1
 clouds_enabled = true
+cloud_quality = HIGH
+cloud_temporal = true
 
 [node]
 name = Sky Atmosphere

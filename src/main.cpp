@@ -1552,6 +1552,8 @@ int WINAPI WinMain(
                                g_sceneData->cloud_wind_speed, g_sceneData->cloud_wind_dir_x,
                                g_sceneData->cloud_wind_dir_z, g_sceneData->cloud_absorption,
                                g_sceneData->cloud_ambient);
+            renderer.setCloudQuality(g_sceneData->cloud_quality);
+            renderer.setCloudTemporal(g_sceneData->cloud_temporal);
             {
                 UZ_PROFILE_ZONE("startup/renderer_setScene");
                 renderer.setScene(g_sceneData.get());

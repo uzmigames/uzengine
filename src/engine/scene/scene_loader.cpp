@@ -339,6 +339,17 @@ SceneLoadResult scene_load_from_string(Scene* scene, const char* text) {
             } else if (key == "cloud_ambient") {
                 char* ep = nullptr; float v = std::strtof(value.c_str(), &ep);
                 if (ep != value.c_str()) scene->cloud_ambient = v;
+            } else if (key == "cloud_quality") {
+                if (value == "low" || value == "LOW") scene->cloud_quality = 0;
+                else if (value == "medium" || value == "MEDIUM") scene->cloud_quality = 1;
+                else if (value == "high" || value == "HIGH") scene->cloud_quality = 2;
+                else if (value == "cinematic" || value == "CINEMATIC") scene->cloud_quality = 3;
+                else {
+                    char* ep = nullptr; long v = std::strtol(value.c_str(), &ep, 10);
+                    if (ep != value.c_str() && v >= 0 && v <= 3) scene->cloud_quality = static_cast<uint32_t>(v);
+                }
+            } else if (key == "cloud_temporal") {
+                scene->cloud_temporal = parse_bool(value);
             }
 
         } else if (current_section == Section::Node) {

@@ -194,6 +194,8 @@ void applyPendingScene(PendingSceneLoad& pending,
                        sceneData->cloud_wind_speed, sceneData->cloud_wind_dir_x,
                        sceneData->cloud_wind_dir_z, sceneData->cloud_absorption,
                        sceneData->cloud_ambient);
+    renderer.setCloudQuality(sceneData->cloud_quality);
+    renderer.setCloudTemporal(sceneData->cloud_temporal);
 
     // GPU work: setScene does IBL cubemap generation + baking.
     // This is safe here because we're on the main render thread.

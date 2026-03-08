@@ -1,11 +1,12 @@
 // volumetric_apply.ps.hlsl -- Volumetric fog application pass
 //
-// Reads scene depth, computes exponential height fog + distance fog,
-// and applies inscattering from the directional light.
+// Analytical height-based exponential fog with directional inscattering.
+// Uses the Frostbite 2014 analytical integral for proper height fog
+// instead of naive screen-space overlay.
 //
 // References:
+//   [Frostbite 2014] Hillaire "Physically-Based & Unified Volumetric Rendering"
 //   [UE5] HeightFogPixelShader.usf
-//   [Frostbite 2014] "Physically-Based & Unified Volumetric Rendering"
 
 cbuffer FogParams : register(b0) {
     float3 fogColor;         // base fog color (RGB, linear)
@@ -20,7 +21,6 @@ cbuffer FogParams : register(b0) {
 
 cbuffer InvVPCB : register(b3) {
     float4x4 invViewProj;
-    // We only need invViewProj, but root constants are 16 DWORDs
 };
 
 Texture2D    depthTex    : register(t0);
@@ -32,6 +32,8 @@ struct PSInput {
     float2 texcoord : TEXCOORD0;
 };
 
+static const float PI = 3.14159265359;
+
 float3 ReconstructWorldPos(float2 uv, float depth) {
     float4 ndc = float4(uv * 2.0 - 1.0, depth, 1.0);
     ndc.y = -ndc.y;
@@ -39,38 +41,76 @@ float3 ReconstructWorldPos(float2 uv, float depth) {
     return wp.xyz / wp.w;
 }
 
+// Henyey-Greenstein phase function
+float HG(float cosTheta, float g) {
+    float g2 = g * g;
+    return (1.0 - g2) / (4.0 * PI * pow(abs(1.0 + g2 - 2.0 * g * cosTheta), 1.5));
+}
+
 float4 PSMain(PSInput input) : SV_TARGET {
     float depth = depthTex.Load(int3(input.position.xy, 0)).r;
     float3 color = colorTex.Load(int3(input.position.xy, 0)).rgb;
 
-    // Skip fog for sky pixels (depth = 1.0 or 0.0 depending on convention)
+    // Skip fog for sky pixels or when fog is disabled
     if (depth >= 0.999 || fogDensity < 0.0001) {
         return float4(color, 1.0);
     }
 
     float3 worldPos = ReconstructWorldPos(input.texcoord, depth);
-    float3 viewDir = worldPos - cameraPos;
-    float viewDist = length(viewDir);
+    float3 viewVec = worldPos - cameraPos;
+    float viewDist = length(viewVec);
+    float3 viewDir = viewVec / max(viewDist, 0.001);
 
-    // Distance fog: exponential Beer-Lambert
-    float distanceFog = 1.0 - exp(-fogDensity * viewDist);
+    // -----------------------------------------------------------------------
+    // Frostbite 2014 analytical height fog integral
+    //
+    // Fog density at height h:  rho(h) = fogDensity * exp(-falloff * (h - baseHeight))
+    //
+    // Integral along ray from camera to worldPos:
+    //   integral = (fogDensity / falloff) * exp(-camHeight * falloff)
+    //              * (1 - exp(-dist * rayDirY * falloff)) / (rayDirY * falloff)
+    // -----------------------------------------------------------------------
 
-    // Height fog: exponential density decrease with altitude
-    float heightDelta = worldPos.y - fogBaseHeight;
-    float heightFactor = exp(-fogHeightFalloff * max(heightDelta, 0.0));
-    float heightFog = heightFactor * distanceFog;
+    float camRelHeight = cameraPos.y - fogBaseHeight;
+    float falloff = max(fogHeightFalloff, 0.001);
+    float rayDirY = viewDir.y;
 
-    // Combined fog amount (clamped to max opacity)
-    float fogAmount = saturate(heightFog * fogMaxOpacity);
+    float fogAmount;
+    float verticalFactor = rayDirY * falloff;
 
-    // Inscattering from directional light (Henyey-Greenstein phase, g=0.7)
-    float cosAngle = dot(normalize(viewDir), -normalize(lightDir));
-    float g = 0.7;
-    float g2 = g * g;
-    float phase = (1.0 - g2) / (4.0 * 3.14159 * pow(1.0 + g2 - 2.0 * g * cosAngle, 1.5));
-    float3 inscatter = lightColor * phase * fogDensity * 2.0;
+    if (abs(verticalFactor) > 0.001) {
+        // General case: ray has vertical component
+        float baseAmount = fogDensity * exp(-camRelHeight * falloff) / falloff;
+        fogAmount = baseAmount * (1.0 - exp(-viewDist * verticalFactor)) / verticalFactor;
+    } else {
+        // Near-horizontal ray: Taylor expansion to avoid division by zero
+        fogAmount = fogDensity * exp(-camRelHeight * falloff) * viewDist;
+    }
 
+    fogAmount = saturate(fogAmount * fogMaxOpacity);
+
+    // Smooth falloff at far distances (prevent harsh fog cutoff)
+    float distanceFade = 1.0 - exp(-viewDist * 0.0001);
+    fogAmount *= distanceFade;
+
+    // -----------------------------------------------------------------------
+    // Inscattering from directional light
+    // Dual-lobe Henyey-Greenstein matching cloud phase function
+    // -----------------------------------------------------------------------
+
+    float cosAngle = dot(viewDir, normalize(-lightDir));
+    float phase = lerp(HG(cosAngle, 0.8), HG(cosAngle, -0.2), 0.25);
+    float3 inscatter = lightColor * phase * fogDensity * 1.5;
+
+    // Height-based inscatter attenuation (less inscatter high up)
+    float avgHeight = (cameraPos.y + worldPos.y) * 0.5;
+    float inscatterHeight = exp(-max(avgHeight - fogBaseHeight, 0.0) * falloff * 0.5);
+    inscatter *= inscatterHeight;
+
+    // Final fog color = base fog + inscattering
     float3 fogFinal = fogColor + inscatter;
+
+    // Apply fog
     color = lerp(color, fogFinal, fogAmount);
 
     return float4(color, 1.0);

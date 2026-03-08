@@ -1056,9 +1056,14 @@ void Renderer::render(bool readback) {
     }
 
     // --- Pass 1b: Volumetric Clouds ------------------------------------------
-    // Alpha-blend procedural clouds over the sky. Runs after all geometry so
-    // the depth buffer is fully written — cloud shader skips solid-geometry pixels.
-    // Lazy-init clouds PSO on first use (saves ~2300ms startup)
+    // Alpha-blend procedural clouds over the sky with integrated fog.
+    // Quality-driven step count, blue noise jitter, temporal accumulation.
+    // Lazy-init PSOs on first use.
+
+    // Quality → step count mapping
+    static constexpr float kCloudSteps[] = { 32.0f, 64.0f, 96.0f, 128.0f };
+    float cloudStepCount = kCloudSteps[static_cast<uint32_t>(cloudQuality_)];
+
     if (cloudsEnabled_ && cloudsPSO_ == RHI_NULL) {
         UZ_PROFILE_ZONE("pso/clouds");
         RhiPipelineDesc cd{};
@@ -1082,6 +1087,39 @@ void Renderer::render(bool readback) {
         cd.debug_name = "Clouds_PSO";
         cloudsPSO_ = shaderLib_.get_or_create_pipeline("clouds", cd);
     }
+
+    // Lazy-init temporal accumulation PSO + render targets
+    if (cloudsEnabled_ && cloudTemporalEnabled_ && cloudsTemporalPSO_ == RHI_NULL) {
+        UZ_PROFILE_ZONE("pso/clouds_temporal");
+        // Create history render targets (double-buffered, RGBA16F)
+        for (uint32_t i = 0; i < kCloudHistoryCount; ++i) {
+            if (cloudHistoryRT_[i] == RHI_NULL) {
+                RhiTextureDesc td{};
+                td.width  = width_;
+                td.height = height_;
+                td.format = RHI_FORMAT_RGBA16_FLOAT;
+                td.usage  = RHI_USAGE_RENDER_TARGET | RHI_USAGE_SHADER_READ;
+                td.debug_name = (i == 0) ? "CloudHistory0" : "CloudHistory1";
+                cloudHistoryRT_[i] = rhi()->create_texture(td);
+            }
+        }
+        // Temporal resolve PSO (no blend — writes directly)
+        RhiPipelineDesc td{};
+        td.vertex_layout.attrib_count = 0;
+        td.rt_count      = 1;
+        td.rt_formats[0] = RHI_FORMAT_RGBA16_FLOAT;
+        td.ds_format     = RHI_FORMAT_UNKNOWN;
+        td.topology      = RHI_TOPOLOGY_TRIANGLE_LIST;
+        td.rasterizer.fill_mode = RHI_FILL_SOLID;
+        td.rasterizer.cull_mode = RHI_CULL_NONE;
+        td.depth_stencil.depth_enable = false;
+        td.depth_stencil.depth_write  = false;
+        td.blend.render_targets[0].write_mask   = 0xF;
+        td.blend.render_targets[0].blend_enable = false;
+        td.debug_name = "CloudsTemporal_PSO";
+        cloudsTemporalPSO_ = shaderLib_.get_or_create_pipeline("clouds_temporal", td);
+    }
+
     if (cloudsEnabled_ && cloudsPSO_ != RHI_NULL && hdrRT_ != RHI_NULL) {
         renderGraph_.add_pass("clouds", RgPassType::Graphics,
             [&](RgPassBuilder& builder) {
@@ -1089,7 +1127,7 @@ void Renderer::render(bool readback) {
                 builder.write(rgHdr);
                 builder.force_run();
             },
-            [this](RhiCmdList cmd) {
+            [this, cloudStepCount](RhiCmdList cmd) {
                 rhi()->cmd_barrier_texture(cmd, hdrRT_,
                                            RHI_STATE_SHADER_READ, RHI_STATE_RENDER_TARGET);
                 rhi()->cmd_set_pipeline(cmd, cloudsPSO_);
@@ -1097,12 +1135,13 @@ void Renderer::render(bool readback) {
                 rhi()->cmd_set_scissor(cmd, 0, 0, width_, height_);
                 rhi()->cmd_set_render_targets(cmd, &hdrRT_, 1, RHI_NULL);
 
-                // b0: cloud params (16 root constants)
+                // b0: cloud params (16 root constants) — now includes quality + fog
                 float cp[16] = {
                     cloudCoverage_, cloudDensity_, cloudBase_, cloudTop_,
                     cloudWindSpeed_, cloudWindDir_[0], cloudWindDir_[1], cloudAbsorption_,
-                    cloudAmbient_, static_cast<float>(frameNumber_ % 8), 0.0f, 0.0f,
-                    0.0f, 0.0f, 0.0f, 0.0f
+                    cloudAmbient_, static_cast<float>(frameNumber_ % 16),
+                    cloudStepCount, static_cast<float>(cloudDebugMode_),
+                    fogDensity_, fogHeightFalloff_, fogBaseHeight_, fogMaxOpacity_
                 };
                 rhi()->cmd_set_root_constants(cmd, 0, cp, 16, 0);
 

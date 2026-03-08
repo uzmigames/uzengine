@@ -114,6 +114,8 @@ struct Scene {
     float   cloud_wind_dir_z    = 0.0f;    ///< wind direction Z (normalized)
     float   cloud_absorption    = 0.85f;   ///< single-scattering albedo
     float   cloud_ambient       = 0.5f;    ///< ambient sky contribution
+    uint32_t cloud_quality      = 2;       ///< 0=LOW, 1=MEDIUM, 2=HIGH, 3=CINEMATIC
+    bool    cloud_temporal      = true;    ///< temporal accumulation enabled
 
     /// Path of the .uzscene file this scene was loaded from.
     /// Empty if the scene was created programmatically (not from a file).
