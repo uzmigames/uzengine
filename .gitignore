@@ -1,0 +1,46 @@
+# Rulebook - ignore runtime data, keep specs and tasks
+/.rulebook/*
+!/.rulebook/specs/
+!/.rulebook/tasks/
+!/.rulebook/tasks/**/*.md
+!/.rulebook/rulebook.json
+
+# Patterns added by @hivellm/rulebook
+# Added at: 2026-03-10T17:05:03.334Z
+
+*.log
+*.swo
+*.swp
+*~
+.DS_Store
+.cache/
+.env
+.env.*.local
+.env.local
+.idea/
+
+# Claude Code
+.claude/settings.local.json
+.claude/worktrees/
+Thumbs.db
+logs/
+temp/
+tmp/
+
+# Zig
+.zig-cache/
+zig-out/
+
+# Node
+node_modules/
+package-lock.json
+
+# Build artifacts
+napi/build/
+extension/out/
+extension/native/
+
+# POC (backup reference, not part of main build)
+poc-napi/build/
+poc-napi/out/
+poc-napi/node_modules/

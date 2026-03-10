@@ -1,0 +1,12 @@
+# Node
+node_modules/
+
+# TypeScript output
+out/
+dist/
+
+# Native addon (copied by build pipeline)
+native/
+
+# Lock file
+package-lock.json

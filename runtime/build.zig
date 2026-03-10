@@ -1,0 +1,98 @@
+const std = @import("std");
+
+pub fn build(b: *std.Build) void {
+    const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
+
+    const cpp_flags = &.{ "-std=c++17", "-DSPDLOG_COMPILED_LIB" };
+
+    const tp = "thirdparty/";
+
+    // ── Runtime module ──────────────────────────────────────────────────
+
+    const runtime_mod = b.createModule(.{
+        .target = target,
+        .optimize = optimize,
+    });
+    runtime_mod.link_libc = true;
+    runtime_mod.link_libcpp = true;
+
+    // Engine sources
+    runtime_mod.addCSourceFiles(.{
+        .root = b.path("src"),
+        .files = &.{"uz_runtime.cpp"},
+        .flags = cpp_flags,
+    });
+
+    // ── spdlog (compiled library) ───────────────────────────────────────
+
+    runtime_mod.addCSourceFiles(.{
+        .root = b.path(tp ++ "spdlog/src"),
+        .files = &.{
+            "spdlog.cpp",
+            "async.cpp",
+            "cfg.cpp",
+            "color_sinks.cpp",
+            "file_sinks.cpp",
+            "stdout_sinks.cpp",
+            "bundled_fmtlib_format.cpp",
+        },
+        .flags = cpp_flags,
+    });
+
+    // ── Tracy (compiled client) ─────────────────────────────────────────
+
+    runtime_mod.addCSourceFiles(.{
+        .root = b.path(tp ++ "tracy/public"),
+        .files = &.{"TracyClient.cpp"},
+        .flags = &.{ "-std=c++17", "-DTRACY_ENABLE", "-DTRACY_ON_DEMAND" },
+    });
+
+    // ── Include paths ───────────────────────────────────────────────────
+
+    // Engine
+    runtime_mod.addIncludePath(b.path("src"));
+
+    // spdlog
+    runtime_mod.addIncludePath(b.path(tp ++ "spdlog/include"));
+
+    // Tracy
+    runtime_mod.addIncludePath(b.path(tp ++ "tracy/public"));
+
+    // mimalloc
+    runtime_mod.addIncludePath(b.path(tp ++ "mimalloc/include"));
+
+    // D3D12 Memory Allocator
+    runtime_mod.addIncludePath(b.path(tp ++ "d3d12ma/include"));
+
+    // DirectX Headers
+    runtime_mod.addIncludePath(b.path(tp ++ "directx_headers/include"));
+    runtime_mod.addIncludePath(b.path(tp ++ "directx_headers/include/directx"));
+
+    // DirectXMath
+    runtime_mod.addIncludePath(b.path(tp ++ "directxmath/Inc"));
+
+    // Agility SDK
+    runtime_mod.addIncludePath(b.path(tp ++ "agility/include"));
+
+    // DXC (shader compiler headers)
+    runtime_mod.addIncludePath(b.path(tp ++ "dxc/inc"));
+
+    // GLM
+    runtime_mod.addIncludePath(b.path(tp ++ "glm"));
+
+    // nlohmann/json
+    runtime_mod.addIncludePath(b.path(tp ++ "nlohmann"));
+
+    // atomic_queue
+    runtime_mod.addIncludePath(b.path(tp ++ "atomic_queue/include"));
+
+    // ── Output ──────────────────────────────────────────────────────────
+
+    const lib = b.addLibrary(.{
+        .linkage = .static,
+        .name = "uzengine_runtime",
+        .root_module = runtime_mod,
+    });
+    b.installArtifact(lib);
+}

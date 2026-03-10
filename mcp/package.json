@@ -1,0 +1,20 @@
+{
+  "name": "@uzmigames/uzengine-mcp",
+  "version": "0.2.0",
+  "private": true,
+  "description": "UzEngine MCP server — AI tool invocations, scene queries, autonomous development",
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "tsc -p .",
+    "start": "node dist/server.js --stdio",
+    "dev": "tsc -w -p ."
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "pino": "^10.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^25.4.0",
+    "typescript": "^5.9.3"
+  }
+}

@@ -1,0 +1,93 @@
+{
+  "version": "4.2.2",
+  "installedAt": "2026-03-10T17:05:03.229Z",
+  "updatedAt": "2026-03-10T17:05:03.231Z",
+  "projectId": "21a4a928-3e94-447a-b26d-e9701c4c57e5",
+  "mode": "full",
+  "features": {
+    "watcher": true,
+    "agent": true,
+    "logging": true,
+    "telemetry": true,
+    "notifications": false,
+    "dryRun": false,
+    "gitHooks": false,
+    "repl": false,
+    "templates": false,
+    "context": false,
+    "health": false,
+    "plugins": false,
+    "parallel": false,
+    "smartContinue": false
+  },
+  "coverageThreshold": 95,
+  "language": "en",
+  "outputLanguage": "en",
+  "cliTools": [],
+  "maxParallelTasks": 1,
+  "timeouts": {
+    "taskExecution": 300000,
+    "cliResponse": 60000,
+    "testRun": 120000
+  },
+  "memory": {
+    "enabled": true,
+    "dbPath": ".rulebook/memory/memory.db",
+    "maxSizeBytes": 524288000,
+    "autoCapture": true,
+    "vectorDimensions": 256
+  },
+  "ralph": {
+    "enabled": true,
+    "maxIterations": 10,
+    "tool": "claude",
+    "maxContextLoss": 3,
+    "securityGate": {
+      "enabled": true,
+      "failOn": "high",
+      "tool": "auto"
+    },
+    "contextCompression": {
+      "enabled": true,
+      "recentCount": 3,
+      "threshold": 5
+    },
+    "parallel": {
+      "enabled": false,
+      "maxWorkers": 3
+    },
+    "planCheckpoint": {
+      "enabled": false,
+      "autoApproveAfterSeconds": 0,
+      "requireApprovalForStories": "all"
+    }
+  },
+  "agentsMode": "full",
+  "monorepo": {
+    "detected": false,
+    "tool": null,
+    "packages": []
+  },
+  "languages": [],
+  "frameworks": [],
+  "modules": [],
+  "modular": true,
+  "rulebookDir": ".rulebook",
+  "skills": {
+    "enabled": [
+      "core/agent-automation",
+      "core/dag-workflow",
+      "core/documentation-rules",
+      "core/quality-enforcement",
+      "core/rulebook-task-management",
+      "core/agents-lean",
+      "core/agents-override",
+      "core/dag",
+      "core/multi-agent",
+      "core/plans",
+      "core/ralph",
+      "core/rulebook",
+      "core/workspace"
+    ]
+  }
+}

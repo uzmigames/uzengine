@@ -1,0 +1,14 @@
+.{
+    .name = .uzengine_runtime,
+    .version = "0.2.0",
+    .fingerprint = 0xbef95a378434d9b8,
+    .minimum_zig_version = "0.14.0",
+
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+
+    .dependencies = .{},
+}

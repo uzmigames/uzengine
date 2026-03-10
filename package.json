@@ -1,0 +1,17 @@
+{
+  "name": "@uzmigames/uzengine",
+  "version": "0.2.0",
+  "private": true,
+  "description": "UzEngine — AAA game engine embedded in VSCode",
+  "scripts": {
+    "build:runtime": "cd runtime && zig build -Doptimize=ReleaseFast",
+    "build:runtime:debug": "cd runtime && zig build",
+    "build:napi": "cd napi && npx cmake-js compile --runtime=electron --runtime-version=39.6.0 --CDCMAKE_BUILD_TYPE=Release",
+    "build:napi:debug": "cd napi && npx cmake-js compile --runtime=electron --runtime-version=39.6.0 --CDCMAKE_BUILD_TYPE=Debug",
+    "copy:node": "node -e \"require('fs').mkdirSync('extension/native',{recursive:true});require('fs').copyFileSync('napi/build/Release/uzengine.node','extension/native/uzengine.node')\"",
+    "build:extension": "cd extension && npx tsc -p .",
+    "build:mcp": "cd mcp && npx tsc -p .",
+    "build": "npm run build:runtime && npm run build:napi && npm run copy:node && npm run build:extension && npm run build:mcp",
+    "build:debug": "npm run build:runtime:debug && npm run build:napi:debug && npm run copy:node && npm run build:extension && npm run build:mcp"
+  }
+}
