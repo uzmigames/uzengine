@@ -88,6 +88,7 @@ struct Vec3 {
     Vec3 operator+(const Vec3& other) const { return {x + other.x, y + other.y, z + other.z}; }
     Vec3 operator-(const Vec3& other) const { return {x - other.x, y - other.y, z - other.z}; }
     Vec3 operator*(float scalar) const { return {x * scalar, y * scalar, z * scalar}; }
+    Vec3 operator*(const Vec3& other) const { return {x * other.x, y * other.y, z * other.z}; }
     Vec3 operator/(float scalar) const { return {x / scalar, y / scalar, z / scalar}; }
     Vec3 operator-() const { return {-x, -y, -z}; }
     Vec3& operator+=(const Vec3& other) { x += other.x; y += other.y; z += other.z; return *this; }
@@ -228,7 +229,7 @@ struct Quat {
     /// Constructors
     Quat() = default;
     constexpr Quat(float x, float y, float z, float w) : x(x), y(y), z(z), w(w) {}
-    constexpr Quat(const Vec3& axis, float angle);
+    Quat(const Vec3& axis, float angle);
     explicit Quat(const XMVECTOR& xm) {
         XMStoreFloat4(reinterpret_cast<XMFLOAT4*>(this), xm);
     }
@@ -293,7 +294,7 @@ struct Transform {
     /// Transformations
     Transform translate(const Vec3& delta) const;
     Transform rotate(const Quat& rot) const;
-    Transform scale(const Vec3& s) const;
+    Transform scaleBy(const Vec3& s) const;
 };
 
 }  // namespace uz

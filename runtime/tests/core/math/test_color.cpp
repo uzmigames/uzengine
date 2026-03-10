@@ -1,5 +1,5 @@
 #include <gtest/gtest.h>
-#include "uz_color.h"
+#include "uz_math.h"
 
 using namespace uz;
 

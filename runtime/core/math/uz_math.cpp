@@ -323,7 +323,7 @@ Transform Transform::rotate(const Quat& rot) const {
     return {position, rotation * rot, scale};
 }
 
-Transform Transform::scale(const Vec3& s) const {
+Transform Transform::scaleBy(const Vec3& s) const {
     return {position, rotation, scale * s};
 }
 

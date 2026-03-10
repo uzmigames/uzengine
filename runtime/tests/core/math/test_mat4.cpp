@@ -1,5 +1,5 @@
 #include <gtest/gtest.h>
-#include "uz_mat4.h"
+#include "uz_math.h"
 
 using namespace uz;
 

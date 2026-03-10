@@ -242,19 +242,17 @@ Clone-Repo -Name "xxhash" `
     -Branch "v0.8.2" `
     -RemoveDirs @("tests", "doc", "cmake_unofficial", "contrib")
 
-# SSE Math Fun (SIMD math functions) — TODO: find working repository
-# Clone-Repo -Name "sse_mathfun" `
-#     -Url "https://github.com/xxxxx/SSE_Mathfun.git" `
-#     -Branch "master" `
-#     -RemoveDirs @("examples", "doc")
-Write-Host "  [sse_mathfun] skipped (find working source)" -ForegroundColor DarkYellow
+# SSE Math Fun (SIMD math functions)
+Clone-Repo -Name "sse_mathfun" `
+    -Url "https://github.com/RJVB/sse_mathfun.git" `
+    -Branch "master" `
+    -RemoveDirs @()
 
-# MikkTSpace (tangent space generation) — TODO: find working repository
-# Clone-Repo -Name "mikktspace" `
-#     -Url "https://github.com/xxxx/MikkTSpace.git" `
-#     -Branch "master" `
-#     -RemoveDirs @("examples", "tests", "cmake")
-Write-Host "  [mikktspace] skipped (find working source)" -ForegroundColor DarkYellow
+# MikkTSpace (tangent space generation)
+Clone-Repo -Name "mikktspace" `
+    -Url "https://github.com/mmikk/MikkTSpace.git" `
+    -Branch "master" `
+    -RemoveDirs @()
 
 # Crashpad (crash reporting) — TODO: find working minimal crashpad repo
 # Clone-Repo -Name "crashpad" `
