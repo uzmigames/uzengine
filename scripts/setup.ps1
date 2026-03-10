@@ -233,7 +233,7 @@ Clone-Repo -Name "googletest" `
 # SPIRV-Reflect (shader reflection)
 Clone-Repo -Name "spirv-reflect" `
     -Url "https://github.com/KhronosGroup/SPIRV-Reflect.git" `
-    -Branch "v1.3.268" `
+    -Branch "vulkan-sdk-1.3.268.0" `
     -RemoveDirs @("examples", "tests", "docs", "scripts", "cmake")
 
 # xxhash (fast hashing)
@@ -242,17 +242,19 @@ Clone-Repo -Name "xxhash" `
     -Branch "v0.8.2" `
     -RemoveDirs @("tests", "doc", "cmake_unofficial", "contrib")
 
-# SSE Math Fun (SIMD math functions)
-Clone-Repo -Name "sse_mathfun" `
-    -Url "https://github.com/dpilger26/SSE_Mathfun.git" `
-    -Branch "master" `
-    -RemoveDirs @("examples", "doc")
+# SSE Math Fun (SIMD math functions) — TODO: find working repository
+# Clone-Repo -Name "sse_mathfun" `
+#     -Url "https://github.com/xxxxx/SSE_Mathfun.git" `
+#     -Branch "master" `
+#     -RemoveDirs @("examples", "doc")
+Write-Host "  [sse_mathfun] skipped (find working source)" -ForegroundColor DarkYellow
 
-# MikkTSpace (tangent space generation)
-Clone-Repo -Name "mikktspace" `
-    -Url "https://github.com/svenslaggare/MikkTSpace.git" `
-    -Branch "master" `
-    -RemoveDirs @("examples", "tests", "cmake")
+# MikkTSpace (tangent space generation) — TODO: find working repository
+# Clone-Repo -Name "mikktspace" `
+#     -Url "https://github.com/xxxx/MikkTSpace.git" `
+#     -Branch "master" `
+#     -RemoveDirs @("examples", "tests", "cmake")
+Write-Host "  [mikktspace] skipped (find working source)" -ForegroundColor DarkYellow
 
 # Crashpad (crash reporting) — TODO: find working minimal crashpad repo
 # Clone-Repo -Name "crashpad" `
