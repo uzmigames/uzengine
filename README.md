@@ -110,21 +110,23 @@ All thirdparty libraries are **committed to the repo** under `runtime/thirdparty
 - **Offline development** — no network dependency during build
 - **Pinned versions** — exact versions tracked in git
 
-| Library | Version | Purpose |
-|---------|---------|---------|
-| spdlog | 1.15.3 | Structured logging |
-| Tracy | 0.11.1 | CPU profiling |
-| mimalloc | 2.1.7 | Global allocator |
-| D3D12MA | 2.0.1 | GPU memory allocator |
-| DirectX Headers | 1.614.1 | DX12 API headers |
-| DirectXMath | oct2024 | SIMD math |
-| Agility SDK | 1.614.1 | DX12 runtime |
-| DXC | 1.8.2407 | Shader compiler |
-| glm | 1.0.1 | Math (header-only) |
-| nlohmann/json | 3.11.3 | JSON parsing (single header) |
-| atomic_queue | latest | Lock-free queue |
-| GoogleTest | 1.15.2 | Testing framework |
-| vcpkg | latest | zlib, zstd |
+| Library | Version | License | Purpose |
+|---------|---------|---------|---------|
+| spdlog | 1.15.3 | MIT | Structured logging |
+| Tracy | 0.11.1 | BSD-3-Clause | CPU profiling |
+| mimalloc | 2.1.7 | MIT | Global allocator |
+| D3D12MA | 2.0.1 | MIT | GPU memory allocator |
+| DirectX Headers | 1.614.1 | MIT | DX12 API headers |
+| DirectXMath | oct2024 | MIT | SIMD math |
+| Agility SDK | 1.614.1 | MIT | DX12 runtime |
+| DXC | 1.8.2407 | NCSA | Shader compiler |
+| glm | 1.0.1 | MIT | Math (header-only) |
+| nlohmann/json | 3.11.3 | MIT | JSON parsing (single header) |
+| atomic_queue | latest | MIT | Lock-free queue |
+| GoogleTest | 1.15.2 | BSD-3-Clause | Testing framework |
+| dlmalloc | 2.8.6 | Public Domain | Lightweight allocator |
+| jemalloc | 5.3.0 | BSD-2-Clause | Alternative allocator |
+| vcpkg | latest | MIT | zlib, zstd |
 
 ## Documentation
 
