@@ -1,8 +1,20 @@
+/// UzEngine Input System Implementation (Windows)
+///
+/// Implements InputSystem for keyboard, mouse, and gamepad input on Windows.
+/// Maintains per-frame state tracking (current vs previous) for detecting transitions.
+/// Integrates with WM_* messages from PlatformWindow::WndProc.
+
 #include "uz_input.h"
 #include <cstring>
 
 namespace uz {
 
+/// Initializes input state arrays to zero (no keys/buttons pressed).
+///
+/// # Behavior
+/// - Zeros both current and previous key arrays
+/// - Zeros both current and previous mouse button arrays
+/// - Mouse position and delta left at default (will update on first move)
 void InputSystem::Init() {
     std::memset(m_keyCurrent, 0, sizeof(m_keyCurrent));
     std::memset(m_keyPrevious, 0, sizeof(m_keyPrevious));
