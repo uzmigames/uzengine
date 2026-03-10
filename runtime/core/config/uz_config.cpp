@@ -1,9 +1,18 @@
+/// UzEngine Configuration System Implementation
+///
+/// Provides the Config class implementation for cascaded configuration loading:
+/// 1. Parse .uzproject JSON file
+/// 2. Apply CLI argument overrides
+/// 3. Merge with engine defaults
+/// 4. Expose via typed getters with dot-notation paths
+
 #include "uz_config.h"
 #include "../logging/uz_log.h"
 
 #include <fstream>
 #include <sstream>
 
+/// Log category for configuration loading and parsing errors.
 UZ_DEFINE_LOG_CATEGORY(Config, Trace);
 
 namespace uz {
