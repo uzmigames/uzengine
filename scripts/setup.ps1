@@ -89,17 +89,29 @@ function Download-Header {
 
 # ─── Prerequisites ──────────────────────────────────────────────────────────
 
-Write-Host "[1/5] Checking prerequisites..." -ForegroundColor Cyan
+Write-Host "[1/6] Checking prerequisites..." -ForegroundColor Cyan
+
+# Refresh PATH from registry (picks up winget/installer changes without restarting terminal)
+function Refresh-Path {
+    $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
+    $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
+    $env:Path = "$machinePath;$userPath"
+}
 
 # Zig
 if (-not (Get-Command zig -ErrorAction SilentlyContinue)) {
+    Refresh-Path
+}
+if (-not (Get-Command zig -ErrorAction SilentlyContinue)) {
     Write-Host "  Zig not found. Installing via winget..." -ForegroundColor Yellow
     winget install zig.zig --accept-package-agreements --accept-source-agreements 2>&1 | Out-Null
-    Write-Host "  Zig install requested. Restart terminal if not in PATH." -ForegroundColor Green
-} else {
-    $zigVer = zig version
-    Write-Host "  Zig: $zigVer" -ForegroundColor Green
+    Refresh-Path
+    if (-not (Get-Command zig -ErrorAction SilentlyContinue)) {
+        Write-Error "Zig installed but not in PATH. Restart terminal and re-run setup."
+    }
 }
+$zigVer = zig version
+Write-Host "  Zig: $zigVer" -ForegroundColor Green
 
 # CMake
 if (-not (Get-Command cmake -ErrorAction SilentlyContinue)) {
@@ -121,7 +133,7 @@ if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
 # ─── vcpkg ──────────────────────────────────────────────────────────────────
 
 Write-Host ""
-Write-Host "[2/5] Setting up vcpkg..." -ForegroundColor Cyan
+Write-Host "[2/6] Setting up vcpkg..." -ForegroundColor Cyan
 
 $VcpkgDir = Join-Path $ThirdPartyDir "vcpkg"
 $VcpkgExe = Join-Path $VcpkgDir "vcpkg.exe"
@@ -144,7 +156,7 @@ foreach ($pkg in $VcpkgPackages) {
 # ─── Git Clones ─────────────────────────────────────────────────────────────
 
 Write-Host ""
-Write-Host "[3/5] Cloning thirdparty repos..." -ForegroundColor Cyan
+Write-Host "[3/6] Cloning thirdparty repos..." -ForegroundColor Cyan
 
 # DirectX Headers
 Clone-Repo -Name "directx_headers" `
@@ -222,7 +234,7 @@ Write-Host "  [crashpad] skipped (manual setup required)" -ForegroundColor DarkY
 # ─── Downloads ──────────────────────────────────────────────────────────────
 
 Write-Host ""
-Write-Host "[4/5] Downloading prebuilt packages..." -ForegroundColor Cyan
+Write-Host "[4/6] Downloading prebuilt packages..." -ForegroundColor Cyan
 
 # DXC (DirectX Shader Compiler)
 Download-Extract-Zip -Name "dxc" `
@@ -236,7 +248,7 @@ Download-Extract-Zip -Name "agility" `
 # ─── Global Cleanup ────────────────────────────────────────────────────────
 
 Write-Host ""
-Write-Host "[5/5] Cleaning up..." -ForegroundColor Cyan
+Write-Host "[5/6] Cleaning up..." -ForegroundColor Cyan
 
 $JunkDirs = @(".github", ".vscode", ".ci", ".circleci")
 $JunkFiles = @(".gitignore", ".gitattributes", ".gitmodules",
@@ -268,11 +280,26 @@ Get-ChildItem -Path $ThirdPartyDir -Directory | ForEach-Object {
 # Remove temp dir
 if (Test-Path $TempDir) { Remove-Item -Recurse -Force $TempDir }
 
+# ─── npm install ───────────────────────────────────────────────────────────
+
+Write-Host ""
+Write-Host "[6/6] Installing Node dependencies..." -ForegroundColor Cyan
+
+$npmModules = @("napi", "mcp", "extension")
+foreach ($mod in $npmModules) {
+    $modPath = Join-Path $RootDir $mod
+    if (Test-Path (Join-Path $modPath "package.json")) {
+        Write-Host "  [$mod] npm install..." -ForegroundColor Yellow
+        Push-Location $modPath
+        npm install 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) { Pop-Location; Write-Error "npm install failed in $mod" }
+        Pop-Location
+        Write-Host "  [$mod] OK" -ForegroundColor Green
+    }
+}
+
 Write-Host ""
 Write-Host "=== Setup Complete ===" -ForegroundColor Green
 Write-Host "Thirdparty libraries installed at: $ThirdPartyDir"
 Write-Host ""
-Write-Host "Next steps:"
-Write-Host "  cd napi && npm install"
-Write-Host "  cd extension && npm install"
-Write-Host "  npm run build"
+Write-Host "Next: scripts\build.ps1"

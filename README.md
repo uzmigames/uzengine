@@ -24,6 +24,7 @@ AAA-quality game engine embedded in VSCode, with open file formats designed for 
 | [`runtime/`](runtime/) | Engine core (C++) | Zig |
 | [`napi/`](napi/) | N-API bridge to Electron | cmake-js / MSVC |
 | [`extension/`](extension/) | VSCode extension | TypeScript |
+| [`mcp/`](mcp/) | MCP server for AI workflows | TypeScript |
 
 ## Quick Start
 
@@ -34,16 +35,27 @@ AAA-quality game engine embedded in VSCode, with open file formats designed for 
 - [Visual Studio Build Tools 2022](https://visualstudio.microsoft.com/downloads/) (C++ workload)
 - [CMake 3.15+](https://cmake.org/)
 
+### Setup
+
+```bash
+# Run the setup script (downloads thirdparty deps + npm install)
+scripts/setup.ps1    # PowerShell
+scripts/setup.bat    # CMD
+```
+
 ### Build
 
 ```bash
-# Install dependencies
-cd napi && npm install && cd ..
-cd extension && npm install && cd ..
+# Full build (with pre-flight lock check)
+scripts/build.ps1    # PowerShell
+scripts/build.bat    # CMD
 
-# Full build pipeline: runtime → napi → copy .node → extension
+# Or via npm (no lock check)
 npm run build
 ```
+
+> The build scripts check for locked files (e.g. `.node` loaded by VSCode) before building.
+> If a lock is detected, close the Extension Host or run **Developer: Reload Window** first.
 
 ### Run
 
@@ -56,12 +68,14 @@ npm run build:debug
 ## Build Pipeline
 
 ```
-npm run build
+scripts/build.ps1
   │
-  ├─ 1. build:runtime    zig build → runtime/zig-out/lib/uzengine_runtime.lib
-  ├─ 2. build:napi       cmake-js  → napi/build/Release/uzengine.node
-  ├─ 3. copy:node                  → extension/native/uzengine.node
-  └─ 4. build:extension  tsc       → extension/out/extension.js
+  ├─ 0. Pre-flight        check for locked .node / .lib files
+  ├─ 1. build:runtime     zig build → runtime/zig-out/lib/uzengine_runtime.lib
+  ├─ 2. build:napi        cmake-js  → napi/build/Release/uzengine.node
+  │     └─ copy:node                → extension/native/uzengine.node
+  ├─ 3. build:mcp         tsc       → mcp/dist/
+  └─ 4. build:extension   tsc       → extension/out/extension.js
 ```
 
 ## Documentation
