@@ -12,6 +12,35 @@ AAA-quality game engine (visual parity with Unity, Godot, Unreal) fully embedded
 - **Reference-driven development** — never brute-force implementations; always consult proven engine sources first
 - **No garbage collector** — deterministic memory via Rust-inspired ownership and borrow checking in C++
 
+## Engineering Principles
+
+### Clean Code
+This engine is too large for sloppy code — every subsystem must be readable, testable, and maintainable by both humans and AI agents.
+
+- **Meaningful names** — names reveal intent. No `tmp`, `buf`, `data`, `mgr`. Prefer `meshVertexBuffer` over `vb`.
+- **Small functions** — one function = one thing, max ~40 lines. If a block needs a comment, extract it.
+- **No side effects** — `GetX()` reads, `SetX()` writes. Never mix.
+- **No magic numbers** — `constexpr float kGravity = -9.81f;`, not inline literals.
+- **Fail early** — validate at system boundaries. `UZ_CHECK` for invariants, `UZ_ENSURE` for soft errors.
+- **Delete dead code** — git has history. No commented-out code.
+- **Max 1500 lines per file** — split proactively at ~1000. One file = one responsibility.
+
+### SOLID (adapted for C++ game engine)
+- **Single Responsibility** — `InputSystem` owns input. `Config` owns config. Not a god class.
+- **Open/Closed** — new RHI backends, new components, new importers extend via new types, not by modifying existing code.
+- **Liskov Substitution** — any `rhi_backend_t` (DX12, Vulkan, Metal) is interchangeable at the vtable level.
+- **Interface Segregation** — focused interfaces: `IRenderable`, `IUpdatable`, `ISerializable`. No fat base classes.
+- **Dependency Inversion** — Renderer depends on RHI abstraction, not DX12 directly. Inject, don't hardcode.
+
+### Observability
+An engine without observability is undebuggable. Every subsystem must be transparent.
+
+- **Structured logging** — `UZ_LOG(Category, Level, fmt, ...)` at every init/shutdown, external call, and error path. Log includes category, level, and formatted context.
+- **CPU profiling** — `UZ_PROFILE_SCOPE("name")` on every function that touches GPU, disk, or runs per-frame. Tracy integration for visual analysis.
+- **Assertions** — `UZ_CHECK(expr)` for invariants (fatal in debug), `UZ_ENSURE(expr)` for recoverable violations (returns bool), `UZ_VERIFY(expr)` for side-effect expressions (never stripped).
+- **Stat counters** — `StatCounter` tracks allocations, draw calls, frame time, cache hits per group (Rendering, RHI, Physics, Scene, Memory, IO).
+- **Error context** — always log what, why, and the input: `"Failed to load texture: path='{}', reason='{}'"`.
+
 ## Development Directives
 
 ### Reference Sources

@@ -224,6 +224,12 @@ Download-Header -Name "nlohmann" `
     -Url "https://github.com/nlohmann/json/releases/download/v3.11.3/json.hpp" `
     -FileName "json.hpp"
 
+# GoogleTest (testing framework)
+Clone-Repo -Name "googletest" `
+    -Url "https://github.com/google/googletest.git" `
+    -Branch "v1.15.2" `
+    -RemoveDirs @("ci", "docs", "googlemock", "fake_fuchsia_sdk")
+
 # Crashpad (crash reporting) — TODO: find working minimal crashpad repo
 # Clone-Repo -Name "crashpad" `
 #     -Url "https://github.com/nickvdp/mini-crashpad.git" `

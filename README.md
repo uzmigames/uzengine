@@ -84,7 +84,7 @@ scripts/build.ps1
 |------|---------|-------|-----------|-----|
 | **Lint** | clang-tidy | — | ESLint 9 | ESLint 9 |
 | **Format** | clang-format | clang-format | Prettier 3.8 | Prettier 3.8 |
-| **Test** | zig build test | — | Vitest 4 | Vitest 4 |
+| **Test** | GoogleTest 1.15 | — | Vitest 4 | Vitest 4 |
 
 ```bash
 # Run all quality checks
@@ -101,6 +101,30 @@ npm run format         # extension + mcp
 - **Zero warnings** — all warnings promoted to errors across every module
 - **95% coverage** — enforced via Vitest thresholds on branches, functions, lines, and statements
 - **Structured logging** — `LogOutputChannel` (extension), `pino` (mcp), `spdlog` (runtime)
+
+## Thirdparty Dependencies
+
+All thirdparty libraries are **committed to the repo** under `runtime/thirdparty/`. The setup script (`scripts/setup.ps1`) clones them with `--depth 1`, strips `.git`, docs, tests, and CI files to keep the footprint minimal. This ensures:
+
+- **Reproducible builds** — no external download required after clone
+- **Offline development** — no network dependency during build
+- **Pinned versions** — exact versions tracked in git
+
+| Library | Version | Purpose |
+|---------|---------|---------|
+| spdlog | 1.15.3 | Structured logging |
+| Tracy | 0.11.1 | CPU profiling |
+| mimalloc | 2.1.7 | Global allocator |
+| D3D12MA | 2.0.1 | GPU memory allocator |
+| DirectX Headers | 1.614.1 | DX12 API headers |
+| DirectXMath | oct2024 | SIMD math |
+| Agility SDK | 1.614.1 | DX12 runtime |
+| DXC | 1.8.2407 | Shader compiler |
+| glm | 1.0.1 | Math (header-only) |
+| nlohmann/json | 3.11.3 | JSON parsing (single header) |
+| atomic_queue | latest | Lock-free queue |
+| GoogleTest | 1.15.2 | Testing framework |
+| vcpkg | latest | zlib, zstd |
 
 ## Documentation
 

@@ -92,6 +92,66 @@ it('should throw NotFoundError when user does not exist', () => {
 4. **ALWAYS test error paths** - Exceptions, edge cases, and failure modes
 5. **ALWAYS maintain coverage** - Tests must achieve the project's coverage threshold (95%+)
 
+## ⚠️ CRITICAL: File Size & Responsibility Rules
+
+**MANDATORY**: No file may exceed **1500 lines**. Every file must have a **single, clear responsibility**.
+
+### Why This Matters
+
+Large files with mixed responsibilities degrade LLM comprehension. Smaller, focused files are easier to reason about, review, and test — both for humans and AI agents.
+
+### Rules
+
+1. **Max 1500 lines per file** — source, tests, headers, configs. No exceptions.
+2. **Single Responsibility** — each file owns one concern (e.g., logging, input, config). If a file does two things, split it.
+3. **Organize by topic directories** — group related files into directories by domain (e.g., `core/logging/`, `core/memory/`, `platform/windows/`). Prefer `topic/file.cpp` over a flat directory with many files.
+4. **Tests mirror source structure** — `tests/core/test_logging.cpp`, `tests/core/test_memory.cpp`, etc. Never a monolithic `test_all.cpp`.
+5. **Split proactively** — when a file approaches 1000 lines, plan the split. Don't wait until 1500.
+6. **No generated artifacts in repo** — tests must clean up any files they create (logs, temp files). Never commit generated output.
+
+### Examples
+
+```
+✅ CORRECT:
+  runtime/core/logging/uz_log.h        (~150 lines)
+  runtime/core/logging/uz_log.cpp      (~120 lines)
+  runtime/tests/core/test_logging.cpp  (~100 lines)
+
+❌ WRONG:
+  runtime/tests/test_runtime.cpp       (400+ lines, tests everything)
+  runtime/core/engine.cpp              (2000 lines, does logging + config + init)
+```
+
+## ⚠️ CRITICAL: Clean Code & SOLID Principles
+
+**MANDATORY**: All code must follow Clean Code and SOLID principles. This engine is large — without discipline, it becomes unmaintainable for both humans and AI.
+
+### Clean Code Rules
+
+1. **Meaningful names** — variables, functions, classes must reveal intent. No `tmp`, `data`, `handler`, `manager` unless truly generic. Prefer `meshVertexBuffer` over `buf`.
+2. **Small functions** — each function does ONE thing. If you need a comment to explain a section, extract it into a named function. Max ~40 lines per function.
+3. **No side effects** — a function named `GetX()` must not modify state. Separate queries from commands.
+4. **No magic numbers** — use named constants. `constexpr float kGravity = -9.81f;` not `y += -9.81f`.
+5. **Fail early, fail loud** — validate inputs at boundaries, use `UZ_CHECK`/`UZ_ENSURE` for invariants. Never silently swallow errors.
+6. **Delete dead code** — don't comment out code "for later". Git has history.
+7. **Consistent formatting** — follow `.clang-format`. No manual formatting overrides.
+
+### SOLID Principles (adapted for C++/game engine)
+
+1. **S — Single Responsibility**: One class/struct = one reason to change. `InputSystem` handles input, not window events. `Config` loads config, not file I/O.
+2. **O — Open/Closed**: Extend via new types, not by modifying existing ones. Use virtual interfaces or templates for extension points (e.g., RHI backends).
+3. **L — Liskov Substitution**: Any RHI backend (DX12, Vulkan, Metal) must be interchangeable through the `rhi_backend_t` vtable without the caller knowing which one.
+4. **I — Interface Segregation**: Don't force consumers to depend on methods they don't use. Split fat interfaces into focused ones (e.g., `IRenderable` vs `IUpdatable` vs `ISerializable`).
+5. **D — Dependency Inversion**: High-level modules (Renderer, Scene) depend on abstractions (RHI interface), not concrete backends (DX12). Inject dependencies, don't hardcode them.
+
+### Observability Rules
+
+1. **Log at boundaries** — every system init/shutdown, every external call (file I/O, GPU, OS API) gets a log entry with timing.
+2. **Profile critical paths** — `UZ_PROFILE_SCOPE` on every function that touches GPU, disk, or runs per-frame. No guessing where time is spent.
+3. **Assert invariants** — use `UZ_CHECK` for things that must never fail (corrupted state = crash). Use `UZ_ENSURE` for recoverable violations.
+4. **Stat counters** — track allocations, draw calls, frame time, cache hits. Every system exposes its health via `StatCounter`.
+5. **Error context** — log messages include what failed, why, and what input caused it. `"Failed to load texture: path='{}', reason='{}'"` not `"Load failed"`.
+
 ## Critical Rules
 
 1. **ALWAYS read AGENTS.md first** - Contains all project standards and patterns

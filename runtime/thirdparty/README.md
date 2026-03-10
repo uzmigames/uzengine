@@ -101,6 +101,21 @@ Files extracted from upstream source:
 - `LICENSE`
 
 
+## googletest
+
+- Upstream: https://github.com/google/googletest
+- Version: 1.15.2 (2024)
+- License: BSD-3-Clause
+
+Google's C++ testing framework. Used for all runtime unit tests.
+
+Files extracted from upstream source:
+
+- `googletest/` (gtest headers + source)
+- `LICENSE`
+- `CMakeLists.txt`
+
+
 ## dlmalloc
 
 - Upstream: https://gee.cs.oswego.edu/dl/html/malloc.html

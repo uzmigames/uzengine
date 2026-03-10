@@ -104,6 +104,39 @@ Then the system MUST return a JWT token
 
 ---
 
+## ⚠️ CRITICAL: File Size & Single Responsibility
+
+1. **Max 1500 lines per file** — source, tests, headers, configs. No exceptions.
+2. **Single Responsibility** — one file = one concern. If it does two things, split it.
+3. **Organize by topic directories** — `core/logging/`, `core/memory/`, `platform/windows/`, etc.
+4. **Tests mirror source structure** — `tests/core/test_logging.cpp`, not `test_all.cpp`.
+5. **Split at ~1000 lines** — don't wait until the limit.
+6. **No generated artifacts** — tests clean up logs/temp files. Never commit generated output.
+
+## ⚠️ CRITICAL: Clean Code, SOLID & Observability
+
+### Clean Code
+- **Meaningful names** — no `tmp`, `data`, `buf`. Names reveal intent.
+- **Small functions** — ONE thing per function, max ~40 lines. Extract with named functions.
+- **No side effects** — `GetX()` must not modify state. Separate queries from commands.
+- **No magic numbers** — named constants only. `constexpr float kGravity = -9.81f;`
+- **Fail early, fail loud** — validate at boundaries, `UZ_CHECK`/`UZ_ENSURE` for invariants.
+- **Delete dead code** — no commented-out code. Git has history.
+
+### SOLID (C++/game engine)
+- **S — Single Responsibility**: one class = one reason to change.
+- **O — Open/Closed**: extend via new types (backends, components), not modifying existing ones.
+- **L — Liskov Substitution**: any RHI backend interchangeable via `rhi_backend_t` vtable.
+- **I — Interface Segregation**: focused interfaces (`IRenderable`, `IUpdatable`), not fat ones.
+- **D — Dependency Inversion**: high-level depends on abstractions (RHI), not concrete backends.
+
+### Observability
+- **Log at boundaries** — system init/shutdown, external calls (file I/O, GPU, OS).
+- **Profile critical paths** — `UZ_PROFILE_SCOPE` on GPU, disk, per-frame functions.
+- **Assert invariants** — `UZ_CHECK` for corruption, `UZ_ENSURE` for recoverable.
+- **Stat counters** — allocations, draw calls, frame time, cache hits via `StatCounter`.
+- **Error context** — log what failed, why, and what input caused it.
+
 ## Core Rules
 
 This project uses @hivellm/rulebook standards.
