@@ -35,6 +35,8 @@ pub fn build(b: *std.Build) void {
         tp ++ "glm",
         tp ++ "nlohmann",
         tp ++ "atomic_queue/include",
+        tp ++ "spirv-reflect/include",
+        tp ++ "xxhash",
     };
 
     // ── Runtime static library ───────────────────────────────────────────
@@ -52,6 +54,7 @@ pub fn build(b: *std.Build) void {
     runtime_mod.addCSourceFiles(.{ .root = b.path("core/assertions"), .files = &.{"uz_assert.cpp"}, .flags = cpp_flags });
     runtime_mod.addCSourceFiles(.{ .root = b.path("core/profiling"), .files = &.{"uz_profiler.cpp"}, .flags = cpp_flags });
     runtime_mod.addCSourceFiles(.{ .root = b.path("core/config"), .files = &.{"uz_config.cpp"}, .flags = cpp_flags });
+    runtime_mod.addCSourceFiles(.{ .root = b.path("core/math"), .files = &.{"uz_math.cpp"}, .flags = cpp_flags });
     runtime_mod.addCSourceFiles(.{ .root = b.path("platform/windows"), .files = &.{ "uz_platform_window.cpp", "uz_input.cpp" }, .flags = cpp_flags });
 
     // Thirdparty — spdlog
