@@ -104,7 +104,9 @@ pub fn build(b: *std.Build) void {
     // Test sources — custom main + per-module test files
     test_mod.addCSourceFiles(.{ .root = b.path("tests"), .files = &.{"test_main.cpp"}, .flags = cpp_flags });
     test_mod.addCSourceFiles(.{ .root = b.path("tests/core"), .files = &.{ "test_runtime_api.cpp", "test_logging.cpp", "test_assertions.cpp", "test_profiler.cpp", "test_memory.cpp", "test_config.cpp", "test_allocators.cpp" }, .flags = cpp_flags });
-    // TODO: math tests — need rewriting to match uz_math.h API
+    // Math tests disabled — stubs expect old split headers (uz_mat4.h, uz_quat.h) and old API
+    // (q.X() instead of q.x, Vec3::UnitY() static, RotateVector() instead of operator*)
+    // Implementation per IMPLEMENTATION-PLAN-1.1.md Task 1.1.0e
     // test_mod.addCSourceFiles(.{ .root = b.path("tests/core/math"), .files = &.{ "test_vec.cpp", "test_mat4.cpp", "test_quat.cpp", "test_transform.cpp", "test_color.cpp", "test_bounds.cpp" }, .flags = cpp_flags });
     test_mod.addCSourceFiles(.{ .root = b.path("tests/core/containers"), .files = &.{ "test_ring_buffer.cpp", "test_free_list.cpp", "test_handle_map.cpp", "test_frame_array.cpp" }, .flags = cpp_flags });
     test_mod.addCSourceFiles(.{ .root = b.path("tests/core/random"), .files = &.{"test_random.cpp"}, .flags = cpp_flags });

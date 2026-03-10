@@ -254,12 +254,8 @@ Clone-Repo -Name "mikktspace" `
     -Branch "master" `
     -RemoveDirs @()
 
-# Crashpad (crash reporting) — TODO: find working minimal crashpad repo
-# Clone-Repo -Name "crashpad" `
-#     -Url "https://github.com/nickvdp/mini-crashpad.git" `
-#     -Branch "main" `
-#     -RemoveDirs @("docs", "test")
-Write-Host "  [crashpad] skipped (manual setup required)" -ForegroundColor DarkYellow
+# Crashpad (crash reporting) — deferred to milestone 2.x when crash reporting is implemented
+Write-Host "  [crashpad] skipped (not needed until 2.x crash reporting)" -ForegroundColor DarkYellow
 
 # ─── Downloads ──────────────────────────────────────────────────────────────
 
