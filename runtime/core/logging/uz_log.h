@@ -1,8 +1,22 @@
 #pragma once
 
-/// UzEngine Logging System
-/// Category-based, compile-time filtered, spdlog-backed.
-/// Pattern: UE5's UE_LOG with fmt formatting.
+/// UzEngine Structured Logging System
+///
+/// Provides category-based, compile-time filtered logging via spdlog backend.
+/// Inspired by Unreal Engine 5's UE_LOG macro pattern with format string support.
+///
+/// # Design
+/// - **Categories**: Each subsystem defines its own LogCategory for filtering
+/// - **Compile-time filtering**: Trace/Debug stripped in shipping builds
+/// - **Thread-safe**: Uses mutex-protected logger pool
+/// - **Dual output**: Console (colored) + rotating file sink (10MB, 3 files)
+///
+/// # Usage
+/// ```cpp
+/// UZ_DEFINE_LOG_CATEGORY(MySystem, Trace);
+/// UZ_LOG(MySystem, Info, "Initialized with {} items", count);
+/// UZ_LOG(MySystem, Error, "Failed: {}", reason);
+/// ```
 
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
@@ -14,29 +28,64 @@
 
 namespace uz {
 
+/// Log severity level (ascending order: Trace is most verbose, Fatal is least).
 enum class LogLevel : uint8_t {
-    Trace = 0,
-    Debug = 1,
-    Info = 2,
-    Warning = 3,
-    Error = 4,
-    Fatal = 5,
+    Trace = 0,    ///< Very detailed diagnostic output (stripped in shipping)
+    Debug = 1,    ///< Debug messages (stripped in shipping)
+    Info = 2,     ///< General informational messages
+    Warning = 3,  ///< Warning conditions (non-fatal)
+    Error = 4,    ///< Error conditions (recoverable)
+    Fatal = 5,    ///< Fatal errors (calls std::abort after logging)
 };
 
-/// Log category — one per subsystem. Create with UZ_DECLARE_LOG_CATEGORY / UZ_DEFINE_LOG_CATEGORY.
+/// Log category metadata — one per subsystem.
+///
+/// Categories are typically created via UZ_DECLARE_LOG_CATEGORY (header)
+/// and UZ_DEFINE_LOG_CATEGORY (single .cpp file).
+/// Each category has a name and compile-time minimum level for filtering.
 struct LogCategory {
-    const char* name;
-    LogLevel compileTimeMin;
+    const char* name;              ///< Category identifier (e.g., "RHI", "Scene")
+    LogLevel compileTimeMin;       ///< Minimum level at compile time (stripped below)
 };
 
-/// Global log system initialization/shutdown.
+/// Initializes the global logging system.
+///
+/// # Arguments
+/// * `logFilePath` - Path to rotating log file. If empty or nullptr, only console logging.
+///
+/// # Behavior
+/// - Sets up console sink (colored output)
+/// - Sets up file sink (rotating: 10MB max, keeps 3 files)
+/// - Safe to call multiple times (no-op if already initialized)
 void LogInit(const char* logFilePath = "uzengine.log");
+
+/// Shuts down the global logging system.
+///
+/// # Behavior
+/// - Flushes all pending log messages
+/// - Destroys all logger instances
+/// - Safe to call multiple times (no-op if not initialized)
 void LogShutdown();
 
-/// Get or create a spdlog logger for a category.
+/// Gets or creates a spdlog logger for a category.
+///
+/// # Thread Safety
+/// Thread-safe via internal mutex.
+///
+/// # Returns
+/// Pointer to spdlog logger, or nullptr if LogInit not called.
+///
+/// # Caching
+/// Loggers are cached by category name — repeated calls are fast.
 spdlog::logger* LogGetLogger(const LogCategory& cat);
 
-/// Set runtime minimum level for all loggers.
+/// Sets runtime minimum level for all active loggers.
+///
+/// # Arguments
+/// * `level` - New minimum level (e.g., LogLevel::Warning to suppress Info)
+///
+/// # Thread Safety
+/// Thread-safe via internal mutex.
 void LogSetLevel(LogLevel level);
 
 } // namespace uz

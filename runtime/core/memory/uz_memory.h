@@ -1,8 +1,24 @@
 #pragma once
 
-/// UzEngine Memory Foundation
-/// Rust-inspired ownership: Own<T>, Ref<T>, RefMut<T>.
-/// Debug borrow checker validates at runtime. Zero-cost in release.
+/// UzEngine Memory Ownership System
+///
+/// Implements Rust-inspired ownership semantics in C++:
+/// - **Own<T>**: Exclusive ownership (unique_ptr-like)
+/// - **Ref<T>**: Immutable borrow (shared_ptr-like, but no modification)
+/// - **RefMut<T>**: Mutable borrow (exclusive mutable access)
+///
+/// # Borrow Checking
+/// - **Debug builds**: Runtime borrow tracking detects violations (asserts)
+/// - **Release builds**: Zero overhead (tracking compiled out)
+/// - **Rules enforced**:
+///   - Cannot hold mutable borrow while immutable borrows exist
+///   - Cannot hold multiple mutable borrows
+///   - Can hold multiple immutable borrows simultaneously
+///
+/// # Design Philosophy
+/// Catch memory safety bugs at compile-time (via type system) and runtime (borrow checks)
+/// rather than discovering them in production.
+/// Inspired by Rust's ownership model, adapted for C++ game engine constraints.
 
 #include <memory>
 #include <cstdint>

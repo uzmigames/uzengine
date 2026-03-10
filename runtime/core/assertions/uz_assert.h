@@ -1,7 +1,22 @@
 #pragma once
 
 /// UzEngine Assertion System
-/// Pattern: UE5's check/ensure/verify with crash context.
+///
+/// Provides three assertion types inspired by Unreal Engine 5's philosophy:
+/// - **UZ_CHECK**: Verify invariants (fatal in debug, stripped in shipping)
+/// - **UZ_ENSURE**: Handle recoverable conditions (logs + continues)
+/// - **UZ_VERIFY**: Must execute side effects (never stripped)
+///
+/// # Shipping Builds
+/// UZ_CHECK and UZ_ENSURE are compiled out in UZ_SHIPPING builds.
+/// UZ_VERIFY is always executed (because it may have side effects).
+///
+/// # Example
+/// ```cpp
+/// UZ_CHECK(device != nullptr);  // Fatal if null in debug
+/// if (!UZ_ENSURE(buffer.size() > 0)) return;  // Log, continue
+/// UZ_VERIFY(file.close());  // Always runs, checks result
+/// ```
 
 #include <cstdio>
 #include <cstdlib>
@@ -9,10 +24,31 @@
 
 namespace uz::detail {
 
-/// Report assertion failure. Returns true if execution should continue (ensure), false if fatal.
+/// Reports a recoverable assertion failure (used by UZ_ENSURE).
+///
+/// # Arguments
+/// * `expr` - The failed expression as a string (from macro)
+/// * `file` - Source file name (__FILE__)
+/// * `line` - Source line number (__LINE__)
+/// * `msg` - Optional formatted message or nullptr
+///
+/// # Returns
+/// Always returns false (the condition was false).
+/// Caller uses this to continue execution after logging.
 [[nodiscard]] bool AssertionFailed(const char* expr, const char* file, int line, const char* msg);
 
-/// Report fatal assertion. Never returns.
+/// Reports a fatal assertion failure (used by UZ_CHECK and UZ_VERIFY).
+///
+/// # Arguments
+/// * `expr` - The failed expression as a string (from macro)
+/// * `file` - Source file name (__FILE__)
+/// * `line` - Source line number (__LINE__)
+/// * `msg` - Optional formatted message or nullptr
+///
+/// # Behavior
+/// - Logs full context (expression, file, line, custom message)
+/// - Logs a stack trace (if available)
+/// - Calls std::abort() — NEVER RETURNS
 [[noreturn]] void FatalAssert(const char* expr, const char* file, int line, const char* msg);
 
 } // namespace uz::detail

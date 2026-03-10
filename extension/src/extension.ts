@@ -1,3 +1,8 @@
+/// UzEngine VSCode extension entry point.
+///
+/// This module initializes the UzEngine runtime addon and registers VSCode commands.
+/// It manages the lifecycle of the native addon, including initialization and shutdown.
+
 import * as vscode from 'vscode';
 import * as path from 'path';
 
@@ -6,6 +11,15 @@ const addon = require(path.join(__dirname, '..', 'native', 'uzengine.node'));
 
 let log: vscode.LogOutputChannel;
 
+/// Activates the UzEngine extension.
+///
+/// # Arguments
+/// * `context` - The extension context provided by VSCode, used to manage subscriptions.
+///
+/// # Behavior
+/// - Creates a log output channel for UzEngine
+/// - Loads the native addon and displays version/backend info
+/// - Registers the 'uzengine.start' command to initialize the runtime
 export function activate(context: vscode.ExtensionContext) {
   log = vscode.window.createOutputChannel('UzEngine', { log: true });
   context.subscriptions.push(log);
@@ -23,6 +37,11 @@ export function activate(context: vscode.ExtensionContext) {
   );
 }
 
+/// Deactivates the UzEngine extension.
+///
+/// # Behavior
+/// - Cleanly shuts down the native addon
+/// - Releases all GPU and system resources
 export function deactivate() {
   addon.shutdown();
 }
