@@ -1,6 +1,7 @@
-#include <gtest/gtest.h>
 #include "uz_runtime.h"
+
 #include <cstring>
+#include <gtest/gtest.h>
 
 TEST(RuntimeAPI, VersionReturnsValidString) {
     ASSERT_NE(uz_runtime_version(), nullptr);

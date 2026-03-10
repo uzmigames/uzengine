@@ -3,10 +3,10 @@
 /// UzEngine Allocators — LinearAllocator, PoolAllocator, FrameAllocator.
 /// All allocators are named and tracked for memory budget debugging.
 
-#include <cstdint>
-#include <cstddef>
-#include <cstdlib>
 #include <cassert>
+#include <cstddef>
+#include <cstdint>
+#include <cstdlib>
 #include <new>
 #include <type_traits>
 
@@ -15,34 +15,31 @@ namespace uz {
 // ── LinearAllocator — bump pointer, reset to start ──────────────────────────
 
 class LinearAllocator {
-public:
+  public:
     LinearAllocator(const char* name, size_t sizeBytes)
-        : m_name(name)
-        , m_size(sizeBytes)
-        , m_offset(0) {
+        : m_name(name), m_size(sizeBytes), m_offset(0) {
         m_buffer = static_cast<uint8_t*>(std::malloc(sizeBytes));
         assert(m_buffer && "LinearAllocator: allocation failed");
     }
 
-    ~LinearAllocator() {
-        std::free(m_buffer);
-    }
+    ~LinearAllocator() { std::free(m_buffer); }
 
     LinearAllocator(const LinearAllocator&) = delete;
     LinearAllocator& operator=(const LinearAllocator&) = delete;
 
     void* Alloc(size_t size, size_t alignment = alignof(std::max_align_t)) {
         size_t aligned = AlignUp(m_offset, alignment);
-        if (aligned + size > m_size) return nullptr; // out of memory
+        if (aligned + size > m_size)
+            return nullptr; // out of memory
         void* ptr = m_buffer + aligned;
         m_offset = aligned + size;
         return ptr;
     }
 
-    template <typename T, typename... Args>
-    T* New(Args&&... args) {
+    template <typename T, typename... Args> T* New(Args&&... args) {
         void* mem = Alloc(sizeof(T), alignof(T));
-        if (!mem) return nullptr;
+        if (!mem)
+            return nullptr;
         return new (mem) T(static_cast<Args&&>(args)...);
     }
 
@@ -53,7 +50,7 @@ public:
     size_t GetSize() const { return m_size; }
     const char* Name() const { return m_name; }
 
-private:
+  private:
     static size_t AlignUp(size_t offset, size_t alignment) {
         return (offset + alignment - 1) & ~(alignment - 1);
     }
@@ -66,13 +63,10 @@ private:
 
 // ── PoolAllocator — fixed-size block pool with free list ────────────────────
 
-template <typename T>
-class PoolAllocator {
-public:
+template <typename T> class PoolAllocator {
+  public:
     PoolAllocator(const char* name, size_t capacity)
-        : m_name(name)
-        , m_capacity(capacity)
-        , m_count(0) {
+        : m_name(name), m_capacity(capacity), m_count(0) {
         size_t blockSize = sizeof(T) > sizeof(void*) ? sizeof(T) : sizeof(void*);
         m_blockSize = blockSize;
         m_buffer = static_cast<uint8_t*>(std::malloc(blockSize * capacity));
@@ -88,16 +82,14 @@ public:
         *lastSlot = nullptr;
     }
 
-    ~PoolAllocator() {
-        std::free(m_buffer);
-    }
+    ~PoolAllocator() { std::free(m_buffer); }
 
     PoolAllocator(const PoolAllocator&) = delete;
     PoolAllocator& operator=(const PoolAllocator&) = delete;
 
-    template <typename... Args>
-    T* Alloc(Args&&... args) {
-        if (!m_freeHead) return nullptr;
+    template <typename... Args> T* Alloc(Args&&... args) {
+        if (!m_freeHead)
+            return nullptr;
         void* block = m_freeHead;
         m_freeHead = *static_cast<void**>(block);
         ++m_count;
@@ -122,7 +114,7 @@ public:
     size_t GetCapacity() const { return m_capacity; }
     const char* Name() const { return m_name; }
 
-private:
+  private:
     const char* m_name;
     uint8_t* m_buffer;
     void* m_freeHead;
@@ -134,16 +126,14 @@ private:
 // ── FrameAllocator — linear allocator that auto-resets each frame ───────────
 
 class FrameAllocator {
-public:
-    FrameAllocator(const char* name, size_t sizeBytes)
-        : m_alloc(name, sizeBytes) {}
+  public:
+    FrameAllocator(const char* name, size_t sizeBytes) : m_alloc(name, sizeBytes) {}
 
     void* Alloc(size_t size, size_t alignment = alignof(std::max_align_t)) {
         return m_alloc.Alloc(size, alignment);
     }
 
-    template <typename T, typename... Args>
-    T* New(Args&&... args) {
+    template <typename T, typename... Args> T* New(Args&&... args) {
         return m_alloc.New<T>(static_cast<Args&&>(args)...);
     }
 
@@ -153,7 +143,7 @@ public:
     size_t Remaining() const { return m_alloc.Remaining(); }
     const char* Name() const { return m_alloc.Name(); }
 
-private:
+  private:
     LinearAllocator m_alloc;
 };
 

@@ -21,32 +21,31 @@ LRESULT CALLBACK PlatformWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
     auto* self = reinterpret_cast<PlatformWindow*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
 
     switch (msg) {
-        case WM_CREATE: {
-            auto* cs = reinterpret_cast<CREATESTRUCTW*>(lp);
-            SetWindowLongPtrW(hwnd, GWLP_USERDATA,
-                              reinterpret_cast<LONG_PTR>(cs->lpCreateParams));
-            return 0;
+    case WM_CREATE: {
+        auto* cs = reinterpret_cast<CREATESTRUCTW*>(lp);
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(cs->lpCreateParams));
+        return 0;
+    }
+
+    case WM_SIZE: {
+        if (self && wp != SIZE_MINIMIZED) {
+            self->m_width = LOWORD(lp);
+            self->m_height = HIWORD(lp);
+            self->m_resized = true;
         }
+        return 0;
+    }
 
-        case WM_SIZE: {
-            if (self && wp != SIZE_MINIMIZED) {
-                self->m_width = LOWORD(lp);
-                self->m_height = HIWORD(lp);
-                self->m_resized = true;
-            }
-            return 0;
+    case WM_CLOSE:
+        if (self) {
+            self->m_open = false;
+            UZ_LOG(Window, Info, "Window close requested");
         }
+        return 0;
 
-        case WM_CLOSE:
-            if (self) {
-                self->m_open = false;
-                UZ_LOG(Window, Info, "Window close requested");
-            }
-            return 0;
-
-        case WM_DESTROY:
-            PostQuitMessage(0);
-            return 0;
+    case WM_DESTROY:
+        PostQuitMessage(0);
+        return 0;
     }
 
     return DefWindowProcW(hwnd, msg, wp, lp);
@@ -77,7 +76,7 @@ bool PlatformWindow::Create(const WindowDesc& desc) {
         style &= ~(WS_THICKFRAME | WS_MAXIMIZEBOX);
     }
 
-    RECT rect = { 0, 0, desc.width, desc.height };
+    RECT rect = {0, 0, desc.width, desc.height};
     AdjustWindowRect(&rect, style, FALSE);
 
     int adjustedWidth = rect.right - rect.left;
@@ -87,12 +86,9 @@ bool PlatformWindow::Create(const WindowDesc& desc) {
     wchar_t wTitle[256] = {};
     MultiByteToWideChar(CP_UTF8, 0, desc.title, -1, wTitle, 256);
 
-    m_hwnd = CreateWindowExW(
-        0, kWindowClass, wTitle, style,
-        CW_USEDEFAULT, CW_USEDEFAULT,
-        adjustedWidth, adjustedHeight,
-        nullptr, nullptr, m_hinstance,
-        this  // passed to WM_CREATE → GWLP_USERDATA
+    m_hwnd = CreateWindowExW(0, kWindowClass, wTitle, style, CW_USEDEFAULT, CW_USEDEFAULT,
+                             adjustedWidth, adjustedHeight, nullptr, nullptr, m_hinstance,
+                             this // passed to WM_CREATE → GWLP_USERDATA
     );
 
     if (!m_hwnd) {
@@ -107,18 +103,16 @@ bool PlatformWindow::Create(const WindowDesc& desc) {
     if (desc.fullscreen) {
         // Borderless fullscreen
         HMONITOR monitor = MonitorFromWindow(m_hwnd, MONITOR_DEFAULTTOPRIMARY);
-        MONITORINFO mi = { sizeof(mi) };
+        MONITORINFO mi = {sizeof(mi)};
         GetMonitorInfoW(monitor, &mi);
         SetWindowLongPtrW(m_hwnd, GWL_STYLE, WS_POPUP | WS_VISIBLE);
-        SetWindowPos(m_hwnd, HWND_TOP,
-                     mi.rcMonitor.left, mi.rcMonitor.top,
-                     mi.rcMonitor.right - mi.rcMonitor.left,
-                     mi.rcMonitor.bottom - mi.rcMonitor.top,
+        SetWindowPos(m_hwnd, HWND_TOP, mi.rcMonitor.left, mi.rcMonitor.top,
+                     mi.rcMonitor.right - mi.rcMonitor.left, mi.rcMonitor.bottom - mi.rcMonitor.top,
                      SWP_FRAMECHANGED);
     }
 
-    UZ_LOG(Window, Info, "Window created: {}x{} ({})",
-           m_width, m_height, desc.fullscreen ? "fullscreen" : "windowed");
+    UZ_LOG(Window, Info, "Window created: {}x{} ({})", m_width, m_height,
+           desc.fullscreen ? "fullscreen" : "windowed");
 
     return true;
 }
@@ -150,11 +144,13 @@ bool PlatformWindow::PumpMessages() {
 }
 
 void PlatformWindow::Show() {
-    if (m_hwnd) ShowWindow(m_hwnd, SW_SHOW);
+    if (m_hwnd)
+        ShowWindow(m_hwnd, SW_SHOW);
 }
 
 void PlatformWindow::Hide() {
-    if (m_hwnd) ShowWindow(m_hwnd, SW_HIDE);
+    if (m_hwnd)
+        ShowWindow(m_hwnd, SW_HIDE);
 }
 
 } // namespace uz

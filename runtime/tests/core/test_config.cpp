@@ -1,10 +1,11 @@
-#include <gtest/gtest.h>
 #include "uz_config.h"
 #include "uz_log.h"
+
+#include <gtest/gtest.h>
 #include <string>
 
 class ConfigTest : public ::testing::Test {
-protected:
+  protected:
     void SetUp() override { uz::LogInit(); }
     void TearDown() override { uz::LogShutdown(); }
 };
@@ -41,7 +42,7 @@ TEST_F(ConfigTest, CLIOverridesApplyCorrectly) {
     uz::Config cfg;
     cfg.LoadFromString(R"({ "name": "Original", "debug": false })");
 
-    const char* argv[] = { "engine", "--name=Overridden", "--debug=true", "--extra", "hello" };
+    const char* argv[] = {"engine", "--name=Overridden", "--debug=true", "--extra", "hello"};
     cfg.ApplyCLIOverrides(5, argv);
 
     EXPECT_EQ(cfg.GetString("name"), "Overridden");

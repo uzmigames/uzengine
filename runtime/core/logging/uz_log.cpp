@@ -1,12 +1,11 @@
 #include "uz_log.h"
 
-#include <spdlog/sinks/stdout_color_sinks.h>
-#include <spdlog/sinks/rotating_file_sink.h>
-#include <spdlog/spdlog.h>
-
 #include <mutex>
-#include <unordered_map>
+#include <spdlog/sinks/rotating_file_sink.h>
+#include <spdlog/sinks/stdout_color_sinks.h>
+#include <spdlog/spdlog.h>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 /// Built-in log category definitions (global scope, matching declarations in header)
@@ -46,7 +45,8 @@ static bool g_initialized = false;
 /// Console: `[2024-03-10 14:32:45.123] [RHI] [ERROR] Device lost`
 /// File: Same but without color codes
 void LogInit(const char* logFilePath) {
-    if (g_initialized) return;
+    if (g_initialized)
+        return;
 
     // Console sink with color support
     auto consoleSink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
@@ -55,8 +55,8 @@ void LogInit(const char* logFilePath) {
 
     // File sink: rotating (10MB max, 3 files kept)
     if (logFilePath && logFilePath[0] != '\0') {
-        auto fileSink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
-            logFilePath, 10 * 1024 * 1024, 3);
+        auto fileSink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(logFilePath,
+                                                                               10 * 1024 * 1024, 3);
         fileSink->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%n] [%l] %v");
         g_sinks.push_back(fileSink);
     }
@@ -72,7 +72,8 @@ void LogInit(const char* logFilePath) {
 /// - Clears all sinks
 /// - Sets g_initialized = false (allows re-init)
 void LogShutdown() {
-    if (!g_initialized) return;
+    if (!g_initialized)
+        return;
 
     spdlog::shutdown();
 
@@ -95,7 +96,8 @@ void LogShutdown() {
 /// - Pointer to spdlog logger (never nullptr if initialized)
 /// - nullptr if LogInit() not called
 spdlog::logger* LogGetLogger(const LogCategory& cat) {
-    if (!g_initialized) return nullptr;
+    if (!g_initialized)
+        return nullptr;
 
     std::lock_guard<std::mutex> lock(g_loggerMutex);
 
@@ -105,10 +107,9 @@ spdlog::logger* LogGetLogger(const LogCategory& cat) {
     }
 
     // Create new logger with shared sinks (console + file)
-    auto logger = std::make_shared<spdlog::logger>(
-        cat.name, g_sinks.begin(), g_sinks.end());
+    auto logger = std::make_shared<spdlog::logger>(cat.name, g_sinks.begin(), g_sinks.end());
     logger->set_level(detail::ToSpdlogLevel(cat.compileTimeMin));
-    logger->flush_on(spdlog::level::err);  // Auto-flush on Error and Fatal
+    logger->flush_on(spdlog::level::err); // Auto-flush on Error and Fatal
 
     g_loggers[cat.name] = logger;
     return logger.get();

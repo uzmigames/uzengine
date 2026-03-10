@@ -25,9 +25,9 @@
 /// Can rebind or disable contexts at runtime.
 
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <unordered_map>
-#include <functional>
 
 namespace uz {
 
@@ -45,34 +45,88 @@ namespace uz {
 /// if (input.JustPressed(Key::Space)) { /* jump */ }
 /// ```
 enum class Key : uint16_t {
-    Unknown = 0,  ///< Unknown/unsupported key
+    Unknown = 0, ///< Unknown/unsupported key
 
     // ──── Letters (A-Z) ────
-    A = 'A', B = 'B', C = 'C', D = 'D', E = 'E', F = 'F', G = 'G', H = 'H',
-    I = 'I', J = 'J', K = 'K', L = 'L', M = 'M', N = 'N', O = 'O', P = 'P',
-    Q = 'Q', R = 'R', S = 'S', T = 'T', U = 'U', V = 'V', W = 'W', X = 'X',
-    Y = 'Y', Z = 'Z',
+    A = 'A',
+    B = 'B',
+    C = 'C',
+    D = 'D',
+    E = 'E',
+    F = 'F',
+    G = 'G',
+    H = 'H',
+    I = 'I',
+    J = 'J',
+    K = 'K',
+    L = 'L',
+    M = 'M',
+    N = 'N',
+    O = 'O',
+    P = 'P',
+    Q = 'Q',
+    R = 'R',
+    S = 'S',
+    T = 'T',
+    U = 'U',
+    V = 'V',
+    W = 'W',
+    X = 'X',
+    Y = 'Y',
+    Z = 'Z',
 
     // ──── Numbers (0-9) ────
-    Num0 = '0', Num1 = '1', Num2 = '2', Num3 = '3', Num4 = '4',
-    Num5 = '5', Num6 = '6', Num7 = '7', Num8 = '8', Num9 = '9',
+    Num0 = '0',
+    Num1 = '1',
+    Num2 = '2',
+    Num3 = '3',
+    Num4 = '4',
+    Num5 = '5',
+    Num6 = '6',
+    Num7 = '7',
+    Num8 = '8',
+    Num9 = '9',
 
     // ──── Function Keys (F1-F12) ────
-    F1 = 0x70, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11, F12,
+    F1 = 0x70,
+    F2,
+    F3,
+    F4,
+    F5,
+    F6,
+    F7,
+    F8,
+    F9,
+    F10,
+    F11,
+    F12,
 
     // ──── Special Keys ────
-    Escape = 0x1B, Tab = 0x09, Space = 0x20, Enter = 0x0D, Backspace = 0x08,
-    LeftShift = 0xA0, RightShift = 0xA1,    ///< Shift (left/right)
-    LeftCtrl = 0xA2, RightCtrl = 0xA3,      ///< Control (left/right)
-    LeftAlt = 0xA4, RightAlt = 0xA5,        ///< Alt (left/right)
+    Escape = 0x1B,
+    Tab = 0x09,
+    Space = 0x20,
+    Enter = 0x0D,
+    Backspace = 0x08,
+    LeftShift = 0xA0,
+    RightShift = 0xA1, ///< Shift (left/right)
+    LeftCtrl = 0xA2,
+    RightCtrl = 0xA3, ///< Control (left/right)
+    LeftAlt = 0xA4,
+    RightAlt = 0xA5, ///< Alt (left/right)
 
     // ──── Arrow Keys ────
-    Left = 0x25, Up = 0x26, Right = 0x27, Down = 0x28,
+    Left = 0x25,
+    Up = 0x26,
+    Right = 0x27,
+    Down = 0x28,
 
     // ──── Misc Keys ────
-    Delete = 0x2E, Insert = 0x2D,
-    Home = 0x24, End = 0x23,
-    PageUp = 0x21, PageDown = 0x22,
+    Delete = 0x2E,
+    Insert = 0x2D,
+    Home = 0x24,
+    End = 0x23,
+    PageUp = 0x21,
+    PageDown = 0x22,
 };
 
 /// Mouse button codes.
@@ -83,7 +137,7 @@ enum class Key : uint16_t {
 /// # Extended buttons
 /// Side buttons (Browser Back/Forward) on gaming mice
 enum class MouseButton : uint8_t {
-    Left = 0,      ///< Left mouse button (primary)
+    Left = 0, ///< Left mouse button (primary)
     Right = 1,
     Middle = 2,
     X1 = 3,
@@ -94,7 +148,7 @@ enum class MouseButton : uint8_t {
 // ── Input state ─────────────────────────────────────────────────────────────
 
 class InputSystem {
-public:
+  public:
     void Init();
     void Shutdown();
 
@@ -128,7 +182,7 @@ public:
     void OnMouseButton(MouseButton btn, bool down);
     void OnMouseScroll(float delta);
 
-private:
+  private:
     static constexpr int kMaxKeys = 256;
 
     bool m_keyCurrent[kMaxKeys] = {};

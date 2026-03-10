@@ -1,5 +1,6 @@
-#include <gtest/gtest.h>
 #include "uz_frame_array.h"
+
+#include <gtest/gtest.h>
 
 using namespace uz;
 
@@ -50,7 +51,8 @@ TEST(FrameArrayTest, RangeFor) {
     arr.Push(2);
     arr.Push(3);
     int sum = 0;
-    for (int v : arr) sum += v;
+    for (int v : arr)
+        sum += v;
     EXPECT_EQ(sum, 6);
 }
 

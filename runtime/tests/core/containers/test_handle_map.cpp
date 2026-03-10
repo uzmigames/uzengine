@@ -1,5 +1,6 @@
-#include <gtest/gtest.h>
 #include "uz_handle_map.h"
+
+#include <gtest/gtest.h>
 
 using namespace uz;
 
@@ -13,7 +14,7 @@ struct Resource {
 int Resource::alive = 0;
 
 class HandleMapTest : public ::testing::Test {
-protected:
+  protected:
     void SetUp() override { Resource::alive = 0; }
 };
 

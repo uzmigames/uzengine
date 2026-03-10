@@ -2,8 +2,9 @@
 /// SIMD-accelerated vector and matrix operations via DirectXMath
 
 #include "uz_math.h"
-#include <cassert>
+
 #include <algorithm>
+#include <cassert>
 
 namespace uz {
 
@@ -50,19 +51,11 @@ Vec3 Vec3::normalize() const {
 }
 
 Vec3 Vec3::max(const Vec3& other) const {
-    return {
-        std::max(x, other.x),
-        std::max(y, other.y),
-        std::max(z, other.z)
-    };
+    return {std::max(x, other.x), std::max(y, other.y), std::max(z, other.z)};
 }
 
 Vec3 Vec3::min(const Vec3& other) const {
-    return {
-        std::min(x, other.x),
-        std::min(y, other.y),
-        std::min(z, other.z)
-    };
+    return {std::min(x, other.x), std::min(y, other.y), std::min(z, other.z)};
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -327,4 +320,4 @@ Transform Transform::scaleBy(const Vec3& s) const {
     return {position, rotation, scale * s};
 }
 
-}  // namespace uz
+} // namespace uz

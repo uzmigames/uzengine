@@ -25,9 +25,9 @@
 /// e = entities.Get(h);  // nullptr: handle stale
 /// ```
 
-#include <cstdint>
-#include <cstddef>
 #include <cassert>
+#include <cstddef>
+#include <cstdint>
 #include <new>
 #include <type_traits>
 
@@ -52,16 +52,17 @@ namespace uz {
 /// Handle<Entity> h2 = map.Create(...);  // {0, 2}
 /// assert(h1 != h2);  // true: same slot, different generation
 /// ```
-template <typename T>
-struct Handle {
-    uint32_t index = 0;          ///< Slot index in pool
-    uint32_t generation = 0;     ///< Version counter (0 = invalid)
+template <typename T> struct Handle {
+    uint32_t index = 0;      ///< Slot index in pool
+    uint32_t generation = 0; ///< Version counter (0 = invalid)
 
     /// Returns true if this handle was ever created (generation != 0).
     bool IsValid() const { return generation != 0; }
 
     /// Equality: both index and generation must match.
-    bool operator==(Handle other) const { return index == other.index && generation == other.generation; }
+    bool operator==(Handle other) const {
+        return index == other.index && generation == other.generation;
+    }
 
     /// Inequality: either index or generation differs.
     bool operator!=(Handle other) const { return !(*this == other); }
@@ -73,11 +74,10 @@ struct Handle {
 
 // ── HandleMap — sparse generational array ────────────────────────────────────
 
-template <typename T, size_t Capacity>
-class HandleMap {
+template <typename T, size_t Capacity> class HandleMap {
     static_assert(Capacity > 0, "Capacity must be > 0");
 
-public:
+  public:
     HandleMap() {
         for (size_t i = 0; i < Capacity - 1; ++i) {
             m_freeNext[i] = static_cast<uint32_t>(i + 1);
@@ -98,9 +98,9 @@ public:
     HandleMap(const HandleMap&) = delete;
     HandleMap& operator=(const HandleMap&) = delete;
 
-    template <typename... Args>
-    Handle<T> Create(Args&&... args) {
-        if (m_freeHead == kInvalid) return Handle<T>::Invalid();
+    template <typename... Args> Handle<T> Create(Args&&... args) {
+        if (m_freeHead == kInvalid)
+            return Handle<T>::Invalid();
         uint32_t idx = m_freeHead;
         m_freeHead = m_freeNext[idx];
         m_generation[idx]++;
@@ -111,7 +111,8 @@ public:
     }
 
     void Destroy(Handle<T> h) {
-        if (!IsValidHandle(h)) return;
+        if (!IsValidHandle(h))
+            return;
         reinterpret_cast<T&>(m_storage[h.index]).~T();
         m_alive[h.index] = false;
         m_freeNext[h.index] = m_freeHead;
@@ -120,27 +121,26 @@ public:
     }
 
     T* Get(Handle<T> h) {
-        if (!IsValidHandle(h)) return nullptr;
+        if (!IsValidHandle(h))
+            return nullptr;
         return &reinterpret_cast<T&>(m_storage[h.index]);
     }
 
     const T* Get(Handle<T> h) const {
-        if (!IsValidHandle(h)) return nullptr;
+        if (!IsValidHandle(h))
+            return nullptr;
         return &reinterpret_cast<const T&>(m_storage[h.index]);
     }
 
     bool IsValidHandle(Handle<T> h) const {
-        return h.index < Capacity
-            && m_alive[h.index]
-            && m_generation[h.index] == h.generation;
+        return h.index < Capacity && m_alive[h.index] && m_generation[h.index] == h.generation;
     }
 
     size_t Count() const { return m_count; }
     size_t GetCapacity() const { return Capacity; }
 
     // Iterate over all alive entries
-    template <typename Fn>
-    void ForEach(Fn&& fn) {
+    template <typename Fn> void ForEach(Fn&& fn) {
         for (size_t i = 0; i < Capacity; ++i) {
             if (m_alive[i]) {
                 fn(Handle<T>{static_cast<uint32_t>(i), m_generation[i]},
@@ -149,7 +149,7 @@ public:
         }
     }
 
-private:
+  private:
     static constexpr uint32_t kInvalid = 0xFFFFFFFF;
 
     typename std::aligned_storage<sizeof(T), alignof(T)>::type m_storage[Capacity];

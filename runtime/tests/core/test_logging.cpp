@@ -1,11 +1,10 @@
-#include <gtest/gtest.h>
 #include "uz_log.h"
 
+#include <gtest/gtest.h>
+
 class LoggingTest : public ::testing::Test {
-protected:
-    void TearDown() override {
-        uz::LogShutdown();
-    }
+  protected:
+    void TearDown() override { uz::LogShutdown(); }
 };
 
 TEST_F(LoggingTest, InitAndShutdownAreSafe) {

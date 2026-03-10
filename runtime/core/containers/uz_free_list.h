@@ -21,9 +21,9 @@
 /// particles.Free(p);
 /// ```
 
-#include <cstdint>
-#include <cstddef>
 #include <cassert>
+#include <cstddef>
+#include <cstdint>
 #include <new>
 #include <type_traits>
 
@@ -38,11 +38,10 @@ namespace uz {
 /// # Thread Safety
 /// NOT thread-safe: single-threaded use only.
 /// For multi-threaded access, use external synchronization (mutex).
-template <typename T, size_t Capacity>
-class FreeList {
+template <typename T, size_t Capacity> class FreeList {
     static_assert(Capacity > 0, "Capacity must be > 0");
 
-public:
+  public:
     /// Initializes empty free list with Capacity slots available.
     ///
     /// # Behavior
@@ -92,9 +91,9 @@ public:
     /// Entity* e = list.Alloc(position, velocity);
     /// if (!e) { /* out of space */ }
     /// ```
-    template <typename... Args>
-    T* Alloc(Args&&... args) {
-        if (m_freeHead == kInvalid) return nullptr; // full
+    template <typename... Args> T* Alloc(Args&&... args) {
+        if (m_freeHead == kInvalid)
+            return nullptr; // full
         uint32_t idx = m_freeHead;
         m_freeHead = m_next[idx];
         T* ptr = new (&m_storage[idx]) T(static_cast<Args&&>(args)...);
@@ -182,7 +181,7 @@ public:
         return &reinterpret_cast<const T&>(m_storage[idx]);
     }
 
-private:
+  private:
     static constexpr uint32_t kInvalid = 0xFFFFFFFF;
 
     typename std::aligned_storage<sizeof(T), alignof(T)>::type m_storage[Capacity];

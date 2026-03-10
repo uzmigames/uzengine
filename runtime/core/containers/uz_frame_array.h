@@ -29,9 +29,9 @@
 /// commands.Clear();  // Ready for next frame
 /// ```
 
-#include <cstdint>
-#include <cstddef>
 #include <cassert>
+#include <cstddef>
+#include <cstdint>
 #include <cstring>
 #include <new>
 
@@ -47,18 +47,15 @@ namespace uz {
 /// - No free: only Clear() resets
 /// - No resize: adding past Capacity asserts
 /// - Not thread-safe: single-threaded use or external sync
-template <typename T, size_t Capacity>
-class FrameArray {
+template <typename T, size_t Capacity> class FrameArray {
     static_assert(Capacity > 0, "Capacity must be > 0");
 
-public:
+  public:
     /// Initializes empty linear allocator.
     FrameArray() = default;
 
     /// Destructs all remaining elements.
-    ~FrameArray() {
-        Clear();
-    }
+    ~FrameArray() { Clear(); }
 
     FrameArray(const FrameArray&) = delete;
     FrameArray& operator=(const FrameArray&) = delete;
@@ -77,8 +74,7 @@ public:
         return *ptr;
     }
 
-    template <typename... Args>
-    T& Emplace(Args&&... args) {
+    template <typename... Args> T& Emplace(Args&&... args) {
         assert(m_count < Capacity && "FrameArray overflow");
         T* ptr = new (&Storage(m_count)) T(static_cast<Args&&>(args)...);
         ++m_count;
@@ -92,8 +88,14 @@ public:
         m_count = 0;
     }
 
-    T& operator[](size_t i) { assert(i < m_count); return At(i); }
-    const T& operator[](size_t i) const { assert(i < m_count); return At(i); }
+    T& operator[](size_t i) {
+        assert(i < m_count);
+        return At(i);
+    }
+    const T& operator[](size_t i) const {
+        assert(i < m_count);
+        return At(i);
+    }
 
     T* Data() { return m_count > 0 ? &At(0) : nullptr; }
     const T* Data() const { return m_count > 0 ? &At(0) : nullptr; }
@@ -108,7 +110,7 @@ public:
     const T* begin() const { return Data(); }
     const T* end() const { return Data() + m_count; }
 
-private:
+  private:
     T& At(size_t i) { return reinterpret_cast<T&>(m_storage[i]); }
     const T& At(size_t i) const { return reinterpret_cast<const T&>(m_storage[i]); }
 

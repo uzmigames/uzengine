@@ -14,21 +14,21 @@ namespace uz {
 /// Groups are displayed together in profiler UI / debug output.
 
 /// Rendering subsystem stats (draw calls, triangles, state changes).
-StatGroup StatRendering { "Rendering" };
+StatGroup StatRendering{"Rendering"};
 
 /// RHI backend stats (GPU fence waits, descriptor heap usage).
-StatGroup StatRHI       { "RHI" };
+StatGroup StatRHI{"RHI"};
 
 /// Physics subsystem stats (collisions, constraint solves, queries).
-StatGroup StatPhysics   { "Physics" };
+StatGroup StatPhysics{"Physics"};
 
 /// Scene/ECS stats (entity count, component queries, tree traversals).
-StatGroup StatScene     { "Scene" };
+StatGroup StatScene{"Scene"};
 
 /// Memory system stats (allocations, deallocations, pool usage).
-StatGroup StatMemory    { "Memory" };
+StatGroup StatMemory{"Memory"};
 
 /// I/O subsystem stats (file reads, asset loads, shader compiles).
-StatGroup StatIO        { "IO" };
+StatGroup StatIO{"IO"};
 
 } // namespace uz

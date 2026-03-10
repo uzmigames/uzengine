@@ -40,11 +40,11 @@ namespace uz {
 ///
 /// Passed to PlatformWindow::Create() to configure HWND behavior.
 struct WindowDesc {
-    const char* title = "UzEngine";      ///< Window title bar text
-    int32_t width = 1280;                ///< Initial window width (pixels)
-    int32_t height = 720;                ///< Initial window height (pixels)
-    bool resizable = true;               ///< Allow user window resizing
-    bool fullscreen = false;             ///< Request fullscreen mode
+    const char* title = "UzEngine"; ///< Window title bar text
+    int32_t width = 1280;           ///< Initial window width (pixels)
+    int32_t height = 720;           ///< Initial window height (pixels)
+    bool resizable = true;          ///< Allow user window resizing
+    bool fullscreen = false;        ///< Request fullscreen mode
 };
 
 /// Platform window abstraction (Win32 HWND wrapper).
@@ -52,7 +52,7 @@ struct WindowDesc {
 /// Single-threaded: all calls from main thread.
 /// Thread-safe for: IsOpen(), GetWidth(), GetHeight() (read-only).
 class PlatformWindow {
-public:
+  public:
     /// Initializes empty window (not yet created).
     PlatformWindow() = default;
 
@@ -141,7 +141,7 @@ public:
     HINSTANCE GetHInstance() const { return m_hinstance; }
 #endif
 
-private:
+  private:
 #ifdef _WIN32
     HWND m_hwnd = nullptr;
     HINSTANCE m_hinstance = nullptr;

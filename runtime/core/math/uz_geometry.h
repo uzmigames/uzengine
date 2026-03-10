@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include <algorithm>
+
 #include "uz_math.h"
 
 namespace uz {
@@ -23,9 +25,7 @@ struct Plane {
     /// Create plane from coefficients (a, b, c, d) where normal = (a, b, c).
     Plane(float a, float b, float c, float d) : a(a), b(b), c(c), d(d) {}
     /// Create plane from XMVECTOR (packed as XMFLOAT4 coefficients).
-    explicit Plane(const XMVECTOR& xm) {
-        XMStoreFloat4(reinterpret_cast<XMFLOAT4*>(this), xm);
-    }
+    explicit Plane(const XMVECTOR& xm) { XMStoreFloat4(reinterpret_cast<XMFLOAT4*>(this), xm); }
 
     /// Conversion to XMVECTOR for SIMD operations.
     XMVECTOR toXM() const { return XMLoadFloat4(reinterpret_cast<const XMFLOAT4*>(this)); }
@@ -54,18 +54,16 @@ struct AABB {
 
     /// Test if point is strictly inside AABB (including boundary).
     bool contains(const Vec3& p) const {
-        return p.x >= min.x && p.x <= max.x &&
-               p.y >= min.y && p.y <= max.y &&
-               p.z >= min.z && p.z <= max.z;
+        return p.x >= min.x && p.x <= max.x && p.y >= min.y && p.y <= max.y && p.z >= min.z &&
+               p.z <= max.z;
     }
     /// Uppercase alias for test compatibility.
     bool Contains(const Vec3& p) const { return contains(p); }
 
     /// Test if another AABB overlaps this one (inclusive).
     bool intersects(const AABB& other) const {
-        return !(max.x < other.min.x || min.x > other.max.x ||
-                 max.y < other.min.y || min.y > other.max.y ||
-                 max.z < other.min.z || min.z > other.max.z);
+        return !(max.x < other.min.x || min.x > other.max.x || max.y < other.min.y ||
+                 min.y > other.max.y || max.z < other.min.z || min.z > other.max.z);
     }
     /// Uppercase alias for test compatibility.
     bool Intersects(const AABB& other) const { return intersects(other); }
@@ -83,7 +81,9 @@ struct AABB {
         return (dx * dx + dy * dy + dz * dz) <= (radius * radius);
     }
     /// Uppercase alias for test compatibility.
-    bool IntersectsSphere(const Vec3& center, float radius) const { return intersectsSphere(center, radius); }
+    bool IntersectsSphere(const Vec3& center, float radius) const {
+        return intersectsSphere(center, radius);
+    }
 
     /// Expand AABB to include point (returns new AABB, non-mutating).
     AABB expand(const Vec3& p) const {
@@ -130,9 +130,7 @@ struct AABB {
     float Volume() const { return volume(); }
 
     /// Check if AABB is valid (min <= max in all dimensions).
-    bool isValid() const {
-        return min.x <= max.x && min.y <= max.y && min.z <= max.z;
-    }
+    bool isValid() const { return min.x <= max.x && min.y <= max.y && min.z <= max.z; }
     /// Uppercase alias for consistency.
     bool IsValid() const { return isValid(); }
 
@@ -150,13 +148,13 @@ struct AABB {
 /// Planes are indexed: 0=near, 1=far, 2=left, 3=right, 4=top, 5=bottom.
 /// Each plane has inward-facing normal (negative distance means inside frustum).
 struct Frustum {
-    Plane planes[6];  // 0=near, 1=far, 2=left, 3=right, 4=top, 5=bottom
+    Plane planes[6]; // 0=near, 1=far, 2=left, 3=right, 4=top, 5=bottom
 
     /// Default constructor — creates empty frustum.
     Frustum() = default;
     /// Construct frustum from 6 explicit clipping planes.
-    Frustum(const Plane& near_p, const Plane& far_p, const Plane& left_p,
-            const Plane& right_p, const Plane& top_p, const Plane& bottom_p) {
+    Frustum(const Plane& near_p, const Plane& far_p, const Plane& left_p, const Plane& right_p,
+            const Plane& top_p, const Plane& bottom_p) {
         planes[0] = near_p;
         planes[1] = far_p;
         planes[2] = left_p;
@@ -168,7 +166,8 @@ struct Frustum {
     /// Test if point is strictly inside frustum (all plane distances <= 0).
     bool contains(const Vec3& p) const {
         for (int i = 0; i < 6; i++) {
-            if (planes[i].distance(p) > 0) return false;
+            if (planes[i].distance(p) > 0)
+                return false;
         }
         return true;
     }
@@ -183,12 +182,16 @@ struct Frustum {
         for (int i = 0; i < 6; i++) {
             // Find vertex of box closest to plane (in direction opposite to normal)
             Vec3 closest = box.max;
-            if (planes[i].a > 0) closest.x = box.min.x;
-            if (planes[i].b > 0) closest.y = box.min.y;
-            if (planes[i].c > 0) closest.z = box.min.z;
+            if (planes[i].a > 0)
+                closest.x = box.min.x;
+            if (planes[i].b > 0)
+                closest.y = box.min.y;
+            if (planes[i].c > 0)
+                closest.z = box.min.z;
 
             // If closest point is outside plane, box is completely culled
-            if (planes[i].distance(closest) > 0) return false;
+            if (planes[i].distance(closest) > 0)
+                return false;
         }
         return true;
     }
@@ -200,14 +203,19 @@ struct Frustum {
     /// Test if sphere is potentially visible (center + radius vs all planes).
     bool intersectsSphere(const Vec3& center, float radius) const {
         for (int i = 0; i < 6; i++) {
-            if (planes[i].distance(center) > radius) return false;
+            if (planes[i].distance(center) > radius)
+                return false;
         }
         return true;
     }
     /// Uppercase alias for consistency.
-    bool IntersectsSphere(const Vec3& center, float radius) const { return intersectsSphere(center, radius); }
+    bool IntersectsSphere(const Vec3& center, float radius) const {
+        return intersectsSphere(center, radius);
+    }
     /// Alias for clarity.
-    bool TestSphere(const Vec3& center, float radius) const { return intersectsSphere(center, radius); }
+    bool TestSphere(const Vec3& center, float radius) const {
+        return intersectsSphere(center, radius);
+    }
 
     /// Extract view frustum from combined view-projection matrix (proj * view).
     /// Extracts the 6 clipping planes from the viewproj matrix rows.
@@ -238,4 +246,4 @@ struct Frustum {
     }
 };
 
-}  // namespace uz
+} // namespace uz

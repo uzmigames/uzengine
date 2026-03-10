@@ -31,10 +31,10 @@
 /// while (queue.TryPop(out)) { process(out); }
 /// ```
 
-#include <cstdint>
-#include <cstddef>
-#include <cassert>
 #include <atomic>
+#include <cassert>
+#include <cstddef>
+#include <cstdint>
 #include <new>
 #include <type_traits>
 
@@ -50,12 +50,11 @@ namespace uz {
 /// - Thread-safe IFF: one thread calls Puush/Size/Full, another calls Pop/Empty
 /// - Multiple producers or consumers require external synchronization
 /// - No locks: uses atomic operations only
-template <typename T, size_t Capacity>
-class RingBuffer {
+template <typename T, size_t Capacity> class RingBuffer {
     static_assert(Capacity > 0, "Capacity must be > 0");
     static_assert((Capacity & (Capacity - 1)) == 0, "Capacity must be power of 2");
 
-public:
+  public:
     /// Initializes an empty ring buffer.
     RingBuffer() = default;
 
@@ -68,7 +67,8 @@ public:
     bool TryPush(const T& item) {
         size_t head = m_head.load(std::memory_order_relaxed);
         size_t next = (head + 1) & kMask;
-        if (next == m_tail.load(std::memory_order_acquire)) return false; // full
+        if (next == m_tail.load(std::memory_order_acquire))
+            return false; // full
         new (&m_storage[head]) T(item);
         m_head.store(next, std::memory_order_release);
         return true;
@@ -77,7 +77,8 @@ public:
     bool TryPush(T&& item) {
         size_t head = m_head.load(std::memory_order_relaxed);
         size_t next = (head + 1) & kMask;
-        if (next == m_tail.load(std::memory_order_acquire)) return false;
+        if (next == m_tail.load(std::memory_order_acquire))
+            return false;
         new (&m_storage[head]) T(static_cast<T&&>(item));
         m_head.store(next, std::memory_order_release);
         return true;
@@ -85,7 +86,8 @@ public:
 
     bool TryPop(T& out) {
         size_t tail = m_tail.load(std::memory_order_relaxed);
-        if (tail == m_head.load(std::memory_order_acquire)) return false; // empty
+        if (tail == m_head.load(std::memory_order_acquire))
+            return false; // empty
         out = static_cast<T&&>(reinterpret_cast<T&>(m_storage[tail]));
         reinterpret_cast<T&>(m_storage[tail]).~T();
         m_tail.store((tail + 1) & kMask, std::memory_order_release);
@@ -98,16 +100,19 @@ public:
         return (head - tail) & kMask;
     }
 
-    bool Empty() const { return m_head.load(std::memory_order_acquire) == m_tail.load(std::memory_order_acquire); }
+    bool Empty() const {
+        return m_head.load(std::memory_order_acquire) == m_tail.load(std::memory_order_acquire);
+    }
     bool Full() const { return Size() == Capacity - 1; }
     static constexpr size_t GetCapacity() { return Capacity - 1; } // usable capacity
 
     void Clear() {
         T tmp;
-        while (TryPop(tmp)) {}
+        while (TryPop(tmp)) {
+        }
     }
 
-private:
+  private:
     static constexpr size_t kMask = Capacity - 1;
     alignas(64) std::atomic<size_t> m_head{0};
     alignas(64) std::atomic<size_t> m_tail{0};

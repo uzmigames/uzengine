@@ -7,6 +7,7 @@
 /// 4. Expose via typed getters with dot-notation paths
 
 #include "uz_config.h"
+
 #include "../logging/uz_log.h"
 
 #include <fstream>
@@ -50,7 +51,8 @@ bool Config::LoadFromString(const std::string& json) {
 void Config::ApplyCLIOverrides(int argc, const char* const* argv) {
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
-        if (arg.rfind("--", 0) != 0) continue;
+        if (arg.rfind("--", 0) != 0)
+            continue;
 
         arg = arg.substr(2); // strip "--"
         std::string key, value;
@@ -87,25 +89,29 @@ void Config::RebuildMerged() {
 
 std::string Config::GetString(const std::string& key, const std::string& defaultVal) const {
     auto* val = Resolve(key);
-    if (val && val->is_string()) return val->get<std::string>();
+    if (val && val->is_string())
+        return val->get<std::string>();
     return defaultVal;
 }
 
 int Config::GetInt(const std::string& key, int defaultVal) const {
     auto* val = Resolve(key);
-    if (val && val->is_number_integer()) return val->get<int>();
+    if (val && val->is_number_integer())
+        return val->get<int>();
     return defaultVal;
 }
 
 float Config::GetFloat(const std::string& key, float defaultVal) const {
     auto* val = Resolve(key);
-    if (val && val->is_number()) return val->get<float>();
+    if (val && val->is_number())
+        return val->get<float>();
     return defaultVal;
 }
 
 bool Config::GetBool(const std::string& key, bool defaultVal) const {
     auto* val = Resolve(key);
-    if (val && val->is_boolean()) return val->get<bool>();
+    if (val && val->is_boolean())
+        return val->get<bool>();
     return defaultVal;
 }
 
@@ -125,12 +131,14 @@ const nlohmann::json* Config::ResolvePath(const nlohmann::json& root, const std:
     while (std::getline(stream, segment, '.')) {
         if (current->is_object()) {
             auto it = current->find(segment);
-            if (it == current->end()) return nullptr;
+            if (it == current->end())
+                return nullptr;
             current = &(*it);
         } else if (current->is_array()) {
             try {
                 size_t idx = std::stoull(segment);
-                if (idx >= current->size()) return nullptr;
+                if (idx >= current->size())
+                    return nullptr;
                 current = &(*current)[idx];
             } catch (...) {
                 return nullptr;
@@ -149,28 +157,32 @@ void ConfigSetEngineDefaults(Config& config) {
         {"engine_version", "0.2.0"},
         {"default_scene", ""},
         {"content_root", "content/"},
-        {"render", {
-            {"backend", "dx12"},
-            {"shader_model", "6_6"},
-            {"resolution", {1920, 1080}},
-            {"vsync", true},
-            {"hdr", false},
-        }},
-        {"physics", {
-            {"gravity", {0, -9.81, 0}},
-            {"fixed_timestep", 0.01667},
-        }},
-        {"window", {
-            {"title", "UzEngine"},
-            {"width", 1280},
-            {"height", 720},
-            {"fullscreen", false},
-            {"resizable", true},
-        }},
-        {"log", {
-            {"level", "info"},
-            {"file", "uzengine.log"},
-        }},
+        {"render",
+         {
+             {"backend", "dx12"},
+             {"shader_model", "6_6"},
+             {"resolution", {1920, 1080}},
+             {"vsync", true},
+             {"hdr", false},
+         }},
+        {"physics",
+         {
+             {"gravity", {0, -9.81, 0}},
+             {"fixed_timestep", 0.01667},
+         }},
+        {"window",
+         {
+             {"title", "UzEngine"},
+             {"width", 1280},
+             {"height", 720},
+             {"fullscreen", false},
+             {"resizable", true},
+         }},
+        {"log",
+         {
+             {"level", "info"},
+             {"file", "uzengine.log"},
+         }},
     };
 
     // LoadFromString sets m_project, but we want m_defaults.

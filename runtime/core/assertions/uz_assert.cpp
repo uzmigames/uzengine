@@ -1,4 +1,5 @@
 #include "uz_assert.h"
+
 #include <cstdio>
 #include <cstdlib>
 
@@ -26,8 +27,8 @@ static void PrintStackTrace() {
 
     std::fprintf(stderr, "  Stack trace (%d frames):\n", frameCount);
     for (WORD i = 0; i < frameCount; ++i) {
-        std::fprintf(stderr, "    [%2d] 0x%llx\n",
-                     i, reinterpret_cast<unsigned long long>(frames[i]));
+        std::fprintf(stderr, "    [%2d] 0x%llx\n", i,
+                     reinterpret_cast<unsigned long long>(frames[i]));
     }
 }
 #else

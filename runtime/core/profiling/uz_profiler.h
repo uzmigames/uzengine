@@ -47,44 +47,44 @@
 // ────────────────────────────────────────────────────────────────────────────
 
 #if defined(UZ_PROFILING_ENABLED) && __has_include(<tracy/Tracy.hpp>)
-    #include <tracy/Tracy.hpp>
+#include <tracy/Tracy.hpp>
 
-    /// Mark the start of a named scope. Automatically marks exit on return/throw.
-    /// Use UZ_PROFILE_SCOPE(MyFunction) to create a ZoneScopedN("MyFunction") RAII guard.
-    #define UZ_PROFILE_SCOPE(Name)        ZoneScopedN(#Name)
+/// Mark the start of a named scope. Automatically marks exit on return/throw.
+/// Use UZ_PROFILE_SCOPE(MyFunction) to create a ZoneScopedN("MyFunction") RAII guard.
+#define UZ_PROFILE_SCOPE(Name) ZoneScopedN(#Name)
 
-    /// Mark the current function as a profiled scope.
-    /// Equivalent to UZ_PROFILE_SCOPE but auto-names from __func__.
-    #define UZ_PROFILE_FUNCTION()         ZoneScoped
+/// Mark the current function as a profiled scope.
+/// Equivalent to UZ_PROFILE_SCOPE but auto-names from __func__.
+#define UZ_PROFILE_FUNCTION() ZoneScoped
 
-    /// Signal end of frame to Tracy profiler.
-    /// Call once per frame to create frame boundaries in timeline.
-    #define UZ_PROFILE_FRAME_MARK()       FrameMark
+/// Signal end of frame to Tracy profiler.
+/// Call once per frame to create frame boundaries in timeline.
+#define UZ_PROFILE_FRAME_MARK() FrameMark
 
-    /// Set thread name in Tracy for identification.
-    /// Helpful for debugging multi-threaded code.
-    #define UZ_PROFILE_THREAD(Name)       tracy::SetThreadName(Name)
+/// Set thread name in Tracy for identification.
+/// Helpful for debugging multi-threaded code.
+#define UZ_PROFILE_THREAD(Name) tracy::SetThreadName(Name)
 
-    /// Plot a numerical value to Tracy timeline (graph).
-    /// Useful for tracking frame time, memory, temperature, etc.
-    #define UZ_PROFILE_VALUE(Name, Val)   TracyPlot(Name, Val)
+/// Plot a numerical value to Tracy timeline (graph).
+/// Useful for tracking frame time, memory, temperature, etc.
+#define UZ_PROFILE_VALUE(Name, Val) TracyPlot(Name, Val)
 
-    /// Annotate current zone with text (shows in timeline).
-    /// Useful for logging errors or state within a profiled zone.
-    #define UZ_PROFILE_TAG(Text)          ZoneText(Text, std::strlen(Text))
+/// Annotate current zone with text (shows in timeline).
+/// Useful for logging errors or state within a profiled zone.
+#define UZ_PROFILE_TAG(Text) ZoneText(Text, std::strlen(Text))
 #else
-    /// No-op: profiling disabled or Tracy not installed.
-    #define UZ_PROFILE_SCOPE(Name)        ((void)0)
-    /// No-op: profiling disabled or Tracy not installed.
-    #define UZ_PROFILE_FUNCTION()         ((void)0)
-    /// No-op: profiling disabled or Tracy not installed.
-    #define UZ_PROFILE_FRAME_MARK()       ((void)0)
-    /// No-op: profiling disabled or Tracy not installed.
-    #define UZ_PROFILE_THREAD(Name)       ((void)0)
-    /// No-op: profiling disabled or Tracy not installed.
-    #define UZ_PROFILE_VALUE(Name, Val)   ((void)0)
-    /// No-op: profiling disabled or Tracy not installed.
-    #define UZ_PROFILE_TAG(Text)          ((void)0)
+/// No-op: profiling disabled or Tracy not installed.
+#define UZ_PROFILE_SCOPE(Name) ((void)0)
+/// No-op: profiling disabled or Tracy not installed.
+#define UZ_PROFILE_FUNCTION() ((void)0)
+/// No-op: profiling disabled or Tracy not installed.
+#define UZ_PROFILE_FRAME_MARK() ((void)0)
+/// No-op: profiling disabled or Tracy not installed.
+#define UZ_PROFILE_THREAD(Name) ((void)0)
+/// No-op: profiling disabled or Tracy not installed.
+#define UZ_PROFILE_VALUE(Name, Val) ((void)0)
+/// No-op: profiling disabled or Tracy not installed.
+#define UZ_PROFILE_TAG(Text) ((void)0)
 #endif
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -98,7 +98,7 @@ namespace uz {
 
 /// Stat counter group (for organization/filtering in UI).
 struct StatGroup {
-    const char* name;  ///< Group name (e.g., "Render", "Physics")
+    const char* name; ///< Group name (e.g., "Render", "Physics")
 };
 
 /// Atomic counter for a statistic (e.g., draw calls, memory allocation).
@@ -125,17 +125,15 @@ extern StatGroup StatIO;
 
 } // namespace uz
 
-#define UZ_DECLARE_STAT(Group, Name) \
-    extern ::uz::StatCounter Stat_##Group##_##Name
+#define UZ_DECLARE_STAT(Group, Name) extern ::uz::StatCounter Stat_##Group##_##Name
 
-#define UZ_DEFINE_STAT(Group, Name) \
-    ::uz::StatCounter Stat_##Group##_##Name { #Name, &::uz::Stat##Group }
+#define UZ_DEFINE_STAT(Group, Name)                                                                \
+    ::uz::StatCounter Stat_##Group##_##Name {                                                      \
+        #Name, &::uz::Stat##Group                                                                  \
+    }
 
-#define UZ_STAT_INCREMENT(Group, Name, ...) \
-    Stat_##Group##_##Name.Increment(__VA_ARGS__ + 0)
+#define UZ_STAT_INCREMENT(Group, Name, ...) Stat_##Group##_##Name.Increment(__VA_ARGS__ + 0)
 
-#define UZ_STAT_RESET(Group, Name) \
-    Stat_##Group##_##Name.Reset()
+#define UZ_STAT_RESET(Group, Name) Stat_##Group##_##Name.Reset()
 
-#define UZ_STAT_GET(Group, Name) \
-    Stat_##Group##_##Name.Get()
+#define UZ_STAT_GET(Group, Name) Stat_##Group##_##Name.Get()

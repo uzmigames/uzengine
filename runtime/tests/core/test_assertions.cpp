@@ -1,5 +1,6 @@
-#include <gtest/gtest.h>
 #include "uz_assert.h"
+
+#include <gtest/gtest.h>
 
 TEST(Assertions, EnsureReturnsTrueOnPass) {
     EXPECT_TRUE(UZ_ENSURE(true));

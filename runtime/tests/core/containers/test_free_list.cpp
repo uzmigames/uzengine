@@ -1,5 +1,6 @@
-#include <gtest/gtest.h>
 #include "uz_free_list.h"
+
+#include <gtest/gtest.h>
 
 using namespace uz;
 
@@ -13,7 +14,7 @@ struct TestItem {
 int TestItem::alive = 0;
 
 class FreeListTest : public ::testing::Test {
-protected:
+  protected:
     void SetUp() override { TestItem::alive = 0; }
 };
 

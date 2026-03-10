@@ -45,12 +45,8 @@ struct LinearColor {
 
     /// Interpolation
     static LinearColor Lerp(const LinearColor& a, const LinearColor& b, float t) {
-        return {
-            a.r + (b.r - a.r) * t,
-            a.g + (b.g - a.g) * t,
-            a.b + (b.b - a.b) * t,
-            a.a + (b.a - a.a) * t
-        };
+        return {a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t,
+                a.a + (b.a - a.a) * t};
     }
 };
 
@@ -63,8 +59,7 @@ struct sRGBColor {
 
     /// Constructors
     sRGBColor() : r(0), g(0), b(0), a(255) {}
-    sRGBColor(uint8_t r, uint8_t g, uint8_t b, uint8_t a = 255)
-        : r(r), g(g), b(b), a(a) {}
+    sRGBColor(uint8_t r, uint8_t g, uint8_t b, uint8_t a = 255) : r(r), g(g), b(b), a(a) {}
 
     /// Conversion (implemented below after utility functions)
     LinearColor ToLinear() const;
@@ -108,22 +103,16 @@ inline float srgb_to_linear(float srgb) {
 
 /// Convert LinearColor to sRGBColor
 inline sRGBColor linear_to_srgb_color(const LinearColor& linear) {
-    return {
-        (uint8_t)(linear_to_srgb(linear.r) * 255.0f + 0.5f),
-        (uint8_t)(linear_to_srgb(linear.g) * 255.0f + 0.5f),
-        (uint8_t)(linear_to_srgb(linear.b) * 255.0f + 0.5f),
-        (uint8_t)(linear.a * 255.0f + 0.5f)
-    };
+    return {(uint8_t)(linear_to_srgb(linear.r) * 255.0f + 0.5f),
+            (uint8_t)(linear_to_srgb(linear.g) * 255.0f + 0.5f),
+            (uint8_t)(linear_to_srgb(linear.b) * 255.0f + 0.5f),
+            (uint8_t)(linear.a * 255.0f + 0.5f)};
 }
 
 /// Convert sRGBColor to LinearColor
 inline LinearColor srgb_to_linear_color(const sRGBColor& srgb) {
-    return {
-        srgb_to_linear(srgb.r / 255.0f),
-        srgb_to_linear(srgb.g / 255.0f),
-        srgb_to_linear(srgb.b / 255.0f),
-        srgb.a / 255.0f
-    };
+    return {srgb_to_linear(srgb.r / 255.0f), srgb_to_linear(srgb.g / 255.0f),
+            srgb_to_linear(srgb.b / 255.0f), srgb.a / 255.0f};
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -138,4 +127,4 @@ inline LinearColor sRGBColor::ToLinear() const {
     return srgb_to_linear_color(*this);
 }
 
-}  // namespace uz
+} // namespace uz

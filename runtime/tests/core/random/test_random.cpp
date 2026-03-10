@@ -1,6 +1,7 @@
-#include <gtest/gtest.h>
 #include "uz_random.h"
+
 #include <cmath>
+#include <gtest/gtest.h>
 #include <set>
 
 using namespace uz;
@@ -18,7 +19,10 @@ TEST(PCGRandomTest, DifferentSeedsDifferentSequence) {
     PCGRandom b(2);
     bool allSame = true;
     for (int i = 0; i < 10; ++i) {
-        if (a.Next() != b.Next()) { allSame = false; break; }
+        if (a.Next() != b.Next()) {
+            allSame = false;
+            break;
+        }
     }
     EXPECT_FALSE(allSame);
 }
@@ -63,7 +67,8 @@ TEST(PCGRandomTest, Bool) {
     PCGRandom rng(42);
     int trueCount = 0;
     for (int i = 0; i < 10000; ++i) {
-        if (rng.Bool()) ++trueCount;
+        if (rng.Bool())
+            ++trueCount;
     }
     // Should be roughly 50/50
     EXPECT_GT(trueCount, 4000);

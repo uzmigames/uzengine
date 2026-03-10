@@ -29,8 +29,8 @@
 /// }
 /// ```
 
-#include <cstdint>
 #include <cmath>
+#include <cstdint>
 
 namespace uz {
 
@@ -40,7 +40,7 @@ namespace uz {
 /// NOT thread-safe: each thread needs its own instance.
 /// Use thread-local storage for parallel loops.
 class PCGRandom {
-public:
+  public:
     /// Constructs seeded RNG from a single seed value.
     ///
     /// # Arguments
@@ -95,30 +95,26 @@ public:
     }
 
     // [0, 1)
-    float Float() {
-        return static_cast<float>(Next()) / 4294967296.0f;
-    }
+    float Float() { return static_cast<float>(Next()) / 4294967296.0f; }
 
     // [0, 1)
-    double Double() {
-        return static_cast<double>(Next()) / 4294967296.0;
-    }
+    double Double() { return static_cast<double>(Next()) / 4294967296.0; }
 
     // [min, max)
-    float Range(float min, float max) {
-        return min + Float() * (max - min);
-    }
+    float Range(float min, float max) { return min + Float() * (max - min); }
 
     // [min, max] inclusive
     int32_t Int(int32_t min, int32_t max) {
-        if (min >= max) return min;
+        if (min >= max)
+            return min;
         uint32_t range = static_cast<uint32_t>(max - min + 1);
         return min + static_cast<int32_t>(Next() % range);
     }
 
     // [0, max) exclusive
     uint32_t UInt(uint32_t max) {
-        if (max == 0) return 0;
+        if (max == 0)
+            return 0;
         return Next() % max;
     }
 
@@ -146,7 +142,7 @@ public:
         } while (x * x + y * y >= 1.0f);
     }
 
-private:
+  private:
     uint64_t m_state;
     uint64_t m_inc;
 };

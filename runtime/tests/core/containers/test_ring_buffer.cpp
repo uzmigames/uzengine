@@ -1,5 +1,6 @@
-#include <gtest/gtest.h>
 #include "uz_ring_buffer.h"
+
+#include <gtest/gtest.h>
 
 using namespace uz;
 
@@ -83,8 +84,14 @@ TEST(RingBufferTest, MoveSemantics) {
         bool moved = false;
         MoveOnly() : value(0) {}
         explicit MoveOnly(int v) : value(v) {}
-        MoveOnly(MoveOnly&& other) noexcept : value(other.value), moved(false) { other.moved = true; }
-        MoveOnly& operator=(MoveOnly&& other) noexcept { value = other.value; other.moved = true; return *this; }
+        MoveOnly(MoveOnly&& other) noexcept : value(other.value), moved(false) {
+            other.moved = true;
+        }
+        MoveOnly& operator=(MoveOnly&& other) noexcept {
+            value = other.value;
+            other.moved = true;
+            return *this;
+        }
         MoveOnly(const MoveOnly&) = default;
         MoveOnly& operator=(const MoveOnly&) = default;
     };

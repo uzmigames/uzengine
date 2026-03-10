@@ -18,11 +18,10 @@
 /// UZ_LOG(MySystem, Error, "Failed: {}", reason);
 /// ```
 
-#include <spdlog/spdlog.h>
-#include <spdlog/sinks/stdout_color_sinks.h>
-#include <spdlog/sinks/rotating_file_sink.h>
-
 #include <memory>
+#include <spdlog/sinks/rotating_file_sink.h>
+#include <spdlog/sinks/stdout_color_sinks.h>
+#include <spdlog/spdlog.h>
 #include <string>
 #include <string_view>
 
@@ -30,12 +29,12 @@ namespace uz {
 
 /// Log severity level (ascending order: Trace is most verbose, Fatal is least).
 enum class LogLevel : uint8_t {
-    Trace = 0,    ///< Very detailed diagnostic output (stripped in shipping)
-    Debug = 1,    ///< Debug messages (stripped in shipping)
-    Info = 2,     ///< General informational messages
-    Warning = 3,  ///< Warning conditions (non-fatal)
-    Error = 4,    ///< Error conditions (recoverable)
-    Fatal = 5,    ///< Fatal errors (calls std::abort after logging)
+    Trace = 0,   ///< Very detailed diagnostic output (stripped in shipping)
+    Debug = 1,   ///< Debug messages (stripped in shipping)
+    Info = 2,    ///< General informational messages
+    Warning = 3, ///< Warning conditions (non-fatal)
+    Error = 4,   ///< Error conditions (recoverable)
+    Fatal = 5,   ///< Fatal errors (calls std::abort after logging)
 };
 
 /// Log category metadata — one per subsystem.
@@ -44,8 +43,8 @@ enum class LogLevel : uint8_t {
 /// and UZ_DEFINE_LOG_CATEGORY (single .cpp file).
 /// Each category has a name and compile-time minimum level for filtering.
 struct LogCategory {
-    const char* name;              ///< Category identifier (e.g., "RHI", "Scene")
-    LogLevel compileTimeMin;       ///< Minimum level at compile time (stripped below)
+    const char* name;        ///< Category identifier (e.g., "RHI", "Scene")
+    LogLevel compileTimeMin; ///< Minimum level at compile time (stripped below)
 };
 
 /// Initializes the global logging system.
@@ -93,27 +92,28 @@ void LogSetLevel(LogLevel level);
 // ── Macros ──────────────────────────────────────────────────────────────────
 
 /// Declare a log category (header). Use in .h files.
-#define UZ_DECLARE_LOG_CATEGORY(Name) \
-    extern ::uz::LogCategory Log##Name
+#define UZ_DECLARE_LOG_CATEGORY(Name) extern ::uz::LogCategory Log##Name
 
 /// Define a log category (source). Use in ONE .cpp file.
-#define UZ_DEFINE_LOG_CATEGORY(Name, MinLevel) \
-    ::uz::LogCategory Log##Name { #Name, ::uz::LogLevel::MinLevel }
+#define UZ_DEFINE_LOG_CATEGORY(Name, MinLevel)                                                     \
+    ::uz::LogCategory Log##Name {                                                                  \
+        #Name, ::uz::LogLevel::MinLevel                                                            \
+    }
 
 /// Core log macro. Checks compile-time minimum before formatting.
-#define UZ_LOG(Category, Level, ...) \
-    do { \
-        if (static_cast<uint8_t>(::uz::LogLevel::Level) >= \
-            static_cast<uint8_t>(Log##Category.compileTimeMin)) { \
-            auto* _uz_logger = ::uz::LogGetLogger(Log##Category); \
-            if (_uz_logger) { \
-                _uz_logger->log(::uz::detail::ToSpdlogLevel(::uz::LogLevel::Level), __VA_ARGS__); \
-                if (::uz::LogLevel::Level == ::uz::LogLevel::Fatal) { \
-                    _uz_logger->flush(); \
-                    std::abort(); \
-                } \
-            } \
-        } \
+#define UZ_LOG(Category, Level, ...)                                                               \
+    do {                                                                                           \
+        if (static_cast<uint8_t>(::uz::LogLevel::Level) >=                                         \
+            static_cast<uint8_t>(Log##Category.compileTimeMin)) {                                  \
+            auto* _uz_logger = ::uz::LogGetLogger(Log##Category);                                  \
+            if (_uz_logger) {                                                                      \
+                _uz_logger->log(::uz::detail::ToSpdlogLevel(::uz::LogLevel::Level), __VA_ARGS__);  \
+                if (::uz::LogLevel::Level == ::uz::LogLevel::Fatal) {                              \
+                    _uz_logger->flush();                                                           \
+                    std::abort();                                                                  \
+                }                                                                                  \
+            }                                                                                      \
+        }                                                                                          \
     } while (0)
 
 /// Shipping build strips Debug/Trace entirely.
@@ -127,12 +127,18 @@ namespace uz::detail {
 
 constexpr spdlog::level::level_enum ToSpdlogLevel(LogLevel level) {
     switch (level) {
-        case LogLevel::Trace:   return spdlog::level::trace;
-        case LogLevel::Debug:   return spdlog::level::debug;
-        case LogLevel::Info:    return spdlog::level::info;
-        case LogLevel::Warning: return spdlog::level::warn;
-        case LogLevel::Error:   return spdlog::level::err;
-        case LogLevel::Fatal:   return spdlog::level::critical;
+    case LogLevel::Trace:
+        return spdlog::level::trace;
+    case LogLevel::Debug:
+        return spdlog::level::debug;
+    case LogLevel::Info:
+        return spdlog::level::info;
+    case LogLevel::Warning:
+        return spdlog::level::warn;
+    case LogLevel::Error:
+        return spdlog::level::err;
+    case LogLevel::Fatal:
+        return spdlog::level::critical;
     }
     return spdlog::level::info;
 }

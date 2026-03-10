@@ -1,6 +1,7 @@
-#include <gtest/gtest.h>
-#include "uz_math.h"
 #include "uz_geometry.h"
+#include "uz_math.h"
+
+#include <gtest/gtest.h>
 
 using namespace uz;
 
@@ -80,13 +81,13 @@ TEST(PlaneTest, DistanceToPoint) {
 // ── Frustum ──────────────────────────────────────────────────────────────────
 
 class FrustumTest : public ::testing::Test {
-protected:
+  protected:
     Frustum frustum;
 
     void SetUp() override {
         Mat4 view = Mat4::LookAt(Vec3(0, 0, -5), Vec3(0, 0, 0), Vec3::Up());
         Mat4 proj = Mat4::Perspective(XM_PIDIV4, 1.0f, 0.1f, 100.0f);
-        Mat4 vp = proj * view;  // Correct order: proj applied after view
+        Mat4 vp = proj * view; // Correct order: proj applied after view
         frustum = Frustum::FromViewProj(vp);
     }
 };

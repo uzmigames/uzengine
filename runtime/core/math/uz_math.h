@@ -11,9 +11,9 @@
 
 #pragma once
 
-#include <DirectXMath.h>
 #include <cmath>
 #include <cstring>
+#include <DirectXMath.h>
 
 using namespace DirectX;
 
@@ -61,11 +61,23 @@ struct Vec2 {
     /// Negation.
     Vec2 operator-() const { return {-x, -y}; }
     /// In-place addition.
-    Vec2& operator+=(const Vec2& other) { x += other.x; y += other.y; return *this; }
+    Vec2& operator+=(const Vec2& other) {
+        x += other.x;
+        y += other.y;
+        return *this;
+    }
     /// In-place subtraction.
-    Vec2& operator-=(const Vec2& other) { x -= other.x; y -= other.y; return *this; }
+    Vec2& operator-=(const Vec2& other) {
+        x -= other.x;
+        y -= other.y;
+        return *this;
+    }
     /// In-place scalar multiplication.
-    Vec2& operator*=(float scalar) { x *= scalar; y *= scalar; return *this; }
+    Vec2& operator*=(float scalar) {
+        x *= scalar;
+        y *= scalar;
+        return *this;
+    }
 
     /// Exact equality comparison.
     bool operator==(const Vec2& other) const { return x == other.x && y == other.y; }
@@ -98,9 +110,7 @@ struct Vec2 {
     /// Unit vector along Y axis (0, 1).
     static Vec2 UnitY() { return {0, 1}; }
     /// Linear interpolation between a and b (t in [0,1]).
-    static Vec2 Lerp(const Vec2& a, const Vec2& b, float t) {
-        return a + (b - a) * t;
-    }
+    static Vec2 Lerp(const Vec2& a, const Vec2& b, float t) { return a + (b - a) * t; }
     /// Load from XMFLOAT2 (DirectXMath compatible).
     static Vec2 FromFloat2(const XMFLOAT2& f) { return {f.x, f.y}; }
 
@@ -126,9 +136,7 @@ struct Vec3 {
     /// Load from memory (pointer to at least 3 floats).
     explicit Vec3(const float* ptr) : x(ptr[0]), y(ptr[1]), z(ptr[2]) {}
     /// Convert from DirectXMath XMVECTOR.
-    explicit Vec3(const XMVECTOR& xm) {
-        XMStoreFloat3(reinterpret_cast<XMFLOAT3*>(this), xm);
-    }
+    explicit Vec3(const XMVECTOR& xm) { XMStoreFloat3(reinterpret_cast<XMFLOAT3*>(this), xm); }
     /// Convert from DirectXMath XMFLOAT3.
     explicit Vec3(const XMFLOAT3& f3) : x(f3.x), y(f3.y), z(f3.z) {}
 
@@ -163,14 +171,31 @@ struct Vec3 {
     /// Negation.
     Vec3 operator-() const { return {-x, -y, -z}; }
     /// In-place addition.
-    Vec3& operator+=(const Vec3& other) { x += other.x; y += other.y; z += other.z; return *this; }
+    Vec3& operator+=(const Vec3& other) {
+        x += other.x;
+        y += other.y;
+        z += other.z;
+        return *this;
+    }
     /// In-place subtraction.
-    Vec3& operator-=(const Vec3& other) { x -= other.x; y -= other.y; z -= other.z; return *this; }
+    Vec3& operator-=(const Vec3& other) {
+        x -= other.x;
+        y -= other.y;
+        z -= other.z;
+        return *this;
+    }
     /// In-place scalar multiplication.
-    Vec3& operator*=(float scalar) { x *= scalar; y *= scalar; z *= scalar; return *this; }
+    Vec3& operator*=(float scalar) {
+        x *= scalar;
+        y *= scalar;
+        z *= scalar;
+        return *this;
+    }
 
     /// Exact equality comparison.
-    bool operator==(const Vec3& other) const { return x == other.x && y == other.y && z == other.z; }
+    bool operator==(const Vec3& other) const {
+        return x == other.x && y == other.y && z == other.z;
+    }
     /// Inequality.
     bool operator!=(const Vec3& other) const { return !(*this == other); }
 
@@ -216,9 +241,7 @@ struct Vec3 {
     /// World "forward" direction (0, 0, 1).
     static Vec3 Forward() { return UnitZ(); }
     /// Linear interpolation between a and b (t in [0,1]).
-    static Vec3 Lerp(const Vec3& a, const Vec3& b, float t) {
-        return a + (b - a) * t;
-    }
+    static Vec3 Lerp(const Vec3& a, const Vec3& b, float t) { return a + (b - a) * t; }
     /// Component-wise minimum.
     static Vec3 Min(const Vec3& a, const Vec3& b) { return a.min(b); }
     /// Component-wise maximum.
@@ -243,9 +266,7 @@ struct Vec4 {
     constexpr Vec4(const Vec3& v, float w) : x(v.x), y(v.y), z(v.z), w(w) {}
     explicit constexpr Vec4(float scalar) : x(scalar), y(scalar), z(scalar), w(scalar) {}
     explicit Vec4(const float* ptr) : x(ptr[0]), y(ptr[1]), z(ptr[2]), w(ptr[3]) {}
-    explicit Vec4(const XMVECTOR& xm) {
-        XMStoreFloat4(reinterpret_cast<XMFLOAT4*>(this), xm);
-    }
+    explicit Vec4(const XMVECTOR& xm) { XMStoreFloat4(reinterpret_cast<XMFLOAT4*>(this), xm); }
     explicit Vec4(const XMFLOAT4& f4) : x(f4.x), y(f4.y), z(f4.z), w(f4.w) {}
 
     /// Conversion to XMVECTOR
@@ -268,17 +289,41 @@ struct Vec4 {
     float W() const { return w; }
 
     /// Arithmetic operators
-    Vec4 operator+(const Vec4& other) const { return {x + other.x, y + other.y, z + other.z, w + other.w}; }
-    Vec4 operator-(const Vec4& other) const { return {x - other.x, y - other.y, z - other.z, w - other.w}; }
+    Vec4 operator+(const Vec4& other) const {
+        return {x + other.x, y + other.y, z + other.z, w + other.w};
+    }
+    Vec4 operator-(const Vec4& other) const {
+        return {x - other.x, y - other.y, z - other.z, w - other.w};
+    }
     Vec4 operator*(float scalar) const { return {x * scalar, y * scalar, z * scalar, w * scalar}; }
     Vec4 operator/(float scalar) const { return {x / scalar, y / scalar, z / scalar, w / scalar}; }
     Vec4 operator-() const { return {-x, -y, -z, -w}; }
-    Vec4& operator+=(const Vec4& other) { x += other.x; y += other.y; z += other.z; w += other.w; return *this; }
-    Vec4& operator-=(const Vec4& other) { x -= other.x; y -= other.y; z -= other.z; w -= other.w; return *this; }
-    Vec4& operator*=(float scalar) { x *= scalar; y *= scalar; z *= scalar; w *= scalar; return *this; }
+    Vec4& operator+=(const Vec4& other) {
+        x += other.x;
+        y += other.y;
+        z += other.z;
+        w += other.w;
+        return *this;
+    }
+    Vec4& operator-=(const Vec4& other) {
+        x -= other.x;
+        y -= other.y;
+        z -= other.z;
+        w -= other.w;
+        return *this;
+    }
+    Vec4& operator*=(float scalar) {
+        x *= scalar;
+        y *= scalar;
+        z *= scalar;
+        w *= scalar;
+        return *this;
+    }
 
     /// Comparison
-    bool operator==(const Vec4& other) const { return x == other.x && y == other.y && z == other.z && w == other.w; }
+    bool operator==(const Vec4& other) const {
+        return x == other.x && y == other.y && z == other.z && w == other.w;
+    }
     bool operator!=(const Vec4& other) const { return !(*this == other); }
 
     /// Vector operations
@@ -300,16 +345,10 @@ struct Mat4 {
     XMFLOAT4X4 m;
 
     /// Constructors
-    Mat4() {
-        XMStoreFloat4x4(&m, XMMatrixIdentity());
-    }
-    Mat4(const XMMATRIX& xm) {
-        XMStoreFloat4x4(&m, xm);
-    }
+    Mat4() { XMStoreFloat4x4(&m, XMMatrixIdentity()); }
+    Mat4(const XMMATRIX& xm) { XMStoreFloat4x4(&m, xm); }
     Mat4(const XMFLOAT4X4& f4x4) : m(f4x4) {}
-    explicit Mat4(const float* ptr) {
-        std::memcpy(&m, ptr, 16 * sizeof(float));
-    }
+    explicit Mat4(const float* ptr) { std::memcpy(&m, ptr, 16 * sizeof(float)); }
 
     /// Static constructors
     static Mat4 Identity();
@@ -369,7 +408,8 @@ struct Mat4 {
     /// Comparisons
     bool operator==(const Mat4& other) const {
         for (int i = 0; i < 16; i++) {
-            if (data()[i] != other.data()[i]) return false;
+            if (data()[i] != other.data()[i])
+                return false;
         }
         return true;
     }
@@ -395,9 +435,7 @@ struct Quat {
     Quat() : x(0), y(0), z(0), w(1) {}
     constexpr Quat(float x, float y, float z, float w) : x(x), y(y), z(z), w(w) {}
     Quat(const Vec3& axis, float angle);
-    explicit Quat(const XMVECTOR& xm) {
-        XMStoreFloat4(reinterpret_cast<XMFLOAT4*>(this), xm);
-    }
+    explicit Quat(const XMVECTOR& xm) { XMStoreFloat4(reinterpret_cast<XMFLOAT4*>(this), xm); }
     explicit Quat(const XMFLOAT4& f4) : x(f4.x), y(f4.y), z(f4.z), w(f4.w) {}
 
     /// Static constructors
@@ -418,7 +456,9 @@ struct Quat {
     /// Arithmetic operators
     Quat operator*(const Quat& other) const;
     Vec3 operator*(const Vec3& v) const;
-    bool operator==(const Quat& other) const { return x == other.x && y == other.y && z == other.z && w == other.w; }
+    bool operator==(const Quat& other) const {
+        return x == other.x && y == other.y && z == other.z && w == other.w;
+    }
     bool operator!=(const Quat& other) const { return !(*this == other); }
 
     /// Quaternion operations
@@ -427,7 +467,9 @@ struct Quat {
     Quat Inverse() const { return inverse(); }
     Quat normalize() const;
     Quat Normalized() const { return normalize(); }
-    float dot(const Quat& other) const { return x * other.x + y * other.y + z * other.z + w * other.w; }
+    float dot(const Quat& other) const {
+        return x * other.x + y * other.y + z * other.z + w * other.w;
+    }
     float Dot(const Quat& other) const { return dot(other); }
     float length() const { return std::sqrt(x * x + y * y + z * z + w * w); }
     float Length() const { return length(); }
@@ -500,8 +542,14 @@ struct Transform {
 // Utility operators for scalar * vector
 // ─────────────────────────────────────────────────────────────────────────────
 
-inline Vec2 operator*(float scalar, const Vec2& v) { return v * scalar; }
-inline Vec3 operator*(float scalar, const Vec3& v) { return v * scalar; }
-inline Vec4 operator*(float scalar, const Vec4& v) { return v * scalar; }
+inline Vec2 operator*(float scalar, const Vec2& v) {
+    return v * scalar;
+}
+inline Vec3 operator*(float scalar, const Vec3& v) {
+    return v * scalar;
+}
+inline Vec4 operator*(float scalar, const Vec4& v) {
+    return v * scalar;
+}
 
-}  // namespace uz
+} // namespace uz

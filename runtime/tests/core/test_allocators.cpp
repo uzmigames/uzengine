@@ -1,5 +1,6 @@
-#include <gtest/gtest.h>
 #include "uz_allocators.h"
+
+#include <gtest/gtest.h>
 
 using namespace uz;
 
@@ -36,7 +37,10 @@ TEST(LinearAllocatorTest, Alignment) {
 
 TEST(LinearAllocatorTest, NewTyped) {
     LinearAllocator alloc("Typed", 1024);
-    struct Foo { int x; float y; };
+    struct Foo {
+        int x;
+        float y;
+    };
     Foo* f = alloc.New<Foo>();
     ASSERT_NE(f, nullptr);
     f->x = 42;
@@ -127,7 +131,9 @@ TEST(FrameAllocatorTest, AllocAndBeginFrame) {
 
 TEST(FrameAllocatorTest, NewTyped) {
     FrameAllocator alloc("Frame", 1024);
-    struct Bar { int x; };
+    struct Bar {
+        int x;
+    };
     Bar* b = alloc.New<Bar>();
     ASSERT_NE(b, nullptr);
     b->x = 99;

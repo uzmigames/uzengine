@@ -1,8 +1,9 @@
-#include <gtest/gtest.h>
 #include "uz_input.h"
 
+#include <gtest/gtest.h>
+
 class InputTest : public ::testing::Test {
-protected:
+  protected:
     uz::InputSystem input;
     void SetUp() override { input.Init(); }
     void TearDown() override { input.Shutdown(); }

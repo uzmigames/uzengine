@@ -1,5 +1,6 @@
-#include <gtest/gtest.h>
 #include "uz_memory.h"
+
+#include <gtest/gtest.h>
 #include <utility>
 
 namespace {
@@ -13,7 +14,7 @@ struct TestObj {
 int TestObj::alive = 0;
 
 class MemoryTest : public ::testing::Test {
-protected:
+  protected:
     void SetUp() override { TestObj::alive = 0; }
 };
 

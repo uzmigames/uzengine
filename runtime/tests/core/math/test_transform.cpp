@@ -1,5 +1,6 @@
-#include <gtest/gtest.h>
 #include "uz_math.h"
+
+#include <gtest/gtest.h>
 
 using namespace uz;
 
@@ -55,7 +56,8 @@ TEST(TransformTest, TransformDirection) {
 }
 
 TEST(TransformTest, Inverse) {
-    Transform t(Vec3(5.0f, 10.0f, 15.0f), Quat::FromAxisAngle(Vec3::UnitY(), 1.0f), Vec3(2.0f, 2.0f, 2.0f));
+    Transform t(Vec3(5.0f, 10.0f, 15.0f), Quat::FromAxisAngle(Vec3::UnitY(), 1.0f),
+                Vec3(2.0f, 2.0f, 2.0f));
     Transform inv = t.Inverse();
     Vec3 original(1.0f, 2.0f, 3.0f);
     Vec3 transformed = t.TransformPoint(original);

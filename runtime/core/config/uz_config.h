@@ -23,8 +23,8 @@
 /// For nested values use dot-separated paths: `"render.viewport.width"`.
 
 #include <json.hpp>
-#include <string>
 #include <optional>
+#include <string>
 
 namespace uz {
 
@@ -33,7 +33,7 @@ namespace uz {
 /// Merges configuration from multiple sources with cascading priority.
 /// Thread-safe: multiple threads can safely read config after initialization.
 class Config {
-public:
+  public:
     /// Loads .uzproject configuration file.
     ///
     /// # Arguments
@@ -117,11 +117,11 @@ public:
     /// Read-only after initialization.
     const nlohmann::json& GetRoot() const { return m_merged; }
 
-private:
-    nlohmann::json m_defaults = nlohmann::json::object();  ///< Engine defaults
-    nlohmann::json m_project = nlohmann::json::object();   ///< .uzproject loaded config
-    nlohmann::json m_cli = nlohmann::json::object();       ///< CLI overrides
-    nlohmann::json m_merged = nlohmann::json::object();    ///< Cascaded result
+  private:
+    nlohmann::json m_defaults = nlohmann::json::object(); ///< Engine defaults
+    nlohmann::json m_project = nlohmann::json::object();  ///< .uzproject loaded config
+    nlohmann::json m_cli = nlohmann::json::object();      ///< CLI overrides
+    nlohmann::json m_merged = nlohmann::json::object();   ///< Cascaded result
 
     /// Rebuilds m_merged from all sources (called after any load/override).
     void RebuildMerged();

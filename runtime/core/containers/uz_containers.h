@@ -12,7 +12,7 @@
 /// All containers use stack or provided allocators (no std::allocator magic).
 /// Each header is independent — include only what you need.
 
-#include "uz_ring_buffer.h"
+#include "uz_frame_array.h"
 #include "uz_free_list.h"
 #include "uz_handle_map.h"
-#include "uz_frame_array.h"
+#include "uz_ring_buffer.h"

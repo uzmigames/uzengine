@@ -20,8 +20,8 @@
 /// rather than discovering them in production.
 /// Inspired by Rust's ownership model, adapted for C++ game engine constraints.
 
-#include <memory>
 #include <cstdint>
+#include <memory>
 #include <utility>
 
 #ifndef UZ_SHIPPING
@@ -59,7 +59,8 @@ struct BorrowTracker {
         int32_t imm = immutableCount.load(std::memory_order_acquire);
         int32_t mut = mutableCount.load(std::memory_order_acquire);
         if (imm != 0) {
-            std::fprintf(stderr, "UZ_BORROW: mutable borrow while %d immutable borrows active!\n", imm);
+            std::fprintf(stderr, "UZ_BORROW: mutable borrow while %d immutable borrows active!\n",
+                         imm);
             assert(false && "Borrow violation: mutable borrow while immutable borrows active");
         }
         if (mut != 0) {
@@ -79,9 +80,8 @@ struct BorrowTracker {
 
 // ── Own<T> — unique owning pointer (move-only) ─────────────────────────────
 
-template <typename T>
-class Own {
-public:
+template <typename T> class Own {
+  public:
     Own() = default;
     explicit Own(T* ptr) : m_ptr(ptr) {}
     ~Own() { delete m_ptr; }
@@ -125,59 +125,64 @@ public:
     BorrowTracker* GetTracker() { return &m_tracker; }
 #endif
 
-private:
+  private:
     T* m_ptr = nullptr;
 #ifndef UZ_SHIPPING
     BorrowTracker m_tracker;
 #endif
 };
 
-template <typename T, typename... Args>
-Own<T> MakeOwn(Args&&... args) {
+template <typename T, typename... Args> Own<T> MakeOwn(Args&&... args) {
     return Own<T>(new T(std::forward<Args>(args)...));
 }
 
 // ── Ref<T> — non-owning immutable borrow ────────────────────────────────────
 
-template <typename T>
-class Ref {
-public:
+template <typename T> class Ref {
+  public:
     Ref() = default;
 
     explicit Ref(const Own<T>& owner)
         : m_ptr(owner.Get())
 #ifndef UZ_SHIPPING
-        , m_tracker(const_cast<Own<T>&>(owner).GetTracker())
+          ,
+          m_tracker(const_cast<Own<T>&>(owner).GetTracker())
 #endif
     {
 #ifndef UZ_SHIPPING
-        if (m_tracker) m_tracker->AcquireImmutable();
+        if (m_tracker)
+            m_tracker->AcquireImmutable();
 #endif
     }
 
     ~Ref() {
 #ifndef UZ_SHIPPING
-        if (m_tracker) m_tracker->ReleaseImmutable();
+        if (m_tracker)
+            m_tracker->ReleaseImmutable();
 #endif
     }
 
     Ref(const Ref& other)
         : m_ptr(other.m_ptr)
 #ifndef UZ_SHIPPING
-        , m_tracker(other.m_tracker)
+          ,
+          m_tracker(other.m_tracker)
 #endif
     {
 #ifndef UZ_SHIPPING
-        if (m_tracker) m_tracker->AcquireImmutable();
+        if (m_tracker)
+            m_tracker->AcquireImmutable();
 #endif
     }
 
     Ref& operator=(const Ref& other) {
         if (this != &other) {
 #ifndef UZ_SHIPPING
-            if (m_tracker) m_tracker->ReleaseImmutable();
+            if (m_tracker)
+                m_tracker->ReleaseImmutable();
             m_tracker = other.m_tracker;
-            if (m_tracker) m_tracker->AcquireImmutable();
+            if (m_tracker)
+                m_tracker->AcquireImmutable();
 #endif
             m_ptr = other.m_ptr;
         }
@@ -187,7 +192,8 @@ public:
     Ref(Ref&& other) noexcept
         : m_ptr(other.m_ptr)
 #ifndef UZ_SHIPPING
-        , m_tracker(other.m_tracker)
+          ,
+          m_tracker(other.m_tracker)
 #endif
     {
         other.m_ptr = nullptr;
@@ -199,7 +205,8 @@ public:
     Ref& operator=(Ref&& other) noexcept {
         if (this != &other) {
 #ifndef UZ_SHIPPING
-            if (m_tracker) m_tracker->ReleaseImmutable();
+            if (m_tracker)
+                m_tracker->ReleaseImmutable();
             m_tracker = other.m_tracker;
             other.m_tracker = nullptr;
 #endif
@@ -214,7 +221,7 @@ public:
     const T& operator*() const { return *m_ptr; }
     explicit operator bool() const { return m_ptr != nullptr; }
 
-private:
+  private:
     const T* m_ptr = nullptr;
 #ifndef UZ_SHIPPING
     BorrowTracker* m_tracker = nullptr;
@@ -223,25 +230,27 @@ private:
 
 // ── RefMut<T> — exclusive mutable borrow ────────────────────────────────────
 
-template <typename T>
-class RefMut {
-public:
+template <typename T> class RefMut {
+  public:
     RefMut() = default;
 
     explicit RefMut(Own<T>& owner)
         : m_ptr(owner.Get())
 #ifndef UZ_SHIPPING
-        , m_tracker(owner.GetTracker())
+          ,
+          m_tracker(owner.GetTracker())
 #endif
     {
 #ifndef UZ_SHIPPING
-        if (m_tracker) m_tracker->AcquireMutable();
+        if (m_tracker)
+            m_tracker->AcquireMutable();
 #endif
     }
 
     ~RefMut() {
 #ifndef UZ_SHIPPING
-        if (m_tracker) m_tracker->ReleaseMutable();
+        if (m_tracker)
+            m_tracker->ReleaseMutable();
 #endif
     }
 
@@ -252,7 +261,8 @@ public:
     RefMut(RefMut&& other) noexcept
         : m_ptr(other.m_ptr)
 #ifndef UZ_SHIPPING
-        , m_tracker(other.m_tracker)
+          ,
+          m_tracker(other.m_tracker)
 #endif
     {
         other.m_ptr = nullptr;
@@ -264,7 +274,8 @@ public:
     RefMut& operator=(RefMut&& other) noexcept {
         if (this != &other) {
 #ifndef UZ_SHIPPING
-            if (m_tracker) m_tracker->ReleaseMutable();
+            if (m_tracker)
+                m_tracker->ReleaseMutable();
             m_tracker = other.m_tracker;
             other.m_tracker = nullptr;
 #endif
@@ -279,7 +290,7 @@ public:
     T& operator*() const { return *m_ptr; }
     explicit operator bool() const { return m_ptr != nullptr; }
 
-private:
+  private:
     T* m_ptr = nullptr;
 #ifndef UZ_SHIPPING
     BorrowTracker* m_tracker = nullptr;

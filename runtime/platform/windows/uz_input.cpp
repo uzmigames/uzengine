@@ -5,6 +5,7 @@
 /// Integrates with WM_* messages from PlatformWindow::WndProc.
 
 #include "uz_input.h"
+
 #include <cstring>
 
 namespace uz {
@@ -72,22 +73,26 @@ void InputSystem::RegisterAction(const std::string& name, Key key) {
 
 bool InputSystem::IsActionDown(const std::string& name) const {
     auto it = m_actions.find(name);
-    if (it == m_actions.end()) return false;
+    if (it == m_actions.end())
+        return false;
     return IsKeyDown(it->second);
 }
 
 bool InputSystem::IsActionJustPressed(const std::string& name) const {
     auto it = m_actions.find(name);
-    if (it == m_actions.end()) return false;
+    if (it == m_actions.end())
+        return false;
     return IsKeyJustPressed(it->second);
 }
 
 void InputSystem::OnKeyDown(uint16_t vk) {
-    if (vk < kMaxKeys) m_keyCurrent[vk] = true;
+    if (vk < kMaxKeys)
+        m_keyCurrent[vk] = true;
 }
 
 void InputSystem::OnKeyUp(uint16_t vk) {
-    if (vk < kMaxKeys) m_keyCurrent[vk] = false;
+    if (vk < kMaxKeys)
+        m_keyCurrent[vk] = false;
 }
 
 void InputSystem::OnMouseMove(float x, float y) {
@@ -97,7 +102,8 @@ void InputSystem::OnMouseMove(float x, float y) {
 
 void InputSystem::OnMouseButton(MouseButton btn, bool down) {
     int b = static_cast<int>(btn);
-    if (b < kMaxMouseButtons) m_mouseCurrent[b] = down;
+    if (b < kMaxMouseButtons)
+        m_mouseCurrent[b] = down;
 }
 
 void InputSystem::OnMouseScroll(float delta) {

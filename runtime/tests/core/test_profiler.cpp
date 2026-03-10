@@ -1,5 +1,6 @@
-#include <gtest/gtest.h>
 #include "uz_profiler.h"
+
+#include <gtest/gtest.h>
 
 UZ_DEFINE_STAT(Rendering, TestDrawCalls);
 
