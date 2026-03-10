@@ -7,6 +7,7 @@
   "engines": {
     "vscode": "^1.85.0"
   },
+  "icon": "icon.png",
   "categories": [
     "Other"
   ],
@@ -24,38 +25,45 @@
         "id": "hlsl",
         "aliases": ["HLSL", "hlsl"],
         "extensions": [".hlsl", ".hlsli", ".fx", ".fxh"],
-        "configuration": "./language-configuration/hlsl.json"
+        "configuration": "./language-configuration/hlsl.json",
+        "icon": { "light": "./icons/hlsl.svg", "dark": "./icons/hlsl.svg" }
       },
       {
         "id": "zig",
         "aliases": ["Zig", "zig"],
         "extensions": [".zig"],
-        "configuration": "./language-configuration/zig.json"
+        "configuration": "./language-configuration/zig.json",
+        "icon": { "light": "./icons/zig.svg", "dark": "./icons/zig.svg" }
       },
       {
         "id": "uzscene",
         "aliases": ["UzEngine Scene"],
-        "extensions": [".uzscene"]
+        "extensions": [".uzscene"],
+        "icon": { "light": "./icons/uzscene.svg", "dark": "./icons/uzscene.svg" }
       },
       {
         "id": "uzmaterial",
         "aliases": ["UzEngine Material"],
-        "extensions": [".uzmaterial"]
+        "extensions": [".uzmaterial"],
+        "icon": { "light": "./icons/uzmaterial.svg", "dark": "./icons/uzmaterial.svg" }
       },
       {
         "id": "uzmesh",
         "aliases": ["UzEngine Mesh"],
-        "extensions": [".uzmesh"]
+        "extensions": [".uzmesh"],
+        "icon": { "light": "./icons/uzmesh.svg", "dark": "./icons/uzmesh.svg" }
       },
       {
         "id": "uzprefab",
         "aliases": ["UzEngine Prefab"],
-        "extensions": [".uzprefab"]
+        "extensions": [".uzprefab"],
+        "icon": { "light": "./icons/uzprefab.svg", "dark": "./icons/uzprefab.svg" }
       },
       {
         "id": "uzproject",
         "aliases": ["UzEngine Project"],
-        "extensions": [".uzproject"]
+        "extensions": [".uzproject"],
+        "icon": { "light": "./icons/uzproject.svg", "dark": "./icons/uzproject.svg" }
       }
     ],
     "grammars": [

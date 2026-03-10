@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
+  <!-- animation / figure icon -->
+  <circle fill="#F48FB1" cx="8" cy="3" r="2"/>
+  <path fill="#F48FB1" d="M5 6h6l-1 4H6L5 6zM6 10l-1.5 4M10 10l1.5 4M5 6l-2 3M11 6l2 3"/>
+</svg>

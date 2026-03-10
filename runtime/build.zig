@@ -24,6 +24,41 @@ pub fn build(b: *std.Build) void {
         .flags = cpp_flags,
     });
 
+    // Core — logging
+    runtime_mod.addCSourceFiles(.{
+        .root = b.path("core/logging"),
+        .files = &.{"uz_log.cpp"},
+        .flags = cpp_flags,
+    });
+
+    // Core — assertions
+    runtime_mod.addCSourceFiles(.{
+        .root = b.path("core/assertions"),
+        .files = &.{"uz_assert.cpp"},
+        .flags = cpp_flags,
+    });
+
+    // Core — profiling
+    runtime_mod.addCSourceFiles(.{
+        .root = b.path("core/profiling"),
+        .files = &.{"uz_profiler.cpp"},
+        .flags = cpp_flags,
+    });
+
+    // Core — config
+    runtime_mod.addCSourceFiles(.{
+        .root = b.path("core/config"),
+        .files = &.{"uz_config.cpp"},
+        .flags = cpp_flags,
+    });
+
+    // Platform — Windows
+    runtime_mod.addCSourceFiles(.{
+        .root = b.path("platform/windows"),
+        .files = &.{ "uz_platform_window.cpp", "uz_input.cpp" },
+        .flags = cpp_flags,
+    });
+
     // ── spdlog (compiled library) ───────────────────────────────────────
 
     runtime_mod.addCSourceFiles(.{
@@ -52,6 +87,12 @@ pub fn build(b: *std.Build) void {
 
     // Engine
     runtime_mod.addIncludePath(b.path("src"));
+    runtime_mod.addIncludePath(b.path("core/logging"));
+    runtime_mod.addIncludePath(b.path("core/assertions"));
+    runtime_mod.addIncludePath(b.path("core/profiling"));
+    runtime_mod.addIncludePath(b.path("core/memory"));
+    runtime_mod.addIncludePath(b.path("core/config"));
+    runtime_mod.addIncludePath(b.path("platform/windows"));
 
     // spdlog
     runtime_mod.addIncludePath(b.path(tp ++ "spdlog/include"));
@@ -104,15 +145,69 @@ pub fn build(b: *std.Build) void {
     });
     test_mod.link_libc = true;
     test_mod.link_libcpp = true;
+
+    // Include paths (same as runtime)
     test_mod.addIncludePath(b.path("src"));
+    test_mod.addIncludePath(b.path("core/logging"));
+    test_mod.addIncludePath(b.path("core/assertions"));
+    test_mod.addIncludePath(b.path("core/profiling"));
+    test_mod.addIncludePath(b.path("core/memory"));
+    test_mod.addIncludePath(b.path("core/config"));
+    test_mod.addIncludePath(b.path("platform/windows"));
+    test_mod.addIncludePath(b.path(tp ++ "spdlog/include"));
+    test_mod.addIncludePath(b.path(tp ++ "nlohmann"));
+
+    // Test sources
     test_mod.addCSourceFiles(.{
         .root = b.path("tests"),
         .files = &.{"test_runtime.cpp"},
         .flags = cpp_flags,
     });
+
+    // Runtime sources needed by tests
     test_mod.addCSourceFiles(.{
         .root = b.path("src"),
         .files = &.{"uz_runtime.cpp"},
+        .flags = cpp_flags,
+    });
+    test_mod.addCSourceFiles(.{
+        .root = b.path("core/logging"),
+        .files = &.{"uz_log.cpp"},
+        .flags = cpp_flags,
+    });
+    test_mod.addCSourceFiles(.{
+        .root = b.path("core/assertions"),
+        .files = &.{"uz_assert.cpp"},
+        .flags = cpp_flags,
+    });
+    test_mod.addCSourceFiles(.{
+        .root = b.path("core/profiling"),
+        .files = &.{"uz_profiler.cpp"},
+        .flags = cpp_flags,
+    });
+    test_mod.addCSourceFiles(.{
+        .root = b.path("core/config"),
+        .files = &.{"uz_config.cpp"},
+        .flags = cpp_flags,
+    });
+    test_mod.addCSourceFiles(.{
+        .root = b.path("platform/windows"),
+        .files = &.{ "uz_input.cpp" },
+        .flags = cpp_flags,
+    });
+
+    // spdlog for tests
+    test_mod.addCSourceFiles(.{
+        .root = b.path(tp ++ "spdlog/src"),
+        .files = &.{
+            "spdlog.cpp",
+            "async.cpp",
+            "cfg.cpp",
+            "color_sinks.cpp",
+            "file_sinks.cpp",
+            "stdout_sinks.cpp",
+            "bundled_fmtlib_format.cpp",
+        },
         .flags = cpp_flags,
     });
 

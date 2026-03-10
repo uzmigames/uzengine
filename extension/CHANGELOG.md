@@ -13,3 +13,6 @@
 - Syntax highlighting for Zig (`.zig`)
 - Language registration for UzEngine formats (`.uzscene`, `.uzmaterial`, `.uzmesh`, `.uzprefab`, `.uzproject`)
 - Markdown fenced code block injection for `hlsl` and `zig`
+- Extension marketplace icon (`icon.png`)
+- File type icons (SVG) for HLSL, Zig, and all UzEngine formats
+- `open-vscode.bat` launcher with `--extensionDevelopmentPath` and `--remote-debugging-port=9229`

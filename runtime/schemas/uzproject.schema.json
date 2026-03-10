@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uzengine.dev/schemas/uzproject.schema.json",
+  "title": "UzEngine Project",
+  "description": "UzEngine project configuration file (.uzproject)",
+  "type": "object",
+  "required": ["name", "version", "engine_version"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Project display name"
+    },
+    "version": {
+      "type": "string",
+      "description": "Project version (semver)"
+    },
+    "engine_version": {
+      "type": "string",
+      "description": "Required engine version"
+    },
+    "default_scene": {
+      "type": "string",
+      "description": "Path to the default scene (.uzscene) relative to content_root"
+    },
+    "content_root": {
+      "type": "string",
+      "default": "content/",
+      "description": "Root directory for all content assets"
+    },
+    "render": {
+      "type": "object",
+      "properties": {
+        "backend": {
+          "type": "string",
+          "enum": ["dx12", "dx11", "vulkan", "metal"],
+          "default": "dx12"
+        },
+        "shader_model": {
+          "type": "string",
+          "enum": ["6_6", "6_0", "5_1", "5_0"],
+          "default": "6_6"
+        },
+        "resolution": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 1 },
+          "minItems": 2,
+          "maxItems": 2,
+          "default": [1920, 1080]
+        },
+        "vsync": { "type": "boolean", "default": true },
+        "hdr": { "type": "boolean", "default": false }
+      }
+    },
+    "physics": {
+      "type": "object",
+      "properties": {
+        "gravity": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 3,
+          "maxItems": 3,
+          "default": [0, -9.81, 0]
+        },
+        "fixed_timestep": {
+          "type": "number",
+          "minimum": 0.001,
+          "default": 0.01667
+        }
+      }
+    },
+    "window": {
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "default": "UzEngine" },
+        "width": { "type": "integer", "minimum": 1, "default": 1280 },
+        "height": { "type": "integer", "minimum": 1, "default": 720 },
+        "fullscreen": { "type": "boolean", "default": false },
+        "resizable": { "type": "boolean", "default": true }
+      }
+    },
+    "log": {
+      "type": "object",
+      "properties": {
+        "level": {
+          "type": "string",
+          "enum": ["trace", "debug", "info", "warning", "error", "fatal"],
+          "default": "info"
+        },
+        "file": { "type": "string", "default": "uzengine.log" }
+      }
+    }
+  },
+  "additionalProperties": true
+}
