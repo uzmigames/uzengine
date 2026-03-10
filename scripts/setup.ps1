@@ -228,7 +228,31 @@ Download-Header -Name "nlohmann" `
 Clone-Repo -Name "googletest" `
     -Url "https://github.com/google/googletest.git" `
     -Branch "v1.15.2" `
-    -RemoveDirs @("ci", "docs", "googlemock", "fake_fuchsia_sdk")
+    -RemoveDirs @("ci", "docs", "googlemock", "fake_fuchsia_sdk", "test", "samples")
+
+# SPIRV-Reflect (shader reflection)
+Clone-Repo -Name "spirv-reflect" `
+    -Url "https://github.com/KhronosGroup/SPIRV-Reflect.git" `
+    -Branch "v1.3.268" `
+    -RemoveDirs @("examples", "tests", "docs", "scripts", "cmake")
+
+# xxhash (fast hashing)
+Clone-Repo -Name "xxhash" `
+    -Url "https://github.com/Cyan4973/xxHash.git" `
+    -Branch "v0.8.2" `
+    -RemoveDirs @("tests", "doc", "cmake_unofficial", "contrib")
+
+# SSE Math Fun (SIMD math functions)
+Clone-Repo -Name "sse_mathfun" `
+    -Url "https://github.com/dpilger26/SSE_Mathfun.git" `
+    -Branch "master" `
+    -RemoveDirs @("examples", "doc")
+
+# MikkTSpace (tangent space generation)
+Clone-Repo -Name "mikktspace" `
+    -Url "https://github.com/svenslaggare/MikkTSpace.git" `
+    -Branch "master" `
+    -RemoveDirs @("examples", "tests", "cmake")
 
 # Crashpad (crash reporting) — TODO: find working minimal crashpad repo
 # Clone-Repo -Name "crashpad" `

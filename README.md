@@ -124,6 +124,10 @@ All thirdparty libraries are **committed to the repo** under `runtime/thirdparty
 | nlohmann/json | 3.11.3 | MIT | JSON parsing (single header) |
 | atomic_queue | latest | MIT | Lock-free queue |
 | GoogleTest | 1.15.2 | BSD-3-Clause | Testing framework |
+| SPIRV-Reflect | 1.3.268 | Apache 2.0 | Shader reflection & root signature generation |
+| xxhash | 0.8.2 | BSD-2-Clause | Fast hashing (content fingerprints, asset caching) |
+| SSE Math Fun | latest | MIT | SIMD math functions (sin, cos, log, sqrt optimized) |
+| MikkTSpace | latest | MIT | Tangent space generation for normal maps |
 | dlmalloc | 2.8.6 | Public Domain | Lightweight allocator |
 | jemalloc | 5.3.0 | BSD-2-Clause | Alternative allocator |
 | vcpkg | latest | MIT | zlib, zstd |
