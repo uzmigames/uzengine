@@ -122,6 +122,35 @@ Large files with mixed responsibilities degrade LLM comprehension. Smaller, focu
   runtime/core/engine.cpp              (2000 lines, does logging + config + init)
 ```
 
+## ⚠️ CRITICAL: Documentation Style
+
+**MANDATORY**: All code headers, types, and public functions MUST use **Rust-style documentation comments**.
+
+### Documentation Rules
+
+1. **Triple-slash (`///`) for public items** — all public structs, functions, methods
+   ```cpp
+   /// Thin wrapper over DirectXMath for SIMD-accelerated vector operations.
+   /// All types are DirectX-friendly: column-major matrices, XMVECTOR-compatible.
+   struct Vec3 {
+       /// Signed distance from point — positive if point is in front of plane.
+       float Distance(const Vec3& p) const;
+   }
+   ```
+
+2. **Double-slash sections (`// ───`)** — for logical groupings within files
+   ```cpp
+   // ─────────────────────────────────────────────────────────────────────────────
+   // Vec3 Implementation — 3D float vector (primary SIMD vector)
+   // ─────────────────────────────────────────────────────────────────────────────
+   ```
+
+3. **Inline comments ONLY for "why"** — never explain "what" the code does
+   - ❌ `x += 1;  // increment x`
+   - ✅ `x += 1;  // Skip sentinel value at index 0`
+
+4. **No comments = self-explanatory code** — if you need to explain it, rename variables/functions
+
 ## ⚠️ CRITICAL: Clean Code & SOLID Principles
 
 **MANDATORY**: All code must follow Clean Code and SOLID principles. This engine is large — without discipline, it becomes unmaintainable for both humans and AI.

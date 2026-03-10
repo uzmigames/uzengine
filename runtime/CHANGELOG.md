@@ -2,6 +2,23 @@
 
 ## [0.2.0] — 2026-03-10
 
+### Milestone 1.1 — Math & Geometry Library
+- **Math foundation** (`core/math/uz_math.h`) — SIMD-accelerated vectors and matrices via DirectXMath:
+  - Vec2, Vec3, Vec4 with zero-initialization, SIMD operations (dot, cross, normalize)
+  - Mat4 with identity default, transforms (point/direction), decomposition, comparisons
+  - Quat with slerp, lerp, axis-angle, vector rotation
+  - Transform with position/rotation/scale composition, decomposition, interpolation
+- **Geometry types** (`core/math/uz_geometry.h`) — Frustum culling and collision:
+  - Plane (half-space, signed distance for frustum clipping)
+  - AABB (axis-aligned bounds with containment, intersection, expansion tests)
+  - Frustum (6-plane view frustum extraction from projection matrix, conservative culling)
+- **Color space conversions** (`core/math/uz_color.h`) — Linear ↔ sRGB gamma correction:
+  - LinearColor (float4, linear RGB for rendering)
+  - sRGBColor (uint8_t RGBA, sRGB for storage/UI)
+  - Gamma-correct conversions, hex color support
+- **160 unit tests** — Complete coverage of all math types and operations (27 test suites)
+- **Rust-style documentation** — All public types/methods documented with `///` comments
+
 ### Added
 - Initial Zig build system (`build.zig`)
 - Thirdparty dependency setup via `scripts/setup.ps1`
