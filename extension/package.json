@@ -7,7 +7,9 @@
   "engines": {
     "vscode": "^1.85.0"
   },
-  "categories": ["Other"],
+  "categories": [
+    "Other"
+  ],
   "main": "./out/extension.js",
   "activationEvents": [],
   "contributes": {
@@ -20,7 +22,14 @@
   },
   "scripts": {
     "build:ts": "tsc -p .",
-    "build": "npm run build:ts"
+    "build": "npm run build:ts",
+    "lint": "eslint src/",
+    "lint:fix": "eslint src/ --fix",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\"",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "@vscode/extension-telemetry": "^1.5.0"
@@ -29,6 +38,11 @@
     "@sentry/browser": "^10.43.0",
     "@types/node": "^25.4.0",
     "@types/vscode": "^1.110.0",
-    "typescript": "^5.9.3"
+    "@typescript-eslint/eslint-plugin": "^8.57.0",
+    "@typescript-eslint/parser": "^8.57.0",
+    "eslint": "^9.39.4",
+    "prettier": "^3.8.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
   }
 }

@@ -95,4 +95,34 @@ pub fn build(b: *std.Build) void {
         .root_module = runtime_mod,
     });
     b.installArtifact(lib);
+
+    // ── Test executable ───────────────────────────────────────────────
+
+    const test_mod = b.createModule(.{
+        .target = target,
+        .optimize = optimize,
+    });
+    test_mod.link_libc = true;
+    test_mod.link_libcpp = true;
+    test_mod.addIncludePath(b.path("src"));
+    test_mod.addCSourceFiles(.{
+        .root = b.path("tests"),
+        .files = &.{"test_runtime.cpp"},
+        .flags = cpp_flags,
+    });
+    test_mod.addCSourceFiles(.{
+        .root = b.path("src"),
+        .files = &.{"uz_runtime.cpp"},
+        .flags = cpp_flags,
+    });
+
+    const test_exe = b.addExecutable(.{
+        .name = "test_runtime",
+        .root_module = test_mod,
+    });
+    b.installArtifact(test_exe);
+
+    const run_test = b.addRunArtifact(test_exe);
+    const test_step = b.step("test", "Run runtime unit tests");
+    test_step.dependOn(&run_test.step);
 }

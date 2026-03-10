@@ -12,6 +12,12 @@
     "build:extension": "cd extension && npx tsc -p .",
     "build:mcp": "cd mcp && npx tsc -p .",
     "build": "npm run build:runtime && npm run build:napi && npm run copy:node && npm run build:extension && npm run build:mcp",
-    "build:debug": "npm run build:runtime:debug && npm run build:napi:debug && npm run copy:node && npm run build:extension && npm run build:mcp"
+    "build:debug": "npm run build:runtime:debug && npm run build:napi:debug && npm run copy:node && npm run build:extension && npm run build:mcp",
+    "lint": "cd extension && npm run lint && cd ../mcp && npm run lint",
+    "lint:fix": "cd extension && npm run lint:fix && cd ../mcp && npm run lint:fix",
+    "format": "cd extension && npm run format && cd ../mcp && npm run format",
+    "format:check": "cd extension && npm run format:check && cd ../mcp && npm run format:check",
+    "test": "cd extension && npm test && cd ../mcp && npm test",
+    "test:coverage": "cd extension && npm run test:coverage && cd ../mcp && npm run test:coverage"
   }
 }

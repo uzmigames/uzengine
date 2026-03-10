@@ -1,5 +1,6 @@
-#include <napi.h>
 #include "uz_runtime.h"
+
+#include <napi.h>
 
 Napi::Value GetVersion(const Napi::CallbackInfo& info) {
     return Napi::String::New(info.Env(), uz_runtime_version());

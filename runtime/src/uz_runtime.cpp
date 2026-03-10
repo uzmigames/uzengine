@@ -14,7 +14,6 @@ int uz_runtime_init(void) {
     return 1;
 }
 
-void uz_runtime_shutdown(void) {
-}
+void uz_runtime_shutdown(void) {}
 
 } // extern "C"
