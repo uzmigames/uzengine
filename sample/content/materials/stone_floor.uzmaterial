@@ -1,0 +1,23 @@
+{
+  "name": "StoneFloor",
+  "version": "1.0",
+  "shading_model": "default_lit",
+  "blend_mode": "opaque",
+  "two_sided": false,
+  "properties": {
+    "base_color": [0.45, 0.42, 0.38],
+    "metallic": 0.0,
+    "roughness": 0.85,
+    "normal_strength": 1.0
+  },
+  "textures": {
+    "base_color_map": "content/textures/stone_floor_albedo.png",
+    "normal_map": "content/textures/stone_floor_normal.png",
+    "roughness_map": "content/textures/stone_floor_roughness.png",
+    "ao_map": "content/textures/stone_floor_ao.png"
+  },
+  "tiling": {
+    "u": 8.0,
+    "v": 8.0
+  }
+}

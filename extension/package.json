@@ -18,6 +18,92 @@
         "command": "uzengine.start",
         "title": "UzEngine: Start"
       }
+    ],
+    "languages": [
+      {
+        "id": "hlsl",
+        "aliases": ["HLSL", "hlsl"],
+        "extensions": [".hlsl", ".hlsli", ".fx", ".fxh"],
+        "configuration": "./language-configuration/hlsl.json"
+      },
+      {
+        "id": "zig",
+        "aliases": ["Zig", "zig"],
+        "extensions": [".zig"],
+        "configuration": "./language-configuration/zig.json"
+      },
+      {
+        "id": "uzscene",
+        "aliases": ["UzEngine Scene"],
+        "extensions": [".uzscene"]
+      },
+      {
+        "id": "uzmaterial",
+        "aliases": ["UzEngine Material"],
+        "extensions": [".uzmaterial"]
+      },
+      {
+        "id": "uzmesh",
+        "aliases": ["UzEngine Mesh"],
+        "extensions": [".uzmesh"]
+      },
+      {
+        "id": "uzprefab",
+        "aliases": ["UzEngine Prefab"],
+        "extensions": [".uzprefab"]
+      },
+      {
+        "id": "uzproject",
+        "aliases": ["UzEngine Project"],
+        "extensions": [".uzproject"]
+      }
+    ],
+    "grammars": [
+      {
+        "language": "hlsl",
+        "scopeName": "source.hlsl",
+        "path": "./syntaxes/hlsl.tmLanguage.json"
+      },
+      {
+        "language": "zig",
+        "scopeName": "source.zig",
+        "path": "./syntaxes/zig.tmLanguage.json"
+      },
+      {
+        "language": "uzscene",
+        "scopeName": "source.json.uzengine",
+        "path": "./syntaxes/uzengine-json.tmLanguage.json"
+      },
+      {
+        "language": "uzmaterial",
+        "scopeName": "source.json.uzengine",
+        "path": "./syntaxes/uzengine-json.tmLanguage.json"
+      },
+      {
+        "language": "uzmesh",
+        "scopeName": "source.json.uzengine",
+        "path": "./syntaxes/uzengine-json.tmLanguage.json"
+      },
+      {
+        "language": "uzprefab",
+        "scopeName": "source.json.uzengine",
+        "path": "./syntaxes/uzengine-json.tmLanguage.json"
+      },
+      {
+        "language": "uzproject",
+        "scopeName": "source.json.uzengine",
+        "path": "./syntaxes/uzengine-json.tmLanguage.json"
+      },
+      {
+        "scopeName": "markdown.hlsl.codeblock",
+        "path": "./syntaxes/hlsl-markdown-injection.tmLanguage.json",
+        "injectTo": ["text.html.markdown"]
+      },
+      {
+        "scopeName": "markdown.zig.codeblock",
+        "path": "./syntaxes/zig-markdown-injection.tmLanguage.json",
+        "injectTo": ["text.html.markdown"]
+      }
     ]
   },
   "scripts": {

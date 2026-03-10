@@ -78,6 +78,30 @@ scripts/build.ps1
   └─ 4. build:extension   tsc       → extension/out/extension.js
 ```
 
+## Quality
+
+| Tool | Runtime | N-API | Extension | MCP |
+|------|---------|-------|-----------|-----|
+| **Lint** | clang-tidy | — | ESLint 9 | ESLint 9 |
+| **Format** | clang-format | clang-format | Prettier 3.8 | Prettier 3.8 |
+| **Test** | zig build test | — | Vitest 4 | Vitest 4 |
+
+```bash
+# Run all quality checks
+scripts/lint.ps1       # clang-tidy + eslint
+scripts/format.ps1     # clang-format + prettier (--check for CI)
+scripts/test.ps1       # zig test + vitest (--coverage for thresholds)
+
+# Or per-module via npm
+npm run lint           # extension + mcp
+npm run test           # extension + mcp
+npm run format         # extension + mcp
+```
+
+- **Zero warnings** — all warnings promoted to errors across every module
+- **95% coverage** — enforced via Vitest thresholds on branches, functions, lines, and statements
+- **Structured logging** — `LogOutputChannel` (extension), `pino` (mcp), `spdlog` (runtime)
+
 ## Documentation
 
 - [Architecture](docs/ARCHITECTURE.md) — system design, layers, execution model
