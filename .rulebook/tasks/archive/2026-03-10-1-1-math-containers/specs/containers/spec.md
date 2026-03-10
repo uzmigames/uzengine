@@ -35,7 +35,7 @@ public:
 - **Cache-line alignment**: alignas(64) to prevent false-sharing
 - **SPSC guarantee**: One thread calls Push/Size/Full, one thread calls Pop/Empty
 
-### Scenario: Circular Queue Full
+##### Scenario: Circular Queue Full
 
 **Given** a RingBuffer<int, 4> with 3 items
 **When** TryPush(item) on full queue
@@ -70,7 +70,7 @@ public:
 - **Element-stable**: Allocated addresses never change (no reallocation)
 - **Constructor/destructor**: Placement new/delete called on blocks
 
-### Scenario: Reuse After Free
+##### Scenario: Reuse After Free
 
 **Given** a FreeList with one allocation at address P
 **When** Free(P) then Allocate() again
@@ -120,7 +120,7 @@ public:
 - **Reuse detection**: After Destroy(), next Create() increments generation
 - **Dense iteration**: ForEach only iterates alive entries
 
-### Scenario: Use-After-Free Detection
+##### Scenario: Use-After-Free Detection
 
 **Given** `Handle<Entity> h = map.Create()`  // h = {0, 1}
 **When** `map.Destroy(h)` then `map.Create()`  // next = {0, 2}
@@ -155,7 +155,7 @@ public:
 - **No Free**: All allocations live until BeginFrame()
 - **Fast**: Bump pointer allocation O(1)
 
-### Scenario: Frame Scoped Allocation
+##### Scenario: Frame Scoped Allocation
 
 **Given** a FrameArray with 1MB capacity
 **When** BeginFrame() called in frame N, then allocate 100KB
@@ -227,7 +227,7 @@ public:
 
 **Use**: Temporary per-frame allocations (sorting, queries, collision narrowphase)
 
-## Scenario: ECS Entity Creation/Destruction
+#### Scenario: ECS Entity Creation/Destruction
 
 **Given** a HandleMap<Entity, 100000> entities
 **When** game creates 50K entities with components

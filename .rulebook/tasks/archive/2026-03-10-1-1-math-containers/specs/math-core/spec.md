@@ -147,14 +147,14 @@ struct Transform {
 };
 ```
 
-## Scenario: Vector Arithmetic
+#### Scenario: Vector Arithmetic
 
 **Given** a Vec3 `a = (1, 2, 3)` and `b = (4, 5, 6)`
 **When** computing `c = a + b`
 **Then** `c = (5, 7, 9)`
 **And** disassembly shows `paddd` (SIMD add) instruction
 
-## Scenario: Frustum Culling
+#### Scenario: Frustum Culling
 
 **Given** a Frustum extracted from view-projection matrix
 **And** an AABB representing a bounding box
