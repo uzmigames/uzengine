@@ -154,7 +154,6 @@ struct Vec3 {
     /// Vector addition.
     Vec3 operator+(const Vec3& other) const { return {x + other.x, y + other.y, z + other.z}; }
     /// Vector subtraction.
-    Vec3 operator+(const Vec3& other) const { return {x + other.x, y + other.y, z + other.z}; }
     Vec3 operator-(const Vec3& other) const { return {x - other.x, y - other.y, z - other.z}; }
     Vec3 operator*(float scalar) const { return {x * scalar, y * scalar, z * scalar}; }
     /// Component-wise multiplication (not standard vector op, used for scale blending).

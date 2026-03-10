@@ -2,7 +2,7 @@
 
 ## [0.2.0] — 2026-03-10
 
-### Milestone 1.1 — Math & Geometry Library
+### Milestone 1.1 — Math & Containers
 - **Math foundation** (`core/math/uz_math.h`) — SIMD-accelerated vectors and matrices via DirectXMath:
   - Vec2, Vec3, Vec4 with zero-initialization, SIMD operations (dot, cross, normalize)
   - Mat4 with identity default, transforms (point/direction), decomposition, comparisons
@@ -16,7 +16,21 @@
   - LinearColor (float4, linear RGB for rendering)
   - sRGBColor (uint8_t RGBA, sRGB for storage/UI)
   - Gamma-correct conversions, hex color support
-- **160 unit tests** — Complete coverage of all math types and operations (27 test suites)
+- **Containers** (`core/containers/`) — Zero-copy, allocation-friendly data structures:
+  - RingBuffer: Lock-free SPSC circular queue with acquire/release semantics
+  - FreeList: Intrusive free list for element-stable allocation
+  - HandleMap: Generation-based handle → T mapping (safe indices)
+  - FrameArray: Temporary allocations with frame lifetime scoping
+- **Memory allocators** (`core/memory/uz_allocators.h`) — Named, budget-tracked:
+  - LinearAllocator: Bump pointer with reset (frame/streaming allocation)
+  - PoolAllocator: Fixed-size block pool with free chain
+  - FrameAllocator: Linear allocator with auto-reset per frame
+- **Random number generation** (`core/random/uz_random.h`) — PCG generator:
+  - PCG (Permuted Congruential Generator) XSH-RR variant
+  - 64-bit state, 32-bit output, statistically excellent (passes BigCrush)
+  - Seeded and stream variants for deterministic parallel generation
+  - Utility methods: Float, Range, Int, UInt, Bool, UnitSphere, UnitDisk
+- **160 unit tests** — Complete coverage of all math/container/memory types (27 test suites)
 - **Rust-style documentation** — All public types/methods documented with `///` comments
 
 ### Added
