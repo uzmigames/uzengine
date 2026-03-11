@@ -151,6 +151,38 @@ Large files with mixed responsibilities degrade LLM comprehension. Smaller, focu
 
 4. **No comments = self-explanatory code** — if you need to explain it, rename variables/functions
 
+5. **Documentation MUST be detailed enough for auto-generated API docs** — every `///` comment must describe:
+   - **What** the function/class does (purpose, not implementation)
+   - **Parameters**: what each parameter means, valid ranges, ownership semantics
+   - **Return value**: what it returns on success AND failure
+   - **Side effects**: logging, file I/O, state mutations
+   - **Thread safety**: if relevant
+   - **Example**: for non-obvious usage patterns (use `/// ```cpp` blocks)
+
+   ```cpp
+   // ❌ WRONG — lazy one-liner that says nothing useful
+   /// Reads a file.
+   std::vector<uint8_t> Read(const std::string& path);
+
+   // ✅ CORRECT — complete, generates useful API docs
+   /// Reads an entire file into memory as a byte buffer.
+   ///
+   /// The path is resolved relative to the VFS root directory.
+   /// Uses forward slashes as separators (e.g., "shaders/pbr.uzshader").
+   ///
+   /// # Returns
+   /// - Non-empty vector containing the file bytes on success.
+   /// - Empty vector if the file does not exist or an I/O error occurs.
+   ///
+   /// # Errors
+   /// Logs `Asset::Error` on I/O failure with the resolved absolute path.
+   std::vector<uint8_t> Read(const std::string& path) override;
+   ```
+
+6. **Override methods MUST have docs** — don't skip docs just because the base class has them. Each override should document its specific behavior/contract.
+
+7. **Implementation files (.cpp) need section-level docs** — each function implementation should have a brief `///` comment if the behavior differs from or extends the header doc.
+
 ## ⚠️ CRITICAL: Clean Code & SOLID Principles
 
 **MANDATORY**: All code must follow Clean Code and SOLID principles. This engine is large — without discipline, it becomes unmaintainable for both humans and AI.
@@ -180,6 +212,31 @@ Large files with mixed responsibilities degrade LLM comprehension. Smaller, focu
 3. **Assert invariants** — use `UZ_CHECK` for things that must never fail (corrupted state = crash). Use `UZ_ENSURE` for recoverable violations.
 4. **Stat counters** — track allocations, draw calls, frame time, cache hits. Every system exposes its health via `StatCounter`.
 5. **Error context** — log messages include what failed, why, and what input caused it. `"Failed to load texture: path='{}', reason='{}'"` not `"Load failed"`.
+
+## ⚠️ CRITICAL: Engine Systems — Use Engine APIs, Not Raw Libraries
+
+**MANDATORY**: Always use UzEngine's own abstractions. Never bypass them with raw library calls.
+
+### Rules
+
+1. **Logging**: Use `UZ_LOG(Category, Level, ...)` — NEVER use `spdlog::info/error/warn` directly
+2. **Log categories**: Every subsystem MUST have a `UZ_DECLARE_LOG_CATEGORY` / `UZ_DEFINE_LOG_CATEGORY`. Add new ones when creating new subsystems.
+3. **Assertions**: Use `UZ_CHECK` / `UZ_ENSURE` — NEVER use raw `assert()`
+4. **Memory**: Use engine allocators — NEVER use raw `new`/`malloc` in engine code
+5. **Paths**: Use `uz::GetExeDir()` / `uz::ResolveEngineResource()` — NEVER use hardcoded paths
+6. **Profiling**: Use `UZ_PROFILE_SCOPE` — NEVER use raw Tracy macros
+
+### Examples
+
+```cpp
+// ❌ WRONG — bypasses engine logging
+spdlog::info("Loaded texture: {}", path);
+spdlog::error("Failed to compile shader");
+
+// ✅ CORRECT — uses engine log system with category
+UZ_LOG(Asset, Info, "Loaded texture: path='{}'", path);
+UZ_LOG(Asset, Error, "Failed to compile shader: reason='{}'", err);
+```
 
 ## Critical Rules
 

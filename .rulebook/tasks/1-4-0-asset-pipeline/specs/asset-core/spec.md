@@ -49,21 +49,21 @@ key = xxhash64(
 
 ### Storage Layout
 ```
-.uz_cache/
+.cache/
 ├── imported/
-│   ├── a1b2c3d4e5f67890.uz_shader    # cached DXIL bytecode
-│   ├── b2c3d4e5f6789012.uz_texture   # cached BC7 texture
+│   ├── a1b2c3d4e5f67890.uzshader    # cached DXIL bytecode
+│   ├── b2c3d4e5f6789012.uztexture   # cached BC7 texture
 │   └── ...
-└── registry.json                      # optional: maps logical paths to cache entries
+└── registry.json                     # optional: maps logical paths to cache entries
 ```
 
 ### Invariants
 - MUST: Cache is safe to delete entirely — reimport regenerates everything
 - MUST: No timestamps — content hash only
 - MUST: Cache entries are immutable — never updated, only created or evicted
-- SHALL: `.uz_cache/` is gitignored
+- SHALL: `.cache/` is gitignored
 
-## 3. Import Sidecar (.uz_import)
+## 3. Import Sidecar (.uzimport)
 
 ### Schema
 ```json
@@ -77,7 +77,7 @@ key = xxhash64(
         "model": "sm6_6"
     },
     "outputs": {
-        "sm6_6": ".uz_cache/imported/a1b2c3d4e5f67890.uz_shader"
+        "sm6_6": ".cache/imported/a1b2c3d4e5f67890.uzshader"
     },
     "dependencies": []
 }
@@ -150,7 +150,7 @@ public:
 3. Loose file on disk (dev mode only)
 4. Failure
 
-## 6. .uz_shader Binary Format
+## 6. .uzshader Binary Format
 
 ```
 [Header]          32 bytes
@@ -170,5 +170,5 @@ public:
 
 ### Invariants
 - MUST: Bytecode is platform-native (DXIL for DX12, SPIR-V for Vulkan)
-- MUST: Loading a .uz_shader requires NO runtime shader compilation
+- MUST: Loading a .uzshader requires NO runtime shader compilation
 - SHALL: Reflection data enables auto root-signature generation

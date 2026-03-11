@@ -1,7 +1,8 @@
 # Build System — Zig
 
-UzEngine uses Zig as both its build system and C/C++ compiler toolchain.
-This eliminates the need for CMake, MSVC, or platform-specific build scripts.
+UzEngine uses Zig as its primary build system and C/C++ compiler toolchain.
+CMake is also supported for MSVC and Clang builds (see `CMakePresets.json`).
+Three compilers are verified: Zig, MSVC, and Clang.
 
 > **File**: `runtime/build.zig`
 

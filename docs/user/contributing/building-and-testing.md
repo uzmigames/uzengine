@@ -44,7 +44,7 @@ Tests mirror the source directory structure:
 tests/
 ├── test_main.cpp                  # GoogleTest entry point
 ├── core/
-│   ├── test_runtime_api.cpp       # uz_runtime_version, uz_runtime_init
+│   ├── test_runtime_api.cpp       # runtime_version, runtime_init
 │   ├── test_logging.cpp           # Log categories, levels, output
 │   ├── test_assertions.cpp        # UZ_CHECK, UZ_ENSURE, UZ_VERIFY
 │   ├── test_profiler.cpp          # Tracy scopes, stat counters

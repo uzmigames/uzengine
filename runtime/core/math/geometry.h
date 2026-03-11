@@ -1,7 +1,30 @@
-/// UzEngine Geometry Library
+/// UzEngine Geometry Library — Plane, AABB, and Frustum primitives.
 ///
-/// AABB (Axis-Aligned Bounding Box) and Frustum for frustum culling.
-/// All types work with DirectXMath vectors.
+/// Provides geometric primitives for spatial queries: frustum culling, collision detection,
+/// and bounding volume tests. All types are value types with zero dynamic allocation.
+///
+/// # Types
+/// - `Plane` — Half-space defined by `ax + by + cz + d = 0`
+/// - `AABB` — Axis-Aligned Bounding Box (min/max corners)
+/// - `Frustum` — 6-plane view frustum extracted from view-projection matrix
+///
+/// # Coordinate System
+/// Left-handed (DirectX convention). Plane normals point toward the positive half-space.
+/// Frustum planes have inward-facing normals (negative distance = inside frustum).
+///
+/// # Thread Safety
+/// All types are trivially copyable and have no mutable shared state. Thread-safe by value.
+///
+/// # Examples
+/// ```cpp
+/// // Frustum culling
+/// auto frustum = Frustum::FromViewProj(viewProj);
+/// for (auto& obj : objects) {
+///     if (frustum.intersects(obj.bounds)) {
+///         drawList.push_back(&obj);
+///     }
+/// }
+/// ```
 
 #pragma once
 
@@ -15,10 +38,31 @@ namespace uz {
 // Plane — defines half-space (ax + by + cz + d = 0)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Plane equation (ax + by + cz + d = 0) — defines half-space for frustum culling.
-/// Normal vector is (a, b, c), and signed distance from point is the plane equation result.
+/// Half-space defined by the plane equation `ax + by + cz + d = 0`.
+///
+/// Normal vector is `(a, b, c)`. The signed distance from a point P to the plane
+/// is `a*Px + b*Py + c*Pz + d`. Positive distance = point is on the normal side (front),
+/// negative = behind the plane.
+///
+/// # Memory Layout
+/// `[a: f32, b: f32, c: f32, d: f32]` — 16 bytes, same as XMFLOAT4.
+///
+/// # Examples
+/// ```cpp
+/// // Ground plane (y = 0, normal pointing up)
+/// Plane ground{0.f, 1.f, 0.f, 0.f};
+/// float dist = ground.distance(Vec3{0, 5, 0}); // +5.0 (above)
+/// float dist2 = ground.distance(Vec3{0, -3, 0}); // -3.0 (below)
+/// ```
 struct Plane {
-    float a, b, c, d;
+    /// Plane normal X component.
+    float a;
+    /// Plane normal Y component.
+    float b;
+    /// Plane normal Z component.
+    float c;
+    /// Signed distance from origin along normal.
+    float d;
 
     /// Constructors
     Plane() = default;
@@ -30,11 +74,18 @@ struct Plane {
     /// Conversion to XMVECTOR for SIMD operations.
     XMVECTOR toXM() const { return XMLoadFloat4(reinterpret_cast<const XMFLOAT4*>(this)); }
 
-    /// Signed distance from point to plane. Positive = front (on normal side), negative = behind.
+    /// Signed distance from point to plane.
+    ///
+    /// # Arguments
+    /// * `p` - Point to test
+    ///
+    /// # Returns
+    /// Positive if `p` is on the normal side (front), negative if behind, zero if exactly on plane.
+    /// NOT normalized — if normal is not unit-length, result is scaled by `|normal|`.
     float distance(const Vec3& p) const { return a * p.x + b * p.y + c * p.z + d; }
-    /// Uppercase alias for distance() for test compatibility.
+    /// Alias for `distance()`.
     float Distance(const Vec3& p) const { return distance(p); }
-    /// Uppercase alias for distance() for clarity.
+    /// Alias for `distance()`.
     float DistanceToPoint(const Vec3& p) const { return distance(p); }
 };
 
@@ -43,9 +94,26 @@ struct Plane {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Axis-Aligned Bounding Box for collision testing and frustum culling.
-/// Stores min/max corners; invalid by default (min > max) to safely expand incrementally.
+///
+/// Stores min/max corners. Default-constructed as **invalid** (`min=+INF, max=-INF`)
+/// so that calling `Expand()` on a fresh AABB correctly builds the bounding box incrementally.
+///
+/// # Memory Layout
+/// `[min: Vec3, max: Vec3]` — 24 bytes, no padding.
+///
+/// # Examples
+/// ```cpp
+/// AABB box;  // invalid — ready for expansion
+/// for (auto& v : vertices) box.Expand(v.position);
+/// assert(box.IsValid());
+///
+/// if (frustum.intersects(box)) { /* visible */ }
+/// ```
 struct AABB {
-    Vec3 min, max;
+    /// Minimum corner (most negative X, Y, Z).
+    Vec3 min;
+    /// Maximum corner (most positive X, Y, Z).
+    Vec3 max;
 
     /// Default constructor creates invalid AABB (min=+inf, max=-inf) for safe expansion.
     AABB() : min(FLT_MAX, FLT_MAX, FLT_MAX), max(-FLT_MAX, -FLT_MAX, -FLT_MAX) {}
@@ -69,6 +137,13 @@ struct AABB {
     bool Intersects(const AABB& other) const { return intersects(other); }
 
     /// Test if sphere (center + radius) overlaps this AABB.
+    ///
+    /// # Arguments
+    /// * `center` - Sphere center position
+    /// * `radius` - Sphere radius (must be >= 0)
+    ///
+    /// # Returns
+    /// `true` if any part of the sphere intersects the AABB.
     bool intersectsSphere(const Vec3& center, float radius) const {
         Vec3 closest;
         closest.x = std::max(min.x, std::min(center.x, max.x));
@@ -145,10 +220,33 @@ struct AABB {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// View frustum with 6 clipping planes for frustum culling.
-/// Planes are indexed: 0=near, 1=far, 2=left, 3=right, 4=top, 5=bottom.
-/// Each plane has inward-facing normal (negative distance means inside frustum).
+///
+/// Planes are indexed: `[0]=near, [1]=far, [2]=left, [3]=right, [4]=top, [5]=bottom`.
+/// Each plane has **inward-facing normal** — negative signed distance means the point
+/// is inside the frustum. This is the standard convention for Gribb-Hartmann extraction.
+///
+/// # Construction
+/// Use `Frustum::FromViewProj(viewProjMatrix)` to extract planes from a combined
+/// view-projection matrix. The extraction works for both perspective and orthographic projections.
+///
+/// # Culling Strategy
+/// `intersects(AABB)` is **conservative**: it returns `true` for any AABB that *might* be visible.
+/// False positives are possible near frustum corners, but false negatives never occur.
+///
+/// # Examples
+/// ```cpp
+/// Mat4 viewProj = proj * view;
+/// Frustum frustum = Frustum::FromViewProj(viewProj);
+///
+/// for (auto& obj : scene) {
+///     if (frustum.intersects(obj.worldAABB)) {
+///         visibleObjects.push_back(&obj);
+///     }
+/// }
+/// ```
 struct Frustum {
-    Plane planes[6]; // 0=near, 1=far, 2=left, 3=right, 4=top, 5=bottom
+    /// The 6 clipping planes: [0]=near, [1]=far, [2]=left, [3]=right, [4]=top, [5]=bottom.
+    Plane planes[6];
 
     /// Default constructor — creates empty frustum.
     Frustum() = default;
@@ -163,7 +261,13 @@ struct Frustum {
         planes[5] = bottom_p;
     }
 
-    /// Test if point is strictly inside frustum (all plane distances <= 0).
+    /// Test if point is inside the frustum (all 6 plane distances <= 0).
+    ///
+    /// # Arguments
+    /// * `p` - World-space point to test
+    ///
+    /// # Returns
+    /// `true` if point is on the negative side (inside) of all 6 planes.
     bool contains(const Vec3& p) const {
         for (int i = 0; i < 6; i++) {
             if (planes[i].distance(p) > 0)
@@ -176,8 +280,21 @@ struct Frustum {
     /// Alias for clarity.
     bool TestPoint(const Vec3& p) const { return contains(p); }
 
-    /// Test if AABB is potentially visible (conservative: returns true if uncertain).
-    /// Returns false only if AABB is completely outside at least one plane.
+    /// Conservative frustum-AABB intersection test.
+    ///
+    /// Returns `false` **only** if the AABB is completely outside at least one plane.
+    /// May return `true` for AABBs near frustum corners that are actually outside
+    /// (false positive), but **never** returns `false` for visible AABBs (no false negatives).
+    ///
+    /// # Arguments
+    /// * `box` - World-space AABB to test
+    ///
+    /// # Returns
+    /// `true` if the AABB might be visible, `false` if definitely culled.
+    ///
+    /// # Algorithm
+    /// Tests the P-vertex (vertex most aligned with plane normal) against each plane.
+    /// O(6) plane tests with early-out on first definite cull.
     bool intersects(const AABB& box) const {
         for (int i = 0; i < 6; i++) {
             // Find vertex of box closest to plane (in direction opposite to normal)
@@ -200,7 +317,14 @@ struct Frustum {
     /// Alias for clarity.
     bool TestAABB(const AABB& box) const { return intersects(box); }
 
-    /// Test if sphere is potentially visible (center + radius vs all planes).
+    /// Conservative frustum-sphere intersection test.
+    ///
+    /// # Arguments
+    /// * `center` - Sphere center in world space
+    /// * `radius` - Sphere radius (must be >= 0)
+    ///
+    /// # Returns
+    /// `true` if the sphere might be visible, `false` if definitely culled.
     bool intersectsSphere(const Vec3& center, float radius) const {
         for (int i = 0; i < 6; i++) {
             if (planes[i].distance(center) > radius)
@@ -217,8 +341,24 @@ struct Frustum {
         return intersectsSphere(center, radius);
     }
 
-    /// Extract view frustum from combined view-projection matrix (proj * view).
-    /// Extracts the 6 clipping planes from the viewproj matrix rows.
+    /// Extract view frustum planes from a combined view-projection matrix.
+    ///
+    /// Uses the Gribb-Hartmann method: extracts 6 planes directly from matrix rows.
+    /// Works with both perspective and orthographic projections.
+    ///
+    /// # Arguments
+    /// * `viewproj` - Combined view-projection matrix (`projection * view`)
+    ///
+    /// # Returns
+    /// Frustum with 6 planes. Planes are NOT normalized — `distance()` results are
+    /// scaled by the plane normal length. This is fine for culling (sign is preserved).
+    ///
+    /// # Examples
+    /// ```cpp
+    /// Mat4 view = Mat4::LookAt(eye, target, Vec3{0,1,0});
+    /// Mat4 proj = Mat4::Perspective(fovY, aspect, nearZ, farZ);
+    /// Frustum frustum = Frustum::FromViewProj(proj * view);
+    /// ```
     static Frustum FromViewProj(const Mat4& viewproj) {
         XMMATRIX m = viewproj.toXM();
         XMVECTOR planes_xm[6];

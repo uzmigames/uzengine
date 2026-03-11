@@ -1,6 +1,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # UzEngine Runtime — CMake Build
 # Mirrors the Zig build system. Supports MSVC and Clang on Windows.
+# Uses file(GLOB) for automatic source discovery — no manual file lists.
 # ─────────────────────────────────────────────────────────────────────────────
 cmake_minimum_required(VERSION 3.21)
 project(uzengine_runtime LANGUAGES C CXX)
@@ -21,41 +22,44 @@ else()
 endif()
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Sources — Cross-Platform
+# Sources — Cross-Platform (auto-discovered via GLOB)
 # ─────────────────────────────────────────────────────────────────────────────
+file(GLOB SRC_RUNTIME        src/*.cpp)
+file(GLOB SRC_LOGGING        core/logging/*.cpp)
+file(GLOB SRC_ASSERTIONS     core/assertions/*.cpp)
+file(GLOB SRC_PROFILING      core/profiling/*.cpp)
+file(GLOB SRC_CONFIG         core/config/*.cpp)
+file(GLOB SRC_MATH           core/math/*.cpp)
+file(GLOB SRC_RHI_COMMON     core/rhi/*.cpp)
+file(GLOB SRC_PATHS          core/paths/*.cpp)
+file(GLOB SRC_SHADER_COMMON  core/shader/*.cpp)
+file(GLOB SRC_RENDERER       core/renderer/*.cpp)
+file(GLOB SRC_ASSET          core/asset/*.cpp)
+
+# Shader compiler and shader importer are Windows-only (require DXC)
+if(NOT WIN32)
+    list(FILTER SRC_SHADER_COMMON EXCLUDE REGEX "shader_compiler\\.cpp$")
+    list(FILTER SRC_ASSET EXCLUDE REGEX "shader_importer\\.cpp$")
+endif()
+
 set(RUNTIME_SOURCES
-    src/runtime.cpp
-    core/logging/log.cpp
-    core/assertions/engine_assert.cpp
-    core/profiling/profiler.cpp
-    core/config/config.cpp
-    core/math/engine_math.cpp
-    core/rhi/rhi_config.cpp
-    core/paths/paths.cpp
-    core/shader/shader_vfs.cpp
-    core/shader/shader_source_manager.cpp
-    core/shader/shader_dependency_graph.cpp
-    core/shader/shader_cache.cpp
-    core/shader/shader_permutation.cpp
-    core/shader/shader_reflection.cpp
-    core/shader/shader_hot_reload.cpp
-    core/shader/shader_pipeline.cpp
-    core/shader/shader_archive.cpp
-    core/renderer/upload_context.cpp
+    ${SRC_RUNTIME}
+    ${SRC_LOGGING}
+    ${SRC_ASSERTIONS}
+    ${SRC_PROFILING}
+    ${SRC_CONFIG}
+    ${SRC_MATH}
+    ${SRC_RHI_COMMON}
+    ${SRC_PATHS}
+    ${SRC_SHADER_COMMON}
+    ${SRC_RENDERER}
+    ${SRC_ASSET}
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Sources — Thirdparty (always compiled)
 # ─────────────────────────────────────────────────────────────────────────────
-set(SPDLOG_SOURCES
-    thirdparty/spdlog/src/spdlog.cpp
-    thirdparty/spdlog/src/async.cpp
-    thirdparty/spdlog/src/cfg.cpp
-    thirdparty/spdlog/src/color_sinks.cpp
-    thirdparty/spdlog/src/file_sinks.cpp
-    thirdparty/spdlog/src/stdout_sinks.cpp
-    thirdparty/spdlog/src/bundled_fmtlib_format.cpp
-)
+file(GLOB SPDLOG_SOURCES     thirdparty/spdlog/src/*.cpp)
 
 set(TRACY_SOURCES
     thirdparty/tracy/public/TracyClient.cpp
@@ -66,21 +70,17 @@ set(SPIRV_REFLECT_SOURCES
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Sources — Windows Only
+# Sources — Windows Only (auto-discovered via GLOB)
 # ─────────────────────────────────────────────────────────────────────────────
+file(GLOB SRC_PLATFORM_WIN   platform/windows/*.cpp)
+file(GLOB SRC_RHI_DX12       core/rhi/dx12/*.cpp)
+
+# Exclude dx12_agility.cpp — only linked into executables, not the library
+list(FILTER SRC_RHI_DX12 EXCLUDE REGEX "dx12_agility\\.cpp$")
+
 set(WINDOWS_SOURCES
-    platform/windows/platform_window.cpp
-    platform/windows/input.cpp
-    core/rhi/dx12/dx12_device.cpp
-    core/rhi/dx12/dx12_swapchain.cpp
-    core/rhi/dx12/dx12_fence.cpp
-    core/rhi/dx12/dx12_command_list.cpp
-    core/rhi/dx12/dx12_descriptor_allocator.cpp
-    core/rhi/dx12/dx12_resource_creation.cpp
-    core/rhi/dx12/dx12_gpu_profiler.cpp
-    core/rhi/dx12/dx12_gpu_breadcrumbs.cpp
-    core/rhi/dx12/dx12_d3d12ma.cpp
-    core/shader/shader_compiler.cpp
+    ${SRC_PLATFORM_WIN}
+    ${SRC_RHI_DX12}
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -140,6 +140,7 @@ target_include_directories(uzengine_runtime PUBLIC
     core/shader
     core/paths
     core/renderer
+    core/asset
 )
 
 # Thirdparty includes
@@ -209,49 +210,33 @@ target_compile_definitions(gtest PUBLIC
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Test Executable
+# Test Executable (auto-discovered via GLOB_RECURSE)
 # ─────────────────────────────────────────────────────────────────────────────
-set(TEST_SOURCES
-    tests/test_main.cpp
-    tests/core/test_runtime_api.cpp
-    tests/core/test_logging.cpp
-    tests/core/test_assertions.cpp
-    tests/core/test_profiler.cpp
-    tests/core/test_memory.cpp
-    tests/core/test_config.cpp
-    tests/core/test_allocators.cpp
-    tests/core/math/test_vec.cpp
-    tests/core/math/test_mat4.cpp
-    tests/core/math/test_quat.cpp
-    tests/core/math/test_transform.cpp
-    tests/core/math/test_color.cpp
-    tests/core/math/test_bounds.cpp
-    tests/core/containers/test_ring_buffer.cpp
-    tests/core/containers/test_free_list.cpp
-    tests/core/containers/test_handle_map.cpp
-    tests/core/containers/test_frame_array.cpp
-    tests/core/random/test_random.cpp
-    tests/core/paths/test_paths.cpp
-    tests/core/shader/test_shader_vfs.cpp
-    tests/core/shader/test_shader_source_manager.cpp
-    tests/core/shader/test_shader_dependency_graph.cpp
-    tests/core/shader/test_shader_cache.cpp
-    tests/core/shader/test_shader_compiler.cpp
-    tests/core/shader/test_shader_permutation.cpp
-    tests/core/shader/test_shader_reflection.cpp
-    tests/core/shader/test_shader_hot_reload.cpp
-    tests/core/shader/test_shader_pipeline.cpp
-    tests/core/shader/test_shader_archive.cpp
-    tests/core/rhi/test_rhi_types.cpp
-    tests/core/rhi/test_rhi_config.cpp
+file(GLOB_RECURSE ALL_TEST_SOURCES tests/*.cpp)
+
+# Separate Windows-only tests
+set(WINDOWS_TEST_PATTERNS
+    "test_dx12_"
+    "test_input"
 )
 
-set(WINDOWS_TEST_SOURCES
-    tests/core/rhi/test_dx12_resources.cpp
-    tests/core/rhi/test_dx12_device.cpp
-    tests/core/rhi/test_dx12_render_loop.cpp
-    tests/platform/test_input.cpp
-)
+set(TEST_SOURCES "")
+set(WINDOWS_TEST_SOURCES "")
+
+foreach(src IN LISTS ALL_TEST_SOURCES)
+    set(_is_win_test FALSE)
+    foreach(pat IN LISTS WINDOWS_TEST_PATTERNS)
+        if(src MATCHES "${pat}")
+            set(_is_win_test TRUE)
+            break()
+        endif()
+    endforeach()
+    if(_is_win_test)
+        list(APPEND WINDOWS_TEST_SOURCES ${src})
+    else()
+        list(APPEND TEST_SOURCES ${src})
+    endif()
+endforeach()
 
 add_executable(test_runtime
     ${TEST_SOURCES}
@@ -264,41 +249,35 @@ target_link_libraries(test_runtime PRIVATE
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Executables
+# Executables (tools and demos, auto-discovered)
 # ─────────────────────────────────────────────────────────────────────────────
 
-# --- uzengine ---
-set(UZENGINE_SOURCES tools/uzengine.cpp)
-if(WIN32)
-    list(APPEND UZENGINE_SOURCES core/rhi/dx12/dx12_agility.cpp)
-endif()
+# --- Tool executables ---
+file(GLOB TOOL_SOURCES tools/*.cpp)
+foreach(tool_src IN LISTS TOOL_SOURCES)
+    get_filename_component(tool_name ${tool_src} NAME_WE)
+    set(TOOL_EXE_SOURCES ${tool_src})
+    if(WIN32)
+        list(APPEND TOOL_EXE_SOURCES core/rhi/dx12/dx12_agility.cpp)
+    endif()
+    add_executable(${tool_name} ${TOOL_EXE_SOURCES})
+    target_link_libraries(${tool_name} PRIVATE uzengine_runtime)
+endforeach()
 
-add_executable(uzengine ${UZENGINE_SOURCES})
-target_link_libraries(uzengine PRIVATE uzengine_runtime)
-
-# --- clear_screen_demo ---
-set(CLEAR_SCREEN_SOURCES
-    demos/clear_screen/main.cpp
-    demos/clear_screen/dx12_clear_screen.cpp
-)
-if(WIN32)
-    list(APPEND CLEAR_SCREEN_SOURCES core/rhi/dx12/dx12_agility.cpp)
-endif()
-
-add_executable(clear_screen_demo ${CLEAR_SCREEN_SOURCES})
-target_link_libraries(clear_screen_demo PRIVATE uzengine_runtime)
-
-# --- triangle_demo ---
-set(TRIANGLE_SOURCES
-    demos/triangle/main.cpp
-    demos/triangle/triangle_demo.cpp
-)
-if(WIN32)
-    list(APPEND TRIANGLE_SOURCES core/rhi/dx12/dx12_agility.cpp)
-endif()
-
-add_executable(triangle_demo ${TRIANGLE_SOURCES})
-target_link_libraries(triangle_demo PRIVATE uzengine_runtime)
+# --- Demo executables ---
+file(GLOB DEMO_DIRS demos/*)
+foreach(demo_dir IN LISTS DEMO_DIRS)
+    if(NOT IS_DIRECTORY ${demo_dir})
+        continue()
+    endif()
+    get_filename_component(demo_name ${demo_dir} NAME)
+    file(GLOB DEMO_SOURCES ${demo_dir}/*.cpp)
+    if(WIN32)
+        list(APPEND DEMO_SOURCES core/rhi/dx12/dx12_agility.cpp)
+    endif()
+    add_executable(${demo_name}_demo ${DEMO_SOURCES})
+    target_link_libraries(${demo_name}_demo PRIVATE uzengine_runtime)
+endforeach()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # DLL Deployment (Windows)
@@ -307,7 +286,18 @@ if(WIN32)
     # Agility SDK DLLs → D3D12/ subdirectory
     file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/D3D12)
 
-    set(DEPLOY_TARGETS uzengine clear_screen_demo triangle_demo test_runtime)
+    # Collect all deploy targets
+    set(DEPLOY_TARGETS test_runtime)
+    foreach(tool_src IN LISTS TOOL_SOURCES)
+        get_filename_component(tool_name ${tool_src} NAME_WE)
+        list(APPEND DEPLOY_TARGETS ${tool_name})
+    endforeach()
+    foreach(demo_dir IN LISTS DEMO_DIRS)
+        if(IS_DIRECTORY ${demo_dir})
+            get_filename_component(demo_name ${demo_dir} NAME)
+            list(APPEND DEPLOY_TARGETS ${demo_name}_demo)
+        endif()
+    endforeach()
 
     foreach(tgt IN LISTS DEPLOY_TARGETS)
         add_custom_command(TARGET ${tgt} POST_BUILD

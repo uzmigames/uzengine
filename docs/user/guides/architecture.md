@@ -99,7 +99,7 @@ tests/ ──→ everything (read-only, via link against static lib)
 |----------|-----------|
 | N-API in-process, not IPC | POC 0.2 proved IPC adds unacceptable latency for frame-rate-sensitive ops |
 | Own HWND for 3D viewport | WebGL/webview cannot match native DX12 quality; frame streaming adds latency |
-| Zig build system | Single toolchain for C++17 + cross-compilation, no CMake/MSVC dependency |
+| Zig + CMake build systems | Zig (primary) + CMake (MSVC/Clang). Three verified compilers: Zig, MSVC, Clang |
 | SM6.6 bindless primary | One global descriptor heap, no descriptor table management, simpler shaders |
 | Agility SDK bundled | Unlocks latest DX12 features regardless of OS-installed runtime |
 | JSON for all project files | Human-readable, AI-parseable, diff-friendly |

@@ -15,10 +15,10 @@
 
 | Spec | Milestone | Status |
 |------|-----------|--------|
-| [1.0-bootstrap.md](1.0-bootstrap.md) | Bootstrap & Project Setup | Planned |
-| [1.1-math-containers.md](1.1-math-containers.md) | Math & Containers | Planned |
-| [1.2-rhi.md](1.2-rhi.md) | RHI (DX12 SM6.6) | Planned |
-| [1.3-renderer.md](1.3-renderer.md) | Renderer (Triangle → Deferred → PostFX → Advanced) | Planned |
+| [1.0-bootstrap.md](1.0-bootstrap.md) | Bootstrap & Project Setup | Complete |
+| [1.1-math-containers.md](1.1-math-containers.md) | Math & Containers | Complete |
+| [1.2-rhi.md](1.2-rhi.md) | RHI (DX12 SM6.6) | Complete |
+| [1.3-renderer.md](1.3-renderer.md) | Renderer (Triangle → Deferred → PostFX → Advanced) | In Progress |
 | [1.4-scene-system.md](1.4-scene-system.md) | Scene System (ECS, hierarchy, serialization) | Planned |
 | [1.5-gameplay.md](1.5-gameplay.md) | Gameplay Systems (Physics → Animation → Audio → Nav → Script → Terrain → VFX → UI) | Planned |
 
@@ -26,7 +26,7 @@
 
 | Spec | Milestone | Status |
 |------|-----------|--------|
-| [1.5-build-pipeline.md](1.5-build-pipeline.md) | Shader Compiler, Asset Processor, Packager | Planned |
+| [1.5-build-pipeline.md](1.5-build-pipeline.md) | Shader Compiler, Asset Processor, Packager | Partial (Shader Compiler complete) |
 
 ## Phase 2: Editor Extension
 

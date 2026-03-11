@@ -30,6 +30,7 @@ pub fn build(b: *std.Build) void {
         "core/shader",
         "core/paths",
         "core/renderer",
+        "core/asset",
     };
 
     const thirdparty_include_dirs = [_][]const u8{
@@ -66,79 +67,20 @@ pub fn build(b: *std.Build) void {
     runtime_mod.link_libc = true;
     runtime_mod.link_libcpp = true;
 
-    // Engine sources — cross-platform core
-    runtime_mod.addCSourceFiles(.{
-        .root = b.path("src"),
-        .files = &.{"runtime.cpp"},
-        .flags = cpp_flags,
-    });
-    runtime_mod.addCSourceFiles(.{
-        .root = b.path("core/logging"),
-        .files = &.{"log.cpp"},
-        .flags = cpp_flags,
-    });
-    runtime_mod.addCSourceFiles(.{
-        .root = b.path("core/assertions"),
-        .files = &.{"engine_assert.cpp"},
-        .flags = cpp_flags,
-    });
-    runtime_mod.addCSourceFiles(.{
-        .root = b.path("core/profiling"),
-        .files = &.{"profiler.cpp"},
-        .flags = cpp_flags,
-    });
-    runtime_mod.addCSourceFiles(.{
-        .root = b.path("core/config"),
-        .files = &.{"config.cpp"},
-        .flags = cpp_flags,
-    });
-    runtime_mod.addCSourceFiles(.{
-        .root = b.path("core/math"),
-        .files = &.{"engine_math.cpp"},
-        .flags = cpp_flags,
-    });
+    // Cross-platform engine sources — auto-discovered via glob
+    addCppDir(runtime_mod, b, "src", cpp_flags);
+    addCppDir(runtime_mod, b, "core/logging", cpp_flags);
+    addCppDir(runtime_mod, b, "core/assertions", cpp_flags);
+    addCppDir(runtime_mod, b, "core/profiling", cpp_flags);
+    addCppDir(runtime_mod, b, "core/config", cpp_flags);
+    addCppDir(runtime_mod, b, "core/math", cpp_flags);
+    addCppDir(runtime_mod, b, "core/rhi", cpp_flags);
+    addCppDir(runtime_mod, b, "core/paths", cpp_flags);
+    addCppDir(runtime_mod, b, "core/shader", cpp_flags);
+    addCppDir(runtime_mod, b, "core/asset", cpp_flags);
+    addCppDir(runtime_mod, b, "core/renderer", cpp_flags);
 
-    // RHI core (cross-platform — no backend dependency)
-    runtime_mod.addCSourceFiles(.{
-        .root = b.path("core/rhi"),
-        .files = &.{"rhi_config.cpp"},
-        .flags = cpp_flags,
-    });
-
-    // Path resolution (cross-platform)
-    runtime_mod.addCSourceFiles(.{
-        .root = b.path("core/paths"),
-        .files = &.{"paths.cpp"},
-        .flags = cpp_flags,
-    });
-
-    // Shader pipeline (cross-platform)
-    runtime_mod.addCSourceFiles(.{
-        .root = b.path("core/shader"),
-        .files = &.{
-            "shader_vfs.cpp",
-            "shader_source_manager.cpp",
-            "shader_dependency_graph.cpp",
-            "shader_cache.cpp",
-            "shader_permutation.cpp",
-            "shader_reflection.cpp",
-            "shader_hot_reload.cpp",
-            "shader_pipeline.cpp",
-            "shader_archive.cpp",
-        },
-        .flags = cpp_flags,
-    });
-
-    // Renderer (cross-platform)
-    runtime_mod.addCSourceFiles(.{
-        .root = b.path("core/renderer"),
-        .files = &.{
-            "upload_context.cpp",
-        },
-        .flags = cpp_flags,
-    });
-
-    // Thirdparty — SPIRV-Reflect (C source)
+    // Thirdparty — SPIRV-Reflect (C source, not C++)
     runtime_mod.addCSourceFiles(.{
         .root = b.path(tp ++ "spirv-reflect"),
         .files = &.{"spirv_reflect.c"},
@@ -147,43 +89,10 @@ pub fn build(b: *std.Build) void {
 
     // Windows-only sources
     if (is_windows) {
-        runtime_mod.addCSourceFiles(.{
-            .root = b.path("platform/windows"),
-            .files = &.{ "platform_window.cpp", "input.cpp" },
-            .flags = cpp_flags,
-        });
-
-        // RHI DX12 backend
-        runtime_mod.addCSourceFiles(.{
-            .root = b.path("core/rhi/dx12"),
-            .files = &.{
-                "dx12_device.cpp",
-                "dx12_swapchain.cpp",
-                "dx12_fence.cpp",
-                "dx12_command_list.cpp",
-                "dx12_descriptor_allocator.cpp",
-                "dx12_resource_creation.cpp",
-                "dx12_gpu_profiler.cpp",
-                "dx12_gpu_breadcrumbs.cpp",
-            },
-            .flags = cpp_flags,
-        });
+        addCppDir(runtime_mod, b, "platform/windows", cpp_flags);
+        addCppDir(runtime_mod, b, "core/rhi/dx12", cpp_flags);
         runtime_mod.addIncludePath(b.path("core/rhi/dx12"));
-
-        // Thirdparty — D3D12MA (compiled via wrapper for Clang/MinGW GUID compatibility)
-        runtime_mod.addCSourceFiles(.{
-            .root = b.path("core/rhi/dx12"),
-            .files = &.{"dx12_d3d12ma.cpp"},
-            .flags = &.{ "-std=c++17", "-fno-sanitize=undefined", "-Wno-undefined-bool-conversion", "-Wno-switch", "-Wno-unused-private-field" },
-        });
         runtime_mod.addIncludePath(b.path(tp ++ "d3d12ma/src"));
-
-        // Shader compiler (DXC dynamic loading — Windows only)
-        runtime_mod.addCSourceFiles(.{
-            .root = b.path("core/shader"),
-            .files = &.{"shader_compiler.cpp"},
-            .flags = cpp_flags,
-        });
     }
 
     // Thirdparty — spdlog
@@ -252,86 +161,20 @@ pub fn build(b: *std.Build) void {
     test_mod.addIncludePath(b.path(tp ++ "googletest/googletest/include"));
     test_mod.addIncludePath(b.path(tp ++ "googletest/googletest"));
 
-    // Test sources — custom main + per-module test files
-    test_mod.addCSourceFiles(.{
-        .root = b.path("tests"),
-        .files = &.{"test_main.cpp"},
-        .flags = cpp_flags,
-    });
-    test_mod.addCSourceFiles(.{
-        .root = b.path("tests/core"),
-        .files = &.{
-            "test_runtime_api.cpp",
-            "test_logging.cpp",
-            "test_assertions.cpp",
-            "test_profiler.cpp",
-            "test_memory.cpp",
-            "test_config.cpp",
-            "test_allocators.cpp",
-        },
-        .flags = cpp_flags,
-    });
-    test_mod.addCSourceFiles(.{
-        .root = b.path("tests/core/math"),
-        .files = &.{
-            "test_vec.cpp",
-            "test_mat4.cpp",
-            "test_quat.cpp",
-            "test_transform.cpp",
-            "test_color.cpp",
-            "test_bounds.cpp",
-        },
-        .flags = cpp_flags,
-    });
-    test_mod.addCSourceFiles(.{
-        .root = b.path("tests/core/containers"),
-        .files = &.{
-            "test_ring_buffer.cpp",
-            "test_free_list.cpp",
-            "test_handle_map.cpp",
-            "test_frame_array.cpp",
-        },
-        .flags = cpp_flags,
-    });
-    test_mod.addCSourceFiles(.{
-        .root = b.path("tests/core/random"),
-        .files = &.{"test_random.cpp"},
-        .flags = cpp_flags,
-    });
-    test_mod.addCSourceFiles(.{
-        .root = b.path("tests/core/paths"),
-        .files = &.{"test_paths.cpp"},
-        .flags = cpp_flags,
-    });
-    test_mod.addCSourceFiles(.{
-        .root = b.path("tests/core/shader"),
-        .files = &.{
-            "test_shader_vfs.cpp",
-            "test_shader_source_manager.cpp",
-            "test_shader_dependency_graph.cpp",
-            "test_shader_cache.cpp",
-            "test_shader_compiler.cpp",
-            "test_shader_permutation.cpp",
-            "test_shader_reflection.cpp",
-            "test_shader_hot_reload.cpp",
-            "test_shader_pipeline.cpp",
-            "test_shader_archive.cpp",
-        },
-        .flags = cpp_flags,
-    });
+    // Test sources — auto-discovered via glob
+    addCppDir(test_mod, b, "tests", cpp_flags);
+    addCppDir(test_mod, b, "tests/core", cpp_flags);
+    addCppDir(test_mod, b, "tests/core/math", cpp_flags);
+    addCppDir(test_mod, b, "tests/core/containers", cpp_flags);
+    addCppDir(test_mod, b, "tests/core/random", cpp_flags);
+    addCppDir(test_mod, b, "tests/core/paths", cpp_flags);
+    addCppDir(test_mod, b, "tests/core/asset", cpp_flags);
+    addCppDir(test_mod, b, "tests/core/shader", cpp_flags);
 
     // Windows-only test sources
     if (is_windows) {
-        test_mod.addCSourceFiles(.{
-            .root = b.path("tests/core/rhi"),
-            .files = &.{ "test_rhi_types.cpp", "test_rhi_config.cpp", "test_dx12_resources.cpp", "test_dx12_device.cpp", "test_dx12_render_loop.cpp" },
-            .flags = cpp_flags,
-        });
-        test_mod.addCSourceFiles(.{
-            .root = b.path("tests/platform"),
-            .files = &.{"test_input.cpp"},
-            .flags = cpp_flags,
-        });
+        addCppDir(test_mod, b, "tests/core/rhi", cpp_flags);
+        addCppDir(test_mod, b, "tests/platform", cpp_flags);
     } else {
         // RHI type tests are cross-platform (no DX12 dependency)
         test_mod.addCSourceFiles(.{
@@ -373,8 +216,7 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run runtime unit tests");
     test_step.dependOn(&run_test.step);
 
-    // ── Demos (Windows/DX12 only) ─────────────────────────────────────────
-    // Each demo owns its build logic in demos/<name>/build.zig
+    // ── Demos & Tools (Windows/DX12 only) ────────────────────────────────
 
     if (is_windows) {
         const clear_screen_build = @import("demos/clear_screen/build.zig");
@@ -385,36 +227,48 @@ pub fn build(b: *std.Build) void {
 
         const win_sys_libs = [_][]const u8{ "d3d12", "dxgi", "dxguid", "gdi32", "user32" };
 
-        // ── UzEngine Runtime ─────────────────────────────────────────────
+        // Helper to create a tool exe from a single .cpp + agility
+        const tool_names = [_][]const u8{ "uzengine", "uzcook" };
+        for (tool_names) |tool_name| {
+            const tool_mod = b.createModule(.{ .target = target, .optimize = optimize });
+            tool_mod.link_libc = true;
+            tool_mod.link_libcpp = true;
+            for (engine_include_dirs) |dir| tool_mod.addIncludePath(b.path(dir));
+            for (thirdparty_include_dirs) |dir| tool_mod.addIncludePath(b.path(dir));
+            for (windows_engine_include_dirs) |dir| tool_mod.addIncludePath(b.path(dir));
+            for (windows_thirdparty_include_dirs) |dir| tool_mod.addIncludePath(b.path(dir));
+            tool_mod.addIncludePath(b.path("core/rhi/dx12"));
 
-        const rt_mod = b.createModule(.{ .target = target, .optimize = optimize });
-        rt_mod.link_libc = true;
-        rt_mod.link_libcpp = true;
-        for (engine_include_dirs) |dir| rt_mod.addIncludePath(b.path(dir));
-        for (thirdparty_include_dirs) |dir| rt_mod.addIncludePath(b.path(dir));
-        for (windows_engine_include_dirs) |dir| rt_mod.addIncludePath(b.path(dir));
-        for (windows_thirdparty_include_dirs) |dir| rt_mod.addIncludePath(b.path(dir));
-        rt_mod.addIncludePath(b.path("core/rhi/dx12"));
+            tool_mod.addCSourceFiles(.{
+                .root = b.path("tools"),
+                .files = &.{b.fmt("{s}.cpp", .{tool_name})},
+                .flags = cpp_flags,
+            });
+            tool_mod.addCSourceFiles(.{
+                .root = b.path("core/rhi/dx12"),
+                .files = &.{"dx12_agility.cpp"},
+                .flags = cpp_flags,
+            });
 
-        rt_mod.addCSourceFiles(.{
-            .root = b.path("tools"),
-            .files = &.{"uzengine.cpp"},
-            .flags = cpp_flags,
-        });
-        rt_mod.addCSourceFiles(.{
-            .root = b.path("core/rhi/dx12"),
-            .files = &.{"dx12_agility.cpp"},
-            .flags = cpp_flags,
-        });
+            const tool_exe = b.addExecutable(.{ .name = tool_name, .root_module = tool_mod });
+            tool_exe.linkLibrary(lib);
+            for (win_sys_libs) |l| tool_exe.linkSystemLibrary(l);
+            b.installArtifact(tool_exe);
+        }
 
-        const rt_exe = b.addExecutable(.{ .name = "uzengine", .root_module = rt_mod });
-        rt_exe.linkLibrary(lib);
-        for (win_sys_libs) |l| rt_exe.linkSystemLibrary(l);
-        b.installArtifact(rt_exe);
-
-        const run_rt = b.addRunArtifact(rt_exe);
+        // Run steps
+        const rt_exe = b.addExecutable(.{ .name = "uzengine_run", .root_module = b.createModule(.{ .target = target, .optimize = optimize }) });
+        _ = rt_exe;
         const run_step = b.step("run", "Run UzEngine runtime");
-        run_step.dependOn(&run_rt.step);
+        const run_rt_cmd = b.addSystemCommand(&.{b.getInstallPath(.bin, "uzengine.exe")});
+        run_rt_cmd.step.dependOn(b.getInstallStep());
+        run_step.dependOn(&run_rt_cmd.step);
+
+        const cook_step = b.step("cook", "Run uzcook asset cook tool");
+        const run_cook_cmd = b.addSystemCommand(&.{b.getInstallPath(.bin, "uzcook.exe")});
+        run_cook_cmd.step.dependOn(b.getInstallStep());
+        if (b.args) |a| for (a) |arg| run_cook_cmd.addArg(arg);
+        cook_step.dependOn(&run_cook_cmd.step);
 
         // ── DLL deployment ───────────────────────────────────────────────
 
@@ -433,5 +287,72 @@ pub fn build(b: *std.Build) void {
         b.getInstallStep().dependOn(&b.addInstallBinFile(
             b.path(tp ++ "dxc/bin/x64/dxil.dll"), "dxil.dll",
         ).step);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Build helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Scans a directory for all .cpp files (non-recursive) and adds them as
+/// C++ source files to the given module. This replaces manual file lists —
+/// just drop a .cpp in the directory and it gets compiled automatically.
+///
+/// Special handling:
+/// - `dx12_d3d12ma.cpp` gets extra flags to suppress upstream warnings.
+/// - Only .cpp files are collected (not .c or .h).
+fn addCppDir(
+    mod: *std.Build.Module,
+    b: *std.Build,
+    dir: []const u8,
+    flags: []const []const u8,
+) void {
+    // D3D12MA needs special flags to suppress upstream warnings
+    const d3d12ma_flags = &[_][]const u8{
+        "-std=c++17",
+        "-fno-sanitize=undefined",
+        "-Wno-undefined-bool-conversion",
+        "-Wno-switch",
+        "-Wno-unused-private-field",
+    };
+
+    var cpp_files = std.ArrayListUnmanaged([]const u8){};
+
+    var d3d12ma_found = false;
+
+    const resolved = b.path(dir);
+    var iter_dir = std.fs.openDirAbsolute(resolved.getPath(b), .{ .iterate = true }) catch return;
+    defer iter_dir.close();
+
+    var iter = iter_dir.iterate();
+    while (iter.next() catch null) |entry| {
+        if (entry.kind != .file) continue;
+        const name = entry.name;
+        if (!std.mem.endsWith(u8, name, ".cpp")) continue;
+
+        // D3D12MA wrapper gets its own flags
+        if (std.mem.eql(u8, name, "dx12_d3d12ma.cpp")) {
+            d3d12ma_found = true;
+            continue;
+        }
+
+        cpp_files.append(b.allocator, b.allocator.dupe(u8, name) catch @panic("OOM")) catch @panic("OOM");
+    }
+
+    if (cpp_files.items.len > 0) {
+        const files_slice = b.allocator.dupe([]const u8, cpp_files.items) catch @panic("OOM");
+        mod.addCSourceFiles(.{
+            .root = b.path(dir),
+            .files = files_slice,
+            .flags = flags,
+        });
+    }
+
+    if (d3d12ma_found) {
+        mod.addCSourceFiles(.{
+            .root = b.path(dir),
+            .files = &.{"dx12_d3d12ma.cpp"},
+            .flags = d3d12ma_flags,
+        });
     }
 }

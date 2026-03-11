@@ -1,6 +1,27 @@
-/// UzEngine Color Library
+/// UzEngine Color Library — Linear RGB and sRGB color types with gamma-correct conversions.
 ///
-/// LinearColor (float4) and sRGBColor (byte4) with gamma-correct conversions.
+/// Two color types for the rendering pipeline:
+/// - `LinearColor` — `float4` in linear RGB space for shader math (HDR-capable, unbounded)
+/// - `sRGBColor` — `uint8_t[4]` in sRGB space for storage, textures, and UI (0–255)
+///
+/// # Gamma Correction
+/// sRGB uses a piecewise gamma curve (IEC 61966-2-1):
+/// - Linear segment below 0.0031308 (multiplied by 12.92)
+/// - Power curve above: `1.055 * x^(1/2.4) - 0.055`
+///
+/// Always convert to linear before blending/lighting, then back to sRGB for display.
+///
+/// # Thread Safety
+/// All types are trivially copyable value types. Thread-safe by value.
+///
+/// # Examples
+/// ```cpp
+/// LinearColor sun{1.5f, 1.4f, 1.0f};      // HDR sunlight
+/// sRGBColor ui = sun.ToSRGB();              // clamps + gamma for display
+/// LinearColor back = ui.ToLinear();          // round-trip (lossy — 8-bit precision)
+///
+/// auto blended = LinearColor::Lerp(colorA, colorB, 0.5f); // linear-space blend
+/// ```
 
 #pragma once
 
@@ -19,10 +40,21 @@ struct sRGBColor;
 
 /// HDR color in linear RGB space — used for all rendering calculations.
 ///
-/// Components are unbounded floats (can exceed 1.0 for HDR).
+/// Components are unbounded floats (can exceed 1.0 for HDR). Negative values are valid
+/// for intermediate calculations but should be clamped before display.
 /// Alpha defaults to 1.0 (fully opaque).
+///
+/// # Memory Layout
+/// `[r: f32, g: f32, b: f32, a: f32]` — 16 bytes, compatible with HLSL `float4`.
 struct LinearColor {
-    float r, g, b, a;
+    /// Red channel (0.0 = none, 1.0 = full, >1.0 = HDR).
+    float r;
+    /// Green channel.
+    float g;
+    /// Blue channel.
+    float b;
+    /// Alpha channel (0.0 = transparent, 1.0 = opaque).
+    float a;
 
     /// Default: black with full alpha (0, 0, 0, 1).
     LinearColor() : r(0), g(0), b(0), a(1.0f) {}
@@ -40,17 +72,28 @@ struct LinearColor {
         return {r * scalar, g * scalar, b * scalar, a * scalar};
     }
 
-    /// Converts to sRGB color space (applies gamma curve).
+    /// Converts to sRGB color space by applying the gamma curve.
+    ///
+    /// # Returns
+    /// 8-bit sRGB color. Values are clamped to [0, 255]. HDR values above 1.0 saturate to 255.
     sRGBColor ToSRGB() const;
 
-    /// Named colors
+    /// Predefined named colors in linear space.
     static LinearColor White() { return {1, 1, 1, 1}; }
     static LinearColor Black() { return {0, 0, 0, 1}; }
     static LinearColor Red() { return {1, 0, 0, 1}; }
     static LinearColor Green() { return {0, 1, 0, 1}; }
     static LinearColor Blue() { return {0, 0, 1, 1}; }
 
-    /// Interpolation
+    /// Linear interpolation between two colors in linear space.
+    ///
+    /// # Arguments
+    /// * `a` - Start color (t=0)
+    /// * `b` - End color (t=1)
+    /// * `t` - Interpolation factor, typically [0, 1] but unclamped
+    ///
+    /// # Returns
+    /// Component-wise lerp: `a + (b - a) * t`.
     static LinearColor Lerp(const LinearColor& a, const LinearColor& b, float t) {
         return {a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t, a.b + (b.b - a.b) * t,
                 a.a + (b.a - a.a) * t};
@@ -64,8 +107,19 @@ struct LinearColor {
 /// LDR color in sRGB color space — used for storage, UI, and texture sampling.
 ///
 /// Components are 0–255 bytes. Alpha defaults to 255 (fully opaque).
+/// Alpha is stored linearly (NOT gamma-encoded) — only RGB channels have the sRGB curve.
+///
+/// # Memory Layout
+/// `[r: u8, g: u8, b: u8, a: u8]` — 4 bytes, compatible with RGBA8 texture formats.
 struct sRGBColor {
-    uint8_t r, g, b, a;
+    /// Red channel (0 = none, 255 = full intensity in sRGB space).
+    uint8_t r;
+    /// Green channel.
+    uint8_t g;
+    /// Blue channel.
+    uint8_t b;
+    /// Alpha channel (0 = transparent, 255 = opaque). Stored linearly.
+    uint8_t a;
 
     /// Default: black with full alpha (0, 0, 0, 255).
     sRGBColor() : r(0), g(0), b(0), a(255) {}
