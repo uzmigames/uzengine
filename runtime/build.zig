@@ -59,7 +59,7 @@ pub fn build(b: *std.Build) void {
     runtime_mod.addCSourceFiles(.{ .root = b.path("platform/windows"), .files = &.{ "uz_platform_window.cpp", "uz_input.cpp" }, .flags = cpp_flags });
 
     // RHI DX12 backend
-    runtime_mod.addCSourceFiles(.{ .root = b.path("core/rhi/dx12"), .files = &.{ "dx12_device.cpp", "dx12_swapchain.cpp", "dx12_fence.cpp", "dx12_command_list.cpp", "dx12_descriptor_allocator.cpp", "dx12_resource_creation.cpp", "dx12_gpu_profiler.cpp" }, .flags = cpp_flags });
+    runtime_mod.addCSourceFiles(.{ .root = b.path("core/rhi/dx12"), .files = &.{ "dx12_device.cpp", "dx12_swapchain.cpp", "dx12_fence.cpp", "dx12_command_list.cpp", "dx12_descriptor_allocator.cpp", "dx12_resource_creation.cpp", "dx12_gpu_profiler.cpp", "dx12_gpu_breadcrumbs.cpp" }, .flags = cpp_flags });
     runtime_mod.addIncludePath(b.path("core/rhi/dx12"));
 
     // Thirdparty — D3D12MA (compiled via wrapper for Clang/MinGW GUID compatibility)

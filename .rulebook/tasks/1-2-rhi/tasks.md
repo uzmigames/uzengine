@@ -77,10 +77,11 @@
   - BeginTimestamp/EndTimestamp per scope, ResolveFrame reads N-2 results
   - GPU frequency-based tick-to-ms conversion, 64 scopes/frame max
   - New files: dx12_gpu_profiler.h/.cpp
-- [ ] 4.4 GPU breadcrumbs (dev builds)
-  - WriteBufferImmediate for GPU breadcrumb markers
-  - Readback breadcrumb buffer on device removal
-  - Log breadcrumb trail with context
+- [x] 4.4 GPU breadcrumbs (dev builds) ✅
+  - DX12GpuBreadcrumbs: WriteBufferImmediate via ID3D12GraphicsCommandList2
+  - Mark() writes sequential uint32 markers (1-based, 0 = never reached)
+  - LogLastMarker() reads back buffer, logs DONE/LAST/NOT REACHED trail
+  - New files: dx12_gpu_breadcrumbs.h/.cpp
 
 ## Phase 5: Backend Selection & Runtime Executable
 - [ ] 5.1 Backend selection system (`core/rhi/rhi_config.h/.cpp`)
