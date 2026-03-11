@@ -1,0 +1,114 @@
+# Build System — Zig
+
+UzEngine uses Zig as both its build system and C/C++ compiler toolchain.
+This eliminates the need for CMake, MSVC, or platform-specific build scripts.
+
+> **File**: `runtime/build.zig`
+
+## Why Zig?
+
+| Advantage | Description |
+|-----------|-------------|
+| Cross-compilation | Build for Linux from Windows with `-Dtarget=x86_64-linux-gnu` |
+| Bundled C/C++ compiler | No MSVC or Clang install required |
+| Reproducible builds | Same binary on every machine |
+| Fast incremental builds | Zig's cache tracks file content hashes |
+| Single file build definition | `build.zig` replaces CMakeLists.txt + toolchain files |
+
+## Build Targets
+
+| Step | Command | Output |
+|------|---------|--------|
+| `zig build` | Build everything | `zig-out/bin/` |
+| `zig build test` | Run unit tests | Test results on stdout |
+| `zig build run` | Launch runtime | Window with clear screen |
+| `zig build demo` | Launch demo | Animated color demo |
+
+## Build Structure
+
+The build produces one static library and multiple executables:
+
+```
+build.zig
+├── uzengine_runtime (static lib) ─── All engine code
+│   ├── core/ sources
+│   ├── platform/windows/ sources (Windows only)
+│   ├── core/rhi/dx12/ sources (Windows only)
+│   └── thirdparty/ (spdlog, Tracy, D3D12MA)
+│
+├── uzengine_runtime.exe ─── Standalone runtime (links static lib)
+├── clear_screen_demo.exe ── DX12 demo (links static lib)
+└── test_runtime.exe ─────── GoogleTest runner (links static lib)
+```
+
+## Platform Guards
+
+Windows-only code is guarded with `is_windows`:
+
+```zig
+const is_windows = target.result.os.tag == .windows;
+
+if (is_windows) {
+    // DX12 backend, platform/windows, system libraries
+    runtime_mod.addCSourceFiles(.{
+        .root = b.path("core/rhi/dx12"),
+        .files = &.{ "dx12_device.cpp", "dx12_swapchain.cpp", ... },
+    });
+    lib.linkSystemLibrary("d3d12");
+    lib.linkSystemLibrary("dxgi");
+}
+```
+
+Cross-platform code (math, logging, config, containers) compiles on all targets.
+
+## Include Path Organization
+
+Include paths are split into four tables:
+
+| Table | Scope | Examples |
+|-------|-------|---------|
+| `engine_include_dirs` | Cross-platform engine | `src`, `core/logging`, `core/math` |
+| `thirdparty_include_dirs` | Cross-platform deps | `spdlog/include`, `directxmath/Inc` |
+| `windows_engine_include_dirs` | Windows-only engine | `platform/windows` |
+| `windows_thirdparty_include_dirs` | Windows-only deps | `d3d12ma/include`, `agility/include` |
+
+## Agility SDK Deployment
+
+On Windows, the build automatically copies Agility SDK DLLs:
+
+```zig
+b.getInstallStep().dependOn(&b.addInstallBinFile(
+    b.path(tp ++ "agility/bin/x64/D3D12Core.dll"),
+    "D3D12/D3D12Core.dll",
+).step);
+```
+
+This ensures `D3D12Core.dll` is in `zig-out/bin/D3D12/` next to the executables,
+which is where the Agility SDK activation code (`dx12_agility.cpp`) expects it.
+
+## Cross-Compilation
+
+Build for Linux from Windows:
+
+```bash
+zig build -Dtarget=x86_64-linux-gnu
+```
+
+This compiles all cross-platform code (math, containers, logging, config, RHI
+types). DX12 backend and Windows platform code are automatically excluded.
+
+## Compiler Flags
+
+All C++ sources use:
+- `-std=c++17`
+- `-DSPDLOG_COMPILED_LIB`
+
+D3D12MA has additional flags for Clang/MinGW compatibility:
+- `-Wno-undefined-bool-conversion`
+- `-Wno-switch`
+- `-Wno-unused-private-field`
+
+## Related Pages
+
+- [Building from Source](../../getting-started/building.md) — Step-by-step setup
+- [Architecture](../architecture.md) — System design

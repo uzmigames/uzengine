@@ -1,0 +1,120 @@
+# Core Module Reference
+
+Core systems shared by all engine subsystems.
+
+> **Guide**: [Architecture](../../guides/architecture.md)
+
+## Logging (`core/logging/uz_log.h`)
+
+### LogLevel
+
+```cpp
+enum class LogLevel : uint8_t {
+    Trace   = 0,  // Very detailed (stripped in shipping)
+    Debug   = 1,  // Debug output (stripped in shipping)
+    Info    = 2,  // Informational messages
+    Warning = 3,  // Non-fatal warnings
+    Error   = 4,  // Recoverable errors
+    Fatal   = 5,  // Calls std::abort after logging
+};
+```
+
+### LogCategory
+
+```cpp
+struct LogCategory {
+    const char* name;         // e.g., "RHI", "Scene"
+    LogLevel compileTimeMin;  // Messages below this are compiled out
+};
+```
+
+### Functions
+
+| Function | Description |
+|----------|-------------|
+| `LogInit(path)` | Initialize logging (console + rotating file). Safe to call multiple times. |
+| `LogShutdown()` | Flush and close all loggers. |
+
+### Macros
+
+| Macro | Description |
+|-------|-------------|
+| `UZ_LOG(Category, Level, fmt, ...)` | Log a message to the named category |
+| `UZ_DECLARE_LOG_CATEGORY(Name, MinLevel)` | Declare category in header |
+| `UZ_DEFINE_LOG_CATEGORY(Name, MinLevel)` | Define category in one .cpp |
+
+Built-in categories: Core, RHI, Renderer, Scene, Physics, Audio, Input, Platform, Memory, IO, Config, Window, Engine.
+
+---
+
+## Assertions (`core/assertions/uz_assert.h`)
+
+| Macro | On Failure | Shipping? |
+|-------|-----------|-----------|
+| `UZ_CHECK(expr)` | Log + stack trace + abort | Active |
+| `UZ_ENSURE(expr)` | Log + stack trace + continue | Stripped |
+| `UZ_VERIFY(expr)` | Log + stack trace + abort | Active |
+
+All macros capture stack traces via `CaptureStackBackTrace` and trigger debugger breaks when attached.
+
+---
+
+## Config (`core/config/uz_config.h`)
+
+### Config
+
+```cpp
+class Config {
+    bool LoadFromFile(const std::string& path);   // Load .uzproject JSON
+    void ApplyCLIOverrides(int argc, const char* const* argv);
+
+    std::string GetString(const std::string& key, const std::string& def = "");
+    int GetInt(const std::string& key, int def = 0);
+    float GetFloat(const std::string& key, float def = 0.0f);
+    bool GetBool(const std::string& key, bool def = false);
+};
+```
+
+Supports dotted-path resolution: `render.rhi`, `render.shader_model`.
+CLI overrides use `--key=value` format.
+
+---
+
+## Profiling (`core/profiling/uz_profiler.h`)
+
+### Macros
+
+| Macro | Description |
+|-------|-------------|
+| `UZ_PROFILE_SCOPE(name)` | RAII scope marker for Tracy |
+| `UZ_STAT_INC(group, name)` | Increment atomic counter |
+| `UZ_STAT_ADD(group, name, value)` | Add to atomic counter |
+| `UZ_STAT_SET(group, name, value)` | Set atomic counter |
+
+### StatCounter
+
+Atomic int64 counters organized by stat group (Core, Memory, Renderer, Physics, Audio, IO).
+
+---
+
+## Memory (`core/memory/`)
+
+### Ownership Types (`uz_memory.h`)
+
+| Type | Semantics |
+|------|-----------|
+| `Own<T>` | Exclusive ownership (non-copyable, movable) |
+| `Ref<T>` | Shared immutable borrow (debug borrow checking) |
+| `RefMut<T>` | Exclusive mutable borrow (debug borrow checking) |
+
+### Allocators (`uz_allocators.h`)
+
+| Class | Pattern | Alloc | Free |
+|-------|---------|-------|------|
+| `LinearAllocator` | Bump pointer | O(1) | Reset only |
+| `PoolAllocator` | Fixed-size blocks | O(1) | O(1) |
+| `FrameAllocator` | Linear + per-frame reset | O(1) | NewFrame() |
+
+All allocators: named, budget-tracked, report `Used()` / `Remaining()` / `GetSize()`.
+
+> **Guide**: [Memory & Allocators](../../guides/memory/overview.md)

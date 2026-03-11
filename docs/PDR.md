@@ -1,5 +1,6 @@
 # UzEngine 0.2 — Project Design Review (PDR)
 
+> **Repository**: https://github.com/uzmigames/uzengine
 > **Date**: 2026-03-10
 > **Status**: Phase 1 — Runtime Foundation (pre-implementation)
 > **POC Status**: POC 0.2 validated (N-API + DX12 + H.264 streaming @ 120 FPS)

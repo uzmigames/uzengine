@@ -1,5 +1,6 @@
 # UzEngine 0.2 — Dependency Acyclic Graph (DAG)
 
+> **Repository**: https://github.com/uzmigames/uzengine
 > Milestone dependency graph. Arrows mean "depends on". Read top-to-bottom.
 
 ---

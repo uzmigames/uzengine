@@ -1,5 +1,7 @@
 # UzEngine 0.2 — Roadmap
 
+> **Repository**: https://github.com/uzmigames/uzengine
+
 > Complete development roadmap from zero to AAA-ready engine.
 > Each milestone has clear deliverables and acceptance criteria.
 > Reference: [ARCHITECTURE.md](ARCHITECTURE.md) for design details.

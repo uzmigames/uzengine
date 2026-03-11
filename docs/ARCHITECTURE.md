@@ -1,5 +1,7 @@
 # UzEngine 0.2 - Architecture
 
+> **Repository**: https://github.com/uzmigames/uzengine
+
 ## Vision
 AAA-quality game engine (visual parity with Unity, Godot, Unreal) fully embedded in VSCode, with open file formats designed for LLM manipulation. **The first engine built for autonomous AI-driven development.**
 

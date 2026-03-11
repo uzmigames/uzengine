@@ -1,5 +1,7 @@
 # Changelog — runtime
 
+> **Repository**: https://github.com/uzmigames/uzengine
+
 ## [0.2.0] — 2026-03-10
 
 ### Milestone 1.2 — RHI (Rendering Hardware Interface)
@@ -35,6 +37,15 @@
 - **Clear screen demo** (`tools/clear_screen_demo.cpp`, `dx12_clear_screen.cpp`):
   - Animated sine-wave RGB clear color, 6069 FPS on RTX 4090 (0.16ms/frame)
   - Triple-buffered frame pacing with fence synchronization
+- **Agility SDK activation** (`core/rhi/dx12/dx12_agility.cpp`):
+  - Exports D3D12SDKVersion + D3D12SDKPath for runtime SDK loading
+  - DLL deployment: D3D12Core.dll + d3d12SDKLayers.dll → zig-out/bin/D3D12/
+  - Unlocks FL 12_2 + SM6.6 on supported hardware (RTX 4090: FL 12_1→12_2, SM6.5→SM6.6)
+  - Linked into every executable (demo + runtime), not the static lib
+- **Standalone runtime executable** (`tools/uzengine_runtime.cpp`):
+  - CLI flags: --scene, --width, --height, --headless, --rhi, --shader-model, --gpu-validation
+  - Windowed mode with DX12 clear screen render loop, headless mode for CI/testing
+  - `zig build run` step for quick iteration
 - **Debug & validation**:
   - D3D12 debug layer + GPU-based validation (optional)
   - DRED enabled (auto-breadcrumbs + page fault tracking)
@@ -55,7 +66,7 @@
 - **Shader model negotiation** (DX12Device):
   - NegotiateShaderModel(): probes SM6.6 → SM6.0 → SM5.1 → SM5.0
   - Root signature adapts: DIRECTLY_INDEXED for SM6.6, standard for lower
-- **223 unit tests** — 22 RHI config tests + 35 RHI type/interface/resource tests + all existing
+- **223 unit tests** — 22 RHI config tests + 35 RHI type/interface/resource tests + 166 core/math/container tests
 
 ### Shader Pipeline Architecture (docs only)
 - **New spec**: `docs/specs/1.5.0-shader-pipeline.md` — comprehensive shader source management architecture

@@ -1,5 +1,7 @@
 # UzEngine 0.2 — Specs Index
 
+> **Repository**: https://github.com/uzmigames/uzengine
+
 > Detailed specifications per major milestone. Each spec includes comparative analysis (Unreal/Godot/Unity), problem statement, and UzEngine approach.
 
 ## Cross-Cutting
