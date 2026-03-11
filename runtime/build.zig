@@ -22,6 +22,8 @@ pub fn build(b: *std.Build) void {
         "core/containers",
         "core/random",
         "core/rhi",
+        "core/shader",
+        "core/paths",
     };
 
     const thirdparty_include_dirs = [_][]const u8{
@@ -96,6 +98,25 @@ pub fn build(b: *std.Build) void {
         .flags = cpp_flags,
     });
 
+    // Path resolution (cross-platform)
+    runtime_mod.addCSourceFiles(.{
+        .root = b.path("core/paths"),
+        .files = &.{"uz_paths.cpp"},
+        .flags = cpp_flags,
+    });
+
+    // Shader pipeline (cross-platform)
+    runtime_mod.addCSourceFiles(.{
+        .root = b.path("core/shader"),
+        .files = &.{
+            "shader_vfs.cpp",
+            "shader_source_manager.cpp",
+            "shader_dependency_graph.cpp",
+            "shader_cache.cpp",
+        },
+        .flags = cpp_flags,
+    });
+
     // Windows-only sources
     if (is_windows) {
         runtime_mod.addCSourceFiles(.{
@@ -128,6 +149,13 @@ pub fn build(b: *std.Build) void {
             .flags = &.{ "-std=c++17", "-Wno-undefined-bool-conversion", "-Wno-switch", "-Wno-unused-private-field" },
         });
         runtime_mod.addIncludePath(b.path(tp ++ "d3d12ma/src"));
+
+        // Shader compiler (DXC dynamic loading — Windows only)
+        runtime_mod.addCSourceFiles(.{
+            .root = b.path("core/shader"),
+            .files = &.{"shader_compiler.cpp"},
+            .flags = cpp_flags,
+        });
     }
 
     // Thirdparty — spdlog
@@ -242,6 +270,22 @@ pub fn build(b: *std.Build) void {
         .files = &.{"test_random.cpp"},
         .flags = cpp_flags,
     });
+    test_mod.addCSourceFiles(.{
+        .root = b.path("tests/core/paths"),
+        .files = &.{"test_paths.cpp"},
+        .flags = cpp_flags,
+    });
+    test_mod.addCSourceFiles(.{
+        .root = b.path("tests/core/shader"),
+        .files = &.{
+            "test_shader_vfs.cpp",
+            "test_shader_source_manager.cpp",
+            "test_shader_dependency_graph.cpp",
+            "test_shader_cache.cpp",
+            "test_shader_compiler.cpp",
+        },
+        .flags = cpp_flags,
+    });
 
     // Windows-only test sources
     if (is_windows) {
@@ -288,7 +332,13 @@ pub fn build(b: *std.Build) void {
 
     b.installArtifact(test_exe);
 
-    const run_test = b.addRunArtifact(test_exe);
+    // ── Run tests from the install directory (zig-out/bin/) ──────────────
+    // addRunArtifact runs from .zig-cache where deployed DLLs aren't present.
+    // Instead, run the installed exe so GetExeDir() finds DLLs next to it.
+    const run_test = b.addSystemCommand(&.{
+        b.getInstallPath(.bin, "test_runtime.exe"),
+    });
+    run_test.step.dependOn(b.getInstallStep());
     const test_step = b.step("test", "Run runtime unit tests");
     test_step.dependOn(&run_test.step);
 
@@ -388,6 +438,15 @@ pub fn build(b: *std.Build) void {
         ).step);
         b.getInstallStep().dependOn(&b.addInstallBinFile(
             b.path(tp ++ "agility/bin/x64/d3d12SDKLayers.dll"), "D3D12/d3d12SDKLayers.dll",
+        ).step);
+
+        // ── DXC DLL deployment ───────────────────────────────────────────────
+        // dxcompiler.dll and dxil.dll must be next to executables for shader compilation.
+        b.getInstallStep().dependOn(&b.addInstallBinFile(
+            b.path(tp ++ "dxc/bin/x64/dxcompiler.dll"), "dxcompiler.dll",
+        ).step);
+        b.getInstallStep().dependOn(&b.addInstallBinFile(
+            b.path(tp ++ "dxc/bin/x64/dxil.dll"), "dxil.dll",
         ).step);
     }
 }

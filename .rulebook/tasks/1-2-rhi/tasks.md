@@ -91,14 +91,15 @@
   - `--gpu-validation`, `--gpu-breadcrumbs`, `--adapter N` flags
   - Platform auto-detect: DX12 on Windows, Vulkan elsewhere
   - 22 unit tests (RHIConfigResolve suite)
-- [ ] 5.2 Standalone runtime executable (`tools/uzengine_runtime.cpp`)
-  - CLI argument parser (--scene, --screenshot, --rhi, --shader-model, --headless, etc.)
-  - Interactive windowed mode (default): open scene, render until close
-  - Headless mode: render N frames, capture screenshot, exit
-  - Debug overlays: --overlay wireframe|normals|depth|gbuffer
-  - GPU validation flags: --gpu-validation, --gpu-breadcrumbs
-  - Profiling mode: --profile --frames N
+- [x] 5.2 Standalone runtime executable (`tools/uzengine_runtime.cpp`) ✅
+  - CLI argument parser (--scene, --width, --height, --rhi, --shader-model, --headless, --frames)
+  - Interactive windowed mode (default): open window, DX12 clear screen render loop
+  - Headless mode: create device only, log diagnostics, exit
+  - GPU validation flags: --gpu-validation, --gpu-breadcrumbs, --adapter
   - Exit codes: 0 = success, 1 = render error, 2 = shader compile error, 3 = device lost
+  - Agility SDK activation: D3D12SDKVersion + D3D12SDKPath exports, DLL auto-deployment
+  - `zig build run` step for quick iteration
+  - Remaining features (screenshot, overlays, profiling mode) deferred to renderer milestone
 - [x] 5.3 Shader model negotiation in DX12Device ✅
   - NegotiateShaderModel(): probes SM6.6 → SM6.0 → SM5.1 → SM5.0
   - SM6.6 requires Resource Binding Tier 3 + D3D_SHADER_MODEL_6_6
@@ -111,29 +112,47 @@
 > POC 1 lesson: NEVER embed shaders as C header strings during dev — causes stale cache.
 > Two modes: `UZ_SHADER_DEV` (load from disk + VFS) / `UZ_SHADER_SHIP` (precompiled archive).
 
-- [ ] 6.1 Shader VFS (`core/shader/shader_vfs.h/.cpp`)
+- [x] 6.1 Shader VFS (`core/shader/shader_vfs.h/.cpp`) ✅
   - Virtual path mounting: `Mount("/engine", "shaders/engine")`
   - Path resolution: `/engine/pbr.hlsl` → `shaders/engine/pbr.hlsl`
   - Source loading from disk (dev) — no C header embedding
-- [ ] 6.2 Shader source manager (`core/shader/shader_source_manager.h/.cpp`)
-  - Load source via ShaderVFS, parse `#include` recursively
+  - Unmount, Exists, ReadFile, path normalization (backslash → forward slash)
+  - 14 unit tests (ShaderVFSTest suite)
+- [x] 6.2 Shader source manager (`core/shader/shader_source_manager.h/.cpp`) ✅
+  - Load source via ShaderVFS, parse `#include "path"` recursively
   - Compute xxHash64(source + sorted includes + defines + target + compiler_version)
   - Content-addressed identity — no timestamps in cache keys
-- [ ] 6.3 Shader dependency graph (`core/shader/shader_dependency_graph.h/.cpp`)
-  - Forward graph: file → its includes (transitive)
-  - Reverse graph: file → all shaders that depend on it
+  - Include deduplication, relative/absolute path resolution, max depth 32
+  - Source caching with Invalidate/InvalidateAll
+  - 14 unit tests (ShaderSourceManagerTest suite)
+- [x] 6.3 Shader dependency graph (`core/shader/shader_dependency_graph.h/.cpp`) ✅
+  - Forward graph: file → its includes (direct)
+  - Reverse graph: file → all shaders that depend on it (transitive BFS)
   - Incremental update on file change (rebuild edges for changed file only)
-- [ ] 6.4 Shader cache (`core/shader/shader_cache.h/.cpp`)
+  - Diamond dependency handling, sorted results
+  - 13 unit tests (ShaderDepGraphTest suite)
+- [x] 6.4 Shader cache (`core/shader/shader_cache.h/.cpp`) ✅
   - Cache directory: `cache/shaders/{backend}_{sm}/`
   - Lookup by xxHash64 — no explicit invalidation needed (hash changes on source change)
-  - Manifest.json for debugging only (hash → source path mapping)
-  - Periodic GC: delete unreferenced cache entries
-- [ ] 6.5 DXC integration (`core/shader/shader_compiler.h/.cpp`)
-  - Load DXC (dxcompiler.dll) dynamically — not linked at build time
-  - HLSL → DXIL compilation (DX12 SM6.6 / SM6.0)
-  - HLSL → SPIRV compilation (Vulkan target)
-  - FXC fallback for SM5 DXBC (`d3dcompiler_47.dll`)
-  - Compilation error reporting with source location
+  - Store/Lookup/Contains/Remove, multiple subdirectories
+  - Entry count and total size statistics
+  - 11 unit tests (ShaderCacheTest suite)
+- [x] 6.5 DXC integration (`core/shader/shader_compiler.h/.cpp`) ✅
+  - Load DXC (dxcompiler.dll) dynamically via LoadLibrary/GetProcAddress
+  - Path resolution via uz::ResolveEngineResource (exe-relative, never CWD)
+  - Build system deploys dxcompiler.dll + dxil.dll to zig-out/bin/
+  - HLSL → DXIL compilation (SM6.6, SM6.0)
+  - HLSL → SPIRV compilation (Vulkan 1.3 target)
+  - Preprocessor defines, debug info, optimization control
+  - Compilation error reporting with DXC error messages
+  - DXC version query (IDxcVersionInfo)
+  - Fixed IID_IDxcUtils bug (was using CLSID as IID → E_NOINTERFACE)
+  - 17 unit tests (ShaderCompilerTest + ShaderCompilerInitTest suites)
+- [x] 6.5b Engine path resolution (`core/paths/uz_paths.h/.cpp`) ✅
+  - GetExeDir(): cached exe directory via platform-native API
+  - ResolveEngineResource(): relative path → exe-relative absolute path
+  - Follows UE5/Godot pattern (exe-relative, never CWD, never hardcoded paths)
+  - 8 unit tests (PathsTest suite)
 - [ ] 6.6 Permutation system (`core/shader/shader_permutation.h/.cpp`)
   - Parse `#pragma uz_permutation` from shader source
   - Expand variants: each permutation = unique define set = unique hash

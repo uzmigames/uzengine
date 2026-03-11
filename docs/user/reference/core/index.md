@@ -80,6 +80,34 @@ CLI overrides use `--key=value` format.
 
 ---
 
+## Path Resolution (`core/paths/uz_paths.h`)
+
+Engine resource paths are resolved relative to the executable directory.
+
+### Functions
+
+| Function | Description |
+|----------|-------------|
+| `GetExeDir()` | Returns the directory containing the running executable |
+| `ResolveEngineResource(path)` | Resolves a relative path against the exe directory |
+
+```cpp
+// Resolve DLL next to exe
+auto dxcPath = uz::ResolveEngineResource("dxcompiler.dll");
+// → "C:/build/zig-out/bin/dxcompiler.dll"
+
+// Absolute paths pass through unchanged
+auto abs = uz::ResolveEngineResource("C:/custom/path.dll");
+// → "C:/custom/path.dll"
+```
+
+Result is cached after first call. Platform-native API is used:
+- Windows: `GetModuleFileNameW(NULL, ...)`
+- Linux: `readlink("/proc/self/exe", ...)`
+- macOS: `_NSGetExecutablePath(...)`
+
+---
+
 ## Profiling (`core/profiling/uz_profiler.h`)
 
 ### Macros

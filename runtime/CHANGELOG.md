@@ -66,14 +66,50 @@
 - **Shader model negotiation** (DX12Device):
   - NegotiateShaderModel(): probes SM6.6 → SM6.0 → SM5.1 → SM5.0
   - Root signature adapts: DIRECTLY_INDEXED for SM6.6, standard for lower
-- **223 unit tests** — 22 RHI config tests + 35 RHI type/interface/resource tests + 166 core/math/container tests
+- **DXC DLL deployment** (`build.zig`):
+  - `dxcompiler.dll` + `dxil.dll` copied to `zig-out/bin/` alongside executables
+  - Test runner executes from install directory so `GetExeDir()` finds deployed DLLs
+- **302 unit tests** — 77 shader pipeline tests + 22 RHI config + 35 RHI type/resource + 8 paths + 160 core/math/container
 
-### Shader Pipeline Architecture (docs only)
-- **New spec**: `docs/specs/1.5.0-shader-pipeline.md` — comprehensive shader source management architecture
+### Shader Pipeline
+- **Shader VFS** (`core/shader/shader_vfs.h/.cpp`):
+  - Virtual path mounting: `Mount("/engine", "shaders/engine")`
+  - Path resolution, exists check, binary file reading
+  - Backslash normalization, last-mounted-wins priority
+  - 14 unit tests
+- **Shader source manager** (`core/shader/shader_source_manager.h/.cpp`):
+  - Load source via VFS, parse `#include "path"` recursively (max depth 32)
+  - xxHash64 identity hash: source + sorted includes + defines + target + compiler version
+  - Content-addressed — no timestamps, no stale cache bugs
+  - Include deduplication, relative/absolute path resolution
+  - 14 unit tests
+- **Shader dependency graph** (`core/shader/shader_dependency_graph.h/.cpp`):
+  - Forward graph: file → its includes (direct dependencies)
+  - Reverse graph: file → all shaders that depend on it (transitive BFS)
+  - Incremental edge rebuild on file change, diamond dependency handling
+  - 13 unit tests
+- **Shader cache** (`core/shader/shader_cache.h/.cpp`):
+  - Disk-based bytecode cache: `cache/shaders/{backend}_{sm}/{hash}.bin`
+  - Lookup by xxHash64 — hash changes on source change, no explicit invalidation
+  - Store/Lookup/Contains/Remove, entry count and total size statistics
+  - 11 unit tests
+- **DXC shader compiler** (`core/shader/shader_compiler.h/.cpp`):
+  - Dynamic loading of dxcompiler.dll via LoadLibrary/GetProcAddress
+  - HLSL → DXIL compilation (SM6.6, SM6.0)
+  - HLSL → SPIRV compilation (Vulkan 1.3 target via `-spirv`)
+  - Preprocessor defines, debug info (`-Zi`), optimization control (`-Od`)
+  - DXC version query (IDxcVersionInfo) — DXC 1.8 confirmed
+  - Auto-extracted IIDs via constexpr ParseUUID from CROSS_PLATFORM_UUIDOF
+  - 17 unit tests
+- **Engine path resolution** (`core/paths/uz_paths.h/.cpp`):
+  - `GetExeDir()`: cached executable directory via platform-native API
+  - `ResolveEngineResource()`: resolve relative paths against exe directory
+  - Follows UE5/Godot pattern — never CWD, never hardcoded absolute paths
+  - Build system deploys DLLs to `zig-out/bin/` via `addInstallBinFile`
+  - 8 unit tests
+- **Shader pipeline spec**: `docs/specs/1.5.0-shader-pipeline.md`
   - Two-mode design: UZ_SHADER_DEV (VFS + disk load + hot-reload) / UZ_SHADER_SHIP (precompiled archive)
-  - ShaderVFS, ShaderDependencyGraph, content-hash cache (xxHash64), lazy dirty-flag recompile
   - Learned from POC 1 failures: never embed shaders as C header strings during dev
-  - Researched UE5 (virtual filesystem + SHA1 + DDC) and Godot (build-time embedding + SHA-256)
 
 ### Runtime CLI & Backend Selection (docs only)
 - **Runtime executable design**: CLI flags (--scene, --screenshot, --rhi, --shader-model, --headless)

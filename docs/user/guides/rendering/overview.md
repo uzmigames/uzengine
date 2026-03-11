@@ -15,6 +15,26 @@ The runtime currently renders an animated clear-screen loop via DX12:
 This validates the full RHI stack (device, swapchain, command list, fences,
 barriers) and serves as the foundation for the renderer.
 
+## Shader Pipeline
+
+The engine includes a full shader compilation pipeline (`core/shader/`):
+
+| Component | Purpose |
+|-----------|---------|
+| `ShaderVFS` | Virtual filesystem for shader sources — mount points, path resolution |
+| `ShaderSourceManager` | `#include` parsing, xxHash64 content-based identity hashing |
+| `ShaderDependencyGraph` | Bidirectional dependency tracking for hot-reload |
+| `ShaderCache` | Disk-based bytecode cache keyed by content hash |
+| `ShaderCompiler` | DXC integration — HLSL → DXIL (SM6.6/6.0) and SPIRV (Vulkan 1.3) |
+
+Key design decisions:
+- **Content-addressed caching**: `hash = xxHash64(source + includes + defines + target + compiler_version)` — no timestamps, no stale cache
+- **Two modes**: `UZ_SHADER_DEV` (load from disk + hot-reload) / `UZ_SHADER_SHIP` (precompiled archive)
+- **Dynamic DXC loading**: `dxcompiler.dll` loaded at runtime, resolved relative to executable via `uz::ResolveEngineResource()`
+- **No embedded shaders**: POC 1 proved that embedding shaders as C strings causes stale cache bugs
+
+See [Shader Pipeline Spec](../../specs/1.5.0-shader-pipeline.md) for full details.
+
 ## Planned Pipeline
 
 The target architecture is a compute-driven deferred renderer:

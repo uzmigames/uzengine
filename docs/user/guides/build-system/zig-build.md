@@ -86,6 +86,40 @@ b.getInstallStep().dependOn(&b.addInstallBinFile(
 This ensures `D3D12Core.dll` is in `zig-out/bin/D3D12/` next to the executables,
 which is where the Agility SDK activation code (`dx12_agility.cpp`) expects it.
 
+## DXC Shader Compiler Deployment
+
+DXC (DirectX Shader Compiler) DLLs are deployed to `zig-out/bin/` alongside executables:
+
+```
+zig-out/bin/
+    dxcompiler.dll    # HLSL → DXIL/SPIRV compiler
+    dxil.dll          # DXIL validator
+```
+
+The `ShaderCompiler` class loads `dxcompiler.dll` at runtime via `LoadLibrary`.
+Path resolution is handled by `uz::ResolveEngineResource()`, which resolves
+relative paths against the executable directory — never CWD, never absolute paths.
+
+## Engine Resource Path Convention
+
+All engine-internal resources (DLLs, shaders, configs) are discovered relative
+to the running executable via `uz::GetExeDir()` (defined in `core/paths/uz_paths.h`).
+
+| Pattern | Description |
+|---------|-------------|
+| Same-dir DLLs | `dxcompiler.dll`, `dxil.dll` — loaded via `LoadLibrary` |
+| Subdirectory DLLs | `D3D12/D3D12Core.dll` — loader-specific convention |
+| Future: shaders | `shaders/` — built-in shader sources |
+
+**Rules:**
+- NEVER use absolute paths for engine resources
+- NEVER search relative to CWD (`../` chains are fragile)
+- ALWAYS resolve relative to the executable directory
+- Build system MUST deploy all runtime dependencies to `zig-out/bin/`
+
+This follows the same pattern used by Unreal Engine (`FPlatformProcess::BaseDir()`)
+and Godot (`OS::get_executable_path().get_base_dir()`).
+
 ## Cross-Compilation
 
 Build for Linux from Windows:

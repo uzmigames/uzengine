@@ -1,7 +1,9 @@
 #include <cstdio>
 #include <gtest/gtest.h>
+#include "uz_log.h"
 
 int main(int argc, char** argv) {
+    uz::LogInit("uzengine.log");
     ::testing::InitGoogleTest(&argc, argv);
     int result = RUN_ALL_TESTS();
 
