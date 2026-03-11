@@ -77,7 +77,7 @@ pub fn build(b: *std.Build) void {
     for (engine_dirs) |dir| mod.addIncludePath(b.path(dir));
 
     // Generated shader headers (produced by uzembed during runtime build)
-    mod.addIncludePath(b.path("../../generated/shaders"));
+    mod.addIncludePath(b.path("../../build/generated/shaders"));
 
     // Demo includes
     mod.addIncludePath(b.path("."));

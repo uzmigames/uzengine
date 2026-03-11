@@ -22,6 +22,26 @@ else()
 endif()
 
 # ─────────────────────────────────────────────────────────────────────────────
+# uzembed — Embed engine shaders as C++ constexpr headers
+# ─────────────────────────────────────────────────────────────────────────────
+add_executable(uzembed tools/uzembed.cpp)
+
+set(UZEMBED_INPUT_DIR  ${CMAKE_CURRENT_SOURCE_DIR}/shaders/editor)
+set(UZEMBED_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated/shaders/editor)
+
+file(GLOB EDITOR_SHADERS ${UZEMBED_INPUT_DIR}/*.hlsl)
+
+add_custom_command(
+    OUTPUT  ${UZEMBED_OUTPUT_DIR}/engine_shaders.gen.h
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${UZEMBED_OUTPUT_DIR}
+    COMMAND uzembed --input-dir ${UZEMBED_INPUT_DIR} --output-dir ${UZEMBED_OUTPUT_DIR}
+    DEPENDS uzembed ${EDITOR_SHADERS}
+    COMMENT "uzembed: embedding editor shaders"
+)
+
+add_custom_target(embed_shaders DEPENDS ${UZEMBED_OUTPUT_DIR}/engine_shaders.gen.h)
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Sources — Cross-Platform (auto-discovered via GLOB)
 # ─────────────────────────────────────────────────────────────────────────────
 file(GLOB SRC_RUNTIME        src/*.cpp)
@@ -108,6 +128,8 @@ add_library(uzengine_runtime STATIC
     $<$<PLATFORM_ID:Windows>:${WINDOWS_SOURCES}>
 )
 
+add_dependencies(uzengine_runtime embed_shaders)
+
 target_compile_definitions(uzengine_runtime PUBLIC
     SPDLOG_COMPILED_LIB
 )
@@ -174,6 +196,7 @@ target_include_directories(uzengine_runtime PUBLIC
     core/paths
     core/renderer
     core/asset
+    ${CMAKE_CURRENT_BINARY_DIR}/generated/shaders
 )
 
 # Thirdparty includes
@@ -292,6 +315,8 @@ target_link_libraries(test_runtime PRIVATE
 
 # --- Tool executables ---
 file(GLOB TOOL_SOURCES tools/*.cpp)
+# uzembed is built separately above — exclude from generic tool loop
+list(FILTER TOOL_SOURCES EXCLUDE REGEX "uzembed\\.cpp$")
 foreach(tool_src IN LISTS TOOL_SOURCES)
     get_filename_component(tool_name ${tool_src} NAME_WE)
     set(TOOL_EXE_SOURCES ${tool_src})
