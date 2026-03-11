@@ -1,3 +1,9 @@
+/// DX12 Fence Implementation
+///
+/// CPU-GPU synchronization via ID3D12Fence + Win32 event.
+/// Supports Signal (GPU increments), WaitCPU (block until reached), and status queries.
+/// Single event per fence; shared across multiple Signal/Wait pairs.
+
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include "dx12_fence.h"
@@ -8,10 +14,7 @@
 
 namespace uz {
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Lifecycle
-// ─────────────────────────────────────────────────────────────────────────────
-
+/// Cleanup: closes Win32 event if allocated.
 DX12Fence::~DX12Fence() {
     if (m_event) {
         CloseHandle(m_event);

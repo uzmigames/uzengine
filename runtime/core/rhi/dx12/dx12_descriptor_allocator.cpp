@@ -1,13 +1,26 @@
+/// DX12 Descriptor Allocator Implementation
+///
+/// O(1) free-list allocator for descriptor heap slots (CBV_SRV_UAV, Sampler, RTV, DSV).
+/// Tracks CPU and GPU descriptor handles separately.
+/// Supports reserved slots for future allocation and reuses freed indices.
+
 #include "dx12_descriptor_allocator.h"
 #include "dx12_guids.h"
 #include "uz_log.h"
 
 namespace uz {
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Initialization
-// ─────────────────────────────────────────────────────────────────────────────
-
+/// Initializes allocator with descriptor heap and capacity.
+///
+/// # Arguments
+/// * `heap` - ID3D12DescriptorHeap to allocate from
+/// * `capacity` - Total descriptor slots available
+/// * `incrementSize` - Size of each descriptor (varies by heap type)
+/// * `reservedCount` - Slots reserved at start (allocations start after this)
+///
+/// # Behavior
+/// - Caches CPU and GPU handles from heap for O(1) offset calculations
+/// - GPU handle only cached if heap is shader-visible
 void DescriptorAllocator::Init(ID3D12DescriptorHeap* heap, uint32_t capacity,
                                 uint32_t incrementSize, uint32_t reservedCount) {
     m_heap = heap;

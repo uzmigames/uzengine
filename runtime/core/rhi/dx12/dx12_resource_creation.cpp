@@ -1,3 +1,9 @@
+/// DX12 Resource Creation Implementation
+///
+/// Format conversion, buffer creation, texture creation, and sampler descriptors.
+/// Uses D3D12MemoryAllocator (D3D12MA) for GPU memory management.
+/// Auto-creates SRV/UAV descriptors for bindless access and RTVs/DSVs for rendering.
+
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include "dx12_resource_creation.h"
@@ -8,10 +14,13 @@
 
 namespace uz {
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Format Conversion
-// ─────────────────────────────────────────────────────────────────────────────
-
+/// Converts RHIFormat enum to DXGI_FORMAT for DX12 API calls.
+///
+/// Maps: R/RG/RGB/RGBA channels × unsigned/signed/float × 8/16/32-bit
+/// Also handles special formats like Depth24Stencil8, R11G11B10Float.
+///
+/// # Panics
+/// Returns DXGI_FORMAT_UNKNOWN for unmapped formats (should never happen if spec is complete).
 DXGI_FORMAT ToDxgiFormat(RHIFormat format) {
     switch (format) {
         case RHIFormat::R8Unorm:        return DXGI_FORMAT_R8_UNORM;

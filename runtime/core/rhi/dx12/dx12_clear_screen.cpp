@@ -1,3 +1,9 @@
+/// DX12 Clear Screen Demo Implementation
+///
+/// Demonstrates triple-buffered frame pacing with DX12 rendering.
+/// Renders animated sine-wave RGB clear color at ~6000+ FPS on modern GPU.
+/// Tests: device creation, command list recording, swapchain Present, fence synchronization.
+
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include "dx12_clear_screen.h"
@@ -14,6 +20,7 @@
 
 namespace uz {
 
+/// Triple buffering constant for frame pacing.
 static constexpr uint32_t kFramesInFlight = 3;
 
 bool RunClearScreen(uint32_t frameCount) {
