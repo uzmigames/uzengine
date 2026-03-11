@@ -1,3 +1,8 @@
+/// DX12 Command List Implementation
+///
+/// Records GPU commands (barriers, clears, draws) into a command allocator.
+/// Uses triple-buffered allocators for frame pacing and SM6.6 bindless heap binding.
+
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include "dx12_command_list.h"

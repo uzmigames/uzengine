@@ -1,3 +1,8 @@
+/// DX12 Swapchain Implementation
+///
+/// IDXGISwapChain4 with FLIP_DISCARD, triple-buffering, tearing support,
+/// and resize handling (release + recreate back buffers and RTVs).
+
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include "dx12_swapchain.h"

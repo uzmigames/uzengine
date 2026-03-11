@@ -1,3 +1,9 @@
+/// DX12 Device Implementation
+///
+/// Initializes the full D3D12 stack: debug layer, DXGI factory, adapter, device,
+/// D3D12MA allocator, descriptor heaps, command queues, and bindless root signature.
+/// All resource Create/Destroy methods delegate to dx12_resource_creation helpers.
+
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include "dx12_device.h"
