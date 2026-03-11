@@ -64,6 +64,7 @@ template <typename T, size_t Capacity> class RingBuffer {
     RingBuffer(const RingBuffer&) = delete;
     RingBuffer& operator=(const RingBuffer&) = delete;
 
+    /// Attempts to push an item (copy). Returns false if buffer is full.
     bool TryPush(const T& item) {
         size_t head = m_head.load(std::memory_order_relaxed);
         size_t next = (head + 1) & kMask;
@@ -74,6 +75,7 @@ template <typename T, size_t Capacity> class RingBuffer {
         return true;
     }
 
+    /// Attempts to push an item (move). Returns false if buffer is full.
     bool TryPush(T&& item) {
         size_t head = m_head.load(std::memory_order_relaxed);
         size_t next = (head + 1) & kMask;
@@ -84,6 +86,7 @@ template <typename T, size_t Capacity> class RingBuffer {
         return true;
     }
 
+    /// Attempts to pop an item into `out`. Returns false if buffer is empty.
     bool TryPop(T& out) {
         size_t tail = m_tail.load(std::memory_order_relaxed);
         if (tail == m_head.load(std::memory_order_acquire))
@@ -94,18 +97,23 @@ template <typename T, size_t Capacity> class RingBuffer {
         return true;
     }
 
+    /// Current number of items in the buffer.
     size_t Size() const {
         size_t head = m_head.load(std::memory_order_acquire);
         size_t tail = m_tail.load(std::memory_order_acquire);
         return (head - tail) & kMask;
     }
 
+    /// True if buffer contains no items.
     bool Empty() const {
         return m_head.load(std::memory_order_acquire) == m_tail.load(std::memory_order_acquire);
     }
+    /// True if buffer is at maximum usable capacity.
     bool Full() const { return Size() == Capacity - 1; }
-    static constexpr size_t GetCapacity() { return Capacity - 1; } // usable capacity
+    /// Usable capacity (Capacity - 1 due to sentinel slot).
+    static constexpr size_t GetCapacity() { return Capacity - 1; }
 
+    /// Drains all items from the buffer, destroying each element.
     void Clear() {
         T tmp;
         while (TryPop(tmp)) {

@@ -13,8 +13,16 @@ class ConfigTest : public ::testing::Test {
         auto tmp = fs::temp_directory_path() / "uzengine_test";
         fs::create_directories(tmp);
         uz::LogInit((tmp / "uzengine.log").string().c_str());
+        uz::LogSetLevel(uz::LogLevel::Error);
     }
-    void TearDown() override { uz::LogShutdown(); }
+    void TearDown() override {
+        uz::LogShutdown();
+        // Re-init with Error level so subsequent tests stay quiet
+        auto tmp = fs::temp_directory_path() / "uzengine_test";
+        fs::create_directories(tmp);
+        uz::LogInit((tmp / "uzengine.log").string().c_str());
+        uz::LogSetLevel(uz::LogLevel::Error);
+    }
 };
 
 TEST_F(ConfigTest, LoadFromStringParsesCorrectly) {

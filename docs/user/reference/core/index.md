@@ -84,6 +84,8 @@ CLI overrides use `--key=value` format.
 
 Engine resource paths are resolved relative to the executable directory.
 
+> **Full reference**: [Engine Paths](paths.md)
+
 ### Functions
 
 | Function | Description |

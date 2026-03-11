@@ -35,6 +35,7 @@ static std::vector<spdlog::sink_ptr> g_sinks;
 static std::mutex g_loggerMutex;
 static std::unordered_map<std::string, std::shared_ptr<spdlog::logger>> g_loggers;
 static bool g_initialized = false;
+static spdlog::level::level_enum g_runtimeLevel = spdlog::level::trace;
 
 /// Initializes logging with console and optional file output.
 ///
@@ -81,6 +82,7 @@ void LogShutdown() {
     std::lock_guard<std::mutex> lock(g_loggerMutex);
     g_loggers.clear();
     g_sinks.clear();
+    g_runtimeLevel = spdlog::level::trace;
     g_initialized = false;
 }
 
@@ -109,7 +111,8 @@ spdlog::logger* LogGetLogger(const LogCategory& cat) {
 
     // Create new logger with shared sinks (console + file)
     auto logger = std::make_shared<spdlog::logger>(cat.name, g_sinks.begin(), g_sinks.end());
-    logger->set_level(detail::ToSpdlogLevel(cat.compileTimeMin));
+    auto minLevel = std::max(detail::ToSpdlogLevel(cat.compileTimeMin), g_runtimeLevel);
+    logger->set_level(minLevel);
     logger->flush_on(spdlog::level::err); // Auto-flush on Error and Fatal
 
     g_loggers[cat.name] = logger;
@@ -131,6 +134,7 @@ spdlog::logger* LogGetLogger(const LogCategory& cat) {
 void LogSetLevel(LogLevel level) {
     std::lock_guard<std::mutex> lock(g_loggerMutex);
     auto spdLevel = detail::ToSpdlogLevel(level);
+    g_runtimeLevel = spdLevel;
     for (auto& [name, logger] : g_loggers) {
         logger->set_level(spdLevel);
     }

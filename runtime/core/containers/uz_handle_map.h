@@ -74,10 +74,19 @@ template <typename T> struct Handle {
 
 // ── HandleMap — sparse generational array ────────────────────────────────────
 
+/// Generational handle-based sparse array with O(1) access.
+///
+/// # Template Parameters
+/// * `T` - Element type to store
+/// * `Capacity` - Maximum number of elements (stack-allocated)
+///
+/// # Thread Safety
+/// NOT thread-safe: single-threaded use only.
 template <typename T, size_t Capacity> class HandleMap {
     static_assert(Capacity > 0, "Capacity must be > 0");
 
   public:
+    /// Initializes empty map with all slots in the free chain.
     HandleMap() {
         for (size_t i = 0; i < Capacity - 1; ++i) {
             m_freeNext[i] = static_cast<uint32_t>(i + 1);
@@ -87,6 +96,7 @@ template <typename T, size_t Capacity> class HandleMap {
         m_count = 0;
     }
 
+    /// Destroys all live objects in the map.
     ~HandleMap() {
         for (size_t i = 0; i < Capacity; ++i) {
             if (m_alive[i]) {
@@ -98,6 +108,10 @@ template <typename T, size_t Capacity> class HandleMap {
     HandleMap(const HandleMap&) = delete;
     HandleMap& operator=(const HandleMap&) = delete;
 
+    /// Creates a new element and returns a handle to it.
+    ///
+    /// # Returns
+    /// Valid handle on success, or Handle::Invalid() if map is full.
     template <typename... Args> Handle<T> Create(Args&&... args) {
         if (m_freeHead == kInvalid)
             return Handle<T>::Invalid();
@@ -110,6 +124,7 @@ template <typename T, size_t Capacity> class HandleMap {
         return {idx, m_generation[idx]};
     }
 
+    /// Destroys the element referenced by handle. No-op if handle is stale.
     void Destroy(Handle<T> h) {
         if (!IsValidHandle(h))
             return;
@@ -120,26 +135,31 @@ template <typename T, size_t Capacity> class HandleMap {
         --m_count;
     }
 
+    /// Returns mutable pointer to element, or nullptr if handle is stale/invalid.
     T* Get(Handle<T> h) {
         if (!IsValidHandle(h))
             return nullptr;
         return &reinterpret_cast<T&>(m_storage[h.index]);
     }
 
+    /// Returns const pointer to element, or nullptr if handle is stale/invalid.
     const T* Get(Handle<T> h) const {
         if (!IsValidHandle(h))
             return nullptr;
         return &reinterpret_cast<const T&>(m_storage[h.index]);
     }
 
+    /// Returns true if handle refers to a currently alive element.
     bool IsValidHandle(Handle<T> h) const {
         return h.index < Capacity && m_alive[h.index] && m_generation[h.index] == h.generation;
     }
 
+    /// Number of currently alive elements.
     size_t Count() const { return m_count; }
+    /// Maximum capacity (fixed).
     size_t GetCapacity() const { return Capacity; }
 
-    // Iterate over all alive entries
+    /// Iterates over all alive entries, calling fn(Handle<T>, T&) for each.
     template <typename Fn> void ForEach(Fn&& fn) {
         for (size_t i = 0; i < Capacity; ++i) {
             if (m_alive[i]) {

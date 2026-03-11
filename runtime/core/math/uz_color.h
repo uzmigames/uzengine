@@ -17,23 +17,30 @@ struct sRGBColor;
 // LinearColor — Float4 in linear RGB space (for rendering)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// HDR color in linear RGB space — used for all rendering calculations.
+///
+/// Components are unbounded floats (can exceed 1.0 for HDR).
+/// Alpha defaults to 1.0 (fully opaque).
 struct LinearColor {
     float r, g, b, a;
 
-    /// Constructors
+    /// Default: black with full alpha (0, 0, 0, 1).
     LinearColor() : r(0), g(0), b(0), a(1.0f) {}
+    /// Construct from explicit RGBA components.
     LinearColor(float r, float g, float b, float a = 1.0f) : r(r), g(g), b(b), a(a) {}
+    /// Construct uniform gray (gray, gray, gray, 1).
     explicit LinearColor(float gray) : r(gray), g(gray), b(gray), a(1.0f) {}
 
-    /// Arithmetic
+    /// Component-wise addition.
     LinearColor operator+(const LinearColor& other) const {
         return {r + other.r, g + other.g, b + other.b, a + other.a};
     }
+    /// Scalar multiplication (brightness adjustment).
     LinearColor operator*(float scalar) const {
         return {r * scalar, g * scalar, b * scalar, a * scalar};
     }
 
-    /// Conversion (implemented at end of file)
+    /// Converts to sRGB color space (applies gamma curve).
     sRGBColor ToSRGB() const;
 
     /// Named colors
@@ -54,18 +61,24 @@ struct LinearColor {
 // sRGBColor — Byte4 in sRGB color space (for storage/UI)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// LDR color in sRGB color space — used for storage, UI, and texture sampling.
+///
+/// Components are 0–255 bytes. Alpha defaults to 255 (fully opaque).
 struct sRGBColor {
     uint8_t r, g, b, a;
 
-    /// Constructors
+    /// Default: black with full alpha (0, 0, 0, 255).
     sRGBColor() : r(0), g(0), b(0), a(255) {}
+    /// Construct from explicit RGBA byte components.
     sRGBColor(uint8_t r, uint8_t g, uint8_t b, uint8_t a = 255) : r(r), g(g), b(b), a(a) {}
 
-    /// Conversion (implemented below after utility functions)
+    /// Converts to linear RGB space (removes gamma curve).
     LinearColor ToLinear() const;
+    /// Packs RGBA into a single 32-bit integer (R=MSB, A=LSB).
     uint32_t ToHex() const {
         return ((uint32_t)r << 24) | ((uint32_t)g << 16) | ((uint32_t)b << 8) | (uint32_t)a;
     }
+    /// Unpacks RGBA from a 32-bit integer.
     static sRGBColor FromHex(uint32_t hex) {
         return {(uint8_t)((hex >> 24) & 0xFF), (uint8_t)((hex >> 16) & 0xFF),
                 (uint8_t)((hex >> 8) & 0xFF), (uint8_t)(hex & 0xFF)};

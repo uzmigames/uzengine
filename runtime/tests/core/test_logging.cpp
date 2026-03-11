@@ -14,7 +14,12 @@ class LoggingTest : public ::testing::Test {
         return (tmpDir_ / name).string();
     }
 
-    void TearDown() override { uz::LogShutdown(); }
+    void TearDown() override {
+        uz::LogShutdown();
+        // Re-init with Error level so subsequent tests stay quiet
+        uz::LogInit(TmpLog("uzengine.log").c_str());
+        uz::LogSetLevel(uz::LogLevel::Error);
+    }
 };
 
 TEST_F(LoggingTest, InitAndShutdownAreSafe) {

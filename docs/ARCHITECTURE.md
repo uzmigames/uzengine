@@ -557,7 +557,8 @@ The build pipeline (Spec 1.5) produces a standalone game executable that links t
 
 ## Shader Compilation Pipeline
 
-> Full specification: [1.5.0-shader-pipeline.md](specs/1.5.0-shader-pipeline.md)
+> **Developer guide**: [Shader Pipeline — Development & Compilation](user/guides/rendering/shader-pipeline.md) |
+> **Specification**: [1.5.0-shader-pipeline.md](specs/1.5.0-shader-pipeline.md)
 
 Shaders are authored in **HLSL** and compiled via DXC to backend-specific bytecode (DXIL, SPIRV, MSL). The pipeline uses two distinct modes to avoid the stale-cache and file-copy problems from POC 1:
 
@@ -589,6 +590,8 @@ Shaders are authored in **HLSL** and compiled via DXC to backend-specific byteco
 ## RHI — Rendering Hardware Interface
 
 The first major challenge. A clean abstraction layer that lets the renderer work across multiple graphics backends without leaking API-specific details.
+
+> **Reference**: [RHI Config Resolution](user/reference/rhi/rhi-config.md) | [RHI Overview Guide](user/guides/rhi/overview.md)
 
 ### Backends (by priority)
 

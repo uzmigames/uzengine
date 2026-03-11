@@ -31,7 +31,7 @@ Phase 4: Polish & Shipping ─────────────────�
 
 ## Phase 1: Runtime Foundation
 
-### 1.0 — Bootstrap & Project Setup
+### 1.0 — Bootstrap & Project Setup ✅ COMPLETED
 
 **Goal**: Compilable project with build system, logging, and a window.
 
@@ -54,7 +54,7 @@ Phase 4: Polish & Shipping ─────────────────�
 
 ---
 
-### 1.1 — Math & Containers
+### 1.1 — Math & Containers ✅ COMPLETED
 
 **Goal**: Complete math library and core data structures.
 
@@ -72,7 +72,7 @@ Phase 4: Polish & Shipping ─────────────────�
 
 ---
 
-### 1.2 — RHI (Rendering Hardware Interface)
+### 1.2 — RHI (Rendering Hardware Interface) ✅ COMPLETED
 
 **Goal**: Abstract GPU interface with DX12 SM6.6 backend working.
 
@@ -276,7 +276,7 @@ Phase 4: Polish & Shipping ─────────────────�
 
 ## Phase 1.5: Build Pipeline
 
-### 1.5.0 — Shader Compiler
+### 1.5.0 — Shader Compiler ✅ COMPLETED
 
 | Task | Details | Acceptance Criteria |
 |------|---------|-------------------|

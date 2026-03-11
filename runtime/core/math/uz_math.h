@@ -257,23 +257,31 @@ struct Vec3 {
 // Vec4 — 4D float vector
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// 4D float vector (x, y, z, w) — used for homogeneous coordinates and SIMD ops.
 struct Vec4 {
     float x, y, z, w;
 
-    /// Constructors
+    /// Zero-initialized vector (0, 0, 0, 0).
     Vec4() : x(0), y(0), z(0), w(0) {}
+    /// Construct from explicit components.
     constexpr Vec4(float x, float y, float z, float w) : x(x), y(y), z(z), w(w) {}
+    /// Construct from Vec3 + W component (e.g., position w=1, direction w=0).
     constexpr Vec4(const Vec3& v, float w) : x(v.x), y(v.y), z(v.z), w(w) {}
+    /// Construct uniform vector (scalar, scalar, scalar, scalar).
     explicit constexpr Vec4(float scalar) : x(scalar), y(scalar), z(scalar), w(scalar) {}
+    /// Load from memory (pointer to at least 4 floats).
     explicit Vec4(const float* ptr) : x(ptr[0]), y(ptr[1]), z(ptr[2]), w(ptr[3]) {}
+    /// Convert from DirectXMath XMVECTOR.
     explicit Vec4(const XMVECTOR& xm) { XMStoreFloat4(reinterpret_cast<XMFLOAT4*>(this), xm); }
+    /// Convert from DirectXMath XMFLOAT4.
     explicit Vec4(const XMFLOAT4& f4) : x(f4.x), y(f4.y), z(f4.z), w(f4.w) {}
 
-    /// Conversion to XMVECTOR
+    /// Convert to XMVECTOR for SIMD operations.
     XMVECTOR toXM() const { return XMLoadFloat4(reinterpret_cast<const XMFLOAT4*>(this)); }
 
-    /// Extract XYZ as Vec3
+    /// Extract XYZ as Vec3 (drops W).
     Vec3 xyz() const { return {x, y, z}; }
+    /// Uppercase alias.
     Vec3 XYZ() const { return xyz(); }
 
     /// Element access
@@ -341,13 +349,17 @@ struct Vec4 {
 // Mat4 — 4×4 matrix (column-major, DirectX convention)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// 4x4 matrix (column-major, DirectX convention) — SIMD-accelerated via DirectXMath.
 struct Mat4 {
     XMFLOAT4X4 m;
 
-    /// Constructors
+    /// Default: identity matrix.
     Mat4() { XMStoreFloat4x4(&m, XMMatrixIdentity()); }
+    /// Construct from DirectXMath XMMATRIX.
     Mat4(const XMMATRIX& xm) { XMStoreFloat4x4(&m, xm); }
+    /// Construct from DirectXMath XMFLOAT4X4.
     Mat4(const XMFLOAT4X4& f4x4) : m(f4x4) {}
+    /// Load from memory (pointer to 16 floats, row-major layout).
     explicit Mat4(const float* ptr) { std::memcpy(&m, ptr, 16 * sizeof(float)); }
 
     /// Static constructors
@@ -428,14 +440,22 @@ struct Mat4 {
 // Quat — Quaternion (x, y, z, w)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Quaternion (x, y, z, w) — rotation representation, SIMD-accelerated.
+///
+/// Default is identity rotation (0, 0, 0, 1).
+/// Prefer over Euler angles to avoid gimbal lock.
 struct Quat {
     float x, y, z, w;
 
-    /// Constructors
+    /// Identity rotation (no rotation).
     Quat() : x(0), y(0), z(0), w(1) {}
+    /// Construct from explicit components.
     constexpr Quat(float x, float y, float z, float w) : x(x), y(y), z(z), w(w) {}
+    /// Construct rotation around axis by angle (radians).
     Quat(const Vec3& axis, float angle);
+    /// Convert from DirectXMath XMVECTOR.
     explicit Quat(const XMVECTOR& xm) { XMStoreFloat4(reinterpret_cast<XMFLOAT4*>(this), xm); }
+    /// Convert from DirectXMath XMFLOAT4.
     explicit Quat(const XMFLOAT4& f4) : x(f4.x), y(f4.y), z(f4.z), w(f4.w) {}
 
     /// Static constructors

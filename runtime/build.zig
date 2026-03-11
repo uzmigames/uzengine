@@ -34,6 +34,7 @@ pub fn build(b: *std.Build) void {
         tp ++ "glm",
         tp ++ "nlohmann",
         tp ++ "atomic_queue/include",
+        tp ++ "spirv-reflect",
         tp ++ "spirv-reflect/include",
         tp ++ "xxhash",
     };
@@ -113,8 +114,20 @@ pub fn build(b: *std.Build) void {
             "shader_source_manager.cpp",
             "shader_dependency_graph.cpp",
             "shader_cache.cpp",
+            "shader_permutation.cpp",
+            "shader_reflection.cpp",
+            "shader_hot_reload.cpp",
+            "shader_pipeline.cpp",
+            "shader_archive.cpp",
         },
         .flags = cpp_flags,
+    });
+
+    // Thirdparty — SPIRV-Reflect (C source)
+    runtime_mod.addCSourceFiles(.{
+        .root = b.path(tp ++ "spirv-reflect"),
+        .files = &.{"spirv_reflect.c"},
+        .flags = &.{"-std=c11"},
     });
 
     // Windows-only sources
@@ -283,6 +296,11 @@ pub fn build(b: *std.Build) void {
             "test_shader_dependency_graph.cpp",
             "test_shader_cache.cpp",
             "test_shader_compiler.cpp",
+            "test_shader_permutation.cpp",
+            "test_shader_reflection.cpp",
+            "test_shader_hot_reload.cpp",
+            "test_shader_pipeline.cpp",
+            "test_shader_archive.cpp",
         },
         .flags = cpp_flags,
     });

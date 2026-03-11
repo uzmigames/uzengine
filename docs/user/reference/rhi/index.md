@@ -3,7 +3,7 @@
 Abstract GPU interfaces and type definitions.
 
 > **Headers**: `core/rhi/rhi.h`, `core/rhi/rhi_types.h`, `core/rhi/rhi_backend.h`, `core/rhi/rhi_config.h`
-> **Guide**: [RHI Overview](../../guides/rhi/overview.md)
+> **Guides**: [RHI Overview](../../guides/rhi/overview.md) | [RHI Config Reference](rhi-config.md)
 
 ## Handles and Types
 

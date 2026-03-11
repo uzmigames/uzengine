@@ -53,8 +53,18 @@ runtime/
 │   ├── math/                # uz_math.h — DirectXMath SIMD wrappers
 │   ├── containers/          # Ring buffer, free list, handle map, frame array
 │   ├── random/              # uz_random.h — PCG generator
-│   └── rhi/                 # Abstract interfaces (rhi.h, rhi_types.h)
-│       └── dx12/            # DX12 backend implementation
+│   ├── rhi/                 # Abstract interfaces (rhi.h, rhi_types.h)
+│   │   └── dx12/            # DX12 backend implementation
+│   ├── shader/              # Shader pipeline (VFS, compiler, cache, hot-reload)
+│   │   ├── shader_vfs.h           # Virtual filesystem for shader sources
+│   │   ├── shader_source_manager.h # Include parsing, content hashing
+│   │   ├── shader_dependency_graph.h # Forward/reverse include tracking
+│   │   ├── shader_cache.h         # Disk-based bytecode cache
+│   │   ├── shader_compiler.h      # DXC integration (HLSL→DXIL/SPIRV)
+│   │   ├── shader_permutation.h   # Feature flag variants
+│   │   ├── shader_hot_reload.h    # FileWatcher + dirty flags
+│   │   └── shader_archive.h       # Shipping mode precompiled archive
+│   └── paths/               # Path resolution (uz_paths.h)
 ├── platform/
 │   └── windows/             # Win32 window, input system
 ├── tools/                   # Standalone executables (runtime, demo)
@@ -69,12 +79,17 @@ runtime/
 Dependencies flow downward. No circular references.
 
 ```
-tools/ ──→ core/rhi/ ──→ core/ (logging, assertions, math, config)
+tools/ ──→ core/rhi/ ──→ core/shader/ ──→ core/ (logging, assertions, math, config)
              │
              ├──→ core/rhi/dx12/  (DX12 backend)
              └──→ core/rhi/vulkan/ (planned)
 
-platform/windows/ ──→ core/ (logging, input)
+core/shader/ ──→ core/paths/ (resource resolution)
+             ──→ core/ (VFS, source loading, DXC integration)
+
+platform/windows/ ──→ core/paths/ (path resolution)
+                  ──→ core/ (logging, input)
+
 tests/ ──→ everything (read-only, via link against static lib)
 ```
 
@@ -88,9 +103,15 @@ tests/ ──→ everything (read-only, via link against static lib)
 | SM6.6 bindless primary | One global descriptor heap, no descriptor table management, simpler shaders |
 | Agility SDK bundled | Unlocks latest DX12 features regardless of OS-installed runtime |
 | JSON for all project files | Human-readable, AI-parseable, diff-friendly |
+| Content-addressed shader cache | xxHash64 of source + includes eliminates stale cache bugs during iteration |
+| Exe-relative path resolution | All resources (DLLs, shaders, configs) relative to executable, never CWD |
+| Virtual shader filesystem | Mount points decouple shader code from filesystem, enables mods/overrides |
+| Lazy shader compilation | Mark dirty on file change, compile on next use (batches rapid saves) |
 
 ## Related Pages
 
 - [RHI Overview](rhi/overview.md) — Hardware abstraction layer design
+- [Shader Pipeline](rendering/shader-pipeline.md) — Compilation, caching, hot-reload
 - [Build System](build-system/zig-build.md) — Zig build details
 - [Building from Source](../getting-started/building.md) — Quick start
+- [API: Core Reference](../reference/core/index.md) — Logging, paths, config

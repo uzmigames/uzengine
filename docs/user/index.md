@@ -33,7 +33,8 @@ patterns, and links to the relevant API reference.
 | [Math Library](guides/math/overview.md) | Vectors, matrices, quaternions, transforms (DirectXMath SIMD) |
 | [Memory & Allocators](guides/memory/overview.md) | Ownership model, linear/pool/frame allocators, budgets |
 | [Platform Abstraction](guides/platform/overview.md) | Window creation, input system, OS services |
-| [Rendering](guides/rendering/overview.md) | Frame lifecycle, passes, materials *(planned)* |
+| [Rendering](guides/rendering/overview.md) | Frame lifecycle, shader pipeline, DX12 RHI |
+| [Shader Pipeline](guides/rendering/shader-pipeline.md) | Development workflow, hot-reload, shader caching |
 | [Profiling & Debugging](guides/profiling/overview.md) | Tracy, GPU profiling, DRED breadcrumbs, stat counters |
 
 ## API Reference
@@ -43,10 +44,10 @@ Generated from source-level `///` documentation comments.
 
 | Module | Description |
 |--------|-------------|
-| [Core](reference/core/index.md) | Logging, assertions, config, profiling |
+| [Core](reference/core/index.md) | Logging, assertions, config, profiling, [paths](reference/core/paths.md) |
 | [Math](reference/math/index.md) | Vec2, Vec3, Vec4, Mat4, Quat, Transform, Color, AABB, Frustum |
 | [Containers](reference/containers/index.md) | RingBuffer, FreeList, HandleMap, FrameArray |
-| [RHI](reference/rhi/index.md) | IRHIDevice, IRHICommandList, IRHISwapChain, handles, enums |
+| [RHI](reference/rhi/index.md) | IRHIDevice, IRHICommandList, IRHISwapChain, handles, [config](reference/rhi/rhi-config.md) |
 | [Platform](reference/platform/index.md) | PlatformWindow, InputSystem, action mapping |
 
 ## Contributing

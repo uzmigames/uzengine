@@ -1,4 +1,3 @@
-#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <gtest/gtest.h>
@@ -16,6 +15,7 @@ static fs::path GetTestTempDir() {
 int main(int argc, char** argv) {
     const auto tmpDir = GetTestTempDir();
     uz::LogInit((tmpDir / "uzengine.log").string().c_str());
+    uz::LogSetLevel(uz::LogLevel::Error);
     ::testing::InitGoogleTest(&argc, argv);
     int result = RUN_ALL_TESTS();
 
