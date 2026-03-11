@@ -380,4 +380,4 @@ int main(int argc, char* argv[]) {
 
 - [RHI Overview](../../guides/rhi/overview.md) — High-level design
 - [Getting Started](../../getting-started/first-window.md) — Practical walkthrough
-- [Architecture](../architecture.md) — System design
+- [Architecture](../../guides/architecture.md) — System design

@@ -27,15 +27,15 @@ ConstantBuffer<PushConstants> push : register(b0);
 
 // Per-frame CB at b1
 cbuffer PerFrameCB : register(b1) {
-    float4x4 viewProj;
+    row_major float4x4 viewProj;
     float4   cameraPos;
     float4   timeParams;
 };
 
 // Per-object CB at b2
 cbuffer PerObjectCB : register(b2) {
-    float4x4 model;
-    float4x4 normalMatrix;
+    row_major float4x4 model;
+    row_major float4x4 normalMatrix;
     uint     materialIndex;
 };
 

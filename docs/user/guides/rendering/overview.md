@@ -38,7 +38,7 @@ Key design decisions:
 - **Dynamic DXC loading**: `dxcompiler.dll` loaded at runtime, resolved relative to executable via `uz::ResolveEngineResource()`
 - **No embedded shaders**: POC 1 proved that embedding shaders as C strings causes stale cache bugs
 
-See [Shader Pipeline Guide](shader-pipeline.md) for developer workflow, or [Shader Pipeline Spec](../../specs/1.5.0-shader-pipeline.md) for detailed technical design.
+See [Shader Pipeline Guide](shader-pipeline.md) for developer workflow, or [Shader Pipeline Spec](../../../specs/1.5.0-shader-pipeline.md) for detailed technical design.
 
 ## Planned Pipeline
 

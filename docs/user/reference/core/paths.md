@@ -304,6 +304,6 @@ int main() {
 
 ## Related Pages
 
-- [Architecture](../architecture.md) — System design
+- [Architecture](../../guides/architecture.md) — System design
 - [Getting Started](../../getting-started/first-window.md) — Practical walkthrough
-- [Build System](../build-system/zig-build.md) — How Zig deploys resources
+- [Build System](../../guides/build-system/zig-build.md) — How Zig deploys resources

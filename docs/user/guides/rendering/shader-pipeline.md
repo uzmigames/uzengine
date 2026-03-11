@@ -2,7 +2,7 @@
 
 UzEngine's shader pipeline is designed for rapid iteration during development and efficient pre-compilation for shipping builds.
 
-> **Related**: [Spec 1.5.0 — Shader Pipeline Architecture](../../specs/1.5.0-shader-pipeline.md) |
+> **Related**: [Spec 1.5.0 — Shader Pipeline Architecture](../../../specs/1.5.0-shader-pipeline.md) |
 > [Shader VFS API](#shader-vfs) | [Hot-Reload System](#hot-reload-development)
 
 ## Overview
@@ -452,6 +452,6 @@ if (dxcVersion != expectedVersion) {
 
 ## Related Pages
 
-- [Spec 1.5.0 — Shader Pipeline Architecture](../../specs/1.5.0-shader-pipeline.md) — Detailed technical design
+- [Spec 1.5.0 — Shader Pipeline Architecture](../../../specs/1.5.0-shader-pipeline.md) — Detailed technical design
 - [Rendering Overview](overview.md) — Graphics subsystem
 - [First Window Guide](../../getting-started/first-window.md) — Practical setup

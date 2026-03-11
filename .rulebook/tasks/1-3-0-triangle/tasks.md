@@ -49,11 +49,11 @@
 - [x] 5.15 Editor screenshot utility at `runtime/editor/screenshot/`
 
 ## Phase 6: Mesh Loading
-- [ ] 6.1 Define `.uzmesh` format (JSON header + binary blob)
-- [ ] 6.2 Implement mesh loader (parse header, read vertex/index binary)
-- [ ] 6.3 Create test mesh (cube or export Stanford bunny to .uzmesh)
-- [ ] 6.4 Render loaded mesh with transforms + camera
-- [ ] 6.5 Tests: mesh format parsing, vertex/index data integrity
+- [x] 6.1 Define `.uzmesh` format (binary header + vertex/index data) <!-- MeshHeader 128 bytes, magic "UZMH", version 1 -->
+- [x] 6.2 Implement mesh loader (LoadMesh/SaveMesh in `core/renderer/mesh.h/.cpp`)
+- [x] 6.3 Create test mesh (MeshBuilder::CreateCube — 24 verts, 36 indices, Z-up)
+- [x] 6.4 Render loaded mesh with transforms + camera <!-- mesh_test demo: MeshBuilder cube + mesh_vs/ps + PerObjectCB + indexed draw -->
+- [x] 6.5 Tests: mesh format parsing, vertex/index data integrity (25 tests, 737 total)
 
 ## Phase 7: Shaders & Integration
 - [ ] 7.1 Vertex shader: MVP transform, pass UVs/normals to PS

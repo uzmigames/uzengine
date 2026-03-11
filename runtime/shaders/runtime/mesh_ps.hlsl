@@ -20,15 +20,15 @@ ConstantBuffer<PushConstants> push : register(b0);
 
 // Per-frame CB at b1
 cbuffer PerFrameCB : register(b1) {
-    float4x4 viewProj;
+    row_major float4x4 viewProj;
     float4   cameraPos;
     float4   timeParams;
 };
 
 // Per-object CB at b2
 cbuffer PerObjectCB : register(b2) {
-    float4x4 model;
-    float4x4 normalMatrix;
+    row_major float4x4 model;
+    row_major float4x4 normalMatrix;
     uint     materialIndex;
 };
 
@@ -39,7 +39,7 @@ float4 main(PSInput input) : SV_Target {
     // Directional light (fixed sun direction, Z-up)
     float3 lightDir = normalize(float3(0.5, 0.3, 0.8));
     float3 lightColor = float3(1.0, 0.95, 0.9);
-    float3 ambient = float3(0.15, 0.15, 0.2);
+    float3 ambient = float3(0.25, 0.25, 0.3);
 
     // N·L diffuse
     float3 N = normalize(input.normalWS);
@@ -48,7 +48,7 @@ float4 main(PSInput input) : SV_Target {
 
     // Base color: use materialIndex as texture SRV index if available,
     // otherwise use vertex-interpolated white
-    float3 albedo = float3(0.8, 0.8, 0.8);
+    float3 albedo = float3(1.0, 1.0, 1.0);
 
     if (materialIndex > 0) {
         Texture2D<float4> albedoTex = ResourceDescriptorHeap[materialIndex];

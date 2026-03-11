@@ -78,9 +78,9 @@ bool EditorGrid::Init(IRHIDevice* device, ShaderPipeline& pipeline,
     desc.renderTargetCount = 1;
     desc.depthStencilFormat = dsvFormat;
 
-    // Depth: test and write (SV_Depth outputs correct Z=0 plane depth)
+    // Depth: test only, no write — grid must not occlude geometry at Z=0
     desc.depthStencil.depthEnable = true;
-    desc.depthStencil.depthWrite = true;
+    desc.depthStencil.depthWrite = false;
     desc.depthStencil.depthFunc = RHICompareFunc::LessEqual;
 
     // Rasterizer: no culling for fullscreen tri

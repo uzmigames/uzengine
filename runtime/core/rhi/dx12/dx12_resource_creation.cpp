@@ -581,12 +581,28 @@ ID3D12RootSignature* CreateBindlessRootSignature(ID3D12Device* device, ShaderMod
                 D3D12_ROOT_SIGNATURE_FLAG_SAMPLER_HEAP_DIRECTLY_INDEXED;
     }
 
+    // Static sampler s0: linear wrap (used by mesh_ps and any textured shader)
+    D3D12_STATIC_SAMPLER_DESC staticSamplers[1] = {};
+    staticSamplers[0].Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+    staticSamplers[0].AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+    staticSamplers[0].AddressV = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+    staticSamplers[0].AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+    staticSamplers[0].MipLODBias = 0.f;
+    staticSamplers[0].MaxAnisotropy = 1;
+    staticSamplers[0].ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
+    staticSamplers[0].BorderColor = D3D12_STATIC_BORDER_COLOR_OPAQUE_BLACK;
+    staticSamplers[0].MinLOD = 0.f;
+    staticSamplers[0].MaxLOD = D3D12_FLOAT32_MAX;
+    staticSamplers[0].ShaderRegister = 0;  // s0
+    staticSamplers[0].RegisterSpace = 0;
+    staticSamplers[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
     D3D12_VERSIONED_ROOT_SIGNATURE_DESC versionedDesc = {};
     versionedDesc.Version = D3D_ROOT_SIGNATURE_VERSION_1_1;
     versionedDesc.Desc_1_1.NumParameters = 3;
     versionedDesc.Desc_1_1.pParameters = rootParams;
-    versionedDesc.Desc_1_1.NumStaticSamplers = 0;
-    versionedDesc.Desc_1_1.pStaticSamplers = nullptr;
+    versionedDesc.Desc_1_1.NumStaticSamplers = 1;
+    versionedDesc.Desc_1_1.pStaticSamplers = staticSamplers;
     versionedDesc.Desc_1_1.Flags = flags;
 
     ID3DBlob* serialized = nullptr;
