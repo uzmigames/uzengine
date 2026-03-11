@@ -4534,3 +4534,1050 @@ engine/
 | **Phase 2** | Material param override + render layers + LOD selection. |
 | **Phase 3** | GPU instance culling + HZB occlusion + dual-thread render. |
 | **Phase 4+** | Virtual geometry (cluster BVH, software rasterizer, visibility buffer). |
+
+---
+
+## 24. Physics World — Jolt Integration
+
+> **Goal**: Define the gameplay-facing physics API — collision channels, queries, callbacks, forces, constraints, fixed timestep, character movement, and physical materials.
+> **Backend**: Jolt Physics (MIT, deterministic, validated by Godot at scale).
+> **References**: UE5 Chaos Physics public API (clean-room), Godot `PhysicsServer3D` + Jolt integration.
+
+### 24.1 The Problem
+
+Without a physics abstraction, game code must:
+- Manually check AABB overlaps for trigger volumes
+- Implement its own raycast against triangle meshes
+- Track collision pairs frame-to-frame for begin/end events
+- Hardcode timestep logic that drifts under variable frame rates
+- Implement character ground detection, step-up, and wall sliding from scratch
+
+### 24.2 Collision Channels & Response Matrix
+
+Every physics body has two properties: an **object channel** (what it IS) and a **response table** (how it reacts to every other channel). Collision between two bodies uses the **minimum** of both responses — if either says Ignore, the pair is ignored.
+
+```cpp
+/// 32 collision channels. First 14 are engine-reserved, 14-31 are game-defined.
+enum class CollisionChannel : uint8_t {
+    WorldStatic   = 0,    // immovable geometry (floors, walls)
+    WorldDynamic  = 1,    // movable physics objects (crates, barrels)
+    Pawn          = 2,    // characters
+    Visibility    = 3,    // trace-only (line-of-sight checks, no physics)
+    Camera        = 4,    // camera collision traces
+    PhysicsBody   = 5,    // ragdolls, cloth
+    Projectile    = 6,    // bullets, arrows
+    Trigger       = 7,    // overlap-only volumes
+    // 8-13: engine reserved
+    Game0         = 14,   // project-defined
+    // ...
+    Game17        = 31,
+};
+
+/// How a body responds to a specific channel.
+enum class CollisionResponse : uint8_t {
+    Ignore  = 0,   // no event, no block, no query hit
+    Overlap = 1,   // fires OnOverlapBegin/End callbacks, no physical blocking
+    Block   = 2,   // physically blocked, fires OnHit callback
+};
+
+/// Per-body response table. 32 bytes — one response per channel.
+struct CollisionResponseContainer {
+    CollisionResponse responses[32];
+
+    /// Preset helpers
+    static CollisionResponseContainer BlockAll();
+    static CollisionResponseContainer OverlapAll();
+    static CollisionResponseContainer IgnoreAll();
+
+    void Set(CollisionChannel channel, CollisionResponse response);
+    CollisionResponse Get(CollisionChannel channel) const;
+};
+```
+
+**Collision enabled modes** — orthogonal to the response table:
+
+```cpp
+/// Controls whether a body participates in queries, simulation, or both.
+enum class CollisionEnabled : uint8_t {
+    NoCollision,       // invisible to everything
+    QueryOnly,         // raycasts/sweeps hit it, no rigid body simulation
+    PhysicsOnly,       // simulates, but invisible to raycasts
+    QueryAndPhysics,   // full (default for dynamic bodies)
+    ProbeOnly,         // gets contact callbacks but no physical response
+};
+```
+
+**Why three responses (Ignore/Overlap/Block)?** Without this, trigger volumes require a separate object type. With it, any body can be a trigger for some channels and a blocker for others simultaneously. A door can Block Pawns but Overlap Projectiles (bullets pass through, player can't).
+
+### 24.3 Physics Queries — Raycast, Sweep, Overlap
+
+All queries go through `PhysicsWorld` (a WorldSubsystem). Three query shapes × two result modes (single/multi) × filter by channel.
+
+#### HitResult
+
+```cpp
+/// Complete result of a physics query. Contains both swept-shape and surface contact info.
+struct HitResult {
+    bool  blocking_hit;        // false = overlap only
+    bool  start_penetrating;   // trace started inside geometry
+    float time;                // 0..1 along the trace segment
+    float distance;            // world units from start
+
+    /// Where the swept shape CENTER ends up at contact.
+    /// For a sphere sweep, this is the sphere center at hit time.
+    Vec3  location;
+
+    /// Actual surface contact point.
+    /// For VFX spawning (sparks, decals) — always use this, not location.
+    Vec3  impact_point;
+
+    /// Normal of the swept shape surface (inward-facing for spheres).
+    Vec3  normal;
+
+    /// Normal of the HIT surface (outward-facing from geometry).
+    /// Use this for floor angle checks, wall sliding, and surface alignment.
+    Vec3  impact_normal;
+
+    Vec3  trace_start;
+    Vec3  trace_end;
+    float penetration_depth;   // if start_penetrating, distance to depenetrate
+
+    Entity          entity;           // which game entity was hit
+    PhysBodyHandle  body;             // Jolt body ID
+    PhysMaterialId  physical_material;// surface type for footsteps/decals
+    uint32_t        face_index;       // triangle index (complex trace only)
+};
+```
+
+**Critical distinction**: `location` vs `impact_point`. Character movement uses `impact_normal` for floor walkability. VFX uses `impact_point` for spark placement. Never conflate them.
+
+#### Query API
+
+```cpp
+/// Query parameters — per-query filtering.
+struct QueryParams {
+    bool trace_complex = false;         // hit triangle mesh, not simplified hull
+    bool find_initial_overlaps = true;  // detect if start is already inside
+    bool return_physical_material = false;
+
+    /// Entities to skip (inline, no heap allocation).
+    Entity ignore_entities[8];
+    uint32_t ignore_entity_count = 0;
+};
+
+class PhysicsWorld : public WorldSubsystem {
+public:
+    // ─── Line Trace ────────────────────────────────────────
+    /// Cast a ray. Returns true if a blocking hit was found.
+    bool LineTraceSingle(HitResult& out, Vec3 start, Vec3 end,
+                         CollisionChannel channel,
+                         const QueryParams& params = {}) const;
+
+    /// Cast a ray. Returns all hits (blocking + overlapping), sorted by distance.
+    int32_t LineTraceMulti(HitResult* out, int32_t max_results,
+                           Vec3 start, Vec3 end,
+                           CollisionChannel channel,
+                           const QueryParams& params = {}) const;
+
+    // ─── Sweep (Swept Shape) ───────────────────────────────
+    /// Sweep a shape (sphere, box, capsule) along a line. Returns first blocking hit.
+    bool SweepSingle(HitResult& out, Vec3 start, Vec3 end, Quat rotation,
+                     const CollisionShape& shape, CollisionChannel channel,
+                     const QueryParams& params = {}) const;
+
+    int32_t SweepMulti(HitResult* out, int32_t max_results,
+                       Vec3 start, Vec3 end, Quat rotation,
+                       const CollisionShape& shape, CollisionChannel channel,
+                       const QueryParams& params = {}) const;
+
+    // ─── Overlap (Static Test) ─────────────────────────────
+    /// Test if a shape at a position overlaps anything. Returns overlap count.
+    int32_t OverlapMulti(HitResult* out, int32_t max_results,
+                         Vec3 position, Quat rotation,
+                         const CollisionShape& shape, CollisionChannel channel,
+                         const QueryParams& params = {}) const;
+
+    /// Quick boolean test — any overlap at all?
+    bool OverlapAny(Vec3 position, Quat rotation,
+                    const CollisionShape& shape, CollisionChannel channel,
+                    const QueryParams& params = {}) const;
+};
+
+/// Shape for sweeps and overlaps.
+struct CollisionShape {
+    enum Type { Sphere, Box, Capsule };
+    Type type;
+    union {
+        struct { float radius; } sphere;
+        struct { Vec3 half_extents; } box;
+        struct { float radius; float half_height; } capsule;
+    };
+
+    static CollisionShape MakeSphere(float radius);
+    static CollisionShape MakeBox(Vec3 half_extents);
+    static CollisionShape MakeCapsule(float radius, float half_height);
+};
+```
+
+#### Usage Example
+
+```cpp
+// Raycast from camera for aiming
+HitResult hit;
+Vec3 start = camera.GetWorldPosition();
+Vec3 end = start + camera.GetForward() * 1000.0f;
+
+if (GetWorld().GetSubsystem<PhysicsWorld>().LineTraceSingle(hit, start, end, CollisionChannel::Visibility)) {
+    // hit.impact_point = where the crosshair is pointing
+    // hit.impact_normal = surface normal for decal alignment
+    // hit.entity = what we're looking at
+    // hit.physical_material = surface type for hit sound selection
+    SpawnDecal(hit.impact_point, hit.impact_normal);
+}
+
+// Overlap sphere for area damage
+HitResult overlaps[32];
+auto shape = CollisionShape::MakeSphere(5.0f);
+int32_t count = physics.OverlapMulti(overlaps, 32, explosion_pos, Quat::Identity(),
+                                      shape, CollisionChannel::Pawn);
+for (int32_t i = 0; i < count; ++i) {
+    float dist = Vec3::Distance(explosion_pos, overlaps[i].impact_point);
+    float damage = Lerp(100.0f, 10.0f, dist / 5.0f);
+    ApplyDamage(overlaps[i].entity, damage);
+}
+```
+
+### 24.4 Collision Events & Callbacks
+
+Three event types, matching the three collision responses:
+
+```cpp
+/// Fired when physics simulation produces a blocking contact.
+/// Only fires if the body has notify_hit = true.
+struct HitEvent {
+    Entity    self_entity;
+    Entity    other_entity;
+    Vec3      normal_impulse;   // direction × magnitude of the impact
+    HitResult hit;              // full contact info
+};
+
+/// Fired when a new overlap begins (Overlap response, not Block).
+/// Only fires if both bodies have generate_overlaps = true.
+struct OverlapBeginEvent {
+    Entity    self_entity;
+    Entity    other_entity;
+    bool      from_sweep;       // detected by movement sweep vs physics step
+    HitResult sweep_result;     // valid only if from_sweep
+};
+
+/// Fired when an existing overlap ends.
+struct OverlapEndEvent {
+    Entity self_entity;
+    Entity other_entity;
+};
+```
+
+**Registration in Behaviors:**
+
+```cpp
+class ExplosiveBarrel : public Behavior {
+    void OnBeginPlay() override {
+        auto& body = Get<RigidBody>();
+        body.notify_hit = true;
+        body.OnHit.Bind(this, &ExplosiveBarrel::OnHit);
+    }
+
+    void OnHit(const HitEvent& event) {
+        if (event.normal_impulse.Length() > 500.0f) {
+            Explode();
+        }
+    }
+};
+
+class TriggerZone : public Behavior {
+    void OnBeginPlay() override {
+        auto& trigger = Get<TriggerVolume>();
+        trigger.OnOverlapBegin.Bind(this, &TriggerZone::OnEnter);
+        trigger.OnOverlapEnd.Bind(this, &TriggerZone::OnExit);
+    }
+
+    void OnEnter(const OverlapBeginEvent& event) {
+        if (GetWorld().Has<PlayerTag>(event.other_entity)) {
+            OpenDoor();
+        }
+    }
+
+    void OnExit(const OverlapEndEvent& event) {
+        CloseDoor();
+    }
+};
+```
+
+### 24.5 Force & Impulse API
+
+Two categories: **force** (continuous, applied per physics tick) and **impulse** (instantaneous, applied once). Each has a mass-dependent and mass-independent variant.
+
+```cpp
+class RigidBody : public PhysicsBody {
+public:
+    // ─── Continuous Forces (call from OnPhysicsTick) ───────
+    /// Apply force in Newtons. Affected by mass (heavier = less acceleration).
+    void AddForce(Vec3 force);
+    /// Apply acceleration directly. Mass-independent (jump = same height regardless of mass).
+    void AddAcceleration(Vec3 accel);
+    /// Apply force at a world position. Generates torque if off-center.
+    void AddForceAtPosition(Vec3 force, Vec3 world_pos);
+    /// Apply torque in Newton-meters.
+    void AddTorque(Vec3 torque);
+
+    // ─── Instantaneous Impulses (call once per event) ──────
+    /// Apply impulse in kg·m/s. Affected by mass.
+    void AddImpulse(Vec3 impulse);
+    /// Apply velocity change directly. Mass-independent.
+    void AddVelocityChange(Vec3 delta_velocity);
+    /// Apply impulse at a world position. Generates angular impulse if off-center.
+    void AddImpulseAtPosition(Vec3 impulse, Vec3 world_pos);
+    /// Apply angular impulse in rad/s.
+    void AddAngularImpulse(Vec3 angular_impulse);
+
+    // ─── Direct Velocity Control (use sparingly) ───────────
+    void SetLinearVelocity(Vec3 velocity, bool add_to_current = false);
+    void SetAngularVelocity(Vec3 angular_vel, bool add_to_current = false);
+    Vec3 GetLinearVelocity() const;
+    Vec3 GetAngularVelocity() const;
+    Vec3 GetVelocityAtPoint(Vec3 world_point) const;
+
+    // ─── Sleep Control ─────────────────────────────────────
+    void WakeUp();
+    void PutToSleep();
+    bool IsSleeping() const;
+};
+```
+
+**Why mass-independent variants?** A jump should always reach the same height regardless of character mass. Without `AddAcceleration()` / `AddVelocityChange()`, game code must divide by mass — introducing bugs when mass changes at runtime (power-ups, carrying objects).
+
+### 24.6 Physical Material
+
+Per-surface properties for friction, bounciness, density, and game-side surface type routing.
+
+```cpp
+/// Physical material — assigned per collision shape.
+/// Controls how surfaces interact and provides a game-side surface type tag
+/// for footstep sounds, decals, and particle effects.
+struct PhysicalMaterial {
+    float friction          = 0.5f;
+    float static_friction   = 0.5f;
+    float restitution       = 0.3f;   // bounciness 0..1
+    float density           = 1.0f;   // g/cm³, used to compute mass from shape volume
+
+    /// How friction/restitution combines when two materials meet.
+    /// If materials disagree, the more conservative mode wins.
+    enum class CombineMode { Average, Min, Max, Multiply };
+    CombineMode friction_combine    = CombineMode::Average;
+    CombineMode restitution_combine = CombineMode::Average;
+
+    /// Game-side surface type tag (0-31). Returned in HitResult.physical_material.
+    /// Use for: footstep sounds, bullet decals, tire friction, particle effects.
+    /// Project defines the mapping (0=Default, 1=Concrete, 2=Metal, 3=Wood, etc.)
+    uint8_t surface_type = 0;
+};
+```
+
+**Surface type is the correct hook for game-side routing.** Don't use collision channel or entity type for footstep/decal selection — a stone wall and stone floor are different objects on different channels but share the same physical material.
+
+### 24.7 Physics Body Properties
+
+```cpp
+/// Per-body simulation configuration.
+/// Set on RigidBody, CharacterBody, or StaticBody components.
+struct PhysicsBodyDesc {
+    CollisionChannel          object_channel = CollisionChannel::WorldDynamic;
+    CollisionResponseContainer response      = CollisionResponseContainer::BlockAll();
+    CollisionEnabled          collision_mode = CollisionEnabled::QueryAndPhysics;
+
+    bool  simulate_physics    = true;
+    bool  enable_gravity      = true;
+    bool  use_ccd             = false;   // continuous collision detection (fast objects)
+    bool  notify_hit          = false;   // enables OnHit callbacks
+    bool  generate_overlaps   = false;   // enables OnOverlapBegin/End callbacks
+
+    float linear_damping      = 0.01f;
+    float angular_damping     = 0.05f;
+    float max_angular_velocity = 100.0f; // rad/s cap
+    float mass_override       = 0.0f;   // 0 = compute from shape + material density
+    float mass_scale          = 1.0f;
+    Vec3  center_of_mass_offset = {};
+
+    bool lock_linear_x  = false, lock_linear_y  = false, lock_linear_z  = false;
+    bool lock_angular_x = false, lock_angular_y = false, lock_angular_z = false;
+
+    float sleep_threshold_multiplier = 1.0f;
+};
+```
+
+### 24.8 Constraints (Joints)
+
+Per-axis Free/Limited/Locked model — any joint type is expressible without a type enum.
+
+```cpp
+/// Constraint between two bodies. Per-axis motion control.
+/// A hinge = all translations locked, 1 rotation free.
+/// A ball socket = all translations locked, all rotations free.
+/// A slider = 1 translation free, all rotations locked.
+struct ConstraintDesc {
+    Entity body_a, body_b;
+    Vec3   pivot_a, pivot_b;    // local-space pivot points
+    Quat   frame_a, frame_b;    // local-space orientation
+
+    enum Motion : uint8_t { Free, Limited, Locked };
+
+    // Linear axes
+    Motion linear_x = Locked, linear_y = Locked, linear_z = Locked;
+    float  linear_limit = 0.0f;   // used when Limited
+
+    // Angular: swing (Y,Z cone) + twist (X axis)
+    Motion swing1 = Free, swing2 = Free, twist = Free;
+    float  swing1_limit_deg = 0.0f, swing2_limit_deg = 0.0f, twist_limit_deg = 0.0f;
+
+    // Break threshold (0 = unbreakable)
+    float break_force  = 0.0f;
+    float break_torque = 0.0f;
+
+    // Motor (optional)
+    struct Drive {
+        bool  enabled = false;
+        float stiffness = 0.0f;
+        float damping = 0.0f;
+        float max_force = FLT_MAX;
+    };
+    Drive linear_drive;
+    Drive angular_drive;
+    Vec3  linear_target_position;
+    Vec3  linear_target_velocity;
+    Quat  angular_target_orientation;
+    Vec3  angular_target_velocity;
+};
+
+/// Convenience constructors
+ConstraintDesc ConstraintDesc::MakeHinge(Entity a, Entity b, Vec3 pivot, Vec3 axis);
+ConstraintDesc ConstraintDesc::MakeBallSocket(Entity a, Entity b, Vec3 pivot);
+ConstraintDesc ConstraintDesc::MakeSlider(Entity a, Entity b, Vec3 pivot, Vec3 slide_axis);
+ConstraintDesc ConstraintDesc::MakeFixed(Entity a, Entity b);
+```
+
+### 24.9 Fixed Timestep & Async Physics Tick
+
+Physics runs at a fixed rate (default 120Hz), independent of the variable game frame rate. Game code hooks into the physics tick for deterministic force application.
+
+```cpp
+/// Behavior callback for fixed-rate physics tick.
+/// Called at the physics substep rate (e.g., 120Hz), not the game tick rate.
+/// Apply forces and read physics state here for frame-rate-independent behavior.
+class Behavior {
+    // ... existing methods ...
+    virtual void OnPhysicsTick(float fixed_dt) {}  // called at fixed rate (e.g., 1/120s)
+};
+```
+
+**Timing model:**
+
+```
+Game Frame (variable, e.g., 16ms at 60 FPS):
+    │
+    ├── Game Tick (variable dt)
+    │
+    ├── Physics Step (may run 0, 1, or 2+ substeps to catch up)
+    │   ├── Substep 1 (fixed_dt = 1/120s)
+    │   │   ├── OnPhysicsTick() callbacks
+    │   │   └── Jolt simulation step
+    │   ├── Substep 2 (if time accumulated)
+    │   │   ├── OnPhysicsTick() callbacks
+    │   │   └── Jolt simulation step
+    │   └── ... (max substeps capped to prevent spiral of death)
+    │
+    └── Transform Interpolation
+        └── Visual transform = lerp(prev_physics, curr_physics, alpha)
+            where alpha = accumulated_time / fixed_dt
+```
+
+**Transform interpolation** prevents visual jitter when physics runs at a different rate than rendering. The game world stores two snapshots (previous + current physics transform). The renderer interpolates between them using the fractional time remaining after the last substep.
+
+### 24.10 Character Movement — Query-Based, Not Simulated
+
+Characters do NOT use rigid body simulation. The character capsule is `CollisionEnabled::QueryOnly` — it participates in raycasts/sweeps but has no physics body. All motion is driven by game code via sweeps. This prevents rigid body instabilities (tumbling on slopes, jittering on edges).
+
+```cpp
+class CharacterMovementComponent : public ActorComponent {
+public:
+    // ─── Configuration ─────────────────────────────────────
+    float max_walk_speed       = 600.0f;   // cm/s
+    float max_fall_speed       = 2000.0f;  // cm/s terminal velocity
+    float acceleration         = 2048.0f;  // cm/s²
+    float braking_deceleration = 2048.0f;
+    float ground_friction      = 8.0f;
+    float gravity              = -981.0f;  // cm/s²
+    float jump_velocity        = 420.0f;
+    float max_step_height      = 45.0f;   // cm
+    float walkable_floor_angle = 44.0f;   // degrees — steeper = slide
+
+    // ─── State ─────────────────────────────────────────────
+    Vec3  velocity;
+    bool  is_grounded = false;
+    bool  is_falling  = false;
+
+    // ─── Inputs (set by PlayerController) ──────────────────
+    void AddInput(Vec3 world_direction);
+    void Jump();
+
+    // ─── Queries used internally ───────────────────────────
+
+    /// Sweep capsule downward to detect walkable ground.
+    /// Returns floor info: distance, normal, walkable flag.
+    struct FloorResult {
+        bool      walkable;         // normal angle < walkable_floor_angle
+        bool      from_line_trace;  // very close to floor (sweep can't detect)
+        float     floor_distance;
+        HitResult hit;
+    };
+    FloorResult FindFloor(Vec3 position) const;
+
+    /// Attempt to step over an obstacle. Sweeps up → forward → down.
+    /// Returns true if the step succeeded and updates position.
+    bool StepUp(Vec3& position, Vec3 move_delta, const HitResult& wall_hit) const;
+
+    /// Slide remaining velocity along a surface after hitting a wall/ramp.
+    Vec3 SlideAlongSurface(Vec3 velocity, float dt, Vec3 surface_normal) const;
+};
+```
+
+**Why not rigid body?**
+- Rigid body characters tumble unpredictably on slight geometry variations
+- Step-up logic requires custom sweeps regardless
+- Query-only capsule is cheaper (not in simulation BVH)
+- Deterministic: same input = same position, no solver jitter
+
+### 24.11 Physics Debug Draw
+
+```cpp
+/// Debug visualization for physics shapes, contacts, and queries.
+/// Only active in dev/editor builds — stripped in shipping.
+class PhysicsWorld : public WorldSubsystem {
+    // ... queries above ...
+
+    // ─── Debug ─────────────────────────────────────────────
+    void SetDebugDrawEnabled(bool enabled);
+
+    /// Draw options (bitmask)
+    enum DebugDraw : uint32_t {
+        Shapes        = 1 << 0,   // collision shapes (wireframe)
+        Contacts      = 1 << 1,   // active contact points
+        Constraints   = 1 << 2,   // joint visualizations
+        BoundingBoxes = 1 << 3,   // AABBs
+        CenterOfMass  = 1 << 4,   // CoM markers
+        Velocities    = 1 << 5,   // velocity vectors
+        SleepState    = 1 << 6,   // color sleeping bodies differently
+    };
+    void SetDebugDrawFlags(uint32_t flags);
+};
+```
+
+### 24.12 Directory Structure
+
+```
+engine/components/physics/                   ← component definitions (§4.2)
+│   ├── collision_object.h
+│   ├── physics_body.h
+│   ├── rigid_body.h/.cpp
+│   ├── character_body.h/.cpp
+│   ├── static_body.h
+│   ├── collision_shape.h/.cpp
+│   ├── trigger_volume.h
+│   └── joints/
+│       └── ...
+
+engine/subsystem/
+│   └── physics_world.h/.cpp                 ← PhysicsWorld subsystem (queries, step, debug)
+
+engine/physics/                              ← physics internals
+├── collision_channel.h                      ← CollisionChannel enum + CollisionResponseContainer
+├── collision_shape.h                        ← CollisionShape (sphere/box/capsule)
+├── hit_result.h                             ← HitResult struct
+├── query_params.h                           ← QueryParams
+├── physics_events.h                         ← HitEvent, OverlapBeginEvent, OverlapEndEvent
+├── physical_material.h                      ← PhysicalMaterial + SurfaceType
+├── constraint.h                             ← ConstraintDesc + convenience constructors
+├── physics_body_desc.h                      ← PhysicsBodyDesc
+└── jolt/                                    ← Jolt integration internals (not public API)
+    ├── jolt_physics_world.cpp               ← JPH::PhysicsSystem wrapper
+    ├── jolt_contact_listener.cpp            ← hit/overlap event dispatch
+    ├── jolt_layer_mapping.cpp               ← CollisionChannel → Jolt ObjectLayer
+    └── jolt_debug_renderer.cpp              ← Jolt debug draw → engine debug draw
+```
+
+### 24.13 Comparison
+
+| Feature | Unreal 5 | Godot 4 | Unity | **UzEngine** |
+|---------|----------|---------|-------|--------------|
+| Backend | Chaos (proprietary) | Jolt | PhysX / Havok | **Jolt (MIT, deterministic)** |
+| Collision model | Channel × Response (Ignore/Overlap/Block) | Layer × Mask (bitmask) | Layer × Layer matrix | **Channel × Response (UE5 pattern)** |
+| Query API | `LineTraceSingle/Multi` | `PhysicsServer3D::intersect_ray` | `Physics.Raycast` | **`LineTraceSingle/Multi`, `Sweep`, `Overlap`** |
+| Hit result | `FHitResult` (Location + ImpactPoint split) | Dictionary | `RaycastHit` | **`HitResult` (Location + ImpactPoint split)** |
+| Callbacks | `OnComponentHit/BeginOverlap/EndOverlap` | `body_entered/exited` signals | `OnCollisionEnter/Exit` | **`OnHit`, `OnOverlapBegin/End`** |
+| Force API | `AddForce` + `bAccelChange` flag | `apply_force/impulse` | `AddForce/AddTorque` | **`AddForce` / `AddAcceleration` (separate methods)** |
+| Character | Kinematic sweep (QueryOnly capsule) | `CharacterBody3D.move_and_slide()` | `CharacterController.Move()` | **Kinematic sweep (QueryOnly capsule)** |
+| Fixed timestep | Async physics tick (120Hz) | Fixed 60Hz | `FixedUpdate` (50Hz) | **Fixed 120Hz + interpolation** |
+| Constraints | `FConstraintInstance` (6DOF) | `Joint3D` subtypes | `Joint` components | **Per-axis Free/Limited/Locked (6DOF)** |
+| Physical material | `UPhysicalMaterial` + SurfaceType | `PhysicsMaterial` | `PhysicMaterial` | **`PhysicalMaterial` + SurfaceType (32 slots)** |
+| Deterministic | No (Chaos) | Yes (Jolt) | No (PhysX) / Yes (Havok) | **Yes (Jolt)** |
+
+### 24.14 Implementation Phase
+
+| Phase | What Ships |
+|-------|-----------|
+| **Phase 2** | PhysicsWorld subsystem, collision channels, line trace, sweep, overlap, HitResult. Static + dynamic bodies. |
+| **Phase 3** | Callbacks (OnHit, OnOverlapBegin/End), constraints, physical materials, character movement integration. |
+| **Phase 4** | Async physics tick (120Hz), transform interpolation, ragdoll, cloth. |
+
+---
+
+## 25. Audio System — miniaudio + Submix Hierarchy
+
+> **Goal**: Define the gameplay-facing audio API — play/stop/fade, 3D spatialization, bus hierarchy, concurrency, attenuation, and audio zones.
+> **Backend**: miniaudio (public domain, cross-platform device abstraction) + custom submix mixer.
+> **References**: UE5 AudioMixer + Submix hierarchy (clean-room), Godot AudioServer bus system.
+
+### 25.1 The Problem
+
+Without an audio abstraction, game code must:
+- Manage raw PCM buffers and device output manually
+- Implement distance attenuation, spatialization, and air absorption per-sound
+- Track how many gunshot sounds are playing simultaneously (voice budget)
+- Hardcode volume levels with no bus routing (can't mute "all SFX" in one call)
+- Implement crossfade logic for music transitions
+
+### 25.2 Architecture Overview
+
+```
+Game Code
+    │
+    ├── Fire-and-forget: uz::Audio::PlayAt(sound, position)
+    │   └── Creates internal voice, auto-destroys on completion
+    │
+    ├── Persistent: AudioSourceComponent (attached to entity)
+    │   └── Play, FadeIn, FadeOut, Stop, SetVolume, SetPitch
+    │
+    ▼
+Audio Engine (runs on dedicated audio thread)
+    │
+    ├── Voice Pool (max ~64 simultaneous voices)
+    │   ├── Active voices → mixing
+    │   ├── Virtual voices → tracked silently (resume when slot opens)
+    │   └── Concurrency Manager → decides which voices live/die
+    │
+    ├── Submix Bus Tree
+    │   ├── Master
+    │   │   ├── SFX → effects: compressor
+    │   │   ├── Music → effects: none (or crossfade)
+    │   │   ├── Voice → effects: ducking
+    │   │   └── Ambient → effects: reverb
+    │   └── Each bus: volume, mute, effect chain
+    │
+    ├── Spatialization (per-voice)
+    │   ├── Distance attenuation (inverse square / logarithmic / linear)
+    │   ├── HRTF panning (optional plugin)
+    │   ├── Air absorption LPF
+    │   └── Occlusion (physics raycast → LPF + volume reduction)
+    │
+    └── miniaudio Device Output
+```
+
+### 25.3 Audio Assets
+
+```cpp
+/// Base audio asset — the playable contract. Can be a raw wave or a sound cue.
+/// Game code always uses ResourceHandle<SoundAsset>, never raw PCM.
+class SoundAsset {
+public:
+    float  base_volume   = 1.0f;
+    float  base_pitch    = 1.0f;
+    float  priority      = 50.0f;      // 0-100, for voice eviction
+    float  duration      = 0.0f;       // seconds, computed at import
+
+    ResourceHandle<Attenuation> attenuation;    // spatial falloff (null = 2D)
+    ResourceHandle<Concurrency> concurrency;    // voice budget rules (null = unlimited)
+
+    /// Which bus this sound routes to by default.
+    StringView default_bus = "SFX";
+};
+
+/// Raw audio data — decoded or streaming PCM.
+class SoundWave : public SoundAsset {
+    // Backed by ma_decoder or ma_audio_buffer in miniaudio.
+    // Supports: WAV, MP3, OGG, FLAC via miniaudio's built-in decoders.
+    enum class DecompressionType { InMemory, Streaming };
+    DecompressionType decompression = DecompressionType::InMemory;
+};
+
+/// Behavioral audio descriptor — picks from a set of waves with randomization,
+/// volume/pitch variation, and looping. JSON-authored (.uzsound).
+class SoundCue : public SoundAsset {
+    /// Playback mode for selecting from the wave list.
+    enum class Mode { Random, RoundRobin, Shuffle };
+    Mode mode = Mode::Random;
+
+    std::vector<ResourceHandle<SoundWave>> waves;
+
+    float volume_variation_min = 1.0f;   // random range applied per play
+    float volume_variation_max = 1.0f;
+    float pitch_variation_min  = 1.0f;
+    float pitch_variation_max  = 1.0f;
+    bool  looping = false;
+};
+```
+
+**`.uzsound` format (SoundCue):**
+
+```json
+{
+    "format": "uzsound",
+    "version": 1,
+    "mode": "random",
+    "waves": [
+        "content/audio/footstep_concrete_01.wav",
+        "content/audio/footstep_concrete_02.wav",
+        "content/audio/footstep_concrete_03.wav"
+    ],
+    "volume_variation": [0.9, 1.1],
+    "pitch_variation": [0.95, 1.05],
+    "looping": false,
+    "default_bus": "SFX",
+    "attenuation": "content/audio/attenuation_footstep.uzatten",
+    "concurrency": "content/audio/concurrency_footstep.uzconcurrency"
+}
+```
+
+### 25.4 Fire-and-Forget API
+
+For one-shot sounds that game code doesn't need to control after triggering.
+
+```cpp
+namespace uz::Audio {
+    /// Play a 2D sound (non-spatialized). UI clicks, menu sounds.
+    void Play2D(ResourceHandle<SoundAsset> sound,
+                float volume = 1.0f, float pitch = 1.0f);
+
+    /// Play a 3D sound at a fixed world position. Explosions, impacts.
+    /// The sound does NOT follow any entity — it stays at the position.
+    void PlayAt(World& world, ResourceHandle<SoundAsset> sound, Vec3 position,
+                float volume = 1.0f, float pitch = 1.0f);
+
+    /// Play a 3D sound attached to an entity. Follows the entity's transform.
+    /// Auto-stops when the entity is destroyed (if stop_on_destroy = true).
+    void PlayAttached(World& world, ResourceHandle<SoundAsset> sound, Entity entity,
+                      float volume = 1.0f, float pitch = 1.0f,
+                      bool stop_on_destroy = true);
+}
+```
+
+**No handle returned.** Game code cannot stop, fade, or mutate these sounds. If you need control, use `AudioSourceComponent` (§25.5).
+
+### 25.5 AudioSourceComponent — Persistent Emitter
+
+```cpp
+/// 3D positional audio emitter. Attached to an entity, follows its transform.
+/// Use for: looping sounds (engine hum, torch crackle), music sources, ambient emitters.
+class AudioSourceComponent : public SceneComponent {
+public:
+    ResourceHandle<SoundAsset> sound;
+    bool auto_play = false;         // start playing on BeginPlay
+    bool stop_on_destroy = true;    // stop when entity is destroyed
+
+    // ─── Playback Control ──────────────────────────────────
+    void Play(float start_time = 0.0f);
+    void Stop();
+    void FadeIn(float duration, float target_volume = 1.0f, FadeCurve curve = FadeCurve::Linear);
+    void FadeOut(float duration, float target_volume = 0.0f, FadeCurve curve = FadeCurve::Linear);
+    void Pause();
+    void Resume();
+
+    // ─── Runtime Parameters ────────────────────────────────
+    void SetVolume(float linear);           // 0..1+
+    void SetPitch(float scale);             // 0.5 = octave down, 2.0 = octave up
+    void SetLowPassFilter(float cutoff_hz); // 0 = disabled
+    void SetHighPassFilter(float cutoff_hz);
+
+    // ─── Routing ───────────────────────────────────────────
+    void SetBus(StringView bus_name);                        // route to a different bus
+    void SetBusSend(StringView bus_name, float send_level);  // parallel send (e.g., reverb)
+
+    // ─── State ─────────────────────────────────────────────
+    enum class PlayState { Stopped, Playing, Paused, FadingIn, FadingOut };
+    PlayState GetPlayState() const;
+    bool IsPlaying() const;
+    float GetPlaybackPosition() const;  // seconds
+
+    // ─── Callbacks ─────────────────────────────────────────
+    MulticastDelegate<void()> OnFinished;   // fires when sound completes (non-looping)
+    MulticastDelegate<void(float)> OnPlaybackPercent;  // 0..1 progress
+};
+
+/// Fade curve types for FadeIn/FadeOut.
+enum class FadeCurve : uint8_t {
+    Linear,         // constant rate
+    Logarithmic,    // fast start, slow end
+    SCurve,         // smooth acceleration/deceleration
+    EqualPower,     // perceptually correct crossfade (sin/cos)
+};
+```
+
+### 25.6 AudioListenerComponent
+
+```cpp
+/// Defines the listener position for 3D spatialization.
+/// Usually attached to the camera entity. Only one active listener per world.
+class AudioListenerComponent : public SceneComponent {
+public:
+    bool is_active = false;   // only one active listener — set true on the main camera
+};
+```
+
+The audio engine reads the active listener's world position and orientation each frame to compute per-voice spatialization.
+
+### 25.7 Submix Bus Tree
+
+Hierarchical mixing with per-bus volume, mute, and effect chain. Every sound routes to a bus. Every bus feeds its parent. Master is the root.
+
+```cpp
+/// A mixing bus in the submix hierarchy. Created at startup from project config.
+class AudioBus {
+public:
+    StringView name;
+
+    void SetVolume(float linear);   // 0..1+
+    void SetMuted(bool muted);      // mutes this bus and all children
+    float GetVolume() const;
+    bool IsMuted() const;
+
+    /// Add a DSP effect to this bus's chain (reverb, compressor, EQ).
+    void AddEffect(AudioEffect* effect);
+    void RemoveEffect(AudioEffect* effect);
+
+    /// Reroute this bus to a different parent at runtime.
+    /// Use for: underwater → reroute SFX through a lowpass bus.
+    void SetParent(AudioBus* new_parent);
+};
+```
+
+**Default bus topology** (configured in `.uzproject`):
+
+```
+Master (output to device)
+├── SFX                    ← gunshots, footsteps, impacts
+│   └── Weapons            ← sub-bus for weapon-specific mixing
+├── Music                  ← background music, stingers
+├── Voice                  ← dialogue, VO
+│   └── Dialogue           ← sub-bus for subtitle-synced VO
+└── Ambient                ← environment loops, wind, rain
+```
+
+**Usage:**
+
+```cpp
+// Mute all music (pause menu)
+auto& audio = GetWorld().GetSubsystem<AudioSubsystem>();
+audio.GetBus("Music")->SetMuted(true);
+
+// Reduce SFX volume to 50%
+audio.GetBus("SFX")->SetVolume(0.5f);
+
+// Add reverb to Ambient bus
+auto* reverb = audio.CreateEffect<ReverbEffect>(ReverbPreset::Cathedral);
+audio.GetBus("Ambient")->AddEffect(reverb);
+```
+
+### 25.8 Concurrency — Voice Budget Management
+
+Controls how many instances of a sound can play simultaneously and what happens when the limit is exceeded.
+
+```cpp
+/// Voice eviction strategy when max_count is reached.
+enum class ConcurrencyRule : uint8_t {
+    PreventNew,             // reject the new sound
+    StopOldest,             // kill the longest-running voice
+    StopFarthest,           // kill the most distant voice
+    StopFarthestThenOldest, // kill most distant; if tied, kill oldest (default)
+    StopLowestPriority,     // kill the lowest SoundAsset::priority
+    StopQuietest,           // kill the quietest (post-attenuation volume)
+};
+
+/// Concurrency rules for a sound class. Shared across assets.
+struct ConcurrencySettings {
+    int32_t         max_count = 8;
+    bool            limit_to_owner = false;  // per-entity vs global limit
+    ConcurrencyRule rule = ConcurrencyRule::StopFarthestThenOldest;
+    float           retrigger_time = 0.0f;   // min seconds between plays
+    float           voice_steal_fade = 0.05f;// fade out before killing (prevents pops)
+};
+```
+
+**Example:** Footsteps use `StopOldest, max_count=4, limit_to_owner=true` — each character can play at most 4 footstep sounds, oldest is cut first. Globally, 50 NPCs can each have their 4 footsteps without stomping each other.
+
+**Voice virtualization:** When the global voice pool (~64 voices) is exhausted, low-priority voices are **virtualized** — the engine tracks their elapsed time silently. When a voice slot opens, the sound resumes at the correct playback position. This prevents audible pops from hard-cutting distant ambient loops.
+
+### 25.9 Attenuation — 3D Spatial Falloff
+
+```cpp
+/// Reusable attenuation settings. Shared across sounds (e.g., all footsteps use the same).
+struct AttenuationSettings {
+    // ─── Distance Volume Falloff ───────────────────────────
+    bool  enable_distance = true;
+    float min_distance = 100.0f;     // full volume within this radius (cm)
+    float max_distance = 5000.0f;    // silence beyond this radius
+    enum class FalloffModel { Linear, InverseSquare, Logarithmic };
+    FalloffModel falloff = FalloffModel::InverseSquare;
+
+    // ─── Spatialization ────────────────────────────────────
+    bool  enable_spatialization = true;
+    float non_spatialized_radius = 50.0f;  // blend to 2D within this radius
+                                            // (prevents comb filtering on close sources)
+
+    // ─── Air Absorption (distance-based LPF) ──────────────
+    bool  enable_air_absorption = false;
+    float lpf_min_distance = 500.0f;
+    float lpf_max_distance = 5000.0f;
+    float lpf_cutoff_near  = 20000.0f; // Hz at min distance
+    float lpf_cutoff_far   = 2000.0f;  // Hz at max distance
+
+    // ─── Occlusion (physics raycast) ───────────────────────
+    bool  enable_occlusion = false;
+    float occlusion_check_interval = 0.1f;   // seconds between raycasts
+    float occlusion_lpf_cutoff = 1000.0f;    // Hz when fully occluded
+    float occlusion_volume_scale = 0.3f;     // volume when fully occluded
+    float occlusion_interp_time = 0.2f;      // smooth transition in/out
+
+    // ─── Reverb Send (distance-based) ──────────────────────
+    bool  enable_reverb_send = false;
+    float reverb_send_near = 0.0f;   // at min_distance
+    float reverb_send_far  = 0.6f;   // at max_distance
+};
+```
+
+**Occlusion** uses a physics raycast (via PhysicsWorld §24) from the sound source to the listener. If the ray is blocked, LPF and volume attenuation are applied with smooth interpolation. This models sound traveling through walls.
+
+### 25.10 Audio Zones — World-Space DSP
+
+Volume-based DSP modification. When the listener enters a zone, audio processing changes.
+
+```cpp
+/// World-space audio zone. When the listener is inside, modifies audio globally.
+/// Use for: cave reverb, underwater muffling, indoor/outdoor transitions.
+class AudioZone : public SceneComponent {
+public:
+    /// How outdoor sounds are heard from inside this zone.
+    float exterior_volume = 0.3f;       // attenuate outdoor sounds
+    float exterior_lpf_cutoff = 1500.0f; // muffle outdoor sounds
+
+    /// How indoor sounds are heard from outside this zone.
+    float interior_volume = 0.5f;
+    float interior_lpf_cutoff = 2000.0f;
+
+    /// Transition time when entering/exiting the zone.
+    float crossfade_time = 0.5f;
+
+    /// Optional: override a bus's effect chain while listener is inside.
+    /// e.g., swap SFX bus to route through a cave reverb.
+    StringView bus_override_target;                   // "SFX"
+    std::vector<AudioEffect*> bus_override_effects;   // cave reverb chain
+};
+```
+
+### 25.11 Music System
+
+Music has unique requirements: crossfades, stingers (short one-shot overlays), and layered stems.
+
+```cpp
+namespace uz::Music {
+    /// Play a music track. Crossfades from any currently playing music.
+    void Play(ResourceHandle<SoundAsset> music, float crossfade_duration = 1.0f);
+
+    /// Stop all music with fade out.
+    void Stop(float fade_duration = 1.0f);
+
+    /// Play a stinger (short one-shot) on top of current music.
+    /// Ducks the music bus by duck_amount for the stinger's duration.
+    void PlayStinger(ResourceHandle<SoundAsset> stinger, float duck_amount = 0.3f);
+
+    /// Set music intensity (0..1). For layered music systems where
+    /// stems fade in/out based on gameplay state.
+    void SetIntensity(float intensity);
+}
+```
+
+### 25.12 Thread Model
+
+Audio runs on a dedicated thread — never blocks the game thread.
+
+```
+Game Thread                          Audio Thread
+───────────────────                  ────────────────────────────
+AudioSourceComponent.Play()          │
+    │ enqueue command ──────────────►│ Voice allocation
+                                     │ Concurrency check
+AudioSourceComponent.SetVolume()     │ Mix active voices
+    │ enqueue command ──────────────►│ Apply attenuation per voice
+                                     │ Apply bus effects
+                                     │ Sum to master
+                                     │ Output to miniaudio device
+```
+
+Parameter changes from the game thread are **command-queued** and applied between mix frames. This avoids data races without locks on the hot path.
+
+### 25.13 Directory Structure
+
+```
+engine/components/audio/                     ← component definitions (§4.2)
+│   ├── audio_source_component.h/.cpp
+│   └── audio_listener_component.h
+
+engine/subsystem/
+│   └── audio_subsystem.h/.cpp               ← AudioSubsystem (bus tree, voice pool, tick)
+
+engine/audio/                                ← audio internals
+├── audio_bus.h/.cpp                         ← AudioBus + effect chain
+├── audio_voice.h/.cpp                       ← internal voice (wraps ma_sound)
+├── audio_concurrency.h/.cpp                 ← ConcurrencySettings + voice eviction
+├── audio_attenuation.h/.cpp                 ← AttenuationSettings + distance calc
+├── audio_zone.h/.cpp                        ← AudioZone (world-space DSP)
+├── audio_music.h/.cpp                       ← Music namespace (crossfade, stingers, stems)
+├── audio_effect.h                           ← AudioEffect base (reverb, compressor, EQ)
+├── sound_asset.h                            ← SoundAsset, SoundWave, SoundCue
+├── fade_curve.h                             ← FadeCurve enum + interpolation
+└── miniaudio/                               ← miniaudio integration internals
+    ├── ma_engine_wrapper.cpp                ← ma_engine lifecycle
+    ├── ma_bus_node.cpp                      ← custom ma_node for bus mixing
+    └── ma_spatial_processor.cpp             ← 3D attenuation + HRTF + occlusion
+```
+
+### 25.14 Comparison
+
+| Feature | Unreal 5 | Godot 4 | Unity | **UzEngine** |
+|---------|----------|---------|-------|--------------|
+| Backend | Custom AudioMixer | Custom AudioServer | FMOD-based | **miniaudio (public domain)** |
+| Bus system | USoundSubmix hierarchy | Flat indexed buses | AudioMixer groups | **Named bus tree (submix hierarchy)** |
+| Concurrency | USoundConcurrency (6 rules) | `max_polyphony` (oldest only) | None built-in | **ConcurrencySettings (6 rules + per-owner)** |
+| Attenuation | FSoundAttenuationSettings (asset) | Per-node params | Per-AudioSource | **AttenuationSettings (shared asset)** |
+| Occlusion | Physics trace + LPF | None built-in | None built-in | **Physics raycast + LPF + volume** |
+| Voice virtualization | Yes (track + resume) | No | No | **Yes (track + resume)** |
+| Fire-and-forget | `PlaySoundAtLocation` | `AudioStreamPlayer.play()` | `AudioSource.PlayOneShot()` | **`Audio::PlayAt()` / `Audio::Play2D()`** |
+| Music | Manual crossfade | Manual | Manual | **`Music::Play()` with auto-crossfade + stingers** |
+| Audio zones | AAudioVolume | None built-in | Reverb zones | **AudioZone (interior/exterior + bus override)** |
+| Thread model | Separate audio thread | Separate audio thread | FMOD thread | **Dedicated audio thread** |
+| Spatialization | HRTF plugin support | Basic panning | Basic panning | **HRTF optional + distance + air absorption** |
+
+### 25.15 Implementation Phase
+
+| Phase | What Ships |
+|-------|-----------|
+| **Phase 2** | AudioSubsystem, AudioSourceComponent, Play2D/PlayAt, bus tree (Master/SFX/Music/Voice), basic distance attenuation. |
+| **Phase 3** | Concurrency manager, voice virtualization, SoundCue (.uzsound), air absorption LPF, occlusion via physics raycast. |
+| **Phase 4** | AudioZone, music system (crossfade/stingers/stems), HRTF spatialization, reverb effects. |
