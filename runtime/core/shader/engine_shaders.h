@@ -16,9 +16,9 @@
 /// ```
 ///
 /// # Adding New Engine Shaders
-/// Just add a `.hlsl` file to `runtime/shaders/editor/` and rebuild.
+/// Just add a `.hlsl` file to `runtime/shaders/` (any subdirectory) and rebuild.
 /// `uzembed` automatically discovers it and regenerates the enum + registry.
 
 #pragma once
 
-#include "editor/engine_shaders.gen.h"
+#include "engine_shaders.gen.h"

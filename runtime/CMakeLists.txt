@@ -26,17 +26,17 @@ endif()
 # ─────────────────────────────────────────────────────────────────────────────
 add_executable(uzembed tools/uzembed.cpp)
 
-set(UZEMBED_INPUT_DIR  ${CMAKE_CURRENT_SOURCE_DIR}/shaders/editor)
-set(UZEMBED_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated/shaders/editor)
+set(UZEMBED_INPUT_DIR  ${CMAKE_CURRENT_SOURCE_DIR}/shaders)
+set(UZEMBED_OUTPUT_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated/shaders)
 
-file(GLOB EDITOR_SHADERS ${UZEMBED_INPUT_DIR}/*.hlsl)
+file(GLOB_RECURSE ALL_SHADERS ${UZEMBED_INPUT_DIR}/*.hlsl)
 
 add_custom_command(
     OUTPUT  ${UZEMBED_OUTPUT_DIR}/engine_shaders.gen.h
     COMMAND ${CMAKE_COMMAND} -E make_directory ${UZEMBED_OUTPUT_DIR}
     COMMAND uzembed --input-dir ${UZEMBED_INPUT_DIR} --output-dir ${UZEMBED_OUTPUT_DIR}
-    DEPENDS uzembed ${EDITOR_SHADERS}
-    COMMENT "uzembed: embedding editor shaders"
+    DEPENDS uzembed ${ALL_SHADERS}
+    COMMENT "uzembed: embedding all engine shaders"
 )
 
 add_custom_target(embed_shaders DEPENDS ${UZEMBED_OUTPUT_DIR}/engine_shaders.gen.h)

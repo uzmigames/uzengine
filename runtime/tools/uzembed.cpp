@@ -107,7 +107,7 @@ static bool GenerateHeader(const fs::path& inputPath, const fs::path& outputPath
                            const std::string& constName) {
     std::string source = ReadFile(inputPath);
     if (source.empty()) {
-        fprintf(stderr, "uzembed: failed to read '%s'\n", inputPath.string().c_str());
+        fprintf(stderr, "[uzembed] error: failed to read '%s'\n", inputPath.string().c_str());
         return false;
     }
 
@@ -122,7 +122,7 @@ static bool GenerateHeader(const fs::path& inputPath, const fs::path& outputPath
 
     std::ofstream out(outputPath, std::ios::binary);
     if (!out) {
-        fprintf(stderr, "uzembed: failed to write '%s'\n", outputPath.string().c_str());
+        fprintf(stderr, "[uzembed] error: failed to write '%s'\n", outputPath.string().c_str());
         return false;
     }
 
@@ -152,7 +152,7 @@ static bool GenerateIndex(const fs::path& outputDir,
 
     std::ofstream out(indexPath, std::ios::binary);
     if (!out) {
-        fprintf(stderr, "uzembed: failed to write '%s'\n", indexPath.string().c_str());
+        fprintf(stderr, "[uzembed] error: failed to write '%s'\n", indexPath.string().c_str());
         return false;
     }
 
@@ -231,12 +231,15 @@ static void PrintUsage() {
 int main(int argc, char* argv[]) {
     std::string inputDir;
     std::string outputDir;
+    bool quiet = false;
 
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--input-dir") == 0 && i + 1 < argc) {
             inputDir = argv[++i];
         } else if (strcmp(argv[i], "--output-dir") == 0 && i + 1 < argc) {
             outputDir = argv[++i];
+        } else if (strcmp(argv[i], "--quiet") == 0 || strcmp(argv[i], "-q") == 0) {
+            quiet = true;
         } else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
             PrintUsage();
             return 0;
@@ -249,7 +252,7 @@ int main(int argc, char* argv[]) {
     }
 
     if (!fs::is_directory(inputDir)) {
-        fprintf(stderr, "uzembed: input directory '%s' not found\n", inputDir.c_str());
+        fprintf(stderr, "[uzembed] error: input directory '%s' not found\n", inputDir.c_str());
         return 1;
     }
 
@@ -284,7 +287,7 @@ int main(int argc, char* argv[]) {
         se.fileName = entry.path().filename().string();
 
         if (GenerateHeader(entry.path(), outPath, se.constName)) {
-            printf("  %s -> %s\n", relPath.string().c_str(), outPath.filename().string().c_str());
+            if (!quiet) printf("[uzembed] %s -> %s\n", relPath.string().c_str(), outPath.filename().string().c_str());
             entries.push_back(std::move(se));
             processed++;
         } else {
@@ -295,12 +298,12 @@ int main(int argc, char* argv[]) {
     // Generate index header
     if (!entries.empty()) {
         if (GenerateIndex(fs::path(outputDir), entries)) {
-            printf("  engine_shaders.gen.h (index, %zu shaders)\n", entries.size());
+            if (!quiet) printf("[uzembed] engine_shaders.gen.h (index, %zu shaders)\n", entries.size());
         } else {
             failed++;
         }
     }
 
-    printf("uzembed: %d files processed, %d failed\n", processed, failed);
+    if (!quiet) printf("[uzembed] %d files processed, %d failed\n", processed, failed);
     return failed > 0 ? 1 : 0;
 }

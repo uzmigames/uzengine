@@ -77,11 +77,12 @@ pub fn build(b: *std.Build) void {
     const embed_exe = b.addExecutable(.{ .name = "uzembed", .root_module = embed_mod });
     b.installArtifact(embed_exe);
 
-    // Run uzembed: shaders/editor/ → build/generated/shaders/editor/
+    // Run uzembed: shaders/ → build/generated/shaders/ (all subdirs)
     const run_embed = b.addRunArtifact(embed_exe);
     run_embed.addArgs(&.{
-        "--input-dir",  b.path("shaders/editor").getPath(b),
-        "--output-dir", b.path("build/generated/shaders/editor").getPath(b),
+        "--quiet",
+        "--input-dir",  b.path("shaders").getPath(b),
+        "--output-dir", b.path("build/generated/shaders").getPath(b),
     });
 
     // ── Runtime static library ───────────────────────────────────────────

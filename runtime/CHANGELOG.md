@@ -125,12 +125,24 @@
   - Single-file C++ tool: `.hlsl` → `.hlsl.gen.h` (`constexpr char[]` in `uz::generated` namespace)
   - Auto-generates `engine_shaders.gen.h` index with `enum class EngineShader` + `EngineShaders::GetSource()`/`GetName()` registry
   - CLI: `uzembed --input-dir <dir> --output-dir <dir>`, deterministic alphabetical output
-  - Adding new shaders: drop `.hlsl` in `runtime/shaders/editor/` and rebuild — no manual registration
+  - `--quiet` / `-q` flag suppresses stdout during build (errors still go to stderr)
+  - Adding new shaders: drop `.hlsl` in `runtime/shaders/` (any subdirectory) and rebuild — no manual registration
 - **`ShaderPipeline::LoadBytecodeFromSource()`** — compile from in-memory HLSL string (bypasses VFS/cache/hot-reload)
 - **Migration**: TextRenderer and EditorGrid now use embedded shaders — no VFS mount or disk paths needed
 - **`engine_shaders.h`** — thin wrapper that includes the auto-generated index header
 - **19 unit tests** — source non-empty, HLSL keyword validation, filename convention, stage suffix, distinctness
 - **Build integration**: Zig `build.zig` compiles and runs `uzembed` before runtime library compilation
+
+### Mesh Format (.uzmesh)
+- **Binary mesh format** (`core/renderer/mesh.h/.cpp`):
+  - 128-byte fixed header (`MeshHeader`): magic `0x484D5A55`, version 1, AABB bounds
+  - Two vertex formats: `Vertex` (48B, position+normal+uv+tangent) and `SimpleVertex` (36B, position+normal+uv)
+  - `MeshBuilder`: `CreateFromVertices()`, `CreateFromSimpleVertices()`, `CreateCube()` (Z-up, bottom at Z=0)
+  - `LoadMesh()` / `SaveMesh()`: binary I/O with magic/version validation and truncation detection
+  - 25 unit tests (header, builder, file I/O round-trip, error cases)
+- **Mesh shaders** (`shaders/runtime/mesh_vs.hlsl`, `mesh_ps.hlsl`):
+  - SM6.6 bindless vertex fetch via `ResourceDescriptorHeap[index]`
+  - N·L directional lighting with ambient, optional albedo texture
 
 ### Shader Pipeline
 - **Shader VFS** (`core/shader/shader_vfs.h/.cpp`):
