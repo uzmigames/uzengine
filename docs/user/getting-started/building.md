@@ -39,6 +39,11 @@ This clones and configures:
 - **spirv-reflect** — Shader reflection
 - **xxHash** — Fast hashing
 - **atomic_queue** — Lock-free queues
+- **stb** — Image loading (PNG, JPG, TGA, BMP, HDR), writing, resizing
+- **libjpeg-turbo** — SIMD-accelerated JPEG codec
+- **tinyexr** — OpenEXR/HDR image format
+- **basis_universal** — GPU texture supercompression (BC7, ASTC, ETC2)
+- **astcenc** — ASTC texture encoder/decoder
 
 ## Build
 

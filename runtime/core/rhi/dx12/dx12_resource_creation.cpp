@@ -552,13 +552,28 @@ void DestroyDX12Sampler(DX12Sampler& sampler, DescriptorAllocator& samplerHeap) 
 /// SM6.6: uses DIRECTLY_INDEXED flags for bindless heap access.
 /// SM < 6.6: omits DIRECTLY_INDEXED flags (standard descriptor binding).
 ID3D12RootSignature* CreateBindlessRootSignature(ID3D12Device* device, ShaderModel sm) {
-    // Root parameter 0: one root constant (uint32 descriptorIndex) at b0
-    D3D12_ROOT_PARAMETER1 rootParams[1] = {};
+    // Root parameter 0: root constants (uint32 descriptorIndex) at b0
+    // Root parameter 1: root CBV for per-frame data at b1
+    // Root parameter 2: root CBV for per-object data at b2
+    D3D12_ROOT_PARAMETER1 rootParams[3] = {};
+
     rootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
     rootParams[0].Constants.ShaderRegister = 0;   // b0
     rootParams[0].Constants.RegisterSpace = 0;
     rootParams[0].Constants.Num32BitValues = 1;
     rootParams[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+    rootParams[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+    rootParams[1].Descriptor.ShaderRegister = 1;  // b1 — per-frame
+    rootParams[1].Descriptor.RegisterSpace = 0;
+    rootParams[1].Descriptor.Flags = D3D12_ROOT_DESCRIPTOR_FLAG_DATA_STATIC_WHILE_SET_AT_EXECUTE;
+    rootParams[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+    rootParams[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+    rootParams[2].Descriptor.ShaderRegister = 2;  // b2 — per-object
+    rootParams[2].Descriptor.RegisterSpace = 0;
+    rootParams[2].Descriptor.Flags = D3D12_ROOT_DESCRIPTOR_FLAG_DATA_STATIC_WHILE_SET_AT_EXECUTE;
+    rootParams[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
     D3D12_ROOT_SIGNATURE_FLAGS flags = D3D12_ROOT_SIGNATURE_FLAG_NONE;
     if (sm >= ShaderModel::SM6_6) {
@@ -568,7 +583,7 @@ ID3D12RootSignature* CreateBindlessRootSignature(ID3D12Device* device, ShaderMod
 
     D3D12_VERSIONED_ROOT_SIGNATURE_DESC versionedDesc = {};
     versionedDesc.Version = D3D_ROOT_SIGNATURE_VERSION_1_1;
-    versionedDesc.Desc_1_1.NumParameters = 1;
+    versionedDesc.Desc_1_1.NumParameters = 3;
     versionedDesc.Desc_1_1.pParameters = rootParams;
     versionedDesc.Desc_1_1.NumStaticSamplers = 0;
     versionedDesc.Desc_1_1.pStaticSamplers = nullptr;

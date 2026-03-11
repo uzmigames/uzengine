@@ -57,6 +57,7 @@ public:
     void SetViewport(const RHIViewport& viewport) override;
     void SetScissor(const RHIScissorRect& scissor) override;
     void SetDescriptorIndex(uint32_t rootParamIndex, uint32_t descriptorIndex) override;
+    void SetRootCBV(uint32_t rootParamIndex, uint64_t gpuAddress) override;
 
     void DrawIndexed(uint32_t indexCount, uint32_t instanceCount = 1,
                      uint32_t firstIndex = 0, int32_t vertexOffset = 0,

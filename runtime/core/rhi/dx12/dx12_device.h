@@ -86,6 +86,7 @@ public:
     void DestroyBuffer(RHIBufferHandle handle) override;
     void* MapBuffer(RHIBufferHandle handle) override;
     uint32_t GetBufferSRVIndex(RHIBufferHandle handle) const override;
+    uint64_t GetBufferGPUAddress(RHIBufferHandle handle) const override;
 
     // ── IRHIDevice: Texture operations ───────────────────────────────────
     RHITextureHandle CreateTexture(const RHITextureDesc& desc) override;

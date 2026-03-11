@@ -6,7 +6,7 @@
 /// # What This Validates
 /// - Vertex buffer creation as StructuredBuffer
 /// - SRV descriptor allocation and bindless access
-/// - Runtime HLSL compilation via DXC (`ShaderCompiler`)
+/// - ShaderPipeline integration (VFS mount → cache → DXC compilation)
 /// - Graphics PSO creation (root signature, rasterizer, blend state)
 /// - Complete draw call pipeline: Begin → barriers → clear → set pipeline
 ///   → set root constant → draw → barriers → End → Execute → Present
@@ -24,7 +24,7 @@ namespace uz {
 
 /// Runs the DX12 triangle render loop.
 ///
-/// Creates a 1280x720 window, compiles vertex/pixel shaders from disk,
+/// Creates a 1280x720 window, loads shaders via ShaderPipeline (VFS → cache → DXC),
 /// creates a pipeline, uploads triangle vertices to a StructuredBuffer,
 /// and renders with triple-buffered frame pacing.
 ///
@@ -38,8 +38,9 @@ namespace uz {
 ///
 /// # Side Effects
 /// - Opens a visible window titled "UzEngine -- Triangle Demo"
-/// - Reads shader files from `{exe_dir}/../demos/triangle/shaders/`
-/// - Logs compilation results, SRV index, and final FPS statistics
+/// - Mounts `{exe_dir}/../demos/triangle/shaders/` into VFS at `/demo/triangle`
+/// - Caches compiled shaders in `{exe_dir}/cache/shaders/`
+/// - Logs pipeline results, SRV index, and final FPS statistics
 ///
 /// # Example
 /// ```cpp

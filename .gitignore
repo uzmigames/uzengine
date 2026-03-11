@@ -30,6 +30,7 @@ tmp/
 # Zig
 .zig-cache/
 zig-out/
+build/
 
 # Node
 node_modules/

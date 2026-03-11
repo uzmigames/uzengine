@@ -69,6 +69,17 @@ set(SPIRV_REFLECT_SOURCES
     thirdparty/spirv-reflect/spirv_reflect.c
 )
 
+# Image libraries
+file(GLOB ASTCENC_SOURCES thirdparty/astcenc/Source/astcenc_*.cpp)
+
+set(BASIS_UNIVERSAL_SOURCES
+    thirdparty/basis_universal/transcoder/basisu_transcoder.cpp
+)
+
+set(MINIZ_SOURCES
+    thirdparty/tinyexr/miniz.c
+)
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Sources — Windows Only (auto-discovered via GLOB)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -91,6 +102,9 @@ add_library(uzengine_runtime STATIC
     ${SPDLOG_SOURCES}
     ${TRACY_SOURCES}
     ${SPIRV_REFLECT_SOURCES}
+    ${ASTCENC_SOURCES}
+    ${BASIS_UNIVERSAL_SOURCES}
+    ${MINIZ_SOURCES}
     $<$<PLATFORM_ID:Windows>:${WINDOWS_SOURCES}>
 )
 
@@ -120,6 +134,25 @@ endif()
 set_source_files_properties(thirdparty/spirv-reflect/spirv_reflect.c
     PROPERTIES LANGUAGE C
 )
+
+# miniz.c is C
+set_source_files_properties(thirdparty/tinyexr/miniz.c
+    PROPERTIES LANGUAGE C
+)
+
+# basis_universal needs BASISD_SUPPORT_KTX2_ZSTD=0 (no zstd dependency)
+set_source_files_properties(thirdparty/basis_universal/transcoder/basisu_transcoder.cpp
+    PROPERTIES COMPILE_DEFINITIONS "BASISD_SUPPORT_KTX2_ZSTD=0"
+)
+
+# Suppress warnings on thirdparty image library sources
+if(NOT MSVC)
+    foreach(src IN LISTS ASTCENC_SOURCES)
+        set_source_files_properties(${src}
+            PROPERTIES COMPILE_OPTIONS "-Wno-unused-parameter;-Wno-missing-field-initializers"
+        )
+    endforeach()
+endif()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Include Directories
@@ -155,6 +188,11 @@ target_include_directories(uzengine_runtime PUBLIC
     thirdparty/spirv-reflect
     thirdparty/spirv-reflect/include
     thirdparty/xxhash
+    thirdparty/stb
+    thirdparty/tinyexr
+    thirdparty/libjpeg-turbo
+    thirdparty/basis_universal/transcoder
+    thirdparty/astcenc/Source
 )
 
 # Windows-only includes

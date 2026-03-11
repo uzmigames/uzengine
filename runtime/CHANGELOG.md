@@ -80,6 +80,15 @@
   - Test runner executes from install directory so `GetExeDir()` finds deployed DLLs
 - **302 unit tests** — 77 shader pipeline tests + 22 RHI config + 35 RHI type/resource + 8 paths + 160 core/math/container
 
+### Image Libraries (Texture Pipeline Dependencies)
+- **stb** (v2.30/1.16/2.16) — stb_image, stb_image_write, stb_image_resize2 for PNG/JPG/TGA/BMP/HDR loading, PNG writing, and high-quality resizing
+- **libjpeg-turbo** (3.0.3) — SIMD-accelerated JPEG codec (SSE2/AVX2), 2-6x faster than libjpeg
+- **tinyexr** (1.0.9) — OpenEXR HDR image loader/saver with bundled miniz for compression
+- **basis_universal** (git 2025) — GPU texture supercompression transcoder (BC7, BC1, ASTC, ETC2, PVRTC)
+- **astcenc** (5.3.0) — ASTC texture encoder/decoder for mobile GPU targets (Android, iOS)
+- **22 integration tests** — Real functional tests for all 5 image libraries (round-trip encode/decode, format validation, error handling)
+- **Build system** — Both Zig (`build.zig`) and CMake (`CMakeLists.txt`) updated with include paths, source compilation, and test registration
+
 ### Shader Pipeline
 - **Shader VFS** (`core/shader/shader_vfs.h/.cpp`):
   - Virtual path mounting: `Mount("/engine", "shaders/engine")`

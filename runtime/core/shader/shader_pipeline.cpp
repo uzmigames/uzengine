@@ -22,6 +22,33 @@
 namespace uz {
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Stage inference from filename convention
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Infers the shader stage from the virtual path using suffix conventions:
+/// `_vs.hlsl` → Vertex, `_ps.hlsl` → Pixel, `_cs.hlsl` → Compute, etc.
+static ShaderStageCompile InferStageFromPath(const std::string& path) {
+    auto stem = std::filesystem::path(path).stem().string();
+    if (stem.size() >= 3) {
+        auto suffix = stem.substr(stem.size() - 3);
+        if (suffix == "_vs") return ShaderStageCompile::Vertex;
+        if (suffix == "_ps") return ShaderStageCompile::Pixel;
+        if (suffix == "_cs") return ShaderStageCompile::Compute;
+        if (suffix == "_gs") return ShaderStageCompile::Geometry;
+        if (suffix == "_hs") return ShaderStageCompile::Hull;
+        if (suffix == "_ds") return ShaderStageCompile::Domain;
+        if (suffix == "_as") return ShaderStageCompile::Amplification;
+        if (suffix == "_ms") return ShaderStageCompile::Mesh;
+    }
+    // Fallback: check for common naming patterns
+    if (stem.find("vert") != std::string::npos) return ShaderStageCompile::Vertex;
+    if (stem.find("pixel") != std::string::npos || stem.find("frag") != std::string::npos)
+        return ShaderStageCompile::Pixel;
+    if (stem.find("comp") != std::string::npos) return ShaderStageCompile::Compute;
+    return ShaderStageCompile::Vertex; // Default
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // PIMPL — holds all subsystems with correct initialization order
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -272,6 +299,7 @@ bool ShaderPipeline::CompileShader(const std::string& virtualPath) {
         desc.source = sourceInfo->source;
         desc.sourceName = virtualPath;
         desc.defines = defineStrings;
+        desc.stage = InferStageFromPath(virtualPath);
 
         auto compileResult = m_impl->compiler->Compile(desc);
         if (!compileResult.success) {
@@ -343,6 +371,7 @@ std::vector<uint8_t> ShaderPipeline::LoadBytecode(
     desc.source = sourceInfo->source;
     desc.sourceName = virtualPath;
     desc.defines = defineStrings;
+    desc.stage = InferStageFromPath(virtualPath);
 
     auto compileResult = m_impl->compiler->Compile(desc);
     if (!compileResult.success) {

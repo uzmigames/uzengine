@@ -279,6 +279,10 @@ void DX12CommandList::SetDescriptorIndex(uint32_t rootParamIndex, uint32_t descr
     m_cmdList->SetGraphicsRoot32BitConstant(rootParamIndex, descriptorIndex, 0);
 }
 
+void DX12CommandList::SetRootCBV(uint32_t rootParamIndex, uint64_t gpuAddress) {
+    m_cmdList->SetGraphicsRootConstantBufferView(rootParamIndex, gpuAddress);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Draw and Dispatch
 // ─────────────────────────────────────────────────────────────────────────────

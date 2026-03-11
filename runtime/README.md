@@ -80,7 +80,8 @@ runtime/
 │   ├── rhi/                       # Render Hardware Interface (DX12 backend)
 │   ├── shader/                    # Shader pipeline (VFS, cache, compiler, hot-reload)
 │   ├── paths/                     # Exe-relative resource resolution
-│   └── renderer/                  # GPU upload context
+│   ├── renderer/                  # GPU upload context
+│   └── asset/                     # Asset pipeline (shader importer)
 ├── platform/
 │   └── windows/                   # Win32 window, input system
 ├── demos/
@@ -89,7 +90,8 @@ runtime/
 ├── tools/
 │   └── uzengine.cpp               # Standalone runtime executable
 ├── tests/
-│   └── core/                      # 444 unit tests (64 test suites)
+│   ├── core/                      # Engine unit tests (64 test suites)
+│   └── thirdparty/                # Image library integration tests (22 tests)
 └── thirdparty/                    # All dependencies committed to repo
 ```
 
@@ -105,7 +107,7 @@ runtime/
 
 ## Code Quality
 
-- **444 tests passing** across 64 test suites
+- **661 tests passing** across 86 test suites
 - **Three compilers**: Zig (Clang/MinGW), MSVC, Clang (clang-cl)
 - **100% Rust-style documentation** (`///` comments on all public APIs)
 - **Zero compiler warnings** via clang-tidy (warnings-as-errors mode)

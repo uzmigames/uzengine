@@ -1,0 +1,144 @@
+/// Unit tests for constant buffer definitions and CBRingAllocator.
+///
+/// Validates struct sizes, alignment, field offsets, and ring allocator logic.
+
+#include "constant_buffers.h"
+
+#include <gtest/gtest.h>
+
+#include <cstddef>
+#include <cstring>
+
+using namespace uz;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PerFrameCB layout
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST(PerFrameCB, SizeIs256Bytes) {
+    EXPECT_EQ(sizeof(PerFrameCB), 256u);
+}
+
+TEST(PerFrameCB, FieldOffsets) {
+    EXPECT_EQ(offsetof(PerFrameCB, viewProj), 0u);
+    EXPECT_EQ(offsetof(PerFrameCB, cameraPos), 64u);
+    EXPECT_EQ(offsetof(PerFrameCB, timeParams), 80u);
+}
+
+TEST(PerFrameCB, DefaultInitialization) {
+    PerFrameCB cb{};
+    // Mat4 defaults to identity
+    const auto* raw = reinterpret_cast<const float*>(&cb.viewProj);
+    for (int i = 0; i < 4; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            float expected = (i == j) ? 1.0f : 0.0f;
+            EXPECT_FLOAT_EQ(raw[i * 4 + j], expected);
+        }
+    }
+    EXPECT_FLOAT_EQ(cb.cameraPos.x, 0.0f);
+    EXPECT_FLOAT_EQ(cb.timeParams.x, 0.0f);
+}
+
+TEST(PerFrameCB, WriteAndReadBack) {
+    PerFrameCB cb{};
+    cb.cameraPos = {10.0f, 20.0f, 30.0f, 0.0f};
+    cb.timeParams = {1.5f, 0.016f, 90.0f, 0.0f};
+
+    EXPECT_FLOAT_EQ(cb.cameraPos.x, 10.0f);
+    EXPECT_FLOAT_EQ(cb.cameraPos.z, 30.0f);
+    EXPECT_FLOAT_EQ(cb.timeParams.x, 1.5f);
+    EXPECT_FLOAT_EQ(cb.timeParams.y, 0.016f);
+}
+
+TEST(PerFrameCB, MemcpyRoundTrip) {
+    PerFrameCB src{};
+    src.cameraPos = {1.0f, 2.0f, 3.0f, 0.0f};
+    src.timeParams = {100.0f, 0.016f, 6000.0f, 0.0f};
+
+    uint8_t buffer[256];
+    std::memcpy(buffer, &src, sizeof(src));
+
+    PerFrameCB dst{};
+    std::memcpy(&dst, buffer, sizeof(dst));
+
+    EXPECT_FLOAT_EQ(dst.cameraPos.x, 1.0f);
+    EXPECT_FLOAT_EQ(dst.cameraPos.z, 3.0f);
+    EXPECT_FLOAT_EQ(dst.timeParams.x, 100.0f);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PerObjectCB layout
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST(PerObjectCB, SizeIs256Bytes) {
+    EXPECT_EQ(sizeof(PerObjectCB), 256u);
+}
+
+TEST(PerObjectCB, FieldOffsets) {
+    EXPECT_EQ(offsetof(PerObjectCB, model), 0u);
+    EXPECT_EQ(offsetof(PerObjectCB, normalMatrix), 64u);
+    EXPECT_EQ(offsetof(PerObjectCB, materialIndex), 128u);
+}
+
+TEST(PerObjectCB, DefaultInitialization) {
+    PerObjectCB cb{};
+    EXPECT_EQ(cb.materialIndex, 0u);
+}
+
+TEST(PerObjectCB, WriteMaterialIndex) {
+    PerObjectCB cb{};
+    cb.materialIndex = 42;
+    EXPECT_EQ(cb.materialIndex, 42u);
+}
+
+TEST(PerObjectCB, MemcpyRoundTrip) {
+    PerObjectCB src{};
+    src.materialIndex = 99;
+
+    uint8_t buffer[256];
+    std::memcpy(buffer, &src, sizeof(src));
+
+    PerObjectCB dst{};
+    std::memcpy(&dst, buffer, sizeof(dst));
+    EXPECT_EQ(dst.materialIndex, 99u);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CBAllocation struct
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST(CBAllocation, DefaultIsNull) {
+    CBAllocation alloc{};
+    EXPECT_EQ(alloc.cpuPtr, nullptr);
+    EXPECT_EQ(alloc.gpuAddr, 0u);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CBRingAllocator — argument validation (no device)
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST(CBRingAllocator, InitRejectsNullDevice) {
+    CBRingAllocator ring;
+    EXPECT_FALSE(ring.Init(nullptr, 3, 64 * 1024));
+}
+
+TEST(CBRingAllocator, InitRejectsZeroFrames) {
+    auto* fakeDevice = reinterpret_cast<IRHIDevice*>(0x1);
+    CBRingAllocator ring;
+    EXPECT_FALSE(ring.Init(fakeDevice, 0, 64 * 1024));
+}
+
+TEST(CBRingAllocator, InitRejectsZeroBytes) {
+    auto* fakeDevice = reinterpret_cast<IRHIDevice*>(0x1);
+    CBRingAllocator ring;
+    EXPECT_FALSE(ring.Init(fakeDevice, 3, 0));
+}
+
+TEST(CBRingAllocator, ShutdownOnUninitializedIsNoOp) {
+    CBRingAllocator ring;
+    ring.Shutdown(); // Should not crash
+}
+
+TEST(CBRingAllocator, DestructorOnUninitializedIsNoOp) {
+    { CBRingAllocator ring; } // Should not crash
+}

@@ -3,6 +3,9 @@
 /// Creates a colored triangle via SM6.6 bindless vertex fetch.
 /// Vertex data is stored in a StructuredBuffer, accessed by SRV index
 /// pushed as a root constant. No Input Assembler vertex layout is used.
+///
+/// Shaders are loaded through the ShaderPipeline (VFS → cache → DXC),
+/// not compiled directly. This validates the full asset pipeline path.
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -15,30 +18,15 @@
 #include "log.h"
 #include "vertex.h"
 #include "upload_context.h"
+#include "shader_pipeline.h"
 #include "shader_compiler.h"
 #include "paths.h"
 
 #include <chrono>
 #include <d3d12.h>
-#include <fstream>
-#include <sstream>
 #include <string>
 
 namespace uz {
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Shader Loading
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Reads an HLSL file from disk into a string.
-static bool ReadShaderFile(const std::string& path, std::string& outSource) {
-    std::ifstream file(path);
-    if (!file.is_open()) return false;
-    std::ostringstream ss;
-    ss << file.rdbuf();
-    outSource = ss.str();
-    return !outSource.empty();
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Triangle Geometry
@@ -74,7 +62,11 @@ bool RunTriangleDemo(uint32_t frameCount) {
     // ── Device ───────────────────────────────────────────────────────────
     RHIDeviceDesc deviceDesc{};
     deviceDesc.backend = RHIBackend::DX12;
+#ifdef NDEBUG
+    deviceDesc.enableValidation = false;
+#else
     deviceDesc.enableValidation = true;
+#endif
 
     auto* rhiDevice = CreateRHIDevice(deviceDesc);
     if (!rhiDevice) {
@@ -125,65 +117,51 @@ bool RunTriangleDemo(uint32_t frameCount) {
         }
     }
 
-    // ── Compile Shaders ──────────────────────────────────────────────────
+    // ── Shader Pipeline (VFS → cache → DXC) ────────────────────────────
     ShaderCompiler compiler;
     if (!compiler.Init()) {
         UZ_LOG(Renderer, Error, "Failed to init shader compiler");
         return false;
     }
 
-    std::string shadersDir = (uz::GetExeDir() / "../demos/triangle/shaders/").string();
-    std::string vsSource, psSource;
+    ShaderPipeline shaderPipeline;
+    ShaderPipeline::Config pipelineCfg;
+    pipelineCfg.cacheDir = (uz::GetExeDir() / "cache/shaders").string();
+    pipelineCfg.targetBackend = "dx12_sm66";
+    shaderPipeline.Init(pipelineCfg);
+    shaderPipeline.SetCompiler(&compiler);
 
-    if (!ReadShaderFile(shadersDir + "simple_vs.hlsl", vsSource)) {
-        UZ_LOG(Renderer, Error, "Failed to read simple_vs.hlsl from {}", shadersDir);
-        return false;
-    }
-    if (!ReadShaderFile(shadersDir + "simple_ps.hlsl", psSource)) {
-        UZ_LOG(Renderer, Error, "Failed to read simple_ps.hlsl");
-        return false;
-    }
+    // Mount demo shaders from source directory (not copied to build output)
+    std::string shadersDir = (uz::GetExeDir() / "../../demos/triangle/shaders").string();
+    shaderPipeline.Mount("/demo/triangle", shadersDir);
 
-    ShaderCompileDesc vsReq{};
-    vsReq.source = vsSource;
-    vsReq.entryPoint = "main";
-    vsReq.sourceName = "simple_vs.hlsl";
-    vsReq.stage = ShaderStageCompile::Vertex;
-    vsReq.model = ShaderModelCompile::SM6_6;
-
-    ShaderCompileDesc psReq{};
-    psReq.source = psSource;
-    psReq.entryPoint = "main";
-    psReq.sourceName = "simple_ps.hlsl";
-    psReq.stage = ShaderStageCompile::Pixel;
-    psReq.model = ShaderModelCompile::SM6_6;
-
-    ShaderCompileResult vsResult = compiler.Compile(vsReq);
-    if (!vsResult.success) {
-        UZ_LOG(Renderer, Error, "VS compilation failed: {}", vsResult.errors);
+    // Load bytecode through the pipeline (VFS read → cache check → compile if needed)
+    auto vsBytecode = shaderPipeline.LoadBytecode("/demo/triangle/simple_vs.hlsl", "");
+    if (vsBytecode.empty()) {
+        UZ_LOG(Renderer, Error, "Failed to load VS via ShaderPipeline");
         return false;
     }
 
-    ShaderCompileResult psResult = compiler.Compile(psReq);
-    if (!psResult.success) {
-        UZ_LOG(Renderer, Error, "PS compilation failed: {}", psResult.errors);
+    auto psBytecode = shaderPipeline.LoadBytecode("/demo/triangle/simple_ps.hlsl", "");
+    if (psBytecode.empty()) {
+        UZ_LOG(Renderer, Error, "Failed to load PS via ShaderPipeline");
         return false;
     }
 
-    UZ_LOG(Renderer, Info, "Shaders compiled: VS={} bytes, PS={} bytes",
-           vsResult.bytecode.size(), psResult.bytecode.size());
+    UZ_LOG(Renderer, Info, "Shaders loaded via pipeline: VS={} bytes, PS={} bytes",
+           vsBytecode.size(), psBytecode.size());
 
     // ── Create Shader Handles ────────────────────────────────────────────
     RHIShaderDesc vsDesc{};
-    vsDesc.bytecode = vsResult.bytecode.data();
-    vsDesc.bytecodeSize = vsResult.bytecode.size();
+    vsDesc.bytecode = vsBytecode.data();
+    vsDesc.bytecodeSize = vsBytecode.size();
     vsDesc.stage = RHIShaderStage::Vertex;
     vsDesc.entryPoint = "main";
     vsDesc.debugName = "simple_vs";
 
     RHIShaderDesc psDesc{};
-    psDesc.bytecode = psResult.bytecode.data();
-    psDesc.bytecodeSize = psResult.bytecode.size();
+    psDesc.bytecode = psBytecode.data();
+    psDesc.bytecodeSize = psBytecode.size();
     psDesc.stage = RHIShaderStage::Pixel;
     psDesc.entryPoint = "main";
     psDesc.debugName = "simple_ps";
@@ -341,6 +319,7 @@ bool RunTriangleDemo(uint32_t frameCount) {
     UZ_LOG(Renderer, Info, "Triangle demo finished: {} frames, {:.1f}ms total, {:.2f}ms/frame ({:.0f} FPS)",
            frameIndex, totalMs, avgMs, avgMs > 0 ? 1000.0f / avgMs : 0.0f);
 
+    shaderPipeline.Shutdown();
     device->DestroyBuffer(vbHandle);
     device->DestroyPipeline(pipeline);
     device->DestroyShader(vsHandle);

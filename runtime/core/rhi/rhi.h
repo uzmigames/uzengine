@@ -206,6 +206,13 @@ public:
     /// * `descriptorIndex` — Index into the global CBV_SRV_UAV heap.
     virtual void SetDescriptorIndex(uint32_t rootParamIndex, uint32_t descriptorIndex) = 0;
 
+    /// Binds a constant buffer via GPU virtual address at a root parameter slot.
+    ///
+    /// # Arguments
+    /// * `rootParamIndex` — Root parameter slot (must be a root CBV parameter).
+    /// * `gpuAddress` — GPU virtual address of the constant buffer.
+    virtual void SetRootCBV(uint32_t rootParamIndex, uint64_t gpuAddress) = 0;
+
     // ── Draw and dispatch ────────────────────────────────────────────────
 
     /// Issues an indexed draw call.
@@ -455,6 +462,17 @@ public:
     /// The SRV index in the global CBV_SRV_UAV heap, or `UINT32_MAX` if the
     /// buffer has no SRV (e.g., not created with `RHIBufferUsage::StructuredBuffer`).
     virtual uint32_t GetBufferSRVIndex(RHIBufferHandle handle) const = 0;
+
+    /// Returns the GPU virtual address of a buffer.
+    ///
+    /// Used for root CBV binding (`SetGraphicsRootConstantBufferView`).
+    ///
+    /// # Arguments
+    /// * `handle` — Buffer handle to query.
+    ///
+    /// # Returns
+    /// The GPU virtual address, or `0` if the handle is invalid.
+    virtual uint64_t GetBufferGPUAddress(RHIBufferHandle handle) const = 0;
 
     // ── Texture operations ───────────────────────────────────────────────
 

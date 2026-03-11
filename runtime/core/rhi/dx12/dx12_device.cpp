@@ -541,6 +541,12 @@ uint32_t DX12Device::GetBufferSRVIndex(RHIBufferHandle handle) const {
     return buf->srvIndex;
 }
 
+uint64_t DX12Device::GetBufferGPUAddress(RHIBufferHandle handle) const {
+    const DX12Buffer* buf = m_bufferPool.Get(handle.index, handle.generation);
+    if (!buf || !buf->resource) return 0;
+    return buf->resource->GetGPUVirtualAddress();
+}
+
 RHITextureHandle DX12Device::CreateTexture(const RHITextureDesc& desc) {
     uint32_t generation = 0;
     uint32_t index = m_texturePool.Allocate(generation);

@@ -19,6 +19,22 @@ Files extracted from upstream source:
 - `include/` (d3d12.h, d3d12sdklayers.h, d3dcommon.h)
 
 
+## astcenc
+
+- Upstream: https://github.com/ARM-software/astc-encoder
+- Version: 5.3.0 (2025)
+- License: Apache 2.0
+
+ASTC texture encoder/decoder. Compresses textures to ASTC format for mobile
+GPU targets (Android, iOS). Supports LDR and HDR profiles with configurable
+quality presets.
+
+Files extracted from upstream source:
+
+- `Source/` (encoder/decoder source + public header)
+- `LICENSE`
+
+
 ## atomic_queue
 
 - Upstream: https://github.com/max0x7ba/atomic_queue
@@ -32,6 +48,24 @@ Lock-free multi-producer multi-consumer queues. Used for inter-thread communicat
 Files extracted from upstream source:
 
 - `include/atomic_queue/` (header-only)
+- `LICENSE`
+
+
+## basis_universal
+
+- Upstream: https://github.com/BinomialLLC/basis_universal
+- Version: git (master, 2025)
+- License: Apache 2.0
+
+Basis Universal GPU texture compression. Supercompresses textures into an
+intermediate format that can be transcoded to any GPU format at load time
+(BC7, BC1, ASTC, ETC2, PVRTC). Used by the asset pipeline for offline
+texture compression.
+
+Files extracted from upstream source:
+
+- `encoder/` (basisu_comp.cpp, basisu_enc.cpp, etc.)
+- `transcoder/` (basisu_transcoder.cpp, basisu_transcoder.h)
 - `LICENSE`
 
 
@@ -161,6 +195,23 @@ Files extracted from upstream source:
 - `copying.txt`
 
 
+## libjpeg-turbo
+
+- Upstream: https://github.com/libjpeg-turbo/libjpeg-turbo
+- Version: 3.0.3 (2024)
+- License: BSD-3-Clause
+
+SIMD-accelerated JPEG codec. Decodes JPEG images 2-6x faster than libjpeg
+using SSE2/AVX2 intrinsics. Used as the primary JPEG decoder for texture
+import and runtime image loading.
+
+Files extracted from upstream source:
+
+- Root (jpeglib.h, jconfig.h, turbojpeg.h, source files)
+- `simd/` (SIMD implementations)
+- `LICENSE.md`
+
+
 ## jemalloc
 
 - Upstream: https://github.com/jemalloc/jemalloc
@@ -208,6 +259,27 @@ Files extracted from upstream source:
 - `json.hpp` (single header)
 
 
+## stb
+
+- Upstream: https://github.com/nothings/stb
+- Version: git (master, 2025)
+- License: MIT / Public Domain (dual-licensed)
+
+Single-file public domain libraries for C/C++. Used headers:
+
+- `stb_image.h` (v2.30) — loads PNG, JPG, TGA, BMP, PSD, GIF, HDR, PIC
+- `stb_image_write.h` (v1.16) — writes PNG, TGA, BMP
+- `stb_image_resize2.h` (v2.16) — high-quality image resizing
+
+Primary image loader for the engine. stb_image handles most formats; libjpeg-turbo
+is used for performance-critical JPEG batch imports.
+
+Files extracted from upstream source:
+
+- Root (header files)
+- `LICENSE`
+
+
 ## spdlog
 
 - Upstream: https://github.com/gabime/spdlog
@@ -223,6 +295,21 @@ Files extracted from upstream source:
 - `include/spdlog/` (headers)
 - `src/` (compiled library sources)
 - `CMakeLists.txt`
+- `LICENSE`
+
+
+## tinyexr
+
+- Upstream: https://github.com/syoyo/tinyexr
+- Version: 1.0.9 (2024)
+- License: BSD-3-Clause
+
+Tiny OpenEXR image loader/saver. Reads `.exr` files (HDR environment maps,
+lightmaps, baked GI). Header-only library with optional miniz/zlib dependency.
+
+Files extracted from upstream source:
+
+- `tinyexr.h` (single header)
 - `LICENSE`
 
 

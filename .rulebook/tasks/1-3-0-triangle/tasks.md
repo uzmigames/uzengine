@@ -12,14 +12,14 @@
 - [x] 2.4 Create index buffer (uint16/uint32 via UploadContext)
 - [x] 2.5 Wire `SetVertexBuffer` / `SetIndexBuffer` / `DrawIndexed` in DX12 command list
 - [x] 2.6 Render hardcoded colored triangle (no texture, no camera)
-- [ ] 2.7 Tests: buffer upload, vertex layout validation, draw call smoke test
+- [x] 2.7 Tests: buffer upload, vertex layout validation, draw call smoke test (19 tests)
 
 ## Phase 3: Constant Buffers
-- [ ] 3.1 Per-frame constant buffer struct (ViewProj, CameraPos, Time)
-- [ ] 3.2 Per-object constant buffer struct (Model, NormalMatrix, MaterialIndex)
-- [ ] 3.3 Ring-buffer allocator for per-frame CB uploads (triple-buffered)
-- [ ] 3.4 Bind constant buffers via root signature (CBV in root descriptor or bindless)
-- [ ] 3.5 Tests: CB creation, ring-buffer wrap-around, data upload verification
+- [x] 3.1 Per-frame constant buffer struct (ViewProj, CameraPos, Time)
+- [x] 3.2 Per-object constant buffer struct (Model, NormalMatrix, MaterialIndex)
+- [x] 3.3 Ring-buffer allocator for per-frame CB uploads (triple-buffered)
+- [x] 3.4 Bind constant buffers via root signature (root CBV at b1/b2 + SetRootCBV + GetBufferGPUAddress)
+- [x] 3.5 Tests: CB struct layout, ring allocator validation (16 tests)
 
 ## Phase 4: Texture Pipeline
 - [ ] 4.1 Integrate stb_image (header-only, add to thirdparty/)

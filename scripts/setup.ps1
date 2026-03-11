@@ -89,7 +89,7 @@ function Download-Header {
 
 # ─── Prerequisites ──────────────────────────────────────────────────────────
 
-Write-Host "[1/6] Checking prerequisites..." -ForegroundColor Cyan
+Write-Host "[1/8] Checking prerequisites..." -ForegroundColor Cyan
 
 # Refresh PATH from registry (picks up winget/installer changes without restarting terminal)
 function Refresh-Path {
@@ -133,7 +133,7 @@ if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
 # ─── vcpkg ──────────────────────────────────────────────────────────────────
 
 Write-Host ""
-Write-Host "[2/6] Setting up vcpkg..." -ForegroundColor Cyan
+Write-Host "[2/8] Setting up vcpkg..." -ForegroundColor Cyan
 
 $VcpkgDir = Join-Path $ThirdPartyDir "vcpkg"
 $VcpkgExe = Join-Path $VcpkgDir "vcpkg.exe"
@@ -156,7 +156,7 @@ foreach ($pkg in $VcpkgPackages) {
 # ─── Git Clones ─────────────────────────────────────────────────────────────
 
 Write-Host ""
-Write-Host "[3/6] Cloning thirdparty repos..." -ForegroundColor Cyan
+Write-Host "[3/8] Cloning thirdparty repos..." -ForegroundColor Cyan
 
 # DirectX Headers
 Clone-Repo -Name "directx_headers" `
@@ -265,13 +265,100 @@ Clone-Repo -Name "mikktspace" `
     -Branch "master" `
     -RemoveDirs @()
 
+# stb (image loading/writing/resizing — header-only, keep only needed headers)
+Clone-Repo -Name "stb" `
+    -Url "https://github.com/nothings/stb.git" `
+    -Branch "master" `
+    -RemoveDirs @("docs", "data", "tests", "tools", "deprecated")
+
+# Keep only the 3 headers we use
+$stbKeep = @("stb_image.h", "stb_image_write.h", "stb_image_resize2.h", "LICENSE")
+$stbPath = Join-Path $ThirdPartyDir "stb"
+if (Test-Path $stbPath) {
+    Get-ChildItem $stbPath -File | Where-Object { $stbKeep -notcontains $_.Name } | Remove-Item -Force
+    Get-ChildItem $stbPath -Directory | Remove-Item -Recurse -Force
+}
+
+# libjpeg-turbo (fast JPEG decode with SIMD)
+Clone-Repo -Name "libjpeg-turbo" `
+    -Url "https://github.com/libjpeg-turbo/libjpeg-turbo.git" `
+    -Branch "3.0.3" `
+    -RemoveDirs @("doc", "java", "release", "win", "fuzz", "cmakescripts", "md5", "testimages", "sharedlib")
+
+# Remove CLI tools, test files, build configs (keep only lib source + headers)
+$jtPath = Join-Path $ThirdPartyDir "libjpeg-turbo"
+if (Test-Path $jtPath) {
+    $jtRemove = @("BUILDING.md","ChangeLog.md","README.md","README.ijg","change.log","coderules.txt",
+                   "libjpeg.txt","structure.txt","usage.txt","wizard.txt","jconfig.txt","doxygen.config",
+                   "doxygen-extra.css","cjpeg.1","djpeg.1","jpegtran.1","rdjpgcom.1","wrjpgcom.1",
+                   "cjpeg.c","djpeg.c","jpegtran.c","rdjpgcom.c","wrjpgcom.c","cdjpeg.c","cdjpeg.h",
+                   "rdbmp.c","rdcolmap.c","rdgif.c","rdppm.c","rdswitch.c","rdtarga.c",
+                   "wrbmp.c","wrgif.c","wrppm.c","wrtarga.c",
+                   "tjbench.c","tjexample.c","tjunittest.c","tjutil.c","tjutil.h","strtest.c",
+                   "jcstest.c","jpeg_nbits.c","example.c","croptest.in","tjbenchtest.in","tjexampletest.in",
+                   "CMakeLists.txt","jconfig.h.in","jconfigint.h.in","jversion.h.in","libjpeg.map.in",
+                   "turbojpeg-jni.c","turbojpeg-mapfile","turbojpeg-mapfile.jni","turbojpeg-mp.c")
+    foreach ($f in $jtRemove) {
+        $p = Join-Path $jtPath $f
+        if (Test-Path $p) { Remove-Item -Force $p }
+    }
+}
+
+# tinyexr (EXR/HDR image format — single header only)
+Clone-Repo -Name "tinyexr" `
+    -Url "https://github.com/syoyo/tinyexr.git" `
+    -Branch "v1.0.9" `
+    -RemoveDirs @("examples", "experimental", "test", "deps", "cmake", "jni")
+
+# Keep only the header
+$texrPath = Join-Path $ThirdPartyDir "tinyexr"
+if (Test-Path $texrPath) {
+    Get-ChildItem $texrPath -File | Where-Object { $_.Name -ne "tinyexr.h" } | Remove-Item -Force
+}
+
+# basis_universal (GPU texture compression — BC7, ASTC, ETC2)
+Clone-Repo -Name "basis_universal" `
+    -Url "https://github.com/BinomialLLC/basis_universal.git" `
+    -Branch "master" `
+    -RemoveDirs @("webgl", "test_files", "bin", "OpenCL", "build", "cmd_help", "contrib",
+                  "example", "example_capi", "example_transcoding", "khronos", "python",
+                  "shader_deblocking", "zstd", "encoder_lib")
+
+# Remove build/tool files from root (keep encoder/, transcoder/, LICENSE*)
+$basisPath = Join-Path $ThirdPartyDir "basis_universal"
+if (Test-Path $basisPath) {
+    $basisRemove = @("CMakeLists.txt","CppProperties.json","README.md","readme_wasi.md","NOTICE",
+                     "all_builds.py","basisu.manifest","basisu.sln","basisu.vcxproj",
+                     "basisu.vcxproj.filters","basisu_tool.cpp","basisu_tool_help.h",
+                     "build_python_win.bat","encoder_lvl_vs_perf.png")
+    foreach ($f in $basisRemove) {
+        $p = Join-Path $basisPath $f
+        if (Test-Path $p) { Remove-Item -Force $p }
+    }
+}
+
+# astcenc (ASTC texture encoder/decoder)
+Clone-Repo -Name "astcenc" `
+    -Url "https://github.com/ARM-software/astc-encoder.git" `
+    -Branch "5.3.0" `
+    -RemoveDirs @("Docs", "Test", "Jenkins", "Utils")
+
+# Remove build files from root (keep Source/ + LICENSE)
+$astcPath = Join-Path $ThirdPartyDir "astcenc"
+if (Test-Path $astcPath) {
+    @("CMakeLists.txt","README.md") | ForEach-Object {
+        $p = Join-Path $astcPath $_
+        if (Test-Path $p) { Remove-Item -Force $p }
+    }
+}
+
 # Crashpad (crash reporting) — deferred to milestone 2.x when crash reporting is implemented
 Write-Host "  [crashpad] skipped (not needed until 2.x crash reporting)" -ForegroundColor DarkYellow
 
 # ─── Downloads ──────────────────────────────────────────────────────────────
 
 Write-Host ""
-Write-Host "[4/6] Downloading prebuilt packages..." -ForegroundColor Cyan
+Write-Host "[4/8] Downloading prebuilt packages..." -ForegroundColor Cyan
 
 # DXC (DirectX Shader Compiler)
 Download-Extract-Zip -Name "dxc" `
@@ -285,7 +372,7 @@ Download-Extract-Zip -Name "agility" `
 # ─── Global Cleanup ────────────────────────────────────────────────────────
 
 Write-Host ""
-Write-Host "[5/6] Cleaning up..." -ForegroundColor Cyan
+Write-Host "[5/8] Cleaning up..." -ForegroundColor Cyan
 
 $JunkDirs = @(".github", ".vscode", ".ci", ".circleci")
 $JunkFiles = @(".gitignore", ".gitattributes", ".gitmodules",
@@ -320,7 +407,7 @@ if (Test-Path $TempDir) { Remove-Item -Recurse -Force $TempDir }
 # ─── npm install ───────────────────────────────────────────────────────────
 
 Write-Host ""
-Write-Host "[6/6] Installing Node dependencies..." -ForegroundColor Cyan
+Write-Host "[6/8] Installing Node dependencies..." -ForegroundColor Cyan
 
 $npmModules = @("napi", "mcp", "extension")
 foreach ($mod in $npmModules) {
@@ -334,6 +421,39 @@ foreach ($mod in $npmModules) {
         Write-Host "  [$mod] OK" -ForegroundColor Green
     }
 }
+
+# ─── Verify Image Libraries ────────────────────────────────────────────────
+
+Write-Host ""
+Write-Host "[7/8] Verifying image libraries..." -ForegroundColor Cyan
+
+$ImageLibs = @(
+    @{ Name = "stb";              File = "stb_image.h" },
+    @{ Name = "libjpeg-turbo";    File = "jpeglib.h" },
+    @{ Name = "tinyexr";          File = "tinyexr.h" },
+    @{ Name = "basis_universal";  File = "transcoder\basisu_transcoder.h" },
+    @{ Name = "astcenc";          File = "Source\astcenc.h" }
+)
+
+$allOk = $true
+foreach ($lib in $ImageLibs) {
+    $check = Join-Path $ThirdPartyDir "$($lib.Name)\$($lib.File)"
+    if (Test-Path $check) {
+        Write-Host "  [$($lib.Name)] OK" -ForegroundColor Green
+    } else {
+        Write-Host "  [$($lib.Name)] MISSING: $check" -ForegroundColor Red
+        $allOk = $false
+    }
+}
+if (-not $allOk) { Write-Warning "Some image libraries are incomplete. Check above." }
+
+# ─── Summary ───────────────────────────────────────────────────────────────
+
+Write-Host ""
+Write-Host "[8/8] Summary" -ForegroundColor Cyan
+
+$dirCount = (Get-ChildItem -Path $ThirdPartyDir -Directory | Where-Object { $_.Name -ne "vcpkg" } | Measure-Object).Count
+Write-Host "  $dirCount thirdparty libraries installed" -ForegroundColor Green
 
 Write-Host ""
 Write-Host "=== Setup Complete ===" -ForegroundColor Green

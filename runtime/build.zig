@@ -44,6 +44,11 @@ pub fn build(b: *std.Build) void {
         tp ++ "spirv-reflect",
         tp ++ "spirv-reflect/include",
         tp ++ "xxhash",
+        tp ++ "stb",
+        tp ++ "tinyexr",
+        tp ++ "libjpeg-turbo",
+        tp ++ "basis_universal/transcoder",
+        tp ++ "astcenc/Source",
     };
 
     const windows_engine_include_dirs = [_][]const u8{
@@ -117,6 +122,50 @@ pub fn build(b: *std.Build) void {
         .flags = &.{ "-std=c++17", "-DTRACY_ENABLE", "-DTRACY_ON_DEMAND" },
     });
 
+    // Thirdparty — basis_universal transcoder
+    runtime_mod.addCSourceFiles(.{
+        .root = b.path(tp ++ "basis_universal/transcoder"),
+        .files = &.{"basisu_transcoder.cpp"},
+        .flags = &.{ "-std=c++17", "-DBASISD_SUPPORT_KTX2_ZSTD=0" },
+    });
+
+    // Thirdparty — miniz (zlib-compatible compression for tinyexr)
+    runtime_mod.addCSourceFiles(.{
+        .root = b.path(tp ++ "tinyexr"),
+        .files = &.{"miniz.c"},
+        .flags = &.{"-std=c11"},
+    });
+
+    // Thirdparty — astcenc (ASTC texture compression, library sources only)
+    runtime_mod.addCSourceFiles(.{
+        .root = b.path(tp ++ "astcenc/Source"),
+        .files = &.{
+            "astcenc_averages_and_directions.cpp",
+            "astcenc_block_sizes.cpp",
+            "astcenc_color_quantize.cpp",
+            "astcenc_color_unquantize.cpp",
+            "astcenc_compress_symbolic.cpp",
+            "astcenc_compute_variance.cpp",
+            "astcenc_decompress_symbolic.cpp",
+            "astcenc_diagnostic_trace.cpp",
+            "astcenc_entry.cpp",
+            "astcenc_find_best_partitioning.cpp",
+            "astcenc_ideal_endpoints_and_weights.cpp",
+            "astcenc_image.cpp",
+            "astcenc_integer_sequence.cpp",
+            "astcenc_mathlib.cpp",
+            "astcenc_mathlib_softfloat.cpp",
+            "astcenc_partition_tables.cpp",
+            "astcenc_percentile_tables.cpp",
+            "astcenc_pick_best_endpoint_format.cpp",
+            "astcenc_quantization.cpp",
+            "astcenc_symbolic_physical.cpp",
+            "astcenc_weight_align.cpp",
+            "astcenc_weight_quant_xfer_tables.cpp",
+        },
+        .flags = &.{"-std=c++17"},
+    });
+
     // Include paths — cross-platform
     for (engine_include_dirs) |dir| runtime_mod.addIncludePath(b.path(dir));
     for (thirdparty_include_dirs) |dir| runtime_mod.addIncludePath(b.path(dir));
@@ -170,6 +219,13 @@ pub fn build(b: *std.Build) void {
     addCppDir(test_mod, b, "tests/core/paths", cpp_flags);
     addCppDir(test_mod, b, "tests/core/asset", cpp_flags);
     addCppDir(test_mod, b, "tests/core/shader", cpp_flags);
+    addCppDir(test_mod, b, "tests/core/renderer", cpp_flags);
+    // Thirdparty image lib tests — disable alignment sanitizer for stb_image_resize2
+    test_mod.addCSourceFiles(.{
+        .root = b.path("tests/thirdparty"),
+        .files = &.{"test_image_libs.cpp"},
+        .flags = &.{ "-std=c++17", "-DSPDLOG_COMPILED_LIB", "-fno-sanitize=alignment" },
+    });
 
     // Windows-only test sources
     if (is_windows) {
