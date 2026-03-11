@@ -277,7 +277,7 @@ struct Vec3 {
     ///
     /// # Examples
     /// ```cpp
-    /// Vec3 up = Vec3::Right().Cross(Vec3::Forward()); // {0, 1, 0}
+    /// Vec3 up = Vec3::Forward().Cross(Vec3::Right()); // {0, 0, 1}
     /// ```
     Vec3 cross(const Vec3& other) const;
     /// Uppercase alias for `cross()`.
@@ -318,12 +318,12 @@ struct Vec3 {
     static Vec3 UnitY() { return {0, 1, 0}; }
     /// Unit vector along Z axis (0, 0, 1).
     static Vec3 UnitZ() { return {0, 0, 1}; }
-    /// World "up" direction (0, 1, 0).
-    static Vec3 Up() { return UnitY(); }
-    /// World "right" direction (1, 0, 0).
-    static Vec3 Right() { return UnitX(); }
-    /// World "forward" direction (0, 0, 1).
-    static Vec3 Forward() { return UnitZ(); }
+    /// World "up" direction (0, 0, 1) — Z-up coordinate system (X-forward, Y-right, Z-up).
+    static Vec3 Up() { return UnitZ(); }
+    /// World "right" direction (0, 1, 0) — Z-up coordinate system.
+    static Vec3 Right() { return UnitY(); }
+    /// World "forward" direction (1, 0, 0) — Z-up coordinate system.
+    static Vec3 Forward() { return UnitX(); }
     /// Linear interpolation between a and b (t in [0,1]).
     static Vec3 Lerp(const Vec3& a, const Vec3& b, float t) { return a + (b - a) * t; }
     /// Component-wise minimum.
@@ -550,6 +550,15 @@ struct Mat4 {
     /// * `target` - Point the camera looks at.
     /// * `up` - World up direction (typically `Vec3::Up()`).
     static Mat4 LookAt(const Vec3& eye, const Vec3& target, const Vec3& up);
+
+    /// Creates a left-handed orthographic projection matrix.
+    ///
+    /// # Arguments
+    /// * `width` - View width in world units.
+    /// * `height` - View height in world units.
+    /// * `near_plane` - Near clipping plane distance.
+    /// * `far_plane` - Far clipping plane distance.
+    static Mat4 Orthographic(float width, float height, float near_plane, float far_plane);
 
     /// Converts to XMMATRIX for SIMD operations (zero-cost in release).
     XMMATRIX toXM() const { return XMLoadFloat4x4(&m); }

@@ -1,3 +1,5 @@
+/// Unit tests for HandleMap — generational handle allocation, stale-handle
+/// rejection after removal, iteration over live entries, and capacity growth.
 #include "handle_map.h"
 
 #include <gtest/gtest.h>

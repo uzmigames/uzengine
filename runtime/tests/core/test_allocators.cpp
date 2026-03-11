@@ -1,3 +1,5 @@
+/// Unit tests for engine allocators — Linear, Pool, and Frame allocator
+/// correctness, alignment guarantees, capacity limits, and reset semantics.
 #include "allocators.h"
 
 #include <gtest/gtest.h>

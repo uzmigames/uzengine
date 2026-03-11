@@ -1,5 +1,21 @@
 /// UzEngine Math Library Implementation
-/// SIMD-accelerated vector and matrix operations via DirectXMath
+///
+/// Sole translation unit for `engine_math.h`.  Implements all math types used
+/// throughout the engine:
+///
+///   - `Vec2` / `Vec3` / `Vec4` — float vectors with SIMD-backed dot, cross,
+///     length, and normalize via `XMVector*` intrinsics.
+///   - `Mat4` — column-major 4×4 matrix (XMFLOAT4X4 storage) with factory
+///     constructors (Identity, Translation, Scaling, Rotation, Perspective,
+///     LookAt) and SIMD multiply/transform via `XMMatrixMultiply`.
+///   - `Quat` — unit quaternion with slerp/lerp, axis-angle and Euler
+///     construction, and matrix round-trip via DirectXMath.
+///   - `Transform` — position + rotation + scale with hierarchical composition
+///     (`compose`) and analytical inverse (`inverse`).
+///
+/// All SIMD work is delegated to DirectXMath (`XMVector*` / `XMMatrix*`).
+/// `toXM()` / `Vec3(XMVECTOR)` conversions bridge between engine types and
+/// DirectXMath registers with zero heap allocation.
 
 #include "engine_math.h"
 
@@ -131,6 +147,10 @@ Mat4 Mat4::LookAt(const Vec3& eye, const Vec3& target, const Vec3& up) {
     return Mat4(XMMatrixLookAtLH(eye.toXM(), target.toXM(), up.toXM()));
 }
 
+Mat4 Mat4::Orthographic(float width, float height, float near_plane, float far_plane) {
+    return Mat4(XMMatrixOrthographicLH(width, height, near_plane, far_plane));
+}
+
 Mat4 Mat4::operator*(const Mat4& other) const {
     XMMATRIX m1 = toXM();
     XMMATRIX m2 = other.toXM();
@@ -178,6 +198,15 @@ Vec3 Mat4::getTranslation() const {
     return {m._41, m._42, m._43};
 }
 
+/// Extracts the per-axis scale factors from this matrix.
+///
+/// Scale is the Euclidean length (L2 norm) of each row of the upper-left 3×3
+/// rotation-scale block.  For a TRS matrix built by `Scaling * Rotation *
+/// Translation`, this recovers the original scale exactly.  Shear or non-uniform
+/// negative scale may produce unexpected results.
+///
+/// # Returns
+/// `Vec3{|row0|, |row1|, |row2|}` — always non-negative.
 Vec3 Mat4::getScale() const {
     Vec3 scale;
     scale.x = std::sqrt(m._11 * m._11 + m._12 * m._12 + m._13 * m._13);
@@ -265,6 +294,16 @@ Mat4 Quat::toMatrix() const {
 // Transform Implementation
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Constructs a `Transform` by decomposing a 4×4 matrix into TRS components.
+///
+/// Delegates to `XMMatrixDecompose`, which extracts the scale vector,
+/// rotation quaternion, and translation vector via QR-like decomposition.
+/// The result is exact for pure TRS matrices.  Matrices that contain shear
+/// or perspective cannot be exactly represented as a `Transform` — the
+/// decomposition will approximate them.
+///
+/// # Arguments
+/// - `m`: the matrix to decompose, typically a world or local-to-parent matrix.
 Transform::Transform(const Mat4& m) {
     // Decompose TRS from matrix
     XMVECTOR scale_v;
@@ -291,6 +330,23 @@ Transform Transform::FromMatrix(const Mat4& m) {
     return Transform(m);
 }
 
+/// Computes the local-to-world transform by composing this (child) transform
+/// with a parent transform.
+///
+/// The composition follows standard TRS hierarchy rules:
+///   - `world.scale    = child.scale * parent.scale`       (per-axis multiply)
+///   - `world.rotation = child.rotation * parent.rotation` (quaternion concatenation)
+///   - `world.position = child.rotation * (parent.scale * child.position) + parent.position`
+///
+/// The position is first scaled by the parent's scale, then rotated by the
+/// child's orientation, then offset by the parent's world position.  This
+/// matches the behaviour of standard scene-graph composition (SRT order).
+///
+/// # Arguments
+/// - `parent`: the parent world-space transform.
+///
+/// # Returns
+/// The world-space transform of this node.
 Transform Transform::compose(const Transform& parent) const {
     // Local to world: world = local * parent
     Transform world;
@@ -300,6 +356,19 @@ Transform Transform::compose(const Transform& parent) const {
     return world;
 }
 
+/// Computes the analytical inverse of this TRS transform.
+///
+/// For a transform T with components (P, R, S), the inverse is:
+///   - `inv.scale    = 1 / S`            (per-axis reciprocal)
+///   - `inv.rotation = R^{-1}`           (conjugate for unit quaternions)
+///   - `inv.position = -(R^{-1} * (S^{-1} * P))`
+///
+/// This is exact (no floating-point decomposition) and cheaper than
+/// inverting the equivalent 4×4 matrix.  Assumes a well-formed TRS with
+/// non-zero scale on all axes.
+///
+/// # Returns
+/// A `Transform` T_inv such that `T.compose(T_inv)` yields identity.
 Transform Transform::inverse() const {
     Transform inv;
     inv.scale = {1 / scale.x, 1 / scale.y, 1 / scale.z};

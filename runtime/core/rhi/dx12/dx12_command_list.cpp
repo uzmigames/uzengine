@@ -7,6 +7,7 @@
 #define NOMINMAX
 #include "dx12_command_list.h"
 #include "dx12_device.h"
+#include "dx12_resource_creation.h"
 #include "d3dx12.h"
 
 #include "log.h"
@@ -279,6 +280,11 @@ void DX12CommandList::SetDescriptorIndex(uint32_t rootParamIndex, uint32_t descr
     m_cmdList->SetGraphicsRoot32BitConstant(rootParamIndex, descriptorIndex, 0);
 }
 
+void DX12CommandList::SetRootConstants(uint32_t rootParamIndex, const uint32_t* data,
+                                        uint32_t count, uint32_t offsetIn32BitValues) {
+    m_cmdList->SetGraphicsRoot32BitConstants(rootParamIndex, count, data, offsetIn32BitValues);
+}
+
 void DX12CommandList::SetRootCBV(uint32_t rootParamIndex, uint64_t gpuAddress) {
     m_cmdList->SetGraphicsRootConstantBufferView(rootParamIndex, gpuAddress);
 }
@@ -439,6 +445,48 @@ void DX12CommandList::CopyTexture(RHITextureHandle src, RHITextureHandle dst) {
     }
 
     m_cmdList->CopyResource(dstTex->resource, srcTex->resource);
+}
+
+void DX12CommandList::CopyBufferToTexture(RHIBufferHandle srcBuffer, uint64_t srcOffset,
+                                           uint32_t srcRowPitch,
+                                           RHITextureHandle dstTexture,
+                                           uint32_t mipLevel, uint32_t arraySlice) {
+    if (!srcBuffer.IsValid() || !dstTexture.IsValid()) {
+        UZ_LOG(RHI, Warning, "CopyBufferToTexture — invalid source or destination handle");
+        return;
+    }
+
+    auto* buf = m_device->GetBufferPool().Get(srcBuffer.index, srcBuffer.generation);
+    auto* tex = m_device->GetTexturePool().Get(dstTexture.index, dstTexture.generation);
+    if (!buf || !buf->resource || !tex || !tex->resource) {
+        UZ_LOG(RHI, Warning, "CopyBufferToTexture — could not resolve handles");
+        return;
+    }
+
+    // Query the required layout from DX12 for this subresource
+    const uint32_t subresource = mipLevel + (arraySlice * tex->desc.mipLevels);
+    D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint = {};
+    UINT64 totalBytes = 0;
+
+    D3D12_RESOURCE_DESC resDesc{};
+    tex->resource->GetDesc(&resDesc);
+    m_device->GetDevice()->GetCopyableFootprints(
+        &resDesc, subresource, 1, srcOffset, &footprint, nullptr, nullptr, &totalBytes);
+
+    // Override the row pitch if the caller provided one that matches the footprint width
+    // (the footprint already accounts for 256-byte alignment)
+
+    D3D12_TEXTURE_COPY_LOCATION dst = {};
+    dst.pResource = tex->resource;
+    dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+    dst.SubresourceIndex = subresource;
+
+    D3D12_TEXTURE_COPY_LOCATION src = {};
+    src.pResource = buf->resource;
+    src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+    src.PlacedFootprint = footprint;
+
+    m_cmdList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

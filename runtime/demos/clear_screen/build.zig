@@ -1,52 +1,108 @@
 const std = @import("std");
 
-/// Called by the main runtime/build.zig to add the clear screen demo.
-pub fn addTo(
-    b: *std.Build,
-    lib: *std.Build.Step.Compile,
-    target: std.Build.ResolvedTarget,
-    optimize: std.builtin.OptimizeMode,
-    engine_include_dirs: []const []const u8,
-    thirdparty_include_dirs: []const []const u8,
-    windows_engine_include_dirs: []const []const u8,
-    windows_thirdparty_include_dirs: []const []const u8,
-    cpp_flags: []const []const u8,
-) void {
+/// Standalone build for the clear screen demo.
+/// Links against the pre-compiled uzengine_runtime.lib from runtime/build/lib/.
+/// Run `zig build` from runtime/ first, then `zig build run` from here.
+pub fn build(b: *std.Build) void {
+    const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
+
+    const cpp_flags = &.{ "-std=c++17", "-DSPDLOG_COMPILED_LIB" };
+
     const mod = b.createModule(.{ .target = target, .optimize = optimize });
     mod.link_libc = true;
     mod.link_libcpp = true;
 
-    for (engine_include_dirs) |dir| mod.addIncludePath(b.path(dir));
-    for (thirdparty_include_dirs) |dir| mod.addIncludePath(b.path(dir));
-    for (windows_engine_include_dirs) |dir| mod.addIncludePath(b.path(dir));
-    for (windows_thirdparty_include_dirs) |dir| mod.addIncludePath(b.path(dir));
-    mod.addIncludePath(b.path("core/rhi/dx12"));
-    mod.addIncludePath(b.path("demos/clear_screen"));
-
+    // Demo sources
     mod.addCSourceFiles(.{
-        .root = b.path("demos/clear_screen"),
+        .root = b.path("."),
         .files = &.{ "main.cpp", "dx12_clear_screen.cpp" },
         .flags = cpp_flags,
     });
     mod.addCSourceFiles(.{
-        .root = b.path("core/rhi/dx12"),
+        .root = b.path("../../core/rhi/dx12"),
         .files = &.{"dx12_agility.cpp"},
         .flags = cpp_flags,
     });
 
-    const exe = b.addExecutable(.{ .name = "clear_screen_demo", .root_module = mod });
-    exe.linkLibrary(lib);
+    // Engine include paths
+    const engine_dirs = [_][]const u8{
+        "../../src",
+        "../../core/logging",
+        "../../core/assertions",
+        "../../core/profiling",
+        "../../core/memory",
+        "../../core/config",
+        "../../core/math",
+        "../../core/containers",
+        "../../core/random",
+        "../../core/rhi",
+        "../../core/shader",
+        "../../core/paths",
+        "../../core/renderer",
+        "../../core/asset",
+        "../../platform/windows",
+        "../../core/rhi/dx12",
+    };
+    for (engine_dirs) |dir| mod.addIncludePath(b.path(dir));
 
-    const win_sys_libs = [_][]const u8{ "d3d12", "dxgi", "dxguid", "gdi32", "user32" };
-    for (win_sys_libs) |l| exe.linkSystemLibrary(l);
+    // Thirdparty include paths
+    const tp_dirs = [_][]const u8{
+        "../../thirdparty/spdlog/include",
+        "../../thirdparty/tracy/public",
+        "../../thirdparty/mimalloc/include",
+        "../../thirdparty/directxmath/Inc",
+        "../../thirdparty/glm",
+        "../../thirdparty/nlohmann",
+        "../../thirdparty/atomic_queue/include",
+        "../../thirdparty/spirv-reflect",
+        "../../thirdparty/spirv-reflect/include",
+        "../../thirdparty/xxhash",
+        "../../thirdparty/stb",
+        "../../thirdparty/tinyexr",
+        "../../thirdparty/libjpeg-turbo",
+        "../../thirdparty/basis_universal/transcoder",
+        "../../thirdparty/astcenc/Source",
+        "../../thirdparty/d3d12ma/include",
+        "../../thirdparty/directx_headers/include",
+        "../../thirdparty/directx_headers/include/directx",
+        "../../thirdparty/agility/include",
+        "../../thirdparty/dxc/inc",
+    };
+    for (tp_dirs) |dir| mod.addIncludePath(b.path(dir));
+
+    // Demo's own directory
+    mod.addIncludePath(b.path("."));
+
+    // Link pre-compiled runtime lib
+    mod.addObjectFile(b.path("../../build/lib/uzengine_runtime.lib"));
+
+    const exe = b.addExecutable(.{ .name = "clear_screen_demo", .root_module = mod });
+
+    const sys_libs = [_][]const u8{ "d3d12", "dxgi", "dxguid", "gdi32", "user32" };
+    for (sys_libs) |l| exe.linkSystemLibrary(l);
 
     b.installArtifact(exe);
 
-    // Run from install dir so Agility SDK DLLs are found
+    // Deploy DLLs
+    b.getInstallStep().dependOn(&b.addInstallBinFile(
+        b.path("../../thirdparty/agility/bin/x64/D3D12Core.dll"), "D3D12/D3D12Core.dll",
+    ).step);
+    b.getInstallStep().dependOn(&b.addInstallBinFile(
+        b.path("../../thirdparty/agility/bin/x64/d3d12SDKLayers.dll"), "D3D12/d3d12SDKLayers.dll",
+    ).step);
+    b.getInstallStep().dependOn(&b.addInstallBinFile(
+        b.path("../../thirdparty/dxc/bin/x64/dxcompiler.dll"), "dxcompiler.dll",
+    ).step);
+    b.getInstallStep().dependOn(&b.addInstallBinFile(
+        b.path("../../thirdparty/dxc/bin/x64/dxil.dll"), "dxil.dll",
+    ).step);
+
+    // Run step
     const run = b.addSystemCommand(&.{
         b.getInstallPath(.bin, "clear_screen_demo.exe"),
     });
     run.step.dependOn(b.getInstallStep());
-    const step = b.step("demo-clear", "Run DX12 clear screen demo");
+    const step = b.step("run", "Run the clear screen demo");
     step.dependOn(&run.step);
 }

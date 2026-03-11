@@ -1,4 +1,25 @@
 /// UzEngine Shader Permutation System — Implementation
+///
+/// Parses `#pragma uz_permutation` directives embedded in HLSL source and
+/// expands them into all valid compile-time variants.
+///
+/// Parsing strategy:
+///   `ParsePermutations` scans the source line-by-line with `std::istringstream`,
+///   looking for the two-token prefix "#pragma uz_permutation".  The third token
+///   becomes the define name; any remaining tokens on the same line are the
+///   enumeration values.  A directive with no values is treated as a boolean
+///   and automatically receives values {"0", "1"}.
+///
+/// Cartesian product:
+///   `ExpandPermutations` builds variants iteratively — it multiplies the
+///   running variant list by each new permutation axis, producing N×M variants
+///   per step.  Defines within each variant are sorted by name so the resulting
+///   string key is deterministic regardless of directive order in source.
+///
+/// Explosion guard:
+///   The total variant count is checked against `kMaxPermutationVariants` before
+///   any allocation.  If exceeded, `ExpandPermutations` returns an error result
+///   rather than allocating potentially millions of entries.
 
 #include "shader_permutation.h"
 

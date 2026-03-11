@@ -116,7 +116,7 @@ public:
     /// `true` if all variants compiled successfully or were already cached.
     bool CompileShader(const std::string& virtualPath);
 
-    /// Loads compiled bytecode for a shader variant.
+    /// Loads compiled bytecode for a shader variant from the VFS.
     ///
     /// Checks the hot-reload dirty flag, recompiles if needed, then returns
     /// bytecode from the cache.
@@ -130,6 +130,28 @@ public:
     /// Compiled bytecode, or an empty vector on failure.
     [[nodiscard]] std::vector<uint8_t> LoadBytecode(
         const std::string& virtualPath,
+        const std::string& permutationDefines = "");
+
+    /// Compiles an in-memory HLSL source string and returns bytecode.
+    ///
+    /// Used for embedded engine shaders whose source is baked into C++ headers
+    /// at build time (via uzembed). Bypasses VFS, source manager, and hot-reload
+    /// entirely — the source is compiled directly via the shader compiler.
+    ///
+    /// The shader stage is inferred from `name` using the standard suffix
+    /// convention (`_vs`, `_ps`, `_cs`, etc.).
+    ///
+    /// # Arguments
+    /// * `name` — Logical name for error messages and stage inference
+    ///   (e.g., "overlay_vs.hlsl").
+    /// * `hlslSource` — Complete HLSL source code string.
+    /// * `permutationDefines` — Semicolon-separated defines, or empty.
+    ///
+    /// # Returns
+    /// Compiled bytecode, or an empty vector on failure.
+    [[nodiscard]] std::vector<uint8_t> LoadBytecodeFromSource(
+        const std::string& name,
+        const std::string& hlslSource,
         const std::string& permutationDefines = "");
 
     /// Polls for hot-reload file changes (call once per frame in dev builds).

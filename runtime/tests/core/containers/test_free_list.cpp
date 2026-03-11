@@ -1,3 +1,5 @@
+/// Unit tests for FreeList — allocation, deallocation, slot reuse after
+/// free, exhaustion behaviour, and double-free detection.
 #include "free_list.h"
 
 #include <gtest/gtest.h>

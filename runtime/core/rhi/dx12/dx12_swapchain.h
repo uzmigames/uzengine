@@ -1,3 +1,5 @@
+#pragma once
+
 /// DX12 Swapchain — IDXGISwapChain4 wrapper with FLIP_DISCARD presentation.
 ///
 /// Wraps IDXGISwapChain4 with the modern FLIP_DISCARD presentation model for optimal
@@ -15,8 +17,6 @@
 /// # Back Buffer Rotation
 /// After `Present()`, `GetCurrentBackBufferIndex()` advances automatically.
 /// The render loop must re-query the current back buffer each frame.
-
-#pragma once
 
 #include "../rhi.h"
 

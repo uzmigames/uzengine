@@ -1,3 +1,6 @@
+/// Unit tests for engine memory ownership primitives — Own<T> exclusive
+/// ownership, Ref<T> shared immutable borrows, and RefMut<T> exclusive
+/// mutable borrows, including move semantics and lifetime safety.
 #include "engine_memory.h"
 
 #include <gtest/gtest.h>

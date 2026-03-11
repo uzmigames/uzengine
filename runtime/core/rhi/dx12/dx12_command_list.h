@@ -57,6 +57,8 @@ public:
     void SetViewport(const RHIViewport& viewport) override;
     void SetScissor(const RHIScissorRect& scissor) override;
     void SetDescriptorIndex(uint32_t rootParamIndex, uint32_t descriptorIndex) override;
+    void SetRootConstants(uint32_t rootParamIndex, const uint32_t* data,
+                          uint32_t count, uint32_t offsetIn32BitValues) override;
     void SetRootCBV(uint32_t rootParamIndex, uint64_t gpuAddress) override;
 
     void DrawIndexed(uint32_t indexCount, uint32_t instanceCount = 1,
@@ -74,6 +76,10 @@ public:
     void CopyBuffer(RHIBufferHandle src, uint64_t srcOffset,
                     RHIBufferHandle dst, uint64_t dstOffset, uint64_t size) override;
     void CopyTexture(RHITextureHandle src, RHITextureHandle dst) override;
+    void CopyBufferToTexture(RHIBufferHandle srcBuffer, uint64_t srcOffset,
+                             uint32_t srcRowPitch,
+                             RHITextureHandle dstTexture,
+                             uint32_t mipLevel = 0, uint32_t arraySlice = 0) override;
 
     void BeginRenderPass(const RHIRenderPassDesc& desc) override;
     void EndRenderPass() override;

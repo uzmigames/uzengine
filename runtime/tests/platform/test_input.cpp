@@ -1,3 +1,6 @@
+/// Unit tests for the input system — key and mouse button state tracking,
+/// action mapping registration, binding resolution, and event dispatch
+/// ordering across a simulated frame boundary.
 #include "input.h"
 
 #include <gtest/gtest.h>

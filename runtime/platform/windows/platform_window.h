@@ -36,6 +36,8 @@
 
 namespace uz {
 
+class InputSystem;
+
 /// Window creation parameters.
 ///
 /// Passed to PlatformWindow::Create() to configure HWND behavior.
@@ -147,6 +149,13 @@ class PlatformWindow {
     [[nodiscard]] HINSTANCE GetHInstance() const { return m_hinstance; }
 #endif
 
+    /// Binds an InputSystem to receive keyboard and mouse events from this window.
+    ///
+    /// # Arguments
+    /// * `input` — Input system to route WM_KEY*/WM_MOUSE* events to.
+    ///   Pass `nullptr` to unbind. Must outlive this window while bound.
+    void SetInputSystem(InputSystem* input) { m_input = input; }
+
   private:
 #ifdef _WIN32
     HWND m_hwnd = nullptr;
@@ -154,6 +163,7 @@ class PlatformWindow {
     static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
 #endif
 
+    InputSystem* m_input = nullptr;
     int32_t m_width = 0;
     int32_t m_height = 0;
     bool m_open = false;

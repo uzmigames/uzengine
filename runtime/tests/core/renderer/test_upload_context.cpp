@@ -54,3 +54,44 @@ TEST(UploadContext, ReleaseOnEmptyIsNoOp) {
     ctx.ReleaseStaging(); // Should not crash
     EXPECT_EQ(ctx.GetStagingCount(), 0u);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// UploadTexture — Argument validation (no device needed)
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST(UploadContext, UploadTextureRejectsNullDevice) {
+    UploadContext ctx(nullptr);
+    uint8_t data = 42;
+    EXPECT_FALSE(ctx.UploadTexture(nullptr, RHITextureHandle{}, &data, 1));
+}
+
+TEST(UploadContext, UploadTextureRejectsNullData) {
+    auto* fakeDevice = reinterpret_cast<IRHIDevice*>(0x1);
+    auto* fakeCmdList = reinterpret_cast<IRHICommandList*>(0x1);
+    UploadContext ctx(fakeDevice);
+    EXPECT_FALSE(ctx.UploadTexture(fakeCmdList, RHITextureHandle{}, nullptr, 100));
+}
+
+TEST(UploadContext, UploadTextureRejectsZeroSize) {
+    auto* fakeDevice = reinterpret_cast<IRHIDevice*>(0x1);
+    auto* fakeCmdList = reinterpret_cast<IRHICommandList*>(0x1);
+    UploadContext ctx(fakeDevice);
+    uint8_t data = 42;
+    EXPECT_FALSE(ctx.UploadTexture(fakeCmdList, RHITextureHandle{}, &data, 0));
+}
+
+TEST(UploadContext, UploadTextureRejectsNullCmdList) {
+    auto* fakeDevice = reinterpret_cast<IRHIDevice*>(0x1);
+    UploadContext ctx(fakeDevice);
+    uint8_t data = 42;
+    EXPECT_FALSE(ctx.UploadTexture(nullptr, RHITextureHandle{}, &data, 1));
+}
+
+TEST(UploadContext, UploadTextureRejectsInvalidHandle) {
+    auto* fakeDevice = reinterpret_cast<IRHIDevice*>(0x1);
+    auto* fakeCmdList = reinterpret_cast<IRHICommandList*>(0x1);
+    UploadContext ctx(fakeDevice);
+    uint8_t data = 42;
+    RHITextureHandle invalid = RHITextureHandle::Invalid();
+    EXPECT_FALSE(ctx.UploadTexture(fakeCmdList, invalid, &data, 4));
+}

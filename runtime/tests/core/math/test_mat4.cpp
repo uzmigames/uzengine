@@ -1,3 +1,6 @@
+/// Unit tests for Mat4 — identity, translation, rotation, and scale
+/// construction, matrix multiplication associativity, inverse correctness,
+/// and TRS decomposition round-trips.
 #include "engine_math.h"
 
 #include <gtest/gtest.h>

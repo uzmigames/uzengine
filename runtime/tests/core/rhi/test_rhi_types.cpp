@@ -1,3 +1,6 @@
+/// Unit tests for RHI type definitions — handle validity sentinel values,
+/// enum numeric stability, descriptor struct field defaults, and
+/// backend-independent type size/alignment constraints.
 #include "rhi_types.h"
 #include "rhi.h"
 #include "rhi_backend.h"
@@ -202,4 +205,60 @@ TEST(RHIInterfaces, HaveVirtualDestructors) {
     static_assert(std::has_virtual_destructor_v<IRHICommandList>);
     static_assert(std::has_virtual_destructor_v<IRHISwapChain>);
     static_assert(std::has_virtual_destructor_v<IRHIDevice>);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BytesPerTexel Tests
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST(BytesPerTexel, UnknownReturnsZero) {
+    EXPECT_EQ(BytesPerTexel(RHIFormat::Unknown), 0u);
+}
+
+TEST(BytesPerTexel, SingleChannel8Bit) {
+    EXPECT_EQ(BytesPerTexel(RHIFormat::R8Unorm), 1u);
+}
+
+TEST(BytesPerTexel, TwoChannel8Bit) {
+    EXPECT_EQ(BytesPerTexel(RHIFormat::RG8Unorm), 2u);
+}
+
+TEST(BytesPerTexel, FourChannel8Bit) {
+    EXPECT_EQ(BytesPerTexel(RHIFormat::RGBA8Unorm), 4u);
+    EXPECT_EQ(BytesPerTexel(RHIFormat::RGBA8Srgb), 4u);
+    EXPECT_EQ(BytesPerTexel(RHIFormat::BGRA8Unorm), 4u);
+    EXPECT_EQ(BytesPerTexel(RHIFormat::BGRA8Srgb), 4u);
+}
+
+TEST(BytesPerTexel, HalfFloatFormats) {
+    EXPECT_EQ(BytesPerTexel(RHIFormat::R16Float), 2u);
+    EXPECT_EQ(BytesPerTexel(RHIFormat::RG16Float), 4u);
+    EXPECT_EQ(BytesPerTexel(RHIFormat::RGBA16Float), 8u);
+}
+
+TEST(BytesPerTexel, FullFloatFormats) {
+    EXPECT_EQ(BytesPerTexel(RHIFormat::R32Float), 4u);
+    EXPECT_EQ(BytesPerTexel(RHIFormat::RG32Float), 8u);
+    EXPECT_EQ(BytesPerTexel(RHIFormat::RGB32Float), 12u);
+    EXPECT_EQ(BytesPerTexel(RHIFormat::RGBA32Float), 16u);
+}
+
+TEST(BytesPerTexel, UintFormats) {
+    EXPECT_EQ(BytesPerTexel(RHIFormat::R32Uint), 4u);
+    EXPECT_EQ(BytesPerTexel(RHIFormat::RG32Uint), 8u);
+    EXPECT_EQ(BytesPerTexel(RHIFormat::RGBA32Uint), 16u);
+}
+
+TEST(BytesPerTexel, DepthFormats) {
+    EXPECT_EQ(BytesPerTexel(RHIFormat::D16Unorm), 2u);
+    EXPECT_EQ(BytesPerTexel(RHIFormat::D32Float), 4u);
+    EXPECT_EQ(BytesPerTexel(RHIFormat::D24UnormS8Uint), 4u);
+    EXPECT_EQ(BytesPerTexel(RHIFormat::D32FloatS8Uint), 8u);
+}
+
+TEST(BytesPerTexel, IsConstexpr) {
+    constexpr uint32_t rgba8 = BytesPerTexel(RHIFormat::RGBA8Unorm);
+    static_assert(rgba8 == 4, "RGBA8Unorm should be 4 bytes");
+    constexpr uint32_t unknown = BytesPerTexel(RHIFormat::Unknown);
+    static_assert(unknown == 0, "Unknown should be 0 bytes");
 }

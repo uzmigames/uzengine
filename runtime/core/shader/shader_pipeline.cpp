@@ -385,6 +385,44 @@ std::vector<uint8_t> ShaderPipeline::LoadBytecode(
     return compileResult.bytecode;
 }
 
+std::vector<uint8_t> ShaderPipeline::LoadBytecodeFromSource(
+    const std::string& name,
+    const std::string& hlslSource,
+    const std::string& permutationDefines)
+{
+    if (!m_initialized || !m_impl->compiler) {
+        UZ_LOG(IO, Error, "ShaderPipeline::LoadBytecodeFromSource: not initialized or no compiler (name='{}')", name);
+        return {};
+    }
+
+    // Parse defines
+    std::vector<std::string> defineStrings;
+    if (!permutationDefines.empty()) {
+        std::istringstream ss(permutationDefines);
+        std::string token;
+        while (std::getline(ss, token, ';')) {
+            if (!token.empty()) {
+                defineStrings.push_back(token);
+            }
+        }
+    }
+
+    ShaderCompileDesc desc;
+    desc.source = hlslSource;
+    desc.sourceName = name;
+    desc.defines = defineStrings;
+    desc.stage = InferStageFromPath(name);
+
+    auto compileResult = m_impl->compiler->Compile(desc);
+    if (!compileResult.success) {
+        UZ_LOG(IO, Error, "ShaderPipeline::LoadBytecodeFromSource: compile failed for '{}': {}",
+               name, compileResult.errors);
+        return {};
+    }
+
+    return compileResult.bytecode;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Hot-reload
 // ─────────────────────────────────────────────────────────────────────────────

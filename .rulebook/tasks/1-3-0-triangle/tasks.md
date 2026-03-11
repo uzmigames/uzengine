@@ -22,20 +22,31 @@
 - [x] 3.5 Tests: CB struct layout, ring allocator validation (16 tests)
 
 ## Phase 4: Texture Pipeline
-- [ ] 4.1 Integrate stb_image (header-only, add to thirdparty/)
-- [ ] 4.2 Implement texture upload (staging → default heap → generate mips if needed)
-- [ ] 4.3 Create SRV descriptor in bindless heap for loaded textures
-- [ ] 4.4 Create sampler objects (linear, point, anisotropic) in sampler heap
-- [ ] 4.5 Render textured quad (SM6.6 `ResourceDescriptorHeap[index]`)
-- [ ] 4.6 Tests: texture load/upload, SRV allocation, sampler creation
+- [x] 4.1 Integrate stb_image (+ libjpeg-turbo, tinyexr, basis_universal, astcenc — all with 22 tests)
+- [x] 4.2 Implement texture upload (staging → default heap → generate mips if needed)
+- [x] 4.3 Create SRV descriptor in bindless heap for loaded textures
+- [x] 4.4 Create sampler objects (linear, point, anisotropic) in sampler heap
+- [x] 4.5 Render textured quad (SM6.6 `ResourceDescriptorHeap[index]`)
+- [x] 4.6 Tests: texture load/upload, SRV allocation, sampler creation
 
 ## Phase 5: Camera System
-- [ ] 5.1 Perspective projection (FOV, aspect, near, far)
-- [ ] 5.2 Orthographic projection
-- [ ] 5.3 View matrix from position + quaternion orientation
-- [ ] 5.4 FPS camera controller (WASD + mouse look, delta-time smoothing)
-- [ ] 5.5 Camera feeds per-frame CB (ViewProj matrix)
-- [ ] 5.6 Tests: projection math, view matrix, camera transforms
+- [x] 5.1 Perspective projection (FOV, aspect, near, far)
+- [x] 5.2 Orthographic projection
+- [x] 5.3 View matrix from position + quaternion orientation
+- [x] 5.4 FPS camera controller (WASD + mouse look, delta-time smoothing)
+- [x] 5.5 Camera feeds per-frame CB (ViewProj matrix)
+- [x] 5.6 Tests: projection math, view matrix, camera transforms
+- [x] 5.7 Z-up coordinate system (left-handed, X-forward, Y-right, Z-up)
+- [x] 5.8 Camera space conversion: Y-up ↔ Z-up via ToYUp/FromYUp helpers
+- [x] 5.9 FPS controller rewrite: Euler angles → LookAt, ground-projected WASD movement
+- [x] 5.10 Grid depth correctness: SV_Depth pixel shader output for Z=0 plane
+- [x] 5.11 Cube positioned at Z=0: vertex offset for grid alignment
+
+## Phase 5b: Screenshot System (New)
+- [x] 5.12 ScreenshotCapture class: Init/CaptureBackBuffer/SaveToPNG/Shutdown
+- [x] 5.13 DX12 back buffer readback: create staging buffer, CopyResource, MapDiscard
+- [x] 5.14 stb_image_write PNG encoding: from RGBA8 readback to PNG file
+- [x] 5.15 Editor screenshot utility at `runtime/editor/screenshot/`
 
 ## Phase 6: Mesh Loading
 - [ ] 6.1 Define `.uzmesh` format (JSON header + binary blob)

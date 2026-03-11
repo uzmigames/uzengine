@@ -1,3 +1,6 @@
+/// Unit tests for the Config system — JSON file loading, CLI argument overrides,
+/// dotted-path key resolution, type coercion, missing-key defaults, and error
+/// handling for malformed or absent config files.
 #include "config.h"
 #include "log.h"
 

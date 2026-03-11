@@ -63,6 +63,27 @@ pub fn build(b: *std.Build) void {
         tp ++ "dxc/inc",
     };
 
+    // ── uzembed build tool (generates .hlsl.gen.h headers) ─────────
+
+    const embed_mod = b.createModule(.{ .target = target, .optimize = optimize });
+    embed_mod.link_libc = true;
+    embed_mod.link_libcpp = true;
+    embed_mod.addCSourceFiles(.{
+        .root = b.path("tools"),
+        .files = &.{"uzembed.cpp"},
+        .flags = cpp_flags,
+    });
+
+    const embed_exe = b.addExecutable(.{ .name = "uzembed", .root_module = embed_mod });
+    b.installArtifact(embed_exe);
+
+    // Run uzembed: shaders/editor/ → generated/shaders/editor/
+    const run_embed = b.addRunArtifact(embed_exe);
+    run_embed.addArgs(&.{
+        "--input-dir",  b.path("shaders/editor").getPath(b),
+        "--output-dir", b.path("generated/shaders/editor").getPath(b),
+    });
+
     // ── Runtime static library ───────────────────────────────────────────
 
     const runtime_mod = b.createModule(.{
@@ -170,6 +191,9 @@ pub fn build(b: *std.Build) void {
     for (engine_include_dirs) |dir| runtime_mod.addIncludePath(b.path(dir));
     for (thirdparty_include_dirs) |dir| runtime_mod.addIncludePath(b.path(dir));
 
+    // Generated shader headers (from uzembed tool)
+    runtime_mod.addIncludePath(b.path("generated/shaders"));
+
     // Include paths — Windows-only
     if (is_windows) {
         for (windows_engine_include_dirs) |dir| runtime_mod.addIncludePath(b.path(dir));
@@ -181,6 +205,9 @@ pub fn build(b: *std.Build) void {
         .name = "uzengine_runtime",
         .root_module = runtime_mod,
     });
+
+    // Runtime compilation depends on uzembed having run
+    lib.step.dependOn(&run_embed.step);
 
     // DX12 system libraries (Windows only)
     if (is_windows) {
@@ -243,6 +270,7 @@ pub fn build(b: *std.Build) void {
     // Engine + thirdparty headers for tests
     for (engine_include_dirs) |dir| test_mod.addIncludePath(b.path(dir));
     for (thirdparty_include_dirs) |dir| test_mod.addIncludePath(b.path(dir));
+    test_mod.addIncludePath(b.path("generated/shaders"));
 
     if (is_windows) {
         test_mod.addIncludePath(b.path("core/rhi/dx12"));
@@ -275,12 +303,6 @@ pub fn build(b: *std.Build) void {
     // ── Demos & Tools (Windows/DX12 only) ────────────────────────────────
 
     if (is_windows) {
-        const clear_screen_build = @import("demos/clear_screen/build.zig");
-        clear_screen_build.addTo(b, lib, target, optimize, &engine_include_dirs, &thirdparty_include_dirs, &windows_engine_include_dirs, &windows_thirdparty_include_dirs, cpp_flags);
-
-        const triangle_build = @import("demos/triangle/build.zig");
-        triangle_build.addTo(b, lib, target, optimize, &engine_include_dirs, &thirdparty_include_dirs, &windows_engine_include_dirs, &windows_thirdparty_include_dirs, cpp_flags);
-
         const win_sys_libs = [_][]const u8{ "d3d12", "dxgi", "dxguid", "gdi32", "user32" };
 
         // Helper to create a tool exe from a single .cpp + agility

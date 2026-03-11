@@ -1,3 +1,5 @@
+/// Unit tests for Transform — TRS composition, parent-child hierarchy
+/// concatenation, inverse computation, and world-space point transformation.
 #include "engine_math.h"
 
 #include <gtest/gtest.h>

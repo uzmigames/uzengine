@@ -1,4 +1,17 @@
 /// UzEngine Shader Reflection — SPIRV-Reflect implementation.
+///
+/// Extracts descriptor bindings, push constant blocks, entry point names,
+/// and stage flags from compiled SPIR-V bytecode using the spirv-reflect library.
+///
+/// Key algorithms:
+///   - `ReflectSPIRV`: walks `spvReflectEnumerateDescriptorBindings` and
+///     `spvReflectEnumeratePushConstantBlocks`, mapping SPIR-V types to the
+///     engine's `ShaderResourceType` vocabulary.
+///   - `MergeBindings`: deduplicates bindings from multiple pipeline stages by
+///     (set, binding) key, ORing stage-flag bits when the same slot appears in
+///     more than one stage.
+///   - `SortBindings`: sorts the merged list by (set, binding) for deterministic
+///     root-signature / descriptor-set layout construction.
 
 #include "shader_reflection.h"
 #include "log.h"
@@ -16,6 +29,18 @@ namespace uz {
 // Type Mapping Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Maps a SPIR-V descriptor type integer to the engine's `ShaderResourceType`.
+///
+/// Combined-image-samplers and plain samplers both become `Sampler`.
+/// Storage images, storage buffers, and texel-storage buffers become `UnorderedAccess`.
+/// Acceleration structures are treated as read-only `ShaderResource`.
+/// Unrecognised descriptor types fall back to `ShaderResource`.
+///
+/// # Arguments
+/// - `spvDescriptorType`: raw `SpvReflectDescriptorType` value cast to uint32_t.
+///
+/// # Returns
+/// The closest engine-side `ShaderResourceType` equivalent.
 ShaderResourceType MapSpvDescriptorType(uint32_t spvDescriptorType) {
     switch (static_cast<SpvReflectDescriptorType>(spvDescriptorType)) {
         case SPV_REFLECT_DESCRIPTOR_TYPE_UNIFORM_BUFFER:
@@ -47,6 +72,18 @@ ShaderResourceType MapSpvDescriptorType(uint32_t spvDescriptorType) {
     }
 }
 
+/// Converts a SPIR-V shader stage bitmask into the engine's `ShaderStageFlags`.
+///
+/// Each SPIR-V `SPV_REFLECT_SHADER_STAGE_*_BIT` is tested independently so
+/// multi-stage modules (rare but valid) produce a correctly combined result.
+/// Tessellation control → Hull, tessellation evaluation → Domain, to match
+/// HLSL / DX12 terminology.
+///
+/// # Arguments
+/// - `spvStageFlags`: raw `SpvReflectShaderStageFlagBits` value cast to uint32_t.
+///
+/// # Returns
+/// Engine `ShaderStageFlags` bitmask with the corresponding stage bits set.
 ShaderStageFlags MapSpvStageFlags(uint32_t spvStageFlags) {
     ShaderStageFlags flags = 0;
     if (spvStageFlags & SPV_REFLECT_SHADER_STAGE_VERTEX_BIT)                  flags |= kStageVertex;
@@ -60,6 +97,11 @@ ShaderStageFlags MapSpvStageFlags(uint32_t spvStageFlags) {
     return flags;
 }
 
+/// Returns a human-readable string for a `ShaderResourceType` enum value.
+/// Intended for logging and debug output only — not a stable serialisation format.
+///
+/// # Returns
+/// A null-terminated string literal; never returns null.
 const char* ShaderResourceTypeName(ShaderResourceType type) {
     switch (type) {
         case ShaderResourceType::ConstantBuffer:  return "ConstantBuffer";
@@ -181,6 +223,21 @@ bool ReflectionSucceeded(const ShaderReflectionResult& result) {
     return result.error.empty();
 }
 
+/// Merges per-stage reflection results into a single deduplicated binding list.
+///
+/// When the same (set, binding) slot appears in multiple stages (e.g., a
+/// uniform buffer visible to both vertex and fragment shaders), the entries are
+/// collapsed into one and their `stageFlags` fields are OR-combined so the final
+/// binding accurately represents all stages that consume it.
+///
+/// Dedup key: `(set << 32) | binding` packed into a uint64_t for cheap hashing.
+/// Insertion order within each stage is preserved for the first occurrence.
+///
+/// # Arguments
+/// - `stageResults`: one `ShaderReflectionResult` per compiled stage (e.g., VS, PS).
+///
+/// # Returns
+/// A flat vector of unique bindings, ready for `SortBindings`.
 std::vector<ShaderResourceBinding> MergeBindings(
     const std::vector<ShaderReflectionResult>& stageResults)
 {
@@ -219,6 +276,14 @@ std::vector<ShaderResourceBinding> MergeBindings(
     return merged;
 }
 
+/// Sorts a binding list by (set, binding) in ascending order.
+///
+/// Deterministic ordering is required so that root-signature / descriptor-set
+/// layouts built from the same shader produce identical results regardless of
+/// the order in which bindings were discovered during reflection.
+///
+/// # Arguments
+/// - `bindings`: list to sort in-place.
 void SortBindings(std::vector<ShaderResourceBinding>& bindings) {
     std::sort(bindings.begin(), bindings.end(),
         [](const ShaderResourceBinding& a, const ShaderResourceBinding& b) {

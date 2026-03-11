@@ -1,3 +1,5 @@
+/// Unit tests for FrameArray — per-frame linear-backed array push, indexed
+/// access, scope-lifetime auto-reset, and overflow detection behaviour.
 #include "frame_array.h"
 
 #include <gtest/gtest.h>

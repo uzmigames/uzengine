@@ -148,3 +148,44 @@ Atomic int64 counters organized by stat group (Core, Memory, Renderer, Physics, 
 All allocators: named, budget-tracked, report `Used()` / `Remaining()` / `GetSize()`.
 
 > **Guide**: [Memory & Allocators](../../guides/memory/overview.md)
+
+---
+
+## Random (`core/random/random.h`)
+
+PCG-based pseudo-random number generator (XSH-RR variant) with deterministic seeding.
+Passes the BigCrush test suite. Suitable for procedural generation, physics randomization, and sampling.
+Not suitable for cryptography.
+
+### PCGRandom
+
+| Method | Description |
+|--------|-------------|
+| `PCGRandom(seed)` | Construct with a single 64-bit seed for a deterministic sequence |
+| `PCGRandom(seed, seq)` | Construct with seed + stream identifier for independent parallel streams |
+| `Seed(seed)` | Re-seed the generator in place |
+| `Next()` | Next uniformly distributed `uint32_t` in `[0, 2^32)` |
+| `Float()` | Uniform `float` in `[0.0, 1.0)` |
+| `Double()` | Uniform `double` in `[0.0, 1.0)` |
+| `Range(min, max)` | Uniform `float` in `[min, max)` |
+| `Int(min, max)` | Uniform `int32_t` in `[min, max]` inclusive |
+| `UInt(max)` | Uniform `uint32_t` in `[0, max)` |
+| `Bool()` | Random boolean (50/50 coin flip) |
+| `UnitSphere(x, y, z)` | Random unit vector on the sphere surface (Marsaglia method) |
+| `UnitDisk(x, y)` | Random point inside the unit disk (rejection sampling) |
+
+```cpp
+PCGRandom rng(42);
+float speed  = rng.Range(5.0f, 15.0f);  // [5, 15)
+int   damage = rng.Int(10, 25);          // [10, 25]
+uint32_t idx = rng.UInt(array.size());  // valid index
+```
+
+Thread-safe only when each thread owns its own `PCGRandom` instance. Use the two-argument
+constructor to create independent streams: same seed, different `seq` values.
+
+```cpp
+// Independent streams per thread
+PCGRandom thread0_rng(master_seed, 0);
+PCGRandom thread1_rng(master_seed, 1);
+```

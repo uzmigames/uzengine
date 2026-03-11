@@ -560,7 +560,7 @@ ID3D12RootSignature* CreateBindlessRootSignature(ID3D12Device* device, ShaderMod
     rootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
     rootParams[0].Constants.ShaderRegister = 0;   // b0
     rootParams[0].Constants.RegisterSpace = 0;
-    rootParams[0].Constants.Num32BitValues = 1;
+    rootParams[0].Constants.Num32BitValues = 4;
     rootParams[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
     rootParams[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;

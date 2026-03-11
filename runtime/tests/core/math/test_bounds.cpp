@@ -1,3 +1,6 @@
+/// Unit tests for geometric bounds — AABB construction and expansion,
+/// point/AABB intersection, Plane signed-distance, and Frustum culling
+/// against AABB and sphere primitives.
 #include "geometry.h"
 #include "engine_math.h"
 
@@ -85,9 +88,11 @@ class FrustumTest : public ::testing::Test {
     Frustum frustum;
 
     void SetUp() override {
-        Mat4 view = Mat4::LookAt(Vec3(0, 0, -5), Vec3(0, 0, 0), Vec3::Up());
+        // Mat4::LookAt wraps XMMatrixLookAtLH which uses Y-up convention.
+        // Pass Y-up vector (0,1,0) directly, NOT Vec3::Up() which is Z-up (0,0,1).
+        Mat4 view = Mat4::LookAt(Vec3(0, 0, -5), Vec3(0, 0, 0), Vec3(0, 1, 0));
         Mat4 proj = Mat4::Perspective(XM_PIDIV4, 1.0f, 0.1f, 100.0f);
-        Mat4 vp = proj * view; // Correct order: proj applied after view
+        Mat4 vp = proj * view;
         frustum = Frustum::FromViewProj(vp);
     }
 };

@@ -73,6 +73,20 @@ namespace uz {
 // String Conversion Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Converts a UTF-8 encoded `std::string` to a `std::wstring` (UTF-16 on Windows).
+///
+/// Uses `MultiByteToWideChar(CP_UTF8, ...)` with a two-pass approach: the first
+/// call determines the required buffer length, the second fills it.  An empty
+/// input string short-circuits to an empty wide string without an API call.
+///
+/// Required because DXC accepts file paths and entry-point names only as wide
+/// strings (`LPCWSTR`), while the rest of the engine works exclusively in UTF-8.
+///
+/// # Arguments
+/// - `s`: UTF-8 string to convert.
+///
+/// # Returns
+/// The equivalent UTF-16 wide string.
 static std::wstring ToWide(const std::string& s) {
     if (s.empty()) return {};
     int len = MultiByteToWideChar(CP_UTF8, 0, s.c_str(),

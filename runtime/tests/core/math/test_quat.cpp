@@ -1,3 +1,5 @@
+/// Unit tests for Quat — identity, axis-angle construction, Hamilton product,
+/// slerp/lerp interpolation, to-matrix conversion, and normalisation.
 #include "engine_math.h"
 
 #include <gtest/gtest.h>

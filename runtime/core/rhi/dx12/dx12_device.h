@@ -91,6 +91,8 @@ public:
     // ── IRHIDevice: Texture operations ───────────────────────────────────
     RHITextureHandle CreateTexture(const RHITextureDesc& desc) override;
     void DestroyTexture(RHITextureHandle handle) override;
+    uint32_t GetTextureSRVIndex(RHITextureHandle handle) const override;
+    RHITextureDesc GetTextureDesc(RHITextureHandle handle) const override;
 
     // ── IRHIDevice: Shader operations ────────────────────────────────────
     RHIShaderHandle CreateShader(const RHIShaderDesc& desc) override;
@@ -103,6 +105,7 @@ public:
     // ── IRHIDevice: Sampler operations ───────────────────────────────────
     RHISamplerHandle CreateSampler(const RHISamplerDesc& desc) override;
     void DestroySampler(RHISamplerHandle handle) override;
+    uint32_t GetSamplerIndex(RHISamplerHandle handle) const override;
 
     // ── IRHIDevice: Swap chain operations ────────────────────────────────
     IRHISwapChain* CreateSwapChain(const RHISwapChainDesc& desc) override;

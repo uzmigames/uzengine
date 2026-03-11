@@ -1,3 +1,6 @@
+/// GoogleTest entry point for the UzEngine runtime test suite.
+/// Initialises the logging system before any test runs so test output
+/// captures engine diagnostics alongside GoogleTest results.
 #include <cstdlib>
 #include <filesystem>
 #include <gtest/gtest.h>

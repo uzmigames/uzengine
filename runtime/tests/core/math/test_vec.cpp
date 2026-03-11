@@ -1,3 +1,5 @@
+/// Unit tests for Vec2, Vec3, and Vec4 — component-wise arithmetic, dot
+/// product, cross product (Vec3), normalisation, length, and swizzle access.
 #include "engine_math.h"
 
 #include <gtest/gtest.h>
@@ -155,9 +157,10 @@ TEST(Vec3Test, MinMax) {
 }
 
 TEST(Vec3Test, NamedDirections) {
-    EXPECT_TRUE(Vec3::Up() == Vec3::UnitY());
-    EXPECT_TRUE(Vec3::Forward() == Vec3::UnitZ());
-    EXPECT_TRUE(Vec3::Right() == Vec3::UnitX());
+    // Engine uses Z-up coordinate system: +X forward, +Y right, +Z up
+    EXPECT_TRUE(Vec3::Up() == Vec3::UnitZ());
+    EXPECT_TRUE(Vec3::Forward() == Vec3::UnitX());
+    EXPECT_TRUE(Vec3::Right() == Vec3::UnitY());
 }
 
 TEST(Vec3Test, StorageConversion) {

@@ -1,3 +1,6 @@
+/// Unit tests for the Color type — linear-to-sRGB and sRGB-to-linear
+/// conversion accuracy, gamma-correct blending, hex round-trips, and
+/// per-channel arithmetic operations.
 #include "color.h"
 #include "engine_math.h"
 

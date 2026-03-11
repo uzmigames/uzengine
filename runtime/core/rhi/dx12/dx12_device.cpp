@@ -547,6 +547,18 @@ uint64_t DX12Device::GetBufferGPUAddress(RHIBufferHandle handle) const {
     return buf->resource->GetGPUVirtualAddress();
 }
 
+uint32_t DX12Device::GetTextureSRVIndex(RHITextureHandle handle) const {
+    const DX12Texture* tex = m_texturePool.Get(handle.index, handle.generation);
+    if (!tex) return UINT32_MAX;
+    return tex->srvIndex;
+}
+
+RHITextureDesc DX12Device::GetTextureDesc(RHITextureHandle handle) const {
+    const DX12Texture* tex = m_texturePool.Get(handle.index, handle.generation);
+    if (!tex) return {};
+    return tex->desc;
+}
+
 RHITextureHandle DX12Device::CreateTexture(const RHITextureDesc& desc) {
     uint32_t generation = 0;
     uint32_t index = m_texturePool.Allocate(generation);
@@ -673,6 +685,12 @@ void DX12Device::DestroySampler(RHISamplerHandle handle) {
     }
     DestroyDX12Sampler(*sampler, m_samplerAllocator);
     m_samplerPool.Free(handle.index);
+}
+
+uint32_t DX12Device::GetSamplerIndex(RHISamplerHandle handle) const {
+    const DX12Sampler* sampler = m_samplerPool.Get(handle.index, handle.generation);
+    if (!sampler) return UINT32_MAX;
+    return sampler->samplerIndex;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

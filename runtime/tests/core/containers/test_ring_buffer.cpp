@@ -1,3 +1,5 @@
+/// Unit tests for RingBuffer — SPSC push/pop ordering, wrap-around
+/// correctness, full/empty edge cases, and non-blocking try_pop semantics.
 #include "ring_buffer.h"
 
 #include <gtest/gtest.h>

@@ -1,3 +1,6 @@
+/// Unit tests for the profiler module — Tracy scope instrumentation,
+/// stat counter accumulation, and zero-overhead no-op behaviour when
+/// profiling is disabled at compile time.
 #include "profiler.h"
 
 #include <gtest/gtest.h>

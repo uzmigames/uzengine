@@ -1,3 +1,6 @@
+/// Unit tests for engine assertion macros — UZ_CHECK hard-abort on invariant
+/// violation, UZ_ENSURE recoverable-violation reporting, and UZ_VERIFY
+/// side-effect-safe expression evaluation in all build configurations.
 #include "engine_assert.h"
 
 #include <gtest/gtest.h>

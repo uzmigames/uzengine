@@ -2,7 +2,38 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
-## [0.2.0] — 2026-03-10
+## [0.2.0] — 2026-03-11
+
+### Stats Overlay
+- **StatsOverlay** (`editor/stats/stats_overlay.h/.cpp`):
+  - FPS counter, frame time (ms), GPU adapter name, resolution display
+  - Configurable position (top-left/top-right/bottom-left/bottom-right)
+  - Uses TextRenderer for bitmap font rendering
+  - Toggle visibility at runtime
+
+### Camera System & 3D Space
+- **Z-up coordinate system**: All camera, controller, and grid operations use left-handed X-forward, Y-right, Z-up (matching UE5)
+- **Camera space conversion**: Internal storage uses Y-up quaternions for consistency, public API converts via ToYUp/FromYUp helpers at boundaries
+- **View matrix**: Swap matrix transforms Z-up coordinates to Y-up before feeding to XMMatrixLookToLH (Y-up space)
+- **FPS camera controller rewritten**:
+  - Euler angle-based orientation system (pitch, yaw, roll)
+  - LookAt vector construction from Euler angles
+  - Ground-projected movement (WASD moves along flat plane, not in view direction)
+  - Delta-time smoothing for stable, responsive controls
+- **Grid depth correctness**:
+  - Pixel shader now outputs explicit SV_Depth to Z=0 plane
+  - Grid pipeline changed from depthWrite=false to depthWrite=true to enable depth output
+  - Prevents grid from overlapping with actual 3D geometry
+- **Cube positioning**: Vertex offsets set cube bottom face at Z=0 for correct grid alignment
+
+### Screenshot System
+- **ScreenshotCapture utility** (`runtime/editor/screenshot/screenshot.h/.cpp`):
+  - `Init()`: Create staging buffer for back buffer readback
+  - `CaptureBackBuffer()`: Async GPU → CPU copy via staging buffer (MapDiscard pattern)
+  - `SaveToPNG()`: PNG encoding via stb_image_write from RGBA8 readback
+  - `Shutdown()`: Cleanup GPU resources
+- **Integration**: Editor utility for automated back buffer → PNG capture (off-screen rendering, CI screenshots, automated testing)
+- **Back buffer readback**: Proper DX12 staging + fence synchronization to ensure GPU work completes before CPU reads
 
 ### Build System
 - **CMake support** — Added `CMakeLists.txt` and `CMakePresets.json` for MSVC and Clang on Windows
@@ -78,7 +109,7 @@
 - **DXC DLL deployment** (`build.zig`):
   - `dxcompiler.dll` + `dxil.dll` copied to `build/bin/` alongside executables
   - Test runner executes from install directory so `GetExeDir()` finds deployed DLLs
-- **302 unit tests** — 77 shader pipeline tests + 22 RHI config + 35 RHI type/resource + 8 paths + 160 core/math/container
+- **321 unit tests** — 19 engine shader + 77 shader pipeline + 22 RHI config + 35 RHI type/resource + 8 paths + 160 core/math/container
 
 ### Image Libraries (Texture Pipeline Dependencies)
 - **stb** (v2.30/1.16/2.16) — stb_image, stb_image_write, stb_image_resize2 for PNG/JPG/TGA/BMP/HDR loading, PNG writing, and high-quality resizing
@@ -88,6 +119,18 @@
 - **astcenc** (5.3.0) — ASTC texture encoder/decoder for mobile GPU targets (Android, iOS)
 - **22 integration tests** — Real functional tests for all 5 image libraries (round-trip encode/decode, format validation, error handling)
 - **Build system** — Both Zig (`build.zig`) and CMake (`CMakeLists.txt`) updated with include paths, source compilation, and test registration
+
+### Embedded Engine Shaders
+- **`uzembed` build tool** (`tools/uzembed.cpp`):
+  - Single-file C++ tool: `.hlsl` → `.hlsl.gen.h` (`constexpr char[]` in `uz::generated` namespace)
+  - Auto-generates `engine_shaders.gen.h` index with `enum class EngineShader` + `EngineShaders::GetSource()`/`GetName()` registry
+  - CLI: `uzembed --input-dir <dir> --output-dir <dir>`, deterministic alphabetical output
+  - Adding new shaders: drop `.hlsl` in `runtime/shaders/editor/` and rebuild — no manual registration
+- **`ShaderPipeline::LoadBytecodeFromSource()`** — compile from in-memory HLSL string (bypasses VFS/cache/hot-reload)
+- **Migration**: TextRenderer and EditorGrid now use embedded shaders — no VFS mount or disk paths needed
+- **`engine_shaders.h`** — thin wrapper that includes the auto-generated index header
+- **19 unit tests** — source non-empty, HLSL keyword validation, filename convention, stage suffix, distinctness
+- **Build integration**: Zig `build.zig` compiles and runs `uzembed` before runtime library compilation
 
 ### Shader Pipeline
 - **Shader VFS** (`core/shader/shader_vfs.h/.cpp`):

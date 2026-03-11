@@ -1,3 +1,5 @@
+/// Unit tests for the logging system — log categories, verbosity levels,
+/// output sink routing (file, console), and log filtering behaviour.
 #include "log.h"
 
 #include <filesystem>

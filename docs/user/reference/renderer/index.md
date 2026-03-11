@@ -85,8 +85,60 @@ or the GPU will read freed memory.
 
 ---
 
-## Related Pages
+## Camera (`camera.h`)
+
+Perspective and orthographic camera with Z-up coordinate system (left-handed: X-forward, Y-right, Z-up).
+
+### Perspective Projection
+
+Creates a view frustum with field-of-view, aspect ratio, and near/far planes.
+
+```cpp
+class PerspectiveCamera {
+    /// Set perspective projection and update ViewProj matrix
+    void SetPerspective(float fovDegrees, float aspectRatio, float nearClip, float farClip);
+};
+```
+
+### Orthographic Projection
+
+Creates a parallel projection (no perspective distortion).
+
+```cpp
+class OrthographicCamera {
+    /// Set orthographic projection (left, right, bottom, top, near, far)
+    void SetOrthographic(float left, float right, float bottom, float top, float nearClip, float farClip);
+};
+```
+
+### Z-Up Coordinate System
+
+The engine uses a **left-handed Z-up coordinate system**: X points forward, Y points right, Z points up.
+This differs from DirectXMath's default (Y-up), so cameras convert internally:
+
+```cpp
+/// Convert Z-up quaternion to Y-up for DirectXMath LookAt
+Quat ToYUp(const Quat& zUpQuat);
+
+/// Convert Y-up quaternion back to Z-up for storage
+Quat FromYUp(const Quat& yUpQuat);
+```
+
+Internally, cameras store orientation as Y-up quaternions for consistency with DirectXMath.
+The public API and view matrix construction handle the conversion transparently.
+
+### View Matrix
+
+Computes view matrix from position and quaternion orientation.
+
+```cpp
+Mat4 GetViewMatrix() const;  // Returns matrix with Z-up → Y-up conversion applied
+```
+
+The view matrix uses XMMatrixLookToLH after swapping Z-up to Y-up coordinates.
+
+### Related Pages
 
 - [RHI Module](../rhi/index.md) — Device, command lists, buffers
 - [Rendering Overview](../../guides/rendering/overview.md) — Graphics subsystem
-- [Math Module](../math/index.md) — Vec2, Vec3, Vec4 types used in vertices
+- [Math Module](../math/index.md) — Vec2, Vec3, Vec4, Quat, Mat4 types

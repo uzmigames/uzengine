@@ -49,10 +49,11 @@ Generated from source-level `///` documentation comments.
 | [Core](reference/core/index.md) | Logging, assertions, config, profiling, [paths](reference/core/paths.md) |
 | [Math](reference/math/index.md) | Vec2, Vec3, Vec4, Mat4, Quat, Transform, Color, AABB, Frustum |
 | [Containers](reference/containers/index.md) | RingBuffer, FreeList, HandleMap, FrameArray |
+| [Random](reference/core/index.md#random-corerandomrandomh) | PCGRandom generator, deterministic seeding |
 | [RHI](reference/rhi/index.md) | IRHIDevice, IRHICommandList, IRHISwapChain, handles, [config](reference/rhi/rhi-config.md) |
 | [Shader](reference/shader/index.md) | ShaderVFS, ShaderCompiler, ShaderCache, ShaderPipeline, hot-reload |
 | [Asset](reference/asset/index.md) | VFS, importers, cache, registry, .uzpak archive |
-| [Renderer](reference/renderer/index.md) | Vertex formats, UploadContext |
+| [Renderer](reference/renderer/index.md) | [Camera](reference/renderer/index.md#camera-camerah) (Z-up coordinate system), Vertex formats, UploadContext |
 | [Platform](reference/platform/index.md) | PlatformWindow, InputSystem, action mapping |
 
 ## Contributing

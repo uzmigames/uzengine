@@ -1,0 +1,501 @@
+/// Camera Test Demo Implementation
+///
+/// Renders a colored cube in 3D with FPS camera controls.
+/// WASD to move, right-click + mouse to look, Shift to sprint, Space/Ctrl up/down.
+
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include "camera_test_demo.h"
+#include "dx12_device.h"
+#include "dx12_swapchain.h"
+#include "dx12_command_list.h"
+#include "dx12_fence.h"
+#include "platform_window.h"
+#include "input.h"
+#include "log.h"
+#include "vertex.h"
+#include "upload_context.h"
+#include "constant_buffers.h"
+#include "camera.h"
+#include "fps_camera_controller.h"
+#include "shader_pipeline.h"
+#include "shader_compiler.h"
+#include "paths.h"
+#include "editor_grid.h"
+#include "screenshot_capture.h"
+#include "stats_overlay.h"
+
+#include <DirectXMath.h>
+#include <chrono>
+#include <cstring>
+#include <d3d12.h>
+#include <thread>
+
+using namespace DirectX;
+
+namespace uz {
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cube Geometry — 36 vertices (6 faces × 2 triangles × 3 verts)
+// ─────────────────────────────────────────────────────────────────────────────
+
+static constexpr uint32_t kCubeVertexCount = 36;
+static constexpr float kMaxFPS = 500.f;
+static constexpr float kMinFrameTime = 1.f / kMaxFPS;
+
+/// Fills outVerts with a unit cube centered at origin. Each face has a distinct color.
+static void GetCubeVertices(SimpleVertex outVerts[kCubeVertexCount]) {
+    // Face colors: +X=red, -X=cyan, +Y=green, -Y=magenta, +Z=blue, -Z=yellow
+    const Vec4 red    = {1, 0, 0, 1};
+    const Vec4 cyan   = {0, 1, 1, 1};
+    const Vec4 green  = {0, 1, 0, 1};
+    const Vec4 magenta= {1, 0, 1, 1};
+    const Vec4 blue   = {0, 0, 1, 1};
+    const Vec4 yellow = {1, 1, 0, 1};
+
+    // Half-extent; cube sits on Z=0 ground plane (bottom at Z=0, top at Z=1)
+    constexpr float h = 0.5f;
+    constexpr float zOff = h; // Offset so cube bottom = Z=0
+    const Vec2 uv00 = {0, 0}, uv10 = {1, 0}, uv01 = {0, 1}, uv11 = {1, 1};
+
+    uint32_t i = 0;
+    auto quad = [&](Vec3 a, Vec3 b, Vec3 c, Vec3 d, Vec4 col) {
+        a.z += zOff; b.z += zOff; c.z += zOff; d.z += zOff;
+        outVerts[i++] = {a, col, uv00};
+        outVerts[i++] = {b, col, uv10};
+        outVerts[i++] = {c, col, uv11};
+        outVerts[i++] = {a, col, uv00};
+        outVerts[i++] = {c, col, uv11};
+        outVerts[i++] = {d, col, uv01};
+    };
+
+    // +X face (forward)
+    quad({h,-h, h}, {h,-h,-h}, {h, h,-h}, {h, h, h}, red);
+    // -X face (back)
+    quad({-h,-h,-h}, {-h,-h, h}, {-h, h, h}, {-h, h,-h}, cyan);
+    // +Y face (right)
+    quad({-h, h, h}, { h, h, h}, { h, h,-h}, {-h, h,-h}, green);
+    // -Y face (left)
+    quad({-h,-h,-h}, { h,-h,-h}, { h,-h, h}, {-h,-h, h}, magenta);
+    // +Z face (top)
+    quad({-h,-h, h}, { h,-h, h}, { h, h, h}, {-h, h, h}, blue);
+    // -Z face (bottom)
+    quad({ h,-h,-h}, {-h,-h,-h}, {-h, h,-h}, { h, h,-h}, yellow);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Main Demo
+// ─────────────────────────────────────────────────────────────────────────────
+
+static constexpr uint32_t kFramesInFlight = 3;
+
+bool RunCameraTestDemo(const CameraTestConfig& config) {
+    const uint32_t frameCount = config.frameCount;
+    // ── Window ───────────────────────────────────────────────────────────
+    WindowDesc winDesc{};
+    winDesc.title = "UzEngine — Camera Test (WASD + RMB Look)";
+    winDesc.width = 1280;
+    winDesc.height = 720;
+
+    PlatformWindow window;
+    if (!window.Create(winDesc)) {
+        UZ_LOG(Renderer, Error, "Failed to create window");
+        return false;
+    }
+    window.Show();
+
+    // ── Input ────────────────────────────────────────────────────────────
+    InputSystem input;
+    input.Init();
+    window.SetInputSystem(&input);
+
+    // ── Device ───────────────────────────────────────────────────────────
+    RHIDeviceDesc deviceDesc{};
+    deviceDesc.backend = RHIBackend::DX12;
+#ifdef NDEBUG
+    deviceDesc.enableValidation = false;
+#else
+    deviceDesc.enableValidation = true;
+#endif
+
+    auto* device = static_cast<DX12Device*>(CreateRHIDevice(deviceDesc));
+    if (!device) {
+        UZ_LOG(Renderer, Error, "Failed to create RHI device");
+        return false;
+    }
+
+    // ── Swapchain ────────────────────────────────────────────────────────
+    RHISwapChainDesc scDesc{};
+    scDesc.windowHandle = window.GetHWND();
+    scDesc.width = static_cast<uint32_t>(window.GetWidth());
+    scDesc.height = static_cast<uint32_t>(window.GetHeight());
+    scDesc.bufferCount = kFramesInFlight;
+    scDesc.format = RHIFormat::RGBA8Unorm;
+    scDesc.vsync = false;
+
+    auto* swapChain = static_cast<DX12SwapChain*>(device->CreateSwapChain(scDesc));
+    if (!swapChain) {
+        UZ_LOG(Renderer, Error, "Failed to create swapchain");
+        DestroyRHIDevice(device);
+        return false;
+    }
+
+    // ── Command List ─────────────────────────────────────────────────────
+    auto* cmdList = static_cast<DX12CommandList*>(device->CreateCommandList(RHIQueueType::Graphics));
+    if (!cmdList) {
+        UZ_LOG(Renderer, Error, "Failed to create command list");
+        device->DestroySwapChain(swapChain);
+        DestroyRHIDevice(device);
+        return false;
+    }
+
+    // ── Fences ───────────────────────────────────────────────────────────
+    DX12Fence* frameFences[kFramesInFlight] = {};
+    uint64_t fenceValues[kFramesInFlight] = {};
+    for (uint32_t i = 0; i < kFramesInFlight; ++i) {
+        frameFences[i] = static_cast<DX12Fence*>(device->CreateFence());
+    }
+
+    // ── Shader Pipeline ──────────────────────────────────────────────────
+    ShaderCompiler compiler;
+    if (!compiler.Init()) {
+        UZ_LOG(Renderer, Error, "Failed to init shader compiler");
+        return false;
+    }
+
+    ShaderPipeline shaderPipeline;
+    ShaderPipeline::Config pipelineCfg;
+    pipelineCfg.cacheDir = (uz::GetExeDir() / "cache/shaders").string();
+    pipelineCfg.targetBackend = "dx12_sm66";
+    shaderPipeline.Init(pipelineCfg);
+    shaderPipeline.SetCompiler(&compiler);
+
+    std::string shadersDir = (uz::GetExeDir() / "../../shaders").string();
+    shaderPipeline.Mount("/demo/camera", shadersDir);
+
+    auto vsBytecode = shaderPipeline.LoadBytecode("/demo/camera/camera_vs.hlsl", "");
+    auto psBytecode = shaderPipeline.LoadBytecode("/demo/camera/camera_ps.hlsl", "");
+    if (vsBytecode.empty() || psBytecode.empty()) {
+        UZ_LOG(Renderer, Error, "Failed to load camera shaders");
+        return false;
+    }
+
+    // ── Shader Handles ───────────────────────────────────────────────────
+    RHIShaderDesc vsDesc{};
+    vsDesc.bytecode = vsBytecode.data();
+    vsDesc.bytecodeSize = vsBytecode.size();
+    vsDesc.stage = RHIShaderStage::Vertex;
+    vsDesc.entryPoint = "main";
+    vsDesc.debugName = "camera_vs";
+
+    RHIShaderDesc psDesc{};
+    psDesc.bytecode = psBytecode.data();
+    psDesc.bytecodeSize = psBytecode.size();
+    psDesc.stage = RHIShaderStage::Pixel;
+    psDesc.entryPoint = "main";
+    psDesc.debugName = "camera_ps";
+
+    RHIShaderHandle vsHandle = device->CreateShader(vsDesc);
+    RHIShaderHandle psHandle = device->CreateShader(psDesc);
+
+    // ── Pipeline ─────────────────────────────────────────────────────────
+    RHIGraphicsPipelineDesc pipeDesc{};
+    pipeDesc.vertexShader = vsHandle;
+    pipeDesc.pixelShader = psHandle;
+    pipeDesc.topology = RHIPrimitiveTopology::TriangleList;
+    pipeDesc.rasterizer.cullMode = RHICullMode::None;
+    pipeDesc.depthStencil.depthEnable = true;
+    pipeDesc.depthStencil.depthWrite = true;
+    pipeDesc.renderTargetFormats[0] = RHIFormat::RGBA8Unorm;
+    pipeDesc.renderTargetCount = 1;
+    pipeDesc.depthStencilFormat = RHIFormat::D32Float;
+    pipeDesc.debugName = "CameraCubePipeline";
+
+    RHIPipelineHandle pipeline = device->CreateGraphicsPipeline(pipeDesc);
+    if (!pipeline.IsValid()) {
+        UZ_LOG(Renderer, Error, "Failed to create pipeline");
+        return false;
+    }
+
+    // ── Vertex Buffer ────────────────────────────────────────────────────
+    SimpleVertex cubeVerts[kCubeVertexCount];
+    GetCubeVertices(cubeVerts);
+
+    RHIBufferDesc vbDesc{};
+    vbDesc.sizeBytes = sizeof(cubeVerts);
+    vbDesc.stride = sizeof(SimpleVertex);
+    vbDesc.usage = RHIBufferUsage::StructuredBuffer;
+    vbDesc.memory = RHIMemoryType::Upload;
+    vbDesc.debugName = "CubeVertexBuffer";
+
+    RHIBufferHandle vbHandle = device->CreateBuffer(vbDesc);
+    void* mapped = device->MapBuffer(vbHandle);
+    std::memcpy(mapped, cubeVerts, sizeof(cubeVerts));
+
+    uint32_t vbSrvIndex = device->GetBufferSRVIndex(vbHandle);
+
+    // ── Depth Buffer ─────────────────────────────────────────────────────
+    RHITextureDesc depthDesc{};
+    depthDesc.width = scDesc.width;
+    depthDesc.height = scDesc.height;
+    depthDesc.format = RHIFormat::D32Float;
+    depthDesc.usage = RHITextureUsage::DepthStencil;
+    depthDesc.debugName = "DepthBuffer";
+
+    RHITextureHandle depthBuffer = device->CreateTexture(depthDesc);
+
+    // ── CB Ring Allocator ────────────────────────────────────────────────
+    CBRingAllocator cbRing;
+    cbRing.Init(device, kFramesInFlight, 64 * 1024);
+
+    // ── Editor Grid ──────────────────────────────────────────────────────
+    EditorGrid editorGrid;
+    if (!editorGrid.Init(device, shaderPipeline, RHIFormat::RGBA8Unorm, RHIFormat::D32Float)) {
+        UZ_LOG(Renderer, Error, "Failed to initialize editor grid");
+        return false;
+    }
+
+    // ── Stats Overlay ─────────────────────────────────────────────────
+    StatsOverlay statsOverlay;
+    {
+        UploadContext upload(device);
+        cmdList->Begin();
+        if (!statsOverlay.Init(device, cmdList, upload, shaderPipeline,
+                               RHIFormat::RGBA8Unorm, winDesc.width, winDesc.height)) {
+            UZ_LOG(Renderer, Error, "Failed to initialize stats overlay");
+            return false;
+        }
+        cmdList->End();
+        cmdList->Execute();
+        device->WaitIdle();
+        upload.ReleaseStaging();
+    }
+
+    // ── Screenshot Capture ─────────────────────────────────────────────
+    ScreenshotCapture screenshotCapture;
+    bool screenshotPending = !config.screenshotPath.empty();
+    if (screenshotPending) {
+        if (!screenshotCapture.Init(device, scDesc.width, scDesc.height)) {
+            UZ_LOG(Renderer, Error, "Failed to initialize screenshot capture");
+            return false;
+        }
+    }
+
+    // ── Camera (UE5 default viewport values, scaled to meters) ─────────
+    Camera camera;
+    // UE5: 90° horizontal FOV → ~59° vertical FOV at 16:9
+    constexpr float kHFovDeg = 90.f;
+    constexpr float kAspect = 16.f / 9.f;
+    float vFovRad = 2.f * std::atan(std::tan(kHFovDeg * 0.5f * 3.14159265f / 180.f) / kAspect);
+    camera.SetPerspective(vFovRad,
+        static_cast<float>(winDesc.width) / static_cast<float>(winDesc.height),
+        0.1f, 1000.f);
+    // UE5 default: Position(0, 1024, 512)cm → meters: (0, 10.24, 5.12)
+    // Scaled down for our scene: (0, 5, 2.5)
+    // Yaw=-90° from +X = looking along -Y, Pitch=-15° = slightly downward
+    camera.SetPosition({0.f, 5.f, 2.5f});
+
+    constexpr float kPitchDeg = -15.f;
+    constexpr float kYawDeg = -90.f;
+    constexpr float kDegToRad = 3.14159265f / 180.f;
+    {
+        // Build forward direction from Euler angles in Z-up space
+        float yawRad = kYawDeg * kDegToRad;
+        float pitchRad = kPitchDeg * kDegToRad;
+        float cosPitch = std::cos(pitchRad);
+        Vec3 forward = {
+            std::cos(yawRad) * cosPitch,
+            std::sin(yawRad) * cosPitch,
+            std::sin(pitchRad)
+        };
+        Vec3 pos = camera.GetPosition();
+        camera.LookAt(pos + forward, Vec3::Up());
+    }
+
+    FPSCameraController cameraCtrl;
+    cameraCtrl.InitFromCamera(camera);
+    cameraCtrl.SetMoveSpeed(10.f);
+
+    // ── Render Loop ──────────────────────────────────────────────────────
+    uint32_t frameIndex = 0;
+    uint64_t globalFenceValue = 0;
+    auto prevTime = std::chrono::high_resolution_clock::now();
+    auto startTime = prevTime;
+
+    UZ_LOG(Renderer, Info, "Camera test demo started — WASD move, RMB+mouse look, Shift sprint");
+
+    while (window.PumpMessages() && window.IsOpen()) {
+        if (frameCount > 0 && frameIndex >= frameCount) break;
+
+        // ── Timing ───────────────────────────────────────────────────────
+        auto now = std::chrono::high_resolution_clock::now();
+        float dt = std::chrono::duration<float>(now - prevTime).count();
+        float totalTime = std::chrono::duration<float>(now - startTime).count();
+        prevTime = now;
+
+        // ── Stats ────────────────────────────────────────────────────────
+        statsOverlay.BeginFrame(dt);
+
+        // ── Input ────────────────────────────────────────────────────────
+        input.BeginFrame();
+
+        // ── Camera Update ────────────────────────────────────────────────
+        cameraCtrl.Update(camera, input, dt);
+
+        // Handle resize
+        if (window.WasResized()) {
+            device->WaitIdle();
+            swapChain->Resize(
+                static_cast<uint32_t>(window.GetWidth()),
+                static_cast<uint32_t>(window.GetHeight()));
+            // Recreate depth buffer at new size
+            device->DestroyTexture(depthBuffer);
+            depthDesc.width = static_cast<uint32_t>(window.GetWidth());
+            depthDesc.height = static_cast<uint32_t>(window.GetHeight());
+            depthBuffer = device->CreateTexture(depthDesc);
+            statsOverlay.SetScreenSize(depthDesc.width, depthDesc.height);
+            window.ClearResizedFlag();
+            camera.SetAspectRatio(
+                static_cast<float>(window.GetWidth()) /
+                static_cast<float>(window.GetHeight()));
+        }
+
+        // Wait for frame N-2
+        uint32_t allocFrame = frameIndex % kFramesInFlight;
+        if (fenceValues[allocFrame] > 0) {
+            frameFences[allocFrame]->WaitCPU(fenceValues[allocFrame]);
+        }
+
+        // ── Upload PerFrameCB ────────────────────────────────────────────
+        cbRing.BeginFrame(frameIndex);
+
+        PerFrameCB perFrame{};
+        perFrame.viewProj = camera.GetViewProjection();
+        Vec3 camPos = camera.GetPosition();
+        perFrame.cameraPos = {camPos.x, camPos.y, camPos.z, 0.f};
+        perFrame.timeParams = {totalTime, dt, static_cast<float>(frameIndex), 0.f};
+
+        CBAllocation cbAlloc = cbRing.Allocate(sizeof(PerFrameCB));
+        std::memcpy(cbAlloc.cpuPtr, &perFrame, sizeof(PerFrameCB));
+
+        // ── Record ───────────────────────────────────────────────────────
+        cmdList->Begin();
+
+        ID3D12Resource* backBuffer = swapChain->GetCurrentBackBufferResource();
+        D3D12_CPU_DESCRIPTOR_HANDLE rtv = swapChain->GetCurrentRTV();
+
+        cmdList->TransitionBarrier(backBuffer,
+            D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
+
+        float clearColor[4] = {0.05f, 0.05f, 0.08f, 1.0f};
+        cmdList->ClearRTV(rtv, clearColor);
+        cmdList->ClearDepthStencil(depthBuffer, 1.0f, 0);
+
+        auto* depthTex = device->GetTexturePool().Get(depthBuffer.index, depthBuffer.generation);
+        D3D12_CPU_DESCRIPTOR_HANDLE dsv = device->GetDescriptorAllocator(
+            D3D12_DESCRIPTOR_HEAP_TYPE_DSV).CpuHandle(depthTex->dsvIndex);
+        cmdList->GetNative()->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
+
+        cmdList->SetPipeline(pipeline);
+        cmdList->GetNative()->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+        // Root constant: vertex buffer SRV index
+        cmdList->SetDescriptorIndex(0, vbSrvIndex);
+
+        // Root CBV: per-frame CB at b1 (root param index 1)
+        cmdList->SetRootCBV(1, cbAlloc.gpuAddr);
+
+        RHIViewport vp{};
+        vp.width = static_cast<float>(swapChain->GetWidth());
+        vp.height = static_cast<float>(swapChain->GetHeight());
+        vp.maxDepth = 1.0f;
+        cmdList->SetViewport(vp);
+
+        RHIScissorRect sc{};
+        sc.right = swapChain->GetWidth();
+        sc.bottom = swapChain->GetHeight();
+        cmdList->SetScissor(sc);
+
+        cmdList->Draw(kCubeVertexCount);
+
+        // ── Editor Grid (drawn after opaque geometry, uses alpha blend) ──
+        editorGrid.Draw(cmdList, cbRing, camera);
+
+        // ── Stats Overlay (drawn last, on top of everything) ─────────────
+        statsOverlay.SetDrawCalls(2); // Cube + grid
+        statsOverlay.SetVertexCount(kCubeVertexCount + 3);
+        statsOverlay.SetTriangleCount(kCubeVertexCount / 3 + 1);
+
+        // Rebind render target without depth for 2D overlay
+        cmdList->GetNative()->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
+        statsOverlay.Render(cmdList, cbRing, frameIndex);
+
+        // ── Screenshot Capture (if requested on this frame) ─────────────
+        bool capturedThisFrame = false;
+        if (screenshotPending && frameIndex == config.screenshotFrame) {
+            screenshotCapture.CaptureBackBuffer(cmdList, swapChain);
+            capturedThisFrame = true;
+        }
+
+        cmdList->TransitionBarrier(backBuffer,
+            D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
+
+        cmdList->End();
+        cmdList->Execute();
+
+        swapChain->Present(false);
+
+        globalFenceValue++;
+        fenceValues[allocFrame] = globalFenceValue;
+        device->GetDirectQueue()->Signal(
+            frameFences[allocFrame]->GetNativeFence(), globalFenceValue);
+
+        // ── Save screenshot after GPU completes ──────────────────────────
+        if (capturedThisFrame) {
+            // Wait for this frame's GPU work to finish
+            frameFences[allocFrame]->WaitCPU(globalFenceValue);
+            screenshotCapture.SaveToPNG(config.screenshotPath);
+            screenshotPending = false;
+        }
+
+        frameIndex++;
+
+        // ── FPS Cap ──────────────────────────────────────────────────────
+        auto frameEnd = std::chrono::high_resolution_clock::now();
+        float elapsed = std::chrono::duration<float>(frameEnd - now).count();
+        if (elapsed < kMinFrameTime) {
+            auto sleepUs = std::chrono::microseconds(
+                static_cast<int64_t>((kMinFrameTime - elapsed) * 1e6f));
+            std::this_thread::sleep_for(sleepUs);
+        }
+    }
+
+    // ── Cleanup ──────────────────────────────────────────────────────────
+    device->WaitIdle();
+
+    auto endTime = std::chrono::high_resolution_clock::now();
+    float totalMs = std::chrono::duration<float, std::milli>(endTime - startTime).count();
+    float avgMs = frameIndex > 0 ? totalMs / static_cast<float>(frameIndex) : 0.f;
+
+    UZ_LOG(Renderer, Info, "Camera test demo: {} frames, {:.1f}ms total, {:.2f}ms/frame ({:.0f} FPS)",
+           frameIndex, totalMs, avgMs, avgMs > 0 ? 1000.f / avgMs : 0.f);
+
+    screenshotCapture.Shutdown();
+    statsOverlay.Shutdown();
+    editorGrid.Shutdown();
+    cbRing.Shutdown();
+    shaderPipeline.Shutdown();
+    device->DestroyTexture(depthBuffer);
+    device->DestroyBuffer(vbHandle);
+    device->DestroyPipeline(pipeline);
+    device->DestroyShader(vsHandle);
+    device->DestroyShader(psHandle);
+    for (uint32_t i = 0; i < kFramesInFlight; ++i) device->DestroyFence(frameFences[i]);
+    device->DestroyCommandList(cmdList);
+    device->DestroySwapChain(swapChain);
+    DestroyRHIDevice(device);
+
+    return true;
+}
+
+} // namespace uz

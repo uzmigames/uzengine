@@ -134,6 +134,39 @@ enum class RHIFormat : uint8_t {
     D32FloatS8Uint,           ///< 32-bit float depth + 8-bit stencil (+ 24 padding).
 };
 
+/// Returns the number of bytes per texel for the given format.
+///
+/// # Returns
+/// Bytes per texel (1–16), or 0 for `Unknown`.
+///
+/// # Notes
+/// Block-compressed formats are not yet supported.
+[[nodiscard]] constexpr uint32_t BytesPerTexel(RHIFormat format) {
+    switch (format) {
+        case RHIFormat::R8Unorm:        return 1;
+        case RHIFormat::RG8Unorm:       return 2;
+        case RHIFormat::RGBA8Unorm:     return 4;
+        case RHIFormat::RGBA8Srgb:      return 4;
+        case RHIFormat::BGRA8Unorm:     return 4;
+        case RHIFormat::BGRA8Srgb:      return 4;
+        case RHIFormat::R16Float:       return 2;
+        case RHIFormat::RG16Float:      return 4;
+        case RHIFormat::RGBA16Float:    return 8;
+        case RHIFormat::R32Float:       return 4;
+        case RHIFormat::RG32Float:      return 8;
+        case RHIFormat::RGB32Float:     return 12;
+        case RHIFormat::RGBA32Float:    return 16;
+        case RHIFormat::R32Uint:        return 4;
+        case RHIFormat::RG32Uint:       return 8;
+        case RHIFormat::RGBA32Uint:     return 16;
+        case RHIFormat::D16Unorm:       return 2;
+        case RHIFormat::D32Float:       return 4;
+        case RHIFormat::D24UnormS8Uint: return 4;
+        case RHIFormat::D32FloatS8Uint: return 8;
+        default:                        return 0;
+    }
+}
+
 /// Buffer usage flags (combinable via bitwise OR).
 ///
 /// Multiple flags can be combined: `VertexBuffer | CopySrc`.

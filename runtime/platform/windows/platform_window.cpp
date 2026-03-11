@@ -5,10 +5,12 @@
 /// Integrates with InputSystem for input event routing.
 
 #include "platform_window.h"
+#include "input.h"
 
 #ifdef _WIN32
 
 #include "../../core/logging/log.h"
+#include <windowsx.h>
 
 /// Log category for window lifecycle and event messages.
 UZ_DEFINE_LOG_CATEGORY(Window, Trace);
@@ -45,6 +47,57 @@ LRESULT CALLBACK PlatformWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
 
     case WM_DESTROY:
         PostQuitMessage(0);
+        return 0;
+
+    // ── Input dispatch ───────────────────────────────────────────────
+    case WM_KEYDOWN:
+    case WM_SYSKEYDOWN:
+        if (self && self->m_input)
+            self->m_input->OnKeyDown(static_cast<uint16_t>(wp));
+        return 0;
+
+    case WM_KEYUP:
+    case WM_SYSKEYUP:
+        if (self && self->m_input)
+            self->m_input->OnKeyUp(static_cast<uint16_t>(wp));
+        return 0;
+
+    case WM_MOUSEMOVE:
+        if (self && self->m_input)
+            self->m_input->OnMouseMove(
+                static_cast<float>(GET_X_LPARAM(lp)),
+                static_cast<float>(GET_Y_LPARAM(lp)));
+        return 0;
+
+    case WM_LBUTTONDOWN:
+        if (self && self->m_input)
+            self->m_input->OnMouseButton(MouseButton::Left, true);
+        return 0;
+    case WM_LBUTTONUP:
+        if (self && self->m_input)
+            self->m_input->OnMouseButton(MouseButton::Left, false);
+        return 0;
+    case WM_RBUTTONDOWN:
+        if (self && self->m_input)
+            self->m_input->OnMouseButton(MouseButton::Right, true);
+        return 0;
+    case WM_RBUTTONUP:
+        if (self && self->m_input)
+            self->m_input->OnMouseButton(MouseButton::Right, false);
+        return 0;
+    case WM_MBUTTONDOWN:
+        if (self && self->m_input)
+            self->m_input->OnMouseButton(MouseButton::Middle, true);
+        return 0;
+    case WM_MBUTTONUP:
+        if (self && self->m_input)
+            self->m_input->OnMouseButton(MouseButton::Middle, false);
+        return 0;
+
+    case WM_MOUSEWHEEL:
+        if (self && self->m_input)
+            self->m_input->OnMouseScroll(
+                static_cast<float>(GET_WHEEL_DELTA_WPARAM(wp)) / 120.f);
         return 0;
     }
 

@@ -1,4 +1,20 @@
 /// UzEngine Shader Archive — implementation.
+///
+/// Implements a simple flat-file binary cache for precompiled shader bytecode.
+///
+/// Binary format (little-endian):
+///   Header  (16 bytes): magic(u32) | version(u32) | count(u32) | reserved(u32)
+///   Entry table (count × kEntrySize): hash[kHashFieldSize] | offset(u64) | size(u64)
+///   Data section: raw bytecode blobs, packed contiguously in entry-table order
+///
+/// Workflow:
+///   - `Build`:  writes a new archive to disk from a vector of (hash, bytecode) pairs.
+///   - `Load`:   reads the entire archive into memory; builds an in-memory index
+///               mapping content-hash → (offset_in_data, size).
+///   - `Lookup`: copies bytecode for a given hash out of the in-memory data buffer.
+///
+/// Content hashes (xxHash64) are produced by the shader pipeline and include the
+/// source, all includes, defines, and compile target — so cache hits are exact.
 
 #include "shader_archive.h"
 #include "log.h"

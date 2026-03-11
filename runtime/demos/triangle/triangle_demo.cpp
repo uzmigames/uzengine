@@ -131,8 +131,8 @@ bool RunTriangleDemo(uint32_t frameCount) {
     shaderPipeline.Init(pipelineCfg);
     shaderPipeline.SetCompiler(&compiler);
 
-    // Mount demo shaders from source directory (not copied to build output)
-    std::string shadersDir = (uz::GetExeDir() / "../../demos/triangle/shaders").string();
+    // Mount demo shaders: exe is at zig-out/bin/, shaders at shaders/
+    std::string shadersDir = (uz::GetExeDir() / "../../shaders").string();
     shaderPipeline.Mount("/demo/triangle", shadersDir);
 
     // Load bytecode through the pipeline (VFS read → cache check → compile if needed)

@@ -1,3 +1,6 @@
+/// Unit tests for the public C runtime API — runtime_version string format,
+/// runtime_init / runtime_shutdown lifecycle, and error codes returned for
+/// invalid arguments and double-init scenarios.
 #include "runtime.h"
 
 #include <cstring>

@@ -1,3 +1,6 @@
+/// Unit tests for the PCG random number generator — output distribution
+/// uniformity, deterministic seeded sequences, range clamping, and
+/// reproducibility across independent generator instances.
 #include "random.h"
 
 #include <cmath>

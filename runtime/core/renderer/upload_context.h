@@ -68,6 +68,30 @@ public:
     bool UploadBuffer(IRHICommandList* cmdList, RHIBufferHandle dst,
                       const void* data, uint64_t sizeBytes);
 
+    /// Uploads CPU pixel data to a GPU default-heap texture via a staging buffer.
+    ///
+    /// Creates a temporary upload-heap buffer sized for 256-byte row alignment,
+    /// copies pixel data with proper row pitch, then records a `CopyBufferToTexture`
+    /// GPU command from staging to `dst` on the provided command list.
+    ///
+    /// # Arguments
+    /// * `cmdList` - Command list to record the copy command on. Must be in recording state.
+    /// * `dst` - Destination texture handle (must be default-heap with CopyDst usage).
+    /// * `data` - Pointer to tightly-packed CPU pixel data (no padding between rows).
+    /// * `sizeBytes` - Total size of pixel data in bytes.
+    /// * `mipLevel` - Target mip level (default 0).
+    /// * `arraySlice` - Target array slice (default 0).
+    ///
+    /// # Returns
+    /// `true` if the staging buffer was created and the copy was recorded.
+    /// `false` on invalid arguments, unsupported format, or staging buffer creation failure.
+    ///
+    /// # Errors
+    /// Logs `Renderer::Error` on failure with specific reason.
+    bool UploadTexture(IRHICommandList* cmdList, RHITextureHandle dst,
+                       const void* data, uint64_t sizeBytes,
+                       uint32_t mipLevel = 0, uint32_t arraySlice = 0);
+
     /// Releases all staging buffers held by this context.
     ///
     /// # Safety

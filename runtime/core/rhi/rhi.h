@@ -206,6 +206,16 @@ public:
     /// * `descriptorIndex` — Index into the global CBV_SRV_UAV heap.
     virtual void SetDescriptorIndex(uint32_t rootParamIndex, uint32_t descriptorIndex) = 0;
 
+    /// Pushes multiple 32-bit root constants at a root parameter slot.
+    ///
+    /// # Arguments
+    /// * `rootParamIndex` — Root parameter slot (must be a root constants parameter).
+    /// * `data` — Pointer to an array of uint32 values to push.
+    /// * `count` — Number of uint32 values to push.
+    /// * `offsetIn32BitValues` — Offset within the root constant range (default 0).
+    virtual void SetRootConstants(uint32_t rootParamIndex, const uint32_t* data,
+                                  uint32_t count, uint32_t offsetIn32BitValues = 0) = 0;
+
     /// Binds a constant buffer via GPU virtual address at a root parameter slot.
     ///
     /// # Arguments
@@ -296,6 +306,24 @@ public:
     /// * `src` — Source texture handle.
     /// * `dst` — Destination texture handle.
     virtual void CopyTexture(RHITextureHandle src, RHITextureHandle dst) = 0;
+
+    /// Copies pixel data from a staging buffer to a texture subresource.
+    ///
+    /// Used for uploading CPU image data to GPU textures. The source buffer must
+    /// contain tightly packed pixel rows (no row padding beyond `srcRowPitch`).
+    /// The backend handles row-pitch alignment requirements internally.
+    ///
+    /// # Arguments
+    /// * `srcBuffer` — Upload-heap buffer containing pixel data.
+    /// * `srcOffset` — Byte offset into the source buffer where pixel data starts.
+    /// * `srcRowPitch` — Byte stride between rows in the source data.
+    /// * `dstTexture` — Destination texture (must have `CopyDst` usage).
+    /// * `mipLevel` — Target mip level (0 = full resolution).
+    /// * `arraySlice` — Target array slice (0 for non-array textures).
+    virtual void CopyBufferToTexture(RHIBufferHandle srcBuffer, uint64_t srcOffset,
+                                     uint32_t srcRowPitch,
+                                     RHITextureHandle dstTexture,
+                                     uint32_t mipLevel = 0, uint32_t arraySlice = 0) = 0;
 
     // ── Render pass scope ────────────────────────────────────────────────
 
@@ -494,6 +522,26 @@ public:
     /// * `handle` — Texture handle to destroy. Becomes invalid after this call.
     virtual void DestroyTexture(RHITextureHandle handle) = 0;
 
+    /// Returns the bindless SRV descriptor index for a texture.
+    ///
+    /// # Arguments
+    /// * `handle` — Texture handle to query.
+    ///
+    /// # Returns
+    /// The SRV index in the global CBV_SRV_UAV heap, or `UINT32_MAX` if the
+    /// texture has no SRV (e.g., depth-only without `ShaderResource` usage).
+    virtual uint32_t GetTextureSRVIndex(RHITextureHandle handle) const = 0;
+
+    /// Returns the creation descriptor for a texture.
+    ///
+    /// # Arguments
+    /// * `handle` — Texture handle to query.
+    ///
+    /// # Returns
+    /// The `RHITextureDesc` used to create the texture.
+    /// Returns a default-constructed desc if the handle is invalid.
+    virtual RHITextureDesc GetTextureDesc(RHITextureHandle handle) const = 0;
+
     // ── Shader operations ────────────────────────────────────────────────
 
     /// Creates a shader module from compiled bytecode (DXIL, SPIR-V, or MSL).
@@ -549,6 +597,15 @@ public:
     /// # Arguments
     /// * `handle` — Sampler handle to destroy. Becomes invalid after this call.
     virtual void DestroySampler(RHISamplerHandle handle) = 0;
+
+    /// Returns the index of a sampler in the global sampler descriptor heap.
+    ///
+    /// # Arguments
+    /// * `handle` — Sampler handle to query.
+    ///
+    /// # Returns
+    /// The sampler index in the global sampler heap, or `UINT32_MAX` if invalid.
+    virtual uint32_t GetSamplerIndex(RHISamplerHandle handle) const = 0;
 
     // ── Swap chain operations ────────────────────────────────────────────
 
