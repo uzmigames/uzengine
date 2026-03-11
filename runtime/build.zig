@@ -309,7 +309,7 @@ pub fn build(b: *std.Build) void {
     if (is_windows) {
         test_mod.addCSourceFiles(.{
             .root = b.path("tests/core/rhi"),
-            .files = &.{ "test_rhi_types.cpp", "test_rhi_config.cpp", "test_dx12_resources.cpp" },
+            .files = &.{ "test_rhi_types.cpp", "test_rhi_config.cpp", "test_dx12_resources.cpp", "test_dx12_device.cpp", "test_dx12_render_loop.cpp" },
             .flags = cpp_flags,
         });
         test_mod.addCSourceFiles(.{
