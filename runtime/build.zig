@@ -59,7 +59,7 @@ pub fn build(b: *std.Build) void {
     runtime_mod.addCSourceFiles(.{ .root = b.path("platform/windows"), .files = &.{ "uz_platform_window.cpp", "uz_input.cpp" }, .flags = cpp_flags });
 
     // RHI DX12 backend
-    runtime_mod.addCSourceFiles(.{ .root = b.path("core/rhi/dx12"), .files = &.{ "dx12_device.cpp", "dx12_swapchain.cpp", "dx12_fence.cpp", "dx12_command_list.cpp", "dx12_clear_screen.cpp", "dx12_descriptor_allocator.cpp", "dx12_resource_creation.cpp" }, .flags = cpp_flags });
+    runtime_mod.addCSourceFiles(.{ .root = b.path("core/rhi/dx12"), .files = &.{ "dx12_device.cpp", "dx12_swapchain.cpp", "dx12_fence.cpp", "dx12_command_list.cpp", "dx12_descriptor_allocator.cpp", "dx12_resource_creation.cpp" }, .flags = cpp_flags });
     runtime_mod.addIncludePath(b.path("core/rhi/dx12"));
 
     // Thirdparty — D3D12MA (compiled via wrapper for Clang/MinGW GUID compatibility)
@@ -157,11 +157,12 @@ pub fn build(b: *std.Build) void {
     demo_mod.link_libc = true;
     demo_mod.link_libcpp = true;
 
-    demo_mod.addCSourceFiles(.{ .root = b.path("tools"), .files = &.{"clear_screen_demo.cpp"}, .flags = cpp_flags });
+    demo_mod.addCSourceFiles(.{ .root = b.path("tools"), .files = &.{ "clear_screen_demo.cpp", "dx12_clear_screen.cpp" }, .flags = cpp_flags });
 
     for (engine_include_dirs) |dir| demo_mod.addIncludePath(b.path(dir));
     for (thirdparty_include_dirs) |dir| demo_mod.addIncludePath(b.path(dir));
     demo_mod.addIncludePath(b.path("core/rhi/dx12"));
+    demo_mod.addIncludePath(b.path("tools"));
 
     const demo_exe = b.addExecutable(.{
         .name = "clear_screen_demo",
