@@ -20,10 +20,9 @@ Three compilers are verified: Zig, MSVC, and Clang.
 
 | Step | Command | Output |
 |------|---------|--------|
-| `zig build` | Build everything | `build/bin/` |
+| `zig build` | Build everything | `zig-out/bin/` |
 | `zig build test` | Run unit tests | Test results on stdout |
 | `zig build run` | Launch runtime | Window with clear screen |
-| `zig build demo` | Launch demo | Animated color demo |
 
 ## Build Structure
 
@@ -32,14 +31,18 @@ The build produces one static library and multiple executables:
 ```
 build.zig
 ├── uzengine (static lib) ─── All engine code
-│   ├── core/ sources
+│   ├── core/ sources (logging, math, config, shader, asset, renderer, rhi)
 │   ├── platform/windows/ sources (Windows only)
 │   ├── core/rhi/dx12/ sources (Windows only)
-│   └── thirdparty/ (spdlog, Tracy, D3D12MA)
+│   └── thirdparty/ (spdlog, Tracy, D3D12MA, xxHash, spirv-reflect)
 │
 ├── uzengine.exe ─── Standalone runtime (links static lib)
-├── clear_screen_demo.exe ── DX12 demo (links static lib)
 └── test_runtime.exe ─────── GoogleTest runner (links static lib)
+
+Demos are standalone projects with their own build.zig:
+demos/
+├── clear_screen/build.zig ── DX12 animated clear screen
+└── triangle/build.zig ────── DX12 triangle (SM6.6 bindless)
 ```
 
 ## Platform Guards

@@ -354,6 +354,9 @@ This mirrors UE5's DDC (Derived Data Cache) model — shaders are compiled lazil
 #include "core/shader/shader_vfs.h"
 #include "core/shader/shader_source_manager.h"
 #include "core/shader/shader_cache.h"
+#include "core/shader/shader_pipeline.h"     // High-level compile orchestrator
+#include "core/shader/shader_reflection.h"   // SPIRV-Reflect binding extraction
+#include "core/shader/shader_permutation.h"  // Feature flag variant expansion
 
 // Mount virtual directories
 ShaderVFS vfs;

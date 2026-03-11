@@ -26,6 +26,11 @@ The engine includes a full shader compilation pipeline (`core/shader/`):
 | `ShaderDependencyGraph` | Bidirectional dependency tracking for hot-reload |
 | `ShaderCache` | Disk-based bytecode cache keyed by content hash |
 | `ShaderCompiler` | DXC integration — HLSL → DXIL (SM5.1–SM6.7) and SPIRV (Vulkan 1.3) |
+| `ShaderPipeline` | High-level orchestrator — combines VFS, source, cache, compiler |
+| `ShaderPermutation` | Feature flag variant expansion (`#pragma uz_permutation`) |
+| `ShaderReflection` | SPIRV-Reflect binding extraction (CBV/SRV/UAV/sampler) |
+| `ShaderHotReload` | FileWatcher + reverse dependency graph + dirty flags |
+| `ShaderArchive` | Shipping mode precompiled archive (`.uzpak`) |
 
 Key design decisions:
 - **Content-addressed caching**: `hash = xxHash64(source + includes + defines + target + compiler_version)` — no timestamps, no stale cache

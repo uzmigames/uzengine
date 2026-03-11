@@ -28,7 +28,9 @@ patterns, and links to the relevant API reference.
 | Topic | Description |
 |-------|-------------|
 | [Architecture](guides/architecture.md) | Three-layer design (Extension → Runtime → MCP), process model |
-| [Build System](guides/build-system/zig-build.md) | Zig build system, cross-compilation, platform guards |
+| [Build System — Zig](guides/build-system/zig-build.md) | Zig build system, cross-compilation, platform guards |
+| [Build System — MSVC](guides/build-system/cmake-msvc.md) | CMake with Visual Studio 2022 |
+| [Build System — Clang](guides/build-system/cmake-clang.md) | CMake with Clang-CL and Ninja |
 | [RHI — Render Hardware Interface](guides/rhi/overview.md) | Backend abstraction, device creation, resource management |
 | [Math Library](guides/math/overview.md) | Vectors, matrices, quaternions, transforms (DirectXMath SIMD) |
 | [Memory & Allocators](guides/memory/overview.md) | Ownership model, linear/pool/frame allocators, budgets |
@@ -48,6 +50,9 @@ Generated from source-level `///` documentation comments.
 | [Math](reference/math/index.md) | Vec2, Vec3, Vec4, Mat4, Quat, Transform, Color, AABB, Frustum |
 | [Containers](reference/containers/index.md) | RingBuffer, FreeList, HandleMap, FrameArray |
 | [RHI](reference/rhi/index.md) | IRHIDevice, IRHICommandList, IRHISwapChain, handles, [config](reference/rhi/rhi-config.md) |
+| [Shader](reference/shader/index.md) | ShaderVFS, ShaderCompiler, ShaderCache, ShaderPipeline, hot-reload |
+| [Asset](reference/asset/index.md) | VFS, importers, cache, registry, .uzpak archive |
+| [Renderer](reference/renderer/index.md) | Vertex formats, UploadContext |
 | [Platform](reference/platform/index.md) | PlatformWindow, InputSystem, action mapping |
 
 ## Contributing

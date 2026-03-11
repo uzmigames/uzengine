@@ -1,0 +1,124 @@
+# Shader Module Reference
+
+Shader compilation pipeline: VFS, source management, caching, hot-reload, and archive.
+
+> **Headers**: `core/shader/` (20 files) | **Guide**: [Shader Pipeline](../../guides/rendering/shader-pipeline.md)
+
+---
+
+## ShaderVFS (`shader_vfs.h`)
+
+Virtual filesystem for shader sources with mount-point based path resolution.
+
+```cpp
+ShaderVFS vfs;
+vfs.Mount("/engine", "shaders/engine");  // Built-in shaders
+vfs.Mount("/game", "shaders/game");      // Game-specific
+```
+
+| Method | Description |
+|--------|-------------|
+| `Mount(virtualDir, realDir)` | Register a mount point (last mount wins) |
+| `ReadFile(virtualPath)` | Load shader source via VFS |
+| `Exists(virtualPath)` | Check if shader exists |
+| `FindVirtualPath(realPath)` | Reverse-resolve a real path to virtual |
+
+---
+
+## ShaderSourceManager (`shader_source_manager.h`)
+
+Include parsing, content hashing (xxHash64), and source loading.
+
+| Method | Description |
+|--------|-------------|
+| `LoadSource(virtualPath)` | Load and parse includes recursively |
+| `ComputeIdentityHash(path, defines, target, version)` | xxHash64 content-based identity |
+| `GetIncludes(virtualPath)` | List transitive includes |
+
+---
+
+## ShaderDependencyGraph (`shader_dependency_graph.h`)
+
+Bidirectional include-dependency tracking for hot-reload.
+
+| Direction | Query | Use |
+|-----------|-------|-----|
+| Forward | `GetDependencies(path)` | What does this shader include? |
+| Reverse | `GetDependents(path)` | Which shaders include this file? |
+
+---
+
+## ShaderCache (`shader_cache.h`)
+
+Disk-based bytecode cache keyed by content hash.
+
+| Method | Description |
+|--------|-------------|
+| `Contains(hash)` | Check for cache hit |
+| `Lookup(hash)` | Load cached bytecode |
+| `Store(hash, bytecode)` | Write bytecode to disk |
+
+---
+
+## ShaderCompiler (`shader_compiler.h`)
+
+DXC integration — HLSL to DXIL (SM5.1–SM6.7) and SPIRV (Vulkan 1.3).
+
+| Method | Description |
+|--------|-------------|
+| `Init()` | Load `dxcompiler.dll` via `ResolveEngineResource()` |
+| `Compile(source, entry, profile, defines)` | Compile HLSL to bytecode |
+| `GetVersion()` | DXC version string (feeds into content hash) |
+
+---
+
+## ShaderPipeline (`shader_pipeline.h`)
+
+High-level orchestrator combining VFS, source manager, cache, and compiler.
+
+Handles the full compile flow:
+1. Load source via VFS
+2. Parse includes and compute content hash
+3. Check cache — return on hit
+4. Compile via DXC — store result in cache
+
+---
+
+## ShaderPermutation (`shader_permutation.h`)
+
+Feature flag variant expansion from `#pragma uz_permutation` directives.
+
+```hlsl
+#pragma uz_permutation HAS_NORMAL_MAP               // bool → 2 variants
+#pragma uz_permutation SHADOW_QUALITY LOW MEDIUM HIGH  // enum → 3 variants
+```
+
+Max 256 variants per shader (prevents combinatorial explosion).
+
+---
+
+## ShaderReflection (`shader_reflection.h`)
+
+SPIRV-Reflect based binding extraction (CBV/SRV/UAV/sampler).
+
+---
+
+## ShaderHotReload (`shader_hot_reload.h`)
+
+FileWatcher + reverse dependency graph + dirty flags for development-time iteration.
+
+Flow: file change → mark dependents dirty → lazy recompile on next use.
+
+---
+
+## ShaderArchive (`shader_archive.h`)
+
+Shipping mode precompiled archive — hash-indexed binary blob for O(1) runtime lookup.
+
+---
+
+## Related Pages
+
+- [Shader Pipeline Guide](../../guides/rendering/shader-pipeline.md) — Development workflow
+- [Rendering Overview](../../guides/rendering/overview.md) — Graphics subsystem
+- [Asset Module](../asset/index.md) — Import pipeline and VFS

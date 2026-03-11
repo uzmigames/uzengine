@@ -378,6 +378,6 @@ int main(int argc, char* argv[]) {
 
 ## Related Pages
 
-- [RHI Overview](overview.md) — High-level design
+- [RHI Overview](../../guides/rhi/overview.md) — High-level design
 - [Getting Started](../../getting-started/first-window.md) — Practical walkthrough
 - [Architecture](../architecture.md) — System design
