@@ -128,6 +128,9 @@ public:
     /// Returns the global bindless root signature (shared by all pipelines).
     ID3D12RootSignature* GetRootSignature() const { return m_rootSignature; }
 
+    /// Queries and logs DRED data after device removal (breadcrumbs + page fault info).
+    void LogDeviceRemoved();
+
 private:
     bool EnableDebugLayer(bool gpuValidation);
     bool CreateFactory(bool validation);

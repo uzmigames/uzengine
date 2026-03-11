@@ -38,10 +38,12 @@
   - Bindless SRV/UAV in global CBV_SRV_UAV heap, RTV/DSV in CPU-only heaps
   - Typeless depth formats for SRV+DSV combo, persistent CPU mapping for Upload/Readback
   - New files: dx12_resources.h, dx12_descriptor_allocator.h/.cpp, dx12_resource_creation.h/.cpp
-- [ ] 2.4 Implement DX12 pipeline state
+- [x] 2.4 Implement DX12 pipeline state ✅
   - D3D12_GRAPHICS_PIPELINE_STATE_DESC construction from RHIGraphicsPipelineDesc
-  - Root signature auto-generation (bindless: one global root signature)
-  - PSO cache with content-hash lookup (xxHash64)
+  - Global bindless root signature (SM6.6 DIRECTLY_INDEXED, 1 root constant at b0)
+  - Full state conversion: rasterizer, blend, depth-stencil, topology → D3D12 enums
+  - DX12Pipeline struct with ResourcePool generational handles
+  - PSO cache with content-hash lookup (xxHash64) — deferred to Phase 6
 
 ## Phase 3: Swapchain & Frame Pacing ✅
 - [x] 3.1 Implement DX12SwapChain (`dx12_swapchain.h/.cpp`)
@@ -56,9 +58,10 @@
   - Wait for frame N-2 fence before reusing its command allocator
   - Signal fence after Execute() for each frame
   - Triple-buffer cycling (0, 1, 2)
-- [ ] 3.4 Handle DXGI errors (DXGI_ERROR_DEVICE_REMOVED, DEVICE_RESET)
+- [x] 3.4 Handle DXGI errors (DXGI_ERROR_DEVICE_REMOVED, DEVICE_RESET) ✅
   - DRED enabled (auto-breadcrumbs + page fault tracking) ✅
-  - Log adapter name, reason, last breadcrumb on device loss
+  - LogDeviceRemoved(): queries DRED1, logs breadcrumb trail + page fault VA + alloc names
+  - Swapchain Present calls LogDeviceRemoved() on device loss
 
 ## Phase 4: Validation & Clear Screen ✅
 - [x] 4.1 Enable D3D12 debug layer

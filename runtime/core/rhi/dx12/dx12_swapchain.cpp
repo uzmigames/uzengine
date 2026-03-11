@@ -184,7 +184,7 @@ void DX12SwapChain::Present(bool vsync) {
 
     HRESULT hr = m_swapChain->Present(syncInterval, flags);
     if (hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET) {
-        UZ_LOG(RHI, Error, "Device removed during Present, HRESULT=0x{:08X}", static_cast<uint32_t>(hr));
+        m_device->LogDeviceRemoved();
     }
 }
 

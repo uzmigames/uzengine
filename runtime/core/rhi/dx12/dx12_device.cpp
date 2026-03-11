@@ -351,6 +351,96 @@ bool DX12Device::EnableDRED() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Device Removed Diagnostics
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Converts D3D12_AUTO_BREADCRUMB_OP to human-readable string.
+static const char* BreadcrumbOpToString(D3D12_AUTO_BREADCRUMB_OP op) {
+    switch (op) {
+        case D3D12_AUTO_BREADCRUMB_OP_SETMARKER:           return "SetMarker";
+        case D3D12_AUTO_BREADCRUMB_OP_BEGINEVENT:          return "BeginEvent";
+        case D3D12_AUTO_BREADCRUMB_OP_ENDEVENT:            return "EndEvent";
+        case D3D12_AUTO_BREADCRUMB_OP_DRAWINSTANCED:       return "DrawInstanced";
+        case D3D12_AUTO_BREADCRUMB_OP_DRAWINDEXEDINSTANCED: return "DrawIndexedInstanced";
+        case D3D12_AUTO_BREADCRUMB_OP_EXECUTEINDIRECT:     return "ExecuteIndirect";
+        case D3D12_AUTO_BREADCRUMB_OP_DISPATCH:            return "Dispatch";
+        case D3D12_AUTO_BREADCRUMB_OP_COPYBUFFERREGION:    return "CopyBufferRegion";
+        case D3D12_AUTO_BREADCRUMB_OP_COPYTEXTUREREGION:   return "CopyTextureRegion";
+        case D3D12_AUTO_BREADCRUMB_OP_COPYRESOURCE:        return "CopyResource";
+        case D3D12_AUTO_BREADCRUMB_OP_RESOLVESUBRESOURCE:  return "ResolveSubresource";
+        case D3D12_AUTO_BREADCRUMB_OP_CLEARRENDERTARGETVIEW: return "ClearRTV";
+        case D3D12_AUTO_BREADCRUMB_OP_CLEARDEPTHSTENCILVIEW: return "ClearDSV";
+        case D3D12_AUTO_BREADCRUMB_OP_RESOURCEBARRIER:     return "ResourceBarrier";
+        case D3D12_AUTO_BREADCRUMB_OP_EXECUTEBUNDLE:       return "ExecuteBundle";
+        case D3D12_AUTO_BREADCRUMB_OP_PRESENT:             return "Present";
+        default: return "Unknown";
+    }
+}
+
+void DX12Device::LogDeviceRemoved() {
+    HRESULT removedReason = m_device->GetDeviceRemovedReason();
+    UZ_LOG(RHI, Error, "=== DEVICE REMOVED ===");
+    UZ_LOG(RHI, Error, "Adapter: '{}'", m_adapterName);
+    UZ_LOG(RHI, Error, "Removed reason: hr=0x{:08X}", static_cast<uint32_t>(removedReason));
+
+    // Query DRED auto-breadcrumbs
+    ComPtr<ID3D12DeviceRemovedExtendedData1> dred;
+    if (SUCCEEDED(m_device->QueryInterface(IID_PPV_ARGS(&dred)))) {
+        D3D12_DRED_AUTO_BREADCRUMBS_OUTPUT1 breadcrumbs = {};
+        if (SUCCEEDED(dred->GetAutoBreadcrumbsOutput1(&breadcrumbs))) {
+            const auto* node = breadcrumbs.pHeadAutoBreadcrumbNode;
+            uint32_t nodeIdx = 0;
+            while (node) {
+                UZ_LOG(RHI, Error, "Breadcrumb node [{}]: cmdList='{}', cmdQueue='{}'",
+                       nodeIdx,
+                       node->pCommandListDebugNameW ? WideToUtf8(node->pCommandListDebugNameW) : "(unnamed)",
+                       node->pCommandQueueDebugNameW ? WideToUtf8(node->pCommandQueueDebugNameW) : "(unnamed)");
+
+                // Log completed operations
+                if (node->pLastBreadcrumbValue && node->pCommandHistory) {
+                    uint32_t lastCompleted = *node->pLastBreadcrumbValue;
+                    for (uint32_t i = 0; i < node->BreadcrumbCount; ++i) {
+                        const char* status = (i < lastCompleted) ? "DONE" : (i == lastCompleted) ? ">>> LAST" : "PENDING";
+                        UZ_LOG(RHI, Error, "  [{:3}] {} — {}", i,
+                               BreadcrumbOpToString(node->pCommandHistory[i]), status);
+                    }
+                }
+                node = node->pNext;
+                nodeIdx++;
+            }
+            if (nodeIdx == 0) {
+                UZ_LOG(RHI, Warning, "DRED: no breadcrumb nodes available");
+            }
+        }
+
+        // Query page fault info
+        D3D12_DRED_PAGE_FAULT_OUTPUT1 pageFault = {};
+        if (SUCCEEDED(dred->GetPageFaultAllocationOutput1(&pageFault))) {
+            if (pageFault.PageFaultVA != 0) {
+                UZ_LOG(RHI, Error, "Page fault at VA=0x{:016X}", pageFault.PageFaultVA);
+
+                const auto* allocNode = pageFault.pHeadExistingAllocationNode;
+                while (allocNode) {
+                    UZ_LOG(RHI, Error, "  Existing alloc: '{}'",
+                           allocNode->ObjectNameW ? WideToUtf8(allocNode->ObjectNameW) : "(unnamed)");
+                    allocNode = allocNode->pNext;
+                }
+                const auto* freedNode = pageFault.pHeadRecentFreedAllocationNode;
+                while (freedNode) {
+                    UZ_LOG(RHI, Error, "  Recently freed: '{}'",
+                           freedNode->ObjectNameW ? WideToUtf8(freedNode->ObjectNameW) : "(unnamed)");
+                    freedNode = freedNode->pNext;
+                }
+            }
+        }
+    } else {
+        UZ_LOG(RHI, Warning, "DRED query interface not available — no detailed diagnostics");
+    }
+
+    UZ_LOG(RHI, Error, "=== END DEVICE REMOVED ===");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Descriptor Allocator Init
 // ─────────────────────────────────────────────────────────────────────────────
 
