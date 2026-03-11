@@ -1,0 +1,93 @@
+#pragma once
+
+/// DX12 backend implementation of IRHISwapChain.
+///
+/// Wraps IDXGISwapChain4 with FLIP_DISCARD presentation model.
+/// Triple-buffered by default, supports tearing (variable refresh rate)
+/// when the display and driver allow it.
+
+#include "../rhi.h"
+
+#include <wrl/client.h>
+#include <d3d12.h>
+#include <dxgi1_6.h>
+
+namespace uz {
+
+using Microsoft::WRL::ComPtr;
+
+class DX12Device;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DX12SwapChain
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// DX12 implementation of IRHISwapChain using IDXGISwapChain4.
+///
+/// Uses DXGI_SWAP_EFFECT_FLIP_DISCARD for optimal performance.
+/// Supports DXGI_PRESENT_ALLOW_TEARING for variable refresh rate displays
+/// when vsync is disabled.
+class DX12SwapChain final : public IRHISwapChain {
+public:
+    DX12SwapChain() = default;
+    ~DX12SwapChain() override;
+
+    /// Creates the DXGI swap chain. Returns false on failure.
+    bool Init(DX12Device* device, const RHISwapChainDesc& desc);
+
+    // ── IRHISwapChain overrides ──────────────────────────────────────────
+
+    /// Returns a handle to the current back buffer texture.
+    RHITextureHandle GetCurrentBackBuffer() override;
+
+    /// Returns the index of the current back buffer (0..bufferCount-1).
+    uint32_t GetCurrentBackBufferIndex() const override;
+
+    /// Presents the current back buffer to the display.
+    void Present(bool vsync) override;
+
+    /// Resizes all back buffers. Invalidates existing back buffer handles.
+    void Resize(uint32_t width, uint32_t height) override;
+
+    /// Returns the current back buffer width.
+    uint32_t GetWidth() const override;
+
+    /// Returns the current back buffer height.
+    uint32_t GetHeight() const override;
+
+    /// Returns the back buffer format.
+    RHIFormat GetFormat() const override;
+
+    // ── DX12-specific accessors ──────────────────────────────────────────
+
+    /// Returns the native back buffer resource for the current index (for barrier transitions).
+    ID3D12Resource* GetCurrentBackBufferResource() const;
+
+    /// Returns the RTV CPU descriptor handle for the current back buffer.
+    D3D12_CPU_DESCRIPTOR_HANDLE GetCurrentRTV() const;
+
+private:
+    static constexpr uint32_t kMaxBackBuffers = 3;
+
+    /// Acquires ID3D12Resource references for each back buffer from the swap chain.
+    void AcquireBackBuffers();
+
+    /// Releases all back buffer resource references and invalidates handles.
+    void ReleaseBackBuffers();
+
+    ComPtr<IDXGISwapChain4>  m_swapChain;
+    ComPtr<ID3D12Resource>   m_backBuffers[kMaxBackBuffers];
+    RHITextureHandle         m_backBufferHandles[kMaxBackBuffers] = {};
+
+    D3D12_CPU_DESCRIPTOR_HANDLE m_rtvHandles[kMaxBackBuffers] = {};
+    uint32_t                 m_rtvDescriptorSize = 0;
+
+    DX12Device*              m_device = nullptr;
+    uint32_t                 m_width = 0;
+    uint32_t                 m_height = 0;
+    uint32_t                 m_bufferCount = 0;
+    RHIFormat                m_format = RHIFormat::RGBA8Unorm;
+    bool                     m_tearingSupported = false;
+};
+
+} // namespace uz

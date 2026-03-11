@@ -1,0 +1,80 @@
+#include "dx12_descriptor_allocator.h"
+#include "dx12_guids.h"
+#include "uz_log.h"
+
+namespace uz {
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Initialization
+// ─────────────────────────────────────────────────────────────────────────────
+
+void DescriptorAllocator::Init(ID3D12DescriptorHeap* heap, uint32_t capacity,
+                                uint32_t incrementSize, uint32_t reservedCount) {
+    m_heap = heap;
+    m_capacity = capacity;
+    m_incrementSize = incrementSize;
+    m_nextIndex = reservedCount;
+    m_allocated = 0;
+
+    // Clang/MinGW ABI: struct-return methods use out-parameter form
+    heap->GetCPUDescriptorHandleForHeapStart(&m_cpuBase);
+
+    // GPU handle is only valid for shader-visible heaps
+    D3D12_DESCRIPTOR_HEAP_DESC heapDesc = {};
+    heap->GetDesc(&heapDesc);
+    if (heapDesc.Flags & D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE) {
+        heap->GetGPUDescriptorHandleForHeapStart(&m_gpuBase);
+    } else {
+        m_gpuBase = {};
+    }
+
+    m_freeList.reserve(256);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Allocate / Free
+// ─────────────────────────────────────────────────────────────────────────────
+
+uint32_t DescriptorAllocator::Allocate() {
+    uint32_t index;
+
+    if (!m_freeList.empty()) {
+        // Recycle a freed index
+        index = m_freeList.back();
+        m_freeList.pop_back();
+    } else if (m_nextIndex < m_capacity) {
+        // Allocate from high-water mark
+        index = m_nextIndex++;
+    } else {
+        UZ_LOG(RHI, Error, "DescriptorAllocator: heap full (capacity={})", m_capacity);
+        return kInvalidIndex;
+    }
+
+    m_allocated++;
+    return index;
+}
+
+void DescriptorAllocator::Free(uint32_t index) {
+    if (index == kInvalidIndex) return;
+
+    m_freeList.push_back(index);
+    m_allocated--;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Handle Computation
+// ─────────────────────────────────────────────────────────────────────────────
+
+D3D12_CPU_DESCRIPTOR_HANDLE DescriptorAllocator::CpuHandle(uint32_t index) const {
+    D3D12_CPU_DESCRIPTOR_HANDLE handle = m_cpuBase;
+    handle.ptr += static_cast<SIZE_T>(index) * m_incrementSize;
+    return handle;
+}
+
+D3D12_GPU_DESCRIPTOR_HANDLE DescriptorAllocator::GpuHandle(uint32_t index) const {
+    D3D12_GPU_DESCRIPTOR_HANDLE handle = m_gpuBase;
+    handle.ptr += static_cast<UINT64>(index) * m_incrementSize;
+    return handle;
+}
+
+} // namespace uz

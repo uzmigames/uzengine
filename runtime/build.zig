@@ -19,6 +19,7 @@ pub fn build(b: *std.Build) void {
         "core/math",
         "core/containers",
         "core/random",
+        "core/rhi",
         "platform/windows",
     };
 
@@ -57,6 +58,18 @@ pub fn build(b: *std.Build) void {
     runtime_mod.addCSourceFiles(.{ .root = b.path("core/math"), .files = &.{"uz_math.cpp"}, .flags = cpp_flags });
     runtime_mod.addCSourceFiles(.{ .root = b.path("platform/windows"), .files = &.{ "uz_platform_window.cpp", "uz_input.cpp" }, .flags = cpp_flags });
 
+    // RHI DX12 backend
+    runtime_mod.addCSourceFiles(.{ .root = b.path("core/rhi/dx12"), .files = &.{ "dx12_device.cpp", "dx12_swapchain.cpp", "dx12_fence.cpp", "dx12_command_list.cpp", "dx12_clear_screen.cpp", "dx12_descriptor_allocator.cpp", "dx12_resource_creation.cpp" }, .flags = cpp_flags });
+    runtime_mod.addIncludePath(b.path("core/rhi/dx12"));
+
+    // Thirdparty — D3D12MA (compiled via wrapper for Clang/MinGW GUID compatibility)
+    runtime_mod.addCSourceFiles(.{
+        .root = b.path("core/rhi/dx12"),
+        .files = &.{"dx12_d3d12ma.cpp"},
+        .flags = &.{ "-std=c++17", "-Wno-undefined-bool-conversion", "-Wno-switch", "-Wno-unused-private-field" },
+    });
+    runtime_mod.addIncludePath(b.path(tp ++ "d3d12ma/src"));
+
     // Thirdparty — spdlog
     runtime_mod.addCSourceFiles(.{
         .root = b.path(tp ++ "spdlog/src"),
@@ -80,6 +93,12 @@ pub fn build(b: *std.Build) void {
         .name = "uzengine_runtime",
         .root_module = runtime_mod,
     });
+
+    // DX12 system libraries
+    lib.linkSystemLibrary("d3d12");
+    lib.linkSystemLibrary("dxgi");
+    lib.linkSystemLibrary("dxguid");
+
     b.installArtifact(lib);
 
     // ── Test executable (links runtime lib — no recompilation) ───────────
@@ -108,6 +127,7 @@ pub fn build(b: *std.Build) void {
     test_mod.addCSourceFiles(.{ .root = b.path("tests/core/math"), .files = &.{ "test_vec.cpp", "test_mat4.cpp", "test_quat.cpp", "test_transform.cpp", "test_color.cpp", "test_bounds.cpp" }, .flags = cpp_flags });
     test_mod.addCSourceFiles(.{ .root = b.path("tests/core/containers"), .files = &.{ "test_ring_buffer.cpp", "test_free_list.cpp", "test_handle_map.cpp", "test_frame_array.cpp" }, .flags = cpp_flags });
     test_mod.addCSourceFiles(.{ .root = b.path("tests/core/random"), .files = &.{"test_random.cpp"}, .flags = cpp_flags });
+    test_mod.addCSourceFiles(.{ .root = b.path("tests/core/rhi"), .files = &.{"test_rhi_types.cpp"}, .flags = cpp_flags });
     test_mod.addCSourceFiles(.{ .root = b.path("tests/platform"), .files = &.{"test_input.cpp"}, .flags = cpp_flags });
 
     // Engine + thirdparty headers for tests
@@ -119,9 +139,44 @@ pub fn build(b: *std.Build) void {
         .root_module = test_mod,
     });
     test_exe.linkLibrary(lib);
+    test_exe.linkSystemLibrary("d3d12");
+    test_exe.linkSystemLibrary("dxgi");
+    test_exe.linkSystemLibrary("dxguid");
     b.installArtifact(test_exe);
 
     const run_test = b.addRunArtifact(test_exe);
     const test_step = b.step("test", "Run runtime unit tests");
     test_step.dependOn(&run_test.step);
+
+    // ── Clear screen demo executable ─────────────────────────────────────
+
+    const demo_mod = b.createModule(.{
+        .target = target,
+        .optimize = optimize,
+    });
+    demo_mod.link_libc = true;
+    demo_mod.link_libcpp = true;
+
+    demo_mod.addCSourceFiles(.{ .root = b.path("tools"), .files = &.{"clear_screen_demo.cpp"}, .flags = cpp_flags });
+
+    for (engine_include_dirs) |dir| demo_mod.addIncludePath(b.path(dir));
+    for (thirdparty_include_dirs) |dir| demo_mod.addIncludePath(b.path(dir));
+    demo_mod.addIncludePath(b.path("core/rhi/dx12"));
+
+    const demo_exe = b.addExecutable(.{
+        .name = "clear_screen_demo",
+        .root_module = demo_mod,
+    });
+    demo_exe.linkLibrary(lib);
+    demo_exe.linkSystemLibrary("d3d12");
+    demo_exe.linkSystemLibrary("dxgi");
+    demo_exe.linkSystemLibrary("dxguid");
+    demo_exe.linkSystemLibrary("gdi32");
+    demo_exe.linkSystemLibrary("user32");
+    // Console subsystem for log output (not .Windows)
+    b.installArtifact(demo_exe);
+
+    const run_demo = b.addRunArtifact(demo_exe);
+    const demo_step = b.step("demo", "Run DX12 clear screen demo");
+    demo_step.dependOn(&run_demo.step);
 }

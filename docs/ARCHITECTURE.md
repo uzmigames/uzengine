@@ -490,6 +490,100 @@ uzengine-runtime --headless --screenshot output.png --exit-after-frame 1
 
 ---
 
+## Runtime Executable & CLI
+
+The runtime compiles as both a **static library** (for N-API addon and test harnesses) and a **standalone executable** for CLI usage, debugging, CI, and shipped games. The same codebase produces both — the executable is a thin `main()` that links the runtime library.
+
+### Executable Modes
+
+```bash
+# Interactive windowed mode (default)
+uzengine-runtime --scene "scenes/level1.uzscene"
+
+# Headless screenshot (CI/LLM workflow)
+uzengine-runtime --headless --scene "scenes/test.uzscene" --screenshot output.png --exit-after-frame 1
+
+# Backend selection via CLI
+uzengine-runtime --scene "scenes/test.uzscene" --rhi dx12        # DX12 SM6.6 (default)
+uzengine-runtime --scene "scenes/test.uzscene" --rhi dx12-sm5    # DX12 SM5 fallback
+uzengine-runtime --scene "scenes/test.uzscene" --rhi vulkan      # Vulkan/SPIRV
+uzengine-runtime --scene "scenes/test.uzscene" --rhi metal       # Metal/MSL (macOS)
+
+# Debug overlays
+uzengine-runtime --scene "scenes/test.uzscene" --overlay wireframe
+uzengine-runtime --scene "scenes/test.uzscene" --overlay normals --overlay depth
+
+# Shader model override (for testing fallback paths)
+uzengine-runtime --scene "scenes/test.uzscene" --shader-model sm5
+uzengine-runtime --scene "scenes/test.uzscene" --shader-model sm6.6
+
+# Validation / profiling
+uzengine-runtime --scene "scenes/test.uzscene" --gpu-validation --gpu-breadcrumbs
+uzengine-runtime --scene "scenes/test.uzscene" --profile --frames 1000
+```
+
+### Backend Selection Priority
+
+The RHI backend is resolved in this order:
+1. **CLI flag** (`--rhi dx12`) — highest priority, overrides everything
+2. **Project config** (`.uzproject` → `"rhi": "dx12"`) — per-project setting
+3. **User config** (`~/.uzengine/config.json` → `"default_rhi": "dx12"`) — global preference
+4. **Auto-detect** — probe GPU capabilities, pick best available backend
+
+```json
+// .uzproject
+{
+  "engine": {
+    "rhi": "dx12",
+    "shader_model": "sm6.6",
+    "fallback_rhi": "dx12-sm5"
+  }
+}
+```
+
+When the user changes the RHI backend (e.g., from `dx12` to `vulkan`), the shader cache is checked for the target backend. If shaders haven't been compiled for that backend yet, **post-switch shader compilation** runs automatically before the first frame.
+
+### Shipped Game Executable
+
+The build pipeline (Spec 1.5) produces a standalone game executable that links the runtime statically. The shipped exe:
+- Embeds compiled shaders for all target backends (configurable in build settings)
+- Loads assets from `.uzpak` archives
+- Has no editor, no debug UI, no validation overhead
+- Supports the same `--rhi` and `--shader-model` flags for runtime backend switching
+
+---
+
+## Shader Compilation Pipeline
+
+> Full specification: [1.5.0-shader-pipeline.md](specs/1.5.0-shader-pipeline.md)
+
+Shaders are authored in **HLSL** and compiled via DXC to backend-specific bytecode (DXIL, SPIRV, MSL). The pipeline uses two distinct modes to avoid the stale-cache and file-copy problems from POC 1:
+
+- **`UZ_SHADER_DEV`**: Load `.hlsl` from disk via ShaderVFS (virtual filesystem with mount points). Content-hash cache (xxHash64) with FileWatcher + reverse-dependency graph for surgical hot-reload. Lazy recompilation on next use (dirty flag pattern, inspired by Godot).
+- **`UZ_SHADER_SHIP`**: All bytecode precompiled into `shaders.uzpak` archive, indexed by hash. Zero disk I/O for source files. No DXC, no VFS, no FileWatcher in the binary.
+
+### Key Design Decisions
+
+1. **Never embed shaders as C header strings** — POC 1 proved this causes stale cache during rapid iteration. Dev loads from disk; shipping uses precompiled archive.
+2. **Content-addressed cache** — `xxHash64(source + includes + defines + target + compiler_version)`. No timestamps. Changing any included file produces a different hash automatically.
+3. **Reverse-dependency graph** — when `common.hlsli` changes, instantly find every shader that includes it (transitively). Mark all dependents dirty, recompile lazily.
+4. **HLSL is the single source language** — DXC compiles to DXIL (DX12) and SPIRV (Vulkan). SPIRV-Cross transpiles to MSL (Metal) / GLSL (GLES).
+5. **Reflection-driven binding** — SPIRV-Reflect extracts resource bindings → root signature (DX12) and descriptor set layouts (Vulkan) auto-generated.
+6. **Post-switch compilation** — when `--rhi` changes, compile missing shaders before first frame (DDC model).
+7. **Permutation cap** — max 256 variants per shader to prevent UE5-style permutation explosion.
+
+### Dependencies
+
+| Library | Purpose | Location |
+|---------|---------|----------|
+| DXC | HLSL → DXIL, HLSL → SPIRV | Dynamic load (`dxcompiler.dll`) |
+| FXC | HLSL → DXBC (SM5 legacy) | Dynamic load (`d3dcompiler_47.dll`) |
+| SPIRV-Cross | SPIRV → MSL, SPIRV → GLSL | TBD |
+| SPIRV-Reflect | Binding layout extraction | `thirdparty/spirv-reflect/` |
+| xxHash | Content hash for cache keys | `thirdparty/xxhash/` |
+
+---
+
 ## RHI — Rendering Hardware Interface
 
 The first major challenge. A clean abstraction layer that lets the renderer work across multiple graphics backends without leaking API-specific details.
@@ -498,7 +592,7 @@ The first major challenge. A clean abstraction layer that lets the renderer work
 
 | # | Backend | Shader Model | Priority | Status |
 |---|---------|-------------|----------|--------|
-| 1 | **DirectX 12** | SM6.6 | **Primary — develop first** | Planned |
+| 1 | **DirectX 12** | SM6.6 | **Primary — develop first** | **Done** (clear screen validated) |
 | 2 | DirectX 12 | SM5 | Fallback for older DX12 GPUs | Planned |
 | 3 | DirectX 11 | SM5 | Legacy GPU support | Planned |
 | 4 | Vulkan | SPIR-V | Cross-platform (Linux/Steam Deck) | Planned |
@@ -510,18 +604,43 @@ The first major challenge. A clean abstraction layer that lets the renderer work
 - Easier to write clean shaders and then create SM5 fallback paths
 - POC proved that starting with SM5 and trying to upgrade was painful
 
-### RHI Core Abstractions (planned)
+### Backend Selection at Runtime
+
+The RHI backend is selected once at startup and cannot change during a session (GPU device, descriptor heaps, and command queues are backend-specific). The selection follows the priority chain described in "Runtime Executable & CLI" above.
+
+```cpp
+// Pseudocode for backend initialization
+RHIBackend backend = ResolveBackend(cliArgs, projectConfig, userConfig);
+IRHIDevice* device = CreateRHIDevice({
+    .backend = backend,
+    .enableValidation = isDebugBuild,
+    .shaderModel = ResolveShaderModel(cliArgs, projectConfig),
+});
 ```
-RHIDevice           — GPU device creation, feature queries
+
+If the requested backend is not available (e.g., Vulkan on a system without drivers), the system falls back to the next priority backend and logs a warning.
+
+### Shader Model Negotiation
+
+The device probes GPU capabilities at init time:
+1. Check SM6.6 support (Resource Binding Tier 3)
+2. If SM6.6 not available, fall back to SM6.0 → SM5.1 → SM5.0
+3. Load shader bytecode matching the negotiated shader model
+4. If bytecode for the negotiated SM is not in the cache, trigger post-switch compilation
+
+### RHI Core Abstractions
+```
+RHIDevice           — GPU device creation, feature queries, backend selection
 RHICommandList      — Command recording (draw, dispatch, barriers)
 RHISwapChain        — Present to window
-RHIPipelineState    — Shader + render state
+RHIPipelineState    — Shader + render state, PSO cache
 RHIBuffer           — Vertex/Index/Constant/Structured buffers
 RHITexture          — 2D/3D/Cube textures, render targets
-RHIShader           — Compiled shader programs
-RHIRootSignature    — Resource binding layout (DX12) / descriptor sets (Vulkan)
+RHIShader           — Compiled shader bytecode (DXIL/SPIRV/MSL)
+RHIRootSignature    — Resource binding layout (auto-generated from reflection)
 RHISampler          — Texture sampling state
 RHIFence            — GPU/CPU synchronization
+ShaderCompiler      — HLSL compilation, cross-compilation, caching
 ```
 
 ---

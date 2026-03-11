@@ -1,0 +1,53 @@
+#pragma once
+
+/// UzEngine RHI Backend Registration and Factory
+///
+/// Provides the factory function for creating a backend-specific IRHIDevice.
+/// Backend selection is compile-time only (UZ_BACKEND_DX12, UZ_BACKEND_VULKAN, UZ_BACKEND_METAL).
+/// There is no runtime backend switching.
+
+#include "rhi.h"
+
+#include <cstdint>
+
+namespace uz {
+
+/// Available RHI backends (compile-time selection only).
+enum class RHIBackend : uint8_t {
+    DX12,
+    Vulkan,
+    Metal,
+    Null, ///< Headless backend for testing (no GPU)
+};
+
+/// Configuration for device creation.
+struct RHIDeviceDesc {
+    RHIBackend backend = RHIBackend::DX12;   ///< Which backend to initialize
+    bool enableValidation = false;           ///< Enable API validation layer (D3D12 Debug, VK validation)
+    bool enableGpuValidation = false;        ///< Enable GPU-based validation (expensive, dev only)
+    uint32_t adapterIndex = 0;               ///< GPU adapter index (0 = system default)
+};
+
+/// Creates a backend-specific RHI device.
+///
+/// # Returns
+/// A valid IRHIDevice pointer on success, nullptr on failure (unsupported hardware,
+/// missing drivers, etc.). The caller owns the returned pointer and must call
+/// DestroyRHIDevice() when done.
+///
+/// # Backend Selection
+/// The active backend is determined at compile time via UZ_BACKEND_* defines.
+/// Passing a backend that was not compiled in returns nullptr.
+///
+/// # Logging
+/// Logs adapter info, feature level, and memory budget on success.
+/// Logs detailed error on failure (driver version, missing features, etc.).
+IRHIDevice* CreateRHIDevice(const RHIDeviceDesc& desc);
+
+/// Destroys an RHI device and all resources it owns.
+///
+/// Calls WaitIdle() internally before teardown to ensure no in-flight GPU work.
+/// After this call, all handles created from this device are invalid.
+void DestroyRHIDevice(IRHIDevice* device);
+
+} // namespace uz

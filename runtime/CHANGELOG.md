@@ -2,6 +2,56 @@
 
 ## [0.2.0] — 2026-03-10
 
+### Milestone 1.2 — RHI (Rendering Hardware Interface)
+- **RHI abstract interfaces** (`core/rhi/rhi.h`, `rhi_types.h`, `rhi_backend.h`):
+  - IRHIDevice, IRHICommandList, IRHISwapChain, IRHIFence — pure virtual interfaces
+  - RHIHandle<Tag> generational handles (Buffer, Texture, Pipeline, Shader, Sampler)
+  - 20+ enums, 15+ descriptor structs, backend factory (CreateRHIDevice/DestroyRHIDevice)
+- **DX12 SM6.6 backend** (`core/rhi/dx12/`):
+  - DX12Device: IDXGIFactory6 + IDXGIAdapter4 + ID3D12Device, feature level auto-detect (12_2→12_0)
+  - D3D12MA v3.1.0 integration for GPU memory management
+  - Global descriptor heaps: CBV_SRV_UAV (1M, SM6.6 bindless), Sampler (2048), RTV (256), DSV (64)
+  - Direct + Copy command queues, triple-buffered command allocators
+  - SM6.6 Resource Binding Tier 3 validation
+  - DescriptorAllocator: O(1) free-list allocator for all heap types
+  - ResourcePool<T>: generational handle validation with use-after-free protection
+  - CreateBuffer: vertex/index/constant/structured via D3D12MA, auto SRV/UAV for bindless
+  - CreateTexture: 2D/Cube/Array with SRV + optional RTV/DSV/UAV, typeless depth for SRV+DSV
+  - CreateShader: bytecode copy with pool storage
+  - CreateSampler: sampler descriptor in global sampler heap
+  - Persistent CPU mapping for Upload/Readback buffers
+- **DX12 swapchain** (`dx12_swapchain.h/.cpp`):
+  - IDXGISwapChain4 (FLIP_DISCARD), triple-buffered, tearing support
+  - Resize handling (release + recreate back buffers)
+- **DX12 fence** (`dx12_fence.h/.cpp`):
+  - ID3D12Fence with Win32 event, Signal/WaitCPU/IsComplete/GetCompletedValue
+- **DX12 command list** (`dx12_command_list.h/.cpp`):
+  - ID3D12GraphicsCommandList (base interface for Clang/MinGW compat)
+  - SM6.6 bindless heap binding on Begin(), SetDescriptorIndex for root constants
+- **Clear screen demo** (`tools/clear_screen_demo.cpp`, `dx12_clear_screen.cpp`):
+  - Animated sine-wave RGB clear color, 6069 FPS on RTX 4090 (0.16ms/frame)
+  - Triple-buffered frame pacing with fence synchronization
+- **Debug & validation**:
+  - D3D12 debug layer + GPU-based validation (optional)
+  - DRED enabled (auto-breadcrumbs + page fault tracking)
+- **DX12 Clang/MinGW compatibility**:
+  - Microsoft directx-headers (SDK 614) with correct GUIDs
+  - Struct-return ABI: out-parameter form for GetCPUDescriptorHandleForHeapStart etc.
+  - Base COM interfaces only (ID3D12Device, ID3D12GraphicsCommandList)
+- **183 unit tests** — 23 RHI type/interface compile tests + all existing tests pass
+
+### Shader Pipeline Architecture (docs only)
+- **New spec**: `docs/specs/1.5.0-shader-pipeline.md` — comprehensive shader source management architecture
+  - Two-mode design: UZ_SHADER_DEV (VFS + disk load + hot-reload) / UZ_SHADER_SHIP (precompiled archive)
+  - ShaderVFS, ShaderDependencyGraph, content-hash cache (xxHash64), lazy dirty-flag recompile
+  - Learned from POC 1 failures: never embed shaders as C header strings during dev
+  - Researched UE5 (virtual filesystem + SHA1 + DDC) and Godot (build-time embedding + SHA-256)
+
+### Runtime CLI & Backend Selection (docs only)
+- **Runtime executable design**: CLI flags (--scene, --screenshot, --rhi, --shader-model, --headless)
+- **Backend selection priority**: CLI → .uzproject → user config → auto-detect
+- **Post-switch shader compilation**: compile missing shaders before first frame when backend changes
+
 ### Milestone 1.1 — Math & Containers
 - **Math foundation** (`core/math/uz_math.h`) — SIMD-accelerated vectors and matrices via DirectXMath:
   - Vec2, Vec3, Vec4 with zero-initialization, SIMD operations (dot, cross, normalize)

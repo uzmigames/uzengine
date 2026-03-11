@@ -1,155 +1,236 @@
 # RHI Core Interface Specification
 
 ## Overview
-The RHI (Rendering Hardware Interface) provides a unified GPU abstraction layer. All game code accesses GPU via the RHI interface. Backend implementations (DX12, Vulkan, Metal) are swappable without game code changes.
+The RHI (Rendering Hardware Interface) provides a unified GPU abstraction layer via C++ abstract classes (virtual interfaces). All rendering code above the backend uses only these interfaces. Backend implementations (DX12, Vulkan, Metal) are swappable via the factory function.
 
 ## File Structure
 ```
-runtime/src/rhi/
-├── rhi.h                   # Pure virtual C interface
-├── rhi_backend.h           # Backend registration
-├── rhi_dx12.c              # DX12 SM6.6 backend
-└── rhi_vulkan.c            # Vulkan backend (future)
+runtime/core/rhi/
+├── rhi_types.h              # Enums, descriptors, RHIHandle<Tag> generational handles
+├── rhi.h                    # Abstract interfaces: IRHIDevice, IRHICommandList, IRHISwapChain, IRHIFence
+├── rhi_backend.h            # Backend enum, RHIDeviceDesc, CreateRHIDevice/DestroyRHIDevice factory
+└── dx12/                    # DX12 SM6.6 backend implementation
+    ├── dx12_device.h/.cpp       # DX12Device : IRHIDevice
+    ├── dx12_command_list.h/.cpp # DX12CommandList : IRHICommandList
+    ├── dx12_swapchain.h/.cpp    # DX12SwapChain : IRHISwapChain
+    ├── dx12_fence.h/.cpp        # DX12Fence : IRHIFence
+    └── dx12_backend.cpp         # CreateRHIDevice factory for DX12
 ```
 
-## Key Types & Operations
+## Handle System
 
-### RHI Device Interface
+GPU resources use typed generational handles — no raw pointers cross the RHI boundary.
+
 ```cpp
-/// Rendering device abstraction
-struct rhi_device_t { /* opaque */ };
-typedef rhi_device_t* RHIDevice;
-
-/// Device creation parameters
-struct rhi_device_desc {
-    uint32_t feature_level;     // DX12: 60 = SM6.0, 61 = SM6.1, 62 = SM6.2, 63 = SM6.3, 64 = SM6.4, 65 = SM6.5, 66 = SM6.6
-    bool validation_enabled;
-    bool gpu_based_validation;
+template <typename Tag>
+struct RHIHandle {
+    uint32_t index = 0;
+    uint32_t generation = 0;
+    bool IsValid() const { return generation != 0; }
+    static RHIHandle Invalid() { return {0, 0}; }
 };
 
-/// Create rendering device
-RHIDevice rhi_device_create(const rhi_device_desc* desc, uz_log_category category);
-
-/// Destroy device and all resources
-void rhi_device_destroy(RHIDevice dev);
-
-/// Get device vendor string (e.g., "NVIDIA RTX 4090")
-const char* rhi_device_get_name(RHIDevice dev);
+using RHIBufferHandle   = RHIHandle<BufferTag>;
+using RHITextureHandle  = RHIHandle<TextureTag>;
+using RHIPipelineHandle = RHIHandle<PipelineTag>;
+using RHIShaderHandle   = RHIHandle<ShaderTag>;
+using RHISamplerHandle  = RHIHandle<SamplerTag>;
 ```
 
-### Command List Interface
+Generation counters prevent use-after-free — same pattern as `uz_handle_map.h`.
+
+## Core Interfaces
+
+### IRHIDevice — GPU device and resource factory
 ```cpp
-struct rhi_command_list_t { /* opaque */ };
-typedef rhi_command_list_t* RHICommandList;
+class IRHIDevice {
+    // Resource creation/destruction (all handle-based)
+    virtual RHIBufferHandle CreateBuffer(const RHIBufferDesc& desc) = 0;
+    virtual void DestroyBuffer(RHIBufferHandle handle) = 0;
+    virtual RHITextureHandle CreateTexture(const RHITextureDesc& desc) = 0;
+    virtual void DestroyTexture(RHITextureHandle handle) = 0;
+    virtual RHIShaderHandle CreateShader(const RHIShaderDesc& desc) = 0;
+    virtual void DestroyShader(RHIShaderHandle handle) = 0;
+    virtual RHIPipelineHandle CreateGraphicsPipeline(const RHIGraphicsPipelineDesc& desc) = 0;
+    virtual void DestroyPipeline(RHIPipelineHandle handle) = 0;
+    virtual RHISamplerHandle CreateSampler(const RHISamplerDesc& desc) = 0;
+    virtual void DestroySampler(RHISamplerHandle handle) = 0;
 
-/// Begin recording commands
-RHICommandList rhi_command_list_begin(RHIDevice dev);
+    // Object creation (pointer-based, device owns lifetime)
+    virtual IRHISwapChain* CreateSwapChain(const RHISwapChainDesc& desc) = 0;
+    virtual void DestroySwapChain(IRHISwapChain* swapChain) = 0;
+    virtual IRHIFence* CreateFence() = 0;
+    virtual void DestroyFence(IRHIFence* fence) = 0;
+    virtual IRHICommandList* CreateCommandList(RHIQueueType queue) = 0;
+    virtual void DestroyCommandList(IRHICommandList* cmdList) = 0;
 
-/// Clear render target to color
-void rhi_command_list_clear(RHICommandList cmd, float r, float g, float b, float a);
-
-/// Execute recorded commands (GPU fence created)
-void rhi_command_list_execute(RHIDevice dev, RHICommandList cmd);
-
-/// Wait for GPU execution
-void rhi_device_wait_idle(RHIDevice dev);
+    // Sync and queries
+    virtual void WaitIdle() = 0;
+    virtual const char* GetAdapterName() const = 0;
+    virtual const char* GetFeatureLevel() const = 0;
+    virtual RHIMemoryBudget GetMemoryBudget() const = 0;
+};
 ```
 
-### Resource Interface
+### IRHICommandList — GPU command recording
 ```cpp
-struct rhi_buffer_t { /* opaque */ };
-typedef rhi_buffer_t* RHIBuffer;
+class IRHICommandList {
+    // Lifecycle: Begin() → record → End() → Execute()
+    virtual void Begin() = 0;
+    virtual void End() = 0;
+    virtual void Execute() = 0;
 
-enum rhi_buffer_usage {
-    RHI_BUFFER_VERTEX    = 0x1,
-    RHI_BUFFER_INDEX     = 0x2,
-    RHI_BUFFER_CONSTANT  = 0x4,
-    RHI_BUFFER_STORAGE   = 0x8,
+    // Binding
+    virtual void SetPipeline(RHIPipelineHandle pipeline) = 0;
+    virtual void SetVertexBuffer(uint32_t slot, RHIBufferHandle buffer, uint32_t offset = 0) = 0;
+    virtual void SetIndexBuffer(RHIBufferHandle buffer, RHIIndexFormat format, uint32_t offset = 0) = 0;
+    virtual void SetViewport(const RHIViewport& viewport) = 0;
+    virtual void SetScissor(const RHIScissorRect& scissor) = 0;
+    virtual void SetDescriptorIndex(uint32_t rootParamIndex, uint32_t descriptorIndex) = 0;
+
+    // Draw/Dispatch
+    virtual void DrawIndexed(uint32_t indexCount, uint32_t instanceCount = 1, ...) = 0;
+    virtual void Draw(uint32_t vertexCount, uint32_t instanceCount = 1, ...) = 0;
+    virtual void Dispatch(uint32_t x, uint32_t y, uint32_t z) = 0;
+
+    // Barriers, Clear, Copy, Render Pass
+    virtual void ResourceBarrier(const RHIBarrierDesc* barriers, uint32_t count) = 0;
+    virtual void ClearRenderTarget(RHITextureHandle texture, const float color[4]) = 0;
+    virtual void ClearDepthStencil(RHITextureHandle texture, float depth, uint8_t stencil) = 0;
+    virtual void CopyBuffer(RHIBufferHandle src, uint64_t srcOffset, RHIBufferHandle dst, uint64_t dstOffset, uint64_t size) = 0;
+    virtual void CopyTexture(RHITextureHandle src, RHITextureHandle dst) = 0;
+    virtual void BeginRenderPass(const RHIRenderPassDesc& desc) = 0;
+    virtual void EndRenderPass() = 0;
+};
+```
+
+### IRHISwapChain — presentation
+```cpp
+class IRHISwapChain {
+    virtual RHITextureHandle GetCurrentBackBuffer() = 0;
+    virtual uint32_t GetCurrentBackBufferIndex() const = 0;
+    virtual void Present(bool vsync) = 0;
+    virtual void Resize(uint32_t width, uint32_t height) = 0;
+    virtual uint32_t GetWidth() const = 0;
+    virtual uint32_t GetHeight() const = 0;
+    virtual RHIFormat GetFormat() const = 0;
+};
+```
+
+### IRHIFence — CPU/GPU synchronization
+```cpp
+class IRHIFence {
+    virtual void Signal(uint64_t value) = 0;
+    virtual void WaitCPU(uint64_t value) = 0;
+    virtual bool IsComplete(uint64_t value) const = 0;
+    virtual uint64_t GetCompletedValue() const = 0;
+};
+```
+
+### Factory
+```cpp
+enum class RHIBackend : uint8_t { DX12, Vulkan, Metal, Null };
+
+struct RHIDeviceDesc {
+    RHIBackend backend = RHIBackend::DX12;
+    bool enableValidation = false;
+    bool enableGpuValidation = false;
+    uint32_t adapterIndex = 0;
 };
 
-/// Create GPU buffer
-RHIBuffer rhi_buffer_create(RHIDevice dev, size_t size, enum rhi_buffer_usage usage);
-
-/// Upload data to buffer
-void rhi_buffer_upload(RHIDevice dev, RHIBuffer buf, const void* data, size_t size);
-
-/// Release buffer
-void rhi_buffer_destroy(RHIDevice dev, RHIBuffer buf);
+IRHIDevice* CreateRHIDevice(const RHIDeviceDesc& desc);
+void DestroyRHIDevice(IRHIDevice* device);
 ```
 
-### Swapchain Interface
-```cpp
-struct rhi_swapchain_t { /* opaque */ };
-typedef rhi_swapchain_t* RHISwapchain;
+## DX12 SM6.6 Backend Requirements
 
-struct rhi_swapchain_desc {
-    void* hwnd;              // Win32 HWND
-    uint32_t width;
-    uint32_t height;
-    uint32_t buffer_count;   // 2 = double, 3 = triple
-    bool vsync;
-};
+### Device Initialization
+- IDXGIFactory6 + IDXGIAdapter4 enumeration (prefer high-performance GPU)
+- ID3D12Device10 with feature level auto-detection (SM6.6 → fallback SM6.0)
+- D3D12MemoryAllocator (D3D12MA) for GPU heap management
+- Three memory pools: Default (GPU-only), Upload (CPU→GPU), Readback (GPU→CPU)
+- Global CBV_SRV_UAV descriptor heap (SM6.6 bindless)
+- Global sampler descriptor heap
 
-/// Create swapchain for window
-RHISwapchain rhi_swapchain_create(RHIDevice dev, const rhi_swapchain_desc* desc);
+### Command Recording
+- Triple-buffered command allocators (one per frame-in-flight)
+- ID3D12GraphicsCommandList7 wrapping
+- Root signature with bindless push constants (SM6.6 ResourceDescriptorHeap[])
 
-/// Present backbuffer to display
-void rhi_swapchain_present(RHISwapchain sc);
+### Pipeline State
+- PSO cache with content-hash lookup (xxHash64)
+- Single global root signature for SM6.6 bindless model
+- Async PSO compilation on worker thread (future)
 
-/// Handle resize (e.g., from WM_SIZE)
-void rhi_swapchain_resize(RHISwapchain sc, uint32_t width, uint32_t height);
+### Swapchain
+- IDXGISwapChain4 via CreateSwapChainForHwnd
+- Triple-buffered back buffers
+- DXGI_PRESENT_ALLOW_TEARING for variable refresh rate
+- Resize: release back buffer refs → ResizeBuffers → re-acquire
 
-/// Destroy swapchain
-void rhi_swapchain_destroy(RHIDevice dev, RHISwapchain sc);
-```
-
-## DX12 Backend Requirements
-
-### ADDED
-Device initialization with:
-- Feature level auto-detection (try SM6.6, fallback to SM6.0)
-- Debug layer registration
-- GPU-based validation (if requested)
-- Swapchain with DXGI
-- Fence and event creation for synchronization
-
-Command list recording:
-- Allocator per frame
-- Reset on frame boundary
-- Barrier insertion for resource transitions
+### Debug & Profiling
+- ID3D12Debug6 activation in dev builds
+- GPU-based validation (optional)
+- DRED for device removal diagnostics
+- GPU timestamp queries (triple-buffered ID3D12QueryHeap)
+- GPU breadcrumbs via WriteBufferImmediate
 
 ## Design Decisions
 
-### Why Pure C Interface?
-- Easy binding to N-API and other languages
-- No C++ ABI compatibility issues
-- Clear ownership (caller allocates/frees via opaque pointers)
+### Why C++ Virtual Classes (not C API)?
+- Type-safe method dispatch via vtable (compile-time errors for wrong signatures)
+- Natural inheritance for backend implementations (DX12Device : IRHIDevice)
+- Still ABI-stable within a single binary (no cross-DLL boundary)
+- C wrapper can be added later for N-API binding if needed
 
-### Why VTable Pattern?
-- Single backend active per session (no multi-instance)
-- Vtable allows backend swapping at runtime
-- Minimal overhead (one pointer dereference per call)
+### Why Handle-Based Resources?
+- No raw GPU resource pointers cross the abstraction boundary
+- Generation counters detect use-after-free in debug builds
+- Backend manages actual COM/API objects internally
+- Same pattern as HandleMap from Milestone 1.1
+
+### Why Compile-Time Backend Selection?
+- Single backend per build (no runtime overhead)
+- No DX12/Vulkan headers pulled into non-backend code
+- UZ_BACKEND_DX12/UZ_BACKEND_VULKAN defines control compilation
 
 ### Resource Lifetime
-- Creator is responsible for destruction
-- Double-free checks in debug builds
-- GPU sync happens on device_wait_idle() or destruction
+- Device owns all resources — destroying device implicitly destroys everything
+- Explicit Destroy*() preferred for deterministic cleanup
+- WaitIdle() called before device destruction
+- Double-free checks via generation counter in debug builds
 
 ## Testing Requirements
 
-### Unit Tests
-- Device creation/destruction succeeds
-- Resource creation with various sizes/alignments
-- Swapchain resize doesn't crash
-- Validation catches invalid operations
+#### Scenario: Handle validity
+- RHIHandle::Invalid() has generation=0, IsValid()=false
+- Created handles have generation>0, IsValid()=true
+- Handles with same index but different generation are not equal
 
-### Integration Tests
-- Clear screen renders correctly
-- Frame pacing maintains 60fps target
-- No GPU hangs or TDR events
-- Memory profiler shows no leaks
+#### Scenario: Enum bitwise operations
+- BufferUsage flags combine with |, test with HasFlag()
+- TextureUsage flags combine with |, test with HasFlag()
 
-### Validation
-- All operations pass D3D12 debug layer
-- GPU hangs detected via timeout
-- Invalid state caught at runtime
+#### Scenario: Device creation (requires GPU)
+- CreateRHIDevice with DX12 backend succeeds on SM6.6 hardware
+- GetAdapterName returns non-empty string
+- GetFeatureLevel returns valid level string
+- GetMemoryBudget reports non-zero budget
+
+#### Scenario: Clear screen render loop
+- Create device + swapchain + command list + fence
+- Record: Barrier(Present→RT) → ClearRenderTarget(animated color) → Barrier(RT→Present)
+- Execute + Present for 10 frames
+- No D3D12 debug layer validation errors
+- Frame time ≤16.6ms (60fps target)
+
+#### Scenario: Swapchain resize
+- Create swapchain at 800x600
+- Resize to 1280x720
+- GetWidth()/GetHeight() reflect new size
+- Present succeeds after resize
+
+#### Scenario: Shutdown cleanup
+- Destroy all resources explicitly
+- DestroyRHIDevice succeeds
+- No GPU memory leaks (D3D12MA reports zero live allocations)
