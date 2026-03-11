@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uzengine.dev/schemas/uzimport.schema.json",
+  "title": "UzEngine Import Sidecar",
+  "description": "UzEngine import sidecar file (.uzimport) — metadata tracking the import history of a source asset. Stored alongside the source file (e.g., 'shader.hlsl.uzimport'). Used by the cook pipeline to skip up-to-date assets (content-addressed via xxHash64).",
+  "type": "object",
+  "required": ["importer", "version", "source_hash"],
+  "properties": {
+    "importer": {
+      "type": "string",
+      "description": "Name of the importer that produced this sidecar (e.g., 'shader', 'texture', 'mesh', 'audio')."
+    },
+    "version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Importer version at the time of import. When the importer version increases, a reimport is triggered."
+    },
+    "source_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{16}$",
+      "description": "xxHash64 hex digest (16 lowercase hex chars) of the source file content. Changed hash triggers reimport."
+    },
+    "options": {
+      "type": "object",
+      "description": "Import options used during this import. Preserved for deterministic reimport.",
+      "additionalProperties": {
+        "oneOf": [
+          { "type": "string" },
+          { "type": "number" },
+          { "type": "boolean" }
+        ]
+      },
+      "examples": [{
+        "stage": "pixel",
+        "model": "sm6_6",
+        "entry_point": "main"
+      }]
+    },
+    "outputs": {
+      "type": "object",
+      "description": "Map of variant name to cached output file path. Each variant is a different compilation target (e.g., shader model, platform).",
+      "additionalProperties": {
+        "type": "string",
+        "description": "Absolute or relative path to the cached compiled output file."
+      },
+      "examples": [{
+        "sm6_6": ".cache/imported/a1b2c3d4e5f6g7h8.bin",
+        "sm5_1": ".cache/imported/f8e7d6c5b4a39281.bin"
+      }]
+    },
+    "dependencies": {
+      "type": "array",
+      "description": "Paths of files this asset depends on (e.g., included shader headers). A change in any dependency triggers reimport.",
+      "items": { "type": "string" }
+    }
+  },
+  "additionalProperties": false
+}

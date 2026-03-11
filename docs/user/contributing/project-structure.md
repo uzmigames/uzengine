@@ -59,6 +59,30 @@ runtime/
 │   │   └── frame_array.h     # Frame-scoped dynamic array
 │   ├── random/
 │   │   └── random.h          # PCG random generator
+│   ├── shader/
+│   │   ├── shader_vfs.h/.cpp            # Virtual filesystem for shader sources
+│   │   ├── shader_source_manager.h/.cpp # Include parsing, content hashing
+│   │   ├── shader_dependency_graph.h/.cpp # Forward/reverse include tracking
+│   │   ├── shader_cache.h/.cpp          # Disk-based bytecode cache
+│   │   ├── shader_compiler.h/.cpp       # DXC integration (HLSL→DXIL/SPIRV)
+│   │   ├── shader_pipeline.h/.cpp       # High-level compile orchestrator
+│   │   ├── shader_permutation.h/.cpp    # Feature flag variant expansion
+│   │   ├── shader_reflection.h/.cpp     # SPIRV-Reflect binding extraction
+│   │   ├── shader_hot_reload.h/.cpp     # FileWatcher + dirty flags
+│   │   └── shader_archive.h/.cpp        # Shipping precompiled archive
+│   ├── asset/
+│   │   ├── vfs.h/.cpp                   # General-purpose virtual filesystem
+│   │   ├── asset_importer.h             # Base importer interface
+│   │   ├── asset_cache.h/.cpp           # Asset content cache
+│   │   ├── asset_registry.h/.cpp        # Global asset database
+│   │   ├── asset_manifest.h/.cpp        # Build manifest tracking
+│   │   ├── import_sidecar.h/.cpp        # .import.json sidecar files
+│   │   ├── pak_format.h/.cpp            # .uzpak binary archive
+│   │   ├── shader_importer.h            # HLSL-specific importer
+│   │   └── uzshader_format.h/.cpp       # .uzshader binary format
+│   ├── renderer/
+│   │   ├── upload_context.h/.cpp        # GPU upload ring buffer
+│   │   └── vertex.h                     # Vertex format definitions
 │   └── rhi/
 │       ├── rhi.h             # IRHIDevice, IRHICommandList, etc.
 │       ├── rhi_types.h       # Handles, enums, descriptors
@@ -85,9 +109,19 @@ runtime/
 │       └── input.h/.cpp               # Keyboard/mouse/action mapping
 │
 ├── tools/
-│   ├── uzengine.cpp  # Standalone runtime executable
-│   ├── clear_screen_demo.cpp # DX12 clear screen demo
-│   └── dx12_clear_screen.cpp # Demo render implementation
+│   ├── uzengine.cpp          # Standalone runtime executable
+│   └── uzcook.cpp            # Asset cooker CLI
+│
+├── demos/
+│   ├── clear_screen/         # DX12 animated clear screen (standalone build.zig)
+│   │   ├── build.zig
+│   │   ├── main.cpp
+│   │   └── dx12_clear_screen.h/.cpp
+│   └── triangle/             # DX12 triangle demo (SM6.6 bindless, standalone build.zig)
+│       ├── build.zig
+│       ├── main.cpp
+│       ├── triangle_demo.h/.cpp
+│       └── shaders/          # HLSL sources (simple_vs.hlsl, simple_ps.hlsl)
 │
 └── tests/                    # Mirrors core/ structure
 ```
@@ -99,7 +133,8 @@ runtime/
 | New core system | `core/<system>/<system>.h` + `.cpp` |
 | New RHI backend | `core/rhi/<backend>/` (e.g., `core/rhi/vulkan/`) |
 | New platform | `platform/<os>/` (e.g., `platform/linux/`) |
-| New tool/demo | `tools/<name>.cpp` + add to `build.zig` |
+| New tool | `tools/<name>.cpp` + add to `build.zig` |
+| New demo | `demos/<name>/` with own `build.zig` (standalone project) |
 | New tests | `tests/core/<area>/test_<name>.cpp` + add to `build.zig` |
 | New third-party dep | `thirdparty/<name>/` + add to `scripts/setup.ps1` + `build.zig` |
 

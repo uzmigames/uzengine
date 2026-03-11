@@ -1,0 +1,151 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uzengine.dev/schemas/uzvfx.schema.json",
+  "title": "UzEngine VFX System",
+  "description": "UzEngine VFX file (.uzvfx) — Niagara-style modular GPU particle system. Each system contains one or more emitters, each with a module stack (spawn, update, render). Modules are composable and drive GPU compute shaders at runtime.",
+  "type": "object",
+  "required": ["name", "emitters"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "VFX system display name."
+    },
+    "bounds": {
+      "type": "object",
+      "description": "Fixed bounding box for GPU culling. If omitted, bounds are computed dynamically (slower).",
+      "properties": {
+        "min": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "max": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 3,
+          "maxItems": 3
+        }
+      },
+      "additionalProperties": false
+    },
+    "warmup_time": {
+      "type": "number",
+      "minimum": 0,
+      "default": 0,
+      "description": "Pre-simulation time in seconds. Particles are simulated invisibly for this duration before first visible frame."
+    },
+    "emitters": {
+      "type": "array",
+      "description": "Particle emitters in this system. Each emitter has independent spawn/update/render modules.",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Emitter display name."
+          },
+          "enabled": {
+            "type": "boolean",
+            "default": true
+          },
+          "max_particles": {
+            "type": "integer",
+            "minimum": 1,
+            "default": 1000,
+            "description": "Maximum live particle count. GPU buffer is pre-allocated to this size."
+          },
+          "simulation_space": {
+            "type": "string",
+            "enum": ["local", "world"],
+            "default": "world",
+            "description": "Coordinate space for particle simulation. 'local' = particles move with emitter. 'world' = particles detach."
+          },
+          "sort_mode": {
+            "type": "string",
+            "enum": ["none", "back_to_front", "front_to_back", "by_age"],
+            "default": "none",
+            "description": "Particle sort order for correct alpha blending."
+          },
+          "spawn_modules": {
+            "type": "array",
+            "description": "Modules that control particle emission rate and burst patterns.",
+            "items": { "$ref": "#/$defs/module" }
+          },
+          "update_modules": {
+            "type": "array",
+            "description": "Modules that modify particles each frame (forces, drag, noise, collision, color over life).",
+            "items": { "$ref": "#/$defs/module" }
+          },
+          "render_modules": {
+            "type": "array",
+            "description": "Modules that control how particles are rendered (billboard, ribbon, mesh, lit/unlit).",
+            "items": { "$ref": "#/$defs/module" }
+          },
+          "events": {
+            "type": "array",
+            "description": "Event handlers that trigger sub-emitters or gameplay callbacks on particle death, collision, etc.",
+            "items": {
+              "type": "object",
+              "required": ["trigger"],
+              "properties": {
+                "trigger": {
+                  "type": "string",
+                  "enum": ["on_death", "on_collision", "on_spawn", "on_lifetime"],
+                  "description": "Event trigger condition."
+                },
+                "action": {
+                  "type": "string",
+                  "enum": ["spawn_emitter", "play_sound", "run_lua"],
+                  "description": "Action to execute when triggered."
+                },
+                "properties": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "description": "Action-specific parameters (emitter name, sound path, lua function)."
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "module": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Module type identifier. Built-in types: rate, burst, initial_velocity, initial_size, initial_color, initial_lifetime, gravity, drag, noise, orbit, collision, color_over_life, size_over_life, velocity_over_life, sprite_renderer, ribbon_renderer, mesh_renderer, light_renderer.",
+          "examples": ["rate", "burst", "initial_velocity", "gravity", "drag", "color_over_life", "sprite_renderer"]
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": true
+        },
+        "properties": {
+          "type": "object",
+          "description": "Module-specific parameters. Depends on the module type.",
+          "additionalProperties": true,
+          "examples": [
+            { "rate": 100 },
+            { "count": 50, "time": 0, "repeat": false },
+            { "min": [-1, 2, -1], "max": [1, 5, 1] },
+            { "strength": -9.81 },
+            { "coefficient": 0.1 },
+            { "start": [1, 0.8, 0.2, 1], "end": [1, 0.2, 0.1, 0] },
+            { "material": "materials/particle_spark.uzmaterial", "alignment": "camera" }
+          ]
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -61,13 +61,31 @@ runtime/
 │   │   ├── shader_dependency_graph.h # Forward/reverse include tracking
 │   │   ├── shader_cache.h         # Disk-based bytecode cache
 │   │   ├── shader_compiler.h      # DXC integration (HLSL→DXIL/SPIRV)
+│   │   ├── shader_pipeline.h      # High-level compile orchestrator
 │   │   ├── shader_permutation.h   # Feature flag variants
+│   │   ├── shader_reflection.h    # SPIRV-Reflect binding extraction
 │   │   ├── shader_hot_reload.h    # FileWatcher + dirty flags
 │   │   └── shader_archive.h       # Shipping mode precompiled archive
+│   ├── asset/               # Asset pipeline (VFS, importers, cache, registry)
+│   │   ├── vfs.h                  # General-purpose virtual filesystem
+│   │   ├── asset_importer.h       # Base importer interface
+│   │   ├── asset_cache.h          # Asset content cache
+│   │   ├── asset_registry.h       # Global asset database
+│   │   ├── asset_manifest.h       # Build manifest tracking
+│   │   ├── import_sidecar.h       # .import.json sidecar files
+│   │   ├── pak_format.h           # .uzpak binary archive format
+│   │   ├── shader_importer.h      # HLSL-specific importer
+│   │   └── uzshader_format.h      # .uzshader binary format
+│   ├── renderer/            # Renderer utilities
+│   │   ├── upload_context.h       # GPU upload ring buffer
+│   │   └── vertex.h               # Vertex format definitions
 │   └── paths/               # Path resolution (paths.h)
 ├── platform/
 │   └── windows/             # Win32 window, input system
-├── tools/                   # Standalone executables (runtime, demo)
+├── tools/                   # Standalone executables (uzengine, uzcook)
+├── demos/                   # Standalone demo projects (own build.zig each)
+│   ├── clear_screen/        # DX12 animated clear screen demo
+│   └── triangle/            # DX12 triangle demo (SM6.6 bindless)
 ├── tests/                   # GoogleTest suites (mirrors source structure)
 ├── thirdparty/              # All third-party dependencies (git-tracked)
 ├── build.zig                # Zig build system
@@ -86,6 +104,12 @@ tools/ ──→ core/rhi/ ──→ core/shader/ ──→ core/ (logging, asse
 
 core/shader/ ──→ core/paths/ (resource resolution)
              ──→ core/ (VFS, source loading, DXC integration)
+
+core/asset/  ──→ core/shader/ (shader importer)
+             ──→ core/paths/ (resource resolution)
+             ──→ core/ (logging, VFS)
+
+core/renderer/ ──→ core/rhi/ (GPU upload, vertex buffers)
 
 platform/windows/ ──→ core/paths/ (path resolution)
                   ──→ core/ (logging, input)

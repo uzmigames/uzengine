@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uzengine.dev/schemas/uzscript.schema.json",
+  "title": "UzEngine Visual Script",
+  "description": "UzEngine visual script file (.uzscript) — Blueprint-style node graph for visual programming. Compiles to Lua code at cook time. Nodes represent operations (math, flow control, component access, events). Connections carry typed data between node pins.",
+  "type": "object",
+  "required": ["name", "nodes"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Script display name."
+    },
+    "description": {
+      "type": "string",
+      "description": "Human-readable description of what this script does."
+    },
+    "variables": {
+      "type": "array",
+      "description": "Script-level variables accessible from all functions/event graphs in this script.",
+      "items": {
+        "type": "object",
+        "required": ["name", "type"],
+        "properties": {
+          "name": { "type": "string", "description": "Variable name." },
+          "type": {
+            "type": "string",
+            "enum": ["bool", "int", "float", "string", "vec2", "vec3", "vec4", "color", "entity", "asset_ref"],
+            "description": "Variable data type."
+          },
+          "default": {
+            "description": "Default value. Must match the declared type."
+          },
+          "exposed": {
+            "type": "boolean",
+            "default": false,
+            "description": "If true, this variable appears in the entity inspector and can be set per-instance in .uzscene."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "nodes": {
+      "type": "array",
+      "description": "All nodes in the visual script graph.",
+      "items": {
+        "type": "object",
+        "required": ["id", "type"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique node identifier within this script."
+          },
+          "type": {
+            "type": "string",
+            "description": "Node type. Categories: events (on_start, on_update, on_trigger_enter), flow (branch, for_each, sequence, delay), math (add, multiply, lerp, clamp), component (get_transform, set_position), entity (spawn, destroy, find_by_tag), debug (print, draw_line).",
+            "examples": ["on_start", "on_update", "branch", "get_transform", "set_position", "add", "multiply", "print"]
+          },
+          "position": {
+            "type": "array",
+            "items": { "type": "number" },
+            "minItems": 2,
+            "maxItems": 2,
+            "description": "Editor canvas position [x, y]."
+          },
+          "properties": {
+            "type": "object",
+            "description": "Node-specific properties (constant values, enum selections, etc.).",
+            "additionalProperties": true
+          },
+          "comment": {
+            "type": "string",
+            "description": "Optional comment displayed on the node in the editor."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "connections": {
+      "type": "array",
+      "description": "Directed edges between node pins. Execution pins (white) control flow order. Data pins (colored) carry typed values.",
+      "items": {
+        "type": "object",
+        "required": ["from_node", "from_pin", "to_node", "to_pin"],
+        "properties": {
+          "from_node": { "type": "string", "description": "Source node ID." },
+          "from_pin": { "type": "string", "description": "Source output pin name (e.g., 'exec_out', 'result', 'true', 'false')." },
+          "to_node": { "type": "string", "description": "Destination node ID." },
+          "to_pin": { "type": "string", "description": "Destination input pin name (e.g., 'exec_in', 'a', 'b', 'target')." }
+        },
+        "additionalProperties": false
+      }
+    },
+    "functions": {
+      "type": "array",
+      "description": "Named functions that can be called from other scripts or from Lua. Each function has its own sub-graph of nodes.",
+      "items": {
+        "type": "object",
+        "required": ["name", "entry_node"],
+        "properties": {
+          "name": { "type": "string", "description": "Function name (callable via ctx.script:call_function())." },
+          "entry_node": { "type": "string", "description": "Node ID of the function entry point." },
+          "inputs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["name", "type"],
+              "properties": {
+                "name": { "type": "string" },
+                "type": { "type": "string" }
+              },
+              "additionalProperties": false
+            }
+          },
+          "outputs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["name", "type"],
+              "properties": {
+                "name": { "type": "string" },
+                "type": { "type": "string" }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

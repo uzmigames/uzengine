@@ -56,12 +56,13 @@ zig build -Doptimize=ReleaseFast       # Release build
 zig build -Dtarget=x86_64-linux-gnu    # Cross-compile to Linux
 ```
 
-Output goes to `build/bin/`:
+Output goes to `zig-out/bin/`:
 - `uzengine.exe` — Standalone runtime
-- `clear_screen_demo.exe` — DX12 animated clear demo
-- `triangle_demo.exe` — DX12 triangle demo (SM6.6 bindless)
 - `test_runtime.exe` — Unit test runner
+- `dxcompiler.dll` / `dxil.dll` — DXC shader compiler (auto-deployed)
 - `D3D12/D3D12Core.dll` — Agility SDK runtime (auto-deployed)
+
+Demos (`clear_screen`, `triangle`) are standalone projects in `demos/` with their own `build.zig`.
 
 ### Option 2: CMake (MSVC or Clang)
 
@@ -95,7 +96,6 @@ Output goes to `build/<preset>/Debug/` (or `Release/`).
 | `zig build` | Build all targets (library + executables) |
 | `zig build test` | Build and run all unit tests |
 | `zig build run` | Build and launch the runtime executable |
-| `zig build demo` | Build and run the DX12 clear screen demo |
 
 ## Run Tests
 
@@ -103,11 +103,13 @@ Output goes to `build/<preset>/Debug/` (or `Release/`).
 zig build test
 ```
 
-Currently **223 tests** across:
-- Core systems (logging, assertions, config, profiling, memory)
+42 test files across:
+- Core systems (logging, assertions, config, profiling, memory, paths)
 - Math (vectors, matrices, quaternions, transforms, color, bounds)
 - Containers (ring buffer, free list, handle map, frame array)
-- RHI (types, config resolution, DX12 resource creation)
+- Shader pipeline (VFS, source manager, dependency graph, cache, compiler, pipeline, permutations, reflection, hot-reload, archive)
+- Asset pipeline (VFS, cache, registry, manifest, importer sidecar, pak format, uzshader format)
+- RHI (types, config resolution, DX12 device, DX12 resources, DX12 render loop)
 - Platform (input system)
 
 ## Verify the Build

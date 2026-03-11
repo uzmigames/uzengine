@@ -9,7 +9,7 @@
 | `zig build` | Build all targets |
 | `zig build test` | Build and run all unit tests |
 | `zig build run` | Build and launch runtime |
-| `zig build demo` | Build and run DX12 demo |
+| `zig build -Doptimize=ReleaseSafe` | Release build with safety checks |
 | `zig build -Doptimize=ReleaseFast` | Release build |
 | `zig build -Dtarget=x86_64-linux-gnu` | Cross-compile for Linux |
 
@@ -65,10 +65,33 @@ tests/
 │   │   └── test_frame_array.cpp
 │   ├── random/
 │   │   └── test_random.cpp
+│   ├── paths/
+│   │   └── test_paths.cpp         # GetExeDir, ResolveEngineResource
+│   ├── shader/
+│   │   ├── test_shader_vfs.cpp          # ShaderVFS mount/resolve
+│   │   ├── test_shader_source_manager.cpp # Include parsing, hashing
+│   │   ├── test_shader_dependency_graph.cpp # Forward/reverse deps
+│   │   ├── test_shader_cache.cpp        # Bytecode cache hit/miss
+│   │   ├── test_shader_compiler.cpp     # DXC integration
+│   │   ├── test_shader_pipeline.cpp     # End-to-end compile orchestration
+│   │   ├── test_shader_permutation.cpp  # Variant expansion
+│   │   ├── test_shader_reflection.cpp   # SPIRV-Reflect bindings
+│   │   ├── test_shader_hot_reload.cpp   # File watch + dirty flags
+│   │   └── test_shader_archive.cpp      # Precompiled archive
+│   ├── asset/
+│   │   ├── test_vfs.cpp                 # General VFS
+│   │   ├── test_asset_cache.cpp         # Asset content cache
+│   │   ├── test_asset_registry.cpp      # Global asset database
+│   │   ├── test_asset_manifest.cpp      # Build manifest
+│   │   ├── test_import_sidecar.cpp      # .import.json files
+│   │   ├── test_pak_format.cpp          # .uzpak archive
+│   │   └── test_uzshader_format.cpp     # .uzshader binary format
 │   └── rhi/
 │       ├── test_rhi_types.cpp     # Handle, enum, descriptor tests
 │       ├── test_rhi_config.cpp    # Config resolution, CLI parsing
-│       └── test_dx12_resources.cpp # DX12 resource creation (Windows only)
+│       ├── test_dx12_device.cpp   # DX12 device creation (Windows only)
+│       ├── test_dx12_resources.cpp # DX12 resource creation (Windows only)
+│       └── test_dx12_render_loop.cpp # DX12 render loop (Windows only)
 └── platform/
     └── test_input.cpp             # Input system (Windows only)
 ```

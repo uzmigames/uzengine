@@ -1,0 +1,169 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uzengine.dev/schemas/uzanimsequence.schema.json",
+  "title": "UzEngine Animation Sequence",
+  "description": "UzEngine animation sequence file (.uzanimsequence) — skeletal animation with per-bone keyframes, curves, and animation events (notifies). JSON header defines metadata; binary keyframe data is stored in the companion .uzpak or loose binary blob.",
+  "type": "object",
+  "required": ["name", "skeleton", "duration"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Animation display name (e.g., 'Walk', 'Run', 'Attack_01')."
+    },
+    "skeleton": {
+      "type": "string",
+      "description": "Path to the skeleton asset (.uzskeleton) this animation was authored for."
+    },
+    "duration": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Total animation duration in seconds."
+    },
+    "frame_rate": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "default": 30.0,
+      "description": "Authoring frame rate (FPS). Keyframes are stored at this rate; runtime interpolates."
+    },
+    "looping": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether this animation is designed to loop seamlessly."
+    },
+    "additive": {
+      "type": "boolean",
+      "default": false,
+      "description": "If true, keyframes are stored as deltas from a reference pose (for additive blending layers)."
+    },
+    "additive_ref_frame": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 0,
+      "description": "Reference frame index for additive animations. Deltas are computed relative to this frame."
+    },
+    "root_motion": {
+      "type": "object",
+      "description": "Root motion extraction settings. When enabled, the root bone's translation/rotation is extracted and applied to the entity transform instead of the skeleton.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Extract root motion from the root bone."
+        },
+        "lock_vertical": {
+          "type": "boolean",
+          "default": false,
+          "description": "Zero out vertical (Y) root motion. Useful for locomotion where gravity handles vertical movement."
+        },
+        "lock_rotation": {
+          "type": "boolean",
+          "default": false,
+          "description": "Do not extract rotational root motion."
+        }
+      },
+      "additionalProperties": false
+    },
+    "tracks": {
+      "type": "array",
+      "description": "Per-bone animation tracks. Each track contains keyframes for a specific bone's transform channels.",
+      "items": {
+        "type": "object",
+        "required": ["bone"],
+        "properties": {
+          "bone": {
+            "type": "string",
+            "description": "Target bone name (must match a bone in the referenced skeleton)."
+          },
+          "position_keys": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 0,
+            "description": "Number of position keyframes. Actual data stored in binary blob."
+          },
+          "rotation_keys": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 0,
+            "description": "Number of rotation keyframes (quaternion). Actual data stored in binary blob."
+          },
+          "scale_keys": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 0,
+            "description": "Number of scale keyframes. Actual data stored in binary blob."
+          },
+          "compression": {
+            "type": "string",
+            "enum": ["none", "quantized", "curve_reduced"],
+            "default": "none",
+            "description": "Keyframe compression mode. 'quantized': fixed-point 16-bit. 'curve_reduced': key reduction with error threshold."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "curves": {
+      "type": "array",
+      "description": "Named float curves for driving material parameters, blend weights, or gameplay values during playback.",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Curve name referenced by game code (e.g., 'foot_ik_weight', 'opacity')."
+          },
+          "key_count": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Number of keyframes. Data in binary blob as [time, value] pairs."
+          },
+          "interpolation": {
+            "type": "string",
+            "enum": ["linear", "cubic", "step"],
+            "default": "linear",
+            "description": "Interpolation mode between keyframes."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "notifies": {
+      "type": "array",
+      "description": "Animation events (notifies) triggered at specific times during playback. Used for footstep sounds, VFX spawning, gameplay triggers.",
+      "items": {
+        "type": "object",
+        "required": ["time", "type"],
+        "properties": {
+          "time": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Trigger time in seconds from animation start."
+          },
+          "type": {
+            "type": "string",
+            "description": "Notify type identifier dispatched to Lua callbacks (e.g., 'footstep', 'spawn_vfx', 'play_sound')."
+          },
+          "properties": {
+            "type": "object",
+            "description": "Notify-specific payload data passed to the callback.",
+            "additionalProperties": true
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "import_settings": {
+      "type": "object",
+      "properties": {
+        "source_file": { "type": "string" },
+        "source_take": { "type": "string", "description": "Take/clip name in multi-take source files (FBX)." },
+        "trim_start": { "type": "number", "minimum": 0, "default": 0 },
+        "trim_end": { "type": "number", "minimum": 0 },
+        "scale": { "type": "number", "default": 1.0 }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
