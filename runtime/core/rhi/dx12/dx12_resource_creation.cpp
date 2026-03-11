@@ -47,6 +47,7 @@ DXGI_FORMAT ToDxgiFormat(RHIFormat format) {
     }
 }
 
+/// Returns true if the format is a depth or depth-stencil format.
 bool IsDepthFormat(RHIFormat format) {
     return format == RHIFormat::D16Unorm
         || format == RHIFormat::D32Float
@@ -54,6 +55,7 @@ bool IsDepthFormat(RHIFormat format) {
         || format == RHIFormat::D32FloatS8Uint;
 }
 
+/// Returns the typeless equivalent for SRV+DSV combo (e.g. D32Float → R32_TYPELESS).
 DXGI_FORMAT ToTypelessDepthFormat(RHIFormat format) {
     switch (format) {
         case RHIFormat::D16Unorm:       return DXGI_FORMAT_R16_TYPELESS;
@@ -64,6 +66,7 @@ DXGI_FORMAT ToTypelessDepthFormat(RHIFormat format) {
     }
 }
 
+/// Returns the SRV-readable format for a depth texture (e.g. D32Float → R32_FLOAT).
 DXGI_FORMAT ToDepthSrvFormat(RHIFormat format) {
     switch (format) {
         case RHIFormat::D16Unorm:       return DXGI_FORMAT_R16_UNORM;
@@ -78,6 +81,7 @@ DXGI_FORMAT ToDepthSrvFormat(RHIFormat format) {
 // D3D12MA Heap Type Mapping
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Converts RHIMemoryType to D3D12_HEAP_TYPE.
 static D3D12_HEAP_TYPE ToD3D12HeapType(RHIMemoryType memory) {
     switch (memory) {
         case RHIMemoryType::Upload:   return D3D12_HEAP_TYPE_UPLOAD;
@@ -90,6 +94,7 @@ static D3D12_HEAP_TYPE ToD3D12HeapType(RHIMemoryType memory) {
 // Buffer Creation
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Creates a D3D12MA buffer with optional SRV/UAV descriptors and CPU mapping.
 bool CreateDX12Buffer(ID3D12Device* device,
                       D3D12MA::Allocator* allocator,
                       DescriptorAllocator& srvUavHeap,
@@ -216,6 +221,7 @@ bool CreateDX12Buffer(ID3D12Device* device,
     return true;
 }
 
+/// Releases a buffer's D3D12MA allocation and frees its SRV/UAV descriptor indices.
 void DestroyDX12Buffer(DX12Buffer& buffer, DescriptorAllocator& srvUavHeap) {
     // Unmap persistent mapping
     if (buffer.mappedPtr && buffer.resource) {
@@ -250,6 +256,7 @@ void DestroyDX12Buffer(DX12Buffer& buffer, DescriptorAllocator& srvUavHeap) {
 // Texture Creation
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Creates a D3D12MA texture with SRV and optional RTV/DSV/UAV descriptors.
 bool CreateDX12Texture(ID3D12Device* device,
                        D3D12MA::Allocator* allocator,
                        DescriptorAllocator& srvUavHeap,
@@ -423,6 +430,7 @@ bool CreateDX12Texture(ID3D12Device* device,
     return true;
 }
 
+/// Releases a texture's D3D12MA allocation and frees all descriptor indices.
 void DestroyDX12Texture(DX12Texture& texture,
                         DescriptorAllocator& srvUavHeap,
                         DescriptorAllocator& rtvHeap,
@@ -458,6 +466,7 @@ void DestroyDX12Texture(DX12Texture& texture,
 // Sampler Creation
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Converts RHIFilterMode to D3D12_FILTER.
 static D3D12_FILTER ToD3D12Filter(RHIFilterMode filter) {
     switch (filter) {
         case RHIFilterMode::Point:       return D3D12_FILTER_MIN_MAG_MIP_POINT;
@@ -467,6 +476,7 @@ static D3D12_FILTER ToD3D12Filter(RHIFilterMode filter) {
     }
 }
 
+/// Converts RHIAddressMode to D3D12_TEXTURE_ADDRESS_MODE.
 static D3D12_TEXTURE_ADDRESS_MODE ToD3D12AddressMode(RHIAddressMode mode) {
     switch (mode) {
         case RHIAddressMode::Wrap:   return D3D12_TEXTURE_ADDRESS_MODE_WRAP;
@@ -477,6 +487,7 @@ static D3D12_TEXTURE_ADDRESS_MODE ToD3D12AddressMode(RHIAddressMode mode) {
     }
 }
 
+/// Converts RHICompareFunc to D3D12_COMPARISON_FUNC (sampler section).
 static D3D12_COMPARISON_FUNC ToD3D12CompareFunc(RHICompareFunc func) {
     switch (func) {
         case RHICompareFunc::Never:        return D3D12_COMPARISON_FUNC_NEVER;
@@ -491,6 +502,7 @@ static D3D12_COMPARISON_FUNC ToD3D12CompareFunc(RHICompareFunc func) {
     }
 }
 
+/// Creates a sampler descriptor in the global sampler heap.
 bool CreateDX12Sampler(ID3D12Device* device,
                        DescriptorAllocator& samplerHeap,
                        const RHISamplerDesc& desc,
@@ -523,6 +535,7 @@ bool CreateDX12Sampler(ID3D12Device* device,
     return true;
 }
 
+/// Frees a sampler's descriptor index in the global sampler heap.
 void DestroyDX12Sampler(DX12Sampler& sampler, DescriptorAllocator& samplerHeap) {
     if (sampler.samplerIndex != UINT32_MAX) {
         samplerHeap.Free(sampler.samplerIndex);
@@ -534,6 +547,10 @@ void DestroyDX12Sampler(DX12Sampler& sampler, DescriptorAllocator& samplerHeap) 
 // Root Signature — Global Bindless (SM6.6)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Creates the global bindless root signature with SM6.6 DIRECTLY_INDEXED flags.
+///
+/// Layout: one root constant (uint descriptorIndex at b0, visibility ALL).
+/// CBV_SRV_UAV and Sampler heaps are directly indexed by shader code.
 ID3D12RootSignature* CreateBindlessRootSignature(ID3D12Device* device) {
     // Root parameter 0: one root constant (uint32 descriptorIndex) at b0
     D3D12_ROOT_PARAMETER1 rootParams[1] = {};
@@ -665,6 +682,7 @@ static D3D12_PRIMITIVE_TOPOLOGY_TYPE ToDx12TopologyType(RHIPrimitiveTopology top
     return D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
 }
 
+/// Creates a graphics PSO from RHIGraphicsPipelineDesc, resolving shader handles from the pool.
 bool CreateDX12GraphicsPipeline(ID3D12Device* device,
                                  ID3D12RootSignature* rootSignature,
                                  const RHIGraphicsPipelineDesc& desc,
@@ -772,6 +790,7 @@ bool CreateDX12GraphicsPipeline(ID3D12Device* device,
     return true;
 }
 
+/// Releases a pipeline state object's COM reference.
 void DestroyDX12Pipeline(DX12Pipeline& pipeline) {
     if (pipeline.pso) {
         pipeline.pso->Release();
