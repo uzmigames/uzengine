@@ -72,10 +72,11 @@
   - 6069 FPS on RTX 4090 (0.16ms/frame)
   - Animated sine-wave RGB clear color
   - Per-frame: Begin → Barrier → ClearRTV → Barrier → End → Execute → Present
-- [ ] 4.3 Frame time profiling
-  - GPU timestamp queries (ID3D12QueryHeap, triple-buffered)
-  - UZ_GPU_TIMESTAMP macro for pass-level timing
-  - Log frame time to console
+- [x] 4.3 Frame time profiling ✅
+  - DX12GpuProfiler: ID3D12QueryHeap (TIMESTAMP) with triple-buffered readback
+  - BeginTimestamp/EndTimestamp per scope, ResolveFrame reads N-2 results
+  - GPU frequency-based tick-to-ms conversion, 64 scopes/frame max
+  - New files: dx12_gpu_profiler.h/.cpp
 - [ ] 4.4 GPU breadcrumbs (dev builds)
   - WriteBufferImmediate for GPU breadcrumb markers
   - Readback breadcrumb buffer on device removal
