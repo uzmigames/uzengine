@@ -152,52 +152,218 @@ Entities live in a **World**. They have:
 - A **parent entity** (optional, for hierarchy)
 - Zero or more **Components** attached
 
-### 4.2 Components
+### 4.2 Component Hierarchy
 
-Components are **data structs** registered with the engine. No inheritance required.
+UE5-style class hierarchy for type safety and shared behavior, with Godot-style directory organization by server/subsystem. Physics and rendering are **independent pipelines** — a SceneComponent can have physics without rendering, and vice versa.
+
+#### Class Hierarchy
+
+```
+Component                              — base: lifecycle callbacks, owner entity
+├── ActorComponent                     — no transform, pure logic/data
+│   ├── MovementComponent              — moves another component's transform (like UE5)
+│   │   ├── CharacterMovementComponent — ground movement, gravity, stepping
+│   │   └── ProjectileMovementComponent— ballistic trajectory
+│   ├── InputComponent                 — binds InputActions to entity
+│   └── (game-defined: HealthComponent, InventoryComponent, ...)
+│
+└── SceneComponent                     — HAS transform, parent/child hierarchy, attach/detach
+    ├── CameraComponent                — perspective/ortho, active camera resolution
+    ├── AudioSourceComponent           — 3D positional playback → AudioEngine
+    ├── AudioListenerComponent         — spatial listener (usually on camera entity)
+    ├── SpringArmComponent             — collision-avoiding arm for camera follow
+    ├── CollisionObject                — base physics presence → PhysicsWorld (Jolt)
+    │   ├── PhysicsBody                — simulated (mass, velocity, forces)
+    │   │   ├── RigidBody              — fully simulated dynamic body
+    │   │   ├── CharacterBody          — kinematic with ground/wall detection
+    │   │   └── StaticBody             — immovable, infinite mass
+    │   ├── TriggerVolume              — overlap detection, no physics response
+    │   └── CollisionShape             — geometry definition (box, sphere, capsule, mesh)
+    ├── NavAgent                       — pathfinding agent → NavigationServer (Recast/Detour)
+    │
+    └── PrimitiveComponent             — HAS render proxy → RenderWorld (visible in scene)
+        ├── MeshComponent              — base for mesh rendering (material overrides)
+        │   ├── StaticMeshComponent    — static geometry, instancing-friendly
+        │   └── SkeletalMeshComponent  — skinned mesh, bone transforms from Animator
+        ├── LightComponent             — base for all lights
+        │   ├── DirectionalLightComponent — sun/moon, no position (direction only)
+        │   ├── PointLightComponent    — omnidirectional, range-based attenuation
+        │   └── SpotLightComponent     — cone, inner/outer angle
+        ├── DecalComponent             — projected material onto surfaces
+        └── ParticleSystemComponent    — GPU/CPU particle emitter
+```
+
+#### Design Rules
+
+| Rule | Description |
+|------|-------------|
+| **Physics ≠ Rendering** | `CollisionObject` inherits from `SceneComponent`, NOT `PrimitiveComponent`. An entity can collide without rendering, and render without colliding. |
+| **Movement is ActorComponent** | Like UE5 — `MovementComponent` has no transform. It holds a pointer to an `UpdatedComponent` (a SceneComponent) and modifies that component's transform. |
+| **SceneComponent owns hierarchy** | Parent/child attachment, local→world transform propagation, dirty flags — all live in `SceneComponent`. |
+| **PrimitiveComponent owns render proxy** | Creates/updates/destroys a proxy in `RenderWorld`. Game code never touches the proxy directly. |
+| **One CollisionShape per shape** | Compound collision = multiple `CollisionShape` children under one `PhysicsBody`. |
+
+#### Base Classes
 
 ```cpp
-/// Position, rotation, scale in world or local space.
-/// If the entity has a parent, local_transform is relative to parent.
-/// world_transform is cached and recomputed when dirty.
-struct TransformComponent {
+/// Base component. Owns lifecycle callbacks and a reference to the owning entity.
+/// All components inherit from this — never used directly.
+class Component {
+public:
+    virtual ~Component() = default;
+
+    virtual void OnRegister() {}       // added to entity
+    virtual void OnInitialize() {}     // world preparing for play
+    virtual void OnBeginPlay() {}      // gameplay starts
+    virtual void OnEndPlay() {}        // gameplay stopping
+    virtual void OnUninitialize() {}   // world teardown
+    virtual void OnUnregister() {}     // removed from entity
+
+    Entity GetEntity() const;
+    World& GetWorld() const;
+};
+
+/// Component without transform. Pure logic and data.
+/// Use for: movement controllers, input binding, AI, game state (health, inventory).
+class ActorComponent : public Component {
+    // No transform. No scene hierarchy participation.
+    // Access other components via GetWorld().Get<T>(GetEntity()).
+};
+
+/// Component with transform. Participates in parent/child scene hierarchy.
+/// Local transform is relative to parent. World transform is cached + lazily recomputed.
+class SceneComponent : public Component {
+public:
     Vec3 position = {0, 0, 0};
     Quat rotation = Quat::Identity();
-    Vec3 scale = {1, 1, 1};
-    // --- internal (not set by user) ---
-    Mat4 world_matrix;          // cached
-    bool world_dirty = true;    // recompute on next access
+    Vec3 scale    = {1, 1, 1};
+
+    /// Attach this component as child of another SceneComponent.
+    void AttachTo(SceneComponent& parent);
+    void Detach();
+
+    /// Cached world-space matrix. Recomputed when dirty flag is set.
+    const Mat4& GetWorldMatrix() const;
+
+    /// Mark transform as dirty. Propagates down to all children.
+    void MarkDirty();
+
+private:
+    Mat4 world_matrix_;
+    bool world_dirty_ = true;
+    SceneComponent* parent_ = nullptr;
+    std::vector<SceneComponent*> children_;
 };
 
-/// References a mesh + material for rendering.
-/// The RenderWorld reads this to build draw calls.
-struct MeshRendererComponent {
-    ResourceHandle<Mesh> mesh;
-    ResourceHandle<Material> material;
+/// Component that is visible in the scene. Creates a render proxy in RenderWorld.
+/// The proxy is automatically created on OnRegister, updated on transform change,
+/// and destroyed on OnUnregister. Game code never touches the proxy directly.
+class PrimitiveComponent : public SceneComponent {
+public:
     bool visible = true;
     bool cast_shadows = true;
+    uint32_t render_layer = 0;   // bitmask — camera filters by layer
+
+protected:
+    /// Called by the system to create the backend-specific render proxy.
+    /// Subclasses override this (StaticMeshComponent creates a mesh proxy, etc.)
+    virtual RenderProxyHandle CreateRenderProxy() = 0;
+
+private:
+    RenderProxyHandle proxy_ = INVALID_HANDLE;  // managed by RenderWorld
+};
+```
+
+#### Concrete Components (key examples)
+
+```cpp
+/// Static mesh + material for rendering. Inherits PrimitiveComponent.
+/// Instancing-friendly — identical mesh+material combos auto-batch.
+class StaticMeshComponent : public PrimitiveComponent {
+public:
+    ResourceHandle<Mesh> mesh;
+    ResourceHandle<Material> material;
+
+    /// Override material parameter at runtime without creating a new Material asset.
+    /// Creates a per-instance material override (like UE5's dynamic material instance).
+    void SetParameter(StringView name, const Vec4& value);
+    void SetParameter(StringView name, ResourceHandle<Texture> texture);
 };
 
-/// Perspective or orthographic camera.
-struct CameraComponent {
-    float fov = 60.0f;           // degrees, perspective only
+/// Perspective or orthographic camera. Only one active camera per World.
+/// Inherits SceneComponent (has position/rotation) but NOT PrimitiveComponent (no render proxy).
+class CameraComponent : public SceneComponent {
+public:
+    float fov = 60.0f;            // degrees, perspective only
     float near_plane = 0.1f;
     float far_plane = 1000.0f;
     bool  is_ortho = false;
-    float ortho_size = 10.0f;    // half-height, ortho only
-    bool  is_active = false;     // only one active camera per world
+    float ortho_size = 10.0f;     // half-height, ortho only
+    bool  is_active = false;      // set true to make this the active camera
+
+    /// Computed view-projection matrix (world_matrix inverse * projection).
+    Mat4 GetViewProjection() const;
 };
 
-/// Directional, point, or spot light.
-struct LightComponent {
-    enum Type { Directional, Point, Spot };
-    Type type = Directional;
-    Vec3 color = {1, 1, 1};
+/// Light base. Inherits PrimitiveComponent for shadow map rendering and culling.
+/// Concrete types: DirectionalLightComponent, PointLightComponent, SpotLightComponent.
+/// All three defined in light_component.h (variants change together, Godot pattern).
+class LightComponent : public PrimitiveComponent {
+public:
+    Color color = Color::White();
     float intensity = 1.0f;
-    float range = 10.0f;         // point/spot only
-    float spot_angle = 45.0f;    // spot only
-    bool cast_shadows = true;
 };
+
+class DirectionalLightComponent : public LightComponent { /* no range, no position — direction only */ };
+class PointLightComponent : public LightComponent { public: float range = 10.0f; };
+class SpotLightComponent : public LightComponent { public: float range = 10.0f; float inner_angle = 30.0f; float outer_angle = 45.0f; };
+
+/// Physics body with full simulation (mass, velocity, forces).
+/// Inherits SceneComponent — has transform, syncs with PhysicsWorld (Jolt).
+/// Does NOT inherit PrimitiveComponent — physics bodies are invisible by default.
+/// Add a StaticMeshComponent to the same entity if you want it visible.
+class RigidBody : public PhysicsBody {
+public:
+    float mass = 1.0f;
+    float linear_damping = 0.01f;
+    float angular_damping = 0.05f;
+
+    void AddForce(const Vec3& force);
+    void AddImpulse(const Vec3& impulse);
+    Vec3 GetLinearVelocity() const;
+};
+
+/// Movement controller — ActorComponent (no transform of its own).
+/// Holds a reference to the SceneComponent it moves (UpdatedComponent).
+/// Reads input, applies movement rules, writes to UpdatedComponent's transform.
+class CharacterMovementComponent : public MovementComponent {
+public:
+    float max_speed = 600.0f;
+    float acceleration = 2048.0f;
+    float gravity = -981.0f;
+    float jump_velocity = 420.0f;
+    bool is_grounded = false;     // updated by PhysicsWorld sweep
+
+    /// The SceneComponent whose transform this movement controller drives.
+    /// Typically the root SceneComponent or CharacterBody of the entity.
+    SceneComponent* updated_component = nullptr;
+};
+```
+
+#### Entity Assembly Example
+
+```
+Player (entity)
+├── SceneComponent (root)                    — transform root
+│   ├── SkeletalMeshComponent                — PrimitiveComponent → RenderWorld
+│   ├── CameraComponent                      — SceneComponent → view/projection
+│   │   └── SpringArmComponent               — SceneComponent → collision avoidance
+│   ├── CollisionShape (capsule)             — SceneComponent → PhysicsWorld
+│   │   └── CharacterBody                    — SceneComponent → PhysicsWorld (kinematic)
+│   └── AudioListenerComponent               — SceneComponent → AudioEngine
+├── CharacterMovementComponent               — ActorComponent (moves the CharacterBody)
+├── InputComponent                           — ActorComponent (binds actions)
+└── HealthComponent                          — ActorComponent (game data)
 ```
 
 ### 4.3 Component Lifecycle
@@ -969,62 +1135,103 @@ public:
 
 ```
 runtime/
-  core/                 ← primitives (no engine deps)
-    assertions/
-    config/
-    containers/
-    logging/
-    math/
-    memory/
-    paths/
-    random/
-
-  rhi/                  ← GPU abstraction (depends on core/)
-    dx12/
-    rhi.h
-    rhi_backend.h
-    rhi_types.h
-    rhi_config.h/.cpp
-
-  renderer/             ← render pipeline (depends on core/, rhi/)
-    camera/
-    mesh/
-    shader/
-    upload/
-    constant_buffers/
-    vertex/
-
-  engine/               ← game API (depends on core/, rhi/, renderer/, platform/)
-    application/        ← Application, GameLoop, TimeManager
-    world/              ← World, Entity, Component storage
-    components/         ← built-in components (Transform, MeshRenderer, Light, Camera)
-    behavior/           ← Behavior base class
-    subsystem/          ← WorldSubsystem base + built-in subsystems
-    event/              ← MulticastDelegate, EventQueue, EngineEvents
-    tick/               ← TickGroup, TickFunction, TickManager
-    plugin/             ← Plugin loader, ModuleDescriptor, C ABI
-    resource/           ← ResourceManager, ResourceHandle, ResourceLoader
-    scene/              ← SceneLoader, SceneSaver (.uzscene/.uzprefab)
-    input/              ← InputAction, InputMap (wraps platform/)
-
-  editor/               ← editor-only (depends on engine/)
-    font/
-    grid/
-    screenshot/
-    stats/
-
-  developer/            ← dev-only, stripped in shipping (see DEVELOPER.md)
-    profiling/
-    debug_draw/
-    hot_reload/
-    console/
-
-  platform/             ← OS abstraction (depends on core/)
-    windows/
-
-  demos/                ← refactored to use engine/ API
-  tests/                ← mirrors source structure
-  tools/                ← uzcook, uzembed, uzengine
+├── core/                                    ← primitives (no engine deps)
+│   ├── assertions/
+│   ├── config/
+│   ├── containers/
+│   ├── logging/
+│   ├── math/
+│   ├── memory/
+│   ├── paths/
+│   └── random/
+│
+├── rhi/                                     ← GPU abstraction (depends on core/)
+│   ├── dx12/
+│   ├── rhi.h
+│   ├── rhi_backend.h
+│   ├── rhi_types.h
+│   └── rhi_config.h/.cpp
+│
+├── renderer/                                ← render pipeline (depends on core/, rhi/)
+│   ├── camera/
+│   ├── mesh/
+│   ├── shader/
+│   ├── upload/
+│   ├── constant_buffers/
+│   └── vertex/
+│
+├── engine/                                  ← game API (depends on core/, rhi/, renderer/, platform/)
+│   ├── application/                         ← Application, GameLoop, TimeManager
+│   ├── world/                               ← World, Entity, Component storage
+│   ├── components/                          ← component hierarchy (by server/subsystem)
+│   │   ├── component.h                      ← Component base (lifecycle)
+│   │   ├── actor_component.h                ← ActorComponent (no transform, pure logic)
+│   │   ├── scene_component.h                ← SceneComponent (transform, hierarchy)
+│   │   ├── primitive_component.h            ← PrimitiveComponent (render proxy, visibility)
+│   │   ├── rendering/                       ← → RenderWorld
+│   │   │   ├── static_mesh_component.h/.cpp
+│   │   │   ├── skeletal_mesh_component.h/.cpp
+│   │   │   ├── light_component.h/.cpp       ← Directional + Point + Spot (one file)
+│   │   │   ├── decal_component.h
+│   │   │   └── particle_system_component.h/.cpp
+│   │   ├── physics/                         ← → PhysicsWorld (Jolt)
+│   │   │   ├── collision_object.h
+│   │   │   ├── physics_body.h
+│   │   │   ├── rigid_body.h/.cpp
+│   │   │   ├── character_body.h/.cpp
+│   │   │   ├── static_body.h
+│   │   │   ├── collision_shape.h/.cpp
+│   │   │   ├── trigger_volume.h
+│   │   │   └── joints/
+│   │   │       ├── joint.h
+│   │   │       ├── hinge_joint.h
+│   │   │       └── spring_joint.h
+│   │   ├── audio/                           ← → AudioEngine
+│   │   │   ├── audio_source_component.h/.cpp
+│   │   │   └── audio_listener_component.h
+│   │   ├── camera/                          ← SceneComponent (no render proxy)
+│   │   │   ├── camera_component.h/.cpp
+│   │   │   └── spring_arm_component.h
+│   │   ├── navigation/                      ← → NavigationServer (Recast/Detour)
+│   │   │   ├── nav_agent_component.h
+│   │   │   ├── nav_obstacle_component.h
+│   │   │   └── nav_region_component.h
+│   │   ├── animation/                       ← → AnimationSystem
+│   │   │   └── animator_component.h/.cpp
+│   │   └── gameplay/                        ← ActorComponents (pure logic)
+│   │       ├── movement/
+│   │       │   ├── movement_component.h
+│   │       │   ├── character_movement.h/.cpp
+│   │       │   └── projectile_movement.h
+│   │       └── input/
+│   │           └── input_component.h
+│   ├── behavior/                            ← Behavior base class
+│   ├── subsystem/                           ← WorldSubsystem base + built-ins
+│   ├── event/                               ← MulticastDelegate, EventQueue, EngineEvents
+│   ├── tick/                                ← TickGroup, TickFunction, TickManager
+│   ├── plugin/                              ← Plugin loader, ModuleDescriptor, C ABI
+│   ├── resource/                            ← ResourceManager, ResourceHandle, ResourceLoader
+│   ├── scene/                               ← SceneLoader, SceneSaver (.uzscene/.uzprefab)
+│   └── input/                               ← InputAction, InputMap (wraps platform/)
+│
+├── editor/                                  ← editor-only (depends on engine/)
+│   ├── font/
+│   ├── grid/
+│   ├── screenshot/
+│   └── stats/
+│
+├── developer/                               ← dev-only, stripped in shipping (see DEVELOPER.md)
+│   ├── profiling/
+│   ├── debug_draw/
+│   ├── hot_reload/
+│   └── console/
+│
+├── platform/                                ← OS abstraction (depends on core/)
+│   └── windows/
+│
+├── demos/                                   ← refactored to use engine/ API
+├── tests/                                   ← mirrors source structure
+└── tools/                                   ← uzcook, uzembed, uzengine
 ```
 
 ---
@@ -1747,15 +1954,18 @@ private:
         UZ_LOG(Game, Info, "Wave {} — {} enemies", wave, enemies_to_spawn_);
     }
 
+    // Cached assets — loaded once at subsystem init
+    UZ_ASSET(uz::Mesh, "meshes/sphere.uzmesh", enemy_mesh);
+    UZ_ASSET(uz::Material, "materials/red.uzmat", enemy_mat);
+
     void SpawnEnemy() {
-        auto& res = uz::Application::GetResources();
         auto e = GetWorld().CreateEntity("Enemy");
         GetWorld().Add<uz::TransformComponent>(e, {
             .position = {-10, 0.5f, 0}, .scale = {0.5f, 0.5f, 0.5f}
         });
         GetWorld().Add<uz::MeshRendererComponent>(e, {
-            .mesh = res.Load<uz::Mesh>("meshes/sphere.uzmesh"),
-            .material = res.Load<uz::Material>("materials/red.uzmat")
+            .mesh = enemy_mesh,      // UZ_ASSET — already loaded
+            .material = enemy_mat
         });
         GetWorld().Add<Enemy>(e, {
             .speed = 2.0f + current_wave * 0.3f,
@@ -1774,25 +1984,26 @@ class EnemyWalker : public uz::Behavior {
     UZ_BEHAVIOR(EnemyWalker);
     UZ_TICK_PARALLEL(true);  // enemies walk independently — safe for parallel execution
 
+    // Cached references — resolved once at BeginPlay, ~1ns access per frame
+    UZ_REF(uz::TransformComponent, transform);
+    UZ_REF(Enemy, enemy);
+
     Vec3 move_dir_ = {};
 
 public:
     /// OnTick (every frame): apply movement + check death.
     /// Cheap — just move along cached direction, check health.
     void OnTick(float dt) override {
-        auto& transform = Get<uz::TransformComponent>();
-        auto& enemy = Get<Enemy>();
-
-        // Apply cached movement direction (computed by PathUpdate)
-        transform.position += move_dir_ * enemy.speed * dt;
+        // Direct access via UZ_REF — no Get<T>() lookup per frame
+        transform->position += move_dir_ * enemy->speed * dt;
         if (move_dir_.LengthSq() > 0.0f)
-            transform.rotation = Quat::LookAt(move_dir_, Vec3::Up());
+            transform->rotation = Quat::LookAt(move_dir_, Vec3::Up());
 
         // Death check — immediate response, not deferred
-        if (enemy.health <= 0.0f) {
+        if (enemy->health <= 0.0f) {
             auto* waves = GetWorld().GetSubsystem<WaveSubsystem>();
             waves->enemies_alive--;
-            waves->OnEnemyKilled.Broadcast({.enemy = GetEntity(), .position = transform.position});
+            waves->OnEnemyKilled.Broadcast({.enemy = GetEntity(), .position = transform->position});
             GetWorld().DestroyEntity(GetEntity());
         }
     }
@@ -1802,24 +2013,22 @@ public:
     /// Waypoint checks don't need per-frame precision.
     UZ_SCHEDULED(PathUpdate, 10.0f);
     void PathUpdate(float dt) {
-        auto& transform = Get<uz::TransformComponent>();
-        auto& enemy = Get<Enemy>();
         constexpr int kCount = sizeof(kWaypoints) / sizeof(kWaypoints[0]);
 
-        if (enemy.path_index >= kCount) {
+        if (enemy->path_index >= kCount) {
             GetWorld().GetSubsystem<WaveSubsystem>()->enemies_alive--;
             GetWorld().DestroyEntity(GetEntity());
             return;
         }
 
-        Vec3 dir = kWaypoints[enemy.path_index] - transform.position;
+        Vec3 dir = kWaypoints[enemy->path_index] - transform->position;
         if (dir.Length() < 0.3f) {
-            enemy.path_index++;
+            enemy->path_index++;
         }
 
         // Cache direction for OnTick to apply every frame (smooth movement)
-        if (enemy.path_index < kCount) {
-            move_dir_ = (kWaypoints[enemy.path_index] - transform.position).Normalized();
+        if (enemy->path_index < kCount) {
+            move_dir_ = (kWaypoints[enemy->path_index] - transform->position).Normalized();
         } else {
             move_dir_ = Vec3::Zero();
         }
@@ -1828,6 +2037,14 @@ public:
 
 class TurretAI : public uz::Behavior {
     UZ_BEHAVIOR(TurretAI);
+
+    // Cached references — no Get<T>() per frame
+    UZ_REF(uz::TransformComponent, transform);
+    UZ_REF(Turret, turret);
+
+    // Cached assets — loaded once, reused for every bullet spawn
+    UZ_ASSET(uz::Mesh, "meshes/sphere.uzmesh", bullet_mesh);
+    UZ_ASSET(uz::Material, "materials/yellow_emissive.uzmat", bullet_mat);
 
     uz::Entity target_ = uz::Entity::Invalid();
 
@@ -1838,10 +2055,9 @@ public:
         if (target_ == uz::Entity::Invalid()) return;
         if (!GetWorld().IsValid(target_)) { target_ = uz::Entity::Invalid(); return; }
 
-        auto& transform = Get<uz::TransformComponent>();
         auto& ep = GetWorld().Get<uz::TransformComponent>(target_).position;
-        Quat desired = Quat::LookAt((ep - transform.position).Normalized(), Vec3::Up());
-        transform.rotation = Quat::Slerp(transform.rotation, desired, dt * 8.0f);
+        Quat desired = Quat::LookAt((ep - transform->position).Normalized(), Vec3::Up());
+        transform->rotation = Quat::Slerp(transform->rotation, desired, dt * 8.0f);
     }
 
     // ─── Reactive: 10 Hz — scan for targets + fire ──────────────────────
@@ -1849,37 +2065,33 @@ public:
     /// 10Hz is plenty for turret targeting — no need for per-frame scans.
     UZ_SCHEDULED(TargetAndFire, 10.0f);
     void TargetAndFire(float dt) {
-        auto& turret = Get<Turret>();
-        auto& transform = Get<uz::TransformComponent>();
-
-        turret.cooldown -= dt;
+        turret->cooldown -= dt;
 
         // Scan for nearest enemy in range
         target_ = uz::Entity::Invalid();
-        float nearest_dist = turret.range;
+        float nearest_dist = turret->range;
 
         GetWorld().ForEach<Enemy, uz::TransformComponent>(
             [&](uz::Entity e, Enemy&, uz::TransformComponent& et) {
-                float d = (et.position - transform.position).Length();
+                float d = (et.position - transform->position).Length();
                 if (d < nearest_dist) { nearest_dist = d; target_ = e; }
             }
         );
 
         // Fire if target found and cooldown ready
-        if (target_ != uz::Entity::Invalid() && turret.cooldown <= 0.0f) {
-            auto& res = uz::Application::GetResources();
+        if (target_ != uz::Entity::Invalid() && turret->cooldown <= 0.0f) {
             auto bullet = GetWorld().CreateEntity("Bullet");
             GetWorld().Add<uz::TransformComponent>(bullet, {
-                .position = transform.position + Vec3::Up() * 0.5f,
+                .position = transform->position + Vec3::Up() * 0.5f,
                 .scale = {0.1f, 0.1f, 0.1f}
             });
             GetWorld().Add<uz::MeshRendererComponent>(bullet, {
-                .mesh = res.Load<uz::Mesh>("meshes/sphere.uzmesh"),
-                .material = res.Load<uz::Material>("materials/yellow_emissive.uzmat")
+                .mesh = bullet_mesh,      // UZ_ASSET — already loaded, zero cost
+                .material = bullet_mat
             });
             GetWorld().Add<Bullet>(bullet, {.target = target_});
             GetWorld().Add<BulletLogic>(bullet);
-            turret.cooldown = 1.0f / turret.fire_rate;
+            turret->cooldown = 1.0f / turret->fire_rate;
         }
     }
 };
@@ -1953,4 +2165,2372 @@ public:
 | UZ_TICK_PARALLEL | | | | ✓ |
 | Game state machine | | | ✓ | |
 | Scene transitions (LoadScene) | | | | |
+| UZ_REF (cached component access) | | | | ✓ |
+| UZ_ASSET (cached resource) | | | | ✓ |
+| UZ_ENTITY_REF (cross-entity ref) | | | | |
+| UZ_OBSERVABLE (reactive fields) | | | | |
 | UZ_LOG | ✓ | | ✓ | ✓ |
+
+---
+
+## 16. Reference & Reactivity System
+
+### 16.1 The Problem
+
+In Unity, calling `GetComponent<T>()` every frame inside `Update()` is a common anti-pattern — it's a type-based lookup each call. In Unreal, the best practice is to cache references in `BeginPlay` using `UPROPERTY()`. But without engine support, developers must manually write boilerplate: store pointers, null-check, handle invalidation.
+
+Similarly, cross-entity data access (`GetWorld().Get<TransformComponent>(other_entity).position`) is verbose and repeated constantly. And polling for changes (`if (health != last_health_)`) wastes CPU when most values change rarely.
+
+### 16.2 UZ_REF — Cached Component Access
+
+`UZ_REF` declares a cached reference to a component on the **owning entity**. Resolved automatically during `OnBeginPlay`, accessed as a direct pointer with O(1) array lookup and generation safety check.
+
+```cpp
+class EnemyWalker : public uz::Behavior {
+    UZ_BEHAVIOR(EnemyWalker);
+
+    // Cached references — resolved once at BeginPlay, ~1ns access thereafter
+    UZ_REF(uz::TransformComponent, transform);
+    UZ_REF(Enemy, enemy);
+    UZ_REF(Health, health);
+
+    Vec3 move_dir_ = {};
+
+public:
+    void OnTick(float dt) override {
+        // Direct access — no Get<T>() lookup per frame
+        transform->position += move_dir_ * enemy->speed * dt;
+    }
+};
+```
+
+**Implementation:** `UZ_REF` stores entity handle + component type ID. Access dereferences via `world.components[type_id][entity.index]` — a single array lookup (~1ns). The generation check catches stale references (component removed or entity destroyed).
+
+**Invariant:** If the component is removed while a `UZ_REF` exists, access returns nullptr (safe) and logs a warning in dev builds.
+
+### 16.3 UZ_ASSET — Cached Resource Handle
+
+`UZ_ASSET` declares a resource that loads once during init and stays cached. Eliminates repeated `Application::GetResources().Load<T>()` calls.
+
+```cpp
+class WaveSubsystem : public uz::WorldSubsystem {
+    UZ_SUBSYSTEM(WaveSubsystem);
+
+    // Loaded once at subsystem init — zero cost per spawn
+    UZ_ASSET(uz::Mesh, "meshes/sphere.uzmesh", enemy_mesh);
+    UZ_ASSET(uz::Material, "materials/red.uzmat", enemy_mat);
+    UZ_ASSET(uz::Mesh, "meshes/sphere.uzmesh", bullet_mesh);
+    UZ_ASSET(uz::Material, "materials/yellow_emissive.uzmat", bullet_mat);
+
+    void SpawnEnemy() {
+        auto e = GetWorld().CreateEntity("Enemy");
+        GetWorld().Add<uz::MeshRendererComponent>(e, {
+            .mesh = enemy_mesh,      // already loaded, just copy handle
+            .material = enemy_mat
+        });
+        // ...
+    }
+};
+```
+
+**Hot-reload:** When the asset is reloaded by the developer layer, the `ResourceHandle` inside `UZ_ASSET` automatically points to the new version. No callback registration needed — it's built into `ResourceHandle`.
+
+### 16.4 UZ_ENTITY_REF — Cross-Entity Reference
+
+`UZ_ENTITY_REF` caches a reference to **another entity** by name or tag. Resolved at BeginPlay via world query, validated each access via generation check.
+
+```cpp
+class EnemyAI : public uz::Behavior {
+    UZ_BEHAVIOR(EnemyAI);
+
+    // Find entity named "Player" at BeginPlay, cache handle
+    UZ_ENTITY_REF("Player", player);
+
+    // Cache a component on the referenced entity
+    UZ_ENTITY_COMPONENT(player, uz::TransformComponent, player_transform);
+
+public:
+    void OnTick(float dt) override {
+        if (!player.IsValid()) return;  // player destroyed? skip
+
+        auto& transform = Get<uz::TransformComponent>();
+        Vec3 to_player = player_transform->position - transform.position;
+        // Chase player...
+    }
+};
+```
+
+**Resolution strategies:**
+- `UZ_ENTITY_REF("name", var)` — find by entity name (debug builds only, slow)
+- `UZ_ENTITY_REF_TAG(PlayerTag, var)` — find first entity with component type (fast, O(1) via sparse set)
+- `UZ_ENTITY_REF_NEAREST(EnemyTag, var)` — find nearest entity with tag (spatial query)
+
+### 16.5 UZ_SYNC — Read-Only Cross-Entity Data Cache
+
+`UZ_SYNC` copies a field from another entity's component once per frame, before tick groups run. Useful for frequently-read cross-entity data like player position.
+
+```cpp
+class EnemyAI : public uz::Behavior {
+    UZ_BEHAVIOR(EnemyAI);
+
+    UZ_ENTITY_REF_TAG(PlayerTag, player);
+
+    // Synced once per frame before tick groups — zero lookup cost during OnTick
+    UZ_SYNC(player, uz::TransformComponent, position, player_pos);  // Vec3
+    UZ_SYNC(player, Health, current, player_health);                 // float
+
+public:
+    void OnTick(float dt) override {
+        // player_pos and player_health are plain member variables, updated automatically
+        Vec3 to_player = player_pos - Get<uz::TransformComponent>().position;
+        if (player_health <= 0.0f) {
+            // Player dead, stop chasing
+        }
+    }
+};
+```
+
+**When to use:** Data that changes every frame (position, velocity) where you need to read it from many entities. 200 enemies reading `player_pos` = 200 cheap copies (memcpy of Vec3) vs 200 world lookups + generation checks.
+
+**When NOT to use:** Data that changes rarely — use `UZ_OBSERVABLE` + `Observe<>` instead.
+
+### 16.6 UZ_OBSERVABLE — Reactive Field Change Detection
+
+`UZ_OBSERVABLE` marks a component field for change detection. When the value changes, registered observers are notified. This replaces per-frame polling with event-driven updates.
+
+```cpp
+/// Health component with observable 'current' field.
+/// Writing to 'current' via Set() dispatches change events.
+struct Health {
+    float max = 100.0f;
+    UZ_OBSERVABLE(float, current, 100.0f);  // generates getter, setter, and change delegate
+    UZ_COMPONENT(Health);
+};
+```
+
+**Observer registration from behaviors:**
+
+```cpp
+class HealthBar : public uz::Behavior {
+    UZ_BEHAVIOR(HealthBar);
+
+    UZ_REF(Health, health);
+    UZ_REF(HealthBarUI, ui);
+
+public:
+    void OnBeginPlay() override {
+        // Callback only fires when health.current CHANGES — not every frame
+        Observe(health, &Health::current, [this](float old_val, float new_val) {
+            ui->fill_percent = new_val / health->max;
+
+            if (new_val < old_val)
+                ui->FlashRed();  // damage feedback
+
+            if (new_val <= 0.0f)
+                GetWorld().DestroyEntity(GetEntity());
+        });
+    }
+
+    // No OnTick needed! Zero per-frame cost.
+};
+```
+
+**Performance comparison:**
+- **Without reactivity:** 500 entities × HealthBar polling `if (health != last_)` = 500 branches/frame
+- **With reactivity:** 0 checks/frame + N callbacks only when damage happens (e.g., 3 hits/frame = 3 callbacks)
+
+**Cost:** Each `UZ_OBSERVABLE` field adds ~8 bytes (delegate list pointer) to the component. The setter compares old vs new value before dispatching — a single branch per write.
+
+### 16.7 When to Use What
+
+| Macro | Purpose | Access Cost | Memory | Best For |
+|---|---|---|---|---|
+| `UZ_REF(T, name)` | Cache own-entity component | ~1ns (array lookup) | 8 bytes (handle) | Replace Get<T>() in OnTick |
+| `UZ_ASSET(T, path, name)` | Cache loaded resource | 0 (already loaded) | 16 bytes (handle) | Replace Load<T>() in spawn code |
+| `UZ_ENTITY_REF(q, name)` | Cache other-entity handle | ~1ns (generation check) | 8 bytes (handle) | Player ref, target ref |
+| `UZ_SYNC(src, C, field, name)` | Read-only copy per frame | 0 (pre-copied) | sizeof(field) | Position, velocity (changes every frame) |
+| `UZ_OBSERVABLE(T, name, default)` | Reactive field with change events | ~1 branch per write | ~8 bytes (delegate ptr) | Health, score, state (changes rarely) |
+
+**Rules of thumb:**
+- Field changes **every frame** (position, velocity) → `UZ_REF` or `UZ_SYNC`
+- Field changes **rarely** (health, score, game state) → `UZ_OBSERVABLE` + `Observe<>`
+- Field **never changes** at runtime (mesh, material) → `UZ_ASSET`
+- Need reference to **own entity's component** → `UZ_REF`
+- Need reference to **another entity** → `UZ_ENTITY_REF`
+
+### 16.8 Anti-Patterns — What NOT to Do
+
+**1. Don't make position/rotation observable:**
+```cpp
+// ❌ WRONG — position changes 60x/sec, delegate dispatch overhead > poll cost
+struct TransformComponent {
+    UZ_OBSERVABLE(Vec3, position, {});  // fires 60 events/sec per entity!
+};
+
+// ✅ CORRECT — just read it directly
+UZ_REF(uz::TransformComponent, transform);
+transform->position;  // ~1ns
+```
+
+**2. Don't create bidirectional sync:**
+```cpp
+// ❌ WRONG — who has authority? race condition
+UZ_SYNC(player, Health, current, player_hp);
+// then writing back: player_hp = 50;  ← writes to LOCAL copy, not player's Health
+
+// ✅ CORRECT — read via SYNC, write via world access
+auto& hp = GetWorld().Get<Health>(player.GetEntity());
+hp.SetCurrent(50.0f);  // goes through UZ_OBSERVABLE setter
+```
+
+**3. Don't cascade observers:**
+```cpp
+// ❌ WRONG — A observes B, B observes C, C change cascades to A in same frame
+// This is React.js, not a game engine. Leads to infinite loops and frame spikes.
+
+// ✅ CORRECT — limit to 1 level of observation. If you need A→B→C, use events.
+```
+
+### 16.9 MVP vs Full Implementation
+
+**MVP (Phase 2):**
+- `UZ_REF` — cached component access with generation check
+- `UZ_ASSET` — cached resource handles
+
+**Phase 2 — Cross-Entity:**
+- `UZ_ENTITY_REF` — name/tag-based entity lookup
+- `UZ_ENTITY_COMPONENT` — component on referenced entity
+- `UZ_SYNC` — per-frame field copy
+
+**Phase 3 — Reactivity:**
+- `UZ_OBSERVABLE` — setter with change detection
+- `Observe<>` — callback registration
+- Observer auto-cleanup on entity/behavior destruction
+
+---
+
+## 17. GameInstance — Cross-Scene Persistence
+
+### 17.1 The Problem
+
+`WorldSubsystem` dies with the `World`. When you call `LoadScene("level2")`, all entities, components, and subsystems are destroyed. Where do you store the player's total score, inventory, settings, or online session data?
+
+In Unreal, `UGameInstance` solves this — it persists from boot to shutdown. In Unity, developers hack around it with `DontDestroyOnLoad` singletons. In Godot, Autoload nodes serve a similar purpose. UzEngine needs a first-class solution.
+
+### 17.2 Design
+
+```cpp
+/// Persists across scene transitions. One per application.
+/// Created at startup (Phase 0), destroyed at shutdown.
+/// Game developers subclass this and register it in .uzproject config.
+///
+/// # Lifecycle
+/// - `OnInit()` — after engine init, before first scene load
+/// - `OnSceneLoaded(path)` — after each scene finishes loading
+/// - `OnSceneUnloaded(path)` — before a scene is destroyed (on transition)
+/// - `OnShutdown()` — application closing
+///
+/// # Access
+/// - `GameInstance::Get()` — returns base reference from anywhere
+/// - `GameInstance::GetAs<T>()` — returns typed reference (game subclass)
+///
+/// # Thread Safety
+/// GameInstance is accessed from the main thread only. Scene transitions
+/// are synchronous in the MVP — no concurrent access.
+class GameInstance {
+public:
+    virtual ~GameInstance() = default;
+
+    virtual void OnInit() {}
+    virtual void OnSceneLoaded(const char* path) {}
+    virtual void OnSceneUnloaded(const char* path) {}
+    virtual void OnShutdown() {}
+
+    /// Access the singleton instance.
+    static GameInstance& Get();
+
+    /// Typed access — game code uses their subclass.
+    template<typename T>
+    static T& GetAs();
+};
+```
+
+### 17.3 Project Registration
+
+The game's `GameInstance` subclass is declared in `.uzproject`:
+
+```json
+// game.uzproject
+{
+    "game_instance": "MyGameInstance",
+    "startup_scene": "scenes/main_menu.uzscene"
+}
+```
+
+The engine creates the `GameInstance` via `ClassRegistry` before loading the startup scene.
+
+### 17.4 Usage Example
+
+```cpp
+class MyGameInstance : public uz::GameInstance {
+    UZ_GAME_INSTANCE(MyGameInstance);
+
+public:
+    int total_score = 0;
+    int current_level = 1;
+    PlayerProfile profile;
+    SettingsData settings;
+
+    void OnInit() override {
+        profile = LoadProfile("save/profile.dat");
+        settings = LoadSettings("save/settings.json");
+    }
+
+    void OnSceneLoaded(const char* path) override {
+        UZ_LOG(Game, Info, "Scene loaded: path='{}'", path);
+    }
+
+    void OnShutdown() override {
+        SaveProfile("save/profile.dat", profile);
+        SaveSettings("save/settings.json", settings);
+    }
+};
+
+// Access from any behavior or subsystem:
+auto& gi = uz::GameInstance::GetAs<MyGameInstance>();
+gi.total_score += 100;
+```
+
+### 17.5 Comparison
+
+| Engine | Mechanism | Weight |
+|---|---|---|
+| Unreal 5 | `UGameInstance` (UObject, GC, reflection) | Heavy |
+| Unity | No equivalent (manual `DontDestroyOnLoad` singletons) | Hack |
+| Godot | Autoload nodes | Medium |
+| **UzEngine** | `GameInstance` (lightweight, static access, no GC) | **Light** |
+
+### 17.6 Implementation Phase
+
+**MVP Phase 2** — required for scene transitions and save/load.
+
+---
+
+## 18. Player Controller & Possession
+
+### 18.1 The Problem
+
+Without a controller abstraction, input is coupled directly to the character entity. When the player dies and respawns, all input state is lost. When the player enters a vehicle, you need to duplicate or redirect input logic. In multiplayer, mapping inputs to specific pawns becomes ad-hoc.
+
+Unreal's `APlayerController` solves this with the possess/unpossess pattern — the controller persists and can be attached to different pawns. Unity and Godot have no equivalent; developers must build it manually.
+
+### 18.2 Design
+
+```cpp
+/// Intermediary between human input and the controlled entity (Pawn).
+/// Persists across pawn changes (death/respawn, vehicle enter/exit).
+/// One PlayerController per local player (splitscreen = multiple).
+///
+/// # Ownership
+/// - Input is always routed through the controller, never the pawn directly.
+/// - The controller decides what input means; the pawn executes movement.
+///
+/// # Lifecycle
+/// - Created in the scene (or spawned at runtime).
+/// - Possesses its initial pawn via scene config or OnBeginPlay.
+/// - Survives pawn destruction — can possess a new pawn later.
+class PlayerController : public uz::Behavior {
+    UZ_BEHAVIOR(PlayerController);
+
+public:
+    /// The entity this controller currently possesses.
+    uz::Entity GetPawn() const;
+
+    /// Transfer control to a different entity.
+    /// Calls OnUnpossess() on old pawn, OnPossess() on new pawn.
+    void Possess(uz::Entity pawn);
+
+    /// Release the current pawn without possessing a new one.
+    void Unpossess();
+
+    /// Override to set up input bindings. Called on BeginPlay and on every Possess().
+    /// Add mapping contexts, bind action callbacks here.
+    /// Previous bindings are automatically cleared on Unpossess().
+    virtual void OnSetupInput(uz::InputComponent& input) {}
+};
+
+/// Any entity that can be possessed by a PlayerController.
+/// Marker behavior — attach to entities that accept possession.
+class Pawn : public uz::Behavior {
+    UZ_BEHAVIOR(Pawn);
+
+public:
+    /// Returns the controller currently possessing this pawn, or nullptr.
+    PlayerController* GetController() const;
+
+    /// True if a PlayerController is possessing this pawn.
+    bool IsPlayerControlled() const;
+
+    /// Called when a controller possesses this pawn.
+    virtual void OnPossess(PlayerController& controller) {}
+
+    /// Called when the controller releases this pawn.
+    virtual void OnUnpossess() {}
+};
+```
+
+### 18.3 Usage Example — On-Foot + Mount
+
+The key pattern: `OnSetupInput()` is called on every `Possess()`. The controller checks what type of pawn it is possessing and sets up the appropriate mapping context. When the player dismounts, `Unpossess()` clears all bindings, then `Possess(foot_pawn)` calls `OnSetupInput()` again with the on-foot context.
+
+```cpp
+// ─────────────────────────────────────────────────────────────────────────────
+// Actions (shared, global)
+// ─────────────────────────────────────────────────────────────────────────────
+inline InputAction IA_Move     { "IA_Move",     InputValueType::Axis2D };
+inline InputAction IA_Jump     { "IA_Jump",     InputValueType::Boolean };
+inline InputAction IA_Attack   { "IA_Attack",   InputValueType::Boolean };
+inline InputAction IA_Interact { "IA_Interact", InputValueType::Boolean };
+inline InputAction IA_Dismount { "IA_Dismount", InputValueType::Boolean };
+inline InputAction IA_Steer    { "IA_Steer",    InputValueType::Axis2D };
+inline InputAction IA_Gallop   { "IA_Gallop",   InputValueType::Boolean };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Mapping contexts — different key layouts for different modes
+// ─────────────────────────────────────────────────────────────────────────────
+inline InputMappingContext IMC_OnFoot = { "IMC_OnFoot", {
+    { &IA_Move,     Key::W, {new Negate({false,true,false}), new SwizzleAxis(YXZ)}, {} },
+    { &IA_Move,     Key::S, {new SwizzleAxis(YXZ)}, {} },
+    { &IA_Move,     Key::A, {new Negate()}, {} },
+    { &IA_Move,     Key::D, {}, {} },
+    { &IA_Jump,     Key::Space, {}, {new TriggerPressed()} },
+    { &IA_Attack,   Key::MouseLeft, {}, {} },
+    { &IA_Interact, Key::E, {}, {new TriggerPressed()} },
+}};
+
+inline InputMappingContext IMC_Mount = { "IMC_Mount", {
+    { &IA_Steer,    Key::W, {new Negate({false,true,false}), new SwizzleAxis(YXZ)}, {} },
+    { &IA_Steer,    Key::S, {new SwizzleAxis(YXZ)}, {} },
+    { &IA_Steer,    Key::A, {new Negate()}, {} },
+    { &IA_Steer,    Key::D, {}, {} },
+    { &IA_Gallop,   Key::Space, {}, {} },          // hold to gallop (default Down trigger)
+    { &IA_Attack,   Key::MouseLeft, {}, {} },       // same key, different pawn executes it
+    { &IA_Dismount, Key::E, {}, {new TriggerPressed()} },  // E = dismount instead of interact
+}};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Player Controller — persists across pawn changes
+// ─────────────────────────────────────────────────────────────────────────────
+class MyPlayerController : public uz::PlayerController {
+    UZ_BEHAVIOR(MyPlayerController);
+
+    uz::Entity foot_pawn_;   // saved reference for dismounting back
+
+public:
+    /// Called on every Possess(). Previous bindings are auto-cleared.
+    void OnSetupInput(uz::InputComponent& input) override {
+        auto& pawn_world = GetWorld();
+        auto pawn = GetPawn();
+
+        if (pawn_world.Has<MountPawn>(pawn)) {
+            // ── Mount mode ──────────────────────────────────────────
+            auto& sub = pawn_world.GetSubsystem<InputSubsystem>();
+            sub.AddMappingContext(&IMC_Mount, 0);
+
+            input.BindAction(&IA_Steer, ETriggerEvent::Triggered,
+                [this](const InputActionInstance& ctx) {
+                    Vec2 dir = ctx.value.AsAxis2D();
+                    GetWorld().Get<MountMovement>(GetPawn()).Steer(dir);
+                });
+
+            input.BindAction(&IA_Gallop, ETriggerEvent::Triggered,
+                [this](const InputActionInstance& ctx) {
+                    GetWorld().Get<MountMovement>(GetPawn()).Gallop();
+                });
+
+            input.BindAction(&IA_Dismount, ETriggerEvent::Triggered,
+                [this](const InputActionInstance& ctx) {
+                    Dismount();
+                });
+
+        } else {
+            // ── On-foot mode ────────────────────────────────────────
+            auto& sub = pawn_world.GetSubsystem<InputSubsystem>();
+            sub.AddMappingContext(&IMC_OnFoot, 0);
+
+            input.BindAction(&IA_Move, ETriggerEvent::Triggered,
+                [this](const InputActionInstance& ctx) {
+                    Vec2 move = ctx.value.AsAxis2D();
+                    GetWorld().Get<CharacterMovementComponent>(GetPawn()).AddInput({move.x, 0, move.y});
+                });
+
+            input.BindAction(&IA_Jump, ETriggerEvent::Triggered,
+                [this](const InputActionInstance& ctx) {
+                    GetWorld().Get<CharacterMovementComponent>(GetPawn()).Jump();
+                });
+
+            input.BindAction(&IA_Interact, ETriggerEvent::Triggered,
+                [this](const InputActionInstance& ctx) {
+                    TryInteract();
+                });
+        }
+
+        // Attack works in both modes — same key, pawn-specific execution
+        input.BindAction(&IA_Attack, ETriggerEvent::Triggered,
+            [this](const InputActionInstance& ctx) {
+                if (auto* combat = GetWorld().TryGet<CombatComponent>(GetPawn())) {
+                    combat->Attack();
+                }
+            });
+    }
+
+    void Mount(uz::Entity mount_entity) {
+        foot_pawn_ = GetPawn();
+        Unpossess();                    // clears on-foot bindings + context
+        Possess(mount_entity);          // triggers OnSetupInput() with mount pawn
+    }
+
+    void Dismount() {
+        Unpossess();                    // clears mount bindings + context
+        Possess(foot_pawn_);            // triggers OnSetupInput() with foot pawn
+    }
+};
+```
+
+### 18.3.1 Possess/Unpossess Flow
+
+```
+Player presses E near horse
+    → TryInteract() detects MountPawn nearby
+    → controller.Mount(horse_entity)
+        → Unpossess()
+            ← clears all InputComponent bindings
+            ← RemoveMappingContext(IMC_OnFoot)
+            ← calls pawn.OnUnpossess()
+        → Possess(horse_entity)
+            ← calls horse.OnPossess(controller)
+            ← calls OnSetupInput(input)  ← now sets up IMC_Mount + mount bindings
+            ← player is now steering the horse
+
+Player presses E while mounted
+    → Dismount()
+        → Unpossess()
+            ← clears mount bindings + IMC_Mount
+        → Possess(foot_pawn_)
+            ← calls OnSetupInput(input)  ← now sets up IMC_OnFoot + foot bindings
+            ← player walks again
+```
+
+### 18.4 Scene Configuration
+
+```json
+// fps.uzscene
+{
+    "entities": [
+        {
+            "name": "PlayerController_0",
+            "components": {
+                "MyPlayerController": { "initial_pawn": "Player" }
+            }
+        },
+        {
+            "name": "Player",
+            "components": {
+                "Transform": { "position": [0, 1.7, 0] },
+                "CharacterPawn": { "move_speed": 5.0 },
+                "Health": { "max": 100, "current": 100 }
+            }
+        }
+    ]
+}
+```
+
+### 18.5 Comparison
+
+| Engine | Mechanism | Notes |
+|---|---|---|
+| Unreal 5 | `APlayerController` (AActor, heavy) | Full-featured, possess/unpossess |
+| Unity | No equivalent | Manual implementation required |
+| Godot | No equivalent | Manual implementation required |
+| **UzEngine** | `PlayerController` (Behavior, lightweight) | **Possess/unpossess, input routing** |
+
+### 18.6 Implementation Phase
+
+**Phase 3** — requires input system (Enhanced Input) first.
+
+---
+
+## 19. Property System & Reflection
+
+### 19.1 The Problem
+
+Game engines need runtime type information for: editor inspectors (display and edit fields), serialization (save/load scenes), networking (replicate state), and data binding (UI ↔ game state). In Unreal, the heavy `UObject` + `UPROPERTY()` system handles all of this. In Unity, C# reflection + `[SerializeField]` serves the same role.
+
+UzEngine does **not** have a universal base object (no `UObject` equivalent). Instead, reflection is opt-in via macros — only types that need it pay for it.
+
+### 19.2 Design — No Universal Base Object
+
+```
+// What UObject gives you, and how UzEngine achieves it without a universal base:
+// ┌───────────────────┬──────────────────────────────────────────┐
+// │ UObject Feature   │ UzEngine Equivalent                      │
+// ├───────────────────┼──────────────────────────────────────────┤
+// │ Reflection        │ ClassRegistry + UZ_REFLECT macro         │
+// │ Serialization     │ UZ_COMPONENT auto-serialization          │
+// │ GC                │ Entity generation check (no GC needed)   │
+// │ CDO               │ .uzscene default values                  │
+// │ Property system   │ UZ_PROPERTY macro (field enumeration)    │
+// │ Networking        │ UZ_REPLICATED macro (future)             │
+// │ Editor metadata   │ UZ_PROPERTY annotations                  │
+// └───────────────────┴──────────────────────────────────────────┘
+```
+
+### 19.3 UZ_PROPERTY — Field Declaration
+
+```cpp
+/// Component with reflected properties.
+/// UZ_PROPERTY generates: field storage, name string, default value,
+/// tooltip, type info, and enables iteration over all properties at runtime.
+struct Enemy {
+    UZ_COMPONENT(Enemy);
+
+    UZ_PROPERTY(float, speed, 2.0f, "Movement speed in m/s");
+    UZ_PROPERTY(float, health, 30.0f, "Current health points");
+    UZ_PROPERTY(int, path_index, 0, "Current waypoint index");
+};
+```
+
+### 19.4 Runtime Property Iteration
+
+```cpp
+// Editor inspector, serialization, and networking all use this:
+uz::ClassRegistry::ForEachProperty<Enemy>([](const uz::PropertyInfo& prop) {
+    // prop.name     = "speed"
+    // prop.type     = uz::PropertyType::Float
+    // prop.offset   = offsetof(Enemy, speed)
+    // prop.default_value = 2.0f
+    // prop.tooltip  = "Movement speed in m/s"
+});
+```
+
+### 19.5 PropertyInfo Structure
+
+```cpp
+/// Describes a single reflected property on a component or behavior.
+struct PropertyInfo {
+    const char* name;           /// Field name (e.g., "speed")
+    PropertyType type;          /// Float, Int, Bool, Vec3, String, EntityRef, Asset, Enum
+    size_t offset;              /// Byte offset from struct start (for direct memory access)
+    size_t size;                /// sizeof(field)
+    const char* tooltip;        /// Human-readable description (shown in editor)
+    const void* default_value;  /// Pointer to default value (for reset-to-default)
+
+    /// Category for editor grouping (optional).
+    const char* category = "";
+
+    /// Range constraints for numeric types (optional).
+    float min = -FLT_MAX;
+    float max = FLT_MAX;
+
+    /// Flags: read-only, hidden, replicated, save-game, etc.
+    PropertyFlags flags = PropertyFlags::None;
+};
+
+enum class PropertyFlags : uint32_t {
+    None        = 0,
+    ReadOnly    = 1 << 0,   /// Cannot be edited in inspector
+    Hidden      = 1 << 1,   /// Not shown in inspector
+    Replicated  = 1 << 2,   /// Sent over network (future)
+    SaveGame    = 1 << 3,   /// Included in save files
+    Transient   = 1 << 4,   /// Not serialized to .uzscene
+};
+```
+
+### 19.6 Advanced Property Types
+
+```cpp
+struct Weapon {
+    UZ_COMPONENT(Weapon);
+
+    // Basic types
+    UZ_PROPERTY(float, damage, 25.0f, "Damage per hit");
+    UZ_PROPERTY(int, ammo, 30, "Current ammo count");
+    UZ_PROPERTY(bool, automatic, false, "Full-auto fire mode");
+
+    // Math types
+    UZ_PROPERTY(Vec3, muzzle_offset, Vec3(0, 0, 1), "Local-space muzzle position");
+    UZ_PROPERTY(Color, tracer_color, Color::Yellow(), "Bullet tracer color");
+
+    // Enum types (auto-generates dropdown in editor)
+    UZ_PROPERTY(WeaponType, type, WeaponType::Rifle, "Weapon category");
+
+    // Asset references (shows asset picker in editor)
+    UZ_PROPERTY(uz::AssetRef<uz::Mesh>, mesh, {}, "Weapon mesh");
+    UZ_PROPERTY(uz::AssetRef<uz::Sound>, fire_sound, {}, "Fire sound effect");
+
+    // Entity references (shows entity picker in editor)
+    UZ_PROPERTY(uz::EntityRef, owner, {}, "Entity that owns this weapon");
+
+    // Range-constrained (editor shows slider)
+    UZ_PROPERTY_RANGE(float, spread, 0.05f, 0.0f, 1.0f, "Bullet spread angle");
+};
+```
+
+### 19.7 Comparison
+
+| Engine | Mechanism | Weight | GC Required |
+|---|---|---|---|
+| Unreal 5 | `UPROPERTY()` on `UObject` (mandatory base) | Heavy | Yes |
+| Unity | `[SerializeField]` (C# reflection) | Medium | Yes (C# GC) |
+| Godot | `@export` + Variant system | Medium | RefCounted |
+| **UzEngine** | `UZ_PROPERTY()` (opt-in macro, no base class) | **Light** | **No** |
+
+### 19.8 Implementation Phase
+
+**MVP Phase 2** — required for editor inspector and scene serialization.
+
+---
+
+## 20. Data Tables — Data-Driven Design
+
+### 20.1 The Problem
+
+Hardcoding `float damage = 25.0f` in C++ code is terrible for game balancing. Every number change requires recompilation. Designers want to tweak weapon stats, enemy waves, XP curves, and drop rates without touching code.
+
+In Unreal, `UDataTable` provides spreadsheet-like tables with typed rows, editable in the editor or imported from CSV. Unity uses `ScriptableObject` (manual, no table format). Godot uses `Resource` files.
+
+### 20.2 Design
+
+```cpp
+/// A typed table of rows, loaded from .uzdata (JSON) files.
+/// Each row has a string key and typed columns defined by the RowType struct.
+/// Hot-reloadable — designers edit JSON, values update in real-time.
+///
+/// # File Format
+/// `.uzdata` files are JSON with a `row_type` header and a `rows` object.
+/// The row type must have `UZ_DATA_ROW` and `UZ_PROPERTY` declarations.
+///
+/// # Access
+/// - `Find(key)` — O(1) hash lookup, returns nullptr if not found
+/// - `ForEach(fn)` — iterate all rows
+/// - `Count()` — number of rows
+///
+/// # Hot-Reload
+/// When the `.uzdata` file changes on disk, the table is re-parsed and
+/// all existing `DataTable<T>` handles automatically see the new data.
+template<typename RowType>
+class DataTable {
+public:
+    /// Find a row by string key. Returns nullptr if not found.
+    const RowType* Find(const char* key) const;
+
+    /// Iterate all rows with their keys.
+    void ForEach(std::function<void(const char* key, const RowType&)> fn) const;
+
+    /// Number of rows in the table.
+    int Count() const;
+};
+```
+
+### 20.3 Row Definition
+
+```cpp
+/// C++ row struct — defines the columns and their types.
+/// UZ_DATA_ROW registers it with ClassRegistry for JSON deserialization.
+struct WeaponStats {
+    UZ_DATA_ROW(WeaponStats);
+
+    UZ_PROPERTY(float, damage, 10.0f, "Damage per hit");
+    UZ_PROPERTY(float, fire_rate, 1.0f, "Shots per second");
+    UZ_PROPERTY(int, magazine, 10, "Ammo capacity");
+    UZ_PROPERTY(float, reload_time, 2.0f, "Reload duration in seconds");
+};
+```
+
+### 20.4 Data File Format (.uzdata)
+
+```json
+// data/weapons.uzdata
+{
+    "row_type": "WeaponStats",
+    "rows": {
+        "pistol":  { "damage": 15,  "fire_rate": 5.0, "magazine": 12, "reload_time": 1.5 },
+        "shotgun": { "damage": 80,  "fire_rate": 1.2, "magazine": 6,  "reload_time": 2.5 },
+        "rifle":   { "damage": 25,  "fire_rate": 10,  "magazine": 30, "reload_time": 2.0 },
+        "sniper":  { "damage": 150, "fire_rate": 0.8, "magazine": 5,  "reload_time": 3.0 },
+        "rocket":  { "damage": 200, "fire_rate": 0.5, "magazine": 1,  "reload_time": 4.0 }
+    }
+}
+```
+
+### 20.5 Usage in Behaviors
+
+```cpp
+class WeaponSystem : public uz::Behavior {
+    UZ_BEHAVIOR(WeaponSystem);
+
+    // Loaded once at init — hot-reloadable
+    UZ_ASSET(uz::DataTable<WeaponStats>, "data/weapons.uzdata", weapon_table);
+
+    std::string current_weapon = "pistol";
+
+public:
+    void Fire() {
+        auto* stats = weapon_table->Find(current_weapon.c_str());
+        if (!stats) return;
+
+        // Data-driven values — designer changes JSON, values hot-reload
+        SpawnProjectile(stats->damage);
+        cooldown_ = 1.0f / stats->fire_rate;
+    }
+};
+```
+
+### 20.6 Common Use Cases
+
+**Enemy wave configuration:**
+```json
+// data/enemy_waves.uzdata
+{
+    "row_type": "WaveConfig",
+    "rows": {
+        "wave_1":  { "enemy_count": 5,  "speed": 2.0, "health": 30,  "spawn_interval": 0.8 },
+        "wave_2":  { "enemy_count": 8,  "speed": 2.3, "health": 45,  "spawn_interval": 0.7 },
+        "wave_3":  { "enemy_count": 12, "speed": 2.6, "health": 60,  "spawn_interval": 0.6 },
+        "wave_10": { "enemy_count": 30, "speed": 4.0, "health": 150, "spawn_interval": 0.3 }
+    }
+}
+```
+
+**XP level curve:**
+```json
+// data/xp_curve.uzdata
+{
+    "row_type": "LevelXP",
+    "rows": {
+        "level_1":  { "xp_required": 0 },
+        "level_2":  { "xp_required": 100 },
+        "level_3":  { "xp_required": 300 },
+        "level_4":  { "xp_required": 600 },
+        "level_5":  { "xp_required": 1000 }
+    }
+}
+```
+
+### 20.7 Comparison
+
+| Engine | Mechanism | Editor Integration | Hot-Reload |
+|---|---|---|---|
+| Unreal 5 | `UDataTable` (row struct + CSV/JSON) | Full editor | Yes |
+| Unity | `ScriptableObject` (manual, no table) | Inspector only | No |
+| Godot | `Resource` (JSON/custom format) | Limited | Partial |
+| **UzEngine** | `DataTable<T>` (JSON `.uzdata`, typed rows) | **Editor + JSON** | **Yes** |
+
+### 20.8 Implementation Phase
+
+**Phase 3** — requires Property System (§19) for JSON deserialization of row types.
+
+---
+
+## 21. Input System — Enhanced Input
+
+> **Reference**: UE5 Enhanced Input Plugin (clean-room). Adapted for UzEngine's C++ component model.
+> **Goal**: Value-typed, modifier/trigger-driven input with context stacking, runtime rebinding, and zero-boilerplate binding in Behaviors.
+
+### 21.1 The Problem
+
+Traditional input systems map keys directly to callbacks (`if (IsKeyPressed(Key::Space)) Jump()`). This breaks down quickly:
+
+- **No value types** — a joystick axis and a button press use completely different code paths
+- **No composability** — dead zones, smoothing, negation require per-action if-chains
+- **No context switching** — UI vs gameplay vs vehicle all fight over the same key bindings
+- **No runtime rebinding** — key mappings hardcoded in C++, unmodifiable by players
+- **No chords** — Shift+E requires manual state tracking
+
+### 21.2 Architecture Overview
+
+```
+OS Key Event (WM_KEYDOWN, XInput, etc.)
+    │
+    ▼
+Platform Layer (platform/windows/) → stores raw KeyState per key
+    │
+    ▼
+InputSystem::Tick() — per player, per frame:
+    │
+    │  For each ActionKeyMapping (sorted by context priority):
+    │    1. Read raw key value
+    │    2. Apply mapping-level Modifiers (DeadZone, Negate, Scalar...)
+    │    3. Evaluate mapping-level Triggers (Down, Hold, Tap...)
+    │    4. Accumulate into InputActionInstance (highest abs value or cumulative)
+    │
+    │  For each InputActionInstance (post-accumulation):
+    │    5. Apply action-level Modifiers
+    │    6. Evaluate action-level Triggers
+    │    7. Compute ETriggerEvent from state transition (None→Ongoing = Started, etc.)
+    │
+    │  Walk InputComponent binding stack:
+    │    8. For each binding where action.trigger_event matches → fire callback
+    │
+    ▼
+Game Code receives (InputActionInstance&) with typed value + event
+```
+
+**Two-pass design** (critical): mapping-level modifiers/triggers run first per-key, then action-level modifiers/triggers run on the accumulated value. A `Negate` on a mapping negates only that key's contribution; a `Negate` on the action negates the combined input from all keys.
+
+### 21.3 InputValue — Unified Value Type
+
+All input flows through a single value type. No branching on "is this a button or an axis?"
+
+```cpp
+/// The type tag describes which components of the Vec3 are meaningful.
+/// The data is always Vec3 — modifiers operate on 3 floats without branching.
+enum class InputValueType : uint8_t {
+    Boolean,  // value.x is 0.0 or 1.0, y/z = 0
+    Axis1D,   // value.x is the scalar, y/z = 0
+    Axis2D,   // value.x + value.y active, z = 0
+    Axis3D,   // all components active
+};
+
+/// Unified input value. 16 bytes, no heap, no virtuals.
+/// Modifiers receive and return this — they never need to know the semantic type.
+struct InputValue {
+    Vec3           value = {};
+    InputValueType type  = InputValueType::Boolean;
+
+    bool  AsBool()   const;   // magnitude² >= 0.25
+    float AsAxis1D() const;   // value.x
+    Vec2  AsAxis2D() const;   // {value.x, value.y}
+    Vec3  AsAxis3D() const;   // value
+
+    float MagnitudeSq() const; // type-aware: bool→x², 2D→x²+y², 3D→full
+    bool  IsNonZero(float tolerance = 0.01f) const;
+
+    InputValue& operator+=(const InputValue& rhs); // promotes type, adds vector
+    InputValue& operator*=(float scalar);
+};
+```
+
+### 21.4 Input Modifiers — Pure Function Chain
+
+A modifier transforms a value. Modifiers chain: output of one feeds input of the next. Some are stateless (Negate, Scalar), some carry per-instance state (SmoothDelta, ResponseCurve).
+
+```cpp
+/// Base class for all input modifiers.
+/// Override Modify() to transform the input value.
+/// Modifiers are instanced per-player (state like SmoothDelta::old_value is per-player).
+class InputModifier {
+public:
+    virtual ~InputModifier() = default;
+
+    /// Transform the input value. Called once per frame per mapping or action.
+    /// @param value  Output of the previous modifier (or raw key value for the first).
+    /// @param dt     Frame delta time (non-dilated).
+    /// @returns      Modified value. Type tag must be preserved unless explicitly promoted.
+    virtual InputValue Modify(InputValue value, float dt) = 0;
+};
+```
+
+**Built-in modifiers:**
+
+| Modifier | Description | Stateful? |
+|----------|-------------|-----------|
+| `DeadZone` | Axial or radial dead zone with lower/upper threshold | No |
+| `Scalar` | Per-axis multiply (`Vec3 scale`) | No |
+| `Negate` | Flip sign on selected axes | No |
+| `SwizzleAxis` | Remap axes (e.g. swap X↔Y for different stick conventions) | No |
+| `SmoothDelta` | Frame-to-frame smoothing (stores previous value) | **Yes** |
+| `ResponseCurve` | Exponential/custom curve remapping | No |
+| `FOVScaling` | Scale sensitivity by current camera FOV | No |
+
+**Chain execution:**
+
+```cpp
+/// Apply a chain of modifiers sequentially. Returns the final value.
+InputValue ApplyModifiers(Span<InputModifier*> chain, InputValue value, float dt) {
+    for (auto* mod : chain) {
+        value = mod->Modify(value, dt);
+    }
+    return value;
+}
+```
+
+### 21.5 Input Triggers — State Machine
+
+A trigger evaluates whether an action should fire. Triggers return a **state** (`None`, `Ongoing`, `Triggered`), not an **event**. The event (`Started`, `Completed`, `Canceled`) is derived by the system by comparing previous state to current state.
+
+```cpp
+/// What role this trigger plays in the voting system.
+enum class TriggerType : uint8_t {
+    Explicit,  // At least one Explicit must be Triggered for the action to fire
+    Implicit,  // ALL Implicits must be Triggered (used for chords)
+    Blocker,   // If ANY Blocker is Triggered, the action is suppressed
+};
+
+/// Current state of a trigger (NOT the event — see §21.6).
+enum class TriggerState : uint8_t {
+    None,       // not active
+    Ongoing,    // in progress (e.g. hold timer counting)
+    Triggered,  // condition met
+};
+
+/// Base class for all input triggers.
+class InputTrigger {
+public:
+    virtual ~InputTrigger() = default;
+
+    float actuation_threshold = 0.5f;
+
+    /// What type of trigger this is (for voting).
+    virtual TriggerType GetType() const { return TriggerType::Explicit; }
+
+    /// Evaluate the trigger this frame. Returns the current state.
+    /// @param value  The modified input value (after modifier chain).
+    /// @param dt     Frame delta time.
+    virtual TriggerState Update(InputValue value, float dt) = 0;
+
+protected:
+    InputValue last_value;  // auto-updated by the system after Update()
+
+    /// Helper: is the value above the actuation threshold?
+    bool IsActuated(const InputValue& v) const {
+        return v.MagnitudeSq() >= actuation_threshold * actuation_threshold;
+    }
+};
+```
+
+**Built-in triggers:**
+
+| Trigger | Fires when | Type |
+|---------|-----------|------|
+| `Down` | Value is non-zero (default if no triggers specified) | Explicit |
+| `Pressed` | Transition from zero → non-zero (single frame) | Explicit |
+| `Released` | Transition from non-zero → zero (single frame) | Explicit |
+| `Hold` | Held for N seconds continuously | Explicit |
+| `HoldAndRelease` | Held for N seconds, fires on release | Explicit |
+| `Tap` | Pressed and released within N seconds | Explicit |
+| `Pulse` | Fires repeatedly every N seconds while held | Explicit |
+| `ChordAction` | Another action is currently Triggered | **Implicit** |
+| `ChordBlocker` | Blocks the action while a chord key is active | **Blocker** |
+
+**Trigger voting** (when multiple triggers on one mapping/action):
+
+- No triggers defined → fire if value is non-zero (implicit `Down`).
+- Explicit only → at least one Explicit must be `Triggered`.
+- Implicit present → ALL Implicits must be `Triggered` (AND logic).
+- Any Blocker `Triggered` → action is suppressed regardless.
+
+### 21.6 Trigger Events — State Transition Table
+
+Triggers return `TriggerState`. The system converts state transitions into `ETriggerEvent` — this is what game code binds to.
+
+```cpp
+/// The public events that game code can bind to.
+enum class ETriggerEvent : uint8_t {
+    None       = 0,
+    Started    = 1 << 0,  // None/Triggered → Ongoing (or instant None → Triggered)
+    Ongoing    = 1 << 1,  // Ongoing → Ongoing (still in progress)
+    Triggered  = 1 << 2,  // any → Triggered (condition met)
+    Completed  = 1 << 3,  // Triggered → None (cleanly finished)
+    Canceled   = 1 << 4,  // Ongoing → None (interrupted before Triggered)
+};
+```
+
+**Full state transition table:**
+
+```
+Last State  →  New State   →  Event
+─────────────────────────────────────────
+None        →  Ongoing     →  Started
+None        →  Triggered   →  Started + Triggered (both fire)
+Ongoing     →  Ongoing     →  Ongoing
+Ongoing     →  Triggered   →  Triggered
+Ongoing     →  None        →  Canceled
+Triggered   →  Triggered   →  Triggered
+Triggered   →  Ongoing     →  Ongoing
+Triggered   →  None        →  Completed
+```
+
+The `None → Triggered` case fires **both** `Started` and `Triggered` callbacks in the same frame. This handles single-frame triggers (like `Pressed`) that actuate and resolve immediately.
+
+### 21.7 InputAction — Definition vs Instance
+
+An **InputAction** is a named, typed definition — authored once, shared across all players. The **InputActionInstance** is the per-player runtime state cloned from the definition.
+
+```cpp
+/// Static definition of a logical input action.
+/// Define in code or load from .uzinput config file.
+/// Shared — never holds per-player state.
+struct InputAction {
+    const char*    name;           // unique ID, e.g. "IA_Jump", "IA_Move"
+    InputValueType value_type;     // Boolean for jump, Axis2D for movement, etc.
+
+    /// How values from multiple keys mapping to the same action combine.
+    /// - HighestAbsValue: take the key with the largest absolute value (default)
+    /// - Cumulative: sum all key values (for WASD → Axis2D cancellation)
+    enum class Accumulation { HighestAbsValue, Cumulative };
+    Accumulation accumulation = Accumulation::HighestAbsValue;
+
+    /// Action-level modifiers/triggers (applied AFTER mapping-level, on accumulated value).
+    Span<InputModifier*> modifiers;
+    Span<InputTrigger*>  triggers;
+
+    bool consume_input     = true;   // prevent lower-priority contexts from seeing this key
+    bool trigger_when_paused = false;
+};
+
+/// Per-player runtime state for an action. Created during context rebuild.
+/// Holds per-instance copies of triggers/modifiers (so HeldDuration etc. are per-player).
+struct InputActionInstance {
+    const InputAction* source;
+
+    InputValue    value;                   // accumulated this frame
+    ETriggerEvent trigger_event;           // the event fired this frame
+    TriggerState  last_trigger_state;      // from previous frame
+
+    float elapsed_processed_time = 0.0f;  // time in Started/Ongoing/Triggered
+    float elapsed_triggered_time = 0.0f;  // time in Triggered specifically
+
+    // Per-instance clones (state like HeldDuration is per-player, not shared)
+    std::vector<std::unique_ptr<InputModifier>> modifiers;
+    std::vector<std::unique_ptr<InputTrigger>>  triggers;
+};
+```
+
+### 21.8 Mapping Context — Priority-Based Context Stack
+
+An **InputMappingContext** groups key→action bindings into a named "mode" (Gameplay, UI, Vehicle, Spectator). Multiple contexts can be active simultaneously with different priorities.
+
+```cpp
+/// One physical key → one logical action, with per-mapping modifiers and triggers.
+struct ActionKeyMapping {
+    const InputAction* action;
+    KeyCode            key;
+    std::vector<std::unique_ptr<InputModifier>> modifiers;  // mapping-level (run first)
+    std::vector<std::unique_ptr<InputTrigger>>  triggers;   // mapping-level
+
+    bool should_ignore = false;  // key was down during context switch — skip until released
+};
+
+/// A named collection of key mappings representing one input "mode."
+/// Authored as a data asset (.uzinput) or defined in code.
+struct InputMappingContext {
+    const char*                    name;       // e.g. "IMC_Gameplay", "IMC_UI"
+    std::vector<ActionKeyMapping>  mappings;
+};
+```
+
+**Context stack operations:**
+
+```cpp
+/// Add a context at the given priority. Higher priority = processed first.
+/// Deferred to end-of-frame unless force_immediately is true.
+///
+/// @param priority                      Integer priority (higher wins).
+/// @param ignore_pressed_until_release  If true, keys currently held are skipped
+///                                      until released. Prevents "instant trigger"
+///                                      when swapping contexts.
+void AddMappingContext(const InputMappingContext* context, int32_t priority,
+                       bool ignore_pressed_until_release = true);
+
+/// Remove a context. Reference-counted — if added twice, must be removed twice.
+void RemoveMappingContext(const InputMappingContext* context);
+```
+
+**Typical context setup:**
+
+```cpp
+// In a gameplay Behavior:
+void OnBeginPlay() override {
+    auto& input = GetWorld().GetSubsystem<InputSubsystem>();
+    input.AddMappingContext(&IMC_Gameplay, /*priority=*/ 0);
+}
+
+// When opening a menu:
+void OpenMenu() {
+    auto& input = GetWorld().GetSubsystem<InputSubsystem>();
+    input.AddMappingContext(&IMC_UI, /*priority=*/ 10);  // higher = processed first
+    // IMC_UI consumes movement keys → gameplay context doesn't see them
+}
+
+// When closing the menu:
+void CloseMenu() {
+    auto& input = GetWorld().GetSubsystem<InputSubsystem>();
+    input.RemoveMappingContext(&IMC_UI);
+    // Gameplay context resumes, ignore_pressed_until_release prevents stale triggers
+}
+```
+
+**Context rebuild** (end-of-frame, only when contexts changed):
+1. Sort active contexts by priority (descending).
+2. Flatten all mappings into a single array.
+3. Re-order: chord sources first, then chorded actions, then everything else.
+4. Mark currently-held keys as `should_ignore` on new mappings (if `ignore_pressed_until_release`).
+5. Clone modifiers/triggers per-player into fresh `InputActionInstance` objects.
+
+### 21.9 Binding in Game Code
+
+Input is always routed through the **PlayerController** (§18), never through a standalone Behavior. When the controller possesses a new pawn, `OnSetupInput()` is called — this is where mapping contexts are added and actions are bound. On `Unpossess()`, all bindings and contexts are automatically cleared.
+
+This makes input **interchangeable by possession**: same player, different pawn = different keys, different actions, different behavior. See §18.3 for the full mount/dismount example.
+
+```cpp
+/// The PlayerController owns all input binding.
+/// OnSetupInput() is called on every Possess() — bind actions here.
+/// Previous bindings are auto-cleared on Unpossess().
+class FPSController : public uz::PlayerController {
+    UZ_BEHAVIOR(FPSController);
+
+public:
+    void OnSetupInput(uz::InputComponent& input) override {
+        auto& sub = GetWorld().GetSubsystem<InputSubsystem>();
+        sub.AddMappingContext(&IMC_OnFoot, 0);
+
+        input.BindAction(&IA_Move, ETriggerEvent::Triggered,
+            [this](const InputActionInstance& ctx) {
+                Vec2 move = ctx.value.AsAxis2D();
+                GetWorld().Get<CharacterMovementComponent>(GetPawn()).AddInput({move.x, 0, move.y});
+            });
+
+        input.BindAction(&IA_Jump, ETriggerEvent::Triggered,
+            [this](const InputActionInstance& ctx) {
+                GetWorld().Get<CharacterMovementComponent>(GetPawn()).Jump();
+            });
+
+        input.BindAction(&IA_Attack, ETriggerEvent::Triggered,
+            [this](const InputActionInstance& ctx) {
+                GetWorld().Get<CombatComponent>(GetPawn()).Attack();
+            });
+    }
+};
+```
+
+**Why PlayerController, not Behavior?**
+
+| Scenario | With Behavior (wrong) | With PlayerController (correct) |
+|----------|----------------------|-------------------------------|
+| Player dies + respawns | Input bindings lost, must re-bind | Controller persists, `Possess(new_pawn)` re-triggers `OnSetupInput()` |
+| Player mounts horse | Must manually swap bindings, error-prone | `Possess(horse)` → auto-clears foot bindings, `OnSetupInput()` sets up mount bindings |
+| Player enters vehicle | Duplicate input logic in vehicle Behavior | Controller checks pawn type, binds vehicle context |
+| UI menu opens | Behavior doesn't know about context priority | Controller adds `IMC_UI` at higher priority, gameplay keys consumed |
+
+### 21.10 Chord Actions
+
+Chords (Shift+E, Ctrl+Shift+S) are implemented entirely as triggers — no special engine code path.
+
+```cpp
+// IA_Interact = E (normal)
+// IA_PickUp = Shift+E (chord)
+
+// Define a ChordAction trigger on IA_PickUp that requires IA_Shift to be active:
+InputAction IA_Shift { "IA_Shift", InputValueType::Boolean };
+
+InputMappingContext IMC_Gameplay = {
+    "IMC_Gameplay",
+    {
+        // Shift key → IA_Shift (always evaluates, consumed by chord system)
+        { &IA_Shift, Key::LeftShift, {}, {} },
+
+        // E → IA_Interact (normal, but auto-blocked when Shift is held)
+        { &IA_Interact, Key::E, {}, {new TriggerPressed()} },
+
+        // Shift+E → IA_PickUp (ChordAction makes IA_Shift an Implicit requirement)
+        { &IA_PickUp, Key::E, {}, {new TriggerPressed(), new ChordAction(&IA_Shift)} },
+    }
+};
+```
+
+**How it works internally:**
+1. During context rebuild, the system detects `ChordAction(&IA_Shift)` on `IA_PickUp`.
+2. It injects a `ChordBlocker(&IA_Shift)` on `IA_Interact` automatically — so plain E is blocked while Shift is held.
+3. Evaluation order is sorted: `IA_Shift` first (chord source), then `IA_PickUp` (chorded), then `IA_Interact` (blocked).
+4. When Shift is held + E pressed: `IA_Shift` = Triggered → `ChordAction` Implicit is satisfied → `IA_PickUp` fires. `ChordBlocker` on `IA_Interact` suppresses it.
+5. When only E pressed: `IA_Shift` = None → `ChordAction` Implicit fails → `IA_PickUp` doesn't fire. `ChordBlocker` not active → `IA_Interact` fires.
+
+### 21.11 Runtime Rebinding
+
+Players can remap keys at runtime. Rebindings are saved per-player and persist across sessions.
+
+```cpp
+/// Rebind a specific mapping in a context. The new key replaces the old one.
+/// Persisted to player settings (JSON) automatically.
+void InputSubsystem::RebindKey(
+    const InputMappingContext* context,
+    const InputAction*         action,
+    KeyCode                    old_key,
+    KeyCode                    new_key);
+
+/// Get current binding for an action (for UI display).
+/// Returns all keys mapped to this action across all active contexts.
+std::vector<KeyCode> InputSubsystem::GetBoundKeys(const InputAction* action) const;
+
+/// Reset all rebindings to default.
+void InputSubsystem::ResetToDefaults(const InputMappingContext* context);
+```
+
+**Rebinding storage** (`.uzinput` sidecar per player profile):
+
+```json
+{
+    "rebindings": {
+        "IMC_Gameplay": {
+            "IA_Jump": { "Space": "GamepadFaceBottom" },
+            "IA_Fire": { "MouseLeft": "GamepadRightTrigger" }
+        }
+    }
+}
+```
+
+### 21.12 Input Config File Format
+
+Mapping contexts can be defined in JSON (`.uzinput`) instead of code — enabling designers and LLMs to author/modify input mappings without recompilation.
+
+```json
+{
+    "name": "IMC_Gameplay",
+    "mappings": [
+        {
+            "action": "IA_Move",
+            "key": "W",
+            "modifiers": [
+                { "type": "Negate", "axes": [false, true, false] },
+                { "type": "SwizzleAxis", "order": "YXZ" }
+            ],
+            "triggers": []
+        },
+        {
+            "action": "IA_Move",
+            "key": "Gamepad_LeftStick",
+            "modifiers": [
+                { "type": "DeadZone", "lower": 0.2, "upper": 1.0, "mode": "Radial" }
+            ],
+            "triggers": []
+        },
+        {
+            "action": "IA_Jump",
+            "key": "Space",
+            "modifiers": [],
+            "triggers": [{ "type": "Pressed" }]
+        },
+        {
+            "action": "IA_Fire",
+            "key": "MouseLeft",
+            "modifiers": [],
+            "triggers": [{ "type": "Hold", "threshold": 0.0 }]
+        }
+    ]
+}
+```
+
+### 21.13 Directory Structure
+
+```
+engine/input/
+├── input_value.h                ← InputValue struct + operators
+├── input_action.h               ← InputAction (definition) + InputActionInstance (per-player)
+├── input_component.h/.cpp       ← InputComponent (ActorComponent) + BindAction API
+├── input_subsystem.h/.cpp       ← InputSubsystem (WorldSubsystem) + context stack + tick
+├── mapping_context.h            ← InputMappingContext + ActionKeyMapping
+├── modifier.h                   ← InputModifier base class + ApplyModifiers()
+├── trigger.h                    ← InputTrigger base class + TriggerState + voting
+├── trigger_event.h              ← ETriggerEvent enum + state transition table
+├── key_codes.h                  ← KeyCode enum (keyboard, mouse, gamepad)
+├── modifiers/                   ← built-in modifier implementations
+│   ├── deadzone.h
+│   ├── scalar.h
+│   ├── negate.h
+│   ├── swizzle_axis.h
+│   ├── smooth_delta.h
+│   └── response_curve.h
+└── triggers/                    ← built-in trigger implementations
+    ├── trigger_down.h
+    ├── trigger_pressed.h
+    ├── trigger_released.h
+    ├── trigger_hold.h
+    ├── trigger_tap.h
+    ├── trigger_pulse.h
+    └── trigger_chord.h
+```
+
+### 21.14 Comparison
+
+| Feature | Legacy (UE4/Unity) | UE5 Enhanced Input | **UzEngine** |
+|---------|--------------------|--------------------|--------------|
+| Value types | bool/float separate | Unified `FInputActionValue` | Unified `InputValue` (Vec3 + type tag) |
+| Modifiers | Hardcoded per-action | Chainable `UInputModifier` | Chainable `InputModifier` (virtual) |
+| Triggers | Pressed/Released only | `UInputTrigger` state machine | `InputTrigger` state machine |
+| Context switching | Manual enable/disable | Priority stack + `bConsumeInput` | Priority stack + `consume_input` |
+| Chords | Manual state tracking | `ChordAction` trigger (Implicit) | `ChordAction` trigger (Implicit) |
+| Rebinding | Platform-specific | `UPlayerMappableKeySettings` | `RebindKey()` + `.uzinput` JSON |
+| Config format | C++ only | Data assets (UObject) | **JSON `.uzinput`** (LLM-friendly) |
+
+### 21.15 Implementation Phase
+
+**Phase 2** — requires platform/ input capture (§12) and WorldSubsystem (§6). InputComponent is an ActorComponent (§4.2).
+
+---
+
+## 22. Scene Serialization — `.uzscene` & `.uzprefab`
+
+> **Goal**: Define the file format for scenes and prefabs — how entities, components, hierarchy, and cross-references are serialized.
+> **Principles**: JSON everywhere (LLM-friendly), Property System (§19) resolves component types, hierarchy expressed inline.
+
+### 22.1 The Problem
+
+The engine needs a scene format that:
+- Is **human-readable and LLM-editable** — no binary blobs, no custom syntax
+- Supports **component hierarchy** — SceneComponents with parent/child attachment
+- Supports **prefab instancing** with overrides — designers place 50 enemies without duplicating data
+- Supports **entity cross-references** — a PlayerController references its initial pawn
+- Is **hot-reloadable** — edit JSON, see changes in-editor without restart
+- Resolves component types via the **Property System** (§19) — no hardcoded deserialization
+
+### 22.2 Format: `.uzscene`
+
+```json
+{
+    "format": "uzscene",
+    "version": 1,
+
+    "settings": {
+        "subsystems": ["PhysicsWorld", "NavigationServer"],
+        "gravity": [0, -981, 0],
+        "ambient_light": [0.1, 0.1, 0.15]
+    },
+
+    "entities": [
+        {
+            "id": "player",
+            "components": {
+                "SceneComponent": { "position": [0, 1.7, 0] },
+                "SkeletalMeshComponent": {
+                    "parent": "SceneComponent",
+                    "mesh": "content/meshes/character.uzmesh",
+                    "material": "content/materials/player.uzmat"
+                },
+                "CapsuleCollision": {
+                    "parent": "SceneComponent",
+                    "radius": 0.4,
+                    "half_height": 0.9
+                },
+                "CharacterBody": {
+                    "parent": "CapsuleCollision"
+                },
+                "CameraComponent": {
+                    "parent": "SceneComponent",
+                    "position": [0, 0.6, 0],
+                    "fov": 90,
+                    "is_active": true
+                },
+                "CharacterMovementComponent": {
+                    "max_speed": 600,
+                    "jump_velocity": 420
+                },
+                "FPSController": {
+                    "initial_pawn": "player"
+                }
+            }
+        },
+        {
+            "id": "enemy_01",
+            "prefab": "content/prefabs/grunt.uzprefab",
+            "overrides": {
+                "SceneComponent": { "position": [10, 0, 5] },
+                "Health": { "max": 150 }
+            }
+        },
+        {
+            "id": "main_light",
+            "components": {
+                "SceneComponent": { "rotation": [-45, 30, 0] },
+                "DirectionalLightComponent": {
+                    "parent": "SceneComponent",
+                    "intensity": 2.0,
+                    "color": [1.0, 0.95, 0.9],
+                    "cast_shadows": true
+                }
+            }
+        }
+    ]
+}
+```
+
+### 22.3 Design Rules
+
+#### Component Hierarchy via `parent` Field
+
+SceneComponents declare their parent attachment inline. The first `SceneComponent` without a `parent` field is the entity root. This avoids deeply nested JSON and mirrors how UE5 organizes component attachment — components attached to each other, not entities nested inside entities.
+
+```json
+"components": {
+    "SceneComponent": { "position": [0, 0, 0] },
+    "StaticMeshComponent": { "parent": "SceneComponent", "mesh": "..." },
+    "CapsuleCollision": { "parent": "SceneComponent", "radius": 0.5 },
+    "CharacterBody": { "parent": "CapsuleCollision" }
+}
+```
+
+Produces the hierarchy:
+```
+SceneComponent (root)
+├── StaticMeshComponent
+└── CapsuleCollision
+    └── CharacterBody
+```
+
+#### Multiple Components of the Same Type
+
+When an entity needs two components of the same type (e.g., two collision shapes), use a suffix after `#`:
+
+```json
+"components": {
+    "SceneComponent": {},
+    "BoxCollision#body": { "parent": "SceneComponent", "half_extents": [0.5, 1.0, 0.3] },
+    "BoxCollision#head": { "parent": "SceneComponent", "half_extents": [0.3, 0.3, 0.3], "position": [0, 1.2, 0] },
+    "RigidBody": { "parent": "BoxCollision#body" }
+}
+```
+
+The part before `#` is the component type (resolved via Property System). The part after `#` is the instance name (used for `parent` references and debugging). If no `#` suffix, the instance name equals the type name.
+
+#### ActorComponents vs SceneComponents
+
+ActorComponents have no `parent` field — they are flat, non-spatial:
+
+```json
+"CharacterMovementComponent": { "max_speed": 600 },
+"FPSController": { "initial_pawn": "player" },
+"Health": { "max": 100 }
+```
+
+SceneComponents have an optional `parent` field and inherit transform from their parent:
+
+```json
+"CameraComponent": { "parent": "SceneComponent", "fov": 90 }
+```
+
+The SceneLoader distinguishes them by checking the type's inheritance chain in the Property System registry.
+
+#### Entity References by ID
+
+Cross-entity references use the `id` string:
+
+```json
+{ "id": "player", "components": { ... } },
+{ "id": "controller", "components": {
+    "FPSController": { "initial_pawn": "player" }
+}}
+```
+
+Resolved at load-time by the SceneLoader. The Property System marks `UZ_PROPERTY` fields with `meta(entity_ref)` so the loader knows to resolve them:
+
+```cpp
+class FPSController : public PlayerController {
+    UZ_PROPERTY(meta(entity_ref))
+    uz::Entity initial_pawn;
+};
+```
+
+In shipping builds, string IDs are stripped and replaced by integer indices for faster lookup.
+
+#### Transform Fields
+
+SceneComponents carry their transform as direct fields — there is no separate `TransformComponent`. Transform IS the SceneComponent:
+
+```json
+"SceneComponent": { "position": [0, 1.7, 0], "rotation": [0, 90, 0], "scale": [1, 1, 1] }
+```
+
+- `position`: `Vec3`, world or local (local if has parent). Default `[0, 0, 0]`.
+- `rotation`: `Vec3` Euler angles in degrees (pitch, yaw, roll). Default `[0, 0, 0]`.
+- `scale`: `Vec3`. Default `[1, 1, 1]`.
+
+Omitted fields use defaults. A bare `"SceneComponent": {}` is identity transform at origin.
+
+### 22.4 Format: `.uzprefab`
+
+A prefab is a reusable entity template. Same structure as a scene entity, but with `"format": "uzprefab"` and a single `entity` (no `id` — the ID comes from whoever instantiates it).
+
+```json
+{
+    "format": "uzprefab",
+    "version": 1,
+
+    "entity": {
+        "components": {
+            "SceneComponent": {},
+            "StaticMeshComponent": {
+                "parent": "SceneComponent",
+                "mesh": "content/meshes/crate.uzmesh",
+                "material": "content/materials/wood.uzmat"
+            },
+            "BoxCollision": {
+                "parent": "SceneComponent",
+                "half_extents": [0.5, 0.5, 0.5]
+            },
+            "RigidBody": { "parent": "BoxCollision", "mass": 10.0 },
+            "Health": { "max": 50 }
+        }
+    }
+}
+```
+
+#### Prefab Instancing with Overrides
+
+In a `.uzscene`, reference a prefab and override specific fields:
+
+```json
+{
+    "id": "crate_01",
+    "prefab": "content/prefabs/crate.uzprefab",
+    "overrides": {
+        "SceneComponent": { "position": [5, 0, 3] },
+        "RigidBody": { "mass": 25.0 },
+        "Health": { "max": 200 }
+    }
+}
+```
+
+**Override rules:**
+- Only listed fields are overridden — unlisted fields keep prefab defaults.
+- Component types not in the prefab are **added** (extend the prefab).
+- A component set to `null` is **removed** (strip from this instance).
+- Overrides are shallow-merged per component (field-level, not deep).
+
+#### Nested Prefabs
+
+A prefab can reference another prefab:
+
+```json
+{
+    "format": "uzprefab",
+    "version": 1,
+
+    "entity": {
+        "prefab": "content/prefabs/base_enemy.uzprefab",
+        "overrides": {
+            "SkeletalMeshComponent": { "mesh": "content/meshes/goblin.uzmesh" },
+            "Health": { "max": 80 },
+            "AIController": { "behavior_tree": "content/ai/goblin_bt.uzbt" }
+        }
+    }
+}
+```
+
+Resolution is recursive: load base prefab → apply overrides → if base also references a prefab, resolve that first. Max depth: 8 (fail with error if exceeded — prevents cycles).
+
+### 22.5 Runtime Spawning from Prefab
+
+Game code can instantiate prefabs at runtime:
+
+```cpp
+// Spawn a single prefab instance
+uz::Entity crate = GetWorld().SpawnPrefab("content/prefabs/crate.uzprefab", {
+    .position = {5, 2, 0},
+    .rotation = Quat::Identity(),
+});
+
+// Spawn with component overrides
+uz::Entity boss = GetWorld().SpawnPrefab("content/prefabs/grunt.uzprefab", {
+    .position = {0, 0, 20},
+    .overrides = {
+        { "Health", { {"max", 500} } },
+        { "SceneComponent", { {"scale", {2, 2, 2}} } },
+    }
+});
+```
+
+### 22.6 Scene Loading Pipeline
+
+```
+.uzscene file (JSON on disk)
+    │
+    ▼
+SceneLoader::Load(path)
+    │
+    ├── 1. Parse JSON (rapidjson / simdjson)
+    ├── 2. Validate format + version
+    ├── 3. Apply scene settings (subsystems, gravity, etc.)
+    │
+    ├── 4. For each entity:
+    │   ├── If "prefab" → load prefab recursively, apply overrides
+    │   ├── For each component:
+    │   │   ├── Resolve type name via Property System registry
+    │   │   ├── Allocate component in World
+    │   │   ├── Deserialize JSON fields → UZ_PROPERTY fields
+    │   │   └── If SceneComponent with "parent" → attach to parent
+    │   └── Register entity in World
+    │
+    ├── 5. Resolve entity references (string ID → Entity handle)
+    │
+    ├── 6. Call OnRegister() on all components
+    ├── 7. Call OnInitialize() on all components
+    └── 8. Call OnBeginPlay() on all components
+```
+
+**Ordering guarantee** (from §4.3): ALL components call OnInitialize before ANY component calls OnBeginPlay.
+
+### 22.7 Scene Saving
+
+```cpp
+/// Serialize the current World state back to JSON.
+/// Only saves entities marked as persistent (editor-placed or explicitly flagged).
+/// Runtime-spawned entities are excluded unless flagged with UZ_SAVE.
+void SceneSaver::Save(const World& world, const std::string& path);
+```
+
+The saver walks all entities, serializes their components via the Property System (§19), and writes valid `.uzscene` JSON. Round-trip guarantee: `Load(Save(world))` produces an identical world state.
+
+### 22.8 Hot-Reload
+
+When a `.uzscene` or `.uzprefab` file changes on disk (detected by FileWatcher):
+
+1. **In editor mode**: reload the scene — destroy all entities, re-load from updated JSON.
+2. **Prefab instances**: if a `.uzprefab` changes, all instances in the current scene are re-created with updated base + their overrides re-applied.
+3. **No hot-reload in shipping builds** — scenes are baked into `.uzpak`.
+
+### 22.9 Comparison
+
+| Feature | Unreal 5 | Unity | Godot | **UzEngine** |
+|---------|----------|-------|-------|--------------|
+| Format | Binary `.umap` (UAsset) | Binary YAML `.unity` | Text `.tscn` (custom syntax) | **JSON `.uzscene`** |
+| Human-readable | No | Barely | Yes | **Yes** |
+| LLM-editable | No | No | Partially | **Yes (pure JSON)** |
+| Prefabs | Blueprint (heavy) | `.prefab` (nested) | `.tscn` (PackedScene) | **`.uzprefab` (JSON + overrides)** |
+| Nested prefabs | Yes (complex) | Yes | Yes (via instance) | **Yes (recursive, max depth 8)** |
+| Entity references | FObjectProperty (GUIDs) | fileID (integer) | NodePath (string) | **String ID → Entity handle** |
+| Hot-reload | Editor only | Editor only | Yes | **Yes (editor mode)** |
+
+### 22.10 Implementation Phase
+
+**Phase 2** — requires Property System (§19) for component type resolution and field deserialization. SceneLoader lives in `engine/scene/` (§12).
+
+---
+
+## 23. Render World & Sync
+
+> **Goal**: Define how the game world (entities, components) communicates with the rendering pipeline. The two worlds are **parallel and decoupled** — game code describes what to render, the Render World decides how.
+> **References**: UE5 `FScene` + `FPrimitiveSceneProxy` (clean-room), Godot `RenderingServer` + RID pattern.
+
+### 23.1 The Problem
+
+Game code manipulates entities and components — position, mesh, material, visibility. The renderer needs a **GPU-optimized representation** — vertex buffers, pipeline states, draw call batches, culling structures. If game code touches render data directly:
+- Thread safety is impossible (game tick and render submission fight over the same data)
+- Cache layout is wrong (components are entity-centric, rendering needs material-centric sorting)
+- Culling requires spatial structures that game code doesn't maintain
+
+### 23.2 Architecture — Dual World Model
+
+```
+Game Thread                              Render Thread (future — single-thread MVP)
+───────────────────────────              ──────────────────────────────────────────
+World                                    RenderWorld
+  │                                        │
+  │ PrimitiveComponent (game data)         │ RenderProxy (GPU-ready data)
+  │   - ResourceHandle<Mesh>               │   - GPU vertex/index buffers
+  │   - ResourceHandle<Material>           │   - PSO handle
+  │   - visible, cast_shadows              │   - world matrix (copied from sync)
+  │   - render_layer bitmask               │   - material param block (copied)
+  │   - param_overrides                    │   - bounding sphere (for culling)
+  │                                        │
+  │ CameraComponent                        │ ViewState
+  │   - fov, near, far, is_active          │   - view/proj matrices
+  │   - layer_mask                         │   - frustum planes (derived)
+  │                                        │   - HZB from previous frame
+  │                                        │
+  │◄──── Sync Point ─────────────────────►│
+  │   (end of game tick, before render)    │
+  │   1. Added primitives → CreateProxy    │
+  │   2. Dirty transforms → SetTransform   │
+  │   3. Changed props → SetMaterial/etc   │
+  │   4. Removed primitives → DestroyProxy │
+  │   5. Active camera → SetViewState      │
+  │                                        │
+  │                                        ▼
+  │                                    Visibility Pipeline (§23.6)
+  │                                        │
+  │                                        ▼
+  │                                    Draw Call Generation
+  │                                        │
+  │                                        ▼
+  │                                    RHI Submission (DX12/Vulkan/Metal)
+```
+
+### 23.3 RenderProxy — Render-Side Primitive
+
+A `RenderProxy` is the render-side representation of a `PrimitiveComponent`. It is a **POD struct** in a dense `HandleMap` — no vtable, no heap allocation per-proxy, cache-coherent iteration.
+
+```cpp
+/// Opaque handle to a render proxy. Game code holds this but never dereferences it.
+/// Generation-checked — stale handles are safely detected.
+struct RenderProxyHandle { uint32_t id = INVALID_ID; };
+
+/// Type tag for proxy-specific data.
+enum class RenderProxyType : uint8_t {
+    StaticMesh,
+    SkeletalMesh,
+    DirectionalLight,
+    PointLight,
+    SpotLight,
+    Decal,
+    ParticleSystem,
+};
+
+/// Render-side representation of a PrimitiveComponent.
+/// Owned exclusively by RenderWorld. Game thread writes only during sync.
+/// POD struct — no virtuals, no inheritance. Stored in HandleMap<RenderProxy> (dense array).
+///
+/// # Memory Layout
+/// All proxies are contiguous in memory. The visibility pass iterates linearly —
+/// cache-friendly for scenes with 10k+ proxies.
+struct RenderProxy {
+    // ─── Identity ──────────────────────────────
+    RenderProxyHandle handle;
+    RenderProxyType   type;
+
+    // ─── Transform ─────────────────────────────
+    Mat4   world_matrix;
+    Sphere bounding_sphere;              // world-space, updated on transform change
+
+    // ─── Visibility ────────────────────────────
+    bool     visible;
+    bool     cast_shadows;
+    uint32_t render_layer;               // bitmask, matched against camera layer mask
+
+    // ─── Material ──────────────────────────────
+    ResourceHandle<Material> material;
+    MaterialParamBlock       param_overrides;  // per-instance (color tints, texture swaps)
+
+    // ─── LOD ───────────────────────────────────
+    uint8_t  current_lod;                // selected by LOD system or virtual geometry
+    float    screen_size;                // cached from last frame (for LOD selection)
+
+    // ─── Geometry (type-specific) ──────────────
+    union {
+        struct {
+            ResourceHandle<Mesh> mesh;
+            uint32_t instance_batch_key;   // hash of mesh+material — same key = auto-instance
+        } static_mesh;
+
+        struct {
+            ResourceHandle<Mesh> mesh;
+            JointPalette* joint_palette;   // pointer to skinning matrices (updated per-frame)
+        } skeletal_mesh;
+
+        struct {
+            float intensity;
+            Color color;
+            float range;                   // 0 for directional
+            float inner_angle;             // spot only
+            float outer_angle;             // spot only
+            bool  shadow_enabled;
+        } light;
+    };
+};
+```
+
+**Why POD instead of virtual (like UE5)?**
+
+UE5's `FPrimitiveSceneProxy` has ~50 virtual methods and per-proxy heap allocation. For 10k proxies, that's 10k vtable pointer chases during visibility. Our `RenderProxy` is a flat struct in a dense array — the CPU prefetcher handles it. The type-specific behavior lives in the draw call generator (switch on `type`), not in per-proxy virtual dispatch.
+
+### 23.4 RenderWorld — The Render Container
+
+```cpp
+/// Render-side parallel to World. Owns all RenderProxies.
+/// The ONLY code that writes to this is RenderWorldSubsystem::Sync().
+/// The renderer reads from it during visibility + draw call generation.
+class RenderWorld {
+public:
+    // ─── Proxy Lifecycle (called during sync) ──────────
+    RenderProxyHandle CreateProxy(const RenderProxyDesc& desc);
+    void              DestroyProxy(RenderProxyHandle handle);
+
+    // ─── Proxy Updates (called during sync) ────────────
+    void SetTransform(RenderProxyHandle h, const Mat4& world_matrix, const Sphere& bounds);
+    void SetVisible(RenderProxyHandle h, bool visible);
+    void SetMaterial(RenderProxyHandle h, ResourceHandle<Material> material);
+    void SetParamOverrides(RenderProxyHandle h, const MaterialParamBlock& params);
+    void SetRenderLayer(RenderProxyHandle h, uint32_t layer_mask);
+    void SetCastShadows(RenderProxyHandle h, bool cast);
+    void SetJointPalette(RenderProxyHandle h, const JointPalette& palette);
+
+    // ─── View State (called during sync) ───────────────
+    void SetActiveView(const ViewState& view);
+
+    // ─── Rendering Pipeline ────────────────────────────
+
+    /// Run the full visibility pipeline: frustum cull → GPU occlusion → LOD select.
+    /// Populates internal visible_proxies list.
+    void CullVisibility();
+
+    /// Generate sorted draw calls from visible proxies.
+    /// Opaque: sorted by PSO → material → mesh (minimize state changes).
+    /// Transparent: sorted back-to-front.
+    void GenerateDrawCalls(DrawCallList& opaque, DrawCallList& transparent);
+
+    /// Gather shadow-casting proxies for a specific light.
+    void GatherShadowCasters(RenderProxyHandle light, DrawCallList& out);
+
+    // ─── Queries (read-only, for debug/editor) ─────────
+    uint32_t GetProxyCount() const;
+    uint32_t GetVisibleCount() const;
+    uint32_t GetDrawCallCount() const;
+
+private:
+    HandleMap<RenderProxy> proxies_;         // dense array, generation-checked
+    ViewState              active_view_;
+    Frustum                frustum_;         // derived from view_proj
+    std::vector<RenderProxyHandle> visible_; // populated by CullVisibility
+};
+```
+
+### 23.5 Sync Point — The Bridge
+
+```cpp
+/// WorldSubsystem that bridges Game World → Render World.
+/// Runs automatically at the end of every game tick, before rendering.
+/// This is the ONLY place where game data touches render data.
+class RenderWorldSubsystem : public WorldSubsystem {
+public:
+    /// Sync all PrimitiveComponents and CameraComponents to RenderWorld.
+    void Sync() {
+        auto& world = GetWorld();
+        auto& rw = render_world_;
+
+        // ── 1. NEW primitives → create proxies ──────────────
+        for (auto [entity, prim] : world.Added<PrimitiveComponent>()) {
+            prim.proxy_ = rw.CreateProxy(BuildDesc(prim));
+            auto& scene = world.Get<SceneComponent>(entity);
+            rw.SetTransform(prim.proxy_, scene.GetWorldMatrix(), prim.ComputeWorldBounds(scene));
+        }
+
+        // ── 2. DIRTY transforms → update proxy matrices ─────
+        for (auto [entity, prim, scene] : world.View<PrimitiveComponent, SceneComponent>()) {
+            if (scene.IsDirty()) {
+                rw.SetTransform(prim.proxy_, scene.GetWorldMatrix(), prim.ComputeWorldBounds(scene));
+            }
+        }
+
+        // ── 3. CHANGED properties → update proxy state ──────
+        for (auto [entity, prim] : world.Changed<PrimitiveComponent>()) {
+            rw.SetVisible(prim.proxy_, prim.visible);
+            rw.SetMaterial(prim.proxy_, prim.material);
+            rw.SetParamOverrides(prim.proxy_, prim.param_overrides);
+            rw.SetRenderLayer(prim.proxy_, prim.render_layer);
+            rw.SetCastShadows(prim.proxy_, prim.cast_shadows);
+        }
+
+        // ── 4. REMOVED primitives → destroy proxies ─────────
+        for (auto [entity, prim] : world.Removed<PrimitiveComponent>()) {
+            rw.DestroyProxy(prim.proxy_);
+        }
+
+        // ── 5. ACTIVE CAMERA → update view state ────────────
+        for (auto [entity, cam, scene] : world.View<CameraComponent, SceneComponent>()) {
+            if (cam.is_active) {
+                rw.SetActiveView({
+                    .view_matrix = Mat4::Inverse(scene.GetWorldMatrix()),
+                    .proj_matrix = cam.GetProjectionMatrix(),
+                    .position    = scene.GetWorldPosition(),
+                    .near_plane  = cam.near_plane,
+                    .far_plane   = cam.far_plane,
+                    .layer_mask  = cam.layer_mask,
+                });
+            }
+        }
+    }
+
+private:
+    RenderWorld render_world_;
+};
+```
+
+**Key invariant**: After `Sync()` completes, the `RenderWorld` is a complete, self-contained snapshot. The renderer can read it without any reference back to the game `World`. This is what makes the future dual-thread split trivial — just double-buffer the `RenderWorld`.
+
+### 23.6 Visibility Pipeline — Three-Phase Culling
+
+```
+All Proxies (N)
+    │
+    ▼
+Phase 1: Frustum Cull (CPU)
+    │  Test bounding_sphere vs 6 frustum planes (SIMD, 4 spheres at a time)
+    │  Rejects ~60-80% of proxies
+    │  Cost: ~0.1ms for 10k proxies
+    │
+    ▼
+Frustum-Visible Proxies (~2k-4k)
+    │
+    ▼
+Phase 2: GPU Occlusion Cull (Compute Shader)
+    │  Input: AABB list + HZB depth pyramid from previous frame
+    │  Per-instance: project AABB to screen rect, sample HZB at appropriate mip
+    │  If max_depth < HZB_depth → occluded, reject
+    │  Output: indirect draw args (only visible instances survive)
+    │  Rejects ~20-50% of remaining
+    │  Cost: ~0.05ms GPU for 4k instances
+    │
+    ▼
+Visible Proxies (~1k-3k)
+    │
+    ▼
+Phase 3: LOD Selection
+    │  screen_size = bounding_sphere.radius / distance_to_camera
+    │  Select LOD level from mesh LOD chain
+    │  Virtual geometry (§23.8) overrides this for Nanite-enabled meshes
+    │
+    ▼
+Final Visible Set (with LOD)
+    │
+    ▼
+Sort & Batch
+    ├── Opaque: sort by PSO → material → mesh → distance (front-to-back)
+    ├── Transparent: sort by distance (back-to-front)
+    └── Shadow: per-light frustum cull → sort by mesh
+```
+
+### 23.7 GPU Instance Culling — Indirect Draw Pipeline
+
+For scenes with thousands of instances (vegetation, rocks, buildings), CPU-side draw call submission becomes the bottleneck. GPU instance culling moves the per-instance visibility decision to a compute shader, producing `DrawIndexedInstancedIndirect` arguments directly on the GPU.
+
+```
+CPU (per frame, once):
+    1. Upload instance buffer: [world_matrix, bounds, mesh_id, material_id] × N instances
+    2. Upload HZB depth pyramid (from previous frame's depth buffer)
+    3. Dispatch CullInstances compute shader
+
+GPU Compute (CullInstances.hlsl):
+    [numthreads(64, 1, 1)]
+    void CullInstances(uint3 id : SV_DispatchThreadID) {
+        Instance inst = instances[id.x];
+
+        // Frustum test (6 planes vs AABB)
+        if (!FrustumTestAABB(frustum_planes, inst.aabb)) return;
+
+        // HZB occlusion test
+        float2 screen_min, screen_max;
+        ProjectAABB(inst.aabb, view_proj, screen_min, screen_max);
+        float mip = log2(max(screen_max - screen_min) * hzb_size);
+        float hzb_depth = hzb.SampleLevel(sampler, (screen_min + screen_max) * 0.5, mip);
+        float inst_depth = ProjectZ(inst.aabb.near_z, view_proj);
+        if (inst_depth > hzb_depth) return;  // fully occluded
+
+        // Survived — append to indirect draw args
+        uint batch_idx = inst.batch_key;  // hash(mesh + material)
+        uint offset;
+        InterlockedAdd(draw_args[batch_idx].InstanceCount, 1, offset);
+        visible_instances[batch_idx][offset] = id.x;
+    }
+
+GPU Draw:
+    For each batch (unique mesh + material combo):
+        DrawIndexedInstancedIndirect(args_buffer, batch_idx * stride)
+        // GPU reads instance transforms from visible_instances buffer
+```
+
+**Benefits:**
+- Zero CPU-side per-instance work after the initial upload
+- Draw call count = number of unique mesh+material combos (typically 50-200), not number of instances (10k+)
+- HZB occlusion is free — it reuses the depth pyramid already built for post-processing
+
+**When it kicks in:** Automatically for `StaticMeshComponent` with `instance_batch_key`. The batch key is `hash(mesh_handle, material_handle)` — identical mesh+material combos share the same indirect draw. Game code does nothing special; the `RenderWorld` detects batchable proxies during `GenerateDrawCalls()`.
+
+### 23.8 Virtual Geometry — Nanite-Style Mesh Streaming (Phase 4+)
+
+For extremely dense scenes (photogrammetry, film-quality assets), traditional LOD breaks down — artists can't author 5 LOD levels per asset, and pop-in is visible. UE5's Nanite solves this with GPU-driven mesh streaming at cluster granularity.
+
+UzEngine's virtual geometry system follows the same principles, adapted for our architecture:
+
+#### Concept
+
+```
+Source Mesh (millions of triangles)
+    │
+    ▼
+Offline: Build Cluster Hierarchy (uzcook)
+    │  Split mesh into clusters (~128 triangles each)
+    │  Build BVH over clusters
+    │  Generate DAG of cluster groups at multiple detail levels
+    │  Store as .uzvmesh (virtual mesh format)
+    │
+    ▼
+Runtime: GPU-Driven Cluster Selection
+    │  Per-frame compute pass:
+    │    1. Traverse cluster BVH on GPU
+    │    2. For each cluster: screen-space error test
+    │       If projected error < 1 pixel → this detail level is sufficient
+    │    3. Surviving clusters → append to draw buffer
+    │    4. Software rasterizer for small triangles (< 2x2 pixels)
+    │       Hardware rasterizer for larger triangles
+    │
+    ▼
+No LOD pops, no artist-authored LODs, triangle count adapts continuously
+```
+
+#### Integration with RenderWorld
+
+```cpp
+/// Virtual geometry mesh. Replaces traditional LOD chain.
+/// The mesh is a hierarchy of clusters — the GPU selects which clusters to render
+/// based on screen-space error, every frame.
+struct VirtualMeshComponent : public PrimitiveComponent {
+    ResourceHandle<VirtualMesh> virtual_mesh;  // .uzvmesh asset
+
+    /// Error threshold in pixels. Lower = higher quality, more triangles.
+    /// Default 1.0 = Nanite default. 0.5 = 2x quality. 2.0 = half quality.
+    float pixel_error_threshold = 1.0f;
+
+    /// Force a specific detail level (for debugging). -1 = automatic.
+    int32_t force_detail_level = -1;
+};
+
+/// RenderProxy extension for virtual geometry.
+/// Instead of a single mesh + LOD index, holds a cluster hierarchy handle.
+/// The visibility pipeline skips traditional LOD selection for these proxies
+/// and instead dispatches the cluster selection compute pass.
+struct VirtualMeshProxyData {
+    ResourceHandle<VirtualMesh> virtual_mesh;
+    float    pixel_error_threshold;
+    uint32_t cluster_bvh_offset;     // offset into global cluster buffer
+    uint32_t cluster_count;          // total clusters in hierarchy
+};
+```
+
+#### Visibility Pipeline with Virtual Geometry
+
+```
+Phase 1: Frustum Cull (CPU) — same as §23.6
+    │
+    ▼
+Phase 2: Split by type
+    ├── Traditional proxies → GPU Instance Culling (§23.7)
+    └── Virtual mesh proxies → Cluster Selection Pass
+                                   │
+                                   ▼
+                               GPU Compute: TraverseClusters
+                                   │  Walk BVH per virtual mesh instance
+                                   │  Screen-space error test per cluster group
+                                   │  Expand to individual clusters
+                                   │  Append surviving clusters to draw buffer
+                                   │
+                                   ▼
+                               GPU Compute: ClassifyClusters
+                                   │  Small triangles (< 2x2 px) → software raster queue
+                                   │  Large triangles → hardware raster queue
+                                   │
+                                   ▼
+                               Rasterize
+                                   ├── Software rasterizer (compute) → visibility buffer
+                                   └── Hardware rasterizer (draw) → visibility buffer
+                                   │
+                                   ▼
+                               Material Pass
+                                   │  Read visibility buffer
+                                   │  Shade each pixel with its material
+                                   │  Output to GBuffer
+```
+
+#### File Format: `.uzvmesh`
+
+```json
+{
+    "format": "uzvmesh",
+    "version": 1,
+    "source_mesh": "content/meshes/statue.uzmesh",
+    "cluster_count": 4096,
+    "cluster_group_levels": 6,
+    "total_triangles": 2300000,
+    "bvh_depth": 8,
+    "data": "content/meshes/statue.uzvmesh.bin"   // binary blob: clusters + BVH + vertex data
+}
+```
+
+#### What Ships vs What's Phase 4
+
+| Feature | MVP (Phase 1-2) | Phase 3 | Phase 4+ |
+|---------|-----------------|---------|----------|
+| RenderProxy in HandleMap | ✅ | ✅ | ✅ |
+| Frustum culling (CPU) | ✅ | ✅ | ✅ |
+| Traditional LOD | ✅ | ✅ | ✅ (fallback for non-virtual meshes) |
+| GPU instance culling | — | ✅ | ✅ |
+| HZB occlusion | — | ✅ | ✅ |
+| Virtual geometry (cluster BVH) | — | — | ✅ |
+| Software rasterizer | — | — | ✅ |
+| Visibility buffer | — | — | ✅ |
+
+### 23.9 Material Parameter Override
+
+Game code can change material properties per-instance without creating new Material assets. Changes are picked up at the next sync point automatically.
+
+```cpp
+auto& mesh = GetWorld().Get<StaticMeshComponent>(GetPawn());
+
+// Per-instance color override (doesn't affect other entities using same material)
+mesh.SetParameter("base_color", Vec4(1, 0, 0, 1));
+
+// Texture swap
+mesh.SetParameter("albedo_map", GetResources().Load<Texture>("content/textures/damage.uztexture"));
+
+// Swap entire material
+mesh.material = GetResources().Load<Material>("content/materials/burning.uzmat");
+
+// Dissolve effect (animate a scalar parameter)
+void OnTick(float dt) override {
+    dissolve_progress += dt * 0.5f;
+    auto& mesh = GetWorld().Get<StaticMeshComponent>(GetEntity());
+    mesh.SetParameter("dissolve_amount", dissolve_progress);
+}
+```
+
+Internally, `SetParameter()` writes to a `MaterialParamBlock` on the component. The sync point copies it to the proxy. The renderer binds it as a per-instance constant buffer alongside the material's shared constant buffer.
+
+### 23.10 Render Layers
+
+Bitmask-based visibility filtering. A proxy is visible to a camera only if `(proxy.render_layer & camera.layer_mask) != 0`.
+
+```cpp
+namespace RenderLayer {
+    constexpr uint32_t Default     = 1 << 0;   // normal world geometry
+    constexpr uint32_t UI3D        = 1 << 1;   // 3D HUD (health bars, nameplates)
+    constexpr uint32_t Minimap     = 1 << 2;   // only visible to minimap camera
+    constexpr uint32_t FirstPerson = 1 << 3;   // first-person arms, weapon
+    constexpr uint32_t Portal      = 1 << 4;   // portal rendering targets
+    constexpr uint32_t DebugDraw   = 1 << 5;   // debug lines, wireframes (stripped in shipping)
+}
+
+// Main camera
+camera.layer_mask = RenderLayer::Default | RenderLayer::FirstPerson;
+
+// Minimap camera (top-down, no FP arms)
+minimap_cam.layer_mask = RenderLayer::Default | RenderLayer::Minimap;
+
+// Portal camera (renders into a texture)
+portal_cam.layer_mask = RenderLayer::Default | RenderLayer::Portal;
+```
+
+### 23.11 Thread Model — MVP to Full
+
+The sync point API is identical in single-thread and dual-thread modes. The only difference is where the buffer lives.
+
+```
+MVP (Phase 1-2): Single-Thread
+────────────────────────────────────────────────────
+│ Game Tick │ Sync │ Cull │ Draw │ Present │
+────────────────────────────────────────────────────
+All on main thread. Simple, debuggable.
+Sync writes directly to RenderWorld — no copy needed.
+
+Phase 3: Dual-Thread (Double-Buffered)
+────────────────────────────────────────────────────
+Game Thread: │ Tick N │ Sync N→buf │ Tick N+1 │ Sync N+1→buf │
+Render Thread:            │ Read buf │ Cull │ Draw │ Present │ Read buf │ ...
+────────────────────────────────────────────────────
+Sync writes to a staging buffer. Render thread swaps and reads.
+Game thread never stalls (except if render is 2+ frames behind → frame pacing).
+
+Phase 4: Triple-Buffered + Job System
+────────────────────────────────────────────────────
+Game Thread: │ Tick │ Sync │ Tick │ Sync │
+Render Thread:       │ Cull+Draw N-1 │ Cull+Draw N │
+Worker Pool:    │ AnimUpdate │ PhysicsSync │ ParticleUpdate │
+────────────────────────────────────────────────────
+```
+
+**What game code sees**: Nothing changes. `PrimitiveComponent`, `SetParameter()`, `CameraComponent.is_active` — all the same API. The engine handles double-buffering internally.
+
+### 23.12 Frame Pipeline — Full Picture
+
+```
+Frame N:
+    │
+    ├── 1. Input Tick (§21)
+    │      OS events → modifier chains → trigger evaluation → callbacks
+    │
+    ├── 2. Game Tick (§8)
+    │      PrePhysics → Physics → PostPhysics → PreRender tick groups
+    │      Behaviors run, components update, events fire
+    │
+    ├── 3. Transform Propagation
+    │      Dirty SceneComponents → recompute world matrices (parent→child)
+    │
+    ├── 4. Sync Point (§23.5)
+    │      PrimitiveComponent → RenderProxy (create/update/destroy)
+    │      CameraComponent → ViewState
+    │
+    ├── 5. Visibility (§23.6)
+    │      Frustum cull (CPU) → GPU occlusion cull → LOD select
+    │      Virtual geometry: cluster BVH traversal → cluster selection
+    │
+    ├── 6. Shadow Pass
+    │      Per shadow-casting light: frustum cull → shadow map render
+    │
+    ├── 7. GBuffer Pass (Deferred)
+    │      Opaque geometry → Albedo, Normal, Metallic/Roughness, Emissive, Depth
+    │      Virtual geometry → visibility buffer → material shading → GBuffer
+    │
+    ├── 8. Lighting Pass
+    │      Screen-space: read GBuffer + shadow maps → lit result
+    │      GI: Lumen-style software RT / light probes / DXR (§ARCHITECTURE)
+    │
+    ├── 9. Transparent Pass (Forward)
+    │      Back-to-front sorted, forward shading
+    │
+    ├── 10. Post-Processing (§ARCHITECTURE)
+    │       TAA → SSAO → SSR → Bloom → DoF → Motion Blur → Tonemap → DLSS/FSR
+    │
+    └── 11. Present
+            Swapchain present → start Frame N+1
+```
+
+### 23.13 Directory Structure
+
+```
+engine/
+├── render_world/                           ← this section's code
+│   ├── render_world.h/.cpp                 ← RenderWorld container + CullVisibility + GenerateDrawCalls
+│   ├── render_proxy.h                      ← RenderProxy struct + RenderProxyHandle + RenderProxyDesc
+│   ├── render_world_subsystem.h/.cpp       ← WorldSubsystem: Sync()
+│   ├── view_state.h                        ← ViewState, Frustum
+│   ├── render_layers.h                     ← RenderLayer constants
+│   ├── material_param_block.h/.cpp         ← per-instance parameter storage
+│   ├── gpu_culling/                        ← GPU instance culling pipeline
+│   │   ├── gpu_cull_pipeline.h/.cpp        ← dispatch + buffer management
+│   │   ├── hzb_generator.h/.cpp            ← depth pyramid from previous frame
+│   │   └── shaders/
+│   │       ├── cull_instances.hlsl
+│   │       └── generate_hzb.hlsl
+│   └── virtual_geometry/                   ← Phase 4+: Nanite-style pipeline
+│       ├── virtual_mesh.h                  ← VirtualMesh asset + VirtualMeshComponent
+│       ├── cluster_bvh.h/.cpp              ← cluster hierarchy traversal
+│       ├── software_rasterizer.h/.cpp      ← compute-based triangle rasterizer
+│       ├── visibility_buffer.h/.cpp        ← triangle ID + instance ID buffer
+│       └── shaders/
+│           ├── traverse_clusters.hlsl
+│           ├── classify_clusters.hlsl
+│           ├── software_raster.hlsl
+│           └── material_shade.hlsl
+```
+
+### 23.14 Comparison
+
+| Feature | Unreal 5 | Godot 4 | Unity | **UzEngine** |
+|---------|----------|---------|-------|--------------|
+| Render proxy | `FPrimitiveSceneProxy` (vtable, heap) | `RID` → `RenderingServer` | Internal | **POD struct in HandleMap (cache-coherent)** |
+| Sync mechanism | `ENQUEUE_RENDER_COMMAND` (lambda queue) | Scattered `RS::instance_set_*()` | `BatchRendererGroup` | **Single sync point (subsystem)** |
+| CPU culling | Frustum | CPU HZB | Umbra (baked) | **Frustum (SIMD)** |
+| GPU culling | GPU instance culling (indirect) | None | None (SRP) | **GPU instance culling (indirect)** |
+| Occlusion | GPU HZB | CPU HZB | Umbra (baked) | **GPU HZB (no bake, fully dynamic)** |
+| Virtual geometry | Nanite (cluster BVH + sw raster) | None | None | **Phase 4+ (cluster BVH + sw raster)** |
+| Material override | Dynamic Material Instance | `set_instance_shader_parameter` | `MaterialPropertyBlock` | **`SetParameter()` → MaterialParamBlock** |
+| Render layers | Bitmask (32 layers) | Bitmask (20 layers) | Bitmask (32 layers) | **Bitmask (32 layers)** |
+| Thread model | Separate render thread | Threaded RenderingServer | Render thread | **Single-thread MVP → dual-thread Phase 3** |
+| Draw call batching | GPU instancing + Nanite | MultiMesh | SRP Batcher | **GPU instancing + virtual geometry** |
+
+### 23.15 Implementation Phase
+
+| Phase | What Ships |
+|-------|-----------|
+| **Phase 1 (MVP)** | RenderWorld + RenderProxy + Sync + CPU frustum cull + basic draw calls. Single-thread. |
+| **Phase 2** | Material param override + render layers + LOD selection. |
+| **Phase 3** | GPU instance culling + HZB occlusion + dual-thread render. |
+| **Phase 4+** | Virtual geometry (cluster BVH, software rasterizer, visibility buffer). |
