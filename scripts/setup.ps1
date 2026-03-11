@@ -271,8 +271,8 @@ Clone-Repo -Name "stb" `
     -Branch "master" `
     -RemoveDirs @("docs", "data", "tests", "tools", "deprecated")
 
-# Keep only the 3 headers we use
-$stbKeep = @("stb_image.h", "stb_image_write.h", "stb_image_resize2.h", "LICENSE")
+# Keep only the headers we use
+$stbKeep = @("stb_image.h", "stb_image_write.h", "stb_image_resize2.h", "stb_truetype.h", "LICENSE")
 $stbPath = Join-Path $ThirdPartyDir "stb"
 if (Test-Path $stbPath) {
     Get-ChildItem $stbPath -File | Where-Object { $stbKeep -notcontains $_.Name } | Remove-Item -Force
