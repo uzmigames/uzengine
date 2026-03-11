@@ -307,6 +307,12 @@ pub fn build(b: *std.Build) void {
             .files = &.{ "clear_screen_demo.cpp", "dx12_clear_screen.cpp" },
             .flags = cpp_flags,
         });
+        // Agility SDK activation (exports D3D12SDKVersion + D3D12SDKPath)
+        demo_mod.addCSourceFiles(.{
+            .root = b.path("core/rhi/dx12"),
+            .files = &.{"dx12_agility.cpp"},
+            .flags = cpp_flags,
+        });
 
         for (engine_include_dirs) |dir| demo_mod.addIncludePath(b.path(dir));
         for (thirdparty_include_dirs) |dir| demo_mod.addIncludePath(b.path(dir));
@@ -330,5 +336,58 @@ pub fn build(b: *std.Build) void {
         const run_demo = b.addRunArtifact(demo_exe);
         const demo_step = b.step("demo", "Run DX12 clear screen demo");
         demo_step.dependOn(&run_demo.step);
+
+        // ── UzEngine Runtime executable (Windows/DX12 only) ─────────────────
+
+        const rt_mod = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+        });
+        rt_mod.link_libc = true;
+        rt_mod.link_libcpp = true;
+
+        rt_mod.addCSourceFiles(.{
+            .root = b.path("tools"),
+            .files = &.{"uzengine_runtime.cpp"},
+            .flags = cpp_flags,
+        });
+        // Agility SDK activation (exports D3D12SDKVersion + D3D12SDKPath)
+        rt_mod.addCSourceFiles(.{
+            .root = b.path("core/rhi/dx12"),
+            .files = &.{"dx12_agility.cpp"},
+            .flags = cpp_flags,
+        });
+
+        for (engine_include_dirs) |dir| rt_mod.addIncludePath(b.path(dir));
+        for (thirdparty_include_dirs) |dir| rt_mod.addIncludePath(b.path(dir));
+        for (windows_engine_include_dirs) |dir| rt_mod.addIncludePath(b.path(dir));
+        for (windows_thirdparty_include_dirs) |dir| rt_mod.addIncludePath(b.path(dir));
+        rt_mod.addIncludePath(b.path("core/rhi/dx12"));
+        rt_mod.addIncludePath(b.path("tools"));
+
+        const rt_exe = b.addExecutable(.{
+            .name = "uzengine_runtime",
+            .root_module = rt_mod,
+        });
+        rt_exe.linkLibrary(lib);
+        rt_exe.linkSystemLibrary("d3d12");
+        rt_exe.linkSystemLibrary("dxgi");
+        rt_exe.linkSystemLibrary("dxguid");
+        rt_exe.linkSystemLibrary("gdi32");
+        rt_exe.linkSystemLibrary("user32");
+        b.installArtifact(rt_exe);
+
+        const run_rt = b.addRunArtifact(rt_exe);
+        const run_step = b.step("run", "Run UzEngine runtime");
+        run_step.dependOn(&run_rt.step);
+
+        // ── Agility SDK DLL deployment ───────────────────────────────────────
+        // Copy D3D12Core.dll and d3d12SDKLayers.dll to zig-out/bin/D3D12/
+        b.getInstallStep().dependOn(&b.addInstallBinFile(
+            b.path(tp ++ "agility/bin/x64/D3D12Core.dll"), "D3D12/D3D12Core.dll",
+        ).step);
+        b.getInstallStep().dependOn(&b.addInstallBinFile(
+            b.path(tp ++ "agility/bin/x64/d3d12SDKLayers.dll"), "D3D12/d3d12SDKLayers.dll",
+        ).step);
     }
 }
