@@ -111,6 +111,11 @@
         "scopeName": "markdown.zig.codeblock",
         "path": "./syntaxes/zig-markdown-injection.tmLanguage.json",
         "injectTo": ["text.html.markdown"]
+      },
+      {
+        "scopeName": "source.cpp.uzengine",
+        "path": "./syntaxes/uzengine-cpp-injection.tmLanguage.json",
+        "injectTo": ["source.cpp", "source.c"]
       }
     ]
   },

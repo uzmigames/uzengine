@@ -30,6 +30,17 @@ Press **F5** in VSCode (launch config in `.vscode/launch.json`) to start the Ext
 |---------|------------|
 | `UzEngine: Start` | Initialize the engine runtime |
 
+## Syntax Highlighting
+
+| Language | Extensions | Grammar |
+|----------|-----------|---------|
+| HLSL | `.hlsl`, `.hlsli`, `.fx`, `.fxh` | Full TextMate grammar |
+| Zig | `.zig` | Full TextMate grammar |
+| UzScene / UzMaterial / UzMesh / UzPrefab / UzProject | `.uz*` | JSON-based grammar |
+| **C/C++ (injection)** | `.c`, `.cpp`, `.h` | UzEngine types, macros, RHI interfaces |
+
+The C++ injection highlights engine-specific symbols (e.g. `UZ_LOG`, `Vec3`, `IRHIDevice`, `ShaderPipeline`) with semantic scopes so your color theme can distinguish them from standard C++ code.
+
 ## Directory Structure
 
 ```
@@ -38,6 +49,13 @@ extension/
 ├── tsconfig.json
 ├── native/            # .node binary (copied by build pipeline, gitignored)
 │   └── uzengine.node
+├── syntaxes/          # TextMate grammars
+│   ├── hlsl.tmLanguage.json
+│   ├── zig.tmLanguage.json
+│   ├── uzengine-json.tmLanguage.json
+│   ├── uzengine-cpp-injection.tmLanguage.json   # C++ UzEngine highlighting
+│   ├── hlsl-markdown-injection.tmLanguage.json
+│   └── zig-markdown-injection.tmLanguage.json
 └── src/
     └── extension.ts   # Extension entry point
 ```
