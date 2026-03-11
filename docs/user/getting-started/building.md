@@ -26,24 +26,7 @@ Run the setup script to download third-party dependencies:
 ./scripts/setup.ps1
 ```
 
-This clones and configures:
-- **spdlog** — Structured logging
-- **Tracy** — CPU/GPU profiling
-- **mimalloc** — Memory allocator
-- **DirectXMath** — SIMD math (+ sal.h stub for cross-platform)
-- **nlohmann/json** — JSON parsing
-- **GoogleTest** — Unit testing
-- **D3D12 Memory Allocator** — GPU memory management
-- **DirectX Headers** — DX12 API headers for Clang/MinGW
-- **Agility SDK** — Latest DX12 runtime (enables SM6.6 + FL 12.2)
-- **spirv-reflect** — Shader reflection
-- **xxHash** — Fast hashing
-- **atomic_queue** — Lock-free queues
-- **stb** — Image loading (PNG, JPG, TGA, BMP, HDR), writing, resizing
-- **libjpeg-turbo** — SIMD-accelerated JPEG codec
-- **tinyexr** — OpenEXR/HDR image format
-- **basis_universal** — GPU texture supercompression (BC7, ASTC, ETC2)
-- **astcenc** — ASTC texture encoder/decoder
+This clones and configures all third-party dependencies. See [`runtime/thirdparty/README.md`](../../../runtime/thirdparty/README.md) for the full list with versions and licenses.
 
 ## Build
 

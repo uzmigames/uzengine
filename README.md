@@ -120,33 +120,7 @@ scripts/test.ps1 --compiler=msvc   # MSVC tests
 
 ## Thirdparty Dependencies
 
-All thirdparty libraries are **committed to the repo** under `runtime/thirdparty/`. The setup script (`scripts/setup.ps1`) clones them with `--depth 1`, strips `.git`, docs, tests, and CI files to keep the footprint minimal. This ensures:
-
-- **Reproducible builds** — no external download required after clone
-- **Offline development** — no network dependency during build
-- **Pinned versions** — exact versions tracked in git
-
-| Library | Version | License | Purpose |
-|---------|---------|---------|---------|
-| spdlog | 1.15.3 | MIT | Structured logging (12 categories with compile-time filtering) |
-| Tracy | 0.11.1 | BSD-3-Clause | CPU profiling with Tracy integration |
-| mimalloc | 2.1.7 | MIT | Global allocator (high performance, low fragmentation) |
-| D3D12MA | 2.0.1 | MIT | GPU memory allocator (named tracking, budget enforcement) |
-| DirectX Headers | 1.614.1 | MIT | DX12 API headers (SM6.6 support) |
-| DirectXMath | oct2024 | MIT | SIMD math library (Vec2/Vec3/Vec4/Mat4 operations) |
-| Agility SDK | 1.614.1 | MIT | DX12 runtime (variable shading rate, mesh shaders) |
-| DXC | 1.8.2407 | NCSA | Shader compiler (HLSL to DXIL) |
-| glm | 1.0.1 | MIT | Math (header-only, reference implementation) |
-| nlohmann/json | 3.11.3 | MIT | JSON parsing (single header, .uzproject files) |
-| atomic_queue | latest | MIT | Lock-free MPMC queue (EventBus, work queues) |
-| GoogleTest | 1.15.2 | BSD-3-Clause | Testing framework (444 tests, 64 test suites) |
-| SPIRV-Reflect | 1.3.268 | Apache 2.0 | Shader reflection & root signature generation |
-| xxhash | 0.8.2 | BSD-2-Clause | Fast hashing (content fingerprints, asset caching) |
-| SSE Math Fun | RJVB fork | MIT | SIMD math functions (sin, cos, log, sqrt optimized) |
-| MikkTSpace | latest | MIT | Tangent space generation for normal maps |
-| dlmalloc | 2.8.6 | Public Domain | Lightweight allocator (alternative to mimalloc) |
-| jemalloc | 5.3.0 | BSD-2-Clause | Alternative allocator (multi-threaded workloads) |
-| vcpkg | latest | MIT | Dependency management (zlib, zstd) |
+All thirdparty libraries are **committed to the repo** under `runtime/thirdparty/`. See [`runtime/thirdparty/README.md`](runtime/thirdparty/README.md) for the full list with versions, licenses, and extracted files.
 
 ## Documentation
 
