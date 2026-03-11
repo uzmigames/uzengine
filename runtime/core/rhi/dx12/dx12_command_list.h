@@ -22,17 +22,27 @@ class DX12Device;
 // DX12CommandList
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// DX12 implementation of IRHICommandList.
+/// DX12 implementation of `IRHICommandList`.
 ///
-/// Owns one ID3D12GraphicsCommandList and kFramesInFlight command allocators.
-/// The allocators rotate each frame so previously submitted work can complete
-/// while new commands are recorded.
+/// Owns one `ID3D12GraphicsCommandList` and `kFramesInFlight` (3) command
+/// allocators. The allocators rotate each frame so previously submitted GPU
+/// work can complete while new commands are recorded into a fresh allocator.
+///
+/// On `Begin()`, the global CBV_SRV_UAV and Sampler descriptor heaps are
+/// bound for SM6.6 bindless shader access.
+///
+/// # Thread Safety
+/// NOT thread-safe. Only one thread may record into this command list at a time.
 class DX12CommandList final : public IRHICommandList {
 public:
     DX12CommandList() = default;
     ~DX12CommandList() override;
 
-    /// Creates command allocator(s) and command list. Returns false on failure.
+    /// Creates command allocator(s) and the command list. Returns false on failure.
+    ///
+    /// # Arguments
+    /// * `device` — Parent DX12 device (must outlive this command list).
+    /// * `queueType` — Queue type determines the command list type (Direct, Compute, Copy).
     bool Init(DX12Device* device, RHIQueueType queueType);
 
     // ── IRHICommandList overrides ────────────────────────────────────────
@@ -69,18 +79,35 @@ public:
 
     // ── DX12-specific methods (pre-texture-pool) ─────────────────────────
 
-    /// Transitions a resource between states (used until texture pool resolves handles).
+    /// Transitions a resource between D3D12 states (low-level, for swap chain back buffers).
+    ///
+    /// Prefer `ResourceBarrier()` with `RHIBarrierDesc` for handle-based transitions.
+    /// This overload takes raw D3D12 types for cases where no `RHIHandle` exists
+    /// (e.g., swap chain back buffers before texture pool integration).
+    ///
+    /// # Arguments
+    /// * `resource` — Native D3D12 resource pointer.
+    /// * `before` — Current resource state.
+    /// * `after` — Desired resource state.
     void TransitionBarrier(ID3D12Resource* resource,
                            D3D12_RESOURCE_STATES before,
                            D3D12_RESOURCE_STATES after);
 
-    /// Clears an RTV descriptor handle (used until texture pool manages RTV descriptors).
+    /// Clears a render target view by raw descriptor handle.
+    ///
+    /// Prefer `ClearRenderTarget()` with `RHITextureHandle` for handle-based clears.
+    /// This overload is used by the swap chain which manages its own RTV descriptors.
+    ///
+    /// # Arguments
+    /// * `rtv` — CPU descriptor handle for the render target view.
+    /// * `color` — Four-element float array `[R, G, B, A]`.
     void ClearRTV(D3D12_CPU_DESCRIPTOR_HANDLE rtv, const float color[4]);
 
-    /// Returns the underlying command list (for other dx12/ files only).
+    /// Returns the underlying `ID3D12GraphicsCommandList` (for sibling DX12 classes only).
     ID3D12GraphicsCommandList* GetNative() const { return m_cmdList.Get(); }
 
 private:
+    /// Number of command allocators for triple-buffered frame pacing.
     static constexpr uint32_t kFramesInFlight = 3;
 
     DX12Device*                          m_device = nullptr;

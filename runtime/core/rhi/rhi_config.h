@@ -15,17 +15,21 @@ namespace uz {
 class Config; // forward declare
 
 /// Shader model levels supported by the engine.
+///
+/// Ordered from lowest to highest capability. The engine negotiates the highest
+/// shader model the GPU supports at device creation time.
+/// SM6.6 is the preferred baseline — it enables bindless resource access.
 enum class ShaderModel : uint8_t {
-    SM5_0,   ///< DirectX 11 baseline
-    SM5_1,   ///< DirectX 11.3+ (dynamic indexing)
-    SM6_0,   ///< DirectX 12 baseline (wave intrinsics)
-    SM6_1,   ///< Barycentric intrinsics, SV_ViewID
-    SM6_2,   ///< Float16, denorm mode control
-    SM6_3,   ///< DirectX Raytracing (DXR 1.0)
-    SM6_4,   ///< Variable rate shading, low-precision packed dot
-    SM6_5,   ///< DXR 1.1, mesh shaders, sampler feedback
-    SM6_6,   ///< DirectX 12 Ultimate (bindless, dynamic resources)
-    SM6_7,   ///< Advanced texture ops, relaxed precision
+    SM5_0,   ///< DirectX 11 baseline (absolute minimum).
+    SM5_1,   ///< DirectX 11.3+ (dynamic indexing, space-qualified registers).
+    SM6_0,   ///< DirectX 12 baseline (wave intrinsics, 64-bit integers).
+    SM6_1,   ///< Barycentric intrinsics, `SV_ViewID` for VR.
+    SM6_2,   ///< Native float16 (`half`), denorm mode control.
+    SM6_3,   ///< DirectX Raytracing 1.0 (DXR), `TraceRay` intrinsic.
+    SM6_4,   ///< Variable rate shading (VRS), low-precision packed dot product.
+    SM6_5,   ///< DXR 1.1, mesh shaders, sampler feedback.
+    SM6_6,   ///< DirectX 12 Ultimate — bindless (`ResourceDescriptorHeap[]`), dynamic resources.
+    SM6_7,   ///< Advanced texture ops, relaxed precision, quad-wide shuffle.
 };
 
 /// Resolved RHI configuration from all sources.

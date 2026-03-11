@@ -22,6 +22,7 @@ UZ_DEFINE_LOG_CATEGORY(Platform, Trace);
 UZ_DEFINE_LOG_CATEGORY(Memory, Trace);
 UZ_DEFINE_LOG_CATEGORY(IO, Trace);
 UZ_DEFINE_LOG_CATEGORY(Engine, Trace);
+UZ_DEFINE_LOG_CATEGORY(Asset, Trace);
 
 namespace uz {
 

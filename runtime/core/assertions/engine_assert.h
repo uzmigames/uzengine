@@ -54,6 +54,39 @@ namespace uz::detail {
 } // namespace uz::detail
 
 // ── UZ_CHECK — fatal in debug, stripped in shipping ─────────────────────────
+
+/// Verifies an invariant condition. Fatal in debug builds, stripped in shipping.
+///
+/// # Arguments
+/// * `expr` - Boolean expression to verify
+///
+/// # Behavior
+/// - **Debug/Development**: Evaluates `expr`; if false, prints diagnostics + stack trace, aborts.
+/// - **Shipping (UZ_SHIPPING)**: Entire macro is `((void)0)` — zero cost.
+///
+/// # Panics
+/// Calls `std::abort()` via `FatalAssert` when `expr` is false (non-shipping builds).
+///
+/// # Examples
+/// ```cpp
+/// UZ_CHECK(device != nullptr);
+/// UZ_CHECK(index < array.size());
+/// ```
+
+/// Verifies an invariant condition with a formatted message. Fatal in debug, stripped in shipping.
+///
+/// # Arguments
+/// * `expr` - Boolean expression to verify
+/// * `fmt` - printf-style format string for the failure message
+/// * `...` - Format arguments
+///
+/// # Panics
+/// Calls `std::abort()` via `FatalAssert` when `expr` is false (non-shipping builds).
+///
+/// # Examples
+/// ```cpp
+/// UZ_CHECKF(size > 0, "Buffer size must be positive, got %d", size);
+/// ```
 #ifdef UZ_SHIPPING
 #define UZ_CHECK(expr) ((void)0)
 #define UZ_CHECKF(expr, ...) ((void)0)
@@ -76,7 +109,27 @@ namespace uz::detail {
 #endif
 
 // ── UZ_ENSURE — non-fatal, logs + continues ─────────────────────────────────
-// Evaluates to the condition result so you can use: if (!UZ_ENSURE(ptr)) return;
+
+/// Checks a recoverable condition. Logs failure but continues execution.
+///
+/// Evaluates to the boolean result of `expr`, so it can be used in conditionals.
+/// In shipping builds, evaluates `expr` without logging (for the boolean result).
+///
+/// # Arguments
+/// * `expr` - Boolean expression to check
+///
+/// # Returns
+/// `true` if `expr` is truthy, `false` otherwise.
+///
+/// # Behavior
+/// - **Debug/Development**: If false, logs expression + file + line + stack trace to stderr.
+/// - **Shipping (UZ_SHIPPING)**: Evaluates to `!!(expr)` with no logging.
+///
+/// # Examples
+/// ```cpp
+/// if (!UZ_ENSURE(texture != nullptr)) return;
+/// if (!UZ_ENSURE(file.is_open())) { UseDefault(); }
+/// ```
 #ifdef UZ_SHIPPING
 #define UZ_ENSURE(expr) (!!(expr))
 #else
@@ -91,6 +144,23 @@ namespace uz::detail {
 #endif
 
 // ── UZ_VERIFY — never stripped (side effects must execute) ──────────────────
+
+/// Verifies a condition that has side effects. NEVER stripped, even in shipping.
+///
+/// Use when the expression must always execute (e.g., `file.close()`, `mutex.unlock()`),
+/// and the return value indicates success.
+///
+/// # Arguments
+/// * `expr` - Boolean expression with side effects that must always execute
+///
+/// # Panics
+/// Calls `std::abort()` via `FatalAssert` when `expr` is false (ALL build configs).
+///
+/// # Examples
+/// ```cpp
+/// UZ_VERIFY(CloseHandle(handle));
+/// UZ_VERIFY(allocator.Free(ptr));
+/// ```
 #define UZ_VERIFY(expr)                                                                            \
     do {                                                                                           \
         if (!(expr)) {                                                                             \

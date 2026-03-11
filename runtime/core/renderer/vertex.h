@@ -1,10 +1,16 @@
-#pragma once
-
-/// Standard vertex layout for 3D mesh rendering.
+/// UzEngine Vertex Definitions
 ///
-/// All vertex data is uploaded as structured buffers and accessed
+/// Standard vertex layouts for 3D mesh and debug geometry rendering.
+/// All vertex data is uploaded as StructuredBuffers and accessed
 /// via SM6.6 bindless `ResourceDescriptorHeap[index]` in shaders.
-/// No Input Assembler vertex layout is used.
+/// No Input Assembler vertex layout is used — vertex fetch is entirely
+/// in the vertex shader.
+///
+/// # Layouts
+/// - `Vertex` (48 bytes): full PBR mesh vertex with position, normal, UV, tangent
+/// - `SimpleVertex` (36 bytes): minimal vertex for debug lines, UI, and test geometry
+
+#pragma once
 
 #include "engine_math.h"
 

@@ -23,9 +23,25 @@ namespace uz {
 // Vec2 — 2D float vector
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// 2D float vector (x, y) — zero-initialized by default.
+/// 2D floating-point vector for UI coordinates, texture UVs, and screen-space math.
+///
+/// Stores x, y as `float` fields. All operations are scalar (no SIMD).
+/// Default-constructed to zero.
+///
+/// # Memory Layout
+/// `[x: f32, y: f32]` — 8 bytes, no padding.
+///
+/// # Examples
+/// ```cpp
+/// Vec2 uv{0.5f, 0.5f};
+/// Vec2 screen = uv * Vec2{1920.0f, 1080.0f};
+/// float len = screen.length();
+/// ```
 struct Vec2 {
-    float x, y;
+    /// X component (horizontal axis).
+    float x;
+    /// Y component (vertical axis).
+    float y;
 
     /// Zero-initialized vector (0, 0).
     Vec2() : x(0), y(0) {}
@@ -84,21 +100,33 @@ struct Vec2 {
     /// Inequality.
     bool operator!=(const Vec2& other) const { return !(*this == other); }
 
-    /// Dot product.
+    /// Computes the dot product with another vector.
+    ///
+    /// # Returns
+    /// Scalar projection: `x*other.x + y*other.y`.
     float dot(const Vec2& other) const { return x * other.x + y * other.y; }
-    /// Uppercase alias for consistency.
+    /// Uppercase alias for `dot()`.
     float Dot(const Vec2& other) const { return dot(other); }
-    /// Euclidean length.
+    /// Computes the Euclidean length (magnitude) of the vector.
+    ///
+    /// # Returns
+    /// `sqrt(x*x + y*y)`. Use `lengthSq()` when comparing distances to avoid sqrt.
     float length() const { return std::sqrt(x * x + y * y); }
-    /// Uppercase alias.
+    /// Uppercase alias for `length()`.
     float Length() const { return length(); }
-    /// Squared length (faster, avoids sqrt).
+    /// Computes the squared Euclidean length (avoids sqrt).
+    ///
+    /// # Returns
+    /// `x*x + y*y`. Prefer over `length()` for distance comparisons.
     float lengthSq() const { return x * x + y * y; }
-    /// Uppercase alias.
+    /// Uppercase alias for `lengthSq()`.
     float LengthSq() const { return lengthSq(); }
-    /// Return normalized vector (length = 1).
+    /// Returns a unit-length copy of this vector.
+    ///
+    /// # Returns
+    /// Normalized vector with length 1. Returns copy of `*this` if length is zero.
     Vec2 normalize() const;
-    /// Uppercase alias.
+    /// Uppercase alias for `normalize()`.
     Vec2 Normalized() const { return normalize(); }
 
     /// Zero vector (0, 0).
@@ -122,10 +150,34 @@ struct Vec2 {
 // Vec3 — 3D float vector (primary SIMD vector)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// 3D float vector (x, y, z) — zero-initialized, SIMD-accelerated via DirectXMath.
-/// Primary vector type used throughout the engine for positions, directions, scales.
+/// 3D floating-point vector with SIMD acceleration via DirectXMath.
+///
+/// Stores x, y, z as `float` fields. All arithmetic operations are SIMD-accelerated
+/// through implicit conversion to `XMVECTOR` via `toXM()`. Default-constructed to zero.
+/// Primary vector type for positions, directions, normals, and scales.
+///
+/// # Memory Layout
+/// `[x: f32, y: f32, z: f32]` — 12 bytes, no padding. NOT 16-byte aligned.
+/// Use `toXM()` for SIMD operations that require `XMVECTOR` (16-byte aligned).
+///
+/// # Coordinate System
+/// Left-handed: +X right, +Y up, +Z forward.
+///
+/// # Examples
+/// ```cpp
+/// Vec3 a{1.0f, 2.0f, 3.0f};
+/// Vec3 b{4.0f, 5.0f, 6.0f};
+/// float d = a.Dot(b);           // 32.0
+/// Vec3 c = a.Cross(b);          // {-3, 6, -3}
+/// Vec3 n = a.Normalized();      // unit length
+/// ```
 struct Vec3 {
-    float x, y, z;
+    /// X component (horizontal axis, positive = right).
+    float x;
+    /// Y component (vertical axis, positive = up).
+    float y;
+    /// Z component (depth axis, positive = forward in LH coordinate system).
+    float z;
 
     /// Zero-initialized vector (0, 0, 0).
     Vec3() : x(0), y(0), z(0) {}
@@ -199,29 +251,61 @@ struct Vec3 {
     /// Inequality.
     bool operator!=(const Vec3& other) const { return !(*this == other); }
 
-    /// Dot product (SIMD-accelerated via DirectXMath).
+    /// Computes the dot product with another vector (SIMD-accelerated).
+    ///
+    /// # Arguments
+    /// * `other` - The vector to dot with.
+    ///
+    /// # Returns
+    /// Scalar projection: `x*other.x + y*other.y + z*other.z`.
+    ///
+    /// # Examples
+    /// ```cpp
+    /// Vec3 a{1, 0, 0}, b{0, 1, 0};
+    /// assert(a.Dot(b) == 0.0f); // perpendicular
+    /// ```
     float dot(const Vec3& other) const;
-    /// Uppercase alias.
+    /// Uppercase alias for `dot()`.
     float Dot(const Vec3& other) const { return dot(other); }
-    /// Cross product (SIMD-accelerated).
+    /// Computes the cross product with another vector (SIMD-accelerated).
+    ///
+    /// # Arguments
+    /// * `other` - The right-hand operand.
+    ///
+    /// # Returns
+    /// Vector perpendicular to both inputs. Magnitude = `|a|*|b|*sin(theta)`.
+    ///
+    /// # Examples
+    /// ```cpp
+    /// Vec3 up = Vec3::Right().Cross(Vec3::Forward()); // {0, 1, 0}
+    /// ```
     Vec3 cross(const Vec3& other) const;
-    /// Uppercase alias.
+    /// Uppercase alias for `cross()`.
     Vec3 Cross(const Vec3& other) const { return cross(other); }
-    /// Euclidean length (SIMD-accelerated).
+    /// Computes the Euclidean length (SIMD-accelerated).
+    ///
+    /// # Returns
+    /// `sqrt(x*x + y*y + z*z)`. Use `lengthSq()` for distance comparisons.
     float length() const;
-    /// Uppercase alias.
+    /// Uppercase alias for `length()`.
     float Length() const { return length(); }
-    /// Squared length (faster, avoids sqrt).
+    /// Computes the squared Euclidean length (avoids sqrt).
+    ///
+    /// # Returns
+    /// `x*x + y*y + z*z`. Prefer over `length()` for distance comparisons.
     float lengthSq() const { return x * x + y * y + z * z; }
-    /// Uppercase alias.
+    /// Uppercase alias for `lengthSq()`.
     float LengthSq() const { return lengthSq(); }
-    /// Return normalized vector (length = 1, SIMD-accelerated).
+    /// Returns a unit-length copy of this vector (SIMD-accelerated).
+    ///
+    /// # Returns
+    /// Vector with length 1. Returns zero vector if input is zero-length.
     Vec3 normalize() const;
-    /// Uppercase alias.
+    /// Uppercase alias for `normalize()`.
     Vec3 Normalized() const { return normalize(); }
-    /// Component-wise maximum.
+    /// Returns component-wise maximum of this vector and `other`.
     Vec3 max(const Vec3& other) const;
-    /// Component-wise minimum.
+    /// Returns component-wise minimum of this vector and `other`.
     Vec3 min(const Vec3& other) const;
 
     /// Zero vector (0, 0, 0).
@@ -257,9 +341,29 @@ struct Vec3 {
 // Vec4 — 4D float vector
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// 4D float vector (x, y, z, w) — used for homogeneous coordinates and SIMD ops.
+/// 4D floating-point vector for homogeneous coordinates and SIMD operations.
+///
+/// Stores x, y, z, w as `float` fields. Used for matrix-vector multiplication
+/// (w=1 for points, w=0 for directions), color (RGBA), and shader constants.
+///
+/// # Memory Layout
+/// `[x: f32, y: f32, z: f32, w: f32]` — 16 bytes. Naturally aligned for XMVECTOR.
+///
+/// # Examples
+/// ```cpp
+/// Vec4 pos{1.0f, 2.0f, 3.0f, 1.0f};  // homogeneous point
+/// Vec4 dir{1.0f, 0.0f, 0.0f, 0.0f};  // direction (w=0)
+/// Vec3 xyz = pos.xyz();               // extract {1, 2, 3}
+/// ```
 struct Vec4 {
-    float x, y, z, w;
+    /// X component.
+    float x;
+    /// Y component.
+    float y;
+    /// Z component.
+    float z;
+    /// W component (1.0 for points, 0.0 for directions in homogeneous space).
+    float w;
 
     /// Zero-initialized vector (0, 0, 0, 0).
     Vec4() : x(0), y(0), z(0), w(0) {}
@@ -284,28 +388,39 @@ struct Vec4 {
     /// Uppercase alias.
     Vec3 XYZ() const { return xyz(); }
 
-    /// Element access
+    /// Pointer to contiguous float storage for array-like access.
     float* data() { return &x; }
+    /// Const pointer to contiguous float storage.
     const float* data() const { return &x; }
+    /// Array indexing: [0]=x, [1]=y, [2]=z, [3]=w.
     float& operator[](int idx) { return data()[idx]; }
+    /// Const array indexing.
     float operator[](int idx) const { return data()[idx]; }
 
-    /// Getters (uppercase for test compatibility)
+    /// Get X component (uppercase for test compatibility).
     float X() const { return x; }
+    /// Get Y component.
     float Y() const { return y; }
+    /// Get Z component.
     float Z() const { return z; }
+    /// Get W component.
     float W() const { return w; }
 
-    /// Arithmetic operators
+    /// Vector addition.
     Vec4 operator+(const Vec4& other) const {
         return {x + other.x, y + other.y, z + other.z, w + other.w};
     }
+    /// Vector subtraction.
     Vec4 operator-(const Vec4& other) const {
         return {x - other.x, y - other.y, z - other.z, w - other.w};
     }
+    /// Scalar multiplication.
     Vec4 operator*(float scalar) const { return {x * scalar, y * scalar, z * scalar, w * scalar}; }
+    /// Scalar division.
     Vec4 operator/(float scalar) const { return {x / scalar, y / scalar, z / scalar, w / scalar}; }
+    /// Negation.
     Vec4 operator-() const { return {-x, -y, -z, -w}; }
+    /// In-place addition.
     Vec4& operator+=(const Vec4& other) {
         x += other.x;
         y += other.y;
@@ -313,6 +428,7 @@ struct Vec4 {
         w += other.w;
         return *this;
     }
+    /// In-place subtraction.
     Vec4& operator-=(const Vec4& other) {
         x -= other.x;
         y -= other.y;
@@ -320,6 +436,7 @@ struct Vec4 {
         w -= other.w;
         return *this;
     }
+    /// In-place scalar multiplication.
     Vec4& operator*=(float scalar) {
         x *= scalar;
         y *= scalar;
@@ -328,20 +445,31 @@ struct Vec4 {
         return *this;
     }
 
-    /// Comparison
+    /// Exact equality comparison.
     bool operator==(const Vec4& other) const {
         return x == other.x && y == other.y && z == other.z && w == other.w;
     }
+    /// Inequality.
     bool operator!=(const Vec4& other) const { return !(*this == other); }
 
-    /// Vector operations
+    /// Computes the 4D dot product (SIMD-accelerated).
+    ///
+    /// # Returns
+    /// `x*other.x + y*other.y + z*other.z + w*other.w`.
     float dot(const Vec4& other) const;
+    /// Uppercase alias for `dot()`.
     float Dot(const Vec4& other) const { return dot(other); }
+    /// Computes the 4D Euclidean length (SIMD-accelerated).
     float length() const;
+    /// Uppercase alias for `length()`.
     float Length() const { return length(); }
+    /// Computes the squared 4D length (avoids sqrt).
     float lengthSq() const { return x * x + y * y + z * z + w * w; }
+    /// Uppercase alias for `lengthSq()`.
     float LengthSq() const { return lengthSq(); }
+    /// Returns a unit-length copy (SIMD-accelerated).
     Vec4 normalize() const;
+    /// Uppercase alias for `normalize()`.
     Vec4 Normalized() const { return normalize(); }
 };
 
@@ -349,8 +477,24 @@ struct Vec4 {
 // Mat4 — 4×4 matrix (column-major, DirectX convention)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// 4x4 matrix (column-major, DirectX convention) — SIMD-accelerated via DirectXMath.
+/// 4x4 matrix for transforms, projections, and view calculations (SIMD-accelerated).
+///
+/// Wraps `XMFLOAT4X4` (column-major, DirectX row-vector convention).
+/// Default-constructed to identity. All operations delegate to DirectXMath SIMD intrinsics.
+///
+/// # Memory Layout
+/// 16 floats (64 bytes) stored as `XMFLOAT4X4`. Row-major in memory
+/// (row 0 = _11,_12,_13,_14), but multiplication follows DirectX row-vector convention.
+///
+/// # Examples
+/// ```cpp
+/// Mat4 view = Mat4::LookAt(eye, target, Vec3::Up());
+/// Mat4 proj = Mat4::Perspective(XM_PIDIV4, 16.0f/9.0f, 0.1f, 1000.0f);
+/// Mat4 mvp = model * view * proj;
+/// Vec3 worldPos = mvp.getTranslation();
+/// ```
 struct Mat4 {
+    /// Raw 4x4 float storage (DirectXMath compatible).
     XMFLOAT4X4 m;
 
     /// Default: identity matrix.
@@ -362,43 +506,89 @@ struct Mat4 {
     /// Load from memory (pointer to 16 floats, row-major layout).
     explicit Mat4(const float* ptr) { std::memcpy(&m, ptr, 16 * sizeof(float)); }
 
-    /// Static constructors
+    /// Returns the 4x4 identity matrix.
     static Mat4 Identity();
+    /// Returns a 4x4 zero matrix (all elements 0).
     static Mat4 Zero();
+    /// Creates a translation matrix from individual components.
     static Mat4 Translation(float x, float y, float z);
+    /// Creates a translation matrix from a position vector.
     static Mat4 Translation(const Vec3& pos);
+    /// Creates a scaling matrix from individual axis scales.
     static Mat4 Scaling(float x, float y, float z);
+    /// Creates a scaling matrix from a scale vector.
     static Mat4 Scaling(const Vec3& scale);
+    /// Creates a uniform scaling matrix.
     static Mat4 Scaling(float uniform) { return Scaling(uniform, uniform, uniform); }
+    /// Creates a rotation matrix around the X axis.
+    ///
+    /// # Arguments
+    /// * `angle` - Rotation in radians.
     static Mat4 RotationX(float angle);
+    /// Creates a rotation matrix around the Y axis.
+    ///
+    /// # Arguments
+    /// * `angle` - Rotation in radians.
     static Mat4 RotationY(float angle);
+    /// Creates a rotation matrix around the Z axis.
+    ///
+    /// # Arguments
+    /// * `angle` - Rotation in radians.
     static Mat4 RotationZ(float angle);
+    /// Creates a left-handed perspective projection matrix.
+    ///
+    /// # Arguments
+    /// * `fov` - Vertical field of view in radians.
+    /// * `aspect` - Width/height aspect ratio.
+    /// * `near_plane` - Near clipping plane distance (must be > 0).
+    /// * `far_plane` - Far clipping plane distance (must be > near_plane).
     static Mat4 Perspective(float fov, float aspect, float near_plane, float far_plane);
+    /// Creates a left-handed look-at view matrix.
+    ///
+    /// # Arguments
+    /// * `eye` - Camera position in world space.
+    /// * `target` - Point the camera looks at.
+    /// * `up` - World up direction (typically `Vec3::Up()`).
     static Mat4 LookAt(const Vec3& eye, const Vec3& target, const Vec3& up);
 
-    /// Conversion to XMMATRIX
+    /// Converts to XMMATRIX for SIMD operations (zero-cost in release).
     XMMATRIX toXM() const { return XMLoadFloat4x4(&m); }
 
-    /// Element access
+    /// Pointer to the first element (_11) for raw float access.
     float* data() { return &m._11; }
+    /// Const pointer to the first element.
     const float* data() const { return &m._11; }
+    /// Element access by row and column (0-indexed).
     float& operator()(int row, int col) { return data()[row * 4 + col]; }
+    /// Const element access by row and column.
     float operator()(int row, int col) const { return data()[row * 4 + col]; }
 
-    /// Matrix operations
+    /// Matrix multiplication (SIMD-accelerated).
     Mat4 operator*(const Mat4& other) const;
+    /// Transforms a Vec4 by this matrix.
     Vec4 operator*(const Vec4& v) const;
+    /// Transforms a Vec3 as a 3D point (w=1 assumed, SIMD-accelerated).
     Vec3 operator*(const Vec3& v) const;
+    /// In-place matrix multiplication.
     Mat4& operator*=(const Mat4& other);
 
+    /// Returns the transpose of this matrix.
     Mat4 transpose() const;
+    /// Uppercase alias for `transpose()`.
     Mat4 Transposed() const { return transpose(); }
+    /// Returns the inverse of this matrix (SIMD-accelerated).
+    ///
+    /// # Returns
+    /// Inverse matrix. Result is undefined if matrix is singular (determinant near zero).
     Mat4 inverse() const;
+    /// Uppercase alias for `inverse()`.
     Mat4 Inverse() const { return inverse(); }
+    /// Computes the determinant of this matrix.
     float determinant() const;
+    /// Uppercase alias for `determinant()`.
     float Determinant() const { return determinant(); }
 
-    /// Transform vector by matrix
+    /// Transforms a point by this matrix (applies full 4x4 including translation).
     Vec3 TransformPoint(const Vec3& p) const { return *this * p; }
     Vec3 TransformDirection(const Vec3& d) const {
         // Transform direction (no translation) — use only 3x3 part
@@ -412,12 +602,13 @@ struct Mat4 {
         return Vec3(result4);
     }
 
-    /// Decomposition
+    /// Extracts the translation component (row 3: _41, _42, _43).
     Vec3 getTranslation() const;
+    /// Extracts the scale by computing the length of each basis row.
     Vec3 getScale() const;
     // Quat getRotation() const;  // Forward declared, defined after Quat
 
-    /// Comparisons
+    /// Exact element-wise equality comparison.
     bool operator==(const Mat4& other) const {
         for (int i = 0; i < 16; i++) {
             if (data()[i] != other.data()[i])
@@ -427,12 +618,14 @@ struct Mat4 {
     }
     bool operator!=(const Mat4& other) const { return !(*this == other); }
 
-    /// Conversions
+    /// Converts to raw XMFLOAT4X4 for DirectXMath interop.
     XMFLOAT4X4 ToFloat4x4() const { return m; }
+    /// Creates Mat4 from raw XMFLOAT4X4.
     static Mat4 FromFloat4x4(const XMFLOAT4X4& f) { return {f}; }
 
-    /// Transformations
+    /// Returns `this * Translation(pos)` — appends a translation.
     Mat4 translate(const Vec3& pos) const;
+    /// Returns `this * Scaling(s)` — appends a scale.
     Mat4 scale(const Vec3& s) const;
 };
 
@@ -440,10 +633,22 @@ struct Mat4 {
 // Quat — Quaternion (x, y, z, w)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Quaternion (x, y, z, w) — rotation representation, SIMD-accelerated.
+/// Unit quaternion for 3D rotation (SIMD-accelerated via DirectXMath).
 ///
-/// Default is identity rotation (0, 0, 0, 1).
-/// Prefer over Euler angles to avoid gimbal lock.
+/// Stores (x, y, z, w) where (x, y, z) is the imaginary part and w is the real part.
+/// Default-constructed to identity rotation (0, 0, 0, 1).
+/// Prefer quaternions over Euler angles to avoid gimbal lock and enable smooth interpolation.
+///
+/// # Memory Layout
+/// `[x: f32, y: f32, z: f32, w: f32]` — 16 bytes, same layout as XMFLOAT4.
+///
+/// # Examples
+/// ```cpp
+/// Quat q = Quat::FromAxisAngle(Vec3::Up(), XM_PIDIV2); // 90 deg around Y
+/// Vec3 rotated = q * Vec3::Forward();                    // rotates forward vector
+/// Mat4 rotMat = q.toMatrix();                            // convert to rotation matrix
+/// Quat blended = Quat::Slerp(a, b, 0.5f);              // smooth interpolation
+/// ```
 struct Quat {
     float x, y, z, w;
 
@@ -458,34 +663,54 @@ struct Quat {
     /// Convert from DirectXMath XMFLOAT4.
     explicit Quat(const XMFLOAT4& f4) : x(f4.x), y(f4.y), z(f4.z), w(f4.w) {}
 
-    /// Static constructors
+    /// Returns the identity quaternion (no rotation).
     static Quat Identity() { return {0, 0, 0, 1}; }
+    /// Creates a quaternion from an axis and angle.
+    ///
+    /// # Arguments
+    /// * `axis` - Rotation axis (should be normalized).
+    /// * `angle` - Rotation angle in radians.
     static Quat FromAxisAngle(const Vec3& axis, float angle);
+    /// Creates a quaternion from Euler angles.
+    ///
+    /// # Arguments
+    /// * `pitch` - Rotation around X axis (radians).
+    /// * `yaw` - Rotation around Y axis (radians).
+    /// * `roll` - Rotation around Z axis (radians).
     static Quat FromEuler(float pitch, float yaw, float roll);
+    /// Extracts rotation quaternion from a rotation matrix.
     static Quat FromMatrix(const Mat4& m);
 
-    /// Conversion to XMVECTOR
+    /// Converts to XMVECTOR for SIMD operations.
     XMVECTOR toXM() const { return XMLoadFloat4(reinterpret_cast<const XMFLOAT4*>(this)); }
 
-    /// Getters (uppercase for test compatibility)
+    /// Get X component (imaginary i).
     float X() const { return x; }
+    /// Get Y component (imaginary j).
     float Y() const { return y; }
+    /// Get Z component (imaginary k).
     float Z() const { return z; }
+    /// Get W component (real/scalar part).
     float W() const { return w; }
 
-    /// Arithmetic operators
+    /// Quaternion multiplication (combines rotations: result = this * other).
     Quat operator*(const Quat& other) const;
+    /// Rotates a vector by this quaternion.
     Vec3 operator*(const Vec3& v) const;
     bool operator==(const Quat& other) const {
         return x == other.x && y == other.y && z == other.z && w == other.w;
     }
     bool operator!=(const Quat& other) const { return !(*this == other); }
 
-    /// Quaternion operations
+    /// Returns the conjugate (negated imaginary part). For unit quaternions, equals inverse.
     Quat conjugate() const { return {-x, -y, -z, w}; }
+    /// Returns the multiplicative inverse (SIMD-accelerated).
     Quat inverse() const;
+    /// Uppercase alias for `inverse()`.
     Quat Inverse() const { return inverse(); }
+    /// Returns a unit-length quaternion (SIMD-accelerated).
     Quat normalize() const;
+    /// Uppercase alias for `normalize()`.
     Quat Normalized() const { return normalize(); }
     float dot(const Quat& other) const {
         return x * other.x + y * other.y + z * other.z + w * other.w;
@@ -495,15 +720,31 @@ struct Quat {
     float Length() const { return length(); }
     Vec3 RotateVector(const Vec3& v) const { return *this * v; }
 
-    /// Interpolation
+    /// Spherical linear interpolation (constant angular velocity, SIMD-accelerated).
+    ///
+    /// # Arguments
+    /// * `other` - Target quaternion.
+    /// * `t` - Interpolation factor in [0, 1].
+    ///
+    /// # Returns
+    /// Interpolated quaternion. `t=0` returns `*this`, `t=1` returns `other`.
     Quat slerp(const Quat& other, float t) const;
+    /// Uppercase alias for `slerp()`.
     Quat Slerp(const Quat& other, float t) const { return slerp(other, t); }
+    /// Static slerp between two quaternions.
     static Quat Slerp(const Quat& a, const Quat& b, float t) { return a.slerp(b, t); }
+    /// Linear interpolation (faster but non-constant angular velocity).
+    ///
+    /// # Arguments
+    /// * `other` - Target quaternion.
+    /// * `t` - Interpolation factor in [0, 1].
     Quat lerp(const Quat& other, float t) const;
+    /// Uppercase alias for `lerp()`.
     Quat Lerp(const Quat& other, float t) const { return lerp(other, t); }
 
-    /// Conversion
+    /// Converts this quaternion to a 4x4 rotation matrix.
     Mat4 toMatrix() const;
+    /// Uppercase alias for `toMatrix()`.
     Mat4 ToMatrix() const { return toMatrix(); }
 };
 
@@ -511,44 +752,88 @@ struct Quat {
 // Transform — Position + Rotation + Scale
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Decomposed 3D transform: position + rotation + scale (TRS).
+///
+/// Stores transform components separately for efficient manipulation and interpolation.
+/// Conversion to/from Mat4 available via `toMatrix()` / `FromMatrix()`.
+/// Supports hierarchy composition for scene graphs.
+///
+/// # TRS Order
+/// Matrix = Scale * Rotate * Translate (applied right-to-left to vertices).
+///
+/// # Examples
+/// ```cpp
+/// Transform t;
+/// t.position = {10, 0, 0};
+/// t.rotation = Quat::FromAxisAngle(Vec3::Up(), XM_PIDIV2);
+/// t.scale = {2, 2, 2};
+/// Mat4 matrix = t.toMatrix();
+/// Vec3 worldPos = t.TransformPoint({1, 0, 0});
+/// ```
 struct Transform {
+    /// World position (translation).
     Vec3 position = {0, 0, 0};
+    /// Orientation as unit quaternion.
     Quat rotation = {0, 0, 0, 1};
+    /// Non-uniform scale per axis.
     Vec3 scale = {1, 1, 1};
 
+    /// Default: identity transform (origin, no rotation, unit scale).
     Transform() = default;
+    /// Constructs from explicit position, rotation, and scale.
     Transform(const Vec3& pos, const Quat& rot, const Vec3& scl)
         : position(pos), rotation(rot), scale(scl) {}
+    /// Decomposes a matrix into position, rotation, and scale via `XMMatrixDecompose`.
     explicit Transform(const Mat4& m);
 
-    /// Convert to matrix (TRS order: translate after scale/rotate)
+    /// Builds a 4x4 matrix from this transform (TRS order).
     Mat4 toMatrix() const;
+    /// Uppercase alias for `toMatrix()`.
     Mat4 ToMatrix() const { return toMatrix(); }
 
-    /// Decompose from matrix
+    /// Decomposes a matrix into a Transform.
     static Transform FromMatrix(const Mat4& m);
 
-    /// Hierarchy composition (world = local * parent)
+    /// Composes this local transform with a parent to produce world-space transform.
+    ///
+    /// # Arguments
+    /// * `parent` - The parent (world-space) transform.
+    ///
+    /// # Returns
+    /// World-space transform: `world = local * parent`.
     Transform compose(const Transform& parent) const;
+    /// Uppercase alias for `compose()`.
     Transform Compose(const Transform& parent) const { return compose(parent); }
 
-    /// Inverse
+    /// Returns the inverse transform (undo this transform).
     Transform inverse() const;
+    /// Uppercase alias for `inverse()`.
     Transform Inverse() const { return inverse(); }
 
-    /// Transform points/vectors
+    /// Transforms a point by applying scale, rotation, then translation.
     Vec3 TransformPoint(const Vec3& p) const { return position + rotation * (scale * p); }
+    /// Transforms a direction by applying scale and rotation (no translation).
     Vec3 TransformDirection(const Vec3& d) const { return rotation * (scale * d); }
 
-    /// Transformations
+    /// Returns a copy with position offset by `delta`.
     Transform translate(const Vec3& delta) const;
+    /// Uppercase alias for `translate()`.
     Transform Translate(const Vec3& delta) const { return translate(delta); }
+    /// Returns a copy with rotation composed by `rot`.
     Transform rotate(const Quat& rot) const;
+    /// Uppercase alias for `rotate()`.
     Transform Rotate(const Quat& rot) const { return rotate(rot); }
+    /// Returns a copy with scale multiplied component-wise by `s`.
     Transform scaleBy(const Vec3& s) const;
+    /// Uppercase alias for `scaleBy()`.
     Transform ScaleBy(const Vec3& s) const { return scaleBy(s); }
 
-    /// Static constructors
+    /// Interpolates between two transforms (position lerp, rotation slerp, scale lerp).
+    ///
+    /// # Arguments
+    /// * `a` - Start transform.
+    /// * `b` - End transform.
+    /// * `t` - Interpolation factor in [0, 1].
     static Transform Lerp(const Transform& a, const Transform& b, float t) {
         Transform result;
         result.position = a.position + (b.position - a.position) * t;
@@ -562,12 +847,15 @@ struct Transform {
 // Utility operators for scalar * vector
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Scalar-left multiplication for Vec2 (`2.0f * vec`).
 inline Vec2 operator*(float scalar, const Vec2& v) {
     return v * scalar;
 }
+/// Scalar-left multiplication for Vec3 (`2.0f * vec`).
 inline Vec3 operator*(float scalar, const Vec3& v) {
     return v * scalar;
 }
+/// Scalar-left multiplication for Vec4 (`2.0f * vec`).
 inline Vec4 operator*(float scalar, const Vec4& v) {
     return v * scalar;
 }

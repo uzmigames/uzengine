@@ -34,19 +34,28 @@ namespace uz {
 // Exit codes
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Process exit code: normal termination.
 static constexpr int kExitSuccess = 0;
+
+/// Process exit code: RHI device/swapchain/command list creation failure.
 static constexpr int kExitRenderError = 1;
+
+/// Process exit code: shader compilation failure.
 static constexpr int kExitShaderError = 2;
+
+/// Process exit code: GPU device lost (TDR, driver crash).
 static constexpr int kExitDeviceLost = 3;
 
-/// Triple buffering for frame pacing.
+/// Number of swapchain back buffers for triple-buffered frame pacing.
 static constexpr uint32_t kFramesInFlight = 3;
 
-/// Default window dimensions.
+/// Default window width in pixels when no `--width` CLI override is given.
 static constexpr int kDefaultWidth = 1280;
+
+/// Default window height in pixels when no `--height` CLI override is given.
 static constexpr int kDefaultHeight = 720;
 
-/// Infinite frame count sentinel.
+/// Sentinel value for `--frames` meaning "run until window close".
 static constexpr int kInfiniteFrames = -1;
 
 // ─────────────────────────────────────────────────────────────────────────────

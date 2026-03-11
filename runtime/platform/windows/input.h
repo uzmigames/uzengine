@@ -147,39 +147,186 @@ enum class MouseButton : uint8_t {
 
 // ── Input state ─────────────────────────────────────────────────────────────
 
+/// Unified input system for keyboard, mouse, and gamepad state tracking.
+///
+/// Maintains per-frame snapshots of key/button state (current vs previous)
+/// to detect press/release transitions. Also tracks mouse position, delta,
+/// and scroll wheel accumulation.
+///
+/// # Lifecycle
+/// 1. Call `Init()` once at startup to zero all state
+/// 2. Call `BeginFrame()` once per frame before processing OS messages
+/// 3. Platform layer calls `OnKey*`, `OnMouse*` during message dispatch
+/// 4. Game code queries `IsKeyDown()`, `IsActionDown()`, etc.
+/// 5. Call `Shutdown()` to clear action mappings
+///
+/// # Thread Safety
+/// NOT thread-safe. All calls must be from the main (message pump) thread.
+///
+/// # Example
+/// ```cpp
+/// InputSystem input;
+/// input.Init();
+/// input.RegisterAction("jump", Key::Space);
+/// // ... per frame:
+/// input.BeginFrame();
+/// window.PumpMessages(); // triggers OnKey*/OnMouse* callbacks
+/// if (input.IsActionJustPressed("jump")) { player.Jump(); }
+/// ```
 class InputSystem {
   public:
+    /// Initializes all key and mouse state arrays to zero.
+    ///
+    /// Must be called once before any input processing begins.
     void Init();
+
+    /// Clears action mappings and resets state.
     void Shutdown();
 
-    /// Call once per frame before processing events.
+    /// Snapshots current state into previous state for transition detection.
+    ///
+    /// Must be called exactly once per frame, before the platform layer
+    /// dispatches new WM_* messages. Computes mouse delta from position
+    /// change since last frame and resets scroll accumulator.
     void BeginFrame();
 
-    /// Key state queries.
-    bool IsKeyDown(Key key) const;
-    bool IsKeyJustPressed(Key key) const;
-    bool IsKeyJustReleased(Key key) const;
+    /// Returns `true` if the key is currently held down.
+    ///
+    /// # Arguments
+    /// * `key` - The key to query.
+    ///
+    /// # Returns
+    /// `true` if the key's virtual key code is in the pressed state.
+    [[nodiscard]] bool IsKeyDown(Key key) const;
 
-    /// Mouse state.
-    bool IsMouseDown(MouseButton btn) const;
-    bool IsMouseJustPressed(MouseButton btn) const;
-    bool IsMouseJustReleased(MouseButton btn) const;
-    float GetMouseX() const { return m_mouseX; }
-    float GetMouseY() const { return m_mouseY; }
-    float GetMouseDeltaX() const { return m_mouseDX; }
-    float GetMouseDeltaY() const { return m_mouseDY; }
-    float GetScrollDelta() const { return m_scrollDelta; }
+    /// Returns `true` if the key transitioned from up to down this frame.
+    ///
+    /// # Arguments
+    /// * `key` - The key to query.
+    ///
+    /// # Returns
+    /// `true` if `current[key] && !previous[key]`.
+    [[nodiscard]] bool IsKeyJustPressed(Key key) const;
 
-    /// Action mapping.
+    /// Returns `true` if the key transitioned from down to up this frame.
+    ///
+    /// # Arguments
+    /// * `key` - The key to query.
+    ///
+    /// # Returns
+    /// `true` if `!current[key] && previous[key]`.
+    [[nodiscard]] bool IsKeyJustReleased(Key key) const;
+
+    /// Returns `true` if the mouse button is currently held down.
+    ///
+    /// # Arguments
+    /// * `btn` - The mouse button to query.
+    [[nodiscard]] bool IsMouseDown(MouseButton btn) const;
+
+    /// Returns `true` if the mouse button was just pressed this frame.
+    ///
+    /// # Arguments
+    /// * `btn` - The mouse button to query.
+    [[nodiscard]] bool IsMouseJustPressed(MouseButton btn) const;
+
+    /// Returns `true` if the mouse button was just released this frame.
+    ///
+    /// # Arguments
+    /// * `btn` - The mouse button to query.
+    [[nodiscard]] bool IsMouseJustReleased(MouseButton btn) const;
+
+    /// Returns the current mouse X position in window-relative pixels.
+    [[nodiscard]] float GetMouseX() const { return m_mouseX; }
+
+    /// Returns the current mouse Y position in window-relative pixels.
+    [[nodiscard]] float GetMouseY() const { return m_mouseY; }
+
+    /// Returns the mouse X movement since last frame (pixels).
+    [[nodiscard]] float GetMouseDeltaX() const { return m_mouseDX; }
+
+    /// Returns the mouse Y movement since last frame (pixels).
+    [[nodiscard]] float GetMouseDeltaY() const { return m_mouseDY; }
+
+    /// Returns the accumulated scroll wheel delta since last `BeginFrame()`.
+    ///
+    /// Positive = scroll up, negative = scroll down.
+    /// Resets to 0 at each `BeginFrame()`.
+    [[nodiscard]] float GetScrollDelta() const { return m_scrollDelta; }
+
+    /// Binds a named action to a keyboard key.
+    ///
+    /// # Arguments
+    /// * `name` - Human-readable action name (e.g., "jump", "fire").
+    /// * `key` - The key that triggers this action.
+    ///
+    /// # Behavior
+    /// Overwrites any existing binding for the same action name.
     void RegisterAction(const std::string& name, Key key);
-    bool IsActionDown(const std::string& name) const;
-    bool IsActionJustPressed(const std::string& name) const;
 
-    /// Called by platform layer — do not call directly.
+    /// Returns `true` if the key bound to the named action is held down.
+    ///
+    /// # Arguments
+    /// * `name` - Action name previously registered via `RegisterAction()`.
+    ///
+    /// # Returns
+    /// `false` if the action name is not registered.
+    [[nodiscard]] bool IsActionDown(const std::string& name) const;
+
+    /// Returns `true` if the action's bound key was just pressed this frame.
+    ///
+    /// # Arguments
+    /// * `name` - Action name previously registered via `RegisterAction()`.
+    ///
+    /// # Returns
+    /// `false` if the action name is not registered.
+    [[nodiscard]] bool IsActionJustPressed(const std::string& name) const;
+
+    /// Called by the platform layer when a key is pressed.
+    ///
+    /// # Safety
+    /// Do not call directly — invoked by `PlatformWindow::WndProc` on WM_KEYDOWN.
+    ///
+    /// # Arguments
+    /// * `vk` - Windows virtual key code (VK_*). Values >= 256 are ignored.
     void OnKeyDown(uint16_t vk);
+
+    /// Called by the platform layer when a key is released.
+    ///
+    /// # Safety
+    /// Do not call directly — invoked by `PlatformWindow::WndProc` on WM_KEYUP.
+    ///
+    /// # Arguments
+    /// * `vk` - Windows virtual key code (VK_*). Values >= 256 are ignored.
     void OnKeyUp(uint16_t vk);
+
+    /// Called by the platform layer when the mouse moves.
+    ///
+    /// # Safety
+    /// Do not call directly — invoked by `PlatformWindow::WndProc` on WM_MOUSEMOVE.
+    ///
+    /// # Arguments
+    /// * `x` - New mouse X in window-relative pixels.
+    /// * `y` - New mouse Y in window-relative pixels.
     void OnMouseMove(float x, float y);
+
+    /// Called by the platform layer when a mouse button is pressed/released.
+    ///
+    /// # Safety
+    /// Do not call directly — invoked by `PlatformWindow::WndProc`.
+    ///
+    /// # Arguments
+    /// * `btn` - Which mouse button changed state.
+    /// * `down` - `true` if pressed, `false` if released.
     void OnMouseButton(MouseButton btn, bool down);
+
+    /// Called by the platform layer when the scroll wheel moves.
+    ///
+    /// # Safety
+    /// Do not call directly — invoked by `PlatformWindow::WndProc` on WM_MOUSEWHEEL.
+    ///
+    /// # Arguments
+    /// * `delta` - Scroll amount (positive = up, negative = down).
+    ///   Accumulated until the next `BeginFrame()`.
     void OnMouseScroll(float delta);
 
   private:

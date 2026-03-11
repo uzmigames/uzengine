@@ -32,7 +32,14 @@ public:
     DX12SwapChain() = default;
     ~DX12SwapChain() override;
 
-    /// Creates the DXGI swap chain. Returns false on failure.
+    /// Creates the DXGI swap chain, acquires back buffer resources, and creates RTVs.
+    ///
+    /// # Arguments
+    /// * `device` — Parent DX12 device (must outlive this swap chain).
+    /// * `desc` — Swap chain descriptor (HWND, dimensions, buffer count, format).
+    ///
+    /// # Returns
+    /// `true` on success, `false` on failure (logs detailed error).
     bool Init(DX12Device* device, const RHISwapChainDesc& desc);
 
     // ── IRHISwapChain overrides ──────────────────────────────────────────
@@ -60,13 +67,18 @@ public:
 
     // ── DX12-specific accessors ──────────────────────────────────────────
 
-    /// Returns the native back buffer resource for the current index (for barrier transitions).
+    /// Returns the native `ID3D12Resource` for the current back buffer.
+    ///
+    /// Used for barrier transitions via `DX12CommandList::TransitionBarrier()`.
     ID3D12Resource* GetCurrentBackBufferResource() const;
 
     /// Returns the RTV CPU descriptor handle for the current back buffer.
+    ///
+    /// Used for `DX12CommandList::ClearRTV()` and `OMSetRenderTargets()`.
     D3D12_CPU_DESCRIPTOR_HANDLE GetCurrentRTV() const;
 
 private:
+    /// Maximum number of back buffers (triple-buffered).
     static constexpr uint32_t kMaxBackBuffers = 3;
 
     /// Acquires ID3D12Resource references for each back buffer from the swap chain.

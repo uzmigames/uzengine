@@ -34,16 +34,21 @@ enum class ShaderResourceType : uint8_t {
 };
 
 /// Bitmask flags identifying which pipeline stages use a binding.
+///
+/// Multiple flags can be ORed together to indicate a binding used by several stages.
+/// Used by `MergeBindings()` to combine per-stage reflection into a unified layout.
 enum ShaderStageFlag : uint32_t {
-    kStageVertex        = 1 << 0,
-    kStagePixel         = 1 << 1,
-    kStageCompute       = 1 << 2,
-    kStageGeometry      = 1 << 3,
-    kStageHull          = 1 << 4,
-    kStageDomain        = 1 << 5,
-    kStageAmplification = 1 << 6,
-    kStageMesh          = 1 << 7,
+    kStageVertex        = 1 << 0,  ///< Vertex shader stage
+    kStagePixel         = 1 << 1,  ///< Pixel/fragment shader stage
+    kStageCompute       = 1 << 2,  ///< Compute shader stage
+    kStageGeometry      = 1 << 3,  ///< Geometry shader stage
+    kStageHull          = 1 << 4,  ///< Hull/tessellation control stage
+    kStageDomain        = 1 << 5,  ///< Domain/tessellation evaluation stage
+    kStageAmplification = 1 << 6,  ///< Amplification shader stage (mesh pipeline)
+    kStageMesh          = 1 << 7,  ///< Mesh shader stage (mesh pipeline)
 };
+
+/// Combined bitmask of `ShaderStageFlag` values.
 using ShaderStageFlags = uint32_t;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -51,13 +56,17 @@ using ShaderStageFlags = uint32_t;
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// A single resource binding extracted from shader reflection.
+///
+/// Represents one descriptor/register slot used by the shader. After merging
+/// across stages via `MergeBindings()`, the `stageFlags` field indicates all
+/// stages that reference this binding.
 struct ShaderResourceBinding {
-    std::string name;                ///< Variable name in HLSL
-    ShaderResourceType type;         ///< CBV, SRV, UAV, Sampler, PushConstant
+    std::string name;                ///< Variable name in HLSL (e.g., "g_SceneConstants")
+    ShaderResourceType type;         ///< Resource type: CBV, SRV, UAV, Sampler, or PushConstant
     uint32_t set     = 0;            ///< Descriptor set (Vulkan) / register space (DX12)
-    uint32_t binding = 0;            ///< Binding slot / register number
-    uint32_t count   = 1;            ///< Array size (1 for non-array)
-    ShaderStageFlags stageFlags = 0; ///< Which stages use this binding
+    uint32_t binding = 0;            ///< Binding slot / register number within the set
+    uint32_t count   = 1;            ///< Array size (1 for non-array bindings)
+    ShaderStageFlags stageFlags = 0; ///< Bitmask of `ShaderStageFlag` values indicating which stages use this
 };
 
 /// Result of reflecting a single shader stage.
@@ -72,33 +81,75 @@ struct ShaderReflectionResult {
 // Functions
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Reflect SPIRV bytecode using SPIRV-Reflect.
-/// Returns extracted bindings, or a result with non-empty `error` on failure.
+/// Reflects SPIRV bytecode using SPIRV-Reflect to extract resource bindings.
+///
+/// # Arguments
+/// * `bytecode` — Pointer to compiled SPIRV bytecode.
+/// * `size` — Size in bytes of the bytecode buffer.
+///
+/// # Returns
+/// `ShaderReflectionResult` with extracted bindings. If reflection fails,
+/// `result.error` is non-empty and `result.bindings` is empty.
 [[nodiscard]] ShaderReflectionResult ReflectSPIRV(const void* bytecode, size_t size);
 
-/// Check if reflection succeeded (no error).
+/// Checks if a reflection result indicates success (empty error string).
+///
+/// # Arguments
+/// * `result` — The reflection result to check.
+///
+/// # Returns
+/// `true` if `result.error` is empty.
 [[nodiscard]] bool ReflectionSucceeded(const ShaderReflectionResult& result);
 
-/// Merge bindings from multiple stages into a combined layout.
-/// Deduplicates by (set, binding) and ORs stage flags together.
+/// Merges bindings from multiple shader stages into a combined pipeline layout.
+///
+/// Deduplicates bindings by `(set, binding)` key and ORs `stageFlags` together
+/// so the merged result shows which stages reference each binding.
+///
+/// # Arguments
+/// * `stageResults` — Reflection results from each pipeline stage.
+///
+/// # Returns
+/// Merged and deduplicated binding list.
 [[nodiscard]] std::vector<ShaderResourceBinding> MergeBindings(
     const std::vector<ShaderReflectionResult>& stageResults);
 
-/// Sort bindings by (set, binding) for deterministic output.
+/// Sorts bindings by `(set, binding)` for deterministic output.
+///
+/// # Arguments
+/// * `bindings` — Binding list to sort in-place.
 void SortBindings(std::vector<ShaderResourceBinding>& bindings);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Internal Helpers (exposed for testing)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Maps a SPIRV-Reflect descriptor type to our ShaderResourceType.
-/// Returns ShaderResource for unknown types as a safe default.
+/// Maps a SPIRV-Reflect descriptor type enum to our `ShaderResourceType`.
+///
+/// # Arguments
+/// * `spvDescriptorType` — SPIRV-Reflect `SpvReflectDescriptorType` value.
+///
+/// # Returns
+/// Mapped `ShaderResourceType`. Returns `ShaderResource` for unknown types
+/// as a safe default.
 [[nodiscard]] ShaderResourceType MapSpvDescriptorType(uint32_t spvDescriptorType);
 
-/// Maps SPIRV-Reflect shader stage bits to our ShaderStageFlags.
+/// Maps SPIRV-Reflect shader stage bitmask to our `ShaderStageFlags`.
+///
+/// # Arguments
+/// * `spvStageFlags` — SPIRV-Reflect `SpvReflectShaderStageFlagBits` bitmask.
+///
+/// # Returns
+/// Combined `ShaderStageFlags` bitmask.
 [[nodiscard]] ShaderStageFlags MapSpvStageFlags(uint32_t spvStageFlags);
 
-/// Returns the string name for a ShaderResourceType (for logging/debug).
+/// Returns a human-readable string name for a `ShaderResourceType` value.
+///
+/// # Arguments
+/// * `type` — The resource type to name.
+///
+/// # Returns
+/// Static string (e.g., "ConstantBuffer", "ShaderResource"). Never null.
 [[nodiscard]] const char* ShaderResourceTypeName(ShaderResourceType type);
 
 } // namespace uz

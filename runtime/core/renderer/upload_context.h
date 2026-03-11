@@ -1,11 +1,18 @@
-#pragma once
-
-/// GPU upload context for staging CPU data to default-heap resources.
+/// UzEngine GPU Upload Context
 ///
-/// Creates a temporary upload (staging) buffer, copies CPU data into it,
-/// then records a GPU copy command from staging → destination buffer.
-/// The caller must ensure the copy completes (via fence) before releasing
-/// the staging buffer.
+/// Manages staging (upload-heap) buffers for transferring CPU data to
+/// GPU default-heap resources. Creates temporary upload buffers, copies
+/// CPU data into them, and records CopyBuffer commands on a command list.
+///
+/// # Ownership
+/// The `UploadContext` holds staging buffers alive until `ReleaseStaging()`
+/// is called. The caller MUST wait for the GPU copy to complete (via fence)
+/// before calling `ReleaseStaging()`, or the GPU will read freed memory.
+///
+/// # Thread Safety
+/// NOT thread-safe. Use from the thread that owns the command list.
+
+#pragma once
 
 #include "rhi.h"
 #include "rhi_types.h"
@@ -34,21 +41,42 @@ namespace uz {
 class UploadContext {
 public:
     /// Creates an upload context bound to a device for staging buffer creation.
+    ///
+    /// # Arguments
+    /// * `device` - RHI device used to create staging buffers. Must outlive
+    ///   this context. Must not be null.
     explicit UploadContext(IRHIDevice* device) : m_device(device) {}
 
-    /// Uploads CPU data to a GPU default-heap buffer via staging copy.
+    /// Uploads CPU data to a GPU default-heap buffer via an intermediate staging buffer.
     ///
-    /// Creates a temporary upload buffer, memcpy's data into it, then
-    /// records a CopyBuffer command on the given command list.
-    /// The staging buffer is held alive until ReleaseStaging() is called.
+    /// Creates a temporary upload-heap buffer, copies `sizeBytes` from `data`
+    /// into it via `memcpy`, then records a `CopyBuffer` GPU command from
+    /// staging to `dst` on the provided command list.
+    ///
+    /// # Arguments
+    /// * `cmdList` - Command list to record the copy command on. Must be in recording state.
+    /// * `dst` - Destination buffer handle (must be default-heap with CopyDst usage).
+    /// * `data` - Pointer to CPU source data. Must be valid for `sizeBytes` bytes.
+    /// * `sizeBytes` - Number of bytes to upload. Must be > 0.
+    ///
+    /// # Returns
+    /// `true` if the staging buffer was created and the copy was recorded.
+    /// `false` on invalid arguments or buffer creation failure.
+    ///
+    /// # Errors
+    /// Logs `Renderer::Error` on failure with specific reason.
     bool UploadBuffer(IRHICommandList* cmdList, RHIBufferHandle dst,
                       const void* data, uint64_t sizeBytes);
 
-    /// Releases all staging buffers. Call after the GPU copy completes.
+    /// Releases all staging buffers held by this context.
+    ///
+    /// # Safety
+    /// The GPU MUST have finished all copy commands before calling this.
+    /// Typically achieved by executing the command list and waiting on a fence.
     void ReleaseStaging();
 
-    /// Returns the number of pending staging buffers.
-    uint32_t GetStagingCount() const { return static_cast<uint32_t>(m_stagingBuffers.size()); }
+    /// Returns the number of staging buffers awaiting release.
+    [[nodiscard]] uint32_t GetStagingCount() const { return static_cast<uint32_t>(m_stagingBuffers.size()); }
 
 private:
     IRHIDevice*                    m_device = nullptr;

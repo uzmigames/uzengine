@@ -1,13 +1,22 @@
 #pragma once
 
-/// DX12 COM GUID declarations for Clang/MinGW compatibility.
+/// DX12 COM GUID declarations for Clang/MinGW ABI compatibility.
 ///
-/// The DirectX headers from the Agility SDK use MIDL_INTERFACE("uuid") which
-/// works with MSVC's __declspec(uuid) but not with Clang/MinGW's __uuidof<T>.
-/// MinGW requires __CRT_UUID_DECL to generate the template specializations
-/// that IID_PPV_ARGS and ComPtr::As rely on.
+/// The DirectX headers from the Agility SDK use `MIDL_INTERFACE("uuid")` which
+/// maps to `__declspec(uuid(...))` on MSVC. Clang/MinGW uses `__uuidof<T>` template
+/// specializations instead, which must be provided via `__CRT_UUID_DECL`.
 ///
-/// Include this header in every DX12 .cpp file AFTER d3d12.h and dxgi1_6.h.
+/// Without these declarations, `IID_PPV_ARGS()` and `ComPtr::As()` fail to compile
+/// on non-MSVC toolchains.
+///
+/// # Usage
+/// Include this header in every DX12 `.cpp` file AFTER `d3d12.h` and `dxgi1_6.h`.
+/// On MSVC, the entire file is a no-op (guarded by `#ifndef _MSC_VER`).
+///
+/// # Maintenance
+/// When adding new D3D12 interfaces, add corresponding `__CRT_UUID_DECL` entries
+/// here and in `dx12_guids.cpp`. Validate GUIDs against `d3d12.h` `DEFINE_GUID` —
+/// a single wrong hex digit causes `E_NOINTERFACE` at runtime.
 
 #include <d3d12.h>
 #include <dxgi1_6.h>

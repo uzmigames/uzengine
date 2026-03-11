@@ -18,7 +18,10 @@ using Microsoft::WRL::ComPtr;
 
 class DX12Device;
 
-/// Maximum number of breadcrumb markers per frame.
+/// Maximum number of breadcrumb markers that can be written per frame.
+///
+/// Each marker writes a single `uint32_t` to the readback buffer via
+/// `WriteBufferImmediate`. Total buffer size = `kMaxBreadcrumbs * 4` bytes.
 static constexpr uint32_t kMaxBreadcrumbs = 256;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -36,17 +39,32 @@ static constexpr uint32_t kMaxBreadcrumbs = 256;
 ///   breadcrumbs.LogLastMarker();
 class DX12GpuBreadcrumbs {
 public:
-    /// Initializes the breadcrumb buffer. Returns false on failure.
+    /// Creates the readback buffer for breadcrumb marker storage.
+    ///
+    /// # Arguments
+    /// * `device` — Parent DX12 device.
+    ///
+    /// # Returns
+    /// `true` on success, `false` if buffer creation fails.
     bool Init(DX12Device* device);
 
-    /// Resets the marker counter for a new frame.
+    /// Resets the marker counter for a new frame. Call at the start of each frame.
     void BeginFrame();
 
     /// Writes a breadcrumb marker at the current GPU execution point.
+    ///
+    /// Uses `WriteBufferImmediate` (requires `ID3D12GraphicsCommandList2`).
+    /// Markers are 1-based so that 0 means "never reached".
+    ///
+    /// # Arguments
+    /// * `cmdList` — Active command list (must support `WriteBufferImmediate`).
+    /// * `name` — Human-readable marker name (string literal, not copied).
     void Mark(ID3D12GraphicsCommandList* cmdList, const char* name);
 
-    /// Reads back the breadcrumb buffer and logs the last completed marker.
-    /// Call after device removal is detected.
+    /// Maps the breadcrumb buffer, finds the last completed marker, and logs results.
+    ///
+    /// Call after device removal is detected. Logs the full marker trail with
+    /// `DONE`, `>>> LAST`, and `NOT REACHED` status for each marker.
     void LogLastMarker();
 
 private:

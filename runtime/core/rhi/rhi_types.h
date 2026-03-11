@@ -1,14 +1,23 @@
 #pragma once
 
-/// UzEngine RHI Type Definitions
+/// UzEngine RHI Type Definitions — Enums, Descriptors, and Resource Handles.
 ///
-/// All enums, descriptor structs, and handle types for the Rendering Hardware Interface.
-/// This header is backend-agnostic — no DX12/Vulkan/Metal types appear here.
+/// This header contains all backend-agnostic type definitions for the Rendering
+/// Hardware Interface. No DX12, Vulkan, or Metal types appear here.
 ///
 /// # Handle System
-/// GPU resources use typed generational handles (RHIHandle<Tag>) to prevent
-/// use-after-free and dangling references. Handles are value types with
-/// index + generation, matching the pattern in handle_map.h.
+/// GPU resources use typed generational handles (`RHIHandle<Tag>`) to prevent
+/// use-after-free and dangling references. Handles are lightweight value types
+/// (8 bytes: index + generation) that can be freely copied, stored, and compared.
+/// A handle with `generation == 0` is always invalid.
+///
+/// # Enums
+/// Flag enums (`RHIBufferUsage`, `RHITextureUsage`, `RHIResourceState`) support
+/// bitwise OR to combine multiple flags. Use `HasFlag()` to test individual bits.
+///
+/// # Descriptor Structs
+/// All `*Desc` structs use aggregate initialization with safe defaults.
+/// Only fields that differ from defaults need to be set explicitly.
 
 #include <cstdint>
 
@@ -21,26 +30,56 @@ namespace uz {
 /// Typed generational handle for GPU resources.
 ///
 /// Combines a slot index with a generation counter so that stale handles
-/// (pointing to freed/reallocated slots) are safely detected.
+/// (pointing to freed/reallocated slots) are safely detected at O(1) cost.
+/// This is the primary mechanism for preventing use-after-free of GPU resources.
+///
+/// # Type Safety
+/// The `Tag` parameter prevents mixing handle types at compile time — you cannot
+/// accidentally pass a `RHIBufferHandle` where a `RHITextureHandle` is expected.
+///
+/// # Examples
+/// ```cpp
+/// RHIBufferHandle buffer = device->CreateBuffer(desc);
+/// if (buffer.IsValid()) {
+///     // Use the buffer...
+///     device->DestroyBuffer(buffer);
+/// }
+/// ```
 template <typename Tag>
 struct RHIHandle {
-    uint32_t index = 0;      ///< Slot index in backend pool
-    uint32_t generation = 0; ///< Version counter (0 = invalid/never allocated)
+    uint32_t index = 0;      ///< Slot index in the backend's resource pool.
+    uint32_t generation = 0; ///< Generation counter. 0 means invalid/never-allocated.
 
-    /// Returns true if this handle was ever created (generation != 0).
+    /// Returns true if this handle was ever created (`generation != 0`).
+    ///
+    /// # Returns
+    /// `true` if the handle may reference a valid resource.
+    /// Note: a valid handle can still be stale if the resource was destroyed.
     bool IsValid() const { return generation != 0; }
 
-    /// Creates an invalid handle sentinel.
-    static RHIHandle Invalid() { return {0, 0}; }
+    /// Creates an invalid handle sentinel (index=0, generation=0).
+    ///
+    /// # Returns
+    /// A handle that always returns `false` from `IsValid()`.
+    [[nodiscard]] static RHIHandle Invalid() { return {0, 0}; }
 
     bool operator==(RHIHandle other) const { return index == other.index && generation == other.generation; }
     bool operator!=(RHIHandle other) const { return !(*this == other); }
 };
 
+/// Tag type for `RHIHandle` — identifies buffer resources.
 struct BufferTag {};
+
+/// Tag type for `RHIHandle` — identifies texture resources.
 struct TextureTag {};
+
+/// Tag type for `RHIHandle` — identifies pipeline state objects.
 struct PipelineTag {};
+
+/// Tag type for `RHIHandle` — identifies compiled shader modules.
 struct ShaderTag {};
+
+/// Tag type for `RHIHandle` — identifies texture sampler states.
 struct SamplerTag {};
 
 /// Handle to a GPU buffer (vertex, index, constant, structured, etc.).
@@ -63,45 +102,52 @@ using RHISamplerHandle = RHIHandle<SamplerTag>;
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// GPU resource format for textures, render targets, and vertex attributes.
+///
+/// Maps 1:1 to `DXGI_FORMAT` on DX12, `VkFormat` on Vulkan, `MTLPixelFormat` on Metal.
 enum class RHIFormat : uint8_t {
-    Unknown = 0,
+    Unknown = 0,              ///< Invalid/uninitialized format.
 
-    // Color formats
-    R8Unorm,
-    RG8Unorm,
-    RGBA8Unorm,
-    RGBA8Srgb,
-    BGRA8Unorm,
-    BGRA8Srgb,
-    R16Float,
-    RG16Float,
-    RGBA16Float,
-    R32Float,
-    RG32Float,
-    RGB32Float,
-    RGBA32Float,
-    R32Uint,
-    RG32Uint,
-    RGBA32Uint,
+    // ── Color formats ────────────────────────────────────────────────────
 
-    // Depth/stencil formats
-    D16Unorm,
-    D32Float,
-    D24UnormS8Uint,
-    D32FloatS8Uint,
+    R8Unorm,                  ///< Single channel, 8-bit unsigned normalized [0,1].
+    RG8Unorm,                 ///< Two channels, 8-bit unsigned normalized.
+    RGBA8Unorm,               ///< Four channels, 8-bit unsigned normalized (linear).
+    RGBA8Srgb,                ///< Four channels, 8-bit sRGB gamma-encoded.
+    BGRA8Unorm,               ///< Four channels, 8-bit BGRA order (swap chain format on Windows).
+    BGRA8Srgb,                ///< Four channels, 8-bit BGRA sRGB.
+    R16Float,                 ///< Single channel, 16-bit half-float.
+    RG16Float,                ///< Two channels, 16-bit half-float.
+    RGBA16Float,              ///< Four channels, 16-bit half-float (HDR render targets).
+    R32Float,                 ///< Single channel, 32-bit float.
+    RG32Float,                ///< Two channels, 32-bit float.
+    RGB32Float,               ///< Three channels, 32-bit float (vertex positions).
+    RGBA32Float,              ///< Four channels, 32-bit float.
+    R32Uint,                  ///< Single channel, 32-bit unsigned integer.
+    RG32Uint,                 ///< Two channels, 32-bit unsigned integer.
+    RGBA32Uint,               ///< Four channels, 32-bit unsigned integer.
+
+    // ── Depth/stencil formats ────────────────────────────────────────────
+
+    D16Unorm,                 ///< 16-bit depth, no stencil.
+    D32Float,                 ///< 32-bit float depth, no stencil.
+    D24UnormS8Uint,           ///< 24-bit depth + 8-bit stencil.
+    D32FloatS8Uint,           ///< 32-bit float depth + 8-bit stencil (+ 24 padding).
 };
 
 /// Buffer usage flags (combinable via bitwise OR).
+///
+/// Multiple flags can be combined: `VertexBuffer | CopySrc`.
+/// The backend uses these to set appropriate D3D12 resource flags and initial state.
 enum class RHIBufferUsage : uint32_t {
-    None          = 0,
-    VertexBuffer  = 1 << 0,
-    IndexBuffer   = 1 << 1,
-    ConstantBuffer = 1 << 2,
-    StructuredBuffer = 1 << 3,
-    UnorderedAccess = 1 << 4,
-    IndirectArgs  = 1 << 5,
-    CopySrc       = 1 << 6,
-    CopyDst       = 1 << 7,
+    None             = 0,        ///< No usage specified (invalid for creation).
+    VertexBuffer     = 1 << 0,   ///< Vertex buffer for input assembler binding.
+    IndexBuffer      = 1 << 1,   ///< Index buffer for indexed draw calls.
+    ConstantBuffer   = 1 << 2,   ///< Constant buffer (256-byte aligned automatically).
+    StructuredBuffer = 1 << 3,   ///< Structured buffer with per-element stride (creates SRV).
+    UnorderedAccess  = 1 << 4,   ///< Read-write access from compute/pixel shaders (creates UAV).
+    IndirectArgs     = 1 << 5,   ///< Indirect draw/dispatch argument buffer.
+    CopySrc          = 1 << 6,   ///< Source for GPU copy operations.
+    CopyDst          = 1 << 7,   ///< Destination for GPU copy operations.
 };
 
 inline RHIBufferUsage operator|(RHIBufferUsage a, RHIBufferUsage b) {
@@ -110,19 +156,30 @@ inline RHIBufferUsage operator|(RHIBufferUsage a, RHIBufferUsage b) {
 inline RHIBufferUsage operator&(RHIBufferUsage a, RHIBufferUsage b) {
     return static_cast<RHIBufferUsage>(static_cast<uint32_t>(a) & static_cast<uint32_t>(b));
 }
+/// Tests whether a specific usage flag is set.
+///
+/// # Arguments
+/// * `flags` — Combined flags to test against.
+/// * `test` — Single flag to check for.
+///
+/// # Returns
+/// `true` if `test` is present in `flags`.
 inline bool HasFlag(RHIBufferUsage flags, RHIBufferUsage test) {
     return (static_cast<uint32_t>(flags) & static_cast<uint32_t>(test)) != 0;
 }
 
 /// Texture usage flags (combinable via bitwise OR).
+///
+/// Multiple flags can be combined: `ShaderResource | RenderTarget`.
+/// The backend creates appropriate descriptors (SRV, RTV, DSV, UAV) based on flags.
 enum class RHITextureUsage : uint32_t {
-    None            = 0,
-    ShaderResource  = 1 << 0,
-    RenderTarget    = 1 << 1,
-    DepthStencil    = 1 << 2,
-    UnorderedAccess = 1 << 3,
-    CopySrc         = 1 << 4,
-    CopyDst         = 1 << 5,
+    None            = 0,        ///< No usage specified (invalid for creation).
+    ShaderResource  = 1 << 0,   ///< Readable from shaders (creates SRV).
+    RenderTarget    = 1 << 1,   ///< Color render target (creates RTV).
+    DepthStencil    = 1 << 2,   ///< Depth/stencil target (creates DSV).
+    UnorderedAccess = 1 << 3,   ///< Read-write from compute/pixel shaders (creates UAV).
+    CopySrc         = 1 << 4,   ///< Source for GPU copy operations.
+    CopyDst         = 1 << 5,   ///< Destination for GPU copy operations.
 };
 
 inline RHITextureUsage operator|(RHITextureUsage a, RHITextureUsage b) {
@@ -131,120 +188,133 @@ inline RHITextureUsage operator|(RHITextureUsage a, RHITextureUsage b) {
 inline RHITextureUsage operator&(RHITextureUsage a, RHITextureUsage b) {
     return static_cast<RHITextureUsage>(static_cast<uint32_t>(a) & static_cast<uint32_t>(b));
 }
+/// Tests whether a specific texture usage flag is set.
 inline bool HasFlag(RHITextureUsage flags, RHITextureUsage test) {
     return (static_cast<uint32_t>(flags) & static_cast<uint32_t>(test)) != 0;
 }
 
 /// Resource state for barrier transitions.
 ///
-/// Backends map these to native states (D3D12_RESOURCE_STATES, VkImageLayout, etc.).
+/// Backends map these to native states (`D3D12_RESOURCE_STATES`, `VkImageLayout`, etc.).
+/// Use `ResourceBarrier()` on a command list to transition resources between states.
 enum class RHIResourceState : uint32_t {
-    Undefined         = 0,
-    Common            = 1 << 0,
-    VertexBuffer      = 1 << 1,
-    IndexBuffer       = 1 << 2,
-    ConstantBuffer    = 1 << 3,
-    ShaderResource    = 1 << 4,
-    UnorderedAccess   = 1 << 5,
-    RenderTarget      = 1 << 6,
-    DepthStencilWrite = 1 << 7,
-    DepthStencilRead  = 1 << 8,
-    CopySrc           = 1 << 9,
-    CopyDst           = 1 << 10,
-    Present           = 1 << 11,
-    IndirectArgument  = 1 << 12,
+    Undefined         = 0,        ///< Resource state is unknown (initial state for some resources).
+    Common            = 1 << 0,   ///< General-purpose state (D3D12_RESOURCE_STATE_COMMON).
+    VertexBuffer      = 1 << 1,   ///< Bound as vertex buffer.
+    IndexBuffer       = 1 << 2,   ///< Bound as index buffer.
+    ConstantBuffer    = 1 << 3,   ///< Bound as constant buffer.
+    ShaderResource    = 1 << 4,   ///< Read by pixel and non-pixel shaders (SRV).
+    UnorderedAccess   = 1 << 5,   ///< Read-write from shaders (UAV).
+    RenderTarget      = 1 << 6,   ///< Bound as color render target (RTV).
+    DepthStencilWrite = 1 << 7,   ///< Bound as depth-stencil for writing.
+    DepthStencilRead  = 1 << 8,   ///< Bound as depth-stencil for read-only access.
+    CopySrc           = 1 << 9,   ///< Source of a GPU copy operation.
+    CopyDst           = 1 << 10,  ///< Destination of a GPU copy operation.
+    Present           = 1 << 11,  ///< Ready for presentation (swap chain back buffer).
+    IndirectArgument  = 1 << 12,  ///< Used as indirect draw/dispatch argument buffer.
 };
 
 /// Primitive topology for draw calls.
+///
+/// Determines how vertices are assembled into primitives by the input assembler.
 enum class RHIPrimitiveTopology : uint8_t {
-    TriangleList,
-    TriangleStrip,
-    LineList,
-    LineStrip,
-    PointList,
+    TriangleList,   ///< Every 3 vertices form an independent triangle.
+    TriangleStrip,  ///< Each vertex after the first two forms a triangle with the previous two.
+    LineList,       ///< Every 2 vertices form an independent line segment.
+    LineStrip,      ///< Each vertex after the first forms a line with the previous vertex.
+    PointList,      ///< Each vertex is rendered as a single point.
 };
 
 /// Depth/stencil comparison function.
+///
+/// Used in depth testing and sampler comparison operations.
 enum class RHICompareFunc : uint8_t {
-    Never,
-    Less,
-    Equal,
-    LessEqual,
-    Greater,
-    NotEqual,
-    GreaterEqual,
-    Always,
+    Never,        ///< Comparison always fails.
+    Less,         ///< Passes if source < destination.
+    Equal,        ///< Passes if source == destination.
+    LessEqual,    ///< Passes if source <= destination.
+    Greater,      ///< Passes if source > destination.
+    NotEqual,     ///< Passes if source != destination.
+    GreaterEqual, ///< Passes if source >= destination.
+    Always,       ///< Comparison always passes.
 };
 
-/// Blend factor for color/alpha blending.
+/// Blend factor for color/alpha blending equations.
+///
+/// Multiplied with source or destination color in the blend equation:
+/// `result = srcFactor * srcColor OP dstFactor * dstColor`
 enum class RHIBlendFactor : uint8_t {
-    Zero,
-    One,
-    SrcColor,
-    InvSrcColor,
-    SrcAlpha,
-    InvSrcAlpha,
-    DstColor,
-    InvDstColor,
-    DstAlpha,
-    InvDstAlpha,
+    Zero,          ///< Factor is `(0, 0, 0, 0)`.
+    One,           ///< Factor is `(1, 1, 1, 1)`.
+    SrcColor,      ///< Factor is the source color `(Rs, Gs, Bs, As)`.
+    InvSrcColor,   ///< Factor is `(1-Rs, 1-Gs, 1-Bs, 1-As)`.
+    SrcAlpha,      ///< Factor is `(As, As, As, As)`.
+    InvSrcAlpha,   ///< Factor is `(1-As, 1-As, 1-As, 1-As)`.
+    DstColor,      ///< Factor is the destination color `(Rd, Gd, Bd, Ad)`.
+    InvDstColor,   ///< Factor is `(1-Rd, 1-Gd, 1-Bd, 1-Ad)`.
+    DstAlpha,      ///< Factor is `(Ad, Ad, Ad, Ad)`.
+    InvDstAlpha,   ///< Factor is `(1-Ad, 1-Ad, 1-Ad, 1-Ad)`.
 };
 
-/// Blend operation.
+/// Blend operation applied between source and destination factors.
 enum class RHIBlendOp : uint8_t {
-    Add,
-    Subtract,
-    RevSubtract,
-    Min,
-    Max,
+    Add,          ///< `result = src + dst`
+    Subtract,     ///< `result = src - dst`
+    RevSubtract,  ///< `result = dst - src`
+    Min,          ///< `result = min(src, dst)`
+    Max,          ///< `result = max(src, dst)`
 };
 
-/// Triangle cull mode.
+/// Triangle cull mode for the rasterizer.
 enum class RHICullMode : uint8_t {
-    None,
-    Front,
-    Back,
+    None,   ///< No culling — both front and back faces are rendered.
+    Front,  ///< Cull front-facing triangles.
+    Back,   ///< Cull back-facing triangles (most common).
 };
 
-/// Polygon fill mode.
+/// Polygon fill mode for the rasterizer.
 enum class RHIFillMode : uint8_t {
-    Solid,
-    Wireframe,
+    Solid,      ///< Filled triangles (default).
+    Wireframe,  ///< Wireframe rendering (edges only).
 };
 
 /// Index buffer element format.
 enum class RHIIndexFormat : uint8_t {
-    Uint16,
-    Uint32,
+    Uint16,  ///< 16-bit indices (max 65535 vertices).
+    Uint32,  ///< 32-bit indices (max ~4 billion vertices).
 };
 
 /// Shader compilation stage.
 enum class RHIShaderStage : uint8_t {
-    Vertex,
-    Pixel,
-    Compute,
+    Vertex,   ///< Vertex shader stage.
+    Pixel,    ///< Pixel (fragment) shader stage.
+    Compute,  ///< Compute shader stage.
 };
 
 /// GPU command queue type.
+///
+/// Different queue types have different capabilities and may execute in parallel.
 enum class RHIQueueType : uint8_t {
-    Graphics,
-    Compute,
-    Copy,
+    Graphics,  ///< Full graphics + compute + copy capability.
+    Compute,   ///< Compute + copy only (no rasterization).
+    Copy,      ///< DMA copy only (no shader execution).
 };
 
 /// Texture sampler filter mode.
 enum class RHIFilterMode : uint8_t {
-    Point,
-    Linear,
-    Anisotropic,
+    Point,       ///< Nearest-neighbor filtering (pixelated).
+    Linear,      ///< Bilinear/trilinear filtering (smooth).
+    Anisotropic, ///< Anisotropic filtering (high quality for oblique surfaces).
 };
 
 /// Texture sampler address mode (wrap/clamp/mirror).
+///
+/// Determines how texture coordinates outside `[0, 1]` are handled.
 enum class RHIAddressMode : uint8_t {
-    Wrap,
-    Clamp,
-    Mirror,
-    Border,
+    Wrap,    ///< Tile the texture (repeat).
+    Clamp,   ///< Clamp to edge color.
+    Mirror,  ///< Mirror the texture at boundaries.
+    Border,  ///< Use a fixed border color.
 };
 
 /// Memory heap type for buffer allocation.
@@ -258,7 +328,18 @@ enum class RHIMemoryType : uint8_t {
 // Descriptor Structs
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Describes a GPU buffer to create.
+/// Describes a GPU buffer to create via `IRHIDevice::CreateBuffer()`.
+///
+/// # Examples
+/// ```cpp
+/// RHIBufferDesc desc{};
+/// desc.sizeBytes = sizeof(Vertex) * vertexCount;
+/// desc.stride = sizeof(Vertex);
+/// desc.usage = RHIBufferUsage::VertexBuffer;
+/// desc.memory = RHIMemoryType::Default;
+/// desc.debugName = "MeshVertexBuffer";
+/// auto handle = device->CreateBuffer(desc);
+/// ```
 struct RHIBufferDesc {
     uint64_t sizeBytes = 0;                          ///< Total size in bytes
     uint32_t stride = 0;                             ///< Element stride (for structured buffers)
@@ -267,7 +348,10 @@ struct RHIBufferDesc {
     const char* debugName = nullptr;                 ///< Debug label (stripped in shipping)
 };
 
-/// Describes a GPU texture to create.
+/// Describes a GPU texture to create via `IRHIDevice::CreateTexture()`.
+///
+/// Supports 2D textures, 2D arrays, and cube maps. The backend automatically
+/// creates appropriate descriptor views (SRV, RTV, DSV, UAV) based on usage flags.
 struct RHITextureDesc {
     uint32_t width = 1;                                 ///< Width in texels
     uint32_t height = 1;                                ///< Height in texels
@@ -278,7 +362,7 @@ struct RHITextureDesc {
     const char* debugName = nullptr;                    ///< Debug label
 };
 
-/// Describes a swap chain to create.
+/// Describes a swap chain to create via `IRHIDevice::CreateSwapChain()`.
 struct RHISwapChainDesc {
     void* windowHandle = nullptr;    ///< Native window handle (HWND on Windows)
     uint32_t width = 0;              ///< Back buffer width
@@ -288,7 +372,9 @@ struct RHISwapChainDesc {
     bool vsync = true;               ///< Enable vertical sync
 };
 
-/// Describes a compiled shader module.
+/// Describes a compiled shader module to create via `IRHIDevice::CreateShader()`.
+///
+/// The bytecode pointer is copied internally; the caller's buffer need not persist.
 struct RHIShaderDesc {
     const void* bytecode = nullptr;  ///< Pointer to compiled shader bytecode (DXIL/SPIR-V/MSL)
     uint64_t bytecodeSize = 0;       ///< Size of bytecode in bytes
@@ -297,7 +383,10 @@ struct RHIShaderDesc {
     const char* debugName = nullptr; ///< Debug label
 };
 
-/// Blend state for a single render target.
+/// Blend state for a single render target in a graphics pipeline.
+///
+/// Defaults to opaque (no blending). For alpha blending, set `blendEnable = true`
+/// and configure the blend factors.
 struct RHIBlendDesc {
     bool blendEnable = false;
     RHIBlendFactor srcColor = RHIBlendFactor::One;
@@ -324,7 +413,16 @@ struct RHIRasterizerDesc {
     float slopeScaledDepthBias = 0.0f;
 };
 
-/// Describes a graphics pipeline state object.
+/// Describes a graphics pipeline state object (PSO) to create via
+/// `IRHIDevice::CreateGraphicsPipeline()`.
+///
+/// Combines shaders, rasterizer state, depth-stencil state, blend state,
+/// render target formats, and topology into a single immutable PSO.
+///
+/// # Note
+/// SM6.6 bindless pipelines use no input layout — vertex data is pulled
+/// from SRV buffers in the shader. `vertexShader` is required; `pixelShader`
+/// is optional (depth-only passes).
 struct RHIGraphicsPipelineDesc {
     RHIShaderHandle vertexShader;                    ///< Vertex shader handle
     RHIShaderHandle pixelShader;                     ///< Pixel shader handle (optional for depth-only)
@@ -338,7 +436,9 @@ struct RHIGraphicsPipelineDesc {
     const char* debugName = nullptr;                 ///< Debug label
 };
 
-/// Describes a texture sampler.
+/// Describes a texture sampler to create via `IRHIDevice::CreateSampler()`.
+///
+/// Defaults to linear filtering, wrap addressing, full LOD range.
 struct RHISamplerDesc {
     RHIFilterMode filter = RHIFilterMode::Linear;
     RHIAddressMode addressU = RHIAddressMode::Wrap;
@@ -352,7 +452,7 @@ struct RHISamplerDesc {
     const char* debugName = nullptr;
 };
 
-/// Viewport rectangle.
+/// Viewport rectangle for the rasterizer, in floating-point pixel coordinates.
 struct RHIViewport {
     float x = 0.0f;
     float y = 0.0f;
@@ -362,7 +462,7 @@ struct RHIViewport {
     float maxDepth = 1.0f;
 };
 
-/// Scissor rectangle (integer coordinates).
+/// Scissor rectangle in integer pixel coordinates for pixel clipping.
 struct RHIScissorRect {
     int32_t left = 0;
     int32_t top = 0;
@@ -371,6 +471,8 @@ struct RHIScissorRect {
 };
 
 /// Resource barrier descriptor for state transitions.
+///
+/// Exactly one of `texture` or `buffer` should be valid; the other should be `Invalid()`.
 struct RHIBarrierDesc {
     RHITextureHandle texture;          ///< Texture to transition (or invalid for buffer)
     RHIBufferHandle buffer;            ///< Buffer to transition (or invalid for texture)
@@ -378,14 +480,18 @@ struct RHIBarrierDesc {
     RHIResourceState stateAfter;       ///< State after barrier
 };
 
-/// Render pass color attachment.
+/// Render pass color attachment descriptor.
+///
+/// Specifies a color render target and optional clear-on-load behavior.
 struct RHIRenderPassColorAttachment {
     RHITextureHandle texture;                   ///< Render target texture
     float clearColor[4] = {0, 0, 0, 1};        ///< Clear color (used if loadOp is Clear)
     bool clear = false;                         ///< True to clear on load
 };
 
-/// Render pass depth attachment.
+/// Render pass depth-stencil attachment descriptor.
+///
+/// Specifies a depth-stencil target and optional clear-on-load behavior.
 struct RHIRenderPassDepthAttachment {
     RHITextureHandle texture;                   ///< Depth-stencil texture
     float clearDepth = 1.0f;                    ///< Clear depth value
@@ -393,7 +499,9 @@ struct RHIRenderPassDepthAttachment {
     bool clear = false;                         ///< True to clear on load
 };
 
-/// Describes a render pass (begin/end scope for rendering).
+/// Describes a render pass scope for `IRHICommandList::BeginRenderPass()`.
+///
+/// Supports up to 8 color attachments and an optional depth-stencil attachment.
 struct RHIRenderPassDesc {
     RHIRenderPassColorAttachment colorAttachments[8] = {};
     uint32_t colorAttachmentCount = 0;

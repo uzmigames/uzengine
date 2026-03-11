@@ -34,22 +34,54 @@ class ShaderDependencyGraph;
 /// Polls directories for file modifications using filesystem timestamps.
 ///
 /// Tracks `.hlsl`, `.hlsli`, `.h`, `.fx`, `.fxh` files recursively.
-/// Designed for simplicity and testability; a ReadDirectoryChangesW backend
+/// Designed for simplicity and testability; a `ReadDirectoryChangesW` backend
 /// can replace the polling internals later without changing the interface.
+///
+/// # Thread Safety
+/// NOT thread-safe. Must be called from a single thread.
+///
+/// # Lifetime
+/// Standalone. Does not own any OS handles — purely stat-based polling.
+///
+/// # Examples
+/// ```cpp
+/// FileWatcher watcher;
+/// watcher.Watch("shaders/engine");
+/// watcher.Watch("shaders/game");
+///
+/// // Per-frame poll:
+/// auto changed = watcher.PollChanges();
+/// for (const auto& path : changed) {
+///     // path is normalized (forward slashes, lowercase on Windows)
+/// }
+/// ```
 class FileWatcher {
 public:
     FileWatcher() = default;
 
-    /// Add a directory to watch recursively for shader file changes.
+    /// Adds a directory to watch recursively for shader file changes.
+    ///
+    /// Performs an initial scan to record baseline timestamps. Only files with
+    /// shader extensions (`.hlsl`, `.hlsli`, `.h`, `.fx`, `.fxh`) are tracked.
+    ///
+    /// # Arguments
+    /// * `dir` — Filesystem directory to watch. Must exist.
     void Watch(const std::filesystem::path& dir);
 
-    /// Stop watching all directories and clear internal state.
+    /// Stops watching all directories and clears all internal timestamp state.
     void StopAll();
 
-    /// Poll for changes since last call. Returns normalized paths of changed files.
+    /// Polls for changes since the last call.
+    ///
+    /// Scans all watched directories and compares timestamps against the
+    /// previously recorded values. New files are also detected.
+    ///
+    /// # Returns
+    /// Normalized paths (forward slashes, lowercase on Windows) of all files
+    /// whose modification time changed since the last poll. Empty if no changes.
     [[nodiscard]] std::vector<std::string> PollChanges();
 
-    /// Whether any directories are currently being watched.
+    /// Returns true if any directories are currently being watched.
     [[nodiscard]] bool IsWatching() const noexcept;
 
 private:
@@ -76,42 +108,92 @@ private:
 ///
 /// Call `Poll()` once per frame to detect changes. Query `IsDirty()` before
 /// using a cached shader to decide whether recompilation is needed.
+///
+/// # Thread Safety
+/// NOT thread-safe. All calls must be on the same thread (render/main thread).
+///
+/// # Lifetime
+/// Optionally references a `ShaderDependencyGraph` via raw pointer (set by
+/// `SetDependencyGraph()`). The graph must outlive the hot-reload instance
+/// or be set to `nullptr` before the graph is destroyed.
+///
+/// # Examples
+/// ```cpp
+/// ShaderHotReload hotReload;
+/// hotReload.SetDependencyGraph(&depGraph);
+/// hotReload.Start({std::filesystem::path("shaders/engine")});
+///
+/// // Per-frame:
+/// auto dirty = hotReload.Poll();
+/// for (const auto& path : dirty) {
+///     recompileShader(path);
+///     hotReload.ClearDirty(path);
+/// }
+/// ```
 class ShaderHotReload {
 public:
     ShaderHotReload() = default;
 
-    /// Start watching the given directories for shader file changes.
+    /// Starts watching the given directories for shader file changes.
+    ///
+    /// # Arguments
+    /// * `watchDirs` — List of filesystem directories to watch recursively.
     void Start(const std::vector<std::filesystem::path>& watchDirs);
 
-    /// Stop watching all directories.
+    /// Stops watching all directories and clears the file watcher state.
+    /// Does NOT clear the dirty set — use `ClearAll()` for that.
     void Stop();
 
-    /// Poll for file changes (non-blocking). Returns shaders marked dirty this poll.
+    /// Polls for file changes (non-blocking timestamp comparison).
+    ///
+    /// For each changed file, marks it dirty and propagates the dirty flag
+    /// to all transitive dependents via the dependency graph (if set).
+    ///
+    /// # Returns
+    /// Virtual paths of all shaders newly marked dirty in this poll cycle.
     [[nodiscard]] std::vector<std::string> Poll();
 
-    /// Check if a shader path is marked dirty (needs recompile).
+    /// Checks if a shader path is marked dirty (needs recompile).
+    ///
+    /// # Arguments
+    /// * `shaderPath` — Virtual or normalized path to check.
+    ///
+    /// # Returns
+    /// `true` if the shader is in the dirty set.
     [[nodiscard]] bool IsDirty(const std::string& shaderPath) const;
 
-    /// Mark a shader and all its transitive dependents as dirty.
+    /// Marks a shader and all its transitive dependents as dirty.
+    ///
+    /// If a dependency graph is set, walks the reverse graph to find all
+    /// root shaders that include this file (directly or transitively).
+    ///
+    /// # Arguments
+    /// * `shaderPath` — Path of the shader/include that changed.
     void MarkDirty(const std::string& shaderPath);
 
-    /// Clear the dirty flag for a single shader (after successful recompile).
+    /// Clears the dirty flag for a single shader (after successful recompile).
+    ///
+    /// # Arguments
+    /// * `shaderPath` — Path to clear from the dirty set.
     void ClearDirty(const std::string& shaderPath);
 
-    /// Clear all dirty flags.
+    /// Clears all dirty flags.
     void ClearAll();
 
-    /// Get all currently dirty shader paths.
+    /// Returns all currently dirty shader paths as a vector.
     [[nodiscard]] std::vector<std::string> GetDirtyShaders() const;
 
-    /// Get the number of currently dirty shaders.
+    /// Returns the number of currently dirty shaders.
     [[nodiscard]] size_t GetDirtyCount() const noexcept;
 
-    /// Set the dependency graph for transitive dirty propagation.
-    /// Null is valid — disables transitive propagation.
+    /// Sets the dependency graph for transitive dirty propagation.
+    ///
+    /// # Arguments
+    /// * `graph` — Pointer to a `ShaderDependencyGraph`, or `nullptr` to disable
+    ///   transitive propagation (only the directly changed file is marked dirty).
     void SetDependencyGraph(ShaderDependencyGraph* graph) noexcept;
 
-    /// Whether the file watcher is currently running.
+    /// Returns true if the file watcher is currently running.
     [[nodiscard]] bool IsRunning() const noexcept;
 
 private:

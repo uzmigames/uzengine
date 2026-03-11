@@ -28,7 +28,13 @@ public:
     DX12Fence() = default;
     ~DX12Fence() override;
 
-    /// Creates the D3D12 fence and Win32 event. Returns false on failure.
+    /// Creates the D3D12 fence (initial value 0) and a Win32 auto-reset event.
+    ///
+    /// # Arguments
+    /// * `device` — D3D12 device to create the fence on.
+    ///
+    /// # Returns
+    /// `true` on success, `false` on failure (cleans up partial state).
     bool Init(ID3D12Device* device);
 
     // ── IRHIFence overrides ──────────────────────────────────────────────

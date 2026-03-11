@@ -1,11 +1,21 @@
 #pragma once
 
-/// DX12 backend implementation of IRHIDevice.
+/// DX12 backend implementation of `IRHIDevice`.
 ///
-/// Owns the D3D12 device, DXGI factory/adapter, D3D12MA allocator,
-/// descriptor heaps, and command queues. All DX12 headers are confined
-/// to this file and dx12_device.cpp — nothing else in the engine
-/// includes d3d12.h or dxgi1_6.h.
+/// Owns the full D3D12 device stack: DXGI factory/adapter, D3D12 device,
+/// D3D12MA allocator, descriptor heaps (CBV_SRV_UAV, Sampler, RTV, DSV),
+/// command queues (Direct + Copy), and the global bindless root signature.
+///
+/// All DX12 headers are confined to this file and `dx12_device.cpp` — nothing
+/// else in the engine includes `d3d12.h` or `dxgi1_6.h` directly.
+///
+/// # Thread Safety
+/// Resource creation/destruction methods are NOT internally synchronized in
+/// the current implementation. Callers must serialize access from multiple threads.
+///
+/// # Lifetime
+/// Created via `CreateRHIDevice()`, destroyed via `DestroyRHIDevice()`.
+/// The destructor calls `WaitIdle()` and reports live objects in debug builds.
 
 #include "../rhi.h"
 #include "../rhi_backend.h"
@@ -46,17 +56,29 @@ static constexpr uint32_t kMaxDsvDescriptors = 64;
 // DX12Device
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// DX12 implementation of IRHIDevice.
+/// DX12 implementation of `IRHIDevice`.
 ///
 /// Initializes the full D3D12 device stack: debug layer, DXGI factory,
-/// adapter, device, D3D12MA allocator, descriptor heaps, and command queues.
-/// Resource creation methods are stubbed until Task 2.3/2.4.
+/// adapter selection (high-performance preference), device creation (feature
+/// level 12_0+), D3D12MA allocator, descriptor heaps, command queues,
+/// and bindless root signature.
+///
+/// # Initialization Order
+/// 1. Debug layer (optional)  2. DXGI factory  3. Adapter selection
+/// 4. Device creation  5. Shader model negotiation  6. D3D12MA allocator
+/// 7. Descriptor heaps  8. Command queues  9. Root signature  10. DRED (optional)
 class DX12Device final : public IRHIDevice {
 public:
     DX12Device() = default;
     ~DX12Device() override;
 
-    /// Initializes the DX12 device stack. Returns false on failure.
+    /// Initializes the DX12 device stack from debug layer through root signature.
+    ///
+    /// # Arguments
+    /// * `desc` — Device descriptor (backend, validation flags, adapter index).
+    ///
+    /// # Returns
+    /// `true` on success, `false` on failure (logs detailed error via `UZ_LOG`).
     bool Init(const RHIDeviceDesc& desc);
 
     // ── IRHIDevice: Buffer operations ────────────────────────────────────
@@ -124,10 +146,16 @@ public:
     /// Returns the descriptor allocator for a heap type.
     DescriptorAllocator& GetDescriptorAllocator(D3D12_DESCRIPTOR_HEAP_TYPE type);
 
-    /// Returns resource pools (for command list resource lookups).
+    /// Returns the buffer resource pool (for command list resource lookups).
     ResourcePool<DX12Buffer>& GetBufferPool() { return m_bufferPool; }
+
+    /// Returns the texture resource pool (for command list resource lookups).
     ResourcePool<DX12Texture>& GetTexturePool() { return m_texturePool; }
+
+    /// Returns the pipeline resource pool (for command list PSO binding).
     ResourcePool<DX12Pipeline>& GetPipelinePool() { return m_pipelinePool; }
+
+    /// Returns the shader resource pool (for pipeline creation bytecode lookup).
     ResourcePool<DX12Shader>& GetShaderPool() { return m_shaderPool; }
 
     /// Returns the global bindless root signature (shared by all pipelines).
@@ -136,7 +164,11 @@ public:
     /// Returns the negotiated shader model for this device.
     ShaderModel GetShaderModel() const { return m_shaderModel; }
 
-    /// Queries and logs DRED data after device removal (breadcrumbs + page fault info).
+    /// Queries and logs DRED diagnostic data after device removal.
+    ///
+    /// Logs auto-breadcrumb nodes (last GPU operations before hang) and
+    /// page fault info (faulting VA, existing/freed allocations).
+    /// Call this when `Present()` returns `DXGI_ERROR_DEVICE_REMOVED`.
     void LogDeviceRemoved();
 
 private:

@@ -18,16 +18,20 @@ using Microsoft::WRL::ComPtr;
 
 class DX12Device;
 
-/// Maximum number of timestamp pairs (begin+end) per frame.
+/// Maximum number of timestamp pairs (begin + end) per frame.
+///
+/// Each pair uses 2 timestamp queries. Total queries per frame = `kMaxGpuTimestamps * 2`.
 static constexpr uint32_t kMaxGpuTimestamps = 64;
 
-/// Triple-buffer count matching frame pacing.
+/// Triple-buffer count for timestamp readback latency hiding.
+///
+/// Frame N writes timestamps, frame N-2 reads results (allows 2 frames of GPU latency).
 static constexpr uint32_t kProfilerFramesInFlight = 3;
 
-/// A single GPU timing result in milliseconds.
+/// A single GPU timing result resolved from a begin/end timestamp pair.
 struct GpuTimingResult {
-    const char* name = nullptr;  ///< Pass/scope name (string literal, not owned)
-    float ms = 0.0f;            ///< Elapsed time in milliseconds
+    const char* name = nullptr;  ///< Pass/scope name (string literal, not owned).
+    float ms = 0.0f;            ///< Elapsed GPU time in milliseconds.
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -46,28 +50,64 @@ struct GpuTimingResult {
 ///   profiler.ResolveFrame();
 class DX12GpuProfiler {
 public:
-    /// Initializes query heap and readback buffer. Returns false on failure.
+    /// Creates the timestamp query heap and readback buffer.
+    ///
+    /// Queries the GPU timestamp frequency from the direct queue. Returns `false`
+    /// if the queue does not support timestamps.
+    ///
+    /// # Arguments
+    /// * `device` — Parent DX12 device.
     bool Init(DX12Device* device);
 
-    /// Marks the beginning of a profiled frame. Resets the timestamp counter.
+    /// Resets the timestamp counter for a new frame.
+    ///
+    /// # Arguments
+    /// * `cmdList` — Active command list (currently unused, reserved for future use).
     void BeginFrame(ID3D12GraphicsCommandList* cmdList);
 
     /// Records a begin timestamp for a named scope.
+    ///
+    /// Must be paired with a subsequent `EndTimestamp()` call with the same name.
+    ///
+    /// # Arguments
+    /// * `cmdList` — Active command list to record the timestamp query on.
+    /// * `name` — Human-readable scope name (string literal, not copied).
     void BeginTimestamp(ID3D12GraphicsCommandList* cmdList, const char* name);
 
-    /// Records an end timestamp for a named scope.
+    /// Records an end timestamp for the current scope.
+    ///
+    /// # Arguments
+    /// * `cmdList` — Active command list to record the timestamp query on.
+    /// * `name` — Scope name (currently unused, kept for symmetry with `BeginTimestamp`).
     void EndTimestamp(ID3D12GraphicsCommandList* cmdList, const char* name);
 
-    /// Resolves query data into the readback buffer at end of frame.
+    /// Resolves all timestamp queries for this frame into the readback buffer.
+    ///
+    /// Must be called at the end of the frame, before the command list is submitted.
+    /// Advances the internal frame index.
+    ///
+    /// # Arguments
+    /// * `cmdList` — Active command list to record the resolve command on.
     void EndFrame(ID3D12GraphicsCommandList* cmdList);
 
-    /// Reads back resolved timestamps from frame N-2 and computes ms deltas.
+    /// Reads back resolved timestamps from 2 frames ago and computes millisecond deltas.
+    ///
+    /// Call this after the GPU has completed the frame whose timestamps are being read
+    /// (i.e., after a fence wait for frame N-2).
     void ResolveFrame();
 
     /// Returns the most recent resolved timing results.
+    ///
+    /// # Returns
+    /// A vector of `GpuTimingResult` entries (one per `BeginTimestamp`/`EndTimestamp` pair).
+    /// Empty if no timestamps were recorded or `ResolveFrame()` has not been called.
     const std::vector<GpuTimingResult>& GetResults() const { return m_results; }
 
-    /// Returns total GPU frame time (first BeginTimestamp to last EndTimestamp).
+    /// Returns the total GPU frame time spanning all profiled scopes.
+    ///
+    /// # Returns
+    /// Time in milliseconds from the first `BeginTimestamp` to the last `EndTimestamp`.
+    /// Returns `0.0f` if no timestamps were resolved.
     float GetFrameTimeMs() const { return m_frameTimeMs; }
 
 private:

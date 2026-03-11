@@ -46,22 +46,45 @@ public:
     DescriptorAllocator(DescriptorAllocator&&) = default;
     DescriptorAllocator& operator=(DescriptorAllocator&&) = default;
 
-    /// Initialize with a descriptor heap and its capacity.
-    /// reservedCount indices at the start are skipped (e.g., for swapchain RTVs).
+    /// Initializes the allocator with a descriptor heap and its capacity.
+    ///
+    /// # Arguments
+    /// * `heap` — The D3D12 descriptor heap to allocate from (must outlive this allocator).
+    /// * `capacity` — Total number of descriptor slots in the heap.
+    /// * `incrementSize` — Size of each descriptor in bytes (from `GetDescriptorHandleIncrementSize`).
+    /// * `reservedCount` — Indices `[0, reservedCount)` are skipped (e.g., for swap chain RTVs).
     void Init(ID3D12DescriptorHeap* heap, uint32_t capacity,
               uint32_t incrementSize, uint32_t reservedCount = 0);
 
-    /// Allocate a single descriptor index. Returns kInvalidIndex if full.
-    uint32_t Allocate();
+    /// Allocates a single descriptor index from the heap.
+    ///
+    /// # Returns
+    /// A valid descriptor index, or `kInvalidIndex` if the heap is full.
+    [[nodiscard]] uint32_t Allocate();
 
-    /// Free a previously allocated index back to the pool.
+    /// Frees a previously allocated index back to the pool for reuse.
+    ///
+    /// # Arguments
+    /// * `index` — Previously allocated index. `kInvalidIndex` is a safe no-op.
     void Free(uint32_t index);
 
-    /// Returns the CPU handle for a given index.
-    D3D12_CPU_DESCRIPTOR_HANDLE CpuHandle(uint32_t index) const;
+    /// Computes the CPU descriptor handle for the given index.
+    ///
+    /// # Arguments
+    /// * `index` — Descriptor index (from `Allocate()`).
+    ///
+    /// # Returns
+    /// `D3D12_CPU_DESCRIPTOR_HANDLE` at `cpuBase + index * incrementSize`.
+    [[nodiscard]] D3D12_CPU_DESCRIPTOR_HANDLE CpuHandle(uint32_t index) const;
 
-    /// Returns the GPU handle for a given index (only valid for shader-visible heaps).
-    D3D12_GPU_DESCRIPTOR_HANDLE GpuHandle(uint32_t index) const;
+    /// Computes the GPU descriptor handle for the given index.
+    ///
+    /// Only valid for shader-visible heaps (CBV_SRV_UAV, Sampler).
+    /// Returns a zeroed handle for non-shader-visible heaps (RTV, DSV).
+    ///
+    /// # Arguments
+    /// * `index` — Descriptor index (from `Allocate()`).
+    [[nodiscard]] D3D12_GPU_DESCRIPTOR_HANDLE GpuHandle(uint32_t index) const;
 
     /// Number of currently allocated descriptors.
     uint32_t AllocatedCount() const { return m_allocated; }

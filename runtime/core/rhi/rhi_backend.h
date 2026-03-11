@@ -12,20 +12,23 @@
 
 namespace uz {
 
-/// Available RHI backends (compile-time selection only).
+/// Available RHI backends (compile-time selection only via `UZ_BACKEND_*` defines).
 enum class RHIBackend : uint8_t {
-    DX12,
-    Vulkan,
-    Metal,
-    Null, ///< Headless backend for testing (no GPU)
+    DX12,    ///< DirectX 12 backend (Windows only, SM6.6 bindless).
+    Vulkan,  ///< Vulkan backend (cross-platform, Linux/Windows).
+    Metal,   ///< Metal backend (macOS/iOS only).
+    Null,    ///< Headless backend for testing (no GPU, all operations are no-ops).
 };
 
-/// Configuration for device creation.
+/// Configuration for device creation via `CreateRHIDevice()`.
+///
+/// Typically constructed from an `RHIConfig` via `ToDeviceDesc()`, but can
+/// be filled manually for direct device creation.
 struct RHIDeviceDesc {
-    RHIBackend backend = RHIBackend::DX12;   ///< Which backend to initialize
-    bool enableValidation = false;           ///< Enable API validation layer (D3D12 Debug, VK validation)
-    bool enableGpuValidation = false;        ///< Enable GPU-based validation (expensive, dev only)
-    uint32_t adapterIndex = 0;               ///< GPU adapter index (0 = system default)
+    RHIBackend backend = RHIBackend::DX12;   ///< Which backend to initialize.
+    bool enableValidation = false;           ///< Enable API validation layer (D3D12 Debug, VK validation).
+    bool enableGpuValidation = false;        ///< Enable GPU-based validation (expensive, dev only).
+    uint32_t adapterIndex = 0;               ///< GPU adapter index (0 = system default/highest performance).
 };
 
 /// Creates a backend-specific RHI device.

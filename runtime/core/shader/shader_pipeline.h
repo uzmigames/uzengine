@@ -26,23 +26,50 @@ class ShaderVFS;
 /// Orchestrates the full shader compilation pipeline.
 ///
 /// Owns VFS, source manager, dependency graph, cache, and hot-reload.
-/// Does NOT own the compiler — caller manages its lifetime.
+/// Does NOT own the compiler — caller manages its lifetime and passes it
+/// via `SetCompiler()`.
+///
+/// # Thread Safety
+/// NOT thread-safe. All calls must happen on the render/init thread.
+/// Hot-reload polling (`PollHotReload()`) must also be on the same thread.
+///
+/// # Lifetime
+/// Owns all subsystems via PIMPL. The external `ShaderCompiler*` set via
+/// `SetCompiler()` must outlive the pipeline (or be set to `nullptr` before
+/// the compiler is destroyed).
+///
+/// # Examples
+/// ```cpp
+/// ShaderPipeline pipeline;
+/// pipeline.Init({.cacheDir = "cache/shaders", .targetBackend = "dx12_sm66"});
+/// pipeline.Mount("/engine", "shaders/engine");
+/// pipeline.SetCompiler(&compiler);
+///
+/// auto result = pipeline.CompileAll();
+/// UZ_LOG_INFO("Compiled {}/{} shaders ({} cached, {} failed)",
+///             result.compiled, result.total, result.cached, result.failed);
+///
+/// // Per-frame in dev builds:
+/// auto reloaded = pipeline.PollHotReload();
+/// ```
 class ShaderPipeline {
 public:
     /// Configuration for the pipeline.
     struct Config {
-        std::string cacheDir = "cache/shaders";    ///< Root cache directory
-        std::string targetBackend = "dx12_sm67";   ///< Target backend string for cache subdir
-        bool enableHotReload = true;               ///< Enable file watching in dev builds
+        std::string cacheDir = "cache/shaders";    ///< Root cache directory on disk
+        std::string targetBackend = "dx12_sm67";   ///< Target backend string for cache subdirectory naming
+        bool enableHotReload = true;               ///< Enable file watching for dev builds
     };
 
-    /// Statistics returned by CompileAll().
+    /// Statistics returned by `CompileAll()`.
+    ///
+    /// `total = cached + compiled + failed`
     struct CompileAllResult {
         size_t total = 0;                          ///< Total shader variants enumerated
-        size_t cached = 0;                         ///< Already in cache (skipped)
+        size_t cached = 0;                         ///< Already in cache (skipped compilation)
         size_t compiled = 0;                       ///< Successfully compiled this run
-        size_t failed = 0;                         ///< Failed to compile
-        std::vector<std::string> errors;           ///< Error messages for failures
+        size_t failed = 0;                         ///< Failed to compile (see `errors`)
+        std::vector<std::string> errors;           ///< One error message per failed variant
     };
 
     ShaderPipeline();
@@ -51,53 +78,80 @@ public:
     ShaderPipeline(const ShaderPipeline&) = delete;
     ShaderPipeline& operator=(const ShaderPipeline&) = delete;
 
-    /// Initialize the pipeline with all subsystems.
+    /// Initializes the pipeline with all subsystems (VFS, cache, source manager, etc.).
     ///
     /// Safe to call multiple times — subsequent calls are no-ops.
+    ///
+    /// # Arguments
+    /// * `config` — Pipeline configuration (cache dir, backend, hot-reload toggle).
     void Init(const Config& config);
 
-    /// Shutdown and release resources.
+    /// Shuts down and releases all subsystem resources.
     ///
-    /// Safe to call multiple times or without prior Init.
+    /// Safe to call multiple times or without prior `Init()`.
     void Shutdown();
 
-    /// Mount a shader directory in the VFS.
+    /// Mounts a shader directory in the VFS.
+    ///
+    /// # Arguments
+    /// * `virtualPath` — Virtual prefix (e.g., "/engine").
+    /// * `realPath` — Real filesystem directory (e.g., "shaders/engine").
     void Mount(const std::string& virtualPath, const std::string& realPath);
 
-    /// Compile all shaders that are missing from the cache.
+    /// Compiles all shaders that are missing from the cache.
     ///
-    /// Enumerates all .hlsl files in VFS mounts, expands permutations,
-    /// checks cache, and compiles missing variants.
+    /// Enumerates all `.hlsl` files in VFS mounts, expands permutations via
+    /// `#pragma uz_permutation`, checks the cache, and compiles missing variants.
+    ///
+    /// # Returns
+    /// `CompileAllResult` with counts and error messages.
     [[nodiscard]] CompileAllResult CompileAll();
 
-    /// Compile a single shader file (all permutations).
+    /// Compiles a single shader file (all permutations).
     ///
-    /// Returns true if all variants compiled or were already cached.
+    /// # Arguments
+    /// * `virtualPath` — Virtual path to the `.hlsl` file.
+    ///
+    /// # Returns
+    /// `true` if all variants compiled successfully or were already cached.
     bool CompileShader(const std::string& virtualPath);
 
-    /// Load compiled bytecode for a shader variant.
+    /// Loads compiled bytecode for a shader variant.
     ///
-    /// Checks dirty flag, recompiles if needed, then returns from cache.
-    /// Returns empty vector on failure.
+    /// Checks the hot-reload dirty flag, recompiles if needed, then returns
+    /// bytecode from the cache.
+    ///
+    /// # Arguments
+    /// * `virtualPath` — Virtual path to the `.hlsl` file.
+    /// * `permutationDefines` — Semicolon-separated defines string (e.g.,
+    ///   "HAS_NORMAL_MAP=1;SHADOW_QUALITY=HIGH"). Empty for the base variant.
+    ///
+    /// # Returns
+    /// Compiled bytecode, or an empty vector on failure.
     [[nodiscard]] std::vector<uint8_t> LoadBytecode(
         const std::string& virtualPath,
         const std::string& permutationDefines = "");
 
-    /// Poll for hot-reload changes (call once per frame in dev).
+    /// Polls for hot-reload file changes (call once per frame in dev builds).
     ///
-    /// Returns virtual paths that were recompiled.
+    /// # Returns
+    /// Virtual paths of shaders that were marked dirty and recompiled this poll.
     [[nodiscard]] std::vector<std::string> PollHotReload();
 
-    /// Get the VFS for external use.
+    /// Returns a reference to the internal VFS for external mount/resolve operations.
     [[nodiscard]] ShaderVFS& GetVFS();
 
-    /// Get the source manager.
+    /// Returns a reference to the internal source manager.
     [[nodiscard]] ShaderSourceManager& GetSourceManager();
 
-    /// Set the compiler (external, not owned).
+    /// Sets the external shader compiler (not owned by the pipeline).
+    ///
+    /// # Arguments
+    /// * `compiler` — Pointer to an initialized `ShaderCompiler`. Must outlive the
+    ///   pipeline, or be set to `nullptr` before the compiler is destroyed.
     void SetCompiler(ShaderCompiler* compiler);
 
-    /// Returns true if Init() has been called and Shutdown() has not.
+    /// Returns true if `Init()` has been called and `Shutdown()` has not.
     [[nodiscard]] bool IsInitialized() const noexcept;
 
 private:

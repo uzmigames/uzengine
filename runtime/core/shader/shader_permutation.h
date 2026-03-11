@@ -25,24 +25,40 @@
 namespace uz {
 
 /// Maximum number of permutation variants allowed per shader.
-/// Prevents combinatorial explosion (the UE5 problem of tens of thousands of variants).
+///
+/// Prevents combinatorial explosion from `#pragma uz_permutation` directives.
+/// A shader declaring axes whose Cartesian product exceeds this limit will
+/// return an error from `ExpandPermutations()` instead of silently generating
+/// thousands of variants.
 static constexpr size_t kMaxPermutationVariants = 256;
 
 /// A single permutation axis parsed from a `#pragma uz_permutation` directive.
+///
+/// # Bool vs Enum
+/// - Bool permutation (name only): `#pragma uz_permutation HAS_NORMAL_MAP`
+///   produces `values = {"0", "1"}`.
+/// - Enum permutation (name + values): `#pragma uz_permutation SHADOW_QUALITY LOW MEDIUM HIGH`
+///   produces `values = {"LOW", "MEDIUM", "HIGH"}`.
 struct ShaderPermutation {
     std::string name;                ///< Define name (e.g., "HAS_NORMAL_MAP")
     std::vector<std::string> values; ///< Possible values. Bool: {"0","1"}. Enum: {"LOW","MEDIUM","HIGH"}
 };
 
 /// Result of expanding permutations into concrete variant define sets.
+///
+/// On success, `variants` contains the full Cartesian product of all axes,
+/// each variant represented as a sorted list of (name, value) pairs for
+/// deterministic hashing. On failure, `error` describes what went wrong.
 struct PermutationExpandResult {
     /// Each variant is a sorted list of (define_name, define_value) pairs.
+    /// The outer vector has one entry per variant; the inner vector has one
+    /// entry per permutation axis.
     std::vector<std::vector<std::pair<std::string, std::string>>> variants;
 
-    /// Non-empty if expansion failed (e.g., exceeded kMaxPermutationVariants).
+    /// Non-empty if expansion failed (e.g., exceeded `kMaxPermutationVariants`).
     std::string error;
 
-    /// Returns true if expansion succeeded.
+    /// Returns true if expansion succeeded (no error).
     [[nodiscard]] bool Ok() const { return error.empty(); }
 };
 

@@ -137,8 +137,14 @@ class PlatformWindow {
     void ClearResizedFlag() { m_resized = false; }
 
 #ifdef _WIN32
-    HWND GetHWND() const { return m_hwnd; }
-    HINSTANCE GetHInstance() const { return m_hinstance; }
+    /// Returns the native Win32 window handle.
+    ///
+    /// Pass to `IDXGIFactory::CreateSwapChainForHwnd()` for GPU rendering.
+    /// Returns `nullptr` if the window was not created or was destroyed.
+    [[nodiscard]] HWND GetHWND() const { return m_hwnd; }
+
+    /// Returns the HINSTANCE of the application module.
+    [[nodiscard]] HINSTANCE GetHInstance() const { return m_hinstance; }
 #endif
 
   private:

@@ -91,16 +91,59 @@ void LogSetLevel(LogLevel level);
 
 // ── Macros ──────────────────────────────────────────────────────────────────
 
-/// Declare a log category (header). Use in .h files.
+/// Declares a log category in a header file.
+///
+/// Creates an `extern` declaration for the category's `LogCategory` variable.
+/// Must be paired with exactly one `UZ_DEFINE_LOG_CATEGORY` in a `.cpp` file.
+///
+/// # Arguments
+/// * `Name` - Category identifier (e.g., `RHI`, `Scene`, `MySystem`)
+///
+/// # Examples
+/// ```cpp
+/// // In my_system.h
+/// UZ_DECLARE_LOG_CATEGORY(MySystem);
+/// ```
 #define UZ_DECLARE_LOG_CATEGORY(Name) extern ::uz::LogCategory Log##Name
 
-/// Define a log category (source). Use in ONE .cpp file.
+/// Defines a log category in a source file.
+///
+/// Creates the `LogCategory` variable with a compile-time minimum severity level.
+/// Messages below this level are eliminated at compile time (zero overhead).
+///
+/// # Arguments
+/// * `Name` - Category identifier (must match a prior `UZ_DECLARE_LOG_CATEGORY`)
+/// * `MinLevel` - Compile-time minimum: `Trace`, `Debug`, `Info`, `Warning`, `Error`, `Fatal`
+///
+/// # Examples
+/// ```cpp
+/// // In my_system.cpp
+/// UZ_DEFINE_LOG_CATEGORY(MySystem, Info);  // strips Trace/Debug at compile time
+/// ```
 #define UZ_DEFINE_LOG_CATEGORY(Name, MinLevel)                                                     \
     ::uz::LogCategory Log##Name {                                                                  \
         #Name, ::uz::LogLevel::MinLevel                                                            \
     }
 
-/// Core log macro. Checks compile-time minimum before formatting.
+/// Logs a message to a category at the specified severity level.
+///
+/// Messages below the category's compile-time minimum are eliminated with zero overhead.
+/// Messages below the runtime level (set via `LogSetLevel`) are discarded at runtime.
+///
+/// # Arguments
+/// * `Category` - Log category name (must be declared with `UZ_DECLARE_LOG_CATEGORY`)
+/// * `Level` - Severity: `Trace`, `Debug`, `Info`, `Warning`, `Error`, `Fatal`
+/// * `...` - fmt-lib format string and arguments
+///
+/// # Panics
+/// `Fatal` level flushes the logger and calls `std::abort()` after logging.
+///
+/// # Examples
+/// ```cpp
+/// UZ_LOG(RHI, Info, "Device created: {}", deviceName);
+/// UZ_LOG(Scene, Error, "Entity {} not found", entityId);
+/// UZ_LOG(Core, Fatal, "Unrecoverable: {}", reason);  // aborts after logging
+/// ```
 #define UZ_LOG(Category, Level, ...)                                                               \
     do {                                                                                           \
         if (static_cast<uint8_t>(::uz::LogLevel::Level) >=                                         \
@@ -116,7 +159,11 @@ void LogSetLevel(LogLevel level);
         }                                                                                          \
     } while (0)
 
-/// Shipping build strips Debug/Trace entirely.
+/// Global compile-time minimum log level.
+///
+/// In shipping builds (`UZ_SHIPPING` defined), set to `Info` — all `Trace`/`Debug`
+/// messages are stripped at compile time across all categories.
+/// In development builds, set to `Trace` (everything passes compile-time gate).
 #ifdef UZ_SHIPPING
 #define UZ_LOG_COMPILE_MIN ::uz::LogLevel::Info
 #else
@@ -125,6 +172,13 @@ void LogSetLevel(LogLevel level);
 
 namespace uz::detail {
 
+/// Converts `uz::LogLevel` to the equivalent `spdlog::level::level_enum`.
+///
+/// # Arguments
+/// * `level` - Engine log level to convert
+///
+/// # Returns
+/// Corresponding spdlog level. Falls back to `spdlog::level::info` for unrecognized values.
 constexpr spdlog::level::level_enum ToSpdlogLevel(LogLevel level) {
     switch (level) {
     case LogLevel::Trace:
@@ -145,17 +199,22 @@ constexpr spdlog::level::level_enum ToSpdlogLevel(LogLevel level) {
 
 } // namespace uz::detail
 
-// ── Built-in categories ─────────────────────────────────────────────────────
-UZ_DECLARE_LOG_CATEGORY(Core);
-UZ_DECLARE_LOG_CATEGORY(RHI);
-UZ_DECLARE_LOG_CATEGORY(Renderer);
-UZ_DECLARE_LOG_CATEGORY(Scene);
-UZ_DECLARE_LOG_CATEGORY(Physics);
-UZ_DECLARE_LOG_CATEGORY(Audio);
-UZ_DECLARE_LOG_CATEGORY(Input);
-UZ_DECLARE_LOG_CATEGORY(Platform);
-UZ_DECLARE_LOG_CATEGORY(Memory);
-UZ_DECLARE_LOG_CATEGORY(IO);
-UZ_DECLARE_LOG_CATEGORY(Config);
-UZ_DECLARE_LOG_CATEGORY(Window);
-UZ_DECLARE_LOG_CATEGORY(Engine);
+// ── Built-in Log Categories ──────────────────────────────────────────────────
+//
+// Engine-provided categories for each major subsystem.
+// Custom systems should declare their own via UZ_DECLARE_LOG_CATEGORY.
+
+UZ_DECLARE_LOG_CATEGORY(Core);      ///< Core engine systems (startup, shutdown, tick)
+UZ_DECLARE_LOG_CATEGORY(RHI);       ///< Render Hardware Interface (DX12, Vulkan, Metal)
+UZ_DECLARE_LOG_CATEGORY(Renderer);  ///< High-level rendering (passes, materials, lighting)
+UZ_DECLARE_LOG_CATEGORY(Scene);     ///< Scene graph, entity management, transforms
+UZ_DECLARE_LOG_CATEGORY(Physics);   ///< Physics simulation (collision, dynamics, queries)
+UZ_DECLARE_LOG_CATEGORY(Audio);     ///< Audio engine (playback, mixing, spatial)
+UZ_DECLARE_LOG_CATEGORY(Input);     ///< Input handling (keyboard, mouse, gamepad)
+UZ_DECLARE_LOG_CATEGORY(Platform);  ///< Platform abstraction layer (OS, windowing)
+UZ_DECLARE_LOG_CATEGORY(Memory);    ///< Memory management (allocators, pools, tracking)
+UZ_DECLARE_LOG_CATEGORY(IO);        ///< File I/O, asset streaming, virtual filesystem
+UZ_DECLARE_LOG_CATEGORY(Config);    ///< Configuration loading and parsing
+UZ_DECLARE_LOG_CATEGORY(Window);    ///< Window creation, resize, focus events
+UZ_DECLARE_LOG_CATEGORY(Engine);    ///< Top-level engine orchestration
+UZ_DECLARE_LOG_CATEGORY(Asset);     ///< Asset pipeline (import, cook, cache)
