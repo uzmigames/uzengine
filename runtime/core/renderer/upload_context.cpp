@@ -4,7 +4,7 @@
 /// to default-heap destinations via command list CopyBuffer commands.
 
 #include "upload_context.h"
-#include "uz_log.h"
+#include "log.h"
 
 #include <cstring>
 

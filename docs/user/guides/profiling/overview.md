@@ -3,7 +3,7 @@
 UzEngine integrates Tracy for CPU profiling, DX12 debug layers for GPU validation,
 and DRED for crash analysis. Every system exposes stat counters for runtime monitoring.
 
-> **Headers**: `core/profiling/uz_profiler.h`, `core/assertions/uz_assert.h`
+> **Headers**: `core/profiling/profiler.h`, `core/assertions/engine_assert.h`
 
 ## CPU Profiling — Tracy
 

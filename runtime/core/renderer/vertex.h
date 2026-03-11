@@ -6,7 +6,7 @@
 /// via SM6.6 bindless `ResourceDescriptorHeap[index]` in shaders.
 /// No Input Assembler vertex layout is used.
 
-#include "uz_math.h"
+#include "engine_math.h"
 
 #include <cstdint>
 

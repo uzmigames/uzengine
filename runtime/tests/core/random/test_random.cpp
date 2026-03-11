@@ -1,4 +1,4 @@
-#include "uz_random.h"
+#include "random.h"
 
 #include <cmath>
 #include <gtest/gtest.h>

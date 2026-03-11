@@ -4,11 +4,11 @@
 /// Creates HWND for DX12 rendering and dispatches WM_* messages to handlers.
 /// Integrates with InputSystem for input event routing.
 
-#include "uz_platform_window.h"
+#include "platform_window.h"
 
 #ifdef _WIN32
 
-#include "../../core/logging/uz_log.h"
+#include "../../core/logging/log.h"
 
 /// Log category for window lifecycle and event messages.
 UZ_DEFINE_LOG_CATEGORY(Window, Trace);

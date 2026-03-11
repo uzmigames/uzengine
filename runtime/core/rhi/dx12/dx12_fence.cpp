@@ -8,7 +8,7 @@
 #define NOMINMAX
 #include "dx12_fence.h"
 
-#include "uz_log.h"
+#include "log.h"
 
 #include <windows.h>
 

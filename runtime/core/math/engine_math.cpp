@@ -1,7 +1,7 @@
 /// UzEngine Math Library Implementation
 /// SIMD-accelerated vector and matrix operations via DirectXMath
 
-#include "uz_math.h"
+#include "engine_math.h"
 
 #include <algorithm>
 #include <cassert>

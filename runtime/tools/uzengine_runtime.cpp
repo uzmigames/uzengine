@@ -8,13 +8,13 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 
-#include "uz_config.h"
+#include "config.h"
 #include "rhi_config.h"
 #include "rhi_backend.h"
-#include "uz_log.h"
+#include "log.h"
 
 #ifdef _WIN32
-#include "uz_platform_window.h"
+#include "platform_window.h"
 #include "dx12_device.h"
 #include "dx12_swapchain.h"
 #include "dx12_command_list.h"

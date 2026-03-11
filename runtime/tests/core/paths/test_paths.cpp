@@ -1,6 +1,6 @@
 /// Tests for uz_paths — exe-relative resource path resolution.
 
-#include "uz_paths.h"
+#include "paths.h"
 #include <gtest/gtest.h>
 #include <filesystem>
 

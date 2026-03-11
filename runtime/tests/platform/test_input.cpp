@@ -1,4 +1,4 @@
-#include "uz_input.h"
+#include "input.h"
 
 #include <gtest/gtest.h>
 

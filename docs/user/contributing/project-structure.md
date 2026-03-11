@@ -28,37 +28,37 @@ UzEngine/0.2/
 ```
 runtime/
 ├── src/
-│   ├── uz_runtime.h         # Public C API header
-│   └── uz_runtime.cpp       # C API implementation
+│   ├── runtime.h            # Public C API header
+│   └── runtime.cpp          # C API implementation
 │
 ├── core/
 │   ├── logging/
-│   │   ├── uz_log.h          # Logging macros and categories
-│   │   └── uz_log.cpp
+│   │   ├── log.h             # Logging macros and categories
+│   │   └── log.cpp
 │   ├── assertions/
-│   │   ├── uz_assert.h       # UZ_CHECK, UZ_ENSURE, UZ_VERIFY
-│   │   └── uz_assert.cpp
+│   │   ├── engine_assert.h   # UZ_CHECK, UZ_ENSURE, UZ_VERIFY
+│   │   └── engine_assert.cpp
 │   ├── profiling/
-│   │   ├── uz_profiler.h     # Tracy + stat counters
-│   │   └── uz_profiler.cpp
+│   │   ├── profiler.h        # Tracy + stat counters
+│   │   └── profiler.cpp
 │   ├── memory/
-│   │   ├── uz_memory.h       # Own<T>, Ref<T>, RefMut<T>
-│   │   └── uz_allocators.h   # Linear, Pool, Frame allocators
+│   │   ├── engine_memory.h   # Own<T>, Ref<T>, RefMut<T>
+│   │   └── allocators.h      # Linear, Pool, Frame allocators
 │   ├── config/
-│   │   ├── uz_config.h       # .uzproject loader + CLI overrides
-│   │   └── uz_config.cpp
+│   │   ├── config.h          # .uzproject loader + CLI overrides
+│   │   └── config.cpp
 │   ├── math/
-│   │   ├── uz_math.h         # Vec2-4, Mat4, Quat, Transform
-│   │   ├── uz_math.cpp
-│   │   ├── uz_color.h        # LinearColor, sRGBColor
-│   │   └── uz_geometry.h     # Plane, AABB, Frustum
+│   │   ├── engine_math.h     # Vec2-4, Mat4, Quat, Transform
+│   │   ├── engine_math.cpp
+│   │   ├── color.h           # LinearColor, sRGBColor
+│   │   └── geometry.h        # Plane, AABB, Frustum
 │   ├── containers/
-│   │   ├── uz_ring_buffer.h  # Lock-free SPSC queue
-│   │   ├── uz_free_list.h    # Intrusive free list
-│   │   ├── uz_handle_map.h   # Generational handle map
-│   │   └── uz_frame_array.h  # Frame-scoped dynamic array
+│   │   ├── ring_buffer.h     # Lock-free SPSC queue
+│   │   ├── free_list.h       # Intrusive free list
+│   │   ├── handle_map.h      # Generational handle map
+│   │   └── frame_array.h     # Frame-scoped dynamic array
 │   ├── random/
-│   │   └── uz_random.h       # PCG random generator
+│   │   └── random.h          # PCG random generator
 │   └── rhi/
 │       ├── rhi.h             # IRHIDevice, IRHICommandList, etc.
 │       ├── rhi_types.h       # Handles, enums, descriptors
@@ -81,8 +81,8 @@ runtime/
 │
 ├── platform/
 │   └── windows/
-│       ├── uz_platform_window.h/.cpp  # Win32 HWND
-│       └── uz_input.h/.cpp            # Keyboard/mouse/action mapping
+│       ├── platform_window.h/.cpp     # Win32 HWND
+│       └── input.h/.cpp               # Keyboard/mouse/action mapping
 │
 ├── tools/
 │   ├── uzengine_runtime.cpp  # Standalone runtime executable
@@ -96,7 +96,7 @@ runtime/
 
 | New code for... | Location |
 |-----------------|----------|
-| New core system | `core/<system>/uz_<system>.h` + `.cpp` |
+| New core system | `core/<system>/<system>.h` + `.cpp` |
 | New RHI backend | `core/rhi/<backend>/` (e.g., `core/rhi/vulkan/`) |
 | New platform | `platform/<os>/` (e.g., `platform/linux/`) |
 | New tool/demo | `tools/<name>.cpp` + add to `build.zig` |
@@ -107,6 +107,6 @@ runtime/
 
 1. **Max 1500 lines** per file — split at ~1000
 2. **One file = one concern** — `dx12_device.cpp` does device init, `dx12_resource_creation.cpp` does resources
-3. **Tests mirror source** — `tests/core/math/test_vec.cpp` for `core/math/uz_math.h`
+3. **Tests mirror source** — `tests/core/math/test_vec.cpp` for `core/math/engine_math.h`
 4. **No generated artifacts** — tests clean up logs/temp files
 5. **Headers in same directory** — `.h` and `.cpp` live together

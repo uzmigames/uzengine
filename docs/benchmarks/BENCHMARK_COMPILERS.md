@@ -1,7 +1,7 @@
 # Compiler Benchmark — Runtime Build
 
 > **Date**: 2026-03-10
-> **Source**: `runtime/src/uz_runtime.cpp` (minimal bootstrap — 4 functions, ~20 LOC)
+> **Source**: `runtime/src/runtime.cpp` (minimal bootstrap — 4 functions, ~20 LOC)
 > **Machine**: Windows 10 Pro, AMD/Intel x64
 > **Iterations**: 5 per test (warmup + 5 measured)
 

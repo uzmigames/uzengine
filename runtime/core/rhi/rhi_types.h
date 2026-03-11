@@ -8,7 +8,7 @@
 /// # Handle System
 /// GPU resources use typed generational handles (RHIHandle<Tag>) to prevent
 /// use-after-free and dangling references. Handles are value types with
-/// index + generation, matching the pattern in uz_handle_map.h.
+/// index + generation, matching the pattern in handle_map.h.
 
 #include <cstdint>
 

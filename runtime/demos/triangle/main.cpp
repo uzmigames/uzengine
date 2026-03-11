@@ -1,7 +1,7 @@
 /// UzEngine DX12 Triangle Demo — entry point.
 
 #include "triangle_demo.h"
-#include "uz_log.h"
+#include "log.h"
 
 int main() {
     uz::LogInit();

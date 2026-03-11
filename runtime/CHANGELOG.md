@@ -34,7 +34,7 @@
 - **DX12 command list** (`dx12_command_list.h/.cpp`):
   - ID3D12GraphicsCommandList (base interface for Clang/MinGW compat)
   - SM6.6 bindless heap binding on Begin(), SetDescriptorIndex for root constants
-- **Clear screen demo** (`tools/clear_screen_demo.cpp`, `dx12_clear_screen.cpp`):
+- **Clear screen demo** (`demos/clear_screen/`):
   - Animated sine-wave RGB clear color, 6069 FPS on RTX 4090 (0.16ms/frame)
   - Triple-buffered frame pacing with fence synchronization
 - **Agility SDK activation** (`core/rhi/dx12/dx12_agility.cpp`):
@@ -42,7 +42,7 @@
   - DLL deployment: D3D12Core.dll + d3d12SDKLayers.dll → zig-out/bin/D3D12/
   - Unlocks FL 12_2 + SM6.6 on supported hardware (RTX 4090: FL 12_1→12_2, SM6.5→SM6.6)
   - Linked into every executable (demo + runtime), not the static lib
-- **Standalone runtime executable** (`tools/uzengine_runtime.cpp`):
+- **Standalone runtime executable** (`tools/uzengine_runtime.cpp`, `demos/triangle/`):
   - CLI flags: --scene, --width, --height, --headless, --rhi, --shader-model, --gpu-validation
   - Windowed mode with DX12 clear screen render loop, headless mode for CI/testing
   - `zig build run` step for quick iteration
@@ -101,7 +101,7 @@
   - DXC version query (IDxcVersionInfo) — DXC 1.8 confirmed
   - Auto-extracted IIDs via constexpr ParseUUID from CROSS_PLATFORM_UUIDOF
   - 17 unit tests
-- **Engine path resolution** (`core/paths/uz_paths.h/.cpp`):
+- **Engine path resolution** (`core/paths/paths.h/.cpp`):
   - `GetExeDir()`: cached executable directory via platform-native API
   - `ResolveEngineResource()`: resolve relative paths against exe directory
   - Follows UE5/Godot pattern — never CWD, never hardcoded absolute paths
@@ -117,16 +117,16 @@
 - **Post-switch shader compilation**: compile missing shaders before first frame when backend changes
 
 ### Milestone 1.1 — Math & Containers
-- **Math foundation** (`core/math/uz_math.h`) — SIMD-accelerated vectors and matrices via DirectXMath:
+- **Math foundation** (`core/math/engine_math.h`) — SIMD-accelerated vectors and matrices via DirectXMath:
   - Vec2, Vec3, Vec4 with zero-initialization, SIMD operations (dot, cross, normalize)
   - Mat4 with identity default, transforms (point/direction), decomposition, comparisons
   - Quat with slerp, lerp, axis-angle, vector rotation
   - Transform with position/rotation/scale composition, decomposition, interpolation
-- **Geometry types** (`core/math/uz_geometry.h`) — Frustum culling and collision:
+- **Geometry types** (`core/math/geometry.h`) — Frustum culling and collision:
   - Plane (half-space, signed distance for frustum clipping)
   - AABB (axis-aligned bounds with containment, intersection, expansion tests)
   - Frustum (6-plane view frustum extraction from projection matrix, conservative culling)
-- **Color space conversions** (`core/math/uz_color.h`) — Linear ↔ sRGB gamma correction:
+- **Color space conversions** (`core/math/color.h`) — Linear ↔ sRGB gamma correction:
   - LinearColor (float4, linear RGB for rendering)
   - sRGBColor (uint8_t RGBA, sRGB for storage/UI)
   - Gamma-correct conversions, hex color support
@@ -135,11 +135,11 @@
   - FreeList: Intrusive free list for element-stable allocation
   - HandleMap: Generation-based handle → T mapping (safe indices)
   - FrameArray: Temporary allocations with frame lifetime scoping
-- **Memory allocators** (`core/memory/uz_allocators.h`) — Named, budget-tracked:
+- **Memory allocators** (`core/memory/allocators.h`) — Named, budget-tracked:
   - LinearAllocator: Bump pointer with reset (frame/streaming allocation)
   - PoolAllocator: Fixed-size block pool with free chain
   - FrameAllocator: Linear allocator with auto-reset per frame
-- **Random number generation** (`core/random/uz_random.h`) — PCG generator:
+- **Random number generation** (`core/random/random.h`) — PCG generator:
   - PCG (Permuted Congruential Generator) XSH-RR variant
   - 64-bit state, 32-bit output, statistically excellent (passes BigCrush)
   - Seeded and stream variants for deterministic parallel generation

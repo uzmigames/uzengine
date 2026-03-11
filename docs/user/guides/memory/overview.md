@@ -3,7 +3,7 @@
 UzEngine provides purpose-built allocators for different allocation patterns,
 plus a Rust-inspired ownership model for safe resource management.
 
-> **Headers**: `core/memory/uz_allocators.h`, `core/memory/uz_memory.h`
+> **Headers**: `core/memory/allocators.h`, `core/memory/engine_memory.h`
 > **API Reference**: [Core Reference](../../reference/core/index.md)
 
 ## Allocator Types

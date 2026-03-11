@@ -4,7 +4,7 @@
 /// Each StatGroup is used to categorize related counters (draw calls, allocations, etc.)
 /// for easier debugging and performance monitoring.
 
-#include "uz_profiler.h"
+#include "profiler.h"
 
 namespace uz {
 

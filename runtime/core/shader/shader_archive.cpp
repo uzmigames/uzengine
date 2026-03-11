@@ -1,7 +1,7 @@
 /// UzEngine Shader Archive — implementation.
 
 #include "shader_archive.h"
-#include "uz_log.h"
+#include "log.h"
 
 #include <cstring>
 #include <fstream>

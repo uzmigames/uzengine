@@ -5,7 +5,7 @@
 #include <algorithm>
 #include <sstream>
 
-#include "uz_log.h"
+#include "log.h"
 
 UZ_DEFINE_LOG_CATEGORY(Shader, Trace);
 

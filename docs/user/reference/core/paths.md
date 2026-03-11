@@ -2,7 +2,7 @@
 
 Exe-relative path resolution for engine resources and configuration files.
 
-> **Header**: `runtime/core/paths/uz_paths.h` |
+> **Header**: `runtime/core/paths/paths.h` |
 > **API**: [GetExeDir()](#GetExeDir) | [ResolveEngineResource()](#ResolveEngineResource)
 
 ## Overview
@@ -79,7 +79,7 @@ Absolute path to the resource.
 ### Examples
 
 ```cpp
-#include "core/paths/uz_paths.h"
+#include "core/paths/paths.h"
 
 // Relative paths (common case)
 uz::ResolveEngineResource("dxcompiler.dll");
@@ -133,7 +133,7 @@ The Zig build script uses `addInstallBinFile()` to deploy DLLs alongside executa
 ### Loading DXC (HLSL Compiler)
 
 ```cpp
-#include "core/paths/uz_paths.h"
+#include "core/paths/paths.h"
 #include <windows.h>
 
 auto dxcPath = uz::ResolveEngineResource("dxcompiler.dll");
@@ -147,7 +147,7 @@ if (!dxcModule) {
 ### Loading Agility SDK (DX12 Runtime)
 
 ```cpp
-#include "core/paths/uz_paths.h"
+#include "core/paths/paths.h"
 #include <windows.h>
 
 // Set Agility SDK path before calling D3D12GetInterface()
@@ -161,7 +161,7 @@ HRESULT hr = D3D12GetInterface(CLSID_D3D12Device, IID_PPV_ARGS(&device));
 ### Loading Shader Files (Development Mode)
 
 ```cpp
-#include "core/paths/uz_paths.h"
+#include "core/paths/paths.h"
 #include "core/shader/shader_vfs.h"
 
 uz::ShaderVFS vfs;
@@ -177,8 +177,8 @@ vfs.Mount("/game", gameShadersPath.string());
 ### Loading Configuration Files
 
 ```cpp
-#include "core/paths/uz_paths.h"
-#include "core/config/uz_config.h"
+#include "core/paths/paths.h"
+#include "core/config/config.h"
 
 // Load project config
 auto projectPath = uz::ResolveEngineResource("project.uzproject");
@@ -272,8 +272,8 @@ GetModuleFileNameW(nullptr, buffer, MAX_PATH);
 ## Complete Example
 
 ```cpp
-#include "core/paths/uz_paths.h"
-#include "core/config/uz_config.h"
+#include "core/paths/paths.h"
+#include "core/config/config.h"
 #include "core/shader/shader_vfs.h"
 #include <iostream>
 

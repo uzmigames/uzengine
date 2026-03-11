@@ -1,4 +1,4 @@
-#include "uz_log.h"
+#include "log.h"
 
 #include <filesystem>
 #include <gtest/gtest.h>

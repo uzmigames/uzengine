@@ -7,7 +7,7 @@
 /// 4. If no mount matches: return nullopt
 
 #include "shader_vfs.h"
-#include "uz_log.h"
+#include "log.h"
 
 #include <algorithm>
 #include <fstream>

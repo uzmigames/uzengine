@@ -4,7 +4,7 @@
 /// include resolution). Reverse graph is rebuilt each time forward edges change.
 
 #include "shader_dependency_graph.h"
-#include "uz_log.h"
+#include "log.h"
 
 #include <algorithm>
 #include <queue>

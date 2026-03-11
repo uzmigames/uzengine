@@ -1,4 +1,4 @@
-#include "uz_log.h"
+#include "log.h"
 
 #include <mutex>
 #include <spdlog/sinks/rotating_file_sink.h>

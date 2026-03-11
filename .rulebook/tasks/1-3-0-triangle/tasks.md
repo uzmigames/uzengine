@@ -11,7 +11,7 @@
 - [x] 2.3 Create vertex buffer from CPU data (staging + copy via UploadContext)
 - [x] 2.4 Create index buffer (uint16/uint32 via UploadContext)
 - [x] 2.5 Wire `SetVertexBuffer` / `SetIndexBuffer` / `DrawIndexed` in DX12 command list
-- [ ] 2.6 Render hardcoded colored triangle (no texture, no camera)
+- [x] 2.6 Render hardcoded colored triangle (no texture, no camera)
 - [ ] 2.7 Tests: buffer upload, vertex layout validation, draw call smoke test
 
 ## Phase 3: Constant Buffers

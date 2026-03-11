@@ -48,11 +48,11 @@ public:
     void SetScissor(const RHIScissorRect& scissor) override;
     void SetDescriptorIndex(uint32_t rootParamIndex, uint32_t descriptorIndex) override;
 
-    void DrawIndexed(uint32_t indexCount, uint32_t instanceCount,
-                     uint32_t firstIndex, int32_t vertexOffset,
-                     uint32_t firstInstance) override;
-    void Draw(uint32_t vertexCount, uint32_t instanceCount,
-              uint32_t firstVertex, uint32_t firstInstance) override;
+    void DrawIndexed(uint32_t indexCount, uint32_t instanceCount = 1,
+                     uint32_t firstIndex = 0, int32_t vertexOffset = 0,
+                     uint32_t firstInstance = 0) override;
+    void Draw(uint32_t vertexCount, uint32_t instanceCount = 1,
+              uint32_t firstVertex = 0, uint32_t firstInstance = 0) override;
     void Dispatch(uint32_t groupCountX, uint32_t groupCountY, uint32_t groupCountZ) override;
 
     void ResourceBarrier(const RHIBarrierDesc* barriers, uint32_t count) override;

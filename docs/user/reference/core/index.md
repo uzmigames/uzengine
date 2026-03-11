@@ -4,7 +4,7 @@ Core systems shared by all engine subsystems.
 
 > **Guide**: [Architecture](../../guides/architecture.md)
 
-## Logging (`core/logging/uz_log.h`)
+## Logging (`core/logging/log.h`)
 
 ### LogLevel
 
@@ -47,7 +47,7 @@ Built-in categories: Core, RHI, Renderer, Scene, Physics, Audio, Input, Platform
 
 ---
 
-## Assertions (`core/assertions/uz_assert.h`)
+## Assertions (`core/assertions/engine_assert.h`)
 
 | Macro | On Failure | Shipping? |
 |-------|-----------|-----------|
@@ -59,7 +59,7 @@ All macros capture stack traces via `CaptureStackBackTrace` and trigger debugger
 
 ---
 
-## Config (`core/config/uz_config.h`)
+## Config (`core/config/config.h`)
 
 ### Config
 
@@ -80,7 +80,7 @@ CLI overrides use `--key=value` format.
 
 ---
 
-## Path Resolution (`core/paths/uz_paths.h`)
+## Path Resolution (`core/paths/paths.h`)
 
 Engine resource paths are resolved relative to the executable directory.
 
@@ -110,7 +110,7 @@ Result is cached after first call. Platform-native API is used:
 
 ---
 
-## Profiling (`core/profiling/uz_profiler.h`)
+## Profiling (`core/profiling/profiler.h`)
 
 ### Macros
 
@@ -129,7 +129,7 @@ Atomic int64 counters organized by stat group (Core, Memory, Renderer, Physics, 
 
 ## Memory (`core/memory/`)
 
-### Ownership Types (`uz_memory.h`)
+### Ownership Types (`engine_memory.h`)
 
 | Type | Semantics |
 |------|-----------|
@@ -137,7 +137,7 @@ Atomic int64 counters organized by stat group (Core, Memory, Renderer, Physics, 
 | `Ref<T>` | Shared immutable borrow (debug borrow checking) |
 | `RefMut<T>` | Exclusive mutable borrow (debug borrow checking) |
 
-### Allocators (`uz_allocators.h`)
+### Allocators (`allocators.h`)
 
 | Class | Pattern | Alloc | Free |
 |-------|---------|-------|------|

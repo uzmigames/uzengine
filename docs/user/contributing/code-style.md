@@ -14,7 +14,7 @@ conventions enforced across the codebase.
 | Enum values | PascalCase | `RHIFormat::RGBA8Unorm` |
 | Macros | UPPER_SNAKE | `UZ_LOG`, `UZ_CHECK` |
 | Member variables | m_camelCase | `m_device`, `m_bufferPool` |
-| Files | snake_case | `uz_platform_window.cpp`, `dx12_device.h` |
+| Files | snake_case | `platform_window.cpp`, `dx12_device.h` |
 
 ## Documentation
 

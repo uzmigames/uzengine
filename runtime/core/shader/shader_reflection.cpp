@@ -1,7 +1,7 @@
 /// UzEngine Shader Reflection — SPIRV-Reflect implementation.
 
 #include "shader_reflection.h"
-#include "uz_log.h"
+#include "log.h"
 
 #include <spirv_reflect.h>
 

@@ -4,7 +4,7 @@
 /// Maintains per-frame state tracking (current vs previous) for detecting transitions.
 /// Integrates with WM_* messages from PlatformWindow::WndProc.
 
-#include "uz_input.h"
+#include "input.h"
 
 #include <cstring>
 

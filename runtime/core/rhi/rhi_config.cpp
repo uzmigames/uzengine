@@ -4,8 +4,8 @@
 /// and falls back to platform auto-detection.
 
 #include "rhi_config.h"
-#include "uz_config.h"
-#include "uz_log.h"
+#include "config.h"
+#include "log.h"
 
 #include <algorithm>
 #include <cctype>

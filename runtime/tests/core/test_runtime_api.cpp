@@ -1,4 +1,4 @@
-#include "uz_runtime.h"
+#include "runtime.h"
 
 #include <cstring>
 #include <gtest/gtest.h>

@@ -8,7 +8,7 @@
 #include "dx12_swapchain.h"
 #include "dx12_device.h"
 
-#include "uz_log.h"
+#include "log.h"
 
 #include <windows.h>
 

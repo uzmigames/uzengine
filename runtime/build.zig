@@ -64,32 +64,32 @@ pub fn build(b: *std.Build) void {
     // Engine sources — cross-platform core
     runtime_mod.addCSourceFiles(.{
         .root = b.path("src"),
-        .files = &.{"uz_runtime.cpp"},
+        .files = &.{"runtime.cpp"},
         .flags = cpp_flags,
     });
     runtime_mod.addCSourceFiles(.{
         .root = b.path("core/logging"),
-        .files = &.{"uz_log.cpp"},
+        .files = &.{"log.cpp"},
         .flags = cpp_flags,
     });
     runtime_mod.addCSourceFiles(.{
         .root = b.path("core/assertions"),
-        .files = &.{"uz_assert.cpp"},
+        .files = &.{"engine_assert.cpp"},
         .flags = cpp_flags,
     });
     runtime_mod.addCSourceFiles(.{
         .root = b.path("core/profiling"),
-        .files = &.{"uz_profiler.cpp"},
+        .files = &.{"profiler.cpp"},
         .flags = cpp_flags,
     });
     runtime_mod.addCSourceFiles(.{
         .root = b.path("core/config"),
-        .files = &.{"uz_config.cpp"},
+        .files = &.{"config.cpp"},
         .flags = cpp_flags,
     });
     runtime_mod.addCSourceFiles(.{
         .root = b.path("core/math"),
-        .files = &.{"uz_math.cpp"},
+        .files = &.{"engine_math.cpp"},
         .flags = cpp_flags,
     });
 
@@ -103,7 +103,7 @@ pub fn build(b: *std.Build) void {
     // Path resolution (cross-platform)
     runtime_mod.addCSourceFiles(.{
         .root = b.path("core/paths"),
-        .files = &.{"uz_paths.cpp"},
+        .files = &.{"paths.cpp"},
         .flags = cpp_flags,
     });
 
@@ -144,7 +144,7 @@ pub fn build(b: *std.Build) void {
     if (is_windows) {
         runtime_mod.addCSourceFiles(.{
             .root = b.path("platform/windows"),
-            .files = &.{ "uz_platform_window.cpp", "uz_input.cpp" },
+            .files = &.{ "platform_window.cpp", "input.cpp" },
             .flags = cpp_flags,
         });
 
@@ -368,10 +368,16 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run runtime unit tests");
     test_step.dependOn(&run_test.step);
 
-    // ── Runtime & DLL deployment (Windows/DX12 only) ─────────────────────
-    // Demos have their own build.zig in demos/<name>/
+    // ── Demos (Windows/DX12 only) ─────────────────────────────────────────
+    // Each demo owns its build logic in demos/<name>/build.zig
 
     if (is_windows) {
+        const clear_screen_build = @import("demos/clear_screen/build.zig");
+        clear_screen_build.addTo(b, lib, target, optimize, &engine_include_dirs, &thirdparty_include_dirs, &windows_engine_include_dirs, &windows_thirdparty_include_dirs, cpp_flags);
+
+        const triangle_build = @import("demos/triangle/build.zig");
+        triangle_build.addTo(b, lib, target, optimize, &engine_include_dirs, &thirdparty_include_dirs, &windows_engine_include_dirs, &windows_thirdparty_include_dirs, cpp_flags);
+
         const win_sys_libs = [_][]const u8{ "d3d12", "dxgi", "dxguid", "gdi32", "user32" };
 
         // ── UzEngine Runtime ─────────────────────────────────────────────

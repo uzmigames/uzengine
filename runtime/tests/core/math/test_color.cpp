@@ -1,5 +1,5 @@
-#include "uz_color.h"
-#include "uz_math.h"
+#include "color.h"
+#include "engine_math.h"
 
 #include <gtest/gtest.h>
 

@@ -3,7 +3,7 @@
 UzEngine's math library wraps DirectXMath for SIMD-accelerated operations,
 exposed through ergonomic C++ types.
 
-> **Header**: `core/math/uz_math.h`
+> **Header**: `core/math/engine_math.h`
 > **API Reference**: [Math Reference](../../reference/math/index.md)
 
 ## Types

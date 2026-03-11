@@ -6,7 +6,7 @@
 
 #include "shader_source_manager.h"
 #include "shader_vfs.h"
-#include "uz_log.h"
+#include "log.h"
 
 #define XXH_INLINE_ALL
 #include <xxhash.h>

@@ -114,8 +114,8 @@ The best approach for streaming rendered frames to webview panels (e.g. preview,
 │   ├── build.zig                # Zig build system — compiles C++ via zig cc
 │   ├── build.zig.zon            # Zig package manifest
 │   └── src/
-│       ├── uz_runtime.h         # Public C API (extern "C")
-│       └── uz_runtime.cpp       # Engine implementation
+│       ├── runtime.h            # Public C API (extern "C")
+│       └── runtime.cpp          # Engine implementation
 ├── napi/                        # N-API bridge (C++, compiled with cmake-js/MSVC)
 │   ├── CMakeLists.txt           # cmake-js build (links runtime.lib + node.lib + delay-load)
 │   ├── package.json             # @uzmigames/napi — node-addon-api + cmake-js deps

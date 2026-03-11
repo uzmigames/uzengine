@@ -2,7 +2,7 @@
 
 OS abstraction for window management and input.
 
-> **Headers**: `platform/windows/uz_platform_window.h`, `platform/windows/uz_input.h`
+> **Headers**: `platform/windows/platform_window.h`, `platform/windows/input.h`
 > **Guide**: [Platform Abstraction](../../guides/platform/overview.md)
 
 ## PlatformWindow

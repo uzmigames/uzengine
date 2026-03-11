@@ -9,7 +9,7 @@
 #include "dx12_gpu_breadcrumbs.h"
 #include "dx12_device.h"
 #include "dx12_guids.h"
-#include "uz_log.h"
+#include "log.h"
 
 namespace uz {
 

@@ -1,4 +1,4 @@
-#include "uz_profiler.h"
+#include "profiler.h"
 
 #include <gtest/gtest.h>
 

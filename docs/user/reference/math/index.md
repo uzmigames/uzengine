@@ -2,7 +2,7 @@
 
 SIMD-accelerated math types via DirectXMath.
 
-> **Header**: `core/math/uz_math.h`
+> **Header**: `core/math/engine_math.h`
 > **Guide**: [Math Library](../../guides/math/overview.md)
 
 ## Vec2
@@ -136,7 +136,7 @@ t.scale = Vec3(1, 1, 1);
 
 ---
 
-## Geometry Types (`core/math/uz_geometry.h`)
+## Geometry Types (`core/math/geometry.h`)
 
 ### LinearColor
 

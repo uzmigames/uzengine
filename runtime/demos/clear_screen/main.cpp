@@ -4,7 +4,7 @@
 /// Opens a window and renders an animated color-cycling clear screen.
 
 #include "dx12_clear_screen.h"
-#include "uz_log.h"
+#include "log.h"
 
 int main() {
     uz::LogInit();

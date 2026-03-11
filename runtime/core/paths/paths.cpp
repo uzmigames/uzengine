@@ -2,7 +2,7 @@
 ///
 /// Platform-specific executable directory detection with caching.
 
-#include "uz_paths.h"
+#include "paths.h"
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN

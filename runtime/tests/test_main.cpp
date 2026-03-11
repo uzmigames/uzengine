@@ -1,7 +1,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <gtest/gtest.h>
-#include "uz_log.h"
+#include "log.h"
 
 namespace fs = std::filesystem;
 

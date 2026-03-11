@@ -1,5 +1,5 @@
-#include "uz_geometry.h"
-#include "uz_math.h"
+#include "geometry.h"
+#include "engine_math.h"
 
 #include <gtest/gtest.h>
 

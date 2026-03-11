@@ -43,16 +43,16 @@ Media Foundation + WebCodecs.
 
 ```
 runtime/
-├── src/                     # Runtime C API (uz_runtime.h/.cpp)
+├── src/                     # Runtime C API (runtime.h/.cpp)
 ├── core/
-│   ├── logging/             # uz_log.h — spdlog-backed structured logging
-│   ├── assertions/          # uz_assert.h — UZ_CHECK, UZ_ENSURE, UZ_VERIFY
-│   ├── profiling/           # uz_profiler.h — Tracy integration, stat counters
-│   ├── memory/              # uz_memory.h — Own<T>/Ref<T>, uz_allocators.h
-│   ├── config/              # uz_config.h — .uzproject JSON + CLI overrides
-│   ├── math/                # uz_math.h — DirectXMath SIMD wrappers
+│   ├── logging/             # log.h — spdlog-backed structured logging
+│   ├── assertions/          # engine_assert.h — UZ_CHECK, UZ_ENSURE, UZ_VERIFY
+│   ├── profiling/           # profiler.h — Tracy integration, stat counters
+│   ├── memory/              # engine_memory.h — Own<T>/Ref<T>, allocators.h
+│   ├── config/              # config.h — .uzproject JSON + CLI overrides
+│   ├── math/                # engine_math.h — DirectXMath SIMD wrappers
 │   ├── containers/          # Ring buffer, free list, handle map, frame array
-│   ├── random/              # uz_random.h — PCG generator
+│   ├── random/              # random.h — PCG generator
 │   ├── rhi/                 # Abstract interfaces (rhi.h, rhi_types.h)
 │   │   └── dx12/            # DX12 backend implementation
 │   ├── shader/              # Shader pipeline (VFS, compiler, cache, hot-reload)
@@ -64,7 +64,7 @@ runtime/
 │   │   ├── shader_permutation.h   # Feature flag variants
 │   │   ├── shader_hot_reload.h    # FileWatcher + dirty flags
 │   │   └── shader_archive.h       # Shipping mode precompiled archive
-│   └── paths/               # Path resolution (uz_paths.h)
+│   └── paths/               # Path resolution (paths.h)
 ├── platform/
 │   └── windows/             # Win32 window, input system
 ├── tools/                   # Standalone executables (runtime, demo)

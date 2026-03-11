@@ -6,7 +6,7 @@
 
 #include "dx12_descriptor_allocator.h"
 #include "dx12_guids.h"
-#include "uz_log.h"
+#include "log.h"
 
 namespace uz {
 

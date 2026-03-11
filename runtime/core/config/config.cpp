@@ -6,9 +6,9 @@
 /// 3. Merge with engine defaults
 /// 4. Expose via typed getters with dot-notation paths
 
-#include "uz_config.h"
+#include "config.h"
 
-#include "../logging/uz_log.h"
+#include "../logging/log.h"
 
 #include <fstream>
 #include <sstream>

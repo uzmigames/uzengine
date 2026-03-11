@@ -11,8 +11,8 @@
 #include "dx12_swapchain.h"
 #include "dx12_command_list.h"
 #include "dx12_fence.h"
-#include "uz_platform_window.h"
-#include "uz_log.h"
+#include "platform_window.h"
+#include "log.h"
 
 #include <cmath>
 #include <chrono>

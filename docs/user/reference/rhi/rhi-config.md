@@ -155,7 +155,7 @@ Resolves configuration from all sources and returns a ready-to-use `RHIConfig`.
 ### Example
 
 ```cpp
-#include "core/config/uz_config.h"
+#include "core/config/config.h"
 #include "core/rhi/rhi_config.h"
 
 // Load config from .uzproject + CLI args
@@ -339,7 +339,7 @@ Valid values:
 ## Complete Example
 
 ```cpp
-#include "core/config/uz_config.h"
+#include "core/config/config.h"
 #include "core/rhi/rhi_config.h"
 #include "core/rhi/rhi.h"
 

@@ -13,7 +13,7 @@
 #include "shader_permutation.h"
 #include "shader_source_manager.h"
 #include "shader_vfs.h"
-#include "uz_log.h"
+#include "log.h"
 
 #include <algorithm>
 #include <filesystem>

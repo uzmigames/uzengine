@@ -1,7 +1,7 @@
 /// Tests for RHI configuration resolution (rhi_config.h/.cpp).
 
 #include "rhi_config.h"
-#include "uz_config.h"
+#include "config.h"
 
 #include <gtest/gtest.h>
 

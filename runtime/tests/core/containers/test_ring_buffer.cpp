@@ -1,4 +1,4 @@
-#include "uz_ring_buffer.h"
+#include "ring_buffer.h"
 
 #include <gtest/gtest.h>
 

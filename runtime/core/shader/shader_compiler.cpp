@@ -6,8 +6,8 @@
 #ifdef _WIN32
 
 #include "shader_compiler.h"
-#include "uz_log.h"
-#include "uz_paths.h"
+#include "log.h"
+#include "paths.h"
 
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>

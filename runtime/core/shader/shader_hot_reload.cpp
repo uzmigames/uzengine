@@ -5,7 +5,7 @@
 
 #include "shader_hot_reload.h"
 #include "shader_dependency_graph.h"
-#include "uz_log.h"
+#include "log.h"
 
 #include <algorithm>
 #include <cctype>

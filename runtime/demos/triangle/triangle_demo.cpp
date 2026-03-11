@@ -11,12 +11,12 @@
 #include "dx12_swapchain.h"
 #include "dx12_command_list.h"
 #include "dx12_fence.h"
-#include "uz_platform_window.h"
-#include "uz_log.h"
+#include "platform_window.h"
+#include "log.h"
 #include "vertex.h"
 #include "upload_context.h"
 #include "shader_compiler.h"
-#include "uz_paths.h"
+#include "paths.h"
 
 #include <chrono>
 #include <d3d12.h>

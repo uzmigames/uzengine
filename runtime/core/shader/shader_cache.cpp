@@ -4,7 +4,7 @@
 /// Hash is formatted as 16-char lowercase hex for filenames.
 
 #include "shader_cache.h"
-#include "uz_log.h"
+#include "log.h"
 
 #include <filesystem>
 #include <fstream>

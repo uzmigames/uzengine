@@ -1,4 +1,4 @@
-#include "uz_frame_array.h"
+#include "frame_array.h"
 
 #include <gtest/gtest.h>
 

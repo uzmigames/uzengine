@@ -3,7 +3,7 @@
 UzEngine isolates OS-specific code in the `platform/` directory. Currently
 Windows is the only implemented platform; Linux and macOS support is planned.
 
-> **Headers**: `platform/windows/uz_platform_window.h`, `platform/windows/uz_input.h`
+> **Headers**: `platform/windows/platform_window.h`, `platform/windows/input.h`
 > **API Reference**: [Platform Reference](../../reference/platform/index.md)
 
 ## Window
@@ -79,7 +79,7 @@ The Zig build system automatically excludes platform-specific code on other targ
 if (is_windows) {
     runtime_mod.addCSourceFiles(.{
         .root = b.path("platform/windows"),
-        .files = &.{ "uz_platform_window.cpp", "uz_input.cpp" },
+        .files = &.{ "platform_window.cpp", "input.cpp" },
     });
 }
 ```

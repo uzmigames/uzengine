@@ -5,7 +5,7 @@ Zero-copy, allocation-friendly data structures.
 > **Headers**: `core/containers/`
 > **Guide**: [Memory & Allocators](../../guides/memory/overview.md)
 
-## RingBuffer\<T, N\> (`uz_ring_buffer.h`)
+## RingBuffer\<T, N\> (`ring_buffer.h`)
 
 Lock-free SPSC (single-producer, single-consumer) circular queue.
 Uses acquire/release memory ordering for thread safety.
@@ -26,7 +26,7 @@ queue.IsFull();
 
 ---
 
-## FreeList\<T\> (`uz_free_list.h`)
+## FreeList\<T\> (`free_list.h`)
 
 Intrusive free list for element-stable O(1) allocation. Elements are
 stored in a flat vector; freed slots are chained together.
@@ -43,7 +43,7 @@ pool.Free(idx);                // O(1), chains to free list
 
 ---
 
-## HandleMap\<T\> (`uz_handle_map.h`)
+## HandleMap\<T\> (`handle_map.h`)
 
 Generational handle → T mapping. Handles include a generation counter
 so that stale handles (pointing to freed/reallocated slots) are detected.
@@ -69,7 +69,7 @@ meshes.Get(h);                  // nullptr (generation mismatch)
 
 ---
 
-## FrameArray\<T\> (`uz_frame_array.h`)
+## FrameArray\<T\> (`frame_array.h`)
 
 Temporary dynamic array with frame lifetime. Backed by a linear allocator
 that resets each frame.

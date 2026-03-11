@@ -1,5 +1,5 @@
-#include "uz_config.h"
-#include "uz_log.h"
+#include "config.h"
+#include "log.h"
 
 #include <filesystem>
 #include <gtest/gtest.h>

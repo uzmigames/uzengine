@@ -1,6 +1,6 @@
 /// UzEngine Runtime Implementation
 ///
-/// This file implements the C API exported by uz_runtime.h.
+/// This file implements the C API exported by runtime.h.
 /// All functions are defined in extern "C" blocks for C calling convention compatibility.
 ///
 /// # Current Status (Phase 1)
@@ -8,7 +8,7 @@
 /// - Init/shutdown stubs: temporary (to be replaced with GPU init)
 /// - Full GPU pipeline: in development
 
-#include "uz_runtime.h"
+#include "runtime.h"
 
 extern "C" {
 

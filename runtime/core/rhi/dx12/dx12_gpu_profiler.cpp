@@ -8,7 +8,7 @@
 #include "dx12_gpu_profiler.h"
 #include "dx12_device.h"
 #include "dx12_guids.h"
-#include "uz_log.h"
+#include "log.h"
 
 namespace uz {
 

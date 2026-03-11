@@ -103,7 +103,7 @@ relative paths against the executable directory — never CWD, never absolute pa
 ## Engine Resource Path Convention
 
 All engine-internal resources (DLLs, shaders, configs) are discovered relative
-to the running executable via `uz::GetExeDir()` (defined in `core/paths/uz_paths.h`).
+to the running executable via `uz::GetExeDir()` (defined in `core/paths/paths.h`).
 
 | Pattern | Description |
 |---------|-------------|

@@ -10,7 +10,7 @@
 #include "dx12_guids.h"
 #include "D3D12MemAlloc.h"
 #include "d3dx12.h"
-#include "uz_log.h"
+#include "log.h"
 
 namespace uz {
 
