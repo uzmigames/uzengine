@@ -213,6 +213,17 @@ Clone-Repo -Name "directxmath" `
     -Branch "oct2024" `
     -RemoveDirs @("SHMath", "XDSP", "Spherical", "Extensions", "MatrixStack", "Tests", "Utilities")
 
+# SAL stub for non-MSVC platforms (DirectXMath requires sal.h)
+$salPath = Join-Path $ThirdPartyDir "directxmath\Inc\sal.h"
+if (-not (Test-Path $salPath)) {
+    Write-Host "  [sal.h] downloading cross-platform stub..." -ForegroundColor Yellow
+    Download-File `
+        -Url "https://raw.githubusercontent.com/dotnet/runtime/main/src/coreclr/pal/inc/rt/sal.h" `
+        -OutFile $salPath
+} else {
+    Write-Host "  [sal.h] already exists, skipping." -ForegroundColor Green
+}
+
 # glm (math, header-only)
 Clone-Repo -Name "glm" `
     -Url "https://github.com/g-truc/glm.git" `

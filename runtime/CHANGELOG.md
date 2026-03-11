@@ -42,6 +42,11 @@
   - Microsoft directx-headers (SDK 614) with correct GUIDs
   - Struct-return ABI: out-parameter form for GetCPUDescriptorHandleForHeapStart etc.
   - Base COM interfaces only (ID3D12Device, ID3D12GraphicsCommandList)
+- **Cross-platform build** (`build.zig`):
+  - Platform-aware: Windows-only code (DX12, platform/windows) guarded behind `is_windows`
+  - DirectXMath compiles on Linux via dotnet/runtime sal.h stub (SAL annotations as no-ops)
+  - Cross-compile validated: `zig build -Dtarget=x86_64-linux-gnu` passes
+  - Setup script (`setup.ps1`) downloads sal.h automatically after DirectXMath clone
 - **195 unit tests** — 35 RHI type/interface/resource compile tests + all existing tests pass
 
 ### Shader Pipeline Architecture (docs only)

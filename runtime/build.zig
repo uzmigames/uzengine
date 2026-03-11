@@ -4,6 +4,8 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    const is_windows = target.result.os.tag == .windows;
+
     const cpp_flags = &.{ "-std=c++17", "-DSPDLOG_COMPILED_LIB" };
     const tp = "thirdparty/";
 
@@ -20,24 +22,30 @@ pub fn build(b: *std.Build) void {
         "core/containers",
         "core/random",
         "core/rhi",
-        "platform/windows",
     };
 
     const thirdparty_include_dirs = [_][]const u8{
         tp ++ "spdlog/include",
         tp ++ "tracy/public",
         tp ++ "mimalloc/include",
-        tp ++ "d3d12ma/include",
-        tp ++ "directx_headers/include",
-        tp ++ "directx_headers/include/directx",
         tp ++ "directxmath/Inc",
-        tp ++ "agility/include",
-        tp ++ "dxc/inc",
         tp ++ "glm",
         tp ++ "nlohmann",
         tp ++ "atomic_queue/include",
         tp ++ "spirv-reflect/include",
         tp ++ "xxhash",
+    };
+
+    const windows_engine_include_dirs = [_][]const u8{
+        "platform/windows",
+    };
+
+    const windows_thirdparty_include_dirs = [_][]const u8{
+        tp ++ "d3d12ma/include",
+        tp ++ "directx_headers/include",
+        tp ++ "directx_headers/include/directx",
+        tp ++ "agility/include",
+        tp ++ "dxc/inc",
     };
 
     // ── Runtime static library ───────────────────────────────────────────
@@ -49,7 +57,7 @@ pub fn build(b: *std.Build) void {
     runtime_mod.link_libc = true;
     runtime_mod.link_libcpp = true;
 
-    // Engine sources — add new .cpp files here (one place only)
+    // Engine sources — cross-platform core
     runtime_mod.addCSourceFiles(.{
         .root = b.path("src"),
         .files = &.{"uz_runtime.cpp"},
@@ -80,36 +88,40 @@ pub fn build(b: *std.Build) void {
         .files = &.{"uz_math.cpp"},
         .flags = cpp_flags,
     });
-    runtime_mod.addCSourceFiles(.{
-        .root = b.path("platform/windows"),
-        .files = &.{ "uz_platform_window.cpp", "uz_input.cpp" },
-        .flags = cpp_flags,
-    });
 
-    // RHI DX12 backend
-    runtime_mod.addCSourceFiles(.{
-        .root = b.path("core/rhi/dx12"),
-        .files = &.{
-            "dx12_device.cpp",
-            "dx12_swapchain.cpp",
-            "dx12_fence.cpp",
-            "dx12_command_list.cpp",
-            "dx12_descriptor_allocator.cpp",
-            "dx12_resource_creation.cpp",
-            "dx12_gpu_profiler.cpp",
-            "dx12_gpu_breadcrumbs.cpp",
-        },
-        .flags = cpp_flags,
-    });
-    runtime_mod.addIncludePath(b.path("core/rhi/dx12"));
+    // Windows-only sources
+    if (is_windows) {
+        runtime_mod.addCSourceFiles(.{
+            .root = b.path("platform/windows"),
+            .files = &.{ "uz_platform_window.cpp", "uz_input.cpp" },
+            .flags = cpp_flags,
+        });
 
-    // Thirdparty — D3D12MA (compiled via wrapper for Clang/MinGW GUID compatibility)
-    runtime_mod.addCSourceFiles(.{
-        .root = b.path("core/rhi/dx12"),
-        .files = &.{"dx12_d3d12ma.cpp"},
-        .flags = &.{ "-std=c++17", "-Wno-undefined-bool-conversion", "-Wno-switch", "-Wno-unused-private-field" },
-    });
-    runtime_mod.addIncludePath(b.path(tp ++ "d3d12ma/src"));
+        // RHI DX12 backend
+        runtime_mod.addCSourceFiles(.{
+            .root = b.path("core/rhi/dx12"),
+            .files = &.{
+                "dx12_device.cpp",
+                "dx12_swapchain.cpp",
+                "dx12_fence.cpp",
+                "dx12_command_list.cpp",
+                "dx12_descriptor_allocator.cpp",
+                "dx12_resource_creation.cpp",
+                "dx12_gpu_profiler.cpp",
+                "dx12_gpu_breadcrumbs.cpp",
+            },
+            .flags = cpp_flags,
+        });
+        runtime_mod.addIncludePath(b.path("core/rhi/dx12"));
+
+        // Thirdparty — D3D12MA (compiled via wrapper for Clang/MinGW GUID compatibility)
+        runtime_mod.addCSourceFiles(.{
+            .root = b.path("core/rhi/dx12"),
+            .files = &.{"dx12_d3d12ma.cpp"},
+            .flags = &.{ "-std=c++17", "-Wno-undefined-bool-conversion", "-Wno-switch", "-Wno-unused-private-field" },
+        });
+        runtime_mod.addIncludePath(b.path(tp ++ "d3d12ma/src"));
+    }
 
     // Thirdparty — spdlog
     runtime_mod.addCSourceFiles(.{
@@ -133,9 +145,15 @@ pub fn build(b: *std.Build) void {
         .flags = &.{ "-std=c++17", "-DTRACY_ENABLE", "-DTRACY_ON_DEMAND" },
     });
 
-    // Include paths
+    // Include paths — cross-platform
     for (engine_include_dirs) |dir| runtime_mod.addIncludePath(b.path(dir));
     for (thirdparty_include_dirs) |dir| runtime_mod.addIncludePath(b.path(dir));
+
+    // Include paths — Windows-only
+    if (is_windows) {
+        for (windows_engine_include_dirs) |dir| runtime_mod.addIncludePath(b.path(dir));
+        for (windows_thirdparty_include_dirs) |dir| runtime_mod.addIncludePath(b.path(dir));
+    }
 
     const lib = b.addLibrary(.{
         .linkage = .static,
@@ -143,10 +161,12 @@ pub fn build(b: *std.Build) void {
         .root_module = runtime_mod,
     });
 
-    // DX12 system libraries
-    lib.linkSystemLibrary("d3d12");
-    lib.linkSystemLibrary("dxgi");
-    lib.linkSystemLibrary("dxguid");
+    // DX12 system libraries (Windows only)
+    if (is_windows) {
+        lib.linkSystemLibrary("d3d12");
+        lib.linkSystemLibrary("dxgi");
+        lib.linkSystemLibrary("dxguid");
+    }
 
     b.installArtifact(lib);
 
@@ -215,70 +235,93 @@ pub fn build(b: *std.Build) void {
         .files = &.{"test_random.cpp"},
         .flags = cpp_flags,
     });
-    test_mod.addCSourceFiles(.{
-        .root = b.path("tests/core/rhi"),
-        .files = &.{ "test_rhi_types.cpp", "test_dx12_resources.cpp" },
-        .flags = cpp_flags,
-    });
-    test_mod.addCSourceFiles(.{
-        .root = b.path("tests/platform"),
-        .files = &.{"test_input.cpp"},
-        .flags = cpp_flags,
-    });
+
+    // Windows-only test sources
+    if (is_windows) {
+        test_mod.addCSourceFiles(.{
+            .root = b.path("tests/core/rhi"),
+            .files = &.{ "test_rhi_types.cpp", "test_dx12_resources.cpp" },
+            .flags = cpp_flags,
+        });
+        test_mod.addCSourceFiles(.{
+            .root = b.path("tests/platform"),
+            .files = &.{"test_input.cpp"},
+            .flags = cpp_flags,
+        });
+    } else {
+        // RHI type tests are cross-platform (no DX12 dependency)
+        test_mod.addCSourceFiles(.{
+            .root = b.path("tests/core/rhi"),
+            .files = &.{"test_rhi_types.cpp"},
+            .flags = cpp_flags,
+        });
+    }
 
     // Engine + thirdparty headers for tests
     for (engine_include_dirs) |dir| test_mod.addIncludePath(b.path(dir));
     for (thirdparty_include_dirs) |dir| test_mod.addIncludePath(b.path(dir));
-    test_mod.addIncludePath(b.path("core/rhi/dx12"));
+
+    if (is_windows) {
+        test_mod.addIncludePath(b.path("core/rhi/dx12"));
+        for (windows_engine_include_dirs) |dir| test_mod.addIncludePath(b.path(dir));
+        for (windows_thirdparty_include_dirs) |dir| test_mod.addIncludePath(b.path(dir));
+    }
 
     const test_exe = b.addExecutable(.{
         .name = "test_runtime",
         .root_module = test_mod,
     });
     test_exe.linkLibrary(lib);
-    test_exe.linkSystemLibrary("d3d12");
-    test_exe.linkSystemLibrary("dxgi");
-    test_exe.linkSystemLibrary("dxguid");
+
+    if (is_windows) {
+        test_exe.linkSystemLibrary("d3d12");
+        test_exe.linkSystemLibrary("dxgi");
+        test_exe.linkSystemLibrary("dxguid");
+    }
+
     b.installArtifact(test_exe);
 
     const run_test = b.addRunArtifact(test_exe);
     const test_step = b.step("test", "Run runtime unit tests");
     test_step.dependOn(&run_test.step);
 
-    // ── Clear screen demo executable ─────────────────────────────────────
+    // ── Clear screen demo executable (Windows/DX12 only) ─────────────────
 
-    const demo_mod = b.createModule(.{
-        .target = target,
-        .optimize = optimize,
-    });
-    demo_mod.link_libc = true;
-    demo_mod.link_libcpp = true;
+    if (is_windows) {
+        const demo_mod = b.createModule(.{
+            .target = target,
+            .optimize = optimize,
+        });
+        demo_mod.link_libc = true;
+        demo_mod.link_libcpp = true;
 
-    demo_mod.addCSourceFiles(.{
-        .root = b.path("tools"),
-        .files = &.{ "clear_screen_demo.cpp", "dx12_clear_screen.cpp" },
-        .flags = cpp_flags,
-    });
+        demo_mod.addCSourceFiles(.{
+            .root = b.path("tools"),
+            .files = &.{ "clear_screen_demo.cpp", "dx12_clear_screen.cpp" },
+            .flags = cpp_flags,
+        });
 
-    for (engine_include_dirs) |dir| demo_mod.addIncludePath(b.path(dir));
-    for (thirdparty_include_dirs) |dir| demo_mod.addIncludePath(b.path(dir));
-    demo_mod.addIncludePath(b.path("core/rhi/dx12"));
-    demo_mod.addIncludePath(b.path("tools"));
+        for (engine_include_dirs) |dir| demo_mod.addIncludePath(b.path(dir));
+        for (thirdparty_include_dirs) |dir| demo_mod.addIncludePath(b.path(dir));
+        for (windows_engine_include_dirs) |dir| demo_mod.addIncludePath(b.path(dir));
+        for (windows_thirdparty_include_dirs) |dir| demo_mod.addIncludePath(b.path(dir));
+        demo_mod.addIncludePath(b.path("core/rhi/dx12"));
+        demo_mod.addIncludePath(b.path("tools"));
 
-    const demo_exe = b.addExecutable(.{
-        .name = "clear_screen_demo",
-        .root_module = demo_mod,
-    });
-    demo_exe.linkLibrary(lib);
-    demo_exe.linkSystemLibrary("d3d12");
-    demo_exe.linkSystemLibrary("dxgi");
-    demo_exe.linkSystemLibrary("dxguid");
-    demo_exe.linkSystemLibrary("gdi32");
-    demo_exe.linkSystemLibrary("user32");
-    // Console subsystem for log output (not .Windows)
-    b.installArtifact(demo_exe);
+        const demo_exe = b.addExecutable(.{
+            .name = "clear_screen_demo",
+            .root_module = demo_mod,
+        });
+        demo_exe.linkLibrary(lib);
+        demo_exe.linkSystemLibrary("d3d12");
+        demo_exe.linkSystemLibrary("dxgi");
+        demo_exe.linkSystemLibrary("dxguid");
+        demo_exe.linkSystemLibrary("gdi32");
+        demo_exe.linkSystemLibrary("user32");
+        b.installArtifact(demo_exe);
 
-    const run_demo = b.addRunArtifact(demo_exe);
-    const demo_step = b.step("demo", "Run DX12 clear screen demo");
-    demo_step.dependOn(&run_demo.step);
+        const run_demo = b.addRunArtifact(demo_exe);
+        const demo_step = b.step("demo", "Run DX12 clear screen demo");
+        demo_step.dependOn(&run_demo.step);
+    }
 }
