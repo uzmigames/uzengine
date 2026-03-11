@@ -58,13 +58,13 @@ On DX12, `CreateRHIDevice` initializes the full stack:
 2. **DXGI factory** — Adapter enumeration
 3. **Adapter selection** — GPU device (respects `--adapter`)
 4. **D3D12 Device** — Feature level auto-detect (12_2 → 12_0)
-5. **Shader model negotiation** — Probes SM6.6 → SM5.0, adapts root signature
+5. **Shader model negotiation** — Probes SM6.7 → SM6.6 → SM5.0, adapts root signature
 6. **D3D12MA allocator** — GPU memory management
-7. **Descriptor heaps** — 1M CBV/SRV/UAV (SM6.6 bindless), 2048 samplers, 256 RTV, 64 DSV
+7. **Descriptor heaps** — 1M CBV/SRV/UAV (SM6.6+ bindless), 2048 samplers, 256 RTV, 64 DSV
 8. **Command queues** — Direct (graphics) + Copy
 
 > **Agility SDK**: The runtime exports `D3D12SDKVersion` and `D3D12SDKPath` to activate
-> the bundled Agility SDK, enabling Feature Level 12.2 and SM6.6 on supported hardware.
+> the bundled Agility SDK, enabling Feature Level 12.2 and SM6.7 on supported hardware.
 
 ## Swapchain and Frame Pacing
 

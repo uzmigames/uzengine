@@ -110,6 +110,7 @@ CLI (--rhi=dx12)  >  .uzproject (render.rhi)  >  platform auto-detect
 
 | Backend | Status | Platform |
 |---------|--------|----------|
+| DX12 SM6.7 | Implemented | Windows 10+ |
 | DX12 SM6.6 | Implemented | Windows 10+ |
 | DX12 SM5.x | Fallback | Windows 10+ |
 | Vulkan | Planned | Windows, Linux |
@@ -121,10 +122,10 @@ The DX12 backend probes hardware capabilities at device creation:
 
 1. Check `D3D12_FEATURE_SHADER_MODEL` for highest supported SM
 2. Check `ResourceBindingTier` for Tier 3 (required for SM6.6 bindless)
-3. Select highest supported: SM6.6 → SM6.0 → SM5.1 → SM5.0
-4. Adapt root signature: `DIRECTLY_INDEXED` flags only for SM6.6
+3. Select highest supported: SM6.7 → SM6.6 → SM6.0 → SM5.1 → SM5.0
+4. Adapt root signature: `DIRECTLY_INDEXED` flags only for SM6.6+
 
-The Agility SDK bundled with UzEngine enables SM6.6 on hardware that supports it,
+The Agility SDK bundled with UzEngine enables SM6.7 on hardware that supports it,
 regardless of the OS-installed D3D12 runtime version.
 
 ## DX12 Backend Details

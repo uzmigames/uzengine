@@ -19,7 +19,13 @@ enum class ShaderModel : uint8_t {
     SM5_0,   ///< DirectX 11 baseline
     SM5_1,   ///< DirectX 11.3+ (dynamic indexing)
     SM6_0,   ///< DirectX 12 baseline (wave intrinsics)
+    SM6_1,   ///< Barycentric intrinsics, SV_ViewID
+    SM6_2,   ///< Float16, denorm mode control
+    SM6_3,   ///< DirectX Raytracing (DXR 1.0)
+    SM6_4,   ///< Variable rate shading, low-precision packed dot
+    SM6_5,   ///< DXR 1.1, mesh shaders, sampler feedback
     SM6_6,   ///< DirectX 12 Ultimate (bindless, dynamic resources)
+    SM6_7,   ///< Advanced texture ops, relaxed precision
 };
 
 /// Resolved RHI configuration from all sources.
@@ -44,7 +50,7 @@ struct RHIConfig {
 ///
 /// CLI flag formats:
 /// - `--rhi dx12|vulkan|metal|null`
-/// - `--shader-model sm5|sm5.1|sm6|sm6.6`
+/// - `--shader-model sm5|sm5.1|sm6|sm6.1|sm6.2|sm6.3|sm6.4|sm6.5|sm6.6|sm6.7`
 /// - `--gpu-validation` (boolean flag)
 /// - `--gpu-breadcrumbs` (boolean flag)
 /// - `--adapter N` (GPU index)

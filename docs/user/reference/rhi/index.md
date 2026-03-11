@@ -200,7 +200,13 @@ enum class ShaderModel : uint8_t {
     SM5_0,  // DX11 baseline
     SM5_1,  // DX11.3+ (dynamic indexing)
     SM6_0,  // DX12 baseline (wave intrinsics)
-    SM6_6,  // DX12 Ultimate (bindless)
+    SM6_1,  // Barycentric intrinsics, SV_ViewID
+    SM6_2,  // Float16, denorm mode control
+    SM6_3,  // DirectX Raytracing (DXR 1.0)
+    SM6_4,  // Variable rate shading, low-precision packed dot
+    SM6_5,  // DXR 1.1, mesh shaders, sampler feedback
+    SM6_6,  // DX12 Ultimate (bindless, dynamic resources)
+    SM6_7,  // Advanced texture ops, relaxed precision
 };
 ```
 
@@ -209,7 +215,7 @@ enum class ShaderModel : uint8_t {
 ```cpp
 struct RHIConfig {
     RHIBackend backend;          // DX12, Vulkan, Metal, Null
-    ShaderModel shaderModel;     // SM5_0..SM6_6
+    ShaderModel shaderModel;     // SM5_0..SM6_7
     bool enableValidation;
     bool enableGpuValidation;
     bool enableBreadcrumbs;
@@ -223,7 +229,7 @@ struct RHIConfig {
 |----------|-------------|
 | `ResolveRHIConfig(Config)` | Resolve from CLI > .uzproject > auto-detect |
 | `RHIBackendToString(backend)` | "DX12", "Vulkan", etc. |
-| `ShaderModelToString(sm)` | "SM5.0", "SM6.6", etc. |
+| `ShaderModelToString(sm)` | "SM5.0", "SM6.6", "SM6.7", etc. |
 | `ToDeviceDesc(config)` | Convert to RHIDeviceDesc |
 
 ---

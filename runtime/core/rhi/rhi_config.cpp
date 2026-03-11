@@ -32,7 +32,13 @@ const char* ShaderModelToString(ShaderModel sm) {
         case ShaderModel::SM5_0: return "SM5.0";
         case ShaderModel::SM5_1: return "SM5.1";
         case ShaderModel::SM6_0: return "SM6.0";
+        case ShaderModel::SM6_1: return "SM6.1";
+        case ShaderModel::SM6_2: return "SM6.2";
+        case ShaderModel::SM6_3: return "SM6.3";
+        case ShaderModel::SM6_4: return "SM6.4";
+        case ShaderModel::SM6_5: return "SM6.5";
         case ShaderModel::SM6_6: return "SM6.6";
+        case ShaderModel::SM6_7: return "SM6.7";
     }
     return "Unknown";
 }
@@ -63,13 +69,23 @@ bool ParseBackend(const std::string& raw, RHIBackend& out) {
 }
 
 /// Parses a shader model string (case-insensitive).
-/// Accepts: "sm5", "sm5.0", "sm5.1", "sm6", "sm6.0", "sm6.6"
+/// Accepts: "sm5", "sm5.0", "5_0", "5.0", "sm5.1", "5_1", "5.1",
+///          "sm6", "sm6.0", "6_0", "6.0", "sm6.6", "6_6", "6.6"
 bool ParseShaderModel(const std::string& raw, ShaderModel& out) {
-    const std::string s = ToLower(raw);
-    if (s == "sm5" || s == "sm5.0")  { out = ShaderModel::SM5_0; return true; }
-    if (s == "sm5.1")                { out = ShaderModel::SM5_1; return true; }
-    if (s == "sm6" || s == "sm6.0")  { out = ShaderModel::SM6_0; return true; }
-    if (s == "sm6.6")                { out = ShaderModel::SM6_6; return true; }
+    std::string s = ToLower(raw);
+    // Normalize: strip "sm" prefix, replace '_' with '.'
+    if (s.rfind("sm", 0) == 0) s = s.substr(2);
+    std::replace(s.begin(), s.end(), '_', '.');
+    if (s == "5" || s == "5.0")  { out = ShaderModel::SM5_0; return true; }
+    if (s == "5.1")              { out = ShaderModel::SM5_1; return true; }
+    if (s == "6" || s == "6.0")  { out = ShaderModel::SM6_0; return true; }
+    if (s == "6.1")              { out = ShaderModel::SM6_1; return true; }
+    if (s == "6.2")              { out = ShaderModel::SM6_2; return true; }
+    if (s == "6.3")              { out = ShaderModel::SM6_3; return true; }
+    if (s == "6.4")              { out = ShaderModel::SM6_4; return true; }
+    if (s == "6.5")              { out = ShaderModel::SM6_5; return true; }
+    if (s == "6.6")              { out = ShaderModel::SM6_6; return true; }
+    if (s == "6.7")              { out = ShaderModel::SM6_7; return true; }
     return false;
 }
 

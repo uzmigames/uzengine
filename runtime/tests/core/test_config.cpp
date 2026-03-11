@@ -1,12 +1,19 @@
 #include "uz_config.h"
 #include "uz_log.h"
 
+#include <filesystem>
 #include <gtest/gtest.h>
 #include <string>
 
+namespace fs = std::filesystem;
+
 class ConfigTest : public ::testing::Test {
   protected:
-    void SetUp() override { uz::LogInit(); }
+    void SetUp() override {
+        auto tmp = fs::temp_directory_path() / "uzengine_test";
+        fs::create_directories(tmp);
+        uz::LogInit((tmp / "uzengine.log").string().c_str());
+    }
     void TearDown() override { uz::LogShutdown(); }
 };
 

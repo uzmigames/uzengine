@@ -257,7 +257,9 @@ void DX12Device::NegotiateShaderModel() {
     }
 
     // Negotiate: pick the highest SM the hardware actually supports
-    if (hasTier3 && smData.HighestShaderModel >= D3D_SHADER_MODEL_6_6) {
+    if (hasTier3 && smData.HighestShaderModel >= D3D_SHADER_MODEL_6_7) {
+        m_shaderModel = ShaderModel::SM6_7;
+    } else if (hasTier3 && smData.HighestShaderModel >= D3D_SHADER_MODEL_6_6) {
         m_shaderModel = ShaderModel::SM6_6;
     } else if (smData.HighestShaderModel >= D3D_SHADER_MODEL_6_0) {
         m_shaderModel = ShaderModel::SM6_0;

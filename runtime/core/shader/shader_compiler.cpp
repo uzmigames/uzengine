@@ -184,7 +184,13 @@ std::wstring ShaderCompiler::GetTargetProfile(ShaderStageCompile stage,
     switch (model) {
         case ShaderModelCompile::SM5_1: version = L"5_1"; break;
         case ShaderModelCompile::SM6_0: version = L"6_0"; break;
+        case ShaderModelCompile::SM6_1: version = L"6_1"; break;
+        case ShaderModelCompile::SM6_2: version = L"6_2"; break;
+        case ShaderModelCompile::SM6_3: version = L"6_3"; break;
+        case ShaderModelCompile::SM6_4: version = L"6_4"; break;
+        case ShaderModelCompile::SM6_5: version = L"6_5"; break;
         case ShaderModelCompile::SM6_6: version = L"6_6"; break;
+        case ShaderModelCompile::SM6_7: version = L"6_7"; break;
     }
 
     return std::wstring(prefix) + L"_" + version;

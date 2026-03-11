@@ -9,7 +9,7 @@
   - IRHIDevice, IRHICommandList, IRHISwapChain, IRHIFence — pure virtual interfaces
   - RHIHandle<Tag> generational handles (Buffer, Texture, Pipeline, Shader, Sampler)
   - 20+ enums, 15+ descriptor structs, backend factory (CreateRHIDevice/DestroyRHIDevice)
-- **DX12 SM6.6 backend** (`core/rhi/dx12/`):
+- **DX12 SM6.7 backend** (`core/rhi/dx12/`):
   - DX12Device: IDXGIFactory6 + IDXGIAdapter4 + ID3D12Device, feature level auto-detect (12_2→12_0)
   - D3D12MA v3.1.0 integration for GPU memory management
   - Global descriptor heaps: CBV_SRV_UAV (1M, SM6.6 bindless), Sampler (2048), RTV (256), DSV (64)

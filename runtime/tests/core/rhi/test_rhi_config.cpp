@@ -215,7 +215,13 @@ TEST(RHIConfig, ShaderModelToStringAllValues) {
     EXPECT_STREQ(ShaderModelToString(ShaderModel::SM5_0), "SM5.0");
     EXPECT_STREQ(ShaderModelToString(ShaderModel::SM5_1), "SM5.1");
     EXPECT_STREQ(ShaderModelToString(ShaderModel::SM6_0), "SM6.0");
+    EXPECT_STREQ(ShaderModelToString(ShaderModel::SM6_1), "SM6.1");
+    EXPECT_STREQ(ShaderModelToString(ShaderModel::SM6_2), "SM6.2");
+    EXPECT_STREQ(ShaderModelToString(ShaderModel::SM6_3), "SM6.3");
+    EXPECT_STREQ(ShaderModelToString(ShaderModel::SM6_4), "SM6.4");
+    EXPECT_STREQ(ShaderModelToString(ShaderModel::SM6_5), "SM6.5");
     EXPECT_STREQ(ShaderModelToString(ShaderModel::SM6_6), "SM6.6");
+    EXPECT_STREQ(ShaderModelToString(ShaderModel::SM6_7), "SM6.7");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

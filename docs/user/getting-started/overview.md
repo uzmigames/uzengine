@@ -50,8 +50,8 @@ All rendering goes through an abstract RHI layer. The application never touches 
 Vulkan, or Metal APIs directly — only `IRHIDevice`, `IRHICommandList`, and typed handles.
 
 Currently implemented:
-- **DX12 SM6.6** — Full bindless via Agility SDK, D3D12MA memory management, DRED debugging
-- **Shader model negotiation** — Runtime probes hardware and falls back: SM6.6 → SM6.0 → SM5.1 → SM5.0
+- **DX12 SM6.7** — Full bindless via Agility SDK, D3D12MA memory management, DRED debugging
+- **Shader model negotiation** — Runtime probes hardware and falls back: SM6.7 → SM6.6 → SM6.0 → SM5.1 → SM5.0
 
 See [RHI Guide](../guides/rhi/overview.md) for details.
 

@@ -25,7 +25,7 @@ The engine includes a full shader compilation pipeline (`core/shader/`):
 | `ShaderSourceManager` | `#include` parsing, xxHash64 content-based identity hashing |
 | `ShaderDependencyGraph` | Bidirectional dependency tracking for hot-reload |
 | `ShaderCache` | Disk-based bytecode cache keyed by content hash |
-| `ShaderCompiler` | DXC integration — HLSL → DXIL (SM6.6/6.0) and SPIRV (Vulkan 1.3) |
+| `ShaderCompiler` | DXC integration — HLSL → DXIL (SM5.1–SM6.7) and SPIRV (Vulkan 1.3) |
 
 Key design decisions:
 - **Content-addressed caching**: `hash = xxHash64(source + includes + defines + target + compiler_version)` — no timestamps, no stale cache

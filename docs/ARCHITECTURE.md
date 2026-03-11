@@ -594,7 +594,7 @@ The first major challenge. A clean abstraction layer that lets the renderer work
 
 | # | Backend | Shader Model | Priority | Status |
 |---|---------|-------------|----------|--------|
-| 1 | **DirectX 12** | SM6.6 | **Primary — develop first** | **Done** (clear screen validated) |
+| 1 | **DirectX 12** | SM6.7 | **Primary — develop first** | **Done** (clear screen validated) |
 | 2 | DirectX 12 | SM5 | Fallback for older DX12 GPUs | Planned |
 | 3 | DirectX 11 | SM5 | Legacy GPU support | Planned |
 | 4 | Vulkan | SPIR-V | Cross-platform (Linux/Steam Deck) | Planned |
@@ -625,8 +625,8 @@ If the requested backend is not available (e.g., Vulkan on a system without driv
 ### Shader Model Negotiation
 
 The device probes GPU capabilities at init time:
-1. Check SM6.6 support (Resource Binding Tier 3)
-2. If SM6.6 not available, fall back to SM6.0 → SM5.1 → SM5.0
+1. Check SM6.7/SM6.6 support (Resource Binding Tier 3)
+2. If SM6.7 not available, fall back to SM6.6 → SM6.0 → SM5.1 → SM5.0
 3. Load shader bytecode matching the negotiated shader model
 4. If bytecode for the negotiated SM is not in the cache, trigger post-switch compilation
 

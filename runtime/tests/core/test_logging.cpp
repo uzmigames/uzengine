@@ -1,15 +1,26 @@
 #include "uz_log.h"
 
+#include <filesystem>
 #include <gtest/gtest.h>
+
+namespace fs = std::filesystem;
 
 class LoggingTest : public ::testing::Test {
   protected:
+    fs::path tmpDir_ = fs::temp_directory_path() / "uzengine_test";
+
+    std::string TmpLog(const char* name) {
+        fs::create_directories(tmpDir_);
+        return (tmpDir_ / name).string();
+    }
+
     void TearDown() override { uz::LogShutdown(); }
 };
 
 TEST_F(LoggingTest, InitAndShutdownAreSafe) {
-    uz::LogInit("test_output.log");
-    uz::LogInit("test_output.log"); // double init is no-op
+    auto logPath = TmpLog("test_output.log");
+    uz::LogInit(logPath.c_str());
+    uz::LogInit(logPath.c_str()); // double init is no-op
 
     UZ_LOG(Core, Info, "Test log message: {}", 42);
     UZ_LOG(Core, Warning, "Test warning: {}", "caution");
@@ -20,7 +31,7 @@ TEST_F(LoggingTest, InitAndShutdownAreSafe) {
 }
 
 TEST_F(LoggingTest, AllCategoriesHaveLoggers) {
-    uz::LogInit("test_categories.log");
+    uz::LogInit(TmpLog("test_categories.log").c_str());
 
     EXPECT_NE(uz::LogGetLogger(LogCore), nullptr);
     EXPECT_NE(uz::LogGetLogger(LogRHI), nullptr);
@@ -33,7 +44,7 @@ TEST_F(LoggingTest, AllCategoriesHaveLoggers) {
 }
 
 TEST_F(LoggingTest, LevelChangeAffectsOutput) {
-    uz::LogInit("test_levels.log");
+    uz::LogInit(TmpLog("test_levels.log").c_str());
     uz::LogSetLevel(uz::LogLevel::Warning);
     UZ_LOG(Core, Warning, "This appears at warning level");
     uz::LogSetLevel(uz::LogLevel::Trace);
