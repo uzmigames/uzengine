@@ -89,6 +89,13 @@ pub fn build(b: *std.Build) void {
         .flags = cpp_flags,
     });
 
+    // RHI core (cross-platform — no backend dependency)
+    runtime_mod.addCSourceFiles(.{
+        .root = b.path("core/rhi"),
+        .files = &.{"rhi_config.cpp"},
+        .flags = cpp_flags,
+    });
+
     // Windows-only sources
     if (is_windows) {
         runtime_mod.addCSourceFiles(.{
@@ -240,7 +247,7 @@ pub fn build(b: *std.Build) void {
     if (is_windows) {
         test_mod.addCSourceFiles(.{
             .root = b.path("tests/core/rhi"),
-            .files = &.{ "test_rhi_types.cpp", "test_dx12_resources.cpp" },
+            .files = &.{ "test_rhi_types.cpp", "test_rhi_config.cpp", "test_dx12_resources.cpp" },
             .flags = cpp_flags,
         });
         test_mod.addCSourceFiles(.{
@@ -252,7 +259,7 @@ pub fn build(b: *std.Build) void {
         // RHI type tests are cross-platform (no DX12 dependency)
         test_mod.addCSourceFiles(.{
             .root = b.path("tests/core/rhi"),
-            .files = &.{"test_rhi_types.cpp"},
+            .files = &.{ "test_rhi_types.cpp", "test_rhi_config.cpp" },
             .flags = cpp_flags,
         });
     }

@@ -8,6 +8,7 @@
 
 #include "dx12_resources.h"
 #include "dx12_descriptor_allocator.h"
+#include "../rhi_config.h"
 
 #include <d3d12.h>
 
@@ -85,12 +86,12 @@ void DestroyDX12Sampler(DX12Sampler& sampler,
 // Root Signature
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Creates the global bindless root signature for SM6.6.
+/// Creates the global root signature, adapting to the negotiated shader model.
 ///
-/// Layout: one root constant (uint descriptorIndex at b0),
-/// plus two descriptor tables (CBV_SRV_UAV and Sampler) bound as unbounded arrays.
-/// All pipelines share this single root signature.
-ID3D12RootSignature* CreateBindlessRootSignature(ID3D12Device* device);
+/// SM6.6: DIRECTLY_INDEXED flags for bindless heap access.
+/// SM < 6.6: Standard root signature without bindless flags.
+/// Layout: one root constant (uint descriptorIndex at b0).
+ID3D12RootSignature* CreateBindlessRootSignature(ID3D12Device* device, ShaderModel sm);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Pipeline Creation

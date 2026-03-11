@@ -110,15 +110,15 @@ bool DX12Device::Init(const RHIDeviceDesc& desc) {
     if (!SelectAdapter(desc.adapterIndex))      return false;
     if (!CreateDevice())                        return false;
 
-    CheckSM66Support();
+    NegotiateShaderModel();
 
     if (!CreateAllocator())                     return false;
     if (!CreateDescriptorHeaps())               return false;
     InitDescriptorAllocators();
     if (!CreateCommandQueues())                 return false;
 
-    // Global bindless root signature (SM6.6 DIRECTLY_INDEXED)
-    m_rootSignature = CreateBindlessRootSignature(m_device.Get());
+    // Global root signature (adapts to negotiated shader model)
+    m_rootSignature = CreateBindlessRootSignature(m_device.Get(), m_shaderModel);
     if (!m_rootSignature) return false;
 
     // WaitIdle fence
@@ -232,22 +232,45 @@ bool DX12Device::CreateDevice() {
     return false;
 }
 
-bool DX12Device::CheckSM66Support() {
+/// Probes GPU capabilities and negotiates the highest supported shader model.
+///
+/// Probe order: SM6.6 → SM6.0 → SM5.1 → SM5.0.
+/// SM6.6 requires Resource Binding Tier 3 and D3D_SHADER_MODEL_6_6.
+/// SM6.0 requires D3D_SHADER_MODEL_6_0.
+/// SM5.1 requires feature level 12_0 (always true if device was created).
+/// SM5.0 is the absolute fallback.
+void DX12Device::NegotiateShaderModel() {
+    // Check resource binding tier for SM6.6 bindless
     D3D12_FEATURE_DATA_D3D12_OPTIONS options = {};
+    bool hasTier3 = false;
     HRESULT hr = m_device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS, &options, sizeof(options));
+    if (SUCCEEDED(hr)) {
+        hasTier3 = (options.ResourceBindingTier >= D3D12_RESOURCE_BINDING_TIER_3);
+    }
+
+    // Check highest shader model supported by the device
+    D3D12_FEATURE_DATA_SHADER_MODEL smData = {};
+    smData.HighestShaderModel = D3D_SHADER_MODEL_6_6;
+    hr = m_device->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &smData, sizeof(smData));
     if (FAILED(hr)) {
-        UZ_LOG(RHI, Warning, "Failed to query D3D12_OPTIONS feature support");
-        return false;
+        smData.HighestShaderModel = D3D_SHADER_MODEL_5_1;
     }
 
-    if (options.ResourceBindingTier < D3D12_RESOURCE_BINDING_TIER_3) {
-        UZ_LOG(RHI, Warning, "Resource binding tier {} < 3 — SM6.6 bindless may not be fully supported",
-               static_cast<int>(options.ResourceBindingTier));
-        return false;
+    // Negotiate: pick the highest SM the hardware actually supports
+    if (hasTier3 && smData.HighestShaderModel >= D3D_SHADER_MODEL_6_6) {
+        m_shaderModel = ShaderModel::SM6_6;
+    } else if (smData.HighestShaderModel >= D3D_SHADER_MODEL_6_0) {
+        m_shaderModel = ShaderModel::SM6_0;
+    } else if (smData.HighestShaderModel >= D3D_SHADER_MODEL_5_1) {
+        m_shaderModel = ShaderModel::SM5_1;
+    } else {
+        m_shaderModel = ShaderModel::SM5_0;
     }
 
-    UZ_LOG(RHI, Info, "Resource binding tier 3 confirmed (SM6.6 bindless supported)");
-    return true;
+    UZ_LOG(RHI, Info, "Shader model negotiated: {} (binding tier={}, device max=0x{:X})",
+           ShaderModelToString(m_shaderModel),
+           static_cast<int>(options.ResourceBindingTier),
+           static_cast<int>(smData.HighestShaderModel));
 }
 
 bool DX12Device::CreateAllocator() {

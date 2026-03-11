@@ -47,7 +47,15 @@
   - DirectXMath compiles on Linux via dotnet/runtime sal.h stub (SAL annotations as no-ops)
   - Cross-compile validated: `zig build -Dtarget=x86_64-linux-gnu` passes
   - Setup script (`setup.ps1`) downloads sal.h automatically after DirectXMath clone
-- **195 unit tests** — 35 RHI type/interface/resource compile tests + all existing tests pass
+- **Backend selection** (`core/rhi/rhi_config.h/.cpp`):
+  - RHIConfig resolution: CLI → .uzproject → platform auto-detect
+  - ShaderModel enum: SM5_0, SM5_1, SM6_0, SM6_6
+  - Flags: --rhi, --shader-model, --gpu-validation, --gpu-breadcrumbs, --adapter
+  - ToDeviceDesc() conversion to RHIDeviceDesc
+- **Shader model negotiation** (DX12Device):
+  - NegotiateShaderModel(): probes SM6.6 → SM6.0 → SM5.1 → SM5.0
+  - Root signature adapts: DIRECTLY_INDEXED for SM6.6, standard for lower
+- **223 unit tests** — 22 RHI config tests + 35 RHI type/interface/resource tests + all existing
 
 ### Shader Pipeline Architecture (docs only)
 - **New spec**: `docs/specs/1.5.0-shader-pipeline.md` — comprehensive shader source management architecture

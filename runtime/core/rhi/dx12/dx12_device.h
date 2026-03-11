@@ -9,6 +9,7 @@
 
 #include "../rhi.h"
 #include "../rhi_backend.h"
+#include "../rhi_config.h"
 #include "dx12_resources.h"
 #include "dx12_descriptor_allocator.h"
 
@@ -128,6 +129,9 @@ public:
     /// Returns the global bindless root signature (shared by all pipelines).
     ID3D12RootSignature* GetRootSignature() const { return m_rootSignature; }
 
+    /// Returns the negotiated shader model for this device.
+    ShaderModel GetShaderModel() const { return m_shaderModel; }
+
     /// Queries and logs DRED data after device removal (breadcrumbs + page fault info).
     void LogDeviceRemoved();
 
@@ -136,7 +140,7 @@ private:
     bool CreateFactory(bool validation);
     bool SelectAdapter(uint32_t adapterIndex);
     bool CreateDevice();
-    bool CheckSM66Support();
+    void NegotiateShaderModel();
     bool CreateAllocator();
     bool CreateDescriptorHeaps();
     bool CreateCommandQueues();
@@ -182,6 +186,7 @@ private:
     /// Global bindless root signature — shared by all graphics pipelines.
     ID3D12RootSignature*           m_rootSignature = nullptr;
 
+    ShaderModel                    m_shaderModel = ShaderModel::SM5_0;
     std::string                    m_adapterName;
     std::string                    m_featureLevelStr;
     D3D_FEATURE_LEVEL              m_featureLevel = D3D_FEATURE_LEVEL_12_0;

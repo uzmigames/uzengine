@@ -544,14 +544,14 @@ void DestroyDX12Sampler(DX12Sampler& sampler, DescriptorAllocator& samplerHeap) 
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Root Signature — Global Bindless (SM6.6)
+// Root Signature — Global (adapts to shader model)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Creates the global bindless root signature with SM6.6 DIRECTLY_INDEXED flags.
+/// Creates the global root signature, adapting flags to the negotiated shader model.
 ///
-/// Layout: one root constant (uint descriptorIndex at b0, visibility ALL).
-/// CBV_SRV_UAV and Sampler heaps are directly indexed by shader code.
-ID3D12RootSignature* CreateBindlessRootSignature(ID3D12Device* device) {
+/// SM6.6: uses DIRECTLY_INDEXED flags for bindless heap access.
+/// SM < 6.6: omits DIRECTLY_INDEXED flags (standard descriptor binding).
+ID3D12RootSignature* CreateBindlessRootSignature(ID3D12Device* device, ShaderModel sm) {
     // Root parameter 0: one root constant (uint32 descriptorIndex) at b0
     D3D12_ROOT_PARAMETER1 rootParams[1] = {};
     rootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
@@ -560,7 +560,11 @@ ID3D12RootSignature* CreateBindlessRootSignature(ID3D12Device* device) {
     rootParams[0].Constants.Num32BitValues = 1;
     rootParams[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
-    // Static samplers: none — we use the bindless sampler heap
+    D3D12_ROOT_SIGNATURE_FLAGS flags = D3D12_ROOT_SIGNATURE_FLAG_NONE;
+    if (sm >= ShaderModel::SM6_6) {
+        flags = D3D12_ROOT_SIGNATURE_FLAG_CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED |
+                D3D12_ROOT_SIGNATURE_FLAG_SAMPLER_HEAP_DIRECTLY_INDEXED;
+    }
 
     D3D12_VERSIONED_ROOT_SIGNATURE_DESC versionedDesc = {};
     versionedDesc.Version = D3D_ROOT_SIGNATURE_VERSION_1_1;
@@ -568,16 +572,14 @@ ID3D12RootSignature* CreateBindlessRootSignature(ID3D12Device* device) {
     versionedDesc.Desc_1_1.pParameters = rootParams;
     versionedDesc.Desc_1_1.NumStaticSamplers = 0;
     versionedDesc.Desc_1_1.pStaticSamplers = nullptr;
-    versionedDesc.Desc_1_1.Flags =
-        D3D12_ROOT_SIGNATURE_FLAG_CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED |
-        D3D12_ROOT_SIGNATURE_FLAG_SAMPLER_HEAP_DIRECTLY_INDEXED;
+    versionedDesc.Desc_1_1.Flags = flags;
 
     ID3DBlob* serialized = nullptr;
     ID3DBlob* error = nullptr;
     HRESULT hr = D3D12SerializeVersionedRootSignature(&versionedDesc, &serialized, &error);
     if (FAILED(hr)) {
         const char* errMsg = error ? static_cast<const char*>(error->GetBufferPointer()) : "unknown";
-        UZ_LOG(RHI, Error, "Failed to serialize bindless root signature: {}", errMsg);
+        UZ_LOG(RHI, Error, "Failed to serialize root signature: {}", errMsg);
         if (error) error->Release();
         if (serialized) serialized->Release();
         return nullptr;
@@ -592,11 +594,12 @@ ID3D12RootSignature* CreateBindlessRootSignature(ID3D12Device* device) {
     if (error) error->Release();
 
     if (FAILED(hr)) {
-        UZ_LOG(RHI, Error, "Failed to create bindless root signature, hr=0x{:08X}", static_cast<uint32_t>(hr));
+        UZ_LOG(RHI, Error, "Failed to create root signature, hr=0x{:08X}", static_cast<uint32_t>(hr));
         return nullptr;
     }
 
-    UZ_LOG(RHI, Info, "Bindless root signature created (SM6.6 DIRECTLY_INDEXED)");
+    const char* mode = (sm >= ShaderModel::SM6_6) ? "SM6.6 DIRECTLY_INDEXED" : "standard";
+    UZ_LOG(RHI, Info, "Root signature created ({})", mode);
     return rootSig;
 }
 
