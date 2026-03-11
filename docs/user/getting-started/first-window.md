@@ -8,7 +8,7 @@ sequence and how all the pieces fit together.
 
 ## The Runtime Entry Point
 
-The standalone runtime (`tools/uzengine_runtime.cpp`) follows this sequence:
+The standalone runtime (`tools/uzengine.cpp`) follows this sequence:
 
 ```
 1. Initialize logging

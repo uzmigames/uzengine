@@ -12,7 +12,7 @@
 /// # Layout Convention
 /// ```
 /// zig-out/bin/
-///     uzengine_runtime.exe     # Engine executable
+///     uzengine.exe             # Engine executable
 ///     test_runtime.exe         # Test executable
 ///     dxcompiler.dll           # DXC (same directory as exe)
 ///     dxil.dll                 # DXC validator

@@ -42,7 +42,7 @@
   - DLL deployment: D3D12Core.dll + d3d12SDKLayers.dll → zig-out/bin/D3D12/
   - Unlocks FL 12_2 + SM6.6 on supported hardware (RTX 4090: FL 12_1→12_2, SM6.5→SM6.6)
   - Linked into every executable (demo + runtime), not the static lib
-- **Standalone runtime executable** (`tools/uzengine_runtime.cpp`, `demos/triangle/`):
+- **Standalone runtime executable** (`tools/uzengine.cpp`, `demos/triangle/`):
   - CLI flags: --scene, --width, --height, --headless, --rhi, --shader-model, --gpu-validation
   - Windowed mode with DX12 clear screen render loop, headless mode for CI/testing
   - `zig build run` step for quick iteration

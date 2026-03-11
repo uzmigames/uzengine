@@ -393,7 +393,7 @@ pub fn build(b: *std.Build) void {
 
         rt_mod.addCSourceFiles(.{
             .root = b.path("tools"),
-            .files = &.{"uzengine_runtime.cpp"},
+            .files = &.{"uzengine.cpp"},
             .flags = cpp_flags,
         });
         rt_mod.addCSourceFiles(.{
@@ -402,7 +402,7 @@ pub fn build(b: *std.Build) void {
             .flags = cpp_flags,
         });
 
-        const rt_exe = b.addExecutable(.{ .name = "uzengine_runtime", .root_module = rt_mod });
+        const rt_exe = b.addExecutable(.{ .name = "uzengine", .root_module = rt_mod });
         rt_exe.linkLibrary(lib);
         for (win_sys_libs) |l| rt_exe.linkSystemLibrary(l);
         b.installArtifact(rt_exe);

@@ -85,7 +85,7 @@ runtime/
 │       └── input.h/.cpp               # Keyboard/mouse/action mapping
 │
 ├── tools/
-│   ├── uzengine_runtime.cpp  # Standalone runtime executable
+│   ├── uzengine.cpp  # Standalone runtime executable
 │   ├── clear_screen_demo.cpp # DX12 clear screen demo
 │   └── dx12_clear_screen.cpp # Demo render implementation
 │

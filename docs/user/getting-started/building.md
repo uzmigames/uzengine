@@ -55,7 +55,7 @@ zig build
 ```
 
 Output goes to `zig-out/bin/`:
-- `uzengine_runtime.exe` — Standalone runtime
+- `uzengine.exe` — Standalone runtime
 - `clear_screen_demo.exe` — DX12 animated clear demo
 - `test_runtime.exe` — Unit test runner
 - `D3D12/D3D12Core.dll` — Agility SDK runtime (auto-deployed)

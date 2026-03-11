@@ -146,7 +146,7 @@ The best approach for streaming rendered frames to webview panels (e.g. preview,
 npm run build
   │
   ├─ 1. build:runtime    zig build -Doptimize=ReleaseFast
-  │                       → runtime/zig-out/lib/uzengine_runtime.lib
+  │                       → runtime/zig-out/lib/uzengine.lib
   │
   ├─ 2. build:napi       cmake-js compile (MSVC, Electron 39.6.0 headers)
   │                       links runtime.lib + node.lib + delay-load hook
@@ -161,7 +161,7 @@ npm run build
 ### Why three layers
 
 - **runtime/** is pure C++ with zero Node/N-API dependency. It compiles as a static library and can be consumed by CLI tools, test harnesses, or a standalone game executable. Zig compiles it.
-- **napi/** is a thin C++ bridge that wraps the runtime's C API for Node/Electron. cmake-js compiles it with MSVC to get proper delay-load support for Electron. It links `uzengine_runtime.lib` and produces `uzengine.node`.
+- **napi/** is a thin C++ bridge that wraps the runtime's C API for Node/Electron. cmake-js compiles it with MSVC to get proper delay-load support for Electron. It links `uzengine.lib` and produces `uzengine.node`.
 - **extension/** is pure TypeScript. It `require()`s `uzengine.node` from `native/` (copied there by the build pipeline). No native compilation happens here.
 
 ---

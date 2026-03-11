@@ -34,9 +34,9 @@ Absolute path to the directory containing the executable.
 
 | Executable | GetExeDir() Return |
 |------------|-------------------|
-| `C:/project/zig-out/bin/uzengine_runtime.exe` | `C:/project/zig-out/bin` |
-| `/usr/local/bin/uzengine_runtime` | `/usr/local/bin` |
-| `/home/user/game/zig-out/bin/uzengine_runtime` | `/home/user/game/zig-out/bin` |
+| `C:/project/zig-out/bin/uzengine.exe` | `C:/project/zig-out/bin` |
+| `/usr/local/bin/uzengine` | `/usr/local/bin` |
+| `/home/user/game/zig-out/bin/uzengine` | `/home/user/game/zig-out/bin` |
 
 ### Caching
 
@@ -107,7 +107,7 @@ The build system (Zig) deploys resources to `zig-out/bin/`:
 
 ```
 zig-out/bin/
-├── uzengine_runtime.exe         # Main executable
+├── uzengine.exe         # Main executable
 ├── test_runtime.exe              # Test runner
 ├── dxcompiler.dll                # DXC HLSL compiler (Windows)
 ├── dxil.dll                      # DXC SPIR-V validator (Windows)
@@ -253,7 +253,7 @@ $ zig build test
 ```cpp
 WCHAR buffer[MAX_PATH];
 GetModuleFileNameW(nullptr, buffer, MAX_PATH);
-// buffer = "C:\\project\\zig-out\\bin\\uzengine_runtime.exe"
+// buffer = "C:\\project\\zig-out\\bin\\uzengine.exe"
 // Extract parent directory
 ```
 

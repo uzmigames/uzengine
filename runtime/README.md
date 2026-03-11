@@ -17,7 +17,7 @@ zig build -Doptimize=ReleaseFast
 # Debug
 zig build
 
-# Output: zig-out/lib/uzengine_runtime.lib
+# Output: zig-out/bin/uzengine.exe
 ```
 
 ## Architecture

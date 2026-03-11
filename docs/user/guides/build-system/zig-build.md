@@ -30,13 +30,13 @@ The build produces one static library and multiple executables:
 
 ```
 build.zig
-├── uzengine_runtime (static lib) ─── All engine code
+├── uzengine (static lib) ─── All engine code
 │   ├── core/ sources
 │   ├── platform/windows/ sources (Windows only)
 │   ├── core/rhi/dx12/ sources (Windows only)
 │   └── thirdparty/ (spdlog, Tracy, D3D12MA)
 │
-├── uzengine_runtime.exe ─── Standalone runtime (links static lib)
+├── uzengine.exe ─── Standalone runtime (links static lib)
 ├── clear_screen_demo.exe ── DX12 demo (links static lib)
 └── test_runtime.exe ─────── GoogleTest runner (links static lib)
 ```

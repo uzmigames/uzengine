@@ -26,7 +26,7 @@ Platform auto-detect (lowest priority)
 Command-line flags override everything:
 
 ```bash
-./uzengine_runtime \
+./uzengine \
     --rhi dx12 \
     --shader-model sm6.6 \
     --gpu-validation \
@@ -236,7 +236,7 @@ Specify which GPU adapter to use (for multi-GPU systems).
 Use `enumerate-adapters` to list available GPUs:
 
 ```bash
-./uzengine_runtime --enumerate-adapters
+./uzengine --enumerate-adapters
 # Output:
 # Adapter 0: NVIDIA RTX 4090 (VRAM: 24GB)
 # Adapter 1: NVIDIA RTX 3090 (VRAM: 24GB)
