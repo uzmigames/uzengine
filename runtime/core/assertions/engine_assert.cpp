@@ -1,3 +1,9 @@
+/// UzEngine Assertion System Implementation
+///
+/// Provides stack trace capture (via CaptureStackBackTrace on Windows),
+/// assertion failure reporting to stderr, and debugger break support.
+/// Fatal assertions (UZ_CHECK) call std::abort() after logging.
+
 #include "engine_assert.h"
 
 #include <cstdio>

@@ -126,9 +126,16 @@ struct sRGBColor {
     /// Construct from explicit RGBA byte components.
     sRGBColor(uint8_t r, uint8_t g, uint8_t b, uint8_t a = 255) : r(r), g(g), b(b), a(a) {}
 
-    /// Converts to linear RGB space (removes gamma curve).
+    /// Converts to linear RGB space by removing the sRGB gamma curve.
+    ///
+    /// # Returns
+    /// Float color in [0, 1] range. Use for shader math, blending, and lighting.
     LinearColor ToLinear() const;
-    /// Packs RGBA into a single 32-bit integer (R=MSB, A=LSB).
+
+    /// Packs RGBA into a single 32-bit integer (R=MSB, A=LSB): `0xRRGGBBAA`.
+    ///
+    /// # Returns
+    /// 32-bit packed color suitable for hex literals (e.g., `0xFF0000FF` = red).
     uint32_t ToHex() const {
         return ((uint32_t)r << 24) | ((uint32_t)g << 16) | ((uint32_t)b << 8) | (uint32_t)a;
     }
@@ -150,7 +157,13 @@ struct sRGBColor {
 // Gamma correction utilities
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Convert single float from linear to sRGB
+/// Convert a single float from linear to sRGB space (IEC 61966-2-1 transfer function).
+///
+/// # Arguments
+/// * `linear` - Value in linear space, typically [0, 1]
+///
+/// # Returns
+/// sRGB-encoded value. Input is NOT clamped — values outside [0, 1] produce extrapolated results.
 inline float linear_to_srgb(float linear) {
     if (linear <= 0.0031308f) {
         return linear * 12.92f;
@@ -159,7 +172,13 @@ inline float linear_to_srgb(float linear) {
     }
 }
 
-/// Convert single float from sRGB to linear
+/// Convert a single float from sRGB to linear space (inverse IEC 61966-2-1).
+///
+/// # Arguments
+/// * `srgb` - Value in sRGB space, typically [0, 1]
+///
+/// # Returns
+/// Linear-space value for shader math.
 inline float srgb_to_linear(float srgb) {
     if (srgb <= 0.04045f) {
         return srgb / 12.92f;

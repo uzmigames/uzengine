@@ -1,3 +1,9 @@
+/// UzEngine Logging System Implementation
+///
+/// Initializes spdlog with colored stdout + rotating file sinks.
+/// Manages per-category loggers with runtime severity filtering.
+/// Thread-safe logging via spdlog's internal mutex.
+
 #include "log.h"
 
 #include <mutex>

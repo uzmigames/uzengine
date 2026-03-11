@@ -1,10 +1,22 @@
-#pragma once
-
-/// DX12 backend implementation of IRHISwapChain.
+/// DX12 Swapchain — IDXGISwapChain4 wrapper with FLIP_DISCARD presentation.
 ///
-/// Wraps IDXGISwapChain4 with FLIP_DISCARD presentation model.
-/// Triple-buffered by default, supports tearing (variable refresh rate)
-/// when the display and driver allow it.
+/// Wraps IDXGISwapChain4 with the modern FLIP_DISCARD presentation model for optimal
+/// compositor throughput. Triple-buffered by default. Supports `DXGI_PRESENT_ALLOW_TEARING`
+/// for variable refresh rate (VRR/FreeSync/G-Sync) when vsync is disabled.
+///
+/// # Lifecycle
+/// 1. Construct → `Init(device, desc)` → use in render loop → destructor releases
+/// 2. `Resize()` releases and recreates back buffers (invalidates existing handles)
+///
+/// # Thread Safety
+/// NOT thread-safe. Must be used from the main/render thread only.
+/// Present must not overlap with command list recording that targets back buffers.
+///
+/// # Back Buffer Rotation
+/// After `Present()`, `GetCurrentBackBufferIndex()` advances automatically.
+/// The render loop must re-query the current back buffer each frame.
+
+#pragma once
 
 #include "../rhi.h"
 
