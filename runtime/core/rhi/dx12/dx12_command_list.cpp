@@ -11,7 +11,43 @@
 
 #include "uz_log.h"
 
+#include <vector>
+
 namespace uz {
+
+// ─────────────────────────────────────────────────────────────────────────────
+// State and Format Mapping
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Maps RHIResourceState to the corresponding D3D12_RESOURCE_STATES bitmask.
+static D3D12_RESOURCE_STATES ToD3D12ResourceState(RHIResourceState state) {
+    switch (state) {
+        case RHIResourceState::Common:            return D3D12_RESOURCE_STATE_COMMON;
+        case RHIResourceState::VertexBuffer:      return D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER;
+        case RHIResourceState::IndexBuffer:       return D3D12_RESOURCE_STATE_INDEX_BUFFER;
+        case RHIResourceState::ConstantBuffer:    return D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER;
+        case RHIResourceState::ShaderResource:    return D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE
+                                                       | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+        case RHIResourceState::UnorderedAccess:   return D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+        case RHIResourceState::RenderTarget:      return D3D12_RESOURCE_STATE_RENDER_TARGET;
+        case RHIResourceState::DepthStencilWrite: return D3D12_RESOURCE_STATE_DEPTH_WRITE;
+        case RHIResourceState::DepthStencilRead:  return D3D12_RESOURCE_STATE_DEPTH_READ;
+        case RHIResourceState::CopySrc:           return D3D12_RESOURCE_STATE_COPY_SOURCE;
+        case RHIResourceState::CopyDst:           return D3D12_RESOURCE_STATE_COPY_DEST;
+        case RHIResourceState::Present:           return D3D12_RESOURCE_STATE_PRESENT;
+        case RHIResourceState::IndirectArgument:  return D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT;
+        default:                                  return D3D12_RESOURCE_STATE_COMMON;
+    }
+}
+
+/// Maps RHIIndexFormat to the corresponding DXGI_FORMAT.
+static DXGI_FORMAT ToD3D12IndexFormat(RHIIndexFormat format) {
+    switch (format) {
+        case RHIIndexFormat::Uint16: return DXGI_FORMAT_R16_UINT;
+        case RHIIndexFormat::Uint32: return DXGI_FORMAT_R32_UINT;
+        default:                     return DXGI_FORMAT_R32_UINT;
+    }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Queue Type Mapping
@@ -159,16 +195,65 @@ void DX12CommandList::Execute() {
 // Pipeline and Resource Binding
 // ─────────────────────────────────────────────────────────────────────────────
 
-void DX12CommandList::SetPipeline(RHIPipelineHandle /*pipeline*/) {
-    UZ_LOG(RHI, Warning, "SetPipeline not yet implemented — needs pipeline pool");
+void DX12CommandList::SetPipeline(RHIPipelineHandle pipeline) {
+    if (!pipeline.IsValid()) {
+        UZ_LOG(RHI, Warning, "SetPipeline — invalid pipeline handle");
+        return;
+    }
+
+    auto* dx12Pipeline = m_device->GetPipelinePool().Get(pipeline.index, pipeline.generation);
+    if (!dx12Pipeline || !dx12Pipeline->pso) {
+        UZ_LOG(RHI, Warning, "SetPipeline — pipeline not found in pool (index={}, gen={})",
+               pipeline.index, pipeline.generation);
+        return;
+    }
+
+    m_cmdList->SetPipelineState(dx12Pipeline->pso);
+
+    // Bind the global bindless root signature alongside the PSO
+    if (auto* rootSig = m_device->GetRootSignature()) {
+        m_cmdList->SetGraphicsRootSignature(rootSig);
+    }
 }
 
-void DX12CommandList::SetVertexBuffer(uint32_t /*slot*/, RHIBufferHandle /*buffer*/, uint32_t /*offset*/) {
-    UZ_LOG(RHI, Warning, "SetVertexBuffer not yet implemented — needs buffer pool");
+void DX12CommandList::SetVertexBuffer(uint32_t slot, RHIBufferHandle buffer, uint32_t offset) {
+    if (!buffer.IsValid()) {
+        UZ_LOG(RHI, Warning, "SetVertexBuffer — invalid buffer handle");
+        return;
+    }
+
+    auto* dx12Buffer = m_device->GetBufferPool().Get(buffer.index, buffer.generation);
+    if (!dx12Buffer || !dx12Buffer->resource) {
+        UZ_LOG(RHI, Warning, "SetVertexBuffer — buffer not found in pool (index={}, gen={})",
+               buffer.index, buffer.generation);
+        return;
+    }
+
+    D3D12_VERTEX_BUFFER_VIEW vbv = {};
+    vbv.BufferLocation = dx12Buffer->resource->GetGPUVirtualAddress() + offset;
+    vbv.SizeInBytes = static_cast<UINT>(dx12Buffer->desc.sizeBytes - offset);
+    vbv.StrideInBytes = dx12Buffer->desc.stride;
+    m_cmdList->IASetVertexBuffers(slot, 1, &vbv);
 }
 
-void DX12CommandList::SetIndexBuffer(RHIBufferHandle /*buffer*/, RHIIndexFormat /*format*/, uint32_t /*offset*/) {
-    UZ_LOG(RHI, Warning, "SetIndexBuffer not yet implemented — needs buffer pool");
+void DX12CommandList::SetIndexBuffer(RHIBufferHandle buffer, RHIIndexFormat format, uint32_t offset) {
+    if (!buffer.IsValid()) {
+        UZ_LOG(RHI, Warning, "SetIndexBuffer — invalid buffer handle");
+        return;
+    }
+
+    auto* dx12Buffer = m_device->GetBufferPool().Get(buffer.index, buffer.generation);
+    if (!dx12Buffer || !dx12Buffer->resource) {
+        UZ_LOG(RHI, Warning, "SetIndexBuffer — buffer not found in pool (index={}, gen={})",
+               buffer.index, buffer.generation);
+        return;
+    }
+
+    D3D12_INDEX_BUFFER_VIEW ibv = {};
+    ibv.BufferLocation = dx12Buffer->resource->GetGPUVirtualAddress() + offset;
+    ibv.SizeInBytes = static_cast<UINT>(dx12Buffer->desc.sizeBytes - offset);
+    ibv.Format = ToD3D12IndexFormat(format);
+    m_cmdList->IASetIndexBuffer(&ibv);
 }
 
 void DX12CommandList::SetViewport(const RHIViewport& viewport) {
@@ -219,8 +304,47 @@ void DX12CommandList::Dispatch(uint32_t groupCountX, uint32_t groupCountY,
 // Barriers
 // ─────────────────────────────────────────────────────────────────────────────
 
-void DX12CommandList::ResourceBarrier(const RHIBarrierDesc* /*barriers*/, uint32_t /*count*/) {
-    UZ_LOG(RHI, Warning, "ResourceBarrier (handle-based) not yet implemented — needs texture/buffer pool");
+void DX12CommandList::ResourceBarrier(const RHIBarrierDesc* barriers, uint32_t count) {
+    if (!barriers || count == 0) return;
+
+    // Stack-allocate for typical batch sizes, heap-allocate for large batches
+    constexpr uint32_t kStackMax = 16;
+    D3D12_RESOURCE_BARRIER stackBarriers[kStackMax];
+    std::vector<D3D12_RESOURCE_BARRIER> heapBarriers;
+
+    D3D12_RESOURCE_BARRIER* d3dBarriers = (count <= kStackMax)
+        ? stackBarriers
+        : (heapBarriers.resize(count), heapBarriers.data());
+
+    uint32_t validCount = 0;
+    for (uint32_t i = 0; i < count; ++i) {
+        const auto& b = barriers[i];
+        ID3D12Resource* resource = nullptr;
+
+        // Resolve the resource from either texture or buffer handle
+        if (b.texture.IsValid()) {
+            auto* tex = m_device->GetTexturePool().Get(b.texture.index, b.texture.generation);
+            if (tex) resource = tex->resource;
+        } else if (b.buffer.IsValid()) {
+            auto* buf = m_device->GetBufferPool().Get(b.buffer.index, b.buffer.generation);
+            if (buf) resource = buf->resource;
+        }
+
+        if (!resource) {
+            UZ_LOG(RHI, Warning, "ResourceBarrier[{}] — could not resolve resource handle", i);
+            continue;
+        }
+
+        d3dBarriers[validCount] = CD3DX12_RESOURCE_BARRIER::Transition(
+            resource,
+            ToD3D12ResourceState(b.stateBefore),
+            ToD3D12ResourceState(b.stateAfter));
+        ++validCount;
+    }
+
+    if (validCount > 0) {
+        m_cmdList->ResourceBarrier(validCount, d3dBarriers);
+    }
 }
 
 void DX12CommandList::TransitionBarrier(ID3D12Resource* resource,
@@ -235,12 +359,40 @@ void DX12CommandList::TransitionBarrier(ID3D12Resource* resource,
 // Clear Operations
 // ─────────────────────────────────────────────────────────────────────────────
 
-void DX12CommandList::ClearRenderTarget(RHITextureHandle /*texture*/, const float /*color*/[4]) {
-    UZ_LOG(RHI, Warning, "ClearRenderTarget (handle-based) not yet implemented — needs texture pool with RTV descriptors");
+void DX12CommandList::ClearRenderTarget(RHITextureHandle texture, const float color[4]) {
+    if (!texture.IsValid()) {
+        UZ_LOG(RHI, Warning, "ClearRenderTarget — invalid texture handle");
+        return;
+    }
+
+    auto* dx12Tex = m_device->GetTexturePool().Get(texture.index, texture.generation);
+    if (!dx12Tex || dx12Tex->rtvIndex == UINT32_MAX) {
+        UZ_LOG(RHI, Warning, "ClearRenderTarget — texture has no RTV descriptor (index={}, gen={})",
+               texture.index, texture.generation);
+        return;
+    }
+
+    auto rtv = m_device->GetDescriptorAllocator(D3D12_DESCRIPTOR_HEAP_TYPE_RTV).CpuHandle(dx12Tex->rtvIndex);
+    m_cmdList->ClearRenderTargetView(rtv, color, 0, nullptr);
 }
 
-void DX12CommandList::ClearDepthStencil(RHITextureHandle /*texture*/, float /*depth*/, uint8_t /*stencil*/) {
-    UZ_LOG(RHI, Warning, "ClearDepthStencil not yet implemented — needs texture pool with DSV descriptors");
+void DX12CommandList::ClearDepthStencil(RHITextureHandle texture, float depth, uint8_t stencil) {
+    if (!texture.IsValid()) {
+        UZ_LOG(RHI, Warning, "ClearDepthStencil — invalid texture handle");
+        return;
+    }
+
+    auto* dx12Tex = m_device->GetTexturePool().Get(texture.index, texture.generation);
+    if (!dx12Tex || dx12Tex->dsvIndex == UINT32_MAX) {
+        UZ_LOG(RHI, Warning, "ClearDepthStencil — texture has no DSV descriptor (index={}, gen={})",
+               texture.index, texture.generation);
+        return;
+    }
+
+    auto dsv = m_device->GetDescriptorAllocator(D3D12_DESCRIPTOR_HEAP_TYPE_DSV).CpuHandle(dx12Tex->dsvIndex);
+    m_cmdList->ClearDepthStencilView(
+        dsv, D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL,
+        depth, stencil, 0, nullptr);
 }
 
 void DX12CommandList::ClearRTV(D3D12_CPU_DESCRIPTOR_HANDLE rtv, const float color[4]) {
@@ -251,25 +403,98 @@ void DX12CommandList::ClearRTV(D3D12_CPU_DESCRIPTOR_HANDLE rtv, const float colo
 // Copy Operations
 // ─────────────────────────────────────────────────────────────────────────────
 
-void DX12CommandList::CopyBuffer(RHIBufferHandle /*src*/, uint64_t /*srcOffset*/,
-                                 RHIBufferHandle /*dst*/, uint64_t /*dstOffset*/, uint64_t /*size*/) {
-    UZ_LOG(RHI, Warning, "CopyBuffer not yet implemented — needs buffer pool");
+void DX12CommandList::CopyBuffer(RHIBufferHandle src, uint64_t srcOffset,
+                                 RHIBufferHandle dst, uint64_t dstOffset, uint64_t size) {
+    if (!src.IsValid() || !dst.IsValid()) {
+        UZ_LOG(RHI, Warning, "CopyBuffer — invalid source or destination handle");
+        return;
+    }
+
+    auto* srcBuf = m_device->GetBufferPool().Get(src.index, src.generation);
+    auto* dstBuf = m_device->GetBufferPool().Get(dst.index, dst.generation);
+    if (!srcBuf || !srcBuf->resource || !dstBuf || !dstBuf->resource) {
+        UZ_LOG(RHI, Warning, "CopyBuffer — could not resolve buffer handles");
+        return;
+    }
+
+    m_cmdList->CopyBufferRegion(dstBuf->resource, dstOffset,
+                                srcBuf->resource, srcOffset, size);
 }
 
-void DX12CommandList::CopyTexture(RHITextureHandle /*src*/, RHITextureHandle /*dst*/) {
-    UZ_LOG(RHI, Warning, "CopyTexture not yet implemented — needs texture pool");
+void DX12CommandList::CopyTexture(RHITextureHandle src, RHITextureHandle dst) {
+    if (!src.IsValid() || !dst.IsValid()) {
+        UZ_LOG(RHI, Warning, "CopyTexture — invalid source or destination handle");
+        return;
+    }
+
+    auto* srcTex = m_device->GetTexturePool().Get(src.index, src.generation);
+    auto* dstTex = m_device->GetTexturePool().Get(dst.index, dst.generation);
+    if (!srcTex || !srcTex->resource || !dstTex || !dstTex->resource) {
+        UZ_LOG(RHI, Warning, "CopyTexture — could not resolve texture handles");
+        return;
+    }
+
+    m_cmdList->CopyResource(dstTex->resource, srcTex->resource);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Render Pass
 // ─────────────────────────────────────────────────────────────────────────────
 
-void DX12CommandList::BeginRenderPass(const RHIRenderPassDesc& /*desc*/) {
-    UZ_LOG(RHI, Warning, "BeginRenderPass not yet implemented — needs texture pool for attachment resolution");
+void DX12CommandList::BeginRenderPass(const RHIRenderPassDesc& desc) {
+    // Resolve RTV CPU handles for each color attachment
+    D3D12_CPU_DESCRIPTOR_HANDLE rtvHandles[8] = {};
+    uint32_t validRtvCount = 0;
+
+    for (uint32_t i = 0; i < desc.colorAttachmentCount && i < 8; ++i) {
+        const auto& att = desc.colorAttachments[i];
+        if (!att.texture.IsValid()) {
+            UZ_LOG(RHI, Warning, "BeginRenderPass — color attachment {} has invalid texture", i);
+            continue;
+        }
+
+        auto* tex = m_device->GetTexturePool().Get(att.texture.index, att.texture.generation);
+        if (!tex || tex->rtvIndex == UINT32_MAX) {
+            UZ_LOG(RHI, Warning, "BeginRenderPass — color attachment {} has no RTV", i);
+            continue;
+        }
+
+        rtvHandles[validRtvCount] = m_device->GetDescriptorAllocator(
+            D3D12_DESCRIPTOR_HEAP_TYPE_RTV).CpuHandle(tex->rtvIndex);
+
+        if (att.clear) {
+            m_cmdList->ClearRenderTargetView(rtvHandles[validRtvCount], att.clearColor, 0, nullptr);
+        }
+        ++validRtvCount;
+    }
+
+    // Resolve optional DSV
+    D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle = {};
+    const D3D12_CPU_DESCRIPTOR_HANDLE* dsvPtr = nullptr;
+
+    if (desc.hasDepth && desc.depthAttachment.texture.IsValid()) {
+        auto* depthTex = m_device->GetTexturePool().Get(
+            desc.depthAttachment.texture.index, desc.depthAttachment.texture.generation);
+        if (depthTex && depthTex->dsvIndex != UINT32_MAX) {
+            dsvHandle = m_device->GetDescriptorAllocator(
+                D3D12_DESCRIPTOR_HEAP_TYPE_DSV).CpuHandle(depthTex->dsvIndex);
+            dsvPtr = &dsvHandle;
+
+            if (desc.depthAttachment.clear) {
+                m_cmdList->ClearDepthStencilView(
+                    dsvHandle, D3D12_CLEAR_FLAG_DEPTH | D3D12_CLEAR_FLAG_STENCIL,
+                    desc.depthAttachment.clearDepth, desc.depthAttachment.clearStencil,
+                    0, nullptr);
+            }
+        }
+    }
+
+    m_cmdList->OMSetRenderTargets(validRtvCount, validRtvCount > 0 ? rtvHandles : nullptr,
+                                  FALSE, dsvPtr);
 }
 
 void DX12CommandList::EndRenderPass() {
-    UZ_LOG(RHI, Warning, "EndRenderPass not yet implemented");
+    // DX12 has no matching end for OMSetRenderTargets — intentional no-op
 }
 
 } // namespace uz

@@ -89,9 +89,7 @@ TEST_F(DX12DeviceTest, MemoryBudgetReturnsNonZero) {
 // Buffer Creation
 // ─────────────────────────────────────────────────────────────────────────────
 
-// NOTE: Buffer/texture creation tests disabled — D3D12MA heap flags enum
-// triggers Zig runtime safety panic. Needs -fno-sanitize=enum on D3D12MA TU.
-TEST_F(DX12DeviceTest, DISABLED_CreateVertexBuffer) {
+TEST_F(DX12DeviceTest, CreateVertexBuffer) {
     uz::RHIBufferDesc desc{};
     desc.sizeBytes = 1024;
     desc.usage = uz::RHIBufferUsage::VertexBuffer;
@@ -103,7 +101,7 @@ TEST_F(DX12DeviceTest, DISABLED_CreateVertexBuffer) {
     m_device->DestroyBuffer(handle);
 }
 
-TEST_F(DX12DeviceTest, DISABLED_CreateIndexBuffer) {
+TEST_F(DX12DeviceTest, CreateIndexBuffer) {
     uz::RHIBufferDesc desc{};
     desc.sizeBytes = 512;
     desc.usage = uz::RHIBufferUsage::IndexBuffer;
@@ -115,7 +113,7 @@ TEST_F(DX12DeviceTest, DISABLED_CreateIndexBuffer) {
     m_device->DestroyBuffer(handle);
 }
 
-TEST_F(DX12DeviceTest, DISABLED_CreateConstantBuffer) {
+TEST_F(DX12DeviceTest, CreateConstantBuffer) {
     uz::RHIBufferDesc desc{};
     desc.sizeBytes = 256;
     desc.usage = uz::RHIBufferUsage::ConstantBuffer;
@@ -127,7 +125,7 @@ TEST_F(DX12DeviceTest, DISABLED_CreateConstantBuffer) {
     m_device->DestroyBuffer(handle);
 }
 
-TEST_F(DX12DeviceTest, DISABLED_CreateUploadBuffer) {
+TEST_F(DX12DeviceTest, CreateUploadBuffer) {
     uz::RHIBufferDesc desc{};
     desc.sizeBytes = 2048;
     desc.usage = uz::RHIBufferUsage::VertexBuffer;
@@ -139,7 +137,7 @@ TEST_F(DX12DeviceTest, DISABLED_CreateUploadBuffer) {
     m_device->DestroyBuffer(handle);
 }
 
-TEST_F(DX12DeviceTest, DISABLED_CreateReadbackBuffer) {
+TEST_F(DX12DeviceTest, CreateReadbackBuffer) {
     uz::RHIBufferDesc desc{};
     desc.sizeBytes = 4096;
     desc.usage = uz::RHIBufferUsage::CopyDst;
@@ -151,7 +149,7 @@ TEST_F(DX12DeviceTest, DISABLED_CreateReadbackBuffer) {
     m_device->DestroyBuffer(handle);
 }
 
-TEST_F(DX12DeviceTest, DISABLED_DestroyBufferInvalidatesHandle) {
+TEST_F(DX12DeviceTest, DestroyBufferInvalidatesHandle) {
     uz::RHIBufferDesc desc{};
     desc.sizeBytes = 256;
     desc.usage = uz::RHIBufferUsage::VertexBuffer;
@@ -168,7 +166,7 @@ TEST_F(DX12DeviceTest, DISABLED_DestroyBufferInvalidatesHandle) {
 // Texture Creation
 // ─────────────────────────────────────────────────────────────────────────────
 
-TEST_F(DX12DeviceTest, DISABLED_CreateRGBA8Texture) {
+TEST_F(DX12DeviceTest, CreateRGBA8Texture) {
     uz::RHITextureDesc desc{};
     desc.width = 256;
     desc.height = 256;
@@ -181,7 +179,7 @@ TEST_F(DX12DeviceTest, DISABLED_CreateRGBA8Texture) {
     m_device->DestroyTexture(handle);
 }
 
-TEST_F(DX12DeviceTest, DISABLED_CreateDepthTexture) {
+TEST_F(DX12DeviceTest, CreateDepthTexture) {
     uz::RHITextureDesc desc{};
     desc.width = 1280;
     desc.height = 720;
@@ -194,7 +192,7 @@ TEST_F(DX12DeviceTest, DISABLED_CreateDepthTexture) {
     m_device->DestroyTexture(handle);
 }
 
-TEST_F(DX12DeviceTest, DISABLED_CreateRenderTargetTexture) {
+TEST_F(DX12DeviceTest, CreateRenderTargetTexture) {
     uz::RHITextureDesc desc{};
     desc.width = 512;
     desc.height = 512;
@@ -281,7 +279,7 @@ TEST_F(DX12DeviceTest, SwapchainRequiresHWND) {
 // Descriptor Heap Capacity (validated via multiple buffer allocations)
 // ─────────────────────────────────────────────────────────────────────────────
 
-TEST_F(DX12DeviceTest, DISABLED_DescriptorHeapHandlesMultipleResources) {
+TEST_F(DX12DeviceTest, DescriptorHeapHandlesMultipleResources) {
     constexpr int kCount = 16;
     uz::RHIBufferHandle handles[kCount];
 

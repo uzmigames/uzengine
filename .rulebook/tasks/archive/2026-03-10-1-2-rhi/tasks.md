@@ -197,7 +197,7 @@
 - [x] 7.2 DX12 backend tests (`tests/core/rhi/test_dx12_device.cpp`) ✅
   - 20 GPU-gated tests (GTEST_SKIP if no GPU): device lifecycle, buffer/texture creation,
     fence signal/wait, command list cycle, adapter name, feature level, memory budget
-  - Note: buffer/texture tests expose D3D12MA heap flags panic under Zig safety — pre-existing
+  - D3D12MA heap flags panic fixed: `-fno-sanitize=undefined` on D3D12MA TU, all 20 tests enabled
 - [x] 7.3 Render loop integration test (`tests/core/rhi/test_dx12_render_loop.cpp`) ✅
   - 10-frame Begin/End/Execute/Signal/WaitCPU cycle, device health check
   - Frame time variance validation (no frame > 10x average)

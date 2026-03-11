@@ -62,6 +62,8 @@ public:
     // ── IRHIDevice: Buffer operations ────────────────────────────────────
     RHIBufferHandle CreateBuffer(const RHIBufferDesc& desc) override;
     void DestroyBuffer(RHIBufferHandle handle) override;
+    void* MapBuffer(RHIBufferHandle handle) override;
+    uint32_t GetBufferSRVIndex(RHIBufferHandle handle) const override;
 
     // ── IRHIDevice: Texture operations ───────────────────────────────────
     RHITextureHandle CreateTexture(const RHITextureDesc& desc) override;
@@ -122,9 +124,11 @@ public:
     /// Returns the descriptor allocator for a heap type.
     DescriptorAllocator& GetDescriptorAllocator(D3D12_DESCRIPTOR_HEAP_TYPE type);
 
-    /// Returns the buffer pool (for command list resource lookups).
+    /// Returns resource pools (for command list resource lookups).
     ResourcePool<DX12Buffer>& GetBufferPool() { return m_bufferPool; }
     ResourcePool<DX12Texture>& GetTexturePool() { return m_texturePool; }
+    ResourcePool<DX12Pipeline>& GetPipelinePool() { return m_pipelinePool; }
+    ResourcePool<DX12Shader>& GetShaderPool() { return m_shaderPool; }
 
     /// Returns the global bindless root signature (shared by all pipelines).
     ID3D12RootSignature* GetRootSignature() const { return m_rootSignature; }

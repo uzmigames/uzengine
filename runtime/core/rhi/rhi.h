@@ -209,6 +209,14 @@ public:
     /// Destroys a GPU buffer. The handle becomes invalid after this call.
     virtual void DestroyBuffer(RHIBufferHandle handle) = 0;
 
+    /// Returns the persistently mapped pointer for Upload/Readback buffers.
+    /// Returns nullptr for Default-heap buffers or invalid handles.
+    virtual void* MapBuffer(RHIBufferHandle handle) = 0;
+
+    /// Returns the bindless SRV descriptor index for a structured buffer.
+    /// Returns UINT32_MAX if the buffer has no SRV (e.g., not a StructuredBuffer).
+    virtual uint32_t GetBufferSRVIndex(RHIBufferHandle handle) const = 0;
+
     // ── Texture operations ───────────────────────────────────────────────
 
     /// Creates a GPU texture.

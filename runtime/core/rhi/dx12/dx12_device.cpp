@@ -529,6 +529,18 @@ void DX12Device::DestroyBuffer(RHIBufferHandle handle) {
     m_bufferPool.Free(handle.index);
 }
 
+void* DX12Device::MapBuffer(RHIBufferHandle handle) {
+    DX12Buffer* buf = m_bufferPool.Get(handle.index, handle.generation);
+    if (!buf) return nullptr;
+    return buf->mappedPtr;
+}
+
+uint32_t DX12Device::GetBufferSRVIndex(RHIBufferHandle handle) const {
+    const DX12Buffer* buf = m_bufferPool.Get(handle.index, handle.generation);
+    if (!buf) return UINT32_MAX;
+    return buf->srvIndex;
+}
+
 RHITextureHandle DX12Device::CreateTexture(const RHITextureDesc& desc) {
     uint32_t generation = 0;
     uint32_t index = m_texturePool.Allocate(generation);
