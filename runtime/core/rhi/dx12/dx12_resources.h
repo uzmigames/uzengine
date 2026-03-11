@@ -73,6 +73,17 @@ struct DX12Sampler {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// DX12Pipeline — Graphics or compute pipeline state object
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Internal storage for a DX12 pipeline state object.
+struct DX12Pipeline {
+    ID3D12PipelineState*         pso = nullptr;        ///< Native pipeline state object
+    uint32_t                     generation = 0;
+    RHIGraphicsPipelineDesc      desc = {};             ///< Creation parameters (for debugging)
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // ResourcePool — Generic typed pool with generational handles
 // ─────────────────────────────────────────────────────────────────────────────
 

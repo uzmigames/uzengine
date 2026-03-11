@@ -81,4 +81,30 @@ bool CreateDX12Sampler(ID3D12Device* device,
 void DestroyDX12Sampler(DX12Sampler& sampler,
                         DescriptorAllocator& samplerHeap);
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Root Signature
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Creates the global bindless root signature for SM6.6.
+///
+/// Layout: one root constant (uint descriptorIndex at b0),
+/// plus two descriptor tables (CBV_SRV_UAV and Sampler) bound as unbounded arrays.
+/// All pipelines share this single root signature.
+ID3D12RootSignature* CreateBindlessRootSignature(ID3D12Device* device);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pipeline Creation
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Creates a DX12 graphics pipeline state object.
+/// Requires a pre-created root signature and resolved shader bytecodes.
+bool CreateDX12GraphicsPipeline(ID3D12Device* device,
+                                 ID3D12RootSignature* rootSignature,
+                                 const RHIGraphicsPipelineDesc& desc,
+                                 const ResourcePool<DX12Shader>& shaderPool,
+                                 DX12Pipeline& outPipeline);
+
+/// Releases a DX12 pipeline state object.
+void DestroyDX12Pipeline(DX12Pipeline& pipeline);
+
 } // namespace uz

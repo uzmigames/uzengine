@@ -530,4 +530,253 @@ void DestroyDX12Sampler(DX12Sampler& sampler, DescriptorAllocator& samplerHeap) 
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Root Signature — Global Bindless (SM6.6)
+// ─────────────────────────────────────────────────────────────────────────────
+
+ID3D12RootSignature* CreateBindlessRootSignature(ID3D12Device* device) {
+    // Root parameter 0: one root constant (uint32 descriptorIndex) at b0
+    D3D12_ROOT_PARAMETER1 rootParams[1] = {};
+    rootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+    rootParams[0].Constants.ShaderRegister = 0;   // b0
+    rootParams[0].Constants.RegisterSpace = 0;
+    rootParams[0].Constants.Num32BitValues = 1;
+    rootParams[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+    // Static samplers: none — we use the bindless sampler heap
+
+    D3D12_VERSIONED_ROOT_SIGNATURE_DESC versionedDesc = {};
+    versionedDesc.Version = D3D_ROOT_SIGNATURE_VERSION_1_1;
+    versionedDesc.Desc_1_1.NumParameters = 1;
+    versionedDesc.Desc_1_1.pParameters = rootParams;
+    versionedDesc.Desc_1_1.NumStaticSamplers = 0;
+    versionedDesc.Desc_1_1.pStaticSamplers = nullptr;
+    versionedDesc.Desc_1_1.Flags =
+        D3D12_ROOT_SIGNATURE_FLAG_CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED |
+        D3D12_ROOT_SIGNATURE_FLAG_SAMPLER_HEAP_DIRECTLY_INDEXED;
+
+    ID3DBlob* serialized = nullptr;
+    ID3DBlob* error = nullptr;
+    HRESULT hr = D3D12SerializeVersionedRootSignature(&versionedDesc, &serialized, &error);
+    if (FAILED(hr)) {
+        const char* errMsg = error ? static_cast<const char*>(error->GetBufferPointer()) : "unknown";
+        UZ_LOG(RHI, Error, "Failed to serialize bindless root signature: {}", errMsg);
+        if (error) error->Release();
+        if (serialized) serialized->Release();
+        return nullptr;
+    }
+
+    ID3D12RootSignature* rootSig = nullptr;
+    hr = device->CreateRootSignature(0,
+        serialized->GetBufferPointer(), serialized->GetBufferSize(),
+        IID_ID3D12RootSignature, reinterpret_cast<void**>(&rootSig));
+
+    serialized->Release();
+    if (error) error->Release();
+
+    if (FAILED(hr)) {
+        UZ_LOG(RHI, Error, "Failed to create bindless root signature, hr=0x{:08X}", static_cast<uint32_t>(hr));
+        return nullptr;
+    }
+
+    UZ_LOG(RHI, Info, "Bindless root signature created (SM6.6 DIRECTLY_INDEXED)");
+    return rootSig;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pipeline State Object Creation
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Converts RHICullMode to D3D12_CULL_MODE.
+static D3D12_CULL_MODE ToDx12CullMode(RHICullMode mode) {
+    switch (mode) {
+        case RHICullMode::None:  return D3D12_CULL_MODE_NONE;
+        case RHICullMode::Front: return D3D12_CULL_MODE_FRONT;
+        case RHICullMode::Back:  return D3D12_CULL_MODE_BACK;
+    }
+    return D3D12_CULL_MODE_BACK;
+}
+
+/// Converts RHIFillMode to D3D12_FILL_MODE.
+static D3D12_FILL_MODE ToDx12FillMode(RHIFillMode mode) {
+    switch (mode) {
+        case RHIFillMode::Solid:     return D3D12_FILL_MODE_SOLID;
+        case RHIFillMode::Wireframe: return D3D12_FILL_MODE_WIREFRAME;
+    }
+    return D3D12_FILL_MODE_SOLID;
+}
+
+/// Converts RHICompareFunc to D3D12_COMPARISON_FUNC.
+static D3D12_COMPARISON_FUNC ToDx12CompareFunc(RHICompareFunc func) {
+    switch (func) {
+        case RHICompareFunc::Never:        return D3D12_COMPARISON_FUNC_NEVER;
+        case RHICompareFunc::Less:         return D3D12_COMPARISON_FUNC_LESS;
+        case RHICompareFunc::Equal:        return D3D12_COMPARISON_FUNC_EQUAL;
+        case RHICompareFunc::LessEqual:    return D3D12_COMPARISON_FUNC_LESS_EQUAL;
+        case RHICompareFunc::Greater:      return D3D12_COMPARISON_FUNC_GREATER;
+        case RHICompareFunc::NotEqual:     return D3D12_COMPARISON_FUNC_NOT_EQUAL;
+        case RHICompareFunc::GreaterEqual: return D3D12_COMPARISON_FUNC_GREATER_EQUAL;
+        case RHICompareFunc::Always:       return D3D12_COMPARISON_FUNC_ALWAYS;
+    }
+    return D3D12_COMPARISON_FUNC_LESS;
+}
+
+/// Converts RHIBlendFactor to D3D12_BLEND.
+static D3D12_BLEND ToDx12Blend(RHIBlendFactor factor) {
+    switch (factor) {
+        case RHIBlendFactor::Zero:         return D3D12_BLEND_ZERO;
+        case RHIBlendFactor::One:          return D3D12_BLEND_ONE;
+        case RHIBlendFactor::SrcColor:     return D3D12_BLEND_SRC_COLOR;
+        case RHIBlendFactor::InvSrcColor:  return D3D12_BLEND_INV_SRC_COLOR;
+        case RHIBlendFactor::SrcAlpha:     return D3D12_BLEND_SRC_ALPHA;
+        case RHIBlendFactor::InvSrcAlpha:  return D3D12_BLEND_INV_SRC_ALPHA;
+        case RHIBlendFactor::DstColor:     return D3D12_BLEND_DEST_COLOR;
+        case RHIBlendFactor::InvDstColor:  return D3D12_BLEND_INV_DEST_COLOR;
+        case RHIBlendFactor::DstAlpha:     return D3D12_BLEND_DEST_ALPHA;
+        case RHIBlendFactor::InvDstAlpha:  return D3D12_BLEND_INV_DEST_ALPHA;
+    }
+    return D3D12_BLEND_ONE;
+}
+
+/// Converts RHIBlendOp to D3D12_BLEND_OP.
+static D3D12_BLEND_OP ToDx12BlendOp(RHIBlendOp op) {
+    switch (op) {
+        case RHIBlendOp::Add:         return D3D12_BLEND_OP_ADD;
+        case RHIBlendOp::Subtract:    return D3D12_BLEND_OP_SUBTRACT;
+        case RHIBlendOp::RevSubtract: return D3D12_BLEND_OP_REV_SUBTRACT;
+        case RHIBlendOp::Min:         return D3D12_BLEND_OP_MIN;
+        case RHIBlendOp::Max:         return D3D12_BLEND_OP_MAX;
+    }
+    return D3D12_BLEND_OP_ADD;
+}
+
+/// Converts RHIPrimitiveTopology to D3D12_PRIMITIVE_TOPOLOGY_TYPE.
+static D3D12_PRIMITIVE_TOPOLOGY_TYPE ToDx12TopologyType(RHIPrimitiveTopology topo) {
+    switch (topo) {
+        case RHIPrimitiveTopology::TriangleList:
+        case RHIPrimitiveTopology::TriangleStrip:
+            return D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+        case RHIPrimitiveTopology::LineList:
+        case RHIPrimitiveTopology::LineStrip:
+            return D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE;
+        case RHIPrimitiveTopology::PointList:
+            return D3D12_PRIMITIVE_TOPOLOGY_TYPE_POINT;
+    }
+    return D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+}
+
+bool CreateDX12GraphicsPipeline(ID3D12Device* device,
+                                 ID3D12RootSignature* rootSignature,
+                                 const RHIGraphicsPipelineDesc& desc,
+                                 const ResourcePool<DX12Shader>& shaderPool,
+                                 DX12Pipeline& outPipeline) {
+    // Resolve shader bytecodes
+    const DX12Shader* vs = shaderPool.Get(desc.vertexShader.index, desc.vertexShader.generation);
+    if (!vs || vs->bytecode.empty()) {
+        UZ_LOG(RHI, Error, "CreateGraphicsPipeline: invalid vertex shader (name='{}')",
+               desc.debugName ? desc.debugName : "");
+        return false;
+    }
+
+    const DX12Shader* ps = nullptr;
+    if (desc.pixelShader.index != UINT32_MAX && desc.pixelShader.generation != 0) {
+        ps = shaderPool.Get(desc.pixelShader.index, desc.pixelShader.generation);
+        if (!ps || ps->bytecode.empty()) {
+            UZ_LOG(RHI, Error, "CreateGraphicsPipeline: invalid pixel shader (name='{}')",
+                   desc.debugName ? desc.debugName : "");
+            return false;
+        }
+    }
+
+    // Build D3D12 PSO descriptor
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc = {};
+    psoDesc.pRootSignature = rootSignature;
+
+    // Shaders
+    psoDesc.VS.pShaderBytecode = vs->bytecode.data();
+    psoDesc.VS.BytecodeLength = vs->bytecode.size();
+    if (ps) {
+        psoDesc.PS.pShaderBytecode = ps->bytecode.data();
+        psoDesc.PS.BytecodeLength = ps->bytecode.size();
+    }
+
+    // No input layout — SM6.6 bindless pulls vertex data from SRV
+    psoDesc.InputLayout.pInputElementDescs = nullptr;
+    psoDesc.InputLayout.NumElements = 0;
+
+    // Rasterizer
+    psoDesc.RasterizerState.FillMode = ToDx12FillMode(desc.rasterizer.fillMode);
+    psoDesc.RasterizerState.CullMode = ToDx12CullMode(desc.rasterizer.cullMode);
+    psoDesc.RasterizerState.FrontCounterClockwise = desc.rasterizer.frontCounterClockwise;
+    psoDesc.RasterizerState.DepthBias = static_cast<INT>(desc.rasterizer.depthBias);
+    psoDesc.RasterizerState.SlopeScaledDepthBias = desc.rasterizer.slopeScaledDepthBias;
+    psoDesc.RasterizerState.DepthClipEnable = TRUE;
+    psoDesc.RasterizerState.MultisampleEnable = FALSE;
+    psoDesc.RasterizerState.AntialiasedLineEnable = FALSE;
+    psoDesc.RasterizerState.ConservativeRaster = D3D12_CONSERVATIVE_RASTERIZATION_MODE_OFF;
+
+    // Depth-stencil
+    psoDesc.DepthStencilState.DepthEnable = desc.depthStencil.depthEnable;
+    psoDesc.DepthStencilState.DepthWriteMask = desc.depthStencil.depthWrite
+        ? D3D12_DEPTH_WRITE_MASK_ALL : D3D12_DEPTH_WRITE_MASK_ZERO;
+    psoDesc.DepthStencilState.DepthFunc = ToDx12CompareFunc(desc.depthStencil.depthFunc);
+    psoDesc.DepthStencilState.StencilEnable = FALSE;
+    psoDesc.DSVFormat = ToDxgiFormat(desc.depthStencilFormat);
+
+    // Blend state
+    psoDesc.BlendState.AlphaToCoverageEnable = FALSE;
+    psoDesc.BlendState.IndependentBlendEnable = (desc.renderTargetCount > 1) ? TRUE : FALSE;
+    for (uint32_t i = 0; i < desc.renderTargetCount && i < 8; ++i) {
+        auto& src = desc.renderTargetBlend[i];
+        auto& dst = psoDesc.BlendState.RenderTarget[i];
+        dst.BlendEnable = src.blendEnable;
+        dst.SrcBlend = ToDx12Blend(src.srcColor);
+        dst.DestBlend = ToDx12Blend(src.dstColor);
+        dst.BlendOp = ToDx12BlendOp(src.colorOp);
+        dst.SrcBlendAlpha = ToDx12Blend(src.srcAlpha);
+        dst.DestBlendAlpha = ToDx12Blend(src.dstAlpha);
+        dst.BlendOpAlpha = ToDx12BlendOp(src.alphaOp);
+        dst.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+        dst.LogicOpEnable = FALSE;
+    }
+
+    // Render target formats
+    psoDesc.NumRenderTargets = desc.renderTargetCount;
+    for (uint32_t i = 0; i < desc.renderTargetCount && i < 8; ++i) {
+        psoDesc.RTVFormats[i] = ToDxgiFormat(desc.renderTargetFormats[i]);
+    }
+
+    // Topology
+    psoDesc.PrimitiveTopologyType = ToDx12TopologyType(desc.topology);
+
+    // Sample desc (no MSAA)
+    psoDesc.SampleDesc.Count = 1;
+    psoDesc.SampleDesc.Quality = 0;
+    psoDesc.SampleMask = UINT_MAX;
+
+    // Create PSO
+    ID3D12PipelineState* pso = nullptr;
+    HRESULT hr = device->CreateGraphicsPipelineState(&psoDesc,
+        IID_ID3D12PipelineState, reinterpret_cast<void**>(&pso));
+    if (FAILED(hr)) {
+        UZ_LOG(RHI, Error, "CreateGraphicsPipelineState failed: hr=0x{:08X} (name='{}')",
+               static_cast<uint32_t>(hr), desc.debugName ? desc.debugName : "");
+        return false;
+    }
+
+    outPipeline.pso = pso;
+    outPipeline.desc = desc;
+
+    UZ_LOG(RHI, Info, "Graphics pipeline created (name='{}')",
+           desc.debugName ? desc.debugName : "");
+    return true;
+}
+
+void DestroyDX12Pipeline(DX12Pipeline& pipeline) {
+    if (pipeline.pso) {
+        pipeline.pso->Release();
+        pipeline.pso = nullptr;
+    }
+}
+
 } // namespace uz

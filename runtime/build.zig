@@ -127,12 +127,13 @@ pub fn build(b: *std.Build) void {
     test_mod.addCSourceFiles(.{ .root = b.path("tests/core/math"), .files = &.{ "test_vec.cpp", "test_mat4.cpp", "test_quat.cpp", "test_transform.cpp", "test_color.cpp", "test_bounds.cpp" }, .flags = cpp_flags });
     test_mod.addCSourceFiles(.{ .root = b.path("tests/core/containers"), .files = &.{ "test_ring_buffer.cpp", "test_free_list.cpp", "test_handle_map.cpp", "test_frame_array.cpp" }, .flags = cpp_flags });
     test_mod.addCSourceFiles(.{ .root = b.path("tests/core/random"), .files = &.{"test_random.cpp"}, .flags = cpp_flags });
-    test_mod.addCSourceFiles(.{ .root = b.path("tests/core/rhi"), .files = &.{"test_rhi_types.cpp"}, .flags = cpp_flags });
+    test_mod.addCSourceFiles(.{ .root = b.path("tests/core/rhi"), .files = &.{ "test_rhi_types.cpp", "test_dx12_resources.cpp" }, .flags = cpp_flags });
     test_mod.addCSourceFiles(.{ .root = b.path("tests/platform"), .files = &.{"test_input.cpp"}, .flags = cpp_flags });
 
     // Engine + thirdparty headers for tests
     for (engine_include_dirs) |dir| test_mod.addIncludePath(b.path(dir));
     for (thirdparty_include_dirs) |dir| test_mod.addIncludePath(b.path(dir));
+    test_mod.addIncludePath(b.path("core/rhi/dx12"));
 
     const test_exe = b.addExecutable(.{
         .name = "test_runtime",

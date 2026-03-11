@@ -53,6 +53,12 @@ DX12Device::~DX12Device() {
         m_idleFenceEvent = nullptr;
     }
 
+    // Release root signature
+    if (m_rootSignature) {
+        m_rootSignature->Release();
+        m_rootSignature = nullptr;
+    }
+
     // Release D3D12MA allocator before device
     if (m_allocator) {
         m_allocator->Release();
@@ -104,6 +110,10 @@ bool DX12Device::Init(const RHIDeviceDesc& desc) {
     if (!CreateDescriptorHeaps())               return false;
     InitDescriptorAllocators();
     if (!CreateCommandQueues())                 return false;
+
+    // Global bindless root signature (SM6.6 DIRECTLY_INDEXED)
+    m_rootSignature = CreateBindlessRootSignature(m_device.Get());
+    if (!m_rootSignature) return false;
 
     // WaitIdle fence
     HRESULT hr = m_device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&m_idleFence));
@@ -469,13 +479,32 @@ void DX12Device::DestroyShader(RHIShaderHandle handle) {
 }
 
 RHIPipelineHandle DX12Device::CreateGraphicsPipeline(const RHIGraphicsPipelineDesc& desc) {
-    UZ_LOG(RHI, Warning, "CreateGraphicsPipeline not yet implemented — Phase 2.4 (name='{}')",
-           desc.debugName ? desc.debugName : "");
-    return RHIPipelineHandle::Invalid();
+    uint32_t generation = 0;
+    uint32_t index = m_pipelinePool.Allocate(generation);
+    DX12Pipeline* slot = m_pipelinePool.Get(index, generation);
+    if (!slot) {
+        UZ_LOG(RHI, Error, "CreateGraphicsPipeline: pool allocation failed");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (!CreateDX12GraphicsPipeline(m_device.Get(), m_rootSignature, desc, m_shaderPool, *slot)) {
+        m_pipelinePool.Free(index);
+        return RHIPipelineHandle::Invalid();
+    }
+
+    slot->generation = generation;
+    return RHIPipelineHandle{index, generation};
 }
 
 void DX12Device::DestroyPipeline(RHIPipelineHandle handle) {
-    UZ_LOG(RHI, Warning, "DestroyPipeline not yet implemented — Phase 2.4");
+    DX12Pipeline* pipeline = m_pipelinePool.Get(handle.index, handle.generation);
+    if (!pipeline) {
+        UZ_LOG(RHI, Warning, "DestroyPipeline: invalid handle (idx={}, gen={})",
+               handle.index, handle.generation);
+        return;
+    }
+    DestroyDX12Pipeline(*pipeline);
+    m_pipelinePool.Free(handle.index);
 }
 
 RHISamplerHandle DX12Device::CreateSampler(const RHISamplerDesc& desc) {

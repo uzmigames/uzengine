@@ -125,6 +125,9 @@ public:
     ResourcePool<DX12Buffer>& GetBufferPool() { return m_bufferPool; }
     ResourcePool<DX12Texture>& GetTexturePool() { return m_texturePool; }
 
+    /// Returns the global bindless root signature (shared by all pipelines).
+    ID3D12RootSignature* GetRootSignature() const { return m_rootSignature; }
+
 private:
     bool EnableDebugLayer(bool gpuValidation);
     bool CreateFactory(bool validation);
@@ -171,6 +174,10 @@ private:
     ResourcePool<DX12Texture>      m_texturePool;
     ResourcePool<DX12Shader>       m_shaderPool;
     ResourcePool<DX12Sampler>      m_samplerPool;
+    ResourcePool<DX12Pipeline>     m_pipelinePool;
+
+    /// Global bindless root signature — shared by all graphics pipelines.
+    ID3D12RootSignature*           m_rootSignature = nullptr;
 
     std::string                    m_adapterName;
     std::string                    m_featureLevelStr;

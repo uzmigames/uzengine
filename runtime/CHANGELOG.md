@@ -19,6 +19,10 @@
   - CreateTexture: 2D/Cube/Array with SRV + optional RTV/DSV/UAV, typeless depth for SRV+DSV
   - CreateShader: bytecode copy with pool storage
   - CreateSampler: sampler descriptor in global sampler heap
+  - CreateGraphicsPipeline: full PSO from RHIGraphicsPipelineDesc with root signature
+  - Global bindless root signature (SM6.6 DIRECTLY_INDEXED, one root constant at b0)
+  - State conversion: cull, fill, blend, depth-stencil, topology → D3D12 enums
+  - No input layout — SM6.6 bindless pulls vertex data from SRV
   - Persistent CPU mapping for Upload/Readback buffers
 - **DX12 swapchain** (`dx12_swapchain.h/.cpp`):
   - IDXGISwapChain4 (FLIP_DISCARD), triple-buffered, tearing support
@@ -38,7 +42,7 @@
   - Microsoft directx-headers (SDK 614) with correct GUIDs
   - Struct-return ABI: out-parameter form for GetCPUDescriptorHandleForHeapStart etc.
   - Base COM interfaces only (ID3D12Device, ID3D12GraphicsCommandList)
-- **183 unit tests** — 23 RHI type/interface compile tests + all existing tests pass
+- **195 unit tests** — 35 RHI type/interface/resource compile tests + all existing tests pass
 
 ### Shader Pipeline Architecture (docs only)
 - **New spec**: `docs/specs/1.5.0-shader-pipeline.md` — comprehensive shader source management architecture
