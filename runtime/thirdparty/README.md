@@ -5,6 +5,36 @@ respective folder names. Use two empty lines to separate categories for
 readability.
 
 
+## Patch system
+
+Thirdparty files are downloaded fresh by `scripts/setup.ps1`. To modify an
+upstream file without losing changes on the next setup run, use **patches**
+(following Godot's convention):
+
+```
+runtime/thirdparty/<library>/patches/
+  0001-description.patch
+  0002-another-fix.patch
+```
+
+**Creating a patch:**
+```powershell
+# 1. Modify the thirdparty file directly
+# 2. Run the helper script
+.\scripts\create_patch.ps1 -Library stb -File stb_truetype.h -Description "fix-msvc-warning"
+# 3. Restore the original file
+git checkout -- runtime/thirdparty/stb/stb_truetype.h
+# 4. Commit only the .patch file
+```
+
+**Rules:**
+- Patches use unified diff format (`git apply` compatible)
+- Numbered sequentially: `0001-`, `0002-`, etc.
+- Applied alphabetically after `setup.ps1` downloads clean sources
+- Patch files are committed; modified thirdparty files are NOT
+- Document each patch in the library's section below with a one-line description
+
+
 ## agility
 
 - Upstream: https://www.nuget.org/packages/Microsoft.Direct3D.D3D12
@@ -270,6 +300,7 @@ Single-file public domain libraries for C/C++. Used headers:
 - `stb_image.h` (v2.30) — loads PNG, JPG, TGA, BMP, PSD, GIF, HDR, PIC
 - `stb_image_write.h` (v1.16) — writes PNG, TGA, BMP
 - `stb_image_resize2.h` (v2.16) — high-quality image resizing
+- `stb_truetype.h` (v1.26) — TrueType font rasterizer (used by bitmap_font)
 
 Primary image loader for the engine. stb_image handles most formats; libjpeg-turbo
 is used for performance-critical JPEG batch imports.

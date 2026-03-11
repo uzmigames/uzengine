@@ -75,6 +75,24 @@ function Download-Extract-Zip {
     Remove-Item $zip
 }
 
+function Apply-Patches {
+    param([string]$Name)
+    $patchDir = Join-Path $ThirdPartyDir "$Name\patches"
+    if (-not (Test-Path $patchDir)) { return }
+    $patches = Get-ChildItem $patchDir -Filter "*.patch" | Sort-Object Name
+    if ($patches.Count -eq 0) { return }
+    foreach ($patch in $patches) {
+        Write-Host "  [$Name] applying $($patch.Name)..." -ForegroundColor Magenta
+        # Apply from repo root — git apply works on the working tree even for non-git subdirs
+        Push-Location $RootDir
+        git apply --directory="runtime/thirdparty/$Name" $patch.FullName 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "  [$Name] WARN: patch may already be applied: $($patch.Name)" -ForegroundColor DarkYellow
+        }
+        Pop-Location
+    }
+}
+
 function Download-Header {
     param([string]$Name, [string]$Url, [string]$FileName)
     $dir = Join-Path $ThirdPartyDir $Name
@@ -404,10 +422,22 @@ Get-ChildItem -Path $ThirdPartyDir -Directory | ForEach-Object {
 # Remove temp dir
 if (Test-Path $TempDir) { Remove-Item -Recurse -Force $TempDir }
 
+# ─── Apply Patches ────────────────────────────────────────────────────────
+
+Write-Host ""
+Write-Host "[6/9] Applying thirdparty patches..." -ForegroundColor Cyan
+
+Get-ChildItem -Path $ThirdPartyDir -Directory | ForEach-Object {
+    if ($_.Name -eq "vcpkg") { return }
+    Apply-Patches -Name $_.Name
+}
+
+Write-Host "  Patches applied." -ForegroundColor Green
+
 # ─── npm install ───────────────────────────────────────────────────────────
 
 Write-Host ""
-Write-Host "[6/8] Installing Node dependencies..." -ForegroundColor Cyan
+Write-Host "[7/9] Installing Node dependencies..." -ForegroundColor Cyan
 
 $npmModules = @("napi", "mcp", "extension")
 foreach ($mod in $npmModules) {
@@ -425,7 +455,7 @@ foreach ($mod in $npmModules) {
 # ─── Verify Image Libraries ────────────────────────────────────────────────
 
 Write-Host ""
-Write-Host "[7/8] Verifying image libraries..." -ForegroundColor Cyan
+Write-Host "[8/9] Verifying image libraries..." -ForegroundColor Cyan
 
 $ImageLibs = @(
     @{ Name = "stb";              File = "stb_image.h" },
@@ -450,7 +480,7 @@ if (-not $allOk) { Write-Warning "Some image libraries are incomplete. Check abo
 # ─── Summary ───────────────────────────────────────────────────────────────
 
 Write-Host ""
-Write-Host "[8/8] Summary" -ForegroundColor Cyan
+Write-Host "[9/9] Summary" -ForegroundColor Cyan
 
 $dirCount = (Get-ChildItem -Path $ThirdPartyDir -Directory | Where-Object { $_.Name -ne "vcpkg" } | Measure-Object).Count
 Write-Host "  $dirCount thirdparty libraries installed" -ForegroundColor Green
