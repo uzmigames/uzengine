@@ -2,6 +2,8 @@
 
 ## Build Commands
 
+### Zig (default)
+
 | Command | Description |
 |---------|-------------|
 | `zig build` | Build all targets |
@@ -15,6 +17,19 @@ Clean build (after major changes):
 ```bash
 rm -rf .zig-cache && zig build
 ```
+
+### CMake (MSVC / Clang)
+
+| Command | Description |
+|---------|-------------|
+| `cmake --preset msvc-debug` | Configure MSVC debug |
+| `cmake --build build/msvc-debug` | Build MSVC debug |
+| `cmake --preset clang-debug` | Configure Clang debug |
+| `cmake --build build/clang-debug` | Build Clang debug |
+| `cmake --preset msvc-release` | Configure MSVC release |
+| `cmake --preset clang-release` | Configure Clang release |
+
+Presets are defined in `CMakePresets.json`. CMake output goes to `build/`.
 
 ## Test Framework
 

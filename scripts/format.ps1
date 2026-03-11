@@ -17,28 +17,54 @@ Write-Host ""
 $failed = @()
 
 # C++ modules (clang-format)
-$cppModules = @("runtime", "napi")
 $clangFormat = Get-Command clang-format -ErrorAction SilentlyContinue
 
-foreach ($mod in $cppModules) {
-    $modPath = Join-Path $Root $mod
-    if (-not (Test-Path (Join-Path $modPath ".clang-format"))) { continue }
-    $srcPath = Join-Path $modPath "src"
-
-    Write-Host "[$mod] clang-format..." -ForegroundColor Yellow
+# Runtime — scan src/, core/, platform/, demos/, tools/, tests/
+$runtimePath = Join-Path $Root "runtime"
+if (Test-Path (Join-Path $runtimePath ".clang-format")) {
+    Write-Host "[runtime] clang-format..." -ForegroundColor Yellow
     if ($clangFormat) {
-        $sources = Get-ChildItem -Path $srcPath -Include "*.cpp","*.h" -Recurse | Select-Object -ExpandProperty FullName
+        $runtimeDirs = @("src", "core", "platform", "demos", "tools", "tests")
+        $sources = @()
+        foreach ($dir in $runtimeDirs) {
+            $dirPath = Join-Path $runtimePath $dir
+            if (Test-Path $dirPath) {
+                $sources += Get-ChildItem -Path $dirPath -Include "*.cpp","*.h" -Recurse | Select-Object -ExpandProperty FullName
+            }
+        }
         if ($sources) {
             if ($checkOnly) {
                 & clang-format --dry-run --Werror $sources
             } else {
                 & clang-format -i $sources
             }
-            if ($LASTEXITCODE -ne 0) { $failed += $mod }
-            else { Write-Host "[$mod] OK" -ForegroundColor Green }
+            if ($LASTEXITCODE -ne 0) { $failed += "runtime" }
+            else { Write-Host "[runtime] OK" -ForegroundColor Green }
         }
     } else {
-        Write-Host "[$mod] SKIP - clang-format not found" -ForegroundColor DarkYellow
+        Write-Host "[runtime] SKIP - clang-format not found" -ForegroundColor DarkYellow
+    }
+    Write-Host ""
+}
+
+# N-API module
+$napiPath = Join-Path $Root "napi"
+if (Test-Path (Join-Path $napiPath ".clang-format")) {
+    $napiSrc = Join-Path $napiPath "src"
+    Write-Host "[napi] clang-format..." -ForegroundColor Yellow
+    if ($clangFormat) {
+        $sources = Get-ChildItem -Path $napiSrc -Include "*.cpp","*.h" -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
+        if ($sources) {
+            if ($checkOnly) {
+                & clang-format --dry-run --Werror $sources
+            } else {
+                & clang-format -i $sources
+            }
+            if ($LASTEXITCODE -ne 0) { $failed += "napi" }
+            else { Write-Host "[napi] OK" -ForegroundColor Green }
+        }
+    } else {
+        Write-Host "[napi] SKIP - clang-format not found" -ForegroundColor DarkYellow
     }
     Write-Host ""
 }

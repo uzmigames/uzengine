@@ -19,7 +19,7 @@ This eliminates the need for CMake, MSVC, or platform-specific build scripts.
 
 | Step | Command | Output |
 |------|---------|--------|
-| `zig build` | Build everything | `zig-out/bin/` |
+| `zig build` | Build everything | `build/bin/` |
 | `zig build test` | Run unit tests | Test results on stdout |
 | `zig build run` | Launch runtime | Window with clear screen |
 | `zig build demo` | Launch demo | Animated color demo |
@@ -83,15 +83,15 @@ b.getInstallStep().dependOn(&b.addInstallBinFile(
 ).step);
 ```
 
-This ensures `D3D12Core.dll` is in `zig-out/bin/D3D12/` next to the executables,
+This ensures `D3D12Core.dll` is in `build/bin/D3D12/` next to the executables,
 which is where the Agility SDK activation code (`dx12_agility.cpp`) expects it.
 
 ## DXC Shader Compiler Deployment
 
-DXC (DirectX Shader Compiler) DLLs are deployed to `zig-out/bin/` alongside executables:
+DXC (DirectX Shader Compiler) DLLs are deployed to `build/bin/` alongside executables:
 
 ```
-zig-out/bin/
+build/bin/
     dxcompiler.dll    # HLSL → DXIL/SPIRV compiler
     dxil.dll          # DXIL validator
 ```
@@ -115,7 +115,7 @@ to the running executable via `uz::GetExeDir()` (defined in `core/paths/paths.h`
 - NEVER use absolute paths for engine resources
 - NEVER search relative to CWD (`../` chains are fragile)
 - ALWAYS resolve relative to the executable directory
-- Build system MUST deploy all runtime dependencies to `zig-out/bin/`
+- Build system MUST deploy all runtime dependencies to `build/bin/`
 
 This follows the same pattern used by Unreal Engine (`FPlatformProcess::BaseDir()`)
 and Godot (`OS::get_executable_path().get_base_dir()`).

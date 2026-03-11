@@ -42,38 +42,51 @@ This clones and configures:
 
 ## Build
 
-All builds use Zig from the `runtime/` directory:
+All builds run from the `runtime/` directory:
 
 ```bash
 cd runtime
 ```
 
-### Debug Build (default)
+### Option 1: Zig (default, recommended)
 
 ```bash
-zig build
+zig build                              # Debug build
+zig build -Doptimize=ReleaseFast       # Release build
+zig build -Dtarget=x86_64-linux-gnu    # Cross-compile to Linux
 ```
 
-Output goes to `zig-out/bin/`:
+Output goes to `build/bin/`:
 - `uzengine.exe` — Standalone runtime
 - `clear_screen_demo.exe` — DX12 animated clear demo
+- `triangle_demo.exe` — DX12 triangle demo (SM6.6 bindless)
 - `test_runtime.exe` — Unit test runner
 - `D3D12/D3D12Core.dll` — Agility SDK runtime (auto-deployed)
 
-### Release Build
+### Option 2: CMake (MSVC or Clang)
+
+CMake presets are provided for MSVC and Clang on Windows:
 
 ```bash
-zig build -Doptimize=ReleaseFast
+# MSVC
+cmake --preset msvc-debug
+cmake --build build/msvc-debug
+
+# Clang
+cmake --preset clang-debug
+cmake --build build/clang-debug
+
+# Release variants
+cmake --preset msvc-release
+cmake --build build/msvc-release
 ```
 
-### Cross-Compile to Linux
+Available presets: `msvc-debug`, `msvc-release`, `clang-debug`, `clang-release`.
 
-```bash
-zig build -Dtarget=x86_64-linux-gnu
-```
+Output goes to `build/<preset>/Debug/` (or `Release/`).
 
-> **Note**: Linux builds compile the math library and cross-platform core. DX12 backend
-> and platform/windows sources are automatically excluded.
+> **Note**: Linux builds (Zig only) compile the math library and cross-platform core.
+> DX12 backend and platform/windows sources are automatically excluded.
 
 ## Build Targets
 
@@ -121,7 +134,7 @@ You should see a window with an animated color-cycling clear screen and log outp
 require Windows. Use cross-compilation target or build on Windows.
 
 **Agility SDK not loading (FL < 12.2 on capable hardware)** — Ensure
-`zig-out/bin/D3D12/D3D12Core.dll` exists. The build deploys it automatically.
+`build/bin/D3D12/D3D12Core.dll` exists. The build deploys it automatically.
 
 **Stale build cache** — If you see unexpected behavior after code changes:
 ```bash

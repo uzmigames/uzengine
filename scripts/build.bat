@@ -1,8 +1,17 @@
 @echo off
 setlocal enabledelayedexpansion
 
+:: Parse --compiler flag (default: zig)
+set COMPILER=zig
+for %%a in (%*) do (
+    echo %%a | findstr /b "--compiler=" >nul && (
+        for /f "tokens=2 delims==" %%v in ("%%a") do set COMPILER=%%v
+    )
+)
+
 echo ============================================
 echo  UzEngine Full Build Pipeline
+echo  Compiler: %COMPILER%
 echo ============================================
 echo.
 
@@ -16,48 +25,35 @@ set "PATH=%SYSPATH%;%USRPATH%"
 :: ---- Pre-flight: kill processes locking build artifacts ----
 echo [0/4] Checking for blocking processes...
 
-:: Check if uzengine.node is locked (loaded by VSCode/Electron)
 set NODE_FILE=%ROOT%\extension\native\uzengine.node
 if exist "%NODE_FILE%" (
-    for /f "tokens=1" %%p in ('handle.exe -accepteula -nobanner "%NODE_FILE%" 2^>nul ^| findstr /i pid') do (
-        echo       WARNING: uzengine.node is locked by PID %%p
-    )
-    :: Try rename as lock test
     ren "%NODE_FILE%" uzengine.node.tmp >nul 2>&1
     if !errorlevel! neq 0 (
         echo.
         echo ERROR: uzengine.node is locked by another process.
         echo        Close VSCode or any Extension Host using the addon, then retry.
-        echo        Tip: In VSCode, run "Developer: Reload Window" first.
-        echo.
         exit /b 1
     )
     ren "%NODE_FILE%.tmp" uzengine.node >nul 2>&1
 )
 
-:: Check if runtime .lib is locked
-set LIB_FILE=%ROOT%\runtime\zig-out\lib\uzengine_runtime.lib
+set LIB_FILE=%ROOT%\runtime\build\lib\uzengine.lib
 if exist "%LIB_FILE%" (
-    ren "%LIB_FILE%" uzengine_runtime.lib.tmp >nul 2>&1
+    ren "%LIB_FILE%" uzengine.lib.tmp >nul 2>&1
     if !errorlevel! neq 0 (
         echo.
-        echo ERROR: uzengine_runtime.lib is locked by another process.
-        echo        Close any linker or process using the library, then retry.
-        echo.
+        echo ERROR: uzengine.lib is locked by another process.
         exit /b 1
     )
-    ren "%LIB_FILE%.tmp" uzengine_runtime.lib >nul 2>&1
+    ren "%LIB_FILE%.tmp" uzengine.lib >nul 2>&1
 )
 
-:: Check if napi build output is locked
 set NAPI_NODE=%ROOT%\napi\build\Release\uzengine.node
 if exist "%NAPI_NODE%" (
     ren "%NAPI_NODE%" uzengine.node.tmp >nul 2>&1
     if !errorlevel! neq 0 (
         echo.
         echo ERROR: napi/build/Release/uzengine.node is locked.
-        echo        Close any process using the addon, then retry.
-        echo.
         exit /b 1
     )
     ren "%NAPI_NODE%.tmp" uzengine.node >nul 2>&1
@@ -68,10 +64,23 @@ echo.
 
 :: ---- Build Pipeline ----
 
-:: 1. Runtime (Zig)
-echo [1/4] Building runtime (Zig)...
+:: 1. Runtime
+echo [1/4] Building runtime (%COMPILER%)...
 cd /d "%ROOT%\runtime"
-zig build -Doptimize=ReleaseFast
+
+if "%COMPILER%"=="zig" (
+    zig build -Doptimize=ReleaseFast
+) else if "%COMPILER%"=="msvc" (
+    cmake --preset msvc-release >nul 2>&1
+    cmake --build build/msvc-release --config Release
+) else if "%COMPILER%"=="clang" (
+    cmake --preset clang-release >nul 2>&1
+    cmake --build build/clang-release --config Release
+) else (
+    echo ERROR: Unknown compiler: %COMPILER%. Use zig, msvc, or clang.
+    exit /b 1
+)
+
 if !errorlevel! neq 0 (
     echo FAILED: runtime build
     exit /b 1
@@ -124,5 +133,5 @@ echo       OK
 echo.
 
 echo ============================================
-echo  Build complete!
+echo  Build complete! (compiler: %COMPILER%)
 echo ============================================

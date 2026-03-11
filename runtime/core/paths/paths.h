@@ -11,7 +11,7 @@
 ///
 /// # Layout Convention
 /// ```
-/// zig-out/bin/
+/// build/bin/
 ///     uzengine.exe             # Engine executable
 ///     test_runtime.exe         # Test executable
 ///     dxcompiler.dll           # DXC (same directory as exe)
@@ -34,8 +34,8 @@ namespace uz {
 /// Uses platform-native API (GetModuleFileNameW on Windows, /proc/self/exe
 /// on Linux, _NSGetExecutablePath on macOS). Result is cached after first call.
 ///
-/// Example: if exe is at `C:/build/zig-out/bin/test_runtime.exe`,
-/// returns `C:/build/zig-out/bin`.
+/// Example: if exe is at `C:/project/build/bin/test_runtime.exe`,
+/// returns `C:/project/build/bin`.
 std::filesystem::path GetExeDir();
 
 /// Resolves a resource path relative to the executable directory.
@@ -45,9 +45,9 @@ std::filesystem::path GetExeDir();
 ///
 /// Example:
 ///   ResolveEngineResource("dxcompiler.dll")
-///     → "C:/build/zig-out/bin/dxcompiler.dll"
+///     → "C:/project/build/bin/dxcompiler.dll"
 ///   ResolveEngineResource("D3D12/D3D12Core.dll")
-///     → "C:/build/zig-out/bin/D3D12/D3D12Core.dll"
+///     → "C:/project/build/bin/D3D12/D3D12Core.dll"
 ///   ResolveEngineResource("C:/absolute/path.dll")
 ///     → "C:/absolute/path.dll" (unchanged)
 std::filesystem::path ResolveEngineResource(const std::string& relativePath);

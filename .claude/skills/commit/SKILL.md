@@ -2,7 +2,6 @@
 name: commit
 description: Commit changes after verifying build and tests pass. Use when the user asks to commit, comitar, or save changes to git.
 disable-model-invocation: true
-allowed-tools: Bash, Read, Glob, Grep
 ---
 
 Commit changes to git. Build and lint MUST pass before committing.

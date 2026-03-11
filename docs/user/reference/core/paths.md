@@ -34,9 +34,9 @@ Absolute path to the directory containing the executable.
 
 | Executable | GetExeDir() Return |
 |------------|-------------------|
-| `C:/project/zig-out/bin/uzengine.exe` | `C:/project/zig-out/bin` |
+| `C:/project/build/bin/uzengine.exe` | `C:/project/build/bin` |
 | `/usr/local/bin/uzengine` | `/usr/local/bin` |
-| `/home/user/game/zig-out/bin/uzengine` | `/home/user/game/zig-out/bin` |
+| `/home/user/game/build/bin/uzengine` | `/home/user/game/build/bin` |
 
 ### Caching
 
@@ -83,13 +83,13 @@ Absolute path to the resource.
 
 // Relative paths (common case)
 uz::ResolveEngineResource("dxcompiler.dll");
-// → "C:/project/zig-out/bin/dxcompiler.dll"
+// → "C:/project/build/bin/dxcompiler.dll"
 
 uz::ResolveEngineResource("D3D12/D3D12Core.dll");
-// → "C:/project/zig-out/bin/D3D12/D3D12Core.dll"
+// → "C:/project/build/bin/D3D12/D3D12Core.dll"
 
 uz::ResolveEngineResource("shaders/engine/pbr.hlsl");
-// → "C:/project/zig-out/bin/shaders/engine/pbr.hlsl"
+// → "C:/project/build/bin/shaders/engine/pbr.hlsl"
 
 // Absolute paths (returned unchanged)
 uz::ResolveEngineResource("C:/custom/path/shader.hlsl");
@@ -103,10 +103,10 @@ uz::ResolveEngineResource("/usr/share/uzengine/data");
 
 ## Build Layout
 
-The build system (Zig) deploys resources to `zig-out/bin/`:
+The build system (Zig) deploys resources to `build/bin/`:
 
 ```
-zig-out/bin/
+build/bin/
 ├── uzengine.exe         # Main executable
 ├── test_runtime.exe              # Test runner
 ├── dxcompiler.dll                # DXC HLSL compiler (Windows)
@@ -195,8 +195,8 @@ config.LoadFromFile(projectPath.string());
 ```cpp
 // ❌ WRONG: Depends on where process is launched from
 std::ifstream file("shaders/pbr.hlsl");
-// Works from project root: ./zig-out/bin/uzengine --scene scene.uzscene
-// Fails from other dir: cd / && /path/to/project/zig-out/bin/uzengine --scene scene.uzscene
+// Works from project root: ./build/bin/uzengine --scene scene.uzscene
+// Fails from other dir: cd / && /path/to/project/build/bin/uzengine --scene scene.uzscene
 ```
 
 ### Problem: Absolute Paths
@@ -229,18 +229,18 @@ Benefits:
 
 ### Test Runner
 
-Tests run from the `zig-out/bin/` directory via `zig build test`:
+Tests run from the `build/bin/` directory via `zig build test`:
 
 ```bash
 $ zig build test
-# Internally runs: ./zig-out/bin/test_runtime
-# GetExeDir() returns ./zig-out/bin
+# Internally runs: ./build/bin/test_runtime
+# GetExeDir() returns ./build/bin
 # All paths resolve correctly
 ```
 
 **Before:** Tests ran from `.zig-cache/`, breaking `GetExeDir()`.
 
-**Fix:** `addInstallBinFile()` copies test executable to `zig-out/bin/`, so all tests run from the same directory as production executables.
+**Fix:** `addInstallBinFile()` copies test executable to `build/bin/`, so all tests run from the same directory as production executables.
 
 ---
 
@@ -253,7 +253,7 @@ $ zig build test
 ```cpp
 WCHAR buffer[MAX_PATH];
 GetModuleFileNameW(nullptr, buffer, MAX_PATH);
-// buffer = "C:\\project\\zig-out\\bin\\uzengine.exe"
+// buffer = "C:\\project\\build\\bin\\uzengine.exe"
 // Extract parent directory
 ```
 

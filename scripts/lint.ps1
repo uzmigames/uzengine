@@ -14,26 +14,48 @@ Write-Host ""
 $failed = @()
 
 # C++ modules (clang-tidy)
-$cppModules = @(
-    @{ Name = "runtime"; Src = "runtime/src"; Includes = @("-I$Root/runtime/src") }
-    @{ Name = "napi"; Src = "napi/src"; Includes = @("-I$Root/napi/src", "-I$Root/runtime/src", "-I$Root/napi/node_modules/node-addon-api") }
-)
-
 $clangTidy = Get-Command clang-tidy -ErrorAction SilentlyContinue
-foreach ($mod in $cppModules) {
-    if (-not (Test-Path (Join-Path $Root "$($mod.Name)/.clang-tidy"))) { continue }
-    $srcPath = Join-Path $Root $mod.Src
 
-    Write-Host "[$($mod.Name)] clang-tidy..." -ForegroundColor Yellow
+# Runtime — lint src/, core/, platform/, demos/, tools/
+$runtimePath = Join-Path $Root "runtime"
+if (Test-Path (Join-Path $runtimePath ".clang-tidy")) {
+    Write-Host "[runtime] clang-tidy..." -ForegroundColor Yellow
     if ($clangTidy) {
-        $sources = Get-ChildItem -Path $srcPath -Filter "*.cpp" -Recurse | Select-Object -ExpandProperty FullName
+        $runtimeDirs = @("src", "core", "platform", "demos", "tools")
+        $sources = @()
+        foreach ($dir in $runtimeDirs) {
+            $dirPath = Join-Path $runtimePath $dir
+            if (Test-Path $dirPath) {
+                $sources += Get-ChildItem -Path $dirPath -Filter "*.cpp" -Recurse | Select-Object -ExpandProperty FullName
+            }
+        }
         if ($sources) {
-            & clang-tidy $sources -- -std=c++17 $mod.Includes
-            if ($LASTEXITCODE -ne 0) { $failed += $mod.Name }
-            else { Write-Host "[$($mod.Name)] OK" -ForegroundColor Green }
+            $includes = @("-I$runtimePath/src")
+            & clang-tidy $sources -- -std=c++17 $includes
+            if ($LASTEXITCODE -ne 0) { $failed += "runtime" }
+            else { Write-Host "[runtime] OK" -ForegroundColor Green }
         }
     } else {
-        Write-Host "[$($mod.Name)] SKIP - clang-tidy not found" -ForegroundColor DarkYellow
+        Write-Host "[runtime] SKIP - clang-tidy not found" -ForegroundColor DarkYellow
+    }
+    Write-Host ""
+}
+
+# N-API module
+$napiPath = Join-Path $Root "napi"
+if (Test-Path (Join-Path $napiPath ".clang-tidy")) {
+    $napiSrc = Join-Path $napiPath "src"
+    Write-Host "[napi] clang-tidy..." -ForegroundColor Yellow
+    if ($clangTidy) {
+        $sources = Get-ChildItem -Path $napiSrc -Filter "*.cpp" -Recurse -ErrorAction SilentlyContinue | Select-Object -ExpandProperty FullName
+        if ($sources) {
+            $includes = @("-I$napiPath/src", "-I$runtimePath/src", "-I$napiPath/node_modules/node-addon-api")
+            & clang-tidy $sources -- -std=c++17 $includes
+            if ($LASTEXITCODE -ne 0) { $failed += "napi" }
+            else { Write-Host "[napi] OK" -ForegroundColor Green }
+        }
+    } else {
+        Write-Host "[napi] SKIP - clang-tidy not found" -ForegroundColor DarkYellow
     }
     Write-Host ""
 }

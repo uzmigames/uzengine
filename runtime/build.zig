@@ -1,6 +1,11 @@
 const std = @import("std");
 
 pub fn build(b: *std.Build) void {
+    // Default output to build/ — user can override with -p <path>
+    if (std.mem.endsWith(u8, b.install_prefix, "zig-out")) {
+        b.resolveInstallPrefix("build", .{});
+    }
+
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
@@ -360,7 +365,7 @@ pub fn build(b: *std.Build) void {
 
     b.installArtifact(test_exe);
 
-    // ── Run tests from the install directory (zig-out/bin/) ──────────────
+    // ── Run tests from the install directory (build/bin/) ─────────────────
     const run_test = b.addSystemCommand(&.{
         b.getInstallPath(.bin, "test_runtime.exe"),
     });

@@ -6,8 +6,15 @@ $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
 $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
 $env:Path = "$machinePath;$userPath"
 
+# Parse --compiler flag (zig, msvc, clang). Default: zig
+$compiler = "zig"
+foreach ($arg in $args) {
+    if ($arg -match "^--compiler=(.+)$") { $compiler = $Matches[1] }
+}
+
 Write-Host "============================================" -ForegroundColor Cyan
 Write-Host " UzEngine Full Build Pipeline" -ForegroundColor Cyan
+Write-Host " Compiler: $compiler" -ForegroundColor Cyan
 Write-Host "============================================" -ForegroundColor Cyan
 Write-Host ""
 
@@ -28,14 +35,13 @@ function Test-FileLocked([string]$Path) {
 $filesToCheck = @(
     @{ Path = "$Root/extension/native/uzengine.node"; Desc = "uzengine.node (extension)" }
     @{ Path = "$Root/napi/build/Release/uzengine.node"; Desc = "uzengine.node (napi build)" }
-    @{ Path = "$Root/runtime/zig-out/lib/uzengine_runtime.lib"; Desc = "uzengine_runtime.lib" }
+    @{ Path = "$Root/runtime/build/lib/uzengine.lib"; Desc = "uzengine.lib" }
 )
 
 $blocked = $false
 foreach ($file in $filesToCheck) {
     if (Test-FileLocked $file.Path) {
         Write-Host "      LOCKED: $($file.Desc)" -ForegroundColor Red
-        # Try to find which process holds it
         $name = Split-Path $file.Path -Leaf
         $procs = Get-Process | Where-Object {
             try { $_.Modules | Where-Object { $_.FileName -like "*$name*" } } catch {}
@@ -61,10 +67,28 @@ Write-Host ""
 
 # ---- Build Pipeline ----
 
-# 1. Runtime (Zig)
-Write-Host "[1/4] Building runtime (Zig)..." -ForegroundColor Yellow
+# 1. Runtime
+Write-Host "[1/4] Building runtime ($compiler)..." -ForegroundColor Yellow
 Push-Location "$Root/runtime"
-zig build -Doptimize=ReleaseFast
+
+switch ($compiler) {
+    "zig" {
+        zig build -Doptimize=ReleaseFast
+    }
+    "msvc" {
+        cmake --preset msvc-release 2>&1 | Out-Null
+        cmake --build build/msvc-release --config Release
+    }
+    "clang" {
+        cmake --preset clang-release 2>&1 | Out-Null
+        cmake --build build/clang-release --config Release
+    }
+    default {
+        Pop-Location
+        throw "Unknown compiler: $compiler. Use zig, msvc, or clang."
+    }
+}
+
 if ($LASTEXITCODE -ne 0) { Pop-Location; throw "runtime build failed" }
 Pop-Location
 Write-Host "      OK" -ForegroundColor Green
@@ -105,5 +129,5 @@ Write-Host "      OK" -ForegroundColor Green
 Write-Host ""
 
 Write-Host "============================================" -ForegroundColor Cyan
-Write-Host " Build complete!" -ForegroundColor Cyan
+Write-Host " Build complete! (compiler: $compiler)" -ForegroundColor Cyan
 Write-Host "============================================" -ForegroundColor Cyan

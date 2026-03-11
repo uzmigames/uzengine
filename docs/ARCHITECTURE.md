@@ -146,7 +146,7 @@ The best approach for streaming rendered frames to webview panels (e.g. preview,
 npm run build
   │
   ├─ 1. build:runtime    zig build -Doptimize=ReleaseFast
-  │                       → runtime/zig-out/lib/uzengine.lib
+  │                       → runtime/build/lib/uzengine.lib
   │
   ├─ 2. build:napi       cmake-js compile (MSVC, Electron 39.6.0 headers)
   │                       links runtime.lib + node.lib + delay-load hook

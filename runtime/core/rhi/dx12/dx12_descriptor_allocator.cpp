@@ -5,6 +5,7 @@
 /// Supports reserved slots for future allocation and reuses freed indices.
 
 #include "dx12_descriptor_allocator.h"
+#include "dx12_compat.h"
 #include "dx12_guids.h"
 #include "log.h"
 
@@ -29,14 +30,12 @@ void DescriptorAllocator::Init(ID3D12DescriptorHeap* heap, uint32_t capacity,
     m_nextIndex = reservedCount;
     m_allocated = 0;
 
-    // Clang/MinGW ABI: struct-return methods use out-parameter form
-    heap->GetCPUDescriptorHandleForHeapStart(&m_cpuBase);
+    m_cpuBase = dx12::GetCPUStart(heap);
 
     // GPU handle is only valid for shader-visible heaps
-    D3D12_DESCRIPTOR_HEAP_DESC heapDesc = {};
-    heap->GetDesc(&heapDesc);
+    D3D12_DESCRIPTOR_HEAP_DESC heapDesc = dx12::GetHeapDesc(heap);
     if (heapDesc.Flags & D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE) {
-        heap->GetGPUDescriptorHandleForHeapStart(&m_gpuBase);
+        m_gpuBase = dx12::GetGPUStart(heap);
     } else {
         m_gpuBase = {};
     }

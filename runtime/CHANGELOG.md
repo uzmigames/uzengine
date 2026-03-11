@@ -4,6 +4,15 @@
 
 ## [0.2.0] — 2026-03-10
 
+### Build System
+- **CMake support** — Added `CMakeLists.txt` and `CMakePresets.json` for MSVC and Clang on Windows
+  - Presets: `msvc-debug`, `msvc-release`, `clang-debug`, `clang-release`
+  - Static library + test executable + 3 demo executables
+  - DLL deployment (Agility SDK, DXC) via post-build commands
+- **Cross-compiler DX12 ABI** — `dx12_compat.h` normalizes struct-return COM methods (MSVC vs MinGW)
+- **Three compilers verified**: Zig (Clang/MinGW), MSVC, Clang (clang-cl)
+- **Unified output directory** — Zig now defaults to `build/` (same as CMake), override with `-p <path>`
+
 ### Milestone 1.2 — RHI (Rendering Hardware Interface)
 - **RHI abstract interfaces** (`core/rhi/rhi.h`, `rhi_types.h`, `rhi_backend.h`):
   - IRHIDevice, IRHICommandList, IRHISwapChain, IRHIFence — pure virtual interfaces
@@ -39,7 +48,7 @@
   - Triple-buffered frame pacing with fence synchronization
 - **Agility SDK activation** (`core/rhi/dx12/dx12_agility.cpp`):
   - Exports D3D12SDKVersion + D3D12SDKPath for runtime SDK loading
-  - DLL deployment: D3D12Core.dll + d3d12SDKLayers.dll → zig-out/bin/D3D12/
+  - DLL deployment: D3D12Core.dll + d3d12SDKLayers.dll → build/bin/D3D12/
   - Unlocks FL 12_2 + SM6.6 on supported hardware (RTX 4090: FL 12_1→12_2, SM6.5→SM6.6)
   - Linked into every executable (demo + runtime), not the static lib
 - **Standalone runtime executable** (`tools/uzengine.cpp`, `demos/triangle/`):
@@ -67,7 +76,7 @@
   - NegotiateShaderModel(): probes SM6.6 → SM6.0 → SM5.1 → SM5.0
   - Root signature adapts: DIRECTLY_INDEXED for SM6.6, standard for lower
 - **DXC DLL deployment** (`build.zig`):
-  - `dxcompiler.dll` + `dxil.dll` copied to `zig-out/bin/` alongside executables
+  - `dxcompiler.dll` + `dxil.dll` copied to `build/bin/` alongside executables
   - Test runner executes from install directory so `GetExeDir()` finds deployed DLLs
 - **302 unit tests** — 77 shader pipeline tests + 22 RHI config + 35 RHI type/resource + 8 paths + 160 core/math/container
 
@@ -105,7 +114,7 @@
   - `GetExeDir()`: cached executable directory via platform-native API
   - `ResolveEngineResource()`: resolve relative paths against exe directory
   - Follows UE5/Godot pattern — never CWD, never hardcoded absolute paths
-  - Build system deploys DLLs to `zig-out/bin/` via `addInstallBinFile`
+  - Build system deploys DLLs to `build/bin/` via `addInstallBinFile`
   - 8 unit tests
 - **Shader pipeline spec**: `docs/specs/1.5.0-shader-pipeline.md`
   - Two-mode design: UZ_SHADER_DEV (VFS + disk load + hot-reload) / UZ_SHADER_SHIP (precompiled archive)

@@ -96,7 +96,7 @@ Engine resource paths are resolved relative to the executable directory.
 ```cpp
 // Resolve DLL next to exe
 auto dxcPath = uz::ResolveEngineResource("dxcompiler.dll");
-// → "C:/build/zig-out/bin/dxcompiler.dll"
+// → "C:/build/build/bin/dxcompiler.dll"
 
 // Absolute paths pass through unchanged
 auto abs = uz::ResolveEngineResource("C:/custom/path.dll");

@@ -1,7 +1,6 @@
 ---
 name: lint
 description: Lint the UzEngine runtime C++ code with clang-tidy via Zig build. Use when checking code quality, style violations, or warnings.
-allowed-tools: Bash
 ---
 
 Lint the runtime code. The Zig build system runs clang-tidy with warnings-as-errors during compilation.

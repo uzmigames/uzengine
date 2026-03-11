@@ -1,6 +1,6 @@
-# Zig build artifacts
+# Build artifacts (Zig + CMake)
 .zig-cache/
-zig-out/
+build/
 
 # vcpkg build artifacts (large, reproducible via setup.ps1)
 thirdparty/vcpkg/

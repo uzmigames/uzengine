@@ -6,6 +6,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include "dx12_swapchain.h"
+#include "dx12_compat.h"
 #include "dx12_device.h"
 
 #include "log.h"
@@ -137,10 +138,7 @@ void DX12SwapChain::AcquireBackBuffers() {
     ID3D12DescriptorHeap* rtvHeap = m_device->GetDescriptorHeap(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
     m_rtvDescriptorSize = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 
-    // Clang on Windows uses the out-parameter ABI for struct-returning COM methods
-    // (not _MSC_VER, so d3d12.h selects the RetVal variant).
-    D3D12_CPU_DESCRIPTOR_HANDLE rtvStart = {};
-    rtvHeap->GetCPUDescriptorHandleForHeapStart(&rtvStart);
+    D3D12_CPU_DESCRIPTOR_HANDLE rtvStart = dx12::GetCPUStart(rtvHeap);
 
     for (uint32_t i = 0; i < m_bufferCount; ++i) {
         HRESULT hr = m_swapChain->GetBuffer(i, IID_PPV_ARGS(&m_backBuffers[i]));

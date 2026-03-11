@@ -7,19 +7,51 @@ $userPath = [Environment]::GetEnvironmentVariable("Path", "User")
 $env:Path = "$machinePath;$userPath"
 
 $withCoverage = $args -contains "--coverage"
+
+# Parse --compiler flag (zig, msvc, clang). Default: zig
+$compiler = "zig"
+foreach ($arg in $args) {
+    if ($arg -match "^--compiler=(.+)$") { $compiler = $Matches[1] }
+}
+
 $action = if ($withCoverage) { "Testing (with coverage)" } else { "Testing" }
 
 Write-Host "============================================" -ForegroundColor Cyan
 Write-Host " UzEngine $action" -ForegroundColor Cyan
+Write-Host " Compiler: $compiler" -ForegroundColor Cyan
 Write-Host "============================================" -ForegroundColor Cyan
 Write-Host ""
 
 $failed = @()
 
-# Runtime (zig build test)
-Write-Host "[runtime] zig build test..." -ForegroundColor Yellow
+# Runtime
+Write-Host "[runtime] Testing ($compiler)..." -ForegroundColor Yellow
 Push-Location (Join-Path $Root "runtime")
-zig build test
+
+switch ($compiler) {
+    "zig" {
+        zig build test
+    }
+    "msvc" {
+        $testExe = "build/msvc-debug/Debug/test_runtime.exe"
+        if (-not (Test-Path $testExe)) {
+            Write-Host "  Building first..." -ForegroundColor Gray
+            cmake --preset msvc-debug 2>&1 | Out-Null
+            cmake --build build/msvc-debug
+        }
+        & $testExe
+    }
+    "clang" {
+        $testExe = "build/clang-debug/test_runtime.exe"
+        if (-not (Test-Path $testExe)) {
+            Write-Host "  Building first..." -ForegroundColor Gray
+            cmake --preset clang-debug 2>&1 | Out-Null
+            cmake --build build/clang-debug
+        }
+        & $testExe
+    }
+}
+
 if ($LASTEXITCODE -ne 0) { $failed += "runtime" }
 else { Write-Host "[runtime] OK" -ForegroundColor Green }
 Pop-Location
