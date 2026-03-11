@@ -2,8 +2,5 @@
 .zig-cache/
 build/
 
-# Generated shader headers (produced by uzembed at build time)
-generated/
-
 # vcpkg build artifacts (large, reproducible via setup.ps1)
 thirdparty/vcpkg/
