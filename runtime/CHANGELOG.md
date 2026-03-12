@@ -2,6 +2,28 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
+## [0.2.2] — 2026-03-12
+
+### DX11 RHI Backend
+- **Complete DX11 backend** implementing all 4 RHI interfaces:
+  - **DX11Device** (29 methods): D3D11CreateDevice, feature level 11_0+, debug layer, SM5 slot-based SRV/UAV binding
+  - **DX11CommandList** (28 methods): deferred context recording, immediate context execution, SM5 register-based binding
+  - **DX11SwapChain** (7 methods): DXGI FLIP_DISCARD, tearing support, resize handling
+  - **DX11Fence** (4 methods): emulated timeline fence via D3D11_QUERY_EVENT + CPU monotonic counter
+- **ResourcePool\<T\>** extracted to shared `rhi/resource_pool.h` (reused by DX12 and DX11)
+- **RHI factory** unified in `rhi_factory.cpp` — dispatches DX12/DX11 via `RHIBackend` enum
+- **DX11-specific design**: no explicit barriers (ResourceBarrier = no-op), slot-based binding (not bindless), deferred context command lists
+- **96 new DX11 tests** (test_dx11_device.cpp, test_dx11_render_loop.cpp, test_dx11_resources.cpp)
+
+### Backend-Agnostic Demos
+- **All 5 demos refactored** from DX12-specific code to abstract RHI interfaces:
+  - `clear_screen`, `triangle`, `textured_quad`, `camera_test`, `mesh_test`
+  - Use only `IRHIDevice*`, `IRHICommandList*`, `IRHISwapChain*`, `IRHIFence*`
+  - `--rhi dx11|dx12` CLI flag for runtime backend selection
+- **DX12 swapchain fix**: backbuffers now properly registered in device texture pool with RTV descriptors allocated through the descriptor allocator, enabling abstract handle-based `ClearRenderTarget` and `ResourceBarrier`
+- **Screenshot capture** gracefully skips on non-DX12 backends (DX12 readback API only)
+- **832 total tests passing** across all suites
+
 ## [0.2.1] — 2026-03-12
 
 ### FXC Dual-Compiler (SM5.0 Fallback)
