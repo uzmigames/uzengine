@@ -5,6 +5,11 @@
 /// GPU capabilities. Validates the full texture upload pipeline:
 /// staging buffer → CopyBufferToTexture → SRV access.
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#endif
+
 #include "textured_quad_demo.h"
 #include "rhi.h"
 #include "rhi_backend.h"
@@ -14,11 +19,14 @@
 #include "log.h"
 #include "vertex.h"
 #include "upload_context.h"
+#include "paths.h"
+
+#ifdef _WIN32
 #include "shader_pipeline.h"
 #include "shader_compiler.h"
 #include "shader_compiler_fxc.h"
-#include "paths.h"
 #include "screenshot_capture.h"
+#endif
 
 #include <chrono>
 #include <cstdlib>
@@ -27,6 +35,62 @@
 #include <vector>
 
 namespace uz {
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Embedded MSL Shaders (macOS only)
+// ─────────────────────────────────────────────────────────────────────────────
+
+#if defined(__APPLE__)
+
+/// MSL vertex shader — passes position, color, and UVs through (NDC space).
+static const char kTexturedQuadVSSource[] = R"msl(
+#include <metal_stdlib>
+using namespace metal;
+
+struct VertexIn {
+    float3 position [[attribute(0)]];
+    float4 color    [[attribute(1)]];
+    float2 texcoord [[attribute(2)]];
+};
+
+struct VertexOut {
+    float4 position [[position]];
+    float4 color;
+    float2 texcoord;
+};
+
+vertex VertexOut vertex_main(VertexIn in [[stage_in]]) {
+    VertexOut out;
+    out.position = float4(in.position, 1.0);
+    out.color    = in.color;
+    out.texcoord = in.texcoord;
+    return out;
+}
+)msl";
+
+/// MSL pixel shader — samples texture and modulates by vertex color.
+///
+/// Uses direct texture binding: `[[texture(0)]]` and `[[sampler(0)]]`.
+/// These are bound via `SetFragmentTexture(0, ...)` and `SetFragmentSampler(0, ...)`.
+static const char kTexturedQuadPSSource[] = R"msl(
+#include <metal_stdlib>
+using namespace metal;
+
+struct FragmentIn {
+    float4 position [[position]];
+    float4 color;
+    float2 texcoord;
+};
+
+fragment float4 fragment_main(FragmentIn in [[stage_in]],
+                               texture2d<float> tex [[texture(0)]],
+                               sampler samp [[sampler(0)]]) {
+    float4 texColor = tex.sample(samp, in.texcoord);
+    return texColor * in.color;
+}
+)msl";
+
+#endif // __APPLE__
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Procedural Checkerboard Texture
@@ -168,9 +232,17 @@ bool RunTexturedQuadDemo(const TexturedQuadConfig& config) {
         }
     }
 
-    // ── Shader Pipeline ──────────────────────────────────────────────────
+    // ── Shaders ────────────────────────────────────────────────────────────
+#if defined(__APPLE__)
+    const bool bindless = false;
+#else
     const bool bindless = device->IsBindless();
+#endif
 
+    RHIShaderHandle vsHandle{};
+    RHIShaderHandle psHandle{};
+
+#ifdef _WIN32
     ShaderCompiler compiler;
     if (!compiler.Init()) {
         UZ_LOG(Renderer, Error, "Failed to init shader compiler");
@@ -206,23 +278,45 @@ bool RunTexturedQuadDemo(const TexturedQuadConfig& config) {
     UZ_LOG(Renderer, Info, "Shaders loaded: VS={} bytes, PS={} bytes",
            vsBytecode.size(), psBytecode.size());
 
-    // ── Create Shader Handles ────────────────────────────────────────────
-    RHIShaderDesc vsDesc{};
-    vsDesc.bytecode = vsBytecode.data();
-    vsDesc.bytecodeSize = vsBytecode.size();
-    vsDesc.stage = RHIShaderStage::Vertex;
-    vsDesc.entryPoint = "main";
-    vsDesc.debugName = "textured_vs";
+    {
+        RHIShaderDesc vsDesc{};
+        vsDesc.bytecode = vsBytecode.data();
+        vsDesc.bytecodeSize = vsBytecode.size();
+        vsDesc.stage = RHIShaderStage::Vertex;
+        vsDesc.entryPoint = "main";
+        vsDesc.debugName = "textured_vs";
 
-    RHIShaderDesc psDesc{};
-    psDesc.bytecode = psBytecode.data();
-    psDesc.bytecodeSize = psBytecode.size();
-    psDesc.stage = RHIShaderStage::Pixel;
-    psDesc.entryPoint = "main";
-    psDesc.debugName = "textured_ps";
+        RHIShaderDesc psDesc{};
+        psDesc.bytecode = psBytecode.data();
+        psDesc.bytecodeSize = psBytecode.size();
+        psDesc.stage = RHIShaderStage::Pixel;
+        psDesc.entryPoint = "main";
+        psDesc.debugName = "textured_ps";
 
-    RHIShaderHandle vsHandle = device->CreateShader(vsDesc);
-    RHIShaderHandle psHandle = device->CreateShader(psDesc);
+        vsHandle = device->CreateShader(vsDesc);
+        psHandle = device->CreateShader(psDesc);
+    }
+#elif defined(__APPLE__)
+    {
+        RHIShaderDesc vsDesc{};
+        vsDesc.bytecode = reinterpret_cast<const uint8_t*>(kTexturedQuadVSSource);
+        vsDesc.bytecodeSize = sizeof(kTexturedQuadVSSource) - 1;
+        vsDesc.stage = RHIShaderStage::Vertex;
+        vsDesc.entryPoint = "vertex_main";
+        vsDesc.debugName = "textured_quad_vs_msl";
+
+        RHIShaderDesc psDesc{};
+        psDesc.bytecode = reinterpret_cast<const uint8_t*>(kTexturedQuadPSSource);
+        psDesc.bytecodeSize = sizeof(kTexturedQuadPSSource) - 1;
+        psDesc.stage = RHIShaderStage::Pixel;
+        psDesc.entryPoint = "fragment_main";
+        psDesc.debugName = "textured_quad_ps_msl";
+
+        vsHandle = device->CreateShader(vsDesc);
+        psHandle = device->CreateShader(psDesc);
+    }
+#endif
+
     if (!vsHandle.IsValid() || !psHandle.IsValid()) {
         UZ_LOG(Renderer, Error, "Failed to create shader handles");
         return false;
@@ -242,7 +336,7 @@ bool RunTexturedQuadDemo(const TexturedQuadConfig& config) {
     pipeDesc.topology = RHIPrimitiveTopology::TriangleList;
     pipeDesc.rasterizer.cullMode = RHICullMode::None;
     pipeDesc.depthStencil.depthEnable = false;
-    pipeDesc.renderTargetFormats[0] = RHIFormat::RGBA8Unorm;
+    pipeDesc.renderTargetFormats[0] = swapChain->GetFormat();
     pipeDesc.renderTargetCount = 1;
     pipeDesc.debugName = "TexturedQuadPipeline";
 
@@ -371,7 +465,8 @@ bool RunTexturedQuadDemo(const TexturedQuadConfig& config) {
         rootConsts.samplerIndex = samplerIdx;
     }
 
-    // ── Screenshot Capture ────────────────────────────────────────────────
+    // ── Screenshot Capture (Windows only) ──────────────────────────────
+#ifdef _WIN32
     ScreenshotCapture screenshotCapture;
     bool screenshotPending = !config.screenshotPath.empty();
     if (screenshotPending) {
@@ -380,6 +475,9 @@ bool RunTexturedQuadDemo(const TexturedQuadConfig& config) {
             screenshotPending = false;
         }
     }
+#else
+    bool screenshotPending = false;
+#endif
 
     // ── Render Loop ──────────────────────────────────────────────────────
     uint32_t frameIndex = 0;
@@ -416,14 +514,14 @@ bool RunTexturedQuadDemo(const TexturedQuadConfig& config) {
         toRenderTarget.stateAfter = RHIResourceState::RenderTarget;
         cmdList->ResourceBarrier(&toRenderTarget, 1);
 
-        // Clear the back buffer before binding it as a render target.
-        const float clearColor[4] = { 0.05f, 0.05f, 0.08f, 1.0f };
-        cmdList->ClearRenderTarget(backBuffer, clearColor);
-
-        // Begin render pass — sets OMSetRenderTargets via abstract interface.
+        // Begin render pass with clear — single encoder to avoid artifacts.
         RHIRenderPassDesc rpDesc{};
         rpDesc.colorAttachments[0].texture = backBuffer;
-        rpDesc.colorAttachments[0].clear = false;
+        rpDesc.colorAttachments[0].clear = true;
+        rpDesc.colorAttachments[0].clearColor[0] = 0.05f;
+        rpDesc.colorAttachments[0].clearColor[1] = 0.05f;
+        rpDesc.colorAttachments[0].clearColor[2] = 0.08f;
+        rpDesc.colorAttachments[0].clearColor[3] = 1.0f;
         rpDesc.colorAttachmentCount = 1;
         cmdList->BeginRenderPass(rpDesc);
 
@@ -434,7 +532,13 @@ bool RunTexturedQuadDemo(const TexturedQuadConfig& config) {
             cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rootConsts), 3, 0);
         } else {
             cmdList->SetVertexBuffer(0, vbHandle, 0);
+#if defined(__APPLE__)
+            // Metal: bind texture and sampler directly via [[texture(0)]] / [[sampler(0)]]
+            cmdList->SetFragmentTexture(0, texHandle);
+            cmdList->SetFragmentSampler(0, samplerHandle);
+#else
             cmdList->SetDescriptorTable(3, texSrvIndex);
+#endif
         }
 
         RHIViewport vp{};
@@ -453,12 +557,14 @@ bool RunTexturedQuadDemo(const TexturedQuadConfig& config) {
 
         cmdList->EndRenderPass();
 
-        // ── Screenshot ────────────────────────────────────────────────────
+        // ── Screenshot (Windows only) ────────────────────────────────────
+#ifdef _WIN32
         bool capturedThisFrame = false;
         if (screenshotPending && frameIndex == config.screenshotFrame) {
             screenshotCapture.CaptureBackBuffer(cmdList, swapChain);
             capturedThisFrame = true;
         }
+#endif
 
         // Barrier: RenderTarget -> Present
         RHIBarrierDesc toPresent{};
@@ -477,12 +583,14 @@ bool RunTexturedQuadDemo(const TexturedQuadConfig& config) {
         fenceValues[allocFrame] = globalFenceValue;
         frameFences[allocFrame]->Signal(globalFenceValue);
 
-        // ── Save screenshot after GPU completes ───────────────────────────
+        // ── Save screenshot after GPU completes (Windows only) ────────────
+#ifdef _WIN32
         if (capturedThisFrame) {
             frameFences[allocFrame]->WaitCPU(globalFenceValue);
             screenshotCapture.SaveToPNG(config.screenshotPath);
             screenshotPending = false;
         }
+#endif
 
         frameIndex++;
     }
@@ -498,8 +606,10 @@ bool RunTexturedQuadDemo(const TexturedQuadConfig& config) {
            "{:.2f}ms/frame ({:.0f} FPS)",
            frameIndex, totalMs, avgMs, avgMs > 0 ? 1000.0f / avgMs : 0.0f);
 
+#ifdef _WIN32
     screenshotCapture.Shutdown();
     shaderPipeline.Shutdown();
+#endif
     device->DestroySampler(samplerHandle);
     device->DestroyTexture(texHandle);
     device->DestroyBuffer(vbHandle);

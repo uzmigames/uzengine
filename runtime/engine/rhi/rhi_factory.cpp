@@ -17,6 +17,11 @@
 // Vulkan backend (cross-platform — Windows and Linux)
 #include "vulkan/vulkan_device.h"
 
+// Metal backend (macOS/iOS only)
+#if defined(__APPLE__)
+#include "metal/metal_device.h"
+#endif
+
 namespace uz {
 
 namespace {
@@ -61,6 +66,23 @@ IRHIDevice* CreateRHIDevice(const RHIDeviceDesc& desc) {
             g_activeBackend = desc.backend;
             return device;
         }
+
+#if defined(__APPLE__)
+        case RHIBackend::Metal: {
+            auto* device = new MetalDevice();
+            if (!device->Init(desc)) {
+                UZ_LOG(RHI, Error, "CreateRHIDevice: MetalDevice::Init failed");
+                delete device;
+                return nullptr;
+            }
+            g_activeBackend = desc.backend;
+            return device;
+        }
+#else
+        case RHIBackend::Metal:
+            UZ_LOG(RHI, Error, "CreateRHIDevice: Metal backend requires macOS or iOS");
+            return nullptr;
+#endif
 
         default:
             UZ_LOG(RHI, Error, "CreateRHIDevice: unsupported backend {}",

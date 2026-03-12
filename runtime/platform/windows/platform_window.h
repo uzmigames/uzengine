@@ -34,6 +34,16 @@
 #include <windows.h>
 #endif
 
+#if defined(__APPLE__)
+#ifdef __OBJC__
+@class NSWindow;
+@class NSView;
+#else
+typedef void NSWindow;
+typedef void NSView;
+#endif
+#endif
+
 namespace uz {
 
 class InputSystem;
@@ -149,18 +159,52 @@ class PlatformWindow {
     [[nodiscard]] HINSTANCE GetHInstance() const { return m_hinstance; }
 #endif
 
+#if defined(__APPLE__)
+    /// Returns the native NSWindow pointer (as void* for C++ compatibility).
+    ///
+    /// Pass to `RHISwapChainDesc::windowHandle` for Metal swapchain creation.
+    /// The Metal swapchain casts this back to `NSWindow*` via `__bridge`.
+    /// Returns `nullptr` if the window was not created or was destroyed.
+    [[nodiscard]] void* GetNativeHandle() const { return m_nsWindow; }
+
+    /// Alias for GetNativeHandle() -- matches Win32 GetHWND() usage pattern.
+    ///
+    /// Returns the NSWindow* cast to void*. Exists so that call sites using
+    /// `window.GetHWND()` compile on both platforms without #ifdefs.
+    [[nodiscard]] void* GetHWND() const { return m_nsWindow; }
+#endif
+
     /// Binds an InputSystem to receive keyboard and mouse events from this window.
     ///
     /// # Arguments
     /// * `input` — Input system to route WM_KEY*/WM_MOUSE* events to.
     ///   Pass `nullptr` to unbind. Must outlive this window while bound.
+    ///
+    /// # Platform Notes
+    /// On macOS, also forwards the pointer to the UZMetalView so that
+    /// NSEvent handlers can dispatch directly to the InputSystem.
+#if defined(__APPLE__)
+    void SetInputSystem(InputSystem* input);
+#else
     void SetInputSystem(InputSystem* input) { m_input = input; }
+#endif
 
   private:
 #ifdef _WIN32
     HWND m_hwnd = nullptr;
     HINSTANCE m_hinstance = nullptr;
     static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
+#endif
+
+#if defined(__APPLE__)
+    /// Called by UZWindowDelegate when the window is resized.
+    friend void MacOS_NotifyResize(PlatformWindow*, int32_t, int32_t);
+    /// Called by UZWindowDelegate when the window is closed.
+    friend void MacOS_NotifyClose(PlatformWindow*);
+
+    void* m_nsWindow = nullptr;    ///< NSWindow* (stored as void* to avoid ObjC in header)
+    void* m_nsView = nullptr;      ///< NSView* with CAMetalLayer backing
+    void* m_appDelegate = nullptr; ///< UZWindowDelegate* (NSWindowDelegate impl)
 #endif
 
     InputSystem* m_input = nullptr;

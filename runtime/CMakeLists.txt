@@ -6,6 +6,12 @@
 cmake_minimum_required(VERSION 3.21)
 project(uzengine_runtime LANGUAGES C CXX)
 
+# Enable Objective-C/C++ for macOS platform layer (.mm files)
+if(APPLE)
+    enable_language(OBJC)
+    enable_language(OBJCXX)
+endif()
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -57,6 +63,13 @@ file(GLOB SRC_RENDERER       engine/renderer/*.cpp)
 file(GLOB SRC_ASSET          engine/asset/*.cpp)
 file(GLOB SRC_RHI_VULKAN     engine/rhi/vulkan/*.cpp)
 
+# Metal backend (macOS/iOS only)
+if(APPLE)
+    file(GLOB SRC_RHI_METAL_CPP  engine/rhi/metal/*.cpp)
+    file(GLOB SRC_RHI_METAL_MM   engine/rhi/metal/*.mm)
+    set(SRC_RHI_METAL ${SRC_RHI_METAL_CPP} ${SRC_RHI_METAL_MM})
+endif()
+
 # Shader compiler and shader importer are Windows-only (require DXC)
 if(NOT WIN32)
     list(FILTER SRC_SHADER_COMMON EXCLUDE REGEX "shader_compiler\\.cpp$")
@@ -76,6 +89,7 @@ set(RUNTIME_SOURCES
     ${SRC_SHADER_COMMON}
     ${SRC_RENDERER}
     ${SRC_ASSET}
+    $<$<PLATFORM_ID:Darwin>:${SRC_RHI_METAL}>
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -123,6 +137,22 @@ set(WINDOWS_SOURCES
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Sources — macOS Only (auto-discovered via GLOB)
+# ─────────────────────────────────────────────────────────────────────────────
+if(APPLE)
+    file(GLOB SRC_PLATFORM_MACOS_CPP  platform/macos/*.cpp)
+    file(GLOB SRC_PLATFORM_MACOS_MM   platform/macos/*.mm)
+    set(MACOS_PLATFORM_SOURCES ${SRC_PLATFORM_MACOS_CPP} ${SRC_PLATFORM_MACOS_MM})
+
+    # Set .mm files as Objective-C++
+    foreach(mm_src IN LISTS SRC_PLATFORM_MACOS_MM)
+        set_source_files_properties(${mm_src}
+            PROPERTIES LANGUAGE OBJCXX
+        )
+    endforeach()
+endif()
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Static Library
 # ─────────────────────────────────────────────────────────────────────────────
 add_library(uzengine_runtime STATIC
@@ -135,6 +165,7 @@ add_library(uzengine_runtime STATIC
     ${BASIS_UNIVERSAL_SOURCES}
     ${MINIZ_SOURCES}
     $<$<PLATFORM_ID:Windows>:${WINDOWS_SOURCES}>
+    $<$<PLATFORM_ID:Darwin>:${MACOS_PLATFORM_SOURCES}>
 )
 
 add_dependencies(uzengine_runtime embed_shaders)
@@ -173,6 +204,15 @@ set_source_files_properties(thirdparty/tinyexr/miniz.c
 set_source_files_properties(thirdparty/volk/volk.c
     PROPERTIES LANGUAGE C COMPILE_DEFINITIONS "VK_NO_PROTOTYPES"
 )
+
+# Metal backend — set .mm files as Objective-C++
+if(APPLE)
+    foreach(mm_src IN LISTS SRC_RHI_METAL_MM)
+        set_source_files_properties(${mm_src}
+            PROPERTIES LANGUAGE OBJCXX
+        )
+    endforeach()
+endif()
 
 # basis_universal needs BASISD_SUPPORT_KTX2_ZSTD=0 (no zstd dependency)
 set_source_files_properties(thirdparty/basis_universal/transcoder/basisu_transcoder.cpp
@@ -254,6 +294,14 @@ if(WIN32)
     )
 endif()
 
+# macOS/iOS — Metal backend and platform includes
+if(APPLE)
+    target_include_directories(uzengine_runtime PUBLIC
+        platform/macos
+        engine/rhi/metal
+    )
+endif()
+
 # ─────────────────────────────────────────────────────────────────────────────
 # System Libraries (Windows)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -269,6 +317,25 @@ if(WIN32)
         dbghelp.lib
         advapi32.lib
     )
+endif()
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Apple Frameworks (macOS/iOS — Metal backend)
+# ─────────────────────────────────────────────────────────────────────────────
+if(APPLE)
+    find_library(METAL_FRAMEWORK Metal REQUIRED)
+    find_library(QUARTZCORE_FRAMEWORK QuartzCore REQUIRED)
+    find_library(FOUNDATION_FRAMEWORK Foundation REQUIRED)
+    find_library(APPKIT_FRAMEWORK AppKit)
+
+    target_link_libraries(uzengine_runtime PUBLIC
+        ${METAL_FRAMEWORK}
+        ${QUARTZCORE_FRAMEWORK}
+        ${FOUNDATION_FRAMEWORK}
+    )
+    if(APPKIT_FRAMEWORK)
+        target_link_libraries(uzengine_runtime PUBLIC ${APPKIT_FRAMEWORK})
+    endif()
 endif()
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -302,19 +369,35 @@ set(WINDOWS_TEST_PATTERNS
     "test_input"
 )
 
+set(APPLE_TEST_PATTERNS
+    "test_metal_"
+)
+
 set(TEST_SOURCES "")
 set(WINDOWS_TEST_SOURCES "")
+set(APPLE_TEST_SOURCES "")
 
 foreach(src IN LISTS ALL_TEST_SOURCES)
     set(_is_win_test FALSE)
+    set(_is_apple_test FALSE)
     foreach(pat IN LISTS WINDOWS_TEST_PATTERNS)
         if(src MATCHES "${pat}")
             set(_is_win_test TRUE)
             break()
         endif()
     endforeach()
+    if(NOT _is_win_test)
+        foreach(pat IN LISTS APPLE_TEST_PATTERNS)
+            if(src MATCHES "${pat}")
+                set(_is_apple_test TRUE)
+                break()
+            endif()
+        endforeach()
+    endif()
     if(_is_win_test)
         list(APPEND WINDOWS_TEST_SOURCES ${src})
+    elseif(_is_apple_test)
+        list(APPEND APPLE_TEST_SOURCES ${src})
     else()
         list(APPEND TEST_SOURCES ${src})
     endif()
@@ -323,6 +406,7 @@ endforeach()
 add_executable(test_runtime
     ${TEST_SOURCES}
     $<$<PLATFORM_ID:Windows>:${WINDOWS_TEST_SOURCES}>
+    $<$<PLATFORM_ID:Darwin>:${APPLE_TEST_SOURCES}>
 )
 
 target_link_libraries(test_runtime PRIVATE

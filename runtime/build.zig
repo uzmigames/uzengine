@@ -10,6 +10,9 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     const is_windows = target.result.os.tag == .windows;
+    const is_macos = target.result.os.tag == .macos;
+    const is_ios = target.result.os.tag == .ios;
+    const is_apple = is_macos or is_ios;
 
     const cpp_flags = &.{ "-std=c++17", "-DSPDLOG_COMPILED_LIB", "-DUZ_PROFILING_ENABLED", "-DTRACY_ENABLE", "-DTRACY_ON_DEMAND" };
     const tp = "thirdparty/";
@@ -131,6 +134,37 @@ pub fn build(b: *std.Build) void {
     addCppDir(runtime_mod, b, "engine/rhi/vulkan", cpp_flags);
     runtime_mod.addIncludePath(b.path("engine/rhi/vulkan"));
 
+    // macOS/iOS platform + Metal backend sources
+    if (is_apple) {
+        // Platform layer (NSWindow + CAMetalLayer)
+        addCppDir(runtime_mod, b, "platform/macos", cpp_flags);
+        // Objective-C++ source (.mm) for PlatformWindow (NSWindow + Cocoa event loop)
+        runtime_mod.addCSourceFiles(.{
+            .root = b.path("platform/macos"),
+            .files = &.{"platform_window.mm"},
+            .flags = &.{ "-std=c++17", "-ObjC++", "-fno-objc-arc", "-DSPDLOG_COMPILED_LIB", "-DUZ_PROFILING_ENABLED", "-DTRACY_ENABLE", "-DTRACY_ON_DEMAND" },
+        });
+
+        // Metal RHI backend — all files compiled as Objective-C++ because they
+        // include <Metal/Metal.h> which uses @class/@interface ObjC syntax.
+        const objcxx_flags = &.{ "-std=c++17", "-ObjC++", "-fno-objc-arc", "-DSPDLOG_COMPILED_LIB", "-DUZ_PROFILING_ENABLED", "-DTRACY_ENABLE", "-DTRACY_ON_DEMAND" };
+        runtime_mod.addCSourceFiles(.{
+            .root = b.path("engine/rhi/metal"),
+            .files = &.{ "metal_device.cpp", "metal_command_list.cpp", "metal_fence.cpp", "metal_gpu_profiler.cpp", "metal_swapchain.mm" },
+            .flags = objcxx_flags,
+        });
+
+        // Tracy Metal wrapper — requires ARC (compiled separately from the rest of the backend)
+        const objcxx_arc_flags = &.{ "-std=c++17", "-ObjC++", "-fobjc-arc", "-DSPDLOG_COMPILED_LIB", "-DUZ_PROFILING_ENABLED", "-DTRACY_ENABLE", "-DTRACY_ON_DEMAND" };
+        runtime_mod.addCSourceFiles(.{
+            .root = b.path("engine/rhi/metal"),
+            .files = &.{"metal_tracy_gpu.mm"},
+            .flags = objcxx_arc_flags,
+        });
+
+        runtime_mod.addIncludePath(b.path("engine/rhi/metal"));
+    }
+
     // Thirdparty — volk (C source, compiled with VK_NO_PROTOTYPES)
     runtime_mod.addCSourceFiles(.{
         .root = b.path(tp ++ "volk"),
@@ -217,6 +251,11 @@ pub fn build(b: *std.Build) void {
         for (windows_thirdparty_include_dirs) |dir| runtime_mod.addIncludePath(b.path(dir));
     }
 
+    // Include paths — macOS/iOS
+    if (is_apple) {
+        runtime_mod.addIncludePath(b.path("platform/macos"));
+    }
+
     const lib = b.addLibrary(.{
         .linkage = .static,
         .name = "uzengine_runtime",
@@ -235,6 +274,18 @@ pub fn build(b: *std.Build) void {
         lib.linkSystemLibrary("ws2_32");  // Tracy socket profiling
         lib.linkSystemLibrary("dbghelp"); // Tracy callstack capture
         lib.linkSystemLibrary("winmm");   // timeBeginPeriod/timeEndPeriod for frame limiter
+    }
+
+    // Apple frameworks (macOS/iOS — Metal backend)
+    if (is_apple) {
+        lib.linkFramework("Metal");
+        lib.linkFramework("QuartzCore");
+        lib.linkFramework("Foundation");
+        if (is_macos) {
+            lib.linkFramework("AppKit");
+        } else {
+            lib.linkFramework("UIKit");
+        }
     }
 
     b.installArtifact(lib);
@@ -275,12 +326,26 @@ pub fn build(b: *std.Build) void {
         .flags = &.{ "-std=c++17", "-DSPDLOG_COMPILED_LIB", "-fno-sanitize=alignment" },
     });
 
-    // Windows-only test sources
+    // Platform-specific test sources
     if (is_windows) {
         addCppDir(test_mod, b, "tests/engine/rhi", cpp_flags);
         addCppDir(test_mod, b, "tests/platform", cpp_flags);
+    } else if (is_apple) {
+        // RHI type tests (cross-platform) + Metal backend tests
+        test_mod.addCSourceFiles(.{
+            .root = b.path("tests/engine/rhi"),
+            .files = &.{
+                "test_rhi_types.cpp",
+                "test_rhi_config.cpp",
+                "test_metal_device.cpp",
+                "test_metal_resources.cpp",
+                "test_metal_render_loop.cpp",
+                "test_metal_gpu_profiler.cpp",
+            },
+            .flags = cpp_flags,
+        });
     } else {
-        // RHI type tests are cross-platform (no DX12 dependency)
+        // RHI type tests are cross-platform (no DX12/Metal dependency)
         test_mod.addCSourceFiles(.{
             .root = b.path("tests/engine/rhi"),
             .files = &.{ "test_rhi_types.cpp", "test_rhi_config.cpp" },
@@ -298,6 +363,10 @@ pub fn build(b: *std.Build) void {
         test_mod.addIncludePath(b.path("engine/rhi/vulkan"));
         for (windows_engine_include_dirs) |dir| test_mod.addIncludePath(b.path(dir));
         for (windows_thirdparty_include_dirs) |dir| test_mod.addIncludePath(b.path(dir));
+    }
+
+    if (is_apple) {
+        test_mod.addIncludePath(b.path("engine/rhi/metal"));
     }
 
     const test_exe = b.addExecutable(.{

@@ -419,6 +419,24 @@ Download-Extract-Zip -Name "agility" `
     -Url "https://www.nuget.org/api/v2/package/Microsoft.Direct3D.D3D12/1.614.1" `
     -SubPath "build\native"
 
+# ─── Metal Dependencies (macOS build cross-compile support) ──────────────────
+
+# metal-cpp (Apple's C++ wrapper for Metal — macOS only, downloaded for cross-ref)
+# Using GitHub mirror — easier for automated setup than Apple's developer portal zip.
+Clone-Repo -Name "metal-cpp" `
+    -Url "https://github.com/AdrenalineJunkieDev/metal-cpp.git" `
+    -Branch "metal-cpp_macOS15.2_iOS18.2" `
+    -RemoveDirs @()
+
+# Slang (HLSL→MSL/SPIR-V shader compiler, Windows prebuilt)
+# macOS uses libslang.dylib; see setup.sh for the macOS download.
+$slangArch = "win64"
+if ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq [System.Runtime.InteropServices.Architecture]::Arm64) {
+    $slangArch = "win-arm64"
+}
+Download-Extract-Zip -Name "slang" `
+    -Url "https://github.com/shader-slang/slang/releases/download/v2025.6.3/slang-2025.6.3-$slangArch.zip"
+
 # ─── Global Cleanup ────────────────────────────────────────────────────────
 
 Write-Host ""
@@ -497,7 +515,9 @@ $ImageLibs = @(
     @{ Name = "astcenc";          File = "Source\astcenc.h" },
     @{ Name = "vulkan_headers";   File = "include\vulkan\vulkan.h" },
     @{ Name = "volk";             File = "volk.h" },
-    @{ Name = "vma";              File = "include\vk_mem_alloc.h" }
+    @{ Name = "vma";              File = "include\vk_mem_alloc.h" },
+    @{ Name = "metal-cpp";        File = "Metal\Metal.hpp" },
+    @{ Name = "slang";            File = "include\slang.h" }
 )
 
 $allOk = $true

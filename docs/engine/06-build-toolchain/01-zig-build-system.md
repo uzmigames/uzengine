@@ -91,9 +91,11 @@ addCppDir("core/shader")         → shader compiler, VFS, cache, hot-reload
 addCppDir("core/asset")          → asset pipeline
 addCppDir("core/renderer")       → high-level renderer
 
-# Windows only:
+# Platform-specific:
 addCppDir("platform/windows")    → Win32 window, message pump
-addCppDir("core/rhi/dx12")       → DX12 backend implementation
+addCppDir("core/rhi/dx12")       → DX12 backend (Windows only)
+addCppDir("core/rhi/metal")      → Metal backend (macOS/iOS only)
+addCppDir("core/rhi/vulkan")     → Vulkan backend (cross-platform)
 ```
 
 ## Compiler Flags
@@ -110,11 +112,81 @@ const cpp_flags = &.{ "-std=c++17", "-DSPDLOG_COMPILED_LIB" };
 | Source | Extra Flags | Why |
 |--------|------------|-----|
 | `dx12_d3d12ma.cpp` | `-fno-sanitize=undefined`, `-Wno-switch`, `-Wno-unused-private-field` | D3D12MA upstream code triggers Clang warnings/UBSan false positives |
+| `metal_swapchain.mm` | `-fno-objc-arc`, `-fobjc-arc-exceptions`, `-std=c++17` | Objective-C++ file requiring Metal framework access |
 | `TracyClient.cpp` | `-DTRACY_ENABLE`, `-DTRACY_ON_DEMAND` | Tracy must be compiled with its feature defines |
 | `basisu_transcoder.cpp` | `-DBASISD_SUPPORT_KTX2_ZSTD=0` | Disable zstd dependency (not needed for transcoding) |
 | `spirv_reflect.c` | `-std=c11` | C source, not C++ |
 | `miniz.c` | `-std=c11` | C source (zlib-compatible compression for tinyexr) |
 | `test_image_libs.cpp` | `-fno-sanitize=alignment` | stb_image_resize2 uses intentional unaligned loads |
+
+## macOS Build Configuration
+
+Building on macOS requires Metal framework detection and conditional compilation:
+
+### Platform Detection in build.zig
+
+```zig
+const is_apple = target.os.tag == .macos or target.os.tag == .ios;
+
+if (is_apple) {
+    // Link Metal frameworks
+    lib.linkFramework("Metal");
+    lib.linkFramework("QuartzCore");
+    lib.linkFramework("Foundation");
+    lib.linkFramework("AppKit");
+    lib.linkFramework("Cocoa");
+
+    // Add Metal backend sources
+    addCppDir("core/rhi/metal");
+
+    // Note: Objective-C++ files (.mm) are handled separately with special flags
+    lib.addCppSource(.{
+        .file = b.path("runtime/core/rhi/metal/metal_swapchain.mm"),
+        .flags = &.{
+            "-fno-objc-arc",
+            "-fobjc-arc-exceptions",
+            "-std=c++17",
+        },
+    });
+}
+```
+
+### Metal Source Compilation
+
+The Metal backend has four source categories:
+
+1. **Pure C++ files** (normal compilation):
+   - `metal_device.cpp` — GPU initialization, feature detection
+   - `metal_command_list.cpp` — Command recording with encoder switching
+   - `metal_fence.cpp` — Synchronization primitives
+   - Compiled with standard `-std=c++17` flags
+
+2. **Objective-C++ file** (requires special flags):
+   - `metal_swapchain.mm` — CAMetalLayer integration (only Objective-C code in the backend)
+   - Compiled with `-fno-objc-arc` (manual lifetime management) and `-fobjc-arc-exceptions` (C++ exception support)
+
+3. **All Metal headers** (internal to backend):
+   - `runtime/core/rhi/metal/*.h` — Never included outside `rhi/metal/`
+   - Use forward declarations to hide Metal types from the RHI interface
+
+### Cross-Compilation to Apple Platforms
+
+When building on Linux/Windows for macOS, use Zig's cross-compilation:
+
+```bash
+# Build for macOS arm64 (Apple Silicon) from any host
+zig build -Dtarget=aarch64-macos.13
+
+# Build for macOS x86_64 (Intel) from any host
+zig build -Dtarget=x86_64-macos.13
+
+# Build universal binary (arm64 + x86_64)
+zig build -Dtarget=aarch64-macos.13 && \
+zig build -Dtarget=x86_64-macos.13 && \
+lipo -create build-arm64/bin/uzengine build-x86_64/bin/uzengine -output uzengine-universal
+```
+
+**Note:** Cross-compilation to macOS requires the Xcode command-line tools to be available on the build host (for Metal framework headers and Objective-C runtime). Pure remote cross-compilation from Linux without macOS SDK is not yet supported.
 
 ## Build Targets
 
@@ -171,7 +243,9 @@ uzengine_runtime.lib
 
 This is enforced via `lib.step.dependOn(&run_embed.step)` — Zig's build graph ensures correct ordering.
 
-## System Libraries (Windows)
+## System Libraries (Platform-Specific)
+
+### Windows
 
 The DX12 backend requires three system libraries:
 
@@ -182,6 +256,37 @@ lib.linkSystemLibrary("dxguid");  // GUID definitions for COM interfaces
 ```
 
 Tools additionally link `gdi32` and `user32` for window creation.
+
+### macOS
+
+The Metal backend requires native Apple framework linking:
+
+```zig
+lib.linkFramework("Metal");          // Core Metal GPU API
+lib.linkFramework("QuartzCore");     // CAMetalLayer (drawable surface)
+lib.linkFramework("Foundation");     // NSString, NSWindow utilities
+lib.linkFramework("AppKit");         // Window management (NSWindow)
+lib.linkFramework("Cocoa");          // Objective-C runtime integration
+```
+
+Additionally, Metal source files (`.mm` files) must be compiled with Objective-C++ support:
+
+```zig
+// In build.zig, when adding Metal backend sources:
+lib.addCppSource(.{
+    .file = b.path("runtime/core/rhi/metal/metal_swapchain.mm"),
+    .flags = &.{"-fno-objc-arc", "-fobjc-arc-exceptions", "-std=c++17"},
+});
+```
+
+**Key compiler flags for Objective-C++:**
+- `-fno-objc-arc` — Disable Automatic Reference Counting (we manage lifetimes manually)
+- `-fobjc-arc-exceptions` — Allow C++ exceptions to cross Objective-C boundaries
+- `-std=c++17` — Ensure C++17 support within Objective-C++ context
+
+### Linux
+
+No special framework linking required. The Vulkan backend uses dynamically loaded functions via `volk` (no link-time dependency on `libvulkan.so`).
 
 ## Engine Comparison
 

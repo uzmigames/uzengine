@@ -3,6 +3,11 @@
 /// Orchestrates VFS → source loading → permutation expansion → cache check →
 /// compilation → cache store. Uses PIMPL to hide subsystem headers from
 /// consumers.
+///
+/// Windows-only: depends on DXC (ShaderCompiler) and FXC (ShaderCompilerFXC)
+/// which are Windows-only shader compilers. macOS uses Slang via slang_compiler.h.
+
+#ifdef _WIN32
 
 #include "shader_pipeline.h"
 
@@ -574,3 +579,5 @@ std::string ShaderPipeline::ComputeCacheKey(
 }
 
 } // namespace uz
+
+#endif // _WIN32

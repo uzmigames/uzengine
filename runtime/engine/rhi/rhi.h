@@ -261,6 +261,30 @@ public:
     /// * `descriptorIndex` — Index into the global CBV_SRV_UAV descriptor heap.
     virtual void SetDescriptorTable(uint32_t rootParamIndex, uint32_t descriptorIndex) = 0;
 
+    /// Binds a texture to the fragment/pixel shader at the specified slot.
+    ///
+    /// On Metal, this calls `[encoder setFragmentTexture:atIndex:]` directly.
+    /// On DX12/Vulkan, this is a no-op (textures are bound via descriptor tables).
+    ///
+    /// # Arguments
+    /// * `slot` — Texture slot index (maps to `[[texture(N)]]` in MSL).
+    /// * `texture` — Texture handle to bind.
+    virtual void SetFragmentTexture(uint32_t slot, RHITextureHandle texture) {
+        (void)slot; (void)texture;
+    }
+
+    /// Binds a sampler to the fragment/pixel shader at the specified slot.
+    ///
+    /// On Metal, this calls `[encoder setFragmentSamplerState:atIndex:]` directly.
+    /// On DX12/Vulkan, this is a no-op (samplers are bound via root signature/descriptor sets).
+    ///
+    /// # Arguments
+    /// * `slot` — Sampler slot index (maps to `[[sampler(N)]]` in MSL).
+    /// * `sampler` — Sampler handle to bind.
+    virtual void SetFragmentSampler(uint32_t slot, RHISamplerHandle sampler) {
+        (void)slot; (void)sampler;
+    }
+
     // ── Draw and dispatch ────────────────────────────────────────────────
 
     /// Issues an indexed draw call.

@@ -14,8 +14,8 @@ The RHI interface layer is designed to support multiple backends. DX12 SM6.6 is 
 | 1 | **DX12 SM6.6** | Windows (modern GPUs) | DXIL | **Done** |
 | 2 | **DX12 SM5** | Windows (older DX12 GPUs) | DXIL (SM5.x) | Planned |
 | 3 | **DX11** | Windows (legacy GPUs) | DXBC | Planned |
-| 4 | **Vulkan** | Linux, Steam Deck, Windows | SPIR-V | Planned |
-| 5 | **Metal** | macOS, iOS | MSL | Planned |
+| 4 | **Vulkan** | Linux, Steam Deck, Windows | SPIR-V | **Done** |
+| 5 | **Metal** | macOS, iOS | MSL | **Phase 4** (core impl. complete) |
 
 ## DX12 SM5 Fallback
 
@@ -62,18 +62,37 @@ Primary target: Linux, Steam Deck, and cross-platform Windows development.
 
 ## Metal Backend
 
+**Status**: Phase 4 (Core implementation complete; build integration and factory registration in progress). See [metal-backend.md](15-metal-backend.md) for complete implementation details.
+
 Target: macOS and iOS.
 
-**Implementation Plan:**
-- `rhi_metal.cpp` implementing all four RHI interfaces
-- MSL shader bytecode (transpiled from SPIR-V via SPIRV-Cross)
-- `MTKView` for swap chain, `MTLDevice` for resource creation
-- Metal 3 minimum — for mesh shaders, ray tracing (when needed)
+**Core Implementation (Phase 3 — Complete):**
+- `rhi/metal/metal_device.h/.cpp` implementing `IRHIDevice` — GPU initialization, family detection, argument buffer setup
+- `rhi/metal/metal_command_list.h/.cpp` implementing `IRHICommandList` — encoder-based command recording with auto-switching, deferred index buffer binding
+- `rhi/metal/metal_swapchain.h/.mm` implementing `IRHISwapChain` — CAMetalLayer integration, drawable acquisition, V-Sync control
+- `rhi/metal/metal_fence.h/.cpp` implementing `IRHIFence` — SharedEvent timeline synchronization, completion handlers
+- MSL shader bytecode (transpiled from SPIR-V via Shader-Slang)
+- metal-cpp (C++ wrapper) for type-safe Metal API access — Objective-C isolated to `metal_swapchain.mm` only
+- Argument Buffers (Tier 2) for bindless rendering
+- Metal 3.0 minimum — for argument buffer tier 2, indirect dispatch, mesh shaders
+- Automatic resource state management (no explicit barriers needed)
+
+**Build Integration & Factory (Phase 4 — In Progress):**
+- Zig build system changes: macOS platform detection (`is_apple`), Metal framework linking, `.mm` Objective-C++ compilation flags
+- Factory registration: `CreateRHIDevice()` detection and instantiation of Metal backend on macOS
+- Configuration validation: shader model negotiation, family-specific feature detection
+
+**Remaining Work (Phase 5+):**
+- Validation layer (diagnostic error reporting)
+- Comprehensive test suite (device creation, command encoding, synchronization, swapchain lifecycle)
+- Performance profiling and optimization
 
 **Shader Pipeline:**
 ```
-HLSL → DXC (-spirv) → SPIR-V → SPIRV-Cross → MSL → Metal compiler
+HLSL → DXC (-spirv) → SPIR-V → Shader-Slang → MSL → Metal compiler
 ```
+
+See [slang-metal-compilation.md](../05-shader-pipeline/07-slang-metal-compilation.md) for detailed Slang integration.
 
 ## DX11 Backend
 
@@ -100,7 +119,7 @@ HLSL Source (.hlsl)
        ├─── FXC (SM5.0) ──→ DXBC ──→ DX12 SM5.0 (legacy DX12)
        ├─── FXC (SM5.0) ──→ DXBC ──→ DX11 SM5.0 (legacy backend)
        ├─── DXC (-spirv) ──→ SPIR-V ──→ Vulkan
-       └─── DXC (-spirv) ──→ SPIR-V ──→ SPIRV-Cross ──→ MSL ──→ Metal
+       └─── DXC (-spirv) ──→ SPIR-V ──→ Shader-Slang ──→ MSL ──→ Metal
 ```
 
 **Compiler routing rule:** `SM >= 6.0 → DXC`, `SM 5.0 → FXC`. See [11-dx11-backend](11-dx11-backend.md) for the full FXC integration plan.

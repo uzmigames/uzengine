@@ -6,9 +6,12 @@
 
 #include "text_renderer.h"
 #include "constant_buffers.h"
+#include "log.h"
+
+#ifdef _WIN32
 #include "engine_shaders.h"
 #include "shader_pipeline.h"
-#include "log.h"
+#endif
 
 #include <cstring>
 
@@ -31,6 +34,111 @@ struct OverlayCB {
 // Init / Shutdown
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Creates pipelines, vertex buffers, and sampler from pre-created shader handles.
+/// Shared by both Init overloads — call after m_vs is set.
+bool TextRenderer::InitPipelines(RHIShaderHandle textPs, RHIShaderHandle rectPs,
+                                  RHIFormat rtvFormat) {
+    // SM5 input layout: matches overlay_vs VSInput {POSITION, TEXCOORD0, COLOR0}
+    RHIInputElementDesc overlayInputElements[] = {
+        { RHIInputSemantic::Position, 0, RHIFormat::RG32Float,  0, 0  },  // float2 position
+        { RHIInputSemantic::Texcoord, 0, RHIFormat::RG32Float,  0, 8  },  // float2 texcoord
+        { RHIInputSemantic::Color,    0, RHIFormat::RGBA32Float, 0, 16 }, // float4 color
+    };
+
+    // ── Rect pipeline (alpha blend for semi-transparent backgrounds) ─────
+    {
+        RHIGraphicsPipelineDesc desc{};
+        desc.vertexShader = m_vs;
+        desc.pixelShader = rectPs;
+        desc.renderTargetFormats[0] = rtvFormat;
+        desc.renderTargetCount = 1;
+        desc.depthStencilFormat = RHIFormat::Unknown;
+        desc.depthStencil.depthEnable = false;
+        desc.depthStencil.depthWrite = false;
+        desc.rasterizer.cullMode = RHICullMode::None;
+
+        desc.renderTargetBlend[0].blendEnable = true;
+        desc.renderTargetBlend[0].srcColor = RHIBlendFactor::SrcAlpha;
+        desc.renderTargetBlend[0].dstColor = RHIBlendFactor::InvSrcAlpha;
+        desc.renderTargetBlend[0].colorOp = RHIBlendOp::Add;
+        desc.renderTargetBlend[0].srcAlpha = RHIBlendFactor::One;
+        desc.renderTargetBlend[0].dstAlpha = RHIBlendFactor::Zero;
+        desc.renderTargetBlend[0].alphaOp = RHIBlendOp::Add;
+
+        if (!m_bindless) {
+            desc.inputElements = overlayInputElements;
+            desc.inputElementCount = 3;
+            desc.vertexStride = sizeof(OverlayVertex);
+        }
+
+        desc.debugName = "OverlayRectPipeline";
+        m_rectPipeline = m_device->CreateGraphicsPipeline(desc);
+    }
+
+    // ── Text pipeline (alpha blend with font atlas alpha) ────────────────
+    {
+        RHIGraphicsPipelineDesc desc{};
+        desc.vertexShader = m_vs;
+        desc.pixelShader = textPs;
+        desc.renderTargetFormats[0] = rtvFormat;
+        desc.renderTargetCount = 1;
+        desc.depthStencilFormat = RHIFormat::Unknown;
+        desc.depthStencil.depthEnable = false;
+        desc.depthStencil.depthWrite = false;
+        desc.rasterizer.cullMode = RHICullMode::None;
+
+        desc.renderTargetBlend[0].blendEnable = true;
+        desc.renderTargetBlend[0].srcColor = RHIBlendFactor::SrcAlpha;
+        desc.renderTargetBlend[0].dstColor = RHIBlendFactor::InvSrcAlpha;
+        desc.renderTargetBlend[0].colorOp = RHIBlendOp::Add;
+        desc.renderTargetBlend[0].srcAlpha = RHIBlendFactor::One;
+        desc.renderTargetBlend[0].dstAlpha = RHIBlendFactor::Zero;
+        desc.renderTargetBlend[0].alphaOp = RHIBlendOp::Add;
+
+        if (!m_bindless) {
+            desc.inputElements = overlayInputElements;
+            desc.inputElementCount = 3;
+            desc.vertexStride = sizeof(OverlayVertex);
+        }
+
+        desc.debugName = "OverlayTextPipeline";
+        m_textPipeline = m_device->CreateGraphicsPipeline(desc);
+    }
+
+    // ── Vertex buffers (one per frame in flight, Upload heap) ──────────
+    for (uint32_t i = 0; i < kFramesInFlight; ++i) {
+        RHIBufferDesc vbDesc{};
+        vbDesc.sizeBytes = kMaxVertices * sizeof(OverlayVertex);
+        vbDesc.stride = sizeof(OverlayVertex);
+        vbDesc.usage = m_bindless ? RHIBufferUsage::StructuredBuffer : RHIBufferUsage::VertexBuffer;
+        vbDesc.memory = RHIMemoryType::Upload;
+        vbDesc.debugName = "OverlayVertexBuffer";
+
+        m_vertexBuffers[i] = m_device->CreateBuffer(vbDesc);
+        m_vbSrvIndices[i] = m_device->GetBufferSRVIndex(m_vertexBuffers[i]);
+    }
+
+    // ── Sampler (linear filtering for font atlas) ────────────────────────
+    RHISamplerDesc sampDesc{};
+    sampDesc.filter = RHIFilterMode::Linear;
+    sampDesc.addressU = RHIAddressMode::Clamp;
+    sampDesc.addressV = RHIAddressMode::Clamp;
+    sampDesc.debugName = "FontAtlasSampler";
+
+    m_sampler = m_device->CreateSampler(sampDesc);
+    m_samplerIndex = m_device->GetSamplerIndex(m_sampler);
+
+    if (!m_rectPipeline.IsValid() || !m_textPipeline.IsValid() || !m_vertexBuffers[0].IsValid()) {
+        UZ_LOG(EditorText, Error, "Failed to create overlay pipeline resources");
+        return false;
+    }
+
+    UZ_LOG(EditorText, Info, "Text renderer initialized (maxVerts={}, screen={}x{}, bindless={})",
+           kMaxVertices, m_screenWidth, m_screenHeight, m_bindless);
+    return true;
+}
+
+#ifdef _WIN32
 bool TextRenderer::Init(IRHIDevice* device, ShaderPipeline& shaderPipeline,
                         RHIFormat rtvFormat, uint32_t screenWidth, uint32_t screenHeight,
                         bool bindless) {
@@ -76,104 +184,21 @@ bool TextRenderer::Init(IRHIDevice* device, ShaderPipeline& shaderPipeline,
     rectPsDesc.debugName = "overlay_rect_ps";
     RHIShaderHandle rectPs = device->CreateShader(rectPsDesc);
 
-    // SM5 input layout: matches overlay_vs.hlsl VSInput {POSITION, TEXCOORD0, COLOR0}
-    RHIInputElementDesc overlayInputElements[] = {
-        { RHIInputSemantic::Position, 0, RHIFormat::RG32Float,  0, 0  },  // float2 position
-        { RHIInputSemantic::Texcoord, 0, RHIFormat::RG32Float,  0, 8  },  // float2 texcoord
-        { RHIInputSemantic::Color,    0, RHIFormat::RGBA32Float, 0, 16 }, // float4 color
-    };
+    return InitPipelines(textPs, rectPs, rtvFormat);
+}
+#endif // _WIN32
 
-    // ── Rect pipeline (alpha blend for semi-transparent backgrounds) ─────
-    {
-        RHIGraphicsPipelineDesc desc{};
-        desc.vertexShader = m_vs;
-        desc.pixelShader = rectPs;
-        desc.renderTargetFormats[0] = rtvFormat;
-        desc.renderTargetCount = 1;
-        desc.depthStencilFormat = RHIFormat::Unknown;
-        desc.depthStencil.depthEnable = false;
-        desc.depthStencil.depthWrite = false;
-        desc.rasterizer.cullMode = RHICullMode::None;
+bool TextRenderer::Init(IRHIDevice* device, RHIShaderHandle overlayVS,
+                        RHIShaderHandle textPS, RHIShaderHandle rectPS,
+                        RHIFormat rtvFormat, uint32_t screenWidth, uint32_t screenHeight,
+                        bool bindless) {
+    m_device = device;
+    m_screenWidth = screenWidth;
+    m_screenHeight = screenHeight;
+    m_bindless = bindless;
+    m_vs = overlayVS;
 
-        desc.renderTargetBlend[0].blendEnable = true;
-        desc.renderTargetBlend[0].srcColor = RHIBlendFactor::SrcAlpha;
-        desc.renderTargetBlend[0].dstColor = RHIBlendFactor::InvSrcAlpha;
-        desc.renderTargetBlend[0].colorOp = RHIBlendOp::Add;
-        desc.renderTargetBlend[0].srcAlpha = RHIBlendFactor::One;
-        desc.renderTargetBlend[0].dstAlpha = RHIBlendFactor::Zero;
-        desc.renderTargetBlend[0].alphaOp = RHIBlendOp::Add;
-
-        if (!bindless) {
-            desc.inputElements = overlayInputElements;
-            desc.inputElementCount = 3;
-            desc.vertexStride = sizeof(OverlayVertex);
-        }
-
-        desc.debugName = "OverlayRectPipeline";
-        m_rectPipeline = device->CreateGraphicsPipeline(desc);
-    }
-
-    // ── Text pipeline (alpha blend with font atlas alpha) ────────────────
-    {
-        RHIGraphicsPipelineDesc desc{};
-        desc.vertexShader = m_vs;
-        desc.pixelShader = textPs;
-        desc.renderTargetFormats[0] = rtvFormat;
-        desc.renderTargetCount = 1;
-        desc.depthStencilFormat = RHIFormat::Unknown;
-        desc.depthStencil.depthEnable = false;
-        desc.depthStencil.depthWrite = false;
-        desc.rasterizer.cullMode = RHICullMode::None;
-
-        desc.renderTargetBlend[0].blendEnable = true;
-        desc.renderTargetBlend[0].srcColor = RHIBlendFactor::SrcAlpha;
-        desc.renderTargetBlend[0].dstColor = RHIBlendFactor::InvSrcAlpha;
-        desc.renderTargetBlend[0].colorOp = RHIBlendOp::Add;
-        desc.renderTargetBlend[0].srcAlpha = RHIBlendFactor::One;
-        desc.renderTargetBlend[0].dstAlpha = RHIBlendFactor::Zero;
-        desc.renderTargetBlend[0].alphaOp = RHIBlendOp::Add;
-
-        if (!bindless) {
-            desc.inputElements = overlayInputElements;
-            desc.inputElementCount = 3;
-            desc.vertexStride = sizeof(OverlayVertex);
-        }
-
-        desc.debugName = "OverlayTextPipeline";
-        m_textPipeline = device->CreateGraphicsPipeline(desc);
-    }
-
-    // ── Vertex buffers (one per frame in flight, Upload heap) ──────────
-    for (uint32_t i = 0; i < kFramesInFlight; ++i) {
-        RHIBufferDesc vbDesc{};
-        vbDesc.sizeBytes = kMaxVertices * sizeof(OverlayVertex);
-        vbDesc.stride = sizeof(OverlayVertex);
-        vbDesc.usage = bindless ? RHIBufferUsage::StructuredBuffer : RHIBufferUsage::VertexBuffer;
-        vbDesc.memory = RHIMemoryType::Upload;
-        vbDesc.debugName = "OverlayVertexBuffer";
-
-        m_vertexBuffers[i] = device->CreateBuffer(vbDesc);
-        m_vbSrvIndices[i] = device->GetBufferSRVIndex(m_vertexBuffers[i]);
-    }
-
-    // ── Sampler (linear filtering for font atlas) ────────────────────────
-    RHISamplerDesc sampDesc{};
-    sampDesc.filter = RHIFilterMode::Linear;
-    sampDesc.addressU = RHIAddressMode::Clamp;
-    sampDesc.addressV = RHIAddressMode::Clamp;
-    sampDesc.debugName = "FontAtlasSampler";
-
-    m_sampler = device->CreateSampler(sampDesc);
-    m_samplerIndex = device->GetSamplerIndex(m_sampler);
-
-    if (!m_rectPipeline.IsValid() || !m_textPipeline.IsValid() || !m_vertexBuffers[0].IsValid()) {
-        UZ_LOG(EditorText, Error, "Failed to create overlay pipeline resources");
-        return false;
-    }
-
-    UZ_LOG(EditorText, Info, "Text renderer initialized (maxVerts={}, screen={}x{}, bindless={})",
-           kMaxVertices, screenWidth, screenHeight, bindless);
-    return true;
+    return InitPipelines(textPS, rectPS, rtvFormat);
 }
 
 void TextRenderer::Shutdown() {
@@ -324,8 +349,10 @@ void TextRenderer::Render(IRHICommandList* cmdList, CBRingAllocator& cbRing,
 
         if (totalTextVerts > 0) {
             cmdList->SetPipeline(m_textPipeline);
-            // Bind font atlas at t0 via descriptor table (root param 3)
+            // Bind font atlas — DX12 uses descriptor table, Metal uses direct binding
             cmdList->SetDescriptorTable(3, font.GetAtlasSRVIndex());
+            cmdList->SetFragmentTexture(0, font.GetAtlasTexture());
+            cmdList->SetFragmentSampler(0, m_sampler);
             cmdList->Draw(totalTextVerts, 1, totalRectVerts);
         }
     }

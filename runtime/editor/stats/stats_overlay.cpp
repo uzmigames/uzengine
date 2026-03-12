@@ -5,9 +5,12 @@
 
 #include "stats_overlay.h"
 #include "upload_context.h"
-#include "shader_pipeline.h"
 #include "constant_buffers.h"
 #include "log.h"
+
+#ifdef _WIN32
+#include "shader_pipeline.h"
+#endif
 
 #include <algorithm>
 #include <cmath>
@@ -22,6 +25,7 @@ UZ_DEFINE_LOG_CATEGORY(EditorStats, Info);
 // Init / Shutdown
 // ─────────────────────────────────────────────────────────────────────────────
 
+#ifdef _WIN32
 bool StatsOverlay::Init(IRHIDevice* device, IRHICommandList* cmdList, UploadContext& upload,
                         ShaderPipeline& shaderPipeline, RHIFormat rtvFormat,
                         uint32_t screenWidth, uint32_t screenHeight,
@@ -46,6 +50,36 @@ bool StatsOverlay::Init(IRHIDevice* device, IRHICommandList* cmdList, UploadCont
     m_frameTimeHistory.fill(0.f);
 
     UZ_LOG(EditorStats, Info, "Stats overlay initialized ({}x{})", screenWidth, screenHeight);
+    return true;
+}
+#endif // _WIN32
+
+bool StatsOverlay::Init(IRHIDevice* device, IRHICommandList* cmdList, UploadContext& upload,
+                        const std::string& fontPath,
+                        RHIShaderHandle overlayVS, RHIShaderHandle textPS, RHIShaderHandle rectPS,
+                        RHIFormat rtvFormat, uint32_t screenWidth, uint32_t screenHeight,
+                        bool bindless) {
+    m_device = device;
+    m_screenWidth = screenWidth;
+    m_screenHeight = screenHeight;
+
+    // ── Font atlas ───────────────────────────────────────────────────────
+    if (!m_font.Init(device, cmdList, upload, fontPath, kFontSize)) {
+        UZ_LOG(EditorStats, Error, "Failed to init stats font: path='{}'", fontPath);
+        return false;
+    }
+
+    // ── Text renderer (using pre-created shader handles) ─────────────────
+    if (!m_textRenderer.Init(device, overlayVS, textPS, rectPS, rtvFormat,
+                              screenWidth, screenHeight, bindless)) {
+        UZ_LOG(EditorStats, Error, "Failed to init text renderer");
+        return false;
+    }
+
+    m_frameTimeHistory.fill(0.f);
+
+    UZ_LOG(EditorStats, Info, "Stats overlay initialized ({}x{}, font='{}')",
+           screenWidth, screenHeight, fontPath);
     return true;
 }
 

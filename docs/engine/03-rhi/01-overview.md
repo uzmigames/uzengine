@@ -14,15 +14,15 @@ This is the single most critical architectural boundary in the engine. Every ren
 Application Layer (Renderer, Scene, Materials)
         │
         ▼
-    ┌───────────────────────────────────┐
-    │       RHI Interface Layer         │
-    │  IRHIDevice · IRHICommandList     │
-    │  IRHISwapChain · IRHIFence        │
-    │  RHIHandle<Tag> typed handles     │
-    ├───────────────────────────────────┤
-    │  DX12 Backend  │  Vulkan  │ Metal │
-    │  (rhi/dx12/)   │  (TODO)  │ (TODO)│
-    └───────────────────────────────────┘
+    ┌───────────────────────────────────────┐
+    │       RHI Interface Layer             │
+    │  IRHIDevice · IRHICommandList         │
+    │  IRHISwapChain · IRHIFence            │
+    │  RHIHandle<Tag> typed handles         │
+    ├───────────────────────────────────────┤
+    │ DX12 (Done) │ Vulkan (Done) │ Metal   │
+    │(rhi/dx12/)  │(rhi/vulkan/)  │(WIP)    │
+    └───────────────────────────────────────┘
         │
         ▼
     GPU Hardware (D3D12, Vulkan, Metal APIs)
@@ -170,7 +170,7 @@ bool bindless = device->IsBindless();  // true for SM6.6+
 | DX12 SM5.0 | SM5.0 (FXC → DXBC) | Planned | Traditional IA + register binding. Requires FXC compiler (DXC can't compile SM5.0) |
 | **DX11** | **SM5.0 (FXC → DXBC)** | **Planned** | Legacy GPU support via Direct3D 11.1. Deferred context command model, implicit memory management. See [11-dx11-backend](11-dx11-backend.md) |
 | **Vulkan** | **SPIR-V (SM6.0)** | **Done** (5187 FPS triangle, RTX 4090) | Cross-platform (Linux/Windows/Steam Deck). Uses volk for dynamic dispatch, zero shader changes needed. See [vulkan-backend.md](vulkan-backend.md) |
-| Metal | MSL | Planned | macOS / iOS |
+| **Metal** | **MSL (Shader-Slang transpilation)** | **Phase 4** (Core impl. done; build + factory in progress) | macOS / iOS via argument buffers (bindless). metal-cpp for C++ safety. MetalDevice, MetalCommandList, MetalSwapChain, MetalFence complete. See [15-metal-backend.md](15-metal-backend.md) |
 | Null | N/A | **Done** | Headless testing, all ops are no-ops |
 
 ## Rules

@@ -5,6 +5,11 @@
 /// and SM5 Input Assembler fallback (VertexBuffer + input layout).
 /// The code never touches DX12/DX11 types directly.
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#endif
+
 #include "triangle_demo.h"
 #include "rhi.h"
 #include "rhi_backend.h"
@@ -13,11 +18,14 @@
 #include "platform_window.h"
 #include "log.h"
 #include "vertex.h"
+#include "paths.h"
+
+#ifdef _WIN32
 #include "shader_pipeline.h"
 #include "shader_compiler.h"
 #include "shader_compiler_fxc.h"
-#include "paths.h"
 #include "screenshot_capture.h"
+#endif
 
 #include <chrono>
 #include <cstdlib>
@@ -25,6 +33,57 @@
 #include <string>
 
 namespace uz {
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Embedded MSL Shaders (macOS only)
+// ─────────────────────────────────────────────────────────────────────────────
+
+#if defined(__APPLE__)
+
+/// MSL vertex shader — passes position through and interpolates color.
+///
+/// No camera transform — vertices are in NDC space directly.
+/// Uses stage_in with vertex attributes matching SimpleVertex layout:
+/// attribute(0) = position (float3), attribute(1) = color (float4), attribute(2) = texcoord (float2).
+static const char kTriangleVSSource[] = R"msl(
+#include <metal_stdlib>
+using namespace metal;
+
+struct VertexIn {
+    float3 position [[attribute(0)]];
+    float4 color    [[attribute(1)]];
+    float2 texcoord [[attribute(2)]];
+};
+
+struct VertexOut {
+    float4 position [[position]];
+    float4 color;
+};
+
+vertex VertexOut vertex_main(VertexIn in [[stage_in]]) {
+    VertexOut out;
+    out.position = float4(in.position, 1.0);
+    out.color    = in.color;
+    return out;
+}
+)msl";
+
+/// MSL pixel shader — returns interpolated vertex color.
+static const char kTrianglePSSource[] = R"msl(
+#include <metal_stdlib>
+using namespace metal;
+
+struct FragmentIn {
+    float4 position [[position]];
+    float4 color;
+};
+
+fragment float4 fragment_main(FragmentIn in [[stage_in]]) {
+    return in.color;
+}
+)msl";
+
+#endif // __APPLE__
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Triangle Geometry
@@ -126,13 +185,21 @@ bool RunTriangleDemo(const TriangleDemoConfig& config) {
         }
     }
 
-    // ── Shader Pipeline (VFS -> cache -> DXC/FXC) ────────────────────────
-    // Use bindless (SM6.6) if the device supports it, otherwise fall back to
-    // the SM5 Input Assembler path compiled by FXC.
+    // ── Shaders ────────────────────────────────────────────────────────────
+    // On Apple, embedded MSL shaders use [[stage_in]] vertex attributes (IA path).
+    // The device may report bindless support (Argument Buffers Tier 2), but our
+    // MSL shaders are written for the vertex attribute path — force non-bindless.
+#if defined(__APPLE__)
+    const bool bindless = false;
+#else
     const bool bindless = device->IsBindless();
+#endif
+    RHIShaderHandle vsHandle{};
+    RHIShaderHandle psHandle{};
 
+#ifdef _WIN32
+    // Windows: ShaderPipeline (VFS -> cache -> DXC/FXC)
     // SM6.6 bindless -> DXC produces DXIL; SM5 -> FXC produces DXBC.
-    // Both DX12 and DX11 SM5 consume DXBC from FXC, so "dx12_sm50" works for both.
     const std::string targetBackend = bindless ? "dx12_sm66" : "dx12_sm50";
 
     ShaderCompiler compiler;
@@ -167,7 +234,6 @@ bool RunTriangleDemo(const TriangleDemoConfig& config) {
         shaderPipeline.SetCompilerFXC(&compilerFXC);
     }
 
-    // Exe is at zig-out/bin/; shaders live at shaders/ relative to the repo root.
     const std::string shadersDir = (uz::GetExeDir() / "../../shaders").string();
     shaderPipeline.Mount("/demo/triangle", shadersDir);
 
@@ -196,27 +262,51 @@ bool RunTriangleDemo(const TriangleDemoConfig& config) {
     UZ_LOG(Renderer, Info, "Shaders loaded via pipeline: VS={} bytes, PS={} bytes",
            vsBytecode.size(), psBytecode.size());
 
-    // ── Create Shader Handles ────────────────────────────────────────────
-    RHIShaderDesc vsDesc{};
-    vsDesc.bytecode = vsBytecode.data();
-    vsDesc.bytecodeSize = vsBytecode.size();
-    vsDesc.stage = RHIShaderStage::Vertex;
-    vsDesc.entryPoint = "main";
-    vsDesc.debugName = "simple_vs";
+    {
+        RHIShaderDesc vsDesc{};
+        vsDesc.bytecode = vsBytecode.data();
+        vsDesc.bytecodeSize = vsBytecode.size();
+        vsDesc.stage = RHIShaderStage::Vertex;
+        vsDesc.entryPoint = "main";
+        vsDesc.debugName = "simple_vs";
 
-    RHIShaderDesc psDesc{};
-    psDesc.bytecode = psBytecode.data();
-    psDesc.bytecodeSize = psBytecode.size();
-    psDesc.stage = RHIShaderStage::Pixel;
-    psDesc.entryPoint = "main";
-    psDesc.debugName = "simple_ps";
+        RHIShaderDesc psDesc{};
+        psDesc.bytecode = psBytecode.data();
+        psDesc.bytecodeSize = psBytecode.size();
+        psDesc.stage = RHIShaderStage::Pixel;
+        psDesc.entryPoint = "main";
+        psDesc.debugName = "simple_ps";
 
-    RHIShaderHandle vsHandle = device->CreateShader(vsDesc);
-    RHIShaderHandle psHandle = device->CreateShader(psDesc);
+        vsHandle = device->CreateShader(vsDesc);
+        psHandle = device->CreateShader(psDesc);
+    }
+#elif defined(__APPLE__)
+    // macOS: embed MSL source strings directly — no ShaderPipeline/DXC dependency
+    {
+        RHIShaderDesc vsDesc{};
+        vsDesc.bytecode = reinterpret_cast<const uint8_t*>(kTriangleVSSource);
+        vsDesc.bytecodeSize = sizeof(kTriangleVSSource) - 1;
+        vsDesc.stage = RHIShaderStage::Vertex;
+        vsDesc.entryPoint = "vertex_main";
+        vsDesc.debugName = "triangle_vs_msl";
+
+        RHIShaderDesc psDesc{};
+        psDesc.bytecode = reinterpret_cast<const uint8_t*>(kTrianglePSSource);
+        psDesc.bytecodeSize = sizeof(kTrianglePSSource) - 1;
+        psDesc.stage = RHIShaderStage::Pixel;
+        psDesc.entryPoint = "fragment_main";
+        psDesc.debugName = "triangle_ps_msl";
+
+        vsHandle = device->CreateShader(vsDesc);
+        psHandle = device->CreateShader(psDesc);
+    }
+#endif
 
     if (!vsHandle.IsValid() || !psHandle.IsValid()) {
         UZ_LOG(Renderer, Error, "Failed to create shader handles");
+#ifdef _WIN32
         shaderPipeline.Shutdown();
+#endif
         for (uint32_t i = 0; i < kFramesInFlight; ++i) device->DestroyFence(frameFences[i]);
         device->DestroyCommandList(cmdList);
         device->DestroySwapChain(swapChain);
@@ -239,7 +329,7 @@ bool RunTriangleDemo(const TriangleDemoConfig& config) {
     pipeDesc.topology = RHIPrimitiveTopology::TriangleList;
     pipeDesc.rasterizer.cullMode = RHICullMode::None;
     pipeDesc.depthStencil.depthEnable = false;
-    pipeDesc.renderTargetFormats[0] = RHIFormat::RGBA8Unorm;
+    pipeDesc.renderTargetFormats[0] = swapChain->GetFormat();
     pipeDesc.renderTargetCount = 1;
     pipeDesc.debugName = "TrianglePipeline";
 
@@ -255,7 +345,9 @@ bool RunTriangleDemo(const TriangleDemoConfig& config) {
         UZ_LOG(Renderer, Error, "Failed to create triangle pipeline");
         device->DestroyShader(vsHandle);
         device->DestroyShader(psHandle);
+#ifdef _WIN32
         shaderPipeline.Shutdown();
+#endif
         for (uint32_t i = 0; i < kFramesInFlight; ++i) device->DestroyFence(frameFences[i]);
         device->DestroyCommandList(cmdList);
         device->DestroySwapChain(swapChain);
@@ -283,7 +375,9 @@ bool RunTriangleDemo(const TriangleDemoConfig& config) {
         device->DestroyPipeline(pipeline);
         device->DestroyShader(vsHandle);
         device->DestroyShader(psHandle);
+#ifdef _WIN32
         shaderPipeline.Shutdown();
+#endif
         for (uint32_t i = 0; i < kFramesInFlight; ++i) device->DestroyFence(frameFences[i]);
         device->DestroyCommandList(cmdList);
         device->DestroySwapChain(swapChain);
@@ -298,7 +392,9 @@ bool RunTriangleDemo(const TriangleDemoConfig& config) {
         device->DestroyPipeline(pipeline);
         device->DestroyShader(vsHandle);
         device->DestroyShader(psHandle);
+#ifdef _WIN32
         shaderPipeline.Shutdown();
+#endif
         for (uint32_t i = 0; i < kFramesInFlight; ++i) device->DestroyFence(frameFences[i]);
         device->DestroyCommandList(cmdList);
         device->DestroySwapChain(swapChain);
@@ -318,7 +414,9 @@ bool RunTriangleDemo(const TriangleDemoConfig& config) {
             device->DestroyPipeline(pipeline);
             device->DestroyShader(vsHandle);
             device->DestroyShader(psHandle);
+#ifdef _WIN32
             shaderPipeline.Shutdown();
+#endif
             for (uint32_t i = 0; i < kFramesInFlight; ++i) device->DestroyFence(frameFences[i]);
             device->DestroyCommandList(cmdList);
             device->DestroySwapChain(swapChain);
@@ -328,7 +426,8 @@ bool RunTriangleDemo(const TriangleDemoConfig& config) {
         UZ_LOG(Renderer, Info, "Vertex buffer SRV index: {}", vbSrvIndex);
     }
 
-    // ── Screenshot Capture ────────────────────────────────────────────────
+    // ── Screenshot Capture (Windows only) ──────────────────────────────
+#ifdef _WIN32
     ScreenshotCapture screenshotCapture;
     bool screenshotPending = !config.screenshotPath.empty();
     if (screenshotPending) {
@@ -337,6 +436,9 @@ bool RunTriangleDemo(const TriangleDemoConfig& config) {
             screenshotPending = false;
         }
     }
+#else
+    bool screenshotPending = false;
+#endif
 
     // ── Render Loop ──────────────────────────────────────────────────────
     uint32_t frameIndex = 0;
@@ -375,16 +477,17 @@ bool RunTriangleDemo(const TriangleDemoConfig& config) {
         toRenderTarget.stateAfter = RHIResourceState::RenderTarget;
         cmdList->ResourceBarrier(&toRenderTarget, 1);
 
-        // Clear to dark charcoal background before drawing the triangle.
-        const float clearColor[4] = { 0.1f, 0.1f, 0.12f, 1.0f };
-        cmdList->ClearRenderTarget(backBuffer, clearColor);
-
-        // Begin render pass — sets the render target for subsequent draw calls.
+        // Begin render pass with clear — single encoder clears and draws.
+        // Using a separate ClearRenderTarget + BeginRenderPass(clear=false)
+        // creates two encoders which can cause visual artifacts at high FPS.
         RHIRenderPassDesc rpDesc{};
         rpDesc.colorAttachmentCount = 1;
         rpDesc.colorAttachments[0].texture = backBuffer;
-        // Already cleared above; no load-clear needed here.
-        rpDesc.colorAttachments[0].clear = false;
+        rpDesc.colorAttachments[0].clear = true;
+        rpDesc.colorAttachments[0].clearColor[0] = 0.1f;
+        rpDesc.colorAttachments[0].clearColor[1] = 0.1f;
+        rpDesc.colorAttachments[0].clearColor[2] = 0.12f;
+        rpDesc.colorAttachments[0].clearColor[3] = 1.0f;
         cmdList->BeginRenderPass(rpDesc);
 
         cmdList->SetPipeline(pipeline);
@@ -411,12 +514,14 @@ bool RunTriangleDemo(const TriangleDemoConfig& config) {
 
         cmdList->EndRenderPass();
 
-        // ── Screenshot ────────────────────────────────────────────────────
+        // ── Screenshot (Windows only) ────────────────────────────────────
+#ifdef _WIN32
         bool capturedThisFrame = false;
         if (screenshotPending && frameIndex == config.screenshotFrame) {
             screenshotCapture.CaptureBackBuffer(cmdList, swapChain);
             capturedThisFrame = true;
         }
+#endif
 
         // Barrier: RenderTarget -> Present
         RHIBarrierDesc toPresent{};
@@ -435,12 +540,14 @@ bool RunTriangleDemo(const TriangleDemoConfig& config) {
         fenceValues[allocFrame] = globalFenceValue;
         frameFences[allocFrame]->Signal(globalFenceValue);
 
-        // ── Save screenshot after GPU completes ───────────────────────────
+        // ── Save screenshot after GPU completes (Windows only) ────────────
+#ifdef _WIN32
         if (capturedThisFrame) {
             frameFences[allocFrame]->WaitCPU(globalFenceValue);
             screenshotCapture.SaveToPNG(config.screenshotPath);
             screenshotPending = false;
         }
+#endif
 
         frameIndex++;
     }
@@ -458,8 +565,10 @@ bool RunTriangleDemo(const TriangleDemoConfig& config) {
            "Triangle demo finished: {} frames, {:.1f}ms total, {:.2f}ms/frame ({:.0f} FPS)",
            frameIndex, totalMs, avgMs, avgMs > 0 ? 1000.0f / avgMs : 0.0f);
 
+#ifdef _WIN32
     screenshotCapture.Shutdown();
     shaderPipeline.Shutdown();
+#endif
     device->DestroyBuffer(vbHandle);
     device->DestroyPipeline(pipeline);
     device->DestroyShader(vsHandle);

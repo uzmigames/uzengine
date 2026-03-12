@@ -51,11 +51,11 @@ class TextRenderer {
 public:
     TextRenderer() = default;
 
-    /// Initializes GPU resources (pipeline, shaders, vertex buffer).
+    /// Initializes GPU resources using ShaderPipeline for shader compilation.
     ///
     /// # Arguments
     /// * `device` — RHI device.
-    /// * `shaderPipeline` — Shader compilation pipeline.
+    /// * `shaderPipeline` — Shader compilation pipeline (Windows/HLSL).
     /// * `rtvFormat` — Render target format for pipeline creation.
     /// * `screenWidth` / `screenHeight` — Initial screen dimensions.
     /// * `bindless` — If true, uses SM6.6 bindless path (SV_VertexID +
@@ -67,6 +67,27 @@ public:
     bool Init(IRHIDevice* device, ShaderPipeline& shaderPipeline,
               RHIFormat rtvFormat, uint32_t screenWidth, uint32_t screenHeight,
               bool bindless = true);
+
+    /// Initializes GPU resources with pre-created shader handles.
+    ///
+    /// Use this overload when ShaderPipeline is not available (e.g., on macOS
+    /// with MSL shaders compiled directly via CreateShader).
+    ///
+    /// # Arguments
+    /// * `device` — RHI device.
+    /// * `overlayVS` — Pre-created vertex shader handle.
+    /// * `textPS` — Pre-created text pixel/fragment shader handle.
+    /// * `rectPS` — Pre-created rect pixel/fragment shader handle.
+    /// * `rtvFormat` — Render target format for pipeline creation.
+    /// * `screenWidth` / `screenHeight` — Initial screen dimensions.
+    /// * `bindless` — If true, uses SM6.6 bindless path.
+    ///
+    /// # Returns
+    /// `true` on success.
+    bool Init(IRHIDevice* device, RHIShaderHandle overlayVS,
+              RHIShaderHandle textPS, RHIShaderHandle rectPS,
+              RHIFormat rtvFormat, uint32_t screenWidth, uint32_t screenHeight,
+              bool bindless = false);
 
     /// Destroys GPU resources.
     void Shutdown();
@@ -108,6 +129,9 @@ public:
     void SetScreenSize(uint32_t width, uint32_t height);
 
 private:
+    /// Shared pipeline/buffer/sampler creation logic used by both Init overloads.
+    bool InitPipelines(RHIShaderHandle textPs, RHIShaderHandle rectPs, RHIFormat rtvFormat);
+
     IRHIDevice* m_device = nullptr;
 
     RHIShaderHandle m_vs{};

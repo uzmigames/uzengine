@@ -1,11 +1,17 @@
-/// Camera Test Demo Implementation — Backend-Agnostic
+/// Camera Test Demo Implementation — Cross-Platform (Windows + macOS)
 ///
 /// Renders a colored cube in 3D with FPS camera controls.
 /// WASD to move, right-click + mouse to look, Shift to sprint, Space/Ctrl up/down.
 /// Uses only abstract RHI interfaces — no DX12, Vulkan, or Metal types.
+///
+/// On Windows: loads HLSL shaders via ShaderPipeline + ShaderCompiler/FXC.
+/// On macOS:   embeds MSL source strings and passes them directly to CreateShader().
 
+#ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#endif
+
 #include "camera_test_demo.h"
 #include "rhi.h"
 #include "rhi_backend.h"
@@ -15,17 +21,21 @@
 #include "input.h"
 #include "log.h"
 #include "vertex.h"
-#include "upload_context.h"
 #include "constant_buffers.h"
 #include "camera.h"
 #include "fps_camera_controller.h"
+#include "paths.h"
+
+#include "upload_context.h"
+#include "stats_overlay.h"
+
+#ifdef _WIN32
 #include "shader_pipeline.h"
 #include "shader_compiler.h"
 #include "shader_compiler_fxc.h"
-#include "paths.h"
 #include "editor_grid.h"
 #include "screenshot_capture.h"
-#include "stats_overlay.h"
+#endif
 
 #include <DirectXMath.h>
 #include <chrono>
@@ -38,7 +48,279 @@ using namespace DirectX;
 namespace uz {
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Cube Geometry — 36 vertices (6 faces × 2 triangles × 3 verts)
+// Embedded MSL Shaders (macOS only)
+// ─────────────────────────────────────────────────────────────────────────────
+
+#if defined(__APPLE__)
+
+/// MSL vertex shader source — transforms position by viewProj, passes color through.
+///
+/// The engine stores matrices in row-major order (DirectXMath convention).
+/// MSL float4x4 is column-major, so transpose is required before multiply.
+/// PerFrameCB is bound at buffer(1), matching HLSL register(b1).
+static const char kCameraVSSource[] = R"msl(
+#include <metal_stdlib>
+using namespace metal;
+
+struct VertexIn {
+    float3 position [[attribute(0)]];
+    float4 color    [[attribute(1)]];
+    float2 texcoord [[attribute(2)]];
+};
+
+struct VertexOut {
+    float4 position [[position]];
+    float4 color;
+    float2 texcoord;
+};
+
+struct PerFrameCB {
+    float4x4 viewProj;
+    float4   cameraPos;
+    float4   timeParams;
+};
+
+vertex VertexOut vertex_main(VertexIn in [[stage_in]],
+                             constant PerFrameCB& perFrame [[buffer(1)]]) {
+    // Row-major bytes (DirectXMath) read as column-major in MSL = transpose(M).
+    // HLSL mul(v, M) == transpose(M) * v == MSL_M * v — no transpose needed.
+    VertexOut out;
+    out.position = perFrame.viewProj * float4(in.position, 1.0);
+    out.color    = in.color;
+    out.texcoord = in.texcoord;
+    return out;
+}
+)msl";
+
+/// MSL pixel shader source — returns interpolated vertex color.
+static const char kCameraPSSource[] = R"msl(
+#include <metal_stdlib>
+using namespace metal;
+
+struct FragmentIn {
+    float4 position [[position]];
+    float4 color;
+    float2 texcoord;
+};
+
+fragment float4 fragment_main(FragmentIn in [[stage_in]]) {
+    return in.color;
+}
+)msl";
+
+/// MSL grid vertex shader — fullscreen triangle from vertex_id (no vertex buffer).
+///
+/// Generates a triangle that covers the entire screen using the vertex ID trick:
+/// 3 vertices produce NDC coords that span [-1,1] on both axes.
+static const char kGridVSSource[] = R"msl(
+#include <metal_stdlib>
+using namespace metal;
+
+struct GridVSOut {
+    float4 position [[position]];
+    float2 ndc;
+};
+
+vertex GridVSOut grid_vertex_main(uint vid [[vertex_id]]) {
+    float2 uv = float2((vid << 1) & 2, vid & 2);
+    GridVSOut out;
+    out.position = float4(uv * 2.0 - 1.0, 0.0, 1.0);
+    out.ndc = float2(out.position.x, out.position.y);
+    return out;
+}
+)msl";
+
+/// MSL grid pixel shader — ray-plane intersection with procedural anti-aliased grid lines.
+///
+/// Reconstructs a world-space ray from NDC, intersects with Z=0 ground plane,
+/// and draws minor/major grid lines with axis highlights and distance fade.
+///
+/// DirectXMath stores matrices row-major. MSL float4x4 is column-major,
+/// so we transpose before multiplying: transpose(M) * v == HLSL mul(v, M).
+static const char kGridPSSource[] = R"msl(
+#include <metal_stdlib>
+using namespace metal;
+
+struct GridCB {
+    float4x4 invViewProj;
+    float4x4 viewProj;
+    float4   cameraPos;
+    float4   gridParams;
+};
+
+struct GridVSOut {
+    float4 position [[position]];
+    float2 ndc;
+};
+
+struct GridPSOut {
+    float4 color [[color(0)]];
+    float  depth [[depth(any)]];
+};
+
+float GridLine(float coord, float spacing) {
+    float wrapped = fract(coord / spacing + 0.5) - 0.5;
+    float lineDist = abs(wrapped) * spacing;
+    float derivative = fwidth(coord);
+    return 1.0 - smoothstep(0.0, derivative * 1.5, lineDist);
+}
+
+fragment GridPSOut grid_fragment_main(GridVSOut in [[stage_in]],
+                                      constant GridCB& gridCb [[buffer(1)]]) {
+    float minorSpacing  = gridCb.gridParams.x;
+    float majorInterval = gridCb.gridParams.y;
+    float fadeDistance   = gridCb.gridParams.z;
+    float majorSpacing  = minorSpacing * majorInterval;
+
+    // Row-major bytes (DirectXMath) read as column-major in MSL = transpose(M).
+    // HLSL mul(v, M) == transpose(M) * v == MSL_M * v — no transpose needed.
+    float4 nearNDC = float4(in.ndc, 0.0, 1.0);
+    float4 farNDC  = float4(in.ndc, 1.0, 1.0);
+
+    float4 nearWorld = gridCb.invViewProj * nearNDC;
+    float4 farWorld  = gridCb.invViewProj * farNDC;
+    nearWorld /= nearWorld.w;
+    farWorld  /= farWorld.w;
+
+    // Intersect ray with Z=0 ground plane
+    float3 rayOrigin = nearWorld.xyz;
+    float3 rayDir    = farWorld.xyz - nearWorld.xyz;
+    float t = -rayOrigin.z / rayDir.z;
+
+    if (t < 0.0) {
+        discard_fragment();
+    }
+
+    float3 worldPos = rayOrigin + rayDir * t;
+
+    // Grid lines on XY plane (Z-up ground)
+    float minorX = GridLine(worldPos.x, minorSpacing);
+    float minorY = GridLine(worldPos.y, minorSpacing);
+    float minor  = max(minorX, minorY);
+
+    float majorX = GridLine(worldPos.x, majorSpacing);
+    float majorY = GridLine(worldPos.y, majorSpacing);
+    float major  = max(majorX, majorY);
+
+    // Axis highlights — X-axis (forward) = red at Y=0, Y-axis (right) = green at X=0
+    float onXAxis = (abs(worldPos.y) < fwidth(worldPos.y) * 2.0) ? 1.0 : 0.0;
+    float onYAxis = (abs(worldPos.x) < fwidth(worldPos.x) * 2.0) ? 1.0 : 0.0;
+
+    // Color and distance fade
+    float dist = length(worldPos - gridCb.cameraPos.xyz);
+    float fade = 1.0 - saturate(dist / fadeDistance);
+    fade *= fade;
+
+    float3 color = float3(0.3, 0.3, 0.3);
+    float alpha = minor * 0.3;
+
+    color = mix(color, float3(0.5, 0.5, 0.5), major);
+    alpha = max(alpha, major * 0.5);
+
+    color = mix(color, float3(0.8, 0.2, 0.2), onXAxis);
+    color = mix(color, float3(0.2, 0.8, 0.2), onYAxis);
+    alpha = max(alpha, max(onXAxis, onYAxis) * 0.8);
+
+    alpha *= fade;
+
+    if (alpha < 0.01) {
+        discard_fragment();
+    }
+
+    // Project Z=0 hit point back to clip space for correct depth
+    float4 clipPos = gridCb.viewProj * float4(worldPos, 1.0);
+    float depth = clipPos.z / clipPos.w;
+
+    GridPSOut out;
+    out.color = float4(color, alpha);
+    out.depth = depth;
+    return out;
+}
+)msl";
+
+/// MSL overlay vertex shader — screen-space 2D quads via Input Assembler.
+///
+/// Transforms pixel coordinates to NDC using invScreenSize from a constant buffer.
+/// OverlayCB is bound at buffer(1), matching HLSL register(b1).
+/// Vertex data comes via [[stage_in]] with OverlayVertex layout.
+static const char kOverlayVSSource[] = R"msl(
+#include <metal_stdlib>
+using namespace metal;
+
+struct OverlayVertexIn {
+    float2 position [[attribute(0)]];
+    float2 texcoord [[attribute(1)]];
+    float4 color    [[attribute(2)]];
+};
+
+struct OverlayVSOut {
+    float4 position [[position]];
+    float2 texcoord;
+    float4 color;
+};
+
+struct OverlayCB {
+    float2 invScreenSize;
+    float2 padding;
+};
+
+vertex OverlayVSOut overlay_vertex_main(OverlayVertexIn in [[stage_in]],
+                                         constant OverlayCB& cb [[buffer(1)]]) {
+    // Screen pixels -> NDC: x in [0,W] -> [-1,1], y in [0,H] -> [1,-1] (flip Y)
+    float2 ndc;
+    ndc.x = in.position.x * cb.invScreenSize.x * 2.0 - 1.0;
+    ndc.y = 1.0 - in.position.y * cb.invScreenSize.y * 2.0;
+
+    OverlayVSOut out;
+    out.position = float4(ndc, 0.0, 1.0);
+    out.texcoord = in.texcoord;
+    out.color    = in.color;
+    return out;
+}
+)msl";
+
+/// MSL overlay text pixel shader — samples R8 font atlas for alpha.
+///
+/// Binds font atlas at [[texture(0)]] and sampler at [[sampler(0)]].
+/// Output alpha = vertex color alpha * atlas red channel (glyph coverage).
+static const char kOverlayTextPSSource[] = R"msl(
+#include <metal_stdlib>
+using namespace metal;
+
+struct OverlayPSIn {
+    float4 position [[position]];
+    float2 texcoord;
+    float4 color;
+};
+
+fragment float4 overlay_text_fragment(OverlayPSIn in [[stage_in]],
+                                      texture2d<float> fontAtlas [[texture(0)]],
+                                      sampler texSampler [[sampler(0)]]) {
+    float alpha = fontAtlas.sample(texSampler, in.texcoord).r;
+    return float4(in.color.rgb, in.color.a * alpha);
+}
+)msl";
+
+/// MSL overlay rect pixel shader — pass-through vertex color.
+static const char kOverlayRectPSSource[] = R"msl(
+#include <metal_stdlib>
+using namespace metal;
+
+struct OverlayPSIn {
+    float4 position [[position]];
+    float2 texcoord;
+    float4 color;
+};
+
+fragment float4 overlay_rect_fragment(OverlayPSIn in [[stage_in]]) {
+    return in.color;
+}
+)msl";
+
+#endif // __APPLE__
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cube Geometry — 36 vertices (6 faces x 2 triangles x 3 verts)
 // ─────────────────────────────────────────────────────────────────────────────
 
 static constexpr uint32_t kCubeVertexCount = 36;
@@ -96,6 +378,15 @@ static void GetCubeVertices(SimpleVertex outVerts[kCubeVertexCount]) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 static constexpr uint32_t kFramesInFlight = 3;
+
+/// Constant buffer layout for the infinite grid shader.
+/// Must match the GridCB struct in both HLSL and MSL grid shaders.
+struct GridCB {
+    Mat4 invViewProj;
+    Mat4 viewProj;
+    Vec4 cameraPos;
+    Vec4 gridParams; ///< x=minorSpacing, y=majorInterval, z=fadeDistance
+};
 
 bool RunCameraTestDemo(const CameraTestConfig& config) {
     const uint32_t frameCount = config.frameCount;
@@ -178,9 +469,19 @@ bool RunCameraTestDemo(const CameraTestConfig& config) {
         }
     }
 
-    // ── Shader Pipeline ──────────────────────────────────────────────────
+    // ── Shader Loading ──────────────────────────────────────────────────
+    // Force non-bindless on macOS Metal — our embedded MSL shaders use
+    // [[stage_in]] with [[attribute(N)]], which requires a vertex descriptor.
+    // The bindless MSL path would need a StructuredBuffer<SimpleVertex>
+    // accessed via argument buffers, which is not implemented yet.
+#if defined(__APPLE__)
+    const bool bindless = false;
+#else
     const bool bindless = device->IsBindless();
+#endif
 
+#ifdef _WIN32
+    // ── Windows: HLSL via ShaderPipeline ─────────────────────────────────
     ShaderCompiler compiler;
     if (!compiler.Init()) {
         UZ_LOG(Renderer, Error, "Failed to init shader compiler");
@@ -214,7 +515,6 @@ bool RunCameraTestDemo(const CameraTestConfig& config) {
         return false;
     }
 
-    // ── Shader Handles ───────────────────────────────────────────────────
     RHIShaderDesc vsDesc{};
     vsDesc.bytecode = vsBytecode.data();
     vsDesc.bytecodeSize = vsBytecode.size();
@@ -229,8 +529,30 @@ bool RunCameraTestDemo(const CameraTestConfig& config) {
     psDesc.entryPoint = "main";
     psDesc.debugName = "camera_ps";
 
+#elif defined(__APPLE__)
+    // ── macOS: embedded MSL source passed directly to CreateShader ───────
+    RHIShaderDesc vsDesc{};
+    vsDesc.bytecode = kCameraVSSource;
+    vsDesc.bytecodeSize = std::strlen(kCameraVSSource);
+    vsDesc.stage = RHIShaderStage::Vertex;
+    vsDesc.entryPoint = "vertex_main";
+    vsDesc.debugName = "camera_vs_msl";
+
+    RHIShaderDesc psDesc{};
+    psDesc.bytecode = kCameraPSSource;
+    psDesc.bytecodeSize = std::strlen(kCameraPSSource);
+    psDesc.stage = RHIShaderStage::Pixel;
+    psDesc.entryPoint = "fragment_main";
+    psDesc.debugName = "camera_ps_msl";
+#endif
+
     RHIShaderHandle vsHandle = device->CreateShader(vsDesc);
     RHIShaderHandle psHandle = device->CreateShader(psDesc);
+
+    if (!vsHandle.IsValid() || !psHandle.IsValid()) {
+        UZ_LOG(Renderer, Error, "Failed to create camera shaders");
+        return false;
+    }
 
     // ── Pipeline ─────────────────────────────────────────────────────────
     // SM5 input layout: POSITION(float3) + COLOR(float4) + TEXCOORD(float2)
@@ -247,7 +569,7 @@ bool RunCameraTestDemo(const CameraTestConfig& config) {
     pipeDesc.rasterizer.cullMode = RHICullMode::None;
     pipeDesc.depthStencil.depthEnable = true;
     pipeDesc.depthStencil.depthWrite = true;
-    pipeDesc.renderTargetFormats[0] = RHIFormat::RGBA8Unorm;
+    pipeDesc.renderTargetFormats[0] = swapChain->GetFormat();
     pipeDesc.renderTargetCount = 1;
     pipeDesc.depthStencilFormat = RHIFormat::D32Float;
     pipeDesc.debugName = "CameraCubePipeline";
@@ -299,30 +621,128 @@ bool RunCameraTestDemo(const CameraTestConfig& config) {
     CBRingAllocator cbRing;
     cbRing.Init(device, kFramesInFlight, 64 * 1024);
 
-    // ── Editor Grid ──────────────────────────────────────────────────────
+#if defined(__APPLE__)
+    // ── Grid Pipeline (macOS — inline MSL, no ShaderPipeline dependency) ──
+    RHIShaderDesc gridVsDesc{};
+    gridVsDesc.bytecode = kGridVSSource;
+    gridVsDesc.bytecodeSize = std::strlen(kGridVSSource);
+    gridVsDesc.stage = RHIShaderStage::Vertex;
+    gridVsDesc.entryPoint = "grid_vertex_main";
+    gridVsDesc.debugName = "grid_vs_msl";
+
+    RHIShaderDesc gridPsDesc{};
+    gridPsDesc.bytecode = kGridPSSource;
+    gridPsDesc.bytecodeSize = std::strlen(kGridPSSource);
+    gridPsDesc.stage = RHIShaderStage::Pixel;
+    gridPsDesc.entryPoint = "grid_fragment_main";
+    gridPsDesc.debugName = "grid_ps_msl";
+
+    RHIShaderHandle gridVsHandle = device->CreateShader(gridVsDesc);
+    RHIShaderHandle gridPsHandle = device->CreateShader(gridPsDesc);
+    if (!gridVsHandle.IsValid() || !gridPsHandle.IsValid()) {
+        UZ_LOG(Renderer, Error, "Failed to create grid shaders");
+        return false;
+    }
+
+    RHIGraphicsPipelineDesc gridPipeDesc{};
+    gridPipeDesc.vertexShader = gridVsHandle;
+    gridPipeDesc.pixelShader = gridPsHandle;
+    gridPipeDesc.topology = RHIPrimitiveTopology::TriangleList;
+    gridPipeDesc.rasterizer.cullMode = RHICullMode::None;
+    gridPipeDesc.depthStencil.depthEnable = true;
+    gridPipeDesc.depthStencil.depthWrite = false;
+    gridPipeDesc.depthStencil.depthFunc = RHICompareFunc::LessEqual;
+    gridPipeDesc.renderTargetBlend[0].blendEnable = true;
+    gridPipeDesc.renderTargetBlend[0].srcColor = RHIBlendFactor::SrcAlpha;
+    gridPipeDesc.renderTargetBlend[0].dstColor = RHIBlendFactor::InvSrcAlpha;
+    gridPipeDesc.renderTargetBlend[0].colorOp = RHIBlendOp::Add;
+    gridPipeDesc.renderTargetBlend[0].srcAlpha = RHIBlendFactor::SrcAlpha;
+    gridPipeDesc.renderTargetBlend[0].dstAlpha = RHIBlendFactor::InvSrcAlpha;
+    gridPipeDesc.renderTargetBlend[0].alphaOp = RHIBlendOp::Add;
+    gridPipeDesc.renderTargetFormats[0] = swapChain->GetFormat();
+    gridPipeDesc.renderTargetCount = 1;
+    gridPipeDesc.depthStencilFormat = RHIFormat::D32Float;
+    gridPipeDesc.debugName = "GridPipeline";
+    // No inputElements — fullscreen triangle generated from vertex_id
+
+    RHIPipelineHandle gridPipeline = device->CreateGraphicsPipeline(gridPipeDesc);
+    if (!gridPipeline.IsValid()) {
+        UZ_LOG(Renderer, Error, "Failed to create grid pipeline");
+        return false;
+    }
+#endif // __APPLE__
+
+#ifdef _WIN32
+    // ── Editor Grid (Windows only — depends on ShaderPipeline) ───────────
     EditorGrid editorGrid;
     if (!editorGrid.Init(device, shaderPipeline, RHIFormat::RGBA8Unorm, RHIFormat::D32Float)) {
         UZ_LOG(Renderer, Error, "Failed to initialize editor grid");
         return false;
     }
+#endif
 
-    // ── Stats Overlay ─────────────────────────────────────────────────
+    // ── Stats Overlay (cross-platform) ──────────────────────────────────
     StatsOverlay statsOverlay;
     {
         UploadContext upload(device);
         cmdList->Begin();
+
+#if defined(__APPLE__)
+        // Create MSL overlay shaders for the stats overlay
+        RHIShaderDesc overlayVsDesc{};
+        overlayVsDesc.bytecode = kOverlayVSSource;
+        overlayVsDesc.bytecodeSize = std::strlen(kOverlayVSSource);
+        overlayVsDesc.stage = RHIShaderStage::Vertex;
+        overlayVsDesc.entryPoint = "overlay_vertex_main";
+        overlayVsDesc.debugName = "overlay_vs_msl";
+
+        RHIShaderDesc overlayTextPsDesc{};
+        overlayTextPsDesc.bytecode = kOverlayTextPSSource;
+        overlayTextPsDesc.bytecodeSize = std::strlen(kOverlayTextPSSource);
+        overlayTextPsDesc.stage = RHIShaderStage::Pixel;
+        overlayTextPsDesc.entryPoint = "overlay_text_fragment";
+        overlayTextPsDesc.debugName = "overlay_text_ps_msl";
+
+        RHIShaderDesc overlayRectPsDesc{};
+        overlayRectPsDesc.bytecode = kOverlayRectPSSource;
+        overlayRectPsDesc.bytecodeSize = std::strlen(kOverlayRectPSSource);
+        overlayRectPsDesc.stage = RHIShaderStage::Pixel;
+        overlayRectPsDesc.entryPoint = "overlay_rect_fragment";
+        overlayRectPsDesc.debugName = "overlay_rect_ps_msl";
+
+        RHIShaderHandle overlayVsHandle = device->CreateShader(overlayVsDesc);
+        RHIShaderHandle overlayTextPsHandle = device->CreateShader(overlayTextPsDesc);
+        RHIShaderHandle overlayRectPsHandle = device->CreateShader(overlayRectPsDesc);
+
+        if (!overlayVsHandle.IsValid() || !overlayTextPsHandle.IsValid() || !overlayRectPsHandle.IsValid()) {
+            UZ_LOG(Renderer, Error, "Failed to create overlay shaders");
+            return false;
+        }
+
+        // macOS monospace font — Monaco is a plain .ttf available on all macOS versions
+        std::string fontPath = "/System/Library/Fonts/Monaco.ttf";
+        if (!statsOverlay.Init(device, cmdList, upload, fontPath,
+                                overlayVsHandle, overlayTextPsHandle, overlayRectPsHandle,
+                                swapChain->GetFormat(), winDesc.width, winDesc.height, bindless)) {
+            UZ_LOG(Renderer, Error, "Failed to initialize stats overlay");
+            return false;
+        }
+#elif defined(_WIN32)
         if (!statsOverlay.Init(device, cmdList, upload, shaderPipeline,
                                RHIFormat::RGBA8Unorm, winDesc.width, winDesc.height, bindless)) {
             UZ_LOG(Renderer, Error, "Failed to initialize stats overlay");
             return false;
         }
+#endif
+
         cmdList->End();
         cmdList->Execute();
         device->WaitIdle();
         upload.ReleaseStaging();
     }
 
-    // ── Screenshot Capture ─────────────────────────────────────────────
+#ifdef _WIN32
+    // ── Screenshot Capture (Windows only) ────────────────────────────────
     ScreenshotCapture screenshotCapture;
     bool screenshotPending = !config.screenshotPath.empty();
     if (screenshotPending) {
@@ -331,19 +751,20 @@ bool RunCameraTestDemo(const CameraTestConfig& config) {
             return false;
         }
     }
+#endif // _WIN32
 
     // ── Camera (UE5 default viewport values, scaled to meters) ─────────
     Camera camera;
-    // UE5: 90° horizontal FOV → ~59° vertical FOV at 16:9
+    // UE5: 90deg horizontal FOV -> ~59deg vertical FOV at 16:9
     constexpr float kHFovDeg = 90.f;
     constexpr float kAspect = 16.f / 9.f;
     float vFovRad = 2.f * std::atan(std::tan(kHFovDeg * 0.5f * 3.14159265f / 180.f) / kAspect);
     camera.SetPerspective(vFovRad,
         static_cast<float>(winDesc.width) / static_cast<float>(winDesc.height),
         0.1f, 1000.f);
-    // UE5 default: Position(0, 1024, 512)cm → meters: (0, 10.24, 5.12)
+    // UE5 default: Position(0, 1024, 512)cm -> meters: (0, 10.24, 5.12)
     // Scaled down for our scene: (0, 5, 2.5)
-    // Yaw=-90° from +X = looking along -Y, Pitch=-15° = slightly downward
+    // Yaw=-90deg from +X = looking along -Y, Pitch=-15deg = slightly downward
     camera.SetPosition({0.f, 5.f, 2.5f});
 
     constexpr float kPitchDeg = -15.f;
@@ -480,8 +901,29 @@ bool RunCameraTestDemo(const CameraTestConfig& config) {
 
         cmdList->Draw(kCubeVertexCount);
 
+#if defined(__APPLE__)
+        // ── Grid (macOS) — fullscreen triangle with procedural grid shader ──
+        {
+            GridCB gridCb{};
+            Mat4 vpMat = camera.GetViewProjection();
+            gridCb.invViewProj = vpMat.inverse();
+            gridCb.viewProj = vpMat;
+            Vec3 gridCamPos = camera.GetPosition();
+            gridCb.cameraPos = {gridCamPos.x, gridCamPos.y, gridCamPos.z, 0.f};
+            gridCb.gridParams = {1.0f, 10.0f, 100.0f, 0.f};
+
+            CBAllocation gridAlloc = cbRing.Allocate(sizeof(GridCB));
+            std::memcpy(gridAlloc.cpuPtr, &gridCb, sizeof(GridCB));
+
+            cmdList->SetPipeline(gridPipeline);
+            cmdList->SetRootCBV(1, gridAlloc.bufferHandle, gridAlloc.offsetBytes,
+                                gridAlloc.cpuPtr, sizeof(GridCB));
+            cmdList->Draw(3);
+        }
+#elif defined(_WIN32)
         // ── Editor Grid (drawn after opaque geometry, uses alpha blend) ──
         editorGrid.Draw(cmdList, cbRing, camera);
+#endif
 
         cmdList->EndRenderPass();
 
@@ -491,19 +933,25 @@ bool RunCameraTestDemo(const CameraTestConfig& config) {
         statsOverlay.SetTriangleCount(kCubeVertexCount / 3 + 1);
 
         // Overlay render pass: color only, no depth — 2D UI sits on top of 3D
-        RHIRenderPassDesc overlayRpDesc{};
-        overlayRpDesc.colorAttachments[0].texture = backBuffer;
-        overlayRpDesc.colorAttachmentCount = 1;
-        overlayRpDesc.hasDepth = false;
-        cmdList->BeginRenderPass(overlayRpDesc);
-        statsOverlay.Render(cmdList, cbRing, frameIndex);
-        cmdList->EndRenderPass();
+        {
+            RHIRenderPassDesc overlayRpDesc{};
+            overlayRpDesc.colorAttachments[0].texture = backBuffer;
+            overlayRpDesc.colorAttachmentCount = 1;
+            overlayRpDesc.hasDepth = false;
+            cmdList->BeginRenderPass(overlayRpDesc);
 
+            cmdList->SetViewport(vp);
+            cmdList->SetScissor(sc);
+            statsOverlay.Render(cmdList, cbRing, frameIndex);
+            cmdList->EndRenderPass();
+        }
+
+#ifdef _WIN32
         // ── Screenshot Capture ─────────────────────────────────────────
         // If capturing this frame, skip the Present barrier here — the
-        // capture helper transitions RenderTarget→CopySrc→RenderTarget,
+        // capture helper transitions RenderTarget->CopySrc->RenderTarget,
         // and we add the Present barrier after. This avoids a redundant
-        // RenderTarget→Present→RenderTarget round-trip.
+        // RenderTarget->Present->RenderTarget round-trip.
         bool capturedThisFrame = false;
         if (screenshotPending && frameIndex == config.screenshotFrame) {
             // End + Execute the rendering commands first
@@ -524,7 +972,9 @@ bool RunCameraTestDemo(const CameraTestConfig& config) {
             cmdList->End();
             cmdList->Execute();
             capturedThisFrame = true;
-        } else {
+        } else
+#endif // _WIN32
+        {
             // Normal path: just transition to Present
             RHIBarrierDesc toPresent{};
             toPresent.texture = backBuffer;
@@ -543,12 +993,14 @@ bool RunCameraTestDemo(const CameraTestConfig& config) {
         fenceValues[allocFrame] = globalFenceValue;
         frameFences[allocFrame]->Signal(globalFenceValue);
 
+#ifdef _WIN32
         // ── Save screenshot after GPU completes ──────────────────────────
         if (capturedThisFrame) {
             frameFences[allocFrame]->WaitCPU(globalFenceValue);
             screenshotCapture.SaveToPNG(config.screenshotPath);
             screenshotPending = false;
         }
+#endif
 
         frameIndex++;
 
@@ -573,11 +1025,18 @@ bool RunCameraTestDemo(const CameraTestConfig& config) {
            "Camera test demo: {} frames, {:.1f}ms total, {:.2f}ms/frame ({:.0f} FPS)",
            frameIndex, totalMs, avgMs, avgMs > 0 ? 1000.f / avgMs : 0.f);
 
-    screenshotCapture.Shutdown();
     statsOverlay.Shutdown();
+#ifdef _WIN32
+    screenshotCapture.Shutdown();
     editorGrid.Shutdown();
-    cbRing.Shutdown();
     shaderPipeline.Shutdown();
+#endif
+#if defined(__APPLE__)
+    device->DestroyPipeline(gridPipeline);
+    device->DestroyShader(gridVsHandle);
+    device->DestroyShader(gridPsHandle);
+#endif
+    cbRing.Shutdown();
     device->DestroyTexture(depthBuffer);
     device->DestroyBuffer(vbHandle);
     device->DestroyPipeline(pipeline);

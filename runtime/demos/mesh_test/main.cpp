@@ -38,7 +38,11 @@ uz::RHIBackend ParseBackend(int argc, char* argv[]) {
             if (std::strcmp(val, "null")   == 0) return uz::RHIBackend::Null;
         }
     }
+#if defined(__APPLE__)
+    return uz::RHIBackend::Metal;
+#else
     return uz::RHIBackend::DX12;
+#endif
 }
 
 } // anonymous namespace

@@ -1,14 +1,20 @@
-/// Mesh Test Demo Implementation — Backend-Agnostic
+/// Mesh Test Demo Implementation — Cross-Platform (Windows + macOS)
 ///
 /// Renders a MeshBuilder::CreateCube() with the standard mesh shaders.
 /// Uses Vertex format (48 bytes: position, normal, texcoord, tangent) and
 /// PerObjectCB for model/normal matrix transforms.
 ///
+/// On Windows: loads HLSL shaders via ShaderPipeline + ShaderCompiler/FXC.
+/// On macOS:   embeds MSL source strings and passes them directly to CreateShader().
+///
 /// All GPU interaction flows through abstract RHI interfaces — no DX12,
 /// Vulkan, or Metal types appear in this file.
 
+#ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
+#endif
+
 #include "mesh_test_demo.h"
 #include "rhi.h"
 #include "rhi_backend.h"
@@ -23,14 +29,17 @@
 #include "constant_buffers.h"
 #include "camera.h"
 #include "fps_camera_controller.h"
+#include "paths.h"
+#include "stats_overlay.h"
+
+#ifdef _WIN32
 #include "shader_pipeline.h"
 #include "shader_compiler.h"
 #include "shader_compiler_fxc.h"
 #include "engine_shaders.h"
-#include "paths.h"
 #include "editor_grid.h"
 #include "screenshot_capture.h"
-#include "stats_overlay.h"
+#endif
 
 #include <DirectXMath.h>
 #include <chrono>
@@ -41,6 +50,103 @@
 using namespace DirectX;
 
 namespace uz {
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Embedded MSL Shaders (macOS only)
+// ─────────────────────────────────────────────────────────────────────────────
+
+#if defined(__APPLE__)
+
+/// MSL vertex shader for lit mesh — transforms position by model then viewProj,
+/// passes normalWS, texcoord, tangentWS, positionWS to fragment stage.
+///
+/// The engine stores matrices in row-major order (DirectXMath convention).
+/// MSL float4x4 is column-major, so when row-major bytes are read as column-major
+/// it is equivalent to transpose(M). HLSL mul(v, M) == transpose(M) * v == MSL_M * v.
+///
+/// PerFrameCB at buffer(1): viewProj, cameraPos, timeParams.
+/// PerObjectCB at buffer(2): model, normalMatrix, materialIndex.
+static const char kMeshVSSource[] = R"msl(
+#include <metal_stdlib>
+using namespace metal;
+
+struct VertexIn {
+    float3 position [[attribute(0)]];
+    float3 normal   [[attribute(1)]];
+    float2 texcoord [[attribute(2)]];
+    float4 tangent  [[attribute(3)]];
+};
+
+struct VertexOut {
+    float4 position  [[position]];
+    float3 normalWS;
+    float2 texcoord;
+    float4 tangentWS;
+    float3 positionWS;
+};
+
+struct PerFrameCB {
+    float4x4 viewProj;
+    float4   cameraPos;
+    float4   timeParams;
+};
+
+struct PerObjectCB {
+    float4x4 model;
+    float4x4 normalMatrix;
+    uint     materialIndex;
+};
+
+vertex VertexOut vertex_main(VertexIn in [[stage_in]],
+                             constant PerFrameCB& perFrame [[buffer(1)]],
+                             constant PerObjectCB& perObject [[buffer(2)]]) {
+    // Row-major bytes (DirectXMath) read as column-major in MSL = transpose(M).
+    // HLSL mul(v, M) == transpose(M) * v == MSL_M * v — no transpose needed.
+    VertexOut out;
+    float4 worldPos = perObject.model * float4(in.position, 1.0);
+    out.position   = perFrame.viewProj * worldPos;
+    out.positionWS = worldPos.xyz;
+    out.normalWS   = normalize((perObject.normalMatrix * float4(in.normal, 0.0)).xyz);
+    out.texcoord   = in.texcoord;
+    out.tangentWS  = float4((perObject.model * float4(in.tangent.xyz, 0.0)).xyz, in.tangent.w);
+    return out;
+}
+)msl";
+
+/// MSL pixel shader for lit mesh — N dot L directional lighting with fixed sun.
+///
+/// Uses white albedo (no texture sampling on macOS for now).
+/// Sun direction (0.5, 0.3, 0.8) normalized, ambient = 0.15.
+static const char kMeshPSSource[] = R"msl(
+#include <metal_stdlib>
+using namespace metal;
+
+struct FragmentIn {
+    float4 position  [[position]];
+    float3 normalWS;
+    float2 texcoord;
+    float4 tangentWS;
+    float3 positionWS;
+};
+
+fragment float4 fragment_main(FragmentIn in [[stage_in]]) {
+    // Fixed directional sun light
+    float3 sunDir = normalize(float3(0.5, 0.3, 0.8));
+    float3 N = normalize(in.normalWS);
+
+    // N dot L diffuse lighting
+    float NdotL = max(dot(N, sunDir), 0.0);
+
+    // White albedo — no texture on macOS for now
+    float3 albedo = float3(1.0, 1.0, 1.0);
+    float3 ambient = albedo * 0.15;
+    float3 diffuse = albedo * NdotL;
+
+    return float4(ambient + diffuse, 1.0);
+}
+)msl";
+
+#endif // __APPLE__
 
 static constexpr uint32_t kFramesInFlight = 3;
 static constexpr float kMaxFPS = 500.f;
@@ -180,9 +286,17 @@ bool RunMeshTestDemo(const MeshTestConfig& config) {
         }
     }
 
-    // ── Shader Pipeline ──────────────────────────────────────────────────
+    // ── Shader Loading ──────────────────────────────────────────────────
+    // Force non-bindless on macOS Metal — our embedded MSL shaders use
+    // [[stage_in]] with [[attribute(N)]], which requires a vertex descriptor.
+#if defined(__APPLE__)
+    const bool bindless = false;
+#else
     const bool bindless = device->IsBindless();
+#endif
 
+#ifdef _WIN32
+    // ── Windows: HLSL via ShaderPipeline ─────────────────────────────────
     ShaderCompiler compiler;
     if (!compiler.Init()) {
         UZ_LOG(Renderer, Error, "Failed to init shader compiler");
@@ -218,7 +332,6 @@ bool RunMeshTestDemo(const MeshTestConfig& config) {
         return false;
     }
 
-    // ── Shader Handles ───────────────────────────────────────────────────
     RHIShaderDesc vsDesc{};
     vsDesc.bytecode = vsBytecode.data();
     vsDesc.bytecodeSize = vsBytecode.size();
@@ -233,8 +346,30 @@ bool RunMeshTestDemo(const MeshTestConfig& config) {
     psDesc.entryPoint = "main";
     psDesc.debugName = "mesh_ps";
 
+#elif defined(__APPLE__)
+    // ── macOS: embedded MSL source passed directly to CreateShader ───────
+    RHIShaderDesc vsDesc{};
+    vsDesc.bytecode = kMeshVSSource;
+    vsDesc.bytecodeSize = std::strlen(kMeshVSSource);
+    vsDesc.stage = RHIShaderStage::Vertex;
+    vsDesc.entryPoint = "vertex_main";
+    vsDesc.debugName = "mesh_vs_msl";
+
+    RHIShaderDesc psDesc{};
+    psDesc.bytecode = kMeshPSSource;
+    psDesc.bytecodeSize = std::strlen(kMeshPSSource);
+    psDesc.stage = RHIShaderStage::Pixel;
+    psDesc.entryPoint = "fragment_main";
+    psDesc.debugName = "mesh_ps_msl";
+#endif
+
     RHIShaderHandle vsHandle = device->CreateShader(vsDesc);
     RHIShaderHandle psHandle = device->CreateShader(psDesc);
+
+    if (!vsHandle.IsValid() || !psHandle.IsValid()) {
+        UZ_LOG(Renderer, Error, "Failed to create mesh shaders");
+        return false;
+    }
 
     // ── Pipeline ─────────────────────────────────────────────────────────
     // SM5 input layout: POSITION(float3) + NORMAL(float3) + TEXCOORD(float2) + TANGENT(float4)
@@ -253,7 +388,7 @@ bool RunMeshTestDemo(const MeshTestConfig& config) {
     pipeDesc.rasterizer.frontCounterClockwise = false;
     pipeDesc.depthStencil.depthEnable = true;
     pipeDesc.depthStencil.depthWrite = true;
-    pipeDesc.renderTargetFormats[0] = RHIFormat::RGBA8Unorm;
+    pipeDesc.renderTargetFormats[0] = swapChain->GetFormat();
     pipeDesc.renderTargetCount = 1;
     pipeDesc.depthStencilFormat = RHIFormat::D32Float;
     pipeDesc.debugName = "MeshPipeline";
@@ -325,30 +460,42 @@ bool RunMeshTestDemo(const MeshTestConfig& config) {
     CBRingAllocator cbRing;
     cbRing.Init(device, kFramesInFlight, 64 * 1024);
 
-    // ── Editor Grid ───────────────────────────────────────────────────────
+#ifdef _WIN32
+    // ── Editor Grid (Windows only — depends on ShaderPipeline) ───────────
     EditorGrid editorGrid;
-    if (!editorGrid.Init(device, shaderPipeline, RHIFormat::RGBA8Unorm, RHIFormat::D32Float)) {
+    if (!editorGrid.Init(device, shaderPipeline, swapChain->GetFormat(), RHIFormat::D32Float)) {
         UZ_LOG(Renderer, Error, "Failed to initialize editor grid");
         return false;
     }
+#endif
 
     // ── Stats Overlay ─────────────────────────────────────────────────────
     StatsOverlay statsOverlay;
+    bool hasStatsOverlay = false;
     {
         UploadContext upload(device);
         cmdList->Begin();
+
+#ifdef _WIN32
         if (!statsOverlay.Init(device, cmdList, upload, shaderPipeline,
-                               RHIFormat::RGBA8Unorm, winDesc.width, winDesc.height, bindless)) {
+                               swapChain->GetFormat(), winDesc.width, winDesc.height, bindless)) {
             UZ_LOG(Renderer, Error, "Failed to initialize stats overlay");
             return false;
         }
+        hasStatsOverlay = true;
+#endif
+        // macOS: stats overlay skipped for now — depends on ShaderPipeline for
+        // overlay text/rect shaders. Will be enabled once MSL overlay shaders
+        // are integrated (same pattern as camera_test).
+
         cmdList->End();
         cmdList->Execute();
         device->WaitIdle();
         upload.ReleaseStaging();
     }
 
-    // ── Screenshot Capture ────────────────────────────────────────────────
+#ifdef _WIN32
+    // ── Screenshot Capture (Windows only) ────────────────────────────────
     ScreenshotCapture screenshotCapture;
     bool screenshotPending = !config.screenshotPath.empty();
     if (screenshotPending) {
@@ -357,6 +504,7 @@ bool RunMeshTestDemo(const MeshTestConfig& config) {
             return false;
         }
     }
+#endif
 
     // ── Camera ────────────────────────────────────────────────────────────
     Camera camera;
@@ -404,7 +552,9 @@ bool RunMeshTestDemo(const MeshTestConfig& config) {
         prevTime = now;
 
         // ── Stats ─────────────────────────────────────────────────────────
-        statsOverlay.BeginFrame(dt);
+        if (hasStatsOverlay) {
+            statsOverlay.BeginFrame(dt);
+        }
 
         // ── Input ─────────────────────────────────────────────────────────
         input.BeginFrame();
@@ -422,7 +572,9 @@ bool RunMeshTestDemo(const MeshTestConfig& config) {
             depthDesc.width = static_cast<uint32_t>(window.GetWidth());
             depthDesc.height = static_cast<uint32_t>(window.GetHeight());
             depthBuffer = device->CreateTexture(depthDesc);
-            statsOverlay.SetScreenSize(depthDesc.width, depthDesc.height);
+            if (hasStatsOverlay) {
+                statsOverlay.SetScreenSize(depthDesc.width, depthDesc.height);
+            }
             window.ClearResizedFlag();
             camera.SetAspectRatio(
                 static_cast<float>(window.GetWidth()) /
@@ -468,21 +620,21 @@ bool RunMeshTestDemo(const MeshTestConfig& config) {
         toRenderTarget.stateAfter = RHIResourceState::RenderTarget;
         cmdList->ResourceBarrier(&toRenderTarget, 1);
 
-        // Clear render target and depth independently so systems that only
-        // need one clear operation can call the minimal abstract path.
+        // Begin render pass with clear — single pass clears both color and depth
         float clearColor[4] = {0.05f, 0.05f, 0.08f, 1.0f};
-        cmdList->ClearRenderTarget(backBuffer, clearColor);
-        cmdList->ClearDepthStencil(depthBuffer, 1.0f, 0);
 
-        // Begin render pass with color + depth attachments
         RHIRenderPassDesc passDesc{};
         passDesc.colorAttachmentCount = 1;
         passDesc.colorAttachments[0].texture = backBuffer;
-        passDesc.colorAttachments[0].clear = false; // already cleared above
+        passDesc.colorAttachments[0].clear = true;
+        passDesc.colorAttachments[0].clearColor[0] = clearColor[0];
+        passDesc.colorAttachments[0].clearColor[1] = clearColor[1];
+        passDesc.colorAttachments[0].clearColor[2] = clearColor[2];
+        passDesc.colorAttachments[0].clearColor[3] = clearColor[3];
         passDesc.hasDepth = true;
         passDesc.depthAttachment.texture = depthBuffer;
+        passDesc.depthAttachment.clear = true;
         passDesc.depthAttachment.clearDepth = 1.0f;
-        passDesc.depthAttachment.clear = false; // already cleared above
         cmdList->BeginRenderPass(passDesc);
 
         // ── Draw Mesh ─────────────────────────────────────────────────────
@@ -516,23 +668,29 @@ bool RunMeshTestDemo(const MeshTestConfig& config) {
         cmdList->SetIndexBuffer(ibHandle, idxFmt, 0);
         cmdList->DrawIndexed(cubeMesh.GetIndexCount());
 
-        // ── Editor Grid ───────────────────────────────────────────────────
+#ifdef _WIN32
+        // ── Editor Grid (Windows only) ───────────────────────────────────
         editorGrid.Draw(cmdList, cbRing, camera);
+#endif
 
         // ── Stats Overlay ─────────────────────────────────────────────────
-        statsOverlay.SetDrawCalls(2); // mesh + grid
-        statsOverlay.SetVertexCount(cubeMesh.GetVertexCount() + 3);
-        statsOverlay.SetTriangleCount(cubeMesh.GetIndexCount() / 3 + 1);
-        statsOverlay.Render(cmdList, cbRing, frameIndex);
+        if (hasStatsOverlay) {
+            statsOverlay.SetDrawCalls(2); // mesh + grid
+            statsOverlay.SetVertexCount(cubeMesh.GetVertexCount() + 3);
+            statsOverlay.SetTriangleCount(cubeMesh.GetIndexCount() / 3 + 1);
+            statsOverlay.Render(cmdList, cbRing, frameIndex);
+        }
 
         cmdList->EndRenderPass();
 
+#ifdef _WIN32
         // ── Screenshot ────────────────────────────────────────────────────
         bool capturedThisFrame = false;
         if (screenshotPending && frameIndex == config.screenshotFrame) {
             screenshotCapture.CaptureBackBuffer(cmdList, swapChain);
             capturedThisFrame = true;
         }
+#endif
 
         // Barrier: RenderTarget -> Present
         RHIBarrierDesc toPresent{};
@@ -551,12 +709,14 @@ bool RunMeshTestDemo(const MeshTestConfig& config) {
         fenceValues[allocFrame] = globalFenceValue;
         frameFences[allocFrame]->Signal(globalFenceValue);
 
+#ifdef _WIN32
         // ── Save screenshot after GPU completes ───────────────────────────
         if (capturedThisFrame) {
             frameFences[allocFrame]->WaitCPU(globalFenceValue);
             screenshotCapture.SaveToPNG(config.screenshotPath);
             screenshotPending = false;
         }
+#endif
 
         frameIndex++;
 
@@ -580,11 +740,15 @@ bool RunMeshTestDemo(const MeshTestConfig& config) {
     UZ_LOG(Renderer, Info, "Mesh test demo: {} frames, {:.1f}ms total, {:.2f}ms/frame ({:.0f} FPS)",
            frameIndex, totalMs, avgMs, avgMs > 0 ? 1000.f / avgMs : 0.f);
 
+    if (hasStatsOverlay) {
+        statsOverlay.Shutdown();
+    }
+#ifdef _WIN32
     screenshotCapture.Shutdown();
-    statsOverlay.Shutdown();
     editorGrid.Shutdown();
-    cbRing.Shutdown();
     shaderPipeline.Shutdown();
+#endif
+    cbRing.Shutdown();
     device->DestroyTexture(depthBuffer);
     device->DestroyBuffer(ibHandle);
     device->DestroyBuffer(vbHandle);

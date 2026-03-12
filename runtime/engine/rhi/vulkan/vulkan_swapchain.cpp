@@ -88,9 +88,9 @@ bool VulkanSwapChain::Init(VulkanDevice* device, const RHISwapChainDesc& desc) {
     surfaceCI.hwnd = static_cast<HWND>(desc.windowHandle);
     surfaceCI.hinstance = GetModuleHandle(nullptr);
 
-    VkResult result = vkCreateWin32SurfaceKHR(device->GetVkInstance(), &surfaceCI, nullptr, &m_surface);
-    if (result != VK_SUCCESS) {
-        UZ_LOG(RHI, Error, "vkCreateWin32SurfaceKHR failed, result={}", static_cast<int>(result));
+    VkResult surfaceResult = vkCreateWin32SurfaceKHR(device->GetVkInstance(), &surfaceCI, nullptr, &m_surface);
+    if (surfaceResult != VK_SUCCESS) {
+        UZ_LOG(RHI, Error, "vkCreateWin32SurfaceKHR failed, result={}", static_cast<int>(surfaceResult));
         return false;
     }
 #else
@@ -128,7 +128,7 @@ bool VulkanSwapChain::Init(VulkanDevice* device, const RHISwapChainDesc& desc) {
     VkSemaphoreCreateInfo semCI = {};
     semCI.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
 
-    result = vkCreateSemaphore(device->GetVkDevice(), &semCI, nullptr, &m_imageAvailableSemaphore);
+    VkResult result = vkCreateSemaphore(device->GetVkDevice(), &semCI, nullptr, &m_imageAvailableSemaphore);
     if (result != VK_SUCCESS) {
         UZ_LOG(RHI, Error, "Failed to create image available semaphore, result={}", static_cast<int>(result));
         return false;

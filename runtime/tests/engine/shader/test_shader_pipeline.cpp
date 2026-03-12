@@ -2,6 +2,10 @@
 ///
 /// All tests run without DXC. They verify orchestration logic: lifecycle,
 /// VFS integration, cache checking, error handling, and hot-reload polling.
+///
+/// Windows-only: ShaderPipeline depends on DXC/FXC which are Windows-only.
+
+#ifdef _WIN32
 
 #include "shader_pipeline.h"
 #include "shader_source_manager.h"
@@ -321,3 +325,5 @@ TEST_F(ShaderPipelineTest, ReInitAfterShutdownWorks) {
     EXPECT_TRUE(pipeline.IsInitialized());
     EXPECT_EQ(pipeline.GetVFS().GetMountCount(), 0u);
 }
+
+#endif // _WIN32

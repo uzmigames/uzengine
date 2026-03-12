@@ -23,8 +23,8 @@ namespace {
 /// * `argv` - Argument vector from main().
 ///
 /// # Returns
-/// The selected backend, or DX12 if no --rhi flag is present or the
-/// value is unrecognized.
+/// The selected backend, or the platform default if no --rhi flag is present
+/// or the value is unrecognized (Metal on macOS, DX12 on Windows, Vulkan on Linux).
 uz::RHIBackend ParseBackend(int argc, char* argv[]) {
     for (int i = 1; i < argc - 1; ++i) {
         if (std::strcmp(argv[i], "--rhi") == 0) {
@@ -36,7 +36,13 @@ uz::RHIBackend ParseBackend(int argc, char* argv[]) {
             if (std::strcmp(val, "null")   == 0) return uz::RHIBackend::Null;
         }
     }
+#if defined(__APPLE__)
+    return uz::RHIBackend::Metal;
+#elif defined(_WIN32)
     return uz::RHIBackend::DX12;
+#else
+    return uz::RHIBackend::Vulkan;
+#endif
 }
 
 } // anonymous namespace

@@ -49,13 +49,13 @@ class StatsOverlay {
 public:
     StatsOverlay() = default;
 
-    /// Initializes font, text renderer, and GPU resources.
+    /// Initializes font, text renderer, and GPU resources using ShaderPipeline.
     ///
     /// # Arguments
     /// * `device` — RHI device.
     /// * `cmdList` — Command list for font atlas upload (must be recording).
     /// * `upload` — Upload context for staging.
-    /// * `shaderPipeline` — Shader compilation pipeline.
+    /// * `shaderPipeline` — Shader compilation pipeline (Windows/HLSL).
     /// * `rtvFormat` — Render target format.
     /// * `screenWidth`, `screenHeight` — Initial screen dimensions.
     /// * `bindless` — If true, uses SM6.6 bindless rendering. If false,
@@ -67,6 +67,32 @@ public:
               ShaderPipeline& shaderPipeline, RHIFormat rtvFormat,
               uint32_t screenWidth, uint32_t screenHeight,
               bool bindless = true);
+
+    /// Initializes font, text renderer, and GPU resources with pre-created shaders.
+    ///
+    /// Use this overload when ShaderPipeline is not available (e.g., macOS Metal).
+    /// The font is loaded from `fontPath` and the overlay shaders are passed
+    /// as pre-created handles.
+    ///
+    /// # Arguments
+    /// * `device` — RHI device.
+    /// * `cmdList` — Command list for font atlas upload (must be recording).
+    /// * `upload` — Upload context for staging.
+    /// * `fontPath` — Absolute path to a .ttf/.ttc font file.
+    /// * `overlayVS` — Pre-created overlay vertex shader handle.
+    /// * `textPS` — Pre-created overlay text pixel/fragment shader handle.
+    /// * `rectPS` — Pre-created overlay rect pixel/fragment shader handle.
+    /// * `rtvFormat` — Render target format.
+    /// * `screenWidth`, `screenHeight` — Initial screen dimensions.
+    /// * `bindless` — If true, uses SM6.6 bindless rendering.
+    ///
+    /// # Returns
+    /// `true` on success.
+    bool Init(IRHIDevice* device, IRHICommandList* cmdList, UploadContext& upload,
+              const std::string& fontPath,
+              RHIShaderHandle overlayVS, RHIShaderHandle textPS, RHIShaderHandle rectPS,
+              RHIFormat rtvFormat, uint32_t screenWidth, uint32_t screenHeight,
+              bool bindless = false);
 
     /// Destroys all GPU resources.
     void Shutdown();
