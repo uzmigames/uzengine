@@ -3,8 +3,8 @@
 /// DX12 backend implementation of IRHIFence.
 ///
 /// Wraps an ID3D12Fence and a Win32 event for CPU-side waits.
-/// GPU queue signaling is done externally via ID3D12CommandQueue::Signal();
-/// this class exposes CPU-side Signal() and blocking WaitCPU().
+/// Signal() enqueues a GPU-side signal via ID3D12CommandQueue::Signal(),
+/// ensuring the fence value is only reached after all preceding GPU work completes.
 
 #include "../rhi.h"
 
@@ -23,6 +23,9 @@ using Microsoft::WRL::ComPtr;
 ///
 /// Fences are monotonically increasing: each Signal(value) must use a value
 /// greater than any previously signaled value.
+///
+/// Signal() uses the GPU command queue, NOT the CPU, so the fence value
+/// is only reached after all preceding ExecuteCommandLists() work finishes.
 class DX12Fence final : public IRHIFence {
 public:
     DX12Fence() = default;
@@ -32,14 +35,18 @@ public:
     ///
     /// # Arguments
     /// * `device` — D3D12 device to create the fence on.
+    /// * `queue` — Command queue used for GPU-side Signal() calls.
     ///
     /// # Returns
     /// `true` on success, `false` on failure (cleans up partial state).
-    bool Init(ID3D12Device* device);
+    bool Init(ID3D12Device* device, ID3D12CommandQueue* queue);
 
     // ── IRHIFence overrides ──────────────────────────────────────────────
 
-    /// Signals the fence to the given value from the CPU side.
+    /// Enqueues a GPU-side signal on the command queue.
+    ///
+    /// The fence value is only reached after all previously submitted
+    /// command lists on this queue have completed execution.
     void Signal(uint64_t value) override;
 
     /// Blocks the calling CPU thread until the fence reaches the given value.
@@ -56,6 +63,7 @@ public:
 
 private:
     ComPtr<ID3D12Fence> m_fence;
+    ID3D12CommandQueue* m_queue = nullptr;
     HANDLE m_event = nullptr;
 };
 

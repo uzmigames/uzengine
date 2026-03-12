@@ -765,7 +765,7 @@ void DX12Device::DestroySwapChain(IRHISwapChain* swapChain) {
 IRHIFence* DX12Device::CreateFence() {
     UZ_PROFILE_FUNCTION();
     auto* fence = new DX12Fence();
-    if (!fence->Init(m_device.Get())) {
+    if (!fence->Init(m_device.Get(), m_directQueue.Get())) {
         delete fence;
         return nullptr;
     }

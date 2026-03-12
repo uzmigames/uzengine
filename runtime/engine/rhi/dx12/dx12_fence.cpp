@@ -23,13 +23,20 @@ DX12Fence::~DX12Fence() {
     }
 }
 
-bool DX12Fence::Init(ID3D12Device* device) {
+bool DX12Fence::Init(ID3D12Device* device, ID3D12CommandQueue* queue) {
     UZ_PROFILE_FUNCTION();
+    if (!queue) {
+        UZ_LOG(RHI, Error, "DX12Fence::Init — null command queue");
+        return false;
+    }
+
     HRESULT hr = device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&m_fence));
     if (FAILED(hr)) {
         UZ_LOG(RHI, Error, "Failed to create ID3D12Fence, hr=0x{:08X}", static_cast<uint32_t>(hr));
         return false;
     }
+
+    m_queue = queue;
 
     m_event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     if (!m_event) {
@@ -47,7 +54,7 @@ bool DX12Fence::Init(ID3D12Device* device) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void DX12Fence::Signal(uint64_t value) {
-    HRESULT hr = m_fence->Signal(value);
+    HRESULT hr = m_queue->Signal(m_fence.Get(), value);
     if (FAILED(hr)) {
         UZ_LOG(RHI, Error, "DX12Fence::Signal({}) failed, hr=0x{:08X}", value, static_cast<uint32_t>(hr));
     }
