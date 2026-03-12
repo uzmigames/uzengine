@@ -62,6 +62,7 @@
 | [29-design-decisions/](29-design-decisions/) | Design Decisions | 3 | **Reference** | POC lessons, technology choices |
 | [30-game-examples/](30-game-examples/) | Game Examples | 4 | **Reference** | Pong, Flappy Bird, Tower Defense |
 | [40-editor-framework/](40-editor-framework/) | Editor Framework | 21 | **Planned** | Overview, gizmos, undo/redo, inspector, hierarchy (05), asset browser (06), tool modes (07), output panel (08), **node-graph framework (09), material (10), anim controller (11), control rig (12), VFX (13), sequencer (14), behavior tree (15), PCG (16), debug tools (17), viewport modes (18), preferences (19), editor IPC (20), testing (21)** |
+| [41-engine-mode/](41-engine-mode/) | Engine Mode | 5 | **Planned** | VSCode IDE transformation, layout management, panel lifecycle, IDE compatibility (VSCode/Cursor/Windsurf), viewport embedding |
 
 ## How to Read This
 
