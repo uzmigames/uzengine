@@ -122,7 +122,7 @@ pub fn build(b: *std.Build) void {
 
     const exe = b.addExecutable(.{ .name = "mesh_test_demo", .root_module = mod });
 
-    const sys_libs = [_][]const u8{ "d3d12", "d3d11", "dxgi", "dxguid", "gdi32", "user32", "ws2_32", "dbghelp" };
+    const sys_libs = [_][]const u8{ "d3d12", "d3d11", "dxgi", "dxguid", "gdi32", "user32", "ws2_32", "dbghelp", "winmm" };
     for (sys_libs) |l| exe.linkSystemLibrary(l);
 
     b.installArtifact(exe);

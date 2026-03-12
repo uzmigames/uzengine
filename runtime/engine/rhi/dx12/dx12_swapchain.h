@@ -19,6 +19,7 @@
 /// The render loop must re-query the current back buffer each frame.
 
 #include "../rhi.h"
+#include "../rhi_frame_limiter.h"
 
 #include <wrl/client.h>
 #include <d3d12.h>
@@ -112,6 +113,9 @@ private:
     uint32_t                 m_bufferCount = 0;
     RHIFormat                m_format = RHIFormat::RGBA8Unorm;
     bool                     m_tearingSupported = false;
+
+    /// Hybrid sleep/spin-wait frame limiter (500 FPS default cap).
+    FrameLimiter             m_frameLimiter;
 };
 
 } // namespace uz

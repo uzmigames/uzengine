@@ -234,6 +234,7 @@ pub fn build(b: *std.Build) void {
         lib.linkSystemLibrary("dxguid");
         lib.linkSystemLibrary("ws2_32");  // Tracy socket profiling
         lib.linkSystemLibrary("dbghelp"); // Tracy callstack capture
+        lib.linkSystemLibrary("winmm");   // timeBeginPeriod/timeEndPeriod for frame limiter
     }
 
     b.installArtifact(lib);
@@ -312,6 +313,7 @@ pub fn build(b: *std.Build) void {
         test_exe.linkSystemLibrary("dxguid");
         test_exe.linkSystemLibrary("ws2_32");
         test_exe.linkSystemLibrary("dbghelp");
+        test_exe.linkSystemLibrary("winmm");
     }
 
     b.installArtifact(test_exe);

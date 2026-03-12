@@ -16,6 +16,7 @@
 /// NOT thread-safe. Must be used from the main/render thread only.
 
 #include "../rhi.h"
+#include "../rhi_frame_limiter.h"
 
 #define VK_NO_PROTOTYPES
 #ifdef _WIN32
@@ -103,6 +104,9 @@ private:
     RHIFormat            m_format = RHIFormat::BGRA8Unorm;
     VkFormat             m_vkFormat = VK_FORMAT_B8G8R8A8_UNORM;
     VkPresentModeKHR     m_presentMode = VK_PRESENT_MODE_FIFO_KHR;
+
+    /// Hybrid sleep/spin-wait frame limiter (500 FPS default cap).
+    FrameLimiter         m_frameLimiter;
 };
 
 } // namespace uz

@@ -14,6 +14,7 @@
 /// NOT thread-safe. Must be used from the main/render thread only.
 
 #include "../rhi.h"
+#include "../rhi_frame_limiter.h"
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -94,6 +95,9 @@ private:
     uint32_t                     m_currentBackBuffer = 0;
     RHIFormat                    m_format = RHIFormat::RGBA8Unorm;
     bool                         m_tearingSupported = false;
+
+    /// Hybrid sleep/spin-wait frame limiter (500 FPS default cap).
+    FrameLimiter                 m_frameLimiter;
 };
 
 } // namespace uz

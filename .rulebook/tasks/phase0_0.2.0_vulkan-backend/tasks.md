@@ -48,6 +48,16 @@
 - [x] 1.35 Verify all 5 existing demos work with Vulkan backend (clear_screen, triangle 5187 FPS, textured_quad 5334 FPS, camera_test 332 FPS, mesh_test 331 FPS on RTX 4090)
 - [x] 1.36 Add automatic HLSL→SPIR-V compilation in ShaderPipeline (DXC -spirv with -fvk-*-shift binding remaps, zero demo code changes)
 
+### Bug Fixes (v0.2.6)
+- [x] 1.37 Fix Vulkan VMA assert "Unmapping allocation not previously mapped" — UnmapBuffer no-op for persistent-mapped buffers
+- [x] 1.38 Fix Vulkan Tracy null pointer crash — guard TracyVkCollect/TracyVkDestroy with null checks
+- [x] 1.39 Fix DX11 black screen — add UnmapBuffer() after memcpy for DYNAMIC buffers in all demos and engine code (upload_context, text_renderer)
+- [x] 1.40 Fix DX11 white texture (textured_quad) — implement SetDescriptorTable with PSSetShaderResources/PSSetSamplers binding
+- [x] 1.41 Add screenshot capture support to clear_screen, triangle, textured_quad demos (--screenshot, --frames, --rhi CLI args)
+- [x] 1.42 Add DX11 FlushDebugMessages via ID3D11InfoQueue
+- [x] 1.43 Add benchmark report with 15 screenshots (5 demos × 3 backends) in docs/benchmarks/
+- [x] 1.44 Investigate textured_quad DX12 DEVICE_REMOVED (0x887A0001) — caused by multiple demos running simultaneously (GPU contention/TDR), not reproducible in isolation
+
 ## 2. Testing
 
 - [x] 2.1 Port test_dx12_device.cpp → test_vulkan_device.cpp (20 tests, all passing)

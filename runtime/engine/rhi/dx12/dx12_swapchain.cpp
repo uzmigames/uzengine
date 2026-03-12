@@ -129,6 +129,7 @@ bool DX12SwapChain::Init(DX12Device* device, const RHISwapChainDesc& desc) {
 
     UZ_LOG(RHI, Info, "DX12SwapChain created: {}x{}, {} buffers, tearing={}",
            m_width, m_height, m_bufferCount, m_tearingSupported);
+    m_frameLimiter.LogConfig();
 
     return true;
 }
@@ -231,6 +232,8 @@ void DX12SwapChain::Present(bool vsync) {
         TracyD3D12Collect(m_device->GetTracyGpuContext());
         TracyD3D12NewFrame(m_device->GetTracyGpuContext());
     }
+
+    m_frameLimiter.WaitForTargetFrameTime();
 }
 
 void DX12SwapChain::Resize(uint32_t width, uint32_t height) {

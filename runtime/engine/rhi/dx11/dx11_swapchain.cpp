@@ -111,6 +111,7 @@ bool DX11SwapChain::Init(DX11Device* device, const RHISwapChainDesc& desc) {
 
     UZ_LOG(RHI, Info, "DX11SwapChain created: {}x{}, {} buffers, tearing={}",
            m_width, m_height, m_bufferCount, m_tearingSupported);
+    m_frameLimiter.LogConfig();
 
     return true;
 }
@@ -206,6 +207,8 @@ void DX11SwapChain::Present(bool vsync) {
     if (m_device->GetTracyGpuContext()) {
         TracyD3D11Collect(m_device->GetTracyGpuContext());
     }
+
+    m_frameLimiter.WaitForTargetFrameTime();
 }
 
 void DX11SwapChain::Resize(uint32_t width, uint32_t height) {

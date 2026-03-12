@@ -144,6 +144,7 @@ bool VulkanSwapChain::Init(VulkanDevice* device, const RHISwapChainDesc& desc) {
 
     UZ_LOG(RHI, Info, "VulkanSwapChain created: {}x{}, {} images",
            m_width, m_height, m_imageCount);
+    m_frameLimiter.LogConfig();
 
     return true;
 }
@@ -315,6 +316,8 @@ void VulkanSwapChain::Present(bool vsync) {
     } else if (result != VK_SUCCESS) {
         UZ_LOG(RHI, Error, "vkQueuePresentKHR failed, result={}", static_cast<int>(result));
     }
+
+    m_frameLimiter.WaitForTargetFrameTime();
 }
 
 void VulkanSwapChain::Resize(uint32_t width, uint32_t height) {
