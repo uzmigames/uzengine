@@ -22,7 +22,7 @@ TEST(Profiler, StatCounterIncrementAndReset) {
 }
 
 TEST(Profiler, MacrosCompileAndRunWithoutCrash) {
-    UZ_PROFILE_SCOPE(TestScope);
-    UZ_PROFILE_FUNCTION();
+    { UZ_PROFILE_SCOPE(TestScope); }
+    { UZ_PROFILE_FUNCTION(); }
     UZ_PROFILE_FRAME_MARK();
 }

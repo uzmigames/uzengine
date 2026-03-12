@@ -218,6 +218,8 @@ pub fn build(b: *std.Build) void {
         lib.linkSystemLibrary("d3d11");
         lib.linkSystemLibrary("dxgi");
         lib.linkSystemLibrary("dxguid");
+        lib.linkSystemLibrary("ws2_32");  // Tracy socket profiling
+        lib.linkSystemLibrary("dbghelp"); // Tracy callstack capture
     }
 
     b.installArtifact(lib);
@@ -293,6 +295,8 @@ pub fn build(b: *std.Build) void {
         test_exe.linkSystemLibrary("d3d11");
         test_exe.linkSystemLibrary("dxgi");
         test_exe.linkSystemLibrary("dxguid");
+        test_exe.linkSystemLibrary("ws2_32");
+        test_exe.linkSystemLibrary("dbghelp");
     }
 
     b.installArtifact(test_exe);
