@@ -197,7 +197,7 @@ Clone-Repo -Name "spdlog" `
 # Tracy (profiling)
 Clone-Repo -Name "tracy" `
     -Url "https://github.com/wolfpld/tracy.git" `
-    -Branch "v0.11.1" `
+    -Branch "v0.13.1" `
     -RemoveDirs @("capture", "csvexport", "doc", "dtl", "examples", "extra", "icon", "imgui",
                   "import", "manual", "nfd", "profiler", "python", "server", "test", "update",
                   "zstd", "getopt")

@@ -11,7 +11,7 @@ pub fn build(b: *std.Build) void {
 
     const is_windows = target.result.os.tag == .windows;
 
-    const cpp_flags = &.{ "-std=c++17", "-DSPDLOG_COMPILED_LIB" };
+    const cpp_flags = &.{ "-std=c++17", "-DSPDLOG_COMPILED_LIB", "-DUZ_PROFILING_ENABLED", "-DTRACY_ENABLE", "-DTRACY_ON_DEMAND" };
     const tp = "thirdparty/";
 
     // ── Include path tables (shared between runtime and tests) ───────────
@@ -119,6 +119,8 @@ pub fn build(b: *std.Build) void {
         addCppDir(runtime_mod, b, "platform/windows", cpp_flags);
         addCppDir(runtime_mod, b, "core/rhi/dx12", cpp_flags);
         runtime_mod.addIncludePath(b.path("core/rhi/dx12"));
+        addCppDir(runtime_mod, b, "core/rhi/dx11", cpp_flags);
+        runtime_mod.addIncludePath(b.path("core/rhi/dx11"));
         runtime_mod.addIncludePath(b.path(tp ++ "d3d12ma/src"));
     }
 
@@ -210,9 +212,10 @@ pub fn build(b: *std.Build) void {
     // Runtime compilation depends on uzembed having run
     lib.step.dependOn(&run_embed.step);
 
-    // DX12 system libraries (Windows only)
+    // DX12/DX11 system libraries (Windows only)
     if (is_windows) {
         lib.linkSystemLibrary("d3d12");
+        lib.linkSystemLibrary("d3d11");
         lib.linkSystemLibrary("dxgi");
         lib.linkSystemLibrary("dxguid");
     }
@@ -287,6 +290,7 @@ pub fn build(b: *std.Build) void {
 
     if (is_windows) {
         test_exe.linkSystemLibrary("d3d12");
+        test_exe.linkSystemLibrary("d3d11");
         test_exe.linkSystemLibrary("dxgi");
         test_exe.linkSystemLibrary("dxguid");
     }
@@ -304,7 +308,7 @@ pub fn build(b: *std.Build) void {
     // ── Demos & Tools (Windows/DX12 only) ────────────────────────────────
 
     if (is_windows) {
-        const win_sys_libs = [_][]const u8{ "d3d12", "dxgi", "dxguid", "gdi32", "user32" };
+        const win_sys_libs = [_][]const u8{ "d3d12", "d3d11", "dxgi", "dxguid", "gdi32", "user32" };
 
         // Helper to create a tool exe from a single .cpp + agility
         const tool_names = [_][]const u8{ "uzengine", "uzcook" };

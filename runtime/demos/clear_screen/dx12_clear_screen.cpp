@@ -13,6 +13,7 @@
 #include "dx12_fence.h"
 #include "platform_window.h"
 #include "log.h"
+#include "profiler.h"
 
 #include <cmath>
 #include <chrono>
@@ -24,6 +25,9 @@ namespace uz {
 static constexpr uint32_t kFramesInFlight = 3;
 
 bool RunClearScreen(uint32_t frameCount) {
+    UZ_PROFILE_FUNCTION();
+    UZ_PROFILE_THREAD("Main");
+
     // ── Window ───────────────────────────────────────────────────────────
     WindowDesc winDesc{};
     winDesc.title = "UzEngine — DX12 Clear Screen";
@@ -103,6 +107,8 @@ bool RunClearScreen(uint32_t frameCount) {
     UZ_LOG(RHI, Info, "Starting clear screen render loop (frames={})", frameCount == 0 ? -1 : static_cast<int>(frameCount));
 
     while (window.PumpMessages() && window.IsOpen()) {
+        UZ_PROFILE_SCOPE(Frame);
+
         if (frameCount > 0 && frameIndex >= frameCount) break;
 
         // Handle resize
@@ -131,6 +137,8 @@ bool RunClearScreen(uint32_t frameCount) {
         };
 
         // Record
+        {
+        UZ_PROFILE_SCOPE(RecordCommands);
         cmdList->Begin();
 
         ID3D12Resource* backBuffer = swapChain->GetCurrentBackBufferResource();
@@ -150,9 +158,12 @@ bool RunClearScreen(uint32_t frameCount) {
             D3D12_RESOURCE_STATE_PRESENT);
 
         cmdList->End();
-        cmdList->Execute();
+        }
 
-        // Present
+        // Execute + Present
+        {
+        UZ_PROFILE_SCOPE(ExecuteAndPresent);
+        cmdList->Execute();
         swapChain->Present(false);
 
         // Signal fence for this frame
@@ -160,8 +171,10 @@ bool RunClearScreen(uint32_t frameCount) {
         fenceValues[allocFrame] = globalFenceValue;
         device->GetDirectQueue()->Signal(
             frameFences[allocFrame]->GetNativeFence(), globalFenceValue);
+        }
 
         frameIndex++;
+        UZ_PROFILE_FRAME_MARK();
     }
 
     // ── Cleanup ──────────────────────────────────────────────────────────
