@@ -100,8 +100,10 @@ static_assert(sizeof(PerObjectCB) == 256, "PerObjectCB must be 256 bytes (D3D12 
 class IRHIDevice;
 
 struct CBAllocation {
-    void*    cpuPtr;   ///< CPU-writable pointer (upload heap mapped memory)
-    uint64_t gpuAddr;  ///< GPU virtual address for root CBV binding
+    void*           cpuPtr;      ///< CPU-writable pointer (upload heap mapped memory)
+    uint64_t        gpuAddr;     ///< GPU virtual address for root CBV binding (DX12/Vulkan)
+    RHIBufferHandle bufferHandle; ///< Backing buffer handle (for DX11 handle-based binding)
+    uint64_t        offsetBytes; ///< Byte offset into the backing buffer
 };
 
 class CBRingAllocator {

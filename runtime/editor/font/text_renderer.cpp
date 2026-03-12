@@ -300,7 +300,7 @@ void TextRenderer::Render(IRHICommandList* cmdList, CBRingAllocator& cbRing,
             cmdList->SetPipeline(m_rectPipeline);
             uint32_t rectConsts[4] = {m_vbSrvIndices[fi], 0, 0, 0};
             cmdList->SetRootConstants(0, rectConsts, 4, 0);
-            cmdList->SetRootCBV(1, alloc.gpuAddr);
+            cmdList->SetRootCBV(1, alloc.bufferHandle, alloc.offsetBytes, alloc.cpuPtr, sizeof(OverlayCB));
             cmdList->Draw(totalRectVerts);
         }
 
@@ -308,13 +308,13 @@ void TextRenderer::Render(IRHICommandList* cmdList, CBRingAllocator& cbRing,
             cmdList->SetPipeline(m_textPipeline);
             uint32_t textConsts[4] = {m_vbSrvIndices[fi], font.GetAtlasSRVIndex(), m_samplerIndex, totalRectVerts};
             cmdList->SetRootConstants(0, textConsts, 4, 0);
-            cmdList->SetRootCBV(1, alloc.gpuAddr);
+            cmdList->SetRootCBV(1, alloc.bufferHandle, alloc.offsetBytes, alloc.cpuPtr, sizeof(OverlayCB));
             cmdList->Draw(totalTextVerts);
         }
     } else {
         // ── SM5: vertex data via Input Assembler, textures via descriptor table ──
         cmdList->SetVertexBuffer(0, m_vertexBuffers[fi]);
-        cmdList->SetRootCBV(1, alloc.gpuAddr);
+        cmdList->SetRootCBV(1, alloc.bufferHandle, alloc.offsetBytes, alloc.cpuPtr, sizeof(OverlayCB));
 
         if (totalRectVerts > 0) {
             cmdList->SetPipeline(m_rectPipeline);

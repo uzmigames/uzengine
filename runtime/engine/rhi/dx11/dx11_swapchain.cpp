@@ -120,9 +120,8 @@ bool DX11SwapChain::Init(DX11Device* device, const RHISwapChainDesc& desc) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void DX11SwapChain::AcquireBackBuffers() {
-    // For FLIP_DISCARD with DX11, we can only get buffer index 0
+    // For FLIP_DISCARD with DX11, we can only get buffer index 0.
     // DX11 does not expose GetCurrentBackBufferIndex() — the driver manages rotation.
-    // We create RTVs for buffer 0 only; DXGI handles the rest internally.
 
     ComPtr<ID3D11Texture2D> backBuffer;
     HRESULT hr = m_swapChain->GetBuffer(0, IID_PPV_ARGS(&backBuffer));
@@ -138,14 +137,37 @@ void DX11SwapChain::AcquireBackBuffers() {
         return;
     }
 
-    // Register the back buffer as a texture in the device pool so command lists can reference it
-    // For simplicity, use a fixed handle with generation 1
-    m_backBufferHandles[0] = {0, 1};
+    // Register in device texture pool so ClearRenderTarget / BeginRenderPass can find the RTV
+    uint32_t generation = 0;
+    uint32_t poolIdx = m_device->GetTexturePool().Allocate(generation);
+    auto* tex = m_device->GetTexturePool().Get(poolIdx, generation);
+    if (tex) {
+        tex->texture = backBuffer.Get();
+        tex->rtv = m_rtvs[0];
+        tex->srv = nullptr;
+        tex->dsv = nullptr;
+        tex->uav = nullptr;
+        tex->srvIndex = UINT32_MAX;
+        tex->generation = generation;
+        tex->desc.width = m_width;
+        tex->desc.height = m_height;
+        tex->desc.format = m_format;
+    }
+    m_backBufferHandles[0] = {poolIdx, generation};
     m_currentBackBuffer = 0;
 }
 
 void DX11SwapChain::ReleaseBackBuffers() {
     for (uint32_t i = 0; i < kMaxBackBuffers; ++i) {
+        if (m_backBufferHandles[i].IsValid()) {
+            auto* tex = m_device->GetTexturePool().Get(
+                m_backBufferHandles[i].index, m_backBufferHandles[i].generation);
+            if (tex) {
+                tex->texture = nullptr;  // swapchain owns the texture, don't release
+                tex->rtv = nullptr;      // will be released below
+            }
+            m_device->GetTexturePool().Free(m_backBufferHandles[i].index);
+        }
         if (m_rtvs[i]) {
             m_rtvs[i]->Release();
             m_rtvs[i] = nullptr;
@@ -178,7 +200,9 @@ void DX11SwapChain::Present(bool vsync) {
     }
 
     // Collect pending Tracy GPU timestamps after each present
-    TracyD3D11Collect(m_device->GetTracyGpuContext());
+    if (m_device->GetTracyGpuContext()) {
+        TracyD3D11Collect(m_device->GetTracyGpuContext());
+    }
 }
 
 void DX11SwapChain::Resize(uint32_t width, uint32_t height) {

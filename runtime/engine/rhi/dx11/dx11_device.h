@@ -68,6 +68,7 @@ public:
     RHIBufferHandle CreateBuffer(const RHIBufferDesc& desc) override;
     void DestroyBuffer(RHIBufferHandle handle) override;
     void* MapBuffer(RHIBufferHandle handle) override;
+    void UnmapBuffer(RHIBufferHandle handle) override;
     uint32_t GetBufferSRVIndex(RHIBufferHandle handle) const override;
     uint64_t GetBufferGPUAddress(RHIBufferHandle handle) const override;
 

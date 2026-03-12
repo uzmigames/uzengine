@@ -2,13 +2,15 @@
 
 /// DX11 backend implementation of IRHICommandList.
 ///
-/// Uses deferred contexts for command recording and the immediate context
-/// for execution. Unlike DX12, there are no command allocators or descriptor
-/// heap bindings — DX11 manages these implicitly.
+/// Uses the **immediate context directly** for all command recording.
+/// Unlike DX12, there are no command allocators or descriptor heap bindings
+/// — DX11 manages these implicitly.
 ///
-/// # Deferred Context Model
-/// Each `Begin()` creates a fresh deferred context. `End()` finalizes it into
-/// an `ID3D11CommandList`. `Execute()` submits it via the immediate context.
+/// # Immediate Context Model
+/// UE5 and Godot both use the immediate context on DX11 — deferred contexts
+/// are unreliable for real rendering. `Begin()` stores the immediate context
+/// pointer, `End()` and `Execute()` are no-ops since commands are already
+/// submitted as they are recorded.
 ///
 /// # Barriers
 /// DX11 manages resource state transitions implicitly — `ResourceBarrier()`
@@ -33,8 +35,9 @@ class DX11Device;
 
 /// DX11 implementation of `IRHICommandList`.
 ///
-/// Records commands into a deferred device context, then submits via
-/// the immediate context on `Execute()`.
+/// Records commands directly on the immediate device context. `Begin()`,
+/// `End()`, and `Execute()` exist only to satisfy the RHI interface —
+/// commands take effect immediately as they are recorded.
 class DX11CommandList final : public IRHICommandList {
 public:
     DX11CommandList() = default;
@@ -62,6 +65,8 @@ public:
     void SetRootConstants(uint32_t rootParamIndex, const uint32_t* data,
                           uint32_t count, uint32_t offsetIn32BitValues) override;
     void SetRootCBV(uint32_t rootParamIndex, uint64_t gpuAddress) override;
+    void SetRootCBV(uint32_t rootParamIndex, RHIBufferHandle buffer,
+                    uint64_t offsetBytes, const void* cpuData, uint32_t dataSize) override;
     void SetDescriptorTable(uint32_t rootParamIndex, uint32_t descriptorIndex) override;
 
     void DrawIndexed(uint32_t indexCount, uint32_t instanceCount,
@@ -83,15 +88,26 @@ public:
                              uint32_t srcRowPitch,
                              RHITextureHandle dstTexture,
                              uint32_t mipLevel, uint32_t arraySlice) override;
+    void CopyTextureToBuffer(RHITextureHandle srcTexture, uint32_t mipLevel,
+                             RHIBufferHandle dstBuffer, uint64_t dstOffset,
+                             uint32_t dstRowPitch) override;
 
     void BeginRenderPass(const RHIRenderPassDesc& desc) override;
     void EndRenderPass() override;
 
 private:
+    /// Gets or creates a scratch DYNAMIC constant buffer for a given slot.
+    /// Uses Map/WRITE_DISCARD to upload data, then binds to VS+PS stages.
+    ID3D11Buffer* GetOrCreateScratchCB(uint32_t slot);
+
     DX11Device*              m_device = nullptr;
-    ID3D11DeviceContext*     m_deferredCtx = nullptr;
-    ID3D11CommandList*       m_pendingCmdList = nullptr;
+    /// Non-owning pointer to the device's immediate context.
+    ID3D11DeviceContext*     m_ctx = nullptr;
     RHIQueueType             m_queueType = RHIQueueType::Graphics;
+
+    /// Scratch constant buffers for SetRootCBV (one per slot, DYNAMIC usage).
+    static constexpr uint32_t kMaxCBSlots = 8;
+    ID3D11Buffer*            m_scratchCBs[kMaxCBSlots] = {};
 };
 
 } // namespace uz

@@ -419,10 +419,11 @@ TEST_F(ProfileCaptureTest, Export_Json_CaptureFunctionNameAppearsInNodes) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 TEST_F(ProfileCaptureTest, BufferOverflow_RecordMoreThanCapacity_NocrashExportSucceeds) {
-    // kMaxEvents = 1024*1024. We record pairs (enter+exit) in a tight loop.
-    // Recording 600 000 pairs = 1.2M events exceeds the buffer; events past
-    // the limit are silently dropped (first-N strategy).
-    constexpr int kPairs = 600000;
+    // kMaxEvents = 1024*1024 = 1048576. Each pair = 2 events (enter+exit).
+    // 524289 pairs = 1048578 events, just over the limit.
+    // The export processes min(eventCount, kMaxEvents) = 1048576 events.
+    // This is slow (~seconds) but validates the overflow path.
+    constexpr int kPairs = 524289;
 
     auto& cap = uz::ProfileCapture::Get();
     const std::string path = Track(MakeTempPath("overflow"));

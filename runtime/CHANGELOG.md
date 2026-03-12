@@ -2,6 +2,32 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
+## [0.2.5] — 2026-03-12
+
+### DX11 Black Screen Fix
+- **Root cause**: Deferred context rendering produces black frames — UE5 and Godot do NOT use deferred contexts on DX11
+- **Rewritten `DX11CommandList`** to use immediate context directly (matching UE5 pattern)
+  - Removed `CreateDeferredContext` / `FinishCommandList` / `ExecuteCommandList` entirely
+  - All draw, clear, barrier, copy commands go directly to the immediate context
+  - `Begin()` / `End()` / `Execute()` are now no-ops (satisfy RHI interface only)
+- **Constant buffer binding**: Changed from `UpdateSubresource` on DEFAULT buffers to `Map(WRITE_DISCARD)` on DYNAMIC buffers (UE5 pattern)
+- **All 5 demos verified rendering on DX11**: clear_screen, triangle, textured_quad (2755 FPS), camera_test, mesh_test
+
+### RHI-Agnostic Screenshot Capture
+- **`ScreenshotCapture`** rewritten to use only `IRHIDevice` / `IRHICommandList` / `IRHISwapChain` (was DX12-only)
+- **`CopyTextureToBuffer`** added to `IRHICommandList` interface — implemented in DX12, DX11, Vulkan
+  - DX12: `CopyTextureRegion` with placed footprint
+  - DX11: Staging texture + `CopyResource` + `Map(READ)` + row-by-row memcpy
+  - Vulkan: `vkCmdCopyImageToBuffer`
+- **`UnmapBuffer`** added to `IRHIDevice` interface — DX12 no-op (persistent mapping), DX11 explicit Unmap, Vulkan vmaUnmapMemory
+- **`SetRootCBV`** extended with `cpuData` + `dataSize` params for DX11 shadow-buffer pattern
+- **`CBAllocation`** now includes `bufferHandle` and `offsetBytes` fields
+- Screenshot verified on DX11 and DX12 via `--screenshot` flag in camera_test and mesh_test demos
+
+### Research
+- UE5 DX11 architecture analysis saved to `docs/research/UE5_DX11_ANALYSIS.md`
+- Godot analysis files moved to `docs/research/`
+
 ## [0.2.4] — 2026-03-12
 
 ### Vulkan RHI Backend

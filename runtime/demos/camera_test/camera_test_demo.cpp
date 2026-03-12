@@ -9,6 +9,7 @@
 #include "camera_test_demo.h"
 #include "rhi.h"
 #include "rhi_backend.h"
+#include "rhi_config.h"
 #include "rhi_types.h"
 #include "platform_window.h"
 #include "input.h"
@@ -24,9 +25,6 @@
 #include "paths.h"
 #include "editor_grid.h"
 #include "screenshot_capture.h"
-#include "dx12_device.h"
-#include "dx12_command_list.h"
-#include "dx12_swapchain.h"
 #include "stats_overlay.h"
 
 #include <DirectXMath.h>
@@ -280,6 +278,7 @@ bool RunCameraTestDemo(const CameraTestConfig& config) {
     RHIBufferHandle vbHandle = device->CreateBuffer(vbDesc);
     void* mapped = device->MapBuffer(vbHandle);
     std::memcpy(mapped, cubeVerts, sizeof(cubeVerts));
+    device->UnmapBuffer(vbHandle);
 
     uint32_t vbSrvIndex = 0;
     if (bindless) {
@@ -327,12 +326,7 @@ bool RunCameraTestDemo(const CameraTestConfig& config) {
     ScreenshotCapture screenshotCapture;
     bool screenshotPending = !config.screenshotPath.empty();
     if (screenshotPending) {
-        // Screenshot capture is DX12-only for now (uses DX12 readback APIs)
-        auto* dx12Dev = dynamic_cast<DX12Device*>(device);
-        if (!dx12Dev) {
-            UZ_LOG(Renderer, Warning, "Screenshot capture only supported on DX12 backend");
-            screenshotPending = false;
-        } else if (!screenshotCapture.Init(dx12Dev, scDesc.width, scDesc.height)) {
+        if (!screenshotCapture.Init(device, scDesc.width, scDesc.height)) {
             UZ_LOG(Renderer, Error, "Failed to initialize screenshot capture");
             return false;
         }
@@ -470,7 +464,8 @@ bool RunCameraTestDemo(const CameraTestConfig& config) {
         }
 
         // Root CBV: per-frame CB at b1 (root param index 1)
-        cmdList->SetRootCBV(1, cbAlloc.gpuAddr);
+        cmdList->SetRootCBV(1, cbAlloc.bufferHandle, cbAlloc.offsetBytes,
+                            cbAlloc.cpuPtr, sizeof(PerFrameCB));
 
         RHIViewport vp{};
         vp.width = static_cast<float>(swapChain->GetWidth());
@@ -504,24 +499,42 @@ bool RunCameraTestDemo(const CameraTestConfig& config) {
         statsOverlay.Render(cmdList, cbRing, frameIndex);
         cmdList->EndRenderPass();
 
-        // ── Screenshot Capture (if requested on this frame) ─────────────
+        // ── Screenshot Capture ─────────────────────────────────────────
+        // If capturing this frame, skip the Present barrier here — the
+        // capture helper transitions RenderTarget→CopySrc→RenderTarget,
+        // and we add the Present barrier after. This avoids a redundant
+        // RenderTarget→Present→RenderTarget round-trip.
         bool capturedThisFrame = false;
         if (screenshotPending && frameIndex == config.screenshotFrame) {
-            screenshotCapture.CaptureBackBuffer(
-                dynamic_cast<DX12CommandList*>(cmdList),
-                dynamic_cast<DX12SwapChain*>(swapChain));
+            // End + Execute the rendering commands first
+            cmdList->End();
+            cmdList->Execute();
+
+            // New submission: capture the back buffer (it's in RenderTarget state)
+            cmdList->Begin();
+            screenshotCapture.CaptureBackBuffer(cmdList, swapChain);
+
+            // Barrier: RenderTarget -> Present (after capture puts it back to RT)
+            RHIBarrierDesc toPresent{};
+            toPresent.texture = backBuffer;
+            toPresent.stateBefore = RHIResourceState::RenderTarget;
+            toPresent.stateAfter = RHIResourceState::Present;
+            cmdList->ResourceBarrier(&toPresent, 1);
+
+            cmdList->End();
+            cmdList->Execute();
             capturedThisFrame = true;
+        } else {
+            // Normal path: just transition to Present
+            RHIBarrierDesc toPresent{};
+            toPresent.texture = backBuffer;
+            toPresent.stateBefore = RHIResourceState::RenderTarget;
+            toPresent.stateAfter = RHIResourceState::Present;
+            cmdList->ResourceBarrier(&toPresent, 1);
+
+            cmdList->End();
+            cmdList->Execute();
         }
-
-        // Barrier: RenderTarget -> Present
-        RHIBarrierDesc toPresent{};
-        toPresent.texture = backBuffer;
-        toPresent.stateBefore = RHIResourceState::RenderTarget;
-        toPresent.stateAfter = RHIResourceState::Present;
-        cmdList->ResourceBarrier(&toPresent, 1);
-
-        cmdList->End();
-        cmdList->Execute();
 
         swapChain->Present(false);
 

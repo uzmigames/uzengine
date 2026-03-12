@@ -14,6 +14,8 @@
 #include "log.h"
 #include "profiler.h"
 
+#include <algorithm>
+
 #include <vector>
 
 namespace uz {
@@ -295,6 +297,13 @@ void DX12CommandList::SetRootCBV(uint32_t rootParamIndex, uint64_t gpuAddress) {
     m_cmdList->SetGraphicsRootConstantBufferView(rootParamIndex, gpuAddress);
 }
 
+void DX12CommandList::SetRootCBV(uint32_t rootParamIndex, RHIBufferHandle buffer,
+                                  uint64_t offsetBytes, const void* /*cpuData*/, uint32_t /*dataSize*/) {
+    // DX12: buffer is persistently mapped — GPU reads directly. cpuData unused.
+    uint64_t gpuAddr = m_device->GetBufferGPUAddress(buffer);
+    m_cmdList->SetGraphicsRootConstantBufferView(rootParamIndex, gpuAddr + offsetBytes);
+}
+
 void DX12CommandList::SetDescriptorTable(uint32_t rootParamIndex, uint32_t descriptorIndex) {
     auto* heap = m_device->GetDescriptorHeap(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     D3D12_GPU_DESCRIPTOR_HANDLE gpuHandle = dx12::GetGPUStart(heap);
@@ -503,6 +512,70 @@ void DX12CommandList::CopyBufferToTexture(RHIBufferHandle srcBuffer, uint64_t sr
     src.PlacedFootprint = footprint;
 
     m_cmdList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+}
+
+/// Maps RHIFormat to DXGI_FORMAT for copy operations.
+static DXGI_FORMAT ToDXGIFormat(RHIFormat format) {
+    switch (format) {
+        case RHIFormat::R8Unorm:        return DXGI_FORMAT_R8_UNORM;
+        case RHIFormat::RG8Unorm:       return DXGI_FORMAT_R8G8_UNORM;
+        case RHIFormat::RGBA8Unorm:     return DXGI_FORMAT_R8G8B8A8_UNORM;
+        case RHIFormat::RGBA8Srgb:      return DXGI_FORMAT_R8G8B8A8_UNORM_SRGB;
+        case RHIFormat::BGRA8Unorm:     return DXGI_FORMAT_B8G8R8A8_UNORM;
+        case RHIFormat::BGRA8Srgb:      return DXGI_FORMAT_B8G8R8A8_UNORM_SRGB;
+        case RHIFormat::R16Float:       return DXGI_FORMAT_R16_FLOAT;
+        case RHIFormat::RG16Float:      return DXGI_FORMAT_R16G16_FLOAT;
+        case RHIFormat::RGBA16Float:    return DXGI_FORMAT_R16G16B16A16_FLOAT;
+        case RHIFormat::R32Float:       return DXGI_FORMAT_R32_FLOAT;
+        case RHIFormat::RG32Float:      return DXGI_FORMAT_R32G32_FLOAT;
+        case RHIFormat::RGB32Float:     return DXGI_FORMAT_R32G32B32_FLOAT;
+        case RHIFormat::RGBA32Float:    return DXGI_FORMAT_R32G32B32A32_FLOAT;
+        case RHIFormat::R32Uint:        return DXGI_FORMAT_R32_UINT;
+        case RHIFormat::RG32Uint:       return DXGI_FORMAT_R32G32_UINT;
+        case RHIFormat::RGBA32Uint:     return DXGI_FORMAT_R32G32B32A32_UINT;
+        case RHIFormat::D16Unorm:       return DXGI_FORMAT_D16_UNORM;
+        case RHIFormat::D32Float:       return DXGI_FORMAT_D32_FLOAT;
+        case RHIFormat::D24UnormS8Uint: return DXGI_FORMAT_D24_UNORM_S8_UINT;
+        case RHIFormat::D32FloatS8Uint: return DXGI_FORMAT_D32_FLOAT_S8X24_UINT;
+        default:                        return DXGI_FORMAT_UNKNOWN;
+    }
+}
+
+void DX12CommandList::CopyTextureToBuffer(RHITextureHandle srcTexture, uint32_t mipLevel,
+                                           RHIBufferHandle dstBuffer, uint64_t dstOffset,
+                                           uint32_t dstRowPitch) {
+    UZ_PROFILE_FUNCTION();
+    if (!srcTexture.IsValid() || !dstBuffer.IsValid()) {
+        UZ_LOG(RHI, Warning, "CopyTextureToBuffer — invalid source or destination handle");
+        return;
+    }
+
+    auto* tex = m_device->GetTexturePool().Get(srcTexture.index, srcTexture.generation);
+    auto* buf = m_device->GetBufferPool().Get(dstBuffer.index, dstBuffer.generation);
+    if (!tex || !tex->resource || !buf || !buf->resource) {
+        UZ_LOG(RHI, Warning, "CopyTextureToBuffer — could not resolve handles");
+        return;
+    }
+
+    const uint32_t mipWidth  = std::max(1u, tex->desc.width >> mipLevel);
+    const uint32_t mipHeight = std::max(1u, tex->desc.height >> mipLevel);
+
+    D3D12_TEXTURE_COPY_LOCATION srcLoc = {};
+    srcLoc.pResource = tex->resource;
+    srcLoc.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+    srcLoc.SubresourceIndex = mipLevel;
+
+    D3D12_TEXTURE_COPY_LOCATION dstLoc = {};
+    dstLoc.pResource = buf->resource;
+    dstLoc.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+    dstLoc.PlacedFootprint.Offset = dstOffset;
+    dstLoc.PlacedFootprint.Footprint.Format = ToDXGIFormat(tex->desc.format);
+    dstLoc.PlacedFootprint.Footprint.Width = mipWidth;
+    dstLoc.PlacedFootprint.Footprint.Height = mipHeight;
+    dstLoc.PlacedFootprint.Footprint.Depth = 1;
+    dstLoc.PlacedFootprint.Footprint.RowPitch = dstRowPitch;
+
+    m_cmdList->CopyTextureRegion(&dstLoc, 0, 0, 0, &srcLoc, nullptr);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

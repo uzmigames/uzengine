@@ -60,6 +60,8 @@ public:
     void SetRootConstants(uint32_t rootParamIndex, const uint32_t* data,
                           uint32_t count, uint32_t offsetIn32BitValues) override;
     void SetRootCBV(uint32_t rootParamIndex, uint64_t gpuAddress) override;
+    void SetRootCBV(uint32_t rootParamIndex, RHIBufferHandle buffer,
+                    uint64_t offsetBytes, const void* cpuData, uint32_t dataSize) override;
     void SetDescriptorTable(uint32_t rootParamIndex, uint32_t descriptorIndex) override;
 
     void DrawIndexed(uint32_t indexCount, uint32_t instanceCount = 1,
@@ -81,6 +83,9 @@ public:
                              uint32_t srcRowPitch,
                              RHITextureHandle dstTexture,
                              uint32_t mipLevel = 0, uint32_t arraySlice = 0) override;
+    void CopyTextureToBuffer(RHITextureHandle srcTexture, uint32_t mipLevel,
+                             RHIBufferHandle dstBuffer, uint64_t dstOffset,
+                             uint32_t dstRowPitch) override;
 
     void BeginRenderPass(const RHIRenderPassDesc& desc) override;
     void EndRenderPass() override;

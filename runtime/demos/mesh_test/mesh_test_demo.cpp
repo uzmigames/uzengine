@@ -12,6 +12,7 @@
 #include "mesh_test_demo.h"
 #include "rhi.h"
 #include "rhi_backend.h"
+#include "rhi_config.h"
 #include "rhi_types.h"
 #include "platform_window.h"
 #include "input.h"
@@ -29,9 +30,6 @@
 #include "paths.h"
 #include "editor_grid.h"
 #include "screenshot_capture.h"
-#include "dx12_device.h"
-#include "dx12_command_list.h"
-#include "dx12_swapchain.h"
 #include "stats_overlay.h"
 
 #include <DirectXMath.h>
@@ -293,6 +291,7 @@ bool RunMeshTestDemo(const MeshTestConfig& config) {
     RHIBufferHandle vbHandle = device->CreateBuffer(vbDesc);
     void* vbMapped = device->MapBuffer(vbHandle);
     std::memcpy(vbMapped, cubeMesh.vertexData.data(), cubeMesh.GetVertexDataSize());
+    device->UnmapBuffer(vbHandle);
 
     uint32_t vbSrvIndex = 0;
     if (bindless) {
@@ -310,6 +309,7 @@ bool RunMeshTestDemo(const MeshTestConfig& config) {
     RHIBufferHandle ibHandle = device->CreateBuffer(ibDesc);
     void* ibMapped = device->MapBuffer(ibHandle);
     std::memcpy(ibMapped, cubeMesh.indexData.data(), cubeMesh.GetIndexDataSize());
+    device->UnmapBuffer(ibHandle);
 
     // ── Depth Buffer ──────────────────────────────────────────────────────
     RHITextureDesc depthDesc{};
@@ -352,12 +352,7 @@ bool RunMeshTestDemo(const MeshTestConfig& config) {
     ScreenshotCapture screenshotCapture;
     bool screenshotPending = !config.screenshotPath.empty();
     if (screenshotPending) {
-        // Screenshot capture is DX12-only for now (uses DX12 readback APIs)
-        auto* dx12Dev = dynamic_cast<DX12Device*>(device);
-        if (!dx12Dev) {
-            UZ_LOG(Renderer, Warning, "Screenshot capture only supported on DX12 backend");
-            screenshotPending = false;
-        } else if (!screenshotCapture.Init(dx12Dev, scDesc.width, scDesc.height)) {
+        if (!screenshotCapture.Init(device, scDesc.width, scDesc.height)) {
             UZ_LOG(Renderer, Error, "Failed to initialize screenshot capture");
             return false;
         }
@@ -500,8 +495,10 @@ bool RunMeshTestDemo(const MeshTestConfig& config) {
             cmdList->SetVertexBuffer(0, vbHandle, 0);
         }
 
-        cmdList->SetRootCBV(1, perFrameAlloc.gpuAddr);
-        cmdList->SetRootCBV(2, perObjectAlloc.gpuAddr);
+        cmdList->SetRootCBV(1, perFrameAlloc.bufferHandle, perFrameAlloc.offsetBytes,
+                            perFrameAlloc.cpuPtr, sizeof(PerFrameCB));
+        cmdList->SetRootCBV(2, perObjectAlloc.bufferHandle, perObjectAlloc.offsetBytes,
+                            perObjectAlloc.cpuPtr, sizeof(PerObjectCB));
 
         RHIViewport vp{};
         vp.width = static_cast<float>(swapChain->GetWidth());
@@ -533,9 +530,7 @@ bool RunMeshTestDemo(const MeshTestConfig& config) {
         // ── Screenshot ────────────────────────────────────────────────────
         bool capturedThisFrame = false;
         if (screenshotPending && frameIndex == config.screenshotFrame) {
-            screenshotCapture.CaptureBackBuffer(
-                dynamic_cast<DX12CommandList*>(cmdList),
-                dynamic_cast<DX12SwapChain*>(swapChain));
+            screenshotCapture.CaptureBackBuffer(cmdList, swapChain);
             capturedThisFrame = true;
         }
 

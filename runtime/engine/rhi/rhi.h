@@ -226,10 +226,29 @@ public:
 
     /// Binds a constant buffer via GPU virtual address at a root parameter slot.
     ///
+    /// DX12/Vulkan path — uses GPU virtual address directly.
+    /// On DX11 this is a no-op; use the buffer handle overload instead.
+    ///
     /// # Arguments
     /// * `rootParamIndex` — Root parameter slot (must be a root CBV parameter).
     /// * `gpuAddress` — GPU virtual address of the constant buffer.
     virtual void SetRootCBV(uint32_t rootParamIndex, uint64_t gpuAddress) = 0;
+
+    /// Binds a constant buffer by handle + byte offset at a root parameter slot.
+    ///
+    /// Cross-backend constant buffer binding. DX12/Vulkan use the buffer's GPU
+    /// address + offset. DX11 uses `UpdateSubresource` from `cpuData` into a
+    /// scratch DEFAULT-usage buffer, then binds via `VSSetConstantBuffers`.
+    /// This follows the UE5 pattern of shadow-buffer + UpdateSubresource for DX11.
+    ///
+    /// # Arguments
+    /// * `rootParamIndex` — Root parameter slot (maps to HLSL register `b<N>`).
+    /// * `buffer` — Buffer handle (DX12/Vulkan use for GPU address; DX11 ignores).
+    /// * `offsetBytes` — Byte offset into the buffer (must be 256-byte aligned).
+    /// * `cpuData` — CPU pointer to the constant data (DX11 uses this; DX12/Vulkan ignore).
+    /// * `dataSize` — Size of the constant data in bytes (must be <= 256).
+    virtual void SetRootCBV(uint32_t rootParamIndex, RHIBufferHandle buffer,
+                            uint64_t offsetBytes, const void* cpuData, uint32_t dataSize) = 0;
 
     /// Binds a descriptor table at a root parameter slot (SM5 fallback).
     ///
@@ -343,6 +362,23 @@ public:
                                      uint32_t srcRowPitch,
                                      RHITextureHandle dstTexture,
                                      uint32_t mipLevel = 0, uint32_t arraySlice = 0) = 0;
+
+    /// Copies a texture subresource into a buffer (GPU readback).
+    ///
+    /// Used for reading back rendered frames to CPU memory (e.g., screenshots).
+    /// The destination buffer must have `CopyDst` usage and `Readback` memory.
+    /// The source texture must be in `CopySrc` state (caller handles barriers).
+    ///
+    /// # Arguments
+    /// * `srcTexture` — Source texture handle (must be in CopySrc state).
+    /// * `mipLevel` — Source mip level to copy from.
+    /// * `dstBuffer` — Readback buffer to receive pixel data.
+    /// * `dstOffset` — Byte offset in the destination buffer.
+    /// * `dstRowPitch` — Row pitch in the destination buffer (must meet backend
+    ///   alignment requirements, e.g., 256 bytes for DX12).
+    virtual void CopyTextureToBuffer(RHITextureHandle srcTexture, uint32_t mipLevel,
+                                     RHIBufferHandle dstBuffer, uint64_t dstOffset,
+                                     uint32_t dstRowPitch) = 0;
 
     // ── Render pass scope ────────────────────────────────────────────────
 
@@ -490,7 +526,11 @@ public:
     ///   Passing an invalid handle logs a warning and returns.
     virtual void DestroyBuffer(RHIBufferHandle handle) = 0;
 
-    /// Returns the persistently mapped CPU pointer for Upload/Readback buffers.
+    /// Returns a CPU-writable pointer for Upload/Readback buffers.
+    ///
+    /// On DX12/Vulkan, returns a persistently mapped pointer (no Unmap needed).
+    /// On DX11, returns a transiently mapped pointer — `UnmapBuffer()` MUST be
+    /// called after writing data, before the GPU can access the buffer.
     ///
     /// # Arguments
     /// * `handle` — Buffer handle to map.
@@ -499,6 +539,16 @@ public:
     /// A valid pointer for `RHIMemoryType::Upload` or `RHIMemoryType::Readback` buffers.
     /// Returns `nullptr` for `Default`-heap buffers or invalid handles.
     virtual void* MapBuffer(RHIBufferHandle handle) = 0;
+
+    /// Unmaps a previously mapped buffer, flushing writes to the GPU.
+    ///
+    /// On DX12/Vulkan this is a no-op (buffers are persistently mapped).
+    /// On DX11 this calls `ID3D11DeviceContext::Unmap()` — **required** after
+    /// writing to a mapped Upload buffer.
+    ///
+    /// # Arguments
+    /// * `handle` — Buffer handle previously passed to `MapBuffer()`.
+    virtual void UnmapBuffer(RHIBufferHandle handle) = 0;
 
     /// Returns the bindless SRV descriptor index for a structured buffer.
     ///

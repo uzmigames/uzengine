@@ -43,6 +43,7 @@ bool UploadContext::UploadBuffer(IRHICommandList* cmdList, RHIBufferHandle dst,
         return false;
     }
     std::memcpy(mapped, data, sizeBytes);
+    m_device->UnmapBuffer(staging);
 
     // Record GPU copy: staging → destination
     cmdList->CopyBuffer(staging, 0, dst, 0, sizeBytes);
@@ -118,6 +119,7 @@ bool UploadContext::UploadTexture(IRHICommandList* cmdList, RHITextureHandle dst
                         srcRowPitch);
         }
     }
+    m_device->UnmapBuffer(staging);
 
     // Record GPU copy: staging buffer → destination texture
     cmdList->CopyBufferToTexture(staging, 0, alignedRowPitch, dst, mipLevel, arraySlice);

@@ -384,6 +384,37 @@ void VulkanCommandList::SetRootCBV(uint32_t rootParamIndex, uint64_t gpuAddress)
     m_descriptorsDirty = true;
 }
 
+void VulkanCommandList::SetRootCBV(uint32_t rootParamIndex, RHIBufferHandle buffer,
+                                    uint64_t offsetBytes, const void* /*cpuData*/, uint32_t /*dataSize*/) {
+    // Vulkan: buffer is persistently mapped — GPU reads directly. cpuData unused.
+    auto* buf = m_device->GetBufferPool().Get(buffer.index, buffer.generation);
+    if (!buf || buf->buffer == VK_NULL_HANDLE) {
+        UZ_LOG(RHI, Warning, "SetRootCBV(handle): could not resolve buffer");
+        return;
+    }
+
+    VkDescriptorBufferInfo bufInfo = {};
+    bufInfo.buffer = buf->buffer;
+    bufInfo.offset = offsetBytes;
+    bufInfo.range = buf->desc.sizeBytes - offsetBytes;
+
+    constexpr uint64_t kMaxUniformRange = 65536;
+    if (bufInfo.range > kMaxUniformRange) {
+        bufInfo.range = kMaxUniformRange;
+    }
+
+    VkWriteDescriptorSet write = {};
+    write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    write.dstSet = m_descriptorSets[m_frameIndex];
+    write.dstBinding = 32 + rootParamIndex;
+    write.descriptorCount = 1;
+    write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    write.pBufferInfo = &bufInfo;
+
+    vkUpdateDescriptorSets(m_device->GetVkDevice(), 1, &write, 0, nullptr);
+    m_descriptorsDirty = true;
+}
+
 void VulkanCommandList::SetDescriptorTable(uint32_t rootParamIndex, uint32_t descriptorIndex) {
     // For non-bindless paths: look up the texture by SRV index and write it
     // (plus the first available sampler) to the per-frame descriptor set.
@@ -716,6 +747,39 @@ void VulkanCommandList::CopyBufferToTexture(RHIBufferHandle srcBuffer, uint64_t 
                            buf->buffer, tex->image,
                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                            1, &region);
+}
+
+void VulkanCommandList::CopyTextureToBuffer(RHITextureHandle srcTexture, uint32_t mipLevel,
+                                             RHIBufferHandle dstBuffer, uint64_t dstOffset,
+                                             uint32_t dstRowPitch) {
+    if (!srcTexture.IsValid() || !dstBuffer.IsValid()) return;
+
+    auto* tex = m_device->GetTexturePool().Get(srcTexture.index, srcTexture.generation);
+    auto* buf = m_device->GetBufferPool().Get(dstBuffer.index, dstBuffer.generation);
+    if (!tex || tex->image == VK_NULL_HANDLE || !buf || buf->buffer == VK_NULL_HANDLE) {
+        UZ_LOG(RHI, Warning, "CopyTextureToBuffer — could not resolve handles");
+        return;
+    }
+
+    const uint32_t mipWidth  = std::max(1u, tex->desc.width >> mipLevel);
+    const uint32_t mipHeight = std::max(1u, tex->desc.height >> mipLevel);
+    const uint32_t texelSize = BytesPerTexel(tex->desc.format);
+
+    VkBufferImageCopy region = {};
+    region.bufferOffset = dstOffset;
+    // bufferRowLength is in texels, not bytes
+    region.bufferRowLength = dstRowPitch / texelSize;
+    region.bufferImageHeight = mipHeight;
+    region.imageSubresource.aspectMask = GetAspectFlags(tex->desc.format);
+    region.imageSubresource.mipLevel = mipLevel;
+    region.imageSubresource.baseArrayLayer = 0;
+    region.imageSubresource.layerCount = 1;
+    region.imageOffset = {0, 0, 0};
+    region.imageExtent = {mipWidth, mipHeight, 1};
+
+    vkCmdCopyImageToBuffer(m_commandBuffers[m_frameIndex],
+                           tex->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+                           buf->buffer, 1, &region);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

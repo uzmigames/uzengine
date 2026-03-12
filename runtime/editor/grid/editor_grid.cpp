@@ -132,7 +132,7 @@ void EditorGrid::Draw(IRHICommandList* cmdList, CBRingAllocator& cbRing, const C
     std::memcpy(alloc.cpuPtr, &cb, sizeof(GridCB));
 
     cmdList->SetPipeline(m_pipeline);
-    cmdList->SetRootCBV(1, alloc.gpuAddr);
+    cmdList->SetRootCBV(1, alloc.bufferHandle, alloc.offsetBytes, alloc.cpuPtr, sizeof(GridCB));
     cmdList->Draw(3); // Fullscreen triangle — 3 vertices, no VB
 }
 

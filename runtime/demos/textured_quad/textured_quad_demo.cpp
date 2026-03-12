@@ -279,6 +279,7 @@ bool RunTexturedQuadDemo(RHIBackend backend, uint32_t frameCount) {
         return false;
     }
     std::memcpy(mapped, vertices, sizeof(vertices));
+    device->UnmapBuffer(vbHandle);
 
     uint32_t vbSrvIndex = 0;
     if (bindless) {

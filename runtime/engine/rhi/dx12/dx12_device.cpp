@@ -573,6 +573,10 @@ void* DX12Device::MapBuffer(RHIBufferHandle handle) {
     return buf->mappedPtr;
 }
 
+void DX12Device::UnmapBuffer(RHIBufferHandle) {
+    // DX12 uses persistent mapping — no explicit unmap needed.
+}
+
 uint32_t DX12Device::GetBufferSRVIndex(RHIBufferHandle handle) const {
     const DX12Buffer* buf = m_bufferPool.Get(handle.index, handle.generation);
     if (!buf) return UINT32_MAX;

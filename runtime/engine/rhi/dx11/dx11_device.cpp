@@ -385,18 +385,29 @@ RHIBufferHandle DX11Device::CreateBuffer(const RHIBufferDesc& desc) {
         bd.ByteWidth = (bd.ByteWidth + 15u) & ~15u;
     }
 
+    // DX11 DYNAMIC requires at least one bind flag. Buffers used only for
+    // copy-source (staging) have no bind flag, so fall back to STAGING usage.
+    const bool isStagingUpload = (desc.memory == RHIMemoryType::Upload) &&
+        (desc.usage == RHIBufferUsage::CopySrc);
+
     // Map memory type to D3D11 usage
     switch (desc.memory) {
         case RHIMemoryType::Default:
             bd.Usage = D3D11_USAGE_DEFAULT;
             break;
         case RHIMemoryType::Upload:
-            bd.Usage = D3D11_USAGE_DYNAMIC;
-            bd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+            if (isStagingUpload) {
+                bd.Usage = D3D11_USAGE_STAGING;
+                bd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE | D3D11_CPU_ACCESS_READ;
+            } else {
+                bd.Usage = D3D11_USAGE_DYNAMIC;
+                bd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+            }
             break;
         case RHIMemoryType::Readback:
             bd.Usage = D3D11_USAGE_STAGING;
-            bd.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+            // READ for MapBuffer readback, WRITE for CopyTextureToBuffer staging path
+            bd.CPUAccessFlags = D3D11_CPU_ACCESS_READ | D3D11_CPU_ACCESS_WRITE;
             break;
     }
 
@@ -510,10 +521,13 @@ void* DX11Device::MapBuffer(RHIBufferHandle handle) {
     DX11Buffer* buf = m_bufferPool.Get(handle.index, handle.generation);
     if (!buf || !buf->buffer) return nullptr;
 
-    // DX11 dynamic buffers require Map/Unmap each time
+    // DX11 dynamic/staging buffers require Map/Unmap each time
     if (buf->desc.memory == RHIMemoryType::Upload) {
+        // Staging buffers (CopySrc only) use MAP_WRITE; dynamic buffers use WRITE_DISCARD
+        const bool isStaging = (buf->desc.usage == RHIBufferUsage::CopySrc);
+        D3D11_MAP mapType = isStaging ? D3D11_MAP_WRITE : D3D11_MAP_WRITE_DISCARD;
         D3D11_MAPPED_SUBRESOURCE mapped = {};
-        HRESULT hr = m_immediateContext->Map(buf->buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+        HRESULT hr = m_immediateContext->Map(buf->buffer, 0, mapType, 0, &mapped);
         if (SUCCEEDED(hr)) {
             return mapped.pData;
         }
@@ -532,6 +546,16 @@ void* DX11Device::MapBuffer(RHIBufferHandle handle) {
     }
 
     return nullptr;
+}
+
+void DX11Device::UnmapBuffer(RHIBufferHandle handle) {
+    DX11Buffer* buf = m_bufferPool.Get(handle.index, handle.generation);
+    if (!buf || !buf->buffer) return;
+
+    if (buf->desc.memory == RHIMemoryType::Upload ||
+        buf->desc.memory == RHIMemoryType::Readback) {
+        m_immediateContext->Unmap(buf->buffer, 0);
+    }
 }
 
 uint32_t DX11Device::GetBufferSRVIndex(RHIBufferHandle handle) const {

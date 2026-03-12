@@ -841,6 +841,12 @@ void* VulkanDevice::MapBuffer(RHIBufferHandle handle) {
     return data;
 }
 
+void VulkanDevice::UnmapBuffer(RHIBufferHandle handle) {
+    VulkanBuffer* buf = m_bufferPool.Get(handle.index, handle.generation);
+    if (!buf || !buf->allocation) return;
+    vmaUnmapMemory(m_allocator, buf->allocation);
+}
+
 uint32_t VulkanDevice::GetBufferSRVIndex(RHIBufferHandle handle) const {
     const VulkanBuffer* buf = m_bufferPool.Get(handle.index, handle.generation);
     if (!buf) return UINT32_MAX;

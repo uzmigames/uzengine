@@ -227,8 +227,10 @@ void DX12SwapChain::Present(bool vsync) {
         m_device->LogDeviceRemoved();
     }
 
-    TracyD3D12Collect(m_device->GetTracyGpuContext());
-    TracyD3D12NewFrame(m_device->GetTracyGpuContext());
+    if (m_device->GetTracyGpuContext()) {
+        TracyD3D12Collect(m_device->GetTracyGpuContext());
+        TracyD3D12NewFrame(m_device->GetTracyGpuContext());
+    }
 }
 
 void DX12SwapChain::Resize(uint32_t width, uint32_t height) {

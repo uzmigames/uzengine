@@ -1,8 +1,8 @@
-/// UzEngine Screenshot Capture
+/// UzEngine Screenshot Capture — RHI-Agnostic
 ///
 /// Captures the current back buffer to a PNG file for automated visual testing.
-/// Uses a DX12 readback buffer to copy the render target to CPU memory,
-/// then writes it via stb_image_write.
+/// Works with any RHI backend (DX12, DX11, Vulkan). Uses a readback buffer to
+/// copy the render target to CPU memory, then writes it via stb_image_write.
 ///
 /// # Usage
 /// ```cpp
@@ -25,9 +25,6 @@
 #pragma once
 
 #include "rhi.h"
-#include "dx12_device.h"
-#include "dx12_command_list.h"
-#include "dx12_swapchain.h"
 #include "log.h"
 
 #include <string>
@@ -43,6 +40,9 @@ UZ_DECLARE_LOG_CATEGORY(Screenshot);
 /// 1. `CaptureBackBuffer()` — records GPU copy commands (call before Present)
 /// 2. `SaveToPNG()` — reads mapped CPU memory and writes PNG (call after fence wait)
 ///
+/// Works with any RHI backend — uses only `IRHIDevice`, `IRHICommandList`,
+/// and `IRHISwapChain` interfaces.
+///
 /// # Thread Safety
 /// NOT thread-safe. Call from the render thread only.
 class ScreenshotCapture {
@@ -52,14 +52,17 @@ public:
 
     /// Initializes the readback buffer for the given dimensions.
     ///
+    /// Creates a readback buffer with 256-byte aligned row pitch. The alignment
+    /// satisfies all backends (DX12 requires 256, others are fine with it).
+    ///
     /// # Arguments
-    /// * `device` — DX12 device for buffer creation.
+    /// * `device` — RHI device for buffer creation (any backend).
     /// * `width` — Back buffer width in pixels.
     /// * `height` — Back buffer height in pixels.
     ///
     /// # Returns
     /// true on success, false if buffer creation fails.
-    bool Init(DX12Device* device, uint32_t width, uint32_t height);
+    bool Init(IRHIDevice* device, uint32_t width, uint32_t height);
 
     /// Records GPU commands to copy the back buffer into the readback buffer.
     ///
@@ -68,9 +71,9 @@ public:
     /// After this call, the back buffer is transitioned back to RENDER_TARGET.
     ///
     /// # Arguments
-    /// * `cmdList` — Command list to record copy commands on.
+    /// * `cmdList` — Command list to record copy commands on (any backend).
     /// * `swapChain` — Swap chain to read the current back buffer from.
-    void CaptureBackBuffer(DX12CommandList* cmdList, DX12SwapChain* swapChain);
+    void CaptureBackBuffer(IRHICommandList* cmdList, IRHISwapChain* swapChain);
 
     /// Saves the captured pixels to a PNG file.
     ///
@@ -92,11 +95,11 @@ public:
     [[nodiscard]] bool IsInitialized() const { return m_device != nullptr; }
 
 private:
-    DX12Device* m_device = nullptr;
+    IRHIDevice* m_device = nullptr;
     RHIBufferHandle m_readbackBuffer;
     uint32_t m_width = 0;
     uint32_t m_height = 0;
-    uint32_t m_rowPitch = 0;  ///< Aligned row pitch (D3D12 requires 256-byte alignment)
+    uint32_t m_rowPitch = 0;  ///< Aligned row pitch (256-byte alignment for DX12 compat)
 };
 
 } // namespace uz

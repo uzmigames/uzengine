@@ -50,12 +50,7 @@ bool CBRingAllocator::Init(IRHIDevice* device, uint32_t framesInFlight, uint64_t
     }
 
     m_gpuBaseAddr = device->GetBufferGPUAddress(m_buffer);
-    if (m_gpuBaseAddr == 0) {
-        UZ_LOG(Renderer, Error, "CBRingAllocator: GPU address is 0");
-        device->DestroyBuffer(m_buffer);
-        m_buffer = {};
-        return false;
-    }
+    // DX11 returns 0 for GPU address — that's OK, we use handle-based binding instead
 
     UZ_LOG(Renderer, Info, "CBRingAllocator: {} frames x {} bytes = {} total",
            framesInFlight, m_perFrameBytes, totalBytes);
@@ -92,6 +87,8 @@ CBAllocation CBRingAllocator::Allocate(uint64_t sizeBytes) {
     CBAllocation alloc;
     alloc.cpuPtr = m_mappedBase + offset;
     alloc.gpuAddr = m_gpuBaseAddr + offset;
+    alloc.bufferHandle = m_buffer;
+    alloc.offsetBytes = offset;
 
     m_currentOffset += alignedSize;
     return alloc;
