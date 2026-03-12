@@ -190,7 +190,7 @@ static const char* ShaderStageName(SlangShaderStage stage) {
         }                                                                       \
     } while (0)
 
-bool SlangCompiler::LoadLibrary() {
+bool SlangCompiler::LoadSlangLibrary() {
     // Try engine thirdparty directory first, then system paths
     auto thirdpartyPath = ResolveEngineResource(
         std::string("thirdparty/slang/bin/") + kSlangLibraryName);
@@ -263,7 +263,7 @@ bool SlangCompiler::Init() {
 
     if (m_session) return true;  // Already initialized
 
-    if (!LoadLibrary()) {
+    if (!LoadSlangLibrary()) {
         return false;
     }
 

@@ -155,7 +155,7 @@ public:
 
 private:
     /// Loads the Slang shared library and resolves function pointers.
-    bool LoadLibrary();
+    bool LoadSlangLibrary();
 
     /// Unloads the Slang shared library.
     void UnloadLibrary();
