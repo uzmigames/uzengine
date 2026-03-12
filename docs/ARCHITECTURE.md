@@ -1,3 +1,10 @@
+> **DEPRECATED**: This document has been fully migrated to `docs/engine/`.
+> See [docs/engine/README.md](engine/README.md) for the structured index.
+> All 39 sections are covered across `00-overview/` through `33-vfx-ai-tool/`.
+> This file is kept for reference only — do not update it.
+
+---
+
 # UzEngine 0.2 - Architecture
 
 > **Repository**: https://github.com/uzmigames/uzengine

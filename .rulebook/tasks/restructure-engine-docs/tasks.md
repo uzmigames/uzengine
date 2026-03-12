@@ -41,7 +41,7 @@
 - [x] 5.9 Write 30-game-examples/ (Pong, FPS, Flappy Bird, Turret Defense)
 
 ## 6. Finalization
-- [ ] 6.1 Verify all content from ENGINE.md is covered
-- [ ] 6.2 Verify all content from ARCHITECTURE.md is covered
-- [ ] 6.3 Verify all content from DEVELOPER.md is covered
-- [ ] 6.4 Add redirects/deprecation notices to original files
+- [x] 6.1 Verify all content from ENGINE.md is covered
+- [x] 6.2 Verify all content from ARCHITECTURE.md is covered
+- [x] 6.3 Verify all content from DEVELOPER.md is covered
+- [x] 6.4 Add redirects/deprecation notices to original files

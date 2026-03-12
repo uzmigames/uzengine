@@ -1,3 +1,11 @@
+> **DEPRECATED**: This document has been fully migrated to `docs/engine/`.
+> See [docs/engine/README.md](engine/README.md) for the structured index.
+> Key sections: `09-application-lifecycle/`, `10-entity-component/`, `11-scene/`,
+> `12-rendering/`, `20-gameplay/`, `21-property-system/`, `29-design-decisions/`, `30-game-examples/`.
+> This file is kept for reference only — do not update it.
+
+---
+
 # Engine Layer — MVP Architecture
 
 > **Status**: Planning

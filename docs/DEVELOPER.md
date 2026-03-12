@@ -1,3 +1,10 @@
+> **DEPRECATED**: This document has been fully migrated to `docs/engine/22-developer-layer/`.
+> See [docs/engine/22-developer-layer/01-overview.md](engine/22-developer-layer/01-overview.md) for the structured version.
+> All 6 subsections covered: profiling, debug draw, hot-reload, automation, console, ImGui.
+> This file is kept for reference only — do not update it.
+
+---
+
 # Developer Layer — Planning Document
 
 > **Status**: Planning
