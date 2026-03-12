@@ -14,6 +14,27 @@
 - Use admonition format: `> **⚠️ Note**: text` for callouts
 - Lua APIs always bind via `ctx.*` pattern (ctx.saves, ctx.locale, ctx.scene, etc.)
 
+## Recent Work (2026-03-12 Session 2) - Engine Sections 43 & 44
+
+### Asset Cooking & GPU Memory Management Documentation
+- **Section 43**: `docs/engine/43-asset-cooking/01-overview.md` (244 lines)
+  - Purpose: offline preprocessing pipeline (uzcook CLI) for shipping builds
+  - Key topics: 5-stage pipeline (discover→import→process→package→validate), incremental cooking (content-hash invalidation), dependency graph tracking, .uzpak archive format (64-byte aligned), platform targets (DX12/Vulkan), parallel cooking, cook manifest & patching, validation
+  - Status: Planned (Phase 1.5 basic, 2.0 incremental+parallel, 3.0 patching)
+  - Follows pattern: Purpose section with ASCII diagram, pipeline stages, platform targets table, archive format, cook manifest JSON example, engine comparison (UE5 UAT/DDC vs Godot PCK), 6 critical rules
+
+- **Section 44**: `docs/engine/44-gpu-memory/01-overview.md` (305 lines)
+  - Purpose: GPU memory management abstraction over D3D12 complexity
+  - Key topics: D3D12MA allocator integration, heap types (Default/Upload/Readback), descriptor heaps (shader-visible + non-visible), bindless SM6.6 indexing, upload ring buffer, VRAM budgeting (IDXGIAdapter3), texture streaming pool, residency management (MakeResident/Evict), defragmentation, memory categories & leak detection
+  - Status: Planned (Phase 1.5 basic D3D12MA, 2.0 descriptors+streaming, 3.0 residency)
+  - Follows pattern: D3D12 architecture table, D3D12MA integration diagram, heap types table, bindless descriptor code example, VRAM query code example, streaming pool example, residency management example, memory categories table, engine comparison (UE5 FD3D12DynamicRHI vs Godot RenderingDevice), 7 critical rules
+
+### README.md Updates
+- Updated `docs/engine/README.md` Tier 3.5 section to add both sections:
+  - Row for section 43: `[43-asset-cooking/]` with link and description
+  - Row for section 44: `[44-gpu-memory/]` with link and description
+  - Positioned in "Rendering Extensions" tier alongside sections 34-42 (mesh-pipeline, texture-pipeline)
+
 ## Recent Work (2026-03-12) - FXC Dual-Compiler Documentation
 
 ### Documentation Updates for Milestone 0.2.1

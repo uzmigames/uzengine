@@ -31,3 +31,10 @@ C++23 game engine. ECS via EnTT. game.dll C ABI boundary. LuaJIT scripting.
 - Hash: FNV-1a mix of file_size + mtime. .import.json sidecar next to source file
 - IPC pattern: capture pointer in lambda, null-check first, make_error() helper
 - Deferred: phase2-asset-importer-pipeline, phase2-vscode-asset-browser-panel
+
+## ECS/Scene Roadmap Analysis (2026-03-12)
+- Full analysis at `.claude/memory/analysis_ecs_scene.md`
+- Build order: World → Components → Events → Subsystems → Property System → Behaviors → Scene Loader
+- Property System is HARD GATE for scene loading (type resolution + deserialization)
+- Scenes CAN exist without rendering (World is pure simulation)
+- Minimum playable scene: World + Components + Property(MVP) + SceneLoader + Behaviors + Renderer(1.3.0) + Input

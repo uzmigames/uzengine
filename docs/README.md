@@ -9,7 +9,8 @@
 | [ARCHITECTURE.md](ARCHITECTURE.md) | High-level architecture — layers, threading, rendering backend, build system |
 | [ENGINE.md](ENGINE.md) | Engine layer API — lifecycle, ECS, components, input, physics, audio, rendering |
 | [DEVELOPER.md](DEVELOPER.md) | Developer layer — tools and systems stripped from shipping builds |
-| [ROADMAP.md](ROADMAP.md) | Full development roadmap from zero to AAA-ready |
+| [ROADMAP.md](ROADMAP.md) | Full development roadmap — 9 phases, from foundation to shipping |
+| [ROADMAP_ANALYSIS_REPORT.md](ROADMAP_ANALYSIS_REPORT.md) | Architecture analysis from 8 agents (UE5, Godot, Unity, RHI, ECS, Editor, Asset, Gameplay) |
 | [DAG.md](DAG.md) | Milestone dependency graph |
 | [PDR.md](PDR.md) | Project Design Review — scope, risks, decisions |
 
@@ -17,11 +18,12 @@
 
 For comprehensive system design, API reference, and implementation details, see [engine/README.md](engine/README.md).
 
-This contains 30 sections organized by tier (architecture → built systems → gameplay → future):
-- **Sections 00–06**: Architecture, core systems, RHI, shader pipeline (built/in-progress)
-- **Sections 07–12**: Resource system, ECS, scene, rendering (next phase)
-- **Sections 13–21**: Input, physics, audio, UI, animation, gameplay (foundation systems)
-- **Sections 22–30**: Developer tools, localization, networking, **VFX, AI content pipeline, platform services**, IPC, examples
+183 files across 32 sections organized by tier:
+- **Sections 00–06**: Architecture, core systems, RHI, shader pipeline (Phase 1 — done)
+- **Sections 07–12**: Platform, resource system, lifecycle, ECS, scene, rendering (Phases 2–3)
+- **Sections 13–21**: Input, camera, scripting, physics, audio, UI, animation, gameplay, property system (Phases 4–6)
+- **Sections 22–30**: Developer tools, localization, networking, VFX, AI pipeline, platform services, IPC, examples (Phases 7–9)
+- **Section 40**: Editor framework — 21 files covering all VSCode editor panels (Phase 5)
 
 ## Technical Specs
 

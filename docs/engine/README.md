@@ -2,7 +2,7 @@
 
 > **AAA game engine embedded in VSCode, designed for autonomous AI-driven development.**
 
-183 files across 32 sections. Each section has multiple detailed sub-files covering API design, code examples, architecture diagrams, and engine comparisons.
+189 files across 33 sections. Each section has multiple detailed sub-files covering API design, code examples, architecture diagrams, and engine comparisons.
 
 ## Document Map
 
@@ -56,6 +56,7 @@
 | [23-localization/](23-localization/) | Localization | 5 | **Planned** | String tables, ICU formatting, text shaping, asset localization |
 | [24-networking/](24-networking/) | Networking | 5 | **Planned** | Server architecture, replication, RPCs, lag compensation |
 | [25-vfx/](25-vfx/) | VFX System | 5 | **Planned** | GPU particles, VFX modules, VFX graph, decals |
+| [33-vfx-ai-tool/](33-vfx-ai-tool/) | **VFX AI Tool** | **6** | **Planned** | **Natural language VFX generation, Claude shaders, ComfyUI textures, TRELLIS.2 meshes, orchestrator, user workflow** |
 | [26-ai-content-pipeline/](26-ai-content-pipeline/) | AI Content Pipeline | 3 | **Planned** | LLM content generation, validation |
 | [27-platform-services/](27-platform-services/) | Platform Services | 3 | **Planned** | Steam integration, upscaling (DLSS/FSR/XeSS) |
 | [28-ipc-protocol/](28-ipc-protocol/) | IPC Protocol | 3 | **Planned** | N-API bridge, H.264 frame streaming |
