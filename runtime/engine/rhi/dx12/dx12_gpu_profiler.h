@@ -6,7 +6,7 @@
 /// Triple-buffered: frame N writes timestamps, frame N-2 reads results from readback.
 /// Results are resolved in milliseconds using the GPU timestamp frequency.
 
-#include "../gpu_profiler_types.h"
+#include "../rhi_gpu_profiler_types.h"
 
 #include <d3d12.h>
 #include <wrl/client.h>

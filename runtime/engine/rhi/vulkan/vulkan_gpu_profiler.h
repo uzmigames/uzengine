@@ -21,7 +21,7 @@
 /// # Thread Safety
 /// NOT thread-safe. Must be used from the render thread only.
 
-#include "../gpu_profiler_types.h"
+#include "../rhi_gpu_profiler_types.h"
 
 #define VK_NO_PROTOTYPES
 #ifdef _WIN32

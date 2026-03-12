@@ -11,7 +11,7 @@
 /// The handle's generation counter validates access.
 
 #include "../rhi_types.h"
-#include "../resource_pool.h"
+#include "../rhi_resource_pool.h"
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX

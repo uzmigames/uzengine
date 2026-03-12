@@ -9,7 +9,7 @@
 /// DX11 uses individual query objects (not heaps) and requires one disjoint query
 /// per frame to validate timestamp coherence and obtain the GPU frequency.
 
-#include "../gpu_profiler_types.h"
+#include "../rhi_gpu_profiler_types.h"
 
 #include <d3d11_1.h>
 #include <wrl/client.h>

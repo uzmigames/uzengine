@@ -17,7 +17,7 @@
 #include <vulkan/vulkan.h>
 
 #include "../rhi_types.h"
-#include "../resource_pool.h"
+#include "../rhi_resource_pool.h"
 
 #include <cstdint>
 #include <vector>

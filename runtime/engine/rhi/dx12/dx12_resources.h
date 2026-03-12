@@ -10,7 +10,7 @@
 /// The handle's generation counter validates access.
 
 #include "../rhi_types.h"
-#include "../resource_pool.h"
+#include "../rhi_resource_pool.h"
 
 #include <d3d12.h>
 #include <cstdint>
@@ -90,6 +90,6 @@ struct DX12Pipeline {
     RHIGraphicsPipelineDesc      desc = {};             ///< Creation parameters (for debugging)
 };
 
-// ResourcePool<T> is defined in ../resource_pool.h (shared across all backends).
+// ResourcePool<T> is defined in ../rhi_resource_pool.h (shared across all backends).
 
 } // namespace uz
