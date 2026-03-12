@@ -347,17 +347,19 @@ Files extracted from upstream source:
 ## tracy
 
 - Upstream: https://github.com/wolfpld/tracy
-- Version: 0.11.1 (2024)
-- Commit: `5d542dc09f3d9378d005092a4ad446bd405f819a`
+- Version: 0.13.1 (2025) — Protocol 76
+- Commit: `05cceee0df3b8d7c6fa87e9638af311dbabc63cb`
 - License: BSD-3-Clause
 
 Frame profiler with nanosecond precision. Backend for UZ_PROFILE_SCOPE macros.
 Supports CPU zones, GPU timestamps, memory tracking, and lock profiling.
+Requires Tracy GUI v0.13.1 to connect (protocol version must match).
+
+Build flags: `-DTRACY_ENABLE -DTRACY_ON_DEMAND` (global cpp_flags).
 
 Files extracted from upstream source:
 
-- `public/` (TracyClient headers + source)
-- `CMakeLists.txt`
+- `public/` (TracyClient.cpp, client/, common/, tracy/, libbacktrace/)
 - `LICENSE`
 
 
