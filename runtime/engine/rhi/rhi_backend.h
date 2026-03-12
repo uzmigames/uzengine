@@ -60,4 +60,17 @@ IRHIDevice* CreateRHIDevice(const RHIDeviceDesc& desc);
 /// After this call, all handles created from this device are invalid.
 void DestroyRHIDevice(IRHIDevice* device);
 
+/// Returns the currently active RHI backend.
+///
+/// Set automatically by `CreateRHIDevice()` on successful device creation.
+/// Defaults to `RHIBackend::DX12` if no device has been created yet.
+///
+/// # Thread Safety
+/// Read-only after device creation. Not safe to call concurrently with
+/// `CreateRHIDevice()`.
+///
+/// # Returns
+/// The `RHIBackend` value of the most recently created device.
+RHIBackend GetActiveRHIBackend();
+
 } // namespace uz

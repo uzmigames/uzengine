@@ -382,6 +382,26 @@ if (Test-Path $astcPath) {
     }
 }
 
+# ─── Vulkan Dependencies ──────────────────────────────────────────────────
+
+# Vulkan-Headers (Khronos official API headers)
+Clone-Repo -Name "vulkan_headers" `
+    -Url "https://github.com/KhronosGroup/Vulkan-Headers.git" `
+    -Branch "vulkan-sdk-1.4.309.0" `
+    -RemoveDirs @("tests", "cmake")
+
+# volk (Vulkan meta-loader — dynamic function dispatch, no static vulkan-1.lib needed)
+Clone-Repo -Name "volk" `
+    -Url "https://github.com/zeux/volk.git" `
+    -Branch "vulkan-sdk-1.4.309.0" `
+    -RemoveDirs @("cmake", "test")
+
+# VMA — Vulkan Memory Allocator (AMD, GPU memory sub-allocation)
+Clone-Repo -Name "vma" `
+    -Url "https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git" `
+    -Branch "v3.2.1" `
+    -RemoveDirs @("docs", "tools", "cmake")
+
 # Crashpad (crash reporting) — deferred to milestone 2.x when crash reporting is implemented
 Write-Host "  [crashpad] skipped (not needed until 2.x crash reporting)" -ForegroundColor DarkYellow
 
@@ -474,7 +494,10 @@ $ImageLibs = @(
     @{ Name = "libjpeg-turbo";    File = "jpeglib.h" },
     @{ Name = "tinyexr";          File = "tinyexr.h" },
     @{ Name = "basis_universal";  File = "transcoder\basisu_transcoder.h" },
-    @{ Name = "astcenc";          File = "Source\astcenc.h" }
+    @{ Name = "astcenc";          File = "Source\astcenc.h" },
+    @{ Name = "vulkan_headers";   File = "include\vulkan\vulkan.h" },
+    @{ Name = "volk";             File = "volk.h" },
+    @{ Name = "vma";              File = "include\vk_mem_alloc.h" }
 )
 
 $allOk = $true

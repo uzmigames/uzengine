@@ -14,7 +14,16 @@
 #include "dx11/dx11_device.h"
 #endif
 
+// Vulkan backend (cross-platform — Windows and Linux)
+#include "vulkan/vulkan_device.h"
+
 namespace uz {
+
+namespace {
+    RHIBackend g_activeBackend = RHIBackend::DX12;
+} // namespace
+
+RHIBackend GetActiveRHIBackend() { return g_activeBackend; }
 
 IRHIDevice* CreateRHIDevice(const RHIDeviceDesc& desc) {
     switch (desc.backend) {
@@ -26,6 +35,7 @@ IRHIDevice* CreateRHIDevice(const RHIDeviceDesc& desc) {
                 delete device;
                 return nullptr;
             }
+            g_activeBackend = desc.backend;
             return device;
         }
 
@@ -36,9 +46,21 @@ IRHIDevice* CreateRHIDevice(const RHIDeviceDesc& desc) {
                 delete device;
                 return nullptr;
             }
+            g_activeBackend = desc.backend;
             return device;
         }
 #endif
+
+        case RHIBackend::Vulkan: {
+            auto* device = new VulkanDevice();
+            if (!device->Init(desc)) {
+                UZ_LOG(RHI, Error, "CreateRHIDevice: VulkanDevice::Init failed");
+                delete device;
+                return nullptr;
+            }
+            g_activeBackend = desc.backend;
+            return device;
+        }
 
         default:
             UZ_LOG(RHI, Error, "CreateRHIDevice: unsupported backend {}",

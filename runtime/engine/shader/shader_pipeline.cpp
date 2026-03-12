@@ -15,12 +15,18 @@
 #include "shader_source_manager.h"
 #include "shader_vfs.h"
 #include "log.h"
+#include "profiler.h"
+#include "../rhi/rhi_backend.h"
 
 #include <algorithm>
 #include <filesystem>
 #include <sstream>
 
 namespace uz {
+
+UZ_DEFINE_STAT(RHI, ShaderCompiles);
+UZ_DEFINE_STAT(RHI, CacheHits);
+UZ_DEFINE_STAT(RHI, CacheMisses);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Stage inference from filename convention
@@ -49,16 +55,25 @@ static ShaderStageCompile InferStageFromPath(const std::string& path) {
     return ShaderStageCompile::Vertex; // Default
 }
 
-/// Applies bindless/SM5 configuration to a compile descriptor.
+/// Applies bindless/SM5 configuration and backend-specific output format.
 ///
 /// When bindless is true: injects UZ_BINDLESS=1 define, targets SM6_6 (DXC).
-/// When bindless is false: targets SM5_0 (FXC).
+/// When bindless is false: targets SM5_0 (FXC) for DX backends, SM6_0 (DXC) for Vulkan.
+/// When Vulkan backend is active: forces SPIRV output and always uses DXC
+/// (FXC cannot produce SPIR-V).
 static void ApplyBindlessConfig(ShaderCompileDesc& desc, bool bindless) {
+    const bool isVulkan = (GetActiveRHIBackend() == RHIBackend::Vulkan);
+
     if (bindless) {
         desc.defines.push_back("UZ_BINDLESS=1");
         desc.model = ShaderModelCompile::SM6_6;
     } else {
-        desc.model = ShaderModelCompile::SM5_0;
+        // Vulkan requires DXC (FXC cannot emit SPIR-V), so use SM6_0 minimum
+        desc.model = isVulkan ? ShaderModelCompile::SM6_0 : ShaderModelCompile::SM5_0;
+    }
+
+    if (isVulkan) {
+        desc.output = ShaderOutputFormat::SPIRV;
     }
 }
 
@@ -100,6 +115,7 @@ ShaderPipeline::ShaderPipeline() = default;
 ShaderPipeline::~ShaderPipeline() { Shutdown(); }
 
 void ShaderPipeline::Init(const Config& config) {
+    UZ_PROFILE_FUNCTION();
     if (m_initialized) {
         return;
     }
@@ -107,8 +123,16 @@ void ShaderPipeline::Init(const Config& config) {
     m_impl = std::make_unique<Impl>(config);
     m_initialized = true;
 
+    // Auto-detect Vulkan backend: force SPIRV output and disable bindless
+    // (ResourceDescriptorHeap is DX12-only, not supported with -spirv)
+    if (GetActiveRHIBackend() == RHIBackend::Vulkan) {
+        m_impl->config.targetBackend = "vulkan_spirv";
+        m_impl->config.bindless = false;
+        UZ_LOG(IO, Info, "ShaderPipeline: auto-detected Vulkan backend, using SPIRV output (bindless disabled)");
+    }
+
     UZ_LOG(IO, Info, "ShaderPipeline: initialized (backend='{}', cache='{}', bindless={})",
-           config.targetBackend, config.cacheDir, config.bindless ? "true" : "false");
+           m_impl->config.targetBackend, config.cacheDir, config.bindless ? "true" : "false");
 }
 
 void ShaderPipeline::Shutdown() {
@@ -131,6 +155,7 @@ void ShaderPipeline::Shutdown() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void ShaderPipeline::Mount(const std::string& virtualPath, const std::string& realPath) {
+    UZ_PROFILE_FUNCTION();
     if (!m_initialized) {
         UZ_LOG(IO, Warning, "ShaderPipeline::Mount called before Init");
         return;
@@ -178,6 +203,7 @@ static std::vector<std::string> EnumerateShaderFiles(
 }
 
 ShaderPipeline::CompileAllResult ShaderPipeline::CompileAll() {
+    UZ_PROFILE_FUNCTION();
     CompileAllResult result;
 
     if (!m_initialized) {
@@ -235,9 +261,11 @@ ShaderPipeline::CompileAllResult ShaderPipeline::CompileAll() {
 
             // Check cache
             if (m_impl->cache.Contains(m_impl->config.targetBackend, identityHash)) {
+                UZ_STAT_INCREMENT(RHI, CacheHits);
                 result.cached++;
                 continue;
             }
+            UZ_STAT_INCREMENT(RHI, CacheMisses);
 
             // Compile — route to DXC (SM 6.0+) or FXC (SM 5.0)
             ShaderCompileDesc desc;
@@ -270,6 +298,7 @@ ShaderPipeline::CompileAllResult ShaderPipeline::CompileAll() {
                                         compileResult.errors);
                 continue;
             }
+            UZ_STAT_INCREMENT(RHI, ShaderCompiles);
 
             // Store in cache
             m_impl->cache.Store(m_impl->config.targetBackend, identityHash,
@@ -286,6 +315,7 @@ ShaderPipeline::CompileAllResult ShaderPipeline::CompileAll() {
 }
 
 bool ShaderPipeline::CompileShader(const std::string& virtualPath) {
+    UZ_PROFILE_FUNCTION();
     if (!m_initialized) {
         return false;
     }
@@ -319,8 +349,10 @@ bool ShaderPipeline::CompileShader(const std::string& virtualPath) {
             virtualPath, defineStrings, ShaderTarget::DXIL_SM6_6, 0);
 
         if (m_impl->cache.Contains(m_impl->config.targetBackend, identityHash)) {
+            UZ_STAT_INCREMENT(RHI, CacheHits);
             continue;
         }
+        UZ_STAT_INCREMENT(RHI, CacheMisses);
 
         ShaderCompileDesc desc;
         desc.source = sourceInfo->source;
@@ -342,6 +374,7 @@ bool ShaderPipeline::CompileShader(const std::string& virtualPath) {
             allOk = false;
             continue;
         }
+        UZ_STAT_INCREMENT(RHI, ShaderCompiles);
 
         m_impl->cache.Store(m_impl->config.targetBackend, identityHash,
                             compileResult.bytecode, virtualPath);
@@ -358,6 +391,7 @@ std::vector<uint8_t> ShaderPipeline::LoadBytecode(
     const std::string& virtualPath,
     const std::string& permutationDefines)
 {
+    UZ_PROFILE_FUNCTION();
     if (!m_initialized) {
         return {};
     }
@@ -395,8 +429,10 @@ std::vector<uint8_t> ShaderPipeline::LoadBytecode(
 
     auto cached = m_impl->cache.Lookup(m_impl->config.targetBackend, identityHash);
     if (cached) {
+        UZ_STAT_INCREMENT(RHI, CacheHits);
         return std::move(*cached);
     }
+    UZ_STAT_INCREMENT(RHI, CacheMisses);
 
     // Not in cache — try to compile on-demand
     ShaderCompileDesc desc;
@@ -419,6 +455,7 @@ std::vector<uint8_t> ShaderPipeline::LoadBytecode(
                virtualPath, compileResult.errors);
         return {};
     }
+    UZ_STAT_INCREMENT(RHI, ShaderCompiles);
 
     m_impl->cache.Store(m_impl->config.targetBackend, identityHash,
                         compileResult.bytecode, virtualPath);
@@ -430,6 +467,7 @@ std::vector<uint8_t> ShaderPipeline::LoadBytecodeFromSource(
     const std::string& hlslSource,
     const std::string& permutationDefines)
 {
+    UZ_PROFILE_FUNCTION();
     if (!m_initialized) {
         UZ_LOG(IO, Error, "ShaderPipeline::LoadBytecodeFromSource: not initialized (name='{}')", name);
         return {};
@@ -478,6 +516,7 @@ std::vector<uint8_t> ShaderPipeline::LoadBytecodeFromSource(
 // ─────────────────────────────────────────────────────────────────────────────
 
 std::vector<std::string> ShaderPipeline::PollHotReload() {
+    UZ_PROFILE_FUNCTION();
     if (!m_initialized) {
         return {};
     }

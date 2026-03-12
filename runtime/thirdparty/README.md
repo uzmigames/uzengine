@@ -362,6 +362,14 @@ Files extracted from upstream source:
 - `public/` (TracyClient.cpp, client/, common/, tracy/, libbacktrace/)
 - `LICENSE`
 
+Patches:
+
+- `0001-fix-getdesc-abi-directx-headers.patch` — Fix `ID3D12CommandQueue::GetDesc()` ABI
+  incompatibility with directx-headers. The upstream `TracyD3D12.hpp` calls
+  `queue->GetDesc().Type` (struct-return), but directx-headers declares `GetDesc`
+  as an out-param (`void GetDesc(D3D12_COMMAND_QUEUE_DESC*)`). Patch replaces both
+  callsites with the out-param form.
+
 
 ## vcpkg
 
@@ -374,3 +382,53 @@ C++ package manager. Used to install prebuilt binaries for:
 - `zstd` — fast compression (asset streaming)
 
 Not a library itself — manages installation of other libraries.
+
+
+## vma
+
+- Upstream: https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator
+- Version: 3.2.1 (2025)
+- License: MIT
+
+Vulkan Memory Allocator by AMD. Manages GPU memory sub-allocation,
+defragmentation, and memory type selection for Vulkan backends. Analogous
+to D3D12MA for the DX12 backend.
+
+Files extracted from upstream source:
+
+- `include/vk_mem_alloc.h` (header-only library)
+- `LICENSE`
+
+
+## volk
+
+- Upstream: https://github.com/zeux/volk
+- Version: vulkan-sdk-1.4.309.0 (2025)
+- License: MIT
+
+Vulkan meta-loader. Dynamically loads all Vulkan function pointers at runtime
+via `volkInitialize()` + `volkLoadDevice()`. Eliminates the need to link
+`vulkan-1.lib` statically — the engine loads the Vulkan driver at runtime.
+
+Files extracted from upstream source:
+
+- `volk.h` (header with API declarations)
+- `volk.c` (implementation)
+- `LICENSE.md`
+
+
+## vulkan_headers
+
+- Upstream: https://github.com/KhronosGroup/Vulkan-Headers
+- Version: vulkan-sdk-1.4.309.0 (2025)
+- License: Apache 2.0
+
+Official Vulkan C/C++ API headers from Khronos Group. Provides vulkan.h,
+vulkan_core.h, and platform-specific headers (vulkan_win32.h, etc.).
+Used by the Vulkan RHI backend.
+
+Files extracted from upstream source:
+
+- `include/vulkan/` (vulkan.h, vulkan_core.h, platform headers)
+- `include/vk_video/` (video codec headers)
+- `LICENSE.md`

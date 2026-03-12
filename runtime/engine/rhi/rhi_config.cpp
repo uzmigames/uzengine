@@ -7,6 +7,7 @@
 #include "rhi.h"
 #include "config.h"
 #include "log.h"
+#include "profiler.h"
 
 #include <algorithm>
 #include <cctype>
@@ -19,6 +20,11 @@ namespace uz {
 // ─────────────────────────────────────────────────────────────────────────────
 
 bool IRHIDevice::IsBindless() const {
+    // Vulkan does not support DX12-style ResourceDescriptorHeap bindless;
+    // it uses descriptor sets instead (not yet implemented)
+    if (GetBackend() == RHIBackend::Vulkan) {
+        return false;
+    }
     return GetShaderModel() >= ShaderModel::SM6_6;
 }
 
@@ -118,6 +124,7 @@ RHIBackend PlatformDefaultBackend() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 RHIConfig ResolveRHIConfig(const Config& config) {
+    UZ_PROFILE_FUNCTION();
     RHIConfig result{};
     result.backend = PlatformDefaultBackend();
 

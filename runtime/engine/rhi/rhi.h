@@ -43,6 +43,10 @@ namespace uz {
 // (rhi.h → rhi_config.h → rhi_backend.h → rhi.h).
 enum class ShaderModel : uint8_t;
 
+// Forward declare — defined in rhi_backend.h. Avoids circular include
+// (rhi.h → rhi_backend.h → rhi.h).
+enum class RHIBackend : uint8_t;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // IRHIFence — CPU/GPU synchronization primitive
 // ─────────────────────────────────────────────────────────────────────────────
@@ -715,6 +719,12 @@ public:
     /// and pipelines need no input layout. When false, shaders use traditional
     /// register-based binding and the Input Assembler for vertex data.
     ///
+    /// Returns the RHI backend type of this device (DX12, DX11, Vulkan, etc.).
+    ///
+    /// # Returns
+    /// The `RHIBackend` enum value corresponding to this device's backend.
+    virtual RHIBackend GetBackend() const = 0;
+
     /// Defined out-of-line in rhi_config.h (needs full ShaderModel enum).
     bool IsBindless() const;
 };

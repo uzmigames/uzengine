@@ -8,6 +8,7 @@
 #include "shader_compiler.h"
 #include "log.h"
 #include "paths.h"
+#include "profiler.h"
 
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
@@ -102,6 +103,7 @@ static std::wstring ToWide(const std::string& s) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 bool ShaderCompiler::Init(const std::string& dxcPath) {
+    UZ_PROFILE_FUNCTION();
     if (m_compiler) return true;
 
     // Resolve relative paths against the executable directory.
@@ -232,6 +234,15 @@ std::vector<std::wstring> ShaderCompiler::BuildArguments(
     if (desc.output == ShaderOutputFormat::SPIRV) {
         args.push_back(L"-spirv");
         args.push_back(L"-fspv-target-env=vulkan1.3");
+
+        // Explicit register-to-binding shifts so we know the exact SPIRV layout:
+        //   t registers → binding 0..15  (SAMPLED_IMAGE)
+        //   s registers → binding 16..31 (SAMPLER)
+        //   b registers → binding 32..47 (UNIFORM_BUFFER)
+        // All in descriptor set 0.
+        args.push_back(L"-fvk-t-shift"); args.push_back(L"0");  args.push_back(L"0");
+        args.push_back(L"-fvk-s-shift"); args.push_back(L"16"); args.push_back(L"0");
+        args.push_back(L"-fvk-b-shift"); args.push_back(L"32"); args.push_back(L"0");
     }
 
     // Debug info
@@ -263,6 +274,7 @@ std::vector<std::wstring> ShaderCompiler::BuildArguments(
 // ─────────────────────────────────────────────────────────────────────────────
 
 ShaderCompileResult ShaderCompiler::Compile(const ShaderCompileDesc& desc) {
+    UZ_PROFILE_FUNCTION();
     ShaderCompileResult result;
 
     if (!m_compiler || !m_utils) {

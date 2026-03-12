@@ -44,6 +44,7 @@ pub fn build(b: *std.Build) void {
         "../../platform/windows",
         "../../engine/rhi/dx12",
         "../../engine/rhi/dx11",
+        "../../engine/rhi/vulkan",
     };
     for (engine_dirs) |dir| mod.addIncludePath(b.path(dir));
 
@@ -69,6 +70,9 @@ pub fn build(b: *std.Build) void {
         "../../thirdparty/directx_headers/include/directx",
         "../../thirdparty/agility/include",
         "../../thirdparty/dxc/inc",
+        "../../thirdparty/vulkan_headers/include",
+        "../../thirdparty/volk",
+        "../../thirdparty/vma/include",
     };
     for (tp_dirs) |dir| mod.addIncludePath(b.path(dir));
 
@@ -80,7 +84,7 @@ pub fn build(b: *std.Build) void {
 
     const exe = b.addExecutable(.{ .name = "triangle_demo", .root_module = mod });
 
-    const sys_libs = [_][]const u8{ "d3d12", "d3d11", "dxgi", "dxguid", "gdi32", "user32" };
+    const sys_libs = [_][]const u8{ "d3d12", "d3d11", "dxgi", "dxguid", "gdi32", "user32", "ws2_32", "dbghelp" };
     for (sys_libs) |l| exe.linkSystemLibrary(l);
 
     b.installArtifact(exe);

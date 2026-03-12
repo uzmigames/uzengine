@@ -49,6 +49,9 @@ pub fn build(b: *std.Build) void {
         tp ++ "libjpeg-turbo",
         tp ++ "basis_universal/transcoder",
         tp ++ "astcenc/Source",
+        tp ++ "vulkan_headers/include",
+        tp ++ "volk",
+        tp ++ "vma/include",
     };
 
     const windows_engine_include_dirs = [_][]const u8{
@@ -123,6 +126,17 @@ pub fn build(b: *std.Build) void {
         runtime_mod.addIncludePath(b.path("engine/rhi/dx11"));
         runtime_mod.addIncludePath(b.path(tp ++ "d3d12ma/src"));
     }
+
+    // Vulkan backend sources (cross-platform)
+    addCppDir(runtime_mod, b, "engine/rhi/vulkan", cpp_flags);
+    runtime_mod.addIncludePath(b.path("engine/rhi/vulkan"));
+
+    // Thirdparty — volk (C source, compiled with VK_NO_PROTOTYPES)
+    runtime_mod.addCSourceFiles(.{
+        .root = b.path(tp ++ "volk"),
+        .files = &.{"volk.c"},
+        .flags = &.{ "-std=c11", "-DVK_NO_PROTOTYPES" },
+    });
 
     // Thirdparty — spdlog
     runtime_mod.addCSourceFiles(.{

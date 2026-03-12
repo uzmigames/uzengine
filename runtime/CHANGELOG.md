@@ -2,6 +2,91 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
+## [0.2.4] — 2026-03-12
+
+### Vulkan RHI Backend
+- **Full Vulkan backend** (`engine/rhi/vulkan/`): VulkanDevice, VulkanCommandList, VulkanSwapChain, VulkanFence
+  - volk dynamic loader (VK_NO_PROTOTYPES) — no static vulkan-1.lib linking
+  - VMA v3.2.1 GPU memory allocator
+  - VK_KHR_dynamic_rendering for render passes (no VkRenderPass objects)
+  - VK_KHR_synchronization2 for pipeline barriers
+  - VK_KHR_timeline_semaphore for fences (1:1 IRHIFence mapping)
+  - VK_KHR_buffer_device_address for GPU virtual address queries
+  - MAILBOX present mode, triple-buffered swapchain
+  - Descriptor set layout: 16 textures (binding 0-15) + 16 samplers (16-31) + 16 UBOs (32-47)
+  - Per-frame descriptor set allocation and automatic flush before draw calls
+- **Automatic HLSL→SPIR-V compilation**: ShaderPipeline auto-detects Vulkan backend and compiles to SPIR-V via DXC (`-spirv -fspv-target-env=vulkan1.3`)
+  - DXC SPIRV binding shifts: `-fvk-t-shift 0 0`, `-fvk-s-shift 16 0`, `-fvk-b-shift 32 0`
+  - Bindless auto-disabled for Vulkan (ResourceDescriptorHeap not supported with -spirv)
+  - Separate `vulkan_spirv` cache directory for SPIR-V bytecode
+  - Zero demo code changes required — fully transparent to application layer
+- **IRHIDevice::GetBackend()** virtual method + `GetActiveRHIBackend()` global accessor
+- **IsBindless()** returns false for Vulkan (descriptor set model, not DX12 ResourceDescriptorHeap)
+- **Build system**: Vulkan sources, volk.c, include paths added to runtime build.zig and all 5 demo build.zig files
+- **Thirdparty**: vulkan-headers (SDK 1.4.309), volk, VMA added to setup.ps1 and thirdparty/README.md
+- **All 5 demos verified**: clear_screen, triangle (5187 FPS), textured_quad (5334 FPS), camera_test (332 FPS), mesh_test (331 FPS) on RTX 4090 Vulkan 1.4.325
+
+## [0.2.3] — 2026-03-12
+
+### Build System
+- **CMake**: `TRACY_ENABLE` + `TRACY_ON_DEMAND` promoted from PRIVATE to PUBLIC definitions
+- **CMake**: Added `UZ_PROFILING_ENABLED` define so `UZ_PROFILE_*` macros are active
+- **CMake**: Added Tracy link libs (`ws2_32`, `dbghelp`, `advapi32`) for networking/callstack support
+- **build.zig**: Tracy link libs added to Zig build (conditional on `UZ_PROFILING_ENABLED`)
+
+### Tracy CPU Instrumentation
+- **UZ_PROFILE_FUNCTION()** added to ~39 engine .cpp files across all subsystems:
+  - RHI backends: DX12Device, DX12CommandList, DX12SwapChain, DX12Fence, DX11Device, DX11CommandList, DX11SwapChain
+  - Shader pipeline: ShaderPipeline, ShaderCompiler, ShaderCompilerFXC, ShaderSourceManager, ShaderDependencyGraph, ShaderCache
+  - VFS & assets: VirtualFileSystem, AssetCache, TextureImporter, MeshImporter
+  - Renderer: Renderer, TextRenderer, StatsOverlay, EditorGrid
+  - Platform: PlatformWindow, InputSystem, ScreenshotCapture
+- **UZ_PROFILE_FRAME_MARK()** at swapchain Present boundary for frame-level analysis
+- Function-level profiling captures allocation, I/O, GPU command recording, and compilation time per subsystem
+
+### Tracy GPU Profiling
+- **DX12 integration** (`engine/rhi/dx12/dx12_device.cpp`, `dx12_swapchain.cpp`):
+  - TracyD3D12Context integrated into DX12Device Init/Destroy
+  - `TracyD3D12Collect` + `TracyD3D12NewFrame` called in DX12SwapChain::Present
+  - Captures GPU timeline for all compute/graphics work on the direct queue
+- **DX11 integration** (`engine/rhi/dx11/dx11_device.cpp`, `dx11_swapchain.cpp`):
+  - TracyD3D11Context integrated into DX11Device Init/Destroy
+  - `TracyD3D11Collect` called in DX11SwapChain::Present
+  - Captures GPU timeline for deferred context command lists
+- **TracyD3D12.hpp ABI patch** (`thirdparty/tracy/patches/0001-fix-getdesc-abi-directx-headers.patch`):
+  - Fixes GetDesc() struct-return compatibility with directx-headers (out-parameter form for Clang/MinGW)
+  - Godot-style numbered patch, applied by `scripts/setup.ps1`
+
+### Custom GPU Timestamp Profiler
+- **DX12 implementation** (`engine/rhi/dx12/dx12_gpu_profiler.h/.cpp`):
+  - ID3D12QueryHeap-based timestamp queries (TIMESTAMP type)
+  - Triple-buffered (frame-in-flight) query resolve buffer
+  - GPU frequency via `ID3D12CommandQueue::GetTimestampFrequency()` — converts GPU ticks to milliseconds
+  - Readback buffer with Map/Unmap pattern
+- **DX11 implementation** (`engine/rhi/dx11/dx11_gpu_profiler.h/.cpp`):
+  - Individual ID3D11Query objects for each timestamp (TIMESTAMP + TIMESTAMP_DISJOINT pair)
+  - Triple-buffered, GetData() CPU readback with synchronization
+  - Frequency extracted from TIMESTAMP_DISJOINT query result
+  - Discards results when `Disjoint` flag is set (GPU frequency changed mid-frame)
+- **Shared types**(`engine/rhi/gpu_profiler_types.h`):
+  - GpuTimingResult struct: timestamp label, start/end ticks, ms duration
+  - kMaxGpuTimestamps = 64 per frame, kProfilerFramesInFlight = 3
+  - Used by both DX12 and DX11 backends
+- **Exposure**: GetGpuProfiler() on IRHIDevice, non-fatal warning on init failure
+
+### Stat Counters
+- **8 built-in counters** (thread-safe atomic):
+  - DrawCalls: incremented per BeginRenderPass
+  - Triangles: incremented per bound mesh (vertex count / 3)
+  - BufferUploads: incremented in UploadContext::Flush
+  - ShaderCompiles: incremented in ShaderPipeline::CompileShader (non-cache hits)
+  - CacheHits: incremented on shader cache lookup success
+  - CacheMisses: incremented on shader cache lookup failure
+  - VFSReads: incremented on VirtualFileSystem::ReadFile
+  - PipelineCreations: incremented in CreateGraphicsPipeline
+- **UZ_STAT_INCREMENT macro** — atomic increment with stat ID, compile-time category filtering
+- **Per-frame reset**: Stats exposed to IPC handlers for editor telemetry (Phase 2+)
+
 ## [0.2.2] — 2026-03-12
 
 ### DX11 RHI Backend
