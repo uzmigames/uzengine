@@ -33,6 +33,17 @@
 
 #include <string>
 
+// Forward-declare Tracy Vulkan context type to avoid pulling TracyVulkan.hpp
+// into every translation unit that includes vulkan_device.h.
+// When TRACY_ENABLE is defined, TracyVkCtx is tracy::VkCtx*.
+// When TRACY_ENABLE is not defined, TracyVkCtx is void*.
+#if defined(TRACY_ENABLE)
+namespace tracy { class VkCtx; }
+using TracyVkCtx = tracy::VkCtx*;
+#else
+using TracyVkCtx = void*;
+#endif
+
 // Forward declare VMA allocator to avoid header inclusion
 struct VmaAllocator_T;
 typedef VmaAllocator_T* VmaAllocator;
@@ -109,6 +120,15 @@ public:
     RHIMemoryBudget GetMemoryBudget() const override;
     ShaderModel GetShaderModel() const override { return m_shaderModel; }
     RHIBackend GetBackend() const override { return RHIBackend::Vulkan; }
+
+    // ── Tracy GPU Profiling ─────────────────────────────────────────────
+
+    /// Returns the Tracy Vulkan GPU context for timestamp collection.
+    ///
+    /// When `TRACY_ENABLE` is not defined, `TracyVkCtx` is `void*` and this
+    /// returns `nullptr`. Used by `VulkanCommandList::End()` and
+    /// `VulkanSwapChain::Present()` to collect GPU timestamps each frame.
+    TracyVkCtx GetTracyGpuContext() const { return m_tracyVkCtx; }
 
     // ── Accessors for sibling Vulkan classes ─────────────────────────────
 
@@ -226,6 +246,10 @@ private:
     std::string                    m_adapterName;
     std::string                    m_apiVersionStr;
     bool                           m_validationEnabled = false;
+
+    /// Tracy GPU context for Vulkan timestamp collection.
+    /// nullptr when `TRACY_ENABLE` is not defined.
+    TracyVkCtx                     m_tracyVkCtx = nullptr;
 };
 
 } // namespace uz

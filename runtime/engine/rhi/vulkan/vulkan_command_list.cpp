@@ -13,6 +13,8 @@
 #include "vulkan_command_list.h"
 #include "vulkan_device.h"
 
+#include <tracy/TracyVulkan.hpp>
+
 #include "log.h"
 #include "profiler.h"
 
@@ -229,6 +231,10 @@ void VulkanCommandList::Begin() {
 
 void VulkanCommandList::End() {
     UZ_PROFILE_FUNCTION();
+
+    // Collect Tracy GPU timestamps before ending the command buffer.
+    // TracyVkCollect records query pool reset commands into this command buffer.
+    TracyVkCollect(m_device->GetTracyGpuContext(), m_commandBuffers[m_frameIndex]);
 
     VkResult result = vkEndCommandBuffer(m_commandBuffers[m_frameIndex]);
     if (result != VK_SUCCESS) {

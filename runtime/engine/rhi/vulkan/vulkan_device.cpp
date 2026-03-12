@@ -27,6 +27,8 @@
 #include "vulkan_fence.h"
 #include "vulkan_command_list.h"
 
+#include <tracy/TracyVulkan.hpp>
+
 #include "log.h"
 #include "profiler.h"
 
@@ -202,6 +204,7 @@ VulkanDevice::~VulkanDevice() {
     if (m_pipelineLayout != VK_NULL_HANDLE)       vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
     if (m_descriptorSetLayout != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(m_device, m_descriptorSetLayout, nullptr);
     if (m_descriptorPool != VK_NULL_HANDLE)      vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
+    TracyVkDestroy(m_tracyVkCtx);
     if (m_allocator)                          vmaDestroyAllocator(m_allocator);
     if (m_device != VK_NULL_HANDLE)          vkDestroyDevice(m_device, nullptr);
 
@@ -232,6 +235,37 @@ bool VulkanDevice::Init(const RHIDeviceDesc& desc) {
         UZ_LOG(RHI, Warning, "Shader model forced: {} -> {}",
                ShaderModelToString(m_shaderModel), ShaderModelToString(*desc.forceShaderModel));
         m_shaderModel = *desc.forceShaderModel;
+    }
+
+    // Create Tracy GPU context for Vulkan timestamp profiling.
+    // Tracy needs a temporary command buffer to calibrate GPU/CPU clocks.
+    {
+        VkCommandPoolCreateInfo poolCI = {};
+        poolCI.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+        poolCI.flags = VK_COMMAND_POOL_CREATE_TRANSIENT_BIT;
+        poolCI.queueFamilyIndex = m_graphicsQueueFamily;
+
+        VkCommandPool tempPool = VK_NULL_HANDLE;
+        VkResult tracyRes = vkCreateCommandPool(m_device, &poolCI, nullptr, &tempPool);
+        if (tracyRes == VK_SUCCESS) {
+            VkCommandBufferAllocateInfo allocInfo = {};
+            allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+            allocInfo.commandPool = tempPool;
+            allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+            allocInfo.commandBufferCount = 1;
+
+            VkCommandBuffer tempCmdBuf = VK_NULL_HANDLE;
+            tracyRes = vkAllocateCommandBuffers(m_device, &allocInfo, &tempCmdBuf);
+            if (tracyRes == VK_SUCCESS) {
+                m_tracyVkCtx = TracyVkContext(m_physicalDevice, m_device, m_graphicsQueue, tempCmdBuf);
+                UZ_LOG(RHI, Info, "Tracy Vulkan GPU context created");
+            } else {
+                UZ_LOG(RHI, Warning, "Failed to allocate temp command buffer for Tracy GPU context");
+            }
+            vkDestroyCommandPool(m_device, tempPool, nullptr);
+        } else {
+            UZ_LOG(RHI, Warning, "Failed to create temp command pool for Tracy GPU context");
+        }
     }
 
     RHIMemoryBudget budget = GetMemoryBudget();
