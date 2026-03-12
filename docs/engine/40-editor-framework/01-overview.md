@@ -441,10 +441,31 @@ enum class TransformSpace : uint8_t {
 | Inspector | SDetailsView (auto-layout from UClass) | EditorInspectorPlugin (generated from @export) | PropertyDrawer (reflection) | **InspectorPanel (Property System §21)** |
 | Hierarchy | World Outliner (tree + visibility toggles) | SceneTreeDock (drag-drop reparent) | Hierarchy window (drag-drop) | **HierarchyPanel (tree + lock/hide per-entity)** |
 
+## Visual Node-Graph Editors
+
+UzEngine includes a shared node-graph framework (§40.09) used by multiple specialized editors:
+
+- **[Material Editor (§40.10)](10-material-editor.md)** — Visual material authoring via connected nodes (Math, Texture, Output)
+- **[Animation Controller (§40.11)](11-animcontroller-editor.md)** — State machines with transitions and blend spaces
+- **[Control Rig (§40.12)](12-controlrig-editor.md)** — IK chains and bone constraints for rigging
+- **[Node-Graph Framework (§40.09)](09-node-graph-framework.md)** — Shared foundation (pan/zoom, virtual rendering, compilation pipeline, undo/redo)
+
+## Specialized Visual Editors
+
+Advanced editors for content creation and game logic:
+
+- **[VFX Graph Editor (§40.13)](13-vfx-editor.md)** — Particle system authoring with spawn/physics/render modules, live preview, parameter curves
+- **[Sequencer/Timeline Editor (§40.14)](14-sequencer-editor.md)** — Cinematic sequencing with camera cuts, skeletal animation, audio sync, possessables/spawnables
+- **[Behavior Tree Editor (§40.15)](15-behavior-tree-editor.md)** — AI decision authoring with composites, decorators, tasks, blackboard debugging
+- **[PCG Graph Editor (§40.16)](16-pcg-editor.md)** — Procedural world generation (scatter, filter, transform, output to foliage/meshes)
+- **[Debug Tools (§40.17)](17-debug-tools.md)** — Asset preview (animation/texture/mesh/shader), physics/audio/navmesh visualization, performance HUD
+
+See each editor's documentation for specialized features.
+
 ## Implementation Phase
 
 | Phase | What Ships |
 |-------|-----------|
-| **Phase 2** | Viewport client, basic gizmo (translate), selection (raycast pick), undo/redo |
-| **Phase 3** | Rotate/Scale gizmos, box/lasso select, inspector panel, multi-select with Ctrl/Shift, snapping, viewport overlays, hot-reload coordination |
-| **Phase 4** | Multi-viewport (split view), orthographic projections, editor preferences persistence, advanced selection tools |
+| **Phase 2** | Viewport client, basic gizmo (translate), selection (raycast pick), undo/redo, material graph foundation, animation controller basic states |
+| **Phase 3** | Rotate/Scale gizmos, box/lasso select, inspector panel, multi-select with Ctrl/Shift, snapping, viewport overlays, hot-reload coordination, material editor live preview, animation blend spaces, control rig IK |
+| **Phase 4** | Multi-viewport (split view), orthographic projections, editor preferences persistence, advanced selection tools, material functions, advanced constraints, retargeting |

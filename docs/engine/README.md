@@ -2,7 +2,7 @@
 
 > **AAA game engine embedded in VSCode, designed for autonomous AI-driven development.**
 
-167 files across 32 sections. Each section has multiple detailed sub-files covering API design, code examples, architecture diagrams, and engine comparisons.
+183 files across 32 sections. Each section has multiple detailed sub-files covering API design, code examples, architecture diagrams, and engine comparisons.
 
 ## Document Map
 
@@ -61,7 +61,7 @@
 | [28-ipc-protocol/](28-ipc-protocol/) | IPC Protocol | 3 | **Planned** | N-API bridge, H.264 frame streaming |
 | [29-design-decisions/](29-design-decisions/) | Design Decisions | 3 | **Reference** | POC lessons, technology choices |
 | [30-game-examples/](30-game-examples/) | Game Examples | 4 | **Reference** | Pong, Flappy Bird, Tower Defense |
-| [40-editor-framework/](40-editor-framework/) | Editor Framework | 4 | **Planned** | Gizmos, undo/redo, inspector |
+| [40-editor-framework/](40-editor-framework/) | Editor Framework | 21 | **Planned** | Overview, gizmos, undo/redo, inspector, hierarchy (05), asset browser (06), tool modes (07), output panel (08), **node-graph framework (09), material (10), anim controller (11), control rig (12), VFX (13), sequencer (14), behavior tree (15), PCG (16), debug tools (17), viewport modes (18), preferences (19), editor IPC (20), testing (21)** |
 
 ## How to Read This
 
