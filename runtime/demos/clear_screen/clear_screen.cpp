@@ -11,6 +11,7 @@
 #include "platform_window.h"
 #include "log.h"
 #include "profiler.h"
+#include "screenshot_capture.h"
 
 #include <cmath>
 #include <chrono>
@@ -20,9 +21,12 @@ namespace uz {
 /// Triple buffering constant for frame pacing.
 static constexpr uint32_t kFramesInFlight = 3;
 
-bool RunClearScreen(RHIBackend backend, uint32_t frameCount) {
+bool RunClearScreen(const ClearScreenConfig& config) {
     UZ_PROFILE_FUNCTION();
     UZ_PROFILE_THREAD("Main");
+
+    const RHIBackend backend = config.backend;
+    const uint32_t frameCount = config.frameCount;
 
     // ── Window ───────────────────────────────────────────────────────────
     WindowDesc winDesc{};
@@ -90,6 +94,16 @@ bool RunClearScreen(RHIBackend backend, uint32_t frameCount) {
         }
     }
 
+    // ── Screenshot Capture ────────────────────────────────────────────────
+    ScreenshotCapture screenshotCapture;
+    bool screenshotPending = !config.screenshotPath.empty();
+    if (screenshotPending) {
+        if (!screenshotCapture.Init(device, scDesc.width, scDesc.height)) {
+            UZ_LOG(RHI, Error, "Failed to initialize screenshot capture");
+            screenshotPending = false;
+        }
+    }
+
     // ── Render Loop ──────────────────────────────────────────────────────
     uint32_t frameIndex = 0;
     uint64_t globalFenceValue = 0;
@@ -129,6 +143,7 @@ bool RunClearScreen(RHIBackend backend, uint32_t frameCount) {
         };
 
         // Record
+        bool capturedThisFrame = false;
         {
         UZ_PROFILE_SCOPE(RecordCommands);
         cmdList->Begin();
@@ -144,6 +159,12 @@ bool RunClearScreen(RHIBackend backend, uint32_t frameCount) {
 
         // Clear
         cmdList->ClearRenderTarget(backBuffer, color);
+
+        // ── Screenshot ────────────────────────────────────────────────────
+        if (screenshotPending && frameIndex == config.screenshotFrame) {
+            screenshotCapture.CaptureBackBuffer(cmdList, swapChain);
+            capturedThisFrame = true;
+        }
 
         // Barrier: RenderTarget -> Present
         RHIBarrierDesc toPresent{};
@@ -167,6 +188,13 @@ bool RunClearScreen(RHIBackend backend, uint32_t frameCount) {
         frameFences[allocFrame]->Signal(globalFenceValue);
         }
 
+        // ── Save screenshot after GPU completes ───────────────────────────
+        if (capturedThisFrame) {
+            frameFences[allocFrame]->WaitCPU(globalFenceValue);
+            screenshotCapture.SaveToPNG(config.screenshotPath);
+            screenshotPending = false;
+        }
+
         frameIndex++;
         UZ_PROFILE_FRAME_MARK();
     }
@@ -180,6 +208,8 @@ bool RunClearScreen(RHIBackend backend, uint32_t frameCount) {
 
     UZ_LOG(RHI, Info, "Clear screen loop finished: {} frames, {:.1f}ms total, {:.2f}ms/frame ({:.0f} FPS)",
            frameIndex, totalMs, avgMs, avgMs > 0 ? 1000.0f / avgMs : 0.0f);
+
+    screenshotCapture.Shutdown();
 
     for (uint32_t i = 0; i < kFramesInFlight; ++i) {
         device->DestroyFence(frameFences[i]);

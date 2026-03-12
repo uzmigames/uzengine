@@ -148,7 +148,7 @@ bool TextRenderer::Init(IRHIDevice* device, ShaderPipeline& shaderPipeline,
         RHIBufferDesc vbDesc{};
         vbDesc.sizeBytes = kMaxVertices * sizeof(OverlayVertex);
         vbDesc.stride = sizeof(OverlayVertex);
-        vbDesc.usage = RHIBufferUsage::StructuredBuffer;
+        vbDesc.usage = bindless ? RHIBufferUsage::StructuredBuffer : RHIBufferUsage::VertexBuffer;
         vbDesc.memory = RHIMemoryType::Upload;
         vbDesc.debugName = "OverlayVertexBuffer";
 
@@ -285,6 +285,7 @@ void TextRenderer::Render(IRHICommandList* cmdList, CBRingAllocator& cbRing,
         std::memcpy(dst + totalRectVerts, m_textVertices.data(),
                     totalTextVerts * sizeof(OverlayVertex));
     }
+    m_device->UnmapBuffer(m_vertexBuffers[fi]);
 
     // ── Constant buffer ──────────────────────────────────────────────────
     OverlayCB cb{};

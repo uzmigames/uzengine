@@ -199,6 +199,9 @@ void DX11SwapChain::Present(bool vsync) {
         UZ_LOG(RHI, Error, "DX11SwapChain::Present failed, hr=0x{:08X}", static_cast<uint32_t>(hr));
     }
 
+    // Flush debug layer messages after each present to surface warnings/errors
+    m_device->FlushDebugMessages();
+
     // Collect pending Tracy GPU timestamps after each present
     if (m_device->GetTracyGpuContext()) {
         TracyD3D11Collect(m_device->GetTracyGpuContext());

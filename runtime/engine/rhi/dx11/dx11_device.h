@@ -139,10 +139,31 @@ public:
     /// Returns the sampler resource pool.
     ResourcePool<DX11Sampler>& GetSamplerPool() { return m_samplerPool; }
 
+    /// Finds a texture SRV by its logical SRV index (assigned at creation).
+    ///
+    /// Iterates the texture pool to find a texture whose `srvIndex` matches.
+    /// Used by DX11CommandList::SetDescriptorTable to bind SRVs to shader slots.
+    ///
+    /// # Returns
+    /// The ID3D11ShaderResourceView pointer, or `nullptr` if not found.
+    ID3D11ShaderResourceView* FindTextureSRVByIndex(uint32_t srvIndex);
+
+    /// Finds a sampler by its logical sampler index (assigned at creation).
+    ///
+    /// # Returns
+    /// The ID3D11SamplerState pointer, or `nullptr` if not found.
+    ID3D11SamplerState* FindSamplerByIndex(uint32_t samplerIndex);
+
     /// Returns the DX11 GPU timestamp profiler.
     ///
     /// Used for per-pass GPU timing alongside Tracy's frame-level profiling.
     DX11GpuProfiler& GetGpuProfiler() { return m_gpuProfiler; }
+
+    /// Reads all pending ID3D11InfoQueue messages and logs them via UZ_LOG.
+    ///
+    /// Call after Present() or any suspect operation to surface DX11 debug layer
+    /// warnings and errors. No-op if the debug layer is not active.
+    void FlushDebugMessages();
 
     /// Returns the Tracy GPU profiling context for DX11.
     ///

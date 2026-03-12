@@ -14,8 +14,17 @@
 #include "rhi_backend.h"
 
 #include <cstdint>
+#include <string>
 
 namespace uz {
+
+/// Configuration for running the clear screen demo.
+struct ClearScreenConfig {
+    uint32_t frameCount = 0;            ///< Number of frames to render (0 = infinite)
+    std::string screenshotPath;         ///< If non-empty, save screenshot to this path
+    uint32_t screenshotFrame = 5;       ///< Frame number to capture (default: 5)
+    RHIBackend backend = RHIBackend::DX12; ///< RHI backend to use
+};
 
 /// Runs the backend-agnostic clear screen render loop.
 ///
@@ -24,9 +33,7 @@ namespace uz {
 /// using triple-buffered frame pacing with per-frame fences.
 ///
 /// # Arguments
-/// * `backend` - Which RHI backend to use (DX12, DX11, etc.).
-/// * `frameCount` - Number of frames to render. Pass `0` to run until
-///   the user closes the window.
+/// * `config` — Demo configuration (frame count, screenshot settings, backend).
 ///
 /// # Returns
 /// `true` if all frames rendered without validation errors.
@@ -40,9 +47,11 @@ namespace uz {
 /// # Example
 /// ```cpp
 /// uz::LogInit();
-/// bool ok = uz::RunClearScreen(uz::RHIBackend::DX12, 300);
+/// uz::ClearScreenConfig cfg;
+/// cfg.backend = uz::RHIBackend::DX12;
+/// bool ok = uz::RunClearScreen(cfg);
 /// uz::LogShutdown();
 /// ```
-bool RunClearScreen(RHIBackend backend = RHIBackend::DX12, uint32_t frameCount = 0);
+bool RunClearScreen(const ClearScreenConfig& config = {});
 
 } // namespace uz

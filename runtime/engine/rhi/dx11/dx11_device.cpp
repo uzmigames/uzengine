@@ -17,6 +17,7 @@
 
 #include <windows.h>
 #include <string>
+#include <vector>
 
 namespace uz {
 
@@ -483,19 +484,6 @@ RHIBufferHandle DX11Device::CreateBuffer(const RHIBufferDesc& desc) {
         m_device->CreateUnorderedAccessView(buffer, &uavDesc, &slot->uav);
     }
 
-    // Persistently map upload buffers
-    if (desc.memory == RHIMemoryType::Upload) {
-        D3D11_MAPPED_SUBRESOURCE mapped = {};
-        hr = m_immediateContext->Map(buffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
-        if (SUCCEEDED(hr)) {
-            slot->mappedPtr = mapped.pData;
-            // Keep mapped — DX11 dynamic buffers must be mapped/unmapped per frame,
-            // but we unmap immediately and re-map on MapBuffer() calls.
-            m_immediateContext->Unmap(buffer, 0);
-            slot->mappedPtr = nullptr;
-        }
-    }
-
     UZ_LOG(RHI, Debug, "CreateBuffer: size={}, stride={} (name='{}')",
            desc.sizeBytes, desc.stride, desc.debugName ? desc.debugName : "");
 
@@ -713,6 +701,23 @@ uint32_t DX11Device::GetTextureSRVIndex(RHITextureHandle handle) const {
     const DX11Texture* tex = m_texturePool.Get(handle.index, handle.generation);
     if (!tex) return UINT32_MAX;
     return tex->srvIndex;
+}
+
+ID3D11ShaderResourceView* DX11Device::FindTextureSRVByIndex(uint32_t srvIndex) {
+    for (auto& slot : m_texturePool.Slots()) {
+        if (slot.srvIndex == srvIndex && slot.srv) return slot.srv;
+    }
+    for (auto& slot : m_bufferPool.Slots()) {
+        if (slot.srvIndex == srvIndex && slot.srv) return slot.srv;
+    }
+    return nullptr;
+}
+
+ID3D11SamplerState* DX11Device::FindSamplerByIndex(uint32_t samplerIndex) {
+    for (auto& slot : m_samplerPool.Slots()) {
+        if (slot.samplerIndex == samplerIndex && slot.sampler) return slot.sampler;
+    }
+    return nullptr;
 }
 
 RHITextureDesc DX11Device::GetTextureDesc(RHITextureHandle handle) const {
@@ -1083,6 +1088,43 @@ void DX11Device::WaitIdle() {
     while (m_immediateContext->GetData(query.Get(), &complete, sizeof(complete), 0) == S_FALSE) {
         Sleep(0);
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Debug Messages
+// ─────────────────────────────────────────────────────────────────────────────
+
+void DX11Device::FlushDebugMessages() {
+    if (!m_device) return;
+
+    ComPtr<ID3D11InfoQueue> infoQueue;
+    HRESULT hr = m_device->QueryInterface(IID_PPV_ARGS(&infoQueue));
+    if (FAILED(hr) || !infoQueue) return;
+
+    const UINT64 msgCount = infoQueue->GetNumStoredMessages();
+    for (UINT64 i = 0; i < msgCount; ++i) {
+        SIZE_T msgLen = 0;
+        infoQueue->GetMessage(i, nullptr, &msgLen);
+        if (msgLen == 0) continue;
+
+        std::vector<uint8_t> buf(msgLen);
+        auto* msg = reinterpret_cast<D3D11_MESSAGE*>(buf.data());
+        if (SUCCEEDED(infoQueue->GetMessage(i, msg, &msgLen))) {
+            switch (msg->Severity) {
+                case D3D11_MESSAGE_SEVERITY_CORRUPTION:
+                case D3D11_MESSAGE_SEVERITY_ERROR:
+                    UZ_LOG(RHI, Error, "D3D11 Debug: {}", msg->pDescription);
+                    break;
+                case D3D11_MESSAGE_SEVERITY_WARNING:
+                    UZ_LOG(RHI, Warning, "D3D11 Debug: {}", msg->pDescription);
+                    break;
+                default:
+                    UZ_LOG(RHI, Debug, "D3D11 Debug: {}", msg->pDescription);
+                    break;
+            }
+        }
+    }
+    infoQueue->ClearStoredMessages();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

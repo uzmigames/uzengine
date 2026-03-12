@@ -123,8 +123,6 @@ bool ScreenshotCapture::SaveToPNG(const std::string& path) const {
             4, tight.data(), static_cast<int>(tightPitch)) != 0;
     }
 
-    m_device->UnmapBuffer(m_readbackBuffer);
-
     if (!ok) {
         UZ_LOG(Screenshot, Error, "stbi_write_png failed: path='{}'", path);
         return false;

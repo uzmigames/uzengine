@@ -18,6 +18,7 @@
 #include "shader_compiler.h"
 #include "shader_compiler_fxc.h"
 #include "paths.h"
+#include "screenshot_capture.h"
 
 #include <chrono>
 #include <cstdlib>
@@ -89,7 +90,10 @@ static constexpr uint32_t kTexWidth = 256;
 static constexpr uint32_t kTexHeight = 256;
 static constexpr uint32_t kTileSize = 32;
 
-bool RunTexturedQuadDemo(RHIBackend backend, uint32_t frameCount) {
+bool RunTexturedQuadDemo(const TexturedQuadConfig& config) {
+    const RHIBackend backend = config.backend;
+    const uint32_t frameCount = config.frameCount;
+
     // ── Window ───────────────────────────────────────────────────────────
     WindowDesc winDesc{};
     winDesc.title = "UzEngine — Textured Quad Demo";
@@ -367,6 +371,16 @@ bool RunTexturedQuadDemo(RHIBackend backend, uint32_t frameCount) {
         rootConsts.samplerIndex = samplerIdx;
     }
 
+    // ── Screenshot Capture ────────────────────────────────────────────────
+    ScreenshotCapture screenshotCapture;
+    bool screenshotPending = !config.screenshotPath.empty();
+    if (screenshotPending) {
+        if (!screenshotCapture.Init(device, scDesc.width, scDesc.height)) {
+            UZ_LOG(Renderer, Error, "Failed to initialize screenshot capture");
+            screenshotPending = false;
+        }
+    }
+
     // ── Render Loop ──────────────────────────────────────────────────────
     uint32_t frameIndex = 0;
     uint64_t globalFenceValue = 0;
@@ -439,6 +453,13 @@ bool RunTexturedQuadDemo(RHIBackend backend, uint32_t frameCount) {
 
         cmdList->EndRenderPass();
 
+        // ── Screenshot ────────────────────────────────────────────────────
+        bool capturedThisFrame = false;
+        if (screenshotPending && frameIndex == config.screenshotFrame) {
+            screenshotCapture.CaptureBackBuffer(cmdList, swapChain);
+            capturedThisFrame = true;
+        }
+
         // Barrier: RenderTarget -> Present
         RHIBarrierDesc toPresent{};
         toPresent.texture = backBuffer;
@@ -456,6 +477,13 @@ bool RunTexturedQuadDemo(RHIBackend backend, uint32_t frameCount) {
         fenceValues[allocFrame] = globalFenceValue;
         frameFences[allocFrame]->Signal(globalFenceValue);
 
+        // ── Save screenshot after GPU completes ───────────────────────────
+        if (capturedThisFrame) {
+            frameFences[allocFrame]->WaitCPU(globalFenceValue);
+            screenshotCapture.SaveToPNG(config.screenshotPath);
+            screenshotPending = false;
+        }
+
         frameIndex++;
     }
 
@@ -470,6 +498,7 @@ bool RunTexturedQuadDemo(RHIBackend backend, uint32_t frameCount) {
            "{:.2f}ms/frame ({:.0f} FPS)",
            frameIndex, totalMs, avgMs, avgMs > 0 ? 1000.0f / avgMs : 0.0f);
 
+    screenshotCapture.Shutdown();
     shaderPipeline.Shutdown();
     device->DestroySampler(samplerHandle);
     device->DestroyTexture(texHandle);

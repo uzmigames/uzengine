@@ -17,6 +17,7 @@
 #include "shader_compiler.h"
 #include "shader_compiler_fxc.h"
 #include "paths.h"
+#include "screenshot_capture.h"
 
 #include <chrono>
 #include <cstdlib>
@@ -46,7 +47,10 @@ static void GetTriangleVertices(SimpleVertex outVerts[3]) {
 /// Number of frames in flight for triple-buffered frame pacing.
 static constexpr uint32_t kFramesInFlight = 3;
 
-bool RunTriangleDemo(RHIBackend backend, uint32_t frameCount) {
+bool RunTriangleDemo(const TriangleDemoConfig& config) {
+    const RHIBackend backend = config.backend;
+    const uint32_t frameCount = config.frameCount;
+
     // ── Window ───────────────────────────────────────────────────────────
     WindowDesc winDesc{};
     winDesc.title = "UzEngine — Triangle Demo";
@@ -324,6 +328,16 @@ bool RunTriangleDemo(RHIBackend backend, uint32_t frameCount) {
         UZ_LOG(Renderer, Info, "Vertex buffer SRV index: {}", vbSrvIndex);
     }
 
+    // ── Screenshot Capture ────────────────────────────────────────────────
+    ScreenshotCapture screenshotCapture;
+    bool screenshotPending = !config.screenshotPath.empty();
+    if (screenshotPending) {
+        if (!screenshotCapture.Init(device, scDesc.width, scDesc.height)) {
+            UZ_LOG(Renderer, Error, "Failed to initialize screenshot capture");
+            screenshotPending = false;
+        }
+    }
+
     // ── Render Loop ──────────────────────────────────────────────────────
     uint32_t frameIndex = 0;
     uint64_t globalFenceValue = 0;
@@ -397,6 +411,13 @@ bool RunTriangleDemo(RHIBackend backend, uint32_t frameCount) {
 
         cmdList->EndRenderPass();
 
+        // ── Screenshot ────────────────────────────────────────────────────
+        bool capturedThisFrame = false;
+        if (screenshotPending && frameIndex == config.screenshotFrame) {
+            screenshotCapture.CaptureBackBuffer(cmdList, swapChain);
+            capturedThisFrame = true;
+        }
+
         // Barrier: RenderTarget -> Present
         RHIBarrierDesc toPresent{};
         toPresent.texture = backBuffer;
@@ -414,6 +435,13 @@ bool RunTriangleDemo(RHIBackend backend, uint32_t frameCount) {
         fenceValues[allocFrame] = globalFenceValue;
         frameFences[allocFrame]->Signal(globalFenceValue);
 
+        // ── Save screenshot after GPU completes ───────────────────────────
+        if (capturedThisFrame) {
+            frameFences[allocFrame]->WaitCPU(globalFenceValue);
+            screenshotCapture.SaveToPNG(config.screenshotPath);
+            screenshotPending = false;
+        }
+
         frameIndex++;
     }
 
@@ -430,6 +458,7 @@ bool RunTriangleDemo(RHIBackend backend, uint32_t frameCount) {
            "Triangle demo finished: {} frames, {:.1f}ms total, {:.2f}ms/frame ({:.0f} FPS)",
            frameIndex, totalMs, avgMs, avgMs > 0 ? 1000.0f / avgMs : 0.0f);
 
+    screenshotCapture.Shutdown();
     shaderPipeline.Shutdown();
     device->DestroyBuffer(vbHandle);
     device->DestroyPipeline(pipeline);

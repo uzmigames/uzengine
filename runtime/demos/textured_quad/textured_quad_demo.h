@@ -22,8 +22,17 @@
 #include "rhi_backend.h"
 
 #include <cstdint>
+#include <string>
 
 namespace uz {
+
+/// Configuration for running the textured quad demo.
+struct TexturedQuadConfig {
+    uint32_t frameCount = 0;            ///< Number of frames to render (0 = infinite)
+    std::string screenshotPath;         ///< If non-empty, save screenshot to this path
+    uint32_t screenshotFrame = 5;       ///< Frame number to capture (default: 5)
+    RHIBackend backend = RHIBackend::DX12; ///< RHI backend to use
+};
 
 /// Runs the backend-agnostic textured quad render loop.
 ///
@@ -33,9 +42,7 @@ namespace uz {
 /// path based on GPU capabilities reported by `IRHIDevice::IsBindless()`.
 ///
 /// # Arguments
-/// * `backend` - Which RHI backend to initialize (DX12, DX11, etc.).
-/// * `frameCount` - Number of frames to render. Pass `0` to run until
-///   the user closes the window.
+/// * `config` — Demo configuration (frame count, screenshot settings, backend).
 ///
 /// # Returns
 /// `true` if all frames rendered without errors.
@@ -49,9 +56,11 @@ namespace uz {
 /// # Example
 /// ```cpp
 /// uz::LogInit();
-/// bool ok = uz::RunTexturedQuadDemo(uz::RHIBackend::DX12, 300);
+/// uz::TexturedQuadConfig cfg;
+/// cfg.backend = uz::RHIBackend::DX12;
+/// bool ok = uz::RunTexturedQuadDemo(cfg);
 /// uz::LogShutdown();
 /// ```
-bool RunTexturedQuadDemo(RHIBackend backend = RHIBackend::DX12, uint32_t frameCount = 0);
+bool RunTexturedQuadDemo(const TexturedQuadConfig& config = {});
 
 } // namespace uz

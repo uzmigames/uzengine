@@ -263,11 +263,20 @@ ID3D11Buffer* DX11CommandList::GetOrCreateScratchCB(uint32_t slot) {
 }
 
 void DX11CommandList::SetDescriptorTable(uint32_t rootParamIndex, uint32_t descriptorIndex) {
-    // DX11 has no descriptor tables. SM5 slot-based binding is done directly.
-    (void)rootParamIndex;
-    (void)descriptorIndex;
-    UZ_LOG(RHI, Trace, "SetDescriptorTable: no-op on DX11 (rootParam={}, index={})",
-           rootParamIndex, descriptorIndex);
+    // DX11 SM5: translate descriptor index into slot-based PSSetShaderResources/PSSetSamplers.
+    // Bind the SRV to PS t0 and auto-bind the first sampler to s0.
+    ID3D11ShaderResourceView* srv = m_device->FindTextureSRVByIndex(descriptorIndex);
+    if (srv) {
+        m_ctx->PSSetShaderResources(0, 1, &srv);
+        // Auto-bind first sampler to s0 for SM5 texture sampling
+        ID3D11SamplerState* sampler = m_device->FindSamplerByIndex(0);
+        if (sampler) {
+            m_ctx->PSSetSamplers(0, 1, &sampler);
+        }
+    } else {
+        UZ_LOG(RHI, Warning, "SetDescriptorTable: no SRV found for index {} (rootParam={})",
+               descriptorIndex, rootParamIndex);
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

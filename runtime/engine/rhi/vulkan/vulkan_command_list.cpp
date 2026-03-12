@@ -234,7 +234,9 @@ void VulkanCommandList::End() {
 
     // Collect Tracy GPU timestamps before ending the command buffer.
     // TracyVkCollect records query pool reset commands into this command buffer.
-    TracyVkCollect(m_device->GetTracyGpuContext(), m_commandBuffers[m_frameIndex]);
+    if (m_device->GetTracyGpuContext()) {
+        TracyVkCollect(m_device->GetTracyGpuContext(), m_commandBuffers[m_frameIndex]);
+    }
 
     VkResult result = vkEndCommandBuffer(m_commandBuffers[m_frameIndex]);
     if (result != VK_SUCCESS) {

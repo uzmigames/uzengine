@@ -24,6 +24,11 @@ pub fn build(b: *std.Build) void {
         .files = &.{"dx12_agility.cpp"},
         .flags = cpp_flags,
     });
+    mod.addCSourceFiles(.{
+        .root = b.path("../../editor/screenshot"),
+        .files = &.{"screenshot_capture.cpp"},
+        .flags = cpp_flags,
+    });
 
     // Engine include paths
     const engine_dirs = [_][]const u8{
@@ -45,6 +50,7 @@ pub fn build(b: *std.Build) void {
         "../../engine/rhi/dx12",
         "../../engine/rhi/dx11",
         "../../engine/rhi/vulkan",
+        "../../editor/screenshot",
     };
     for (engine_dirs) |dir| mod.addIncludePath(b.path(dir));
 
