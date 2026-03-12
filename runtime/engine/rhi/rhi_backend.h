@@ -16,6 +16,7 @@ namespace uz {
 /// Available RHI backends (compile-time selection only via `UZ_BACKEND_*` defines).
 enum class RHIBackend : uint8_t {
     DX12,    ///< DirectX 12 backend (Windows only, SM6.6 bindless).
+    DX11,    ///< DirectX 11 backend (Windows only, SM5 slot-based binding).
     Vulkan,  ///< Vulkan backend (cross-platform, Linux/Windows).
     Metal,   ///< Metal backend (macOS/iOS only).
     Null,    ///< Headless backend for testing (no GPU, all operations are no-ops).

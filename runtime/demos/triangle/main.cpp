@@ -1,12 +1,50 @@
-/// UzEngine DX12 Triangle Demo — entry point.
+/// UzEngine Triangle Demo — Backend-Agnostic Entry Point
+///
+/// Standalone executable to validate any RHI backend.
+/// Opens a window and renders a colored RGB triangle.
+/// Supports --rhi flag to select backend (dx12, dx11). Defaults to DX12.
 
 #include "triangle_demo.h"
+#include "rhi_backend.h"
 #include "log.h"
 
-int main() {
+#include <cstring>
+
+namespace {
+
+/// Parses the --rhi argument from the command line to select an RHI backend.
+///
+/// Scans `argv` for a `--rhi <value>` pair. Recognized values are:
+/// `dx12`, `dx11`, `vulkan`, `metal`, `null`. Comparison is case-sensitive.
+///
+/// # Arguments
+/// * `argc` - Argument count from main().
+/// * `argv` - Argument vector from main().
+///
+/// # Returns
+/// The selected backend, or `RHIBackend::DX12` if `--rhi` is absent or
+/// the value is unrecognized.
+uz::RHIBackend ParseBackend(int argc, char* argv[]) {
+    for (int i = 1; i < argc - 1; ++i) {
+        if (std::strcmp(argv[i], "--rhi") == 0) {
+            const char* val = argv[i + 1];
+            if (std::strcmp(val, "dx11")   == 0) return uz::RHIBackend::DX11;
+            if (std::strcmp(val, "dx12")   == 0) return uz::RHIBackend::DX12;
+            if (std::strcmp(val, "vulkan") == 0) return uz::RHIBackend::Vulkan;
+            if (std::strcmp(val, "metal")  == 0) return uz::RHIBackend::Metal;
+            if (std::strcmp(val, "null")   == 0) return uz::RHIBackend::Null;
+        }
+    }
+    return uz::RHIBackend::DX12;
+}
+
+} // anonymous namespace
+
+int main(int argc, char* argv[]) {
     uz::LogInit();
 
-    bool success = uz::RunTriangleDemo(0);
+    uz::RHIBackend backend = ParseBackend(argc, argv);
+    bool success = uz::RunTriangleDemo(backend, 0);
 
     uz::LogShutdown();
     return success ? 0 : 1;

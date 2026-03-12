@@ -1,16 +1,18 @@
-/// Mesh Test Demo Implementation
+/// Mesh Test Demo Implementation — Backend-Agnostic
 ///
 /// Renders a MeshBuilder::CreateCube() with the standard mesh shaders.
 /// Uses Vertex format (48 bytes: position, normal, texcoord, tangent) and
 /// PerObjectCB for model/normal matrix transforms.
+///
+/// All GPU interaction flows through abstract RHI interfaces — no DX12,
+/// Vulkan, or Metal types appear in this file.
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include "mesh_test_demo.h"
-#include "dx12_device.h"
-#include "dx12_swapchain.h"
-#include "dx12_command_list.h"
-#include "dx12_fence.h"
+#include "rhi.h"
+#include "rhi_backend.h"
+#include "rhi_types.h"
 #include "platform_window.h"
 #include "input.h"
 #include "log.h"
@@ -27,13 +29,15 @@
 #include "paths.h"
 #include "editor_grid.h"
 #include "screenshot_capture.h"
+#include "dx12_device.h"
+#include "dx12_command_list.h"
+#include "dx12_swapchain.h"
 #include "stats_overlay.h"
 
 #include <DirectXMath.h>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
-#include <d3d12.h>
 #include <thread>
 
 using namespace DirectX;
@@ -60,7 +64,7 @@ static Mat4 ComputeNormalMatrix(const Mat4& model) {
     XMVECTOR det;
     XMMATRIX inv = XMMatrixInverse(&det, m);
 
-    // If singular, return identity
+    // Singular matrix — normal transform undefined, return identity
     if (XMVectorGetX(det) == 0.f) {
         return Mat4::Identity();
     }
@@ -120,7 +124,7 @@ bool RunMeshTestDemo(const MeshTestConfig& config) {
 
     // ── Device ───────────────────────────────────────────────────────────
     RHIDeviceDesc deviceDesc{};
-    deviceDesc.backend = RHIBackend::DX12;
+    deviceDesc.backend = config.backend;
 #ifdef NDEBUG
     deviceDesc.enableValidation = false;
 #else
@@ -131,9 +135,10 @@ bool RunMeshTestDemo(const MeshTestConfig& config) {
         deviceDesc.forceShaderModel = ShaderModel::SM5_0;
     }
 
-    auto* device = static_cast<DX12Device*>(CreateRHIDevice(deviceDesc));
+    IRHIDevice* device = CreateRHIDevice(deviceDesc);
     if (!device) {
-        UZ_LOG(Renderer, Error, "Failed to create RHI device");
+        UZ_LOG(Renderer, Error, "Failed to create RHI device (backend={})",
+               static_cast<int>(config.backend));
         return false;
     }
 
@@ -146,7 +151,7 @@ bool RunMeshTestDemo(const MeshTestConfig& config) {
     scDesc.format = RHIFormat::RGBA8Unorm;
     scDesc.vsync = false;
 
-    auto* swapChain = static_cast<DX12SwapChain*>(device->CreateSwapChain(scDesc));
+    IRHISwapChain* swapChain = device->CreateSwapChain(scDesc);
     if (!swapChain) {
         UZ_LOG(Renderer, Error, "Failed to create swapchain");
         DestroyRHIDevice(device);
@@ -154,7 +159,7 @@ bool RunMeshTestDemo(const MeshTestConfig& config) {
     }
 
     // ── Command List ─────────────────────────────────────────────────────
-    auto* cmdList = static_cast<DX12CommandList*>(device->CreateCommandList(RHIQueueType::Graphics));
+    IRHICommandList* cmdList = device->CreateCommandList(RHIQueueType::Graphics);
     if (!cmdList) {
         UZ_LOG(Renderer, Error, "Failed to create command list");
         device->DestroySwapChain(swapChain);
@@ -163,10 +168,18 @@ bool RunMeshTestDemo(const MeshTestConfig& config) {
     }
 
     // ── Fences ───────────────────────────────────────────────────────────
-    DX12Fence* frameFences[kFramesInFlight] = {};
+    IRHIFence* frameFences[kFramesInFlight] = {};
     uint64_t fenceValues[kFramesInFlight] = {};
     for (uint32_t i = 0; i < kFramesInFlight; ++i) {
-        frameFences[i] = static_cast<DX12Fence*>(device->CreateFence());
+        frameFences[i] = device->CreateFence();
+        if (!frameFences[i]) {
+            UZ_LOG(Renderer, Error, "Failed to create frame fence {}", i);
+            for (uint32_t j = 0; j < i; ++j) device->DestroyFence(frameFences[j]);
+            device->DestroyCommandList(cmdList);
+            device->DestroySwapChain(swapChain);
+            DestroyRHIDevice(device);
+            return false;
+        }
     }
 
     // ── Shader Pipeline ──────────────────────────────────────────────────
@@ -259,7 +272,7 @@ bool RunMeshTestDemo(const MeshTestConfig& config) {
         return false;
     }
 
-    // ── Load Mesh from .uzmesh asset ───────────────────────────────────
+    // ── Load Mesh from .uzmesh asset ──────────────────────────────────────
     std::string meshPath = (uz::GetExeDir() / "assets/cube.uzmesh").string();
     Mesh cubeMesh = LoadMesh(meshPath);
     if (!cubeMesh.IsValid()) {
@@ -269,7 +282,7 @@ bool RunMeshTestDemo(const MeshTestConfig& config) {
     UZ_LOG(Renderer, Info, "Loaded cube.uzmesh: {} vertices, {} indices, stride={}",
            cubeMesh.GetVertexCount(), cubeMesh.GetIndexCount(), cubeMesh.header.vertexStride);
 
-    // ── Upload Vertex Buffer ─────────────────────────────────────────────
+    // ── Upload Vertex Buffer ──────────────────────────────────────────────
     RHIBufferDesc vbDesc{};
     vbDesc.sizeBytes = cubeMesh.GetVertexDataSize();
     vbDesc.stride = cubeMesh.header.vertexStride;
@@ -286,7 +299,7 @@ bool RunMeshTestDemo(const MeshTestConfig& config) {
         vbSrvIndex = device->GetBufferSRVIndex(vbHandle);
     }
 
-    // ── Upload Index Buffer ──────────────────────────────────────────────
+    // ── Upload Index Buffer ───────────────────────────────────────────────
     RHIBufferDesc ibDesc{};
     ibDesc.sizeBytes = cubeMesh.GetIndexDataSize();
     ibDesc.stride = (cubeMesh.header.indexFormat == MeshIndexFormat::UInt32) ? 4u : 2u;
@@ -298,7 +311,7 @@ bool RunMeshTestDemo(const MeshTestConfig& config) {
     void* ibMapped = device->MapBuffer(ibHandle);
     std::memcpy(ibMapped, cubeMesh.indexData.data(), cubeMesh.GetIndexDataSize());
 
-    // ── Depth Buffer ─────────────────────────────────────────────────────
+    // ── Depth Buffer ──────────────────────────────────────────────────────
     RHITextureDesc depthDesc{};
     depthDesc.width = scDesc.width;
     depthDesc.height = scDesc.height;
@@ -308,18 +321,18 @@ bool RunMeshTestDemo(const MeshTestConfig& config) {
 
     RHITextureHandle depthBuffer = device->CreateTexture(depthDesc);
 
-    // ── CB Ring Allocator ────────────────────────────────────────────────
+    // ── CB Ring Allocator ─────────────────────────────────────────────────
     CBRingAllocator cbRing;
     cbRing.Init(device, kFramesInFlight, 64 * 1024);
 
-    // ── Editor Grid ──────────────────────────────────────────────────────
+    // ── Editor Grid ───────────────────────────────────────────────────────
     EditorGrid editorGrid;
     if (!editorGrid.Init(device, shaderPipeline, RHIFormat::RGBA8Unorm, RHIFormat::D32Float)) {
         UZ_LOG(Renderer, Error, "Failed to initialize editor grid");
         return false;
     }
 
-    // ── Stats Overlay ────────────────────────────────────────────────────
+    // ── Stats Overlay ─────────────────────────────────────────────────────
     StatsOverlay statsOverlay;
     {
         UploadContext upload(device);
@@ -335,17 +348,22 @@ bool RunMeshTestDemo(const MeshTestConfig& config) {
         upload.ReleaseStaging();
     }
 
-    // ── Screenshot Capture ───────────────────────────────────────────────
+    // ── Screenshot Capture ────────────────────────────────────────────────
     ScreenshotCapture screenshotCapture;
     bool screenshotPending = !config.screenshotPath.empty();
     if (screenshotPending) {
-        if (!screenshotCapture.Init(device, scDesc.width, scDesc.height)) {
+        // Screenshot capture is DX12-only for now (uses DX12 readback APIs)
+        auto* dx12Dev = dynamic_cast<DX12Device*>(device);
+        if (!dx12Dev) {
+            UZ_LOG(Renderer, Warning, "Screenshot capture only supported on DX12 backend");
+            screenshotPending = false;
+        } else if (!screenshotCapture.Init(dx12Dev, scDesc.width, scDesc.height)) {
             UZ_LOG(Renderer, Error, "Failed to initialize screenshot capture");
             return false;
         }
     }
 
-    // ── Camera ───────────────────────────────────────────────────────────
+    // ── Camera ────────────────────────────────────────────────────────────
     Camera camera;
     constexpr float kHFovDeg = 90.f;
     constexpr float kAspect = 16.f / 9.f;
@@ -353,7 +371,7 @@ bool RunMeshTestDemo(const MeshTestConfig& config) {
     camera.SetPerspective(vFovRad,
         static_cast<float>(winDesc.width) / static_cast<float>(winDesc.height),
         0.1f, 1000.f);
-    // Same camera as camera_test for direct comparison
+    // Same initial position as camera_test for direct comparison
     camera.SetPosition({0.f, 5.f, 2.5f});
     {
         constexpr float kDegToRad = 3.14159265f / 180.f;
@@ -373,7 +391,7 @@ bool RunMeshTestDemo(const MeshTestConfig& config) {
     cameraCtrl.InitFromCamera(camera);
     cameraCtrl.SetMoveSpeed(10.f);
 
-    // ── Render Loop ──────────────────────────────────────────────────────
+    // ── Render Loop ───────────────────────────────────────────────────────
     uint32_t frameIndex = 0;
     uint64_t globalFenceValue = 0;
     auto prevTime = std::chrono::high_resolution_clock::now();
@@ -390,16 +408,16 @@ bool RunMeshTestDemo(const MeshTestConfig& config) {
         float totalTime = std::chrono::duration<float>(now - startTime).count();
         prevTime = now;
 
-        // ── Stats ────────────────────────────────────────────────────────
+        // ── Stats ─────────────────────────────────────────────────────────
         statsOverlay.BeginFrame(dt);
 
-        // ── Input ────────────────────────────────────────────────────────
+        // ── Input ─────────────────────────────────────────────────────────
         input.BeginFrame();
 
-        // ── Camera Update ────────────────────────────────────────────────
+        // ── Camera Update ─────────────────────────────────────────────────
         cameraCtrl.Update(camera, input, dt);
 
-        // Handle resize
+        // ── Resize ───────────────────────────────────────────────────────
         if (window.WasResized()) {
             device->WaitIdle();
             swapChain->Resize(
@@ -416,13 +434,13 @@ bool RunMeshTestDemo(const MeshTestConfig& config) {
                 static_cast<float>(window.GetHeight()));
         }
 
-        // Wait for frame N-2
+        // Wait for frame N-2 before reusing its allocator slot
         uint32_t allocFrame = frameIndex % kFramesInFlight;
         if (fenceValues[allocFrame] > 0) {
             frameFences[allocFrame]->WaitCPU(fenceValues[allocFrame]);
         }
 
-        // ── Upload PerFrameCB ────────────────────────────────────────────
+        // ── Upload PerFrameCB ─────────────────────────────────────────────
         cbRing.BeginFrame(frameIndex);
 
         PerFrameCB perFrame{};
@@ -434,7 +452,7 @@ bool RunMeshTestDemo(const MeshTestConfig& config) {
         CBAllocation perFrameAlloc = cbRing.Allocate(sizeof(PerFrameCB));
         std::memcpy(perFrameAlloc.cpuPtr, &perFrame, sizeof(PerFrameCB));
 
-        // ── Upload PerObjectCB ───────────────────────────────────────────
+        // ── Upload PerObjectCB ────────────────────────────────────────────
         PerObjectCB perObject{};
         perObject.model = BuildModelMatrix({0.f, 0.f, 0.f}, 1.f);
         perObject.normalMatrix = ComputeNormalMatrix(perObject.model);
@@ -443,39 +461,46 @@ bool RunMeshTestDemo(const MeshTestConfig& config) {
         CBAllocation perObjectAlloc = cbRing.Allocate(sizeof(PerObjectCB));
         std::memcpy(perObjectAlloc.cpuPtr, &perObject, sizeof(PerObjectCB));
 
-        // ── Record ───────────────────────────────────────────────────────
+        // ── Record ────────────────────────────────────────────────────────
         cmdList->Begin();
 
-        ID3D12Resource* backBuffer = swapChain->GetCurrentBackBufferResource();
-        D3D12_CPU_DESCRIPTOR_HANDLE rtv = swapChain->GetCurrentRTV();
+        RHITextureHandle backBuffer = swapChain->GetCurrentBackBuffer();
 
-        cmdList->TransitionBarrier(backBuffer,
-            D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
+        // Barrier: Present -> RenderTarget
+        RHIBarrierDesc toRenderTarget{};
+        toRenderTarget.texture = backBuffer;
+        toRenderTarget.stateBefore = RHIResourceState::Present;
+        toRenderTarget.stateAfter = RHIResourceState::RenderTarget;
+        cmdList->ResourceBarrier(&toRenderTarget, 1);
 
+        // Clear render target and depth independently so systems that only
+        // need one clear operation can call the minimal abstract path.
         float clearColor[4] = {0.05f, 0.05f, 0.08f, 1.0f};
-        cmdList->ClearRTV(rtv, clearColor);
+        cmdList->ClearRenderTarget(backBuffer, clearColor);
         cmdList->ClearDepthStencil(depthBuffer, 1.0f, 0);
 
-        auto* depthTex = device->GetTexturePool().Get(depthBuffer.index, depthBuffer.generation);
-        D3D12_CPU_DESCRIPTOR_HANDLE dsv = device->GetDescriptorAllocator(
-            D3D12_DESCRIPTOR_HEAP_TYPE_DSV).CpuHandle(depthTex->dsvIndex);
-        cmdList->GetNative()->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
+        // Begin render pass with color + depth attachments
+        RHIRenderPassDesc passDesc{};
+        passDesc.colorAttachmentCount = 1;
+        passDesc.colorAttachments[0].texture = backBuffer;
+        passDesc.colorAttachments[0].clear = false; // already cleared above
+        passDesc.hasDepth = true;
+        passDesc.depthAttachment.texture = depthBuffer;
+        passDesc.depthAttachment.clearDepth = 1.0f;
+        passDesc.depthAttachment.clear = false; // already cleared above
+        cmdList->BeginRenderPass(passDesc);
 
-        // ── Draw Mesh ────────────────────────────────────────────────────
+        // ── Draw Mesh ─────────────────────────────────────────────────────
         cmdList->SetPipeline(pipeline);
-        cmdList->GetNative()->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-        // Bind vertex data
+        // Bind vertex data — bindless uses SRV index, SM5 uses vertex buffer slot
         if (bindless) {
             cmdList->SetDescriptorIndex(0, vbSrvIndex);
         } else {
             cmdList->SetVertexBuffer(0, vbHandle, 0);
         }
 
-        // Root CBV: per-frame CB at b1
         cmdList->SetRootCBV(1, perFrameAlloc.gpuAddr);
-
-        // Root CBV: per-object CB at b2
         cmdList->SetRootCBV(2, perObjectAlloc.gpuAddr);
 
         RHIViewport vp{};
@@ -485,48 +510,53 @@ bool RunMeshTestDemo(const MeshTestConfig& config) {
         cmdList->SetViewport(vp);
 
         RHIScissorRect sc{};
-        sc.right = swapChain->GetWidth();
-        sc.bottom = swapChain->GetHeight();
+        sc.right = static_cast<int32_t>(swapChain->GetWidth());
+        sc.bottom = static_cast<int32_t>(swapChain->GetHeight());
         cmdList->SetScissor(sc);
 
-        // Bind index buffer and draw indexed
         RHIIndexFormat idxFmt = (cubeMesh.header.indexFormat == MeshIndexFormat::UInt32)
             ? RHIIndexFormat::Uint32 : RHIIndexFormat::Uint16;
         cmdList->SetIndexBuffer(ibHandle, idxFmt, 0);
         cmdList->DrawIndexed(cubeMesh.GetIndexCount());
 
-        // ── Editor Grid ──────────────────────────────────────────────────
+        // ── Editor Grid ───────────────────────────────────────────────────
         editorGrid.Draw(cmdList, cbRing, camera);
 
-        // ── Stats Overlay ────────────────────────────────────────────────
-        statsOverlay.SetDrawCalls(2); // Mesh + grid
+        // ── Stats Overlay ─────────────────────────────────────────────────
+        statsOverlay.SetDrawCalls(2); // mesh + grid
         statsOverlay.SetVertexCount(cubeMesh.GetVertexCount() + 3);
         statsOverlay.SetTriangleCount(cubeMesh.GetIndexCount() / 3 + 1);
-
-        cmdList->GetNative()->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
         statsOverlay.Render(cmdList, cbRing, frameIndex);
 
-        // ── Screenshot ───────────────────────────────────────────────────
+        cmdList->EndRenderPass();
+
+        // ── Screenshot ────────────────────────────────────────────────────
         bool capturedThisFrame = false;
         if (screenshotPending && frameIndex == config.screenshotFrame) {
-            screenshotCapture.CaptureBackBuffer(cmdList, swapChain);
+            screenshotCapture.CaptureBackBuffer(
+                dynamic_cast<DX12CommandList*>(cmdList),
+                dynamic_cast<DX12SwapChain*>(swapChain));
             capturedThisFrame = true;
         }
 
-        cmdList->TransitionBarrier(backBuffer,
-            D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
+        // Barrier: RenderTarget -> Present
+        RHIBarrierDesc toPresent{};
+        toPresent.texture = backBuffer;
+        toPresent.stateBefore = RHIResourceState::RenderTarget;
+        toPresent.stateAfter = RHIResourceState::Present;
+        cmdList->ResourceBarrier(&toPresent, 1);
 
         cmdList->End();
         cmdList->Execute();
 
         swapChain->Present(false);
 
+        // Signal per-frame fence via abstract interface (no raw queue access)
         globalFenceValue++;
         fenceValues[allocFrame] = globalFenceValue;
-        device->GetDirectQueue()->Signal(
-            frameFences[allocFrame]->GetNativeFence(), globalFenceValue);
+        frameFences[allocFrame]->Signal(globalFenceValue);
 
-        // ── Save screenshot after GPU completes ──────────────────────────
+        // ── Save screenshot after GPU completes ───────────────────────────
         if (capturedThisFrame) {
             frameFences[allocFrame]->WaitCPU(globalFenceValue);
             screenshotCapture.SaveToPNG(config.screenshotPath);
@@ -535,7 +565,7 @@ bool RunMeshTestDemo(const MeshTestConfig& config) {
 
         frameIndex++;
 
-        // ── FPS Cap ──────────────────────────────────────────────────────
+        // ── FPS Cap ───────────────────────────────────────────────────────
         auto frameEnd = std::chrono::high_resolution_clock::now();
         float elapsed = std::chrono::duration<float>(frameEnd - now).count();
         if (elapsed < kMinFrameTime) {
@@ -545,7 +575,7 @@ bool RunMeshTestDemo(const MeshTestConfig& config) {
         }
     }
 
-    // ── Cleanup ──────────────────────────────────────────────────────────
+    // ── Cleanup ───────────────────────────────────────────────────────────
     device->WaitIdle();
 
     auto endTime = std::chrono::high_resolution_clock::now();

@@ -135,10 +135,8 @@ bool DX12SwapChain::Init(DX12Device* device, const RHISwapChainDesc& desc) {
 
 void DX12SwapChain::AcquireBackBuffers() {
     ID3D12Device* device = m_device->GetDevice();
-    ID3D12DescriptorHeap* rtvHeap = m_device->GetDescriptorHeap(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+    auto& rtvAlloc = m_device->GetDescriptorAllocator(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
     m_rtvDescriptorSize = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
-
-    D3D12_CPU_DESCRIPTOR_HANDLE rtvStart = dx12::GetCPUStart(rtvHeap);
 
     for (uint32_t i = 0; i < m_bufferCount; ++i) {
         HRESULT hr = m_swapChain->GetBuffer(i, IID_PPV_ARGS(&m_backBuffers[i]));
@@ -147,17 +145,54 @@ void DX12SwapChain::AcquireBackBuffers() {
             continue;
         }
 
-        // Create RTV for this back buffer
-        m_rtvHandles[i].ptr = rtvStart.ptr + static_cast<SIZE_T>(i) * m_rtvDescriptorSize;
+        // Allocate RTV descriptor via the device's allocator
+        uint32_t rtvIdx = rtvAlloc.Allocate();
+        m_rtvHandles[i] = rtvAlloc.CpuHandle(rtvIdx);
         device->CreateRenderTargetView(m_backBuffers[i].Get(), nullptr, m_rtvHandles[i]);
 
-        // Temporary handles until a texture pool is available.
-        m_backBufferHandles[i] = {i, 1};
+        // Register in the device's texture pool so abstract RHI handles work
+        uint32_t generation = 0;
+        uint32_t poolIdx = m_device->GetTexturePool().Allocate(generation);
+        auto* tex = m_device->GetTexturePool().Get(poolIdx, generation);
+        if (tex) {
+            tex->allocation = nullptr;  // swapchain-owned, not D3D12MA
+            tex->resource = m_backBuffers[i].Get();
+            tex->srvIndex = UINT32_MAX;
+            tex->uavIndex = UINT32_MAX;
+            tex->rtvIndex = rtvIdx;
+            tex->dsvIndex = UINT32_MAX;
+            tex->generation = generation;
+            tex->desc.width = m_width;
+            tex->desc.height = m_height;
+            tex->desc.format = m_format;
+        }
+        m_backBufferHandles[i] = {poolIdx, generation};
     }
 }
 
 void DX12SwapChain::ReleaseBackBuffers() {
+    if (!m_device) {
+        for (uint32_t i = 0; i < kMaxBackBuffers; ++i) {
+            m_backBuffers[i].Reset();
+            m_backBufferHandles[i] = RHITextureHandle::Invalid();
+        }
+        return;
+    }
+    auto& rtvAlloc = m_device->GetDescriptorAllocator(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+
     for (uint32_t i = 0; i < kMaxBackBuffers; ++i) {
+        // Free texture pool entry (don't destroy the resource — swapchain owns it)
+        if (m_backBufferHandles[i].IsValid()) {
+            auto* tex = m_device->GetTexturePool().Get(
+                m_backBufferHandles[i].index, m_backBufferHandles[i].generation);
+            if (tex) {
+                if (tex->rtvIndex != UINT32_MAX) {
+                    rtvAlloc.Free(tex->rtvIndex);
+                }
+                tex->resource = nullptr;  // don't release — ComPtr handles it
+            }
+            m_device->GetTexturePool().Free(m_backBufferHandles[i].index);
+        }
         m_backBuffers[i].Reset();
         m_backBufferHandles[i] = RHITextureHandle::Invalid();
     }

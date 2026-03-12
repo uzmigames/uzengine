@@ -1,41 +1,57 @@
-/// UzEngine DX12 Textured Quad Demo
+/// UzEngine Textured Quad Demo — Backend-Agnostic
 ///
-/// Renders a textured quad using SM6.6 bindless resource access.
-/// Validates the full texture pipeline: creation, upload, SRV allocation,
-/// sampler creation, and bindless sampling in the pixel shader.
+/// Creates a window, initializes an RHI device (any backend), and renders
+/// a procedural checkerboard quad using triple-buffered frame pacing.
 ///
-/// # What This Validates
+/// Validates the full texture pipeline across all RHI backends:
 /// - Texture creation with `ShaderResource | CopyDst` usage
 /// - Texture upload via `UploadContext::UploadTexture` (staging → default heap)
 /// - SRV descriptor allocation in the global bindless heap
-/// - Sampler creation and bindless sampler heap access
-/// - SM6.6 `ResourceDescriptorHeap[index]` and `SamplerDescriptorHeap[index]`
+/// - Sampler creation and sampler heap access
+/// - SM6.6 bindless path: `ResourceDescriptorHeap[index]` / `SamplerDescriptorHeap[index]`
+/// - SM5 fallback path: Input Assembler vertex binding + descriptor table SRV
 /// - Root constants with 3 values (vertexBufferIndex, textureIndex, samplerIndex)
 ///
 /// # Shader Architecture
-/// The vertex shader fetches from a StructuredBuffer via `ResourceDescriptorHeap`.
-/// The pixel shader samples a texture via `ResourceDescriptorHeap` and
-/// `SamplerDescriptorHeap`, both indexed by root constants pushed from CPU.
+/// The vertex shader fetches vertex data from a StructuredBuffer via
+/// `ResourceDescriptorHeap` (SM6.6) or from the Input Assembler (SM5).
+/// The pixel shader samples via heap indices pushed through root constants.
 
 #pragma once
+
+#include "rhi_backend.h"
 
 #include <cstdint>
 
 namespace uz {
 
-/// Runs the DX12 textured quad render loop.
+/// Runs the backend-agnostic textured quad render loop.
 ///
 /// Creates a 1280x720 window, generates a procedural 256x256 checkerboard
-/// texture, uploads it to the GPU, and renders a full-screen quad using
-/// SM6.6 bindless texture sampling.
+/// texture, uploads it to the GPU, and renders a quad using the selected
+/// backend. Automatically selects SM6.6 bindless or SM5 Input Assembler
+/// path based on GPU capabilities reported by `IRHIDevice::IsBindless()`.
 ///
 /// # Arguments
+/// * `backend` - Which RHI backend to initialize (DX12, DX11, etc.).
 /// * `frameCount` - Number of frames to render. Pass `0` to run until
 ///   the user closes the window.
 ///
 /// # Returns
 /// `true` if all frames rendered without errors.
 /// `false` if any initialization step failed.
-bool RunTexturedQuadDemo(uint32_t frameCount = 0);
+///
+/// # Side Effects
+/// - Opens a visible window titled "UzEngine -- Textured Quad Demo"
+/// - Logs RHI errors on failure
+/// - Logs final FPS statistics on completion
+///
+/// # Example
+/// ```cpp
+/// uz::LogInit();
+/// bool ok = uz::RunTexturedQuadDemo(uz::RHIBackend::DX12, 300);
+/// uz::LogShutdown();
+/// ```
+bool RunTexturedQuadDemo(RHIBackend backend = RHIBackend::DX12, uint32_t frameCount = 0);
 
 } // namespace uz

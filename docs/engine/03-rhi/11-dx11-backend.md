@@ -1,288 +1,551 @@
-# RHI — DX11 Backend & FXC Compiler Integration
+# RHI — DX11 Backend
 
 > **Status**: Planned
-> **Source**: FXC integration plan, `runtime/core/shader/shader_compiler.h`, `runtime/core/shader/shader_pipeline.cpp`
-> **Depends on**: RHI interface (Done), DX12 backend (Done), Shader Pipeline (Done)
-> **References**: UE5 dual-compiler pattern (DXC for SM6+, FXC for SM5)
+> **Source**: `runtime/engine/rhi/dx11/dx11_device.h/.cpp`, `dx11_command_list.h/.cpp`, `dx11_swapchain.h`, `dx11_fence.h`, `dx11_resources.h`
+> **Depends on**: RHI interface (Done), Shader Pipeline (FXC compiler), Config system
+> **References**: UE5 legacy support pattern
 
 ## Purpose
 
-Support legacy GPUs that lack DX12 SM6.0+ capability. This involves two orthogonal changes:
-
-1. **FXC compiler module** — `d3dcompiler_47.dll` as a second shader compiler for SM5.0 targets
-2. **DX11 backend** — `rhi_dx11/` implementing IRHIDevice/IRHICommandList/IRHISwapChain/IRHIFence via D3D11
-
-The FXC compiler also enables the DX12 SM5.0 fallback path — DXC cannot compile SM5.0 (only SM5.1+).
-
-## The Problem
-
-DXC (`dxcompiler.dll`) only supports SM 6.0+. When the engine detects an older GPU and falls back to SM 5.0, shader compilation fails with `"invalid profile vs_5_1"`. We need FXC (`d3dcompiler_47.dll`) as a second compiler for SM 5.0 targets — both for DX12 SM5 fallback and the future DX11 backend.
-
-This follows UE5's dual-compiler pattern: **SM >= 6.0 → DXC, SM 5.0 → FXC**.
-
-## Dual Compiler Architecture
+The DX11 backend provides legacy GPU support for hardware that lacks Direct3D 12. It implements `IRHIDevice`, `IRHICommandList`, `IRHISwapChain`, and `IRHIFence` using the Direct3D 11.1 API with Shader Model 5.0. This is the **lowest-priority fallback path** for minimum hardware requirements.
 
 ```
-HLSL Source (.hlsl)
-       │
-       ├─── DXC (SM6.0+) ──→ DXIL ──→ DX12 SM6.6 (bindless)
-       │                             ──→ DX12 SM6.0 (wave ops)
-       │
-       ├─── FXC (SM5.0)  ──→ DXBC ──→ DX12 SM5.0 (legacy DX12)
-       │                             ──→ DX11 SM5.0 (legacy backend)
-       │
-       ├─── DXC (-spirv)  ──→ SPIR-V ──→ Vulkan
-       └─── DXC (-spirv)  ──→ SPIR-V ──→ SPIRV-Cross ──→ MSL ──→ Metal
+┌─────────────────────────────────────┐
+│    RHI Interface Layer              │
+│    (same for all backends)          │
+├─────────────────────────────────────┤
+│ DX12 (SM6.6) │ DX12 (SM5.0) │ DX11 │
+└─────────────────────────────────────┘
+        │           │          │
+        ▼           ▼          ▼
+    D3D12 Device  D3D12 Device  D3D11 Device
+    (Feature 12) (Feature 12) (Feature 11.1)
 ```
 
-### Compiler Routing
+## Architectural Differences: DX12 vs DX11
+
+| Aspect | DX12 | DX11 |
+|--------|------|------|
+| **Memory management** | Explicit (D3D12MA allocator) | Implicit (driver manages) |
+| **Descriptor heaps** | Explicit (CBV_SRV_UAV, RTV, DSV, Sampler) | None (views created per-resource) |
+| **Root signature** | Explicit layout | None (register-based binding) |
+| **Command model** | Explicit lists + queues | Immediate context + deferred contexts |
+| **State management** | Monolithic PSOs | Individual state objects |
+| **Barriers** | Explicit (`ResourceBarrier`) | Implicit (driver manages) |
+| **Bindless shaders** | Native (ResourceDescriptorHeap[index]) | No (slot-based binding) |
+| **Shader model** | SM6.6+ (DX12 primary), SM5.1+ fallback | SM5.0 only (via FXC) |
+
+**Key insight**: DX11 is significantly simpler but less efficient. The RHI abstraction hides these differences so application code is backend-agnostic.
+
+## Shader Model — SM5.0 Only
+
+DX11 supports only Shader Model 5.0, compiled via **FXC** (`d3dcompiler_47.dll`). DXC cannot target SM5.0, so the shader pipeline routes SM5.0 targets to FXC:
 
 ```cpp
-static bool RequiresDXC(ShaderModelCompile model) {
-    return model >= ShaderModelCompile::SM6_0;
+// In ShaderPipeline::CompileShader()
+static bool RequiresDXC(ShaderModel model) {
+    return model >= ShaderModel::SM6_0;  // SM6.0+ uses DXC
+}
+
+if (RequiresDXC(model)) {
+    return m_compilerDXC->Compile(desc);
+} else {
+    return m_compilerFXC->Compile(desc);  // SM5.0 → FXC → DXBC
 }
 ```
 
-In the shader pipeline:
-- `RequiresDXC(desc.model)` → route to `ShaderCompiler` (DXC)
-- Otherwise → route to `ShaderCompilerFXC` (FXC)
+**No bindless rendering** on DX11. Shaders use traditional slot-based binding:
+- `Texture2D g_textures[16] : register(t0, space0);`
+- `SamplerState g_samplers[8] : register(s0, space0);`
+- `Buffer<float4> g_buffers[16] : register(t16, space0);`
 
-## FXC Module — `ShaderCompilerFXC`
+## Device Creation
 
-### API
+The DX11Device initializes the D3D11.1 stack in this order:
 
-```cpp
-/// Dynamically loads FXC (d3dcompiler_47.dll) and compiles HLSL to DXBC.
-///
-/// Same interface pattern as ShaderCompiler (DXC) for consistency.
-/// Loads d3dcompiler_47.dll via LoadLibraryW + GetProcAddress("D3DCompile").
-///
-/// # Output Format
-/// DXBC bytecode (ID3DBlob) — consumed by DX11 and DX12 SM5.0 paths.
-///
-/// # Thread Safety
-/// Each instance is independent. Not safe for concurrent use within a single instance.
-class ShaderCompilerFXC {
-public:
-    bool Init(const std::string& fxcPath = "d3dcompiler_47.dll");
-    [[nodiscard]] bool IsInitialized() const;
-    [[nodiscard]] ShaderCompileResult Compile(const ShaderCompileDesc& desc);
-    void Shutdown();
-
-private:
-    /// Maps stages to FXC profile strings: vs_5_0, ps_5_0, cs_5_0, etc.
-    static std::string GetTargetProfile(ShaderStageCompile stage, ShaderModelCompile model);
-
-    void* m_fxcModule = nullptr;  // HMODULE for d3dcompiler_47.dll
-    void* m_d3dCompileFn = nullptr;  // D3DCompile function pointer
-};
-```
-
-### Key Differences from DXC
-
-| Aspect | DXC (ShaderCompiler) | FXC (ShaderCompilerFXC) |
-|--------|---------------------|------------------------|
-| DLL | `dxcompiler.dll` | `d3dcompiler_47.dll` |
-| API | COM-based (`IDxcCompiler3`) | C function (`D3DCompile`) |
-| Output | DXIL (`IDxcBlob`) | DXBC (`ID3DBlob`) |
-| SM range | 5.1–6.7 | 4.0–5.0 |
-| Defines | `-D NAME=VALUE` args | `D3D_SHADER_MACRO` array |
-| Include handler | `IDxcIncludeHandler` | `ID3DInclude` |
-
-### FXC Compilation Flow
-
-```
-ShaderCompileDesc (SM5.0)
-    │
-    ├── 1. Build D3D_SHADER_MACRO array from desc.defines
-    ├── 2. Map stage → profile string (e.g., ShaderStageCompile::Vertex → "vs_5_0")
-    ├── 3. Set compile flags:
-    │      D3DCOMPILE_OPTIMIZATION_LEVEL3  (release)
-    │      D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION  (debug)
-    │      D3DCOMPILE_PACK_MATRIX_COLUMN_MAJOR
-    ├── 4. Call D3DCompile(source, ...) → ID3DBlob* code, ID3DBlob* errors
-    ├── 5. Copy ID3DBlob → ShaderCompileResult.bytecode (std::vector<uint8_t>)
-    └── 6. Release ID3DBlobs
-```
-
-## DLL Deployment
-
-### Vendoring
-
-```
-runtime/thirdparty/fxc/bin/x64/d3dcompiler_47.dll
-```
-
-Source: `C:\Program Files (x86)\Windows Kits\10\Redist\D3D\x64\d3dcompiler_47.dll`
-
-### Build System (Zig)
-
-Same pattern as DXC DLLs — `addInstallBinFile` in `runtime/build.zig`:
-
-```zig
-// Deploy FXC DLL to zig-out/bin/
-const fxc_dll = b.path("thirdparty/fxc/bin/x64/d3dcompiler_47.dll");
-b.installBinFile(fxc_dll, "d3dcompiler_47.dll");
-```
-
-At runtime, `ShaderCompilerFXC::Init()` loads from `uz::GetExeDir() / "d3dcompiler_47.dll"`.
-
-## Shader Pipeline Changes
-
-### ApplyBindlessConfig Update
+### 1. Debug Layer (Optional)
 
 ```cpp
-// Before (broken for SM5.0):
-static void ApplyBindlessConfig(ShaderCompileDesc& desc, bool bindless) {
-    if (bindless) {
-        desc.defines.push_back("UZ_BINDLESS=1");
-        desc.model = ShaderModelCompile::SM6_6;
-    } else {
-        desc.model = ShaderModelCompile::SM5_1;  // ← DXC can't compile SM5.0
-    }
-}
-
-// After (correct routing):
-static void ApplyBindlessConfig(ShaderCompileDesc& desc, bool bindless) {
-    if (bindless) {
-        desc.defines.push_back("UZ_BINDLESS=1");
-        desc.model = ShaderModelCompile::SM6_6;
-    } else {
-        desc.model = ShaderModelCompile::SM5_0;  // ← FXC handles this
+bool DX11Device::EnableDebugLayer() {
+    ComPtr<ID3D11Debug> debug;
+    if (SUCCEEDED(D3D11CreateDevice(..., D3D11_CREATE_DEVICE_DEBUG, ...))) {
+        // Debug layer enabled
     }
 }
 ```
 
-### PIMPL Extension
+- Enabled if `RHIDeviceDesc::validation == true`
+- Reports DX11 errors to the debug output window
+
+### 2. DXGI Factory & Adapter Selection
 
 ```cpp
-struct ShaderPipeline::Impl {
-    ShaderVFS vfs;
-    ShaderSourceManager sourceManager;
-    ShaderDependencyGraph depGraph;
-    ShaderCache cache;
-    ShaderHotReload hotReload;
-    ShaderCompiler* compiler = nullptr;      // DXC (SM6.0+)
-    ShaderCompilerFXC* compilerFXC = nullptr; // FXC (SM5.0)
-    Config config;
-    // ...
-};
+bool DX11Device::CreateFactory() {
+    HRESULT hr = CreateDXGIFactory2(
+        DXGI_CREATE_FACTORY_DEBUG,  // Debug output
+        IID_PPV_ARGS(&m_factory)
+    );
+    return SUCCEEDED(hr);
+}
+
+bool DX11Device::SelectAdapter(uint32_t adapterIndex) {
+    // Use adapterIndex to enumerate adapters
+    // Preference: high-performance GPU (NVIDIA > Intel iGPU)
+}
 ```
 
-### Compile Routing
+### 3. D3D11 Device Creation
 
 ```cpp
-ShaderCompileResult ShaderPipeline::CompileShader(const ShaderCompileDesc& desc) {
-    if (RequiresDXC(desc.model)) {
-        return m_impl->compiler->Compile(desc);
-    } else {
-        return m_impl->compilerFXC->Compile(desc);
+bool DX11Device::CreateDevice() {
+    D3D_FEATURE_LEVEL featureLevels[] = {
+        D3D_FEATURE_LEVEL_11_1,
+        D3D_FEATURE_LEVEL_11_0,
+        D3D_FEATURE_LEVEL_10_1,
+        D3D_FEATURE_LEVEL_10_0,
+    };
+
+    HRESULT hr = D3D11CreateDevice(
+        m_adapter.Get(),
+        D3D_DRIVER_TYPE_UNKNOWN,
+        nullptr,  // No software device
+        flags,    // D3D11_CREATE_DEVICE_DEBUG if validation enabled
+        featureLevels, ARRAYSIZE(featureLevels),
+        D3D11_SDK_VERSION,
+        &m_device,
+        &m_featureLevel,
+        &m_immediateContext
+    );
+
+    // Query ID3D11Device1 / ID3D11DeviceContext1 for modern features
+    if (m_device) {
+        m_device->QueryInterface(IID_PPV_ARGS(&m_device1));
+        m_immediateContext->QueryInterface(IID_PPV_ARGS(&m_immediateContext1));
+    }
+
+    return SUCCEEDED(hr);
+}
+```
+
+### Feature Level vs Shader Model
+
+| D3D_FEATURE_LEVEL | Shader Model | GPU Requirements |
+|-----------------|---------|--|
+| 11_1 | SM5.0+ | Windows 8.1+ |
+| 11_0 | SM5.0+ | Windows Vista+ with WDDM 1.2 |
+| 10_1 | SM4.x | Windows Vista+ with WDDM 1.1 |
+| 10_0 | SM4.0 | Windows Vista+ |
+
+The DX11Device always negotiates to **SM5.0** (hard-coded), regardless of feature level.
+
+## Resource Management
+
+Unlike DX12's explicit memory allocator, DX11 resources are created directly and managed implicitly by the driver.
+
+### Buffers
+
+```cpp
+RHIBufferHandle DX11Device::CreateBuffer(const RHIBufferDesc& desc) {
+    D3D11_BUFFER_DESC bd = {
+        .ByteWidth = (UINT)desc.size,
+        .Usage = D3D11_USAGE_DEFAULT,  // GPU read/write
+        .BindFlags = D3D11_BIND_VERTEX_BUFFER | D3D11_BIND_INDEX_BUFFER
+                   | D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS,
+        .CPUAccessFlags = 0,
+        .StructureByteStride = desc.stride,
+    };
+
+    if (desc.flags & RHIBufferFlags::Upload) {
+        bd.Usage = D3D11_USAGE_DYNAMIC;
+        bd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+    } else if (desc.flags & RHIBufferFlags::Readback) {
+        bd.Usage = D3D11_USAGE_STAGING;
+        bd.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    }
+
+    ID3D11Buffer* buffer = nullptr;
+    HRESULT hr = m_device->CreateBuffer(&bd, nullptr, &buffer);
+
+    // Assign SRV index for slot-based shader binding
+    uint32_t srvIndex = m_nextSrvIndex++;
+
+    // Create SRV if needed
+    if (desc.flags & RHIBufferFlags::ShaderResource) {
+        D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = { /* ... */ };
+        ID3D11ShaderResourceView* srv = nullptr;
+        m_device->CreateShaderResourceView(buffer, &srvDesc, &srv);
+        // Store srv in DX11Buffer
+    }
+
+    // Return handle to slot in resource pool
+    return m_bufferPool.Add(DX11Buffer{buffer, srv, ...});
+}
+```
+
+### Textures
+
+```cpp
+RHITextureHandle DX11Device::CreateTexture(const RHITextureDesc& desc) {
+    D3D11_TEXTURE2D_DESC td = {
+        .Width = desc.width,
+        .Height = desc.height,
+        .MipLevels = desc.mipLevels,
+        .ArraySize = 1,
+        .Format = ToD3D11Format(desc.format),
+        .SampleDesc = {1, 0},
+        .Usage = D3D11_USAGE_DEFAULT,
+        .BindFlags = GetBindFlags(desc.flags),
+        .CPUAccessFlags = 0,
+    };
+
+    ID3D11Texture2D* texture = nullptr;
+    HRESULT hr = m_device->CreateTexture2D(&td, nullptr, &texture);
+
+    // Create views based on flags
+    ID3D11ShaderResourceView* srv = nullptr;
+    if (desc.flags & RHITextureFlags::ShaderResource) {
+        m_device->CreateShaderResourceView(texture, nullptr, &srv);
+    }
+
+    ID3D11RenderTargetView* rtv = nullptr;
+    if (desc.flags & RHITextureFlags::RenderTarget) {
+        m_device->CreateRenderTargetView(texture, nullptr, &rtv);
+    }
+
+    ID3D11DepthStencilView* dsv = nullptr;
+    if (desc.flags & RHITextureFlags::DepthStencil) {
+        m_device->CreateDepthStencilView(texture, nullptr, &dsv);
+    }
+
+    // Assign SRV index
+    uint32_t srvIndex = m_nextSrvIndex++;
+
+    return m_texturePool.Add(DX11Texture{texture, srv, rtv, dsv, srvIndex, ...});
+}
+```
+
+### No Descriptor Heaps
+
+DX11 has no descriptor heaps. Instead, views are created per-resource and stored in the resource itself. This trades memory efficiency (per-resource views) for simplicity (no heap management).
+
+## Command Recording & Execution
+
+DX11 uses a deferred-context pattern rather than explicit command lists.
+
+### Begin() → Record → End() → Execute()
+
+```cpp
+void DX11CommandList::Begin() {
+    // Create fresh deferred context
+    HRESULT hr = m_device->GetDevice()->CreateDeferredContext1(
+        0,
+        reinterpret_cast<ID3D11DeviceContext1**>(&m_deferredCtx)
+    );
+    if (FAILED(hr)) {
+        // Fallback to base interface
+        m_device->GetDevice()->CreateDeferredContext(0, &m_deferredCtx);
+    }
+}
+
+void DX11CommandList::End() {
+    // Finalize deferred context into command list
+    m_deferredCtx->FinishCommandList(FALSE, &m_pendingCmdList);
+    // FinishCommandList() doesn't execute — it just serializes commands
+}
+
+void DX11CommandList::Execute() {
+    // Submit finalized command list to immediate context
+    m_device->GetImmediateContext()->ExecuteCommandList(m_pendingCmdList, FALSE);
+    m_pendingCmdList->Release();
+    m_pendingCmdList = nullptr;
+}
+```
+
+**Key difference from DX12:**
+- DX12: Record commands on any thread, submit via command queue
+- DX11: Record on deferred context, execute via immediate context (main thread only)
+
+### Recording Commands
+
+Commands are recorded the same way as DX12 — via the `IRHICommandList` interface. The deferred context mirrors the immediate context's API:
+
+```cpp
+void DX11CommandList::SetPipeline(RHIPipelineHandle pipeline) {
+    auto* pso = m_device->GetPipelinePool().Get(pipeline);
+
+    // Bind individual state objects
+    m_deferredCtx->IASetInputLayout(pso->inputLayout);
+    m_deferredCtx->IASetPrimitiveTopology(pso->topology);
+    m_deferredCtx->VSSetShader(pso->vertexShader, nullptr, 0);
+    m_deferredCtx->PSSetShader(pso->pixelShader, nullptr, 0);
+    m_deferredCtx->RSSetState(pso->rasterizer);
+    m_deferredCtx->OMSetDepthStencilState(pso->depthStencil, 0);
+
+    float blendFactor[4] = {1, 1, 1, 1};
+    m_deferredCtx->OMSetBlendState(pso->blend, blendFactor, 0xFFFFFFFF);
+}
+
+void DX11CommandList::DrawIndexed(uint32_t indexCount, uint32_t instanceCount,
+                                   uint32_t firstIndex, int32_t vertexOffset,
+                                   uint32_t firstInstance) {
+    m_deferredCtx->DrawIndexedInstanced(indexCount, instanceCount, firstIndex,
+                                         vertexOffset, firstInstance);
+}
+```
+
+## Barriers — No-Op
+
+DX11 has no explicit resource barriers. State transitions are implicit:
+
+```cpp
+void DX11CommandList::ResourceBarrier(const RHIBarrierDesc* barriers, uint32_t count) {
+    // Intentional no-op
+    // Driver automatically inserts hazard barriers
+}
+```
+
+The RHI interface requires this method for DX12 compatibility, but on DX11 it does nothing. The driver silently manages state transitions.
+
+## Fence Emulation
+
+DX11 has no native timeline fences. The `DX11Fence` emulates them using event queries:
+
+```cpp
+class DX11Fence : public IRHIFence {
+    struct PendingQuery {
+        ID3D11Query* query;  // D3D11_QUERY_EVENT
+        uint64_t value;      // Associated fence value
+    };
+
+    std::vector<PendingQuery> m_pending;
+    uint64_t m_completedValue = 0;
+    uint64_t m_lastSignaledValue = 0;
+};
+
+void DX11Fence::Signal(uint64_t value) {
+    // Must be monotonically increasing
+    assert(value > m_lastSignaledValue);
+    m_lastSignaledValue = value;
+
+    // Create event query on immediate context
+    D3D11_QUERY_DESC qd = {D3D11_QUERY_EVENT, 0};
+    ID3D11Query* query = nullptr;
+    m_device->GetDevice()->CreateQuery(&qd, &query);
+
+    // Insert marker: GPU sets query when all preceding work completes
+    m_device->GetImmediateContext()->End(query);
+
+    m_pending.push_back({query, value});
+}
+
+void DX11Fence::WaitCPU(uint64_t value) {
+    while (m_completedValue < value) {
+        PollPending();  // Check query results
+        if (m_completedValue < value) {
+            Sleep(0);  // Yield CPU
+        }
+    }
+}
+
+void DX11Fence::PollPending() {
+    for (auto& pending : m_pending) {
+        HRESULT hr = m_device->GetImmediateContext()->GetData(
+            pending.query, nullptr, 0, 0);  // Non-blocking check
+        if (hr == S_OK) {
+            // Query complete — GPU reached this point
+            m_completedValue = pending.value;
+        }
     }
 }
 ```
 
-## ShaderTarget Enum Update
+**Performance note**: This is much slower than DX12's native fences. Typical usage: once per frame for frame pacing. Do not use for intra-frame synchronization.
+
+## Swapchain
+
+The DX11SwapChain wraps `IDXGISwapChain1` with FLIP_DISCARD presentation:
 
 ```cpp
-enum class ShaderTarget : uint8_t {
-    DXIL_SM6_6,   // DX12 Shader Model 6.6 (bindless)
-    DXIL_SM6_0,   // DX12 Shader Model 6.0 (wave ops)
-    DXBC_SM5_1,   // DX12 Shader Model 5.1 (DXC legacy)
-    DXBC_SM5_0,   // DX12 SM5.0 / DX11 SM5.0 (FXC)
-    SPIRV_1_6,    // Vulkan SPIR-V 1.6
+class DX11SwapChain : public IRHISwapChain {
+    ComPtr<IDXGISwapChain1> m_swapChain;
+    RHITextureHandle m_backBufferHandles[3];  // Triple-buffered
+    uint32_t m_currentBackBuffer = 0;
 };
+
+bool DX11SwapChain::Init(DX11Device* device, const RHISwapChainDesc& desc) {
+    DXGI_SWAP_CHAIN_DESC1 scd = {
+        .Width = desc.width,
+        .Height = desc.height,
+        .Format = DXGI_FORMAT_R8G8B8A8_UNORM,
+        .Stereo = FALSE,
+        .SampleDesc = {1, 0},
+        .BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT,
+        .BufferCount = 3,  // Triple-buffered
+        .Scaling = DXGI_SCALING_STRETCH,
+        .SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD,  // Modern presentation
+        .AlphaMode = DXGI_ALPHA_MODE_UNSPECIFIED,
+        .Flags = m_tearingSupported ? DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING : 0,
+    };
+
+    IDXGISwapChain1* swapChain = nullptr;
+    HRESULT hr = device->GetFactory()->CreateSwapChainForHwnd(
+        device->GetImmediateContext(),  // Queue (not used on DX11)
+        hwnd, &scd, nullptr, nullptr, &swapChain);
+
+    m_swapChain = swapChain;
+    AcquireBackBuffers();  // Create RTVs for back buffers
+    return SUCCEEDED(hr);
+}
+
+void DX11SwapChain::AcquireBackBuffers() {
+    for (uint32_t i = 0; i < 3; ++i) {
+        ID3D11Texture2D* backBuffer = nullptr;
+        m_swapChain->GetBuffer(i, IID_PPV_ARGS(&backBuffer));
+
+        ID3D11RenderTargetView* rtv = nullptr;
+        m_device->GetDevice()->CreateRenderTargetView(backBuffer, nullptr, &rtv);
+
+        // Register with texture pool
+        m_backBufferHandles[i] = m_device->GetTexturePool().Add(DX11Texture{
+            backBuffer, nullptr, rtv, nullptr, UINT32_MAX, ...
+        });
+    }
+}
+
+void DX11SwapChain::Present(bool vsync) {
+    UINT flags = 0;
+    if (!vsync && m_tearingSupported) {
+        flags |= DXGI_PRESENT_ALLOW_TEARING;
+    }
+    UINT syncInterval = vsync ? 1 : 0;
+
+    m_swapChain->Present(syncInterval, flags);
+    m_currentBackBuffer = (m_currentBackBuffer + 1) % 3;
+}
 ```
 
-## DX11 Backend — `rhi_dx11/`
+## Input Layout & Vertex Binding
 
-### Scope
+Unlike DX12 bindless, DX11 requires explicit Input Assembler layout:
 
-Minimal fallback for GPUs without DX12 support. Feature-reduced path:
+```cpp
+// In pipeline creation
+D3D11_INPUT_ELEMENT_DESC layout[] = {
+    {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
+    {"NORMAL",   0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0},
+    {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D11_INPUT_PER_VERTEX_DATA, 0},
+};
 
-| Feature | DX12 SM6.6 | DX12 SM5.0 | DX11 SM5.0 |
-|---------|-----------|-----------|-----------|
-| Bindless | Yes | No | No |
-| Compute shaders | Yes | Yes | Limited |
-| UAV | Yes | Yes | Limited |
-| Structured buffers | Yes | Yes | Limited |
-| Async compute | Yes | Possible | No |
-| Mesh shaders | Yes | No | No |
-| Ray tracing | Yes | No | No |
-| Input assembler | Optional | Required | Required |
-| Shader format | DXIL | DXBC (via FXC) | DXBC (via FXC) |
+ID3D11InputLayout* inputLayout = nullptr;
+m_device->CreateInputLayout(layout, 3, vsBlob->GetBufferPointer(),
+                            vsBlob->GetBufferSize(), &inputLayout);
 
-### D3D11 Interface Mapping
+// Commands reference this layout
+m_deferredCtx->IASetInputLayout(inputLayout);
+```
 
-| UzEngine RHI | DX12 | DX11 |
-|-------------|------|------|
-| `IRHIDevice` | `ID3D12Device` | `ID3D11Device` + `ID3D11DeviceContext` |
-| `IRHICommandList` | `ID3D12GraphicsCommandList` | `ID3D11DeviceContext` (deferred) |
-| `IRHISwapChain` | `IDXGISwapChain4` | `IDXGISwapChain1` |
-| `IRHIFence` | `ID3D12Fence` | `ID3D11Query(EVENT)` + CPU sync |
-| Descriptor heap | `ID3D12DescriptorHeap` | N/A (implicit binding) |
-| Root signature | `ID3D12RootSignature` | N/A (register-based) |
-| Resource barriers | `ResourceBarrier()` | N/A (driver-managed) |
-| Memory allocator | D3D12MA | N/A (`CreateBuffer`/`CreateTexture2D` manage memory) |
+## Backend Selection
 
-### Key Architectural Differences
+Users can force DX11 backend via CLI flag:
 
-**Command Model**: DX12 uses explicit command lists that are recorded and submitted. DX11 uses an immediate context (single-threaded) or deferred contexts. The `IRHICommandList` wrapper for DX11 uses a deferred context, flushed to the immediate context on "submit".
+```bash
+uz-engine --rhi dx11 --shader-model sm5.0
+```
 
-**State Management**: DX12 has pipeline state objects (PSOs) that bundle all state. DX11 sets state individually (`IASetInputLayout`, `VSSetShader`, `PSSetShader`, `OMSetRenderTargets`). The DX11 backend tracks current state and applies delta changes.
+Or in `.uzproject`:
 
-**Resource Barriers**: DX12 requires explicit state transitions. DX11 has none — the driver manages resource states automatically. The DX11 `ResourceBarrier()` implementation is a no-op.
+```toml
+[render]
+rhi = "dx11"
+shader_model = "sm5.0"
+```
 
-**Memory**: DX12 requires manual memory management (D3D12MA). DX11 manages GPU memory internally — `CreateBuffer`/`CreateTexture2D` handle allocation.
+### Auto-Fallback (Not Yet Implemented)
 
-### Implementation Files
+A future feature may auto-fallback to DX11 if DX12 device creation fails, but this is **not** in the current plan.
+
+## Limitations vs DX12
+
+| Feature | DX12 | DX11 |
+|---------|------|------|
+| **Bindless shaders** | Yes (SM6.6) | No |
+| **Compute dispatch** | Full (CS 5.0+) | Limited (CS 5.0) |
+| **UAVs** | Yes | Limited |
+| **Async compute** | Yes | No |
+| **Root constants** | Yes (native) | Emulated (constant buffers) |
+| **Resource barriers** | Explicit (required) | Implicit (no-op) |
+| **Timeline fences** | Native (efficient) | Emulated (slow) |
+| **DRED diagnostics** | Full (GPU page faults) | Minimal |
+| **Multithreaded recording** | Yes (parallel command lists) | No (immediate context only) |
+
+## Implementation Files
 
 ```
-runtime/core/rhi/dx11/
+runtime/engine/rhi/dx11/
 ├── dx11_device.h/.cpp         — IRHIDevice via ID3D11Device
 ├── dx11_command_list.h/.cpp   — IRHICommandList via ID3D11DeviceContext (deferred)
-├── dx11_swapchain.h/.cpp      — IRHISwapChain via IDXGISwapChain1
-├── dx11_fence.h/.cpp          — IRHIFence via ID3D11Query(EVENT)
-├── dx11_resource_creation.h/.cpp — Buffer/Texture/Shader/Pipeline creation helpers
-└── dx11_types.h               — DX11-specific internal types (not exposed to RHI)
+├── dx11_swapchain.h           — IRHISwapChain via IDXGISwapChain1
+├── dx11_fence.h               — IRHIFence via D3D11_QUERY_EVENT emulation
+└── dx11_resources.h           — DX11Buffer, DX11Texture, DX11Pipeline structs
 ```
 
-### Priority
+## Configuration & Compilation
 
-The DX11 backend is **lowest priority** and may be skipped entirely if minimum hardware requirements don't demand it. The FXC compiler integration (for DX12 SM5.0 fallback) is the immediate priority.
+### Prerequisites
 
-## Implementation Order
+- **OS**: Windows 10+ (DX11.1 runtime)
+- **Compiler**: MSVC or Clang-CL (Windows SDK 10.0+)
+- **Dependencies**: directx-headers (GUID definitions)
 
-| Step | What | Why |
-|------|------|-----|
-| 1 | Vendor `d3dcompiler_47.dll` + deploy in `build.zig` | DLL must exist before compiler can load it |
-| 2 | Add `DXBC_SM5_0` to `ShaderTarget` enum | Cache key differentiation |
-| 3 | Implement `ShaderCompilerFXC` class | The compiler itself |
-| 4 | Add FXC routing in `ShaderPipeline` | Pipeline uses correct compiler per SM |
-| 5 | Fix `ApplyBindlessConfig` (SM5_1 → SM5_0) | Non-bindless path targets FXC-compatible SM |
-| 6 | Remove debug SM5.1 force override in `dx12_device.cpp` | Clean up dev hack |
-| 7 | Update demo `targetBackend` strings (`dx12_sm51` → `dx12_sm50`) | Demos use correct fallback target |
-| 8 | (Later) Implement `rhi_dx11/` backend | Full DX11 support |
+### Header Dependencies
 
-## Verification
+```cpp
+#include <d3d11_1.h>       // Core D3D11 interface
+#include <dxgi1_6.h>       // DXGI factory/swapchain
+#include <wrl/client.h>    // WRL::ComPtr smart pointers
+```
 
-1. `cd runtime && zig build` — must compile with FXC DLL deployed to `zig-out/bin/`
-2. Force SM5.0 in `dx12_device.cpp` temporarily, run demos — shaders compile via FXC
-3. Remove force override, run on SM6.6 GPU — DXC path still works
-4. Verify `zig-out/bin/d3dcompiler_47.dll` exists after build
+### Build (Zig)
+
+In `runtime/build.zig`, DX11 backend is compiled when `target.os.tag == .windows`:
+
+```zig
+// DX11 backend sources
+const dx11_src = [_][]const u8{
+    "engine/rhi/dx11/dx11_device.cpp",
+    "engine/rhi/dx11/dx11_command_list.cpp",
+    "engine/rhi/dx11/dx11_swapchain.cpp",
+    "engine/rhi/dx11/dx11_fence.cpp",
+};
+```
+
+## Phase Roadmap
+
+| Phase | Milestone | What | Priority |
+|-------|-----------|------|----------|
+| 1.5 | FXC Compiler | SM5.0 compilation via FXC | High (enables DX12 SM5.0 fallback) |
+| 2.0 | DX11 Device | Device creation, buffer/texture/pipeline | Medium (legacy GPU support) |
+| 2.0 | DX11 Command Lists | Deferred context recording + barriers | Medium |
+| 2.0 | DX11 Swapchain | FLIP_DISCARD presentation | Medium |
+| 3.0+ | DX11 Diagnostics | Debug layer, shader validation | Low |
 
 ## Engine Comparison
 
 | Aspect | UE5 | Godot | UzEngine |
 |--------|-----|-------|----------|
-| Dual compiler | DXC (SM6+) + FXC (SM5) | FXC only (DX11 renderer) | **DXC (SM6+) + FXC (SM5)** |
-| DX11 support | Full backend (`D3D11RHI`) | Full backend (`RenderingDeviceD3D12` is DX12 only, old `GLES3` covers DX11-era) | **Planned minimal fallback** |
-| SM5 compilation | FXC via `D3DCompile` | FXC via `D3DCompile` | **FXC via `D3DCompile` (dynamic load)** |
-| Shader bytecode | DXBC (SM5) / DXIL (SM6+) | DXBC only | **DXBC (SM5) / DXIL (SM6+)** |
+| **DX11 support** | Full backend (`D3D11RHI`) with async compute, texture streaming | Old GLES3 renderer (not DX11) | Minimal fallback (SM5.0 only) |
+| **Deferred contexts** | Used for async compute | N/A | Used for command recording |
+| **Fence emulation** | Native (DX11 provides `ID3D11Query` helpers) | N/A | Manual event query polling |
+| **Descriptor views** | Per-resource (like our approach) | N/A | Per-resource |
+| **State delta optimization** | Yes (tracks state) | N/A | No (resends all state) |
 
 ## Rules
 
-1. **ALWAYS route SM5.0 to FXC, SM6.0+ to DXC** — DXC cannot compile SM5.0
-2. **NEVER use FXC for SM6.0+** — FXC doesn't understand DXIL, wave intrinsics, or bindless
-3. **ALWAYS deploy `d3dcompiler_47.dll`** alongside the engine executable
-4. **ALWAYS use the same `ShaderCompileDesc` struct** for both compilers — the pipeline routes transparently
-5. **NEVER include `d3dcompiler.h`** above the shader compiler module — dynamic loading only
+1. **ALWAYS route SM5.0 to FXC** — DXC cannot compile SM5.0
+2. **NEVER use DX12 API calls** in DX11 backend — keep them isolated
+3. **ALWAYS check `generation` field** when accessing pooled resources
+4. **NEVER assume async compute** — DX11 compute is limited compared to DX12
+5. **ALWAYS poll fences** before blocking — the emulation is slow, use sparingly
+6. **NEVER mix deferred/immediate context** — each command list has one deferred context
+7. **ALWAYS destroy resources explicitly** before device destruction
+8. **Resource barriers are no-ops** — don't rely on them for correctness, the driver manages state

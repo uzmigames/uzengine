@@ -488,8 +488,7 @@ void DX12Device::InitDescriptorAllocators() {
 
     m_srvUavAllocator.Init(m_cbvSrvUavHeap.Get(), kMaxCbvSrvUavDescriptors, cbvSrvUavIncrement);
     m_samplerAllocator.Init(m_samplerHeap.Get(), kMaxSamplerDescriptors, samplerIncrement);
-    // Reserve first 3 RTV slots for swapchain back buffers
-    m_rtvAllocator.Init(m_rtvHeap.Get(), kMaxRtvDescriptors, rtvIncrement, 3);
+    m_rtvAllocator.Init(m_rtvHeap.Get(), kMaxRtvDescriptors, rtvIncrement);
     m_dsvAllocator.Init(m_dsvHeap.Get(), kMaxDsvDescriptors, dsvIncrement);
 }
 
@@ -816,27 +815,6 @@ ID3D12DescriptorHeap* DX12Device::GetDescriptorHeap(D3D12_DESCRIPTOR_HEAP_TYPE t
     }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Factory Functions (rhi_backend.h)
-// ─────────────────────────────────────────────────────────────────────────────
-
-IRHIDevice* CreateRHIDevice(const RHIDeviceDesc& desc) {
-    if (desc.backend != RHIBackend::DX12) {
-        UZ_LOG(RHI, Error, "CreateRHIDevice: requested backend is not DX12 (compiled with UZ_BACKEND_DX12)");
-        return nullptr;
-    }
-
-    auto* device = new DX12Device();
-    if (!device->Init(desc)) {
-        UZ_LOG(RHI, Error, "CreateRHIDevice: DX12Device::Init failed");
-        delete device;
-        return nullptr;
-    }
-    return device;
-}
-
-void DestroyRHIDevice(IRHIDevice* device) {
-    delete device;
-}
+// Factory functions moved to rhi_factory.cpp (unified dispatch for all backends).
 
 } // namespace uz

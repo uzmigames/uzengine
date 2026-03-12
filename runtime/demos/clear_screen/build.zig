@@ -7,7 +7,7 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const cpp_flags = &.{ "-std=c++17", "-DSPDLOG_COMPILED_LIB", "-DUZ_PROFILING_ENABLED", "-DTRACY_ENABLE", "-DTRACY_ON_DEMAND" };
+    const cpp_flags = &.{ "-std=c++17", "-DSPDLOG_COMPILED_LIB" };
 
     const mod = b.createModule(.{ .target = target, .optimize = optimize });
     mod.link_libc = true;
@@ -16,7 +16,7 @@ pub fn build(b: *std.Build) void {
     // Demo sources
     mod.addCSourceFiles(.{
         .root = b.path("."),
-        .files = &.{ "main.cpp", "dx12_clear_screen.cpp" },
+        .files = &.{ "main.cpp", "clear_screen.cpp" },
         .flags = cpp_flags,
     });
     mod.addCSourceFiles(.{
@@ -43,6 +43,7 @@ pub fn build(b: *std.Build) void {
         "../../engine/asset",
         "../../platform/windows",
         "../../engine/rhi/dx12",
+        "../../engine/rhi/dx11",
     };
     for (engine_dirs) |dir| mod.addIncludePath(b.path(dir));
 
@@ -79,7 +80,7 @@ pub fn build(b: *std.Build) void {
 
     const exe = b.addExecutable(.{ .name = "clear_screen_demo", .root_module = mod });
 
-    const sys_libs = [_][]const u8{ "d3d12", "d3d11", "dxgi", "dxguid", "gdi32", "user32", "ws2_32", "dbghelp", "advapi32" };
+    const sys_libs = [_][]const u8{ "d3d12", "d3d11", "dxgi", "dxguid", "gdi32", "user32" };
     for (sys_libs) |l| exe.linkSystemLibrary(l);
 
     b.installArtifact(exe);

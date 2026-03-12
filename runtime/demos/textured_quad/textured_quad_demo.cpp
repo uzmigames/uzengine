@@ -1,17 +1,15 @@
-/// DX12 Textured Quad Demo — first textured geometry on screen.
+/// Textured Quad Demo Implementation — Backend-Agnostic
 ///
-/// Renders a quad with a procedural checkerboard texture. Automatically
-/// selects SM6.6 bindless or SM5 Input Assembler path based on GPU
-/// capabilities. Validates the full texture upload pipeline:
+/// Renders a procedural checkerboard quad using only abstract RHI interfaces.
+/// Automatically selects SM6.6 bindless or SM5 Input Assembler path based on
+/// GPU capabilities. Validates the full texture upload pipeline:
 /// staging buffer → CopyBufferToTexture → SRV access.
 
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
 #include "textured_quad_demo.h"
-#include "dx12_device.h"
-#include "dx12_swapchain.h"
-#include "dx12_command_list.h"
-#include "dx12_fence.h"
+#include "rhi.h"
+#include "rhi_backend.h"
+#include "rhi_config.h"
+#include "rhi_types.h"
 #include "platform_window.h"
 #include "log.h"
 #include "vertex.h"
@@ -24,7 +22,6 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
-#include <d3d12.h>
 #include <string>
 #include <vector>
 
@@ -37,14 +34,14 @@ namespace uz {
 /// Generates a 256x256 RGBA8 checkerboard pattern.
 ///
 /// Each tile is 32x32 pixels, alternating between two colors.
-/// Returns tightly-packed pixel data (no padding).
+/// Returns tightly-packed pixel data (no row padding).
 static std::vector<uint8_t> GenerateCheckerboard(uint32_t width, uint32_t height,
                                                   uint32_t tileSize) {
     std::vector<uint8_t> pixels(width * height * 4);
     for (uint32_t y = 0; y < height; ++y) {
         for (uint32_t x = 0; x < width; ++x) {
-            bool isWhite = ((x / tileSize) + (y / tileSize)) % 2 == 0;
-            uint32_t idx = (y * width + x) * 4;
+            const bool isWhite = ((x / tileSize) + (y / tileSize)) % 2 == 0;
+            const uint32_t idx = (y * width + x) * 4;
             pixels[idx + 0] = isWhite ? 240 : 40;   // R
             pixels[idx + 1] = isWhite ? 240 : 40;   // G
             pixels[idx + 2] = isWhite ? 240 : 200;  // B — slight blue tint on dark tiles
@@ -58,7 +55,7 @@ static std::vector<uint8_t> GenerateCheckerboard(uint32_t width, uint32_t height
 // Quad Geometry
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Returns 6 vertices forming a full-screen quad (two triangles).
+/// Returns 6 vertices forming a quad (two triangles).
 /// UVs map [0,0] at top-left to [1,1] at bottom-right.
 static void GetQuadVertices(SimpleVertex outVerts[6]) {
     // Triangle 1: top-left, top-right, bottom-left
@@ -75,6 +72,8 @@ static void GetQuadVertices(SimpleVertex outVerts[6]) {
 // Root constants layout — must match HLSL cbuffer RootConstants : register(b0)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Bindless root constants pushed to the GPU each frame.
+/// Only used on the SM6.6 path — SM5 binds via SetVertexBuffer + SetDescriptorTable.
 struct RootConstants {
     uint32_t vertexBufferIndex;
     uint32_t textureIndex;
@@ -90,7 +89,7 @@ static constexpr uint32_t kTexWidth = 256;
 static constexpr uint32_t kTexHeight = 256;
 static constexpr uint32_t kTileSize = 32;
 
-bool RunTexturedQuadDemo(uint32_t frameCount) {
+bool RunTexturedQuadDemo(RHIBackend backend, uint32_t frameCount) {
     // ── Window ───────────────────────────────────────────────────────────
     WindowDesc winDesc{};
     winDesc.title = "UzEngine — Textured Quad Demo";
@@ -106,7 +105,7 @@ bool RunTexturedQuadDemo(uint32_t frameCount) {
 
     // ── Device ───────────────────────────────────────────────────────────
     RHIDeviceDesc deviceDesc{};
-    deviceDesc.backend = RHIBackend::DX12;
+    deviceDesc.backend = backend;
 #ifdef NDEBUG
     deviceDesc.enableValidation = false;
 #else
@@ -117,12 +116,12 @@ bool RunTexturedQuadDemo(uint32_t frameCount) {
         deviceDesc.forceShaderModel = ShaderModel::SM5_0;
     }
 
-    auto* rhiDevice = CreateRHIDevice(deviceDesc);
-    if (!rhiDevice) {
-        UZ_LOG(Renderer, Error, "Failed to create RHI device");
+    IRHIDevice* device = CreateRHIDevice(deviceDesc);
+    if (!device) {
+        UZ_LOG(Renderer, Error, "Failed to create RHI device (backend={})",
+               static_cast<int>(backend));
         return false;
     }
-    auto* device = static_cast<DX12Device*>(rhiDevice);
 
     // ── Swapchain ────────────────────────────────────────────────────────
     RHISwapChainDesc scDesc{};
@@ -133,7 +132,7 @@ bool RunTexturedQuadDemo(uint32_t frameCount) {
     scDesc.format = RHIFormat::RGBA8Unorm;
     scDesc.vsync = false;
 
-    auto* swapChain = static_cast<DX12SwapChain*>(device->CreateSwapChain(scDesc));
+    IRHISwapChain* swapChain = device->CreateSwapChain(scDesc);
     if (!swapChain) {
         UZ_LOG(Renderer, Error, "Failed to create swapchain");
         DestroyRHIDevice(device);
@@ -141,8 +140,8 @@ bool RunTexturedQuadDemo(uint32_t frameCount) {
     }
 
     // ── Command Lists ────────────────────────────────────────────────────
-    auto* cmdList = static_cast<DX12CommandList*>(device->CreateCommandList(RHIQueueType::Graphics));
-    auto* copyCmdList = static_cast<DX12CommandList*>(device->CreateCommandList(RHIQueueType::Graphics));
+    IRHICommandList* cmdList = device->CreateCommandList(RHIQueueType::Graphics);
+    IRHICommandList* copyCmdList = device->CreateCommandList(RHIQueueType::Graphics);
     if (!cmdList || !copyCmdList) {
         UZ_LOG(Renderer, Error, "Failed to create command lists");
         DestroyRHIDevice(device);
@@ -150,12 +149,16 @@ bool RunTexturedQuadDemo(uint32_t frameCount) {
     }
 
     // ── Fences ───────────────────────────────────────────────────────────
-    DX12Fence* frameFences[kFramesInFlight] = {};
+    IRHIFence* frameFences[kFramesInFlight] = {};
     uint64_t fenceValues[kFramesInFlight] = {};
     for (uint32_t i = 0; i < kFramesInFlight; ++i) {
-        frameFences[i] = static_cast<DX12Fence*>(device->CreateFence());
+        frameFences[i] = device->CreateFence();
         if (!frameFences[i]) {
             UZ_LOG(Renderer, Error, "Failed to create frame fence {}", i);
+            for (uint32_t j = 0; j < i; ++j) device->DestroyFence(frameFences[j]);
+            device->DestroyCommandList(copyCmdList);
+            device->DestroyCommandList(cmdList);
+            device->DestroySwapChain(swapChain);
             DestroyRHIDevice(device);
             return false;
         }
@@ -187,7 +190,7 @@ bool RunTexturedQuadDemo(uint32_t frameCount) {
         shaderPipeline.SetCompilerFXC(&compilerFXC);
     }
 
-    std::string shadersDir = (uz::GetExeDir() / "../../shaders").string();
+    const std::string shadersDir = (uz::GetExeDir() / "../../shaders").string();
     shaderPipeline.Mount("/demo/textured_quad", shadersDir);
 
     auto vsBytecode = shaderPipeline.LoadBytecode("/demo/textured_quad/textured_vs.hlsl", "");
@@ -240,6 +243,7 @@ bool RunTexturedQuadDemo(uint32_t frameCount) {
     pipeDesc.debugName = "TexturedQuadPipeline";
 
     if (!bindless) {
+        // Topology is encoded in the pipeline descriptor — no IASetPrimitiveTopology needed.
         pipeDesc.inputElements = inputElements;
         pipeDesc.inputElementCount = 3;
         pipeDesc.vertexStride = sizeof(SimpleVertex);
@@ -314,20 +318,18 @@ bool RunTexturedQuadDemo(uint32_t frameCount) {
         UploadContext upload(device);
         copyCmdList->Begin();
 
-        bool uploaded = upload.UploadTexture(
-            copyCmdList, texHandle,
-            checkerPixels.data(), checkerPixels.size());
-        if (!uploaded) {
+        if (!upload.UploadTexture(copyCmdList, texHandle,
+                                  checkerPixels.data(), checkerPixels.size())) {
             UZ_LOG(Renderer, Error, "Failed to upload checkerboard texture");
             return false;
         }
 
-        // Transition texture from CopyDst to ShaderResource
-        RHIBarrierDesc barrier{};
-        barrier.texture = texHandle;
-        barrier.stateBefore = RHIResourceState::CopyDst;
-        barrier.stateAfter = RHIResourceState::ShaderResource;
-        copyCmdList->ResourceBarrier(&barrier, 1);
+        // Transition texture from CopyDst to ShaderResource before sampling.
+        RHIBarrierDesc toShaderResource{};
+        toShaderResource.texture = texHandle;
+        toShaderResource.stateBefore = RHIResourceState::CopyDst;
+        toShaderResource.stateAfter = RHIResourceState::ShaderResource;
+        copyCmdList->ResourceBarrier(&toShaderResource, 1);
 
         copyCmdList->End();
         copyCmdList->Execute();
@@ -383,27 +385,36 @@ bool RunTexturedQuadDemo(uint32_t frameCount) {
             window.ClearResizedFlag();
         }
 
-        uint32_t allocFrame = frameIndex % kFramesInFlight;
+        const uint32_t allocFrame = frameIndex % kFramesInFlight;
         if (fenceValues[allocFrame] > 0) {
             frameFences[allocFrame]->WaitCPU(fenceValues[allocFrame]);
         }
 
         cmdList->Begin();
 
-        ID3D12Resource* backBuffer = swapChain->GetCurrentBackBufferResource();
-        D3D12_CPU_DESCRIPTOR_HANDLE rtv = swapChain->GetCurrentRTV();
+        RHITextureHandle backBuffer = swapChain->GetCurrentBackBuffer();
 
-        cmdList->TransitionBarrier(backBuffer,
-            D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
+        // Barrier: Present -> RenderTarget
+        RHIBarrierDesc toRenderTarget{};
+        toRenderTarget.texture = backBuffer;
+        toRenderTarget.stateBefore = RHIResourceState::Present;
+        toRenderTarget.stateAfter = RHIResourceState::RenderTarget;
+        cmdList->ResourceBarrier(&toRenderTarget, 1);
 
-        float clearColor[4] = { 0.05f, 0.05f, 0.08f, 1.0f };
-        cmdList->ClearRTV(rtv, clearColor);
-        cmdList->GetNative()->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
+        // Clear the back buffer before binding it as a render target.
+        const float clearColor[4] = { 0.05f, 0.05f, 0.08f, 1.0f };
+        cmdList->ClearRenderTarget(backBuffer, clearColor);
+
+        // Begin render pass — sets OMSetRenderTargets via abstract interface.
+        RHIRenderPassDesc rpDesc{};
+        rpDesc.colorAttachments[0].texture = backBuffer;
+        rpDesc.colorAttachments[0].clear = false;
+        rpDesc.colorAttachmentCount = 1;
+        cmdList->BeginRenderPass(rpDesc);
 
         cmdList->SetPipeline(pipeline);
-        cmdList->GetNative()->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-        // Bind vertex data and texture
+        // Bind vertex data and texture via the appropriate path for the shader model.
         if (bindless) {
             cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rootConsts), 3, 0);
         } else {
@@ -422,21 +433,27 @@ bool RunTexturedQuadDemo(uint32_t frameCount) {
         sc.bottom = swapChain->GetHeight();
         cmdList->SetScissor(sc);
 
-        // Draw 6 vertices (2 triangles = quad)
+        // Draw 6 vertices (2 triangles = quad). Topology is encoded in the pipeline.
         cmdList->Draw(6);
 
-        cmdList->TransitionBarrier(backBuffer,
-            D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
+        cmdList->EndRenderPass();
+
+        // Barrier: RenderTarget -> Present
+        RHIBarrierDesc toPresent{};
+        toPresent.texture = backBuffer;
+        toPresent.stateBefore = RHIResourceState::RenderTarget;
+        toPresent.stateAfter = RHIResourceState::Present;
+        cmdList->ResourceBarrier(&toPresent, 1);
 
         cmdList->End();
         cmdList->Execute();
 
         swapChain->Present(false);
 
+        // Signal via abstract fence interface — no raw queue access needed.
         globalFenceValue++;
         fenceValues[allocFrame] = globalFenceValue;
-        device->GetDirectQueue()->Signal(
-            frameFences[allocFrame]->GetNativeFence(), globalFenceValue);
+        frameFences[allocFrame]->Signal(globalFenceValue);
 
         frameIndex++;
     }
@@ -445,8 +462,8 @@ bool RunTexturedQuadDemo(uint32_t frameCount) {
     device->WaitIdle();
 
     auto endTime = std::chrono::high_resolution_clock::now();
-    float totalMs = std::chrono::duration<float, std::milli>(endTime - startTime).count();
-    float avgMs = frameIndex > 0 ? totalMs / static_cast<float>(frameIndex) : 0.0f;
+    const float totalMs = std::chrono::duration<float, std::milli>(endTime - startTime).count();
+    const float avgMs = frameIndex > 0 ? totalMs / static_cast<float>(frameIndex) : 0.0f;
 
     UZ_LOG(Renderer, Info, "Textured quad demo finished: {} frames, {:.1f}ms total, "
            "{:.2f}ms/frame ({:.0f} FPS)",

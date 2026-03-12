@@ -73,6 +73,7 @@ pub fn build(b: *std.Build) void {
         "../../engine/asset",
         "../../platform/windows",
         "../../engine/rhi/dx12",
+        "../../engine/rhi/dx11",
     };
     for (engine_dirs) |dir| mod.addIncludePath(b.path(dir));
 
@@ -117,7 +118,7 @@ pub fn build(b: *std.Build) void {
 
     const exe = b.addExecutable(.{ .name = "mesh_test_demo", .root_module = mod });
 
-    const sys_libs = [_][]const u8{ "d3d12", "dxgi", "dxguid", "gdi32", "user32" };
+    const sys_libs = [_][]const u8{ "d3d12", "d3d11", "dxgi", "dxguid", "gdi32", "user32" };
     for (sys_libs) |l| exe.linkSystemLibrary(l);
 
     b.installArtifact(exe);

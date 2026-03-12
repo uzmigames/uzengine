@@ -29,6 +29,7 @@ bool IRHIDevice::IsBindless() const {
 const char* RHIBackendToString(RHIBackend backend) {
     switch (backend) {
         case RHIBackend::DX12:   return "DX12";
+        case RHIBackend::DX11:   return "DX11";
         case RHIBackend::Vulkan: return "Vulkan";
         case RHIBackend::Metal:  return "Metal";
         case RHIBackend::Null:   return "Null";
@@ -71,6 +72,7 @@ std::string ToLower(const std::string& s) {
 bool ParseBackend(const std::string& raw, RHIBackend& out) {
     const std::string s = ToLower(raw);
     if (s == "dx12")        { out = RHIBackend::DX12;   return true; }
+    if (s == "dx11")        { out = RHIBackend::DX11;   return true; }
     if (s == "vulkan")      { out = RHIBackend::Vulkan; return true; }
     if (s == "metal")       { out = RHIBackend::Metal;  return true; }
     if (s == "null")        { out = RHIBackend::Null;   return true; }

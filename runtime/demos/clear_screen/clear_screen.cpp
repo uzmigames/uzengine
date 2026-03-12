@@ -1,36 +1,32 @@
-/// DX12 Clear Screen Demo Implementation
+/// Clear Screen Demo Implementation — Backend-Agnostic
 ///
-/// Demonstrates triple-buffered frame pacing with DX12 rendering.
+/// Demonstrates triple-buffered frame pacing using only abstract RHI interfaces.
 /// Renders animated sine-wave RGB clear color at ~6000+ FPS on modern GPU.
 /// Tests: device creation, command list recording, swapchain Present, fence synchronization.
 
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
-#include "dx12_clear_screen.h"
-#include "dx12_device.h"
-#include "dx12_swapchain.h"
-#include "dx12_command_list.h"
-#include "dx12_fence.h"
+#include "clear_screen.h"
+#include "rhi.h"
+#include "rhi_backend.h"
+#include "rhi_types.h"
 #include "platform_window.h"
 #include "log.h"
 #include "profiler.h"
 
 #include <cmath>
 #include <chrono>
-#include <d3d12.h>
 
 namespace uz {
 
 /// Triple buffering constant for frame pacing.
 static constexpr uint32_t kFramesInFlight = 3;
 
-bool RunClearScreen(uint32_t frameCount) {
+bool RunClearScreen(RHIBackend backend, uint32_t frameCount) {
     UZ_PROFILE_FUNCTION();
     UZ_PROFILE_THREAD("Main");
 
     // ── Window ───────────────────────────────────────────────────────────
     WindowDesc winDesc{};
-    winDesc.title = "UzEngine — DX12 Clear Screen";
+    winDesc.title = "UzEngine — Clear Screen";
     winDesc.width = 1280;
     winDesc.height = 720;
 
@@ -43,16 +39,15 @@ bool RunClearScreen(uint32_t frameCount) {
 
     // ── Device ───────────────────────────────────────────────────────────
     RHIDeviceDesc deviceDesc{};
-    deviceDesc.backend = RHIBackend::DX12;
+    deviceDesc.backend = backend;
     deviceDesc.enableValidation = true;
 
-    auto* rhiDevice = CreateRHIDevice(deviceDesc);
-    if (!rhiDevice) {
-        UZ_LOG(RHI, Error, "Failed to create RHI device");
+    IRHIDevice* device = CreateRHIDevice(deviceDesc);
+    if (!device) {
+        UZ_LOG(RHI, Error, "Failed to create RHI device (backend={})",
+               static_cast<int>(backend));
         return false;
     }
-
-    auto* device = static_cast<DX12Device*>(rhiDevice);
 
     // ── Swapchain ────────────────────────────────────────────────────────
     RHISwapChainDesc scDesc{};
@@ -63,40 +58,36 @@ bool RunClearScreen(uint32_t frameCount) {
     scDesc.format = RHIFormat::RGBA8Unorm;
     scDesc.vsync = false;
 
-    auto* rhiSwapChain = device->CreateSwapChain(scDesc);
-    if (!rhiSwapChain) {
+    IRHISwapChain* swapChain = device->CreateSwapChain(scDesc);
+    if (!swapChain) {
         UZ_LOG(RHI, Error, "Failed to create swapchain");
         DestroyRHIDevice(device);
         return false;
     }
-    auto* swapChain = static_cast<DX12SwapChain*>(rhiSwapChain);
 
     // ── Command List ─────────────────────────────────────────────────────
-    auto* rhiCmdList = device->CreateCommandList(RHIQueueType::Graphics);
-    if (!rhiCmdList) {
+    IRHICommandList* cmdList = device->CreateCommandList(RHIQueueType::Graphics);
+    if (!cmdList) {
         UZ_LOG(RHI, Error, "Failed to create command list");
         device->DestroySwapChain(swapChain);
         DestroyRHIDevice(device);
         return false;
     }
-    auto* cmdList = static_cast<DX12CommandList*>(rhiCmdList);
 
     // ── Per-frame fences ─────────────────────────────────────────────────
-    DX12Fence* frameFences[kFramesInFlight] = {};
+    IRHIFence* frameFences[kFramesInFlight] = {};
     uint64_t fenceValues[kFramesInFlight] = {};
 
     for (uint32_t i = 0; i < kFramesInFlight; ++i) {
-        auto* f = static_cast<DX12Fence*>(device->CreateFence());
-        if (!f) {
+        frameFences[i] = device->CreateFence();
+        if (!frameFences[i]) {
             UZ_LOG(RHI, Error, "Failed to create frame fence {}", i);
-            // Cleanup already-created fences
             for (uint32_t j = 0; j < i; ++j) device->DestroyFence(frameFences[j]);
             device->DestroyCommandList(cmdList);
             device->DestroySwapChain(swapChain);
             DestroyRHIDevice(device);
             return false;
         }
-        frameFences[i] = f;
     }
 
     // ── Render Loop ──────────────────────────────────────────────────────
@@ -104,7 +95,8 @@ bool RunClearScreen(uint32_t frameCount) {
     uint64_t globalFenceValue = 0;
     auto startTime = std::chrono::high_resolution_clock::now();
 
-    UZ_LOG(RHI, Info, "Starting clear screen render loop (frames={})", frameCount == 0 ? -1 : static_cast<int>(frameCount));
+    UZ_LOG(RHI, Info, "Starting clear screen render loop (frames={})",
+           frameCount == 0 ? -1 : static_cast<int>(frameCount));
 
     while (window.PumpMessages() && window.IsOpen()) {
         UZ_PROFILE_SCOPE(Frame);
@@ -141,21 +133,24 @@ bool RunClearScreen(uint32_t frameCount) {
         UZ_PROFILE_SCOPE(RecordCommands);
         cmdList->Begin();
 
-        ID3D12Resource* backBuffer = swapChain->GetCurrentBackBufferResource();
-        D3D12_CPU_DESCRIPTOR_HANDLE rtv = swapChain->GetCurrentRTV();
+        RHITextureHandle backBuffer = swapChain->GetCurrentBackBuffer();
 
-        // Barrier: Present → RenderTarget
-        cmdList->TransitionBarrier(backBuffer,
-            D3D12_RESOURCE_STATE_PRESENT,
-            D3D12_RESOURCE_STATE_RENDER_TARGET);
+        // Barrier: Present -> RenderTarget
+        RHIBarrierDesc toRenderTarget{};
+        toRenderTarget.texture = backBuffer;
+        toRenderTarget.stateBefore = RHIResourceState::Present;
+        toRenderTarget.stateAfter = RHIResourceState::RenderTarget;
+        cmdList->ResourceBarrier(&toRenderTarget, 1);
 
         // Clear
-        cmdList->ClearRTV(rtv, color);
+        cmdList->ClearRenderTarget(backBuffer, color);
 
-        // Barrier: RenderTarget → Present
-        cmdList->TransitionBarrier(backBuffer,
-            D3D12_RESOURCE_STATE_RENDER_TARGET,
-            D3D12_RESOURCE_STATE_PRESENT);
+        // Barrier: RenderTarget -> Present
+        RHIBarrierDesc toPresent{};
+        toPresent.texture = backBuffer;
+        toPresent.stateBefore = RHIResourceState::RenderTarget;
+        toPresent.stateAfter = RHIResourceState::Present;
+        cmdList->ResourceBarrier(&toPresent, 1);
 
         cmdList->End();
         }
@@ -166,11 +161,10 @@ bool RunClearScreen(uint32_t frameCount) {
         cmdList->Execute();
         swapChain->Present(false);
 
-        // Signal fence for this frame
+        // Signal fence for this frame via abstract interface
         globalFenceValue++;
         fenceValues[allocFrame] = globalFenceValue;
-        device->GetDirectQueue()->Signal(
-            frameFences[allocFrame]->GetNativeFence(), globalFenceValue);
+        frameFences[allocFrame]->Signal(globalFenceValue);
         }
 
         frameIndex++;

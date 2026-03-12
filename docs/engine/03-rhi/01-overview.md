@@ -166,9 +166,9 @@ bool bindless = device->IsBindless();  // true for SM6.6+
 
 | Backend | Shader Model | Status | Notes |
 |---------|-------------|--------|-------|
-| **DX12 SM6.6** | SM6.6+ bindless | **Done** (6069 FPS clear screen, RTX 4090) | Primary development path |
-| DX12 SM5 | SM5.0 (FXC → DXBC) | Planned | Traditional IA + register binding. Requires FXC compiler (DXC can't compile SM5.0) |
-| DX11 | SM5.0 (FXC → DXBC) | Planned | Legacy GPU support. See [11-dx11-backend](11-dx11-backend.md) |
+| **DX12 SM6.6** | SM6.6+ bindless | **Done** (6069 FPS clear screen, RTX 4090) | Primary development path, multithread-safe |
+| DX12 SM5.0 | SM5.0 (FXC → DXBC) | Planned | Traditional IA + register binding. Requires FXC compiler (DXC can't compile SM5.0) |
+| **DX11** | **SM5.0 (FXC → DXBC)** | **Planned** | Legacy GPU support via Direct3D 11.1. Deferred context command model, implicit memory management. See [11-dx11-backend](11-dx11-backend.md) |
 | Vulkan | SPIR-V | Planned | Linux / Steam Deck |
 | Metal | MSL | Planned | macOS / iOS |
 | Null | N/A | **Done** | Headless testing, all ops are no-ops |

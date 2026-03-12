@@ -1,23 +1,18 @@
-/// DX12 Triangle Demo — first geometry on screen.
+/// Triangle Demo Implementation — Backend-Agnostic
 ///
-/// Supports both SM6.6 bindless and SM5 Input Assembler paths automatically.
-/// SM6.6: vertex data in StructuredBuffer, accessed by SRV index via root constant.
-/// SM5: vertex data in VertexBuffer, accessed via Input Assembler with vertex layout.
-///
-/// Shaders are loaded through the ShaderPipeline (VFS → cache → DXC),
-/// not compiled directly. This validates the full asset pipeline path.
+/// Renders a colored RGB triangle using only abstract RHI interfaces.
+/// Supports SM6.6 bindless (StructuredBuffer + SRV index root constant)
+/// and SM5 Input Assembler fallback (VertexBuffer + input layout).
+/// The code never touches DX12/DX11 types directly.
 
-#define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
 #include "triangle_demo.h"
-#include "dx12_device.h"
-#include "dx12_swapchain.h"
-#include "dx12_command_list.h"
-#include "dx12_fence.h"
+#include "rhi.h"
+#include "rhi_backend.h"
+#include "rhi_config.h"
+#include "rhi_types.h"
 #include "platform_window.h"
 #include "log.h"
 #include "vertex.h"
-#include "upload_context.h"
 #include "shader_pipeline.h"
 #include "shader_compiler.h"
 #include "shader_compiler_fxc.h"
@@ -25,7 +20,7 @@
 
 #include <chrono>
 #include <cstdlib>
-#include <d3d12.h>
+#include <cstring>
 #include <string>
 
 namespace uz {
@@ -34,7 +29,10 @@ namespace uz {
 // Triangle Geometry
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Returns the 3 vertices of a colored triangle in NDC.
+/// Fills `outVerts` with the 3 vertices of a colored NDC triangle.
+///
+/// Winding order is clockwise (top, bottom-right, bottom-left).
+/// Colors: red (top), green (bottom-right), blue (bottom-left).
 static void GetTriangleVertices(SimpleVertex outVerts[3]) {
     outVerts[0] = { {  0.0f,  0.5f, 0.0f }, { 1, 0, 0, 1 }, { 0.5f, 0.0f } };  // Top — red
     outVerts[1] = { {  0.5f, -0.5f, 0.0f }, { 0, 1, 0, 1 }, { 1.0f, 1.0f } };  // Bottom-right — green
@@ -45,9 +43,10 @@ static void GetTriangleVertices(SimpleVertex outVerts[3]) {
 // Main Demo
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Number of frames in flight for triple-buffered frame pacing.
 static constexpr uint32_t kFramesInFlight = 3;
 
-bool RunTriangleDemo(uint32_t frameCount) {
+bool RunTriangleDemo(RHIBackend backend, uint32_t frameCount) {
     // ── Window ───────────────────────────────────────────────────────────
     WindowDesc winDesc{};
     winDesc.title = "UzEngine — Triangle Demo";
@@ -63,24 +62,24 @@ bool RunTriangleDemo(uint32_t frameCount) {
 
     // ── Device ───────────────────────────────────────────────────────────
     RHIDeviceDesc deviceDesc{};
-    deviceDesc.backend = RHIBackend::DX12;
+    deviceDesc.backend = backend;
 #ifdef NDEBUG
     deviceDesc.enableValidation = false;
 #else
     deviceDesc.enableValidation = true;
 #endif
 
-    // UZ_FORCE_SM5=1 environment variable forces SM5.0 for testing FXC fallback
+    // UZ_FORCE_SM5=1 forces the FXC/SM5 path regardless of hardware capability.
     if (const char* env = std::getenv("UZ_FORCE_SM5"); env && std::string(env) == "1") {
         deviceDesc.forceShaderModel = ShaderModel::SM5_0;
     }
 
-    auto* rhiDevice = CreateRHIDevice(deviceDesc);
-    if (!rhiDevice) {
-        UZ_LOG(Renderer, Error, "Failed to create RHI device");
+    IRHIDevice* device = CreateRHIDevice(deviceDesc);
+    if (!device) {
+        UZ_LOG(Renderer, Error, "Failed to create RHI device (backend={})",
+               static_cast<int>(backend));
         return false;
     }
-    auto* device = static_cast<DX12Device*>(rhiDevice);
 
     // ── Swapchain ────────────────────────────────────────────────────────
     RHISwapChainDesc scDesc{};
@@ -91,29 +90,28 @@ bool RunTriangleDemo(uint32_t frameCount) {
     scDesc.format = RHIFormat::RGBA8Unorm;
     scDesc.vsync = false;
 
-    auto* rhiSwapChain = device->CreateSwapChain(scDesc);
-    if (!rhiSwapChain) {
+    IRHISwapChain* swapChain = device->CreateSwapChain(scDesc);
+    if (!swapChain) {
         UZ_LOG(Renderer, Error, "Failed to create swapchain");
         DestroyRHIDevice(device);
         return false;
     }
-    auto* swapChain = static_cast<DX12SwapChain*>(rhiSwapChain);
 
     // ── Command List ─────────────────────────────────────────────────────
-    auto* rhiCmdList = device->CreateCommandList(RHIQueueType::Graphics);
-    if (!rhiCmdList) {
+    IRHICommandList* cmdList = device->CreateCommandList(RHIQueueType::Graphics);
+    if (!cmdList) {
         UZ_LOG(Renderer, Error, "Failed to create command list");
         device->DestroySwapChain(swapChain);
         DestroyRHIDevice(device);
         return false;
     }
-    auto* cmdList = static_cast<DX12CommandList*>(rhiCmdList);
 
-    // ── Fences ───────────────────────────────────────────────────────────
-    DX12Fence* frameFences[kFramesInFlight] = {};
+    // ── Per-frame Fences ─────────────────────────────────────────────────
+    IRHIFence* frameFences[kFramesInFlight] = {};
     uint64_t fenceValues[kFramesInFlight] = {};
+
     for (uint32_t i = 0; i < kFramesInFlight; ++i) {
-        frameFences[i] = static_cast<DX12Fence*>(device->CreateFence());
+        frameFences[i] = device->CreateFence();
         if (!frameFences[i]) {
             UZ_LOG(Renderer, Error, "Failed to create frame fence {}", i);
             for (uint32_t j = 0; j < i; ++j) device->DestroyFence(frameFences[j]);
@@ -124,19 +122,29 @@ bool RunTriangleDemo(uint32_t frameCount) {
         }
     }
 
-    // ── Shader Pipeline (VFS → cache → DXC) ────────────────────────────
+    // ── Shader Pipeline (VFS -> cache -> DXC/FXC) ────────────────────────
+    // Use bindless (SM6.6) if the device supports it, otherwise fall back to
+    // the SM5 Input Assembler path compiled by FXC.
     const bool bindless = device->IsBindless();
+
+    // SM6.6 bindless -> DXC produces DXIL; SM5 -> FXC produces DXBC.
+    // Both DX12 and DX11 SM5 consume DXBC from FXC, so "dx12_sm50" works for both.
+    const std::string targetBackend = bindless ? "dx12_sm66" : "dx12_sm50";
 
     ShaderCompiler compiler;
     if (!compiler.Init()) {
-        UZ_LOG(Renderer, Error, "Failed to init shader compiler");
+        UZ_LOG(Renderer, Error, "Failed to init DXC shader compiler");
+        for (uint32_t i = 0; i < kFramesInFlight; ++i) device->DestroyFence(frameFences[i]);
+        device->DestroyCommandList(cmdList);
+        device->DestroySwapChain(swapChain);
+        DestroyRHIDevice(device);
         return false;
     }
 
     ShaderPipeline shaderPipeline;
     ShaderPipeline::Config pipelineCfg;
     pipelineCfg.cacheDir = (uz::GetExeDir() / "cache/shaders").string();
-    pipelineCfg.targetBackend = bindless ? "dx12_sm66" : "dx12_sm50";
+    pipelineCfg.targetBackend = targetBackend;
     pipelineCfg.bindless = bindless;
     shaderPipeline.Init(pipelineCfg);
     shaderPipeline.SetCompiler(&compiler);
@@ -145,25 +153,39 @@ bool RunTriangleDemo(uint32_t frameCount) {
     if (!bindless) {
         if (!compilerFXC.Init()) {
             UZ_LOG(Renderer, Error, "Failed to init FXC shader compiler");
+            shaderPipeline.Shutdown();
+            for (uint32_t i = 0; i < kFramesInFlight; ++i) device->DestroyFence(frameFences[i]);
+            device->DestroyCommandList(cmdList);
+            device->DestroySwapChain(swapChain);
+            DestroyRHIDevice(device);
             return false;
         }
         shaderPipeline.SetCompilerFXC(&compilerFXC);
     }
 
-    // Mount demo shaders: exe is at zig-out/bin/, shaders at shaders/
-    std::string shadersDir = (uz::GetExeDir() / "../../shaders").string();
+    // Exe is at zig-out/bin/; shaders live at shaders/ relative to the repo root.
+    const std::string shadersDir = (uz::GetExeDir() / "../../shaders").string();
     shaderPipeline.Mount("/demo/triangle", shadersDir);
 
-    // Load bytecode through the pipeline (VFS read → cache check → compile if needed)
     auto vsBytecode = shaderPipeline.LoadBytecode("/demo/triangle/simple_vs.hlsl", "");
     if (vsBytecode.empty()) {
         UZ_LOG(Renderer, Error, "Failed to load VS via ShaderPipeline");
+        shaderPipeline.Shutdown();
+        for (uint32_t i = 0; i < kFramesInFlight; ++i) device->DestroyFence(frameFences[i]);
+        device->DestroyCommandList(cmdList);
+        device->DestroySwapChain(swapChain);
+        DestroyRHIDevice(device);
         return false;
     }
 
     auto psBytecode = shaderPipeline.LoadBytecode("/demo/triangle/simple_ps.hlsl", "");
     if (psBytecode.empty()) {
         UZ_LOG(Renderer, Error, "Failed to load PS via ShaderPipeline");
+        shaderPipeline.Shutdown();
+        for (uint32_t i = 0; i < kFramesInFlight; ++i) device->DestroyFence(frameFences[i]);
+        device->DestroyCommandList(cmdList);
+        device->DestroySwapChain(swapChain);
+        DestroyRHIDevice(device);
         return false;
     }
 
@@ -190,11 +212,17 @@ bool RunTriangleDemo(uint32_t frameCount) {
 
     if (!vsHandle.IsValid() || !psHandle.IsValid()) {
         UZ_LOG(Renderer, Error, "Failed to create shader handles");
+        shaderPipeline.Shutdown();
+        for (uint32_t i = 0; i < kFramesInFlight; ++i) device->DestroyFence(frameFences[i]);
+        device->DestroyCommandList(cmdList);
+        device->DestroySwapChain(swapChain);
+        DestroyRHIDevice(device);
         return false;
     }
 
     // ── Create Pipeline ──────────────────────────────────────────────────
-    // SM5 input layout: POSITION(float3) + COLOR(float4) + TEXCOORD(float2)
+    // SM5 input layout: POSITION(float3) + COLOR(float4) + TEXCOORD(float2).
+    // Only populated when not in bindless mode.
     RHIInputElementDesc inputElements[] = {
         { RHIInputSemantic::Position, 0, RHIFormat::RGB32Float,  0, 0  },
         { RHIInputSemantic::Color,    0, RHIFormat::RGBA32Float, 0, 12 },
@@ -212,6 +240,7 @@ bool RunTriangleDemo(uint32_t frameCount) {
     pipeDesc.debugName = "TrianglePipeline";
 
     if (!bindless) {
+        // SM5 fallback: provide explicit vertex layout for the Input Assembler.
         pipeDesc.inputElements = inputElements;
         pipeDesc.inputElementCount = 3;
         pipeDesc.vertexStride = sizeof(SimpleVertex);
@@ -220,17 +249,26 @@ bool RunTriangleDemo(uint32_t frameCount) {
     RHIPipelineHandle pipeline = device->CreateGraphicsPipeline(pipeDesc);
     if (!pipeline.IsValid()) {
         UZ_LOG(Renderer, Error, "Failed to create triangle pipeline");
+        device->DestroyShader(vsHandle);
+        device->DestroyShader(psHandle);
+        shaderPipeline.Shutdown();
+        for (uint32_t i = 0; i < kFramesInFlight; ++i) device->DestroyFence(frameFences[i]);
+        device->DestroyCommandList(cmdList);
+        device->DestroySwapChain(swapChain);
+        DestroyRHIDevice(device);
         return false;
     }
-    UZ_LOG(Renderer, Info, "Triangle pipeline created successfully");
+    UZ_LOG(Renderer, Info, "Triangle pipeline created (bindless={})", bindless);
 
-    // ── Create Vertex Buffer ───────────────────────────────────────────────
+    // ── Create Vertex Buffer ─────────────────────────────────────────────
     SimpleVertex vertices[3];
     GetTriangleVertices(vertices);
 
     RHIBufferDesc vbDesc{};
     vbDesc.sizeBytes = sizeof(vertices);
     vbDesc.stride = sizeof(SimpleVertex);
+    // SM6.6: StructuredBuffer accessed by SRV index via root constant.
+    // SM5: plain VertexBuffer bound through the Input Assembler.
     vbDesc.usage = bindless ? RHIBufferUsage::StructuredBuffer : RHIBufferUsage::VertexBuffer;
     vbDesc.memory = RHIMemoryType::Upload;
     vbDesc.debugName = "TriangleVertexBuffer";
@@ -238,12 +276,29 @@ bool RunTriangleDemo(uint32_t frameCount) {
     RHIBufferHandle vbHandle = device->CreateBuffer(vbDesc);
     if (!vbHandle.IsValid()) {
         UZ_LOG(Renderer, Error, "Failed to create vertex buffer");
+        device->DestroyPipeline(pipeline);
+        device->DestroyShader(vsHandle);
+        device->DestroyShader(psHandle);
+        shaderPipeline.Shutdown();
+        for (uint32_t i = 0; i < kFramesInFlight; ++i) device->DestroyFence(frameFences[i]);
+        device->DestroyCommandList(cmdList);
+        device->DestroySwapChain(swapChain);
+        DestroyRHIDevice(device);
         return false;
     }
 
     void* mapped = device->MapBuffer(vbHandle);
     if (!mapped) {
         UZ_LOG(Renderer, Error, "Failed to map vertex buffer");
+        device->DestroyBuffer(vbHandle);
+        device->DestroyPipeline(pipeline);
+        device->DestroyShader(vsHandle);
+        device->DestroyShader(psHandle);
+        shaderPipeline.Shutdown();
+        for (uint32_t i = 0; i < kFramesInFlight; ++i) device->DestroyFence(frameFences[i]);
+        device->DestroyCommandList(cmdList);
+        device->DestroySwapChain(swapChain);
+        DestroyRHIDevice(device);
         return false;
     }
     std::memcpy(mapped, vertices, sizeof(vertices));
@@ -252,7 +307,17 @@ bool RunTriangleDemo(uint32_t frameCount) {
     if (bindless) {
         vbSrvIndex = device->GetBufferSRVIndex(vbHandle);
         if (vbSrvIndex == UINT32_MAX) {
-            UZ_LOG(Renderer, Error, "Vertex buffer has no SRV — check StructuredBuffer usage flag");
+            UZ_LOG(Renderer, Error,
+                   "Vertex buffer has no SRV — check StructuredBuffer usage flag");
+            device->DestroyBuffer(vbHandle);
+            device->DestroyPipeline(pipeline);
+            device->DestroyShader(vsHandle);
+            device->DestroyShader(psHandle);
+            shaderPipeline.Shutdown();
+            for (uint32_t i = 0; i < kFramesInFlight; ++i) device->DestroyFence(frameFences[i]);
+            device->DestroyCommandList(cmdList);
+            device->DestroySwapChain(swapChain);
+            DestroyRHIDevice(device);
             return false;
         }
         UZ_LOG(Renderer, Info, "Vertex buffer SRV index: {}", vbSrvIndex);
@@ -269,7 +334,7 @@ bool RunTriangleDemo(uint32_t frameCount) {
     while (window.PumpMessages() && window.IsOpen()) {
         if (frameCount > 0 && frameIndex >= frameCount) break;
 
-        // Handle resize
+        // Handle resize — must drain the GPU before touching swapchain resources.
         if (window.WasResized()) {
             device->WaitIdle();
             swapChain->Resize(
@@ -278,43 +343,44 @@ bool RunTriangleDemo(uint32_t frameCount) {
             window.ClearResizedFlag();
         }
 
-        // Wait for frame N-2
-        uint32_t allocFrame = frameIndex % kFramesInFlight;
+        // Wait for frame N-2 before reusing its command allocator.
+        const uint32_t allocFrame = frameIndex % kFramesInFlight;
         if (fenceValues[allocFrame] > 0) {
             frameFences[allocFrame]->WaitCPU(fenceValues[allocFrame]);
         }
 
-        // Record
         cmdList->Begin();
 
-        ID3D12Resource* backBuffer = swapChain->GetCurrentBackBufferResource();
-        D3D12_CPU_DESCRIPTOR_HANDLE rtv = swapChain->GetCurrentRTV();
+        RHITextureHandle backBuffer = swapChain->GetCurrentBackBuffer();
 
-        // Barrier: Present → RenderTarget
-        cmdList->TransitionBarrier(backBuffer,
-            D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
+        // Barrier: Present -> RenderTarget
+        RHIBarrierDesc toRenderTarget{};
+        toRenderTarget.texture = backBuffer;
+        toRenderTarget.stateBefore = RHIResourceState::Present;
+        toRenderTarget.stateAfter = RHIResourceState::RenderTarget;
+        cmdList->ResourceBarrier(&toRenderTarget, 1);
 
-        // Clear to dark gray
-        float clearColor[4] = { 0.1f, 0.1f, 0.12f, 1.0f };
-        cmdList->ClearRTV(rtv, clearColor);
+        // Clear to dark charcoal background before drawing the triangle.
+        const float clearColor[4] = { 0.1f, 0.1f, 0.12f, 1.0f };
+        cmdList->ClearRenderTarget(backBuffer, clearColor);
 
-        // Set render target
-        cmdList->GetNative()->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
+        // Begin render pass — sets the render target for subsequent draw calls.
+        RHIRenderPassDesc rpDesc{};
+        rpDesc.colorAttachmentCount = 1;
+        rpDesc.colorAttachments[0].texture = backBuffer;
+        // Already cleared above; no load-clear needed here.
+        rpDesc.colorAttachments[0].clear = false;
+        cmdList->BeginRenderPass(rpDesc);
 
-        // Set pipeline
         cmdList->SetPipeline(pipeline);
 
-        // Set topology
-        cmdList->GetNative()->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-
-        // Bind vertex data
+        // Bind vertex data: SRV index root constant (SM6.6) or IA vertex buffer (SM5).
         if (bindless) {
             cmdList->SetDescriptorIndex(0, vbSrvIndex);
         } else {
             cmdList->SetVertexBuffer(0, vbHandle, 0);
         }
 
-        // Set viewport and scissor
         RHIViewport vp{};
         vp.width = static_cast<float>(swapChain->GetWidth());
         vp.height = static_cast<float>(swapChain->GetHeight());
@@ -322,27 +388,30 @@ bool RunTriangleDemo(uint32_t frameCount) {
         cmdList->SetViewport(vp);
 
         RHIScissorRect sc{};
-        sc.right = swapChain->GetWidth();
-        sc.bottom = swapChain->GetHeight();
+        sc.right = static_cast<int32_t>(swapChain->GetWidth());
+        sc.bottom = static_cast<int32_t>(swapChain->GetHeight());
         cmdList->SetScissor(sc);
 
-        // Draw 3 vertices
         cmdList->Draw(3);
 
-        // Barrier: RenderTarget → Present
-        cmdList->TransitionBarrier(backBuffer,
-            D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
+        cmdList->EndRenderPass();
+
+        // Barrier: RenderTarget -> Present
+        RHIBarrierDesc toPresent{};
+        toPresent.texture = backBuffer;
+        toPresent.stateBefore = RHIResourceState::RenderTarget;
+        toPresent.stateAfter = RHIResourceState::Present;
+        cmdList->ResourceBarrier(&toPresent, 1);
 
         cmdList->End();
         cmdList->Execute();
 
         swapChain->Present(false);
 
-        // Signal fence
+        // Signal fence for this frame via the abstract interface.
         globalFenceValue++;
         fenceValues[allocFrame] = globalFenceValue;
-        device->GetDirectQueue()->Signal(
-            frameFences[allocFrame]->GetNativeFence(), globalFenceValue);
+        frameFences[allocFrame]->Signal(globalFenceValue);
 
         frameIndex++;
     }
@@ -351,10 +420,13 @@ bool RunTriangleDemo(uint32_t frameCount) {
     device->WaitIdle();
 
     auto endTime = std::chrono::high_resolution_clock::now();
-    float totalMs = std::chrono::duration<float, std::milli>(endTime - startTime).count();
-    float avgMs = frameIndex > 0 ? totalMs / static_cast<float>(frameIndex) : 0.0f;
+    const float totalMs =
+        std::chrono::duration<float, std::milli>(endTime - startTime).count();
+    const float avgMs =
+        frameIndex > 0 ? totalMs / static_cast<float>(frameIndex) : 0.0f;
 
-    UZ_LOG(Renderer, Info, "Triangle demo finished: {} frames, {:.1f}ms total, {:.2f}ms/frame ({:.0f} FPS)",
+    UZ_LOG(Renderer, Info,
+           "Triangle demo finished: {} frames, {:.1f}ms total, {:.2f}ms/frame ({:.0f} FPS)",
            frameIndex, totalMs, avgMs, avgMs > 0 ? 1000.0f / avgMs : 0.0f);
 
     shaderPipeline.Shutdown();

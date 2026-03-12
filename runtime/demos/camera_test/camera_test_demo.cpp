@@ -1,15 +1,15 @@
-/// Camera Test Demo Implementation
+/// Camera Test Demo Implementation — Backend-Agnostic
 ///
 /// Renders a colored cube in 3D with FPS camera controls.
 /// WASD to move, right-click + mouse to look, Shift to sprint, Space/Ctrl up/down.
+/// Uses only abstract RHI interfaces — no DX12, Vulkan, or Metal types.
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include "camera_test_demo.h"
-#include "dx12_device.h"
-#include "dx12_swapchain.h"
-#include "dx12_command_list.h"
-#include "dx12_fence.h"
+#include "rhi.h"
+#include "rhi_backend.h"
+#include "rhi_types.h"
 #include "platform_window.h"
 #include "input.h"
 #include "log.h"
@@ -24,13 +24,15 @@
 #include "paths.h"
 #include "editor_grid.h"
 #include "screenshot_capture.h"
+#include "dx12_device.h"
+#include "dx12_command_list.h"
+#include "dx12_swapchain.h"
 #include "stats_overlay.h"
 
 #include <DirectXMath.h>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
-#include <d3d12.h>
 #include <thread>
 
 using namespace DirectX;
@@ -46,18 +48,24 @@ static constexpr float kMaxFPS = 500.f;
 static constexpr float kMinFrameTime = 1.f / kMaxFPS;
 
 /// Fills outVerts with a unit cube centered at origin. Each face has a distinct color.
+///
+/// # Arguments
+/// * `outVerts` — Array of exactly `kCubeVertexCount` (36) vertices to fill.
+///
+/// # Face colors
+/// +X=red, -X=cyan, +Y=green, -Y=magenta, +Z=blue, -Z=yellow
+/// Cube bottom sits on Z=0, top at Z=1.
 static void GetCubeVertices(SimpleVertex outVerts[kCubeVertexCount]) {
-    // Face colors: +X=red, -X=cyan, +Y=green, -Y=magenta, +Z=blue, -Z=yellow
-    const Vec4 red    = {1, 0, 0, 1};
-    const Vec4 cyan   = {0, 1, 1, 1};
-    const Vec4 green  = {0, 1, 0, 1};
-    const Vec4 magenta= {1, 0, 1, 1};
-    const Vec4 blue   = {0, 0, 1, 1};
-    const Vec4 yellow = {1, 1, 0, 1};
+    const Vec4 red     = {1, 0, 0, 1};
+    const Vec4 cyan    = {0, 1, 1, 1};
+    const Vec4 green   = {0, 1, 0, 1};
+    const Vec4 magenta = {1, 0, 1, 1};
+    const Vec4 blue    = {0, 0, 1, 1};
+    const Vec4 yellow  = {1, 1, 0, 1};
 
     // Half-extent; cube sits on Z=0 ground plane (bottom at Z=0, top at Z=1)
     constexpr float h = 0.5f;
-    constexpr float zOff = h; // Offset so cube bottom = Z=0
+    constexpr float zOff = h;
     const Vec2 uv00 = {0, 0}, uv10 = {1, 0}, uv01 = {0, 1}, uv11 = {1, 1};
 
     uint32_t i = 0;
@@ -93,6 +101,7 @@ static constexpr uint32_t kFramesInFlight = 3;
 
 bool RunCameraTestDemo(const CameraTestConfig& config) {
     const uint32_t frameCount = config.frameCount;
+
     // ── Window ───────────────────────────────────────────────────────────
     WindowDesc winDesc{};
     winDesc.title = "UzEngine — Camera Test (WASD + RMB Look)";
@@ -113,7 +122,7 @@ bool RunCameraTestDemo(const CameraTestConfig& config) {
 
     // ── Device ───────────────────────────────────────────────────────────
     RHIDeviceDesc deviceDesc{};
-    deviceDesc.backend = RHIBackend::DX12;
+    deviceDesc.backend = config.backend;
 #ifdef NDEBUG
     deviceDesc.enableValidation = false;
 #else
@@ -124,9 +133,10 @@ bool RunCameraTestDemo(const CameraTestConfig& config) {
         deviceDesc.forceShaderModel = ShaderModel::SM5_0;
     }
 
-    auto* device = static_cast<DX12Device*>(CreateRHIDevice(deviceDesc));
+    IRHIDevice* device = CreateRHIDevice(deviceDesc);
     if (!device) {
-        UZ_LOG(Renderer, Error, "Failed to create RHI device");
+        UZ_LOG(Renderer, Error, "Failed to create RHI device (backend={})",
+               static_cast<int>(config.backend));
         return false;
     }
 
@@ -139,7 +149,7 @@ bool RunCameraTestDemo(const CameraTestConfig& config) {
     scDesc.format = RHIFormat::RGBA8Unorm;
     scDesc.vsync = false;
 
-    auto* swapChain = static_cast<DX12SwapChain*>(device->CreateSwapChain(scDesc));
+    IRHISwapChain* swapChain = device->CreateSwapChain(scDesc);
     if (!swapChain) {
         UZ_LOG(Renderer, Error, "Failed to create swapchain");
         DestroyRHIDevice(device);
@@ -147,7 +157,7 @@ bool RunCameraTestDemo(const CameraTestConfig& config) {
     }
 
     // ── Command List ─────────────────────────────────────────────────────
-    auto* cmdList = static_cast<DX12CommandList*>(device->CreateCommandList(RHIQueueType::Graphics));
+    IRHICommandList* cmdList = device->CreateCommandList(RHIQueueType::Graphics);
     if (!cmdList) {
         UZ_LOG(Renderer, Error, "Failed to create command list");
         device->DestroySwapChain(swapChain);
@@ -156,10 +166,18 @@ bool RunCameraTestDemo(const CameraTestConfig& config) {
     }
 
     // ── Fences ───────────────────────────────────────────────────────────
-    DX12Fence* frameFences[kFramesInFlight] = {};
+    IRHIFence* frameFences[kFramesInFlight] = {};
     uint64_t fenceValues[kFramesInFlight] = {};
     for (uint32_t i = 0; i < kFramesInFlight; ++i) {
-        frameFences[i] = static_cast<DX12Fence*>(device->CreateFence());
+        frameFences[i] = device->CreateFence();
+        if (!frameFences[i]) {
+            UZ_LOG(Renderer, Error, "Failed to create frame fence {}", i);
+            for (uint32_t j = 0; j < i; ++j) device->DestroyFence(frameFences[j]);
+            device->DestroyCommandList(cmdList);
+            device->DestroySwapChain(swapChain);
+            DestroyRHIDevice(device);
+            return false;
+        }
     }
 
     // ── Shader Pipeline ──────────────────────────────────────────────────
@@ -309,7 +327,12 @@ bool RunCameraTestDemo(const CameraTestConfig& config) {
     ScreenshotCapture screenshotCapture;
     bool screenshotPending = !config.screenshotPath.empty();
     if (screenshotPending) {
-        if (!screenshotCapture.Init(device, scDesc.width, scDesc.height)) {
+        // Screenshot capture is DX12-only for now (uses DX12 readback APIs)
+        auto* dx12Dev = dynamic_cast<DX12Device*>(device);
+        if (!dx12Dev) {
+            UZ_LOG(Renderer, Warning, "Screenshot capture only supported on DX12 backend");
+            screenshotPending = false;
+        } else if (!screenshotCapture.Init(dx12Dev, scDesc.width, scDesc.height)) {
             UZ_LOG(Renderer, Error, "Failed to initialize screenshot capture");
             return false;
         }
@@ -394,7 +417,7 @@ bool RunCameraTestDemo(const CameraTestConfig& config) {
                 static_cast<float>(window.GetHeight()));
         }
 
-        // Wait for frame N-2
+        // Wait for frame N-2 before reusing its allocator
         uint32_t allocFrame = frameIndex % kFramesInFlight;
         if (fenceValues[allocFrame] > 0) {
             frameFences[allocFrame]->WaitCPU(fenceValues[allocFrame]);
@@ -415,23 +438,29 @@ bool RunCameraTestDemo(const CameraTestConfig& config) {
         // ── Record ───────────────────────────────────────────────────────
         cmdList->Begin();
 
-        ID3D12Resource* backBuffer = swapChain->GetCurrentBackBufferResource();
-        D3D12_CPU_DESCRIPTOR_HANDLE rtv = swapChain->GetCurrentRTV();
+        RHITextureHandle backBuffer = swapChain->GetCurrentBackBuffer();
 
-        cmdList->TransitionBarrier(backBuffer,
-            D3D12_RESOURCE_STATE_PRESENT, D3D12_RESOURCE_STATE_RENDER_TARGET);
+        // Barrier: Present -> RenderTarget
+        RHIBarrierDesc toRenderTarget{};
+        toRenderTarget.texture = backBuffer;
+        toRenderTarget.stateBefore = RHIResourceState::Present;
+        toRenderTarget.stateAfter = RHIResourceState::RenderTarget;
+        cmdList->ResourceBarrier(&toRenderTarget, 1);
 
+        // Clear render target and depth
         float clearColor[4] = {0.05f, 0.05f, 0.08f, 1.0f};
-        cmdList->ClearRTV(rtv, clearColor);
+        cmdList->ClearRenderTarget(backBuffer, clearColor);
         cmdList->ClearDepthStencil(depthBuffer, 1.0f, 0);
 
-        auto* depthTex = device->GetTexturePool().Get(depthBuffer.index, depthBuffer.generation);
-        D3D12_CPU_DESCRIPTOR_HANDLE dsv = device->GetDescriptorAllocator(
-            D3D12_DESCRIPTOR_HEAP_TYPE_DSV).CpuHandle(depthTex->dsvIndex);
-        cmdList->GetNative()->OMSetRenderTargets(1, &rtv, FALSE, &dsv);
+        // Begin render pass with depth attachment — binds both color and DSV
+        RHIRenderPassDesc rpDesc{};
+        rpDesc.colorAttachments[0].texture = backBuffer;
+        rpDesc.colorAttachmentCount = 1;
+        rpDesc.hasDepth = true;
+        rpDesc.depthAttachment.texture = depthBuffer;
+        cmdList->BeginRenderPass(rpDesc);
 
         cmdList->SetPipeline(pipeline);
-        cmdList->GetNative()->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
         // Bind vertex data
         if (bindless) {
@@ -459,38 +488,50 @@ bool RunCameraTestDemo(const CameraTestConfig& config) {
         // ── Editor Grid (drawn after opaque geometry, uses alpha blend) ──
         editorGrid.Draw(cmdList, cbRing, camera);
 
-        // ── Stats Overlay (drawn last, on top of everything) ─────────────
+        cmdList->EndRenderPass();
+
+        // ── Stats Overlay (drawn last on top, no depth binding needed) ───
         statsOverlay.SetDrawCalls(2); // Cube + grid
         statsOverlay.SetVertexCount(kCubeVertexCount + 3);
         statsOverlay.SetTriangleCount(kCubeVertexCount / 3 + 1);
 
-        // Rebind render target without depth for 2D overlay
-        cmdList->GetNative()->OMSetRenderTargets(1, &rtv, FALSE, nullptr);
+        // Overlay render pass: color only, no depth — 2D UI sits on top of 3D
+        RHIRenderPassDesc overlayRpDesc{};
+        overlayRpDesc.colorAttachments[0].texture = backBuffer;
+        overlayRpDesc.colorAttachmentCount = 1;
+        overlayRpDesc.hasDepth = false;
+        cmdList->BeginRenderPass(overlayRpDesc);
         statsOverlay.Render(cmdList, cbRing, frameIndex);
+        cmdList->EndRenderPass();
 
         // ── Screenshot Capture (if requested on this frame) ─────────────
         bool capturedThisFrame = false;
         if (screenshotPending && frameIndex == config.screenshotFrame) {
-            screenshotCapture.CaptureBackBuffer(cmdList, swapChain);
+            screenshotCapture.CaptureBackBuffer(
+                dynamic_cast<DX12CommandList*>(cmdList),
+                dynamic_cast<DX12SwapChain*>(swapChain));
             capturedThisFrame = true;
         }
 
-        cmdList->TransitionBarrier(backBuffer,
-            D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_PRESENT);
+        // Barrier: RenderTarget -> Present
+        RHIBarrierDesc toPresent{};
+        toPresent.texture = backBuffer;
+        toPresent.stateBefore = RHIResourceState::RenderTarget;
+        toPresent.stateAfter = RHIResourceState::Present;
+        cmdList->ResourceBarrier(&toPresent, 1);
 
         cmdList->End();
         cmdList->Execute();
 
         swapChain->Present(false);
 
+        // Signal fence via abstract interface
         globalFenceValue++;
         fenceValues[allocFrame] = globalFenceValue;
-        device->GetDirectQueue()->Signal(
-            frameFences[allocFrame]->GetNativeFence(), globalFenceValue);
+        frameFences[allocFrame]->Signal(globalFenceValue);
 
         // ── Save screenshot after GPU completes ──────────────────────────
         if (capturedThisFrame) {
-            // Wait for this frame's GPU work to finish
             frameFences[allocFrame]->WaitCPU(globalFenceValue);
             screenshotCapture.SaveToPNG(config.screenshotPath);
             screenshotPending = false;
@@ -515,7 +556,8 @@ bool RunCameraTestDemo(const CameraTestConfig& config) {
     float totalMs = std::chrono::duration<float, std::milli>(endTime - startTime).count();
     float avgMs = frameIndex > 0 ? totalMs / static_cast<float>(frameIndex) : 0.f;
 
-    UZ_LOG(Renderer, Info, "Camera test demo: {} frames, {:.1f}ms total, {:.2f}ms/frame ({:.0f} FPS)",
+    UZ_LOG(Renderer, Info,
+           "Camera test demo: {} frames, {:.1f}ms total, {:.2f}ms/frame ({:.0f} FPS)",
            frameIndex, totalMs, avgMs, avgMs > 0 ? 1000.f / avgMs : 0.f);
 
     screenshotCapture.Shutdown();
