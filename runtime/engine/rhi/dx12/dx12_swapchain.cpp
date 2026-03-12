@@ -10,6 +10,9 @@
 #include "dx12_device.h"
 
 #include "log.h"
+#include "profiler.h"
+
+#include <tracy/TracyD3D12.hpp>
 
 #include <windows.h>
 
@@ -57,6 +60,7 @@ DX12SwapChain::~DX12SwapChain() {
 }
 
 bool DX12SwapChain::Init(DX12Device* device, const RHISwapChainDesc& desc) {
+    UZ_PROFILE_FUNCTION();
     if (!device || !desc.windowHandle) {
         UZ_LOG(RHI, Error, "DX12SwapChain::Init — null device or window handle");
         return false;
@@ -134,6 +138,7 @@ bool DX12SwapChain::Init(DX12Device* device, const RHISwapChainDesc& desc) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void DX12SwapChain::AcquireBackBuffers() {
+    UZ_PROFILE_FUNCTION();
     ID3D12Device* device = m_device->GetDevice();
     auto& rtvAlloc = m_device->GetDescriptorAllocator(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
     m_rtvDescriptorSize = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
@@ -171,6 +176,7 @@ void DX12SwapChain::AcquireBackBuffers() {
 }
 
 void DX12SwapChain::ReleaseBackBuffers() {
+    UZ_PROFILE_FUNCTION();
     if (!m_device) {
         for (uint32_t i = 0; i < kMaxBackBuffers; ++i) {
             m_backBuffers[i].Reset();
@@ -212,6 +218,7 @@ uint32_t DX12SwapChain::GetCurrentBackBufferIndex() const {
 }
 
 void DX12SwapChain::Present(bool vsync) {
+    UZ_PROFILE_FUNCTION();
     UINT syncInterval = vsync ? 1 : 0;
     UINT flags = (!vsync && m_tearingSupported) ? DXGI_PRESENT_ALLOW_TEARING : 0;
 
@@ -219,9 +226,13 @@ void DX12SwapChain::Present(bool vsync) {
     if (hr == DXGI_ERROR_DEVICE_REMOVED || hr == DXGI_ERROR_DEVICE_RESET) {
         m_device->LogDeviceRemoved();
     }
+
+    TracyD3D12Collect(m_device->GetTracyGpuContext());
+    TracyD3D12NewFrame(m_device->GetTracyGpuContext());
 }
 
 void DX12SwapChain::Resize(uint32_t width, uint32_t height) {
+    UZ_PROFILE_FUNCTION();
     if (width == 0 || height == 0) {
         return; // Minimized window — skip resize
     }

@@ -2,6 +2,7 @@
 
 #include "mesh.h"
 #include "log.h"
+#include "profiler.h"
 
 #include <cstring>
 #include <fstream>
@@ -13,6 +14,7 @@ namespace uz {
 // ─────────────────────────────────────────────────────────────────────────────
 
 Mesh LoadMesh(const std::string& path) {
+    UZ_PROFILE_FUNCTION();
     Mesh mesh{};
 
     std::ifstream file(path, std::ios::binary);
@@ -92,6 +94,7 @@ Mesh LoadMesh(const std::string& path) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 bool SaveMesh(const std::string& path, const Mesh& mesh) {
+    UZ_PROFILE_FUNCTION();
     std::ofstream file(path, std::ios::binary);
     if (!file.is_open()) {
         UZ_LOG(Renderer, Error, "Failed to create mesh file: path='{}'", path);
@@ -164,6 +167,7 @@ static void ComputeBoundsSimple(const SimpleVertex* verts, uint32_t count,
 
 Mesh MeshBuilder::CreateFromVertices(const std::vector<Vertex>& vertices,
                                       const std::vector<uint32_t>& indices) {
+    UZ_PROFILE_FUNCTION();
     Mesh mesh{};
     auto& h = mesh.header;
     h.magic          = kMeshMagic;
@@ -199,6 +203,7 @@ Mesh MeshBuilder::CreateFromVertices(const std::vector<Vertex>& vertices,
 
 Mesh MeshBuilder::CreateFromSimpleVertices(const std::vector<SimpleVertex>& vertices,
                                             const std::vector<uint32_t>& indices) {
+    UZ_PROFILE_FUNCTION();
     Mesh mesh{};
     auto& h = mesh.header;
     h.magic          = kMeshMagic;
@@ -231,6 +236,7 @@ Mesh MeshBuilder::CreateFromSimpleVertices(const std::vector<SimpleVertex>& vert
 // ─────────────────────────────────────────────────────────────────────────────
 
 Mesh MeshBuilder::CreateCube(float size) {
+    UZ_PROFILE_FUNCTION();
     // Cube with bottom at Z=0, centered on XY.
     // 6 faces × 4 vertices = 24 vertices, 6 faces × 2 triangles × 3 = 36 indices.
     // Z-up coordinate system: X-forward, Y-right, Z-up.

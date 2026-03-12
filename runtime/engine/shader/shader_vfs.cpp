@@ -8,6 +8,7 @@
 
 #include "shader_vfs.h"
 #include "log.h"
+#include "profiler.h"
 
 #include <algorithm>
 #include <fstream>
@@ -48,6 +49,7 @@ static std::string NormalizePath(const std::string& path) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void ShaderVFS::Mount(const std::string& virtualPrefix, const std::string& realDirectory) {
+    UZ_PROFILE_FUNCTION();
     ShaderMount mount;
     mount.virtualPrefix = NormalizePath(virtualPrefix);
     mount.realDirectory = NormalizePath(realDirectory);
@@ -109,6 +111,7 @@ bool ShaderVFS::Exists(const std::string& virtualPath) const {
 }
 
 std::optional<std::string> ShaderVFS::ReadFile(const std::string& virtualPath) const {
+    UZ_PROFILE_FUNCTION();
     auto resolved = Resolve(virtualPath);
     if (!resolved) {
         UZ_LOG(IO, Warning, "ShaderVFS: cannot resolve '{}'", virtualPath);

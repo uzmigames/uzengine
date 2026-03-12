@@ -7,6 +7,7 @@
 
 #include "shader_importer.h"
 #include "log.h"
+#include "profiler.h"
 #include "shader_compiler.h"
 #include "uzshader_format.h"
 
@@ -88,6 +89,7 @@ AssetImportResult ShaderImporter::Import(
     const std::vector<uint8_t>& sourceData,
     const std::string& sourceName,
     const AssetImportOptions& options) {
+    UZ_PROFILE_FUNCTION();
 
     AssetImportResult result;
 

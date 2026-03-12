@@ -32,3 +32,12 @@ StatGroup StatMemory{"Memory"};
 StatGroup StatIO{"IO"};
 
 } // namespace uz
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Built-in Stat Counter Definitions
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Number of draw calls issued per frame.
+UZ_DEFINE_STAT(Rendering, DrawCalls);
+/// Number of triangles submitted per frame.
+UZ_DEFINE_STAT(Rendering, Triangles);

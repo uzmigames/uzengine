@@ -55,6 +55,7 @@ file(GLOB SRC_PATHS          engine/paths/*.cpp)
 file(GLOB SRC_SHADER_COMMON  engine/shader/*.cpp)
 file(GLOB SRC_RENDERER       engine/renderer/*.cpp)
 file(GLOB SRC_ASSET          engine/asset/*.cpp)
+file(GLOB SRC_RHI_VULKAN     engine/rhi/vulkan/*.cpp)
 
 # Shader compiler and shader importer are Windows-only (require DXC)
 if(NOT WIN32)
@@ -70,6 +71,7 @@ set(RUNTIME_SOURCES
     ${SRC_CONFIG}
     ${SRC_MATH}
     ${SRC_RHI_COMMON}
+    ${SRC_RHI_VULKAN}
     ${SRC_PATHS}
     ${SRC_SHADER_COMMON}
     ${SRC_RENDERER}
@@ -89,6 +91,10 @@ set(SPIRV_REFLECT_SOURCES
     thirdparty/spirv-reflect/spirv_reflect.c
 )
 
+set(VOLK_SOURCES
+    thirdparty/volk/volk.c
+)
+
 # Image libraries
 file(GLOB ASTCENC_SOURCES thirdparty/astcenc/Source/astcenc_*.cpp)
 
@@ -105,6 +111,7 @@ set(MINIZ_SOURCES
 # ─────────────────────────────────────────────────────────────────────────────
 file(GLOB SRC_PLATFORM_WIN   platform/windows/*.cpp)
 file(GLOB SRC_RHI_DX12       engine/rhi/dx12/*.cpp)
+file(GLOB SRC_RHI_DX11       engine/rhi/dx11/*.cpp)
 
 # Exclude dx12_agility.cpp — only linked into executables, not the library
 list(FILTER SRC_RHI_DX12 EXCLUDE REGEX "dx12_agility\\.cpp$")
@@ -112,6 +119,7 @@ list(FILTER SRC_RHI_DX12 EXCLUDE REGEX "dx12_agility\\.cpp$")
 set(WINDOWS_SOURCES
     ${SRC_PLATFORM_WIN}
     ${SRC_RHI_DX12}
+    ${SRC_RHI_DX11}
 )
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -122,6 +130,7 @@ add_library(uzengine_runtime STATIC
     ${SPDLOG_SOURCES}
     ${TRACY_SOURCES}
     ${SPIRV_REFLECT_SOURCES}
+    ${VOLK_SOURCES}
     ${ASTCENC_SOURCES}
     ${BASIS_UNIVERSAL_SOURCES}
     ${MINIZ_SOURCES}
@@ -158,6 +167,11 @@ set_source_files_properties(thirdparty/spirv-reflect/spirv_reflect.c
 # miniz.c is C
 set_source_files_properties(thirdparty/tinyexr/miniz.c
     PROPERTIES LANGUAGE C
+)
+
+# volk.c is C, needs VK_NO_PROTOTYPES
+set_source_files_properties(thirdparty/volk/volk.c
+    PROPERTIES LANGUAGE C COMPILE_DEFINITIONS "VK_NO_PROTOTYPES"
 )
 
 # basis_universal needs BASISD_SUPPORT_KTX2_ZSTD=0 (no zstd dependency)
@@ -214,6 +228,9 @@ target_include_directories(uzengine_runtime PUBLIC
     thirdparty/libjpeg-turbo
     thirdparty/basis_universal/transcoder
     thirdparty/astcenc/Source
+    thirdparty/vulkan_headers/include
+    thirdparty/volk
+    thirdparty/vma/include
 )
 
 # Windows-only includes
@@ -230,6 +247,7 @@ if(WIN32)
     )
     target_include_directories(uzengine_runtime PUBLIC
         engine/rhi/dx12
+        engine/rhi/dx11
     )
     target_include_directories(uzengine_runtime PRIVATE
         thirdparty/d3d12ma/src
@@ -242,6 +260,7 @@ endif()
 if(WIN32)
     target_link_libraries(uzengine_runtime PUBLIC
         d3d12.lib
+        d3d11.lib
         dxgi.lib
         dxguid.lib
         gdi32.lib
@@ -279,6 +298,7 @@ file(GLOB_RECURSE ALL_TEST_SOURCES tests/*.cpp)
 # Separate Windows-only tests
 set(WINDOWS_TEST_PATTERNS
     "test_dx12_"
+    "test_dx11_"
     "test_input"
 )
 

@@ -6,6 +6,7 @@
 #include "shader_hot_reload.h"
 #include "shader_dependency_graph.h"
 #include "log.h"
+#include "profiler.h"
 
 #include <algorithm>
 #include <cctype>
@@ -136,6 +137,7 @@ void ShaderHotReload::Stop() {
 }
 
 std::vector<std::string> ShaderHotReload::Poll() {
+    UZ_PROFILE_FUNCTION();
     if (!m_running) return {};
 
     auto changedFiles = m_watcher.PollChanges();
@@ -162,6 +164,7 @@ bool ShaderHotReload::IsDirty(const std::string& shaderPath) const {
 }
 
 void ShaderHotReload::MarkDirty(const std::string& shaderPath) {
+    UZ_PROFILE_FUNCTION();
     m_dirtySet.insert(shaderPath);
 
     if (m_depGraph != nullptr) {

@@ -5,6 +5,7 @@
 
 #include "pak_format.h"
 #include "log.h"
+#include "profiler.h"
 
 #define XXH_INLINE_ALL
 #include <xxhash.h>
@@ -30,6 +31,7 @@ static size_t AlignUp(size_t value, size_t alignment) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 std::vector<uint8_t> WritePak(const std::vector<PakWriteEntry>& entries) {
+    UZ_PROFILE_FUNCTION();
     // Build index entries with path hashes
     struct IndexBuild {
         PakIndexEntry index;
@@ -100,6 +102,7 @@ std::vector<uint8_t> WritePak(const std::vector<PakWriteEntry>& entries) {
 }
 
 bool WritePakFile(const std::string& path, const std::vector<PakWriteEntry>& entries) {
+    UZ_PROFILE_FUNCTION();
     auto data = WritePak(entries);
 
     std::ofstream file(path, std::ios::binary);
@@ -122,6 +125,7 @@ bool WritePakFile(const std::string& path, const std::vector<PakWriteEntry>& ent
 // ─────────────────────────────────────────────────────────────────────────────
 
 bool PakReader::Load(const std::vector<uint8_t>& data) {
+    UZ_PROFILE_FUNCTION();
     Unload();
 
     if (data.size() < sizeof(PakHeader) + sizeof(PakTrailer)) {
@@ -178,6 +182,7 @@ bool PakReader::Load(const std::vector<uint8_t>& data) {
 }
 
 bool PakReader::LoadFile(const std::string& path) {
+    UZ_PROFILE_FUNCTION();
     std::ifstream file(path, std::ios::binary | std::ios::ate);
     if (!file.is_open()) {
         UZ_LOG(Asset, Error, "Cannot open pak file: path='{}'", path);
@@ -195,6 +200,7 @@ bool PakReader::LoadFile(const std::string& path) {
 }
 
 std::vector<uint8_t> PakReader::Lookup(const std::string& path) const {
+    UZ_PROFILE_FUNCTION();
     uint64_t hash = XXH64(path.data(), path.size(), 0);
     return LookupByHash(hash);
 }

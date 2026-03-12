@@ -18,6 +18,7 @@
 
 #include "shader_archive.h"
 #include "log.h"
+#include "profiler.h"
 
 #include <cstring>
 #include <fstream>
@@ -39,6 +40,7 @@ static constexpr size_t kEntrySize = kHashFieldSize + 2 * sizeof(uint64_t);  // 
 
 bool ShaderArchive::Build(const std::filesystem::path& outputPath,
                           const std::vector<ShaderArchiveEntry>& entries) {
+    UZ_PROFILE_FUNCTION();
     std::ofstream file(outputPath, std::ios::binary | std::ios::trunc);
     if (!file.is_open()) {
         UZ_LOG(ShaderArchive, Error, "Failed to open '{}' for writing", outputPath.string());
@@ -110,6 +112,7 @@ bool ShaderArchive::Build(const std::filesystem::path& outputPath,
 // ─────────────────────────────────────────────────────────────────────────────
 
 bool ShaderArchive::Load(const std::filesystem::path& archivePath) {
+    UZ_PROFILE_FUNCTION();
     // Replace any previous state
     Unload();
 
@@ -211,6 +214,7 @@ void ShaderArchive::Unload() {
 }
 
 std::vector<uint8_t> ShaderArchive::Lookup(const std::string& hash) const {
+    UZ_PROFILE_FUNCTION();
     const auto it = m_index.find(hash);
     if (it == m_index.end()) {
         return {};

@@ -22,11 +22,13 @@
 #include "../rhi_config.h"
 #include "dx12_resources.h"
 #include "dx12_descriptor_allocator.h"
+#include "dx12_gpu_profiler.h"
 
 #include <wrl/client.h>
 #include <d3d12.h>
 #include <dxgi1_6.h>
 #include "dx12_guids.h"
+#include <tracy/TracyD3D12.hpp>
 #include <string>
 
 // Forward-declare D3D12MA to avoid pulling the header into consumers
@@ -170,6 +172,7 @@ public:
     /// Determined during device creation by probing GPU capabilities.
     /// SM6.6+ enables bindless resource access; SM5.x uses traditional binding.
     ShaderModel GetShaderModel() const override { return m_shaderModel; }
+    RHIBackend GetBackend() const override { return RHIBackend::DX12; }
 
     /// Queries and logs DRED diagnostic data after device removal.
     ///
@@ -177,6 +180,19 @@ public:
     /// page fault info (faulting VA, existing/freed allocations).
     /// Call this when `Present()` returns `DXGI_ERROR_DEVICE_REMOVED`.
     void LogDeviceRemoved();
+
+    /// Returns the GPU timestamp profiler for per-pass timing.
+    ///
+    /// # Returns
+    /// Mutable reference to the device-owned `DX12GpuProfiler`.
+    /// The profiler may be uninitialized if `Init()` failed — check before use.
+    DX12GpuProfiler& GetGpuProfiler() { return m_gpuProfiler; }
+
+    /// Returns the Tracy GPU profiling context for DX12.
+    ///
+    /// Used for GPU timestamp collection via Tracy. When `TRACY_ENABLE` is not
+    /// defined, this returns `nullptr` (`TracyD3D12Ctx` is `void*`).
+    TracyD3D12Ctx GetTracyGpuContext() const { return m_tracyD3D12Ctx; }
 
 private:
     bool EnableDebugLayer(bool gpuValidation);
@@ -228,6 +244,9 @@ private:
 
     /// Global bindless root signature — shared by all graphics pipelines.
     ID3D12RootSignature*           m_rootSignature = nullptr;
+
+    DX12GpuProfiler                m_gpuProfiler;
+    TracyD3D12Ctx                  m_tracyD3D12Ctx = nullptr;
 
     ShaderModel                    m_shaderModel = ShaderModel::SM5_0;
     std::string                    m_adapterName;

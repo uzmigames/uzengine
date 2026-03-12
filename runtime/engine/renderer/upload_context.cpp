@@ -5,13 +5,18 @@
 
 #include "upload_context.h"
 #include "log.h"
+#include "profiler.h"
 
 #include <cstring>
 
 namespace uz {
 
+UZ_DEFINE_STAT(IO, BufferUploads);
+
 bool UploadContext::UploadBuffer(IRHICommandList* cmdList, RHIBufferHandle dst,
                                  const void* data, uint64_t sizeBytes) {
+    UZ_PROFILE_FUNCTION();
+    UZ_STAT_INCREMENT(IO, BufferUploads);
     if (!m_device || !cmdList || !data || sizeBytes == 0) {
         UZ_LOG(Renderer, Error, "UploadBuffer: invalid arguments");
         return false;
@@ -50,6 +55,8 @@ bool UploadContext::UploadBuffer(IRHICommandList* cmdList, RHIBufferHandle dst,
 bool UploadContext::UploadTexture(IRHICommandList* cmdList, RHITextureHandle dst,
                                   const void* data, uint64_t sizeBytes,
                                   uint32_t mipLevel, uint32_t arraySlice) {
+    UZ_PROFILE_FUNCTION();
+    UZ_STAT_INCREMENT(IO, BufferUploads);
     if (!m_device || !cmdList || !data || sizeBytes == 0) {
         UZ_LOG(Renderer, Error, "UploadTexture: invalid arguments");
         return false;
@@ -120,6 +127,7 @@ bool UploadContext::UploadTexture(IRHICommandList* cmdList, RHITextureHandle dst
 }
 
 void UploadContext::ReleaseStaging() {
+    UZ_PROFILE_FUNCTION();
     for (auto& buf : m_stagingBuffers) {
         m_device->DestroyBuffer(buf);
     }

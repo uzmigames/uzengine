@@ -9,6 +9,7 @@
 #include "dx12_fence.h"
 
 #include "log.h"
+#include "profiler.h"
 
 #include <windows.h>
 
@@ -23,6 +24,7 @@ DX12Fence::~DX12Fence() {
 }
 
 bool DX12Fence::Init(ID3D12Device* device) {
+    UZ_PROFILE_FUNCTION();
     HRESULT hr = device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&m_fence));
     if (FAILED(hr)) {
         UZ_LOG(RHI, Error, "Failed to create ID3D12Fence, hr=0x{:08X}", static_cast<uint32_t>(hr));
@@ -52,6 +54,7 @@ void DX12Fence::Signal(uint64_t value) {
 }
 
 void DX12Fence::WaitCPU(uint64_t value) {
+    UZ_PROFILE_FUNCTION();
     if (m_fence->GetCompletedValue() >= value) {
         return;
     }

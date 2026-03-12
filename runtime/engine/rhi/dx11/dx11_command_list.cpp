@@ -10,6 +10,7 @@
 #include "dx11_device.h"
 
 #include "log.h"
+#include "profiler.h"
 
 namespace uz {
 
@@ -43,6 +44,7 @@ DX11CommandList::~DX11CommandList() {
 }
 
 bool DX11CommandList::Init(DX11Device* device, RHIQueueType queueType) {
+    UZ_PROFILE_FUNCTION();
     if (!device || !device->GetDevice()) {
         UZ_LOG(RHI, Error, "DX11CommandList::Init — null device");
         return false;
@@ -66,6 +68,7 @@ bool DX11CommandList::Init(DX11Device* device, RHIQueueType queueType) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void DX11CommandList::Begin() {
+    UZ_PROFILE_FUNCTION();
     // Release previous deferred context and command list
     if (m_pendingCmdList) {
         m_pendingCmdList->Release();
@@ -88,6 +91,7 @@ void DX11CommandList::Begin() {
 }
 
 void DX11CommandList::End() {
+    UZ_PROFILE_FUNCTION();
     if (!m_deferredCtx) {
         UZ_LOG(RHI, Error, "DX11CommandList::End — no deferred context (Begin() not called?)");
         return;
@@ -100,6 +104,7 @@ void DX11CommandList::End() {
 }
 
 void DX11CommandList::Execute() {
+    UZ_PROFILE_FUNCTION();
     if (!m_pendingCmdList) {
         UZ_LOG(RHI, Warning, "DX11CommandList::Execute — no pending command list (End() not called?)");
         return;
@@ -116,6 +121,7 @@ void DX11CommandList::Execute() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void DX11CommandList::SetPipeline(RHIPipelineHandle pipeline) {
+    UZ_PROFILE_FUNCTION();
     if (!m_deferredCtx || !pipeline.IsValid()) {
         UZ_LOG(RHI, Warning, "SetPipeline — invalid state");
         return;
@@ -397,6 +403,7 @@ void DX11CommandList::CopyBufferToTexture(RHIBufferHandle srcBuffer, uint64_t sr
 // ─────────────────────────────────────────────────────────────────────────────
 
 void DX11CommandList::BeginRenderPass(const RHIRenderPassDesc& desc) {
+    UZ_PROFILE_FUNCTION();
     if (!m_deferredCtx) return;
 
     ID3D11RenderTargetView* rtvs[8] = {};

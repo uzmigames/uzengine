@@ -12,6 +12,7 @@
 #include "d3dx12.h"
 
 #include "log.h"
+#include "profiler.h"
 
 #include <vector>
 
@@ -78,6 +79,7 @@ DX12CommandList::~DX12CommandList() {
 }
 
 bool DX12CommandList::Init(DX12Device* device, RHIQueueType queueType) {
+    UZ_PROFILE_FUNCTION();
     if (!device || !device->GetDevice()) {
         UZ_LOG(RHI, Error, "DX12CommandList::Init — null device");
         return false;
@@ -122,6 +124,7 @@ bool DX12CommandList::Init(DX12Device* device, RHIQueueType queueType) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void DX12CommandList::Begin() {
+    UZ_PROFILE_FUNCTION();
     auto& allocator = m_allocators[m_currentFrame];
 
     HRESULT hr = allocator->Reset();
@@ -157,6 +160,7 @@ void DX12CommandList::Begin() {
 }
 
 void DX12CommandList::End() {
+    UZ_PROFILE_FUNCTION();
     HRESULT hr = m_cmdList->Close();
     if (FAILED(hr)) {
         UZ_LOG(RHI, Error, "CommandList::Close failed, HRESULT=0x{:08X}",
@@ -165,6 +169,7 @@ void DX12CommandList::End() {
 }
 
 void DX12CommandList::Execute() {
+    UZ_PROFILE_FUNCTION();
     ID3D12CommandQueue* queue = nullptr;
 
     switch (m_listType) {
@@ -324,6 +329,7 @@ void DX12CommandList::Dispatch(uint32_t groupCountX, uint32_t groupCountY,
 // ─────────────────────────────────────────────────────────────────────────────
 
 void DX12CommandList::ResourceBarrier(const RHIBarrierDesc* barriers, uint32_t count) {
+    UZ_PROFILE_FUNCTION();
     if (!barriers || count == 0) return;
 
     // Stack-allocate for typical batch sizes, heap-allocate for large batches
@@ -460,6 +466,7 @@ void DX12CommandList::CopyBufferToTexture(RHIBufferHandle srcBuffer, uint64_t sr
                                            uint32_t srcRowPitch,
                                            RHITextureHandle dstTexture,
                                            uint32_t mipLevel, uint32_t arraySlice) {
+    UZ_PROFILE_FUNCTION();
     if (!srcBuffer.IsValid() || !dstTexture.IsValid()) {
         UZ_LOG(RHI, Warning, "CopyBufferToTexture — invalid source or destination handle");
         return;
@@ -503,6 +510,7 @@ void DX12CommandList::CopyBufferToTexture(RHIBufferHandle srcBuffer, uint64_t sr
 // ─────────────────────────────────────────────────────────────────────────────
 
 void DX12CommandList::BeginRenderPass(const RHIRenderPassDesc& desc) {
+    UZ_PROFILE_FUNCTION();
     // Resolve RTV CPU handles for each color attachment
     D3D12_CPU_DESCRIPTOR_HANDLE rtvHandles[8] = {};
     uint32_t validRtvCount = 0;

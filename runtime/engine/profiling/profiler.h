@@ -72,6 +72,7 @@
 /// Annotate current zone with text (shows in timeline).
 /// Useful for logging errors or state within a profiled zone.
 #define UZ_PROFILE_TAG(Text) ZoneText(Text, std::strlen(Text))
+
 #else
 /// No-op: profiling disabled or Tracy not installed.
 #define UZ_PROFILE_SCOPE(Name) ((void)0)
@@ -85,6 +86,71 @@
 #define UZ_PROFILE_VALUE(Name, Val) ((void)0)
 /// No-op: profiling disabled or Tracy not installed.
 #define UZ_PROFILE_TAG(Text) ((void)0)
+#endif
+
+// ────────────────────────────────────────────────────────────────────────────
+// GPU Profiling — RAII timestamp scope
+// ────────────────────────────────────────────────────────────────────────────
+
+namespace uz {
+
+/// RAII guard that records a GPU begin timestamp on construction and end timestamp on destruction.
+///
+/// Templated to avoid including backend-specific headers. Works with any profiler type
+/// that provides `BeginTimestamp(CmdList*, const char*)` and `EndTimestamp(CmdList*, const char*)`.
+///
+/// # Template Parameters
+/// * `ProfilerT` — GPU profiler type (e.g., `DX12GpuProfiler`).
+/// * `CmdListT` — Command list type (e.g., `ID3D12GraphicsCommandList`).
+///
+/// # Example
+/// ```cpp
+/// GpuProfileScope<DX12GpuProfiler, ID3D12GraphicsCommandList> scope(profiler, cmdList, "GBuffer");
+/// ```
+template <typename ProfilerT, typename CmdListT>
+struct GpuProfileScope {
+    /// Begins a GPU timestamp with the given name.
+    ///
+    /// # Arguments
+    /// * `profiler` — GPU profiler instance (must outlive this scope).
+    /// * `cmdList` — Active command list for timestamp recording.
+    /// * `name` — Scope name (string literal, not copied).
+    GpuProfileScope(ProfilerT& profiler, CmdListT* cmdList, const char* name)
+        : m_profiler(profiler), m_cmdList(cmdList), m_name(name) {
+        m_profiler.BeginTimestamp(m_cmdList, m_name);
+    }
+
+    /// Records the end timestamp on scope exit.
+    ~GpuProfileScope() {
+        m_profiler.EndTimestamp(m_cmdList, m_name);
+    }
+
+    GpuProfileScope(const GpuProfileScope&) = delete;
+    GpuProfileScope& operator=(const GpuProfileScope&) = delete;
+
+private:
+    ProfilerT& m_profiler;
+    CmdListT* m_cmdList;
+    const char* m_name;
+};
+
+} // namespace uz
+
+#if defined(UZ_PROFILING_ENABLED)
+
+/// RAII GPU timestamp scope — records begin timestamp on construction, end on destruction.
+/// Use within a frame between BeginFrame/EndFrame on a DX12GpuProfiler.
+///
+/// # Arguments
+/// * `Profiler` — GPU profiler instance reference.
+/// * `CmdList` — Active command list pointer.
+/// * `Name` — Scope name (string literal).
+#define UZ_PROFILE_GPU_SCOPE(Profiler, CmdList, Name) \
+    ::uz::GpuProfileScope _gpuScope_##__LINE__((Profiler), (CmdList), (Name))
+
+#else
+/// No-op: profiling disabled.
+#define UZ_PROFILE_GPU_SCOPE(Profiler, CmdList, Name) ((void)0)
 #endif
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -195,3 +261,27 @@ extern StatGroup StatIO;
 /// # Returns
 /// `int64_t` snapshot of the counter value.
 #define UZ_STAT_GET(Group, Name) Stat_##Group##_##Name.Get()
+
+// ────────────────────────────────────────────────────────────────────────────
+/// Built-in Stat Counter Declarations
+///
+/// Pre-declared counters for common engine metrics. Define (UZ_DEFINE_STAT)
+/// in profiler.cpp. Wire UZ_STAT_INCREMENT at callsites.
+// ────────────────────────────────────────────────────────────────────────────
+
+/// Number of draw calls issued per frame.
+UZ_DECLARE_STAT(Rendering, DrawCalls);
+/// Number of triangles submitted per frame.
+UZ_DECLARE_STAT(Rendering, Triangles);
+/// Number of GPU buffer uploads per frame (vertex, index, constant).
+UZ_DECLARE_STAT(IO, BufferUploads);
+/// Number of shader compilations (DXC or FXC) this session.
+UZ_DECLARE_STAT(RHI, ShaderCompiles);
+/// Number of shader cache hits this session.
+UZ_DECLARE_STAT(RHI, CacheHits);
+/// Number of shader cache misses this session.
+UZ_DECLARE_STAT(RHI, CacheMisses);
+/// Number of VFS file reads per frame.
+UZ_DECLARE_STAT(IO, VFSReads);
+/// Number of PSO/pipeline state creations this session.
+UZ_DECLARE_STAT(RHI, PipelineCreations);

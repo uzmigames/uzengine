@@ -22,6 +22,7 @@
 #include "../rhi_backend.h"
 #include "../rhi_config.h"
 #include "dx11_resources.h"
+#include "dx11_gpu_profiler.h"
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -29,6 +30,8 @@
 #include <d3d11_1.h>
 #include <dxgi1_6.h>
 #include <string>
+
+#include <tracy/TracyD3D11.hpp>
 
 namespace uz {
 
@@ -107,6 +110,7 @@ public:
     const char* GetFeatureLevel() const override;
     RHIMemoryBudget GetMemoryBudget() const override;
     ShaderModel GetShaderModel() const override { return m_shaderModel; }
+    RHIBackend GetBackend() const override { return RHIBackend::DX11; }
 
     // ── Accessors for sibling DX11 classes ───────────────────────────────
 
@@ -133,6 +137,18 @@ public:
 
     /// Returns the sampler resource pool.
     ResourcePool<DX11Sampler>& GetSamplerPool() { return m_samplerPool; }
+
+    /// Returns the DX11 GPU timestamp profiler.
+    ///
+    /// Used for per-pass GPU timing alongside Tracy's frame-level profiling.
+    DX11GpuProfiler& GetGpuProfiler() { return m_gpuProfiler; }
+
+    /// Returns the Tracy GPU profiling context for DX11.
+    ///
+    /// Used by `DX11SwapChain::Present()` to collect GPU timestamps each frame.
+    /// When `TRACY_ENABLE` is not defined, this returns `nullptr` (`TracyD3D11Ctx`
+    /// is `void*` and all Tracy macros are no-ops).
+    TracyD3D11Ctx GetTracyGpuContext() const { return m_tracyD3D11Ctx; }
 
 private:
     bool EnableDebugLayer();
@@ -166,6 +182,12 @@ private:
     std::string                    m_featureLevelStr;
     D3D_FEATURE_LEVEL              m_featureLevel = D3D_FEATURE_LEVEL_11_0;
     bool                           m_validationEnabled = false;
+
+    /// Per-pass GPU timestamp profiler (individual query objects, not Tracy).
+    DX11GpuProfiler                m_gpuProfiler;
+
+    /// Tracy GPU profiling context (no-op `void*` when `TRACY_ENABLE` is off).
+    TracyD3D11Ctx                  m_tracyD3D11Ctx = nullptr;
 };
 
 } // namespace uz

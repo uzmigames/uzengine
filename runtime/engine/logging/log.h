@@ -218,3 +218,4 @@ UZ_DECLARE_LOG_CATEGORY(Config);    ///< Configuration loading and parsing
 UZ_DECLARE_LOG_CATEGORY(Window);    ///< Window creation, resize, focus events
 UZ_DECLARE_LOG_CATEGORY(Engine);    ///< Top-level engine orchestration
 UZ_DECLARE_LOG_CATEGORY(Asset);     ///< Asset pipeline (import, cook, cache)
+UZ_DECLARE_LOG_CATEGORY(Profiling); ///< CPU profile capture and export

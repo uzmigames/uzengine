@@ -10,11 +10,13 @@
 #include "dx12_device.h"
 #include "dx12_guids.h"
 #include "log.h"
+#include "profiler.h"
 
 namespace uz {
 
 /// Creates a readback buffer for breadcrumb marker writes.
 bool DX12GpuBreadcrumbs::Init(DX12Device* device) {
+    UZ_PROFILE_FUNCTION();
     m_device = device;
     auto* d3dDevice = device->GetDevice();
 
@@ -78,6 +80,7 @@ void DX12GpuBreadcrumbs::Mark(ID3D12GraphicsCommandList* cmdList, const char* na
 
 /// Maps the breadcrumb buffer and logs the last completed marker.
 void DX12GpuBreadcrumbs::LogLastMarker() {
+    UZ_PROFILE_FUNCTION();
     if (!m_breadcrumbBuffer) return;
 
     uint32_t* mapped = nullptr;

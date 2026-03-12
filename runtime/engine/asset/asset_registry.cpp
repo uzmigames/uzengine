@@ -4,10 +4,12 @@
 
 #include "asset_registry.h"
 #include "log.h"
+#include "profiler.h"
 
 namespace uz {
 
 bool AssetImporterRegistry::Register(std::unique_ptr<IAssetImporter> importer) {
+    UZ_PROFILE_FUNCTION();
     if (!importer) {
         UZ_LOG(Asset, Error, "Attempted to register null importer");
         return false;

@@ -7,6 +7,7 @@
 /// Swap: world(x,y,z) → view(y,z,x) which maps Y-right→screenX, Z-up→screenY, X-fwd→depth.
 
 #include "camera.h"
+#include "profiler.h"
 
 #include <DirectXMath.h>
 
@@ -19,6 +20,7 @@ namespace uz {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void Camera::SetPerspective(float fovY, float aspectRatio, float nearPlane, float farPlane) {
+    UZ_PROFILE_FUNCTION();
     m_projMode = ProjectionMode::Perspective;
     m_fovY = fovY;
     m_aspectRatio = aspectRatio;
@@ -28,6 +30,7 @@ void Camera::SetPerspective(float fovY, float aspectRatio, float nearPlane, floa
 }
 
 void Camera::SetOrthographic(float width, float height, float nearPlane, float farPlane) {
+    UZ_PROFILE_FUNCTION();
     m_projMode = ProjectionMode::Orthographic;
     m_orthoWidth = width;
     m_orthoHeight = height;
@@ -54,6 +57,7 @@ static XMVECTOR ToYUp(const Vec3& v) {
 }
 
 void Camera::LookAt(const Vec3& target, const Vec3& up) {
+    UZ_PROFILE_FUNCTION();
     Vec3 forward = (target - m_position).normalize();
 
     // Build orientation using Y-up DirectXMath, then convert back.
@@ -140,6 +144,7 @@ Mat4 Camera::GetViewProjection() const {
 ///   [0 1 0 0]   // Z input → Y output (screen up)
 ///   [0 0 0 1]
 void Camera::UpdateView() const {
+    UZ_PROFILE_FUNCTION();
     // Orientation is stored in Y-up space
     Vec3 fwdYUp = m_orientation * Vec3(0, 0, 1);
     Vec3 upYUp  = m_orientation * Vec3(0, 1, 0);
@@ -166,6 +171,7 @@ void Camera::UpdateView() const {
 /// Standard DX left-handed perspective/ortho — works regardless of world up
 /// since the view matrix already handles the coordinate system conversion.
 void Camera::UpdateProjection() const {
+    UZ_PROFILE_FUNCTION();
     if (m_projMode == ProjectionMode::Perspective) {
         m_projection = Mat4::Perspective(m_fovY, m_aspectRatio, m_nearPlane, m_farPlane);
     } else {

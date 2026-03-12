@@ -27,6 +27,7 @@
 #include <sstream>
 
 #include "log.h"
+#include "profiler.h"
 
 UZ_DEFINE_LOG_CATEGORY(Shader, Trace);
 
@@ -96,6 +97,7 @@ size_t VariantCount(const std::vector<ShaderPermutation>& perms) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 PermutationExpandResult ExpandPermutations(const std::vector<ShaderPermutation>& perms) {
+    UZ_PROFILE_FUNCTION();
     PermutationExpandResult result;
 
     const size_t totalCount = VariantCount(perms);

@@ -9,11 +9,13 @@
 #include "dx12_device.h"
 #include "dx12_guids.h"
 #include "log.h"
+#include "profiler.h"
 
 namespace uz {
 
 /// Initializes the timestamp query heap and readback buffer.
 bool DX12GpuProfiler::Init(DX12Device* device) {
+    UZ_PROFILE_FUNCTION();
     m_device = device;
     auto* d3dDevice = device->GetDevice();
 
@@ -100,6 +102,7 @@ void DX12GpuProfiler::EndTimestamp(ID3D12GraphicsCommandList* cmdList, const cha
 
 /// Resolves all timestamps for this frame into the readback buffer.
 void DX12GpuProfiler::EndFrame(ID3D12GraphicsCommandList* cmdList) {
+    UZ_PROFILE_FUNCTION();
     if (m_timestampCount == 0) {
         m_currentFrame = (m_currentFrame + 1) % kProfilerFramesInFlight;
         return;
@@ -122,6 +125,7 @@ void DX12GpuProfiler::EndFrame(ID3D12GraphicsCommandList* cmdList) {
 
 /// Reads timestamps from frame N-2 and computes millisecond deltas.
 void DX12GpuProfiler::ResolveFrame() {
+    UZ_PROFILE_FUNCTION();
     m_results.clear();
     m_frameTimeMs = 0.0f;
 

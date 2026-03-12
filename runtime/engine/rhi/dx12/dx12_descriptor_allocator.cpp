@@ -8,6 +8,7 @@
 #include "dx12_compat.h"
 #include "dx12_guids.h"
 #include "log.h"
+#include "profiler.h"
 
 namespace uz {
 
@@ -24,6 +25,7 @@ namespace uz {
 /// - GPU handle only cached if heap is shader-visible
 void DescriptorAllocator::Init(ID3D12DescriptorHeap* heap, uint32_t capacity,
                                 uint32_t incrementSize, uint32_t reservedCount) {
+    UZ_PROFILE_FUNCTION();
     m_heap = heap;
     m_capacity = capacity;
     m_incrementSize = incrementSize;

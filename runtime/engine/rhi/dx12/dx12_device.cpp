@@ -15,12 +15,15 @@
 #include "D3D12MemAlloc.h"
 #include "d3dx12.h"
 #include "log.h"
+#include "profiler.h"
 
 #include <windows.h>
 #include <dxgidebug.h>
 #include <string>
 
 namespace uz {
+
+UZ_DEFINE_STAT(RHI, PipelineCreations);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -51,6 +54,13 @@ static const char* FeatureLevelToString(D3D_FEATURE_LEVEL level) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 DX12Device::~DX12Device() {
+    UZ_PROFILE_FUNCTION();
+
+    if (m_tracyD3D12Ctx) {
+        TracyD3D12Destroy(m_tracyD3D12Ctx);
+        m_tracyD3D12Ctx = nullptr;
+    }
+
     WaitIdle();
 
     // Close the fence event handle
@@ -97,6 +107,7 @@ DX12Device::~DX12Device() {
 }
 
 bool DX12Device::Init(const RHIDeviceDesc& desc) {
+    UZ_PROFILE_FUNCTION();
     m_validationEnabled = desc.enableValidation;
 
     // Order matters: debug layer must be enabled before device creation
@@ -137,6 +148,14 @@ bool DX12Device::Init(const RHIDeviceDesc& desc) {
         EnableDRED();
     }
 
+    // Initialize GPU timestamp profiler (non-fatal)
+    if (!m_gpuProfiler.Init(this)) {
+        UZ_LOG(RHI, Warning, "GPU profiler init failed — GPU timing disabled");
+    }
+
+    // Initialize Tracy GPU profiling context
+    m_tracyD3D12Ctx = TracyD3D12Context(m_device.Get(), m_directQueue.Get());
+
     // Log device info
     RHIMemoryBudget budget = GetMemoryBudget();
     UZ_LOG(RHI, Info, "DX12Device initialized: adapter='{}', featureLevel={}, VRAM={:.0f}MB (used {:.0f}MB)",
@@ -152,6 +171,7 @@ bool DX12Device::Init(const RHIDeviceDesc& desc) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 bool DX12Device::EnableDebugLayer(bool gpuValidation) {
+    UZ_PROFILE_FUNCTION();
     ComPtr<ID3D12Debug3> debug;
     HRESULT hr = D3D12GetDebugInterface(IID_PPV_ARGS(&debug));
     if (FAILED(hr)) {
@@ -171,6 +191,7 @@ bool DX12Device::EnableDebugLayer(bool gpuValidation) {
 }
 
 bool DX12Device::CreateFactory(bool validation) {
+    UZ_PROFILE_FUNCTION();
     UINT flags = 0;
     if (validation) {
         flags = DXGI_CREATE_FACTORY_DEBUG;
@@ -185,6 +206,7 @@ bool DX12Device::CreateFactory(bool validation) {
 }
 
 bool DX12Device::SelectAdapter(uint32_t adapterIndex) {
+    UZ_PROFILE_FUNCTION();
     ComPtr<IDXGIAdapter1> adapter1;
     HRESULT hr = m_factory->EnumAdapterByGpuPreference(
         adapterIndex, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IID_PPV_ARGS(&adapter1));
@@ -209,6 +231,7 @@ bool DX12Device::SelectAdapter(uint32_t adapterIndex) {
 }
 
 bool DX12Device::CreateDevice() {
+    UZ_PROFILE_FUNCTION();
     // Try feature levels in descending order
     static constexpr D3D_FEATURE_LEVEL kFeatureLevels[] = {
         D3D_FEATURE_LEVEL_12_2,
@@ -240,6 +263,7 @@ bool DX12Device::CreateDevice() {
 /// SM5.1 requires feature level 12_0 (always true if device was created).
 /// SM5.0 is the absolute fallback.
 void DX12Device::NegotiateShaderModel(std::optional<ShaderModel> forceModel) {
+    UZ_PROFILE_FUNCTION();
     // Check resource binding tier for SM6.6 bindless
     D3D12_FEATURE_DATA_D3D12_OPTIONS options = {};
     bool hasTier3 = false;
@@ -283,6 +307,7 @@ void DX12Device::NegotiateShaderModel(std::optional<ShaderModel> forceModel) {
 }
 
 bool DX12Device::CreateAllocator() {
+    UZ_PROFILE_FUNCTION();
     D3D12MA::ALLOCATOR_DESC allocatorDesc = {};
     allocatorDesc.pDevice = m_device.Get();
     allocatorDesc.pAdapter = m_adapter.Get();
@@ -299,6 +324,7 @@ bool DX12Device::CreateAllocator() {
 }
 
 bool DX12Device::CreateDescriptorHeaps() {
+    UZ_PROFILE_FUNCTION();
     if (!CreateDescriptorHeap(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
                               kMaxCbvSrvUavDescriptors, true, m_cbvSrvUavHeap))
         return false;
@@ -339,6 +365,7 @@ bool DX12Device::CreateDescriptorHeap(D3D12_DESCRIPTOR_HEAP_TYPE type, uint32_t 
 }
 
 bool DX12Device::CreateCommandQueues() {
+    UZ_PROFILE_FUNCTION();
     // Direct (graphics) queue
     D3D12_COMMAND_QUEUE_DESC directDesc = {};
     directDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
@@ -368,6 +395,7 @@ bool DX12Device::CreateCommandQueues() {
 }
 
 bool DX12Device::EnableDRED() {
+    UZ_PROFILE_FUNCTION();
     ComPtr<ID3D12DeviceRemovedExtendedDataSettings1> dredSettings;
     HRESULT hr = D3D12GetDebugInterface(IID_PPV_ARGS(&dredSettings));
     if (FAILED(hr)) {
@@ -410,6 +438,7 @@ static const char* BreadcrumbOpToString(D3D12_AUTO_BREADCRUMB_OP op) {
 }
 
 void DX12Device::LogDeviceRemoved() {
+    UZ_PROFILE_FUNCTION();
     HRESULT removedReason = m_device->GetDeviceRemovedReason();
     UZ_LOG(RHI, Error, "=== DEVICE REMOVED ===");
     UZ_LOG(RHI, Error, "Adapter: '{}'", m_adapterName);
@@ -477,6 +506,7 @@ void DX12Device::LogDeviceRemoved() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void DX12Device::InitDescriptorAllocators() {
+    UZ_PROFILE_FUNCTION();
     uint32_t cbvSrvUavIncrement = m_device->GetDescriptorHandleIncrementSize(
         D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     uint32_t samplerIncrement = m_device->GetDescriptorHandleIncrementSize(
@@ -507,6 +537,7 @@ DescriptorAllocator& DX12Device::GetDescriptorAllocator(D3D12_DESCRIPTOR_HEAP_TY
 // ─────────────────────────────────────────────────────────────────────────────
 
 RHIBufferHandle DX12Device::CreateBuffer(const RHIBufferDesc& desc) {
+    UZ_PROFILE_FUNCTION();
     uint32_t generation = 0;
     uint32_t index = m_bufferPool.Allocate(generation);
     DX12Buffer* slot = m_bufferPool.Get(index, generation);
@@ -525,6 +556,7 @@ RHIBufferHandle DX12Device::CreateBuffer(const RHIBufferDesc& desc) {
 }
 
 void DX12Device::DestroyBuffer(RHIBufferHandle handle) {
+    UZ_PROFILE_FUNCTION();
     DX12Buffer* buf = m_bufferPool.Get(handle.index, handle.generation);
     if (!buf) {
         UZ_LOG(RHI, Warning, "DestroyBuffer: invalid handle (idx={}, gen={})",
@@ -566,6 +598,7 @@ RHITextureDesc DX12Device::GetTextureDesc(RHITextureHandle handle) const {
 }
 
 RHITextureHandle DX12Device::CreateTexture(const RHITextureDesc& desc) {
+    UZ_PROFILE_FUNCTION();
     uint32_t generation = 0;
     uint32_t index = m_texturePool.Allocate(generation);
     DX12Texture* slot = m_texturePool.Get(index, generation);
@@ -585,6 +618,7 @@ RHITextureHandle DX12Device::CreateTexture(const RHITextureDesc& desc) {
 }
 
 void DX12Device::DestroyTexture(RHITextureHandle handle) {
+    UZ_PROFILE_FUNCTION();
     DX12Texture* tex = m_texturePool.Get(handle.index, handle.generation);
     if (!tex) {
         UZ_LOG(RHI, Warning, "DestroyTexture: invalid handle (idx={}, gen={})",
@@ -596,6 +630,7 @@ void DX12Device::DestroyTexture(RHITextureHandle handle) {
 }
 
 RHIShaderHandle DX12Device::CreateShader(const RHIShaderDesc& desc) {
+    UZ_PROFILE_FUNCTION();
     if (!desc.bytecode || desc.bytecodeSize == 0) {
         UZ_LOG(RHI, Error, "CreateShader: null/empty bytecode (name='{}')",
                desc.debugName ? desc.debugName : "");
@@ -624,6 +659,7 @@ RHIShaderHandle DX12Device::CreateShader(const RHIShaderDesc& desc) {
 }
 
 void DX12Device::DestroyShader(RHIShaderHandle handle) {
+    UZ_PROFILE_FUNCTION();
     DX12Shader* shader = m_shaderPool.Get(handle.index, handle.generation);
     if (!shader) {
         UZ_LOG(RHI, Warning, "DestroyShader: invalid handle (idx={}, gen={})",
@@ -636,6 +672,7 @@ void DX12Device::DestroyShader(RHIShaderHandle handle) {
 }
 
 RHIPipelineHandle DX12Device::CreateGraphicsPipeline(const RHIGraphicsPipelineDesc& desc) {
+    UZ_PROFILE_FUNCTION();
     uint32_t generation = 0;
     uint32_t index = m_pipelinePool.Allocate(generation);
     DX12Pipeline* slot = m_pipelinePool.Get(index, generation);
@@ -650,10 +687,12 @@ RHIPipelineHandle DX12Device::CreateGraphicsPipeline(const RHIGraphicsPipelineDe
     }
 
     slot->generation = generation;
+    UZ_STAT_INCREMENT(RHI, PipelineCreations);
     return RHIPipelineHandle{index, generation};
 }
 
 void DX12Device::DestroyPipeline(RHIPipelineHandle handle) {
+    UZ_PROFILE_FUNCTION();
     DX12Pipeline* pipeline = m_pipelinePool.Get(handle.index, handle.generation);
     if (!pipeline) {
         UZ_LOG(RHI, Warning, "DestroyPipeline: invalid handle (idx={}, gen={})",
@@ -665,6 +704,7 @@ void DX12Device::DestroyPipeline(RHIPipelineHandle handle) {
 }
 
 RHISamplerHandle DX12Device::CreateSampler(const RHISamplerDesc& desc) {
+    UZ_PROFILE_FUNCTION();
     uint32_t generation = 0;
     uint32_t index = m_samplerPool.Allocate(generation);
     DX12Sampler* slot = m_samplerPool.Get(index, generation);
@@ -683,6 +723,7 @@ RHISamplerHandle DX12Device::CreateSampler(const RHISamplerDesc& desc) {
 }
 
 void DX12Device::DestroySampler(RHISamplerHandle handle) {
+    UZ_PROFILE_FUNCTION();
     DX12Sampler* sampler = m_samplerPool.Get(handle.index, handle.generation);
     if (!sampler) {
         UZ_LOG(RHI, Warning, "DestroySampler: invalid handle (idx={}, gen={})",
@@ -704,6 +745,7 @@ uint32_t DX12Device::GetSamplerIndex(RHISamplerHandle handle) const {
 // ─────────────────────────────────────────────────────────────────────────────
 
 IRHISwapChain* DX12Device::CreateSwapChain(const RHISwapChainDesc& desc) {
+    UZ_PROFILE_FUNCTION();
     auto* sc = new DX12SwapChain();
     if (!sc->Init(this, desc)) {
         delete sc;
@@ -717,6 +759,7 @@ void DX12Device::DestroySwapChain(IRHISwapChain* swapChain) {
 }
 
 IRHIFence* DX12Device::CreateFence() {
+    UZ_PROFILE_FUNCTION();
     auto* fence = new DX12Fence();
     if (!fence->Init(m_device.Get())) {
         delete fence;
@@ -730,6 +773,7 @@ void DX12Device::DestroyFence(IRHIFence* fence) {
 }
 
 IRHICommandList* DX12Device::CreateCommandList(RHIQueueType queue) {
+    UZ_PROFILE_FUNCTION();
     auto* cmdList = new DX12CommandList();
     if (!cmdList->Init(this, queue)) {
         delete cmdList;
@@ -747,6 +791,7 @@ void DX12Device::DestroyCommandList(IRHICommandList* cmdList) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void DX12Device::WaitIdle() {
+    UZ_PROFILE_FUNCTION();
     if (!m_directQueue || !m_idleFence || !m_idleFenceEvent) return;
 
     m_idleFenceValue++;

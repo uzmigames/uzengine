@@ -6,6 +6,7 @@
 #include "constant_buffers.h"
 #include "rhi.h"
 #include "log.h"
+#include "profiler.h"
 
 #include <cstring>
 
@@ -16,6 +17,7 @@ CBRingAllocator::~CBRingAllocator() {
 }
 
 bool CBRingAllocator::Init(IRHIDevice* device, uint32_t framesInFlight, uint64_t perFrameBytes) {
+    UZ_PROFILE_FUNCTION();
     if (!device || framesInFlight == 0 || perFrameBytes == 0) {
         UZ_LOG(Renderer, Error, "CBRingAllocator::Init: invalid arguments");
         return false;
@@ -76,6 +78,7 @@ void CBRingAllocator::BeginFrame(uint32_t frameIndex) {
 }
 
 CBAllocation CBRingAllocator::Allocate(uint64_t sizeBytes) {
+    UZ_PROFILE_FUNCTION();
     uint64_t alignedSize = (sizeBytes + 255) & ~255ULL;
     if (m_currentOffset + alignedSize > m_perFrameBytes) {
         UZ_LOG(Renderer, Error, "CBRingAllocator: frame region exhausted ({}/{} bytes)",

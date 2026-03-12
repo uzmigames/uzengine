@@ -7,6 +7,7 @@
 #include "shader_source_manager.h"
 #include "shader_vfs.h"
 #include "log.h"
+#include "profiler.h"
 
 #define XXH_INLINE_ALL
 #include <xxhash.h>
@@ -166,6 +167,7 @@ uint64_t ShaderSourceManager::ComputeContentHash(
 // ─────────────────────────────────────────────────────────────────────────────
 
 std::optional<ShaderSourceInfo> ShaderSourceManager::LoadSource(const std::string& virtualPath) {
+    UZ_PROFILE_FUNCTION();
     // Check cache
     auto cacheIt = m_cache.find(virtualPath);
     if (cacheIt != m_cache.end()) {
@@ -212,6 +214,7 @@ uint64_t ShaderSourceManager::ComputeIdentityHash(
     ShaderTarget target,
     uint32_t compilerVersion)
 {
+    UZ_PROFILE_FUNCTION();
     auto info = LoadSource(virtualPath);
     if (!info) return 0;
 

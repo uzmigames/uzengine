@@ -9,6 +9,7 @@
 
 #include "asset_manifest.h"
 #include "log.h"
+#include "profiler.h"
 
 #define XXH_INLINE_ALL
 #include <xxhash.h>
@@ -27,10 +28,12 @@ namespace uz {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void AssetManifestWriter::AddEntry(const ManifestWriteEntry& entry) {
+    UZ_PROFILE_FUNCTION();
     m_entries.push_back(entry);
 }
 
 std::vector<uint8_t> AssetManifestWriter::Serialize() const {
+    UZ_PROFILE_FUNCTION();
     // Intermediate representation with pre-hashed paths for sorting
     struct HashedEntry {
         uint64_t pathHash;
@@ -114,6 +117,7 @@ std::vector<uint8_t> AssetManifestWriter::Serialize() const {
 }
 
 bool WriteManifestFile(const std::string& path, const AssetManifestWriter& writer) {
+    UZ_PROFILE_FUNCTION();
     auto data = writer.Serialize();
 
     std::ofstream file(path, std::ios::binary);
@@ -135,6 +139,7 @@ bool WriteManifestFile(const std::string& path, const AssetManifestWriter& write
 // ─────────────────────────────────────────────────────────────────────────────
 
 bool AssetManifest::Load(const std::vector<uint8_t>& data) {
+    UZ_PROFILE_FUNCTION();
     m_entries.clear();
     m_loaded = false;
 
@@ -206,6 +211,7 @@ bool AssetManifest::Load(const std::vector<uint8_t>& data) {
 }
 
 bool AssetManifest::LoadFile(const std::string& path) {
+    UZ_PROFILE_FUNCTION();
     std::ifstream file(path, std::ios::binary | std::ios::ate);
     if (!file.is_open()) {
         UZ_LOG(Asset, Error, "Cannot open manifest: path='{}'", path);

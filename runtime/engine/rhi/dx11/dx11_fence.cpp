@@ -9,6 +9,7 @@
 #include "dx11_device.h"
 
 #include "log.h"
+#include "profiler.h"
 
 #include <windows.h>
 
@@ -26,6 +27,7 @@ DX11Fence::~DX11Fence() {
 }
 
 bool DX11Fence::Init(DX11Device* device) {
+    UZ_PROFILE_FUNCTION();
     if (!device) {
         UZ_LOG(RHI, Error, "DX11Fence::Init — null device");
         return false;
@@ -41,6 +43,7 @@ bool DX11Fence::Init(DX11Device* device) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void DX11Fence::Signal(uint64_t value) {
+    UZ_PROFILE_FUNCTION();
     if (!m_device) return;
 
     D3D11_QUERY_DESC qd = {};
@@ -63,6 +66,7 @@ void DX11Fence::Signal(uint64_t value) {
 }
 
 void DX11Fence::WaitCPU(uint64_t value) {
+    UZ_PROFILE_FUNCTION();
     PollPending();
 
     while (m_completedValue < value) {

@@ -15,6 +15,7 @@
 
 #include "shader_reflection.h"
 #include "log.h"
+#include "profiler.h"
 
 #include <spirv_reflect.h>
 
@@ -118,6 +119,7 @@ const char* ShaderResourceTypeName(ShaderResourceType type) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 ShaderReflectionResult ReflectSPIRV(const void* bytecode, size_t size) {
+    UZ_PROFILE_FUNCTION();
     ShaderReflectionResult result;
 
     if (bytecode == nullptr || size == 0) {

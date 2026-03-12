@@ -13,6 +13,7 @@
 #include "dx11_command_list.h"
 
 #include "log.h"
+#include "profiler.h"
 
 #include <windows.h>
 #include <string>
@@ -173,6 +174,12 @@ static D3D11_PRIMITIVE_TOPOLOGY ToD3D11Topology(RHIPrimitiveTopology topo) {
 DX11Device::~DX11Device() {
     WaitIdle();
 
+    // Destroy Tracy GPU context before releasing the device
+    if (m_tracyD3D11Ctx) {
+        TracyD3D11Destroy(m_tracyD3D11Ctx);
+        m_tracyD3D11Ctx = nullptr;
+    }
+
     // Release all pooled resources
     for (auto& buf : m_bufferPool.Slots()) {
         if (buf.uav) { buf.uav->Release(); buf.uav = nullptr; }
@@ -211,6 +218,7 @@ DX11Device::~DX11Device() {
 }
 
 bool DX11Device::Init(const RHIDeviceDesc& desc) {
+    UZ_PROFILE_FUNCTION();
     m_validationEnabled = desc.enableValidation;
 
     if (desc.enableValidation) {
@@ -237,6 +245,14 @@ bool DX11Device::Init(const RHIDeviceDesc& desc) {
         m_shaderModel = *desc.forceShaderModel;
     }
 
+    // Initialize per-pass GPU timestamp profiler (non-fatal on failure)
+    if (!m_gpuProfiler.Init(this)) {
+        UZ_LOG(RHI, Warning, "GPU timestamp profiler failed to initialize — per-pass timing unavailable");
+    }
+
+    // Initialize Tracy GPU profiling context
+    m_tracyD3D11Ctx = TracyD3D11Context(m_device.Get(), m_immediateContext.Get());
+
     RHIMemoryBudget budget = GetMemoryBudget();
     UZ_LOG(RHI, Info, "DX11Device initialized: adapter='{}', featureLevel={}, SM={}, VRAM={:.0f}MB",
            m_adapterName, m_featureLevelStr, ShaderModelToString(m_shaderModel),
@@ -257,6 +273,7 @@ bool DX11Device::EnableDebugLayer() {
 }
 
 bool DX11Device::CreateFactory() {
+    UZ_PROFILE_FUNCTION();
     UINT flags = 0;
     if (m_validationEnabled) {
         flags = DXGI_CREATE_FACTORY_DEBUG;
@@ -271,6 +288,7 @@ bool DX11Device::CreateFactory() {
 }
 
 bool DX11Device::SelectAdapter(uint32_t adapterIndex) {
+    UZ_PROFILE_FUNCTION();
     // Try EnumAdapterByGpuPreference via IDXGIFactory6 first
     ComPtr<IDXGIFactory6> factory6;
     if (SUCCEEDED(m_factory.As(&factory6))) {
@@ -301,6 +319,7 @@ bool DX11Device::SelectAdapter(uint32_t adapterIndex) {
 }
 
 bool DX11Device::CreateDevice() {
+    UZ_PROFILE_FUNCTION();
     UINT createFlags = D3D11_CREATE_DEVICE_BGRA_SUPPORT;
     if (m_validationEnabled) {
         createFlags |= D3D11_CREATE_DEVICE_DEBUG;
@@ -357,6 +376,7 @@ bool DX11Device::CreateDevice() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 RHIBufferHandle DX11Device::CreateBuffer(const RHIBufferDesc& desc) {
+    UZ_PROFILE_FUNCTION();
     D3D11_BUFFER_DESC bd = {};
     bd.ByteWidth = static_cast<UINT>(desc.sizeBytes);
 
@@ -472,6 +492,7 @@ RHIBufferHandle DX11Device::CreateBuffer(const RHIBufferDesc& desc) {
 }
 
 void DX11Device::DestroyBuffer(RHIBufferHandle handle) {
+    UZ_PROFILE_FUNCTION();
     DX11Buffer* buf = m_bufferPool.Get(handle.index, handle.generation);
     if (!buf) {
         UZ_LOG(RHI, Warning, "DestroyBuffer: invalid handle (idx={}, gen={})",
@@ -530,6 +551,7 @@ uint64_t DX11Device::GetBufferGPUAddress(RHIBufferHandle handle) const {
 // ─────────────────────────────────────────────────────────────────────────────
 
 RHITextureHandle DX11Device::CreateTexture(const RHITextureDesc& desc) {
+    UZ_PROFILE_FUNCTION();
     D3D11_TEXTURE2D_DESC td = {};
     td.Width = desc.width;
     td.Height = desc.height;
@@ -648,6 +670,7 @@ RHITextureHandle DX11Device::CreateTexture(const RHITextureDesc& desc) {
 }
 
 void DX11Device::DestroyTexture(RHITextureHandle handle) {
+    UZ_PROFILE_FUNCTION();
     DX11Texture* tex = m_texturePool.Get(handle.index, handle.generation);
     if (!tex) {
         UZ_LOG(RHI, Warning, "DestroyTexture: invalid handle (idx={}, gen={})",
@@ -679,6 +702,7 @@ RHITextureDesc DX11Device::GetTextureDesc(RHITextureHandle handle) const {
 // ─────────────────────────────────────────────────────────────────────────────
 
 RHIShaderHandle DX11Device::CreateShader(const RHIShaderDesc& desc) {
+    UZ_PROFILE_FUNCTION();
     if (!desc.bytecode || desc.bytecodeSize == 0) {
         UZ_LOG(RHI, Error, "CreateShader: null/empty bytecode (name='{}')",
                desc.debugName ? desc.debugName : "");
@@ -730,6 +754,7 @@ RHIShaderHandle DX11Device::CreateShader(const RHIShaderDesc& desc) {
 }
 
 void DX11Device::DestroyShader(RHIShaderHandle handle) {
+    UZ_PROFILE_FUNCTION();
     DX11Shader* shader = m_shaderPool.Get(handle.index, handle.generation);
     if (!shader) {
         UZ_LOG(RHI, Warning, "DestroyShader: invalid handle (idx={}, gen={})",
@@ -749,6 +774,7 @@ void DX11Device::DestroyShader(RHIShaderHandle handle) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 RHIPipelineHandle DX11Device::CreateGraphicsPipeline(const RHIGraphicsPipelineDesc& desc) {
+    UZ_PROFILE_FUNCTION();
     // Resolve vertex shader
     const DX11Shader* vs = m_shaderPool.Get(desc.vertexShader.index, desc.vertexShader.generation);
     if (!vs || !vs->vs) {
@@ -879,6 +905,7 @@ RHIPipelineHandle DX11Device::CreateGraphicsPipeline(const RHIGraphicsPipelineDe
 }
 
 void DX11Device::DestroyPipeline(RHIPipelineHandle handle) {
+    UZ_PROFILE_FUNCTION();
     DX11Pipeline* pipeline = m_pipelinePool.Get(handle.index, handle.generation);
     if (!pipeline) {
         UZ_LOG(RHI, Warning, "DestroyPipeline: invalid handle (idx={}, gen={})",
@@ -897,6 +924,7 @@ void DX11Device::DestroyPipeline(RHIPipelineHandle handle) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 RHISamplerHandle DX11Device::CreateSampler(const RHISamplerDesc& desc) {
+    UZ_PROFILE_FUNCTION();
     D3D11_SAMPLER_DESC sd = {};
 
     switch (desc.filter) {
@@ -945,6 +973,7 @@ RHISamplerHandle DX11Device::CreateSampler(const RHISamplerDesc& desc) {
 }
 
 void DX11Device::DestroySampler(RHISamplerHandle handle) {
+    UZ_PROFILE_FUNCTION();
     DX11Sampler* sampler = m_samplerPool.Get(handle.index, handle.generation);
     if (!sampler) {
         UZ_LOG(RHI, Warning, "DestroySampler: invalid handle (idx={}, gen={})",
@@ -966,6 +995,7 @@ uint32_t DX11Device::GetSamplerIndex(RHISamplerHandle handle) const {
 // ─────────────────────────────────────────────────────────────────────────────
 
 IRHISwapChain* DX11Device::CreateSwapChain(const RHISwapChainDesc& desc) {
+    UZ_PROFILE_FUNCTION();
     auto* sc = new DX11SwapChain();
     if (!sc->Init(this, desc)) {
         delete sc;
@@ -979,6 +1009,7 @@ void DX11Device::DestroySwapChain(IRHISwapChain* swapChain) {
 }
 
 IRHIFence* DX11Device::CreateFence() {
+    UZ_PROFILE_FUNCTION();
     auto* fence = new DX11Fence();
     if (!fence->Init(this)) {
         delete fence;
@@ -992,6 +1023,7 @@ void DX11Device::DestroyFence(IRHIFence* fence) {
 }
 
 IRHICommandList* DX11Device::CreateCommandList(RHIQueueType queue) {
+    UZ_PROFILE_FUNCTION();
     auto* cmdList = new DX11CommandList();
     if (!cmdList->Init(this, queue)) {
         delete cmdList;
@@ -1009,6 +1041,7 @@ void DX11Device::DestroyCommandList(IRHICommandList* cmdList) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void DX11Device::WaitIdle() {
+    UZ_PROFILE_FUNCTION();
     if (!m_immediateContext || !m_device) return;
 
     m_immediateContext->Flush();

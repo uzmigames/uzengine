@@ -9,6 +9,7 @@
 #include "config.h"
 
 #include "../logging/log.h"
+#include "profiler.h"
 
 #include <fstream>
 #include <sstream>
@@ -19,6 +20,7 @@ UZ_DEFINE_LOG_CATEGORY(Config, Trace);
 namespace uz {
 
 bool Config::LoadFromFile(const std::string& path) {
+    UZ_PROFILE_FUNCTION();
     std::ifstream file(path);
     if (!file.is_open()) {
         UZ_LOG(Config, Error, "Failed to open config: {}", path);
@@ -38,6 +40,7 @@ bool Config::LoadFromFile(const std::string& path) {
 }
 
 bool Config::LoadFromString(const std::string& json) {
+    UZ_PROFILE_FUNCTION();
     try {
         m_project = nlohmann::json::parse(json);
     } catch (const nlohmann::json::parse_error& e) {

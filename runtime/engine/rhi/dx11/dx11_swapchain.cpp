@@ -10,6 +10,9 @@
 #include "dx11_device.h"
 
 #include "log.h"
+#include "profiler.h"
+
+#include <tracy/TracyD3D11.hpp>
 
 #include <windows.h>
 
@@ -42,6 +45,7 @@ DX11SwapChain::~DX11SwapChain() {
 }
 
 bool DX11SwapChain::Init(DX11Device* device, const RHISwapChainDesc& desc) {
+    UZ_PROFILE_FUNCTION();
     if (!device || !desc.windowHandle) {
         UZ_LOG(RHI, Error, "DX11SwapChain::Init — null device or window handle");
         return false;
@@ -164,6 +168,7 @@ uint32_t DX11SwapChain::GetCurrentBackBufferIndex() const {
 }
 
 void DX11SwapChain::Present(bool vsync) {
+    UZ_PROFILE_FUNCTION();
     UINT syncInterval = vsync ? 1 : 0;
     UINT flags = (!vsync && m_tearingSupported) ? DXGI_PRESENT_ALLOW_TEARING : 0;
 
@@ -171,9 +176,13 @@ void DX11SwapChain::Present(bool vsync) {
     if (FAILED(hr)) {
         UZ_LOG(RHI, Error, "DX11SwapChain::Present failed, hr=0x{:08X}", static_cast<uint32_t>(hr));
     }
+
+    // Collect pending Tracy GPU timestamps after each present
+    TracyD3D11Collect(m_device->GetTracyGpuContext());
 }
 
 void DX11SwapChain::Resize(uint32_t width, uint32_t height) {
+    UZ_PROFILE_FUNCTION();
     if (width == 0 || height == 0) {
         return; // Minimized window — skip resize
     }

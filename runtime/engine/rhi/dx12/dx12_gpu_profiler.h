@@ -6,8 +6,11 @@
 /// Triple-buffered: frame N writes timestamps, frame N-2 reads results from readback.
 /// Results are resolved in milliseconds using the GPU timestamp frequency.
 
+#include "../gpu_profiler_types.h"
+
 #include <d3d12.h>
 #include <wrl/client.h>
+#include <array>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -17,22 +20,6 @@ namespace uz {
 using Microsoft::WRL::ComPtr;
 
 class DX12Device;
-
-/// Maximum number of timestamp pairs (begin + end) per frame.
-///
-/// Each pair uses 2 timestamp queries. Total queries per frame = `kMaxGpuTimestamps * 2`.
-static constexpr uint32_t kMaxGpuTimestamps = 64;
-
-/// Triple-buffer count for timestamp readback latency hiding.
-///
-/// Frame N writes timestamps, frame N-2 reads results (allows 2 frames of GPU latency).
-static constexpr uint32_t kProfilerFramesInFlight = 3;
-
-/// A single GPU timing result resolved from a begin/end timestamp pair.
-struct GpuTimingResult {
-    const char* name = nullptr;  ///< Pass/scope name (string literal, not owned).
-    float ms = 0.0f;            ///< Elapsed GPU time in milliseconds.
-};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DX12GpuProfiler
@@ -124,10 +111,10 @@ private:
     uint32_t m_timestampCount = 0;      ///< Number of timestamp pairs this frame
 
     /// Names for each timestamp pair, indexed by pair index.
-    const char* m_names[kMaxGpuTimestamps] = {};
+    std::array<const char*, kMaxGpuTimestamps> m_names = {};
 
     std::vector<GpuTimingResult> m_results;
-    float m_frameTimeMs = 0.0f;
+    float m_frameTimeMs = 0.0F;
 };
 
 } // namespace uz

@@ -119,7 +119,10 @@ namespace tracy
         {
             // Verify we support timestamp queries on this queue.
 
-            if (queue->GetDesc().Type == D3D12_COMMAND_LIST_TYPE_COPY)
+            D3D12_COMMAND_QUEUE_DESC queueDesc{};
+            queue->GetDesc(&queueDesc);
+
+            if (queueDesc.Type == D3D12_COMMAND_LIST_TYPE_COPY)
             {
                 D3D12_FEATURE_DATA_D3D12_OPTIONS3 featureData{};
 
@@ -134,7 +137,7 @@ namespace tracy
             m_queryLimit = MaxQueries;
 
             D3D12_QUERY_HEAP_DESC heapDesc{};
-            heapDesc.Type = queue->GetDesc().Type == D3D12_COMMAND_LIST_TYPE_COPY ? D3D12_QUERY_HEAP_TYPE_COPY_QUEUE_TIMESTAMP : D3D12_QUERY_HEAP_TYPE_TIMESTAMP;
+            heapDesc.Type = queueDesc.Type == D3D12_COMMAND_LIST_TYPE_COPY ? D3D12_QUERY_HEAP_TYPE_COPY_QUEUE_TIMESTAMP : D3D12_QUERY_HEAP_TYPE_TIMESTAMP;
             heapDesc.Count = m_queryLimit;
             heapDesc.NodeMask = 0;  // #TODO: Support multiple adapters.
 

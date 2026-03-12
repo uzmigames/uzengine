@@ -5,6 +5,7 @@
 
 #include "shader_cache.h"
 #include "log.h"
+#include "profiler.h"
 
 #include <filesystem>
 #include <fstream>
@@ -61,6 +62,7 @@ std::optional<std::vector<uint8_t>> ShaderCache::Lookup(
     const std::string& subdirectory,
     uint64_t identityHash) const
 {
+    UZ_PROFILE_FUNCTION();
     std::string path = GetEntryPath(subdirectory, identityHash);
 
     std::ifstream file(path, std::ios::binary | std::ios::ate);
@@ -81,6 +83,7 @@ bool ShaderCache::Store(const std::string& subdirectory,
                           uint64_t identityHash,
                           const std::vector<uint8_t>& bytecode,
                           const std::string& sourcePath) {
+    UZ_PROFILE_FUNCTION();
     if (!EnsureDirectory(subdirectory)) return false;
 
     std::string path = GetEntryPath(subdirectory, identityHash);

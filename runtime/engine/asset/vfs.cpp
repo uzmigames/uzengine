@@ -7,6 +7,7 @@
 
 #include "vfs.h"
 #include "log.h"
+#include "profiler.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -15,6 +16,8 @@
 namespace fs = std::filesystem;
 
 namespace uz {
+
+UZ_DEFINE_STAT(IO, VFSReads);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // LooseFileVFS — disk-based file access for development mode
@@ -34,6 +37,8 @@ std::string LooseFileVFS::ResolvePath(const std::string& path) const {
 }
 
 std::vector<uint8_t> LooseFileVFS::Read(const std::string& path) {
+    UZ_PROFILE_FUNCTION();
+    UZ_STAT_INCREMENT(IO, VFSReads);
     std::string fullPath = ResolvePath(path);
     std::ifstream file(fullPath, std::ios::binary | std::ios::ate);
     if (!file.is_open()) {
@@ -59,6 +64,7 @@ std::vector<uint8_t> LooseFileVFS::Read(const std::string& path) {
 }
 
 bool LooseFileVFS::Exists(const std::string& path) {
+    UZ_PROFILE_FUNCTION();
     std::string fullPath = ResolvePath(path);
     return fs::exists(fullPath) && fs::is_regular_file(fullPath);
 }
@@ -78,6 +84,7 @@ PakVFS::PakVFS(PakReader reader)
 }
 
 std::unique_ptr<PakVFS> PakVFS::FromFile(const std::string& path) {
+    UZ_PROFILE_FUNCTION();
     PakReader reader;
     if (!reader.LoadFile(path)) {
         UZ_LOG(Asset, Error, "PakVFS: failed to load archive: path='{}'", path);
@@ -90,6 +97,8 @@ std::unique_ptr<PakVFS> PakVFS::FromFile(const std::string& path) {
 }
 
 std::vector<uint8_t> PakVFS::Read(const std::string& path) {
+    UZ_PROFILE_FUNCTION();
+    UZ_STAT_INCREMENT(IO, VFSReads);
     return m_reader.Lookup(path);
 }
 
@@ -106,6 +115,7 @@ std::string PakVFS::Name() const {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void LayeredVFS::Mount(std::shared_ptr<IVFS> vfs, int priority) {
+    UZ_PROFILE_FUNCTION();
     if (!vfs) {
         UZ_LOG(Asset, Error, "LayeredVFS: cannot mount null VFS backend");
         return;
@@ -133,6 +143,8 @@ size_t LayeredVFS::MountCount() const {
 }
 
 std::vector<uint8_t> LayeredVFS::Read(const std::string& path) {
+    UZ_PROFILE_FUNCTION();
+    UZ_STAT_INCREMENT(IO, VFSReads);
     for (auto& mount : m_mounts) {
         auto data = mount.vfs->Read(path);
         if (!data.empty()) {
@@ -143,6 +155,7 @@ std::vector<uint8_t> LayeredVFS::Read(const std::string& path) {
 }
 
 bool LayeredVFS::Exists(const std::string& path) {
+    UZ_PROFILE_FUNCTION();
     for (auto& mount : m_mounts) {
         if (mount.vfs->Exists(path)) {
             return true;

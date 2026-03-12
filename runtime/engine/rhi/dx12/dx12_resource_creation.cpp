@@ -11,6 +11,7 @@
 #include "D3D12MemAlloc.h"
 #include "d3dx12.h"
 #include "log.h"
+#include "profiler.h"
 
 #include <vector>
 
@@ -102,6 +103,7 @@ bool CreateDX12Buffer(ID3D12Device* device,
                       DescriptorAllocator& srvUavHeap,
                       const RHIBufferDesc& desc,
                       DX12Buffer& outBuffer) {
+    UZ_PROFILE_FUNCTION();
     if (desc.sizeBytes == 0) {
         UZ_LOG(RHI, Error, "CreateBuffer: sizeBytes is 0 (name='{}')",
                desc.debugName ? desc.debugName : "");
@@ -225,6 +227,7 @@ bool CreateDX12Buffer(ID3D12Device* device,
 
 /// Releases a buffer's D3D12MA allocation and frees its SRV/UAV descriptor indices.
 void DestroyDX12Buffer(DX12Buffer& buffer, DescriptorAllocator& srvUavHeap) {
+    UZ_PROFILE_FUNCTION();
     // Unmap persistent mapping
     if (buffer.mappedPtr && buffer.resource) {
         buffer.resource->Unmap(0, nullptr);
@@ -266,6 +269,7 @@ bool CreateDX12Texture(ID3D12Device* device,
                        DescriptorAllocator& dsvHeap,
                        const RHITextureDesc& desc,
                        DX12Texture& outTexture) {
+    UZ_PROFILE_FUNCTION();
     bool isDepth = IsDepthFormat(desc.format);
     bool isRT = HasFlag(desc.usage, RHITextureUsage::RenderTarget);
     bool isDS = HasFlag(desc.usage, RHITextureUsage::DepthStencil);
@@ -437,6 +441,7 @@ void DestroyDX12Texture(DX12Texture& texture,
                         DescriptorAllocator& srvUavHeap,
                         DescriptorAllocator& rtvHeap,
                         DescriptorAllocator& dsvHeap) {
+    UZ_PROFILE_FUNCTION();
     if (texture.srvIndex != UINT32_MAX) {
         srvUavHeap.Free(texture.srvIndex);
         texture.srvIndex = UINT32_MAX;
@@ -509,6 +514,7 @@ bool CreateDX12Sampler(ID3D12Device* device,
                        DescriptorAllocator& samplerHeap,
                        const RHISamplerDesc& desc,
                        DX12Sampler& outSampler) {
+    UZ_PROFILE_FUNCTION();
     uint32_t idx = samplerHeap.Allocate();
     if (idx == DescriptorAllocator::kInvalidIndex) {
         UZ_LOG(RHI, Error, "CreateSampler: sampler heap full (name='{}')",
@@ -562,6 +568,7 @@ void DestroyDX12Sampler(DX12Sampler& sampler, DescriptorAllocator& samplerHeap) 
 ///   [2] Root CBV at b2 (per-object data)
 ///   [3] SRV descriptor table at t0, space0, unbounded (textures + structured buffers)
 ID3D12RootSignature* CreateBindlessRootSignature(ID3D12Device* device, ShaderModel sm) {
+    UZ_PROFILE_FUNCTION();
     const bool bindless = (sm >= ShaderModel::SM6_6);
 
     // SM6.6: 3 root params. SM5: 4 root params (extra SRV table).
@@ -757,6 +764,7 @@ bool CreateDX12GraphicsPipeline(ID3D12Device* device,
                                  const RHIGraphicsPipelineDesc& desc,
                                  const ResourcePool<DX12Shader>& shaderPool,
                                  DX12Pipeline& outPipeline) {
+    UZ_PROFILE_FUNCTION();
     // Resolve shader bytecodes
     const DX12Shader* vs = shaderPool.Get(desc.vertexShader.index, desc.vertexShader.generation);
     if (!vs || vs->bytecode.empty()) {

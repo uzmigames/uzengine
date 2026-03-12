@@ -10,6 +10,7 @@
 #ifdef _WIN32
 
 #include "log.h"
+#include "profiler.h"
 #include <windowsx.h>
 
 /// Log category for window lifecycle and event messages.
@@ -105,6 +106,7 @@ LRESULT CALLBACK PlatformWindow::WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
 }
 
 bool PlatformWindow::Create(const WindowDesc& desc) {
+    UZ_PROFILE_FUNCTION();
     m_hinstance = GetModuleHandleW(nullptr);
 
     WNDCLASSEXW wc = {};
@@ -171,6 +173,7 @@ bool PlatformWindow::Create(const WindowDesc& desc) {
 }
 
 void PlatformWindow::Destroy() {
+    UZ_PROFILE_FUNCTION();
     if (m_hwnd) {
         DestroyWindow(m_hwnd);
         m_hwnd = nullptr;
@@ -184,6 +187,7 @@ PlatformWindow::~PlatformWindow() {
 }
 
 bool PlatformWindow::PumpMessages() {
+    UZ_PROFILE_FUNCTION();
     MSG msg = {};
     while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
         if (msg.message == WM_QUIT) {

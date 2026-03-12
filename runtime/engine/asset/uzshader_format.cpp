@@ -4,6 +4,7 @@
 /// All operations are little-endian and platform-independent.
 
 #include "uzshader_format.h"
+#include "profiler.h"
 
 #include <cstring>
 
@@ -15,6 +16,7 @@ std::vector<uint8_t> WriteUzShader(
     UzShaderFormat format,
     const std::vector<uint8_t>& bytecode,
     const std::vector<uint8_t>& reflection) {
+    UZ_PROFILE_FUNCTION();
 
     UzShaderHeader header;
     header.stage = static_cast<uint32_t>(stage);
@@ -39,6 +41,7 @@ std::vector<uint8_t> WriteUzShader(
 }
 
 UzShaderParseResult ReadUzShader(const std::vector<uint8_t>& data) {
+    UZ_PROFILE_FUNCTION();
     UzShaderParseResult result;
 
     if (data.size() < sizeof(UzShaderHeader)) {

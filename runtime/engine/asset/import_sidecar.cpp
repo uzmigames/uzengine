@@ -5,6 +5,7 @@
 
 #include "import_sidecar.h"
 #include "log.h"
+#include "profiler.h"
 
 #include <json.hpp>
 
@@ -43,6 +44,7 @@ uint64_t HexToHash(const std::string& hex) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 std::string WriteSidecarJson(const ImportSidecar& sidecar) {
+    UZ_PROFILE_FUNCTION();
     json j;
     j["importer"] = sidecar.importer;
     j["version"] = sidecar.version;
@@ -64,6 +66,7 @@ std::string WriteSidecarJson(const ImportSidecar& sidecar) {
 }
 
 SidecarParseResult ReadSidecarJson(const std::string& jsonStr) {
+    UZ_PROFILE_FUNCTION();
     SidecarParseResult result;
 
     try {
@@ -104,6 +107,7 @@ SidecarParseResult ReadSidecarJson(const std::string& jsonStr) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 bool WriteSidecarFile(const std::string& path, const ImportSidecar& sidecar) {
+    UZ_PROFILE_FUNCTION();
     std::ofstream file(path);
     if (!file.is_open()) {
         UZ_LOG(Asset, Error, "Cannot write sidecar: path='{}'", path);
@@ -119,6 +123,7 @@ bool WriteSidecarFile(const std::string& path, const ImportSidecar& sidecar) {
 }
 
 SidecarParseResult ReadSidecarFile(const std::string& path) {
+    UZ_PROFILE_FUNCTION();
     SidecarParseResult result;
 
     std::ifstream file(path);

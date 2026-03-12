@@ -5,6 +5,7 @@
 
 #include "shader_dependency_graph.h"
 #include "log.h"
+#include "profiler.h"
 
 #include <algorithm>
 #include <queue>
@@ -17,6 +18,7 @@ namespace uz {
 
 void ShaderDependencyGraph::SetDependencies(const std::string& file,
                                               const std::vector<std::string>& dependencies) {
+    UZ_PROFILE_FUNCTION();
     // Remove old reverse edges for this file
     auto oldIt = m_forward.find(file);
     if (oldIt != m_forward.end()) {
@@ -92,6 +94,7 @@ void ShaderDependencyGraph::CollectDependents(const std::string& file,
 }
 
 std::vector<std::string> ShaderDependencyGraph::GetDependents(const std::string& file) const {
+    UZ_PROFILE_FUNCTION();
     std::unordered_set<std::string> visited;
     CollectDependents(file, visited);
 

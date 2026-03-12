@@ -11,6 +11,7 @@
 #include "shader_compiler_fxc.h"
 #include "log.h"
 #include "paths.h"
+#include "profiler.h"
 
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
@@ -60,6 +61,7 @@ namespace uz {
 // ─────────────────────────────────────────────────────────────────────────────
 
 bool ShaderCompilerFXC::Init(const std::string& fxcPath) {
+    UZ_PROFILE_FUNCTION();
     if (m_d3dCompile) return true;
 
     auto resolved = ResolveEngineResource(fxcPath);
@@ -137,6 +139,7 @@ std::string ShaderCompilerFXC::GetTargetProfile(ShaderStageCompile stage,
 // ─────────────────────────────────────────────────────────────────────────────
 
 ShaderCompileResult ShaderCompilerFXC::Compile(const ShaderCompileDesc& desc) {
+    UZ_PROFILE_FUNCTION();
     ShaderCompileResult result;
 
     if (!m_d3dCompile) {

@@ -5,6 +5,7 @@
 
 #include "asset_cache.h"
 #include "log.h"
+#include "profiler.h"
 
 #define XXH_INLINE_ALL
 #include <xxhash.h>
@@ -45,6 +46,7 @@ uint64_t AssetCache::ComputeKey(
     uint32_t importerVersion,
     uint64_t sourceHash,
     uint64_t optionsHash) {
+    UZ_PROFILE_FUNCTION();
 
     XXH64_state_t* state = XXH64_createState();
     XXH64_reset(state, 0);
@@ -91,6 +93,7 @@ bool AssetCache::EnsureDirectory() const {
 // ─────────────────────────────────────────────────────────────────────────────
 
 std::optional<std::vector<uint8_t>> AssetCache::Lookup(uint64_t key) const {
+    UZ_PROFILE_FUNCTION();
     std::string path = EntryPath(key);
 
     std::ifstream file(path, std::ios::binary | std::ios::ate);
@@ -108,6 +111,7 @@ std::optional<std::vector<uint8_t>> AssetCache::Lookup(uint64_t key) const {
 }
 
 bool AssetCache::Store(uint64_t key, const std::vector<uint8_t>& data) {
+    UZ_PROFILE_FUNCTION();
     if (!EnsureDirectory()) return false;
 
     std::string path = EntryPath(key);
@@ -170,6 +174,7 @@ size_t AssetCache::TotalSizeBytes() const {
 }
 
 void AssetCache::Clear() {
+    UZ_PROFILE_FUNCTION();
     std::error_code ec;
     if (fs::exists(m_cacheDir, ec)) {
         fs::remove_all(m_cacheDir, ec);
