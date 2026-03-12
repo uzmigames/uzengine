@@ -44,17 +44,17 @@ add_custom_target(embed_shaders DEPENDS ${UZEMBED_OUTPUT_DIR}/engine_shaders.gen
 # ─────────────────────────────────────────────────────────────────────────────
 # Sources — Cross-Platform (auto-discovered via GLOB)
 # ─────────────────────────────────────────────────────────────────────────────
-file(GLOB SRC_RUNTIME        src/*.cpp)
-file(GLOB SRC_LOGGING        core/logging/*.cpp)
-file(GLOB SRC_ASSERTIONS     core/assertions/*.cpp)
-file(GLOB SRC_PROFILING      core/profiling/*.cpp)
-file(GLOB SRC_CONFIG         core/config/*.cpp)
-file(GLOB SRC_MATH           core/math/*.cpp)
-file(GLOB SRC_RHI_COMMON     core/rhi/*.cpp)
-file(GLOB SRC_PATHS          core/paths/*.cpp)
-file(GLOB SRC_SHADER_COMMON  core/shader/*.cpp)
-file(GLOB SRC_RENDERER       core/renderer/*.cpp)
-file(GLOB SRC_ASSET          core/asset/*.cpp)
+file(GLOB SRC_RUNTIME        engine/app/*.cpp)
+file(GLOB SRC_LOGGING        engine/logging/*.cpp)
+file(GLOB SRC_ASSERTIONS     engine/assertions/*.cpp)
+file(GLOB SRC_PROFILING      engine/profiling/*.cpp)
+file(GLOB SRC_CONFIG         engine/config/*.cpp)
+file(GLOB SRC_MATH           engine/math/*.cpp)
+file(GLOB SRC_RHI_COMMON     engine/rhi/*.cpp)
+file(GLOB SRC_PATHS          engine/paths/*.cpp)
+file(GLOB SRC_SHADER_COMMON  engine/shader/*.cpp)
+file(GLOB SRC_RENDERER       engine/renderer/*.cpp)
+file(GLOB SRC_ASSET          engine/asset/*.cpp)
 
 # Shader compiler and shader importer are Windows-only (require DXC)
 if(NOT WIN32)
@@ -104,7 +104,7 @@ set(MINIZ_SOURCES
 # Sources — Windows Only (auto-discovered via GLOB)
 # ─────────────────────────────────────────────────────────────────────────────
 file(GLOB SRC_PLATFORM_WIN   platform/windows/*.cpp)
-file(GLOB SRC_RHI_DX12       core/rhi/dx12/*.cpp)
+file(GLOB SRC_RHI_DX12       engine/rhi/dx12/*.cpp)
 
 # Exclude dx12_agility.cpp — only linked into executables, not the library
 list(FILTER SRC_RHI_DX12 EXCLUDE REGEX "dx12_agility\\.cpp$")
@@ -140,11 +140,11 @@ target_compile_definitions(uzengine_runtime PUBLIC
 # Per-file compiler flags for D3D12MA (suppresses upstream warnings)
 if(WIN32)
     if(MSVC)
-        set_source_files_properties(core/rhi/dx12/dx12_d3d12ma.cpp
+        set_source_files_properties(engine/rhi/dx12/dx12_d3d12ma.cpp
             PROPERTIES COMPILE_OPTIONS "/wd4267;/wd4244"
         )
     else()
-        set_source_files_properties(core/rhi/dx12/dx12_d3d12ma.cpp
+        set_source_files_properties(engine/rhi/dx12/dx12_d3d12ma.cpp
             PROPERTIES COMPILE_OPTIONS "-Wno-switch;-Wno-unused-private-field"
         )
     endif()
@@ -180,20 +180,20 @@ endif()
 
 # Engine includes
 target_include_directories(uzengine_runtime PUBLIC
-    src
-    core/logging
-    core/assertions
-    core/profiling
-    core/memory
-    core/config
-    core/math
-    core/containers
-    core/random
-    core/rhi
-    core/shader
-    core/paths
-    core/renderer
-    core/asset
+    engine/app
+    engine/logging
+    engine/assertions
+    engine/profiling
+    engine/memory
+    engine/config
+    engine/math
+    engine/containers
+    engine/random
+    engine/rhi
+    engine/shader
+    engine/paths
+    engine/renderer
+    engine/asset
     ${CMAKE_CURRENT_BINARY_DIR}/generated/shaders
 )
 
@@ -229,7 +229,7 @@ if(WIN32)
         thirdparty/dxc/inc
     )
     target_include_directories(uzengine_runtime PUBLIC
-        core/rhi/dx12
+        engine/rhi/dx12
     )
     target_include_directories(uzengine_runtime PRIVATE
         thirdparty/d3d12ma/src
@@ -322,7 +322,7 @@ foreach(tool_src IN LISTS TOOL_SOURCES)
     get_filename_component(tool_name ${tool_src} NAME_WE)
     set(TOOL_EXE_SOURCES ${tool_src})
     if(WIN32)
-        list(APPEND TOOL_EXE_SOURCES core/rhi/dx12/dx12_agility.cpp)
+        list(APPEND TOOL_EXE_SOURCES engine/rhi/dx12/dx12_agility.cpp)
     endif()
     add_executable(${tool_name} ${TOOL_EXE_SOURCES})
     target_link_libraries(${tool_name} PRIVATE uzengine_runtime)
@@ -337,7 +337,7 @@ foreach(demo_dir IN LISTS DEMO_DIRS)
     get_filename_component(demo_name ${demo_dir} NAME)
     file(GLOB DEMO_SOURCES ${demo_dir}/*.cpp)
     if(WIN32)
-        list(APPEND DEMO_SOURCES core/rhi/dx12/dx12_agility.cpp)
+        list(APPEND DEMO_SOURCES engine/rhi/dx12/dx12_agility.cpp)
     endif()
     add_executable(${demo_name}_demo ${DEMO_SOURCES})
     target_link_libraries(${demo_name}_demo PRIVATE uzengine_runtime)

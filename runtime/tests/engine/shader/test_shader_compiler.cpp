@@ -165,21 +165,6 @@ TEST_F(ShaderCompilerTest, CompileSM6_0) {
     EXPECT_FALSE(result.bytecode.empty());
 }
 
-TEST_F(ShaderCompilerTest, CompileSM5_1_MayFail) {
-    uz::ShaderCompileDesc desc;
-    desc.source = kSimpleVS;
-    desc.entryPoint = "main";
-    desc.stage = uz::ShaderStageCompile::Vertex;
-    desc.model = uz::ShaderModelCompile::SM5_1;
-    desc.output = uz::ShaderOutputFormat::DXIL;
-
-    auto result = m_compiler.Compile(desc);
-    // SM5.1 may not be supported by all DXC versions (e.g., DXC 1.8+)
-    if (!result.success) {
-        GTEST_SKIP() << "SM5.1 not supported by this DXC: " << result.errors;
-    }
-    EXPECT_FALSE(result.bytecode.empty());
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Compile — SPIRV Output

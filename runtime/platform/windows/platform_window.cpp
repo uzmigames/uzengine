@@ -9,7 +9,7 @@
 
 #ifdef _WIN32
 
-#include "../../core/logging/log.h"
+#include "log.h"
 #include <windowsx.h>
 
 /// Log category for window lifecycle and event messages.

@@ -222,7 +222,8 @@ TEST_F(ShaderPipelineTest, CompileAllWithNoCompilerReportsFailures) {
     // Error should mention no compiler
     bool hasCompilerError = false;
     for (const auto& err : result.errors) {
-        if (err.find("No compiler") != std::string::npos) {
+        if (err.find("No DXC compiler") != std::string::npos ||
+            err.find("No FXC compiler") != std::string::npos) {
             hasCompilerError = true;
             break;
         }

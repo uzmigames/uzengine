@@ -20,29 +20,29 @@ pub fn build(b: *std.Build) void {
         .flags = cpp_flags,
     });
     mod.addCSourceFiles(.{
-        .root = b.path("../../core/rhi/dx12"),
+        .root = b.path("../../engine/rhi/dx12"),
         .files = &.{"dx12_agility.cpp"},
         .flags = cpp_flags,
     });
 
     // Engine include paths
     const engine_dirs = [_][]const u8{
-        "../../src",
-        "../../core/logging",
-        "../../core/assertions",
-        "../../core/profiling",
-        "../../core/memory",
-        "../../core/config",
-        "../../core/math",
-        "../../core/containers",
-        "../../core/random",
-        "../../core/rhi",
-        "../../core/shader",
-        "../../core/paths",
-        "../../core/renderer",
-        "../../core/asset",
+        "../../engine/app",
+        "../../engine/logging",
+        "../../engine/assertions",
+        "../../engine/profiling",
+        "../../engine/memory",
+        "../../engine/config",
+        "../../engine/math",
+        "../../engine/containers",
+        "../../engine/random",
+        "../../engine/rhi",
+        "../../engine/shader",
+        "../../engine/paths",
+        "../../engine/renderer",
+        "../../engine/asset",
         "../../platform/windows",
-        "../../core/rhi/dx12",
+        "../../engine/rhi/dx12",
     };
     for (engine_dirs) |dir| mod.addIncludePath(b.path(dir));
 

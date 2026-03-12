@@ -17,20 +17,20 @@ pub fn build(b: *std.Build) void {
     // ── Include path tables (shared between runtime and tests) ───────────
 
     const engine_include_dirs = [_][]const u8{
-        "src",
-        "core/logging",
-        "core/assertions",
-        "core/profiling",
-        "core/memory",
-        "core/config",
-        "core/math",
-        "core/containers",
-        "core/random",
-        "core/rhi",
-        "core/shader",
-        "core/paths",
-        "core/renderer",
-        "core/asset",
+        "engine/app",
+        "engine/logging",
+        "engine/assertions",
+        "engine/profiling",
+        "engine/memory",
+        "engine/config",
+        "engine/math",
+        "engine/containers",
+        "engine/random",
+        "engine/rhi",
+        "engine/shader",
+        "engine/paths",
+        "engine/renderer",
+        "engine/asset",
     };
 
     const thirdparty_include_dirs = [_][]const u8{
@@ -95,17 +95,17 @@ pub fn build(b: *std.Build) void {
     runtime_mod.link_libcpp = true;
 
     // Cross-platform engine sources — auto-discovered via glob
-    addCppDir(runtime_mod, b, "src", cpp_flags);
-    addCppDir(runtime_mod, b, "core/logging", cpp_flags);
-    addCppDir(runtime_mod, b, "core/assertions", cpp_flags);
-    addCppDir(runtime_mod, b, "core/profiling", cpp_flags);
-    addCppDir(runtime_mod, b, "core/config", cpp_flags);
-    addCppDir(runtime_mod, b, "core/math", cpp_flags);
-    addCppDir(runtime_mod, b, "core/rhi", cpp_flags);
-    addCppDir(runtime_mod, b, "core/paths", cpp_flags);
-    addCppDir(runtime_mod, b, "core/shader", cpp_flags);
-    addCppDir(runtime_mod, b, "core/asset", cpp_flags);
-    addCppDir(runtime_mod, b, "core/renderer", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/app", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/logging", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/assertions", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/profiling", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/config", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/math", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/rhi", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/paths", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/shader", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/asset", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/renderer", cpp_flags);
 
     // Thirdparty — SPIRV-Reflect (C source, not C++)
     runtime_mod.addCSourceFiles(.{
@@ -117,10 +117,10 @@ pub fn build(b: *std.Build) void {
     // Windows-only sources
     if (is_windows) {
         addCppDir(runtime_mod, b, "platform/windows", cpp_flags);
-        addCppDir(runtime_mod, b, "core/rhi/dx12", cpp_flags);
-        runtime_mod.addIncludePath(b.path("core/rhi/dx12"));
-        addCppDir(runtime_mod, b, "core/rhi/dx11", cpp_flags);
-        runtime_mod.addIncludePath(b.path("core/rhi/dx11"));
+        addCppDir(runtime_mod, b, "engine/rhi/dx12", cpp_flags);
+        runtime_mod.addIncludePath(b.path("engine/rhi/dx12"));
+        addCppDir(runtime_mod, b, "engine/rhi/dx11", cpp_flags);
+        runtime_mod.addIncludePath(b.path("engine/rhi/dx11"));
         runtime_mod.addIncludePath(b.path(tp ++ "d3d12ma/src"));
     }
 
@@ -245,14 +245,14 @@ pub fn build(b: *std.Build) void {
 
     // Test sources — auto-discovered via glob
     addCppDir(test_mod, b, "tests", cpp_flags);
-    addCppDir(test_mod, b, "tests/core", cpp_flags);
-    addCppDir(test_mod, b, "tests/core/math", cpp_flags);
-    addCppDir(test_mod, b, "tests/core/containers", cpp_flags);
-    addCppDir(test_mod, b, "tests/core/random", cpp_flags);
-    addCppDir(test_mod, b, "tests/core/paths", cpp_flags);
-    addCppDir(test_mod, b, "tests/core/asset", cpp_flags);
-    addCppDir(test_mod, b, "tests/core/shader", cpp_flags);
-    addCppDir(test_mod, b, "tests/core/renderer", cpp_flags);
+    addCppDir(test_mod, b, "tests/engine", cpp_flags);
+    addCppDir(test_mod, b, "tests/engine/math", cpp_flags);
+    addCppDir(test_mod, b, "tests/engine/containers", cpp_flags);
+    addCppDir(test_mod, b, "tests/engine/random", cpp_flags);
+    addCppDir(test_mod, b, "tests/engine/paths", cpp_flags);
+    addCppDir(test_mod, b, "tests/engine/asset", cpp_flags);
+    addCppDir(test_mod, b, "tests/engine/shader", cpp_flags);
+    addCppDir(test_mod, b, "tests/engine/renderer", cpp_flags);
     // Thirdparty image lib tests — disable alignment sanitizer for stb_image_resize2
     test_mod.addCSourceFiles(.{
         .root = b.path("tests/thirdparty"),
@@ -262,12 +262,12 @@ pub fn build(b: *std.Build) void {
 
     // Windows-only test sources
     if (is_windows) {
-        addCppDir(test_mod, b, "tests/core/rhi", cpp_flags);
+        addCppDir(test_mod, b, "tests/engine/rhi", cpp_flags);
         addCppDir(test_mod, b, "tests/platform", cpp_flags);
     } else {
         // RHI type tests are cross-platform (no DX12 dependency)
         test_mod.addCSourceFiles(.{
-            .root = b.path("tests/core/rhi"),
+            .root = b.path("tests/engine/rhi"),
             .files = &.{ "test_rhi_types.cpp", "test_rhi_config.cpp" },
             .flags = cpp_flags,
         });
@@ -279,7 +279,7 @@ pub fn build(b: *std.Build) void {
     test_mod.addIncludePath(b.path("build/generated/shaders"));
 
     if (is_windows) {
-        test_mod.addIncludePath(b.path("core/rhi/dx12"));
+        test_mod.addIncludePath(b.path("engine/rhi/dx12"));
         for (windows_engine_include_dirs) |dir| test_mod.addIncludePath(b.path(dir));
         for (windows_thirdparty_include_dirs) |dir| test_mod.addIncludePath(b.path(dir));
     }
@@ -324,7 +324,7 @@ pub fn build(b: *std.Build) void {
             for (thirdparty_include_dirs) |dir| tool_mod.addIncludePath(b.path(dir));
             for (windows_engine_include_dirs) |dir| tool_mod.addIncludePath(b.path(dir));
             for (windows_thirdparty_include_dirs) |dir| tool_mod.addIncludePath(b.path(dir));
-            tool_mod.addIncludePath(b.path("core/rhi/dx12"));
+            tool_mod.addIncludePath(b.path("engine/rhi/dx12"));
 
             tool_mod.addCSourceFiles(.{
                 .root = b.path("tools"),
@@ -332,7 +332,7 @@ pub fn build(b: *std.Build) void {
                 .flags = cpp_flags,
             });
             tool_mod.addCSourceFiles(.{
-                .root = b.path("core/rhi/dx12"),
+                .root = b.path("engine/rhi/dx12"),
                 .files = &.{"dx12_agility.cpp"},
                 .flags = cpp_flags,
             });
