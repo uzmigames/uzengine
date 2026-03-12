@@ -18,7 +18,7 @@
 |---|--------|-------|--------|-------------|
 | [01-core/](01-core/) | Core Systems | 5 | **Partial** | Paths, logging, assertions, config, memory |
 | [02-math/](02-math/) | Math Library | 3 | **Done** | Vec2/3/4, Mat4, Quat, Transform, DirectXMath SIMD |
-| [03-rhi/](03-rhi/) | Render Hardware Interface | 12 | **Done** (DX12) | Multi-backend GPU abstraction, DX12 SM6.6, **GPU memory management** |
+| [03-rhi/](03-rhi/) | Render Hardware Interface | 14 | **Done** (DX12+Vulkan) | Multi-backend GPU abstraction, DX12 SM6.6, Vulkan 1.3, SPIR-V, **GPU memory management** |
 | [04-observability/](04-observability/) | Observability | 5 | **Partial** | Logging, CPU/GPU profiling, stat counters, crash reporting |
 | [05-shader-pipeline/](05-shader-pipeline/) | Shader Pipeline | 6 | **Planned** | VFS, DXC compilation, content-hash cache, hot-reload, reflection |
 | [06-build-toolchain/](06-build-toolchain/) | Build Toolchain | 5 | **Active** | Zig build, thirdparty libs, N-API addon, build configs |

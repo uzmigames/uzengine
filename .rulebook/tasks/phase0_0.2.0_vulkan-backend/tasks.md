@@ -63,6 +63,6 @@
 
 ## 3. Documentation
 
-- [ ] 3.1 Add `docs/engine/03-rhi/vulkan-backend.md` documenting Vulkan-specific behaviors (dynamic rendering, timeline semaphores, descriptor layout)
-- [ ] 3.2 Update `docs/engine/03-rhi/01-overview.md` with Vulkan backend details
-- [ ] 3.3 Add SPIR-V compilation guide (DXC -spirv flag, -fvk-*-shift binding remaps, automatic detection via GetActiveRHIBackend)
+- [x] 3.1 Add `docs/engine/03-rhi/13-vulkan-backend.md` documenting Vulkan-specific behaviors (dynamic rendering, timeline semaphores, descriptor layout)
+- [x] 3.2 Update `docs/engine/03-rhi/01-overview.md` with Vulkan backend details
+- [x] 3.3 Add `docs/engine/03-rhi/14-spirv-compilation.md` (DXC -spirv flag, -fvk-*-shift binding remaps, automatic detection via GetActiveRHIBackend)

@@ -31,14 +31,20 @@ The device's `GetShaderModel()` and `IsBindless()` queries determine which path 
 
 ## Vulkan Backend
 
+**Status**: Done (Milestone 1.3). See [vulkan-backend.md](vulkan-backend.md) for complete implementation details.
+
 Primary target: Linux, Steam Deck, and cross-platform Windows development.
 
-**Implementation Plan:**
-- `rhi_vulkan.cpp` implementing `IRHIDevice`, `IRHICommandList`, `IRHISwapChain`, `IRHIFence`
-- SPIR-V shader bytecode (compiled from HLSL via DXC's `-spirv` flag)
+**Implementation:**
+- `rhi/vulkan/vulkan_device.h/.cpp` implementing `IRHIDevice`, `IRHICommandList`, `IRHISwapChain`, `IRHIFence`
+- SPIR-V shader bytecode (compiled from HLSL via DXC's `-spirv` flag with binding shifts)
 - `VMA` (Vulkan Memory Allocator) for memory management — AMD's allocator, same author as D3D12MA
-- Descriptor set layout matching UzEngine's bindless model (descriptor indexing extension)
-- Vulkan 1.3 minimum — for dynamic rendering, synchronization2, maintenance4
+- volk for dynamic function loading (no `vulkan-1.lib` linking required)
+- Vulkan 1.3 minimum — for dynamic rendering, synchronization2, timeline semaphores, buffer device address
+- Per-frame descriptor sets with automatic flushing
+- Triple-buffered command pools to avoid in-flight reuse
+- MAILBOX present mode for lowest-latency rendering
+- Timeline semaphores for CPU/GPU synchronization (not traditional fences)
 
 **Vulkan Equivalents:**
 
