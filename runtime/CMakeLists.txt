@@ -376,6 +376,9 @@ if(WIN32)
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/dxc/bin/x64/dxil.dll
                 $<TARGET_FILE_DIR:${tgt}>/dxil.dll
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/fxc/bin/x64/d3dcompiler_47.dll
+                $<TARGET_FILE_DIR:${tgt}>/d3dcompiler_47.dll
             COMMENT "Deploying runtime DLLs for ${tgt}"
         )
     endforeach()

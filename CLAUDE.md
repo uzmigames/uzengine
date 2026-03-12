@@ -238,18 +238,72 @@ UZ_LOG(Asset, Info, "Loaded texture: path='{}'", path);
 UZ_LOG(Asset, Error, "Failed to compile shader: reason='{}'", err);
 ```
 
+## ⚠️ CRITICAL: Agent Delegation Rules
+
+**MANDATORY**: You MUST delegate work to specialist agents instead of doing everything in the main conversation. This saves cost (haiku/sonnet vs opus) and produces better results from domain experts.
+
+### When You MUST Delegate
+
+| Task Type | Agent | Model | Why |
+|-----------|-------|-------|-----|
+| **Write/update docs** | docs-operator | haiku | 20x cheaper, docs don't need opus |
+| **Explore/search codebase** | researcher | haiku | Read-only exploration is cheap |
+| **Write C++ code** | cpp-core-expert | opus | Domain expert with quality checklist |
+| **Write/fix shaders** | shader-engineer | opus | HLSL/SPIRV specialist |
+| **RHI backend work** | rhi-engineer | opus | DX12/Vulkan/Metal specialist |
+| **Render graph passes** | render-graph-engineer | opus | DAG/barrier specialist |
+| **ECS/game systems** | ecs-systems-engineer | opus | EnTT/game loop specialist |
+| **Write tests** | test-engineer | sonnet | Test patterns specialist |
+| **Build system issues** | build-system-engineer | sonnet | Zig/vcpkg/DLL deploy specialist |
+| **IPC/N-API work** | ipc-protocol-engineer | sonnet | Frame streaming/Electron specialist |
+| **Performance work** | performance-engineer | sonnet | Tracy/GPU profiling specialist |
+| **Analyze UE5 patterns** | unreal-architect | haiku | Reads W:\UE_5.6_Source |
+| **Analyze Godot patterns** | godot-architect | haiku | Reads E:\godot |
+| **Architecture synthesis** | engine-architect | sonnet | Combines multi-engine analysis |
+| **TypeScript/extension** | typescript-vscode-extension | sonnet | TS/VSCode specialist |
+| **Physics (Jolt)** | physics-engineer | sonnet | Jolt integration specialist |
+| **Animation** | animation-engineer | sonnet | Skeletal/skinning/IK specialist |
+| **Audio** | audio-engineer | sonnet | miniaudio/spatial specialist |
+| **Lua scripting** | lua-scripting-engineer | sonnet | LuaJIT/sandbox specialist |
+| **UI system** | ui-engineer | sonnet | HTML/CSS/data binding specialist |
+| **Gameplay systems** | gameplay-systems-engineer | sonnet | Input/camera/save/BT/nav specialist |
+| **Project coordination** | project-manager | haiku | Planning/status tracking |
+
+### Delegation Rules
+
+1. **NEVER write docs in main conversation** — ALWAYS delegate to docs-operator (haiku). This includes ENGINE.md migrations, new feature docs, doc audits.
+2. **NEVER do broad codebase exploration in main conversation** — delegate to researcher (haiku) or use the Explore agent type.
+3. **NEVER write C++ directly in main conversation** — delegate to the appropriate specialist agent (cpp-core-expert for general C++, rhi-engineer for RHI, etc.).
+4. **NEVER analyze reference engines in main conversation** — delegate to architect agents (haiku).
+5. **After implementing C++ code, ALWAYS launch docs-operator** to update relevant docs.
+6. **After implementing C++ code, ALWAYS launch test-engineer** to write tests.
+7. **Use skills as shortcuts**: `/docs`, `/research`, `/review`, `/analyze`, `/demo`, `/deps`, `/profile` trigger the right agents automatically.
+8. **Parallel delegation**: Launch independent agents in parallel (e.g., docs-operator + test-engineer after code changes).
+9. **Main conversation role**: The main conversation (opus) should ONLY do: coordination, user communication, planning, and delegating. It should NOT do bulk work.
+
+### Cost Optimization
+
+```
+opus  = $$$  → Only for: C++ core, RHI, render graph, shaders, ECS (complex, critical)
+sonnet = $$  → For: gameplay, physics, audio, animation, build, IPC, tests, TS
+haiku  = $   → For: docs, research, project management, architecture analysis
+```
+
+**Rule of thumb**: If the task is read-only or text-generation (not complex code), use haiku. If it's code but not core engine, use sonnet. Only use opus for critical C++ systems.
+
 ## Critical Rules
 
 1. **ALWAYS read AGENTS.md first** - Contains all project standards and patterns
-2. **Edit files sequentially** - One at a time, verify each edit
-3. **Write complete tests** - No placeholders, no simplifications
-4. **Tests required** - Minimum 95% coverage for all new code
-5. **Quality checks before committing**:
+2. **ALWAYS delegate to specialist agents** - See delegation table above
+3. **Edit files sequentially** - One at a time, verify each edit
+4. **Write complete tests** - No placeholders, no simplifications
+5. **Tests required** - Minimum 95% coverage for all new code
+6. **Quality checks before committing**:
    - Type check / Compiler check
    - Lint (zero warnings)
    - All tests passing
    - Coverage threshold met
-6. **Documentation** - Update /docs/ when implementing features
+7. **Documentation** - Update /docs/ when implementing features (via docs-operator agent)
 
 ## Persistent Memory
 

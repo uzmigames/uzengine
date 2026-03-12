@@ -1,7 +1,7 @@
 ---
 name: physics-engineer
 description: "Use this agent for all work involving Jolt Physics integration, rigid bodies, colliders, triggers, character controller, physics queries (raycasts, overlaps), collision events, physics debug draw, and ragdoll systems. Also use for PhysicsWorld lifecycle, fixed-timestep loop, and collision layer configuration.\n\nExamples:\n\n- Example 1:\n  user: \"Implement CRigidBody and CColliderBox ECS components with Jolt integration\"\n  assistant: \"I'll use the physics-engineer agent to implement the Jolt body creation and ECS sync.\"\n  Commentary: All Jolt Physics work goes to this agent.\n\n- Example 2:\n  user: \"Add raycast query to the Lua physics API\"\n  assistant: \"Let me use the physics-engineer agent to implement ctx.world:raycast() binding.\"\n  Commentary: Physics query Lua bindings are this agent's domain.\n\n- Example 3:\n  user: \"The character controller is clipping through walls\"\n  assistant: \"I'll use the physics-engineer agent to debug the CharacterVirtual integration.\"\n  Commentary: Physics bugs (penetration, tunneling, jitter) go here.\n\n- Example 4:\n  user: \"Add trigger volumes that fire EventBus<TriggerEvent>\"\n  assistant: \"The physics-engineer agent will implement CTrigger with Jolt contact listener.\"\n  Commentary: Collision/trigger event integration is this agent's responsibility."
-model: opus
+model: sonnet
 color: orange
 memory: project
 ---

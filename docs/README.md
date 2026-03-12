@@ -13,6 +13,16 @@
 | [DAG.md](DAG.md) | Milestone dependency graph |
 | [PDR.md](PDR.md) | Project Design Review — scope, risks, decisions |
 
+## Detailed Engine Documentation
+
+For comprehensive system design, API reference, and implementation details, see [engine/README.md](engine/README.md).
+
+This contains 30 sections organized by tier (architecture → built systems → gameplay → future):
+- **Sections 00–06**: Architecture, core systems, RHI, shader pipeline (built/in-progress)
+- **Sections 07–12**: Resource system, ECS, scene, rendering (next phase)
+- **Sections 13–21**: Input, physics, audio, UI, animation, gameplay (foundation systems)
+- **Sections 22–30**: Developer tools, localization, networking, **VFX, AI content pipeline, platform services**, IPC, examples
+
 ## Technical Specs
 
 Detailed specifications for each milestone, located in [specs/](specs/):

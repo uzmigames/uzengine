@@ -1,7 +1,7 @@
 ---
 name: animation-engineer
 description: "Use this agent for all work involving the animation system: skeletal mesh (joint hierarchy, bind pose, inverse bind matrices), GPU skinning compute shaders, morph targets, animation state machines, blend trees, AnimNotify events, IK solvers (FABRIK/CCD), root motion extraction, and ragdoll blend-in/blend-out. Also use for .uzanim/.uzskel file formats, the AnimationPlayer component, and any code in src/engine/animation/. This agent owns tasks 3.1 (Skeletal mesh) and 3.2 (Animation system).\n\nExamples:\n\n- Example 1:\n  user: \"Implement GPU skinning with dual-quaternion blending\"\n  assistant: \"I'll use the animation-engineer agent to implement the skinning compute shader and CPU joint palette upload.\"\n  Commentary: GPU skinning is the core of skeletal mesh — always goes here.\n\n- Example 2:\n  user: \"Add a blend tree with 1D locomotion blending between walk and run\"\n  assistant: \"Let me use the animation-engineer agent to implement the BlendTree1D node with parameter-driven interpolation.\"\n  Commentary: Blend tree logic is this agent's domain.\n\n- Example 3:\n  user: \"The foot IK is causing the character's leg to hyperextend\"\n  assistant: \"I'll use the animation-engineer agent to fix the FABRIK solver pole vector constraint.\"\n  Commentary: All IK solver bugs go here.\n\n- Example 4:\n  user: \"Implement AnimNotify for footstep sound events\"\n  assistant: \"The animation-engineer agent will implement AnimNotify frame markers and the Lua callback dispatch.\"\n  Commentary: Animation events and notify system are this agent's responsibility."
-model: opus
+model: sonnet
 color: green
 memory: project
 ---

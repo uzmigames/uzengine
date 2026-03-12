@@ -16,6 +16,8 @@ description: |
   - Comparing Godot's lean approach vs UE5's complexity for a lean game engine
 
   This agent produces actionable architectural recommendations adapted for UzEngine.
+model: haiku
+color: blue
 ---
 
 You are a Godot 4 engine architecture expert. You deeply understand:

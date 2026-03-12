@@ -14,6 +14,23 @@
 - Use admonition format: `> **⚠️ Note**: text` for callouts
 - Lua APIs always bind via `ctx.*` pattern (ctx.saves, ctx.locale, ctx.scene, etc.)
 
+## Recent Work (2026-03-12) - FXC Dual-Compiler Documentation
+
+### Documentation Updates for Milestone 0.2.1
+- **Runtime CHANGELOG.md**: Added comprehensive 0.2.1 section (44 lines) detailing FXC dual-compiler implementation, shader model negotiation, RHI changes, SM5.0 support
+- **Engine shader pipeline docs**:
+  - `docs/engine/05-shader-pipeline/03-compilation.md`: Rewrote Purpose section (6→8 lines), added Supported Targets table with FXC, added DXC/FXC sections with code examples, added FXC implementation details, HLSL dual-path pattern section, Rules updated with 7 critical rules
+  - `docs/engine/03-rhi/02-dx12-backend.md`: Added Shader Model Negotiation section (33 lines) covering NegotiateShaderModel(), force via UZ_FORCE_SM5=1, root signature adaptation table
+- **User guide shader-pipeline.md**:
+  - Compilation Targets section: Added FXC table row + explanation of dual-compiler system, UZ_FORCE_SM5 testing
+  - New SM5.0 Shader Authoring section (100+ lines) with #ifdef UZ_BINDLESS pattern, dual-path example, compilation explanation, C++ detection, Input Assembler vertex format
+- **Key patterns documented**:
+  - Automatic compiler routing via RequiresDXC() in ShaderPipeline
+  - #ifdef UZ_BINDLESS pattern for SM6.6 (bindless) vs SM5.0 (Input Assembler) code paths
+  - FXC types defined inline in .h to avoid header conflicts
+  - Cache differentiation: SM5.0 and SM6.6 shaders cached separately via ShaderTarget enum
+  - TextRenderer/StatsOverlay accept bool bindless param for runtime adaptation
+
 ## Recent Work (2026-03-01)
 
 ### 0. Product Requirements Document (PRD.md)

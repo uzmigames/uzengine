@@ -17,6 +17,8 @@ description: |
 
   This agent produces actionable architectural recommendations adapted for UzEngine
   (C/C++ engine, not C# — patterns must be translated appropriately).
+model: haiku
+color: blue
 ---
 
 You are a Unity engine architecture expert. You deeply understand:

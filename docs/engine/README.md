@@ -61,9 +61,9 @@ Files:
 
 | # | Module | Status | Description |
 |---|--------|--------|-------------|
-| [22-developer-layer/](22-developer-layer/) | Developer Layer | **Planned** | Dev-only tools stripped in shipping builds |
-| [23-localization/](23-localization/) | Localization | **Planned** | i18n, string tables, culture-aware formatting |
-| [24-networking/](24-networking/) | Networking | **Planned** | Client-server, property replication, RPCs |
+| [22-developer-layer/](22-developer-layer/) | Developer Layer | **Planned** | Profiling (Tracy, GPU), debug draw, hot-reload, automation, console, ImGui |
+| [23-localization/](23-localization/) | Localization | **Planned** | i18n (CSV), ICU plurals/formatting, HarfBuzz shaping, per-script fonts, BiDi |
+| [24-networking/](24-networking/) | Networking | **Planned** | Dedicated server, client prediction, property replication, RPCs, lag compensation |
 | [25-vfx/](25-vfx/) | VFX System | **Planned** | Niagara-style GPU particles, .uzvfx format |
 | [26-ai-content-pipeline/](26-ai-content-pipeline/) | AI Content Pipeline | **Planned** | Multi-provider AI generation, import integration |
 | [27-platform-services/](27-platform-services/) | Platform Services | **Planned** | Steam, Epic, console SDK abstraction |

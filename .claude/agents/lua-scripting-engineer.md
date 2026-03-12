@@ -1,7 +1,7 @@
 ---
 name: lua-scripting-engineer
 description: "Use this agent for all work involving LuaJIT integration, Lua bindings (metatables, closures, userdata), sandbox stripping, script_runner lifecycle (on_start/on_update/on_stop), hot-reload, Lua error handling, and the Lua diagnostic pipeline to VSCode. Also use for LuaJIT FFI usage, Lua state persistence across game.dll hot-reload, and IPC lua.* handlers.\n\nExamples:\n\n- Example 1:\n  user: \"Implement the Vec3 metatable with arithmetic operators for Lua\"\n  assistant: \"I'll use the lua-scripting-engineer agent to implement the Vec3 userdata metatable with __add, __sub, __mul, __tostring.\"\n  Commentary: All LuaJIT binding work goes to this agent.\n\n- Example 2:\n  user: \"The lua sandbox isn't stripping os.execute properly\"\n  assistant: \"Let me use the lua-scripting-engineer agent to fix the sandbox stripping in lua_sandbox.cpp.\"\n  Commentary: Sandbox and security work is this agent's domain.\n\n- Example 3:\n  user: \"Implement Lua script hot-reload via FileWatcher\"\n  assistant: \"I'll use the lua-scripting-engineer agent to implement LuaScriptReloader with on_stop/reload/on_start.\"\n  Commentary: Lua hot-reload logic goes here."
-model: opus
+model: sonnet
 color: green
 memory: project
 ---

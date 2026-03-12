@@ -96,7 +96,7 @@ ELECTRON_RUN_AS_NODE=1 "f:/IDEs/Microsoft VS Code/Code.exe" \
 
 ```
 ┌─────────────────────────────────────────────────┐
-│ VSCode Window                                    │
+│ VSCode Window                                   │
 │  ┌───────────────────────────────────────────┐  │
 │  │ Primary Viewport (native HWND)            │  │
 │  │ ┌─────────────────────────────────────┐   │  │
@@ -105,11 +105,11 @@ ELECTRON_RUN_AS_NODE=1 "f:/IDEs/Microsoft VS Code/Code.exe" \
 │  │ │ Full GPU performance (6069 FPS)     │   │  │
 │  │ └─────────────────────────────────────┘   │  │
 │  └───────────────────────────────────────────┘  │
-│  ┌──────────┐ ┌──────────┐ ┌──────────────────┐│
-│  │Inspector │ │Hierarchy │ │ Preview (webview) ││
-│  │(webview) │ │(webview) │ │ H.264 stream     ││
-│  │ HTML/CSS │ │ HTML/CSS │ │ 120 FPS          ││
-│  └──────────┘ └──────────┘ └──────────────────┘│
+│  ┌──────────┐ ┌──────────┐ ┌──────────────────┐ │
+│  │Inspector │ │Hierarchy │ │ Preview (webview)│ │
+│  │(webview) │ │(webview) │ │ H.264 stream     │ │
+│  │ HTML/CSS │ │ HTML/CSS │ │ 120 FPS          │ │
+│  └──────────┘ └──────────┘ └──────────────────┘ │
 └─────────────────────────────────────────────────┘
 ```
 

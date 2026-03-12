@@ -30,15 +30,15 @@
 - [x] 4.9 Write 21-property-system/ (reflection, serialization, reactivity)
 
 ## 5. Tier 4 — Developer & Future (22-30)
-- [ ] 5.1 Write 22-developer-layer/ (overview, profiling, debug draw, hot-reload, automation, console, imgui)
-- [ ] 5.2 Write 23-localization/ (i18n)
-- [ ] 5.3 Write 24-networking/ (architecture, transport)
-- [ ] 5.4 Write 25-vfx/ (particles, vfx graph, decals)
-- [ ] 5.5 Write 26-ai-content-pipeline/ (LLM, procgen, dialogue)
-- [ ] 5.6 Write 27-platform-services/ (Steam, cross-platform)
-- [ ] 5.7 Write 28-ipc-protocol/ (overview, messages, frame streaming)
-- [ ] 5.8 Write 29-design-decisions/ (rationale, POC lessons, engine comparison)
-- [ ] 5.9 Write 30-game-examples/ (Pong, FPS, Flappy Bird, Turret Defense)
+- [x] 5.1 Write 22-developer-layer/ (overview, profiling, debug draw, hot-reload, automation, console, imgui)
+- [x] 5.2 Write 23-localization/ (i18n)
+- [x] 5.3 Write 24-networking/ (architecture, transport)
+- [x] 5.4 Write 25-vfx/ (particles, vfx graph, decals)
+- [x] 5.5 Write 26-ai-content-pipeline/ (LLM, procgen, dialogue)
+- [x] 5.6 Write 27-platform-services/ (Steam, cross-platform)
+- [x] 5.7 Write 28-ipc-protocol/ (overview, messages, frame streaming)
+- [x] 5.8 Write 29-design-decisions/ (rationale, POC lessons, engine comparison)
+- [x] 5.9 Write 30-game-examples/ (Pong, FPS, Flappy Bird, Turret Defense)
 
 ## 6. Finalization
 - [ ] 6.1 Verify all content from ENGINE.md is covered

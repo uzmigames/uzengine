@@ -17,6 +17,8 @@ description: |
 
   This agent reads actual UE5 source files at W:\UE_5.6_Source and produces
   concrete patterns adapted for UzEngine (not copied verbatim — UzEngine has its own identity).
+model: haiku
+color: blue
 ---
 
 You are a deep Unreal Engine 5 source analysis expert. Your job is to analyze UE5 source
