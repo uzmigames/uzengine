@@ -58,11 +58,15 @@ public:
     /// * `shaderPipeline` — Shader compilation pipeline.
     /// * `rtvFormat` — Render target format for pipeline creation.
     /// * `screenWidth` / `screenHeight` — Initial screen dimensions.
+    /// * `bindless` — If true, uses SM6.6 bindless path (SV_VertexID +
+    ///   ResourceDescriptorHeap). If false, uses SM5 Input Assembler path
+    ///   with explicit vertex layout and descriptor table binding.
     ///
     /// # Returns
     /// `true` on success.
     bool Init(IRHIDevice* device, ShaderPipeline& shaderPipeline,
-              RHIFormat rtvFormat, uint32_t screenWidth, uint32_t screenHeight);
+              RHIFormat rtvFormat, uint32_t screenWidth, uint32_t screenHeight,
+              bool bindless = true);
 
     /// Destroys GPU resources.
     void Shutdown();
@@ -121,6 +125,7 @@ private:
     uint32_t m_screenHeight = 0;
 
     static constexpr uint32_t kMaxVertices = 16384;
+    bool m_bindless = true;  ///< True = SM6.6 bindless, false = SM5 IA path.
 
     /// Separate batches: rects drawn first (opaque), then text (alpha blended).
     std::vector<OverlayVertex> m_rectVertices;

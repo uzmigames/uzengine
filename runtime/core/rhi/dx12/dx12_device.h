@@ -166,7 +166,10 @@ public:
     ID3D12RootSignature* GetRootSignature() const { return m_rootSignature; }
 
     /// Returns the negotiated shader model for this device.
-    ShaderModel GetShaderModel() const { return m_shaderModel; }
+    ///
+    /// Determined during device creation by probing GPU capabilities.
+    /// SM6.6+ enables bindless resource access; SM5.x uses traditional binding.
+    ShaderModel GetShaderModel() const override { return m_shaderModel; }
 
     /// Queries and logs DRED diagnostic data after device removal.
     ///
@@ -180,7 +183,7 @@ private:
     bool CreateFactory(bool validation);
     bool SelectAdapter(uint32_t adapterIndex);
     bool CreateDevice();
-    void NegotiateShaderModel();
+    void NegotiateShaderModel(std::optional<ShaderModel> forceModel = std::nullopt);
     bool CreateAllocator();
     bool CreateDescriptorHeaps();
     bool CreateCommandQueues();

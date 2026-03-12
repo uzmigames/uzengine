@@ -1,8 +1,9 @@
 /// DX12 Textured Quad Demo — first textured geometry on screen.
 ///
-/// Renders a quad with a procedural checkerboard texture using SM6.6
-/// bindless texture sampling. Validates the full texture upload pipeline:
-/// staging buffer → CopyBufferToTexture → SRV bindless access.
+/// Renders a quad with a procedural checkerboard texture. Automatically
+/// selects SM6.6 bindless or SM5 Input Assembler path based on GPU
+/// capabilities. Validates the full texture upload pipeline:
+/// staging buffer → CopyBufferToTexture → SRV access.
 
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -17,9 +18,11 @@
 #include "upload_context.h"
 #include "shader_pipeline.h"
 #include "shader_compiler.h"
+#include "shader_compiler_fxc.h"
 #include "paths.h"
 
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <d3d12.h>
 #include <string>
@@ -110,6 +113,10 @@ bool RunTexturedQuadDemo(uint32_t frameCount) {
     deviceDesc.enableValidation = true;
 #endif
 
+    if (const char* env = std::getenv("UZ_FORCE_SM5"); env && std::string(env) == "1") {
+        deviceDesc.forceShaderModel = ShaderModel::SM5_0;
+    }
+
     auto* rhiDevice = CreateRHIDevice(deviceDesc);
     if (!rhiDevice) {
         UZ_LOG(Renderer, Error, "Failed to create RHI device");
@@ -155,6 +162,8 @@ bool RunTexturedQuadDemo(uint32_t frameCount) {
     }
 
     // ── Shader Pipeline ──────────────────────────────────────────────────
+    const bool bindless = device->IsBindless();
+
     ShaderCompiler compiler;
     if (!compiler.Init()) {
         UZ_LOG(Renderer, Error, "Failed to init shader compiler");
@@ -164,9 +173,19 @@ bool RunTexturedQuadDemo(uint32_t frameCount) {
     ShaderPipeline shaderPipeline;
     ShaderPipeline::Config pipelineCfg;
     pipelineCfg.cacheDir = (uz::GetExeDir() / "cache/shaders").string();
-    pipelineCfg.targetBackend = "dx12_sm66";
+    pipelineCfg.targetBackend = bindless ? "dx12_sm66" : "dx12_sm50";
+    pipelineCfg.bindless = bindless;
     shaderPipeline.Init(pipelineCfg);
     shaderPipeline.SetCompiler(&compiler);
+
+    ShaderCompilerFXC compilerFXC;
+    if (!bindless) {
+        if (!compilerFXC.Init()) {
+            UZ_LOG(Renderer, Error, "Failed to init FXC shader compiler");
+            return false;
+        }
+        shaderPipeline.SetCompilerFXC(&compilerFXC);
+    }
 
     std::string shadersDir = (uz::GetExeDir() / "../../shaders").string();
     shaderPipeline.Mount("/demo/textured_quad", shadersDir);
@@ -203,6 +222,13 @@ bool RunTexturedQuadDemo(uint32_t frameCount) {
     }
 
     // ── Create Pipeline ──────────────────────────────────────────────────
+    // SM5 input layout: POSITION(float3) + COLOR(float4) + TEXCOORD(float2)
+    RHIInputElementDesc inputElements[] = {
+        { RHIInputSemantic::Position, 0, RHIFormat::RGB32Float,  0, 0  },
+        { RHIInputSemantic::Color,    0, RHIFormat::RGBA32Float, 0, 12 },
+        { RHIInputSemantic::Texcoord, 0, RHIFormat::RG32Float,   0, 28 },
+    };
+
     RHIGraphicsPipelineDesc pipeDesc{};
     pipeDesc.vertexShader = vsHandle;
     pipeDesc.pixelShader = psHandle;
@@ -213,6 +239,12 @@ bool RunTexturedQuadDemo(uint32_t frameCount) {
     pipeDesc.renderTargetCount = 1;
     pipeDesc.debugName = "TexturedQuadPipeline";
 
+    if (!bindless) {
+        pipeDesc.inputElements = inputElements;
+        pipeDesc.inputElementCount = 3;
+        pipeDesc.vertexStride = sizeof(SimpleVertex);
+    }
+
     RHIPipelineHandle pipeline = device->CreateGraphicsPipeline(pipeDesc);
     if (!pipeline.IsValid()) {
         UZ_LOG(Renderer, Error, "Failed to create textured quad pipeline");
@@ -220,14 +252,14 @@ bool RunTexturedQuadDemo(uint32_t frameCount) {
     }
     UZ_LOG(Renderer, Info, "Textured quad pipeline created");
 
-    // ── Create Vertex Buffer (StructuredBuffer for bindless) ─────────────
+    // ── Create Vertex Buffer ─────────────────────────────────────────────
     SimpleVertex vertices[6];
     GetQuadVertices(vertices);
 
     RHIBufferDesc vbDesc{};
     vbDesc.sizeBytes = sizeof(vertices);
     vbDesc.stride = sizeof(SimpleVertex);
-    vbDesc.usage = RHIBufferUsage::StructuredBuffer;
+    vbDesc.usage = bindless ? RHIBufferUsage::StructuredBuffer : RHIBufferUsage::VertexBuffer;
     vbDesc.memory = RHIMemoryType::Upload;
     vbDesc.debugName = "QuadVertexBuffer";
 
@@ -244,12 +276,15 @@ bool RunTexturedQuadDemo(uint32_t frameCount) {
     }
     std::memcpy(mapped, vertices, sizeof(vertices));
 
-    uint32_t vbSrvIndex = device->GetBufferSRVIndex(vbHandle);
-    if (vbSrvIndex == UINT32_MAX) {
-        UZ_LOG(Renderer, Error, "Vertex buffer has no SRV");
-        return false;
+    uint32_t vbSrvIndex = 0;
+    if (bindless) {
+        vbSrvIndex = device->GetBufferSRVIndex(vbHandle);
+        if (vbSrvIndex == UINT32_MAX) {
+            UZ_LOG(Renderer, Error, "Vertex buffer has no SRV");
+            return false;
+        }
+        UZ_LOG(Renderer, Info, "Vertex buffer SRV index: {}", vbSrvIndex);
     }
-    UZ_LOG(Renderer, Info, "Vertex buffer SRV index: {}", vbSrvIndex);
 
     // ── Create Texture ───────────────────────────────────────────────────
     RHITextureDesc texDesc{};
@@ -321,11 +356,13 @@ bool RunTexturedQuadDemo(uint32_t frameCount) {
     }
     UZ_LOG(Renderer, Info, "Sampler index: {}", samplerIdx);
 
-    // ── Root Constants ───────────────────────────────────────────────────
+    // ── Root Constants (SM6.6 bindless only) ────────────────────────────
     RootConstants rootConsts{};
-    rootConsts.vertexBufferIndex = vbSrvIndex;
-    rootConsts.textureIndex = texSrvIndex;
-    rootConsts.samplerIndex = samplerIdx;
+    if (bindless) {
+        rootConsts.vertexBufferIndex = vbSrvIndex;
+        rootConsts.textureIndex = texSrvIndex;
+        rootConsts.samplerIndex = samplerIdx;
+    }
 
     // ── Render Loop ──────────────────────────────────────────────────────
     uint32_t frameIndex = 0;
@@ -366,8 +403,13 @@ bool RunTexturedQuadDemo(uint32_t frameCount) {
         cmdList->SetPipeline(pipeline);
         cmdList->GetNative()->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-        // Push all 3 root constants at once
-        cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rootConsts), 3, 0);
+        // Bind vertex data and texture
+        if (bindless) {
+            cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rootConsts), 3, 0);
+        } else {
+            cmdList->SetVertexBuffer(0, vbHandle, 0);
+            cmdList->SetDescriptorTable(3, texSrvIndex);
+        }
 
         RHIViewport vp{};
         vp.width = static_cast<float>(swapChain->GetWidth());

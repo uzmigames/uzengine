@@ -366,6 +366,11 @@ pub fn build(b: *std.Build) void {
         b.getInstallStep().dependOn(&b.addInstallBinFile(
             b.path(tp ++ "dxc/bin/x64/dxil.dll"), "dxil.dll",
         ).step);
+
+        // FXC (SM 5.0 fallback + future DX11)
+        b.getInstallStep().dependOn(&b.addInstallBinFile(
+            b.path(tp ++ "fxc/bin/x64/d3dcompiler_47.dll"), "d3dcompiler_47.dll",
+        ).step);
     }
 }
 

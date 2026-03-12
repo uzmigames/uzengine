@@ -39,6 +39,10 @@
 
 namespace uz {
 
+// Forward declare — defined in rhi_config.h. Avoids circular include
+// (rhi.h → rhi_config.h → rhi_backend.h → rhi.h).
+enum class ShaderModel : uint8_t;
+
 // ─────────────────────────────────────────────────────────────────────────────
 // IRHIFence — CPU/GPU synchronization primitive
 // ─────────────────────────────────────────────────────────────────────────────
@@ -222,6 +226,17 @@ public:
     /// * `rootParamIndex` — Root parameter slot (must be a root CBV parameter).
     /// * `gpuAddress` — GPU virtual address of the constant buffer.
     virtual void SetRootCBV(uint32_t rootParamIndex, uint64_t gpuAddress) = 0;
+
+    /// Binds a descriptor table at a root parameter slot (SM5 fallback).
+    ///
+    /// Sets the GPU descriptor handle for a root parameter that is a descriptor table.
+    /// The `descriptorIndex` is an offset into the global CBV_SRV_UAV heap.
+    /// Used for SM5 SRV/UAV binding where DIRECTLY_INDEXED is not available.
+    ///
+    /// # Arguments
+    /// * `rootParamIndex` — Root parameter slot (must be a descriptor table parameter).
+    /// * `descriptorIndex` — Index into the global CBV_SRV_UAV descriptor heap.
+    virtual void SetDescriptorTable(uint32_t rootParamIndex, uint32_t descriptorIndex) = 0;
 
     // ── Draw and dispatch ────────────────────────────────────────────────
 
@@ -686,6 +701,22 @@ public:
     /// An `RHIMemoryBudget` with `budgetBytes` (total available) and `usageBytes` (currently used).
     /// Both are 0 if the query fails or the adapter is unavailable.
     virtual RHIMemoryBudget GetMemoryBudget() const = 0;
+
+    /// Returns the negotiated shader model for the current GPU.
+    ///
+    /// # Returns
+    /// The highest shader model the GPU supports, as determined during device creation.
+    /// Use `IsBindless()` to check if SM6.6+ bindless resource access is available.
+    virtual ShaderModel GetShaderModel() const = 0;
+
+    /// Returns true if the device supports SM6.6+ bindless resource access.
+    ///
+    /// When true, shaders use `ResourceDescriptorHeap[index]` for resource access
+    /// and pipelines need no input layout. When false, shaders use traditional
+    /// register-based binding and the Input Assembler for vertex data.
+    ///
+    /// Defined out-of-line in rhi_config.h (needs full ShaderModel enum).
+    bool IsBindless() const;
 };
 
 } // namespace uz

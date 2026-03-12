@@ -135,6 +135,9 @@ pub fn build(b: *std.Build) void {
     b.getInstallStep().dependOn(&b.addInstallBinFile(
         b.path("../../thirdparty/dxc/bin/x64/dxil.dll"), "dxil.dll",
     ).step);
+    b.getInstallStep().dependOn(&b.addInstallBinFile(
+        b.path("../../thirdparty/fxc/bin/x64/d3dcompiler_47.dll"), "d3dcompiler_47.dll",
+    ).step);
 
     // Deploy mesh assets
     b.getInstallStep().dependOn(&b.addInstallBinFile(

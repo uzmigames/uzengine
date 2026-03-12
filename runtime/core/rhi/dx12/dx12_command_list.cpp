@@ -6,6 +6,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include "dx12_command_list.h"
+#include "dx12_compat.h"
 #include "dx12_device.h"
 #include "dx12_resource_creation.h"
 #include "d3dx12.h"
@@ -287,6 +288,14 @@ void DX12CommandList::SetRootConstants(uint32_t rootParamIndex, const uint32_t* 
 
 void DX12CommandList::SetRootCBV(uint32_t rootParamIndex, uint64_t gpuAddress) {
     m_cmdList->SetGraphicsRootConstantBufferView(rootParamIndex, gpuAddress);
+}
+
+void DX12CommandList::SetDescriptorTable(uint32_t rootParamIndex, uint32_t descriptorIndex) {
+    auto* heap = m_device->GetDescriptorHeap(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+    D3D12_GPU_DESCRIPTOR_HANDLE gpuHandle = dx12::GetGPUStart(heap);
+    gpuHandle.ptr += static_cast<UINT64>(descriptorIndex) *
+        m_device->GetDevice()->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+    m_cmdList->SetGraphicsRootDescriptorTable(rootParamIndex, gpuHandle);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

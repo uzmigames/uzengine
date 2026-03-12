@@ -18,6 +18,7 @@ namespace uz {
 
 class ShaderCache;
 class ShaderCompiler;
+class ShaderCompilerFXC;
 class ShaderDependencyGraph;
 class ShaderHotReload;
 class ShaderSourceManager;
@@ -59,6 +60,7 @@ public:
         std::string cacheDir = "cache/shaders";    ///< Root cache directory on disk
         std::string targetBackend = "dx12_sm67";   ///< Target backend string for cache subdirectory naming
         bool enableHotReload = true;               ///< Enable file watching for dev builds
+        bool bindless = true;                      ///< If true, injects UZ_BINDLESS=1 define and compiles for SM6.6+
     };
 
     /// Statistics returned by `CompileAll()`.
@@ -166,12 +168,19 @@ public:
     /// Returns a reference to the internal source manager.
     [[nodiscard]] ShaderSourceManager& GetSourceManager();
 
-    /// Sets the external shader compiler (not owned by the pipeline).
+    /// Sets the external DXC shader compiler for SM 6.0+ (not owned by the pipeline).
     ///
     /// # Arguments
     /// * `compiler` — Pointer to an initialized `ShaderCompiler`. Must outlive the
     ///   pipeline, or be set to `nullptr` before the compiler is destroyed.
     void SetCompiler(ShaderCompiler* compiler);
+
+    /// Sets the external FXC shader compiler for SM 5.0 (not owned by the pipeline).
+    ///
+    /// # Arguments
+    /// * `compiler` — Pointer to an initialized `ShaderCompilerFXC`. Must outlive the
+    ///   pipeline, or be set to `nullptr` before the compiler is destroyed.
+    void SetCompilerFXC(ShaderCompilerFXC* compiler);
 
     /// Returns true if `Init()` has been called and `Shutdown()` has not.
     [[nodiscard]] bool IsInitialized() const noexcept;

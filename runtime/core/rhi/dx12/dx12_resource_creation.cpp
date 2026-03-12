@@ -12,6 +12,8 @@
 #include "d3dx12.h"
 #include "log.h"
 
+#include <vector>
+
 namespace uz {
 
 /// Converts RHIFormat enum to DXGI_FORMAT for DX12 API calls.
@@ -547,38 +549,71 @@ void DestroyDX12Sampler(DX12Sampler& sampler, DescriptorAllocator& samplerHeap) 
 // Root Signature — Global (adapts to shader model)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Creates the global root signature, adapting flags to the negotiated shader model.
+/// Creates the global root signature, adapting layout to the negotiated shader model.
 ///
-/// SM6.6: uses DIRECTLY_INDEXED flags for bindless heap access.
-/// SM < 6.6: omits DIRECTLY_INDEXED flags (standard descriptor binding).
+/// SM6.6+: uses DIRECTLY_INDEXED flags for bindless heap access. Root layout:
+///   [0] 4x uint32 root constants at b0 (descriptor indices)
+///   [1] Root CBV at b1 (per-frame data)
+///   [2] Root CBV at b2 (per-object data)
+///
+/// SM5.x: uses Input Assembler + descriptor table for SRV/texture binding. Root layout:
+///   [0] 4x uint32 root constants at b0
+///   [1] Root CBV at b1 (per-frame data)
+///   [2] Root CBV at b2 (per-object data)
+///   [3] SRV descriptor table at t0, space0, unbounded (textures + structured buffers)
 ID3D12RootSignature* CreateBindlessRootSignature(ID3D12Device* device, ShaderModel sm) {
-    // Root parameter 0: root constants (uint32 descriptorIndex) at b0
-    // Root parameter 1: root CBV for per-frame data at b1
-    // Root parameter 2: root CBV for per-object data at b2
-    D3D12_ROOT_PARAMETER1 rootParams[3] = {};
+    const bool bindless = (sm >= ShaderModel::SM6_6);
 
+    // SM6.6: 3 root params. SM5: 4 root params (extra SRV table).
+    D3D12_ROOT_PARAMETER1 rootParams[4] = {};
+    uint32_t numParams = 3;
+
+    // Root parameter 0: root constants (uint32 descriptorIndex) at b0
     rootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
     rootParams[0].Constants.ShaderRegister = 0;   // b0
     rootParams[0].Constants.RegisterSpace = 0;
     rootParams[0].Constants.Num32BitValues = 4;
     rootParams[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
+    // Root parameter 1: root CBV for per-frame data at b1
     rootParams[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     rootParams[1].Descriptor.ShaderRegister = 1;  // b1 — per-frame
     rootParams[1].Descriptor.RegisterSpace = 0;
     rootParams[1].Descriptor.Flags = D3D12_ROOT_DESCRIPTOR_FLAG_DATA_STATIC_WHILE_SET_AT_EXECUTE;
     rootParams[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
+    // Root parameter 2: root CBV for per-object data at b2
     rootParams[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     rootParams[2].Descriptor.ShaderRegister = 2;  // b2 — per-object
     rootParams[2].Descriptor.RegisterSpace = 0;
     rootParams[2].Descriptor.Flags = D3D12_ROOT_DESCRIPTOR_FLAG_DATA_STATIC_WHILE_SET_AT_EXECUTE;
     rootParams[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
+    // SM5 only: Root parameter 3 — SRV descriptor table for textures/structured buffers
+    D3D12_DESCRIPTOR_RANGE1 srvRange = {};
+    if (!bindless) {
+        srvRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+        srvRange.NumDescriptors = UINT_MAX; // unbounded
+        srvRange.BaseShaderRegister = 0;    // t0
+        srvRange.RegisterSpace = 0;
+        srvRange.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DESCRIPTORS_VOLATILE;
+        srvRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+        rootParams[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+        rootParams[3].DescriptorTable.NumDescriptorRanges = 1;
+        rootParams[3].DescriptorTable.pDescriptorRanges = &srvRange;
+        rootParams[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+        numParams = 4;
+    }
+
     D3D12_ROOT_SIGNATURE_FLAGS flags = D3D12_ROOT_SIGNATURE_FLAG_NONE;
-    if (sm >= ShaderModel::SM6_6) {
+    if (bindless) {
         flags = D3D12_ROOT_SIGNATURE_FLAG_CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED |
                 D3D12_ROOT_SIGNATURE_FLAG_SAMPLER_HEAP_DIRECTLY_INDEXED;
+    } else {
+        // SM5: allow Input Assembler vertex/index buffer binding
+        flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
     }
 
     // Static sampler s0: linear wrap (used by mesh_ps and any textured shader)
@@ -599,7 +634,7 @@ ID3D12RootSignature* CreateBindlessRootSignature(ID3D12Device* device, ShaderMod
 
     D3D12_VERSIONED_ROOT_SIGNATURE_DESC versionedDesc = {};
     versionedDesc.Version = D3D_ROOT_SIGNATURE_VERSION_1_1;
-    versionedDesc.Desc_1_1.NumParameters = 3;
+    versionedDesc.Desc_1_1.NumParameters = numParams;
     versionedDesc.Desc_1_1.pParameters = rootParams;
     versionedDesc.Desc_1_1.NumStaticSamplers = 1;
     versionedDesc.Desc_1_1.pStaticSamplers = staticSamplers;
@@ -752,9 +787,28 @@ bool CreateDX12GraphicsPipeline(ID3D12Device* device,
         psoDesc.PS.BytecodeLength = ps->bytecode.size();
     }
 
-    // No input layout — SM6.6 bindless pulls vertex data from SRV
-    psoDesc.InputLayout.pInputElementDescs = nullptr;
-    psoDesc.InputLayout.NumElements = 0;
+    // Input layout: SM5 uses Input Assembler, SM6.6 uses bindless SRV fetch
+    std::vector<D3D12_INPUT_ELEMENT_DESC> inputElements;
+    if (desc.inputElementCount > 0 && desc.inputElements != nullptr) {
+        inputElements.reserve(desc.inputElementCount);
+        for (uint32_t i = 0; i < desc.inputElementCount; ++i) {
+            const auto& elem = desc.inputElements[i];
+            D3D12_INPUT_ELEMENT_DESC d3dElem = {};
+            d3dElem.SemanticName = InputSemanticToString(elem.semantic);
+            d3dElem.SemanticIndex = elem.semanticIndex;
+            d3dElem.Format = ToDxgiFormat(elem.format);
+            d3dElem.InputSlot = elem.inputSlot;
+            d3dElem.AlignedByteOffset = elem.byteOffset;
+            d3dElem.InputSlotClass = D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA;
+            d3dElem.InstanceDataStepRate = 0;
+            inputElements.push_back(d3dElem);
+        }
+        psoDesc.InputLayout.pInputElementDescs = inputElements.data();
+        psoDesc.InputLayout.NumElements = static_cast<UINT>(inputElements.size());
+    } else {
+        psoDesc.InputLayout.pInputElementDescs = nullptr;
+        psoDesc.InputLayout.NumElements = 0;
+    }
 
     // Rasterizer
     psoDesc.RasterizerState.FillMode = ToDx12FillMode(desc.rasterizer.fillMode);

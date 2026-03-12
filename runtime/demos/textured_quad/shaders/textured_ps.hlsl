@@ -1,7 +1,11 @@
-/// Textured quad pixel shader — SM6.6 bindless texture sampling.
+/// Textured quad pixel shader.
 ///
-/// Samples a texture via ResourceDescriptorHeap[textureIndex] using
-/// SamplerDescriptorHeap[samplerIndex], then multiplies by vertex color.
+/// SM6.6 (UZ_BINDLESS): samples texture via ResourceDescriptorHeap[textureIndex]
+/// and sampler via SamplerDescriptorHeap[samplerIndex].
+///
+/// SM5 (!UZ_BINDLESS): samples texture via register-bound t0 / s0.
+///
+/// Multiplies sampled color by vertex color.
 
 struct PSInput {
     float4 position : SV_Position;
@@ -9,6 +13,7 @@ struct PSInput {
     float2 texcoord : TEXCOORD0;
 };
 
+#ifdef UZ_BINDLESS
 cbuffer RootConstants : register(b0) {
     uint vertexBufferIndex;
     uint textureIndex;
@@ -22,3 +27,12 @@ float4 main(PSInput input) : SV_Target {
     float4 texColor = tex.Sample(sam, input.texcoord);
     return texColor * input.color;
 }
+#else
+Texture2D    tex : register(t0);
+SamplerState sam : register(s0);
+
+float4 main(PSInput input) : SV_Target {
+    float4 texColor = tex.Sample(sam, input.texcoord);
+    return texColor * input.color;
+}
+#endif

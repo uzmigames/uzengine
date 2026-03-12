@@ -9,6 +9,7 @@
 #include "rhi.h"
 
 #include <cstdint>
+#include <optional>
 
 namespace uz {
 
@@ -29,6 +30,11 @@ struct RHIDeviceDesc {
     bool enableValidation = false;           ///< Enable API validation layer (D3D12 Debug, VK validation).
     bool enableGpuValidation = false;        ///< Enable GPU-based validation (expensive, dev only).
     uint32_t adapterIndex = 0;               ///< GPU adapter index (0 = system default/highest performance).
+
+    /// Forces a specific shader model instead of auto-negotiating the highest supported.
+    /// Used for testing fallback paths (e.g., force SM5_0 to test FXC compilation).
+    /// When set, the device clamps to this shader model even if the GPU supports higher.
+    std::optional<ShaderModel> forceShaderModel;
 };
 
 /// Creates a backend-specific RHI device.

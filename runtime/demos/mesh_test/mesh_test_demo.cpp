@@ -22,6 +22,7 @@
 #include "fps_camera_controller.h"
 #include "shader_pipeline.h"
 #include "shader_compiler.h"
+#include "shader_compiler_fxc.h"
 #include "engine_shaders.h"
 #include "paths.h"
 #include "editor_grid.h"
@@ -30,6 +31,7 @@
 
 #include <DirectXMath.h>
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <d3d12.h>
 #include <thread>
@@ -125,6 +127,10 @@ bool RunMeshTestDemo(const MeshTestConfig& config) {
     deviceDesc.enableValidation = true;
 #endif
 
+    if (const char* env = std::getenv("UZ_FORCE_SM5"); env && std::string(env) == "1") {
+        deviceDesc.forceShaderModel = ShaderModel::SM5_0;
+    }
+
     auto* device = static_cast<DX12Device*>(CreateRHIDevice(deviceDesc));
     if (!device) {
         UZ_LOG(Renderer, Error, "Failed to create RHI device");
@@ -164,6 +170,8 @@ bool RunMeshTestDemo(const MeshTestConfig& config) {
     }
 
     // ── Shader Pipeline ──────────────────────────────────────────────────
+    const bool bindless = device->IsBindless();
+
     ShaderCompiler compiler;
     if (!compiler.Init()) {
         UZ_LOG(Renderer, Error, "Failed to init shader compiler");
@@ -173,9 +181,19 @@ bool RunMeshTestDemo(const MeshTestConfig& config) {
     ShaderPipeline shaderPipeline;
     ShaderPipeline::Config pipelineCfg;
     pipelineCfg.cacheDir = (uz::GetExeDir() / "cache/shaders").string();
-    pipelineCfg.targetBackend = "dx12_sm66";
+    pipelineCfg.targetBackend = bindless ? "dx12_sm66" : "dx12_sm50";
+    pipelineCfg.bindless = bindless;
     shaderPipeline.Init(pipelineCfg);
     shaderPipeline.SetCompiler(&compiler);
+
+    ShaderCompilerFXC compilerFXC;
+    if (!bindless) {
+        if (!compilerFXC.Init()) {
+            UZ_LOG(Renderer, Error, "Failed to init FXC shader compiler");
+            return false;
+        }
+        shaderPipeline.SetCompilerFXC(&compilerFXC);
+    }
 
     // Use embedded engine shaders (compiled into the binary via uzembed)
     auto vsBytecode = shaderPipeline.LoadBytecodeFromSource(
@@ -208,6 +226,14 @@ bool RunMeshTestDemo(const MeshTestConfig& config) {
     RHIShaderHandle psHandle = device->CreateShader(psDesc);
 
     // ── Pipeline ─────────────────────────────────────────────────────────
+    // SM5 input layout: POSITION(float3) + NORMAL(float3) + TEXCOORD(float2) + TANGENT(float4)
+    RHIInputElementDesc inputElements[] = {
+        { RHIInputSemantic::Position, 0, RHIFormat::RGB32Float,  0, 0  },
+        { RHIInputSemantic::Normal,   0, RHIFormat::RGB32Float,  0, 12 },
+        { RHIInputSemantic::Texcoord, 0, RHIFormat::RG32Float,   0, 24 },
+        { RHIInputSemantic::Tangent,  0, RHIFormat::RGBA32Float, 0, 32 },
+    };
+
     RHIGraphicsPipelineDesc pipeDesc{};
     pipeDesc.vertexShader = vsHandle;
     pipeDesc.pixelShader = psHandle;
@@ -220,6 +246,12 @@ bool RunMeshTestDemo(const MeshTestConfig& config) {
     pipeDesc.renderTargetCount = 1;
     pipeDesc.depthStencilFormat = RHIFormat::D32Float;
     pipeDesc.debugName = "MeshPipeline";
+
+    if (!bindless) {
+        pipeDesc.inputElements = inputElements;
+        pipeDesc.inputElementCount = 4;
+        pipeDesc.vertexStride = sizeof(Vertex);
+    }
 
     RHIPipelineHandle pipeline = device->CreateGraphicsPipeline(pipeDesc);
     if (!pipeline.IsValid()) {
@@ -241,7 +273,7 @@ bool RunMeshTestDemo(const MeshTestConfig& config) {
     RHIBufferDesc vbDesc{};
     vbDesc.sizeBytes = cubeMesh.GetVertexDataSize();
     vbDesc.stride = cubeMesh.header.vertexStride;
-    vbDesc.usage = RHIBufferUsage::StructuredBuffer;
+    vbDesc.usage = bindless ? RHIBufferUsage::StructuredBuffer : RHIBufferUsage::VertexBuffer;
     vbDesc.memory = RHIMemoryType::Upload;
     vbDesc.debugName = "MeshVertexBuffer";
 
@@ -249,7 +281,10 @@ bool RunMeshTestDemo(const MeshTestConfig& config) {
     void* vbMapped = device->MapBuffer(vbHandle);
     std::memcpy(vbMapped, cubeMesh.vertexData.data(), cubeMesh.GetVertexDataSize());
 
-    uint32_t vbSrvIndex = device->GetBufferSRVIndex(vbHandle);
+    uint32_t vbSrvIndex = 0;
+    if (bindless) {
+        vbSrvIndex = device->GetBufferSRVIndex(vbHandle);
+    }
 
     // ── Upload Index Buffer ──────────────────────────────────────────────
     RHIBufferDesc ibDesc{};
@@ -290,7 +325,7 @@ bool RunMeshTestDemo(const MeshTestConfig& config) {
         UploadContext upload(device);
         cmdList->Begin();
         if (!statsOverlay.Init(device, cmdList, upload, shaderPipeline,
-                               RHIFormat::RGBA8Unorm, winDesc.width, winDesc.height)) {
+                               RHIFormat::RGBA8Unorm, winDesc.width, winDesc.height, bindless)) {
             UZ_LOG(Renderer, Error, "Failed to initialize stats overlay");
             return false;
         }
@@ -430,8 +465,12 @@ bool RunMeshTestDemo(const MeshTestConfig& config) {
         cmdList->SetPipeline(pipeline);
         cmdList->GetNative()->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-        // Root constant: vertex buffer SRV index (b0)
-        cmdList->SetDescriptorIndex(0, vbSrvIndex);
+        // Bind vertex data
+        if (bindless) {
+            cmdList->SetDescriptorIndex(0, vbSrvIndex);
+        } else {
+            cmdList->SetVertexBuffer(0, vbHandle, 0);
+        }
 
         // Root CBV: per-frame CB at b1
         cmdList->SetRootCBV(1, perFrameAlloc.gpuAddr);

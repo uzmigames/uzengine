@@ -32,10 +32,12 @@ struct OverlayCB {
 // ─────────────────────────────────────────────────────────────────────────────
 
 bool TextRenderer::Init(IRHIDevice* device, ShaderPipeline& shaderPipeline,
-                        RHIFormat rtvFormat, uint32_t screenWidth, uint32_t screenHeight) {
+                        RHIFormat rtvFormat, uint32_t screenWidth, uint32_t screenHeight,
+                        bool bindless) {
     m_device = device;
     m_screenWidth = screenWidth;
     m_screenHeight = screenHeight;
+    m_bindless = bindless;
 
     // ── Compile embedded shaders ──────────────────────────────────────────
     auto vsBytecode = shaderPipeline.LoadBytecodeFromSource(
@@ -74,6 +76,13 @@ bool TextRenderer::Init(IRHIDevice* device, ShaderPipeline& shaderPipeline,
     rectPsDesc.debugName = "overlay_rect_ps";
     RHIShaderHandle rectPs = device->CreateShader(rectPsDesc);
 
+    // SM5 input layout: matches overlay_vs.hlsl VSInput {POSITION, TEXCOORD0, COLOR0}
+    RHIInputElementDesc overlayInputElements[] = {
+        { RHIInputSemantic::Position, 0, RHIFormat::RG32Float,  0, 0  },  // float2 position
+        { RHIInputSemantic::Texcoord, 0, RHIFormat::RG32Float,  0, 8  },  // float2 texcoord
+        { RHIInputSemantic::Color,    0, RHIFormat::RGBA32Float, 0, 16 }, // float4 color
+    };
+
     // ── Rect pipeline (alpha blend for semi-transparent backgrounds) ─────
     {
         RHIGraphicsPipelineDesc desc{};
@@ -93,8 +102,14 @@ bool TextRenderer::Init(IRHIDevice* device, ShaderPipeline& shaderPipeline,
         desc.renderTargetBlend[0].srcAlpha = RHIBlendFactor::One;
         desc.renderTargetBlend[0].dstAlpha = RHIBlendFactor::Zero;
         desc.renderTargetBlend[0].alphaOp = RHIBlendOp::Add;
-        desc.debugName = "OverlayRectPipeline";
 
+        if (!bindless) {
+            desc.inputElements = overlayInputElements;
+            desc.inputElementCount = 3;
+            desc.vertexStride = sizeof(OverlayVertex);
+        }
+
+        desc.debugName = "OverlayRectPipeline";
         m_rectPipeline = device->CreateGraphicsPipeline(desc);
     }
 
@@ -117,8 +132,14 @@ bool TextRenderer::Init(IRHIDevice* device, ShaderPipeline& shaderPipeline,
         desc.renderTargetBlend[0].srcAlpha = RHIBlendFactor::One;
         desc.renderTargetBlend[0].dstAlpha = RHIBlendFactor::Zero;
         desc.renderTargetBlend[0].alphaOp = RHIBlendOp::Add;
-        desc.debugName = "OverlayTextPipeline";
 
+        if (!bindless) {
+            desc.inputElements = overlayInputElements;
+            desc.inputElementCount = 3;
+            desc.vertexStride = sizeof(OverlayVertex);
+        }
+
+        desc.debugName = "OverlayTextPipeline";
         m_textPipeline = device->CreateGraphicsPipeline(desc);
     }
 
@@ -150,8 +171,8 @@ bool TextRenderer::Init(IRHIDevice* device, ShaderPipeline& shaderPipeline,
         return false;
     }
 
-    UZ_LOG(EditorText, Info, "Text renderer initialized (maxVerts={}, screen={}x{})",
-           kMaxVertices, screenWidth, screenHeight);
+    UZ_LOG(EditorText, Info, "Text renderer initialized (maxVerts={}, screen={}x{}, bindless={})",
+           kMaxVertices, screenWidth, screenHeight, bindless);
     return true;
 }
 
@@ -273,22 +294,39 @@ void TextRenderer::Render(IRHICommandList* cmdList, CBRingAllocator& cbRing,
     CBAllocation alloc = cbRing.Allocate(sizeof(OverlayCB));
     std::memcpy(alloc.cpuPtr, &cb, sizeof(OverlayCB));
 
-    // ── Draw rects first (backgrounds, behind text) ────────────────────
-    if (totalRectVerts > 0) {
-        cmdList->SetPipeline(m_rectPipeline);
-        uint32_t rectConsts[4] = {m_vbSrvIndices[fi], 0, 0, 0};
-        cmdList->SetRootConstants(0, rectConsts, 4, 0);
-        cmdList->SetRootCBV(1, alloc.gpuAddr);
-        cmdList->Draw(totalRectVerts);
-    }
+    if (m_bindless) {
+        // ── SM6.6 bindless: vertex fetch via ResourceDescriptorHeap ──────
+        if (totalRectVerts > 0) {
+            cmdList->SetPipeline(m_rectPipeline);
+            uint32_t rectConsts[4] = {m_vbSrvIndices[fi], 0, 0, 0};
+            cmdList->SetRootConstants(0, rectConsts, 4, 0);
+            cmdList->SetRootCBV(1, alloc.gpuAddr);
+            cmdList->Draw(totalRectVerts);
+        }
 
-    // ── Draw text on top ─────────────────────────────────────────────────
-    if (totalTextVerts > 0) {
-        cmdList->SetPipeline(m_textPipeline);
-        uint32_t textConsts[4] = {m_vbSrvIndices[fi], font.GetAtlasSRVIndex(), m_samplerIndex, totalRectVerts};
-        cmdList->SetRootConstants(0, textConsts, 4, 0);
+        if (totalTextVerts > 0) {
+            cmdList->SetPipeline(m_textPipeline);
+            uint32_t textConsts[4] = {m_vbSrvIndices[fi], font.GetAtlasSRVIndex(), m_samplerIndex, totalRectVerts};
+            cmdList->SetRootConstants(0, textConsts, 4, 0);
+            cmdList->SetRootCBV(1, alloc.gpuAddr);
+            cmdList->Draw(totalTextVerts);
+        }
+    } else {
+        // ── SM5: vertex data via Input Assembler, textures via descriptor table ──
+        cmdList->SetVertexBuffer(0, m_vertexBuffers[fi]);
         cmdList->SetRootCBV(1, alloc.gpuAddr);
-        cmdList->Draw(totalTextVerts);
+
+        if (totalRectVerts > 0) {
+            cmdList->SetPipeline(m_rectPipeline);
+            cmdList->Draw(totalRectVerts);
+        }
+
+        if (totalTextVerts > 0) {
+            cmdList->SetPipeline(m_textPipeline);
+            // Bind font atlas at t0 via descriptor table (root param 3)
+            cmdList->SetDescriptorTable(3, font.GetAtlasSRVIndex());
+            cmdList->Draw(totalTextVerts, 1, totalRectVerts);
+        }
     }
 }
 

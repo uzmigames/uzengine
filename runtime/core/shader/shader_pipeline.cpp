@@ -8,6 +8,7 @@
 
 #include "shader_cache.h"
 #include "shader_compiler.h"
+#include "shader_compiler_fxc.h"
 #include "shader_dependency_graph.h"
 #include "shader_hot_reload.h"
 #include "shader_permutation.h"
@@ -48,6 +49,25 @@ static ShaderStageCompile InferStageFromPath(const std::string& path) {
     return ShaderStageCompile::Vertex; // Default
 }
 
+/// Applies bindless/SM5 configuration to a compile descriptor.
+///
+/// When bindless is true: injects UZ_BINDLESS=1 define, targets SM6_6 (DXC).
+/// When bindless is false: targets SM5_0 (FXC).
+static void ApplyBindlessConfig(ShaderCompileDesc& desc, bool bindless) {
+    if (bindless) {
+        desc.defines.push_back("UZ_BINDLESS=1");
+        desc.model = ShaderModelCompile::SM6_6;
+    } else {
+        desc.model = ShaderModelCompile::SM5_0;
+    }
+}
+
+/// Returns true if the given shader model requires DXC (SM 6.0+).
+/// SM 5.0/5.1 use FXC instead.
+static bool RequiresDXC(ShaderModelCompile model) {
+    return model >= ShaderModelCompile::SM6_0;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // PIMPL — holds all subsystems with correct initialization order
 // ─────────────────────────────────────────────────────────────────────────────
@@ -58,7 +78,8 @@ struct ShaderPipeline::Impl {
     ShaderDependencyGraph depGraph;
     ShaderCache cache;
     ShaderHotReload hotReload;
-    ShaderCompiler* compiler = nullptr;
+    ShaderCompiler* compiler = nullptr;       ///< DXC — SM 6.0+
+    ShaderCompilerFXC* compilerFXC = nullptr; ///< FXC — SM 5.0
     Config config;
 
     /// VFS must exist before sourceManager is constructed.
@@ -86,8 +107,8 @@ void ShaderPipeline::Init(const Config& config) {
     m_impl = std::make_unique<Impl>(config);
     m_initialized = true;
 
-    UZ_LOG(IO, Info, "ShaderPipeline: initialized (backend='{}', cache='{}')",
-           config.targetBackend, config.cacheDir);
+    UZ_LOG(IO, Info, "ShaderPipeline: initialized (backend='{}', cache='{}', bindless={})",
+           config.targetBackend, config.cacheDir, config.bindless ? "true" : "false");
 }
 
 void ShaderPipeline::Shutdown() {
@@ -218,20 +239,31 @@ ShaderPipeline::CompileAllResult ShaderPipeline::CompileAll() {
                 continue;
             }
 
-            // Compile
-            if (!m_impl->compiler) {
-                result.failed++;
-                result.errors.push_back("No compiler set for: " + shaderPath +
-                                        " [" + defines + "]");
-                continue;
-            }
-
+            // Compile — route to DXC (SM 6.0+) or FXC (SM 5.0)
             ShaderCompileDesc desc;
             desc.source = sourceInfo->source;
             desc.sourceName = shaderPath;
             desc.defines = defineStrings;
+            desc.stage = InferStageFromPath(shaderPath);
+            ApplyBindlessConfig(desc, m_impl->config.bindless);
 
-            auto compileResult = m_impl->compiler->Compile(desc);
+            const bool useDXC = RequiresDXC(desc.model);
+            if (useDXC && !m_impl->compiler) {
+                result.failed++;
+                result.errors.push_back("No DXC compiler set for: " + shaderPath +
+                                        " [" + defines + "]");
+                continue;
+            }
+            if (!useDXC && !m_impl->compilerFXC) {
+                result.failed++;
+                result.errors.push_back("No FXC compiler set for: " + shaderPath +
+                                        " [" + defines + "]");
+                continue;
+            }
+
+            auto compileResult = useDXC
+                ? m_impl->compiler->Compile(desc)
+                : m_impl->compilerFXC->Compile(desc);
             if (!compileResult.success) {
                 result.failed++;
                 result.errors.push_back(shaderPath + " [" + defines + "]: " +
@@ -290,18 +322,22 @@ bool ShaderPipeline::CompileShader(const std::string& virtualPath) {
             continue;
         }
 
-        if (!m_impl->compiler) {
-            allOk = false;
-            continue;
-        }
-
         ShaderCompileDesc desc;
         desc.source = sourceInfo->source;
         desc.sourceName = virtualPath;
         desc.defines = defineStrings;
         desc.stage = InferStageFromPath(virtualPath);
+        ApplyBindlessConfig(desc, m_impl->config.bindless);
 
-        auto compileResult = m_impl->compiler->Compile(desc);
+        const bool useDXC = RequiresDXC(desc.model);
+        if ((useDXC && !m_impl->compiler) || (!useDXC && !m_impl->compilerFXC)) {
+            allOk = false;
+            continue;
+        }
+
+        auto compileResult = useDXC
+            ? m_impl->compiler->Compile(desc)
+            : m_impl->compilerFXC->Compile(desc);
         if (!compileResult.success) {
             allOk = false;
             continue;
@@ -363,17 +399,21 @@ std::vector<uint8_t> ShaderPipeline::LoadBytecode(
     }
 
     // Not in cache — try to compile on-demand
-    if (!m_impl->compiler) {
-        return {};
-    }
-
     ShaderCompileDesc desc;
     desc.source = sourceInfo->source;
     desc.sourceName = virtualPath;
     desc.defines = defineStrings;
     desc.stage = InferStageFromPath(virtualPath);
+    ApplyBindlessConfig(desc, m_impl->config.bindless);
 
-    auto compileResult = m_impl->compiler->Compile(desc);
+    const bool useDXC = RequiresDXC(desc.model);
+    if ((useDXC && !m_impl->compiler) || (!useDXC && !m_impl->compilerFXC)) {
+        return {};
+    }
+
+    auto compileResult = useDXC
+        ? m_impl->compiler->Compile(desc)
+        : m_impl->compilerFXC->Compile(desc);
     if (!compileResult.success) {
         UZ_LOG(IO, Error, "ShaderPipeline::LoadBytecode: compile failed for '{}': {}",
                virtualPath, compileResult.errors);
@@ -390,8 +430,8 @@ std::vector<uint8_t> ShaderPipeline::LoadBytecodeFromSource(
     const std::string& hlslSource,
     const std::string& permutationDefines)
 {
-    if (!m_initialized || !m_impl->compiler) {
-        UZ_LOG(IO, Error, "ShaderPipeline::LoadBytecodeFromSource: not initialized or no compiler (name='{}')", name);
+    if (!m_initialized) {
+        UZ_LOG(IO, Error, "ShaderPipeline::LoadBytecodeFromSource: not initialized (name='{}')", name);
         return {};
     }
 
@@ -412,8 +452,18 @@ std::vector<uint8_t> ShaderPipeline::LoadBytecodeFromSource(
     desc.sourceName = name;
     desc.defines = defineStrings;
     desc.stage = InferStageFromPath(name);
+    ApplyBindlessConfig(desc, m_impl->config.bindless);
 
-    auto compileResult = m_impl->compiler->Compile(desc);
+    const bool useDXC = RequiresDXC(desc.model);
+    if ((useDXC && !m_impl->compiler) || (!useDXC && !m_impl->compilerFXC)) {
+        UZ_LOG(IO, Error, "ShaderPipeline::LoadBytecodeFromSource: no {} compiler set (name='{}')",
+               useDXC ? "DXC" : "FXC", name);
+        return {};
+    }
+
+    auto compileResult = useDXC
+        ? m_impl->compiler->Compile(desc)
+        : m_impl->compilerFXC->Compile(desc);
     if (!compileResult.success) {
         UZ_LOG(IO, Error, "ShaderPipeline::LoadBytecodeFromSource: compile failed for '{}': {}",
                name, compileResult.errors);
@@ -464,6 +514,12 @@ ShaderSourceManager& ShaderPipeline::GetSourceManager() {
 void ShaderPipeline::SetCompiler(ShaderCompiler* compiler) {
     if (m_initialized) {
         m_impl->compiler = compiler;
+    }
+}
+
+void ShaderPipeline::SetCompilerFXC(ShaderCompilerFXC* compiler) {
+    if (m_initialized) {
+        m_impl->compilerFXC = compiler;
     }
 }
 

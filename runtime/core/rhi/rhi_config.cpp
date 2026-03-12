@@ -4,6 +4,7 @@
 /// and falls back to platform auto-detection.
 
 #include "rhi_config.h"
+#include "rhi.h"
 #include "config.h"
 #include "log.h"
 
@@ -12,6 +13,14 @@
 #include <string>
 
 namespace uz {
+
+// ─────────────────────────────────────────────────────────────────────────────
+// IRHIDevice::IsBindless — out-of-line to break circular include
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool IRHIDevice::IsBindless() const {
+    return GetShaderModel() >= ShaderModel::SM6_6;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // String Conversion Helpers

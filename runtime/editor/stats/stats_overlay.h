@@ -58,12 +58,15 @@ public:
     /// * `shaderPipeline` — Shader compilation pipeline.
     /// * `rtvFormat` — Render target format.
     /// * `screenWidth`, `screenHeight` — Initial screen dimensions.
+    /// * `bindless` — If true, uses SM6.6 bindless rendering. If false,
+    ///   uses SM5 Input Assembler path for overlay pipelines.
     ///
     /// # Returns
     /// `true` on success.
     bool Init(IRHIDevice* device, IRHICommandList* cmdList, UploadContext& upload,
               ShaderPipeline& shaderPipeline, RHIFormat rtvFormat,
-              uint32_t screenWidth, uint32_t screenHeight);
+              uint32_t screenWidth, uint32_t screenHeight,
+              bool bindless = true);
 
     /// Destroys all GPU resources.
     void Shutdown();

@@ -46,6 +46,7 @@ enum class ShaderStageCompile : uint8_t {
 /// Combined with `ShaderStageCompile` to produce the DXC `-T` profile
 /// string (e.g., `SM6_6` + `Vertex` = `vs_6_6`).
 enum class ShaderModelCompile : uint8_t {
+    SM5_0,  ///< Shader Model 5.0 — DX11/DX12 legacy, compiled via FXC (d3dcompiler_47.dll)
     SM5_1,  ///< Shader Model 5.1 — DX12 legacy, resource binding via registers
     SM6_0,  ///< Shader Model 6.0 — wave intrinsics
     SM6_1,  ///< Shader Model 6.1 — SV_Barycentrics, programmable sample positions

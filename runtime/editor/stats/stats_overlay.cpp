@@ -24,7 +24,8 @@ UZ_DEFINE_LOG_CATEGORY(EditorStats, Info);
 
 bool StatsOverlay::Init(IRHIDevice* device, IRHICommandList* cmdList, UploadContext& upload,
                         ShaderPipeline& shaderPipeline, RHIFormat rtvFormat,
-                        uint32_t screenWidth, uint32_t screenHeight) {
+                        uint32_t screenWidth, uint32_t screenHeight,
+                        bool bindless) {
     m_device = device;
     m_screenWidth = screenWidth;
     m_screenHeight = screenHeight;
@@ -37,7 +38,7 @@ bool StatsOverlay::Init(IRHIDevice* device, IRHICommandList* cmdList, UploadCont
     }
 
     // ── Text renderer ────────────────────────────────────────────────────
-    if (!m_textRenderer.Init(device, shaderPipeline, rtvFormat, screenWidth, screenHeight)) {
+    if (!m_textRenderer.Init(device, shaderPipeline, rtvFormat, screenWidth, screenHeight, bindless)) {
         UZ_LOG(EditorStats, Error, "Failed to init text renderer");
         return false;
     }

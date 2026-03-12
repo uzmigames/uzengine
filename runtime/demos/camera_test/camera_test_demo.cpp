@@ -20,6 +20,7 @@
 #include "fps_camera_controller.h"
 #include "shader_pipeline.h"
 #include "shader_compiler.h"
+#include "shader_compiler_fxc.h"
 #include "paths.h"
 #include "editor_grid.h"
 #include "screenshot_capture.h"
@@ -27,6 +28,7 @@
 
 #include <DirectXMath.h>
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
 #include <d3d12.h>
 #include <thread>
@@ -118,6 +120,10 @@ bool RunCameraTestDemo(const CameraTestConfig& config) {
     deviceDesc.enableValidation = true;
 #endif
 
+    if (const char* env = std::getenv("UZ_FORCE_SM5"); env && std::string(env) == "1") {
+        deviceDesc.forceShaderModel = ShaderModel::SM5_0;
+    }
+
     auto* device = static_cast<DX12Device*>(CreateRHIDevice(deviceDesc));
     if (!device) {
         UZ_LOG(Renderer, Error, "Failed to create RHI device");
@@ -157,6 +163,8 @@ bool RunCameraTestDemo(const CameraTestConfig& config) {
     }
 
     // ── Shader Pipeline ──────────────────────────────────────────────────
+    const bool bindless = device->IsBindless();
+
     ShaderCompiler compiler;
     if (!compiler.Init()) {
         UZ_LOG(Renderer, Error, "Failed to init shader compiler");
@@ -166,9 +174,19 @@ bool RunCameraTestDemo(const CameraTestConfig& config) {
     ShaderPipeline shaderPipeline;
     ShaderPipeline::Config pipelineCfg;
     pipelineCfg.cacheDir = (uz::GetExeDir() / "cache/shaders").string();
-    pipelineCfg.targetBackend = "dx12_sm66";
+    pipelineCfg.targetBackend = bindless ? "dx12_sm66" : "dx12_sm50";
+    pipelineCfg.bindless = bindless;
     shaderPipeline.Init(pipelineCfg);
     shaderPipeline.SetCompiler(&compiler);
+
+    ShaderCompilerFXC compilerFXC;
+    if (!bindless) {
+        if (!compilerFXC.Init()) {
+            UZ_LOG(Renderer, Error, "Failed to init FXC shader compiler");
+            return false;
+        }
+        shaderPipeline.SetCompilerFXC(&compilerFXC);
+    }
 
     std::string shadersDir = (uz::GetExeDir() / "../../shaders").string();
     shaderPipeline.Mount("/demo/camera", shadersDir);
@@ -199,6 +217,13 @@ bool RunCameraTestDemo(const CameraTestConfig& config) {
     RHIShaderHandle psHandle = device->CreateShader(psDesc);
 
     // ── Pipeline ─────────────────────────────────────────────────────────
+    // SM5 input layout: POSITION(float3) + COLOR(float4) + TEXCOORD(float2)
+    RHIInputElementDesc inputElements[] = {
+        { RHIInputSemantic::Position, 0, RHIFormat::RGB32Float,  0, 0  },
+        { RHIInputSemantic::Color,    0, RHIFormat::RGBA32Float, 0, 12 },
+        { RHIInputSemantic::Texcoord, 0, RHIFormat::RG32Float,   0, 28 },
+    };
+
     RHIGraphicsPipelineDesc pipeDesc{};
     pipeDesc.vertexShader = vsHandle;
     pipeDesc.pixelShader = psHandle;
@@ -210,6 +235,12 @@ bool RunCameraTestDemo(const CameraTestConfig& config) {
     pipeDesc.renderTargetCount = 1;
     pipeDesc.depthStencilFormat = RHIFormat::D32Float;
     pipeDesc.debugName = "CameraCubePipeline";
+
+    if (!bindless) {
+        pipeDesc.inputElements = inputElements;
+        pipeDesc.inputElementCount = 3;
+        pipeDesc.vertexStride = sizeof(SimpleVertex);
+    }
 
     RHIPipelineHandle pipeline = device->CreateGraphicsPipeline(pipeDesc);
     if (!pipeline.IsValid()) {
@@ -224,7 +255,7 @@ bool RunCameraTestDemo(const CameraTestConfig& config) {
     RHIBufferDesc vbDesc{};
     vbDesc.sizeBytes = sizeof(cubeVerts);
     vbDesc.stride = sizeof(SimpleVertex);
-    vbDesc.usage = RHIBufferUsage::StructuredBuffer;
+    vbDesc.usage = bindless ? RHIBufferUsage::StructuredBuffer : RHIBufferUsage::VertexBuffer;
     vbDesc.memory = RHIMemoryType::Upload;
     vbDesc.debugName = "CubeVertexBuffer";
 
@@ -232,7 +263,10 @@ bool RunCameraTestDemo(const CameraTestConfig& config) {
     void* mapped = device->MapBuffer(vbHandle);
     std::memcpy(mapped, cubeVerts, sizeof(cubeVerts));
 
-    uint32_t vbSrvIndex = device->GetBufferSRVIndex(vbHandle);
+    uint32_t vbSrvIndex = 0;
+    if (bindless) {
+        vbSrvIndex = device->GetBufferSRVIndex(vbHandle);
+    }
 
     // ── Depth Buffer ─────────────────────────────────────────────────────
     RHITextureDesc depthDesc{};
@@ -261,7 +295,7 @@ bool RunCameraTestDemo(const CameraTestConfig& config) {
         UploadContext upload(device);
         cmdList->Begin();
         if (!statsOverlay.Init(device, cmdList, upload, shaderPipeline,
-                               RHIFormat::RGBA8Unorm, winDesc.width, winDesc.height)) {
+                               RHIFormat::RGBA8Unorm, winDesc.width, winDesc.height, bindless)) {
             UZ_LOG(Renderer, Error, "Failed to initialize stats overlay");
             return false;
         }
@@ -399,8 +433,12 @@ bool RunCameraTestDemo(const CameraTestConfig& config) {
         cmdList->SetPipeline(pipeline);
         cmdList->GetNative()->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-        // Root constant: vertex buffer SRV index
-        cmdList->SetDescriptorIndex(0, vbSrvIndex);
+        // Bind vertex data
+        if (bindless) {
+            cmdList->SetDescriptorIndex(0, vbSrvIndex);
+        } else {
+            cmdList->SetVertexBuffer(0, vbHandle, 0);
+        }
 
         // Root CBV: per-frame CB at b1 (root param index 1)
         cmdList->SetRootCBV(1, cbAlloc.gpuAddr);

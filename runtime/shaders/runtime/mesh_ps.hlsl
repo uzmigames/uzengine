@@ -1,6 +1,8 @@
 /// Standard mesh pixel shader — textured with directional lighting.
 ///
-/// Samples an albedo texture via SM6.6 bindless ResourceDescriptorHeap[index].
+/// SM6.6 (UZ_BINDLESS): samples albedo via ResourceDescriptorHeap[materialIndex].
+/// SM5 (!UZ_BINDLESS): samples albedo via register-bound texture t0.
+///
 /// Applies basic N·L directional lighting with ambient. Outputs to a single
 /// render target (R8G8B8A8_UNORM swapchain backbuffer).
 
@@ -12,11 +14,13 @@ struct PSInput {
     float3 positionWS : TEXCOORD1;
 };
 
-// Root constants at b0
+#ifdef UZ_BINDLESS
+// Root constants at b0 (only needed in VS for bindless vertex fetch)
 struct PushConstants {
     uint vertexBufferIndex;
 };
 ConstantBuffer<PushConstants> push : register(b0);
+#endif
 
 // Per-frame CB at b1
 cbuffer PerFrameCB : register(b1) {
@@ -32,7 +36,9 @@ cbuffer PerObjectCB : register(b2) {
     uint     materialIndex;
 };
 
-// Bindless sampler — index 0 is linear wrap (created by engine)
+#ifndef UZ_BINDLESS
+Texture2D<float4> albedoTexture : register(t0);
+#endif
 SamplerState linearSampler : register(s0);
 
 float4 main(PSInput input) : SV_Target {
@@ -46,13 +52,16 @@ float4 main(PSInput input) : SV_Target {
     float NdotL = max(dot(N, lightDir), 0.0);
     float3 diffuse = lightColor * NdotL;
 
-    // Base color: use materialIndex as texture SRV index if available,
-    // otherwise use vertex-interpolated white
+    // Base color
     float3 albedo = float3(1.0, 1.0, 1.0);
 
     if (materialIndex > 0) {
+#ifdef UZ_BINDLESS
         Texture2D<float4> albedoTex = ResourceDescriptorHeap[materialIndex];
         albedo = albedoTex.Sample(linearSampler, input.texcoord).rgb;
+#else
+        albedo = albedoTexture.Sample(linearSampler, input.texcoord).rgb;
+#endif
     }
 
     float3 finalColor = albedo * (ambient + diffuse);

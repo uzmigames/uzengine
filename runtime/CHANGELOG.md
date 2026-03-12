@@ -2,6 +2,47 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
+## [0.2.1] — 2026-03-12
+
+### FXC Dual-Compiler (SM5.0 Fallback)
+- **Problem solved**: DXC only supports SM 6.0+. Older GPUs (RX 580, DX12 driver bugs) need SM 5.0.
+- **Solution**: Dual-compiler pattern — SM >= 6.0 → DXC (DXIL), SM 5.0 → FXC (DXBC)
+- **ShaderCompilerFXC** (`core/shader/shader_compiler_fxc.h/.cpp`):
+  - Dynamic FXC loading via `LoadLibrary` + `GetProcAddress` on `d3dcompiler_47.dll`
+  - Compiles HLSL → DXBC bytecode for SM5.0
+  - FXC types (IFxcBlob, FxcShaderMacro) defined inline to avoid header conflicts
+- **ShaderPipeline routing** (`core/shader/shader_pipeline.h/.cpp`):
+  - Added `RequiresDXC()` logic — automatically routes SM5.0 to FXC, SM6.0+ to DXC
+  - Added `SetCompilerFXC()` to manually override compiler selection
+  - Unified compile interface — caller doesn't need to know which compiler is used
+- **RHI changes** (`core/rhi/rhi_backend.h`, `dx12_device.h/.cpp`):
+  - Added `SM5_0` to ShaderModelCompile enum
+  - Added `std::optional<ShaderModel> forceShaderModel` to RHIDeviceDesc
+  - NegotiateShaderModel() now respects forceShaderModel (allows `UZ_FORCE_SM5=1` env var)
+- **HLSL shader dual-path** — All runtime shaders use `#ifdef UZ_BINDLESS`:
+  - **SM6.6** (UZ_BINDLESS=1): ResourceDescriptorHeap[], SamplerDescriptorHeap[], SV_VertexID
+  - **SM5.0** (!UZ_BINDLESS): register-bound textures (t0), Input Assembler vertex input (POSITION, TEXCOORD0, COLOR0)
+- **Text rendering on SM5.0** (`editor/font/text_renderer.h/.cpp`):
+  - Added `bool bindless` param to Init()
+  - SM5 path uses Input Assembler pipeline: vertex input layout (POSITION float2, TEXCOORD0 float2, COLOR0 float4), SetVertexBuffer, SetDescriptorTable for font atlas
+- **Stats overlay on SM5.0** (`editor/stats/stats_overlay.h/.cpp`):
+  - Added `bool bindless` param to Init()
+  - Passes through to TextRenderer
+- **Demos updated** (all 4 demos: triangle, textured_quad, camera_test, mesh_test):
+  - FXC DLL initialization and compiler setup
+  - `UZ_FORCE_SM5=1` environment variable for testing SM5.0 path
+  - Bindless flag propagation to overlay/text rendering
+  - All demos verified working in both SM6.6 bindless and SM5.0 non-bindless modes
+- **Build system** (`build.zig`, demo `build.zig` files):
+  - FXC DLL (`d3dcompiler_47.dll`) deployed to `zig-out/bin/` during build
+  - Available for runtime dynamic loading
+- **Vendor DLL** (`runtime/thirdparty/fxc/bin/x64/d3dcompiler_47.dll`):
+  - Vendored alongside project (ensures consistent shader compilation across team)
+- **Shader cache now differentiates** SM5.0 vs SM6.6 via ShaderTarget enum (separate cache dirs)
+- **Verification**: All 4 demos tested and working in both modes:
+  - ✅ SM6.6 bindless (default): full rendering + overlays + grid
+  - ✅ SM5.0 forced (UZ_FORCE_SM5=1): full rendering + overlays + grid via FXC
+
 ## [0.2.0] — 2026-03-11
 
 ### Stats Overlay

@@ -196,6 +196,7 @@ std::wstring ShaderCompiler::GetTargetProfile(ShaderStageCompile stage,
 
     const wchar_t* version = L"6_6";
     switch (model) {
+        case ShaderModelCompile::SM5_0: version = L"5_0"; break;
         case ShaderModelCompile::SM5_1: version = L"5_1"; break;
         case ShaderModelCompile::SM6_0: version = L"6_0"; break;
         case ShaderModelCompile::SM6_1: version = L"6_1"; break;

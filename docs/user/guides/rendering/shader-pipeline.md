@@ -283,17 +283,30 @@ bytecode = cache.Lookup(hash);
 
 ## Compilation Targets
 
-The DXC compiler produces multiple output formats from a single HLSL source:
+UzEngine supports a range of shader models to maximize GPU compatibility:
 
-| Target | Backend | Use Case |
-|--------|---------|----------|
-| **DXIL** (SM6.6) | DX12 | Primary (modern hardware) |
-| **DXIL** (SM6.0) | DX12 | Fallback (older hardware) |
-| **DXBC** (SM5.1) | DX12 | Legacy (pre-Turing) |
-| **SPIR-V** (1.6) | Vulkan | Cross-platform |
-| **MSL** (Metal 3) | Metal | macOS (via SPIRV-Cross) |
+| Output | Compiler | Backend | GPU Compatibility | Use Case |
+|--------|----------|---------|-------------------|----------|
+| **DXIL** (SM6.6) | DXC | DX12 | NVIDIA RTX, AMD RDNA | Primary (modern hardware) |
+| **DXIL** (SM6.0) | DXC | DX12 | NVIDIA Maxwell, AMD Polaris | Older discrete GPU |
+| **DXBC** (SM5.0) | **FXC** | **DX12** | **Pre-Turing GPU (RX 580, GTX 1060)** | **Budget / older GPU** |
+| **SPIR-V** (1.6) | DXC | Vulkan | Cross-platform | Cross-platform |
+| **MSL** (Metal 3) | DXC | Metal | macOS | macOS (via SPIRV-Cross) |
 
-**DXC is loaded dynamically** (`dxcompiler.dll`), not linked at build time. This allows shipping builds to run without DXC (all shaders precompiled).
+**Both DXC and FXC are loaded dynamically** (not linked at build time), allowing shipping builds to run without compilers present.
+
+### Dual-Compiler System (Milestone 0.2.1)
+
+The engine automatically selects the appropriate compiler:
+
+- **SM >= 6.0** → DXC (fast, modern DXIL)
+- **SM 5.0** → FXC (legacy DXBC, older GPU support)
+
+Shader routing is automatic — you don't need to manually choose. However, if you want to test the SM5.0 path on modern hardware:
+
+```bash
+UZ_FORCE_SM5=1 ./uzengine --scene game.uzscene
+```
 
 ---
 
@@ -322,6 +335,128 @@ shaders.uzpak
 At runtime, shader loading becomes a single archive lookup:
 ```cpp
 bytecode = shaderArchive.Load(hash);  // O(1) hash table lookup
+```
+
+---
+
+## SM5.0 Shader Authoring (Legacy GPU Support)
+
+If your shader needs to support older GPUs (pre-Turing NVIDIA, pre-RDNA AMD), you must provide **two separate code paths** — one for SM6.6 bindless, one for SM5.0 traditional binding.
+
+### Why Two Paths?
+
+- **SM6.6 (bindless)**: Uses descriptor heaps and unlimited resource binding
+- **SM5.0 (Input Assembler)**: No descriptor heaps, must use fixed vertex layouts and register-bound resources
+
+### The #ifdef UZ_BINDLESS Pattern
+
+```hlsl
+// vertex_shader.hlsl
+
+#ifdef UZ_BINDLESS
+// ═══════════════════════════════════════════════════════════════════════════
+// SM6.6 Bindless Path
+// ═══════════════════════════════════════════════════════════════════════════
+
+cbuffer PushConstants : register(b0) {
+    uint meshDataIndex;
+    uint materialIndex;
+};
+
+StructuredBuffer<float3> g_VertexPositions : register(t0, space=0);
+StructuredBuffer<float3> g_VertexNormals   : register(t1, space=0);
+StructuredBuffer<float4> g_Colors          : register(t2, space=0);
+
+[RootSignature("RootFlags(ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT), DescriptorTable(SRV(t0, space=0, numDescriptors=1000000)), CBV(b0)")]
+float4 main(uint vertexID : SV_VertexID) : SV_POSITION {
+    float3 pos = g_VertexPositions[meshDataIndex * 65536 + vertexID];
+    float3 norm = g_VertexNormals[meshDataIndex * 65536 + vertexID];
+
+    // Bindless: unlimited descriptor access via indexing
+    return float4(pos, 1.0);
+}
+
+#else
+// ═══════════════════════════════════════════════════════════════════════════
+// SM5.0 Input Assembler Path
+// ═══════════════════════════════════════════════════════════════════════════
+
+cbuffer PerObject : register(b0) {
+    float4x4 worldViewProj;
+};
+
+// Input Assembler vertex layout:
+// POSITION (float2), TEXCOORD0 (float2), COLOR0 (float4)
+struct VS_INPUT {
+    float2 position : POSITION;
+    float2 uv       : TEXCOORD0;
+    float4 color    : COLOR0;
+};
+
+float4 main(VS_INPUT input) : SV_POSITION {
+    float4 worldPos = mul(float4(input.position, 0, 1), worldViewProj);
+    return worldPos;
+}
+
+#endif
+```
+
+### Compilation: Which Path Gets Used?
+
+When compiling:
+
+- **SM6.6 path** (default on modern GPUs):
+  - Define `UZ_BINDLESS=1` during compilation
+  - DXC compiles the SM6.6 section
+  - Bytecode uses descriptor heaps
+
+- **SM5.0 path** (legacy GPU or UZ_FORCE_SM5=1):
+  - Define `UZ_BINDLESS=0` during compilation
+  - FXC compiles the SM5.0 section
+  - Bytecode uses Input Assembler vertex layout
+
+The build system automatically adds the correct define based on target shader model.
+
+### C++ Rendering: Detecting Bindless Support
+
+```cpp
+// In your renderer initialization
+RHIDeviceDesc desc = /* ... */;
+device = CreateRHIDevice(desc);
+
+// Check which path will be used
+bool supportsBindless = device->GetShaderModel() >= ShaderModel::SM6_0;
+
+// Pass to rendering systems
+textRenderer.Init(supportsBindless);    // TextRenderer adapts internally
+statsOverlay.Init(supportsBindless);    // StatsOverlay adapts internally
+```
+
+### Input Assembler Vertex Format (SM5.0)
+
+The standard SM5.0 vertex input format used throughout the engine:
+
+```cpp
+struct Vertex {
+    float x, y;          // POSITION (relative to camera, 2D projected)
+    float u, v;          // TEXCOORD0 (texture coordinates)
+    float r, g, b, a;    // COLOR0 (vertex color / text rendering tint)
+};
+```
+
+Set via Input Assembler during render:
+
+```cpp
+// C++ (SM5.0 path only)
+D3D12_VERTEX_BUFFER_VIEW vbView;
+vbView.BufferLocation = vertexBuffer->GetGPUVirtualAddress();
+vbView.SizeInBytes = bufferSize;
+vbView.StrideInBytes = sizeof(Vertex);
+cmdList->IASetVertexBuffers(0, 1, &vbView);
+
+// Then dispatch
+cmdList->SetDescriptorTable(0, fontAtlasDescriptor);  // t0 in root signature
+cmdList->DrawInstanced(vertexCount, 1, 0, 0);
 ```
 
 ---

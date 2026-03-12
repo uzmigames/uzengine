@@ -452,10 +452,66 @@ struct RHIRasterizerDesc {
 /// Combines shaders, rasterizer state, depth-stencil state, blend state,
 /// render target formats, and topology into a single immutable PSO.
 ///
-/// # Note
-/// SM6.6 bindless pipelines use no input layout — vertex data is pulled
-/// from SRV buffers in the shader. `vertexShader` is required; `pixelShader`
-/// is optional (depth-only passes).
+/// Semantic name for a vertex input element.
+///
+/// Matches HLSL semantics (POSITION, NORMAL, TEXCOORD, etc.).
+/// Used by the Input Assembler when SM < 6.6 (no bindless vertex fetch).
+enum class RHIInputSemantic : uint8_t {
+    Position,   ///< POSITION — vertex position (float2/float3/float4)
+    Normal,     ///< NORMAL — surface normal (float3)
+    Texcoord,   ///< TEXCOORD — texture coordinate (float2/float3/float4)
+    Tangent,    ///< TANGENT — surface tangent (float3/float4)
+    Color,      ///< COLOR — vertex color (float4)
+};
+
+/// Returns the HLSL semantic string for an input semantic enum value.
+///
+/// # Returns
+/// A null-terminated string like `"POSITION"`, `"NORMAL"`, etc.
+[[nodiscard]] constexpr const char* InputSemanticToString(RHIInputSemantic semantic) {
+    switch (semantic) {
+        case RHIInputSemantic::Position: return "POSITION";
+        case RHIInputSemantic::Normal:   return "NORMAL";
+        case RHIInputSemantic::Texcoord: return "TEXCOORD";
+        case RHIInputSemantic::Tangent:  return "TANGENT";
+        case RHIInputSemantic::Color:    return "COLOR";
+    }
+    return "POSITION";
+}
+
+/// Describes a single vertex input element for the Input Assembler.
+///
+/// Used only for SM5 fallback pipelines — SM6.6 bindless pipelines
+/// fetch vertex data from SRV buffers directly in the shader.
+///
+/// # Examples
+/// ```cpp
+/// RHIInputElementDesc elements[] = {
+///     { RHIInputSemantic::Position, 0, RHIFormat::RGB32Float,  0, 0 },
+///     { RHIInputSemantic::Normal,   0, RHIFormat::RGB32Float,  0, 12 },
+///     { RHIInputSemantic::Texcoord, 0, RHIFormat::RG32Float,   0, 24 },
+/// };
+/// ```
+struct RHIInputElementDesc {
+    RHIInputSemantic semantic = RHIInputSemantic::Position; ///< HLSL semantic name
+    uint32_t semanticIndex = 0;  ///< Semantic index (e.g., TEXCOORD0 vs TEXCOORD1)
+    RHIFormat format = RHIFormat::RGB32Float; ///< Element format
+    uint32_t inputSlot = 0;      ///< Input assembler slot (0–15)
+    uint32_t byteOffset = 0;     ///< Byte offset within the vertex stride
+};
+
+/// Describes a graphics pipeline state object (shaders, rasterizer, blend, etc.).
+///
+/// # SM6.6 Bindless
+/// When running SM6.6+, `inputElementCount` should be 0 — vertex data is
+/// pulled from SRV buffers in the shader via `ResourceDescriptorHeap[index]`.
+///
+/// # SM5 Fallback
+/// When running SM5.x, provide `inputElements` and `inputElementCount` to
+/// describe the vertex layout for the Input Assembler. The engine automatically
+/// selects the correct path based on the negotiated shader model.
+///
+/// `vertexShader` is required; `pixelShader` is optional (depth-only passes).
 struct RHIGraphicsPipelineDesc {
     RHIShaderHandle vertexShader;                    ///< Vertex shader handle
     RHIShaderHandle pixelShader;                     ///< Pixel shader handle (optional for depth-only)
@@ -466,6 +522,9 @@ struct RHIGraphicsPipelineDesc {
     RHIFormat renderTargetFormats[8] = {};           ///< RT formats (Unknown = unused)
     uint32_t renderTargetCount = 1;                  ///< Number of active render targets
     RHIFormat depthStencilFormat = RHIFormat::Unknown; ///< Depth format (Unknown = no depth)
+    const RHIInputElementDesc* inputElements = nullptr; ///< Vertex input layout (SM5 only, nullptr for bindless)
+    uint32_t inputElementCount = 0;                  ///< Number of input elements (0 for SM6.6 bindless)
+    uint32_t vertexStride = 0;                       ///< Vertex stride in bytes (SM5 only, 0 for bindless)
     const char* debugName = nullptr;                 ///< Debug label
 };
 

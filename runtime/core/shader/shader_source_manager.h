@@ -37,6 +37,7 @@ class ShaderVFS;
 enum class ShaderTarget : uint8_t {
     DXIL_SM6_6,   ///< DX12 Shader Model 6.6 (bindless, wave intrinsics)
     DXIL_SM6_0,   ///< DX12 Shader Model 6.0 (wave ops, no bindless)
+    DXBC_SM5_0,   ///< DX11/DX12 Shader Model 5.0 (FXC legacy bytecode)
     DXBC_SM5_1,   ///< DX12 Shader Model 5.1 (FXC legacy bytecode)
     SPIRV_1_6,    ///< Vulkan SPIR-V 1.6 (mesh shaders, ray tracing)
 };

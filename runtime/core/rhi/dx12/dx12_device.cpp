@@ -110,7 +110,7 @@ bool DX12Device::Init(const RHIDeviceDesc& desc) {
     if (!SelectAdapter(desc.adapterIndex))      return false;
     if (!CreateDevice())                        return false;
 
-    NegotiateShaderModel();
+    NegotiateShaderModel(desc.forceShaderModel);
 
     if (!CreateAllocator())                     return false;
     if (!CreateDescriptorHeaps())               return false;
@@ -239,7 +239,7 @@ bool DX12Device::CreateDevice() {
 /// SM6.0 requires D3D_SHADER_MODEL_6_0.
 /// SM5.1 requires feature level 12_0 (always true if device was created).
 /// SM5.0 is the absolute fallback.
-void DX12Device::NegotiateShaderModel() {
+void DX12Device::NegotiateShaderModel(std::optional<ShaderModel> forceModel) {
     // Check resource binding tier for SM6.6 bindless
     D3D12_FEATURE_DATA_D3D12_OPTIONS options = {};
     bool hasTier3 = false;
@@ -267,6 +267,13 @@ void DX12Device::NegotiateShaderModel() {
         m_shaderModel = ShaderModel::SM5_1;
     } else {
         m_shaderModel = ShaderModel::SM5_0;
+    }
+
+    // Force override — clamps to a lower shader model for testing fallback paths
+    if (forceModel.has_value() && *forceModel < m_shaderModel) {
+        UZ_LOG(RHI, Warning, "Shader model forced: {} → {} (override active)",
+               ShaderModelToString(m_shaderModel), ShaderModelToString(*forceModel));
+        m_shaderModel = *forceModel;
     }
 
     UZ_LOG(RHI, Info, "Shader model negotiated: {} (binding tier={}, device max=0x{:X})",

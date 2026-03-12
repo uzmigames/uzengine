@@ -1,6 +1,10 @@
-/// Standard mesh vertex shader — SM6.6 bindless vertex fetch.
+/// Standard mesh vertex shader.
 ///
-/// Fetches vertex data from a StructuredBuffer via ResourceDescriptorHeap[index].
+/// SM6.6 (UZ_BINDLESS): fetches vertex data from StructuredBuffer via
+/// ResourceDescriptorHeap[index]. No Input Assembler layout needed.
+///
+/// SM5 (!UZ_BINDLESS): receives vertex data via traditional Input Assembler.
+///
 /// Transforms position by Model * ViewProj. Passes world-space normal,
 /// texcoord, and tangent to the pixel shader for lighting.
 
@@ -12,6 +16,7 @@ struct VSOutput {
     float3 positionWS : TEXCOORD1;
 };
 
+#ifdef UZ_BINDLESS
 struct Vertex {
     float3 position;
     float3 normal;
@@ -24,6 +29,14 @@ struct PushConstants {
     uint vertexBufferIndex;
 };
 ConstantBuffer<PushConstants> push : register(b0);
+#else
+struct VSInput {
+    float3 position : POSITION;
+    float3 normal   : NORMAL;
+    float2 texcoord : TEXCOORD0;
+    float4 tangent  : TANGENT;
+};
+#endif
 
 // Per-frame CB at b1
 cbuffer PerFrameCB : register(b1) {
@@ -39,10 +52,13 @@ cbuffer PerObjectCB : register(b2) {
     uint     materialIndex;
 };
 
+#ifdef UZ_BINDLESS
 VSOutput main(uint vertexID : SV_VertexID) {
-    // SM6.6 bindless vertex fetch
     StructuredBuffer<Vertex> vertices = ResourceDescriptorHeap[push.vertexBufferIndex];
     Vertex v = vertices[vertexID];
+#else
+VSOutput main(VSInput v) {
+#endif
 
     VSOutput output;
 

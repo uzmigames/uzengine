@@ -73,6 +73,54 @@ Device creation follows a strict order — each step depends on the previous:
 - **Descriptor heaps before command queues** — the root signature references heap types
 - **DRED last** — it's optional diagnostics, doesn't affect core functionality
 
+## Shader Model Negotiation
+
+The `NegotiateShaderModel()` function probes GPU feature support and selects the highest supported shader model:
+
+```cpp
+ShaderModel DX12Device::NegotiateShaderModel(std::optional<ShaderModel> forceModel) {
+    // If caller requests specific model (e.g., UZ_FORCE_SM5=1), honor it
+    if (forceModel) {
+        return *forceModel;
+    }
+
+    // Probe in descending order of capability
+    // SM6.6 → SM6.0 → SM5.1 → SM5.0
+
+    if (CheckFeatureSupport(D3D_SHADER_MODEL_6_6)) return ShaderModel::SM6_6;
+    if (CheckFeatureSupport(D3D_SHADER_MODEL_6_0)) return ShaderModel::SM6_0;
+    if (CheckFeatureSupport(D3D_SHADER_MODEL_5_1)) return ShaderModel::SM5_1;
+    return ShaderModel::SM5_0;  // Always supported on DX12 devices
+}
+```
+
+### Force Shader Model via Environment Variable
+
+For testing or debugging older GPU paths without hardware:
+
+```bash
+# Force SM5.0 compilation and rendering, even on RTX 4090
+UZ_FORCE_SM5=1 ./uzengine --scene game.uzscene
+
+# Can be passed via RHIDeviceDesc::forceShaderModel
+RHIDeviceDesc desc;
+desc.forceShaderModel = ShaderModel::SM5_0;  // Override negotiation
+device = CreateRHIDevice(desc);
+```
+
+### Root Signature Adaptation
+
+The root signature adapts based on selected shader model:
+
+| Shader Model | Root Signature | Binding Model | Vertex Input |
+|--------------|---|---|---|
+| SM6.6 | Bindless (DIRECTLY_INDEXED) | ResourceDescriptorHeap[] / SamplerDescriptorHeap[] | SV_VertexID + StructuredBuffer |
+| SM6.0 | Bindless (DIRECTLY_INDEXED) | ResourceDescriptorHeap[] / SamplerDescriptorHeap[] | SV_VertexID + StructuredBuffer |
+| SM5.1 | Standard (register-bound) | t0-t127, s0-s15 (legacy) | Input Assembler |
+| SM5.0 | Standard (register-bound) | t0-t127, s0-s15 (legacy) | Input Assembler |
+
+Renderers and systems that touch GPU memory (TextRenderer, StatsOverlay) detect this via the RHI and adapt accordingly.
+
 ## Third-Party Dependencies
 
 | Library | Version | Purpose | Integration |

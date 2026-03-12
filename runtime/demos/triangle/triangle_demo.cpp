@@ -1,8 +1,8 @@
 /// DX12 Triangle Demo — first geometry on screen.
 ///
-/// Creates a colored triangle via SM6.6 bindless vertex fetch.
-/// Vertex data is stored in a StructuredBuffer, accessed by SRV index
-/// pushed as a root constant. No Input Assembler vertex layout is used.
+/// Supports both SM6.6 bindless and SM5 Input Assembler paths automatically.
+/// SM6.6: vertex data in StructuredBuffer, accessed by SRV index via root constant.
+/// SM5: vertex data in VertexBuffer, accessed via Input Assembler with vertex layout.
 ///
 /// Shaders are loaded through the ShaderPipeline (VFS → cache → DXC),
 /// not compiled directly. This validates the full asset pipeline path.
@@ -20,9 +20,11 @@
 #include "upload_context.h"
 #include "shader_pipeline.h"
 #include "shader_compiler.h"
+#include "shader_compiler_fxc.h"
 #include "paths.h"
 
 #include <chrono>
+#include <cstdlib>
 #include <d3d12.h>
 #include <string>
 
@@ -67,6 +69,11 @@ bool RunTriangleDemo(uint32_t frameCount) {
 #else
     deviceDesc.enableValidation = true;
 #endif
+
+    // UZ_FORCE_SM5=1 environment variable forces SM5.0 for testing FXC fallback
+    if (const char* env = std::getenv("UZ_FORCE_SM5"); env && std::string(env) == "1") {
+        deviceDesc.forceShaderModel = ShaderModel::SM5_0;
+    }
 
     auto* rhiDevice = CreateRHIDevice(deviceDesc);
     if (!rhiDevice) {
@@ -118,6 +125,8 @@ bool RunTriangleDemo(uint32_t frameCount) {
     }
 
     // ── Shader Pipeline (VFS → cache → DXC) ────────────────────────────
+    const bool bindless = device->IsBindless();
+
     ShaderCompiler compiler;
     if (!compiler.Init()) {
         UZ_LOG(Renderer, Error, "Failed to init shader compiler");
@@ -127,9 +136,19 @@ bool RunTriangleDemo(uint32_t frameCount) {
     ShaderPipeline shaderPipeline;
     ShaderPipeline::Config pipelineCfg;
     pipelineCfg.cacheDir = (uz::GetExeDir() / "cache/shaders").string();
-    pipelineCfg.targetBackend = "dx12_sm66";
+    pipelineCfg.targetBackend = bindless ? "dx12_sm66" : "dx12_sm50";
+    pipelineCfg.bindless = bindless;
     shaderPipeline.Init(pipelineCfg);
     shaderPipeline.SetCompiler(&compiler);
+
+    ShaderCompilerFXC compilerFXC;
+    if (!bindless) {
+        if (!compilerFXC.Init()) {
+            UZ_LOG(Renderer, Error, "Failed to init FXC shader compiler");
+            return false;
+        }
+        shaderPipeline.SetCompilerFXC(&compilerFXC);
+    }
 
     // Mount demo shaders: exe is at zig-out/bin/, shaders at shaders/
     std::string shadersDir = (uz::GetExeDir() / "../../shaders").string();
@@ -175,15 +194,28 @@ bool RunTriangleDemo(uint32_t frameCount) {
     }
 
     // ── Create Pipeline ──────────────────────────────────────────────────
+    // SM5 input layout: POSITION(float3) + COLOR(float4) + TEXCOORD(float2)
+    RHIInputElementDesc inputElements[] = {
+        { RHIInputSemantic::Position, 0, RHIFormat::RGB32Float,  0, 0  },
+        { RHIInputSemantic::Color,    0, RHIFormat::RGBA32Float, 0, 12 },
+        { RHIInputSemantic::Texcoord, 0, RHIFormat::RG32Float,   0, 28 },
+    };
+
     RHIGraphicsPipelineDesc pipeDesc{};
     pipeDesc.vertexShader = vsHandle;
     pipeDesc.pixelShader = psHandle;
     pipeDesc.topology = RHIPrimitiveTopology::TriangleList;
-    pipeDesc.rasterizer.cullMode = RHICullMode::None;  // No backface culling for triangle
-    pipeDesc.depthStencil.depthEnable = false;          // No depth buffer for now
+    pipeDesc.rasterizer.cullMode = RHICullMode::None;
+    pipeDesc.depthStencil.depthEnable = false;
     pipeDesc.renderTargetFormats[0] = RHIFormat::RGBA8Unorm;
     pipeDesc.renderTargetCount = 1;
     pipeDesc.debugName = "TrianglePipeline";
+
+    if (!bindless) {
+        pipeDesc.inputElements = inputElements;
+        pipeDesc.inputElementCount = 3;
+        pipeDesc.vertexStride = sizeof(SimpleVertex);
+    }
 
     RHIPipelineHandle pipeline = device->CreateGraphicsPipeline(pipeDesc);
     if (!pipeline.IsValid()) {
@@ -192,15 +224,15 @@ bool RunTriangleDemo(uint32_t frameCount) {
     }
     UZ_LOG(Renderer, Info, "Triangle pipeline created successfully");
 
-    // ── Create Vertex Buffer (StructuredBuffer for bindless) ─────────────
+    // ── Create Vertex Buffer ───────────────────────────────────────────────
     SimpleVertex vertices[3];
     GetTriangleVertices(vertices);
 
     RHIBufferDesc vbDesc{};
     vbDesc.sizeBytes = sizeof(vertices);
     vbDesc.stride = sizeof(SimpleVertex);
-    vbDesc.usage = RHIBufferUsage::StructuredBuffer;
-    vbDesc.memory = RHIMemoryType::Upload;  // Small data, skip staging for simplicity
+    vbDesc.usage = bindless ? RHIBufferUsage::StructuredBuffer : RHIBufferUsage::VertexBuffer;
+    vbDesc.memory = RHIMemoryType::Upload;
     vbDesc.debugName = "TriangleVertexBuffer";
 
     RHIBufferHandle vbHandle = device->CreateBuffer(vbDesc);
@@ -209,7 +241,6 @@ bool RunTriangleDemo(uint32_t frameCount) {
         return false;
     }
 
-    // Copy vertex data into upload buffer
     void* mapped = device->MapBuffer(vbHandle);
     if (!mapped) {
         UZ_LOG(Renderer, Error, "Failed to map vertex buffer");
@@ -217,12 +248,15 @@ bool RunTriangleDemo(uint32_t frameCount) {
     }
     std::memcpy(mapped, vertices, sizeof(vertices));
 
-    uint32_t vbSrvIndex = device->GetBufferSRVIndex(vbHandle);
-    if (vbSrvIndex == UINT32_MAX) {
-        UZ_LOG(Renderer, Error, "Vertex buffer has no SRV — check StructuredBuffer usage flag");
-        return false;
+    uint32_t vbSrvIndex = 0;
+    if (bindless) {
+        vbSrvIndex = device->GetBufferSRVIndex(vbHandle);
+        if (vbSrvIndex == UINT32_MAX) {
+            UZ_LOG(Renderer, Error, "Vertex buffer has no SRV — check StructuredBuffer usage flag");
+            return false;
+        }
+        UZ_LOG(Renderer, Info, "Vertex buffer SRV index: {}", vbSrvIndex);
     }
-    UZ_LOG(Renderer, Info, "Vertex buffer SRV index: {}", vbSrvIndex);
 
     // ── Render Loop ──────────────────────────────────────────────────────
     uint32_t frameIndex = 0;
@@ -273,8 +307,12 @@ bool RunTriangleDemo(uint32_t frameCount) {
         // Set topology
         cmdList->GetNative()->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-        // Push vertex buffer SRV index as root constant
-        cmdList->SetDescriptorIndex(0, vbSrvIndex);
+        // Bind vertex data
+        if (bindless) {
+            cmdList->SetDescriptorIndex(0, vbSrvIndex);
+        } else {
+            cmdList->SetVertexBuffer(0, vbHandle, 0);
+        }
 
         // Set viewport and scissor
         RHIViewport vp{};
@@ -288,7 +326,7 @@ bool RunTriangleDemo(uint32_t frameCount) {
         sc.bottom = swapChain->GetHeight();
         cmdList->SetScissor(sc);
 
-        // Draw 3 vertices (vertex shader fetches from StructuredBuffer)
+        // Draw 3 vertices
         cmdList->Draw(3);
 
         // Barrier: RenderTarget → Present
