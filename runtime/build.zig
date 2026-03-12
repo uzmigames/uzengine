@@ -294,6 +294,7 @@ pub fn build(b: *std.Build) void {
 
     if (is_windows) {
         test_mod.addIncludePath(b.path("engine/rhi/dx12"));
+        test_mod.addIncludePath(b.path("engine/rhi/vulkan"));
         for (windows_engine_include_dirs) |dir| test_mod.addIncludePath(b.path(dir));
         for (windows_thirdparty_include_dirs) |dir| test_mod.addIncludePath(b.path(dir));
     }
