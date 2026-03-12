@@ -132,9 +132,7 @@ add_dependencies(uzengine_runtime embed_shaders)
 
 target_compile_definitions(uzengine_runtime PUBLIC
     SPDLOG_COMPILED_LIB
-)
-
-target_compile_definitions(uzengine_runtime PRIVATE
+    UZ_PROFILING_ENABLED
     TRACY_ENABLE
     TRACY_ON_DEMAND
 )
@@ -248,6 +246,9 @@ if(WIN32)
         dxguid.lib
         gdi32.lib
         user32.lib
+        ws2_32.lib
+        dbghelp.lib
+        advapi32.lib
     )
 endif()
 
