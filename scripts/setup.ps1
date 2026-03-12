@@ -194,13 +194,25 @@ Clone-Repo -Name "spdlog" `
     -Branch "v1.15.3" `
     -RemoveDirs @("bench", "example", "logos", "scripts", "tests")
 
-# Tracy (profiling)
+# Tracy (profiling) — keep only LICENSE + public/ (client lib + headers)
 Clone-Repo -Name "tracy" `
     -Url "https://github.com/wolfpld/tracy.git" `
     -Branch "v0.13.1" `
-    -RemoveDirs @("capture", "csvexport", "doc", "dtl", "examples", "extra", "icon", "imgui",
-                  "import", "manual", "nfd", "profiler", "python", "server", "test", "update",
-                  "zstd", "getopt")
+    -RemoveDirs @("capture", "cmake", "csvexport", "doc", "dtl", "examples", "extra",
+                  "getopt", "icon", "imgui", "import", "manual", "nfd", "profiler",
+                  "python", "server", "test", "update", "zstd")
+
+# Remove build files and Fortran binding (keep only LICENSE + public/)
+$tracyPath = Join-Path $ThirdPartyDir "tracy"
+if (Test-Path $tracyPath) {
+    @("CMakeLists.txt", "Config.cmake.in", "NEWS", "README.md",
+      "meson.build", "meson.options") | ForEach-Object {
+        $p = Join-Path $tracyPath $_
+        if (Test-Path $p) { Remove-Item -Force $p }
+    }
+    $f90 = Join-Path $tracyPath "public\TracyClient.F90"
+    if (Test-Path $f90) { Remove-Item -Force $f90 }
+}
 
 # mimalloc (global allocator)
 Clone-Repo -Name "mimalloc" `
