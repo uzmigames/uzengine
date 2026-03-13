@@ -7,10 +7,10 @@
 - [x] Implement in-memory hash map deduplication in `rhi_common` layer ✅ `rhi_pso_cache.cpp` — open-addressing Robin Hood hash map (power-of-2, 256 default, 70% load rehash)
 - [x] Integrate PSO cache into PipelineLibrary ✅ `pipeline_library.cpp` — all 4 `CreateGraphicsPipeline` calls routed through `CreateCachedPipeline()` (cache lookup → miss → create → insert)
 - [x] Unit tests (33 tests) ✅ `test_rhi_pso_cache.cpp` — key determinism (16 tests), cache ops (17 tests: hit/miss, overwrite, clear, invalidate, rehash, load factor)
-- [ ] Add disk serialization (DX12: `GetCachedBlob`/`CachedPSO`, Vulkan: `VkPipelineCache`, Metal: binary archives)
-- [ ] Add warmup/precache API — load known PSOs at scene load time
-- [ ] Add hit/miss stat counters (`StatCounter`)
-- [ ] Integrate with shader cache (reuse hash infrastructure)
+- [x] Add disk serialization (DX12: `GetCachedBlob`/`CachedPSO`, Vulkan: `VkPipelineCache`, Metal: binary archives) ✅ `pso_disk_cache.h/cpp` — disk cache at `cache/pso/{hash}.bin`, `RHIGraphicsPipelineDesc.cachedBlobData/Size` fields, DX12 `GetCachedBlob()` extraction via `IRHIDevice::GetPipelineCachedBlob()`, stale blob retry fallback
+- [x] Add warmup/precache API — load known PSOs at scene load time ✅ `PipelineLibrary::WarmupAll()` — eagerly creates all standard pipelines (ForwardPBR, GBuffer, Lighting, GBufferDebug, ShadowDepth) in both bindless and SM5 variants
+- [x] Add hit/miss stat counters (`StatCounter`) ✅ `Stat_RHI_PsoCacheHits` / `Stat_RHI_PsoCacheMisses` — incremented in `CreateCachedPipeline()`, declared in profiler.h, defined in pipeline_library.cpp
+- [x] Integrate with shader cache (reuse hash infrastructure) ✅ Both caches use content-addressed hashing (PSO: FNV-1a via `ComputePsoCacheKey`, Shader: xxHash64); disk layouts parallel (`cache/pso/` vs `cache/shaders/`); PsoDiskCache API mirrors ShaderCache patterns
 
 ### 100.2 GPU Memory Subsystem
 - [ ] Define per-category memory budgets (textures, buffers, staging, render targets)

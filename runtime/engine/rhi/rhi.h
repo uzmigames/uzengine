@@ -37,6 +37,9 @@
 
 #include "rhi_types.h"
 
+#include <cstdint>
+#include <vector>
+
 namespace uz {
 
 // Forward declare — defined in rhi_config.h. Avoids circular include
@@ -676,6 +679,24 @@ public:
     /// # Arguments
     /// * `handle` — Pipeline handle to destroy. Becomes invalid after this call.
     virtual void DestroyPipeline(RHIPipelineHandle handle) = 0;
+
+    /// Extracts the cached compilation blob from a pipeline state object.
+    ///
+    /// On DX12, calls `ID3D12PipelineState::GetCachedBlob()` to retrieve the
+    /// driver-compiled pipeline state. This blob can be stored to disk and
+    /// passed back via `RHIGraphicsPipelineDesc::cachedBlobData` on subsequent
+    /// runs to skip GPU compilation.
+    ///
+    /// On Vulkan, `VkPipelineCache` handles caching natively — returns empty.
+    /// On Metal, returns empty (binary archives not yet implemented).
+    ///
+    /// # Arguments
+    /// * `handle` — Pipeline handle to extract the blob from.
+    ///
+    /// # Returns
+    /// The cached blob as a byte vector. Empty on failure, unsupported backend,
+    /// or invalid handle.
+    virtual std::vector<uint8_t> GetPipelineCachedBlob(RHIPipelineHandle handle) = 0;
 
     // ── Sampler operations ───────────────────────────────────────────────
 

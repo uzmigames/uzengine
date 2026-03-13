@@ -10,7 +10,12 @@
 #include "vertex.h"
 #include "vertex_layout.h"
 
+#include "profiler.h"
+
 UZ_DECLARE_LOG_CATEGORY(Renderer);
+
+UZ_DEFINE_STAT(RHI, PsoCacheHits);
+UZ_DEFINE_STAT(RHI, PsoCacheMisses);
 
 namespace uz {
 
@@ -24,7 +29,8 @@ PipelineLibrary::~PipelineLibrary() {
     }
 }
 
-bool PipelineLibrary::Init(IRHIDevice* device, ShaderManager* shaderMgr) {
+bool PipelineLibrary::Init(IRHIDevice* device, ShaderManager* shaderMgr,
+                            const std::string& psoCacheDir) {
     if (m_initialized) {
         UZ_LOG(Renderer, Warning, "PipelineLibrary::Init called while already initialized");
         return true;
@@ -43,6 +49,12 @@ bool PipelineLibrary::Init(IRHIDevice* device, ShaderManager* shaderMgr) {
     m_device = device;
     m_shaderMgr = shaderMgr;
     m_psoCache.Init();
+
+    if (!psoCacheDir.empty()) {
+        m_psoDiskCache = std::make_unique<PsoDiskCache>(psoCacheDir);
+        UZ_LOG(Renderer, Info, "PipelineLibrary: PSO disk cache enabled at '{}'", psoCacheDir);
+    }
+
     m_initialized = true;
 
     UZ_LOG(Renderer, Info, "PipelineLibrary initialized (PSOs will be created lazily)");
@@ -88,6 +100,7 @@ void PipelineLibrary::Shutdown() {
     destroyShader(m_shadowVS);
 
     m_psoCache.Shutdown();
+    m_psoDiskCache.reset();
 
     m_device = nullptr;
     m_shaderMgr = nullptr;
@@ -410,18 +423,86 @@ RHIPipelineHandle PipelineLibrary::GetShadowDepth(bool bindless) {
 
 RHIPipelineHandle PipelineLibrary::CreateCachedPipeline(const RHIGraphicsPipelineDesc& desc) {
     PsoCacheKey key = ComputePsoCacheKey(desc);
+
+    // In-memory cache check
     auto cached = m_psoCache.Lookup(key);
     if (cached.IsValid()) {
+        UZ_STAT_INCREMENT(RHI, PsoCacheHits);
         UZ_LOG(Renderer, Debug, "PsoCache hit for '{}'", desc.debugName ? desc.debugName : "<unnamed>");
         return cached;
     }
 
-    auto handle = m_device->CreateGraphicsPipeline(desc);
+    // Disk cache check — load blob if available
+    std::optional<std::vector<uint8_t>> diskBlob;
+    RHIGraphicsPipelineDesc descWithBlob = desc;
+
+    if (m_psoDiskCache) {
+        diskBlob = m_psoDiskCache->Lookup(key.hash);
+        if (diskBlob && !diskBlob->empty()) {
+            descWithBlob.cachedBlobData = diskBlob->data();
+            descWithBlob.cachedBlobSize = diskBlob->size();
+            UZ_LOG(Renderer, Debug, "PsoDiskCache hit for '{}' ({} bytes)",
+                   desc.debugName ? desc.debugName : "<unnamed>", diskBlob->size());
+        }
+    }
+
+    auto handle = m_device->CreateGraphicsPipeline(descWithBlob);
     if (handle.IsValid()) {
         m_psoCache.Insert(key, handle);
+        UZ_STAT_INCREMENT(RHI, PsoCacheMisses);
+
+        // Store blob to disk if we didn't load one (or if load was stale and
+        // the driver compiled from scratch anyway)
+        if (m_psoDiskCache && !diskBlob) {
+            auto blob = m_device->GetPipelineCachedBlob(handle);
+            if (!blob.empty()) {
+                m_psoDiskCache->Store(key.hash, blob.data(), blob.size());
+            }
+        }
+
         UZ_LOG(Renderer, Debug, "PsoCache miss for '{}' — created and cached", desc.debugName ? desc.debugName : "<unnamed>");
     }
     return handle;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Warmup — Pre-create all standard pipelines
+// ─────────────────────────────────────────────────────────────────────────────
+
+uint32_t PipelineLibrary::WarmupAll() {
+    UZ_PROFILE_FUNCTION();
+
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::WarmupAll called before Init");
+        return 0;
+    }
+
+    const bool bindless = m_device->IsBindless();
+    uint32_t count = 0;
+
+    auto warmup = [&](RHIPipelineHandle h, const char* name) {
+        if (h.IsValid()) {
+            ++count;
+        } else {
+            UZ_LOG(Renderer, Warning, "WarmupAll: failed to create '{}'", name);
+        }
+    };
+
+    warmup(GetForwardPBR(bindless), "ForwardPBR");
+    warmup(GetGBuffer(bindless), "GBuffer");
+    warmup(GetLighting(), "Lighting");
+    warmup(GetGBufferDebug(), "GBufferDebug");
+    warmup(GetShadowDepth(bindless), "ShadowDepth");
+
+    // SM5 variants if device is bindless (need both paths)
+    if (bindless) {
+        warmup(GetForwardPBR(false), "ForwardPBR_SM5");
+        warmup(GetGBuffer(false), "GBuffer_SM5");
+        warmup(GetShadowDepth(false), "ShadowDepth_SM5");
+    }
+
+    UZ_LOG(Renderer, Info, "PipelineLibrary: warmed up {} pipelines", count);
+    return count;
 }
 
 } // namespace uz

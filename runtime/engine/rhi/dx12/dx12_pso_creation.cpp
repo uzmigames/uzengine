@@ -458,10 +458,26 @@ bool CreateDX12GraphicsPipeline(ID3D12Device* device,
     psoDesc.SampleDesc.Quality = 0;
     psoDesc.SampleMask = UINT_MAX;
 
+    // Apply cached PSO blob if provided (skips driver compilation)
+    if (desc.cachedBlobData && desc.cachedBlobSize > 0) {
+        psoDesc.CachedPSO.pCachedBlob = desc.cachedBlobData;
+        psoDesc.CachedPSO.CachedBlobSizeInBytes = desc.cachedBlobSize;
+    }
+
     // Create PSO
     ID3D12PipelineState* pso = nullptr;
     HRESULT hr = device->CreateGraphicsPipelineState(&psoDesc,
         IID_ID3D12PipelineState, reinterpret_cast<void**>(&pso));
+    // If creation fails with a cached blob, retry without it (stale cache)
+    if (FAILED(hr) && psoDesc.CachedPSO.pCachedBlob != nullptr) {
+        UZ_LOG(RHI, Warning, "CreateGraphicsPipelineState failed with cached blob (hr=0x{:08X}), retrying without cache (name='{}')",
+               static_cast<uint32_t>(hr), desc.debugName ? desc.debugName : "");
+        psoDesc.CachedPSO.pCachedBlob = nullptr;
+        psoDesc.CachedPSO.CachedBlobSizeInBytes = 0;
+        hr = device->CreateGraphicsPipelineState(&psoDesc,
+            IID_ID3D12PipelineState, reinterpret_cast<void**>(&pso));
+    }
+
     if (FAILED(hr)) {
         UZ_LOG(RHI, Error, "CreateGraphicsPipelineState failed: hr=0x{:08X} (name='{}') "
                "VS={} PS={} numRT={} DSV={} topology={}",

@@ -30,6 +30,7 @@
 #include <d3d11_1.h>
 #include <dxgi1_6.h>
 #include <string>
+#include <vector>
 
 #include <tracy/TracyD3D11.hpp>
 
@@ -85,6 +86,7 @@ public:
     // ── IRHIDevice: Pipeline operations ──────────────────────────────────
     RHIPipelineHandle CreateGraphicsPipeline(const RHIGraphicsPipelineDesc& desc) override;
     void DestroyPipeline(RHIPipelineHandle handle) override;
+    std::vector<uint8_t> GetPipelineCachedBlob(RHIPipelineHandle handle) override;
 
     // ── IRHIDevice: Sampler operations ───────────────────────────────────
     RHISamplerHandle CreateSampler(const RHISamplerDesc& desc) override;

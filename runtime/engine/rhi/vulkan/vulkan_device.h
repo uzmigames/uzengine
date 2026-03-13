@@ -32,6 +32,7 @@
 #include <vulkan/vulkan.h>
 
 #include <string>
+#include <vector>
 
 // Forward-declare Tracy Vulkan context type to avoid pulling TracyVulkan.hpp
 // into every translation unit that includes vulkan_device.h.
@@ -94,6 +95,7 @@ public:
     // ── IRHIDevice: Pipeline operations ──────────────────────────────────
     RHIPipelineHandle CreateGraphicsPipeline(const RHIGraphicsPipelineDesc& desc) override;
     void DestroyPipeline(RHIPipelineHandle handle) override;
+    std::vector<uint8_t> GetPipelineCachedBlob(RHIPipelineHandle handle) override;
 
     // ── IRHIDevice: Sampler operations ───────────────────────────────────
     RHISamplerHandle CreateSampler(const RHISamplerDesc& desc) override;

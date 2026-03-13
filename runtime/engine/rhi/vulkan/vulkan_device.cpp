@@ -1301,6 +1301,11 @@ void VulkanDevice::DestroyPipeline(RHIPipelineHandle handle) {
     m_pipelinePool.Free(handle.index);
 }
 
+std::vector<uint8_t> VulkanDevice::GetPipelineCachedBlob(RHIPipelineHandle /*handle*/) {
+    // Vulkan uses VkPipelineCache for disk persistence natively
+    return {};
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Sampler Operations
 // ─────────────────────────────────────────────────────────────────────────────

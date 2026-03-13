@@ -948,6 +948,11 @@ void DX11Device::DestroyPipeline(RHIPipelineHandle handle) {
     m_pipelinePool.Free(handle.index);
 }
 
+std::vector<uint8_t> DX11Device::GetPipelineCachedBlob(RHIPipelineHandle /*handle*/) {
+    // DX11 does not support PSO blob extraction
+    return {};
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Sampler Operations
 // ─────────────────────────────────────────────────────────────────────────────

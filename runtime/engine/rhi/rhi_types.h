@@ -527,6 +527,18 @@ struct RHIGraphicsPipelineDesc {
     uint32_t inputElementCount = 0;                  ///< Number of input elements (0 for SM6.6 bindless)
     uint32_t vertexStride = 0;                       ///< Vertex stride in bytes (SM5 only, 0 for bindless)
     const char* debugName = nullptr;                 ///< Debug label
+
+    /// Optional cached PSO blob from a previous compilation.
+    ///
+    /// DX12: from `ID3D12PipelineState::GetCachedBlob()`.
+    /// Vulkan: from `VkPipelineCache` (handled natively, not used here).
+    /// Metal: ignored.
+    ///
+    /// When provided, the driver can skip shader compilation and use the
+    /// cached state directly. These fields are NOT included in `PsoCacheKey`
+    /// computation (they are not part of PSO identity).
+    const void* cachedBlobData = nullptr;             ///< Pointer to cached PSO blob (optional)
+    size_t cachedBlobSize = 0;                        ///< Size of cached PSO blob in bytes
 };
 
 /// Describes a texture sampler to create via `IRHIDevice::CreateSampler()`.

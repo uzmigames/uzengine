@@ -17,6 +17,7 @@
 #include "log.h"
 #include "profiler.h"
 
+#include <cstring>
 #include <windows.h>
 #include <dxgidebug.h>
 #include <d3d12sdklayers.h>
@@ -722,6 +723,31 @@ void DX12Device::DestroyPipeline(RHIPipelineHandle handle) {
     }
     DestroyDX12Pipeline(*pipeline);
     m_pipelinePool.Free(handle.index);
+}
+
+std::vector<uint8_t> DX12Device::GetPipelineCachedBlob(RHIPipelineHandle handle) {
+    UZ_PROFILE_FUNCTION();
+    DX12Pipeline* pipeline = m_pipelinePool.Get(handle.index, handle.generation);
+    if (!pipeline || !pipeline->pso) {
+        UZ_LOG(RHI, Warning, "GetPipelineCachedBlob: invalid handle (idx={}, gen={})",
+               handle.index, handle.generation);
+        return {};
+    }
+
+    ID3DBlob* blob = nullptr;
+    HRESULT hr = pipeline->pso->GetCachedBlob(&blob);
+    if (FAILED(hr) || !blob) {
+        UZ_LOG(RHI, Warning, "GetPipelineCachedBlob: GetCachedBlob failed (hr=0x{:08X})",
+               static_cast<uint32_t>(hr));
+        return {};
+    }
+
+    std::vector<uint8_t> result(blob->GetBufferSize());
+    std::memcpy(result.data(), blob->GetBufferPointer(), blob->GetBufferSize());
+    blob->Release();
+
+    UZ_LOG(RHI, Debug, "GetPipelineCachedBlob: extracted {} bytes", result.size());
+    return result;
 }
 
 RHISamplerHandle DX12Device::CreateSampler(const RHISamplerDesc& desc) {

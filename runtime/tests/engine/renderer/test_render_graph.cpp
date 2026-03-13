@@ -63,6 +63,7 @@ public:
     void DestroyShader(uz::RHIShaderHandle) override {}
     uz::RHIPipelineHandle CreateGraphicsPipeline(const uz::RHIGraphicsPipelineDesc&) override { return {0, 0}; }
     void DestroyPipeline(uz::RHIPipelineHandle) override {}
+    std::vector<uint8_t> GetPipelineCachedBlob(uz::RHIPipelineHandle) override { return {}; }
     uz::RHISamplerHandle CreateSampler(const uz::RHISamplerDesc&) override { return {0, 0}; }
     void DestroySampler(uz::RHISamplerHandle) override {}
     uint32_t GetSamplerIndex(uz::RHISamplerHandle) const override { return UINT32_MAX; }

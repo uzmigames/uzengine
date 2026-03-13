@@ -27,8 +27,12 @@
 
 #pragma once
 
+#include "pso_disk_cache.h"
 #include "rhi_pso_cache.h"
 #include "rhi_types.h"
+
+#include <memory>
+#include <string>
 
 namespace uz {
 
@@ -59,7 +63,8 @@ public:
     PipelineLibrary(PipelineLibrary&&) = delete;
     PipelineLibrary& operator=(PipelineLibrary&&) = delete;
 
-    /// Initializes the pipeline library with a device and shader manager.
+    /// Initializes the pipeline library with a device, shader manager, and
+    /// optional PSO disk cache directory.
     ///
     /// Must be called before any `Get*()` method. No PSOs are created during
     /// init — they are compiled lazily on first access.
@@ -67,10 +72,14 @@ public:
     /// # Arguments
     /// * `device` — Initialized RHI device. Must outlive this library.
     /// * `shaderMgr` — Initialized shader manager. Must outlive this library.
+    /// * `psoCacheDir` — Directory for PSO disk cache (e.g., "cache/pso").
+    ///   If empty, disk caching is disabled.
     ///
     /// # Returns
     /// `true` on success, `false` if either argument is null.
-    [[nodiscard]] bool Init(IRHIDevice* device, ShaderManager* shaderMgr);
+    [[nodiscard]] bool Init(IRHIDevice* device, ShaderManager* shaderMgr,
+                            const std::string& psoCacheDir = "");
+
 
     /// Destroys all cached PSOs and shaders, releases references.
     ///
@@ -152,6 +161,17 @@ public:
     /// Returns the shadow depth pipeline using the device's default bindless mode.
     [[nodiscard]] RHIPipelineHandle GetShadowDepth();
 
+    /// Pre-creates all standard pipelines eagerly instead of on first use.
+    ///
+    /// Call at scene load time to avoid hitches during the first frame.
+    /// Internally calls every `Get*()` method for both bindless and SM5 variants.
+    /// Pipelines that fail to compile are logged but do not abort warmup.
+    ///
+    /// # Returns
+    /// Number of pipelines successfully created (max 8: 4 types x 2 bindless variants,
+    /// though lighting/debug have no bindless variant so max is typically 6).
+    uint32_t WarmupAll();
+
     /// Returns true if `Init()` has been called successfully and `Shutdown()`
     /// has not been called since.
     [[nodiscard]] bool IsInitialized() const noexcept { return m_initialized; }
@@ -178,6 +198,9 @@ private:
 
     // ── PSO content-hash cache ─────────────────────────────────────────
     PsoCache m_psoCache;
+
+    // ── PSO disk cache (optional) ────────────────────────────────────
+    std::unique_ptr<PsoDiskCache> m_psoDiskCache;
 
     // ── Cached shader handles ───────────────────────────────────────────
     RHIShaderHandle m_meshVS           = RHIShaderHandle::Invalid();

@@ -30,6 +30,7 @@
 #include "dx12_guids.h"
 #include <tracy/TracyD3D12.hpp>
 #include <string>
+#include <vector>
 
 // Forward-declare D3D12MA to avoid pulling the header into consumers
 namespace D3D12MA { class Allocator; }
@@ -104,6 +105,7 @@ public:
     // ── IRHIDevice: Pipeline operations ──────────────────────────────────
     RHIPipelineHandle CreateGraphicsPipeline(const RHIGraphicsPipelineDesc& desc) override;
     void DestroyPipeline(RHIPipelineHandle handle) override;
+    std::vector<uint8_t> GetPipelineCachedBlob(RHIPipelineHandle handle) override;
 
     // ── IRHIDevice: Sampler operations ───────────────────────────────────
     RHISamplerHandle CreateSampler(const RHISamplerDesc& desc) override;

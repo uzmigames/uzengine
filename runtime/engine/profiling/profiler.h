@@ -353,3 +353,7 @@ UZ_DECLARE_STAT(RHI, CacheMisses);
 UZ_DECLARE_STAT(IO, VFSReads);
 /// Number of PSO/pipeline state creations this session.
 UZ_DECLARE_STAT(RHI, PipelineCreations);
+/// Number of PSO cache hits (pipeline reuse) this session.
+UZ_DECLARE_STAT(RHI, PsoCacheHits);
+/// Number of PSO cache misses (new pipeline creation) this session.
+UZ_DECLARE_STAT(RHI, PsoCacheMisses);
