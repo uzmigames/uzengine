@@ -1,51 +1,43 @@
-/// Post-Process Test Demo — Full pipeline: 3D Scene → HDR → Tonemap → FXAA → Display
+/// Post-Process Test Demo Implementation — DemoApplication-based
 ///
-/// Renders a lit cube mesh with editor grid into an HDR render target (RGBA16Float),
-/// then applies the post-processing chain through the render graph:
-///   1. Scene3D: Clear HDR + depth, draw lit cube + editor grid
-///   2. Tone mapping (ACES filmic via tonemap_ps.hlsl at register b2)
-///   3. FXAA (edge AA via fxaa_ps.hlsl at register b2)
-///   4. Output to backbuffer
-///
-/// Toggle keys: T=tonemap, A=fxaa
+/// Renders 3 HDR spheres into RGBA16Float, then applies tonemap + FXAA chain.
+/// All GPU interaction flows through abstract RHI interfaces.
 
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
 #include "postprocess_test_demo.h"
 #include "rhi.h"
 #include "rhi_backend.h"
 #include "rhi_config.h"
 #include "rhi_types.h"
 #include "platform_window.h"
+#include "input.h"
 #include "log.h"
 #include "profiler.h"
-#include "screenshot_capture.h"
-#include "render_graph_builder.h"
-#include "render_graph_resources.h"
-#include "shader_pipeline.h"
-#include "shader_compiler.h"
-#include "shader_compiler_fxc.h"
-#include "engine_shaders.h"
-#include "paths.h"
-#include "input.h"
-#include "root_slots.h"
-#include "cb_ring_allocator.h"
 #include "vertex.h"
 #include "mesh.h"
 #include "upload_context.h"
 #include "constant_buffers.h"
 #include "camera.h"
 #include "fps_camera_controller.h"
+#include "shader_pipeline.h"
+#include "shader_compiler.h"
+#include "shader_compiler_fxc.h"
+#include "engine_shaders.h"
+#include "paths.h"
 #include "editor_grid.h"
+#include "screenshot_capture.h"
+#include "cb_ring_allocator.h"
 #include "texture_loader.h"
+#include "root_slots.h"
+#include "render_graph_builder.h"
+#include "render_graph_resources.h"
 
 #include <cmath>
-#include <chrono>
-#include <thread>
 #include <cstring>
 #include <memory>
 
 namespace uz {
-
-static constexpr uint32_t kFramesInFlight = 3;
 
 UZ_DEFINE_LOG_CATEGORY(PostProcessDemo, Info);
 
@@ -74,41 +66,39 @@ struct alignas(256) FXAACB {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Single light for the multi-light forward CB (64 bytes per light).
-/// Matches LightData in light_types.hlsli.
 struct LightDataGPU {
-    Vec3  positionOrDir;    ///< Direction toward light (directional) or world position (point/spot).
-    float range;            ///< Attenuation range (point/spot). Unused for directional.
-    Vec3  color;            ///< Light color * intensity (linear HDR).
-    float lightType;        ///< 0 = directional, 1 = point, 2 = spot.
-    Vec3  spotDirection;    ///< Spot light cone direction. Unused for directional/point.
-    float innerConeCos;     ///< cos(innerConeAngle) for spot lights.
-    float outerConeCos;     ///< cos(outerConeAngle) for spot lights.
+    Vec3  positionOrDir;
+    float range;
+    Vec3  color;
+    float lightType;
+    Vec3  spotDirection;
+    float innerConeCos;
+    float outerConeCos;
     float _pad0 = 0.f;
     float _pad1 = 0.f;
     float _pad2 = 0.f;
 };
 
-static_assert(sizeof(LightDataGPU) == 64, "LightDataGPU must be 64 bytes for mesh_ps.hlsl");
+static_assert(sizeof(LightDataGPU) == 64, "LightDataGPU must be 64 bytes");
 
-/// Maximum lights supported by the multi-light forward CB.
 static constexpr uint32_t kMeshMaxLights = 8;
 
 /// Per-frame constant buffer matching the 768-byte layout expected by mesh_ps.hlsl.
 struct PerFrameMultiLightCB {
-    Mat4         viewProj;                     ///< 64B — combined view-projection matrix.
-    Vec4         cameraPos;                    ///< 16B — xyz = camera world position, w = 0.
-    Vec4         timeParams;                   ///< 16B — x = totalTime, y = dt, z = frame, w = 0.
-    Vec4         ambientColor;                 ///< 16B — xyz = ambient light color, w = 0.
-    uint32_t     lightCount = 0;               ///< 4B  — number of active lights.
-    uint32_t     _pad0a = 0;                   ///< 4B  — padding.
-    uint32_t     _pad0b = 0;                   ///< 4B  — padding.
-    uint32_t     _pad0c = 0;                   ///< 4B  — padding.
-    LightDataGPU lights[kMeshMaxLights];       ///< 512B — light array (8 * 64).
-    Vec4         _pad1[8] = {};                ///< 128B — trailing padding.
+    Mat4         viewProj;
+    Vec4         cameraPos;
+    Vec4         timeParams;
+    Vec4         ambientColor;
+    uint32_t     lightCount = 0;
+    uint32_t     _pad0a = 0;
+    uint32_t     _pad0b = 0;
+    uint32_t     _pad0c = 0;
+    LightDataGPU lights[kMeshMaxLights];
+    Vec4         _pad1[8] = {};
 };
 
 static_assert(sizeof(PerFrameMultiLightCB) == 768,
-              "PerFrameMultiLightCB must be 768 bytes for mesh_ps.hlsl multi-light CB");
+              "PerFrameMultiLightCB must be 768 bytes");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helper: create fullscreen PSO (no vertex input, no depth)
@@ -134,113 +124,134 @@ static RHIPipelineHandle CreateFullscreenPSO(IRHIDevice* device,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Main demo function
+// Constructor / Destructor
 // ─────────────────────────────────────────────────────────────────────────────
 
-bool RunPostProcessTest(const PostProcessTestConfig& config) {
+PostProcessTestDemo::PostProcessTestDemo(const PostProcessTestConfig& config)
+    : DemoApplication(DemoConfig{
+          .title = "UzEngine — Post-Process Test (T=tonemap A=fxaa)",
+          .width = 1280,
+          .height = 720,
+          .maxFrames = config.frameCount,
+          .vsync = false,
+          .enableValidation = true,
+      })
+    , config_(config)
+    , enableTonemap_(config.enableTonemap)
+    , enableFXAA_(config.enableFXAA)
+{
+}
+
+PostProcessTestDemo::~PostProcessTestDemo() = default;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OnInit
+// ─────────────────────────────────────────────────────────────────────────────
+
+void PostProcessTestDemo::OnInit() {
     UZ_PROFILE_FUNCTION();
-    UZ_PROFILE_THREAD("Main");
 
-    // ── Window ───────────────────────────────────────────────────────────
-    WindowDesc winDesc{};
-    winDesc.title  = "UzEngine — Post-Process Test (T=tonemap A=fxaa)";
-    winDesc.width  = 1280;
-    winDesc.height = 720;
+    auto* device = GetDevice();
+    bindless_ = device->IsBindless();
 
-    PlatformWindow window;
-    if (!window.Create(winDesc)) {
-        UZ_LOG(PostProcessDemo, Error, "Failed to create window");
-        return false;
-    }
-    window.Show();
+    startTime_ = std::chrono::high_resolution_clock::now();
 
-    // ── Device ───────────────────────────────────────────────────────────
-    RHIDeviceDesc deviceDesc{};
-    deviceDesc.backend = config.backend;
-    deviceDesc.enableValidation = true;
+    CompileShaders();
+    CreatePipelines();
+    LoadMeshData();
+    LoadTextures();
+    CreateRenderTargets(GetWidth(), GetHeight());
 
-    IRHIDevice* device = CreateRHIDevice(deviceDesc);
-    if (!device) {
-        UZ_LOG(PostProcessDemo, Error, "Failed to create RHI device");
-        return false;
+    // CB ring
+    cbRing_ = std::make_unique<CBRingAllocator>();
+    cbRing_->Init(device, 3, 64 * 1024);
+
+    // Editor grid
+    editorGrid_ = std::make_unique<EditorGrid>();
+    if (!editorGrid_->Init(device, *shaderPipeline_, RHIFormat::RGBA16Float, RHIFormat::D32Float)) {
+        UZ_LOG(PostProcessDemo, Error, "Failed to initialize editor grid");
     }
 
-    // ── Swapchain ────────────────────────────────────────────────────────
-    uint32_t w = static_cast<uint32_t>(window.GetWidth());
-    uint32_t h = static_cast<uint32_t>(window.GetHeight());
+    // Input
+    input_ = std::make_unique<InputSystem>();
+    input_->Init();
+    GetWindow()->SetInputSystem(input_.get());
 
-    RHISwapChainDesc scDesc{};
-    scDesc.windowHandle   = window.GetNativeHandle();
-    scDesc.displayHandle  = window.GetNativeDisplayHandle();
-    scDesc.width          = w;
-    scDesc.height         = h;
-    scDesc.bufferCount    = kFramesInFlight;
-    scDesc.format         = RHIFormat::RGBA8Unorm;
-    scDesc.vsync          = false;
+    // Camera
+    constexpr float kHFovDeg = 90.f;
+    constexpr float kAspect  = 16.f / 9.f;
+    float vFovRad = 2.f * std::atan(std::tan(kHFovDeg * 0.5f * 3.14159265f / 180.f) / kAspect);
+    camera_.SetPerspective(vFovRad,
+        static_cast<float>(GetWidth()) / static_cast<float>(GetHeight()),
+        0.1f, 1000.f);
+    camera_.SetPosition({0.f, 5.f, 2.5f});
+    {
+        constexpr float kDegToRad = 3.14159265f / 180.f;
+        float yawRad   = -90.f * kDegToRad;
+        float pitchRad = -15.f * kDegToRad;
+        float cosPitch = std::cos(pitchRad);
+        Vec3 forward = {
+            std::cos(yawRad) * cosPitch,
+            std::sin(yawRad) * cosPitch,
+            std::sin(pitchRad)
+        };
+        Vec3 pos = camera_.GetPosition();
+        camera_.LookAt(pos + forward, Vec3::Up());
+    }
+    cameraCtrl_.InitFromCamera(camera_);
+    cameraCtrl_.SetMoveSpeed(10.f);
 
-    IRHISwapChain* swapChain = device->CreateSwapChain(scDesc);
-    if (!swapChain) {
-        UZ_LOG(PostProcessDemo, Error, "Failed to create swapchain");
-        DestroyRHIDevice(device);
-        return false;
+    // Screenshot
+    screenshotPending_ = !config_.screenshotPath.empty();
+    if (screenshotPending_) {
+        screenshotCapture_ = std::make_unique<ScreenshotCapture>();
+        screenshotCapture_->Init(device, GetWidth(), GetHeight());
     }
 
-    // ── Command list + fences ────────────────────────────────────────────
-    IRHICommandList* cmdList = device->CreateCommandList(RHIQueueType::Graphics);
-    if (!cmdList) {
-        UZ_LOG(PostProcessDemo, Error, "Failed to create command list");
-        device->DestroySwapChain(swapChain);
-        DestroyRHIDevice(device);
-        return false;
-    }
+    // Render graph pool
+    rgPool_ = std::make_unique<rg::RgResourcePool>(device);
 
-    IRHIFence* frameFences[kFramesInFlight] = {};
-    uint64_t fenceValues[kFramesInFlight] = {};
-    for (uint32_t i = 0; i < kFramesInFlight; ++i) {
-        frameFences[i] = device->CreateFence();
-    }
+    UZ_LOG(PostProcessDemo, Info,
+        "PostProcessTestDemo initialized — T=tonemap A=fxaa toggles | Scene3D -> ToneMap -> FXAA -> display");
+}
 
-    // ── CB Ring Allocator ────────────────────────────────────────────────
-    CBRingAllocator cbRing;
-    cbRing.Init(device, kFramesInFlight, 64 * 1024);
+// ─────────────────────────────────────────────────────────────────────────────
+// CompileShaders
+// ─────────────────────────────────────────────────────────────────────────────
 
-    // ── Compile shaders ──────────────────────────────────────────────────
-    const bool bindless = device->IsBindless();
+void PostProcessTestDemo::CompileShaders() {
+    auto* device = GetDevice();
 
-    auto compiler = std::make_unique<ShaderCompiler>();
-    if (!compiler->Init()) {
+    compiler_ = std::make_unique<ShaderCompiler>();
+    if (!compiler_->Init()) {
         UZ_LOG(PostProcessDemo, Error, "Failed to init DXC shader compiler");
-        return false;
+        return;
     }
 
-    std::unique_ptr<ShaderCompilerFXC> compilerFXC;
-    if (!bindless) {
-        compilerFXC = std::make_unique<ShaderCompilerFXC>();
-        compilerFXC->Init();
+    if (!bindless_) {
+        compilerFXC_ = std::make_unique<ShaderCompilerFXC>();
+        compilerFXC_->Init();
     }
 
-    auto shaderPipeline = std::make_unique<ShaderPipeline>();
+    shaderPipeline_ = std::make_unique<ShaderPipeline>();
     ShaderPipeline::Config pipeCfg;
     pipeCfg.cacheDir      = (uz::GetExeDir() / "cache/shaders").string();
-    pipeCfg.targetBackend = bindless ? "dx12_sm66" : "dx12_sm50";
-    pipeCfg.bindless      = bindless;
-    shaderPipeline->Init(pipeCfg);
-    shaderPipeline->SetCompiler(compiler.get());
-    if (compilerFXC) shaderPipeline->SetCompilerFXC(compilerFXC.get());
+    pipeCfg.targetBackend = bindless_ ? "dx12_sm66" : "dx12_sm50";
+    pipeCfg.bindless      = bindless_;
+    shaderPipeline_->Init(pipeCfg);
+    shaderPipeline_->SetCompiler(compiler_.get());
+    if (compilerFXC_) shaderPipeline_->SetCompilerFXC(compilerFXC_.get());
 
     auto loadShader = [&](EngineShader shader) {
-        return shaderPipeline->LoadBytecodeFromSource(
+        return shaderPipeline_->LoadBytecodeFromSource(
             EngineShaders::GetName(shader), EngineShaders::GetSource(shader));
     };
 
-    // Fullscreen post-process shaders
     auto fsVSBytes    = loadShader(EngineShader::FullscreenVS);
     auto tonemapBytes = loadShader(EngineShader::TonemapPS);
     auto fxaaBytes    = loadShader(EngineShader::FxaaPS);
-
-    // Mesh shaders for 3D scene
-    auto meshVSBytes = loadShader(EngineShader::MeshVS);
-    auto meshPSBytes = loadShader(EngineShader::MeshPS);
+    auto meshVSBytes  = loadShader(EngineShader::MeshVS);
+    auto meshPSBytes  = loadShader(EngineShader::MeshPS);
 
     uint32_t compiled = 0;
     if (!fsVSBytes.empty())    ++compiled;
@@ -250,12 +261,6 @@ bool RunPostProcessTest(const PostProcessTestConfig& config) {
     if (!meshPSBytes.empty())  ++compiled;
     UZ_LOG(PostProcessDemo, Info, "Shader compilation: {}/5 succeeded", compiled);
 
-    if (compiled < 5) {
-        UZ_LOG(PostProcessDemo, Error, "Required shaders failed to compile — aborting");
-        return false;
-    }
-
-    // ── Create RHI shader handles ────────────────────────────────────────
     auto makeShader = [&](const std::vector<uint8_t>& bc, RHIShaderStage stage,
                           const char* name) -> RHIShaderHandle {
         RHIShaderDesc d{};
@@ -267,24 +272,26 @@ bool RunPostProcessTest(const PostProcessTestConfig& config) {
         return device->CreateShader(d);
     };
 
-    RHIShaderHandle fsVS      = makeShader(fsVSBytes,    RHIShaderStage::Vertex, "fullscreen_vs");
-    RHIShaderHandle tonemapPS = makeShader(tonemapBytes, RHIShaderStage::Pixel,  "tonemap_ps");
-    RHIShaderHandle fxaaPS    = makeShader(fxaaBytes,    RHIShaderStage::Pixel,  "fxaa_ps");
-    RHIShaderHandle meshVS    = makeShader(meshVSBytes,  RHIShaderStage::Vertex, "mesh_vs");
-    RHIShaderHandle meshPS    = makeShader(meshPSBytes,  RHIShaderStage::Pixel,  "mesh_ps");
+    fsVS_      = makeShader(fsVSBytes,    RHIShaderStage::Vertex, "fullscreen_vs");
+    tonemapPS_ = makeShader(tonemapBytes, RHIShaderStage::Pixel,  "tonemap_ps");
+    fxaaPS_    = makeShader(fxaaBytes,    RHIShaderStage::Pixel,  "fxaa_ps");
+    meshVS_    = makeShader(meshVSBytes,  RHIShaderStage::Vertex, "mesh_vs");
+    meshPS_    = makeShader(meshPSBytes,  RHIShaderStage::Pixel,  "mesh_ps");
+}
 
-    // ── Create fullscreen PSOs ───────────────────────────────────────────
-    auto tonemapPSO = CreateFullscreenPSO(device, fsVS, tonemapPS,
-                                           RHIFormat::RGBA8Unorm, "ToneMap_PSO");
-    auto fxaaPSO    = CreateFullscreenPSO(device, fsVS, fxaaPS,
-                                           RHIFormat::RGBA8Unorm, "FXAA_PSO");
+// ─────────────────────────────────────────────────────────────────────────────
+// CreatePipelines
+// ─────────────────────────────────────────────────────────────────────────────
 
-    if (!tonemapPSO.IsValid() || !fxaaPSO.IsValid()) {
-        UZ_LOG(PostProcessDemo, Error, "Fullscreen PSO creation failed");
-        return false;
-    }
+void PostProcessTestDemo::CreatePipelines() {
+    auto* device = GetDevice();
 
-    // ── Create mesh pipeline (renders into RGBA16Float HDR target) ───────
+    tonemapPSO_ = CreateFullscreenPSO(device, fsVS_, tonemapPS_,
+                                       RHIFormat::RGBA8Unorm, "ToneMap_PSO");
+    fxaaPSO_    = CreateFullscreenPSO(device, fsVS_, fxaaPS_,
+                                       RHIFormat::RGBA8Unorm, "FXAA_PSO");
+
+    // Mesh pipeline — renders into RGBA16Float HDR target
     RHIInputElementDesc inputElements[] = {
         { RHIInputSemantic::Position, 0, RHIFormat::RGB32Float,  0, 0  },
         { RHIInputSemantic::Normal,   0, RHIFormat::RGB32Float,  0, 12 },
@@ -293,8 +300,8 @@ bool RunPostProcessTest(const PostProcessTestConfig& config) {
     };
 
     RHIGraphicsPipelineDesc meshPipeDesc{};
-    meshPipeDesc.vertexShader    = meshVS;
-    meshPipeDesc.pixelShader     = meshPS;
+    meshPipeDesc.vertexShader    = meshVS_;
+    meshPipeDesc.pixelShader     = meshPS_;
     meshPipeDesc.topology        = RHIPrimitiveTopology::TriangleList;
     meshPipeDesc.rasterizer.cullMode              = RHICullMode::Back;
     meshPipeDesc.rasterizer.frontCounterClockwise = false;
@@ -305,324 +312,339 @@ bool RunPostProcessTest(const PostProcessTestConfig& config) {
     meshPipeDesc.depthStencilFormat               = RHIFormat::D32Float;
     meshPipeDesc.debugName                        = "MeshPipeline_HDR";
 
-    if (!bindless) {
+    if (!bindless_) {
         meshPipeDesc.inputElements     = inputElements;
         meshPipeDesc.inputElementCount = 4;
         meshPipeDesc.vertexStride      = sizeof(Vertex);
     }
 
-    RHIPipelineHandle meshPipeline = device->CreateGraphicsPipeline(meshPipeDesc);
-    if (!meshPipeline.IsValid()) {
+    meshPipeline_ = device->CreateGraphicsPipeline(meshPipeDesc);
+    if (!meshPipeline_.IsValid()) {
         UZ_LOG(PostProcessDemo, Error, "Failed to create mesh pipeline");
-        return false;
     }
+}
 
-    // ── Create sphere mesh (curved edges show FXAA aliasing clearly) ────
-    Mesh sphereMesh = MeshBuilder::CreateSphere(1.0f, 32, 64);
+// ─────────────────────────────────────────────────────────────────────────────
+// LoadMeshData
+// ─────────────────────────────────────────────────────────────────────────────
+
+void PostProcessTestDemo::LoadMeshData() {
+    auto* device = GetDevice();
+
+    sphereMesh_ = std::make_unique<Mesh>(MeshBuilder::CreateSphere(1.0f, 32, 64));
     UZ_LOG(PostProcessDemo, Info, "Created UV sphere: {} vertices, {} indices",
-           sphereMesh.GetVertexCount(), sphereMesh.GetIndexCount());
+           sphereMesh_->GetVertexCount(), sphereMesh_->GetIndexCount());
 
-    // ── Upload vertex buffer ─────────────────────────────────────────────
+    // Upload vertex buffer
     RHIBufferDesc vbDesc{};
-    vbDesc.sizeBytes = sphereMesh.GetVertexDataSize();
-    vbDesc.stride    = sphereMesh.header.vertexStride;
-    vbDesc.usage     = bindless ? RHIBufferUsage::StructuredBuffer : RHIBufferUsage::VertexBuffer;
+    vbDesc.sizeBytes = sphereMesh_->GetVertexDataSize();
+    vbDesc.stride    = sphereMesh_->header.vertexStride;
+    vbDesc.usage     = bindless_ ? RHIBufferUsage::StructuredBuffer : RHIBufferUsage::VertexBuffer;
     vbDesc.memory    = RHIMemoryType::Upload;
     vbDesc.debugName = "PostProcess_VB";
 
-    RHIBufferHandle vbHandle = device->CreateBuffer(vbDesc);
-    void* vbMapped = device->MapBuffer(vbHandle);
-    std::memcpy(vbMapped, sphereMesh.vertexData.data(), sphereMesh.GetVertexDataSize());
-    device->UnmapBuffer(vbHandle);
+    vbHandle_ = device->CreateBuffer(vbDesc);
+    void* vbMapped = device->MapBuffer(vbHandle_);
+    std::memcpy(vbMapped, sphereMesh_->vertexData.data(), sphereMesh_->GetVertexDataSize());
+    device->UnmapBuffer(vbHandle_);
 
-    uint32_t vbSrvIndex = 0;
-    if (bindless) {
-        vbSrvIndex = device->GetBufferSRVIndex(vbHandle);
+    if (bindless_) {
+        vbSrvIndex_ = device->GetBufferSRVIndex(vbHandle_);
     }
 
-    // ── Upload index buffer ──────────────────────────────────────────────
+    // Upload index buffer
     RHIBufferDesc ibDesc{};
-    ibDesc.sizeBytes = sphereMesh.GetIndexDataSize();
-    ibDesc.stride    = (sphereMesh.header.indexFormat == MeshIndexFormat::UInt32) ? 4u : 2u;
+    ibDesc.sizeBytes = sphereMesh_->GetIndexDataSize();
+    ibDesc.stride    = (sphereMesh_->header.indexFormat == MeshIndexFormat::UInt32) ? 4u : 2u;
     ibDesc.usage     = RHIBufferUsage::IndexBuffer;
     ibDesc.memory    = RHIMemoryType::Upload;
     ibDesc.debugName = "PostProcess_IB";
 
-    RHIBufferHandle ibHandle = device->CreateBuffer(ibDesc);
-    void* ibMapped = device->MapBuffer(ibHandle);
-    std::memcpy(ibMapped, sphereMesh.indexData.data(), sphereMesh.GetIndexDataSize());
-    device->UnmapBuffer(ibHandle);
+    ibHandle_ = device->CreateBuffer(ibDesc);
+    void* ibMapped = device->MapBuffer(ibHandle_);
+    std::memcpy(ibMapped, sphereMesh_->indexData.data(), sphereMesh_->GetIndexDataSize());
+    device->UnmapBuffer(ibHandle_);
 
-    // ── Load checker texture ────────────────────────────────────────────
+    indexFormat_ = (sphereMesh_->header.indexFormat == MeshIndexFormat::UInt32)
+        ? RHIIndexFormat::Uint32 : RHIIndexFormat::Uint16;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LoadTextures
+// ─────────────────────────────────────────────────────────────────────────────
+
+void PostProcessTestDemo::LoadTextures() {
+    auto* device = GetDevice();
+    auto* cmdList = GetCommandList();
+
     std::string texPath = (uz::GetExeDir() / "assets/checker.png").string();
-    auto checkerTex = TextureLoader::Load(device, cmdList, texPath);
-    if (!checkerTex.handle.IsValid()) {
+    auto result = TextureLoader::Load(device, cmdList, texPath);
+    if (result.handle.IsValid()) {
+        checkerHandle_ = result.handle;
+        checkerSrvIndex_ = result.srvIndex;
+    } else {
         UZ_LOG(PostProcessDemo, Warning, "checker.png not found — spheres will be white");
     }
+}
 
-    // ── Depth buffer ─────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// CreateRenderTargets / RecreateRenderTargets
+// ─────────────────────────────────────────────────────────────────────────────
+
+void PostProcessTestDemo::CreateRenderTargets(uint32_t width, uint32_t height) {
+    auto* device = GetDevice();
+    const RHITextureUsage kRTUsage = RHITextureUsage::ShaderResource | RHITextureUsage::RenderTarget;
+
+    // Depth buffer
     RHITextureDesc depthDesc{};
-    depthDesc.width     = w;
-    depthDesc.height    = h;
+    depthDesc.width     = width;
+    depthDesc.height    = height;
     depthDesc.format    = RHIFormat::D32Float;
     depthDesc.usage     = RHITextureUsage::DepthStencil;
     depthDesc.debugName = "PostProcess_Depth";
+    depthBuffer_ = device->CreateTexture(depthDesc);
 
-    RHITextureHandle depthBuffer = device->CreateTexture(depthDesc);
+    // HDR scene target
+    RHITextureDesc hdrDesc{};
+    hdrDesc.width     = width;
+    hdrDesc.height    = height;
+    hdrDesc.format    = RHIFormat::RGBA16Float;
+    hdrDesc.usage     = kRTUsage;
+    hdrDesc.debugName = "HDR_Scene";
+    hdrTarget_ = device->CreateTexture(hdrDesc);
 
-    // ── Create intermediate render targets ───────────────────────────────
-    const RHITextureUsage kRTUsage = RHITextureUsage::ShaderResource | RHITextureUsage::RenderTarget;
+    // Tonemap output
+    RHITextureDesc tmDesc{};
+    tmDesc.width     = width;
+    tmDesc.height    = height;
+    tmDesc.format    = RHIFormat::RGBA8Unorm;
+    tmDesc.usage     = kRTUsage;
+    tmDesc.debugName = "ToneMap_Out";
+    tonemapTarget_ = device->CreateTexture(tmDesc);
 
-    auto createRT = [&](RHIFormat fmt, const char* name) -> RHITextureHandle {
-        RHITextureDesc td{};
-        td.width     = w;
-        td.height    = h;
-        td.format    = fmt;
-        td.usage     = kRTUsage;
-        td.debugName = name;
-        return device->CreateTexture(td);
-    };
+    UZ_LOG(PostProcessDemo, Info, "Created render targets: HDR (RGBA16F) + ToneMap (RGBA8) @ {}x{}", width, height);
+}
 
-    RHITextureHandle hdrTarget     = createRT(RHIFormat::RGBA16Float, "HDR_Scene");
-    RHITextureHandle tonemapTarget = createRT(RHIFormat::RGBA8Unorm,  "ToneMap_Out");
+void PostProcessTestDemo::RecreateRenderTargets(uint32_t width, uint32_t height) {
+    auto* device = GetDevice();
+    device->DestroyTexture(depthBuffer_);
+    device->DestroyTexture(hdrTarget_);
+    device->DestroyTexture(tonemapTarget_);
+    CreateRenderTargets(width, height);
+}
 
-    UZ_LOG(PostProcessDemo, Info, "Created render targets: HDR (RGBA16F) + ToneMap (RGBA8) @ {}x{}", w, h);
+// ─────────────────────────────────────────────────────────────────────────────
+// OnFrame
+// ─────────────────────────────────────────────────────────────────────────────
 
-    // ── Editor Grid ──────────────────────────────────────────────────────
-    EditorGrid editorGrid;
-    if (!editorGrid.Init(device, *shaderPipeline, RHIFormat::RGBA16Float, RHIFormat::D32Float)) {
-        UZ_LOG(PostProcessDemo, Error, "Failed to initialize editor grid");
-        return false;
-    }
+void PostProcessTestDemo::OnFrame(float dt) {
+    UZ_PROFILE_FUNCTION();
+
+    auto* device  = GetDevice();
+    auto* cmdList = GetCommandList();
+    auto* swapChain = GetSwapChain();
+    const uint32_t w = GetWidth();
+    const uint32_t h = GetHeight();
+
+    auto now = std::chrono::high_resolution_clock::now();
+    totalTime_ = std::chrono::duration<float>(now - startTime_).count();
 
     // ── Input ────────────────────────────────────────────────────────────
-    InputSystem input;
-    input.Init();
-    window.SetInputSystem(&input);
+    input_->BeginFrame();
+    if (input_->IsKeyJustPressed(Key::T)) {
+        enableTonemap_ = !enableTonemap_;
+        UZ_LOG(PostProcessDemo, Info, "Tone mapping: {}", enableTonemap_ ? "ON" : "OFF");
+    }
+    if (input_->IsKeyJustPressed(Key::A)) {
+        enableFXAA_ = !enableFXAA_;
+        UZ_LOG(PostProcessDemo, Info, "FXAA: {}", enableFXAA_ ? "ON" : "OFF");
+    }
 
     // ── Camera ───────────────────────────────────────────────────────────
-    Camera camera;
-    constexpr float kHFovDeg = 90.f;
-    constexpr float kAspect  = 16.f / 9.f;
-    float vFovRad = 2.f * std::atan(std::tan(kHFovDeg * 0.5f * 3.14159265f / 180.f) / kAspect);
-    camera.SetPerspective(vFovRad,
-        static_cast<float>(winDesc.width) / static_cast<float>(winDesc.height),
-        0.1f, 1000.f);
-    camera.SetPosition({0.f, 5.f, 2.5f});
-    {
-        constexpr float kDegToRad = 3.14159265f / 180.f;
-        float yawRad   = -90.f * kDegToRad;
-        float pitchRad = -15.f * kDegToRad;
-        float cosPitch = std::cos(pitchRad);
-        Vec3 forward = {
-            std::cos(yawRad) * cosPitch,
-            std::sin(yawRad) * cosPitch,
-            std::sin(pitchRad)
-        };
-        Vec3 pos = camera.GetPosition();
-        camera.LookAt(pos + forward, Vec3::Up());
+    cameraCtrl_.Update(camera_, *input_, dt);
+
+    // ── CB Ring ──────────────────────────────────────────────────────────
+    cbRing_->BeginFrame(GetFrameIndex());
+
+    // ── Upload PerFrameMultiLightCB ──────────────────────────────────────
+    PerFrameMultiLightCB perFrame{};
+    perFrame.viewProj = camera_.GetViewProjection();
+    Vec3 camPos = camera_.GetPosition();
+    perFrame.cameraPos   = {camPos.x, camPos.y, camPos.z, 0.f};
+    perFrame.timeParams  = {totalTime_, dt, static_cast<float>(GetFrameIndex()), 0.f};
+    perFrame.ambientColor = {0.08f, 0.08f, 0.1f, 0.f};
+
+    // Sun: warm directional, very high intensity for HDR demo
+    perFrame.lightCount = 2;
+
+    LightDataGPU& sun = perFrame.lights[0];
+    Vec3 rawDir = {0.5f, 1.0f, 0.3f};
+    float len = std::sqrt(rawDir.x * rawDir.x + rawDir.y * rawDir.y + rawDir.z * rawDir.z);
+    sun.positionOrDir = {rawDir.x / len, rawDir.y / len, rawDir.z / len};
+    sun.range     = 0.f;
+    sun.color     = {50.0f, 40.0f, 30.0f};
+    sun.lightType = 0.f;
+
+    // Fill light: cool blue from opposite side
+    LightDataGPU& fill = perFrame.lights[1];
+    Vec3 fillDir = {-0.3f, 0.5f, -0.8f};
+    float fillLen = std::sqrt(fillDir.x * fillDir.x + fillDir.y * fillDir.y + fillDir.z * fillDir.z);
+    fill.positionOrDir = {fillDir.x / fillLen, fillDir.y / fillLen, fillDir.z / fillLen};
+    fill.range     = 0.f;
+    fill.color     = {5.0f, 8.0f, 20.0f};
+    fill.lightType = 0.f;
+
+    CBAllocation perFrameAlloc = cbRing_->Allocate(sizeof(PerFrameMultiLightCB));
+    std::memcpy(perFrameAlloc.cpuPtr, &perFrame, sizeof(PerFrameMultiLightCB));
+
+    // ── Upload PerObjectCBs (3 spheres) ──────────────────────────────────
+    static constexpr uint32_t kSphereCount = 3;
+    struct SphereInstance { Vec3 pos; float scale; };
+    SphereInstance spheres[kSphereCount] = {
+        {{-2.5f, 0.f, 0.f}, 1.0f},
+        {{ 0.0f, 0.f, 0.f}, 1.0f},
+        {{ 2.5f, 0.f, 0.f}, 1.0f},
+    };
+
+    CBAllocation perObjectAllocs[kSphereCount];
+    for (uint32_t ci = 0; ci < kSphereCount; ++ci) {
+        PerObjectCB perObject{};
+        perObject.model        = Mat4::TRS(spheres[ci].pos, spheres[ci].scale);
+        perObject.normalMatrix = perObject.model.NormalMatrix();
+        perObject.albedoIndex  = checkerSrvIndex_;
+        perObjectAllocs[ci] = cbRing_->Allocate(sizeof(PerObjectCB));
+        std::memcpy(perObjectAllocs[ci].cpuPtr, &perObject, sizeof(PerObjectCB));
     }
 
-    FPSCameraController cameraCtrl;
-    cameraCtrl.InitFromCamera(camera);
-    cameraCtrl.SetMoveSpeed(10.f);
+    // ── Upload post-process CB data ──────────────────────────────────────
+    ToneMapCB tmData{};
+    tmData.tonemapIntensity = 1.0f;
+    tmData.exposureAdjust   = 2.0f;
+    tmData.bypassTonemap    = 0.0f;
+    auto tmAlloc = cbRing_->Allocate(sizeof(ToneMapCB));
+    std::memcpy(tmAlloc.cpuPtr, &tmData, sizeof(ToneMapCB));
 
-    // ── Screenshot ───────────────────────────────────────────────────────
-    ScreenshotCapture screenshotCapture;
-    bool screenshotPending = !config.screenshotPath.empty();
-    if (screenshotPending) {
-        screenshotCapture.Init(device, w, h);
-    }
+    // Passthrough blit CB — no exposure boost, no ACES, just saturate
+    ToneMapCB blitData{};
+    blitData.tonemapIntensity = 1.0f;
+    blitData.exposureAdjust   = 0.0f;
+    blitData.bypassTonemap    = 1.0f;
+    auto blitAlloc = cbRing_->Allocate(sizeof(ToneMapCB));
+    std::memcpy(blitAlloc.cpuPtr, &blitData, sizeof(ToneMapCB));
 
-    // ── Render graph pool ────────────────────────────────────────────────
-    rg::RgResourcePool rgPool(device);
+    FXAACB fxData{};
+    fxData.invScreenWidth  = 1.0f / static_cast<float>(w);
+    fxData.invScreenHeight = 1.0f / static_cast<float>(h);
+    fxData.edgeThreshold   = 0.1f;
+    fxData.blurStrength    = 1.0f;
+    auto fxAlloc = cbRing_->Allocate(sizeof(FXAACB));
+    std::memcpy(fxAlloc.cpuPtr, &fxData, sizeof(FXAACB));
 
-    // ── State ────────────────────────────────────────────────────────────
-    bool enableTonemap = config.enableTonemap;
-    bool enableFXAA    = config.enableFXAA;
+    // ── Build render graph ───────────────────────────────────────────────
+    bool capturedThisFrame = false;
 
-    uint32_t frameIndex = 0;
-    uint64_t globalFenceValue = 0;
-    auto startTime = std::chrono::high_resolution_clock::now();
-    auto prevTime  = startTime;
+    RHITextureHandle backBuffer = swapChain->GetCurrentBackBuffer();
+    rg::RgBuilder rgBuilder(device, rgPool_.get());
 
-    UZ_LOG(PostProcessDemo, Info,
-        "Starting render loop — T=tonemap A=fxaa toggles | Scene3D → ToneMap → FXAA → display");
+    auto bbRes  = rgBuilder.ImportTexture("Backbuffer", backBuffer, RHIResourceState::Present);
+    auto hdrRes = rgBuilder.ImportTexture("HDR_Scene", hdrTarget_, RHIResourceState::Common);
+    auto tmRes  = rgBuilder.ImportTexture("ToneMap_Out", tonemapTarget_, RHIResourceState::Common);
 
-    // ── Render loop ──────────────────────────────────────────────────────
-    while (window.PumpMessages() && window.IsOpen()) {
-        if (window.IsMinimized()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-            continue;
-        }
+    // ── Pass 1: Scene3D — render lit spheres + grid into HDR target ──────
+    rgBuilder.AddPass("Scene3D", [&](rg::RgPassBuilder& pb) {
+        pb.Write(hdrRes, RHIResourceState::RenderTarget);
+        pb.SetExecutionCallback([&](IRHICommandList* cmd, const rg::RgPassResources& res) {
+            UZ_PROFILE_SCOPE("Scene3D::Execute");
 
-        UZ_PROFILE_SCOPE(Frame);
-        if (config.frameCount > 0 && frameIndex >= config.frameCount) break;
+            auto hdr = res.GetTexture(hdrRes);
 
-        // ── Timing ───────────────────────────────────────────────────────
-        auto now = std::chrono::high_resolution_clock::now();
-        float dt = std::chrono::duration<float>(now - prevTime).count();
-        float totalTime = std::chrono::duration<float>(now - startTime).count();
-        prevTime = now;
+            float clearColor[4] = {0.05f, 0.05f, 0.08f, 1.0f};
+            cmd->ClearRenderTarget(hdr, clearColor);
+            cmd->ClearDepthStencil(depthBuffer_, 1.0f, 0);
 
-        // ── Resize ───────────────────────────────────────────────────────
-        if (window.WasResized()) {
-            device->WaitIdle();
-            w = static_cast<uint32_t>(window.GetWidth());
-            h = static_cast<uint32_t>(window.GetHeight());
-            swapChain->Resize(w, h);
+            RHIRenderPassDesc passDesc{};
+            passDesc.colorAttachmentCount = 1;
+            passDesc.colorAttachments[0].texture = hdr;
+            passDesc.colorAttachments[0].clear   = false;
+            passDesc.hasDepth = true;
+            passDesc.depthAttachment.texture    = depthBuffer_;
+            passDesc.depthAttachment.clearDepth = 1.0f;
+            passDesc.depthAttachment.clear      = false;
+            cmd->BeginRenderPass(passDesc);
 
-            // Recreate depth buffer at new size
-            device->DestroyTexture(depthBuffer);
-            depthDesc.width  = w;
-            depthDesc.height = h;
-            depthBuffer = device->CreateTexture(depthDesc);
+            RHIViewport vp{};
+            vp.width    = static_cast<float>(w);
+            vp.height   = static_cast<float>(h);
+            vp.maxDepth = 1.0f;
+            cmd->SetViewport(vp);
 
-            // Recreate render targets at new size
-            device->DestroyTexture(hdrTarget);
-            device->DestroyTexture(tonemapTarget);
-            hdrTarget     = createRT(RHIFormat::RGBA16Float, "HDR_Scene");
-            tonemapTarget = createRT(RHIFormat::RGBA8Unorm,  "ToneMap_Out");
+            RHIScissorRect sc{};
+            sc.right  = static_cast<int32_t>(w);
+            sc.bottom = static_cast<int32_t>(h);
+            cmd->SetScissor(sc);
 
-            camera.SetAspectRatio(static_cast<float>(w) / static_cast<float>(h));
-            window.ClearResizedFlag();
-        }
+            cmd->SetPipeline(meshPipeline_);
 
-        // ── Input ────────────────────────────────────────────────────────
-        input.BeginFrame();
-        if (input.IsKeyJustPressed(Key::T)) {
-            enableTonemap = !enableTonemap;
-            UZ_LOG(PostProcessDemo, Info, "Tone mapping: {}", enableTonemap ? "ON" : "OFF");
-        }
-        if (input.IsKeyJustPressed(Key::A)) {
-            enableFXAA = !enableFXAA;
-            UZ_LOG(PostProcessDemo, Info, "FXAA: {}", enableFXAA ? "ON" : "OFF");
-        }
+            if (bindless_) {
+                cmd->SetDescriptorIndex(0, vbSrvIndex_);
+            } else {
+                cmd->SetVertexBuffer(0, vbHandle_, 0);
+            }
 
-        // ── Camera Update ────────────────────────────────────────────────
-        cameraCtrl.Update(camera, input, dt);
+            cmd->SetRootCBV(kSlotPerFrame, perFrameAlloc.bufferHandle,
+                            perFrameAlloc.offsetBytes, perFrameAlloc.cpuPtr,
+                            sizeof(PerFrameMultiLightCB));
 
-        // Wait oldest fence
-        uint32_t allocFrame = frameIndex % kFramesInFlight;
-        if (fenceValues[allocFrame] > 0) {
-            frameFences[allocFrame]->WaitCPU(fenceValues[allocFrame]);
-        }
+            cmd->SetIndexBuffer(ibHandle_, indexFormat_, 0);
 
-        cbRing.BeginFrame(frameIndex);
+            // Bind checker texture for SM5 (t0 = albedo)
+            if (!bindless_ && checkerHandle_.IsValid()) {
+                cmd->SetFragmentTexture(0, checkerHandle_);
+            }
 
-        // ── Upload PerFrameMultiLightCB ──────────────────────────────────
-        PerFrameMultiLightCB perFrame{};
-        perFrame.viewProj = camera.GetViewProjection();
-        Vec3 camPos = camera.GetPosition();
-        perFrame.cameraPos   = {camPos.x, camPos.y, camPos.z, 0.f};
-        perFrame.timeParams  = {totalTime, dt, static_cast<float>(frameIndex), 0.f};
-        perFrame.ambientColor = {0.08f, 0.08f, 0.1f, 0.f};
+            for (uint32_t ci = 0; ci < kSphereCount; ++ci) {
+                cmd->SetRootCBV(kSlotPerObject, perObjectAllocs[ci].bufferHandle,
+                                perObjectAllocs[ci].offsetBytes, perObjectAllocs[ci].cpuPtr,
+                                sizeof(PerObjectCB));
+                cmd->DrawIndexed(sphereMesh_->GetIndexCount());
+            }
 
-        // Directional light — extreme HDR intensity to make tonemap difference obvious
-        perFrame.lightCount = 2;
+            editorGrid_->Draw(cmd, *cbRing_, camera_);
 
-        // Sun: warm directional, very high intensity
-        LightDataGPU& sun = perFrame.lights[0];
-        Vec3 rawDir = {0.5f, 1.0f, 0.3f};
-        float len = std::sqrt(rawDir.x * rawDir.x + rawDir.y * rawDir.y + rawDir.z * rawDir.z);
-        sun.positionOrDir = {rawDir.x / len, rawDir.y / len, rawDir.z / len};
-        sun.range     = 0.f;
-        sun.color     = {50.0f, 40.0f, 30.0f};  // Warm white, extreme HDR
-        sun.lightType = 0.f;
+            cmd->EndRenderPass();
+        });
+    });
 
-        // Fill light: cool blue from opposite side
-        LightDataGPU& fill = perFrame.lights[1];
-        Vec3 fillDir = {-0.3f, 0.5f, -0.8f};
-        float fillLen = std::sqrt(fillDir.x * fillDir.x + fillDir.y * fillDir.y + fillDir.z * fillDir.z);
-        fill.positionOrDir = {fillDir.x / fillLen, fillDir.y / fillLen, fillDir.z / fillLen};
-        fill.range     = 0.f;
-        fill.color     = {5.0f, 8.0f, 20.0f};  // Cool blue fill
-        fill.lightType = 0.f;
+    // ── Pass 2: Tone mapping (HDR -> LDR) ────────────────────────────────
+    auto tmOutputRes = enableFXAA_ ? tmRes : bbRes;
 
-        CBAllocation perFrameAlloc = cbRing.Allocate(sizeof(PerFrameMultiLightCB));
-        std::memcpy(perFrameAlloc.cpuPtr, &perFrame, sizeof(PerFrameMultiLightCB));
-
-        // ── Upload PerObjectCBs (3 cubes at different positions) ─────────
-        static constexpr uint32_t kCubeCount = 3;
-        struct CubeInstance { Vec3 pos; float scale; };
-        CubeInstance cubes[kCubeCount] = {
-            {{-2.5f, 0.f, 0.f}, 1.0f},
-            {{ 0.0f, 0.f, 0.f}, 1.0f},
-            {{ 2.5f, 0.f, 0.f}, 1.0f},
-        };
-
-        CBAllocation perObjectAllocs[kCubeCount];
-        for (uint32_t ci = 0; ci < kCubeCount; ++ci) {
-            PerObjectCB perObject{};
-            perObject.model        = Mat4::TRS(cubes[ci].pos, cubes[ci].scale);
-            perObject.normalMatrix = perObject.model.NormalMatrix();
-            perObject.albedoIndex  = checkerSrvIdx;
-            perObjectAllocs[ci] = cbRing.Allocate(sizeof(PerObjectCB));
-            std::memcpy(perObjectAllocs[ci].cpuPtr, &perObject, sizeof(PerObjectCB));
-        }
-
-        // ── Upload post-process CB data ──────────────────────────────────
-        ToneMapCB tmData{};
-        tmData.tonemapIntensity = 1.0f;
-        tmData.exposureAdjust   = 2.0f;  // +2 EV = 4x brighter, amplifies HDR range
-        tmData.bypassTonemap    = 0.0f;  // Apply ACES curve
-        auto tmAlloc = cbRing.Allocate(sizeof(ToneMapCB));
-        std::memcpy(tmAlloc.cpuPtr, &tmData, sizeof(ToneMapCB));
-
-        // Passthrough blit CB — no exposure boost, no ACES, just saturate
-        ToneMapCB blitData{};
-        blitData.tonemapIntensity = 1.0f;
-        blitData.exposureAdjust   = 0.0f;  // No exposure change
-        blitData.bypassTonemap    = 1.0f;  // Skip ACES curve
-        auto blitAlloc = cbRing.Allocate(sizeof(ToneMapCB));
-        std::memcpy(blitAlloc.cpuPtr, &blitData, sizeof(ToneMapCB));
-
-        FXAACB fxData{};
-        fxData.invScreenWidth  = 1.0f / static_cast<float>(w);
-        fxData.invScreenHeight = 1.0f / static_cast<float>(h);
-        fxData.edgeThreshold   = 0.1f;
-        fxData.blurStrength    = 1.0f;
-        auto fxAlloc = cbRing.Allocate(sizeof(FXAACB));
-        std::memcpy(fxAlloc.cpuPtr, &fxData, sizeof(FXAACB));
-
-        // ── Build render graph ───────────────────────────────────────────
-        bool capturedThisFrame = false;
-        {
-        UZ_PROFILE_SCOPE(RecordCommands);
-        cmdList->Begin();
-
-        RHITextureHandle backBuffer = swapChain->GetCurrentBackBuffer();
-        rg::RgBuilder rgBuilder(device, &rgPool);
-
-        auto bbRes  = rgBuilder.ImportTexture("Backbuffer", backBuffer, RHIResourceState::Present);
-        auto hdrRes = rgBuilder.ImportTexture("HDR_Scene", hdrTarget, RHIResourceState::Common);
-        auto tmRes  = rgBuilder.ImportTexture("ToneMap_Out", tonemapTarget, RHIResourceState::Common);
-
-        // ── Pass 1: Scene3D — render lit cube + grid into HDR target ─
-        rgBuilder.AddPass("Scene3D", [&](rg::RgPassBuilder& pb) {
-            pb.Write(hdrRes, RHIResourceState::RenderTarget);
+    if (enableTonemap_) {
+        rgBuilder.AddPass("ToneMap", [&](rg::RgPassBuilder& pb) {
+            pb.Read(hdrRes, RHIResourceState::ShaderResource);
+            pb.Write(tmOutputRes, RHIResourceState::RenderTarget);
             pb.SetExecutionCallback([&](IRHICommandList* cmd, const rg::RgPassResources& res) {
-                UZ_PROFILE_SCOPE("Scene3D::Execute");
+                UZ_PROFILE_SCOPE("ToneMap::Execute");
 
-                auto hdr = res.GetTexture(hdrRes);
+                auto outTex = res.GetTexture(tmOutputRes);
 
-                // Clear HDR and depth
-                float clearColor[4] = {0.05f, 0.05f, 0.08f, 1.0f};
-                cmd->ClearRenderTarget(hdr, clearColor);
-                cmd->ClearDepthStencil(depthBuffer, 1.0f, 0);
-
-                // Begin render pass with HDR color + depth
                 RHIRenderPassDesc passDesc{};
                 passDesc.colorAttachmentCount = 1;
-                passDesc.colorAttachments[0].texture = hdr;
+                passDesc.colorAttachments[0].texture = outTex;
                 passDesc.colorAttachments[0].clear   = false;
-                passDesc.hasDepth = true;
-                passDesc.depthAttachment.texture    = depthBuffer;
-                passDesc.depthAttachment.clearDepth = 1.0f;
-                passDesc.depthAttachment.clear      = false;
+                passDesc.hasDepth = false;
                 cmd->BeginRenderPass(passDesc);
 
-                // Set viewport and scissor
+                cmd->SetPipeline(tonemapPSO_);
+                cmd->SetRootCBV(kSlotPerObject, tmAlloc.bufferHandle,
+                                tmAlloc.offsetBytes, tmAlloc.cpuPtr, sizeof(ToneMapCB));
+
+                if (bindless_) {
+                    uint32_t srvIdx = device->GetTextureSRVIndex(res.GetTexture(hdrRes));
+                    cmd->SetRootConstants(kSlotRootConstants, &srvIdx, 1, 0);
+                } else {
+                    cmd->SetFragmentTexture(0, res.GetTexture(hdrRes));
+                }
+
                 RHIViewport vp{};
                 vp.width    = static_cast<float>(w);
                 vp.height   = static_cast<float>(h);
@@ -634,255 +656,169 @@ bool RunPostProcessTest(const PostProcessTestConfig& config) {
                 sc.bottom = static_cast<int32_t>(h);
                 cmd->SetScissor(sc);
 
-                // Draw cube meshes
-                cmd->SetPipeline(meshPipeline);
-
-                if (bindless) {
-                    cmd->SetDescriptorIndex(0, vbSrvIndex);
-                } else {
-                    cmd->SetVertexBuffer(0, vbHandle, 0);
-                }
-
-                cmd->SetRootCBV(kSlotPerFrame, perFrameAlloc.bufferHandle,
-                                perFrameAlloc.offsetBytes, perFrameAlloc.cpuPtr,
-                                sizeof(PerFrameMultiLightCB));
-
-                RHIIndexFormat idxFmt = (sphereMesh.header.indexFormat == MeshIndexFormat::UInt32)
-                    ? RHIIndexFormat::Uint32 : RHIIndexFormat::Uint16;
-                cmd->SetIndexBuffer(ibHandle, idxFmt, 0);
-
-                // Bind checker texture for SM5 (t0 = albedo)
-                if (!bindless && checkerTexHandle.IsValid()) {
-                    cmd->SetFragmentTexture(0, checkerTexHandle);
-                }
-
-                for (uint32_t ci = 0; ci < kCubeCount; ++ci) {
-                    cmd->SetRootCBV(kSlotPerObject, perObjectAllocs[ci].bufferHandle,
-                                    perObjectAllocs[ci].offsetBytes, perObjectAllocs[ci].cpuPtr,
-                                    sizeof(PerObjectCB));
-                    cmd->DrawIndexed(sphereMesh.GetIndexCount());
-                }
-
-                // Draw editor grid
-                editorGrid.Draw(cmd, cbRing, camera);
-
+                cmd->Draw(3);
                 cmd->EndRenderPass();
             });
         });
+    }
 
-        // ── Pass 2: Tone mapping (HDR → LDR) ────────────────────────
-        // If FXAA follows, write to intermediate tmRes; otherwise write straight to backbuffer.
-        auto tmOutputRes = enableFXAA ? tmRes : bbRes;
+    // ── Pass 3: FXAA (edge AA) ───────────────────────────────────────────
+    if (enableFXAA_) {
+        auto fxaaInputRes = enableTonemap_ ? tmRes : hdrRes;
+        rgBuilder.AddPass("FXAA", [&](rg::RgPassBuilder& pb) {
+            pb.Read(fxaaInputRes, RHIResourceState::ShaderResource);
+            pb.Write(bbRes, RHIResourceState::RenderTarget);
+            pb.SetExecutionCallback([&](IRHICommandList* cmd, const rg::RgPassResources& res) {
+                UZ_PROFILE_SCOPE("FXAA::Execute");
 
-        if (enableTonemap) {
-            rgBuilder.AddPass("ToneMap", [&](rg::RgPassBuilder& pb) {
-                pb.Read(hdrRes, RHIResourceState::ShaderResource);
-                pb.Write(tmOutputRes, RHIResourceState::RenderTarget);
-                pb.SetExecutionCallback([&](IRHICommandList* cmd, const rg::RgPassResources& res) {
-                    UZ_PROFILE_SCOPE("ToneMap::Execute");
+                auto outTex = res.GetTexture(bbRes);
 
-                    auto outTex = res.GetTexture(tmOutputRes);
+                RHIRenderPassDesc passDesc{};
+                passDesc.colorAttachmentCount = 1;
+                passDesc.colorAttachments[0].texture = outTex;
+                passDesc.colorAttachments[0].clear   = false;
+                passDesc.hasDepth = false;
+                cmd->BeginRenderPass(passDesc);
 
-                    RHIRenderPassDesc passDesc{};
-                    passDesc.colorAttachmentCount = 1;
-                    passDesc.colorAttachments[0].texture = outTex;
-                    passDesc.colorAttachments[0].clear   = false;
-                    passDesc.hasDepth = false;
-                    cmd->BeginRenderPass(passDesc);
+                cmd->SetPipeline(fxaaPSO_);
+                cmd->SetRootCBV(kSlotPerObject, fxAlloc.bufferHandle,
+                                fxAlloc.offsetBytes, fxAlloc.cpuPtr, sizeof(FXAACB));
 
-                    cmd->SetPipeline(tonemapPSO);
+                if (bindless_) {
+                    uint32_t srvIdx = device->GetTextureSRVIndex(res.GetTexture(fxaaInputRes));
+                    cmd->SetRootConstants(kSlotRootConstants, &srvIdx, 1, 0);
+                } else {
+                    cmd->SetFragmentTexture(0, res.GetTexture(fxaaInputRes));
+                }
 
-                    cmd->SetRootCBV(kSlotPerObject, tmAlloc.bufferHandle,
-                                    tmAlloc.offsetBytes, tmAlloc.cpuPtr, sizeof(ToneMapCB));
+                RHIViewport vp{};
+                vp.width    = static_cast<float>(w);
+                vp.height   = static_cast<float>(h);
+                vp.maxDepth = 1.0f;
+                cmd->SetViewport(vp);
 
-                    if (bindless) {
-                        uint32_t srvIdx = device->GetTextureSRVIndex(res.GetTexture(hdrRes));
-                        cmd->SetRootConstants(kSlotRootConstants, &srvIdx, 1, 0);
-                    } else {
-                        cmd->SetFragmentTexture(0, res.GetTexture(hdrRes));
-                    }
+                RHIScissorRect sc{};
+                sc.right  = static_cast<int32_t>(w);
+                sc.bottom = static_cast<int32_t>(h);
+                cmd->SetScissor(sc);
 
-                    RHIViewport vp{};
-                    vp.width    = static_cast<float>(w);
-                    vp.height   = static_cast<float>(h);
-                    vp.maxDepth = 1.0f;
-                    cmd->SetViewport(vp);
-
-                    RHIScissorRect sc{};
-                    sc.right  = static_cast<int32_t>(w);
-                    sc.bottom = static_cast<int32_t>(h);
-                    cmd->SetScissor(sc);
-
-                    cmd->Draw(3);
-                    cmd->EndRenderPass();
-                });
+                cmd->Draw(3);
+                cmd->EndRenderPass();
             });
-        }
-
-        // ── Pass 3: FXAA (edge AA) ──────────────────────────────────
-        if (enableFXAA) {
-            auto fxaaInputRes = enableTonemap ? tmRes : hdrRes;
-            rgBuilder.AddPass("FXAA", [&](rg::RgPassBuilder& pb) {
-                pb.Read(fxaaInputRes, RHIResourceState::ShaderResource);
-                pb.Write(bbRes, RHIResourceState::RenderTarget);
-                pb.SetExecutionCallback([&](IRHICommandList* cmd, const rg::RgPassResources& res) {
-                    UZ_PROFILE_SCOPE("FXAA::Execute");
-
-                    auto outTex = res.GetTexture(bbRes);
-
-                    RHIRenderPassDesc passDesc{};
-                    passDesc.colorAttachmentCount = 1;
-                    passDesc.colorAttachments[0].texture = outTex;
-                    passDesc.colorAttachments[0].clear   = false;
-                    passDesc.hasDepth = false;
-                    cmd->BeginRenderPass(passDesc);
-
-                    cmd->SetPipeline(fxaaPSO);
-
-                    cmd->SetRootCBV(kSlotPerObject, fxAlloc.bufferHandle,
-                                    fxAlloc.offsetBytes, fxAlloc.cpuPtr, sizeof(FXAACB));
-
-                    if (bindless) {
-                        uint32_t srvIdx = device->GetTextureSRVIndex(res.GetTexture(fxaaInputRes));
-                        cmd->SetRootConstants(kSlotRootConstants, &srvIdx, 1, 0);
-                    } else {
-                        cmd->SetFragmentTexture(0, res.GetTexture(fxaaInputRes));
-                    }
-
-                    RHIViewport vp{};
-                    vp.width    = static_cast<float>(w);
-                    vp.height   = static_cast<float>(h);
-                    vp.maxDepth = 1.0f;
-                    cmd->SetViewport(vp);
-
-                    RHIScissorRect sc{};
-                    sc.right  = static_cast<int32_t>(w);
-                    sc.bottom = static_cast<int32_t>(h);
-                    cmd->SetScissor(sc);
-
-                    cmd->Draw(3);
-                    cmd->EndRenderPass();
-                });
-            });
-        } else if (!enableTonemap) {
-            // Neither tonemap nor FXAA — blit HDR to backbuffer via tonemap passthrough
-            rgBuilder.AddPass("BlitToBackbuffer", [&](rg::RgPassBuilder& pb) {
-                pb.Read(hdrRes, RHIResourceState::ShaderResource);
-                pb.Write(bbRes, RHIResourceState::RenderTarget);
-                pb.SetExecutionCallback([&](IRHICommandList* cmd, const rg::RgPassResources& res) {
-                    auto outTex = res.GetTexture(bbRes);
-
-                    RHIRenderPassDesc passDesc{};
-                    passDesc.colorAttachmentCount = 1;
-                    passDesc.colorAttachments[0].texture = outTex;
-                    passDesc.colorAttachments[0].clear   = false;
-                    passDesc.hasDepth = false;
-                    cmd->BeginRenderPass(passDesc);
-
-                    // Passthrough blit — bypass ACES, no exposure, just saturate
-                    cmd->SetPipeline(tonemapPSO);
-                    cmd->SetRootCBV(kSlotPerObject, blitAlloc.bufferHandle,
-                                    blitAlloc.offsetBytes, blitAlloc.cpuPtr, sizeof(ToneMapCB));
-
-                    if (bindless) {
-                        uint32_t srvIdx = device->GetTextureSRVIndex(res.GetTexture(hdrRes));
-                        cmd->SetRootConstants(kSlotRootConstants, &srvIdx, 1, 0);
-                    } else {
-                        cmd->SetFragmentTexture(0, res.GetTexture(hdrRes));
-                    }
-
-                    RHIViewport vp{};
-                    vp.width    = static_cast<float>(w);
-                    vp.height   = static_cast<float>(h);
-                    vp.maxDepth = 1.0f;
-                    cmd->SetViewport(vp);
-
-                    RHIScissorRect sc{};
-                    sc.right  = static_cast<int32_t>(w);
-                    sc.bottom = static_cast<int32_t>(h);
-                    cmd->SetScissor(sc);
-
-                    cmd->Draw(3);
-                    cmd->EndRenderPass();
-                });
-            });
-        }
-
-        // ── Screenshot ───────────────────────────────────────────────
-        if (screenshotPending && frameIndex == config.screenshotFrame) {
-            rgBuilder.AddPass("Screenshot", [&](rg::RgPassBuilder& pb) {
-                pb.Read(bbRes, RHIResourceState::RenderTarget);
-                pb.SetExecutionCallback([&](IRHICommandList*, const rg::RgPassResources&) {
-                    screenshotCapture.CaptureBackBuffer(cmdList, swapChain);
-                    capturedThisFrame = true;
-                });
-            });
-        }
-
-        // ── Present barrier ──────────────────────────────────────────
-        rgBuilder.AddPass("Present", [&](rg::RgPassBuilder& pb) {
-            pb.Write(bbRes, RHIResourceState::Present);
-            pb.SetExecutionCallback([](IRHICommandList*, const rg::RgPassResources&) {});
         });
+    } else if (!enableTonemap_) {
+        // Neither tonemap nor FXAA — blit HDR to backbuffer via tonemap passthrough
+        rgBuilder.AddPass("BlitToBackbuffer", [&](rg::RgPassBuilder& pb) {
+            pb.Read(hdrRes, RHIResourceState::ShaderResource);
+            pb.Write(bbRes, RHIResourceState::RenderTarget);
+            pb.SetExecutionCallback([&](IRHICommandList* cmd, const rg::RgPassResources& res) {
+                auto outTex = res.GetTexture(bbRes);
 
-        rgBuilder.Compile();
-        rgBuilder.Execute(cmdList);
-        cmdList->End();
-        }
+                RHIRenderPassDesc passDesc{};
+                passDesc.colorAttachmentCount = 1;
+                passDesc.colorAttachments[0].texture = outTex;
+                passDesc.colorAttachments[0].clear   = false;
+                passDesc.hasDepth = false;
+                cmd->BeginRenderPass(passDesc);
 
-        // ── Execute + Present ────────────────────────────────────────
-        {
-        UZ_PROFILE_SCOPE(ExecuteAndPresent);
-        cmdList->Execute();
-        swapChain->Present(false);
-        globalFenceValue++;
-        fenceValues[allocFrame] = globalFenceValue;
-        frameFences[allocFrame]->Signal(globalFenceValue);
-        }
+                cmd->SetPipeline(tonemapPSO_);
+                cmd->SetRootCBV(kSlotPerObject, blitAlloc.bufferHandle,
+                                blitAlloc.offsetBytes, blitAlloc.cpuPtr, sizeof(ToneMapCB));
 
-        if (capturedThisFrame) {
-            frameFences[allocFrame]->WaitCPU(globalFenceValue);
-            screenshotCapture.SaveToPNG(config.screenshotPath);
-            screenshotPending = false;
-        }
+                if (bindless_) {
+                    uint32_t srvIdx = device->GetTextureSRVIndex(res.GetTexture(hdrRes));
+                    cmd->SetRootConstants(kSlotRootConstants, &srvIdx, 1, 0);
+                } else {
+                    cmd->SetFragmentTexture(0, res.GetTexture(hdrRes));
+                }
 
-        frameIndex++;
-        UZ_PROFILE_FRAME_MARK();
+                RHIViewport vp{};
+                vp.width    = static_cast<float>(w);
+                vp.height   = static_cast<float>(h);
+                vp.maxDepth = 1.0f;
+                cmd->SetViewport(vp);
+
+                RHIScissorRect sc{};
+                sc.right  = static_cast<int32_t>(w);
+                sc.bottom = static_cast<int32_t>(h);
+                cmd->SetScissor(sc);
+
+                cmd->Draw(3);
+                cmd->EndRenderPass();
+            });
+        });
     }
 
-    // ── Cleanup ──────────────────────────────────────────────────────────
-    device->WaitIdle();
-
-    auto endTime = std::chrono::high_resolution_clock::now();
-    float totalMs = std::chrono::duration<float, std::milli>(endTime - startTime).count();
-    float avgMs = frameIndex > 0 ? totalMs / static_cast<float>(frameIndex) : 0.0f;
-
-    UZ_LOG(PostProcessDemo, Info,
-        "Demo finished: {} frames, {:.1f}ms total, {:.2f}ms/frame ({:.0f} FPS)",
-        frameIndex, totalMs, avgMs, avgMs > 0 ? 1000.0f / avgMs : 0.0f);
-
-    screenshotCapture.Shutdown();
-    editorGrid.Shutdown();
-    cbRing.Shutdown();
-
-    device->DestroyTexture(depthBuffer);
-    device->DestroyTexture(hdrTarget);
-    device->DestroyTexture(tonemapTarget);
-    if (checkerTexHandle.IsValid()) device->DestroyTexture(checkerTexHandle);
-    device->DestroyBuffer(vbHandle);
-    device->DestroyBuffer(ibHandle);
-    device->DestroyPipeline(meshPipeline);
-    device->DestroyShader(meshVS);
-    device->DestroyShader(meshPS);
-
-    for (uint32_t i = 0; i < kFramesInFlight; ++i) {
-        device->DestroyFence(frameFences[i]);
+    // ── Screenshot ───────────────────────────────────────────────────────
+    if (screenshotPending_ && GetFrameIndex() == config_.screenshotFrame) {
+        rgBuilder.AddPass("Screenshot", [&](rg::RgPassBuilder& pb) {
+            pb.Read(bbRes, RHIResourceState::RenderTarget);
+            pb.SetExecutionCallback([&](IRHICommandList*, const rg::RgPassResources&) {
+                screenshotCapture_->CaptureBackBuffer(cmdList, swapChain);
+                capturedThisFrame = true;
+            });
+        });
     }
-    device->DestroyCommandList(cmdList);
-    device->DestroySwapChain(swapChain);
-    DestroyRHIDevice(device);
 
-    return true;
+    // ── Present barrier ──────────────────────────────────────────────────
+    rgBuilder.AddPass("Present", [&](rg::RgPassBuilder& pb) {
+        pb.Write(bbRes, RHIResourceState::Present);
+        pb.SetExecutionCallback([](IRHICommandList*, const rg::RgPassResources&) {});
+    });
+
+    rgBuilder.Compile();
+    rgBuilder.Execute(cmdList);
+
+    // ── Deferred screenshot save ─────────────────────────────────────────
+    if (screenshotSaveDeferred_) {
+        screenshotCapture_->SaveToPNG(config_.screenshotPath);
+        screenshotPending_ = false;
+        screenshotSaveDeferred_ = false;
+    }
+    if (capturedThisFrame) {
+        screenshotSaveDeferred_ = true;
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OnResize
+// ─────────────────────────────────────────────────────────────────────────────
+
+void PostProcessTestDemo::OnResize(uint32_t width, uint32_t height) {
+    RecreateRenderTargets(width, height);
+    camera_.SetAspectRatio(static_cast<float>(width) / static_cast<float>(height));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OnShutdown
+// ─────────────────────────────────────────────────────────────────────────────
+
+void PostProcessTestDemo::OnShutdown() {
+    auto* device = GetDevice();
+
+    rgPool_.reset();
+
+    if (screenshotCapture_) screenshotCapture_->Shutdown();
+    if (editorGrid_) editorGrid_->Shutdown();
+    if (cbRing_) cbRing_->Shutdown();
+
+    device->DestroyTexture(depthBuffer_);
+    device->DestroyTexture(hdrTarget_);
+    device->DestroyTexture(tonemapTarget_);
+    if (checkerHandle_.IsValid()) device->DestroyTexture(checkerHandle_);
+
+    device->DestroyBuffer(vbHandle_);
+    device->DestroyBuffer(ibHandle_);
+
+    device->DestroyPipeline(tonemapPSO_);
+    device->DestroyPipeline(fxaaPSO_);
+    device->DestroyPipeline(meshPipeline_);
+
+    device->DestroyShader(fsVS_);
+    device->DestroyShader(tonemapPS_);
+    device->DestroyShader(fxaaPS_);
+    device->DestroyShader(meshVS_);
+    device->DestroyShader(meshPS_);
 }
 
 } // namespace uz

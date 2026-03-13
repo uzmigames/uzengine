@@ -46,7 +46,6 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
-#include <thread>
 
 namespace uz {
 
@@ -191,299 +190,84 @@ struct PerFrameMultiLightCB {
 static_assert(sizeof(PerFrameMultiLightCB) == 768,
               "PerFrameMultiLightCB must be 768 bytes for mesh_ps.hlsl multi-light CB");
 
-static constexpr uint32_t kFramesInFlight = 3;
-static constexpr float kMaxFPS = 500.f;
-static constexpr float kMinFrameTime = 1.f / kMaxFPS;
-
-// (Matrix helpers removed — using engine Mat4::TRS / Mat4::NormalMatrix directly)
-
 // ─────────────────────────────────────────────────────────────────────────────
-// Main Demo
+// Constructor / Destructor
 // ─────────────────────────────────────────────────────────────────────────────
 
-bool RunMeshTestDemo(const MeshTestConfig& config) {
-    const uint32_t frameCount = config.frameCount;
+MeshTestDemo::MeshTestDemo(const MeshTestConfig& config)
+    : DemoApplication(DemoConfig{
+        .title  = "UzEngine \xe2\x80\x94 Mesh Test (Lit Cube)",
+        .width  = 1280,
+        .height = 720,
+        .maxFrames = config.frameCount,
+      })
+    , config_(config)
+{}
 
-    // ── Window ───────────────────────────────────────────────────────────
-    WindowDesc winDesc{};
-    winDesc.title = "UzEngine — Mesh Test (Lit Cube)";
-    winDesc.width = 1280;
-    winDesc.height = 720;
+MeshTestDemo::~MeshTestDemo() = default;
 
-    PlatformWindow window;
-    if (!window.Create(winDesc)) {
-        UZ_LOG(Renderer, Error, "Failed to create window");
-        return false;
-    }
-    window.Show();
+// ─────────────────────────────────────────────────────────────────────────────
+// OnInit — Create all rendering resources
+// ─────────────────────────────────────────────────────────────────────────────
+
+void MeshTestDemo::OnInit() {
+    startTime_ = std::chrono::high_resolution_clock::now();
+
+    auto* device  = GetDevice();
+    auto* cmdList = GetCommandList();
+
+    // Force non-bindless on macOS Metal — embedded MSL uses [[stage_in]]
+#if defined(__APPLE__)
+    bindless_ = false;
+#else
+    bindless_ = device->IsBindless();
+#endif
 
     // ── Input ────────────────────────────────────────────────────────────
-    InputSystem input;
-    input.Init();
-    window.SetInputSystem(&input);
+    input_ = std::make_unique<InputSystem>();
+    input_->Init();
+    GetWindow()->SetInputSystem(input_.get());
 
-    // ── Device ───────────────────────────────────────────────────────────
-    RHIDeviceDesc deviceDesc{};
-    deviceDesc.backend = config.backend;
-#ifdef NDEBUG
-    deviceDesc.enableValidation = false;
-#else
-    deviceDesc.enableValidation = true;
-#endif
+    // ── Shaders & Pipeline ──────────────────────────────────────────────
+    CompileShaders();
+    CreatePipeline();
 
-    if (const char* env = std::getenv("UZ_FORCE_SM5"); env && std::string(env) == "1") {
-        deviceDesc.forceShaderModel = ShaderModel::SM5_0;
-    }
+    // ── Mesh ─────────────────────────────────────────────────────────────
+    LoadMeshData();
 
-    IRHIDevice* device = CreateRHIDevice(deviceDesc);
-    if (!device) {
-        UZ_LOG(Renderer, Error, "Failed to create RHI device (backend={})",
-               static_cast<int>(config.backend));
-        return false;
-    }
-
-    // ── Swapchain ────────────────────────────────────────────────────────
-    RHISwapChainDesc scDesc{};
-    scDesc.windowHandle = window.GetNativeHandle();
-    scDesc.displayHandle = window.GetNativeDisplayHandle();
-    scDesc.width = static_cast<uint32_t>(window.GetWidth());
-    scDesc.height = static_cast<uint32_t>(window.GetHeight());
-    scDesc.bufferCount = kFramesInFlight;
-    scDesc.format = RHIFormat::RGBA8Unorm;
-    scDesc.vsync = false;
-
-    IRHISwapChain* swapChain = device->CreateSwapChain(scDesc);
-    if (!swapChain) {
-        UZ_LOG(Renderer, Error, "Failed to create swapchain");
-        DestroyRHIDevice(device);
-        return false;
-    }
-
-    // ── Command List ─────────────────────────────────────────────────────
-    IRHICommandList* cmdList = device->CreateCommandList(RHIQueueType::Graphics);
-    if (!cmdList) {
-        UZ_LOG(Renderer, Error, "Failed to create command list");
-        device->DestroySwapChain(swapChain);
-        DestroyRHIDevice(device);
-        return false;
-    }
-
-    // ── Fences ───────────────────────────────────────────────────────────
-    IRHIFence* frameFences[kFramesInFlight] = {};
-    uint64_t fenceValues[kFramesInFlight] = {};
-    for (uint32_t i = 0; i < kFramesInFlight; ++i) {
-        frameFences[i] = device->CreateFence();
-        if (!frameFences[i]) {
-            UZ_LOG(Renderer, Error, "Failed to create frame fence {}", i);
-            for (uint32_t j = 0; j < i; ++j) device->DestroyFence(frameFences[j]);
-            device->DestroyCommandList(cmdList);
-            device->DestroySwapChain(swapChain);
-            DestroyRHIDevice(device);
-            return false;
-        }
-    }
-
-    // ── Shader Loading ──────────────────────────────────────────────────
-    // Force non-bindless on macOS Metal — our embedded MSL shaders use
-    // [[stage_in]] with [[attribute(N)]], which requires a vertex descriptor.
-#if defined(__APPLE__)
-    const bool bindless = false;
-#else
-    const bool bindless = device->IsBindless();
-#endif
-
-#ifdef _WIN32
-    // ── Windows: HLSL via ShaderPipeline ─────────────────────────────────
-    ShaderCompiler compiler;
-    if (!compiler.Init()) {
-        UZ_LOG(Renderer, Error, "Failed to init shader compiler");
-        return false;
-    }
-
-    ShaderPipeline shaderPipeline;
-    ShaderPipeline::Config pipelineCfg;
-    pipelineCfg.cacheDir = (uz::GetExeDir() / "cache/shaders").string();
-    pipelineCfg.targetBackend = bindless ? "dx12_sm66" : "dx12_sm50";
-    pipelineCfg.bindless = bindless;
-    shaderPipeline.Init(pipelineCfg);
-    shaderPipeline.SetCompiler(&compiler);
-
-    ShaderCompilerFXC compilerFXC;
-    if (!bindless) {
-        if (!compilerFXC.Init()) {
-            UZ_LOG(Renderer, Error, "Failed to init FXC shader compiler");
-            return false;
-        }
-        shaderPipeline.SetCompilerFXC(&compilerFXC);
-    }
-
-    // Use embedded engine shaders (compiled into the binary via uzembed)
-    auto vsBytecode = shaderPipeline.LoadBytecodeFromSource(
-        EngineShaders::GetName(EngineShader::MeshVS),
-        EngineShaders::GetSource(EngineShader::MeshVS));
-    auto psBytecode = shaderPipeline.LoadBytecodeFromSource(
-        EngineShaders::GetName(EngineShader::MeshPS),
-        EngineShaders::GetSource(EngineShader::MeshPS));
-    if (vsBytecode.empty() || psBytecode.empty()) {
-        UZ_LOG(Renderer, Error, "Failed to compile mesh shaders from embedded source");
-        return false;
-    }
-
-    RHIShaderDesc vsDesc{};
-    vsDesc.bytecode = vsBytecode.data();
-    vsDesc.bytecodeSize = vsBytecode.size();
-    vsDesc.stage = RHIShaderStage::Vertex;
-    vsDesc.entryPoint = "main";
-    vsDesc.debugName = "mesh_vs";
-
-    RHIShaderDesc psDesc{};
-    psDesc.bytecode = psBytecode.data();
-    psDesc.bytecodeSize = psBytecode.size();
-    psDesc.stage = RHIShaderStage::Pixel;
-    psDesc.entryPoint = "main";
-    psDesc.debugName = "mesh_ps";
-
-#elif defined(__APPLE__)
-    // ── macOS: embedded MSL source passed directly to CreateShader ───────
-    RHIShaderDesc vsDesc{};
-    vsDesc.bytecode = kMeshVSSource;
-    vsDesc.bytecodeSize = std::strlen(kMeshVSSource);
-    vsDesc.stage = RHIShaderStage::Vertex;
-    vsDesc.entryPoint = "vertex_main";
-    vsDesc.debugName = "mesh_vs_msl";
-
-    RHIShaderDesc psDesc{};
-    psDesc.bytecode = kMeshPSSource;
-    psDesc.bytecodeSize = std::strlen(kMeshPSSource);
-    psDesc.stage = RHIShaderStage::Pixel;
-    psDesc.entryPoint = "fragment_main";
-    psDesc.debugName = "mesh_ps_msl";
-#endif
-
-    RHIShaderHandle vsHandle = device->CreateShader(vsDesc);
-    RHIShaderHandle psHandle = device->CreateShader(psDesc);
-
-    if (!vsHandle.IsValid() || !psHandle.IsValid()) {
-        UZ_LOG(Renderer, Error, "Failed to create mesh shaders");
-        return false;
-    }
-
-    // ── Pipeline ─────────────────────────────────────────────────────────
-    // SM5 input layout: POSITION(float3) + NORMAL(float3) + TEXCOORD(float2) + TANGENT(float4)
-    RHIInputElementDesc inputElements[] = {
-        { RHIInputSemantic::Position, 0, RHIFormat::RGB32Float,  0, 0  },
-        { RHIInputSemantic::Normal,   0, RHIFormat::RGB32Float,  0, 12 },
-        { RHIInputSemantic::Texcoord, 0, RHIFormat::RG32Float,   0, 24 },
-        { RHIInputSemantic::Tangent,  0, RHIFormat::RGBA32Float, 0, 32 },
-    };
-
-    RHIGraphicsPipelineDesc pipeDesc{};
-    pipeDesc.vertexShader = vsHandle;
-    pipeDesc.pixelShader = psHandle;
-    pipeDesc.topology = RHIPrimitiveTopology::TriangleList;
-    pipeDesc.rasterizer.cullMode = RHICullMode::Back;
-    pipeDesc.rasterizer.frontCounterClockwise = false;
-    pipeDesc.depthStencil.depthEnable = true;
-    pipeDesc.depthStencil.depthWrite = true;
-    pipeDesc.renderTargetFormats[0] = swapChain->GetFormat();
-    pipeDesc.renderTargetCount = 1;
-    pipeDesc.depthStencilFormat = RHIFormat::D32Float;
-    pipeDesc.debugName = "MeshPipeline";
-
-    if (!bindless) {
-        pipeDesc.inputElements = inputElements;
-        pipeDesc.inputElementCount = 4;
-        pipeDesc.vertexStride = sizeof(Vertex);
-    }
-
-    RHIPipelineHandle pipeline = device->CreateGraphicsPipeline(pipeDesc);
-    if (!pipeline.IsValid()) {
-        UZ_LOG(Renderer, Error, "Failed to create mesh pipeline");
-        return false;
-    }
-
-    // ── Load Mesh from .uzmesh asset ──────────────────────────────────────
-    std::string meshPath = (uz::GetExeDir() / "assets/cube.uzmesh").string();
-    Mesh cubeMesh = LoadMesh(meshPath);
-    if (!cubeMesh.IsValid()) {
-        UZ_LOG(Renderer, Error, "Failed to load cube.uzmesh from '{}'", meshPath);
-        return false;
-    }
-    UZ_LOG(Renderer, Info, "Loaded cube.uzmesh: {} vertices, {} indices, stride={}",
-           cubeMesh.GetVertexCount(), cubeMesh.GetIndexCount(), cubeMesh.header.vertexStride);
-
-    // ── Upload Vertex Buffer ──────────────────────────────────────────────
-    RHIBufferDesc vbDesc{};
-    vbDesc.sizeBytes = cubeMesh.GetVertexDataSize();
-    vbDesc.stride = cubeMesh.header.vertexStride;
-    vbDesc.usage = bindless ? RHIBufferUsage::StructuredBuffer : RHIBufferUsage::VertexBuffer;
-    vbDesc.memory = RHIMemoryType::Upload;
-    vbDesc.debugName = "MeshVertexBuffer";
-
-    RHIBufferHandle vbHandle = device->CreateBuffer(vbDesc);
-    void* vbMapped = device->MapBuffer(vbHandle);
-    std::memcpy(vbMapped, cubeMesh.vertexData.data(), cubeMesh.GetVertexDataSize());
-    device->UnmapBuffer(vbHandle);
-
-    uint32_t vbSrvIndex = 0;
-    if (bindless) {
-        vbSrvIndex = device->GetBufferSRVIndex(vbHandle);
-    }
-
-    // ── Upload Index Buffer ───────────────────────────────────────────────
-    RHIBufferDesc ibDesc{};
-    ibDesc.sizeBytes = cubeMesh.GetIndexDataSize();
-    ibDesc.stride = (cubeMesh.header.indexFormat == MeshIndexFormat::UInt32) ? 4u : 2u;
-    ibDesc.usage = RHIBufferUsage::IndexBuffer;
-    ibDesc.memory = RHIMemoryType::Upload;
-    ibDesc.debugName = "MeshIndexBuffer";
-
-    RHIBufferHandle ibHandle = device->CreateBuffer(ibDesc);
-    void* ibMapped = device->MapBuffer(ibHandle);
-    std::memcpy(ibMapped, cubeMesh.indexData.data(), cubeMesh.GetIndexDataSize());
-    device->UnmapBuffer(ibHandle);
-
-    // ── Depth Buffer ──────────────────────────────────────────────────────
+    // ── Depth Buffer ─────────────────────────────────────────────────────
     RHITextureDesc depthDesc{};
-    depthDesc.width = scDesc.width;
-    depthDesc.height = scDesc.height;
+    depthDesc.width  = GetWidth();
+    depthDesc.height = GetHeight();
     depthDesc.format = RHIFormat::D32Float;
-    depthDesc.usage = RHITextureUsage::DepthStencil;
+    depthDesc.usage  = RHITextureUsage::DepthStencil;
     depthDesc.debugName = "DepthBuffer";
+    depthBuffer_ = device->CreateTexture(depthDesc);
 
-    RHITextureHandle depthBuffer = device->CreateTexture(depthDesc);
-
-    // ── CB Ring Allocator ─────────────────────────────────────────────────
-    CBRingAllocator cbRing;
-    cbRing.Init(device, kFramesInFlight, 64 * 1024);
+    // ── CB Ring Allocator ────────────────────────────────────────────────
+    cbRing_ = std::make_unique<CBRingAllocator>();
+    cbRing_->Init(device, 3, 64 * 1024);
 
 #ifdef _WIN32
-    // ── Editor Grid (Windows only — depends on ShaderPipeline) ───────────
-    EditorGrid editorGrid;
-    if (!editorGrid.Init(device, shaderPipeline, swapChain->GetFormat(), RHIFormat::D32Float)) {
+    // ── Editor Grid ──────────────────────────────────────────────────────
+    editorGrid_ = std::make_unique<EditorGrid>();
+    if (!editorGrid_->Init(device, *shaderPipeline_, GetSwapChain()->GetFormat(), RHIFormat::D32Float)) {
         UZ_LOG(Renderer, Error, "Failed to initialize editor grid");
-        return false;
     }
 #endif
 
-    // ── Stats Overlay ─────────────────────────────────────────────────────
-    StatsOverlay statsOverlay;
-    bool hasStatsOverlay = false;
+    // ── Stats Overlay ────────────────────────────────────────────────────
+    statsOverlay_ = std::make_unique<StatsOverlay>();
     {
         UploadContext upload(device);
         cmdList->Begin();
 
 #ifdef _WIN32
-        if (!statsOverlay.Init(device, cmdList, upload, shaderPipeline,
-                               swapChain->GetFormat(), winDesc.width, winDesc.height, bindless)) {
+        if (!statsOverlay_->Init(device, cmdList, upload, *shaderPipeline_,
+                                  GetSwapChain()->GetFormat(), GetWidth(), GetHeight(), bindless_)) {
             UZ_LOG(Renderer, Error, "Failed to initialize stats overlay");
-            return false;
         }
-        hasStatsOverlay = true;
 #endif
-        // macOS: stats overlay skipped for now — depends on ShaderPipeline for
-        // overlay text/rect shaders. Will be enabled once MSL overlay shaders
-        // are integrated (same pattern as camera_test).
 
         cmdList->End();
         cmdList->Execute();
@@ -492,33 +276,31 @@ bool RunMeshTestDemo(const MeshTestConfig& config) {
     }
 
 #ifdef _WIN32
-    // ── Screenshot Capture (Windows only) ────────────────────────────────
-    ScreenshotCapture screenshotCapture;
-    bool screenshotPending = !config.screenshotPath.empty();
-    if (screenshotPending) {
-        if (!screenshotCapture.Init(device, scDesc.width, scDesc.height)) {
+    // ── Screenshot Capture ───────────────────────────────────────────────
+    screenshotPending_ = !config_.screenshotPath.empty();
+    if (screenshotPending_) {
+        screenshotCapture_ = std::make_unique<ScreenshotCapture>();
+        if (!screenshotCapture_->Init(device, GetWidth(), GetHeight())) {
             UZ_LOG(Renderer, Error, "Failed to initialize screenshot capture");
-            return false;
         }
     }
 #endif
 
-    // ── Render Graph Resource Pool (persistent across frames) ────────────
-    rg::RgResourcePool rgPool(device);
+    // ── Render Graph Resource Pool ───────────────────────────────────────
+    rgPool_ = std::make_unique<rg::RgResourcePool>(device);
 
-    // ── Camera ────────────────────────────────────────────────────────────
-    Camera camera;
+    // ── Camera ───────────────────────────────────────────────────────────
     constexpr float kHFovDeg = 90.f;
-    constexpr float kAspect = 16.f / 9.f;
+    constexpr float kAspect  = 16.f / 9.f;
     float vFovRad = 2.f * std::atan(std::tan(kHFovDeg * 0.5f * 3.14159265f / 180.f) / kAspect);
-    camera.SetPerspective(vFovRad,
-        static_cast<float>(winDesc.width) / static_cast<float>(winDesc.height),
+    camera_.SetPerspective(vFovRad,
+        static_cast<float>(GetWidth()) / static_cast<float>(GetHeight()),
         0.1f, 1000.f);
     // Same initial position as camera_test for direct comparison
-    camera.SetPosition({0.f, 5.f, 2.5f});
+    camera_.SetPosition({0.f, 5.f, 2.5f});
     {
         constexpr float kDegToRad = 3.14159265f / 180.f;
-        float yawRad = -90.f * kDegToRad;
+        float yawRad   = -90.f * kDegToRad;
         float pitchRad = -15.f * kDegToRad;
         float cosPitch = std::cos(pitchRad);
         Vec3 forward = {
@@ -526,259 +308,395 @@ bool RunMeshTestDemo(const MeshTestConfig& config) {
             std::sin(yawRad) * cosPitch,
             std::sin(pitchRad)
         };
-        Vec3 pos = camera.GetPosition();
-        camera.LookAt(pos + forward, Vec3::Up());
+        Vec3 pos = camera_.GetPosition();
+        camera_.LookAt(pos + forward, Vec3::Up());
     }
 
-    FPSCameraController cameraCtrl;
-    cameraCtrl.InitFromCamera(camera);
-    cameraCtrl.SetMoveSpeed(10.f);
-
-    // ── Render Loop ───────────────────────────────────────────────────────
-    uint32_t frameIndex = 0;
-    uint64_t globalFenceValue = 0;
-    auto prevTime = std::chrono::high_resolution_clock::now();
-    auto startTime = prevTime;
+    cameraCtrl_.InitFromCamera(camera_);
+    cameraCtrl_.SetMoveSpeed(10.f);
 
     UZ_LOG(Renderer, Info, "Mesh test demo started — lit cube with mesh shaders");
+}
 
-    while (window.PumpMessages() && window.IsOpen()) {
-        // Skip rendering while minimized — swapchain surface is 0x0
-        if (window.IsMinimized()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-            continue;
+// ─────────────────────────────────────────────────────────────────────────────
+// CompileShaders
+// ─────────────────────────────────────────────────────────────────────────────
+
+void MeshTestDemo::CompileShaders() {
+    auto* device = GetDevice();
+
+#ifdef _WIN32
+    compiler_ = std::make_unique<ShaderCompiler>();
+    if (!compiler_->Init()) {
+        UZ_LOG(Renderer, Error, "Failed to init shader compiler");
+        return;
+    }
+
+    shaderPipeline_ = std::make_unique<ShaderPipeline>();
+    ShaderPipeline::Config pipelineCfg;
+    pipelineCfg.cacheDir      = (uz::GetExeDir() / "cache/shaders").string();
+    pipelineCfg.targetBackend = bindless_ ? "dx12_sm66" : "dx12_sm50";
+    pipelineCfg.bindless      = bindless_;
+    shaderPipeline_->Init(pipelineCfg);
+    shaderPipeline_->SetCompiler(compiler_.get());
+
+    if (!bindless_) {
+        compilerFXC_ = std::make_unique<ShaderCompilerFXC>();
+        if (!compilerFXC_->Init()) {
+            UZ_LOG(Renderer, Error, "Failed to init FXC shader compiler");
+            return;
         }
+        shaderPipeline_->SetCompilerFXC(compilerFXC_.get());
+    }
 
-        if (frameCount > 0 && frameIndex >= frameCount) break;
+    auto vsBytecode = shaderPipeline_->LoadBytecodeFromSource(
+        EngineShaders::GetName(EngineShader::MeshVS),
+        EngineShaders::GetSource(EngineShader::MeshVS));
+    auto psBytecode = shaderPipeline_->LoadBytecodeFromSource(
+        EngineShaders::GetName(EngineShader::MeshPS),
+        EngineShaders::GetSource(EngineShader::MeshPS));
+    if (vsBytecode.empty() || psBytecode.empty()) {
+        UZ_LOG(Renderer, Error, "Failed to compile mesh shaders from embedded source");
+        return;
+    }
 
-        // ── Timing ───────────────────────────────────────────────────────
-        auto now = std::chrono::high_resolution_clock::now();
-        float dt = std::chrono::duration<float>(now - prevTime).count();
-        float totalTime = std::chrono::duration<float>(now - startTime).count();
-        prevTime = now;
+    RHIShaderDesc vsDesc{};
+    vsDesc.bytecode     = vsBytecode.data();
+    vsDesc.bytecodeSize = vsBytecode.size();
+    vsDesc.stage        = RHIShaderStage::Vertex;
+    vsDesc.entryPoint   = "main";
+    vsDesc.debugName    = "mesh_vs";
 
-        // ── Stats ─────────────────────────────────────────────────────────
-        if (hasStatsOverlay) {
-            statsOverlay.BeginFrame(dt);
-        }
+    RHIShaderDesc psDesc{};
+    psDesc.bytecode     = psBytecode.data();
+    psDesc.bytecodeSize = psBytecode.size();
+    psDesc.stage        = RHIShaderStage::Pixel;
+    psDesc.entryPoint   = "main";
+    psDesc.debugName    = "mesh_ps";
 
-        // ── Input ─────────────────────────────────────────────────────────
-        input.BeginFrame();
+#elif defined(__APPLE__)
+    RHIShaderDesc vsDesc{};
+    vsDesc.bytecode     = kMeshVSSource;
+    vsDesc.bytecodeSize = std::strlen(kMeshVSSource);
+    vsDesc.stage        = RHIShaderStage::Vertex;
+    vsDesc.entryPoint   = "vertex_main";
+    vsDesc.debugName    = "mesh_vs_msl";
 
-        // ── Camera Update ─────────────────────────────────────────────────
-        cameraCtrl.Update(camera, input, dt);
+    RHIShaderDesc psDesc{};
+    psDesc.bytecode     = kMeshPSSource;
+    psDesc.bytecodeSize = std::strlen(kMeshPSSource);
+    psDesc.stage        = RHIShaderStage::Pixel;
+    psDesc.entryPoint   = "fragment_main";
+    psDesc.debugName    = "mesh_ps_msl";
+#endif
 
-        // ── Resize ───────────────────────────────────────────────────────
-        if (window.WasResized()) {
-            device->WaitIdle();
-            swapChain->Resize(
-                static_cast<uint32_t>(window.GetWidth()),
-                static_cast<uint32_t>(window.GetHeight()));
-            device->DestroyTexture(depthBuffer);
-            depthDesc.width = static_cast<uint32_t>(window.GetWidth());
-            depthDesc.height = static_cast<uint32_t>(window.GetHeight());
-            depthBuffer = device->CreateTexture(depthDesc);
-            if (hasStatsOverlay) {
-                statsOverlay.SetScreenSize(depthDesc.width, depthDesc.height);
+    vsHandle_ = device->CreateShader(vsDesc);
+    psHandle_ = device->CreateShader(psDesc);
+
+    if (!vsHandle_.IsValid() || !psHandle_.IsValid()) {
+        UZ_LOG(Renderer, Error, "Failed to create mesh shaders");
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CreatePipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+void MeshTestDemo::CreatePipeline() {
+    auto* device = GetDevice();
+
+    RHIInputElementDesc inputElements[] = {
+        { RHIInputSemantic::Position, 0, RHIFormat::RGB32Float,  0, 0  },
+        { RHIInputSemantic::Normal,   0, RHIFormat::RGB32Float,  0, 12 },
+        { RHIInputSemantic::Texcoord, 0, RHIFormat::RG32Float,   0, 24 },
+        { RHIInputSemantic::Tangent,  0, RHIFormat::RGBA32Float, 0, 32 },
+    };
+
+    RHIGraphicsPipelineDesc pipeDesc{};
+    pipeDesc.vertexShader                 = vsHandle_;
+    pipeDesc.pixelShader                  = psHandle_;
+    pipeDesc.topology                     = RHIPrimitiveTopology::TriangleList;
+    pipeDesc.rasterizer.cullMode          = RHICullMode::Back;
+    pipeDesc.rasterizer.frontCounterClockwise = false;
+    pipeDesc.depthStencil.depthEnable     = true;
+    pipeDesc.depthStencil.depthWrite      = true;
+    pipeDesc.renderTargetFormats[0]       = GetSwapChain()->GetFormat();
+    pipeDesc.renderTargetCount            = 1;
+    pipeDesc.depthStencilFormat           = RHIFormat::D32Float;
+    pipeDesc.debugName                    = "MeshPipeline";
+
+    if (!bindless_) {
+        pipeDesc.inputElements     = inputElements;
+        pipeDesc.inputElementCount = 4;
+        pipeDesc.vertexStride      = sizeof(Vertex);
+    }
+
+    pipeline_ = device->CreateGraphicsPipeline(pipeDesc);
+    if (!pipeline_.IsValid()) {
+        UZ_LOG(Renderer, Error, "Failed to create mesh pipeline");
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LoadMeshData
+// ─────────────────────────────────────────────────────────────────────────────
+
+void MeshTestDemo::LoadMeshData() {
+    auto* device = GetDevice();
+
+    std::string meshPath = (uz::GetExeDir() / "assets/cube.uzmesh").string();
+    auto loaded = LoadMesh(meshPath);
+    if (!loaded.IsValid()) {
+        UZ_LOG(Renderer, Error, "Failed to load cube.uzmesh from '{}'", meshPath);
+        return;
+    }
+    UZ_LOG(Renderer, Info, "Loaded cube.uzmesh: {} vertices, {} indices, stride={}",
+           loaded.GetVertexCount(), loaded.GetIndexCount(), loaded.header.vertexStride);
+
+    cubeMesh_ = std::make_unique<Mesh>(std::move(loaded));
+
+    // Upload vertex buffer
+    RHIBufferDesc vbDesc{};
+    vbDesc.sizeBytes  = cubeMesh_->GetVertexDataSize();
+    vbDesc.stride     = cubeMesh_->header.vertexStride;
+    vbDesc.usage      = bindless_ ? RHIBufferUsage::StructuredBuffer : RHIBufferUsage::VertexBuffer;
+    vbDesc.memory     = RHIMemoryType::Upload;
+    vbDesc.debugName  = "MeshVertexBuffer";
+
+    vbHandle_ = device->CreateBuffer(vbDesc);
+    void* vbMapped = device->MapBuffer(vbHandle_);
+    std::memcpy(vbMapped, cubeMesh_->vertexData.data(), cubeMesh_->GetVertexDataSize());
+    device->UnmapBuffer(vbHandle_);
+
+    if (bindless_) {
+        vbSrvIndex_ = device->GetBufferSRVIndex(vbHandle_);
+    }
+
+    // Upload index buffer
+    RHIBufferDesc ibDesc{};
+    ibDesc.sizeBytes  = cubeMesh_->GetIndexDataSize();
+    ibDesc.stride     = (cubeMesh_->header.indexFormat == MeshIndexFormat::UInt32) ? 4u : 2u;
+    ibDesc.usage      = RHIBufferUsage::IndexBuffer;
+    ibDesc.memory     = RHIMemoryType::Upload;
+    ibDesc.debugName  = "MeshIndexBuffer";
+
+    ibHandle_ = device->CreateBuffer(ibDesc);
+    void* ibMapped = device->MapBuffer(ibHandle_);
+    std::memcpy(ibMapped, cubeMesh_->indexData.data(), cubeMesh_->GetIndexDataSize());
+    device->UnmapBuffer(ibHandle_);
+
+    indexFormat_ = (cubeMesh_->header.indexFormat == MeshIndexFormat::UInt32)
+        ? RHIIndexFormat::Uint32 : RHIIndexFormat::Uint16;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OnResize
+// ─────────────────────────────────────────────────────────────────────────────
+
+void MeshTestDemo::OnResize(uint32_t width, uint32_t height) {
+    auto* device = GetDevice();
+
+    // Recreate depth buffer at new dimensions
+    device->DestroyTexture(depthBuffer_);
+    RHITextureDesc depthDesc{};
+    depthDesc.width     = width;
+    depthDesc.height    = height;
+    depthDesc.format    = RHIFormat::D32Float;
+    depthDesc.usage     = RHITextureUsage::DepthStencil;
+    depthDesc.debugName = "DepthBuffer";
+    depthBuffer_ = device->CreateTexture(depthDesc);
+
+    if (statsOverlay_) {
+        statsOverlay_->SetScreenSize(width, height);
+    }
+
+    camera_.SetAspectRatio(static_cast<float>(width) / static_cast<float>(height));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OnFrame
+// ─────────────────────────────────────────────────────────────────────────────
+
+void MeshTestDemo::OnFrame(float dt) {
+    auto* device    = GetDevice();
+    auto* cmdList   = GetCommandList();
+    auto* swapChain = GetSwapChain();
+
+    auto now = std::chrono::high_resolution_clock::now();
+    totalTime_ = std::chrono::duration<float>(now - startTime_).count();
+
+    // ── Stats ────────────────────────────────────────────────────────────
+    if (statsOverlay_) {
+        statsOverlay_->BeginFrame(dt);
+    }
+
+    // ── Input ────────────────────────────────────────────────────────────
+    input_->BeginFrame();
+
+    // ── Camera Update ────────────────────────────────────────────────────
+    cameraCtrl_.Update(camera_, *input_, dt);
+
+    // ── Upload PerFrameCB ────────────────────────────────────────────────
+    cbRing_->BeginFrame(GetFrameIndex());
+
+    PerFrameMultiLightCB perFrame{};
+    perFrame.viewProj = camera_.GetViewProjection();
+    Vec3 camPos = camera_.GetPosition();
+    perFrame.cameraPos  = {camPos.x, camPos.y, camPos.z, 0.f};
+    perFrame.timeParams = {totalTime_, dt, static_cast<float>(GetFrameIndex()), 0.f};
+    perFrame.ambientColor = {0.08f, 0.08f, 0.1f, 0.f};
+
+    // Directional light — direction toward light, white at intensity 3
+    perFrame.lightCount = 1;
+    LightDataGPU& sun = perFrame.lights[0];
+    Vec3 rawDir = {0.5f, 1.0f, 0.3f};
+    float len = std::sqrt(rawDir.x * rawDir.x + rawDir.y * rawDir.y + rawDir.z * rawDir.z);
+    sun.positionOrDir = {rawDir.x / len, rawDir.y / len, rawDir.z / len};
+    sun.range     = 0.f;
+    sun.color     = {3.0f, 3.0f, 3.0f};
+    sun.lightType = 0.f;
+
+    CBAllocation perFrameAlloc = cbRing_->Allocate(sizeof(PerFrameMultiLightCB));
+    std::memcpy(perFrameAlloc.cpuPtr, &perFrame, sizeof(PerFrameMultiLightCB));
+
+    // ── Upload PerObjectCB ───────────────────────────────────────────────
+    PerObjectCB perObject{};
+    perObject.model        = Mat4::TRS({0.f, 0.f, 0.f}, 1.f);
+    perObject.normalMatrix = perObject.model.NormalMatrix();
+    perObject.albedoIndex  = 0;
+
+    CBAllocation perObjectAlloc = cbRing_->Allocate(sizeof(PerObjectCB));
+    std::memcpy(perObjectAlloc.cpuPtr, &perObject, sizeof(PerObjectCB));
+
+    // ── Record via render graph ──────────────────────────────────────────
+    bool capturedThisFrame = false;
+
+    RHITextureHandle backBuffer = swapChain->GetCurrentBackBuffer();
+
+    rg::RgBuilder rgBuilder(device, rgPool_.get());
+    auto bbRes = rgBuilder.ImportTexture("Backbuffer", backBuffer, RHIResourceState::Present);
+
+    // Main 3D pass: clear + mesh + grid + stats overlay.
+    rgBuilder.AddPass("MeshScene", [&](rg::RgPassBuilder& pb) {
+        pb.Write(bbRes, RHIResourceState::RenderTarget);
+        pb.SetExecutionCallback([&](IRHICommandList* cmd, const rg::RgPassResources& res) {
+            auto bb = res.GetTexture(bbRes);
+
+            float clearColor[4] = {0.05f, 0.05f, 0.08f, 1.0f};
+            cmd->ClearRenderTarget(bb, clearColor);
+            cmd->ClearDepthStencil(depthBuffer_, 1.0f, 0);
+
+            RHIRenderPassDesc passDesc{};
+            passDesc.colorAttachmentCount        = 1;
+            passDesc.colorAttachments[0].texture = bb;
+            passDesc.colorAttachments[0].clear   = false;
+            passDesc.hasDepth                    = true;
+            passDesc.depthAttachment.texture     = depthBuffer_;
+            passDesc.depthAttachment.clearDepth  = 1.0f;
+            passDesc.depthAttachment.clear       = false;
+            cmd->BeginRenderPass(passDesc);
+
+            cmd->SetPipeline(pipeline_);
+
+            if (bindless_) {
+                cmd->SetDescriptorIndex(0, vbSrvIndex_);
+            } else {
+                cmd->SetVertexBuffer(0, vbHandle_, 0);
             }
-            window.ClearResizedFlag();
-            camera.SetAspectRatio(
-                static_cast<float>(window.GetWidth()) /
-                static_cast<float>(window.GetHeight()));
-        }
 
-        // Wait for frame N-2 before reusing its allocator slot
-        uint32_t allocFrame = frameIndex % kFramesInFlight;
-        if (fenceValues[allocFrame] > 0) {
-            frameFences[allocFrame]->WaitCPU(fenceValues[allocFrame]);
-        }
+            cmd->SetRootCBV(1, perFrameAlloc.bufferHandle, perFrameAlloc.offsetBytes,
+                            perFrameAlloc.cpuPtr, sizeof(PerFrameMultiLightCB));
+            cmd->SetRootCBV(2, perObjectAlloc.bufferHandle, perObjectAlloc.offsetBytes,
+                            perObjectAlloc.cpuPtr, sizeof(PerObjectCB));
 
-        // ── Upload PerFrameCB ─────────────────────────────────────────────
-        cbRing.BeginFrame(frameIndex);
+            RHIViewport vp{};
+            vp.width    = static_cast<float>(swapChain->GetWidth());
+            vp.height   = static_cast<float>(swapChain->GetHeight());
+            vp.maxDepth = 1.0f;
+            cmd->SetViewport(vp);
 
-        PerFrameMultiLightCB perFrame{};
-        perFrame.viewProj = camera.GetViewProjection();
-        Vec3 camPos = camera.GetPosition();
-        perFrame.cameraPos = {camPos.x, camPos.y, camPos.z, 0.f};
-        perFrame.timeParams = {totalTime, dt, static_cast<float>(frameIndex), 0.f};
-        perFrame.ambientColor = {0.08f, 0.08f, 0.1f, 0.f};
+            RHIScissorRect sc{};
+            sc.right  = static_cast<int32_t>(swapChain->GetWidth());
+            sc.bottom = static_cast<int32_t>(swapChain->GetHeight());
+            cmd->SetScissor(sc);
 
-        // Directional light — direction toward light, white at intensity 3
-        perFrame.lightCount = 1;
-        LightDataGPU& sun = perFrame.lights[0];
-        Vec3 rawDir = {0.5f, 1.0f, 0.3f};
-        float len = std::sqrt(rawDir.x * rawDir.x + rawDir.y * rawDir.y + rawDir.z * rawDir.z);
-        sun.positionOrDir = {rawDir.x / len, rawDir.y / len, rawDir.z / len};
-        sun.range = 0.f;
-        sun.color = {3.0f, 3.0f, 3.0f};
-        sun.lightType = 0.f;
-
-        CBAllocation perFrameAlloc = cbRing.Allocate(sizeof(PerFrameMultiLightCB));
-        std::memcpy(perFrameAlloc.cpuPtr, &perFrame, sizeof(PerFrameMultiLightCB));
-
-        // ── Upload PerObjectCB ────────────────────────────────────────────
-        PerObjectCB perObject{};
-        perObject.model = Mat4::TRS({0.f, 0.f, 0.f}, 1.f);
-        perObject.normalMatrix = perObject.model.NormalMatrix();
-        perObject.albedoIndex = 0;
-
-        CBAllocation perObjectAlloc = cbRing.Allocate(sizeof(PerObjectCB));
-        std::memcpy(perObjectAlloc.cpuPtr, &perObject, sizeof(PerObjectCB));
-
-        // ── Record via render graph ──────────────────────────────────────
-        bool capturedThisFrame = false;
-        cmdList->Begin();
-
-        RHITextureHandle backBuffer = swapChain->GetCurrentBackBuffer();
-
-        rg::RgBuilder rgBuilder(device, &rgPool);
-        auto bbRes = rgBuilder.ImportTexture("Backbuffer", backBuffer, RHIResourceState::Present);
-
-        // Main 3D pass: clear + mesh + grid + stats overlay.
-        rgBuilder.AddPass("MeshScene", [&](rg::RgPassBuilder& pb) {
-            pb.Write(bbRes, RHIResourceState::RenderTarget);
-            pb.SetExecutionCallback([&](IRHICommandList* cmd, const rg::RgPassResources& res) {
-                auto bb = res.GetTexture(bbRes);
-
-                float clearColor[4] = {0.05f, 0.05f, 0.08f, 1.0f};
-                cmd->ClearRenderTarget(bb, clearColor);
-                cmd->ClearDepthStencil(depthBuffer, 1.0f, 0);
-
-                RHIRenderPassDesc passDesc{};
-                passDesc.colorAttachmentCount = 1;
-                passDesc.colorAttachments[0].texture = bb;
-                passDesc.colorAttachments[0].clear = false;
-                passDesc.hasDepth = true;
-                passDesc.depthAttachment.texture = depthBuffer;
-                passDesc.depthAttachment.clearDepth = 1.0f;
-                passDesc.depthAttachment.clear = false;
-                cmd->BeginRenderPass(passDesc);
-
-                cmd->SetPipeline(pipeline);
-
-                if (bindless) {
-                    cmd->SetDescriptorIndex(0, vbSrvIndex);
-                } else {
-                    cmd->SetVertexBuffer(0, vbHandle, 0);
-                }
-
-                cmd->SetRootCBV(1, perFrameAlloc.bufferHandle, perFrameAlloc.offsetBytes,
-                                perFrameAlloc.cpuPtr, sizeof(PerFrameMultiLightCB));
-                cmd->SetRootCBV(2, perObjectAlloc.bufferHandle, perObjectAlloc.offsetBytes,
-                                perObjectAlloc.cpuPtr, sizeof(PerObjectCB));
-
-                RHIViewport vp{};
-                vp.width = static_cast<float>(swapChain->GetWidth());
-                vp.height = static_cast<float>(swapChain->GetHeight());
-                vp.maxDepth = 1.0f;
-                cmd->SetViewport(vp);
-
-                RHIScissorRect sc{};
-                sc.right = static_cast<int32_t>(swapChain->GetWidth());
-                sc.bottom = static_cast<int32_t>(swapChain->GetHeight());
-                cmd->SetScissor(sc);
-
-                RHIIndexFormat idxFmt = (cubeMesh.header.indexFormat == MeshIndexFormat::UInt32)
-                    ? RHIIndexFormat::Uint32 : RHIIndexFormat::Uint16;
-                cmd->SetIndexBuffer(ibHandle, idxFmt, 0);
-                cmd->DrawIndexed(cubeMesh.GetIndexCount());
+            cmd->SetIndexBuffer(ibHandle_, indexFormat_, 0);
+            cmd->DrawIndexed(cubeMesh_->GetIndexCount());
 
 #ifdef _WIN32
-                editorGrid.Draw(cmd, cbRing, camera);
+            if (editorGrid_) {
+                editorGrid_->Draw(cmd, *cbRing_, camera_);
+            }
 #endif
 
-                statsOverlay.SetDrawCalls(2);
-                statsOverlay.SetVertexCount(cubeMesh.GetVertexCount() + 3);
-                statsOverlay.SetTriangleCount(cubeMesh.GetIndexCount() / 3 + 1);
-                statsOverlay.Render(cmd, cbRing, frameIndex);
+            if (statsOverlay_) {
+                statsOverlay_->SetDrawCalls(2);
+                statsOverlay_->SetVertexCount(cubeMesh_->GetVertexCount() + 3);
+                statsOverlay_->SetTriangleCount(cubeMesh_->GetIndexCount() / 3 + 1);
+                statsOverlay_->Render(cmd, *cbRing_, GetFrameIndex());
+            }
 
-                cmd->EndRenderPass();
+            cmd->EndRenderPass();
+        });
+    });
+
+    // Screenshot pass (optional).
+#ifdef _WIN32
+    if (screenshotPending_ && GetFrameIndex() == config_.screenshotFrame) {
+        rgBuilder.AddPass("Screenshot", [&](rg::RgPassBuilder& pb) {
+            pb.Read(bbRes, RHIResourceState::RenderTarget);
+            pb.SetExecutionCallback([&](IRHICommandList*, const rg::RgPassResources&) {
+                screenshotCapture_->CaptureBackBuffer(cmdList, swapChain);
+                capturedThisFrame = true;
             });
         });
-
-        // Screenshot pass (optional).
-#ifdef _WIN32
-        if (screenshotPending && frameIndex == config.screenshotFrame) {
-            rgBuilder.AddPass("Screenshot", [&](rg::RgPassBuilder& pb) {
-                pb.Read(bbRes, RHIResourceState::RenderTarget);
-                pb.SetExecutionCallback([&](IRHICommandList*, const rg::RgPassResources&) {
-                    screenshotCapture.CaptureBackBuffer(cmdList, swapChain);
-                    capturedThisFrame = true;
-                });
-            });
-        }
-#endif
-
-        // Present transition pass.
-        rgBuilder.AddPass("Present", [&](rg::RgPassBuilder& pb) {
-            pb.Write(bbRes, RHIResourceState::Present);
-            pb.SetExecutionCallback([](IRHICommandList*, const rg::RgPassResources&) {});
-        });
-
-        rgBuilder.Compile();
-        rgBuilder.Execute(cmdList);
-
-        cmdList->End();
-        cmdList->Execute();
-
-        swapChain->Present(false);
-
-        globalFenceValue++;
-        fenceValues[allocFrame] = globalFenceValue;
-        frameFences[allocFrame]->Signal(globalFenceValue);
-
-#ifdef _WIN32
-        // ── Save screenshot after GPU completes ───────────────────────────
-        if (capturedThisFrame) {
-            frameFences[allocFrame]->WaitCPU(globalFenceValue);
-            screenshotCapture.SaveToPNG(config.screenshotPath);
-            screenshotPending = false;
-        }
-#endif
-
-        frameIndex++;
-
-        // ── FPS Cap ───────────────────────────────────────────────────────
-        auto frameEnd = std::chrono::high_resolution_clock::now();
-        float elapsed = std::chrono::duration<float>(frameEnd - now).count();
-        if (elapsed < kMinFrameTime) {
-            auto sleepUs = std::chrono::microseconds(
-                static_cast<int64_t>((kMinFrameTime - elapsed) * 1e6f));
-            std::this_thread::sleep_for(sleepUs);
-        }
     }
-
-    // ── Cleanup ───────────────────────────────────────────────────────────
-    device->WaitIdle();
-
-    auto endTime = std::chrono::high_resolution_clock::now();
-    float totalMs = std::chrono::duration<float, std::milli>(endTime - startTime).count();
-    float avgMs = frameIndex > 0 ? totalMs / static_cast<float>(frameIndex) : 0.f;
-
-    UZ_LOG(Renderer, Info, "Mesh test demo: {} frames, {:.1f}ms total, {:.2f}ms/frame ({:.0f} FPS)",
-           frameIndex, totalMs, avgMs, avgMs > 0 ? 1000.f / avgMs : 0.f);
-
-    if (hasStatsOverlay) {
-        statsOverlay.Shutdown();
-    }
-#ifdef _WIN32
-    screenshotCapture.Shutdown();
-    editorGrid.Shutdown();
-    shaderPipeline.Shutdown();
 #endif
-    cbRing.Shutdown();
-    device->DestroyTexture(depthBuffer);
-    device->DestroyBuffer(ibHandle);
-    device->DestroyBuffer(vbHandle);
-    device->DestroyPipeline(pipeline);
-    device->DestroyShader(vsHandle);
-    device->DestroyShader(psHandle);
-    for (uint32_t i = 0; i < kFramesInFlight; ++i) device->DestroyFence(frameFences[i]);
-    device->DestroyCommandList(cmdList);
-    device->DestroySwapChain(swapChain);
-    DestroyRHIDevice(device);
 
-    return true;
+    // Present transition pass.
+    rgBuilder.AddPass("Present", [&](rg::RgPassBuilder& pb) {
+        pb.Write(bbRes, RHIResourceState::Present);
+        pb.SetExecutionCallback([](IRHICommandList*, const rg::RgPassResources&) {});
+    });
+
+    rgBuilder.Compile();
+    rgBuilder.Execute(cmdList);
+
+    cmdList->End();
+    cmdList->Execute();
+
+    swapChain->Present(false);
+
+#ifdef _WIN32
+    // Save screenshot after GPU completes
+    if (capturedThisFrame && screenshotCapture_) {
+        device->WaitIdle();
+        screenshotCapture_->SaveToPNG(config_.screenshotPath);
+        screenshotPending_ = false;
+    }
+#endif
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OnShutdown
+// ─────────────────────────────────────────────────────────────────────────────
+
+void MeshTestDemo::OnShutdown() {
+    auto* device = GetDevice();
+
+    if (screenshotCapture_) screenshotCapture_->Shutdown();
+    if (statsOverlay_) statsOverlay_->Shutdown();
+    if (editorGrid_) editorGrid_->Shutdown();
+    if (shaderPipeline_) shaderPipeline_->Shutdown();
+
+    cbRing_->Shutdown();
+
+    device->DestroyTexture(depthBuffer_);
+    device->DestroyBuffer(ibHandle_);
+    device->DestroyBuffer(vbHandle_);
+    device->DestroyPipeline(pipeline_);
+    device->DestroyShader(vsHandle_);
+    device->DestroyShader(psHandle_);
 }
 
 } // namespace uz

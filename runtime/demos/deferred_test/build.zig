@@ -12,17 +12,7 @@ pub fn build(b: *std.Build) void {
             .{ .root = "../../editor/font",  .files = &.{ "bitmap_font.cpp", "text_renderer.cpp" } },
             .{ .root = "../../editor/stats", .files = &.{"stats_overlay.cpp"} },
         },
-        .extra_includes = &.{
-            "../../engine/renderer/camera",
-            "../../engine/renderer/core",
-            "../../engine/renderer/mesh",
-            "../../engine/renderer/shadows",
-            "../../engine/renderer/upload",
-            "../../editor/grid",
-            "../../editor/font",
-            "../../editor/stats",
-            "../../build/generated/shaders",
-        },
+        .extra_includes = &.{},
         .deploy_fxc = true,
         .extra_deploy = &.{
             .{ .source = "assets/cube.uzmesh",                .dest = "assets/cube.uzmesh" },
