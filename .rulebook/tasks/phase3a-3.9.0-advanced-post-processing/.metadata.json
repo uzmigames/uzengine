@@ -1,5 +1,7 @@
 {
-  "status": "pending",
+  "status": "archived",
   "createdAt": "2026-03-13T07:15:39.940Z",
-  "updatedAt": "2026-03-13T07:15:39.940Z"
+  "updatedAt": "2026-03-13T17:00:00.000Z",
+  "archivedAt": "2026-03-13T17:00:00.000Z",
+  "archivedReason": "Superseded by individual tasks: 3.14.0-TAA, 3.15.0-GTAO, 3.16.0-SSR, 3.17.0-DoF, 3.18.0-MotionBlur, 3.19.0-AutoExposure, 3.20.0-ColorGrading, 3.21.0-FilmGrain, 3.22.0-Vignette, 3.23.0-ChromaticAberration, 3.24.0-LensFlare, 3.25.0-PostProcessVolumes, 3.29.0-ContactShadows"
 }

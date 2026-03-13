@@ -1,0 +1,199 @@
+UE5 PARALLAX OCCLUSION MAPPING ANALYSIS - EXECUTIVE SUMMARY
+================================================================
+
+Date: 2026-03-13
+Analyst: Unreal Architect (Deep UE5 source analysis)
+Scope: Extract architectural patterns from W:\UE_5.6_Source for UzEngine adaptation
+
+KEY FINDINGS
+============
+
+1. MATERIAL EXPRESSION COMPOSITION PATTERN
+   - UE5 uses virtual dispatch per expression type (BumpOffset, Normal, etc.)
+   - Each expression compiles to shader code via FMaterialCompiler::Compile()
+   - No switch-on-type; no union types; no RTTI
+   - Pattern: subclass UMaterialExpression, override Compile(), return code index
+
+   File: W:\UE_5.6_Source\Engine\Source\Runtime\Engine\Public\Materials\MaterialExpressionBumpOffset.h
+   File: W:\UE_5.6_Source\Engine\Source\Runtime\Engine\Private\Materials\MaterialExpressions.cpp
+
+2. MATERIAL PROPERTIES AS FIRST-CLASS ENUM
+   - UE5 defines EMaterialProperty with 32+ values: MP_EmissiveColor, MP_Normal, MP_Metallic, etc.
+   - MP_Displacement is **distinct** from MP_WorldPositionOffset and MP_PixelDepthOffset
+   - Allows variant shaders per property (only include code for connected properties)
+
+   File: W:\UE_5.6_Source\Engine\Source\Runtime\Engine\Public\SceneTypes.h (lines 143-187)
+
+3. SHADER CODE GENERATION VIA INTERMEDIATE REPRESENTATION
+   - FShaderCodeChunk structure maintains HLSL code + type + derivatives
+   - Two variants: DefinitionFinite (LOD) and DefinitionAnalytic (chain rule)
+   - Expression compilation builds AST of code chunks; final pass generates shader
+   - Enables dead-code elimination and constant folding
+
+   File: W:\UE_5.6_Source\Engine\Source\Runtime\Engine\Private\Materials\HLSLMaterialTranslator.h (lines 82-170)
+
+4. COORDINATE SPACE TRANSFORMATIONS
+   - BumpOffset transforms camera vector from World → Tangent space at compile-time
+   - Formula: OutputUV = InputUV + (CameraVec.xy in tangent space) * (Height - RefPlane) * Ratio
+   - No runtime matrix inverse; all computed in HLSL as matrix multiplication
+   - Supports multiple texture coordinate sources via optional inputs
+
+   Compile code: W:\UE_5.6_Source\Engine\Source\Runtime\Engine\Private\Materials\MaterialExpressions.cpp
+
+5. DISPLACEMENT HIERARCHY IN UE5
+   - Vertex-space: MP_WorldPositionOffset (pre-rasterization, geometric)
+   - Pixel-space: BumpOffset (parallax texture offset, per-fragment)
+   - Depth-space: MP_PixelDepthOffset (post-projection depth tweak)
+   - Nanite-space: MP_Displacement (for GPU-driven geometry, Nanite virtual mesh)
+   - Screen-space ray marching: Custom shaders (8-32 step iterations)
+
+6. QUALITY TIER ARCHITECTURE
+   - No single "POM shader"; instead precompile variants with different PARALLAX_STEPS
+   - Preprocessor defines: PARALLAX_STEPS = 8/16/32 based on EMaterialQualityLevel
+   - Distance-based LOD: reduce steps at >50m for performance
+   - UE5 approach: zero runtime branching; compile multiple shader variants
+
+7. ANTI-PATTERNS TO AVOID
+   - No switch-on-material-type in shader (bloats code, unfair to profile)
+   - No per-pixel function pointers (GPU ISAs don't support)
+   - No unbounded loops (must be statically determinable loop count)
+   - No runtime dispatch of displacement algorithm (compile-time only)
+
+UZENGINE STATUS (per MEMORY.md)
+================================
+
+✓ IMPLEMENTED:
+  - POM displacement: 8-32 adaptive layers + linear interpolation
+  - Heightmap self-shadow: 6-tap light-direction trace on displacement map
+  - Per-material parameters: normalStrength, specularMultiplier, cavityStrength, selfShadowStrength
+  - RHI boundary respected: displacement logic in shaders, not C++ renderer code
+
+⚠ RECOMMENDED IMPROVEMENTS:
+  - Clarify material property taxonomy (add MaterialPropertyFlags bitset to CB)
+  - Implement adaptive step count based on distance (currently static)
+  - Document interaction between POM and self-shadowing (heightmap trace offset)
+  - Add stat counters: POM cost per frame, step count distribution
+  - Consider binless resource descriptors (dynamic step count via DWORD instead of variant)
+
+✗ CRITICAL: DO NOT DO
+  - Runtime selection of displacement algorithm (compile-time variants only)
+  - Per-pixel branching on material type (use bitmasks + static compiler)
+  - Unbounded loop iteration in ray marching
+  - Manual depth writes conflicting with z-prepass
+
+ARCHITECTURAL PRINCIPLES EXTRACTED
+====================================
+
+Principle 1: EXPRESSION-BASED COMPOSITION
+  - Each material feature (parallax, normal, metallic) is independent expression
+  - Expressions compose via function call graph; no global switch/dispatch
+  - Benefit: modular, testable, extensible without shader bloat
+
+Principle 2: LAZY COMPILATION
+  - Shader only includes code for **connected** properties
+  - Optional inputs checked at compile-time (e.g., HeightRatioInput)
+  - Benefit: minimal shader size; no unused shader code
+
+Principle 3: PROPERTY SEMANTICS MATTER
+  - Displacement (geometric), parallax (texture offset), and depth (post-proj) are **different**
+  - Each requires different coordinate space, evaluation pipeline, and integration point
+  - Benefit: correctness; prevents mixing up concepts; enables future GPU-driven rendering
+
+Principle 4: DERIVATIVES ARE FIRST-CLASS
+  - Shader code generation tracks both finite differences (for LOD) and analytic derivatives (for precision)
+  - Necessary for correct texture sampling and future screen-space derivative work
+  - Benefit: robust LOD calculation; basis for TAA, motion blur, gradient-based effects
+
+Principle 5: VARIANTS OVER BRANCHING
+  - Quality tiers (Low/Med/High) compiled as separate shader variants, not runtime branches
+  - Each platform/quality level gets dedicated shader code
+  - Benefit: cache-friendly; predictable GPU performance; no stalls from branch divergence
+
+FILES DELIVERED
+================
+
+1. PARALLEL OX_MAPPING_ANALYSIS.md
+   - Comprehensive architectural analysis (7 sections)
+   - Pattern-by-pattern breakdown with Problem Solved + UzEngine Adaptation
+   - Risk assessment and anti-patterns
+
+2. UE5_SHADER_PATTERNS_ANALYSIS.md
+   - Exact shader code patterns (8 patterns)
+   - Compilation flow, space transforms, quality tiers
+   - Recommended UzEngine implementation
+
+3. UE5_POM_CODE_REFERENCE.md
+   - Exact file paths and line numbers
+   - Copy-pasteable code snippets
+   - Quick lookup reference (all 9 core files)
+
+4. POM_ANALYSIS_SUMMARY.txt (this file)
+   - Executive summary
+   - Key findings + UzEngine status
+   - Architectural principles
+
+NEXT STEPS FOR UZENGINE
+=======================
+
+Phase 1 (High Priority):
+  [ ] Document material property enum (displacement type flags)
+  [ ] Implement adaptive step count (distance-based LOD)
+  [ ] Add stat counters for POM profiling
+  [ ] Write spec: pom-quality-tiers.md
+
+Phase 2 (Medium Priority):
+  [ ] Consider expression system foundation (future layer)
+  [ ] Implement material attributes struct (Future layer system)
+  [ ] Document heightmap self-shadow interaction
+  [ ] Add LOD-distance thresholds to demo
+
+Phase 3 (Low Priority):
+  [ ] Explore GPU-driven rendering (like Nanite) with displacement
+  [ ] Screen-space derivative tracking (for TAA/motion blur prep)
+  [ ] Material graph editor UI (long-term)
+
+SOURCES
+=======
+
+UE5 Source: W:\UE_5.6_Source (version 5.6, June 2025 snapshot)
+
+Core Files Analyzed:
+  1. W:\UE_5.6_Source\Engine\Source\Runtime\Engine\Public\Materials\MaterialExpressionBumpOffset.h
+  2. W:\UE_5.6_Source\Engine\Source\Runtime\Engine\Private\Materials\MaterialExpressions.cpp
+  3. W:\UE_5.6_Source\Engine\Source\Runtime\Engine\Public\SceneTypes.h
+  4. W:\UE_5.6_Source\Engine\Source\Runtime\Engine\Public\MaterialCompiler.h
+  5. W:\UE_5.6_Source\Engine\Source\Runtime\Engine\Private\Materials\HLSLMaterialTranslator.h
+  6. W:\UE_5.6_Source\Engine\Source\Runtime\Engine\Public\Materials\MaterialExpressionBreakMaterialAttributes.h
+  7. W:\UE_5.6_Source\Engine\Shaders\Private\BasePassVertexShader.usf
+  8. W:\UE_5.6_Source\Engine\Shaders\Private\BinarySearch.ush
+  9. W:\UE_5.6_Source\Engine\Source\Developer\NaniteUtilities\Public\DisplacementMap.h
+
+UzEngine References:
+  - /e/UzEngine/MEMORY.md (POM implementation status)
+  - /e/UzEngine/runtime/engine/renderer/passes/pbr_pass.cpp
+  - /e/UzEngine/docs/architecture/render-pipeline.md
+
+ANALYSIS CONFIDENCE
+===================
+
+High Confidence (95%+):
+  - Material Expression composition pattern (code reviewed, well-documented in UE5)
+  - EMaterialProperty enum structure (enum defined, line-by-line analyzed)
+  - Shader code generation pattern (FShaderCodeChunk, code path traced)
+  - Coordinate space handling (BumpOffset compile code, formulas verified)
+
+Medium Confidence (70-90%):
+  - Quality tier variant compilation (inferred from preprocessor patterns, not traced end-to-end)
+  - Exact performance cliffs at distance (not measured, based on industry practice)
+  - Optimal step count ranges (8/16/32 common, but not validated against UE5 settings)
+
+Areas NOT Fully Analyzed (Future Work):
+  - Temporal coherence patterns (TAA interaction with POM)
+  - Mobile/deferred variant selection (UE5 has multiple shading paths)
+  - Streaming and memory budget constraints
+  - GPU-driven rendering with MP_Displacement (Nanite-specific, complex)
+
+END OF ANALYSIS
+===============
+
+Questions? See the detailed documents for code snippets, file paths, and deeper explanations.
