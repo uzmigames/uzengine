@@ -50,27 +50,77 @@
 #include <tracy/Tracy.hpp>
 
 /// Mark the start of a named scope. Automatically marks exit on return/throw.
-/// Use UZ_PROFILE_SCOPE(MyFunction) to create a ZoneScopedN("MyFunction") RAII guard.
+///
+/// Creates a Tracy ZoneScopedN RAII guard with the given name. Zone lifts on scope exit or exception throw.
+/// Expands to zero-cost `((void)0)` when profiling is disabled.
+///
+/// # Arguments
+/// * `Name` — Identifier (not a string literal) used for zone naming
+///
+/// # Examples
+/// ```cpp
+/// void RenderFrame() {
+///     UZ_PROFILE_SCOPE(RenderFrame);
+///     // Zone recorded in Tracy timeline
+/// }
+/// ```
 #define UZ_PROFILE_SCOPE(Name) ZoneScopedN(#Name)
 
 /// Mark the current function as a profiled scope.
-/// Equivalent to UZ_PROFILE_SCOPE but auto-names from __func__.
+///
+/// Equivalent to UZ_PROFILE_SCOPE but auto-generates zone name from `__func__`.
+/// Expands to zero-cost `((void)0)` when profiling is disabled.
+///
+/// # Examples
+/// ```cpp
+/// void ProcessPhysics() {
+///     UZ_PROFILE_FUNCTION();  // Zone named "ProcessPhysics"
+/// }
+/// ```
 #define UZ_PROFILE_FUNCTION() ZoneScoped
 
 /// Signal end of frame to Tracy profiler.
-/// Call once per frame to create frame boundaries in timeline.
+///
+/// Call once per frame to create frame boundaries and enable frame-relative analysis in the timeline.
+/// Expands to zero-cost `((void)0)` when profiling is disabled.
 #define UZ_PROFILE_FRAME_MARK() FrameMark
 
 /// Set thread name in Tracy for identification.
-/// Helpful for debugging multi-threaded code.
+///
+/// Sets the current thread's name visible in the Tracy timeline for easier thread identification.
+/// Expands to zero-cost `((void)0)` when profiling is disabled.
+///
+/// # Arguments
+/// * `Name` — Thread name string literal (e.g., "RenderThread", "JobWorker-3")
 #define UZ_PROFILE_THREAD(Name) tracy::SetThreadName(Name)
 
-/// Plot a numerical value to Tracy timeline (graph).
-/// Useful for tracking frame time, memory, temperature, etc.
+/// Plot a numerical value to Tracy timeline (appears as a time-series graph).
+///
+/// Low-overhead data point for graphing frame-relative metrics. Data is collected and displayed
+/// as a time-series plot in the Tracy UI (frame time, memory usage, GPU utilization, etc.).
+/// Expands to zero-cost `((void)0)` when profiling is disabled.
+///
+/// # Arguments
+/// * `Name` — Identifier (not a string literal) for the graph series
+/// * `Val` — Numeric value to plot (int or float)
 #define UZ_PROFILE_VALUE(Name, Val) TracyPlot(Name, Val)
 
-/// Annotate current zone with text (shows in timeline).
-/// Useful for logging errors or state within a profiled zone.
+/// Annotate current zone with text (displayed in timeline).
+///
+/// Adds a text annotation to the currently active Tracy zone. Text is copied immediately.
+/// Useful for logging error codes, state names, or conditional diagnostics within a profiled region.
+/// Expands to zero-cost `((void)0)` when profiling is disabled.
+///
+/// # Arguments
+/// * `Text` — C-string (non-owning; copied immediately)
+///
+/// # Examples
+/// ```cpp
+/// UZ_PROFILE_SCOPE(ShaderCompile);
+/// if (error) {
+///     UZ_PROFILE_TAG("compilation failed");  // Annotates the zone
+/// }
+/// ```
 #define UZ_PROFILE_TAG(Text) ZoneText(Text, std::strlen(Text))
 
 #else
@@ -121,6 +171,9 @@ struct GpuProfileScope {
     }
 
     /// Records the end timestamp on scope exit.
+    ///
+    /// # Side Effects
+    /// Calls `profiler.EndTimestamp(cmdList, name)`. Errors are silent (no exception).
     ~GpuProfileScope() {
         m_profiler.EndTimestamp(m_cmdList, m_name);
     }
@@ -162,9 +215,18 @@ private:
 
 namespace uz {
 
-/// Stat counter group (for organization/filtering in UI).
+/// Categorization namespace for stat counters.
+///
+/// Used to organize and filter related statistics in debug UI and telemetry reports.
+/// Built-in groups include `StatRendering`, `StatRHI`, `StatPhysics`, `StatScene`, `StatMemory`, `StatIO`.
+///
+/// # Examples
+/// ```cpp
+/// // Reference in stat macro:
+/// UZ_DECLARE_STAT(Rendering, DrawCalls);  // Uses StatRendering group
+/// ```
 struct StatGroup {
-    const char* name; ///< Group name (e.g., "Render", "Physics")
+    const char* name; ///< Group name (e.g., "Rendering", "RHI", "Physics") — used for UI categorization
 };
 
 /// Atomic counter for a single statistic (e.g., draw calls, memory allocations).
@@ -185,23 +247,29 @@ struct StatGroup {
 /// UZ_STAT_RESET(Rendering, DrawCalls);
 /// ```
 struct StatCounter {
-    const char* name;            ///< Human-readable counter name (e.g., "DrawCalls")
-    const StatGroup* group;      ///< Owning group for categorization
-    std::atomic<int64_t> value{0}; ///< Current counter value
+    const char* name;            ///< Counter name matching UZ_DECLARE_STAT(Group, Name) expansion. Use CamelCase (e.g., "DrawCalls")
+    const StatGroup* group;      ///< Parent group for UI filtering. Set by UZ_DEFINE_STAT; must never be nullptr
+    std::atomic<int64_t> value{0}; ///< Current counter value (incremented atomically, may be stale)
 
     /// Atomically adds `delta` to the counter (default: +1).
     ///
     /// # Arguments
     /// * `delta` - Amount to add (can be negative for decrements)
+    ///
+    /// # Thread Safety
+    /// Thread-safe for concurrent calls via relaxed atomic ordering. Zero lock contention.
     void Increment(int64_t delta = 1) { value.fetch_add(delta, std::memory_order_relaxed); }
 
-    /// Resets the counter to zero. Typically called at frame boundaries.
+    /// Resets the counter to zero (typically at frame boundaries).
+    ///
+    /// # Thread Safety
+    /// Safe concurrent with Increment/Get. May cause a snapshot between increment and reset to be missed.
     void Reset() { value.store(0, std::memory_order_relaxed); }
 
     /// Returns the current counter value.
     ///
     /// # Returns
-    /// Snapshot of the counter (may be stale if other threads are incrementing).
+    /// Snapshot of the counter (may be stale if other threads are incrementing concurrently).
     [[nodiscard]] int64_t Get() const { return value.load(std::memory_order_relaxed); }
 };
 

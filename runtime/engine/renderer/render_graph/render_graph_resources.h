@@ -133,10 +133,14 @@ private:
         bool operator==(const BufferKey& other) const;
     };
 
+    /// Hash functor for `TextureKey`, used by the render graph resource pool's
+    /// `std::unordered_map` to match cached texture allocations by descriptor.
     struct TextureKeyHash {
         size_t operator()(const TextureKey& k) const;
     };
 
+    /// Hash functor for `BufferKey`, used by the render graph resource pool's
+    /// `std::unordered_map` to match cached buffer allocations by descriptor.
     struct BufferKeyHash {
         size_t operator()(const BufferKey& k) const;
     };

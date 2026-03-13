@@ -205,7 +205,16 @@ void JobSystem::ParallelFor(T* data, size_t count, Fn&& fn) {
     const uint32_t totalThreads = GetWorkerCount() + 1; // +1 for calling thread
     const size_t chunkSize = (count + totalThreads - 1) / totalThreads;
 
-    // Capture partition info in Job::data
+    /// Per-chunk partition descriptor stored inline in `Job::data`.
+    ///
+    /// Each ParallelFor worker receives one ChunkData describing its
+    /// [begin, end) slice of the input array plus a pointer to the
+    /// callable. Created on the calling thread's stack and copied into
+    /// the Job inline buffer — must remain trivially copyable and fit
+    /// within `sizeof(Job::data)`.
+    ///
+    /// # Thread Safety
+    /// Each worker owns its ChunkData copy; no synchronization needed.
     struct ChunkData {
         T* ptr;
         size_t begin;
