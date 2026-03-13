@@ -75,8 +75,8 @@ VSOutput main(VSInput v) {
     // Transform normal to world space (using normal matrix)
     output.normalWS = normalize(mul(float4(v.normal, 0.0), normalMatrix).xyz);
 
-    // Transform tangent to world space
-    output.tangentWS = float4(normalize(mul(float4(v.tangent.xyz, 0.0), model).xyz), v.tangent.w);
+    // Transform tangent to world space (normalMatrix for correct non-uniform scale)
+    output.tangentWS = float4(normalize(mul(float4(v.tangent.xyz, 0.0), normalMatrix).xyz), v.tangent.w);
 
     output.texcoord = v.texcoord;
 

@@ -100,7 +100,9 @@ cbuffer PerFrameCB : register(b1) {
     float4   lightColor;     ///< xyz = color * intensity, w = unused.
     float4   ambientColor;   ///< xyz = ambient radiance, w = unused.
     row_major float4x4 invViewProj; ///< Inverse view-projection for world-position reconstruction.
-    float    _framePad[12];  ///< Padding to 256-byte alignment.
+    float    nearPlane;          ///< Near clip plane distance in world units.
+    float    farPlane;           ///< Far clip plane distance in world units.
+    float    _framePad[10];      ///< Remaining padding to 256-byte alignment.
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -117,16 +119,6 @@ Texture2D<float>  gbufferDepth      : register(t3); ///< Hardware depth as R32_F
 
 /// Point sampler — G-Buffer texels map 1:1 to pixels; filtering would smear edges.
 SamplerState pointSampler : register(s0);
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Depth Linearization Constants
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Near clip plane distance in world units (matches engine default projection).
-static const float kNearPlane = 0.1f;
-
-/// Far clip plane distance in world units (matches engine default projection).
-static const float kFarPlane = 1000.0f;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Debug Mode Enumerants

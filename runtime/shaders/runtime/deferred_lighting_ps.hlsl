@@ -23,8 +23,10 @@
 /// - b4: ShadowDataCB (cascade view-proj matrices, splits, bias, atlas index)
 ///
 /// # Output
-/// Linear HDR color tonemapped via Reinhard and gamma-corrected to sRGB for
+/// Linear HDR color tonemapped via ACES filmic and gamma-corrected to sRGB for
 /// the R8G8B8A8_UNORM backbuffer.
+
+#include "include/pbr_common.hlsli"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Input Structure
@@ -128,78 +130,6 @@ SamplerState pointSampler : register(s0);
 SamplerComparisonState shadowSampler : register(s1);
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PBR Constants
-// ─────────────────────────────────────────────────────────────────────────────
-
-static const float PI = 3.14159265359f;
-
-/// Minimum roughness clamped before squaring to alpha, preventing a perfectly
-/// smooth (singular) specular lobe that collapses to a delta function on GPU.
-static const float MIN_ROUGHNESS = 0.04f;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// PBR Helper Functions
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// GGX / Trowbridge-Reitz Normal Distribution Function.
-///
-/// D(h) = alpha^2 / (PI * ((N.H)^2 * (alpha^2 - 1) + 1)^2)
-///
-/// # Parameters
-/// - NdotH: dot product of macrosurface normal N and half-vector H, in [0,1].
-/// - alpha: perceptual roughness squared (r^2), in [MIN_ROUGHNESS^2, 1].
-///
-/// # Returns
-/// Specular lobe density in [0, +inf). Integrates to 1 over the hemisphere.
-float DistributionGGX(float NdotH, float alpha) {
-    float a2    = alpha * alpha;
-    float denom = NdotH * NdotH * (a2 - 1.0f) + 1.0f;
-    return a2 / (PI * denom * denom);
-}
-
-/// Schlick-GGX single-direction geometry masking/shadowing term.
-///
-/// G1(v) = N.V / (N.V * (1 - k) + k)   where k = alpha / 2 for direct lighting
-///
-/// # Parameters
-/// - NdotV: saturated dot product of N and the view or light direction.
-/// - alpha: perceptual roughness squared (r^2).
-///
-/// # Returns
-/// Scalar in (0, 1].
-float GeometrySchlickGGX(float NdotV, float alpha) {
-    float k = alpha / 2.0f;
-    return NdotV / (NdotV * (1.0f - k) + k);
-}
-
-/// Smith combined geometry function for both view and light directions.
-///
-/// # Parameters
-/// - NdotV: saturated dot(N, V).
-/// - NdotL: saturated dot(N, L).
-/// - alpha: perceptual roughness squared (r^2).
-///
-/// # Returns
-/// Scalar geometry attenuation in (0, 1].
-float GeometrySmith(float NdotV, float NdotL, float alpha) {
-    return GeometrySchlickGGX(NdotV, alpha) * GeometrySchlickGGX(NdotL, alpha);
-}
-
-/// Schlick Fresnel approximation.
-///
-/// F(v, h) = F0 + (1 - F0) * (1 - V.H)^5
-///
-/// # Parameters
-/// - cosTheta: dot(V, H) clamped to [0,1].
-/// - F0: reflectance at normal incidence.
-///
-/// # Returns
-/// float3 Fresnel reflectance in [F0, 1].
-float3 FresnelSchlick(float cosTheta, float3 F0) {
-    return F0 + (1.0f - F0) * pow(saturate(1.0f - cosTheta), 5.0f);
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Utility Functions
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -226,186 +156,7 @@ float3 ReconstructWorldPosition(float2 uv, float depth) {
     return worldPos.xyz / worldPos.w;
 }
 
-/// Evaluates Cook-Torrance BRDF for a single light source.
-///
-/// # Parameters
-/// - N:         world-space surface normal (normalised).
-/// - V:         world-space view direction (normalised, toward camera).
-/// - L:         world-space light direction (normalised, toward light).
-/// - radiance:  incoming light radiance (color * intensity * attenuation).
-/// - albedo:    surface base color (linear).
-/// - metallic:  metallic factor [0,1].
-/// - alpha:     roughness^2 (PBR alpha parameter).
-/// - F0:        reflectance at normal incidence.
-///
-/// # Returns
-/// Outgoing radiance contribution from this light.
-float3 EvaluateBRDF(float3 N, float3 V, float3 L, float3 radiance,
-                    float3 albedo, float metallic, float alpha, float3 F0) {
-    float3 H = normalize(V + L);
-
-    float NdotL = max(dot(N, L), 0.001f);
-    float NdotV = max(dot(N, V), 0.001f);
-    float NdotH = saturate(dot(N, H));
-    float VdotH = saturate(dot(V, H));
-
-    // Cook-Torrance specular BRDF
-    float  D = DistributionGGX(NdotH, alpha);
-    float  G = GeometrySmith(NdotV, NdotL, alpha);
-    float3 F = FresnelSchlick(VdotH, F0);
-
-    // D*G*F / (4 * N.V * N.L) — the 4 is the half-vector Jacobian
-    float3 specular = (D * G * F) / max(4.0f * NdotV * NdotL, 0.001f);
-
-    // Energy conservation: kD zeroed for metals (no diffuse lobe)
-    float3 kS = F;
-    float3 kD = (1.0f - kS) * (1.0f - metallic);
-
-    // Lambertian diffuse normalised by PI
-    float3 diffuse = kD * albedo / PI;
-
-    return (diffuse + specular) * radiance * NdotL;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Cascaded Shadow Map Sampling
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Fraction of each cascade's range used for blending with the next cascade.
-/// At 10%, a cascade covering [0, 100] units begins blending at 90 units.
-static const float CASCADE_BLEND_BAND = 0.1f;
-
-/// Samples the shadow atlas with 3x3 PCF at the given atlas UV and depth.
-///
-/// Performs 9 taps in a 3x3 grid around the sample point, each offset by one
-/// texel. The comparison sampler returns 1.0 for lit and 0.0 for shadowed per
-/// tap, and the results are averaged for a soft penumbra.
-///
-/// # Parameters
-/// - atlasUV:   UV coordinates within the full shadow atlas, in [0,1].
-/// - depth:     light-space depth to compare against, in [0,1].
-/// - texelSize: 1.0 / shadow atlas width in texels.
-///
-/// # Returns
-/// Shadow factor in [0,1]: 1.0 = fully lit, 0.0 = fully shadowed.
-float SampleShadowPCF(float2 atlasUV, float depth, float texelSize) {
-#ifdef UZ_BINDLESS
-    Texture2D<float> shadowAtlas = ResourceDescriptorHeap[shadowAtlasIndex];
-#else
-    // SM5 path uses register-bound texture
-    #define shadowAtlas shadowAtlasTexture
-#endif
-
-    float shadow = 0.0f;
-
-    // 3x3 PCF kernel — 9 taps centered on the sample point
-    [unroll]
-    for (int y = -1; y <= 1; y++) {
-        [unroll]
-        for (int x = -1; x <= 1; x++) {
-            float2 offset = float2((float)x, (float)y) * texelSize;
-            shadow += shadowAtlas.SampleCmpLevelZero(
-                shadowSampler, atlasUV + offset, depth);
-        }
-    }
-
-#ifndef UZ_BINDLESS
-    #undef shadowAtlas
-#endif
-
-    return shadow / 9.0f;
-}
-
-/// Computes the shadow factor for a world-space position using cascaded shadow maps.
-///
-/// Selects the tightest cascade that contains the fragment based on view-space
-/// depth, projects into light space, applies normal and depth bias, then samples
-/// with 3x3 PCF. In the last 10% of each cascade's range, the result is blended
-/// with the next cascade to eliminate visible seams.
-///
-/// # Parameters
-/// - positionWS: fragment world-space position.
-/// - normalWS:   fragment world-space surface normal (normalized).
-/// - viewDepth:  distance from camera to fragment along the view axis.
-///
-/// # Returns
-/// Shadow factor in [0,1]: 1.0 = fully lit, 0.0 = fully shadowed.
-float SampleShadowMap(float3 positionWS, float3 normalWS, float viewDepth) {
-    // Per-cascade atlas texel size: atlas is 2x the cascade resolution
-    float texelSize = 1.0f / (shadowMapSize * 2.0f);
-
-    // Access cascade split distances as an array
-    float splits[4] = { cascadeSplits.x, cascadeSplits.y,
-                         cascadeSplits.z, cascadeSplits.w };
-
-    // Atlas quadrant offsets: 2x2 layout
-    // 0 = top-left, 1 = top-right, 2 = bottom-left, 3 = bottom-right
-    static const float2 cascadeOffsets[4] = {
-        float2(0.0f, 0.0f), float2(0.5f, 0.0f),
-        float2(0.0f, 0.5f), float2(0.5f, 0.5f)
-    };
-
-    // Select the first cascade whose far split exceeds the fragment depth
-    uint cascadeIdx = 0;
-    for (uint i = 0; i < cascadeCount; i++) {
-        if (viewDepth <= splits[i]) {
-            cascadeIdx = i;
-            break;
-        }
-        cascadeIdx = i; // Fall through to last cascade if beyond all splits
-    }
-
-    // Offset position along surface normal to reduce shadow acne on slopes
-    float3 biasedPos = positionWS + normalWS * normalBias;
-
-    // Project into light clip space for the selected cascade
-    float4 shadowClip = mul(float4(biasedPos, 1.0f), cascadeViewProj[cascadeIdx]);
-    float3 shadowNDC  = shadowClip.xyz / shadowClip.w;
-
-    // Convert from NDC [-1,1] to UV [0,1], flipping Y for texture space
-    float2 shadowUV = float2(shadowNDC.x * 0.5f + 0.5f,
-                             -shadowNDC.y * 0.5f + 0.5f);
-
-    // Map UV into the cascade's atlas quadrant (each quadrant is 0.5 x 0.5)
-    float2 atlasUV = shadowUV * 0.5f + cascadeOffsets[cascadeIdx];
-
-    // Apply depth bias before comparison
-    float shadowDepth = shadowNDC.z - depthBias;
-
-    float shadow = SampleShadowPCF(atlasUV, shadowDepth, texelSize);
-
-    // ── Cascade blending ──
-    // In the last CASCADE_BLEND_BAND fraction of the cascade range, lerp
-    // toward the next cascade's shadow to avoid hard seams between cascades.
-    if (cascadeIdx < cascadeCount - 1) {
-        float cascadeNear = (cascadeIdx == 0) ? 0.0f : splits[cascadeIdx - 1];
-        float cascadeFar  = splits[cascadeIdx];
-        float cascadeRange = cascadeFar - cascadeNear;
-        float blendStart  = cascadeFar - cascadeRange * CASCADE_BLEND_BAND;
-
-        if (viewDepth > blendStart) {
-            // Compute next cascade's shadow
-            uint nextIdx = cascadeIdx + 1;
-            float3 biasedPosNext = positionWS + normalWS * normalBias;
-            float4 nextClip = mul(float4(biasedPosNext, 1.0f), cascadeViewProj[nextIdx]);
-            float3 nextNDC  = nextClip.xyz / nextClip.w;
-
-            float2 nextUV = float2(nextNDC.x * 0.5f + 0.5f,
-                                   -nextNDC.y * 0.5f + 0.5f);
-            float2 nextAtlasUV = nextUV * 0.5f + cascadeOffsets[nextIdx];
-            float nextDepth = nextNDC.z - depthBias;
-
-            float nextShadow = SampleShadowPCF(nextAtlasUV, nextDepth, texelSize);
-
-            // Blend factor: 0 at blendStart, 1 at cascadeFar
-            float blendFactor = saturate((viewDepth - blendStart) /
-                                         (cascadeFar - blendStart));
-            shadow = lerp(shadow, nextShadow, blendFactor);
-        }
-    }
-
-    return shadow;
-}
+#include "include/shadow_common.hlsli"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Pixel Shader Entry Point
@@ -504,9 +255,10 @@ float4 main(FSInput input) : SV_Target {
     // ── Combine ──
     float3 color = ambient + Lo;
 
-    // ── Tonemap (Reinhard) + gamma correction ──
-    // Reinhard: maps [0, +inf) -> [0, 1) while preserving dark values
-    color = color / (color + 1.0f);
+    // ── Tonemap (ACES filmic) + gamma correction ──
+    // ACES filmic curve: better highlight rolloff than Reinhard, preserves
+    // color saturation in bright areas.
+    color = ACESFilm(color);
     // Convert linear to sRGB (approximate gamma 2.2 for UNORM backbuffer)
     color = pow(color, 1.0f / 2.2f);
 

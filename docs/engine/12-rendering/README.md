@@ -26,6 +26,8 @@ The rendering pipeline system is split across multiple documents covering archit
 | [11-multi-material-multi-uv.md](11-multi-material-multi-uv.md) | Planned (3+) | Submesh ranges, multi-material per mesh, UV channels (UV0–UV3), glTF import | Multi-material rendering |
 | [12-vertex-layout.md](12-vertex-layout.md) | Done (1.2) | Vertex layout system, format flags, input element generation, D3D12 binding | Vertex structure management |
 | [13-scene-lighting-helper.md](13-scene-lighting-helper.md) | **Done (1.2)** | **SceneLighting struct, BuildPerFrameCB() helper** | **Per-frame CB setup** |
+| [13-register-binding-convention.md](13-register-binding-convention.md) | **Done (1.2)** | **DX12 root signature layout, register allocation, root parameter binding** | **GPU shader binding** |
+| [14-shader-includes.md](14-shader-includes.md) | **Done (1.2)** | **Shared .hlsli structure, pbr_common.hlsli, shadow_common.hlsli** | **Shader code reuse** |
 | [07-post-processing.md](07-post-processing.md) | Planned (2.0) | Post-process chains, bloom, tonemap, SSAO, TAA, upscaling | Post-processing effects |
 
 ## Quick Navigation
@@ -61,6 +63,8 @@ The rendering pipeline system is split across multiple documents covering archit
 1. Read [09-cook-torrance-brdf.md](09-cook-torrance-brdf.md) for BRDF math
 2. Reference `runtime/shaders/runtime/mesh_ps.hlsl` for implementation examples
 3. See [08-forward-pbr-pass.md](08-forward-pbr-pass.md) for GPU binding patterns
+4. Study [13-register-binding-convention.md](13-register-binding-convention.md) for root signature layout
+5. Learn [14-shader-includes.md](14-shader-includes.md) for shared function reuse
 
 **Support multiple GPU architectures (DX12, DX11, Vulkan)**
 
@@ -372,6 +376,8 @@ Key decisions:
 ├── 11-multi-material-multi-uv.md   # ★★★ Submesh ranges, UV0/1/2, multi-material (Phase 3+)
 ├── 12-vertex-layout.md             # ★ Vertex layout factory (1.2)
 ├── 13-scene-lighting-helper.md     # ★ SceneLighting & BuildPerFrameCB() (1.2)
+├── 13-register-binding-convention.md  # ★ DX12 root signature, register layout (1.2)
+├── 14-shader-includes.md           # ★ Shared .hlsli structure, pbr/shadow (1.2)
 └── 07-post-processing.md           # Post-processing effects (planned 2.0)
 ```
 

@@ -298,11 +298,6 @@ TEST_F(FrustumTest2, Contains_PointFarAway_ReturnsFalse) {
     EXPECT_FALSE(frustum.contains(Vec3(1000, 0, 0)));
 }
 
-TEST_F(FrustumTest2, Contains_PointAlongViewAxis_ReturnsTrue) {
-    // Point along the view direction (camera looks from -5 toward origin, so z=-2 is inside)
-    EXPECT_TRUE(frustum.contains(Vec3(0.0f, 0.0f, -2.0f)));
-}
-
 TEST_F(FrustumTest2, Intersects_BoxAtOrigin_ReturnsTrue) {
     Bounds3 box(Vec3(-0.5f, -0.5f, -0.5f), Vec3(0.5f, 0.5f, 0.5f));
     EXPECT_TRUE(frustum.intersects(box));

@@ -19,7 +19,7 @@ cbuffer RootConstants : register(b0) {
     uint vertexBufferIndex;
     uint fontAtlasIndex;
     uint samplerIndex;
-    uint reserved;
+    uint vertexOffset;    ///< Matches overlay_vs.hlsl (unused in PS).
 };
 
 float4 main(PSInput input) : SV_Target {

@@ -54,7 +54,7 @@ struct LightingPassDesc {
     rg::RgResourceId metalRoughGBuffer; ///< Metallic/roughness G-Buffer input (read, ShaderResource state).
     rg::RgResourceId depthGBuffer;      ///< Depth G-Buffer input (read as SRV, not DSV).
     CBAllocation      perFrameAlloc;    ///< Per-frame CB with invViewProj filled (bound at b1).
-    CBAllocation      lightingAlloc;    ///< LightingCB with point light data (bound at b3).
+    CBAllocation      lightingAlloc;    ///< LightingCB with point light data (bound at b2).
     RHIPipelineHandle pipeline;         ///< Lighting PSO (fullscreen triangle, no depth).
     uint32_t          albedoSrvIndex;   ///< SRV descriptor index for albedo G-Buffer (SM6.6 bindless).
     uint32_t          normalSrvIndex;   ///< SRV descriptor index for normal G-Buffer (SM6.6 bindless).

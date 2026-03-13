@@ -92,7 +92,7 @@ struct PerObjectCB {
 static_assert(sizeof(PerObjectCB) == 256, "PerObjectCB must be 256 bytes (D3D12 CB alignment)");
 
 // ─────────────────────────────────────────────────────────────────────────────
-// LightingCB — bound at b3 (root CBV, updated once per frame for deferred lighting)
+// LightingCB — bound at b2 (root CBV slot 2, reused from PerObjectCB slot in fullscreen deferred passes)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Maximum number of point lights supported in the deferred lighting pass.
@@ -121,7 +121,7 @@ struct PointLightData {
 
 static_assert(sizeof(PointLightData) == 32, "PointLightData must be 32 bytes (two float4s)");
 
-/// Lighting constant buffer for the deferred lighting pass, bound at register `b3`.
+/// Lighting constant buffer for the deferred lighting pass, bound at register `b2`.
 ///
 /// Contains an array of point lights and a count of active lights. The shader
 /// iterates `pointLightCount` entries and accumulates their contributions.
@@ -130,7 +130,7 @@ static_assert(sizeof(PointLightData) == 32, "PointLightData must be 32 bytes (tw
 ///
 /// Matches the HLSL struct:
 /// ```hlsl
-/// cbuffer LightingCB : register(b3) {
+/// cbuffer LightingCB : register(b2) {
 ///     PointLightData pointLights[64];
 ///     uint           pointLightCount;
 ///     uint3          _pad;

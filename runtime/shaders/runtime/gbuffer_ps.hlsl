@@ -89,6 +89,7 @@ SamplerState linearSampler : register(s0);
 /// Samples PBR texture maps (or uses defaults when index == 0), applies
 /// tangent-space normal mapping when a normal map is bound, and outputs
 /// the raw material data with no lighting computation.
+[earlydepthstencil]
 GBufferOutput main(PSInput input) {
 
     // ── Material defaults (when no texture is bound) ──
@@ -132,15 +133,22 @@ GBufferOutput main(PSInput input) {
         float3 B = cross(N, T) * input.tangentWS.w; // w = handedness
         float3x3 TBN = float3x3(T, B, N);
 
-        float3 normalTS;
+        float4 normalSample;
 #ifdef UZ_BINDLESS
         Texture2D<float4> nrmTex = ResourceDescriptorHeap[normalIndex];
-        normalTS = nrmTex.Sample(linearSampler, uv).rgb;
+        normalSample = nrmTex.Sample(linearSampler, uv);
 #else
-        normalTS = normalTexture.Sample(linearSampler, uv).rgb;
+        normalSample = normalTexture.Sample(linearSampler, uv);
 #endif
         // Remap from [0,1] to [-1,1] tangent space
-        normalTS = normalTS * 2.0f - 1.0f;
+        float3 normalTS;
+        normalTS.xy = normalSample.rg * 2.0f - 1.0f;
+
+        // BC5 two-channel normal maps store only RG; reconstruct Z from unit length
+        // constraint. For standard RGB normal maps, the sampled B channel is used.
+        normalTS.z = (normalSample.b > 0.0f)
+            ? normalSample.b * 2.0f - 1.0f
+            : sqrt(max(1.0f - dot(normalTS.xy, normalTS.xy), 0.0f));
         N = normalize(mul(normalTS, TBN));
     }
 
