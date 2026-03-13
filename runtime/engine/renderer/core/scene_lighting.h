@@ -21,6 +21,7 @@
 
 #include "camera.h"
 #include "constant_buffers.h"
+#include "multi_light.h"
 
 namespace uz {
 
@@ -99,6 +100,74 @@ struct SceneLighting {
 
     cb.nearPlane = camera.GetNearPlane();
     cb.farPlane  = camera.GetFarPlane();
+
+    return cb;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BuildPerFrameMultiLightCB — multi-light CB population
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Populates a `PerFrameMultiLightCB` from camera state, timing, lighting,
+/// and an array of CPU-side dynamic lights.
+///
+/// The directional light from `SceneLighting` is injected as `lightArray[0]`
+/// (type = Directional, infinite range), then `SelectNearestLights()` fills
+/// the remaining slots with the nearest point/spot lights from `candidates`.
+///
+/// # Arguments
+/// * `camera`     — Camera providing view/projection matrices and position.
+/// * `totalTime`  — Total elapsed time in seconds since application start.
+/// * `deltaTime`  — Frame delta time in seconds.
+/// * `frameIndex` — Current frame number (cast to float for shader use).
+/// * `lighting`   — Scene lighting parameters (directional + ambient).
+/// * `candidates` — Array of CPU-side dynamic lights to cull and upload.
+/// * `candidateCount` — Number of entries in `candidates`.
+///
+/// # Returns
+/// A fully populated `PerFrameMultiLightCB` ready for GPU upload (768 bytes).
+[[nodiscard]] inline PerFrameMultiLightCB BuildPerFrameMultiLightCB(
+    const Camera&        camera,
+    float                totalTime,
+    float                deltaTime,
+    uint32_t             frameIndex,
+    const SceneLighting& lighting,
+    const LightCPU*      candidates,
+    uint32_t             candidateCount)
+{
+    const Vec3& camPos = camera.GetPosition();
+
+    // Start with the multi-light CB from candidates (fills lightArray via culling).
+    PerFrameMultiLightCB cb = BuildMultiLightCB(
+        candidates, candidateCount, camPos, lighting.ambientColor);
+
+    // Fill camera and timing fields.
+    cb.viewProj   = camera.GetViewProjection();
+    cb.cameraPos  = {camPos.x, camPos.y, camPos.z, 0.0f};
+    cb.timeParams = {totalTime, deltaTime, static_cast<float>(frameIndex), 0.0f};
+
+    // Inject the directional sun light as lightArray[0] by shifting existing
+    // lights right by one slot (up to kMaxMultiLights - 1).
+    if (cb.lightCount < kMaxMultiLights) {
+        // Shift existing lights to make room at index 0.
+        for (uint32_t i = cb.lightCount; i > 0; --i) {
+            cb.lightArray[i] = cb.lightArray[i - 1];
+        }
+        ++cb.lightCount;
+    } else {
+        // Array full — shift and evict the last light.
+        for (uint32_t i = kMaxMultiLights - 1; i > 0; --i) {
+            cb.lightArray[i] = cb.lightArray[i - 1];
+        }
+    }
+
+    // Write directional sun light at slot 0.
+    LightGPU& sun  = cb.lightArray[0];
+    sun             = LightGPU{};
+    sun.positionOrDir = lighting.sunDirection;
+    sun.range         = 0.0f; // Directional — infinite range.
+    sun.color         = lighting.sunColor;
+    sun.lightType     = static_cast<float>(static_cast<uint32_t>(LightType::Directional));
 
     return cb;
 }

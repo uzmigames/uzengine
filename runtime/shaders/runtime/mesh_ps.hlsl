@@ -1,7 +1,8 @@
-/// Standard mesh pixel shader — Cook-Torrance PBR with directional lighting.
+/// Standard mesh pixel shader — Cook-Torrance PBR with multi-light support.
 ///
 /// Implements GGX (Trowbridge-Reitz) NDF, Smith geometry function, and
 /// Schlick-Fresnel approximation. Uses the metallic-roughness workflow.
+/// Supports up to 8 dynamic lights: directional, point, and spot.
 ///
 /// SM6.6 (UZ_BINDLESS): samples textures via ResourceDescriptorHeap[index].
 /// SM5 (!UZ_BINDLESS): samples textures via register-bound textures t0-t4.
@@ -13,7 +14,8 @@
 /// - metallicIndex:  Metallic map (R channel) → metallic factor
 /// - aoIndex:        Ambient occlusion map (R channel) → AO multiplier
 ///
-/// Lighting inputs come from PerFrameCB (lightDir, lightColor, ambientColor).
+/// Lighting inputs come from PerFrameCB (lights array, ambientColor).
+/// Shadow mapping is applied to the first directional light only.
 ///
 /// Output: linear HDR color tonemapped via ACES filmic and gamma-corrected to
 /// sRGB for the R8G8B8A8_UNORM swapchain backbuffer.
@@ -36,14 +38,30 @@ struct PushConstants {
 ConstantBuffer<PushConstants> push : register(b0);
 #endif
 
-// Per-frame CB at b1 — must match C++ PerFrameCB struct exactly
+// ─────────────────────────────────────────────────────────────────────────────
+// Per-Frame Constant Buffer — Multi-Light Layout (768 bytes = 3 x 256)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// LightData struct and MAX_LIGHTS are defined here (before cbuffer) because
+// lighting.hlsli must be included after shadow_common.hlsli (it calls SampleShadowMap).
+#include "include/light_types.hlsli"
+
+/// Per-frame CB at b1 — must match C++ PerFrameMultiLightCB struct exactly.
+///
+/// Contains camera transforms, time parameters, ambient color, and an array
+/// of up to MAX_LIGHTS (8) dynamic lights. Total size: 768 bytes (3 x 256
+/// byte aligned) to satisfy cbuffer packing rules.
 cbuffer PerFrameCB : register(b1) {
-    row_major float4x4 viewProj;
-    float4   cameraPos;     // xyz = world position, w = unused
-    float4   timeParams;    // x = totalTime, y = deltaTime, z = frameCount, w = unused
-    float4   lightDir;      // xyz = direction TOWARD the light (normalized), w = unused
-    float4   lightColor;    // xyz = color * intensity (radiance), w = unused
-    float4   ambientColor;  // xyz = ambient radiance, w = unused
+    row_major float4x4 viewProj;     // camera view-projection matrix
+    float4   cameraPos;              // xyz = world position, w = unused
+    float4   timeParams;             // x = totalTime, y = deltaTime, z = frameCount, w = unused
+    float4   ambientColor;           // xyz = ambient radiance, w = unused
+    uint     lightCount;             // number of active lights [0, MAX_LIGHTS]
+    uint     _pad0a;                 // pad to 16-byte boundary
+    uint     _pad0b;
+    uint     _pad0c;
+    LightData lights[MAX_LIGHTS];    // dynamic light array (64 bytes each = 512 bytes)
+    float4   _pad1[8];              // pad to 768 bytes total (8 x 16 = 128 bytes)
 };
 
 // Per-object CB at b2 — must match C++ PerObjectCB struct exactly
@@ -86,6 +104,7 @@ SamplerState linearSampler : register(s0);
 SamplerComparisonState shadowSampler : register(s1);
 
 #include "include/shadow_common.hlsli"
+#include "include/lighting.hlsli"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Pixel Shader Entry Point
@@ -157,14 +176,9 @@ float4 main(PSInput input) : SV_Target {
     }
 
     float3 V = normalize(cameraPos.xyz - input.positionWS);
-    float3 L = normalize(lightDir.xyz);     // already points TOWARD the light
-    float3 H = normalize(V + L);
 
-    // Clamp dot products away from zero to avoid division artifacts
-    float NdotL = max(dot(N, L), 0.001f);
+    // NdotV depends only on N and V — computed once, shared across all lights
     float NdotV = max(dot(N, V), 0.001f);
-    float NdotH = saturate(dot(N, H));
-    float VdotH = saturate(dot(V, H));
 
     // ── PBR parameter preparation ──
 
@@ -178,35 +192,12 @@ float4 main(PSInput input) : SV_Target {
     // Metals use their albedo color as the tinted F0 (no diffuse transmission).
     float3 F0 = lerp(float3(0.04f, 0.04f, 0.04f), albedo, metallic);
 
-    // ── Cook-Torrance specular BRDF ──
-    float  D = DistributionGGX(NdotH, alpha);
-    float  G = GeometrySmith(NdotV, NdotL, alpha);
-    float3 F = FresnelSchlick(VdotH, F0);
-
-    // Specular term: D*G*F / (4 * N·V * N·L)
-    // The 4 in the denominator is the Jacobian of the half-vector transformation.
-    float3 specular = (D * G * F) / max(4.0f * NdotV * NdotL, 0.001f);
-
-    // ── Energy conservation ──
-    // kS is the specular reflectance fraction (Fresnel).
-    // kD is the remaining diffuse fraction, zeroed for metals (no diffuse lobe).
-    float3 kS = F;
-    float3 kD = (1.0f - kS) * (1.0f - metallic);
-
-    // Lambertian diffuse: albedo / PI normalises for energy conservation.
-    float3 diffuse = kD * albedo / PI;
-
-    // ── Shadow ──
-    // Skip shadow sampling when no cascades are active (shadows disabled).
-    float shadow = 1.0f;
-    if (cascadeCount > 0) {
-        float viewDepth = length(input.positionWS - cameraPos.xyz);
-        shadow = SampleShadowMap(input.positionWS, N, viewDepth);
-    }
-
-    // ── Direct lighting ──
-    // Outgoing radiance Lo = BRDF * radiance * N·L, attenuated by shadow
-    float3 Lo = (diffuse + specular) * lightColor.xyz * NdotL * shadow;
+    // ── Multi-light direct lighting ──
+    float3 Lo = AccumulateDirectLighting(
+        input.positionWS, N, V, NdotV,
+        albedo, metallic, alpha, F0,
+        lightCount, lights,
+        cameraPos.xyz, cascadeCount);
 
     // ── Ambient (constant approximation; will be replaced with IBL) ──
     float3 ambient = ambientColor.xyz * albedo * ao;

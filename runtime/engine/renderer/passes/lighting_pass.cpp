@@ -7,6 +7,7 @@
 #include "lighting_pass.h"
 
 #include "constant_buffers.h"
+#include "multi_light.h"
 #include "render_graph_builder.h"
 #include "render_graph_pass.h"
 #include "root_slots.h"
@@ -55,7 +56,7 @@ void AddLightingPass(rg::RgBuilder& builder, const LightingPassDesc& desc)
             // ── Bind constant buffers ────────────────────────────────────
             cmd->SetRootCBV(kSlotPerFrame, desc.perFrameAlloc.bufferHandle,
                             desc.perFrameAlloc.offsetBytes,
-                            desc.perFrameAlloc.cpuPtr, sizeof(PerFrameCB));
+                            desc.perFrameAlloc.cpuPtr, sizeof(PerFrameMultiLightCB));
 
             cmd->SetRootCBV(kSlotPerObject, desc.lightingAlloc.bufferHandle,
                             desc.lightingAlloc.offsetBytes,

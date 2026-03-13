@@ -109,7 +109,7 @@ TEST(MultiLightTest, LightGPU_OuterConeCos_OffsetIs48) {
     const auto base    = reinterpret_cast<const char*>(&light);
     const auto fieldPtr = reinterpret_cast<const char*>(&light.outerConeCos);
     EXPECT_EQ(fieldPtr - base, 48)
-        << "outerConeCos must be at offset 48";
+        << "outerConeCos must be at offset 48 (w component of third float4 row)";
 }
 
 TEST(MultiLightTest, LightGPU_ZeroInit_AllFieldsZero) {

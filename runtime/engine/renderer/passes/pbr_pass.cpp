@@ -6,6 +6,7 @@
 #include "pbr_pass.h"
 
 #include "constant_buffers.h"
+#include "multi_light.h"
 #include "draw_list.h"
 #include "render_graph_builder.h"
 #include "render_graph_pass.h"
@@ -67,7 +68,7 @@ void AddPBRPass(rg::RgBuilder& builder, const PBRPassDesc& desc)
 
             cmd->SetRootCBV(kSlotPerFrame, desc.perFrameAlloc.bufferHandle,
                             desc.perFrameAlloc.offsetBytes,
-                            desc.perFrameAlloc.cpuPtr, sizeof(PerFrameCB));
+                            desc.perFrameAlloc.cpuPtr, sizeof(PerFrameMultiLightCB));
 
             // ── Viewport and scissor ─────────────────────────────────────
             RHIViewport vp{};
