@@ -7,8 +7,9 @@
 #include "log.h"
 #include "profiler.h"
 
+#include "file_system.h"
+
 #include <filesystem>
-#include <fstream>
 #include <iomanip>
 #include <sstream>
 
@@ -65,15 +66,8 @@ std::optional<std::vector<uint8_t>> ShaderCache::Lookup(
     UZ_PROFILE_FUNCTION();
     std::string path = GetEntryPath(subdirectory, identityHash);
 
-    std::ifstream file(path, std::ios::binary | std::ios::ate);
-    if (!file.is_open()) return std::nullopt;
-
-    auto size = file.tellg();
-    if (size <= 0) return std::nullopt;
-
-    std::vector<uint8_t> bytecode(static_cast<size_t>(size));
-    file.seekg(0);
-    file.read(reinterpret_cast<char*>(bytecode.data()), size);
+    auto bytecode = FileReadAll(path.c_str());
+    if (bytecode.empty()) return std::nullopt;
 
     UZ_LOG(IO, Debug, "ShaderCache: hit {:016x} ({} bytes)", identityHash, bytecode.size());
     return bytecode;
@@ -88,15 +82,11 @@ bool ShaderCache::Store(const std::string& subdirectory,
 
     std::string path = GetEntryPath(subdirectory, identityHash);
 
-    std::ofstream file(path, std::ios::binary);
-    if (!file.is_open()) {
-        UZ_LOG(IO, Error, "ShaderCache: cannot write '{}'", path);
+    const FileResult result = FileWriteAll(path.c_str(), bytecode.data(), bytecode.size());
+    if (result != FileResult::Success) {
+        UZ_LOG(IO, Error, "ShaderCache: cannot write '{}': {}", path, FileResultToString(result));
         return false;
     }
-
-    file.write(reinterpret_cast<const char*>(bytecode.data()),
-               static_cast<std::streamsize>(bytecode.size()));
-    file.close();
 
     UZ_LOG(IO, Debug, "ShaderCache: stored {:016x} ({} bytes, source='{}')",
            identityHash, bytecode.size(), sourcePath);

@@ -9,9 +9,10 @@
 
 #include <json.hpp>
 
+#include "file_system.h"
+
 #include <cstdint>
 #include <filesystem>
-#include <fstream>
 #include <iomanip>
 #include <sstream>
 
@@ -108,14 +109,13 @@ SidecarParseResult ReadSidecarJson(const std::string& jsonStr) {
 
 bool WriteSidecarFile(const std::string& path, const ImportSidecar& sidecar) {
     UZ_PROFILE_FUNCTION();
-    std::ofstream file(path);
-    if (!file.is_open()) {
-        UZ_LOG(Asset, Error, "Cannot write sidecar: path='{}'", path);
+    const std::string json = WriteSidecarJson(sidecar);
+    const FileResult result = FileWriteAllText(path.c_str(), json.c_str());
+    if (result != FileResult::Success) {
+        UZ_LOG(Asset, Error, "Cannot write sidecar: path='{}': {}",
+               path, FileResultToString(result));
         return false;
     }
-
-    file << WriteSidecarJson(sidecar);
-    file.close();
 
     UZ_LOG(Asset, Debug, "Wrote sidecar: path='{}', importer='{}', hash='{}'",
            path, sidecar.importer, sidecar.sourceHash);
@@ -126,14 +126,12 @@ SidecarParseResult ReadSidecarFile(const std::string& path) {
     UZ_PROFILE_FUNCTION();
     SidecarParseResult result;
 
-    std::ifstream file(path);
-    if (!file.is_open()) {
+    const std::string content = FileReadAllText(path.c_str());
+    if (content.empty()) {
         result.error = "Cannot open sidecar file: '" + path + "'";
         return result;
     }
 
-    std::string content((std::istreambuf_iterator<char>(file)),
-                         std::istreambuf_iterator<char>());
     return ReadSidecarJson(content);
 }
 
