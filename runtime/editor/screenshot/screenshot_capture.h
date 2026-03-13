@@ -75,6 +75,16 @@ public:
     /// * `swapChain` — Swap chain to read the current back buffer from.
     void CaptureBackBuffer(IRHICommandList* cmdList, IRHISwapChain* swapChain);
 
+    /// Records GPU commands to copy the back buffer from Present state.
+    ///
+    /// Use this when capturing AFTER the render graph has transitioned the
+    /// backbuffer to Present state. Transitions: Present → CopySrc → Present.
+    ///
+    /// # Arguments
+    /// * `cmdList` — Command list to record copy commands on.
+    /// * `swapChain` — Swap chain to read the current back buffer from.
+    void CaptureFromPresent(IRHICommandList* cmdList, IRHISwapChain* swapChain);
+
     /// Saves the captured pixels to a PNG file.
     ///
     /// Must be called AFTER the GPU has finished executing the copy commands

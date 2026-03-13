@@ -61,6 +61,7 @@ cache/
 **/cache/shaders/
 **/cache/textures/
 **/cache/cooked/
+screenshots
 
 # Cooked assets (build output)
 *.uzpak

@@ -132,6 +132,13 @@ pub fn createDemo(b: *std.Build, config: DemoConfig) DemoHandle {
         .flags = cpp_flags,
     });
 
+    // DemoApplication base class (shared across all demos)
+    mod.addCSourceFiles(.{
+        .root = b.path("../common"),
+        .files = &.{"demo_application.cpp"},
+        .flags = cpp_flags,
+    });
+
     // Extra source groups
     for (config.extra_sources) |src| {
         mod.addCSourceFiles(.{
@@ -144,6 +151,8 @@ pub fn createDemo(b: *std.Build, config: DemoConfig) DemoHandle {
     // Engine include paths
     const engine_dirs = [_][]const u8{
         "../..",
+        "../common",
+        "../../engine",
         "../../engine/app",
         "../../engine/logging",
         "../../engine/assertions",
@@ -166,6 +175,8 @@ pub fn createDemo(b: *std.Build, config: DemoConfig) DemoHandle {
         "../../engine/renderer/material",
         "../../engine/renderer/passes",
         "../../engine/asset",
+        "../../engine/asset/formats",
+        "../../engine/asset/importers",
         "../../engine/ecs",
         "../../engine/event",
         "../../engine/property",

@@ -35,9 +35,18 @@ bool ShaderManager::Init(IRHIDevice* device) {
     m_device = device;
     m_bindless = device->IsBindless();
 
-    // Create compilers
+    // Create and initialize compilers
     m_compiler = std::make_unique<ShaderCompiler>();
+    if (!m_compiler->Init()) {
+        UZ_LOG(Renderer, Error, "ShaderManager: failed to init DXC compiler");
+        return false;
+    }
+
     m_compilerFXC = std::make_unique<ShaderCompilerFXC>();
+    if (!m_compilerFXC->Init()) {
+        UZ_LOG(Renderer, Warning, "ShaderManager: FXC compiler not available (SM5 fallback disabled)");
+        // Not fatal — FXC is only needed for SM5.0 path
+    }
 
     // Configure pipeline
     ShaderPipeline::Config config;

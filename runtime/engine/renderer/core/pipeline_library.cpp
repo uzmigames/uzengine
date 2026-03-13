@@ -68,6 +68,8 @@ void PipelineLibrary::Shutdown() {
     destroyPipeline(m_gbufferBindless);
     destroyPipeline(m_lighting);
     destroyPipeline(m_gbufferDebug);
+    destroyPipeline(m_shadowDepth);
+    destroyPipeline(m_shadowDepthBindless);
 
     // Destroy cached shaders
     auto destroyShader = [this](RHIShaderHandle& h) {
@@ -83,6 +85,7 @@ void PipelineLibrary::Shutdown() {
     destroyShader(m_gbufferPS);
     destroyShader(m_lightingPS);
     destroyShader(m_gbufferDebugPS);
+    destroyShader(m_shadowVS);
 
     m_psoCache.Shutdown();
 
@@ -337,6 +340,68 @@ RHIPipelineHandle PipelineLibrary::GetGBufferDebug() {
     }
 
     return m_gbufferDebug;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Shadow Depth Pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool PipelineLibrary::EnsureShadowShaders() {
+    if (!m_shadowVS.IsValid()) {
+        m_shadowVS = m_shaderMgr->CreateShader(EngineShader::ShadowDepthVS, RHIShaderStage::Vertex);
+        if (!m_shadowVS.IsValid()) {
+            UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile ShadowDepthVS");
+            return false;
+        }
+    }
+    return true;
+}
+
+RHIPipelineHandle PipelineLibrary::GetShadowDepth() {
+    return GetShadowDepth(m_device->IsBindless());
+}
+
+RHIPipelineHandle PipelineLibrary::GetShadowDepth(bool bindless) {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetShadowDepth called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    auto& cached = bindless ? m_shadowDepthBindless : m_shadowDepth;
+    if (cached.IsValid()) {
+        return cached;
+    }
+
+    if (!EnsureShadowShaders()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIGraphicsPipelineDesc desc{};
+    desc.vertexShader  = m_shadowVS;
+    desc.topology      = RHIPrimitiveTopology::TriangleList;
+    desc.rasterizer.cullMode              = RHICullMode::Back;
+    desc.rasterizer.frontCounterClockwise = false;
+    desc.depthStencil.depthEnable         = true;
+    desc.depthStencil.depthWrite          = true;
+    desc.renderTargetCount                = 0;
+    desc.depthStencilFormat               = RHIFormat::D32Float;
+    desc.debugName                        = bindless ? "ShadowDepth_Bindless" : "ShadowDepth";
+
+    if (!bindless) {
+        const auto layout = VertexLayout::Standard();
+        desc.inputElements     = layout.elements;
+        desc.inputElementCount = layout.count;
+        desc.vertexStride      = layout.stride;
+    }
+
+    cached = CreateCachedPipeline(desc);
+    if (!cached.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create ShadowDepth pipeline (bindless={})", bindless);
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created ShadowDepth pipeline (bindless={})", bindless);
+    }
+
+    return cached;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

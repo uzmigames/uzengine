@@ -86,6 +86,25 @@ void ScreenshotCapture::CaptureBackBuffer(IRHICommandList* cmdList, IRHISwapChai
     cmdList->ResourceBarrier(&barrier, 1);
 }
 
+void ScreenshotCapture::CaptureFromPresent(IRHICommandList* cmdList, IRHISwapChain* swapChain) {
+    RHITextureHandle backBuffer = swapChain->GetCurrentBackBuffer();
+
+    // Transition: Present → CopySrc
+    RHIBarrierDesc barrier{};
+    barrier.texture = backBuffer;
+    barrier.stateBefore = RHIResourceState::Present;
+    barrier.stateAfter = RHIResourceState::CopySrc;
+    cmdList->ResourceBarrier(&barrier, 1);
+
+    // Copy texture → readback buffer
+    cmdList->CopyTextureToBuffer(backBuffer, 0, m_readbackBuffer, 0, m_rowPitch);
+
+    // Transition: CopySrc → Present
+    barrier.stateBefore = RHIResourceState::CopySrc;
+    barrier.stateAfter = RHIResourceState::Present;
+    cmdList->ResourceBarrier(&barrier, 1);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Save
 // ─────────────────────────────────────────────────────────────────────────────

@@ -2,6 +2,26 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
+## [0.2.16] — 2026-03-13
+
+### Engine Simplification — `uzengine.h` umbrella header + DemoApplication refactor
+- **`uzengine.h` umbrella header**: single `#include "uzengine.h"` replaces all manual engine includes
+  - Platform-conditional RHI backends (`#ifdef _WIN32` for DX12/DX11, `__APPLE__` for Metal, etc.)
+  - ECS headers guarded by `#ifdef UZ_HAS_ENTT`
+  - Proper include ordering to resolve forward-declaration issues (ShaderCompiler, ShaderCompilerFXC)
+- **DemoApplication moved to `demos/common/`**: no longer part of engine — it's demo infrastructure
+  - Owns all engine infrastructure: InputSystem, ShaderManager, PipelineLibrary, CBRingAllocator, Camera, FPSCameraController, EditorGrid, StatsOverlay, ScreenshotCapture, RgResourcePool
+  - Protected accessors: `GetInput()`, `GetShaderManager()`, `GetPipelines()`, `GetCBRing()`, `GetCamera()`, etc.
+  - DemoConfig expanded with screenshot and camera default fields
+- **PBR demo simplified**: removed ~1000 lines of boilerplate, only keeps demo-specific code
+- **Screenshot capture fixes**:
+  - `SetReady()` mechanism — subclass signals when resources are loaded, screenshot waits for ready
+  - `CaptureFromPresent()` — new method for capture after render graph (Present → CopySrc → Present)
+  - Save moved to `Run()` after `Execute()` — fixes zero-data readback from unsubmitted command list
+  - Spurious resize fix — `ClearResizedFlag()` before render loop prevents WM_SIZE double GBuffer creation
+- **PipelineLibrary lazy creation**: PSOs created on first use instead of upfront
+- **ShaderManager `GetPipeline()`**: returns root pipeline state for subsystem init
+
 ## [0.2.15] — 2026-03-13
 
 ### Security & Memory Safety Audit — COMPLETE

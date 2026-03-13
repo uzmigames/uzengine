@@ -20,6 +20,7 @@ pub fn build(b: *std.Build) void {
     // ── Include path tables (shared between runtime and tests) ───────────
 
     const engine_include_dirs = [_][]const u8{
+        "engine",
         "engine/app",
         "engine/logging",
         "engine/assertions",
@@ -48,6 +49,10 @@ pub fn build(b: *std.Build) void {
         "engine/ecs",
         "engine/event",
         "engine/property",
+        "editor/grid",
+        "editor/font",
+        "editor/stats",
+        "editor/screenshot",
     };
 
     const thirdparty_include_dirs = [_][]const u8{

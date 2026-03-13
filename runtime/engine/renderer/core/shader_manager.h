@@ -99,6 +99,15 @@ public:
     /// prior `Init()`. Called automatically by the destructor.
     void Shutdown();
 
+    /// Returns a reference to the internal ShaderPipeline.
+    ///
+    /// Needed by subsystems that require direct pipeline access (e.g., EditorGrid,
+    /// StatsOverlay). Must only be called after successful `Init()`.
+    ///
+    /// # Returns
+    /// Mutable reference to the owned `ShaderPipeline`.
+    [[nodiscard]] ShaderPipeline& GetPipeline() { return m_pipeline; }
+
     /// Returns true if `Init()` has been called successfully and `Shutdown()`
     /// has not been called since.
     [[nodiscard]] bool IsInitialized() const noexcept { return m_initialized; }

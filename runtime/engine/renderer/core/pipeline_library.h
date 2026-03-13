@@ -134,6 +134,24 @@ public:
     /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
     [[nodiscard]] RHIPipelineHandle GetGBufferDebug();
 
+    /// Returns the shadow depth pipeline (shadow_depth_vs, no pixel shader, depth-only).
+    ///
+    /// Rasterizer: back-face cull, clockwise front.
+    /// Depth: enabled, write enabled.
+    /// Render targets: 0 (depth-only).
+    /// Depth format: D32Float.
+    ///
+    /// # Arguments
+    /// * `bindless` — If true, omits vertex input layout (SM6.6 path).
+    ///   Defaults to the device's bindless capability.
+    ///
+    /// # Returns
+    /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
+    [[nodiscard]] RHIPipelineHandle GetShadowDepth(bool bindless);
+
+    /// Returns the shadow depth pipeline using the device's default bindless mode.
+    [[nodiscard]] RHIPipelineHandle GetShadowDepth();
+
     /// Returns true if `Init()` has been called successfully and `Shutdown()`
     /// has not been called since.
     [[nodiscard]] bool IsInitialized() const noexcept { return m_initialized; }
@@ -147,6 +165,7 @@ private:
     [[nodiscard]] bool EnsureLightingPixelShader();
     [[nodiscard]] bool EnsureGBufferDebugPixelShader();
     [[nodiscard]] bool EnsureForwardPixelShader();
+    [[nodiscard]] bool EnsureShadowShaders();
 
     /// Creates a pipeline through the PSO cache. On cache hit, returns the
     /// cached handle without calling the device. On miss, creates via the
@@ -167,14 +186,17 @@ private:
     RHIShaderHandle m_gbufferPS        = RHIShaderHandle::Invalid();
     RHIShaderHandle m_lightingPS       = RHIShaderHandle::Invalid();
     RHIShaderHandle m_gbufferDebugPS   = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_shadowVS         = RHIShaderHandle::Invalid();
 
     // ── Cached pipeline handles (one per bindless variant) ──────────────
     RHIPipelineHandle m_forwardPBR         = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_forwardPBRBindless = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_gbuffer            = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_gbufferBindless    = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_lighting           = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_gbufferDebug       = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_lighting              = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_gbufferDebug          = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_shadowDepth           = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_shadowDepthBindless   = RHIPipelineHandle::Invalid();
 };
 
 } // namespace uz

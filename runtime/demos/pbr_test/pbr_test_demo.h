@@ -6,9 +6,10 @@
 /// lighting pass with 4 point lights + directional sun. Forward path
 /// renders directly to the backbuffer in a single pass.
 ///
-/// Extends `DemoApplication` to eliminate window/device/swapchain/fence
-/// boilerplate. All GPU resources are created in `OnInit()` and released
-/// in `OnShutdown()`.
+/// Extends `DemoApplication` which owns all engine infrastructure (input,
+/// shaders, pipelines, CB ring, camera, editor grid, stats overlay,
+/// screenshot capture, render graph pool). This class only owns
+/// demo-specific resources: mesh, textures, G-Buffer, shadow atlas.
 ///
 /// Supports `--screenshot <path>` and `--screenshot-frame <N>` for
 /// automated visual testing. Debug visualization of individual G-Buffer
@@ -17,31 +18,13 @@
 #pragma once
 
 #include "demo_application.h"
-#include "rhi_types.h"
-#include "rhi_backend.h"
-#include "constant_buffers.h"
-#include "camera.h"
-#include "fps_camera_controller.h"
-#include "render_path.h"
+#include "uzengine.h"
 
 #include <chrono>
 #include <cstdint>
-#include <memory>
 #include <string>
 
 namespace uz {
-
-class InputSystem;
-class ShaderPipeline;
-class ShaderCompiler;
-class ShaderCompilerFXC;
-class EditorGrid;
-class StatsOverlay;
-class ScreenshotCapture;
-class CBRingAllocator;
-class Mesh;
-
-namespace rg { class RgResourcePool; }
 
 /// Configuration for running the PBR test demo.
 struct PBRTestConfig {
@@ -51,44 +34,19 @@ struct PBRTestConfig {
     RHIBackend backend = RHIBackend::DX12; ///< RHI backend to use.
 };
 
-/// GPU-resident PBR texture handles and their SRV descriptor indices.
-struct PBRTextures {
-    RHITextureHandle handles[5] = {};
-    uint32_t albedoSrv    = 0;
-    uint32_t normalSrv    = 0;
-    uint32_t roughnessSrv = 0;
-    uint32_t metallicSrv  = 0;
-    uint32_t aoSrv        = 0;
-};
-
-/// Physical G-Buffer texture handles used across G-Buffer and lighting passes.
-///
-/// The render graph declares these as transient but the physical textures are
-/// maintained externally so their SRV indices remain stable within the frame.
-struct GBufferTextures {
-    RHITextureHandle albedo;      ///< RGBA8Unorm — base colour + alpha.
-    RHITextureHandle normal;      ///< RGBA16Float — world-space normals.
-    RHITextureHandle metalRough;  ///< RGBA8Unorm — R=metallic, G=roughness.
-    RHITextureHandle depth;       ///< D32Float — primary depth buffer.
-
-    uint32_t albedoSrv     = 0;
-    uint32_t normalSrv     = 0;
-    uint32_t metalRoughSrv = 0;
-    uint32_t depthSrv      = 0;
-};
-
 /// PBR Test Demo — renders 5 PBR-lit cubes with deferred/forward path toggle.
 ///
 /// Extends `DemoApplication` for lifecycle management. The base class owns the
-/// window, device, swapchain, command list, and fences. This class owns all
-/// rendering resources: shaders, pipelines, meshes, textures, G-Buffer, shadow
-/// atlas, CB ring, editor grid, stats overlay, camera, and input system.
+/// window, device, swapchain, command list, fences, AND all engine infrastructure
+/// (input, shaders, pipelines, CB ring, camera, grid, stats, screenshot, RG pool).
+/// This class only owns demo-specific resources: mesh, textures, G-Buffer,
+/// shadow atlas.
 ///
 /// # Lifecycle
-/// - `OnInit()` — Compiles shaders, loads mesh/textures, creates pipelines and G-Buffer.
+/// - `OnInit()` — Loads mesh/textures, creates G-Buffer and shadow atlas.
 /// - `OnFrame(dt)` — Processes input, updates camera, builds draw list, records render graph.
-/// - `OnResize(w, h)` — Recreates G-Buffer textures and updates camera aspect ratio.
-/// - `OnShutdown()` — Releases all GPU resources.
+/// - `OnResize(w, h)` — Recreates G-Buffer textures.
+/// - `OnShutdown()` — Releases demo-specific GPU resources.
 class PBRTestDemo final : public DemoApplication {
 public:
     /// Constructs the PBR test demo with the given configuration.
@@ -99,9 +57,9 @@ public:
     ~PBRTestDemo() override;
 
 protected:
-    /// Called once after device/swapchain creation. Compiles all shaders,
-    /// loads the cube mesh and PBR textures, creates pipelines, G-Buffer,
-    /// shadow atlas, CB ring, editor grid, stats overlay, and camera.
+    /// Called once after engine infrastructure is initialized.
+    /// The command list is already in recording state. Loads mesh and textures,
+    /// creates G-Buffer and shadow atlas.
     void OnInit() override;
 
     /// Called every frame with the command list already opened.
@@ -112,25 +70,17 @@ protected:
     /// * `dt` — Delta time in seconds since last frame.
     void OnFrame(float dt) override;
 
-    /// Called when the window is resized. Recreates G-Buffer textures and
-    /// updates the camera aspect ratio and stats overlay dimensions.
+    /// Called when the window is resized. Recreates G-Buffer textures.
     ///
     /// # Arguments
     /// * `width` — New window width in pixels.
     /// * `height` — New window height in pixels.
     void OnResize(uint32_t width, uint32_t height) override;
 
-    /// Called before shutdown. Releases all GPU resources owned by this demo.
+    /// Called before shutdown. Releases demo-specific GPU resources.
     void OnShutdown() override;
 
 private:
-    /// Compiles all shaders (mesh, gbuffer, lighting, debug, forward, shadow)
-    /// via the ShaderPipeline and creates RHI shader handles.
-    void CompileShaders();
-
-    /// Creates all PSOs (gbuffer, lighting, debug, forward, shadow).
-    void CreatePipelines();
-
     /// Loads the cube mesh from disk and uploads vertex/index buffers to GPU.
     void LoadMeshData();
 
@@ -151,70 +101,27 @@ private:
     std::chrono::high_resolution_clock::time_point startTime_;
     float totalTime_ = 0.f;
 
-    // ── Input & Camera ──────────────────────────────────────────────────
-    std::unique_ptr<InputSystem> input_;
-    Camera camera_;
-    FPSCameraController cameraCtrl_;
-
     // ── Render state ────────────────────────────────────────────────────
-    bool bindless_ = false;
     RenderPath renderPath_ = RenderPath::Deferred;
     uint32_t debugModeValue_ = 0;  ///< GBufferDebugMode::Count = off.
 
-    // ── Shader compilation ──────────────────────────────────────────────
-    std::unique_ptr<ShaderPipeline> shaderPipeline_;
-    std::unique_ptr<ShaderCompiler> compiler_;
-    std::unique_ptr<ShaderCompilerFXC> compilerFXC_;
-
-    // ── Shader handles ──────────────────────────────────────────────────
-    RHIShaderHandle meshVSHandle_;
-    RHIShaderHandle meshPSHandle_;
-    RHIShaderHandle gbufPSHandle_;
-    RHIShaderHandle fsVSHandle_;
-    RHIShaderHandle lightPSHandle_;
-    RHIShaderHandle debugPSHandle_;
-    RHIShaderHandle shadowVSHandle_;
-
-    // ── Pipeline handles ────────────────────────────────────────────────
-    RHIPipelineHandle gbufPipeline_;
-    RHIPipelineHandle lightPipeline_;
-    RHIPipelineHandle debugPipeline_;
-    RHIPipelineHandle forwardPipeline_;
-    RHIPipelineHandle shadowPipeline_;
-
     // ── Mesh data ───────────────────────────────────────────────────────
-    std::unique_ptr<Mesh> cubeMesh_;
-    RHIBufferHandle vbHandle_;
-    RHIBufferHandle ibHandle_;
-    uint32_t vbSrvIndex_ = 0;
-    RHIIndexFormat indexFormat_ = RHIIndexFormat::Uint32;
+    GPUMesh cubeMesh_;
 
     // ── Textures ────────────────────────────────────────────────────────
-    PBRTextures pbrTex_;
-    RHITextureHandle checkerHandle_;
-    uint32_t checkerSrv_ = 0;
+    TextureLoadResult albedoTex_;
+    TextureLoadResult normalTex_;
+    TextureLoadResult roughnessTex_;
+    TextureLoadResult metallicTex_;
+    TextureLoadResult aoTex_;
+    TextureLoadResult checkerTex_;
 
     // ── G-Buffer ────────────────────────────────────────────────────────
-    GBufferTextures gbuf_;
+    GBuffer gbuffer_;
 
     // ── Shadow atlas ────────────────────────────────────────────────────
     RHITextureHandle shadowAtlas_;
     uint32_t shadowAtlasSrv_ = 0;
-
-    // ── Constant buffer ring ────────────────────────────────────────────
-    std::unique_ptr<CBRingAllocator> cbRing_;
-
-    // ── Overlays ────────────────────────────────────────────────────────
-    std::unique_ptr<EditorGrid> editorGrid_;
-    std::unique_ptr<StatsOverlay> statsOverlay_;
-
-    // ── Screenshot ──────────────────────────────────────────────────────
-    std::unique_ptr<ScreenshotCapture> screenshotCapture_;
-    bool screenshotPending_ = false;
-    bool screenshotSaveDeferred_ = false;  ///< True when capture happened, save on next frame.
-
-    // ── Render graph pool (persistent across frames) ────────────────────
-    std::unique_ptr<rg::RgResourcePool> rgPool_;
 };
 
 } // namespace uz

@@ -1,7 +1,9 @@
 /// DemoApplication — Boilerplate extraction for all engine demos.
 ///
 /// Centralizes window creation, RHI device init, swapchain, command list,
-/// per-frame fence sync, resize handling, minimize sleep, and frame timing.
+/// per-frame fence sync, resize handling, minimize sleep, frame timing,
+/// AND common engine infrastructure (input, shaders, pipelines, camera,
+/// CB ring, editor grid, stats overlay, screenshot capture, RG pool).
 /// See demo_application.h for full documentation.
 
 #ifdef _WIN32
@@ -10,11 +12,7 @@
 #endif
 
 #include "demo_application.h"
-#include "rhi.h"
-#include "rhi_backend.h"
-#include "rhi_config.h"
-#include "platform_window.h"
-#include "log.h"
+#include "uzengine.h"
 
 #include <chrono>
 #include <cstdlib>
@@ -41,6 +39,7 @@ DemoApplication::DemoApplication(const char* title, uint32_t width, uint32_t hei
 
 DemoApplication::~DemoApplication() {
     // ShutdownPlatform is called in Run(), but guard against early destruction
+    ShutdownInfrastructure();
     ShutdownPlatform();
 }
 
@@ -58,7 +57,32 @@ int DemoApplication::Run() {
     m_width = static_cast<uint32_t>(m_window->GetWidth());
     m_height = static_cast<uint32_t>(m_window->GetHeight());
 
+    // Initialize engine infrastructure before subclass OnInit()
+    InitInfrastructure();
+
+    // Open command list so OnInit() can upload meshes/textures immediately
+    m_cmdList->Begin();
+
     OnInit();
+
+    // StatsOverlay init needs cmdList in recording state — it was left recording
+    // by OnInit() (UploadMesh/TextureLoader leave it recording).
+    // After init, flush all uploads.
+    {
+        UploadContext upload(m_device);
+        if (m_statsOverlay && !m_statsOverlay->Init(m_device, m_cmdList, upload,
+                m_shaderMgr->GetPipeline(), RHIFormat::RGBA8Unorm,
+                m_width, m_height, m_device->IsBindless())) {
+            UZ_LOG(App, Error, "Failed to initialize stats overlay");
+        }
+        m_cmdList->End();
+        m_cmdList->Execute();
+        m_device->WaitIdle();
+        upload.ReleaseStaging();
+    }
+
+    // Clear spurious resize flag — WM_SIZE fires on first ShowWindow()
+    m_window->ClearResizedFlag();
 
     UZ_LOG(App, Info, "DemoApplication '{}': entering render loop (maxFrames={})",
            m_config.title, m_config.maxFrames == 0 ? -1 : static_cast<int>(m_config.maxFrames));
@@ -90,6 +114,15 @@ int DemoApplication::Run() {
             m_width = newWidth;
             m_height = newHeight;
 
+            // Update base-class-owned resize-sensitive systems
+            if (m_statsOverlay) {
+                m_statsOverlay->SetScreenSize(m_width, m_height);
+            }
+            if (m_camera) {
+                m_camera->SetAspectRatio(
+                    static_cast<float>(m_width) / static_cast<float>(m_height));
+            }
+
             OnResize(m_width, m_height);
         }
 
@@ -119,6 +152,14 @@ int DemoApplication::Run() {
         m_cmdList->End();
         m_cmdList->Execute();
 
+        // Save deferred screenshot — GPU has finished the copy commands
+        if (m_screenshotSaveDeferred) {
+            m_device->WaitIdle();
+            m_screenshotCapture->SaveToPNG(m_config.screenshotPath);
+            m_screenshotSaveDeferred = false;
+            m_screenshotPending = false;
+        }
+
         m_swapChain->Present(m_config.vsync);
 
         // Signal fence for this frame
@@ -141,6 +182,7 @@ int DemoApplication::Run() {
            m_config.title, m_frameIndex, totalSec, avgFps);
 
     OnShutdown();
+    ShutdownInfrastructure();
     ShutdownPlatform();
 
     return 0;
@@ -152,6 +194,127 @@ int DemoApplication::Run() {
 
 bool DemoApplication::IsBindless() const {
     return m_device && m_device->IsBindless();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Engine Infrastructure Accessors
+// ─────────────────────────────────────────────────────────────────────────────
+
+InputSystem* DemoApplication::GetInput() const { return m_input.get(); }
+ShaderManager* DemoApplication::GetShaderManager() const { return m_shaderMgr.get(); }
+PipelineLibrary* DemoApplication::GetPipelines() const { return m_pipelines.get(); }
+CBRingAllocator* DemoApplication::GetCBRing() const { return m_cbRing.get(); }
+EditorGrid* DemoApplication::GetEditorGrid() const { return m_editorGrid.get(); }
+StatsOverlay* DemoApplication::GetStatsOverlay() const { return m_statsOverlay.get(); }
+ScreenshotCapture* DemoApplication::GetScreenshotCapture() const { return m_screenshotCapture.get(); }
+rg::RgResourcePool* DemoApplication::GetRgPool() const { return m_rgPool.get(); }
+
+Camera& DemoApplication::GetCamera() { return *m_camera; }
+FPSCameraController& DemoApplication::GetCameraController() { return *m_cameraCtrl; }
+
+const std::string& DemoApplication::GetScreenshotPath() const { return m_config.screenshotPath; }
+uint32_t DemoApplication::GetScreenshotFrame() const { return m_config.screenshotFrame; }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// InitInfrastructure — Creates engine systems after device is ready
+// ─────────────────────────────────────────────────────────────────────────────
+
+void DemoApplication::InitInfrastructure() {
+    // ── Input ────────────────────────────────────────────────────────────
+    m_input = std::make_unique<InputSystem>();
+    m_input->Init();
+    m_window->SetInputSystem(m_input.get());
+
+    // ── Shader Manager ──────────────────────────────────────────────────
+    m_shaderMgr = std::make_unique<ShaderManager>();
+    if (!m_shaderMgr->Init(m_device)) {
+        UZ_LOG(App, Error, "Failed to init shader manager");
+    }
+
+    // ── Pipeline Library ────────────────────────────────────────────────
+    m_pipelines = std::make_unique<PipelineLibrary>();
+    if (!m_pipelines->Init(m_device, m_shaderMgr.get())) {
+        UZ_LOG(App, Error, "Failed to init pipeline library");
+    }
+
+    // ── CB Ring Allocator (3 frames, 128KB) ─────────────────────────────
+    m_cbRing = std::make_unique<CBRingAllocator>();
+    m_cbRing->Init(m_device, 3, 128 * 1024);
+
+    // ── Editor Grid ─────────────────────────────────────────────────────
+    m_editorGrid = std::make_unique<EditorGrid>();
+    if (!m_editorGrid->Init(m_device, m_shaderMgr->GetPipeline(),
+                            RHIFormat::RGBA8Unorm, RHIFormat::D32Float)) {
+        UZ_LOG(App, Error, "Failed to initialize editor grid");
+    }
+
+    // ── Stats Overlay (deferred — needs cmdList in recording state) ─────
+    // Created here but Init() is called in Run() after OnInit() returns,
+    // because StatsOverlay::Init needs the command list in recording state
+    // and we want OnInit() to do its uploads first.
+    m_statsOverlay = std::make_unique<StatsOverlay>();
+
+    // ── Screenshot Capture ──────────────────────────────────────────────
+    m_screenshotPending = !m_config.screenshotPath.empty();
+    if (m_screenshotPending) {
+        m_screenshotCapture = std::make_unique<ScreenshotCapture>();
+        if (!m_screenshotCapture->Init(m_device, m_width, m_height)) {
+            UZ_LOG(App, Error, "Failed to initialize screenshot capture");
+        }
+    }
+
+    // ── Render Graph Resource Pool ──────────────────────────────────────
+    m_rgPool = std::make_unique<rg::RgResourcePool>(m_device);
+
+    // ── Camera ──────────────────────────────────────────────────────────
+    m_camera = std::make_unique<Camera>();
+    m_cameraCtrl = std::make_unique<FPSCameraController>();
+
+    constexpr float kHFovDeg = 90.f;
+    constexpr float kAspect  = 16.f / 9.f;
+    float vFovRad = 2.f * std::atan(std::tan(kHFovDeg * 0.5f * 3.14159265f / 180.f) / kAspect);
+    m_camera->SetPerspective(vFovRad,
+        static_cast<float>(m_width) / static_cast<float>(m_height),
+        0.1f, 1000.f);
+
+    m_camera->SetPosition({m_config.cameraPositionX, m_config.cameraPositionY,
+                           m_config.cameraPositionZ});
+    {
+        constexpr float kDegToRad = 3.14159265f / 180.f;
+        float yawRad   = m_config.cameraYawDeg * kDegToRad;
+        float pitchRad = m_config.cameraPitchDeg * kDegToRad;
+        float cosPitch = std::cos(pitchRad);
+        Vec3 forward = {
+            std::cos(yawRad) * cosPitch,
+            std::sin(yawRad) * cosPitch,
+            std::sin(pitchRad)
+        };
+        Vec3 pos = m_camera->GetPosition();
+        m_camera->LookAt(pos + forward, Vec3::Up());
+    }
+
+    m_cameraCtrl->InitFromCamera(*m_camera);
+    m_cameraCtrl->SetMoveSpeed(m_config.cameraMoveSpeed);
+
+    UZ_LOG(App, Info, "DemoApplication '{}': engine infrastructure initialized", m_config.title);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ShutdownInfrastructure — Destroys engine systems in reverse creation order
+// ─────────────────────────────────────────────────────────────────────────────
+
+void DemoApplication::ShutdownInfrastructure() {
+    // Reverse order of creation
+    m_cameraCtrl.reset();
+    m_camera.reset();
+    m_rgPool.reset();
+    if (m_screenshotCapture) { m_screenshotCapture->Shutdown(); m_screenshotCapture.reset(); }
+    if (m_statsOverlay) { m_statsOverlay->Shutdown(); m_statsOverlay.reset(); }
+    if (m_editorGrid) { m_editorGrid->Shutdown(); m_editorGrid.reset(); }
+    if (m_cbRing) { m_cbRing->Shutdown(); m_cbRing.reset(); }
+    if (m_pipelines) { m_pipelines->Shutdown(); m_pipelines.reset(); }
+    if (m_shaderMgr) { m_shaderMgr->Shutdown(); m_shaderMgr.reset(); }
+    m_input.reset();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
