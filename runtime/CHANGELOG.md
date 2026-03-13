@@ -2,6 +2,26 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
+## [0.2.13] — 2026-03-13
+
+### Engine API Consolidation (Phase 5.2.0) — COMPLETE
+- **DemoApplication base class** (`engine/app/demo_application.h/.cpp`):
+  - Eliminates window/device/swapchain/fence boilerplate from all demos
+  - Virtual hooks: `OnInit()`, `OnFrame(dt)`, `OnResize(w,h)`, `OnShutdown()`
+  - Triple-buffered frame sync, resize handling, minimize sleep, FPS stats
+- **PipelineLibrary** (`engine/renderer/core/pipeline_library.h/.cpp`):
+  - Lazy PSO cache for ForwardPBR, GBuffer, Lighting, GBufferDebug pipelines
+  - Uses ShaderManager + VertexLayout::Standard() internally
+  - 31 unit tests
+- **Demo migrations** — all 3 demos now extend DemoApplication:
+  - `textured_quad`: main.cpp reduced to 15 lines
+  - `pbr_test`: main.cpp reduced to 43 lines (from 125), full PBR pipeline preserved
+  - `deferred_test`: main.cpp reduced to 42 lines, deferred/forward toggle preserved
+- **Build fixes**: resolved include paths (constant_buffers.h, upload_context.h, vertex.h, cascade.h), removed duplicate fps_camera_controller from extra_sources
+- **Log category namespace fix**: moved all `UZ_DECLARE_LOG_CATEGORY` outside `namespace uz {}` across 6 files (gpu_mesh.cpp, shader_manager.cpp, pipeline_library.cpp, text_renderer.cpp, bitmap_font.cpp, stats_overlay.cpp)
+- All 2641 tests passing, all 3 demos verified running at ~480 FPS
+- Task archived
+
 ## [0.2.12] — 2026-03-13
 
 ### Rendering Roadmap — 0.1 Parity Planning (Phase 3A)

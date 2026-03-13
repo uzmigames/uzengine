@@ -8,7 +8,6 @@ pub fn build(b: *std.Build) void {
         .name = "deferred_test",
         .sources = &.{ "main.cpp", "deferred_test_demo.cpp" },
         .extra_sources = &.{
-            .{ .root = "../../engine/renderer/camera", .files = &.{"fps_camera_controller.cpp"} },
             .{ .root = "../../editor/grid",  .files = &.{"editor_grid.cpp"} },
             .{ .root = "../../editor/font",  .files = &.{ "bitmap_font.cpp", "text_renderer.cpp" } },
             .{ .root = "../../editor/stats", .files = &.{"stats_overlay.cpp"} },
@@ -16,6 +15,8 @@ pub fn build(b: *std.Build) void {
         .extra_includes = &.{
             "../../engine/renderer/camera",
             "../../engine/renderer/core",
+            "../../engine/renderer/mesh",
+            "../../engine/renderer/shadows",
             "../../engine/renderer/upload",
             "../../editor/grid",
             "../../editor/font",

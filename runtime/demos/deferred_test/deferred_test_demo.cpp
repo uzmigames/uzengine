@@ -62,7 +62,7 @@ using namespace DirectX;
 
 namespace uz {
 
-UZ_DEFINE_LOG_CATEGORY(DeferredTest, Trace);
+// Uses the Renderer log category declared in log.h
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -145,7 +145,7 @@ static uint32_t LoadPBRTexture(IRHIDevice* device, IRHICommandList* cmdList,
     int w = 0, h = 0, ch = 0;
     unsigned char* pixels = stbi_load(path.c_str(), &w, &h, &ch, 4);
     if (!pixels) {
-        UZ_LOG(DeferredTest, Warning, "PBR texture not found: '{}' (using default)", filename);
+        UZ_LOG(Renderer, Warning, "PBR texture not found: '{}' (using default)", filename);
         return 0;
     }
 
@@ -159,7 +159,7 @@ static uint32_t LoadPBRTexture(IRHIDevice* device, IRHICommandList* cmdList,
     outHandle = device->CreateTexture(desc);
     if (!outHandle.IsValid()) {
         stbi_image_free(pixels);
-        UZ_LOG(DeferredTest, Error, "Failed to create texture: '{}'", debugName);
+        UZ_LOG(Renderer, Error, "Failed to create texture: '{}'", debugName);
         return 0;
     }
 
@@ -182,7 +182,7 @@ static uint32_t LoadPBRTexture(IRHIDevice* device, IRHICommandList* cmdList,
     upload.ReleaseStaging();
     stbi_image_free(pixels);
 
-    UZ_LOG(DeferredTest, Info, "PBR texture '{}': {}x{}, SRV={}", debugName, w, h, srvIdx);
+    UZ_LOG(Renderer, Info, "PBR texture '{}': {}x{}, SRV={}", debugName, w, h, srvIdx);
     return srvIdx;
 }
 
@@ -330,7 +330,7 @@ void DeferredTestDemo::OnInit() {
 
     compiler_ = std::make_unique<ShaderCompiler>();
     if (!compiler_->Init()) {
-        UZ_LOG(DeferredTest, Error, "Failed to init shader compiler");
+        UZ_LOG(Renderer, Error, "Failed to init shader compiler");
         return;
     }
 
@@ -345,7 +345,7 @@ void DeferredTestDemo::OnInit() {
     if (!bindless_) {
         compilerFXC_ = std::make_unique<ShaderCompilerFXC>();
         if (!compilerFXC_->Init()) {
-            UZ_LOG(DeferredTest, Error, "Failed to init FXC shader compiler");
+            UZ_LOG(Renderer, Error, "Failed to init FXC shader compiler");
             return;
         }
         shaderPipeline_->SetCompilerFXC(compilerFXC_.get());
@@ -358,7 +358,7 @@ void DeferredTestDemo::OnInit() {
 
     // ── G-Buffer textures ────────────────────────────────────────────────
     if (!CreateGBuffer()) {
-        UZ_LOG(DeferredTest, Error, "Failed to create initial G-Buffer textures");
+        UZ_LOG(Renderer, Error, "Failed to create initial G-Buffer textures");
         return;
     }
 
@@ -367,7 +367,7 @@ void DeferredTestDemo::OnInit() {
 
     // ── Editor grid ──────────────────────────────────────────────────────
     if (!editorGrid_.Init(device, *shaderPipeline_, RHIFormat::RGBA8Unorm, RHIFormat::D32Float)) {
-        UZ_LOG(DeferredTest, Error, "Failed to initialize editor grid");
+        UZ_LOG(Renderer, Error, "Failed to initialize editor grid");
         return;
     }
 
@@ -377,7 +377,7 @@ void DeferredTestDemo::OnInit() {
         cmdList->Begin();
         if (!statsOverlay_.Init(device, cmdList, upload, *shaderPipeline_,
                                 RHIFormat::RGBA8Unorm, GetWidth(), GetHeight(), bindless_)) {
-            UZ_LOG(DeferredTest, Error, "Failed to initialize stats overlay");
+            UZ_LOG(Renderer, Error, "Failed to initialize stats overlay");
             cmdList->End();
             return;
         }
@@ -391,7 +391,7 @@ void DeferredTestDemo::OnInit() {
     screenshotPending_ = !config_.screenshotPath.empty();
     if (screenshotPending_) {
         if (!screenshotCapture_.Init(device, GetWidth(), GetHeight())) {
-            UZ_LOG(DeferredTest, Error, "Failed to initialize screenshot capture");
+            UZ_LOG(Renderer, Error, "Failed to initialize screenshot capture");
             return;
         }
     }
@@ -427,7 +427,7 @@ void DeferredTestDemo::OnInit() {
     // ── Render path ──────────────────────────────────────────────────────
     renderPath_ = GetDefaultRenderPath();
 
-    UZ_LOG(DeferredTest, Info, "Deferred test demo started — 5 cubes, 4 point lights + directional sun "
+    UZ_LOG(Renderer, Info, "Deferred test demo started — 5 cubes, 4 point lights + directional sun "
            "(F=toggle render path, current={})", RenderPathToString(renderPath_));
 }
 
@@ -460,7 +460,7 @@ void DeferredTestDemo::CompileShaders() {
     if (meshVSBytes.empty() || gbufPSBytes.empty() || fsVSBytes.empty() ||
         lightPSBytes.empty() || debugPSBytes.empty() || meshPSBytes.empty())
     {
-        UZ_LOG(DeferredTest, Error, "Failed to compile one or more deferred shaders");
+        UZ_LOG(Renderer, Error, "Failed to compile one or more deferred shaders");
         return;
     }
 
@@ -497,7 +497,7 @@ void DeferredTestDemo::CreatePipelines() {
 
     if (!gbufPipeline_.IsValid() || !lightPipeline_.IsValid() ||
         !debugPipeline_.IsValid() || !forwardPipeline_.IsValid()) {
-        UZ_LOG(DeferredTest, Error, "Failed to create one or more PSOs");
+        UZ_LOG(Renderer, Error, "Failed to create one or more PSOs");
     }
 }
 
@@ -511,10 +511,10 @@ void DeferredTestDemo::LoadAndUploadMesh() {
     std::string meshPath = (uz::GetExeDir() / "assets/cube.uzmesh").string();
     Mesh cubeMesh = LoadMesh(meshPath);
     if (!cubeMesh.IsValid()) {
-        UZ_LOG(DeferredTest, Error, "Failed to load cube.uzmesh from '{}'", meshPath);
+        UZ_LOG(Renderer, Error, "Failed to load cube.uzmesh from '{}'", meshPath);
         return;
     }
-    UZ_LOG(DeferredTest, Info, "Loaded cube.uzmesh: {} vertices, {} indices, stride={}",
+    UZ_LOG(Renderer, Info, "Loaded cube.uzmesh: {} vertices, {} indices, stride={}",
            cubeMesh.GetVertexCount(), cubeMesh.GetIndexCount(), cubeMesh.header.vertexStride);
 
     // ── Vertex buffer ────────────────────────────────────────────────────
@@ -585,7 +585,7 @@ bool DeferredTestDemo::CreateGBuffer() {
         desc.debugName = name;
         handle = device->CreateTexture(desc);
         if (!handle.IsValid()) {
-            UZ_LOG(DeferredTest, Error, "Failed to create G-Buffer texture: '{}'", name);
+            UZ_LOG(Renderer, Error, "Failed to create G-Buffer texture: '{}'", name);
             return false;
         }
         srvIdx = device->GetTextureSRVIndex(handle);
@@ -619,7 +619,7 @@ void DeferredTestDemo::DestroyGBuffer() {
 void DeferredTestDemo::OnResize(uint32_t width, uint32_t height) {
     DestroyGBuffer();
     if (!CreateGBuffer()) {
-        UZ_LOG(DeferredTest, Error, "Failed to recreate G-Buffer textures on resize");
+        UZ_LOG(Renderer, Error, "Failed to recreate G-Buffer textures on resize");
         return;
     }
 
@@ -657,7 +657,7 @@ void DeferredTestDemo::OnFrame(float dt) {
     if (input_.IsKeyJustPressed(Key::F)) {
         renderPath_ = (renderPath_ == RenderPath::Deferred)
             ? RenderPath::Forward : RenderPath::Deferred;
-        UZ_LOG(DeferredTest, Info, "Render path switched to: {}",
+        UZ_LOG(Renderer, Info, "Render path switched to: {}",
                RenderPathToString(renderPath_));
     }
 
@@ -948,7 +948,7 @@ void DeferredTestDemo::OnShutdown() {
     if (gbufPSHandle_.IsValid())  device->DestroyShader(gbufPSHandle_);
     if (meshVSHandle_.IsValid())  device->DestroyShader(meshVSHandle_);
 
-    UZ_LOG(DeferredTest, Info, "Deferred test demo shutdown complete");
+    UZ_LOG(Renderer, Info, "Deferred test demo shutdown complete");
 }
 
 } // namespace uz
