@@ -16,9 +16,10 @@
 #include <cmath>
 #include <cstdio>
 
+UZ_DECLARE_LOG_CATEGORY(EditorStats);
+
 namespace uz {
 
-UZ_DECLARE_LOG_CATEGORY(EditorStats);
 UZ_DEFINE_LOG_CATEGORY(EditorStats, Info);
 
 // ─────────────────────────────────────────────────────────────────────────────

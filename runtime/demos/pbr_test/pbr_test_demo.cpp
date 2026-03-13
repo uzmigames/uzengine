@@ -60,7 +60,6 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
-#include <thread>
 
 using namespace DirectX;
 
@@ -70,22 +69,16 @@ namespace uz {
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
 
-static constexpr uint32_t kFramesInFlight  = 3;
-static constexpr float    kMaxFPS          = 500.f;
-static constexpr float    kMinFrameTime    = 1.f / kMaxFPS;
 static constexpr int      kCubeCount       = 5;
 static constexpr uint32_t kPointLightCount = 4;
 static constexpr uint32_t kShadowResolution = 2048;
-static constexpr uint32_t kShadowAtlasSize  = kShadowResolution * 2; // 4096x4096 atlas for 2x2 cascade layout
+static constexpr uint32_t kShadowAtlasSize  = kShadowResolution * 2;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Matrix helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Computes transpose(inverse(model)) for correct normal transformation.
-///
-/// Uses DirectXMath SIMD for the matrix inverse and transpose.
-/// Falls back to identity if the matrix is singular.
 static Mat4 ComputeNormalMatrix(const Mat4& model) {
     XMFLOAT4X4 xmModel;
     std::memcpy(&xmModel, &model, sizeof(Mat4));
@@ -94,7 +87,6 @@ static Mat4 ComputeNormalMatrix(const Mat4& model) {
     XMVECTOR det;
     XMMATRIX inv = XMMatrixInverse(&det, m);
 
-    // Singular matrix — normal transform undefined, return identity
     if (XMVectorGetX(det) == 0.f) {
         return Mat4::Identity();
     }
@@ -124,9 +116,6 @@ static Mat4 BuildModelMatrix(Vec3 position, float scale) {
 }
 
 /// Builds a model matrix with non-uniform scale for objects like the ground plane.
-///
-/// Scale is applied per-axis before translation, allowing flattened shapes
-/// (e.g., a cube squashed into a thin slab).
 static Mat4 BuildModelMatrixNonUniform(Vec3 position, Vec3 scale) {
     XMMATRIX s = XMMatrixScaling(scale.x, scale.y, scale.z);
     XMMATRIX t = XMMatrixTranslation(position.x, position.y, position.z);
@@ -141,9 +130,6 @@ static Mat4 BuildModelMatrixNonUniform(Vec3 position, Vec3 scale) {
 }
 
 /// Computes the inverse of a view-projection matrix for world-position reconstruction.
-///
-/// The lighting pass uses `invViewProj` to reconstruct world-space positions from
-/// screen-space UV + sampled depth. Returns identity if the matrix is singular.
 static Mat4 ComputeInvViewProj(const Mat4& viewProj) {
     return viewProj.Inverse();
 }
@@ -152,9 +138,6 @@ static Mat4 ComputeInvViewProj(const Mat4& viewProj) {
 // Scene data
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// World-space positions for the 5-cube row, evenly spaced along X.
-///
-/// Spacing of 2 units with scale 0.8 leaves ~1.2 units of clearance between cubes.
 static constexpr Vec3 kCubePositions[kCubeCount] = {
     {-4.f, 0.f, 0.f},
     {-2.f, 0.f, 0.f},
@@ -165,55 +148,10 @@ static constexpr Vec3 kCubePositions[kCubeCount] = {
 static constexpr float kCubeScale = 0.8f;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PBR texture bundle (per-material maps)
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// GPU-resident PBR texture handles and their SRV descriptor indices.
-struct PBRTextures {
-    RHITextureHandle handles[5] = {};
-    uint32_t albedoSrv    = 0;
-    uint32_t normalSrv    = 0;
-    uint32_t roughnessSrv = 0;
-    uint32_t metallicSrv  = 0;
-    uint32_t aoSrv        = 0;
-};
-
-// ─────────────────────────────────────────────────────────────────────────────
-// G-Buffer transient textures (recreated on resize)
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Physical G-Buffer texture handles used across G-Buffer and lighting passes.
-///
-/// The render graph declares these as transient but the physical textures are
-/// maintained externally so their SRV indices remain stable within the frame.
-struct GBufferTextures {
-    RHITextureHandle albedo;      ///< RGBA8Unorm — base colour + alpha
-    RHITextureHandle normal;      ///< RGBA16Float — world-space normals
-    RHITextureHandle metalRough;  ///< RGBA8Unorm — R=metallic, G=roughness
-    RHITextureHandle depth;       ///< D32Float — primary depth buffer
-
-    uint32_t albedoSrv     = 0;
-    uint32_t normalSrv     = 0;
-    uint32_t metalRoughSrv = 0;
-    uint32_t depthSrv      = 0;
-};
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Texture creation helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Loads an image from disk, uploads it to the GPU, and returns the SRV index.
-///
-/// # Arguments
-/// * `device`    — RHI device. Must outlive the returned texture handle.
-/// * `cmdList`   — Open command list used for the upload barrier.
-/// * `filename`  — Filename relative to `assets/` next to the executable.
-/// * `debugName` — Name shown in GPU validation layers.
-/// * `outHandle` — Populated with the created GPU texture handle.
-///
-/// # Returns
-/// Non-zero SRV descriptor index on success, 0 if the texture file was not
-/// found or GPU texture creation failed. Shaders treat 0 as "use default value".
 static uint32_t LoadPBRTexture(IRHIDevice* device, IRHICommandList* cmdList,
                                const char* filename, const char* debugName,
                                RHITextureHandle& outHandle)
@@ -264,19 +202,6 @@ static uint32_t LoadPBRTexture(IRHIDevice* device, IRHICommandList* cmdList,
 }
 
 /// Creates a procedural checker texture (dark/light grey squares).
-///
-/// Generates a `size x size` RGBA8 texture on the CPU, uploads it to GPU,
-/// and returns the SRV heap index. Used for the ground plane.
-///
-/// # Parameters
-/// * `device` — RHI device for resource creation.
-/// * `cmdList` — Command list for the staging upload.
-/// * `size` — Texture resolution (width = height).
-/// * `tileCount` — Number of checker tiles per axis (e.g., 16 = 16x16 grid).
-/// * `outHandle` — Receives the created texture handle.
-///
-/// # Returns
-/// SRV heap index on success, 0 on failure.
 static uint32_t CreateCheckerTexture(IRHIDevice* device, IRHICommandList* cmdList,
                                      uint32_t size, uint32_t tileCount,
                                      RHITextureHandle& outHandle)
@@ -332,9 +257,6 @@ static uint32_t CreateCheckerTexture(IRHIDevice* device, IRHICommandList* cmdLis
 }
 
 /// Creates all four G-Buffer textures at the given resolution.
-///
-/// Depth is created with `DepthStencil | ShaderResource` usage so it can be
-/// read in the lighting pass. Returns false if any texture creation fails.
 static bool CreateGBufferTextures(IRHIDevice* device, uint32_t width, uint32_t height,
                                   GBufferTextures& out)
 {
@@ -380,9 +302,6 @@ static void DestroyGBufferTextures(IRHIDevice* device, GBufferTextures& gbuf) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Creates the G-Buffer PSO (mesh_vs + gbuffer_ps, 3 RTs + depth).
-///
-/// # Returns
-/// Valid pipeline handle on success, invalid handle on shader or PSO creation failure.
 static RHIPipelineHandle CreateGBufferPipeline(IRHIDevice* device,
                                                RHIShaderHandle vsHandle,
                                                RHIShaderHandle psHandle,
@@ -403,10 +322,9 @@ static RHIPipelineHandle CreateGBufferPipeline(IRHIDevice* device,
     desc.rasterizer.frontCounterClockwise = false;
     desc.depthStencil.depthEnable         = true;
     desc.depthStencil.depthWrite          = true;
-    // Three G-Buffer render targets
-    desc.renderTargetFormats[0]           = RHIFormat::RGBA8Unorm;   // albedo
-    desc.renderTargetFormats[1]           = RHIFormat::RGBA16Float;  // normals
-    desc.renderTargetFormats[2]           = RHIFormat::RGBA8Unorm;   // metallic/roughness
+    desc.renderTargetFormats[0]           = RHIFormat::RGBA8Unorm;
+    desc.renderTargetFormats[1]           = RHIFormat::RGBA16Float;
+    desc.renderTargetFormats[2]           = RHIFormat::RGBA8Unorm;
     desc.renderTargetCount                = 3;
     desc.depthStencilFormat               = RHIFormat::D32Float;
     desc.debugName                        = "GBufferPipeline";
@@ -421,9 +339,6 @@ static RHIPipelineHandle CreateGBufferPipeline(IRHIDevice* device,
 }
 
 /// Creates the fullscreen lighting PSO (fullscreen_vs + deferred_lighting_ps, 1 RT, no depth).
-///
-/// # Returns
-/// Valid pipeline handle on success, invalid handle on failure.
 static RHIPipelineHandle CreateLightingPipeline(IRHIDevice* device,
                                                 RHIShaderHandle vsHandle,
                                                 RHIShaderHandle psHandle)
@@ -441,10 +356,7 @@ static RHIPipelineHandle CreateLightingPipeline(IRHIDevice* device,
     return device->CreateGraphicsPipeline(desc);
 }
 
-/// Creates the fullscreen debug visualization PSO (fullscreen_vs + gbuffer_debug_ps, 1 RT, no depth).
-///
-/// # Returns
-/// Valid pipeline handle on success, invalid handle on failure.
+/// Creates the fullscreen debug visualization PSO.
 static RHIPipelineHandle CreateDebugPipeline(IRHIDevice* device,
                                              RHIShaderHandle vsHandle,
                                              RHIShaderHandle psHandle)
@@ -463,12 +375,6 @@ static RHIPipelineHandle CreateDebugPipeline(IRHIDevice* device,
 }
 
 /// Creates the forward PBR PSO (mesh_vs + mesh_ps, 1 RT + depth).
-///
-/// Uses the same vertex input layout as the G-Buffer pipeline but outputs
-/// to a single RGBA8Unorm render target with forward Cook-Torrance lighting.
-///
-/// # Returns
-/// Valid pipeline handle on success, invalid handle on shader or PSO creation failure.
 static RHIPipelineHandle CreateForwardPipeline(IRHIDevice* device,
                                                 RHIShaderHandle vsHandle,
                                                 RHIShaderHandle psHandle,
@@ -504,138 +410,177 @@ static RHIPipelineHandle CreateForwardPipeline(IRHIDevice* device,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Main Demo
+// PBRTestDemo — Construction / Destruction
 // ─────────────────────────────────────────────────────────────────────────────
 
-bool RunPBRTestDemo(const PBRTestConfig& config) {
-    const uint32_t frameCount = config.frameCount;
+PBRTestDemo::PBRTestDemo(const PBRTestConfig& config)
+    : DemoApplication(DemoConfig{
+        .title  = "UzEngine \xe2\x80\x94 PBR Test (Cook-Torrance)",
+        .width  = 1280,
+        .height = 720,
+        .maxFrames = config.frameCount,
+        .vsync  = false,
+    })
+    , config_(config)
+{}
 
-    // ── Window ───────────────────────────────────────────────────────────
-    WindowDesc winDesc{};
-    winDesc.title = "UzEngine \xe2\x80\x94 PBR Test (Cook-Torrance)";
-    winDesc.width = 1280;
-    winDesc.height = 720;
+PBRTestDemo::~PBRTestDemo() = default;
 
-    PlatformWindow window;
-    if (!window.Create(winDesc)) {
-        UZ_LOG(Renderer, Error, "Failed to create window");
-        return false;
-    }
-    window.Show();
+// ─────────────────────────────────────────────────────────────────────────────
+// OnInit — Create all rendering resources
+// ─────────────────────────────────────────────────────────────────────────────
+
+void PBRTestDemo::OnInit() {
+    startTime_ = std::chrono::high_resolution_clock::now();
+
+    auto* device = GetDevice();
+    bindless_ = device->IsBindless();
 
     // ── Input ────────────────────────────────────────────────────────────
-    InputSystem input;
-    input.Init();
-    window.SetInputSystem(&input);
+    input_ = std::make_unique<InputSystem>();
+    input_->Init();
+    GetWindow()->SetInputSystem(input_.get());
 
-    // ── Device ───────────────────────────────────────────────────────────
-    RHIDeviceDesc deviceDesc{};
-    deviceDesc.backend = config.backend;
-#ifdef NDEBUG
-    deviceDesc.enableValidation = false;
-#else
-    deviceDesc.enableValidation = true;
-#endif
+    CompileShaders();
+    CreatePipelines();
+    LoadMeshData();
+    LoadTextures();
+    CreateGBuffer();
 
-    if (const char* env = std::getenv("UZ_FORCE_SM5"); env && std::string(env) == "1") {
-        deviceDesc.forceShaderModel = ShaderModel::SM5_0;
+    // ── Shadow atlas texture ─────────────────────────────────────────────
+    RHITextureDesc shadowAtlasDesc{};
+    shadowAtlasDesc.width     = kShadowAtlasSize;
+    shadowAtlasDesc.height    = kShadowAtlasSize;
+    shadowAtlasDesc.format    = RHIFormat::D32Float;
+    shadowAtlasDesc.usage     = RHITextureUsage::DepthStencil | RHITextureUsage::ShaderResource;
+    shadowAtlasDesc.debugName = "ShadowAtlas";
+    shadowAtlas_    = device->CreateTexture(shadowAtlasDesc);
+    shadowAtlasSrv_ = device->GetTextureSRVIndex(shadowAtlas_);
+
+    // ── CB ring allocator ────────────────────────────────────────────────
+    cbRing_ = std::make_unique<CBRingAllocator>();
+    cbRing_->Init(device, 3, 128 * 1024);
+
+    // ── Editor Grid ──────────────────────────────────────────────────────
+    editorGrid_ = std::make_unique<EditorGrid>();
+    if (!editorGrid_->Init(device, *shaderPipeline_, RHIFormat::RGBA8Unorm, RHIFormat::D32Float)) {
+        UZ_LOG(Renderer, Error, "Failed to initialize editor grid");
+        return;
     }
 
-    IRHIDevice* device = CreateRHIDevice(deviceDesc);
-    if (!device) {
-        UZ_LOG(Renderer, Error, "Failed to create RHI device (backend={})",
-               static_cast<int>(config.backend));
-        return false;
+    // ── Stats Overlay ────────────────────────────────────────────────────
+    statsOverlay_ = std::make_unique<StatsOverlay>();
+    {
+        auto* cmdList = GetCommandList();
+        UploadContext upload(device);
+        cmdList->Begin();
+        if (!statsOverlay_->Init(device, cmdList, upload, *shaderPipeline_,
+                                 RHIFormat::RGBA8Unorm, GetWidth(), GetHeight(), bindless_)) {
+            UZ_LOG(Renderer, Error, "Failed to initialize stats overlay");
+            return;
+        }
+        cmdList->End();
+        cmdList->Execute();
+        device->WaitIdle();
+        upload.ReleaseStaging();
     }
 
-    // ── Swapchain ────────────────────────────────────────────────────────
-    RHISwapChainDesc scDesc{};
-    scDesc.windowHandle  = window.GetNativeHandle();
-    scDesc.displayHandle = window.GetNativeDisplayHandle();
-    scDesc.width         = static_cast<uint32_t>(window.GetWidth());
-    scDesc.height        = static_cast<uint32_t>(window.GetHeight());
-    scDesc.bufferCount   = kFramesInFlight;
-    scDesc.format        = RHIFormat::RGBA8Unorm;
-    scDesc.vsync         = false;
-
-    IRHISwapChain* swapChain = device->CreateSwapChain(scDesc);
-    if (!swapChain) {
-        UZ_LOG(Renderer, Error, "Failed to create swapchain");
-        DestroyRHIDevice(device);
-        return false;
-    }
-
-    // ── Command List ─────────────────────────────────────────────────────
-    IRHICommandList* cmdList = device->CreateCommandList(RHIQueueType::Graphics);
-    if (!cmdList) {
-        UZ_LOG(Renderer, Error, "Failed to create command list");
-        device->DestroySwapChain(swapChain);
-        DestroyRHIDevice(device);
-        return false;
-    }
-
-    // ── Fences ───────────────────────────────────────────────────────────
-    IRHIFence* frameFences[kFramesInFlight] = {};
-    uint64_t   fenceValues[kFramesInFlight] = {};
-    for (uint32_t i = 0; i < kFramesInFlight; ++i) {
-        frameFences[i] = device->CreateFence();
-        if (!frameFences[i]) {
-            UZ_LOG(Renderer, Error, "Failed to create frame fence {}", i);
-            for (uint32_t j = 0; j < i; ++j) device->DestroyFence(frameFences[j]);
-            device->DestroyCommandList(cmdList);
-            device->DestroySwapChain(swapChain);
-            DestroyRHIDevice(device);
-            return false;
+    // ── Screenshot Capture ───────────────────────────────────────────────
+    screenshotPending_ = !config_.screenshotPath.empty();
+    if (screenshotPending_) {
+        screenshotCapture_ = std::make_unique<ScreenshotCapture>();
+        if (!screenshotCapture_->Init(device, GetWidth(), GetHeight())) {
+            UZ_LOG(Renderer, Error, "Failed to initialize screenshot capture");
+            return;
         }
     }
 
-    // ── Shader Pipeline ──────────────────────────────────────────────────
-    const bool bindless = device->IsBindless();
+    // ── Render Graph Resource Pool ───────────────────────────────────────
+    rgPool_ = std::make_unique<rg::RgResourcePool>(device);
 
-    ShaderCompiler compiler;
-    if (!compiler.Init()) {
-        UZ_LOG(Renderer, Error, "Failed to init shader compiler");
-        return false;
+    // ── Camera ───────────────────────────────────────────────────────────
+    constexpr float kHFovDeg = 90.f;
+    constexpr float kAspect  = 16.f / 9.f;
+    float vFovRad = 2.f * std::atan(std::tan(kHFovDeg * 0.5f * 3.14159265f / 180.f) / kAspect);
+    camera_.SetPerspective(vFovRad,
+        static_cast<float>(GetWidth()) / static_cast<float>(GetHeight()),
+        0.1f, 1000.f);
+
+    camera_.SetPosition({0.f, 5.f, 2.f});
+    {
+        constexpr float kDegToRad = 3.14159265f / 180.f;
+        float yawRad   = -90.f * kDegToRad;
+        float pitchRad = -20.f * kDegToRad;
+        float cosPitch = std::cos(pitchRad);
+        Vec3 forward = {
+            std::cos(yawRad) * cosPitch,
+            std::sin(yawRad) * cosPitch,
+            std::sin(pitchRad)
+        };
+        Vec3 pos = camera_.GetPosition();
+        camera_.LookAt(pos + forward, Vec3::Up());
     }
 
-    ShaderPipeline shaderPipeline;
+    cameraCtrl_.InitFromCamera(camera_);
+    cameraCtrl_.SetMoveSpeed(10.f);
+
+    // ── Render state ─────────────────────────────────────────────────────
+    debugModeValue_ = static_cast<uint32_t>(GBufferDebugMode::Count);
+    renderPath_ = GetDefaultRenderPath();
+
+    UZ_LOG(Renderer, Info, "PBR test demo started — 5 cubes, {} point lights + directional sun "
+           "(F=toggle render path, current={})", kPointLightCount, RenderPathToString(renderPath_));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CompileShaders
+// ─────────────────────────────────────────────────────────────────────────────
+
+void PBRTestDemo::CompileShaders() {
+    auto* device = GetDevice();
+
+    compiler_ = std::make_unique<ShaderCompiler>();
+    if (!compiler_->Init()) {
+        UZ_LOG(Renderer, Error, "Failed to init shader compiler");
+        return;
+    }
+
+    shaderPipeline_ = std::make_unique<ShaderPipeline>();
     ShaderPipeline::Config pipelineCfg;
     pipelineCfg.cacheDir      = (uz::GetExeDir() / "cache/shaders").string();
-    pipelineCfg.targetBackend = bindless ? "dx12_sm66" : "dx12_sm50";
-    pipelineCfg.bindless      = bindless;
-    shaderPipeline.Init(pipelineCfg);
-    shaderPipeline.SetCompiler(&compiler);
+    pipelineCfg.targetBackend = bindless_ ? "dx12_sm66" : "dx12_sm50";
+    pipelineCfg.bindless      = bindless_;
+    shaderPipeline_->Init(pipelineCfg);
+    shaderPipeline_->SetCompiler(compiler_.get());
 
-    ShaderCompilerFXC compilerFXC;
-    if (!bindless) {
-        if (!compilerFXC.Init()) {
+    if (!bindless_) {
+        compilerFXC_ = std::make_unique<ShaderCompilerFXC>();
+        if (!compilerFXC_->Init()) {
             UZ_LOG(Renderer, Error, "Failed to init FXC shader compiler");
-            return false;
+            return;
         }
-        shaderPipeline.SetCompilerFXC(&compilerFXC);
+        shaderPipeline_->SetCompilerFXC(compilerFXC_.get());
     }
 
-    // ── Compile shaders from embedded sources ────────────────────────────
-    auto meshVSBytes = shaderPipeline.LoadBytecodeFromSource(
+    auto meshVSBytes = shaderPipeline_->LoadBytecodeFromSource(
         EngineShaders::GetName(EngineShader::MeshVS),
         EngineShaders::GetSource(EngineShader::MeshVS));
-    auto meshPSBytes = shaderPipeline.LoadBytecodeFromSource(
+    auto meshPSBytes = shaderPipeline_->LoadBytecodeFromSource(
         EngineShaders::GetName(EngineShader::MeshPS),
         EngineShaders::GetSource(EngineShader::MeshPS));
-    auto gbufPSBytes = shaderPipeline.LoadBytecodeFromSource(
+    auto gbufPSBytes = shaderPipeline_->LoadBytecodeFromSource(
         EngineShaders::GetName(EngineShader::GbufferPS),
         EngineShaders::GetSource(EngineShader::GbufferPS));
-    auto fsVSBytes = shaderPipeline.LoadBytecodeFromSource(
+    auto fsVSBytes = shaderPipeline_->LoadBytecodeFromSource(
         EngineShaders::GetName(EngineShader::FullscreenVS),
         EngineShaders::GetSource(EngineShader::FullscreenVS));
-    auto lightPSBytes = shaderPipeline.LoadBytecodeFromSource(
+    auto lightPSBytes = shaderPipeline_->LoadBytecodeFromSource(
         EngineShaders::GetName(EngineShader::DeferredLightingPS),
         EngineShaders::GetSource(EngineShader::DeferredLightingPS));
-    auto debugPSBytes = shaderPipeline.LoadBytecodeFromSource(
+    auto debugPSBytes = shaderPipeline_->LoadBytecodeFromSource(
         EngineShaders::GetName(EngineShader::GbufferDebugPS),
         EngineShaders::GetSource(EngineShader::GbufferDebugPS));
-
-    auto shadowVSBytes = shaderPipeline.LoadBytecodeFromSource(
+    auto shadowVSBytes = shaderPipeline_->LoadBytecodeFromSource(
         EngineShaders::GetName(EngineShader::ShadowDepthVS),
         EngineShaders::GetSource(EngineShader::ShadowDepthVS));
 
@@ -644,10 +589,9 @@ bool RunPBRTestDemo(const PBRTestConfig& config) {
         shadowVSBytes.empty())
     {
         UZ_LOG(Renderer, Error, "Failed to compile one or more shaders");
-        return false;
+        return;
     }
 
-    // ── Shader handles ───────────────────────────────────────────────────
     auto makeShader = [&](const std::vector<uint8_t>& bc, RHIShaderStage stage,
                           const char* name) -> RHIShaderHandle {
         RHIShaderDesc d{};
@@ -659,22 +603,28 @@ bool RunPBRTestDemo(const PBRTestConfig& config) {
         return device->CreateShader(d);
     };
 
-    RHIShaderHandle meshVSHandle  = makeShader(meshVSBytes,  RHIShaderStage::Vertex, "mesh_vs");
-    RHIShaderHandle meshPSHandle  = makeShader(meshPSBytes,  RHIShaderStage::Pixel,  "mesh_ps");
-    RHIShaderHandle gbufPSHandle  = makeShader(gbufPSBytes,  RHIShaderStage::Pixel,  "gbuffer_ps");
-    RHIShaderHandle fsVSHandle    = makeShader(fsVSBytes,    RHIShaderStage::Vertex, "fullscreen_vs");
-    RHIShaderHandle lightPSHandle = makeShader(lightPSBytes, RHIShaderStage::Pixel,  "deferred_lighting_ps");
-    RHIShaderHandle debugPSHandle = makeShader(debugPSBytes, RHIShaderStage::Pixel,  "gbuffer_debug_ps");
-    RHIShaderHandle shadowVSHandle = makeShader(shadowVSBytes, RHIShaderStage::Vertex, "shadow_depth_vs");
+    meshVSHandle_   = makeShader(meshVSBytes,   RHIShaderStage::Vertex, "mesh_vs");
+    meshPSHandle_   = makeShader(meshPSBytes,   RHIShaderStage::Pixel,  "mesh_ps");
+    gbufPSHandle_   = makeShader(gbufPSBytes,   RHIShaderStage::Pixel,  "gbuffer_ps");
+    fsVSHandle_     = makeShader(fsVSBytes,     RHIShaderStage::Vertex, "fullscreen_vs");
+    lightPSHandle_  = makeShader(lightPSBytes,  RHIShaderStage::Pixel,  "deferred_lighting_ps");
+    debugPSHandle_  = makeShader(debugPSBytes,  RHIShaderStage::Pixel,  "gbuffer_debug_ps");
+    shadowVSHandle_ = makeShader(shadowVSBytes, RHIShaderStage::Vertex, "shadow_depth_vs");
+}
 
-    // ── PSOs ─────────────────────────────────────────────────────────────
-    RHIPipelineHandle gbufPipeline    = CreateGBufferPipeline(device, meshVSHandle, gbufPSHandle, bindless);
-    RHIPipelineHandle lightPipeline   = CreateLightingPipeline(device, fsVSHandle, lightPSHandle);
-    RHIPipelineHandle debugPipeline   = CreateDebugPipeline(device, fsVSHandle, debugPSHandle);
-    RHIPipelineHandle forwardPipeline = CreateForwardPipeline(device, meshVSHandle, meshPSHandle, bindless);
+// ─────────────────────────────────────────────────────────────────────────────
+// CreatePipelines
+// ─────────────────────────────────────────────────────────────────────────────
+
+void PBRTestDemo::CreatePipelines() {
+    auto* device = GetDevice();
+
+    gbufPipeline_    = CreateGBufferPipeline(device, meshVSHandle_, gbufPSHandle_, bindless_);
+    lightPipeline_   = CreateLightingPipeline(device, fsVSHandle_, lightPSHandle_);
+    debugPipeline_   = CreateDebugPipeline(device, fsVSHandle_, debugPSHandle_);
+    forwardPipeline_ = CreateForwardPipeline(device, meshVSHandle_, meshPSHandle_, bindless_);
 
     // Shadow depth PSO — vertex shader only, depth-only output, no pixel shader
-    RHIPipelineHandle shadowPipeline;
     {
         RHIInputElementDesc inputElements[] = {
             { RHIInputSemantic::Position, 0, RHIFormat::RGB32Float,  0, 0  },
@@ -684,8 +634,7 @@ bool RunPBRTestDemo(const PBRTestConfig& config) {
         };
 
         RHIGraphicsPipelineDesc desc{};
-        desc.vertexShader  = shadowVSHandle;
-        // No pixel shader — depth-only pass
+        desc.vertexShader  = shadowVSHandle_;
         desc.topology      = RHIPrimitiveTopology::TriangleList;
         desc.rasterizer.cullMode              = RHICullMode::Back;
         desc.rasterizer.frontCounterClockwise = false;
@@ -695,611 +644,481 @@ bool RunPBRTestDemo(const PBRTestConfig& config) {
         desc.depthStencilFormat               = RHIFormat::D32Float;
         desc.debugName                        = "ShadowDepthPipeline";
 
-        if (!bindless) {
+        if (!bindless_) {
             desc.inputElements     = inputElements;
             desc.inputElementCount = 4;
         }
 
-        shadowPipeline = device->CreateGraphicsPipeline(desc);
+        shadowPipeline_ = device->CreateGraphicsPipeline(desc);
     }
 
-    if (!gbufPipeline.IsValid() || !lightPipeline.IsValid() ||
-        !debugPipeline.IsValid() || !forwardPipeline.IsValid() ||
-        !shadowPipeline.IsValid()) {
+    if (!gbufPipeline_.IsValid() || !lightPipeline_.IsValid() ||
+        !debugPipeline_.IsValid() || !forwardPipeline_.IsValid() ||
+        !shadowPipeline_.IsValid()) {
         UZ_LOG(Renderer, Error, "Failed to create one or more PSOs");
-        return false;
     }
+}
 
-    // ── Load cube mesh ────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// LoadMeshData
+// ─────────────────────────────────────────────────────────────────────────────
+
+void PBRTestDemo::LoadMeshData() {
+    auto* device = GetDevice();
+
     std::string meshPath = (uz::GetExeDir() / "assets/cube.uzmesh").string();
-    Mesh cubeMesh = LoadMesh(meshPath);
-    if (!cubeMesh.IsValid()) {
+    auto mesh = std::make_unique<Mesh>(LoadMesh(meshPath));
+    if (!mesh->IsValid()) {
         UZ_LOG(Renderer, Error, "Failed to load cube.uzmesh from '{}'", meshPath);
-        return false;
+        return;
     }
     UZ_LOG(Renderer, Info, "Loaded cube.uzmesh: {} vertices, {} indices, stride={}",
-           cubeMesh.GetVertexCount(), cubeMesh.GetIndexCount(), cubeMesh.header.vertexStride);
+           mesh->GetVertexCount(), mesh->GetIndexCount(), mesh->header.vertexStride);
 
-    // ── Upload vertex buffer ──────────────────────────────────────────────
+    // Upload vertex buffer
     RHIBufferDesc vbDesc{};
-    vbDesc.sizeBytes = cubeMesh.GetVertexDataSize();
-    vbDesc.stride    = cubeMesh.header.vertexStride;
-    vbDesc.usage     = bindless ? RHIBufferUsage::StructuredBuffer : RHIBufferUsage::VertexBuffer;
+    vbDesc.sizeBytes = mesh->GetVertexDataSize();
+    vbDesc.stride    = mesh->header.vertexStride;
+    vbDesc.usage     = bindless_ ? RHIBufferUsage::StructuredBuffer : RHIBufferUsage::VertexBuffer;
     vbDesc.memory    = RHIMemoryType::Upload;
     vbDesc.debugName = "PBRVertexBuffer";
 
-    RHIBufferHandle vbHandle = device->CreateBuffer(vbDesc);
-    void* vbMapped = device->MapBuffer(vbHandle);
-    std::memcpy(vbMapped, cubeMesh.vertexData.data(), cubeMesh.GetVertexDataSize());
-    device->UnmapBuffer(vbHandle);
+    vbHandle_ = device->CreateBuffer(vbDesc);
+    void* vbMapped = device->MapBuffer(vbHandle_);
+    std::memcpy(vbMapped, mesh->vertexData.data(), mesh->GetVertexDataSize());
+    device->UnmapBuffer(vbHandle_);
 
-    uint32_t vbSrvIndex = bindless ? device->GetBufferSRVIndex(vbHandle) : 0u;
+    vbSrvIndex_ = bindless_ ? device->GetBufferSRVIndex(vbHandle_) : 0u;
 
-    // ── Upload index buffer ───────────────────────────────────────────────
+    // Upload index buffer
     RHIBufferDesc ibDesc{};
-    ibDesc.sizeBytes = cubeMesh.GetIndexDataSize();
-    ibDesc.stride    = (cubeMesh.header.indexFormat == MeshIndexFormat::UInt32) ? 4u : 2u;
+    ibDesc.sizeBytes = mesh->GetIndexDataSize();
+    ibDesc.stride    = (mesh->header.indexFormat == MeshIndexFormat::UInt32) ? 4u : 2u;
     ibDesc.usage     = RHIBufferUsage::IndexBuffer;
     ibDesc.memory    = RHIMemoryType::Upload;
     ibDesc.debugName = "PBRIndexBuffer";
 
-    RHIBufferHandle ibHandle = device->CreateBuffer(ibDesc);
-    void* ibMapped = device->MapBuffer(ibHandle);
-    std::memcpy(ibMapped, cubeMesh.indexData.data(), cubeMesh.GetIndexDataSize());
-    device->UnmapBuffer(ibHandle);
+    ibHandle_ = device->CreateBuffer(ibDesc);
+    void* ibMapped = device->MapBuffer(ibHandle_);
+    std::memcpy(ibMapped, mesh->indexData.data(), mesh->GetIndexDataSize());
+    device->UnmapBuffer(ibHandle_);
 
-    const RHIIndexFormat indexFormat = (cubeMesh.header.indexFormat == MeshIndexFormat::UInt32)
+    indexFormat_ = (mesh->header.indexFormat == MeshIndexFormat::UInt32)
         ? RHIIndexFormat::Uint32 : RHIIndexFormat::Uint16;
 
-    // ── Load PBR textures ─────────────────────────────────────────────────
-    PBRTextures pbrTex;
-    pbrTex.albedoSrv    = LoadPBRTexture(device, cmdList, "Stonebricks_BaseColor.jpg", "StonebricksBaseColor",  pbrTex.handles[0]);
-    pbrTex.normalSrv    = LoadPBRTexture(device, cmdList, "Stonebricks_Normal.jpg",    "StonebricksNormal",     pbrTex.handles[1]);
-    pbrTex.roughnessSrv = LoadPBRTexture(device, cmdList, "Stonebricks_Roughness.jpg", "StonebricksRoughness",  pbrTex.handles[2]);
-    pbrTex.metallicSrv  = LoadPBRTexture(device, cmdList, "Stonebricks_Metallic.jpg",  "StonebricksMetallic",   pbrTex.handles[3]);
-    pbrTex.aoSrv        = LoadPBRTexture(device, cmdList, "Stonebricks_AO.jpg",        "StonebricksAO",         pbrTex.handles[4]);
+    cubeMesh_ = std::move(mesh);
+}
 
-    // ── Checker texture for ground plane ─────────────────────────────────
-    RHITextureHandle checkerHandle;
-    uint32_t checkerSrv = CreateCheckerTexture(device, cmdList, 512, 16, checkerHandle);
+// ─────────────────────────────────────────────────────────────────────────────
+// LoadTextures
+// ─────────────────────────────────────────────────────────────────────────────
 
-    // ── G-Buffer textures ─────────────────────────────────────────────────
-    GBufferTextures gbuf;
-    if (!CreateGBufferTextures(device, scDesc.width, scDesc.height, gbuf)) {
-        return false;
+void PBRTestDemo::LoadTextures() {
+    auto* device  = GetDevice();
+    auto* cmdList = GetCommandList();
+
+    pbrTex_.albedoSrv    = LoadPBRTexture(device, cmdList, "Stonebricks_BaseColor.jpg", "StonebricksBaseColor",  pbrTex_.handles[0]);
+    pbrTex_.normalSrv    = LoadPBRTexture(device, cmdList, "Stonebricks_Normal.jpg",    "StonebricksNormal",     pbrTex_.handles[1]);
+    pbrTex_.roughnessSrv = LoadPBRTexture(device, cmdList, "Stonebricks_Roughness.jpg", "StonebricksRoughness",  pbrTex_.handles[2]);
+    pbrTex_.metallicSrv  = LoadPBRTexture(device, cmdList, "Stonebricks_Metallic.jpg",  "StonebricksMetallic",   pbrTex_.handles[3]);
+    pbrTex_.aoSrv        = LoadPBRTexture(device, cmdList, "Stonebricks_AO.jpg",        "StonebricksAO",         pbrTex_.handles[4]);
+
+    checkerSrv_ = CreateCheckerTexture(device, cmdList, 512, 16, checkerHandle_);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CreateGBuffer / RecreateGBuffer
+// ─────────────────────────────────────────────────────────────────────────────
+
+void PBRTestDemo::CreateGBuffer() {
+    if (!CreateGBufferTextures(GetDevice(), GetWidth(), GetHeight(), gbuf_)) {
+        UZ_LOG(Renderer, Error, "Failed to create G-Buffer textures");
+    }
+}
+
+void PBRTestDemo::RecreateGBuffer(uint32_t width, uint32_t height) {
+    DestroyGBufferTextures(GetDevice(), gbuf_);
+    if (!CreateGBufferTextures(GetDevice(), width, height, gbuf_)) {
+        UZ_LOG(Renderer, Error, "Failed to recreate G-Buffer textures on resize");
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OnResize
+// ─────────────────────────────────────────────────────────────────────────────
+
+void PBRTestDemo::OnResize(uint32_t width, uint32_t height) {
+    RecreateGBuffer(width, height);
+    statsOverlay_->SetScreenSize(width, height);
+    camera_.SetAspectRatio(static_cast<float>(width) / static_cast<float>(height));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OnFrame — Record one frame's rendering commands
+// ─────────────────────────────────────────────────────────────────────────────
+
+void PBRTestDemo::OnFrame(float dt) {
+    auto* device    = GetDevice();
+    auto* cmdList   = GetCommandList();
+    auto* swapChain = GetSwapChain();
+
+    auto now = std::chrono::high_resolution_clock::now();
+    totalTime_ = std::chrono::duration<float>(now - startTime_).count();
+
+    // ── Stats ────────────────────────────────────────────────────────────
+    statsOverlay_->BeginFrame(dt);
+
+    // ── Input ────────────────────────────────────────────────────────────
+    input_->BeginFrame();
+
+    // Debug mode toggle: '0' = off, '1'-'7' = G-Buffer channels 0-6
+    if (input_->IsKeyJustPressed(Key::Num0)) {
+        debugModeValue_ = static_cast<uint32_t>(GBufferDebugMode::Count);
+    }
+    for (uint32_t k = 0; k < 7; ++k) {
+        if (input_->IsKeyJustPressed(static_cast<Key>(static_cast<uint32_t>(Key::Num1) + k))) {
+            debugModeValue_ = k;
+        }
     }
 
-    // ── Shadow atlas texture ─────────────────────────────────────────────
-    RHITextureDesc shadowAtlasDesc{};
-    shadowAtlasDesc.width     = kShadowAtlasSize;
-    shadowAtlasDesc.height    = kShadowAtlasSize;
-    shadowAtlasDesc.format    = RHIFormat::D32Float;
-    shadowAtlasDesc.usage     = RHITextureUsage::DepthStencil | RHITextureUsage::ShaderResource;
-    shadowAtlasDesc.debugName = "ShadowAtlas";
-    RHITextureHandle shadowAtlas    = device->CreateTexture(shadowAtlasDesc);
-    uint32_t         shadowAtlasSrv = device->GetTextureSRVIndex(shadowAtlas);
-
-    // ── CB ring allocator ─────────────────────────────────────────────────
-    CBRingAllocator cbRing;
-    // Extra capacity for LightingCB (2304 bytes) + PerFrameCB (256) + 5*PerObjectCB (1280)
-    cbRing.Init(device, kFramesInFlight, 128 * 1024);
-
-    // ── Editor Grid ───────────────────────────────────────────────────────
-    EditorGrid editorGrid;
-    if (!editorGrid.Init(device, shaderPipeline, RHIFormat::RGBA8Unorm, RHIFormat::D32Float)) {
-        UZ_LOG(Renderer, Error, "Failed to initialize editor grid");
-        return false;
+    // Render path toggle: F switches between Deferred and Forward
+    if (input_->IsKeyJustPressed(Key::F)) {
+        renderPath_ = (renderPath_ == RenderPath::Deferred)
+            ? RenderPath::Forward : RenderPath::Deferred;
+        UZ_LOG(Renderer, Info, "Render path switched to: {}",
+               RenderPathToString(renderPath_));
     }
 
-    // ── Stats Overlay ─────────────────────────────────────────────────────
-    StatsOverlay statsOverlay;
+    // ── Camera Update ────────────────────────────────────────────────────
+    cameraCtrl_.Update(camera_, *input_, dt);
+
+    // ── Upload PerFrameCB ────────────────────────────────────────────────
+    cbRing_->BeginFrame(GetFrameIndex());
+
+    PerFrameCB perFrame{};
+    perFrame.viewProj    = camera_.GetViewProjection();
+    perFrame.invViewProj = ComputeInvViewProj(perFrame.viewProj);
+    Vec3 camPos          = camera_.GetPosition();
+    perFrame.cameraPos   = {camPos.x, camPos.y, camPos.z, 0.f};
+    perFrame.timeParams  = {totalTime_, dt, static_cast<float>(GetFrameIndex()), 0.f};
+
+    Vec3 sunDir           = Vec3{0.5f, 0.3f, 0.8f}.Normalized();
+    perFrame.lightDir     = {sunDir.x, sunDir.y, sunDir.z, 0.f};
+    perFrame.lightColor   = {3.0f, 2.85f, 2.7f, 0.f};
+    perFrame.ambientColor = {0.03f, 0.03f, 0.05f, 0.f};
+
+    CBAllocation perFrameAlloc = cbRing_->Allocate(sizeof(PerFrameCB));
+    std::memcpy(perFrameAlloc.cpuPtr, &perFrame, sizeof(PerFrameCB));
+
+    // ── LightingCB — 4 coloured point lights ────────────────────────────
+    LightingCB lightingData{};
+    lightingData.pointLightCount = kPointLightCount;
+    lightingData.pointLights[0] = { {-3.f, 2.f,  2.f}, 8.f,  {4.f, 0.2f, 0.2f}, 0.f };
+    lightingData.pointLights[1] = { { 0.f, 3.f, -2.f}, 10.f, {0.2f, 4.f, 0.2f}, 0.f };
+    lightingData.pointLights[2] = { { 3.f, 2.f,  2.f}, 8.f,  {0.2f, 0.2f, 4.f}, 0.f };
+    lightingData.pointLights[3] = { { 0.f, 1.f,  0.f}, 15.f, {3.f,  3.f,  3.f}, 0.f };
+
+    CBAllocation lightingAlloc = cbRing_->Allocate(sizeof(LightingCB));
+    std::memcpy(lightingAlloc.cpuPtr, &lightingData, sizeof(LightingCB));
+
+    // ── Compute shadow cascades ──────────────────────────────────────────
+    ShadowConfig shadowCfg{};
+    shadowCfg.cascadeCount = 4;
+    shadowCfg.resolution   = kShadowResolution;
+    shadowCfg.maxDistance   = 50.0f;
+    shadowCfg.splitLambda  = 0.75f;
+    shadowCfg.normalBias   = 0.02f;
+    shadowCfg.depthBias    = 0.005f;
+
+    ShadowCascade cascades[kMaxShadowCascades];
+    Vec3 lightShineDir = Vec3{-sunDir.x, -sunDir.y, -sunDir.z};
+    ComputeCascades(camera_.GetView(), camera_.GetProjection(), lightShineDir, shadowCfg, cascades);
+
+    // ── Upload ShadowDataCB ──────────────────────────────────────────────
+    ShadowDataCB shadowData{};
+    for (uint32_t i = 0; i < shadowCfg.cascadeCount; ++i) {
+        shadowData.cascadeViewProj[i] = cascades[i].viewProj;
+    }
+    shadowData.cascadeSplits   = {cascades[0].splitFar, cascades[1].splitFar,
+                                  cascades[2].splitFar, cascades[3].splitFar};
+    shadowData.shadowAtlasIndex = shadowAtlasSrv_;
+    shadowData.cascadeCount     = shadowCfg.cascadeCount;
+    shadowData.normalBias       = shadowCfg.normalBias;
+    shadowData.depthBias        = shadowCfg.depthBias;
+    shadowData.shadowMapSize    = static_cast<float>(kShadowResolution);
+
+    CBAllocation shadowAlloc = cbRing_->Allocate(sizeof(ShadowDataCB));
+    std::memcpy(shadowAlloc.cpuPtr, &shadowData, sizeof(ShadowDataCB));
+
+    // ── Build draw list ──────────────────────────────────────────────────
+    DrawList drawList;
+    drawList.Clear();
+    for (int i = 0; i < kCubeCount; ++i) {
+        DrawCommand cmd{};
+        cmd.sortKey      = SortKey::Opaque(0, 0, 0.f, static_cast<uint32_t>(i));
+        cmd.worldMatrix  = BuildModelMatrix(kCubePositions[i], kCubeScale);
+        cmd.normalMatrix = ComputeNormalMatrix(cmd.worldMatrix);
+        cmd.meshId             = 0;
+        cmd.albedoSrvIndex     = pbrTex_.albedoSrv;
+        cmd.normalSrvIndex     = pbrTex_.normalSrv;
+        cmd.roughnessSrvIndex  = pbrTex_.roughnessSrv;
+        cmd.metallicSrvIndex   = pbrTex_.metallicSrv;
+        drawList.Add(cmd);
+    }
     {
-        UploadContext upload(device);
-        cmdList->Begin();
-        if (!statsOverlay.Init(device, cmdList, upload, shaderPipeline,
-                               RHIFormat::RGBA8Unorm, winDesc.width, winDesc.height, bindless)) {
-            UZ_LOG(Renderer, Error, "Failed to initialize stats overlay");
-            return false;
-        }
-        cmdList->End();
-        cmdList->Execute();
-        device->WaitIdle();
-        upload.ReleaseStaging();
+        DrawCommand ground{};
+        ground.sortKey      = SortKey::Opaque(0, 0, 0.f, static_cast<uint32_t>(kCubeCount));
+        ground.worldMatrix  = BuildModelMatrixNonUniform(
+            Vec3{0.f, 0.f, -0.82f},
+            Vec3{15.f, 15.f, 0.02f});
+        ground.normalMatrix      = ComputeNormalMatrix(ground.worldMatrix);
+        ground.meshId            = 0;
+        ground.albedoSrvIndex    = checkerSrv_;
+        ground.normalSrvIndex    = 0;
+        ground.roughnessSrvIndex = 0;
+        ground.metallicSrvIndex  = 0;
+        drawList.Add(ground);
     }
+    drawList.Sort();
 
-    // ── Screenshot Capture ────────────────────────────────────────────────
-    ScreenshotCapture screenshotCapture;
-    bool screenshotPending = !config.screenshotPath.empty();
-    if (screenshotPending) {
-        if (!screenshotCapture.Init(device, scDesc.width, scDesc.height)) {
-            UZ_LOG(Renderer, Error, "Failed to initialize screenshot capture");
-            return false;
-        }
-    }
+    // ── Record frame via render graph ────────────────────────────────────
+    RHITextureHandle backBuffer = swapChain->GetCurrentBackBuffer();
+    rg::RgBuilder rgBuilder(device, rgPool_.get());
+    auto bbRes = rgBuilder.ImportTexture("Backbuffer", backBuffer, RHIResourceState::Present);
 
-    // ── Render Graph Resource Pool (persistent across frames) ────────────
-    rg::RgResourcePool rgPool(device);
+    auto albedoRes     = rgBuilder.ImportTexture("GBuf_Albedo",     gbuf_.albedo,     RHIResourceState::ShaderResource);
+    auto normalRes     = rgBuilder.ImportTexture("GBuf_Normal",     gbuf_.normal,     RHIResourceState::ShaderResource);
+    auto metalRoughRes = rgBuilder.ImportTexture("GBuf_MetalRough", gbuf_.metalRough, RHIResourceState::ShaderResource);
+    auto depthRes      = rgBuilder.ImportTexture("GBuf_Depth",      gbuf_.depth,      RHIResourceState::ShaderResource);
 
-    // ── Camera ────────────────────────────────────────────────────────────
-    Camera camera;
-    constexpr float kHFovDeg = 90.f;
-    constexpr float kAspect  = 16.f / 9.f;
-    float vFovRad = 2.f * std::atan(std::tan(kHFovDeg * 0.5f * 3.14159265f / 180.f) / kAspect);
-    camera.SetPerspective(vFovRad,
-        static_cast<float>(winDesc.width) / static_cast<float>(winDesc.height),
-        0.1f, 1000.f);
-
-    // Position camera above and slightly in front to view the 5-cube row clearly
-    camera.SetPosition({0.f, 5.f, 2.f});
+    // ── Shadow pass ──────────────────────────────────────────────────────
+    auto shadowAtlasRes = rgBuilder.ImportTexture("ShadowAtlas", shadowAtlas_, RHIResourceState::ShaderResource);
     {
-        constexpr float kDegToRad = 3.14159265f / 180.f;
-        float yawRad   = -90.f * kDegToRad;
-        float pitchRad = -20.f * kDegToRad;
-        float cosPitch = std::cos(pitchRad);
-        Vec3 forward = {
-            std::cos(yawRad) * cosPitch,
-            std::sin(yawRad) * cosPitch,
-            std::sin(pitchRad)
-        };
-        Vec3 pos = camera.GetPosition();
-        camera.LookAt(pos + forward, Vec3::Up());
-    }
-
-    FPSCameraController cameraCtrl;
-    cameraCtrl.InitFromCamera(camera);
-    cameraCtrl.SetMoveSpeed(10.f);
-
-    // ── Debug mode — which G-Buffer channel to visualise (Count = off) ───
-    uint32_t debugModeValue = static_cast<uint32_t>(GBufferDebugMode::Count);
-
-    // ── Render path (F key toggles Deferred/Forward) ─────────────────────
-    RenderPath renderPath = GetDefaultRenderPath();
-
-    // ── Render Loop ───────────────────────────────────────────────────────
-    uint32_t frameIndex       = 0;
-    uint64_t globalFenceValue = 0;
-    auto     prevTime         = std::chrono::high_resolution_clock::now();
-    auto     startTime        = prevTime;
-
-    UZ_LOG(Renderer, Info, "PBR test demo started — 5 cubes, {} point lights + directional sun "
-           "(F=toggle render path, current={})", kPointLightCount, RenderPathToString(renderPath));
-
-    while (window.PumpMessages() && window.IsOpen()) {
-        // Skip rendering while minimized — swapchain surface is 0x0
-        if (window.IsMinimized()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
-            continue;
-        }
-
-        if (frameCount > 0 && frameIndex >= frameCount) break;
-
-        // ── Timing ───────────────────────────────────────────────────────
-        auto  now       = std::chrono::high_resolution_clock::now();
-        float dt        = std::chrono::duration<float>(now - prevTime).count();
-        float totalTime = std::chrono::duration<float>(now - startTime).count();
-        prevTime = now;
-
-        // ── Stats ─────────────────────────────────────────────────────────
-        statsOverlay.BeginFrame(dt);
-
-        // ── Input ─────────────────────────────────────────────────────────
-        input.BeginFrame();
-
-        // Debug mode toggle: '0' = off, '1'-'7' = G-Buffer channels 0-6
-        if (input.IsKeyJustPressed(Key::Num0)) {
-            debugModeValue = static_cast<uint32_t>(GBufferDebugMode::Count);
-        }
-        for (uint32_t k = 0; k < 7; ++k) {
-            if (input.IsKeyJustPressed(static_cast<Key>(static_cast<uint32_t>(Key::Num1) + k))) {
-                debugModeValue = k;
-            }
-        }
-
-        // Render path toggle: F switches between Deferred and Forward
-        if (input.IsKeyJustPressed(Key::F)) {
-            renderPath = (renderPath == RenderPath::Deferred)
-                ? RenderPath::Forward : RenderPath::Deferred;
-            UZ_LOG(Renderer, Info, "Render path switched to: {}",
-                   RenderPathToString(renderPath));
-        }
-
-        // ── Camera Update ─────────────────────────────────────────────────
-        cameraCtrl.Update(camera, input, dt);
-
-        // ── Resize ───────────────────────────────────────────────────────
-        if (window.WasResized()) {
-            device->WaitIdle();
-            const uint32_t newW = static_cast<uint32_t>(window.GetWidth());
-            const uint32_t newH = static_cast<uint32_t>(window.GetHeight());
-
-            swapChain->Resize(newW, newH);
-
-            // Recreate all G-Buffer textures at the new resolution
-            DestroyGBufferTextures(device, gbuf);
-            if (!CreateGBufferTextures(device, newW, newH, gbuf)) {
-                UZ_LOG(Renderer, Error, "Failed to recreate G-Buffer textures on resize");
-                break;
-            }
-
-            statsOverlay.SetScreenSize(newW, newH);
-            window.ClearResizedFlag();
-            camera.SetAspectRatio(static_cast<float>(newW) / static_cast<float>(newH));
-        }
-
-        // Wait for the oldest in-flight frame before reusing its ring slot
-        uint32_t allocFrame = frameIndex % kFramesInFlight;
-        if (fenceValues[allocFrame] > 0) {
-            frameFences[allocFrame]->WaitCPU(fenceValues[allocFrame]);
-        }
-
-        // ── Upload PerFrameCB ─────────────────────────────────────────────
-        cbRing.BeginFrame(frameIndex);
-
-        PerFrameCB perFrame{};
-        perFrame.viewProj    = camera.GetViewProjection();
-        perFrame.invViewProj = ComputeInvViewProj(perFrame.viewProj);
-        Vec3 camPos          = camera.GetPosition();
-        perFrame.cameraPos   = {camPos.x, camPos.y, camPos.z, 0.f};
-        perFrame.timeParams  = {totalTime, dt, static_cast<float>(frameIndex), 0.f};
-
-        // PBR lighting — warm directional sun + very dark blue-tinted ambient
-        Vec3 sunDir           = Vec3{0.5f, 0.3f, 0.8f}.Normalized();
-        perFrame.lightDir     = {sunDir.x, sunDir.y, sunDir.z, 0.f};
-        perFrame.lightColor   = {3.0f, 2.85f, 2.7f, 0.f};
-        perFrame.ambientColor = {0.03f, 0.03f, 0.05f, 0.f};
-
-        CBAllocation perFrameAlloc = cbRing.Allocate(sizeof(PerFrameCB));
-        std::memcpy(perFrameAlloc.cpuPtr, &perFrame, sizeof(PerFrameCB));
-
-        // ── LightingCB — 4 coloured point lights ─────────────────────────
-        // Colours chosen to make each G-Buffer channel clearly distinguishable
-        // under the deferred lighting pass.
-        LightingCB lightingData{};
-        lightingData.pointLightCount = kPointLightCount;
-        lightingData.pointLights[0] = { {-3.f, 2.f,  2.f}, 8.f,  {4.f, 0.2f, 0.2f}, 0.f }; // red
-        lightingData.pointLights[1] = { { 0.f, 3.f, -2.f}, 10.f, {0.2f, 4.f, 0.2f}, 0.f }; // green
-        lightingData.pointLights[2] = { { 3.f, 2.f,  2.f}, 8.f,  {0.2f, 0.2f, 4.f}, 0.f }; // blue
-        lightingData.pointLights[3] = { { 0.f, 1.f,  0.f}, 15.f, {3.f,  3.f,  3.f}, 0.f }; // white fill
-
-        CBAllocation lightingAlloc = cbRing.Allocate(sizeof(LightingCB));
-        std::memcpy(lightingAlloc.cpuPtr, &lightingData, sizeof(LightingCB));
-
-        // ── Compute shadow cascades ──────────────────────────────────────
-        ShadowConfig shadowCfg{};
-        shadowCfg.cascadeCount = 4;
-        shadowCfg.resolution   = kShadowResolution;
-        shadowCfg.maxDistance   = 50.0f;
-        shadowCfg.splitLambda  = 0.75f;
-        shadowCfg.normalBias   = 0.02f;
-        shadowCfg.depthBias    = 0.005f;
-
-        ShadowCascade cascades[kMaxShadowCascades];
-        // sunDir points toward the sun; ComputeCascades expects the direction
-        // the light shines (away from the sun), so negate it.
-        Vec3 lightShineDir = Vec3{-sunDir.x, -sunDir.y, -sunDir.z};
-        ComputeCascades(camera.GetView(), camera.GetProjection(), lightShineDir, shadowCfg, cascades);
-
-        // ── Upload ShadowDataCB ──────────────────────────────────────────
-        ShadowDataCB shadowData{};
+        ShadowPassDesc shadowDesc{};
+        shadowDesc.shadowAtlas          = shadowAtlasRes;
+        shadowDesc.shadowAtlasTexture   = shadowAtlas_;
+        shadowDesc.drawList             = &drawList;
+        shadowDesc.cbAllocator          = cbRing_.get();
+        shadowDesc.pipeline             = shadowPipeline_;
+        shadowDesc.vertexBufferSrvIndex = vbSrvIndex_;
+        shadowDesc.vertexBuffer         = vbHandle_;
+        shadowDesc.indexBuffer          = ibHandle_;
+        shadowDesc.indexFormat          = indexFormat_;
+        shadowDesc.indexCount           = cubeMesh_->GetIndexCount();
+        shadowDesc.bindless             = bindless_;
         for (uint32_t i = 0; i < shadowCfg.cascadeCount; ++i) {
-            shadowData.cascadeViewProj[i] = cascades[i].viewProj;
+            shadowDesc.cascades[i] = cascades[i];
         }
-        shadowData.cascadeSplits   = {cascades[0].splitFar, cascades[1].splitFar,
-                                      cascades[2].splitFar, cascades[3].splitFar};
-        shadowData.shadowAtlasIndex = shadowAtlasSrv;
-        shadowData.cascadeCount     = shadowCfg.cascadeCount;
-        shadowData.normalBias       = shadowCfg.normalBias;
-        shadowData.depthBias        = shadowCfg.depthBias;
-        shadowData.shadowMapSize    = static_cast<float>(kShadowResolution);
-
-        CBAllocation shadowAlloc = cbRing.Allocate(sizeof(ShadowDataCB));
-        std::memcpy(shadowAlloc.cpuPtr, &shadowData, sizeof(ShadowDataCB));
-
-        // ── Build draw list for G-Buffer / forward pass ──────────────────
-        DrawList drawList;
-        drawList.Clear();
-        for (int i = 0; i < kCubeCount; ++i) {
-            DrawCommand cmd{};
-            cmd.sortKey      = SortKey::Opaque(0, 0, 0.f, static_cast<uint32_t>(i));
-            cmd.worldMatrix  = BuildModelMatrix(kCubePositions[i], kCubeScale);
-            cmd.normalMatrix = ComputeNormalMatrix(cmd.worldMatrix);
-            cmd.meshId             = 0;
-            cmd.albedoSrvIndex     = pbrTex.albedoSrv;
-            cmd.normalSrvIndex     = pbrTex.normalSrv;
-            cmd.roughnessSrvIndex  = pbrTex.roughnessSrv;
-            cmd.metallicSrvIndex   = pbrTex.metallicSrv;
-            drawList.Add(cmd);
-        }
-        // Ground plane — a cube flattened into a thin slab so deferred
-        // lighting is visible on the floor beneath the cubes.
-        {
-            DrawCommand ground{};
-            ground.sortKey      = SortKey::Opaque(0, 0, 0.f, static_cast<uint32_t>(kCubeCount));
-            ground.worldMatrix  = BuildModelMatrixNonUniform(
-                Vec3{0.f, 0.f, -0.82f},  // just below cubes (Z-up: cubes at Z=0, halfExtent=0.8)
-                Vec3{15.f, 15.f, 0.02f}); // wide on XY, thin on Z
-            ground.normalMatrix      = ComputeNormalMatrix(ground.worldMatrix);
-            ground.meshId            = 0;
-            ground.albedoSrvIndex    = checkerSrv;
-            ground.normalSrvIndex    = 0;
-            ground.roughnessSrvIndex = 0;
-            ground.metallicSrvIndex  = 0;
-            drawList.Add(ground);
-        }
-
-        drawList.Sort();
-
-        // ── Record frame via render graph ─────────────────────────────────
-        bool capturedThisFrame = false;
-        cmdList->Begin();
-
-        RHITextureHandle backBuffer = swapChain->GetCurrentBackBuffer();
-        rg::RgBuilder rgBuilder(device, &rgPool);
-        auto bbRes = rgBuilder.ImportTexture("Backbuffer", backBuffer, RHIResourceState::Present);
-
-        // Import G-Buffer textures and depth — always imported so the render
-        // graph can schedule barriers regardless of which path is active.
-        auto albedoRes     = rgBuilder.ImportTexture("GBuf_Albedo",     gbuf.albedo,     RHIResourceState::ShaderResource);
-        auto normalRes     = rgBuilder.ImportTexture("GBuf_Normal",     gbuf.normal,     RHIResourceState::ShaderResource);
-        auto metalRoughRes = rgBuilder.ImportTexture("GBuf_MetalRough", gbuf.metalRough, RHIResourceState::ShaderResource);
-        auto depthRes      = rgBuilder.ImportTexture("GBuf_Depth",      gbuf.depth,      RHIResourceState::ShaderResource);
-
-        // ── Shadow pass (runs before lighting in both paths) ─────────
-        auto shadowAtlasRes = rgBuilder.ImportTexture("ShadowAtlas", shadowAtlas, RHIResourceState::ShaderResource);
-        {
-            ShadowPassDesc shadowDesc{};
-            shadowDesc.shadowAtlas          = shadowAtlasRes;
-            shadowDesc.shadowAtlasTexture   = shadowAtlas;
-            shadowDesc.drawList             = &drawList;
-            shadowDesc.cbAllocator          = &cbRing;
-            shadowDesc.pipeline             = shadowPipeline;
-            shadowDesc.vertexBufferSrvIndex = vbSrvIndex;
-            shadowDesc.vertexBuffer         = vbHandle;
-            shadowDesc.indexBuffer          = ibHandle;
-            shadowDesc.indexFormat          = indexFormat;
-            shadowDesc.indexCount           = cubeMesh.GetIndexCount();
-            shadowDesc.bindless             = bindless;
-            for (uint32_t i = 0; i < shadowCfg.cascadeCount; ++i) {
-                shadowDesc.cascades[i] = cascades[i];
-            }
-            shadowDesc.cascadeCount     = shadowCfg.cascadeCount;
-            shadowDesc.atlasResolution  = kShadowResolution;
-            AddShadowPass(rgBuilder, shadowDesc);
-        }
-
-        if (renderPath == RenderPath::Deferred) {
-            // ── Deferred path: G-Buffer + lighting/debug ─────────────────
-            {
-                GBufferPassDesc gbDesc{};
-                gbDesc.albedoTarget         = albedoRes;
-                gbDesc.normalTarget         = normalRes;
-                gbDesc.metalRoughTarget     = metalRoughRes;
-                gbDesc.depthBuffer          = depthRes;
-                gbDesc.depthTexture         = gbuf.depth;
-                gbDesc.drawList             = &drawList;
-                gbDesc.cbAllocator          = &cbRing;
-                gbDesc.perFrameAlloc        = perFrameAlloc;
-                gbDesc.pipeline             = gbufPipeline;
-                gbDesc.vertexBufferSrvIndex = vbSrvIndex;
-                gbDesc.vertexBuffer         = vbHandle;
-                gbDesc.indexBuffer          = ibHandle;
-                gbDesc.indexFormat          = indexFormat;
-                gbDesc.indexCount           = cubeMesh.GetIndexCount();
-                gbDesc.bindless             = bindless;
-                gbDesc.viewportWidth        = static_cast<float>(swapChain->GetWidth());
-                gbDesc.viewportHeight       = static_cast<float>(swapChain->GetHeight());
-                AddGBufferPass(rgBuilder, gbDesc);
-            }
-
-            const bool debugActive = (debugModeValue < static_cast<uint32_t>(GBufferDebugMode::Count));
-
-            if (!debugActive) {
-                LightingPassDesc lightDesc{};
-                lightDesc.backbuffer          = bbRes;
-                lightDesc.albedoGBuffer       = albedoRes;
-                lightDesc.normalGBuffer       = normalRes;
-                lightDesc.metalRoughGBuffer   = metalRoughRes;
-                lightDesc.depthGBuffer        = depthRes;
-                lightDesc.perFrameAlloc       = perFrameAlloc;
-                lightDesc.lightingAlloc       = lightingAlloc;
-                lightDesc.pipeline            = lightPipeline;
-                lightDesc.albedoSrvIndex      = gbuf.albedoSrv;
-                lightDesc.normalSrvIndex      = gbuf.normalSrv;
-                lightDesc.metalRoughSrvIndex  = gbuf.metalRoughSrv;
-                lightDesc.depthSrvIndex       = gbuf.depthSrv;
-                lightDesc.albedoTexture       = gbuf.albedo;
-                lightDesc.normalTexture       = gbuf.normal;
-                lightDesc.metalRoughTexture   = gbuf.metalRough;
-                lightDesc.depthTextureForSrv  = gbuf.depth;
-                lightDesc.shadowAlloc         = shadowAlloc;
-                lightDesc.bindless            = bindless;
-                lightDesc.viewportWidth       = static_cast<float>(swapChain->GetWidth());
-                lightDesc.viewportHeight      = static_cast<float>(swapChain->GetHeight());
-                AddLightingPass(rgBuilder, lightDesc);
-            } else {
-                GBufferDebugPassDesc dbgDesc{};
-                dbgDesc.backbuffer         = bbRes;
-                dbgDesc.albedoGBuffer      = albedoRes;
-                dbgDesc.normalGBuffer      = normalRes;
-                dbgDesc.metalRoughGBuffer  = metalRoughRes;
-                dbgDesc.depthGBuffer       = depthRes;
-                dbgDesc.perFrameAlloc      = perFrameAlloc;
-                struct DebugCBData { uint32_t mode; uint32_t pad[3]; };
-                CBAllocation debugAlloc = cbRing.Allocate(sizeof(DebugCBData));
-                DebugCBData debugCBData{static_cast<uint32_t>(debugModeValue), {0, 0, 0}};
-                std::memcpy(debugAlloc.cpuPtr, &debugCBData, sizeof(DebugCBData));
-                dbgDesc.debugAlloc         = debugAlloc;
-                dbgDesc.pipeline           = debugPipeline;
-                dbgDesc.mode               = static_cast<GBufferDebugMode>(debugModeValue);
-                dbgDesc.albedoSrvIndex     = gbuf.albedoSrv;
-                dbgDesc.normalSrvIndex     = gbuf.normalSrv;
-                dbgDesc.metalRoughSrvIndex = gbuf.metalRoughSrv;
-                dbgDesc.depthSrvIndex      = gbuf.depthSrv;
-                dbgDesc.albedoTexture      = gbuf.albedo;
-                dbgDesc.normalTexture      = gbuf.normal;
-                dbgDesc.metalRoughTexture  = gbuf.metalRough;
-                dbgDesc.depthTextureForSrv = gbuf.depth;
-                dbgDesc.bindless           = bindless;
-                dbgDesc.viewportWidth      = static_cast<float>(swapChain->GetWidth());
-                dbgDesc.viewportHeight     = static_cast<float>(swapChain->GetHeight());
-                AddGBufferDebugPass(rgBuilder, dbgDesc);
-            }
-        } else {
-            // ── Forward path: single-pass PBR directly to backbuffer ─────
-            PBRPassDesc fwdDesc{};
-            fwdDesc.backbuffer           = bbRes;
-            fwdDesc.depthBuffer          = depthRes;
-            fwdDesc.depthTexture         = gbuf.depth;
-            fwdDesc.drawList             = &drawList;
-            fwdDesc.cbAllocator          = &cbRing;
-            fwdDesc.perFrameAlloc        = perFrameAlloc;
-            fwdDesc.pipeline             = forwardPipeline;
-            fwdDesc.vertexBufferSrvIndex = vbSrvIndex;
-            fwdDesc.vertexBuffer         = vbHandle;
-            fwdDesc.indexBuffer          = ibHandle;
-            fwdDesc.indexFormat          = indexFormat;
-            fwdDesc.indexCount           = cubeMesh.GetIndexCount();
-            fwdDesc.bindless             = bindless;
-            fwdDesc.viewportWidth        = static_cast<float>(swapChain->GetWidth());
-            fwdDesc.viewportHeight       = static_cast<float>(swapChain->GetHeight());
-            AddPBRPass(rgBuilder, fwdDesc);
-        }
-
-        // Grid + stats overlay pass (composited on top of the lit backbuffer).
-        // The grid needs depth testing against the G-Buffer depth so it doesn't
-        // draw over the meshes.
-        rgBuilder.AddPass("OverlayPass", [&](rg::RgPassBuilder& pb) {
-            pb.Write(bbRes, RHIResourceState::RenderTarget);
-            pb.Write(depthRes, RHIResourceState::DepthStencilWrite);
-            pb.SetExecutionCallback([&](IRHICommandList* cmd, const rg::RgPassResources& res) {
-                auto bb    = res.GetTexture(bbRes);
-                auto depth = res.GetTexture(depthRes);
-
-                RHIRenderPassDesc passDesc{};
-                passDesc.colorAttachmentCount        = 1;
-                passDesc.colorAttachments[0].texture = bb;
-                passDesc.colorAttachments[0].clear   = false;
-                passDesc.hasDepth                    = true;
-                passDesc.depthAttachment.texture     = depth;
-                passDesc.depthAttachment.clear       = false;
-                cmd->BeginRenderPass(passDesc);
-
-                RHIViewport vp{};
-                vp.width    = static_cast<float>(swapChain->GetWidth());
-                vp.height   = static_cast<float>(swapChain->GetHeight());
-                vp.maxDepth = 1.0f;
-                cmd->SetViewport(vp);
-
-                RHIScissorRect sc{};
-                sc.right  = static_cast<int32_t>(swapChain->GetWidth());
-                sc.bottom = static_cast<int32_t>(swapChain->GetHeight());
-                cmd->SetScissor(sc);
-
-                editorGrid.Draw(cmd, cbRing, camera);
-
-                statsOverlay.SetDrawCalls(kCubeCount + 1 /*grid*/);
-                statsOverlay.SetVertexCount(
-                    static_cast<uint32_t>(kCubeCount) * cubeMesh.GetVertexCount() + 3);
-                statsOverlay.SetTriangleCount(
-                    static_cast<uint32_t>(kCubeCount) * (cubeMesh.GetIndexCount() / 3) + 1);
-                statsOverlay.Render(cmd, cbRing, frameIndex);
-
-                cmd->EndRenderPass();
-            });
-        });
-
-        // Screenshot pass (optional).
-        if (screenshotPending && frameIndex == config.screenshotFrame) {
-            rgBuilder.AddPass("Screenshot", [&](rg::RgPassBuilder& pb) {
-                pb.Read(bbRes, RHIResourceState::RenderTarget);
-                pb.SetExecutionCallback([&](IRHICommandList*, const rg::RgPassResources&) {
-                    screenshotCapture.CaptureBackBuffer(cmdList, swapChain);
-                    capturedThisFrame = true;
-                });
-            });
-        }
-
-        // Present transition pass.
-        rgBuilder.AddPass("Present", [&](rg::RgPassBuilder& pb) {
-            pb.Write(bbRes, RHIResourceState::Present);
-            pb.SetExecutionCallback([](IRHICommandList*, const rg::RgPassResources&) {});
-        });
-
-        rgBuilder.Compile();
-        rgBuilder.Execute(cmdList);
-
-        cmdList->End();
-        cmdList->Execute();
-
-        swapChain->Present(false);
-
-        globalFenceValue++;
-        fenceValues[allocFrame] = globalFenceValue;
-        frameFences[allocFrame]->Signal(globalFenceValue);
-
-        // ── Save screenshot after GPU completes ───────────────────────────
-        if (capturedThisFrame) {
-            frameFences[allocFrame]->WaitCPU(globalFenceValue);
-            screenshotCapture.SaveToPNG(config.screenshotPath);
-            screenshotPending = false;
-        }
-
-        frameIndex++;
-
-        // ── FPS Cap ───────────────────────────────────────────────────────
-        auto  frameEnd = std::chrono::high_resolution_clock::now();
-        float elapsed  = std::chrono::duration<float>(frameEnd - now).count();
-        if (elapsed < kMinFrameTime) {
-            auto sleepUs = std::chrono::microseconds(
-                static_cast<int64_t>((kMinFrameTime - elapsed) * 1e6f));
-            std::this_thread::sleep_for(sleepUs);
-        }
+        shadowDesc.cascadeCount     = shadowCfg.cascadeCount;
+        shadowDesc.atlasResolution  = kShadowResolution;
+        AddShadowPass(rgBuilder, shadowDesc);
     }
 
-    // ── Cleanup ───────────────────────────────────────────────────────────
-    device->WaitIdle();
+    if (renderPath_ == RenderPath::Deferred) {
+        // ── Deferred path: G-Buffer + lighting/debug ─────────────────────
+        {
+            GBufferPassDesc gbDesc{};
+            gbDesc.albedoTarget         = albedoRes;
+            gbDesc.normalTarget         = normalRes;
+            gbDesc.metalRoughTarget     = metalRoughRes;
+            gbDesc.depthBuffer          = depthRes;
+            gbDesc.depthTexture         = gbuf_.depth;
+            gbDesc.drawList             = &drawList;
+            gbDesc.cbAllocator          = cbRing_.get();
+            gbDesc.perFrameAlloc        = perFrameAlloc;
+            gbDesc.pipeline             = gbufPipeline_;
+            gbDesc.vertexBufferSrvIndex = vbSrvIndex_;
+            gbDesc.vertexBuffer         = vbHandle_;
+            gbDesc.indexBuffer          = ibHandle_;
+            gbDesc.indexFormat          = indexFormat_;
+            gbDesc.indexCount           = cubeMesh_->GetIndexCount();
+            gbDesc.bindless             = bindless_;
+            gbDesc.viewportWidth        = static_cast<float>(swapChain->GetWidth());
+            gbDesc.viewportHeight       = static_cast<float>(swapChain->GetHeight());
+            AddGBufferPass(rgBuilder, gbDesc);
+        }
 
-    auto  endTime  = std::chrono::high_resolution_clock::now();
-    float totalMs  = std::chrono::duration<float, std::milli>(endTime - startTime).count();
-    float avgMs    = frameIndex > 0 ? totalMs / static_cast<float>(frameIndex) : 0.f;
+        const bool debugActive = (debugModeValue_ < static_cast<uint32_t>(GBufferDebugMode::Count));
 
-    UZ_LOG(Renderer, Info,
-           "PBR test demo: {} frames, {:.1f}ms total, {:.2f}ms/frame ({:.0f} FPS)",
-           frameIndex, totalMs, avgMs, avgMs > 0 ? 1000.f / avgMs : 0.f);
+        if (!debugActive) {
+            LightingPassDesc lightDesc{};
+            lightDesc.backbuffer          = bbRes;
+            lightDesc.albedoGBuffer       = albedoRes;
+            lightDesc.normalGBuffer       = normalRes;
+            lightDesc.metalRoughGBuffer   = metalRoughRes;
+            lightDesc.depthGBuffer        = depthRes;
+            lightDesc.perFrameAlloc       = perFrameAlloc;
+            lightDesc.lightingAlloc       = lightingAlloc;
+            lightDesc.pipeline            = lightPipeline_;
+            lightDesc.albedoSrvIndex      = gbuf_.albedoSrv;
+            lightDesc.normalSrvIndex      = gbuf_.normalSrv;
+            lightDesc.metalRoughSrvIndex  = gbuf_.metalRoughSrv;
+            lightDesc.depthSrvIndex       = gbuf_.depthSrv;
+            lightDesc.albedoTexture       = gbuf_.albedo;
+            lightDesc.normalTexture       = gbuf_.normal;
+            lightDesc.metalRoughTexture   = gbuf_.metalRough;
+            lightDesc.depthTextureForSrv  = gbuf_.depth;
+            lightDesc.shadowAlloc         = shadowAlloc;
+            lightDesc.bindless            = bindless_;
+            lightDesc.viewportWidth       = static_cast<float>(swapChain->GetWidth());
+            lightDesc.viewportHeight      = static_cast<float>(swapChain->GetHeight());
+            AddLightingPass(rgBuilder, lightDesc);
+        } else {
+            GBufferDebugPassDesc dbgDesc{};
+            dbgDesc.backbuffer         = bbRes;
+            dbgDesc.albedoGBuffer      = albedoRes;
+            dbgDesc.normalGBuffer      = normalRes;
+            dbgDesc.metalRoughGBuffer  = metalRoughRes;
+            dbgDesc.depthGBuffer       = depthRes;
+            dbgDesc.perFrameAlloc      = perFrameAlloc;
+            struct DebugCBData { uint32_t mode; uint32_t pad[3]; };
+            CBAllocation debugAlloc = cbRing_->Allocate(sizeof(DebugCBData));
+            DebugCBData debugCBData{debugModeValue_, {0, 0, 0}};
+            std::memcpy(debugAlloc.cpuPtr, &debugCBData, sizeof(DebugCBData));
+            dbgDesc.debugAlloc         = debugAlloc;
+            dbgDesc.pipeline           = debugPipeline_;
+            dbgDesc.mode               = static_cast<GBufferDebugMode>(debugModeValue_);
+            dbgDesc.albedoSrvIndex     = gbuf_.albedoSrv;
+            dbgDesc.normalSrvIndex     = gbuf_.normalSrv;
+            dbgDesc.metalRoughSrvIndex = gbuf_.metalRoughSrv;
+            dbgDesc.depthSrvIndex      = gbuf_.depthSrv;
+            dbgDesc.albedoTexture      = gbuf_.albedo;
+            dbgDesc.normalTexture      = gbuf_.normal;
+            dbgDesc.metalRoughTexture  = gbuf_.metalRough;
+            dbgDesc.depthTextureForSrv = gbuf_.depth;
+            dbgDesc.bindless           = bindless_;
+            dbgDesc.viewportWidth      = static_cast<float>(swapChain->GetWidth());
+            dbgDesc.viewportHeight     = static_cast<float>(swapChain->GetHeight());
+            AddGBufferDebugPass(rgBuilder, dbgDesc);
+        }
+    } else {
+        // ── Forward path: single-pass PBR directly to backbuffer ─────────
+        PBRPassDesc fwdDesc{};
+        fwdDesc.backbuffer           = bbRes;
+        fwdDesc.depthBuffer          = depthRes;
+        fwdDesc.depthTexture         = gbuf_.depth;
+        fwdDesc.drawList             = &drawList;
+        fwdDesc.cbAllocator          = cbRing_.get();
+        fwdDesc.perFrameAlloc        = perFrameAlloc;
+        fwdDesc.pipeline             = forwardPipeline_;
+        fwdDesc.vertexBufferSrvIndex = vbSrvIndex_;
+        fwdDesc.vertexBuffer         = vbHandle_;
+        fwdDesc.indexBuffer          = ibHandle_;
+        fwdDesc.indexFormat          = indexFormat_;
+        fwdDesc.indexCount           = cubeMesh_->GetIndexCount();
+        fwdDesc.bindless             = bindless_;
+        fwdDesc.viewportWidth        = static_cast<float>(swapChain->GetWidth());
+        fwdDesc.viewportHeight       = static_cast<float>(swapChain->GetHeight());
+        AddPBRPass(rgBuilder, fwdDesc);
+    }
 
-    screenshotCapture.Shutdown();
-    statsOverlay.Shutdown();
-    editorGrid.Shutdown();
-    cbRing.Shutdown();
-    shaderPipeline.Shutdown();
+    // ── Overlay pass (grid + stats) ──────────────────────────────────────
+    rgBuilder.AddPass("OverlayPass", [&](rg::RgPassBuilder& pb) {
+        pb.Write(bbRes, RHIResourceState::RenderTarget);
+        pb.Write(depthRes, RHIResourceState::DepthStencilWrite);
+        pb.SetExecutionCallback([&](IRHICommandList* cmd, const rg::RgPassResources& res) {
+            auto bb    = res.GetTexture(bbRes);
+            auto depth = res.GetTexture(depthRes);
 
-    if (shadowAtlas.IsValid()) device->DestroyTexture(shadowAtlas);
-    DestroyGBufferTextures(device, gbuf);
+            RHIRenderPassDesc passDesc{};
+            passDesc.colorAttachmentCount        = 1;
+            passDesc.colorAttachments[0].texture = bb;
+            passDesc.colorAttachments[0].clear   = false;
+            passDesc.hasDepth                    = true;
+            passDesc.depthAttachment.texture     = depth;
+            passDesc.depthAttachment.clear       = false;
+            cmd->BeginRenderPass(passDesc);
 
-    for (auto& h : pbrTex.handles) {
+            RHIViewport vp{};
+            vp.width    = static_cast<float>(swapChain->GetWidth());
+            vp.height   = static_cast<float>(swapChain->GetHeight());
+            vp.maxDepth = 1.0f;
+            cmd->SetViewport(vp);
+
+            RHIScissorRect sc{};
+            sc.right  = static_cast<int32_t>(swapChain->GetWidth());
+            sc.bottom = static_cast<int32_t>(swapChain->GetHeight());
+            cmd->SetScissor(sc);
+
+            editorGrid_->Draw(cmd, *cbRing_, camera_);
+
+            statsOverlay_->SetDrawCalls(kCubeCount + 1);
+            statsOverlay_->SetVertexCount(
+                static_cast<uint32_t>(kCubeCount) * cubeMesh_->GetVertexCount() + 3);
+            statsOverlay_->SetTriangleCount(
+                static_cast<uint32_t>(kCubeCount) * (cubeMesh_->GetIndexCount() / 3) + 1);
+            statsOverlay_->Render(cmd, *cbRing_, GetFrameIndex());
+
+            cmd->EndRenderPass();
+        });
+    });
+
+    // ── Screenshot pass (optional) ───────────────────────────────────────
+    if (screenshotPending_ && GetFrameIndex() == config_.screenshotFrame) {
+        rgBuilder.AddPass("Screenshot", [&](rg::RgPassBuilder& pb) {
+            pb.Read(bbRes, RHIResourceState::RenderTarget);
+            pb.SetExecutionCallback([&](IRHICommandList*, const rg::RgPassResources&) {
+                screenshotCapture_->CaptureBackBuffer(cmdList, swapChain);
+                screenshotSaveDeferred_ = true;
+            });
+        });
+    }
+
+    // ── Present transition ───────────────────────────────────────────────
+    rgBuilder.AddPass("Present", [&](rg::RgPassBuilder& pb) {
+        pb.Write(bbRes, RHIResourceState::Present);
+        pb.SetExecutionCallback([](IRHICommandList*, const rg::RgPassResources&) {});
+    });
+
+    rgBuilder.Compile();
+    rgBuilder.Execute(cmdList);
+
+    // ── Save screenshot after this frame completes on GPU ────────────────
+    // The base class will End()/Execute()/Present()/Signal() after OnFrame
+    // returns, so we defer the save to the next frame when the fence is waited.
+    if (screenshotSaveDeferred_) {
+        // GPU completed previous frame's capture (fence waited by base class)
+        GetDevice()->WaitIdle();
+        screenshotCapture_->SaveToPNG(config_.screenshotPath);
+        screenshotPending_ = false;
+        screenshotSaveDeferred_ = false;
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OnShutdown — Release all GPU resources
+// ─────────────────────────────────────────────────────────────────────────────
+
+void PBRTestDemo::OnShutdown() {
+    auto* device = GetDevice();
+
+    if (screenshotCapture_) screenshotCapture_->Shutdown();
+    if (statsOverlay_) statsOverlay_->Shutdown();
+    if (editorGrid_) editorGrid_->Shutdown();
+    if (cbRing_) cbRing_->Shutdown();
+    if (shaderPipeline_) shaderPipeline_->Shutdown();
+
+    if (shadowAtlas_.IsValid()) device->DestroyTexture(shadowAtlas_);
+    DestroyGBufferTextures(device, gbuf_);
+
+    for (auto& h : pbrTex_.handles) {
         if (h.IsValid()) device->DestroyTexture(h);
     }
-    if (checkerHandle.IsValid()) device->DestroyTexture(checkerHandle);
-    device->DestroyBuffer(ibHandle);
-    device->DestroyBuffer(vbHandle);
-    device->DestroyPipeline(shadowPipeline);
-    device->DestroyPipeline(forwardPipeline);
-    device->DestroyPipeline(debugPipeline);
-    device->DestroyPipeline(lightPipeline);
-    device->DestroyPipeline(gbufPipeline);
-    device->DestroyShader(shadowVSHandle);
-    device->DestroyShader(meshPSHandle);
-    device->DestroyShader(debugPSHandle);
-    device->DestroyShader(lightPSHandle);
-    device->DestroyShader(fsVSHandle);
-    device->DestroyShader(gbufPSHandle);
-    device->DestroyShader(meshVSHandle);
-    for (uint32_t i = 0; i < kFramesInFlight; ++i) device->DestroyFence(frameFences[i]);
-    device->DestroyCommandList(cmdList);
-    device->DestroySwapChain(swapChain);
-    DestroyRHIDevice(device);
-
-    return true;
+    if (checkerHandle_.IsValid()) device->DestroyTexture(checkerHandle_);
+    if (ibHandle_.IsValid())  device->DestroyBuffer(ibHandle_);
+    if (vbHandle_.IsValid())  device->DestroyBuffer(vbHandle_);
+    if (shadowPipeline_.IsValid())  device->DestroyPipeline(shadowPipeline_);
+    if (forwardPipeline_.IsValid()) device->DestroyPipeline(forwardPipeline_);
+    if (debugPipeline_.IsValid())   device->DestroyPipeline(debugPipeline_);
+    if (lightPipeline_.IsValid())   device->DestroyPipeline(lightPipeline_);
+    if (gbufPipeline_.IsValid())    device->DestroyPipeline(gbufPipeline_);
+    if (shadowVSHandle_.IsValid())  device->DestroyShader(shadowVSHandle_);
+    if (meshPSHandle_.IsValid())    device->DestroyShader(meshPSHandle_);
+    if (debugPSHandle_.IsValid())   device->DestroyShader(debugPSHandle_);
+    if (lightPSHandle_.IsValid())   device->DestroyShader(lightPSHandle_);
+    if (fsVSHandle_.IsValid())      device->DestroyShader(fsVSHandle_);
+    if (gbufPSHandle_.IsValid())    device->DestroyShader(gbufPSHandle_);
+    if (meshVSHandle_.IsValid())    device->DestroyShader(meshVSHandle_);
 }
 
 } // namespace uz

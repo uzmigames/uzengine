@@ -15,9 +15,10 @@
 
 #include <cstring>
 
+UZ_DECLARE_LOG_CATEGORY(EditorText);
+
 namespace uz {
 
-UZ_DECLARE_LOG_CATEGORY(EditorText);
 UZ_DEFINE_LOG_CATEGORY(EditorText, Info);
 
 // ─────────────────────────────────────────────────────────────────────────────

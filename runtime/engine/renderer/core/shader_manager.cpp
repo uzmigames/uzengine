@@ -7,9 +7,9 @@
 #include "shader_compiler.h"
 #include "shader_compiler_fxc.h"
 
-namespace uz {
-
 UZ_DECLARE_LOG_CATEGORY(Renderer);
+
+namespace uz {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Lifecycle

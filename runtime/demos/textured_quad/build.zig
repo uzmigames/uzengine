@@ -13,6 +13,10 @@ pub fn build(b: *std.Build) void {
         .name = "textured_quad_demo",
         .sources = &.{ "main.cpp", "textured_quad_demo.cpp" },
         .deploy_fxc = true,
+        .extra_includes = &.{
+            "../../engine/renderer/mesh",
+            "../../engine/renderer/upload",
+        },
     });
     demo.install();
 }

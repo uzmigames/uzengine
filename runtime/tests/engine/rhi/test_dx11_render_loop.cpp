@@ -43,32 +43,40 @@ constexpr double kMaxFrameTimeMs = 100.0;
 // Fixture
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Fixture that creates a DX11 device with validation enabled.
+/// Fixture that shares a single DX11 device across all render loop tests.
 ///
-/// All tests are skipped if no GPU is available. TearDown calls WaitIdle()
-/// to ensure the GPU is quiescent before destroying the device.
+/// SetUpTestSuite creates the device once. TearDownTestSuite destroys it.
+/// All tests are skipped if no GPU is available.
 class DX11RenderLoopTest : public ::testing::Test {
 protected:
-    uz::IRHIDevice* m_device = nullptr;
+    static uz::IRHIDevice* s_device;
 
-    void SetUp() override {
+    static void SetUpTestSuite() {
         uz::RHIDeviceDesc desc{};
         desc.backend          = uz::RHIBackend::DX11;
         desc.enableValidation = true;
-        m_device = uz::CreateRHIDevice(desc);
-        if (!m_device) {
-            GTEST_SKIP() << "DX11 device creation failed (no GPU or driver support)";
+        s_device = uz::CreateRHIDevice(desc);
+    }
+
+    static void TearDownTestSuite() {
+        if (s_device) {
+            s_device->WaitIdle();
+            uz::DestroyRHIDevice(s_device);
+            s_device = nullptr;
         }
     }
 
-    void TearDown() override {
-        if (m_device) {
-            m_device->WaitIdle();
-            uz::DestroyRHIDevice(m_device);
-            m_device = nullptr;
+    uz::IRHIDevice* m_device = nullptr;
+
+    void SetUp() override {
+        if (!s_device) {
+            GTEST_SKIP() << "DX11 device creation failed (no GPU or driver support)";
         }
+        m_device = s_device;
     }
 };
+
+uz::IRHIDevice* DX11RenderLoopTest::s_device = nullptr;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tests

@@ -1,66 +1,69 @@
-/// UzEngine Textured Quad Demo — Backend-Agnostic
+/// Textured Quad Demo — DemoApplication-based backend-agnostic checkerboard quad.
 ///
-/// Creates a window, initializes an RHI device (any backend), and renders
-/// a procedural checkerboard quad using triple-buffered frame pacing.
-///
-/// Validates the full texture pipeline across all RHI backends:
-/// - Texture creation with `ShaderResource | CopyDst` usage
-/// - Texture upload via `UploadContext::UploadTexture` (staging → default heap)
-/// - SRV descriptor allocation in the global bindless heap
-/// - Sampler creation and sampler heap access
-/// - SM6.6 bindless path: `ResourceDescriptorHeap[index]` / `SamplerDescriptorHeap[index]`
-/// - SM5 fallback path: Input Assembler vertex binding + descriptor table SRV
-/// - Root constants with 3 values (vertexBufferIndex, textureIndex, samplerIndex)
-///
-/// # Shader Architecture
-/// The vertex shader fetches vertex data from a StructuredBuffer via
-/// `ResourceDescriptorHeap` (SM6.6) or from the Input Assembler (SM5).
-/// The pixel shader samples via heap indices pushed through root constants.
+/// Renders a procedural 256x256 checkerboard texture on a fullscreen-ish quad.
+/// Automatically selects SM6.6 bindless or SM5 Input Assembler path.
+/// Validates: texture upload pipeline, SRV binding, sampler creation, root constants.
 
 #pragma once
 
-#include "rhi_backend.h"
+#include "demo_application.h"
+#include "rhi_types.h"
 
 #include <cstdint>
-#include <string>
+#include <memory>
 
 namespace uz {
 
-/// Configuration for running the textured quad demo.
-struct TexturedQuadConfig {
-    uint32_t frameCount = 0;            ///< Number of frames to render (0 = infinite)
-    std::string screenshotPath;         ///< If non-empty, save screenshot to this path
-    uint32_t screenshotFrame = 5;       ///< Frame number to capture (default: 5)
-    RHIBackend backend = RHIBackend::DX12; ///< RHI backend to use
-};
+class ShaderPipeline;
+class ShaderCompiler;
+class ShaderCompilerFXC;
 
-/// Runs the backend-agnostic textured quad render loop.
+/// Textured quad demo — draws a checkerboard quad using the RHI abstraction.
 ///
-/// Creates a 1280x720 window, generates a procedural 256x256 checkerboard
-/// texture, uploads it to the GPU, and renders a quad using the selected
-/// backend. Automatically selects SM6.6 bindless or SM5 Input Assembler
-/// path based on GPU capabilities reported by `IRHIDevice::IsBindless()`.
-///
-/// # Arguments
-/// * `config` — Demo configuration (frame count, screenshot settings, backend).
-///
-/// # Returns
-/// `true` if all frames rendered without errors.
-/// `false` if any initialization step failed.
-///
-/// # Side Effects
-/// - Opens a visible window titled "UzEngine -- Textured Quad Demo"
-/// - Logs RHI errors on failure
-/// - Logs final FPS statistics on completion
-///
-/// # Example
-/// ```cpp
-/// uz::LogInit();
-/// uz::TexturedQuadConfig cfg;
-/// cfg.backend = uz::RHIBackend::DX12;
-/// bool ok = uz::RunTexturedQuadDemo(cfg);
-/// uz::LogShutdown();
-/// ```
-bool RunTexturedQuadDemo(const TexturedQuadConfig& config = {});
+/// Extends `DemoApplication` to eliminate window/device/swapchain boilerplate.
+/// All GPU resources are created in `OnInit()` and released in `OnShutdown()`.
+class TexturedQuadDemo final : public DemoApplication {
+public:
+    TexturedQuadDemo();
+    ~TexturedQuadDemo() override;
+
+protected:
+    void OnInit() override;
+    void OnFrame(float dt) override;
+    void OnShutdown() override;
+
+private:
+    /// Generates the 256x256 procedural checkerboard, creates GPU texture,
+    /// uploads via staging buffer, and transitions to ShaderResource state.
+    void CreateCheckerboardTexture();
+
+    /// Compiles and creates vertex/pixel shader handles via ShaderPipeline.
+    void CompileShaders();
+
+    /// Creates the graphics pipeline (bindless or SM5 input-assembled).
+    void CreatePipeline();
+
+    /// Creates the quad vertex buffer (6 verts, 2 triangles).
+    void CreateVertexBuffer();
+
+    // ── GPU resources ───────────────────────────────────────────────────
+    RHIPipelineHandle pipeline_;
+    RHIShaderHandle vsHandle_;
+    RHIShaderHandle psHandle_;
+    RHIBufferHandle vbHandle_;
+    RHITextureHandle texHandle_;
+    RHISamplerHandle samplerHandle_;
+
+    uint32_t texSrvIndex_ = UINT32_MAX;
+    uint32_t vbSrvIndex_ = 0;
+    uint32_t samplerIdx_ = UINT32_MAX;
+
+    bool bindless_ = false;
+
+    // ── Shader compilation (Windows only, forward-declared) ─────────────
+    std::unique_ptr<ShaderPipeline> shaderPipeline_;
+    std::unique_ptr<ShaderCompiler> compiler_;
+    std::unique_ptr<ShaderCompilerFXC> compilerFXC_;
+};
 
 } // namespace uz

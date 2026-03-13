@@ -547,4 +547,4 @@ Example (reverse of above):
 - [Tick Architecture](./03-tick-architecture.md) — Per-frame execution and tick groups
 - [Subsystem Registry](./04-subsystem-registry.md) — Registry implementation details
 - [Game Instance](./05-game-instance.md) — Scene loading, pause/resume, level transitions
-- [Demo Migration Guide](./demo-guide.md) — How to update old demos to use EngineLoop
+- [DemoApplication Guide](./06-demo-guide.md) — Lightweight base class for simple GPU demos + migration to EngineLoop

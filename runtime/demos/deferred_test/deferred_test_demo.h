@@ -1,71 +1,188 @@
-/// Deferred Rendering Test Demo — Backend-Agnostic
+/// Deferred Rendering Test Demo — DemoApplication-based multi-pass pipeline.
 ///
-/// Renders 5 cubes in a row through a multi-pass deferred shading pipeline:
-/// G-Buffer pass writes albedo, world-space normals, and metallic/roughness
-/// to three render targets plus a depth buffer. A fullscreen lighting pass
-/// then reconstructs world positions from depth and accumulates 4 point lights
-/// plus a directional sun via Cook-Torrance BRDF.
+/// Renders 5 cubes through a deferred shading pipeline (G-Buffer + lighting)
+/// or a single-pass forward PBR path, toggled at runtime with the F key.
 ///
-/// Debug visualization: press keys 1-7 to inspect individual G-Buffer channels
-/// in-place. Press 0 to return to the composed deferred result. The current
-/// mode is shown in the stats overlay.
-///
-/// Supports `--screenshot <path>` and `--screenshot-frame <N>` for automated
-/// visual testing. Backend is selected at runtime via `--rhi` flag.
+/// Debug visualization: keys 1-7 inspect individual G-Buffer channels,
+/// key 0 returns to the composed deferred result. Supports `--screenshot`
+/// and `--screenshot-frame` for automated visual testing.
 
 #pragma once
 
-#include "rhi_backend.h"
+#include "demo_application.h"
+#include "rhi_types.h"
+#include "camera.h"
+#include "fps_camera_controller.h"
+#include "input.h"
+#include "constant_buffers.h"
+#include "editor_grid.h"
+#include "screenshot_capture.h"
+#include "stats_overlay.h"
+#include "render_path.h"
+#include "passes/gbuffer_debug_pass.h"
 
 #include <cstdint>
+#include <memory>
 #include <string>
+#include <vector>
 
 namespace uz {
 
-/// Configuration for running the deferred rendering test demo.
+class ShaderPipeline;
+class ShaderCompiler;
+class ShaderCompilerFXC;
+class Mesh;
+
+namespace rg { class RgResourcePool; }
+
+/// Configuration for the deferred rendering test demo.
+///
+/// Screenshot fields are parsed from command-line flags. The `maxFrames`
+/// field maps to `DemoConfig::maxFrames` in the base class.
 struct DeferredTestConfig {
-    uint32_t    frameCount      = 0;               ///< Number of frames to render (0 = run until window close).
-    std::string screenshotPath;                    ///< If non-empty, save screenshot to this path at `screenshotFrame`.
-    uint32_t    screenshotFrame = 60;              ///< Frame number at which to capture the screenshot (default: 60).
-    RHIBackend  backend         = RHIBackend::DX12;///< RHI backend to use (default: DX12).
+    uint32_t    maxFrames       = 0;    ///< Frames to render (0 = until window close).
+    std::string screenshotPath;         ///< If non-empty, save screenshot at `screenshotFrame`.
+    uint32_t    screenshotFrame = 60;   ///< Frame at which to capture the screenshot.
 };
 
-/// Runs the deferred rendering test demo.
+/// GPU-resident PBR texture handles and their SRV descriptor indices.
+struct PBRTextures {
+    RHITextureHandle handles[5] = {};
+    uint32_t albedoSrv    = 0;
+    uint32_t normalSrv    = 0;
+    uint32_t roughnessSrv = 0;
+    uint32_t metallicSrv  = 0;
+    uint32_t aoSrv        = 0;
+};
+
+/// Physical G-Buffer texture handles used across G-Buffer and lighting passes.
 ///
-/// Creates a 1280x720 window, initialises the selected RHI backend, uploads a
-/// cube mesh and five PBR texture sets, and renders a multi-pass deferred frame:
+/// The render graph declares these as transient but the physical textures are
+/// maintained externally so their SRV indices remain stable within the frame.
+struct GBufferTextures {
+    RHITextureHandle albedo;      ///< RGBA8Unorm — base colour + alpha.
+    RHITextureHandle normal;      ///< RGBA16Float — world-space normals.
+    RHITextureHandle metalRough;  ///< RGBA8Unorm — R=metallic, G=roughness.
+    RHITextureHandle depth;       ///< D32Float — primary depth buffer.
+
+    uint32_t albedoSrv     = 0;
+    uint32_t normalSrv     = 0;
+    uint32_t metalRoughSrv = 0;
+    uint32_t depthSrv      = 0;
+};
+
+/// Deferred rendering test demo — extends DemoApplication for lifecycle management.
 ///
-/// 1. **G-Buffer pass** — draws 5 cubes and fills albedo (RGBA8), normal
-///    (RGBA16F), metallic/roughness (RGBA8), and depth (D32F) render targets.
-/// 2. **Lighting pass** — fullscreen triangle that reads the G-Buffer, reconstructs
-///    world positions via `invViewProj`, and accumulates 4 point lights + 1
-///    directional light using Cook-Torrance BRDF.
-/// 3. **(Optional) Debug pass** — if the user pressed 1-7, a GBuffer debug pass
-///    replaces the lighting pass and visualises a single G-Buffer channel.
-///
-/// The editor grid and FPS stats overlay are composited into the final backbuffer
-/// after lighting.
-///
-/// # Arguments
-/// * `config` — Demo configuration (frame count, screenshot settings, RHI backend).
-///
-/// # Returns
-/// `true` if all frames rendered without errors.
-/// `false` if device creation, swapchain, shader compilation, or mesh load failed.
-///
-/// # Side Effects
-/// - Opens a visible 1280x720 window titled "UzEngine — Deferred Rendering Test".
-/// - Logs errors on failure via `UZ_LOG(Renderer, Error, ...)`.
-/// - Logs final FPS statistics on completion.
-///
-/// # Example
-/// ```cpp
-/// uz::LogInit();
-/// uz::DeferredTestConfig cfg;
-/// cfg.backend = uz::RHIBackend::DX12;
-/// bool ok = uz::RunDeferredTestDemo(cfg);
-/// uz::LogShutdown();
-/// ```
-bool RunDeferredTestDemo(const DeferredTestConfig& config = {});
+/// Owns all GPU resources (shaders, pipelines, mesh buffers, textures, G-Buffer),
+/// plus camera, input, editor grid, stats overlay, and screenshot capture.
+/// All setup happens in `OnInit()`, per-frame rendering in `OnFrame(dt)`,
+/// resize-dependent resource recreation in `OnResize()`, and cleanup in `OnShutdown()`.
+class DeferredTestDemo final : public DemoApplication {
+public:
+    /// Constructs with optional configuration for frame cap and screenshots.
+    explicit DeferredTestDemo(const DeferredTestConfig& config = {});
+    ~DeferredTestDemo() override;
+
+protected:
+    /// Compiles shaders, creates pipelines, loads mesh and textures,
+    /// initializes G-Buffer, camera, input, editor grid, and stats overlay.
+    void OnInit() override;
+
+    /// Records one frame via the render graph: G-Buffer or forward pass,
+    /// overlay pass (grid + stats), optional screenshot capture, and present.
+    ///
+    /// # Arguments
+    /// * `dt` — Time since last frame in seconds (clamped by base class).
+    void OnFrame(float dt) override;
+
+    /// Recreates G-Buffer textures and updates camera aspect ratio.
+    ///
+    /// # Arguments
+    /// * `width`  — New window width in pixels.
+    /// * `height` — New window height in pixels.
+    void OnResize(uint32_t width, uint32_t height) override;
+
+    /// Releases all GPU resources owned by this demo.
+    void OnShutdown() override;
+
+private:
+    /// Compiles all deferred/forward shaders via ShaderPipeline.
+    void CompileShaders();
+
+    /// Creates G-Buffer, lighting, debug, and forward PSOs.
+    void CreatePipelines();
+
+    /// Loads cube.uzmesh and uploads vertex/index buffers to GPU.
+    void LoadAndUploadMesh();
+
+    /// Loads PBR texture set (albedo, normal, roughness, metallic, AO).
+    void LoadPBRTextures();
+
+    /// Creates G-Buffer textures at the current window dimensions.
+    bool CreateGBuffer();
+
+    /// Destroys all G-Buffer textures.
+    void DestroyGBuffer();
+
+    // ── Config ───────────────────────────────────────────────────────────
+    DeferredTestConfig config_;
+
+    // ── Shader compilation ───────────────────────────────────────────────
+    std::unique_ptr<ShaderPipeline> shaderPipeline_;
+    std::unique_ptr<ShaderCompiler> compiler_;
+    std::unique_ptr<ShaderCompilerFXC> compilerFXC_;
+
+    // ── Shader handles ───────────────────────────────────────────────────
+    RHIShaderHandle meshVSHandle_;
+    RHIShaderHandle gbufPSHandle_;
+    RHIShaderHandle fsVSHandle_;
+    RHIShaderHandle lightPSHandle_;
+    RHIShaderHandle debugPSHandle_;
+    RHIShaderHandle meshPSHandle_;
+
+    // ── Pipeline handles ─────────────────────────────────────────────────
+    RHIPipelineHandle gbufPipeline_;
+    RHIPipelineHandle lightPipeline_;
+    RHIPipelineHandle debugPipeline_;
+    RHIPipelineHandle forwardPipeline_;
+
+    // ── Mesh buffers ─────────────────────────────────────────────────────
+    RHIBufferHandle vbHandle_;
+    RHIBufferHandle ibHandle_;
+    uint32_t vbSrvIndex_  = 0;
+    uint32_t indexCount_   = 0;
+    uint32_t vertexCount_  = 0;
+    RHIIndexFormat indexFormat_ = RHIIndexFormat::Uint32;
+    bool bindless_ = false;
+
+    // ── Textures ─────────────────────────────────────────────────────────
+    PBRTextures pbrTex_;
+    GBufferTextures gbuf_;
+
+    // ── Constant buffer ring ─────────────────────────────────────────────
+    CBRingAllocator cbRing_;
+
+    // ── Camera + input ───────────────────────────────────────────────────
+    Camera camera_;
+    FPSCameraController cameraCtrl_;
+    InputSystem input_;
+
+    // ── Editor grid + stats overlay ──────────────────────────────────────
+    EditorGrid editorGrid_;
+    StatsOverlay statsOverlay_;
+
+    // ── Screenshot ───────────────────────────────────────────────────────
+    ScreenshotCapture screenshotCapture_;
+    bool screenshotPending_ = false;
+    bool screenshotCaptured_ = false;
+
+    // ── Render graph resource pool ───────────────────────────────────────
+    std::unique_ptr<rg::RgResourcePool> rgPool_;
+
+    // ── Frame state ──────────────────────────────────────────────────────
+    float totalTime_       = 0.f;
+    uint32_t debugModeValue_ = static_cast<uint32_t>(GBufferDebugMode::Count);
+    RenderPath renderPath_ = RenderPath::Deferred;
+};
 
 } // namespace uz

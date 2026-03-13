@@ -159,31 +159,40 @@ static const uint8_t kMinimalPsDXBC[] = {
 // Test Fixture — creates a real DX11 device, skips if unavailable
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Fixture that owns a real DX11 IRHIDevice for GPU-dependent tests.
+/// Fixture that shares a single DX11 IRHIDevice across all tests in the suite.
 ///
-/// SetUp attempts device creation with validation enabled. If the GPU or
-/// driver does not support D3D11.1, the test is skipped rather than failed.
-/// TearDown calls WaitIdle() before destruction to ensure GPU is quiescent.
+/// SetUpTestSuite creates the device once with validation enabled.
+/// TearDownTestSuite calls WaitIdle() and destroys it after all tests complete.
+/// Per-test SetUp skips if the shared device is unavailable. Individual tests
+/// still create and destroy their own resources (buffers, textures, shaders)
+/// to avoid cross-test state leakage.
 class DX11DeviceTest : public ::testing::Test {
 protected:
-    uz::IRHIDevice* m_device = nullptr;
+    static uz::IRHIDevice* s_device;
 
-    void SetUp() override {
+    static void SetUpTestSuite() {
         uz::RHIDeviceDesc desc{};
         desc.backend = uz::RHIBackend::DX11;
         desc.enableValidation = true;
-        m_device = uz::CreateRHIDevice(desc);
-        if (!m_device) {
-            GTEST_SKIP() << "DX11 device creation failed (no GPU or driver support)";
+        s_device = uz::CreateRHIDevice(desc);
+    }
+
+    static void TearDownTestSuite() {
+        if (s_device) {
+            s_device->WaitIdle();
+            uz::DestroyRHIDevice(s_device);
+            s_device = nullptr;
         }
     }
 
-    void TearDown() override {
-        if (m_device) {
-            m_device->WaitIdle();
-            uz::DestroyRHIDevice(m_device);
-            m_device = nullptr;
+    /// Alias so test bodies can use m_device without changes.
+    uz::IRHIDevice* m_device = nullptr;
+
+    void SetUp() override {
+        if (!s_device) {
+            GTEST_SKIP() << "DX11 device creation failed (no GPU or driver support)";
         }
+        m_device = s_device;
     }
 
     /// Creates a minimal vertex shader from the pre-compiled DXBC blob.
@@ -210,6 +219,8 @@ protected:
         return m_device->CreateShader(desc);
     }
 };
+
+uz::IRHIDevice* DX11DeviceTest::s_device = nullptr;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Device Lifecycle

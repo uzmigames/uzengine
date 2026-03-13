@@ -35,6 +35,11 @@ namespace {
 ///
 /// SetUp attempts device creation with validation enabled. If the GPU or
 /// driver does not support Vulkan, the test is skipped rather than failed.
+///
+/// Note: Vulkan/VMA requires per-test device teardown to avoid internal
+/// allocation leak assertions. Unlike DX11/DX12 which tolerate shared devices,
+/// the Vulkan backend's VMA allocator asserts on destruction if any internal
+/// allocations remain — which happens when a device outlives per-test resources.
 class VulkanDeviceTest : public ::testing::Test {
 protected:
     uz::IRHIDevice* m_device = nullptr;

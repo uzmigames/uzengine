@@ -6,6 +6,16 @@
 #include <gtest/gtest.h>
 #include "log.h"
 
+// Force-reference all log categories so the linker pulls them from the static
+// library. Without this, categories only used by engine .cpp files (but not
+// directly by test .cpp files) get discarded by the linker.
+UZ_DECLARE_LOG_CATEGORY(Renderer);
+UZ_DECLARE_LOG_CATEGORY(Asset);
+static volatile const void* kForceLogCategories[] = {
+    &LogRenderer,
+    &LogAsset,
+};
+
 namespace fs = std::filesystem;
 
 /// Returns a temp directory for test artifacts, cleaned up on exit.

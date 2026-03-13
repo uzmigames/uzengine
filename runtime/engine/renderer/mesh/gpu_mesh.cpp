@@ -6,9 +6,10 @@
 #include "upload_context.h"
 #include "log.h"
 
-namespace uz {
-
+// Log category declared at global scope (matching log.cpp definition)
 UZ_DECLARE_LOG_CATEGORY(Renderer);
+
+namespace uz {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // UploadMesh

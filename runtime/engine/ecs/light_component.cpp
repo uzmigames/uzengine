@@ -8,9 +8,9 @@
 
 #include "log.h"
 
-namespace uz {
-
 UZ_DEFINE_LOG_CATEGORY(Light, Trace);
+
+namespace uz {
 
 // ─────────────────────────────────────────────────────────────────────────────
 // LightComponent

@@ -137,11 +137,10 @@ TEST_F(TimeManagerTest, TotalTime_AccumulatesOverFrames) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 TEST_F(TimeManagerTest, DeltaTimeClamping_NeverExceedsMaxDeltaTime) {
-    // Simulate a long hitch by manipulating via multiple rapid calls and inspecting
-    // that even with a large gap, deltaTime is bounded.
-    // We directly inject state by sleeping a long time after first frame.
+    // Sleep just past the clamping threshold (kMaxDeltaTime is typically 0.25s = 250ms).
+    // 300ms is sufficient to exceed it without wasting time.
     tm_.BeginFrame(); // record base timestamp
-    std::this_thread::sleep_for(std::chrono::milliseconds(500)); // > 250ms max
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
     tm_.BeginFrame();
 
     EXPECT_LE(tm_.GetDeltaTime(), kMaxDeltaTime)
@@ -150,12 +149,12 @@ TEST_F(TimeManagerTest, DeltaTimeClamping_NeverExceedsMaxDeltaTime) {
 
 TEST_F(TimeManagerTest, RawDeltaTime_NotClamped_CanExceedMaxDeltaTime) {
     tm_.BeginFrame();
-    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
     tm_.BeginFrame();
 
     // rawDeltaTime_ records the actual elapsed time before clamping
     EXPECT_GT(tm_.GetRawDeltaTime(), kMaxDeltaTime)
-        << "rawDeltaTime must reflect actual wall-clock elapsed (> kMaxDeltaTime after 500ms sleep)";
+        << "rawDeltaTime must reflect actual wall-clock elapsed (> kMaxDeltaTime after 300ms sleep)";
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -237,7 +236,7 @@ TEST_F(TimeManagerTest, Pause_TimeScaleZero_NoFixedTicks) {
     tm_.SetTimeScale(0.0f);
 
     tm_.BeginFrame();
-    std::this_thread::sleep_for(std::chrono::milliseconds(100)); // plenty of wall time
+    std::this_thread::sleep_for(std::chrono::milliseconds(30)); // some wall time
     tm_.BeginFrame();
 
     EXPECT_EQ(tm_.ConsumeFixedTicks(), 0)

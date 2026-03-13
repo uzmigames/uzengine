@@ -15,9 +15,10 @@
 #include <cstring>
 #include <vector>
 
+UZ_DECLARE_LOG_CATEGORY(EditorFont);
+
 namespace uz {
 
-UZ_DECLARE_LOG_CATEGORY(EditorFont);
 UZ_DEFINE_LOG_CATEGORY(EditorFont, Info);
 
 // ─────────────────────────────────────────────────────────────────────────────
