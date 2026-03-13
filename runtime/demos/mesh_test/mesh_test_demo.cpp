@@ -510,12 +510,6 @@ void MeshTestDemo::OnFrame(float dt) {
         });
     });
 
-    // Screenshot pass (optional) — capture from present state.
-    if (ShouldCaptureScreenshot()) {
-        GetScreenshotCapture()->CaptureFromPresent(cmdList, swapChain);
-        SetScreenshotSaveDeferred();
-    }
-
     // Present transition pass.
     rgBuilder.AddPass("Present", [&](rg::RgPassBuilder& pb) {
         pb.Write(bbRes, RHIResourceState::Present);
@@ -525,10 +519,11 @@ void MeshTestDemo::OnFrame(float dt) {
     rgBuilder.Compile();
     rgBuilder.Execute(cmdList);
 
-    cmdList->End();
-    cmdList->Execute();
-
-    swapChain->Present(false);
+    // Screenshot capture — after render graph, backbuffer is in Present state.
+    if (ShouldCaptureScreenshot()) {
+        GetScreenshotCapture()->CaptureFromPresent(cmdList, swapChain);
+        SetScreenshotSaveDeferred();
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

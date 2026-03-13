@@ -85,8 +85,9 @@ static uint32_t LoadPBRTexture(IRHIDevice* device, IRHICommandList* cmdList,
 
     uint32_t srvIdx = device->GetTextureSRVIndex(outHandle);
 
+    // Command list is already recording (DemoApplication opens it before OnInit).
+    // Flush upload, wait, then re-open for subsequent work.
     UploadContext upload(device);
-    cmdList->Begin();
     uint64_t dataSize = static_cast<uint64_t>(w) * h * 4;
     upload.UploadTexture(cmdList, outHandle, pixels, dataSize);
 
@@ -100,6 +101,7 @@ static uint32_t LoadPBRTexture(IRHIDevice* device, IRHICommandList* cmdList,
     cmdList->Execute();
     device->WaitIdle();
     upload.ReleaseStaging();
+    cmdList->Begin();
     stbi_image_free(pixels);
 
     UZ_LOG(Renderer, Info, "PBR texture '{}': {}x{}, SRV={}", debugName, w, h, srvIdx);

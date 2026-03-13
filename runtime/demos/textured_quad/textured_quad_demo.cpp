@@ -137,8 +137,16 @@ static void GetQuadVertices(SimpleVertex outVerts[kVertexCount]) {
 // TexturedQuadDemo
 // ─────────────────────────────────────────────────────────────────────────────
 
-TexturedQuadDemo::TexturedQuadDemo()
-    : DemoApplication("UzEngine \xe2\x80\x94 Textured Quad Demo") {}
+TexturedQuadDemo::TexturedQuadDemo(const TexturedQuadConfig& config)
+    : DemoApplication(DemoConfig{
+        .title  = "UzEngine \xe2\x80\x94 Textured Quad Demo",
+        .width  = 1280,
+        .height = 720,
+        .maxFrames = config.maxFrames,
+        .vsync  = false,
+        .screenshotPath = config.screenshotPath,
+        .screenshotFrame = config.screenshotFrame,
+    }) {}
 
 TexturedQuadDemo::~TexturedQuadDemo() = default;
 
@@ -236,6 +244,12 @@ void TexturedQuadDemo::OnFrame(float /*dt*/) {
 
     rgBuilder.Compile();
     rgBuilder.Execute(cmdList);
+
+    // Screenshot capture — after render graph, backbuffer is in Present state.
+    if (ShouldCaptureScreenshot()) {
+        GetScreenshotCapture()->CaptureFromPresent(cmdList, swapChain);
+        SetScreenshotSaveDeferred();
+    }
 }
 
 void TexturedQuadDemo::OnShutdown() {
@@ -428,9 +442,11 @@ void TexturedQuadDemo::CreateCheckerboardTexture() {
 
     auto pixels = GenerateCheckerboard(kTexWidth, kTexHeight, kTileSize);
 
+    // Upload into the already-open command list (DemoApplication opens it before OnInit).
+    // Flush immediately so staging buffer stays alive until GPU completes, then re-open
+    // for DemoApplication's post-OnInit work (stats overlay init).
     {
         UploadContext upload(device);
-        cmdList->Begin();
 
         if (!upload.UploadTexture(cmdList, texHandle_, pixels.data(), pixels.size())) {
             UZ_LOG(Renderer, Error, "Failed to upload checkerboard texture");
@@ -447,6 +463,8 @@ void TexturedQuadDemo::CreateCheckerboardTexture() {
         cmdList->Execute();
         device->WaitIdle();
         upload.ReleaseStaging();
+
+        cmdList->Begin();
     }
     UZ_LOG(Renderer, Info, "Checkerboard texture uploaded ({}x{})", kTexWidth, kTexHeight);
 }

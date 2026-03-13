@@ -18,13 +18,20 @@ class ShaderPipeline;
 class ShaderCompiler;
 class ShaderCompilerFXC;
 
+/// Configuration for the textured quad demo.
+struct TexturedQuadConfig {
+    std::string screenshotPath;
+    uint32_t screenshotFrame = 60;
+    uint32_t maxFrames = 0;
+};
+
 /// Textured quad demo — draws a checkerboard quad using the RHI abstraction.
 ///
 /// Extends `DemoApplication` to eliminate window/device/swapchain boilerplate.
 /// All GPU resources are created in `OnInit()` and released in `OnShutdown()`.
 class TexturedQuadDemo final : public DemoApplication {
 public:
-    TexturedQuadDemo();
+    explicit TexturedQuadDemo(const TexturedQuadConfig& config = {});
     ~TexturedQuadDemo() override;
 
 protected:
