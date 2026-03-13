@@ -4,6 +4,7 @@
 #include "log.h"
 #include "profiler.h"
 
+#include <cmath>
 #include <cstring>
 #include <fstream>
 
@@ -303,6 +304,59 @@ Mesh MeshBuilder::CreateCube(float size) {
         indices.push_back(base + 0);
         indices.push_back(base + 2);
         indices.push_back(base + 3);
+    }
+
+    return CreateFromVertices(vertices, indices);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MeshBuilder::CreateSphere
+// ─────────────────────────────────────────────────────────────────────────────
+
+Mesh MeshBuilder::CreateSphere(float radius, uint32_t stacks, uint32_t slices) {
+    UZ_PROFILE_FUNCTION();
+    constexpr float kPi = 3.14159265358979f;
+
+    std::vector<Vertex> vertices;
+    vertices.reserve((stacks + 1) * (slices + 1));
+
+    for (uint32_t i = 0; i <= stacks; ++i) {
+        float phi = kPi * static_cast<float>(i) / static_cast<float>(stacks);
+        float sinPhi = std::sin(phi);
+        float cosPhi = std::cos(phi);
+
+        for (uint32_t j = 0; j <= slices; ++j) {
+            float theta = 2.0f * kPi * static_cast<float>(j) / static_cast<float>(slices);
+            float sinTheta = std::sin(theta);
+            float cosTheta = std::cos(theta);
+
+            Vec3 normal = {sinPhi * cosTheta, cosPhi, sinPhi * sinTheta};
+            float u = static_cast<float>(j) / static_cast<float>(slices);
+            float v = 1.0f - static_cast<float>(i) / static_cast<float>(stacks);
+
+            Vertex vert{};
+            vert.position = {normal.x * radius, normal.y * radius, normal.z * radius};
+            vert.normal   = normal;
+            vert.texcoord = {u, v};
+            vert.tangent  = {-sinTheta, 0.0f, cosTheta, 1.0f};
+            vertices.push_back(vert);
+        }
+    }
+
+    // CW winding order (matches frontCounterClockwise = false)
+    std::vector<uint32_t> indices;
+    indices.reserve(stacks * slices * 6);
+    for (uint32_t i = 0; i < stacks; ++i) {
+        for (uint32_t j = 0; j < slices; ++j) {
+            uint32_t a = i * (slices + 1) + j;
+            uint32_t b = a + slices + 1;
+            indices.push_back(a);
+            indices.push_back(a + 1);
+            indices.push_back(b);
+            indices.push_back(a + 1);
+            indices.push_back(b + 1);
+            indices.push_back(b);
+        }
     }
 
     return CreateFromVertices(vertices, indices);

@@ -63,6 +63,7 @@ public:
     void SetRootCBV(uint32_t rootParamIndex, RHIBufferHandle buffer,
                     uint64_t offsetBytes, const void* cpuData, uint32_t dataSize) override;
     void SetDescriptorTable(uint32_t rootParamIndex, uint32_t descriptorIndex) override;
+    void SetFragmentTexture(uint32_t slot, RHITextureHandle texture) override;
 
     void DrawIndexed(uint32_t indexCount, uint32_t instanceCount = 1,
                      uint32_t firstIndex = 0, int32_t vertexOffset = 0,
@@ -123,11 +124,19 @@ private:
     /// Number of command allocators for triple-buffered frame pacing.
     static constexpr uint32_t kFramesInFlight = 3;
 
+    /// Maximum fragment textures bindable via SetFragmentTexture (SM5 path).
+    static constexpr uint32_t kMaxFragmentTextures = 16;
+
     DX12Device*                          m_device = nullptr;
     ComPtr<ID3D12GraphicsCommandList>    m_cmdList;
     ComPtr<ID3D12CommandAllocator>       m_allocators[kFramesInFlight];
     uint32_t                             m_currentFrame = 0;
     D3D12_COMMAND_LIST_TYPE              m_listType = D3D12_COMMAND_LIST_TYPE_DIRECT;
+
+    /// Base index in the CBV_SRV_UAV heap for the contiguous staging block
+    /// used by SetFragmentTexture (SM5 descriptor table path).
+    /// Allocated once in Init(), reused every frame via descriptor copies.
+    uint32_t                             m_fragmentTexStagingBase = UINT32_MAX;
 };
 
 } // namespace uz

@@ -37,8 +37,9 @@
 // Constant Buffers
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Bound at root slot 2 (kSlotPerObject / register b2) via SetRootCBV.
 /// Per-pass downsampling parameters.
-cbuffer DownsampleParams : register(b0) {
+cbuffer DownsampleParams : register(b2) {
     /// Bloom threshold (luminance cutoff). Pixels with luminance < threshold
     /// are clamped to 0 before accumulation. Prevents dark areas from blooming.
     /// Typical range: [0.1, 1.0]. Default: 0.5.
@@ -54,8 +55,18 @@ cbuffer DownsampleParams : register(b0) {
 // Textures & Samplers
 // ─────────────────────────────────────────────────────────────────────────────
 
+#ifdef UZ_BINDLESS
+/// Root constants at b0 — SRV heap index for the source texture to downsample.
+cbuffer RootConstants : register(b0) {
+    uint inputTextureIndex;   ///< SRV descriptor heap index for source texture.
+    uint _rcPad0;
+    uint _rcPad1;
+    uint _rcPad2;
+};
+#else
 /// Input texture to downsample (full or current mip level resolution).
 Texture2D<float4> sourceTexture : register(t0);
+#endif
 
 /// Bilinear sampler for smooth downsampling.
 SamplerState samplerLinear : register(s0);
@@ -119,7 +130,12 @@ float4 main(PSInput input) : SV_Target {
     // Since we're downsampling by 2x, our texcoord naturally lands between
     // 4 source texels. The bilinear sampler weights them automatically.
 
+#ifdef UZ_BINDLESS
+    Texture2D<float4> inputTex = ResourceDescriptorHeap[inputTextureIndex];
+    float3 color = inputTex.Sample(samplerLinear, input.texcoord).rgb;
+#else
     float3 color = sourceTexture.Sample(samplerLinear, input.texcoord).rgb;
+#endif
 
     // Apply bloom threshold: isolate bright pixels
     float lum = Luminance(color);

@@ -56,6 +56,10 @@ public:
                 config.screenshotFrame = static_cast<uint32_t>(std::atoi(argv_[++i]));
             } else if (std::strcmp(argv_[i], "--frames") == 0 && i + 1 < argc_) {
                 config.frameCount = static_cast<uint32_t>(std::atoi(argv_[++i]));
+            } else if (std::strcmp(argv_[i], "--no-tonemap") == 0) {
+                config.enableTonemap = false;
+            } else if (std::strcmp(argv_[i], "--no-fxaa") == 0) {
+                config.enableFXAA = false;
             }
         }
 

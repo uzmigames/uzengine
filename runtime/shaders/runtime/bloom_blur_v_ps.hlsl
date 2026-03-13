@@ -29,8 +29,9 @@
 // Constant Buffers
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Bound at root slot 2 (kSlotPerObject / register b2) via SetRootCBV.
 /// Per-pass blur parameters.
-cbuffer BlurParams : register(b0) {
+cbuffer BlurParams : register(b2) {
     /// Reciprocal of texture height (1.0 / height). Used to compute texel size
     /// for offset sampling. For a 540-pixel-tall texture: 1.0 / 540 ≈ 0.00185.
     float invTextureHeight;
@@ -48,8 +49,18 @@ cbuffer BlurParams : register(b0) {
 // Textures & Samplers
 // ─────────────────────────────────────────────────────────────────────────────
 
+#ifdef UZ_BINDLESS
+/// Root constants at b0 — SRV heap index for the input bloom texture.
+cbuffer RootConstants : register(b0) {
+    uint inputTextureIndex;   ///< SRV descriptor heap index for horizontally-blurred bloom.
+    uint _rcPad0;
+    uint _rcPad1;
+    uint _rcPad2;
+};
+#else
 /// Input bloom texture (horizontally-blurred from bloom_blur_h_ps.hlsl).
 Texture2D<float4> bloomTexture : register(t0);
+#endif
 
 /// Bilinear sampler for smooth interpolation during blur.
 SamplerState samplerLinear : register(s0);
@@ -104,9 +115,16 @@ float4 main(PSInput input) : SV_Target {
     float3 result = float3(0.0f, 0.0f, 0.0f);
 
     // Apply 5-tap filter: sample at [-2, -1, 0, +1, +2] texels vertically
+#ifdef UZ_BINDLESS
+    Texture2D<float4> inputTex = ResourceDescriptorHeap[inputTextureIndex];
+#endif
     for (int i = -2; i <= 2; ++i) {
         float2 sampleTexCoord = texCoord + float2(0.0f, i * texelOffset);
+#ifdef UZ_BINDLESS
+        float3 sampleColor = inputTex.Sample(samplerLinear, sampleTexCoord).rgb;
+#else
         float3 sampleColor = bloomTexture.Sample(samplerLinear, sampleTexCoord).rgb;
+#endif
         result += sampleColor * weights[i + 2];
     }
 

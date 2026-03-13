@@ -3,12 +3,14 @@
 ## P0 — Highest Impact
 
 ### 100.1 PSO Cache
-- [ ] Define `PsoCacheKey` struct with xxHash64 of full pipeline descriptor
-- [ ] Implement in-memory hash map deduplication in `rhi_common` layer
+- [x] Define `PsoCacheKey` struct with FNV-1a hash of full pipeline descriptor ✅ `rhi_pso_cache.h` — hashes all descriptor fields (shaders, topology, rasterizer, depth, blend, RT formats, input layout), excludes debugName
+- [x] Implement in-memory hash map deduplication in `rhi_common` layer ✅ `rhi_pso_cache.cpp` — open-addressing Robin Hood hash map (power-of-2, 256 default, 70% load rehash)
+- [x] Integrate PSO cache into PipelineLibrary ✅ `pipeline_library.cpp` — all 4 `CreateGraphicsPipeline` calls routed through `CreateCachedPipeline()` (cache lookup → miss → create → insert)
+- [x] Unit tests (33 tests) ✅ `test_rhi_pso_cache.cpp` — key determinism (16 tests), cache ops (17 tests: hit/miss, overwrite, clear, invalidate, rehash, load factor)
 - [ ] Add disk serialization (DX12: `GetCachedBlob`/`CachedPSO`, Vulkan: `VkPipelineCache`, Metal: binary archives)
 - [ ] Add warmup/precache API — load known PSOs at scene load time
 - [ ] Add hit/miss stat counters (`StatCounter`)
-- [ ] Integrate with shader cache (reuse xxHash infrastructure)
+- [ ] Integrate with shader cache (reuse hash infrastructure)
 
 ### 100.2 GPU Memory Subsystem
 - [ ] Define per-category memory budgets (textures, buffers, staging, render targets)

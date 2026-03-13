@@ -264,7 +264,10 @@ public:
     /// Binds a texture to the fragment/pixel shader at the specified slot.
     ///
     /// On Metal, this calls `[encoder setFragmentTexture:atIndex:]` directly.
-    /// On DX12/Vulkan, this is a no-op (textures are bound via descriptor tables).
+    /// On DX12 (SM5), this copies the texture's SRV into a contiguous staging
+    /// block and binds it as root param 4's descriptor table.
+    /// On DX12 (SM6.6+), this is a no-op (bindless via ResourceDescriptorHeap[]).
+    /// On Vulkan, this is a no-op (textures bound via descriptor sets).
     ///
     /// # Arguments
     /// * `slot` — Texture slot index (maps to `[[texture(N)]]` in MSL).

@@ -175,6 +175,17 @@ struct MeshBuilder {
     /// * `size` - Half-extent of the cube (default 1.0).
     static Mesh CreateCube(float size = 1.0f);
 
+    /// Creates a UV sphere centered at origin with the given radius.
+    ///
+    /// Uses `Vertex` format with normals, UVs (spherical mapping), and tangents.
+    /// CW winding order (matches `frontCounterClockwise = false`).
+    ///
+    /// # Arguments
+    /// * `radius` - Sphere radius (default 1.0).
+    /// * `stacks` - Number of latitude divisions (default 32).
+    /// * `slices` - Number of longitude divisions (default 64).
+    static Mesh CreateSphere(float radius = 1.0f, uint32_t stacks = 32, uint32_t slices = 64);
+
     /// Creates a mesh from explicit vertex and index arrays.
     ///
     /// # Arguments

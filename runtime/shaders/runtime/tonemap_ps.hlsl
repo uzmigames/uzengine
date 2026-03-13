@@ -25,8 +25,9 @@
 // Constant Buffers
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Bound at root slot 2 (kSlotPerObject / register b2) via SetRootCBV.
 /// Per-frame tone mapping parameters.
-cbuffer PostProcessParams : register(b0) {
+cbuffer PostProcessParams : register(b2) {
     /// Global tone mapping intensity. Values > 1.0 brighten the image,
     /// < 1.0 darken. Typical range: [0.5, 1.5]. Default: 1.0.
     float tonemapIntensity;
@@ -35,8 +36,9 @@ cbuffer PostProcessParams : register(b0) {
     /// +1.0 = 2x brighter, -1.0 = 2x darker. Default: 0.0.
     float exposureAdjust;
 
-    /// Unused padding.
-    float _pad0;
+    /// When > 0.5, bypasses ACES curve and outputs saturate(hdr * intensity).
+    /// Used for passthrough blit when tone mapping is disabled.
+    float bypassTonemap;
     float _pad1;
 };
 
@@ -44,8 +46,18 @@ cbuffer PostProcessParams : register(b0) {
 // Textures & Samplers
 // ─────────────────────────────────────────────────────────────────────────────
 
+#ifdef UZ_BINDLESS
+/// Root constants at b0 — SRV heap index for the input HDR scene color texture.
+cbuffer RootConstants : register(b0) {
+    uint inputTextureIndex;   ///< SRV descriptor heap index for HDR scene color.
+    uint _rcPad0;
+    uint _rcPad1;
+    uint _rcPad2;
+};
+#else
 /// HDR scene color output from the main render passes (e.g., lighting pass output).
 Texture2D<float4> sceneColor : register(t0);
+#endif
 
 /// Bilinear sampler for scene color lookup.
 SamplerState samplerLinear : register(s0);
@@ -90,19 +102,26 @@ float3 ACESTonemapFast(float3 hdrColor) {
 /// LDR color in [0, 1] range for display.
 float4 main(PSInput input) : SV_Target {
     // Sample HDR scene color
+#ifdef UZ_BINDLESS
+    Texture2D<float4> inputTex = ResourceDescriptorHeap[inputTextureIndex];
+    float3 hdrColor = inputTex.Sample(samplerLinear, input.texcoord).rgb;
+#else
     float3 hdrColor = sceneColor.Sample(samplerLinear, input.texcoord).rgb;
+#endif
 
     // Apply exposure adjustment (linear scale: 2^exposureAdjust)
     hdrColor *= exp2(exposureAdjust);
 
-    // Apply ACES tone mapping
-    float3 ldrColor = ACESTonemapFast(hdrColor);
-
-    // Apply global intensity
-    ldrColor *= tonemapIntensity;
-
-    // Re-clamp in case intensity made it exceed [0, 1]
-    ldrColor = saturate(ldrColor);
+    float3 ldrColor;
+    if (bypassTonemap > 0.5f) {
+        // Passthrough — just clamp HDR to [0,1] without tone curve
+        ldrColor = saturate(hdrColor * tonemapIntensity);
+    } else {
+        // Apply ACES tone mapping
+        ldrColor = ACESTonemapFast(hdrColor);
+        ldrColor *= tonemapIntensity;
+        ldrColor = saturate(ldrColor);
+    }
 
     return float4(ldrColor, 1.0f);
 }

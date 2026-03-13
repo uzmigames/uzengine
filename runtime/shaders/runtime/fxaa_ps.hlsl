@@ -33,8 +33,9 @@
 // Constant Buffers
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Bound at root slot 2 (kSlotPerObject / register b2) via SetRootCBV.
 /// Per-frame FXAA parameters.
-cbuffer FXAAParams : register(b0) {
+cbuffer FXAAParams : register(b2) {
     /// Reciprocal of viewport width (1.0 / width). Used for texel offset.
     float invScreenWidth;
 
@@ -55,8 +56,18 @@ cbuffer FXAAParams : register(b0) {
 // Textures & Samplers
 // ─────────────────────────────────────────────────────────────────────────────
 
+#ifdef UZ_BINDLESS
+/// Root constants at b0 — SRV heap index for the input scene color texture.
+cbuffer RootConstants : register(b0) {
+    uint inputTextureIndex;   ///< SRV descriptor heap index for LDR scene color.
+    uint _rcPad0;
+    uint _rcPad1;
+    uint _rcPad2;
+};
+#else
 /// Scene color input (LDR, after tone mapping and bloom).
 Texture2D<float4> sceneColor : register(t0);
+#endif
 
 /// Point sampler for precise per-pixel and per-neighbor lookups.
 SamplerState samplerPoint : register(s0);
@@ -116,11 +127,20 @@ float4 main(PSInput input) : SV_Target {
     float texelHeight = invScreenHeight;
 
     // Sample center and 4 neighbors (up, down, left, right)
+#ifdef UZ_BINDLESS
+    Texture2D<float4> inputTex = ResourceDescriptorHeap[inputTextureIndex];
+    float3 centerColor = inputTex.Sample(samplerPoint, texCoord).rgb;
+    float3 upColor    = inputTex.Sample(samplerPoint, texCoord + float2(0.0f, -texelHeight)).rgb;
+    float3 downColor  = inputTex.Sample(samplerPoint, texCoord + float2(0.0f,  texelHeight)).rgb;
+    float3 leftColor  = inputTex.Sample(samplerPoint, texCoord - float2(texelWidth, 0.0f)).rgb;
+    float3 rightColor = inputTex.Sample(samplerPoint, texCoord + float2(texelWidth, 0.0f)).rgb;
+#else
     float3 centerColor = sceneColor.Sample(samplerPoint, texCoord).rgb;
     float3 upColor    = sceneColor.Sample(samplerPoint, texCoord + float2(0.0f, -texelHeight)).rgb;
     float3 downColor  = sceneColor.Sample(samplerPoint, texCoord + float2(0.0f,  texelHeight)).rgb;
     float3 leftColor  = sceneColor.Sample(samplerPoint, texCoord - float2(texelWidth, 0.0f)).rgb;
     float3 rightColor = sceneColor.Sample(samplerPoint, texCoord + float2(texelWidth, 0.0f)).rgb;
+#endif
 
     // Compute luminance for each
     float centerLum = Luminance(centerColor);

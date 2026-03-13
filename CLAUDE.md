@@ -9,6 +9,28 @@ This project uses @hivehub/rulebook standards. All code generation should follow
 **Languages**: Not specified
 **Coverage Threshold**: 95%
 
+## ⚠️ CRITICAL: Visual Verification Over Unit Tests for Rendering
+
+**MANDATORY**: Unit tests are NOT sufficient to validate rendering features. A test can pass while the visual result is completely wrong.
+
+### Why
+
+This is a rendering engine. Math tests and API tests can all pass green while the actual GPU output is a black screen, wrong colors, or broken pipeline. The only real validation is **seeing the pixels**.
+
+### What To Do
+
+1. **Every rendering feature MUST have a demo** — either create a new demo under `demos/` or modify an existing one.
+2. **Run the demo with `--screenshot`** to capture the output.
+3. **View the screenshot** (using the Read tool on the PNG) and verify the visual result is correct.
+4. **Only after visual confirmation** is the feature considered implemented.
+
+### Rules
+
+- Unit tests are still useful for math utilities, data structures, and non-visual logic — keep writing them.
+- But for any shader, render pass, post-process effect, or GPU pipeline change: **demo + screenshot = the real test**.
+- Never mark a rendering task as complete based solely on unit tests passing.
+- If the screenshot shows wrong output (black screen, wrong colors, artifacts), the feature is **NOT done** regardless of test results.
+
 ## ⚠️ CRITICAL: NEVER Use `git stash`
 
 **ABSOLUTELY FORBIDDEN**: No agent or conversation may run `git stash`, `git stash pop`, `git stash apply`, or any `git stash` subcommand. **No exceptions.**

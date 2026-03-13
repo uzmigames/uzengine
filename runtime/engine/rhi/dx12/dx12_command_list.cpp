@@ -117,6 +117,33 @@ bool DX12CommandList::Init(DX12Device* device, RHIQueueType queueType) {
     // Close the command list — Begin() will reset it before recording
     m_cmdList->Close();
 
+    // Allocate a contiguous block of kMaxFragmentTextures descriptors in the
+    // shader-visible CBV_SRV_UAV heap for the SM5 SetFragmentTexture staging area.
+    // These are allocated once and reused every frame via CopyDescriptorsSimple.
+    if (m_listType == D3D12_COMMAND_LIST_TYPE_DIRECT) {
+        auto& srvAlloc = m_device->GetDescriptorAllocator(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+        uint32_t base = srvAlloc.Allocate();
+        if (base == DescriptorAllocator::kInvalidIndex) {
+            UZ_LOG(RHI, Error, "Failed to allocate fragment texture staging block");
+            return false;
+        }
+        m_fragmentTexStagingBase = base;
+
+        // Allocate remaining slots — bump allocator guarantees contiguity for
+        // sequential Allocate() calls when no free-list entries exist yet.
+        for (uint32_t i = 1; i < kMaxFragmentTextures; ++i) {
+            uint32_t idx = srvAlloc.Allocate();
+            if (idx != base + i) {
+                UZ_LOG(RHI, Error, "Fragment texture staging block not contiguous at slot {} "
+                       "(expected {}, got {})", i, base + i, idx);
+                return false;
+            }
+        }
+
+        UZ_LOG(RHI, Info, "Allocated fragment texture staging block at heap index {} ({} slots)",
+               m_fragmentTexStagingBase, kMaxFragmentTextures);
+    }
+
     UZ_LOG(RHI, Info, "DX12CommandList created, type={}", static_cast<int>(m_listType));
     return true;
 }
@@ -310,6 +337,49 @@ void DX12CommandList::SetDescriptorTable(uint32_t rootParamIndex, uint32_t descr
     gpuHandle.ptr += static_cast<UINT64>(descriptorIndex) *
         m_device->GetDevice()->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
     m_cmdList->SetGraphicsRootDescriptorTable(rootParamIndex, gpuHandle);
+}
+
+void DX12CommandList::SetFragmentTexture(uint32_t slot, RHITextureHandle texture) {
+    // SM6.6 bindless path — textures accessed via ResourceDescriptorHeap[index],
+    // no descriptor table copy needed.
+    if (static_cast<uint8_t>(m_device->GetShaderModel()) >= static_cast<uint8_t>(ShaderModel::SM6_6)) {
+        return;
+    }
+
+    if (slot >= kMaxFragmentTextures) {
+        UZ_LOG(RHI, Warning, "SetFragmentTexture — slot {} exceeds max {}", slot, kMaxFragmentTextures);
+        return;
+    }
+
+    if (m_fragmentTexStagingBase == UINT32_MAX) {
+        UZ_LOG(RHI, Error, "SetFragmentTexture — staging block not allocated");
+        return;
+    }
+
+    if (!texture.IsValid()) {
+        UZ_LOG(RHI, Warning, "SetFragmentTexture — invalid texture handle at slot {}", slot);
+        return;
+    }
+
+    auto* dx12Tex = m_device->GetTexturePool().Get(texture.index, texture.generation);
+    if (!dx12Tex || dx12Tex->srvIndex == UINT32_MAX) {
+        UZ_LOG(RHI, Warning, "SetFragmentTexture — texture has no SRV (index={}, gen={})",
+               texture.index, texture.generation);
+        return;
+    }
+
+    // Copy the texture's SRV descriptor into the contiguous staging block
+    auto& alloc = m_device->GetDescriptorAllocator(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+    auto srcHandle = alloc.CpuHandle(dx12Tex->srvIndex);
+    auto dstHandle = alloc.CpuHandle(m_fragmentTexStagingBase + slot);
+
+    m_device->GetDevice()->CopyDescriptorsSimple(
+        1, dstHandle, srcHandle, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+
+    // Bind the staging block as root param 4 (SM5 SRV descriptor table)
+    constexpr uint32_t kSM5SrvTableRootParam = 4;
+    m_cmdList->SetGraphicsRootDescriptorTable(
+        kSM5SrvTableRootParam, alloc.GpuHandle(m_fragmentTexStagingBase));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

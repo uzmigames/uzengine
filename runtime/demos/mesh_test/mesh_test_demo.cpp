@@ -147,6 +147,50 @@ fragment float4 fragment_main(FragmentIn in [[stage_in]]) {
 
 #endif // __APPLE__
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Multi-Light PerFrame CB — matches mesh_ps.hlsl 768-byte layout at b1
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Single light for the multi-light forward CB (64 bytes per light).
+/// Matches LightData in light_types.hlsli.
+struct LightDataGPU {
+    Vec3  positionOrDir;    ///< Direction toward light (directional) or world position (point/spot).
+    float range;            ///< Attenuation range (point/spot). Unused for directional.
+    Vec3  color;            ///< Light color * intensity (linear HDR).
+    float lightType;        ///< 0 = directional, 1 = point, 2 = spot.
+    Vec3  spotDirection;    ///< Spot light cone direction. Unused for directional/point.
+    float innerConeCos;     ///< cos(innerConeAngle) for spot lights.
+    float outerConeCos;     ///< cos(outerConeAngle) for spot lights.
+    float _pad0 = 0.f;
+    float _pad1 = 0.f;
+    float _pad2 = 0.f;
+};
+
+static_assert(sizeof(LightDataGPU) == 64, "LightDataGPU must be 64 bytes for mesh_ps.hlsl");
+
+/// Maximum lights supported by the multi-light forward CB.
+static constexpr uint32_t kMeshMaxLights = 8;
+
+/// Per-frame constant buffer matching the 768-byte layout expected by mesh_ps.hlsl.
+///
+/// This is a demo-local struct — NOT the same as the 256-byte PerFrameCB in
+/// constant_buffers.h, which is used by other passes (gbuffer, deferred, etc.).
+struct PerFrameMultiLightCB {
+    Mat4         viewProj;                     ///< 64B — combined view-projection matrix.
+    Vec4         cameraPos;                    ///< 16B — xyz = camera world position, w = 0.
+    Vec4         timeParams;                   ///< 16B — x = totalTime, y = dt, z = frame, w = 0.
+    Vec4         ambientColor;                 ///< 16B — xyz = ambient light color, w = 0.
+    uint32_t     lightCount = 0;               ///< 4B  — number of active lights.
+    uint32_t     _pad0a = 0;                   ///< 4B  — padding.
+    uint32_t     _pad0b = 0;                   ///< 4B  — padding.
+    uint32_t     _pad0c = 0;                   ///< 4B  — padding.
+    LightDataGPU lights[kMeshMaxLights];       ///< 512B — light array (8 * 64).
+    Vec4         _pad1[8] = {};                ///< 128B — trailing padding.
+};
+
+static_assert(sizeof(PerFrameMultiLightCB) == 768,
+              "PerFrameMultiLightCB must be 768 bytes for mesh_ps.hlsl multi-light CB");
+
 static constexpr uint32_t kFramesInFlight = 3;
 static constexpr float kMaxFPS = 500.f;
 static constexpr float kMinFrameTime = 1.f / kMaxFPS;
@@ -552,14 +596,25 @@ bool RunMeshTestDemo(const MeshTestConfig& config) {
         // ── Upload PerFrameCB ─────────────────────────────────────────────
         cbRing.BeginFrame(frameIndex);
 
-        PerFrameCB perFrame{};
+        PerFrameMultiLightCB perFrame{};
         perFrame.viewProj = camera.GetViewProjection();
         Vec3 camPos = camera.GetPosition();
         perFrame.cameraPos = {camPos.x, camPos.y, camPos.z, 0.f};
         perFrame.timeParams = {totalTime, dt, static_cast<float>(frameIndex), 0.f};
+        perFrame.ambientColor = {0.08f, 0.08f, 0.1f, 0.f};
 
-        CBAllocation perFrameAlloc = cbRing.Allocate(sizeof(PerFrameCB));
-        std::memcpy(perFrameAlloc.cpuPtr, &perFrame, sizeof(PerFrameCB));
+        // Directional light — direction toward light, white at intensity 3
+        perFrame.lightCount = 1;
+        LightDataGPU& sun = perFrame.lights[0];
+        Vec3 rawDir = {0.5f, 1.0f, 0.3f};
+        float len = std::sqrt(rawDir.x * rawDir.x + rawDir.y * rawDir.y + rawDir.z * rawDir.z);
+        sun.positionOrDir = {rawDir.x / len, rawDir.y / len, rawDir.z / len};
+        sun.range = 0.f;
+        sun.color = {3.0f, 3.0f, 3.0f};
+        sun.lightType = 0.f;
+
+        CBAllocation perFrameAlloc = cbRing.Allocate(sizeof(PerFrameMultiLightCB));
+        std::memcpy(perFrameAlloc.cpuPtr, &perFrame, sizeof(PerFrameMultiLightCB));
 
         // ── Upload PerObjectCB ────────────────────────────────────────────
         PerObjectCB perObject{};
@@ -608,7 +663,7 @@ bool RunMeshTestDemo(const MeshTestConfig& config) {
                 }
 
                 cmd->SetRootCBV(1, perFrameAlloc.bufferHandle, perFrameAlloc.offsetBytes,
-                                perFrameAlloc.cpuPtr, sizeof(PerFrameCB));
+                                perFrameAlloc.cpuPtr, sizeof(PerFrameMultiLightCB));
                 cmd->SetRootCBV(2, perObjectAlloc.bufferHandle, perObjectAlloc.offsetBytes,
                                 perObjectAlloc.cpuPtr, sizeof(PerObjectCB));
 

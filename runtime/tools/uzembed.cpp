@@ -99,7 +99,88 @@ static std::string ReadFile(const fs::path& path) {
     return buf.str();
 }
 
+/// Resolves `#include "path"` directives by inlining the referenced file content.
+///
+/// Searches for include files relative to the source file's directory.
+/// Supports recursive includes up to 16 levels deep. Prevents circular
+/// includes via a visited set. Only handles `"quoted"` includes, not `<angle>`.
+///
+/// # Arguments
+/// * `source` — HLSL source text to process.
+/// * `sourceDir` — Directory of the source file (for resolving relative paths).
+/// * `visited` — Set of already-included canonical paths (prevents cycles).
+/// * `depth` — Current recursion depth (max 16).
+///
+/// # Returns
+/// Source with all `#include "..."` directives replaced by file contents.
+static std::string ResolveIncludes(const std::string& source, const fs::path& sourceDir,
+                                   std::vector<std::string>& visited, int depth) {
+    constexpr int kMaxDepth = 16;
+    if (depth >= kMaxDepth) {
+        fprintf(stderr, "[uzembed] warning: max include depth (%d) reached\n", kMaxDepth);
+        return source;
+    }
+
+    std::istringstream stream(source);
+    std::ostringstream result;
+    std::string line;
+
+    while (std::getline(stream, line)) {
+        // Check for #include "path" (not <angle>)
+        size_t pos = line.find("#include");
+        if (pos != std::string::npos) {
+            size_t q1 = line.find('"', pos);
+            size_t q2 = (q1 != std::string::npos) ? line.find('"', q1 + 1) : std::string::npos;
+            if (q1 != std::string::npos && q2 != std::string::npos) {
+                std::string includePath = line.substr(q1 + 1, q2 - q1 - 1);
+                fs::path resolved = sourceDir / includePath;
+
+                std::error_code ec;
+                std::string canonical = fs::canonical(resolved, ec).string();
+                if (ec) {
+                    // File not found — keep the #include as-is (DXC will report the error)
+                    result << line << "\n";
+                    continue;
+                }
+
+                // Check for circular include
+                bool alreadyVisited = false;
+                for (const auto& v : visited) {
+                    if (v == canonical) { alreadyVisited = true; break; }
+                }
+                if (alreadyVisited) {
+                    result << "// [uzembed] skipped circular include: " << includePath << "\n";
+                    continue;
+                }
+
+                std::string includeContent = ReadFile(resolved);
+                if (includeContent.empty()) {
+                    fprintf(stderr, "[uzembed] warning: failed to read include '%s'\n",
+                            resolved.string().c_str());
+                    result << line << "\n";
+                    continue;
+                }
+
+                visited.push_back(canonical);
+                std::string inlined = ResolveIncludes(includeContent, resolved.parent_path(),
+                                                      visited, depth + 1);
+                result << "// ── begin include: " << includePath << " ──\n";
+                result << inlined;
+                if (!inlined.empty() && inlined.back() != '\n') result << "\n";
+                result << "// ── end include: " << includePath << " ──\n";
+                continue;
+            }
+        }
+        result << line << "\n";
+    }
+
+    return result.str();
+}
+
 /// Generates a `.hlsl.gen.h` header from an HLSL source file.
+///
+/// All `#include "..."` directives are resolved and inlined so the
+/// embedded source is self-contained (no runtime file I/O needed).
 ///
 /// # Returns
 /// `true` on success, `false` on I/O error.
@@ -111,13 +192,18 @@ static bool GenerateHeader(const fs::path& inputPath, const fs::path& outputPath
         return false;
     }
 
+    // Resolve #include directives — inline referenced files
+    std::vector<std::string> visited;
+    std::error_code ec;
+    visited.push_back(fs::canonical(inputPath, ec).string());
+    source = ResolveIncludes(source, inputPath.parent_path(), visited, 0);
+
     while (!source.empty() && (source.back() == '\n' || source.back() == '\r')) {
         source.pop_back();
     }
 
     std::string filename = inputPath.filename().string();
 
-    std::error_code ec;
     fs::create_directories(outputPath.parent_path(), ec);
 
     std::ofstream out(outputPath, std::ios::binary);

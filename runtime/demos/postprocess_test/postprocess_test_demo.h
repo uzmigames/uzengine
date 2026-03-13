@@ -28,6 +28,8 @@ struct PostProcessTestConfig {
     std::string screenshotPath;            ///< If non-empty, save screenshot to this path.
     uint32_t screenshotFrame = 5;          ///< Frame number to capture (default: 5).
     RHIBackend backend = RHIBackend::DX12; ///< RHI backend to use.
+    bool enableTonemap = true;             ///< Initial state of tone mapping (toggle with T).
+    bool enableFXAA    = true;             ///< Initial state of FXAA (toggle with A).
 };
 
 /// Runs the post-process test demo.
