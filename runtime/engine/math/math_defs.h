@@ -8,8 +8,6 @@
 #include <cmath>
 #include <DirectXMath.h>
 
-using namespace DirectX;
-
 namespace uz {
 
 /// Engine-wide real number type (float by default, double for high-precision builds).

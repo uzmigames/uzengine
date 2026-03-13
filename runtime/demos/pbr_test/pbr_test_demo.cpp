@@ -56,12 +56,9 @@
 
 #include "stb_image.h"
 
-#include <DirectXMath.h>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
-
-using namespace DirectX;
 
 namespace uz {
 
@@ -73,66 +70,6 @@ static constexpr int      kCubeCount       = 5;
 static constexpr uint32_t kPointLightCount = 4;
 static constexpr uint32_t kShadowResolution = 2048;
 static constexpr uint32_t kShadowAtlasSize  = kShadowResolution * 2;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Matrix helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Computes transpose(inverse(model)) for correct normal transformation.
-static Mat4 ComputeNormalMatrix(const Mat4& model) {
-    XMFLOAT4X4 xmModel;
-    std::memcpy(&xmModel, &model, sizeof(Mat4));
-
-    XMMATRIX m = XMLoadFloat4x4(&xmModel);
-    XMVECTOR det;
-    XMMATRIX inv = XMMatrixInverse(&det, m);
-
-    if (XMVectorGetX(det) == 0.f) {
-        return Mat4::Identity();
-    }
-
-    XMMATRIX normalMat = XMMatrixTranspose(inv);
-
-    XMFLOAT4X4 result;
-    XMStoreFloat4x4(&result, normalMat);
-
-    Mat4 out;
-    std::memcpy(&out, &result, sizeof(Mat4));
-    return out;
-}
-
-/// Builds a model matrix from position and uniform scale.
-static Mat4 BuildModelMatrix(Vec3 position, float scale) {
-    XMMATRIX s = XMMatrixScaling(scale, scale, scale);
-    XMMATRIX t = XMMatrixTranslation(position.x, position.y, position.z);
-    XMMATRIX m = XMMatrixMultiply(s, t);
-
-    XMFLOAT4X4 result;
-    XMStoreFloat4x4(&result, m);
-
-    Mat4 out;
-    std::memcpy(&out, &result, sizeof(Mat4));
-    return out;
-}
-
-/// Builds a model matrix with non-uniform scale for objects like the ground plane.
-static Mat4 BuildModelMatrixNonUniform(Vec3 position, Vec3 scale) {
-    XMMATRIX s = XMMatrixScaling(scale.x, scale.y, scale.z);
-    XMMATRIX t = XMMatrixTranslation(position.x, position.y, position.z);
-    XMMATRIX m = XMMatrixMultiply(s, t);
-
-    XMFLOAT4X4 result;
-    XMStoreFloat4x4(&result, m);
-
-    Mat4 out;
-    std::memcpy(&out, &result, sizeof(Mat4));
-    return out;
-}
-
-/// Computes the inverse of a view-projection matrix for world-position reconstruction.
-static Mat4 ComputeInvViewProj(const Mat4& viewProj) {
-    return viewProj.Inverse();
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Scene data
@@ -797,7 +734,7 @@ void PBRTestDemo::OnFrame(float dt) {
 
     PerFrameCB perFrame{};
     perFrame.viewProj    = camera_.GetViewProjection();
-    perFrame.invViewProj = ComputeInvViewProj(perFrame.viewProj);
+    perFrame.invViewProj = perFrame.viewProj.Inverse();
     Vec3 camPos          = camera_.GetPosition();
     perFrame.cameraPos   = {camPos.x, camPos.y, camPos.z, 0.f};
     perFrame.timeParams  = {totalTime_, dt, static_cast<float>(GetFrameIndex()), 0.f};
@@ -856,8 +793,8 @@ void PBRTestDemo::OnFrame(float dt) {
     for (int i = 0; i < kCubeCount; ++i) {
         DrawCommand cmd{};
         cmd.sortKey      = SortKey::Opaque(0, 0, 0.f, static_cast<uint32_t>(i));
-        cmd.worldMatrix  = BuildModelMatrix(kCubePositions[i], kCubeScale);
-        cmd.normalMatrix = ComputeNormalMatrix(cmd.worldMatrix);
+        cmd.worldMatrix  = Mat4::TRS(kCubePositions[i], kCubeScale);
+        cmd.normalMatrix = cmd.worldMatrix.NormalMatrix();
         cmd.meshId             = 0;
         cmd.albedoSrvIndex     = pbrTex_.albedoSrv;
         cmd.normalSrvIndex     = pbrTex_.normalSrv;
@@ -868,10 +805,10 @@ void PBRTestDemo::OnFrame(float dt) {
     {
         DrawCommand ground{};
         ground.sortKey      = SortKey::Opaque(0, 0, 0.f, static_cast<uint32_t>(kCubeCount));
-        ground.worldMatrix  = BuildModelMatrixNonUniform(
+        ground.worldMatrix  = Mat4::TRS(
             Vec3{0.f, 0.f, -0.82f},
             Vec3{15.f, 15.f, 0.02f});
-        ground.normalMatrix      = ComputeNormalMatrix(ground.worldMatrix);
+        ground.normalMatrix      = ground.worldMatrix.NormalMatrix();
         ground.meshId            = 0;
         ground.albedoSrvIndex    = checkerSrv_;
         ground.normalSrvIndex    = 0;

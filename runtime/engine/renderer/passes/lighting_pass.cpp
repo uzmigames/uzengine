@@ -9,6 +9,7 @@
 #include "constant_buffers.h"
 #include "render_graph_builder.h"
 #include "render_graph_pass.h"
+#include "root_slots.h"
 #include "engine/rhi/rhi.h"
 
 #include "engine_assert.h"
@@ -52,17 +53,17 @@ void AddLightingPass(rg::RgBuilder& builder, const LightingPassDesc& desc)
             cmd->SetPipeline(desc.pipeline);
 
             // ── Bind constant buffers ────────────────────────────────────
-            cmd->SetRootCBV(1, desc.perFrameAlloc.bufferHandle,
+            cmd->SetRootCBV(kSlotPerFrame, desc.perFrameAlloc.bufferHandle,
                             desc.perFrameAlloc.offsetBytes,
                             desc.perFrameAlloc.cpuPtr, sizeof(PerFrameCB));
 
-            cmd->SetRootCBV(2, desc.lightingAlloc.bufferHandle,
+            cmd->SetRootCBV(kSlotPerObject, desc.lightingAlloc.bufferHandle,
                             desc.lightingAlloc.offsetBytes,
                             desc.lightingAlloc.cpuPtr, sizeof(LightingCB));
 
             // ── Bind shadow data at b4 (root param 3) ───────────────────
             if (desc.shadowAlloc.cpuPtr != nullptr) {
-                cmd->SetRootCBV(3, desc.shadowAlloc.bufferHandle,
+                cmd->SetRootCBV(kSlotShadow, desc.shadowAlloc.bufferHandle,
                                 desc.shadowAlloc.offsetBytes,
                                 desc.shadowAlloc.cpuPtr, sizeof(ShadowDataCB));
             }
@@ -77,7 +78,7 @@ void AddLightingPass(rg::RgBuilder& builder, const LightingPassDesc& desc)
                     desc.metalRoughSrvIndex,
                     desc.depthSrvIndex
                 };
-                cmd->SetRootConstants(0, indices, 4);
+                cmd->SetRootConstants(kSlotRootConstants, indices, 4);
             } else {
                 // SM5: bind textures directly at fragment texture slots t0-t3.
                 cmd->SetFragmentTexture(0, desc.albedoTexture);

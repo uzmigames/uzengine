@@ -3,6 +3,7 @@
 #include "vector4.h"
 
 namespace uz {
+using namespace DirectX;
 
 float Vec4::dot(const Vec4& other) const {
     XMVECTOR v1 = toXM();

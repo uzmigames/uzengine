@@ -7,6 +7,7 @@
 #include <gtest/gtest.h>
 
 using namespace uz;
+using namespace DirectX;
 
 TEST(Mat4Test, IdentityIsDefault) {
     Mat4 m;

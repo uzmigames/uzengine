@@ -39,13 +39,10 @@
 #include "render_graph_resources.h"
 #endif
 
-#include <DirectXMath.h>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <thread>
-
-using namespace DirectX;
 
 namespace uz {
 

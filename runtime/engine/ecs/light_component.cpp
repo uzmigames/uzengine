@@ -11,6 +11,7 @@
 UZ_DEFINE_LOG_CATEGORY(Light, Trace);
 
 namespace uz {
+using namespace DirectX;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // LightComponent

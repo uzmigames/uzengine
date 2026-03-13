@@ -51,12 +51,12 @@ struct Vec3 {
     /// Load from memory (pointer to at least 3 floats).
     explicit Vec3(const float* ptr) : x(ptr[0]), y(ptr[1]), z(ptr[2]) {}
     /// Convert from DirectXMath XMVECTOR.
-    explicit Vec3(const XMVECTOR& xm) { XMStoreFloat3(reinterpret_cast<XMFLOAT3*>(this), xm); }
+    explicit Vec3(const DirectX::XMVECTOR& xm) { DirectX::XMStoreFloat3(reinterpret_cast<DirectX::XMFLOAT3*>(this), xm); }
     /// Convert from DirectXMath XMFLOAT3.
-    explicit Vec3(const XMFLOAT3& f3) : x(f3.x), y(f3.y), z(f3.z) {}
+    explicit Vec3(const DirectX::XMFLOAT3& f3) : x(f3.x), y(f3.y), z(f3.z) {}
 
     /// Convert to XMVECTOR for SIMD operations (zero-cost in release).
-    XMVECTOR toXM() const { return XMLoadFloat3(reinterpret_cast<const XMFLOAT3*>(this)); }
+    DirectX::XMVECTOR toXM() const { return DirectX::XMLoadFloat3(reinterpret_cast<const DirectX::XMFLOAT3*>(this)); }
 
     /// Pointer to elements for array-like access.
     float* data() { return &x; }
@@ -265,7 +265,7 @@ struct Vec3 {
     /// Component-wise maximum.
     static Vec3 Max(const Vec3& a, const Vec3& b) { return a.max(b); }
     /// Load from XMFLOAT3 (DirectXMath compatible).
-    static Vec3 FromFloat3(const XMFLOAT3& f) { return {f.x, f.y, f.z}; }
+    static Vec3 FromFloat3(const DirectX::XMFLOAT3& f) { return {f.x, f.y, f.z}; }
 
     // ─────────────────────────────────────────────────────────────────────────
     // Geometric & Utility Methods
@@ -553,7 +553,7 @@ struct Vec3 {
     static Vec3 octahedron_decode(const Vec2& oct);
 
     /// Convert to XMFLOAT3 for DirectXMath compatibility.
-    XMFLOAT3 ToFloat3() const { return {x, y, z}; }
+    DirectX::XMFLOAT3 ToFloat3() const { return {x, y, z}; }
 };
 
 /// Scalar-left multiplication for Vec3 (`2.0f * vec`).

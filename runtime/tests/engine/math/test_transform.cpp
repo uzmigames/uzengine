@@ -5,6 +5,7 @@
 #include <gtest/gtest.h>
 
 using namespace uz;
+using namespace DirectX;
 
 TEST(TransformTest, IdentityIsDefault) {
     Transform t;

@@ -9,6 +9,7 @@
 #include "constant_buffers.h"
 #include "render_graph_builder.h"
 #include "render_graph_pass.h"
+#include "root_slots.h"
 #include "engine/rhi/rhi.h"
 
 #include "engine_assert.h"
@@ -54,7 +55,7 @@ void AddGBufferDebugPass(rg::RgBuilder& builder, const GBufferDebugPassDesc& des
 
             // ── Bind per-frame CB at b1 (root param 1) ───────────────────
             // Required for invViewProj when WorldPos mode is active.
-            cmd->SetRootCBV(1, desc.perFrameAlloc.bufferHandle,
+            cmd->SetRootCBV(kSlotPerFrame, desc.perFrameAlloc.bufferHandle,
                             desc.perFrameAlloc.offsetBytes,
                             desc.perFrameAlloc.cpuPtr, sizeof(PerFrameCB));
 
@@ -67,18 +68,18 @@ void AddGBufferDebugPass(rg::RgBuilder& builder, const GBufferDebugPassDesc& des
                     desc.metalRoughSrvIndex,
                     desc.depthSrvIndex
                 };
-                cmd->SetRootConstants(0, srvIndices, 4);
+                cmd->SetRootConstants(kSlotRootConstants, srvIndices, 4);
 
                 // Bind DebugCB at root param 2 (b2) with debugMode.
                 struct DebugCB { uint32_t mode; uint32_t pad[3]; };
                 DebugCB debugCB{static_cast<uint32_t>(desc.mode), {0, 0, 0}};
-                cmd->SetRootCBV(2, desc.debugAlloc.bufferHandle,
+                cmd->SetRootCBV(kSlotPerObject, desc.debugAlloc.bufferHandle,
                                 desc.debugAlloc.offsetBytes,
                                 desc.debugAlloc.cpuPtr, sizeof(DebugCB));
             } else {
                 // SM5: push debug mode as root constant at b0.
                 const uint32_t modeValue = static_cast<uint32_t>(desc.mode);
-                cmd->SetRootConstants(0, &modeValue, 1);
+                cmd->SetRootConstants(kSlotRootConstants, &modeValue, 1);
 
                 // SM5: bind textures directly at fragment texture slots t0-t3.
                 cmd->SetFragmentTexture(0, desc.albedoTexture);

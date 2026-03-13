@@ -3,6 +3,7 @@
 #include "transform.h"
 
 namespace uz {
+using namespace DirectX;
 
 /// Constructs a `Transform` by decomposing a 4x4 matrix into TRS components.
 ///

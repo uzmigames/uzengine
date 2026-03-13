@@ -408,10 +408,10 @@ struct Vec2 {
     /// Linear interpolation between a and b (t in [0,1]).
     static Vec2 Lerp(const Vec2& a, const Vec2& b, float t) { return a + (b - a) * t; }
     /// Load from XMFLOAT2 (DirectXMath compatible).
-    static Vec2 FromFloat2(const XMFLOAT2& f) { return {f.x, f.y}; }
+    static Vec2 FromFloat2(const DirectX::XMFLOAT2& f) { return {f.x, f.y}; }
 
     /// Convert to XMFLOAT2 for DirectXMath compatibility.
-    XMFLOAT2 ToFloat2() const { return {x, y}; }
+    DirectX::XMFLOAT2 ToFloat2() const { return {x, y}; }
 };
 
 /// Scalar-left multiplication for Vec2 (`2.0f * vec`).

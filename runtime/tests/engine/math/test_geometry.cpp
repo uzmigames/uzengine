@@ -8,6 +8,7 @@
 #include <gtest/gtest.h>
 
 using namespace uz;
+using namespace DirectX;
 
 static constexpr float kEps = 1e-4f;
 

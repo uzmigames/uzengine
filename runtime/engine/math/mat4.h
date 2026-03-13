@@ -33,14 +33,14 @@ struct Quat;
 /// ```
 struct Mat4 {
     /// Raw 4x4 float storage (DirectXMath compatible).
-    XMFLOAT4X4 m;
+    DirectX::XMFLOAT4X4 m;
 
     /// Default: identity matrix.
-    Mat4() { XMStoreFloat4x4(&m, XMMatrixIdentity()); }
+    Mat4() { DirectX::XMStoreFloat4x4(&m, DirectX::XMMatrixIdentity()); }
     /// Construct from DirectXMath XMMATRIX.
-    Mat4(const XMMATRIX& xm) { XMStoreFloat4x4(&m, xm); }
+    Mat4(const DirectX::XMMATRIX& xm) { DirectX::XMStoreFloat4x4(&m, xm); }
     /// Construct from DirectXMath XMFLOAT4X4.
-    Mat4(const XMFLOAT4X4& f4x4) : m(f4x4) {}
+    Mat4(const DirectX::XMFLOAT4X4& f4x4) : m(f4x4) {}
     /// Load from memory (pointer to 16 floats, row-major layout).
     explicit Mat4(const float* ptr) { std::memcpy(&m, ptr, 16 * sizeof(float)); }
 
@@ -99,7 +99,7 @@ struct Mat4 {
     static Mat4 Orthographic(float width, float height, float near_plane, float far_plane);
 
     /// Converts to XMMATRIX for SIMD operations (zero-cost in release).
-    XMMATRIX toXM() const { return XMLoadFloat4x4(&m); }
+    DirectX::XMMATRIX toXM() const { return DirectX::XMLoadFloat4x4(&m); }
 
     /// Pointer to the first element (_11) for raw float access.
     float* data() { return &m._11; }
@@ -139,13 +139,12 @@ struct Mat4 {
     Vec3 TransformPoint(const Vec3& p) const { return *this * p; }
     Vec3 TransformDirection(const Vec3& d) const {
         // Transform direction (no translation) — use only 3x3 part
-        XMMATRIX m = toXM();
-        XMVECTOR vec = d.toXM();
-        XMVECTOR result = XMVector3TransformCoord(vec, m);
+        DirectX::XMMATRIX m = toXM();
+        DirectX::XMVECTOR vec = d.toXM();
         // XMVector3TransformCoord applies the full matrix, so we need to manually handle
         // the 3x3 rotation/scale only. Use XMVector4Transform with w=0.
-        XMVECTOR vec4 = XMVectorSetW(vec, 0.0f);
-        XMVECTOR result4 = XMVector4Transform(vec4, m);
+        DirectX::XMVECTOR vec4 = DirectX::XMVectorSetW(vec, 0.0f);
+        DirectX::XMVECTOR result4 = DirectX::XMVector4Transform(vec4, m);
         return Vec3(result4);
     }
 
@@ -166,9 +165,9 @@ struct Mat4 {
     bool operator!=(const Mat4& other) const { return !(*this == other); }
 
     /// Converts to raw XMFLOAT4X4 for DirectXMath interop.
-    XMFLOAT4X4 ToFloat4x4() const { return m; }
+    DirectX::XMFLOAT4X4 ToFloat4x4() const { return m; }
     /// Creates Mat4 from raw XMFLOAT4X4.
-    static Mat4 FromFloat4x4(const XMFLOAT4X4& f) { return {f}; }
+    static Mat4 FromFloat4x4(const DirectX::XMFLOAT4X4& f) { return {f}; }
 
     /// Returns `this * Translation(pos)` — appends a translation.
     Mat4 translate(const Vec3& pos) const;

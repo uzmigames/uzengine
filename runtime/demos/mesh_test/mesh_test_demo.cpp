@@ -43,13 +43,10 @@
 #include "render_graph_resources.h"
 #endif
 
-#include <DirectXMath.h>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <thread>
-
-using namespace DirectX;
 
 namespace uz {
 
@@ -154,54 +151,7 @@ static constexpr uint32_t kFramesInFlight = 3;
 static constexpr float kMaxFPS = 500.f;
 static constexpr float kMinFrameTime = 1.f / kMaxFPS;
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Normal Matrix Computation
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Computes transpose(inverse(model)) for correct normal transformation.
-///
-/// Uses DirectXMath SIMD for the matrix inverse and transpose.
-/// Falls back to identity if the matrix is singular.
-static Mat4 ComputeNormalMatrix(const Mat4& model) {
-    XMFLOAT4X4 xmModel;
-    std::memcpy(&xmModel, &model, sizeof(Mat4));
-
-    XMMATRIX m = XMLoadFloat4x4(&xmModel);
-    XMVECTOR det;
-    XMMATRIX inv = XMMatrixInverse(&det, m);
-
-    // Singular matrix — normal transform undefined, return identity
-    if (XMVectorGetX(det) == 0.f) {
-        return Mat4::Identity();
-    }
-
-    XMMATRIX normalMat = XMMatrixTranspose(inv);
-
-    XMFLOAT4X4 result;
-    XMStoreFloat4x4(&result, normalMat);
-
-    Mat4 out;
-    std::memcpy(&out, &result, sizeof(Mat4));
-    return out;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Model Matrix from Transform
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Builds a model matrix from position and uniform scale.
-static Mat4 BuildModelMatrix(Vec3 position, float scale) {
-    XMMATRIX s = XMMatrixScaling(scale, scale, scale);
-    XMMATRIX t = XMMatrixTranslation(position.x, position.y, position.z);
-    XMMATRIX m = XMMatrixMultiply(s, t);
-
-    XMFLOAT4X4 result;
-    XMStoreFloat4x4(&result, m);
-
-    Mat4 out;
-    std::memcpy(&out, &result, sizeof(Mat4));
-    return out;
-}
+// (Matrix helpers removed — using engine Mat4::TRS / Mat4::NormalMatrix directly)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Main Demo
@@ -613,8 +563,8 @@ bool RunMeshTestDemo(const MeshTestConfig& config) {
 
         // ── Upload PerObjectCB ────────────────────────────────────────────
         PerObjectCB perObject{};
-        perObject.model = BuildModelMatrix({0.f, 0.f, 0.f}, 1.f);
-        perObject.normalMatrix = ComputeNormalMatrix(perObject.model);
+        perObject.model = Mat4::TRS({0.f, 0.f, 0.f}, 1.f);
+        perObject.normalMatrix = perObject.model.NormalMatrix();
         perObject.albedoIndex = 0;
 
         CBAllocation perObjectAlloc = cbRing.Allocate(sizeof(PerObjectCB));

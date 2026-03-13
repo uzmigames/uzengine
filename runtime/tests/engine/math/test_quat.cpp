@@ -6,6 +6,7 @@
 #include <gtest/gtest.h>
 
 using namespace uz;
+using namespace DirectX;
 
 TEST(QuatTest, IdentityIsDefault) {
     Quat q;

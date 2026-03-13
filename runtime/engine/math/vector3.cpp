@@ -6,6 +6,7 @@
 #include <algorithm>
 
 namespace uz {
+using namespace DirectX;
 
 float Vec3::dot(const Vec3& other) const {
     XMVECTOR v1 = toXM();

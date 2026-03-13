@@ -9,6 +9,7 @@
 #include "draw_list.h"
 #include "render_graph_builder.h"
 #include "render_graph_pass.h"
+#include "root_slots.h"
 #include "engine/rhi/rhi.h"
 
 #include "engine_assert.h"
@@ -115,7 +116,7 @@ void AddShadowPass(rg::RgBuilder& builder, const ShadowPassDesc& desc)
                 cmd->SetPipeline(desc.pipeline);
 
                 if (desc.bindless) {
-                    cmd->SetDescriptorIndex(0, desc.vertexBufferSrvIndex);
+                    cmd->SetDescriptorIndex(kSlotRootConstants, desc.vertexBufferSrvIndex);
                 } else {
                     cmd->SetVertexBuffer(0, desc.vertexBuffer, 0);
                 }
@@ -134,7 +135,7 @@ void AddShadowPass(rg::RgBuilder& builder, const ShadowPassDesc& desc)
                     break;
                 }
                 std::memcpy(shadowAlloc.cpuPtr, &shadowCb, sizeof(ShadowCB));
-                cmd->SetRootCBV(3, shadowAlloc.bufferHandle, shadowAlloc.offsetBytes,
+                cmd->SetRootCBV(kSlotShadow, shadowAlloc.bufferHandle, shadowAlloc.offsetBytes,
                                 shadowAlloc.cpuPtr, sizeof(ShadowCB));
 
                 // ── Draw loop — render all objects for this cascade ────────
@@ -151,7 +152,7 @@ void AddShadowPass(rg::RgBuilder& builder, const ShadowPassDesc& desc)
                     }
                     std::memcpy(objAlloc.cpuPtr, &perObject, sizeof(PerObjectCB));
 
-                    cmd->SetRootCBV(2, objAlloc.bufferHandle, objAlloc.offsetBytes,
+                    cmd->SetRootCBV(kSlotPerObject, objAlloc.bufferHandle, objAlloc.offsetBytes,
                                     objAlloc.cpuPtr, sizeof(PerObjectCB));
                     cmd->DrawIndexed(desc.indexCount);
                     ++totalDrawCalls;

@@ -10,6 +10,7 @@
 #include "draw_list.h"
 #include "render_graph_builder.h"
 #include "render_graph_pass.h"
+#include "root_slots.h"
 #include "engine/rhi/rhi.h"
 
 #include "engine_assert.h"
@@ -73,14 +74,14 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
             cmd->SetPipeline(desc.pipeline);
 
             if (desc.bindless) {
-                cmd->SetDescriptorIndex(0, desc.vertexBufferSrvIndex);
+                cmd->SetDescriptorIndex(kSlotRootConstants, desc.vertexBufferSrvIndex);
             } else {
                 cmd->SetVertexBuffer(0, desc.vertexBuffer, 0);
             }
 
             cmd->SetIndexBuffer(desc.indexBuffer, desc.indexFormat, 0);
 
-            cmd->SetRootCBV(1, desc.perFrameAlloc.bufferHandle,
+            cmd->SetRootCBV(kSlotPerFrame, desc.perFrameAlloc.bufferHandle,
                             desc.perFrameAlloc.offsetBytes,
                             desc.perFrameAlloc.cpuPtr, sizeof(PerFrameCB));
 
@@ -118,7 +119,7 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
                 }
                 std::memcpy(objAlloc.cpuPtr, &perObject, sizeof(PerObjectCB));
 
-                cmd->SetRootCBV(2, objAlloc.bufferHandle, objAlloc.offsetBytes,
+                cmd->SetRootCBV(kSlotPerObject, objAlloc.bufferHandle, objAlloc.offsetBytes,
                                 objAlloc.cpuPtr, sizeof(PerObjectCB));
                 cmd->DrawIndexed(desc.indexCount);
                 ++drawCallCount;

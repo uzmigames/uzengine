@@ -13,6 +13,7 @@
 #include "scene_component.h"
 
 namespace uz {
+using namespace DirectX;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Destructor

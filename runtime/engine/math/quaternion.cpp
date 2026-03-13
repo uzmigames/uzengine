@@ -4,6 +4,7 @@
 #include "mat4.h"
 
 namespace uz {
+using namespace DirectX;
 
 Quat::Quat(const Vec3& axis, float angle)
     : Quat(Quat(XMQuaternionRotationAxis(axis.toXM(), angle))) {}

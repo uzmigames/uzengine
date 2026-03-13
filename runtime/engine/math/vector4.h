@@ -45,12 +45,12 @@ struct Vec4 {
     /// Load from memory (pointer to at least 4 floats).
     explicit Vec4(const float* ptr) : x(ptr[0]), y(ptr[1]), z(ptr[2]), w(ptr[3]) {}
     /// Convert from DirectXMath XMVECTOR.
-    explicit Vec4(const XMVECTOR& xm) { XMStoreFloat4(reinterpret_cast<XMFLOAT4*>(this), xm); }
+    explicit Vec4(const DirectX::XMVECTOR& xm) { DirectX::XMStoreFloat4(reinterpret_cast<DirectX::XMFLOAT4*>(this), xm); }
     /// Convert from DirectXMath XMFLOAT4.
-    explicit Vec4(const XMFLOAT4& f4) : x(f4.x), y(f4.y), z(f4.z), w(f4.w) {}
+    explicit Vec4(const DirectX::XMFLOAT4& f4) : x(f4.x), y(f4.y), z(f4.z), w(f4.w) {}
 
     /// Convert to XMVECTOR for SIMD operations.
-    XMVECTOR toXM() const { return XMLoadFloat4(reinterpret_cast<const XMFLOAT4*>(this)); }
+    DirectX::XMVECTOR toXM() const { return DirectX::XMLoadFloat4(reinterpret_cast<const DirectX::XMFLOAT4*>(this)); }
 
     /// Extract XYZ as Vec3 (drops W).
     Vec3 xyz() const { return {x, y, z}; }

@@ -54,11 +54,8 @@
 
 #include "stb_image.h"
 
-#include <DirectXMath.h>
 #include <cstdlib>
 #include <cstring>
-
-using namespace DirectX;
 
 namespace uz {
 
@@ -72,52 +69,6 @@ static constexpr float kMaxFPS         = 500.f;
 static constexpr float kMinFrameTime   = 1.f / kMaxFPS;
 static constexpr int   kCubeCount      = 5;
 static constexpr uint32_t kPointLightCount = 4;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Matrix helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Computes transpose(inverse(model)) for correct normal transformation.
-static Mat4 ComputeNormalMatrix(const Mat4& model) {
-    XMFLOAT4X4 xmModel;
-    std::memcpy(&xmModel, &model, sizeof(Mat4));
-
-    XMMATRIX m  = XMLoadFloat4x4(&xmModel);
-    XMVECTOR det;
-    XMMATRIX inv = XMMatrixInverse(&det, m);
-
-    // Singular matrix — normal transform undefined, return identity
-    if (XMVectorGetX(det) == 0.f) {
-        return Mat4::Identity();
-    }
-
-    XMMATRIX normalMat = XMMatrixTranspose(inv);
-    XMFLOAT4X4 result;
-    XMStoreFloat4x4(&result, normalMat);
-
-    Mat4 out;
-    std::memcpy(&out, &result, sizeof(Mat4));
-    return out;
-}
-
-/// Builds a model matrix from position and uniform scale.
-static Mat4 BuildModelMatrix(Vec3 position, float scale) {
-    XMMATRIX s = XMMatrixScaling(scale, scale, scale);
-    XMMATRIX t = XMMatrixTranslation(position.x, position.y, position.z);
-    XMMATRIX m = XMMatrixMultiply(s, t);
-
-    XMFLOAT4X4 result;
-    XMStoreFloat4x4(&result, m);
-
-    Mat4 out;
-    std::memcpy(&out, &result, sizeof(Mat4));
-    return out;
-}
-
-/// Computes the inverse of a view-projection matrix for world-position reconstruction.
-static Mat4 ComputeInvViewProj(const Mat4& viewProj) {
-    return viewProj.Inverse();
-}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Scene data
@@ -669,7 +620,7 @@ void DeferredTestDemo::OnFrame(float dt) {
     // ── PerFrameCB ───────────────────────────────────────────────────────
     PerFrameCB perFrame{};
     perFrame.viewProj    = camera_.GetViewProjection();
-    perFrame.invViewProj = ComputeInvViewProj(perFrame.viewProj);
+    perFrame.invViewProj = perFrame.viewProj.Inverse();
     Vec3 camPos          = camera_.GetPosition();
     perFrame.cameraPos   = {camPos.x, camPos.y, camPos.z, 0.f};
     perFrame.timeParams  = {totalTime_, dt, static_cast<float>(frameIndex), 0.f};
@@ -700,8 +651,8 @@ void DeferredTestDemo::OnFrame(float dt) {
     for (int i = 0; i < kCubeCount; ++i) {
         DrawCommand cmd{};
         cmd.sortKey     = SortKey::Opaque(0, 0, 0.f, static_cast<uint32_t>(i));
-        cmd.worldMatrix  = BuildModelMatrix(kCubePositions[i], kCubeScale);
-        cmd.normalMatrix = ComputeNormalMatrix(cmd.worldMatrix);
+        cmd.worldMatrix  = Mat4::TRS(kCubePositions[i], kCubeScale);
+        cmd.normalMatrix = cmd.worldMatrix.NormalMatrix();
         cmd.meshId             = 0;
         cmd.albedoSrvIndex     = pbrTex_.albedoSrv;
         cmd.normalSrvIndex     = pbrTex_.normalSrv;

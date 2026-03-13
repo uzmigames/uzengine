@@ -13,6 +13,7 @@
 #include <cmath>
 
 namespace uz {
+using namespace DirectX;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Internal helpers

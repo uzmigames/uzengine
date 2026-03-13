@@ -7,6 +7,7 @@
 #include <cassert>
 
 namespace uz {
+using namespace DirectX;
 
 Mat4 Mat4::Identity() {
     return Mat4(XMMatrixIdentity());

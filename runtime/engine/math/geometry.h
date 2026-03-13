@@ -70,10 +70,10 @@ struct Plane {
     /// Create plane from coefficients (a, b, c, d) where normal = (a, b, c).
     Plane(float a, float b, float c, float d) : a(a), b(b), c(c), d(d) {}
     /// Create plane from XMVECTOR (packed as XMFLOAT4 coefficients).
-    explicit Plane(const XMVECTOR& xm) { XMStoreFloat4(reinterpret_cast<XMFLOAT4*>(this), xm); }
+    explicit Plane(const DirectX::XMVECTOR& xm) { DirectX::XMStoreFloat4(reinterpret_cast<DirectX::XMFLOAT4*>(this), xm); }
 
     /// Conversion to XMVECTOR for SIMD operations.
-    XMVECTOR toXM() const { return XMLoadFloat4(reinterpret_cast<const XMFLOAT4*>(this)); }
+    DirectX::XMVECTOR toXM() const { return DirectX::XMLoadFloat4(reinterpret_cast<const DirectX::XMFLOAT4*>(this)); }
 
     /// Signed distance from point to plane.
     ///
@@ -361,8 +361,8 @@ struct Frustum {
     /// Frustum frustum = Frustum::FromViewProj(proj * view);
     /// ```
     static Frustum FromViewProj(const Mat4& viewproj) {
-        XMMATRIX m = viewproj.toXM();
-        XMVECTOR planes_xm[6];
+        DirectX::XMMATRIX m = viewproj.toXM();
+        DirectX::XMVECTOR planes_xm[6];
 
         // Extract 6 planes from matrix rows (without normalization to preserve magnitudes)
         // Left: (r[3] + r[0])
@@ -372,12 +372,12 @@ struct Frustum {
         // Near: r[2]
         // Far: (r[3] - r[2])
 
-        planes_xm[2] = XMVectorAdd(m.r[3], m.r[0]);      // left
-        planes_xm[3] = XMVectorSubtract(m.r[3], m.r[0]); // right
-        planes_xm[5] = XMVectorAdd(m.r[3], m.r[1]);      // bottom
-        planes_xm[4] = XMVectorSubtract(m.r[3], m.r[1]); // top
-        planes_xm[0] = XMVectorNegate(m.r[2]);           // near (negated for inward normal)
-        planes_xm[1] = XMVectorSubtract(m.r[3], m.r[2]); // far
+        planes_xm[2] = DirectX::XMVectorAdd(m.r[3], m.r[0]);      // left
+        planes_xm[3] = DirectX::XMVectorSubtract(m.r[3], m.r[0]); // right
+        planes_xm[5] = DirectX::XMVectorAdd(m.r[3], m.r[1]);      // bottom
+        planes_xm[4] = DirectX::XMVectorSubtract(m.r[3], m.r[1]); // top
+        planes_xm[0] = DirectX::XMVectorNegate(m.r[2]);           // near (negated for inward normal)
+        planes_xm[1] = DirectX::XMVectorSubtract(m.r[3], m.r[2]); // far
 
         Frustum f;
         for (int i = 0; i < 6; i++) {

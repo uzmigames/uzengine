@@ -40,9 +40,9 @@ struct Quat {
     /// Construct rotation around axis by angle (radians).
     Quat(const Vec3& axis, float angle);
     /// Convert from DirectXMath XMVECTOR.
-    explicit Quat(const XMVECTOR& xm) { XMStoreFloat4(reinterpret_cast<XMFLOAT4*>(this), xm); }
+    explicit Quat(const DirectX::XMVECTOR& xm) { DirectX::XMStoreFloat4(reinterpret_cast<DirectX::XMFLOAT4*>(this), xm); }
     /// Convert from DirectXMath XMFLOAT4.
-    explicit Quat(const XMFLOAT4& f4) : x(f4.x), y(f4.y), z(f4.z), w(f4.w) {}
+    explicit Quat(const DirectX::XMFLOAT4& f4) : x(f4.x), y(f4.y), z(f4.z), w(f4.w) {}
 
     /// Returns the identity quaternion (no rotation).
     static Quat Identity() { return {0, 0, 0, 1}; }
@@ -63,7 +63,7 @@ struct Quat {
     static Quat FromMatrix(const Mat4& m);
 
     /// Converts to XMVECTOR for SIMD operations.
-    XMVECTOR toXM() const { return XMLoadFloat4(reinterpret_cast<const XMFLOAT4*>(this)); }
+    DirectX::XMVECTOR toXM() const { return DirectX::XMLoadFloat4(reinterpret_cast<const DirectX::XMFLOAT4*>(this)); }
 
     /// Get X component (imaginary i).
     float X() const { return x; }
