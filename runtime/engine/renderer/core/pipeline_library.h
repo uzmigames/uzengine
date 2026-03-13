@@ -27,6 +27,7 @@
 
 #pragma once
 
+#include "rhi_pso_cache.h"
 #include "rhi_types.h"
 
 namespace uz {
@@ -147,9 +148,17 @@ private:
     [[nodiscard]] bool EnsureGBufferDebugPixelShader();
     [[nodiscard]] bool EnsureForwardPixelShader();
 
+    /// Creates a pipeline through the PSO cache. On cache hit, returns the
+    /// cached handle without calling the device. On miss, creates via the
+    /// device and inserts into the cache.
+    [[nodiscard]] RHIPipelineHandle CreateCachedPipeline(const RHIGraphicsPipelineDesc& desc);
+
     IRHIDevice*    m_device    = nullptr;
     ShaderManager* m_shaderMgr = nullptr;
     bool           m_initialized = false;
+
+    // ── PSO content-hash cache ─────────────────────────────────────────
+    PsoCache m_psoCache;
 
     // ── Cached shader handles ───────────────────────────────────────────
     RHIShaderHandle m_meshVS           = RHIShaderHandle::Invalid();

@@ -5,6 +5,7 @@
 #include "engine_shaders.h"
 #include "log.h"
 #include "rhi.h"
+#include "rhi_pso_cache.h"
 #include "shader_manager.h"
 #include "vertex.h"
 #include "vertex_layout.h"
@@ -41,6 +42,7 @@ bool PipelineLibrary::Init(IRHIDevice* device, ShaderManager* shaderMgr) {
 
     m_device = device;
     m_shaderMgr = shaderMgr;
+    m_psoCache.Init();
     m_initialized = true;
 
     UZ_LOG(Renderer, Info, "PipelineLibrary initialized (PSOs will be created lazily)");
@@ -81,6 +83,8 @@ void PipelineLibrary::Shutdown() {
     destroyShader(m_gbufferPS);
     destroyShader(m_lightingPS);
     destroyShader(m_gbufferDebugPS);
+
+    m_psoCache.Shutdown();
 
     m_device = nullptr;
     m_shaderMgr = nullptr;
@@ -202,7 +206,7 @@ RHIPipelineHandle PipelineLibrary::GetForwardPBR(bool bindless) {
         desc.vertexStride      = layout.stride;
     }
 
-    cached = m_device->CreateGraphicsPipeline(desc);
+    cached = CreateCachedPipeline(desc);
     if (!cached.IsValid()) {
         UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create ForwardPBR pipeline (bindless={})", bindless);
     } else {
@@ -254,7 +258,7 @@ RHIPipelineHandle PipelineLibrary::GetGBuffer(bool bindless) {
         desc.vertexStride      = layout.stride;
     }
 
-    cached = m_device->CreateGraphicsPipeline(desc);
+    cached = CreateCachedPipeline(desc);
     if (!cached.IsValid()) {
         UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create GBuffer pipeline (bindless={})", bindless);
     } else {
@@ -290,7 +294,7 @@ RHIPipelineHandle PipelineLibrary::GetLighting() {
     desc.debugName                = "DeferredLighting";
 
     // Fullscreen passes never use vertex input layout
-    m_lighting = m_device->CreateGraphicsPipeline(desc);
+    m_lighting = CreateCachedPipeline(desc);
     if (!m_lighting.IsValid()) {
         UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create Lighting pipeline");
     } else {
@@ -325,7 +329,7 @@ RHIPipelineHandle PipelineLibrary::GetGBufferDebug() {
     desc.renderTargetCount        = 1;
     desc.debugName                = "GBufferDebug";
 
-    m_gbufferDebug = m_device->CreateGraphicsPipeline(desc);
+    m_gbufferDebug = CreateCachedPipeline(desc);
     if (!m_gbufferDebug.IsValid()) {
         UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create GBufferDebug pipeline");
     } else {
@@ -333,6 +337,26 @@ RHIPipelineHandle PipelineLibrary::GetGBufferDebug() {
     }
 
     return m_gbufferDebug;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PSO Cache Integration
+// ─────────────────────────────────────────────────────────────────────────────
+
+RHIPipelineHandle PipelineLibrary::CreateCachedPipeline(const RHIGraphicsPipelineDesc& desc) {
+    PsoCacheKey key = ComputePsoCacheKey(desc);
+    auto cached = m_psoCache.Lookup(key);
+    if (cached.IsValid()) {
+        UZ_LOG(Renderer, Debug, "PsoCache hit for '{}'", desc.debugName ? desc.debugName : "<unnamed>");
+        return cached;
+    }
+
+    auto handle = m_device->CreateGraphicsPipeline(desc);
+    if (handle.IsValid()) {
+        m_psoCache.Insert(key, handle);
+        UZ_LOG(Renderer, Debug, "PsoCache miss for '{}' — created and cached", desc.debugName ? desc.debugName : "<unnamed>");
+    }
+    return handle;
 }
 
 } // namespace uz

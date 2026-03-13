@@ -1,0 +1,9 @@
+.{
+    .name = .postprocess_test_demo,
+    .version = "0.2.0",
+    .fingerprint = 0xa3971d9966060700,
+    .dependencies = .{
+        .uz_demo_common = .{ .path = "../common" },
+    },
+    .paths = .{"build.zig"},
+}

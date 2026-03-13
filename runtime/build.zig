@@ -40,6 +40,7 @@ pub fn build(b: *std.Build) void {
         "engine/renderer/upload",
         "engine/renderer/render_graph",
         "engine/renderer/shadows",
+        "engine/renderer/passes",
         "engine/asset",
         "engine/asset/formats",
         "engine/asset/importers",
@@ -425,6 +426,7 @@ pub fn build(b: *std.Build) void {
             .files = &.{
                 "test_rhi_types.cpp",
                 "test_rhi_config.cpp",
+                "test_rhi_pso_cache.cpp",
                 "test_metal_device.cpp",
                 "test_metal_resources.cpp",
                 "test_metal_render_loop.cpp",
@@ -436,7 +438,7 @@ pub fn build(b: *std.Build) void {
         // RHI type tests are cross-platform (no DX12/Metal dependency)
         test_mod.addCSourceFiles(.{
             .root = b.path("tests/engine/rhi"),
-            .files = &.{ "test_rhi_types.cpp", "test_rhi_config.cpp" },
+            .files = &.{ "test_rhi_types.cpp", "test_rhi_config.cpp", "test_rhi_pso_cache.cpp" },
             .flags = cpp_flags,
         });
     }
