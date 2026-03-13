@@ -51,7 +51,9 @@ struct PerFrameCB {
     Vec4  lightColor;           ///< xyz = primary light color multiplied by intensity, w = unused.
     Vec4  ambientColor;         ///< xyz = ambient light color contribution, w = unused.
     Mat4  invViewProj;          ///< Inverse view-projection matrix for world position reconstruction (deferred lighting).
-    float _pad[12] = {};        ///< Remaining padding to 256-byte alignment (144 + 64 data + 48 pad = 256).
+    float nearPlane  = 0.1f;    ///< Near clip plane distance in world units (for depth linearization).
+    float farPlane   = 1000.0f; ///< Far clip plane distance in world units (for depth linearization).
+    float _pad[10]   = {};      ///< Remaining padding to 256-byte alignment.
 };
 
 static_assert(sizeof(PerFrameCB) == 256, "PerFrameCB must be 256 bytes (D3D12 CB alignment)");

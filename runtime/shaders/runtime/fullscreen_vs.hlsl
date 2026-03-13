@@ -5,13 +5,17 @@
 /// because it avoids the diagonal edge where two triangles overlap, which
 /// causes redundant pixel shader invocations along the seam.
 ///
-/// # Vertex Layout (counter-clockwise)
+/// # Vertex Layout
 /// ```
-/// ID  Position (NDC)   UV
-///  0  (-1, -1)         (0, 1)
-///  1  (-1,  3)         (0, -1)
-///  2  ( 3, -1)         (2, 1)
+/// ID  Intermediate UV  Position (NDC)   Final UV (after Y flip)
+///  0  (0, 0)           (-1, -1)         (0, 1)
+///  1  (2, 0)           ( 3, -1)         (2, 1)
+///  2  (0, 2)           (-1,  3)         (0, -1)
 /// ```
+/// UV is computed from SV_VertexID via bit manipulation:
+///   u = (id << 1) & 2,  v = id & 2
+/// Position is derived as: pos = uv * 2 - 1.
+/// The final texcoord flips V so (0,0) is top-left (D3D convention).
 ///
 /// The oversized triangle is clipped by the rasterizer to the viewport.
 /// UVs interpolate to [0,0]-[1,1] within the visible screen area.

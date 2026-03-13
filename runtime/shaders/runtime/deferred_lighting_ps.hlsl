@@ -70,7 +70,9 @@ cbuffer PerFrameCB : register(b1) {
     float4   lightColor;     ///< xyz = color * intensity (radiance), w = unused
     float4   ambientColor;   ///< xyz = ambient radiance, w = unused
     row_major float4x4 invViewProj; ///< Inverse view-projection for world position reconstruction
-    float    _framePad[12];  ///< Remaining padding to 256-byte boundary
+    float    nearPlane;          ///< Near clip plane distance in world units.
+    float    farPlane;           ///< Far clip plane distance in world units.
+    float    _framePad[10];      ///< Remaining padding to 256-byte boundary
 };
 
 /// Single point light for the deferred lighting pass.
@@ -166,7 +168,7 @@ float3 ReconstructWorldPosition(float2 uv, float depth) {
 ///
 /// Reads surface attributes from the G-Buffer textures, reconstructs the
 /// world-space position from depth, and evaluates Cook-Torrance BRDF for
-/// one directional light and up to 64 point lights. Applies Reinhard
+/// one directional light and up to 64 point lights. Applies ACES filmic
 /// tonemapping and sRGB gamma correction.
 ///
 /// # Returns

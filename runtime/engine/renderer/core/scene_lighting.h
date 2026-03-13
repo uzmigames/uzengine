@@ -97,6 +97,9 @@ struct SceneLighting {
     cb.lightColor   = {lighting.sunColor.x, lighting.sunColor.y, lighting.sunColor.z, 0.0f};
     cb.ambientColor = {lighting.ambientColor.x, lighting.ambientColor.y, lighting.ambientColor.z, 0.0f};
 
+    cb.nearPlane = camera.GetNearPlane();
+    cb.farPlane  = camera.GetFarPlane();
+
     return cb;
 }
 

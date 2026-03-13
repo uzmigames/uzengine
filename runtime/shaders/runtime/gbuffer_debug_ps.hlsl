@@ -140,7 +140,8 @@ static const uint kModeWorldPos  = 6;
 /// Converts a non-linear hardware depth value to a linear view-space depth.
 ///
 /// Uses the standard perspective depth linearization formula derived from the
-/// projection matrix near/far parameters.  The result is in [0, 1]:
+/// projection matrix near/far parameters (read from PerFrameCB).
+/// The result is in [0, 1]:
 ///   0.0 = at the near plane (white in visualization)
 ///   1.0 = at the far plane  (black in visualization)
 ///
@@ -148,14 +149,14 @@ static const uint kModeWorldPos  = 6;
 /// - depth: raw depth value from the depth buffer in [0, 1].
 ///
 /// # Returns
-/// Linear depth normalized to [0, 1] within [kNearPlane, kFarPlane].
+/// Linear depth normalized to [0, 1] within [nearPlane, farPlane].
 float LinearizeDepth(float depth) {
     // Perspective depth is stored as: z_ndc = (far*(z-near)) / (z*(far-near))
     // Solving for linear z:  z_linear = (near * far) / (far - depth*(far-near))
-    float linearZ = (kNearPlane * kFarPlane) /
-                    (kFarPlane - depth * (kFarPlane - kNearPlane));
+    float linearZ = (nearPlane * farPlane) /
+                    (farPlane - depth * (farPlane - nearPlane));
     // Normalize to [0,1] so 0=near, 1=far
-    return saturate((linearZ - kNearPlane) / (kFarPlane - kNearPlane));
+    return saturate((linearZ - nearPlane) / (farPlane - nearPlane));
 }
 
 /// Reconstructs world-space position from screen UV and hardware depth.
