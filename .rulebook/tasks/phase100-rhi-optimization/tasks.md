@@ -21,10 +21,10 @@
 - [ ] Implement defrag pass (incremental, budget-limited per frame)
 
 ### 100.3 Upload Ring + Copy Queue Integration
-- [ ] Create persistent upload ring buffer (mapped, triple-buffered)
-- [ ] Wire existing DX12 `m_copyQueue` for texture/buffer uploads
-- [ ] Add per-frame upload budget (bytes/frame cap to avoid stalls)
-- [ ] Add fence-based completion tracking (upload done → resource usable)
+- [x] Create persistent upload ring buffer (mapped, triple-buffered) ✅ `upload_ring.h/cpp` — single large upload-heap buffer, persistent map, bump allocator with alignment, per-frame budget tracking
+- [x] Wire existing DX12 `m_copyQueue` for texture/buffer uploads ✅ `dx12_device.cpp` — CreateCopyCommandList(), ExecuteCopyCommandList(), copy fence creation/signal/wait via m_copyFence
+- [x] Add per-frame upload budget (bytes/frame cap to avoid stalls) ✅ `UploadRing::Allocate()` returns invalid allocation when frame budget exhausted, GetRemainingBytes()/GetBytesUsedThisFrame() queries
+- [x] Add fence-based completion tracking (upload done → resource usable) ✅ `IRHIDevice::SignalCopyQueue()` + `GraphicsWaitForCopy(fenceValue)` — DX12 impl signals m_copyFence, graphics queue waits via ID3D12CommandQueue::Wait
 - [ ] Add staging batch API (group multiple small uploads into one copy submission)
 - [ ] Wire Vulkan transfer queue (if separate family available)
 
