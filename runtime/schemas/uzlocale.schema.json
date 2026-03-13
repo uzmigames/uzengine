@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uzengine.dev/schemas/uzlocale.schema.json",
+  "title": "UzEngine Locale",
+  "description": "UzEngine localization file (.uzlocale) — string table for a specific culture/language. Keys are dot-separated identifiers. Values are display strings with optional ICU MessageFormat placeholders for pluralization, gender, and variable substitution.",
+  "type": "object",
+  "required": ["locale", "strings"],
+  "properties": {
+    "locale": {
+      "type": "string",
+      "description": "BCP 47 locale tag (e.g., 'en-US', 'pt-BR', 'ja-JP', 'zh-CN').",
+      "pattern": "^[a-z]{2,3}(-[A-Z]{2,4})?$"
+    },
+    "name": {
+      "type": "string",
+      "description": "Human-readable language name (e.g., 'English (US)', 'Português (Brasil)')."
+    },
+    "fallback": {
+      "type": "string",
+      "description": "Fallback locale tag. If a key is missing in this locale, the engine looks it up in the fallback (e.g., 'pt-BR' falls back to 'pt')."
+    },
+    "strings": {
+      "type": "object",
+      "description": "Flat key-value map of localized strings. Keys use dot notation for namespacing (e.g., 'ui.menu.play', 'dialog.npc.greeting'). Values support ICU MessageFormat for pluralization: '{count, plural, one {# item} other {# items}}'.",
+      "additionalProperties": { "type": "string" },
+      "examples": [{
+        "ui.menu.play": "Play",
+        "ui.menu.settings": "Settings",
+        "ui.menu.quit": "Quit",
+        "ui.hud.health": "Health: {value}",
+        "ui.hud.ammo": "{count, plural, one {# round} other {# rounds}}",
+        "dialog.npc.greeting": "Hello, {player_name}! Welcome to {town_name}."
+      }]
+    }
+  },
+  "additionalProperties": false
+}

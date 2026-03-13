@@ -1,0 +1,184 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uzengine.dev/schemas/uzmesh.schema.json",
+  "title": "UzEngine Mesh",
+  "description": "UzEngine mesh file (.uzmesh) — 3D mesh definition with vertex layout, submeshes, material references, bounding volumes, and LOD chain. The JSON header describes structure; binary vertex/index data is stored in the companion .uzpak or loose binary.",
+  "type": "object",
+  "required": ["name", "vertex_layout", "submeshes"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Mesh display name for editor and debug UI."
+    },
+    "vertex_layout": {
+      "type": "array",
+      "description": "Ordered list of vertex attributes. Defines the per-vertex data layout in the binary buffer.",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["semantic", "format"],
+        "properties": {
+          "semantic": {
+            "type": "string",
+            "enum": ["position", "normal", "tangent", "texcoord0", "texcoord1", "color0", "joints0", "weights0"],
+            "description": "Vertex attribute semantic. Maps to HLSL input semantics (POSITION, NORMAL, etc.)."
+          },
+          "format": {
+            "type": "string",
+            "enum": ["float2", "float3", "float4", "unorm8x4", "uint16x4", "uint8x4"],
+            "description": "Data format per vertex. float3 = 12 bytes, unorm8x4 = 4 bytes (packed color), uint16x4 = 8 bytes (joint indices)."
+          }
+        },
+        "additionalProperties": false
+      },
+      "examples": [[
+        { "semantic": "position", "format": "float3" },
+        { "semantic": "normal", "format": "float3" },
+        { "semantic": "tangent", "format": "float4" },
+        { "semantic": "texcoord0", "format": "float2" }
+      ]]
+    },
+    "submeshes": {
+      "type": "array",
+      "description": "List of submeshes (draw calls). Each submesh has its own material and index range.",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["index_offset", "index_count"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Submesh name (often from the source DCC tool)."
+          },
+          "material": {
+            "type": "string",
+            "description": "Path to default material asset (.uzmaterial). Can be overridden per-instance in .uzscene."
+          },
+          "index_offset": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Starting index in the index buffer for this submesh."
+          },
+          "index_count": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Number of indices to draw for this submesh."
+          },
+          "vertex_offset": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 0,
+            "description": "Base vertex offset added to each index."
+          },
+          "topology": {
+            "type": "string",
+            "enum": ["triangles", "lines", "points"],
+            "default": "triangles",
+            "description": "Primitive topology for this submesh."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "index_format": {
+      "type": "string",
+      "enum": ["uint16", "uint32"],
+      "default": "uint32",
+      "description": "Index buffer element size. uint16 saves memory for meshes with < 65536 vertices."
+    },
+    "vertex_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total number of vertices in the vertex buffer."
+    },
+    "index_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total number of indices in the index buffer."
+    },
+    "bounds": {
+      "type": "object",
+      "description": "Axis-aligned bounding box in local space. Used for frustum culling and LOD selection.",
+      "required": ["min", "max"],
+      "properties": {
+        "min": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "AABB minimum corner [x, y, z]."
+        },
+        "max": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 3,
+          "maxItems": 3,
+          "description": "AABB maximum corner [x, y, z]."
+        }
+      },
+      "additionalProperties": false
+    },
+    "lods": {
+      "type": "array",
+      "description": "Level-of-detail chain. LOD 0 is the highest detail. Each LOD specifies a screen-size threshold and its own submesh/vertex data.",
+      "items": {
+        "type": "object",
+        "required": ["screen_size"],
+        "properties": {
+          "screen_size": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Minimum screen coverage ratio [0..1] for this LOD to be used. LOD 0 typically = 1.0."
+          },
+          "vertex_count": { "type": "integer", "minimum": 0 },
+          "index_count": { "type": "integer", "minimum": 0 },
+          "data_offset": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Byte offset into the binary data blob for this LOD's vertex/index data."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "skeleton": {
+      "type": "string",
+      "description": "Path to the skeleton asset (.uzskeleton) if this is a skinned mesh."
+    },
+    "morph_targets": {
+      "type": "array",
+      "description": "Named morph targets (blend shapes) for facial animation or deformation.",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Morph target name (e.g., 'smile', 'blink_left')."
+          },
+          "data_offset": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Byte offset into binary blob for delta position/normal data."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "import_settings": {
+      "type": "object",
+      "description": "Settings used when importing this mesh from source (glTF/FBX). Preserved for reimport.",
+      "properties": {
+        "source_file": { "type": "string", "description": "Original source file path (e.g., 'models/character.gltf')." },
+        "scale": { "type": "number", "default": 1.0, "description": "Uniform scale applied at import." },
+        "generate_tangents": { "type": "boolean", "default": true, "description": "Compute tangent vectors via MikkTSpace." },
+        "optimize_vertices": { "type": "boolean", "default": true, "description": "Run meshoptimizer vertex cache optimization." },
+        "generate_lods": { "type": "boolean", "default": false, "description": "Auto-generate LOD chain via meshoptimizer simplification." },
+        "lod_count": { "type": "integer", "minimum": 1, "maximum": 8, "default": 4, "description": "Number of LODs to generate." }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

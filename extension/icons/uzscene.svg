@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
+  <!-- cube / scene icon -->
+  <path fill="#4FC3F7" d="M8 1L1 4.5v7L8 15l7-3.5v-7L8 1z"/>
+  <path fill="#0288D1" d="M8 1v14M1 4.5l7 3.5 7-3.5M8 8.5v6.5"/>
+  <path fill="#81D4FA" d="M8 1L1 4.5l7 3.5 7-3.5L8 1z"/>
+</svg>

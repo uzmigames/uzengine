@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16">
+  <!-- project / rocket icon -->
+  <rect fill="#66BB6A" x="1" y="2" width="14" height="12" rx="1.5"/>
+  <path fill="#fff" d="M8 3c-2 0-4 2-4 5h2v3h4V8h2c0-3-2-5-4-5z"/>
+  <circle fill="#66BB6A" cx="8" cy="7" r="1.2"/>
+</svg>

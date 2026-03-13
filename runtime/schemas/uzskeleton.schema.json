@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uzengine.dev/schemas/uzskeleton.schema.json",
+  "title": "UzEngine Skeleton",
+  "description": "UzEngine skeleton file (.uzskeleton) — bone hierarchy definition with bind pose transforms. Referenced by skinned meshes (.uzmesh) and animation sequences (.uzanimsequence). Bones are stored in a flat array where parent indices form the tree.",
+  "type": "object",
+  "required": ["name", "bones"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Skeleton display name (typically matches the character/rig name)."
+    },
+    "bones": {
+      "type": "array",
+      "description": "Flat array of bones ordered by index. Bone 0 is always the root. Parent indices must reference earlier bones (DAG constraint).",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Bone name matching the DCC tool naming (e.g., 'Hips', 'Spine', 'LeftArm'). Used for animation retargeting."
+          },
+          "parent": {
+            "type": "integer",
+            "minimum": -1,
+            "default": -1,
+            "description": "Parent bone index. -1 for root bones. Must be < this bone's index (forward reference not allowed)."
+          },
+          "bind_position": {
+            "type": "array",
+            "items": { "type": "number" },
+            "minItems": 3,
+            "maxItems": 3,
+            "default": [0, 0, 0],
+            "description": "Local bind pose position relative to parent [x, y, z]."
+          },
+          "bind_rotation": {
+            "type": "array",
+            "items": { "type": "number" },
+            "minItems": 4,
+            "maxItems": 4,
+            "default": [0, 0, 0, 1],
+            "description": "Local bind pose rotation as quaternion [x, y, z, w]."
+          },
+          "bind_scale": {
+            "type": "array",
+            "items": { "type": "number" },
+            "minItems": 3,
+            "maxItems": 3,
+            "default": [1, 1, 1],
+            "description": "Local bind pose scale [x, y, z]."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "retarget_chains": {
+      "type": "array",
+      "description": "Named bone chains for animation retargeting between different skeletons (e.g., 'spine', 'left_arm', 'right_leg').",
+      "items": {
+        "type": "object",
+        "required": ["name", "bones"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Chain name (e.g., 'spine', 'left_arm')."
+          },
+          "bones": {
+            "type": "array",
+            "items": { "type": "integer", "minimum": 0 },
+            "minItems": 1,
+            "description": "Ordered list of bone indices forming this chain (root to tip)."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "import_settings": {
+      "type": "object",
+      "properties": {
+        "source_file": { "type": "string" },
+        "scale": { "type": "number", "default": 1.0 }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

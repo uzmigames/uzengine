@@ -1,0 +1,83 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "HLSL",
+  "scopeName": "source.hlsl",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#preprocessor" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#semantics" },
+    { "include": "#attributes" },
+    { "include": "#keywords" },
+    { "include": "#types" },
+    { "include": "#functions" },
+    { "include": "#registers" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        { "name": "comment.line.double-slash.hlsl", "match": "//.*$" },
+        { "name": "comment.block.hlsl", "begin": "/\\*", "end": "\\*/" }
+      ]
+    },
+    "preprocessor": {
+      "patterns": [
+        { "name": "meta.preprocessor.hlsl", "match": "^\\s*#\\s*(include|define|undef|if|ifdef|ifndef|else|elif|endif|pragma|error|line)\\b.*$",
+          "captures": { "1": { "name": "keyword.control.preprocessor.hlsl" } } }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        { "name": "string.quoted.double.hlsl", "begin": "\"", "end": "\"", "patterns": [
+          { "name": "constant.character.escape.hlsl", "match": "\\\\." }
+        ]}
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        { "name": "constant.numeric.hex.hlsl", "match": "\\b0[xX][0-9a-fA-F]+[uUlL]*\\b" },
+        { "name": "constant.numeric.float.hlsl", "match": "\\b[0-9]+\\.[0-9]*([eE][+-]?[0-9]+)?[fFhH]?\\b" },
+        { "name": "constant.numeric.float.hlsl", "match": "\\b\\.[0-9]+([eE][+-]?[0-9]+)?[fFhH]?\\b" },
+        { "name": "constant.numeric.integer.hlsl", "match": "\\b[0-9]+[uUlL]*\\b" }
+      ]
+    },
+    "semantics": {
+      "patterns": [
+        { "name": "support.variable.semantic.hlsl", "match": ":\\s*(SV_Position|SV_Target[0-7]?|SV_Depth|SV_VertexID|SV_InstanceID|SV_PrimitiveID|SV_IsFrontFace|SV_SampleIndex|SV_Coverage|SV_DispatchThreadID|SV_GroupID|SV_GroupIndex|SV_GroupThreadID|POSITION[0-9]*|NORMAL[0-9]*|TEXCOORD[0-9]*|COLOR[0-9]*|TANGENT[0-9]*|BINORMAL[0-9]*|BLENDWEIGHT[0-9]*|BLENDINDICES[0-9]*)",
+          "captures": { "1": { "name": "support.variable.semantic.hlsl" } } }
+      ]
+    },
+    "attributes": {
+      "patterns": [
+        { "name": "meta.attribute.hlsl", "match": "\\[(numthreads|unroll|loop|branch|flatten|earlydepthstencil|RootSignature|outputtopology|maxvertexcount|domain|partitioning|outputcontrolpoints|patchconstantfunc)\\b[^\\]]*\\]" }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        { "name": "keyword.control.hlsl", "match": "\\b(if|else|for|while|do|switch|case|default|break|continue|return|discard|true|false)\\b" },
+        { "name": "storage.modifier.hlsl", "match": "\\b(const|static|extern|inline|volatile|uniform|groupshared|precise|nointerpolation|linear|centroid|noperspective|sample|globallycoherent|in|out|inout)\\b" },
+        { "name": "storage.type.hlsl", "match": "\\b(struct|cbuffer|tbuffer|typedef|namespace|register|packoffset)\\b" }
+      ]
+    },
+    "types": {
+      "patterns": [
+        { "name": "support.type.hlsl", "match": "\\b(void|bool|int|uint|dword|half|float|double|min16float|min10float|min16int|min12int|min16uint)\\b" },
+        { "name": "support.type.vector.hlsl", "match": "\\b(bool|int|uint|half|float|double|min16float|min16int|min16uint)[1-4]\\b" },
+        { "name": "support.type.matrix.hlsl", "match": "\\b(bool|int|uint|half|float|double)[1-4]x[1-4]\\b" },
+        { "name": "support.type.object.hlsl", "match": "\\b(Texture1D|Texture1DArray|Texture2D|Texture2DArray|Texture2DMS|Texture2DMSArray|Texture3D|TextureCube|TextureCubeArray|RWTexture1D|RWTexture1DArray|RWTexture2D|RWTexture2DArray|RWTexture3D|SamplerState|SamplerComparisonState|Buffer|RWBuffer|StructuredBuffer|RWStructuredBuffer|AppendStructuredBuffer|ConsumeStructuredBuffer|ByteAddressBuffer|RWByteAddressBuffer|RaytracingAccelerationStructure|RayQuery|RayDesc|BuiltInTriangleIntersectionAttributes)\\b" },
+        { "name": "support.type.sm66.hlsl", "match": "\\b(ResourceDescriptorHeap|SamplerDescriptorHeap)\\b" }
+      ]
+    },
+    "functions": {
+      "patterns": [
+        { "name": "support.function.hlsl", "match": "\\b(abs|acos|all|any|asin|atan|atan2|ceil|clamp|clip|cos|cross|ddx|ddy|degrees|determinant|distance|dot|exp|exp2|floor|fmod|frac|frexp|isfinite|isinf|isnan|ldexp|length|lerp|lit|log|log10|log2|mad|max|min|modf|mul|normalize|pow|radians|rcp|reflect|refract|round|rsqrt|saturate|sign|sin|sincos|smoothstep|sqrt|step|tan|tanh|tex1D|tex2D|tex3D|texCUBE|transpose|trunc|WaveActiveAllEqual|WaveActiveBallot|WaveActiveCountBits|WaveActiveMax|WaveActiveMin|WaveActiveProduct|WaveActiveSum|WaveGetLaneCount|WaveGetLaneIndex|WaveIsFirstLane|WavePrefixCountBits|WavePrefixProduct|WavePrefixSum|WaveReadLaneAt|WaveReadLaneFirst|QuadReadAcrossDiagonal|QuadReadAcrossX|QuadReadAcrossY|QuadReadLaneAt|DispatchMesh|SetMeshOutputCounts|TraceRay|ReportHit|IgnoreHit|AcceptHitAndEndSearch|CallShader)\\b" }
+      ]
+    },
+    "registers": {
+      "patterns": [
+        { "name": "support.variable.register.hlsl", "match": "\\bregister\\s*\\(\\s*([bBtTuUsS][0-9]+)\\s*(,\\s*space[0-9]+)?\\s*\\)" }
+      ]
+    }
+  }
+}

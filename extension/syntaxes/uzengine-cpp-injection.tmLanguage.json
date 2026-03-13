@@ -1,0 +1,134 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "UzEngine C++ Injection",
+  "scopeName": "source.cpp.uzengine",
+  "injectionSelector": "L:source.cpp, L:source.c",
+  "patterns": [
+    { "include": "#uz-macros" },
+    { "include": "#uz-log-macro" },
+    { "include": "#uz-rhi-types" },
+    { "include": "#uz-rhi-enums" },
+    { "include": "#uz-shader-types" },
+    { "include": "#uz-math-types" },
+    { "include": "#uz-container-types" },
+    { "include": "#uz-memory-types" },
+    { "include": "#uz-core-types" },
+    { "include": "#uz-dx12-types" },
+    { "include": "#uz-platform-types" },
+    { "include": "#uz-interfaces" }
+  ],
+  "repository": {
+    "uz-macros": {
+      "patterns": [
+        {
+          "name": "keyword.other.uzengine.macro.assert",
+          "match": "\\b(UZ_CHECK|UZ_CHECKF|UZ_ENSURE|UZ_VERIFY)\\b"
+        },
+        {
+          "name": "keyword.other.uzengine.macro.log",
+          "match": "\\b(UZ_DECLARE_LOG_CATEGORY|UZ_DEFINE_LOG_CATEGORY)\\b"
+        },
+        {
+          "name": "keyword.other.uzengine.macro.profiling",
+          "match": "\\b(UZ_PROFILE_FUNCTION|UZ_PROFILE_SCOPE|UZ_PROFILE_FRAME_MARK|UZ_PROFILE_TAG|UZ_PROFILE_THREAD|UZ_PROFILE_VALUE|UZ_PROFILING_ENABLED)\\b"
+        },
+        {
+          "name": "keyword.other.uzengine.macro.stat",
+          "match": "\\b(UZ_DECLARE_STAT|UZ_DEFINE_STAT|UZ_STAT_GET|UZ_STAT_INCREMENT|UZ_STAT_RESET)\\b"
+        },
+        {
+          "name": "keyword.other.uzengine.macro.config",
+          "match": "\\b(UZ_SHIPPING|UZ_GPU_BREADCRUMBS|UZ_BORROW|UZ_LOG_COMPILE_MIN|UZ_BACKEND_VULKAN|UZ_BACKEND_METAL)\\b"
+        }
+      ]
+    },
+    "uz-log-macro": {
+      "patterns": [
+        {
+          "name": "support.function.uzengine.log",
+          "match": "\\bUZ_LOG\\b"
+        }
+      ]
+    },
+    "uz-interfaces": {
+      "patterns": [
+        {
+          "name": "entity.name.type.interface.uzengine",
+          "match": "\\b(IRHIDevice|IRHICommandList|IRHISwapChain|IRHIFence)\\b"
+        }
+      ]
+    },
+    "uz-rhi-types": {
+      "patterns": [
+        {
+          "name": "entity.name.type.class.uzengine.rhi",
+          "match": "\\b(RHIHandle|RHIConfig|RHIDeviceDesc|RHIBufferDesc|RHITextureDesc|RHIShaderDesc|RHISamplerDesc|RHIGraphicsPipelineDesc|RHIBarrierDesc|RHIBlendDesc|RHIDepthStencilDesc|RHIRasterizerDesc|RHIRenderPassDesc|RHIRenderPassColorAttachment|RHIRenderPassDepthAttachment|RHIViewport|RHIScissorRect|RHIMemoryBudget)\\b"
+        }
+      ]
+    },
+    "uz-rhi-enums": {
+      "patterns": [
+        {
+          "name": "entity.name.type.enum.uzengine.rhi",
+          "match": "\\b(RHIBackend|RHIFormat|RHIBufferUsage|RHITextureUsage|RHIMemoryType|RHIResourceState|RHIShaderStage|RHIQueueType|RHICullMode|RHIFillMode|RHIBlendFactor|RHIBlendOp|RHICompareFunc|RHIPrimitiveTopology|RHIIndexFormat|RHIFilterMode|RHIAddressMode|ShaderModel|ShaderModelCompile|ShaderStageFlag|ShaderStageCompile|ShaderOutputFormat|ShaderTarget|ShaderResourceType)\\b"
+        }
+      ]
+    },
+    "uz-shader-types": {
+      "patterns": [
+        {
+          "name": "entity.name.type.class.uzengine.shader",
+          "match": "\\b(ShaderVFS|ShaderSourceManager|ShaderSourceInfo|ShaderDependencyGraph|ShaderCache|ShaderCompiler|ShaderCompileDesc|ShaderCompileResult|ShaderPipeline|ShaderPermutation|ShaderHotReload|ShaderArchive|ShaderArchiveEntry|ShaderReflectionResult|ShaderResourceBinding|ShaderMount|CachedShader|PermutationExpandResult|CompileAllResult)\\b"
+        }
+      ]
+    },
+    "uz-math-types": {
+      "patterns": [
+        {
+          "name": "entity.name.type.class.uzengine.math",
+          "match": "\\b(Vec2|Vec3|Vec4|Mat4|Quat|Transform|LinearColor|AABB|Plane|Frustum)\\b"
+        }
+      ]
+    },
+    "uz-container-types": {
+      "patterns": [
+        {
+          "name": "entity.name.type.class.uzengine.container",
+          "match": "\\b(RingBuffer|FreeList|HandleMap|FrameArray|ResourcePool)\\b"
+        }
+      ]
+    },
+    "uz-memory-types": {
+      "patterns": [
+        {
+          "name": "entity.name.type.class.uzengine.memory",
+          "match": "\\b(Own|Ref|RefMut|BorrowTracker|LinearAllocator|PoolAllocator|FrameAllocator)\\b"
+        }
+      ]
+    },
+    "uz-core-types": {
+      "patterns": [
+        {
+          "name": "entity.name.type.class.uzengine.core",
+          "match": "\\b(Config|LogCategory|LogLevel|StatCounter|StatGroup|PCGRandom|FileWatcher|UploadContext)\\b"
+        }
+      ]
+    },
+    "uz-dx12-types": {
+      "patterns": [
+        {
+          "name": "entity.name.type.class.uzengine.dx12",
+          "match": "\\b(DX12Device|DX12CommandList|DX12SwapChain|DX12Fence|DX12Buffer|DX12Texture|DX12Shader|DX12Sampler|DX12Pipeline|DX12GpuBreadcrumbs|DX12GpuProfiler|DescriptorAllocator)\\b"
+        }
+      ]
+    },
+    "uz-platform-types": {
+      "patterns": [
+        {
+          "name": "entity.name.type.class.uzengine.platform",
+          "match": "\\b(PlatformWindow|WindowDesc|InputSystem|Key|MouseButton)\\b"
+        }
+      ]
+    }
+  }
+}

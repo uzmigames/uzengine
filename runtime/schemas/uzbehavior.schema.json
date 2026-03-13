@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uzengine.dev/schemas/uzbehavior.schema.json",
+  "title": "UzEngine Behavior Tree",
+  "description": "UzEngine behavior tree file (.uzbehavior) — AI decision tree with composite, decorator, and task nodes. Evaluated top-down each tick. Uses a Blackboard for shared state between nodes. Supports parallel execution, abort conditions, and runtime debugging.",
+  "type": "object",
+  "required": ["name", "root"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Behavior tree display name."
+    },
+    "blackboard": {
+      "type": "array",
+      "description": "Blackboard key definitions. Keys are typed variables shared across all nodes in the tree.",
+      "items": {
+        "type": "object",
+        "required": ["name", "type"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Key name referenced by nodes (e.g., 'target_entity', 'patrol_index', 'is_alerted')."
+          },
+          "type": {
+            "type": "string",
+            "enum": ["bool", "int", "float", "string", "vec3", "entity"],
+            "description": "Value type stored in this key."
+          },
+          "default": {
+            "description": "Default value when the tree starts. Must match declared type.",
+            "oneOf": [
+              { "type": "boolean" },
+              { "type": "integer" },
+              { "type": "number" },
+              { "type": "string" },
+              {
+                "type": "array",
+                "items": { "type": "number" },
+                "minItems": 3,
+                "maxItems": 3
+              },
+              { "type": "null" }
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "root": {
+      "$ref": "#/$defs/node",
+      "description": "Root node of the behavior tree. Must be a composite node (sequence, selector, parallel)."
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "node": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "description": "Node type identifier.",
+          "enum": [
+            "sequence", "selector", "parallel",
+            "inverter", "repeater", "cooldown", "blackboard_condition",
+            "succeed_always", "fail_always",
+            "task", "wait", "move_to", "play_animation", "set_blackboard", "run_lua"
+          ]
+        },
+        "name": {
+          "type": "string",
+          "description": "Optional node display name for editor and runtime debugging."
+        },
+        "abort_type": {
+          "type": "string",
+          "enum": ["none", "self", "lower_priority", "both"],
+          "default": "none",
+          "description": "Abort behavior when a decorator's condition changes. 'self': abort this subtree. 'lower_priority': abort lower-priority siblings. 'both': abort both."
+        },
+        "children": {
+          "type": "array",
+          "description": "Child nodes. Required for composites (sequence, selector, parallel). Optional for decorators (exactly 1 child).",
+          "items": { "$ref": "#/$defs/node" }
+        },
+        "properties": {
+          "type": "object",
+          "description": "Node-specific properties. Contents depend on the node type.",
+          "additionalProperties": true,
+          "examples": [
+            { "key": "is_alerted", "value": true, "operator": "equal" },
+            { "duration": 2.5 },
+            { "target_key": "target_entity", "acceptance_radius": 1.0 },
+            { "animation": "animations/attack.uzanimsequence", "wait_for_end": true },
+            { "script": "scripts/ai/custom_check.lua", "function": "evaluate" },
+            { "count": 3 },
+            { "cooldown_time": 5.0 }
+          ]
+        },
+        "position": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 2,
+          "maxItems": 2,
+          "description": "Editor canvas position [x, y]."
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

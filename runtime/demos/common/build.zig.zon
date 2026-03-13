@@ -1,0 +1,6 @@
+.{
+    .name = .uz_demo_common,
+    .version = "0.2.0",
+    .fingerprint = 0x83a4cdf6b9b10714,
+    .paths = .{ "build.zig", "build_common.zig", "app.rc", "icon.ico" },
+}

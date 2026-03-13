@@ -1,0 +1,637 @@
+const std = @import("std");
+
+pub fn build(b: *std.Build) void {
+    // Default output to build/ — user can override with -p <path>
+    if (std.mem.endsWith(u8, b.install_prefix, "zig-out")) {
+        b.resolveInstallPrefix("build", .{});
+    }
+
+    const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
+
+    const is_windows = target.result.os.tag == .windows;
+    const is_macos = target.result.os.tag == .macos;
+    const is_ios = target.result.os.tag == .ios;
+    const is_apple = is_macos or is_ios;
+
+    const cpp_flags = &.{ "-std=c++17", "-DSPDLOG_COMPILED_LIB", "-DUZ_PROFILING_ENABLED", "-DTRACY_ENABLE", "-DTRACY_ON_DEMAND" };
+    const tp = "thirdparty/";
+
+    // ── Include path tables (shared between runtime and tests) ───────────
+
+    const engine_include_dirs = [_][]const u8{
+        "engine/app",
+        "engine/logging",
+        "engine/assertions",
+        "engine/profiling",
+        "engine/memory",
+        "engine/config",
+        "engine/math",
+        "engine/containers",
+        "engine/random",
+        "engine/rhi",
+        "engine/shader",
+        "engine/paths",
+        "engine/renderer",
+        "engine/renderer/camera",
+        "engine/renderer/core",
+        "engine/renderer/material",
+        "engine/renderer/mesh",
+        "engine/renderer/upload",
+        "engine/renderer/render_graph",
+        "engine/renderer/shadows",
+        "engine/asset",
+        "engine/asset/formats",
+        "engine/asset/importers",
+        "engine/job",
+        "engine/ecs",
+        "engine/event",
+        "engine/property",
+    };
+
+    const thirdparty_include_dirs = [_][]const u8{
+        tp ++ "spdlog/include",
+        tp ++ "tracy/public",
+        tp ++ "mimalloc/include",
+        tp ++ "directxmath/Inc",
+        tp ++ "glm",
+        tp ++ "nlohmann",
+        tp ++ "atomic_queue/include",
+        tp ++ "spirv-reflect",
+        tp ++ "spirv-reflect/include",
+        tp ++ "xxhash",
+        tp ++ "stb",
+        tp ++ "tinyexr",
+        tp ++ "libjpeg-turbo",
+        tp ++ "basis_universal/transcoder",
+        tp ++ "astcenc/Source",
+        tp ++ "vulkan_headers/include",
+        tp ++ "volk",
+        tp ++ "vma/include",
+        tp ++ "fastgltf/include",
+        tp ++ "fastgltf/deps/simdjson",
+        tp ++ "meshoptimizer/src",
+        tp ++ "entt/single_include",
+    };
+
+    const linux_engine_include_dirs = [_][]const u8{
+        "platform/linux",
+    };
+
+    const windows_engine_include_dirs = [_][]const u8{
+        "platform/windows",
+    };
+
+    const windows_thirdparty_include_dirs = [_][]const u8{
+        tp ++ "d3d12ma/include",
+        tp ++ "directx_headers/include",
+        tp ++ "directx_headers/include/directx",
+        tp ++ "agility/include",
+        tp ++ "dxc/inc",
+    };
+
+    // ── uzembed build tool (generates .hlsl.gen.h headers) ─────────
+
+    const embed_mod = b.createModule(.{ .target = target, .optimize = optimize });
+    embed_mod.link_libc = true;
+    embed_mod.link_libcpp = true;
+    embed_mod.addCSourceFiles(.{
+        .root = b.path("tools"),
+        .files = &.{"uzembed.cpp"},
+        .flags = cpp_flags,
+    });
+
+    const embed_exe = b.addExecutable(.{ .name = "uzembed", .root_module = embed_mod });
+    b.installArtifact(embed_exe);
+
+    // Run uzembed: shaders/ → build/generated/shaders/ (all subdirs)
+    const run_embed = b.addRunArtifact(embed_exe);
+    run_embed.addArgs(&.{
+        "--quiet",
+        "--input-dir",  b.path("shaders").getPath(b),
+        "--output-dir", b.path("build/generated/shaders").getPath(b),
+    });
+
+    // ── Runtime static library ───────────────────────────────────────────
+
+    const runtime_mod = b.createModule(.{
+        .target = target,
+        .optimize = optimize,
+    });
+    runtime_mod.link_libc = true;
+    runtime_mod.link_libcpp = true;
+
+    // Cross-platform engine sources — auto-discovered via glob
+    addCppDir(runtime_mod, b, "engine/app", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/logging", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/assertions", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/profiling", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/config", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/math", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/rhi", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/paths", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/shader", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/asset", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/asset/formats", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/asset/importers", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/renderer/camera", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/renderer/core", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/renderer/material", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/renderer/mesh", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/renderer/upload", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/renderer/passes", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/renderer/shadows", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/renderer/render_graph", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/job", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/ecs", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/property", cpp_flags);
+
+    // Thirdparty — SPIRV-Reflect (C source, not C++)
+    runtime_mod.addCSourceFiles(.{
+        .root = b.path(tp ++ "spirv-reflect"),
+        .files = &.{"spirv_reflect.c"},
+        .flags = &.{"-std=c11"},
+    });
+
+    // Platform-specific sources
+    if (is_windows) {
+        addCppDir(runtime_mod, b, "platform/windows", cpp_flags);
+        addCppDir(runtime_mod, b, "engine/rhi/dx12", cpp_flags);
+        runtime_mod.addIncludePath(b.path("engine/rhi/dx12"));
+        addCppDir(runtime_mod, b, "engine/rhi/dx11", cpp_flags);
+        runtime_mod.addIncludePath(b.path("engine/rhi/dx11"));
+        runtime_mod.addIncludePath(b.path(tp ++ "d3d12ma/src"));
+    } else if (target.result.os.tag == .linux) {
+        addCppDir(runtime_mod, b, "platform/linux", cpp_flags);
+    }
+
+    // Vulkan backend sources (cross-platform)
+    addCppDir(runtime_mod, b, "engine/rhi/vulkan", cpp_flags);
+    runtime_mod.addIncludePath(b.path("engine/rhi/vulkan"));
+
+    // macOS/iOS platform + Metal backend sources
+    if (is_apple) {
+        // Platform layer (NSWindow + CAMetalLayer)
+        addCppDir(runtime_mod, b, "platform/macos", cpp_flags);
+        // Objective-C++ source (.mm) for PlatformWindow (NSWindow + Cocoa event loop)
+        runtime_mod.addCSourceFiles(.{
+            .root = b.path("platform/macos"),
+            .files = &.{"platform_window.mm"},
+            .flags = &.{ "-std=c++17", "-ObjC++", "-fno-objc-arc", "-DSPDLOG_COMPILED_LIB", "-DUZ_PROFILING_ENABLED", "-DTRACY_ENABLE", "-DTRACY_ON_DEMAND" },
+        });
+
+        // Metal RHI backend — all files compiled as Objective-C++ because they
+        // include <Metal/Metal.h> which uses @class/@interface ObjC syntax.
+        const objcxx_flags = &.{ "-std=c++17", "-ObjC++", "-fno-objc-arc", "-DSPDLOG_COMPILED_LIB", "-DUZ_PROFILING_ENABLED", "-DTRACY_ENABLE", "-DTRACY_ON_DEMAND" };
+        runtime_mod.addCSourceFiles(.{
+            .root = b.path("engine/rhi/metal"),
+            .files = &.{ "metal_device.cpp", "metal_command_list.cpp", "metal_fence.cpp", "metal_gpu_profiler.cpp", "metal_swapchain.mm" },
+            .flags = objcxx_flags,
+        });
+
+        // Tracy Metal wrapper — requires ARC (compiled separately from the rest of the backend)
+        const objcxx_arc_flags = &.{ "-std=c++17", "-ObjC++", "-fobjc-arc", "-DSPDLOG_COMPILED_LIB", "-DUZ_PROFILING_ENABLED", "-DTRACY_ENABLE", "-DTRACY_ON_DEMAND" };
+        runtime_mod.addCSourceFiles(.{
+            .root = b.path("engine/rhi/metal"),
+            .files = &.{"metal_tracy_gpu.mm"},
+            .flags = objcxx_arc_flags,
+        });
+
+        runtime_mod.addIncludePath(b.path("engine/rhi/metal"));
+    }
+
+    // Thirdparty — volk (C source, compiled with VK_NO_PROTOTYPES)
+    runtime_mod.addCSourceFiles(.{
+        .root = b.path(tp ++ "volk"),
+        .files = &.{"volk.c"},
+        .flags = &.{ "-std=c11", "-DVK_NO_PROTOTYPES" },
+    });
+
+    // Thirdparty — fastgltf (C++17 glTF 2.0 parser + bundled simdjson)
+    runtime_mod.addCSourceFiles(.{
+        .root = b.path(tp ++ "fastgltf/deps/simdjson"),
+        .files = &.{"simdjson.cpp"},
+        .flags = &.{"-std=c++17"},
+    });
+    runtime_mod.addCSourceFiles(.{
+        .root = b.path(tp ++ "fastgltf/src"),
+        .files = &.{ "fastgltf.cpp", "base64.cpp", "io.cpp" },
+        .flags = &.{"-std=c++17"},
+    });
+
+    // Thirdparty — meshoptimizer (mesh optimization library)
+    runtime_mod.addCSourceFiles(.{
+        .root = b.path(tp ++ "meshoptimizer/src"),
+        .files = &.{
+            "allocator.cpp",
+            "clusterizer.cpp",
+            "indexcodec.cpp",
+            "indexgenerator.cpp",
+            "overdrawanalyzer.cpp",
+            "overdrawoptimizer.cpp",
+            "quantization.cpp",
+            "simplifier.cpp",
+            "spatialorder.cpp",
+            "stripifier.cpp",
+            "vcacheanalyzer.cpp",
+            "vcacheoptimizer.cpp",
+            "vertexcodec.cpp",
+            "vertexfilter.cpp",
+            "vfetchanalyzer.cpp",
+            "vfetchoptimizer.cpp",
+        },
+        .flags = &.{"-std=c++17"},
+    });
+
+    // Thirdparty — spdlog
+    runtime_mod.addCSourceFiles(.{
+        .root = b.path(tp ++ "spdlog/src"),
+        .files = &.{
+            "spdlog.cpp",
+            "async.cpp",
+            "cfg.cpp",
+            "color_sinks.cpp",
+            "file_sinks.cpp",
+            "stdout_sinks.cpp",
+            "bundled_fmtlib_format.cpp",
+        },
+        .flags = cpp_flags,
+    });
+
+    // Thirdparty — Tracy
+    runtime_mod.addCSourceFiles(.{
+        .root = b.path(tp ++ "tracy/public"),
+        .files = &.{"TracyClient.cpp"},
+        .flags = &.{ "-std=c++17", "-DTRACY_ENABLE", "-DTRACY_ON_DEMAND" },
+    });
+
+    // Thirdparty — basis_universal transcoder
+    runtime_mod.addCSourceFiles(.{
+        .root = b.path(tp ++ "basis_universal/transcoder"),
+        .files = &.{"basisu_transcoder.cpp"},
+        .flags = &.{ "-std=c++17", "-DBASISD_SUPPORT_KTX2_ZSTD=0" },
+    });
+
+    // Thirdparty — miniz (zlib-compatible compression for tinyexr)
+    runtime_mod.addCSourceFiles(.{
+        .root = b.path(tp ++ "tinyexr"),
+        .files = &.{"miniz.c"},
+        .flags = &.{"-std=c11"},
+    });
+
+    // Thirdparty — astcenc (ASTC texture compression, library sources only)
+    runtime_mod.addCSourceFiles(.{
+        .root = b.path(tp ++ "astcenc/Source"),
+        .files = &.{
+            "astcenc_averages_and_directions.cpp",
+            "astcenc_block_sizes.cpp",
+            "astcenc_color_quantize.cpp",
+            "astcenc_color_unquantize.cpp",
+            "astcenc_compress_symbolic.cpp",
+            "astcenc_compute_variance.cpp",
+            "astcenc_decompress_symbolic.cpp",
+            "astcenc_diagnostic_trace.cpp",
+            "astcenc_entry.cpp",
+            "astcenc_find_best_partitioning.cpp",
+            "astcenc_ideal_endpoints_and_weights.cpp",
+            "astcenc_image.cpp",
+            "astcenc_integer_sequence.cpp",
+            "astcenc_mathlib.cpp",
+            "astcenc_mathlib_softfloat.cpp",
+            "astcenc_partition_tables.cpp",
+            "astcenc_percentile_tables.cpp",
+            "astcenc_pick_best_endpoint_format.cpp",
+            "astcenc_quantization.cpp",
+            "astcenc_symbolic_physical.cpp",
+            "astcenc_weight_align.cpp",
+            "astcenc_weight_quant_xfer_tables.cpp",
+        },
+        .flags = &.{"-std=c++17"},
+    });
+
+    // Include paths — runtime root (for "platform/platform_types.h" etc.)
+    runtime_mod.addIncludePath(b.path("."));
+
+    // Include paths — cross-platform
+    for (engine_include_dirs) |dir| runtime_mod.addIncludePath(b.path(dir));
+    for (thirdparty_include_dirs) |dir| runtime_mod.addIncludePath(b.path(dir));
+
+    // Generated shader headers (from uzembed tool)
+    runtime_mod.addIncludePath(b.path("build/generated/shaders"));
+
+    // Include paths — platform-specific
+    if (is_windows) {
+        for (windows_engine_include_dirs) |dir| runtime_mod.addIncludePath(b.path(dir));
+        for (windows_thirdparty_include_dirs) |dir| runtime_mod.addIncludePath(b.path(dir));
+    } else if (target.result.os.tag == .linux) {
+        for (linux_engine_include_dirs) |dir| runtime_mod.addIncludePath(b.path(dir));
+    }
+
+    // Include paths — macOS/iOS
+    if (is_apple) {
+        runtime_mod.addIncludePath(b.path("platform/macos"));
+    }
+
+    const lib = b.addLibrary(.{
+        .linkage = .static,
+        .name = "uzengine_runtime",
+        .root_module = runtime_mod,
+    });
+
+    // Runtime compilation depends on uzembed having run
+    lib.step.dependOn(&run_embed.step);
+
+    // DX12/DX11 system libraries (Windows only)
+    if (is_windows) {
+        lib.linkSystemLibrary("d3d12");
+        lib.linkSystemLibrary("d3d11");
+        lib.linkSystemLibrary("dxgi");
+        lib.linkSystemLibrary("dxguid");
+        lib.linkSystemLibrary("ws2_32");  // Tracy socket profiling
+        lib.linkSystemLibrary("dbghelp"); // Tracy callstack capture
+        lib.linkSystemLibrary("winmm");   // timeBeginPeriod/timeEndPeriod for frame limiter
+        lib.linkSystemLibrary("xinput1_4");  // XInput gamepad support
+        lib.linkSystemLibrary("shcore");      // GetDpiForMonitor (multi-monitor DPI)
+        lib.linkSystemLibrary("ole32");       // OLE drag-drop (OleInitialize, RegisterDragDrop)
+        lib.linkSystemLibrary("shell32");     // Shell_NotifyIconW, SHCreateItemFromParsingName
+        lib.linkSystemLibrary("comdlg32");    // Common dialog support (IFileDialog COM)
+    } else if (target.result.os.tag == .linux) {
+        lib.linkSystemLibrary("X11");
+    }
+
+    // Apple frameworks (macOS/iOS — Metal backend)
+    if (is_apple) {
+        lib.linkFramework("Metal");
+        lib.linkFramework("QuartzCore");
+        lib.linkFramework("Foundation");
+        if (is_macos) {
+            lib.linkFramework("AppKit");
+        } else {
+            lib.linkFramework("UIKit");
+        }
+    }
+
+    b.installArtifact(lib);
+
+    // ── Test executable (links runtime lib — no recompilation) ───────────
+
+    const test_mod = b.createModule(.{
+        .target = target,
+        .optimize = optimize,
+    });
+    test_mod.link_libc = true;
+    test_mod.link_libcpp = true;
+
+    // GoogleTest — compiled from source (gtest-all.cc only, we provide main)
+    const gtest_flags = &.{ "-std=c++17", "-DGTEST_HAS_PTHREAD=0" };
+    test_mod.addCSourceFiles(.{
+        .root = b.path(tp ++ "googletest/googletest/src"),
+        .files = &.{"gtest-all.cc"},
+        .flags = gtest_flags,
+    });
+    test_mod.addIncludePath(b.path(tp ++ "googletest/googletest/include"));
+    test_mod.addIncludePath(b.path(tp ++ "googletest/googletest"));
+
+    // Test sources — auto-discovered via glob
+    addCppDir(test_mod, b, "tests", cpp_flags);
+    addCppDir(test_mod, b, "tests/engine", cpp_flags);
+    addCppDir(test_mod, b, "tests/engine/math", cpp_flags);
+    addCppDir(test_mod, b, "tests/engine/containers", cpp_flags);
+    addCppDir(test_mod, b, "tests/engine/random", cpp_flags);
+    addCppDir(test_mod, b, "tests/engine/paths", cpp_flags);
+    addCppDir(test_mod, b, "tests/engine/asset", cpp_flags);
+    addCppDir(test_mod, b, "tests/engine/shader", cpp_flags);
+    addCppDir(test_mod, b, "tests/engine/renderer", cpp_flags);
+    addCppDir(test_mod, b, "tests/engine/app", cpp_flags);
+    addCppDir(test_mod, b, "tests/engine/job", cpp_flags);
+    addCppDir(test_mod, b, "tests/engine/ecs", cpp_flags);
+    addCppDir(test_mod, b, "tests/engine/event", cpp_flags);
+    addCppDir(test_mod, b, "tests/engine/property", cpp_flags);
+    // Thirdparty image lib tests — disable alignment sanitizer for stb_image_resize2
+    test_mod.addCSourceFiles(.{
+        .root = b.path("tests/thirdparty"),
+        .files = &.{"test_image_libs.cpp"},
+        .flags = &.{ "-std=c++17", "-DSPDLOG_COMPILED_LIB", "-fno-sanitize=alignment" },
+    });
+
+    // Platform-specific test sources
+    if (is_windows) {
+        addCppDir(test_mod, b, "tests/engine/rhi", cpp_flags);
+        addCppDir(test_mod, b, "tests/platform", cpp_flags);
+    } else if (is_apple) {
+        // RHI type tests (cross-platform) + Metal backend tests
+        test_mod.addCSourceFiles(.{
+            .root = b.path("tests/engine/rhi"),
+            .files = &.{
+                "test_rhi_types.cpp",
+                "test_rhi_config.cpp",
+                "test_metal_device.cpp",
+                "test_metal_resources.cpp",
+                "test_metal_render_loop.cpp",
+                "test_metal_gpu_profiler.cpp",
+            },
+            .flags = cpp_flags,
+        });
+    } else {
+        // RHI type tests are cross-platform (no DX12/Metal dependency)
+        test_mod.addCSourceFiles(.{
+            .root = b.path("tests/engine/rhi"),
+            .files = &.{ "test_rhi_types.cpp", "test_rhi_config.cpp" },
+            .flags = cpp_flags,
+        });
+    }
+
+    // Engine + thirdparty headers for tests
+    test_mod.addIncludePath(b.path("."));
+    for (engine_include_dirs) |dir| test_mod.addIncludePath(b.path(dir));
+    for (thirdparty_include_dirs) |dir| test_mod.addIncludePath(b.path(dir));
+    test_mod.addIncludePath(b.path("build/generated/shaders"));
+
+    if (is_windows) {
+        test_mod.addIncludePath(b.path("engine/rhi/dx12"));
+        test_mod.addIncludePath(b.path("engine/rhi/vulkan"));
+        for (windows_engine_include_dirs) |dir| test_mod.addIncludePath(b.path(dir));
+        for (windows_thirdparty_include_dirs) |dir| test_mod.addIncludePath(b.path(dir));
+    } else if (target.result.os.tag == .linux) {
+        test_mod.addIncludePath(b.path("engine/rhi/vulkan"));
+        for (linux_engine_include_dirs) |dir| test_mod.addIncludePath(b.path(dir));
+    }
+
+    if (is_apple) {
+        test_mod.addIncludePath(b.path("engine/rhi/metal"));
+    }
+
+    const test_exe = b.addExecutable(.{
+        .name = "test_runtime",
+        .root_module = test_mod,
+    });
+    test_exe.linkLibrary(lib);
+
+    if (is_windows) {
+        test_exe.linkSystemLibrary("d3d12");
+        test_exe.linkSystemLibrary("d3d11");
+        test_exe.linkSystemLibrary("dxgi");
+        test_exe.linkSystemLibrary("dxguid");
+        test_exe.linkSystemLibrary("ws2_32");
+        test_exe.linkSystemLibrary("dbghelp");
+        test_exe.linkSystemLibrary("winmm");
+        test_exe.linkSystemLibrary("xinput1_4");
+        test_exe.linkSystemLibrary("gdi32");
+        test_exe.linkSystemLibrary("ole32");
+        test_exe.linkSystemLibrary("shcore");
+        test_exe.linkSystemLibrary("shell32");
+        test_exe.linkSystemLibrary("comdlg32");
+    } else if (target.result.os.tag == .linux) {
+        test_exe.linkSystemLibrary("X11");
+    }
+
+    b.installArtifact(test_exe);
+
+    // ── Run tests from the install directory (build/bin/) ─────────────────
+    const run_test = b.addSystemCommand(&.{
+        b.getInstallPath(.bin, "test_runtime.exe"),
+    });
+    run_test.step.dependOn(b.getInstallStep());
+    const test_step = b.step("test", "Run runtime unit tests");
+    test_step.dependOn(&run_test.step);
+
+    // ── Demos & Tools (Windows/DX12 only) ────────────────────────────────
+
+    if (is_windows) {
+        const win_sys_libs = [_][]const u8{ "d3d12", "d3d11", "dxgi", "dxguid", "gdi32", "user32", "xinput1_4", "ole32", "shcore", "shell32", "comdlg32" };
+
+        // Helper to create a tool exe from a single .cpp + agility
+        const tool_names = [_][]const u8{ "uzengine", "uzcook" };
+        for (tool_names) |tool_name| {
+            const tool_mod = b.createModule(.{ .target = target, .optimize = optimize });
+            tool_mod.link_libc = true;
+            tool_mod.link_libcpp = true;
+            tool_mod.addIncludePath(b.path("."));
+            for (engine_include_dirs) |dir| tool_mod.addIncludePath(b.path(dir));
+            for (thirdparty_include_dirs) |dir| tool_mod.addIncludePath(b.path(dir));
+            for (windows_engine_include_dirs) |dir| tool_mod.addIncludePath(b.path(dir));
+            for (windows_thirdparty_include_dirs) |dir| tool_mod.addIncludePath(b.path(dir));
+            tool_mod.addIncludePath(b.path("engine/rhi/dx12"));
+
+            tool_mod.addCSourceFiles(.{
+                .root = b.path("tools"),
+                .files = &.{b.fmt("{s}.cpp", .{tool_name})},
+                .flags = cpp_flags,
+            });
+            tool_mod.addCSourceFiles(.{
+                .root = b.path("engine/rhi/dx12"),
+                .files = &.{"dx12_agility.cpp"},
+                .flags = cpp_flags,
+            });
+
+            const tool_exe = b.addExecutable(.{ .name = tool_name, .root_module = tool_mod });
+            tool_exe.linkLibrary(lib);
+            for (win_sys_libs) |l| tool_exe.linkSystemLibrary(l);
+            b.installArtifact(tool_exe);
+        }
+
+        // Run steps
+        const rt_exe = b.addExecutable(.{ .name = "uzengine_run", .root_module = b.createModule(.{ .target = target, .optimize = optimize }) });
+        _ = rt_exe;
+        const run_step = b.step("run", "Run UzEngine runtime");
+        const run_rt_cmd = b.addSystemCommand(&.{b.getInstallPath(.bin, "uzengine.exe")});
+        run_rt_cmd.step.dependOn(b.getInstallStep());
+        run_step.dependOn(&run_rt_cmd.step);
+
+        const cook_step = b.step("cook", "Run uzcook asset cook tool");
+        const run_cook_cmd = b.addSystemCommand(&.{b.getInstallPath(.bin, "uzcook.exe")});
+        run_cook_cmd.step.dependOn(b.getInstallStep());
+        if (b.args) |a| for (a) |arg| run_cook_cmd.addArg(arg);
+        cook_step.dependOn(&run_cook_cmd.step);
+
+        // ── DLL deployment ───────────────────────────────────────────────
+
+        // Agility SDK
+        b.getInstallStep().dependOn(&b.addInstallBinFile(
+            b.path(tp ++ "agility/bin/x64/D3D12Core.dll"), "D3D12/D3D12Core.dll",
+        ).step);
+        b.getInstallStep().dependOn(&b.addInstallBinFile(
+            b.path(tp ++ "agility/bin/x64/d3d12SDKLayers.dll"), "D3D12/d3d12SDKLayers.dll",
+        ).step);
+
+        // DXC
+        b.getInstallStep().dependOn(&b.addInstallBinFile(
+            b.path(tp ++ "dxc/bin/x64/dxcompiler.dll"), "dxcompiler.dll",
+        ).step);
+        b.getInstallStep().dependOn(&b.addInstallBinFile(
+            b.path(tp ++ "dxc/bin/x64/dxil.dll"), "dxil.dll",
+        ).step);
+
+        // FXC (SM 5.0 fallback + future DX11)
+        b.getInstallStep().dependOn(&b.addInstallBinFile(
+            b.path(tp ++ "fxc/bin/x64/d3dcompiler_47.dll"), "d3dcompiler_47.dll",
+        ).step);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Build helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Scans a directory for all .cpp files (non-recursive) and adds them as
+/// C++ source files to the given module. This replaces manual file lists —
+/// just drop a .cpp in the directory and it gets compiled automatically.
+///
+/// Special handling:
+/// - `dx12_d3d12ma.cpp` gets extra flags to suppress upstream warnings.
+/// - Only .cpp files are collected (not .c or .h).
+fn addCppDir(
+    mod: *std.Build.Module,
+    b: *std.Build,
+    dir: []const u8,
+    flags: []const []const u8,
+) void {
+    // D3D12MA needs special flags to suppress upstream warnings
+    const d3d12ma_flags = &[_][]const u8{
+        "-std=c++17",
+        "-fno-sanitize=undefined",
+        "-Wno-undefined-bool-conversion",
+        "-Wno-switch",
+        "-Wno-unused-private-field",
+    };
+
+    var cpp_files = std.ArrayListUnmanaged([]const u8){};
+
+    var d3d12ma_found = false;
+
+    const resolved = b.path(dir);
+    var iter_dir = std.fs.openDirAbsolute(resolved.getPath(b), .{ .iterate = true }) catch return;
+    defer iter_dir.close();
+
+    var iter = iter_dir.iterate();
+    while (iter.next() catch null) |entry| {
+        if (entry.kind != .file) continue;
+        const name = entry.name;
+        if (!std.mem.endsWith(u8, name, ".cpp")) continue;
+
+        // D3D12MA wrapper gets its own flags
+        if (std.mem.eql(u8, name, "dx12_d3d12ma.cpp")) {
+            d3d12ma_found = true;
+            continue;
+        }
+
+        cpp_files.append(b.allocator, b.allocator.dupe(u8, name) catch @panic("OOM")) catch @panic("OOM");
+    }
+
+    if (cpp_files.items.len > 0) {
+        const files_slice = b.allocator.dupe([]const u8, cpp_files.items) catch @panic("OOM");
+        mod.addCSourceFiles(.{
+            .root = b.path(dir),
+            .files = files_slice,
+            .flags = flags,
+        });
+    }
+
+    if (d3d12ma_found) {
+        mod.addCSourceFiles(.{
+            .root = b.path(dir),
+            .files = &.{"dx12_d3d12ma.cpp"},
+            .flags = d3d12ma_flags,
+        });
+    }
+}

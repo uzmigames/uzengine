@@ -1,0 +1,7 @@
+# Build artifacts (Zig + CMake)
+.zig-cache/
+build/
+demos/**/*.png
+
+# vcpkg build artifacts (large, reproducible via setup.ps1)
+thirdparty/vcpkg/

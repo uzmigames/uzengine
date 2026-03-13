@@ -1,0 +1,9 @@
+.{
+    .name = .clear_screen_demo,
+    .version = "0.2.0",
+    .fingerprint = 0x3ea4a13e8197568e,
+    .dependencies = .{
+        .uz_demo_common = .{ .path = "../common" },
+    },
+    .paths = .{"build.zig"},
+}

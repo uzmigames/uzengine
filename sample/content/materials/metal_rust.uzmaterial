@@ -1,0 +1,23 @@
+{
+  "name": "MetalRust",
+  "version": "1.0",
+  "shading_model": "default_lit",
+  "blend_mode": "opaque",
+  "two_sided": false,
+  "properties": {
+    "base_color": [0.56, 0.29, 0.15],
+    "metallic": 0.9,
+    "roughness": 0.65,
+    "normal_strength": 1.2
+  },
+  "textures": {
+    "base_color_map": "content/textures/metal_rust_albedo.png",
+    "normal_map": "content/textures/metal_rust_normal.png",
+    "metallic_map": "content/textures/metal_rust_metallic.png",
+    "roughness_map": "content/textures/metal_rust_roughness.png"
+  },
+  "tiling": {
+    "u": 1.0,
+    "v": 1.0
+  }
+}

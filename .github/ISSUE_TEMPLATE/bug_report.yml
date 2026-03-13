@@ -1,0 +1,104 @@
+name: Bug Report
+description: Report a reproducible defect in UzEngine
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Before filing**: search existing issues to avoid duplicates.
+        Fill in every section that applies — incomplete reports are harder to act on.
+
+  - type: dropdown
+    id: subsystem
+    attributes:
+      label: Subsystem
+      description: Which part of the engine is affected?
+      options:
+        - RHI — DX12
+        - RHI — Vulkan
+        - RHI — Metal
+        - Renderer — Forward Pass
+        - Renderer — Deferred Pipeline
+        - Renderer — Shadows
+        - Renderer — Shaders / HLSL
+        - ECS / Tick System
+        - Platform — Windows
+        - Platform — macOS
+        - Platform — Linux
+        - Build System (Zig)
+        - VSCode Extension
+        - MCP Server
+        - Math / Core
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Clear, concise description of the bug. What went wrong?
+      placeholder: "On startup with a Vulkan backend, the swapchain creation fails silently and the window stays black."
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to Reproduce
+      description: Minimal steps to trigger the bug consistently.
+      placeholder: |
+        1. Set RHI backend to Vulkan in config
+        2. Open the deferred_test demo
+        3. Run `zig build run`
+        4. Observe black window, no error logged
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What should have happened?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: What actually happened? Include log output, assert messages, or crash callstacks if available.
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Fill in what is relevant.
+      value: |
+        - OS:
+        - GPU / Driver:
+        - Zig version (`zig version`):
+        - Engine commit / branch:
+        - Build config (debug / release):
+    validations:
+      required: true
+
+  - type: textarea
+    id: minimal_repro
+    attributes:
+      label: Minimal Reproduction (optional)
+      description: |
+        A minimal demo, test case, or code snippet that isolates the issue.
+        Not required but strongly appreciated — it cuts investigation time significantly.
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
+        - label: I reproduced this on the latest commit of `main`.
+          required: true

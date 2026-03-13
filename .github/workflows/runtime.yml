@@ -1,0 +1,50 @@
+name: Runtime
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "runtime/**"
+  pull_request:
+    branches: [main]
+    paths:
+      - "runtime/**"
+
+concurrency:
+  group: runtime-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Build (Debug)
+        working-directory: runtime
+        run: zig build
+
+      - name: Build (ReleaseFast)
+        working-directory: runtime
+        run: zig build -Doptimize=ReleaseFast
+
+  test:
+    name: Test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.15.2
+
+      - name: Run tests
+        working-directory: runtime
+        run: zig build test

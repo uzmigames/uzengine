@@ -1,0 +1,147 @@
+{
+  "name": "@uzmigames/uzengine-extension",
+  "displayName": "UzEngine",
+  "description": "UzEngine — AAA game engine embedded in VSCode",
+  "version": "0.2.0",
+  "private": true,
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "icon": "icon.png",
+  "categories": [
+    "Other"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "commands": [
+      {
+        "command": "uzengine.start",
+        "title": "UzEngine: Start"
+      }
+    ],
+    "languages": [
+      {
+        "id": "hlsl",
+        "aliases": ["HLSL", "hlsl"],
+        "extensions": [".hlsl", ".hlsli", ".fx", ".fxh"],
+        "configuration": "./language-configuration/hlsl.json",
+        "icon": { "light": "./icons/hlsl.svg", "dark": "./icons/hlsl.svg" }
+      },
+      {
+        "id": "zig",
+        "aliases": ["Zig", "zig"],
+        "extensions": [".zig"],
+        "configuration": "./language-configuration/zig.json",
+        "icon": { "light": "./icons/zig.svg", "dark": "./icons/zig.svg" }
+      },
+      {
+        "id": "uzscene",
+        "aliases": ["UzEngine Scene"],
+        "extensions": [".uzscene"],
+        "icon": { "light": "./icons/uzscene.svg", "dark": "./icons/uzscene.svg" }
+      },
+      {
+        "id": "uzmaterial",
+        "aliases": ["UzEngine Material"],
+        "extensions": [".uzmaterial"],
+        "icon": { "light": "./icons/uzmaterial.svg", "dark": "./icons/uzmaterial.svg" }
+      },
+      {
+        "id": "uzmesh",
+        "aliases": ["UzEngine Mesh"],
+        "extensions": [".uzmesh"],
+        "icon": { "light": "./icons/uzmesh.svg", "dark": "./icons/uzmesh.svg" }
+      },
+      {
+        "id": "uzprefab",
+        "aliases": ["UzEngine Prefab"],
+        "extensions": [".uzprefab"],
+        "icon": { "light": "./icons/uzprefab.svg", "dark": "./icons/uzprefab.svg" }
+      },
+      {
+        "id": "uzproject",
+        "aliases": ["UzEngine Project"],
+        "extensions": [".uzproject"],
+        "icon": { "light": "./icons/uzproject.svg", "dark": "./icons/uzproject.svg" }
+      }
+    ],
+    "grammars": [
+      {
+        "language": "hlsl",
+        "scopeName": "source.hlsl",
+        "path": "./syntaxes/hlsl.tmLanguage.json"
+      },
+      {
+        "language": "zig",
+        "scopeName": "source.zig",
+        "path": "./syntaxes/zig.tmLanguage.json"
+      },
+      {
+        "language": "uzscene",
+        "scopeName": "source.json.uzengine",
+        "path": "./syntaxes/uzengine-json.tmLanguage.json"
+      },
+      {
+        "language": "uzmaterial",
+        "scopeName": "source.json.uzengine",
+        "path": "./syntaxes/uzengine-json.tmLanguage.json"
+      },
+      {
+        "language": "uzmesh",
+        "scopeName": "source.json.uzengine",
+        "path": "./syntaxes/uzengine-json.tmLanguage.json"
+      },
+      {
+        "language": "uzprefab",
+        "scopeName": "source.json.uzengine",
+        "path": "./syntaxes/uzengine-json.tmLanguage.json"
+      },
+      {
+        "language": "uzproject",
+        "scopeName": "source.json.uzengine",
+        "path": "./syntaxes/uzengine-json.tmLanguage.json"
+      },
+      {
+        "scopeName": "markdown.hlsl.codeblock",
+        "path": "./syntaxes/hlsl-markdown-injection.tmLanguage.json",
+        "injectTo": ["text.html.markdown"]
+      },
+      {
+        "scopeName": "markdown.zig.codeblock",
+        "path": "./syntaxes/zig-markdown-injection.tmLanguage.json",
+        "injectTo": ["text.html.markdown"]
+      },
+      {
+        "scopeName": "source.cpp.uzengine",
+        "path": "./syntaxes/uzengine-cpp-injection.tmLanguage.json",
+        "injectTo": ["source.cpp", "source.c"]
+      }
+    ]
+  },
+  "scripts": {
+    "build:ts": "tsc -p .",
+    "build": "npm run build:ts",
+    "lint": "eslint src/",
+    "lint:fix": "eslint src/ --fix",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\"",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "dependencies": {
+    "@vscode/extension-telemetry": "^1.5.0"
+  },
+  "devDependencies": {
+    "@sentry/browser": "^10.43.0",
+    "@types/node": "^25.4.0",
+    "@types/vscode": "^1.110.0",
+    "@typescript-eslint/eslint-plugin": "^8.57.0",
+    "@typescript-eslint/parser": "^8.57.0",
+    "eslint": "^9.39.4",
+    "prettier": "^3.8.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.0.18"
+  }
+}

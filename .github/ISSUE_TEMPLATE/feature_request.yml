@@ -1,0 +1,85 @@
+name: Feature Request
+description: Propose a new feature or meaningful improvement to UzEngine
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Before filing**: check the roadmap in `/docs/` and search existing issues.
+        Large architectural proposals benefit from a Discussion thread before becoming an issue.
+
+  - type: dropdown
+    id: subsystem
+    attributes:
+      label: Target Subsystem
+      description: Which part of the engine would this affect?
+      options:
+        - RHI — DX12
+        - RHI — Vulkan
+        - RHI — Metal
+        - Renderer — Forward Pass
+        - Renderer — Deferred Pipeline
+        - Renderer — Shadows / Lighting
+        - Renderer — Shaders / HLSL
+        - ECS / Tick System
+        - Platform — Windows
+        - Platform — macOS
+        - Platform — Linux
+        - Build System (Zig)
+        - VSCode Extension
+        - MCP Server
+        - Math / Core
+        - New Subsystem
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / Motivation
+      description: |
+        What limitation or gap does this address? Describe the concrete problem, not the solution.
+        If this solves a real use case, describe it.
+      placeholder: "There is no way to query per-object GPU timing, making it impossible to profile individual mesh draw calls."
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed Solution
+      description: |
+        Describe what you want. Include API surface, data structures, or behavioral changes
+        as concretely as you can. Code sketches are welcome.
+      placeholder: |
+        Add a `GpuTimer` RAII type that wraps DX12 timestamp queries.
+        The RHI interface gets `BeginTimestamp()` / `EndTimestamp()` methods.
+        Results are readable via `RHI::ReadTimestamps()` after the frame fence signals.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: What other approaches did you evaluate and why did you prefer this one?
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: Affected Interfaces / Breaking Changes
+      description: |
+        List any public APIs, file formats, or build interfaces this would change or break.
+        Mark new APIs that have no backward-compat concern as "additive only".
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Checklist
+      options:
+        - label: I searched existing issues and this has not been requested before.
+          required: true
+        - label: This fits the project's scope (engine runtime, extension, or MCP layer).
+          required: true
+        - label: I am willing to contribute an implementation or help with review.

@@ -1,0 +1,21 @@
+{
+  "name": "Marble",
+  "version": "1.0",
+  "shading_model": "default_lit",
+  "blend_mode": "opaque",
+  "two_sided": false,
+  "properties": {
+    "base_color": [0.92, 0.91, 0.88],
+    "metallic": 0.0,
+    "roughness": 0.25,
+    "normal_strength": 0.5
+  },
+  "textures": {
+    "base_color_map": "content/textures/marble_albedo.png",
+    "normal_map": "content/textures/marble_normal.png"
+  },
+  "tiling": {
+    "u": 1.0,
+    "v": 1.0
+  }
+}

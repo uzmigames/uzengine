@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uzengine.dev/schemas/uzprefab.schema.json",
+  "title": "UzEngine Prefab",
+  "description": "UzEngine prefab file (.uzprefab) — reusable entity template that can be instantiated into any scene. Same entity structure as .uzscene but represents a single root entity with optional children.",
+  "type": "object",
+  "required": ["name"],
+  "$ref": "uzscene.schema.json#/$defs/entity"
+}

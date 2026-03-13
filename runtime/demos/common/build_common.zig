@@ -1,0 +1,217 @@
+/// UzEngine Demo Build Common — shared build logic for all standalone demos.
+///
+/// Each demo's build.zig imports this module and calls `createDemo()` with its
+/// name and source list. This eliminates ~80 lines of duplicated boilerplate
+/// (include paths, thirdparty paths, system libs, DLL deployment, icon, run step).
+///
+/// Usage from a demo's build.zig:
+/// ```zig
+/// const common = @import("../common/build_common.zig");
+///
+/// pub fn build(b: *std.Build) void {
+///     var demo = common.createDemo(b, .{
+///         .name = "triangle_demo",
+///         .sources = &.{ "main.cpp", "triangle_demo.cpp" },
+///     });
+///     // Add demo-specific extras here if needed:
+///     // demo.mod.addIncludePath(b.path("../common"));
+///     demo.install();
+/// }
+/// ```
+const std = @import("std");
+
+/// Configuration for a demo executable.
+pub const DemoConfig = struct {
+    /// Executable name (without .exe extension).
+    name: []const u8,
+    /// C++ source files relative to the demo directory.
+    sources: []const []const u8,
+    /// Extra C++ source file groups: each entry is { root_path, &.{ files... } }.
+    /// Use for shared sources like fps_camera_controller, editor_grid, etc.
+    extra_sources: []const ExtraSource = &.{},
+    /// Extra include paths beyond the standard engine/thirdparty set.
+    extra_includes: []const []const u8 = &.{},
+    /// Whether to deploy d3dcompiler_47.dll (FXC). Some demos need it, others don't.
+    deploy_fxc: bool = false,
+    /// Extra files to deploy to zig-out/bin/ (e.g., mesh assets).
+    /// Each entry is { source_path, install_subpath }.
+    extra_deploy: []const DeployFile = &.{},
+};
+
+pub const ExtraSource = struct {
+    root: []const u8,
+    files: []const []const u8,
+};
+
+pub const DeployFile = struct {
+    source: []const u8,
+    dest: []const u8,
+};
+
+/// Handle returned by createDemo — call install() to finalize.
+pub const DemoHandle = struct {
+    b: *std.Build,
+    mod: *std.Build.Module,
+    exe: *std.Build.Step.Compile,
+    config: DemoConfig,
+
+    /// Finalize: install artifact, deploy DLLs, create run step.
+    pub fn install(self: *DemoHandle) void {
+        self.b.installArtifact(self.exe);
+        self.deployDlls();
+        self.createRunStep();
+    }
+
+    fn deployDlls(self: *DemoHandle) void {
+        const dlls = [_]struct { src: []const u8, dst: []const u8 }{
+            .{ .src = "../../thirdparty/agility/bin/x64/D3D12Core.dll", .dst = "D3D12/D3D12Core.dll" },
+            .{ .src = "../../thirdparty/agility/bin/x64/d3d12SDKLayers.dll", .dst = "D3D12/d3d12SDKLayers.dll" },
+            .{ .src = "../../thirdparty/dxc/bin/x64/dxcompiler.dll", .dst = "dxcompiler.dll" },
+            .{ .src = "../../thirdparty/dxc/bin/x64/dxil.dll", .dst = "dxil.dll" },
+        };
+        for (dlls) |dll| {
+            self.b.getInstallStep().dependOn(&self.b.addInstallBinFile(
+                self.b.path(dll.src),
+                dll.dst,
+            ).step);
+        }
+
+        if (self.config.deploy_fxc) {
+            self.b.getInstallStep().dependOn(&self.b.addInstallBinFile(
+                self.b.path("../../thirdparty/fxc/bin/x64/d3dcompiler_47.dll"),
+                "d3dcompiler_47.dll",
+            ).step);
+        }
+
+        for (self.config.extra_deploy) |deploy| {
+            self.b.getInstallStep().dependOn(&self.b.addInstallBinFile(
+                self.b.path(deploy.source),
+                deploy.dest,
+            ).step);
+        }
+    }
+
+    fn createRunStep(self: *DemoHandle) void {
+        const exe_path = self.b.getInstallPath(.bin, self.b.fmt("{s}.exe", .{self.config.name}));
+        const run = self.b.addSystemCommand(&.{exe_path});
+        run.step.dependOn(self.b.getInstallStep());
+        const step = self.b.step("run", self.b.fmt("Run the {s}", .{self.config.name}));
+        step.dependOn(&run.step);
+    }
+};
+
+/// Create a demo executable with all standard UzEngine build configuration.
+pub fn createDemo(b: *std.Build, config: DemoConfig) DemoHandle {
+    const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
+
+    const cpp_flags = &.{ "-std=c++17", "-DSPDLOG_COMPILED_LIB" };
+
+    const mod = b.createModule(.{ .target = target, .optimize = optimize });
+    mod.link_libc = true;
+    mod.link_libcpp = true;
+
+    // Demo's own sources
+    mod.addCSourceFiles(.{
+        .root = b.path("."),
+        .files = config.sources,
+        .flags = cpp_flags,
+    });
+
+    // DX12 Agility SDK export (required by all demos)
+    mod.addCSourceFiles(.{
+        .root = b.path("../../engine/rhi/dx12"),
+        .files = &.{"dx12_agility.cpp"},
+        .flags = cpp_flags,
+    });
+
+    // Screenshot capture (shared utility)
+    mod.addCSourceFiles(.{
+        .root = b.path("../../editor/screenshot"),
+        .files = &.{"screenshot_capture.cpp"},
+        .flags = cpp_flags,
+    });
+
+    // Extra source groups
+    for (config.extra_sources) |src| {
+        mod.addCSourceFiles(.{
+            .root = b.path(src.root),
+            .files = src.files,
+            .flags = cpp_flags,
+        });
+    }
+
+    // Engine include paths
+    const engine_dirs = [_][]const u8{
+        "../..",
+        "../../engine/app",
+        "../../engine/logging",
+        "../../engine/assertions",
+        "../../engine/profiling",
+        "../../engine/memory",
+        "../../engine/config",
+        "../../engine/math",
+        "../../engine/containers",
+        "../../engine/random",
+        "../../engine/rhi",
+        "../../engine/shader",
+        "../../engine/paths",
+        "../../engine/renderer",
+        "../../engine/renderer/render_graph",
+        "../../engine/asset",
+        "../../platform/windows",
+        "../../engine/rhi/dx12",
+        "../../engine/rhi/dx11",
+        "../../engine/rhi/vulkan",
+        "../../editor/screenshot",
+    };
+    for (engine_dirs) |dir| mod.addIncludePath(b.path(dir));
+
+    // Thirdparty include paths
+    const tp_dirs = [_][]const u8{
+        "../../thirdparty/spdlog/include",
+        "../../thirdparty/tracy/public",
+        "../../thirdparty/mimalloc/include",
+        "../../thirdparty/directxmath/Inc",
+        "../../thirdparty/glm",
+        "../../thirdparty/nlohmann",
+        "../../thirdparty/atomic_queue/include",
+        "../../thirdparty/spirv-reflect",
+        "../../thirdparty/spirv-reflect/include",
+        "../../thirdparty/xxhash",
+        "../../thirdparty/stb",
+        "../../thirdparty/tinyexr",
+        "../../thirdparty/libjpeg-turbo",
+        "../../thirdparty/basis_universal/transcoder",
+        "../../thirdparty/astcenc/Source",
+        "../../thirdparty/d3d12ma/include",
+        "../../thirdparty/directx_headers/include",
+        "../../thirdparty/directx_headers/include/directx",
+        "../../thirdparty/agility/include",
+        "../../thirdparty/dxc/inc",
+        "../../thirdparty/vulkan_headers/include",
+        "../../thirdparty/volk",
+        "../../thirdparty/vma/include",
+    };
+    for (tp_dirs) |dir| mod.addIncludePath(b.path(dir));
+
+    // Demo's own directory
+    mod.addIncludePath(b.path("."));
+
+    // Extra include paths
+    for (config.extra_includes) |dir| mod.addIncludePath(b.path(dir));
+
+    // Link pre-compiled runtime lib
+    mod.addObjectFile(b.path("../../build/lib/uzengine_runtime.lib"));
+
+    // Application icon
+    mod.addWin32ResourceFile(.{ .file = b.path("../common/app.rc") });
+
+    const exe = b.addExecutable(.{ .name = config.name, .root_module = mod });
+
+    // System libraries
+    const sys_libs = [_][]const u8{ "d3d12", "d3d11", "dxgi", "dxguid", "gdi32", "user32", "ws2_32", "dbghelp", "winmm", "shcore", "xinput1_4" };
+    for (sys_libs) |l| exe.linkSystemLibrary(l);
+
+    return .{ .b = b, .mod = mod, .exe = exe, .config = config };
+}

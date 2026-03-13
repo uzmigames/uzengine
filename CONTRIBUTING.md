@@ -1,0 +1,243 @@
+# Contributing to UzEngine
+
+UzEngine is a AAA-grade game engine embedded in VSCode, built in C++ with a Zig build system and TypeScript extension layer. Contributions are welcome across all subsystems.
+
+---
+
+## Table of Contents
+
+- [Before You Start](#before-you-start)
+- [Project Structure](#project-structure)
+- [Building](#building)
+- [Code Standards](#code-standards)
+- [Testing Requirements](#testing-requirements)
+- [Commit Conventions](#commit-conventions)
+- [Pull Request Process](#pull-request-process)
+- [Specialist Areas](#specialist-areas)
+
+---
+
+## Before You Start
+
+1. **Search open issues and PRs** before filing a new one — duplicates slow everyone down.
+2. **For large changes**, open a discussion issue first. Architectural work that lands without prior agreement will likely be asked to be redesigned.
+3. **Read the docs** in `/docs/` — especially `docs/ARCHITECTURE.md` — before touching core systems.
+4. **Agree to the Code of Conduct** (see `CODE_OF_CONDUCT.md`). All contributors are expected to uphold it.
+
+---
+
+## Project Structure
+
+```
+runtime/          C++ engine library (RHI, ECS, Renderer, Platform, etc.)
+  engine/         Core engine systems
+  platform/       OS abstraction layers (Windows, macOS, Linux)
+  shaders/        HLSL source files
+  tests/          Tests mirror source structure (tests/engine/, tests/platform/, …)
+  build.zig       Zig build script — builds engine lib, tests, and tools only
+extension/        TypeScript VSCode extension
+mcp/              Node.js MCP server
+docs/             All documentation (never put docs inside runtime/)
+.github/          CI workflows and issue/PR templates
+```
+
+---
+
+## Building
+
+### Prerequisites
+
+| Tool | Version | Purpose |
+|------|---------|---------|
+| Zig  | 0.14.x  | Build system |
+| MSVC / Clang | Latest | C++20 compiler |
+| DXC  | Agility SDK 614+ | Shader compilation |
+| Node.js | 22.x | Extension and MCP |
+
+### Build Commands
+
+```bash
+# Build the runtime library
+zig build
+
+# Build and run all tests
+zig build test
+
+# Build a specific demo (each demo is standalone)
+cd runtime/demos/<demo_name>
+zig build
+
+# Extension
+cd extension
+npm install
+npm run build
+
+# MCP server
+cd mcp
+npm install
+npm run build
+```
+
+> **Note**: Demos are standalone — each `demos/<name>/` has its own `build.zig`. Do **not** register demos in the root `runtime/build.zig`.
+
+### First-Time Setup
+
+1. Deploy `dxcompiler.dll` + `dxil.dll` to `zig-out/bin/`
+2. Deploy `D3D12Core.dll` to `zig-out/bin/D3D12/`
+3. Verify with `zig build test` — all tests must pass before your first PR.
+
+---
+
+## Code Standards
+
+### Language: C++ (engine)
+
+- **Standard**: C++20, no compiler extensions.
+- **Max file size**: 1 500 lines. Split proactively at ~1 000.
+- **Single responsibility**: one file = one concern. If a file does two things, split it.
+- **Naming**: `snake_case` for files (`gbuffer_pass.h`), `PascalCase` for types, `camelCase` for locals, `kConstantName` for `constexpr` constants.
+- **No raw `new`/`malloc`** in engine code — use engine allocators.
+- **No raw `assert()`** — use `UZ_CHECK` / `UZ_ENSURE`.
+- **No `spdlog::` calls** — use `UZ_LOG(Category, Level, ...)`.
+- **No hardcoded paths** — use `uz::GetExeDir()` / `uz::ResolveEngineResource()`.
+
+### Documentation Comments
+
+All exported types and functions **must** carry Rust-style doc comments:
+
+```cpp
+/// Resolves a VFS-relative path to an absolute filesystem path.
+///
+/// The path uses forward slashes (e.g., "shaders/pbr.uzshader").
+/// Resolution is relative to the engine's resource root, not CWD.
+///
+/// # Returns
+/// - Absolute path string on success.
+/// - Empty string if the path escapes the resource root.
+///
+/// # Errors
+/// Logs `Asset::Error` with the rejected path on failure.
+std::string ResolveEngineResource(std::string_view vfs_path);
+```
+
+One-liner descriptions that say nothing useful ("Reads a file.") are rejected in review.
+
+### Sections within files
+
+Use separator comments to group logical sections:
+
+```cpp
+// ─────────────────────────────────────────────────────────────────────────────
+// GBuffer Pass — writes albedo/normal/roughness/metallic to MRT
+// ─────────────────────────────────────────────────────────────────────────────
+```
+
+### Profiling and observability
+
+- Wrap per-frame and per-draw functions with `UZ_PROFILE_SCOPE`.
+- Log every system init/shutdown with timing.
+- Expose subsystem health via `StatCounter`.
+
+### Language: TypeScript (extension)
+
+- Strict mode (`"strict": true`).
+- Explicit return types on all exported functions.
+- No `any` — use `unknown` with narrowing.
+- Follow existing patterns in `extension/src/`.
+
+---
+
+## Testing Requirements
+
+- **Minimum coverage**: 95 % for all new code.
+- Tests live in `runtime/tests/` and **mirror** the source tree:
+  - `runtime/engine/renderer/passes/gbuffer_pass.cpp` →
+    `runtime/tests/engine/renderer/test_gbuffer_pass.cpp`
+- **No monolithic test files** (`test_all.cpp` is forbidden).
+- Tests must **clean up** any files they create — no generated artifacts committed.
+- No placeholder tests (`EXPECT_TRUE(true)`), skipped tests, or weak assertions.
+- Every error path must have a test case.
+
+Run tests:
+
+```bash
+zig build test          # all runtime tests
+npm test                # extension tests
+```
+
+All tests must be green before a PR is opened.
+
+---
+
+## Commit Conventions
+
+UzEngine follows [Conventional Commits](https://www.conventionalcommits.org/).
+
+```
+<type>(<scope>): <short summary>
+
+[optional body]
+
+[optional footer]
+```
+
+**Types**: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`, `perf`, `build`
+
+**Scopes** (use the subsystem name): `rhi`, `renderer`, `ecs`, `platform`, `shader`, `extension`, `mcp`, `build`, `docs`
+
+**Examples**:
+
+```
+feat(renderer): add deferred lighting pass with clustered shading
+fix(rhi): correct IID for IDxcUtils — was using CLSID value
+refactor(ecs): split tick_system into update and fixed_update phases
+test(platform): add file system UTF-8 path coverage
+docs(renderer): document GBuffer layout and slot assignments
+```
+
+Rules:
+- Summary is lowercase, no period at end.
+- Body explains **why**, not what — the diff shows the what.
+- Breaking changes: add `!` after type/scope (`feat(rhi)!: ...`) and a `BREAKING CHANGE:` footer.
+- Keep commits focused — one logical change per commit.
+
+---
+
+## Pull Request Process
+
+1. **Fork** the repository and create a feature branch from `main`.
+2. **Keep PRs small** — large PRs stall. Prefer a series of focused PRs.
+3. **Fill in the PR template** completely. Incomplete templates are closed.
+4. **CI must be green** before requesting review. Do not ask reviewers to look at failing builds.
+5. **One approving review** required from a maintainer before merge.
+6. **Squash or rebase** — no merge commits. The maintainer merges with squash if the branch is messy.
+7. **Delete your branch** after merge.
+
+### What Gets Reviewed
+
+- Correctness and test coverage.
+- Adherence to code standards above (doc comments, engine APIs, file size).
+- Performance implications (allocations, draw calls, frame time).
+- Cross-platform compatibility (Windows/macOS/Linux where applicable).
+
+---
+
+## Specialist Areas
+
+Large subsystems have elevated review standards. Tag the relevant area in your PR description so the right person is looped in:
+
+| Area | Scope tag | Notes |
+|------|-----------|-------|
+| RHI (DX12/Vulkan/Metal) | `rhi` | Must pass barrier validation and all 102+ RHI tests |
+| Render graph / passes | `renderer` | DAG correctness, resource lifetime, no hazards |
+| ECS / game systems | `ecs` | EnTT patterns, tick-budget compliance |
+| Shaders (HLSL) | `shader` | SM6.6 primary; SM5 fallback where noted |
+| Platform layer | `platform` | Win32/Cocoa/POSIX — no leaks, correct cleanup |
+| Build system | `build` | Zig build changes must not break any existing target |
+| Extension / IPC | `extension` | N-API ABI must match Electron version in use |
+
+---
+
+## Questions
+
+Open a [Discussion](../../discussions) for anything that doesn't fit an issue — design questions, "how do I…", or general feedback.

@@ -1,0 +1,201 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uzengine.dev/schemas/uzmaterial.schema.json",
+  "title": "UzEngine Material",
+  "description": "UzEngine material file (.uzmaterial) — PBR material definition with texture bindings, shader parameters, and optional node-based shader graph. Compiles to shader permutations at cook time.",
+  "type": "object",
+  "required": ["name", "shader"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Material display name for editor and debug UI."
+    },
+    "shader": {
+      "type": "string",
+      "description": "Base shader path (.uzshader or .hlsl). Determines the pipeline state and available parameters.",
+      "examples": ["shaders/pbr.hlsl", "shaders/unlit.hlsl"]
+    },
+    "render_state": {
+      "type": "object",
+      "description": "Pipeline state overrides for this material.",
+      "properties": {
+        "blend_mode": {
+          "type": "string",
+          "enum": ["opaque", "alpha_blend", "additive", "premultiplied"],
+          "default": "opaque",
+          "description": "How fragments are blended with the framebuffer."
+        },
+        "cull_mode": {
+          "type": "string",
+          "enum": ["back", "front", "none"],
+          "default": "back",
+          "description": "Which faces to cull. 'none' for double-sided materials."
+        },
+        "depth_test": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable depth testing against the depth buffer."
+        },
+        "depth_write": {
+          "type": "boolean",
+          "default": true,
+          "description": "Write to the depth buffer. Typically disabled for transparent materials."
+        },
+        "stencil": {
+          "type": "object",
+          "description": "Stencil test configuration.",
+          "properties": {
+            "enabled": { "type": "boolean", "default": false },
+            "ref": { "type": "integer", "minimum": 0, "maximum": 255, "default": 0 },
+            "compare": {
+              "type": "string",
+              "enum": ["always", "never", "equal", "not_equal", "less", "less_equal", "greater", "greater_equal"],
+              "default": "always"
+            },
+            "pass_op": {
+              "type": "string",
+              "enum": ["keep", "zero", "replace", "increment", "decrement", "invert"],
+              "default": "keep"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "textures": {
+      "type": "object",
+      "description": "Named texture slot bindings. Keys are slot names matching shader texture parameters.",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["asset"],
+        "properties": {
+          "asset": {
+            "type": "string",
+            "description": "Path to texture asset (.uztexture or source image)."
+          },
+          "sampler": {
+            "type": "string",
+            "enum": ["linear_wrap", "linear_clamp", "point_wrap", "point_clamp", "anisotropic_wrap", "anisotropic_clamp"],
+            "default": "linear_wrap",
+            "description": "Texture sampling mode."
+          },
+          "uv_channel": {
+            "type": "integer",
+            "minimum": 0,
+            "default": 0,
+            "description": "UV channel index from the mesh vertex data."
+          },
+          "tiling": {
+            "type": "array",
+            "items": { "type": "number" },
+            "minItems": 2,
+            "maxItems": 2,
+            "default": [1.0, 1.0],
+            "description": "UV tiling scale [u, v]."
+          },
+          "offset": {
+            "type": "array",
+            "items": { "type": "number" },
+            "minItems": 2,
+            "maxItems": 2,
+            "default": [0.0, 0.0],
+            "description": "UV offset [u, v]."
+          }
+        },
+        "additionalProperties": false
+      },
+      "examples": [{
+        "albedo": { "asset": "textures/brick_albedo.png", "sampler": "anisotropic_wrap" },
+        "normal": { "asset": "textures/brick_normal.png", "sampler": "linear_wrap" },
+        "roughness": { "asset": "textures/brick_roughness.png" }
+      }]
+    },
+    "parameters": {
+      "type": "object",
+      "description": "Scalar, vector, and color shader parameters. Keys match shader cbuffer members. Values are auto-typed: number → float, array[3] → float3, array[4] → float4, boolean → uint.",
+      "additionalProperties": {
+        "oneOf": [
+          { "type": "number" },
+          { "type": "boolean" },
+          {
+            "type": "array",
+            "items": { "type": "number" },
+            "minItems": 2,
+            "maxItems": 4
+          }
+        ]
+      },
+      "examples": [{
+        "base_color": [1.0, 0.5, 0.2, 1.0],
+        "roughness": 0.8,
+        "metallic": 0.0,
+        "emissive_intensity": 0.0,
+        "uv_scale": [2.0, 2.0]
+      }]
+    },
+    "defines": {
+      "type": "object",
+      "description": "Preprocessor defines passed to the shader compiler. Drive shader permutations (e.g., HAS_NORMAL_MAP=1).",
+      "additionalProperties": {
+        "oneOf": [
+          { "type": "string" },
+          { "type": "integer" }
+        ]
+      },
+      "examples": [{
+        "HAS_NORMAL_MAP": 1,
+        "HAS_EMISSIVE": 0,
+        "ALPHA_CUTOFF": 1
+      }]
+    },
+    "shader_graph": {
+      "type": "object",
+      "description": "Optional node-based shader graph for visual material editing. When present, overrides the 'shader' field — the graph compiles to HLSL at cook time.",
+      "properties": {
+        "nodes": {
+          "type": "array",
+          "description": "Graph nodes. Each node is a shader operation (texture sample, math, constant, output).",
+          "items": {
+            "type": "object",
+            "required": ["id", "type"],
+            "properties": {
+              "id": { "type": "string", "description": "Unique node identifier within this graph." },
+              "type": { "type": "string", "description": "Node type (e.g., 'texture_sample', 'multiply', 'lerp', 'constant', 'pbr_output')." },
+              "position": {
+                "type": "array",
+                "items": { "type": "number" },
+                "minItems": 2,
+                "maxItems": 2,
+                "description": "Editor canvas position [x, y] for visual layout."
+              },
+              "properties": {
+                "type": "object",
+                "description": "Node-specific properties (e.g., texture path, constant value, operation mode).",
+                "additionalProperties": true
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "connections": {
+          "type": "array",
+          "description": "Directed edges between node pins.",
+          "items": {
+            "type": "object",
+            "required": ["from_node", "from_pin", "to_node", "to_pin"],
+            "properties": {
+              "from_node": { "type": "string", "description": "Source node ID." },
+              "from_pin": { "type": "string", "description": "Source output pin name." },
+              "to_node": { "type": "string", "description": "Destination node ID." },
+              "to_pin": { "type": "string", "description": "Destination input pin name." }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

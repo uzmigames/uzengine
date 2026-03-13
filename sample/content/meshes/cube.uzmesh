@@ -1,0 +1,19 @@
+{
+  "name": "Cube",
+  "version": "1.0",
+  "vertex_layout": ["position", "normal", "tangent", "uv0"],
+  "bounds": {
+    "min": [-0.5, -0.5, -0.5],
+    "max": [0.5, 0.5, 0.5]
+  },
+  "submeshes": [
+    {
+      "index_offset": 0,
+      "index_count": 36,
+      "material_slot": 0
+    }
+  ],
+  "vertex_count": 24,
+  "index_count": 36,
+  "data": "cube.bin"
+}

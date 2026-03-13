@@ -1,0 +1,67 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uzengine.dev/schemas/uzscene.schema.json",
+  "title": "UzEngine Scene",
+  "description": "UzEngine scene file (.uzscene) — hierarchical entity tree with generic ECS components. Components are NOT hardcoded — the scene file drives which component types exist at runtime (lazy, scene-driven registration). Any component type can appear in the 'components' map as long as a matching ComponentFactory is registered in the engine or a plugin. Component schemas are defined separately and validated by the editor, not by this schema.",
+  "type": "object",
+  "required": ["name", "version", "entities"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Scene display name shown in editor and debug UI."
+    },
+    "version": {
+      "type": "string",
+      "description": "Scene format version (semver). Used for migration when the schema evolves.",
+      "pattern": "^\\d+\\.\\d+(\\.\\d+)?$"
+    },
+    "entities": {
+      "type": "array",
+      "description": "Root-level entities in the scene. Each entity may have children forming a tree.",
+      "items": { "$ref": "#/$defs/entity" }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "entity": {
+      "type": "object",
+      "description": "A single entity in the scene tree. Contains a name, a generic component map, and optional children. Components are key-value pairs where the key is the component type name (e.g., 'transform', 'mesh', 'light', 'my_custom_component') and the value is an arbitrary JSON object whose structure is defined by the component's own schema/factory.",
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Entity display name. Must be unique among siblings for reliable editor/script addressing."
+        },
+        "enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether the entity and all its children are active. Disabled entities are skipped by all systems."
+        },
+        "tags": {
+          "type": "array",
+          "description": "String tags for filtering and grouping (e.g., 'player', 'enemy', 'trigger'). Queryable at runtime via registry.view<TagComponent>().",
+          "items": { "type": "string" }
+        },
+        "layer": {
+          "type": "string",
+          "description": "Collision/render layer name. Used by physics queries and camera culling masks.",
+          "default": "default"
+        },
+        "components": {
+          "type": "object",
+          "description": "Generic component map. Keys are component type names registered in the engine's ComponentFactory registry. Values are arbitrary JSON objects — their structure is component-specific and validated by each component's own schema. The scene loader discovers component types from these keys and lazily registers only the types present in the scene (no components registered at boot). Examples: 'transform', 'mesh', 'light', 'camera', 'rigid_body', 'audio_source', 'script', or any plugin-defined type.",
+          "additionalProperties": {
+            "type": "object",
+            "description": "Component data as a freeform JSON object. Structure depends on the component type. For example, a 'transform' component has position/rotation/scale fields, a 'light' component has type/color/intensity, but the scene schema does not enforce these — component validation is the responsibility of the ComponentFactory."
+          }
+        },
+        "children": {
+          "type": "array",
+          "description": "Child entities forming the transform hierarchy. Children inherit parent's world transform via HierarchyComponent.",
+          "items": { "$ref": "#/$defs/entity" }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

@@ -1,0 +1,153 @@
+/// UzEngine GPU Mesh — Implementation
+
+#include "gpu_mesh.h"
+#include "rhi.h"
+#include "mesh.h"
+#include "upload_context.h"
+#include "log.h"
+
+namespace uz {
+
+UZ_DECLARE_LOG_CATEGORY(Renderer);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// UploadMesh
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Creates a vertex buffer desc appropriate for the device's bindless capability.
+static RHIBufferDesc MakeVertexBufferDesc(IRHIDevice* device, const Mesh& mesh) {
+    RHIBufferDesc desc{};
+    desc.sizeBytes = mesh.GetVertexDataSize();
+    desc.memory    = RHIMemoryType::Default;
+
+    if (device->IsBindless()) {
+        // SM6.6: structured buffer with SRV for bindless vertex fetch
+        desc.usage  = RHIBufferUsage::StructuredBuffer | RHIBufferUsage::CopyDst;
+        desc.stride = mesh.header.vertexStride;
+        desc.debugName = "GPUMesh_VB_Structured";
+    } else {
+        desc.usage  = RHIBufferUsage::VertexBuffer | RHIBufferUsage::CopyDst;
+        desc.stride = mesh.header.vertexStride;
+        desc.debugName = "GPUMesh_VB";
+    }
+
+    return desc;
+}
+
+/// Creates an index buffer desc sized for the mesh's index data.
+static RHIBufferDesc MakeIndexBufferDesc(const Mesh& mesh) {
+    RHIBufferDesc desc{};
+    desc.sizeBytes = mesh.GetIndexDataSize();
+    desc.stride    = (mesh.header.indexFormat == MeshIndexFormat::UInt32) ? 4u : 2u;
+    desc.usage     = RHIBufferUsage::IndexBuffer | RHIBufferUsage::CopyDst;
+    desc.memory    = RHIMemoryType::Default;
+    desc.debugName = "GPUMesh_IB";
+    return desc;
+}
+
+/// Destroys a single buffer handle if valid, then invalidates it.
+static void SafeDestroyBuffer(IRHIDevice* device, RHIBufferHandle& handle) {
+    if (handle.IsValid()) {
+        device->DestroyBuffer(handle);
+        handle = {};
+    }
+}
+
+GPUMesh UploadMesh(IRHIDevice* device, IRHICommandList* cmdList, const Mesh& mesh) {
+    if (!device || !cmdList) {
+        UZ_LOG(Renderer, Error, "UploadMesh: null device or command list");
+        return {};
+    }
+
+    if (!mesh.IsValid()) {
+        UZ_LOG(Renderer, Error, "UploadMesh: invalid mesh (failed IsValid check)");
+        return {};
+    }
+
+    GPUMesh result{};
+
+    // -- Create vertex buffer --
+    const RHIBufferDesc vbDesc = MakeVertexBufferDesc(device, mesh);
+    result.vertexBuffer = device->CreateBuffer(vbDesc);
+    if (!result.vertexBuffer.IsValid()) {
+        UZ_LOG(Renderer, Error, "UploadMesh: failed to create vertex buffer ({} bytes)", vbDesc.sizeBytes);
+        return {};
+    }
+
+    // -- Create index buffer (optional) --
+    const bool hasIndices = mesh.GetIndexCount() > 0;
+    if (hasIndices) {
+        const RHIBufferDesc ibDesc = MakeIndexBufferDesc(mesh);
+        result.indexBuffer = device->CreateBuffer(ibDesc);
+        if (!result.indexBuffer.IsValid()) {
+            UZ_LOG(Renderer, Error, "UploadMesh: failed to create index buffer ({} bytes)", ibDesc.sizeBytes);
+            SafeDestroyBuffer(device, result.vertexBuffer);
+            return {};
+        }
+    }
+
+    // -- Upload via staging buffers --
+    UploadContext upload(device);
+
+    if (!upload.UploadBuffer(cmdList, result.vertexBuffer, mesh.vertexData.data(), mesh.GetVertexDataSize())) {
+        UZ_LOG(Renderer, Error, "UploadMesh: failed to upload vertex data ({} bytes)", mesh.GetVertexDataSize());
+        SafeDestroyBuffer(device, result.vertexBuffer);
+        SafeDestroyBuffer(device, result.indexBuffer);
+        return {};
+    }
+
+    if (hasIndices) {
+        if (!upload.UploadBuffer(cmdList, result.indexBuffer, mesh.indexData.data(), mesh.GetIndexDataSize())) {
+            UZ_LOG(Renderer, Error, "UploadMesh: failed to upload index data ({} bytes)", mesh.GetIndexDataSize());
+            SafeDestroyBuffer(device, result.vertexBuffer);
+            SafeDestroyBuffer(device, result.indexBuffer);
+            return {};
+        }
+    }
+
+    // -- Execute copies and wait for GPU --
+    cmdList->End();
+    cmdList->Execute();
+    device->WaitIdle();
+    upload.ReleaseStaging();
+    cmdList->Begin();
+
+    // -- Populate metadata --
+    result.vertexCount = mesh.GetVertexCount();
+    result.indexCount  = mesh.GetIndexCount();
+    result.indexFormat  = (mesh.header.indexFormat == MeshIndexFormat::UInt16)
+                             ? RHIIndexFormat::Uint16
+                             : RHIIndexFormat::Uint32;
+
+    // -- Bindless SRV index --
+    if (device->IsBindless()) {
+        result.vbSrvIndex = device->GetBufferSRVIndex(result.vertexBuffer);
+    }
+
+    UZ_LOG(Renderer, Info, "UploadMesh: uploaded {} vertices, {} indices (bindless SRV={})",
+           result.vertexCount, result.indexCount,
+           result.vbSrvIndex != UINT32_MAX ? static_cast<int>(result.vbSrvIndex) : -1);
+
+    return result;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DestroyGPUMesh
+// ─────────────────────────────────────────────────────────────────────────────
+
+void DestroyGPUMesh(IRHIDevice* device, GPUMesh& gpuMesh) {
+    if (!device) {
+        UZ_LOG(Renderer, Error, "DestroyGPUMesh: null device");
+        return;
+    }
+
+    SafeDestroyBuffer(device, gpuMesh.vertexBuffer);
+    SafeDestroyBuffer(device, gpuMesh.indexBuffer);
+
+    gpuMesh.vbSrvIndex  = UINT32_MAX;
+    gpuMesh.indexCount   = 0;
+    gpuMesh.vertexCount  = 0;
+    gpuMesh.indexFormat   = RHIIndexFormat::Uint32;
+}
+
+} // namespace uz

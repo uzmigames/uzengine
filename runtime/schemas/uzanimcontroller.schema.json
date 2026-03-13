@@ -1,0 +1,257 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uzengine.dev/schemas/uzanimcontroller.schema.json",
+  "title": "UzEngine Animation Controller",
+  "description": "UzEngine animation controller file (.uzanimcontroller) — state machine and blend tree for skeletal animation blending. Defines states, transitions with blend times, 1D/2D blend trees, and animation layers with masks.",
+  "type": "object",
+  "required": ["name", "skeleton", "layers"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Controller display name."
+    },
+    "skeleton": {
+      "type": "string",
+      "description": "Path to the skeleton asset (.uzskeleton) this controller is built for."
+    },
+    "parameters": {
+      "type": "array",
+      "description": "Runtime parameters that drive state transitions and blend tree weights. Set from gameplay code via ctx.animator:set_parameter().",
+      "items": {
+        "type": "object",
+        "required": ["name", "type"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Parameter name referenced by transitions and blend nodes."
+          },
+          "type": {
+            "type": "string",
+            "enum": ["float", "int", "bool", "trigger"],
+            "description": "Parameter data type. 'trigger' auto-resets to false after consumed by a transition."
+          },
+          "default": {
+            "description": "Default value. Must match the declared type.",
+            "oneOf": [
+              { "type": "number" },
+              { "type": "integer" },
+              { "type": "boolean" }
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "layers": {
+      "type": "array",
+      "description": "Animation layers evaluated in order. Each layer has its own state machine and optional bone mask. Layer 0 is the base layer.",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["name", "states"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Layer name (e.g., 'base', 'upper_body', 'face')."
+          },
+          "blend_mode": {
+            "type": "string",
+            "enum": ["override", "additive"],
+            "default": "override",
+            "description": "How this layer combines with layers below. 'override' replaces. 'additive' adds deltas."
+          },
+          "weight": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "default": 1.0,
+            "description": "Layer blend weight. 0 = fully transparent, 1 = fully applied."
+          },
+          "bone_mask": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Bone names affected by this layer. If omitted, all bones are affected. Used for upper/lower body splits."
+          },
+          "default_state": {
+            "type": "string",
+            "description": "Name of the initial state when the controller starts. Defaults to the first state."
+          },
+          "states": {
+            "type": "array",
+            "description": "State machine states. Each state plays an animation or evaluates a blend tree.",
+            "minItems": 1,
+            "items": { "$ref": "#/$defs/state" }
+          },
+          "transitions": {
+            "type": "array",
+            "description": "Directed transitions between states, triggered by parameter conditions.",
+            "items": { "$ref": "#/$defs/transition" }
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "state": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Unique state name within this layer."
+        },
+        "type": {
+          "type": "string",
+          "enum": ["clip", "blend_tree_1d", "blend_tree_2d"],
+          "default": "clip",
+          "description": "State type. 'clip' plays a single animation. 'blend_tree_1d/2d' blends multiple clips by parameter."
+        },
+        "animation": {
+          "type": "string",
+          "description": "Path to animation sequence (.uzanimsequence). Used when type is 'clip'."
+        },
+        "speed": {
+          "type": "number",
+          "default": 1.0,
+          "description": "Playback speed multiplier. Negative values play in reverse."
+        },
+        "loop": {
+          "type": "boolean",
+          "default": true,
+          "description": "Whether the animation loops. One-shot states (attacks, reactions) set this to false."
+        },
+        "blend_tree": {
+          "$ref": "#/$defs/blend_tree",
+          "description": "Blend tree definition. Used when type is 'blend_tree_1d' or 'blend_tree_2d'."
+        },
+        "position": {
+          "type": "array",
+          "items": { "type": "number" },
+          "minItems": 2,
+          "maxItems": 2,
+          "description": "Editor canvas position [x, y] for visual layout."
+        }
+      },
+      "additionalProperties": false
+    },
+    "blend_tree": {
+      "type": "object",
+      "required": ["parameter", "entries"],
+      "properties": {
+        "parameter": {
+          "type": "string",
+          "description": "Parameter name driving the blend (must be a float parameter). For 2D, this is the X axis."
+        },
+        "parameter_y": {
+          "type": "string",
+          "description": "Second parameter for 2D blend trees (Y axis). Only used when parent state type is 'blend_tree_2d'."
+        },
+        "entries": {
+          "type": "array",
+          "description": "Blend entries positioned along the parameter axis. Runtime interpolates between the two nearest entries.",
+          "minItems": 2,
+          "items": {
+            "type": "object",
+            "required": ["animation", "threshold"],
+            "properties": {
+              "animation": {
+                "type": "string",
+                "description": "Path to animation sequence (.uzanimsequence)."
+              },
+              "threshold": {
+                "type": "number",
+                "description": "Position on the blend axis. For 1D: scalar value. For 2D: X coordinate."
+              },
+              "threshold_y": {
+                "type": "number",
+                "description": "Y coordinate for 2D blend trees."
+              },
+              "speed": {
+                "type": "number",
+                "default": 1.0,
+                "description": "Playback speed multiplier for this entry."
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "transition": {
+      "type": "object",
+      "required": ["from", "to"],
+      "properties": {
+        "from": {
+          "type": "string",
+          "description": "Source state name. Use '*' for 'any state' transitions."
+        },
+        "to": {
+          "type": "string",
+          "description": "Destination state name."
+        },
+        "duration": {
+          "type": "number",
+          "minimum": 0,
+          "default": 0.2,
+          "description": "Cross-fade blend duration in seconds."
+        },
+        "offset": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 0,
+          "description": "Normalized start offset in the destination animation [0..1]."
+        },
+        "interruption": {
+          "type": "string",
+          "enum": ["none", "current", "next", "both"],
+          "default": "none",
+          "description": "Whether this transition can be interrupted by another. 'current' = by source state's transitions, 'next' = by destination's."
+        },
+        "conditions": {
+          "type": "array",
+          "description": "All conditions must be true for the transition to fire (AND logic).",
+          "items": {
+            "type": "object",
+            "required": ["parameter", "comparison"],
+            "properties": {
+              "parameter": {
+                "type": "string",
+                "description": "Parameter name to evaluate."
+              },
+              "comparison": {
+                "type": "string",
+                "enum": ["greater", "less", "equal", "not_equal", "true", "false"],
+                "description": "Comparison operator. 'true'/'false' for bool/trigger parameters."
+              },
+              "value": {
+                "description": "Comparison value. Not required for 'true'/'false' comparisons.",
+                "oneOf": [
+                  { "type": "number" },
+                  { "type": "integer" },
+                  { "type": "boolean" }
+                ]
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "has_exit_time": {
+          "type": "boolean",
+          "default": false,
+          "description": "If true, transition only fires after the source animation reaches exit_time."
+        },
+        "exit_time": {
+          "type": "number",
+          "minimum": 0,
+          "default": 1.0,
+          "description": "Normalized time [0..1] in source animation at which exit is allowed. 1.0 = end of animation."
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

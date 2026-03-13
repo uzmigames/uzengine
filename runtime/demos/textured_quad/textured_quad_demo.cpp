@@ -1,0 +1,646 @@
+/// Textured Quad Demo Implementation — Backend-Agnostic
+///
+/// Renders a procedural checkerboard quad using only abstract RHI interfaces.
+/// Automatically selects SM6.6 bindless or SM5 Input Assembler path based on
+/// GPU capabilities. Validates the full texture upload pipeline:
+/// staging buffer → CopyBufferToTexture → SRV access.
+
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#endif
+
+#include "textured_quad_demo.h"
+#include "rhi.h"
+#include "rhi_backend.h"
+#include "rhi_config.h"
+#include "rhi_types.h"
+#include "platform_window.h"
+#include "log.h"
+#include "vertex.h"
+#include "upload_context.h"
+#include "paths.h"
+
+#ifdef _WIN32
+#include "shader_pipeline.h"
+#include "shader_compiler.h"
+#include "shader_compiler_fxc.h"
+#include "screenshot_capture.h"
+#include "render_graph_builder.h"
+#include "render_graph_resources.h"
+#endif
+
+#include <chrono>
+#include <cstdlib>
+#include <cstring>
+#include <string>
+#include <thread>
+#include <vector>
+
+namespace uz {
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Embedded MSL Shaders (macOS only)
+// ─────────────────────────────────────────────────────────────────────────────
+
+#if defined(__APPLE__)
+
+/// MSL vertex shader — passes position, color, and UVs through (NDC space).
+static const char kTexturedQuadVSSource[] = R"msl(
+#include <metal_stdlib>
+using namespace metal;
+
+struct VertexIn {
+    float3 position [[attribute(0)]];
+    float4 color    [[attribute(1)]];
+    float2 texcoord [[attribute(2)]];
+};
+
+struct VertexOut {
+    float4 position [[position]];
+    float4 color;
+    float2 texcoord;
+};
+
+vertex VertexOut vertex_main(VertexIn in [[stage_in]]) {
+    VertexOut out;
+    out.position = float4(in.position, 1.0);
+    out.color    = in.color;
+    out.texcoord = in.texcoord;
+    return out;
+}
+)msl";
+
+/// MSL pixel shader — samples texture and modulates by vertex color.
+///
+/// Uses direct texture binding: `[[texture(0)]]` and `[[sampler(0)]]`.
+/// These are bound via `SetFragmentTexture(0, ...)` and `SetFragmentSampler(0, ...)`.
+static const char kTexturedQuadPSSource[] = R"msl(
+#include <metal_stdlib>
+using namespace metal;
+
+struct FragmentIn {
+    float4 position [[position]];
+    float4 color;
+    float2 texcoord;
+};
+
+fragment float4 fragment_main(FragmentIn in [[stage_in]],
+                               texture2d<float> tex [[texture(0)]],
+                               sampler samp [[sampler(0)]]) {
+    float4 texColor = tex.sample(samp, in.texcoord);
+    return texColor * in.color;
+}
+)msl";
+
+#endif // __APPLE__
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Procedural Checkerboard Texture
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Generates a 256x256 RGBA8 checkerboard pattern.
+///
+/// Each tile is 32x32 pixels, alternating between two colors.
+/// Returns tightly-packed pixel data (no row padding).
+static std::vector<uint8_t> GenerateCheckerboard(uint32_t width, uint32_t height,
+                                                  uint32_t tileSize) {
+    std::vector<uint8_t> pixels(width * height * 4);
+    for (uint32_t y = 0; y < height; ++y) {
+        for (uint32_t x = 0; x < width; ++x) {
+            const bool isWhite = ((x / tileSize) + (y / tileSize)) % 2 == 0;
+            const uint32_t idx = (y * width + x) * 4;
+            pixels[idx + 0] = isWhite ? 240 : 40;   // R
+            pixels[idx + 1] = isWhite ? 240 : 40;   // G
+            pixels[idx + 2] = isWhite ? 240 : 200;  // B — slight blue tint on dark tiles
+            pixels[idx + 3] = 255;                   // A
+        }
+    }
+    return pixels;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Quad Geometry
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Returns 6 vertices forming a quad (two triangles).
+/// UVs map [0,0] at top-left to [1,1] at bottom-right.
+static void GetQuadVertices(SimpleVertex outVerts[6]) {
+    // Triangle 1: top-left, top-right, bottom-left
+    outVerts[0] = { { -0.8f,  0.8f, 0.0f }, { 1, 1, 1, 1 }, { 0.0f, 0.0f } };
+    outVerts[1] = { {  0.8f,  0.8f, 0.0f }, { 1, 1, 1, 1 }, { 1.0f, 0.0f } };
+    outVerts[2] = { { -0.8f, -0.8f, 0.0f }, { 1, 1, 1, 1 }, { 0.0f, 1.0f } };
+    // Triangle 2: top-right, bottom-right, bottom-left
+    outVerts[3] = { {  0.8f,  0.8f, 0.0f }, { 1, 1, 1, 1 }, { 1.0f, 0.0f } };
+    outVerts[4] = { {  0.8f, -0.8f, 0.0f }, { 1, 1, 1, 1 }, { 1.0f, 1.0f } };
+    outVerts[5] = { { -0.8f, -0.8f, 0.0f }, { 1, 1, 1, 1 }, { 0.0f, 1.0f } };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Root constants layout — must match HLSL cbuffer RootConstants : register(b0)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Bindless root constants pushed to the GPU each frame.
+/// Only used on the SM6.6 path — SM5 binds via SetVertexBuffer + SetDescriptorTable.
+struct RootConstants {
+    uint32_t vertexBufferIndex;
+    uint32_t textureIndex;
+    uint32_t samplerIndex;
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Main Demo
+// ─────────────────────────────────────────────────────────────────────────────
+
+static constexpr uint32_t kFramesInFlight = 3;
+static constexpr uint32_t kTexWidth = 256;
+static constexpr uint32_t kTexHeight = 256;
+static constexpr uint32_t kTileSize = 32;
+
+bool RunTexturedQuadDemo(const TexturedQuadConfig& config) {
+    const RHIBackend backend = config.backend;
+    const uint32_t frameCount = config.frameCount;
+
+    // ── Window ───────────────────────────────────────────────────────────
+    WindowDesc winDesc{};
+    winDesc.title = "UzEngine — Textured Quad Demo";
+    winDesc.width = 1280;
+    winDesc.height = 720;
+
+    PlatformWindow window;
+    if (!window.Create(winDesc)) {
+        UZ_LOG(Renderer, Error, "Failed to create window");
+        return false;
+    }
+    window.Show();
+
+    // ── Device ───────────────────────────────────────────────────────────
+    RHIDeviceDesc deviceDesc{};
+    deviceDesc.backend = backend;
+#ifdef NDEBUG
+    deviceDesc.enableValidation = false;
+#else
+    deviceDesc.enableValidation = true;
+#endif
+
+    if (const char* env = std::getenv("UZ_FORCE_SM5"); env && std::string(env) == "1") {
+        deviceDesc.forceShaderModel = ShaderModel::SM5_0;
+    }
+
+    IRHIDevice* device = CreateRHIDevice(deviceDesc);
+    if (!device) {
+        UZ_LOG(Renderer, Error, "Failed to create RHI device (backend={})",
+               static_cast<int>(backend));
+        return false;
+    }
+
+    // ── Swapchain ────────────────────────────────────────────────────────
+    RHISwapChainDesc scDesc{};
+    scDesc.windowHandle = window.GetNativeHandle();
+    scDesc.displayHandle = window.GetNativeDisplayHandle();
+    scDesc.width = static_cast<uint32_t>(window.GetWidth());
+    scDesc.height = static_cast<uint32_t>(window.GetHeight());
+    scDesc.bufferCount = kFramesInFlight;
+    scDesc.format = RHIFormat::RGBA8Unorm;
+    scDesc.vsync = false;
+
+    IRHISwapChain* swapChain = device->CreateSwapChain(scDesc);
+    if (!swapChain) {
+        UZ_LOG(Renderer, Error, "Failed to create swapchain");
+        DestroyRHIDevice(device);
+        return false;
+    }
+
+    // ── Command Lists ────────────────────────────────────────────────────
+    IRHICommandList* cmdList = device->CreateCommandList(RHIQueueType::Graphics);
+    IRHICommandList* copyCmdList = device->CreateCommandList(RHIQueueType::Graphics);
+    if (!cmdList || !copyCmdList) {
+        UZ_LOG(Renderer, Error, "Failed to create command lists");
+        DestroyRHIDevice(device);
+        return false;
+    }
+
+    // ── Fences ───────────────────────────────────────────────────────────
+    IRHIFence* frameFences[kFramesInFlight] = {};
+    uint64_t fenceValues[kFramesInFlight] = {};
+    for (uint32_t i = 0; i < kFramesInFlight; ++i) {
+        frameFences[i] = device->CreateFence();
+        if (!frameFences[i]) {
+            UZ_LOG(Renderer, Error, "Failed to create frame fence {}", i);
+            for (uint32_t j = 0; j < i; ++j) device->DestroyFence(frameFences[j]);
+            device->DestroyCommandList(copyCmdList);
+            device->DestroyCommandList(cmdList);
+            device->DestroySwapChain(swapChain);
+            DestroyRHIDevice(device);
+            return false;
+        }
+    }
+
+    // ── Shaders ────────────────────────────────────────────────────────────
+#if defined(__APPLE__)
+    const bool bindless = false;
+#else
+    const bool bindless = device->IsBindless();
+#endif
+
+    RHIShaderHandle vsHandle{};
+    RHIShaderHandle psHandle{};
+
+#ifdef _WIN32
+    ShaderCompiler compiler;
+    if (!compiler.Init()) {
+        UZ_LOG(Renderer, Error, "Failed to init shader compiler");
+        return false;
+    }
+
+    ShaderPipeline shaderPipeline;
+    ShaderPipeline::Config pipelineCfg;
+    pipelineCfg.cacheDir = (uz::GetExeDir() / "cache/shaders").string();
+    pipelineCfg.targetBackend = bindless ? "dx12_sm66" : "dx12_sm50";
+    pipelineCfg.bindless = bindless;
+    shaderPipeline.Init(pipelineCfg);
+    shaderPipeline.SetCompiler(&compiler);
+
+    ShaderCompilerFXC compilerFXC;
+    if (!bindless) {
+        if (!compilerFXC.Init()) {
+            UZ_LOG(Renderer, Error, "Failed to init FXC shader compiler");
+            return false;
+        }
+        shaderPipeline.SetCompilerFXC(&compilerFXC);
+    }
+
+    const std::string shadersDir = (uz::GetExeDir() / "../../shaders").string();
+    shaderPipeline.Mount("/demo/textured_quad", shadersDir);
+
+    auto vsBytecode = shaderPipeline.LoadBytecode("/demo/textured_quad/textured_vs.hlsl", "");
+    auto psBytecode = shaderPipeline.LoadBytecode("/demo/textured_quad/textured_ps.hlsl", "");
+    if (vsBytecode.empty() || psBytecode.empty()) {
+        UZ_LOG(Renderer, Error, "Failed to load shaders via pipeline");
+        return false;
+    }
+    UZ_LOG(Renderer, Info, "Shaders loaded: VS={} bytes, PS={} bytes",
+           vsBytecode.size(), psBytecode.size());
+
+    {
+        RHIShaderDesc vsDesc{};
+        vsDesc.bytecode = vsBytecode.data();
+        vsDesc.bytecodeSize = vsBytecode.size();
+        vsDesc.stage = RHIShaderStage::Vertex;
+        vsDesc.entryPoint = "main";
+        vsDesc.debugName = "textured_vs";
+
+        RHIShaderDesc psDesc{};
+        psDesc.bytecode = psBytecode.data();
+        psDesc.bytecodeSize = psBytecode.size();
+        psDesc.stage = RHIShaderStage::Pixel;
+        psDesc.entryPoint = "main";
+        psDesc.debugName = "textured_ps";
+
+        vsHandle = device->CreateShader(vsDesc);
+        psHandle = device->CreateShader(psDesc);
+    }
+#elif defined(__APPLE__)
+    {
+        RHIShaderDesc vsDesc{};
+        vsDesc.bytecode = reinterpret_cast<const uint8_t*>(kTexturedQuadVSSource);
+        vsDesc.bytecodeSize = sizeof(kTexturedQuadVSSource) - 1;
+        vsDesc.stage = RHIShaderStage::Vertex;
+        vsDesc.entryPoint = "vertex_main";
+        vsDesc.debugName = "textured_quad_vs_msl";
+
+        RHIShaderDesc psDesc{};
+        psDesc.bytecode = reinterpret_cast<const uint8_t*>(kTexturedQuadPSSource);
+        psDesc.bytecodeSize = sizeof(kTexturedQuadPSSource) - 1;
+        psDesc.stage = RHIShaderStage::Pixel;
+        psDesc.entryPoint = "fragment_main";
+        psDesc.debugName = "textured_quad_ps_msl";
+
+        vsHandle = device->CreateShader(vsDesc);
+        psHandle = device->CreateShader(psDesc);
+    }
+#endif
+
+    if (!vsHandle.IsValid() || !psHandle.IsValid()) {
+        UZ_LOG(Renderer, Error, "Failed to create shader handles");
+        return false;
+    }
+
+    // ── Create Pipeline ──────────────────────────────────────────────────
+    // SM5 input layout: POSITION(float3) + COLOR(float4) + TEXCOORD(float2)
+    RHIInputElementDesc inputElements[] = {
+        { RHIInputSemantic::Position, 0, RHIFormat::RGB32Float,  0, 0  },
+        { RHIInputSemantic::Color,    0, RHIFormat::RGBA32Float, 0, 12 },
+        { RHIInputSemantic::Texcoord, 0, RHIFormat::RG32Float,   0, 28 },
+    };
+
+    RHIGraphicsPipelineDesc pipeDesc{};
+    pipeDesc.vertexShader = vsHandle;
+    pipeDesc.pixelShader = psHandle;
+    pipeDesc.topology = RHIPrimitiveTopology::TriangleList;
+    pipeDesc.rasterizer.cullMode = RHICullMode::None;
+    pipeDesc.depthStencil.depthEnable = false;
+    pipeDesc.renderTargetFormats[0] = swapChain->GetFormat();
+    pipeDesc.renderTargetCount = 1;
+    pipeDesc.debugName = "TexturedQuadPipeline";
+
+    if (!bindless) {
+        // Topology is encoded in the pipeline descriptor — no IASetPrimitiveTopology needed.
+        pipeDesc.inputElements = inputElements;
+        pipeDesc.inputElementCount = 3;
+        pipeDesc.vertexStride = sizeof(SimpleVertex);
+    }
+
+    RHIPipelineHandle pipeline = device->CreateGraphicsPipeline(pipeDesc);
+    if (!pipeline.IsValid()) {
+        UZ_LOG(Renderer, Error, "Failed to create textured quad pipeline");
+        return false;
+    }
+    UZ_LOG(Renderer, Info, "Textured quad pipeline created");
+
+    // ── Create Vertex Buffer ─────────────────────────────────────────────
+    SimpleVertex vertices[6];
+    GetQuadVertices(vertices);
+
+    RHIBufferDesc vbDesc{};
+    vbDesc.sizeBytes = sizeof(vertices);
+    vbDesc.stride = sizeof(SimpleVertex);
+    vbDesc.usage = bindless ? RHIBufferUsage::StructuredBuffer : RHIBufferUsage::VertexBuffer;
+    vbDesc.memory = RHIMemoryType::Upload;
+    vbDesc.debugName = "QuadVertexBuffer";
+
+    RHIBufferHandle vbHandle = device->CreateBuffer(vbDesc);
+    if (!vbHandle.IsValid()) {
+        UZ_LOG(Renderer, Error, "Failed to create vertex buffer");
+        return false;
+    }
+
+    void* mapped = device->MapBuffer(vbHandle);
+    if (!mapped) {
+        UZ_LOG(Renderer, Error, "Failed to map vertex buffer");
+        return false;
+    }
+    std::memcpy(mapped, vertices, sizeof(vertices));
+    device->UnmapBuffer(vbHandle);
+
+    uint32_t vbSrvIndex = 0;
+    if (bindless) {
+        vbSrvIndex = device->GetBufferSRVIndex(vbHandle);
+        if (vbSrvIndex == UINT32_MAX) {
+            UZ_LOG(Renderer, Error, "Vertex buffer has no SRV");
+            return false;
+        }
+        UZ_LOG(Renderer, Info, "Vertex buffer SRV index: {}", vbSrvIndex);
+    }
+
+    // ── Create Texture ───────────────────────────────────────────────────
+    RHITextureDesc texDesc{};
+    texDesc.width = kTexWidth;
+    texDesc.height = kTexHeight;
+    texDesc.format = RHIFormat::RGBA8Unorm;
+    texDesc.usage = RHITextureUsage::ShaderResource | RHITextureUsage::CopyDst;
+    texDesc.debugName = "CheckerboardTexture";
+
+    RHITextureHandle texHandle = device->CreateTexture(texDesc);
+    if (!texHandle.IsValid()) {
+        UZ_LOG(Renderer, Error, "Failed to create checkerboard texture");
+        return false;
+    }
+
+    uint32_t texSrvIndex = device->GetTextureSRVIndex(texHandle);
+    if (texSrvIndex == UINT32_MAX) {
+        UZ_LOG(Renderer, Error, "Texture has no SRV");
+        return false;
+    }
+    UZ_LOG(Renderer, Info, "Texture SRV index: {}", texSrvIndex);
+
+    // ── Upload Texture ───────────────────────────────────────────────────
+    auto checkerPixels = GenerateCheckerboard(kTexWidth, kTexHeight, kTileSize);
+
+    {
+        UploadContext upload(device);
+        copyCmdList->Begin();
+
+        if (!upload.UploadTexture(copyCmdList, texHandle,
+                                  checkerPixels.data(), checkerPixels.size())) {
+            UZ_LOG(Renderer, Error, "Failed to upload checkerboard texture");
+            return false;
+        }
+
+        // Transition texture from CopyDst to ShaderResource before sampling.
+        RHIBarrierDesc toShaderResource{};
+        toShaderResource.texture = texHandle;
+        toShaderResource.stateBefore = RHIResourceState::CopyDst;
+        toShaderResource.stateAfter = RHIResourceState::ShaderResource;
+        copyCmdList->ResourceBarrier(&toShaderResource, 1);
+
+        copyCmdList->End();
+        copyCmdList->Execute();
+        device->WaitIdle();
+        upload.ReleaseStaging();
+    }
+    UZ_LOG(Renderer, Info, "Checkerboard texture uploaded ({}x{})", kTexWidth, kTexHeight);
+
+    // ── Create Sampler ───────────────────────────────────────────────────
+    RHISamplerDesc samplerDesc{};
+    samplerDesc.filter = RHIFilterMode::Linear;
+    samplerDesc.addressU = RHIAddressMode::Wrap;
+    samplerDesc.addressV = RHIAddressMode::Wrap;
+    samplerDesc.debugName = "LinearWrapSampler";
+
+    RHISamplerHandle samplerHandle = device->CreateSampler(samplerDesc);
+    if (!samplerHandle.IsValid()) {
+        UZ_LOG(Renderer, Error, "Failed to create sampler");
+        return false;
+    }
+
+    uint32_t samplerIdx = device->GetSamplerIndex(samplerHandle);
+    if (samplerIdx == UINT32_MAX) {
+        UZ_LOG(Renderer, Error, "Sampler has no heap index");
+        return false;
+    }
+    UZ_LOG(Renderer, Info, "Sampler index: {}", samplerIdx);
+
+    // ── Root Constants (SM6.6 bindless only) ────────────────────────────
+    RootConstants rootConsts{};
+    if (bindless) {
+        rootConsts.vertexBufferIndex = vbSrvIndex;
+        rootConsts.textureIndex = texSrvIndex;
+        rootConsts.samplerIndex = samplerIdx;
+    }
+
+    // ── Screenshot Capture (Windows only) ──────────────────────────────
+#ifdef _WIN32
+    ScreenshotCapture screenshotCapture;
+    bool screenshotPending = !config.screenshotPath.empty();
+    if (screenshotPending) {
+        if (!screenshotCapture.Init(device, scDesc.width, scDesc.height)) {
+            UZ_LOG(Renderer, Error, "Failed to initialize screenshot capture");
+            screenshotPending = false;
+        }
+    }
+#else
+    bool screenshotPending = false;
+#endif
+
+    // ── Render Graph Resource Pool (persistent across frames) ────────────
+    rg::RgResourcePool rgPool(device);
+
+    // ── Render Loop ──────────────────────────────────────────────────────
+    uint32_t frameIndex = 0;
+    uint64_t globalFenceValue = 0;
+    auto startTime = std::chrono::high_resolution_clock::now();
+
+    UZ_LOG(Renderer, Info, "Starting textured quad render loop (frames={})",
+           frameCount == 0 ? -1 : static_cast<int>(frameCount));
+
+    while (window.PumpMessages() && window.IsOpen()) {
+        // Skip rendering while minimized — swapchain surface is 0x0
+        if (window.IsMinimized()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            continue;
+        }
+
+        if (frameCount > 0 && frameIndex >= frameCount) break;
+
+        if (window.WasResized()) {
+            device->WaitIdle();
+            swapChain->Resize(
+                static_cast<uint32_t>(window.GetWidth()),
+                static_cast<uint32_t>(window.GetHeight()));
+            window.ClearResizedFlag();
+        }
+
+        const uint32_t allocFrame = frameIndex % kFramesInFlight;
+        if (fenceValues[allocFrame] > 0) {
+            frameFences[allocFrame]->WaitCPU(fenceValues[allocFrame]);
+        }
+
+        // Record via render graph
+        bool capturedThisFrame = false;
+        cmdList->Begin();
+
+        RHITextureHandle backBuffer = swapChain->GetCurrentBackBuffer();
+
+        rg::RgBuilder rgBuilder(device, &rgPool);
+        auto bbRes = rgBuilder.ImportTexture("Backbuffer", backBuffer, RHIResourceState::Present);
+
+        // Textured quad pass: clear + draw.
+        rgBuilder.AddPass("TexturedQuad", [&](rg::RgPassBuilder& pb) {
+            pb.Write(bbRes, RHIResourceState::RenderTarget);
+            pb.SetExecutionCallback([&](IRHICommandList* cmd, const rg::RgPassResources& res) {
+                auto bb = res.GetTexture(bbRes);
+
+                const float clearColor[4] = { 0.05f, 0.05f, 0.08f, 1.0f };
+
+                RHIRenderPassDesc rpDesc{};
+                rpDesc.colorAttachments[0].texture = bb;
+                rpDesc.colorAttachments[0].clear = false;
+                rpDesc.colorAttachmentCount = 1;
+                cmd->BeginRenderPass(rpDesc);
+
+                cmd->SetPipeline(pipeline);
+
+                if (bindless) {
+                    cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rootConsts), 3, 0);
+                } else {
+                    cmd->SetVertexBuffer(0, vbHandle, 0);
+#if defined(__APPLE__)
+                    // Metal: bind texture and sampler directly via [[texture(0)]] / [[sampler(0)]]
+                    cmd->SetFragmentTexture(0, texHandle);
+                    cmd->SetFragmentSampler(0, samplerHandle);
+#else
+                    cmd->SetDescriptorTable(4, texSrvIndex);
+#endif
+                }
+
+                RHIViewport vp{};
+                vp.width = static_cast<float>(swapChain->GetWidth());
+                vp.height = static_cast<float>(swapChain->GetHeight());
+                vp.maxDepth = 1.0f;
+                cmd->SetViewport(vp);
+
+                RHIScissorRect sc{};
+                sc.right = swapChain->GetWidth();
+                sc.bottom = swapChain->GetHeight();
+                cmd->SetScissor(sc);
+
+                cmd->Draw(6);
+                cmd->EndRenderPass();
+            });
+        });
+
+        // Screenshot pass (optional).
+#ifdef _WIN32
+        if (screenshotPending && frameIndex == config.screenshotFrame) {
+            rgBuilder.AddPass("Screenshot", [&](rg::RgPassBuilder& pb) {
+                pb.Read(bbRes, RHIResourceState::RenderTarget);
+                pb.SetExecutionCallback([&](IRHICommandList*, const rg::RgPassResources&) {
+                    screenshotCapture.CaptureBackBuffer(cmdList, swapChain);
+                    capturedThisFrame = true;
+                });
+            });
+        }
+#endif
+
+        // Present transition pass.
+        rgBuilder.AddPass("Present", [&](rg::RgPassBuilder& pb) {
+            pb.Write(bbRes, RHIResourceState::Present);
+            pb.SetExecutionCallback([](IRHICommandList*, const rg::RgPassResources&) {});
+        });
+
+        rgBuilder.Compile();
+        rgBuilder.Execute(cmdList);
+
+        cmdList->End();
+        cmdList->Execute();
+
+        swapChain->Present(false);
+
+        globalFenceValue++;
+        fenceValues[allocFrame] = globalFenceValue;
+        frameFences[allocFrame]->Signal(globalFenceValue);
+
+        // ── Save screenshot after GPU completes (Windows only) ────────────
+#ifdef _WIN32
+        if (capturedThisFrame) {
+            frameFences[allocFrame]->WaitCPU(globalFenceValue);
+            screenshotCapture.SaveToPNG(config.screenshotPath);
+            screenshotPending = false;
+        }
+#endif
+
+        frameIndex++;
+    }
+
+    // ── Cleanup ──────────────────────────────────────────────────────────
+    device->WaitIdle();
+
+    auto endTime = std::chrono::high_resolution_clock::now();
+    const float totalMs = std::chrono::duration<float, std::milli>(endTime - startTime).count();
+    const float avgMs = frameIndex > 0 ? totalMs / static_cast<float>(frameIndex) : 0.0f;
+
+    UZ_LOG(Renderer, Info, "Textured quad demo finished: {} frames, {:.1f}ms total, "
+           "{:.2f}ms/frame ({:.0f} FPS)",
+           frameIndex, totalMs, avgMs, avgMs > 0 ? 1000.0f / avgMs : 0.0f);
+
+#ifdef _WIN32
+    screenshotCapture.Shutdown();
+    shaderPipeline.Shutdown();
+#endif
+    device->DestroySampler(samplerHandle);
+    device->DestroyTexture(texHandle);
+    device->DestroyBuffer(vbHandle);
+    device->DestroyPipeline(pipeline);
+    device->DestroyShader(vsHandle);
+    device->DestroyShader(psHandle);
+    for (uint32_t i = 0; i < kFramesInFlight; ++i) device->DestroyFence(frameFences[i]);
+    device->DestroyCommandList(copyCmdList);
+    device->DestroyCommandList(cmdList);
+    device->DestroySwapChain(swapChain);
+    DestroyRHIDevice(device);
+
+    return true;
+}
+
+} // namespace uz

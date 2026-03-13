@@ -1,0 +1,9 @@
+.{
+    .name = .textured_quad_demo,
+    .version = "0.2.0",
+    .fingerprint = 0x5ecb894113a5bae9,
+    .dependencies = .{
+        .uz_demo_common = .{ .path = "../common" },
+    },
+    .paths = .{"build.zig"},
+}

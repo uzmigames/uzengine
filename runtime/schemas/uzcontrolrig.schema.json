@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://uzengine.dev/schemas/uzcontrolrig.schema.json",
+  "title": "UzEngine Control Rig",
+  "description": "UzEngine control rig file (.uzcontrolrig) — procedural animation rig with IK solvers, bone constraints, and runtime-driven modifications. Applied as a post-process after animation evaluation to achieve foot placement, look-at, aim correction, and procedural secondary motion.",
+  "type": "object",
+  "required": ["name", "skeleton", "solvers"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Control rig display name."
+    },
+    "skeleton": {
+      "type": "string",
+      "description": "Path to the skeleton asset (.uzskeleton) this rig operates on."
+    },
+    "solvers": {
+      "type": "array",
+      "description": "Ordered list of IK solvers and constraints. Evaluated sequentially — order matters when solvers share bones.",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["name", "type"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Solver display name (e.g., 'left_foot_ik', 'head_lookat', 'spine_twist')."
+          },
+          "enabled": {
+            "type": "boolean",
+            "default": true
+          },
+          "type": {
+            "type": "string",
+            "enum": ["fabrik", "ccd", "two_bone", "look_at", "aim", "twist_chain", "spring_bone"],
+            "description": "Solver algorithm. 'fabrik': Forward And Backward Reaching IK. 'ccd': Cyclic Coordinate Descent. 'two_bone': analytical 2-bone (elbow/knee). 'look_at': orient bone toward target. 'aim': rotate bone chain to aim at target. 'twist_chain': distribute twist along a bone chain. 'spring_bone': physics-based secondary motion (hair, tails, cloth)."
+          },
+          "chain": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Ordered bone names from root to tip of the IK chain."
+          },
+          "target_bone": {
+            "type": "string",
+            "description": "Bone that provides the IK target position (for look_at, aim). If omitted, target is set from gameplay code."
+          },
+          "weight": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "default": 1.0,
+            "description": "Solver blend weight. 0 = pure animation, 1 = fully IK-driven."
+          },
+          "iterations": {
+            "type": "integer",
+            "minimum": 1,
+            "default": 10,
+            "description": "Max solver iterations per frame (FABRIK/CCD only). More = more accurate but slower."
+          },
+          "tolerance": {
+            "type": "number",
+            "minimum": 0,
+            "default": 0.001,
+            "description": "Convergence tolerance in meters. Solver stops early if end-effector is within this distance of target."
+          },
+          "pole_vector": {
+            "type": "array",
+            "items": { "type": "number" },
+            "minItems": 3,
+            "maxItems": 3,
+            "description": "Pole vector direction [x, y, z] for two_bone IK. Controls elbow/knee bend direction."
+          },
+          "constraints": {
+            "type": "array",
+            "description": "Per-bone joint limits applied during IK solve.",
+            "items": {
+              "type": "object",
+              "required": ["bone"],
+              "properties": {
+                "bone": { "type": "string", "description": "Bone name to constrain." },
+                "min_angle": {
+                  "type": "array",
+                  "items": { "type": "number" },
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "description": "Minimum rotation in degrees [pitch, yaw, roll]."
+                },
+                "max_angle": {
+                  "type": "array",
+                  "items": { "type": "number" },
+                  "minItems": 3,
+                  "maxItems": 3,
+                  "description": "Maximum rotation in degrees [pitch, yaw, roll]."
+                },
+                "stiffness": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1,
+                  "default": 0,
+                  "description": "Resistance to movement. 0 = free, 1 = locked."
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "spring_settings": {
+            "type": "object",
+            "description": "Physics settings for spring_bone solver.",
+            "properties": {
+              "stiffness": { "type": "number", "minimum": 0, "default": 1.0, "description": "Spring stiffness. Higher = snappier return to rest pose." },
+              "damping": { "type": "number", "minimum": 0, "maximum": 1, "default": 0.5, "description": "Velocity damping. 0 = no damping (infinite oscillation), 1 = critically damped." },
+              "gravity": { "type": "number", "default": -9.81, "description": "Gravity force applied to spring bones." },
+              "wind_influence": { "type": "number", "minimum": 0, "default": 0, "description": "How much global wind affects these bones [0..1]." },
+              "collision_radius": { "type": "number", "minimum": 0, "default": 0, "description": "Sphere collision radius for self-collision avoidance (meters)." }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,29 @@
+{
+  "name": "StreetLamp",
+  "version": "1.0",
+  "components": {
+    "transform": {},
+    "mesh": {
+      "asset": "content/meshes/cube.uzmesh"
+    },
+    "material": {
+      "asset": "content/materials/metal_rust.uzmaterial"
+    }
+  },
+  "children": [
+    {
+      "name": "LampLight",
+      "components": {
+        "transform": {
+          "position": [0, 3.5, 0]
+        },
+        "light": {
+          "type": "point",
+          "color": [1.0, 0.9, 0.7],
+          "intensity": 5.0,
+          "range": 15
+        }
+      }
+    }
+  ]
+}
