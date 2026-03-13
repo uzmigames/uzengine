@@ -1,25 +1,23 @@
-# Proposal: Multi-Monitor & DPI (Phase 4.3.0)
+# Multi-Monitor & DPI Awareness
 
 ## Why
-Modern setups have multiple monitors at different DPI scales (e.g., 4K primary at 150%, 1080p secondary at 100%). Without per-monitor DPI awareness, the engine renders blurry on high-DPI or incorrectly sized on mixed-DPI setups. UE5 uses `GetDPIScaleFactorAtPoint()` + per-monitor awareness; Godot uses `SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)`. The editor (VSCode-embedded) will frequently span monitors — this is critical for correct UI/viewport sizing.
 
-## What Changes
+Modern displays use varying DPI scales (100%-300%) and multi-monitor setups are common. Without per-monitor DPI awareness, the engine renders blurry or incorrectly sized on high-DPI displays, and cannot target specific monitors for fullscreen.
 
-### New Systems
-1. **MonitorInfo struct** — name, rect, work area, DPI, refresh rate, primary flag
-2. **Monitor enumeration** — `EnumDisplayMonitors` + `GetMonitorInfoW` + `GetDpiForMonitor`
-3. **Per-monitor DPI awareness V2** — `SetProcessDpiAwarenessContext` at startup
-4. **DPI change handling** — `WM_DPICHANGED` handler with automatic window resize
-5. **DPI scale queries** — `GetDpiScale()` on window, `GetMonitorDpiScale(index)`
-6. **Fullscreen on specific monitor** — `SetFullscreen(monitorIndex)` targets any monitor
+## Summary
 
-### Refactoring
-- Window creation accounts for DPI when calculating initial size
-- UI/font systems (future) receive DPI scale factor for correct rendering
+Implement per-monitor DPI awareness (V2) and multi-monitor enumeration for UzEngine's platform layer. Handles WM_DPICHANGED, provides MonitorInfo struct, and supports fullscreen on specific monitors.
 
 ## Impact
-- Affected specs: `docs/engine/07-platform/01-window-system.md`
-- Affected code: `runtime/platform/windows/platform_window.h/.cpp`
-- Breaking change: NO — additive
-- User benefit: Crisp rendering on 4K, correct sizing on mixed-DPI multi-monitor
-- Enables: Editor multi-monitor support, correct UI scaling
+
+- **Platform Layer**: DPI-aware window creation, monitor enumeration
+- **Renderer**: Swapchain resize on DPI change
+- **UI**: DPI scale factor for UI layout
+
+## Acceptance Criteria
+
+1. Window creates with DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
+2. EnumerateMonitors() returns all connected monitors with DPI info
+3. WM_DPICHANGED resizes window correctly
+4. SetFullscreenOnMonitor(index) targets specific monitor
+5. GetDpiScale() returns correct per-monitor scale factor

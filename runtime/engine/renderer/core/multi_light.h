@@ -119,7 +119,11 @@ struct PerFrameMultiLightCB {
     uint32_t lightCount                  = 0;  ///< Number of active entries in `lightArray`.
     uint32_t _pad0[3]                    = {}; ///< Align `lightArray` to 16-byte boundary.
     LightGPU lightArray[kMaxMultiLights] = {}; ///< GPU light descriptors (first `lightCount` live).
-    float    _pad1[32]                   = {}; ///< Pad struct to 768 bytes (3 x 256).
+    uint32_t irradianceSrvIndex          = UINT32_MAX; ///< SRV index for irradiance cubemap (UINT32_MAX = no IBL).
+    uint32_t prefilteredSrvIndex         = UINT32_MAX; ///< SRV index for prefiltered specular cubemap.
+    uint32_t brdfLutSrvIndex             = UINT32_MAX; ///< SRV index for BRDF integration LUT.
+    uint32_t prefilteredMipLevels        = 5;          ///< Number of prefiltered mip levels (for LOD calculation).
+    float    _pad1[28]                   = {}; ///< Pad struct to 768 bytes (3 x 256).
 };
 
 static_assert(sizeof(PerFrameMultiLightCB) % 256 == 0,

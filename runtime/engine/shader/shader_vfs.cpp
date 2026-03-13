@@ -10,9 +10,9 @@
 #include "log.h"
 #include "profiler.h"
 
+#include "file_system.h"
+
 #include <algorithm>
-#include <fstream>
-#include <sstream>
 #include <filesystem>
 
 namespace uz {
@@ -118,15 +118,14 @@ std::optional<std::string> ShaderVFS::ReadFile(const std::string& virtualPath) c
         return std::nullopt;
     }
 
-    std::ifstream file(*resolved, std::ios::in | std::ios::binary);
-    if (!file.is_open()) {
-        UZ_LOG(IO, Warning, "ShaderVFS: cannot open '{}'", *resolved);
+    std::string content = FileReadAllText(resolved->c_str());
+    if (content.empty()) {
+        // FileReadAll already logs the error; emit a warning here for VFS context.
+        UZ_LOG(IO, Warning, "ShaderVFS: cannot read '{}'", *resolved);
         return std::nullopt;
     }
 
-    std::ostringstream ss;
-    ss << file.rdbuf();
-    return ss.str();
+    return content;
 }
 
 } // namespace uz

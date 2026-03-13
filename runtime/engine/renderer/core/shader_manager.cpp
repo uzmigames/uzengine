@@ -6,6 +6,7 @@
 #include "rhi.h"
 #include "shader_compiler.h"
 #include "shader_compiler_fxc.h"
+#include "paths.h"
 
 UZ_DECLARE_LOG_CATEGORY(Renderer);
 
@@ -56,7 +57,8 @@ bool ShaderManager::Init(IRHIDevice* device) {
     config.enableHotReload = false;
 
     m_pipeline.Init(config);
-    m_pipeline.Mount("/engine", "shaders/runtime");
+    auto shaderDir = uz::ResolveEngineResource("shaders/runtime").string();
+    m_pipeline.Mount("/engine", shaderDir);
     m_pipeline.SetCompiler(m_compiler.get());
     m_pipeline.SetCompilerFXC(m_compilerFXC.get());
 

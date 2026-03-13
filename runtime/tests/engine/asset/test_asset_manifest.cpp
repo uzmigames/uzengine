@@ -376,7 +376,8 @@ TEST_F(ManifestFileTest, LoadNonexistentFileFails) {
 
 TEST_F(ManifestFileTest, WriteToInvalidPathFails) {
     AssetManifestWriter writer;
-    EXPECT_FALSE(WriteManifestFile("/nonexistent/dir/file.uzmanifest", writer));
+    // Use an invalid device path that cannot be created on Windows.
+    EXPECT_FALSE(WriteManifestFile("Z:\\:\\invalid<>path/file.uzmanifest", writer));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

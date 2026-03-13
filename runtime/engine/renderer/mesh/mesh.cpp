@@ -4,6 +4,8 @@
 #include "log.h"
 #include "profiler.h"
 
+#include "file_system.h"
+
 #include <cmath>
 #include <cstring>
 #include <fstream>
@@ -96,24 +98,30 @@ Mesh LoadMesh(const std::string& path) {
 
 bool SaveMesh(const std::string& path, const Mesh& mesh) {
     UZ_PROFILE_FUNCTION();
-    std::ofstream file(path, std::ios::binary);
-    if (!file.is_open()) {
-        UZ_LOG(Renderer, Error, "Failed to create mesh file: path='{}'", path);
-        return false;
-    }
 
-    file.write(reinterpret_cast<const char*>(&mesh.header), sizeof(MeshHeader));
+    // Build a single contiguous buffer so FileWriteAll can write atomically.
+    const size_t totalSize = sizeof(MeshHeader)
+                           + mesh.vertexData.size()
+                           + mesh.indexData.size();
+    std::vector<uint8_t> buffer;
+    buffer.resize(totalSize);
+
+    size_t offset = 0;
+    std::memcpy(buffer.data() + offset, &mesh.header, sizeof(MeshHeader));
+    offset += sizeof(MeshHeader);
+
     if (!mesh.vertexData.empty()) {
-        file.write(reinterpret_cast<const char*>(mesh.vertexData.data()),
-                   static_cast<std::streamsize>(mesh.vertexData.size()));
+        std::memcpy(buffer.data() + offset, mesh.vertexData.data(), mesh.vertexData.size());
+        offset += mesh.vertexData.size();
     }
     if (!mesh.indexData.empty()) {
-        file.write(reinterpret_cast<const char*>(mesh.indexData.data()),
-                   static_cast<std::streamsize>(mesh.indexData.size()));
+        std::memcpy(buffer.data() + offset, mesh.indexData.data(), mesh.indexData.size());
     }
 
-    if (!file) {
-        UZ_LOG(Renderer, Error, "Write failed for mesh file: path='{}'", path);
+    const FileResult result = FileWriteAll(path.c_str(), buffer.data(), buffer.size());
+    if (result != FileResult::Success) {
+        UZ_LOG(Renderer, Error, "Write failed for mesh file: path='{}': {}",
+               path, FileResultToString(result));
         return false;
     }
 

@@ -970,6 +970,117 @@ TEST_F(DirectoryWatcherTest, Callback_FileCreated_NotificationDelivered) {
         << "DirectoryWatcher did not deliver a notification within 2 seconds";
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Asynchronous file read
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_F(FileSystemTest, AsyncRead_ExistingFile_MatchesSyncRead) {
+    // Async read of a known-content file must produce byte-identical output to
+    // FileReadAll — both read paths must agree on every byte.
+    const std::string path = Join(m_testDir, "async_match.bin");
+    const uint8_t kData[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0x01, 0x02, 0x03, 0x04 };
+    ASSERT_EQ(uz::FileWriteAll(path.c_str(), kData, sizeof(kData)), uz::FileResult::Success);
+
+    const std::vector<uint8_t> syncResult = uz::FileReadAll(path.c_str());
+
+    uz::AsyncReadHandle handle = uz::FileReadAsync(path.c_str());
+    ASSERT_TRUE(handle.IsValid()) << "FileReadAsync must return a valid handle for an existing file";
+
+    uz::AsyncReadResult asyncResult = uz::FileReadAsyncComplete(handle);
+
+    EXPECT_FALSE(handle.IsValid())
+        << "FileReadAsyncComplete must invalidate the handle after completion";
+    ASSERT_EQ(asyncResult.status, uz::FileResult::Success)
+        << "Async read must succeed for an existing file";
+    ASSERT_EQ(asyncResult.data.size(), syncResult.size())
+        << "Async and sync reads must return the same number of bytes";
+    for (size_t i = 0; i < syncResult.size(); ++i) {
+        EXPECT_EQ(asyncResult.data[i], syncResult[i])
+            << "Byte mismatch at index " << i;
+    }
+}
+
+TEST_F(FileSystemTest, AsyncRead_NonExistentFile_ReturnsInvalidHandle) {
+    const std::string path = Join(m_testDir, "does_not_exist_async.bin");
+    ASSERT_FALSE(uz::FileExists(path.c_str()));
+
+    uz::AsyncReadHandle handle = uz::FileReadAsync(path.c_str());
+
+    EXPECT_FALSE(handle.IsValid())
+        << "FileReadAsync must return an invalid handle for a non-existent file";
+}
+
+TEST_F(FileSystemTest, AsyncRead_EmptyFile_ReturnsEmptyData) {
+    // A zero-byte file is a valid read — async must succeed with empty data.
+    const std::string path = Join(m_testDir, "async_empty.bin");
+    ASSERT_EQ(uz::FileWriteAll(path.c_str(), nullptr, 0), uz::FileResult::Success);
+
+    uz::AsyncReadHandle handle = uz::FileReadAsync(path.c_str());
+    ASSERT_TRUE(handle.IsValid()) << "FileReadAsync must return a valid handle for an empty file";
+
+    uz::AsyncReadResult result = uz::FileReadAsyncComplete(handle);
+
+    EXPECT_FALSE(handle.IsValid());
+    EXPECT_EQ(result.status, uz::FileResult::Success)
+        << "Async read of an empty file must report Success";
+    EXPECT_TRUE(result.data.empty())
+        << "Async read of an empty file must return no bytes";
+}
+
+TEST_F(FileSystemTest, AsyncRead_Cancel_IsNoOp_OnInvalidHandle) {
+    // Cancelling a default-constructed (invalid) handle must be a no-op — no crash.
+    uz::AsyncReadHandle handle;
+    ASSERT_FALSE(handle.IsValid());
+
+    uz::FileReadAsyncCancel(handle);  // Must not crash.
+
+    EXPECT_FALSE(handle.IsValid());
+    SUCCEED();
+}
+
+TEST_F(FileSystemTest, AsyncRead_Cancel_PendingOperation_DoesNotCrash) {
+    // Start a real async read then immediately cancel. The file must exist so
+    // that FileReadAsync succeeds in issuing the I/O.
+    const std::string path = Join(m_testDir, "async_cancel.bin");
+    const uint8_t kPayload[128] = {};
+    ASSERT_EQ(uz::FileWriteAll(path.c_str(), kPayload, sizeof(kPayload)), uz::FileResult::Success);
+
+    uz::AsyncReadHandle handle = uz::FileReadAsync(path.c_str());
+    ASSERT_TRUE(handle.IsValid());
+
+    uz::FileReadAsyncCancel(handle);  // Must not crash regardless of I/O timing.
+
+    EXPECT_FALSE(handle.IsValid())
+        << "FileReadAsyncCancel must invalidate the handle";
+}
+
+TEST_F(FileSystemTest, AsyncRead_LargeFile_MatchesSyncRead) {
+    // 1 MiB file — verifies that the async path handles large buffers correctly.
+    const std::string path = Join(m_testDir, "async_large.bin");
+    constexpr size_t kFileSize = 1u * 1024u * 1024u;  // 1 MiB
+
+    std::vector<uint8_t> expected(kFileSize);
+    for (size_t i = 0; i < kFileSize; ++i) {
+        expected[i] = static_cast<uint8_t>(i & 0xFF);
+    }
+    ASSERT_EQ(uz::FileWriteAll(path.c_str(), expected.data(), kFileSize), uz::FileResult::Success);
+
+    uz::AsyncReadHandle handle = uz::FileReadAsync(path.c_str());
+    ASSERT_TRUE(handle.IsValid()) << "FileReadAsync must return a valid handle for a 1 MiB file";
+
+    uz::AsyncReadResult result = uz::FileReadAsyncComplete(handle);
+
+    EXPECT_FALSE(handle.IsValid());
+    ASSERT_EQ(result.status, uz::FileResult::Success)
+        << "Async read must succeed for a 1 MiB file";
+    ASSERT_EQ(result.data.size(), kFileSize)
+        << "Async read must return exactly 1 MiB of data";
+    for (size_t i = 0; i < kFileSize; ++i) {
+        ASSERT_EQ(result.data[i], expected[i])
+            << "Byte mismatch at index " << i;
+    }
+}
+
 TEST_F(DirectoryWatcherTest, Callback_FileModified_NotificationDelivered) {
     // Create the file before starting the watcher so that the subsequent
     // write triggers a Modified event rather than a Created event.
@@ -1017,4 +1128,107 @@ TEST_F(DirectoryWatcherTest, Callback_FileModified_NotificationDelivered) {
         << "Expected Modified event but got a different event type";
     EXPECT_GT(std::strlen(state.path), 0u)
         << "Notification path must be non-empty for a Modified event";
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Unicode paths — UTF-8 encoded filenames with non-ASCII characters
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_F(FileSystemTest, WriteRead_UnicodeFilename_Japanese_RoundTrip) {
+    // Japanese characters: テスト (test)
+    const std::string path = Join(m_testDir, "\xe3\x83\x86\xe3\x82\xb9\xe3\x83\x88.txt");
+    const char* kText = "Japanese filename test";
+
+    const uz::FileResult result = uz::FileWriteAllText(path.c_str(), kText);
+    ASSERT_EQ(result, uz::FileResult::Success)
+        << "FileWriteAllText must succeed with Japanese UTF-8 filename";
+
+    const std::string readBack = uz::FileReadAllText(path.c_str());
+    EXPECT_EQ(readBack, std::string(kText));
+}
+
+TEST_F(FileSystemTest, WriteRead_UnicodeFilename_Chinese_RoundTrip) {
+    // Chinese characters: 测试 (test)
+    const std::string path = Join(m_testDir, "\xe6\xb5\x8b\xe8\xaf\x95.bin");
+    const uint8_t kData[] = { 0xDE, 0xAD, 0xBE, 0xEF };
+
+    const uz::FileResult result = uz::FileWriteAll(path.c_str(), kData, sizeof(kData));
+    ASSERT_EQ(result, uz::FileResult::Success);
+
+    const auto readBack = uz::FileReadAll(path.c_str());
+    ASSERT_EQ(readBack.size(), sizeof(kData));
+    EXPECT_EQ(readBack[0], 0xDE);
+    EXPECT_EQ(readBack[3], 0xEF);
+}
+
+TEST_F(FileSystemTest, WriteRead_UnicodeFilename_Korean_RoundTrip) {
+    // Korean characters: 테스트 (test)
+    const std::string path = Join(m_testDir, "\xed\x85\x8c\xec\x8a\xa4\xed\x8a\xb8.txt");
+    const char* kText = "Korean filename test";
+
+    const uz::FileResult result = uz::FileWriteAllText(path.c_str(), kText);
+    ASSERT_EQ(result, uz::FileResult::Success);
+
+    const std::string readBack = uz::FileReadAllText(path.c_str());
+    EXPECT_EQ(readBack, std::string(kText));
+}
+
+TEST_F(FileSystemTest, WriteRead_UnicodeFilename_Accented_RoundTrip) {
+    // Accented Latin: àéîöü
+    const std::string path = Join(m_testDir, "\xc3\xa0\xc3\xa9\xc3\xae\xc3\xb6\xc3\xbc.txt");
+    const char* kText = "Accented filename test";
+
+    const uz::FileResult result = uz::FileWriteAllText(path.c_str(), kText);
+    ASSERT_EQ(result, uz::FileResult::Success);
+
+    const std::string readBack = uz::FileReadAllText(path.c_str());
+    EXPECT_EQ(readBack, std::string(kText));
+}
+
+TEST_F(FileSystemTest, FileExists_UnicodeFilename_ReturnsTrue) {
+    const std::string path = Join(m_testDir, "\xe3\x83\x86\xe3\x82\xb9\xe3\x83\x88_exists.txt");
+    uz::FileWriteAllText(path.c_str(), "data");
+
+    EXPECT_TRUE(uz::FileExists(path.c_str()));
+}
+
+TEST_F(FileSystemTest, FileGetSize_UnicodeFilename_ReturnsCorrectSize) {
+    const std::string path = Join(m_testDir, "\xe6\xb5\x8b\xe8\xaf\x95_size.txt");
+    const char* kText = "12345"; // 5 bytes
+    uz::FileWriteAllText(path.c_str(), kText);
+
+    EXPECT_EQ(uz::FileGetSize(path.c_str()), 5);
+}
+
+TEST_F(FileSystemTest, FileDelete_UnicodeFilename_Succeeds) {
+    const std::string path = Join(m_testDir, "\xed\x85\x8c\xec\x8a\xa4\xed\x8a\xb8_delete.txt");
+    uz::FileWriteAllText(path.c_str(), "to delete");
+    ASSERT_TRUE(uz::FileExists(path.c_str()));
+
+    const uz::FileResult result = uz::FileDelete(path.c_str());
+    EXPECT_EQ(result, uz::FileResult::Success);
+    EXPECT_FALSE(uz::FileExists(path.c_str()));
+}
+
+TEST_F(FileSystemTest, DirectoryCreate_UnicodeDirectoryName_Succeeds) {
+    // Create directory with Unicode name: テスト_dir
+    const std::string dir = Join(m_testDir, "\xe3\x83\x86\xe3\x82\xb9\xe3\x83\x88_dir");
+
+    const uz::FileResult result = uz::DirectoryCreate(dir.c_str());
+    ASSERT_EQ(result, uz::FileResult::Success);
+    EXPECT_TRUE(uz::IsDirectory(dir.c_str()));
+}
+
+TEST_F(FileSystemTest, DirectoryEnumerate_UnicodeFilenames_FindsAll) {
+    const std::string dir = Join(m_testDir, "unicode_enum");
+    uz::DirectoryCreate(dir.c_str());
+
+    // Create files with Unicode names
+    uz::FileWriteAllText((dir + "/\xe3\x83\x86\xe3\x82\xb9\xe3\x83\x88.txt").c_str(), "jp");
+    uz::FileWriteAllText((dir + "/\xe6\xb5\x8b\xe8\xaf\x95.txt").c_str(), "cn");
+    uz::FileWriteAllText((dir + "/normal.txt").c_str(), "en");
+
+    const auto entries = uz::DirectoryEnumerate(dir.c_str(), "*.txt");
+    EXPECT_EQ(entries.size(), 3u)
+        << "DirectoryEnumerate must find files with Unicode names";
 }

@@ -14,10 +14,11 @@
 #define XXH_INLINE_ALL
 #include <xxhash.h>
 
+#include "file_system.h"
+
 #include <algorithm>
 #include <cstring>
 #include <filesystem>
-#include <fstream>
 
 namespace fs = std::filesystem;
 
@@ -120,15 +121,12 @@ bool WriteManifestFile(const std::string& path, const AssetManifestWriter& write
     UZ_PROFILE_FUNCTION();
     auto data = writer.Serialize();
 
-    std::ofstream file(path, std::ios::binary);
-    if (!file.is_open()) {
-        UZ_LOG(Asset, Error, "Cannot write manifest: path='{}'", path);
+    const FileResult result = FileWriteAll(path.c_str(), data.data(), data.size());
+    if (result != FileResult::Success) {
+        UZ_LOG(Asset, Error, "Cannot write manifest: path='{}': {}",
+               path, FileResultToString(result));
         return false;
     }
-
-    file.write(reinterpret_cast<const char*>(data.data()),
-               static_cast<std::streamsize>(data.size()));
-    file.close();
 
     UZ_LOG(Asset, Debug, "Wrote manifest: path='{}', size={} bytes", path, data.size());
     return true;
@@ -212,21 +210,11 @@ bool AssetManifest::Load(const std::vector<uint8_t>& data) {
 
 bool AssetManifest::LoadFile(const std::string& path) {
     UZ_PROFILE_FUNCTION();
-    std::ifstream file(path, std::ios::binary | std::ios::ate);
-    if (!file.is_open()) {
-        UZ_LOG(Asset, Error, "Cannot open manifest: path='{}'", path);
+    auto data = FileReadAll(path.c_str());
+    if (data.empty()) {
+        UZ_LOG(Asset, Error, "Cannot open or empty manifest: path='{}'", path);
         return false;
     }
-
-    auto size = file.tellg();
-    if (size <= 0) {
-        UZ_LOG(Asset, Error, "Empty manifest file: path='{}'", path);
-        return false;
-    }
-
-    std::vector<uint8_t> data(static_cast<size_t>(size));
-    file.seekg(0);
-    file.read(reinterpret_cast<char*>(data.data()), size);
 
     return Load(data);
 }

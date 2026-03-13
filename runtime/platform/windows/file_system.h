@@ -107,6 +107,69 @@ const char* FileResultToString(FileResult result);
 [[nodiscard]] std::string FileReadAllText(const char* path);
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Asynchronous file read
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Handle to a pending asynchronous file read operation.
+///
+/// Created by `FileReadAsync()`. The caller polls or waits via
+/// `FileReadAsyncComplete()`. The handle must eventually be completed
+/// or cancelled — failing to do so leaks the OS file handle.
+struct AsyncReadHandle {
+    void* internal = nullptr;  ///< Opaque pointer to OS resources. nullptr = invalid.
+
+    /// Returns true if this handle refers to a pending operation.
+    [[nodiscard]] bool IsValid() const { return internal != nullptr; }
+};
+
+/// Starts an asynchronous file read using Win32 OVERLAPPED I/O.
+///
+/// Opens the file with `FILE_FLAG_OVERLAPPED`, issues `ReadFile` with an
+/// OVERLAPPED structure, and returns immediately. The caller completes
+/// the operation via `FileReadAsyncComplete()`.
+///
+/// # Arguments
+/// * `path` — UTF-8 file path.
+///
+/// # Returns
+/// A valid `AsyncReadHandle` on success. An invalid handle (`IsValid() == false`)
+/// if the file does not exist or cannot be opened.
+///
+/// # Errors
+/// Logs `FileSystem::Error` on failure.
+[[nodiscard]] AsyncReadHandle FileReadAsync(const char* path);
+
+/// Result of an asynchronous file read.
+struct AsyncReadResult {
+    FileResult status = FileResult::IoError;  ///< Outcome of the operation.
+    std::vector<uint8_t> data;                ///< File contents on success.
+};
+
+/// Waits for an asynchronous file read to complete and returns the data.
+///
+/// Blocks until the I/O completes. After this call, the handle is invalidated
+/// (internal resources freed). Calling with an invalid handle returns IoError.
+///
+/// # Arguments
+/// * `handle` — Handle from `FileReadAsync()`. Invalidated after this call.
+///
+/// # Returns
+/// `AsyncReadResult` with status and data. On success, `status` is
+/// `FileResult::Success` and `data` contains the file bytes. On failure,
+/// `status` describes the error and `data` is empty.
+AsyncReadResult FileReadAsyncComplete(AsyncReadHandle& handle);
+
+/// Cancels a pending async read and frees all associated OS resources.
+///
+/// Issues `CancelIoEx` on the pending operation, waits for the OS to confirm
+/// cancellation, then closes handles and frees memory. Safe to call on an
+/// invalid handle (no-op). After this call `handle.IsValid()` returns false.
+///
+/// # Arguments
+/// * `handle` — Handle from `FileReadAsync()`. Invalidated after this call.
+void FileReadAsyncCancel(AsyncReadHandle& handle);
+
+// ─────────────────────────────────────────────────────────────────────────────
 // File write operations
 // ─────────────────────────────────────────────────────────────────────────────
 

@@ -9,9 +9,10 @@
 #include "log.h"
 #include "profiler.h"
 
+#include "file_system.h"
+
 #include <algorithm>
 #include <filesystem>
-#include <fstream>
 
 namespace fs = std::filesystem;
 
@@ -39,24 +40,10 @@ std::string LooseFileVFS::ResolvePath(const std::string& path) const {
 std::vector<uint8_t> LooseFileVFS::Read(const std::string& path) {
     UZ_PROFILE_FUNCTION();
     UZ_STAT_INCREMENT(IO, VFSReads);
-    std::string fullPath = ResolvePath(path);
-    std::ifstream file(fullPath, std::ios::binary | std::ios::ate);
-    if (!file.is_open()) {
-        return {};
-    }
-
-    auto size = file.tellg();
-    if (size <= 0) {
-        return {};
-    }
-
-    std::vector<uint8_t> data(static_cast<size_t>(size));
-    file.seekg(0);
-    file.read(reinterpret_cast<char*>(data.data()), size);
-
-    if (!file.good()) {
-        UZ_LOG(Asset, Error, "LooseFileVFS: read failed after {} bytes: path='{}'",
-               data.size(), fullPath);
+    const std::string fullPath = ResolvePath(path);
+    auto data = FileReadAll(fullPath.c_str());
+    if (data.empty() && !fs::exists(fullPath)) {
+        // FileReadAll already logs the I/O error; only log here when file truly absent.
         return {};
     }
 

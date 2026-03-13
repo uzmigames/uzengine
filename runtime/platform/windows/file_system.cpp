@@ -163,6 +163,197 @@ std::string FileReadAllText(const char* path) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Asynchronous file read — internal state
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Internal state allocated on the heap for each pending async read.
+///
+/// Owns the file handle, event handle, and data buffer for the duration of
+/// the operation. Freed by FileReadAsyncComplete or FileReadAsyncCancel.
+struct AsyncReadState {
+    HANDLE fileHandle  = INVALID_HANDLE_VALUE;  ///< Opened with FILE_FLAG_OVERLAPPED.
+    OVERLAPPED overlapped = {};                  ///< Drives the async I/O operation.
+    std::vector<uint8_t> buffer;                 ///< Pre-allocated to exact file size.
+    DWORD fileSize = 0;                          ///< Bytes requested from ReadFile.
+};
+
+/// Releases all Win32 and heap resources held by state and nulls the handle.
+static void DestroyAsyncReadState(AsyncReadHandle& handle) {
+    auto* state = static_cast<AsyncReadState*>(handle.internal);
+    if (!state) return;
+
+    if (state->overlapped.hEvent && state->overlapped.hEvent != INVALID_HANDLE_VALUE) {
+        CloseHandle(state->overlapped.hEvent);
+        state->overlapped.hEvent = nullptr;
+    }
+    if (state->fileHandle != INVALID_HANDLE_VALUE) {
+        CloseHandle(state->fileHandle);
+        state->fileHandle = INVALID_HANDLE_VALUE;
+    }
+    delete state;
+    handle.internal = nullptr;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Asynchronous file read — public API
+// ─────────────────────────────────────────────────────────────────────────────
+
+AsyncReadHandle FileReadAsync(const char* path) {
+    UZ_PROFILE_FUNCTION();
+
+    const auto widePath = Utf8ToWide(path);
+    if (widePath.empty()) {
+        UZ_LOG(FileSystem, Error, "FileReadAsync: empty or invalid path");
+        return {};
+    }
+
+    HANDLE fileHandle = CreateFileW(
+        widePath.c_str(),
+        GENERIC_READ,
+        FILE_SHARE_READ,
+        nullptr,
+        OPEN_EXISTING,
+        FILE_FLAG_OVERLAPPED,
+        nullptr
+    );
+
+    if (fileHandle == INVALID_HANDLE_VALUE) {
+        const DWORD err = GetLastError();
+        UZ_LOG(FileSystem, Error, "FileReadAsync: failed to open '{}', win32 error={}", path, err);
+        return {};
+    }
+
+    LARGE_INTEGER fileSizeLarge;
+    if (!GetFileSizeEx(fileHandle, &fileSizeLarge)) {
+        const DWORD err = GetLastError();
+        UZ_LOG(FileSystem, Error, "FileReadAsync: GetFileSizeEx failed for '{}', win32 error={}", path, err);
+        CloseHandle(fileHandle);
+        return {};
+    }
+
+    // Files larger than 4GB are not supported by a single OVERLAPPED ReadFile call.
+    // ReadFile accepts a DWORD byte count (max 4,294,967,295 bytes).
+    if (fileSizeLarge.QuadPart > static_cast<LONGLONG>(0xFFFFFFFFLL)) {
+        UZ_LOG(FileSystem, Error, "FileReadAsync: file '{}' exceeds 4GB async read limit", path);
+        CloseHandle(fileHandle);
+        return {};
+    }
+
+    const DWORD fileSize = static_cast<DWORD>(fileSizeLarge.QuadPart);
+
+    HANDLE eventHandle = CreateEvent(nullptr, TRUE, FALSE, nullptr);
+    if (!eventHandle) {
+        const DWORD err = GetLastError();
+        UZ_LOG(FileSystem, Error, "FileReadAsync: CreateEvent failed for '{}', win32 error={}", path, err);
+        CloseHandle(fileHandle);
+        return {};
+    }
+
+    auto* state = new AsyncReadState();
+    state->fileHandle = fileHandle;
+    state->fileSize   = fileSize;
+    state->overlapped.hEvent = eventHandle;
+
+    if (fileSize > 0) {
+        state->buffer.resize(fileSize);
+
+        const BOOL readOk = ReadFile(
+            state->fileHandle,
+            state->buffer.data(),
+            state->fileSize,
+            nullptr,
+            &state->overlapped
+        );
+
+        if (!readOk) {
+            const DWORD err = GetLastError();
+            // ERROR_IO_PENDING is normal for async I/O — the operation was accepted.
+            if (err != ERROR_IO_PENDING) {
+                UZ_LOG(FileSystem, Error, "FileReadAsync: ReadFile failed for '{}', win32 error={}", path, err);
+                AsyncReadHandle handle{state};
+                DestroyAsyncReadState(handle);
+                return {};
+            }
+        }
+    } else {
+        // Zero-byte file: no I/O to issue, but the event must be signalled so
+        // FileReadAsyncComplete does not block forever on WaitForSingleObject.
+        SetEvent(eventHandle);
+    }
+
+    return AsyncReadHandle{state};
+}
+
+AsyncReadResult FileReadAsyncComplete(AsyncReadHandle& handle) {
+    UZ_PROFILE_FUNCTION();
+
+    if (!handle.IsValid()) {
+        UZ_LOG(FileSystem, Error, "FileReadAsyncComplete: called with invalid handle");
+        return { FileResult::IoError, {} };
+    }
+
+    auto* state = static_cast<AsyncReadState*>(handle.internal);
+
+    // Block until the OS signals completion.
+    const DWORD waitResult = WaitForSingleObject(state->overlapped.hEvent, INFINITE);
+    if (waitResult != WAIT_OBJECT_0) {
+        const DWORD err = GetLastError();
+        UZ_LOG(FileSystem, Error, "FileReadAsyncComplete: WaitForSingleObject failed, win32 error={}", err);
+        DestroyAsyncReadState(handle);
+        return { FileResult::IoError, {} };
+    }
+
+    AsyncReadResult result;
+
+    if (state->fileSize > 0) {
+        DWORD bytesRead = 0;
+        const BOOL ok = GetOverlappedResult(
+            state->fileHandle,
+            &state->overlapped,
+            &bytesRead,
+            FALSE  // bWait — already waited above
+        );
+
+        if (!ok) {
+            const DWORD err = GetLastError();
+            UZ_LOG(FileSystem, Error, "FileReadAsyncComplete: GetOverlappedResult failed, win32 error={}", err);
+            DestroyAsyncReadState(handle);
+            return { FileResult::IoError, {} };
+        }
+
+        state->buffer.resize(bytesRead);
+        result.status = FileResult::Success;
+        result.data   = std::move(state->buffer);
+    } else {
+        // Zero-byte file is a valid, successful read.
+        result.status = FileResult::Success;
+    }
+
+    DestroyAsyncReadState(handle);
+    return result;
+}
+
+void FileReadAsyncCancel(AsyncReadHandle& handle) {
+    UZ_PROFILE_FUNCTION();
+
+    if (!handle.IsValid()) {
+        return;  // No-op on invalid handle — documented contract.
+    }
+
+    auto* state = static_cast<AsyncReadState*>(handle.internal);
+
+    // Request cancellation. CancelIoEx may fail if the I/O already completed —
+    // that is harmless; we still need to drain the event and clean up.
+    CancelIoEx(state->fileHandle, &state->overlapped);
+
+    // Wait for the OS to confirm cancellation or natural completion before
+    // closing handles. Skipping this can cause the OS to write into freed memory.
+    WaitForSingleObject(state->overlapped.hEvent, INFINITE);
+
+    DestroyAsyncReadState(handle);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // File write operations
 // ─────────────────────────────────────────────────────────────────────────────
 

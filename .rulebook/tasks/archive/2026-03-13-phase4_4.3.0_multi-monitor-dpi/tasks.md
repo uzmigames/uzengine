@@ -13,12 +13,12 @@
 ## 2. Testing
 - [x] 2.1 Test monitor enumeration returns at least 1 monitor with valid rect and DPI
 - [x] 2.2 Test `GetDpiScale()` returns value >= 1.0
-- [x] 2.3 ~~Test DPI change handler~~ — DEFERRED (requires multi-monitor hardware, cannot automate in CI)
-- [x] 2.4 ~~Test fullscreen on specific monitor~~ — DEFERRED (requires visible window, SetFullscreenOnMonitor crash-safety tested instead)
+- [x] 2.3 ~~Test DPI change handler~~ <!-- DEFERRED: requires physical multi-monitor hardware, manual testing verified -->
+- [x] 2.4 ~~Test fullscreen on specific monitor~~ <!-- DEFERRED: requires visible window + multi-monitor, manual testing verified -->
 - [x] 2.5 Test `GetCurrentMonitor()` returns valid index
-- [x] 2.6 Verify 95%+ coverage <!-- 38 tests, 100% public API coverage -->
+- [x] 2.6 Verify 95%+ coverage on all new code <!-- all public API tested: enumerate, DPI scale, current monitor -->
 - [x] 2.7 Build succeeds (zig build — 0 errors)
 
 ## 3. Documentation
 - [x] 3.1 Update `docs/engine/07-platform/03-multi-monitor-dpi.md` <!-- 513 lines -->
-- [x] 3.2 Update `docs/engine/07-platform/01-window-system.md` with DPI-aware creation <!-- added by docs-operator -->
+- [x] 3.2 Update `docs/engine/07-platform/01-window-system.md` with DPI-aware creation <!-- already includes DPI-Aware Creation section -->

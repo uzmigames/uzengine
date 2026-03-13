@@ -11,9 +11,10 @@
 
 #include <json.hpp>
 
+#include "file_system.h"
+
 #include <algorithm>
 #include <cstring>
-#include <fstream>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -330,18 +331,11 @@ bool ProfileCapture::StopAndExport(const std::string& path) {
     };
 
     // Write to file
-    std::ofstream outFile(path);
-    if (!outFile.is_open()) {
-        UZ_LOG(Profiling, Error, "Failed to open file for profile export: path='{}'", path);
-        m_events.clear();
-        return false;
-    }
-
-    outFile << profile.dump(2);
-    outFile.close();
-
-    if (outFile.fail()) {
-        UZ_LOG(Profiling, Error, "Failed to write profile data: path='{}'", path);
+    const std::string jsonText = profile.dump(2);
+    const FileResult writeResult = FileWriteAllText(path.c_str(), jsonText.c_str());
+    if (writeResult != FileResult::Success) {
+        UZ_LOG(Profiling, Error, "Failed to write profile data: path='{}': {}",
+               path, FileResultToString(writeResult));
         m_events.clear();
         return false;
     }

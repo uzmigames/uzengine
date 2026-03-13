@@ -173,6 +173,7 @@ enum class CursorShape : uint8_t {
     SizeNESW, ///< Diagonal resize NE-SW (IDC_SIZENESW)
     Wait,     ///< Busy/hourglass (IDC_WAIT)
     No,       ///< Not allowed (IDC_NO)
+    Custom,   ///< User-supplied cursor loaded via `SetCustomCursor()`
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -452,6 +453,24 @@ class InputSystem {
     /// Returns the currently configured cursor shape.
     [[nodiscard]] CursorShape GetCursorShape() const { return m_cursorShape; }
 
+    /// Loads a custom cursor from an image file (.cur, .ani).
+    ///
+    /// Uses `LoadCursorFromFileW` on Windows. The file must be a valid .cur or
+    /// .ani format. After a successful call the cursor shape is set to
+    /// `CursorShape::Custom` and applied on the next `WM_SETCURSOR` event.
+    ///
+    /// # Arguments
+    /// * `imagePath` — UTF-8 path to a .cur or .ani cursor file.
+    /// * `hotspotX`  — Horizontal hotspot pixel offset (ignored for .cur files
+    ///                 that embed their own hotspot).
+    /// * `hotspotY`  — Vertical hotspot pixel offset (same caveat as hotspotX).
+    ///
+    /// # Returns
+    /// `true` if the cursor was loaded successfully, `false` on failure (error
+    /// is logged via `UZ_LOG(Input, Error, ...)`).
+    [[nodiscard]] bool SetCustomCursor(const char* imagePath,
+                                       int hotspotX = 0, int hotspotY = 0);
+
     /// Applies the current cursor visibility and shape.
     ///
     /// Called by WndProc in the WM_SETCURSOR handler. Returns `true` if the
@@ -650,6 +669,9 @@ class InputSystem {
     bool m_mouseCaptured = false;
     bool m_cursorVisible = true;
     CursorShape m_cursorShape = CursorShape::Arrow;
+#ifdef _WIN32
+    HCURSOR m_customCursor = nullptr; ///< Cursor handle loaded by SetCustomCursor(), destroyed in Shutdown().
+#endif
 
     // ── Action Mapping ──────────────────────────────────────────────────
     std::unordered_map<std::string, Key> m_actions;

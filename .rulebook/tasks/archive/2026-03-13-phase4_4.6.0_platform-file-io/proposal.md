@@ -1,24 +1,23 @@
-# Proposal: Platform File I/O (Phase 4.6.0)
+# Platform File I/O
 
 ## Why
-The engine currently uses `std::ifstream`/`std::ofstream` scattered across code with no abstraction for async I/O, memory-mapped files, or file watching. Asset hot-reload requires `ReadDirectoryChangesW` (Windows) / `inotify` (Linux); streaming requires async overlapped I/O; shader cache requires memory-mapped access. UE5's `IPlatformFile` vtable and Godot's `FileAccess` hierarchy both abstract this. This is P1 — every subsystem (assets, shaders, config, scenes) depends on file I/O.
 
-## What Changes
+The engine needs a unified file I/O API that wraps Win32 file operations (CreateFileW, ReadDirectoryChangesW) behind a clean interface, enabling memory-mapped files, file watching for hot-reload, and platform path resolution.
 
-### New Systems
-1. **IPlatformFile interface** — vtable with Read, Write, Exists, GetSize, Enumerate, MMap, Watch
-2. **WindowsFile** — implementation using `CreateFileW`, `ReadFile`, overlapped I/O for async
-3. **MemoryMappedFile** — `CreateFileMapping` + `MapViewOfFile` wrapper for large file access
-4. **FileWatcher** — `ReadDirectoryChangesW` with callback on file create/modify/delete
-5. **PlatformPaths** — `GetUserDataDir()`, `GetAppDataDir()`, `GetTempDir()`, `GetExeDir()` (extend existing)
+## Summary
 
-### Refactoring
-- Replace all `std::ifstream`/`std::ofstream` usage with `IPlatformFile` calls
-- Existing `uz::GetExeDir()` integrated into `PlatformPaths`
+Implement FileSystem API (read/write/exists/enumerate/delete), MemoryMappedFile, FileWatcher with ReadDirectoryChangesW, and platform path utilities (GetUserDataDir, GetAppDataDir, GetTempDir).
 
 ## Impact
-- Affected specs: `docs/engine/07-platform/`
-- Affected code: `runtime/engine/core/paths/`, all asset loading code
-- Breaking change: YES — std:: file calls replaced with engine API
-- User benefit: Async file I/O, hot-reload, memory-mapped large files
-- Enables: Asset hot-reload (shaders, textures), streaming, VFS
+
+- **Core**: All file access routes through this API
+- **Hot-reload**: FileWatcher enables shader/script/asset hot-reload
+- **Asset pipeline**: Memory-mapped files for large asset loading
+
+## Acceptance Criteria
+
+1. FileReadAll/FileWriteAll round-trip binary and text correctly
+2. MemoryMappedFile reads match normal reads
+3. FileWatcher detects creation/modification/deletion events
+4. Platform paths return valid, existing directories
+5. 95%+ test coverage (64 tests)

@@ -57,7 +57,11 @@ struct PerFrameCB {
     Mat4  invViewProj;          ///< Inverse view-projection matrix for world position reconstruction (deferred lighting).
     float nearPlane  = 0.1f;    ///< Near clip plane distance in world units (for depth linearization).
     float farPlane   = 1000.0f; ///< Far clip plane distance in world units (for depth linearization).
-    float _pad[10]   = {};      ///< Remaining padding to 256-byte alignment.
+    uint32_t irradianceSrvIndex  = UINT32_MAX; ///< SRV index for irradiance cubemap (UINT32_MAX = no IBL).
+    uint32_t prefilteredSrvIndex = UINT32_MAX; ///< SRV index for prefiltered specular cubemap.
+    uint32_t brdfLutSrvIndex     = UINT32_MAX; ///< SRV index for BRDF integration LUT.
+    uint32_t prefilteredMipLevels = 5;         ///< Number of prefiltered mip levels (for LOD calculation).
+    float _pad[6]    = {};      ///< Remaining padding to 256-byte alignment.
 };
 
 static_assert(sizeof(PerFrameCB) == 256, "PerFrameCB must be 256 bytes (D3D12 CB alignment)");

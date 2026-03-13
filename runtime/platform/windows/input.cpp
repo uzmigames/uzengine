@@ -58,6 +58,14 @@ void InputSystem::Shutdown() {
         m_mouseCaptured = false;
     }
 
+#ifdef _WIN32
+    // Destroy any custom cursor loaded via SetCustomCursor() to avoid a GDI handle leak
+    if (m_customCursor) {
+        DestroyCursor(m_customCursor);
+        m_customCursor = nullptr;
+    }
+#endif
+
     // Stop vibration on all gamepads
     for (int i = 0; i < kMaxGamepads; ++i) {
         if (m_gamepadCurrent[i].connected) {
@@ -245,6 +253,44 @@ void InputSystem::SetCursorShape(CursorShape shape) {
     m_cursorShape = shape;
 }
 
+/// Loads a custom cursor from a .cur or .ani file and sets the shape to Custom.
+bool InputSystem::SetCustomCursor(const char* imagePath, int /*hotspotX*/, int /*hotspotY*/) {
+#ifdef _WIN32
+    if (!imagePath) {
+        UZ_LOG(Input, Error, "SetCustomCursor: imagePath is null");
+        return false;
+    }
+
+    // Convert UTF-8 path to UTF-16 for Win32 API
+    const int wideLen = MultiByteToWideChar(CP_UTF8, 0, imagePath, -1, nullptr, 0);
+    if (wideLen <= 0) {
+        UZ_LOG(Input, Error, "SetCustomCursor: failed to convert path to wide string: path='{}'", imagePath);
+        return false;
+    }
+
+    std::wstring widePath(static_cast<size_t>(wideLen), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, imagePath, -1, widePath.data(), wideLen);
+
+    HCURSOR cursor = LoadCursorFromFileW(widePath.c_str());
+    if (!cursor) {
+        UZ_LOG(Input, Error, "SetCustomCursor: LoadCursorFromFileW failed: path='{}', error={}", imagePath, GetLastError());
+        return false;
+    }
+
+    // Destroy any previously loaded custom cursor to avoid a resource leak
+    if (m_customCursor) {
+        DestroyCursor(m_customCursor);
+    }
+
+    m_customCursor = cursor;
+    m_cursorShape  = CursorShape::Custom;
+    return true;
+#else
+    (void)imagePath;
+    return false;
+#endif
+}
+
 /// Applies cursor visibility and shape (called from WM_SETCURSOR handler).
 bool InputSystem::ApplyCursorState() {
 #ifdef _WIN32
@@ -267,6 +313,11 @@ bool InputSystem::ApplyCursorState() {
     case CursorShape::SizeNESW: cursorId = MAKEINTRESOURCEW(32643); break;
     case CursorShape::Wait:     cursorId = MAKEINTRESOURCEW(32514); break;
     case CursorShape::No:       cursorId = MAKEINTRESOURCEW(32648); break;
+    case CursorShape::Custom:
+        // Use the pre-loaded custom cursor handle if available; fall back to
+        // Arrow if SetCustomCursor() was never called successfully.
+        SetCursor(m_customCursor ? m_customCursor : LoadCursorW(nullptr, MAKEINTRESOURCEW(32512)));
+        return true;
     }
 
     SetCursor(LoadCursorW(nullptr, cursorId));

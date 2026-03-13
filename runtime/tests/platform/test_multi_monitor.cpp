@@ -388,4 +388,34 @@ TEST(MultiMonitorNoWindow, SetWindowed_Uncreated_DoesNotCrash) {
         << "SetWindowed on an uncreated window must be a safe no-op";
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// WM_DPICHANGED simulation — verifies the handler updates DPI scale
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_F(HiddenWindowFixture, WmDpiChanged_UpdatesDpiScale) {
+    if (!windowCreated) GTEST_SKIP() << "Window creation failed (headless environment)";
+
+    // Record initial DPI scale
+    const float initialScale = window.GetDpiScale();
+    EXPECT_GE(initialScale, 1.0f);
+
+    // Simulate WM_DPICHANGED by sending the message directly.
+    // New DPI = 192 (200% scaling), packed as MAKEWPARAM(192, 192).
+    // The LPARAM points to a RECT with the suggested new window position.
+    HWND hwnd = window.GetHWND();
+    if (!hwnd) GTEST_SKIP() << "No native handle available";
+
+    RECT suggestedRect;
+    GetWindowRect(hwnd, &suggestedRect);
+
+    // Send WM_DPICHANGED (0x02E0) with new DPI = 192
+    const WPARAM newDpi = MAKEWPARAM(192, 192);
+    SendMessage(hwnd, WM_DPICHANGED, newDpi, reinterpret_cast<LPARAM>(&suggestedRect));
+
+    // After processing, DPI scale should reflect the new value
+    const float newScale = window.GetDpiScale();
+    EXPECT_FLOAT_EQ(newScale, 192.0f / 96.0f)
+        << "After WM_DPICHANGED with DPI=192, scale should be 2.0";
+}
+
 #endif // _WIN32

@@ -11,7 +11,8 @@
 #include "../logging/log.h"
 #include "profiler.h"
 
-#include <fstream>
+#include "file_system.h"
+
 #include <sstream>
 
 /// Log category for configuration loading and parsing errors.
@@ -21,14 +22,14 @@ namespace uz {
 
 bool Config::LoadFromFile(const std::string& path) {
     UZ_PROFILE_FUNCTION();
-    std::ifstream file(path);
-    if (!file.is_open()) {
+    const std::string text = FileReadAllText(path.c_str());
+    if (text.empty()) {
         UZ_LOG(Config, Error, "Failed to open config: {}", path);
         return false;
     }
 
     try {
-        m_project = nlohmann::json::parse(file);
+        m_project = nlohmann::json::parse(text);
     } catch (const nlohmann::json::parse_error& e) {
         UZ_LOG(Config, Error, "JSON parse error in {}: {}", path, e.what());
         return false;

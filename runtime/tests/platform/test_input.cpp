@@ -766,3 +766,56 @@ TEST_F(InputTest, ApplyCursorState_DoesNotCrash) {
             << static_cast<int>(shape);
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Custom cursor
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST_F(InputTest, SetCustomCursor_NullPath_ReturnsFalse) {
+    // A null path is an invalid argument — must return false and leave the
+    // cursor shape unchanged (still Arrow after Init).
+    EXPECT_FALSE(input.SetCustomCursor(nullptr))
+        << "SetCustomCursor(nullptr) must return false";
+    EXPECT_EQ(input.GetCursorShape(), uz::CursorShape::Arrow)
+        << "Cursor shape must remain Arrow after a failed SetCustomCursor call";
+}
+
+TEST_F(InputTest, SetCustomCursor_NonExistentFile_ReturnsFalse) {
+    // A path that does not exist on disk must fail gracefully without crashing.
+    EXPECT_FALSE(input.SetCustomCursor("C:/does_not_exist_8f3a9b2c.cur"))
+        << "SetCustomCursor with a non-existent file must return false";
+    EXPECT_EQ(input.GetCursorShape(), uz::CursorShape::Arrow)
+        << "Cursor shape must remain Arrow after a failed load";
+}
+
+TEST_F(InputTest, SetCustomCursor_NonExistentFile_ApplyCursorState_DoesNotCrash) {
+    // Even after a failed SetCustomCursor, ApplyCursorState must not crash
+    // regardless of visibility setting because m_customCursor stays null.
+    input.SetCustomCursor("C:/ghost_cursor.cur");
+
+    input.SetCursorVisible(true);
+    EXPECT_NO_THROW(input.ApplyCursorState())
+        << "ApplyCursorState must not crash when m_customCursor is null";
+
+    input.SetCursorVisible(false);
+    EXPECT_NO_THROW(input.ApplyCursorState())
+        << "ApplyCursorState hidden must not crash when m_customCursor is null";
+}
+
+TEST_F(InputTest, ApplyCursorState_CustomShape_WithNullHandle_DoesNotCrash) {
+    // Force the cursor shape to Custom without going through SetCustomCursor
+    // (m_customCursor therefore stays null). ApplyCursorState must fall back to
+    // the Arrow cursor instead of crashing on a null HCURSOR.
+    input.SetCursorShape(uz::CursorShape::Custom);
+    EXPECT_NO_THROW(input.ApplyCursorState())
+        << "ApplyCursorState(Custom) with null handle must fall back to Arrow";
+}
+
+TEST_F(InputTest, GetCursorShape_AfterSetCustomCursor_Failure_RemainsArrow) {
+    // Repeated failed attempts must never flip the shape to Custom.
+    EXPECT_FALSE(input.SetCustomCursor(nullptr));
+    EXPECT_FALSE(input.SetCustomCursor(""));
+    EXPECT_FALSE(input.SetCustomCursor("not_a_real.cur"));
+    EXPECT_EQ(input.GetCursorShape(), uz::CursorShape::Arrow)
+        << "Shape must remain Arrow after any number of failed SetCustomCursor calls";
+}

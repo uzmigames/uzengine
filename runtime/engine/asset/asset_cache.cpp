@@ -10,9 +10,10 @@
 #define XXH_INLINE_ALL
 #include <xxhash.h>
 
+#include "file_system.h"
+
 #include <cstring>
 #include <filesystem>
-#include <fstream>
 #include <iomanip>
 #include <sstream>
 
@@ -96,15 +97,8 @@ std::optional<std::vector<uint8_t>> AssetCache::Lookup(uint64_t key) const {
     UZ_PROFILE_FUNCTION();
     std::string path = EntryPath(key);
 
-    std::ifstream file(path, std::ios::binary | std::ios::ate);
-    if (!file.is_open()) return std::nullopt;
-
-    auto size = file.tellg();
-    if (size <= 0) return std::nullopt;
-
-    std::vector<uint8_t> data(static_cast<size_t>(size));
-    file.seekg(0);
-    file.read(reinterpret_cast<char*>(data.data()), size);
+    auto data = FileReadAll(path.c_str());
+    if (data.empty()) return std::nullopt;
 
     UZ_LOG(Asset, Debug, "Cache hit: {:016x} ({} bytes)", key, data.size());
     return data;
@@ -116,15 +110,11 @@ bool AssetCache::Store(uint64_t key, const std::vector<uint8_t>& data) {
 
     std::string path = EntryPath(key);
 
-    std::ofstream file(path, std::ios::binary);
-    if (!file.is_open()) {
-        UZ_LOG(Asset, Error, "Cannot write cache entry '{}'", path);
+    const FileResult result = FileWriteAll(path.c_str(), data.data(), data.size());
+    if (result != FileResult::Success) {
+        UZ_LOG(Asset, Error, "Cannot write cache entry '{}': {}", path, FileResultToString(result));
         return false;
     }
-
-    file.write(reinterpret_cast<const char*>(data.data()),
-               static_cast<std::streamsize>(data.size()));
-    file.close();
 
     UZ_LOG(Asset, Debug, "Cache store: {:016x} ({} bytes)", key, data.size());
     return true;

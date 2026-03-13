@@ -21,6 +21,7 @@
 /// sRGB for the R8G8B8A8_UNORM swapchain backbuffer.
 
 #include "include/pbr_common.hlsli"
+#include "include/ibl.hlsli"
 
 struct PSInput {
     float4 positionCS : SV_Position;
@@ -61,7 +62,11 @@ cbuffer PerFrameCB : register(b1) {
     uint     _pad0b;
     uint     _pad0c;
     LightData lights[MAX_LIGHTS];    // dynamic light array (64 bytes each = 512 bytes)
-    float4   _pad1[8];              // pad to 768 bytes total (8 x 16 = 128 bytes)
+    uint     irradianceSrvIndex;    // SRV index for irradiance cubemap (0xFFFFFFFF = no IBL)
+    uint     prefilteredSrvIndex;   // SRV index for prefiltered specular cubemap
+    uint     brdfLutSrvIndex;       // SRV index for BRDF LUT
+    uint     prefilteredMipLevels;  // mip count for prefiltered cubemap LOD
+    float4   _pad1[7];             // pad to 768 bytes total (16 + 112 = 128 bytes)
 };
 
 // Per-object CB at b2 — must match C++ PerObjectCB struct exactly
@@ -96,6 +101,9 @@ Texture2D<float4> roughnessTexture : register(t2);
 Texture2D<float4> metallicTexture  : register(t3);
 Texture2D<float4> aoTexture        : register(t4);
 Texture2D<float>  shadowAtlasTexture : register(t5);
+TextureCube<float3> irradianceCubemap  : register(t6);
+TextureCube<float3> prefilteredCubemap : register(t7);
+Texture2D<float2>  brdfLutTexture     : register(t8);
 #endif
 SamplerState linearSampler : register(s0);
 
@@ -199,8 +207,48 @@ float4 main(PSInput input) : SV_Target {
         lightCount, lights,
         cameraPos.xyz, cascadeCount);
 
-    // ── Ambient (constant approximation; will be replaced with IBL) ──
-    float3 ambient = ambientColor.xyz * albedo * ao;
+    // ── Ambient / IBL ──
+    float3 ambient;
+    if (irradianceSrvIndex != 0xFFFFFFFF && brdfLutSrvIndex != 0xFFFFFFFF) {
+        // Diffuse IBL: sample irradiance cubemap at surface normal
+        float3 irradiance;
+        float3 kD = (1.0f - FresnelSchlickRoughness(NdotV, F0, roughness)) * (1.0f - metallic);
+
+#ifdef UZ_BINDLESS
+        TextureCube<float3> irradianceMap = ResourceDescriptorHeap[irradianceSrvIndex];
+        irradiance = irradianceMap.Sample(linearSampler, N).rgb;
+#else
+        irradiance = irradianceCubemap.Sample(linearSampler, N).rgb;
+#endif
+        float3 diffuseIBL = kD * albedo * irradiance;
+
+        // Specular IBL: sample prefiltered cubemap at reflection direction
+        float3 R = reflect(-V, N);
+        float mipLevel = roughness * float(prefilteredMipLevels - 1);
+        float3 prefilteredColor;
+
+#ifdef UZ_BINDLESS
+        TextureCube<float3> prefilteredMap = ResourceDescriptorHeap[prefilteredSrvIndex];
+        prefilteredColor = prefilteredMap.SampleLevel(linearSampler, R, mipLevel).rgb;
+#else
+        prefilteredColor = prefilteredCubemap.SampleLevel(linearSampler, R, mipLevel).rgb;
+#endif
+
+        // BRDF LUT: split-sum scale and bias
+        float2 envBRDF;
+#ifdef UZ_BINDLESS
+        Texture2D<float2> brdfLut = ResourceDescriptorHeap[brdfLutSrvIndex];
+        envBRDF = brdfLut.Sample(linearSampler, float2(NdotV, roughness)).rg;
+#else
+        envBRDF = brdfLutTexture.Sample(linearSampler, float2(NdotV, roughness)).rg;
+#endif
+        float3 specularIBL = prefilteredColor * (F0 * envBRDF.x + envBRDF.y);
+
+        ambient = (diffuseIBL + specularIBL) * ao;
+    } else {
+        // Fallback: constant ambient (no SkyLight / IBL)
+        ambient = ambientColor.xyz * albedo * ao;
+    }
 
     // ── Combine ──
     float3 color = ambient + Lo + emissive;

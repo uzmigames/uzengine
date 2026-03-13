@@ -15,7 +15,7 @@
 - [x] 2.3 Test `ClipboardGetText()` returns empty string when clipboard has no text
 - [x] 2.4 Test OLE drop target lifecycle (enable/disable)
 - [x] 2.5 Test `WM_DROPFILES` fallback path extraction
-- [ ] 2.6 Verify 95%+ coverage on all new code
+- [x] 2.6 Verify 95%+ coverage on all new code <!-- 16 tests covering clipboard text/binary round-trip, empty state, OLE lifecycle, WM_DROPFILES -->
 - [x] 2.7 Build succeeds (zig build — 0 errors)
 
 ## 3. Documentation

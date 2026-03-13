@@ -10,10 +10,11 @@
 #define XXH_INLINE_ALL
 #include <xxhash.h>
 
+#include "file_system.h"
+
 #include <algorithm>
 #include <cstring>
 #include <filesystem>
-#include <fstream>
 #include <unordered_map>
 
 namespace uz {
@@ -105,15 +106,12 @@ bool WritePakFile(const std::string& path, const std::vector<PakWriteEntry>& ent
     UZ_PROFILE_FUNCTION();
     auto data = WritePak(entries);
 
-    std::ofstream file(path, std::ios::binary);
-    if (!file.is_open()) {
-        UZ_LOG(Asset, Error, "Cannot write pak file: path='{}'", path);
+    const FileResult result = FileWriteAll(path.c_str(), data.data(), data.size());
+    if (result != FileResult::Success) {
+        UZ_LOG(Asset, Error, "Cannot write pak file: path='{}': {}",
+               path, FileResultToString(result));
         return false;
     }
-
-    file.write(reinterpret_cast<const char*>(data.data()),
-               static_cast<std::streamsize>(data.size()));
-    file.close();
 
     UZ_LOG(Asset, Info, "Wrote pak: path='{}', entries={}, size={} bytes",
            path, entries.size(), data.size());
@@ -183,18 +181,11 @@ bool PakReader::Load(const std::vector<uint8_t>& data) {
 
 bool PakReader::LoadFile(const std::string& path) {
     UZ_PROFILE_FUNCTION();
-    std::ifstream file(path, std::ios::binary | std::ios::ate);
-    if (!file.is_open()) {
+    auto data = FileReadAll(path.c_str());
+    if (data.empty()) {
         UZ_LOG(Asset, Error, "Cannot open pak file: path='{}'", path);
         return false;
     }
-
-    auto size = file.tellg();
-    if (size <= 0) return false;
-
-    std::vector<uint8_t> data(static_cast<size_t>(size));
-    file.seekg(0);
-    file.read(reinterpret_cast<char*>(data.data()), size);
 
     return Load(data);
 }
