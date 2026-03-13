@@ -21,7 +21,7 @@ The rendering pipeline system is split across multiple documents covering archit
 | [09-cook-torrance-brdf.md](09-cook-torrance-brdf.md) | **Done (1.2)** | **Cook-Torrance BRDF, GGX NDF, Smith geometry, Schlick Fresnel** | **PBR lighting math** |
 | [07-shader-compatibility.md](07-shader-compatibility.md) | **Done (1.2)** | **Cross-backend shader compilation, SM6.6 bindless vs SM5, DXIL/DXBC/SPIR-V targets** | **Multi-target shaders** |
 | [06-shadow-system.md](06-shadow-system.md) | **Done (Phase 2)** | **Cascaded Shadow Maps, frustum splitting, atlas layout, PCF filtering, cascade blending** | **Directional light shadows** |
-| [06-lighting.md](06-lighting.md) | Planned (2.0+) | Directional lights, point lights, spot lights, global illumination | Lighting systems |
+| [06-lighting.md](06-lighting.md) | **Done (1.3+)** | **Multi-light system (8 lights max), light types, attenuation math, CPU culling** + Phase 2-4 roadmap | **Lighting systems** |
 | [10-renderer-passes.md](10-renderer-passes.md) | **Done (1.2–Phase 2)** | **PBR, GBuffer, Lighting, Shadow passes — complete reference** | **All render passes** |
 | [11-multi-material-multi-uv.md](11-multi-material-multi-uv.md) | Planned (3+) | Submesh ranges, multi-material per mesh, UV channels (UV0–UV3), glTF import | Multi-material rendering |
 | [12-vertex-layout.md](12-vertex-layout.md) | Done (1.2) | Vertex layout system, format flags, input element generation, D3D12 binding | Vertex structure management |
@@ -65,6 +65,14 @@ The rendering pipeline system is split across multiple documents covering archit
 3. See [08-forward-pbr-pass.md](08-forward-pbr-pass.md) for GPU binding patterns
 4. Study [13-register-binding-convention.md](13-register-binding-convention.md) for root signature layout
 5. Learn [14-shader-includes.md](14-shader-includes.md) for shared function reuse
+
+**Work with dynamic lights (directional, point, spot)**
+
+1. Read [06-lighting.md](06-lighting.md) → **Multi-Light System** section for CPU culling and GPU shading
+2. Understand the 64-byte `LightGPU` struct layout and constant buffer packing
+3. Learn attenuation math (point lights) and cone falloff (spot lights)
+4. Integrate `BuildPerFrameMultiLightCB()` into your render loop
+5. Use `AccumulateDirectLighting()` in pixel shaders to evaluate all lights
 
 **Support multiple GPU architectures (DX12, DX11, Vulkan)**
 
