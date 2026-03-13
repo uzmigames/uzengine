@@ -10,7 +10,7 @@
 /// # Usage
 /// ```cpp
 /// Camera cam;
-/// cam.SetPerspective(XM_PIDIV4, 16.f/9.f, 0.1f, 1000.f);
+/// cam.SetPerspective(Camera::kDefaultFovY, 16.f/9.f, 0.1f, 1000.f);
 /// cam.SetPosition({0, 2, -5});
 /// cam.LookAt({0, 0, 0});
 ///
@@ -201,13 +201,20 @@ private:
     Quat m_orientation = Quat::Identity();
 
     // ── Projection parameters ────────────────────────────────────────────────
+    // ── Default projection constants ────────────────────────────────────────
+    static constexpr float kDefaultFovY       = 0.7854f;  ///< XM_PIDIV4 (~45 degrees)
+    static constexpr float kDefaultAspect     = 16.f / 9.f;
+    static constexpr float kDefaultNearPlane  = 0.1f;
+    static constexpr float kDefaultFarPlane   = 1000.f;
+    static constexpr float kDefaultOrthoSize  = 10.f;
+
     ProjectionMode m_projMode = ProjectionMode::Perspective;
-    float m_fovY = 0.7854f;       ///< ~45 degrees (XM_PIDIV4)
-    float m_aspectRatio = 16.f / 9.f;
-    float m_nearPlane = 0.1f;
-    float m_farPlane = 1000.f;
-    float m_orthoWidth = 10.f;
-    float m_orthoHeight = 10.f;
+    float m_fovY = kDefaultFovY;
+    float m_aspectRatio = kDefaultAspect;
+    float m_nearPlane = kDefaultNearPlane;
+    float m_farPlane = kDefaultFarPlane;
+    float m_orthoWidth = kDefaultOrthoSize;
+    float m_orthoHeight = kDefaultOrthoSize;
 
     // ── Cached matrices ──────────────────────────────────────────────────────
     mutable Mat4 m_view;

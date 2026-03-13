@@ -168,7 +168,8 @@ bool DemoApplication::InitPlatform() {
     winDesc.height = static_cast<int32_t>(m_config.height);
 
     if (!m_window->Create(winDesc)) {
-        UZ_LOG(App, Error, "Failed to create window");
+        UZ_LOG(App, Error, "Failed to create window: title='{}', size={}x{}",
+               m_config.title, m_config.width, m_config.height);
         return false;
     }
     m_window->Show();
@@ -189,7 +190,8 @@ bool DemoApplication::InitPlatform() {
 
     m_device = CreateRHIDevice(deviceDesc);
     if (!m_device) {
-        UZ_LOG(App, Error, "Failed to create RHI device");
+        UZ_LOG(App, Error, "Failed to create RHI device: backend={}, validation={}",
+               static_cast<int>(deviceDesc.backend), deviceDesc.enableValidation);
         return false;
     }
 
@@ -207,14 +209,15 @@ bool DemoApplication::InitPlatform() {
 
     m_swapChain = m_device->CreateSwapChain(scDesc);
     if (!m_swapChain) {
-        UZ_LOG(App, Error, "Failed to create swapchain");
+        UZ_LOG(App, Error, "Failed to create swapchain: size={}x{}, buffers={}, vsync={}",
+               scDesc.width, scDesc.height, scDesc.bufferCount, scDesc.vsync);
         return false;
     }
 
     // ── Command List ─────────────────────────────────────────────────────
     m_cmdList = m_device->CreateCommandList(RHIQueueType::Graphics);
     if (!m_cmdList) {
-        UZ_LOG(App, Error, "Failed to create command list");
+        UZ_LOG(App, Error, "Failed to create graphics command list");
         return false;
     }
 

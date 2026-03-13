@@ -30,7 +30,7 @@ const RHIInputElementDesc elements[] = {
     {"TEXCOORD", 0, RHIFormat::R32G32Float,    0, 36, RHIInputClassification::PerVertex},
 };
 
-// In forward_pbr_pass.cpp (same again)
+// In pbr_pass.cpp (same again)
 // ... repeated 4 times across the codebase
 ```
 

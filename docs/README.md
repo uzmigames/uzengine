@@ -52,6 +52,12 @@ Detailed specifications for each milestone, located in [specs/](specs/):
 |----------|-------------|
 | [BENCHMARK_COMPILERS.md](benchmarks/BENCHMARK_COMPILERS.md) | Compiler comparison (Zig/Clang/MSVC) — build times, binary size, runtime perf |
 
+## Quality Audits
+
+| Document | Description |
+|----------|-------------|
+| [DOCUMENTATION-AUDIT-2026-03-13.md](audits/DOCUMENTATION-AUDIT-2026-03-13.md) | Code documentation quality audit — Rust-style docs, 100% Excellent across 18 header files |
+
 ## Observability
 
 | Document | Description |

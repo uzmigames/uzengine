@@ -75,7 +75,8 @@ int EngineLoop::Run(const EngineConfig& config) {
            config_.headless, config_.maxFrames);
 
     if (!Initialize()) {
-        UZ_LOG(Lifecycle, Error, "EngineLoop initialization failed");
+        UZ_LOG(Lifecycle, Error, "EngineLoop initialization failed: headless={}, maxFrames={}",
+               config_.headless, config_.maxFrames);
         Shutdown();
         return 1;
     }

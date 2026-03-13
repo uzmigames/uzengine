@@ -1,7 +1,7 @@
 # Math — Transform & Hierarchy
 
 > **Status**: Done (Milestone 1.1.0a)
-> **Source**: `runtime/engine/math/engine_math.h` (Transform struct)
+> **Source**: `runtime/engine/math/transform.h` (Transform struct)
 > **Depends on**: Vec3, Quat, Mat4
 
 ## Purpose
@@ -209,7 +209,7 @@ model_matrix = glm::scale(model_matrix, glm::vec3(scale, scale, scale));
 ### Before (Manual Matrix Math)
 
 ```cpp
-// In forward_pbr_pass.cpp — typical pass setup
+// In pbr_pass.cpp — typical pass setup
 Mat4 model = Mat4::Identity();
 model = glm::translate(model, object_pos);
 model = glm::rotate(model, glm::radians(object_yaw), Vec3::Up());
@@ -225,7 +225,7 @@ per_object_cb.normal_matrix = normal_mat;
 ### After (Convenience Methods)
 
 ```cpp
-// In forward_pbr_pass.cpp — same setup, fewer lines
+// In pbr_pass.cpp — same setup, fewer lines
 Mat4 model = Mat4::TRS(object_pos,
                        Quat::FromAxisAngle(Vec3::Up(), object_yaw),
                        {object_scale, object_scale, object_scale});

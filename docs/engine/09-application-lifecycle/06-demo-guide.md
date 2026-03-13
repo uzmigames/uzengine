@@ -3,21 +3,24 @@
 > **Target Audience**: Developers writing simple graphics demos and validation tests
 > **Scope**: Using `DemoApplication` to eliminate GPU boilerplate (window, device, command list, fences, frame sync)
 > **Time**: ~10 minutes to write a minimal demo
+> **Source**: `runtime/engine/app/demo_application.h`, `runtime/engine/app/demo_application.cpp`
 
 ## Overview
 
-`DemoApplication` is a lightweight base class that handles GPU initialization boilerplate for simple demos. Instead of manually creating windows, RHI devices, swapchains, command lists, and synchronization primitives, subclasses only implement two virtual hooks: `OnInit()` and `OnFrame()`.
+`DemoApplication` is a lightweight base class that handles GPU initialization boilerplate for simple demos. Instead of manually creating windows, RHI devices, swapchains, command lists, and synchronization primitives, subclasses only implement virtual hooks: `OnInit()`, `OnFrame()`, `OnResize()` (optional), and `OnShutdown()` (optional).
 
 **Use DemoApplication when**:
 - Writing a simple graphics demo (~200 lines)
 - Validating a rendering feature (textures, shaders, pipelines)
 - Creating a test that needs a window and GPU device
 - You don't need the full EngineLoop subsystem framework
+- You want automatic triple-buffering and frame synchronization
 
 **Use EngineLoop (see [migration guide below](#migration-to-engineloop)) when**:
 - Building a full game with multiple systems (physics, audio, input, scripting)
 - You need ordered subsystem initialization and shutdown
-- You want CLI flag support (`--frames`, `--headless`, `--screenshot`)
+- You want dependency-based initialization across many modules
+- You need the time manager and tick groups
 
 ---
 
@@ -30,9 +33,10 @@
 | **Window** | DemoApplication | Subclass only calls hooks, reads size via `GetWidth()` / `GetHeight()` |
 | **RHI Device** | DemoApplication | Use via `GetDevice()` in `OnInit()` / `OnFrame()` |
 | **Swapchain** | DemoApplication | Access via `GetSwapChain()`, handles resize internally |
-| **Command List** | DemoApplication | Opened before `OnFrame()` — record commands, don't close/execute |
-| **Frame Synchronization** | DemoApplication | Triple-buffering with per-frame fences (user doesn't call Wait/Signal) |
-| **Frame Timing** | DemoApplication | Provides `dt` parameter to `OnFrame()` (clamped to 0.1s max) |
+| **Command List** | DemoApplication | Opened/closed by base class — record commands in `OnFrame()` |
+| **Frame Synchronization** | DemoApplication | Triple-buffering with per-frame fences (3 frames in-flight max) |
+| **Resize Handling** | DemoApplication | Detects resize, calls `OnResize()`, updates internal state |
+| **Minimize Sleep** | DemoApplication | Skips rendering while minimized, polls messages |
 | **Message Pump** | DemoApplication | Handles window events, minimize, resize |
 | **Shutdown Stats** | DemoApplication | Logs frames, elapsed time, average FPS on exit |
 
@@ -262,6 +266,81 @@ if (IsBindless()) {
 
 ---
 
+## Configuration via DemoConfig
+
+Customize demo behavior by passing a `DemoConfig` struct to the constructor:
+
+```cpp
+/// Configuration for DemoApplication initialization.
+///
+/// All fields have sensible defaults for a windowed demo.
+struct DemoConfig {
+    const char* title = "UzEngine Demo";  ///< Window title bar text
+    uint32_t width = 1280;                ///< Initial window width (pixels)
+    uint32_t height = 720;                ///< Initial window height (pixels)
+    uint32_t maxFrames = 0;               ///< Max frames to render (0 = unlimited)
+    bool vsync = false;                   ///< Enable vertical sync on present
+    bool enableValidation = true;         ///< Enable GPU validation layer (debug builds)
+};
+```
+
+### Usage
+
+You can pass `DemoConfig` directly:
+
+```cpp
+uz::DemoConfig config;
+config.title = "My Advanced Demo";
+config.width = 1920;
+config.height = 1080;
+config.maxFrames = 300;  // Run for 300 frames then exit
+config.vsync = true;
+
+class MyDemo : public uz::DemoApplication {
+public:
+    MyDemo(const uz::DemoConfig& config) : uz::DemoApplication(config) {}
+    // ...
+};
+
+int main() {
+    uz::LogInit();
+    uz::DemoConfig config;
+    config.title = "Advanced Demo";
+    const int result = MyDemo(config).Run();
+    uz::LogShutdown();
+    return result;
+}
+```
+
+Or use the convenience constructor with just a title:
+
+```cpp
+class MyDemo : public uz::DemoApplication {
+public:
+    MyDemo() : uz::DemoApplication("My Demo", 1280, 720) {}
+};
+
+int main() {
+    uz::LogInit();
+    const int result = MyDemo().Run();
+    uz::LogShutdown();
+    return result;
+}
+```
+
+### Configuration Fields
+
+| Field | Default | Purpose |
+|-------|---------|---------|
+| `title` | `"UzEngine Demo"` | Window title bar text displayed to user |
+| `width` | `1280` | Initial window width in pixels |
+| `height` | `720` | Initial window height in pixels |
+| `maxFrames` | `0` | Maximum frames to render before auto-exit (0 = run indefinitely) |
+| `vsync` | `false` | Enable vertical sync on present (matches monitor refresh rate) |
+| `enableValidation` | `true` | Enable GPU validation/debug layer (release builds ignore this) |
+
+---
+
 ## How to Create a Demo
 
 ### Step 1: Subclass DemoApplication
@@ -460,37 +539,6 @@ const demo_exe = b.addExecutable(.{
 demo_exe.linkLibrary(uz_core);
 demo_exe.linkLibrary(uz_gpu);
 demo_exe.linkSystemLibrary("d3d12");  // For DX12 backend
-```
-
----
-
-## Configuration
-
-`DemoApplication` accepts configuration via `DemoConfig`:
-
-```cpp
-uz::DemoConfig config{
-    .title = "My Demo",
-    .width = 1920,
-    .height = 1080,
-    .maxFrames = 300,      // 0 = unlimited
-    .vsync = true,         // Enable vertical sync
-    .enableValidation = true,  // GPU debug layer (debug builds only)
-};
-
-class MyDemo : public uz::DemoApplication {
-public:
-    MyDemo() : DemoApplication(config) {}
-};
-```
-
-Or use the convenience constructor for simple cases:
-
-```cpp
-class MyDemo : public uz::DemoApplication {
-public:
-    MyDemo() : DemoApplication("My Demo", 1280, 720) {}
-};
 ```
 
 ---
