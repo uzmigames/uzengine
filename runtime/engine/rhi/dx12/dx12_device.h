@@ -107,6 +107,10 @@ public:
     void DestroyPipeline(RHIPipelineHandle handle) override;
     std::vector<uint8_t> GetPipelineCachedBlob(RHIPipelineHandle handle) override;
 
+    // ── IRHIDevice: Copy queue ──────────────────────────────────────────
+    uint64_t SignalCopyQueue() override;
+    void GraphicsWaitForCopy(uint64_t value) override;
+
     // ── IRHIDevice: Sampler operations ───────────────────────────────────
     RHISamplerHandle CreateSampler(const RHISamplerDesc& desc) override;
     void DestroySampler(RHISamplerHandle handle) override;
@@ -221,6 +225,8 @@ private:
 
     ComPtr<ID3D12CommandQueue>     m_directQueue;
     ComPtr<ID3D12CommandQueue>     m_copyQueue;
+    ComPtr<ID3D12Fence>            m_copyFence;
+    uint64_t                       m_copyFenceValue = 0;
 
     ComPtr<ID3D12DescriptorHeap>   m_cbvSrvUavHeap;
     ComPtr<ID3D12DescriptorHeap>   m_samplerHeap;

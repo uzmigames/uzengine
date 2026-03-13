@@ -825,6 +825,16 @@ public:
 
     /// Defined out-of-line in rhi_config.h (needs full ShaderModel enum).
     bool IsBindless() const;
+
+    // ── Copy queue (async uploads) ──────────────────────────────────────
+
+    /// Signals a fence on the copy queue, returning the fence value.
+    /// Graphics queue can wait on this value via GraphicsWaitForCopy().
+    virtual uint64_t SignalCopyQueue() { return 0; }
+
+    /// Makes the graphics queue wait until the copy queue fence reaches `value`.
+    /// Creates a GPU-side dependency without CPU stall.
+    virtual void GraphicsWaitForCopy(uint64_t /*value*/) {}
 };
 
 } // namespace uz

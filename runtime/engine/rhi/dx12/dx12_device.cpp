@@ -408,7 +408,14 @@ bool DX12Device::CreateCommandQueues() {
         return false;
     }
 
-    UZ_LOG(RHI, Info, "Command queues created: Direct + Copy");
+    // Copy fence for async upload → graphics synchronization
+    hr = m_device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&m_copyFence));
+    if (FAILED(hr)) {
+        UZ_LOG(RHI, Error, "Failed to create copy fence, hr=0x{:08X}", static_cast<uint32_t>(hr));
+        return false;
+    }
+
+    UZ_LOG(RHI, Info, "Command queues created: Direct + Copy (with fence)");
     return true;
 }
 
@@ -908,6 +915,27 @@ ID3D12DescriptorHeap* DX12Device::GetDescriptorHeap(D3D12_DESCRIPTOR_HEAP_TYPE t
         case D3D12_DESCRIPTOR_HEAP_TYPE_RTV:          return m_rtvHeap.Get();
         case D3D12_DESCRIPTOR_HEAP_TYPE_DSV:          return m_dsvHeap.Get();
         default:                                      return nullptr;
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Copy Queue — Async upload synchronization
+// ─────────────────────────────────────────────────────────────────────────────
+
+uint64_t DX12Device::SignalCopyQueue() {
+    ++m_copyFenceValue;
+    HRESULT hr = m_copyQueue->Signal(m_copyFence.Get(), m_copyFenceValue);
+    if (FAILED(hr)) {
+        UZ_LOG(RHI, Error, "SignalCopyQueue failed: hr=0x{:08X}", static_cast<uint32_t>(hr));
+        return 0;
+    }
+    return m_copyFenceValue;
+}
+
+void DX12Device::GraphicsWaitForCopy(uint64_t value) {
+    HRESULT hr = m_directQueue->Wait(m_copyFence.Get(), value);
+    if (FAILED(hr)) {
+        UZ_LOG(RHI, Error, "GraphicsWaitForCopy failed: hr=0x{:08X}", static_cast<uint32_t>(hr));
     }
 }
 
