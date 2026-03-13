@@ -1,153 +1,294 @@
-/// UzEngine Multi-Light Support — GPU-accelerated per-pixel multi-light evaluation
+/// UzEngine Multi-Light System — CPU structs, GPU layout, and culling helpers.
 ///
-/// Supports up to 8 dynamic point and spot lights per render pass with
-/// per-light distance falloff, spot-light cone attenuation, and
-/// CPU-side light culling (sort + nearest-N selection).
+/// Provides the `LightGPU` struct for efficient GPU upload, the
+/// `PerFrameMultiLightCB` constant buffer that carries up to 8 dynamic lights
+/// per frame, CPU-side light culling via `SelectNearestLights()`, and
+/// standalone attenuation / cone-falloff math functions that can be unit-tested
+/// without any RHI or hardware dependency.
 ///
-/// # Phase Status
-/// **IMPLEMENTATION PENDING**: Spec defined. Tests in test_multi_light.cpp.
-/// This module will be completed in phase3a-3.6.0-multi-light.
+/// # Design Constraints
+/// - `LightGPU` is exactly 64 bytes (four float4 rows) for HLSL alignment.
+/// - `PerFrameMultiLightCB` is a multiple of 256 bytes (D3D12 CB requirement).
+/// - All math functions are `[[nodiscard]] inline` so tests need no .cpp file.
+/// - `SelectNearestLights()` sorts by squared distance, skips lights whose
+///   centre is further than their range from the camera, writes at most
+///   `kMaxMultiLights` entries.
+///
+/// # See Also
+/// - `constant_buffers.h` — existing `PerFrameCB`, `LightingCB`, `PerObjectCB`
+/// - `scene_lighting.h`   — directional-light / ambient helpers
 
 #pragma once
 
-#include "../../math/vector3.h"
+#include "vector3.h"
+#include "vector4.h"
+#include "mat4.h"
+
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
-#include <array>
 
 namespace uz {
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Multi-Light Constants
+// Constants
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Maximum number of dynamic lights that can be evaluated per-pixel.
+/// Maximum number of dynamic lights uploaded per frame in `PerFrameMultiLightCB`.
 ///
-/// Limited to 8 to fit within a D3D12 constant buffer register constraint
-/// (8 × 64-byte LightGPU structures = 512 bytes of light data).
-constexpr uint32_t kMaxMultiLights = 8;
+/// 8 lights x 64 bytes = 512 bytes of light data in the constant buffer.
+static constexpr uint32_t kMaxMultiLights = 8u;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Light GPU Data
+// LightType — discriminant stored in LightGPU.lightType
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Per-light GPU data for multi-light shading (exactly 64 bytes, HLSL-friendly).
+/// Discriminant stored in `LightGPU::lightType` so the shader can branch once
+/// per light without needing separate arrays for each type.
+enum class LightType : uint32_t {
+    Directional = 0, ///< Infinite directional light.
+    Point       = 1, ///< Omnidirectional point light.
+    Spot        = 2, ///< Cone-shaped spot light.
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LightGPU — GPU-resident light descriptor (64 bytes, 16-byte aligned)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// GPU-resident descriptor for one dynamic light.
 ///
-/// Packed struct for constant buffer transmission to GPU shaders.
-/// Layout is HLSL-compatible with float3 → float4 padding:
-/// - [0..15] positionOrDir (float3) + range (float)
-/// - [16..31] color (float3) + lightType (float)
-/// - [32..47] spotDirection (float3) + innerConeCos (float)
-/// - [48..63] outerConeCos (float) + padding (float3)
+/// Exactly 64 bytes (four float4 rows).  All fields are HLSL-compatible:
+/// float3 fields are padded to 16-byte rows by the adjacent scalar fields.
 ///
-/// The float3 fields are implicitly padded to float4 (16 bytes each) to match
-/// D3D HLSL constant buffer alignment requirements.
+/// Memory layout (byte offsets):
+/// ```
+///  [ 0..11] positionOrDir  float3  world position (point/spot) or direction
+///  [12..15] range          float   attenuation radius (0 = directional)
+///  [16..27] color          float3  linear HDR color x intensity
+///  [28..31] lightType      float   0=directional, 1=point, 2=spot
+///  [32..43] spotDirection  float3  normalised cone axis
+///  [44..47] innerConeCos   float   cos(innerAngle)
+///  [48..51] outerConeCos   float   cos(outerAngle)
+///  [52..63] _pad           float3  explicit padding to 64 bytes
+/// ```
 struct alignas(16) LightGPU {
-    /// World-space position for point/spot lights, direction for directional.
-    Vec3 positionOrDir;
+    // Row 0  [bytes 0..15]
+    Vec3  positionOrDir = {}; ///< World-space position (point/spot) or direction (directional).
+    float range         = 0.f;///< Attenuation radius in world units. 0 for directional lights.
 
-    /// Effective range/radius in world units. 0 = directional (infinite range).
-    float range = 0.0f;
+    // Row 1  [bytes 16..31]
+    Vec3  color         = {}; ///< Linear HDR color multiplied by intensity.
+    float lightType     = 0.f;///< Cast of `LightType` to float for HLSL scalar packing.
 
-    /// Linear HDR color (RGB), pre-multiplied by intensity.
-    Vec3 color = Vec3(0.0f, 0.0f, 0.0f);
+    // Row 2  [bytes 32..47]
+    Vec3  spotDirection = {}; ///< Normalised cone axis (spot lights only).
+    float innerConeCos  = 0.f;///< cos(innerAngle) — full intensity inside this threshold.
 
-    /// Light type: 0 = directional, 1 = point, 2 = spot.
-    float lightType = 0.0f;
-
-    /// Normalized cone axis direction (for spot lights only).
-    Vec3 spotDirection = Vec3(0.0f, 0.0f, 1.0f);
-
-    /// cos(innerConeHalfAngle) for smooth spot-light falloff.
-    float innerConeCos = -1.0f;
-
-    /// cos(outerConeHalfAngle) for hard spot-light cutoff.
-    float outerConeCos = -1.0f;
-
-    /// Padding to reach 64 bytes (required for HLSL constant buffer alignment).
-    float _pad = 0.0f;
-
-    /// Default constructor zeroes all fields for safe constant buffer initialization.
-    LightGPU() = default;
+    // Row 3  [bytes 48..63]
+    float outerConeCos  = 0.f;///< cos(outerAngle) — zero intensity outside this threshold.
+    float _pad[3]       = {}; ///< Explicit padding to 64 bytes.
 };
 
-static_assert(sizeof(LightGPU) == 64, "LightGPU must be exactly 64 bytes");
-static_assert(alignof(LightGPU) == 16, "LightGPU must be 16-byte aligned");
+static_assert(sizeof(LightGPU)  == 64u,  "LightGPU must be exactly 64 bytes");
+static_assert(alignof(LightGPU) == 16u,  "LightGPU must be 16-byte aligned");
 
-/// Per-frame multi-light constant buffer (carries up to 8 lights + metadata).
+// ─────────────────────────────────────────────────────────────────────────────
+// PerFrameMultiLightCB — per-frame CB with 8-light dynamic array
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Per-frame constant buffer for the multi-light forward/deferred pass.
 ///
-/// Binds to a D3D12 constant buffer register. Total size is a multiple of 256
-/// bytes (D3D12 requirement). The CPU populates this each frame by culling and
-/// sorting nearby lights from the scene.
-struct alignas(256) PerFrameMultiLightCB {
-    /// Number of active lights in this frame (clamped to [0, 8]).
-    uint32_t lightCount = 0;
+/// Total size: 768 bytes = 3 x 256 (satisfies D3D12 CB alignment).
+///
+/// Field layout:
+/// ```
+///   [  0.. 63] viewProj       Mat4         64 bytes
+///   [ 64.. 79] cameraPos      Vec4         16 bytes
+///   [ 80.. 95] timeParams     Vec4         16 bytes
+///   [ 96..111] ambientColor   Vec4         16 bytes
+///   [112..115] lightCount     uint32        4 bytes
+///   [116..127] _pad0          uint32[3]    12 bytes  (align array to 16)
+///   [128..639] lightArray     LightGPU[8] 512 bytes
+///   [640..767] _pad1          float[32]   128 bytes  (pad to 768)
+/// ```
+struct PerFrameMultiLightCB {
+    Mat4     viewProj                    = {}; ///< Combined view-projection matrix.
+    Vec4     cameraPos                   = {}; ///< xyz = world camera position, w = unused.
+    Vec4     timeParams                  = {}; ///< x = totalTime, y = deltaTime, z = frameCount, w = unused.
+    Vec4     ambientColor                = {}; ///< xyz = ambient contribution, w = unused.
+    uint32_t lightCount                  = 0;  ///< Number of active entries in `lightArray`.
+    uint32_t _pad0[3]                    = {}; ///< Align `lightArray` to 16-byte boundary.
+    LightGPU lightArray[kMaxMultiLights] = {}; ///< GPU light descriptors (first `lightCount` live).
+    float    _pad1[32]                   = {}; ///< Pad struct to 768 bytes (3 x 256).
+};
 
-    /// Padding to 16-byte alignment before light array.
-    uint32_t _pad0 = 0;
-    uint32_t _pad1 = 0;
-    uint32_t _pad2 = 0;
+static_assert(sizeof(PerFrameMultiLightCB) % 256 == 0,
+    "PerFrameMultiLightCB must be a multiple of 256 bytes (D3D12 CB alignment)");
 
-    /// Array of up to 8 lights. Only the first `lightCount` are valid.
-    /// Each element is 64 bytes; 8 elements = 512 bytes total.
-    std::array<LightGPU, kMaxMultiLights> lightArray = {};
+// ─────────────────────────────────────────────────────────────────────────────
+// LightCPU — CPU-side light descriptor (not uploaded directly)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// CPU-side light data consumed by the culling and sorting stage before upload.
+struct LightCPU {
+    Vec3      position    = {};               ///< World-space position.
+    float     range       = 10.0f;            ///< Attenuation radius in world units.
+    Vec3      color       = {1.f, 1.f, 1.f}; ///< Linear HDR color x intensity.
+    LightType type        = LightType::Point;
+    Vec3      direction   = {0.f, -1.f, 0.f};///< Cone axis (directional / spot).
+    float     innerAngle  = 0.3f;             ///< Inner cone half-angle in radians.
+    float     outerAngle  = 0.5f;             ///< Outer cone half-angle in radians.
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Light Attenuation Functions
+// Attenuation math
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Compute point-light attenuation using inverse-square falloff (UE4/Frostbite style).
+/// Computes inverse-square attenuation for a point or spot light.
 ///
-/// Formula:
+/// Formula (Frostbite / UE4-compatible):
 /// ```
-/// distRatio = clamp(distance / range, 0, 1)
-/// attenuation = (1 - distRatio^2)^2 × (1 / (distance^2 + 1))
+///   distRatio   = clamp(dist / range, 0, 1)
+///   windowFn    = (1 - distRatio^2)^2
+///   invSqFactor = 1 / (dist^2 + 1)
+///   attenuation = windowFn * invSqFactor
 /// ```
-///
-/// The second term softens the singularity at distance=0 while preserving the
-/// correct falloff shape. Reaches exactly 0.0 at the range boundary.
-///
-/// # Parameters
-/// * `distance` — Distance from light to surface point (in world units).
-/// * `range` — Effective radius of the light (in world units).
 ///
 /// # Returns
-/// Attenuation factor in [0, 1]. Returns 0.0 if distance > range or range <= 0.
-///
-/// # Examples
-/// ```cpp
-/// float att = ComputePointAttenuation(5.0f, 10.0f);  // ~0.56
-/// float att = ComputePointAttenuation(10.0f, 10.0f); // 0.0 (at boundary)
-/// float att = ComputePointAttenuation(15.0f, 10.0f); // 0.0 (beyond range)
-/// ```
-[[nodiscard]] float ComputePointAttenuation(float distance, float range);
+/// Scalar in [0, 1]. Exactly 0.0 when `dist >= range` or `range <= 0`.
+[[nodiscard]] inline float ComputePointAttenuation(float dist, float range) noexcept {
+    if (range <= 0.0f) {
+        return 0.0f;
+    }
+    float distRatio = dist / range;
+    distRatio = distRatio < 0.0f ? 0.0f : (distRatio > 1.0f ? 1.0f : distRatio);
+    const float window = (1.0f - distRatio * distRatio) * (1.0f - distRatio * distRatio);
+    const float invSq  = 1.0f / (dist * dist + 1.0f);
+    return window * invSq;
+}
 
-/// Compute spot-light cone attenuation using smooth falloff between inner and outer angles.
-///
-/// The cone falloff is a smooth Hermite step between the inner (full intensity)
-/// and outer (zero intensity) cone angles. This avoids harsh aliasing at the cone edge.
+// ─────────────────────────────────────────────────────────────────────────────
+// Cone falloff math
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Computes the cone intensity factor for a spot light.
 ///
 /// Formula:
 /// ```
-/// cosConeAngle = dot(normalize(direction), normalize(lightToPoint))
-/// attenuation = smoothstep(cosOuterAngle, cosInnerAngle, cosConeAngle)
+///   t           = clamp((cosAngle - outerCos) / (innerCos - outerCos), 0, 1)
+///   spotFactor  = t * t
 /// ```
-///
-/// # Parameters
-/// * `cosConeAngle` — cos(angle between spot direction and light-to-point vector).
-/// * `cosInnerAngle` — cos(inner half-cone angle) — full intensity.
-/// * `cosOuterAngle` — cos(outer half-cone angle) — zero intensity.
 ///
 /// # Returns
-/// Cone attenuation factor in [0, 1]. Returns 1.0 if within inner cone,
-/// smoothly blends between inner and outer, returns 0.0 beyond outer cone.
+/// Scalar in [0, 1]. 1.0 inside the inner cone, 0.0 outside the outer cone.
+[[nodiscard]] inline float ComputeSpotConeFactor(float cosAngle,
+                                                  float innerConeCos,
+                                                  float outerConeCos) noexcept {
+    const float denom = innerConeCos - outerConeCos;
+    if (denom < 1e-6f && denom > -1e-6f) {
+        return cosAngle >= innerConeCos ? 1.0f : 0.0f;
+    }
+    float t = (cosAngle - outerConeCos) / denom;
+    t = t < 0.0f ? 0.0f : (t > 1.0f ? 1.0f : t);
+    return t * t;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SelectNearestLights — CPU culling and sorting
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Selects and converts the nearest visible lights from a CPU candidate array
+/// into GPU-ready `LightGPU` entries.
 ///
-/// # Examples
-/// ```cpp
-/// float att = ComputeSpotConeAttenuation(0.9f, 0.87f, 0.71f);  // ~0.75 (edge)
-/// float att = ComputeSpotConeAttenuation(0.95f, 0.87f, 0.71f); // 1.0 (inside)
-/// float att = ComputeSpotConeAttenuation(0.5f, 0.87f, 0.71f);  // 0.0 (outside)
-/// ```
-[[nodiscard]] float ComputeSpotConeAttenuation(float cosConeAngle, float cosInnerAngle, float cosOuterAngle);
+/// Sorts by squared distance to `cameraPos`. Skips lights further than their
+/// range from the camera. Writes at most `outCapacity` entries.
+///
+/// # Returns
+/// Number of `LightGPU` entries written into `outLights` (0 to outCapacity).
+[[nodiscard]] inline uint32_t SelectNearestLights(const LightCPU* candidates,
+                                                   uint32_t        count,
+                                                   const Vec3&     cameraPos,
+                                                   LightGPU*       outLights,
+                                                   uint32_t        outCapacity) noexcept {
+    if (count == 0 || candidates == nullptr || outLights == nullptr || outCapacity == 0) {
+        return 0u;
+    }
+
+    struct SortEntry {
+        uint32_t index;
+        float    sqDist;
+    };
+
+    constexpr uint32_t kMaxBuf = 256u;
+    SortEntry sortBuf[kMaxBuf];
+    uint32_t  validCount = 0u;
+
+    for (uint32_t i = 0u; i < count && validCount < kMaxBuf; ++i) {
+        const LightCPU& l = candidates[i];
+
+        if (l.type == LightType::Directional) {
+            sortBuf[validCount++] = {i, 0.0f};
+            continue;
+        }
+
+        const float dx     = l.position.x - cameraPos.x;
+        const float dy     = l.position.y - cameraPos.y;
+        const float dz     = l.position.z - cameraPos.z;
+        const float sqDist = dx * dx + dy * dy + dz * dz;
+
+        if (sqDist > l.range * l.range) {
+            continue; // Cull — camera outside attenuation radius.
+        }
+
+        sortBuf[validCount++] = {i, sqDist};
+    }
+
+    std::sort(sortBuf, sortBuf + validCount,
+              [](const SortEntry& a, const SortEntry& b) noexcept {
+                  return a.sqDist < b.sqDist;
+              });
+
+    uint32_t written = 0u;
+    for (uint32_t i = 0u; i < validCount && written < outCapacity; ++i) {
+        const LightCPU& src = candidates[sortBuf[i].index];
+        LightGPU&       dst = outLights[written];
+
+        dst               = LightGPU{};
+        dst.positionOrDir = src.position;
+        dst.range         = src.range;
+        dst.color         = src.color;
+        dst.lightType     = static_cast<float>(static_cast<uint32_t>(src.type));
+        dst.spotDirection = src.direction;
+        dst.innerConeCos  = std::cos(src.innerAngle);
+        dst.outerConeCos  = std::cos(src.outerAngle);
+
+        ++written;
+    }
+
+    return written;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BuildMultiLightCB — convenience factory
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Builds a `PerFrameMultiLightCB` from CPU light data and ambient parameters.
+///
+/// Calls `SelectNearestLights()` internally. The caller fills `viewProj`,
+/// `cameraPos`, and `timeParams` separately before GPU upload.
+///
+/// # Returns
+/// A `PerFrameMultiLightCB` with `lightCount`, `lightArray`, and `ambientColor`
+/// populated. `viewProj`, `cameraPos`, `timeParams` are zero-initialised.
+[[nodiscard]] inline PerFrameMultiLightCB BuildMultiLightCB(const LightCPU* candidates,
+                                                             uint32_t        count,
+                                                             const Vec3&     cameraPos,
+                                                             const Vec3&     ambientColor) noexcept {
+    PerFrameMultiLightCB cb{};
+    cb.ambientColor = {ambientColor.x, ambientColor.y, ambientColor.z, 0.0f};
+    cb.lightCount   = SelectNearestLights(
+        candidates, count, cameraPos, cb.lightArray, kMaxMultiLights);
+    return cb;
+}
 
 } // namespace uz
