@@ -261,6 +261,12 @@ std::vector<std::wstring> ShaderCompiler::BuildArguments(
         args.push_back(ToWide(def));
     }
 
+    // Include search directories
+    for (const auto& dir : desc.includeDirs) {
+        args.push_back(L"-I");
+        args.push_back(ToWide(dir));
+    }
+
     // Source name for error messages
     if (!desc.sourceName.empty()) {
         args.push_back(ToWide(desc.sourceName));
@@ -296,15 +302,23 @@ ShaderCompileResult ShaderCompiler::Compile(const ShaderCompileDesc& desc) {
         argPtrs.push_back(arg.c_str());
     }
 
+    // Create include handler when include directories are specified
+    IDxcIncludeHandler* pIncludeHandler = nullptr;
+    if (!desc.includeDirs.empty()) {
+        m_utils->CreateDefaultIncludeHandler(&pIncludeHandler);
+    }
+
     // Compile
     IDxcResult* pResult = nullptr;
     HRESULT hr = m_compiler->Compile(
         &sourceBuffer,
         argPtrs.data(),
         static_cast<UINT32>(argPtrs.size()),
-        nullptr,
+        pIncludeHandler,
         IID_IDxcResult,
         reinterpret_cast<LPVOID*>(&pResult));
+
+    if (pIncludeHandler) { pIncludeHandler->Release(); }
 
     if (FAILED(hr)) {
         result.errors = "IDxcCompiler3::Compile failed (hr=0x" +

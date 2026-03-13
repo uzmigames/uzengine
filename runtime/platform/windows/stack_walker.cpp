@@ -98,11 +98,13 @@ int WalkStack(StackFrame* frames, int maxFrames, int skipFrames) {
         return 0;
     }
 
-    // Capture raw addresses first (skip +1 for this function).
+    // Capture raw addresses. CaptureRawStackTrace already skips itself (+1 internal),
+    // so we only add skipFrames here — not an extra +1 for WalkStack, because
+    // CaptureStackBackTrace sees WalkStack as a regular frame in the chain.
     static constexpr int kMaxCapture = 64;
     void* rawFrames[kMaxCapture];
     const int captureMax = (maxFrames < kMaxCapture) ? maxFrames : kMaxCapture;
-    const int captured = CaptureRawStackTrace(rawFrames, captureMax, skipFrames + 1);
+    const int captured = CaptureRawStackTrace(rawFrames, captureMax, skipFrames);
 
     if (captured == 0) {
         return 0;

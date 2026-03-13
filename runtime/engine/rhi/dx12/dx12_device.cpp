@@ -19,6 +19,7 @@
 
 #include <windows.h>
 #include <dxgidebug.h>
+#include <d3d12sdklayers.h>
 #include <string>
 
 namespace uz {
@@ -146,6 +147,22 @@ bool DX12Device::Init(const RHIDeviceDesc& desc) {
 
     if (desc.enableValidation) {
         EnableDRED();
+
+        // Suppress noisy debug messages and limit stored count to prevent memory exhaustion
+        ComPtr<ID3D12InfoQueue> infoQueue;
+        if (SUCCEEDED(m_device.As(&infoQueue))) {
+            D3D12_MESSAGE_ID suppressedIds[] = {
+                D3D12_MESSAGE_ID_CLEARRENDERTARGETVIEW_MISMATCHINGCLEARVALUE,
+                D3D12_MESSAGE_ID_CLEARDEPTHSTENCILVIEW_MISMATCHINGCLEARVALUE,
+            };
+            D3D12_INFO_QUEUE_FILTER filter = {};
+            filter.DenyList.NumIDs = _countof(suppressedIds);
+            filter.DenyList.pIDList = suppressedIds;
+            infoQueue->AddStorageFilterEntries(&filter);
+            infoQueue->SetMessageCountLimit(1024);
+            UZ_LOG(RHI, Info, "D3D12 info queue configured: suppressed {} noisy IDs, limit=1024 messages",
+                   _countof(suppressedIds));
+        }
     }
 
     // Initialize GPU timestamp profiler (non-fatal)
@@ -798,6 +815,10 @@ void DX12Device::WaitIdle() {
     UZ_PROFILE_FUNCTION();
     if (!m_directQueue || !m_idleFence || !m_idleFenceEvent) return;
 
+    if (m_idleFenceValue == UINT64_MAX) {
+        UZ_LOG(RHI, Warning, "Fence value at UINT64_MAX — resetting after full GPU drain");
+        m_idleFenceValue = 0;
+    }
     m_idleFenceValue++;
     HRESULT hr = m_directQueue->Signal(m_idleFence.Get(), m_idleFenceValue);
     if (FAILED(hr)) {

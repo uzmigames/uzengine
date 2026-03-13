@@ -44,7 +44,14 @@
 /// # Returns
 /// Full HLSL source as a `std::string`, or an empty string if none of the
 /// candidate paths yield a readable file.
-static std::string ReadShaderFile(const std::string& shaderFilename) {
+/// Result of reading a shader file: source code and the directory it was found in.
+struct ShaderFileResult {
+    std::string source;   ///< Full HLSL source text (empty if not found)
+    std::string dir;      ///< Directory containing the shader (for `-I` include resolution)
+    std::string fullPath; ///< Full path to the shader file (for FXC sourceName)
+};
+
+static ShaderFileResult ReadShaderFile(const std::string& shaderFilename) {
     const std::vector<std::string> searchPaths = {
         shaderFilename,
         "shaders/runtime/" + shaderFilename,
@@ -59,10 +66,16 @@ static std::string ReadShaderFile(const std::string& shaderFilename) {
         if (file.is_open()) {
             std::ostringstream ss;
             ss << file.rdbuf();
-            return ss.str();
+            // Extract directory from path
+            std::string dir = ".";
+            auto lastSlash = path.find_last_of("/\\");
+            if (lastSlash != std::string::npos) {
+                dir = path.substr(0, lastSlash);
+            }
+            return { ss.str(), dir, path };
         }
     }
-    return "";
+    return {};
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -215,8 +228,8 @@ TEST_P(ShaderCrossBackendTest, Compile) {
     const BackendTarget      target = param.target;
 
     // ── 1. Load shader source ────────────────────────────────────────────────
-    const std::string source = ReadShaderFile(shader.filename);
-    ASSERT_FALSE(source.empty())
+    const auto shaderFile = ReadShaderFile(shader.filename);
+    ASSERT_FALSE(shaderFile.source.empty())
         << "Shader source not found on disk: " << shader.filename
         << "  (searched relative to exe, two and three levels up)";
 
@@ -225,36 +238,39 @@ TEST_P(ShaderCrossBackendTest, Compile) {
 
     if (target == BackendTarget::DXIL_SM66) {
         uz::ShaderCompileDesc desc;
-        desc.source     = source;
+        desc.source     = shaderFile.source;
         desc.sourceName = shader.filename;
         desc.entryPoint = shader.entryPoint;
         desc.stage      = shader.stage;
         desc.model      = uz::ShaderModelCompile::SM6_6;
         desc.output     = uz::ShaderOutputFormat::DXIL;
         desc.defines    = { "UZ_BINDLESS=1" };
+        desc.includeDirs = { shaderFile.dir };
 
         result = m_dxc.Compile(desc);
 
     } else if (target == BackendTarget::DXBC_SM50) {
         uz::ShaderCompileDesc desc;
-        desc.source     = source;
-        desc.sourceName = shader.filename;
+        desc.source     = shaderFile.source;
+        desc.sourceName = shaderFile.fullPath; // Full path needed for FXC include resolution
         desc.entryPoint = shader.entryPoint;
         desc.stage      = shader.stage;
         desc.model      = uz::ShaderModelCompile::SM5_0;
         desc.output     = uz::ShaderOutputFormat::DXIL; // output field ignored by FXC
+        desc.includeDirs = { shaderFile.dir };
         // Intentionally no UZ_BINDLESS define
 
         result = m_fxc.Compile(desc);
 
     } else { // SPIRV_SM60
         uz::ShaderCompileDesc desc;
-        desc.source     = source;
+        desc.source     = shaderFile.source;
         desc.sourceName = shader.filename;
         desc.entryPoint = shader.entryPoint;
         desc.stage      = shader.stage;
         desc.model      = uz::ShaderModelCompile::SM6_0;
         desc.output     = uz::ShaderOutputFormat::SPIRV;
+        desc.includeDirs = { shaderFile.dir };
         // Intentionally no UZ_BINDLESS define
 
         result = m_dxc.Compile(desc);

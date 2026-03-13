@@ -7,6 +7,7 @@
 #include "dx12_descriptor_allocator.h"
 #include "dx12_compat.h"
 #include "dx12_guids.h"
+#include "engine_assert.h"
 #include "log.h"
 #include "profiler.h"
 
@@ -71,6 +72,11 @@ uint32_t DescriptorAllocator::Allocate() {
 void DescriptorAllocator::Free(uint32_t index) {
     if (index == kInvalidIndex) return;
 
+    if (index >= m_capacity) {
+        UZ_LOG(RHI, Error, "DescriptorAllocator::Free: index {} out of bounds (capacity={})", index, m_capacity);
+        return;
+    }
+
     m_freeList.push_back(index);
     m_allocated--;
 }
@@ -80,12 +86,14 @@ void DescriptorAllocator::Free(uint32_t index) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 D3D12_CPU_DESCRIPTOR_HANDLE DescriptorAllocator::CpuHandle(uint32_t index) const {
+    UZ_CHECKF(index < m_capacity, "CpuHandle index {} >= capacity {}", index, m_capacity);
     D3D12_CPU_DESCRIPTOR_HANDLE handle = m_cpuBase;
     handle.ptr += static_cast<SIZE_T>(index) * m_incrementSize;
     return handle;
 }
 
 D3D12_GPU_DESCRIPTOR_HANDLE DescriptorAllocator::GpuHandle(uint32_t index) const {
+    UZ_CHECKF(index < m_capacity, "GpuHandle index {} >= capacity {}", index, m_capacity);
     D3D12_GPU_DESCRIPTOR_HANDLE handle = m_gpuBase;
     handle.ptr += static_cast<UINT64>(index) * m_incrementSize;
     return handle;

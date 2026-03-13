@@ -22,6 +22,7 @@
 | [04-observability/](04-observability/) | Observability | 5 | **Partial** | Logging, CPU/GPU profiling, stat counters, crash reporting |
 | [05-shader-pipeline/](05-shader-pipeline/) | Shader Pipeline | 6 | **Planned** | VFS, DXC compilation, content-hash cache, hot-reload, reflection |
 | [06-build-toolchain/](06-build-toolchain/) | Build Toolchain | 5 | **Active** | Zig build, thirdparty libs, N-API addon, build configs |
+| [14-security/](14-security/) | **Security & Memory Safety** | **3** | **Reference** | **RAII ownership conventions, shader compilation security, bytecode validation** |
 
 ### Tier 2 — Next Phase Foundation
 

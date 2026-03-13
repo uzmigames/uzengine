@@ -193,7 +193,7 @@ ShaderCompileResult ShaderCompilerFXC::Compile(const ShaderCompileDesc& desc) {
         desc.source.size(),
         desc.sourceName.empty() ? nullptr : desc.sourceName.c_str(),
         macros.data(),
-        nullptr, // No include handler — sources are pre-resolved by ShaderSourceManager
+        desc.includeDirs.empty() ? nullptr : reinterpret_cast<void*>(1), // D3D_COMPILE_STANDARD_FILE_INCLUDE when includes needed
         desc.entryPoint.c_str(),
         profile.c_str(),
         flags1,

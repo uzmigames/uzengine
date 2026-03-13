@@ -12,6 +12,9 @@
 #include "log.h"
 #include "profiler.h"
 
+#include <wrl/client.h>
+using Microsoft::WRL::ComPtr;
+
 namespace uz {
 
 /// Creates a readback buffer for breadcrumb marker writes.
@@ -66,13 +69,10 @@ void DX12GpuBreadcrumbs::Mark(ID3D12GraphicsCommandList* cmdList, const char* na
     D3D12_WRITEBUFFERIMMEDIATE_MODE mode = D3D12_WRITEBUFFERIMMEDIATE_MODE_DEFAULT;
 
     // WriteBufferImmediate is on ID3D12GraphicsCommandList2+
-    // We use the base interface cast since our command list may be base level
-    // For Clang/MinGW compat, cast through void*
-    ID3D12GraphicsCommandList2* cmdList2 = nullptr;
-    if (SUCCEEDED(cmdList->QueryInterface(__uuidof(ID3D12GraphicsCommandList2),
-                                          reinterpret_cast<void**>(&cmdList2)))) {
+    ComPtr<ID3D12GraphicsCommandList2> cmdList2;
+    if (SUCCEEDED(cmdList->QueryInterface(IID_ID3D12GraphicsCommandList2,
+                                          reinterpret_cast<void**>(cmdList2.GetAddressOf())))) {
         cmdList2->WriteBufferImmediate(1, &param, &mode);
-        cmdList2->Release();
     }
 
     m_markerCount++;

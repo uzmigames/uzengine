@@ -2,6 +2,42 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
+## [0.2.15] — 2026-03-13
+
+### Security & Memory Safety Audit — COMPLETE
+- **Descriptor heap bounds checking**: UZ_CHECKF assertions in CpuHandle/GpuHandle, out-of-bounds guard in Free()
+- **Shader bytecode validation**: 64MB max size check before PSO creation
+- **Fence overflow protection**: WaitIdle() detects UINT64_MAX and resets
+- **Debug layer rate limiting**: ID3D12InfoQueue configured with message count limit (1024) and suppressed noisy IDs
+- **Integer overflow checks**: UINT_MAX validation in buffer SRV/UAV element count calculations
+- **ComPtr RAII migration**: Root signature serialization blobs and breadcrumb cmdList2 converted from manual Release() to ComPtr
+- **ID3D12InfoQueue GUID**: Added to dx12_guids.h for Zig/MinGW ABI compatibility
+- **8 new tests**: DescriptorAllocator overflow, free invalid/OOB, recycle, handle offsets, capacity, count tracking
+- **CrashHandler fix**: Fixed double-skip in WalkStack → CaptureRawStackTrace call chain
+- **Shader compiler include support**: Added includeDirs to ShaderCompileDesc, DXC CreateDefaultIncludeHandler, FXC D3D_COMPILE_STANDARD_FILE_INCLUDE
+- **Documentation**: RAII ownership conventions + shader security docs in docs/engine/14-security/
+- All 2648 tests passing
+
+## [0.2.14] — 2026-03-13
+
+### Shader Correctness Audit — COMPLETE
+- **Shared HLSL includes**: extracted duplicated PBR/shadow code into reusable headers
+  - `pbr_common.hlsli` — DistributionGGX, GeometrySmith, FresnelSchlick, EvaluateBRDF, ACESFilm
+  - `shadow_common.hlsli` — SampleShadowPCF (atlas boundary clamping), SampleShadowMap (clean cascade selection)
+- **ACES tonemapping**: replaced per-channel Reinhard with ACESFilm in mesh_ps.hlsl and deferred_lighting_ps.hlsl
+- **Shader quality fixes**:
+  - `[earlydepthstencil]` on opaque pixel shaders (mesh_ps, gbuffer_ps)
+  - BC5 two-channel normal map reconstruction guard
+  - Tangent transform uses normalMatrix instead of model matrix (mesh_vs.hlsl)
+  - Removed hardcoded near/far plane from debug depth shader (reads PerFrameCB)
+  - PCF kernel UV clamping to cascade atlas quadrant boundaries
+  - Refactored cascade selection loop (removed dual-assignment pattern)
+  - Fixed fullscreen_vs.hlsl bit-trick comment
+- **Register binding fixes**: aligned constant_buffers.h/lighting_pass.h comments with actual b2 usage, fixed overlay_text_ps.hlsl field naming
+- **Shader compiler include support**: added `includeDirs` to ShaderCompileDesc, DXC CreateDefaultIncludeHandler, FXC D3D_COMPILE_STANDARD_FILE_INCLUDE
+- **Documentation**: register binding convention + shader includes docs in docs/engine/12-rendering/
+- All 2640 tests passing (21 shader cross-backend compilation tests)
+
 ## [0.2.13] — 2026-03-13
 
 ### Engine API Consolidation (Phase 5.2.0) — COMPLETE

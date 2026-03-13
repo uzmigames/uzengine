@@ -86,6 +86,7 @@ struct ShaderCompileDesc {
     ShaderModelCompile model = ShaderModelCompile::SM6_6;    ///< Target shader model
     ShaderOutputFormat output = ShaderOutputFormat::DXIL;    ///< Output bytecode format
     std::vector<std::string> defines;    ///< Preprocessor defines (e.g., "USE_PBR=1")
+    std::vector<std::string> includeDirs; ///< Include search directories (passed as `-I` to DXC)
     bool generateDebugInfo = false;      ///< Include debug info (`-Zi`) for PIX/RenderDoc
     bool disableOptimizations = false;   ///< Disable optimizations (`-Od`) for debugging
 };
