@@ -3,7 +3,7 @@
 /// Uses std::filesystem for directory creation and file operations.
 /// Hash is formatted as 16-char lowercase hex for filenames.
 
-#include "pso_disk_cache.h"
+#include "rhi_pso_disk_cache.h"
 #include "log.h"
 #include "profiler.h"
 

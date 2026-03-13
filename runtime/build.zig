@@ -31,16 +31,19 @@ pub fn build(b: *std.Build) void {
         "engine/containers",
         "engine/random",
         "engine/rhi",
+        "engine/rhi/optimization",
         "engine/shader",
         "engine/paths",
         "engine/renderer",
         "engine/renderer/camera",
         "engine/renderer/core",
         "engine/renderer/material",
+        "engine/renderer/memory",
         "engine/renderer/mesh",
         "engine/renderer/upload",
         "engine/renderer/render_graph",
         "engine/renderer/shadows",
+        "engine/renderer/ibl",
         "engine/renderer/passes",
         "engine/asset",
         "engine/asset/formats",
@@ -135,6 +138,7 @@ pub fn build(b: *std.Build) void {
     addCppDir(runtime_mod, b, "engine/config", cpp_flags);
     addCppDir(runtime_mod, b, "engine/math", cpp_flags);
     addCppDir(runtime_mod, b, "engine/rhi", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/rhi/optimization", cpp_flags);
     addCppDir(runtime_mod, b, "engine/paths", cpp_flags);
     addCppDir(runtime_mod, b, "engine/shader", cpp_flags);
     addCppDir(runtime_mod, b, "engine/asset", cpp_flags);
@@ -143,11 +147,13 @@ pub fn build(b: *std.Build) void {
     addCppDir(runtime_mod, b, "engine/renderer/camera", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/core", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/material", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/renderer/memory", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/mesh", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/upload", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/passes", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/shadows", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/render_graph", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/renderer/ibl", cpp_flags);
     addCppDir(runtime_mod, b, "engine/job", cpp_flags);
     addCppDir(runtime_mod, b, "engine/ecs", cpp_flags);
     addCppDir(runtime_mod, b, "engine/property", cpp_flags);

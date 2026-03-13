@@ -533,6 +533,38 @@ bool VulkanDevice::CreateLogicalDevice() {
 
     UZ_LOG(RHI, Info, "Vulkan device created (graphicsQueue={}, transferQueue={})",
            m_graphicsQueueFamily, m_transferQueueFamily);
+
+    // Query and log descriptor indexing capabilities for future bindless support
+    {
+        VkPhysicalDeviceVulkan12Features supported12 = {};
+        supported12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+
+        VkPhysicalDeviceFeatures2 features2 = {};
+        features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+        features2.pNext = &supported12;
+        vkGetPhysicalDeviceFeatures2(m_physicalDevice, &features2);
+
+        UZ_LOG(RHI, Info, "Descriptor indexing capabilities: "
+               "descriptorIndexing={}, "
+               "runtimeDescriptorArray={}, "
+               "descriptorBindingPartiallyBound={}, "
+               "descriptorBindingVariableDescriptorCount={}, "
+               "shaderSampledImageArrayNonUniformIndexing={}",
+               supported12.descriptorIndexing ? "true" : "false",
+               supported12.runtimeDescriptorArray ? "true" : "false",
+               supported12.descriptorBindingPartiallyBound ? "true" : "false",
+               supported12.descriptorBindingVariableDescriptorCount ? "true" : "false",
+               supported12.shaderSampledImageArrayNonUniformIndexing ? "true" : "false");
+
+        if (supported12.descriptorIndexing &&
+            supported12.runtimeDescriptorArray &&
+            supported12.descriptorBindingPartiallyBound) {
+            UZ_LOG(RHI, Info, "Bindless descriptors: AVAILABLE (all required features supported)");
+        } else {
+            UZ_LOG(RHI, Warning, "Bindless descriptors: NOT AVAILABLE (missing required features)");
+        }
+    }
+
     return true;
 }
 
@@ -1004,6 +1036,10 @@ uint32_t VulkanDevice::GetTextureSRVIndex(RHITextureHandle handle) const {
     return tex->srvIndex;
 }
 
+uint32_t VulkanDevice::GetTextureUAVIndex(RHITextureHandle /*handle*/) const {
+    return UINT32_MAX; // TODO: Vulkan UAV not yet implemented
+}
+
 RHITextureDesc VulkanDevice::GetTextureDesc(RHITextureHandle handle) const {
     const VulkanTexture* tex = m_texturePool.Get(handle.index, handle.generation);
     if (!tex) return {};
@@ -1284,6 +1320,12 @@ RHIPipelineHandle VulkanDevice::CreateGraphicsPipeline(const RHIGraphicsPipeline
            desc.renderTargetCount, desc.debugName ? desc.debugName : "");
 
     return {index, generation};
+}
+
+RHIPipelineHandle VulkanDevice::CreateComputePipeline(const RHIComputePipelineDesc& desc) {
+    UZ_LOG(RHI, Warning, "CreateComputePipeline: not yet implemented in Vulkan backend (name='{}')",
+           desc.debugName ? desc.debugName : "");
+    return RHIPipelineHandle::Invalid();
 }
 
 void VulkanDevice::DestroyPipeline(RHIPipelineHandle handle) {

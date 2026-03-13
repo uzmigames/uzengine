@@ -96,6 +96,7 @@ public:
     RHITextureHandle CreateTexture(const RHITextureDesc& desc) override;
     void DestroyTexture(RHITextureHandle handle) override;
     uint32_t GetTextureSRVIndex(RHITextureHandle handle) const override;
+    uint32_t GetTextureUAVIndex(RHITextureHandle handle) const override;
     RHITextureDesc GetTextureDesc(RHITextureHandle handle) const override;
 
     // ── IRHIDevice: Shader operations ────────────────────────────────────
@@ -104,12 +105,18 @@ public:
 
     // ── IRHIDevice: Pipeline operations ──────────────────────────────────
     RHIPipelineHandle CreateGraphicsPipeline(const RHIGraphicsPipelineDesc& desc) override;
+    RHIPipelineHandle CreateComputePipeline(const RHIComputePipelineDesc& desc) override;
     void DestroyPipeline(RHIPipelineHandle handle) override;
     std::vector<uint8_t> GetPipelineCachedBlob(RHIPipelineHandle handle) override;
 
     // ── IRHIDevice: Copy queue ──────────────────────────────────────────
     uint64_t SignalCopyQueue() override;
     void GraphicsWaitForCopy(uint64_t value) override;
+
+    // ── IRHIDevice: Compute queue ─────────────────────────────────────
+    uint64_t SignalComputeQueue() override;
+    void GraphicsWaitForCompute(uint64_t value) override;
+    void ComputeWaitForGraphics(uint64_t value) override;
 
     // ── IRHIDevice: Sampler operations ───────────────────────────────────
     RHISamplerHandle CreateSampler(const RHISamplerDesc& desc) override;
@@ -147,6 +154,9 @@ public:
     /// Returns the copy command queue.
     ID3D12CommandQueue* GetCopyQueue() const { return m_copyQueue.Get(); }
 
+    /// Returns the async compute command queue.
+    ID3D12CommandQueue* GetComputeQueue() const { return m_computeQueue.Get(); }
+
     /// Returns the DXGI factory.
     IDXGIFactory6* GetFactory() const { return m_factory.Get(); }
 
@@ -173,6 +183,12 @@ public:
 
     /// Returns the global bindless root signature (shared by all pipelines).
     ID3D12RootSignature* GetRootSignature() const { return m_rootSignature; }
+
+    /// Returns the command signature for indirect indexed draw calls.
+    ID3D12CommandSignature* GetDrawIndexedIndirectSignature() const { return m_drawIndexedIndirectSig.Get(); }
+
+    /// Returns the command signature for indirect dispatch calls.
+    ID3D12CommandSignature* GetDispatchIndirectSignature() const { return m_dispatchIndirectSig.Get(); }
 
     /// Returns the negotiated shader model for this device.
     ///
@@ -228,6 +244,10 @@ private:
     ComPtr<ID3D12Fence>            m_copyFence;
     uint64_t                       m_copyFenceValue = 0;
 
+    ComPtr<ID3D12CommandQueue>     m_computeQueue;
+    ComPtr<ID3D12Fence>            m_computeFence;
+    uint64_t                       m_computeFenceValue = 0;
+
     ComPtr<ID3D12DescriptorHeap>   m_cbvSrvUavHeap;
     ComPtr<ID3D12DescriptorHeap>   m_samplerHeap;
     ComPtr<ID3D12DescriptorHeap>   m_rtvHeap;
@@ -253,6 +273,12 @@ private:
 
     /// Global bindless root signature — shared by all graphics pipelines.
     ID3D12RootSignature*           m_rootSignature = nullptr;
+
+    /// Command signature for ExecuteIndirect with DrawIndexedInstanced args.
+    ComPtr<ID3D12CommandSignature> m_drawIndexedIndirectSig;
+
+    /// Command signature for ExecuteIndirect with Dispatch args.
+    ComPtr<ID3D12CommandSignature> m_dispatchIndirectSig;
 
     DX12GpuProfiler                m_gpuProfiler;
     TracyD3D12Ctx                  m_tracyD3D12Ctx = nullptr;

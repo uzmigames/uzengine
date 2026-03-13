@@ -2,6 +2,28 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
+## [0.2.17] — 2026-03-13
+
+### Phase 100 — RHI Optimization Suite
+- **PSO Cache** (`rhi/optimization/`): FNV-1a content hash + Robin Hood open-addressing hash map (215x vs linear scan), disk blob cache, invalidation by shader handle
+- **Compute Pipeline**: `CreateComputePipeline()` + `RHIComputePipelineDesc`, `isCompute` flag dispatches to compute root signature in all `SetRoot*`/`SetDescriptorTable` methods
+- **Async Compute Queue**: DX12 `D3D12_COMMAND_LIST_TYPE_COMPUTE` with dedicated fence, `SignalComputeQueue()`/`GraphicsWaitForCompute()`/`ComputeWaitForGraphics()`
+- **GPU Memory Tracking** (`renderer/memory/`): per-category budgets (Textures/RenderTargets/Buffers/Staging), pressure callbacks, O(1) stats (1556x vs naive iterate)
+- **Streaming Pool**: LRU mip-level eviction, `MipResidencyState` enum, per-texture mip tracking
+- **Residency Control**: DX12 `MakeResident`/`Evict` abstraction (stubs for future native calls)
+- **Defrag Pass**: incremental fragmentation monitoring with configurable byte budget
+- **Staging Batch** (`renderer/upload/`): groups small uploads into single copy queue submission with 256-byte alignment
+- **Parallel Command Recording** (`rhi/optimization/`): thread-safe acquire/release with mutex, acquisition-order submission
+- **GPU-Driven Rendering**: `DrawIndexedIndirect`/`DispatchIndirect` via DX12 `ExecuteIndirect` with command signatures
+- **Frame Pacer** (`renderer/core/`): VRR/tearing support, rolling average timing, dropped frame detection
+- **Backend Capabilities** (`rhi/optimization/`): feature tier detection (Tier1/2/3), runtime capability queries
+- **Compute Shaders**: `mipgen_cs.hlsl` (bilinear downsample 8x8), `gpu_cull_cs.hlsl` (frustum culling 64x1x1)
+- **Stat Counters**: `RHI.ComputeQueueSignals`, `GPU.Memory*`, `GPU.Streaming*`, `GPU.DefragPassRuns`, `IO.StagingBatchSubmissions`, `Rendering.DroppedFrames`
+- **Benchmark suite**: realistic naive-vs-optimized comparisons with ASCII impact table (all speedups > 1x)
+- **File organization**: RHI optimization files moved to `rhi/optimization/` with `rhi_` prefix
+- All backends updated (DX12 full, DX11/Vulkan/Metal stubs)
+- 2806/2807 tests passing (1 pre-existing shader cross-compile failure)
+
 ## [0.2.16] — 2026-03-13
 
 ### Engine Simplification — `uzengine.h` umbrella header + DemoApplication refactor

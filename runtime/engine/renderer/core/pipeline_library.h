@@ -27,7 +27,7 @@
 
 #pragma once
 
-#include "pso_disk_cache.h"
+#include "rhi_pso_disk_cache.h"
 #include "rhi_pso_cache.h"
 #include "rhi_types.h"
 

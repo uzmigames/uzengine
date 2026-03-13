@@ -733,6 +733,17 @@ void MetalCommandList::Dispatch(uint32_t groupCountX, uint32_t groupCountY,
 #endif
 }
 
+void MetalCommandList::DrawIndexedIndirect(RHIBufferHandle /*argsBuffer*/, uint64_t /*argsOffset*/,
+                                            uint32_t /*drawCount*/, uint32_t /*argsStride*/) {
+    // TODO: Implement via drawIndexedPrimitives:indirectBuffer:indirectBufferOffset:
+    UZ_LOG(RHI, Warning, "DrawIndexedIndirect — Metal stub, not yet implemented");
+}
+
+void MetalCommandList::DispatchIndirect(RHIBufferHandle /*argsBuffer*/, uint64_t /*argsOffset*/) {
+    // TODO: Implement via dispatchThreadgroups:indirectBuffer:indirectBufferOffset:
+    UZ_LOG(RHI, Warning, "DispatchIndirect — Metal stub, not yet implemented");
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Barriers
 // ─────────────────────────────────────────────────────────────────────────────

@@ -84,6 +84,7 @@ public:
     RHITextureHandle CreateTexture(const RHITextureDesc& desc) override;
     void DestroyTexture(RHITextureHandle handle) override;
     uint32_t GetTextureSRVIndex(RHITextureHandle handle) const override;
+    uint32_t GetTextureUAVIndex(RHITextureHandle handle) const override;
     RHITextureDesc GetTextureDesc(RHITextureHandle handle) const override;
 
     // ── IRHIDevice: Shader operations ────────────────────────────────────
@@ -92,6 +93,7 @@ public:
 
     // ── IRHIDevice: Pipeline operations ──────────────────────────────────
     RHIPipelineHandle CreateGraphicsPipeline(const RHIGraphicsPipelineDesc& desc) override;
+    RHIPipelineHandle CreateComputePipeline(const RHIComputePipelineDesc& desc) override;
     void DestroyPipeline(RHIPipelineHandle handle) override;
 
     // ── IRHIDevice: Sampler operations ───────────────────────────────────

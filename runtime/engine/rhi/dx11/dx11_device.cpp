@@ -703,6 +703,10 @@ uint32_t DX11Device::GetTextureSRVIndex(RHITextureHandle handle) const {
     return tex->srvIndex;
 }
 
+uint32_t DX11Device::GetTextureUAVIndex(RHITextureHandle /*handle*/) const {
+    return UINT32_MAX; // TODO: DX11 UAV not yet implemented
+}
+
 ID3D11ShaderResourceView* DX11Device::FindTextureSRVByIndex(uint32_t srvIndex) {
     for (auto& slot : m_texturePool.Slots()) {
         if (slot.srvIndex == srvIndex && slot.srv) return slot.srv;
@@ -931,6 +935,12 @@ RHIPipelineHandle DX11Device::CreateGraphicsPipeline(const RHIGraphicsPipelineDe
            desc.renderTargetCount, desc.debugName ? desc.debugName : "");
 
     return {index, generation};
+}
+
+RHIPipelineHandle DX11Device::CreateComputePipeline(const RHIComputePipelineDesc& desc) {
+    UZ_LOG(RHI, Warning, "CreateComputePipeline: not implemented in DX11 backend (name='{}')",
+           desc.debugName ? desc.debugName : "");
+    return RHIPipelineHandle::Invalid();
 }
 
 void DX11Device::DestroyPipeline(RHIPipelineHandle handle) {

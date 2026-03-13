@@ -202,6 +202,7 @@ bool VulkanCommandList::Init(VulkanDevice* device, RHIQueueType queueType) {
         UZ_LOG(RHI, Error, "vkAllocateDescriptorSets failed for command list, result={}", static_cast<int>(dsResult));
         return false;
     }
+    UZ_STAT_INCREMENT(RHI, VkDescriptorAllocations, kVulkanFrameCount);
 
     UZ_LOG(RHI, Info, "VulkanCommandList created (queue={})", static_cast<int>(queueType));
     return true;
@@ -383,6 +384,7 @@ void VulkanCommandList::SetRootCBV(uint32_t rootParamIndex, uint64_t gpuAddress)
     write.pBufferInfo = &bufInfo;
 
     vkUpdateDescriptorSets(m_device->GetVkDevice(), 1, &write, 0, nullptr);
+    UZ_STAT_INCREMENT(RHI, VkDescriptorWrites);
     m_descriptorsDirty = true;
 }
 
@@ -414,6 +416,7 @@ void VulkanCommandList::SetRootCBV(uint32_t rootParamIndex, RHIBufferHandle buff
     write.pBufferInfo = &bufInfo;
 
     vkUpdateDescriptorSets(m_device->GetVkDevice(), 1, &write, 0, nullptr);
+    UZ_STAT_INCREMENT(RHI, VkDescriptorWrites);
     m_descriptorsDirty = true;
 }
 
@@ -461,6 +464,7 @@ void VulkanCommandList::SetDescriptorTable(uint32_t rootParamIndex, uint32_t des
     }
 
     vkUpdateDescriptorSets(m_device->GetVkDevice(), writeCount, writes, 0, nullptr);
+    UZ_STAT_INCREMENT(RHI, VkDescriptorWrites);
     m_descriptorsDirty = true;
 }
 
@@ -501,6 +505,17 @@ void VulkanCommandList::Draw(uint32_t vertexCount, uint32_t instanceCount,
 void VulkanCommandList::Dispatch(uint32_t groupCountX, uint32_t groupCountY,
                                   uint32_t groupCountZ) {
     vkCmdDispatch(m_commandBuffers[m_frameIndex], groupCountX, groupCountY, groupCountZ);
+}
+
+void VulkanCommandList::DrawIndexedIndirect(RHIBufferHandle /*argsBuffer*/, uint64_t /*argsOffset*/,
+                                             uint32_t /*drawCount*/, uint32_t /*argsStride*/) {
+    // TODO: Implement via vkCmdDrawIndexedIndirect once buffer handle resolution is available
+    UZ_LOG(RHI, Warning, "DrawIndexedIndirect — Vulkan stub, not yet implemented");
+}
+
+void VulkanCommandList::DispatchIndirect(RHIBufferHandle /*argsBuffer*/, uint64_t /*argsOffset*/) {
+    // TODO: Implement via vkCmdDispatchIndirect once buffer handle resolution is available
+    UZ_LOG(RHI, Warning, "DispatchIndirect — Vulkan stub, not yet implemented");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

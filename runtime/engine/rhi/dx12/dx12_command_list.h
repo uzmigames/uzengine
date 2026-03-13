@@ -71,6 +71,9 @@ public:
     void Draw(uint32_t vertexCount, uint32_t instanceCount = 1,
               uint32_t firstVertex = 0, uint32_t firstInstance = 0) override;
     void Dispatch(uint32_t groupCountX, uint32_t groupCountY, uint32_t groupCountZ) override;
+    void DrawIndexedIndirect(RHIBufferHandle argsBuffer, uint64_t argsOffset,
+                             uint32_t drawCount, uint32_t argsStride) override;
+    void DispatchIndirect(RHIBufferHandle argsBuffer, uint64_t argsOffset) override;
 
     void ResourceBarrier(const RHIBarrierDesc* barriers, uint32_t count) override;
 
@@ -132,6 +135,10 @@ private:
     ComPtr<ID3D12CommandAllocator>       m_allocators[kFramesInFlight];
     uint32_t                             m_currentFrame = 0;
     D3D12_COMMAND_LIST_TYPE              m_listType = D3D12_COMMAND_LIST_TYPE_DIRECT;
+
+    /// True when the currently bound pipeline is a compute PSO.
+    /// Used to select `SetComputeRoot*` vs `SetGraphicsRoot*` variants.
+    bool                                 m_isComputeBound = false;
 
     /// Base index in the CBV_SRV_UAV heap for the contiguous staging block
     /// used by SetFragmentTexture (SM5 descriptor table path).

@@ -210,6 +210,11 @@ struct DX12Pipeline {
     ID3D12PipelineState*         pso = nullptr;
     /// Generation counter — must match `RHIPipelineHandle::generation`.
     uint32_t                     generation = 0;
+    /// True if this is a compute pipeline, false for graphics.
+    /// Used by `SetPipeline()` to select `SetComputeRootSignature` vs
+    /// `SetGraphicsRootSignature` and by root parameter binding calls
+    /// to select the correct `SetCompute*` vs `SetGraphics*` variants.
+    bool                         isCompute = false;
     /// Backend-agnostic creation parameters. Retained for debugging, hot-reload
     /// (recreate PSO with modified shaders), and serialization.
     RHIGraphicsPipelineDesc      desc = {};

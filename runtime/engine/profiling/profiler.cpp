@@ -31,6 +31,9 @@ StatGroup StatMemory{"Memory"};
 /// I/O subsystem stats (file reads, asset loads, shader compiles).
 StatGroup StatIO{"IO"};
 
+/// GPU memory tracking stats (allocations, frees, pressure events).
+StatGroup StatGPU{"GPU"};
+
 } // namespace uz
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -41,3 +44,9 @@ StatGroup StatIO{"IO"};
 UZ_DEFINE_STAT(Rendering, DrawCalls);
 /// Number of triangles submitted per frame.
 UZ_DEFINE_STAT(Rendering, Triangles);
+/// Number of Vulkan descriptor set allocations from the global pool.
+UZ_DEFINE_STAT(RHI, VkDescriptorAllocations);
+/// Number of Vulkan descriptor pool resets.
+UZ_DEFINE_STAT(RHI, VkDescriptorPoolResets);
+/// Number of individual vkUpdateDescriptorSets calls per frame.
+UZ_DEFINE_STAT(RHI, VkDescriptorWrites);

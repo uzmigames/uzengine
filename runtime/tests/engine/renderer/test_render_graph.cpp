@@ -58,10 +58,12 @@ public:
     uint32_t GetBufferSRVIndex(uz::RHIBufferHandle) const override { return UINT32_MAX; }
     uint64_t GetBufferGPUAddress(uz::RHIBufferHandle) const override { return 0; }
     uint32_t GetTextureSRVIndex(uz::RHITextureHandle) const override { return UINT32_MAX; }
+    uint32_t GetTextureUAVIndex(uz::RHITextureHandle) const override { return UINT32_MAX; }
     uz::RHITextureDesc GetTextureDesc(uz::RHITextureHandle) const override { return {}; }
     uz::RHIShaderHandle CreateShader(const uz::RHIShaderDesc&) override { return {0, 0}; }
     void DestroyShader(uz::RHIShaderHandle) override {}
     uz::RHIPipelineHandle CreateGraphicsPipeline(const uz::RHIGraphicsPipelineDesc&) override { return {0, 0}; }
+    uz::RHIPipelineHandle CreateComputePipeline(const uz::RHIComputePipelineDesc&) override { return {0, 0}; }
     void DestroyPipeline(uz::RHIPipelineHandle) override {}
     std::vector<uint8_t> GetPipelineCachedBlob(uz::RHIPipelineHandle) override { return {}; }
     uz::RHISamplerHandle CreateSampler(const uz::RHISamplerDesc&) override { return {0, 0}; }
@@ -119,6 +121,8 @@ public:
     void DrawIndexed(uint32_t, uint32_t, uint32_t, int32_t, uint32_t) override {}
     void Draw(uint32_t, uint32_t, uint32_t, uint32_t) override {}
     void Dispatch(uint32_t, uint32_t, uint32_t) override {}
+    void DrawIndexedIndirect(uz::RHIBufferHandle, uint64_t, uint32_t, uint32_t) override {}
+    void DispatchIndirect(uz::RHIBufferHandle, uint64_t) override {}
     void ClearRenderTarget(uz::RHITextureHandle, const float[4]) override {}
     void ClearDepthStencil(uz::RHITextureHandle, float, uint8_t) override {}
     void CopyBuffer(uz::RHIBufferHandle, uint64_t, uz::RHIBufferHandle, uint64_t, uint64_t) override {}

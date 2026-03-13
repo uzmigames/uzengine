@@ -80,6 +80,9 @@ public:
     void Draw(uint32_t vertexCount, uint32_t instanceCount,
               uint32_t firstVertex, uint32_t firstInstance) override;
     void Dispatch(uint32_t groupCountX, uint32_t groupCountY, uint32_t groupCountZ) override;
+    void DrawIndexedIndirect(RHIBufferHandle argsBuffer, uint64_t argsOffset,
+                             uint32_t drawCount, uint32_t argsStride) override;
+    void DispatchIndirect(RHIBufferHandle argsBuffer, uint64_t argsOffset) override;
 
     void ResourceBarrier(const RHIBarrierDesc* barriers, uint32_t count) override;
 

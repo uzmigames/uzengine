@@ -323,6 +323,40 @@ public:
     /// * `groupCountZ` — Number of thread groups in Z dimension.
     virtual void Dispatch(uint32_t groupCountX, uint32_t groupCountY, uint32_t groupCountZ) = 0;
 
+    /// Issues an indirect indexed draw call.
+    ///
+    /// Reads draw arguments from `argsBuffer` at `argsOffset`. Each draw
+    /// argument structure matches `RHIDrawIndexedIndirectArgs` (20 bytes).
+    ///
+    /// DX12: `ExecuteIndirect` with a DrawIndexedInstanced command signature.
+    /// Vulkan: `vkCmdDrawIndexedIndirect`.
+    /// Metal: `drawIndexedPrimitives:indirectBuffer:indirectBufferOffset:`.
+    ///
+    /// # Arguments
+    /// * `argsBuffer` — Buffer containing `RHIDrawIndexedIndirectArgs` structures.
+    ///   Must have been created with `RHIBufferUsage::IndirectArgs`.
+    /// * `argsOffset` — Byte offset into the buffer where arguments begin.
+    /// * `drawCount` — Number of draw calls to issue from the buffer.
+    /// * `argsStride` — Byte stride between consecutive draw argument structures
+    ///   (must be >= `sizeof(RHIDrawIndexedIndirectArgs)`).
+    virtual void DrawIndexedIndirect(RHIBufferHandle argsBuffer, uint64_t argsOffset,
+                                     uint32_t drawCount, uint32_t argsStride) = 0;
+
+    /// Issues an indirect compute dispatch.
+    ///
+    /// Reads dispatch arguments from `argsBuffer` at `argsOffset`. The argument
+    /// structure matches `RHIDispatchIndirectArgs` (12 bytes: X, Y, Z group counts).
+    ///
+    /// DX12: `ExecuteIndirect` with a Dispatch command signature.
+    /// Vulkan: `vkCmdDrawIndexedIndirect` → `vkCmdDispatchIndirect`.
+    /// Metal: `dispatchThreadgroups:indirectBuffer:indirectBufferOffset:`.
+    ///
+    /// # Arguments
+    /// * `argsBuffer` — Buffer containing `RHIDispatchIndirectArgs`.
+    ///   Must have been created with `RHIBufferUsage::IndirectArgs`.
+    /// * `argsOffset` — Byte offset into the buffer where arguments begin.
+    virtual void DispatchIndirect(RHIBufferHandle argsBuffer, uint64_t argsOffset) = 0;
+
     // ── Barriers ─────────────────────────────────────────────────────────
 
     /// Inserts resource barriers (state transitions).
@@ -631,6 +665,13 @@ public:
     /// texture has no SRV (e.g., depth-only without `ShaderResource` usage).
     virtual uint32_t GetTextureSRVIndex(RHITextureHandle handle) const = 0;
 
+    /// Returns the UAV descriptor heap index for a texture.
+    ///
+    /// # Returns
+    /// The UAV index in the global CBV_SRV_UAV heap, or `UINT32_MAX` if the
+    /// texture was not created with `UnorderedAccess` usage.
+    virtual uint32_t GetTextureUAVIndex(RHITextureHandle handle) const = 0;
+
     /// Returns the creation descriptor for a texture.
     ///
     /// # Arguments
@@ -674,7 +715,21 @@ public:
     /// A valid `RHIPipelineHandle` on success, or `RHIPipelineHandle::Invalid()` on failure.
     virtual RHIPipelineHandle CreateGraphicsPipeline(const RHIGraphicsPipelineDesc& desc) = 0;
 
-    /// Destroys a pipeline state object.
+    /// Creates a compute pipeline state object (PSO).
+    ///
+    /// Compute pipelines only require a compute shader — no rasterizer, blend,
+    /// or depth-stencil state. The pipeline shares the same global root signature
+    /// as graphics pipelines.
+    ///
+    /// # Arguments
+    /// * `desc` — Compute pipeline descriptor (shader handle, debug name, optional cached blob).
+    ///
+    /// # Returns
+    /// A valid `RHIPipelineHandle` on success, or `RHIPipelineHandle::Invalid()` on failure.
+    /// Failure causes include invalid shader handle, wrong shader stage, or driver error.
+    virtual RHIPipelineHandle CreateComputePipeline(const RHIComputePipelineDesc& desc) = 0;
+
+    /// Destroys a pipeline state object (graphics or compute).
     ///
     /// # Arguments
     /// * `handle` — Pipeline handle to destroy. Becomes invalid after this call.
@@ -835,6 +890,20 @@ public:
     /// Makes the graphics queue wait until the copy queue fence reaches `value`.
     /// Creates a GPU-side dependency without CPU stall.
     virtual void GraphicsWaitForCopy(uint64_t /*value*/) {}
+
+    // ── Compute queue (async compute) ──────────────────────────────────
+
+    /// Signals a fence on the compute queue, returning the fence value.
+    /// Graphics queue can wait on this value via GraphicsWaitForCompute().
+    virtual uint64_t SignalComputeQueue() { return 0; }
+
+    /// Makes the graphics queue wait until the compute queue fence reaches `value`.
+    /// Creates a GPU-side dependency without CPU stall.
+    virtual void GraphicsWaitForCompute(uint64_t /*value*/) {}
+
+    /// Makes the compute queue wait until the graphics queue fence reaches `value`.
+    /// Creates a GPU-side dependency without CPU stall.
+    virtual void ComputeWaitForGraphics(uint64_t /*value*/) {}
 };
 
 } // namespace uz

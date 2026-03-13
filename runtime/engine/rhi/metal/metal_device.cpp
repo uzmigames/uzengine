@@ -742,6 +742,10 @@ uint32_t MetalDevice::GetTextureSRVIndex(RHITextureHandle handle) const {
     return tex->srvIndex;
 }
 
+uint32_t MetalDevice::GetTextureUAVIndex(RHITextureHandle /*handle*/) const {
+    return UINT32_MAX; // TODO: Metal UAV not yet implemented
+}
+
 RHITextureDesc MetalDevice::GetTextureDesc(RHITextureHandle handle) const {
     const MetalTexture* tex = m_texturePool.Get(handle.index, handle.generation);
     if (!tex) return {};
@@ -987,6 +991,12 @@ RHIPipelineHandle MetalDevice::CreateGraphicsPipeline(const RHIGraphicsPipelineD
     UZ_LOG(MetalRHI, Error, "CreateGraphicsPipeline: Metal backend not available on this platform");
     return RHIPipelineHandle::Invalid();
 #endif
+}
+
+RHIPipelineHandle MetalDevice::CreateComputePipeline(const RHIComputePipelineDesc& desc) {
+    UZ_LOG(MetalRHI, Warning, "CreateComputePipeline: not yet implemented in Metal backend (name='{}')",
+           desc.debugName ? desc.debugName : "");
+    return RHIPipelineHandle::Invalid();
 }
 
 void MetalDevice::DestroyPipeline(RHIPipelineHandle handle) {

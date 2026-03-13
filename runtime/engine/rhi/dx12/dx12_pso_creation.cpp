@@ -124,9 +124,9 @@ ID3D12RootSignature* CreateBindlessRootSignature(ID3D12Device* device, ShaderMod
     UZ_PROFILE_FUNCTION();
     const bool bindless = (sm >= ShaderModel::SM6_6);
 
-    // SM6.6: 4 root params. SM5: 5 root params (extra SRV table).
-    D3D12_ROOT_PARAMETER1 rootParams[5] = {};
-    uint32_t numParams = 4;
+    // SM6.6: 5 root params (+ UAV table for compute). SM5: 6 root params (+ SRV table).
+    D3D12_ROOT_PARAMETER1 rootParams[6] = {};
+    uint32_t numParams = 5;
 
     // Root parameter 0: root constants (uint32 descriptorIndex) at b0
     rootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
@@ -156,7 +156,21 @@ ID3D12RootSignature* CreateBindlessRootSignature(ID3D12Device* device, ShaderMod
     rootParams[3].Descriptor.Flags = D3D12_ROOT_DESCRIPTOR_FLAG_DATA_STATIC_WHILE_SET_AT_EXECUTE;
     rootParams[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
-    // SM5 only: Root parameter 4 — SRV descriptor table for textures/structured buffers
+    // Root parameter 4: UAV descriptor table at u0 (for compute shaders)
+    D3D12_DESCRIPTOR_RANGE1 uavRange = {};
+    uavRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
+    uavRange.NumDescriptors = 4; // u0..u3 (enough for IBL bake + future compute)
+    uavRange.BaseShaderRegister = 0;    // u0
+    uavRange.RegisterSpace = 0;
+    uavRange.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DESCRIPTORS_VOLATILE;
+    uavRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+    rootParams[4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    rootParams[4].DescriptorTable.NumDescriptorRanges = 1;
+    rootParams[4].DescriptorTable.pDescriptorRanges = &uavRange;
+    rootParams[4].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+    // SM5 only: Root parameter 5 — SRV descriptor table for textures/structured buffers
     D3D12_DESCRIPTOR_RANGE1 srvRange = {};
     if (!bindless) {
         srvRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
@@ -166,12 +180,12 @@ ID3D12RootSignature* CreateBindlessRootSignature(ID3D12Device* device, ShaderMod
         srvRange.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DESCRIPTORS_VOLATILE;
         srvRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
 
-        rootParams[4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-        rootParams[4].DescriptorTable.NumDescriptorRanges = 1;
-        rootParams[4].DescriptorTable.pDescriptorRanges = &srvRange;
-        rootParams[4].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+        rootParams[5].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+        rootParams[5].DescriptorTable.NumDescriptorRanges = 1;
+        rootParams[5].DescriptorTable.pDescriptorRanges = &srvRange;
+        rootParams[5].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
-        numParams = 5;
+        numParams = 6;
     }
 
     D3D12_ROOT_SIGNATURE_FLAGS flags = D3D12_ROOT_SIGNATURE_FLAG_NONE;
@@ -197,7 +211,7 @@ ID3D12RootSignature* CreateBindlessRootSignature(ID3D12Device* device, ShaderMod
     staticSamplers[0].MaxLOD = D3D12_FLOAT32_MAX;
     staticSamplers[0].ShaderRegister = 0;  // s0
     staticSamplers[0].RegisterSpace = 0;
-    staticSamplers[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    staticSamplers[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
     // Static sampler s1: comparison sampler for shadow PCF sampling
     staticSamplers[1].Filter = D3D12_FILTER_COMPARISON_MIN_MAG_LINEAR_MIP_POINT;
@@ -212,7 +226,7 @@ ID3D12RootSignature* CreateBindlessRootSignature(ID3D12Device* device, ShaderMod
     staticSamplers[1].MaxLOD = D3D12_FLOAT32_MAX;
     staticSamplers[1].ShaderRegister = 1;  // s1
     staticSamplers[1].RegisterSpace = 0;
-    staticSamplers[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    staticSamplers[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
     D3D12_VERSIONED_ROOT_SIGNATURE_DESC versionedDesc = {};
     versionedDesc.Version = D3D_ROOT_SIGNATURE_VERSION_1_1;
@@ -494,6 +508,77 @@ bool CreateDX12GraphicsPipeline(ID3D12Device* device,
     outPipeline.desc = desc;
 
     UZ_LOG(RHI, Info, "Graphics pipeline created (name='{}')",
+           desc.debugName ? desc.debugName : "");
+    return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Compute Pipeline State Object Creation
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Creates a compute PSO from RHIComputePipelineDesc, resolving the shader handle from the pool.
+bool CreateDX12ComputePipeline(ID3D12Device* device,
+                                ID3D12RootSignature* rootSignature,
+                                const RHIComputePipelineDesc& desc,
+                                const ResourcePool<DX12Shader>& shaderPool,
+                                DX12Pipeline& outPipeline) {
+    UZ_PROFILE_FUNCTION();
+    static constexpr size_t kMaxShaderBytecodeSize = 64 * 1024 * 1024; // 64 MB sanity limit
+
+    const DX12Shader* cs = shaderPool.Get(desc.computeShader.index, desc.computeShader.generation);
+    if (!cs || cs->bytecode.empty()) {
+        UZ_LOG(RHI, Error, "CreateComputePipeline: invalid compute shader (name='{}')",
+               desc.debugName ? desc.debugName : "");
+        return false;
+    }
+    if (cs->stage != RHIShaderStage::Compute) {
+        UZ_LOG(RHI, Error, "CreateComputePipeline: shader is not a compute shader, stage={} (name='{}')",
+               static_cast<int>(cs->stage), desc.debugName ? desc.debugName : "");
+        return false;
+    }
+    if (cs->bytecode.size() > kMaxShaderBytecodeSize) {
+        UZ_LOG(RHI, Error, "CreateComputePipeline: compute shader bytecode exceeds max size: {} bytes (name='{}')",
+               cs->bytecode.size(), desc.debugName ? desc.debugName : "");
+        return false;
+    }
+
+    D3D12_COMPUTE_PIPELINE_STATE_DESC psoDesc = {};
+    psoDesc.pRootSignature = rootSignature;
+    psoDesc.CS.pShaderBytecode = cs->bytecode.data();
+    psoDesc.CS.BytecodeLength = cs->bytecode.size();
+
+    // Apply cached PSO blob if provided (skips driver compilation)
+    if (desc.cachedBlobData && desc.cachedBlobSize > 0) {
+        psoDesc.CachedPSO.pCachedBlob = desc.cachedBlobData;
+        psoDesc.CachedPSO.CachedBlobSizeInBytes = desc.cachedBlobSize;
+    }
+
+    ID3D12PipelineState* pso = nullptr;
+    HRESULT hr = device->CreateComputePipelineState(&psoDesc,
+        IID_ID3D12PipelineState, reinterpret_cast<void**>(&pso));
+
+    // If creation fails with a cached blob, retry without it (stale cache)
+    if (FAILED(hr) && psoDesc.CachedPSO.pCachedBlob != nullptr) {
+        UZ_LOG(RHI, Warning, "CreateComputePipelineState failed with cached blob (hr=0x{:08X}), retrying without cache (name='{}')",
+               static_cast<uint32_t>(hr), desc.debugName ? desc.debugName : "");
+        psoDesc.CachedPSO.pCachedBlob = nullptr;
+        psoDesc.CachedPSO.CachedBlobSizeInBytes = 0;
+        hr = device->CreateComputePipelineState(&psoDesc,
+            IID_ID3D12PipelineState, reinterpret_cast<void**>(&pso));
+    }
+
+    if (FAILED(hr)) {
+        UZ_LOG(RHI, Error, "CreateComputePipelineState failed: hr=0x{:08X} (name='{}') CS={}",
+               static_cast<uint32_t>(hr), desc.debugName ? desc.debugName : "",
+               psoDesc.CS.BytecodeLength);
+        return false;
+    }
+
+    outPipeline.pso = pso;
+    outPipeline.isCompute = true;
+    // Graphics desc is not applicable for compute — leave default-initialized
+
+    UZ_LOG(RHI, Info, "Compute pipeline created (name='{}')",
            desc.debugName ? desc.debugName : "");
     return true;
 }

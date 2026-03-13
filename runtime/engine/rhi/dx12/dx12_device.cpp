@@ -91,6 +91,7 @@ DX12Device::~DX12Device() {
     m_idleFence.Reset();
     m_directQueue.Reset();
     m_copyQueue.Reset();
+    m_computeQueue.Reset();
 
     // Report live objects in debug builds before releasing device
     if (m_validationEnabled && m_device) {
@@ -133,6 +134,39 @@ bool DX12Device::Init(const RHIDeviceDesc& desc) {
     // Global root signature (adapts to negotiated shader model)
     m_rootSignature = CreateBindlessRootSignature(m_device.Get(), m_shaderModel);
     if (!m_rootSignature) return false;
+
+    // Indirect command signatures for GPU-driven rendering
+    {
+        D3D12_INDIRECT_ARGUMENT_DESC argDesc = {};
+        argDesc.Type = D3D12_INDIRECT_ARGUMENT_TYPE_DRAW_INDEXED;
+        D3D12_COMMAND_SIGNATURE_DESC sigDesc = {};
+        sigDesc.ByteStride = sizeof(D3D12_DRAW_INDEXED_ARGUMENTS);
+        sigDesc.NumArgumentDescs = 1;
+        sigDesc.pArgumentDescs = &argDesc;
+        HRESULT hr = m_device->CreateCommandSignature(
+            &sigDesc, nullptr, IID_PPV_ARGS(&m_drawIndexedIndirectSig));
+        if (FAILED(hr)) {
+            UZ_LOG(RHI, Error, "Failed to create DrawIndexedIndirect command signature, hr=0x{:08X}",
+                   static_cast<uint32_t>(hr));
+            return false;
+        }
+    }
+    {
+        D3D12_INDIRECT_ARGUMENT_DESC argDesc = {};
+        argDesc.Type = D3D12_INDIRECT_ARGUMENT_TYPE_DISPATCH;
+        D3D12_COMMAND_SIGNATURE_DESC sigDesc = {};
+        sigDesc.ByteStride = sizeof(D3D12_DISPATCH_ARGUMENTS);
+        sigDesc.NumArgumentDescs = 1;
+        sigDesc.pArgumentDescs = &argDesc;
+        HRESULT hr = m_device->CreateCommandSignature(
+            &sigDesc, nullptr, IID_PPV_ARGS(&m_dispatchIndirectSig));
+        if (FAILED(hr)) {
+            UZ_LOG(RHI, Error, "Failed to create DispatchIndirect command signature, hr=0x{:08X}",
+                   static_cast<uint32_t>(hr));
+            return false;
+        }
+    }
+    UZ_LOG(RHI, Info, "Created indirect command signatures (DrawIndexed + Dispatch)");
 
     // WaitIdle fence
     HRESULT hr = m_device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&m_idleFence));
@@ -415,7 +449,26 @@ bool DX12Device::CreateCommandQueues() {
         return false;
     }
 
-    UZ_LOG(RHI, Info, "Command queues created: Direct + Copy (with fence)");
+    // Compute queue
+    D3D12_COMMAND_QUEUE_DESC computeDesc = {};
+    computeDesc.Type = D3D12_COMMAND_LIST_TYPE_COMPUTE;
+    computeDesc.Priority = D3D12_COMMAND_QUEUE_PRIORITY_NORMAL;
+    computeDesc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
+
+    hr = m_device->CreateCommandQueue(&computeDesc, IID_PPV_ARGS(&m_computeQueue));
+    if (FAILED(hr)) {
+        UZ_LOG(RHI, Error, "Failed to create compute command queue, hr=0x{:08X}", static_cast<uint32_t>(hr));
+        return false;
+    }
+
+    // Compute fence for async compute → graphics synchronization
+    hr = m_device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&m_computeFence));
+    if (FAILED(hr)) {
+        UZ_LOG(RHI, Error, "Failed to create compute fence, hr=0x{:08X}", static_cast<uint32_t>(hr));
+        return false;
+    }
+
+    UZ_LOG(RHI, Info, "Command queues created: Direct + Copy + Compute (with fences)");
     return true;
 }
 
@@ -620,6 +673,12 @@ uint32_t DX12Device::GetTextureSRVIndex(RHITextureHandle handle) const {
     return tex->srvIndex;
 }
 
+uint32_t DX12Device::GetTextureUAVIndex(RHITextureHandle handle) const {
+    const DX12Texture* tex = m_texturePool.Get(handle.index, handle.generation);
+    if (!tex) return UINT32_MAX;
+    return tex->uavIndex;
+}
+
 RHITextureDesc DX12Device::GetTextureDesc(RHITextureHandle handle) const {
     const DX12Texture* tex = m_texturePool.Get(handle.index, handle.generation);
     if (!tex) return {};
@@ -711,6 +770,26 @@ RHIPipelineHandle DX12Device::CreateGraphicsPipeline(const RHIGraphicsPipelineDe
     }
 
     if (!CreateDX12GraphicsPipeline(m_device.Get(), m_rootSignature, desc, m_shaderPool, *slot)) {
+        m_pipelinePool.Free(index);
+        return RHIPipelineHandle::Invalid();
+    }
+
+    slot->generation = generation;
+    UZ_STAT_INCREMENT(RHI, PipelineCreations);
+    return RHIPipelineHandle{index, generation};
+}
+
+RHIPipelineHandle DX12Device::CreateComputePipeline(const RHIComputePipelineDesc& desc) {
+    UZ_PROFILE_FUNCTION();
+    uint32_t generation = 0;
+    uint32_t index = m_pipelinePool.Allocate(generation);
+    DX12Pipeline* slot = m_pipelinePool.Get(index, generation);
+    if (!slot) {
+        UZ_LOG(RHI, Error, "CreateComputePipeline: pool allocation failed");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (!CreateDX12ComputePipeline(m_device.Get(), m_rootSignature, desc, m_shaderPool, *slot)) {
         m_pipelinePool.Free(index);
         return RHIPipelineHandle::Invalid();
     }
@@ -881,6 +960,20 @@ void DX12Device::WaitIdle() {
             WaitForSingleObject(m_idleFenceEvent, INFINITE);
         }
     }
+
+    // Also drain the compute queue
+    if (m_computeQueue) {
+        m_idleFenceValue++;
+        hr = m_computeQueue->Signal(m_idleFence.Get(), m_idleFenceValue);
+        if (FAILED(hr)) {
+            UZ_LOG(RHI, Error, "WaitIdle: Compute queue signal failed, hr=0x{:08X}", static_cast<uint32_t>(hr));
+            return;
+        }
+        if (m_idleFence->GetCompletedValue() < m_idleFenceValue) {
+            m_idleFence->SetEventOnCompletion(m_idleFenceValue, m_idleFenceEvent);
+            WaitForSingleObject(m_idleFenceEvent, INFINITE);
+        }
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -936,6 +1029,34 @@ void DX12Device::GraphicsWaitForCopy(uint64_t value) {
     HRESULT hr = m_directQueue->Wait(m_copyFence.Get(), value);
     if (FAILED(hr)) {
         UZ_LOG(RHI, Error, "GraphicsWaitForCopy failed: hr=0x{:08X}", static_cast<uint32_t>(hr));
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Compute Queue — Async compute synchronization
+// ─────────────────────────────────────────────────────────────────────────────
+
+uint64_t DX12Device::SignalComputeQueue() {
+    ++m_computeFenceValue;
+    HRESULT hr = m_computeQueue->Signal(m_computeFence.Get(), m_computeFenceValue);
+    if (FAILED(hr)) {
+        UZ_LOG(RHI, Error, "SignalComputeQueue failed: hr=0x{:08X}", static_cast<uint32_t>(hr));
+        return 0;
+    }
+    return m_computeFenceValue;
+}
+
+void DX12Device::GraphicsWaitForCompute(uint64_t value) {
+    HRESULT hr = m_directQueue->Wait(m_computeFence.Get(), value);
+    if (FAILED(hr)) {
+        UZ_LOG(RHI, Error, "GraphicsWaitForCompute failed: hr=0x{:08X}", static_cast<uint32_t>(hr));
+    }
+}
+
+void DX12Device::ComputeWaitForGraphics(uint64_t value) {
+    HRESULT hr = m_computeQueue->Wait(m_idleFence.Get(), value);
+    if (FAILED(hr)) {
+        UZ_LOG(RHI, Error, "ComputeWaitForGraphics failed: hr=0x{:08X}", static_cast<uint32_t>(hr));
     }
 }
 

@@ -187,6 +187,26 @@ bool CreateDX12GraphicsPipeline(ID3D12Device* device,
                                  const ResourcePool<DX12Shader>& shaderPool,
                                  DX12Pipeline& outPipeline);
 
+/// Creates a DX12 compute pipeline state object (PSO).
+///
+/// Resolves the compute shader bytecode from its handle via the shader pool,
+/// then creates a `D3D12_COMPUTE_PIPELINE_STATE_DESC` with the global root signature.
+///
+/// # Arguments
+/// * `device` — D3D12 device for PSO creation.
+/// * `rootSignature` — Global bindless root signature.
+/// * `desc` — RHI compute pipeline descriptor (shader handle, debug name, cached blob).
+/// * `shaderPool` — Pool for resolving shader handles to bytecode.
+/// * `outPipeline` — Output struct filled on success.
+///
+/// # Returns
+/// `true` on success, `false` on failure (invalid shader handle, wrong stage, PSO creation error).
+bool CreateDX12ComputePipeline(ID3D12Device* device,
+                                ID3D12RootSignature* rootSignature,
+                                const RHIComputePipelineDesc& desc,
+                                const ResourcePool<DX12Shader>& shaderPool,
+                                DX12Pipeline& outPipeline);
+
 /// Releases a pipeline state object's COM reference.
 void DestroyDX12Pipeline(DX12Pipeline& pipeline);
 

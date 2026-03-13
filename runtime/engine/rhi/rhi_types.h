@@ -541,6 +541,25 @@ struct RHIGraphicsPipelineDesc {
     size_t cachedBlobSize = 0;                        ///< Size of cached PSO blob in bytes
 };
 
+/// Describes a compute pipeline state object (PSO).
+///
+/// Only requires a compute shader — no rasterizer, blend, or depth-stencil state.
+/// The compute pipeline shares the same global root signature as graphics pipelines.
+///
+/// # Examples
+/// ```cpp
+/// RHIComputePipelineDesc desc{};
+/// desc.computeShader = csHandle;
+/// desc.debugName = "DownsampleCS";
+/// auto pipeline = device->CreateComputePipeline(desc);
+/// ```
+struct RHIComputePipelineDesc {
+    RHIShaderHandle computeShader;              ///< Compute shader handle (required, must be RHIShaderStage::Compute)
+    const char* debugName = nullptr;            ///< Debug label (stripped in shipping)
+    const void* cachedBlobData = nullptr;       ///< Optional cached PSO blob from a previous compilation
+    size_t cachedBlobSize = 0;                  ///< Size of cached PSO blob in bytes
+};
+
 /// Describes a texture sampler to create via `IRHIDevice::CreateSampler()`.
 ///
 /// Defaults to linear filtering, wrap addressing, full LOD range.
@@ -612,6 +631,29 @@ struct RHIRenderPassDesc {
     uint32_t colorAttachmentCount = 0;
     RHIRenderPassDepthAttachment depthAttachment;
     bool hasDepth = false;
+};
+
+/// Arguments for an indirect indexed draw call (matches GPU layout).
+///
+/// Layout is identical to `D3D12_DRAW_INDEXED_ARGUMENTS` and
+/// `VkDrawIndexedIndirectCommand`. Must be tightly packed (20 bytes).
+/// Written by GPU compute shaders for GPU-driven rendering.
+struct RHIDrawIndexedIndirectArgs {
+    uint32_t indexCountPerInstance;   ///< Number of indices per instance.
+    uint32_t instanceCount;          ///< Number of instances to draw.
+    uint32_t startIndexLocation;     ///< Offset into the index buffer.
+    int32_t  baseVertexLocation;     ///< Value added to each index before fetching.
+    uint32_t startInstanceLocation;  ///< Offset into per-instance data.
+};
+
+/// Arguments for an indirect dispatch call (matches GPU layout).
+///
+/// Layout is identical to `D3D12_DISPATCH_ARGUMENTS` and
+/// `VkDispatchIndirectCommand`. Must be tightly packed (12 bytes).
+struct RHIDispatchIndirectArgs {
+    uint32_t threadGroupCountX;  ///< Thread groups in X dimension.
+    uint32_t threadGroupCountY;  ///< Thread groups in Y dimension.
+    uint32_t threadGroupCountZ;  ///< Thread groups in Z dimension.
 };
 
 /// Memory budget information reported by the device.

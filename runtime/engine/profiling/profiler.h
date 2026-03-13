@@ -285,6 +285,8 @@ extern StatGroup StatScene;
 extern StatGroup StatMemory;
 /// Built-in stat group for I/O subsystem (file reads, asset loads).
 extern StatGroup StatIO;
+/// Built-in stat group for GPU memory tracking (allocations, frees, pressure events).
+extern StatGroup StatGPU;
 
 } // namespace uz
 
@@ -349,6 +351,8 @@ UZ_DECLARE_STAT(RHI, ShaderCompiles);
 UZ_DECLARE_STAT(RHI, CacheHits);
 /// Number of shader cache misses this session.
 UZ_DECLARE_STAT(RHI, CacheMisses);
+/// Number of compute queue fence signals per frame.
+UZ_DECLARE_STAT(RHI, ComputeQueueSignals);
 /// Number of VFS file reads per frame.
 UZ_DECLARE_STAT(IO, VFSReads);
 /// Number of PSO/pipeline state creations this session.
@@ -357,3 +361,25 @@ UZ_DECLARE_STAT(RHI, PipelineCreations);
 UZ_DECLARE_STAT(RHI, PsoCacheHits);
 /// Number of PSO cache misses (new pipeline creation) this session.
 UZ_DECLARE_STAT(RHI, PsoCacheMisses);
+/// Number of GPU memory allocations tracked this session.
+UZ_DECLARE_STAT(GPU, MemoryAllocations);
+/// Number of GPU memory frees tracked this session.
+UZ_DECLARE_STAT(GPU, MemoryFrees);
+/// Number of memory pressure events fired (category over budget).
+UZ_DECLARE_STAT(GPU, MemoryPressureEvents);
+/// Number of streaming mip levels loaded (uploaded to GPU).
+UZ_DECLARE_STAT(GPU, StreamingMipLoads);
+/// Number of streaming mip levels evicted (freed from GPU memory).
+UZ_DECLARE_STAT(GPU, StreamingMipEvictions);
+/// Number of defrag pass runs triggered by fragmentation exceeding threshold.
+UZ_DECLARE_STAT(GPU, DefragPassRuns);
+/// Number of staging batch submissions (copy queue flushes).
+UZ_DECLARE_STAT(IO, StagingBatchSubmissions);
+/// Number of Vulkan descriptor set allocations from the global pool.
+UZ_DECLARE_STAT(RHI, VkDescriptorAllocations);
+/// Number of Vulkan descriptor pool resets (full pool exhaustion recovery).
+UZ_DECLARE_STAT(RHI, VkDescriptorPoolResets);
+/// Number of individual vkUpdateDescriptorSets calls per frame.
+UZ_DECLARE_STAT(RHI, VkDescriptorWrites);
+/// Number of frames that exceeded the target frame time (cumulative).
+UZ_DECLARE_STAT(Rendering, DroppedFrames);

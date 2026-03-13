@@ -303,6 +303,15 @@ void DX11CommandList::Dispatch(uint32_t groupCountX, uint32_t groupCountY,
     m_ctx->Dispatch(groupCountX, groupCountY, groupCountZ);
 }
 
+void DX11CommandList::DrawIndexedIndirect(RHIBufferHandle /*argsBuffer*/, uint64_t /*argsOffset*/,
+                                           uint32_t /*drawCount*/, uint32_t /*argsStride*/) {
+    UZ_LOG(RHI, Warning, "DrawIndexedIndirect — not supported on DX11 backend");
+}
+
+void DX11CommandList::DispatchIndirect(RHIBufferHandle /*argsBuffer*/, uint64_t /*argsOffset*/) {
+    UZ_LOG(RHI, Warning, "DispatchIndirect — not supported on DX11 backend");
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Barriers
 // ─────────────────────────────────────────────────────────────────────────────

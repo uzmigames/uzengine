@@ -205,11 +205,13 @@ void DX12CommandList::Execute() {
         case D3D12_COMMAND_LIST_TYPE_DIRECT:
             queue = m_device->GetDirectQueue();
             break;
+        case D3D12_COMMAND_LIST_TYPE_COMPUTE:
+            queue = m_device->GetComputeQueue();
+            break;
         case D3D12_COMMAND_LIST_TYPE_COPY:
             queue = m_device->GetCopyQueue();
             break;
         default:
-            // Compute queue not yet exposed by DX12Device
             UZ_LOG(RHI, Warning, "No queue available for command list type {}",
                    static_cast<int>(m_listType));
             return;
@@ -245,10 +247,16 @@ void DX12CommandList::SetPipeline(RHIPipelineHandle pipeline) {
     }
 
     m_cmdList->SetPipelineState(dx12Pipeline->pso);
+    m_isComputeBound = dx12Pipeline->isCompute;
 
-    // Bind the global bindless root signature alongside the PSO
+    // Bind the global root signature — compute and graphics use the same
+    // root signature but require different Set* entry points.
     if (auto* rootSig = m_device->GetRootSignature()) {
-        m_cmdList->SetGraphicsRootSignature(rootSig);
+        if (m_isComputeBound) {
+            m_cmdList->SetComputeRootSignature(rootSig);
+        } else {
+            m_cmdList->SetGraphicsRootSignature(rootSig);
+        }
     }
 }
 
@@ -312,23 +320,39 @@ void DX12CommandList::SetScissor(const RHIScissorRect& scissor) {
 }
 
 void DX12CommandList::SetDescriptorIndex(uint32_t rootParamIndex, uint32_t descriptorIndex) {
-    m_cmdList->SetGraphicsRoot32BitConstant(rootParamIndex, descriptorIndex, 0);
+    if (m_isComputeBound) {
+        m_cmdList->SetComputeRoot32BitConstant(rootParamIndex, descriptorIndex, 0);
+    } else {
+        m_cmdList->SetGraphicsRoot32BitConstant(rootParamIndex, descriptorIndex, 0);
+    }
 }
 
 void DX12CommandList::SetRootConstants(uint32_t rootParamIndex, const uint32_t* data,
                                         uint32_t count, uint32_t offsetIn32BitValues) {
-    m_cmdList->SetGraphicsRoot32BitConstants(rootParamIndex, count, data, offsetIn32BitValues);
+    if (m_isComputeBound) {
+        m_cmdList->SetComputeRoot32BitConstants(rootParamIndex, count, data, offsetIn32BitValues);
+    } else {
+        m_cmdList->SetGraphicsRoot32BitConstants(rootParamIndex, count, data, offsetIn32BitValues);
+    }
 }
 
 void DX12CommandList::SetRootCBV(uint32_t rootParamIndex, uint64_t gpuAddress) {
-    m_cmdList->SetGraphicsRootConstantBufferView(rootParamIndex, gpuAddress);
+    if (m_isComputeBound) {
+        m_cmdList->SetComputeRootConstantBufferView(rootParamIndex, gpuAddress);
+    } else {
+        m_cmdList->SetGraphicsRootConstantBufferView(rootParamIndex, gpuAddress);
+    }
 }
 
 void DX12CommandList::SetRootCBV(uint32_t rootParamIndex, RHIBufferHandle buffer,
                                   uint64_t offsetBytes, const void* /*cpuData*/, uint32_t /*dataSize*/) {
     // DX12: buffer is persistently mapped — GPU reads directly. cpuData unused.
     uint64_t gpuAddr = m_device->GetBufferGPUAddress(buffer);
-    m_cmdList->SetGraphicsRootConstantBufferView(rootParamIndex, gpuAddr + offsetBytes);
+    if (m_isComputeBound) {
+        m_cmdList->SetComputeRootConstantBufferView(rootParamIndex, gpuAddr + offsetBytes);
+    } else {
+        m_cmdList->SetGraphicsRootConstantBufferView(rootParamIndex, gpuAddr + offsetBytes);
+    }
 }
 
 void DX12CommandList::SetDescriptorTable(uint32_t rootParamIndex, uint32_t descriptorIndex) {
@@ -336,7 +360,11 @@ void DX12CommandList::SetDescriptorTable(uint32_t rootParamIndex, uint32_t descr
     D3D12_GPU_DESCRIPTOR_HANDLE gpuHandle = dx12::GetGPUStart(heap);
     gpuHandle.ptr += static_cast<UINT64>(descriptorIndex) *
         m_device->GetDevice()->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-    m_cmdList->SetGraphicsRootDescriptorTable(rootParamIndex, gpuHandle);
+    if (m_isComputeBound) {
+        m_cmdList->SetComputeRootDescriptorTable(rootParamIndex, gpuHandle);
+    } else {
+        m_cmdList->SetGraphicsRootDescriptorTable(rootParamIndex, gpuHandle);
+    }
 }
 
 void DX12CommandList::SetFragmentTexture(uint32_t slot, RHITextureHandle texture) {
@@ -376,8 +404,8 @@ void DX12CommandList::SetFragmentTexture(uint32_t slot, RHITextureHandle texture
     m_device->GetDevice()->CopyDescriptorsSimple(
         1, dstHandle, srcHandle, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
-    // Bind the staging block as root param 4 (SM5 SRV descriptor table)
-    constexpr uint32_t kSM5SrvTableRootParam = 4;
+    // Bind the staging block as root param 5 (SM5 SRV descriptor table)
+    constexpr uint32_t kSM5SrvTableRootParam = 5;
     m_cmdList->SetGraphicsRootDescriptorTable(
         kSM5SrvTableRootParam, alloc.GpuHandle(m_fragmentTexStagingBase));
 }
@@ -401,6 +429,53 @@ void DX12CommandList::Draw(uint32_t vertexCount, uint32_t instanceCount,
 void DX12CommandList::Dispatch(uint32_t groupCountX, uint32_t groupCountY,
                                uint32_t groupCountZ) {
     m_cmdList->Dispatch(groupCountX, groupCountY, groupCountZ);
+}
+
+void DX12CommandList::DrawIndexedIndirect(RHIBufferHandle argsBuffer, uint64_t argsOffset,
+                                           uint32_t drawCount, uint32_t argsStride) {
+    if (!argsBuffer.IsValid()) {
+        UZ_LOG(RHI, Warning, "DrawIndexedIndirect — invalid args buffer handle");
+        return;
+    }
+
+    auto* buf = m_device->GetBufferPool().Get(argsBuffer.index, argsBuffer.generation);
+    if (!buf || !buf->resource) {
+        UZ_LOG(RHI, Warning, "DrawIndexedIndirect — could not resolve args buffer");
+        return;
+    }
+
+    auto* sig = m_device->GetDrawIndexedIndirectSignature();
+    if (!sig) {
+        UZ_LOG(RHI, Error, "DrawIndexedIndirect — command signature not initialized");
+        return;
+    }
+
+    // DX12 ExecuteIndirect ignores argsStride — it uses the ByteStride from the
+    // command signature. The stride parameter exists for Vulkan compatibility.
+    (void)argsStride;
+    m_cmdList->ExecuteIndirect(sig, drawCount, buf->resource,
+                                argsOffset, nullptr, 0);
+}
+
+void DX12CommandList::DispatchIndirect(RHIBufferHandle argsBuffer, uint64_t argsOffset) {
+    if (!argsBuffer.IsValid()) {
+        UZ_LOG(RHI, Warning, "DispatchIndirect — invalid args buffer handle");
+        return;
+    }
+
+    auto* buf = m_device->GetBufferPool().Get(argsBuffer.index, argsBuffer.generation);
+    if (!buf || !buf->resource) {
+        UZ_LOG(RHI, Warning, "DispatchIndirect — could not resolve args buffer");
+        return;
+    }
+
+    auto* sig = m_device->GetDispatchIndirectSignature();
+    if (!sig) {
+        UZ_LOG(RHI, Error, "DispatchIndirect — command signature not initialized");
+        return;
+    }
+
+    m_cmdList->ExecuteIndirect(sig, 1, buf->resource, argsOffset, nullptr, 0);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
