@@ -22,35 +22,6 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include "deferred_test_demo.h"
-#include "rhi.h"
-#include "rhi_backend.h"
-#include "rhi_config.h"
-#include "rhi_types.h"
-#include "platform_window.h"
-#include "input.h"
-#include "log.h"
-#include "vertex.h"
-#include "mesh.h"
-#include "upload_context.h"
-#include "constant_buffers.h"
-#include "camera.h"
-#include "fps_camera_controller.h"
-#include "shader_pipeline.h"
-#include "shader_compiler.h"
-#include "shader_compiler_fxc.h"
-#include "engine_shaders.h"
-#include "paths.h"
-#include "editor_grid.h"
-#include "screenshot_capture.h"
-#include "stats_overlay.h"
-#include "render_graph_builder.h"
-#include "render_graph_resources.h"
-#include "draw_list.h"
-#include "passes/gbuffer_pass.h"
-#include "passes/lighting_pass.h"
-#include "passes/gbuffer_debug_pass.h"
-#include "passes/pbr_pass.h"
-#include "render_path.h"
 
 #include "stb_image.h"
 
@@ -58,8 +29,6 @@
 #include <cstring>
 
 namespace uz {
-
-// Uses the Renderer log category declared in log.h
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
@@ -259,6 +228,8 @@ DeferredTestDemo::DeferredTestDemo(const DeferredTestConfig& config)
           .width     = 1280,
           .height    = 720,
           .maxFrames = config.maxFrames,
+          .screenshotPath  = config.screenshotPath,
+          .screenshotFrame = config.screenshotFrame,
       })
     , config_(config) {}
 
@@ -270,11 +241,6 @@ DeferredTestDemo::~DeferredTestDemo() = default;
 
 void DeferredTestDemo::OnInit() {
     auto* device  = GetDevice();
-    auto* cmdList = GetCommandList();
-
-    // ── Input ────────────────────────────────────────────────────────────
-    input_.Init();
-    GetWindow()->SetInputSystem(&input_);
 
     // ── Shader pipeline ──────────────────────────────────────────────────
     bindless_ = IsBindless();
@@ -313,73 +279,13 @@ void DeferredTestDemo::OnInit() {
         return;
     }
 
-    // ── CB ring allocator ────────────────────────────────────────────────
-    cbRing_.Init(device, 3, 128 * 1024);
-
-    // ── Editor grid ──────────────────────────────────────────────────────
-    if (!editorGrid_.Init(device, *shaderPipeline_, RHIFormat::RGBA8Unorm, RHIFormat::D32Float)) {
-        UZ_LOG(Renderer, Error, "Failed to initialize editor grid");
-        return;
-    }
-
-    // ── Stats overlay ────────────────────────────────────────────────────
-    {
-        UploadContext upload(device);
-        cmdList->Begin();
-        if (!statsOverlay_.Init(device, cmdList, upload, *shaderPipeline_,
-                                RHIFormat::RGBA8Unorm, GetWidth(), GetHeight(), bindless_)) {
-            UZ_LOG(Renderer, Error, "Failed to initialize stats overlay");
-            cmdList->End();
-            return;
-        }
-        cmdList->End();
-        cmdList->Execute();
-        device->WaitIdle();
-        upload.ReleaseStaging();
-    }
-
-    // ── Screenshot capture ───────────────────────────────────────────────
-    screenshotPending_ = !config_.screenshotPath.empty();
-    if (screenshotPending_) {
-        if (!screenshotCapture_.Init(device, GetWidth(), GetHeight())) {
-            UZ_LOG(Renderer, Error, "Failed to initialize screenshot capture");
-            return;
-        }
-    }
-
-    // ── Render graph resource pool ───────────────────────────────────────
-    rgPool_ = std::make_unique<rg::RgResourcePool>(device);
-
-    // ── Camera ───────────────────────────────────────────────────────────
-    constexpr float kHFovDeg = 90.f;
-    constexpr float kAspect  = 16.f / 9.f;
-    float vFovRad = 2.f * std::atan(std::tan(kHFovDeg * 0.5f * 3.14159265f / 180.f) / kAspect);
-    camera_.SetPerspective(vFovRad,
-        static_cast<float>(GetWidth()) / static_cast<float>(GetHeight()),
-        0.1f, 1000.f);
-    camera_.SetPosition({0.f, 5.f, 2.f});
-    {
-        constexpr float kDegToRad = 3.14159265f / 180.f;
-        float yawRad   = -90.f * kDegToRad;
-        float pitchRad = -20.f * kDegToRad;
-        float cosPitch = std::cos(pitchRad);
-        Vec3 forward = {
-            std::cos(yawRad) * cosPitch,
-            std::sin(yawRad) * cosPitch,
-            std::sin(pitchRad)
-        };
-        Vec3 pos = camera_.GetPosition();
-        camera_.LookAt(pos + forward, Vec3::Up());
-    }
-
-    cameraCtrl_.InitFromCamera(camera_);
-    cameraCtrl_.SetMoveSpeed(10.f);
-
     // ── Render path ──────────────────────────────────────────────────────
     renderPath_ = GetDefaultRenderPath();
 
     UZ_LOG(Renderer, Info, "Deferred test demo started — 5 cubes, 4 point lights + directional sun "
            "(F=toggle render path, current={})", RenderPathToString(renderPath_));
+
+    SetReady();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -573,9 +479,7 @@ void DeferredTestDemo::OnResize(uint32_t width, uint32_t height) {
         UZ_LOG(Renderer, Error, "Failed to recreate G-Buffer textures on resize");
         return;
     }
-
-    statsOverlay_.SetScreenSize(width, height);
-    camera_.SetAspectRatio(static_cast<float>(width) / static_cast<float>(height));
+    // Camera aspect ratio and stats overlay are updated by the base class
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -586,26 +490,29 @@ void DeferredTestDemo::OnFrame(float dt) {
     auto* device    = GetDevice();
     auto* cmdList   = GetCommandList();
     auto* swapChain = GetSwapChain();
+    auto* cbRing    = GetCBRing();
+    auto& camera    = GetCamera();
+    auto* input     = GetInput();
     const uint32_t frameIndex = GetFrameIndex();
 
     totalTime_ += dt;
-    statsOverlay_.BeginFrame(dt);
+    GetStatsOverlay()->BeginFrame(dt);
 
     // ── Input ────────────────────────────────────────────────────────────
-    input_.BeginFrame();
+    input->BeginFrame();
 
     // Debug mode toggle: '0' = off, '1'-'7' = G-Buffer channels 0-6
-    if (input_.IsKeyJustPressed(Key::Num0)) {
+    if (input->IsKeyJustPressed(Key::Num0)) {
         debugModeValue_ = static_cast<uint32_t>(GBufferDebugMode::Count);
     }
     for (uint32_t k = 0; k < 7; ++k) {
-        if (input_.IsKeyJustPressed(static_cast<Key>(static_cast<uint32_t>(Key::Num1) + k))) {
+        if (input->IsKeyJustPressed(static_cast<Key>(static_cast<uint32_t>(Key::Num1) + k))) {
             debugModeValue_ = k;
         }
     }
 
     // Render path toggle: F switches between Deferred and Forward
-    if (input_.IsKeyJustPressed(Key::F)) {
+    if (input->IsKeyJustPressed(Key::F)) {
         renderPath_ = (renderPath_ == RenderPath::Deferred)
             ? RenderPath::Forward : RenderPath::Deferred;
         UZ_LOG(Renderer, Info, "Render path switched to: {}",
@@ -613,15 +520,15 @@ void DeferredTestDemo::OnFrame(float dt) {
     }
 
     // ── Camera update ────────────────────────────────────────────────────
-    cameraCtrl_.Update(camera_, input_, dt);
+    GetCameraController().Update(camera, *input, dt);
 
-    cbRing_.BeginFrame(frameIndex);
+    cbRing->BeginFrame(frameIndex);
 
     // ── PerFrameCB ───────────────────────────────────────────────────────
     PerFrameCB perFrame{};
-    perFrame.viewProj    = camera_.GetViewProjection();
+    perFrame.viewProj    = camera.GetViewProjection();
     perFrame.invViewProj = perFrame.viewProj.Inverse();
-    Vec3 camPos          = camera_.GetPosition();
+    Vec3 camPos          = camera.GetPosition();
     perFrame.cameraPos   = {camPos.x, camPos.y, camPos.z, 0.f};
     perFrame.timeParams  = {totalTime_, dt, static_cast<float>(frameIndex), 0.f};
 
@@ -631,7 +538,7 @@ void DeferredTestDemo::OnFrame(float dt) {
     perFrame.lightColor   = {3.0f, 2.85f, 2.7f, 0.f};
     perFrame.ambientColor = {0.03f, 0.03f, 0.05f, 0.f};
 
-    CBAllocation perFrameAlloc = cbRing_.Allocate(sizeof(PerFrameCB));
+    CBAllocation perFrameAlloc = cbRing->Allocate(sizeof(PerFrameCB));
     std::memcpy(perFrameAlloc.cpuPtr, &perFrame, sizeof(PerFrameCB));
 
     // ── LightingCB — 4 coloured point lights ────────────────────────────
@@ -642,7 +549,7 @@ void DeferredTestDemo::OnFrame(float dt) {
     lightingData.pointLights[2] = { { 3.f, 2.f,  2.f}, 8.f,  {0.2f, 0.2f, 4.f}, 0.f };
     lightingData.pointLights[3] = { { 0.f, 1.f,  0.f}, 15.f, {3.f,  3.f,  3.f}, 0.f };
 
-    CBAllocation lightingAlloc = cbRing_.Allocate(sizeof(LightingCB));
+    CBAllocation lightingAlloc = cbRing->Allocate(sizeof(LightingCB));
     std::memcpy(lightingAlloc.cpuPtr, &lightingData, sizeof(LightingCB));
 
     // ── Build draw list ──────────────────────────────────────────────────
@@ -663,10 +570,8 @@ void DeferredTestDemo::OnFrame(float dt) {
     drawList.Sort();
 
     // ── Record frame via render graph ────────────────────────────────────
-    bool capturedThisFrame = false;
-
     RHITextureHandle backBuffer = swapChain->GetCurrentBackBuffer();
-    rg::RgBuilder rgBuilder(device, rgPool_.get());
+    rg::RgBuilder rgBuilder(device, GetRgPool());
     auto bbRes = rgBuilder.ImportTexture("Backbuffer", backBuffer, RHIResourceState::Present);
 
     auto albedoRes     = rgBuilder.ImportTexture("GBuf_Albedo",    gbuf_.albedo,     RHIResourceState::ShaderResource);
@@ -684,7 +589,7 @@ void DeferredTestDemo::OnFrame(float dt) {
             gbDesc.depthBuffer          = depthRes;
             gbDesc.depthTexture         = gbuf_.depth;
             gbDesc.drawList             = &drawList;
-            gbDesc.cbAllocator          = &cbRing_;
+            gbDesc.cbAllocator          = cbRing;
             gbDesc.perFrameAlloc        = perFrameAlloc;
             gbDesc.pipeline             = gbufPipeline_;
             gbDesc.vertexBufferSrvIndex = vbSrvIndex_;
@@ -731,7 +636,7 @@ void DeferredTestDemo::OnFrame(float dt) {
             dbgDesc.depthGBuffer       = depthRes;
             dbgDesc.perFrameAlloc      = perFrameAlloc;
             struct DebugCBData { uint32_t mode; uint32_t pad[3]; };
-            CBAllocation debugAlloc = cbRing_.Allocate(sizeof(DebugCBData));
+            CBAllocation debugAlloc = cbRing->Allocate(sizeof(DebugCBData));
             DebugCBData debugCBData{debugModeValue_, {0, 0, 0}};
             std::memcpy(debugAlloc.cpuPtr, &debugCBData, sizeof(DebugCBData));
             dbgDesc.debugAlloc         = debugAlloc;
@@ -757,7 +662,7 @@ void DeferredTestDemo::OnFrame(float dt) {
         fwdDesc.depthBuffer          = depthRes;
         fwdDesc.depthTexture         = gbuf_.depth;
         fwdDesc.drawList             = &drawList;
-        fwdDesc.cbAllocator          = &cbRing_;
+        fwdDesc.cbAllocator          = cbRing;
         fwdDesc.perFrameAlloc        = perFrameAlloc;
         fwdDesc.pipeline             = forwardPipeline_;
         fwdDesc.vertexBufferSrvIndex = vbSrvIndex_;
@@ -799,29 +704,18 @@ void DeferredTestDemo::OnFrame(float dt) {
             sc.bottom = static_cast<int32_t>(swapChain->GetHeight());
             cmd->SetScissor(sc);
 
-            editorGrid_.Draw(cmd, cbRing_, camera_);
+            GetEditorGrid()->Draw(cmd, *cbRing, camera);
 
-            statsOverlay_.SetDrawCalls(kCubeCount + 1);
-            statsOverlay_.SetVertexCount(
+            GetStatsOverlay()->SetDrawCalls(kCubeCount + 1);
+            GetStatsOverlay()->SetVertexCount(
                 static_cast<uint32_t>(kCubeCount) * vertexCount_ + 3);
-            statsOverlay_.SetTriangleCount(
+            GetStatsOverlay()->SetTriangleCount(
                 static_cast<uint32_t>(kCubeCount) * (indexCount_ / 3) + 1);
-            statsOverlay_.Render(cmd, cbRing_, frameIndex);
+            GetStatsOverlay()->Render(cmd, *cbRing, frameIndex);
 
             cmd->EndRenderPass();
         });
     });
-
-    // Screenshot pass (optional)
-    if (screenshotPending_ && !screenshotCaptured_ && frameIndex == config_.screenshotFrame) {
-        rgBuilder.AddPass("Screenshot", [&](rg::RgPassBuilder& pb) {
-            pb.Read(bbRes, RHIResourceState::RenderTarget);
-            pb.SetExecutionCallback([&](IRHICommandList*, const rg::RgPassResources&) {
-                screenshotCapture_.CaptureBackBuffer(cmdList, swapChain);
-                capturedThisFrame = true;
-            });
-        });
-    }
 
     // Present transition
     rgBuilder.AddPass("Present", [&](rg::RgPassBuilder& pb) {
@@ -832,52 +726,25 @@ void DeferredTestDemo::OnFrame(float dt) {
     rgBuilder.Compile();
     rgBuilder.Execute(cmdList);
 
-    // NOTE: base class handles cmdList->End(), Execute(), Present(), and fence signaling.
-    // However, the base class calls Begin() before OnFrame and End()+Execute()+Present()
-    // after OnFrame. The render graph already recorded into the open command list.
-    // We do NOT call End/Execute/Present here — the base class does that.
-
-    // Save screenshot if captured this frame — must wait for GPU completion.
-    // The base class signals the fence after present, so we defer to next frame
-    // or handle it in OnShutdown. For simplicity, we do a device WaitIdle here.
-    if (capturedThisFrame) {
-        // The base class hasn't submitted yet, so we can't wait on the fence.
-        // Instead mark for deferred save — the screenshot readback happens during
-        // the next WaitIdle. We'll save in OnShutdown or on the next frame.
-        screenshotCaptured_ = true;
-    }
-
-    // Handle deferred screenshot save from previous frame
-    if (screenshotCaptured_ && screenshotPending_ && frameIndex > config_.screenshotFrame) {
-        screenshotCapture_.SaveToPNG(config_.screenshotPath);
-        screenshotPending_ = false;
+    // ── Screenshot capture (records copy commands — saved in Run() after Execute)
+    if (ShouldCaptureScreenshot()) {
+        GetScreenshotCapture()->CaptureFromPresent(cmdList, swapChain);
+        SetScreenshotSaveDeferred();
     }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// OnShutdown — Release all GPU resources
+// OnShutdown — Release demo-specific GPU resources
 // ─────────────────────────────────────────────────────────────────────────────
 
 void DeferredTestDemo::OnShutdown() {
     auto* device = GetDevice();
-
-    // Save any pending screenshot before releasing resources
-    if (screenshotCaptured_ && screenshotPending_) {
-        screenshotCapture_.SaveToPNG(config_.screenshotPath);
-        screenshotPending_ = false;
-    }
-
-    screenshotCapture_.Shutdown();
-    statsOverlay_.Shutdown();
-    editorGrid_.Shutdown();
-    cbRing_.Shutdown();
 
     if (shaderPipeline_) {
         shaderPipeline_->Shutdown();
     }
 
     DestroyGBuffer();
-    rgPool_.reset();
 
     for (auto& h : pbrTex_.handles) {
         if (h.IsValid()) device->DestroyTexture(h);

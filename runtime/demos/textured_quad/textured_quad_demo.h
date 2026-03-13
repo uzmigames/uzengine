@@ -7,7 +7,7 @@
 #pragma once
 
 #include "demo_application.h"
-#include "rhi_types.h"
+#include "uzengine.h"
 
 #include <cstdint>
 #include <memory>

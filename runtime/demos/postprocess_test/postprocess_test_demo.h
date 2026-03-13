@@ -9,9 +9,10 @@
 ///   T — toggle tone mapping
 ///   A — toggle FXAA
 ///
-/// Extends `DemoApplication` to eliminate window/device/swapchain/fence
-/// boilerplate. All GPU resources are created in `OnInit()` and released
-/// in `OnShutdown()`.
+/// Extends `DemoApplication` which owns all engine infrastructure (input,
+/// shaders, pipelines, CB ring, camera, editor grid, stats overlay,
+/// screenshot capture, render graph pool). This class only owns
+/// demo-specific resources: mesh, textures, HDR target, post-process PSOs.
 ///
 /// Supports `--screenshot <path>` and `--screenshot-frame <N>` for
 /// automated visual testing.
@@ -19,11 +20,7 @@
 #pragma once
 
 #include "demo_application.h"
-#include "rhi_types.h"
-#include "rhi_backend.h"
-#include "constant_buffers.h"
-#include "camera.h"
-#include "fps_camera_controller.h"
+#include "uzengine.h"
 
 #include <chrono>
 #include <cstdint>
@@ -32,16 +29,7 @@
 
 namespace uz {
 
-class InputSystem;
-class ShaderPipeline;
-class ShaderCompiler;
-class ShaderCompilerFXC;
-class EditorGrid;
-class ScreenshotCapture;
-class CBRingAllocator;
 class Mesh;
-
-namespace rg { class RgResourcePool; }
 
 /// Configuration for running the post-process test demo.
 struct PostProcessTestConfig {
@@ -56,15 +44,16 @@ struct PostProcessTestConfig {
 /// Post-Process Test Demo — renders HDR spheres with tonemap + FXAA chain.
 ///
 /// Extends `DemoApplication` for lifecycle management. The base class owns the
-/// window, device, swapchain, command list, and fences. This class owns all
-/// rendering resources: shaders, pipelines, meshes, textures, render targets,
-/// CB ring, editor grid, camera, and input system.
+/// window, device, swapchain, command list, fences, AND all engine infrastructure
+/// (input, shaders, pipelines, CB ring, camera, grid, stats, screenshot, RG pool).
+/// This class only owns demo-specific resources: mesh, textures, HDR target,
+/// post-process PSOs and shaders.
 ///
 /// # Lifecycle
 /// - `OnInit()` — Compiles shaders, loads mesh/textures, creates pipelines and render targets.
 /// - `OnFrame(dt)` — Processes input, updates camera, records render graph (Scene3D -> ToneMap -> FXAA).
-/// - `OnResize(w, h)` — Recreates render targets and depth buffer, updates camera aspect ratio.
-/// - `OnShutdown()` — Releases all GPU resources.
+/// - `OnResize(w, h)` — Recreates render targets.
+/// - `OnShutdown()` — Releases demo-specific GPU resources.
 class PostProcessTestDemo final : public DemoApplication {
 public:
     /// Constructs the post-process test demo with the given configuration.
@@ -75,9 +64,9 @@ public:
     ~PostProcessTestDemo() override;
 
 protected:
-    /// Called once after device/swapchain creation. Compiles all shaders,
-    /// loads the sphere mesh and checker texture, creates pipelines,
-    /// render targets, CB ring, editor grid, and camera.
+    /// Called once after engine infrastructure is initialized.
+    /// The command list is already in recording state. Compiles shaders,
+    /// loads mesh/textures, creates pipelines and render targets.
     void OnInit() override;
 
     /// Called every frame with the command list already opened.
@@ -88,20 +77,19 @@ protected:
     /// * `dt` — Delta time in seconds since last frame.
     void OnFrame(float dt) override;
 
-    /// Called when the window is resized. Recreates render targets, depth
-    /// buffer, and updates the camera aspect ratio.
+    /// Called when the window is resized. Recreates render targets.
     ///
     /// # Arguments
     /// * `width` — New window width in pixels.
     /// * `height` — New window height in pixels.
     void OnResize(uint32_t width, uint32_t height) override;
 
-    /// Called before shutdown. Releases all GPU resources owned by this demo.
+    /// Called before shutdown. Releases demo-specific GPU resources.
     void OnShutdown() override;
 
 private:
     /// Compiles all shaders (fullscreen VS, tonemap PS, FXAA PS, mesh VS/PS)
-    /// via the ShaderPipeline and creates RHI shader handles.
+    /// via the ShaderManager's pipeline and creates RHI shader handles.
     void CompileShaders();
 
     /// Creates all PSOs (tonemap, FXAA, mesh HDR pipeline).
@@ -126,20 +114,9 @@ private:
     std::chrono::high_resolution_clock::time_point startTime_;
     float totalTime_ = 0.f;
 
-    // ── Input & Camera ──────────────────────────────────────────────────
-    std::unique_ptr<InputSystem> input_;
-    Camera camera_;
-    FPSCameraController cameraCtrl_;
-
     // ── Render state ────────────────────────────────────────────────────
-    bool bindless_ = false;
     bool enableTonemap_ = true;
     bool enableFXAA_ = true;
-
-    // ── Shader compilation ──────────────────────────────────────────────
-    std::unique_ptr<ShaderPipeline> shaderPipeline_;
-    std::unique_ptr<ShaderCompiler> compiler_;
-    std::unique_ptr<ShaderCompilerFXC> compilerFXC_;
 
     // ── Shader handles ──────────────────────────────────────────────────
     RHIShaderHandle fsVS_;
@@ -168,20 +145,6 @@ private:
     RHITextureHandle depthBuffer_;
     RHITextureHandle hdrTarget_;
     RHITextureHandle tonemapTarget_;
-
-    // ── Constant buffer ring ────────────────────────────────────────────
-    std::unique_ptr<CBRingAllocator> cbRing_;
-
-    // ── Overlays ────────────────────────────────────────────────────────
-    std::unique_ptr<EditorGrid> editorGrid_;
-
-    // ── Screenshot ──────────────────────────────────────────────────────
-    std::unique_ptr<ScreenshotCapture> screenshotCapture_;
-    bool screenshotPending_ = false;
-    bool screenshotSaveDeferred_ = false;
-
-    // ── Render graph pool (persistent across frames) ────────────────────
-    std::unique_ptr<rg::RgResourcePool> rgPool_;
 };
 
 } // namespace uz

@@ -171,6 +171,9 @@ void TexturedQuadDemo::OnInit() {
 
     samplerIdx_ = device->GetSamplerIndex(samplerHandle_);
     UZ_LOG(Renderer, Info, "Sampler index: {}", samplerIdx_);
+
+    // Signal that all resources are loaded — screenshots can now be captured.
+    SetReady();
 }
 
 void TexturedQuadDemo::OnFrame(float /*dt*/) {
@@ -181,10 +184,7 @@ void TexturedQuadDemo::OnFrame(float /*dt*/) {
     RHITextureHandle backBuffer = swapChain->GetCurrentBackBuffer();
 
     // ── Render graph: textured quad pass + present transition ────────
-    // NOTE: RgResourcePool is frame-local, recreated each frame since
-    // DemoApplication does not persist it across frames.
-    rg::RgResourcePool rgPool(device);
-    rg::RgBuilder rgBuilder(device, &rgPool);
+    rg::RgBuilder rgBuilder(device, GetRgPool());
     auto bbRes = rgBuilder.ImportTexture("Backbuffer", backBuffer, RHIResourceState::Present);
 
     rgBuilder.AddPass("TexturedQuad", [&](rg::RgPassBuilder& pb) {

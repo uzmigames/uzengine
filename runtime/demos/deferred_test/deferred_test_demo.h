@@ -6,20 +6,16 @@
 /// Debug visualization: keys 1-7 inspect individual G-Buffer channels,
 /// key 0 returns to the composed deferred result. Supports `--screenshot`
 /// and `--screenshot-frame` for automated visual testing.
+///
+/// Extends `DemoApplication` which owns all engine infrastructure (input,
+/// shaders, pipelines, CB ring, camera, editor grid, stats overlay,
+/// screenshot capture, render graph pool). This class only owns
+/// demo-specific resources: shaders, pipelines, mesh, textures, G-Buffer.
 
 #pragma once
 
 #include "demo_application.h"
-#include "rhi_types.h"
-#include "camera.h"
-#include "fps_camera_controller.h"
-#include "input.h"
-#include "constant_buffers.h"
-#include "editor_grid.h"
-#include "screenshot_capture.h"
-#include "stats_overlay.h"
-#include "render_path.h"
-#include "passes/gbuffer_debug_pass.h"
+#include "uzengine.h"
 
 #include <cstdint>
 #include <memory>
@@ -32,8 +28,6 @@ class ShaderPipeline;
 class ShaderCompiler;
 class ShaderCompilerFXC;
 class Mesh;
-
-namespace rg { class RgResourcePool; }
 
 /// Configuration for the deferred rendering test demo.
 ///
@@ -73,8 +67,10 @@ struct GBufferTextures {
 
 /// Deferred rendering test demo — extends DemoApplication for lifecycle management.
 ///
-/// Owns all GPU resources (shaders, pipelines, mesh buffers, textures, G-Buffer),
-/// plus camera, input, editor grid, stats overlay, and screenshot capture.
+/// Owns demo-specific GPU resources (shaders, pipelines, mesh buffers, textures,
+/// G-Buffer). All engine infrastructure (input, camera, CB ring, editor grid,
+/// stats overlay, screenshot capture, render graph pool) is owned by the base class.
+///
 /// All setup happens in `OnInit()`, per-frame rendering in `OnFrame(dt)`,
 /// resize-dependent resource recreation in `OnResize()`, and cleanup in `OnShutdown()`.
 class DeferredTestDemo final : public DemoApplication {
@@ -85,7 +81,7 @@ public:
 
 protected:
     /// Compiles shaders, creates pipelines, loads mesh and textures,
-    /// initializes G-Buffer, camera, input, editor grid, and stats overlay.
+    /// initializes G-Buffer. Calls SetReady() when complete.
     void OnInit() override;
 
     /// Records one frame via the render graph: G-Buffer or forward pass,
@@ -102,7 +98,7 @@ protected:
     /// * `height` — New window height in pixels.
     void OnResize(uint32_t width, uint32_t height) override;
 
-    /// Releases all GPU resources owned by this demo.
+    /// Releases all demo-specific GPU resources.
     void OnShutdown() override;
 
 private:
@@ -158,26 +154,6 @@ private:
     // ── Textures ─────────────────────────────────────────────────────────
     PBRTextures pbrTex_;
     GBufferTextures gbuf_;
-
-    // ── Constant buffer ring ─────────────────────────────────────────────
-    CBRingAllocator cbRing_;
-
-    // ── Camera + input ───────────────────────────────────────────────────
-    Camera camera_;
-    FPSCameraController cameraCtrl_;
-    InputSystem input_;
-
-    // ── Editor grid + stats overlay ──────────────────────────────────────
-    EditorGrid editorGrid_;
-    StatsOverlay statsOverlay_;
-
-    // ── Screenshot ───────────────────────────────────────────────────────
-    ScreenshotCapture screenshotCapture_;
-    bool screenshotPending_ = false;
-    bool screenshotCaptured_ = false;
-
-    // ── Render graph resource pool ───────────────────────────────────────
-    std::unique_ptr<rg::RgResourcePool> rgPool_;
 
     // ── Frame state ──────────────────────────────────────────────────────
     float totalTime_       = 0.f;

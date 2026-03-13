@@ -6,36 +6,9 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include "postprocess_test_demo.h"
-#include "rhi.h"
-#include "rhi_backend.h"
-#include "rhi_config.h"
-#include "rhi_types.h"
-#include "platform_window.h"
-#include "input.h"
-#include "log.h"
-#include "profiler.h"
-#include "vertex.h"
-#include "mesh.h"
-#include "upload_context.h"
-#include "constant_buffers.h"
-#include "camera.h"
-#include "fps_camera_controller.h"
-#include "shader_pipeline.h"
-#include "shader_compiler.h"
-#include "shader_compiler_fxc.h"
-#include "engine_shaders.h"
-#include "paths.h"
-#include "editor_grid.h"
-#include "screenshot_capture.h"
-#include "cb_ring_allocator.h"
-#include "texture_loader.h"
-#include "root_slots.h"
-#include "render_graph_builder.h"
-#include "render_graph_resources.h"
 
 #include <cmath>
 #include <cstring>
-#include <memory>
 
 namespace uz {
 
@@ -65,40 +38,7 @@ struct alignas(256) FXAACB {
 // Multi-Light PerFrame CB — matches mesh_ps.hlsl 768-byte layout at b1
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Single light for the multi-light forward CB (64 bytes per light).
-struct LightDataGPU {
-    Vec3  positionOrDir;
-    float range;
-    Vec3  color;
-    float lightType;
-    Vec3  spotDirection;
-    float innerConeCos;
-    float outerConeCos;
-    float _pad0 = 0.f;
-    float _pad1 = 0.f;
-    float _pad2 = 0.f;
-};
-
-static_assert(sizeof(LightDataGPU) == 64, "LightDataGPU must be 64 bytes");
-
-static constexpr uint32_t kMeshMaxLights = 8;
-
-/// Per-frame constant buffer matching the 768-byte layout expected by mesh_ps.hlsl.
-struct PerFrameMultiLightCB {
-    Mat4         viewProj;
-    Vec4         cameraPos;
-    Vec4         timeParams;
-    Vec4         ambientColor;
-    uint32_t     lightCount = 0;
-    uint32_t     _pad0a = 0;
-    uint32_t     _pad0b = 0;
-    uint32_t     _pad0c = 0;
-    LightDataGPU lights[kMeshMaxLights];
-    Vec4         _pad1[8] = {};
-};
-
-static_assert(sizeof(PerFrameMultiLightCB) == 768,
-              "PerFrameMultiLightCB must be 768 bytes");
+// Uses PerFrameMultiLightCB and LightGPU from multi_light.h
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helper: create fullscreen PSO (no vertex input, no depth)
@@ -129,12 +69,14 @@ static RHIPipelineHandle CreateFullscreenPSO(IRHIDevice* device,
 
 PostProcessTestDemo::PostProcessTestDemo(const PostProcessTestConfig& config)
     : DemoApplication(DemoConfig{
-          .title = "UzEngine — Post-Process Test (T=tonemap A=fxaa)",
+          .title = "UzEngine \xe2\x80\x94 Post-Process Test (T=tonemap A=fxaa)",
           .width = 1280,
           .height = 720,
           .maxFrames = config.frameCount,
           .vsync = false,
           .enableValidation = true,
+          .screenshotPath = config.screenshotPath,
+          .screenshotFrame = config.screenshotFrame,
       })
     , config_(config)
     , enableTonemap_(config.enableTonemap)
@@ -151,9 +93,6 @@ PostProcessTestDemo::~PostProcessTestDemo() = default;
 void PostProcessTestDemo::OnInit() {
     UZ_PROFILE_FUNCTION();
 
-    auto* device = GetDevice();
-    bindless_ = device->IsBindless();
-
     startTime_ = std::chrono::high_resolution_clock::now();
 
     CompileShaders();
@@ -162,57 +101,11 @@ void PostProcessTestDemo::OnInit() {
     LoadTextures();
     CreateRenderTargets(GetWidth(), GetHeight());
 
-    // CB ring
-    cbRing_ = std::make_unique<CBRingAllocator>();
-    cbRing_->Init(device, 3, 64 * 1024);
-
-    // Editor grid
-    editorGrid_ = std::make_unique<EditorGrid>();
-    if (!editorGrid_->Init(device, *shaderPipeline_, RHIFormat::RGBA16Float, RHIFormat::D32Float)) {
-        UZ_LOG(PostProcessDemo, Error, "Failed to initialize editor grid");
-    }
-
-    // Input
-    input_ = std::make_unique<InputSystem>();
-    input_->Init();
-    GetWindow()->SetInputSystem(input_.get());
-
-    // Camera
-    constexpr float kHFovDeg = 90.f;
-    constexpr float kAspect  = 16.f / 9.f;
-    float vFovRad = 2.f * std::atan(std::tan(kHFovDeg * 0.5f * 3.14159265f / 180.f) / kAspect);
-    camera_.SetPerspective(vFovRad,
-        static_cast<float>(GetWidth()) / static_cast<float>(GetHeight()),
-        0.1f, 1000.f);
-    camera_.SetPosition({0.f, 5.f, 2.5f});
-    {
-        constexpr float kDegToRad = 3.14159265f / 180.f;
-        float yawRad   = -90.f * kDegToRad;
-        float pitchRad = -15.f * kDegToRad;
-        float cosPitch = std::cos(pitchRad);
-        Vec3 forward = {
-            std::cos(yawRad) * cosPitch,
-            std::sin(yawRad) * cosPitch,
-            std::sin(pitchRad)
-        };
-        Vec3 pos = camera_.GetPosition();
-        camera_.LookAt(pos + forward, Vec3::Up());
-    }
-    cameraCtrl_.InitFromCamera(camera_);
-    cameraCtrl_.SetMoveSpeed(10.f);
-
-    // Screenshot
-    screenshotPending_ = !config_.screenshotPath.empty();
-    if (screenshotPending_) {
-        screenshotCapture_ = std::make_unique<ScreenshotCapture>();
-        screenshotCapture_->Init(device, GetWidth(), GetHeight());
-    }
-
-    // Render graph pool
-    rgPool_ = std::make_unique<rg::RgResourcePool>(device);
-
     UZ_LOG(PostProcessDemo, Info,
         "PostProcessTestDemo initialized — T=tonemap A=fxaa toggles | Scene3D -> ToneMap -> FXAA -> display");
+
+    // Signal that all resources are loaded — screenshots can now be captured.
+    SetReady();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -221,29 +114,10 @@ void PostProcessTestDemo::OnInit() {
 
 void PostProcessTestDemo::CompileShaders() {
     auto* device = GetDevice();
-
-    compiler_ = std::make_unique<ShaderCompiler>();
-    if (!compiler_->Init()) {
-        UZ_LOG(PostProcessDemo, Error, "Failed to init DXC shader compiler");
-        return;
-    }
-
-    if (!bindless_) {
-        compilerFXC_ = std::make_unique<ShaderCompilerFXC>();
-        compilerFXC_->Init();
-    }
-
-    shaderPipeline_ = std::make_unique<ShaderPipeline>();
-    ShaderPipeline::Config pipeCfg;
-    pipeCfg.cacheDir      = (uz::GetExeDir() / "cache/shaders").string();
-    pipeCfg.targetBackend = bindless_ ? "dx12_sm66" : "dx12_sm50";
-    pipeCfg.bindless      = bindless_;
-    shaderPipeline_->Init(pipeCfg);
-    shaderPipeline_->SetCompiler(compiler_.get());
-    if (compilerFXC_) shaderPipeline_->SetCompilerFXC(compilerFXC_.get());
+    auto& pipeline = GetShaderManager()->GetPipeline();
 
     auto loadShader = [&](EngineShader shader) {
-        return shaderPipeline_->LoadBytecodeFromSource(
+        return pipeline.LoadBytecodeFromSource(
             EngineShaders::GetName(shader), EngineShaders::GetSource(shader));
     };
 
@@ -285,6 +159,7 @@ void PostProcessTestDemo::CompileShaders() {
 
 void PostProcessTestDemo::CreatePipelines() {
     auto* device = GetDevice();
+    const bool bindless = IsBindless();
 
     tonemapPSO_ = CreateFullscreenPSO(device, fsVS_, tonemapPS_,
                                        RHIFormat::RGBA8Unorm, "ToneMap_PSO");
@@ -312,7 +187,7 @@ void PostProcessTestDemo::CreatePipelines() {
     meshPipeDesc.depthStencilFormat               = RHIFormat::D32Float;
     meshPipeDesc.debugName                        = "MeshPipeline_HDR";
 
-    if (!bindless_) {
+    if (!bindless) {
         meshPipeDesc.inputElements     = inputElements;
         meshPipeDesc.inputElementCount = 4;
         meshPipeDesc.vertexStride      = sizeof(Vertex);
@@ -330,6 +205,7 @@ void PostProcessTestDemo::CreatePipelines() {
 
 void PostProcessTestDemo::LoadMeshData() {
     auto* device = GetDevice();
+    const bool bindless = IsBindless();
 
     sphereMesh_ = std::make_unique<Mesh>(MeshBuilder::CreateSphere(1.0f, 32, 64));
     UZ_LOG(PostProcessDemo, Info, "Created UV sphere: {} vertices, {} indices",
@@ -339,7 +215,7 @@ void PostProcessTestDemo::LoadMeshData() {
     RHIBufferDesc vbDesc{};
     vbDesc.sizeBytes = sphereMesh_->GetVertexDataSize();
     vbDesc.stride    = sphereMesh_->header.vertexStride;
-    vbDesc.usage     = bindless_ ? RHIBufferUsage::StructuredBuffer : RHIBufferUsage::VertexBuffer;
+    vbDesc.usage     = bindless ? RHIBufferUsage::StructuredBuffer : RHIBufferUsage::VertexBuffer;
     vbDesc.memory    = RHIMemoryType::Upload;
     vbDesc.debugName = "PostProcess_VB";
 
@@ -348,7 +224,7 @@ void PostProcessTestDemo::LoadMeshData() {
     std::memcpy(vbMapped, sphereMesh_->vertexData.data(), sphereMesh_->GetVertexDataSize());
     device->UnmapBuffer(vbHandle_);
 
-    if (bindless_) {
+    if (bindless) {
         vbSrvIndex_ = device->GetBufferSRVIndex(vbHandle_);
     }
 
@@ -440,36 +316,43 @@ void PostProcessTestDemo::RecreateRenderTargets(uint32_t width, uint32_t height)
 void PostProcessTestDemo::OnFrame(float dt) {
     UZ_PROFILE_FUNCTION();
 
-    auto* device  = GetDevice();
-    auto* cmdList = GetCommandList();
+    auto* device    = GetDevice();
+    auto* cmdList   = GetCommandList();
     auto* swapChain = GetSwapChain();
+    auto* cbRing    = GetCBRing();
+    auto& camera    = GetCamera();
+    auto* input     = GetInput();
+    const bool bindless = IsBindless();
     const uint32_t w = GetWidth();
     const uint32_t h = GetHeight();
 
     auto now = std::chrono::high_resolution_clock::now();
     totalTime_ = std::chrono::duration<float>(now - startTime_).count();
 
+    // ── Stats ────────────────────────────────────────────────────────────
+    GetStatsOverlay()->BeginFrame(dt);
+
     // ── Input ────────────────────────────────────────────────────────────
-    input_->BeginFrame();
-    if (input_->IsKeyJustPressed(Key::T)) {
+    input->BeginFrame();
+    if (input->IsKeyJustPressed(Key::T)) {
         enableTonemap_ = !enableTonemap_;
         UZ_LOG(PostProcessDemo, Info, "Tone mapping: {}", enableTonemap_ ? "ON" : "OFF");
     }
-    if (input_->IsKeyJustPressed(Key::A)) {
+    if (input->IsKeyJustPressed(Key::A)) {
         enableFXAA_ = !enableFXAA_;
         UZ_LOG(PostProcessDemo, Info, "FXAA: {}", enableFXAA_ ? "ON" : "OFF");
     }
 
     // ── Camera ───────────────────────────────────────────────────────────
-    cameraCtrl_.Update(camera_, *input_, dt);
+    GetCameraController().Update(camera, *input, dt);
 
     // ── CB Ring ──────────────────────────────────────────────────────────
-    cbRing_->BeginFrame(GetFrameIndex());
+    cbRing->BeginFrame(GetFrameIndex());
 
     // ── Upload PerFrameMultiLightCB ──────────────────────────────────────
     PerFrameMultiLightCB perFrame{};
-    perFrame.viewProj = camera_.GetViewProjection();
-    Vec3 camPos = camera_.GetPosition();
+    perFrame.viewProj = camera.GetViewProjection();
+    Vec3 camPos = camera.GetPosition();
     perFrame.cameraPos   = {camPos.x, camPos.y, camPos.z, 0.f};
     perFrame.timeParams  = {totalTime_, dt, static_cast<float>(GetFrameIndex()), 0.f};
     perFrame.ambientColor = {0.08f, 0.08f, 0.1f, 0.f};
@@ -477,7 +360,7 @@ void PostProcessTestDemo::OnFrame(float dt) {
     // Sun: warm directional, very high intensity for HDR demo
     perFrame.lightCount = 2;
 
-    LightDataGPU& sun = perFrame.lights[0];
+    LightGPU& sun = perFrame.lightArray[0];
     Vec3 rawDir = {0.5f, 1.0f, 0.3f};
     float len = std::sqrt(rawDir.x * rawDir.x + rawDir.y * rawDir.y + rawDir.z * rawDir.z);
     sun.positionOrDir = {rawDir.x / len, rawDir.y / len, rawDir.z / len};
@@ -486,7 +369,7 @@ void PostProcessTestDemo::OnFrame(float dt) {
     sun.lightType = 0.f;
 
     // Fill light: cool blue from opposite side
-    LightDataGPU& fill = perFrame.lights[1];
+    LightGPU& fill = perFrame.lightArray[1];
     Vec3 fillDir = {-0.3f, 0.5f, -0.8f};
     float fillLen = std::sqrt(fillDir.x * fillDir.x + fillDir.y * fillDir.y + fillDir.z * fillDir.z);
     fill.positionOrDir = {fillDir.x / fillLen, fillDir.y / fillLen, fillDir.z / fillLen};
@@ -494,7 +377,7 @@ void PostProcessTestDemo::OnFrame(float dt) {
     fill.color     = {5.0f, 8.0f, 20.0f};
     fill.lightType = 0.f;
 
-    CBAllocation perFrameAlloc = cbRing_->Allocate(sizeof(PerFrameMultiLightCB));
+    CBAllocation perFrameAlloc = cbRing->Allocate(sizeof(PerFrameMultiLightCB));
     std::memcpy(perFrameAlloc.cpuPtr, &perFrame, sizeof(PerFrameMultiLightCB));
 
     // ── Upload PerObjectCBs (3 spheres) ──────────────────────────────────
@@ -512,7 +395,7 @@ void PostProcessTestDemo::OnFrame(float dt) {
         perObject.model        = Mat4::TRS(spheres[ci].pos, spheres[ci].scale);
         perObject.normalMatrix = perObject.model.NormalMatrix();
         perObject.albedoIndex  = checkerSrvIndex_;
-        perObjectAllocs[ci] = cbRing_->Allocate(sizeof(PerObjectCB));
+        perObjectAllocs[ci] = cbRing->Allocate(sizeof(PerObjectCB));
         std::memcpy(perObjectAllocs[ci].cpuPtr, &perObject, sizeof(PerObjectCB));
     }
 
@@ -521,7 +404,7 @@ void PostProcessTestDemo::OnFrame(float dt) {
     tmData.tonemapIntensity = 1.0f;
     tmData.exposureAdjust   = 2.0f;
     tmData.bypassTonemap    = 0.0f;
-    auto tmAlloc = cbRing_->Allocate(sizeof(ToneMapCB));
+    auto tmAlloc = cbRing->Allocate(sizeof(ToneMapCB));
     std::memcpy(tmAlloc.cpuPtr, &tmData, sizeof(ToneMapCB));
 
     // Passthrough blit CB — no exposure boost, no ACES, just saturate
@@ -529,7 +412,7 @@ void PostProcessTestDemo::OnFrame(float dt) {
     blitData.tonemapIntensity = 1.0f;
     blitData.exposureAdjust   = 0.0f;
     blitData.bypassTonemap    = 1.0f;
-    auto blitAlloc = cbRing_->Allocate(sizeof(ToneMapCB));
+    auto blitAlloc = cbRing->Allocate(sizeof(ToneMapCB));
     std::memcpy(blitAlloc.cpuPtr, &blitData, sizeof(ToneMapCB));
 
     FXAACB fxData{};
@@ -537,14 +420,12 @@ void PostProcessTestDemo::OnFrame(float dt) {
     fxData.invScreenHeight = 1.0f / static_cast<float>(h);
     fxData.edgeThreshold   = 0.1f;
     fxData.blurStrength    = 1.0f;
-    auto fxAlloc = cbRing_->Allocate(sizeof(FXAACB));
+    auto fxAlloc = cbRing->Allocate(sizeof(FXAACB));
     std::memcpy(fxAlloc.cpuPtr, &fxData, sizeof(FXAACB));
 
     // ── Build render graph ───────────────────────────────────────────────
-    bool capturedThisFrame = false;
-
     RHITextureHandle backBuffer = swapChain->GetCurrentBackBuffer();
-    rg::RgBuilder rgBuilder(device, rgPool_.get());
+    rg::RgBuilder rgBuilder(device, GetRgPool());
 
     auto bbRes  = rgBuilder.ImportTexture("Backbuffer", backBuffer, RHIResourceState::Present);
     auto hdrRes = rgBuilder.ImportTexture("HDR_Scene", hdrTarget_, RHIResourceState::Common);
@@ -585,7 +466,7 @@ void PostProcessTestDemo::OnFrame(float dt) {
 
             cmd->SetPipeline(meshPipeline_);
 
-            if (bindless_) {
+            if (bindless) {
                 cmd->SetDescriptorIndex(0, vbSrvIndex_);
             } else {
                 cmd->SetVertexBuffer(0, vbHandle_, 0);
@@ -598,7 +479,7 @@ void PostProcessTestDemo::OnFrame(float dt) {
             cmd->SetIndexBuffer(ibHandle_, indexFormat_, 0);
 
             // Bind checker texture for SM5 (t0 = albedo)
-            if (!bindless_ && checkerHandle_.IsValid()) {
+            if (!bindless && checkerHandle_.IsValid()) {
                 cmd->SetFragmentTexture(0, checkerHandle_);
             }
 
@@ -609,7 +490,7 @@ void PostProcessTestDemo::OnFrame(float dt) {
                 cmd->DrawIndexed(sphereMesh_->GetIndexCount());
             }
 
-            editorGrid_->Draw(cmd, *cbRing_, camera_);
+            GetEditorGrid()->Draw(cmd, *cbRing, camera);
 
             cmd->EndRenderPass();
         });
@@ -638,7 +519,7 @@ void PostProcessTestDemo::OnFrame(float dt) {
                 cmd->SetRootCBV(kSlotPerObject, tmAlloc.bufferHandle,
                                 tmAlloc.offsetBytes, tmAlloc.cpuPtr, sizeof(ToneMapCB));
 
-                if (bindless_) {
+                if (bindless) {
                     uint32_t srvIdx = device->GetTextureSRVIndex(res.GetTexture(hdrRes));
                     cmd->SetRootConstants(kSlotRootConstants, &srvIdx, 1, 0);
                 } else {
@@ -684,7 +565,7 @@ void PostProcessTestDemo::OnFrame(float dt) {
                 cmd->SetRootCBV(kSlotPerObject, fxAlloc.bufferHandle,
                                 fxAlloc.offsetBytes, fxAlloc.cpuPtr, sizeof(FXAACB));
 
-                if (bindless_) {
+                if (bindless) {
                     uint32_t srvIdx = device->GetTextureSRVIndex(res.GetTexture(fxaaInputRes));
                     cmd->SetRootConstants(kSlotRootConstants, &srvIdx, 1, 0);
                 } else {
@@ -725,7 +606,7 @@ void PostProcessTestDemo::OnFrame(float dt) {
                 cmd->SetRootCBV(kSlotPerObject, blitAlloc.bufferHandle,
                                 blitAlloc.offsetBytes, blitAlloc.cpuPtr, sizeof(ToneMapCB));
 
-                if (bindless_) {
+                if (bindless) {
                     uint32_t srvIdx = device->GetTextureSRVIndex(res.GetTexture(hdrRes));
                     cmd->SetRootConstants(kSlotRootConstants, &srvIdx, 1, 0);
                 } else {
@@ -749,16 +630,40 @@ void PostProcessTestDemo::OnFrame(float dt) {
         });
     }
 
-    // ── Screenshot ───────────────────────────────────────────────────────
-    if (screenshotPending_ && GetFrameIndex() == config_.screenshotFrame) {
-        rgBuilder.AddPass("Screenshot", [&](rg::RgPassBuilder& pb) {
-            pb.Read(bbRes, RHIResourceState::RenderTarget);
-            pb.SetExecutionCallback([&](IRHICommandList*, const rg::RgPassResources&) {
-                screenshotCapture_->CaptureBackBuffer(cmdList, swapChain);
-                capturedThisFrame = true;
-            });
+    // ── Overlay pass (stats) ─────────────────────────────────────────────
+    rgBuilder.AddPass("OverlayPass", [&](rg::RgPassBuilder& pb) {
+        pb.Write(bbRes, RHIResourceState::RenderTarget);
+        pb.SetExecutionCallback([&](IRHICommandList* cmd, const rg::RgPassResources& res) {
+            auto bb = res.GetTexture(bbRes);
+
+            RHIRenderPassDesc passDesc{};
+            passDesc.colorAttachmentCount        = 1;
+            passDesc.colorAttachments[0].texture = bb;
+            passDesc.colorAttachments[0].clear   = false;
+            passDesc.hasDepth                    = false;
+            cmd->BeginRenderPass(passDesc);
+
+            RHIViewport vp{};
+            vp.width    = static_cast<float>(w);
+            vp.height   = static_cast<float>(h);
+            vp.maxDepth = 1.0f;
+            cmd->SetViewport(vp);
+
+            RHIScissorRect sc{};
+            sc.right  = static_cast<int32_t>(w);
+            sc.bottom = static_cast<int32_t>(h);
+            cmd->SetScissor(sc);
+
+            GetStatsOverlay()->SetDrawCalls(kSphereCount);
+            GetStatsOverlay()->SetVertexCount(
+                kSphereCount * sphereMesh_->GetVertexCount());
+            GetStatsOverlay()->SetTriangleCount(
+                kSphereCount * (sphereMesh_->GetIndexCount() / 3));
+            GetStatsOverlay()->Render(cmd, *cbRing, GetFrameIndex());
+
+            cmd->EndRenderPass();
         });
-    }
+    });
 
     // ── Present barrier ──────────────────────────────────────────────────
     rgBuilder.AddPass("Present", [&](rg::RgPassBuilder& pb) {
@@ -769,14 +674,10 @@ void PostProcessTestDemo::OnFrame(float dt) {
     rgBuilder.Compile();
     rgBuilder.Execute(cmdList);
 
-    // ── Deferred screenshot save ─────────────────────────────────────────
-    if (screenshotSaveDeferred_) {
-        screenshotCapture_->SaveToPNG(config_.screenshotPath);
-        screenshotPending_ = false;
-        screenshotSaveDeferred_ = false;
-    }
-    if (capturedThisFrame) {
-        screenshotSaveDeferred_ = true;
+    // ── Screenshot capture (records copy commands — saved in Run() after Execute)
+    if (ShouldCaptureScreenshot()) {
+        GetScreenshotCapture()->CaptureFromPresent(cmdList, swapChain);
+        SetScreenshotSaveDeferred();
     }
 }
 
@@ -786,7 +687,7 @@ void PostProcessTestDemo::OnFrame(float dt) {
 
 void PostProcessTestDemo::OnResize(uint32_t width, uint32_t height) {
     RecreateRenderTargets(width, height);
-    camera_.SetAspectRatio(static_cast<float>(width) / static_cast<float>(height));
+    // Camera aspect ratio and stats overlay are updated by the base class
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -795,12 +696,6 @@ void PostProcessTestDemo::OnResize(uint32_t width, uint32_t height) {
 
 void PostProcessTestDemo::OnShutdown() {
     auto* device = GetDevice();
-
-    rgPool_.reset();
-
-    if (screenshotCapture_) screenshotCapture_->Shutdown();
-    if (editorGrid_) editorGrid_->Shutdown();
-    if (cbRing_) cbRing_->Shutdown();
 
     device->DestroyTexture(depthBuffer_);
     device->DestroyTexture(hdrTarget_);

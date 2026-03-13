@@ -16,32 +16,6 @@
 #endif
 
 #include "mesh_test_demo.h"
-#include "rhi.h"
-#include "rhi_backend.h"
-#include "rhi_config.h"
-#include "rhi_types.h"
-#include "platform_window.h"
-#include "input.h"
-#include "log.h"
-#include "vertex.h"
-#include "mesh.h"
-#include "upload_context.h"
-#include "constant_buffers.h"
-#include "camera.h"
-#include "fps_camera_controller.h"
-#include "paths.h"
-#include "stats_overlay.h"
-
-#ifdef _WIN32
-#include "shader_pipeline.h"
-#include "shader_compiler.h"
-#include "shader_compiler_fxc.h"
-#include "engine_shaders.h"
-#include "editor_grid.h"
-#include "screenshot_capture.h"
-#include "render_graph_builder.h"
-#include "render_graph_resources.h"
-#endif
 
 #include <chrono>
 #include <cstdlib>
@@ -150,45 +124,7 @@ fragment float4 fragment_main(FragmentIn in [[stage_in]]) {
 // Multi-Light PerFrame CB — matches mesh_ps.hlsl 768-byte layout at b1
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Single light for the multi-light forward CB (64 bytes per light).
-/// Matches LightData in light_types.hlsli.
-struct LightDataGPU {
-    Vec3  positionOrDir;    ///< Direction toward light (directional) or world position (point/spot).
-    float range;            ///< Attenuation range (point/spot). Unused for directional.
-    Vec3  color;            ///< Light color * intensity (linear HDR).
-    float lightType;        ///< 0 = directional, 1 = point, 2 = spot.
-    Vec3  spotDirection;    ///< Spot light cone direction. Unused for directional/point.
-    float innerConeCos;     ///< cos(innerConeAngle) for spot lights.
-    float outerConeCos;     ///< cos(outerConeAngle) for spot lights.
-    float _pad0 = 0.f;
-    float _pad1 = 0.f;
-    float _pad2 = 0.f;
-};
-
-static_assert(sizeof(LightDataGPU) == 64, "LightDataGPU must be 64 bytes for mesh_ps.hlsl");
-
-/// Maximum lights supported by the multi-light forward CB.
-static constexpr uint32_t kMeshMaxLights = 8;
-
-/// Per-frame constant buffer matching the 768-byte layout expected by mesh_ps.hlsl.
-///
-/// This is a demo-local struct — NOT the same as the 256-byte PerFrameCB in
-/// constant_buffers.h, which is used by other passes (gbuffer, deferred, etc.).
-struct PerFrameMultiLightCB {
-    Mat4         viewProj;                     ///< 64B — combined view-projection matrix.
-    Vec4         cameraPos;                    ///< 16B — xyz = camera world position, w = 0.
-    Vec4         timeParams;                   ///< 16B — x = totalTime, y = dt, z = frame, w = 0.
-    Vec4         ambientColor;                 ///< 16B — xyz = ambient light color, w = 0.
-    uint32_t     lightCount = 0;               ///< 4B  — number of active lights.
-    uint32_t     _pad0a = 0;                   ///< 4B  — padding.
-    uint32_t     _pad0b = 0;                   ///< 4B  — padding.
-    uint32_t     _pad0c = 0;                   ///< 4B  — padding.
-    LightDataGPU lights[kMeshMaxLights];       ///< 512B — light array (8 * 64).
-    Vec4         _pad1[8] = {};                ///< 128B — trailing padding.
-};
-
-static_assert(sizeof(PerFrameMultiLightCB) == 768,
-              "PerFrameMultiLightCB must be 768 bytes for mesh_ps.hlsl multi-light CB");
+// Uses PerFrameMultiLightCB and LightGPU from multi_light.h
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constructor / Destructor
@@ -200,6 +136,8 @@ MeshTestDemo::MeshTestDemo(const MeshTestConfig& config)
         .width  = 1280,
         .height = 720,
         .maxFrames = config.frameCount,
+        .screenshotPath = config.screenshotPath,
+        .screenshotFrame = config.screenshotFrame,
       })
     , config_(config)
 {}
@@ -207,26 +145,11 @@ MeshTestDemo::MeshTestDemo(const MeshTestConfig& config)
 MeshTestDemo::~MeshTestDemo() = default;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// OnInit — Create all rendering resources
+// OnInit — Create demo-specific rendering resources
 // ─────────────────────────────────────────────────────────────────────────────
 
 void MeshTestDemo::OnInit() {
     startTime_ = std::chrono::high_resolution_clock::now();
-
-    auto* device  = GetDevice();
-    auto* cmdList = GetCommandList();
-
-    // Force non-bindless on macOS Metal — embedded MSL uses [[stage_in]]
-#if defined(__APPLE__)
-    bindless_ = false;
-#else
-    bindless_ = device->IsBindless();
-#endif
-
-    // ── Input ────────────────────────────────────────────────────────────
-    input_ = std::make_unique<InputSystem>();
-    input_->Init();
-    GetWindow()->SetInputSystem(input_.get());
 
     // ── Shaders & Pipeline ──────────────────────────────────────────────
     CompileShaders();
@@ -236,6 +159,7 @@ void MeshTestDemo::OnInit() {
     LoadMeshData();
 
     // ── Depth Buffer ─────────────────────────────────────────────────────
+    auto* device = GetDevice();
     RHITextureDesc depthDesc{};
     depthDesc.width  = GetWidth();
     depthDesc.height = GetHeight();
@@ -244,60 +168,10 @@ void MeshTestDemo::OnInit() {
     depthDesc.debugName = "DepthBuffer";
     depthBuffer_ = device->CreateTexture(depthDesc);
 
-    // ── CB Ring Allocator ────────────────────────────────────────────────
-    cbRing_ = std::make_unique<CBRingAllocator>();
-    cbRing_->Init(device, 3, 64 * 1024);
-
-#ifdef _WIN32
-    // ── Editor Grid ──────────────────────────────────────────────────────
-    editorGrid_ = std::make_unique<EditorGrid>();
-    if (!editorGrid_->Init(device, *shaderPipeline_, GetSwapChain()->GetFormat(), RHIFormat::D32Float)) {
-        UZ_LOG(Renderer, Error, "Failed to initialize editor grid");
-    }
-#endif
-
-    // ── Stats Overlay ────────────────────────────────────────────────────
-    statsOverlay_ = std::make_unique<StatsOverlay>();
-    {
-        UploadContext upload(device);
-        cmdList->Begin();
-
-#ifdef _WIN32
-        if (!statsOverlay_->Init(device, cmdList, upload, *shaderPipeline_,
-                                  GetSwapChain()->GetFormat(), GetWidth(), GetHeight(), bindless_)) {
-            UZ_LOG(Renderer, Error, "Failed to initialize stats overlay");
-        }
-#endif
-
-        cmdList->End();
-        cmdList->Execute();
-        device->WaitIdle();
-        upload.ReleaseStaging();
-    }
-
-#ifdef _WIN32
-    // ── Screenshot Capture ───────────────────────────────────────────────
-    screenshotPending_ = !config_.screenshotPath.empty();
-    if (screenshotPending_) {
-        screenshotCapture_ = std::make_unique<ScreenshotCapture>();
-        if (!screenshotCapture_->Init(device, GetWidth(), GetHeight())) {
-            UZ_LOG(Renderer, Error, "Failed to initialize screenshot capture");
-        }
-    }
-#endif
-
-    // ── Render Graph Resource Pool ───────────────────────────────────────
-    rgPool_ = std::make_unique<rg::RgResourcePool>(device);
-
-    // ── Camera ───────────────────────────────────────────────────────────
-    constexpr float kHFovDeg = 90.f;
-    constexpr float kAspect  = 16.f / 9.f;
-    float vFovRad = 2.f * std::atan(std::tan(kHFovDeg * 0.5f * 3.14159265f / 180.f) / kAspect);
-    camera_.SetPerspective(vFovRad,
-        static_cast<float>(GetWidth()) / static_cast<float>(GetHeight()),
-        0.1f, 1000.f);
-    // Same initial position as camera_test for direct comparison
-    camera_.SetPosition({0.f, 5.f, 2.5f});
+    // ── Camera position ─────────────────────────────────────────────────
+    // Override base class defaults for this demo's viewing angle
+    auto& camera = GetCamera();
+    camera.SetPosition({0.f, 5.f, 2.5f});
     {
         constexpr float kDegToRad = 3.14159265f / 180.f;
         float yawRad   = -90.f * kDegToRad;
@@ -308,14 +182,15 @@ void MeshTestDemo::OnInit() {
             std::sin(yawRad) * cosPitch,
             std::sin(pitchRad)
         };
-        Vec3 pos = camera_.GetPosition();
-        camera_.LookAt(pos + forward, Vec3::Up());
+        Vec3 pos = camera.GetPosition();
+        camera.LookAt(pos + forward, Vec3::Up());
     }
-
-    cameraCtrl_.InitFromCamera(camera_);
-    cameraCtrl_.SetMoveSpeed(10.f);
+    GetCameraController().InitFromCamera(camera);
 
     UZ_LOG(Renderer, Info, "Mesh test demo started — lit cube with mesh shaders");
+
+    // Signal that all resources are loaded — screenshots can now be captured.
+    SetReady();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -324,6 +199,7 @@ void MeshTestDemo::OnInit() {
 
 void MeshTestDemo::CompileShaders() {
     auto* device = GetDevice();
+    bool bindless = IsBindless();
 
 #ifdef _WIN32
     compiler_ = std::make_unique<ShaderCompiler>();
@@ -335,12 +211,12 @@ void MeshTestDemo::CompileShaders() {
     shaderPipeline_ = std::make_unique<ShaderPipeline>();
     ShaderPipeline::Config pipelineCfg;
     pipelineCfg.cacheDir      = (uz::GetExeDir() / "cache/shaders").string();
-    pipelineCfg.targetBackend = bindless_ ? "dx12_sm66" : "dx12_sm50";
-    pipelineCfg.bindless      = bindless_;
+    pipelineCfg.targetBackend = bindless ? "dx12_sm66" : "dx12_sm50";
+    pipelineCfg.bindless      = bindless;
     shaderPipeline_->Init(pipelineCfg);
     shaderPipeline_->SetCompiler(compiler_.get());
 
-    if (!bindless_) {
+    if (!bindless) {
         compilerFXC_ = std::make_unique<ShaderCompilerFXC>();
         if (!compilerFXC_->Init()) {
             UZ_LOG(Renderer, Error, "Failed to init FXC shader compiler");
@@ -404,6 +280,7 @@ void MeshTestDemo::CompileShaders() {
 
 void MeshTestDemo::CreatePipeline() {
     auto* device = GetDevice();
+    bool bindless = IsBindless();
 
     RHIInputElementDesc inputElements[] = {
         { RHIInputSemantic::Position, 0, RHIFormat::RGB32Float,  0, 0  },
@@ -425,7 +302,7 @@ void MeshTestDemo::CreatePipeline() {
     pipeDesc.depthStencilFormat           = RHIFormat::D32Float;
     pipeDesc.debugName                    = "MeshPipeline";
 
-    if (!bindless_) {
+    if (!bindless) {
         pipeDesc.inputElements     = inputElements;
         pipeDesc.inputElementCount = 4;
         pipeDesc.vertexStride      = sizeof(Vertex);
@@ -443,6 +320,7 @@ void MeshTestDemo::CreatePipeline() {
 
 void MeshTestDemo::LoadMeshData() {
     auto* device = GetDevice();
+    bool bindless = IsBindless();
 
     std::string meshPath = (uz::GetExeDir() / "assets/cube.uzmesh").string();
     auto loaded = LoadMesh(meshPath);
@@ -459,7 +337,7 @@ void MeshTestDemo::LoadMeshData() {
     RHIBufferDesc vbDesc{};
     vbDesc.sizeBytes  = cubeMesh_->GetVertexDataSize();
     vbDesc.stride     = cubeMesh_->header.vertexStride;
-    vbDesc.usage      = bindless_ ? RHIBufferUsage::StructuredBuffer : RHIBufferUsage::VertexBuffer;
+    vbDesc.usage      = bindless ? RHIBufferUsage::StructuredBuffer : RHIBufferUsage::VertexBuffer;
     vbDesc.memory     = RHIMemoryType::Upload;
     vbDesc.debugName  = "MeshVertexBuffer";
 
@@ -468,7 +346,7 @@ void MeshTestDemo::LoadMeshData() {
     std::memcpy(vbMapped, cubeMesh_->vertexData.data(), cubeMesh_->GetVertexDataSize());
     device->UnmapBuffer(vbHandle_);
 
-    if (bindless_) {
+    if (bindless) {
         vbSrvIndex_ = device->GetBufferSRVIndex(vbHandle_);
     }
 
@@ -505,12 +383,6 @@ void MeshTestDemo::OnResize(uint32_t width, uint32_t height) {
     depthDesc.usage     = RHITextureUsage::DepthStencil;
     depthDesc.debugName = "DepthBuffer";
     depthBuffer_ = device->CreateTexture(depthDesc);
-
-    if (statsOverlay_) {
-        statsOverlay_->SetScreenSize(width, height);
-    }
-
-    camera_.SetAspectRatio(static_cast<float>(width) / static_cast<float>(height));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -521,34 +393,36 @@ void MeshTestDemo::OnFrame(float dt) {
     auto* device    = GetDevice();
     auto* cmdList   = GetCommandList();
     auto* swapChain = GetSwapChain();
+    auto* cbRing    = GetCBRing();
+    auto& camera    = GetCamera();
+    auto* input     = GetInput();
+    bool  bindless  = IsBindless();
 
     auto now = std::chrono::high_resolution_clock::now();
     totalTime_ = std::chrono::duration<float>(now - startTime_).count();
 
     // ── Stats ────────────────────────────────────────────────────────────
-    if (statsOverlay_) {
-        statsOverlay_->BeginFrame(dt);
-    }
+    GetStatsOverlay()->BeginFrame(dt);
 
     // ── Input ────────────────────────────────────────────────────────────
-    input_->BeginFrame();
+    input->BeginFrame();
 
     // ── Camera Update ────────────────────────────────────────────────────
-    cameraCtrl_.Update(camera_, *input_, dt);
+    GetCameraController().Update(camera, *input, dt);
 
     // ── Upload PerFrameCB ────────────────────────────────────────────────
-    cbRing_->BeginFrame(GetFrameIndex());
+    cbRing->BeginFrame(GetFrameIndex());
 
     PerFrameMultiLightCB perFrame{};
-    perFrame.viewProj = camera_.GetViewProjection();
-    Vec3 camPos = camera_.GetPosition();
+    perFrame.viewProj = camera.GetViewProjection();
+    Vec3 camPos = camera.GetPosition();
     perFrame.cameraPos  = {camPos.x, camPos.y, camPos.z, 0.f};
     perFrame.timeParams = {totalTime_, dt, static_cast<float>(GetFrameIndex()), 0.f};
     perFrame.ambientColor = {0.08f, 0.08f, 0.1f, 0.f};
 
     // Directional light — direction toward light, white at intensity 3
     perFrame.lightCount = 1;
-    LightDataGPU& sun = perFrame.lights[0];
+    LightGPU& sun = perFrame.lightArray[0];
     Vec3 rawDir = {0.5f, 1.0f, 0.3f};
     float len = std::sqrt(rawDir.x * rawDir.x + rawDir.y * rawDir.y + rawDir.z * rawDir.z);
     sun.positionOrDir = {rawDir.x / len, rawDir.y / len, rawDir.z / len};
@@ -556,7 +430,7 @@ void MeshTestDemo::OnFrame(float dt) {
     sun.color     = {3.0f, 3.0f, 3.0f};
     sun.lightType = 0.f;
 
-    CBAllocation perFrameAlloc = cbRing_->Allocate(sizeof(PerFrameMultiLightCB));
+    CBAllocation perFrameAlloc = cbRing->Allocate(sizeof(PerFrameMultiLightCB));
     std::memcpy(perFrameAlloc.cpuPtr, &perFrame, sizeof(PerFrameMultiLightCB));
 
     // ── Upload PerObjectCB ───────────────────────────────────────────────
@@ -565,15 +439,13 @@ void MeshTestDemo::OnFrame(float dt) {
     perObject.normalMatrix = perObject.model.NormalMatrix();
     perObject.albedoIndex  = 0;
 
-    CBAllocation perObjectAlloc = cbRing_->Allocate(sizeof(PerObjectCB));
+    CBAllocation perObjectAlloc = cbRing->Allocate(sizeof(PerObjectCB));
     std::memcpy(perObjectAlloc.cpuPtr, &perObject, sizeof(PerObjectCB));
 
     // ── Record via render graph ──────────────────────────────────────────
-    bool capturedThisFrame = false;
-
     RHITextureHandle backBuffer = swapChain->GetCurrentBackBuffer();
 
-    rg::RgBuilder rgBuilder(device, rgPool_.get());
+    rg::RgBuilder rgBuilder(device, GetRgPool());
     auto bbRes = rgBuilder.ImportTexture("Backbuffer", backBuffer, RHIResourceState::Present);
 
     // Main 3D pass: clear + mesh + grid + stats overlay.
@@ -598,7 +470,7 @@ void MeshTestDemo::OnFrame(float dt) {
 
             cmd->SetPipeline(pipeline_);
 
-            if (bindless_) {
+            if (bindless) {
                 cmd->SetDescriptorIndex(0, vbSrvIndex_);
             } else {
                 cmd->SetVertexBuffer(0, vbHandle_, 0);
@@ -624,34 +496,25 @@ void MeshTestDemo::OnFrame(float dt) {
             cmd->DrawIndexed(cubeMesh_->GetIndexCount());
 
 #ifdef _WIN32
-            if (editorGrid_) {
-                editorGrid_->Draw(cmd, *cbRing_, camera_);
+            if (GetEditorGrid()) {
+                GetEditorGrid()->Draw(cmd, *cbRing, camera);
             }
 #endif
 
-            if (statsOverlay_) {
-                statsOverlay_->SetDrawCalls(2);
-                statsOverlay_->SetVertexCount(cubeMesh_->GetVertexCount() + 3);
-                statsOverlay_->SetTriangleCount(cubeMesh_->GetIndexCount() / 3 + 1);
-                statsOverlay_->Render(cmd, *cbRing_, GetFrameIndex());
-            }
+            GetStatsOverlay()->SetDrawCalls(2);
+            GetStatsOverlay()->SetVertexCount(cubeMesh_->GetVertexCount() + 3);
+            GetStatsOverlay()->SetTriangleCount(cubeMesh_->GetIndexCount() / 3 + 1);
+            GetStatsOverlay()->Render(cmd, *cbRing, GetFrameIndex());
 
             cmd->EndRenderPass();
         });
     });
 
-    // Screenshot pass (optional).
-#ifdef _WIN32
-    if (screenshotPending_ && GetFrameIndex() == config_.screenshotFrame) {
-        rgBuilder.AddPass("Screenshot", [&](rg::RgPassBuilder& pb) {
-            pb.Read(bbRes, RHIResourceState::RenderTarget);
-            pb.SetExecutionCallback([&](IRHICommandList*, const rg::RgPassResources&) {
-                screenshotCapture_->CaptureBackBuffer(cmdList, swapChain);
-                capturedThisFrame = true;
-            });
-        });
+    // Screenshot pass (optional) — capture from present state.
+    if (ShouldCaptureScreenshot()) {
+        GetScreenshotCapture()->CaptureFromPresent(cmdList, swapChain);
+        SetScreenshotSaveDeferred();
     }
-#endif
 
     // Present transition pass.
     rgBuilder.AddPass("Present", [&](rg::RgPassBuilder& pb) {
@@ -666,15 +529,6 @@ void MeshTestDemo::OnFrame(float dt) {
     cmdList->Execute();
 
     swapChain->Present(false);
-
-#ifdef _WIN32
-    // Save screenshot after GPU completes
-    if (capturedThisFrame && screenshotCapture_) {
-        device->WaitIdle();
-        screenshotCapture_->SaveToPNG(config_.screenshotPath);
-        screenshotPending_ = false;
-    }
-#endif
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -684,12 +538,7 @@ void MeshTestDemo::OnFrame(float dt) {
 void MeshTestDemo::OnShutdown() {
     auto* device = GetDevice();
 
-    if (screenshotCapture_) screenshotCapture_->Shutdown();
-    if (statsOverlay_) statsOverlay_->Shutdown();
-    if (editorGrid_) editorGrid_->Shutdown();
     if (shaderPipeline_) shaderPipeline_->Shutdown();
-
-    cbRing_->Shutdown();
 
     device->DestroyTexture(depthBuffer_);
     device->DestroyBuffer(ibHandle_);
