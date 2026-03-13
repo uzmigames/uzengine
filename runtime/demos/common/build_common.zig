@@ -185,6 +185,8 @@ pub fn createDemo(b: *std.Build, config: DemoConfig) DemoHandle {
         "../../engine/rhi/dx12",
         "../../engine/rhi/dx11",
         "../../engine/rhi/vulkan",
+        "../../engine/rhi/optimization",
+        "../../engine/renderer/memory",
         "../../editor/screenshot",
         "../../editor/grid",
         "../../editor/font",
