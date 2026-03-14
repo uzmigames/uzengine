@@ -20,8 +20,8 @@
 /// Output: linear HDR color tonemapped via ACES filmic and gamma-corrected to
 /// sRGB for the R8G8B8A8_UNORM swapchain backbuffer.
 
-#include "include/pbr_common.hlsli"
-#include "include/ibl.hlsli"
+#include "../include/pbr_common.hlsli"
+#include "../include/ibl.hlsli"
 
 struct PSInput {
     float4 positionCS : SV_Position;
@@ -45,7 +45,7 @@ ConstantBuffer<PushConstants> push : register(b0);
 
 // LightData struct and MAX_LIGHTS are defined here (before cbuffer) because
 // lighting.hlsli must be included after shadow_common.hlsli (it calls SampleShadowMap).
-#include "include/light_types.hlsli"
+#include "../include/light_types.hlsli"
 
 /// Per-frame CB at b1 — must match C++ PerFrameMultiLightCB struct exactly.
 ///
@@ -111,8 +111,8 @@ SamplerState linearSampler : register(s0);
 /// Uses LESS comparison — returns 1.0 when the sample passes (fragment is lit).
 SamplerComparisonState shadowSampler : register(s1);
 
-#include "include/shadow_common.hlsli"
-#include "include/lighting.hlsli"
+#include "../include/shadow_common.hlsli"
+#include "../include/lighting.hlsli"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Pixel Shader Entry Point

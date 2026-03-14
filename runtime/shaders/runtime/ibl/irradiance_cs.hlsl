@@ -17,7 +17,7 @@
 /// - Ramamoorthi & Hanrahan 2001, "An Efficient Representation for Irradiance"
 /// - LearnOpenGL, "Diffuse Irradiance"
 
-#include "include/ibl.hlsli"
+#include "../include/ibl.hlsli"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Resources

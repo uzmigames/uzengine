@@ -52,14 +52,24 @@ struct ShaderFileResult {
 };
 
 static ShaderFileResult ReadShaderFile(const std::string& shaderFilename) {
-    const std::vector<std::string> searchPaths = {
-        shaderFilename,
-        "shaders/runtime/" + shaderFilename,
-        "runtime/shaders/runtime/" + shaderFilename,
-        "../../shaders/runtime/" + shaderFilename,
-        "../../runtime/shaders/runtime/" + shaderFilename,
-        "../../../runtime/shaders/runtime/" + shaderFilename,
+    // Shader subdirectories — shaders are organised by theme.
+    static const std::vector<std::string> kSubdirs = {
+        "", "geometry/", "lighting/", "post/", "compute/", "ibl/"
     };
+    // Base search prefixes (varying CWD/build layouts).
+    static const std::vector<std::string> kBases = {
+        "",
+        "shaders/runtime/",
+        "runtime/shaders/runtime/",
+        "../../shaders/runtime/",
+        "../../runtime/shaders/runtime/",
+        "../../../runtime/shaders/runtime/",
+    };
+    std::vector<std::string> searchPaths;
+    searchPaths.reserve(kBases.size() * kSubdirs.size());
+    for (const auto& base : kBases)
+        for (const auto& sub : kSubdirs)
+            searchPaths.push_back(base + sub + shaderFilename);
 
     for (const auto& path : searchPaths) {
         std::ifstream file(path);
@@ -234,6 +244,12 @@ TEST_P(ShaderCrossBackendTest, Compile) {
         << "  (searched relative to exe, two and three levels up)";
 
     // ── 2. Compile ───────────────────────────────────────────────────────────
+    // Include dirs: shader's own dir + the shared include/ dir one level up.
+    const std::vector<std::string> includeDirs = {
+        shaderFile.dir,
+        shaderFile.dir + "/../include",
+    };
+
     uz::ShaderCompileResult result;
 
     if (target == BackendTarget::DXIL_SM66) {
@@ -245,7 +261,7 @@ TEST_P(ShaderCrossBackendTest, Compile) {
         desc.model      = uz::ShaderModelCompile::SM6_6;
         desc.output     = uz::ShaderOutputFormat::DXIL;
         desc.defines    = { "UZ_BINDLESS=1" };
-        desc.includeDirs = { shaderFile.dir };
+        desc.includeDirs = includeDirs;
 
         result = m_dxc.Compile(desc);
 
@@ -257,7 +273,7 @@ TEST_P(ShaderCrossBackendTest, Compile) {
         desc.stage      = shader.stage;
         desc.model      = uz::ShaderModelCompile::SM5_0;
         desc.output     = uz::ShaderOutputFormat::DXIL; // output field ignored by FXC
-        desc.includeDirs = { shaderFile.dir };
+        desc.includeDirs = includeDirs;
         // Intentionally no UZ_BINDLESS define
 
         result = m_fxc.Compile(desc);
@@ -270,7 +286,7 @@ TEST_P(ShaderCrossBackendTest, Compile) {
         desc.stage      = shader.stage;
         desc.model      = uz::ShaderModelCompile::SM6_0;
         desc.output     = uz::ShaderOutputFormat::SPIRV;
-        desc.includeDirs = { shaderFile.dir };
+        desc.includeDirs = includeDirs;
         // Intentionally no UZ_BINDLESS define
 
         result = m_dxc.Compile(desc);

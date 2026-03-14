@@ -40,7 +40,7 @@
 /// |   6   | WorldPos  | rgb = frac(worldPos) for position heat-map      |
 /// |   7   | Velocity  | rg = velocity mapped to color, b = 0            |
 
-#include "include/octahedral.hlsli"
+#include "../include/octahedral.hlsli"
 
 // ---------------------------------------------------------------------------
 // Input Structure

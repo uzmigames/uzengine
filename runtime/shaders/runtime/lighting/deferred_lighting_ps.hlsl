@@ -25,8 +25,8 @@
 /// Linear HDR color tonemapped via ACES filmic and gamma-corrected to sRGB for
 /// the R8G8B8A8_UNORM backbuffer.
 
-#include "include/pbr_common.hlsli"
-#include "include/octahedral.hlsli"
+#include "../include/pbr_common.hlsli"
+#include "../include/octahedral.hlsli"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Input Structure
@@ -159,7 +159,7 @@ float3 ReconstructWorldPosition(float2 uv, float depth) {
     return worldPos.xyz / worldPos.w;
 }
 
-#include "include/shadow_common.hlsli"
+#include "../include/shadow_common.hlsli"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Pixel Shader Entry Point

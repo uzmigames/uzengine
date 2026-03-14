@@ -15,7 +15,7 @@
 /// - Karis 2013, "Real Shading in Unreal Engine 4" — split-sum approximation
 /// - Epic Games, "Real Shading in Unreal Engine 4" course notes
 
-#include "include/ibl.hlsli"
+#include "../include/ibl.hlsli"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Resources

@@ -17,7 +17,7 @@
 /// - metallicIndex:  Metallic map (R channel) -> metallic factor
 /// - aoIndex:        Ambient occlusion map (R channel) -> AO multiplier
 
-#include "include/octahedral.hlsli"
+#include "../include/octahedral.hlsli"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Input / Output Structures

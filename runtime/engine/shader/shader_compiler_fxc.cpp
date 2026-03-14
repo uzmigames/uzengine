@@ -13,6 +13,9 @@
 #include "paths.h"
 #include "profiler.h"
 
+#include <filesystem>
+#include <fstream>
+
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
 #include <unknwn.h>
@@ -53,6 +56,99 @@ using FxcD3DCompileFunc = HRESULT(WINAPI*)(
     UINT Flags2,
     IFxcBlob** ppCode,
     IFxcBlob** ppErrorMsgs);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Custom ID3DInclude for FXC — resolves nested includes by search dirs
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// FXC's D3D_COMPILE_STANDARD_FILE_INCLUDE doesn't resolve nested includes
+/// relative to the includer when compiling from a source string. This handler
+/// searches include dirs + the includer's parent directory.
+///
+/// Uses the raw ID3DInclude COM vtable layout expected by D3DCompile:
+///   void** lpVtbl → [QueryInterface, AddRef, Release, Open, Close]
+/// We only implement Open/Close; QI/AddRef/Release are stubs.
+class FxcIncludeHandler {
+public:
+    FxcIncludeHandler(std::vector<std::string> dirs, std::string sourceDir)
+        : m_dirs(std::move(dirs)), m_sourceDir(std::move(sourceDir)) {}
+
+    /// Returns a void* castable to ID3DInclude* for D3DCompile.
+    void* AsD3DInclude() { return static_cast<void*>(&m_vtblPtr); }
+
+private:
+    // ID3DInclude virtual method signatures (from d3dcommon.h).
+    using OpenFn  = HRESULT(STDMETHODCALLTYPE*)(void* pThis, DWORD includeType,
+                     LPCSTR pFileName, LPCVOID pParentData,
+                     LPCVOID* ppData, UINT* pBytes);
+    using CloseFn = HRESULT(STDMETHODCALLTYPE*)(void* pThis, LPCVOID pData);
+
+    struct VTable {
+        // COM required (stubs)
+        void* QueryInterface;
+        void* AddRef;
+        void* Release;
+        // ID3DInclude
+        OpenFn  Open;
+        CloseFn Close;
+    };
+
+    static HRESULT STDMETHODCALLTYPE OpenImpl(void* pThis, DWORD /*includeType*/,
+                                               LPCSTR pFileName, LPCVOID /*pParentData*/,
+                                               LPCVOID* ppData, UINT* pBytes) {
+        auto* self = reinterpret_cast<FxcIncludeHandler*>(
+            reinterpret_cast<char*>(pThis) - offsetof(FxcIncludeHandler, m_vtblPtr));
+
+        namespace fs = std::filesystem;
+        // Search: source dir first, then each include dir.
+        std::vector<std::string> candidates;
+        candidates.push_back(self->m_sourceDir + "/" + pFileName);
+        for (const auto& dir : self->m_dirs) {
+            candidates.push_back(dir + "/" + pFileName);
+        }
+
+        for (const auto& candidate : candidates) {
+            std::error_code ec;
+            auto absPath = fs::weakly_canonical(candidate, ec);
+            if (ec) continue;
+            std::ifstream file(absPath, std::ios::binary | std::ios::ate);
+            if (!file.is_open()) continue;
+
+            auto size = static_cast<size_t>(file.tellg());
+            file.seekg(0);
+            auto* buf = new char[size];
+            file.read(buf, static_cast<std::streamsize>(size));
+            *ppData = buf;
+            *pBytes = static_cast<UINT>(size);
+
+            // For nested includes, update source dir to this file's parent.
+            self->m_sourceDir = absPath.parent_path().string();
+            return S_OK;
+        }
+
+        *ppData = nullptr;
+        *pBytes = 0;
+        return E_FAIL;
+    }
+
+    static HRESULT STDMETHODCALLTYPE CloseImpl(void* /*pThis*/, LPCVOID pData) {
+        delete[] static_cast<const char*>(pData);
+        return S_OK;
+    }
+
+    static VTable s_vtbl;
+    VTable* m_vtblPtr = &s_vtbl;    ///< First member — COM object layout requires this.
+    std::vector<std::string> m_dirs;
+    std::string m_sourceDir;
+};
+
+FxcIncludeHandler::VTable FxcIncludeHandler::s_vtbl = {
+    nullptr,  // QueryInterface — never called by D3DCompile
+    nullptr,  // AddRef — never called by D3DCompile
+    nullptr,  // Release — never called by D3DCompile
+    &FxcIncludeHandler::OpenImpl,
+    &FxcIncludeHandler::CloseImpl,
+};
 
 namespace uz {
 
@@ -188,12 +284,30 @@ ShaderCompileResult ShaderCompilerFXC::Compile(const ShaderCompileDesc& desc) {
     IFxcBlob* pCode = nullptr;
     IFxcBlob* pErrors = nullptr;
 
+    // Build include handler for nested #include resolution.
+    // FXC's D3D_COMPILE_STANDARD_FILE_INCLUDE doesn't resolve nested includes
+    // relative to the includer when compiling from source strings. Our custom
+    // handler searches the source dir + all include dirs.
+    std::string sourceDir;
+    if (!desc.sourceName.empty()) {
+        auto lastSlash = desc.sourceName.find_last_of("/\\");
+        if (lastSlash != std::string::npos)
+            sourceDir = desc.sourceName.substr(0, lastSlash);
+        else
+            sourceDir = ".";
+    }
+
+    FxcIncludeHandler includeHandler(desc.includeDirs, sourceDir);
+    void* pInclude = desc.includeDirs.empty()
+                   ? nullptr
+                   : includeHandler.AsD3DInclude();
+
     HRESULT hr = d3dCompileFunc(
         desc.source.c_str(),
         desc.source.size(),
         desc.sourceName.empty() ? nullptr : desc.sourceName.c_str(),
         macros.data(),
-        desc.includeDirs.empty() ? nullptr : reinterpret_cast<void*>(1), // D3D_COMPILE_STANDARD_FILE_INCLUDE when includes needed
+        pInclude,
         desc.entryPoint.c_str(),
         profile.c_str(),
         flags1,

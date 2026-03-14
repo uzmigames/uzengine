@@ -20,7 +20,7 @@
 /// - Karis 2013, "Real Shading in Unreal Engine 4" — split-sum, prefiltered env
 /// - Lagarde & de Rousiers 2014, "Moving Frostbite to PBR"
 
-#include "include/ibl.hlsli"
+#include "../include/ibl.hlsli"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Resources
