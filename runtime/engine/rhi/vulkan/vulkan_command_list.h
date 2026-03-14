@@ -127,6 +127,12 @@ private:
     static constexpr uint32_t kMaxDescriptorSetsPerFrame = 4096;
     VkDescriptorSet      m_allocatedSets[kMaxDescriptorSetsPerFrame] = {};
     uint32_t             m_allocatedSetCount = 0;
+
+    /// Bitmask of bindings that have been written to the current frame's working
+    /// descriptor set. Only written bindings are copied in AllocateAndCopyDescriptorSet —
+    /// copying unwritten (uninitialized) bindings is undefined behaviour in Vulkan.
+    static constexpr uint32_t kTotalBindings = 64;
+    uint64_t             m_writtenBindingsMask = 0; // bit i = binding i was written
 };
 
 } // namespace uz

@@ -16,6 +16,13 @@
 int main(int argc, char* argv[]) {
     uz::LogInit();
 
+    // Check for --compose-grid mode (grid composition, no GPU needed)
+    int gridResult = uz::DemoApplication::TryComposeGrid(argc, argv);
+    if (gridResult >= 0) {
+        uz::LogShutdown();
+        return gridResult;
+    }
+
     // Check for --diff mode (image comparison, no GPU needed)
     int diffResult = uz::DemoApplication::TryDiffImages(argc, argv);
     if (diffResult >= 0) {

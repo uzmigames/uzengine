@@ -240,6 +240,7 @@ void VulkanCommandList::Begin() {
     }
 
     m_descriptorsDirty = false;
+    m_writtenBindingsMask = 0;
 }
 
 void VulkanCommandList::End() {
@@ -401,6 +402,7 @@ void VulkanCommandList::SetRootCBV(uint32_t rootParamIndex, uint64_t gpuAddress)
 
     vkUpdateDescriptorSets(m_device->GetVkDevice(), 1, &write, 0, nullptr);
     UZ_STAT_INCREMENT(RHI, VkDescriptorWrites);
+    m_writtenBindingsMask |= (uint64_t(1) << (32 + hlslRegister));
     m_descriptorsDirty = true;
 }
 
@@ -436,6 +438,7 @@ void VulkanCommandList::SetRootCBV(uint32_t rootParamIndex, RHIBufferHandle buff
 
     vkUpdateDescriptorSets(m_device->GetVkDevice(), 1, &write, 0, nullptr);
     UZ_STAT_INCREMENT(RHI, VkDescriptorWrites);
+    m_writtenBindingsMask |= (uint64_t(1) << (32 + hlslRegister));
     m_descriptorsDirty = true;
 }
 
@@ -484,6 +487,8 @@ void VulkanCommandList::SetDescriptorTable(uint32_t rootParamIndex, uint32_t des
 
     vkUpdateDescriptorSets(m_device->GetVkDevice(), writeCount, writes, 0, nullptr);
     UZ_STAT_INCREMENT(RHI, VkDescriptorWrites);
+    m_writtenBindingsMask |= uint64_t(1); // binding 0 (t0)
+    if (writeCount > 1) m_writtenBindingsMask |= (uint64_t(1) << 16); // binding 16 (s0)
     m_descriptorsDirty = true;
 }
 
@@ -532,6 +537,8 @@ void VulkanCommandList::SetFragmentTexture(uint32_t slot, RHITextureHandle textu
     }
 
     vkUpdateDescriptorSets(m_device->GetVkDevice(), writeCount, writes, 0, nullptr);
+    m_writtenBindingsMask |= (uint64_t(1) << slot); // tN
+    if (writeCount > 1) m_writtenBindingsMask |= (uint64_t(1) << (16 + slot)); // sN
     m_descriptorsDirty = true;
 }
 
@@ -561,18 +568,21 @@ VkDescriptorSet VulkanCommandList::AllocateAndCopyDescriptorSet() {
         m_allocatedSets[m_allocatedSetCount++] = newSet;
     }
 
-    // Copy all mutable bindings from the working set to the new snapshot.
+    // Copy only bindings that were actually written to the working set this frame.
     // Layout: binding 0-15 = textures (t0-t15), 16-31 = samplers (s0-s15),
     //         32-47 = CBVs (b0-b15), 48-63 = UAVs (u0-u15).
-    // Bindings 16 (s0) and 17 (s1) are immutable samplers baked into the layout —
-    // immutable sampler bindings MUST NOT be copied (Vulkan spec §14.2.3).
-    constexpr uint32_t kTotalBindings = 64;
-    constexpr uint32_t kImmutableS0   = 16; // s0 linear
-    constexpr uint32_t kImmutableS1   = 17; // s1 shadow comparison
+    // Rules:
+    //   - Only copy bindings with m_writtenBindingsMask bit set (unwritten = uninitialized, UB to copy)
+    //   - Bindings 16 (s0) and 17 (s1) are immutable samplers — MUST NOT be copied (Vulkan spec §14.2.3)
+    constexpr uint32_t kImmutableS0 = 16;
+    constexpr uint32_t kImmutableS1 = 17;
     VkCopyDescriptorSet copies[kTotalBindings] = {};
     uint32_t copyCount = 0;
-    for (uint32_t i = 0; i < kTotalBindings; ++i) {
-        if (i == kImmutableS0 || i == kImmutableS1) continue; // skip immutable samplers
+    uint64_t mask = m_writtenBindingsMask;
+    while (mask) {
+        const uint32_t i = static_cast<uint32_t>(__builtin_ctzll(mask));
+        mask &= mask - 1; // clear lowest set bit
+        if (i == kImmutableS0 || i == kImmutableS1) continue;
         copies[copyCount].sType           = VK_STRUCTURE_TYPE_COPY_DESCRIPTOR_SET;
         copies[copyCount].srcSet          = m_descriptorSets[m_frameIndex];
         copies[copyCount].srcBinding      = i;
@@ -581,7 +591,9 @@ VkDescriptorSet VulkanCommandList::AllocateAndCopyDescriptorSet() {
         copies[copyCount].descriptorCount = 1;
         ++copyCount;
     }
-    vkUpdateDescriptorSets(m_device->GetVkDevice(), 0, nullptr, copyCount, copies);
+    if (copyCount > 0) {
+        vkUpdateDescriptorSets(m_device->GetVkDevice(), 0, nullptr, copyCount, copies);
+    }
 
     return newSet;
 }

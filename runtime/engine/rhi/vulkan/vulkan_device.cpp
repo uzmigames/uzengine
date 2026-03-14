@@ -786,8 +786,21 @@ bool VulkanDevice::CreateDescriptorSetLayout() {
                      | VK_SHADER_STAGE_COMPUTE_BIT;
     }
 
+    // Mark all bindings as PARTIALLY_BOUND so unwritten bindings in a new
+    // descriptor set snapshot are not accessed by the GPU (we only copy
+    // bindings that were actually written via m_writtenBindingsMask).
+    VkDescriptorBindingFlags bindingFlags[kTotalBindings] = {};
+    for (uint32_t i = 0; i < kTotalBindings; ++i) {
+        bindingFlags[i] = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT;
+    }
+    VkDescriptorSetLayoutBindingFlagsCreateInfo bindingFlagsCI = {};
+    bindingFlagsCI.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
+    bindingFlagsCI.bindingCount  = kTotalBindings;
+    bindingFlagsCI.pBindingFlags = bindingFlags;
+
     VkDescriptorSetLayoutCreateInfo layoutCI = {};
     layoutCI.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutCI.pNext = &bindingFlagsCI;
     layoutCI.bindingCount = kTotalBindings;
     layoutCI.pBindings = bindings;
 
