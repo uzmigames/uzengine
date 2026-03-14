@@ -245,6 +245,10 @@ public:
     /// default-constructed result (buffer == VK_NULL_HANDLE) if no match.
     BufferAddressLookup FindBufferByGPUAddress(uint64_t gpuAddress) const;
 
+    /// Returns the root signature layout for translating root param indices
+    /// to HLSL register numbers (matching DX12 root signature).
+    const RHIRootSignatureDesc& GetRootLayout() const { return m_rootLayout; }
+
 private:
     bool CreateInstance(bool enableValidation);
     bool SetupDebugMessenger();
@@ -284,6 +288,11 @@ private:
 
     /// Monotonically increasing sampler index counter.
     uint32_t                       m_nextSamplerIndex = 0;
+
+    /// Root signature layout mirroring DX12 root parameter → HLSL register mapping.
+    /// Built during Init() so Vulkan command list can translate rootParamIndex to
+    /// the correct HLSL register for descriptor binding (with -fvk-b-shift 32 0).
+    RHIRootSignatureDesc           m_rootLayout;
 
     ShaderModel                    m_shaderModel = ShaderModel::SM6_6;
     std::string                    m_adapterName;

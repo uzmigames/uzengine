@@ -309,14 +309,14 @@ bool DX12Device::CreateDevice() {
 
 /// Probes GPU capabilities and negotiates the highest supported shader model.
 ///
-/// Probe order: SM6.6 → SM6.0 → SM5.1 → SM5.0.
-/// SM6.6 requires Resource Binding Tier 3 and D3D_SHADER_MODEL_6_6.
+/// Probe order: SM6.9 → SM6.8 → SM6.7 → SM6.6 → SM6.0 → SM5.1 → SM5.0.
+/// SM6.6+ requires Resource Binding Tier 3 (bindless).
 /// SM6.0 requires D3D_SHADER_MODEL_6_0.
 /// SM5.1 requires feature level 12_0 (always true if device was created).
 /// SM5.0 is the absolute fallback.
 void DX12Device::NegotiateShaderModel(std::optional<ShaderModel> forceModel) {
     UZ_PROFILE_FUNCTION();
-    // Check resource binding tier for SM6.6 bindless
+    // Check resource binding tier for SM6.6+ bindless
     D3D12_FEATURE_DATA_D3D12_OPTIONS options = {};
     bool hasTier3 = false;
     HRESULT hr = m_device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS, &options, sizeof(options));
@@ -324,16 +324,20 @@ void DX12Device::NegotiateShaderModel(std::optional<ShaderModel> forceModel) {
         hasTier3 = (options.ResourceBindingTier >= D3D12_RESOURCE_BINDING_TIER_3);
     }
 
-    // Check highest shader model supported by the device
+    // Probe the highest shader model — request SM6.9 and let the driver clamp down
     D3D12_FEATURE_DATA_SHADER_MODEL smData = {};
-    smData.HighestShaderModel = D3D_SHADER_MODEL_6_6;
+    smData.HighestShaderModel = D3D_SHADER_MODEL_6_9;
     hr = m_device->CheckFeatureSupport(D3D12_FEATURE_SHADER_MODEL, &smData, sizeof(smData));
     if (FAILED(hr)) {
         smData.HighestShaderModel = D3D_SHADER_MODEL_5_1;
     }
 
     // Negotiate: pick the highest SM the hardware actually supports
-    if (hasTier3 && smData.HighestShaderModel >= D3D_SHADER_MODEL_6_7) {
+    if (hasTier3 && smData.HighestShaderModel >= D3D_SHADER_MODEL_6_9) {
+        m_shaderModel = ShaderModel::SM6_9;
+    } else if (hasTier3 && smData.HighestShaderModel >= D3D_SHADER_MODEL_6_8) {
+        m_shaderModel = ShaderModel::SM6_8;
+    } else if (hasTier3 && smData.HighestShaderModel >= D3D_SHADER_MODEL_6_7) {
         m_shaderModel = ShaderModel::SM6_7;
     } else if (hasTier3 && smData.HighestShaderModel >= D3D_SHADER_MODEL_6_6) {
         m_shaderModel = ShaderModel::SM6_6;

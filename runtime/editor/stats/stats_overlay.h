@@ -27,6 +27,7 @@
 
 #include "bitmap_font.h"
 #include "text_renderer.h"
+#include "rhi_config.h"
 
 #include <array>
 #include <cstdint>
@@ -146,6 +147,18 @@ private:
     bool m_visible = true;
     uint32_t m_screenWidth = 0;
     uint32_t m_screenHeight = 0;
+
+    // ── System info (captured once at init) ────────────────────────────
+    std::string m_gpuName;           ///< GPU adapter name (e.g., "NVIDIA GeForce RTX 4090")
+    std::string m_featureLevel;      ///< Feature level string (e.g., "D3D_FEATURE_LEVEL_12_2")
+    std::string m_rhiBackend;        ///< RHI backend name (e.g., "DX12")
+    std::string m_shaderModel;       ///< Shader model string (e.g., "SM6.8")
+    std::string m_resolution;        ///< Resolution string (e.g., "1280x720")
+    uint64_t m_vramTotalMB = 0;      ///< Total VRAM in MB
+    bool m_bindless = false;         ///< Whether bindless is active
+
+    /// Captures static system info from the device (called once in Init).
+    void CaptureSystemInfo(IRHIDevice* device);
 
     // ── Frame stats ──────────────────────────────────────────────────────
     float m_deltaTime = 0.f;

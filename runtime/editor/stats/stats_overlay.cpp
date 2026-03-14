@@ -7,6 +7,8 @@
 #include "upload_context.h"
 #include "constant_buffers.h"
 #include "log.h"
+#include "rhi.h"
+#include "rhi_config.h"
 
 #ifdef _WIN32
 #include "shader_pipeline.h"
@@ -49,6 +51,7 @@ bool StatsOverlay::Init(IRHIDevice* device, IRHICommandList* cmdList, UploadCont
     }
 
     m_frameTimeHistory.fill(0.f);
+    CaptureSystemInfo(device);
 
     UZ_LOG(EditorStats, Info, "Stats overlay initialized ({}x{})", screenWidth, screenHeight);
     return true;
@@ -78,6 +81,7 @@ bool StatsOverlay::Init(IRHIDevice* device, IRHICommandList* cmdList, UploadCont
     }
 
     m_frameTimeHistory.fill(0.f);
+    CaptureSystemInfo(device);
 
     UZ_LOG(EditorStats, Info, "Stats overlay initialized ({}x{}, font='{}')",
            screenWidth, screenHeight, fontPath);
@@ -89,6 +93,23 @@ void StatsOverlay::Shutdown() {
     if (m_device) {
         m_font.Shutdown(m_device);
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// System Info Capture (once at init)
+// ─────────────────────────────────────────────────────────────────────────────
+
+void StatsOverlay::CaptureSystemInfo(IRHIDevice* device) {
+    m_gpuName = device->GetAdapterName();
+    m_featureLevel = device->GetFeatureLevel();
+    m_rhiBackend = RHIBackendToString(device->GetBackend());
+    m_shaderModel = ShaderModelToString(device->GetShaderModel());
+    m_bindless = device->IsBindless();
+
+    const auto budget = device->GetMemoryBudget();
+    m_vramTotalMB = budget.budgetBytes / (1024 * 1024);
+
+    m_resolution = std::to_string(m_screenWidth) + "x" + std::to_string(m_screenHeight);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -115,6 +136,7 @@ void StatsOverlay::BeginFrame(float deltaTime) {
 void StatsOverlay::SetScreenSize(uint32_t width, uint32_t height) {
     m_screenWidth = width;
     m_screenHeight = height;
+    m_resolution = std::to_string(width) + "x" + std::to_string(height);
     m_textRenderer.SetScreenSize(width, height);
 }
 
@@ -136,14 +158,24 @@ void StatsOverlay::Render(IRHICommandList* cmdList, CBRingAllocator& cbRing, uin
 // ─────────────────────────────────────────────────────────────────────────────
 
 void StatsOverlay::BuildTextPanel() {
-    constexpr float kPanelWidth = 220.f;
+    constexpr float kPanelWidth = 280.f;
     float panelX = static_cast<float>(m_screenWidth) - kPanelWidth - kPanelPadding;
     float panelY = kPanelPadding;
 
-    // Background
-    constexpr float kLineH = 18.f;
-    constexpr int kLineCount = 8;
-    float panelH = kLineH * kLineCount + kPanelPadding * 2.f;
+    constexpr float kLineH = 16.f;
+    constexpr float kSectionGap = 6.f;
+
+    // Count lines for panel height:
+    // System info: GPU, RHI+SM, Feature Level, VRAM, Resolution, Bindless = 6
+    // Separator = 1
+    // Performance: FPS, Frame time, Raw FPS = 3
+    // Separator = 1
+    // Rendering: Draw calls, Vertices, Triangles, VRAM used = 4
+    // Separator = 1
+    // Frame number = 1
+    // Total = ~17 lines + gaps
+    constexpr int kLineCount = 17;
+    float panelH = kLineH * kLineCount + kSectionGap * 3.f + kPanelPadding * 2.f;
     m_textRenderer.AddRect(panelX, panelY, kPanelWidth, panelH,
                            {0.05f, 0.05f, 0.08f, 0.85f});
 
@@ -151,15 +183,59 @@ void StatsOverlay::BuildTextPanel() {
     float textY = panelY + kPanelPadding;
 
     // Color scheme
-    const Vec4 white  = {1.f, 1.f, 1.f, 1.f};
-    const Vec4 green  = {0.4f, 1.f, 0.4f, 1.f};
-    const Vec4 yellow = {1.f, 1.f, 0.4f, 1.f};
-    const Vec4 cyan   = {0.4f, 1.f, 1.f, 1.f};
-    const Vec4 gray   = {0.7f, 0.7f, 0.7f, 1.f};
+    const Vec4 white   = {1.f, 1.f, 1.f, 1.f};
+    const Vec4 green   = {0.4f, 1.f, 0.4f, 1.f};
+    const Vec4 yellow  = {1.f, 1.f, 0.4f, 1.f};
+    const Vec4 cyan    = {0.4f, 1.f, 1.f, 1.f};
+    const Vec4 gray    = {0.7f, 0.7f, 0.7f, 1.f};
+    const Vec4 dimGray = {0.5f, 0.5f, 0.5f, 1.f};
+    const Vec4 orange  = {1.f, 0.7f, 0.3f, 1.f};
+    const Vec4 header  = {0.6f, 0.8f, 1.f, 1.f};
 
-    char buf[64];
+    char buf[128];
 
-    // FPS (smoothed, prominent)
+    // ── System Info Section ──────────────────────────────────────────────
+    m_textRenderer.AddText(m_font, "SYSTEM", textX, textY, header);
+    textY += kLineH;
+
+    // GPU name (truncate if too long)
+    snprintf(buf, sizeof(buf), "GPU: %s", m_gpuName.c_str());
+    m_textRenderer.AddText(m_font, buf, textX, textY, white);
+    textY += kLineH;
+
+    // RHI + Shader Model on same line
+    snprintf(buf, sizeof(buf), "RHI: %s  |  %s", m_rhiBackend.c_str(), m_shaderModel.c_str());
+    m_textRenderer.AddText(m_font, buf, textX, textY, orange);
+    textY += kLineH;
+
+    // Feature level
+    snprintf(buf, sizeof(buf), "FL: %s", m_featureLevel.c_str());
+    m_textRenderer.AddText(m_font, buf, textX, textY, gray);
+    textY += kLineH;
+
+    // VRAM total + bindless
+    snprintf(buf, sizeof(buf), "VRAM: %llu MB  |  Bindless: %s",
+             static_cast<unsigned long long>(m_vramTotalMB),
+             m_bindless ? "ON" : "OFF");
+    m_textRenderer.AddText(m_font, buf, textX, textY,
+                           m_bindless ? green : yellow);
+    textY += kLineH;
+
+    // Resolution
+    snprintf(buf, sizeof(buf), "Res: %s", m_resolution.c_str());
+    m_textRenderer.AddText(m_font, buf, textX, textY, gray);
+    textY += kLineH;
+
+    // ── Separator ────────────────────────────────────────────────────────
+    m_textRenderer.AddRect(textX, textY + 2.f, kPanelWidth - kPanelPadding * 2.f, 1.f,
+                           {0.3f, 0.3f, 0.4f, 0.6f});
+    textY += kSectionGap + 4.f;
+
+    // ── Performance Section ──────────────────────────────────────────────
+    m_textRenderer.AddText(m_font, "PERFORMANCE", textX, textY, header);
+    textY += kLineH;
+
+    // FPS (smoothed, color-coded)
     snprintf(buf, sizeof(buf), "FPS: %.0f", m_smoothedFPS);
     m_textRenderer.AddText(m_font, buf, textX, textY,
                            m_smoothedFPS >= 60.f ? green : (m_smoothedFPS >= 30.f ? yellow : Vec4{1.f, 0.3f, 0.3f, 1.f}));
@@ -170,37 +246,43 @@ void StatsOverlay::BuildTextPanel() {
     m_textRenderer.AddText(m_font, buf, textX, textY, white);
     textY += kLineH;
 
-    // Raw FPS (instant)
+    // Raw FPS
     snprintf(buf, sizeof(buf), "FPS (raw): %.0f", m_fps);
-    m_textRenderer.AddText(m_font, buf, textX, textY, gray);
+    m_textRenderer.AddText(m_font, buf, textX, textY, dimGray);
     textY += kLineH;
 
-    // Draw calls
+    // ── Separator ────────────────────────────────────────────────────────
+    m_textRenderer.AddRect(textX, textY + 2.f, kPanelWidth - kPanelPadding * 2.f, 1.f,
+                           {0.3f, 0.3f, 0.4f, 0.6f});
+    textY += kSectionGap + 4.f;
+
+    // ── Rendering Section ────────────────────────────────────────────────
+    m_textRenderer.AddText(m_font, "RENDERING", textX, textY, header);
+    textY += kLineH;
+
     snprintf(buf, sizeof(buf), "Draw calls: %u", m_drawCalls);
     m_textRenderer.AddText(m_font, buf, textX, textY, cyan);
     textY += kLineH;
 
-    // Vertices
     snprintf(buf, sizeof(buf), "Vertices: %u", m_vertexCount);
     m_textRenderer.AddText(m_font, buf, textX, textY, cyan);
     textY += kLineH;
 
-    // Triangles
     snprintf(buf, sizeof(buf), "Triangles: %u", m_triangleCount);
     m_textRenderer.AddText(m_font, buf, textX, textY, cyan);
     textY += kLineH;
 
-    // GPU memory
+    // GPU memory used (dynamic)
     if (m_gpuMemoryBytes > 0) {
         float mb = static_cast<float>(m_gpuMemoryBytes) / (1024.f * 1024.f);
-        snprintf(buf, sizeof(buf), "VRAM: %.1f MB", mb);
+        snprintf(buf, sizeof(buf), "VRAM used: %.1f MB", mb);
         m_textRenderer.AddText(m_font, buf, textX, textY, yellow);
         textY += kLineH;
     }
 
     // Frame number
     snprintf(buf, sizeof(buf), "Frame: %u", m_frameNumber);
-    m_textRenderer.AddText(m_font, buf, textX, textY, gray);
+    m_textRenderer.AddText(m_font, buf, textX, textY, dimGray);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

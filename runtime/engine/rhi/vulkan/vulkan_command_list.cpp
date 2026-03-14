@@ -356,8 +356,8 @@ void VulkanCommandList::SetRootConstants(uint32_t rootParamIndex, const uint32_t
 
 void VulkanCommandList::SetRootCBV(uint32_t rootParamIndex, uint64_t gpuAddress) {
     // Resolve the GPU address to a VkBuffer + offset, then bind as a uniform
-    // buffer descriptor at binding (32 + rootParamIndex) matching the DXC
-    // -fvk-b-shift 32 0 convention.
+    // buffer descriptor. Uses root layout to translate rootParamIndex → HLSL
+    // register, then applies -fvk-b-shift 32 0 convention for the binding.
     auto lookup = m_device->FindBufferByGPUAddress(gpuAddress);
     if (lookup.buffer == VK_NULL_HANDLE) {
         UZ_LOG(RHI, Warning, "SetRootCBV: no buffer found for GPU address {:#x}", gpuAddress);
@@ -375,10 +375,14 @@ void VulkanCommandList::SetRootCBV(uint32_t rootParamIndex, uint64_t gpuAddress)
         bufInfo.range = kMaxUniformRange;
     }
 
+    // Translate root param index → HLSL register via root layout.
+    // Root param 3 maps to b4 (shadow), not b3 — using the index directly was a bug.
+    const uint32_t hlslRegister = m_device->GetRootLayout().params[rootParamIndex].shaderRegister;
+
     VkWriteDescriptorSet write = {};
     write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     write.dstSet = m_descriptorSets[m_frameIndex];
-    write.dstBinding = 32 + rootParamIndex;
+    write.dstBinding = 32 + hlslRegister;
     write.descriptorCount = 1;
     write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     write.pBufferInfo = &bufInfo;
@@ -407,10 +411,13 @@ void VulkanCommandList::SetRootCBV(uint32_t rootParamIndex, RHIBufferHandle buff
         bufInfo.range = kMaxUniformRange;
     }
 
+    // Translate root param index → HLSL register via root layout.
+    const uint32_t hlslRegister = m_device->GetRootLayout().params[rootParamIndex].shaderRegister;
+
     VkWriteDescriptorSet write = {};
     write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     write.dstSet = m_descriptorSets[m_frameIndex];
-    write.dstBinding = 32 + rootParamIndex;
+    write.dstBinding = 32 + hlslRegister;
     write.descriptorCount = 1;
     write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
     write.pBufferInfo = &bufInfo;
@@ -465,6 +472,52 @@ void VulkanCommandList::SetDescriptorTable(uint32_t rootParamIndex, uint32_t des
 
     vkUpdateDescriptorSets(m_device->GetVkDevice(), writeCount, writes, 0, nullptr);
     UZ_STAT_INCREMENT(RHI, VkDescriptorWrites);
+    m_descriptorsDirty = true;
+}
+
+void VulkanCommandList::SetFragmentTexture(uint32_t slot, RHITextureHandle texture) {
+    if (!texture.IsValid()) return;
+
+    auto* tex = m_device->GetTexturePool().Get(texture.index, texture.generation);
+    if (!tex || tex->imageView == VK_NULL_HANDLE) {
+        UZ_LOG(RHI, Warning, "SetFragmentTexture: invalid texture at slot {}", slot);
+        return;
+    }
+
+
+    VkDescriptorSet dstSet = m_descriptorSets[m_frameIndex];
+
+    // Write texture to binding `slot` (t0-t15 map to binding 0-15 via -fvk-t-shift 0 0)
+    VkDescriptorImageInfo imageInfo = {};
+    imageInfo.imageView = tex->imageView;
+    imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+
+    VkWriteDescriptorSet writes[2] = {};
+    uint32_t writeCount = 1;
+
+    writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writes[0].dstSet = dstSet;
+    writes[0].dstBinding = slot;           // t0=0, t1=1, t2=2, ...
+    writes[0].descriptorCount = 1;
+    writes[0].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+    writes[0].pImageInfo = &imageInfo;
+
+    // Auto-bind sampler at binding 16+slot (s0-s15 map to binding 16-31 via -fvk-s-shift 16 0)
+    VkDescriptorImageInfo samplerInfo = {};
+    auto* sam = m_device->FindSamplerByIndex(0);
+    if (sam && sam->sampler != VK_NULL_HANDLE) {
+        samplerInfo.sampler = sam->sampler;
+
+        writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        writes[1].dstSet = dstSet;
+        writes[1].dstBinding = 16 + slot;  // s0=16, s1=17, ...
+        writes[1].descriptorCount = 1;
+        writes[1].descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
+        writes[1].pImageInfo = &samplerInfo;
+        writeCount = 2;
+    }
+
+    vkUpdateDescriptorSets(m_device->GetVkDevice(), writeCount, writes, 0, nullptr);
     m_descriptorsDirty = true;
 }
 
@@ -742,6 +795,36 @@ void VulkanCommandList::CopyBufferToTexture(RHIBufferHandle srcBuffer, uint64_t 
     if (!buf || !tex || buf->buffer == VK_NULL_HANDLE || tex->image == VK_NULL_HANDLE) {
         UZ_LOG(RHI, Warning, "CopyBufferToTexture — could not resolve handles");
         return;
+    }
+
+    // Transition to TRANSFER_DST_OPTIMAL if not already in that layout.
+    // Textures start in UNDEFINED after creation — Vulkan requires an explicit
+    // layout transition before vkCmdCopyBufferToImage.
+    if (tex->currentLayout != VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+        VkImageMemoryBarrier2 preBarrier = {};
+        preBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+        preBarrier.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+        preBarrier.srcAccessMask = VK_ACCESS_2_NONE;
+        preBarrier.dstStageMask = VK_PIPELINE_STAGE_2_COPY_BIT;
+        preBarrier.dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+        preBarrier.oldLayout = tex->currentLayout;
+        preBarrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+        preBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        preBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        preBarrier.image = tex->image;
+        preBarrier.subresourceRange.aspectMask = GetAspectFlags(tex->desc.format);
+        preBarrier.subresourceRange.baseMipLevel = 0;
+        preBarrier.subresourceRange.levelCount = VK_REMAINING_MIP_LEVELS;
+        preBarrier.subresourceRange.baseArrayLayer = 0;
+        preBarrier.subresourceRange.layerCount = VK_REMAINING_ARRAY_LAYERS;
+
+        VkDependencyInfo depInfo = {};
+        depInfo.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+        depInfo.imageMemoryBarrierCount = 1;
+        depInfo.pImageMemoryBarriers = &preBarrier;
+        vkCmdPipelineBarrier2(m_commandBuffers[m_frameIndex], &depInfo);
+
+        tex->currentLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
     }
 
     uint32_t mipWidth = tex->desc.width >> mipLevel;

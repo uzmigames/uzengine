@@ -166,6 +166,43 @@ public:
     /// * `config` — Output config to populate with parsed values.
     static void ParseCommonArgs(int argc, char* argv[], DemoConfig& config);
 
+    /// Composes multiple PNG screenshots into a single labeled grid image.
+    ///
+    /// This is a static utility for visual comparison testing. Call from main()
+    /// before constructing a DemoApplication to handle `--compose-grid` mode.
+    ///
+    /// # Arguments
+    /// * `argc` — Argument count from `main()`.
+    /// * `argv` — Argument vector from `main()`.
+    ///
+    /// # Returns
+    /// - `0` if grid was composed successfully.
+    /// - `1` if composition failed.
+    /// - `-1` if `--compose-grid` was not present (caller should proceed normally).
+    ///
+    /// # CLI Format
+    /// ```
+    /// demo.exe --compose-grid output.png [--cell-size 384] input1.png "Label 1" "Sublabel 1" input2.png "Label 2" "Sublabel 2" ...
+    /// ```
+    static int TryComposeGrid(int argc, char* argv[]);
+
+    /// Compares two PNG screenshots and produces a 3-panel diff image.
+    ///
+    /// Call from main() before constructing a DemoApplication to handle
+    /// `--diff` mode. Generates [Image A | Image B | Diff Heatmap] with
+    /// statistics (% diff, PSNR).
+    ///
+    /// # Returns
+    /// - `0` if diff was generated successfully.
+    /// - `1` if diff failed.
+    /// - `-1` if `--diff` was not present (caller should proceed normally).
+    ///
+    /// # CLI Format
+    /// ```
+    /// demo.exe --diff output.png imageA.png "Label A" imageB.png "Label B" [--cell-size 384]
+    /// ```
+    static int TryDiffImages(int argc, char* argv[]);
+
     /// Runs the application: creates window/device, initializes engine systems,
     /// enters the render loop, cleans up on exit.
     ///

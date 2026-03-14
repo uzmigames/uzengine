@@ -13,6 +13,7 @@
 
 #include "demo_application.h"
 #include "uzengine.h"
+#include "compare_grid.h"
 
 #include <algorithm>
 #include <cctype>
@@ -487,6 +488,8 @@ bool ParseShaderModelArg(const char* str, ShaderModel& out) {
     if (s == "6.5")              { out = ShaderModel::SM6_5; return true; }
     if (s == "6.6")              { out = ShaderModel::SM6_6; return true; }
     if (s == "6.7")              { out = ShaderModel::SM6_7; return true; }
+    if (s == "6.8")              { out = ShaderModel::SM6_8; return true; }
+    if (s == "6.9")              { out = ShaderModel::SM6_9; return true; }
     return false;
 }
 
@@ -522,6 +525,114 @@ void DemoApplication::ParseCommonArgs(int argc, char* argv[], DemoConfig& config
         config.screenshotFrame = std::max(config.screenshotFrame, 5u);
         config.maxFrames = config.screenshotFrame + 2;
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TryComposeGrid — Static utility for --compose-grid mode
+// ─────────────────────────────────────────────────────────────────────────────
+
+int DemoApplication::TryComposeGrid(int argc, char* argv[]) {
+    // Find --compose-grid flag
+    int gridIdx = -1;
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--compose-grid") == 0) {
+            gridIdx = i;
+            break;
+        }
+    }
+    if (gridIdx < 0) return -1; // Not in grid mode
+
+    // Next arg is output path
+    if (gridIdx + 1 >= argc) {
+        UZ_LOG(App, Error, "--compose-grid requires output path");
+        return 1;
+    }
+    const std::string outputPath = argv[gridIdx + 1];
+    int nextArg = gridIdx + 2;
+
+    CompareGrid grid;
+
+    // Optional --cell-size <W> (square cells)
+    if (nextArg + 1 < argc && std::strcmp(argv[nextArg], "--cell-size") == 0) {
+        const uint32_t sz = static_cast<uint32_t>(std::atoi(argv[nextArg + 1]));
+        if (sz > 0) grid.SetCellSize(sz, sz);
+        nextArg += 2;
+    }
+
+    // Optional --label-height <H>
+    if (nextArg + 1 < argc && std::strcmp(argv[nextArg], "--label-height") == 0) {
+        const uint32_t h = static_cast<uint32_t>(std::atoi(argv[nextArg + 1]));
+        if (h > 0) grid.SetLabelHeight(h);
+        nextArg += 2;
+    }
+
+    // Remaining args: triplets of <input.png> <label> <sublabel>
+    while (nextArg + 2 < argc) {
+        const std::string path = argv[nextArg];
+        const std::string label = argv[nextArg + 1];
+        const std::string sublabel = argv[nextArg + 2];
+
+        if (!grid.AddCellFromPNG(path, label, sublabel)) {
+            UZ_LOG(App, Error, "Failed to load grid cell: path='{}'", path);
+            return 1;
+        }
+        nextArg += 3;
+    }
+
+    if (grid.GetCellCount() == 0) {
+        UZ_LOG(App, Error, "--compose-grid: no input images specified");
+        return 1;
+    }
+
+    if (!grid.SaveToPNG(outputPath)) {
+        UZ_LOG(App, Error, "Failed to save grid: path='{}'", outputPath);
+        return 1;
+    }
+
+    UZ_LOG(App, Info, "Compare grid saved: path='{}' ({} cells)", outputPath, grid.GetCellCount());
+    return 0;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TryDiffImages — Static utility for --diff mode
+// ─────────────────────────────────────────────────────────────────────────────
+
+int DemoApplication::TryDiffImages(int argc, char* argv[]) {
+    int diffIdx = -1;
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--diff") == 0) {
+            diffIdx = i;
+            break;
+        }
+    }
+    if (diffIdx < 0) return -1;
+
+    // --diff <output> <imgA> <labelA> <imgB> <labelB> [--cell-size N]
+    if (diffIdx + 5 >= argc) {
+        UZ_LOG(App, Error, "--diff requires: <output.png> <imgA.png> <labelA> <imgB.png> <labelB>");
+        return 1;
+    }
+
+    const std::string output = argv[diffIdx + 1];
+    const std::string pathA = argv[diffIdx + 2];
+    const std::string labelA = argv[diffIdx + 3];
+    const std::string pathB = argv[diffIdx + 4];
+    const std::string labelB = argv[diffIdx + 5];
+
+    uint32_t cellSize = 384;
+    // Check for optional --cell-size after the 5 required args
+    const int optIdx = diffIdx + 6;
+    if (optIdx + 1 < argc && std::strcmp(argv[optIdx], "--cell-size") == 0) {
+        const int sz = std::atoi(argv[optIdx + 1]);
+        if (sz > 0) cellSize = static_cast<uint32_t>(sz);
+    }
+
+    if (!ImageDiff::DiffToPNG(pathA, labelA, pathB, labelB, output, cellSize)) {
+        UZ_LOG(App, Error, "Failed to generate diff: output='{}'", output);
+        return 1;
+    }
+
+    return 0;
 }
 
 } // namespace uz

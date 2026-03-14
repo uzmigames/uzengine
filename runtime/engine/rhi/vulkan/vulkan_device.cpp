@@ -231,6 +231,43 @@ bool VulkanDevice::Init(const RHIDeviceDesc& desc) {
     if (!CreateDescriptorSetLayout())                   return false;
     if (!CreatePipelineLayout())                        return false;
 
+    // Build root layout mapping rootParamIndex → HLSL register.
+    // Must match DX12 root signature exactly so SetRootCBV binds to the correct
+    // descriptor binding (32 + shaderRegister due to -fvk-b-shift 32 0).
+    {
+        m_rootLayout.paramCount = 0;
+        auto& p0 = m_rootLayout.params[m_rootLayout.paramCount++];
+        p0.type = RHIRootParamDesc::Type::Constants;
+        p0.shaderRegister = 0;   // b0
+        p0.registerSpace = 0;
+        p0.num32BitValues = 4;
+
+        auto& p1 = m_rootLayout.params[m_rootLayout.paramCount++];
+        p1.type = RHIRootParamDesc::Type::CBV;
+        p1.shaderRegister = 1;   // b1 — PerFrame
+        p1.registerSpace = 0;
+
+        auto& p2 = m_rootLayout.params[m_rootLayout.paramCount++];
+        p2.type = RHIRootParamDesc::Type::CBV;
+        p2.shaderRegister = 2;   // b2 — PerObject
+        p2.registerSpace = 0;
+
+        auto& p3 = m_rootLayout.params[m_rootLayout.paramCount++];
+        p3.type = RHIRootParamDesc::Type::CBV;
+        p3.shaderRegister = 4;   // b4 — Shadow (NOT b3!)
+        p3.registerSpace = 0;
+
+        auto& p4 = m_rootLayout.params[m_rootLayout.paramCount++];
+        p4.type = RHIRootParamDesc::Type::UAV_Table;
+        p4.shaderRegister = 0;   // u0
+        p4.registerSpace = 0;
+
+        auto& p5 = m_rootLayout.params[m_rootLayout.paramCount++];
+        p5.type = RHIRootParamDesc::Type::SRV_Table;
+        p5.shaderRegister = 0;   // t0 — SRV table
+        p5.registerSpace = 0;
+    }
+
     // Vulkan maps to SM6.6 equivalent (bindless via descriptor indexing)
     m_shaderModel = ShaderModel::SM6_6;
     if (desc.forceShaderModel.has_value() && *desc.forceShaderModel < m_shaderModel) {

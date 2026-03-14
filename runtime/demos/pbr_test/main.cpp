@@ -16,6 +16,13 @@
 int main(int argc, char* argv[]) {
     uz::LogInit();
 
+    // Check for --diff mode (image comparison, no GPU needed)
+    int diffResult = uz::DemoApplication::TryDiffImages(argc, argv);
+    if (diffResult >= 0) {
+        uz::LogShutdown();
+        return diffResult;
+    }
+
     // Parse common CLI flags (--backend, --sm, --screenshot, --frames, etc.)
     uz::DemoConfig baseConfig{};
     uz::DemoApplication::ParseCommonArgs(argc, argv, baseConfig);

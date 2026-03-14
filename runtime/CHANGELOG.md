@@ -2,6 +2,36 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
+## [0.2.20] — 2026-03-14
+
+### CompareGrid — Visual Comparison & Diff System
+- **CompareGrid** (`editor/screenshot/compare_grid.h/.cpp`): CPU-side image compositing for visual regression testing — composes N screenshots into a single labeled grid image
+  - Built-in CP437 8x8 bitmap font (95 ASCII glyphs) with 1px black outline
+  - Bilinear scaling, auto grid layout (`cols = ceil(sqrt(N))`), forced column override via `SetColumns()`
+  - `AddCellFromPNG()` loads PNGs via stb_image, `SaveToPNG()` writes composed grid
+  - Labels with primary + sublabel (RHI backend, SM version, frame number)
+- **ImageDiff**: pixel-by-pixel comparison with heatmap visualization
+  - `Compare()` returns stats: diffPixels, diffPercentage, PSNR, maxChannelDiff, identical
+  - `GenerateHeatmap()` produces color-coded diff (black→red→yellow→white, magenta for size mismatch)
+  - `DiffToPNG()` generates 3-panel comparison: [Image A | Image B | Diff Heatmap] with stats
+  - Per-channel threshold (default 2) tolerates minor float rounding between RHI backends
+- **DemoApplication CLI**:
+  - `--compose-grid <output.png> [--cell-size N] <img> <label> <sublabel> ...` — compose grid from PNGs
+  - `--diff <output.png> <imgA> <labelA> <imgB> <labelB> [--cell-size N]` — 3-panel diff comparison
+
+### Shader Model 6.8 / 6.9 Support
+- **ShaderModel enum** (`rhi_config.h`): added `SM6_8` (work graphs, wave size range) and `SM6_9` (cooperative vectors, inline RT in compute)
+- **ShaderModelCompile enum** (`shader_compiler.h`): added `SM6_8`, `SM6_9` with DXC target profiles (`vs_6_8`, `vs_6_9`, etc.)
+- **DX12 negotiation** (`dx12_device.cpp`): now probes up to `D3D_SHADER_MODEL_6_9` — driver clamps to hardware max
+- **GetActiveShaderModel()** (`rhi_factory.cpp`): new global getter, set at device creation — replaces hardcoded SM6.6 in shader pipeline
+- **ApplyBindlessConfig** (`shader_pipeline.cpp`): compiles shaders at device's negotiated SM (not hardcoded SM6.6), with SM6.6 minimum floor for bindless
+- **CLI / config**: `--sm 6.8` and `--sm 6.9` parsing in both `rhi_config.cpp` and `demo_application.cpp`
+
+### StatsOverlay — System Info Panel
+- **System info capture** (`stats_overlay.cpp`): `CaptureSystemInfo()` reads GPU name, feature level, RHI backend, shader model, VRAM budget, and bindless status from `IRHIDevice` at init
+- **Redesigned text panel**: 3 organized sections — SYSTEM (GPU, RHI|SM, FL, VRAM|Bindless, Res), PERFORMANCE (smoothed FPS, frame time, raw FPS), RENDERING (draw calls, vertices, triangles, VRAM used, frame#)
+- Color-coded section headers, FPS color (green ≥60, yellow ≥30, red <30), separators between sections
+
 ## [0.2.19] — 2026-03-14
 
 ### FXC/DXC Shader Parity — DX11 Brightness Fix

@@ -208,6 +208,8 @@ std::wstring ShaderCompiler::GetTargetProfile(ShaderStageCompile stage,
         case ShaderModelCompile::SM6_5: version = L"6_5"; break;
         case ShaderModelCompile::SM6_6: version = L"6_6"; break;
         case ShaderModelCompile::SM6_7: version = L"6_7"; break;
+        case ShaderModelCompile::SM6_8: version = L"6_8"; break;
+        case ShaderModelCompile::SM6_9: version = L"6_9"; break;
     }
 
     return std::wstring(prefix) + L"_" + version;

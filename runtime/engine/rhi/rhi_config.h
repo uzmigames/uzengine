@@ -30,6 +30,8 @@ enum class ShaderModel : uint8_t {
     SM6_5,   ///< DXR 1.1, mesh shaders, sampler feedback.
     SM6_6,   ///< DirectX 12 Ultimate — bindless (`ResourceDescriptorHeap[]`), dynamic resources.
     SM6_7,   ///< Advanced texture ops, relaxed precision, quad-wide shuffle.
+    SM6_8,   ///< Work graphs, wave size range, expanded comparison samplers.
+    SM6_9,   ///< Cooperative vectors, inline ray tracing in compute, extended atomics.
 };
 
 /// Resolved RHI configuration from all sources.

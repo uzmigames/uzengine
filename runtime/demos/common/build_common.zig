@@ -129,7 +129,7 @@ pub fn createDemo(b: *std.Build, config: DemoConfig) DemoHandle {
     // Screenshot capture (shared utility)
     mod.addCSourceFiles(.{
         .root = b.path("../../editor/screenshot"),
-        .files = &.{"screenshot_capture.cpp"},
+        .files = &.{ "screenshot_capture.cpp", "compare_grid.cpp" },
         .flags = cpp_flags,
     });
 

@@ -192,12 +192,59 @@ bool VulkanSwapChain::CreateSwapChain() {
     m_width = extent.width;
     m_height = extent.height;
 
+    // Query supported surface formats and validate our requested format.
+    // Prefer UNORM to avoid hardware sRGB conversion (shader does LinearToSrgb manually).
+    uint32_t formatCount = 0;
+    vkGetPhysicalDeviceSurfaceFormatsKHR(physDevice, m_surface, &formatCount, nullptr);
+    std::vector<VkSurfaceFormatKHR> surfaceFormats(formatCount);
+    vkGetPhysicalDeviceSurfaceFormatsKHR(physDevice, m_surface, &formatCount, surfaceFormats.data());
+
+    VkFormat chosenFormat = m_vkFormat;
+    VkColorSpaceKHR chosenColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
+    bool formatFound = false;
+
+    // First pass: try exact match with UNORM
+    for (const auto& sf : surfaceFormats) {
+        if (sf.format == m_vkFormat) {
+            chosenFormat = sf.format;
+            chosenColorSpace = sf.colorSpace;
+            formatFound = true;
+            break;
+        }
+    }
+
+    // Second pass: if exact not found, prefer any UNORM variant (B8G8R8A8_UNORM is common)
+    if (!formatFound) {
+        for (const auto& sf : surfaceFormats) {
+            if (sf.format == VK_FORMAT_B8G8R8A8_UNORM || sf.format == VK_FORMAT_R8G8B8A8_UNORM) {
+                chosenFormat = sf.format;
+                chosenColorSpace = sf.colorSpace;
+                formatFound = true;
+                UZ_LOG(RHI, Info, "Swapchain: requested format not supported, using UNORM fallback (format={})",
+                       static_cast<int>(sf.format));
+                break;
+            }
+        }
+    }
+
+    // Last resort: use whatever the surface prefers
+    if (!formatFound && !surfaceFormats.empty()) {
+        chosenFormat = surfaceFormats[0].format;
+        chosenColorSpace = surfaceFormats[0].colorSpace;
+        UZ_LOG(RHI, Warning, "Swapchain: no UNORM format found, using surface default (format={})",
+               static_cast<int>(chosenFormat));
+    }
+
+    m_vkFormat = chosenFormat;
+    UZ_LOG(RHI, Info, "Swapchain format: {} (colorSpace={})",
+           static_cast<int>(m_vkFormat), static_cast<int>(chosenColorSpace));
+
     VkSwapchainCreateInfoKHR swapCI = {};
     swapCI.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
     swapCI.surface = m_surface;
     swapCI.minImageCount = imageCount;
     swapCI.imageFormat = m_vkFormat;
-    swapCI.imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
+    swapCI.imageColorSpace = chosenColorSpace;
     swapCI.imageExtent = extent;
     swapCI.imageArrayLayers = 1;
     swapCI.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;

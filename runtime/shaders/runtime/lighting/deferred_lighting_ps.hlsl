@@ -261,7 +261,7 @@ float4 main(FSInput input) : SV_Target {
     // ACES filmic curve: better highlight rolloff than Reinhard, preserves
     // color saturation in bright areas.
     color = ACESFilm(color);
-    // Linear → sRGB via math_util.hlsli (exact IEC 61966-2-1 curve).
+    // Linear → sRGB via math_util.hlsli (pow-free sqrt chain).
     color = LinearToSrgb(color);
 
     return float4(color, 1.0f);

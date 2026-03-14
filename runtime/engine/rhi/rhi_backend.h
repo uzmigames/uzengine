@@ -73,4 +73,10 @@ void DestroyRHIDevice(IRHIDevice* device);
 /// The `RHIBackend` value of the most recently created device.
 RHIBackend GetActiveRHIBackend();
 
+/// Returns the shader model negotiated by the most recently created device.
+///
+/// Set automatically by `CreateRHIDevice()` after device initialization.
+/// Returns `SM5_0` if no device has been created yet.
+ShaderModel GetActiveShaderModel();
+
 } // namespace uz

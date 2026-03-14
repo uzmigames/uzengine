@@ -204,7 +204,7 @@ private:
     ResourcePool<DX11Pipeline>     m_pipelinePool;
 
     /// Monotonically increasing SRV index counter for logical descriptor binding.
-    uint32_t                       m_nextSrvIndex = 0;
+    uint32_t                       m_nextSrvIndex = 1; ///< Starts at 1: index 0 means "no texture" in shaders.
 
     /// Monotonically increasing sampler index counter.
     uint32_t                       m_nextSamplerIndex = 0;

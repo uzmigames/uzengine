@@ -26,9 +26,11 @@ namespace uz {
 
 namespace {
     RHIBackend g_activeBackend = RHIBackend::DX12;
+    ShaderModel g_activeShaderModel = ShaderModel::SM5_0;
 } // namespace
 
 RHIBackend GetActiveRHIBackend() { return g_activeBackend; }
+ShaderModel GetActiveShaderModel() { return g_activeShaderModel; }
 
 IRHIDevice* CreateRHIDevice(const RHIDeviceDesc& desc) {
     switch (desc.backend) {
@@ -41,6 +43,7 @@ IRHIDevice* CreateRHIDevice(const RHIDeviceDesc& desc) {
                 return nullptr;
             }
             g_activeBackend = desc.backend;
+            g_activeShaderModel = device->GetShaderModel();
             return device;
         }
 
@@ -52,6 +55,7 @@ IRHIDevice* CreateRHIDevice(const RHIDeviceDesc& desc) {
                 return nullptr;
             }
             g_activeBackend = desc.backend;
+            g_activeShaderModel = device->GetShaderModel();
             return device;
         }
 #endif
@@ -64,6 +68,7 @@ IRHIDevice* CreateRHIDevice(const RHIDeviceDesc& desc) {
                 return nullptr;
             }
             g_activeBackend = desc.backend;
+            g_activeShaderModel = device->GetShaderModel();
             return device;
         }
 

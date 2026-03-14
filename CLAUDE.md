@@ -9,6 +9,41 @@ This project uses @hivehub/rulebook standards. All code generation should follow
 **Languages**: Not specified
 **Coverage Threshold**: 95%
 
+## ⚠️ CRITICAL: Reference Engine Research Before Implementation
+
+**MANDATORY**: Before implementing any new system or solving a non-trivial problem, you MUST research how UE5, Godot, and Unity solve it — never rely solely on model knowledge.
+
+### Why
+
+Model knowledge can be outdated, incomplete, or subtly wrong about engine internals. Real engine source code is the ground truth. UE5, Godot, and Unity have battle-tested solutions for nearly every game engine problem. Using their patterns avoids reinventing wheels and produces production-quality results.
+
+### What To Do
+
+1. **Before any new feature/system**: Launch architect agents (unreal-architect, godot-architect, unity-architect) in parallel to analyze how each engine solves the problem.
+2. **Before debugging a hard problem**: Check if reference engines have the same pattern and how they handle edge cases.
+3. **Synthesize findings**: Use engine-architect to combine the 3 analyses into UzEngine-specific directives.
+4. **Document the decision**: Save which patterns were adopted and why in the architecture docs.
+
+### Rules
+
+- **NEVER skip reference research** for new systems — always check at least UE5 + one other engine.
+- **NEVER copy-paste** from reference engines — adapt patterns to UzEngine's identity (C++23, DX12-first, lean architecture).
+- **For rendering**: UE5 (W:\UE_5.6_Source) is primary reference. Godot for lean alternatives.
+- **For ECS/gameplay**: Unity DOTS + Godot Node system for comparison. UE5 for Actor/Component.
+- **For scripting**: Godot GDExtension + Unity C# patterns adapted for LuaJIT.
+- **Delegate cheaply**: Architect agents run on haiku — cost is minimal, value is high.
+
+### Example Workflow
+
+```
+User: "Implement clustered shading"
+1. Launch unreal-architect: "How does UE5 implement clustered/tiled shading?"
+2. Launch godot-architect: "How does Godot 4 handle light culling?"
+3. Launch unity-architect: "How does Unity URP/HDRP handle light clustering?"
+4. Launch engine-architect: Synthesize → UzEngine directive
+5. Implement based on synthesized directive
+```
+
 ## ⚠️ CRITICAL: Visual Verification Over Unit Tests for Rendering
 
 **MANDATORY**: Unit tests are NOT sufficient to validate rendering features. A test can pass while the visual result is completely wrong.
@@ -22,7 +57,8 @@ This is a rendering engine. Math tests and API tests can all pass green while th
 1. **Every rendering feature MUST have a demo** — either create a new demo under `demos/` or modify an existing one.
 2. **Run the demo with `--screenshot`** to capture the output.
 3. **View the screenshot** (using the Read tool on the PNG) and verify the visual result is correct.
-4. **Only after visual confirmation** is the feature considered implemented.
+4. **Delete the screenshot** after verification — `rm` the PNG file to avoid accumulating garbage in the repo.
+5. **Only after visual confirmation** is the feature considered implemented.
 
 ### Rules
 
@@ -30,6 +66,118 @@ This is a rendering engine. Math tests and API tests can all pass green while th
 - But for any shader, render pass, post-process effect, or GPU pipeline change: **demo + screenshot = the real test**.
 - Never mark a rendering task as complete based solely on unit tests passing.
 - If the screenshot shows wrong output (black screen, wrong colors, artifacts), the feature is **NOT done** regardless of test results.
+
+### Compare Grid for Multi-Backend/Multi-Config Testing
+
+When testing the same feature across multiple RHI backends or configurations, use the **CompareGrid** system to compose all screenshots into a **single labeled grid image**. This saves context window tokens (1 image instead of N) and makes visual comparison easier.
+
+#### How to Use
+
+```bash
+# 1. Capture individual screenshots (one per config)
+demo.exe --backend dx12 --sm 6.6 --screenshot dx12_sm66.png
+demo.exe --backend dx11 --sm 5.0 --screenshot dx11_sm50.png
+
+# 2. Compose into a single grid image
+demo.exe --compose-grid compare.png --cell-size 384 \
+  dx12_sm66.png "DX12 SM6.6" "Frame 5" \
+  dx11_sm50.png "DX11 SM5.0" "Frame 5"
+
+# 3. View the grid (single image with all configs labeled)
+# Use the Read tool on compare.png
+
+# 4. Clean up all temporary PNGs
+rm dx12_sm66.png dx11_sm50.png compare.png
+```
+
+#### Rules
+- **Use CompareGrid** whenever comparing 2+ screenshots — never send multiple separate images to the LLM.
+- **Always include labels**: RHI backend, shader model, frame number, and what's being tested.
+- **Cell size 384x384** is the recommended default — large enough to see detail, small enough to fit 4+ in one grid.
+- **Delete all PNGs** (individual + grid) after visual verification.
+
+#### Diff Mode — Detect Rendering Differences Between RHIs
+
+Use `--diff` to compare two screenshots pixel-by-pixel and produce a 3-panel image:
+**[Image A | Image B | Diff Heatmap]** with stats (% diff, PSNR).
+
+```bash
+# Compare DX12 vs DX11 rendering
+demo.exe --diff diff_output.png \
+  dx12.png "DX12 SM6.6" \
+  dx11.png "DX11 SM5.0" \
+  --cell-size 384
+
+# View the diff (heatmap shows: black=identical, red=different, magenta=size mismatch)
+# Use the Read tool on diff_output.png
+
+# Clean up
+rm dx12.png dx11.png diff_output.png
+```
+
+Heatmap color scale:
+- **Black** = identical pixels
+- **Red** (dark→bright) = small→medium difference
+- **Yellow** = large difference
+- **White** = maximum difference
+- **Magenta** = size mismatch (one image larger)
+
+The diff panel label shows: `X.X% diff, PSNR XX.X dB`
+- **PSNR > 40 dB** = visually identical (minor float rounding)
+- **PSNR 30-40 dB** = subtle differences (usually acceptable across RHIs)
+- **PSNR < 30 dB** = visible differences (investigate)
+
+#### Programmatic Usage (C++)
+```cpp
+#include "compare_grid.h"
+
+// Grid mode
+uz::CompareGrid grid;
+grid.SetCellSize(384, 384);
+grid.AddCellFromPNG("dx12.png", "DX12 SM6.6", "Frame 42");
+grid.AddCellFromPNG("dx11.png", "DX11 SM5.0", "Frame 42");
+grid.SaveToPNG("compare.png");
+
+// Diff mode
+uz::ImageDiff::DiffToPNG("dx12.png", "DX12", "dx11.png", "DX11", "diff.png");
+
+// Just stats (no image output)
+auto result = uz::ImageDiff::Compare(pixelsA, wA, hA, pixelsB, wB, hB);
+// result.diffPercentage, result.psnr, result.identical, etc.
+```
+
+## ⚠️ CRITICAL: Demo Build Order (Static Library Dependency)
+
+**MANDATORY**: Demos link against a **static library** built from the runtime. You MUST follow this exact build order or demos will link against stale code.
+
+### Why
+
+Each demo under `demos/` has its own `build.zig` that depends on the runtime static lib. If you change runtime code and only rebuild the demo, it will still link the old `.lib` — your changes won't appear. This is a common source of "I changed the code but nothing happened" bugs.
+
+### Build Steps (Current Architecture)
+
+```bash
+# 1. Clean ALL caches (runtime + demo)
+cd runtime && zig build --clean
+cd demos/<demo_name> && zig build --clean
+
+# 2. Build the runtime static lib FIRST
+cd runtime && zig build
+
+# 3. THEN build the demo
+cd demos/<demo_name> && zig build
+```
+
+### Rules
+
+1. **ALWAYS clean + rebuild runtime BEFORE rebuilding any demo** when runtime code changed.
+2. **ALWAYS clean the demo cache too** — Zig's incremental build may not detect the lib changed.
+3. **Build order is strict**: runtime → demo. Never reverse.
+4. **If a demo shows stale behavior** after code changes, the first thing to check is whether you rebuilt the runtime lib.
+
+### Future Migration
+
+The current static-lib architecture is temporary. The plan is to migrate demos to use **Lua scripting** (LuaJIT) so they become lightweight scripts that load the engine as a runtime — no recompilation needed. Until that migration is complete, follow the manual build order above.
 
 ## ⚠️ CRITICAL: NEVER Manually Clone/Download Thirdparty Libraries
 

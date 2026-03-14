@@ -29,6 +29,7 @@
 #include "../job/job_system.h"
 #include "../job/counter.h"
 #include "../rhi/rhi_backend.h"
+#include "../rhi/rhi_config.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -68,9 +69,29 @@ static ShaderStageCompile InferStageFromPath(const std::string& path) {
     return ShaderStageCompile::Vertex; // Default
 }
 
+/// Maps the device ShaderModel to the compiler ShaderModelCompile enum.
+static ShaderModelCompile DeviceSMToCompileSM(ShaderModel sm) {
+    switch (sm) {
+        case ShaderModel::SM5_0: return ShaderModelCompile::SM5_0;
+        case ShaderModel::SM5_1: return ShaderModelCompile::SM5_1;
+        case ShaderModel::SM6_0: return ShaderModelCompile::SM6_0;
+        case ShaderModel::SM6_1: return ShaderModelCompile::SM6_1;
+        case ShaderModel::SM6_2: return ShaderModelCompile::SM6_2;
+        case ShaderModel::SM6_3: return ShaderModelCompile::SM6_3;
+        case ShaderModel::SM6_4: return ShaderModelCompile::SM6_4;
+        case ShaderModel::SM6_5: return ShaderModelCompile::SM6_5;
+        case ShaderModel::SM6_6: return ShaderModelCompile::SM6_6;
+        case ShaderModel::SM6_7: return ShaderModelCompile::SM6_7;
+        case ShaderModel::SM6_8: return ShaderModelCompile::SM6_8;
+        case ShaderModel::SM6_9: return ShaderModelCompile::SM6_9;
+    }
+    return ShaderModelCompile::SM6_6;
+}
+
 /// Applies bindless/SM5 configuration and backend-specific output format.
 ///
-/// When bindless is true: injects UZ_BINDLESS=1 define, targets SM6_6 (DXC).
+/// When bindless is true: injects UZ_BINDLESS=1 define, targets the device's
+/// negotiated shader model (SM6.6+).
 /// When bindless is false: targets SM5_0 (FXC) for DX backends, SM6_0 (DXC) for Vulkan.
 /// When Vulkan backend is active: forces SPIRV output and always uses DXC
 /// (FXC cannot produce SPIR-V).
@@ -79,7 +100,13 @@ static void ApplyBindlessConfig(ShaderCompileDesc& desc, bool bindless) {
 
     if (bindless) {
         desc.defines.push_back("UZ_BINDLESS=1");
-        desc.model = ShaderModelCompile::SM6_6;
+        // Use the device's actual shader model — compile with the highest SM available
+        const ShaderModel deviceSM = GetActiveShaderModel();
+        desc.model = DeviceSMToCompileSM(deviceSM);
+        // Minimum SM6.6 for bindless
+        if (desc.model < ShaderModelCompile::SM6_6) {
+            desc.model = ShaderModelCompile::SM6_6;
+        }
     } else {
         // Vulkan requires DXC (FXC cannot emit SPIR-V), so use SM6_0 minimum
         desc.model = isVulkan ? ShaderModelCompile::SM6_0 : ShaderModelCompile::SM5_0;

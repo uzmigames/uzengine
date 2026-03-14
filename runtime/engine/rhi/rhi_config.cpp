@@ -55,6 +55,8 @@ const char* ShaderModelToString(ShaderModel sm) {
         case ShaderModel::SM6_5: return "SM6.5";
         case ShaderModel::SM6_6: return "SM6.6";
         case ShaderModel::SM6_7: return "SM6.7";
+        case ShaderModel::SM6_8: return "SM6.8";
+        case ShaderModel::SM6_9: return "SM6.9";
     }
     return "Unknown";
 }
@@ -103,6 +105,8 @@ bool ParseShaderModel(const std::string& raw, ShaderModel& out) {
     if (s == "6.5")              { out = ShaderModel::SM6_5; return true; }
     if (s == "6.6")              { out = ShaderModel::SM6_6; return true; }
     if (s == "6.7")              { out = ShaderModel::SM6_7; return true; }
+    if (s == "6.8")              { out = ShaderModel::SM6_8; return true; }
+    if (s == "6.9")              { out = ShaderModel::SM6_9; return true; }
     return false;
 }
 

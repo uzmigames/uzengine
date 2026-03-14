@@ -56,6 +56,8 @@ enum class ShaderModelCompile : uint8_t {
     SM6_5,  ///< Shader Model 6.5 — DXR 1.1, sampler feedback, mesh shaders
     SM6_6,  ///< Shader Model 6.6 — bindless (ResourceDescriptorHeap), 64-bit atomics
     SM6_7,  ///< Shader Model 6.7 — raw buffer load/store, relaxed casting
+    SM6_8,  ///< Shader Model 6.8 — work graphs, wave size range, expanded comparison samplers
+    SM6_9,  ///< Shader Model 6.9 — cooperative vectors, inline RT in compute, extended atomics
 };
 
 /// Output format for compiled bytecode.
