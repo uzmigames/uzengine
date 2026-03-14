@@ -109,6 +109,11 @@ private:
     /// marks it dirty so the next draw call binds it.
     void FlushDescriptorSet();
 
+    /// Allocates a fresh descriptor set from the pool, copies the current
+    /// frame's working set into it, and returns the copy. This gives each
+    /// draw call its own immutable snapshot of descriptor state.
+    VkDescriptorSet AllocateAndCopyDescriptorSet();
+
     VulkanDevice*        m_device = nullptr;
     VkCommandPool        m_commandPools[kVulkanFrameCount] = {};
     VkCommandBuffer      m_commandBuffers[kVulkanFrameCount] = {};
@@ -117,6 +122,11 @@ private:
     RHIQueueType         m_queueType = RHIQueueType::Graphics;
     bool                 m_inRenderPass = false;
     bool                 m_descriptorsDirty = false;
+
+    /// Tracks all descriptor sets allocated this frame for batch-free on reset.
+    static constexpr uint32_t kMaxDescriptorSetsPerFrame = 4096;
+    VkDescriptorSet      m_allocatedSets[kMaxDescriptorSetsPerFrame] = {};
+    uint32_t             m_allocatedSetCount = 0;
 };
 
 } // namespace uz

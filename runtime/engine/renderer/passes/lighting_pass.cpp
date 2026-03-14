@@ -30,6 +30,9 @@ void AddLightingPass(rg::RgBuilder& builder, const LightingPassDesc& desc)
         pb.Read(desc.albedoGBuffer, RHIResourceState::ShaderResource);
         pb.Read(desc.normalGBuffer, RHIResourceState::ShaderResource);
         pb.Read(desc.depthGBuffer, RHIResourceState::ShaderResource);
+        if (desc.shadowAtlasResource.IsValid()) {
+            pb.Read(desc.shadowAtlasResource, RHIResourceState::ShaderResource);
+        }
 
         pb.SetExecutionCallback([desc](IRHICommandList* cmd, const rg::RgPassResources& res) {
             UZ_PROFILE_SCOPE("DeferredLighting::Execute");

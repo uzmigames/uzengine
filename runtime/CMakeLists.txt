@@ -56,6 +56,7 @@ file(GLOB SRC_ASSERTIONS     engine/assertions/*.cpp)
 file(GLOB SRC_PROFILING      engine/profiling/*.cpp)
 file(GLOB SRC_CONFIG         engine/config/*.cpp)
 file(GLOB SRC_MATH           engine/math/*.cpp)
+file(GLOB SRC_ECS            engine/ecs/*.cpp)
 file(GLOB SRC_RHI_COMMON     engine/rhi/*.cpp)
 file(GLOB SRC_PATHS          engine/paths/*.cpp)
 file(GLOB SRC_SHADER_COMMON  engine/shader/*.cpp)
@@ -84,6 +85,7 @@ set(RUNTIME_SOURCES
     ${SRC_PROFILING}
     ${SRC_CONFIG}
     ${SRC_MATH}
+    ${SRC_ECS}
     ${SRC_RHI_COMMON}
     ${SRC_RHI_VULKAN}
     ${SRC_PATHS}
@@ -250,6 +252,7 @@ target_include_directories(uzengine_runtime PUBLIC
     engine/paths
     engine/renderer
     engine/scripting
+    engine/ecs
     engine/asset
     ${CMAKE_CURRENT_BINARY_DIR}/generated/shaders
 )

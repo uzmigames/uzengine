@@ -6,6 +6,7 @@
 
 #include "screenshot_capture.h"
 
+#include <algorithm>
 #include <cstring>
 #include <vector>
 
@@ -68,6 +69,7 @@ void ScreenshotCapture::Shutdown() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void ScreenshotCapture::CaptureBackBuffer(IRHICommandList* cmdList, IRHISwapChain* swapChain) {
+    m_captureFormat = swapChain->GetFormat();
     RHITextureHandle backBuffer = swapChain->GetCurrentBackBuffer();
 
     // Transition: RenderTarget → CopySrc
@@ -87,6 +89,7 @@ void ScreenshotCapture::CaptureBackBuffer(IRHICommandList* cmdList, IRHISwapChai
 }
 
 void ScreenshotCapture::CaptureFromPresent(IRHICommandList* cmdList, IRHISwapChain* swapChain) {
+    m_captureFormat = swapChain->GetFormat();
     RHITextureHandle backBuffer = swapChain->GetCurrentBackBuffer();
 
     // Transition: Present → CopySrc
@@ -124,23 +127,27 @@ bool ScreenshotCapture::SaveToPNG(const std::string& path) const {
     const uint32_t tightPitch = m_width * 4;
     const auto* srcBytes = static_cast<const uint8_t*>(mapped);
 
-    bool ok = false;
-    if (m_rowPitch == tightPitch) {
-        ok = stbi_write_png(path.c_str(),
-            static_cast<int>(m_width), static_cast<int>(m_height),
-            4, srcBytes, static_cast<int>(tightPitch)) != 0;
-    } else {
-        // Remove row padding — stb needs tight rows
-        std::vector<uint8_t> tight(tightPitch * m_height);
-        for (uint32_t row = 0; row < m_height; ++row) {
-            std::memcpy(tight.data() + row * tightPitch,
-                        srcBytes + row * m_rowPitch,
-                        tightPitch);
-        }
-        ok = stbi_write_png(path.c_str(),
-            static_cast<int>(m_width), static_cast<int>(m_height),
-            4, tight.data(), static_cast<int>(tightPitch)) != 0;
+    // Always copy to tight buffer (removes row padding and handles BGRA swizzle)
+    std::vector<uint8_t> tight(tightPitch * m_height);
+    for (uint32_t row = 0; row < m_height; ++row) {
+        std::memcpy(tight.data() + row * tightPitch,
+                    srcBytes + row * m_rowPitch,
+                    tightPitch);
     }
+
+    // BGRA→RGBA swizzle: swap R and B channels so PNG is always RGBA.
+    // Vulkan swapchains commonly use B8G8R8A8_UNORM when R8G8B8A8 is unavailable.
+    const bool needsSwizzle = (m_captureFormat == RHIFormat::BGRA8Unorm ||
+                               m_captureFormat == RHIFormat::BGRA8Srgb);
+    if (needsSwizzle) {
+        for (uint32_t i = 0; i < tightPitch * m_height; i += 4) {
+            std::swap(tight[i + 0], tight[i + 2]); // B↔R
+        }
+    }
+
+    bool ok = stbi_write_png(path.c_str(),
+        static_cast<int>(m_width), static_cast<int>(m_height),
+        4, tight.data(), static_cast<int>(tightPitch)) != 0;
 
     if (!ok) {
         UZ_LOG(Screenshot, Error, "stbi_write_png failed: path='{}'", path);

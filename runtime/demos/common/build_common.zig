@@ -126,13 +126,6 @@ pub fn createDemo(b: *std.Build, config: DemoConfig) DemoHandle {
         .flags = cpp_flags,
     });
 
-    // Screenshot capture (shared utility)
-    mod.addCSourceFiles(.{
-        .root = b.path("../../editor/screenshot"),
-        .files = &.{ "screenshot_capture.cpp", "compare_grid.cpp" },
-        .flags = cpp_flags,
-    });
-
     // DemoApplication base class (shared across all demos)
     mod.addCSourceFiles(.{
         .root = b.path("../common"),
@@ -189,6 +182,7 @@ pub fn createDemo(b: *std.Build, config: DemoConfig) DemoHandle {
         "../../engine/rhi/vulkan",
         "../../engine/rhi/optimization",
         "../../engine/renderer/memory",
+        "../../editor",
         "../../editor/screenshot",
         "../../editor/grid",
         "../../editor/font",
@@ -232,8 +226,9 @@ pub fn createDemo(b: *std.Build, config: DemoConfig) DemoHandle {
     // Extra include paths
     for (config.extra_includes) |dir| mod.addIncludePath(b.path(dir));
 
-    // Link pre-compiled runtime lib
-    mod.addObjectFile(b.path("../../build/lib/uzengine_runtime.lib"));
+    // Link pre-compiled runtime + editor libs
+    mod.addObjectFile(b.path("../../build/lib/runtime.lib"));
+    mod.addObjectFile(b.path("../../build/lib/editor.lib"));
 
     // Application icon
     mod.addWin32ResourceFile(.{ .file = b.path("../common/app.rc") });

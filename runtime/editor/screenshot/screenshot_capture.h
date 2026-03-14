@@ -109,7 +109,8 @@ private:
     RHIBufferHandle m_readbackBuffer;
     uint32_t m_width = 0;
     uint32_t m_height = 0;
-    uint32_t m_rowPitch = 0;  ///< Aligned row pitch (256-byte alignment for DX12 compat)
+    uint32_t m_rowPitch = 0;      ///< Aligned row pitch (256-byte alignment for DX12 compat)
+    RHIFormat m_captureFormat = RHIFormat::RGBA8Unorm; ///< Actual swapchain format (BGRA needs swizzle)
 };
 
 } // namespace uz

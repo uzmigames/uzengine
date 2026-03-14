@@ -61,11 +61,15 @@ static bool IsDepthFormat(RHIFormat format) {
 }
 
 /// Maps RHIResourceState to Vulkan image layout.
-static VkImageLayout ToVkImageLayout(RHIResourceState state) {
+/// Depth formats use DEPTH_STENCIL_READ_ONLY_OPTIMAL instead of SHADER_READ_ONLY_OPTIMAL
+/// when transitioning to ShaderResource state.
+static VkImageLayout ToVkImageLayout(RHIResourceState state, RHIFormat format = RHIFormat::Unknown) {
     switch (state) {
         case RHIResourceState::Undefined:         return VK_IMAGE_LAYOUT_UNDEFINED;
         case RHIResourceState::Common:            return VK_IMAGE_LAYOUT_GENERAL;
-        case RHIResourceState::ShaderResource:    return VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+        case RHIResourceState::ShaderResource:
+            return IsDepthFormat(format) ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
+                                        : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
         case RHIResourceState::UnorderedAccess:   return VK_IMAGE_LAYOUT_GENERAL;
         case RHIResourceState::RenderTarget:      return VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
         case RHIResourceState::DepthStencilWrite: return VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
@@ -216,6 +220,14 @@ void VulkanCommandList::Begin() {
     UZ_PROFILE_FUNCTION();
 
     VkDevice device = m_device->GetVkDevice();
+
+    // Free all per-draw descriptor sets allocated last frame
+    if (m_allocatedSetCount > 0) {
+        vkFreeDescriptorSets(device, m_device->GetDescriptorPool(),
+                             m_allocatedSetCount, m_allocatedSets);
+        m_allocatedSetCount = 0;
+    }
+
     vkResetCommandPool(device, m_commandPools[m_frameIndex], 0);
 
     VkCommandBufferBeginInfo beginInfo = {};
@@ -484,13 +496,15 @@ void VulkanCommandList::SetFragmentTexture(uint32_t slot, RHITextureHandle textu
         return;
     }
 
-
     VkDescriptorSet dstSet = m_descriptorSets[m_frameIndex];
 
     // Write texture to binding `slot` (t0-t15 map to binding 0-15 via -fvk-t-shift 0 0)
     VkDescriptorImageInfo imageInfo = {};
     imageInfo.imageView = tex->imageView;
-    imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    // Depth textures must use DEPTH_STENCIL_READ_ONLY_OPTIMAL, not SHADER_READ_ONLY_OPTIMAL
+    imageInfo.imageLayout = IsDepthFormat(tex->desc.format)
+        ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL
+        : VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
     VkWriteDescriptorSet writes[2] = {};
     uint32_t writeCount = 1;
@@ -525,13 +539,66 @@ void VulkanCommandList::SetFragmentTexture(uint32_t slot, RHITextureHandle textu
 // Descriptor Set Flush
 // ─────────────────────────────────────────────────────────────────────────────
 
+VkDescriptorSet VulkanCommandList::AllocateAndCopyDescriptorSet() {
+    VkDescriptorSetLayout layout = m_device->GetDescriptorSetLayout();
+
+    VkDescriptorSetAllocateInfo allocInfo = {};
+    allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    allocInfo.descriptorPool = m_device->GetDescriptorPool();
+    allocInfo.descriptorSetCount = 1;
+    allocInfo.pSetLayouts = &layout;
+
+    VkDescriptorSet newSet = VK_NULL_HANDLE;
+    VkResult result = vkAllocateDescriptorSets(m_device->GetVkDevice(), &allocInfo, &newSet);
+    if (result != VK_SUCCESS) {
+        UZ_LOG(RHI, Error, "AllocateAndCopyDescriptorSet: allocation failed, result={}",
+               static_cast<int>(result));
+        return m_descriptorSets[m_frameIndex]; // fallback to shared set
+    }
+
+    // Track for bulk-free at frame start
+    if (m_allocatedSetCount < kMaxDescriptorSetsPerFrame) {
+        m_allocatedSets[m_allocatedSetCount++] = newSet;
+    }
+
+    // Copy all mutable bindings from the working set to the new snapshot.
+    // Layout: binding 0-15 = textures (t0-t15), 16-31 = samplers (s0-s15),
+    //         32-47 = CBVs (b0-b15), 48-63 = UAVs (u0-u15).
+    // Bindings 16 (s0) and 17 (s1) are immutable samplers baked into the layout —
+    // immutable sampler bindings MUST NOT be copied (Vulkan spec §14.2.3).
+    constexpr uint32_t kTotalBindings = 64;
+    constexpr uint32_t kImmutableS0   = 16; // s0 linear
+    constexpr uint32_t kImmutableS1   = 17; // s1 shadow comparison
+    VkCopyDescriptorSet copies[kTotalBindings] = {};
+    uint32_t copyCount = 0;
+    for (uint32_t i = 0; i < kTotalBindings; ++i) {
+        if (i == kImmutableS0 || i == kImmutableS1) continue; // skip immutable samplers
+        copies[copyCount].sType           = VK_STRUCTURE_TYPE_COPY_DESCRIPTOR_SET;
+        copies[copyCount].srcSet          = m_descriptorSets[m_frameIndex];
+        copies[copyCount].srcBinding      = i;
+        copies[copyCount].dstSet          = newSet;
+        copies[copyCount].dstBinding      = i;
+        copies[copyCount].descriptorCount = 1;
+        ++copyCount;
+    }
+    vkUpdateDescriptorSets(m_device->GetVkDevice(), 0, nullptr, copyCount, copies);
+
+    return newSet;
+}
+
 void VulkanCommandList::FlushDescriptorSet() {
     if (!m_descriptorsDirty) return;
+
+    // Allocate a fresh descriptor set snapshot so each draw sees its own
+    // descriptor state. Without this, all draws in the command buffer would
+    // see the LAST vkUpdateDescriptorSets state (Vulkan descriptor sets are
+    // mutable host objects, not command-buffer-local like DX12 root descriptors).
+    VkDescriptorSet snapshot = AllocateAndCopyDescriptorSet();
 
     vkCmdBindDescriptorSets(m_commandBuffers[m_frameIndex],
                             VK_PIPELINE_BIND_POINT_GRAPHICS,
                             m_device->GetPipelineLayout(),
-                            0, 1, &m_descriptorSets[m_frameIndex],
+                            0, 1, &snapshot,
                             0, nullptr);
     m_descriptorsDirty = false;
 }
@@ -592,8 +659,11 @@ void VulkanCommandList::ResourceBarrier(const RHIBarrierDesc* barriers, uint32_t
             imgBarrier.srcAccessMask = ToVkAccessFlags(barrier.stateBefore);
             imgBarrier.dstStageMask = ToVkPipelineStage(barrier.stateAfter);
             imgBarrier.dstAccessMask = ToVkAccessFlags(barrier.stateAfter);
-            imgBarrier.oldLayout = ToVkImageLayout(barrier.stateBefore);
-            imgBarrier.newLayout = ToVkImageLayout(barrier.stateAfter);
+            // Use the tracked current layout as oldLayout — avoids mismatch when
+            // the RHI state abstraction (stateBefore) maps to a different VkImageLayout
+            // than the actual tracked layout (e.g., UNDEFINED on first use).
+            imgBarrier.oldLayout = tex->currentLayout;
+            imgBarrier.newLayout = ToVkImageLayout(barrier.stateAfter, tex->desc.format);
             imgBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             imgBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
             imgBarrier.image = tex->image;
@@ -922,6 +992,31 @@ void VulkanCommandList::BeginRenderPass(const RHIRenderPassDesc& desc) {
             desc.depthAttachment.texture.index, desc.depthAttachment.texture.generation);
         if (depthTex && depthTex->imageView != VK_NULL_HANDLE) {
             hasDepth = true;
+
+            // Transition depth to DEPTH_STENCIL_ATTACHMENT_OPTIMAL if needed
+            // (e.g., after ClearDepthStencil leaves it in TRANSFER_DST_OPTIMAL)
+            if (depthTex->currentLayout != VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL) {
+                VkImageMemoryBarrier2 dsBarrier = {};
+                dsBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+                dsBarrier.srcStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+                dsBarrier.srcAccessMask = VK_ACCESS_2_MEMORY_WRITE_BIT | VK_ACCESS_2_MEMORY_READ_BIT;
+                dsBarrier.dstStageMask = VK_PIPELINE_STAGE_2_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_2_LATE_FRAGMENT_TESTS_BIT;
+                dsBarrier.dstAccessMask = VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_2_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+                dsBarrier.oldLayout = depthTex->currentLayout;
+                dsBarrier.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+                dsBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                dsBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+                dsBarrier.image = depthTex->image;
+                dsBarrier.subresourceRange = {GetAspectFlags(depthTex->desc.format), 0, VK_REMAINING_MIP_LEVELS, 0, VK_REMAINING_ARRAY_LAYERS};
+
+                VkDependencyInfo depInfo = {};
+                depInfo.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+                depInfo.imageMemoryBarrierCount = 1;
+                depInfo.pImageMemoryBarriers = &dsBarrier;
+                vkCmdPipelineBarrier2(m_commandBuffers[m_frameIndex], &depInfo);
+                depthTex->currentLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+            }
+
             depthAttachment.imageView = depthTex->imageView;
             depthAttachment.imageLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
             depthAttachment.loadOp = desc.depthAttachment.clear ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
@@ -957,8 +1052,16 @@ void VulkanCommandList::BeginRenderPass(const RHIRenderPassDesc& desc) {
     renderingInfo.colorAttachmentCount = colorCount;
     renderingInfo.pColorAttachments = colorCount > 0 ? colorAttachments : nullptr;
     renderingInfo.pDepthAttachment = hasDepth ? &depthAttachment : nullptr;
-    // Stencil shares the depth attachment if format has stencil
-    renderingInfo.pStencilAttachment = hasDepth ? &depthAttachment : nullptr;
+    // Only set stencil attachment if the format actually has a stencil component
+    const bool hasStencil = hasDepth &&
+        (desc.depthAttachment.texture.IsValid() && [&]() -> bool {
+            auto* dTex = m_device->GetTexturePool().Get(
+                desc.depthAttachment.texture.index, desc.depthAttachment.texture.generation);
+            if (!dTex) return false;
+            return dTex->desc.format == RHIFormat::D24UnormS8Uint
+                || dTex->desc.format == RHIFormat::D32FloatS8Uint;
+        }());
+    renderingInfo.pStencilAttachment = hasStencil ? &depthAttachment : nullptr;
 
     vkCmdBeginRendering(m_commandBuffers[m_frameIndex], &renderingInfo);
     m_inRenderPass = true;

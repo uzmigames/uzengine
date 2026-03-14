@@ -133,6 +133,14 @@ public:
     /// Returns whether the overlay is currently visible.
     [[nodiscard]] bool IsVisible() const { return m_visible; }
 
+    /// Returns the smoothed frames-per-second from the previous frame.
+    ///
+    /// Zero until the first `BeginFrame()` call.
+    [[nodiscard]] float GetFPS() const { return m_smoothedFPS; }
+
+    /// Returns the draw call count recorded during the previous frame.
+    [[nodiscard]] uint32_t GetDrawCallCount() const { return m_drawCalls; }
+
 private:
     /// Builds the text panel content and adds it to the text renderer.
     void BuildTextPanel();

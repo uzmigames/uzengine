@@ -216,6 +216,8 @@ float4 main(FSInput input) : SV_Target {
     // ── Cascaded shadow map ──
     float viewDepth = length(worldPos - cameraPos.xyz);
     float shadow = 1.0f;
+    // DEBUG: Return red if cascadeCount is 0, green if > 0
+    if (cascadeCount == 0) return float4(1, 0, 0, 1);
     if (cascadeCount > 0) {
         shadow = SampleShadowMap(worldPos, N, viewDepth);
     }

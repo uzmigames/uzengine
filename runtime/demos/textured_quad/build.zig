@@ -12,11 +12,6 @@ pub fn build(b: *std.Build) void {
     var demo = common.createDemo(b, .{
         .name = "textured_quad_demo",
         .sources = &.{ "main.cpp", "textured_quad_demo.cpp" },
-        .extra_sources = &.{
-            .{ .root = "../../editor/grid", .files = &.{"editor_grid.cpp"} },
-            .{ .root = "../../editor/font", .files = &.{ "bitmap_font.cpp", "text_renderer.cpp" } },
-            .{ .root = "../../editor/stats", .files = &.{"stats_overlay.cpp"} },
-        },
         .deploy_fxc = true,
         .extra_includes = &.{},
     });

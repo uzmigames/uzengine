@@ -17,6 +17,10 @@ pub fn build(b: *std.Build) void {
     const cpp_flags = &.{ "-std=c++17", "-DSPDLOG_COMPILED_LIB", "-DUZ_PROFILING_ENABLED", "-DTRACY_ENABLE", "-DTRACY_ON_DEMAND" };
     const tp = "thirdparty/";
 
+    // -Deditor=true  → also build editor.lib (grid, font, stats, screenshot)
+    // Default: false — runtime.lib only (play mode / headless)
+    const build_editor = b.option(bool, "editor", "Build editor.lib alongside runtime.lib") orelse false;
+
     // ── Include path tables (shared between runtime and tests) ───────────
 
     const engine_include_dirs = [_][]const u8{
@@ -146,6 +150,7 @@ pub fn build(b: *std.Build) void {
     addCppDir(runtime_mod, b, "engine/asset", cpp_flags);
     addCppDir(runtime_mod, b, "engine/asset/formats", cpp_flags);
     addCppDir(runtime_mod, b, "engine/asset/importers", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/renderer", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/camera", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/core", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/material", cpp_flags);
@@ -351,7 +356,7 @@ pub fn build(b: *std.Build) void {
 
     const lib = b.addLibrary(.{
         .linkage = .static,
-        .name = "uzengine_runtime",
+        .name = "runtime",
         .root_module = runtime_mod,
     });
 
@@ -390,6 +395,47 @@ pub fn build(b: *std.Build) void {
 
     b.installArtifact(lib);
 
+    // ── Editor static library (grid, font, stats, screenshot) ────────────
+    // Built when -Deditor=true. Links against runtime.lib for includes only.
+    // Output: build/lib/editor.lib
+    const editor_lib = blk: {
+        const editor_mod = b.createModule(.{ .target = target, .optimize = optimize });
+        editor_mod.link_libc = true;
+        editor_mod.link_libcpp = true;
+
+        addCppDir(editor_mod, b, "editor/grid",       cpp_flags);
+        addCppDir(editor_mod, b, "editor/font",       cpp_flags);
+        addCppDir(editor_mod, b, "editor/stats",      cpp_flags);
+        addCppDir(editor_mod, b, "editor/screenshot", cpp_flags);
+
+        // Include paths — same as runtime so editor code can include engine headers
+        editor_mod.addIncludePath(b.path("."));
+        for (engine_include_dirs) |dir| editor_mod.addIncludePath(b.path(dir));
+        for (thirdparty_include_dirs) |dir| editor_mod.addIncludePath(b.path(dir));
+        editor_mod.addIncludePath(b.path("build/generated/shaders"));
+        editor_mod.addIncludePath(b.path("editor"));
+        if (is_windows) {
+            for (windows_engine_include_dirs) |dir| editor_mod.addIncludePath(b.path(dir));
+            for (windows_thirdparty_include_dirs) |dir| editor_mod.addIncludePath(b.path(dir));
+            editor_mod.addIncludePath(b.path("engine/rhi/dx12"));
+            editor_mod.addIncludePath(b.path("engine/rhi/vulkan"));
+        }
+
+        const elib = b.addLibrary(.{
+            .linkage = .static,
+            .name = "editor",
+            .root_module = editor_mod,
+        });
+        elib.step.dependOn(&run_embed.step);
+
+        // Always install — demos link against editor.lib.
+        // -Deditor=true is a signal for the VSCode extension to enable gizmos/tools,
+        // not a gate on whether the lib is built.
+        _ = build_editor; // consumed: future use for compile-time UZ_EDITOR define
+        b.installArtifact(elib);
+        break :blk elib;
+    };
+
     // ── Test executable (links runtime lib — no recompilation) ───────────
 
     const test_mod = b.createModule(.{
@@ -424,6 +470,7 @@ pub fn build(b: *std.Build) void {
     addCppDir(test_mod, b, "tests/engine/ecs", cpp_flags);
     addCppDir(test_mod, b, "tests/engine/event", cpp_flags);
     addCppDir(test_mod, b, "tests/engine/property", cpp_flags);
+    addCppDir(test_mod, b, "tests/engine/scripting", cpp_flags);
     // Thirdparty image lib tests — disable alignment sanitizer for stb_image_resize2
     test_mod.addCSourceFiles(.{
         .root = b.path("tests/thirdparty"),
@@ -484,6 +531,12 @@ pub fn build(b: *std.Build) void {
         .root_module = test_mod,
     });
     test_exe.linkLibrary(lib);
+    test_exe.linkLibrary(editor_lib);
+
+    // LuaJIT — needed by scripting tests that call lua C API directly
+    if (is_windows) {
+        test_mod.addObjectFile(b.path(tp ++ "luajit/src/lua51.lib"));
+    }
 
     if (is_windows) {
         test_exe.linkSystemLibrary("d3d12");
@@ -530,6 +583,7 @@ pub fn build(b: *std.Build) void {
             for (windows_engine_include_dirs) |dir| tool_mod.addIncludePath(b.path(dir));
             for (windows_thirdparty_include_dirs) |dir| tool_mod.addIncludePath(b.path(dir));
             tool_mod.addIncludePath(b.path("engine/rhi/dx12"));
+            tool_mod.addIncludePath(b.path("build/generated/shaders"));
 
             tool_mod.addCSourceFiles(.{
                 .root = b.path("tools"),
@@ -542,8 +596,11 @@ pub fn build(b: *std.Build) void {
                 .flags = cpp_flags,
             });
 
+            tool_mod.addObjectFile(b.path(tp ++ "luajit/src/lua51.lib"));
+
             const tool_exe = b.addExecutable(.{ .name = tool_name, .root_module = tool_mod });
             tool_exe.linkLibrary(lib);
+            tool_exe.linkLibrary(editor_lib);
             for (win_sys_libs) |l| tool_exe.linkSystemLibrary(l);
             b.installArtifact(tool_exe);
         }

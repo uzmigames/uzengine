@@ -236,8 +236,22 @@ bool VulkanSwapChain::CreateSwapChain() {
     }
 
     m_vkFormat = chosenFormat;
-    UZ_LOG(RHI, Info, "Swapchain format: {} (colorSpace={})",
-           static_cast<int>(m_vkFormat), static_cast<int>(chosenColorSpace));
+
+    // Update RHI format to reflect actual swapchain format (may differ from requested).
+    // This ensures downstream code (screenshot readback, render passes) knows the real channel order.
+    if (m_vkFormat == VK_FORMAT_B8G8R8A8_UNORM) {
+        m_format = RHIFormat::BGRA8Unorm;
+    } else if (m_vkFormat == VK_FORMAT_R8G8B8A8_UNORM) {
+        m_format = RHIFormat::RGBA8Unorm;
+    } else if (m_vkFormat == VK_FORMAT_B8G8R8A8_SRGB) {
+        m_format = RHIFormat::BGRA8Srgb;
+    } else if (m_vkFormat == VK_FORMAT_R8G8B8A8_SRGB) {
+        m_format = RHIFormat::RGBA8Srgb;
+    }
+
+    UZ_LOG(RHI, Info, "Swapchain format: {} (colorSpace={}, rhiFormat={})",
+           static_cast<int>(m_vkFormat), static_cast<int>(chosenColorSpace),
+           static_cast<int>(m_format));
 
     VkSwapchainCreateInfoKHR swapCI = {};
     swapCI.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;

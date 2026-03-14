@@ -59,6 +59,9 @@
           "rotation": [0, 0, 0],
           "scale": [1, 1, 1]
         },
+        "script": {
+          "path": "scripts/hello.lua"
+        },
         "mesh": {
           "asset": "content/meshes/sphere.uzmesh"
         },

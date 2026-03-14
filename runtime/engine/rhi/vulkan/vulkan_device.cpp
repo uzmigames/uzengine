@@ -205,6 +205,8 @@ VulkanDevice::~VulkanDevice() {
 
     if (m_pipelineLayout != VK_NULL_HANDLE)       vkDestroyPipelineLayout(m_device, m_pipelineLayout, nullptr);
     if (m_descriptorSetLayout != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(m_device, m_descriptorSetLayout, nullptr);
+    if (m_staticSamplerLinear != VK_NULL_HANDLE) vkDestroySampler(m_device, m_staticSamplerLinear, nullptr);
+    if (m_staticSamplerShadow != VK_NULL_HANDLE) vkDestroySampler(m_device, m_staticSamplerShadow, nullptr);
     if (m_descriptorPool != VK_NULL_HANDLE)      vkDestroyDescriptorPool(m_device, m_descriptorPool, nullptr);
     if (m_tracyVkCtx) TracyVkDestroy(m_tracyVkCtx);
     if (m_allocator)                          vmaDestroyAllocator(m_allocator);
@@ -697,6 +699,48 @@ bool VulkanDevice::CreateDescriptorPool() {
 bool VulkanDevice::CreateDescriptorSetLayout() {
     UZ_PROFILE_FUNCTION();
 
+    // ── Create static samplers (equivalent to DX12 static samplers) ─────────
+    // s0 (binding 16): linear wrap — general texturing
+    {
+        VkSamplerCreateInfo ci = {};
+        ci.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        ci.magFilter = VK_FILTER_LINEAR;
+        ci.minFilter = VK_FILTER_LINEAR;
+        ci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+        ci.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        ci.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        ci.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        ci.maxAnisotropy = 1.0f;
+        ci.minLod = 0.0f;
+        ci.maxLod = VK_LOD_CLAMP_NONE;
+        if (vkCreateSampler(m_device, &ci, nullptr, &m_staticSamplerLinear) != VK_SUCCESS) {
+            UZ_LOG(RHI, Error, "Failed to create static linear sampler");
+            return false;
+        }
+    }
+    // s1 (binding 17): comparison LESS, border black — shadow PCF
+    {
+        VkSamplerCreateInfo ci = {};
+        ci.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        ci.magFilter = VK_FILTER_LINEAR;
+        ci.minFilter = VK_FILTER_LINEAR;
+        ci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST;
+        ci.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+        ci.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+        ci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
+        ci.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
+        ci.compareEnable = VK_TRUE;
+        ci.compareOp = VK_COMPARE_OP_LESS;
+        ci.maxAnisotropy = 1.0f;
+        ci.minLod = 0.0f;
+        ci.maxLod = VK_LOD_CLAMP_NONE;
+        if (vkCreateSampler(m_device, &ci, nullptr, &m_staticSamplerShadow) != VK_SUCCESS) {
+            UZ_LOG(RHI, Error, "Failed to create static shadow comparison sampler");
+            return false;
+        }
+    }
+
+    // ── Descriptor set layout ───────────────────────────────────────────────
     // Matches the DXC -fvk-*-shift flags in shader_compiler.cpp:
     //   binding 0..15  = SAMPLED_IMAGE  (t0..t15, via -fvk-t-shift 0 0)
     //   binding 16..31 = SAMPLER        (s0..s15, via -fvk-s-shift 16 0)
@@ -727,6 +771,11 @@ bool VulkanDevice::CreateDescriptorSetLayout() {
                      | VK_SHADER_STAGE_COMPUTE_BIT;
     }
 
+    // Make s0 and s1 immutable samplers — equivalent to DX12 static samplers.
+    // These are baked into the descriptor set layout and never need explicit binding.
+    bindings[kMaxTextureBindings + 0].pImmutableSamplers = &m_staticSamplerLinear;  // s0
+    bindings[kMaxTextureBindings + 1].pImmutableSamplers = &m_staticSamplerShadow;  // s1
+
     // b registers (b0-b15) → bindings 32-47 as uniform buffers
     for (uint32_t i = 0; i < kMaxCBBindings; ++i) {
         auto& b = bindings[kMaxTextureBindings + kMaxSamplerBindings + i];
@@ -748,7 +797,7 @@ bool VulkanDevice::CreateDescriptorSetLayout() {
         return false;
     }
 
-    UZ_LOG(RHI, Info, "Vulkan descriptor set layout created (16 textures + 16 samplers + 16 CBVs)");
+    UZ_LOG(RHI, Info, "Vulkan descriptor set layout created (16 textures + 16 samplers [s0=linear, s1=shadow] + 16 CBVs)");
     return true;
 }
 

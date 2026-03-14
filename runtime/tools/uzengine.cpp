@@ -13,6 +13,16 @@
 #include "rhi_backend.h"
 #include "log.h"
 
+#include "../engine/app/project_loader.h"
+#include "../engine/ecs/world.h"
+#include "../engine/ecs/scene_loader.h"
+#include "../engine/scripting/lua_vm.h"
+#include "../engine/scripting/lua_scene_api.h"
+#include "../engine/scripting/lua_renderer_api.h"
+#include "../engine/scripting/script_system.h"
+#include "../engine/asset/vfs.h"
+#include "../engine/renderer/scene_renderer.h"
+
 #ifdef _WIN32
 #include "platform_window.h"
 #include "dx12_device.h"
@@ -26,6 +36,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <filesystem>
 #include <string>
 #include <thread>
 
@@ -175,12 +186,15 @@ static void LogRenderStats(uint32_t frameIndex, float totalMs) {
            frameIndex, totalMs, avgMs, fps);
 }
 
-/// Runs the windowed render loop with DX12 clear screen.
+/// Runs the windowed render loop with DX12 clear screen, optional scene + Lua scripting.
 static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, int maxFrames,
-                       const std::string& scenePath) {
+                       const std::string& windowTitle,
+                       const std::string& projectDir,
+                       const std::string& contentRoot,
+                       const std::string& defaultScene) {
     // ── Window ──────────────────────────────────────────────────────────
     WindowDesc winDesc{};
-    winDesc.title = "UzEngine Runtime";
+    winDesc.title = windowTitle.empty() ? "UzEngine Runtime" : windowTitle.c_str();
     winDesc.width = width;
     winDesc.height = height;
 
@@ -236,14 +250,54 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
         return kExitRenderError;
     }
 
-    // ── Render Loop ─────────────────────────────────────────────────────
-    if (!scenePath.empty()) {
-        UZ_LOG(Engine, Info, "Scene path stored (not loaded yet): {}", scenePath);
+    // ── World + VFS + Lua ─────────────────────────────────────────────
+    World world;
+    const std::string resolvedContentRoot = projectDir.empty()
+        ? std::filesystem::current_path().string()
+        : projectDir + "/" + contentRoot;
+    LooseFileVFS vfs(resolvedContentRoot);
+
+    // Load scene if specified
+    if (!defaultScene.empty()) {
+        auto sceneBytes = vfs.Read(defaultScene);
+        if (!sceneBytes.empty()) {
+            const size_t count = LoadScene(world, sceneBytes, defaultScene);
+            UZ_LOG(Engine, Info, "Loaded {} entities from '{}'", count, defaultScene);
+        } else {
+            UZ_LOG(Engine, Warning, "Failed to read scene: '{}'", defaultScene);
+        }
     }
 
+    // Initialize Lua scripting
+    bool luaReady = false;
+    if (LuaVM::Init()) {
+        LuaSetWorld(LuaVM::GetState(), &world);
+        ScriptSystem::Initialize(&world, &vfs);
+        luaReady = true;
+        UZ_LOG(Engine, Info, "Lua scripting initialized");
+    } else {
+        UZ_LOG(Engine, Warning, "LuaVM failed to initialize — scripting disabled");
+    }
+
+    // ── Scene Renderer ─────────────────────────────────────────────────
+    SceneRenderer sceneRenderer;
+    bool sceneRendererReady = sceneRenderer.Init(device, &window,
+        static_cast<uint32_t>(width), static_cast<uint32_t>(height));
+    if (!sceneRendererReady) {
+        UZ_LOG(Engine, Warning, "SceneRenderer init failed — falling back to clear screen");
+    }
+
+    // Bind SceneRenderer into the Lua VM so uz.renderer / uz.mesh / uz.texture work.
+    if (sceneRendererReady && luaReady) {
+        LuaSetSceneRenderer(LuaVM::GetState(), &sceneRenderer);
+        UZ_LOG(Engine, Info, "Lua renderer API connected to SceneRenderer");
+    }
+
+    // ── Render Loop ─────────────────────────────────────────────────────
     uint32_t frameIndex = 0;
     uint64_t globalFenceValue = 0;
     auto startTime = std::chrono::high_resolution_clock::now();
+    auto prevTime = startTime;
 
     const uint32_t frameLimit = maxFrames == kInfiniteFrames ? 0 : static_cast<uint32_t>(maxFrames);
     UZ_LOG(Engine, Info, "Starting render loop (frames={})", maxFrames);
@@ -259,9 +313,12 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
 
         if (window.WasResized()) {
             device->WaitIdle();
-            swapChain->Resize(
-                static_cast<uint32_t>(window.GetWidth()),
-                static_cast<uint32_t>(window.GetHeight()));
+            const uint32_t newW = static_cast<uint32_t>(window.GetWidth());
+            const uint32_t newH = static_cast<uint32_t>(window.GetHeight());
+            swapChain->Resize(newW, newH);
+            if (sceneRendererReady) {
+                sceneRenderer.Resize(newW, newH);
+            }
             window.ClearResizedFlag();
         }
 
@@ -271,10 +328,24 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
             frameFences[allocFrame]->WaitCPU(fenceValues[allocFrame]);
         }
 
-        // Render
+        // Update timing
         auto now = std::chrono::high_resolution_clock::now();
         const float t = std::chrono::duration<float>(now - startTime).count();
-        RenderClearFrame(cmdList, swapChain, t);
+        const float dt = std::chrono::duration<float>(now - prevTime).count();
+        prevTime = now;
+
+        // Update Lua scripts
+        if (luaReady) {
+            LuaVM::UpdateFrameGlobals(dt, t, static_cast<uint64_t>(frameIndex));
+            ScriptSystem::Update(dt);
+        }
+
+        // Render
+        if (sceneRendererReady) {
+            sceneRenderer.RenderFrame(cmdList, swapChain, &world, &vfs, dt, frameIndex);
+        } else {
+            RenderClearFrame(cmdList, swapChain, t);
+        }
 
         // Present + signal fence
         swapChain->Present(false);
@@ -287,7 +358,16 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
     }
 
     // ── Cleanup (reverse order of creation) ─────────────────────────────
+    if (luaReady) {
+        ScriptSystem::Shutdown();
+        LuaVM::Shutdown();
+    }
+
     device->WaitIdle();
+
+    if (sceneRendererReady) {
+        sceneRenderer.Shutdown();
+    }
 
     auto endTime = std::chrono::high_resolution_clock::now();
     const float totalMs = std::chrono::duration<float, std::milli>(endTime - startTime).count();
@@ -324,10 +404,35 @@ int main(int argc, char** argv) {
     const uz::RHIDeviceDesc deviceDesc = uz::ToDeviceDesc(rhiCfg);
 
     const bool headless = config.GetBool("headless", false);
+    const std::string projectPath = config.GetString("project");
+
+    // Load .uzproject and extract project-level settings
+    std::string windowTitle;
+    std::string projectDir;
+    std::string contentRoot;
+    std::string defaultScene;
+    int width = config.GetInt("width", uz::kDefaultWidth);
+    int height = config.GetInt("height", uz::kDefaultHeight);
     const int maxFrames = config.GetInt("frames", uz::kInfiniteFrames);
-    const int width = config.GetInt("width", uz::kDefaultWidth);
-    const int height = config.GetInt("height", uz::kDefaultHeight);
-    const std::string scenePath = config.GetString("scene");
+
+    if (!projectPath.empty()) {
+        auto projectCfg = uz::LoadProject(projectPath);
+        if (projectCfg) {
+            projectDir = std::filesystem::path(projectPath).parent_path().string();
+            contentRoot = projectCfg->contentRoot;
+            defaultScene = projectCfg->defaultScene;
+            windowTitle = projectCfg->windowTitle;
+
+            // Project values serve as defaults; CLI overrides take precedence
+            if (!config.Has("width"))  width = projectCfg->windowWidth;
+            if (!config.Has("height")) height = projectCfg->windowHeight;
+        }
+    }
+
+    // Fallback: --scene without --project
+    if (defaultScene.empty()) {
+        defaultScene = config.GetString("scene");
+    }
 
     uz::LogResolvedConfig(rhiCfg, headless, maxFrames, width, height);
 
@@ -337,7 +442,8 @@ int main(int argc, char** argv) {
         exitCode = uz::RunHeadless(deviceDesc);
     } else {
 #ifdef _WIN32
-        exitCode = uz::RunWindowed(deviceDesc, width, height, maxFrames, scenePath);
+        exitCode = uz::RunWindowed(deviceDesc, width, height, maxFrames,
+                                    windowTitle, projectDir, contentRoot, defaultScene);
 #else
         UZ_LOG(Engine, Error, "Windowed mode not supported on this platform yet");
         exitCode = uz::kExitRenderError;

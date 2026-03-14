@@ -294,6 +294,12 @@ private:
     /// the correct HLSL register for descriptor binding (with -fvk-b-shift 32 0).
     RHIRootSignatureDesc           m_rootLayout;
 
+    /// Static samplers matching DX12 root signature static samplers.
+    /// s0 (binding 16): linear wrap — general texturing.
+    /// s1 (binding 17): comparison LESS, border black — shadow PCF.
+    VkSampler                      m_staticSamplerLinear = VK_NULL_HANDLE;
+    VkSampler                      m_staticSamplerShadow = VK_NULL_HANDLE;
+
     ShaderModel                    m_shaderModel = ShaderModel::SM6_6;
     std::string                    m_adapterName;
     std::string                    m_apiVersionStr;
