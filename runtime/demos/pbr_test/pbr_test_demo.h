@@ -22,6 +22,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <optional>
 #include <string>
 
 namespace uz {
@@ -31,7 +32,8 @@ struct PBRTestConfig {
     uint32_t frameCount = 0;               ///< Number of frames to render (0 = infinite).
     std::string screenshotPath;            ///< If non-empty, save screenshot to this path.
     uint32_t screenshotFrame = 5;          ///< Frame number to capture (default: 5).
-    RHIBackend backend = RHIBackend::DX12; ///< RHI backend to use.
+    std::optional<RHIBackend> backend;     ///< If set, overrides default DX12 backend.
+    std::optional<ShaderModel> shaderModel; ///< If set, forces a specific shader model.
 };
 
 /// PBR Test Demo — renders 5 PBR-lit cubes with deferred/forward path toggle.

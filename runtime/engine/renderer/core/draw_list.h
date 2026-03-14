@@ -7,6 +7,7 @@
 #pragma once
 
 #include "mat4.h"
+#include "engine/rhi/rhi_types.h"  // RHITextureHandle
 
 #include <algorithm>
 #include <cstdint>
@@ -49,6 +50,14 @@ struct DrawCommand {
     uint32_t metallicSrvIndex  = 0;
     /// SRV heap index for AO map (0 = 1.0 default).
     uint32_t aoSrvIndex        = 0;
+
+    /// Texture handles for SM5 (non-bindless) SetFragmentTexture binding.
+    /// These are ignored on SM6.6 bindless where SRV indices are used directly.
+    RHITextureHandle albedoTexture;
+    RHITextureHandle normalTexture;
+    RHITextureHandle roughnessTexture;
+    RHITextureHandle metallicTexture;
+    RHITextureHandle aoTexture;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

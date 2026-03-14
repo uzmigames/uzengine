@@ -14,9 +14,12 @@
 #include "demo_application.h"
 #include "uzengine.h"
 
+#include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 #include <thread>
 
 namespace uz {
@@ -238,9 +241,9 @@ void DemoApplication::InitInfrastructure() {
         UZ_LOG(App, Error, "Failed to init pipeline library");
     }
 
-    // ── CB Ring Allocator (3 frames, 128KB) ─────────────────────────────
+    // ── CB Ring Allocator (3 frames, 2MB) ──────────────────────────────
     m_cbRing = std::make_unique<CBRingAllocator>();
-    m_cbRing->Init(m_device, 3, 128 * 1024);
+    m_cbRing->Init(m_device, 3, 2 * 1024 * 1024);
 
     // ── Editor Grid ─────────────────────────────────────────────────────
     m_editorGrid = std::make_unique<EditorGrid>();
@@ -340,17 +343,26 @@ bool DemoApplication::InitPlatform() {
 
     // ── Device ───────────────────────────────────────────────────────────
     RHIDeviceDesc deviceDesc{};
-    deviceDesc.backend = RHIBackend::DX12;
+    deviceDesc.backend = m_config.backend.value_or(RHIBackend::DX12);
 #ifdef NDEBUG
     deviceDesc.enableValidation = false;
 #else
     deviceDesc.enableValidation = m_config.enableValidation;
 #endif
 
-    // Allow SM5 force via environment variable (for testing fallback paths)
-    if (const char* env = std::getenv("UZ_FORCE_SM5"); env && std::string(env) == "1") {
+    // CLI --sm takes precedence, then env var fallback
+    if (m_config.shaderModel.has_value()) {
+        deviceDesc.forceShaderModel = m_config.shaderModel.value();
+    } else if (const char* env = std::getenv("UZ_FORCE_SM5"); env && std::string(env) == "1") {
         deviceDesc.forceShaderModel = ShaderModel::SM5_0;
     }
+
+    UZ_LOG(App, Info, "DemoApplication '{}': backend={}, forceShaderModel={}",
+           m_config.title,
+           RHIBackendToString(deviceDesc.backend),
+           deviceDesc.forceShaderModel.has_value()
+               ? ShaderModelToString(deviceDesc.forceShaderModel.value())
+               : "auto");
 
     m_device = CreateRHIDevice(deviceDesc);
     if (!m_device) {
@@ -434,6 +446,81 @@ void DemoApplication::ShutdownPlatform() {
     if (m_window) {
         delete m_window;
         m_window = nullptr;
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ParseCommonArgs — Parses common CLI flags into DemoConfig
+// ─────────────────────────────────────────────────────────────────────────────
+
+namespace {
+
+/// Case-insensitive match for backend name.
+/// Returns true if recognized.
+bool ParseBackendArg(const char* str, RHIBackend& out) {
+    std::string s(str);
+    std::transform(s.begin(), s.end(), s.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    if (s == "dx12")   { out = RHIBackend::DX12;   return true; }
+    if (s == "dx11")   { out = RHIBackend::DX11;   return true; }
+    if (s == "vulkan") { out = RHIBackend::Vulkan;  return true; }
+    return false;
+}
+
+/// Case-insensitive match for shader model.
+/// Accepts: "5.0", "5.1", "6.0", "6.5", "6.6", etc.
+bool ParseShaderModelArg(const char* str, ShaderModel& out) {
+    std::string s(str);
+    std::transform(s.begin(), s.end(), s.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    // Strip optional "sm" prefix
+    if (s.rfind("sm", 0) == 0) s = s.substr(2);
+    std::replace(s.begin(), s.end(), '_', '.');
+
+    if (s == "5" || s == "5.0")  { out = ShaderModel::SM5_0; return true; }
+    if (s == "5.1")              { out = ShaderModel::SM5_1; return true; }
+    if (s == "6" || s == "6.0")  { out = ShaderModel::SM6_0; return true; }
+    if (s == "6.1")              { out = ShaderModel::SM6_1; return true; }
+    if (s == "6.2")              { out = ShaderModel::SM6_2; return true; }
+    if (s == "6.3")              { out = ShaderModel::SM6_3; return true; }
+    if (s == "6.4")              { out = ShaderModel::SM6_4; return true; }
+    if (s == "6.5")              { out = ShaderModel::SM6_5; return true; }
+    if (s == "6.6")              { out = ShaderModel::SM6_6; return true; }
+    if (s == "6.7")              { out = ShaderModel::SM6_7; return true; }
+    return false;
+}
+
+} // anonymous namespace
+
+void DemoApplication::ParseCommonArgs(int argc, char* argv[], DemoConfig& config) {
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--backend") == 0 && i + 1 < argc) {
+            RHIBackend backend{};
+            if (ParseBackendArg(argv[++i], backend)) {
+                config.backend = backend;
+            } else {
+                UZ_LOG(App, Warning, "Unknown --backend '{}', ignoring", argv[i]);
+            }
+        } else if (std::strcmp(argv[i], "--sm") == 0 && i + 1 < argc) {
+            ShaderModel sm{};
+            if (ParseShaderModelArg(argv[++i], sm)) {
+                config.shaderModel = sm;
+            } else {
+                UZ_LOG(App, Warning, "Unknown --sm '{}', ignoring", argv[i]);
+            }
+        } else if (std::strcmp(argv[i], "--screenshot") == 0 && i + 1 < argc) {
+            config.screenshotPath = argv[++i];
+        } else if (std::strcmp(argv[i], "--screenshot-frame") == 0 && i + 1 < argc) {
+            config.screenshotFrame = static_cast<uint32_t>(std::atoi(argv[++i]));
+        } else if (std::strcmp(argv[i], "--frames") == 0 && i + 1 < argc) {
+            config.maxFrames = static_cast<uint32_t>(std::atoi(argv[++i]));
+        }
+    }
+
+    // Auto-exit after screenshot so CI pipelines don't block
+    if (!config.screenshotPath.empty() && config.maxFrames == 0) {
+        config.screenshotFrame = std::max(config.screenshotFrame, 5u);
+        config.maxFrames = config.screenshotFrame + 2;
     }
 }
 

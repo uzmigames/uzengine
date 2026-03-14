@@ -71,6 +71,13 @@ void DX11CommandList::Begin() {
     UZ_PROFILE_FUNCTION();
     // Store pointer to the device's immediate context — commands execute as recorded
     m_ctx = m_device->GetImmediateContext();
+
+    // Bind default samplers matching DX12 static samplers s0 (linear wrap) and s1 (shadow comparison)
+    ID3D11SamplerState* defaultSamplers[2] = {
+        m_device->GetDefaultSampler(),
+        m_device->GetShadowComparisonSampler(),
+    };
+    m_ctx->PSSetSamplers(0, 2, defaultSamplers);
 }
 
 void DX11CommandList::End() {
@@ -222,7 +229,9 @@ void DX11CommandList::SetRootCBV(uint32_t rootParamIndex, RHIBufferHandle /*buff
     // Map/WRITE_DISCARD into a DYNAMIC scratch buffer, then bind to VS+PS stages.
     if (!m_ctx || !cpuData || dataSize == 0) return;
 
-    ID3D11Buffer* scratch = GetOrCreateScratchCB(rootParamIndex);
+    // Align to 16 bytes (D3D11 CB requirement)
+    const uint32_t alignedSize = (dataSize + 15u) & ~15u;
+    ID3D11Buffer* scratch = GetOrCreateScratchCB(rootParamIndex, alignedSize);
     if (!scratch) return;
 
     D3D11_MAPPED_SUBRESOURCE mapped = {};
@@ -239,26 +248,37 @@ void DX11CommandList::SetRootCBV(uint32_t rootParamIndex, RHIBufferHandle /*buff
     m_ctx->PSSetConstantBuffers(rootParamIndex, 1, &scratch);
 }
 
-ID3D11Buffer* DX11CommandList::GetOrCreateScratchCB(uint32_t slot) {
+ID3D11Buffer* DX11CommandList::GetOrCreateScratchCB(uint32_t slot, uint32_t requiredSize) {
     if (slot >= kMaxCBSlots) {
         UZ_LOG(RHI, Error, "SetRootCBV: slot {} exceeds max {}", slot, kMaxCBSlots);
         return nullptr;
     }
-    if (m_scratchCBs[slot]) return m_scratchCBs[slot];
 
-    // Create a 256-byte DYNAMIC constant buffer for Map/WRITE_DISCARD pattern
+    // Reuse existing buffer if large enough
+    if (m_scratchCBs[slot] && m_scratchCBSizes[slot] >= requiredSize) {
+        return m_scratchCBs[slot];
+    }
+
+    // Release old buffer if it exists but is too small
+    if (m_scratchCBs[slot]) {
+        m_scratchCBs[slot]->Release();
+        m_scratchCBs[slot] = nullptr;
+        m_scratchCBSizes[slot] = 0;
+    }
+
     D3D11_BUFFER_DESC bd = {};
-    bd.ByteWidth = 256;
+    bd.ByteWidth = requiredSize;
     bd.Usage = D3D11_USAGE_DYNAMIC;
     bd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
     bd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
 
     HRESULT hr = m_device->GetDevice()->CreateBuffer(&bd, nullptr, &m_scratchCBs[slot]);
     if (FAILED(hr)) {
-        UZ_LOG(RHI, Error, "GetOrCreateScratchCB: CreateBuffer failed, slot={}, hr=0x{:08X}",
-               slot, static_cast<uint32_t>(hr));
+        UZ_LOG(RHI, Error, "GetOrCreateScratchCB: CreateBuffer failed, slot={}, size={}, hr=0x{:08X}",
+               slot, requiredSize, static_cast<uint32_t>(hr));
         return nullptr;
     }
+    m_scratchCBSizes[slot] = requiredSize;
     return m_scratchCBs[slot];
 }
 
@@ -277,6 +297,25 @@ void DX11CommandList::SetDescriptorTable(uint32_t rootParamIndex, uint32_t descr
         UZ_LOG(RHI, Warning, "SetDescriptorTable: no SRV found for index {} (rootParam={})",
                descriptorIndex, rootParamIndex);
     }
+}
+
+void DX11CommandList::SetFragmentTexture(uint32_t slot, RHITextureHandle texture) {
+    if (!m_ctx) return;
+
+    if (!texture.IsValid()) {
+        // Unbind the slot
+        ID3D11ShaderResourceView* nullSrv = nullptr;
+        m_ctx->PSSetShaderResources(slot, 1, &nullSrv);
+        return;
+    }
+
+    auto* dx11Tex = m_device->GetTexturePool().Get(texture.index, texture.generation);
+    if (!dx11Tex || !dx11Tex->srv) {
+        UZ_LOG(RHI, Warning, "SetFragmentTexture: texture has no SRV at slot {}", slot);
+        return;
+    }
+
+    m_ctx->PSSetShaderResources(slot, 1, &dx11Tex->srv);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

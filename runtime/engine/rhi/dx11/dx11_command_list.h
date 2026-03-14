@@ -68,6 +68,7 @@ public:
     void SetRootCBV(uint32_t rootParamIndex, RHIBufferHandle buffer,
                     uint64_t offsetBytes, const void* cpuData, uint32_t dataSize) override;
     void SetDescriptorTable(uint32_t rootParamIndex, uint32_t descriptorIndex) override;
+    void SetFragmentTexture(uint32_t slot, RHITextureHandle texture) override;
 
     void DrawIndexed(uint32_t indexCount, uint32_t instanceCount,
                      uint32_t firstIndex, int32_t vertexOffset,
@@ -100,8 +101,8 @@ public:
 
 private:
     /// Gets or creates a scratch DYNAMIC constant buffer for a given slot.
-    /// Uses Map/WRITE_DISCARD to upload data, then binds to VS+PS stages.
-    ID3D11Buffer* GetOrCreateScratchCB(uint32_t slot);
+    /// Recreates the buffer if `requiredSize` exceeds the current allocation.
+    ID3D11Buffer* GetOrCreateScratchCB(uint32_t slot, uint32_t requiredSize);
 
     DX11Device*              m_device = nullptr;
     /// Non-owning pointer to the device's immediate context.
@@ -111,6 +112,7 @@ private:
     /// Scratch constant buffers for SetRootCBV (one per slot, DYNAMIC usage).
     static constexpr uint32_t kMaxCBSlots = 8;
     ID3D11Buffer*            m_scratchCBs[kMaxCBSlots] = {};
+    uint32_t                 m_scratchCBSizes[kMaxCBSlots] = {};
 };
 
 } // namespace uz

@@ -116,6 +116,16 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
 
                 cmd->SetRootCBV(kSlotPerObject, objAlloc.bufferHandle, objAlloc.offsetBytes,
                                 objAlloc.cpuPtr, sizeof(PerObjectCB));
+
+                // SM5: bind material textures at t0-t4 for non-bindless path
+                if (!desc.bindless) {
+                    cmd->SetFragmentTexture(0, drawCmd.albedoTexture);
+                    cmd->SetFragmentTexture(1, drawCmd.normalTexture);
+                    cmd->SetFragmentTexture(2, drawCmd.roughnessTexture);
+                    cmd->SetFragmentTexture(3, drawCmd.metallicTexture);
+                    cmd->SetFragmentTexture(4, drawCmd.aoTexture);
+                }
+
                 cmd->DrawIndexed(desc.indexCount);
                 ++drawCallCount;
             }

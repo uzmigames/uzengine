@@ -2,6 +2,18 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
+## [0.2.18] — 2026-03-14
+
+### DX11 Backend — Full Lighting & Rendering Fix
+- **`--backend dx11` CLI flag**: PBR demo now correctly routes backend selection via `ParseCommonArgs` (was ignored due to duplicate arg parser)
+- **SetFragmentTexture (DX11)**: implemented `PSSetShaderResources` binding — base class was a no-op, textures were never bound to pixel shader
+- **Dynamic scratch constant buffers**: `GetOrCreateScratchCB` now accepts `requiredSize` and recreates buffer if too small (LightingCB needs 2064 bytes, old hardcoded 256)
+- **Default samplers (DX11)**: created linear-wrap sampler (s0) and shadow comparison sampler (s1) in `DX11Device::Init`, bound in `DX11CommandList::Begin()` — DX12 uses static samplers in root signature, DX11 needs manual `PSSetSamplers`
+- **GBuffer SM5 texture binding**: `gbuffer_pass.cpp` now calls `SetFragmentTexture(t0-t4)` per draw command on non-bindless path — root cause of black scene
+- **DrawCommand texture handles**: added `RHITextureHandle` fields (albedo/normal/roughness/metallic/ao) to `DrawCommand` struct for SM5 binding
+- **CB Ring increased**: 128KB → 2MB per frame to prevent ring exhaustion during shadow pass
+- **Architecture analysis docs**: UE5, Unity, Godot backend compatibility patterns documented in `docs/architecture/`
+
 ## [0.2.17] — 2026-03-13
 
 ### Phase 100 — RHI Optimization Suite

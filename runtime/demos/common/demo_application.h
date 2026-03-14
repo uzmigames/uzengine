@@ -46,6 +46,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 
 namespace uz {
@@ -66,6 +67,7 @@ class ScreenshotCapture;
 class Camera;
 class FPSCameraController;
 enum class RHIBackend : uint8_t;
+enum class ShaderModel : uint8_t;
 
 namespace rg { class RgResourcePool; }
 
@@ -86,6 +88,10 @@ struct DemoConfig {
     // ── Screenshot ──────────────────────────────────────────────────────
     std::string screenshotPath;           ///< If non-empty, capture a screenshot to this path.
     uint32_t screenshotFrame = 5;         ///< Frames to wait AFTER SetReady() before capturing.
+
+    // ── RHI overrides ─────────────────────────────────────────────────────
+    std::optional<RHIBackend> backend;    ///< If set, overrides the default DX12 backend.
+    std::optional<ShaderModel> shaderModel; ///< If set, forces a specific shader model.
 
     // ── Camera defaults ─────────────────────────────────────────────────
     float cameraMoveSpeed = 10.f;         ///< FPS camera movement speed (units/sec).
@@ -140,6 +146,25 @@ public:
 
     DemoApplication(const DemoApplication&) = delete;
     DemoApplication& operator=(const DemoApplication&) = delete;
+
+    /// Parses common CLI arguments (`--backend`, `--sm`, `--screenshot`, etc.)
+    /// into the given DemoConfig. Call this from `main()` before constructing
+    /// the DemoApplication subclass.
+    ///
+    /// Recognized flags:
+    /// - `--backend dx12|dx11|vulkan` — selects RHI backend (default: dx12).
+    /// - `--sm 5.0|5.1|6.0|6.5|6.6` — forces shader model (default: auto-detect).
+    /// - `--screenshot <path>` — capture back buffer and save as PNG.
+    /// - `--screenshot-frame <N>` — frame at which to capture (default: 5).
+    /// - `--frames <N>` — max frames to render (0 = unlimited).
+    ///
+    /// Unknown flags are silently skipped so subclass-specific flags can coexist.
+    ///
+    /// # Arguments
+    /// * `argc` — Argument count from `main()`.
+    /// * `argv` — Argument vector from `main()`.
+    /// * `config` — Output config to populate with parsed values.
+    static void ParseCommonArgs(int argc, char* argv[], DemoConfig& config);
 
     /// Runs the application: creates window/device, initializes engine systems,
     /// enters the render loop, cleans up on exit.

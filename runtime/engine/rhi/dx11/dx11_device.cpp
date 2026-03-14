@@ -209,6 +209,9 @@ DX11Device::~DX11Device() {
         if (pipeline.blend) { pipeline.blend->Release(); pipeline.blend = nullptr; }
     }
 
+    if (m_defaultSampler) { m_defaultSampler->Release(); m_defaultSampler = nullptr; }
+    if (m_shadowComparisonSampler) { m_shadowComparisonSampler->Release(); m_shadowComparisonSampler = nullptr; }
+
     m_immediateContext.Reset();
     m_device.Reset();
     m_adapter3.Reset();
@@ -253,6 +256,30 @@ bool DX11Device::Init(const RHIDeviceDesc& desc) {
 
     // Initialize Tracy GPU profiling context
     m_tracyD3D11Ctx = TracyD3D11Context(m_device.Get(), m_immediateContext.Get());
+
+    // Create default samplers matching DX12 static samplers s0 and s1
+    {
+        D3D11_SAMPLER_DESC sd = {};
+        sd.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+        sd.AddressU = D3D11_TEXTURE_ADDRESS_WRAP;
+        sd.AddressV = D3D11_TEXTURE_ADDRESS_WRAP;
+        sd.AddressW = D3D11_TEXTURE_ADDRESS_WRAP;
+        sd.MaxAnisotropy = 1;
+        sd.ComparisonFunc = D3D11_COMPARISON_NEVER;
+        sd.MaxLOD = D3D11_FLOAT32_MAX;
+        m_device->CreateSamplerState(&sd, &m_defaultSampler);
+    }
+    {
+        D3D11_SAMPLER_DESC sd = {};
+        sd.Filter = D3D11_FILTER_COMPARISON_MIN_MAG_LINEAR_MIP_POINT;
+        sd.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
+        sd.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
+        sd.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+        sd.MaxAnisotropy = 1;
+        sd.ComparisonFunc = D3D11_COMPARISON_LESS;
+        sd.MaxLOD = D3D11_FLOAT32_MAX;
+        m_device->CreateSamplerState(&sd, &m_shadowComparisonSampler);
+    }
 
     RHIMemoryBudget budget = GetMemoryBudget();
     UZ_LOG(RHI, Info, "DX11Device initialized: adapter='{}', featureLevel={}, SM={}, VRAM={:.0f}MB",

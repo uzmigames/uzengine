@@ -176,6 +176,12 @@ public:
     /// is `void*` and all Tracy macros are no-ops).
     TracyD3D11Ctx GetTracyGpuContext() const { return m_tracyD3D11Ctx; }
 
+    /// Returns the default linear-wrap sampler (matches DX12 static sampler s0).
+    ID3D11SamplerState* GetDefaultSampler() const { return m_defaultSampler; }
+
+    /// Returns the default shadow comparison sampler (matches DX12 static sampler s1).
+    ID3D11SamplerState* GetShadowComparisonSampler() const { return m_shadowComparisonSampler; }
+
 private:
     bool EnableDebugLayer();
     bool CreateFactory();
@@ -214,6 +220,12 @@ private:
 
     /// Tracy GPU profiling context (no-op `void*` when `TRACY_ENABLE` is off).
     TracyD3D11Ctx                  m_tracyD3D11Ctx = nullptr;
+
+    /// Default linear-wrap sampler (equivalent to DX12 static sampler s0).
+    ID3D11SamplerState*            m_defaultSampler = nullptr;
+
+    /// Shadow PCF comparison sampler (equivalent to DX12 static sampler s1).
+    ID3D11SamplerState*            m_shadowComparisonSampler = nullptr;
 };
 
 } // namespace uz

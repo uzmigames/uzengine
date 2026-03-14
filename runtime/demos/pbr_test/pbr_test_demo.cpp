@@ -64,6 +64,8 @@ PBRTestDemo::PBRTestDemo(const PBRTestConfig& config)
         .vsync  = false,
         .screenshotPath = config.screenshotPath,
         .screenshotFrame = config.screenshotFrame,
+        .backend = config.backend,
+        .shaderModel = config.shaderModel,
     })
     , config_(config)
 {}
@@ -285,6 +287,12 @@ void PBRTestDemo::OnFrame(float dt) {
         cmd.normalSrvIndex     = normalTex_.srvIndex;
         cmd.roughnessSrvIndex  = roughnessTex_.srvIndex;
         cmd.metallicSrvIndex   = metallicTex_.srvIndex;
+        cmd.aoSrvIndex         = aoTex_.srvIndex;
+        cmd.albedoTexture      = albedoTex_.handle;
+        cmd.normalTexture      = normalTex_.handle;
+        cmd.roughnessTexture   = roughnessTex_.handle;
+        cmd.metallicTexture    = metallicTex_.handle;
+        cmd.aoTexture          = aoTex_.handle;
         drawList.Add(cmd);
     }
     {
@@ -299,6 +307,9 @@ void PBRTestDemo::OnFrame(float dt) {
         ground.normalSrvIndex    = 0;
         ground.roughnessSrvIndex = 0;
         ground.metallicSrvIndex  = 0;
+        ground.aoSrvIndex        = 0;
+        ground.albedoTexture     = checkerTex_.handle;
+        // normal/roughness/metallic/ao left default (invalid) — SM5 path unbinds them
         drawList.Add(ground);
     }
     drawList.Sort();
