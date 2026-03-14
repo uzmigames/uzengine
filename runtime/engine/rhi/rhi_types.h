@@ -662,4 +662,57 @@ struct RHIMemoryBudget {
     uint64_t usageBytes = 0;      ///< Current memory usage
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Root Signature Layout — backend-agnostic register mapping
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Describes a single root parameter binding point.
+///
+/// Maps a root parameter index (used by `SetRootCBV`, `SetRootConstants`, etc.)
+/// to an HLSL register number. DX12 encodes this in the root signature natively;
+/// DX11 needs it to translate root param indices to `VSSetConstantBuffers` slots.
+///
+/// # Examples
+/// ```cpp
+/// // Root param 3 maps to HLSL register b4 (shadow data)
+/// RHIRootParamDesc param{};
+/// param.type = RHIRootParamDesc::Type::CBV;
+/// param.shaderRegister = 4;  // b4
+/// ```
+struct RHIRootParamDesc {
+    /// The type of root parameter.
+    enum class Type : uint8_t {
+        Constants,   ///< Inline root constants (maps to a cbuffer register).
+        CBV,         ///< Root constant buffer view.
+        SRV_Table,   ///< Descriptor table of SRVs.
+        UAV_Table,   ///< Descriptor table of UAVs.
+    };
+
+    Type type = Type::CBV;           ///< Parameter type.
+    uint32_t shaderRegister = 0;     ///< HLSL register number (e.g., 4 for b4, 0 for t0).
+    uint32_t registerSpace = 0;      ///< Register space (usually 0).
+    uint32_t num32BitValues = 0;     ///< Number of 32-bit values (only for Type::Constants).
+};
+
+/// Describes the root signature layout — shared by all backends.
+///
+/// Built once at device init time. DX11 uses this to translate root parameter
+/// indices to HLSL register numbers when binding constant buffers. DX12 builds
+/// this alongside the native root signature for validation and parity.
+///
+/// The layout must match the DX12 root signature parameter order exactly:
+/// ```
+/// param[0] = { Constants, b0, space0, 4 values }
+/// param[1] = { CBV,       b1, space0 }  // PerFrame
+/// param[2] = { CBV,       b2, space0 }  // PerObject
+/// param[3] = { CBV,       b4, space0 }  // Shadow
+/// param[4] = { UAV_Table, u0, space0 }
+/// param[5] = { SRV_Table, t0, space0 }  // SM5 only
+/// ```
+struct RHIRootSignatureDesc {
+    static constexpr uint32_t kMaxParams = 8;
+    RHIRootParamDesc params[kMaxParams] = {};
+    uint32_t paramCount = 0;
+};
+
 } // namespace uz

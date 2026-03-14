@@ -285,10 +285,48 @@ bool DX11Device::Init(const RHIDeviceDesc& desc) {
         m_device->CreateSamplerState(&sd, &m_shadowComparisonSampler);
     }
 
+    // Build root layout mirroring DX12 root signature parameter → HLSL register mapping.
+    // This allows DX11 SetRootCBV to bind to the correct HLSL register instead of
+    // incorrectly using the root param index as the register number.
+    {
+        m_rootLayout.paramCount = 0;
+        auto& p0 = m_rootLayout.params[m_rootLayout.paramCount++];
+        p0.type = RHIRootParamDesc::Type::Constants;
+        p0.shaderRegister = 0;   // b0
+        p0.registerSpace = 0;
+        p0.num32BitValues = 4;
+
+        auto& p1 = m_rootLayout.params[m_rootLayout.paramCount++];
+        p1.type = RHIRootParamDesc::Type::CBV;
+        p1.shaderRegister = 1;   // b1 — PerFrame
+        p1.registerSpace = 0;
+
+        auto& p2 = m_rootLayout.params[m_rootLayout.paramCount++];
+        p2.type = RHIRootParamDesc::Type::CBV;
+        p2.shaderRegister = 2;   // b2 — PerObject
+        p2.registerSpace = 0;
+
+        auto& p3 = m_rootLayout.params[m_rootLayout.paramCount++];
+        p3.type = RHIRootParamDesc::Type::CBV;
+        p3.shaderRegister = 4;   // b4 — Shadow (NOT b3!)
+        p3.registerSpace = 0;
+
+        auto& p4 = m_rootLayout.params[m_rootLayout.paramCount++];
+        p4.type = RHIRootParamDesc::Type::UAV_Table;
+        p4.shaderRegister = 0;   // u0
+        p4.registerSpace = 0;
+
+        auto& p5 = m_rootLayout.params[m_rootLayout.paramCount++];
+        p5.type = RHIRootParamDesc::Type::SRV_Table;
+        p5.shaderRegister = 0;   // t0 — SM5 SRV table
+        p5.registerSpace = 0;
+    }
+
     RHIMemoryBudget budget = GetMemoryBudget();
-    UZ_LOG(RHI, Info, "DX11Device initialized: adapter='{}', featureLevel={}, SM={}, VRAM={:.0f}MB",
+    UZ_LOG(RHI, Info, "DX11Device initialized: adapter='{}', featureLevel={}, SM={}, VRAM={:.0f}MB, rootParams={}",
            m_adapterName, m_featureLevelStr, ShaderModelToString(m_shaderModel),
-           static_cast<double>(budget.budgetBytes) / (1024.0 * 1024.0));
+           static_cast<double>(budget.budgetBytes) / (1024.0 * 1024.0),
+           m_rootLayout.paramCount);
 
     return true;
 }

@@ -226,6 +226,16 @@ private:
 
     /// Shadow PCF comparison sampler (equivalent to DX12 static sampler s1).
     ID3D11SamplerState*            m_shadowComparisonSampler = nullptr;
+
+    /// Root signature layout mirroring DX12 root parameter → HLSL register mapping.
+    /// Built during Init() so DX11 command list can translate rootParamIndex to
+    /// the correct HLSL register for VSSetConstantBuffers/PSSetConstantBuffers.
+    RHIRootSignatureDesc           m_rootLayout;
+
+public:
+    /// Returns the root signature layout for translating root param indices
+    /// to HLSL register numbers.
+    const RHIRootSignatureDesc& GetRootLayout() const { return m_rootLayout; }
 };
 
 } // namespace uz

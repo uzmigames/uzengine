@@ -205,14 +205,29 @@ void DX11CommandList::SetDescriptorIndex(uint32_t rootParamIndex, uint32_t descr
 
 void DX11CommandList::SetRootConstants(uint32_t rootParamIndex, const uint32_t* data,
                                         uint32_t count, uint32_t offsetIn32BitValues) {
-    // DX11 has no root constants — this would need to be mapped to a constant buffer update.
-    // For now, log a trace and no-op. Higher-level code should use CBV binding on DX11.
-    (void)rootParamIndex;
-    (void)data;
-    (void)count;
-    (void)offsetIn32BitValues;
-    UZ_LOG(RHI, Trace, "SetRootConstants: no-op on DX11 (rootParam={}, count={})",
-           rootParamIndex, count);
+    // DX11 has no native root constants — emulate via a scratch constant buffer,
+    // just like SetRootCBV. Upload the data and bind to the correct HLSL register.
+    if (!m_ctx || !data || count == 0) return;
+
+    const uint32_t totalValues = offsetIn32BitValues + count;
+    const uint32_t alignedSize = (totalValues * 4 + 15u) & ~15u;
+    ID3D11Buffer* scratch = GetOrCreateScratchCB(rootParamIndex, alignedSize);
+    if (!scratch) return;
+
+    D3D11_MAPPED_SUBRESOURCE mapped = {};
+    HRESULT hr = m_ctx->Map(scratch, 0, D3D11_MAP_WRITE_DISCARD, 0, &mapped);
+    if (FAILED(hr)) {
+        UZ_LOG(RHI, Error, "SetRootConstants: Map failed for slot {}, hr=0x{:08X}",
+               rootParamIndex, static_cast<uint32_t>(hr));
+        return;
+    }
+    auto* dst = static_cast<uint32_t*>(mapped.pData);
+    std::memcpy(dst + offsetIn32BitValues, data, count * sizeof(uint32_t));
+    m_ctx->Unmap(scratch, 0);
+
+    const uint32_t hlslRegister = m_device->GetRootLayout().params[rootParamIndex].shaderRegister;
+    m_ctx->VSSetConstantBuffers(hlslRegister, 1, &scratch);
+    m_ctx->PSSetConstantBuffers(hlslRegister, 1, &scratch);
 }
 
 void DX11CommandList::SetRootCBV(uint32_t rootParamIndex, uint64_t gpuAddress) {
@@ -244,8 +259,11 @@ void DX11CommandList::SetRootCBV(uint32_t rootParamIndex, RHIBufferHandle /*buff
     std::memcpy(mapped.pData, cpuData, dataSize);
     m_ctx->Unmap(scratch, 0);
 
-    m_ctx->VSSetConstantBuffers(rootParamIndex, 1, &scratch);
-    m_ctx->PSSetConstantBuffers(rootParamIndex, 1, &scratch);
+    // Translate root param index to HLSL register via the root layout.
+    // Root param 3 maps to b4 (shadow), not b3 — using the index directly was a bug.
+    const uint32_t hlslRegister = m_device->GetRootLayout().params[rootParamIndex].shaderRegister;
+    m_ctx->VSSetConstantBuffers(hlslRegister, 1, &scratch);
+    m_ctx->PSSetConstantBuffers(hlslRegister, 1, &scratch);
 }
 
 ID3D11Buffer* DX11CommandList::GetOrCreateScratchCB(uint32_t slot, uint32_t requiredSize) {
