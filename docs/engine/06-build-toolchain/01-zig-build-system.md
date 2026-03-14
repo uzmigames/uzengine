@@ -44,18 +44,24 @@ build.zig
   ├── uzembed tool (shader → C++ header generator)
   │   └── Runs before runtime compilation
   │
-  ├── Runtime static library (uzengine_runtime.lib)
+  ├── Runtime static library (runtime.lib)
   │   ├── Engine C++ sources (auto-discovered per directory)
   │   ├── Thirdparty sources (spdlog, Tracy, SPIRV-Reflect, astcenc, basis, miniz)
   │   └── Windows-only: DX12 backend + D3D12MA
   │
+  ├── Editor static library (editor.lib) — NEW
+  │   ├── Editor/debug visualizations (grid, font rendering, stats overlay)
+  │   ├── Screenshot capture subsystem
+  │   ├── Compare grid image composition tool
+  │   └── Linked via -Deditor build flag (optional)
+  │
   ├── Test executable (test_runtime.exe)
   │   ├── GoogleTest compiled from source
   │   ├── Test sources (auto-discovered per directory)
-  │   └── Links uzengine_runtime.lib (no recompilation)
+  │   └── Links runtime.lib (no recompilation)
   │
   └── Tools & DLL deployment (Windows only)
-      ├── uzengine.exe (standalone runtime)
+      ├── uzengine.exe (standalone runtime, links runtime.lib + editor.lib)
       ├── uzcook.exe (asset cook tool)
       └── DLL deployment (Agility SDK, DXC)
 ```
@@ -120,6 +126,61 @@ const cpp_flags = &.{ "-std=c++17", "-DSPDLOG_COMPILED_LIB" };
 | `spirv_reflect.c` | `-std=c11` | C source, not C++ |
 | `miniz.c` | `-std=c11` | C source (zlib-compatible compression for tinyexr) |
 | `test_image_libs.cpp` | `-fno-sanitize=alignment` | stb_image_resize2 uses intentional unaligned loads |
+
+## Library Architecture: runtime.lib + editor.lib
+
+As of commit 493e7dd, the build system produces two static libraries:
+
+### runtime.lib (Core Engine)
+
+Contains all essential engine systems:
+- ECS world, entity, component system
+- Renderer, render graph, RHI backends (DX12, Vulkan, Metal)
+- Physics (Jolt), Audio (XAudio2), Input, Camera
+- Lua scripting VM and scene loader
+- Asset pipeline, shader compiler, profiling, logging
+
+**Consumers**: `uzengine.exe`, `uzcook.exe`, `test_runtime.exe`, custom game DLLs
+
+### editor.lib (Editor Features) — Optional
+
+Contains debug/visualization features:
+- Grid renderer — infinite floor grid for level editing
+- Font rendering — debug text overlay
+- Stats overlay — frame time, memory, draw calls, entity count
+- Screenshot capture — PNG export via libjpeg-turbo
+- Compare grid — multi-image composition tool (for RHI backend comparison)
+- uzeditor.h umbrella header — includes all above subsystems
+
+**Consumers**: Only `uzengine.exe` (editor mode) and demos (via `-Deditor` build flag)
+
+**Linkage model**:
+- Core tools (`uzcook.exe`, `test_runtime.exe`) link ONLY `runtime.lib` — smaller binaries, no debug overhead
+- Editor (`uzengine.exe`) links BOTH `runtime.lib` + `editor.lib` — full feature set
+- Demos auto-link both libraries (via `build_common.zig`) when `-Deditor` is set
+
+### Demo Build Configuration
+
+Demos previously required manual `extra_sources` configuration in each `build.zig`. As of commit 493e7dd:
+
+```zig
+// OLD (per-demo build.zig):
+const extra_sources = &.{
+    "../../editor/grid/grid_renderer.cpp",
+    "../../editor/font/font_renderer.cpp",
+    // ... manual list of editor sources
+};
+
+// NEW (via build_common.zig):
+const editor_lib = "editor";  // Auto-linked via -Deditor flag
+// Demo gets grid, font, stats, screenshot, compare_grid automatically
+```
+
+When building a demo with `-Deditor`:
+```bash
+zig build -Deditor        # Includes editor.lib
+zig build                  # runtime.lib only (smaller binary for headless testing)
+```
 
 ## macOS Build Configuration
 
@@ -201,17 +262,18 @@ Output directory: `runtime/build/` (overridden from Zig's default `zig-out/`):
 ```
 runtime/build/
 ├── bin/
-│   ├── uzengine.exe          # Standalone runtime
-│   ├── uzcook.exe            # Asset cook tool
+│   ├── uzengine.exe          # Standalone runtime (links runtime.lib + editor.lib)
+│   ├── uzcook.exe            # Asset cook tool (links runtime.lib)
 │   ├── uzembed.exe           # Shader embed tool (build-time only)
-│   ├── test_runtime.exe      # Unit tests
+│   ├── test_runtime.exe      # Unit tests (links runtime.lib)
 │   ├── dxcompiler.dll        # DXC (shader compiler)
 │   ├── dxil.dll              # DXIL validation
 │   └── D3D12/
 │       ├── D3D12Core.dll     # Agility SDK runtime
 │       └── d3d12SDKLayers.dll # Agility SDK debug layer
 └── lib/
-    └── uzengine_runtime.lib  # Static library (linked by tools + tests)
+    ├── runtime.lib           # Static library — core engine
+    └── editor.lib            # Static library — editor features (grid, stats, screenshot, compare_grid)
 ```
 
 ### `zig build test`
@@ -231,19 +293,21 @@ zig build cook -- --source assets/ --output build/cooked/ --pak game
 
 ## Build Dependencies
 
-The runtime compilation step depends on `uzembed` having run first:
+The build follows this dependency chain:
 
 ```
 uzembed.exe
     ↓ (generates build/generated/shaders/*.gen.h)
-uzengine_runtime.lib
-    ↓ (links into)
-├── test_runtime.exe
-├── uzengine.exe
-└── uzcook.exe
+runtime.lib + editor.lib (compiled in parallel)
+    ├─ runtime.lib (core engine: ECS, renderer, physics, scripting, etc.)
+    └─ editor.lib (editor features: grid, font rendering, stats, screenshot, compare_grid)
+    ↓ (linked into)
+├── test_runtime.exe (links runtime.lib)
+├── uzengine.exe (links runtime.lib + editor.lib)
+└── uzcook.exe (links runtime.lib)
 ```
 
-This is enforced via `lib.step.dependOn(&run_embed.step)` — Zig's build graph ensures correct ordering.
+The `uzembed` dependency is enforced via `lib.step.dependOn(&run_embed.step)` — Zig's build graph ensures shaders are embedded before runtime compilation starts.
 
 ## System Libraries (Platform-Specific)
 

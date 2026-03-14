@@ -1,9 +1,9 @@
 # Scripting — LuaJIT Integration
 
-> **Status**: Planned (Phase 3)
-> **Source**: `engine/scripting/lua_vm.h`, `lua_bindings.cpp`, `lua_ffi_bridge.h`
-> **Depends on**: Core (logging, memory, paths), subsystem registry (§9.4)
-> **References**: LuaJIT 2.1 FFI, Lua 5.1 API, clean-room (UE5 Slate/UMG for reference only)
+> **Status**: Active (Phase 1 Complete)
+> **Source**: `engine/scripting/lua_vm.h/cpp`, `script_component.h/cpp`, `lua_*_api.cpp`, `lua_bindings.cpp`
+> **Depends on**: Core (logging, memory, paths), subsystem registry (§9.4), ECS system (§10)
+> **References**: LuaJIT 2.1 API, Lua 5.1 C interface, Godot GDScript embedding pattern
 
 ## Purpose
 

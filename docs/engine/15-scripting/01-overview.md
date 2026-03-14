@@ -1,8 +1,8 @@
 # Scripting — C++ & Lua
 
-> **Status**: Planned (Phase 2–3)
-> **Source**: `engine/scripting/`
-> **References**: UE5 Blueprints + C++ dual model (clean-room), Godot GDScript + C++ pattern
+> **Status**: Active (Phase 1 Complete — Lua scripting, Phase 2+ C++ behaviors planned)
+> **Source**: `engine/scripting/`, `lua_vm.h`, `script_component.h`, `lua_*_api.cpp`
+> **References**: LuaJIT 2.1 integration, UE5 Blueprints + C++ dual model (reference), Godot GDScript + C++ pattern (reference)
 
 ## Purpose
 
@@ -154,6 +154,7 @@ When a `.lua` file changes on disk:
 
 | Phase | What Ships |
 |-------|-----------|
-| **Phase 2** | C++ Behavior system, `UZ_REGISTER_BEHAVIOR`, hot-reload via DLL |
-| **Phase 3** | LuaJIT VM, sandbox, `ScriptComponent`, Lua bindings (Vec3, World, Entity), hot-reload |
-| **Phase 4** | Lua debug integration (breakpoints via VSCode DAP), Lua profiler, coroutine scheduler |
+| **Phase 1** | ✅ **DONE** — LuaJIT 2.1 VM, sandboxed state, `ScriptComponent`, per-node lifecycle (`on_start`/`on_update`/`on_stop`), Lua APIs (camera, input, scene, renderer), hot-reload |
+| **Phase 2** | C++ Behavior system, `UZ_REGISTER_BEHAVIOR`, hot-reload via game.dll (ECS integration) |
+| **Phase 3** | Enhanced Lua bindings (physics, audio, events), Lua debug integration (breakpoints via VSCode DAP), Lua profiler |
+| **Phase 4** | Lua coroutine scheduler, async/await patterns, Lua module system with imports |

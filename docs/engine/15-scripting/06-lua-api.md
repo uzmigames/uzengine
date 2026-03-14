@@ -1,9 +1,9 @@
 # Scripting — Lua API Reference
 
-> **Status**: Planned (Phase 3)
-> **Source**: `engine/scripting/lua_bindings/`, all registration files
-> **Depends on**: LuaVM (§15.2), all subsystems (§9+)
-> **References**: Complete C++ → Lua bindings for engine APIs
+> **Status**: Active (Phase 1 Complete — Core APIs; Phase 2+ for extended bindings)
+> **Source**: `engine/scripting/lua_*_api.cpp`, `lua_vm.cpp` (registration)
+> **Depends on**: LuaVM (§15.2), subsystems (§9: Input, Camera, Scene/ECS)
+> **Implements**: Core APIs (uz.log, uz.scene, uz.camera, uz.input, uz.delta_time, uz.total_time)
 
 ## Purpose
 

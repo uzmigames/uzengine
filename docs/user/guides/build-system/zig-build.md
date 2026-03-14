@@ -26,25 +26,34 @@ Three compilers are verified: Zig, MSVC, and Clang.
 
 ## Build Structure
 
-The build produces one static library and multiple executables:
+The build produces two static libraries and multiple executables:
 
 ```
 build.zig
-├── uzengine (static lib) ─── All engine code
-│   ├── engine/ sources (logging, math, config, shader, asset, renderer, rhi, ecs, job)
+├── runtime (static lib) ─── Core engine code
+│   ├── engine/ sources (logging, math, config, shader, asset, renderer, rhi, ecs, job, scripting)
 │   ├── platform/windows/ sources (Windows only)
 │   ├── engine/rhi/dx12/ sources (Windows only)
-│   └── thirdparty/ (spdlog, Tracy, D3D12MA, xxHash, spirv-reflect, entt)
+│   └── thirdparty/ (spdlog, Tracy, D3D12MA, xxHash, spirv-reflect, entt, luajit)
 │
-├── uzengine.exe ─── Standalone runtime (links static lib)
-└── test_runtime.exe ─────── GoogleTest runner (links static lib)
+├── editor (static lib) ───── Editor/debug features (OPTIONAL)
+│   ├── Grid renderer (infinite floor grid)
+│   ├── Font rendering (debug text overlay)
+│   ├── Stats overlay (frame time, memory, draw calls)
+│   ├── Screenshot capture (PNG export)
+│   └── Compare grid tool (multi-image composition)
+│
+├── uzengine.exe ──────────── Editor runtime (links runtime + editor)
+├── uzcook.exe ───────────── Asset cooker (links runtime only)
+└── test_runtime.exe ─────── GoogleTest runner (links runtime only)
 
 Demos use shared build_common.zig:
 demos/
-├── common/build_common.zig ── Shared build logic
+├── common/build_common.zig ── Shared build logic (auto-links editor.lib with -Deditor)
 ├── common/build.zig ───────── Re-exports build_common.zig
-├── clear_screen/build.zig ─── DX12 animated clear screen
-└── triangle/build.zig ──────── DX12 triangle (SM6.6 bindless)
+├── pbr_test/build.zig ────── PBR rendering demo
+├── ibl_test/build.zig ────── IBL pipeline demo
+└── deferred_test/build.zig ─ Deferred shading demo
 ```
 
 ## Platform Guards
@@ -125,6 +134,39 @@ to the running executable via `uz::GetExeDir()` (defined in `engine/paths/paths.
 
 This follows the same pattern used by Unreal Engine (`FPlatformProcess::BaseDir()`)
 and Godot (`OS::get_executable_path().get_base_dir()`).
+
+## Editor Library — Optional Debug Features
+
+The build system separates editor features into an optional `editor.lib` library:
+
+### Included in editor.lib
+
+- **Grid renderer** — infinite floor grid for level layout (editor mode only)
+- **Font rendering** — in-world debug text overlay
+- **Stats overlay** — real-time frame time, memory usage, draw call count, entity count
+- **Screenshot capture** — PNG export via libjpeg-turbo (used by demos for visual testing)
+- **Compare grid tool** — multi-image composition (compare RHI backends side-by-side)
+
+### When to Link editor.lib
+
+| Use Case | Command | Includes |
+|----------|---------|----------|
+| **Editor (dev)** | `zig build` | runtime.lib + editor.lib |
+| **Shipping release** | (custom build) | runtime.lib only |
+| **Demo/test** | `zig build -Deditor` | runtime.lib + editor.lib |
+| **Headless tool** (uzcook) | `zig build cook` | runtime.lib only |
+
+The `-Deditor` flag enables editor features for specific builds:
+
+```bash
+# Build runtime and demos with editor features (grid, stats, screenshots)
+zig build -Deditor
+
+# Build runtime only (smaller binary for shipping)
+zig build
+```
+
+The primary executable (`uzengine.exe`) always includes `editor.lib` for interactive editing.
 
 ## Cross-Compilation
 

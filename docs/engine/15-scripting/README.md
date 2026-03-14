@@ -2,8 +2,8 @@
 
 LuaJIT 2.1 scripting — sandbox, script runner, hot-reload, and the Lua API.
 
-> **Status**: Planned
-> **Source**: `runtime/engine/scripting/`, `runtime/game/lua/`
+> **Status**: Active (Phase 1 Complete)
+> **Source**: `runtime/engine/scripting/`, `lua_vm.h/cpp`, `script_component.h/cpp`, `lua_*_api.cpp`
 
 | Document | Topic |
 |----------|-------|

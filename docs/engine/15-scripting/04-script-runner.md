@@ -1,9 +1,9 @@
 # Scripting — Script Runner
 
-> **Status**: Planned (Phase 3)
-> **Source**: `engine/scripting/script_component.h`, `script_runner.cpp`
-> **Depends on**: LuaVM (§15.2), sandbox (§15.3), component system (§10), entity system
-> **References**: Godot `Node._process/_ready`, Roblox `Script.Parent`
+> **Status**: Active (Phase 1 Complete)
+> **Source**: `engine/scripting/script_component.h/cpp`, `script_runner.cpp`
+> **Depends on**: LuaVM (§15.2), sandbox (§15.3), component system (§10), ECS World system
+> **References**: Godot `Node._process/_ready/_exit_tree`, Roblox `Script.Parent`, UE5 `Actor.BeginPlay/EndPlay`
 
 ## Purpose
 
