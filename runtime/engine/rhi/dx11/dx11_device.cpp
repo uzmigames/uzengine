@@ -272,11 +272,15 @@ bool DX11Device::Init(const RHIDeviceDesc& desc) {
     {
         D3D11_SAMPLER_DESC sd = {};
         sd.Filter = D3D11_FILTER_COMPARISON_MIN_MAG_LINEAR_MIP_POINT;
-        sd.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
-        sd.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
-        sd.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+        sd.AddressU = D3D11_TEXTURE_ADDRESS_BORDER;
+        sd.AddressV = D3D11_TEXTURE_ADDRESS_BORDER;
+        sd.AddressW = D3D11_TEXTURE_ADDRESS_BORDER;
         sd.MaxAnisotropy = 1;
         sd.ComparisonFunc = D3D11_COMPARISON_LESS;
+        sd.BorderColor[0] = 0.0f; // Outside shadow atlas = no occlusion
+        sd.BorderColor[1] = 0.0f;
+        sd.BorderColor[2] = 0.0f;
+        sd.BorderColor[3] = 0.0f;
         sd.MaxLOD = D3D11_FLOAT32_MAX;
         m_device->CreateSamplerState(&sd, &m_shadowComparisonSampler);
     }

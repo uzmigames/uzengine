@@ -61,6 +61,7 @@ struct LightingPassDesc {
     RHITextureHandle  normalTexture;    ///< Physical normal texture handle (SM5 fallback binding).
     RHITextureHandle  depthTextureForSrv;///< Physical depth texture handle (SM5 fallback binding, read as SRV).
     CBAllocation      shadowAlloc;      ///< ShadowDataCB allocation (bound at b4 via root param 3). Zero-init if no shadows.
+    RHITextureHandle  shadowAtlasTexture; ///< Physical shadow atlas texture handle (SM5 fallback, bound at t3).
     bool              bindless;         ///< True if SM6.6 bindless path is active.
     float             viewportWidth;    ///< Viewport width in pixels.
     float             viewportHeight;   ///< Viewport height in pixels.

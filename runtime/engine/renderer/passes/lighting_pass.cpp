@@ -79,10 +79,11 @@ void AddLightingPass(rg::RgBuilder& builder, const LightingPassDesc& desc)
                 };
                 cmd->SetRootConstants(kSlotRootConstants, indices, 3);
             } else {
-                // SM5: bind textures directly at fragment texture slots t0-t2.
+                // SM5: bind textures directly at fragment texture slots t0-t3.
                 cmd->SetFragmentTexture(0, desc.albedoTexture);
                 cmd->SetFragmentTexture(1, desc.normalTexture);
                 cmd->SetFragmentTexture(2, desc.depthTextureForSrv);
+                cmd->SetFragmentTexture(3, desc.shadowAtlasTexture);
             }
 
             // ── Viewport and scissor ─────────────────────────────────────

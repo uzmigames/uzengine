@@ -591,7 +591,17 @@ void DX11CommandList::BeginRenderPass(const RHIRenderPassDesc& desc) {
 }
 
 void DX11CommandList::EndRenderPass() {
-    // DX11 has no explicit render pass end — intentional no-op
+    if (!m_ctx) return;
+
+    // Unbind all render targets and SRVs to prevent DX11 resource hazards.
+    // DX11 automatically forces SRV slots to NULL when the same resource is
+    // bound as RTV/DSV. By explicitly unbinding here, we ensure the next pass
+    // can freely bind these resources as SRVs without the runtime interfering.
+    m_ctx->OMSetRenderTargets(0, nullptr, nullptr);
+
+    // Clear SRV slots that may reference render targets or depth buffers.
+    ID3D11ShaderResourceView* nullSrvs[8] = {};
+    m_ctx->PSSetShaderResources(0, 8, nullSrvs);
 }
 
 } // namespace uz

@@ -389,6 +389,7 @@ void PBRTestDemo::OnFrame(float dt) {
             lightDesc.normalTexture       = gbuffer_.normal;
             lightDesc.depthTextureForSrv  = gbuffer_.depth;
             lightDesc.shadowAlloc         = shadowAlloc;
+            lightDesc.shadowAtlasTexture  = shadowAtlas_;
             lightDesc.bindless            = bindless;
             lightDesc.viewportWidth       = static_cast<float>(swapChain->GetWidth());
             lightDesc.viewportHeight      = static_cast<float>(swapChain->GetHeight());
