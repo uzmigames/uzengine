@@ -1,7 +1,7 @@
 # Architecture Overview — Project Structure
 
 > **Status**: Reference (active — evolves as new modules are added)
-> **Source**: ARCHITECTURE.md §Project Structure, §Build Pipeline, §Why Three Layers, §Directory Structure
+> **Source**: architecture.md §Project Structure, §Build Pipeline, §Why Three Layers, §Directory Structure
 
 ## Three-Layer Architecture
 

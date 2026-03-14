@@ -1,6 +1,6 @@
 # UzEngine 0.2 — Roadmap Analysis Report
 
-> **Status**: PENDING APPROVAL — Do not update ROADMAP.md until approved.
+> **Status**: PENDING APPROVAL — Do not update roadmap.md until approved.
 > **Date**: 2026-03-12
 > **Sources**: 8 parallel agent analyses (UE5, Godot, Unity architects + RHI, ECS, Editor, Asset Pipeline, Gameplay engineers + Codebase explorer)
 
@@ -312,7 +312,7 @@ Phase 8-9:            MCP → Platform Services → Networking → Shipping
 
 Review this report. When approved, I will:
 
-1. Rewrite `docs/ROADMAP.md` with the new phase structure
+1. Rewrite `docs/roadmap.md` with the new phase structure
 2. Fix dependency errors in docs/engine/ (material system, render world)
 3. Update `docs/README.md` to reference new roadmap
 4. Commit with full changelog

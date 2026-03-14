@@ -1228,7 +1228,7 @@ runtime/
 │   ├── screenshot/
 │   └── stats/
 │
-├── developer/                               ← dev-only, stripped in shipping (see DEVELOPER.md)
+├── developer/                               ← dev-only, stripped in shipping (see developer.md)
 │   ├── profiling/
 │   ├── debug_draw/
 │   ├── hot_reload/

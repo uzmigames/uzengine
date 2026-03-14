@@ -6,24 +6,23 @@
 
 | Document | Description |
 |----------|-------------|
-| [ARCHITECTURE.md](ARCHITECTURE.md) | High-level architecture — layers, threading, rendering backend, build system |
-| [ENGINE.md](ENGINE.md) | Engine layer API — lifecycle, ECS, components, input, physics, audio, rendering |
-| [DEVELOPER.md](DEVELOPER.md) | Developer layer — tools and systems stripped from shipping builds |
-| [ROADMAP.md](ROADMAP.md) | Full development roadmap — 9 phases, from foundation to shipping |
-| [ROADMAP_ANALYSIS_REPORT.md](ROADMAP_ANALYSIS_REPORT.md) | Architecture analysis from 8 agents (UE5, Godot, Unity, RHI, ECS, Editor, Asset, Gameplay) |
-| [DAG.md](DAG.md) | Milestone dependency graph |
-| [PDR.md](PDR.md) | Project Design Review — scope, risks, decisions |
+| [architecture.md](architecture.md) | High-level architecture — layers, threading, rendering backend, build system |
+| [roadmap.md](roadmap.md) | Full development roadmap — 9 phases, from foundation to shipping |
+| [dag.md](dag.md) | Milestone dependency graph |
+| [pdr.md](pdr.md) | Project Design Review — scope, risks, decisions |
+| [deprecated/engine.md](deprecated/engine.md) | (Deprecated) Engine layer API — superseded by engine/ directory |
+| [deprecated/developer.md](deprecated/developer.md) | (Deprecated) Developer layer docs — superseded by engine/22-developer-layer/ |
 
 ## Detailed Engine Documentation
 
 For comprehensive system design, API reference, and implementation details, see [engine/README.md](engine/README.md).
 
-183 files across 32 sections organized by tier:
+190+ files across 33 sections organized by tier:
 - **Sections 00–06**: Architecture, core systems, RHI, shader pipeline (Phase 1 — done)
 - **Sections 07–12**: Platform, resource system, lifecycle, ECS, scene, rendering (Phases 2–3)
 - **Sections 13–21**: Input, camera, scripting, physics, audio, UI, animation, gameplay, property system (Phases 4–6)
 - **Sections 22–30**: Developer tools, localization, networking, VFX, AI pipeline, platform services, IPC, examples (Phases 7–9)
-- **Section 40**: Editor framework — 21 files covering all VSCode editor panels (Phase 5)
+- **Sections 31–33**: Editor framework, engine mode, VFX AI tool (Phase 5)
 
 ## Technical Specs
 
@@ -32,7 +31,7 @@ Detailed specifications for each milestone, located in [specs/](specs/):
 | Spec | Milestone | Topic |
 |------|-----------|-------|
 | [1.0-bootstrap](specs/1.0-bootstrap.md) | 1.0 | Project bootstrap, build system, core libraries |
-| [1.1-MATH-CONTAINERS](specs/1.1-MATH-CONTAINERS.md) | 1.1 | Math types (Vec2–4, Mat4, Quat, Transform) and containers |
+| [1.1-math-containers](specs/1.1-math-containers.md) | 1.1 | Math types (Vec2–4, Mat4, Quat, Transform) and containers |
 | [1.2-rhi](specs/1.2-rhi.md) | 1.2 | RHI abstraction — DX12/Vulkan/Metal backends |
 | [1.3-renderer](specs/1.3-renderer.md) | 1.3 | Render graph, GBuffer, lighting, post-processing |
 | [1.4-scene-system](specs/1.4-scene-system.md) | 1.4 | Scene tree, node types, serialization |
@@ -44,26 +43,33 @@ Detailed specifications for each milestone, located in [specs/](specs/):
 | [2.2-2.3-editors](specs/2.2-2.3-editors.md) | 2.2–2.3 | Scene editor, inspector, asset browser |
 | [3.0-mcp-integration](specs/3.0-mcp-integration.md) | 3.0 | MCP server for AI-driven development |
 | [4.0-polish-shipping](specs/4.0-polish-shipping.md) | 4.0 | Polish, optimization, shipping |
-| [INDEX.md](specs/INDEX.md) | — | Spec index and status tracker |
+| [index.md](specs/index.md) | — | Spec index and status tracker |
+
+## Reference Engine Analysis
+
+| Directory | Description |
+|-----------|-------------|
+| [analysis/](analysis/) | Godot 4 and UE5 rendering architecture analysis (POM, tonemap, RenderingDevice) |
+| [architecture/](architecture/) | UE5 RHI binding pattern analysis, migration playbooks, shader model compatibility |
+| [research/](research/) | Research notes, code audits, platform analysis, and implementation templates |
 
 ## Benchmarks
 
-| Document | Description |
-|----------|-------------|
-| [BENCHMARK_COMPILERS.md](benchmarks/BENCHMARK_COMPILERS.md) | Compiler comparison (Zig/Clang/MSVC) — build times, binary size, runtime perf |
+| Directory | Description |
+|-----------|-------------|
+| [benchmarks/](benchmarks/) | Compiler comparison and runtime performance benchmarks |
 
 ## Quality Audits
 
-| Document | Description |
-|----------|-------------|
-| [DOCUMENTATION-AUDIT-2026-03-13.md](audits/DOCUMENTATION-AUDIT-2026-03-13.md) | Code documentation quality audit — Rust-style docs, 100% Excellent across 18 header files |
+| Directory | Description |
+|-----------|-------------|
+| [audits/](audits/) | Documentation and code quality audit reports |
 
 ## Observability
 
-| Document | Description |
-|----------|-------------|
-| [observability-cpp.md](observability/observability-cpp.md) | C++ logging, profiling, assertions (UZ_LOG, Tracy, UZ_CHECK) |
-| [observability-ts.md](observability/observability-ts.md) | TypeScript extension observability |
+| Directory | Description |
+|-----------|-------------|
+| [observability/](observability/) | C++ and TypeScript observability specs (UZ_LOG, Tracy, UZ_CHECK) |
 
 ## User Documentation
 

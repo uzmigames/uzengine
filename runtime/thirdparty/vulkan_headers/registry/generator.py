@@ -1,6 +1,6 @@
 #!/usr/bin/env python3 -i
 #
-# Copyright 2013-2025 The Khronos Group Inc.
+# Copyright 2013-2026 The Khronos Group Inc.
 #
 # SPDX-License-Identifier: Apache-2.0
 """Base class for source/header/doc generators, as well as some utility functions."""
@@ -50,65 +50,50 @@ def enquote(s):
     return None
 
 
-def regSortCategoryKey(feature):
-    """Sort key for regSortFeatures.
-    Sorts by category of the feature name string:
+def regSortFeatures(orderedFeatureNames, features):
+    """Default sort procedure for generated features.
 
-    - Core API features (those defined with a `<feature>` tag)
-        - (sort VKSC after VK - this is Vulkan-specific)
-    - ARB/KHR/OES (Khronos extensions)
-    - other       (EXT/vendor extensions)"""
-
-    if feature.elem.tag == 'feature':
-        if feature.name.startswith('VKSC'):
-            return 0.5
-        else:
-            return 0
-
-    if feature.category.upper() in ('ARB', 'KHR', 'OES'):
-        return 1
-
-    return 2
-
-
-def regSortOrderKey(feature):
-    """Sort key for regSortFeatures - key is the sortorder attribute."""
-
-    return feature.sortorder
-
-
-def regSortNameKey(feature):
-    """Sort key for regSortFeatures - key is the extension name."""
-
-    return feature.name
-
-
-def regSortFeatureVersionKey(feature):
-    """Sort key for regSortFeatures - key is the feature version.
-    `<extension>` elements all have version number 0."""
-
-    return float(feature.versionNumber)
-
-
-def regSortExtensionNumberKey(feature):
-    """Sort key for regSortFeatures - key is the extension number.
-    `<feature>` elements all have extension number 0."""
-
-    return int(feature.number)
-
-
-def regSortFeatures(featureList):
-    """Default sort procedure for features.
+    - orderedFeatureNames - list of feature / extension names to sort
+    - features - dictionary of FeatureInfo keyed by names
 
     - Sorts by explicit sort order (default 0) relative to other features
     - then by feature category ('feature' or 'extension'),
     - then by version number (for features)
     - then by extension number (for extensions)"""
-    featureList.sort(key=regSortExtensionNumberKey)
-    featureList.sort(key=regSortFeatureVersionKey)
-    featureList.sort(key=regSortCategoryKey)
-    featureList.sort(key=regSortOrderKey)
 
+    # Sort by extension numbers; <feature>s all have extension number 0
+    orderedFeatureNames.sort(key=lambda name: int(features[name].number))
+
+    # Sort by feature version; <extension>s all have version number 0
+    orderedFeatureNames.sort(key=lambda name: float(features[name].versionNumber))
+
+    # Sort by feature name category
+    def categoryKey(feature):
+        """Helper function, too long to put in a sort key lambda
+
+        - feature - FeatureInfo containing the XML element to sort
+
+        Sorts by:
+
+        - Core API features (those defined with a `<feature>` tag)
+        - Sort VKSC core features after VK - Vulkan-specific
+        - ARB/KHR/OES (Khronos extensions)
+        - other       (EXT/vendor extensions)"""
+
+        if feature.elem.tag == 'feature':
+            if feature.name.startswith('VKSC'):
+                return 0.5
+            else:
+                return 0
+        elif feature.category.upper() in ('ARB', 'KHR', 'OES'):
+            return 1
+        else:
+            return 2
+
+    orderedFeatureNames.sort(key=lambda name: categoryKey(features[name]))
+
+    # Sort by sortorder attribute
+    orderedFeatureNames.sort(key=lambda name: features[name].sortorder)
 
 class MissingGeneratorOptionsError(RuntimeError):
     """Error raised when a Generator tries to do something that requires GeneratorOptions but it is None."""
@@ -116,7 +101,7 @@ class MissingGeneratorOptionsError(RuntimeError):
     def __init__(self, msg=None):
         full_msg = 'Missing generator options object self.genOpts'
         if msg:
-            full_msg += ': ' + msg
+            full_msg += f": {msg}"
         super().__init__(full_msg)
 
 
@@ -126,7 +111,7 @@ class MissingRegistryError(RuntimeError):
     def __init__(self, msg=None):
         full_msg = 'Missing Registry object self.registry'
         if msg:
-            full_msg += ': ' + msg
+            full_msg += f": {msg}"
         super().__init__(full_msg)
 
 
@@ -136,7 +121,7 @@ class MissingGeneratorOptionsConventionsError(RuntimeError):
     def __init__(self, msg=None):
         full_msg = 'Missing Conventions object self.genOpts.conventions'
         if msg:
-            full_msg += ': ' + msg
+            full_msg += f": {msg}"
         super().__init__(full_msg)
 
 
@@ -153,6 +138,7 @@ class GeneratorOptions:
                  genpath=None,
                  apiname=None,
                  mergeApiNames=None,
+                 mergeInternalApis=True,
                  profile=None,
                  versions='.*',
                  emitversions='.*',
@@ -179,6 +165,7 @@ class GeneratorOptions:
         - apiname - string matching `<api>` 'apiname' attribute, e.g. 'gl'.
         - mergeApiNames - If not None, a comma separated list of API names
           to merge into the API specified by 'apiname'
+        - mergeInternalApis - whether to merge internal APIs into public APIs
         - profile - string specifying API profile , e.g. 'core', or None.
         - versions - regex matching API versions to process interfaces for.
         Normally `'.*'` or `'[0-9][.][0-9]'` to match all defined versions.
@@ -239,6 +226,9 @@ class GeneratorOptions:
 
         self.mergeApiNames = mergeApiNames
         "comma separated list of API names to merge into the API specified by 'apiname'"
+
+        self.mergeInternalApis = mergeInternalApis
+        "whether to merge internal APIs into public APIs"
 
         self.profile = profile
         "string specifying API profile , e.g. 'core', or None."
@@ -338,7 +328,7 @@ class OutputGenerator:
         )
 
         if name in bad and True:
-            print('breakName {}: {}'.format(name, msg))
+            print(f'breakName {name}: {msg}')
             pdb.set_trace()
 
     def __init__(self, errFile=sys.stderr, warnFile=sys.stderr, diagFile=sys.stdout):
@@ -399,7 +389,7 @@ class OutputGenerator:
                 write('DIAG:', *args, file=self.diagFile)
         else:
             raise UserWarning(
-                '*** FATAL ERROR in Generator.logMsg: unknown level:' + level)
+                f"*** FATAL ERROR in Generator.logMsg: unknown level:{level}")
 
     def enumToValue(self, elem, needsNum, bitwidth = 32,
                     forceSuffix = False, parent_for_alias_dereference=None):
@@ -452,20 +442,20 @@ class OutputGenerator:
             #     value += enuminfo.type
             if forceSuffix:
               if bitwidth == 64:
-                value = value + 'ULL'
+                value = f"{value}ULL"
               else:
-                value = value + 'U'
+                value = f"{value}U"
             self.logMsg('diag', 'Enum', name, '-> value [', numVal, ',', value, ']')
             return [numVal, value]
         if 'bitpos' in elem.keys():
             value = elem.get('bitpos')
             bitpos = int(value, 0)
             numVal = 1 << bitpos
-            value = '0x%08x' % numVal
+            value = f'0x{numVal:08x}'
             if bitwidth == 64 or bitpos >= 32:
-              value = value + 'ULL'
+              value = f"{value}ULL"
             elif forceSuffix:
-              value = value + 'U'
+              value = f"{value}U"
             self.logMsg('diag', 'Enum', name, '-> bitpos [', numVal, ',', value, ']')
             return [numVal, value]
         if 'offset' in elem.keys():
@@ -587,14 +577,14 @@ class OutputGenerator:
             name = elem.get('name')
 
         if reason == 'aliased':
-            return f'{padding}// {name} is a deprecated alias\n'
+            return f'{padding}// {name} is a legacy alias\n'
         elif reason == 'ignored':
-            return f'{padding}// {name} is deprecated and should not be used\n'
+            return f'{padding}// {name} is legacy and should not be used\n'
         elif reason == 'true':
-            return f'{padding}// {name} is deprecated, but no reason was given in the API XML\n'
+            return f'{padding}// {name} is legacy, but no reason was given in the API XML\n'
         else:
             # This can be caught by schema validation
-            self.logMsg('error', f"{name} has an unknown deprecation attribute value '{reason}'")
+            self.logMsg('error', f"{name} has an unknown legacy attribute value '{reason}'")
             exit(1)
 
     def buildEnumCDecl(self, expand, groupinfo, groupName):
@@ -655,12 +645,12 @@ class OutputGenerator:
         flagTypeName = groupElem.get('name')
 
         # Prefix
-        body = "// Flag bits for " + flagTypeName + "\n"
+        body = f"// Flag bits for {flagTypeName}\n"
 
         if bitwidth == 64:
-            body += "typedef VkFlags64 %s;\n" % flagTypeName;
+            body += f"typedef VkFlags64 {flagTypeName};\n";
         else:
-            body += "typedef VkFlags %s;\n" % flagTypeName;
+            body += f"typedef VkFlags {flagTypeName};\n";
 
         # Maximum allowable value for a flag (unsigned 64-bit integer)
         maxValidValue = 2**(64) - 1
@@ -697,25 +687,25 @@ class OutputGenerator:
             if self.isEnumRequired(elem):
                 protect = elem.get('protect')
                 if protect is not None:
-                    body += '#ifdef {}\n'.format(protect)
+                    body += f'#ifdef {protect}\n'
 
                 body += self.deprecationComment(elem, indent = 0)
 
                 if usedefine:
-                    decl += "#define {} {}\n".format(name, strVal)
+                    decl += f"#define {name} {strVal}\n"
                 elif self.misracppstyle():
-                    decl += "static constexpr {} {} {{{}}};\n".format(flagTypeName, name, strVal)
+                    decl += f"static constexpr {flagTypeName} {name} {{{strVal}}};\n"
                 else:
                     # Some C compilers only allow initializing a 'static const' variable with a literal value.
                     # So initializing an alias from another 'static const' value would fail to compile.
                     # Work around this by chasing the aliases to get the actual value.
                     while numVal is None:
-                        alias = self.registry.tree.find("enums/enum[@name='" + strVal + "']")
+                        alias = self.registry.tree.find(f"enums/enum[@name='{strVal}']")
                         if alias is not None:
                             (numVal, strVal) = self.enumToValue(alias, True, bitwidth, True)
                         else:
-                            self.logMsg('error', 'No such alias {} for enum {}'.format(strVal, name))
-                    decl += "static const {} {} = {};\n".format(flagTypeName, name, strVal)
+                            self.logMsg('error', f'No such alias {strVal} for enum {name}')
+                    decl += f"static const {flagTypeName} {name} = {strVal};\n"
 
                 if numVal is not None:
                     body += decl
@@ -743,7 +733,7 @@ class OutputGenerator:
         expandSuffix = ''
         expandSuffixMatch = re.search(r'[A-Z][A-Z]+$', groupName)
         if expandSuffixMatch:
-            expandSuffix = '_' + expandSuffixMatch.group()
+            expandSuffix = f"_{expandSuffixMatch.group()}"
             # Strip off the suffix from the prefix
             expandPrefix = expandName.rsplit(expandSuffix, 1)[0]
 
@@ -792,12 +782,12 @@ class OutputGenerator:
 
                 protect = elem.get('protect')
                 if protect is not None:
-                    decl += '#ifdef {}\n'.format(protect)
+                    decl += f'#ifdef {protect}\n'
 
 
                 decl += self.genRequirements(name, mustBeFound = False, indent = 2)
                 decl += self.deprecationComment(elem, indent = 2)
-                decl += '    {} = {},'.format(name, strVal)
+                decl += f'    {name} = {strVal},'
 
                 if protect is not None:
                     decl += '\n#endif'
@@ -868,8 +858,8 @@ class OutputGenerator:
             if typeStr != "float":
                 number += 'U'
             strVal = "~" if invert else ""
-            strVal += "static_cast<" + typeStr + ">(" + number + ")"
-            body = 'static constexpr ' + typeStr.ljust(9) + name.ljust(33) + ' {' + strVal + '};'
+            strVal += f"static_cast<{typeStr}>({number})"
+            body = f"static constexpr {typeStr.ljust(9)}{name.ljust(33)} {{{strVal}}};"
         elif enuminfo.elem.get('type') and not alias:
             # Generate e.g.: #define x (~0ULL)
             typeStr = enuminfo.elem.get('type');
@@ -884,10 +874,10 @@ class OutputGenerator:
             strVal = "~" if invert else ""
             strVal += number
             if paren:
-                strVal = "(" + strVal + ")";
-            body = '#define ' + name.ljust(33) + ' ' + strVal;
+                strVal = f"({strVal})";
+            body = f"#define {name.ljust(33)} {strVal}";
         else:
-            body = '#define ' + name.ljust(33) + ' ' + strVal
+            body = f"#define {name.ljust(33)} {strVal}"
 
         return body
 
@@ -1098,11 +1088,19 @@ class OutputGenerator:
             raise MissingGeneratorOptionsError()
         return self.genOpts.apientry + name + tail
 
-    def makeTypedefName(self, name, tail):
-        """Make the function-pointer typedef name for a command."""
+    def makeTypedefName(self, name, tail, isfuncpointer):
+        """Make the function-pointer typedef name for a command or
+           funcpointer name.
+           If this is a function pointer <type> tag, do not prepend a PFN_
+           to the name, as that is actually the type name and already
+           included.
+        """
         if self.genOpts is None:
             raise MissingGeneratorOptionsError()
-        return '(' + self.genOpts.apientryp + 'PFN_' + name + tail + ')'
+
+        prefix = '' if isfuncpointer else 'PFN_'
+
+        return f'({self.genOpts.apientryp}{prefix}{name}{tail})'
 
     def makeCParamDecl(self, param, aligncol):
         """Return a string which is an indented, formatted
@@ -1135,14 +1133,14 @@ class OutputGenerator:
                 # This works around a problem where very long type names -
                 # longer than the alignment column - would run into the tail
                 # text.
-                paramdecl = paramdecl.ljust(aligncol - 1) + ' '
+                paramdecl = f"{paramdecl.ljust(aligncol - 1)} "
                 newLen = len(paramdecl)
                 self.logMsg('diag', 'Adjust length of parameter decl from', oldLen, 'to', newLen, ':', paramdecl)
 
             if (self.misracppstyle() and prefix.find('const ') != -1):
                 # Change pointer type order from e.g. "const void *" to "void const *".
                 # If the string starts with 'const', reorder it to be after the first type.
-                paramdecl += prefix.replace('const ', '') + text + ' const' + tail
+                paramdecl += f"{prefix.replace('const ', '') + text} const{tail}"
             else:
                 paramdecl += prefix + text + tail
 
@@ -1169,7 +1167,7 @@ class OutputGenerator:
 
         # Allow for missing <name> tag
         newLen = 0
-        paramdecl = '    ' + noneStr(param.text)
+        paramdecl = f"    {noneStr(param.text)}"
         for elem in param:
             text = noneStr(elem.text)
             tail = noneStr(elem.tail)
@@ -1330,11 +1328,15 @@ class OutputGenerator:
 
     def makeCDecls(self, cmd):
         """Return C prototype and function pointer typedef for a
-        `<command>` Element, as a two-element list of strings.
+        `<command>` or `type category="funcpointer"` Element, as a
+        two-element list of strings [prototype, typedef].
 
-        - cmd - Element containing a `<command>` tag"""
+        - cmd - Element containing a command or funcpointer tag"""
         if self.genOpts is None:
             raise MissingGeneratorOptionsError()
+
+        isfuncpointer = (cmd.tag == 'type')
+
         proto = cmd.find('proto')
         params = cmd.findall('param')
         # Begin accumulating prototype and typedef strings
@@ -1358,7 +1360,7 @@ class OutputGenerator:
             tail = noneStr(elem.tail)
             if elem.tag == 'name':
                 pdecl += self.makeProtoName(text, tail)
-                tdecl += self.makeTypedefName(text, tail)
+                tdecl += self.makeTypedefName(text, tail, isfuncpointer)
             else:
                 pdecl += text + tail
                 tdecl += text + tail
@@ -1373,8 +1375,8 @@ class OutputGenerator:
         # a <param> node without the tags. No tree walking required
         # since all tags are ignored.
         # Uses: self.indentFuncProto
-        # self.indentFuncPointer
-        # self.alignFuncParam
+        #       self.indentFuncPointer
+        #       self.alignFuncParam
         n = len(params)
         # Indented parameters
         if n > 0:
@@ -1400,7 +1402,7 @@ class OutputGenerator:
                             # Change pointer type order from e.g. "const void *" to "void const *".
                             # If the string starts with 'const', reorder it to be after the first type.
                             if (prefix.find('const ') != -1):
-                                param += prefix.replace('const ', '') + t + ' const '
+                                param += f"{prefix.replace('const ', '') + t} const "
                             else:
                                 param += prefix + t
                             # Clear prefix for subsequent iterations
@@ -1413,7 +1415,13 @@ class OutputGenerator:
         else:
             paramdecl += 'void'
         paramdecl += ");"
-        return [pdecl + indentdecl, tdecl + paramdecl]
+
+        # For funcpointer types, only the typedef is returned,
+        # and it is formatted more attractively.
+        if isfuncpointer:
+            return [None, tdecl + indentdecl]
+        else:
+            return [pdecl + indentdecl, tdecl + paramdecl]
 
     def newline(self):
         """Print a newline to the output file (utility function)"""

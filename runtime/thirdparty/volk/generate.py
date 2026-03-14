@@ -52,7 +52,7 @@ def is_descendant_type(types, name, base):
 	if name == base:
 		return True
 	type = types.get(name)
-	if type is None:
+	if not type:
 		return False
 	parents = type.get('parent')
 	if not parents:

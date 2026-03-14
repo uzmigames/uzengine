@@ -198,11 +198,11 @@ The critical path runs through **RHI → Shader Pipeline → Runtime Framework �
 - [ ] All unit tests pass (95%+ coverage)
 - [ ] Zero compiler warnings
 - [ ] Zero linter warnings
-- [ ] Performance benchmarks meet targets (see ROADMAP.md Success Metrics)
+- [ ] Performance benchmarks meet targets (see roadmap.md Success Metrics)
 - [ ] Documentation updated in docs/engine/
 - [ ] Screenshot regression test (when renderer exists)
 
-### Success Metrics (from ROADMAP.md)
+### Success Metrics (from roadmap.md)
 
 | Metric | Target |
 |--------|--------|
@@ -230,4 +230,4 @@ The critical path runs through **RHI → Shader Pipeline → Runtime Framework �
 ---
 
 *This PDR is a living document. Update as decisions are validated and risks are resolved.*
-*Reference: [ARCHITECTURE.md](ARCHITECTURE.md) | [ROADMAP.md](ROADMAP.md) | [DAG.md](DAG.md) | [docs/engine/](engine/)*
+*Reference: [architecture.md](architecture.md) | [roadmap.md](roadmap.md) | [dag.md](dag.md) | [docs/engine/](engine/)*

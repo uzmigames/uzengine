@@ -1,7 +1,7 @@
 # Architecture Overview — Development Phases
 
 > **Status**: Reference (roadmap)
-> **Source**: ARCHITECTURE.md §Development Phases
+> **Source**: architecture.md §Development Phases
 
 ## Phase Overview
 

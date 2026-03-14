@@ -427,7 +427,7 @@ If `openspec/` directory exists:
 ### Step 4: Update Documentation
 
 ```bash
-# Update ROADMAP.md (if feature is milestone)
+# Update roadmap.md (if feature is milestone)
 # Update CHANGELOG.md (conventional commits format)
 # Update feature specs (if implementation differs)
 # Update README.md (if public API changed)
@@ -733,7 +733,7 @@ go vet ./...
 ```
 
 **In documentation:**
-- Maintain `docs/DAG.md` with component dependency graph
+- Maintain `docs/dag.md` with component dependency graph
 - Update when adding new components
 - Include dependency direction and purpose
 
@@ -875,7 +875,7 @@ Add dependency checks to:
 - `LICENSE`, `CONTRIBUTING.md`, `SECURITY.md`
 
 **All Other Docs in `/docs`:**
-- `ARCHITECTURE.md`, `DEVELOPMENT.md`, `ROADMAP.md`
+- `architecture.md`, `DEVELOPMENT.md`, `roadmap.md`
 - `specs/`, `guides/`, `diagrams/`, `benchmarks/`
 
 ## Update Requirements by Commit Type
@@ -2411,7 +2411,7 @@ If `openspec/` directory exists:
 ### Step 6: Update Documentation
 
 ```bash
-# Update ROADMAP.md (if feature is milestone)
+# Update roadmap.md (if feature is milestone)
 # Update CHANGELOG.md (conventional commits format)
 # Update feature specs (if implementation differs)
 # Update README.md (if public API changed)
@@ -2740,7 +2740,7 @@ go vet ./...
 ```
 
 **In documentation:**
-- Maintain `docs/DAG.md` with component dependency graph
+- Maintain `docs/dag.md` with component dependency graph
 - Update when adding new components
 - Include dependency direction and purpose
 
@@ -2882,7 +2882,7 @@ Add dependency checks to:
 - `LICENSE`, `CONTRIBUTING.md`, `SECURITY.md`
 
 **All Other Docs in `/docs`:**
-- `ARCHITECTURE.md`, `DEVELOPMENT.md`, `ROADMAP.md`
+- `architecture.md`, `DEVELOPMENT.md`, `roadmap.md`
 - `specs/`, `guides/`, `diagrams/`, `benchmarks/`
 
 ## Update Requirements by Commit Type

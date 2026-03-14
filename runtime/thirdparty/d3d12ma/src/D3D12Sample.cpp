@@ -1,5 +1,5 @@
 //
-// Copyright (c) 2019-2022 Advanced Micro Devices, Inc. All rights reserved.
+// Copyright (c) 2019-2026 Advanced Micro Devices, Inc. All rights reserved.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a copy
 // of this software and associated documentation files (the "Software"), to deal
@@ -34,6 +34,15 @@ namespace PS
 {
     #include "Shaders\PS_Compiled.h"
 }
+
+#if D3D12MA_USE_AGILITY_SDK
+    #if D3D12MA_USE_AGILITY_SDK_PREVIEW
+        extern "C" { __declspec(dllexport) extern const UINT D3D12SDKVersion = D3D12_PREVIEW_SDK_VERSION; }
+    #else
+        extern "C" { __declspec(dllexport) extern const UINT D3D12SDKVersion = D3D12_SDK_VERSION; }
+    #endif
+    extern "C" { __declspec(dllexport) extern const char* D3D12SDKPath = ".\\D3D12\\"; }
+#endif
 
 enum class ExitCode : int
 {
@@ -429,6 +438,11 @@ inline UINT64 UpdateSubresources(
     UINT* pNumRows = reinterpret_cast<UINT*>(pRowSizesInBytes + NumSubresources);
 
     D3D12_RESOURCE_DESC Desc = pDestinationResource->GetDesc();
+    
+    // Needed because of the D3D Debug Layer error:
+    // D3D12 ERROR: ID3D12Device::GetCopyableFootprints: D3D12_RESOURCE_DESC::Alignment is invalid. The value is 16. When D3D12_RESOURCE_DESC::Flag bit for D3D12_RESOURCE_FLAG_USE_TIGHT_ALIGNMENT is set, Alignment must be 0. [ STATE_CREATION ERROR #721: CREATERESOURCE_INVALIDALIGNMENT]
+    Desc.Alignment = 0;
+    
     ID3D12Device* pDevice;
     pDestinationResource->GetDevice(__uuidof(*pDevice), reinterpret_cast<void**>(&pDevice));
     pDevice->GetCopyableFootprints(&Desc, FirstSubresource, NumSubresources, IntermediateOffset, pLayouts, pNumRows, pRowSizesInBytes, &RequiredSize);
@@ -563,6 +577,8 @@ static std::wstring SizeToStr(size_t size)
 
 static void PrintAdapterInformation(IDXGIAdapter1* adapter)
 {
+    assert(g_Allocator);
+
     wprintf(L"DXGI_ADAPTER_DESC1:\n");
     wprintf(L"    Description = %s\n", g_AdapterDesc.Description);
     wprintf(L"    VendorId = 0x%X (%s)\n", g_AdapterDesc.VendorId, VendorIDToStr(g_AdapterDesc.VendorId));
@@ -588,6 +604,9 @@ static void PrintAdapterInformation(IDXGIAdapter1* adapter)
     default:
         assert(0);
     }
+
+    wprintf(L"GPUUploadHeapSupported = %u\n", g_Allocator->IsGPUUploadHeapSupported() ? 1 : 0);
+    wprintf(L"TightAlignmentSupported = %u\n", g_Allocator->IsTightAlignmentSupported() ? 1 : 0);
 
     ComPtr<IDXGIAdapter3> adapter3;
     if(SUCCEEDED(adapter->QueryInterface(IID_PPV_ARGS(&adapter3))))
@@ -772,8 +791,7 @@ static void InitD3D() // initializes direct3d 12
     depthOptimizedClearValue.DepthStencil.Depth = 1.0f;
     depthOptimizedClearValue.DepthStencil.Stencil = 0;
 
-    D3D12MA::ALLOCATION_DESC depthStencilAllocDesc = {};
-    depthStencilAllocDesc.HeapType = D3D12_HEAP_TYPE_DEFAULT;
+    D3D12MA::CALLOCATION_DESC depthStencilAllocDesc = D3D12MA::CALLOCATION_DESC{ D3D12_HEAP_TYPE_DEFAULT };
     D3D12_RESOURCE_DESC depthStencilResourceDesc = {};
     depthStencilResourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
     depthStencilResourceDesc.Alignment = 0;
@@ -795,6 +813,7 @@ static void InitD3D() // initializes direct3d 12
         IID_PPV_ARGS(&g_DepthStencilBuffer)
     ) );
     CHECK_HR( g_DepthStencilBuffer->SetName(L"Depth/Stencil Resource Heap") );
+    g_DepthStencilAllocation->SetName(L"Depth/Stencil Resource Heap");
 
     D3D12_DEPTH_STENCIL_VIEW_DESC depthStencilDesc = {};
     depthStencilDesc.Format = DEPTH_STENCIL_FORMAT;
@@ -895,8 +914,7 @@ static void InitD3D() // initializes direct3d 12
 
     for (int i = 0; i < FRAME_BUFFER_COUNT; ++i)
     {
-        D3D12MA::ALLOCATION_DESC constantBufferUploadAllocDesc = {};
-        constantBufferUploadAllocDesc.HeapType = D3D12_HEAP_TYPE_UPLOAD;
+        D3D12MA::CALLOCATION_DESC constantBufferUploadAllocDesc = D3D12MA::CALLOCATION_DESC{ D3D12_HEAP_TYPE_UPLOAD };
         D3D12_RESOURCE_DESC constantBufferResourceDesc = {};
         constantBufferResourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
         constantBufferResourceDesc.Alignment = 0;
@@ -917,6 +935,7 @@ static void InitD3D() // initializes direct3d 12
             &g_ConstantBufferUploadAllocation[i],
             IID_PPV_ARGS(&g_ConstantBufferUploadHeap[i])) );
         g_ConstantBufferUploadHeap[i]->SetName(L"Constant Buffer Upload Resource Heap");
+        g_ConstantBufferUploadAllocation[i]->SetName(L"Constant Buffer Upload Resource Heap");
 
         D3D12_CONSTANT_BUFFER_VIEW_DESC cbvDesc = {};
         cbvDesc.BufferLocation = g_ConstantBufferUploadHeap[i]->GetGPUVirtualAddress();
@@ -1018,8 +1037,7 @@ static void InitD3D() // initializes direct3d 12
     // default heap is memory on the GPU. Only the GPU has access to this memory
     // To get data into this heap, we will have to upload the data using
     // an upload heap
-    D3D12MA::ALLOCATION_DESC vertexBufferAllocDesc = {};
-    vertexBufferAllocDesc.HeapType = D3D12_HEAP_TYPE_DEFAULT;
+    D3D12MA::CALLOCATION_DESC vertexBufferAllocDesc = D3D12MA::CALLOCATION_DESC{ D3D12_HEAP_TYPE_DEFAULT };
     D3D12_RESOURCE_DESC vertexBufferResourceDesc = {};
     vertexBufferResourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
     vertexBufferResourceDesc.Alignment = 0;
@@ -1036,8 +1054,7 @@ static void InitD3D() // initializes direct3d 12
     CHECK_HR( g_Allocator->CreateResource(
         &vertexBufferAllocDesc,
         &vertexBufferResourceDesc, // resource description for a buffer
-        D3D12_RESOURCE_STATE_COPY_DEST, // we will start this heap in the copy destination state since we will copy data
-                                        // from the upload heap to this heap
+        D3D12_RESOURCE_STATE_COMMON,
         nullptr, // optimized clear value must be null for this type of resource. used for render targets and depth/stencil buffers
         &g_VertexBufferAllocation,
         IID_PPV_ARGS(&vertexBufferPtr)) );
@@ -1045,12 +1062,12 @@ static void InitD3D() // initializes direct3d 12
 
     // we can give resource heaps a name so when we debug with the graphics debugger we know what resource we are looking at
     g_VertexBuffer->SetName(L"Vertex Buffer Resource Heap");
+    g_VertexBufferAllocation->SetName(L"Vertex Buffer Resource Heap");
 
     // create upload heap
     // upload heaps are used to upload data to the GPU. CPU can write to it, GPU can read from it
     // We will upload the vertex buffer using this heap to the default heap
-    D3D12MA::ALLOCATION_DESC vBufferUploadAllocDesc = {};
-    vBufferUploadAllocDesc.HeapType = D3D12_HEAP_TYPE_UPLOAD;
+    D3D12MA::CALLOCATION_DESC vBufferUploadAllocDesc = D3D12MA::CALLOCATION_DESC{ D3D12_HEAP_TYPE_UPLOAD };
     D3D12_RESOURCE_DESC vertexBufferUploadResourceDesc = {};
     vertexBufferUploadResourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
     vertexBufferUploadResourceDesc.Alignment = 0;
@@ -1073,6 +1090,7 @@ static void InitD3D() // initializes direct3d 12
         &vBufferUploadHeapAllocation,
         IID_PPV_ARGS(&vBufferUploadHeap)) );
     vBufferUploadHeap->SetName(L"Vertex Buffer Upload Resource Heap");
+    vBufferUploadHeapAllocation->SetName(L"Vertex Buffer Upload Resource Heap");
 
     // store vertex buffer in upload heap
     D3D12_SUBRESOURCE_DATA vertexData = {};
@@ -1130,8 +1148,7 @@ static void InitD3D() // initializes direct3d 12
     size_t iBufferSize = sizeof(iList);
 
     // create default heap to hold index buffer
-    D3D12MA::ALLOCATION_DESC indexBufferAllocDesc = {};
-    indexBufferAllocDesc.HeapType = D3D12_HEAP_TYPE_DEFAULT;
+    D3D12MA::CALLOCATION_DESC indexBufferAllocDesc = D3D12MA::CALLOCATION_DESC{ D3D12_HEAP_TYPE_DEFAULT };
     D3D12_RESOURCE_DESC indexBufferResourceDesc = {};
     indexBufferResourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
     indexBufferResourceDesc.Alignment = 0;
@@ -1147,17 +1164,17 @@ static void InitD3D() // initializes direct3d 12
     CHECK_HR( g_Allocator->CreateResource(
         &indexBufferAllocDesc,
         &indexBufferResourceDesc, // resource description for a buffer
-        D3D12_RESOURCE_STATE_COPY_DEST, // start in the copy destination state
+        D3D12_RESOURCE_STATE_COMMON,
         nullptr, // optimized clear value must be null for this type of resource
         &g_IndexBufferAllocation,
         IID_PPV_ARGS(&g_IndexBuffer)) );
 
     // we can give resource heaps a name so when we debug with the graphics debugger we know what resource we are looking at
     g_IndexBuffer->SetName(L"Index Buffer Resource Heap");
+    g_IndexBufferAllocation->SetName(L"Index Buffer Resource Heap");
 
     // create upload heap to upload index buffer
-    D3D12MA::ALLOCATION_DESC iBufferUploadAllocDesc = {};
-    iBufferUploadAllocDesc.HeapType = D3D12_HEAP_TYPE_UPLOAD;
+    D3D12MA::CALLOCATION_DESC iBufferUploadAllocDesc = D3D12MA::CALLOCATION_DESC{ D3D12_HEAP_TYPE_UPLOAD };
     D3D12_RESOURCE_DESC indexBufferUploadResourceDesc = {};
     indexBufferUploadResourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
     indexBufferUploadResourceDesc.Alignment = 0;
@@ -1180,6 +1197,7 @@ static void InitD3D() // initializes direct3d 12
         &iBufferUploadHeapAllocation,
         IID_PPV_ARGS(&iBufferUploadHeap)) );
     CHECK_HR( iBufferUploadHeap->SetName(L"Index Buffer Upload Resource Heap") );
+    iBufferUploadHeapAllocation->SetName(L"Index Buffer Upload Resource Heap");
 
     // store vertex buffer in upload heap
     D3D12_SUBRESOURCE_DATA indexData = {};
@@ -1211,8 +1229,7 @@ static void InitD3D() // initializes direct3d 12
     g_IndexBufferView.Format = DXGI_FORMAT_R16_UINT;
     g_IndexBufferView.SizeInBytes = (UINT)iBufferSize;
 
-    D3D12MA::ALLOCATION_DESC cbPerObjectUploadAllocDesc = {};
-    cbPerObjectUploadAllocDesc.HeapType = D3D12_HEAP_TYPE_UPLOAD;
+    D3D12MA::CALLOCATION_DESC cbPerObjectUploadAllocDesc = D3D12MA::CALLOCATION_DESC{ D3D12_HEAP_TYPE_UPLOAD };
     D3D12_RESOURCE_DESC cbPerObjectUploadResourceDesc = {};
     cbPerObjectUploadResourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
     cbPerObjectUploadResourceDesc.Alignment = 0;
@@ -1236,6 +1253,7 @@ static void InitD3D() // initializes direct3d 12
             &g_CbPerObjectUploadHeapAllocations[i],
             IID_PPV_ARGS(&g_CbPerObjectUploadHeaps[i])) );
         g_CbPerObjectUploadHeaps[i]->SetName(L"Constant Buffer Upload Resource Heap");
+        g_CbPerObjectUploadHeapAllocations[i]->SetName(L"Constant Buffer Upload Resource Heap");
 
         CHECK_HR( g_CbPerObjectUploadHeaps[i]->Map(0, &EMPTY_RANGE, &g_CbPerObjectAddress[i]) );
     }
@@ -1288,8 +1306,7 @@ static void InitD3D() // initializes direct3d 12
         textureDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
     }
 
-    D3D12MA::ALLOCATION_DESC textureAllocDesc = {};
-    textureAllocDesc.HeapType = D3D12_HEAP_TYPE_DEFAULT;
+    D3D12MA::CALLOCATION_DESC textureAllocDesc = D3D12MA::CALLOCATION_DESC{ D3D12_HEAP_TYPE_DEFAULT };
     CHECK_HR( g_Allocator->CreateResource(
         &textureAllocDesc,
         &textureDesc,
@@ -1298,6 +1315,7 @@ static void InitD3D() // initializes direct3d 12
         &g_TextureAllocation,
         IID_PPV_ARGS(&g_Texture)) );
     g_Texture->SetName(L"g_Texture");
+    g_TextureAllocation->SetName(L"g_Texture");
 
     UINT64 textureUploadBufferSize;
     device->GetCopyableFootprints(
@@ -1310,8 +1328,7 @@ static void InitD3D() // initializes direct3d 12
         nullptr, // pRowSizeInBytes
         &textureUploadBufferSize); // pTotalBytes
 
-    D3D12MA::ALLOCATION_DESC textureUploadAllocDesc = {};
-    textureUploadAllocDesc.HeapType = D3D12_HEAP_TYPE_UPLOAD;
+    D3D12MA::CALLOCATION_DESC textureUploadAllocDesc = D3D12MA::CALLOCATION_DESC{ D3D12_HEAP_TYPE_UPLOAD };
     D3D12_RESOURCE_DESC textureUploadResourceDesc = {};
     textureUploadResourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
     textureUploadResourceDesc.Alignment = 0;
@@ -1334,6 +1351,7 @@ static void InitD3D() // initializes direct3d 12
         &textureUploadAllocation,
         IID_PPV_ARGS(&textureUpload)) );
     textureUpload->SetName(L"textureUpload");
+    textureUploadAllocation->SetName(L"textureUpload");
 
     D3D12_SUBRESOURCE_DATA textureSubresourceData = {};
     textureSubresourceData.pData = imageData.data();
@@ -1783,13 +1801,14 @@ int Main2(int argc, wchar_t** argv)
         return (int)ExitCode::Help;
     }
 
-    std::unique_ptr<DXGIUsage> DXGIUsage(new DXGIUsage());
-    DXGIUsage->Init();
-    g_DXGIUsage = DXGIUsage.get();
+    // variable name should not same as class name
+    std::unique_ptr<DXGIUsage> dxgiUsage = std::make_unique<DXGIUsage>();
+    dxgiUsage->Init();
+    g_DXGIUsage = dxgiUsage.get();
 
     if(g_CommandLineParameters.m_List)
     {
-        DXGIUsage->PrintAdapterList();
+        dxgiUsage->PrintAdapterList();
         return (int)ExitCode::GPUList;
     }
 

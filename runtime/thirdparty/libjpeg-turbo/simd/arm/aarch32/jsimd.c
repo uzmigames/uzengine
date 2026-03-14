@@ -1,9 +1,8 @@
 /*
- * jsimd_arm.c
- *
  * Copyright 2009 Pierre Ossman <ossman@cendio.se> for Cendio AB
  * Copyright (C) 2011, Nokia Corporation and/or its subsidiary(-ies).
- * Copyright (C) 2009-2011, 2013-2014, 2016, 2018, 2022, D. R. Commander.
+ * Copyright (C) 2009-2011, 2013-2014, 2016, 2018, 2022, 2024-2025,
+ *           D. R. Commander.
  * Copyright (C) 2015-2016, 2018, 2022, Matthieu Darbois.
  * Copyright (C) 2019, Google LLC.
  * Copyright (C) 2020, Arm Limited.
@@ -18,11 +17,11 @@
  */
 
 #define JPEG_INTERNALS
-#include "../../../jinclude.h"
-#include "../../../jpeglib.h"
-#include "../../../jsimd.h"
-#include "../../../jdct.h"
-#include "../../../jsimddct.h"
+#include "../../../src/jinclude.h"
+#include "../../../src/jpeglib.h"
+#include "../../../src/jsimd.h"
+#include "../../../src/jdct.h"
+#include "../../../src/jsimddct.h"
 #include "../../jsimd.h"
 
 #include <ctype.h>
@@ -909,7 +908,7 @@ jsimd_can_huff_encode_one_block(void)
   if (sizeof(JCOEF) != 2)
     return 0;
 
-  if (simd_support & JSIMD_NEON && simd_huffman)
+  if ((simd_support & JSIMD_NEON) && simd_huffman)
     return 1;
 
   return 0;
@@ -934,7 +933,7 @@ jsimd_can_encode_mcu_AC_first_prepare(void)
   if (sizeof(JCOEF) != 2)
     return 0;
 
-  if (simd_support & JSIMD_NEON)
+  if ((simd_support & JSIMD_NEON) && simd_huffman)
     return 1;
 
   return 0;
@@ -959,7 +958,7 @@ jsimd_can_encode_mcu_AC_refine_prepare(void)
   if (sizeof(JCOEF) != 2)
     return 0;
 
-  if (simd_support & JSIMD_NEON)
+  if ((simd_support & JSIMD_NEON) && simd_huffman)
     return 1;
 
   return 0;

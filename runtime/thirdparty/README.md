@@ -38,7 +38,7 @@ git checkout -- runtime/thirdparty/stb/stb_truetype.h
 ## agility
 
 - Upstream: https://www.nuget.org/packages/Microsoft.Direct3D.D3D12
-- Version: 1.614.1 (2024)
+- Version: 1.619.1 (2025)
 - License: MIT
 
 DirectX 12 Agility SDK — enables SM6.6+ features on older Windows versions.
@@ -118,8 +118,7 @@ Files extracted from upstream source:
 ## d3d12ma
 
 - Upstream: https://github.com/GPUOpen-LibrariesAndSDKs/D3D12MemoryAllocator
-- Version: 2.0.1 (2024)
-- Commit: `6a61103936dfadedca584e1a521fab6943d3b5ad`
+- Version: 3.1.0 (2025)
 - License: MIT
 
 GPU memory allocator for DirectX 12. Manages committed/placed resources,
@@ -135,8 +134,7 @@ Files extracted from upstream source:
 ## directx_headers
 
 - Upstream: https://github.com/microsoft/DirectX-Headers
-- Version: 1.614.1 (2024)
-- Commit: `48a762973271c5a75869946bf1fdbc489a628a5c`
+- Version: 1.619.1 (2025)
 - License: MIT
 
 Official DirectX 12 headers from Microsoft. Provides d3d12.h, dxgi1_6.h, etc.
@@ -151,8 +149,7 @@ Files extracted from upstream source:
 ## directxmath
 
 - Upstream: https://github.com/microsoft/DirectXMath
-- Version: oct2024 (2024)
-- Commit: `0d821781da4ed0f20cad4e30e618afab45a08f0f`
+- Version: apr2025 (2025)
 - License: MIT
 
 SIMD-optimized math library for DirectX. **Primary math foundation** for the engine.
@@ -168,7 +165,7 @@ Files extracted from upstream source:
 ## googletest
 
 - Upstream: https://github.com/google/googletest
-- Version: 1.15.2 (2024)
+- Version: 1.17.0 (2025)
 - License: BSD-3-Clause
 
 Google's C++ testing framework. Used for all runtime unit tests.
@@ -197,7 +194,7 @@ Files extracted from upstream source:
 ## dxc
 
 - Upstream: https://github.com/microsoft/DirectXShaderCompiler
-- Version: 1.8.2407 (2024)
+- Version: 1.9.2602 (2026)
 - License: University of Illinois/NCSA Open Source License
 
 DirectX Shader Compiler. Compiles HLSL to DXIL (SM6.x) and SPIR-V.
@@ -212,8 +209,7 @@ Files extracted from upstream source:
 ## glm
 
 - Upstream: https://github.com/g-truc/glm
-- Version: 1.0.1 (2024)
-- Commit: `0af55ccecd98d4e5a8d1fad7de25ba429d60e863`
+- Version: 1.0.3 (2026)
 - License: MIT
 
 OpenGL Mathematics — header-only C++ math library. GLSL-style types (vec3, mat4,
@@ -228,7 +224,7 @@ Files extracted from upstream source:
 ## libjpeg-turbo
 
 - Upstream: https://github.com/libjpeg-turbo/libjpeg-turbo
-- Version: 3.0.3 (2024)
+- Version: 3.1.3 (2025)
 - License: BSD-3-Clause
 
 SIMD-accelerated JPEG codec. Decodes JPEG images 2-6x faster than libjpeg
@@ -240,6 +236,23 @@ Files extracted from upstream source:
 - Root (jpeglib.h, jconfig.h, turbojpeg.h, source files)
 - `simd/` (SIMD implementations)
 - `LICENSE.md`
+
+
+## luajit
+
+- Upstream: https://github.com/LuaJIT/LuaJIT
+- Version: 2.1 (git master, 2025)
+- License: MIT
+
+LuaJIT — Just-In-Time compiler for Lua. Used as the scripting runtime for
+per-node game scripts (on_start/on_update/on_stop lifecycle). Sandboxed
+environment strips os, io, load, require. Built via `scripts/build_luajit.bat`.
+
+Files extracted from upstream source:
+
+- `src/` (full LuaJIT source + headers)
+- `dynasm/` (DynASM preprocessor)
+- `COPYRIGHT`
 
 
 ## jemalloc
@@ -261,8 +274,7 @@ Files extracted from upstream source:
 ## mimalloc
 
 - Upstream: https://github.com/microsoft/mimalloc
-- Version: 2.1.7 (2024)
-- Commit: `7c5c43f58b51baace21fadaeed24fdfeb2977ed0`
+- Version: 2.2.4 (2025)
 - License: MIT
 
 Microsoft's compact general-purpose allocator. **Primary global allocator** for
@@ -278,7 +290,7 @@ Files extracted from upstream source:
 ## nlohmann
 
 - Upstream: https://github.com/nlohmann/json
-- Version: 3.11.3 (2023)
+- Version: 3.12.0 (2025)
 - License: MIT
 
 JSON for Modern C++ — single-header JSON parser. Used for .uzproject, .uzscene,
@@ -314,8 +326,7 @@ Files extracted from upstream source:
 ## spdlog
 
 - Upstream: https://github.com/gabime/spdlog
-- Version: 1.15.3 (2025)
-- Commit: `6fa36017cfd5731d617e1a934f0e5ea9c4445b13`
+- Version: 1.17.0 (2025)
 - License: MIT
 
 Fast C++ logging library. Backend for UZ_LOG macros. Supports console, file
@@ -403,7 +414,7 @@ Files extracted from upstream source:
 ## volk
 
 - Upstream: https://github.com/zeux/volk
-- Version: vulkan-sdk-1.4.309.0 (2025)
+- Version: vulkan-sdk-1.4.304.1 (2025)
 - License: MIT
 
 Vulkan meta-loader. Dynamically loads all Vulkan function pointers at runtime
@@ -420,7 +431,7 @@ Files extracted from upstream source:
 ## vulkan_headers
 
 - Upstream: https://github.com/KhronosGroup/Vulkan-Headers
-- Version: vulkan-sdk-1.4.309.0 (2025)
+- Version: 1.4.342 (2026)
 - License: Apache 2.0
 
 Official Vulkan C/C++ API headers from Khronos Group. Provides vulkan.h,

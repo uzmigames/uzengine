@@ -16,7 +16,7 @@
 | Spec | Milestone | Status |
 |------|-----------|--------|
 | [1.0-bootstrap.md](1.0-bootstrap.md) | Bootstrap & Project Setup | Complete |
-| [1.1-math-containers.md](1.1-MATH-CONTAINERS.md) | Math & Containers | Complete |
+| [1.1-math-containers.md](1.1-math-containers.md) | Math & Containers | Complete |
 | [1.2-rhi.md](1.2-rhi.md) | RHI (DX12 SM6.6) | Complete |
 | [1.3-renderer.md](1.3-renderer.md) | Renderer (Triangle → Deferred → PostFX → Advanced) | In Progress |
 | [1.4-scene-system.md](1.4-scene-system.md) | Scene System (ECS, hierarchy, serialization) | Planned |

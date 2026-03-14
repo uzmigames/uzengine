@@ -1,7 +1,7 @@
 # Architecture Overview — Reference Sources & Clean-Room Rules
 
 > **Status**: Reference (foundational directive)
-> **Source**: ARCHITECTURE.md §Development Directives, §Clean-Room Rules
+> **Source**: architecture.md §Development Directives, §Clean-Room Rules
 
 ## Reference-Driven Development
 

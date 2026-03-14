@@ -524,4 +524,4 @@ runtime/engine/
 
 ---
 
-*Reference: [ARCHITECTURE.md](../../ARCHITECTURE.md) | [ROADMAP.md](../../ROADMAP.md) | [1.0-bootstrap.md](../1.0-bootstrap.md) | [observability-ts.md](observability-ts.md)*
+*Reference: [architecture.md](../../architecture.md) | [roadmap.md](../../roadmap.md) | [1.0-bootstrap.md](../1.0-bootstrap.md) | [observability-ts.md](observability-ts.md)*

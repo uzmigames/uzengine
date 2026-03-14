@@ -275,4 +275,4 @@
 
 ---
 
-*Reference: [ARCHITECTURE.md](ARCHITECTURE.md) | [ROADMAP.md](ROADMAP.md) | [PDR.md](PDR.md) | [docs/engine/](engine/)*
+*Reference: [architecture.md](architecture.md) | [roadmap.md](roadmap.md) | [pdr.md](pdr.md) | [docs/engine/](engine/)*

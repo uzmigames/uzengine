@@ -2,17 +2,13 @@
 
 Easy to integrate memory allocation library for Direct3D 12.
 
-**Documentation:** Browse online: [D3D12 Memory Allocator](https://gpuopen-librariesandsdks.github.io/D3D12MemoryAllocator/html/) (generated from Doxygen-style comments in [src/D3D12MemAlloc.h](src/D3D12MemAlloc.h))
+**Documentation:** Browse online: [D3D12 Memory Allocator](https://gpuopen-librariesandsdks.github.io/D3D12MemoryAllocator/html/) (generated from Doxygen-style comments in [include/D3D12MemAlloc.h](include/D3D12MemAlloc.h))
 
 **License:** MIT. See [LICENSE.txt](LICENSE.txt)
 
 **Changelog:** See [CHANGELOG.md](CHANGELOG.md)
 
-**Product page:** [D3D12 Memory Allocator on GPUOpen](https://gpuopen.com/gaming-product/d3d12-memory-allocator/)
-
-**Build status:**
-
-Windows: [![Build status](https://ci.appveyor.com/api/projects/status/860i07bxv55ydgvg?svg=true)](https://ci.appveyor.com/project/adam-sawicki-amd/d3d12memoryallocator)
+**Product page:** [D3D12 Memory Allocator on GPUOpen](https://gpuopen.com/d3d12-memory-allocator/)
 
 [![Average time to resolve an issue](http://isitmaintained.com/badge/resolution/GPUOpen-LibrariesAndSDKs/D3D12MemoryAllocator.svg)](http://isitmaintained.com/project/GPUOpen-LibrariesAndSDKs/D3D12MemoryAllocator "Average time to resolve an issue")
 
@@ -36,6 +32,7 @@ Additional features:
 - Customization and integration with custom engines: Predefine appropriate macros to provide your own implementation of external facilities used by the library, like assert, mutex, and atomic.
 - Support for resource aliasing (overlap).
 - Custom memory pools: Create a pool with desired parameters (e.g. fixed or limited maximum size, custom `D3D12_HEAP_PROPERTIES` and `D3D12_HEAP_FLAGS`) and allocate memory out of it.
+- Support for GPU Upload Heaps from preview Agility SDK (needs compilation with `D3D12MA_OPTIONS16_SUPPORTED` macro).
 - Linear allocator: Create a pool with linear algorithm and use it for much faster allocations and deallocations in free-at-once, stack, double stack, or ring buffer fashion.
 - Defragmentation: Let the library move data around to free some memory blocks and make your allocations better compacted.
 - Statistics: Obtain brief or detailed statistics about the amount of memory used, unused, number of allocated heaps, number of allocations etc. - globally and per memory heap type. Current memory usage and budget as reported by the system can also be queried.
@@ -90,7 +87,7 @@ With this one function call:
 
 # Binaries
 
-The release comes with precompiled binary executable for "D3D12Sample" application which contains test suite. It is compiled using Visual Studio 2019, so it requires appropriate libraries to work, including "MSVCP140.dll", "VCRUNTIME140.dll", "VCRUNTIME140_1.dll". If its launch fails with error message telling about those files missing, please download and install [Microsoft Visual C++ Redistributable for Visual Studio 2015, 2017 and 2019](https://support.microsoft.com/en-us/help/2977003/the-latest-supported-visual-c-downloads), "x64" version.
+The release comes with precompiled binary executable for "D3D12Sample" application which contains test suite. It is compiled using Visual Studio 2022, so it requires appropriate libraries to work, including "MSVCP140.dll", "VCRUNTIME140.dll", "VCRUNTIME140_1.dll". If its launch fails with error message telling about those files missing, please download and install [Microsoft Visual C++ Redistributable](https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist?view=msvc-170), "X64" version.
 
 # Copyright notice
 
@@ -101,13 +98,19 @@ This software package uses third party software:
 
 For more information see [NOTICES.txt](NOTICES.txt).
 
-# Software using this library
-
-- **[The Forge](https://github.com/ConfettiFX/The-Forge)** - cross-platform rendering framework. Apache License 2.0.
-
-[Some other projects on GitHub](https://github.com/search?q=D3D12MemAlloc.h&type=Code) and some game development studios that use DX12 in their games.
-
 # See also
 
-- **[Vulkan Memory Allocator](https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator/)** - equivalent library for Vulkan. License: MIT.
+- **[Vcpkg](https://github.com/Microsoft/vcpkg)** dependency manager from Microsoft offers a port of this library that is easy to install.
+- **[d3d12ma.c](https://github.com/milliewalky/d3d12ma.c)** - C bindings for this library. Author: Mateusz Maciejewski (Matt Walky). License: MIT.
 - **[TerraFX.Interop.D3D12MemoryAllocator](https://github.com/terrafx/terrafx.interop.d3d12memoryallocator)** - interop bindings for this library for C#, as used by [TerraFX](https://github.com/terrafx/terrafx). License: MIT.
+- **[Vulkan Memory Allocator](https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator/)** - equivalent library for Vulkan. License: MIT.
+
+# Software using this library
+
+- **[Qt Project](https://github.com/qt)**
+- **[Ghost of Tsushima: Director's Cut PC](https://www.youtube.com/watch?v=cPKBDbCYctc&t=698s)** - Information avaliable in 11:38 of credits
+- **[Godot Engine](https://github.com/godotengine/godot/)** - multi-platform 2D and 3D game engine. License: MIT.
+- **[The Forge](https://github.com/ConfettiFX/The-Forge)** - cross-platform rendering framework. Apache License 2.0.
+- **[Wicked Engine](https://github.com/turanszkij/WickedEngine)** - 3D engine with modern graphics
+
+[Some other projects on GitHub](https://github.com/search?q=D3D12MemAlloc.h&type=Code) and some game development studios that use DX12 in their games.

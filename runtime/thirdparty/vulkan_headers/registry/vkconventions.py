@@ -1,6 +1,6 @@
 #!/usr/bin/env python3 -i
 #
-# Copyright 2013-2025 The Khronos Group Inc.
+# Copyright 2013-2026 The Khronos Group Inc.
 #
 # SPDX-License-Identifier: Apache-2.0
 
@@ -28,6 +28,8 @@ SPECIAL_WORDS = set((
     'ASTC',  # VkPhysicalDeviceTextureCompressionASTCHDRFeaturesEXT
     'D3D12',  # VkD3D12FenceSubmitInfoKHR
     'Float16',  # VkPhysicalDeviceShaderFloat16Int8FeaturesKHR
+    'Bfloat16',  # VkPhysicalDeviceShaderBfloat16FeaturesKHR
+    'Float8',  # VkPhysicalDeviceShaderFloat8FeaturesEXT
     'ImagePipe',  # VkImagePipeSurfaceCreateInfoFUCHSIA
     'Int64',  # VkPhysicalDeviceShaderAtomicInt64FeaturesKHR
     'Int8',  # VkPhysicalDeviceShaderFloat16Int8FeaturesKHR
@@ -38,7 +40,7 @@ SPECIAL_WORDS = set((
 ))
 # A regex to match any of the SPECIAL_WORDS
 EXCEPTION_PATTERN = r'(?P<exception>{})'.format(
-    '|'.join('(%s)' % re.escape(w) for w in SPECIAL_WORDS))
+    '|'.join(f'({re.escape(w)})' for w in SPECIAL_WORDS))
 MAIN_RE = re.compile(
     # the negative lookahead is to prevent the all-caps pattern from being too greedy.
     r'({}|([0-9]+)|([A-Z][a-z]+)|([A-Z][A-Z]*(?![a-z])))'.format(EXCEPTION_PATTERN))
@@ -119,6 +121,7 @@ class VulkanConventions(ConventionsBase):
         # The simple-minded rules need modification for some structure names
         subpats = [
             [ r'_H_(26[45])_',              r'_H\1_' ],
+            [ r'_VP_9_',                    r'_VP9_' ],
             [ r'_AV_1_',                    r'_AV1_' ],
             [ r'_VULKAN_([0-9])([0-9])_',   r'_VULKAN_\1_\2_' ],
             [ r'_VULKAN_SC_([0-9])([0-9])_',r'_VULKAN_SC_\1_\2_' ],
@@ -308,4 +311,20 @@ class VulkanSCConventions(VulkanConventions):
     def xml_api_name(self):
         """Return the name used in the default API XML registry for the default API"""
         return 'vulkansc'
+
+class VulkanBaseConventions(VulkanConventions):
+
+    def specURL(self, spectype='api'):
+        """Return public registry URL which ref pages should link to for the
+           current all-extensions HTML specification, so xrefs in the
+           asciidoc source that are not to ref pages can link into it
+           instead. N.b. this may need to change on a per-refpage basis if
+           there are multiple documents involved.
+        """
+        return 'https://registry.khronos.org/vulkan/specs/latest/html/vkspec.html'
+
+    @property
+    def xml_api_name(self):
+        """Return the name used in the default API XML registry for the default API"""
+        return 'vulkanbase'
 

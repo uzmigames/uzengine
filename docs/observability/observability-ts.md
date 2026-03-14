@@ -667,4 +667,4 @@ mcp/src/
 
 ---
 
-*Reference: [observability-cpp.md](observability-cpp.md) | [ARCHITECTURE.md](../ARCHITECTURE.md) | [2.0-napi-foundation.md](../specs/2.0-napi-foundation.md) | [3.0-mcp-integration.md](../specs/3.0-mcp-integration.md)*
+*Reference: [observability-cpp.md](observability-cpp.md) | [architecture.md](../architecture.md) | [2.0-napi-foundation.md](../specs/2.0-napi-foundation.md) | [3.0-mcp-integration.md](../specs/3.0-mcp-integration.md)*

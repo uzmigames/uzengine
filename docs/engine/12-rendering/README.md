@@ -19,16 +19,18 @@ The rendering pipeline system is split across multiple documents covering archit
 | [07-sort-key-architecture.md](07-sort-key-architecture.md) | **Done (1.2)** | **64-bit sort key layout, opaque/transparent ordering, batching** | **Draw call ordering** |
 | [08-forward-pbr-pass.md](08-forward-pbr-pass.md) | **Done (1.2)** | **Forward PBR render pass, render graph integration, per-object CB binding** | **Forward rendering** |
 | [09-cook-torrance-brdf.md](09-cook-torrance-brdf.md) | **Done (1.2)** | **Cook-Torrance BRDF, GGX NDF, Smith geometry, Schlick Fresnel** | **PBR lighting math** |
-| [07-shader-compatibility.md](07-shader-compatibility.md) | **Done (1.2)** | **Cross-backend shader compilation, SM6.6 bindless vs SM5, DXIL/DXBC/SPIR-V targets** | **Multi-target shaders** |
-| [06-shadow-system.md](06-shadow-system.md) | **Done (Phase 2)** | **Cascaded Shadow Maps, frustum splitting, atlas layout, PCF filtering, cascade blending** | **Directional light shadows** |
-| [06-lighting.md](06-lighting.md) | **Done (1.3+)** | **Multi-light system (8 lights max), light types, attenuation math, CPU culling** + Phase 2-4 roadmap | **Lighting systems** |
-| [10-renderer-passes.md](10-renderer-passes.md) | **Done (1.2–Phase 2)** | **PBR, GBuffer, Lighting, Shadow passes — complete reference** | **All render passes** |
+| [10-deferred-pipeline.md](10-deferred-pipeline.md) | Done (1.3) | Deferred rendering pipeline, GBuffer layout, lighting pass | Deferred rendering |
 | [11-multi-material-multi-uv.md](11-multi-material-multi-uv.md) | Planned (3+) | Submesh ranges, multi-material per mesh, UV channels (UV0–UV3), glTF import | Multi-material rendering |
 | [12-vertex-layout.md](12-vertex-layout.md) | Done (1.2) | Vertex layout system, format flags, input element generation, D3D12 binding | Vertex structure management |
-| [13-scene-lighting-helper.md](13-scene-lighting-helper.md) | **Done (1.2)** | **SceneLighting struct, BuildPerFrameCB() helper** | **Per-frame CB setup** |
 | [13-register-binding-convention.md](13-register-binding-convention.md) | **Done (1.2)** | **DX12 root signature layout, register allocation, root parameter binding** | **GPU shader binding** |
 | [14-shader-includes.md](14-shader-includes.md) | **Done (1.2)** | **Shared .hlsli structure, pbr_common.hlsli, shadow_common.hlsli** | **Shader code reuse** |
-| [07-post-processing.md](07-post-processing.md) | Planned (2.0) | Post-process chains, bloom, tonemap, SSAO, TAA, upscaling | Post-processing effects |
+| [15-material-system.md](15-material-system.md) | Planned (2.0) | High-level material system overview, .uzmat format, manager, hot-reload | Material management |
+| [16-lighting.md](16-lighting.md) | **Done (1.3+)** | **Multi-light system (8 lights max), light types, attenuation math, CPU culling** + Phase 2-4 roadmap | **Lighting systems** |
+| [17-shadow-system.md](17-shadow-system.md) | **Done (Phase 2)** | **Cascaded Shadow Maps, frustum splitting, atlas layout, PCF filtering, cascade blending** | **Directional light shadows** |
+| [18-post-processing.md](18-post-processing.md) | Planned (2.0) | Post-process chains, bloom, tonemap, SSAO, TAA, upscaling | Post-processing effects |
+| [19-shader-compatibility.md](19-shader-compatibility.md) | **Done (1.2)** | **Cross-backend shader compilation, SM6.6 bindless vs SM5, DXIL/DXBC/SPIR-V targets** | **Multi-target shaders** |
+| [20-renderer-passes.md](20-renderer-passes.md) | **Done (1.2–Phase 2)** | **PBR, GBuffer, Lighting, Shadow passes — complete reference** | **All render passes** |
+| [21-scene-lighting-helper.md](21-scene-lighting-helper.md) | **Done (1.2)** | **SceneLighting struct, BuildPerFrameCB() helper** | **Per-frame CB setup** |
 
 ## Quick Navigation
 
@@ -68,7 +70,7 @@ The rendering pipeline system is split across multiple documents covering archit
 
 **Work with dynamic lights (directional, point, spot)**
 
-1. Read [06-lighting.md](06-lighting.md) → **Multi-Light System** section for CPU culling and GPU shading
+1. Read [16-lighting.md](16-lighting.md) → **Multi-Light System** section for CPU culling and GPU shading
 2. Understand the 64-byte `LightGPU` struct layout and constant buffer packing
 3. Learn attenuation math (point lights) and cone falloff (spot lights)
 4. Integrate `BuildPerFrameMultiLightCB()` into your render loop
@@ -76,7 +78,7 @@ The rendering pipeline system is split across multiple documents covering archit
 
 **Support multiple GPU architectures (DX12, DX11, Vulkan)**
 
-1. Read [07-shader-compatibility.md](07-shader-compatibility.md) for cross-backend strategies
+1. Read [19-shader-compatibility.md](19-shader-compatibility.md) for cross-backend strategies
 2. Understand the `#ifdef UZ_BINDLESS` dual-path design
 3. Learn SM5 register-bound texture conventions for fallback paths
 
@@ -89,7 +91,7 @@ The rendering pipeline system is split across multiple documents covering archit
 
 **Implement cascaded shadow maps**
 
-1. Read [06-shadow-system.md](06-shadow-system.md) for CSM architecture and split scheme
+1. Read [17-shadow-system.md](17-shadow-system.md) for CSM architecture and split scheme
 2. Understand the practical split algorithm and texel snapping
 3. Learn cascade blending and PCF filtering for soft shadows
 4. Reference the shadow pass setup in render graph integration
@@ -240,7 +242,7 @@ struct PBRMaterial {
 
 Materials are referenced by **index** from per-object constant buffers, enabling material-based sort keys without per-material PSO switches.
 
-**See**: [06-pbr-material-system.md](06-pbr-material-system.md)
+**See**: [06-pbr-material-system.md](06-pbr-material-system.md) and [15-material-system.md](15-material-system.md) for the high-level material manager.
 
 ### Sort-Key Architecture
 
@@ -305,7 +307,7 @@ Parameters: metallic, perceptual roughness, ambient occlusion, emissive.
 - **Single shader source** — `#ifdef UZ_BINDLESS` handles both paths
 - **Future-proof** — Vulkan native support; DX11 compatibility layer via DXVK
 
-**Complete implementation strategy**: [07-shader-compatibility.md](07-shader-compatibility.md) documents cross-backend compilation, resource binding models, and validation for all 7 runtime shaders (mesh, gbuffer, deferred lighting, shadow, fullscreen, gbuffer debug).
+**Complete implementation strategy**: [19-shader-compatibility.md](19-shader-compatibility.md) documents cross-backend compilation, resource binding models, and validation for all 7 runtime shaders (mesh, gbuffer, deferred lighting, shadow, fullscreen, gbuffer debug).
 
 ## References
 
@@ -367,26 +369,28 @@ Key decisions:
 
 ```
 12-rendering/
-├── README.md                        # This file
-├── 01-render-world.md              # Render world, sync point, proxy architecture
-├── 02-visibility-pipeline.md       # Culling, visibility buffer, LOD
-├── 03-frame-pipeline.md            # Per-frame flow, deferred/forward/post
-├── 04-render-graph.md              # Render graph core (done, 1.2)
-├── 05-render-graph-guide.md        # Render graph usage guide (done, 1.2)
-├── 06-pbr-material-system.md       # ★ Material struct, GPU upload (1.2)
-├── 07-sort-key-architecture.md     # ★ 64-bit sort key design (1.2)
-├── 07-shader-compatibility.md      # ★ Cross-backend compilation, SM6.6/SM5 dual-path (1.2)
-├── 08-forward-pbr-pass.md          # ★ Forward pass implementation (1.2)
-├── 09-cook-torrance-brdf.md        # ★ BRDF math & shaders (1.2)
-├── 10-renderer-passes.md           # ★★ Complete pass reference (1.2–Phase 2)
-├── 06-shadow-system.md             # ★★ Cascaded shadow maps, atlas, PCF (Phase 2)
-├── 06-lighting.md                  # Lighting systems (planned 2.0+)
-├── 11-multi-material-multi-uv.md   # ★★★ Submesh ranges, UV0/1/2, multi-material (Phase 3+)
-├── 12-vertex-layout.md             # ★ Vertex layout factory (1.2)
-├── 13-scene-lighting-helper.md     # ★ SceneLighting & BuildPerFrameCB() (1.2)
-├── 13-register-binding-convention.md  # ★ DX12 root signature, register layout (1.2)
-├── 14-shader-includes.md           # ★ Shared .hlsli structure, pbr/shadow (1.2)
-└── 07-post-processing.md           # Post-processing effects (planned 2.0)
+├── README.md                           # This file
+├── 01-render-world.md                  # Render world, sync point, proxy architecture
+├── 02-visibility-pipeline.md           # Culling, visibility buffer, LOD
+├── 03-frame-pipeline.md                # Per-frame flow, deferred/forward/post
+├── 04-render-graph.md                  # Render graph core (done, 1.2)
+├── 05-render-graph-guide.md            # Render graph usage guide (done, 1.2)
+├── 06-pbr-material-system.md           # ★ Material struct, GPU upload (1.2)
+├── 07-sort-key-architecture.md         # ★ 64-bit sort key design (1.2)
+├── 08-forward-pbr-pass.md              # ★ Forward pass implementation (1.2)
+├── 09-cook-torrance-brdf.md            # ★ BRDF math & shaders (1.2)
+├── 10-deferred-pipeline.md             # Deferred rendering pipeline (1.3)
+├── 11-multi-material-multi-uv.md       # ★★★ Submesh ranges, UV0/1/2, multi-material (Phase 3+)
+├── 12-vertex-layout.md                 # ★ Vertex layout factory (1.2)
+├── 13-register-binding-convention.md   # ★ DX12 root signature, register layout (1.2)
+├── 14-shader-includes.md               # ★ Shared .hlsli structure, pbr/shadow (1.2)
+├── 15-material-system.md               # High-level material system, .uzmat format (2.0)
+├── 16-lighting.md                      # Multi-light system (1.3+)
+├── 17-shadow-system.md                 # ★★ Cascaded shadow maps, atlas, PCF (Phase 2)
+├── 18-post-processing.md               # Post-processing effects (planned 2.0)
+├── 19-shader-compatibility.md          # ★ Cross-backend compilation, SM6.6/SM5 dual-path (1.2)
+├── 20-renderer-passes.md               # ★★ Complete pass reference (1.2–Phase 2)
+└── 21-scene-lighting-helper.md         # ★ SceneLighting & BuildPerFrameCB() (1.2)
 ```
 
 (★ = New in Milestone 1.2, ★★ = New in Phase 2, ★★★ = New in Phase 3+)

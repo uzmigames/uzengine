@@ -5,11 +5,19 @@ cmake_minimum_required (VERSION 3.20)
 
 set(DIRECTXMATH_VERSION 3.20)
 
+if(WINDOWS_STORE OR (DEFINED XBOX_CONSOLE_TARGET))
+  set(CMAKE_TRY_COMPILE_TARGET_TYPE "STATIC_LIBRARY")
+endif()
+
 project(DirectXMath
   VERSION ${DIRECTXMATH_VERSION}
   DESCRIPTION "DirectXMath SIMD C++ math library"
   HOMEPAGE_URL "https://go.microsoft.com/fwlink/?LinkID=615560"
   LANGUAGES CXX)
+
+option(BUILD_XDSP "Build XDSP math" OFF)
+
+option(BUILD_SHMATH "Build Spherical Harmonics math" OFF)
 
 include(GNUInstallDirs)
 
@@ -30,7 +38,7 @@ add_library(${PROJECT_NAME} INTERFACE)
 
 target_include_directories(${PROJECT_NAME} INTERFACE
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Inc>
-  $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/directxmath>)
+  $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 
 target_compile_features(${PROJECT_NAME} INTERFACE cxx_std_11)
 
@@ -61,7 +69,7 @@ install(EXPORT ${PROJECT_NAME}-targets
   DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/${PACKAGE_NAME})
 
 install(FILES ${LIBRARY_HEADERS}
-  DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/directxmath)
+  DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 
 install(FILES
     ${CMAKE_CURRENT_BINARY_DIR}/${PACKAGE_NAME}-config.cmake
@@ -71,7 +79,7 @@ install(FILES
 # Create pkg-config file
 include(build/JoinPaths.cmake)
 # from: https://github.com/jtojnar/cmake-snips#concatenating-paths-when-building-pkg-config-files
-join_paths(DIRECTXMATH_INCLUDEDIR_FOR_PKG_CONFIG "\${prefix}" "${CMAKE_INSTALL_INCLUDEDIR}/directxmath")
+join_paths(DIRECTXMATH_INCLUDEDIR_FOR_PKG_CONFIG "\${prefix}" "${CMAKE_INSTALL_INCLUDEDIR}")
 join_paths(DIRECTXMATH_LIBDIR_FOR_PKG_CONFIG "\${prefix}"     "${CMAKE_INSTALL_LIBDIR}")
 
 configure_file(
@@ -82,37 +90,21 @@ configure_file(
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/DirectXMath.pc"
         DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)
 
-#--- Test suite
-if(DEFINED VCPKG_TARGET_ARCHITECTURE)
-    set(DXMATH_ARCHITECTURE ${VCPKG_TARGET_ARCHITECTURE})
-elseif(CMAKE_GENERATOR_PLATFORM MATCHES "^[Ww][Ii][Nn]32$")
-    set(DXMATH_ARCHITECTURE x86)
-elseif(CMAKE_GENERATOR_PLATFORM MATCHES "^[Xx]64$")
-    set(DXMATH_ARCHITECTURE x64)
-elseif(CMAKE_GENERATOR_PLATFORM MATCHES "^[Aa][Rr][Mm]$")
-    set(DXMATH_ARCHITECTURE arm)
-elseif(CMAKE_GENERATOR_PLATFORM MATCHES "^[Aa][Rr][Mm]64$")
-    set(DXMATH_ARCHITECTURE arm64)
-elseif(CMAKE_GENERATOR_PLATFORM MATCHES "^[Aa][Rr][Mm]64EC$")
-    set(DXMATH_ARCHITECTURE arm64ec)
-elseif(CMAKE_VS_PLATFORM_NAME_DEFAULT MATCHES "^[Ww][Ii][Nn]32$")
-    set(DXMATH_ARCHITECTURE x86)
-elseif(CMAKE_VS_PLATFORM_NAME_DEFAULT MATCHES "^[Xx]64$")
-    set(DXMATH_ARCHITECTURE x64)
-elseif(CMAKE_VS_PLATFORM_NAME_DEFAULT MATCHES "^[Aa][Rr][Mm]$")
-    set(DXMATH_ARCHITECTURE arm)
-elseif(CMAKE_VS_PLATFORM_NAME_DEFAULT MATCHES "^[Aa][Rr][Mm]64$")
-    set(DXMATH_ARCHITECTURE arm64)
-elseif(CMAKE_VS_PLATFORM_NAME_DEFAULT MATCHES "^[Aa][Rr][Mm]64EC$")
-    set(DXMATH_ARCHITECTURE arm64ec)
-elseif(NOT (DEFINED DXMATH_ARCHITECTURE))
-    set(DXMATH_ARCHITECTURE "x64")
+#--- Optional extension libraries
+if(BUILD_XDSP)
+  message(STATUS "Including XDSP Digital Signal Processing (DSP)")
+  add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/XDSP)
+endif()
+
+if(BUILD_SHMATH)
+  message(STATUS "Including C++ Spherical Harmonics Math")
+  add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/SHMath)
 endif()
 
 #--- Test suite
-if(NOT WINDOWS_STORE)
+if((NOT WINDOWS_STORE) AND (NOT (DEFINED XBOX_CONSOLE_TARGET)))
   include(CTest)
-  if(BUILD_TESTING AND WIN32 AND (NOT WINDOWS_STORE) AND (EXISTS "${CMAKE_CURRENT_LIST_DIR}/Tests/CMakeLists.txt"))
+  if(BUILD_TESTING AND (EXISTS "${CMAKE_CURRENT_LIST_DIR}/Tests/CMakeLists.txt"))
     enable_testing()
     add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/Tests)
   endif()

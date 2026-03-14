@@ -1,6 +1,6 @@
-cmake_minimum_required(VERSION 3.9)
+cmake_minimum_required(VERSION 3.25)
 
-project(D3D12MemoryAllocator)
+project(D3D12MemoryAllocator VERSION 3.1.0)
 
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
@@ -32,5 +32,4 @@ option(D3D12MA_BUILD_SAMPLE "Build D3D12MemoryAllocator sample application" OFF)
 
 message(STATUS "D3D12MA_BUILD_SAMPLE = ${D3D12MA_BUILD_SAMPLE}")
 
-include_directories(include)
 add_subdirectory(src)

@@ -1,7 +1,7 @@
 # Architecture Overview — POC Lessons
 
 > **Status**: Reference (historical — informing current architecture)
-> **Source**: ARCHITECTURE.md §Lessons from POC 0.1, §Lessons from POC 0.2
+> **Source**: architecture.md §Lessons from POC 0.1, §Lessons from POC 0.2
 
 ## POC 0.1 — WebSocket JPEG Streaming
 

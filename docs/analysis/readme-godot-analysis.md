@@ -8,7 +8,7 @@
 
 ## Documents
 
-### 1. GODOT-ANALYSIS-SUMMARY.md (11 KB)
+### 1. godot-analysis-summary.md (11 KB)
 **Start here.** Executive summary with:
 - 6 key findings (root signatures, dynamic buffers, descriptor heaps, etc.)
 - Direct patterns for UzEngine (5 concrete examples)
@@ -90,7 +90,7 @@
 ### By Topic
 
 **Root Signatures**:
-- Summary: GODOT-ANALYSIS-SUMMARY.md → "Root Signature Strategy"
+- Summary: godot-analysis-summary.md → "Root Signature Strategy"
 - Deep dive: godot-renderingdevice-architecture.md → Section 1
 - Tactical: godot-d3d12-patterns-uzengine.md → Pattern 1
 
@@ -120,23 +120,23 @@
 ### By Role
 
 **Architect**:
-1. Read: GODOT-ANALYSIS-SUMMARY.md
+1. Read: godot-analysis-summary.md
 2. Read: godot-vs-ue5-renderingdevice.md
 3. Skim: godot-renderingdevice-architecture.md (sections 1, 3, 6)
 
 **RHI Implementer**:
-1. Read: GODOT-ANALYSIS-SUMMARY.md
+1. Read: godot-analysis-summary.md
 2. Read: godot-renderingdevice-architecture.md (all sections)
 3. Use: godot-d3d12-patterns-uzengine.md (patterns 1-4)
 
 **Graphics Programmer**:
-1. Skim: GODOT-ANALYSIS-SUMMARY.md
+1. Skim: godot-analysis-summary.md
 2. Read: godot-d3d12-patterns-uzengine.md (all patterns)
 3. Deep dive: godot-renderingdevice-architecture.md (sections 2, 5)
 
 **Engine Integrator**:
 1. Read: godot-d3d12-patterns-uzengine.md → Pattern 5 (fullscreen passes)
-2. Read: GODOT-ANALYSIS-SUMMARY.md → "Key Code Locations"
+2. Read: godot-analysis-summary.md → "Key Code Locations"
 
 ---
 
@@ -234,7 +234,7 @@ After reading the analysis:
 
 ## File Sizes
 
-- **GODOT-ANALYSIS-SUMMARY.md**: 11 KB (5000 words)
+- **godot-analysis-summary.md**: 11 KB (5000 words)
 - **godot-renderingdevice-architecture.md**: 19 KB (8000 words)
 - **godot-d3d12-patterns-uzengine.md**: 21 KB (9000 words)
 - **godot-vs-ue5-renderingdevice.md**: 11 KB (5000 words)

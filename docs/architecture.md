@@ -138,10 +138,10 @@ The best approach for streaming rendered frames to webview panels (e.g. preview,
 │   ├── launch.json
 │   └── tasks.json
 ├── docs/
-│   ├── ARCHITECTURE.md
-│   ├── DAG.md
-│   ├── PDR.md
-│   ├── ROADMAP.md
+│   ├── architecture.md
+│   ├── dag.md
+│   ├── pdr.md
+│   ├── roadmap.md
 │   └── specs/                   # Per-milestone specifications
 ├── poc-napi/                    # POC 0.2 backup (reference only, not built)
 └── package.json                 # @uzmigames/uzengine — orchestrates full build pipeline

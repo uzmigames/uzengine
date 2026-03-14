@@ -68,6 +68,7 @@ pub const DemoHandle = struct {
             .{ .src = "../../thirdparty/agility/bin/x64/d3d12SDKLayers.dll", .dst = "D3D12/d3d12SDKLayers.dll" },
             .{ .src = "../../thirdparty/dxc/bin/x64/dxcompiler.dll", .dst = "dxcompiler.dll" },
             .{ .src = "../../thirdparty/dxc/bin/x64/dxil.dll", .dst = "dxil.dll" },
+            .{ .src = "../../thirdparty/luajit/src/lua51.dll", .dst = "lua51.dll" },
         };
         for (dlls) |dll| {
             self.b.getInstallStep().dependOn(&self.b.addInstallBinFile(
@@ -178,6 +179,7 @@ pub fn createDemo(b: *std.Build, config: DemoConfig) DemoHandle {
         "../../engine/asset/formats",
         "../../engine/asset/importers",
         "../../engine/ecs",
+        "../../engine/scripting",
         "../../engine/event",
         "../../engine/property",
         "../../engine/job",
@@ -220,6 +222,7 @@ pub fn createDemo(b: *std.Build, config: DemoConfig) DemoHandle {
         "../../thirdparty/vulkan_headers/include",
         "../../thirdparty/volk",
         "../../thirdparty/vma/include",
+        "../../thirdparty/luajit/src",
     };
     for (tp_dirs) |dir| mod.addIncludePath(b.path(dir));
 

@@ -1,7 +1,7 @@
 # Architecture Overview — Runtime Execution Model
 
 > **Status**: Reference (core architectural decision — validated by POC 0.2)
-> **Source**: ARCHITECTURE.md §Runtime Execution Model, §Multi-Scene Runtime Pool, §CLI Interface
+> **Source**: architecture.md §Runtime Execution Model, §Multi-Scene Runtime Pool, §CLI Interface
 
 ## The Decision
 

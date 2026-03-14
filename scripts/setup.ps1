@@ -85,7 +85,7 @@ function Apply-Patches {
         Write-Host "  [$Name] applying $($patch.Name)..." -ForegroundColor Magenta
         # Apply from repo root — git apply works on the working tree even for non-git subdirs
         Push-Location $RootDir
-        git apply --directory="runtime/thirdparty/$Name" $patch.FullName 2>&1
+        git apply $patch.FullName 2>&1
         if ($LASTEXITCODE -ne 0) {
             Write-Host "  [$Name] WARN: patch may already be applied: $($patch.Name)" -ForegroundColor DarkYellow
         }
@@ -179,19 +179,19 @@ Write-Host "[3/8] Cloning thirdparty repos..." -ForegroundColor Cyan
 # DirectX Headers
 Clone-Repo -Name "directx_headers" `
     -Url "https://github.com/microsoft/DirectX-Headers.git" `
-    -Branch "v1.614.1" `
+    -Branch "v1.619.1" `
     -RemoveDirs @("test", "googletest")
 
 # D3D12 Memory Allocator
 Clone-Repo -Name "d3d12ma" `
     -Url "https://github.com/GPUOpen-LibrariesAndSDKs/D3D12MemoryAllocator.git" `
-    -Branch "v2.0.1" `
+    -Branch "v3.1.0" `
     -RemoveDirs @("docs", "tools")
 
 # spdlog (logging)
 Clone-Repo -Name "spdlog" `
     -Url "https://github.com/gabime/spdlog.git" `
-    -Branch "v1.15.3" `
+    -Branch "v1.17.0" `
     -RemoveDirs @("bench", "example", "logos", "scripts", "tests")
 
 # Tracy (profiling) — keep only LICENSE + public/ (client lib + headers)
@@ -217,7 +217,7 @@ if (Test-Path $tracyPath) {
 # mimalloc (global allocator)
 Clone-Repo -Name "mimalloc" `
     -Url "https://github.com/microsoft/mimalloc.git" `
-    -Branch "v2.1.7" `
+    -Branch "v2.2.4" `
     -RemoveDirs @("docs", "test", "bench", "ide", "out")
 
 # jemalloc (alternative allocator)
@@ -240,7 +240,7 @@ Clone-Repo -Name "atomic_queue" `
 # DirectXMath
 Clone-Repo -Name "directxmath" `
     -Url "https://github.com/microsoft/DirectXMath.git" `
-    -Branch "oct2024" `
+    -Branch "apr2025" `
     -RemoveDirs @("SHMath", "XDSP", "Spherical", "Extensions", "MatrixStack", "Tests", "Utilities")
 
 # SAL stub for non-MSVC platforms (DirectXMath requires sal.h)
@@ -257,30 +257,30 @@ if (-not (Test-Path $salPath)) {
 # glm (math, header-only)
 Clone-Repo -Name "glm" `
     -Url "https://github.com/g-truc/glm.git" `
-    -Branch "1.0.1" `
+    -Branch "1.0.3" `
     -RemoveDirs @("doc", "test", "util")
 
 # nlohmann/json (config parsing)
 Download-Header -Name "nlohmann" `
-    -Url "https://github.com/nlohmann/json/releases/download/v3.11.3/json.hpp" `
+    -Url "https://github.com/nlohmann/json/releases/download/v3.12.0/json.hpp" `
     -FileName "json.hpp"
 
 # GoogleTest (testing framework)
 Clone-Repo -Name "googletest" `
     -Url "https://github.com/google/googletest.git" `
-    -Branch "v1.15.2" `
+    -Branch "v1.17.0" `
     -RemoveDirs @("ci", "docs", "googlemock", "fake_fuchsia_sdk", "test", "samples")
 
 # SPIRV-Reflect (shader reflection)
 Clone-Repo -Name "spirv-reflect" `
     -Url "https://github.com/KhronosGroup/SPIRV-Reflect.git" `
-    -Branch "vulkan-sdk-1.3.268.0" `
+    -Branch "vulkan-sdk-1.4.309.0" `
     -RemoveDirs @("examples", "tests", "docs", "scripts", "cmake")
 
 # xxhash (fast hashing)
 Clone-Repo -Name "xxhash" `
     -Url "https://github.com/Cyan4973/xxHash.git" `
-    -Branch "v0.8.2" `
+    -Branch "v0.8.3" `
     -RemoveDirs @("tests", "doc", "cmake_unofficial", "contrib")
 
 # SSE Math Fun (SIMD math functions)
@@ -312,7 +312,7 @@ if (Test-Path $stbPath) {
 # libjpeg-turbo (fast JPEG decode with SIMD)
 Clone-Repo -Name "libjpeg-turbo" `
     -Url "https://github.com/libjpeg-turbo/libjpeg-turbo.git" `
-    -Branch "3.0.3" `
+    -Branch "3.1.3" `
     -RemoveDirs @("doc", "java", "release", "win", "fuzz", "cmakescripts", "md5", "testimages", "sharedlib")
 
 # Remove CLI tools, test files, build configs (keep only lib source + headers)
@@ -340,10 +340,27 @@ Clone-Repo -Name "tinyexr" `
     -Branch "v1.0.9" `
     -RemoveDirs @("examples", "experimental", "test", "deps", "cmake", "jni")
 
-# Keep only the header
+# Keep only the header + miniz dependency
 $texrPath = Join-Path $ThirdPartyDir "tinyexr"
 if (Test-Path $texrPath) {
-    Get-ChildItem $texrPath -File | Where-Object { $_.Name -ne "tinyexr.h" } | Remove-Item -Force
+    Get-ChildItem $texrPath -File | Where-Object { $_.Name -notin @("tinyexr.h", "miniz.h", "miniz.c") } | Remove-Item -Force
+    # Download miniz if missing (tinyexr requires it for EXR decompression)
+    $minizH = Join-Path $texrPath "miniz.h"
+    $minizC = Join-Path $texrPath "miniz.c"
+    # miniz 3.0.0 from tinyexr deps (with MINIZ_EXPORT stub prepended)
+    if (-not (Test-Path $minizH)) {
+        Write-Host "  [tinyexr] downloading miniz.h..." -ForegroundColor Yellow
+        Download-File -Url "https://raw.githubusercontent.com/syoyo/tinyexr/v1.0.9/deps/miniz/miniz.h" -OutFile $minizH
+        # Prepend MINIZ_EXPORT define if missing (standalone builds need this)
+        $content = Get-Content $minizH -Raw
+        if ($content -notmatch 'MINIZ_EXPORT') {
+            "#ifndef MINIZ_EXPORT`n#define MINIZ_EXPORT`n#endif`n$content" | Set-Content $minizH -NoNewline
+        }
+    }
+    if (-not (Test-Path $minizC)) {
+        Write-Host "  [tinyexr] downloading miniz.c..." -ForegroundColor Yellow
+        Download-File -Url "https://raw.githubusercontent.com/syoyo/tinyexr/v1.0.9/deps/miniz/miniz.c" -OutFile $minizC
+    }
 }
 
 # basis_universal (GPU texture compression — BC7, ASTC, ETC2)
@@ -382,18 +399,38 @@ if (Test-Path $astcPath) {
     }
 }
 
+# LuaJIT 2.1 (Lua scripting runtime — requires MSVC to build)
+Clone-Repo -Name "luajit" `
+    -Url "https://github.com/LuaJIT/LuaJIT.git" `
+    -Branch "v2.1" `
+    -RemoveDirs @("doc", "etc")
+
+$luajitLib = Join-Path $ThirdPartyDir "luajit\src\lua51.lib"
+$buildScript = Join-Path $PSScriptRoot "build_luajit.bat"
+if (-not (Test-Path $luajitLib)) {
+    Write-Host "  [luajit] building with MSVC..." -ForegroundColor Yellow
+    cmd /c "`"$buildScript`""
+    if (Test-Path $luajitLib) {
+        Write-Host "  [luajit] build OK" -ForegroundColor Green
+    } else {
+        Write-Host "  [luajit] WARN: build failed - run scripts\build_luajit.bat manually from a VS Developer Prompt" -ForegroundColor Red
+    }
+} else {
+    Write-Host "  [luajit] already built, skipping." -ForegroundColor Green
+}
+
 # ─── Vulkan Dependencies ──────────────────────────────────────────────────
 
 # Vulkan-Headers (Khronos official API headers)
 Clone-Repo -Name "vulkan_headers" `
     -Url "https://github.com/KhronosGroup/Vulkan-Headers.git" `
-    -Branch "vulkan-sdk-1.4.309.0" `
+    -Branch "v1.4.342" `
     -RemoveDirs @("tests", "cmake")
 
 # volk (Vulkan meta-loader — dynamic function dispatch, no static vulkan-1.lib needed)
 Clone-Repo -Name "volk" `
     -Url "https://github.com/zeux/volk.git" `
-    -Branch "vulkan-sdk-1.4.309.0" `
+    -Branch "vulkan-sdk-1.4.304.1" `
     -RemoveDirs @("cmake", "test")
 
 # VMA — Vulkan Memory Allocator (AMD, GPU memory sub-allocation)
@@ -412,11 +449,11 @@ Write-Host "[4/8] Downloading prebuilt packages..." -ForegroundColor Cyan
 
 # DXC (DirectX Shader Compiler)
 Download-Extract-Zip -Name "dxc" `
-    -Url "https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.8.2407/dxc_2024_07_31.zip"
+    -Url "https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.9.2602/dxc_2026_02_20.zip"
 
 # Agility SDK (DX12 runtime)
 Download-Extract-Zip -Name "agility" `
-    -Url "https://www.nuget.org/api/v2/package/Microsoft.Direct3D.D3D12/1.614.1" `
+    -Url "https://globalcdn.nuget.org/packages/microsoft.direct3d.d3d12.1.619.1.nupkg" `
     -SubPath "build\native"
 
 # ─── Metal Dependencies (macOS build cross-compile support) ──────────────────
@@ -517,7 +554,8 @@ $ImageLibs = @(
     @{ Name = "volk";             File = "volk.h" },
     @{ Name = "vma";              File = "include\vk_mem_alloc.h" },
     @{ Name = "metal-cpp";        File = "Metal\Metal.hpp" },
-    @{ Name = "slang";            File = "include\slang.h" }
+    @{ Name = "slang";            File = "include\slang.h" },
+    @{ Name = "luajit";           File = "src\lua.h" }
 )
 
 $allOk = $true

@@ -60,6 +60,7 @@ file(GLOB SRC_RHI_COMMON     engine/rhi/*.cpp)
 file(GLOB SRC_PATHS          engine/paths/*.cpp)
 file(GLOB SRC_SHADER_COMMON  engine/shader/*.cpp)
 file(GLOB SRC_RENDERER       engine/renderer/*.cpp)
+file(GLOB SRC_SCRIPTING      engine/scripting/*.cpp)
 file(GLOB SRC_ASSET          engine/asset/*.cpp)
 file(GLOB SRC_RHI_VULKAN     engine/rhi/vulkan/*.cpp)
 
@@ -88,6 +89,7 @@ set(RUNTIME_SOURCES
     ${SRC_PATHS}
     ${SRC_SHADER_COMMON}
     ${SRC_RENDERER}
+    ${SRC_SCRIPTING}
     ${SRC_ASSET}
     $<$<PLATFORM_ID:Darwin>:${SRC_RHI_METAL}>
 )
@@ -247,6 +249,7 @@ target_include_directories(uzengine_runtime PUBLIC
     engine/shader
     engine/paths
     engine/renderer
+    engine/scripting
     engine/asset
     ${CMAKE_CURRENT_BINARY_DIR}/generated/shaders
 )
@@ -271,6 +274,7 @@ target_include_directories(uzengine_runtime PUBLIC
     thirdparty/vulkan_headers/include
     thirdparty/volk
     thirdparty/vma/include
+    thirdparty/luajit/src
 )
 
 # Windows-only includes
@@ -316,6 +320,7 @@ if(WIN32)
         ws2_32.lib
         dbghelp.lib
         advapi32.lib
+        ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/luajit/src/lua51.lib
     )
 endif()
 
@@ -484,6 +489,9 @@ if(WIN32)
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
                 ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/fxc/bin/x64/d3dcompiler_47.dll
                 $<TARGET_FILE_DIR:${tgt}>/d3dcompiler_47.dll
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/luajit/src/lua51.dll
+                $<TARGET_FILE_DIR:${tgt}>/lua51.dll
             COMMENT "Deploying runtime DLLs for ${tgt}"
         )
     endforeach()

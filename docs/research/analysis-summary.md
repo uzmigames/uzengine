@@ -25,7 +25,7 @@
 
 ## Document Outputs
 
-### 1. GODOT_PLATFORM_LAYER_INVENTORY.md
+### 1. godot-platform-layer-inventory.md
 
 **Scope**: Comprehensive inventory of every subsystem across all platforms
 
@@ -56,7 +56,7 @@
 
 **Use Case**: Understand what each platform implements, feature compatibility, architecture patterns
 
-### 2. GODOT_WINDOWS_PLATFORM_DEEP_DIVE.md
+### 2. godot-windows-platform-deep-dive.md
 
 **Scope**: Deep architectural analysis of Windows platform layer (detailed enough for implementation reference)
 
@@ -289,11 +289,11 @@
 Two comprehensive documents created:
 
 1. **Comprehensive Inventory**:
-   `/e/UzEngine/0.2/docs/research/GODOT_PLATFORM_LAYER_INVENTORY.md` (4500+ lines)
+   `/e/UzEngine/0.2/docs/research/godot-platform-layer-inventory.md` (4500+ lines)
    - All 6 platforms, every subsystem, feature coverage table
 
 2. **Windows Deep Dive**:
-   `/e/UzEngine/0.2/docs/research/GODOT_WINDOWS_PLATFORM_DEEP_DIVE.md` (2500+ lines)
+   `/e/UzEngine/0.2/docs/research/godot-windows-platform-deep-dive.md` (2500+ lines)
    - Detailed architecture, code patterns, lessons for implementation
 
 Both documents are committed and ready for reference.

@@ -12,7 +12,7 @@ This folder contains a comprehensive analysis of **how Godot 4 manages per-frame
 
 ## Documents in This Analysis
 
-### 1. **GODOT_UNIFORM_BUFFER_ANALYSIS.md** (Primary Reference)
+### 1. **godot-uniform-buffer-analysis.md** (Primary Reference)
 - **Length**: ~600 lines
 - **Audience**: Architects, senior engineers
 - **Contents**:
@@ -25,7 +25,7 @@ This folder contains a comprehensive analysis of **how Godot 4 manages per-frame
 
 **Start here** if you want to understand the full architecture.
 
-### 2. **GODOT_PATTERNS_SUMMARY.md** (Quick Reference)
+### 2. **godot-patterns-summary.md** (Quick Reference)
 - **Length**: ~300 lines
 - **Audience**: Developers implementing features
 - **Contents**:
@@ -36,7 +36,7 @@ This folder contains a comprehensive analysis of **how Godot 4 manages per-frame
 
 **Start here** if you want a quick refresher or checklist before implementing.
 
-### 3. **GODOT_TO_UZENGINE_ADAPTATION.md** (Implementation Guide)
+### 3. **godot-to-uzengine-adaptation.md** (Implementation Guide)
 - **Length**: ~800 lines
 - **Audience**: Implementers, code reviewers
 - **Contents**:
@@ -50,7 +50,7 @@ This folder contains a comprehensive analysis of **how Godot 4 manages per-frame
 
 **Start here** if you're about to implement this feature.
 
-### 4. **GODOT_CODE_EXAMPLES.md** (Concrete Examples)
+### 4. **godot-code-examples.md** (Concrete Examples)
 - **Length**: ~600 lines
 - **Audience**: Code reviewers, refactorers
 - **Contents**:
@@ -68,19 +68,19 @@ This folder contains a comprehensive analysis of **how Godot 4 manages per-frame
 ## Quick Navigation
 
 ### "I want to understand the pattern"
-Read **GODOT_UNIFORM_BUFFER_ANALYSIS.md** sections 1-3
+Read **godot-uniform-buffer-analysis.md** sections 1-3
 
 ### "I want to implement this in UzEngine"
-Read **GODOT_TO_UZENGINE_ADAPTATION.md** Phase 1-2
+Read **godot-to-uzengine-adaptation.md** Phase 1-2
 
 ### "I need to see actual code"
-Read **GODOT_CODE_EXAMPLES.md** Example 1-4
+Read **godot-code-examples.md** Example 1-4
 
 ### "I need a checklist or quick ref"
-Read **GODOT_PATTERNS_SUMMARY.md** entire document
+Read **godot-patterns-summary.md** entire document
 
 ### "I need to know if this fits our architecture"
-Read **GODOT_UNIFORM_BUFFER_ANALYSIS.md** section "Leanness Lessons for UzEngine"
+Read **godot-uniform-buffer-analysis.md** section "Leanness Lessons for UzEngine"
 
 ## The Core Insight
 
@@ -167,15 +167,15 @@ ERR_FAIL_COND_V_MSG(buf_info->last_frame_mapped == p_frames_drawn, nullptr,
 
 ## Files Included
 
-1. `GODOT_UNIFORM_BUFFER_ANALYSIS.md` — Full architectural analysis
-2. `GODOT_PATTERNS_SUMMARY.md` — Quick reference guide
-3. `GODOT_TO_UZENGINE_ADAPTATION.md` — Implementation roadmap
-4. `GODOT_CODE_EXAMPLES.md` — Concrete code snippets
-5. `GODOT_ANALYSIS_README.md` — This file
+1. `godot-uniform-buffer-analysis.md` — Full architectural analysis
+2. `godot-patterns-summary.md` — Quick reference guide
+3. `godot-to-uzengine-adaptation.md` — Implementation roadmap
+4. `godot-code-examples.md` — Concrete code snippets
+5. `godot-analysis-readme.md` — This file
 
 ## Next Steps
 
-1. **Review Phase 1** from `GODOT_TO_UZENGINE_ADAPTATION.md` (1-2 hours reading)
+1. **Review Phase 1** from `godot-to-uzengine-adaptation.md` (1-2 hours reading)
 2. **Prototype buffer ring** in UzEngine RHI (4-8 hours coding)
 3. **Test with clear-screen demo** (add per-frame MVP constant buffer)
 4. **Profile** to verify zero GPU stall (Tracy integration already present)

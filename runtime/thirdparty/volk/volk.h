@@ -1,7 +1,7 @@
 /**
  * volk
  *
- * Copyright (C) 2018-2025, by Arseny Kapoulkine (arseny.kapoulkine@gmail.com)
+ * Copyright (C) 2018-2024, by Arseny Kapoulkine (arseny.kapoulkine@gmail.com)
  * Report bugs and download new versions at https://github.com/zeux/volk
  *
  * This library is distributed under the MIT License. See notice at the end of this file.
@@ -15,7 +15,7 @@
 #endif
 
 /* VOLK_GENERATE_VERSION_DEFINE */
-#define VOLK_HEADER_VERSION 309
+#define VOLK_HEADER_VERSION 304
 /* VOLK_GENERATE_VERSION_DEFINE */
 
 #ifndef VK_NO_PROTOTYPES
@@ -25,9 +25,29 @@
 #ifndef VULKAN_H_
 #	ifdef VOLK_VULKAN_H_PATH
 #		include VOLK_VULKAN_H_PATH
-#	else /* Platform headers included below */
+#	elif defined(VK_USE_PLATFORM_WIN32_KHR)
 #		include <vulkan/vk_platform.h>
 #		include <vulkan/vulkan_core.h>
+
+		/* When VK_USE_PLATFORM_WIN32_KHR is defined, instead of including vulkan.h directly, we include individual parts of the SDK
+		 * This is necessary to avoid including <windows.h> which is very heavy - it takes 200ms to parse without WIN32_LEAN_AND_MEAN
+		 * and 100ms to parse with it. vulkan_win32.h only needs a few symbols that are easy to redefine ourselves.
+		 */
+		typedef unsigned long DWORD;
+		typedef const wchar_t* LPCWSTR;
+		typedef void* HANDLE;
+		typedef struct HINSTANCE__* HINSTANCE;
+		typedef struct HWND__* HWND;
+		typedef struct HMONITOR__* HMONITOR;
+		typedef struct _SECURITY_ATTRIBUTES SECURITY_ATTRIBUTES;
+
+#		include <vulkan/vulkan_win32.h>
+
+#		ifdef VK_ENABLE_BETA_EXTENSIONS
+#			include <vulkan/vulkan_beta.h>
+#		endif
+#	else
+#		include <vulkan/vulkan.h>
 #	endif
 #endif
 
@@ -103,104 +123,6 @@ VkDevice volkGetLoadedDevice(void);
  * Application should use function pointers from that table instead of using global function pointers.
  */
 void volkLoadDeviceTable(struct VolkDeviceTable* table, VkDevice device);
-
-#ifdef __cplusplus
-}
-#endif
-
-/* Instead of directly including vulkan.h, we include platform-specific parts of the SDK manually
- * This is necessary to avoid including platform headers in some cases (which vulkan.h does unconditionally)
- * and replace them with forward declarations, which makes build times faster and avoids macro conflicts.
- *
- * Note that we only replace platform-specific headers when the headers are known to be problematic: very large
- * or slow to compile (Windows), or introducing unprefixed macros which can cause conflicts (Windows, Xlib).
- */
-#if !defined(VULKAN_H_) && !defined(VOLK_VULKAN_H_PATH)
-
-#ifdef VK_USE_PLATFORM_ANDROID_KHR
-#include <vulkan/vulkan_android.h>
-#endif
-
-#ifdef VK_USE_PLATFORM_FUCHSIA
-#include <zircon/types.h>
-#include <vulkan/vulkan_fuchsia.h>
-#endif
-
-#ifdef VK_USE_PLATFORM_IOS_MVK
-#include <vulkan/vulkan_ios.h>
-#endif
-
-#ifdef VK_USE_PLATFORM_MACOS_MVK
-#include <vulkan/vulkan_macos.h>
-#endif
-
-#ifdef VK_USE_PLATFORM_METAL_EXT
-#include <vulkan/vulkan_metal.h>
-#endif
-
-#ifdef VK_USE_PLATFORM_VI_NN
-#include <vulkan/vulkan_vi.h>
-#endif
-
-#ifdef VK_USE_PLATFORM_WAYLAND_KHR
-#include <vulkan/vulkan_wayland.h>
-#endif
-
-#ifdef VK_USE_PLATFORM_WIN32_KHR
-typedef unsigned long DWORD;
-typedef const wchar_t* LPCWSTR;
-typedef void* HANDLE;
-typedef struct HINSTANCE__* HINSTANCE;
-typedef struct HWND__* HWND;
-typedef struct HMONITOR__* HMONITOR;
-typedef struct _SECURITY_ATTRIBUTES SECURITY_ATTRIBUTES;
-#include <vulkan/vulkan_win32.h>
-#endif
-
-#ifdef VK_USE_PLATFORM_XCB_KHR
-#include <xcb/xcb.h>
-#include <vulkan/vulkan_xcb.h>
-#endif
-
-#ifdef VK_USE_PLATFORM_XLIB_KHR
-typedef struct _XDisplay Display;
-typedef unsigned long Window;
-typedef unsigned long VisualID;
-#include <vulkan/vulkan_xlib.h>
-#endif
-
-#ifdef VK_USE_PLATFORM_DIRECTFB_EXT
-#include <directfb.h>
-#include <vulkan/vulkan_directfb.h>
-#endif
-
-#ifdef VK_USE_PLATFORM_XLIB_XRANDR_EXT
-typedef struct _XDisplay Display;
-typedef unsigned long RROutput;
-#include <vulkan/vulkan_xlib_xrandr.h>
-#endif
-
-#ifdef VK_USE_PLATFORM_GGP
-#include <ggp_c/vulkan_types.h>
-#include <vulkan/vulkan_ggp.h>
-#endif
-
-#ifdef VK_USE_PLATFORM_SCREEN_QNX
-#include <screen/screen.h>
-#include <vulkan/vulkan_screen.h>
-#endif
-
-#ifdef VK_USE_PLATFORM_SCI
-#include <nvscisync.h>
-#include <nvscibuf.h>
-#include <vulkan/vulkan_sci.h>
-#endif
-
-#ifdef VK_ENABLE_BETA_EXTENSIONS
-#include <vulkan/vulkan_beta.h>
-#endif
-
-#endif
 
 /**
  * Device-specific function pointer table
@@ -525,10 +447,6 @@ struct VolkDeviceTable
 #if defined(VK_EXT_external_memory_host)
 	PFN_vkGetMemoryHostPointerPropertiesEXT vkGetMemoryHostPointerPropertiesEXT;
 #endif /* defined(VK_EXT_external_memory_host) */
-#if defined(VK_EXT_external_memory_metal)
-	PFN_vkGetMemoryMetalHandleEXT vkGetMemoryMetalHandleEXT;
-	PFN_vkGetMemoryMetalHandlePropertiesEXT vkGetMemoryMetalHandlePropertiesEXT;
-#endif /* defined(VK_EXT_external_memory_metal) */
 #if defined(VK_EXT_full_screen_exclusive)
 	PFN_vkAcquireFullScreenExclusiveModeEXT vkAcquireFullScreenExclusiveModeEXT;
 	PFN_vkReleaseFullScreenExclusiveModeEXT vkReleaseFullScreenExclusiveModeEXT;
@@ -912,14 +830,6 @@ struct VolkDeviceTable
 #if defined(VK_NV_clip_space_w_scaling)
 	PFN_vkCmdSetViewportWScalingNV vkCmdSetViewportWScalingNV;
 #endif /* defined(VK_NV_clip_space_w_scaling) */
-#if defined(VK_NV_cluster_acceleration_structure)
-	PFN_vkCmdBuildClusterAccelerationStructureIndirectNV vkCmdBuildClusterAccelerationStructureIndirectNV;
-	PFN_vkGetClusterAccelerationStructureBuildSizesNV vkGetClusterAccelerationStructureBuildSizesNV;
-#endif /* defined(VK_NV_cluster_acceleration_structure) */
-#if defined(VK_NV_cooperative_vector)
-	PFN_vkCmdConvertCooperativeVectorMatrixNV vkCmdConvertCooperativeVectorMatrixNV;
-	PFN_vkConvertCooperativeVectorMatrixNV vkConvertCooperativeVectorMatrixNV;
-#endif /* defined(VK_NV_cooperative_vector) */
 #if defined(VK_NV_copy_memory_indirect)
 	PFN_vkCmdCopyMemoryIndirectNV vkCmdCopyMemoryIndirectNV;
 	PFN_vkCmdCopyMemoryToImageIndirectNV vkCmdCopyMemoryToImageIndirectNV;
@@ -985,10 +895,6 @@ struct VolkDeviceTable
 	PFN_vkCreateOpticalFlowSessionNV vkCreateOpticalFlowSessionNV;
 	PFN_vkDestroyOpticalFlowSessionNV vkDestroyOpticalFlowSessionNV;
 #endif /* defined(VK_NV_optical_flow) */
-#if defined(VK_NV_partitioned_acceleration_structure)
-	PFN_vkCmdBuildPartitionedAccelerationStructuresNV vkCmdBuildPartitionedAccelerationStructuresNV;
-	PFN_vkGetPartitionedAccelerationStructuresBuildSizesNV vkGetPartitionedAccelerationStructuresBuildSizesNV;
-#endif /* defined(VK_NV_partitioned_acceleration_structure) */
 #if defined(VK_NV_ray_tracing)
 	PFN_vkBindAccelerationStructureMemoryNV vkBindAccelerationStructureMemoryNV;
 	PFN_vkCmdBuildAccelerationStructureNV vkCmdBuildAccelerationStructureNV;
@@ -1132,10 +1038,6 @@ struct VolkDeviceTable
 #endif /* (defined(VK_KHR_device_group) && defined(VK_KHR_swapchain)) || (defined(VK_KHR_swapchain) && defined(VK_VERSION_1_1)) */
 	/* VOLK_GENERATE_DEVICE_TABLE */
 };
-
-#ifdef __cplusplus
-extern "C" {
-#endif
 
 /* VOLK_GENERATE_PROTOTYPES_H */
 #if defined(VK_VERSION_1_0)
@@ -1522,10 +1424,6 @@ extern PFN_vkGetPhysicalDeviceSurfaceCapabilities2EXT vkGetPhysicalDeviceSurface
 #if defined(VK_EXT_external_memory_host)
 extern PFN_vkGetMemoryHostPointerPropertiesEXT vkGetMemoryHostPointerPropertiesEXT;
 #endif /* defined(VK_EXT_external_memory_host) */
-#if defined(VK_EXT_external_memory_metal)
-extern PFN_vkGetMemoryMetalHandleEXT vkGetMemoryMetalHandleEXT;
-extern PFN_vkGetMemoryMetalHandlePropertiesEXT vkGetMemoryMetalHandlePropertiesEXT;
-#endif /* defined(VK_EXT_external_memory_metal) */
 #if defined(VK_EXT_full_screen_exclusive)
 extern PFN_vkAcquireFullScreenExclusiveModeEXT vkAcquireFullScreenExclusiveModeEXT;
 extern PFN_vkGetPhysicalDeviceSurfacePresentModes2EXT vkGetPhysicalDeviceSurfacePresentModes2EXT;
@@ -2015,21 +1913,12 @@ extern PFN_vkGetWinrtDisplayNV vkGetWinrtDisplayNV;
 #if defined(VK_NV_clip_space_w_scaling)
 extern PFN_vkCmdSetViewportWScalingNV vkCmdSetViewportWScalingNV;
 #endif /* defined(VK_NV_clip_space_w_scaling) */
-#if defined(VK_NV_cluster_acceleration_structure)
-extern PFN_vkCmdBuildClusterAccelerationStructureIndirectNV vkCmdBuildClusterAccelerationStructureIndirectNV;
-extern PFN_vkGetClusterAccelerationStructureBuildSizesNV vkGetClusterAccelerationStructureBuildSizesNV;
-#endif /* defined(VK_NV_cluster_acceleration_structure) */
 #if defined(VK_NV_cooperative_matrix)
 extern PFN_vkGetPhysicalDeviceCooperativeMatrixPropertiesNV vkGetPhysicalDeviceCooperativeMatrixPropertiesNV;
 #endif /* defined(VK_NV_cooperative_matrix) */
 #if defined(VK_NV_cooperative_matrix2)
 extern PFN_vkGetPhysicalDeviceCooperativeMatrixFlexibleDimensionsPropertiesNV vkGetPhysicalDeviceCooperativeMatrixFlexibleDimensionsPropertiesNV;
 #endif /* defined(VK_NV_cooperative_matrix2) */
-#if defined(VK_NV_cooperative_vector)
-extern PFN_vkCmdConvertCooperativeVectorMatrixNV vkCmdConvertCooperativeVectorMatrixNV;
-extern PFN_vkConvertCooperativeVectorMatrixNV vkConvertCooperativeVectorMatrixNV;
-extern PFN_vkGetPhysicalDeviceCooperativeVectorPropertiesNV vkGetPhysicalDeviceCooperativeVectorPropertiesNV;
-#endif /* defined(VK_NV_cooperative_vector) */
 #if defined(VK_NV_copy_memory_indirect)
 extern PFN_vkCmdCopyMemoryIndirectNV vkCmdCopyMemoryIndirectNV;
 extern PFN_vkCmdCopyMemoryToImageIndirectNV vkCmdCopyMemoryToImageIndirectNV;
@@ -2102,10 +1991,6 @@ extern PFN_vkCreateOpticalFlowSessionNV vkCreateOpticalFlowSessionNV;
 extern PFN_vkDestroyOpticalFlowSessionNV vkDestroyOpticalFlowSessionNV;
 extern PFN_vkGetPhysicalDeviceOpticalFlowImageFormatsNV vkGetPhysicalDeviceOpticalFlowImageFormatsNV;
 #endif /* defined(VK_NV_optical_flow) */
-#if defined(VK_NV_partitioned_acceleration_structure)
-extern PFN_vkCmdBuildPartitionedAccelerationStructuresNV vkCmdBuildPartitionedAccelerationStructuresNV;
-extern PFN_vkGetPartitionedAccelerationStructuresBuildSizesNV vkGetPartitionedAccelerationStructuresBuildSizesNV;
-#endif /* defined(VK_NV_partitioned_acceleration_structure) */
 #if defined(VK_NV_ray_tracing)
 extern PFN_vkBindAccelerationStructureMemoryNV vkBindAccelerationStructureMemoryNV;
 extern PFN_vkCmdBuildAccelerationStructureNV vkCmdBuildAccelerationStructureNV;
@@ -2268,7 +2153,7 @@ extern PFN_vkAcquireNextImage2KHR vkAcquireNextImage2KHR;
 #endif
 
 /**
- * Copyright (c) 2018-2025 Arseny Kapoulkine
+ * Copyright (c) 2018-2024 Arseny Kapoulkine
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal

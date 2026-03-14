@@ -93,7 +93,7 @@ This scales from SM5.0 (descriptor tables only) to SM6.6+ (bindless directly-ind
 
 ```
 📁 UzEngine/docs/architecture/
-├── 📄 UE5-RHI-ANALYSIS-INDEX.md (this file)
+├── 📄 ue5-rhi-analysis-index.md (this file)
 │
 ├── 📄 ue5-shader-model-compatibility-summary.md (10 min read)
 │   ├─ Core pattern explanation

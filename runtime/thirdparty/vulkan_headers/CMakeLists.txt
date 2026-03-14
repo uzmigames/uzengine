@@ -7,6 +7,9 @@
 # ~~~
 cmake_minimum_required(VERSION 3.22.1)
 
+include(CMakeDependentOption)
+
+
 # NOTE: Parsing the version like this is suboptimal but neccessary due to our release process:
 # https://github.com/KhronosGroup/Vulkan-Headers/pull/346
 #
@@ -38,42 +41,40 @@ vlk_get_header_version()
 
 project(VULKAN_HEADERS LANGUAGES C CXX VERSION ${VK_VERSION_STRING})
 
+# options for Vulkan-Headers and the Vulkan-Hpp C++20 module
+option(VULKAN_HEADERS_ENABLE_TESTS "Test Vulkan-Headers" ${PROJECT_IS_TOP_LEVEL})
+option(VULKAN_HEADERS_ENABLE_INSTALL "Install Vulkan-Headers" ${PROJECT_IS_TOP_LEVEL})
+cmake_dependent_option(VULKAN_HEADERS_ENABLE_MODULE "Build and install the Vulkan-Hpp C++20 module" ON [[TARGET __CMAKE::CXX23]] OFF)
+# This CMake target is only available when the entire stack (CMake, compiler, standard library) supports C++20 modules and supports importing the standard library as a module.
+# See https://gitlab.kitware.com/ben.boeckel/cmake/-/blob/cxxmodules-docs/Help/manual/cmake-cxxmodules.7.rst?ref_type=heads&plain=1#L398
+
+# set up Vulkan-Headers
 add_library(Vulkan-Headers INTERFACE)
 add_library(Vulkan::Headers ALIAS Vulkan-Headers)
 target_include_directories(Vulkan-Headers INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
 
-if ((CMAKE_CXX_COMPILER_ID STREQUAL "MSVC" AND (MSVC_VERSION GREATER_EQUAL "1941")) OR
-    # clang-cl doesn't currently support modules
-    (CMAKE_CXX_COMPILER_ID STREQUAL "Clang"
-        AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL "16.0"
-        AND (NOT CMAKE_C_COMPILER_FRONTEND_VARIANT MATCHES "MSVC")
-        AND (NOT CMAKE_CXX_COMPILER_CLANG_SCAN_DEPS STREQUAL CMAKE_CXX_COMPILER_CLANG_SCAN_DEPS-NOTFOUND)) OR
-    (CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_GREATER_EQUAL "14.0"))
-    set(COMPILER_SUPPORTS_CXX_MODULES TRUE)
-endif()
+if (VULKAN_HEADERS_ENABLE_MODULE)
+    add_library(Vulkan-HppModule OBJECT)
+    add_library(Vulkan::HppModule ALIAS Vulkan-HppModule)
+    target_sources(Vulkan-HppModule PUBLIC
+        FILE_SET CXX_MODULES
+        BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/include"
+        FILES
+            "${CMAKE_CURRENT_SOURCE_DIR}/include/vulkan/vulkan.cppm"
+            "${CMAKE_CURRENT_SOURCE_DIR}/include/vulkan/vulkan_video.cppm")
 
-option(VULKAN_HEADERS_ENABLE_MODULE "Enables building of the Vulkan C++ module" OFF)
+    target_compile_features(Vulkan-HppModule PUBLIC cxx_std_23) # C++23 is required for both the standard library module, and other details of Vulkan-Hpp such as std::expected
+    set_target_properties(Vulkan-HppModule PROPERTIES CXX_MODULE_STD ON)
+    target_link_libraries(Vulkan-HppModule PUBLIC Vulkan::Headers)
 
-if (VULKAN_HEADERS_ENABLE_MODULE AND (NOT COMPILER_SUPPORTS_CXX_MODULES OR CMAKE_VERSION VERSION_LESS "3.28"))
-    message(WARNING "Vulkan C++ module support is requested but was disabled due to lacking support on this platform")
-endif()
-
-if (CMAKE_VERSION VERSION_GREATER_EQUAL "3.28" AND VULKAN_HEADERS_ENABLE_MODULE AND COMPILER_SUPPORTS_CXX_MODULES)
-    add_library(Vulkan-Module)
-    add_library(Vulkan::VulkanHppModule ALIAS Vulkan-Module)
-    target_sources(Vulkan-Module
-        PUBLIC
-            FILE_SET module
-                TYPE CXX_MODULES
-                BASE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/include"
-                FILES "${CMAKE_CURRENT_SOURCE_DIR}/include/vulkan/vulkan.cppm"
+    # set up fallback targets to notify about name deprecation
+    add_library(Vulkan-Module INTERFACE)
+    add_library(Vulkan::Module ALIAS Vulkan-Module)
+    target_link_libraries(Vulkan-Module INTERFACE Vulkan::HppModule)
+    set_target_properties(Vulkan-Module PROPERTIES
+        DEPRECATION "The Vulkan-Module and Vulkan::Module targets have been deprecated by the Vulkan-HppModule and Vulkan::HppModule targets respectively and will be removed at a future date."
     )
-    target_compile_features(Vulkan-Module PUBLIC cxx_std_20)
-    target_link_libraries(Vulkan-Module PUBLIC Vulkan-Headers)
-endif ()
-
-option(VULKAN_HEADERS_ENABLE_TESTS "Test Vulkan-Headers" ${PROJECT_IS_TOP_LEVEL})
-option(VULKAN_HEADERS_ENABLE_INSTALL "Install Vulkan-Headers" ${PROJECT_IS_TOP_LEVEL})
+endif()
 
 if (VULKAN_HEADERS_ENABLE_TESTS)
     enable_testing() # This is only effective in the top level CMakeLists.txt file.
@@ -84,15 +85,39 @@ if (VULKAN_HEADERS_ENABLE_INSTALL)
     include(GNUInstallDirs)
     include(CMakePackageConfigHelpers)
 
-    install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/include/vk_video" DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
-    install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/include/vulkan" DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+    # Remove the module interface files from the header target if the named module installation is ENABLED.
+    # This ensures that the module interface files are only installed once.
+    if(VULKAN_HEADERS_ENABLE_MODULE)
+        set(CPPM_PATTERN "*.cppm")
+    else()
+        set(CPPM_PATTERN "")
+    endif()
+
+    install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/include/vk_video" DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} PATTERN "${CPPM_PATTERN}" EXCLUDE)
+    install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/include/vulkan" DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} PATTERN "${CPPM_PATTERN}" EXCLUDE)
     # Preserve source permissions https://github.com/KhronosGroup/Vulkan-Headers/issues/336
-    install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/registry" DESTINATION "${CMAKE_INSTALL_DATADIR}/vulkan" USE_SOURCE_PERMISSIONS)
+    install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/registry" DESTINATION "${CMAKE_INSTALL_DATADIR}/vulkan" USE_SOURCE_PERMISSIONS PATTERN "${CPPM_PATTERN}" EXCLUDE)
 
     set_target_properties(Vulkan-Headers PROPERTIES EXPORT_NAME "Headers")
-    install(TARGETS Vulkan-Headers EXPORT VulkanHeadersConfig INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+    install(TARGETS Vulkan-Headers
+        EXPORT VulkanHeadersConfig
+        INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 
-    install(EXPORT VulkanHeadersConfig NAMESPACE "Vulkan::" DESTINATION "share/cmake/VulkanHeaders")
+    # Install the C++ module target and export it
+    if (VULKAN_HEADERS_ENABLE_MODULE)
+        set_target_properties(Vulkan-HppModule PROPERTIES EXPORT_NAME "HppModule")
+        install(TARGETS Vulkan-HppModule
+            EXPORT VulkanHeadersConfig
+            FILE_SET CXX_MODULES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+        install(EXPORT VulkanHeadersConfig
+            NAMESPACE "Vulkan::"
+            DESTINATION "share/cmake/VulkanHeaders"
+            CXX_MODULES_DIRECTORY "")
+    else()
+        install(EXPORT VulkanHeadersConfig
+            NAMESPACE "Vulkan::"
+            DESTINATION "share/cmake/VulkanHeaders")
+    endif()
 
     set(version_config "${CMAKE_CURRENT_BINARY_DIR}/generated/VulkanHeadersConfigVersion.cmake")
     write_basic_package_version_file("${version_config}" COMPATIBILITY SameMajorVersion ARCH_INDEPENDENT)

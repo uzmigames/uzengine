@@ -1,7 +1,7 @@
 # Architecture Overview — Vision & Principles
 
 > **Status**: Reference (foundational, rarely changes)
-> **Source**: ARCHITECTURE.md §Vision, §Core Principles, §Engineering Principles
+> **Source**: architecture.md §Vision, §Core Principles, §Engineering Principles
 
 ## Vision
 

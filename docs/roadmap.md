@@ -5,7 +5,7 @@
 > Complete development roadmap from zero to AAA-ready engine.
 > Each milestone has clear deliverables and acceptance criteria.
 > Detailed design docs: [engine/README.md](engine/README.md) (183 files, 32 sections).
-> Analysis report: [ROADMAP_ANALYSIS_REPORT.md](ROADMAP_ANALYSIS_REPORT.md).
+> Analysis report: [roadmap-analysis-report.md](research/roadmap-analysis-report.md).
 
 ---
 
@@ -1011,4 +1011,4 @@ Each phase has detailed design docs in [engine/](engine/README.md):
 
 *This roadmap was restructured on 2026-03-12 based on analysis from 8 specialized architecture agents.*
 *Previous version archived in git history.*
-*Reference: [ROADMAP_ANALYSIS_REPORT.md](ROADMAP_ANALYSIS_REPORT.md) for full analysis details.*
+*Reference: [roadmap-analysis-report.md](research/roadmap-analysis-report.md) for full analysis details.*

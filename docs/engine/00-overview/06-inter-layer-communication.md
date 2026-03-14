@@ -1,7 +1,7 @@
 # Architecture Overview — Inter-Layer Communication
 
 > **Status**: Reference (Phase 2 design)
-> **Source**: ARCHITECTURE.md §Inter-Layer Communication, §Layers
+> **Source**: architecture.md §Inter-Layer Communication, §Layers
 
 ## Architecture
 

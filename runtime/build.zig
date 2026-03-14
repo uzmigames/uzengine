@@ -50,6 +50,7 @@ pub fn build(b: *std.Build) void {
         "engine/asset/importers",
         "engine/job",
         "engine/ecs",
+        "engine/scripting",
         "engine/event",
         "engine/property",
         "editor/grid",
@@ -81,6 +82,7 @@ pub fn build(b: *std.Build) void {
         tp ++ "fastgltf/deps/simdjson",
         tp ++ "meshoptimizer/src",
         tp ++ "entt/single_include",
+        tp ++ "luajit/src",
     };
 
     const linux_engine_include_dirs = [_][]const u8{
@@ -156,6 +158,7 @@ pub fn build(b: *std.Build) void {
     addCppDir(runtime_mod, b, "engine/renderer/ibl", cpp_flags);
     addCppDir(runtime_mod, b, "engine/job", cpp_flags);
     addCppDir(runtime_mod, b, "engine/ecs", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/scripting", cpp_flags);
     addCppDir(runtime_mod, b, "engine/property", cpp_flags);
 
     // Thirdparty — SPIRV-Reflect (C source, not C++)
@@ -173,6 +176,8 @@ pub fn build(b: *std.Build) void {
         addCppDir(runtime_mod, b, "engine/rhi/dx11", cpp_flags);
         runtime_mod.addIncludePath(b.path("engine/rhi/dx11"));
         runtime_mod.addIncludePath(b.path(tp ++ "d3d12ma/src"));
+        // LuaJIT pre-built library (built by setup.ps1 via msvcbuild.bat)
+        runtime_mod.addObjectFile(b.path(tp ++ "luajit/src/lua51.lib"));
     } else if (target.result.os.tag == .linux) {
         addCppDir(runtime_mod, b, "platform/linux", cpp_flags);
     }
@@ -578,6 +583,11 @@ pub fn build(b: *std.Build) void {
         // FXC (SM 5.0 fallback + future DX11)
         b.getInstallStep().dependOn(&b.addInstallBinFile(
             b.path(tp ++ "fxc/bin/x64/d3dcompiler_47.dll"), "d3dcompiler_47.dll",
+        ).step);
+
+        // LuaJIT
+        b.getInstallStep().dependOn(&b.addInstallBinFile(
+            b.path(tp ++ "luajit/src/lua51.dll"), "lua51.dll",
         ).step);
     }
 }

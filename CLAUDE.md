@@ -31,6 +31,28 @@ This is a rendering engine. Math tests and API tests can all pass green while th
 - Never mark a rendering task as complete based solely on unit tests passing.
 - If the screenshot shows wrong output (black screen, wrong colors, artifacts), the feature is **NOT done** regardless of test results.
 
+## ⚠️ CRITICAL: NEVER Manually Clone/Download Thirdparty Libraries
+
+**ABSOLUTELY FORBIDDEN**: No agent or conversation may run `git clone` targeting `runtime/thirdparty/`, manually download files into `runtime/thirdparty/`, or use `curl`/`wget` to fetch thirdparty sources. **No exceptions.**
+
+### Why
+
+All thirdparty dependencies are managed by `scripts/setup.ps1`. Manual clones create inconsistent state, wrong versions, missing patches, and break the build. The setup script handles cloning, cleanup, patching, and verification — manual intervention bypasses all of that.
+
+### What To Do Instead
+
+1. **Edit `scripts/setup.ps1`** — update the version/tag/URL in the script
+2. **Delete the target directory** — `rm -rf runtime/thirdparty/<lib>` to force re-download
+3. **Run the setup script** — `powershell -ExecutionPolicy Bypass -File scripts/setup.ps1`
+4. **Verify the build** — `cd runtime && zig build`
+
+### Rules
+
+- NEVER run `git clone` into `runtime/thirdparty/`
+- NEVER use `curl`/`wget`/`Download-File` to manually place files in thirdparty
+- ALWAYS update `scripts/setup.ps1` first, then run it
+- If setup.ps1 fails, fix the SCRIPT, don't work around it manually
+
 ## ⚠️ CRITICAL: NEVER Use `git stash`
 
 **ABSOLUTELY FORBIDDEN**: No agent or conversation may run `git stash`, `git stash pop`, `git stash apply`, or any `git stash` subcommand. **No exceptions.**

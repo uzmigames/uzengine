@@ -691,7 +691,7 @@ data.hdr_output_requested = true;
 
 ## Related Files
 
-- Full inventory: `docs/research/GODOT_PLATFORM_LAYER_INVENTORY.md`
+- Full inventory: `docs/research/godot-platform-layer-inventory.md`
 - Windows file count: 40 .h/.cpp files
 - Largest files: display_server_windows.h (1000+ lines), os_windows.cpp (2000+ lines)
 - Key dependencies: Win32 API, COM (DirectWrite, WASAPI, OLE), DirectX headers

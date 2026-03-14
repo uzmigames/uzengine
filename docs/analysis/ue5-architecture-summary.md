@@ -2,7 +2,7 @@
 
 **Analysis Date**: 2026-03-13
 **Source**: W:\UE_5.6_Source (Full UE5.6)
-**Full Analysis**: `UE5_RENDERING_SYSTEMS_ANALYSIS.md` (822 lines)
+**Full Analysis**: `ue5-rendering-systems-analysis.md` (822 lines)
 
 ---
 
@@ -282,7 +282,7 @@ Per zone:
 
 ## File References
 
-Full path analysis in: `UE5_RENDERING_SYSTEMS_ANALYSIS.md`
+Full path analysis in: `ue5-rendering-systems-analysis.md`
 
 **Key source files**:
 - `W:\UE_5.6_Source\Engine\Shaders\Private\BRDF.ush` (600+ lines)
