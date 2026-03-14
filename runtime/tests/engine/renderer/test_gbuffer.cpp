@@ -1,7 +1,7 @@
 /// Tests for GBuffer default state, IsValid() predicate, and field defaults.
 ///
 /// All tests are CPU-only — no GPU device is created.
-/// They verify the zero-initialized struct field layout, the four-handle
+/// They verify the zero-initialized struct field layout, the three-handle
 /// validity contract of IsValid(), and move semantics on default instances.
 
 #include <gtest/gtest.h>
@@ -33,13 +33,6 @@ TEST(GBuffer, Default_NormalHandle_IsInvalid) {
         << "Default GBuffer normal handle must be invalid";
 }
 
-/// Default-constructed GBuffer metalRough handle must be invalid.
-TEST(GBuffer, Default_MetalRoughHandle_IsInvalid) {
-    GBuffer gb;
-    EXPECT_FALSE(gb.metalRough.IsValid())
-        << "Default GBuffer metalRough handle must be invalid";
-}
-
 /// Default-constructed GBuffer depth handle must be invalid.
 TEST(GBuffer, Default_DepthHandle_IsInvalid) {
     GBuffer gb;
@@ -62,12 +55,6 @@ TEST(GBuffer, Default_AlbedoSRV_IsMaxUint32) {
 TEST(GBuffer, Default_NormalSRV_IsMaxUint32) {
     GBuffer gb;
     EXPECT_EQ(gb.normalSRV, UINT32_MAX);
-}
-
-/// Default metalRoughSRV must be UINT32_MAX.
-TEST(GBuffer, Default_MetalRoughSRV_IsMaxUint32) {
-    GBuffer gb;
-    EXPECT_EQ(gb.metalRoughSRV, UINT32_MAX);
 }
 
 /// Default depthSRV must be UINT32_MAX.
@@ -103,13 +90,13 @@ TEST(GBuffer, Default_IsValid_ReturnsFalse) {
         << "Default GBuffer must report IsValid() == false";
 }
 
-/// GBuffer with only albedo valid must not be valid (all four required).
+/// GBuffer with only albedo valid must not be valid (all three required).
 TEST(GBuffer, OnlyAlbedoValid_IsValid_ReturnsFalse) {
     GBuffer gb;
     gb.albedo.index      = 1u;
     gb.albedo.generation = 1u;
     EXPECT_FALSE(gb.IsValid())
-        << "IsValid() requires all four handles to be valid";
+        << "IsValid() requires all three handles to be valid";
 }
 
 /// GBuffer with only normal valid must not be valid.
@@ -117,14 +104,6 @@ TEST(GBuffer, OnlyNormalValid_IsValid_ReturnsFalse) {
     GBuffer gb;
     gb.normal.index      = 1u;
     gb.normal.generation = 1u;
-    EXPECT_FALSE(gb.IsValid());
-}
-
-/// GBuffer with only metalRough valid must not be valid.
-TEST(GBuffer, OnlyMetalRoughValid_IsValid_ReturnsFalse) {
-    GBuffer gb;
-    gb.metalRough.index      = 1u;
-    gb.metalRough.generation = 1u;
     EXPECT_FALSE(gb.IsValid());
 }
 
@@ -136,35 +115,23 @@ TEST(GBuffer, OnlyDepthValid_IsValid_ReturnsFalse) {
     EXPECT_FALSE(gb.IsValid());
 }
 
-/// GBuffer with three of four handles valid (missing depth) must not be valid.
-TEST(GBuffer, ThreeHandlesValid_MissingDepth_IsValid_ReturnsFalse) {
+/// GBuffer with two of three handles valid (missing depth) must not be valid.
+TEST(GBuffer, TwoHandlesValid_MissingDepth_IsValid_ReturnsFalse) {
     GBuffer gb;
     gb.albedo.index      = 1u; gb.albedo.generation      = 1u;
     gb.normal.index      = 2u; gb.normal.generation      = 1u;
-    gb.metalRough.index  = 3u; gb.metalRough.generation  = 1u;
     // depth intentionally left invalid
     EXPECT_FALSE(gb.IsValid());
 }
 
-/// GBuffer with three of four handles valid (missing metalRough) must not be valid.
-TEST(GBuffer, ThreeHandlesValid_MissingMetalRough_IsValid_ReturnsFalse) {
-    GBuffer gb;
-    gb.albedo.index  = 1u; gb.albedo.generation  = 1u;
-    gb.normal.index  = 2u; gb.normal.generation  = 1u;
-    gb.depth.index   = 4u; gb.depth.generation   = 1u;
-    // metalRough intentionally left invalid
-    EXPECT_FALSE(gb.IsValid());
-}
-
-/// GBuffer with all four handles valid must be valid.
-TEST(GBuffer, AllFourHandlesValid_IsValid_ReturnsTrue) {
+/// GBuffer with all three handles valid must be valid.
+TEST(GBuffer, AllThreeHandlesValid_IsValid_ReturnsTrue) {
     GBuffer gb;
     gb.albedo.index      = 1u; gb.albedo.generation      = 1u;
     gb.normal.index      = 2u; gb.normal.generation      = 1u;
-    gb.metalRough.index  = 3u; gb.metalRough.generation  = 1u;
-    gb.depth.index       = 4u; gb.depth.generation       = 1u;
+    gb.depth.index       = 3u; gb.depth.generation       = 1u;
     EXPECT_TRUE(gb.IsValid())
-        << "IsValid() must return true when all four texture handles are valid";
+        << "IsValid() must return true when all three texture handles are valid";
 }
 
 /// Invalidating one handle on a fully-valid GBuffer must make IsValid() false.
@@ -172,8 +139,7 @@ TEST(GBuffer, AfterInvalidatingOneHandle_IsValid_ReturnsFalse) {
     GBuffer gb;
     gb.albedo.index      = 1u; gb.albedo.generation      = 1u;
     gb.normal.index      = 2u; gb.normal.generation      = 1u;
-    gb.metalRough.index  = 3u; gb.metalRough.generation  = 1u;
-    gb.depth.index       = 4u; gb.depth.generation       = 1u;
+    gb.depth.index       = 3u; gb.depth.generation       = 1u;
     ASSERT_TRUE(gb.IsValid());
 
     gb.normal.generation = 0u; // invalidate normal
@@ -196,13 +162,6 @@ TEST(GBuffer, NormalSRV_Assignment_RoundTrip) {
     GBuffer gb;
     gb.normalSRV = 11u;
     EXPECT_EQ(gb.normalSRV, 11u);
-}
-
-/// metalRoughSRV stores assigned value without modification.
-TEST(GBuffer, MetalRoughSRV_Assignment_RoundTrip) {
-    GBuffer gb;
-    gb.metalRoughSRV = 12u;
-    EXPECT_EQ(gb.metalRoughSRV, 12u);
 }
 
 /// depthSRV stores assigned value without modification.
@@ -251,7 +210,6 @@ TEST(GBuffer, MoveConstruct_FromDefault_ProducesDefaultState) {
     EXPECT_FALSE(dst.IsValid());
     EXPECT_EQ(dst.albedoSRV,     UINT32_MAX);
     EXPECT_EQ(dst.normalSRV,     UINT32_MAX);
-    EXPECT_EQ(dst.metalRoughSRV, UINT32_MAX);
     EXPECT_EQ(dst.depthSRV,      UINT32_MAX);
     EXPECT_EQ(dst.width,  0u);
     EXPECT_EQ(dst.height, 0u);
@@ -266,7 +224,6 @@ TEST(GBuffer, MoveAssign_DefaultIntoDefault_IsNoOp) {
     EXPECT_FALSE(b.IsValid());
     EXPECT_EQ(b.albedoSRV,     UINT32_MAX);
     EXPECT_EQ(b.normalSRV,     UINT32_MAX);
-    EXPECT_EQ(b.metalRoughSRV, UINT32_MAX);
     EXPECT_EQ(b.depthSRV,      UINT32_MAX);
 }
 
@@ -275,12 +232,10 @@ TEST(GBuffer, MoveConstruct_FromValid_TransfersAllFields) {
     GBuffer src;
     src.albedo.index      = 1u; src.albedo.generation      = 1u;
     src.normal.index      = 2u; src.normal.generation      = 1u;
-    src.metalRough.index  = 3u; src.metalRough.generation  = 1u;
-    src.depth.index       = 4u; src.depth.generation       = 1u;
+    src.depth.index       = 3u; src.depth.generation       = 1u;
     src.albedoSRV         = 10u;
     src.normalSRV         = 11u;
-    src.metalRoughSRV     = 12u;
-    src.depthSRV          = 13u;
+    src.depthSRV          = 12u;
     src.width             = 1920u;
     src.height            = 1080u;
 
@@ -289,8 +244,7 @@ TEST(GBuffer, MoveConstruct_FromValid_TransfersAllFields) {
     EXPECT_TRUE(dst.IsValid());
     EXPECT_EQ(dst.albedoSRV,     10u);
     EXPECT_EQ(dst.normalSRV,     11u);
-    EXPECT_EQ(dst.metalRoughSRV, 12u);
-    EXPECT_EQ(dst.depthSRV,      13u);
+    EXPECT_EQ(dst.depthSRV,      12u);
     EXPECT_EQ(dst.width,         1920u);
     EXPECT_EQ(dst.height,        1080u);
 }

@@ -84,8 +84,9 @@ int DemoApplication::Run() {
     // Clear spurious resize flag — WM_SIZE fires on first ShowWindow()
     m_window->ClearResizedFlag();
 
-    UZ_LOG(App, Info, "DemoApplication '{}': entering render loop (maxFrames={})",
-           m_config.title, m_config.maxFrames == 0 ? -1 : static_cast<int>(m_config.maxFrames));
+    UZ_LOG(App, Info, "DemoApplication '{}': entering render loop (maxFrames={}, screenshotPending={}, ready={}, readyFrame={}, screenshotFrame={})",
+           m_config.title, m_config.maxFrames == 0 ? -1 : static_cast<int>(m_config.maxFrames),
+           m_screenshotPending, m_ready, m_readyFrame, m_config.screenshotFrame);
 
     auto loopStart = std::chrono::high_resolution_clock::now();
     auto prevFrame = loopStart;

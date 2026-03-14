@@ -383,3 +383,15 @@ UZ_DECLARE_STAT(RHI, VkDescriptorPoolResets);
 UZ_DECLARE_STAT(RHI, VkDescriptorWrites);
 /// Number of frames that exceeded the target frame time (cumulative).
 UZ_DECLARE_STAT(Rendering, DroppedFrames);
+/// Async compute overlap ratio (0–100, scaled from 0.0–1.0 for integer stat).
+UZ_DECLARE_STAT(RHI, AsyncComputeOverlap);
+/// Number of mutex contention events in parallel command list acquisition.
+UZ_DECLARE_STAT(RHI, CmdListContentionEvents);
+/// Number of swap chain buffer count changes triggered by auto-tuning.
+UZ_DECLARE_STAT(Rendering, SwapChainResizes);
+/// Number of async compute mipgen dispatches per frame.
+UZ_DECLARE_STAT(GPU, AsyncMipgenDispatches);
+/// Number of draw list compaction dispatches per frame.
+UZ_DECLARE_STAT(GPU, DrawCompactDispatches);
+/// Number of mesh shader (meshlet) dispatches per frame.
+UZ_DECLARE_STAT(RHI, MeshletDispatches);

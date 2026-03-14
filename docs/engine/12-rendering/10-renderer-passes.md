@@ -20,7 +20,8 @@ Each pass is registered in the render graph, manages resource transitions automa
 | Pass | Purpose | Input | Output | Type | Location |
 |------|---------|-------|--------|------|----------|
 | PBR | Forward Cook-Torrance | DrawList, Materials, Camera | Lit backbuffer + depth | Full render pass | `pbr_pass.h` |
-| GBuffer | Deferred geometry stage | DrawList, Materials, Camera | 3x MRT (Albedo, Normal, MetalRough) + depth | Full render pass | `gbuffer_pass.h` |
+| GBuffer | Deferred geometry stage | DrawList, Materials, Camera | 2x MRT (Albedo, Normal) + depth + velocity | Full render pass | `gbuffer_pass.h` |
+| Velocity | Motion vector generation | Depth, prev/cur view-proj | Velocity buffer (RG16F) | Fullscreen triangle | `velocity_pass.h` |
 | Lighting | Deferred composition | G-Buffers + lights | Lit backbuffer | Fullscreen triangle | `lighting_pass.h` |
 | Shadow | Shadow depth rendering | DrawList per cascade | 2×2 cascade atlas | Depth-only pass | `shadow_pass.h` |
 
@@ -130,9 +131,8 @@ Renders opaque geometry to a deferred G-Buffer, outputting surface attributes (a
 
 ```cpp
 struct GBufferPassDesc {
-    rg::RgResourceId albedoTarget;      ///< Albedo RT (write, RGBA8Unorm)
-    rg::RgResourceId normalTarget;      ///< Normal RT (write, RGBA16Float)
-    rg::RgResourceId metalRoughTarget;  ///< MetalRough RT (write, RGBA8Unorm)
+    rg::RgResourceId albedoTarget;      ///< Albedo RT (write, RGBA8Unorm, RGB color + A AO)
+    rg::RgResourceId normalTarget;      ///< Normal RT (write, RGBA8Unorm, RG normal + B metallic + A roughness)
     rg::RgResourceId depthBuffer;       ///< Depth buffer (write, D32Float)
     RHITextureHandle  depthTexture;     ///< Physical depth texture
     const DrawList*   drawList;         ///< Sorted draw list
@@ -150,22 +150,27 @@ struct GBufferPassDesc {
 };
 ```
 
+**Note** (Milestone 1.3.1): Removed `metalRoughTarget` — metallic/roughness now packed with normal in second MRT. Velocity buffer generated separately via depth reprojection.
+
 ### G-Buffer Layout
 
 | Target | Format | Semantics | Bits | Notes |
 |--------|--------|-----------|------|-------|
-| Albedo | RGBA8Unorm | Base color + opacity | 32 | sRGB color space |
-| Normal | RGBA16Float | World-space normal + padding | 64 | Normalized [-1, 1] |
-| MetalRough | RGBA8Unorm | Metallic + Roughness + AO + padding | 32 | Packed for efficiency |
-| Depth | D32Float | Linear depth | 32 | Written by rasterizer |
+| Albedo | RGBA8Unorm | RGB base color + A ambient occlusion | 32 | Linear color (sRGB→linear conversion in PS) |
+| Normal | RGBA8Unorm | RG octahedral-encoded normal + B metallic + A roughness | 32 | Normal encoding via `OctEncode()`; <0.5° max error |
+| Depth | D32Float | Linear depth | 32 | Written by rasterizer, used for position reconstruction |
+| Velocity | RG16Float | Screen-space motion vectors (pixels) | 32 | Generated via separate depth reprojection pass |
+
+**Total bandwidth**: 16 bytes/pixel (12 B for GBuffer + 4 B for velocity pass output)
 
 ### Render Graph Integration
 
 The pass declares:
 - **Albedo target**: Write (RenderTarget state, RGBA8Unorm)
-- **Normal target**: Write (RenderTarget state, RGBA16Float)
-- **MetalRough target**: Write (RenderTarget state, RGBA8Unorm)
+- **Normal target**: Write (RenderTarget state, RGBA8Unorm)
 - **Depth buffer**: Write (DepthStencilWrite state, D32Float)
+
+After the GBuffer pass, a separate **Velocity Pass** reads the depth and writes velocity vectors.
 
 Barriers are scheduled automatically by the render graph compiler.
 
@@ -185,25 +190,28 @@ Identical to PBR Pass:
 
 During execution the pass:
 
-1. Clears all three G-Buffer render targets and the depth buffer
-2. Begins a render pass with three color attachments and depth
+1. Clears both G-Buffer render targets (albedo, normal) and the depth buffer
+2. Begins a render pass with two color attachments and depth
 3. Binds the pipeline, vertex/index buffers, and per-frame CB
 4. For each draw command:
-   - Allocates a PerObjectCB
-   - Fills model/normal matrices
+   - Allocates a PerObjectCB from the ring allocator
+   - Fills model/normal matrices and material texture indices
    - Binds at root parameter 2
    - Issues DrawIndexed
 5. Ends the render pass
 
-Logs trace-level information with draw call count.
+**Key differences from older 3-RT layout**:
+- Only 2 color attachments (not 3)
+- Metallic/roughness packed into Normal RT alpha channel (requires `OctEncode()` in shader)
+- Ambient occlusion moved to Albedo RT alpha channel
+- Velocity generated separately (see velocity_pass.h)
 
 ### Usage Example
 
 ```cpp
 GBufferPassDesc desc{};
 desc.albedoTarget     = builder.CreateRenderTarget(w, h, RHIFormat::RGBA8Unorm);
-desc.normalTarget     = builder.CreateRenderTarget(w, h, RHIFormat::RGBA16Float);
-desc.metalRoughTarget = builder.CreateRenderTarget(w, h, RHIFormat::RGBA8Unorm);
+desc.normalTarget     = builder.CreateRenderTarget(w, h, RHIFormat::RGBA8Unorm);  // Packed: Oct(normal) + metallic + roughness
 desc.depthBuffer      = builder.CreateDepthBuffer(w, h, RHIFormat::D32Float);
 desc.depthTexture     = physicalDepthHandle;
 desc.drawList         = &frame.drawList;
@@ -219,6 +227,20 @@ desc.viewportWidth    = renderWidth;
 desc.viewportHeight   = renderHeight;
 
 AddGBufferPass(builder, desc);
+
+// Velocity pass (Phase 1.3.1+) — separate, after GBuffer
+VelocityPassDesc velocityDesc{};
+velocityDesc.velocityTarget = builder.CreateRenderTarget(w, h, RHIFormat::RG16Float);
+velocityDesc.depthBuffer    = depthResourceId;  // Read from GBuffer pass output
+velocityDesc.depthTexture   = physicalDepthHandle;
+velocityDesc.depthSrvIndex  = depthSrvIndex;
+velocityDesc.velocityCBAlloc = velocityCB;  // Contains invViewProj + prevViewProj
+velocityDesc.pipeline       = velocityPipeline;
+velocityDesc.viewportWidth  = renderWidth;
+velocityDesc.viewportHeight = renderHeight;
+velocityDesc.bindless       = isBindlessSupported;
+
+AddVelocityPass(builder, velocityDesc);
 ```
 
 ---

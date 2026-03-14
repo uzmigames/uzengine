@@ -50,3 +50,9 @@ UZ_DEFINE_STAT(RHI, VkDescriptorAllocations);
 UZ_DEFINE_STAT(RHI, VkDescriptorPoolResets);
 /// Number of individual vkUpdateDescriptorSets calls per frame.
 UZ_DEFINE_STAT(RHI, VkDescriptorWrites);
+/// Async compute overlap ratio (0–100 integer scale).
+UZ_DEFINE_STAT(RHI, AsyncComputeOverlap);
+/// Mutex contention events in parallel command list acquisition.
+UZ_DEFINE_STAT(RHI, CmdListContentionEvents);
+/// Swap chain buffer count auto-tune changes.
+UZ_DEFINE_STAT(Rendering, SwapChainResizes);

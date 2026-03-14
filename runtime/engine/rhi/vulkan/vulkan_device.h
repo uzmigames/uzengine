@@ -119,6 +119,30 @@ public:
     // ── IRHIDevice: Synchronization ──────────────────────────────────────
     void WaitIdle() override;
 
+    // ── IRHIDevice: Copy queue (async uploads) ───────────────────────────
+
+    /// Signals the copy queue fence, returning the signaled value.
+    /// Stub — logs a warning and returns 0 until Vulkan transfer queue is fully wired.
+    uint64_t SignalCopyQueue() override;
+
+    /// Makes the graphics queue wait for the copy queue fence to reach `value`.
+    /// Stub — logs a warning until Vulkan transfer queue is fully wired.
+    void GraphicsWaitForCopy(uint64_t value) override;
+
+    // ── IRHIDevice: Compute queue (async compute) ────────────────────────
+
+    /// Signals the compute queue fence, returning the signaled value.
+    /// Stub — logs a warning and returns 0 until Vulkan compute queue is fully wired.
+    uint64_t SignalComputeQueue() override;
+
+    /// Makes the graphics queue wait for the compute queue fence to reach `value`.
+    /// Stub — logs a warning until Vulkan compute queue is fully wired.
+    void GraphicsWaitForCompute(uint64_t value) override;
+
+    /// Makes the compute queue wait for the graphics queue fence to reach `value`.
+    /// Stub — logs a warning until Vulkan compute queue is fully wired.
+    void ComputeWaitForGraphics(uint64_t value) override;
+
     // ── IRHIDevice: Device queries ───────────────────────────────────────
     const char* GetAdapterName() const override;
     const char* GetFeatureLevel() const override;
@@ -151,6 +175,18 @@ public:
 
     /// Returns the graphics queue family index.
     uint32_t GetGraphicsQueueFamily() const { return m_graphicsQueueFamily; }
+
+    /// Returns the transfer queue (may alias graphics queue if no dedicated one found).
+    VkQueue GetTransferQueue() const { return m_transferQueue; }
+
+    /// Returns the transfer queue family index.
+    uint32_t GetTransferQueueFamily() const { return m_transferQueueFamily; }
+
+    /// Returns the compute queue (VK_NULL_HANDLE if no dedicated compute queue found).
+    VkQueue GetComputeQueue() const { return m_computeQueue; }
+
+    /// Returns the compute queue family index (UINT32_MAX if not found).
+    uint32_t GetComputeQueueFamily() const { return m_computeQueueFamily; }
 
     /// Returns the VMA allocator.
     VmaAllocator GetAllocator() const { return m_allocator; }
@@ -227,8 +263,10 @@ private:
     VkDevice                       m_device = VK_NULL_HANDLE;
     VkQueue                        m_graphicsQueue = VK_NULL_HANDLE;
     VkQueue                        m_transferQueue = VK_NULL_HANDLE;
+    VkQueue                        m_computeQueue = VK_NULL_HANDLE;
     uint32_t                       m_graphicsQueueFamily = UINT32_MAX;
     uint32_t                       m_transferQueueFamily = UINT32_MAX;
+    uint32_t                       m_computeQueueFamily = UINT32_MAX;
     VmaAllocator                   m_allocator = nullptr;
     VkDescriptorPool               m_descriptorPool = VK_NULL_HANDLE;
     VkDescriptorSetLayout          m_descriptorSetLayout = VK_NULL_HANDLE;

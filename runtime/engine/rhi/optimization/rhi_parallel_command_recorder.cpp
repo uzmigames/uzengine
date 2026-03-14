@@ -9,6 +9,7 @@
 #include "profiler.h"
 
 #include <algorithm>
+#include <chrono>
 
 UZ_DECLARE_LOG_CATEGORY(RHI);
 
@@ -105,12 +106,51 @@ void ParallelCommandRecorder::BeginFrame() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 IRHICommandList* ParallelCommandRecorder::AcquireCommandList() {
-    std::lock_guard lock(m_mutex);
+    using Clock = std::chrono::high_resolution_clock;
+    const auto acquireStart = Clock::now();
+
+    m_acquisitionAttempts.fetch_add(1, std::memory_order_relaxed);
+
+    // Try non-blocking first to detect contention.
+    if (!m_mutex.try_lock()) {
+        m_contentionEvents.fetch_add(1, std::memory_order_relaxed);
+        UZ_STAT_INCREMENT(RHI, CmdListContentionEvents);
+        m_mutex.lock();
+    }
+    std::lock_guard lock(m_mutex, std::adopt_lock);
 
     for (auto& slot : m_slots) {
         if (!slot.acquired && !slot.recorded) {
             slot.acquired = true;
             slot.acquisitionOrder = m_nextOrder++;
+
+            // Track concurrent worker count.
+            const uint32_t workers = m_currentWorkers.fetch_add(1, std::memory_order_relaxed) + 1;
+            // Update peak via CAS loop.
+            uint32_t peak = m_peakWorkers.load(std::memory_order_relaxed);
+            while (workers > peak &&
+                   !m_peakWorkers.compare_exchange_weak(peak, workers, std::memory_order_relaxed)) {
+            }
+
+            // Record acquire duration.
+            const auto acquireEnd = Clock::now();
+            const float acquireUs = static_cast<float>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(acquireEnd - acquireStart).count()
+            ) / 1000.0f;
+
+            // Accumulate total (relaxed — minor drift acceptable for telemetry).
+            float prev = m_totalAcquireTimeUs.load(std::memory_order_relaxed);
+            while (!m_totalAcquireTimeUs.compare_exchange_weak(prev, prev + acquireUs,
+                                                                std::memory_order_relaxed)) {
+            }
+
+            // Update max via CAS loop.
+            float maxUs = m_maxAcquireTimeUs.load(std::memory_order_relaxed);
+            while (acquireUs > maxUs &&
+                   !m_maxAcquireTimeUs.compare_exchange_weak(maxUs, acquireUs,
+                                                              std::memory_order_relaxed)) {
+            }
+
             return slot.cmdList;
         }
     }
@@ -137,6 +177,7 @@ void ParallelCommandRecorder::ReleaseCommandList(IRHICommandList* cmdList) {
             }
             slot.acquired = false;
             slot.recorded = true;
+            m_currentWorkers.fetch_sub(1, std::memory_order_relaxed);
             return;
         }
     }
@@ -199,6 +240,33 @@ uint32_t ParallelCommandRecorder::GetActiveCount() const {
         }
     }
     return count;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Contention stats
+// ─────────────────────────────────────────────────────────────────────────────
+
+ContentionStats ParallelCommandRecorder::GetContentionStats() const {
+    ContentionStats stats;
+    stats.acquisitionAttempts = m_acquisitionAttempts.load(std::memory_order_relaxed);
+    stats.contentionEvents = m_contentionEvents.load(std::memory_order_relaxed);
+    stats.maxConcurrentWorkers = m_peakWorkers.load(std::memory_order_relaxed);
+    stats.maxAcquireTimeUs = m_maxAcquireTimeUs.load(std::memory_order_relaxed);
+
+    if (stats.acquisitionAttempts > 0) {
+        stats.avgAcquireTimeUs = m_totalAcquireTimeUs.load(std::memory_order_relaxed)
+                                 / static_cast<float>(stats.acquisitionAttempts);
+    }
+    return stats;
+}
+
+void ParallelCommandRecorder::ResetContentionStats() {
+    m_acquisitionAttempts.store(0, std::memory_order_relaxed);
+    m_contentionEvents.store(0, std::memory_order_relaxed);
+    m_peakWorkers.store(0, std::memory_order_relaxed);
+    m_totalAcquireTimeUs.store(0.0f, std::memory_order_relaxed);
+    m_maxAcquireTimeUs.store(0.0f, std::memory_order_relaxed);
+    // Don't reset m_currentWorkers — it tracks live state.
 }
 
 } // namespace uz

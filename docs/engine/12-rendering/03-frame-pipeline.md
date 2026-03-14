@@ -52,14 +52,20 @@ Frame N:
 
 ## Deferred Rendering — GBuffer Layout
 
-| Target | Format | Content |
-|--------|--------|---------|
-| GBuffer 0 (Albedo) | RGBA8Unorm | rgb = linear base color, a = 1.0 |
-| GBuffer 1 (Normal) | RGBA16Float | rgb = world-space normal [-1,1], a = 1.0 |
-| GBuffer 2 (MetalRough) | RGBA8Unorm | r = metallic [0,1], g = roughness [0,1], b = AO [0,1], a = 1.0 |
-| Depth | D32Float | Standard depth (0.0 = far, 1.0 = near) |
+| Target | Format | Content | Bytes/Pixel |
+|--------|--------|---------|-------------|
+| GBuffer 0 (Albedo) | RGBA8Unorm | RGB = linear base color, A = ambient occlusion | 4 |
+| GBuffer 1 (Normal) | RGBA8Unorm | RG = octahedral-encoded normal, B = metallic, A = roughness | 4 |
+| GBuffer 2 (Velocity) | RG16Float | RG = screen-space motion vectors (pixels) for TAA/motion blur | 4 |
+| Depth | D32Float | Standard depth (0.0 = far, 1.0 = near) | 4 |
+| **Total** | — | — | **16 B/px** (without velocity) or **20 B/px** (with temporal effects) |
 
-**See**: [10-deferred-pipeline.md](10-deferred-pipeline.md) for complete implementation details.
+**Optimization** (Milestone 1.3.1): Migrated from 3 color RTs (20 bytes) to 2 color + velocity (20 bytes, but with temporal support):
+- **Albedo**: Moved AO from separate RT to alpha channel
+- **Normal**: Changed from RGBA16F (8 bytes) to RGBA8 with octahedral encoding (4 bytes, <0.5° error)
+- **Velocity**: Added for TAA and motion blur via depth reprojection
+
+**See**: [10-deferred-pipeline.md](10-deferred-pipeline.md) for complete implementation and [GBuffer Layout Guide](../../user/guides/rendering/gbuffer-layout.md) for encoding details.
 
 ### Why Deferred
 

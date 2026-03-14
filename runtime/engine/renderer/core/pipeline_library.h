@@ -105,11 +105,11 @@ public:
     /// Returns the forward PBR pipeline using the device's default bindless mode.
     [[nodiscard]] RHIPipelineHandle GetForwardPBR();
 
-    /// Returns the G-Buffer geometry pipeline (mesh_vs + gbuffer_ps, 3 RT + depth).
+    /// Returns the G-Buffer geometry pipeline (mesh_vs + gbuffer_ps, 2 RT + depth).
     ///
     /// Rasterizer: back-face cull, clockwise front.
     /// Depth: enabled, write enabled.
-    /// Render targets: RGBA8Unorm (albedo), RGBA16Float (normal), RGBA8Unorm (metalRough).
+    /// Render targets: RGBA8Unorm (albedo+AO), RGBA8Unorm (octNormal+metallic+roughness).
     /// Depth format: D32Float.
     ///
     /// # Arguments

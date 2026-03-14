@@ -2,7 +2,7 @@
 ///
 /// Registers and executes a deferred G-Buffer pass that iterates a sorted
 /// DrawList, binding per-object constant buffers and issuing indexed draw calls
-/// into three MRT color targets plus depth.
+/// into two MRT color targets plus depth.
 
 #include "gbuffer_pass.h"
 
@@ -34,35 +34,29 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
     builder.AddPass("GBuffer", [desc](rg::RgPassBuilder& pb) {
         pb.Write(desc.albedoTarget, RHIResourceState::RenderTarget);
         pb.Write(desc.normalTarget, RHIResourceState::RenderTarget);
-        pb.Write(desc.metalRoughTarget, RHIResourceState::RenderTarget);
         pb.Write(desc.depthBuffer, RHIResourceState::DepthStencilWrite);
 
         pb.SetExecutionCallback([desc](IRHICommandList* cmd, const rg::RgPassResources& res) {
             UZ_PROFILE_SCOPE("GBuffer::Execute");
 
-            auto albedo     = res.GetTexture(desc.albedoTarget);
-            auto normal     = res.GetTexture(desc.normalTarget);
-            auto metalRough = res.GetTexture(desc.metalRoughTarget);
+            auto albedo = res.GetTexture(desc.albedoTarget);
+            auto normal = res.GetTexture(desc.normalTarget);
 
             // ── Clear render targets ─────────────────────────────────────
             constexpr float kClearBlack[4] = {0.0f, 0.0f, 0.0f, 0.0f};
             cmd->ClearRenderTarget(albedo, kClearBlack);
             cmd->ClearRenderTarget(normal, kClearBlack);
-            cmd->ClearRenderTarget(metalRough, kClearBlack);
             cmd->ClearDepthStencil(desc.depthTexture, 1.0f, 0);
 
-            // ── Begin render pass with 3 color attachments + depth ───────
+            // ── Begin render pass with 2 color attachments + depth ───────
             RHIRenderPassDesc passDesc{};
-            passDesc.colorAttachmentCount = 3;
+            passDesc.colorAttachmentCount = 2;
 
             passDesc.colorAttachments[0].texture = albedo;
             passDesc.colorAttachments[0].clear   = false;
 
             passDesc.colorAttachments[1].texture = normal;
             passDesc.colorAttachments[1].clear   = false;
-
-            passDesc.colorAttachments[2].texture = metalRough;
-            passDesc.colorAttachments[2].clear   = false;
 
             passDesc.hasDepth = true;
             passDesc.depthAttachment.texture    = desc.depthTexture;

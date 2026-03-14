@@ -26,6 +26,8 @@ int main(int argc, char* argv[]) {
             config.screenshotFrame = static_cast<uint32_t>(std::atoi(argv[++i]));
         } else if (std::strcmp(argv[i], "--frames") == 0 && i + 1 < argc) {
             config.maxFrames = static_cast<uint32_t>(std::atoi(argv[++i]));
+        } else if (std::strcmp(argv[i], "--debug-mode") == 0 && i + 1 < argc) {
+            config.debugMode = std::atoi(argv[++i]);
         }
     }
 

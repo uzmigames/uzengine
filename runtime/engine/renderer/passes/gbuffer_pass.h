@@ -1,14 +1,13 @@
 /// UzEngine G-Buffer Pass
 ///
 /// Registers a deferred rendering G-Buffer pass in the render graph that
-/// iterates a sorted DrawList and outputs albedo, world-space normals, and
-/// metallic/roughness into three render targets plus a depth buffer.
+/// iterates a sorted DrawList and outputs albedo+AO and packed
+/// normal+metallic+roughness into two render targets plus a depth buffer.
 ///
 /// # Render Graph Integration
 /// The pass declares:
-/// - Albedo target as Write (RenderTarget state) — RGBA8Unorm
-/// - Normal target as Write (RenderTarget state) — RGBA16Float
-/// - MetalRough target as Write (RenderTarget state) — RGBA8Unorm
+/// - Albedo target as Write (RenderTarget state) — RGBA8Unorm (RGB=albedo, A=AO)
+/// - Normal target as Write (RenderTarget state) — RGBA8Unorm (RG=octNormal, B=metallic, A=roughness)
 /// - Depth buffer as Write (DepthStencilWrite state) — D32Float
 ///
 /// Barriers are scheduled automatically by the render graph compiler.
@@ -53,9 +52,8 @@ namespace uz {
 /// # Thread Safety
 /// NOT thread-safe. Must be populated from the render thread only.
 struct GBufferPassDesc {
-    rg::RgResourceId albedoTarget;      ///< Albedo render target (write, RenderTarget state, RGBA8Unorm).
-    rg::RgResourceId normalTarget;      ///< World-space normal target (write, RenderTarget state, RGBA16Float).
-    rg::RgResourceId metalRoughTarget;  ///< Metallic/roughness target (write, RenderTarget state, RGBA8Unorm).
+    rg::RgResourceId albedoTarget;      ///< Albedo+AO render target (write, RenderTarget state, RGBA8Unorm).
+    rg::RgResourceId normalTarget;      ///< Packed normal+metallic+roughness target (write, RenderTarget state, RGBA8Unorm).
     rg::RgResourceId depthBuffer;       ///< Depth buffer (write, DepthStencilWrite state, D32Float).
     RHITextureHandle  depthTexture;     ///< Physical depth texture for render pass setup.
     const DrawList*   drawList;         ///< Sorted draw list to iterate. Must not be null.
@@ -74,9 +72,9 @@ struct GBufferPassDesc {
 
 /// Registers a deferred G-Buffer pass in the render graph.
 ///
-/// The pass writes albedo, normals, metallic/roughness, and depth, iterates
-/// the sorted DrawList, and issues one indexed draw call per command with
-/// per-object constant buffer binding.
+/// The pass writes albedo+AO and packed normal+metallic+roughness into two
+/// color targets plus depth, iterates the sorted DrawList, and issues one
+/// indexed draw call per command with per-object constant buffer binding.
 ///
 /// # Arguments
 /// * `builder` — Render graph builder to register the pass with.
@@ -86,8 +84,8 @@ struct GBufferPassDesc {
 ///
 /// # Pass Execution
 /// During execution the pass:
-/// 1. Clears all three G-Buffer render targets and the depth buffer.
-/// 2. Begins a render pass with three color attachments and depth.
+/// 1. Clears both G-Buffer render targets and the depth buffer.
+/// 2. Begins a render pass with two color attachments and depth.
 /// 3. Binds the pipeline, vertex/index buffers, and per-frame CB.
 /// 4. For each draw command: allocates a PerObjectCB, fills model/normal/material,
 ///    binds at root param 2, and issues DrawIndexed.
@@ -102,7 +100,6 @@ struct GBufferPassDesc {
 /// GBufferPassDesc desc{};
 /// desc.albedoTarget    = builder.ImportRenderTarget(albedoTex);
 /// desc.normalTarget    = builder.ImportRenderTarget(normalTex);
-/// desc.metalRoughTarget = builder.ImportRenderTarget(metalRoughTex);
 /// desc.depthBuffer     = builder.ImportDepthBuffer(depthTex);
 /// desc.depthTexture    = depthHandle;
 /// desc.drawList        = &sceneDrawList;

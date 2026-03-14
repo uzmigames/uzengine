@@ -1,6 +1,6 @@
 /// UzEngine G-Buffer Debug Visualization Pass
 ///
-/// Registers a fullscreen pass in the render graph that reads the four
+/// Registers a fullscreen pass in the render graph that reads the three
 /// G-Buffer textures and renders a single diagnostic channel into the
 /// backbuffer.  The channel is selected at runtime via `GBufferDebugMode`.
 ///
@@ -11,7 +11,6 @@
 /// - Backbuffer as Write (RenderTarget state)
 /// - Albedo G-Buffer as Read (ShaderResource state)
 /// - Normal G-Buffer as Read (ShaderResource state)
-/// - MetalRough G-Buffer as Read (ShaderResource state)
 /// - Depth G-Buffer as Read (ShaderResource state)
 ///
 /// Barriers are scheduled automatically by the render graph compiler.
@@ -58,6 +57,7 @@ namespace uz {
 /// - `AO`        — Display ambient occlusion as grayscale (1=fully lit).
 /// - `Depth`     — Display linearized depth as grayscale (white=near, black=far).
 /// - `WorldPos`  — Display fractional world-space position as a color grid.
+/// - `Velocity`  — Display screen-space motion vectors as color (RG=XY velocity).
 /// - `Count`     — Sentinel: number of valid modes (not a displayable mode).
 enum class GBufferDebugMode : uint32_t {
     Albedo    = 0, ///< Display base color.
@@ -67,7 +67,8 @@ enum class GBufferDebugMode : uint32_t {
     AO        = 4, ///< Display ambient occlusion (grayscale).
     Depth     = 5, ///< Display linearized depth (white=near, black=far).
     WorldPos  = 6, ///< Display fractional world position as a color grid.
-    Count     = 7, ///< Number of valid debug modes (sentinel, not a displayable mode).
+    Velocity  = 7, ///< Display screen-space motion vectors (RG mapped to color).
+    Count     = 8, ///< Number of valid debug modes (sentinel, not a displayable mode).
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -91,8 +92,8 @@ struct GBufferDebugPassDesc {
     rg::RgResourceId backbuffer;         ///< Final debug output (write, RenderTarget state).
     rg::RgResourceId albedoGBuffer;      ///< Albedo G-Buffer input (read, ShaderResource state).
     rg::RgResourceId normalGBuffer;      ///< Normal G-Buffer input (read, ShaderResource state).
-    rg::RgResourceId metalRoughGBuffer;  ///< MetalRough G-Buffer input (read, ShaderResource state).
     rg::RgResourceId depthGBuffer;       ///< Depth G-Buffer input (read as SRV, not DSV).
+    rg::RgResourceId velocityGBuffer;    ///< Velocity G-Buffer input (read, ShaderResource state).
 
     CBAllocation      perFrameAlloc;     ///< Per-frame CB with invViewProj filled (bound at b1).
     CBAllocation      debugAlloc;        ///< Debug CB with {debugMode, pad[3]} (bound at b2, bindless only).
@@ -105,15 +106,15 @@ struct GBufferDebugPassDesc {
 
     RHITextureHandle  albedoTexture;         ///< Physical albedo texture handle.
     RHITextureHandle  normalTexture;         ///< Physical normal texture handle.
-    RHITextureHandle  metalRoughTexture;     ///< Physical metallic/roughness texture handle.
     RHITextureHandle  depthTextureForSrv;    ///< Physical depth texture handle (bound as SRV).
+    RHITextureHandle  velocityTexture;       ///< Physical velocity texture handle.
 
     // ── SM6.6 bindless SRV descriptor indices (used when bindless == true) ───
 
     uint32_t          albedoSrvIndex;    ///< SRV heap index for albedo G-Buffer.
     uint32_t          normalSrvIndex;    ///< SRV heap index for normal G-Buffer.
-    uint32_t          metalRoughSrvIndex;///< SRV heap index for metallic/roughness G-Buffer.
     uint32_t          depthSrvIndex;     ///< SRV heap index for depth G-Buffer (read as SRV).
+    uint32_t          velocitySrvIndex;  ///< SRV heap index for velocity G-Buffer.
 
     bool              bindless;          ///< True if SM6.6 bindless descriptor model is active.
 
@@ -127,7 +128,7 @@ struct GBufferDebugPassDesc {
 
 /// Registers a G-Buffer debug visualization pass in the render graph.
 ///
-/// The pass reads the four G-Buffer textures, selects a diagnostic channel
+/// The pass reads the three G-Buffer textures, selects a diagnostic channel
 /// based on `desc.mode`, and draws a fullscreen triangle to write the result
 /// to the backbuffer.  No depth buffer is attached or written.
 ///
@@ -143,7 +144,8 @@ struct GBufferDebugPassDesc {
 /// 2. Binds the debug PSO.
 /// 3. Pushes the `mode` value as a root constant at slot 0.
 /// 4. Binds the per-frame CB at root param 1 (b1) for invViewProj.
-/// 5. For SM6.6: pushes G-Buffer SRV indices via root constants.
+/// 5. For SM6.6: pushes G-Buffer SRV indices (albedo, normal, depth, velocity)
+///    + debug mode via root constants.
 ///    For SM5: binds G-Buffer textures at t0-t3 via SetFragmentTexture.
 /// 6. Sets the viewport and scissor rect.
 /// 7. Issues Draw(3) for the fullscreen triangle.
@@ -159,7 +161,6 @@ struct GBufferDebugPassDesc {
 /// desc.backbuffer            = builder.ImportRenderTarget(backbufferTex);
 /// desc.albedoGBuffer         = builder.ImportRenderTarget(albedoGBufTex);
 /// desc.normalGBuffer         = builder.ImportRenderTarget(normalGBufTex);
-/// desc.metalRoughGBuffer     = builder.ImportRenderTarget(metalRoughGBufTex);
 /// desc.depthGBuffer          = builder.ImportDepthBuffer(depthGBufTex);
 /// desc.perFrameAlloc         = perFrameCBAlloc;
 /// desc.debugAlloc            = debugCBAlloc;  // Contains GBufferDebugMode value
@@ -167,12 +168,10 @@ struct GBufferDebugPassDesc {
 /// desc.mode                  = GBufferDebugMode::Normal;  // Show normals
 /// desc.albedoTexture         = albedoGBufHandle;
 /// desc.normalTexture         = normalGBufHandle;
-/// desc.metalRoughTexture     = metalRoughGBufHandle;
 /// desc.depthTextureForSrv    = depthGBufHandle;
 /// desc.albedoSrvIndex        = 100;
 /// desc.normalSrvIndex        = 101;
-/// desc.metalRoughSrvIndex    = 102;
-/// desc.depthSrvIndex         = 103;
+/// desc.depthSrvIndex         = 102;
 /// desc.bindless              = true;
 /// desc.viewportWidth         = 1920.0f;
 /// desc.viewportHeight        = 1080.0f;

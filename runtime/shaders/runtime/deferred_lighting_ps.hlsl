@@ -1,23 +1,22 @@
 /// Deferred lighting pixel shader — Cook-Torrance PBR with directional + point lights
 /// and cascaded shadow maps (CSM).
 ///
-/// Reads G-Buffer render targets (albedo, world normal, metallic/roughness/AO) and
-/// the depth buffer to reconstruct world-space position. Evaluates a single directional
-/// light (with CSM shadow) and up to 64 point lights using the same GGX-based
-/// Cook-Torrance BRDF as the forward pass (mesh_ps.hlsl).
+/// Reads G-Buffer render targets (albedo+AO, octahedral normal+metallic+roughness)
+/// and the depth buffer to reconstruct world-space position. Evaluates a single
+/// directional light (with CSM shadow) and up to 64 point lights using the same
+/// GGX-based Cook-Torrance BRDF as the forward pass (mesh_ps.hlsl).
 ///
 /// SM6.6 (UZ_BINDLESS): fetches G-Buffer textures via ResourceDescriptorHeap[index]
 /// using SRV descriptor indices passed as root constants at b0.
-/// SM5 (!UZ_BINDLESS): uses register-bound Texture2D at t0-t3, shadow atlas at t4.
+/// SM5 (!UZ_BINDLESS): uses register-bound Texture2D at t0-t2, shadow atlas at t3.
 ///
-/// # G-Buffer Inputs
-/// - Albedo       (R8G8B8A8_UNORM)    — rgb = base color (linear)
-/// - Normal       (R16G16B16A16_FLOAT) — rgb = world-space normal [-1,1]
-/// - MetalRough   (R8G8B8A8_UNORM)    — r = metallic, g = roughness, b = ao
-/// - Depth        (R32_FLOAT SRV)      — hardware depth sampled as float
+/// # G-Buffer Inputs (2-RT packed layout)
+/// - AlbedoAO     (R8G8B8A8_UNORM) — rgb = base color (linear), a = AO
+/// - NormalMatPbr  (R8G8B8A8_UNORM) — rg = octahedral normal, b = metallic, a = roughness
+/// - Depth         (R32_FLOAT SRV)  — hardware depth sampled as float
 ///
 /// # Constant Buffers
-/// - b0: Root constants (UZ_BINDLESS only) — 4 x uint32 SRV descriptor indices
+/// - b0: Root constants (UZ_BINDLESS only) — 3 x uint32 SRV descriptor indices
 /// - b1: PerFrameCB (viewProj, invViewProj, camera, lighting globals)
 /// - b2: LightingCB (point light array + count)
 /// - b4: ShadowDataCB (cascade view-proj matrices, splits, bias, atlas index)
@@ -27,6 +26,7 @@
 /// the R8G8B8A8_UNORM backbuffer.
 
 #include "include/pbr_common.hlsli"
+#include "include/octahedral.hlsli"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Input Structure
@@ -48,10 +48,12 @@ struct FSInput {
 /// In SM6.6 bindless mode, the root signature has no SRV descriptor table.
 /// Instead, each texture is accessed via ResourceDescriptorHeap[index] using
 /// indices pushed as 32-bit root constants.
+///
+/// Only 3 indices needed with the packed 2-RT G-Buffer layout:
+/// albedo+AO in RT0, octahedral normal+metallic+roughness in RT1, depth.
 struct GBufferIndices {
-    uint albedoIdx;     ///< Descriptor index for albedo G-Buffer (R8G8B8A8_UNORM).
-    uint normalIdx;     ///< Descriptor index for normal G-Buffer (R16G16B16A16_FLOAT).
-    uint metalRoughIdx; ///< Descriptor index for metallic/roughness G-Buffer (R8G8B8A8_UNORM).
+    uint albedoIdx;     ///< Descriptor index for albedo+AO G-Buffer (R8G8B8A8_UNORM).
+    uint normalIdx;     ///< Descriptor index for normal+metallic+roughness G-Buffer (R8G8B8A8_UNORM).
     uint depthIdx;      ///< Descriptor index for depth buffer SRV (R32_FLOAT).
 };
 ConstantBuffer<GBufferIndices> gBufIndices : register(b0);
@@ -116,12 +118,11 @@ cbuffer ShadowDataCB : register(b4) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #ifndef UZ_BINDLESS
-/// SM5 path: G-Buffer textures bound via SRV descriptor table at t0-t3.
-Texture2D<float4> gbufferAlbedo     : register(t0); ///< rgb = linear base color
-Texture2D<float4> gbufferNormal     : register(t1); ///< rgb = world normal [-1,1]
-Texture2D<float4> gbufferMetalRough : register(t2); ///< r = metallic, g = roughness, b = ao
-Texture2D<float>  gbufferDepth      : register(t3); ///< Hardware depth as R32_FLOAT SRV
-Texture2D<float>  shadowAtlasTexture : register(t4); ///< CSM shadow depth atlas
+/// SM5 path: G-Buffer textures bound via SRV descriptor table at t0-t2.
+Texture2D<float4> gbufferAlbedo     : register(t0); ///< rgb = linear base color, a = AO
+Texture2D<float4> gbufferNormal     : register(t1); ///< rg = octahedral normal, b = metallic, a = roughness
+Texture2D<float>  gbufferDepth      : register(t2); ///< Hardware depth as R32_FLOAT SRV
+Texture2D<float>  shadowAtlasTexture : register(t3); ///< CSM shadow depth atlas
 #endif
 
 /// Point/nearest sampler for G-Buffer reads — no filtering on discrete data.
@@ -177,29 +178,28 @@ float4 main(FSInput input) : SV_Target {
 
     float2 uv = input.texcoord;
 
-    // ── Read G-Buffer ──
+    // ── Read G-Buffer (2-RT packed layout) ──
 #ifdef UZ_BINDLESS
     // SM6.6 bindless: fetch G-Buffer textures from the descriptor heap
-    Texture2D<float4> gbAlbedo     = ResourceDescriptorHeap[gBufIndices.albedoIdx];
-    Texture2D<float4> gbNormal     = ResourceDescriptorHeap[gBufIndices.normalIdx];
-    Texture2D<float4> gbMetalRough = ResourceDescriptorHeap[gBufIndices.metalRoughIdx];
-    Texture2D<float>  gbDepth      = ResourceDescriptorHeap[gBufIndices.depthIdx];
+    Texture2D<float4> gbAlbedo = ResourceDescriptorHeap[gBufIndices.albedoIdx];
+    Texture2D<float4> gbNormal = ResourceDescriptorHeap[gBufIndices.normalIdx];
+    Texture2D<float>  gbDepth  = ResourceDescriptorHeap[gBufIndices.depthIdx];
 
-    float3 albedo     = gbAlbedo.Sample(pointSampler, uv).rgb;
-    float3 N          = normalize(gbNormal.Sample(pointSampler, uv).rgb);
-    float4 metalRough = gbMetalRough.Sample(pointSampler, uv);
-    float  depth      = gbDepth.Sample(pointSampler, uv).r;
+    float4 albedoAO     = gbAlbedo.Sample(pointSampler, uv);
+    float4 normalPacked = gbNormal.Sample(pointSampler, uv);
+    float  depth        = gbDepth.Sample(pointSampler, uv).r;
 #else
-    // SM5 path: register-bound textures at t0-t3
-    float3 albedo     = gbufferAlbedo.Sample(pointSampler, uv).rgb;
-    float3 N          = normalize(gbufferNormal.Sample(pointSampler, uv).rgb);
-    float4 metalRough = gbufferMetalRough.Sample(pointSampler, uv);
-    float  depth      = gbufferDepth.Sample(pointSampler, uv).r;
+    // SM5 path: register-bound textures at t0-t2
+    float4 albedoAO     = gbufferAlbedo.Sample(pointSampler, uv);
+    float4 normalPacked = gbufferNormal.Sample(pointSampler, uv);
+    float  depth        = gbufferDepth.Sample(pointSampler, uv).r;
 #endif
 
-    float metallic  = metalRough.r;
-    float roughness = metalRough.g;
-    float ao        = metalRough.b;
+    float3 albedo    = albedoAO.rgb;
+    float  ao        = albedoAO.a;
+    float3 N         = OctDecode(normalPacked.rg);
+    float  metallic  = normalPacked.b;
+    float  roughness = normalPacked.a;
 
     // ── Reconstruct world position from depth ──
     float3 worldPos = ReconstructWorldPosition(uv, depth);

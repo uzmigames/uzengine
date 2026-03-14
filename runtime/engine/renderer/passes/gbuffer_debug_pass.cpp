@@ -1,6 +1,6 @@
 /// UzEngine G-Buffer Debug Visualization Pass — Implementation
 ///
-/// Registers and executes a fullscreen debug pass that reads the four
+/// Registers and executes a fullscreen debug pass that reads the three
 /// G-Buffer textures and writes a single diagnostic channel (selected at
 /// runtime via `GBufferDebugMode`) to the backbuffer.
 
@@ -32,8 +32,8 @@ void AddGBufferDebugPass(rg::RgBuilder& builder, const GBufferDebugPassDesc& des
         pb.Write(desc.backbuffer, RHIResourceState::RenderTarget);
         pb.Read(desc.albedoGBuffer,     RHIResourceState::ShaderResource);
         pb.Read(desc.normalGBuffer,     RHIResourceState::ShaderResource);
-        pb.Read(desc.metalRoughGBuffer, RHIResourceState::ShaderResource);
         pb.Read(desc.depthGBuffer,      RHIResourceState::ShaderResource);
+        pb.Read(desc.velocityGBuffer,   RHIResourceState::ShaderResource);
 
         pb.SetExecutionCallback([desc](IRHICommandList* cmd, const rg::RgPassResources& res) {
             UZ_PROFILE_SCOPE("GBufferDebug::Execute");
@@ -58,25 +58,25 @@ void AddGBufferDebugPass(rg::RgBuilder& builder, const GBufferDebugPassDesc& des
             // Required for invViewProj when WorldPos mode is active.
             cmd->SetRootCBV(kSlotPerFrame, desc.perFrameAlloc.bufferHandle,
                             desc.perFrameAlloc.offsetBytes,
-                            desc.perFrameAlloc.cpuPtr, sizeof(PerFrameMultiLightCB));
+                            desc.perFrameAlloc.cpuPtr, 256);
 
             // ── Bind G-Buffer textures + debug mode ──────────────────────
             if (desc.bindless) {
-                // SM6.6: push SRV descriptor indices at root param 0 (b0).
-                const uint32_t srvIndices[4] = {
+                // SM6.6: push 4 SRV descriptor indices at root param 0 (b0).
+                // Layout: [albedoSrv, normalSrv, depthSrv, velocitySrv]
+                const uint32_t rootData[4] = {
                     desc.albedoSrvIndex,
                     desc.normalSrvIndex,
-                    desc.metalRoughSrvIndex,
-                    desc.depthSrvIndex
+                    desc.depthSrvIndex,
+                    desc.velocitySrvIndex,
                 };
-                cmd->SetRootConstants(kSlotRootConstants, srvIndices, 4);
+                cmd->SetRootConstants(kSlotRootConstants, rootData, 4);
 
-                // Bind DebugCB at root param 2 (b2) with debugMode.
-                struct DebugCB { uint32_t mode; uint32_t pad[3]; };
-                DebugCB debugCB{static_cast<uint32_t>(desc.mode), {0, 0, 0}};
+                // Bind debugMode via root CBV at b2 (kSlotPerObject reused
+                // for fullscreen passes that have no per-object data).
                 cmd->SetRootCBV(kSlotPerObject, desc.debugAlloc.bufferHandle,
                                 desc.debugAlloc.offsetBytes,
-                                desc.debugAlloc.cpuPtr, sizeof(DebugCB));
+                                desc.debugAlloc.cpuPtr, 256);
             } else {
                 // SM5: push debug mode as root constant at b0.
                 const uint32_t modeValue = static_cast<uint32_t>(desc.mode);
@@ -85,8 +85,8 @@ void AddGBufferDebugPass(rg::RgBuilder& builder, const GBufferDebugPassDesc& des
                 // SM5: bind textures directly at fragment texture slots t0-t3.
                 cmd->SetFragmentTexture(0, desc.albedoTexture);
                 cmd->SetFragmentTexture(1, desc.normalTexture);
-                cmd->SetFragmentTexture(2, desc.metalRoughTexture);
-                cmd->SetFragmentTexture(3, desc.depthTextureForSrv);
+                cmd->SetFragmentTexture(2, desc.depthTextureForSrv);
+                cmd->SetFragmentTexture(3, desc.velocityTexture);
             }
 
             // ── Viewport and scissor ─────────────────────────────────────

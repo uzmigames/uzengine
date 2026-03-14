@@ -40,11 +40,24 @@
 
 #include "rhi.h"
 
+#include <atomic>
 #include <cstdint>
 #include <mutex>
 #include <vector>
 
 namespace uz {
+
+/// Thread contention statistics for parallel command list acquisition.
+///
+/// Tracks how often threads compete for the mutex in `AcquireCommandList()`,
+/// which indicates whether the pool has enough slots for the workload.
+struct ContentionStats {
+    uint32_t acquisitionAttempts = 0;   ///< Total AcquireCommandList calls.
+    uint32_t contentionEvents = 0;      ///< Times a thread had to wait (try_lock failed).
+    uint32_t maxConcurrentWorkers = 0;  ///< Peak number of simultaneously acquired slots.
+    float avgAcquireTimeUs = 0.0f;      ///< Average time to acquire a slot, in microseconds.
+    float maxAcquireTimeUs = 0.0f;      ///< Worst-case acquire time, in microseconds.
+};
 
 /// Configuration for the parallel command recorder.
 struct ParallelRecorderConfig {
@@ -143,6 +156,12 @@ public:
     /// Returns true if the recorder has been initialized.
     [[nodiscard]] bool IsInitialized() const { return m_device != nullptr; }
 
+    /// Returns a snapshot of thread contention statistics since last reset.
+    [[nodiscard]] ContentionStats GetContentionStats() const;
+
+    /// Resets all contention counters to zero.
+    void ResetContentionStats();
+
 private:
     /// Tracks the state of a single command list slot in the pool.
     struct CommandListSlot {
@@ -157,6 +176,14 @@ private:
     std::vector<CommandListSlot> m_slots;
     mutable std::mutex m_mutex;
     uint32_t m_nextOrder = 0;  ///< Monotonic counter for acquisition ordering.
+
+    // Contention tracking — updated atomically since AcquireCommandList is hot.
+    std::atomic<uint32_t> m_acquisitionAttempts{0};
+    std::atomic<uint32_t> m_contentionEvents{0};
+    std::atomic<uint32_t> m_currentWorkers{0};
+    std::atomic<uint32_t> m_peakWorkers{0};
+    std::atomic<float> m_totalAcquireTimeUs{0.0f};
+    std::atomic<float> m_maxAcquireTimeUs{0.0f};
 };
 
 } // namespace uz

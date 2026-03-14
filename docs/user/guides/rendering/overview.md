@@ -79,4 +79,6 @@ StructuredBuffer<Vertex> vertices = ResourceDescriptorHeap[descriptorIndex];
 ## Related Pages
 
 - [RHI Overview](../rhi/overview.md) — Hardware abstraction layer
+- [GBuffer Layout Guide](./gbuffer-layout.md) — Deferred G-Buffer channel mapping and octahedral encoding
+- [Shader Pipeline Guide](./shader-pipeline.md) — Shader compilation, caching, and hot-reload
 - [First Window](../../getting-started/first-window.md) — Current render loop

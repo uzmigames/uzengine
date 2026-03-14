@@ -29,7 +29,6 @@ void AddLightingPass(rg::RgBuilder& builder, const LightingPassDesc& desc)
         pb.Write(desc.backbuffer, RHIResourceState::RenderTarget);
         pb.Read(desc.albedoGBuffer, RHIResourceState::ShaderResource);
         pb.Read(desc.normalGBuffer, RHIResourceState::ShaderResource);
-        pb.Read(desc.metalRoughGBuffer, RHIResourceState::ShaderResource);
         pb.Read(desc.depthGBuffer, RHIResourceState::ShaderResource);
 
         pb.SetExecutionCallback([desc](IRHICommandList* cmd, const rg::RgPassResources& res) {
@@ -72,20 +71,18 @@ void AddLightingPass(rg::RgBuilder& builder, const LightingPassDesc& desc)
             // ── Bind G-Buffer textures ───────────────────────────────────
             if (desc.bindless) {
                 // SM6.6: push descriptor indices for G-Buffer SRVs.
-                // Pack 4 indices into root constants at slot 0.
-                const uint32_t indices[4] = {
+                // Pack 3 indices into root constants at slot 0.
+                const uint32_t indices[3] = {
                     desc.albedoSrvIndex,
                     desc.normalSrvIndex,
-                    desc.metalRoughSrvIndex,
                     desc.depthSrvIndex
                 };
-                cmd->SetRootConstants(kSlotRootConstants, indices, 4);
+                cmd->SetRootConstants(kSlotRootConstants, indices, 3);
             } else {
-                // SM5: bind textures directly at fragment texture slots t0-t3.
+                // SM5: bind textures directly at fragment texture slots t0-t2.
                 cmd->SetFragmentTexture(0, desc.albedoTexture);
                 cmd->SetFragmentTexture(1, desc.normalTexture);
-                cmd->SetFragmentTexture(2, desc.metalRoughTexture);
-                cmd->SetFragmentTexture(3, desc.depthTextureForSrv);
+                cmd->SetFragmentTexture(2, desc.depthTextureForSrv);
             }
 
             // ── Viewport and scissor ─────────────────────────────────────

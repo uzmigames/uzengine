@@ -1,15 +1,14 @@
 /// G-Buffer pixel shader for the deferred rendering geometry pass.
 ///
-/// Writes surface attributes to three render targets (MRT) for later
+/// Writes surface attributes to two render targets (MRT) for later
 /// consumption by the deferred lighting pass. No lighting is computed here.
 ///
 /// SM6.6 (UZ_BINDLESS): samples PBR textures via ResourceDescriptorHeap[index].
 /// SM5 (!UZ_BINDLESS): samples PBR textures via register-bound textures t0-t4.
 ///
-/// # Render Targets
-/// - SV_Target0: Albedo   (R8G8B8A8_UNORM) — rgb = base color, a = 1.0
-/// - SV_Target1: Normal   (R16G16B16A16_FLOAT) — rgb = world-space normal [-1,1], a = 1.0
-/// - SV_Target2: MetalRough (R8G8B8A8_UNORM) — r = metallic, g = roughness, b = ao, a = 1.0
+/// # Render Targets (optimized UE5-style packed layout)
+/// - SV_Target0: AlbedoAO     (R8G8B8A8_UNORM) — rgb = base color (linear), a = AO
+/// - SV_Target1: NormalMatPbr  (R8G8B8A8_UNORM) — rg = octahedral normal, b = metallic, a = roughness
 ///
 /// # Texture Maps (all optional — index 0 = use default value)
 /// - albedoIndex:    BaseColor map (sRGB) -> linear albedo
@@ -17,6 +16,8 @@
 /// - roughnessIndex: Roughness map (R channel) -> perceptual roughness
 /// - metallicIndex:  Metallic map (R channel) -> metallic factor
 /// - aoIndex:        Ambient occlusion map (R channel) -> AO multiplier
+
+#include "include/octahedral.hlsli"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Input / Output Structures
@@ -31,11 +32,10 @@ struct PSInput {
     float3 positionWS : TEXCOORD1;
 };
 
-/// G-Buffer MRT output. Each field maps to a separate render target.
+/// G-Buffer MRT output — 2-RT packed layout.
 struct GBufferOutput {
-    float4 albedo     : SV_Target0; ///< rgb = base color (linear), a = 1.0
-    float4 normal     : SV_Target1; ///< rgb = world normal [-1,1], a = 1.0
-    float4 metalRough : SV_Target2; ///< r = metallic, g = roughness, b = ao, a = 1.0
+    float4 albedoAO     : SV_Target0; ///< rgb = base color (linear), a = ambient occlusion
+    float4 normalMatPbr : SV_Target1; ///< rg = octahedral-encoded normal, b = metallic, a = roughness
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -152,11 +152,10 @@ GBufferOutput main(PSInput input) {
         N = normalize(mul(normalTS, TBN));
     }
 
-    // ── Write G-Buffer ──
+    // ── Write G-Buffer (2-RT packed layout) ──
     GBufferOutput output;
-    output.albedo     = float4(albedo, 1.0f);
-    output.normal     = float4(N, 1.0f);      // RGBA16F — no packing needed
-    output.metalRough = float4(metallic, roughness, ao, 1.0f);
+    output.albedoAO     = float4(albedo, ao);
+    output.normalMatPbr = float4(OctEncode(N), metallic, roughness);
 
     return output;
 }

@@ -437,16 +437,23 @@ bool VulkanDevice::CreateLogicalDevice() {
 
     m_graphicsQueueFamily = UINT32_MAX;
     m_transferQueueFamily = UINT32_MAX;
+    m_computeQueueFamily = UINT32_MAX;
 
     for (uint32_t i = 0; i < queueFamilyCount; ++i) {
         if ((queueFamilies[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) && m_graphicsQueueFamily == UINT32_MAX) {
             m_graphicsQueueFamily = i;
         }
-        // Prefer a dedicated transfer queue (no graphics bit)
+        // Prefer a dedicated transfer queue (transfer but not graphics)
         if ((queueFamilies[i].queueFlags & VK_QUEUE_TRANSFER_BIT)
             && !(queueFamilies[i].queueFlags & VK_QUEUE_GRAPHICS_BIT)
             && m_transferQueueFamily == UINT32_MAX) {
             m_transferQueueFamily = i;
+        }
+        // Prefer a dedicated compute queue (compute but not graphics)
+        if ((queueFamilies[i].queueFlags & VK_QUEUE_COMPUTE_BIT)
+            && !(queueFamilies[i].queueFlags & VK_QUEUE_GRAPHICS_BIT)
+            && m_computeQueueFamily == UINT32_MAX) {
+            m_computeQueueFamily = i;
         }
     }
 
@@ -458,6 +465,16 @@ bool VulkanDevice::CreateLogicalDevice() {
     // Fall back to graphics queue for transfers if no dedicated transfer queue
     if (m_transferQueueFamily == UINT32_MAX) {
         m_transferQueueFamily = m_graphicsQueueFamily;
+        UZ_LOG(RHI, Info, "No dedicated transfer queue family — transfers will use graphics queue");
+    } else {
+        UZ_LOG(RHI, Info, "Found dedicated transfer queue family={}", m_transferQueueFamily);
+    }
+
+    // Log compute queue discovery result
+    if (m_computeQueueFamily == UINT32_MAX) {
+        UZ_LOG(RHI, Info, "No dedicated compute queue family — async compute will use graphics queue");
+    } else {
+        UZ_LOG(RHI, Info, "Found dedicated compute queue family={}", m_computeQueueFamily);
     }
 
     float queuePriority = 1.0f;
@@ -477,6 +494,18 @@ bool VulkanDevice::CreateLogicalDevice() {
         transferQueueCI.queueCount = 1;
         transferQueueCI.pQueuePriorities = &queuePriority;
         queueCreateInfos.push_back(transferQueueCI);
+    }
+
+    // Create dedicated compute queue if found and distinct from graphics/transfer
+    if (m_computeQueueFamily != UINT32_MAX
+        && m_computeQueueFamily != m_graphicsQueueFamily
+        && m_computeQueueFamily != m_transferQueueFamily) {
+        VkDeviceQueueCreateInfo computeQueueCI = {};
+        computeQueueCI.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+        computeQueueCI.queueFamilyIndex = m_computeQueueFamily;
+        computeQueueCI.queueCount = 1;
+        computeQueueCI.pQueuePriorities = &queuePriority;
+        queueCreateInfos.push_back(computeQueueCI);
     }
 
     // Required device extensions
@@ -531,8 +560,13 @@ bool VulkanDevice::CreateLogicalDevice() {
     vkGetDeviceQueue(m_device, m_graphicsQueueFamily, 0, &m_graphicsQueue);
     vkGetDeviceQueue(m_device, m_transferQueueFamily, 0, &m_transferQueue);
 
-    UZ_LOG(RHI, Info, "Vulkan device created (graphicsQueue={}, transferQueue={})",
-           m_graphicsQueueFamily, m_transferQueueFamily);
+    if (m_computeQueueFamily != UINT32_MAX) {
+        vkGetDeviceQueue(m_device, m_computeQueueFamily, 0, &m_computeQueue);
+    }
+
+    UZ_LOG(RHI, Info, "Vulkan device created (graphicsQueue={}, transferQueue={}, computeQueue={})",
+           m_graphicsQueueFamily, m_transferQueueFamily,
+           m_computeQueueFamily == UINT32_MAX ? -1 : static_cast<int>(m_computeQueueFamily));
 
     // Query and log descriptor indexing capabilities for future bindless support
     {
@@ -1556,6 +1590,41 @@ VulkanSampler* VulkanDevice::FindSamplerByIndex(uint32_t samplerIndex) {
         }
     }
     return nullptr;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Copy Queue Stubs
+// ─────────────────────────────────────────────────────────────────────────────
+
+uint64_t VulkanDevice::SignalCopyQueue()
+{
+    UZ_LOG(RHI, Warning, "Vulkan transfer queue not yet implemented — SignalCopyQueue is a no-op");
+    return 0;
+}
+
+void VulkanDevice::GraphicsWaitForCopy(uint64_t /*value*/)
+{
+    UZ_LOG(RHI, Warning, "Vulkan transfer queue not yet implemented — GraphicsWaitForCopy is a no-op");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Compute Queue Stubs
+// ─────────────────────────────────────────────────────────────────────────────
+
+uint64_t VulkanDevice::SignalComputeQueue()
+{
+    UZ_LOG(RHI, Warning, "Vulkan compute queue not yet implemented — SignalComputeQueue is a no-op");
+    return 0;
+}
+
+void VulkanDevice::GraphicsWaitForCompute(uint64_t /*value*/)
+{
+    UZ_LOG(RHI, Warning, "Vulkan compute queue not yet implemented — GraphicsWaitForCompute is a no-op");
+}
+
+void VulkanDevice::ComputeWaitForGraphics(uint64_t /*value*/)
+{
+    UZ_LOG(RHI, Warning, "Vulkan compute queue not yet implemented — ComputeWaitForGraphics is a no-op");
 }
 
 } // namespace uz

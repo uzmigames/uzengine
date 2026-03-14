@@ -1,63 +1,50 @@
-/// Mipmap Generation Compute Shader
+/// Mipmap generation compute shader for async compute queue.
 ///
-/// Downsamples a source mip level to produce the next mip level using
-/// bilinear filtering (average of 4 texels). Designed as UzEngine's
-/// first compute shader and async compute queue proof-of-concept.
+/// Generates one mip level per dispatch by downsampling 2x2 texels using
+/// bilinear filtering. Designed to run on the async compute queue while
+/// the graphics queue renders the current frame.
 ///
-/// Dispatch: ceil(outputWidth / 8), ceil(outputHeight / 8), 1
+/// # Inputs
+/// - `g_InputMip` (t0): Source mip level to downsample.
+/// - `g_LinearSampler` (s0): Bilinear sampler for 2x2 box filter.
+/// - Root constants (b0): output dimensions + reciprocal input dimensions.
+///
+/// # Outputs
+/// - `g_OutputMip` (u0): Destination mip level (half resolution of input).
+///
+/// # Thread Group
+/// [8, 8, 1] — one thread per output texel. Dispatch ceil(width/8) x ceil(height/8) groups.
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Root Constants — source mip dimensions and reciprocals
+// Root Constants
 // ─────────────────────────────────────────────────────────────────────────────
 
-cbuffer MipGenParams : register(b0)
+cbuffer MipgenConstants : register(b0)
 {
-    /// Source mip width in texels.
-    float srcWidth;
-    /// Source mip height in texels.
-    float srcHeight;
-    /// 1.0 / srcWidth — precomputed to avoid per-thread division.
-    float invSrcWidth;
-    /// 1.0 / srcHeight — precomputed to avoid per-thread division.
-    float invSrcHeight;
+    uint2  g_OutputSize;   // Output mip dimensions in texels
+    float2 g_TexelSize;    // 1.0 / inputSize (for UV computation)
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Resources
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Source mip level to read from.
-Texture2D<float4> srcTexture : register(t0);
-
-/// Bilinear sampler with clamp addressing to avoid border artifacts.
-SamplerState linearSampler : register(s0);
-
-/// Destination mip level to write into.
-RWTexture2D<float4> dstTexture : register(u0);
+Texture2D<float4>   g_InputMip      : register(t0);
+RWTexture2D<float4> g_OutputMip     : register(u0);
+SamplerState        g_LinearSampler : register(s0);
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Entry Point
+// Main
 // ─────────────────────────────────────────────────────────────────────────────
 
 [numthreads(8, 8, 1)]
 void CSMain(uint3 dtid : SV_DispatchThreadID)
 {
-    // Early-out for threads beyond output dimensions.
-    // Output is half the source size (rounded up by dispatch granularity).
-    float dstWidth  = max(srcWidth  * 0.5f, 1.0f);
-    float dstHeight = max(srcHeight * 0.5f, 1.0f);
-
-    if (dtid.x >= (uint)dstWidth || dtid.y >= (uint)dstHeight)
+    if (dtid.x >= g_OutputSize.x || dtid.y >= g_OutputSize.y)
         return;
 
-    // Map output texel center to source UV.
-    // +0.5 centers on the texel; multiply by inverse source dims to get [0,1] UV.
-    // Each output texel corresponds to a 2x2 block in the source, so we offset
-    // by 1 source texel (the bilinear tap naturally averages the 2x2 neighborhood).
-    float2 uv = (dtid.xy * 2.0f + 1.0f) * float2(invSrcWidth, invSrcHeight);
-
-    // Bilinear sample averages the 4 source texels covered by this output texel.
-    float4 color = srcTexture.SampleLevel(linearSampler, uv, 0);
-
-    dstTexture[dtid.xy] = color;
+    // Sample center of the 2x2 block in the input mip.
+    // Bilinear filtering produces the box-filter average automatically.
+    float2 uv = (float2(dtid.xy) + 0.5) * g_TexelSize;
+    g_OutputMip[dtid.xy] = g_InputMip.SampleLevel(g_LinearSampler, uv, 0);
 }

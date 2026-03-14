@@ -201,6 +201,7 @@
 #include "gbuffer_pass.h"
 #include "gbuffer_debug_pass.h"
 #include "lighting_pass.h"
+#include "velocity_pass.h"
 #include "shadow_pass.h"
 #include "postprocess_stack.h"
 #include "postprocess_math.h"

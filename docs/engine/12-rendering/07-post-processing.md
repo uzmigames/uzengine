@@ -89,21 +89,38 @@ Smooth jagged edges by rendering at jittered sub-pixels and averaging over time:
 /// TAA resolves aliasing via temporal history.
 struct TAASettings {
     bool     enabled;
-    float    jitter_scale;      // offset sub-pixel amount
+    float    jitter_scale;      // offset sub-pixel amount (0.25-1.0 pixels)
     float    feedback_min;      // minimum history weight (0.8 typical)
     float    feedback_max;      // maximum history weight (0.95 typical)
     float    ghosting_reduction; // reject old history if color changes too much
+    bool     use_velocity;       // enable velocity-based rejection (Phase 1.3.1+)
 };
 ```
 
 **How TAA works:**
-1. Jitter camera projection by random offset (0.25-1.0 pixels) each frame
-2. Render scene, save frame to history texture
-3. Next frame: reproject history using velocity buffer + depth
-4. Blend jittered frame with reprojected history
-5. Repeat — over 8 frames, get smooth 2x or 4x MSAA equivalent
+1. **Jitter camera projection** by random offset (0.25-1.0 pixels) each frame
+2. **Render scene** with jittered projection, save frame to history texture
+3. **Next frame**: reproject history using **velocity buffer** (from depth reprojection)
+   ```hlsl
+   float2 velocity = velocityBuffer.Sample(sampler, uv).rg;
+   float2 prevUV = uv - (velocity / screenDimensions);
+   float3 history = historyBuffer.Sample(sampler, prevUV).rgb;
+   ```
+4. **Blend** jittered frame with reprojected history
+   ```hlsl
+   float weight = mix(feedback_min, feedback_max, velocityLength);  // Reduce history weight for motion
+   output = mix(current, history, weight);
+   ```
+5. **Repeat** — over 8+ frames, jagged edges become smooth (equivalent to 2x–4x MSAA)
 
-**Challenge:** Fast camera movement can cause ghosting. Solution: velocity-based history rejection — if reprojected history differs too much from current frame, weight it down.
+**Challenge:** Fast camera movement or object motion can cause ghosting.
+**Solution:** Velocity-based history rejection — if reprojected history differs significantly from current frame OR velocity is large, reduce history weight dynamically.
+
+**Velocity Buffer Integration** (Milestone 1.3.1+):
+- The velocity buffer (RG16Float) is generated via depth reprojection in a separate fullscreen pass
+- Stores screen-space motion vectors in pixels (positive X = rightward, positive Y = downward)
+- Sky pixels (depth ≈ 0 or ≈ 1) output zero velocity to prevent ghosting at horizon
+- See [GBuffer Layout Guide](../../user/guides/rendering/gbuffer-layout.md#velocity-buffer-generation) for detailed velocity generation
 
 ## Screen-Space Ambient Occlusion (SSAO) — Phase 2
 
@@ -204,17 +221,36 @@ Streak fast motion to convey speed:
 ```cpp
 struct MotionBlurSettings {
     bool     enabled;
-    float    max_blur_radius;   // max pixels per motion
+    float    max_blur_radius;   // max pixels per motion (clamped)
     int      sample_count;      // 8-16 samples along motion ray
-    bool     per_object_blur;   // if false, use camera velocity only
+    bool     per_object_blur;   // if false, use velocity buffer only (Phase 1.3.1+)
 };
 ```
 
 **How it works:**
-1. Reproject each pixel using velocity buffer (camera velocity + object velocity)
-2. Sample multiple points along motion vector
-3. Average samples to produce blur streak
-4. Clamp per-sample to respect max blur (avoid ghosting)
+1. **Sample velocity buffer** for each pixel (camera + object motion combined)
+   ```hlsl
+   float2 velocity = velocityBuffer.Sample(sampler, uv).rg;
+   velocity = min(velocity, maxBlurRadius);  // Clamp to prevent extreme blur
+   ```
+2. **Step along motion vector** and sample color at multiple points
+   ```hlsl
+   float3 blurred = float3(0, 0, 0);
+   for (int i = 0; i < SAMPLE_COUNT; ++i) {
+       float t = i / (SAMPLE_COUNT - 1);
+       float2 sampleUV = uv - (velocity / screenDimensions) * t;
+       blurred += colorBuffer.Sample(sampler, sampleUV).rgb;
+   }
+   blurred /= SAMPLE_COUNT;
+   ```
+3. **Average samples** to produce blur streak
+4. **Clamp velocity** to respect `max_blur_radius` (avoid ghosting on extremely fast motion)
+
+**Velocity Buffer Integration** (Milestone 1.3.1+):
+- Velocity is read directly from the RG16Float velocity buffer generated in the deferred pipeline
+- Negative velocity = leftward/upward motion, positive = rightward/downward
+- Sky pixels have zero velocity, naturally unblurred
+- See [GBuffer Layout Guide](../../user/guides/rendering/gbuffer-layout.md#velocity-buffer-generation) for implementation details
 
 ## Color Grading — Phase 2
 

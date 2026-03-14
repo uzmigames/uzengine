@@ -1,8 +1,8 @@
 #pragma once
 
-/// GBuffer — Manages deferred rendering targets (albedo, normal, metallic-roughness, depth).
+/// GBuffer — Manages deferred rendering targets (albedo+AO, packed normal+metal+rough, depth, velocity).
 ///
-/// Owns four GPU textures and their SRV heap indices for the lighting pass.
+/// Owns four GPU textures and their SRV heap indices for the lighting and post-process passes.
 /// Provides a Create/Resize/Destroy lifecycle tied to an `IRHIDevice`.
 ///
 /// # Thread Safety
@@ -18,14 +18,14 @@ class IRHIDevice;
 
 /// Deferred rendering geometry buffer.
 ///
-/// Allocates and manages the four render targets used by the GBuffer pass:
-/// - **Albedo** (RGBA8Unorm) — base color + opacity
-/// - **Normal** (RGBA16Float) — world-space normals
-/// - **MetalRough** (RGBA8Unorm) — metallic (R), roughness (G), AO (B)
+/// Allocates and manages the render targets used by the GBuffer pass:
+/// - **Albedo** (RGBA8Unorm) — base color (RGB) + ambient occlusion (A)
+/// - **Normal** (RGBA8Unorm) — octahedral-encoded normal (RG) + metallic (B) + roughness (A)
 /// - **Depth** (D32Float) — hardware depth buffer
+/// - **Velocity** (RG16Float) — screen-space motion vectors for TAA/motion blur
 ///
-/// Each color target is created with `RenderTarget | ShaderResource` usage so it
-/// can be written in the geometry pass and read as an SRV in the lighting pass.
+/// Color and velocity targets are created with `RenderTarget | ShaderResource` usage
+/// so they can be written in their respective passes and read as SRVs downstream.
 /// The depth target uses `DepthStencil | ShaderResource`.
 ///
 /// # Lifecycle
@@ -101,26 +101,26 @@ public:
     /// Returns true if all four textures are allocated and valid.
     ///
     /// # Returns
-    /// `true` if albedo, normal, metalRough, and depth handles are all valid.
+    /// `true` if albedo, normal, depth, and velocity handles are all valid.
     [[nodiscard]] bool IsValid() const;
 
     // ─────────────────────────────────────────────────────────────────────────
     // Texture handles — written by GBuffer pass, read by lighting pass
     // ─────────────────────────────────────────────────────────────────────────
 
-    RHITextureHandle albedo;       ///< RGBA8Unorm — base color + opacity
-    RHITextureHandle normal;       ///< RGBA16Float — world-space normals
-    RHITextureHandle metalRough;   ///< RGBA8Unorm — metallic (R), roughness (G), AO (B)
+    RHITextureHandle albedo;       ///< RGBA8Unorm — base color (RGB) + ambient occlusion (A)
+    RHITextureHandle normal;       ///< RGBA8Unorm — octahedral normal (RG) + metallic (B) + roughness (A)
     RHITextureHandle depth;        ///< D32Float — depth buffer
+    RHITextureHandle velocity;     ///< RG16Float — screen-space motion vectors (TAA / motion blur)
 
     // ─────────────────────────────────────────────────────────────────────────
     // SRV indices — bindless descriptor heap indices for lighting pass reads
     // ─────────────────────────────────────────────────────────────────────────
 
-    uint32_t albedoSRV = UINT32_MAX;      ///< Bindless SRV index for albedo texture.
-    uint32_t normalSRV = UINT32_MAX;      ///< Bindless SRV index for normal texture.
-    uint32_t metalRoughSRV = UINT32_MAX;  ///< Bindless SRV index for metallic-roughness texture.
-    uint32_t depthSRV = UINT32_MAX;       ///< Bindless SRV index for depth texture.
+    uint32_t albedoSRV   = UINT32_MAX;    ///< Bindless SRV index for albedo texture.
+    uint32_t normalSRV   = UINT32_MAX;    ///< Bindless SRV index for normal texture.
+    uint32_t depthSRV    = UINT32_MAX;    ///< Bindless SRV index for depth texture.
+    uint32_t velocitySRV = UINT32_MAX;    ///< Bindless SRV index for velocity texture.
 
     uint32_t width = 0;   ///< Current render target width in texels.
     uint32_t height = 0;  ///< Current render target height in texels.

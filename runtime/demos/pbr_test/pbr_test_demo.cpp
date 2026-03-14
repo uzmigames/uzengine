@@ -310,7 +310,6 @@ void PBRTestDemo::OnFrame(float dt) {
 
     auto albedoRes     = rgBuilder.ImportTexture("GBuf_Albedo",     gbuffer_.albedo,     RHIResourceState::ShaderResource);
     auto normalRes     = rgBuilder.ImportTexture("GBuf_Normal",     gbuffer_.normal,     RHIResourceState::ShaderResource);
-    auto metalRoughRes = rgBuilder.ImportTexture("GBuf_MetalRough", gbuffer_.metalRough, RHIResourceState::ShaderResource);
     auto depthRes      = rgBuilder.ImportTexture("GBuf_Depth",      gbuffer_.depth,      RHIResourceState::ShaderResource);
 
     auto* pipelines = GetPipelines();
@@ -344,7 +343,6 @@ void PBRTestDemo::OnFrame(float dt) {
             GBufferPassDesc gbDesc{};
             gbDesc.albedoTarget         = albedoRes;
             gbDesc.normalTarget         = normalRes;
-            gbDesc.metalRoughTarget     = metalRoughRes;
             gbDesc.depthBuffer          = depthRes;
             gbDesc.depthTexture         = gbuffer_.depth;
             gbDesc.drawList             = &drawList;
@@ -369,18 +367,15 @@ void PBRTestDemo::OnFrame(float dt) {
             lightDesc.backbuffer          = bbRes;
             lightDesc.albedoGBuffer       = albedoRes;
             lightDesc.normalGBuffer       = normalRes;
-            lightDesc.metalRoughGBuffer   = metalRoughRes;
             lightDesc.depthGBuffer        = depthRes;
             lightDesc.perFrameAlloc       = perFrameAlloc;
             lightDesc.lightingAlloc       = lightingAlloc;
             lightDesc.pipeline            = pipelines->GetLighting();
             lightDesc.albedoSrvIndex      = gbuffer_.albedoSRV;
             lightDesc.normalSrvIndex      = gbuffer_.normalSRV;
-            lightDesc.metalRoughSrvIndex  = gbuffer_.metalRoughSRV;
             lightDesc.depthSrvIndex       = gbuffer_.depthSRV;
             lightDesc.albedoTexture       = gbuffer_.albedo;
             lightDesc.normalTexture       = gbuffer_.normal;
-            lightDesc.metalRoughTexture   = gbuffer_.metalRough;
             lightDesc.depthTextureForSrv  = gbuffer_.depth;
             lightDesc.shadowAlloc         = shadowAlloc;
             lightDesc.bindless            = bindless;
@@ -392,7 +387,6 @@ void PBRTestDemo::OnFrame(float dt) {
             dbgDesc.backbuffer         = bbRes;
             dbgDesc.albedoGBuffer      = albedoRes;
             dbgDesc.normalGBuffer      = normalRes;
-            dbgDesc.metalRoughGBuffer  = metalRoughRes;
             dbgDesc.depthGBuffer       = depthRes;
             dbgDesc.perFrameAlloc      = perFrameAlloc;
             struct DebugCBData { uint32_t mode; uint32_t pad[3]; };
@@ -404,11 +398,9 @@ void PBRTestDemo::OnFrame(float dt) {
             dbgDesc.mode               = static_cast<GBufferDebugMode>(debugModeValue_);
             dbgDesc.albedoSrvIndex     = gbuffer_.albedoSRV;
             dbgDesc.normalSrvIndex     = gbuffer_.normalSRV;
-            dbgDesc.metalRoughSrvIndex = gbuffer_.metalRoughSRV;
             dbgDesc.depthSrvIndex      = gbuffer_.depthSRV;
             dbgDesc.albedoTexture      = gbuffer_.albedo;
             dbgDesc.normalTexture      = gbuffer_.normal;
-            dbgDesc.metalRoughTexture  = gbuffer_.metalRough;
             dbgDesc.depthTextureForSrv = gbuffer_.depth;
             dbgDesc.bindless           = bindless;
             dbgDesc.viewportWidth      = static_cast<float>(swapChain->GetWidth());

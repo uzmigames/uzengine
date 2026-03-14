@@ -1,5 +1,9 @@
 # G-Buffer Optimization + Velocity Buffer (UE5 Parity)
 
+## Why
+
+The current G-Buffer uses R16G16B16A16_FLOAT (8 bytes/pixel) for world normals when octahedral encoding achieves equivalent quality in 2 bytes (RG8_UNORM). This wastes 15.8MB bandwidth per frame at 1080p. Additionally, TAA (3.14.0) and Motion Blur (3.18.0) are blocked because there is no velocity buffer. Optimizing the G-Buffer layout is a P0 prerequisite for the entire post-processing pipeline.
+
 ## Priority: P0 — Blocker for TAA, Motion Blur, and bandwidth optimization
 
 ## Summary

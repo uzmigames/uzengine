@@ -256,7 +256,6 @@ TEST(GBufferPassDesc, DefaultConstruction_ResourceIdsAreInvalid) {
     GBufferPassDesc desc{};
     EXPECT_FALSE(desc.albedoTarget.IsValid());
     EXPECT_FALSE(desc.normalTarget.IsValid());
-    EXPECT_FALSE(desc.metalRoughTarget.IsValid());
     EXPECT_FALSE(desc.depthBuffer.IsValid());
 }
 
@@ -293,14 +292,13 @@ TEST(GBufferPassDesc, AllFieldsAccessible_WriteAndRead) {
     // Render graph resource IDs
     desc.albedoTarget     = {1u};
     desc.normalTarget     = {2u};
-    desc.metalRoughTarget = {3u};
-    desc.depthBuffer      = {4u};
+    desc.depthBuffer      = {3u};
 
     // Physical handles
-    desc.depthTexture = {5u, 1u};
-    desc.pipeline     = {6u, 1u};
-    desc.vertexBuffer = {7u, 1u};
-    desc.indexBuffer  = {8u, 1u};
+    desc.depthTexture = {4u, 1u};
+    desc.pipeline     = {5u, 1u};
+    desc.vertexBuffer = {6u, 1u};
+    desc.indexBuffer  = {7u, 1u};
 
     // Numeric params
     desc.vertexBufferSrvIndex = 10u;
@@ -311,12 +309,11 @@ TEST(GBufferPassDesc, AllFieldsAccessible_WriteAndRead) {
 
     EXPECT_EQ(desc.albedoTarget.index,     1u);
     EXPECT_EQ(desc.normalTarget.index,     2u);
-    EXPECT_EQ(desc.metalRoughTarget.index, 3u);
-    EXPECT_EQ(desc.depthBuffer.index,      4u);
-    EXPECT_EQ(desc.depthTexture.index,     5u);
-    EXPECT_EQ(desc.pipeline.index,         6u);
-    EXPECT_EQ(desc.vertexBuffer.index,     7u);
-    EXPECT_EQ(desc.indexBuffer.index,      8u);
+    EXPECT_EQ(desc.depthBuffer.index,      3u);
+    EXPECT_EQ(desc.depthTexture.index,     4u);
+    EXPECT_EQ(desc.pipeline.index,         5u);
+    EXPECT_EQ(desc.vertexBuffer.index,     6u);
+    EXPECT_EQ(desc.indexBuffer.index,      7u);
     EXPECT_EQ(desc.vertexBufferSrvIndex,  10u);
     EXPECT_EQ(desc.indexCount,            36u);
     EXPECT_FLOAT_EQ(desc.viewportWidth,  1920.0f);
@@ -333,7 +330,6 @@ TEST(LightingPassDesc, DefaultConstruction_ResourceIdsAreInvalid) {
     EXPECT_FALSE(desc.backbuffer.IsValid());
     EXPECT_FALSE(desc.albedoGBuffer.IsValid());
     EXPECT_FALSE(desc.normalGBuffer.IsValid());
-    EXPECT_FALSE(desc.metalRoughGBuffer.IsValid());
     EXPECT_FALSE(desc.depthGBuffer.IsValid());
 }
 
@@ -342,7 +338,6 @@ TEST(LightingPassDesc, DefaultConstruction_HandlesAreInvalid) {
     EXPECT_FALSE(desc.pipeline.IsValid());
     EXPECT_FALSE(desc.albedoTexture.IsValid());
     EXPECT_FALSE(desc.normalTexture.IsValid());
-    EXPECT_FALSE(desc.metalRoughTexture.IsValid());
     EXPECT_FALSE(desc.depthTextureForSrv.IsValid());
 }
 
@@ -350,7 +345,6 @@ TEST(LightingPassDesc, DefaultConstruction_NumericFieldsAreZero) {
     LightingPassDesc desc{};
     EXPECT_EQ(desc.albedoSrvIndex,      0u);
     EXPECT_EQ(desc.normalSrvIndex,      0u);
-    EXPECT_EQ(desc.metalRoughSrvIndex,  0u);
     EXPECT_EQ(desc.depthSrvIndex,       0u);
     EXPECT_FLOAT_EQ(desc.viewportWidth,  0.0f);
     EXPECT_FLOAT_EQ(desc.viewportHeight, 0.0f);
@@ -367,19 +361,16 @@ TEST(LightingPassDesc, AllFieldsAccessible_WriteAndRead) {
     desc.backbuffer         = {1u};
     desc.albedoGBuffer      = {2u};
     desc.normalGBuffer      = {3u};
-    desc.metalRoughGBuffer  = {4u};
-    desc.depthGBuffer       = {5u};
+    desc.depthGBuffer       = {4u};
 
-    desc.pipeline           = {6u, 1u};
-    desc.albedoTexture      = {7u, 1u};
-    desc.normalTexture      = {8u, 1u};
-    desc.metalRoughTexture  = {9u, 1u};
-    desc.depthTextureForSrv = {10u, 1u};
+    desc.pipeline           = {5u, 1u};
+    desc.albedoTexture      = {6u, 1u};
+    desc.normalTexture      = {7u, 1u};
+    desc.depthTextureForSrv = {8u, 1u};
 
     desc.albedoSrvIndex     = 20u;
     desc.normalSrvIndex     = 21u;
-    desc.metalRoughSrvIndex = 22u;
-    desc.depthSrvIndex      = 23u;
+    desc.depthSrvIndex      = 22u;
     desc.viewportWidth      = 2560.0f;
     desc.viewportHeight     = 1440.0f;
     desc.bindless           = true;
@@ -387,17 +378,14 @@ TEST(LightingPassDesc, AllFieldsAccessible_WriteAndRead) {
     EXPECT_EQ(desc.backbuffer.index,        1u);
     EXPECT_EQ(desc.albedoGBuffer.index,     2u);
     EXPECT_EQ(desc.normalGBuffer.index,     3u);
-    EXPECT_EQ(desc.metalRoughGBuffer.index, 4u);
-    EXPECT_EQ(desc.depthGBuffer.index,      5u);
-    EXPECT_EQ(desc.pipeline.index,          6u);
-    EXPECT_EQ(desc.albedoTexture.index,     7u);
-    EXPECT_EQ(desc.normalTexture.index,     8u);
-    EXPECT_EQ(desc.metalRoughTexture.index, 9u);
-    EXPECT_EQ(desc.depthTextureForSrv.index, 10u);
+    EXPECT_EQ(desc.depthGBuffer.index,      4u);
+    EXPECT_EQ(desc.pipeline.index,          5u);
+    EXPECT_EQ(desc.albedoTexture.index,     6u);
+    EXPECT_EQ(desc.normalTexture.index,     7u);
+    EXPECT_EQ(desc.depthTextureForSrv.index, 8u);
     EXPECT_EQ(desc.albedoSrvIndex,         20u);
     EXPECT_EQ(desc.normalSrvIndex,         21u);
-    EXPECT_EQ(desc.metalRoughSrvIndex,     22u);
-    EXPECT_EQ(desc.depthSrvIndex,          23u);
+    EXPECT_EQ(desc.depthSrvIndex,          22u);
     EXPECT_FLOAT_EQ(desc.viewportWidth,  2560.0f);
     EXPECT_FLOAT_EQ(desc.viewportHeight, 1440.0f);
     EXPECT_TRUE(desc.bindless);
@@ -417,18 +405,11 @@ TEST(GBufferFormats, AlbedoFormat_IsRGBA8Unorm) {
     EXPECT_EQ(BytesPerTexel(kAlbedoFormat), 4u);
 }
 
-/// Normals require 16-bit float to preserve precision in world-space encoding.
-TEST(GBufferFormats, NormalFormat_IsRGBA16Float) {
-    constexpr RHIFormat kNormalFormat = RHIFormat::RGBA16Float;
-    EXPECT_EQ(kNormalFormat, RHIFormat::RGBA16Float);
-    EXPECT_EQ(BytesPerTexel(kNormalFormat), 8u);
-}
-
-/// Metallic/roughness are packed as two [0,1] values — RGBA8Unorm is sufficient.
-TEST(GBufferFormats, MetalRoughFormat_IsRGBA8Unorm) {
-    constexpr RHIFormat kMetalRoughFormat = RHIFormat::RGBA8Unorm;
-    EXPECT_EQ(kMetalRoughFormat, RHIFormat::RGBA8Unorm);
-    EXPECT_EQ(BytesPerTexel(kMetalRoughFormat), 4u);
+/// Normal RT packs octahedral normal (RG) + metallic (B) + roughness (A) in RGBA8Unorm.
+TEST(GBufferFormats, NormalFormat_IsRGBA8Unorm) {
+    constexpr RHIFormat kNormalFormat = RHIFormat::RGBA8Unorm;
+    EXPECT_EQ(kNormalFormat, RHIFormat::RGBA8Unorm);
+    EXPECT_EQ(BytesPerTexel(kNormalFormat), 4u);
 }
 
 /// Depth uses 32-bit float for maximum precision in the deferred depth pass.
@@ -463,26 +444,13 @@ TEST(GBufferTextureDesc, Normal_UsageFlags_ShaderResourceAndRenderTarget) {
     RgTextureDesc desc{};
     desc.width  = 1920;
     desc.height = 1080;
-    desc.format = RHIFormat::RGBA16Float;
-    desc.usage  = RHITextureUsage::ShaderResource | RHITextureUsage::RenderTarget;
-
-    EXPECT_TRUE(HasFlag(desc.usage, RHITextureUsage::ShaderResource));
-    EXPECT_TRUE(HasFlag(desc.usage, RHITextureUsage::RenderTarget));
-    EXPECT_FALSE(HasFlag(desc.usage, RHITextureUsage::DepthStencil));
-    EXPECT_FALSE(HasFlag(desc.usage, RHITextureUsage::UnorderedAccess));
-}
-
-/// MetalRough G-Buffer must be writable as a render target and readable as SRV.
-TEST(GBufferTextureDesc, MetalRough_UsageFlags_ShaderResourceAndRenderTarget) {
-    RgTextureDesc desc{};
-    desc.width  = 1920;
-    desc.height = 1080;
     desc.format = RHIFormat::RGBA8Unorm;
     desc.usage  = RHITextureUsage::ShaderResource | RHITextureUsage::RenderTarget;
 
     EXPECT_TRUE(HasFlag(desc.usage, RHITextureUsage::ShaderResource));
     EXPECT_TRUE(HasFlag(desc.usage, RHITextureUsage::RenderTarget));
     EXPECT_FALSE(HasFlag(desc.usage, RHITextureUsage::DepthStencil));
+    EXPECT_FALSE(HasFlag(desc.usage, RHITextureUsage::UnorderedAccess));
 }
 
 /// Depth G-Buffer must have DepthStencil for the G-Buffer write pass AND

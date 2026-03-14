@@ -135,6 +135,21 @@ public:
     /// * `setupFn` — Setup callback that configures the pass via `RgPassBuilder`.
     void AddPass(const char* name, const std::function<void(RgPassBuilder&)>& setupFn);
 
+    // ── Parallel recording ────────────────────────────────────────────────────
+
+    /// Enable parallel recording of independent passes.
+    ///
+    /// When enabled and an `RgParallelExecutor` is used, passes with no data
+    /// dependencies between them can record their command lists on separate threads.
+    /// Has no effect on the default `Execute(IRHICommandList*)` path.
+    ///
+    /// # Arguments
+    /// * `enabled` — `true` to enable parallel recording.
+    void SetParallelRecordingEnabled(bool enabled) { m_parallelRecordingEnabled = enabled; }
+
+    /// Returns whether parallel recording is enabled.
+    [[nodiscard]] bool IsParallelRecordingEnabled() const { return m_parallelRecordingEnabled; }
+
     // ── Compilation ─────────────────────────────────────────────────────────
 
     /// Compiles the render graph: topological sort, barrier scheduling, pass culling.
@@ -220,8 +235,9 @@ private:
     std::vector<RgPass> m_passes;                  ///< All registered passes.
     std::vector<uint32_t> m_sortedPassIndices;     ///< Topologically sorted pass order.
 
-    bool m_compiled = false;  ///< True after `Compile()` has been called.
-    bool m_executed = false;  ///< True after `Execute()` has been called.
+    bool m_compiled = false;                ///< True after `Compile()` has been called.
+    bool m_executed = false;                ///< True after `Execute()` has been called.
+    bool m_parallelRecordingEnabled = false; ///< Hint for RgParallelExecutor.
 };
 
 } // namespace uz::rg

@@ -1,7 +1,7 @@
 /// UzEngine Deferred Lighting Pass
 ///
 /// Registers a fullscreen lighting pass in the render graph that reads the
-/// G-Buffer textures (albedo, normals, metallic/roughness, depth) and
+/// G-Buffer textures (albedo+AO, packed normal+metallic+roughness, depth) and
 /// composites the final lit result into the backbuffer using a fullscreen
 /// triangle (3 vertices from SV_VertexID, no vertex/index buffer).
 ///
@@ -10,7 +10,6 @@
 /// - Backbuffer as Write (RenderTarget state)
 /// - Albedo G-Buffer as Read (ShaderResource state)
 /// - Normal G-Buffer as Read (ShaderResource state)
-/// - MetalRough G-Buffer as Read (ShaderResource state)
 /// - Depth G-Buffer as Read (ShaderResource state)
 ///
 /// Barriers are scheduled automatically by the render graph compiler.
@@ -19,7 +18,7 @@
 /// - Per-frame CB (with invViewProj) bound at root param 1.
 /// - Lighting CB (point light array) bound at root param 3.
 /// - SM6.6 bindless: G-Buffer SRV indices pushed via root constants at slot 0.
-/// - SM5 fallback: G-Buffer textures bound via SetFragmentTexture at t0-t3.
+/// - SM5 fallback: G-Buffer textures bound via SetFragmentTexture at t0-t2.
 
 #pragma once
 
@@ -51,18 +50,15 @@ struct LightingPassDesc {
     rg::RgResourceId backbuffer;        ///< Final lit output (write, RenderTarget state).
     rg::RgResourceId albedoGBuffer;     ///< Albedo G-Buffer input (read, ShaderResource state).
     rg::RgResourceId normalGBuffer;     ///< Normal G-Buffer input (read, ShaderResource state).
-    rg::RgResourceId metalRoughGBuffer; ///< Metallic/roughness G-Buffer input (read, ShaderResource state).
     rg::RgResourceId depthGBuffer;      ///< Depth G-Buffer input (read as SRV, not DSV).
     CBAllocation      perFrameAlloc;    ///< Per-frame CB with invViewProj filled (bound at b1).
     CBAllocation      lightingAlloc;    ///< LightingCB with point light data (bound at b2).
     RHIPipelineHandle pipeline;         ///< Lighting PSO (fullscreen triangle, no depth).
     uint32_t          albedoSrvIndex;   ///< SRV descriptor index for albedo G-Buffer (SM6.6 bindless).
     uint32_t          normalSrvIndex;   ///< SRV descriptor index for normal G-Buffer (SM6.6 bindless).
-    uint32_t          metalRoughSrvIndex; ///< SRV descriptor index for metallic/roughness G-Buffer (SM6.6 bindless).
     uint32_t          depthSrvIndex;    ///< SRV descriptor index for depth G-Buffer (SM6.6 bindless).
     RHITextureHandle  albedoTexture;    ///< Physical albedo texture handle (SM5 fallback binding).
     RHITextureHandle  normalTexture;    ///< Physical normal texture handle (SM5 fallback binding).
-    RHITextureHandle  metalRoughTexture;///< Physical metallic/roughness texture handle (SM5 fallback binding).
     RHITextureHandle  depthTextureForSrv;///< Physical depth texture handle (SM5 fallback binding, read as SRV).
     CBAllocation      shadowAlloc;      ///< ShadowDataCB allocation (bound at b4 via root param 3). Zero-init if no shadows.
     bool              bindless;         ///< True if SM6.6 bindless path is active.
@@ -88,7 +84,7 @@ struct LightingPassDesc {
 /// 2. Begins a render pass with one color attachment (no depth).
 /// 3. Binds the pipeline, per-frame CB at b1, lighting CB at b3.
 /// 4. For SM6.6: pushes G-Buffer SRV indices via root constants.
-///    For SM5: binds G-Buffer textures at t0-t3 via SetFragmentTexture.
+///    For SM5: binds G-Buffer textures at t0-t2 via SetFragmentTexture.
 /// 5. Issues Draw(3) for the fullscreen triangle.
 /// 6. Ends the render pass.
 ///
@@ -102,18 +98,15 @@ struct LightingPassDesc {
 /// desc.backbuffer            = builder.ImportRenderTarget(backbufferTex);
 /// desc.albedoGBuffer         = builder.ImportRenderTarget(albedoGBufTex);
 /// desc.normalGBuffer         = builder.ImportRenderTarget(normalGBufTex);
-/// desc.metalRoughGBuffer     = builder.ImportRenderTarget(metalRoughGBufTex);
 /// desc.depthGBuffer          = builder.ImportDepthBuffer(depthGBufTex);
 /// desc.perFrameAlloc         = perFrameCBAlloc;
 /// desc.lightingAlloc         = lightingCBAlloc;
 /// desc.pipeline              = lightingPSO;
 /// desc.albedoSrvIndex        = 100;
 /// desc.normalSrvIndex        = 101;
-/// desc.metalRoughSrvIndex    = 102;
-/// desc.depthSrvIndex         = 103;
+/// desc.depthSrvIndex         = 102;
 /// desc.albedoTexture         = albedoGBufHandle;
 /// desc.normalTexture         = normalGBufHandle;
-/// desc.metalRoughTexture     = metalRoughGBufHandle;
 /// desc.depthTextureForSrv    = depthGBufHandle;
 /// desc.shadowAlloc           = shadowCBAlloc;
 /// desc.bindless              = true;

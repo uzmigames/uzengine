@@ -5,7 +5,9 @@
 /// **Deferred** (default):
 ///   Pass 1 — G-Buffer: 5 cubes -> albedo (RGBA8), normal (RGBA16F),
 ///             metallic/roughness (RGBA8), depth (D32F).
-///   Pass 2 — Lighting (or Debug): fullscreen triangle reads G-Buffer,
+///   Pass 2 — Velocity: fullscreen triangle reprojects depth to compute
+///             screen-space motion vectors (RG16F).
+///   Pass 3 — Lighting (or Debug): fullscreen triangle reads G-Buffer,
 ///             accumulates 4 coloured point lights + directional sun, or
 ///             visualises a single G-Buffer channel when debug mode is active.
 ///
@@ -134,9 +136,8 @@ static RHIPipelineHandle CreateGBufferPipeline(IRHIDevice* device,
     desc.depthStencil.depthEnable         = true;
     desc.depthStencil.depthWrite          = true;
     desc.renderTargetFormats[0]           = RHIFormat::RGBA8Unorm;
-    desc.renderTargetFormats[1]           = RHIFormat::RGBA16Float;
-    desc.renderTargetFormats[2]           = RHIFormat::RGBA8Unorm;
-    desc.renderTargetCount                = 3;
+    desc.renderTargetFormats[1]           = RHIFormat::RGBA8Unorm;
+    desc.renderTargetCount                = 2;
     desc.depthStencilFormat               = RHIFormat::D32Float;
     desc.debugName                        = "GBufferPipeline";
 
@@ -185,6 +186,24 @@ static RHIPipelineHandle CreateDebugPipeline(IRHIDevice* device,
     return device->CreateGraphicsPipeline(desc);
 }
 
+/// Creates the fullscreen velocity buffer PSO (fullscreen_vs + velocity_ps, 1 RT RG16F, no depth).
+static RHIPipelineHandle CreateVelocityPipeline(IRHIDevice* device,
+                                                RHIShaderHandle vsHandle,
+                                                RHIShaderHandle psHandle)
+{
+    RHIGraphicsPipelineDesc desc{};
+    desc.vertexShader  = vsHandle;
+    desc.pixelShader   = psHandle;
+    desc.topology      = RHIPrimitiveTopology::TriangleList;
+    desc.rasterizer.cullMode      = RHICullMode::None;
+    desc.depthStencil.depthEnable = false;
+    desc.depthStencil.depthWrite  = false;
+    desc.renderTargetFormats[0]   = RHIFormat::RG16Float;
+    desc.renderTargetCount        = 1;
+    desc.debugName                = "VelocityPipeline";
+    return device->CreateGraphicsPipeline(desc);
+}
+
 /// Creates the forward PBR PSO (mesh_vs + mesh_ps, 1 RT + depth).
 static RHIPipelineHandle CreateForwardPipeline(IRHIDevice* device,
                                                 RHIShaderHandle vsHandle,
@@ -230,6 +249,7 @@ DeferredTestDemo::DeferredTestDemo(const DeferredTestConfig& config)
           .width     = 1280,
           .height    = 720,
           .maxFrames = config.maxFrames,
+          .enableValidation = true,
           .screenshotPath  = config.screenshotPath,
           .screenshotFrame = config.screenshotFrame,
       })
@@ -243,6 +263,11 @@ DeferredTestDemo::~DeferredTestDemo() = default;
 
 void DeferredTestDemo::OnInit() {
     auto* device  = GetDevice();
+
+    // Apply initial debug mode from config (-1 = off, 0-7 = GBuffer channels)
+    if (config_.debugMode >= 0 && config_.debugMode < static_cast<int32_t>(GBufferDebugMode::Count)) {
+        debugModeValue_ = static_cast<uint32_t>(config_.debugMode);
+    }
 
     // ── Shader pipeline ──────────────────────────────────────────────────
     bindless_ = IsBindless();
@@ -315,9 +340,13 @@ void DeferredTestDemo::CompileShaders() {
     auto meshPSBytes = shaderPipeline_->LoadBytecodeFromSource(
         EngineShaders::GetName(EngineShader::MeshPS),
         EngineShaders::GetSource(EngineShader::MeshPS));
+    auto velocityPSBytes = shaderPipeline_->LoadBytecodeFromSource(
+        EngineShaders::GetName(EngineShader::VelocityPS),
+        EngineShaders::GetSource(EngineShader::VelocityPS));
 
     if (meshVSBytes.empty() || gbufPSBytes.empty() || fsVSBytes.empty() ||
-        lightPSBytes.empty() || debugPSBytes.empty() || meshPSBytes.empty())
+        lightPSBytes.empty() || debugPSBytes.empty() || meshPSBytes.empty() ||
+        velocityPSBytes.empty())
     {
         UZ_LOG(Renderer, Error, "Failed to compile one or more deferred shaders");
         return;
@@ -340,6 +369,7 @@ void DeferredTestDemo::CompileShaders() {
     lightPSHandle_ = makeShader(lightPSBytes, RHIShaderStage::Pixel,  "deferred_lighting_ps");
     debugPSHandle_ = makeShader(debugPSBytes, RHIShaderStage::Pixel,  "gbuffer_debug_ps");
     meshPSHandle_  = makeShader(meshPSBytes,  RHIShaderStage::Pixel,  "mesh_ps");
+    velocityPSHandle_ = makeShader(velocityPSBytes, RHIShaderStage::Pixel, "velocity_ps");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -352,10 +382,12 @@ void DeferredTestDemo::CreatePipelines() {
     gbufPipeline_    = CreateGBufferPipeline(device, meshVSHandle_, gbufPSHandle_, bindless_);
     lightPipeline_   = CreateLightingPipeline(device, fsVSHandle_, lightPSHandle_);
     debugPipeline_   = CreateDebugPipeline(device, fsVSHandle_, debugPSHandle_);
-    forwardPipeline_ = CreateForwardPipeline(device, meshVSHandle_, meshPSHandle_, bindless_);
+    forwardPipeline_  = CreateForwardPipeline(device, meshVSHandle_, meshPSHandle_, bindless_);
+    velocityPipeline_ = CreateVelocityPipeline(device, fsVSHandle_, velocityPSHandle_);
 
     if (!gbufPipeline_.IsValid() || !lightPipeline_.IsValid() ||
-        !debugPipeline_.IsValid() || !forwardPipeline_.IsValid()) {
+        !debugPipeline_.IsValid() || !forwardPipeline_.IsValid() ||
+        !velocityPipeline_.IsValid()) {
         UZ_LOG(Renderer, Error, "Failed to create one or more PSOs");
     }
 }
@@ -455,9 +487,9 @@ bool DeferredTestDemo::CreateGBuffer() {
     const RHITextureUsage kDepthUsage = RHITextureUsage::DepthStencil   | RHITextureUsage::ShaderResource;
 
     if (!create(RHIFormat::RGBA8Unorm,   kColorUsage, "GBuffer_Albedo",    gbuf_.albedo,     gbuf_.albedoSrv))    return false;
-    if (!create(RHIFormat::RGBA16Float,  kColorUsage, "GBuffer_Normal",    gbuf_.normal,     gbuf_.normalSrv))    return false;
-    if (!create(RHIFormat::RGBA8Unorm,   kColorUsage, "GBuffer_MetalRough",gbuf_.metalRough, gbuf_.metalRoughSrv))return false;
+    if (!create(RHIFormat::RGBA8Unorm,   kColorUsage, "GBuffer_Normal",    gbuf_.normal,     gbuf_.normalSrv))    return false;
     if (!create(RHIFormat::D32Float,     kDepthUsage, "GBuffer_Depth",     gbuf_.depth,      gbuf_.depthSrv))     return false;
+    if (!create(RHIFormat::RG16Float,    kColorUsage, "GBuffer_Velocity",  gbuf_.velocity,   gbuf_.velocitySrv))  return false;
 
     return true;
 }
@@ -466,8 +498,8 @@ void DeferredTestDemo::DestroyGBuffer() {
     auto* device = GetDevice();
     if (gbuf_.albedo.IsValid())     device->DestroyTexture(gbuf_.albedo);
     if (gbuf_.normal.IsValid())     device->DestroyTexture(gbuf_.normal);
-    if (gbuf_.metalRough.IsValid()) device->DestroyTexture(gbuf_.metalRough);
     if (gbuf_.depth.IsValid())      device->DestroyTexture(gbuf_.depth);
+    if (gbuf_.velocity.IsValid())   device->DestroyTexture(gbuf_.velocity);
     gbuf_ = {};
 }
 
@@ -507,7 +539,7 @@ void DeferredTestDemo::OnFrame(float dt) {
     if (input->IsKeyJustPressed(Key::Num0)) {
         debugModeValue_ = static_cast<uint32_t>(GBufferDebugMode::Count);
     }
-    for (uint32_t k = 0; k < 7; ++k) {
+    for (uint32_t k = 0; k < 8; ++k) {
         if (input->IsKeyJustPressed(static_cast<Key>(static_cast<uint32_t>(Key::Num1) + k))) {
             debugModeValue_ = k;
         }
@@ -578,16 +610,27 @@ void DeferredTestDemo::OnFrame(float dt) {
 
     auto albedoRes     = rgBuilder.ImportTexture("GBuf_Albedo",    gbuf_.albedo,     RHIResourceState::ShaderResource);
     auto normalRes     = rgBuilder.ImportTexture("GBuf_Normal",    gbuf_.normal,     RHIResourceState::ShaderResource);
-    auto metalRoughRes = rgBuilder.ImportTexture("GBuf_MetalRough",gbuf_.metalRough, RHIResourceState::ShaderResource);
     auto depthRes      = rgBuilder.ImportTexture("GBuf_Depth",     gbuf_.depth,      RHIResourceState::ShaderResource);
+    auto velocityRes   = rgBuilder.ImportTexture("GBuf_Velocity",  gbuf_.velocity,   RHIResourceState::ShaderResource);
+
+    // ── VelocityCB — invViewProj + prevViewProj for motion vector generation ─
+    if (firstFrame_) {
+        prevViewProj_ = perFrame.viewProj;
+        firstFrame_ = false;
+    }
+
+    VelocityCB velocityCBData{};
+    velocityCBData.invViewProj = perFrame.invViewProj;
+    velocityCBData.prevViewProj = prevViewProj_;
+    CBAllocation velocityCBAlloc = cbRing->Allocate(sizeof(VelocityCB));
+    std::memcpy(velocityCBAlloc.cpuPtr, &velocityCBData, sizeof(VelocityCB));
 
     if (renderPath_ == RenderPath::Deferred) {
-        // ── Deferred path: G-Buffer + lighting/debug ─────────────────
+        // ── Deferred path: G-Buffer + velocity + lighting/debug ──────
         {
             GBufferPassDesc gbDesc{};
             gbDesc.albedoTarget         = albedoRes;
             gbDesc.normalTarget         = normalRes;
-            gbDesc.metalRoughTarget     = metalRoughRes;
             gbDesc.depthBuffer          = depthRes;
             gbDesc.depthTexture         = gbuf_.depth;
             gbDesc.drawList             = &drawList;
@@ -605,6 +648,22 @@ void DeferredTestDemo::OnFrame(float dt) {
             AddGBufferPass(rgBuilder, gbDesc);
         }
 
+        // ── Velocity pass — generates motion vectors from depth ──────
+        {
+            VelocityPassDesc velDesc{};
+            velDesc.velocityTarget   = velocityRes;
+            velDesc.depthBuffer      = depthRes;
+            velDesc.velocityTexture  = gbuf_.velocity;
+            velDesc.depthTexture     = gbuf_.depth;
+            velDesc.depthSrvIndex    = gbuf_.depthSrv;
+            velDesc.velocityCBAlloc  = velocityCBAlloc;
+            velDesc.pipeline         = velocityPipeline_;
+            velDesc.viewportWidth    = static_cast<float>(swapChain->GetWidth());
+            velDesc.viewportHeight   = static_cast<float>(swapChain->GetHeight());
+            velDesc.bindless         = bindless_;
+            AddVelocityPass(rgBuilder, velDesc);
+        }
+
         const bool debugActive = (debugModeValue_ < static_cast<uint32_t>(GBufferDebugMode::Count));
 
         if (!debugActive) {
@@ -612,18 +671,15 @@ void DeferredTestDemo::OnFrame(float dt) {
             lightDesc.backbuffer          = bbRes;
             lightDesc.albedoGBuffer       = albedoRes;
             lightDesc.normalGBuffer       = normalRes;
-            lightDesc.metalRoughGBuffer   = metalRoughRes;
             lightDesc.depthGBuffer        = depthRes;
             lightDesc.perFrameAlloc       = perFrameAlloc;
             lightDesc.lightingAlloc       = lightingAlloc;
             lightDesc.pipeline            = lightPipeline_;
             lightDesc.albedoSrvIndex      = gbuf_.albedoSrv;
             lightDesc.normalSrvIndex      = gbuf_.normalSrv;
-            lightDesc.metalRoughSrvIndex  = gbuf_.metalRoughSrv;
             lightDesc.depthSrvIndex       = gbuf_.depthSrv;
             lightDesc.albedoTexture       = gbuf_.albedo;
             lightDesc.normalTexture       = gbuf_.normal;
-            lightDesc.metalRoughTexture   = gbuf_.metalRough;
             lightDesc.depthTextureForSrv  = gbuf_.depth;
             lightDesc.bindless            = bindless_;
             lightDesc.viewportWidth       = static_cast<float>(swapChain->GetWidth());
@@ -634,8 +690,8 @@ void DeferredTestDemo::OnFrame(float dt) {
             dbgDesc.backbuffer         = bbRes;
             dbgDesc.albedoGBuffer      = albedoRes;
             dbgDesc.normalGBuffer      = normalRes;
-            dbgDesc.metalRoughGBuffer  = metalRoughRes;
             dbgDesc.depthGBuffer       = depthRes;
+            dbgDesc.velocityGBuffer    = velocityRes;
             dbgDesc.perFrameAlloc      = perFrameAlloc;
             struct DebugCBData { uint32_t mode; uint32_t pad[3]; };
             CBAllocation debugAlloc = cbRing->Allocate(sizeof(DebugCBData));
@@ -646,12 +702,12 @@ void DeferredTestDemo::OnFrame(float dt) {
             dbgDesc.mode               = static_cast<GBufferDebugMode>(debugModeValue_);
             dbgDesc.albedoSrvIndex     = gbuf_.albedoSrv;
             dbgDesc.normalSrvIndex     = gbuf_.normalSrv;
-            dbgDesc.metalRoughSrvIndex = gbuf_.metalRoughSrv;
             dbgDesc.depthSrvIndex      = gbuf_.depthSrv;
+            dbgDesc.velocitySrvIndex   = gbuf_.velocitySrv;
             dbgDesc.albedoTexture      = gbuf_.albedo;
             dbgDesc.normalTexture      = gbuf_.normal;
-            dbgDesc.metalRoughTexture  = gbuf_.metalRough;
             dbgDesc.depthTextureForSrv = gbuf_.depth;
+            dbgDesc.velocityTexture    = gbuf_.velocity;
             dbgDesc.bindless           = bindless_;
             dbgDesc.viewportWidth      = static_cast<float>(swapChain->GetWidth());
             dbgDesc.viewportHeight     = static_cast<float>(swapChain->GetHeight());
@@ -728,6 +784,9 @@ void DeferredTestDemo::OnFrame(float dt) {
     rgBuilder.Compile();
     rgBuilder.Execute(cmdList);
 
+    // ── Save current viewProj for next frame's velocity pass ────────────
+    prevViewProj_ = perFrame.viewProj;
+
     // ── Screenshot capture (records copy commands — saved in Run() after Execute)
     if (ShouldCaptureScreenshot()) {
         GetScreenshotCapture()->CaptureFromPresent(cmdList, swapChain);
@@ -756,11 +815,13 @@ void DeferredTestDemo::OnShutdown() {
     if (ibHandle_.IsValid())  device->DestroyBuffer(ibHandle_);
     if (vbHandle_.IsValid())  device->DestroyBuffer(vbHandle_);
 
+    if (velocityPipeline_.IsValid()) device->DestroyPipeline(velocityPipeline_);
     if (forwardPipeline_.IsValid()) device->DestroyPipeline(forwardPipeline_);
     if (debugPipeline_.IsValid())   device->DestroyPipeline(debugPipeline_);
     if (lightPipeline_.IsValid())   device->DestroyPipeline(lightPipeline_);
     if (gbufPipeline_.IsValid())    device->DestroyPipeline(gbufPipeline_);
 
+    if (velocityPSHandle_.IsValid()) device->DestroyShader(velocityPSHandle_);
     if (meshPSHandle_.IsValid())  device->DestroyShader(meshPSHandle_);
     if (debugPSHandle_.IsValid()) device->DestroyShader(debugPSHandle_);
     if (lightPSHandle_.IsValid()) device->DestroyShader(lightPSHandle_);

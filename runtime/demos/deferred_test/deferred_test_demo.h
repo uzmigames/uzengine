@@ -37,6 +37,7 @@ struct DeferredTestConfig {
     uint32_t    maxFrames       = 0;    ///< Frames to render (0 = until window close).
     std::string screenshotPath;         ///< If non-empty, save screenshot at `screenshotFrame`.
     uint32_t    screenshotFrame = 60;   ///< Frame at which to capture the screenshot.
+    int32_t     debugMode       = -1;   ///< Initial debug mode (-1 = off, 0-7 = GBuffer channels).
 };
 
 /// GPU-resident PBR texture handles and their SRV descriptor indices.
@@ -54,15 +55,15 @@ struct PBRTextures {
 /// The render graph declares these as transient but the physical textures are
 /// maintained externally so their SRV indices remain stable within the frame.
 struct GBufferTextures {
-    RHITextureHandle albedo;      ///< RGBA8Unorm — base colour + alpha.
-    RHITextureHandle normal;      ///< RGBA16Float — world-space normals.
-    RHITextureHandle metalRough;  ///< RGBA8Unorm — R=metallic, G=roughness.
+    RHITextureHandle albedo;      ///< RGBA8Unorm — base colour (RGB) + AO (A).
+    RHITextureHandle normal;      ///< RGBA8Unorm — octahedral normal (RG) + metallic (B) + roughness (A).
     RHITextureHandle depth;       ///< D32Float — primary depth buffer.
+    RHITextureHandle velocity;    ///< RG16Float — screen-space motion vectors.
 
     uint32_t albedoSrv     = 0;
     uint32_t normalSrv     = 0;
-    uint32_t metalRoughSrv = 0;
     uint32_t depthSrv      = 0;
+    uint32_t velocitySrv   = 0;
 };
 
 /// Deferred rendering test demo — extends DemoApplication for lifecycle management.
@@ -141,6 +142,7 @@ private:
     RHIPipelineHandle lightPipeline_;
     RHIPipelineHandle debugPipeline_;
     RHIPipelineHandle forwardPipeline_;
+    RHIPipelineHandle velocityPipeline_;
 
     // ── Mesh buffers ─────────────────────────────────────────────────────
     RHIBufferHandle vbHandle_;
@@ -155,10 +157,15 @@ private:
     PBRTextures pbrTex_;
     GBufferTextures gbuf_;
 
+    // ── Shader handles (velocity) ────────────────────────────────────────
+    RHIShaderHandle velocityPSHandle_;
+
     // ── Frame state ──────────────────────────────────────────────────────
     float totalTime_       = 0.f;
     uint32_t debugModeValue_ = static_cast<uint32_t>(GBufferDebugMode::Count);
     RenderPath renderPath_ = RenderPath::Deferred;
+    Mat4 prevViewProj_;    ///< Previous frame's view-projection for velocity pass.
+    bool firstFrame_ = true; ///< True on the first frame (prevViewProj not yet valid).
 };
 
 } // namespace uz
