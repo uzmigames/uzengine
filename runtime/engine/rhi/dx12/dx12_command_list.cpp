@@ -15,7 +15,7 @@
 #include "profiler.h"
 
 #include <algorithm>
-
+#include <string_view>
 #include <vector>
 
 namespace uz {
@@ -194,6 +194,28 @@ void DX12CommandList::End() {
     if (FAILED(hr)) {
         UZ_LOG(RHI, Error, "CommandList::Close failed, HRESULT=0x{:08X}",
                static_cast<uint32_t>(hr));
+
+        // Dump D3D12 debug layer messages for diagnosis
+        ComPtr<ID3D12InfoQueue> infoQueue;
+        ComPtr<ID3D12Device> device;
+        m_cmdList->GetDevice(IID_PPV_ARGS(&device));
+        if (device && SUCCEEDED(device.As(&infoQueue))) {
+            UINT64 msgCount = infoQueue->GetNumStoredMessages();
+            for (UINT64 i = 0; i < msgCount; ++i) {
+                SIZE_T msgLen = 0;
+                infoQueue->GetMessage(i, nullptr, &msgLen);
+                if (msgLen > 0) {
+                    auto* msg = static_cast<D3D12_MESSAGE*>(malloc(msgLen));
+                    if (msg && SUCCEEDED(infoQueue->GetMessage(i, msg, &msgLen))) {
+                        UZ_LOG(RHI, Error, "D3D12 Debug: [{}] {}",
+                               static_cast<int>(msg->Severity),
+                               std::string_view(msg->pDescription, msg->DescriptionByteLength - 1));
+                    }
+                    free(msg);
+                }
+            }
+            infoQueue->ClearStoredMessages();
+        }
     }
 }
 

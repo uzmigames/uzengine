@@ -363,7 +363,9 @@ bool DX12Device::CreateAllocator() {
     D3D12MA::ALLOCATOR_DESC allocatorDesc = {};
     allocatorDesc.pDevice = m_device.Get();
     allocatorDesc.pAdapter = m_adapter.Get();
-    allocatorDesc.Flags = D3D12MA::ALLOCATOR_FLAG_DEFAULT_POOLS_NOT_ZEROED;
+    allocatorDesc.Flags = static_cast<D3D12MA::ALLOCATOR_FLAGS>(
+        D3D12MA::ALLOCATOR_FLAG_DEFAULT_POOLS_NOT_ZEROED
+        | D3D12MA::ALLOCATOR_FLAG_DONT_USE_TIGHT_ALIGNMENT);
 
     HRESULT hr = D3D12MA::CreateAllocator(&allocatorDesc, &m_allocator);
     if (FAILED(hr)) {
@@ -697,6 +699,9 @@ RHITextureHandle DX12Device::CreateTexture(const RHITextureDesc& desc) {
 
     if (!CreateDX12Texture(m_device.Get(), m_allocator, m_srvUavAllocator,
                            m_rtvAllocator, m_dsvAllocator, desc, *slot)) {
+        UZ_LOG(RHI, Error, "CreateTexture: CreateDX12Texture failed for '{}' ({}x{}, fmt={})",
+               desc.debugName ? desc.debugName : "<unnamed>",
+               desc.width, desc.height, static_cast<int>(desc.format));
         m_texturePool.Free(index);
         return RHITextureHandle::Invalid();
     }
