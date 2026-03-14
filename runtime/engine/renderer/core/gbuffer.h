@@ -112,15 +112,17 @@ public:
     RHITextureHandle normal;       ///< RGBA8Unorm — octahedral normal (RG) + metallic (B) + roughness (A)
     RHITextureHandle depth;        ///< D32Float — depth buffer
     RHITextureHandle velocity;     ///< RG16Float — screen-space motion vectors (TAA / motion blur)
+    RHITextureHandle positionWS;   ///< RGBA32Float — world-space position (RGB), debug/verification target
 
     // ─────────────────────────────────────────────────────────────────────────
     // SRV indices — bindless descriptor heap indices for lighting pass reads
     // ─────────────────────────────────────────────────────────────────────────
 
-    uint32_t albedoSRV   = UINT32_MAX;    ///< Bindless SRV index for albedo texture.
-    uint32_t normalSRV   = UINT32_MAX;    ///< Bindless SRV index for normal texture.
-    uint32_t depthSRV    = UINT32_MAX;    ///< Bindless SRV index for depth texture.
-    uint32_t velocitySRV = UINT32_MAX;    ///< Bindless SRV index for velocity texture.
+    uint32_t albedoSRV      = UINT32_MAX;    ///< Bindless SRV index for albedo texture.
+    uint32_t normalSRV      = UINT32_MAX;    ///< Bindless SRV index for normal texture.
+    uint32_t depthSRV       = UINT32_MAX;    ///< Bindless SRV index for depth texture.
+    uint32_t velocitySRV    = UINT32_MAX;    ///< Bindless SRV index for velocity texture.
+    uint32_t positionWSSRV  = UINT32_MAX;    ///< Bindless SRV index for world-space position texture.
 
     uint32_t width = 0;   ///< Current render target width in texels.
     uint32_t height = 0;  ///< Current render target height in texels.

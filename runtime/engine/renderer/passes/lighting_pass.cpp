@@ -27,9 +27,10 @@ void AddLightingPass(rg::RgBuilder& builder, const LightingPassDesc& desc)
 {
     builder.AddPass("DeferredLighting", [desc](rg::RgPassBuilder& pb) {
         pb.Write(desc.backbuffer, RHIResourceState::RenderTarget);
-        pb.Read(desc.albedoGBuffer, RHIResourceState::ShaderResource);
-        pb.Read(desc.normalGBuffer, RHIResourceState::ShaderResource);
-        pb.Read(desc.depthGBuffer, RHIResourceState::ShaderResource);
+        pb.Read(desc.albedoGBuffer,   RHIResourceState::ShaderResource);
+        pb.Read(desc.normalGBuffer,   RHIResourceState::ShaderResource);
+        pb.Read(desc.depthGBuffer,    RHIResourceState::ShaderResource);
+        pb.Read(desc.positionGBuffer, RHIResourceState::ShaderResource);
         if (desc.shadowAtlasResource.IsValid()) {
             pb.Read(desc.shadowAtlasResource, RHIResourceState::ShaderResource);
         }
@@ -74,19 +75,21 @@ void AddLightingPass(rg::RgBuilder& builder, const LightingPassDesc& desc)
             // ── Bind G-Buffer textures ───────────────────────────────────
             if (desc.bindless) {
                 // SM6.6: push descriptor indices for G-Buffer SRVs.
-                // Pack 3 indices into root constants at slot 0.
-                const uint32_t indices[3] = {
+                // Pack 4 indices into root constants at slot 0.
+                const uint32_t indices[4] = {
                     desc.albedoSrvIndex,
                     desc.normalSrvIndex,
-                    desc.depthSrvIndex
+                    desc.depthSrvIndex,
+                    desc.positionSrvIndex
                 };
-                cmd->SetRootConstants(kSlotRootConstants, indices, 3);
+                cmd->SetRootConstants(kSlotRootConstants, indices, 4);
             } else {
-                // SM5: bind textures directly at fragment texture slots t0-t3.
+                // SM5: bind textures directly at fragment texture slots t0-t4.
                 cmd->SetFragmentTexture(0, desc.albedoTexture);
                 cmd->SetFragmentTexture(1, desc.normalTexture);
                 cmd->SetFragmentTexture(2, desc.depthTextureForSrv);
                 cmd->SetFragmentTexture(3, desc.shadowAtlasTexture);
+                cmd->SetFragmentTexture(4, desc.positionTexture);
             }
 
             // ── Viewport and scissor ─────────────────────────────────────

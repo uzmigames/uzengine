@@ -32,31 +32,37 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
     UZ_CHECKF(desc.cbAllocator != nullptr, "GBufferPass: cbAllocator must not be null");
 
     builder.AddPass("GBuffer", [desc](rg::RgPassBuilder& pb) {
-        pb.Write(desc.albedoTarget, RHIResourceState::RenderTarget);
-        pb.Write(desc.normalTarget, RHIResourceState::RenderTarget);
-        pb.Write(desc.depthBuffer, RHIResourceState::DepthStencilWrite);
+        pb.Write(desc.albedoTarget,   RHIResourceState::RenderTarget);
+        pb.Write(desc.normalTarget,   RHIResourceState::RenderTarget);
+        pb.Write(desc.positionTarget, RHIResourceState::RenderTarget);
+        pb.Write(desc.depthBuffer,    RHIResourceState::DepthStencilWrite);
 
         pb.SetExecutionCallback([desc](IRHICommandList* cmd, const rg::RgPassResources& res) {
             UZ_PROFILE_SCOPE("GBuffer::Execute");
 
-            auto albedo = res.GetTexture(desc.albedoTarget);
-            auto normal = res.GetTexture(desc.normalTarget);
+            auto albedo    = res.GetTexture(desc.albedoTarget);
+            auto normal    = res.GetTexture(desc.normalTarget);
+            auto positionT = res.GetTexture(desc.positionTarget);
 
             // ── Clear render targets ─────────────────────────────────────
             constexpr float kClearBlack[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-            cmd->ClearRenderTarget(albedo, kClearBlack);
-            cmd->ClearRenderTarget(normal, kClearBlack);
+            cmd->ClearRenderTarget(albedo,    kClearBlack);
+            cmd->ClearRenderTarget(normal,    kClearBlack);
+            cmd->ClearRenderTarget(positionT, kClearBlack);
             cmd->ClearDepthStencil(desc.depthTexture, 1.0f, 0);
 
-            // ── Begin render pass with 2 color attachments + depth ───────
+            // ── Begin render pass with 3 color attachments + depth ───────
             RHIRenderPassDesc passDesc{};
-            passDesc.colorAttachmentCount = 2;
+            passDesc.colorAttachmentCount = 3;
 
             passDesc.colorAttachments[0].texture = albedo;
             passDesc.colorAttachments[0].clear   = false;
 
             passDesc.colorAttachments[1].texture = normal;
             passDesc.colorAttachments[1].clear   = false;
+
+            passDesc.colorAttachments[2].texture = positionT;
+            passDesc.colorAttachments[2].clear   = false;
 
             passDesc.hasDepth = true;
             passDesc.depthAttachment.texture    = desc.depthTexture;
@@ -117,13 +123,15 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
                 cmd->SetRootCBV(kSlotPerObject, objAlloc.bufferHandle, objAlloc.offsetBytes,
                                 objAlloc.cpuPtr, sizeof(PerObjectCB));
 
-                // SM5: bind material textures at t0-t4 for non-bindless path
+                // SM5: bind material textures at t0-t4 for non-bindless path.
+                // Use fallback textures when the draw command has no texture bound,
+                // because the SM5 shader samples unconditionally (no index guards).
                 if (!desc.bindless) {
-                    cmd->SetFragmentTexture(0, drawCmd.albedoTexture);
-                    cmd->SetFragmentTexture(1, drawCmd.normalTexture);
-                    cmd->SetFragmentTexture(2, drawCmd.roughnessTexture);
-                    cmd->SetFragmentTexture(3, drawCmd.metallicTexture);
-                    cmd->SetFragmentTexture(4, drawCmd.aoTexture);
+                    cmd->SetFragmentTexture(0, drawCmd.albedoTexture.IsValid()    ? drawCmd.albedoTexture    : desc.fallbackWhite);
+                    cmd->SetFragmentTexture(1, drawCmd.normalTexture.IsValid()    ? drawCmd.normalTexture    : desc.fallbackNormal);
+                    cmd->SetFragmentTexture(2, drawCmd.roughnessTexture.IsValid() ? drawCmd.roughnessTexture : desc.fallbackWhite);
+                    cmd->SetFragmentTexture(3, drawCmd.metallicTexture.IsValid()  ? drawCmd.metallicTexture  : desc.fallbackBlack);
+                    cmd->SetFragmentTexture(4, drawCmd.aoTexture.IsValid()        ? drawCmd.aoTexture        : desc.fallbackWhite);
                 }
 
                 cmd->DrawIndexed(desc.indexCount);

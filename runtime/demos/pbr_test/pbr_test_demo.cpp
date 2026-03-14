@@ -145,6 +145,41 @@ void PBRTestDemo::LoadTextures() {
     metallicTex_  = loadTex("Stonebricks_Metallic.jpg");
     aoTex_        = loadTex("Stonebricks_AO.jpg");
     checkerTex_   = loadTex("checker.png");
+
+    // ── Fallback textures for SM5/Vulkan non-bindless path ────────────────
+    // The SM5 shader samples all PBR textures unconditionally, so every slot
+    // must always have a valid texture. These 1×1 fallbacks produce neutral
+    // defaults when an object has no material texture assigned.
+    {
+        RHITextureDesc fbDesc{};
+        fbDesc.width     = 1;
+        fbDesc.height    = 1;
+        fbDesc.format    = RHIFormat::RGBA8Unorm;
+        fbDesc.usage     = RHITextureUsage::ShaderResource | RHITextureUsage::CopyDst;
+
+        fbDesc.debugName = "FallbackWhite";
+        fallbackWhite_   = device->CreateTexture(fbDesc);
+
+        fbDesc.debugName = "FallbackBlack";
+        fallbackBlack_   = device->CreateTexture(fbDesc);
+
+        fbDesc.debugName = "FallbackNormal";
+        fallbackNormal_  = device->CreateTexture(fbDesc);
+
+        static constexpr uint8_t kWhitePixel[4]  = {255, 255, 255, 255};
+        static constexpr uint8_t kBlackPixel[4]  = {  0,   0,   0, 255}; // metallic=0 fallback
+        static constexpr uint8_t kNormalPixel[4] = {128, 128, 255, 255}; // (0,0,1) tangent-space
+
+        UploadContext upload(device);
+        upload.UploadTexture(cmdList, fallbackWhite_,  kWhitePixel,  sizeof(kWhitePixel));
+        upload.UploadTexture(cmdList, fallbackBlack_,  kBlackPixel,  sizeof(kBlackPixel));
+        upload.UploadTexture(cmdList, fallbackNormal_, kNormalPixel, sizeof(kNormalPixel));
+        cmdList->End();
+        cmdList->Execute();
+        device->WaitIdle();
+        upload.ReleaseStaging();
+        cmdList->Begin();
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -319,9 +354,10 @@ void PBRTestDemo::OnFrame(float dt) {
     rg::RgBuilder rgBuilder(device, GetRgPool());
     auto bbRes = rgBuilder.ImportTexture("Backbuffer", backBuffer, RHIResourceState::Present);
 
-    auto albedoRes     = rgBuilder.ImportTexture("GBuf_Albedo",     gbuffer_.albedo,     RHIResourceState::ShaderResource);
-    auto normalRes     = rgBuilder.ImportTexture("GBuf_Normal",     gbuffer_.normal,     RHIResourceState::ShaderResource);
-    auto depthRes      = rgBuilder.ImportTexture("GBuf_Depth",      gbuffer_.depth,      RHIResourceState::ShaderResource);
+    auto albedoRes     = rgBuilder.ImportTexture("GBuf_Albedo",      gbuffer_.albedo,      RHIResourceState::ShaderResource);
+    auto normalRes     = rgBuilder.ImportTexture("GBuf_Normal",      gbuffer_.normal,      RHIResourceState::ShaderResource);
+    auto depthRes      = rgBuilder.ImportTexture("GBuf_Depth",       gbuffer_.depth,       RHIResourceState::ShaderResource);
+    auto positionWSRes = rgBuilder.ImportTexture("GBuf_PositionWS",  gbuffer_.positionWS,  RHIResourceState::ShaderResource);
 
     auto* pipelines = GetPipelines();
 
@@ -354,6 +390,7 @@ void PBRTestDemo::OnFrame(float dt) {
             GBufferPassDesc gbDesc{};
             gbDesc.albedoTarget         = albedoRes;
             gbDesc.normalTarget         = normalRes;
+            gbDesc.positionTarget       = positionWSRes;
             gbDesc.depthBuffer          = depthRes;
             gbDesc.depthTexture         = gbuffer_.depth;
             gbDesc.drawList             = &drawList;
@@ -366,6 +403,9 @@ void PBRTestDemo::OnFrame(float dt) {
             gbDesc.indexFormat          = cubeMesh_.indexFormat;
             gbDesc.indexCount           = cubeMesh_.indexCount;
             gbDesc.bindless             = bindless;
+            gbDesc.fallbackWhite        = fallbackWhite_;
+            gbDesc.fallbackBlack        = fallbackBlack_;
+            gbDesc.fallbackNormal       = fallbackNormal_;
             gbDesc.viewportWidth        = static_cast<float>(swapChain->GetWidth());
             gbDesc.viewportHeight       = static_cast<float>(swapChain->GetHeight());
             AddGBufferPass(rgBuilder, gbDesc);
@@ -379,15 +419,18 @@ void PBRTestDemo::OnFrame(float dt) {
             lightDesc.albedoGBuffer       = albedoRes;
             lightDesc.normalGBuffer       = normalRes;
             lightDesc.depthGBuffer        = depthRes;
+            lightDesc.positionGBuffer     = positionWSRes;
             lightDesc.perFrameAlloc       = perFrameAlloc;
             lightDesc.lightingAlloc       = lightingAlloc;
             lightDesc.pipeline            = pipelines->GetLighting();
             lightDesc.albedoSrvIndex      = gbuffer_.albedoSRV;
             lightDesc.normalSrvIndex      = gbuffer_.normalSRV;
             lightDesc.depthSrvIndex       = gbuffer_.depthSRV;
+            lightDesc.positionSrvIndex    = gbuffer_.positionWSSRV;
             lightDesc.albedoTexture       = gbuffer_.albedo;
             lightDesc.normalTexture       = gbuffer_.normal;
             lightDesc.depthTextureForSrv  = gbuffer_.depth;
+            lightDesc.positionTexture     = gbuffer_.positionWS;
             lightDesc.shadowAlloc          = shadowAlloc;
             lightDesc.shadowAtlasResource  = shadowAtlasRes;
             lightDesc.shadowAtlasTexture   = shadowAtlas_;
@@ -518,6 +561,10 @@ void PBRTestDemo::OnShutdown() {
     destroyTex(metallicTex_);
     destroyTex(aoTex_);
     destroyTex(checkerTex_);
+
+    if (fallbackWhite_.IsValid())  device->DestroyTexture(fallbackWhite_);
+    if (fallbackBlack_.IsValid())  device->DestroyTexture(fallbackBlack_);
+    if (fallbackNormal_.IsValid()) device->DestroyTexture(fallbackNormal_);
 
     DestroyGPUMesh(device, cubeMesh_);
 }

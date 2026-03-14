@@ -259,10 +259,10 @@ RHIPipelineHandle PipelineLibrary::GetGBuffer(bool bindless) {
     desc.rasterizer.frontCounterClockwise = false;
     desc.depthStencil.depthEnable         = true;
     desc.depthStencil.depthWrite          = true;
-    // G-Buffer render targets match GBuffer class formats
-    desc.renderTargetFormats[0]           = RHIFormat::RGBA8Unorm;   // albedo
-    desc.renderTargetFormats[1]           = RHIFormat::RGBA16Float;  // normals
-    desc.renderTargetFormats[2]           = RHIFormat::RGBA8Unorm;   // metallic/roughness
+    // G-Buffer render targets — must match GBuffer::Create() texture formats exactly
+    desc.renderTargetFormats[0]           = RHIFormat::RGBA8Unorm;    // albedo+AO
+    desc.renderTargetFormats[1]           = RHIFormat::RGBA8Unorm;    // octNormal+metallic+roughness
+    desc.renderTargetFormats[2]           = RHIFormat::RGBA32Float;   // world-space position (debug)
     desc.renderTargetCount                = 3;
     desc.depthStencilFormat               = RHIFormat::D32Float;
     desc.debugName                        = bindless ? "GBuffer_Bindless" : "GBuffer";

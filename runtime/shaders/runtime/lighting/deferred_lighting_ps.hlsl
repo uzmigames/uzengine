@@ -49,12 +49,13 @@ struct FSInput {
 /// Instead, each texture is accessed via ResourceDescriptorHeap[index] using
 /// indices pushed as 32-bit root constants.
 ///
-/// Only 3 indices needed with the packed 2-RT G-Buffer layout:
-/// albedo+AO in RT0, octahedral normal+metallic+roughness in RT1, depth.
+/// 4 indices for the 3-RT G-Buffer layout:
+/// albedo+AO in RT0, octahedral normal+metallic+roughness in RT1, depth, world-space position in RT2.
 struct GBufferIndices {
     uint albedoIdx;     ///< Descriptor index for albedo+AO G-Buffer (R8G8B8A8_UNORM).
     uint normalIdx;     ///< Descriptor index for normal+metallic+roughness G-Buffer (R8G8B8A8_UNORM).
     uint depthIdx;      ///< Descriptor index for depth buffer SRV (R32_FLOAT).
+    uint positionIdx;   ///< Descriptor index for world-space position G-Buffer (R32G32B32A32_FLOAT).
 };
 ConstantBuffer<GBufferIndices> gBufIndices : register(b0);
 #endif
@@ -118,11 +119,12 @@ cbuffer ShadowDataCB : register(b4) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #ifndef UZ_BINDLESS
-/// SM5 path: G-Buffer textures bound via SRV descriptor table at t0-t2.
-Texture2D<float4> gbufferAlbedo     : register(t0); ///< rgb = linear base color, a = AO
-Texture2D<float4> gbufferNormal     : register(t1); ///< rg = octahedral normal, b = metallic, a = roughness
-Texture2D<float>  gbufferDepth      : register(t2); ///< Hardware depth as R32_FLOAT SRV
+/// SM5 path: G-Buffer textures bound via SRV descriptor table at t0-t4.
+Texture2D<float4> gbufferAlbedo      : register(t0); ///< rgb = linear base color, a = AO
+Texture2D<float4> gbufferNormal      : register(t1); ///< rg = octahedral normal, b = metallic, a = roughness
+Texture2D<float>  gbufferDepth       : register(t2); ///< Hardware depth as R32_FLOAT SRV
 Texture2D<float>  shadowAtlasTexture : register(t3); ///< CSM shadow depth atlas
+Texture2D<float4> gbufferPositionWS  : register(t4); ///< xyz = world-space position (RGBA32Float), a = 1
 #endif
 
 /// Point/nearest sampler for G-Buffer reads — no filtering on discrete data.
@@ -201,8 +203,19 @@ float4 main(FSInput input) : SV_Target {
     float  metallic  = normalPacked.b;
     float  roughness = normalPacked.a;
 
-    // ── Reconstruct world position from depth ──
+    // ── World-space position ──
+    // UZ_WORLDPOS_GBUFFER: read directly from the position G-Buffer RT2 (debug / Vulkan verification).
+    // Default: reconstruct from depth + invViewProj (avoids extra 32bpp bandwidth in production).
+#ifdef UZ_WORLDPOS_GBUFFER
+#ifdef UZ_BINDLESS
+    Texture2D<float4> gbPosition = ResourceDescriptorHeap[gBufIndices.positionIdx];
+    float3 worldPos = gbPosition.Sample(pointSampler, uv).xyz;
+#else
+    float3 worldPos = gbufferPositionWS.Sample(pointSampler, uv).xyz;
+#endif
+#else
     float3 worldPos = ReconstructWorldPosition(uv, depth);
+#endif
 
     // ── PBR parameter preparation ──
     float3 V = normalize(cameraPos.xyz - worldPos);
@@ -253,6 +266,7 @@ float4 main(FSInput input) : SV_Target {
 
     // ── Ambient (constant approximation; will be replaced with GI probes) ──
     float3 ambient = ambientColor.xyz * albedo * ao;
+
 
     // ── Combine ──
     float3 color = ambient + Lo;

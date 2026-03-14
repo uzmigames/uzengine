@@ -32,10 +32,11 @@ struct PSInput {
     float3 positionWS : TEXCOORD1;
 };
 
-/// G-Buffer MRT output — 2-RT packed layout.
+/// G-Buffer MRT output — 3-RT layout.
 struct GBufferOutput {
     float4 albedoAO     : SV_Target0; ///< rgb = base color (linear), a = ambient occlusion
     float4 normalMatPbr : SV_Target1; ///< rg = octahedral-encoded normal, b = metallic, a = roughness
+    float4 positionWS   : SV_Target2; ///< xyz = world-space position (debug / reconstruction verification), w = 1
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -61,14 +62,18 @@ cbuffer PerFrameCB : register(b1) {
 };
 
 /// Per-object CB at b2 — must match C++ PerObjectCB struct exactly.
+///
+/// Scalar indices are placed FIRST (offset 0) to avoid SPIRV std140 offset
+/// corruption when float4x4 members precede uint members.
 cbuffer PerObjectCB : register(b2) {
-    row_major float4x4 model;
-    row_major float4x4 normalMatrix;
     uint     albedoIndex;
     uint     normalIndex;
     uint     roughnessIndex;
     uint     metallicIndex;
     uint     aoIndex;
+    float3   _pad;           // align to 16 bytes before matrices
+    row_major float4x4 model;
+    row_major float4x4 normalMatrix;
 };
 
 #ifndef UZ_BINDLESS
@@ -119,43 +124,61 @@ GBufferOutput main(PSInput input) {
         ao = tex.Sample(linearSampler, uv).r;
     }
 #else
-    if (albedoIndex > 0)    albedo    = albedoTexture.Sample(linearSampler, uv).rgb;
-    if (roughnessIndex > 0) roughness = roughnessTexture.Sample(linearSampler, uv).r;
-    if (metallicIndex > 0)  metallic  = metallicTexture.Sample(linearSampler, uv).r;
-    if (aoIndex > 0)        ao        = aoTexture.Sample(linearSampler, uv).r;
+    // SM5 (Vulkan non-bindless): textures are always bound via SetFragmentTexture
+    // with fallback white/flat-normal when no material texture is assigned.
+    // Sample unconditionally — index-based guards fail in Vulkan due to cbuffer
+    // std140 layout differences for row_major float4x4 structs.
+    albedo    = albedoTexture.Sample(linearSampler, uv).rgb;
+    roughness = roughnessTexture.Sample(linearSampler, uv).r;
+    metallic  = metallicTexture.Sample(linearSampler, uv).r;
+    ao        = aoTexture.Sample(linearSampler, uv).r;
 #endif
 
     // ── Surface normal (with optional tangent-space normal mapping) ──
     float3 N = normalize(input.normalWS);
 
+#ifdef UZ_BINDLESS
+    // SM6.6 bindless: guard on normalIndex — 0 means no normal map bound.
     if (normalIndex > 0) {
         float3 T = normalize(input.tangentWS.xyz);
-        float3 B = cross(N, T) * input.tangentWS.w; // w = handedness
+        float3 B = cross(N, T) * input.tangentWS.w;
         float3x3 TBN = float3x3(T, B, N);
 
-        float4 normalSample;
-#ifdef UZ_BINDLESS
         Texture2D<float4> nrmTex = ResourceDescriptorHeap[normalIndex];
-        normalSample = nrmTex.Sample(linearSampler, uv);
-#else
-        normalSample = normalTexture.Sample(linearSampler, uv);
-#endif
-        // Remap from [0,1] to [-1,1] tangent space
+        float4 normalSample = nrmTex.Sample(linearSampler, uv);
+
         float3 normalTS;
         normalTS.xy = normalSample.rg * 2.0f - 1.0f;
-
-        // BC5 two-channel normal maps store only RG; reconstruct Z from unit length
-        // constraint. For standard RGB normal maps, the sampled B channel is used.
         normalTS.z = (normalSample.b > 0.0f)
             ? normalSample.b * 2.0f - 1.0f
             : sqrt(max(1.0f - dot(normalTS.xy, normalTS.xy), 0.0f));
         N = normalize(mul(normalTS, TBN));
     }
+#else
+    // SM5 path: normalTexture is always bound (real map or fallback flat-normal 128,128,255).
+    // Sampling the fallback yields normalTS≈(0,0,1) which leaves N unchanged.
+    // Do NOT guard on normalIndex — it may be unreliable in SPIRV std140 layout.
+    {
+        float3 T = normalize(input.tangentWS.xyz);
+        float3 B = cross(N, T) * input.tangentWS.w;
+        float3x3 TBN = float3x3(T, B, N);
 
-    // ── Write G-Buffer (2-RT packed layout) ──
+        float4 normalSample = normalTexture.Sample(linearSampler, uv);
+
+        float3 normalTS;
+        normalTS.xy = normalSample.rg * 2.0f - 1.0f;
+        normalTS.z = (normalSample.b > 0.0f)
+            ? normalSample.b * 2.0f - 1.0f
+            : sqrt(max(1.0f - dot(normalTS.xy, normalTS.xy), 0.0f));
+        N = normalize(mul(normalTS, TBN));
+    }
+#endif
+
+    // ── Write G-Buffer (3-RT layout) ──
     GBufferOutput output;
     output.albedoAO     = float4(albedo, ao);
     output.normalMatPbr = float4(OctEncode(N), metallic, roughness);
+    output.positionWS   = float4(input.positionWS, 1.0f);
 
     return output;
 }

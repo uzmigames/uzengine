@@ -54,6 +54,7 @@ namespace uz {
 struct GBufferPassDesc {
     rg::RgResourceId albedoTarget;      ///< Albedo+AO render target (write, RenderTarget state, RGBA8Unorm).
     rg::RgResourceId normalTarget;      ///< Packed normal+metallic+roughness target (write, RenderTarget state, RGBA8Unorm).
+    rg::RgResourceId positionTarget;    ///< World-space position target (write, RenderTarget state, RGBA32Float).
     rg::RgResourceId depthBuffer;       ///< Depth buffer (write, DepthStencilWrite state, D32Float).
     RHITextureHandle  depthTexture;     ///< Physical depth texture for render pass setup.
     const DrawList*   drawList;         ///< Sorted draw list to iterate. Must not be null.
@@ -65,6 +66,9 @@ struct GBufferPassDesc {
     RHIBufferHandle   indexBuffer;      ///< Index buffer handle.
     RHIIndexFormat    indexFormat;      ///< Index element format (Uint16 or Uint32).
     uint32_t          indexCount;       ///< Total indices per mesh (single-mesh path).
+    RHITextureHandle  fallbackWhite;   ///< 1x1 white texture for missing albedo/AO/roughness maps (SM5 fallback).
+    RHITextureHandle  fallbackBlack;   ///< 1x1 black texture for missing metallic maps (SM5 fallback — metallic=0).
+    RHITextureHandle  fallbackNormal;  ///< 1x1 flat normal texture (128,128,255) for missing normal maps (SM5 fallback).
     bool              bindless;         ///< True if SM6.6 bindless path is active.
     float             viewportWidth;    ///< Viewport width in pixels.
     float             viewportHeight;   ///< Viewport height in pixels.

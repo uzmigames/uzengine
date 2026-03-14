@@ -124,6 +124,11 @@ private:
     // ── Shadow atlas ────────────────────────────────────────────────────
     RHITextureHandle shadowAtlas_;
     uint32_t shadowAtlasSrv_ = 0;
+
+    // ── Fallback textures (SM5/Vulkan non-bindless path) ─────────────────
+    RHITextureHandle fallbackWhite_;   ///< 1x1 white (missing albedo/roughness/AO)
+    RHITextureHandle fallbackBlack_;   ///< 1x1 black (missing metallic — metallic=0)
+    RHITextureHandle fallbackNormal_;  ///< 1x1 flat normal (128,128,255,255) for missing normal maps
 };
 
 } // namespace uz

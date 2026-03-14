@@ -929,6 +929,34 @@ void VulkanCommandList::CopyBufferToTexture(RHIBufferHandle srcBuffer, uint64_t 
                            buf->buffer, tex->image,
                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
                            1, &region);
+
+    // Transition to SHADER_READ_ONLY_OPTIMAL after upload so the texture is
+    // immediately usable by shaders. Without this, the texture stays in
+    // TRANSFER_DST_OPTIMAL and sampling it produces undefined results.
+    VkImageMemoryBarrier2 postBarrier = {};
+    postBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2;
+    postBarrier.srcStageMask  = VK_PIPELINE_STAGE_2_COPY_BIT;
+    postBarrier.srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
+    postBarrier.dstStageMask  = VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_VERTEX_SHADER_BIT;
+    postBarrier.dstAccessMask = VK_ACCESS_2_SHADER_READ_BIT;
+    postBarrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+    postBarrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    postBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    postBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    postBarrier.image = tex->image;
+    postBarrier.subresourceRange.aspectMask = GetAspectFlags(tex->desc.format);
+    postBarrier.subresourceRange.baseMipLevel = 0;
+    postBarrier.subresourceRange.levelCount = VK_REMAINING_MIP_LEVELS;
+    postBarrier.subresourceRange.baseArrayLayer = 0;
+    postBarrier.subresourceRange.layerCount = VK_REMAINING_ARRAY_LAYERS;
+
+    VkDependencyInfo postDep = {};
+    postDep.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO;
+    postDep.imageMemoryBarrierCount = 1;
+    postDep.pImageMemoryBarriers = &postBarrier;
+    vkCmdPipelineBarrier2(m_commandBuffers[m_frameIndex], &postDep);
+
+    tex->currentLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 }
 
 void VulkanCommandList::CopyTextureToBuffer(RHITextureHandle srcTexture, uint32_t mipLevel,
