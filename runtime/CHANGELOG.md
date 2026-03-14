@@ -2,6 +2,16 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
+## [0.2.19] — 2026-03-14
+
+### FXC/DXC Shader Parity — DX11 Brightness Fix
+- **`math_util.hlsli`** (NEW): centralized compiler-agnostic math utilities — `Pow2/Pow4/Pow5` (multiply chains, no `pow()`), `LinearToSrgb/SrgbToLinear` (exact IEC 61966-2-1 curve). Follows UE5 `MathUtil.ush` / `Common.ush` pattern.
+- **Root cause**: FXC (DX11/SM5) compiles `pow(x, 5)` as multiply chain while DXC (DX12/SM6) uses log-mul-exp, producing different Fresnel reflectance on angled surfaces — cubes 25-40 RGB values brighter on DX11.
+- **FresnelSchlick / FresnelSchlickRoughness**: replaced `pow(1-cosTheta, 5)` with `Pow5()` in `pbr_common.hlsli`, `ibl.hlsli`, `brdf_lut_cs.hlsl`
+- **Gamma correction**: replaced approximate `pow(color, 1/2.2)` with exact sRGB transfer function (`LinearToSrgb()`) in `deferred_lighting_ps.hlsl` and `mesh_ps.hlsl`
+- **CBAllocation.sizeBytes**: added allocation size tracking to prevent out-of-bounds reads on DX11 — passes now use `alloc.sizeBytes` instead of hardcoded `sizeof(PerFrameMultiLightCB)`
+- **Reverted debug edit**: restored cube PBR textures (normal/roughness/metallic/AO) in `pbr_test_demo.cpp`
+
 ## [0.2.18] — 2026-03-14
 
 ### DX11 Backend — Full Lighting & Rendering Fix

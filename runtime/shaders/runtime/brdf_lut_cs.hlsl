@@ -97,7 +97,7 @@ float2 IntegrateBRDF(float NdotV, float roughness) {
         if (NdotL > 0.0f) {
             float G    = GeometrySmithIBL(max(V.z, 0.0f), NdotL, roughness);
             float G_Vis = (G * VdotH) / (NdotH * max(V.z, 0.001f));
-            float Fc   = pow(1.0f - VdotH, 5.0f);
+            float Fc   = Pow5(1.0f - VdotH);
 
             scale += (1.0f - Fc) * G_Vis;
             bias  += Fc * G_Vis;

@@ -115,7 +115,7 @@ float3 ImportanceSampleGGX(float2 Xi, float3 N, float roughness) {
 /// Fresnel reflectance attenuated by roughness.
 float3 FresnelSchlickRoughness(float cosTheta, float3 F0, float roughness) {
     float3 maxF = max(float3(1.0f - roughness, 1.0f - roughness, 1.0f - roughness), F0);
-    return F0 + (maxF - F0) * pow(saturate(1.0f - cosTheta), 5.0f);
+    return F0 + (maxF - F0) * Pow5(saturate(1.0f - cosTheta));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

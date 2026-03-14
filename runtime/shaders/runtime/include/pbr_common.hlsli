@@ -11,6 +11,8 @@
 #ifndef PBR_COMMON_HLSLI
 #define PBR_COMMON_HLSLI
 
+#include "math_util.hlsli"
+
 static const float PI = 3.14159265359f;
 
 /// Minimum roughness clamped before squaring to alpha, preventing a perfectly
@@ -116,7 +118,7 @@ float GeometrySmith(float NdotV, float NdotL, float alpha) {
 /// # Returns
 /// float3 Fresnel reflectance in [F0, 1].
 float3 FresnelSchlick(float cosTheta, float3 F0) {
-    return F0 + (1.0f - F0) * pow(saturate(1.0f - cosTheta), 5.0f);
+    return F0 + (1.0f - F0) * Pow5(saturate(1.0f - cosTheta));
 }
 
 /// Evaluates Cook-Torrance BRDF for a single light source.

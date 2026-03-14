@@ -37,6 +37,7 @@ struct CBAllocation {
     uint64_t        gpuAddr;     ///< GPU virtual address for root CBV binding (DX12/Vulkan)
     RHIBufferHandle bufferHandle; ///< Backing buffer handle (for DX11 handle-based binding)
     uint64_t        offsetBytes; ///< Byte offset into the backing buffer
+    uint32_t        sizeBytes;   ///< Allocation size in bytes (used by DX11 for UpdateSubresource bounds)
 };
 
 /// Ring-buffer allocator for per-frame constant buffer uploads.

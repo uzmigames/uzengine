@@ -78,7 +78,7 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
 
             cmd->SetRootCBV(kSlotPerFrame, desc.perFrameAlloc.bufferHandle,
                             desc.perFrameAlloc.offsetBytes,
-                            desc.perFrameAlloc.cpuPtr, sizeof(PerFrameMultiLightCB));
+                            desc.perFrameAlloc.cpuPtr, desc.perFrameAlloc.sizeBytes);
 
             // ── Viewport and scissor ─────────────────────────────────────
             RHIViewport vp{};

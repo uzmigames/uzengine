@@ -55,7 +55,7 @@ void AddLightingPass(rg::RgBuilder& builder, const LightingPassDesc& desc)
             // ── Bind constant buffers ────────────────────────────────────
             cmd->SetRootCBV(kSlotPerFrame, desc.perFrameAlloc.bufferHandle,
                             desc.perFrameAlloc.offsetBytes,
-                            desc.perFrameAlloc.cpuPtr, sizeof(PerFrameMultiLightCB));
+                            desc.perFrameAlloc.cpuPtr, desc.perFrameAlloc.sizeBytes);
 
             cmd->SetRootCBV(kSlotPerObject, desc.lightingAlloc.bufferHandle,
                             desc.lightingAlloc.offsetBytes,

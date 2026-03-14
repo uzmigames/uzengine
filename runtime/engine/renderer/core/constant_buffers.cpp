@@ -78,7 +78,7 @@ CBAllocation CBRingAllocator::Allocate(uint64_t sizeBytes) {
     if (m_currentOffset + alignedSize > m_perFrameBytes) {
         UZ_LOG(Renderer, Error, "CBRingAllocator: frame region exhausted ({}/{} bytes)",
                m_currentOffset + alignedSize, m_perFrameBytes);
-        return {nullptr, 0};
+        return {nullptr, 0, {}, 0, 0};
     }
 
     uint64_t frameBase = m_currentFrame * m_perFrameBytes;
@@ -89,6 +89,7 @@ CBAllocation CBRingAllocator::Allocate(uint64_t sizeBytes) {
     alloc.gpuAddr = m_gpuBaseAddr + offset;
     alloc.bufferHandle = m_buffer;
     alloc.offsetBytes = offset;
+    alloc.sizeBytes = static_cast<uint32_t>(sizeBytes);
 
     m_currentOffset += alignedSize;
     return alloc;
