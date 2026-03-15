@@ -1216,28 +1216,42 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
         UZ_LOG(Renderer, Info, "SceneRenderer: Sky IBL baked (irrad={}, prefilt={})",
                m_iblResult.irradianceSrvIndex, m_iblResult.prefilteredSrvIndex);
 
-        // Compute SH from sky atmosphere parameters analytically.
-        // GPU cubemap readback (ProjectCubemapToSH with device+cmdList) is implemented
-        // but returns zeros due to resource state issues. Using analytical SH which
-        // correctly captures sky color directionality from Rayleigh physics.
+        // Try GPU cubemap readback for SH projection.
+        // Falls back to analytical approximation if readback returns zeros
+        // (known DX12 resource state issue with cubemap CopyTextureToBuffer).
         {
-            float sunZ = sunDir.z;
-            float sunBright = sunColor.Length();
-            Vec3 rBeta = {5.802e-3f, 13.558e-3f, 33.1e-3f};
-            Vec3 skyCol = {rBeta.x/rBeta.z, rBeta.y/rBeta.z, 1.f};
-            skyCol = skyCol * (sunBright * (0.15f + 0.35f * std::max(0.f, sunZ)));
-            Vec3 gndCol = {0.05f, 0.05f, 0.04f};
-            Vec3 avg = (skyCol + gndCol) * 0.5f;
-            Vec3 dir = (skyCol - gndCol) * 0.5f;
-            float c0 = 3.14159f * 0.282095f, c1 = 2.094395f * 0.488603f;
-            auto& sh = m_skyIrradianceSH;
-            for (int i = 0; i < 7; ++i) sh.coeffs[i] = {0,0,0,0};
-            Vec3 sd = {sunDir.x*0.3f, sunDir.y*0.3f, 0.7f};
-            float sl = std::sqrt(sd.x*sd.x+sd.y*sd.y+sd.z*sd.z);
-            if (sl > 0.001f) sd = sd * (1.f/sl);
-            sh.coeffs[0] = {sd.x*c1*dir.x, sd.y*c1*dir.x, sd.z*c1*dir.x, c0*avg.x};
-            sh.coeffs[1] = {sd.x*c1*dir.y, sd.y*c1*dir.y, sd.z*c1*dir.y, c0*avg.y};
-            sh.coeffs[2] = {sd.x*c1*dir.z, sd.y*c1*dir.z, sd.z*c1*dir.z, c0*avg.z};
+            constexpr uint32_t kSkyCubeFaceSize = 64;
+            auto shResult = ProjectCubemapToSH(m_device, cmdList,
+                                                m_skyCubemap, kSkyCubeFaceSize);
+
+            // Check if readback produced valid data (L0 coefficient > 0)
+            bool shValid = (std::abs(shResult.coeffs[0].w) > 1e-6f ||
+                           std::abs(shResult.coeffs[1].w) > 1e-6f ||
+                           std::abs(shResult.coeffs[2].w) > 1e-6f);
+
+            if (shValid) {
+                m_skyIrradianceSH = shResult;
+                UZ_LOG(Renderer, Info, "SceneRenderer: SH from GPU readback");
+            } else {
+                // Analytical fallback from Rayleigh physics
+                float sunZ = sunDir.z;
+                float sunBright = sunColor.Length();
+                Vec3 rBeta = {5.802e-3f, 13.558e-3f, 33.1e-3f};
+                Vec3 skyCol = {rBeta.x/rBeta.z, rBeta.y/rBeta.z, 1.f};
+                skyCol = skyCol * (sunBright * (0.15f + 0.35f * std::max(0.f, sunZ)));
+                Vec3 gndCol = {0.05f, 0.05f, 0.04f};
+                Vec3 avg = (skyCol + gndCol) * 0.5f;
+                Vec3 dir = (skyCol - gndCol) * 0.5f;
+                float c0 = 3.14159f * 0.282095f, c1 = 2.094395f * 0.488603f;
+                for (int i = 0; i < 7; ++i) m_skyIrradianceSH.coeffs[i] = {0,0,0,0};
+                Vec3 sd = {sunDir.x*0.3f, sunDir.y*0.3f, 0.7f};
+                float sl = std::sqrt(sd.x*sd.x+sd.y*sd.y+sd.z*sd.z);
+                if (sl > 0.001f) sd = sd * (1.f/sl);
+                m_skyIrradianceSH.coeffs[0] = {sd.x*c1*dir.x, sd.y*c1*dir.x, sd.z*c1*dir.x, c0*avg.x};
+                m_skyIrradianceSH.coeffs[1] = {sd.x*c1*dir.y, sd.y*c1*dir.y, sd.z*c1*dir.y, c0*avg.y};
+                m_skyIrradianceSH.coeffs[2] = {sd.x*c1*dir.z, sd.y*c1*dir.z, sd.z*c1*dir.z, c0*avg.z};
+                UZ_LOG(Renderer, Info, "SceneRenderer: SH from analytical fallback");
+            }
         }
 
         // Re-open command list for the remaining work (screenshot, present)

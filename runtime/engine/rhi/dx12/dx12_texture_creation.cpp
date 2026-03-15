@@ -222,8 +222,19 @@ bool CreateDX12Texture(ID3D12Device* device,
         if (uavIdx != DescriptorAllocator::kInvalidIndex) {
             D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
             uavDesc.Format = ToDxgiFormat(desc.format);
-            uavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
-            uavDesc.Texture2D.MipSlice = 0;
+
+            if (desc.depthOrArraySize > 1) {
+                // Array texture or cubemap — HLSL RWTexture2DArray requires TEXTURE2DARRAY
+                uavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2DARRAY;
+                uavDesc.Texture2DArray.MipSlice = 0;
+                uavDesc.Texture2DArray.FirstArraySlice = 0;
+                uavDesc.Texture2DArray.ArraySize = desc.depthOrArraySize;
+                uavDesc.Texture2DArray.PlaneSlice = 0;
+            } else {
+                uavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2D;
+                uavDesc.Texture2D.MipSlice = 0;
+            }
+
             device->CreateUnorderedAccessView(resource, nullptr, &uavDesc,
                                                srvUavHeap.CpuHandle(uavIdx));
             outTexture.uavIndex = uavIdx;

@@ -68,7 +68,6 @@ static void EvaluateSHBasis(float x, float y, float z, float out[9])
     out[3] = 0.488602511902920f * x;
 
     // L=2
-    // Y2,-2 = sqrt(15/(4*pi)) * x*y / sqrt(2) ... actually:
     // Y2,-2 = 0.5*sqrt(15/pi) * x*y = 1.092548430592079 * x*y
     out[4] = 1.092548430592079f * x * y;
     // Y2,-1 = 0.5*sqrt(15/pi) * y*z
@@ -126,17 +125,6 @@ static void CubemapTexelDirection(uint32_t face, float u, float v,
 /// Solid angle in steradians for this texel.
 static float CubemapTexelSolidAngle(float u, float v)
 {
-    // The solid angle of a cube face texel centered at (u,v) on the unit cube
-    // is: dA / r^3 where dA is the texel area on the cube face and r is the
-    // distance from center to the texel direction.
-    //
-    // For a texel at (u, v) in [-1, 1]:
-    // r^2 = 1 + u^2 + v^2  (the face is at distance 1 from center)
-    // dA = (2/N)^2 on the cube face
-    // solid angle = dA / r^3 = 4/(N^2 * r^3)
-    //
-    // But we compute this per-texel with the area factored out in the caller,
-    // so we return just 1/r^3 here. The caller multiplies by 4/N^2.
     const float r2 = 1.0f + u * u + v * v;
     const float r = std::sqrt(r2);
     return 1.0f / (r2 * r);
@@ -160,17 +148,6 @@ static float CubemapTexelSolidAngle(float u, float v)
 static void PackSHToUE5Format(const float shR[9], const float shG[9],
                               const float shB[9], Vec4 out[7])
 {
-    // These coefficients match UE5 exactly (ReflectionEnvironment.cpp:625-630).
-    // They incorporate the SH normalization, diffuse convolution (Al), and
-    // the 1/pi factor needed for irradiance-to-exitance conversion.
-    //
-    // From "Stupid Spherical Harmonics Tricks" (Sloan):
-    // The cosine-lobe convolution in SH is a per-band multiplication:
-    //   A0 = pi,  A1 = 2*pi/3,  A2 = pi/4
-    //
-    // The UE5 packing factors combine these with SH normalization constants
-    // to produce coefficients that, when dotted with the normal vector products,
-    // give the correct irradiance directly.
     const float sqrtPI = std::sqrt(kPI);
 
     const float c0 = 1.0f / (2.0f * sqrtPI);                 // 0.282095
@@ -178,15 +155,6 @@ static void PackSHToUE5Format(const float shR[9], const float shG[9],
     const float c2 = std::sqrt(15.0f) / (8.0f * sqrtPI);     // 0.273137
     const float c3 = std::sqrt(5.0f) / (16.0f * sqrtPI);     // 0.078848
     const float c4 = 0.5f * c2;                               // 0.136569
-
-    // coeffs[0..2]: L0 + L1 terms per color channel (R, G, B).
-    // The shader evaluates: dot(coeffs[i], float4(nx, ny, nz, 1))
-    //
-    // Mapping to SH basis (UE5 index ordering V[L*(L+1)+M]):
-    //   .x = -c1 * V[3]   (Y11 ~ x, negated for shader convention)
-    //   .y = -c1 * V[1]   (Y1,-1 ~ y, negated)
-    //   .z =  c1 * V[2]   (Y10 ~ z)
-    //   .w =  c0 * V[0] - c3 * V[6]  (Y00 constant, minus Y20 correction)
 
     // RED channel L0+L1
     out[0].x = -c1 * shR[3];
@@ -206,15 +174,6 @@ static void PackSHToUE5Format(const float shR[9], const float shG[9],
     out[2].z =  c1 * shB[2];
     out[2].w =  c0 * shB[0] - c3 * shB[6];
 
-    // coeffs[3..5]: L2 terms per color channel (R, G, B).
-    // The shader evaluates: dot(coeffs[i], float4(x*y, y*z, z*z, x*z))
-    //
-    // Mapping:
-    //   .x =  c2 * V[4]       (Y2,-2 ~ x*y)
-    //   .y = -c2 * V[5]       (Y2,-1 ~ y*z, negated)
-    //   .z = 3*c3 * V[6]      (Y2,0 ~ 3z^2 - 1, the z^2 part)
-    //   .w = -c2 * V[7]       (Y2,1 ~ x*z, negated)
-
     // RED channel L2
     out[3].x =  c2 * shR[4];
     out[3].y = -c2 * shR[5];
@@ -233,8 +192,7 @@ static void PackSHToUE5Format(const float shR[9], const float shG[9],
     out[5].z =  3.0f * c3 * shB[6];
     out[5].w = -c2 * shB[7];
 
-    // coeffs[6]: Y2,2 term (x^2 - y^2), one float per channel.
-    // The shader evaluates: coeffs[6].xyz * (nx*nx - ny*ny)
+    // Y2,2 term
     out[6].x = c4 * shR[8];
     out[6].y = c4 * shG[8];
     out[6].z = c4 * shB[8];
@@ -242,21 +200,18 @@ static void PackSHToUE5Format(const float shR[9], const float shG[9],
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Public API
+// Public API — CPU projection from face data
 // ─────────────────────────────────────────────────────────────────────────────
 
 SHCoefficients ProjectCubemapToSH(const float* faceData[6], uint32_t faceSize)
 {
-    // Raw SH coefficients per color channel (9 each, L0..L2).
     float shR[9] = {};
     float shG[9] = {};
     float shB[9] = {};
 
     float totalWeight = 0.0f;
 
-    // Texel size on the cube face in [-1, 1] space.
     const float invN = 1.0f / static_cast<float>(faceSize);
-    // Area of one texel on the cube face: (2/N)^2 = 4/N^2.
     const float texelArea = 4.0f * invN * invN;
 
     for (uint32_t face = 0; face < 6; ++face) {
@@ -268,40 +223,30 @@ SHCoefficients ProjectCubemapToSH(const float* faceData[6], uint32_t faceSize)
 
         for (uint32_t y = 0; y < faceSize; ++y) {
             for (uint32_t x = 0; x < faceSize; ++x) {
-                // Texel center in [0, 1]
                 const float u = (static_cast<float>(x) + 0.5f) * invN;
                 const float v = (static_cast<float>(y) + 0.5f) * invN;
 
-                // Direction (unnormalized) from cube center to texel
                 float dx, dy, dz;
                 CubemapTexelDirection(face, u, v, dx, dy, dz);
 
-                // Normalize direction
                 const float len = std::sqrt(dx * dx + dy * dy + dz * dz);
                 const float invLen = 1.0f / len;
                 dx *= invLen;
                 dy *= invLen;
                 dz *= invLen;
 
-                // Solid angle for this texel.
-                // Map u,v from [0,1] to [-1,1] for the solid angle computation.
                 const float su = 2.0f * u - 1.0f;
                 const float sv = 2.0f * v - 1.0f;
                 const float solidAngle = texelArea * CubemapTexelSolidAngle(su, sv);
 
-                // Read texel color (RGBA, 4 floats per pixel)
                 const uint32_t idx = (y * faceSize + x) * 4;
                 const float r = pixels[idx + 0];
                 const float g = pixels[idx + 1];
                 const float b = pixels[idx + 2];
-                // Alpha (idx+3) ignored
 
-                // Evaluate SH basis at this direction
                 float basis[9];
                 EvaluateSHBasis(dx, dy, dz, basis);
 
-                // Accumulate weighted SH projection:
-                // coeff[i] += color * Y_i(dir) * solidAngle
                 for (int i = 0; i < 9; ++i) {
                     const float w = basis[i] * solidAngle;
                     shR[i] += r * w;
@@ -314,9 +259,6 @@ SHCoefficients ProjectCubemapToSH(const float* faceData[6], uint32_t faceSize)
         }
     }
 
-    // The total solid angle of a sphere is 4*pi.
-    // Due to cubemap texel discretization, the sum won't be exactly 4*pi.
-    // Normalize to correct for this numerical error.
     if (totalWeight > 0.0f) {
         const float normalization = (4.0f * kPI) / totalWeight;
         for (int i = 0; i < 9; ++i) {
@@ -326,7 +268,6 @@ SHCoefficients ProjectCubemapToSH(const float* faceData[6], uint32_t faceSize)
         }
     }
 
-    // Pack into UE5-compatible 7-float4 format
     SHCoefficients result;
     PackSHToUE5Format(shR, shG, shB, result.coeffs);
 
@@ -355,25 +296,20 @@ static float HalfToFloat(uint16_t h)
 
     if (exponent == 0) {
         if (mantissa == 0) {
-            // Zero (positive or negative)
             result = sign;
         } else {
-            // Denormalized half → normalized float
-            // Count leading zeros in mantissa to find the implicit 1 position
             uint32_t m = mantissa;
             uint32_t e = 0;
             while ((m & 0x0400u) == 0) {
                 m <<= 1;
                 ++e;
             }
-            m &= 0x03FFu; // Remove the implicit leading 1
+            m &= 0x03FFu;
             result = sign | ((127u - 15u + 1u - e) << 23) | (m << 13);
         }
     } else if (exponent == 31) {
-        // Inf or NaN — preserve mantissa bits for NaN distinction
         result = sign | 0x7F800000u | (mantissa << 13);
     } else {
-        // Normalized value: rebias exponent from half (bias 15) to float (bias 127)
         result = sign | ((exponent + 127u - 15u) << 23) | (mantissa << 13);
     }
 
@@ -393,8 +329,7 @@ SHCoefficients ProjectCubemapToSH(IRHIDevice* device, IRHICommandList* cmdList,
 
     if (!device || !cmdList || !cubemap.IsValid() || faceSize == 0) {
         UZ_LOG(SHProjection, Error,
-               "ProjectCubemapToSH (GPU): invalid arguments (device={}, cmdList={}, cubemap={}, faceSize={})",
-               device != nullptr, cmdList != nullptr, cubemap.IsValid(), faceSize);
+               "ProjectCubemapToSH (GPU): invalid arguments");
         return zeroResult;
     }
 
@@ -419,13 +354,14 @@ SHCoefficients ProjectCubemapToSH(IRHIDevice* device, IRHICommandList* cmdList,
     RHIBufferHandle readbackBuf = device->CreateBuffer(bufDesc);
     if (!readbackBuf.IsValid()) {
         UZ_LOG(SHProjection, Error,
-               "ProjectCubemapToSH (GPU): failed to create readback buffer ({}  bytes)", totalBytes);
+               "ProjectCubemapToSH (GPU): failed to create readback buffer ({} bytes)", totalBytes);
         return zeroResult;
     }
 
-    // Transition cubemap from UAV to CopySrc. The cubemap was last explicitly
-    // set to UnorderedAccess by the render graph's sky capture pass. BakeEnvironment
-    // reads it via SRV implicit promotion but does not change the tracked state.
+    // Transition cubemap from UAV to CopySrc and copy each face.
+    // The cubemap was last set to UnorderedAccess by the render graph's
+    // sky capture compute pass. The UAV→CopySrc transition flushes
+    // UAV writes so the copy reads correct data.
     cmdList->Begin();
 
     RHIBarrierDesc toCopySrc = {};
@@ -439,8 +375,7 @@ SHCoefficients ProjectCubemapToSH(IRHIDevice* device, IRHICommandList* cmdList,
         cmdList->CopyTextureToBuffer(cubemap, 0, readbackBuf, offset, alignedRowPitch, face);
     }
 
-    // Transition cubemap back to UAV — the render graph imports it as
-    // UnorderedAccess for the next frame's sky capture compute pass.
+    // Transition cubemap back to UAV for next frame's sky capture.
     RHIBarrierDesc toUAV = {};
     toUAV.texture = cubemap;
     toUAV.stateBefore = RHIResourceState::CopySrc;
@@ -460,7 +395,7 @@ SHCoefficients ProjectCubemapToSH(IRHIDevice* device, IRHICommandList* cmdList,
     }
 
     // Convert half-float data to float and build face pointers for the CPU projection
-    const uint32_t floatsPerFace = faceSize * faceSize * 4; // RGBA
+    const uint32_t floatsPerFace = faceSize * faceSize * 4;
     std::vector<float> faceFloats(floatsPerFace * 6);
     const float* facePtrs[6] = {};
 
@@ -470,42 +405,16 @@ SHCoefficients ProjectCubemapToSH(IRHIDevice* device, IRHICommandList* cmdList,
 
         const auto* faceBase = mappedData + face * faceBytes;
         for (uint32_t y = 0; y < faceSize; ++y) {
-            // Row data starts at aligned row pitch offset
             const auto* rowHalf = reinterpret_cast<const uint16_t*>(faceBase + y * alignedRowPitch);
             float* rowFloat = dst + y * faceSize * 4;
 
             for (uint32_t x = 0; x < faceSize; ++x) {
-                rowFloat[x * 4 + 0] = HalfToFloat(rowHalf[x * 4 + 0]); // R
-                rowFloat[x * 4 + 1] = HalfToFloat(rowHalf[x * 4 + 1]); // G
-                rowFloat[x * 4 + 2] = HalfToFloat(rowHalf[x * 4 + 2]); // B
-                rowFloat[x * 4 + 3] = HalfToFloat(rowHalf[x * 4 + 3]); // A (ignored by SH)
+                rowFloat[x * 4 + 0] = HalfToFloat(rowHalf[x * 4 + 0]);
+                rowFloat[x * 4 + 1] = HalfToFloat(rowHalf[x * 4 + 1]);
+                rowFloat[x * 4 + 2] = HalfToFloat(rowHalf[x * 4 + 2]);
+                rowFloat[x * 4 + 3] = HalfToFloat(rowHalf[x * 4 + 3]);
             }
         }
-    }
-
-    // Diagnostic: log a few sample pixels to verify readback data is non-zero
-    {
-        float maxVal = 0.0f;
-        uint32_t nonZeroCount = 0;
-        for (uint32_t face = 0; face < 6; ++face) {
-            const float* fp = facePtrs[face];
-            for (uint32_t i = 0; i < floatsPerFace; i += 4) {
-                const float r = fp[i], g = fp[i + 1], b = fp[i + 2];
-                if (r > 0.0f || g > 0.0f || b > 0.0f) ++nonZeroCount;
-                if (r > maxVal) maxVal = r;
-                if (g > maxVal) maxVal = g;
-                if (b > maxVal) maxVal = b;
-            }
-        }
-        // Also log raw half-float bytes from the first face center pixel
-        const auto* firstFaceCenter = mappedData + (faceSize / 2) * alignedRowPitch
-                                    + (faceSize / 2) * kBytesPerTexel;
-        const auto* halfPixel = reinterpret_cast<const uint16_t*>(firstFaceCenter);
-        UZ_LOG(SHProjection, Info,
-               "Readback diagnostic: nonZero={}/{}, maxVal={:.6f}, "
-               "face0_center_half=[0x{:04X}, 0x{:04X}, 0x{:04X}, 0x{:04X}]",
-               nonZeroCount, faceSize * faceSize * 6, maxVal,
-               halfPixel[0], halfPixel[1], halfPixel[2], halfPixel[3]);
     }
 
     device->UnmapBuffer(readbackBuf);
@@ -515,7 +424,7 @@ SHCoefficients ProjectCubemapToSH(IRHIDevice* device, IRHICommandList* cmdList,
     SHCoefficients result = ProjectCubemapToSH(facePtrs, faceSize);
 
     UZ_LOG(SHProjection, Info,
-           "ProjectCubemapToSH (GPU): readback + projection complete (faceSize={}, "
+           "ProjectCubemapToSH (GPU): readback complete (faceSize={}, "
            "L0_R={:.4f}, L0_G={:.4f}, L0_B={:.4f})",
            faceSize, result.coeffs[0].w, result.coeffs[1].w, result.coeffs[2].w);
 
