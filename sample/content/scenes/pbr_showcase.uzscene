@@ -1,0 +1,262 @@
+{
+  "name": "PBR Showcase",
+  "version": "1.0",
+  "entities": [
+    {
+      "name": "Sun",
+      "components": {
+        "transform": {
+          "position": [0, 20, 0],
+          "rotation": [50, -30, 0],
+          "scale": [1, 1, 1]
+        },
+        "light": {
+          "type": "directional",
+          "color": [1.0, 0.96, 0.88],
+          "intensity": 3.14
+        }
+      }
+    },
+
+    {
+      "name": "GroundPlane",
+      "components": {
+        "transform": {
+          "position": [0, -0.5, 0],
+          "rotation": [0, 0, 0],
+          "scale": [30, 0.04, 30]
+        },
+        "mesh": { "asset": "meshes/cube.uzmesh" },
+        "material": {
+          "albedo": "textures/Concrete/Poliigon_ConcreteWorn_8690_BaseColor.jpg",
+          "normal": "textures/Concrete/Poliigon_ConcreteWorn_8690_Normal.png",
+          "roughness": "textures/Concrete/Poliigon_ConcreteWorn_8690_Roughness.jpg",
+          "metallic": "textures/Concrete/Poliigon_ConcreteWorn_8690_Metallic.jpg",
+          "ao": "textures/Concrete/Poliigon_ConcreteWorn_8690_AmbientOcclusion.jpg"
+        }
+      }
+    },
+
+    {
+      "name": "Cube_Stone_1",
+      "components": {
+        "transform": {
+          "position": [-4, 0.8, 0],
+          "rotation": [0, 0, 0],
+          "scale": [0.8, 0.8, 0.8]
+        },
+        "mesh": { "asset": "meshes/cube.uzmesh" },
+        "material": {
+          "albedo": "textures/Stonebricks/stonebricks_albedo.jpg",
+          "normal": "textures/Stonebricks/stonebricks_normal.jpg",
+          "roughness": "textures/Stonebricks/stonebricks_roughness.jpg",
+          "metallic": "textures/Stonebricks/stonebricks_metallic.jpg",
+          "ao": "textures/Stonebricks/stonebricks_ao.jpg"
+        }
+      }
+    },
+    {
+      "name": "Cube_Stone_2",
+      "components": {
+        "transform": {
+          "position": [-2, 0.8, 0],
+          "rotation": [0, 0, 0],
+          "scale": [0.8, 0.8, 0.8]
+        },
+        "mesh": { "asset": "meshes/cube.uzmesh" },
+        "material": {
+          "albedo": "textures/Stonebricks/stonebricks_albedo.jpg",
+          "normal": "textures/Stonebricks/stonebricks_normal.jpg",
+          "roughness": "textures/Stonebricks/stonebricks_roughness.jpg",
+          "metallic": "textures/Stonebricks/stonebricks_metallic.jpg",
+          "ao": "textures/Stonebricks/stonebricks_ao.jpg"
+        }
+      }
+    },
+    {
+      "name": "Cube_Metal_Center",
+      "components": {
+        "transform": {
+          "position": [0, 0.8, 0],
+          "rotation": [0, 0, 0],
+          "scale": [0.8, 0.8, 0.8]
+        },
+        "mesh": { "asset": "meshes/cube.uzmesh" },
+        "material": {
+          "albedo": "textures/MetalCorroded/MetalCorrodedHeavy001_COL_2K_METALNESS.jpg",
+          "normal": "textures/MetalCorroded/MetalCorrodedHeavy001_NRM_2K_METALNESS.jpg",
+          "roughness": "textures/MetalCorroded/MetalCorrodedHeavy001_ROUGHNESS_2K_METALNESS.jpg",
+          "metallic": "textures/MetalCorroded/MetalCorrodedHeavy001_METALNESS_2K_METALNESS.jpg"
+        }
+      }
+    },
+    {
+      "name": "Cube_Stone_4",
+      "components": {
+        "transform": {
+          "position": [2, 0.8, 0],
+          "rotation": [0, 0, 0],
+          "scale": [0.8, 0.8, 0.8]
+        },
+        "mesh": { "asset": "meshes/cube.uzmesh" },
+        "material": {
+          "albedo": "textures/Stonebricks/stonebricks_albedo.jpg",
+          "normal": "textures/Stonebricks/stonebricks_normal.jpg",
+          "roughness": "textures/Stonebricks/stonebricks_roughness.jpg",
+          "metallic": "textures/Stonebricks/stonebricks_metallic.jpg",
+          "ao": "textures/Stonebricks/stonebricks_ao.jpg"
+        }
+      }
+    },
+    {
+      "name": "Cube_Stone_5",
+      "components": {
+        "transform": {
+          "position": [4, 0.8, 0],
+          "rotation": [0, 0, 0],
+          "scale": [0.8, 0.8, 0.8]
+        },
+        "mesh": { "asset": "meshes/cube.uzmesh" },
+        "material": {
+          "albedo": "textures/Stonebricks/stonebricks_albedo.jpg",
+          "normal": "textures/Stonebricks/stonebricks_normal.jpg",
+          "roughness": "textures/Stonebricks/stonebricks_roughness.jpg",
+          "metallic": "textures/Stonebricks/stonebricks_metallic.jpg",
+          "ao": "textures/Stonebricks/stonebricks_ao.jpg"
+        }
+      }
+    },
+
+    {
+      "name": "Sphere_Metal",
+      "components": {
+        "transform": {
+          "position": [0, 1.8, 3],
+          "rotation": [0, 0, 0],
+          "scale": [1, 1, 1]
+        },
+        "mesh": { "asset": "meshes/sphere.uzmesh" },
+        "material": {
+          "albedo": "textures/MetalCorroded/MetalCorrodedHeavy001_COL_2K_METALNESS.jpg",
+          "normal": "textures/MetalCorroded/MetalCorrodedHeavy001_NRM_2K_METALNESS.jpg",
+          "roughness": "textures/MetalCorroded/MetalCorrodedHeavy001_ROUGHNESS_2K_METALNESS.jpg",
+          "metallic": "textures/MetalCorroded/MetalCorrodedHeavy001_METALNESS_2K_METALNESS.jpg"
+        }
+      }
+    },
+    {
+      "name": "Sphere_Stone",
+      "components": {
+        "transform": {
+          "position": [-3, 1.8, 3],
+          "rotation": [0, 0, 0],
+          "scale": [1, 1, 1]
+        },
+        "mesh": { "asset": "meshes/sphere.uzmesh" },
+        "material": {
+          "albedo": "textures/Stonebricks/stonebricks_albedo.jpg",
+          "normal": "textures/Stonebricks/stonebricks_normal.jpg",
+          "roughness": "textures/Stonebricks/stonebricks_roughness.jpg",
+          "metallic": "textures/Stonebricks/stonebricks_metallic.jpg",
+          "ao": "textures/Stonebricks/stonebricks_ao.jpg"
+        }
+      }
+    },
+    {
+      "name": "Sphere_Concrete",
+      "components": {
+        "transform": {
+          "position": [3, 1.8, 3],
+          "rotation": [0, 0, 0],
+          "scale": [1, 1, 1]
+        },
+        "mesh": { "asset": "meshes/sphere.uzmesh" },
+        "material": {
+          "albedo": "textures/Concrete/Poliigon_ConcreteWorn_8690_BaseColor.jpg",
+          "normal": "textures/Concrete/Poliigon_ConcreteWorn_8690_Normal.png",
+          "roughness": "textures/Concrete/Poliigon_ConcreteWorn_8690_Roughness.jpg",
+          "metallic": "textures/Concrete/Poliigon_ConcreteWorn_8690_Metallic.jpg",
+          "ao": "textures/Concrete/Poliigon_ConcreteWorn_8690_AmbientOcclusion.jpg"
+        }
+      }
+    },
+
+    {
+      "name": "MainCamera",
+      "components": {
+        "transform": {
+          "position": [0, 3, -8],
+          "rotation": [15, 0, 0]
+        },
+        "camera": {
+          "fov": 75,
+          "near": 0.1,
+          "far": 1000,
+          "active": true
+        }
+      }
+    },
+
+    {
+      "name": "PointLight_Red",
+      "components": {
+        "transform": { "position": [-3, 2, 2] },
+        "light": {
+          "type": "point",
+          "color": [4.0, 0.2, 0.2],
+          "intensity": 1.0,
+          "range": 15
+        }
+      }
+    },
+    {
+      "name": "PointLight_Green",
+      "components": {
+        "transform": { "position": [0, 3, -2] },
+        "light": {
+          "type": "point",
+          "color": [0.2, 4.0, 0.2],
+          "intensity": 1.0,
+          "range": 20
+        }
+      }
+    },
+    {
+      "name": "PointLight_Blue",
+      "components": {
+        "transform": { "position": [3, 2, 2] },
+        "light": {
+          "type": "point",
+          "color": [0.2, 0.2, 4.0],
+          "intensity": 1.0,
+          "range": 15
+        }
+      }
+    },
+    {
+      "name": "PointLight_White",
+      "components": {
+        "transform": { "position": [0, 1, 0] },
+        "light": {
+          "type": "point",
+          "color": [3.0, 3.0, 3.0],
+          "intensity": 1.0,
+          "range": 25
+        }
+      }
+    },
+
+    {
+      "name": "Controller",
+      "components": {
+        "script": { "path": "scripts/pbr_showcase_controller.lua" }
+      }
+    },
+    {
+      "name": "CubeRotator",
+      "components": {
+        "script": { "path": "scripts/cube_rotator.lua" }
+      }
+    }
+  ]
+}
