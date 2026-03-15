@@ -420,6 +420,130 @@ static int SceneRemoveComponent(lua_State* L) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Lua C functions — uz.scene.get_entities / get_entities_with / clear
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// uz.scene.get_entities() -> table (array of entity lightuserdata)
+///
+/// Returns a Lua array containing a lightuserdata handle for every alive entity
+/// in the World. The table is 1-indexed (standard Lua convention).
+///
+/// Uses `View<SceneComponent>()` as the iteration source because every entity
+/// created via `uz.scene.create_entity` receives a `SceneComponent`. Entities
+/// created directly via the C++ World API without a SceneComponent will not
+/// appear in this list.
+///
+/// # Returns
+/// A Lua table (array) of lightuserdata entity handles. Empty table if the
+/// World is not set or no entities exist.
+static int SceneGetEntities(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) {
+        UZ_LOG(Scripting, Warning, "uz.scene.get_entities: World not set");
+        lua_newtable(L);
+        return 1;
+    }
+
+    lua_newtable(L);  // result array
+
+    lua_Integer index = 1;
+    for (auto [enttEntity, comp] : world->View<SceneComponent>().each()) {
+        (void)comp;
+        const Entity entity = world->EntityFromEntt(enttEntity);
+        lua_pushlightuserdata(L, EntityToUserdata(entity));
+        lua_rawseti(L, -2, index++);
+    }
+
+    return 1;
+}
+
+/// uz.scene.get_entities_with(component_name) -> table (array of entity lightuserdata)
+///
+/// Returns a Lua array of entity handles filtered to those that have the named
+/// component. Supports the same component name set as `uz.scene.has_component`.
+///
+/// # Component names
+/// - `"transform"` — `SceneComponent`
+/// - `"camera"`    — `CameraComponent`
+/// - `"light"`     — any of `DirectionalLightComponent`, `PointLightComponent`,
+///                   `SpotLightComponent` (entity is included if it has any one)
+/// - `"mesh"`      — `StaticMeshComponent`
+/// - `"script"`    — `CScript`
+/// - `"name"`      — `CName`
+///
+/// # Arguments
+/// * `component_name` (string) — One of the supported names listed above.
+///
+/// # Returns
+/// A Lua table (array) of lightuserdata entity handles. Returns an empty table
+/// for unknown component names (with a Warning log) or if the World is not set.
+static int SceneGetEntitiesWith(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) {
+        UZ_LOG(Scripting, Warning, "uz.scene.get_entities_with: World not set");
+        lua_newtable(L);
+        return 1;
+    }
+
+    const char* name = luaL_checkstring(L, 1);
+
+    lua_newtable(L);  // result array
+    lua_Integer index = 1;
+
+    auto pushEntity = [&](entt::entity enttEntity) {
+        const Entity entity = world->EntityFromEntt(enttEntity);
+        lua_pushlightuserdata(L, EntityToUserdata(entity));
+        lua_rawseti(L, -2, index++);
+    };
+
+    if (std::strcmp(name, "transform") == 0) {
+        for (auto [e, c] : world->View<SceneComponent>().each())              { (void)c; pushEntity(e); }
+    } else if (std::strcmp(name, "camera") == 0) {
+        for (auto [e, c] : world->View<CameraComponent>().each())             { (void)c; pushEntity(e); }
+    } else if (std::strcmp(name, "light") == 0) {
+        // Collect entities with any light type. Use a view per type; an entity
+        // may theoretically have more than one but we push each entt entity once
+        // by iterating each light storage. In the MVP, entities carry at most
+        // one light type, so duplicate entries are not expected.
+        for (auto [e, c] : world->View<DirectionalLightComponent>().each())   { (void)c; pushEntity(e); }
+        for (auto [e, c] : world->View<PointLightComponent>().each())          { (void)c; pushEntity(e); }
+        for (auto [e, c] : world->View<SpotLightComponent>().each())           { (void)c; pushEntity(e); }
+    } else if (std::strcmp(name, "mesh") == 0) {
+        for (auto [e, c] : world->View<StaticMeshComponent>().each())         { (void)c; pushEntity(e); }
+    } else if (std::strcmp(name, "script") == 0) {
+        for (auto [e, c] : world->View<CScript>().each())                     { (void)c; pushEntity(e); }
+    } else if (std::strcmp(name, "name") == 0) {
+        for (auto [e, c] : world->View<CName>().each())                       { (void)c; pushEntity(e); }
+    } else {
+        UZ_LOG(Scripting, Warning,
+            "uz.scene.get_entities_with: unknown component name '{}'. "
+            "Supported: transform, camera, light, mesh, script, name",
+            name);
+    }
+
+    return 1;
+}
+
+/// uz.scene.clear() -> void
+///
+/// Destroys all entities and their components by calling `World::Clear()`.
+/// All previously returned entity handles become stale after this call.
+///
+/// # Side Effects
+/// Logs at Info level (including entity count) via the World implementation.
+static int SceneClear(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) {
+        UZ_LOG(Scripting, Warning, "uz.scene.clear: World not set");
+        return 0;
+    }
+
+    UZ_LOG(Scripting, Info, "uz.scene.clear: clearing all entities");
+    world->Clear();
+    return 0;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Registration
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -466,6 +590,15 @@ void LuaRegisterEntityAPI(lua_State* L) {
 
     lua_pushcfunction(L, SceneRemoveComponent);
     lua_setfield(L, -2, "remove_component");
+
+    lua_pushcfunction(L, SceneGetEntities);
+    lua_setfield(L, -2, "get_entities");
+
+    lua_pushcfunction(L, SceneGetEntitiesWith);
+    lua_setfield(L, -2, "get_entities_with");
+
+    lua_pushcfunction(L, SceneClear);
+    lua_setfield(L, -2, "clear");
 
     lua_pop(L, 2);  // pop scene and uz
 

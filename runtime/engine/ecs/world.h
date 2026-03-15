@@ -232,6 +232,27 @@ public:
     /// Returns a const reference to the underlying EnTT registry.
     [[nodiscard]] const entt::registry& GetRegistry() const { return registry_; }
 
+    /// Reconstructs a valid Entity handle from a raw EnTT entity.
+    ///
+    /// This is intended for use in iteration loops where the caller obtained an
+    /// `entt::entity` from a registry view and needs a fully-formed generational
+    /// `Entity` handle (with correct generation) to pass back to Lua or other API.
+    ///
+    /// # Arguments
+    /// * `enttEntity` — A live entt entity obtained from a registry view or storage iterator.
+    ///
+    /// # Returns
+    /// An `Entity` with `id = entt::to_integral(enttEntity)` and the current generation
+    /// for that slot. The returned handle will pass `World::IsValid()` as long as the
+    /// underlying entity is still alive.
+    [[nodiscard]] Entity EntityFromEntt(entt::entity enttEntity) const {
+        const uint32_t slot = static_cast<uint32_t>(entt::to_integral(enttEntity));
+        Entity e;
+        e.id = slot;
+        e.generation = (slot < generations_.size()) ? generations_[slot] : 0u;
+        return e;
+    }
+
 private:
     entt::registry registry_;
 

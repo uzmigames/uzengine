@@ -131,29 +131,29 @@ The goal: `uzengine.exe --project` renders a full PBR scene driven entirely by .
 Goal: Every C++ engine capability accessible from Lua. Ordered by gameplay impact.
 
 ### N-A: ECS Iteration & Component Access
-- [ ] N.A1 `uz.scene.get_entities()` → array of entity handles (all alive entities).
-- [ ] N.A2 `uz.scene.get_entities_with(component_name)` → filtered array. Supported names: "transform", "camera", "light", "mesh", "script".
+- [x] N.A1 `uz.scene.get_entities()` → array of entity handles (all alive entities).
+- [x] N.A2 `uz.scene.get_entities_with(component_name)` → filtered array. Supported names: "transform", "camera", "light", "mesh", "script".
 - [x] N.A3 `uz.scene.has_component(entity, component_name)` → bool. Supports: transform, camera, light, mesh, script, name.
 - [x] N.A4 `uz.scene.remove_component(entity, component_name)` — removes named component. Same name mapping.
-- [ ] N.A5 `uz.scene.clear()` — destroys all entities (World::Clear).
+- [x] N.A5 `uz.scene.clear()` — destroys all entities (World::Clear).
 - [ ] N.A6 Unit tests for ECS iteration/component access.
 
 ### N-B: Transform Hierarchy
-- [ ] N.B1 `uz.scene.get_world_position(entity)` → x,y,z (computed from hierarchy).
-- [ ] N.B2 `uz.scene.get_world_matrix(entity)` → 16 numbers (row-major flat).
-- [ ] N.B3 `uz.scene.attach_to(child, parent)` — parent-child transform hierarchy.
-- [ ] N.B4 `uz.scene.detach(entity)` — unparent.
-- [ ] N.B5 `uz.scene.get_parent(entity)` → entity or nil.
-- [ ] N.B6 `uz.scene.get_children(entity)` → array of entity handles.
+- [x] N.B1 `uz.scene.get_world_position(entity)` → x,y,z (computed from hierarchy).
+- [x] N.B2 `uz.scene.get_world_matrix(entity)` → 16 numbers (row-major flat).
+- [x] N.B3 `uz.scene.attach_to(child, parent)` — parent-child transform hierarchy.
+- [x] N.B4 `uz.scene.detach(entity)` — unparent.
+- [x] N.B5 `uz.scene.get_parent(entity)` → entity or nil.
+- [x] N.B6 `uz.scene.get_children(entity)` → array of entity handles.
 - [ ] N.B7 Unit tests for hierarchy API.
 
 ### N-C: Camera Extended
-- [ ] N.C1 `uz.camera.get_near()` / `uz.camera.set_near(n)` — near plane.
-- [ ] N.C2 `uz.camera.get_far()` / `uz.camera.set_far(f)` — far plane.
-- [ ] N.C3 `uz.camera.set_orthographic(enabled, size)` / `uz.camera.is_orthographic()`.
-- [ ] N.C4 `uz.camera.set_active(entity)` — switch active camera by entity.
-- [ ] N.C5 `uz.camera.get_view_matrix()` → 16 numbers.
-- [ ] N.C6 `uz.camera.get_projection_matrix()` → 16 numbers.
+- [x] N.C1 `uz.camera.get_near()` / `uz.camera.set_near(n)` — near plane.
+- [x] N.C2 `uz.camera.get_far()` / `uz.camera.set_far(f)` — far plane.
+- [x] N.C3 `uz.camera.set_orthographic(enabled, size)` / `uz.camera.is_orthographic()`.
+- [x] N.C4 `uz.camera.set_active(entity)` — switch active camera by entity.
+- [x] N.C5 `uz.camera.get_view_matrix()` → 16 numbers.
+- [x] N.C6 `uz.camera.get_projection_matrix()` → 16 numbers.
 - [ ] N.C7 Unit tests for camera extended API.
 
 ### N-D: Input Extended
@@ -185,8 +185,8 @@ Goal: Every C++ engine capability accessible from Lua. Ordered by gameplay impac
 - [ ] N.F6 Unit tests for mesh/material extended API.
 
 ### N-G: Renderer Extended
-- [ ] N.G1 `uz.renderer.set_debug_view_mode(mode)` — DebugViewMode enum.
-- [ ] N.G2 `uz.renderer.get_debug_view_mode()` → integer.
+- [x] N.G1 `uz.renderer.set_debug_view(mode_name)` — DebugViewMode by string name (case-insensitive).
+- [x] N.G2 `uz.renderer.get_debug_view()` → string (current mode name).
 - [ ] N.G3 `uz.renderer.screenshot(path)` — capture current frame to PNG.
 - [ ] N.G4 Unit tests for renderer extended API.
 

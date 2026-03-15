@@ -2,9 +2,11 @@
 
 #include "log.h"
 #include "world.h"
+#include "entity.h"
 #include "camera_component.h"
 #include "vector3.h"
 #include "quaternion.h"
+#include "mat4.h"
 
 extern "C" {
 #include <lua.h>
@@ -13,6 +15,8 @@ extern "C" {
 }
 
 #include <cmath>
+#include <cstdint>
+#include <cstring>
 
 // Scripting log category is defined in lua_vm.cpp — only declare here.
 UZ_DECLARE_LOG_CATEGORY(Scripting);
@@ -22,8 +26,39 @@ UZ_DECLARE_LOG_CATEGORY(Scripting);
 // Declared here as an extern string literal — both TUs use the same key.
 // ─────────────────────────────────────────────────────────────────────────────
 
+using namespace uz;
+
 namespace {
     constexpr const char* kWorldRegistryKey = "uz_world";
+
+    // ── Entity <-> lightuserdata encoding ────────────────────────────────────
+    // Mirrors the same encoding used in lua_scene_api.cpp.
+    // High 32 bits = entity.id, low 32 bits = entity.generation.
+
+    static_assert(sizeof(void*) >= 8,
+        "uz::Entity requires 64-bit pointers for lightuserdata encoding");
+
+    /// Unpacks an Entity from a Lua lightuserdata void*.
+    [[nodiscard]] static uz::Entity UserdataToEntity(void* p) noexcept {
+        uint64_t packed;
+        std::memcpy(&packed, &p, sizeof(packed));
+        uz::Entity e;
+        e.id         = static_cast<uint32_t>(packed >> 32);
+        e.generation = static_cast<uint32_t>(packed & 0xFFFFFFFFu);
+        return e;
+    }
+
+    /// Reads an entity lightuserdata from stack index `idx`.
+    /// Returns Entity::Invalid() and logs a warning on type mismatch.
+    [[nodiscard]] static uz::Entity CheckEntityArg(lua_State* L, int idx, const char* funcName) {
+        if (!lua_islightuserdata(L, idx)) {
+            UZ_LOG(Scripting, Warning,
+                "uz.camera.{}: argument {} must be an entity (lightuserdata), got {}",
+                funcName, idx, lua_typename(L, lua_type(L, idx)));
+            return uz::Entity::Invalid();
+        }
+        return UserdataToEntity(lua_touserdata(L, idx));
+    }
 } // anonymous namespace
 
 namespace uz {
@@ -245,6 +280,198 @@ static int CameraSetFov(lua_State* L) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Lua C functions — clip planes, orthographic, active camera, matrices
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// uz.camera.get_near() -> number | nil
+///
+/// Returns the near clipping plane distance of the active camera. Returns nil
+/// if no active camera exists in the world.
+static int CameraGetNear(lua_State* L) {
+    CameraComponent* cam = FindActiveCamera(L, "get_near");
+    if (!cam) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_pushnumber(L, static_cast<double>(cam->nearPlane));
+    return 1;
+}
+
+/// uz.camera.set_near(n)
+///
+/// Sets the near clipping plane of the active camera. Clamped to [0.001, farPlane).
+/// Values outside that range are clamped with a Warning log.
+///
+/// # Arguments
+/// * `n` — Near plane distance in world units. Must be > 0.
+static int CameraSetNear(lua_State* L) {
+    CameraComponent* cam = FindActiveCamera(L, "set_near");
+    if (!cam) return 0;
+
+    const float n = static_cast<float>(luaL_checknumber(L, 1));
+    constexpr float kMinNear = 0.001f;
+    const float maxNear = cam->farPlane - 1e-4f;
+    if (n < kMinNear || n >= cam->farPlane) {
+        UZ_LOG(Scripting, Warning,
+            "uz.camera.set_near: value {} out of range [0.001, farPlane) — clamping", n);
+    }
+    cam->nearPlane = std::fmax(kMinNear, std::fmin(maxNear, n));
+    return 0;
+}
+
+/// uz.camera.get_far() -> number | nil
+///
+/// Returns the far clipping plane distance of the active camera. Returns nil
+/// if no active camera exists in the world.
+static int CameraGetFar(lua_State* L) {
+    CameraComponent* cam = FindActiveCamera(L, "get_far");
+    if (!cam) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_pushnumber(L, static_cast<double>(cam->farPlane));
+    return 1;
+}
+
+/// uz.camera.set_far(f)
+///
+/// Sets the far clipping plane of the active camera. Clamped to (nearPlane, 100000].
+/// Values outside that range are clamped with a Warning log.
+///
+/// # Arguments
+/// * `f` — Far plane distance in world units. Must be > nearPlane.
+static int CameraSetFar(lua_State* L) {
+    CameraComponent* cam = FindActiveCamera(L, "set_far");
+    if (!cam) return 0;
+
+    const float f = static_cast<float>(luaL_checknumber(L, 1));
+    constexpr float kMaxFar = 100000.f;
+    const float minFar = cam->nearPlane + 1e-4f;
+    if (f <= cam->nearPlane || f > kMaxFar) {
+        UZ_LOG(Scripting, Warning,
+            "uz.camera.set_far: value {} out of range (nearPlane, 100000] — clamping", f);
+    }
+    cam->farPlane = std::fmax(minFar, std::fmin(kMaxFar, f));
+    return 0;
+}
+
+/// uz.camera.set_orthographic(enabled [, size])
+///
+/// Switches the active camera between perspective and orthographic projection.
+///
+/// # Arguments
+/// * `enabled` (bool) — true to enable orthographic; false to restore perspective.
+/// * `size`    (number, optional) — Orthographic half-height in world units.
+///              If omitted the existing `orthoSize` value is unchanged.
+static int CameraSetOrthographic(lua_State* L) {
+    CameraComponent* cam = FindActiveCamera(L, "set_orthographic");
+    if (!cam) return 0;
+
+    if (!lua_isboolean(L, 1)) {
+        return luaL_error(L, "uz.camera.set_orthographic: argument 1 must be a boolean");
+    }
+    cam->isOrtho = lua_toboolean(L, 1) != 0;
+
+    if (lua_gettop(L) >= 2 && !lua_isnil(L, 2)) {
+        const float size = static_cast<float>(luaL_checknumber(L, 2));
+        if (size <= 0.f) {
+            UZ_LOG(Scripting, Warning,
+                "uz.camera.set_orthographic: size {} must be > 0 — ignoring", size);
+        } else {
+            cam->orthoSize = size;
+        }
+    }
+    return 0;
+}
+
+/// uz.camera.is_orthographic() -> bool | nil
+///
+/// Returns whether the active camera is in orthographic mode.
+/// Returns nil if no active camera exists.
+static int CameraIsOrthographic(lua_State* L) {
+    CameraComponent* cam = FindActiveCamera(L, "is_orthographic");
+    if (!cam) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_pushboolean(L, cam->isOrtho ? 1 : 0);
+    return 1;
+}
+
+/// uz.camera.set_active(entity)
+///
+/// Deactivates all cameras in the world, then activates the CameraComponent
+/// on the given entity. A Warning is emitted if the entity has no CameraComponent.
+///
+/// # Arguments
+/// * `entity` (lightuserdata) — Target entity with a CameraComponent.
+static int CameraSetActive(lua_State* L) {
+    World* world = GetCameraWorld(L);
+    if (!world) {
+        UZ_LOG(Scripting, Warning, "uz.camera.set_active: World not set");
+        return 0;
+    }
+
+    const Entity target = CheckEntityArg(L, 1, "set_active");
+    if (!target.IsValid() || !world->IsValid(target)) {
+        UZ_LOG(Scripting, Warning, "uz.camera.set_active: invalid or stale entity");
+        return 0;
+    }
+    if (!world->HasComponent<CameraComponent>(target)) {
+        UZ_LOG(Scripting, Warning,
+            "uz.camera.set_active: entity {} has no CameraComponent", target.id);
+        return 0;
+    }
+
+    // Deactivate all cameras first, then activate the target.
+    for (auto [enttEntity, camera] : world->View<CameraComponent>().each()) {
+        camera.isActive = false;
+    }
+    world->GetComponent<CameraComponent>(target).isActive = true;
+    return 0;
+}
+
+/// uz.camera.get_view_matrix() -> m11, m12, ..., m44 (16 numbers, row-major) | nil
+///
+/// Returns all 16 elements of the active camera's view matrix as individual Lua numbers
+/// in row-major order: _11, _12, _13, _14, _21, _22, ..., _44.
+///
+/// Returns nil (1 value) if no active camera exists.
+static int CameraGetViewMatrix(lua_State* L) {
+    CameraComponent* cam = FindActiveCamera(L, "get_view_matrix");
+    if (!cam) {
+        lua_pushnil(L);
+        return 1;
+    }
+    const Mat4 mat = cam->GetViewMatrix();
+    const float* p = mat.data(); // points to _11, row-major
+    for (int i = 0; i < 16; ++i) {
+        lua_pushnumber(L, static_cast<double>(p[i]));
+    }
+    return 16;
+}
+
+/// uz.camera.get_projection_matrix() -> m11, m12, ..., m44 (16 numbers, row-major) | nil
+///
+/// Returns all 16 elements of the active camera's projection matrix as individual
+/// Lua numbers in row-major order: _11, _12, _13, _14, _21, _22, ..., _44.
+///
+/// Returns nil (1 value) if no active camera exists.
+static int CameraGetProjectionMatrix(lua_State* L) {
+    CameraComponent* cam = FindActiveCamera(L, "get_projection_matrix");
+    if (!cam) {
+        lua_pushnil(L);
+        return 1;
+    }
+    const Mat4 mat = cam->GetProjectionMatrix();
+    const float* p = mat.data();
+    for (int i = 0; i < 16; ++i) {
+        lua_pushnumber(L, static_cast<double>(p[i]));
+    }
+    return 16;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Registration
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -273,6 +500,33 @@ void LuaRegisterCameraAPI(lua_State* L) {
 
     lua_pushcfunction(L, CameraSetFov);
     lua_setfield(L, -2, "set_fov");
+
+    lua_pushcfunction(L, CameraGetNear);
+    lua_setfield(L, -2, "get_near");
+
+    lua_pushcfunction(L, CameraSetNear);
+    lua_setfield(L, -2, "set_near");
+
+    lua_pushcfunction(L, CameraGetFar);
+    lua_setfield(L, -2, "get_far");
+
+    lua_pushcfunction(L, CameraSetFar);
+    lua_setfield(L, -2, "set_far");
+
+    lua_pushcfunction(L, CameraSetOrthographic);
+    lua_setfield(L, -2, "set_orthographic");
+
+    lua_pushcfunction(L, CameraIsOrthographic);
+    lua_setfield(L, -2, "is_orthographic");
+
+    lua_pushcfunction(L, CameraSetActive);
+    lua_setfield(L, -2, "set_active");
+
+    lua_pushcfunction(L, CameraGetViewMatrix);
+    lua_setfield(L, -2, "get_view_matrix");
+
+    lua_pushcfunction(L, CameraGetProjectionMatrix);
+    lua_setfield(L, -2, "get_projection_matrix");
 
     lua_setfield(L, -2, "camera"); // uz.camera = { ... }
     lua_pop(L, 1);                 // pop uz table

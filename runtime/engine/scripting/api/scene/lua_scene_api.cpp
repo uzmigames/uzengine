@@ -248,6 +248,263 @@ static int SceneSetScale(lua_State* L) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Lua C functions — uz.scene hierarchy
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Performs an O(N) reverse lookup to find the entity that owns `targetSc`.
+///
+/// Iterates all entities with a `SceneComponent` and compares their component
+/// address against `targetSc`. Returns the matching `Entity` on success, or
+/// `Entity::Invalid()` if no match is found. Acceptable for Phase 0; should be
+/// replaced by a SceneComponent → Entity index in a later phase.
+///
+/// # Arguments
+/// * `world`    - The ECS world to iterate.
+/// * `targetSc` - Pointer to the SceneComponent whose owning entity is sought.
+///
+/// # Returns
+/// The entity that owns `targetSc`, or `Entity::Invalid()` if not found.
+[[nodiscard]] static Entity FindEntityBySceneComponent(
+    World* world, const SceneComponent* targetSc)
+{
+    for (auto [enttEntity, sc] : world->View<SceneComponent>().each()) {
+        if (&sc == targetSc) {
+            const uint32_t slot = static_cast<uint32_t>(entt::to_entity(enttEntity));
+            const uint32_t gen  = static_cast<uint32_t>(
+                world->GetRegistry().current(enttEntity)) + 1u;
+            Entity found;
+            found.id         = slot;
+            found.generation = gen;
+            return found;
+        }
+    }
+    return Entity::Invalid();
+}
+
+/// uz.scene.get_world_position(entity) -> x, y, z | nil
+///
+/// Returns the entity's world-space position computed from the full parent chain.
+/// Returns nil if the entity has no `SceneComponent`.
+///
+/// # Arguments
+/// * `entity` (lightuserdata) — Target entity.
+///
+/// # Returns
+/// Three numbers `x, y, z` on success, or `nil` if no `SceneComponent`.
+static int SceneGetWorldPosition(lua_State* L) {
+    SceneComponent* sc = GetSceneComponent(L, "get_world_position");
+    if (!sc) {
+        lua_pushnil(L);
+        return 1;
+    }
+    const Vec3 pos = sc->GetWorldPosition();
+    lua_pushnumber(L, static_cast<double>(pos.x));
+    lua_pushnumber(L, static_cast<double>(pos.y));
+    lua_pushnumber(L, static_cast<double>(pos.z));
+    return 3;
+}
+
+/// uz.scene.get_world_matrix(entity) -> 16 numbers (row-major) | nil
+///
+/// Returns the entity's cached world-space transform matrix as 16 floats pushed
+/// individually onto the Lua stack (row-major, DirectX convention: row 0 first).
+/// Returns nil if the entity has no `SceneComponent`.
+///
+/// # Arguments
+/// * `entity` (lightuserdata) — Target entity.
+///
+/// # Returns
+/// 16 numbers in row-major order on success, or `nil` if no `SceneComponent`.
+static int SceneGetWorldMatrix(lua_State* L) {
+    SceneComponent* sc = GetSceneComponent(L, "get_world_matrix");
+    if (!sc) {
+        lua_pushnil(L);
+        return 1;
+    }
+    const Mat4& mat = sc->GetWorldMatrix();
+    // XMFLOAT4X4 stores rows contiguously: _11,_12,_13,_14, _21,_22,...,_44.
+    const float* data = &mat.m._11;
+    for (int i = 0; i < 16; ++i) {
+        lua_pushnumber(L, static_cast<double>(data[i]));
+    }
+    return 16;
+}
+
+/// uz.scene.attach_to(child_entity, parent_entity)
+///
+/// Attaches `child_entity` as a child of `parent_entity` in the scene hierarchy.
+/// Both entities must have a `SceneComponent`. Logs a warning and returns
+/// immediately if either entity is missing the component.
+///
+/// # Arguments
+/// * `child_entity`  (lightuserdata) — The entity to be attached.
+/// * `parent_entity` (lightuserdata) — The entity to attach to.
+static int SceneAttachTo(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) {
+        UZ_LOG(Scripting, Warning, "uz.scene.attach_to: World not set");
+        return 0;
+    }
+
+    // Read child entity from arg 1.
+    const Entity childEntity = CheckEntity(L, 1, "attach_to");
+    if (!childEntity.IsValid() || !world->IsValid(childEntity)) {
+        UZ_LOG(Scripting, Warning, "uz.scene.attach_to: invalid or stale child_entity");
+        return 0;
+    }
+
+    // Read parent entity from arg 2.
+    if (!lua_islightuserdata(L, 2)) {
+        UZ_LOG(Scripting, Warning,
+            "uz.scene.attach_to: argument 2 must be an entity (lightuserdata), got {}",
+            lua_typename(L, lua_type(L, 2)));
+        return 0;
+    }
+    const Entity parentEntity = UserdataToEntity(lua_touserdata(L, 2));
+    if (!parentEntity.IsValid() || !world->IsValid(parentEntity)) {
+        UZ_LOG(Scripting, Warning, "uz.scene.attach_to: invalid or stale parent_entity");
+        return 0;
+    }
+
+    if (!world->HasComponent<SceneComponent>(childEntity)) {
+        UZ_LOG(Scripting, Warning,
+            "uz.scene.attach_to: child entity {} has no SceneComponent", childEntity.id);
+        return 0;
+    }
+    if (!world->HasComponent<SceneComponent>(parentEntity)) {
+        UZ_LOG(Scripting, Warning,
+            "uz.scene.attach_to: parent entity {} has no SceneComponent", parentEntity.id);
+        return 0;
+    }
+
+    SceneComponent* childSc  = &world->GetComponent<SceneComponent>(childEntity);
+    SceneComponent* parentSc = &world->GetComponent<SceneComponent>(parentEntity);
+    childSc->AttachTo(parentSc);
+    return 0;
+}
+
+/// uz.scene.detach(entity)
+///
+/// Detaches `entity` from its current parent in the scene hierarchy.
+/// No-op if the entity has no `SceneComponent` or is already a root node.
+///
+/// # Arguments
+/// * `entity` (lightuserdata) — The entity to detach.
+static int SceneDetach(lua_State* L) {
+    SceneComponent* sc = GetSceneComponent(L, "detach");
+    if (!sc) return 0;   // No SceneComponent — silently ignore per spec.
+    sc->Detach();
+    return 0;
+}
+
+/// uz.scene.get_parent(entity) -> parent_entity | nil
+///
+/// Returns the entity handle of this entity's parent in the scene hierarchy.
+/// Performs an O(N) reverse lookup over all entities with `SceneComponent` to
+/// resolve the parent pointer back to an entity handle.
+///
+/// # Arguments
+/// * `entity` (lightuserdata) — The entity whose parent is requested.
+///
+/// # Returns
+/// A lightuserdata entity handle on success, or `nil` if this entity has no
+/// parent, has no `SceneComponent`, or the parent cannot be resolved.
+static int SceneGetParent(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) {
+        UZ_LOG(Scripting, Warning, "uz.scene.get_parent: World not set");
+        lua_pushnil(L);
+        return 1;
+    }
+
+    const Entity entity = CheckEntity(L, 1, "get_parent");
+    if (!entity.IsValid() || !world->IsValid(entity)) {
+        UZ_LOG(Scripting, Warning, "uz.scene.get_parent: invalid or stale entity");
+        lua_pushnil(L);
+        return 1;
+    }
+
+    if (!world->HasComponent<SceneComponent>(entity)) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    const SceneComponent* sc        = &world->GetComponent<SceneComponent>(entity);
+    const SceneComponent* parentPtr = sc->GetParent();
+    if (!parentPtr) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    const Entity parentEntity = FindEntityBySceneComponent(world, parentPtr);
+    if (!parentEntity.IsValid()) {
+        UZ_LOG(Scripting, Warning,
+            "uz.scene.get_parent: parent SceneComponent* not found in world (dangling?)");
+        lua_pushnil(L);
+        return 1;
+    }
+
+    lua_pushlightuserdata(L, EntityToUserdata(parentEntity));
+    return 1;
+}
+
+/// uz.scene.get_children(entity) -> array of entity handles
+///
+/// Returns a Lua array (table with integer keys starting at 1) of entity handles
+/// for all direct children of `entity` in the scene hierarchy. Performs an O(N)
+/// reverse lookup per child pointer to resolve each `SceneComponent*` to an entity.
+///
+/// # Arguments
+/// * `entity` (lightuserdata) — The entity whose children are requested.
+///
+/// # Returns
+/// A Lua table (array) of lightuserdata entity handles. Empty table if the entity
+/// has no `SceneComponent`, has no children, or a child pointer cannot be resolved.
+static int SceneGetChildren(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) {
+        UZ_LOG(Scripting, Warning, "uz.scene.get_children: World not set");
+        lua_newtable(L);
+        return 1;
+    }
+
+    const Entity entity = CheckEntity(L, 1, "get_children");
+    if (!entity.IsValid() || !world->IsValid(entity)) {
+        UZ_LOG(Scripting, Warning, "uz.scene.get_children: invalid or stale entity");
+        lua_newtable(L);
+        return 1;
+    }
+
+    lua_newtable(L);   // result array
+
+    if (!world->HasComponent<SceneComponent>(entity)) {
+        return 1;      // Empty table — no hierarchy data.
+    }
+
+    const SceneComponent& sc       = world->GetComponent<SceneComponent>(entity);
+    const auto&           children = sc.GetChildren();
+
+    int arrayIndex = 1;
+    for (const SceneComponent* childPtr : children) {
+        if (!childPtr) continue;
+
+        const Entity childEntity = FindEntityBySceneComponent(world, childPtr);
+        if (!childEntity.IsValid()) {
+            UZ_LOG(Scripting, Warning,
+                "uz.scene.get_children: a child SceneComponent* could not be resolved — "
+                "skipping (dangling pointer?)");
+            continue;
+        }
+
+        lua_pushlightuserdata(L, EntityToUserdata(childEntity));
+        lua_rawseti(L, -2, arrayIndex);
+        ++arrayIndex;
+    }
+
+    return 1;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Internal helpers — StaticMeshComponent access
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -579,6 +836,24 @@ void LuaRegisterSceneAPI(lua_State* L) {
 
     lua_pushcfunction(L, SceneIsVisible);
     lua_setfield(L, -2, "is_visible");
+
+    lua_pushcfunction(L, SceneGetWorldPosition);
+    lua_setfield(L, -2, "get_world_position");
+
+    lua_pushcfunction(L, SceneGetWorldMatrix);
+    lua_setfield(L, -2, "get_world_matrix");
+
+    lua_pushcfunction(L, SceneAttachTo);
+    lua_setfield(L, -2, "attach_to");
+
+    lua_pushcfunction(L, SceneDetach);
+    lua_setfield(L, -2, "detach");
+
+    lua_pushcfunction(L, SceneGetParent);
+    lua_setfield(L, -2, "get_parent");
+
+    lua_pushcfunction(L, SceneGetChildren);
+    lua_setfield(L, -2, "get_children");
 
     // uz.scene = { ... }
     lua_setfield(L, -2, "scene");
