@@ -32,14 +32,14 @@
 /// exactly 8 DWORDs. Scattering coefficients are hardcoded below as standard
 /// Earth atmosphere values (matching the transmittance LUT bake).
 cbuffer SkyCubemapParams : register(b0) {
-    float bottomRadiusKm;       // DWORD 0: planet surface radius (km), e.g. 6360.0
-    float topRadiusKm;          // DWORD 1: top-of-atmosphere radius (km), e.g. 6420.0
-    float rayleighScaleH;       // DWORD 2: Rayleigh scale height (km), e.g. 8.0
-    float mieScaleH;            // DWORD 3: Mie scale height (km), e.g. 1.2
-    float sunDirX;              // DWORD 4: sun direction X (normalized, toward sun)
-    float sunDirY;              // DWORD 5: sun direction Y
-    float sunDirZ;              // DWORD 6: sun direction Z
-    uint  transmittanceLutIdx;  // DWORD 7: bindless SRV index for transmittance LUT
+    float bottomRadiusKm;       // DWORD 0: planet surface radius (km)
+    float topRadiusKm;          // DWORD 1: top-of-atmosphere radius (km)
+    float sunDirX;              // DWORD 2: sun direction X
+    float sunDirY;              // DWORD 3: sun direction Y
+    float sunDirZ;              // DWORD 4: sun direction Z
+    float sunIntensity;         // DWORD 5: sun illuminance (uniform RGB, from DirectionalLight)
+    uint  transmittanceLutIdx;  // DWORD 6: bindless SRV index for transmittance LUT
+    uint  _pad;                 // DWORD 7: unused
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -76,9 +76,9 @@ static const float MIE_EXTINCTION_RATIO = 1.11f;
 /// 0.8 = strong forward scattering (typical for atmospheric aerosols).
 static const float MIE_ANISOTROPY = 0.8f;
 
-/// Sun illuminance reaching the top of the atmosphere (arbitrary units).
-/// Matches the default sunIlluminance in SkyAtmosphereCB.
-static const float3 SUN_ILLUMINANCE = float3(20.0f, 20.0f, 20.0f);
+/// Rayleigh and Mie scale heights — hardcoded Earth defaults (rarely change).
+static const float RAYLEIGH_SCALE_H = 8.0f;   // km
+static const float MIE_SCALE_H      = 1.2f;   // km
 
 /// Ground albedo for Lambertian reflection when view ray hits the planet.
 /// Dark earth-tone average (~0.3).
@@ -298,8 +298,8 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
         float  altKm    = max(0.0f, length(sampleKm) - bottomRadiusKm);
 
         // Density at this altitude
-        float densR = DensityAtAltitude(altKm, rayleighScaleH);
-        float densM = DensityAtAltitude(altKm, mieScaleH);
+        float densR = DensityAtAltitude(altKm, RAYLEIGH_SCALE_H);
+        float densM = DensityAtAltitude(altKm, MIE_SCALE_H);
 
         // Total extinction (Rayleigh + Mie with 1.11x extinction ratio)
         float3 extR     = RAYLEIGH_BETA * densR;
@@ -323,7 +323,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
         float3 Sint = (scatter - scatter * T_step) / max(extTotal, EXT_EPS);
 
         // Accumulate luminance weighted by path throughput and sun transmittance
-        L         += Throughput * sunT * Sint * SUN_ILLUMINANCE;
+        L         += Throughput * sunT * Sint * float3(sunIntensity, sunIntensity, sunIntensity);
         Throughput *= T_step;
     }
 
@@ -343,7 +343,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
         // Lambertian BRDF: albedo / PI * max(N.L, 0)
         float NdotL = max(0.0f, dot(groundNormal, sunDir));
         float3 groundRadiance = GROUND_ALBEDO * (1.0f / PI) * NdotL
-                              * SUN_ILLUMINANCE * groundSunT;
+                              * float3(sunIntensity, sunIntensity, sunIntensity) * groundSunT;
 
         // Attenuate by path transmittance from ground to camera
         L += Throughput * groundRadiance;

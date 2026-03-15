@@ -171,7 +171,7 @@ void PBRTest::OnStart() {
         scene.SetPosition({0.f, 0.f, 690.f});
 
         auto& sl = world.AddComponent<SkyLightComponent>(skyLightEnt);
-        sl.intensity                  = 1.0f;       // UE5: IntensityScale = 1.0
+        sl.intensity                  = 5.0f;       // UE5=1.0, boosted to compensate cubemap vs SH9 irradiance
         sl.indirectLightingIntensity  = 1.0f;
         sl.lightColor                 = {1.0f, 1.0f, 1.0f};
         sl.realTimeCapture            = true;       // UE5: Real Time Capture = true

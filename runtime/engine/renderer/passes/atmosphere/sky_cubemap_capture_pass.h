@@ -47,12 +47,12 @@ namespace uz {
 struct SkyCubemapCaptureRootConstants {
     float    bottomRadiusKm;        ///< Planet surface radius (km). DWORD 0.
     float    topRadiusKm;           ///< Top of atmosphere radius (km). DWORD 1.
-    float    rayleighScaleH;        ///< Rayleigh scale height (km). DWORD 2.
-    float    mieScaleH;             ///< Mie scale height (km). DWORD 3.
-    float    sunDirX;               ///< Sun direction X component (normalised). DWORD 4.
-    float    sunDirY;               ///< Sun direction Y component (normalised). DWORD 5.
-    float    sunDirZ;               ///< Sun direction Z component (normalised). DWORD 6.
-    uint32_t transmittanceLutIdx;   ///< SRV index for transmittance LUT texture. DWORD 7.
+    float    sunDirX;               ///< Sun direction X component (normalised). DWORD 2.
+    float    sunDirY;               ///< Sun direction Y component (normalised). DWORD 3.
+    float    sunDirZ;               ///< Sun direction Z component (normalised). DWORD 4.
+    float    sunIntensity;          ///< Sun illuminance (uniform RGB). DWORD 5.
+    uint32_t transmittanceLutIdx;   ///< SRV index for transmittance LUT texture. DWORD 6.
+    uint32_t _pad;                  ///< Unused. DWORD 7.
 };
 
 static_assert(sizeof(SkyCubemapCaptureRootConstants) == 32,

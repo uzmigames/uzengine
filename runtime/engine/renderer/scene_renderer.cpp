@@ -922,14 +922,14 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
                     "SkyCubemap", m_skyCubemap, RHIResourceState::UnorderedAccess);
 
                 SkyCubemapCaptureRootConstants cubeRC{};
-                cubeRC.bottomRadiusKm     = skyComp.bottomRadiusKm;
-                cubeRC.topRadiusKm        = skyComp.bottomRadiusKm + skyComp.atmosphereHeightKm;
-                cubeRC.rayleighScaleH     = skyComp.rayleighScaleHeightKm;
-                cubeRC.mieScaleH          = skyComp.mieScaleHeightKm;
-                cubeRC.sunDirX            = sunDir.x;
-                cubeRC.sunDirY            = sunDir.y;
-                cubeRC.sunDirZ            = sunDir.z;
+                cubeRC.bottomRadiusKm      = skyComp.bottomRadiusKm;
+                cubeRC.topRadiusKm         = skyComp.bottomRadiusKm + skyComp.atmosphereHeightKm;
+                cubeRC.sunDirX             = sunDir.x;
+                cubeRC.sunDirY             = sunDir.y;
+                cubeRC.sunDirZ             = sunDir.z;
+                cubeRC.sunIntensity        = sunColor.Length();  // DirectionalLight intensity
                 cubeRC.transmittanceLutIdx = m_transmittanceLutSrv;
+                cubeRC._pad                = 0;
 
                 SkyCubemapCapturePassDesc cubePassDesc{};
                 cubePassDesc.cubemapTarget   = cubeRes;
