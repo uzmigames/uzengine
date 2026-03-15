@@ -10,8 +10,8 @@
 ## 2. Standardize Units
 - [x] 2.1 SpotLight cone angles: change from radians to degrees in component, convert to radians in SyncLightData/shader
 - [x] 2.2 SkyAtmosphere `sunAngularRadius`: change from radians to degrees (0.5 deg default), convert internally
-- [ ] 2.3 Document unit convention in AGENTS.md: UzEngine = meters (not cm), angles = degrees in components
-- [ ] 2.4 Audit all angle parameters across codebase to confirm degrees convention
+- [x] 2.3 Document unit convention in AGENTS.md: UzEngine = meters (not cm), angles = degrees in components
+- [x] 2.4 Audit all angle parameters across codebase to confirm degrees convention
 
 ## 3. Add Missing Parameters — LightComponent Base
 - [x] 3.1 Add `bool useTemperature = false` — enable Kelvin color temperature
@@ -30,7 +30,7 @@
 - [x] 4.5 Add `int shadowCascades = 4` — number of CSM cascades (0-4)
 - [x] 4.6 Add `float cascadeDistributionExponent = 2.0f` — 1=linear, >1=closer to camera
 - [x] 4.7 Add `float cascadeTransitionFraction = 0.1f` — fade region between cascades
-- [ ] 4.8 Add `float shadowDistanceFadeoutFraction = 0.1f` — fade at far extent
+- [x] 4.8 Add `float shadowDistanceFadeoutFraction = 0.1f` — fade at far extent
 - [x] 4.9 Add `float dynamicShadowDistance = 0.f` — max CSM distance in world units (0=default)
 - [x] 4.10 Add `float contactShadowLength = 0.f` — screen-space contact shadow ray length
 - [x] 4.11 Add `FLinearColor atmosphereSunDiskColorScale = (1,1,1)` — sun disk tint
@@ -41,7 +41,7 @@
 - [x] 5.3 Add `float sourceRadius = 0.f` — sphere radius for area light approximation
 - [x] 5.4 Add `float softSourceRadius = 0.f` — soft edge sphere radius
 - [x] 5.5 Add `float sourceLength = 0.f` — tube/capsule length for area light
-- [ ] 5.6 Update PointLightData GPU struct to carry sourceRadius + falloff params
+- [x] 5.6 Update PointLightData GPU struct to carry sourceRadius + falloff params
 
 ## 6. Add Missing Parameters — SpotLightComponent
 - [x] 6.1 Inherits new PointLight params (sourceRadius, falloff, etc.) — verify propagation
@@ -70,8 +70,8 @@
 - [ ] 8.10 Remove `sunAngularRadius` from SkyAtmosphere (should come from linked DirectionalLight `lightSourceAngle`)
 - [ ] 8.11 Remove `sunDiskIntensity` from SkyAtmosphere (should come from linked DirectionalLight intensity)
 - [x] 8.12 Remove `skyLightIntensity` from SkyAtmosphere (belongs on SkyLightComponent)
-- [ ] 8.13 Update SkyAtmosphereCB to carry new fields, remove sun fields
-- [ ] 8.14 Update sky shader to read sun params from PerFrameCB (linked DirectionalLight data)
+- [x] 8.13 Update SkyAtmosphereCB to carry new fields, remove sun fields
+- [x] 8.14 Update sky shader to read sun params from PerFrameCB (linked DirectionalLight data)
 
 ## 9. Add Missing Parameters — SceneComponent
 - [x] 9.1 Add `EComponentMobility mobility = Movable` — Static/Stationary/Movable enum
@@ -145,6 +145,6 @@
 ## 17. Documentation
 - [ ] 17.1 Update `docs/specs/renderer.md` with new component parameters
 - [ ] 17.2 Update `docs/lua-api-reference.md` with new Lua bindings
-- [ ] 17.3 Update AGENTS.md with unit convention (meters, degrees)
+- [x] 17.3 Update AGENTS.md with unit convention (meters, degrees)
 - [ ] 17.4 Create comparison table doc: `docs/reference/ue5-parameter-parity.md`
-- [ ] 17.5 Update CHANGELOG.md
+- [x] 17.5 Update CHANGELOG.md
