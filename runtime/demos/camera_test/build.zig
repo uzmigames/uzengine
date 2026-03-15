@@ -1,19 +1,17 @@
 const std = @import("std");
 const common = @import("uz_demo_common");
 
-/// Standalone build for the camera test demo (cross-platform).
-/// Run `zig build` from runtime/ first, then `zig build run` from here.
-///
-/// Platforms:
-///   Windows — Links DX12/DX11/DXGI libs, deploys Agility SDK + DXC DLLs
-///   macOS   — Links Metal/QuartzCore/AppKit/Cocoa frameworks
-///   Linux   — Links Vulkan (via volk, no static vulkan-1.lib needed)
+/// Standalone build for the camera test demo.
+/// Run `zig build` from runtime/ first, then `zig build` from here.
 pub fn build(b: *std.Build) void {
     var demo = common.createDemo(b, .{
-        .name = "camera_test_demo",
-        .sources = &.{ "main.cpp", "camera_test_demo.cpp" },
-        .extra_includes = &.{},
+        .name = "camera_test",
+        .sources = &.{ "main.cpp", "camera_test.cpp" },
+        .use_demo_application = false,
         .deploy_fxc = true,
+        .extra_deploy = &.{
+            .{ .source = "assets/cube.uzmesh", .dest = "assets/cube.uzmesh" },
+        },
     });
     demo.install();
 }

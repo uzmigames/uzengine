@@ -1,44 +1,13 @@
-/// UzEngine Deferred Rendering Test Demo — Entry Point
+/// Deferred Test — Entry Point
 ///
-/// Validates the multi-pass deferred shading pipeline: G-Buffer fill,
-/// deferred lighting, G-Buffer debug visualization, and forward PBR fallback.
+/// Renders 5 PBR cubes with G-Buffer debug view modes (keys 0-9).
 ///
 /// Supported flags:
-/// - `--screenshot <path>` — Capture back buffer and save as PNG.
-/// - `--screenshot-frame <N>` — Frame at which to capture (default: 60).
-/// - `--frames <N>` — Total frames to render (0 = run until window closed).
+/// - `--screenshot <path>` — Capture back buffer and save as PNG
+/// - `--frames <N>` — Total frames to render (0 = run until window closed)
+/// - `--compose-grid output.png [--cell-size N] img.png "Label" "Sub" ...`
+/// - `--diff output.png imgA.png "A" imgB.png "B"` — Pixel diff (no GPU)
 
-#include "deferred_test_demo.h"
-#include "log.h"
+#include "deferred_test.h"
 
-#include <cstdlib>
-#include <cstring>
-
-int main(int argc, char* argv[]) {
-    uz::LogInit();
-
-    uz::DeferredTestConfig config{};
-
-    for (int i = 1; i < argc; ++i) {
-        if (std::strcmp(argv[i], "--screenshot") == 0 && i + 1 < argc) {
-            config.screenshotPath = argv[++i];
-        } else if (std::strcmp(argv[i], "--screenshot-frame") == 0 && i + 1 < argc) {
-            config.screenshotFrame = static_cast<uint32_t>(std::atoi(argv[++i]));
-        } else if (std::strcmp(argv[i], "--frames") == 0 && i + 1 < argc) {
-            config.maxFrames = static_cast<uint32_t>(std::atoi(argv[++i]));
-        } else if (std::strcmp(argv[i], "--debug-mode") == 0 && i + 1 < argc) {
-            config.debugMode = std::atoi(argv[++i]);
-        }
-    }
-
-    // Auto-exit after screenshot so CI pipelines don't block
-    if (!config.screenshotPath.empty() && config.maxFrames == 0) {
-        config.maxFrames = config.screenshotFrame + 2;
-    }
-
-    uz::DeferredTestDemo demo(config);
-    const int result = demo.Run();
-
-    uz::LogShutdown();
-    return result;
-}
+UZ_APPLICATION_MAIN(uz::DeferredTest)

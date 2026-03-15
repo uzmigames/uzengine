@@ -1,42 +1,14 @@
-/// Camera Test Demo — Entry Point
+/// Camera Test — Entry Point
 ///
-/// Renders a 3D colored cube with FPS camera controls. Creates a CameraTestDemo
-/// instance and delegates lifecycle to the DemoApplication base class.
+/// Renders a lit cube using the uz::Application abstraction.
+/// SceneRenderer handles all GPU infrastructure; this demo only defines scene logic.
 ///
 /// Supported flags:
 /// - `--screenshot <path>` — Capture back buffer and save as PNG
-/// - `--screenshot-frame <N>` — Frame to capture on (default: 5)
 /// - `--frames <N>` — Total frames to render (0 = run until window closed)
+/// - `--compose-grid output.png [--cell-size N] img.png "Label" "Sub" ...`
+/// - `--diff output.png imgA.png "A" imgB.png "B"` — Pixel diff (no GPU)
 
-#include "camera_test_demo.h"
-#include "log.h"
+#include "camera_test.h"
 
-#include <cstdlib>
-#include <cstring>
-
-int main(int argc, char* argv[]) {
-    uz::LogInit();
-
-    uz::CameraTestConfig config{};
-
-    for (int i = 1; i < argc; ++i) {
-        if (std::strcmp(argv[i], "--screenshot") == 0 && i + 1 < argc) {
-            config.screenshotPath = argv[++i];
-        } else if (std::strcmp(argv[i], "--screenshot-frame") == 0 && i + 1 < argc) {
-            config.screenshotFrame = static_cast<uint32_t>(std::atoi(argv[++i]));
-        } else if (std::strcmp(argv[i], "--frames") == 0 && i + 1 < argc) {
-            config.frameCount = static_cast<uint32_t>(std::atoi(argv[++i]));
-        }
-    }
-
-    // Auto-exit after screenshot capture
-    if (!config.screenshotPath.empty() && config.frameCount == 0) {
-        config.frameCount = config.screenshotFrame + 2;
-    }
-
-    uz::CameraTestDemo demo(config);
-    const int result = demo.Run();
-
-    uz::LogShutdown();
-    return result;
-}
+UZ_APPLICATION_MAIN(uz::CameraTest)

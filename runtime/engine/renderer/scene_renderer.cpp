@@ -798,14 +798,27 @@ uint32_t SceneRenderer::LoadMesh(const std::string& path, IVFS* vfs,
         return it->second;
     }
 
-    // Resolve via VFS for relative paths so demos using VFS-relative asset names work.
-    const bool isAbsolute = !path.empty() && (path[0] == '/' || path[0] == '\\' ||
-                             (path.size() > 1 && path[1] == ':'));
-    const std::string resolvedPath = (vfs && !isAbsolute)
-        ? vfs->ResolvePath(path)
-        : path;
-
-    Mesh cpuMesh = uz::LoadMesh(resolvedPath);
+    // Built-in primitives: "builtin:cube", "builtin:sphere"
+    Mesh cpuMesh{};
+    if (path.size() > 8 && path.compare(0, 8, "builtin:") == 0) {
+        const std::string primitive = path.substr(8);
+        if (primitive == "cube") {
+            cpuMesh = MeshBuilder::CreateCube(0.5f);
+        } else if (primitive == "sphere") {
+            cpuMesh = MeshBuilder::CreateSphere(0.5f, 32, 32);
+        } else {
+            UZ_LOG(Renderer, Error, "SceneRenderer: unknown builtin mesh: '{}'", primitive);
+            return UINT32_MAX;
+        }
+    } else {
+        // Resolve via VFS for relative paths so demos using VFS-relative asset names work.
+        const bool isAbsolute = !path.empty() && (path[0] == '/' || path[0] == '\\' ||
+                                 (path.size() > 1 && path[1] == ':'));
+        const std::string resolvedPath = (vfs && !isAbsolute)
+            ? vfs->ResolvePath(path)
+            : path;
+        cpuMesh = uz::LoadMesh(resolvedPath);
+    }
     if (!cpuMesh.IsValid()) {
         UZ_LOG(Renderer, Error, "SceneRenderer: failed to load mesh: '{}'", path);
         return UINT32_MAX;
