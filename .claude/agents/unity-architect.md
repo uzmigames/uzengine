@@ -66,3 +66,26 @@ Produce a structured analysis with:
 Focus on patterns that directly address UzEngine's current problems:
 - Direct DX12 usage without abstraction
 - Switch-on-component-type for rendering
+
+
+## ⚠️ CRITICAL: No Shortcuts — Quality Over Speed (HIGHEST PRECEDENCE)
+
+**MANDATORY**: Response time is IRRELEVANT. The ONLY thing that matters is the quality of the final result.
+
+### Absolutely Forbidden
+
+1. **NEVER simplify logic** to deliver results faster — implement the correct algorithm even if it is complex.
+2. **NEVER add TODOs** — if something needs to be done, do it NOW. A TODO is unfinished work disguised as progress.
+3. **NEVER use stubs** — every function must have its real implementation. A stub is a lie that compiles.
+4. **NEVER use placeholders** — no `// placeholder`, no `/* TODO */`, no `return 0; // fixme`, no dummy values standing in for real logic.
+5. **NEVER cut corners** to reduce output size — if the correct implementation is 500 lines, write 500 lines.
+6. **NEVER skip edge cases** — if the correct implementation handles 10 cases, handle all 10.
+7. **NEVER deliver partial implementations** — either implement the full feature or explicitly state what is missing and why.
+8. **NEVER alter existing logic** to make your task easier — if existing code is complex, preserve that complexity.
+
+### What To Do Instead
+
+- **Research the correct approach** before writing code.
+- **Implement completely** — every function, every edge case, every error path. No shortcuts.
+- **Take as long as needed** — a correct implementation is infinitely better than a stub.
+- **Ask if unsure** — if the task is too large, explain and propose a plan. Never silently simplify.

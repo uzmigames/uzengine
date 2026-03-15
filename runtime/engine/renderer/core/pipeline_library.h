@@ -220,6 +220,12 @@ public:
     /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
     [[nodiscard]] RHIPipelineHandle GetSkyCubemapCapture();
 
+    /// Returns the tonemap pipeline (fullscreen_vs + tonemap_ps, 1 RT RGBA8).
+    ///
+    /// Reads HDR scene color (RGBA16F) via bindless SRV, applies exposure + ACES
+    /// tonemap + sRGB gamma, outputs LDR to backbuffer.
+    [[nodiscard]] RHIPipelineHandle GetTonemap();
+
     /// Returns the height fog pipeline (fullscreen_vs + height_fog_ps, 1 RT, alpha blend).
     ///
     /// Rasterizer: no cull (fullscreen triangle).
@@ -260,6 +266,7 @@ private:
     [[nodiscard]] bool EnsureInstancedShadowShaders();
     [[nodiscard]] bool EnsureShadowShaders();
     [[nodiscard]] bool EnsureSkyAtmospherePixelShader();
+    [[nodiscard]] bool EnsureTonemapPixelShader();
     [[nodiscard]] bool EnsureHeightFogPixelShader();
     [[nodiscard]] bool EnsureTransmittanceLutShader();
     [[nodiscard]] bool EnsureSkyCubemapCaptureShader();
@@ -291,6 +298,7 @@ private:
     RHIShaderHandle m_instancedShadowVS = RHIShaderHandle::Invalid();
     RHIShaderHandle m_shadowVS         = RHIShaderHandle::Invalid();
     RHIShaderHandle m_skyAtmospherePS      = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_tonemapPS            = RHIShaderHandle::Invalid();
     RHIShaderHandle m_heightFogPS          = RHIShaderHandle::Invalid();
     RHIShaderHandle m_transmittanceLutCS      = RHIShaderHandle::Invalid();
     RHIShaderHandle m_skyCubemapCaptureCS    = RHIShaderHandle::Invalid();
@@ -308,6 +316,7 @@ private:
     RHIPipelineHandle m_gbufferInstanced      = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_shadowDepthInstanced  = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_skyAtmosphere         = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_tonemap               = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_heightFog             = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_transmittanceLut      = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_skyCubemapCapture    = RHIPipelineHandle::Invalid();

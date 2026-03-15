@@ -355,10 +355,7 @@ float4 main(FSInput input) : SV_Target {
     // ── Combine ──
     float3 color = ambient + Lo;
 
-    // ── Exposure + Tonemap + gamma ──
-    color *= exposure;
-    color = ACESFilm(color);
-    color = LinearToSrgb(color);
+    // Output linear HDR — tonemap applied in separate fullscreen pass.
 
     return float4(color, 1.0f);
 }

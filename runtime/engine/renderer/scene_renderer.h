@@ -302,6 +302,11 @@ private:
     RHITextureHandle m_shadowAtlas;
     uint32_t m_shadowAtlasSrv = UINT32_MAX;
 
+    // ── HDR Scene Color (intermediate before tonemap) ───────────────────
+    RHITextureHandle m_hdrSceneColor;           ///< RGBA16F HDR render target for scene color.
+    uint32_t m_hdrSceneColorSrv = UINT32_MAX;   ///< SRV for tonemap pass to read.
+    bool m_hdrHasContent = false;               ///< True after the first render graph execution fills the HDR target.
+
     // ── Atmosphere LUT ─────────────────────────────────────────────────────
 
     RHITextureHandle m_transmittanceLut;         ///< 256x64 RGBA16F precomputed transmittance LUT.

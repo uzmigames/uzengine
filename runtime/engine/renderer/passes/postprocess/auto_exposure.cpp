@@ -16,6 +16,7 @@
 
 #include "engine/rhi/rhi.h"
 #include "engine/renderer/core/shader_manager.h"
+#include "engine_shaders.h"
 #include "log.h"
 #include "profiler.h"
 
@@ -220,8 +221,7 @@ bool AutoExposure::EnsureHistogramPipeline() {
         return true;
     }
 
-    auto bytecode = m_shaderMgr->GetPipeline().LoadBytecode(
-        "/engine/postprocess/exposure_histogram_cs.hlsl");
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::ExposureHistogramCS);
     if (bytecode.empty()) {
         UZ_LOG(Renderer, Error, "AutoExposure: failed to compile exposure_histogram_cs.hlsl");
         return false;
@@ -259,8 +259,7 @@ bool AutoExposure::EnsureAveragePipeline() {
         return true;
     }
 
-    auto bytecode = m_shaderMgr->GetPipeline().LoadBytecode(
-        "/engine/postprocess/exposure_average_cs.hlsl");
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::ExposureAverageCS);
     if (bytecode.empty()) {
         UZ_LOG(Renderer, Error, "AutoExposure: failed to compile exposure_average_cs.hlsl");
         return false;
@@ -310,14 +309,16 @@ float AutoExposure::Execute(IRHICommandList* cmdList, uint32_t hdrSrvIndex,
     // ── Bypass paths (no GPU work) ──────────────────────────────────────
 
     if (!settings.enabled) {
-        m_lastExposure = settings.exposureBias;
+        // No auto-exposure — use bias as direct exposure multiplier
+        m_lastExposure = std::pow(2.0f, settings.exposureBias);
         return m_lastExposure;
     }
 
     if (settings.manualExposure > 0.0f) {
-        // Fixed EV: exposure = bias / (1.2 * 2^manualEV)
-        m_lastExposure = settings.exposureBias
-            / (kExposureNorm * std::pow(2.0f, settings.manualExposure));
+        // Fixed manual exposure: treat manualExposure as target luminance
+        // UE5: exposure = 0.18 * pow(2, bias) / manualLuminance
+        float biasLinear = std::pow(2.0f, settings.exposureBias);
+        m_lastExposure = 0.18f * biasLinear / settings.manualExposure;
         return m_lastExposure;
     }
 

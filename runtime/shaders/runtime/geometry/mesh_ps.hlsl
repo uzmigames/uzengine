@@ -17,8 +17,8 @@
 /// Lighting inputs come from PerFrameCB (lights array, ambientColor).
 /// Shadow mapping is applied to the first directional light only.
 ///
-/// Output: linear HDR color tonemapped via ACES filmic and gamma-corrected to
-/// sRGB for the R8G8B8A8_UNORM swapchain backbuffer.
+/// Output: linear HDR color. Tonemapping and gamma correction are handled by
+/// the tonemap_ps.hlsl fullscreen pass (reads HDR scene color → LDR backbuffer).
 
 #include "../include/pbr_common.hlsli"
 #include "../include/ibl.hlsli"
@@ -254,12 +254,6 @@ float4 main(PSInput input) : SV_Target {
     // ── Combine ──
     float3 color = ambient + Lo + emissive;
 
-    // ── Tonemap (ACES filmic) + gamma correction ──
-    // ACES filmic curve: better highlight rolloff than Reinhard, preserves
-    // color saturation in bright areas.
-    color = ACESFilm(color);
-    // Linear → sRGB via math_util.hlsli (exact IEC 61966-2-1 curve).
-    color = LinearToSrgb(color);
-
+    // Output is linear HDR — tonemap_ps.hlsl handles ACES filmic + sRGB conversion.
     return float4(color, 1.0f);
 }

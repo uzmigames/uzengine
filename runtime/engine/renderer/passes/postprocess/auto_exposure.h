@@ -52,11 +52,11 @@ class ShaderManager;
 /// Adaptation speeds and percentile bounds are hardcoded in the average
 /// shader to stay within the root constant budget.
 struct AutoExposureSettings {
-    float exposureBias   = 1.0f;   ///< EV offset (1.0 = neutral). Higher = brighter.
-    float minBrightness  = 0.03f;  ///< Min average luminance (prevents overexposure in dark).
-    float maxBrightness  = 8.0f;   ///< Max average luminance (prevents underexposure in bright).
-    float histLogMin     = -8.0f;  ///< Log2 luminance range min.
-    float histLogMax     = 4.0f;   ///< Log2 luminance range max.
+    float exposureBias   = 0.0f;     ///< EV offset. 0=neutral, +1=2x brighter. UE5: AutoExposureBias=0.0.
+    float minBrightness  = 0.001f;  ///< Min avg luminance (UE5: 2^-10 ≈ 0.001 cd/m²).
+    float maxBrightness  = 1048576.f; ///< Max avg luminance (UE5: 2^20 ≈ 1M cd/m²).
+    float histLogMin     = -10.0f;  ///< Log2 luminance range min (UE5: -10).
+    float histLogMax     = 20.0f;   ///< Log2 luminance range max (UE5: +20).
     float manualExposure = 0.0f;   ///< When > 0, skip auto and use this fixed EV.
     bool  enabled        = true;   ///< Master toggle.
 };

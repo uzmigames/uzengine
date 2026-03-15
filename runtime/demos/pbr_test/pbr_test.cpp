@@ -73,7 +73,7 @@ void PBRTest::OnStart() {
         cubes_[i] = world.CreateEntity();
 
         auto& scene = world.AddComponent<SceneComponent>(cubes_[i]);
-        scene.SetPosition({kCubePositionsX[i], 0.f, 0.f});  // cm
+        scene.SetPosition({kCubePositionsX[i], 0.f, 80.f});  // cubes on top of ground (Z=80cm)
         scene.SetScale({kCubeScale, kCubeScale, kCubeScale});
 
         auto& mesh = world.AddComponent<StaticMeshComponent>(cubes_[i]);
@@ -89,7 +89,7 @@ void PBRTest::OnStart() {
     ground_ = world.CreateEntity();
     {
         auto& scene = world.AddComponent<SceneComponent>(ground_);
-        scene.SetPosition({0.f, 0.f, -82.f});
+        scene.SetPosition({0.f, 0.f, 0.f});      // Ground at Z=0 (same as UE5 fogBaseHeight)
         scene.SetScale({1500.f, 1500.f, 2.f});
 
         auto& mesh = world.AddComponent<StaticMeshComponent>(ground_);
@@ -97,21 +97,26 @@ void PBRTest::OnStart() {
         mesh.albedoPath = "checker.png";
     }
 
-    // ── Directional sun light ─────────────────────────────────────────────
+    // ── Directional sun light (UE5 Basic Scene EXACT values) ────────────
     sun_ = world.CreateEntity();
     {
         auto& scene = world.AddComponent<SceneComponent>(sun_);
-        // Rotate forward axis (1,0,0) toward (0.5, 0.3, 0.8).
-        // axis = cross((1,0,0), normalized) = (0, -0.9357, 0.3528)
-        // angle = acos(dot) ≈ 1.0404 rad
-        scene.SetRotation(Quat::FromAxisAngle(Vec3{0.f, -0.9357f, 0.3528f}, 1.0404f));
+        scene.SetPosition({0.f, 0.f, 920.f});
+        // UE5 rotation: (25.555, -60.779, -14.988) degrees
+        // Convert Euler (pitch=25.555, yaw=-60.779, roll=-14.988) to quaternion
+        constexpr float kD2R = 3.14159265f / 180.f;
+        float pitch = 25.555f * kD2R;
+        float yaw   = -60.779f * kD2R;
+        float roll  = -14.988f * kD2R;
+        scene.SetRotation(Quat::FromEuler(pitch, yaw, roll));
 
-        auto& light   = world.AddComponent<DirectionalLightComponent>(sun_);
-        // UE5 defaults: Intensity=10 lux, white light, atmosphereSunLight=true
-        light.color     = {1.0f, 0.98f, 0.95f};  // Slight warm tint
-        light.intensity = 20.0f;               // Strong sun to dominate over IBL ambient
+        auto& light = world.AddComponent<DirectionalLightComponent>(sun_);
+        light.color              = {1.0f, 1.0f, 1.0f};
+        light.intensity          = 3.0f;           // UE5 Basic Scene: 3.0 lux
         light.atmosphereSunLight = true;
-        light.lightSourceAngle = 0.5357f;  // Earth sun angular diameter
+        light.lightSourceAngle   = 0.7357f;        // UE5 Basic Scene: 0.7357
+        light.useTemperature     = true;
+        light.temperature        = 6500.f;
     }
 
     // ── 4 colored point lights ────────────────────────────────────────────
@@ -139,54 +144,58 @@ void PBRTest::OnStart() {
         light.range     = kPointLightDefs[i].range;
     }
 
-    // ── Sky atmosphere (UE5 exact defaults) ─────────────────────────────
+    // ── Sky atmosphere (UE5 Basic Scene EXACT values) ─────────────────────
     Entity sky = world.CreateEntity();
     {
+        auto& scene = world.AddComponent<SceneComponent>(sky);
+        scene.SetPosition({0.f, 0.f, 1020.f});
+
         auto& atmo = world.AddComponent<SkyAtmosphereComponent>(sky);
-        // UE5: sun illuminance derived from DirectionalLight (intensity=10)
-        // For sky scattering, use moderate value to get vivid blue sky
-        atmo.sunIlluminance        = {6.f, 6.f, 6.f};
-        // UE5 defaults (already set in struct, but explicit for clarity):
-        atmo.bottomRadiusKm        = 6360.0f;
-        atmo.atmosphereHeightKm    = 60.0f;
-        atmo.rayleighScattering    = {5.802e-3f, 13.558e-3f, 33.1e-3f};
-        atmo.rayleighScaleHeightKm = 8.0f;
-        atmo.mieScattering         = 3.996e-3f;
-        atmo.mieAnisotropy         = 0.8f;
-        atmo.mieScaleHeightKm      = 1.2f;
-        atmo.groundAlbedo          = {0.4f, 0.4f, 0.4f};  // UE5: FColor(170,170,170)
-        atmo.multiScatteringFactor = 1.0f;
+        atmo.bottomRadiusKm          = 6360.0f;
+        atmo.atmosphereHeightKm      = 60.0f;
+        atmo.multiScatteringFactor   = 1.0f;
+        atmo.rayleighScatteringScale = 0.0331f;     // UE5: RayleighScatteringScale
+        atmo.rayleighScaleHeightKm   = 8.0f;
+        atmo.mieScatteringScale      = 0.003996f;   // UE5: MieScatteringScale
+        atmo.mieAbsorptionScale      = 0.000444f;    // UE5: MieAbsorptionScale
+        atmo.mieAnisotropy           = 0.8f;
+        atmo.mieScaleHeightKm        = 1.2f;
+        // sunIlluminance driven by linked DirectionalLight (atmosphereSunLight=true)
+        atmo.sunIlluminance          = {3.f, 3.f, 3.f};  // fallback if no linked light
     }
 
-    // ── Sky light (UE5 exact defaults) ───────────────────────────────────
+    // ── Sky light (UE5 Basic Scene EXACT values) ─────────────────────────
     Entity skyLightEnt = world.CreateEntity();
     {
+        auto& scene = world.AddComponent<SceneComponent>(skyLightEnt);
+        scene.SetPosition({0.f, 0.f, 690.f});
+
         auto& sl = world.AddComponent<SkyLightComponent>(skyLightEnt);
-        // UE5 defaults with boost for simpler IBL pipeline.
-        sl.intensity                  = 1.0f;      // UE5 default
+        sl.intensity                  = 1.0f;       // UE5: IntensityScale = 1.0
         sl.indirectLightingIntensity  = 1.0f;
         sl.lightColor                 = {1.0f, 1.0f, 1.0f};
-        sl.lowerHemisphereIsBlack     = true;
-        sl.lowerHemisphereColor       = {0.0f, 0.0f, 0.0f};
-        sl.minOcclusion               = 0.0f;   // UE5 default
+        sl.realTimeCapture            = true;       // UE5: Real Time Capture = true
+        sl.sourceType                 = ESkyLightSourceType::CapturedScene;
         sl.cubemapResolution          = 128;
+        sl.lowerHemisphereIsBlack     = true;
+        sl.minOcclusion               = 0.0f;
     }
 
-    // ── Exponential Height Fog (UE5 exact defaults) ──────────────────────
+    // ── Exponential Height Fog (UE5 Basic Scene EXACT values) ────────────
     Entity fog = world.CreateEntity();
     {
+        auto& scene = world.AddComponent<SceneComponent>(fog);
+        scene.SetPosition({-5600.f, -50.f, -6850.f});  // UE5 fog actor position
+
         auto& fogComp = world.AddComponent<HeightFogComponent>(fog);
-        // UE5: FogInscatteringColor = (0.447, 0.638, 1.0) — blue haze
-        // UE5 cm-scale defaults.
-        fogComp.color                             = {0.447f, 0.638f, 1.0f};
-        fogComp.density                           = 0.02f;
-        fogComp.heightFalloff                     = 0.2f;
-        fogComp.baseHeight                        = 0.f;
+        fogComp.density                           = 0.0436f;    // UE5: 0.0436
+        fogComp.heightFalloff                     = 0.2f;       // UE5: 0.2
+        fogComp.baseHeight                        = -6850.f;    // fog at actor Z position
         fogComp.maxOpacity                        = 1.0f;
         fogComp.startDistance                     = 0.f;
-        fogComp.directionalInscatteringColor      = {0.25f, 0.25f, 0.125f};
+        fogComp.color                             = {0.447f, 0.638f, 1.0f};  // UE5 FogInscatteringColor
         fogComp.directionalInscatteringExponent   = 4.0f;
-        fogComp.directionalInscatteringStartDistance = 10000.f;  // 10000cm = 100m (UE5 default)
+        fogComp.directionalInscatteringStartDistance = 10000.f;
     }
 
     UZ_LOG(Demo, Info, "PBR Test started — {} cubes, 4 point lights + directional sun + sky",

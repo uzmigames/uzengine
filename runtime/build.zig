@@ -135,6 +135,10 @@ pub fn build(b: *std.Build) void {
     const embed_exe = b.addExecutable(.{ .name = "uzembed", .root_module = embed_mod });
     b.installArtifact(embed_exe);
 
+    // Clean old generated headers to prevent stale files from conflicting
+    // with renamed/moved shaders (e.g., post/ → postprocess/ migration).
+    const clean_generated = b.addRemoveDirTree(b.path("build/generated/shaders"));
+
     // Run uzembed: shaders/ → build/generated/shaders/ (all subdirs)
     const run_embed = b.addRunArtifact(embed_exe);
     run_embed.addArgs(&.{
@@ -142,6 +146,7 @@ pub fn build(b: *std.Build) void {
         "--input-dir",  b.path("shaders").getPath(b),
         "--output-dir", b.path("build/generated/shaders").getPath(b),
     });
+    run_embed.step.dependOn(&clean_generated.step);
 
     // ── Runtime static library ───────────────────────────────────────────
 

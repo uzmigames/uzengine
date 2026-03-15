@@ -86,6 +86,7 @@ void PipelineLibrary::Shutdown() {
     destroyPipeline(m_gbufferInstanced);
     destroyPipeline(m_shadowDepthInstanced);
     destroyPipeline(m_skyAtmosphere);
+    destroyPipeline(m_tonemap);
     destroyPipeline(m_heightFog);
     destroyPipeline(m_transmittanceLut);
     destroyPipeline(m_skyCubemapCapture);
@@ -109,6 +110,7 @@ void PipelineLibrary::Shutdown() {
     destroyShader(m_instancedShadowVS);
     destroyShader(m_shadowVS);
     destroyShader(m_skyAtmospherePS);
+    destroyShader(m_tonemapPS);
     destroyShader(m_heightFogPS);
     destroyShader(m_transmittanceLutCS);
     destroyShader(m_skyCubemapCaptureCS);
@@ -235,7 +237,7 @@ RHIPipelineHandle PipelineLibrary::GetForwardPBR(bool bindless) {
     desc.rasterizer.frontCounterClockwise = false;
     desc.depthStencil.depthEnable         = true;
     desc.depthStencil.depthWrite          = true;
-    desc.renderTargetFormats[0]           = RHIFormat::RGBA8Unorm;
+    desc.renderTargetFormats[0]           = RHIFormat::RGBA16Float;
     desc.renderTargetCount                = 1;
     desc.depthStencilFormat               = RHIFormat::D32Float;
     desc.debugName                        = bindless ? "ForwardPBR_Bindless" : "ForwardPBR";
@@ -330,7 +332,7 @@ RHIPipelineHandle PipelineLibrary::GetLighting() {
     desc.rasterizer.cullMode      = RHICullMode::None;
     desc.depthStencil.depthEnable = false;
     desc.depthStencil.depthWrite  = false;
-    desc.renderTargetFormats[0]   = RHIFormat::RGBA8Unorm;
+    desc.renderTargetFormats[0]   = RHIFormat::RGBA16Float;  // HDR output (tonemapped separately)
     desc.renderTargetCount        = 1;
     desc.debugName                = "DeferredLighting";
 
@@ -366,7 +368,7 @@ RHIPipelineHandle PipelineLibrary::GetGBufferDebug() {
     desc.rasterizer.cullMode      = RHICullMode::None;
     desc.depthStencil.depthEnable = false;
     desc.depthStencil.depthWrite  = false;
-    desc.renderTargetFormats[0]   = RHIFormat::RGBA8Unorm;
+    desc.renderTargetFormats[0]   = RHIFormat::RGBA16Float;
     desc.renderTargetCount        = 1;
     desc.debugName                = "GBufferDebug";
 
@@ -401,7 +403,7 @@ RHIPipelineHandle PipelineLibrary::GetDebugView() {
     desc.rasterizer.cullMode      = RHICullMode::None;
     desc.depthStencil.depthEnable = false;
     desc.depthStencil.depthWrite  = false;
-    desc.renderTargetFormats[0]   = RHIFormat::RGBA8Unorm;
+    desc.renderTargetFormats[0]   = RHIFormat::RGBA16Float;
     desc.renderTargetCount        = 1;
     desc.debugName                = "DebugView";
 
@@ -615,7 +617,7 @@ RHIPipelineHandle PipelineLibrary::GetSkyAtmosphere() {
     desc.rasterizer.cullMode      = RHICullMode::None;
     desc.depthStencil.depthEnable = false;
     desc.depthStencil.depthWrite  = false;
-    desc.renderTargetFormats[0]   = RHIFormat::RGBA8Unorm;
+    desc.renderTargetFormats[0]   = RHIFormat::RGBA16Float;
     desc.renderTargetCount        = 1;
     desc.debugName                = "SkyAtmosphere";
 
@@ -627,6 +629,56 @@ RHIPipelineHandle PipelineLibrary::GetSkyAtmosphere() {
     }
 
     return m_skyAtmosphere;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tonemap Pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool PipelineLibrary::EnsureTonemapPixelShader() {
+    if (!m_tonemapPS.IsValid()) {
+        m_tonemapPS = m_shaderMgr->CreateShader(EngineShader::TonemapPS, RHIShaderStage::Pixel);
+        if (!m_tonemapPS.IsValid()) {
+            UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile TonemapPS");
+            return false;
+        }
+    }
+    return true;
+}
+
+RHIPipelineHandle PipelineLibrary::GetTonemap() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetTonemap called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_tonemap.IsValid()) {
+        return m_tonemap;
+    }
+
+    if (!EnsureFullscreenShaders() || !EnsureTonemapPixelShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIGraphicsPipelineDesc desc{};
+    desc.vertexShader  = m_fullscreenVS;
+    desc.pixelShader   = m_tonemapPS;
+    desc.topology      = RHIPrimitiveTopology::TriangleList;
+    desc.rasterizer.cullMode      = RHICullMode::None;
+    desc.depthStencil.depthEnable = false;
+    desc.depthStencil.depthWrite  = false;
+    desc.renderTargetFormats[0]   = RHIFormat::RGBA8Unorm;
+    desc.renderTargetCount        = 1;
+    desc.debugName                = "Tonemap";
+
+    m_tonemap = CreateCachedPipeline(desc);
+    if (!m_tonemap.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create Tonemap pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created Tonemap pipeline");
+    }
+
+    return m_tonemap;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -665,7 +717,7 @@ RHIPipelineHandle PipelineLibrary::GetHeightFog() {
     desc.rasterizer.cullMode      = RHICullMode::None;
     desc.depthStencil.depthEnable = false;
     desc.depthStencil.depthWrite  = false;
-    desc.renderTargetFormats[0]   = RHIFormat::RGBA8Unorm;
+    desc.renderTargetFormats[0]   = RHIFormat::RGBA16Float;
     desc.renderTargetCount        = 1;
     desc.debugName                = "HeightFog";
 

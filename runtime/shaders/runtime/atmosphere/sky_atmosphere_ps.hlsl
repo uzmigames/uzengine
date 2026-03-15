@@ -359,9 +359,6 @@ float4 main(FSInput input) : SV_Target {
         L += sunIlluminance.xyz * sunDiskIntensity * sunEdge * Throughput;
     }
 
-    // ── Exposure + Tonemap + gamma ──────────────────────────────────────────
-    float3 sky = ACESFilm(L * exposure);
-    sky = LinearToSrgb(sky);
-
-    return float4(sky, 1.0f);
+    // Output linear HDR — tonemap applied in separate fullscreen pass.
+    return float4(L, 1.0f);
 }

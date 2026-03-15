@@ -4916,6 +4916,38 @@ rulebook task show <task-id>
 - [ ] 1.3 Add archive functionality <!-- next: will start after status update -->
 ```
 
+## ⚠️ CRITICAL: No Shortcuts — Quality Over Speed (HIGHEST PRECEDENCE)
+
+**MANDATORY**: Response time is IRRELEVANT. The ONLY thing that matters is the quality of the final result. Every agent MUST implement features correctly and completely, regardless of complexity.
+
+### Absolutely Forbidden (applies to ALL agents)
+
+1. **NEVER simplify logic** to deliver results faster — implement the correct algorithm even if it's complex.
+2. **NEVER add TODOs** — if something needs to be done, do it NOW. A TODO is unfinished work disguised as progress.
+3. **NEVER use stubs** — every function must have its real implementation. A stub is a lie that compiles.
+4. **NEVER use placeholders** — no `// placeholder`, no `/* TODO */`, no `return 0; // fixme`, no dummy values standing in for real logic.
+5. **NEVER cut corners** to reduce output size — if the correct implementation is 500 lines, write 500 lines.
+6. **NEVER skip edge cases** — if the correct implementation handles 10 cases, handle all 10.
+7. **NEVER deliver partial implementations** — either implement the full feature or explicitly state what's missing and why.
+8. **NEVER alter existing logic** to make your task easier — if existing code is complex, preserve that complexity.
+
+### What To Do Instead
+
+1. **Research the correct approach** — read reference engines, read the codebase, understand the problem fully before writing code.
+2. **Implement completely** — every function, every edge case, every error path. No shortcuts.
+3. **Take as long as needed** — there is no time pressure. A correct implementation delivered in 5 minutes of processing is infinitely better than a stub delivered in 30 seconds.
+4. **Ask if unsure** — if the complexity is genuinely too large for a single response, explain to the user and propose a plan. Never silently simplify.
+
+### Why
+
+Stubs, TODOs, and placeholders create technical debt that costs MORE time to fix later than doing it right the first time. Every shortcut is a bug waiting to happen. The user trusts agents to deliver production-quality code — delivering a stub betrays that trust.
+
+### Enforcement
+
+- Any agent that delivers a TODO, stub, or placeholder has **FAILED its task**.
+- Code reviewers MUST reject any PR containing TODOs, stubs, or placeholders.
+- If an implementation is too large for a single response, the agent MUST communicate this to the coordinator and propose a phased plan — never silently simplify.
+
 ## Task Archiving Workflow
 
 **CRITICAL**: Archive tasks ONLY after full completion and validation.

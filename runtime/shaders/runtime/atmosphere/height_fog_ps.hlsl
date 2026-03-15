@@ -113,12 +113,12 @@ float ComputeFogLayer(float3 camPos, float3 worldPos, float dist,
     float fogAmount;
     if (abs(falloff * heightDiff) > 0.001f) {
         // Analytical integration of exp(-falloff * h) along the ray
-        float expCam  = exp(-falloff * camHeight);
-        float expFrag = exp(-falloff * fragHeight);
+        float expCam  = exp2(-falloff * camHeight);
+        float expFrag = exp2(-falloff * fragHeight);
         fogAmount = density * dist * (expCam - expFrag) / (falloff * heightDiff);
     } else {
         // Nearly horizontal ray — use density at camera height
-        fogAmount = density * dist * exp(-falloff * camHeight);
+        fogAmount = density * dist * exp2(-falloff * camHeight);
     }
     return max(fogAmount, 0.0f);
 }
@@ -169,7 +169,7 @@ float4 main(FSInput input) : SV_Target {
     }
 
     // Convert accumulated optical depth to fog factor
-    float fog = 1.0f - exp(-fogAmount);
+    float fog = 1.0f - exp2(-fogAmount);
     fog = min(fog, fogMaxOpacity);
 
     if (fog < 0.001f)

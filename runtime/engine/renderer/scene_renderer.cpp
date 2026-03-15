@@ -27,6 +27,8 @@
 #include "render_graph_builder.h"
 #include "render_graph_resources.h"
 #include "cascade.h"
+#include "root_slots.h"
+#include "profiler.h"
 #include "instance_batcher.h"
 #include "texture_loader.h"
 #include "upload_context.h"
@@ -138,6 +140,24 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
         return false;
     }
 
+    // ── HDR Scene Color (RGBA16F — intermediate before tonemap) ────────
+    {
+        RHITextureDesc hdrDesc{};
+        hdrDesc.width     = width;
+        hdrDesc.height    = height;
+        hdrDesc.format    = RHIFormat::RGBA16Float;
+        hdrDesc.usage     = RHITextureUsage::ShaderResource | RHITextureUsage::RenderTarget;
+        hdrDesc.debugName = "HDR_SceneColor";
+        m_hdrSceneColor = device->CreateTexture(hdrDesc);
+        if (!m_hdrSceneColor.IsValid()) {
+            UZ_LOG(Renderer, Error, "SceneRenderer: failed to create HDR scene color texture");
+            return false;
+        }
+        m_hdrSceneColorSrv = device->GetTextureSRVIndex(m_hdrSceneColor);
+        UZ_LOG(Renderer, Info, "SceneRenderer: HDR scene color created ({}x{}, RGBA16F, SRV={})",
+               width, height, m_hdrSceneColorSrv);
+    }
+
     // ── Shadow Atlas ────────────────────────────────────────────────────
     CreateShadowAtlas();
 
@@ -240,6 +260,19 @@ void SceneRenderer::Resize(uint32_t width, uint32_t height) {
         UZ_CHECK(ok);
     }
 
+    // Recreate HDR scene color at new size
+    if (m_hdrSceneColor.IsValid()) {
+        m_device->DestroyTexture(m_hdrSceneColor);
+        RHITextureDesc hdrDesc{};
+        hdrDesc.width     = width;
+        hdrDesc.height    = height;
+        hdrDesc.format    = RHIFormat::RGBA16Float;
+        hdrDesc.usage     = RHITextureUsage::ShaderResource | RHITextureUsage::RenderTarget;
+        hdrDesc.debugName = "HDR_SceneColor";
+        m_hdrSceneColor = m_device->CreateTexture(hdrDesc);
+        m_hdrSceneColorSrv = m_device->GetTextureSRVIndex(m_hdrSceneColor);
+    }
+
     const float aspect = static_cast<float>(width) / static_cast<float>(height);
     m_camera->SetAspectRatio(aspect);
 
@@ -287,6 +320,12 @@ void SceneRenderer::Shutdown() {
         m_skyCubemap = RHITextureHandle{};
         m_skyCubemapSrv = UINT32_MAX;
         m_skyCubemapUav = UINT32_MAX;
+    }
+
+    // ── HDR Scene Color cleanup ─────────────────────────────────
+    if (m_hdrSceneColor.IsValid()) {
+        m_device->DestroyTexture(m_hdrSceneColor);
+        m_hdrSceneColor = RHITextureHandle{};
     }
 
     // ── Auto-Exposure cleanup ─────────────────────────────────────
@@ -491,21 +530,15 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     perFrame.ambientColor = {ambientColor.x, ambientColor.y, ambientColor.z, 0.f};
 
     // ── Auto-Exposure ──────────────────────────────────────────────────
-    // Compute exposure from sun direction using a simple model:
-    // Outdoor scenes with sun high → lower exposure (avoid blow-out)
-    // Sun near horizon → higher exposure (scene is darker)
-    // This approximates UE5's auto-exposure until we have a full histogram pipeline.
-    {
-        float sunZenith = sunDir.z; // Z-up: sunDir.z = cos(zenith angle), 1=overhead, 0=horizon
-        // EV100 estimate: higher sun = brighter scene = higher EV = lower exposure
-        // UE5 outdoor default EV100 ≈ 13-14 (bright sun), 8-10 (overcast/dusk)
-        float sunFactor = sunZenith < 0.f ? 0.f : (sunZenith > 1.f ? 1.f : sunZenith);
-        // EV range: 11.5 (horizon/dusk) to 13.5 (overhead bright sun)
-        // exposure = 1/(1.2 * 2^(ev-12)) maps EV12 → exposure=0.83, EV13 → 0.42
-        float ev100 = 11.5f + 2.0f * sunFactor;
-        float autoExposure = 1.0f / (1.2f * std::pow(2.0f, ev100 - 12.0f));
-        float expBias = m_autoExposure ? m_autoExposure->settings.exposureBias : 1.0f;
-        perFrame.exposure = autoExposure * expBias;
+    // Run GPU histogram-based auto-exposure on the HDR scene color.
+    // On the first few frames before HDR is filled, use a sensible default.
+    if (m_autoExposure && m_hdrSceneColorSrv != UINT32_MAX && m_hdrHasContent) {
+        float autoExp = m_autoExposure->Execute(cmdList, m_hdrSceneColorSrv,
+            m_width, m_height, dt);
+        perFrame.exposure = autoExp;
+        UZ_LOG(Renderer, Debug, "AutoExposure: exposure={:.4f}", perFrame.exposure);
+    } else {
+        perFrame.exposure = 1.0f;
     }
 
     CBAllocation perFrameAlloc = m_cbRing->Allocate(sizeof(PerFrameCB));
@@ -655,7 +688,8 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
 
     RHITextureHandle backBuffer = swapChain->GetCurrentBackBuffer();
     rg::RgBuilder rgBuilder(m_device, m_rgPool.get());
-    auto bbRes = rgBuilder.ImportTexture("Backbuffer", backBuffer, RHIResourceState::Present);
+    auto bbRes  = rgBuilder.ImportTexture("Backbuffer", backBuffer, RHIResourceState::Present);
+    auto hdrRes = rgBuilder.ImportTexture("HDR_SceneColor", m_hdrSceneColor, RHIResourceState::RenderTarget);
 
     auto albedoRes   = rgBuilder.ImportTexture("GBuf_Albedo",    m_gbuffer.albedo,     RHIResourceState::ShaderResource);
     auto normalRes   = rgBuilder.ImportTexture("GBuf_Normal",    m_gbuffer.normal,     RHIResourceState::ShaderResource);
@@ -741,7 +775,7 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
         if (debugViewActive) {
             // ── Debug View Mode — replaces lighting with channel visualization ──
             DebugViewPassDesc dvDesc{};
-            dvDesc.backbuffer        = bbRes;
+            dvDesc.backbuffer        = hdrRes;
             dvDesc.albedoGBuffer     = albedoRes;
             dvDesc.normalGBuffer     = normalRes;
             dvDesc.depthGBuffer      = depthRes;
@@ -763,7 +797,7 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
             AddDebugViewPass(rgBuilder, dvDesc);
         } else if (!debugActive) {
             LightingPassDesc lightDesc{};
-            lightDesc.backbuffer          = bbRes;
+            lightDesc.backbuffer          = hdrRes;
             lightDesc.albedoGBuffer       = albedoRes;
             lightDesc.normalGBuffer       = normalRes;
             lightDesc.depthGBuffer        = depthRes;
@@ -788,7 +822,7 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
             AddLightingPass(rgBuilder, lightDesc);
         } else {
             GBufferDebugPassDesc dbgDesc{};
-            dbgDesc.backbuffer         = bbRes;
+            dbgDesc.backbuffer         = hdrRes;
             dbgDesc.albedoGBuffer      = albedoRes;
             dbgDesc.normalGBuffer      = normalRes;
             dbgDesc.depthGBuffer       = depthRes;
@@ -817,7 +851,7 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
         // ── Forward: single-pass PBR ────────────────────────────────────
         if (renderMesh.IsValid()) {
             PBRPassDesc fwdDesc{};
-            fwdDesc.backbuffer           = bbRes;
+            fwdDesc.backbuffer           = hdrRes;
             fwdDesc.depthBuffer          = depthRes;
             fwdDesc.depthTexture         = m_gbuffer.depth;
             fwdDesc.drawList             = &drawList;
@@ -959,7 +993,7 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
             std::memcpy(skyAlloc.cpuPtr, &skyCB, sizeof(SkyAtmosphereCB));
 
             SkyAtmospherePassDesc skyDesc{};
-            skyDesc.backbuffer              = bbRes;
+            skyDesc.backbuffer              = hdrRes;
             skyDesc.depthGBuffer            = depthRes;
             skyDesc.perFrameAlloc           = perFrameAlloc;
             skyDesc.skyAtmosphereAlloc      = skyAlloc;
@@ -1011,7 +1045,7 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
             std::memcpy(fogAlloc.cpuPtr, &fogCB, sizeof(HeightFogCB));
 
             HeightFogPassDesc fogDesc{};
-            fogDesc.backbuffer    = bbRes;
+            fogDesc.backbuffer    = hdrRes;
             fogDesc.depthGBuffer  = depthRes;
             fogDesc.perFrameAlloc = perFrameAlloc;
             fogDesc.fogAlloc      = fogAlloc;
@@ -1026,6 +1060,53 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
             break;  // Only use first HeightFogComponent found
         }
     }
+
+    // ── Tonemap pass (HDR → LDR backbuffer) ────────────────────────────
+    // Reads HDR scene color (RGBA16F), applies auto-exposure + ACES filmic
+    // tonemap + sRGB gamma, writes LDR to backbuffer (RGBA8Unorm).
+    // This is the ONLY place tonemapping happens in the pipeline.
+    rgBuilder.AddPass("Tonemap", [&](rg::RgPassBuilder& pb) {
+        pb.Read(hdrRes, RHIResourceState::ShaderResource);
+        pb.Write(bbRes, RHIResourceState::RenderTarget);
+
+        pb.SetExecutionCallback([&](IRHICommandList* cmd, const rg::RgPassResources& res) {
+            UZ_PROFILE_SCOPE("Tonemap::Execute");
+
+            auto bb = res.GetTexture(bbRes);
+
+            RHIRenderPassDesc passDesc{};
+            passDesc.colorAttachmentCount        = 1;
+            passDesc.colorAttachments[0].texture = bb;
+            passDesc.colorAttachments[0].clear   = false;
+            cmd->BeginRenderPass(passDesc);
+
+            cmd->SetPipeline(pipelines->GetTonemap());
+
+            RHIViewport vp{};
+            vp.width    = vpWidth;
+            vp.height   = vpHeight;
+            vp.maxDepth = 1.0f;
+            cmd->SetViewport(vp);
+
+            RHIScissorRect sc{};
+            sc.right  = static_cast<int32_t>(swapChain->GetWidth());
+            sc.bottom = static_cast<int32_t>(swapChain->GetHeight());
+            cmd->SetScissor(sc);
+
+            // Root constants: HDR scene color SRV index
+            uint32_t indices[4] = { m_hdrSceneColorSrv, 0, 0, 0 };
+            cmd->SetRootConstants(kSlotRootConstants, indices, 4);
+
+            // PerFrameCB at b1 — contains exposure from auto-exposure
+            cmd->SetRootCBV(kSlotPerFrame, perFrameAlloc.bufferHandle,
+                            perFrameAlloc.offsetBytes, perFrameAlloc.cpuPtr,
+                            perFrameAlloc.sizeBytes);
+
+            cmd->Draw(3); // fullscreen triangle
+
+            cmd->EndRenderPass();
+        });
+    });
 
     // ── Overlay pass (editor grid + stats overlay) ──────────────────────
     rgBuilder.AddPass("OverlayPass", [&](rg::RgPassBuilder& pb) {
@@ -1077,6 +1158,9 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
 
     rgBuilder.Compile();
     rgBuilder.Execute(cmdList);
+
+    // HDR target now contains valid scene color for next frame's auto-exposure readback.
+    m_hdrHasContent = true;
 
     // ── IBL bake from sky cubemap (outside render graph — own GPU work) ──
     // Must happen after render graph executes so the cubemap is filled.

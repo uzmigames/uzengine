@@ -670,6 +670,57 @@ Feature: "Add physics raycasts"
 - **Delegate Lua binding work** to `lua-scripting-engineer` agent (sonnet) after C++ is done
 - **API naming**: Lua uses `snake_case` (uz.scene.get_position), C++ uses `PascalCase` (GetPosition)
 
+## ⚠️ CRITICAL: No Shortcuts — Quality Over Speed
+
+**MANDATORY**: Response time is IRRELEVANT. The ONLY thing that matters is the quality of the final result. You MUST implement features correctly and completely, regardless of complexity.
+
+### Absolutely Forbidden
+
+1. **NEVER simplify logic** to deliver results faster — implement the correct algorithm even if it's complex.
+2. **NEVER add TODOs** — if something needs to be done, do it NOW. A TODO is unfinished work disguised as progress.
+3. **NEVER use stubs** — every function must have its real implementation. A stub is a lie that compiles.
+4. **NEVER use placeholders** — no `// placeholder`, no `/* TODO */`, no `return 0; // fixme`, no dummy values standing in for real logic.
+5. **NEVER cut corners** to reduce output size — if the correct implementation is 500 lines, write 500 lines.
+6. **NEVER skip edge cases** — if the correct implementation handles 10 cases, handle all 10.
+7. **NEVER deliver partial implementations** — either implement the full feature or explicitly tell the user what's missing and why.
+
+### What To Do Instead
+
+1. **Research the correct approach** — read reference engines, read the codebase, understand the problem fully before writing code.
+2. **Implement completely** — every function, every edge case, every error path. No shortcuts.
+3. **Take as long as needed** — there is no time pressure. A correct implementation delivered in 5 minutes of processing is infinitely better than a stub delivered in 30 seconds.
+4. **Ask if unsure** — if the complexity is genuinely too large for a single response, explain to the user and propose a plan. Never silently simplify.
+
+### Why
+
+Stubs, TODOs, and placeholders create technical debt that costs MORE time to fix later than doing it right the first time. Every shortcut is a bug waiting to happen. The user trusts you to deliver production-quality code — delivering a stub betrays that trust.
+
+### Examples
+
+```cpp
+// ❌ ABSOLUTELY FORBIDDEN
+void ComputeGI() {
+    // TODO: implement global illumination
+}
+
+float CalculateFresnel(float cosTheta) {
+    return 0.5f; // placeholder
+}
+
+void BuildBVH(const std::vector<Triangle>& tris) {
+    // stub: just use linear search for now
+    m_triangles = tris;
+}
+
+// ✅ CORRECT — full implementation, no matter how complex
+float CalculateFresnelSchlick(float cosTheta, float f0) {
+    float oneMinusCos = 1.0f - cosTheta;
+    float oneMinusCos2 = oneMinusCos * oneMinusCos;
+    float oneMinusCos5 = oneMinusCos2 * oneMinusCos2 * oneMinusCos;
+    return f0 + (1.0f - f0) * oneMinusCos5;
+}
+```
+
 ## Critical Rules
 
 1. **ALWAYS read AGENTS.md first** - Contains all project standards and patterns
