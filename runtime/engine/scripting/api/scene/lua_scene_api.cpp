@@ -7,6 +7,8 @@
 #include "static_mesh_component.h"
 #include "vector3.h"
 #include "quaternion.h"
+#include "scene_loader.h"
+#include "vfs.h"
 
 extern "C" {
 #include <lua.h>
@@ -36,6 +38,9 @@ namespace uz {
 
 /// Key used to store the World* in the Lua registry.
 static constexpr const char* kWorldRegistryKey = "uz_world";
+
+/// Key used to store the IVFS* in the Lua registry.
+static constexpr const char* kVfsRegistryKey = "uz_vfs";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Entity <-> lightuserdata encoding helpers
@@ -75,6 +80,14 @@ static constexpr const char* kWorldRegistryKey = "uz_world";
     void* p = lua_touserdata(L, -1);
     lua_pop(L, 1);
     return static_cast<World*>(p);
+}
+
+/// Retrieves the IVFS* from the Lua registry. Returns null if not set.
+[[nodiscard]] static IVFS* GetVFS(lua_State* L) {
+    lua_getfield(L, LUA_REGISTRYINDEX, kVfsRegistryKey);
+    void* p = lua_touserdata(L, -1);
+    lua_pop(L, 1);
+    return static_cast<IVFS*>(p);
 }
 
 /// Reads an entity lightuserdata from stack position `idx`.
@@ -782,6 +795,87 @@ static int SceneIsVisible(lua_State* L) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Lua C functions — uz.scene scene load/save
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// uz.scene.load_scene(path) -> bool
+///
+/// Destroys all existing entities in the world and loads a new scene from the
+/// given VFS-relative path (e.g. `"scenes/demo.uzscene"`).
+///
+/// The file is read through the VFS registered via `LuaSetVFS`. The world is
+/// cleared via `World::Clear()` before parsing begins, so partial failures
+/// leave the world empty rather than in a mixed state.
+///
+/// # Arguments
+/// * `path` (string) — VFS-relative path to the `.uzscene` file.
+///
+/// # Returns
+/// - `true` if at least one entity was successfully created.
+/// - `false` if the World or VFS is not set, the file is not found, or the
+///   JSON is malformed (all failures are logged at Warning/Error level).
+static int SceneLoadScene(lua_State* L) {
+    const char* path = luaL_checkstring(L, 1);
+
+    World* world = GetWorld(L);
+    if (!world) {
+        UZ_LOG(Scripting, Warning, "uz.scene.load_scene: World not set");
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    IVFS* vfs = GetVFS(L);
+    if (!vfs) {
+        UZ_LOG(Scripting, Warning, "uz.scene.load_scene: VFS not set");
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    UZ_LOG(Scripting, Info, "uz.scene.load_scene: loading '{}'", path);
+
+    const std::vector<uint8_t> data = vfs->Read(path);
+    if (data.empty()) {
+        UZ_LOG(Scripting, Warning,
+            "uz.scene.load_scene: file not found or empty — path='{}'", path);
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    world->Clear();
+
+    const size_t count = uz::LoadScene(*world, data, path);
+    if (count == 0) {
+        UZ_LOG(Scripting, Warning,
+            "uz.scene.load_scene: no entities loaded from '{}'", path);
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    UZ_LOG(Scripting, Info,
+        "uz.scene.load_scene: loaded {} entities from '{}'", count, path);
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
+/// uz.scene.save_scene(path) -> bool
+///
+/// Placeholder — scene serialization is not yet implemented.
+/// Always returns false and logs a warning.
+///
+/// # Arguments
+/// * `path` (string) — VFS-relative destination path (ignored).
+///
+/// # Returns
+/// Always `false`.
+static int SceneSaveScene(lua_State* L) {
+    const char* path = luaL_checkstring(L, 1);
+    UZ_LOG(Scripting, Warning,
+        "uz.scene.save_scene: not yet implemented — path='{}'", path);
+    lua_pushboolean(L, 0);
+    return 1;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Registration
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -855,6 +949,12 @@ void LuaRegisterSceneAPI(lua_State* L) {
     lua_pushcfunction(L, SceneGetChildren);
     lua_setfield(L, -2, "get_children");
 
+    lua_pushcfunction(L, SceneLoadScene);
+    lua_setfield(L, -2, "load_scene");
+
+    lua_pushcfunction(L, SceneSaveScene);
+    lua_setfield(L, -2, "save_scene");
+
     // uz.scene = { ... }
     lua_setfield(L, -2, "scene");
 
@@ -868,6 +968,12 @@ void LuaSetWorld(lua_State* L, World* world) {
     lua_pushlightuserdata(L, static_cast<void*>(world));
     lua_setfield(L, LUA_REGISTRYINDEX, kWorldRegistryKey);
     UZ_LOG(Scripting, Debug, "LuaSetWorld: world={}", static_cast<void*>(world));
+}
+
+void LuaSetVFS(lua_State* L, IVFS* vfs) {
+    lua_pushlightuserdata(L, static_cast<void*>(vfs));
+    lua_setfield(L, LUA_REGISTRYINDEX, kVfsRegistryKey);
+    UZ_LOG(Scripting, Debug, "LuaSetVFS: vfs={}", static_cast<void*>(vfs));
 }
 
 } // namespace uz

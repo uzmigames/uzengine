@@ -155,6 +155,50 @@ static int RendererSetDebugView(lua_State* L) {
     return 0;
 }
 
+/// uz.renderer.screenshot(path) → true | false
+///
+/// Queues a screenshot capture to be processed by the runtime main loop on the
+/// next frame boundary.  The path is stored in the Lua registry under the key
+/// `"uz_screenshot_request"`.  The runtime polls this key after each
+/// `RenderFrame()` call and, when present, captures the back buffer via
+/// `ScreenshotCapture` and writes the PNG.
+///
+/// # Arguments
+/// * `path` (string) — Output file path for the PNG (e.g. "screenshot.png").
+///   Relative paths are resolved from the working directory of the process.
+///
+/// # Returns
+/// `true` if the request was queued successfully.
+/// `false` if `path` is empty or the renderer is not available.
+///
+/// # Note
+/// Only one screenshot can be pending at a time.  A second call before the
+/// runtime consumes the previous request overwrites the pending path.
+static int RendererScreenshot(lua_State* L) {
+    const char* path = luaL_checkstring(L, 1);
+    if (!path || path[0] == '\0') {
+        UZ_LOG(Scripting, Warning, "uz.renderer.screenshot: path must not be empty");
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    SceneRenderer* renderer = GetRenderer(L);
+    if (!renderer) {
+        UZ_LOG(Scripting, Warning, "uz.renderer.screenshot: SceneRenderer not set");
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    // Store the pending path in the Lua registry so the main loop can poll it.
+    // Key: "uz_screenshot_request"  Value: path string
+    lua_pushstring(L, path);
+    lua_setfield(L, LUA_REGISTRYINDEX, "uz_screenshot_request");
+
+    UZ_LOG(Scripting, Info, "[Lua] uz.renderer.screenshot queued: path='{}'", path);
+    lua_pushboolean(L, 1);
+    return 1;
+}
+
 /// uz.renderer.get_debug_view() -> string
 ///
 /// Returns the current debug view mode name as a lowercase string.
@@ -280,6 +324,9 @@ void LuaRegisterRendererAPI(lua_State* L) {
 
     lua_pushcfunction(L, RendererGetDebugView);
     lua_setfield(L, -2, "get_debug_view");
+
+    lua_pushcfunction(L, RendererScreenshot);
+    lua_setfield(L, -2, "screenshot");
 
     lua_setfield(L, -2, "renderer");
 

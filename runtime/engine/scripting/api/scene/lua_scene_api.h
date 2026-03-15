@@ -31,6 +31,7 @@ struct lua_State;
 namespace uz {
 
 class World;
+class IVFS;
 
 /// Registers the `uz.scene` sub-table into the existing `uz` global table.
 ///
@@ -51,5 +52,15 @@ void LuaRegisterSceneAPI(lua_State* L);
 /// * `L` - Active Lua state. Must not be null.
 /// * `world` - World instance to expose. May be null to revoke access.
 void LuaSetWorld(lua_State* L, World* world);
+
+/// Stores a VFS pointer in the Lua registry for use by scene load callbacks.
+///
+/// Must be called before any Lua script invokes `uz.scene.load_scene`.
+/// Passing `nullptr` disables VFS access (`load_scene` returns false).
+///
+/// # Arguments
+/// * `L`   - Active Lua state. Must not be null.
+/// * `vfs` - IVFS instance to expose. May be null to revoke access.
+void LuaSetVFS(lua_State* L, IVFS* vfs);
 
 } // namespace uz

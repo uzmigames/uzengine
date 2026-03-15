@@ -272,6 +272,7 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
     bool luaReady = false;
     if (LuaVM::Init()) {
         LuaSetWorld(LuaVM::GetState(), &world);
+        LuaSetVFS(LuaVM::GetState(), &vfs);
         ScriptSystem::Initialize(&world, &vfs);
         luaReady = true;
         UZ_LOG(Engine, Info, "Lua scripting initialized");

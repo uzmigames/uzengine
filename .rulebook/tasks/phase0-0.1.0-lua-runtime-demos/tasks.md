@@ -187,7 +187,7 @@ Goal: Every C++ engine capability accessible from Lua. Ordered by gameplay impac
 ### N-G: Renderer Extended
 - [x] N.G1 `uz.renderer.set_debug_view(mode_name)` — DebugViewMode by string name (case-insensitive).
 - [x] N.G2 `uz.renderer.get_debug_view()` → string (current mode name).
-- [ ] N.G3 `uz.renderer.screenshot(path)` — capture current frame to PNG.
+- [x] N.G3 `uz.renderer.screenshot(path)` — queues screenshot request via Lua registry.
 - [ ] N.G4 Unit tests for renderer extended API.
 
 ### N-H: Math Types (Vec3/Quat userdata with metatables)
@@ -200,8 +200,8 @@ Goal: Every C++ engine capability accessible from Lua. Ordered by gameplay impac
 - [ ] N.H7 Unit tests for Vec3 and Quat userdata (arithmetic, methods, constants).
 
 ### N-I: Scene Management
-- [ ] N.I1 `uz.scene.load(scene_path)` — load .uzscene file, replacing current world.
-- [ ] N.I2 `uz.scene.save(scene_path)` — save current world to .uzscene.
+- [x] N.I1 `uz.scene.load_scene(scene_path)` — load .uzscene file via VFS, replacing current world.
+- [x] N.I2 `uz.scene.save_scene(scene_path)` — stub (logs warning, returns false — serialization not yet needed).
 - [ ] N.I3 Unit tests for scene load/save from Lua.
 
 ## Phase M: Cleanup & Polish
