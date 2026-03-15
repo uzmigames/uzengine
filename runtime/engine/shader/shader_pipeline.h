@@ -61,6 +61,7 @@ public:
         std::string targetBackend = "dx12_sm67";   ///< Target backend string for cache subdirectory naming
         bool enableHotReload = true;               ///< Enable file watching for dev builds
         bool bindless = true;                      ///< If true, injects UZ_BINDLESS=1 define and compiles for SM6.6+
+        bool generateDebugInfo = false;            ///< Embed HLSL source and symbols (-Zi) for RenderDoc/PIX pixel debugging
     };
 
     /// Statistics returned by `CompileAll()`.

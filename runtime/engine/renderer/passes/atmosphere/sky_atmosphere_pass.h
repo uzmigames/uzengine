@@ -48,6 +48,9 @@ struct SkyAtmospherePassDesc {
     uint32_t          depthSrvIndex;    ///< SRV heap index for depth G-Buffer (SM6.6 bindless).
     RHITextureHandle  depthTexture;     ///< Physical depth texture handle (SM5 fallback).
 
+    uint32_t          transmittanceLutSrvIndex = UINT32_MAX; ///< SRV index for precomputed transmittance LUT (UINT32_MAX = not available).
+    rg::RgResourceId  transmittanceLutRes;      ///< Render graph resource handle for the LUT (triggers UAV→SRV barrier when valid).
+
     bool              bindless;         ///< True if SM6.6 bindless path is active.
     float             viewportWidth;    ///< Viewport width in pixels.
     float             viewportHeight;   ///< Viewport height in pixels.

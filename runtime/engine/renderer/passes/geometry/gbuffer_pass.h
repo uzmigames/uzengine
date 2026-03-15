@@ -21,6 +21,7 @@
 #pragma once
 
 #include "constant_buffers.h"
+#include "instance_batcher.h"
 #include "render_graph_types.h"
 #include "engine/rhi/rhi_types.h"
 
@@ -72,6 +73,13 @@ struct GBufferPassDesc {
     bool              bindless;         ///< True if SM6.6 bindless path is active.
     float             viewportWidth;    ///< Viewport width in pixels.
     float             viewportHeight;   ///< Viewport height in pixels.
+
+    // ── GPU Instancing (optional — set instanced=true to enable) ──────────
+    bool              instanced = false;       ///< True to use instanced draw path.
+    RHIPipelineHandle instancedPipeline;       ///< PSO compiled with UZ_INSTANCED=1.
+    uint32_t          instanceBufferSrvIndex = UINT32_MAX; ///< SRV index for StructuredBuffer<InstanceData>.
+    const InstanceBatch* batchData = nullptr;  ///< Pointer to instanced draw batches array.
+    uint32_t          batchCount = 0;          ///< Number of batches in the array.
 };
 
 /// Registers a deferred G-Buffer pass in the render graph.

@@ -3,9 +3,9 @@
 
 #include "lua_vm.h"
 #include "lua_scene_api.h"
-#include "../ecs/world.h"
-#include "../ecs/name_component.h"
-#include "../ecs/scene_component.h"
+#include "world.h"
+#include "name_component.h"
+#include "scene_component.h"
 #include "../math/vector3.h"
 #include "../math/quaternion.h"
 

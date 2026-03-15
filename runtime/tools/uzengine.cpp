@@ -14,8 +14,8 @@
 #include "log.h"
 
 #include "../engine/app/project_loader.h"
-#include "../engine/ecs/world.h"
-#include "../engine/ecs/scene_loader.h"
+#include "world.h"
+#include "scene_loader.h"
 #include "../engine/scripting/lua_vm.h"
 #include "lua_scene_api.h"
 #include "lua_renderer_api.h"

@@ -98,44 +98,81 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
             sc.bottom = static_cast<int32_t>(desc.viewportHeight);
             cmd->SetScissor(sc);
 
-            // ── Draw loop — iterate sorted draw commands ─────────────────
-            const auto& commands = desc.drawList->GetCommands();
+            // ── Draw loop ─────────────────────────────────────────────────
             uint32_t drawCallCount = 0;
 
-            for (const auto& drawCmd : commands) {
-                PerObjectCB perObject{};
-                perObject.model        = drawCmd.worldMatrix;
-                perObject.normalMatrix = drawCmd.normalMatrix;
-                perObject.albedoIndex    = drawCmd.albedoSrvIndex;
-                perObject.normalIndex    = drawCmd.normalSrvIndex;
-                perObject.roughnessIndex = drawCmd.roughnessSrvIndex;
-                perObject.metallicIndex  = drawCmd.metallicSrvIndex;
-                perObject.aoIndex        = drawCmd.aoSrvIndex;
+            if (desc.instanced && desc.bindless && desc.batchData != nullptr && desc.batchCount > 0) {
+                // ── Instanced path — one DrawIndexedInstanced per batch ────
+                cmd->SetPipeline(desc.instancedPipeline);
 
-                CBAllocation objAlloc = desc.cbAllocator->Allocate(sizeof(PerObjectCB));
-                if (objAlloc.cpuPtr == nullptr) {
-                    UZ_LOG(Renderer, Error,
-                           "GBufferPass: CB ring exhausted at draw command {}", drawCallCount);
-                    break;
+                // Push both vertexBufferIndex and instanceBufferIndex as root constants
+                const uint32_t rootConstants[2] = {
+                    desc.vertexBufferSrvIndex,
+                    desc.instanceBufferSrvIndex
+                };
+                cmd->SetRootConstants(kSlotRootConstants, rootConstants, 2);
+
+                for (uint32_t bi = 0; bi < desc.batchCount; ++bi) {
+                    const auto& batch = desc.batchData[bi];
+                    // Per-batch material in PerObjectCB (shared by all instances)
+                    PerObjectCB perObject{};
+                    perObject.albedoIndex    = batch.albedoSrvIndex;
+                    perObject.normalIndex    = batch.normalSrvIndex;
+                    perObject.roughnessIndex = batch.roughnessSrvIndex;
+                    perObject.metallicIndex  = batch.metallicSrvIndex;
+                    perObject.aoIndex        = batch.aoSrvIndex;
+
+                    CBAllocation objAlloc = desc.cbAllocator->Allocate(sizeof(PerObjectCB));
+                    if (objAlloc.cpuPtr == nullptr) {
+                        UZ_LOG(Renderer, Error,
+                               "GBufferPass(instanced): CB ring exhausted at batch {}", drawCallCount);
+                        break;
+                    }
+                    std::memcpy(objAlloc.cpuPtr, &perObject, sizeof(PerObjectCB));
+
+                    cmd->SetRootCBV(kSlotPerObject, objAlloc.bufferHandle, objAlloc.offsetBytes,
+                                    objAlloc.cpuPtr, sizeof(PerObjectCB));
+
+                    cmd->DrawIndexed(desc.indexCount, batch.instanceCount,
+                                     0, 0, batch.firstInstance);
+                    ++drawCallCount;
                 }
-                std::memcpy(objAlloc.cpuPtr, &perObject, sizeof(PerObjectCB));
+            } else {
+                // ── Non-instanced path — one DrawIndexed per draw command ──
+                const auto& commands = desc.drawList->GetCommands();
 
-                cmd->SetRootCBV(kSlotPerObject, objAlloc.bufferHandle, objAlloc.offsetBytes,
-                                objAlloc.cpuPtr, sizeof(PerObjectCB));
+                for (const auto& drawCmd : commands) {
+                    PerObjectCB perObject{};
+                    perObject.model        = drawCmd.worldMatrix;
+                    perObject.normalMatrix = drawCmd.normalMatrix;
+                    perObject.albedoIndex    = drawCmd.albedoSrvIndex;
+                    perObject.normalIndex    = drawCmd.normalSrvIndex;
+                    perObject.roughnessIndex = drawCmd.roughnessSrvIndex;
+                    perObject.metallicIndex  = drawCmd.metallicSrvIndex;
+                    perObject.aoIndex        = drawCmd.aoSrvIndex;
 
-                // SM5: bind material textures at t0-t4 for non-bindless path.
-                // Use fallback textures when the draw command has no texture bound,
-                // because the SM5 shader samples unconditionally (no index guards).
-                if (!desc.bindless) {
-                    cmd->SetFragmentTexture(0, drawCmd.albedoTexture.IsValid()    ? drawCmd.albedoTexture    : desc.fallbackWhite);
-                    cmd->SetFragmentTexture(1, drawCmd.normalTexture.IsValid()    ? drawCmd.normalTexture    : desc.fallbackNormal);
-                    cmd->SetFragmentTexture(2, drawCmd.roughnessTexture.IsValid() ? drawCmd.roughnessTexture : desc.fallbackWhite);
-                    cmd->SetFragmentTexture(3, drawCmd.metallicTexture.IsValid()  ? drawCmd.metallicTexture  : desc.fallbackBlack);
-                    cmd->SetFragmentTexture(4, drawCmd.aoTexture.IsValid()        ? drawCmd.aoTexture        : desc.fallbackWhite);
+                    CBAllocation objAlloc = desc.cbAllocator->Allocate(sizeof(PerObjectCB));
+                    if (objAlloc.cpuPtr == nullptr) {
+                        UZ_LOG(Renderer, Error,
+                               "GBufferPass: CB ring exhausted at draw command {}", drawCallCount);
+                        break;
+                    }
+                    std::memcpy(objAlloc.cpuPtr, &perObject, sizeof(PerObjectCB));
+
+                    cmd->SetRootCBV(kSlotPerObject, objAlloc.bufferHandle, objAlloc.offsetBytes,
+                                    objAlloc.cpuPtr, sizeof(PerObjectCB));
+
+                    if (!desc.bindless) {
+                        cmd->SetFragmentTexture(0, drawCmd.albedoTexture.IsValid()    ? drawCmd.albedoTexture    : desc.fallbackWhite);
+                        cmd->SetFragmentTexture(1, drawCmd.normalTexture.IsValid()    ? drawCmd.normalTexture    : desc.fallbackNormal);
+                        cmd->SetFragmentTexture(2, drawCmd.roughnessTexture.IsValid() ? drawCmd.roughnessTexture : desc.fallbackWhite);
+                        cmd->SetFragmentTexture(3, drawCmd.metallicTexture.IsValid()  ? drawCmd.metallicTexture  : desc.fallbackBlack);
+                        cmd->SetFragmentTexture(4, drawCmd.aoTexture.IsValid()        ? drawCmd.aoTexture        : desc.fallbackWhite);
+                    }
+
+                    cmd->DrawIndexed(desc.indexCount);
+                    ++drawCallCount;
                 }
-
-                cmd->DrawIndexed(desc.indexCount);
-                ++drawCallCount;
             }
 
             cmd->EndRenderPass();

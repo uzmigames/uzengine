@@ -104,8 +104,8 @@ Texture2D<float>  gbufferDepth      : register(t2); ///< Hardware depth as R32_F
 Texture2D<float4> gbufferPositionWS : register(t3); ///< xyz = world-space position, a = 1
 #endif
 
-/// Point/nearest sampler -- no filtering on discrete G-Buffer data.
-SamplerState pointSampler : register(s0);
+/// Linear (bilinear wrap) sampler at s0 -- standard engine-wide sampler.
+SamplerState linearSampler : register(s0);
 
 // -------------------------------------------------------------------------
 // Utility: Linearize Depth
@@ -152,15 +152,15 @@ void SampleGBuffer(
     Texture2D<float>  gbDepth    = ResourceDescriptorHeap[dvIndices.depthIdx];
     Texture2D<float4> gbPosition = ResourceDescriptorHeap[dvIndices.positionIdx];
 
-    albedoAO     = gbAlbedo.Sample(pointSampler, uv);
-    normalPacked = gbNormal.Sample(pointSampler, uv);
-    depth        = gbDepth.Sample(pointSampler, uv).r;
-    positionWS   = gbPosition.Sample(pointSampler, uv);
+    albedoAO     = gbAlbedo.Sample(linearSampler, uv);
+    normalPacked = gbNormal.Sample(linearSampler, uv);
+    depth        = gbDepth.Sample(linearSampler, uv).r;
+    positionWS   = gbPosition.Sample(linearSampler, uv);
 #else
-    albedoAO     = gbufferAlbedo.Sample(pointSampler, uv);
-    normalPacked = gbufferNormal.Sample(pointSampler, uv);
-    depth        = gbufferDepth.Sample(pointSampler, uv).r;
-    positionWS   = gbufferPositionWS.Sample(pointSampler, uv);
+    albedoAO     = gbufferAlbedo.Sample(linearSampler, uv);
+    normalPacked = gbufferNormal.Sample(linearSampler, uv);
+    depth        = gbufferDepth.Sample(linearSampler, uv).r;
+    positionWS   = gbufferPositionWS.Sample(linearSampler, uv);
 #endif
 }
 

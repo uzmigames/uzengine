@@ -31,6 +31,7 @@
 
 #include "render_graph_types.h"
 #include "cascade.h"
+#include "instance_batcher.h"
 #include "rhi_types.h"
 
 #include <cstdint>
@@ -108,6 +109,13 @@ struct ShadowPassDesc {
     ///
     /// The full atlas is `(atlasResolution * 2) x (atlasResolution * 2)`.
     uint32_t           atlasResolution;
+
+    // ── GPU Instancing (optional — set instanced=true to enable) ──────────
+    bool               instanced = false;       ///< True to use instanced draw path.
+    RHIPipelineHandle  instancedPipeline;       ///< PSO compiled with UZ_INSTANCED=1.
+    uint32_t           instanceBufferSrvIndex = UINT32_MAX; ///< SRV index for StructuredBuffer<InstanceData>.
+    const InstanceBatch* batchData = nullptr;  ///< Pointer to instanced draw batches array.
+    uint32_t           batchCount = 0;         ///< Number of batches in the array.
 };
 
 /// Registers a shadow depth pass in the render graph.

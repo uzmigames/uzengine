@@ -49,11 +49,24 @@ pub fn build(b: *std.Build) void {
         "engine/renderer/shadows",
         "engine/renderer/ibl",
         "engine/renderer/passes",
+        "engine/renderer/passes/geometry",
+        "engine/renderer/passes/lighting",
+        "engine/renderer/passes/atmosphere",
+        "engine/renderer/passes/postprocess",
+        "engine/renderer/passes/debug",
         "engine/asset",
         "engine/asset/formats",
         "engine/asset/importers",
         "engine/job",
         "engine/ecs",
+        "engine/ecs/core",
+        "engine/ecs/scene",
+        "engine/ecs/lighting",
+        "engine/ecs/mesh",
+        "engine/ecs/environment",
+        "engine/ecs/metadata",
+        "engine/ecs/update",
+        "engine/ecs/loaders",
         "engine/scripting",
         "engine/scripting/api/scene",
         "engine/scripting/api/core",
@@ -160,12 +173,21 @@ pub fn build(b: *std.Build) void {
     addCppDir(runtime_mod, b, "engine/renderer/memory", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/mesh", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/upload", cpp_flags);
-    addCppDir(runtime_mod, b, "engine/renderer/passes", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/renderer/passes/geometry", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/renderer/passes/lighting", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/renderer/passes/atmosphere", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/renderer/passes/postprocess", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/renderer/passes/debug", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/shadows", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/render_graph", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/ibl", cpp_flags);
     addCppDir(runtime_mod, b, "engine/job", cpp_flags);
-    addCppDir(runtime_mod, b, "engine/ecs", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/ecs/core", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/ecs/scene", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/ecs/lighting", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/ecs/mesh", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/ecs/update", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/ecs/loaders", cpp_flags);
     addCppDir(runtime_mod, b, "engine/scripting", cpp_flags);
     addCppDir(runtime_mod, b, "engine/scripting/api/scene", cpp_flags);
     addCppDir(runtime_mod, b, "engine/scripting/api/core", cpp_flags);

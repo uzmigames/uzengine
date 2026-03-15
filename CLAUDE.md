@@ -147,6 +147,62 @@ auto result = uz::ImageDiff::Compare(pixelsA, wA, hA, pixelsB, wB, hB);
 // result.diffPercentage, result.psnr, result.identical, etc.
 ```
 
+## ⚠️ CRITICAL: GPU Debugging — Never Guess, Always Diagnose
+
+**MANDATORY**: When a rendering feature produces wrong output (black screen, wrong colors, white sky, artifacts), you MUST follow a systematic diagnostic process. NEVER iterate blindly by changing code and hoping it works.
+
+### Why
+
+Rendering bugs are GPU-side. The CPU code can be "correct" while the GPU sees completely different data. The only way to diagnose is to inspect what the GPU actually received and produced. Guessing wastes time and money.
+
+### Diagnostic Workflow (in order)
+
+1. **CPU Readback First** — Before anything else, read back the GPU resource to CPU and log actual values:
+   - For LUTs/textures: read back a few diagnostic pixels and compare against known-good values
+   - For constant buffers: log every field as uploaded to GPU
+   - If values are wrong → fix the upload code. If values are correct → the shader logic is wrong.
+
+2. **Use RenderDoc/PIX** — Capture a frame and inspect:
+   - Is the correct shader bound?
+   - Are CBV/SRV/UAV descriptors pointing to the right resources?
+   - What are the actual constant buffer values as decoded by the tool?
+   - What does the UAV output texture look like?
+   - Step through the shader line-by-line if needed (compile with `-Zi -Od`)
+
+3. **Isolate the Pass** — Render ONLY the resource under test to screen:
+   - For a LUT: display it as a fullscreen quad
+   - For a render pass: disable all other passes and view only its output
+   - This eliminates all downstream bugs from consideration
+
+4. **Validate Against Known-Good Values** — Every LUT/texture has mathematically predictable values:
+   - Transmittance LUT: zenith from ground → T ≈ (0.97, 0.98, 0.99); top of atmosphere → T ≈ (1,1,1)
+   - BRDF LUT: corner (0,0) ≈ (1,0); corner (1,1) ≈ (0.5, 0.5)
+   - If values don't match → the integration/math is wrong
+
+### Required Engine Infrastructure
+
+1. **PIX Event Markers**: Every render/compute pass MUST have `PIXBeginEvent`/`PIXEndEvent` markers
+2. **Debug Readback Path**: Every compute pass that generates a LUT MUST have a cvar-gated readback that logs diagnostic pixel values
+3. **Debug Shader Compilation**: Must support `-Zi -Od` flags for shader step-through in RenderDoc/PIX
+4. **DX12 Debug Layer**: Debug builds MUST enable `ID3D12Debug::EnableDebugLayer()` + GPU-Based Validation
+5. **DRED Breadcrumbs**: Enable `SetAutoBreadcrumbsEnablement(FORCED_ON)` for device-removed crash diagnosis
+
+### Atmosphere-Specific Validation
+
+| Check | Expected | If Wrong |
+|-------|----------|----------|
+| Units | All km (bottomRadius=6360, topRadius=6420) | Divide by 1000 if in meters |
+| Rayleigh β | (5.802e-3, 13.558e-3, 33.1e-3) km^-1 | Check unit conversion |
+| Mie β | 3.996e-3 km^-1 | Check unit conversion |
+| Scale heights | Rayleigh=8km, Mie=1.2km | Check CB upload |
+| Integration direction | Toward top of atmosphere | Reverse = black LUT |
+| UV mapping | Bruneton 2017 non-linear | Linear cosine = banding |
+| ClampCosine | clamp(mu, -1, 1) | Missing = NaN artifacts |
+
+### Skill Reference
+
+Use `/gpu-debug` for the full diagnostic workflow with step-by-step instructions.
+
 ## ⚠️ CRITICAL: Demo Build Order (Static Library Dependency)
 
 **MANDATORY**: Demos link against a **static library** built from the runtime. You MUST follow this exact build order or demos will link against stale code.

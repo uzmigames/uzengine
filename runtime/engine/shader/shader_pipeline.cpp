@@ -337,6 +337,7 @@ ShaderPipeline::CompileAllResult ShaderPipeline::CompileAll() {
                 desc.defines = defineStrings;
                 desc.stage = InferStageFromPath(shaderPath);
                 ApplyBindlessConfig(desc, m_impl->config.bindless);
+                desc.generateDebugInfo = m_impl->config.generateDebugInfo;
 
                 const bool useDXC = RequiresDXC(desc.model);
                 if (useDXC && !m_impl->compiler) {
@@ -582,6 +583,7 @@ bool ShaderPipeline::CompileShader(const std::string& virtualPath) {
         desc.defines = defineStrings;
         desc.stage = InferStageFromPath(virtualPath);
         ApplyBindlessConfig(desc, m_impl->config.bindless);
+        desc.generateDebugInfo = m_impl->config.generateDebugInfo;
 
         const bool useDXC = RequiresDXC(desc.model);
         if ((useDXC && !m_impl->compiler) || (!useDXC && !m_impl->compilerFXC)) {
@@ -663,6 +665,7 @@ std::vector<uint8_t> ShaderPipeline::LoadBytecode(
     desc.defines = defineStrings;
     desc.stage = InferStageFromPath(virtualPath);
     ApplyBindlessConfig(desc, m_impl->config.bindless);
+    desc.generateDebugInfo = m_impl->config.generateDebugInfo;
 
     const bool useDXC = RequiresDXC(desc.model);
     if ((useDXC && !m_impl->compiler) || (!useDXC && !m_impl->compilerFXC)) {
@@ -713,6 +716,7 @@ std::vector<uint8_t> ShaderPipeline::LoadBytecodeFromSource(
     desc.defines = defineStrings;
     desc.stage = InferStageFromPath(name);
     ApplyBindlessConfig(desc, m_impl->config.bindless);
+    desc.generateDebugInfo = m_impl->config.generateDebugInfo;
 
     const bool useDXC = RequiresDXC(desc.model);
     if ((useDXC && !m_impl->compiler) || (!useDXC && !m_impl->compilerFXC)) {

@@ -21,10 +21,13 @@
 #include "pbr_pass.h"
 #include "shadow_pass.h"
 #include "sky_atmosphere_pass.h"
+#include "transmittance_lut_pass.h"
+#include "sky_cubemap_capture_pass.h"
 #include "height_fog_pass.h"
 #include "render_graph_builder.h"
 #include "render_graph_resources.h"
 #include "cascade.h"
+#include "instance_batcher.h"
 #include "texture_loader.h"
 #include "upload_context.h"
 #include "vfs.h"
@@ -158,6 +161,57 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
         m_fallbackNormal = m_device->CreateTexture(fbDesc);
     }
 
+    // ── Transmittance LUT texture (256x64 RGBA16F) ──────────────────────────
+    // Created here; filled by the compute pass on first frame with sky atmosphere.
+    {
+        RHITextureDesc lutDesc{};
+        lutDesc.width     = 256;
+        lutDesc.height    = 64;
+        lutDesc.format    = RHIFormat::RGBA16Float;
+        lutDesc.usage     = RHITextureUsage::ShaderResource
+                          | RHITextureUsage::UnorderedAccess;
+        lutDesc.debugName = "TransmittanceLUT";
+
+        m_transmittanceLut = m_device->CreateTexture(lutDesc);
+        if (!m_transmittanceLut.IsValid()) {
+            UZ_LOG(Renderer, Error, "SceneRenderer: failed to create TransmittanceLUT texture");
+        } else {
+            m_transmittanceLutSrv = m_device->GetTextureSRVIndex(m_transmittanceLut);
+            m_transmittanceLutUav = m_device->GetTextureUAVIndex(m_transmittanceLut);
+            UZ_LOG(Renderer, Info, "SceneRenderer: TransmittanceLUT created (256x64 RGBA16F)");
+        }
+    }
+
+    // ── IBL Baker (bake BRDF LUT once) ────────────────────────────────
+    m_iblBaker = std::make_unique<IBLBaker>();
+    if (m_iblBaker->Init(device, m_shaderMgr.get())) {
+        m_brdfLutSrvIndex = m_iblBaker->BakeBRDFLut();
+        UZ_LOG(Renderer, Info, "SceneRenderer: BRDF LUT baked (SRV={})", m_brdfLutSrvIndex);
+    } else {
+        UZ_LOG(Renderer, Error, "SceneRenderer: failed to init IBL baker");
+    }
+
+    // ── Sky cubemap (64x64x6 RGBA16F) for IBL capture ──────────────────
+    {
+        RHITextureDesc cubeDesc{};
+        cubeDesc.width     = 64;
+        cubeDesc.height    = 64;
+        cubeDesc.depthOrArraySize = 6;
+        cubeDesc.format    = RHIFormat::RGBA16Float;
+        cubeDesc.usage     = RHITextureUsage::ShaderResource
+                           | RHITextureUsage::UnorderedAccess;
+        cubeDesc.debugName = "SkyCubemap";
+
+        m_skyCubemap = m_device->CreateTexture(cubeDesc);
+        if (m_skyCubemap.IsValid()) {
+            m_skyCubemapSrv = m_device->GetTextureSRVIndex(m_skyCubemap);
+            m_skyCubemapUav = m_device->GetTextureUAVIndex(m_skyCubemap);
+            UZ_LOG(Renderer, Info, "SceneRenderer: Sky cubemap created (64x64x6 RGBA16F)");
+        } else {
+            UZ_LOG(Renderer, Error, "SceneRenderer: failed to create sky cubemap texture");
+        }
+    }
+
     UZ_LOG(Renderer, Info, "SceneRenderer initialized ({}x{}, {})",
            width, height, RenderPathToString(m_renderPath));
     return true;
@@ -216,6 +270,21 @@ void SceneRenderer::Shutdown() {
         m_device->DestroyTexture(m_shadowAtlas);
         m_shadowAtlas = RHITextureHandle{};
         m_shadowAtlasSrv = UINT32_MAX;
+    }
+
+    // ── IBL resources ──────────────────────────────────────────────────
+    if (m_iblBaker) m_iblBaker->Shutdown();
+    if (m_skyCubemap.IsValid()) {
+        m_device->DestroyTexture(m_skyCubemap);
+        m_skyCubemap = RHITextureHandle{};
+        m_skyCubemapSrv = UINT32_MAX;
+        m_skyCubemapUav = UINT32_MAX;
+    }
+
+    // ── Instance buffer cleanup ─────────────────────────────────────
+    if (m_instanceBuffer.IsValid()) {
+        m_device->DestroyBuffer(m_instanceBuffer);
+        m_instanceBuffer = RHIBufferHandle{};
     }
 
     if (m_statsOverlay)  m_statsOverlay->Shutdown();
@@ -358,6 +427,12 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     perFrame.nearPlane   = camera.GetNearPlane();
     perFrame.farPlane    = camera.GetFarPlane();
 
+    // ── IBL SRV indices (set once after first bake, UINT32_MAX = no IBL) ──
+    perFrame.irradianceSrvIndex  = m_iblResult.irradianceSrvIndex;
+    perFrame.prefilteredSrvIndex = m_iblResult.prefilteredSrvIndex;
+    perFrame.brdfLutSrvIndex     = m_brdfLutSrvIndex;
+    perFrame.prefilteredMipLevels = 5;
+
     // ── Extract directional light from ECS ──────────────────────────────
     Vec3 sunDir = Vec3{0.5f, 0.3f, 0.8f}.Normalized();  // default
     Vec3 sunColor = {3.0f, 2.85f, 2.7f};
@@ -455,6 +530,64 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     SyncWorldToDrawList(world, vfs, cmdList, drawList);
     drawList.Sort();
 
+    // ── GPU Instancing — batch identical mesh+material draw commands ────
+    std::vector<InstanceBatch> instanceBatches;
+    std::vector<InstanceData> instanceDataVec;
+    BuildInstanceBatches(drawList, instanceBatches, instanceDataVec);
+
+    // Ensure instance buffer has enough capacity (recreate only when too small)
+    const auto instanceCount = static_cast<uint32_t>(instanceDataVec.size());
+    const bool useInstancing = bindless && instanceCount > 0;
+
+    if (useInstancing && instanceCount > m_instanceBufferCapacity) {
+        // Need a bigger buffer — wait for GPU idle before destroying the old one
+        if (m_instanceBuffer.IsValid()) {
+            m_device->WaitIdle();
+            m_device->DestroyBuffer(m_instanceBuffer);
+            m_instanceBuffer = RHIBufferHandle{};
+        }
+
+        // Round up to next power of two for stable allocation
+        uint32_t newCapacity = instanceCount;
+        newCapacity |= (newCapacity >> 1);
+        newCapacity |= (newCapacity >> 2);
+        newCapacity |= (newCapacity >> 4);
+        newCapacity |= (newCapacity >> 8);
+        newCapacity |= (newCapacity >> 16);
+        newCapacity++;
+        if (newCapacity < 16) newCapacity = 16;
+
+        RHIBufferDesc ibDesc{};
+        ibDesc.sizeBytes = newCapacity * sizeof(InstanceData);
+        ibDesc.stride    = sizeof(InstanceData);
+        ibDesc.usage     = RHIBufferUsage::StructuredBuffer;
+        ibDesc.memory    = RHIMemoryType::Upload;
+        ibDesc.debugName = "InstanceBuffer";
+
+        m_instanceBuffer = m_device->CreateBuffer(ibDesc);
+        if (m_instanceBuffer.IsValid()) {
+            m_instanceBufferCapacity = newCapacity;
+            m_instanceBufferSrvIndex = m_device->GetBufferSRVIndex(m_instanceBuffer);
+        } else {
+            m_instanceBufferCapacity = 0;
+            m_instanceBufferSrvIndex = UINT32_MAX;
+        }
+    }
+
+    // Upload instance data — must wait for GPU to finish reading from previous frame.
+    // TODO(perf): Replace with per-frame ring offset or triple-buffered instance buffers.
+    uint32_t instanceBufferSrvIndex = UINT32_MAX;
+    if (useInstancing && m_instanceBuffer.IsValid()) {
+        m_device->WaitIdle();
+        void* mapped = m_device->MapBuffer(m_instanceBuffer);
+        if (mapped) {
+            std::memcpy(mapped, instanceDataVec.data(),
+                        instanceCount * sizeof(InstanceData));
+            m_device->UnmapBuffer(m_instanceBuffer);
+        }
+        instanceBufferSrvIndex = m_instanceBufferSrvIndex;
+    }
+
     // ── Record frame via render graph ───────────────────────────────────
     const float vpWidth = static_cast<float>(swapChain->GetWidth());
     const float vpHeight = static_cast<float>(swapChain->GetHeight());
@@ -497,6 +630,13 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
         }
         shadowDesc.cascadeCount     = shadowCfg.cascadeCount;
         shadowDesc.atlasResolution  = kShadowResolution;
+        if (useInstancing) {
+            shadowDesc.instanced              = true;
+            shadowDesc.instancedPipeline      = pipelines->GetShadowDepthInstanced();
+            shadowDesc.instanceBufferSrvIndex = instanceBufferSrvIndex;
+            shadowDesc.batchData              = instanceBatches.data();
+            shadowDesc.batchCount             = static_cast<uint32_t>(instanceBatches.size());
+        }
         AddShadowPass(rgBuilder, shadowDesc);
     }
 
@@ -524,6 +664,13 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
             gbDesc.bindless             = bindless;
             gbDesc.viewportWidth        = vpWidth;
             gbDesc.viewportHeight       = vpHeight;
+            if (useInstancing) {
+                gbDesc.instanced              = true;
+                gbDesc.instancedPipeline      = pipelines->GetGBufferInstanced();
+                gbDesc.instanceBufferSrvIndex = instanceBufferSrvIndex;
+                gbDesc.batchData              = instanceBatches.data();
+                gbDesc.batchCount             = static_cast<uint32_t>(instanceBatches.size());
+            }
             AddGBufferPass(rgBuilder, gbDesc);
         }
 
@@ -635,15 +782,77 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
             auto& skyComp = skyView.get<SkyAtmosphereComponent>(enttEntity);
             if (!skyComp.enabled) continue;
 
-            // Build SkyAtmosphereCB from component data
+            // ── Transmittance LUT — import every frame so RG can track state ─
+            // Always import the LUT so the render graph emits correct UAV→SRV barriers.
+            // Import state must match the actual physical state of the texture:
+            //   - dirty (not yet computed): UAV (compute will write it this frame)
+            //   - filled (already computed): SRV (sky pass reads it, no compute needed)
+            rg::RgResourceId lutRes;
+            if (m_transmittanceLut.IsValid()) {
+                RHIResourceState lutImportState = m_transmittanceLutFilled
+                    ? RHIResourceState::ShaderResource
+                    : RHIResourceState::UnorderedAccess;
+                lutRes = rgBuilder.ImportTexture("TransmittanceLUT",
+                    m_transmittanceLut, lutImportState);
+            }
+
+            if (m_transmittanceLutDirty && m_transmittanceLut.IsValid()
+                    && m_transmittanceLutUav != UINT32_MAX) {
+                TransmittanceLutRootConstants lutRC{};
+                lutRC.rayleighBetaX  = skyComp.rayleighScattering.x;
+                lutRC.rayleighBetaY  = skyComp.rayleighScattering.y;
+                lutRC.rayleighBetaZ  = skyComp.rayleighScattering.z;
+                lutRC.rayleighScaleH = skyComp.rayleighScaleHeightKm;
+                lutRC.mieBeta        = skyComp.mieScattering;
+                lutRC.mieScaleH      = skyComp.mieScaleHeightKm;
+                lutRC.bottomRadiusKm = skyComp.bottomRadiusKm;
+                lutRC.topRadiusKm    = skyComp.bottomRadiusKm + skyComp.atmosphereHeightKm;
+
+                TransmittanceLutPassDesc lutPassDesc{};
+                lutPassDesc.lutTarget      = lutRes;
+                lutPassDesc.pipeline       = pipelines->GetTransmittanceLut();
+                lutPassDesc.rootConstants  = lutRC;
+                lutPassDesc.lutUavIndex    = m_transmittanceLutUav;
+                AddTransmittanceLutPass(rgBuilder, lutPassDesc);
+
+                m_transmittanceLutDirty  = false;
+                m_transmittanceLutFilled = true;   // Physical state after compute = SRV
+            }
+
+            // ── Sky Cubemap Capture (for IBL) ───────────────────────────
+            if (m_skyIBLDirty && m_skyCubemap.IsValid()
+                    && m_skyCubemapUav != UINT32_MAX
+                    && m_transmittanceLutSrv != UINT32_MAX) {
+                auto cubeRes = rgBuilder.ImportTexture(
+                    "SkyCubemap", m_skyCubemap, RHIResourceState::UnorderedAccess);
+
+                SkyCubemapCaptureRootConstants cubeRC{};
+                cubeRC.bottomRadiusKm     = skyComp.bottomRadiusKm;
+                cubeRC.topRadiusKm        = skyComp.bottomRadiusKm + skyComp.atmosphereHeightKm;
+                cubeRC.rayleighScaleH     = skyComp.rayleighScaleHeightKm;
+                cubeRC.mieScaleH          = skyComp.mieScaleHeightKm;
+                cubeRC.sunDirX            = sunDir.x;
+                cubeRC.sunDirY            = sunDir.y;
+                cubeRC.sunDirZ            = sunDir.z;
+                cubeRC.transmittanceLutIdx = m_transmittanceLutSrv;
+
+                SkyCubemapCapturePassDesc cubePassDesc{};
+                cubePassDesc.cubemapTarget   = cubeRes;
+                cubePassDesc.pipeline        = pipelines->GetSkyCubemapCapture();
+                cubePassDesc.rootConstants   = cubeRC;
+                cubePassDesc.cubemapUavIndex = m_skyCubemapUav;
+                AddSkyCubemapCapturePass(rgBuilder, cubePassDesc);
+            }
+
+            // Build SkyAtmosphereCB — all distances in km (UE5 convention)
             SkyAtmosphereCB skyCB{};
             skyCB.rayleighScattering = {skyComp.rayleighScattering.x,
                                         skyComp.rayleighScattering.y,
                                         skyComp.rayleighScattering.z,
-                                        skyComp.rayleighScaleHeight};
+                                        skyComp.rayleighScaleHeightKm};
             skyCB.mieScattering      = {skyComp.mieScattering,
                                         skyComp.mieAnisotropy,
-                                        skyComp.mieScaleHeight, 0.f};
+                                        skyComp.mieScaleHeightKm, 0.f};
             skyCB.groundAlbedo       = {skyComp.groundAlbedo.x,
                                         skyComp.groundAlbedo.y,
                                         skyComp.groundAlbedo.z, 0.f};
@@ -651,24 +860,26 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
                                         skyComp.sunIlluminance.y,
                                         skyComp.sunIlluminance.z,
                                         skyComp.sunAngularRadius};
-            skyCB.planetRadius       = skyComp.planetRadius;
-            skyCB.atmosphereHeight   = skyComp.atmosphereHeight;
+            skyCB.bottomRadiusKm     = skyComp.bottomRadiusKm;
+            skyCB.atmosphereHeightKm = skyComp.atmosphereHeightKm;
             skyCB.sunDiskIntensity   = skyComp.sunDiskIntensity;
 
             CBAllocation skyAlloc = m_cbRing->Allocate(sizeof(SkyAtmosphereCB));
             std::memcpy(skyAlloc.cpuPtr, &skyCB, sizeof(SkyAtmosphereCB));
 
             SkyAtmospherePassDesc skyDesc{};
-            skyDesc.backbuffer      = bbRes;
-            skyDesc.depthGBuffer    = depthRes;
-            skyDesc.perFrameAlloc   = perFrameAlloc;
-            skyDesc.skyAtmosphereAlloc = skyAlloc;
-            skyDesc.pipeline        = pipelines->GetSkyAtmosphere();
-            skyDesc.depthSrvIndex   = m_gbuffer.depthSRV;
-            skyDesc.depthTexture    = m_gbuffer.depth;
-            skyDesc.bindless        = bindless;
-            skyDesc.viewportWidth   = vpWidth;
-            skyDesc.viewportHeight  = vpHeight;
+            skyDesc.backbuffer              = bbRes;
+            skyDesc.depthGBuffer            = depthRes;
+            skyDesc.perFrameAlloc           = perFrameAlloc;
+            skyDesc.skyAtmosphereAlloc      = skyAlloc;
+            skyDesc.pipeline                = pipelines->GetSkyAtmosphere();
+            skyDesc.depthSrvIndex           = m_gbuffer.depthSRV;
+            skyDesc.depthTexture            = m_gbuffer.depth;
+            skyDesc.transmittanceLutSrvIndex = m_transmittanceLutSrv;
+            skyDesc.transmittanceLutRes      = lutRes;
+            skyDesc.bindless                = bindless;
+            skyDesc.viewportWidth           = vpWidth;
+            skyDesc.viewportHeight          = vpHeight;
             AddSkyAtmospherePass(rgBuilder, skyDesc);
 
             break;  // Only use first SkyAtmosphereComponent found
@@ -742,29 +953,16 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
             m_editorGrid->Draw(cmd, *m_cbRing, camera);
 
             if (m_statsOverlayInitialized) {
-                m_statsOverlay->SetDrawCalls(static_cast<uint32_t>(drawList.Count()));
+                const uint32_t reportedDrawCalls = useInstancing
+                    ? static_cast<uint32_t>(instanceBatches.size())
+                    : static_cast<uint32_t>(drawList.Count());
+                m_statsOverlay->SetDrawCalls(reportedDrawCalls);
                 m_statsOverlay->Render(cmd, *m_cbRing, frameIndex);
             }
 
             cmd->EndRenderPass();
         });
     });
-
-    // ── Screenshot capture pass (injected before Present if requested) ──
-    if (m_screenshotPending) {
-        if (!m_screenshotCapture.IsInitialized()) {
-            m_screenshotCapture.Init(m_device, m_width, m_height);
-        }
-        rgBuilder.AddPass("ScreenshotCapture", [&](rg::RgPassBuilder& pb) {
-            pb.Read(bbRes, RHIResourceState::RenderTarget);
-            pb.SetExecutionCallback([&](IRHICommandList* cmd, const rg::RgPassResources& res) {
-                (void)res;
-                m_screenshotCapture.CaptureBackBuffer(cmd, swapChain);
-                m_screenshotSaveDeferred = true;
-                m_screenshotPending      = false;
-            });
-        });
-    }
 
     // ── Present transition ──────────────────────────────────────────────
     rgBuilder.AddPass("Present", [&](rg::RgPassBuilder& pb) {
@@ -775,18 +973,48 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     rgBuilder.Compile();
     rgBuilder.Execute(cmdList);
 
+    // ── IBL bake from sky cubemap (outside render graph — own GPU work) ──
+    // Must happen after render graph executes so the cubemap is filled.
+    // BakeEnvironment submits its own commands synchronously.
+    if (m_skyIBLDirty && m_iblBaker && m_iblBaker->IsInitialized()
+            && m_skyCubemapSrv != UINT32_MAX) {
+        cmdList->End();
+        cmdList->Execute();
+        m_device->WaitIdle();  // ensure cubemap compute is finished
+
+        m_iblResult = m_iblBaker->BakeEnvironment(m_skyCubemapSrv);
+        m_skyIBLDirty = false;
+        UZ_LOG(Renderer, Info, "SceneRenderer: Sky IBL baked (irrad={}, prefilt={})",
+               m_iblResult.irradianceSrvIndex, m_iblResult.prefilteredSrvIndex);
+
+        // Re-open command list for the remaining work (screenshot, present)
+        cmdList->Begin();
+    }
+
+    // ── Screenshot capture (after all passes, before End) ───────────────
+    // Capture directly from the backbuffer after the render graph executed
+    // all passes. The backbuffer is in Present state after the render graph,
+    // so CaptureFromPresent handles the Present→CopySrc→Present transitions.
+    const bool doScreenshot = m_screenshotPending;
+    if (doScreenshot) {
+        if (!m_screenshotCapture.IsInitialized()) {
+            m_screenshotCapture.Init(m_device, m_width, m_height);
+        }
+        m_screenshotCapture.CaptureFromPresent(cmdList, swapChain);
+        m_screenshotPending = false;
+    }
+
     // ── End command list ────────────────────────────────────────────────
     cmdList->End();
     cmdList->Execute();
 
-    // ── Save screenshot after GPU execution ─────────────────────────────
-    // GPU commands were submitted above — wait for idle, then save PNG.
-    if (m_screenshotSaveDeferred) {
+    // ── Save screenshot immediately after GPU finishes ──────────────────
+    if (doScreenshot) {
         m_device->WaitIdle();
         m_screenshotCapture.SaveToPNG(m_screenshotPath);
-        m_screenshotSaveDeferred = false;
         m_screenshotPath.clear();
     }
+
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

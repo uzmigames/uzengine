@@ -194,26 +194,69 @@ static_assert(sizeof(ShadowDataCB) == 512, "ShadowDataCB must be 512 bytes (256-
 
 /// Sky atmosphere constant buffer for the sky rendering pass.
 ///
-/// Contains Rayleigh/Mie scattering parameters, sun properties, and planet
-/// geometry for single-scatter atmospheric sky rendering (Hillaire 2020 model).
+/// Follows UE5 SkyAtmosphereComponent conventions: all distances in KILOMETERS.
+/// Scattering coefficients are km^-1. Planet center is placed at
+/// (0, -bottomRadiusKm, 0) in sky-space so world Y=0 = sea level.
 ///
 /// Bound at register `b2` (reuses the per-object CBV slot, which is unused
-/// in fullscreen passes). All distance values are in meters.
+/// in fullscreen passes).
 ///
 /// Padded to 256 bytes as required by D3D12 constant buffer alignment.
 struct SkyAtmosphereCB {
-    Vec4  rayleighScattering;   ///< xyz = coefficients (m^-1), w = scale height (m).
-    Vec4  mieScattering;        ///< x = coefficient (m^-1), y = anisotropy g, z = scale height (m), w = unused.
+    Vec4  rayleighScattering;   ///< xyz = coefficients (km^-1), w = scale height (km).
+    Vec4  mieScattering;        ///< x = coefficient (km^-1), y = anisotropy g, z = scale height (km), w = unused.
     Vec4  groundAlbedo;         ///< xyz = ground reflectance, w = unused.
     Vec4  sunIlluminance;       ///< xyz = sun color * illuminance, w = sun angular radius (rad).
-    float planetRadius;         ///< Planet radius in meters (center to sea level).
-    float atmosphereHeight;     ///< Atmosphere thickness in meters (sea level to top).
+    float bottomRadiusKm;       ///< Planet radius in km (center to sea level). UE5: BottomRadiusKm.
+    float atmosphereHeightKm;   ///< Atmosphere thickness in km. UE5: AtmosphereHeightKm.
     float sunDiskIntensity;     ///< Multiplier for the sun disk brightness.
     float _skyPad[1] = {};      ///< Pad to 16-byte boundary.
     float _skyPad2[44] = {};    ///< Pad to 256-byte alignment.
 };
 
 static_assert(sizeof(SkyAtmosphereCB) == 256, "SkyAtmosphereCB must be 256 bytes (D3D12 CB alignment)");
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AtmosphereLutCB — bound at b0 in the transmittance LUT compute pass
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Constant buffer for the transmittance LUT compute shader.
+///
+/// Contains all parameters needed to integrate optical depth through the
+/// atmosphere for each (height, zenith angle) texel. Bound at register `b0`
+/// in the LUT compute pass (uses the compute root signature, not the
+/// graphics root signature).
+///
+/// Matches the HLSL struct in `transmittance_lut_cs.hlsl`:
+/// ```hlsl
+/// cbuffer AtmosphereLutCB : register(b0) {
+///     float3 rayleighBeta;     // km^-1
+///     float  rayleighScaleH;   // km
+///     float  mieBeta;          // km^-1
+///     float  mieScaleH;        // km
+///     float  bottomRadiusKm;
+///     float  topRadiusKm;
+///     uint   lutWidth;         // 256
+///     uint   lutHeight;        // 64
+///     float2 _pad;
+/// };
+/// ```
+///
+/// Padded to 256 bytes as required by D3D12 constant buffer alignment.
+struct AtmosphereLutCB {
+    Vec3     rayleighBeta;      ///< Rayleigh scattering coefficients (km^-1).
+    float    rayleighScaleH;    ///< Rayleigh scale height (km).
+    float    mieBeta;           ///< Mie scattering coefficient (km^-1).
+    float    mieScaleH;         ///< Mie scale height (km).
+    float    bottomRadiusKm;    ///< Planet surface radius (km).
+    float    topRadiusKm;       ///< Top of atmosphere radius (km).
+    uint32_t lutWidth;          ///< LUT width in texels (256).
+    uint32_t lutHeight;         ///< LUT height in texels (64).
+    float    _pad[2] = {};      ///< Pad to 16-byte boundary.
+    float    _pad2[52] = {};    ///< Pad to 256 bytes total.
+};
+
+static_assert(sizeof(AtmosphereLutCB) == 256, "AtmosphereLutCB must be 256 bytes (D3D12 CB alignment)");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HeightFogCB — bound at b2 (reusing per-object slot in fullscreen fog pass)

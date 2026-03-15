@@ -3,8 +3,8 @@
 #include "script_component.h"
 #include "lua_vm.h"
 #include "log.h"
-#include "../ecs/world.h"
-#include "../ecs/entity.h"
+#include "world.h"
+#include "entity.h"
 #include "../asset/vfs.h"
 
 extern "C" {

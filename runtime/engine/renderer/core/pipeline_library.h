@@ -174,6 +174,24 @@ public:
     /// Returns the shadow depth pipeline using the device's default bindless mode.
     [[nodiscard]] RHIPipelineHandle GetShadowDepth();
 
+    /// Returns the instanced G-Buffer pipeline (mesh_vs+UZ_INSTANCED + gbuffer_ps, 3 RT + depth).
+    ///
+    /// Uses `DrawIndexedInstanced` with per-instance transforms read from a
+    /// StructuredBuffer via `SV_InstanceID`. Only available on SM6.6 bindless path.
+    ///
+    /// # Returns
+    /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
+    [[nodiscard]] RHIPipelineHandle GetGBufferInstanced();
+
+    /// Returns the instanced shadow depth pipeline (shadow_depth_vs+UZ_INSTANCED, depth-only).
+    ///
+    /// Uses `DrawIndexedInstanced` with per-instance world matrices read from a
+    /// StructuredBuffer via `SV_InstanceID`. Only available on SM6.6 bindless path.
+    ///
+    /// # Returns
+    /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
+    [[nodiscard]] RHIPipelineHandle GetShadowDepthInstanced();
+
     /// Returns the sky atmosphere pipeline (fullscreen_vs + sky_atmosphere_ps, 1 RT, no depth).
     ///
     /// Rasterizer: no cull (fullscreen triangle).
@@ -183,6 +201,24 @@ public:
     /// # Returns
     /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
     [[nodiscard]] RHIPipelineHandle GetSkyAtmosphere();
+
+    /// Returns the transmittance LUT compute pipeline (transmittance_lut_cs.hlsl).
+    ///
+    /// Compute pipeline dispatched once per scene to fill a 256x64 RGBA16F texture
+    /// encoding optical transmittance vs (camera height, sun zenith angle).
+    ///
+    /// # Returns
+    /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
+    [[nodiscard]] RHIPipelineHandle GetTransmittanceLut();
+
+    /// Returns the sky cubemap capture compute pipeline (sky_cubemap_cs.hlsl).
+    ///
+    /// Compute pipeline dispatched to capture sky radiance into a 64x64x6 RGBA16F
+    /// cubemap for IBL baking. Reads the transmittance LUT via bindless SRV index.
+    ///
+    /// # Returns
+    /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
+    [[nodiscard]] RHIPipelineHandle GetSkyCubemapCapture();
 
     /// Returns the height fog pipeline (fullscreen_vs + height_fog_ps, 1 RT, alpha blend).
     ///
@@ -220,9 +256,13 @@ private:
     [[nodiscard]] bool EnsureGBufferDebugPixelShader();
     [[nodiscard]] bool EnsureDebugViewPixelShader();
     [[nodiscard]] bool EnsureForwardPixelShader();
+    [[nodiscard]] bool EnsureInstancedMeshShaders();
+    [[nodiscard]] bool EnsureInstancedShadowShaders();
     [[nodiscard]] bool EnsureShadowShaders();
     [[nodiscard]] bool EnsureSkyAtmospherePixelShader();
     [[nodiscard]] bool EnsureHeightFogPixelShader();
+    [[nodiscard]] bool EnsureTransmittanceLutShader();
+    [[nodiscard]] bool EnsureSkyCubemapCaptureShader();
 
     /// Creates a pipeline through the PSO cache. On cache hit, returns the
     /// cached handle without calling the device. On miss, creates via the
@@ -247,9 +287,13 @@ private:
     RHIShaderHandle m_lightingPS       = RHIShaderHandle::Invalid();
     RHIShaderHandle m_gbufferDebugPS   = RHIShaderHandle::Invalid();
     RHIShaderHandle m_debugViewPS      = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_instancedMeshVS  = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_instancedShadowVS = RHIShaderHandle::Invalid();
     RHIShaderHandle m_shadowVS         = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_skyAtmospherePS  = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_heightFogPS      = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_skyAtmospherePS      = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_heightFogPS          = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_transmittanceLutCS      = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_skyCubemapCaptureCS    = RHIShaderHandle::Invalid();
 
     // ── Cached pipeline handles (one per bindless variant) ──────────────
     RHIPipelineHandle m_forwardPBR         = RHIPipelineHandle::Invalid();
@@ -261,8 +305,12 @@ private:
     RHIPipelineHandle m_debugView             = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_shadowDepth           = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_shadowDepthBindless   = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_gbufferInstanced      = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_shadowDepthInstanced  = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_skyAtmosphere         = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_heightFog             = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_transmittanceLut      = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_skyCubemapCapture    = RHIPipelineHandle::Invalid();
 };
 
 } // namespace uz

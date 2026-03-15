@@ -93,6 +93,23 @@ public:
     /// Valid `RHIShaderHandle` on success, invalid handle on failure (error logged).
     [[nodiscard]] RHIShaderHandle CreateShader(EngineShader shader, RHIShaderStage stage);
 
+    /// Compile and create an RHI shader handle with additional preprocessor defines.
+    ///
+    /// Same as `CreateShader()` but injects extra semicolon-separated defines
+    /// (e.g., "UZ_INSTANCED=1") into the compilation. Used for shader variants
+    /// that share the same source file but need different #ifdef paths.
+    ///
+    /// # Arguments
+    /// * `shader`  — Engine shader enum value.
+    /// * `stage`   — Shader stage (must match the shader's actual stage).
+    /// * `defines` — Semicolon-separated defines (e.g., "UZ_INSTANCED=1").
+    ///
+    /// # Returns
+    /// Valid `RHIShaderHandle` on success, invalid handle on failure (error logged).
+    [[nodiscard]] RHIShaderHandle CreateShaderWithDefines(EngineShader shader,
+                                                          RHIShaderStage stage,
+                                                          const std::string& defines);
+
     /// Shutdown and release all resources.
     ///
     /// Resets compilers and pipeline. Safe to call multiple times or without

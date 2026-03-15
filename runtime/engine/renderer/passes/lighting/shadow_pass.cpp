@@ -113,12 +113,22 @@ void AddShadowPass(rg::RgBuilder& builder, const ShadowPassDesc& desc)
                 cmd->BeginRenderPass(passDesc);
 
                 // ── Bind pipeline and vertex/index state ──────────────────
-                cmd->SetPipeline(desc.pipeline);
+                const bool useInstanced = desc.instanced && desc.bindless && desc.batchData != nullptr && desc.batchCount > 0;
 
-                if (desc.bindless) {
-                    cmd->SetDescriptorIndex(kSlotRootConstants, desc.vertexBufferSrvIndex);
+                if (useInstanced) {
+                    cmd->SetPipeline(desc.instancedPipeline);
+                    const uint32_t rootConstants[2] = {
+                        desc.vertexBufferSrvIndex,
+                        desc.instanceBufferSrvIndex
+                    };
+                    cmd->SetRootConstants(kSlotRootConstants, rootConstants, 2);
                 } else {
-                    cmd->SetVertexBuffer(0, desc.vertexBuffer, 0);
+                    cmd->SetPipeline(desc.pipeline);
+                    if (desc.bindless) {
+                        cmd->SetDescriptorIndex(kSlotRootConstants, desc.vertexBufferSrvIndex);
+                    } else {
+                        cmd->SetVertexBuffer(0, desc.vertexBuffer, 0);
+                    }
                 }
 
                 cmd->SetIndexBuffer(desc.indexBuffer, desc.indexFormat, 0);
@@ -138,24 +148,47 @@ void AddShadowPass(rg::RgBuilder& builder, const ShadowPassDesc& desc)
                 cmd->SetRootCBV(kSlotShadow, shadowAlloc.bufferHandle, shadowAlloc.offsetBytes,
                                 shadowAlloc.cpuPtr, sizeof(ShadowCB));
 
-                // ── Draw loop — render all objects for this cascade ────────
-                for (const auto& drawCmd : commands) {
-                    PerObjectCB perObject{};
-                    perObject.model = drawCmd.worldMatrix;
-
-                    CBAllocation objAlloc = desc.cbAllocator->Allocate(sizeof(PerObjectCB));
-                    if (objAlloc.cpuPtr == nullptr) {
-                        UZ_LOG(Renderer, Error,
-                               "ShadowPass: CB ring exhausted at cascade {} draw {}",
-                               cascade, totalDrawCalls);
-                        break;
+                // ── Draw loop ─────────────────────────────────────────────
+                if (useInstanced) {
+                    // Instanced path — one draw per batch
+                    for (uint32_t bi = 0; bi < desc.batchCount; ++bi) {
+                        const auto& batch = desc.batchData[bi];
+                        // Shadow pass doesn't need material — just a dummy PerObjectCB
+                        PerObjectCB perObject{};
+                        CBAllocation objAlloc = desc.cbAllocator->Allocate(sizeof(PerObjectCB));
+                        if (objAlloc.cpuPtr == nullptr) {
+                            UZ_LOG(Renderer, Error,
+                                   "ShadowPass(instanced): CB ring exhausted at cascade {} batch {}",
+                                   cascade, totalDrawCalls);
+                            break;
+                        }
+                        std::memcpy(objAlloc.cpuPtr, &perObject, sizeof(PerObjectCB));
+                        cmd->SetRootCBV(kSlotPerObject, objAlloc.bufferHandle, objAlloc.offsetBytes,
+                                        objAlloc.cpuPtr, sizeof(PerObjectCB));
+                        cmd->DrawIndexed(desc.indexCount, batch.instanceCount,
+                                         0, 0, batch.firstInstance);
+                        ++totalDrawCalls;
                     }
-                    std::memcpy(objAlloc.cpuPtr, &perObject, sizeof(PerObjectCB));
+                } else {
+                    // Non-instanced path — one draw per command
+                    for (const auto& drawCmd : commands) {
+                        PerObjectCB perObject{};
+                        perObject.model = drawCmd.worldMatrix;
 
-                    cmd->SetRootCBV(kSlotPerObject, objAlloc.bufferHandle, objAlloc.offsetBytes,
-                                    objAlloc.cpuPtr, sizeof(PerObjectCB));
-                    cmd->DrawIndexed(desc.indexCount);
-                    ++totalDrawCalls;
+                        CBAllocation objAlloc = desc.cbAllocator->Allocate(sizeof(PerObjectCB));
+                        if (objAlloc.cpuPtr == nullptr) {
+                            UZ_LOG(Renderer, Error,
+                                   "ShadowPass: CB ring exhausted at cascade {} draw {}",
+                                   cascade, totalDrawCalls);
+                            break;
+                        }
+                        std::memcpy(objAlloc.cpuPtr, &perObject, sizeof(PerObjectCB));
+
+                        cmd->SetRootCBV(kSlotPerObject, objAlloc.bufferHandle, objAlloc.offsetBytes,
+                                        objAlloc.cpuPtr, sizeof(PerObjectCB));
+                        cmd->DrawIndexed(desc.indexCount);
+                        ++totalDrawCalls;
+                    }
                 }
 
                 cmd->EndRenderPass();

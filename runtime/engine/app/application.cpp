@@ -200,16 +200,16 @@ int Application::Run(int argc, char** argv) {
         // ── Game update ───────────────────────────────────────────────────
         OnUpdate(dt);
 
+        // ── Request screenshot BEFORE RenderFrame so it captures THIS frame ──
+        if (m_screenshotPending && m_frameIndex >= m_config.screenshotFrame) {
+            m_renderer->RequestScreenshot(m_config.screenshotPath);
+            m_screenshotPending = false;
+        }
+
         // ── Render frame (SceneRenderer drives Begin/End/Execute) ─────────
         m_renderer->RenderFrame(m_cmdList, m_swapChain,
                                 m_world.get(), m_vfs.get(),
                                 dt, m_frameIndex);
-
-        // ── Request screenshot via SceneRenderer (captures inside render graph) ──
-        if (m_screenshotPending && m_frameIndex + 1 >= m_config.screenshotFrame) {
-            m_renderer->RequestScreenshot(m_config.screenshotPath);
-            m_screenshotPending = false;
-        }
 
         // ── Present ───────────────────────────────────────────────────────
         m_swapChain->Present(m_config.vsync);

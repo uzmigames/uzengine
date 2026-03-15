@@ -6,7 +6,7 @@
 ///
 /// # Inputs
 /// - `g_InputMip` (t0): Source mip level to downsample.
-/// - `g_LinearSampler` (s0): Bilinear sampler for 2x2 box filter.
+/// - `linearSampler` (s0): Bilinear sampler for 2x2 box filter.
 /// - Root constants (b0): output dimensions + reciprocal input dimensions.
 ///
 /// # Outputs
@@ -31,7 +31,7 @@ cbuffer MipgenConstants : register(b0)
 
 Texture2D<float4>   g_InputMip      : register(t0);
 RWTexture2D<float4> g_OutputMip     : register(u0);
-SamplerState        g_LinearSampler : register(s0);
+SamplerState        linearSampler : register(s0);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Main
@@ -46,5 +46,5 @@ void CSMain(uint3 dtid : SV_DispatchThreadID)
     // Sample center of the 2x2 block in the input mip.
     // Bilinear filtering produces the box-filter average automatically.
     float2 uv = (float2(dtid.xy) + 0.5) * g_TexelSize;
-    g_OutputMip[dtid.xy] = g_InputMip.SampleLevel(g_LinearSampler, uv, 0);
+    g_OutputMip[dtid.xy] = g_InputMip.SampleLevel(linearSampler, uv, 0);
 }

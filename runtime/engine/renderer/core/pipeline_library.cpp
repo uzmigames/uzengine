@@ -83,8 +83,12 @@ void PipelineLibrary::Shutdown() {
     destroyPipeline(m_debugView);
     destroyPipeline(m_shadowDepth);
     destroyPipeline(m_shadowDepthBindless);
+    destroyPipeline(m_gbufferInstanced);
+    destroyPipeline(m_shadowDepthInstanced);
     destroyPipeline(m_skyAtmosphere);
     destroyPipeline(m_heightFog);
+    destroyPipeline(m_transmittanceLut);
+    destroyPipeline(m_skyCubemapCapture);
 
     // Destroy cached shaders
     auto destroyShader = [this](RHIShaderHandle& h) {
@@ -101,9 +105,13 @@ void PipelineLibrary::Shutdown() {
     destroyShader(m_lightingPS);
     destroyShader(m_gbufferDebugPS);
     destroyShader(m_debugViewPS);
+    destroyShader(m_instancedMeshVS);
+    destroyShader(m_instancedShadowVS);
     destroyShader(m_shadowVS);
     destroyShader(m_skyAtmospherePS);
     destroyShader(m_heightFogPS);
+    destroyShader(m_transmittanceLutCS);
+    destroyShader(m_skyCubemapCaptureCS);
 
     m_psoCache.Shutdown();
     m_psoDiskCache.reset();
@@ -470,6 +478,108 @@ RHIPipelineHandle PipelineLibrary::GetShadowDepth(bool bindless) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Instanced Pipelines — GPU Instancing variants (UZ_INSTANCED=1)
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool PipelineLibrary::EnsureInstancedMeshShaders() {
+    if (!m_instancedMeshVS.IsValid()) {
+        m_instancedMeshVS = m_shaderMgr->CreateShaderWithDefines(
+            EngineShader::MeshVS, RHIShaderStage::Vertex, "UZ_INSTANCED=1");
+        if (!m_instancedMeshVS.IsValid()) {
+            UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile MeshVS (instanced)");
+            return false;
+        }
+    }
+    return true;
+}
+
+bool PipelineLibrary::EnsureInstancedShadowShaders() {
+    if (!m_instancedShadowVS.IsValid()) {
+        m_instancedShadowVS = m_shaderMgr->CreateShaderWithDefines(
+            EngineShader::ShadowDepthVS, RHIShaderStage::Vertex, "UZ_INSTANCED=1");
+        if (!m_instancedShadowVS.IsValid()) {
+            UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile ShadowDepthVS (instanced)");
+            return false;
+        }
+    }
+    return true;
+}
+
+RHIPipelineHandle PipelineLibrary::GetGBufferInstanced() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetGBufferInstanced called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_gbufferInstanced.IsValid()) {
+        return m_gbufferInstanced;
+    }
+
+    if (!EnsureInstancedMeshShaders() || !EnsureGBufferPixelShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIGraphicsPipelineDesc desc{};
+    desc.vertexShader  = m_instancedMeshVS;
+    desc.pixelShader   = m_gbufferPS;
+    desc.topology      = RHIPrimitiveTopology::TriangleList;
+    desc.rasterizer.cullMode              = RHICullMode::Back;
+    desc.rasterizer.frontCounterClockwise = false;
+    desc.depthStencil.depthEnable         = true;
+    desc.depthStencil.depthWrite          = true;
+    desc.renderTargetFormats[0]           = RHIFormat::RGBA8Unorm;
+    desc.renderTargetFormats[1]           = RHIFormat::RGBA8Unorm;
+    desc.renderTargetFormats[2]           = RHIFormat::RGBA32Float;
+    desc.renderTargetCount                = 3;
+    desc.depthStencilFormat               = RHIFormat::D32Float;
+    desc.debugName                        = "GBuffer_Instanced";
+
+    m_gbufferInstanced = CreateCachedPipeline(desc);
+    if (!m_gbufferInstanced.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create GBuffer_Instanced pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created GBuffer_Instanced pipeline");
+    }
+
+    return m_gbufferInstanced;
+}
+
+RHIPipelineHandle PipelineLibrary::GetShadowDepthInstanced() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetShadowDepthInstanced called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_shadowDepthInstanced.IsValid()) {
+        return m_shadowDepthInstanced;
+    }
+
+    if (!EnsureInstancedShadowShaders()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIGraphicsPipelineDesc desc{};
+    desc.vertexShader  = m_instancedShadowVS;
+    desc.topology      = RHIPrimitiveTopology::TriangleList;
+    desc.rasterizer.cullMode              = RHICullMode::Back;
+    desc.rasterizer.frontCounterClockwise = false;
+    desc.depthStencil.depthEnable         = true;
+    desc.depthStencil.depthWrite          = true;
+    desc.renderTargetCount                = 0;
+    desc.depthStencilFormat               = RHIFormat::D32Float;
+    desc.debugName                        = "ShadowDepth_Instanced";
+
+    m_shadowDepthInstanced = CreateCachedPipeline(desc);
+    if (!m_shadowDepthInstanced.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create ShadowDepth_Instanced pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created ShadowDepth_Instanced pipeline");
+    }
+
+    return m_shadowDepthInstanced;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Sky Atmosphere Pipeline
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -579,6 +689,122 @@ RHIPipelineHandle PipelineLibrary::GetHeightFog() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Transmittance LUT Compute Pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool PipelineLibrary::EnsureTransmittanceLutShader() {
+    if (m_transmittanceLutCS.IsValid()) {
+        return true;
+    }
+
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::TransmittanceLutCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile TransmittanceLutCS");
+        return false;
+    }
+
+    RHIShaderDesc shaderDesc{};
+    shaderDesc.bytecode     = bytecode.data();
+    shaderDesc.bytecodeSize = bytecode.size();
+    shaderDesc.stage        = RHIShaderStage::Compute;
+    shaderDesc.entryPoint   = "main";
+    shaderDesc.debugName    = "transmittance_lut_cs";
+
+    m_transmittanceLutCS = m_device->CreateShader(shaderDesc);
+    if (!m_transmittanceLutCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create TransmittanceLutCS shader");
+        return false;
+    }
+    return true;
+}
+
+RHIPipelineHandle PipelineLibrary::GetTransmittanceLut() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetTransmittanceLut called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_transmittanceLut.IsValid()) {
+        return m_transmittanceLut;
+    }
+
+    if (!EnsureTransmittanceLutShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_transmittanceLutCS;
+    desc.debugName     = "TransmittanceLUT";
+
+    m_transmittanceLut = m_device->CreateComputePipeline(desc);
+    if (!m_transmittanceLut.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create TransmittanceLUT pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created TransmittanceLUT pipeline");
+    }
+
+    return m_transmittanceLut;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sky Cubemap Capture Compute Pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool PipelineLibrary::EnsureSkyCubemapCaptureShader() {
+    if (m_skyCubemapCaptureCS.IsValid()) {
+        return true;
+    }
+
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::SkyCubemapCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile SkyCubemapCS");
+        return false;
+    }
+
+    RHIShaderDesc shaderDesc{};
+    shaderDesc.bytecode     = bytecode.data();
+    shaderDesc.bytecodeSize = bytecode.size();
+    shaderDesc.stage        = RHIShaderStage::Compute;
+    shaderDesc.entryPoint   = "main";
+    shaderDesc.debugName    = "sky_cubemap_cs";
+
+    m_skyCubemapCaptureCS = m_device->CreateShader(shaderDesc);
+    if (!m_skyCubemapCaptureCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create SkyCubemapCS shader");
+        return false;
+    }
+    return true;
+}
+
+RHIPipelineHandle PipelineLibrary::GetSkyCubemapCapture() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetSkyCubemapCapture called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_skyCubemapCapture.IsValid()) {
+        return m_skyCubemapCapture;
+    }
+
+    if (!EnsureSkyCubemapCaptureShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_skyCubemapCaptureCS;
+    desc.debugName     = "SkyCubemapCapture";
+
+    m_skyCubemapCapture = m_device->CreateComputePipeline(desc);
+    if (!m_skyCubemapCapture.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create SkyCubemapCapture pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created SkyCubemapCapture pipeline");
+    }
+
+    return m_skyCubemapCapture;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // PSO Cache Integration
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -657,6 +883,8 @@ uint32_t PipelineLibrary::WarmupAll() {
     warmup(GetShadowDepth(bindless), "ShadowDepth");
     warmup(GetSkyAtmosphere(), "SkyAtmosphere");
     warmup(GetHeightFog(), "HeightFog");
+    warmup(GetTransmittanceLut(), "TransmittanceLUT");
+    warmup(GetSkyCubemapCapture(), "SkyCubemapCapture");
 
     // SM5 variants if device is bindless (need both paths)
     if (bindless) {

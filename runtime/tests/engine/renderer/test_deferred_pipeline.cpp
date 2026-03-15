@@ -17,8 +17,8 @@
 #include "constant_buffers.h"
 #include "render_graph_types.h"
 #include "rhi_types.h"
-#include "passes/gbuffer_pass.h"
-#include "passes/lighting_pass.h"
+#include "gbuffer_pass.h"
+#include "lighting_pass.h"
 
 #include <gtest/gtest.h>
 

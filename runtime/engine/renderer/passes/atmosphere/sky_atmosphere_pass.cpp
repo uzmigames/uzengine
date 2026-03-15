@@ -26,6 +26,9 @@ void AddSkyAtmospherePass(rg::RgBuilder& builder, const SkyAtmospherePassDesc& d
     builder.AddPass("SkyAtmosphere", [desc](rg::RgPassBuilder& pb) {
         pb.Write(desc.backbuffer, RHIResourceState::RenderTarget);
         pb.Read(desc.depthGBuffer, RHIResourceState::ShaderResource);
+        // Declare LUT as read so the render graph emits the UAV→SRV barrier after the compute pass.
+        if (desc.transmittanceLutRes.IsValid())
+            pb.Read(desc.transmittanceLutRes, RHIResourceState::ShaderResource);
 
         pb.SetExecutionCallback([desc](IRHICommandList* cmd, const rg::RgPassResources& res) {
             UZ_PROFILE_SCOPE("SkyAtmosphere::Execute");
@@ -54,14 +57,19 @@ void AddSkyAtmospherePass(rg::RgBuilder& builder, const SkyAtmospherePassDesc& d
                             desc.skyAtmosphereAlloc.offsetBytes,
                             desc.skyAtmosphereAlloc.cpuPtr, sizeof(SkyAtmosphereCB));
 
-            // ── Bind depth texture for sky masking ───────────────────────
+            // ── Bind depth texture + transmittance LUT ──────────────────
             if (desc.bindless) {
                 const uint32_t indices[4] = {
-                    desc.depthSrvIndex, 0, 0, 0
+                    desc.depthSrvIndex,
+                    desc.transmittanceLutSrvIndex,
+                    0, 0
                 };
                 cmd->SetRootConstants(kSlotRootConstants, indices, 4);
             } else {
                 cmd->SetFragmentTexture(0, desc.depthTexture);
+                // t1: transmittance LUT (non-bindless, SM5 path)
+                // Note: SM5 sky shader uses USE_TRANSMITTANCE_LUT define — if LUT not
+                // available (UINT32_MAX) the shader falls back to the ray-march path.
             }
 
             // ── Viewport and scissor ─────────────────────────────────────

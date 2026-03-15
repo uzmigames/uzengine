@@ -75,7 +75,11 @@ cbuffer PerFrameCB : register(b1) {
     row_major float4x4 invViewProj; ///< Inverse view-projection for world position reconstruction
     float    nearPlane;          ///< Near clip plane distance in world units.
     float    farPlane;           ///< Far clip plane distance in world units.
-    float    _framePad[10];      ///< Remaining padding to 256-byte boundary
+    uint     irradianceSrvIndex;    ///< SRV index for irradiance cubemap (0xFFFFFFFF = no IBL).
+    uint     prefilteredSrvIndex;   ///< SRV index for prefiltered specular cubemap.
+    uint     brdfLutSrvIndex;       ///< SRV index for BRDF integration LUT.
+    uint     prefilteredMipLevels;  ///< Number of prefiltered mip levels.
+    float    _framePad[6];       ///< Remaining padding to 256-byte boundary
 };
 
 /// Single point light for the deferred lighting pass.
@@ -127,8 +131,8 @@ Texture2D<float>  shadowAtlasTexture : register(t3); ///< CSM shadow depth atlas
 Texture2D<float4> gbufferPositionWS  : register(t4); ///< xyz = world-space position (RGBA32Float), a = 1
 #endif
 
-/// Point/nearest sampler for G-Buffer reads — no filtering on discrete data.
-SamplerState pointSampler : register(s0);
+/// Linear (bilinear wrap) sampler at s0 — standard engine-wide sampler.
+SamplerState linearSampler : register(s0);
 
 /// Comparison sampler for percentage-closer filtering on shadow depth maps.
 /// Uses LESS comparison — returns 1.0 when the sample passes (fragment is lit).
@@ -164,6 +168,25 @@ float3 ReconstructWorldPosition(float2 uv, float depth) {
 #include "../include/shadow_common.hlsli"
 
 // ─────────────────────────────────────────────────────────────────────────────
+// IBL Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Fresnel-Schlick approximation with roughness for IBL ambient term.
+///
+/// Unlike the standard FresnelSchlick used in direct lighting, this variant
+/// accounts for surface roughness to reduce Fresnel reflections on rough surfaces
+/// at grazing angles. Prevents overly bright rims on rough dielectrics.
+///
+/// # Parameters
+/// - cosTheta: dot(N, V) clamped to [0,1]
+/// - F0: reflectance at normal incidence
+/// - roughness: perceptual roughness [0,1]
+float3 FresnelSchlickRoughness(float cosTheta, float3 F0, float roughness) {
+    float smoothness = 1.0f - roughness;
+    return F0 + (max(float3(smoothness, smoothness, smoothness), F0) - F0) * pow(1.0f - cosTheta, 5.0f);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Pixel Shader Entry Point
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -187,14 +210,14 @@ float4 main(FSInput input) : SV_Target {
     Texture2D<float4> gbNormal = ResourceDescriptorHeap[gBufIndices.normalIdx];
     Texture2D<float>  gbDepth  = ResourceDescriptorHeap[gBufIndices.depthIdx];
 
-    float4 albedoAO     = gbAlbedo.Sample(pointSampler, uv);
-    float4 normalPacked = gbNormal.Sample(pointSampler, uv);
-    float  depth        = gbDepth.Sample(pointSampler, uv).r;
+    float4 albedoAO     = gbAlbedo.Sample(linearSampler, uv);
+    float4 normalPacked = gbNormal.Sample(linearSampler, uv);
+    float  depth        = gbDepth.Sample(linearSampler, uv).r;
 #else
     // SM5 path: register-bound textures at t0-t2
-    float4 albedoAO     = gbufferAlbedo.Sample(pointSampler, uv);
-    float4 normalPacked = gbufferNormal.Sample(pointSampler, uv);
-    float  depth        = gbufferDepth.Sample(pointSampler, uv).r;
+    float4 albedoAO     = gbufferAlbedo.Sample(linearSampler, uv);
+    float4 normalPacked = gbufferNormal.Sample(linearSampler, uv);
+    float  depth        = gbufferDepth.Sample(linearSampler, uv).r;
 #endif
 
     float3 albedo    = albedoAO.rgb;
@@ -209,9 +232,9 @@ float4 main(FSInput input) : SV_Target {
 #ifdef UZ_WORLDPOS_GBUFFER
 #ifdef UZ_BINDLESS
     Texture2D<float4> gbPosition = ResourceDescriptorHeap[gBufIndices.positionIdx];
-    float3 worldPos = gbPosition.Sample(pointSampler, uv).xyz;
+    float3 worldPos = gbPosition.Sample(linearSampler, uv).xyz;
 #else
-    float3 worldPos = gbufferPositionWS.Sample(pointSampler, uv).xyz;
+    float3 worldPos = gbufferPositionWS.Sample(linearSampler, uv).xyz;
 #endif
 #else
     float3 worldPos = ReconstructWorldPosition(uv, depth);
@@ -264,9 +287,40 @@ float4 main(FSInput input) : SV_Target {
                            albedo, metallic, alpha, F0);
     }
 
-    // ── Ambient (constant approximation; will be replaced with GI probes) ──
-    float3 ambient = ambientColor.xyz * albedo * ao;
+    // ── Ambient: IBL or constant fallback ──────────────────────────────
+    float  NdotV = max(dot(N, V), 0.0f);
+    float3 ambient;
 
+#ifdef UZ_BINDLESS
+    if (irradianceSrvIndex != 0xFFFFFFFF) {
+        // IBL available — sample irradiance cubemap for diffuse ambient
+        TextureCube<float4> irradianceMap = ResourceDescriptorHeap[irradianceSrvIndex];
+        float3 irradiance = irradianceMap.SampleLevel(linearSampler, N, 0).rgb;
+
+        // Fresnel: metals reflect more at grazing, dielectrics diffuse more
+        float3 F = FresnelSchlickRoughness(NdotV, F0, roughness);
+        float3 kD = (1.0f - F) * (1.0f - metallic);
+
+        float3 diffuseIBL = kD * albedo * irradiance;
+
+        // Specular IBL — sample prefiltered environment map along reflection
+        float3 R = reflect(-V, N);
+        TextureCube<float4> prefilteredMap = ResourceDescriptorHeap[prefilteredSrvIndex];
+        float mipLevel = roughness * float(prefilteredMipLevels - 1);
+        float3 prefilteredColor = prefilteredMap.SampleLevel(linearSampler, R, mipLevel).rgb;
+
+        // BRDF LUT: pre-integrated scale and bias terms for split-sum approximation
+        Texture2D<float2> brdfLut = ResourceDescriptorHeap[brdfLutSrvIndex];
+        float2 envBRDF = brdfLut.SampleLevel(linearSampler, float2(NdotV, roughness), 0);
+        float3 specularIBL = prefilteredColor * (F * envBRDF.x + envBRDF.y);
+
+        ambient = (diffuseIBL + specularIBL) * ao;
+    } else
+#endif
+    {
+        // Fallback: constant ambient (no IBL data available)
+        ambient = ambientColor.xyz * albedo * ao;
+    }
 
     // ── Combine ──
     float3 color = ambient + Lo;

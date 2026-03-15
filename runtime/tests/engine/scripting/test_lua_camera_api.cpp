@@ -4,8 +4,8 @@
 #include "lua_vm.h"
 #include "lua_scene_api.h"
 #include "lua_camera_api.h"
-#include "../ecs/world.h"
-#include "../ecs/camera_component.h"
+#include "world.h"
+#include "camera_component.h"
 #include "../math/vector3.h"
 #include "../math/quaternion.h"
 

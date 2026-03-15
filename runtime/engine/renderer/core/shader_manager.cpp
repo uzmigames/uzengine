@@ -55,6 +55,9 @@ bool ShaderManager::Init(IRHIDevice* device) {
     config.bindless = m_bindless;
     config.targetBackend = m_bindless ? "dx12_sm67" : "dx12_sm50";
     config.enableHotReload = false;
+#ifndef NDEBUG
+    config.generateDebugInfo = true;  // Embed HLSL symbols for RenderDoc/PIX pixel debugging
+#endif
 
     m_pipeline.Init(config);
     auto shaderDir = uz::ResolveEngineResource("shaders/runtime").string();
@@ -124,6 +127,33 @@ RHIShaderHandle ShaderManager::CreateShader(EngineShader shader, RHIShaderStage 
     desc.stage = stage;
     desc.entryPoint = "main";
     desc.debugName = EngineShaders::GetName(shader);
+
+    return m_device->CreateShader(desc);
+}
+
+RHIShaderHandle ShaderManager::CreateShaderWithDefines(EngineShader shader,
+                                                       RHIShaderStage stage,
+                                                       const std::string& defines) {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "ShaderManager::CreateShaderWithDefines called before Init()");
+        return RHIShaderHandle::Invalid();
+    }
+
+    const char* name = EngineShaders::GetName(shader);
+    const char* source = EngineShaders::GetSource(shader);
+
+    auto bytecode = m_pipeline.LoadBytecodeFromSource(name, source, defines);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "ShaderManager: failed to compile '{}' with defines '{}'", name, defines);
+        return RHIShaderHandle::Invalid();
+    }
+
+    RHIShaderDesc desc;
+    desc.bytecode = bytecode.data();
+    desc.bytecodeSize = bytecode.size();
+    desc.stage = stage;
+    desc.entryPoint = "main";
+    desc.debugName = name;
 
     return m_device->CreateShader(desc);
 }

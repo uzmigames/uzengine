@@ -139,7 +139,7 @@ void PBRTest::OnStart() {
     Entity sky = world.CreateEntity();
     {
         auto& atmo = world.AddComponent<SkyAtmosphereComponent>(sky);
-        atmo.sunIlluminance = {20.f, 20.f, 20.f};
+        atmo.sunIlluminance = {100.f, 100.f, 100.f};
         // Earth-like defaults — Rayleigh/Mie already set by struct defaults.
     }
 

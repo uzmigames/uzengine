@@ -62,7 +62,7 @@ cbuffer HeightFogCB : register(b2) {
 Texture2D<float> sceneDepth : register(t0);
 #endif
 
-SamplerState pointSampler : register(s0);
+SamplerState linearSampler : register(s0);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Utility Functions
@@ -124,9 +124,9 @@ float4 main(FSInput input) : SV_Target {
     // ── Read depth ──
 #ifdef UZ_BINDLESS
     Texture2D<float> depthTex = ResourceDescriptorHeap[fogIndices.depthIdx];
-    float depth = depthTex.Sample(pointSampler, uv).r;
+    float depth = depthTex.Sample(linearSampler, uv).r;
 #else
-    float depth = sceneDepth.Sample(pointSampler, uv).r;
+    float depth = sceneDepth.Sample(linearSampler, uv).r;
 #endif
 
     // Skip sky pixels — fog does not affect the sky

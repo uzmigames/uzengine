@@ -5,7 +5,7 @@
 #include "script_system.h"
 #include "script_component.h"
 #include "lua_vm.h"
-#include "../ecs/world.h"
+#include "world.h"
 #include "../asset/vfs.h"
 
 #include <gtest/gtest.h>

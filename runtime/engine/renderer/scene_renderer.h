@@ -32,6 +32,7 @@
 #include "gpu_mesh.h"
 #include "texture_loader.h"
 #include "screenshot_capture.h"
+#include "ibl/ibl_baker.h"
 
 #include <cstdint>
 #include <memory>
@@ -300,6 +301,24 @@ private:
     RHITextureHandle m_shadowAtlas;
     uint32_t m_shadowAtlasSrv = UINT32_MAX;
 
+    // ── Atmosphere LUT ─────────────────────────────────────────────────────
+
+    RHITextureHandle m_transmittanceLut;         ///< 256x64 RGBA16F precomputed transmittance LUT.
+    uint32_t m_transmittanceLutSrv = UINT32_MAX; ///< SRV index for sky shader sampling.
+    uint32_t m_transmittanceLutUav = UINT32_MAX; ///< UAV index for compute write.
+    bool m_transmittanceLutDirty = true;         ///< True if LUT needs to be (re)computed.
+    bool m_transmittanceLutFilled = false;       ///< True once the LUT has been computed at least once (state = SRV).
+
+    // ── IBL (Image-Based Lighting from sky cubemap) ────────────────────
+
+    std::unique_ptr<IBLBaker> m_iblBaker;            ///< GPU compute pipeline for IBL bake (irradiance + prefiltered).
+    RHITextureHandle m_skyCubemap;                 ///< 64x64x6 RGBA16F cubemap for sky capture.
+    uint32_t m_skyCubemapSrv = UINT32_MAX;         ///< SRV index for IBL baker input.
+    uint32_t m_skyCubemapUav = UINT32_MAX;         ///< UAV index for compute write.
+    bool m_skyIBLDirty = true;                     ///< True when sky cubemap needs re-capture.
+    IBLBaker::BakeResult m_iblResult;              ///< Irradiance + prefiltered SRV indices.
+    uint32_t m_brdfLutSrvIndex = UINT32_MAX;       ///< BRDF LUT SRV (baked once at init).
+
     // ── Render State ───────────────────────────────────────────────────────
 
     RenderPath m_renderPath = RenderPath::Deferred;
@@ -336,6 +355,11 @@ private:
 
     bool m_hasSkyAtmosphere = false;  ///< True if a SkyAtmosphereComponent was found this frame.
     bool m_hasFog = false;            ///< True if a HeightFogComponent (enabled) was found this frame.
+
+    // ── GPU Instancing ────────────────────────────────────────────────────
+    RHIBufferHandle m_instanceBuffer;        ///< Persistent instance buffer (resized on demand).
+    uint32_t m_instanceBufferCapacity = 0;   ///< Current capacity in number of InstanceData elements.
+    uint32_t m_instanceBufferSrvIndex = UINT32_MAX; ///< Cached SRV index for the instance buffer.
 
     static constexpr uint32_t kShadowAtlasSize = 4096;
     static constexpr uint32_t kShadowResolution = 2048;

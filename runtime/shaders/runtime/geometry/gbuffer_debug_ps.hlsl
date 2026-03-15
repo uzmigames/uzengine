@@ -26,7 +26,7 @@
 /// - b1: PerFrameCB     -- invViewProj for world-position reconstruction (mode 6)
 ///
 /// # Sampler
-/// - s0: point/nearest -- no interpolation of discrete G-Buffer data.
+/// - s0: linearSampler -- bilinear wrap, standard engine-wide sampler.
 ///
 /// # Debug Modes
 /// | Value | Name      | Output                                          |
@@ -119,8 +119,8 @@ Texture2D<float>  gbufferDepth    : register(t2); ///< Hardware depth as R32_FLO
 Texture2D<float2> gbufferVelocity : register(t3); ///< Screen-space velocity in pixels (RG16F).
 #endif
 
-/// Point sampler -- G-Buffer texels map 1:1 to pixels; filtering would smear edges.
-SamplerState pointSampler : register(s0);
+/// Linear (bilinear wrap) sampler at s0 -- standard engine-wide sampler.
+SamplerState linearSampler : register(s0);
 
 // ---------------------------------------------------------------------------
 // Debug Mode Enumerants
@@ -209,14 +209,14 @@ float4 main(FSInput input) : SV_Target {
     Texture2D<float4> gbNormal = ResourceDescriptorHeap[gBufIndices.normalIdx];
     Texture2D<float>  gbDepth  = ResourceDescriptorHeap[gBufIndices.depthIdx];
 
-    float4 albedoAO     = gbAlbedo.Sample(pointSampler, uv);
-    float4 normalPacked = gbNormal.Sample(pointSampler, uv);
-    float  depth        = gbDepth.Sample(pointSampler, uv).r;
+    float4 albedoAO     = gbAlbedo.Sample(linearSampler, uv);
+    float4 normalPacked = gbNormal.Sample(linearSampler, uv);
+    float  depth        = gbDepth.Sample(linearSampler, uv).r;
 #else
     // SM5 path: register-bound textures at t0-t2
-    float4 albedoAO     = gbufferAlbedo.Sample(pointSampler, uv);
-    float4 normalPacked = gbufferNormal.Sample(pointSampler, uv);
-    float  depth        = gbufferDepth.Sample(pointSampler, uv).r;
+    float4 albedoAO     = gbufferAlbedo.Sample(linearSampler, uv);
+    float4 normalPacked = gbufferNormal.Sample(linearSampler, uv);
+    float  depth        = gbufferDepth.Sample(linearSampler, uv).r;
 #endif
 
     float3 albedo    = albedoAO.rgb;
