@@ -66,6 +66,8 @@ PBRTestDemo::PBRTestDemo(const PBRTestConfig& config)
         .screenshotFrame = config.screenshotFrame,
         .backend = config.backend,
         .shaderModel = config.shaderModel,
+        .debugViewMode = config.debugViewMode,
+        .allModesOutputPath = config.allModesOutputPath,
     })
     , config_(config)
 {}
@@ -97,7 +99,6 @@ void PBRTestDemo::OnInit() {
     shadowAtlasSrv_ = device->GetTextureSRVIndex(shadowAtlas_);
 
     // ── Render state ─────────────────────────────────────────────────────
-    debugModeValue_ = static_cast<uint32_t>(GBufferDebugMode::Count);
     renderPath_ = GetDefaultRenderPath();
 
     UZ_LOG(Renderer, Info, "PBR test demo started — 5 cubes, {} point lights + directional sun "
@@ -230,16 +231,6 @@ void PBRTestDemo::OnFrame(float dt) {
     // ── Input ────────────────────────────────────────────────────────────
     input->BeginFrame();
 
-    // Debug mode toggle: '0' = off, '1'-'7' = G-Buffer channels 0-6
-    if (input->IsKeyJustPressed(Key::Num0)) {
-        debugModeValue_ = static_cast<uint32_t>(GBufferDebugMode::Count);
-    }
-    for (uint32_t k = 0; k < 7; ++k) {
-        if (input->IsKeyJustPressed(static_cast<Key>(static_cast<uint32_t>(Key::Num1) + k))) {
-            debugModeValue_ = k;
-        }
-    }
-
     // Render path toggle: F switches between Deferred and Forward
     if (input->IsKeyJustPressed(Key::F)) {
         renderPath_ = (renderPath_ == RenderPath::Deferred)
@@ -247,6 +238,9 @@ void PBRTestDemo::OnFrame(float dt) {
         UZ_LOG(Renderer, Info, "Render path switched to: {}",
                RenderPathToString(renderPath_));
     }
+
+    // Debug view mode: F1-F11 — handled by base class
+    ApplyDebugViewKeyboard(input);
 
     // ── Camera Update ────────────────────────────────────────────────────
     GetCameraController().Update(camera, *input, dt);
@@ -411,9 +405,33 @@ void PBRTestDemo::OnFrame(float dt) {
             AddGBufferPass(rgBuilder, gbDesc);
         }
 
-        const bool debugActive = (debugModeValue_ < static_cast<uint32_t>(GBufferDebugMode::Count));
+        // DebugViewMode: F1-F11 select G-Buffer channel visualization via the new DebugViewPass.
+        // When Lit, run the full lighting pass. Any other mode replaces it with the debug view.
+        const DebugViewMode debugViewMode = GetDebugViewMode();
 
-        if (!debugActive) {
+        if (debugViewMode != DebugViewMode::Lit) {
+            DebugViewPassDesc dvDesc{};
+            dvDesc.backbuffer        = bbRes;
+            dvDesc.albedoGBuffer     = albedoRes;
+            dvDesc.normalGBuffer     = normalRes;
+            dvDesc.depthGBuffer      = depthRes;
+            dvDesc.positionGBuffer   = positionWSRes;
+            dvDesc.perFrameAlloc     = perFrameAlloc;
+            dvDesc.pipeline          = pipelines->GetDebugView();
+            dvDesc.mode              = debugViewMode;
+            dvDesc.albedoSrvIndex    = gbuffer_.albedoSRV;
+            dvDesc.normalSrvIndex    = gbuffer_.normalSRV;
+            dvDesc.depthSrvIndex     = gbuffer_.depthSRV;
+            dvDesc.positionSrvIndex  = gbuffer_.positionWSSRV;
+            dvDesc.albedoTexture     = gbuffer_.albedo;
+            dvDesc.normalTexture     = gbuffer_.normal;
+            dvDesc.depthTexture      = gbuffer_.depth;
+            dvDesc.positionTexture   = gbuffer_.positionWS;
+            dvDesc.bindless          = bindless;
+            dvDesc.viewportWidth     = static_cast<float>(swapChain->GetWidth());
+            dvDesc.viewportHeight    = static_cast<float>(swapChain->GetHeight());
+            AddDebugViewPass(rgBuilder, dvDesc);
+        } else {
             LightingPassDesc lightDesc{};
             lightDesc.backbuffer          = bbRes;
             lightDesc.albedoGBuffer       = albedoRes;
@@ -438,30 +456,6 @@ void PBRTestDemo::OnFrame(float dt) {
             lightDesc.viewportWidth       = static_cast<float>(swapChain->GetWidth());
             lightDesc.viewportHeight      = static_cast<float>(swapChain->GetHeight());
             AddLightingPass(rgBuilder, lightDesc);
-        } else {
-            GBufferDebugPassDesc dbgDesc{};
-            dbgDesc.backbuffer         = bbRes;
-            dbgDesc.albedoGBuffer      = albedoRes;
-            dbgDesc.normalGBuffer      = normalRes;
-            dbgDesc.depthGBuffer       = depthRes;
-            dbgDesc.perFrameAlloc      = perFrameAlloc;
-            struct DebugCBData { uint32_t mode; uint32_t pad[3]; };
-            CBAllocation debugAlloc = cbRing->Allocate(sizeof(DebugCBData));
-            DebugCBData debugCBData{debugModeValue_, {0, 0, 0}};
-            std::memcpy(debugAlloc.cpuPtr, &debugCBData, sizeof(DebugCBData));
-            dbgDesc.debugAlloc         = debugAlloc;
-            dbgDesc.pipeline           = pipelines->GetGBufferDebug();
-            dbgDesc.mode               = static_cast<GBufferDebugMode>(debugModeValue_);
-            dbgDesc.albedoSrvIndex     = gbuffer_.albedoSRV;
-            dbgDesc.normalSrvIndex     = gbuffer_.normalSRV;
-            dbgDesc.depthSrvIndex      = gbuffer_.depthSRV;
-            dbgDesc.albedoTexture      = gbuffer_.albedo;
-            dbgDesc.normalTexture      = gbuffer_.normal;
-            dbgDesc.depthTextureForSrv = gbuffer_.depth;
-            dbgDesc.bindless           = bindless;
-            dbgDesc.viewportWidth      = static_cast<float>(swapChain->GetWidth());
-            dbgDesc.viewportHeight     = static_cast<float>(swapChain->GetHeight());
-            AddGBufferDebugPass(rgBuilder, dbgDesc);
         }
     } else {
         // ── Forward path: single-pass PBR directly to backbuffer ─────────

@@ -20,19 +20,64 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <string>
 #include <thread>
+#include <vector>
+
+UZ_DEFINE_LOG_CATEGORY(App, Trace);
 
 namespace uz {
 
-UZ_DEFINE_LOG_CATEGORY(App, Trace);
+// ─────────────────────────────────────────────────────────────────────────────
+// GetScreenshotsDir — Platform-aware screenshots output directory
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Returns the user-scoped directory where all engine screenshots are saved.
+///
+/// - Windows : `%APPDATA%\UzEngine\.screenshots\`
+/// - Linux   : `~/.local/share/UzEngine/.screenshots/`
+/// - macOS   : `~/Library/Application Support/UzEngine/.screenshots/`
+///
+/// The directory is created if it does not exist.
+/// Falls back to `.screenshots/` relative to CWD on any error.
+static std::filesystem::path GetScreenshotsDir() {
+    std::filesystem::path base;
+
+#if defined(_WIN32)
+    if (const char* appdata = std::getenv("APPDATA"); appdata && *appdata) {
+        base = std::filesystem::path(appdata) / "UzEngine" / ".screenshots";
+    }
+#elif defined(__APPLE__)
+    if (const char* home = std::getenv("HOME"); home && *home) {
+        base = std::filesystem::path(home) / "Library" / "Application Support"
+             / "UzEngine" / ".screenshots";
+    }
+#else // Linux / other POSIX
+    if (const char* xdg = std::getenv("XDG_DATA_HOME"); xdg && *xdg) {
+        base = std::filesystem::path(xdg) / "UzEngine" / ".screenshots";
+    } else if (const char* home = std::getenv("HOME"); home && *home) {
+        base = std::filesystem::path(home) / ".local" / "share"
+             / "UzEngine" / ".screenshots";
+    }
+#endif
+
+    if (base.empty()) {
+        base = std::filesystem::path(".screenshots");
+    }
+
+    std::error_code ec;
+    std::filesystem::create_directories(base, ec);
+    return base;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Construction / Destruction
 // ─────────────────────────────────────────────────────────────────────────────
 
 DemoApplication::DemoApplication(const DemoConfig& config)
-    : m_config(config) {}
+    : m_config(config)
+    , m_debugViewMode(config.debugViewMode) {}
 
 DemoApplication::DemoApplication(const char* title, uint32_t width, uint32_t height)
     : m_config{} {
@@ -92,6 +137,21 @@ int DemoApplication::Run() {
            m_config.title, m_config.maxFrames == 0 ? -1 : static_cast<int>(m_config.maxFrames),
            m_screenshotPending, m_ready, m_readyFrame, m_config.screenshotFrame);
 
+    // ── All-modes sequencing state ──────────────────────────────────────
+    // When allModesOutputPath is set, we iterate every DebugViewMode in a
+    // single run: after SetReady(), switch mode, wait screenshotFrame frames,
+    // capture, then advance — no window reopen needed.
+    const bool allModesActive = !m_config.allModesOutputPath.empty();
+    const uint32_t allModeCount = static_cast<uint32_t>(DebugViewMode::Count);
+    uint32_t allModeCurrentIdx = 0;           // which mode we're currently capturing
+    uint32_t allModeCaptureFrame = UINT32_MAX; // absolute frame to capture this mode
+    std::vector<std::string> allModeTempPaths; // collected temp PNG paths
+    if (allModesActive) {
+        allModeTempPaths.reserve(allModeCount);
+        // Start with mode 0; set capture frame after ready
+        m_debugViewMode = static_cast<DebugViewMode>(0);
+    }
+
     auto loopStart = std::chrono::high_resolution_clock::now();
     auto prevFrame = loopStart;
 
@@ -102,9 +162,53 @@ int DemoApplication::Run() {
             continue;
         }
 
-        // Frame cap check
-        if (m_config.maxFrames > 0 && m_frameIndex >= m_config.maxFrames) {
+        // Frame cap check (skip in all-modes — we exit after all modes captured)
+        if (!allModesActive && m_config.maxFrames > 0 && m_frameIndex >= m_config.maxFrames) {
             break;
+        }
+
+        // ── All-modes sequencer ─────────────────────────────────────────
+        if (allModesActive && m_ready) {
+            // Set capture frame for current mode once ready
+            if (allModeCaptureFrame == UINT32_MAX) {
+                allModeCaptureFrame = m_frameIndex + m_config.screenshotFrame;
+            }
+
+            if (m_frameIndex == allModeCaptureFrame) {
+                // Time to capture this mode
+                const auto mode = static_cast<DebugViewMode>(allModeCurrentIdx);
+                const std::string modeName = DebugViewModeName(mode);
+                const std::string tempPath = (GetScreenshotsDir()
+                    / ("__allmode_" + std::to_string(allModeCurrentIdx) + "_" + modeName + ".png")).string();
+
+                UZ_LOG(App, Info, "All-modes: capturing mode {} '{}' -> {}", allModeCurrentIdx, modeName, tempPath);
+
+                // Trigger screenshot this frame
+                m_config.screenshotPath = tempPath;
+                m_screenshotPending = true;
+            }
+
+            // After screenshot saved, advance to next mode
+            if (!m_screenshotPending && allModeCaptureFrame != UINT32_MAX
+                && m_frameIndex > allModeCaptureFrame)
+            {
+                // Record the path we just captured
+                const std::string savedPath = (GetScreenshotsDir()
+                    / ("__allmode_" + std::to_string(allModeCurrentIdx)
+                       + "_" + DebugViewModeName(static_cast<DebugViewMode>(allModeCurrentIdx)) + ".png")).string();
+                allModeTempPaths.push_back(savedPath);
+
+                ++allModeCurrentIdx;
+                if (allModeCurrentIdx >= allModeCount) {
+                    // All modes captured — compose and exit
+                    break;
+                }
+
+                // Advance to next mode
+                m_debugViewMode = static_cast<DebugViewMode>(allModeCurrentIdx);
+                allModeCaptureFrame = m_frameIndex + m_config.screenshotFrame;
+                m_screenshotPending = false;
+            }
         }
 
         // Resize detection
@@ -175,6 +279,28 @@ int DemoApplication::Run() {
         m_frameIndex++;
     }
 
+    // ── All-modes: compose grid and clean up temp files ─────────────────
+    if (allModesActive && !allModeTempPaths.empty()) {
+        CompareGrid grid;
+        grid.SetCellSize(384, 384);
+        grid.SetColumns(4);
+
+        for (uint32_t m = 0; m < static_cast<uint32_t>(allModeTempPaths.size()); ++m) {
+            const std::string modeName = DebugViewModeName(static_cast<DebugViewMode>(m));
+            if (!grid.AddCellFromPNG(allModeTempPaths[m], modeName, "")) {
+                UZ_LOG(App, Error, "All-modes: failed to load temp screenshot '{}'", allModeTempPaths[m]);
+            }
+        }
+
+        const bool saved = grid.SaveToPNG(m_config.allModesOutputPath);
+        UZ_LOG(App, Info, "All-modes grid saved to '{}': {}", m_config.allModesOutputPath, saved ? "OK" : "FAILED");
+
+        for (const auto& path : allModeTempPaths) {
+            std::error_code ec;
+            std::filesystem::remove(path, ec);
+        }
+    }
+
     // Shutdown
     m_device->WaitIdle();
 
@@ -221,6 +347,32 @@ const std::string& DemoApplication::GetScreenshotPath() const { return m_config.
 uint32_t DemoApplication::GetScreenshotFrame() const { return m_config.screenshotFrame; }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// ApplyDebugViewKeyboard — F1-F11 debug view mode selection
+// ─────────────────────────────────────────────────────────────────────────────
+
+void DemoApplication::ApplyDebugViewKeyboard(const InputSystem* input) {
+    static constexpr struct { Key key; DebugViewMode mode; } kKeys[] = {
+        {Key::F1,  DebugViewMode::Lit},
+        {Key::F2,  DebugViewMode::Albedo},
+        {Key::F3,  DebugViewMode::WorldNormal},
+        {Key::F4,  DebugViewMode::Metallic},
+        {Key::F5,  DebugViewMode::Roughness},
+        {Key::F6,  DebugViewMode::AO},
+        {Key::F7,  DebugViewMode::Depth},
+        {Key::F8,  DebugViewMode::WorldPosition},
+        {Key::F9,  DebugViewMode::Overview},
+        {Key::F10, DebugViewMode::Lighting},
+        {Key::F11, DebugViewMode::Shadows},
+    };
+    for (const auto& [key, mode] : kKeys) {
+        if (input->IsKeyJustPressed(key)) {
+            m_debugViewMode = mode;
+            UZ_LOG(App, Info, "Debug view mode: {}", DebugViewModeName(mode));
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // InitInfrastructure — Creates engine systems after device is ready
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -260,8 +412,9 @@ void DemoApplication::InitInfrastructure() {
     m_statsOverlay = std::make_unique<StatsOverlay>();
 
     // ── Screenshot Capture ──────────────────────────────────────────────
+    // Also needed for --all-modes even when --screenshot is not specified.
     m_screenshotPending = !m_config.screenshotPath.empty();
-    if (m_screenshotPending) {
+    if (m_screenshotPending || !m_config.allModesOutputPath.empty()) {
         m_screenshotCapture = std::make_unique<ScreenshotCapture>();
         if (!m_screenshotCapture->Init(m_device, m_width, m_height)) {
             UZ_LOG(App, Error, "Failed to initialize screenshot capture");
@@ -517,8 +670,24 @@ void DemoApplication::ParseCommonArgs(int argc, char* argv[], DemoConfig& config
             config.screenshotFrame = static_cast<uint32_t>(std::atoi(argv[++i]));
         } else if (std::strcmp(argv[i], "--frames") == 0 && i + 1 < argc) {
             config.maxFrames = static_cast<uint32_t>(std::atoi(argv[++i]));
+        } else if (std::strcmp(argv[i], "--view-mode") == 0 && i + 1 < argc) {
+            config.debugViewMode = DebugViewModeFromString(argv[++i]);
+        } else if (std::strcmp(argv[i], "--all-modes") == 0 && i + 1 < argc) {
+            config.allModesOutputPath = argv[++i];
         }
     }
+
+    // Route bare filenames (no directory separator) into the user-scoped
+    // screenshots directory so output is never mixed with exe/build files.
+    auto routeToScreenshotDir = [](std::string& path) {
+        if (path.empty()) return;
+        const std::filesystem::path p(path);
+        if (!p.has_parent_path() || p.parent_path() == ".") {
+            path = (GetScreenshotsDir() / p.filename()).string();
+        }
+    };
+    routeToScreenshotDir(config.screenshotPath);
+    routeToScreenshotDir(config.allModesOutputPath);
 
     // Auto-exit after screenshot so CI pipelines don't block
     if (!config.screenshotPath.empty() && config.maxFrames == 0) {

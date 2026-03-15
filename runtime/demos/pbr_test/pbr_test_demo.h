@@ -18,6 +18,7 @@
 #pragma once
 
 #include "demo_application.h"
+#include "debug_view_mode.h"
 #include "uzengine.h"
 
 #include <chrono>
@@ -34,6 +35,8 @@ struct PBRTestConfig {
     uint32_t screenshotFrame = 5;          ///< Frame number to capture (default: 5).
     std::optional<RHIBackend> backend;     ///< If set, overrides default DX12 backend.
     std::optional<ShaderModel> shaderModel; ///< If set, forces a specific shader model.
+    DebugViewMode debugViewMode = DebugViewMode::Lit; ///< Initial debug view mode (from --view-mode).
+    std::string allModesOutputPath; ///< If non-empty, capture all debug view modes and save grid to this path.
 };
 
 /// PBR Test Demo — renders 5 PBR-lit cubes with deferred/forward path toggle.
@@ -105,7 +108,6 @@ private:
 
     // ── Render state ────────────────────────────────────────────────────
     RenderPath renderPath_ = RenderPath::Deferred;
-    uint32_t debugModeValue_ = 0;  ///< GBufferDebugMode::Count = off.
 
     // ── Mesh data ───────────────────────────────────────────────────────
     GPUMesh cubeMesh_;

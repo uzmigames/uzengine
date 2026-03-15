@@ -44,6 +44,8 @@
 /// that all resources are loaded. After ready, it waits `screenshotFrame` more
 /// frames (default 5) to allow GPU pipeline warmup before capturing.
 
+#include "debug_view_mode.h"
+
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -92,6 +94,12 @@ struct DemoConfig {
     // ── RHI overrides ─────────────────────────────────────────────────────
     std::optional<RHIBackend> backend;    ///< If set, overrides the default DX12 backend.
     std::optional<ShaderModel> shaderModel; ///< If set, forces a specific shader model.
+
+    // ── All-modes capture ─────────────────────────────────────────────
+    std::string allModesOutputPath; ///< If non-empty, capture all debug view modes and save grid to this path.
+
+    // ── Debug view ──────────────────────────────────────────────────────
+    DebugViewMode debugViewMode = DebugViewMode::Lit; ///< Initial debug view mode (from --view-mode).
 
     // ── Camera defaults ─────────────────────────────────────────────────
     float cameraMoveSpeed = 10.f;         ///< FPS camera movement speed (units/sec).
@@ -157,6 +165,8 @@ public:
     /// - `--screenshot <path>` — capture back buffer and save as PNG.
     /// - `--screenshot-frame <N>` — frame at which to capture (default: 5).
     /// - `--frames <N>` — max frames to render (0 = unlimited).
+    /// - `--view-mode <name>` — initial debug view mode (e.g., "albedo", "depth", "overview").
+    /// - `--all-modes <path>` — capture all debug view modes, compose into a labeled grid PNG.
     ///
     /// Unknown flags are silently skipped so subclass-specific flags can coexist.
     ///
@@ -307,6 +317,18 @@ protected:
     /// Returns the render graph resource pool (persistent across frames).
     [[nodiscard]] rg::RgResourcePool* GetRgPool() const;
 
+    /// Returns the current debug view mode. Updated by `ApplyDebugViewKeyboard()`.
+    [[nodiscard]] DebugViewMode GetDebugViewMode() const { return m_debugViewMode; }
+
+    /// Checks F1-F11 keys and updates the debug view mode accordingly.
+    ///
+    /// Call this from the subclass `OnFrame()` (or wherever input is polled).
+    /// When a mode changes, logs the new mode via `UZ_LOG(App, Info, ...)`.
+    ///
+    /// # Arguments
+    /// * `input` — The input system to poll for key presses. Must not be null.
+    void ApplyDebugViewKeyboard(const InputSystem* input);
+
     /// Returns the screenshot capture object (may be null if no screenshot path set).
     [[nodiscard]] ScreenshotCapture* GetScreenshotCapture() const;
 
@@ -378,6 +400,9 @@ private:
     std::unique_ptr<Camera> m_camera;
     std::unique_ptr<FPSCameraController> m_cameraCtrl;
     std::unique_ptr<rg::RgResourcePool> m_rgPool;
+
+    // ── Debug view mode ────────────────────────────────────────────────
+    DebugViewMode m_debugViewMode = DebugViewMode::Lit;
 
     // ── Screenshot state ────────────────────────────────────────────────
     bool m_screenshotPending = false;

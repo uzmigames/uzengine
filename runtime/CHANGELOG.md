@@ -2,6 +2,30 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
+## [0.2.21] — 2026-03-15
+
+### Debug View Modes — G-Buffer Channel Visualization
+- **DebugViewMode enum** (`engine/renderer/core/debug_view_mode.h`): 13 modes — Lit, Albedo, WorldNormal, Metallic, Roughness, AO, Depth, WorldPosition, Lighting, Shadows, Wireframe, Unlit, Overview
+- **DebugViewPass** (`engine/renderer/passes/`): fullscreen triangle pass reading G-Buffer via bindless SRVs; outputs false-colour diagnostic visualization per mode
+- **Overview mode**: 4×2 composite grid showing all 8 diagnostic channels simultaneously with thin black borders
+- **DX12 root constants fix**: `Num32BitValues` bumped from 4→8 in `dx12_pso_creation.cpp` — DebugViewPass pushes 5 root constants (mode + 4 SRV indices), 4 caused a segfault on frame 0
+- **Keyboard shortcuts**: F1–F11 cycle through modes at runtime via `ApplyDebugViewKeyboard()`
+- **CLI**: `--view-mode <name>` sets initial mode (e.g. `--view-mode albedo`, `--view-mode overview`)
+
+### `--all-modes` — Single-Run Full Mode Capture
+- **`DemoApplication::Run()`**: all-modes sequencer built into the render loop — iterates all 13 `DebugViewMode` values in a single GPU session (no window reopen per mode)
+- **Flow**: after `SetReady()`, advances mode every `screenshotFrame` frames, captures screenshot, composes labeled 4-column grid PNG, cleans up temp files automatically
+- **CLI**: `--all-modes <filename.png>` — captures all debug view modes and saves composed grid
+- **`ScreenshotCapture` init**: now created when `allModesOutputPath` is set, even without `--screenshot`
+- **`PBRTestConfig::allModesOutputPath`** field propagated from `DemoConfig` through `PBRTestDemo` constructor
+
+### Screenshot Directory — Platform-Aware AppData Path
+- **`GetScreenshotsDir()`** (static, `demo_application.cpp`): resolves user-scoped output directory per platform:
+  - Windows: `%APPDATA%\UzEngine\.screenshots\`
+  - Linux: `$XDG_DATA_HOME/UzEngine/.screenshots/` (fallback: `~/.local/share/UzEngine/.screenshots/`)
+  - macOS: `~/Library/Application Support/UzEngine/.screenshots/`
+- **`ParseCommonArgs()`**: bare filenames in `--screenshot` and `--all-modes` are automatically routed to `GetScreenshotsDir()` — never written to exe/build directory
+
 ## [0.2.20] — 2026-03-14
 
 ### CompareGrid — Visual Comparison & Diff System
