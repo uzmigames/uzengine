@@ -6,12 +6,17 @@
 
 ## Purpose
 
-Renderer passes are the building blocks of the rendering pipeline, each implementing a specific stage in the deferred or forward rendering workflow. This document comprehensively documents all 4 implemented passes:
+Renderer passes are the building blocks of the rendering pipeline, each implementing a specific stage in the deferred or forward rendering workflow. This document comprehensively documents all 9 implemented passes:
 
 1. **PBR Pass** — Forward rendering with Cook-Torrance BRDF
 2. **GBuffer Pass** — Deferred rendering geometry stage
-3. **Lighting Pass** — Deferred rendering composition stage
+3. **Lighting Pass** — Deferred rendering composition stage with split-sum IBL
 4. **Shadow Pass** — Depth-only rendering for shadow maps
+5. **Sky Atmosphere Pass** — Bruneton atmospheric scattering with precomputed transmittance LUT
+6. **Transmittance LUT Pass** — Precomputes 256×64 atmosphere transmittance table
+7. **Sky Cubemap Capture Pass** — Captures sky atmosphere into 64×64×6 cubemap for IBL
+8. **Height Fog Pass** — Exponential height-based atmospheric fog
+9. **Debug View Pass** — G-Buffer channel visualization with 13 diagnostic modes
 
 Each pass is registered in the render graph, manages resource transitions automatically, and supports both SM6.6 bindless and SM5 fallback binding models.
 
@@ -19,14 +24,20 @@ Each pass is registered in the render graph, manages resource transitions automa
 
 | Pass | Purpose | Input | Output | Type | Location |
 |------|---------|-------|--------|------|----------|
-| PBR | Forward Cook-Torrance | DrawList, Materials, Camera | Lit backbuffer + depth | Full render pass | `pbr_pass.h` |
-| GBuffer | Deferred geometry stage | DrawList, Materials, Camera | 2x MRT (Albedo, Normal) + depth + velocity | Full render pass | `gbuffer_pass.h` |
-| Velocity | Motion vector generation | Depth, prev/cur view-proj | Velocity buffer (RG16F) | Fullscreen triangle | `velocity_pass.h` |
-| Lighting | Deferred composition | G-Buffers + lights | Lit backbuffer | Fullscreen triangle | `lighting_pass.h` |
-| Shadow | Shadow depth rendering | DrawList per cascade | 2×2 cascade atlas | Depth-only pass | `shadow_pass.h` |
-| Debug View | G-Buffer visualization | G-Buffers, Lighting buffer | Visualization output | Fullscreen triangle | `debug_view_pass.h` |
+| PBR | Forward Cook-Torrance | DrawList, Materials, Camera | Lit backbuffer + depth | Full render pass | `geometry/pbr_pass.h` |
+| GBuffer | Deferred geometry stage | DrawList, Materials, Camera | 2x MRT (Albedo, Normal) + depth + velocity | Full render pass | `geometry/gbuffer_pass.h` |
+| Velocity | Motion vector generation | Depth, prev/cur view-proj | Velocity buffer (RG16F) | Fullscreen triangle | `postprocess/velocity_pass.h` |
+| Lighting | Deferred composition with IBL | G-Buffers + IBL cubemaps + lights | Lit backbuffer | Fullscreen triangle | `lighting/lighting_pass.h` |
+| Shadow | Shadow depth rendering | DrawList per cascade | 2×2 cascade atlas | Depth-only pass | `lighting/shadow_pass.h` |
+| Sky Atmosphere | Bruneton atmospheric scattering | SkyAtmosphereComponent, transmittance LUT | Lit fullscreen | Fullscreen triangle | `atmosphere/sky_atmosphere_pass.h` |
+| Transmittance LUT | Precompute atmosphere table | Bruneton parameters | 256×64 RGBA16F texture | Compute dispatch | `atmosphere/transmittance_lut_pass.h` |
+| Sky Cubemap | IBL environment capture | Sky Atmosphere output | 64×64×6 cubemap | Compute dispatch | `atmosphere/sky_cubemap_capture_pass.h` |
+| Height Fog | Exponential fog blending | Scene color, depth, fog params | Fogged scene | Fullscreen triangle | `atmosphere/height_fog_pass.h` |
+| Debug View | G-Buffer visualization | G-Buffers, Lighting buffer | Visualization output | Fullscreen triangle | `debug/debug_view_pass.h` |
 
 > **ℹ️ Note**: The **Debug View pass** is inserted after Lighting, before Tonemapping, for real-time channel visualization without shader recompilation. See **[Debug View Modes Spec](../../specs/rendering/debug-view-modes.md)** for complete details (13 modes, F1–F11 shortcuts, zero overhead when disabled).
+>
+> **ℹ️ Note**: **Atmosphere passes** (Sky, Transmittance LUT, Sky Cubemap, Height Fog) are executed after Lighting. The transmittance LUT is precomputed once at initialization. The sky cubemap is captured each frame and feeds into the IBL baker to drive ambient lighting.
 
 ## PBR Pass — Forward Rendering
 

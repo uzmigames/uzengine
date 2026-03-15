@@ -2,6 +2,19 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
+## [0.2.24] — 2026-03-15
+
+### Sky Atmosphere Transmittance LUT & IBL Integration
+- **Transmittance LUT**: Precomputed 256×64 RGBA16F lookup table using Bruneton 2017 parameterization — replaces per-pixel secondary ray marching with single texture lookup for 2-3x faster atmosphere rendering
+- **Sky → IBL Pipeline**: SkyAtmospherePass now captures 64×64×6 cubemap via compute shader, fed into IBL baker for irradiance (32×32) and prefiltered specular (128×128, 5 mips) — sky environment now drives split-sum IBL ambient lighting
+- **Deferred lighting update**: `lighting_pass.hlsl` replaced constant ambient with split-sum IBL (diffuse via irradiance, specular via prefiltered + BRDF LUT)
+- **Ground contribution**: Sky shader now adds Lambertian ground reflection when view ray hits the planet surface (replaces black bottom hemisphere)
+- **Z-up shader corrections**: All atmosphere shaders corrected from Y-up to Z-up (SkyAtmospherePass, TransmittanceLutPass, SkyCubemapCapturePass, HeightFogPass)
+- **Sampler naming standardization**: All HLSL shaders now use `linearSampler` (s0) and `shadowSampler` (s1) consistently across bindless and SM5 paths
+- **ECS directory reorganization**: Components reorganized into semantic domains — `ecs/core/` (entity, world), `ecs/scene/` (camera, primitive), `ecs/lighting/` (lights), `ecs/mesh/` (meshes), `ecs/environment/` (sky, fog), `ecs/metadata/` (name), `ecs/update/` (tick system), `ecs/loaders/` (scene loading)
+- **Render passes reorganization**: Passes reorganized by function — `passes/geometry/` (gbuffer, pbr), `passes/lighting/` (lighting, shadow), `passes/atmosphere/` (sky_atmosphere, transmittance_lut, sky_cubemap_capture, height_fog), `passes/postprocess/` (postprocess, velocity), `passes/debug/` (debug_view, gbuffer_debug)
+- **Screenshot capture fix**: RequestScreenshot now called before RenderFrame instead of after Present — capture happens in the same frame as render, eliminating one-frame lag
+
 ## [0.2.23] — 2026-03-15
 
 ### Z-up Coordinate System Fixes & PBR Showcase Scene
