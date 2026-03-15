@@ -65,67 +65,84 @@ local t_inv = t:inverse()
 local t3 = uz.Transform.compose(t, t2)
 ```
 
-## World and Entities
+## Global Functions
 
-### World
+### Engine Lifecycle
 
 ```lua
--- Access current world
-local world = ctx.world
+-- Quit the application
+uz.quit()
 
--- Spawn entity
-local entity = world:spawn_entity("Player")
-local entity = world:spawn_entity_from_class("Character", {
-    position = uz.Vec3(0, 0, 0),
-    rotation = uz.Quat.identity(),
-})
+-- Logging
+uz.log("Message to output")
 
--- Query entities
-local by_name = world:find_entity_by_name("NPC_001")
-local all_entities = world:get_all_entities()
+-- Frame timing
+local dt = uz.delta_time        -- Time since last frame (float, seconds)
+local t = uz.total_time         -- Total elapsed time since launch (float, seconds)
 
--- Destroy entity
-world:destroy_entity(entity)
-
--- World state
-local entity_count = world:get_entity_count()
+-- Example: Quit after 5 seconds
+function on_update(entity, dt)
+    if uz.total_time > 5.0 then
+        uz.quit()
+    end
+end
 ```
 
-### Entity
+### Global API Reference
+
+| Function | Parameters | Return | Notes |
+|----------|-----------|--------|-------|
+| `uz.quit()` | — | — | Exit the application |
+| `uz.log(msg)` | msg: string | — | Log a message to the console |
+| `uz.delta_time` | — | float | Elapsed time since last frame (seconds) |
+| `uz.total_time` | — | float | Total elapsed time since engine start (seconds) |
+
+## Scene and Entities
+
+### Scene Queries
 
 ```lua
--- Properties
-local name = entity:get_name()
-entity:set_name("NewName")
-
--- Transform
-local pos = entity:get_position()
-entity:set_position(uz.Vec3(100, 50, 200))
-
-local rot = entity:get_rotation()
-entity:set_rotation(uz.Quat.from_axis_angle({0, 1, 0}, math.rad(45)))
-
-local scale = entity:get_scale()
-entity:set_scale(uz.Vec3(2, 2, 2))
-
--- Hierarchy
-entity:set_parent(parent_entity)
-local parent = entity:get_parent()
-local children = entity:get_children()
-
--- Components
-local mesh = entity:get_component("StaticMeshComponent")
-if mesh then
-    mesh:set_material("material_path")
+-- Get all entities in the scene
+local all_entities = uz.scene.get_entities()
+for i = 1, #all_entities do
+    local entity = all_entities[i]
+    uz.log("Entity: " .. uz.scene.get_name(entity))
 end
 
--- Metadata
-entity:set_tag("Enemy")
-local has_tag = entity:has_tag("Enemy")
+-- Query by name
+local rotation = uz.scene.get_rotation(entity)  -- (pitch, yaw, roll)
+uz.scene.set_rotation(entity, pitch, yaw, roll)
 
--- Active state
-entity:set_active(true)
-local is_active = entity:is_active()
+-- Get entity name
+local name = uz.scene.get_name(entity)
+```
+
+### Scene API Reference
+
+| Function | Parameters | Return | Notes |
+|----------|-----------|--------|-------|
+| `uz.scene.get_entities()` | — | table of entities | Returns all entities currently in the scene |
+| `uz.scene.get_name(entity)` | entity | string | Get entity's display name |
+| `uz.scene.get_rotation(entity)` | entity | (pitch, yaw, roll) | Get rotation in Euler angles (degrees) |
+| `uz.scene.set_rotation(entity, pitch, yaw, roll)` | entity, pitch, yaw, roll | — | Set rotation in Euler angles (degrees) |
+
+### Entity Operations
+
+The scene API focuses on direct entity queries. For component-level access, use the entity directly in your scripts:
+
+```lua
+-- Example: Finding and operating on entities
+function on_start(entity)
+    local all = uz.scene.get_entities()
+    for i = 1, #all do
+        local e = all[i]
+        local name = uz.scene.get_name(e)
+        if name and name:find("Cube_") then
+            -- Found a cube, modify it
+            uz.scene.set_rotation(e, 0, 0, 0)
+        end
+    end
+end
 ```
 
 ## Input
@@ -133,403 +150,310 @@ local is_active = entity:is_active()
 ### Input System
 
 ```lua
--- Keyboard
-if ctx.input:is_key_down("w") then
-    -- W is held
+-- Keyboard — Key state queries
+if uz.input.is_key_down("w") then
+    -- W is currently held down
 end
 
-if ctx.input:is_key_pressed("space") then
-    -- Space just pressed
+if uz.input.is_key_just_pressed("space") then
+    -- Space was just pressed (this frame only)
 end
 
-if ctx.input:is_key_released("escape") then
-    -- Escape just released
+-- Mouse input
+local dx, dy = uz.input.get_mouse_delta()  -- Movement since last frame
+local sx, sy = uz.input.get_scroll_delta() -- Scroll delta (x, y)
+
+-- Mouse button queries
+if uz.input.is_mouse_button_down("Right") then
+    -- Right mouse button is held
 end
 
--- Mouse
-local mouse_pos = ctx.input:get_mouse_position()  -- {x, y}
-local mouse_delta = ctx.input:get_mouse_delta()   -- {x, y}
-local scroll = ctx.input:get_mouse_scroll()       -- float
-
--- Gamepad
-local stick_x = ctx.input:get_gamepad_axis("left_stick_x")
-local stick_y = ctx.input:get_gamepad_axis("left_stick_y")
-
--- Event subscriptions
-ctx.input:on_key_press("e", function()
-    print("E key pressed")
-end)
-
-ctx.input:on_mouse_click("left", function(pos)
-    print("Left click at", pos)
-end)
+-- Gamepad (planned Phase 2+)
+-- local stick_x = uz.input.get_gamepad_axis("left_stick_x")
 ```
 
-## Physics
+### Input API Reference
 
-### Physics System
+| Function | Parameters | Return | Notes |
+|----------|-----------|--------|-------|
+| `uz.input.is_key_down(key)` | key: string | bool | True while key is held |
+| `uz.input.is_key_just_pressed(key)` | key: string | bool | True only on the frame key is pressed |
+| `uz.input.get_mouse_delta()` | — | (dx, dy) | Mouse movement in pixels |
+| `uz.input.get_scroll_delta()` | — | (sx, sy) | Scroll wheel movement |
+| `uz.input.is_mouse_button_down(button)` | button: "Left"/"Right"/"Middle" | bool | True while button is held |
 
-```lua
--- Query
-local hit = ctx.physics:ray_cast(from_pos, to_pos, {
-    channel = "Pawn",
-    ignore_entity = ctx.entity,
-})
+### Key Names
 
-if hit:is_hit() then
-    print("Hit entity:", hit:get_entity():get_name())
-    print("Distance:", hit:get_distance())
-    print("Impact point:", hit:get_impact_point())
-    print("Impact normal:", hit:get_impact_normal())
-end
+Use lowercase key names: `"w"`, `"escape"`, `"shift"`, `"ctrl"`, etc. Special keys: `"Space"`, `"Tab"`, `"Return"`, `"Delete"`, `"Backspace"`, etc.
 
--- Overlap
-local overlapping = ctx.physics:overlap_sphere(center, radius, {
-    channel = "Trigger",
-})
-for _, entity in ipairs(overlapping) do
-    print("Overlapping:", entity:get_name())
-end
+## Physics (Planned Phase 3+)
 
--- Set gravity
-ctx.physics:set_gravity(uz.Vec3(0, -9.81, 0))
+Physics raycast and overlap queries are planned for Phase 3. For now, use the available APIs (input, scene, renderer, camera).
 
--- Debug visualization
-ctx.physics:debug_draw_line(from, to, uz.Vec3(1, 0, 0))  -- Red line
-```
+## Audio (Planned Phase 3+)
 
-### Physics Component
-
-```lua
-local physics = entity:get_component("RigidBodyComponent")
-
--- Properties
-physics:set_mass(100.0)
-physics:set_velocity(uz.Vec3(10, 0, 0))
-physics:add_velocity(uz.Vec3(0, 50, 0))  -- Impulse
-
--- Collision
-physics:set_collision_enabled(true)
-physics:set_collision_channel("Pawn")
-physics:set_collision_response("Trigger", "Ignore")  -- Don't collide with triggers
-
--- Queries
-local velocity = physics:get_velocity()
-local kinetic_energy = physics:get_kinetic_energy()
-
--- Events
-physics:on_collision_begin(function(other_entity)
-    print("Collided with:", other_entity:get_name())
-end)
-
-physics:on_collision_end(function(other_entity)
-    print("Stopped colliding with:", other_entity:get_name())
-end)
-```
-
-## Audio
-
-### Audio System
-
-```lua
--- Play sounds
-ctx.audio:play_sound_2d("content/audio/jump.wav", {
-    volume = 1.0,
-    pitch = 1.0,
-})
-
-ctx.audio:play_sound_3d("content/audio/explosion.wav", location, {
-    volume = 1.0,
-    inner_radius = 500,
-    outer_radius = 2000,
-    falloff = 1.0,
-})
-
--- Stop all sounds
-ctx.audio:stop_all_sounds()
-
--- Volume control
-ctx.audio:set_master_volume(0.8)
-ctx.audio:set_bus_volume("Ambient", 0.5)
-
--- Query
-local voice_count = ctx.audio:get_active_voice_count()
-```
+Audio playback and mixing are planned for Phase 3. The XAudio2 backend is implemented in C++, but Lua bindings are not yet available.
 
 ## Camera
 
 ### Camera System
 
 ```lua
--- Active camera
-local camera = ctx.camera:get_active_camera()
+-- Set camera position (world space)
+uz.camera.set_position(x, y, z)
 
--- Properties
-camera:set_fov(90.0)
-camera:set_near_plane(0.1)
-camera:set_far_plane(10000.0)
+-- Make camera look at a target point
+uz.camera.look_at(target_x, target_y, target_z)
 
--- Shake
-ctx.camera:play_shake({
-    duration = 0.5,
-    blend_in = 0.1,
-    blend_out = 0.2,
-    location_y = {amplitude = 1.0, frequency = 8.0},
-    rotation_yaw = {amplitude = 2.0, frequency = 8.0},
-})
-```
+-- Example: FPS camera controller
+function on_update(entity, dt)
+    -- Get mouse look delta
+    local dx, dy = uz.input.get_mouse_delta()
 
-## Debug Visualization
-
-### Debug System (Phase 2+)
-
-```lua
--- Set debug view mode for rendering diagnostics
-ctx.debug:set_view_mode("albedo")   -- Visualize individual channels
-
--- Get current debug view mode
-local current_mode = ctx.debug:get_view_mode()
-print("Current debug mode:", current_mode)
-
--- Available modes (13 total):
--- - "lit"           : Normal PBR rendering (default, no visualization)
--- - "albedo"        : Base color texture without lighting
--- - "worldnormal"   : Surface normals (decoded, mapped to RGB)
--- - "metallic"      : Metallic parameter as grayscale
--- - "roughness"     : Roughness parameter as grayscale
--- - "ao"            : Ambient occlusion as grayscale
--- - "depth"         : Linearized depth (black=near, white=far)
--- - "worldposition" : Absolute world coordinates (false-color)
--- - "lighting"      : Direct lighting contribution (Lo) without albedo
--- - "shadows"       : Shadow factor visualization (0=shadowed, 1=lit)
--- - "unlit"         : Albedo only (alias for "albedo")
--- - "wireframe"     : Geometry edges on black background
--- - "overview"      : Composite 4×2 grid of all major channels
-```
-
-**Keyboard Shortcuts**: F1–F11 toggle modes during interactive development.
-**CLI**: Use `--view-mode <name>` when launching for headless/automated testing.
-**Use Case**: Rapid iteration on rendering, material bugs, and lighting issues without shader recompilation.
-
-## UI
-
-### UI System (Phase 3+)
-
-```lua
--- Create text
-ctx.ui:create_text({
-    text = "Hello World",
-    position = {x = 100, y = 100},
-    color = {r = 1, g = 1, b = 1},
-    size = 32,
-})
-
--- Create button
-ctx.ui:create_button({
-    text = "Click Me",
-    position = {x = 200, y = 200},
-    on_click = function()
-        print("Button clicked!")
-    end,
-})
-
--- Create panel
-ctx.ui:create_panel({
-    position = {x = 0, y = 0},
-    size = {width = 800, height = 600},
-    background_color = {r = 0.1, g = 0.1, b = 0.1},
-})
-```
-
-## Scene and Levels
-
-### World State
-
-```lua
--- Current level/scene
-local scene_name = ctx.world:get_scene_name()
-
--- Load new scene (resets world)
-ctx.world:load_scene("content/scenes/level_2.uzscene")
-
--- Pause/resume game
-ctx.world:pause()
-ctx.world:resume()
-local paused = ctx.world:is_paused()
-
--- Time management
-local delta_time = ctx.world:get_delta_time()
-local total_time = ctx.world:get_total_time()
-ctx.world:set_timescale(0.5)  -- Slow motion
-```
-
-## Logging
-
-### Logging API
-
-```lua
--- Log with category and level
-ctx.log("Player took damage", "Gameplay", "Info")
-ctx.log_warning("Enemy AI failed to find path")
-ctx.log_error("Script error: undefined variable")
-ctx.log_debug("Position update: x=" .. pos.x)
-```
-
-## Events
-
-### Event System
-
-```lua
--- Subscribe to custom events
-ctx.world:subscribe("PlayerDied", function(player_entity)
-    print("Player died!")
-    local camera = ctx.camera:get_active_camera()
-    camera:play_shake({duration = 1.0})
-end)
-
--- Fire custom events
-ctx.world:fire_event("PlayerDied", ctx.entity)
-
--- Built-in events
-ctx.world:on("EntityCreated", function(entity)
-    print("Entity created:", entity:get_name())
-end)
-
-ctx.world:on("EntityDestroyed", function(entity)
-    print("Entity destroyed:", entity:get_name())
-end)
-```
-
-## Timers and Scheduling
-
-### Async/Delayed Execution (Phase 3.5)
-
-```lua
--- Call function after delay
-ctx.world:schedule_after(2.0, function()
-    print("Called after 2 seconds")
-end)
-
--- Call function repeatedly
-local timer_id = ctx.world:schedule_every(0.5, function()
-    print("Called every 0.5 seconds")
-end)
-
--- Cancel timer
-ctx.world:cancel_timer(timer_id)
-
--- Coroutines (Lua native)
-function async_example(ctx)
-    local coro = coroutine.create(function()
-        coroutine.yield()  -- Wait 1 frame
-        print("Frame 2")
-        coroutine.yield()
-        print("Frame 3")
-    end)
-
-    coroutine.resume(coro)  -- Run 1 step per frame
-end
-```
-
-## Complete Example Script
-
-```lua
--- scripts/player_controller.lua
-
-local move_speed = 500
-local jump_force = 1000
-local grounded = false
-local current_health = 100
-
-function on_start(ctx)
-    ctx.log("Player controller started", "Gameplay")
-
-    -- Subscribe to input
-    ctx.input:on_key_press("space", function()
-        if grounded then jump(ctx) end
-    end)
-
-    -- Subscribe to damage event
-    ctx.world:subscribe("TakeDamage", function(amount)
-        current_health = current_health - amount
-        ctx.log("Player took " .. amount .. " damage, health=" .. current_health)
-        if current_health <= 0 then
-            on_death(ctx)
-        end
-    end)
-end
-
-function on_update(ctx, dt)
-    local entity = ctx.entity
-    local input = ctx.input
-
-    -- Movement input
-    local move_dir = uz.Vec3.new(0, 0, 0)
-    if input:is_key_down("w") then move_dir = move_dir + uz.Vec3(0, 0, 1) end
-    if input:is_key_down("a") then move_dir = move_dir + uz.Vec3(-1, 0, 0) end
-    if input:is_key_down("s") then move_dir = move_dir + uz.Vec3(0, 0, -1) end
-    if input:is_key_down("d") then move_dir = move_dir + uz.Vec3(1, 0, 0) end
-
-    -- Apply movement
-    if move_dir:length() > 0 then
-        move_dir = move_dir:normalize()
-        local pos = entity:get_position()
-        pos = pos + move_dir * move_speed * dt
-        entity:set_position(pos)
+    -- Update camera position based on input
+    local speed = 10.0 * dt
+    if uz.input.is_key_down("w") then
+        cam_z = cam_z + speed
     end
 
-    -- Check if grounded
-    local pos = entity:get_position()
-    local ground_check = ctx.physics:ray_cast(
-        pos,
-        pos + uz.Vec3(0, -100, 0)
+    -- Apply position
+    uz.camera.set_position(cam_x, cam_y, cam_z)
+
+    -- Point camera at a look-ahead position
+    uz.camera.look_at(cam_x, cam_y + 5, cam_z)
+end
+```
+
+### Camera API Reference
+
+| Function | Parameters | Return | Notes |
+|----------|-----------|--------|-------|
+| `uz.camera.set_position(x, y, z)` | x, y, z: float | — | Set camera world position |
+| `uz.camera.look_at(x, y, z)` | x, y, z: float | — | Make camera look at a point in world space |
+
+### Coordinate System
+
+Z-up convention: X=forward, Y=right, Z=up. This matches the demo camera controller.
+
+## Renderer
+
+### Renderer System
+
+```lua
+-- Set render path (deferred or forward)
+uz.renderer.set_render_path("deferred")  -- or "forward"
+
+-- Set debug visualization mode
+uz.renderer.set_debug_mode(0)  -- 0=off, 1-8=various debug channels
+
+-- Set debug view mode by name
+uz.renderer.set_debug_view("Albedo")
+
+-- Example: Toggle render path with keyboard
+if uz.input.is_key_just_pressed("F") then
+    if current_render_path == "deferred" then
+        uz.renderer.set_render_path("forward")
+    else
+        uz.renderer.set_render_path("deferred")
+    end
+end
+```
+
+### Renderer API Reference
+
+| Function | Parameters | Return | Notes |
+|----------|-----------|--------|-------|
+| `uz.renderer.set_render_path(path)` | path: "deferred"/"forward" | — | Switch rendering pipeline |
+| `uz.renderer.set_debug_mode(mode)` | mode: 0-8 (int) | — | 0=off, 1-8=debug channels |
+| `uz.renderer.set_debug_view(name)` | name: string | — | Debug view mode name (see below) |
+
+### Debug View Modes
+
+Available debug views for rendering diagnostics:
+- `"Lit"` — Normal PBR rendering (default)
+- `"Albedo"` — Base color without lighting
+- `"Normal"` — Surface normals (RGB)
+- `"Metallic"` — Metallic parameter (grayscale)
+- `"Roughness"` — Roughness parameter (grayscale)
+- `"AO"` — Ambient occlusion (grayscale)
+- `"Depth"` — Linearized depth (black=near, white=far)
+- `"WorldPos"` — World coordinates (false-color)
+- `"Velocity"` — Motion vectors
+- `"Wireframe"` — Geometry edges
+- `"Overdraw"` — Overdraw visualization
+
+## UI (Planned Phase 3+)
+
+UI system with HTML/CSS rendering is planned for Phase 3. Lua bindings for UI creation will be available then.
+
+## Events (Planned Phase 3+)
+
+Event bus and custom event subscriptions are planned for Phase 3.
+
+## Timers and Scheduling (Planned Phase 3+)
+
+Async scheduling (`schedule_after`, `schedule_every`) is planned for Phase 3. Use Lua coroutines for now if you need frame-by-frame control.
+
+## Complete Example Scripts
+
+### FPS Camera Controller
+
+```lua
+-- scripts/camera_controller.lua
+-- Simple FPS camera with WASD movement and mouse look
+-- Z-up coordinate system: X=forward, Y=right, Z=up
+
+local camera_speed = 5.0
+local mouse_sensitivity = 0.15
+local yaw = 90.0
+local pitch = -15.0
+local cam_x, cam_y, cam_z = 0, -8, 3
+
+function on_start(entity)
+    uz.log("Camera controller started")
+end
+
+function on_update(entity, dt)
+    -- Quit on Escape
+    if uz.input.is_key_just_pressed("Escape") then
+        uz.quit()
+        return
+    end
+
+    -- Mouse look (when right button held)
+    if uz.input.is_mouse_button_down("Right") then
+        local dx, dy = uz.input.get_mouse_delta()
+        yaw = yaw + dx * mouse_sensitivity
+        pitch = pitch - dy * mouse_sensitivity
+        if pitch > 89 then pitch = 89 end
+        if pitch < -89 then pitch = -89 end
+    end
+
+    -- Calculate movement axes
+    local rad = math.pi / 180.0
+    local cy = math.cos(yaw * rad)
+    local sy = math.sin(yaw * rad)
+    local cp = math.cos(pitch * rad)
+    local sp = math.sin(pitch * rad)
+
+    -- Forward direction in Z-up (X=forward, Y=right, Z=up)
+    local fwd_x = cy * cp
+    local fwd_y = sy * cp
+    local fwd_z = sp
+
+    -- Right direction
+    local right_x = -sy
+    local right_y = cy
+
+    local speed = camera_speed * dt
+
+    -- WASD movement
+    if uz.input.is_key_down("W") then
+        cam_x = cam_x + fwd_x * speed
+        cam_y = cam_y + fwd_y * speed
+        cam_z = cam_z + fwd_z * speed
+    end
+    if uz.input.is_key_down("S") then
+        cam_x = cam_x - fwd_x * speed
+        cam_y = cam_y - fwd_y * speed
+        cam_z = cam_z - fwd_z * speed
+    end
+    if uz.input.is_key_down("A") then
+        cam_x = cam_x - right_x * speed
+        cam_y = cam_y - right_y * speed
+    end
+    if uz.input.is_key_down("D") then
+        cam_x = cam_x + right_x * speed
+        cam_y = cam_y + right_y * speed
+    end
+
+    -- Vertical (E/Q)
+    if uz.input.is_key_down("E") then
+        cam_z = cam_z + speed
+    end
+    if uz.input.is_key_down("Q") then
+        cam_z = cam_z - speed
+    end
+
+    -- Apply camera position and look direction
+    uz.camera.set_position(cam_x, cam_y, cam_z)
+
+    local look_dist = 10.0
+    uz.camera.look_at(
+        cam_x + fwd_x * look_dist,
+        cam_y + fwd_y * look_dist,
+        cam_z + fwd_z * look_dist
     )
-    grounded = ground_check:is_hit()
+end
 
-    -- Camera shake on land
-    if ground_check:is_hit() and not was_grounded then
-        ctx.camera:play_shake({duration = 0.2})
+function on_stop(entity)
+    uz.log("Camera controller stopped")
+end
+```
+
+### Entity Finder and Rotator
+
+```lua
+-- scripts/cube_rotator.lua
+-- Finds all entities named "Cube_*" and rotates them
+
+local cubes = {}
+local angles = {}
+local base_speed = 30.0  -- degrees per second
+
+function on_start(entity)
+    -- Collect all cube entities
+    local all = uz.scene.get_entities()
+    for i = 1, #all do
+        local e = all[i]
+        local name = uz.scene.get_name(e)
+        if name and name:sub(1, 5) == "Cube_" then
+            cubes[#cubes + 1] = e
+            angles[#cubes] = 0.0
+        end
     end
-    was_grounded = grounded
+    uz.log("CubeRotator: found " .. #cubes .. " cubes")
 end
 
-function on_stop(ctx)
-    ctx.log("Player controller stopped", "Gameplay")
-end
+function on_update(entity, dt)
+    for i = 1, #cubes do
+        local e = cubes[i]
+        -- Each cube rotates at different speed
+        local speed = base_speed * (0.5 + i * 0.3)
+        angles[i] = angles[i] + speed * dt
+        if angles[i] > 360 then angles[i] = angles[i] - 360 end
 
-function jump(ctx)
-    local entity = ctx.entity
-    local physics = entity:get_component("RigidBodyComponent")
-    if physics then
-        local vel = physics:get_velocity()
-        physics:set_velocity(uz.Vec3(vel.x, jump_force, vel.z))
+        -- Rotate around Z axis (Z-up): set_rotation(pitch, yaw, roll)
+        uz.scene.set_rotation(e, 0, 0, angles[i])
     end
 end
 
-function on_death(ctx)
-    ctx.log("Player died!", "Gameplay")
-    ctx.world:fire_event("PlayerDied", ctx.entity)
-    ctx.world:schedule_after(2.0, function()
-        ctx.world:load_scene("content/scenes/main_menu.uzscene")
-    end)
+function on_stop(entity)
+    uz.log("CubeRotator stopped")
 end
 ```
 
 ## Engine Comparison
 
-| API Category | UE5 (Blueprint) | Godot GDScript | Unity C# | **UzEngine Lua** |
-|-------------|-----------------|-----------------|----------|-----------------|
-| Vectors | FVector | Vector3 | Vector3 | uz.Vec3 |
-| Entities | AActor | Node | GameObject | uz.Entity |
-| Physics | FHitResult | RayQueryParameters | RaycastHit | uz.Physics |
-| Input | APlayerController | Input | Input | ctx.input |
-| Audio | UAudioComponent | AudioStreamPlayer | AudioSource | ctx.audio |
-| Logging | UE_LOG | print() | Debug.Log | ctx.log |
+| Feature | UE5 Scripting | Godot GDScript | Unity C# | **UzEngine Lua (Phase 1)** |
+|---------|---------------|-----------------|----------|---------------------------|
+| **Primary Language** | C++ | GDScript | C# | C++ |
+| **Secondary Language** | Blueprint (visual) | C# (GDExtension) | None | Lua (text) |
+| **Input Queries** | APlayerController | Input singleton | Input class | uz.input.* |
+| **Camera Control** | Pawn/CharacterBP | Camera3D node | Camera component | uz.camera.* |
+| **Scene Queries** | FindActorByName() | get_tree().get_nodes_in_group() | GameObject.Find() | uz.scene.* |
+| **Entity Rotation** | FRotator / Quat | Vector3 (Euler) | Quaternion | Euler (pitch, yaw, roll) |
+| **Renderer Control** | PostProcessVolume | WorldEnvironment | Graphics settings | uz.renderer.* |
+| **Logging** | UE_LOG macro | print() | Debug.Log | uz.log() |
+| **Frame Timing** | DeltaTime (float) | get_process_delta_time() | Time.deltaTime | uz.delta_time |
+| **Hot-Reload** | C++ live coding | GDScript instant | C# domain reload | Lua instant (no state persistence) |
 
 ## Rules
 
-1. **ALWAYS check return values** — ray_cast, overlap_sphere may return nil/empty
-2. **NEVER store entity references in globals** — entities may be destroyed
-3. **ALWAYS clean up event subscriptions** — manually unsubscribe in on_stop
-4. **NEVER call blocking operations** — schedules/await are non-blocking
-5. **ALWAYS handle nil gracefully** — missing components return nil
+1. **Coordinate System**: Z-up convention — X=forward, Y=right, Z=up (matches all engine systems)
+2. **State Preservation**: Script state (local variables) is NOT preserved across hot-reload — design scripts to be stateless or reinitialize in `on_start()`
+3. **Entity Queries**: Use `uz.scene.get_entities()` to find entities by name; no LINQ-style queries yet
+4. **Input Lifecycle**: Input state is captured once per frame; call input functions in `on_update()`
+5. **No Blocking Calls**: All Lua callbacks are synchronous; no async/await yet (Phase 3+)
+6. **Nil Handling**: Always check return values; missing entities or components may be nil
+7. **Rotation Format**: Euler angles (pitch, yaw, roll) in degrees; not radians

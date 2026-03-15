@@ -64,6 +64,22 @@ This directory contains deep-dive analysis of Unreal Engine 5.6 rendering system
 - FRHICommandList (UzEngine uses render graph only)
 - Complex material system integration
 
+### Volumetric Rendering System (Frostbite)
+
+1. **[Frostbite Volumetric Rendering Analysis](frostbite-volumetric-rendering.md)** — Complete technical breakdown
+   - Single-scattering rendering equation with all terms
+   - Froxel grid architecture (8×8×64 frustum-aligned)
+   - 3-step pipeline: material voxelization → light scattering → final accumulation
+   - Participating media material model (σ_a, σ_s, σ_t, ρ, g, σ_e)
+   - Critical: Energy-conservative integration formula with HLSL code
+   - Temporal integration with Halton jitter (5% blend)
+   - Volumetric shadow maps (32³ clip-map per light)
+   - Particle voxelization with extinction normalization
+   - Performance: 2.95 ms on PS4 900p (8×8 tiles) / 0.83 ms (16×16 tiles)
+   - Validation vs Mitsuba path tracer
+   - UzEngine adaptation strategy (phases 3.5a-f, ~10 weeks)
+   - **Read this** for production volumetric rendering implementation
+
 ## Related Analysis Documents
 
 - [RHI Abstraction](rhi-abstraction-pattern.md) — How UE5 abstracts GPU APIs

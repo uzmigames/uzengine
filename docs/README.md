@@ -83,6 +83,7 @@ Located in [user/](user/):
 
 ### Guides
 
+- [Lua Scripting](user/guides/lua-scripting.md) — Write game logic in LuaJIT 2.1 with hot-reload
 - **Build System**: [Zig](user/guides/build-system/zig-build.md) · [CMake+MSVC](user/guides/build-system/cmake-msvc.md) · [CMake+Clang](user/guides/build-system/cmake-clang.md)
 - [Math](user/guides/math/overview.md) — Vec, Mat4, Quat, Transform usage
 - [Memory](user/guides/memory/overview.md) — Engine allocators

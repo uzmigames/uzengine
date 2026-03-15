@@ -17,6 +17,7 @@ Developer-facing documentation for users of UzEngine: getting started guides, sy
 | Guide | Description |
 |-------|-------------|
 | [guides/architecture.md](guides/architecture.md) | Three-layer design (Extension → Runtime → MCP), process model |
+| [guides/lua-scripting.md](guides/lua-scripting.md) | Lua scripting quick start, API reference, examples, best practices |
 | [guides/build-system/zig-build.md](guides/build-system/zig-build.md) | Zig build system, cross-compilation, platform guards |
 | [guides/build-system/cmake-msvc.md](guides/build-system/cmake-msvc.md) | CMake with Visual Studio 2022 |
 | [guides/build-system/cmake-clang.md](guides/build-system/cmake-clang.md) | CMake with Clang-CL and Ninja |
