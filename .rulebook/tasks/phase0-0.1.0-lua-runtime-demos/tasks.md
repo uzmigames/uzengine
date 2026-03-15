@@ -191,12 +191,12 @@ Goal: Every C++ engine capability accessible from Lua. Ordered by gameplay impac
 - [ ] N.G4 Unit tests for renderer extended API.
 
 ### N-H: Math Types (Vec3/Quat userdata with metatables)
-- [ ] N.H1 `uz.math.vec3(x,y,z)` → Vec3 userdata with __add, __sub, __mul, __div, __unm, __len, __tostring, __eq, __index (x,y,z fields).
-- [ ] N.H2 Vec3 methods: `v:dot(v2)`, `v:cross(v2)`, `v:normalize()`, `v:length()`, `v:distance(v2)`, `v:lerp(v2,t)`.
-- [ ] N.H3 Vec3 constants: `uz.math.vec3.ZERO`, `uz.math.vec3.ONE`, `uz.math.vec3.UP`, `uz.math.vec3.RIGHT`, `uz.math.vec3.FORWARD`.
-- [ ] N.H4 `uz.math.quat(x,y,z,w)` → Quat userdata with __mul (compose + rotate vec3), __tostring, __eq.
-- [ ] N.H5 Quat constructors: `uz.math.quat.from_euler(pitch,yaw,roll)`, `uz.math.quat.from_axis_angle(axis_vec3, angle)`, `uz.math.quat.identity()`.
-- [ ] N.H6 Quat methods: `q:slerp(q2,t)`, `q:inverse()`, `q:normalize()`, `q:to_euler()` → pitch,yaw,roll degrees.
+- [x] N.H1 `uz.math.vec3(x,y,z)` → Vec3 userdata with __add, __sub, __mul, __div, __unm, __len, __tostring, __eq, __index (x,y,z fields).
+- [x] N.H2 Vec3 methods: `v:dot(v2)`, `v:cross(v2)`, `v:normalize()`, `v:length()`, `v:distance(v2)`, `v:lerp(v2,t)`.
+- [x] N.H3 Vec3 constants: `uz.math.VEC3_ZERO`, `uz.math.VEC3_ONE`, `uz.math.VEC3_UP`, `uz.math.VEC3_RIGHT`, `uz.math.VEC3_FORWARD`.
+- [x] N.H4 `uz.math.quat(x,y,z,w)` → Quat userdata with __mul (compose + rotate vec3), __tostring, __eq.
+- [x] N.H5 Quat constructors: `uz.math.quat_from_euler(pitch,yaw,roll)`, `uz.math.quat_from_axis_angle(vec3, angle)`, `uz.math.quat_identity()`.
+- [x] N.H6 Quat methods: `q:slerp(q2,t)`, `q:inverse()`, `q:normalize()`, `q:to_euler()` → pitch,yaw,roll degrees.
 - [ ] N.H7 Unit tests for Vec3 and Quat userdata (arithmetic, methods, constants).
 
 ### N-I: Scene Management
