@@ -339,11 +339,31 @@ The oversized triangle is clipped by the rasterizer to the viewport. UVs interpo
    }
    ```
 
-5. **Apply ambient occlusion and tonemap**
+5. **Evaluate split-sum IBL (image-based lighting)**
+   ```hlsl
+   // Sample irradiance cubemap for diffuse ambient
+   float3 irradiance = irradianceCubemap.Sample(linearSampler, N).rgb;
+   float3 diffuseIBL = irradiance * albedo * ao;
+
+   // Sample prefiltered specular cubemap with roughness-based mip level
+   float3 R = reflect(-V, N);
+   uint mipLevel = uint(roughness * 4.0);  // 5 mips: 0-4
+   float3 prefiltered = prefilteredSpecularCubemap.SampleLevel(linearSampler, R, mipLevel).rgb;
+
+   // Fetch BRDF lookup table for current view angle and roughness
+   float2 brdfUV = float2(max(dot(N, V), 0.0), roughness);
+   float2 brdf = brdfLUT.Sample(linearSampler, brdfUV).rg;
+   float3 specularIBL = prefiltered * (F0 * brdf.x + brdf.y);
+
+   // Combine direct lighting with IBL
+   Lo += diffuseIBL + specularIBL;
+   ```
+
+6. **Apply ambient occlusion and tonemap**
    ```hlsl
    Lo *= ao;                                    // Modulate by ambient occlusion
-   color = color / (color + 1.0);              // Reinhard tonemap
-   color = pow(color, 1.0 / 2.2);              // sRGB gamma
+   color = ACESFilm(Lo);                       // ACES filmic tonemap
+   color = LinearToSRGB(color);                // sRGB gamma correction
    ```
 
 **Constant buffers**:
@@ -577,12 +597,16 @@ Modern GPUs execute this in parallel across millions of pixels, hiding latency v
 - [ ] Spot lights with cone attenuation
 - [ ] Light culling (tiled Forward+) to reduce point light iteration
 
+### Phase 2.5+ (Implementing)
+
+- [x] Image-based lighting (IBL) — split-sum with prefiltered sky cubemaps (Phase 2.5b)
+
 ### Phase 3+ (Future)
 
 - [ ] Virtual Shadow Maps (VSM) for efficient dynamic lighting
 - [ ] Clustered deferred for even more lights (per-cluster light lists)
-- [ ] Global illumination (light probes, screen-space GI)
-- [ ] Image-based lighting (IBL with prefiltered cubemaps)
+- [ ] Global illumination (light probes, screen-space GI, ray-traced GI)
+- [ ] Advanced IBL (parallax-corrected cubemaps, per-pixel probe interpolation)
 
 ## Rules
 

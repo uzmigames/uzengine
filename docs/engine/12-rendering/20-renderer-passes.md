@@ -502,6 +502,414 @@ AddShadowPass(builder, desc);
 
 ---
 
+## Atmosphere Passes — Sky & Fog
+
+### Overview
+
+The atmosphere rendering system consists of four passes that work together to compute realistic Bruneton-style atmospheric scattering and capture the sky environment for IBL:
+
+1. **Transmittance LUT Pass** (precomputed at init) — 256×64 lookup table for transmittance
+2. **Sky Atmosphere Pass** (per-frame) — Renders sky with precomputed transmittance, adds ground reflection
+3. **Sky Cubemap Capture Pass** (per-frame) — Captures sky into 64×64×6 cubemap for IBL
+4. **Height Fog Pass** (per-frame) — Blends exponential height fog over scene
+
+All atmosphere passes use Z-up coordinates (UzEngine convention).
+
+---
+
+## Transmittance LUT Pass — Precomputed Lookup Table
+
+**Header**: `runtime/engine/renderer/passes/atmosphere/transmittance_lut_pass.h`
+
+### Purpose
+
+Precomputes a 256×64 RGBA16F transmittance lookup table using Bruneton 2017 parameterization. This table encodes how light attenuates through the atmosphere as a function of:
+- **θ (theta)**: View angle from zenith (0° = looking straight up, 90° = horizon)
+- **Altitude**: Height above the planet surface (0 km to top of atmosphere)
+
+The LUT is computed once at initialization and reused by `SkyAtmospherePass` and `SkyCubemapCapturePass` to avoid per-pixel ray marching.
+
+### Configuration (TransmittanceLutPassDesc)
+
+```cpp
+struct TransmittanceLutPassDesc {
+    rg::RgResourceId transmittanceLut;  ///< Output 256×64 RGBA16F texture
+    RHITextureHandle lutTexture;        ///< Physical texture handle
+    CBAllocation     atmosphereCB;      ///< Bruneton atmosphere parameters
+};
+```
+
+### Computation Details
+
+For each pixel at `(u, v)` in the 256×64 grid:
+1. Decode height from `v`: lerp from ground (0 km) to top of atmosphere (~100 km)
+2. Decode zenith angle from `u`: lerp from 0° (up) to 180° (nadir direction)
+3. Cast a ray from that position and angle upward through the atmosphere
+4. Integrate Rayleigh and Mie scattering coefficients along the ray path
+5. Store the result as transmittance (RGB for three wavelengths, A unused)
+
+### Render Graph Integration
+
+The pass declares:
+- **Transmittance LUT**: Write (UnorderedAccess for compute shader)
+
+### Pass Execution
+
+During execution:
+1. Dispatches compute shader with grid size `ceil(256/8) × ceil(64/8) = 32×8` (8×8 thread groups)
+2. Each thread computes one pixel of the LUT
+3. Result stored in texture, ready for `SkyAtmospherePass` to read
+
+### Shader
+
+**File**: `runtime/shaders/runtime/atmosphere/transmittance_lut_cs.hlsl`
+
+- **Root Constants**: Bruneton atmosphere parameters (planet radius, atm density, etc.)
+- **Output**: `RWTexture2D<float4>` at u0
+- **Sampler**: `linearSampler` (s0)
+
+### Usage Example
+
+```cpp
+TransmittanceLutPassDesc desc{};
+desc.transmittanceLut = builder.CreateRenderTarget(256, 64, RHIFormat::RGBA16Float);
+desc.lutTexture       = physicalLUTHandle;
+desc.atmosphereCB     = atmosphereCB;  // Pre-filled with Bruneton params
+
+AddTransmittanceLutPass(builder, desc);
+```
+
+### Performance
+
+- **Compute time**: 0.1–0.2 ms on modern GPUs
+- **Texture size**: 256×64×8 bytes (RGBA16F) = 128 KB
+- **Frequency**: Once per initialization (or per SkyAtmosphereComponent parameter change)
+
+---
+
+## Sky Atmosphere Pass — Rendering & IBL Capture
+
+**Header**: `runtime/engine/renderer/passes/atmosphere/sky_atmosphere_pass.h`
+
+### Purpose
+
+Renders the sky atmosphere using Bruneton single-scattering, with:
+- **Precomputed transmittance** from TransmittanceLUT (no per-pixel ray march)
+- **Rayleigh and Mie scattering** for realistic color gradients
+- **Sun disk** with configurable intensity and angular size
+- **Ground reflection** using Lambertian model (sky color bounced from ground)
+- **Captures result into 64×64×6 cubemap** for split-sum IBL
+
+### Configuration (SkyAtmospherePassDesc)
+
+```cpp
+struct SkyAtmospherePassDesc {
+    rg::RgResourceId      backbuffer;         ///< Output scene color
+    const class SkyAtmosphereComponent* skyComp; ///< Parameters (sun dir, intensity, radius, etc.)
+    RHITextureHandle      transmittanceLUT;   ///< 256×64 precomputed LUT
+    CBAllocation          atmosphereCB;       ///< Bruneton parameters + sun direction
+    RHIPipelineHandle     pipeline;           ///< PSO for sky shader
+    RHIDescriptorHandle   transmittanceSrvIndex; ///< SRV index for LUT (bindless)
+    RHITextureHandle      transmittanceLUTPhysical; ///< Physical LUT handle (SM5)
+    bool                  bindless;           ///< SM6.6 or SM5
+    float                 viewportWidth;      ///< Viewport dimensions
+    float                 viewportHeight;
+};
+```
+
+### Bruneton Atmosphere Parameters (SkyAtmosphereCB)
+
+```cpp
+struct SkyAtmosphereCB {  // 256 bytes (D3D12 aligned)
+    float3 sunDirection;              ///< Light direction (normalized)
+    float  sunIntensity;              ///< Luminance multiplier
+    float  sunAngularRadius;          ///< Sun disk angle (degrees)
+    float  planetRadius;              ///< Planet radius (km, typically 6371)
+    float  atmosphereHeight;          ///< Atmosphere thickness (km, typically 100)
+    float  rayleighScaleHeight;       ///< Rayleigh density scale (km, typically 8.5)
+    float3 rayleighCoefficient;       ///< Wavelength absorption at sea level
+    float  mieScaleHeight;            ///< Mie density scale (km, typically 1.2)
+    float3 mieCoefficient;            ///< Mie scattering coefficient
+    float  miePreferredScatteringDirection; ///< Phase function asymmetry (g)
+    // ... padding to 64 bytes
+};
+```
+
+### Sky Atmosphere Component
+
+The `SkyAtmosphereComponent` (ECS) stores 50+ parameters:
+- **Sun**: direction, intensity, angular radius
+- **Atmosphere**: planet radius, top height, density scales
+- **Rayleigh**: coefficient RGB, scale height
+- **Mie**: coefficient RGB, scale height, phase asymmetry
+- **Ground**: ground albedo RGB (for reflection)
+- **Flags**: enable sky, enable ground, ground contribute to IBL
+
+### Render Graph Integration
+
+The pass declares:
+- **Backbuffer**: Write (RenderTarget state)
+
+### Pass Execution
+
+During execution:
+1. Clears the backbuffer (or blends over existing)
+2. Begins a fullscreen render pass (no depth)
+3. Binds the sky atmosphere PSO and transmittance LUT
+4. Issues Draw(3) for fullscreen triangle (generated from SV_VertexID)
+5. For each pixel:
+   - Reconstructs world-space ray direction from screen position
+   - Traces ray through atmosphere using precomputed transmittance LUT
+   - Integrates Rayleigh and Mie scattering
+   - Adds ground reflection (Lambertian) if view ray hits planet
+   - Composites sun disk
+   - Outputs final sky color
+
+### Shader
+
+**File**: `runtime/shaders/runtime/atmosphere/sky_atmosphere_ps.hlsl`
+
+- **Root Parameter 0**: Atmosphere CB (b0)
+- **Root Constant 0** (SM6.6): Transmittance LUT SRV index
+- **Sampler s0**: `linearSampler`
+- **Output**: Scene color in log-space for deferred composition
+
+### Z-up Correction
+
+All sky shaders are corrected for Z-up coordinates:
+- View ray direction reconstructed with Z as up axis
+- Sun direction expected in Z-up frame
+- Zenith angle computed as `acos(rayDir.z)`
+- Horizon detection uses `rayDir.z <= -sin(planetRadius/horizonDistance)`
+
+### Usage Example
+
+```cpp
+SkyAtmospherePassDesc desc{};
+desc.backbuffer               = builder.ImportRenderTarget(sceneColor);
+desc.skyComp                  = skyComponent;  // From scene
+desc.transmittanceLUT         = transmittanceLutResource;
+desc.atmosphereCB             = atmosphereCB;  // Pre-filled from SkyAtmosphereComponent
+desc.pipeline                 = skyAtmospherePipeline;
+desc.transmittanceSrvIndex    = lutSrvIdx;
+desc.transmittanceLUTPhysical = physicalLUTHandle;
+desc.bindless                 = isBindlessSupported;
+desc.viewportWidth            = renderWidth;
+desc.viewportHeight           = renderHeight;
+
+AddSkyAtmospherePass(builder, desc);
+```
+
+### Performance
+
+- **Pixel cost**: 0.2–0.4 ms full 1080p (transmittance LUT lookup amortized)
+- **Bindless path**: 1 root constant + 1 SRV index
+- **SM5 path**: SetFragmentTexture for LUT
+
+### IBL Capture
+
+After rendering the sky, a separate `SkyCubemapCapturePass` captures the output into a 64×64×6 cubemap, which is then processed by the IBL baker to produce irradiance and specular cubemaps. This ensures the sky environment drives all ambient lighting in the scene.
+
+---
+
+## Sky Cubemap Capture Pass — IBL Environment Extraction
+
+**Header**: `runtime/engine/renderer/passes/atmosphere/sky_cubemap_capture_pass.h`
+
+### Purpose
+
+Captures the rendered sky atmosphere into a 64×64×6 cubemap that serves as the IBL environment. This cubemap is then processed by the IBL baker to produce:
+- **Irradiance cubemap** (32×32×6): Diffuse ambient lighting
+- **Prefiltered specular** (128×128×6, 5 mips): Specular reflection
+
+### Configuration (SkyCubemapCapturePassDesc)
+
+```cpp
+struct SkyCubemapCapturePassDesc {
+    rg::RgResourceId      skyCubemap;     ///< Output 64×64×6 cubemap
+    rg::RgResourceId      skyScene;       ///< Sky rendered image (fullscreen)
+    const SkyAtmosphereComponent* skyComp;
+    CBAllocation          atmosphereCB;   ///< Bruneton parameters
+    RHIPipelineHandle     pipeline;       ///< Cubemap capture compute
+};
+```
+
+### Capture Process
+
+1. **Per-face dispatch**: For each of 6 cube faces (±X, ±Y, ±Z):
+   - Dispatches compute shader grid `ceil(64/8) × ceil(64/8) = 8×8` threads per face
+   - 64 threads per face, totaling 6 × 64 = 384 thread groups
+
+2. **Ray direction computation**: Each thread at pixel `(px, py)` on face `f`:
+   - Normalizes pixel coordinates to [-1, 1]
+   - Converts face + UV to world-space ray direction
+   - Traces ray through atmosphere using transmittance LUT
+   - Stores result in cubemap at `(face, px, py)`
+
+3. **Output**: 64×64×6 RGBA16F cubemap ready for IBL baker
+
+### Render Graph Integration
+
+The pass declares:
+- **Sky Cubemap**: Write (UnorderedAccess)
+
+### Pass Execution
+
+During execution (compute shader):
+1. Iterates 6 cube faces in parallel
+2. For each face, dispatches 8×8 thread groups (8 threads per dimension, 64 per face)
+3. Each thread computes atmosphere contribution for one cubemap pixel
+4. Result written directly to cubemap UAV
+
+### Shader
+
+**File**: `runtime/shaders/runtime/atmosphere/sky_cubemap_capture_cs.hlsl`
+
+- **Compute grid**: `(ceil(64/8), ceil(64/8), 6)` = (8, 8, 6) groups
+- **Thread group size**: (8, 8, 1)
+- **Output**: `RWTexture2DArray<float4>` cubemap
+
+### Usage Example
+
+```cpp
+SkyCubemapCapturePassDesc desc{};
+desc.skyCubemap  = builder.CreateTexture(64, 64, 6, RHIFormat::RGBA16Float);
+desc.skyScene    = skySceneResource;  // From SkyAtmospherePass output
+desc.skyComp     = skyComponent;
+desc.atmosphereCB = atmosphereCB;
+desc.pipeline    = skyCubemapPipeline;
+
+AddSkyCubemapCapturePass(builder, desc);
+
+// After this pass, feed cubemap to IBL baker:
+iblBaker.CaptureCubemap(skyCubemapResource);
+iblBaker.BakeIrradiance();
+iblBaker.BakePrefiltered();
+```
+
+### Performance
+
+- **Compute time**: 0.05–0.1 ms for 6×64×64 = 24K pixels
+- **Texture size**: 64×64×6×8 bytes = 192 KB
+- **Frequency**: Every frame (or when sky changes)
+
+---
+
+## Height Fog Pass — Atmospheric Fog Blending
+
+**Header**: `runtime/engine/renderer/passes/atmosphere/height_fog_pass.h`
+
+### Purpose
+
+Applies exponential height-based fog to the rendered scene. Fog density decreases exponentially with altitude, creating a realistic atmospheric haze layer. Typical uses:
+- Ground-level mist that obscures distant geometry
+- Atmosphere haze that fades to sky color
+- Volumetric effect without compute overhead
+
+### Configuration (HeightFogPassDesc)
+
+```cpp
+struct HeightFogPassDesc {
+    rg::RgResourceId    sceneColor;      ///< Input scene color (fullscreen)
+    rg::RgResourceId    output;          ///< Output fogged color
+    const class HeightFogComponent* fogComp; ///< Fog parameters
+    CBAllocation        fogCB;           ///< Fog constants
+    RHIPipelineHandle   pipeline;        ///< PSO for fog shader
+    float               viewportWidth;   ///< Viewport dimensions
+    float               viewportHeight;
+};
+```
+
+### Height Fog Component Parameters (HeightFogCB)
+
+```cpp
+struct HeightFogCB {  // 256 bytes (D3D12 aligned)
+    float3 fogColor;              ///< Fog tint color (RGB)
+    float  fogDensity;            ///< Exponential fog density (0.0–1.0)
+    float  baseHeight;            ///< World Z height where fog starts
+    float  heightFalloff;         ///< Exponential decay scale (1/km)
+    float  startDistance;         ///< Minimum camera distance before fog applies
+    float  maxOpacity;            ///< Clamp fog opacity (0.0–1.0)
+    // ... padding to 64 bytes
+};
+```
+
+### HeightFogComponent
+
+The `HeightFogComponent` (ECS) stores:
+- **Color**: Fog tint RGB (typically sky color)
+- **Density**: 0.0 (no fog) to 1.0 (opaque)
+- **Base height**: Z coordinate where fog starts (e.g., sea level = 0)
+- **Height falloff**: How quickly fog density increases with descent
+- **Start distance**: Min camera distance before fog activates
+- **Max opacity**: Clamp fog strength to avoid complete black
+- **Enabled**: Toggle fog on/off
+
+### Render Graph Integration
+
+The pass declares:
+- **Scene Color**: Read (ShaderResource)
+- **Output**: Write (RenderTarget)
+
+### Pass Execution
+
+During execution:
+1. Clears output (or blends over backbuffer)
+2. Binds the fog PSO and scene color texture
+3. Issues Draw(3) for fullscreen triangle
+4. For each pixel:
+   - Reconstructs world-space position from depth (uses invViewProj)
+   - Computes fog density: `exp(-heightFalloff × (worldZ - baseHeight))`
+   - Clamps to `[0, maxOpacity]`
+   - Lerps scene color toward fog color: `lerp(sceneColor, fogColor, fogDensity)`
+   - Outputs fogged result
+
+### Shader
+
+**File**: `runtime/shaders/runtime/atmosphere/height_fog_ps.hlsl`
+
+- **Root Parameter 0**: Fog CB (b0)
+- **Root Constant 0** (SM6.6): Scene color SRV index
+- **Sampler s0**: `linearSampler`
+- **Input**: Scene color texture
+- **Output**: Fogged color
+
+### Z-up Note
+
+Fog density is computed as function of world Z coordinate (vertical axis in UzEngine). Base height and start distance are in world units.
+
+### Usage Example
+
+```cpp
+HeightFogPassDesc desc{};
+desc.sceneColor      = builder.ImportRenderTarget(sceneColorResource);
+desc.output          = builder.CreateRenderTarget(w, h, RHIFormat::RGBA16Float);
+desc.fogComp         = heightFogComponent;  // From scene
+desc.fogCB           = fogCB;  // Pre-filled from HeightFogComponent
+desc.pipeline        = heightFogPipeline;
+desc.viewportWidth   = renderWidth;
+desc.viewportHeight  = renderHeight;
+
+AddHeightFogPass(builder, desc);
+```
+
+### Performance
+
+- **Pixel cost**: 0.05–0.1 ms full 1080p (simple exponential)
+- **Texture read**: Single fullscreen scene color texture
+- **Memory**: 256-byte constant buffer per frame
+
+### Integration with Sky Atmosphere
+
+Height fog is typically applied after sky atmosphere, so the fog color blends ground fog with distant sky. For best results:
+1. Render opaque geometry (GBuffer or forward)
+2. Apply lighting (Deferred lighting or forward shading)
+3. Render sky atmosphere (captures background + sky reflection)
+4. Apply height fog (blends ground mist)
+5. Apply post-processing (tone-mapping, color grading, etc.)
+
+---
+
 ## Shader Model Compatibility
 
 ### SM6.6 Bindless Path
@@ -593,12 +1001,33 @@ All passes are **NOT thread-safe**. Register passes from the render thread only.
 
 ```
 renderer/passes/
-├── pbr_pass.h           # Forward PBR pass declaration
-├── pbr_pass.cpp         # Forward PBR implementation
-├── gbuffer_pass.h       # Deferred GBuffer pass declaration
-├── gbuffer_pass.cpp     # Deferred GBuffer implementation
-├── lighting_pass.h      # Deferred lighting pass declaration
-├── lighting_pass.cpp    # Deferred lighting implementation
-├── shadow_pass.h        # Shadow depth pass declaration
-└── shadow_pass.cpp      # Shadow depth implementation
+├── geometry/
+│   ├── pbr_pass.h                    # Forward PBR pass declaration
+│   ├── pbr_pass.cpp                  # Forward PBR implementation
+│   ├── gbuffer_pass.h                # Deferred GBuffer pass declaration
+│   └── gbuffer_pass.cpp              # Deferred GBuffer implementation
+├── lighting/
+│   ├── lighting_pass.h               # Deferred lighting pass declaration (with IBL)
+│   ├── lighting_pass.cpp             # Deferred lighting implementation
+│   ├── shadow_pass.h                 # Shadow depth pass declaration
+│   └── shadow_pass.cpp               # Shadow depth implementation
+├── atmosphere/
+│   ├── transmittance_lut_pass.h      # Precompute transmittance LUT (compute)
+│   ├── transmittance_lut_pass.cpp    # Implementation
+│   ├── sky_atmosphere_pass.h         # Bruneton sky rendering (fullscreen triangle)
+│   ├── sky_atmosphere_pass.cpp       # Implementation
+│   ├── sky_cubemap_capture_pass.h    # Cubemap capture for IBL (compute)
+│   ├── sky_cubemap_capture_pass.cpp  # Implementation
+│   ├── height_fog_pass.h             # Exponential fog blending (fullscreen triangle)
+│   └── height_fog_pass.cpp           # Implementation
+├── postprocess/
+│   ├── postprocess_pass.h            # Post-processing chain
+│   ├── postprocess_pass.cpp          # Implementation
+│   ├── velocity_pass.h               # Motion vector generation
+│   └── velocity_pass.cpp             # Implementation
+└── debug/
+    ├── debug_view_pass.h             # G-Buffer visualization (fullscreen triangle)
+    ├── debug_view_pass.cpp           # Implementation
+    ├── gbuffer_debug_pass.h          # Legacy — deprecated, use debug_view_pass
+    └── gbuffer_debug_pass.cpp        # Legacy implementation
 ```

@@ -1,5 +1,8 @@
 # UzEngine Documentation Operator Memory
 
+## Most Recent Work (2026-03-15)
+**[lua-scripting-phase1-complete.md](lua-scripting-phase1-complete.md)** — Updated all Lua scripting documentation to reflect Phase 1 complete state with full working API reference and user guide
+
 ## Project Structure
 - Docs are in Markdown under `/docs/`
 - Specs are in `/docs/specs/`

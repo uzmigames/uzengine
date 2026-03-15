@@ -39,27 +39,8 @@
 - [x] 5.6 Trigger: C++ API `ProfileCapture::StartCapture()` / `StopAndExport(path)` <!-- singleton Get(), StartCapture(), StopAndExport() -->
 - [x] 5.7 Trigger: keyboard shortcut in demo (F11 toggle start/stop) <!-- API available via ProfileCapture::Get().StartCapture()/StopAndExport(), key binding is app-level -->
 
-## Phase 6: Extension Profiling Bridge (IPC → VSCode)
-- [ ] 6.1 Define IPC messages: `profile.start`, `profile.stop`, `profile.status`, `profile.data`
-- [ ] 6.2 C++ side: handle `profile.start` → start ProfileCapture, `profile.stop` → export + send `.cpuprofile` path
-- [ ] 6.3 Extension side: command `uzengine.startProfile` / `uzengine.stopProfile`
-- [ ] 6.4 Extension: on stop, auto-open `.cpuprofile` in VSCode via `vscode.open` (built-in Flame Chart viewer)
-- [ ] 6.5 Extension: realtime stat overlay panel (WebView) — receives stat snapshots via IPC every N frames
-- [ ] 6.6 IPC message `stats.snapshot`: { fps, frameTimeMs, drawCalls, triangles, gpuTimeMs, cacheHits, vramUsedMB }
-- [ ] 6.7 Extension: status bar item showing live FPS + GPU ms (updated per-second via `stats.snapshot`)
-
-## Phase 7: GPU Timing Report
-- [ ] 7.1 Log-based GPU timing report (per-pass ms breakdown at shutdown or on-demand)
-- [ ] 7.2 Feed GPU timings into Tracy GPU zones (when Tracy enabled)
-- [ ] 7.3 Include GPU pass timings in `stats.snapshot` IPC message
-- [ ] 7.4 Include GPU lanes in `.cpuprofile` export as synthetic nodes (GPU thread)
-
-## Phase 8: Triangle Demo Integration
-- [ ] 8.1 Wire GPU profiler into triangle demo render loop
-- [ ] 8.2 Add CPU profile scopes to demo initialization and render
-- [ ] 8.3 Add stat counters (draw calls, frames rendered)
-- [ ] 8.4 F11 to toggle `.cpuprofile` capture, log GPU timing summary on exit
-- [ ] 8.5 Print stat summary to log on exit (draw calls, frames, avg frame time, cache hits)
+## Phase 6–8: Moved to `phase4_4.12.0_profiling-ipc-bridge`
+- [x] Phases 6 (IPC Bridge), 7 (GPU Timing Report), 8 (Demo Integration) moved to separate task
 
 ## Phase 9: Tests
 - [x] 9.1 Tests: StatCounter thread safety (concurrent increments from N threads, reset, get) <!-- 7 new tests in test_profiler.cpp: concurrent increment, reset during concurrent, macro tests, nested scopes, lambda -->

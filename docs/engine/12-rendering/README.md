@@ -29,7 +29,7 @@ The rendering pipeline system is split across multiple documents covering archit
 | [17-shadow-system.md](17-shadow-system.md) | **Done (Phase 2)** | **Cascaded Shadow Maps, frustum splitting, atlas layout, PCF filtering, cascade blending** | **Directional light shadows** |
 | [18-post-processing.md](18-post-processing.md) | Planned (2.0) | Post-process chains, bloom, tonemap, SSAO, TAA, upscaling | Post-processing effects |
 | [19-shader-compatibility.md](19-shader-compatibility.md) | **Done (1.2)** | **Cross-backend shader compilation, SM6.6 bindless vs SM5, DXIL/DXBC/SPIR-V targets** | **Multi-target shaders** |
-| [20-renderer-passes.md](20-renderer-passes.md) | **Done (1.2–Phase 2)** | **PBR, GBuffer, Lighting, Shadow passes — complete reference** | **All render passes** |
+| [20-renderer-passes.md](20-renderer-passes.md) | **Done (1.2–Phase 2.5)** | **PBR, GBuffer, Lighting, Shadow, Sky Atmosphere, Height Fog, Debug passes — complete reference** | **All render passes** |
 | [21-scene-lighting-helper.md](21-scene-lighting-helper.md) | **Done (1.2)** | **SceneLighting struct, BuildPerFrameCB() helper** | **Per-frame CB setup** |
 
 ## Quick Navigation
