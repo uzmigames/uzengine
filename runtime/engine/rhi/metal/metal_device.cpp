@@ -597,6 +597,12 @@ uint32_t MetalDevice::GetBufferSRVIndex(RHIBufferHandle handle) const {
     return buf->srvIndex;
 }
 
+uint32_t MetalDevice::GetBufferUAVIndex(RHIBufferHandle handle) const {
+    // Metal uses argument buffers, not bindless UAV indices
+    (void)handle;
+    return UINT32_MAX;
+}
+
 uint64_t MetalDevice::GetBufferGPUAddress(RHIBufferHandle handle) const {
     const MetalBuffer* buf = m_bufferPool.Get(handle.index, handle.generation);
     if (!buf) return 0;

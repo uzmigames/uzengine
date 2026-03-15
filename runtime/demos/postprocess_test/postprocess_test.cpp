@@ -29,8 +29,8 @@ ApplicationConfig PostProcessTest::Configure() {
     cfg.width           = 1280;
     cfg.height          = 720;
     cfg.cameraPositionX = 0.f;
-    cfg.cameraPositionY = 4.f;
-    cfg.cameraPositionZ = 3.f;
+    cfg.cameraPositionY = 400.f;
+    cfg.cameraPositionZ = 300.f;
     cfg.cameraYawDeg    = -90.f;
     cfg.cameraPitchDeg  = -25.f;
     cfg.renderPath      = RenderPath::Deferred;
@@ -45,14 +45,14 @@ void PostProcessTest::OnStart() {
     auto& world = GetWorld();
 
     // ── 3 cubes spaced along X axis ─────────────────────────────────────
-    static constexpr float kPositionsX[3] = {-3.f, 0.f, 3.f};
+    static constexpr float kPositionsX[3] = {-300.f, 0.f, 300.f};
 
     for (int i = 0; i < kCubeCount; ++i) {
         cubes_[i] = world.CreateEntity();
 
         auto& scene = world.AddComponent<SceneComponent>(cubes_[i]);
         scene.SetPosition({kPositionsX[i], 0.f, 0.f});
-        scene.SetScale({1.f, 1.f, 1.f});
+        scene.SetScale({100.f, 100.f, 100.f});  // 1m cube in cm
 
         auto& mesh    = world.AddComponent<StaticMeshComponent>(cubes_[i]);
         mesh.meshPath = "cube.uzmesh";

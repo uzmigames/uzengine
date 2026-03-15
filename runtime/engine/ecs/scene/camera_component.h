@@ -47,15 +47,15 @@ public:
     /// Converted to radians internally when computing the projection matrix.
     float fov = 60.f;
 
-    /// Near clipping plane distance in world units. Default: 0.1.
+    /// Near clipping plane distance in world units / cm. Default: 10 (= 0.1m).
     ///
     /// Must be > 0. Objects closer than this are clipped.
-    float nearPlane = 0.1f;
+    float nearPlane = 10.f;
 
-    /// Far clipping plane distance in world units. Default: 1000.
+    /// Far clipping plane distance in world units / cm. Default: 100000 (= 1km).
     ///
     /// Objects farther than this are clipped. Must be > `nearPlane`.
-    float farPlane = 1000.f;
+    float farPlane = 100000.f;
 
     /// Viewport width / height ratio. Default: 16:9.
     ///
@@ -67,11 +67,11 @@ public:
     /// When true, use orthographic projection instead of perspective.
     bool isOrtho = false;
 
-    /// Half-height of the orthographic view volume in world units. Default: 10.
+    /// Half-height of the orthographic view volume in world units / cm. Default: 1000 (= 10m).
     ///
     /// Full orthographic height = `orthoSize * 2`. Width = `orthoSize * 2 * aspectRatio`.
     /// Only used when `isOrtho` is true.
-    float orthoSize = 10.f;
+    float orthoSize = 1000.f;
 
     // ── Activation ───────────────────────────────────────────────────────────
 

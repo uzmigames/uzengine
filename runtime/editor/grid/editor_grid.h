@@ -72,13 +72,13 @@ public:
     /// Releases GPU resources.
     void Shutdown();
 
-    /// Grid line spacing in world units (default: 1.0).
+    /// Grid line spacing in world units / cm (default: 100 = 1m).
     void SetMinorSpacing(float spacing) { m_minorSpacing = spacing; }
 
     /// Major grid line interval (every N minor lines, default: 10).
     void SetMajorInterval(uint32_t interval) { m_majorInterval = interval; }
 
-    /// Maximum visible distance for grid fade (default: 100.0).
+    /// Maximum visible distance for grid fade in cm (default: 10000 = 100m).
     void SetFadeDistance(float dist) { m_fadeDistance = dist; }
 
 private:
@@ -87,9 +87,9 @@ private:
     RHIShaderHandle m_vs{};
     RHIShaderHandle m_ps{};
 
-    float m_minorSpacing = 1.0f;
-    uint32_t m_majorInterval = 10;
-    float m_fadeDistance = 100.0f;
+    float m_minorSpacing = 100.0f;    ///< 100 cm = 1 m per minor line
+    uint32_t m_majorInterval = 10;    ///< Major line every 10 m
+    float m_fadeDistance = 10000.0f;   ///< Fade at 100 m
 };
 
 } // namespace uz

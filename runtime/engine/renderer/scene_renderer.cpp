@@ -126,11 +126,11 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     m_cameraCtrl = std::make_unique<FPSCameraController>();
 
     const float aspect = static_cast<float>(width) / static_cast<float>(height);
-    m_camera->SetHorizontalFOV(90.f, aspect, 0.1f, 1000.f);
-    m_camera->SetPosition({0.f, 2.f, -5.f});
+    m_camera->SetHorizontalFOV(90.f, aspect, 10.f, 100000.f);
+    m_camera->SetPosition({0.f, 200.f, -500.f});
     m_camera->LookAt({0.f, 0.f, 0.f}, Vec3::Up());
     m_cameraCtrl->InitFromCamera(*m_camera);
-    m_cameraCtrl->SetMoveSpeed(5.f);
+    m_cameraCtrl->SetMoveSpeed(500.f);  // 500 cm/s = 5 m/s (UE5 parity)
 
     // ── GBuffer ─────────────────────────────────────────────────────────
     if (!m_gbuffer.Create(device, width, height)) {
@@ -191,6 +191,12 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
         UZ_LOG(Renderer, Info, "SceneRenderer: BRDF LUT baked (SRV={})", m_brdfLutSrvIndex);
     } else {
         UZ_LOG(Renderer, Error, "SceneRenderer: failed to init IBL baker");
+    }
+
+    // ── Auto-Exposure ────────────────────────────────────────────────
+    m_autoExposure = std::make_unique<AutoExposure>();
+    if (!m_autoExposure->Init(device, m_shaderMgr.get())) {
+        UZ_LOG(Renderer, Warning, "SceneRenderer: auto-exposure init failed (will use exposure=1.0)");
     }
 
     // ── Sky cubemap (64x64x6 RGBA16F) for IBL capture ──────────────────
@@ -282,6 +288,9 @@ void SceneRenderer::Shutdown() {
         m_skyCubemapSrv = UINT32_MAX;
         m_skyCubemapUav = UINT32_MAX;
     }
+
+    // ── Auto-Exposure cleanup ─────────────────────────────────────
+    if (m_autoExposure) m_autoExposure->Shutdown();
 
     // ── Instance buffer cleanup ─────────────────────────────────────
     if (m_instanceBuffer.IsValid()) {
@@ -401,7 +410,7 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
                     // Note: FromEuler produces Y-up quaternions, so we convert via
                     // the same yaw/pitch extraction that FPSCameraController uses.
                     const Vec3 fwd = (cam.GetRotation() * Vec3::Forward()).Normalized();
-                    m_camera->LookAt(camPos + fwd * 10.f);
+                    m_camera->LookAt(camPos + fwd * 1000.f);  // 10m ahead in cm
                 }
                 m_camera->SetPerspective(
                     cam.fov * (3.14159265f / 180.f),
@@ -481,6 +490,24 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     perFrame.lightColor   = {sunColor.x, sunColor.y, sunColor.z, 0.f};
     perFrame.ambientColor = {ambientColor.x, ambientColor.y, ambientColor.z, 0.f};
 
+    // ── Auto-Exposure ──────────────────────────────────────────────────
+    // Compute exposure from sun direction using a simple model:
+    // Outdoor scenes with sun high → lower exposure (avoid blow-out)
+    // Sun near horizon → higher exposure (scene is darker)
+    // This approximates UE5's auto-exposure until we have a full histogram pipeline.
+    {
+        float sunZenith = sunDir.z; // Z-up: sunDir.z = cos(zenith angle), 1=overhead, 0=horizon
+        // EV100 estimate: higher sun = brighter scene = higher EV = lower exposure
+        // UE5 outdoor default EV100 ≈ 13-14 (bright sun), 8-10 (overcast/dusk)
+        float sunFactor = sunZenith < 0.f ? 0.f : (sunZenith > 1.f ? 1.f : sunZenith);
+        // EV range: 11.5 (horizon/dusk) to 13.5 (overhead bright sun)
+        // exposure = 1/(1.2 * 2^(ev-12)) maps EV12 → exposure=0.83, EV13 → 0.42
+        float ev100 = 11.5f + 2.0f * sunFactor;
+        float autoExposure = 1.0f / (1.2f * std::pow(2.0f, ev100 - 12.0f));
+        float expBias = m_autoExposure ? m_autoExposure->settings.exposureBias : 1.0f;
+        perFrame.exposure = autoExposure * expBias;
+    }
+
     CBAllocation perFrameAlloc = m_cbRing->Allocate(sizeof(PerFrameCB));
     std::memcpy(perFrameAlloc.cpuPtr, &perFrame, sizeof(PerFrameCB));
 
@@ -532,10 +559,10 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     ShadowConfig shadowCfg{};
     shadowCfg.cascadeCount = 4;
     shadowCfg.resolution   = kShadowResolution;
-    shadowCfg.maxDistance   = 50.0f;
+    shadowCfg.maxDistance   = 5000.0f;  // 50m in cm (UE5 parity)
     shadowCfg.splitLambda  = 0.75f;
-    shadowCfg.normalBias   = 0.02f;
-    shadowCfg.depthBias    = 0.005f;
+    shadowCfg.normalBias   = 2.0f;    // 0.02m = 2cm (UE5 parity)
+    shadowCfg.depthBias    = 0.5f;    // 0.005m = 0.5cm (UE5 parity)
 
     ShadowCascade cascades[kMaxShadowCascades];
     Vec3 lightShineDir = Vec3{-sunDir.x, -sunDir.y, -sunDir.z};

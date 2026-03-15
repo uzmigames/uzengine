@@ -624,6 +624,16 @@ public:
     /// buffer has no SRV (e.g., not created with `RHIBufferUsage::StructuredBuffer`).
     virtual uint32_t GetBufferSRVIndex(RHIBufferHandle handle) const = 0;
 
+    /// Returns the bindless UAV descriptor index for a buffer.
+    ///
+    /// # Arguments
+    /// * `handle` — Buffer handle to query.
+    ///
+    /// # Returns
+    /// The UAV index in the global CBV_SRV_UAV heap, or `UINT32_MAX` if the
+    /// buffer has no UAV (e.g., not created with `RHIBufferUsage::UnorderedAccess`).
+    virtual uint32_t GetBufferUAVIndex(RHIBufferHandle handle) const = 0;
+
     /// Returns the GPU virtual address of a buffer.
     ///
     /// Used for root CBV binding (`SetGraphicsRootConstantBufferView`).

@@ -175,10 +175,10 @@ protected:
 /// taken from the component's world transform.
 class PointLightComponent : public LightComponent {
 public:
-    /// Effective attenuation radius in world units (meters).
+    /// Effective attenuation radius in world units (centimeters, UE5 parity).
     /// Light contribution becomes zero at or beyond this distance.
-    /// UE5: AttenuationRadius. Default: 10.0 (1000 cm in UE5).
-    float range = 10.0f;
+    /// UE5: AttenuationRadius. Default: 1000 cm (= 10 m).
+    float range = 1000.0f;
 
     /// Use physically-correct inverse square falloff. Default: true.
     /// When false, uses `lightFalloffExponent` instead.

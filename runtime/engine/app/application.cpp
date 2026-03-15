@@ -86,7 +86,7 @@ int Application::Run(int argc, char** argv) {
         FPSCameraController& ctrl = m_renderer->GetCameraController();
 
         const float aspect = static_cast<float>(m_width) / static_cast<float>(m_height);
-        cam.SetHorizontalFOV(90.f, aspect, 0.1f, 1000.f);
+        cam.SetHorizontalFOV(90.f, aspect, 10.f, 100000.f);
         cam.SetPosition({m_config.cameraPositionX, m_config.cameraPositionY,
                          m_config.cameraPositionZ});
 

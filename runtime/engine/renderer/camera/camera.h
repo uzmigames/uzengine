@@ -10,7 +10,7 @@
 /// # Usage
 /// ```cpp
 /// Camera cam;
-/// cam.SetPerspective(Camera::kDefaultFovY, 16.f/9.f, 0.1f, 1000.f);
+/// cam.SetPerspective(Camera::kDefaultFovY, 16.f/9.f, 10.f, 100000.f);
 /// cam.SetPosition({0, 2, -5});
 /// cam.LookAt({0, 0, 0});
 ///
@@ -204,9 +204,9 @@ private:
     // ── Default projection constants ────────────────────────────────────────
     static constexpr float kDefaultFovY       = 0.7854f;  ///< XM_PIDIV4 (~45 degrees)
     static constexpr float kDefaultAspect     = 16.f / 9.f;
-    static constexpr float kDefaultNearPlane  = 0.1f;
-    static constexpr float kDefaultFarPlane   = 1000.f;
-    static constexpr float kDefaultOrthoSize  = 10.f;
+    static constexpr float kDefaultNearPlane  = 10.0f;     ///< 10 cm (UE5 parity: 1 unit = 1 cm)
+    static constexpr float kDefaultFarPlane   = 100000.f;  ///< 100000 cm = 1 km (UE5 parity)
+    static constexpr float kDefaultOrthoSize  = 1000.f;  ///< 10m in cm (UE5 parity)
 
     ProjectionMode m_projMode = ProjectionMode::Perspective;
     float m_fovY = kDefaultFovY;

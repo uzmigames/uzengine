@@ -307,11 +307,11 @@ static int CameraSetNear(lua_State* L) {
     if (!cam) return 0;
 
     const float n = static_cast<float>(luaL_checknumber(L, 1));
-    constexpr float kMinNear = 0.001f;
+    constexpr float kMinNear = 0.1f;  // 0.1 cm minimum near plane
     const float maxNear = cam->farPlane - 1e-4f;
     if (n < kMinNear || n >= cam->farPlane) {
         UZ_LOG(Scripting, Warning,
-            "uz.camera.set_near: value {} out of range [0.001, farPlane) — clamping", n);
+            "uz.camera.set_near: value {} out of range [0.1, farPlane) — clamping", n);
     }
     cam->nearPlane = std::fmax(kMinNear, std::fmin(maxNear, n));
     return 0;

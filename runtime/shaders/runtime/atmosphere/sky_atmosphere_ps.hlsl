@@ -1,7 +1,7 @@
 /// Sky atmosphere pixel shader — Hillaire 2020 single-scatter approximation.
 ///
 /// Follows UE5 SkyAtmosphere coordinate conventions:
-/// - All distances in KILOMETERS (1 world unit = 1 meter = 0.001 km)
+/// - All distances in KILOMETERS (1 world unit = 1 centimeter = 0.00001 km, UE5 parity)
 /// - Planet center at (0, 0, 0) in sky-space; camera offset by bottomRadiusKm
 /// - Camera snapped to minimum 5m above planet surface (prevents near-surface artifacts)
 /// - Light direction points TOWARD the sun (PerFrameCB.lightDir = toward-sun direction)
@@ -59,7 +59,16 @@ cbuffer PerFrameCB : register(b1) {
     row_major float4x4 invViewProj;
     float    nearPlane;
     float    farPlane;
-    float    _framePad[10];
+    uint     irradianceSrvIdx;
+    uint     prefilteredSrvIdx;
+    uint     brdfLutSrvIdx;
+    uint     prefilteredMipLevels;
+    float    skyLightIntensity;
+    float    skyLightColorR;
+    float    skyLightColorG;
+    float    skyLightColorB;
+    float    skyLightMinAmbient;
+    float    exposure;           // Auto-exposure multiplier (applied before tonemap)
 };
 
 cbuffer SkyAtmosphereCB : register(b2) {
@@ -85,9 +94,9 @@ SamplerState linearSampler : register(s0);
 // Constants — UE5 convention
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// 1 world unit (meter) → km. UE5 uses cm, so CmToSkyUnit = 0.00001.
-/// UzEngine uses meters, so MeterToKm = 0.001.
-static const float WORLD_TO_KM            = 0.001f;
+/// 1 world unit (centimeter) → km. UE5 parity: 1 unit = 1 cm.
+/// CmToKm = 0.00001 (same as UE5 CmToSkyUnit).
+static const float WORLD_TO_KM            = 0.00001f;
 
 /// Safety margin: always place camera at least 5m above ground in sky space.
 /// UE5 uses PlanetRadiusOffset = 0.005 km (5 meters).
@@ -218,7 +227,7 @@ float4 main(FSInput input) : SV_Target {
     // UzEngine is Z-up (X-forward, Y-right, Z-up).
     // Planet center is at world origin in sky-space.
     // World Z=0 is sea level → sky Z = bottomRadiusKm.
-    // cameraSkyKm = cameraPos_meters * 0.001 + (0, 0, bottomRadiusKm)
+    // cameraSkyKm = cameraPos_cm * 0.00001 + (0, 0, bottomRadiusKm)
     float3 cameraSkyKm = cameraPos.xyz * WORLD_TO_KM + float3(0.0f, 0.0f, bottomRadiusKm);
 
     // ── Snap camera to minimum 5m above planet surface (UE5 pattern) ─────────
@@ -350,8 +359,8 @@ float4 main(FSInput input) : SV_Target {
         L += sunIlluminance.xyz * sunDiskIntensity * sunEdge * Throughput;
     }
 
-    // ── Tonemap + gamma ──────────────────────────────────────────────────────
-    float3 sky = ACESFilm(L);
+    // ── Exposure + Tonemap + gamma ──────────────────────────────────────────
+    float3 sky = ACESFilm(L * exposure);
     sky = LinearToSrgb(sky);
 
     return float4(sky, 1.0f);

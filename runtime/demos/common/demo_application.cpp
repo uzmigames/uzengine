@@ -433,7 +433,7 @@ void DemoApplication::InitInfrastructure() {
     float vFovRad = 2.f * std::atan(std::tan(kHFovDeg * 0.5f * 3.14159265f / 180.f) / kAspect);
     m_camera->SetPerspective(vFovRad,
         static_cast<float>(m_width) / static_cast<float>(m_height),
-        0.1f, 1000.f);
+        10.f, 100000.f);
 
     m_camera->SetPosition({m_config.cameraPositionX, m_config.cameraPositionY,
                            m_config.cameraPositionZ});

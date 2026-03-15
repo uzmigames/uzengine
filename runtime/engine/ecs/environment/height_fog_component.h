@@ -44,7 +44,7 @@ struct HeightFogComponent {
     /// UE5 default: 0.2 (FogHeightFalloff).
     float heightFalloff = 0.2f;
 
-    /// World-space height at which fog density is at its maximum.
+    /// World-space height at which fog density is at its maximum (cm).
     float baseHeight = 0.f;
 
     /// Maximum fog opacity (0 to 1). Prevents fog from fully obscuring distant objects.
@@ -69,7 +69,7 @@ struct HeightFogComponent {
     /// UE5: SecondFogData.FogHeightFalloff. Default: 0.2.
     float secondFogHeightFalloff = 0.2f;
 
-    /// Second fog layer base height in world units (meters).
+    /// Second fog layer base height in world units (cm, UE5 parity).
     /// UE5: SecondFogData.FogBaseHeight. Default: 0.
     float secondFogBaseHeight = 0.f;
 
@@ -83,7 +83,7 @@ struct HeightFogComponent {
     /// Higher = tighter sun halo. UE5: DirectionalInscatteringExponent. Default: 8.
     float directionalInscatteringExponent = 8.0f;
 
-    /// Start distance for directional inscattering (meters from camera).
+    /// Start distance for directional inscattering (cm from camera).
     /// UE5: DirectionalInscatteringStartDistance. Default: 0.
     float directionalInscatteringStartDistance = 0.f;
 

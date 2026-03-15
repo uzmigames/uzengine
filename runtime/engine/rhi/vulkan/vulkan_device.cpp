@@ -994,6 +994,12 @@ uint32_t VulkanDevice::GetBufferSRVIndex(RHIBufferHandle handle) const {
     return buf->srvIndex;
 }
 
+uint32_t VulkanDevice::GetBufferUAVIndex(RHIBufferHandle handle) const {
+    // Vulkan uses descriptor sets, not bindless UAV indices
+    (void)handle;
+    return UINT32_MAX;
+}
+
 uint64_t VulkanDevice::GetBufferGPUAddress(RHIBufferHandle handle) const {
     const VulkanBuffer* buf = m_bufferPool.Get(handle.index, handle.generation);
     if (!buf || buf->buffer == VK_NULL_HANDLE) return 0;

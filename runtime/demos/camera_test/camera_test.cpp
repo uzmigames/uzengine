@@ -30,8 +30,8 @@ ApplicationConfig CameraTest::Configure() {
     cfg.width           = 1280;
     cfg.height          = 720;
     cfg.cameraPositionX = 0.f;
-    cfg.cameraPositionY = 5.f;
-    cfg.cameraPositionZ = 2.f;
+    cfg.cameraPositionY = 500.f;
+    cfg.cameraPositionZ = 200.f;
     cfg.cameraYawDeg    = -90.f;
     cfg.cameraPitchDeg  = -20.f;
     cfg.renderPath      = RenderPath::Deferred;
@@ -50,7 +50,7 @@ void CameraTest::OnStart() {
     {
         auto& scene = world.AddComponent<SceneComponent>(cube_);
         scene.SetPosition({0.f, 0.f, 0.f});
-        scene.SetScale({1.f, 1.f, 1.f});
+        scene.SetScale({100.f, 100.f, 100.f});  // 1m cube in cm
 
         auto& mesh    = world.AddComponent<StaticMeshComponent>(cube_);
         mesh.meshPath = "cube.uzmesh";

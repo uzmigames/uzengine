@@ -23,9 +23,9 @@ namespace uz {
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Cube positions along the X axis, centered at origin.
-static constexpr float kCubePositionsX[5] = {-4.f, -2.f, 0.f, 2.f, 4.f};
-static constexpr float kCubeScale = 0.8f;
+/// Cube positions along the X axis, centered at origin (cm).
+static constexpr float kCubePositionsX[5] = {-400.f, -200.f, 0.f, 200.f, 400.f};
+static constexpr float kCubeScale = 80.f;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Configure
@@ -37,8 +37,8 @@ ApplicationConfig IBLTest::Configure() {
     cfg.width           = 1280;
     cfg.height          = 720;
     cfg.cameraPositionX = 0.f;
-    cfg.cameraPositionY = 5.f;
-    cfg.cameraPositionZ = 2.f;
+    cfg.cameraPositionY = 500.f;
+    cfg.cameraPositionZ = 200.f;
     cfg.cameraYawDeg    = -90.f;
     cfg.cameraPitchDeg  = -20.f;
     cfg.renderPath      = RenderPath::Deferred;

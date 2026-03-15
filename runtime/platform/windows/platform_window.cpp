@@ -243,6 +243,8 @@ bool PlatformWindow::Create(const WindowDesc& desc) {
     wc.lpfnWndProc = WndProc;
     wc.hInstance = m_hinstance;
     wc.hCursor = LoadCursorW(nullptr, MAKEINTRESOURCEW(32512));
+    wc.hIcon = LoadIconW(m_hinstance, MAKEINTRESOURCEW(1));   // IDI_ICON1 from app.rc
+    wc.hIconSm = LoadIconW(m_hinstance, MAKEINTRESOURCEW(1)); // Small icon for title bar
     wc.hbrBackground = static_cast<HBRUSH>(GetStockObject(BLACK_BRUSH));
     wc.lpszClassName = kWindowClass;
 

@@ -667,6 +667,12 @@ uint32_t DX12Device::GetBufferSRVIndex(RHIBufferHandle handle) const {
     return buf->srvIndex;
 }
 
+uint32_t DX12Device::GetBufferUAVIndex(RHIBufferHandle handle) const {
+    const DX12Buffer* buf = m_bufferPool.Get(handle.index, handle.generation);
+    if (!buf) return UINT32_MAX;
+    return buf->uavIndex;
+}
+
 uint64_t DX12Device::GetBufferGPUAddress(RHIBufferHandle handle) const {
     const DX12Buffer* buf = m_bufferPool.Get(handle.index, handle.generation);
     if (!buf || !buf->resource) return 0;

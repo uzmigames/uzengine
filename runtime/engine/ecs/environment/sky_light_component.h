@@ -53,7 +53,7 @@ enum class ESkyLightSourceType : uint8_t {
 ///
 /// # UE5 Parity
 /// Maps to USkyLightComponent parameters. Key differences:
-/// - UzEngine uses meters (not cm) for distances.
+/// - UzEngine uses centimeters (UE5 parity: 1 unit = 1 cm).
 /// - SH coefficients are computed internally, not exposed.
 struct SkyLightComponent {
     // ── Intensity & Color ─────────────────────────────────────────────────
@@ -99,10 +99,10 @@ struct SkyLightComponent {
 
     // ── Occlusion ─────────────────────────────────────────────────────────
 
-    /// Maximum influence distance for AO/DFAO occlusion (meters).
+    /// Maximum influence distance for AO/DFAO occlusion (cm, UE5 parity).
     /// Objects beyond this distance from occluders receive full sky light.
-    /// UE5 default: 1000 cm = 10 m. UzEngine uses meters.
-    float occlusionMaxDistance = 10.0f;
+    /// UE5 default: 1000 cm.
+    float occlusionMaxDistance = 1000.0f;
 
     /// Minimum occlusion value (0-1). Prevents fully black AO shadows.
     /// 0 = allow full occlusion, 1 = no occlusion. UE5 default: 0.

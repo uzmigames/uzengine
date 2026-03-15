@@ -88,11 +88,11 @@ struct ShadowConfig {
     /// Common values: 1024 (low), 2048 (medium), 4096 (high).
     uint32_t resolution = 2048;
 
-    /// Maximum shadow distance from the camera in world units.
+    /// Maximum shadow distance from the camera in cm (UE5 parity).
     ///
     /// Shadows beyond this distance are not rendered. The camera's far plane
     /// is clamped to this value when computing split distances.
-    float maxDistance = 100.0f;
+    float maxDistance = 10000.0f;  ///< 100m in cm
 
     /// Practical split scheme interpolation factor.
     ///
@@ -101,11 +101,11 @@ struct ShadowConfig {
     /// - 0.75 = recommended default (Nvidia GPU Gems 3).
     float splitLambda = 0.75f;
 
-    /// Normal-direction bias in world units, applied per cascade.
-    float normalBias = 0.02f;
+    /// Normal-direction bias in cm, applied per cascade.
+    float normalBias = 2.0f;     ///< 2 cm (was 0.02m)
 
     /// Depth bias applied to shadow comparison, per cascade.
-    float depthBias = 0.005f;
+    float depthBias = 0.5f;      ///< 0.5 cm (was 0.005m)
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

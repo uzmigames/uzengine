@@ -84,7 +84,7 @@ cbuffer PerFrameCB : register(b1) {
     float    skyLightColorG;       ///< Sky light tint G.
     float    skyLightColorB;       ///< Sky light tint B.
     float    skyLightMinAmbient;   ///< Minimum ambient floor (0-1). Prevents fully black shadows.
-    float    _framePad[1];       ///< Remaining padding to 256-byte boundary
+    float    exposure;           ///< Exposure multiplier from auto-exposure (applied before tonemap).
 };
 
 /// Single point light for the deferred lighting pass (48 bytes = three float4s).
@@ -355,11 +355,9 @@ float4 main(FSInput input) : SV_Target {
     // ── Combine ──
     float3 color = ambient + Lo;
 
-    // ── Tonemap (ACES filmic) + gamma correction ──
-    // ACES filmic curve: better highlight rolloff than Reinhard, preserves
-    // color saturation in bright areas.
+    // ── Exposure + Tonemap + gamma ──
+    color *= exposure;
     color = ACESFilm(color);
-    // Linear → sRGB via math_util.hlsli (pow-free sqrt chain).
     color = LinearToSrgb(color);
 
     return float4(color, 1.0f);

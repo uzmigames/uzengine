@@ -55,8 +55,8 @@ struct PerFrameCB {
     Vec4  lightColor;           ///< xyz = primary light color multiplied by intensity, w = unused.
     Vec4  ambientColor;         ///< xyz = ambient light color contribution, w = unused.
     Mat4  invViewProj;          ///< Inverse view-projection matrix for world position reconstruction (deferred lighting).
-    float nearPlane  = 0.1f;    ///< Near clip plane distance in world units (for depth linearization).
-    float farPlane   = 1000.0f; ///< Far clip plane distance in world units (for depth linearization).
+    float nearPlane  = 10.0f;     ///< Near clip plane distance in world units / cm (for depth linearization).
+    float farPlane   = 100000.0f; ///< Far clip plane distance in world units / cm (for depth linearization).
     uint32_t irradianceSrvIndex  = UINT32_MAX; ///< SRV index for irradiance cubemap (UINT32_MAX = no IBL).
     uint32_t prefilteredSrvIndex = UINT32_MAX; ///< SRV index for prefiltered specular cubemap.
     uint32_t brdfLutSrvIndex     = UINT32_MAX; ///< SRV index for BRDF integration LUT.
@@ -66,7 +66,7 @@ struct PerFrameCB {
     float skyLightColorG    = 1.0f;            ///< Sky light tint color (G).
     float skyLightColorB    = 1.0f;            ///< Sky light tint color (B).
     float skyLightMinAmbient = 0.0f;           ///< Minimum ambient level (0-1). Prevents fully black shadows.
-    float _pad[1]    = {};      ///< Remaining padding to 256-byte alignment.
+    float exposure = 1.0f;                     ///< Exposure multiplier from auto-exposure (applied before tonemap).
 };
 
 static_assert(sizeof(PerFrameCB) == 256, "PerFrameCB must be 256 bytes (D3D12 CB alignment)");
@@ -296,7 +296,7 @@ struct HeightFogCB {
     Vec4  fogColor;             ///< xyz = fog color (linear), w = unused.
     float fogDensity;           ///< Exponential density factor.
     float fogHeightFalloff;     ///< Height falloff coefficient.
-    float fogBaseHeight;        ///< World-space base height (meters).
+    float fogBaseHeight;        ///< World-space base height (cm, UE5 parity).
     float fogMaxOpacity;        ///< Maximum fog opacity (0-1).
     float fogStartDistance;     ///< Minimum distance before fog begins.
     float fogCutoffDistance;    ///< Maximum fog distance. 0 = unlimited.

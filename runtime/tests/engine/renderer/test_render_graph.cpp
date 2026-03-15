@@ -56,6 +56,7 @@ public:
     void* MapBuffer(uz::RHIBufferHandle) override { return nullptr; }
     void UnmapBuffer(uz::RHIBufferHandle) override {}
     uint32_t GetBufferSRVIndex(uz::RHIBufferHandle) const override { return UINT32_MAX; }
+    uint32_t GetBufferUAVIndex(uz::RHIBufferHandle) const override { return UINT32_MAX; }
     uint64_t GetBufferGPUAddress(uz::RHIBufferHandle) const override { return 0; }
     uint32_t GetTextureSRVIndex(uz::RHITextureHandle) const override { return UINT32_MAX; }
     uint32_t GetTextureUAVIndex(uz::RHITextureHandle) const override { return UINT32_MAX; }

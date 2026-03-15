@@ -90,6 +90,7 @@ public:
     void* MapBuffer(RHIBufferHandle handle) override;
     void UnmapBuffer(RHIBufferHandle handle) override;
     uint32_t GetBufferSRVIndex(RHIBufferHandle handle) const override;
+    uint32_t GetBufferUAVIndex(RHIBufferHandle handle) const override;
     uint64_t GetBufferGPUAddress(RHIBufferHandle handle) const override;
 
     // ── IRHIDevice: Texture operations ───────────────────────────────────

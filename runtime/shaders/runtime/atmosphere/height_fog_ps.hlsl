@@ -52,7 +52,7 @@ cbuffer PerFrameCB : register(b1) {
     row_major float4x4 invViewProj;
     float    nearPlane;
     float    farPlane;
-    float    _framePad[10];
+    float    _framePad[10]; // exposure is at offset 248, but fog pass doesn't need it
 };
 
 cbuffer HeightFogCB : register(b2) {

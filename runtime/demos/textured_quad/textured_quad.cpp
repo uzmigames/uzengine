@@ -30,7 +30,7 @@ ApplicationConfig TexturedQuad::Configure() {
     cfg.height          = 720;
     cfg.cameraPositionX = 0.f;
     cfg.cameraPositionY = 0.f;
-    cfg.cameraPositionZ = 8.f;
+    cfg.cameraPositionZ = 800.f;
     cfg.cameraYawDeg    = -90.f;
     cfg.cameraPitchDeg  = -90.f;
     cfg.renderPath      = RenderPath::Deferred;
@@ -49,7 +49,7 @@ void TexturedQuad::OnStart() {
     {
         auto& scene = world.AddComponent<SceneComponent>(ground_);
         scene.SetPosition({0.f, 0.f, 0.f});
-        scene.SetScale({10.f, 10.f, 0.01f});
+        scene.SetScale({1000.f, 1000.f, 1.f});
 
         auto& mesh      = world.AddComponent<StaticMeshComponent>(ground_);
         mesh.meshPath    = "cube.uzmesh";

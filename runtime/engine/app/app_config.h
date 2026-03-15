@@ -94,17 +94,17 @@ struct ApplicationConfig {
 
     // ── Camera Defaults ───────────────────────────────────────────────────
 
-    /// FPS camera movement speed in units/second.
-    float cameraMoveSpeed = 10.f;
+    /// FPS camera movement speed in cm/second (UE5 parity: 1 unit = 1 cm).
+    float cameraMoveSpeed = 1000.f;
 
-    /// Default camera X position.
+    /// Default camera X position (cm).
     float cameraPositionX = 0.f;
 
-    /// Default camera Y position.
-    float cameraPositionY = 5.f;
+    /// Default camera Y position (cm).
+    float cameraPositionY = 500.f;
 
-    /// Default camera Z position.
-    float cameraPositionZ = 2.f;
+    /// Default camera Z position (cm).
+    float cameraPositionZ = 200.f;
 
     /// Default camera yaw in degrees (-90 = facing -Z).
     float cameraYawDeg = -90.f;

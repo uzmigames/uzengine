@@ -621,6 +621,12 @@ uint32_t DX11Device::GetBufferSRVIndex(RHIBufferHandle handle) const {
     return buf->srvIndex;
 }
 
+uint32_t DX11Device::GetBufferUAVIndex(RHIBufferHandle handle) const {
+    // DX11 does not use bindless descriptor indices for UAVs
+    (void)handle;
+    return UINT32_MAX;
+}
+
 uint64_t DX11Device::GetBufferGPUAddress(RHIBufferHandle handle) const {
     // DX11 does not expose GPU virtual addresses
     (void)handle;

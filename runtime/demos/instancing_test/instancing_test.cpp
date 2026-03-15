@@ -30,14 +30,14 @@ namespace uz {
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Spacing between cube centers in world units.
-static constexpr float kSpacing  = 2.5f;
+/// Spacing between cube centers in world units (cm).
+static constexpr float kSpacing  = 250.f;
 
 /// Uniform scale applied to each cube (keeps them smaller than the gap).
-static constexpr float kCubeScale = 0.4f;
+static constexpr float kCubeScale = 40.f;
 
-/// Vertical offset so the grid floats above the ground plane.
-static constexpr float kGridLiftZ = 12.f;
+/// Vertical offset so the grid floats above the ground plane (cm).
+static constexpr float kGridLiftZ = 1200.f;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Configure
@@ -50,8 +50,8 @@ ApplicationConfig InstancingTest::Configure() {
     cfg.height          = 720;
     // Camera pulled back along -Y looking into the grid (Z-up world).
     cfg.cameraPositionX = 0.f;
-    cfg.cameraPositionY = -15.f;
-    cfg.cameraPositionZ = 8.f;
+    cfg.cameraPositionY = -1500.f;
+    cfg.cameraPositionZ = 800.f;
     cfg.cameraYawDeg    = 90.f;
     cfg.cameraPitchDeg  = -5.f;
     cfg.renderPath      = RenderPath::Deferred;
@@ -102,8 +102,8 @@ void InstancingTest::OnStart() {
     ground_ = world.CreateEntity();
     {
         auto& scene = world.AddComponent<SceneComponent>(ground_);
-        scene.SetPosition({0.f, 0.f, -1.f});
-        scene.SetScale({50.f, 50.f, 0.02f});
+        scene.SetPosition({0.f, 0.f, -100.f});
+        scene.SetScale({5000.f, 5000.f, 2.f});
 
         auto& mesh = world.AddComponent<StaticMeshComponent>(ground_);
         mesh.meshPath   = "cube.uzmesh";
@@ -143,8 +143,8 @@ void InstancingTest::OnStart() {
     {
         Entity fog = world.CreateEntity();
         auto& fogComp = world.AddComponent<HeightFogComponent>(fog);
-        fogComp.density       = 0.002f;
-        fogComp.baseHeight    = -1.f;
+        fogComp.density       = 0.02f;   // UE5 default
+        fogComp.baseHeight    = -100.f;
         fogComp.heightFalloff = 0.1f;
         fogComp.maxOpacity    = 0.3f;
         fogComp.color         = {0.75f, 0.80f, 0.90f};
