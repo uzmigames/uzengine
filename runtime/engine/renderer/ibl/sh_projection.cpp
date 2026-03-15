@@ -424,14 +424,14 @@ SHCoefficients ProjectCubemapToSH(IRHIDevice* device, IRHICommandList* cmdList,
     }
 
     // Transition cubemap to CopySrc state and copy each face to the readback buffer.
-    // The cubemap is typically in UnorderedAccess state after the sky capture compute
-    // pass. BakeEnvironment reads it as SRV via DX12 implicit promotion but does not
-    // transition it, so the tracked state remains UnorderedAccess.
+    // After WaitIdle, DX12 resources decay to Common state. We transition from
+    // Common to CopySrc which triggers a full cache flush, ensuring UAV writes
+    // from the sky capture compute pass are visible to the copy operation.
     cmdList->Begin();
 
     RHIBarrierDesc toCopySrc = {};
     toCopySrc.texture = cubemap;
-    toCopySrc.stateBefore = RHIResourceState::UnorderedAccess;
+    toCopySrc.stateBefore = RHIResourceState::Common;
     toCopySrc.stateAfter = RHIResourceState::CopySrc;
     cmdList->ResourceBarrier(&toCopySrc, 1);
 
@@ -440,13 +440,14 @@ SHCoefficients ProjectCubemapToSH(IRHIDevice* device, IRHICommandList* cmdList,
         cmdList->CopyTextureToBuffer(cubemap, 0, readbackBuf, offset, alignedRowPitch, face);
     }
 
-    // Transition cubemap back to UnorderedAccess — the render graph imports it
-    // in this state for the next frame's sky capture compute pass.
-    RHIBarrierDesc toUAV = {};
-    toUAV.texture = cubemap;
-    toUAV.stateBefore = RHIResourceState::CopySrc;
-    toUAV.stateAfter = RHIResourceState::UnorderedAccess;
-    cmdList->ResourceBarrier(&toUAV, 1);
+    // Transition cubemap back to Common state. After WaitIdle, it will decay to
+    // Common anyway, and the render graph will import it as UnorderedAccess
+    // on the next frame (Common → UAV is implicit promotion in DX12).
+    RHIBarrierDesc toCommon = {};
+    toCommon.texture = cubemap;
+    toCommon.stateBefore = RHIResourceState::CopySrc;
+    toCommon.stateAfter = RHIResourceState::Common;
+    cmdList->ResourceBarrier(&toCommon, 1);
 
     cmdList->End();
     cmdList->Execute();

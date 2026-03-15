@@ -285,9 +285,11 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     rayleighScale = (rayleighScale > 0.0f) ? rayleighScale : 1.0f;
     mieScale      = (mieScale > 0.0f)      ? mieScale      : 1.0f;
 
-    // Apply artistic scales to base scattering coefficients
-    float3 scaledRayleighBeta = RAYLEIGH_BETA * rayleighScale;
-    float  scaledMieBeta      = MIE_BETA * mieScale;
+    // Artistic scattering coefficients — affect in-scattering color only.
+    // Extinction uses the unscaled physical RAYLEIGH_BETA / MIE_BETA
+    // to match the precomputed transmittance LUT.
+    float3 artRayleighBeta = RAYLEIGH_BETA * rayleighScale;
+    float  artMieBeta      = MIE_BETA * mieScale;
 
     // ── Bindless transmittance LUT ──────────────────────────────────────────
     Texture2D<float4> tLut = ResourceDescriptorHeap[transmittanceLutIdx];
@@ -313,10 +315,9 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
         float densR = DensityAtAltitude(altKm, RAYLEIGH_SCALE_H);
         float densM = DensityAtAltitude(altKm, MIE_SCALE_H);
 
-        // Total extinction (Rayleigh + Mie with 1.11x extinction ratio)
-        // Uses artistically scaled coefficients for consistent sky appearance
-        float3 extR     = scaledRayleighBeta * densR;
-        float3 extM     = scaledMieBeta * MIE_EXTINCTION_RATIO * densM;
+        // Extinction uses PHYSICAL coefficients (must match transmittance LUT)
+        float3 extR     = RAYLEIGH_BETA * densR;
+        float3 extM     = MIE_BETA * MIE_EXTINCTION_RATIO * densM;
         float3 extTotal = extR + extM;
 
         // Transmittance over this single step
@@ -326,9 +327,9 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
         float3 sunT = SampleTransmittanceLut(tLut, linearSampler,
             sampleKm, sunDir, bottomRadiusKm, topRadiusKm);
 
-        // Scattering weighted by phase functions
-        float3 scatterR = extR * phaseR;
-        float3 scatterM = scaledMieBeta * densM * phaseM;
+        // In-scattering uses ARTISTIC coefficients for color control
+        float3 scatterR = artRayleighBeta * densR * phaseR;
+        float3 scatterM = artMieBeta * densM * phaseM;
         float3 scatter  = scatterR + scatterM;
 
         // Analytical in-scattering integral over the step:

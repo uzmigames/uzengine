@@ -154,18 +154,18 @@ void PBRTest::OnStart() {
         atmo.bottomRadiusKm          = 6360.0f;
         atmo.atmosphereHeightKm      = 60.0f;
         atmo.multiScatteringFactor   = 1.0f;
-        // Scattering scales boost the physical Rayleigh/Mie coefficients.
-        // Values > 1.0 produce more vivid sky color; 1.0 = physically accurate.
-        atmo.rayleighScatteringScale = 2.0f;
+        // Scattering scales boost the in-scattering color without changing
+        // extinction. Higher values = more vivid sky; 1.0 = physically accurate.
+        atmo.rayleighScatteringScale = 4.0f;     // boost blue sky color
         atmo.rayleighScaleHeightKm   = 8.0f;
         atmo.mieScatteringScale      = 1.0f;
         atmo.mieAbsorptionScale      = 1.0f;
         atmo.mieAnisotropy           = 0.8f;
         atmo.mieScaleHeightKm        = 1.2f;
-        // Sun illuminance for atmosphere scattering (not PBR surface lighting).
-        // Lower values prevent ACES from desaturating the sky to white.
-        atmo.sunIlluminance          = {1.f, 1.f, 1.f};
-        atmo.skyLuminanceFactor       = {1.0f, 1.0f, 1.0f};
+        // Sun illuminance for atmosphere scattering (decoupled from PBR lighting).
+        atmo.sunIlluminance          = {1.5f, 1.5f, 1.5f};
+        // Suppress red/green to make blue more vivid after ACES tonemapping.
+        atmo.skyLuminanceFactor       = {0.7f, 0.85f, 1.2f};
     }
 
     // ── Sky light (UE5 Basic Scene EXACT values) ─────────────────────────
