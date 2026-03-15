@@ -124,27 +124,27 @@
 - [x] 14.6 Area light approximation using sourceRadius (representative point technique)
 
 ## 15. Lua API Parity
-- [ ] 15.1 Expose all new LightComponent params: `uz.scene.set_light_temperature()`, `uz.scene.set_light_specular_scale()`, etc.
-- [ ] 15.2 Expose DirectionalLight cascade/atmosphere params to Lua
-- [ ] 15.3 Expose PointLight falloff/source radius params to Lua
-- [ ] 15.4 Expose HeightFog new params (second layer, directional inscattering) to Lua
-- [ ] 15.5 Expose SkyAtmosphere artistic multipliers to Lua
-- [ ] 15.6 Create `uz.scene.create_sky_light()` and `uz.scene.set_sky_light_*()` API
-- [ ] 15.7 Expose SceneComponent mobility/hiddenInGame to Lua
-- [ ] 15.8 Expose PrimitiveComponent draw distance to Lua
+- [x] 15.1 Expose all new LightComponent params: `uz.scene.set_light_temperature()`, `uz.scene.set_light_specular_scale()`, etc.
+- [x] 15.2 Expose DirectionalLight cascade/atmosphere params to Lua
+- [x] 15.3 Expose PointLight falloff/source radius params to Lua
+- [x] 15.4 Expose HeightFog new params (second layer, directional inscattering) to Lua
+- [x] 15.5 Expose SkyAtmosphere artistic multipliers to Lua
+- [x] 15.6 Create `uz.scene.create_sky_light()` and `uz.scene.set_sky_light_*()` API
+- [x] 15.7 Expose SceneComponent mobility/hiddenInGame to Lua
+- [x] 15.8 Expose PrimitiveComponent draw distance to Lua
 
 ## 16. Testing
-- [ ] 16.1 Unit tests: verify all default values match UE5 spec
-- [ ] 16.2 Unit tests: angle degree/radian conversion correctness
-- [ ] 16.3 Unit tests: Kelvin-to-RGB conversion against known values (3000K warm, 6500K white, 10000K blue)
-- [ ] 16.4 Unit tests: SkyLightComponent creation and gathering
-- [ ] 16.5 Unit tests: Sun-Atmosphere link (DirectionalLight -> SkyAtmosphere)
-- [ ] 16.6 Visual verification: demo with all light types + fog + sky showing correct defaults
+- [x] 16.1 Unit tests: verify all default values match UE5 spec
+- [x] 16.2 Unit tests: angle degree/radian conversion correctness
+- [x] 16.3 Unit tests: Kelvin-to-RGB conversion against known values (3000K warm, 6500K white, 10000K blue)
+- [x] 16.4 Unit tests: SkyLightComponent creation and gathering
+- [x] 16.5 Unit tests: Sun-Atmosphere link (DirectionalLight -> SkyAtmosphere)
+- [x] 16.6 Visual verification: demo with all light types + fog + sky showing correct defaults
 - [ ] 16.7 Visual verification: compare UzEngine default scene vs UE5 default scene
 
 ## 17. Documentation
 - [ ] 17.1 Update `docs/specs/renderer.md` with new component parameters
-- [ ] 17.2 Update `docs/lua-api-reference.md` with new Lua bindings
+- [x] 17.2 Update `docs/lua-api-reference.md` with new Lua bindings
 - [x] 17.3 Update AGENTS.md with unit convention (meters, degrees)
 - [ ] 17.4 Create comparison table doc: `docs/reference/ue5-parameter-parity.md`
 - [x] 17.5 Update CHANGELOG.md

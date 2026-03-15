@@ -145,6 +145,101 @@ function on_start(entity)
 end
 ```
 
+### Environment and Lighting API (v0.2.26+)
+
+Environment API provides control over light properties, atmospheric effects, and sky lighting — essential for dynamic scene lighting adjustments.
+
+#### Light Temperature & Scaling
+
+```lua
+-- Set light color temperature (blackbody Kelvin value)
+uz.scene.set_light_temperature(entity, 6500)  -- D65 daylight white
+uz.scene.set_light_temperature(entity, 3000)  -- Warm tungsten light
+
+-- Get temperature setting
+local kelvin, is_enabled = uz.scene.get_light_temperature(entity)
+
+-- Light contribution multipliers
+uz.scene.set_light_specular_scale(entity, 1.5)  -- Brighten highlights
+uz.scene.set_light_diffuse_scale(entity, 0.8)   -- Reduce diffuse contribution
+```
+
+#### Point/Spot Light Falloff
+
+```lua
+-- Control light attenuation curve
+uz.scene.set_light_falloff(entity, true, 2.0)   -- Inverse square (physically-based)
+uz.scene.set_light_falloff(entity, false, 8.0)  -- Custom exponent falloff
+
+-- Area light approximation (sphere radius)
+uz.scene.set_light_source_radius(entity, 0.5)  -- 0.5m sphere light
+```
+
+#### Atmosphere Link
+
+```lua
+-- Link directional light to sky atmosphere as the sun
+uz.scene.set_atmosphere_sun_light(entity, true)  -- This light drives the sky
+```
+
+#### Height Fog
+
+```lua
+-- Configure height-based volumetric fog
+uz.scene.set_fog_density(entity, 0.01)          -- Fog density
+uz.scene.set_fog_color(entity, 0.8, 0.85, 0.95) -- Fog color (linear RGB)
+uz.scene.set_fog_height_falloff(entity, 0.2)    -- Exponential height falloff
+uz.scene.set_fog_base_height(entity, 100.0)     -- Fog base height in meters
+uz.scene.set_fog_max_opacity(entity, 1.0)       -- Maximum opacity (0-1)
+uz.scene.set_fog_enabled(entity, true)          -- Toggle fog on/off
+```
+
+#### Sky Light (IBL Ambient)
+
+```lua
+-- Add sky light component for ambient lighting
+uz.scene.create_sky_light(entity)
+
+-- Configure sky light intensity and color
+uz.scene.set_sky_light_intensity(entity, 1.0)         -- Intensity multiplier
+uz.scene.set_sky_light_color(entity, 1.0, 1.0, 1.0)   -- Tint color (linear RGB)
+uz.scene.set_sky_light_min_occlusion(entity, 0.1)     -- Minimum ambient occlusion (floor)
+```
+
+#### Sky Atmosphere Artistic Parameters
+
+```lua
+-- Artistic control over atmosphere scattering
+uz.scene.set_sky_rayleigh_scale(entity, 1.0)      -- Rayleigh (molecular) scattering
+uz.scene.set_sky_mie_scale(entity, 1.0)           -- Mie (aerosol) scattering
+uz.scene.set_sky_multi_scattering(entity, 1.0)    -- Multiple scattering approximation
+```
+
+#### Environment API Reference
+
+| Function | Parameters | Return | Notes |
+|----------|-----------|--------|-------|
+| `uz.scene.set_light_temperature(entity, kelvin, use_temperature)` | entity, kelvin: float, use_temperature: bool (opt, default true) | — | Set blackbody color temperature |
+| `uz.scene.get_light_temperature(entity)` | entity | (kelvin: float, use_temperature: bool) | Get temperature setting |
+| `uz.scene.set_light_specular_scale(entity, scale)` | entity, scale: float (0-1) | — | Per-light specular highlight multiplier |
+| `uz.scene.set_light_diffuse_scale(entity, scale)` | entity, scale: float (0-1) | — | Per-light diffuse multiplier |
+| `uz.scene.set_light_falloff(entity, use_inverse_squared, exponent)` | entity, use_inverse_squared: bool, exponent: float | — | Set light attenuation curve |
+| `uz.scene.set_light_source_radius(entity, radius)` | entity, radius: float (meters) | — | Area light sphere radius |
+| `uz.scene.set_atmosphere_sun_light(entity, enabled)` | entity, enabled: bool | — | Link directional light to sky as the sun |
+| `uz.scene.set_fog_density(entity, density)` | entity, density: float | — | Set height fog density |
+| `uz.scene.set_fog_color(entity, r, g, b)` | entity, r, g, b: float (0-1) | — | Set fog color (linear RGB) |
+| `uz.scene.set_fog_height_falloff(entity, falloff)` | entity, falloff: float | — | Exponential height falloff curve |
+| `uz.scene.set_fog_base_height(entity, height)` | entity, height: float (meters) | — | Fog base altitude |
+| `uz.scene.set_fog_max_opacity(entity, opacity)` | entity, opacity: float (0-1) | — | Maximum fog opacity |
+| `uz.scene.set_fog_enabled(entity, enabled)` | entity, enabled: bool | — | Toggle fog on/off |
+| `uz.scene.create_sky_light(entity)` | entity | — | Add SkyLightComponent |
+| `uz.scene.set_sky_light_intensity(entity, intensity)` | entity, intensity: float | — | Set IBL ambient intensity |
+| `uz.scene.set_sky_light_color(entity, r, g, b)` | entity, r, g, b: float (0-1) | — | Set sky light tint (linear RGB) |
+| `uz.scene.set_sky_light_min_occlusion(entity, min_occlusion)` | entity, min_occlusion: float (0-1) | — | Minimum ambient occlusion floor |
+| `uz.scene.set_sky_rayleigh_scale(entity, scale)` | entity, scale: float | — | Rayleigh scattering artistic multiplier |
+| `uz.scene.set_sky_mie_scale(entity, scale)` | entity, scale: float | — | Mie scattering artistic multiplier |
+| `uz.scene.set_sky_multi_scattering(entity, factor)` | entity, factor: float | — | Multiple scattering approximation |
+
 ## Input
 
 ### Input System

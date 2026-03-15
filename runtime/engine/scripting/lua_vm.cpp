@@ -7,6 +7,7 @@
 #include "lua_renderer_api.h"
 #include "lua_entity_api.h"
 #include "lua_light_api.h"
+#include "lua_environment_api.h"
 #include "lua_time_api.h"
 #include "lua_math_api.h"
 #include "lua_quat_api.h"
@@ -141,6 +142,7 @@ bool LuaVM::Init() {
     LuaRegisterRendererAPI(s_state);
     LuaRegisterEntityAPI(s_state);
     LuaRegisterLightAPI(s_state);
+    LuaRegisterEnvironmentAPI(s_state);
     LuaRegisterTimeAPI(s_state);
     LuaRegisterMathAPI(s_state);
     LuaRegisterQuatAPI(s_state);

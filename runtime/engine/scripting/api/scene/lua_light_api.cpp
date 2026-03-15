@@ -420,6 +420,243 @@ static int SceneRemoveLight(lua_State* L) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Lua C functions — temperature (15.1)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// uz.scene.set_light_temperature(entity, kelvin [, use_temperature])
+///
+/// Sets the blackbody color temperature on any light component.
+///
+/// # Parameters
+/// - `entity`: Any entity with a DirectionalLightComponent, PointLightComponent,
+///   or SpotLightComponent.
+/// - `kelvin`: Color temperature in Kelvin (e.g. 3000 = warm, 6500 = daylight).
+/// - `use_temperature`: Optional bool (default: true). When false, the temperature
+///   value is stored but the light uses its raw `color` instead.
+///
+/// # Errors
+/// Logs a warning and no-ops if the entity has no light component.
+static int SceneSetLightTemperature(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { UZ_LOG(Scripting, Warning, "uz.scene.set_light_temperature: World not set"); return 0; }
+
+    const Entity entity = CheckEntity(L, 1, "set_light_temperature");
+    if (!entity.IsValid() || !world->IsValid(entity)) return 0;
+
+    LightComponent* light = GetAnyLight(world, entity);
+    if (!light) {
+        UZ_LOG(Scripting, Warning,
+            "uz.scene.set_light_temperature: entity {} has no light component", entity.id);
+        return 0;
+    }
+
+    light->temperature    = static_cast<float>(luaL_checknumber(L, 2));
+    // Third argument is optional; default to true when absent.
+    light->useTemperature = lua_isnoneornil(L, 3) ? true : (lua_toboolean(L, 3) != 0);
+    return 0;
+}
+
+/// uz.scene.get_light_temperature(entity) -> kelvin, use_temperature | nil
+///
+/// Returns the temperature (Kelvin) and use_temperature flag from any light entity.
+/// Returns nil if the entity has no light component.
+static int SceneGetLightTemperature(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+
+    const Entity entity = CheckEntity(L, 1, "get_light_temperature");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+
+    const LightComponent* light = GetAnyLight(world, entity);
+    if (!light) { lua_pushnil(L); return 1; }
+
+    lua_pushnumber(L, static_cast<double>(light->temperature));
+    lua_pushboolean(L, light->useTemperature ? 1 : 0);
+    return 2;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Lua C functions — specular/diffuse scale (15.2)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// uz.scene.set_light_specular_scale(entity, scale)
+///
+/// Sets the non-physical specular highlight multiplier for any light component.
+///
+/// # Parameters
+/// - `entity`: Any entity with a light component.
+/// - `scale`: Float in [0, 1]. 0 = no specular, 1 = normal.
+///
+/// # Errors
+/// Logs a warning and no-ops if the entity has no light component.
+static int SceneSetLightSpecularScale(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { UZ_LOG(Scripting, Warning, "uz.scene.set_light_specular_scale: World not set"); return 0; }
+
+    const Entity entity = CheckEntity(L, 1, "set_light_specular_scale");
+    if (!entity.IsValid() || !world->IsValid(entity)) return 0;
+
+    LightComponent* light = GetAnyLight(world, entity);
+    if (!light) {
+        UZ_LOG(Scripting, Warning,
+            "uz.scene.set_light_specular_scale: entity {} has no light component", entity.id);
+        return 0;
+    }
+
+    light->specularScale = static_cast<float>(luaL_checknumber(L, 2));
+    return 0;
+}
+
+/// uz.scene.set_light_diffuse_scale(entity, scale)
+///
+/// Sets the non-physical diffuse contribution multiplier for any light component.
+///
+/// # Parameters
+/// - `entity`: Any entity with a light component.
+/// - `scale`: Float in [0, 1]. 0 = no diffuse, 1 = normal.
+///
+/// # Errors
+/// Logs a warning and no-ops if the entity has no light component.
+static int SceneSetLightDiffuseScale(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { UZ_LOG(Scripting, Warning, "uz.scene.set_light_diffuse_scale: World not set"); return 0; }
+
+    const Entity entity = CheckEntity(L, 1, "set_light_diffuse_scale");
+    if (!entity.IsValid() || !world->IsValid(entity)) return 0;
+
+    LightComponent* light = GetAnyLight(world, entity);
+    if (!light) {
+        UZ_LOG(Scripting, Warning,
+            "uz.scene.set_light_diffuse_scale: entity {} has no light component", entity.id);
+        return 0;
+    }
+
+    light->diffuseScale = static_cast<float>(luaL_checknumber(L, 2));
+    return 0;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Lua C functions — point light falloff (15.3)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// uz.scene.set_light_falloff(entity, use_inverse_squared, exponent)
+///
+/// Controls the distance falloff mode for PointLightComponent and
+/// SpotLightComponent.
+///
+/// # Parameters
+/// - `entity`: Entity with a PointLightComponent or SpotLightComponent.
+/// - `use_inverse_squared`: Bool. When true, physically-correct inverse-square
+///   falloff is used and `exponent` is ignored. When false, `exponent` drives
+///   a power-curve falloff.
+/// - `exponent`: Float falloff exponent used when `use_inverse_squared` is false.
+///   UE5 default: 8.0.
+///
+/// # Errors
+/// Logs a warning and no-ops if the entity has no point or spot light.
+static int SceneSetLightFalloff(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { UZ_LOG(Scripting, Warning, "uz.scene.set_light_falloff: World not set"); return 0; }
+
+    const Entity entity = CheckEntity(L, 1, "set_light_falloff");
+    if (!entity.IsValid() || !world->IsValid(entity)) return 0;
+
+    const bool  useInvSq   = lua_toboolean(L, 2) != 0;
+    const float exponent   = static_cast<float>(luaL_checknumber(L, 3));
+
+    // SpotLightComponent inherits from PointLightComponent — check spot first
+    // so we write through the most-derived type.
+    if (world->HasComponent<SpotLightComponent>(entity)) {
+        auto& spot = world->GetComponent<SpotLightComponent>(entity);
+        spot.useInverseSquaredFalloff = useInvSq;
+        spot.lightFalloffExponent     = exponent;
+        return 0;
+    }
+    if (world->HasComponent<PointLightComponent>(entity)) {
+        auto& point = world->GetComponent<PointLightComponent>(entity);
+        point.useInverseSquaredFalloff = useInvSq;
+        point.lightFalloffExponent     = exponent;
+        return 0;
+    }
+
+    UZ_LOG(Scripting, Warning,
+        "uz.scene.set_light_falloff: entity {} has no point or spot light component", entity.id);
+    return 0;
+}
+
+/// uz.scene.set_light_source_radius(entity, radius)
+///
+/// Sets the sphere radius used for area light approximation (representative point
+/// technique) on a PointLightComponent or SpotLightComponent.
+///
+/// # Parameters
+/// - `entity`: Entity with a PointLightComponent or SpotLightComponent.
+/// - `radius`: Sphere radius in world units. 0 = point light (no area). Default: 0.
+///
+/// # Errors
+/// Logs a warning and no-ops if the entity has no point or spot light.
+static int SceneSetLightSourceRadius(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { UZ_LOG(Scripting, Warning, "uz.scene.set_light_source_radius: World not set"); return 0; }
+
+    const Entity entity = CheckEntity(L, 1, "set_light_source_radius");
+    if (!entity.IsValid() || !world->IsValid(entity)) return 0;
+
+    const float radius = static_cast<float>(luaL_checknumber(L, 2));
+
+    // SpotLightComponent inherits from PointLightComponent — check spot first.
+    if (world->HasComponent<SpotLightComponent>(entity)) {
+        world->GetComponent<SpotLightComponent>(entity).sourceRadius = radius;
+        return 0;
+    }
+    if (world->HasComponent<PointLightComponent>(entity)) {
+        world->GetComponent<PointLightComponent>(entity).sourceRadius = radius;
+        return 0;
+    }
+
+    UZ_LOG(Scripting, Warning,
+        "uz.scene.set_light_source_radius: entity {} has no point or spot light component", entity.id);
+    return 0;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Lua C functions — atmosphere sun link (15.4)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// uz.scene.set_atmosphere_sun_light(entity, enabled)
+///
+/// Marks a DirectionalLightComponent as the atmospheric sun driver.
+///
+/// When enabled, the light's direction, color, and intensity are passed to
+/// the SkyAtmosphereComponent for physically-based sky rendering.
+/// Only DirectionalLightComponent supports this flag; all other light types
+/// are silently ignored with a warning.
+///
+/// # Parameters
+/// - `entity`: Entity with a DirectionalLightComponent.
+/// - `enabled`: Bool. true = this light drives the sky atmosphere sun.
+///
+/// # Errors
+/// Logs a warning and no-ops if the entity has no DirectionalLightComponent.
+static int SceneSetAtmosphereSunLight(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { UZ_LOG(Scripting, Warning, "uz.scene.set_atmosphere_sun_light: World not set"); return 0; }
+
+    const Entity entity = CheckEntity(L, 1, "set_atmosphere_sun_light");
+    if (!entity.IsValid() || !world->IsValid(entity)) return 0;
+
+    if (!world->HasComponent<DirectionalLightComponent>(entity)) {
+        UZ_LOG(Scripting, Warning,
+            "uz.scene.set_atmosphere_sun_light: entity {} has no DirectionalLightComponent", entity.id);
+        return 0;
+    }
+
+    world->GetComponent<DirectionalLightComponent>(entity).atmosphereSunLight =
+        lua_toboolean(L, 2) != 0;
+    return 0;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Registration
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -479,6 +716,27 @@ void LuaRegisterLightAPI(lua_State* L) {
 
     lua_pushcfunction(L, SceneRemoveLight);
     lua_setfield(L, -2, "remove_light");
+
+    lua_pushcfunction(L, SceneSetLightTemperature);
+    lua_setfield(L, -2, "set_light_temperature");
+
+    lua_pushcfunction(L, SceneGetLightTemperature);
+    lua_setfield(L, -2, "get_light_temperature");
+
+    lua_pushcfunction(L, SceneSetLightSpecularScale);
+    lua_setfield(L, -2, "set_light_specular_scale");
+
+    lua_pushcfunction(L, SceneSetLightDiffuseScale);
+    lua_setfield(L, -2, "set_light_diffuse_scale");
+
+    lua_pushcfunction(L, SceneSetLightFalloff);
+    lua_setfield(L, -2, "set_light_falloff");
+
+    lua_pushcfunction(L, SceneSetLightSourceRadius);
+    lua_setfield(L, -2, "set_light_source_radius");
+
+    lua_pushcfunction(L, SceneSetAtmosphereSunLight);
+    lua_setfield(L, -2, "set_atmosphere_sun_light");
 
     lua_pop(L, 2);
 
