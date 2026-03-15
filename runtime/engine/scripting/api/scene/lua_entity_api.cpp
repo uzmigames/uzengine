@@ -1,0 +1,282 @@
+#include "lua_entity_api.h"
+
+#include "log.h"
+#include "world.h"
+#include "name_component.h"
+#include "scene_component.h"
+
+extern "C" {
+#include <lua.h>
+#include <lualib.h>
+#include <lauxlib.h>
+}
+
+#include <cstdint>
+#include <cstring>
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Compile-time guarantee: void* must be at least 64 bits to encode Entity.
+// ─────────────────────────────────────────────────────────────────────────────
+
+static_assert(sizeof(void*) >= 8,
+    "uz::Entity requires 64-bit pointers for lightuserdata encoding");
+
+// Scripting log category is defined in lua_vm.cpp — only declare here.
+UZ_DECLARE_LOG_CATEGORY(Scripting);
+
+namespace uz {
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Registry key constants
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Key used to store the World* in the Lua registry.
+static constexpr const char* kWorldRegistryKey = "uz_world";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Entity <-> lightuserdata encoding helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Packs an Entity into a void* for use as Lua lightuserdata.
+///
+/// High 32 bits = entity.id, low 32 bits = entity.generation.
+[[nodiscard]] static void* EntityToUserdata(Entity e) noexcept {
+    const uint64_t packed = (static_cast<uint64_t>(e.id) << 32)
+                          | static_cast<uint64_t>(e.generation);
+    void* p;
+    static_assert(sizeof(packed) == sizeof(p));
+    std::memcpy(&p, &packed, sizeof(p));
+    return p;
+}
+
+/// Unpacks an Entity from a void* lightuserdata.
+[[nodiscard]] static Entity UserdataToEntity(void* p) noexcept {
+    uint64_t packed;
+    static_assert(sizeof(packed) == sizeof(p));
+    std::memcpy(&packed, &p, sizeof(packed));
+    Entity e;
+    e.id         = static_cast<uint32_t>(packed >> 32);
+    e.generation = static_cast<uint32_t>(packed & 0xFFFFFFFFu);
+    return e;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Internal helpers — retrieve World and validate entity
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Retrieves the World* from the Lua registry. Returns null if not set.
+[[nodiscard]] static World* GetWorld(lua_State* L) {
+    lua_getfield(L, LUA_REGISTRYINDEX, kWorldRegistryKey);
+    void* p = lua_touserdata(L, -1);
+    lua_pop(L, 1);
+    return static_cast<World*>(p);
+}
+
+/// Reads an entity lightuserdata from stack position `idx`.
+/// Returns Entity::Invalid() and logs a warning if the value is not lightuserdata.
+[[nodiscard]] static Entity CheckEntity(lua_State* L, int idx, const char* funcName) {
+    if (!lua_islightuserdata(L, idx)) {
+        UZ_LOG(Scripting, Warning,
+            "uz.scene.{}: argument {} must be an entity (lightuserdata), got {}",
+            funcName, idx, lua_typename(L, lua_type(L, idx)));
+        return Entity::Invalid();
+    }
+    return UserdataToEntity(lua_touserdata(L, idx));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Lua C functions — uz.scene.* (entity lifecycle)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// uz.scene.create_entity(name?) -> entity | nil
+///
+/// Creates a new entity via World::CreateEntity(). If an optional string
+/// argument is provided, attaches a CName component. Always adds a
+/// SceneComponent so the entity has a transform. Returns the entity as
+/// lightuserdata, or nil if the World is not set.
+static int SceneCreateEntity(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) {
+        UZ_LOG(Scripting, Warning, "uz.scene.create_entity: World not set");
+        lua_pushnil(L);
+        return 1;
+    }
+
+    const Entity entity = world->CreateEntity();
+
+    // Add SceneComponent so the entity has a transform.
+    world->AddComponent<SceneComponent>(entity);
+
+    // Optional name argument.
+    if (lua_gettop(L) >= 1 && lua_isstring(L, 1)) {
+        const char* name = lua_tostring(L, 1);
+        if (name && name[0] != '\0') {
+            world->AddComponent<CName>(entity, CName{name});
+        }
+    }
+
+    lua_pushlightuserdata(L, EntityToUserdata(entity));
+    return 1;
+}
+
+/// uz.scene.destroy_entity(entity) -> void
+///
+/// Destroys the entity referenced by the lightuserdata argument.
+/// No-op if the entity is invalid or stale.
+static int SceneDestroyEntity(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) {
+        UZ_LOG(Scripting, Warning, "uz.scene.destroy_entity: World not set");
+        return 0;
+    }
+
+    const Entity entity = CheckEntity(L, 1, "destroy_entity");
+    if (!entity.IsValid() || !world->IsValid(entity)) {
+        return 0;
+    }
+
+    world->DestroyEntity(entity);
+    return 0;
+}
+
+/// uz.scene.is_valid(entity) -> bool
+///
+/// Returns true if the entity lightuserdata refers to a living entity
+/// whose generation matches. Returns false if the World is not set,
+/// the argument is not lightuserdata, or the entity is stale/destroyed.
+static int SceneIsValid(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    if (!lua_islightuserdata(L, 1)) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    const Entity entity = UserdataToEntity(lua_touserdata(L, 1));
+    lua_pushboolean(L, entity.IsValid() && world->IsValid(entity) ? 1 : 0);
+    return 1;
+}
+
+/// uz.scene.get_name(entity) -> string | nil
+///
+/// Returns the CName.name string for the entity, or nil if the entity
+/// has no CName component, is invalid, or the World is not set.
+static int SceneGetName(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) {
+        UZ_LOG(Scripting, Warning, "uz.scene.get_name: World not set");
+        lua_pushnil(L);
+        return 1;
+    }
+
+    const Entity entity = CheckEntity(L, 1, "get_name");
+    if (!entity.IsValid() || !world->IsValid(entity)) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    if (!world->HasComponent<CName>(entity)) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    const CName& cname = world->GetComponent<CName>(entity);
+    lua_pushstring(L, cname.name.c_str());
+    return 1;
+}
+
+/// uz.scene.set_name(entity, name) -> void
+///
+/// Sets or replaces the CName component on the entity. If the entity
+/// doesn't have a CName, one is added. If it already has one, the name
+/// field is updated in place.
+static int SceneSetName(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) {
+        UZ_LOG(Scripting, Warning, "uz.scene.set_name: World not set");
+        return 0;
+    }
+
+    const Entity entity = CheckEntity(L, 1, "set_name");
+    if (!entity.IsValid() || !world->IsValid(entity)) {
+        return 0;
+    }
+
+    const char* name = luaL_checkstring(L, 2);
+
+    if (world->HasComponent<CName>(entity)) {
+        world->GetComponent<CName>(entity).name = name;
+    } else {
+        world->AddComponent<CName>(entity, CName{name});
+    }
+
+    return 0;
+}
+
+/// uz.scene.entity_count() -> integer
+///
+/// Returns the number of currently alive entities in the World.
+/// Returns 0 if the World is not set.
+static int SceneEntityCount(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) {
+        lua_pushinteger(L, 0);
+        return 1;
+    }
+
+    lua_pushinteger(L, static_cast<lua_Integer>(world->EntityCount()));
+    return 1;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Registration
+// ─────────────────────────────────────────────────────────────────────────────
+
+void LuaRegisterEntityAPI(lua_State* L) {
+    // Retrieve the existing uz table.
+    lua_getglobal(L, "uz");                         // [uz]
+    if (!lua_istable(L, -1)) {
+        UZ_LOG(Scripting, Error,
+            "LuaRegisterEntityAPI: 'uz' global is not a table — call RegisterUzTable first");
+        lua_pop(L, 1);
+        return;
+    }
+
+    // Retrieve the existing uz.scene sub-table.
+    lua_getfield(L, -1, "scene");                   // [uz, scene]
+    if (!lua_istable(L, -1)) {
+        UZ_LOG(Scripting, Error,
+            "LuaRegisterEntityAPI: 'uz.scene' is not a table — call LuaRegisterSceneAPI first");
+        lua_pop(L, 2);
+        return;
+    }
+
+    // Add entity lifecycle functions to the existing scene table.
+    lua_pushcfunction(L, SceneCreateEntity);
+    lua_setfield(L, -2, "create_entity");
+
+    lua_pushcfunction(L, SceneDestroyEntity);
+    lua_setfield(L, -2, "destroy_entity");
+
+    lua_pushcfunction(L, SceneIsValid);
+    lua_setfield(L, -2, "is_valid");
+
+    lua_pushcfunction(L, SceneGetName);
+    lua_setfield(L, -2, "get_name");
+
+    lua_pushcfunction(L, SceneSetName);
+    lua_setfield(L, -2, "set_name");
+
+    lua_pushcfunction(L, SceneEntityCount);
+    lua_setfield(L, -2, "entity_count");
+
+    lua_pop(L, 2);  // pop scene and uz
+
+    UZ_LOG(Scripting, Info, "uz.scene entity API registered");
+}
+
+} // namespace uz

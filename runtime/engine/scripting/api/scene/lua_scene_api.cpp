@@ -1,12 +1,12 @@
 #include "lua_scene_api.h"
 
 #include "log.h"
-#include "../ecs/world.h"
-#include "../ecs/name_component.h"
-#include "../ecs/scene_component.h"
-#include "../ecs/static_mesh_component.h"
-#include "../math/vector3.h"
-#include "../math/quaternion.h"
+#include "world.h"
+#include "name_component.h"
+#include "scene_component.h"
+#include "static_mesh_component.h"
+#include "vector3.h"
+#include "quaternion.h"
 
 extern "C" {
 #include <lua.h>

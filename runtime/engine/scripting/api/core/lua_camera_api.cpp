@@ -1,10 +1,10 @@
 #include "lua_camera_api.h"
 
 #include "log.h"
-#include "../ecs/world.h"
-#include "../ecs/camera_component.h"
-#include "../math/vector3.h"
-#include "../math/quaternion.h"
+#include "world.h"
+#include "camera_component.h"
+#include "vector3.h"
+#include "quaternion.h"
 
 extern "C" {
 #include <lua.h>

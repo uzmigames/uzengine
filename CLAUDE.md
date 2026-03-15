@@ -75,19 +75,19 @@ When testing the same feature across multiple RHI backends or configurations, us
 
 ```bash
 # 1. Capture individual screenshots (one per config)
-demo.exe --backend dx12 --sm 6.6 --screenshot dx12_sm66.png
-demo.exe --backend dx11 --sm 5.0 --screenshot dx11_sm50.png
+demo.exe --backend dx12 --sm 6.6 --screenshot e:/UzEngine/.screenshots/dx12_sm66.png
+demo.exe --backend dx11 --sm 5.0 --screenshot e:/UzEngine/.screenshots/dx11_sm50.png
 
 # 2. Compose into a single grid image
-demo.exe --compose-grid compare.png --cell-size 384 \
-  dx12_sm66.png "DX12 SM6.6" "Frame 5" \
-  dx11_sm50.png "DX11 SM5.0" "Frame 5"
+demo.exe --compose-grid e:/UzEngine/.screenshots/compare.png --cell-size 384 \
+  e:/UzEngine/.screenshots/dx12_sm66.png "DX12 SM6.6" "Frame 5" \
+  e:/UzEngine/.screenshots/dx11_sm50.png "DX11 SM5.0" "Frame 5"
 
 # 3. View the grid (single image with all configs labeled)
-# Use the Read tool on compare.png
+# Use the Read tool on e:/UzEngine/.screenshots/compare.png
 
 # 4. Clean up all temporary PNGs
-rm dx12_sm66.png dx11_sm50.png compare.png
+rm e:/UzEngine/.screenshots/*.png
 ```
 
 #### Rules
@@ -95,6 +95,7 @@ rm dx12_sm66.png dx11_sm50.png compare.png
 - **Always include labels**: RHI backend, shader model, frame number, and what's being tested.
 - **Cell size 384x384** is the recommended default — large enough to see detail, small enough to fit 4+ in one grid.
 - **Delete all PNGs** (individual + grid) after visual verification.
+- **ALWAYS use `e:/UzEngine/.screenshots/` as the output directory** — never use `/tmp`, `AppData`, or any other path. This directory is in `.gitignore` and is always visible to the user.
 
 #### Diff Mode — Detect Rendering Differences Between RHIs
 
@@ -103,16 +104,16 @@ Use `--diff` to compare two screenshots pixel-by-pixel and produce a 3-panel ima
 
 ```bash
 # Compare DX12 vs DX11 rendering
-demo.exe --diff diff_output.png \
-  dx12.png "DX12 SM6.6" \
-  dx11.png "DX11 SM5.0" \
+demo.exe --diff e:/UzEngine/.screenshots/diff_output.png \
+  e:/UzEngine/.screenshots/dx12.png "DX12 SM6.6" \
+  e:/UzEngine/.screenshots/dx11.png "DX11 SM5.0" \
   --cell-size 384
 
 # View the diff (heatmap shows: black=identical, red=different, magenta=size mismatch)
-# Use the Read tool on diff_output.png
+# Use the Read tool on e:/UzEngine/.screenshots/diff_output.png
 
 # Clean up
-rm dx12.png dx11.png diff_output.png
+rm e:/UzEngine/.screenshots/*.png
 ```
 
 Heatmap color scale:
@@ -474,6 +475,7 @@ UZ_LOG(Asset, Error, "Failed to compile shader: reason='{}'", err);
 | **UI system** | ui-engineer | sonnet | HTML/CSS/data binding specialist |
 | **Gameplay systems** | gameplay-systems-engineer | sonnet | Input/camera/save/BT/nav specialist |
 | **Project coordination** | project-manager | haiku | Planning/status tracking |
+| **Review/organize docs** | docs-reviewer | haiku | Naming, indexing, template compliance |
 
 ### Delegation Rules
 
@@ -496,6 +498,45 @@ haiku  = $   → For: docs, research, project management, architecture analysis
 ```
 
 **Rule of thumb**: If the task is read-only or text-generation (not complex code), use haiku. If it's code but not core engine, use sonnet. Only use opus for critical C++ systems.
+
+## ⚠️ CRITICAL: Documentation Standards
+
+**MANDATORY**: All documentation in `/docs/` MUST follow the template at `/docs/TEMPLATE.md`.
+
+### Naming Convention
+
+- **kebab-case ONLY** for filenames: `ue5-rhi-analysis.md` NOT `UE5_RHI_ANALYSIS.md`
+- No UPPERCASE filenames, no snake_case, no spaces, no mixed case
+- Numbered prefixes OK for ordering: `01-overview.md`, `02-details.md`
+
+### File Rules
+
+1. **Max 800 lines** per document — split by subtopic if longer
+2. **Frontmatter is MANDATORY** — every doc needs the `<!-- doc-meta ... -->` block from TEMPLATE.md
+3. **No `.txt` files** — all docs are `.md` only
+4. **No orphan docs** — every file must be listed in its directory's `README.md`
+5. **Code blocks need language tags** — ` ```cpp `, ` ```hlsl `, ` ```bash `, etc.
+
+### Analysis Directory Structure
+
+Analysis docs MUST be organized by theme subdirectories:
+
+```
+docs/analysis/
+  rendering/   ← shaders, post-processing, lighting, PBR
+  rhi/         ← RHI, backend abstraction, GPU API, bindless
+  ecs/         ← ECS, scene, components
+  platform/    ← platform abstraction, window, input
+  general/     ← cross-cutting comparisons, gap analysis
+```
+
+### When Creating Documentation
+
+1. **Read `/docs/TEMPLATE.md` first** — copy the structure
+2. **Use kebab-case filename** — derive from the title
+3. **Add frontmatter** — fill in all required fields
+4. **Update the directory's README.md** — add an entry for the new doc
+5. **After bulk doc creation, run docs-reviewer agent** to audit compliance
 
 ## Critical Rules
 

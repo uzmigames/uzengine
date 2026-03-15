@@ -55,6 +55,9 @@ pub fn build(b: *std.Build) void {
         "engine/job",
         "engine/ecs",
         "engine/scripting",
+        "engine/scripting/api/scene",
+        "engine/scripting/api/core",
+        "engine/scripting/api/renderer",
         "engine/event",
         "engine/property",
         "editor/grid",
@@ -164,6 +167,9 @@ pub fn build(b: *std.Build) void {
     addCppDir(runtime_mod, b, "engine/job", cpp_flags);
     addCppDir(runtime_mod, b, "engine/ecs", cpp_flags);
     addCppDir(runtime_mod, b, "engine/scripting", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/scripting/api/scene", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/scripting/api/core", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/scripting/api/renderer", cpp_flags);
     addCppDir(runtime_mod, b, "engine/property", cpp_flags);
 
     // Thirdparty — SPIRV-Reflect (C source, not C++)

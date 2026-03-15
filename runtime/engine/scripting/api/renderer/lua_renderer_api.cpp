@@ -1,8 +1,8 @@
 #include "lua_renderer_api.h"
 
 #include "log.h"
-#include "../renderer/scene_renderer.h"   // pulls in RenderPath, GBufferDebugMode, StatsOverlay accessors
-#include "../../editor/stats/stats_overlay.h"  // StatsOverlay::GetFPS / GetDrawCallCount
+#include "scene_renderer.h"
+#include "stats_overlay.h"
 
 extern "C" {
 #include <lua.h>

@@ -44,10 +44,10 @@ Research notes, reference engine analyses, audits, and implementation patterns c
 
 | Document | Topic |
 |----------|-------|
-| [audit_architecture.md](audit_architecture.md) | Architecture audit findings |
-| [audit_consolidated.md](audit_consolidated.md) | Consolidated audit results |
-| [audit_shaders.md](audit_shaders.md) | Shader code audit |
-| [audit_test_coverage.md](audit_test_coverage.md) | Test coverage audit |
+| [audit-architecture.md](audit-architecture.md) | Architecture audit findings |
+| [audit-consolidated.md](audit-consolidated.md) | Consolidated audit results |
+| [audit-shaders.md](audit-shaders.md) | Shader code audit |
+| [audit-test-coverage.md](audit-test-coverage.md) | Test coverage audit |
 
 ## AI VFX Research
 

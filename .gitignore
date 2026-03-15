@@ -79,3 +79,6 @@ coverage/
 poc-napi/build/
 poc-napi/out/
 poc-napi/node_modules/
+
+# Screenshots — debug/comparison captures (never commit)
+/.screenshots/

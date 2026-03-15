@@ -5,6 +5,11 @@
 #include "lua_camera_api.h"
 #include "lua_input_api.h"
 #include "lua_renderer_api.h"
+#include "lua_entity_api.h"
+#include "lua_light_api.h"
+#include "lua_time_api.h"
+#include "lua_math_api.h"
+#include "lua_window_api.h"
 
 extern "C" {
 #include <lua.h>
@@ -133,6 +138,11 @@ bool LuaVM::Init() {
     LuaRegisterCameraAPI(s_state);
     LuaRegisterInputAPI(s_state);
     LuaRegisterRendererAPI(s_state);
+    LuaRegisterEntityAPI(s_state);
+    LuaRegisterLightAPI(s_state);
+    LuaRegisterTimeAPI(s_state);
+    LuaRegisterMathAPI(s_state);
+    LuaRegisterWindowAPI(s_state);
 
     UZ_LOG(Scripting, Info, "LuaVM initialized (LuaJIT 2.1)");
     return true;

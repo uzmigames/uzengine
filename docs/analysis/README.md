@@ -1,143 +1,94 @@
-# Godot 4 Architecture Analysis — POM/Heightmap Displacement
+# Analysis Documentation
 
-**Analysis Date**: 2026-03-13
-**Godot Source**: `E:\godot` (4.x branch)
-**UzEngine Target**: Parallax Occlusion Mapping (POM) feature for PBR renderer
+This directory contains architectural and rendering analysis documents from reference engines (UE5, Godot, Unity) that inform UzEngine's design decisions.
 
----
+## Directory Structure
 
-## Documents in This Analysis
+### `/rendering/` — Rendering Systems & Shader Analysis
 
-This folder contains three comprehensive documents analyzing Godot 4's parallax occlusion mapping (heightmap displacement) implementation:
+Analysis of rendering pipelines, visual effects, debug visualization, and shader patterns:
 
-### 1. godot-pom-heightmap-analysis.md (Main Reference)
+- **godot-debug-modes-quick-reference.md** — Godot's debug view modes (wireframe, vertex colors, etc.)
+- **godot-debug-modes-taxonomy.md** — Complete taxonomy of Godot's debug visualization system
+- **godot4-debug-visualization-analysis.md** — Godot 4 implementation details for debug rendering
+- **godot-vs-ue5-debug-visualization.md** — Comparative analysis: Godot vs UE5 debug systems
+- **ue5-view-mode-buffer-visualization-analysis.md** — UE5's buffer visualization view modes (GBuffer, light buffer, etc.)
+- **godot-pom-heightmap-analysis.md** — Parallax Occlusion Mapping (heightmap displacement) in Godot
+- **godot-pom-hlsl-reference.md** — Production HLSL code for POM implementations
+- **godot-rendering-analysis.md** — Godot's overall rendering architecture
+- **godot4-tonemap-fxaa-analysis.md** — Tone mapping and FXAA antialiasing in Godot 4
+- **ue5-tonemap-fxaa-analysis.md** — UE5's tone mapping and FXAA implementations
+- **ue5-pom-code-reference.md** — UE5's parallax occlusion mapping implementation reference
+- **ue5-rendering-systems-analysis.md** — UE5 rendering system architecture
+- **ue5-shader-patterns-analysis.md** — Common shader patterns and conventions in UE5
+- **ue5-default-scene-rendering-systems.md** — Default rendering systems in UE5's base scene
+- **parallel-ox-mapping-analysis.md** — Parallax Occlusion Mapping algorithm variants and analysis
 
-**Audience**: Technical leads, render engineers
-**Key Content**:
-- Executive summary of Godot's two-tier algorithm (Deep Parallax vs. Simple Parallax)
-- Adaptive layer calculation based on view angle
-- Material properties and shader integration
-- Comparison with UE5 and UzEngine
-- Performance considerations
-- Implementation roadmap
+### `/rhi/` — Graphics API & RHI Abstraction
 
-**Key Findings**:
-- Linear raymarching (not binary search) for good performance/quality trade-off
-- Adaptive layers via grazing angle fade eliminate need for explicit distance LOD
-- No self-shadowing in Godot's POM — handled separately via AO texture
-- C++ string codegen approach is elegant for standardized pipelines
+Analysis of rendering hardware interfaces, buffer layouts, and GPU memory management:
 
-### 2. godot-pom-hlsl-reference.md (Implementation Guide)
+- **cbuffer-quick-reference.md** — Quick reference for constant buffer layouts and packing rules
+- **ue5-cbuffer-layout-dx12-vulkan-analysis.md** — Constant buffer layout differences between DX12 and Vulkan
+- **ue5-vulkan-bindless-analysis.md** — UE5's bindless resource system on Vulkan
+- **godot-rendering-device-resource-states.md** — Godot's RenderingDevice resource state management
+- **godot-renderingdevice-architecture.md** — Godot's unified rendering device abstraction architecture
 
-**Audience**: Shader engineers, implementation team
-**Key Content**:
-- Full production-quality HLSL implementations of both algorithms
-- Material constant buffer structure and bitfield packing
-- TBN space transformation with MikktSpace flip corrections
-- Complete fragment shader integration example
-- Performance baseline and known issues
-- Test vectors for unit and visual regression testing
+### `/general/` — Architecture & Comparative Analysis
 
-**Ready-to-Use**: Code can be directly adapted into UzEngine's pbr_pass.hlsl.
+High-level architectural decisions, engine comparisons, and gap analysis:
 
-### 3. README.md (This File)
+- **ue5-architecture-summary.md** — Executive summary of UE5's architecture
+- **godot-architecture-decisions.md** — Key architectural decisions in Godot
+- **godot-d3d12-patterns-uzengine.md** — D3D12 patterns in Godot applicable to UzEngine
+- **godot-vs-ue5-renderingdevice.md** — Comparative analysis: Godot RenderingDevice vs UE5 RHI
+- **godot-vs-uzengine.md** — Godot vs UzEngine feature/architecture comparison
+- **ue5-basic-scene-gap-analysis-2026-03-14.md** — Gap analysis: default rendering features in UE5
 
-Navigation and quick-start guide for the analysis corpus.
+## Usage by Role
 
----
+### Render Engineers
+1. Start with `/rendering/` subdirectory for your feature area
+2. Review reference engine analysis (Godot, UE5)
+3. Check `/rhi/` for GPU-level implementation details
 
-## Quick Start by Role
+### RHI / Graphics API Engineers
+1. Focus on `/rhi/` subdirectory for buffer layouts and resource management
+2. Cross-reference with `/rendering/` for how shaders consume RHI abstractions
+3. Review `/general/` for architectural patterns
 
-### Render Engineers (Implementation)
-1. Read godot-pom-hlsl-reference.md Sections 3-4 (algorithms)
-2. Review Section 6 (shader integration)
-3. Implement in `runtime/engine/renderer/passes/pbr_pass.hlsl`
+### Architects / Technical Leads
+1. Read `/general/` for high-level decisions and comparisons
+2. Dive into specific subdirectories based on feature areas
+3. Use analysis for feature prioritization and feasibility assessment
 
-### Material/Tools Programmers
-1. Read godot-pom-heightmap-analysis.md Section 1 (properties)
-2. Review godot-pom-hlsl-reference.md Section 8 (constant buffers)
-3. Define MaterialParams struct and expose inspector UI
+### Performance Engineers
+1. Review tone mapping, antialiasing, and debug visualization docs
+2. Check constant buffer layout analysis for memory optimization
+3. Look at bindless resource analysis for GPU memory strategies
 
-### Architects
-1. Read godot-pom-heightmap-analysis.md Sections 1-2, 10-14
-2. Review Section 12 (UE5 comparison)
-3. Make decision: Godot's linear refinement vs. UE5's binary refinement
+## Quick Search Guide
 
-### Asset Pipeline
-1. Read godot-pom-heightmap-analysis.md Sections 5-7
-2. Document heightmap format and conventions
-3. Implement validation in asset importer
+**Looking for...**
+- Debug view modes → `/rendering/godot-debug-modes-*.md` and `/rendering/ue5-view-mode-*.md`
+- Parallax occlusion mapping → `/rendering/*pom*.md`
+- Constant buffers → `/rhi/cbuffer-quick-reference.md` and `/rhi/*cbuffer*.md`
+- Bindless resources → `/rhi/*bindless*.md`
+- Tone mapping / antialiasing → `/rendering/*tonemap*.md` and `/rendering/*fxaa*.md`
+- Engine architecture → `/general/*architecture*.md`
+- Feature gaps → `/general/*gap-analysis*.md`
 
----
+## Document Dates & Maintenance
 
-## Key Architectural Decisions
+All analysis documents include date metadata and source file references. When planning implementation:
+1. Check the analysis date — very recent analysis (< 3 months) is more reliable
+2. Verify source engine version (e.g., UE5.6, Godot 4.x)
+3. Cross-reference with current engine source code if analysis is > 6 months old
 
-### Algorithm Choice
-- **Godot**: Linear search + 1-step linear interpolation refinement
-- **UE5**: Linear search + N-step binary refinement
-- **Recommendation**: Godot approach (8-32 texture lookups vs. 16-64)
+## Contributing
 
-### Self-Shadowing
-- **Godot**: None (separate AO texture)
-- **UE5**: Real-time via light-space raycasts (expensive)
-- **Recommendation**: Godot approach (aligns with UzEngine's existing contact shadows)
-
-### Shader Implementation
-- **Godot**: C++ string codegen
-- **UzEngine current**: Shader variants + DXC defines
-- **Recommendation**: Stick with UzEngine's existing variant system
-
----
-
-## Integration Checklist
-
-- [ ] Add heightmap properties to MaterialParams struct
-- [ ] Define HeightmapConstants CB and allocate register
-- [ ] Create `shaders/include/parallax.hlsli` with algorithm implementations
-- [ ] Modify pbr_pass.hlsl to call parallax before texture sampling
-- [ ] Expose UI: heightmap_scale slider, min/max layers, flip checkboxes
-- [ ] Write unit tests (layer adaptation, inversion, flips)
-- [ ] Capture visual regression baseline from Godot
-- [ ] Profile on target GPUs; verify < 5% frame time impact
-- [ ] Document heightmap authoring guide
-
----
-
-## Performance Targets
-
-| Configuration | Est. Cost | Target Platform |
-|---|---|---|
-| Deep Parallax, 32 layers | 1.0–1.2 ms @ 1440p | High-end (RTX 4080) |
-| Deep Parallax, 16 layers | 0.5–0.7 ms @ 1440p | Mid-range (RTX 3070) |
-| Simple Parallax, 1 layer | 0.04 ms @ 1440p | Mobile/low-end |
-
----
-
-## Source References
-
-### Godot 4 Source
-- Material properties: `/e/godot/scene/resources/material.h` (lines 384–703)
-- POM algorithm: `/e/godot/scene/resources/material.cpp` (lines 1544–1614)
-- Property setters: `/e/godot/scene/resources/material.cpp` (lines 2863–2905)
-
-### UzEngine Integration Points
-- Material system: `/e/UzEngine/runtime/engine/renderer/core/material.h`
-- PBR pass: `/e/UzEngine/runtime/engine/renderer/passes/pbr_pass.cpp`
-- Constant buffers: `/e/UzEngine/runtime/engine/renderer/core/constant_buffers.h`
-
----
-
-## Implementation Effort
-
-**Estimated**: 2-3 days
-
-- Core HLSL functions: 0.5 day
-- Shader integration: 0.5 day
-- Material UI: 0.5 day
-- Testing: 1 day
-
----
-
-## Summary
-
-Godot 4's POM implementation is production-ready and suitable for direct HLSL adaptation. The linear raymarching approach offers excellent performance/quality balance. The adaptive layer system elegantly handles LOD without explicit distance-based tuning. Both detailed analysis and ready-to-use HLSL code are provided in the accompanying documents.
+When adding new analysis documents:
+1. Place in appropriate subdirectory (`/rendering/`, `/rhi/`, or `/general/`)
+2. Use kebab-case filenames
+3. Include title, analysis date, and source engine information in the document header
+4. Update this README with a one-line description in the appropriate section
