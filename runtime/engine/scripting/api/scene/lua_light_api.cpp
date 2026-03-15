@@ -257,6 +257,169 @@ static int SceneSetLightRange(lua_State* L) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Lua C functions — extended property access
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// uz.scene.get_light_range(entity) -> number | nil
+///
+/// Returns the effective attenuation radius of a PointLightComponent or
+/// SpotLightComponent. Returns nil for DirectionalLightComponent or entities
+/// without any light component, as directional lights have no finite range.
+static int SceneGetLightRange(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+
+    const Entity entity = CheckEntity(L, 1, "get_light_range");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+
+    if (world->HasComponent<PointLightComponent>(entity)) {
+        lua_pushnumber(L, static_cast<double>(
+            world->GetComponent<PointLightComponent>(entity).range));
+        return 1;
+    }
+    if (world->HasComponent<SpotLightComponent>(entity)) {
+        lua_pushnumber(L, static_cast<double>(
+            world->GetComponent<SpotLightComponent>(entity).range));
+        return 1;
+    }
+    // Directional lights and entities with no light return nil.
+    lua_pushnil(L);
+    return 1;
+}
+
+/// uz.scene.get_spot_angles(entity) -> inner_deg, outer_deg | nil
+///
+/// Returns the inner and outer cone half-angles of a SpotLightComponent in
+/// degrees. Returns nil if the entity has no SpotLightComponent.
+static int SceneGetSpotAngles(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+
+    const Entity entity = CheckEntity(L, 1, "get_spot_angles");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+
+    if (!world->HasComponent<SpotLightComponent>(entity)) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    constexpr float kRadToDeg = 180.f / 3.14159265358979323846f;
+    const auto& spot = world->GetComponent<SpotLightComponent>(entity);
+    lua_pushnumber(L, static_cast<double>(spot.innerAngle * kRadToDeg));
+    lua_pushnumber(L, static_cast<double>(spot.outerAngle * kRadToDeg));
+    return 2;
+}
+
+/// uz.scene.set_spot_angles(entity, inner_deg, outer_deg)
+///
+/// Sets the inner and outer cone half-angles (in degrees) of a
+/// SpotLightComponent, converting to radians internally.
+/// Logs a warning and no-ops if the entity has no SpotLightComponent.
+static int SceneSetSpotAngles(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { UZ_LOG(Scripting, Warning, "uz.scene.set_spot_angles: World not set"); return 0; }
+
+    const Entity entity = CheckEntity(L, 1, "set_spot_angles");
+    if (!entity.IsValid() || !world->IsValid(entity)) return 0;
+
+    if (!world->HasComponent<SpotLightComponent>(entity)) {
+        UZ_LOG(Scripting, Warning,
+            "uz.scene.set_spot_angles: entity {} has no SpotLightComponent", entity.id);
+        return 0;
+    }
+
+    constexpr float kDegToRad = 3.14159265358979323846f / 180.f;
+    const float innerDeg = static_cast<float>(luaL_checknumber(L, 2));
+    const float outerDeg = static_cast<float>(luaL_checknumber(L, 3));
+
+    auto& spot = world->GetComponent<SpotLightComponent>(entity);
+    spot.innerAngle = innerDeg * kDegToRad;
+    spot.outerAngle = outerDeg * kDegToRad;
+    return 0;
+}
+
+/// uz.scene.get_light_direction(entity) -> x, y, z | nil
+///
+/// Returns the world-space unit direction vector of a DirectionalLightComponent.
+/// Returns nil for PointLightComponent, SpotLightComponent, or entities without
+/// any light component, as those lights have positional rather than directional
+/// emission.
+static int SceneGetLightDirection(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+
+    const Entity entity = CheckEntity(L, 1, "get_light_direction");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+
+    if (!world->HasComponent<DirectionalLightComponent>(entity)) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    const Vec3 dir = world->GetComponent<DirectionalLightComponent>(entity).GetDirection();
+    lua_pushnumber(L, static_cast<double>(dir.x));
+    lua_pushnumber(L, static_cast<double>(dir.y));
+    lua_pushnumber(L, static_cast<double>(dir.z));
+    return 3;
+}
+
+/// uz.scene.set_cast_shadows(entity, enabled)
+///
+/// Sets the `castShadows` flag on any PrimitiveComponent (lights, meshes, etc.).
+/// Logs a warning and no-ops if the entity has no PrimitiveComponent.
+static int SceneSetCastShadows(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { UZ_LOG(Scripting, Warning, "uz.scene.set_cast_shadows: World not set"); return 0; }
+
+    const Entity entity = CheckEntity(L, 1, "set_cast_shadows");
+    if (!entity.IsValid() || !world->IsValid(entity)) return 0;
+
+    // LightComponent inherits from PrimitiveComponent — check all light types first,
+    // then fall through to any other PrimitiveComponent in the future.
+    if (world->HasComponent<DirectionalLightComponent>(entity)) {
+        world->GetComponent<DirectionalLightComponent>(entity).castShadows =
+            lua_toboolean(L, 2) != 0;
+        return 0;
+    }
+    if (world->HasComponent<PointLightComponent>(entity)) {
+        world->GetComponent<PointLightComponent>(entity).castShadows =
+            lua_toboolean(L, 2) != 0;
+        return 0;
+    }
+    if (world->HasComponent<SpotLightComponent>(entity)) {
+        world->GetComponent<SpotLightComponent>(entity).castShadows =
+            lua_toboolean(L, 2) != 0;
+        return 0;
+    }
+
+    UZ_LOG(Scripting, Warning,
+        "uz.scene.set_cast_shadows: entity {} has no PrimitiveComponent", entity.id);
+    return 0;
+}
+
+/// uz.scene.remove_light(entity)
+///
+/// Removes whichever LightComponent exists on the entity (directional, point,
+/// or spot). No-op if the entity has no light component.
+static int SceneRemoveLight(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { UZ_LOG(Scripting, Warning, "uz.scene.remove_light: World not set"); return 0; }
+
+    const Entity entity = CheckEntity(L, 1, "remove_light");
+    if (!entity.IsValid() || !world->IsValid(entity)) return 0;
+
+    if (world->HasComponent<DirectionalLightComponent>(entity)) {
+        world->RemoveComponent<DirectionalLightComponent>(entity);
+    } else if (world->HasComponent<PointLightComponent>(entity)) {
+        world->RemoveComponent<PointLightComponent>(entity);
+    } else if (world->HasComponent<SpotLightComponent>(entity)) {
+        world->RemoveComponent<SpotLightComponent>(entity);
+    }
+    // Silently no-op when no light is present — caller may call unconditionally.
+    return 0;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Registration
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -298,6 +461,24 @@ void LuaRegisterLightAPI(lua_State* L) {
 
     lua_pushcfunction(L, SceneSetLightRange);
     lua_setfield(L, -2, "set_light_range");
+
+    lua_pushcfunction(L, SceneGetLightRange);
+    lua_setfield(L, -2, "get_light_range");
+
+    lua_pushcfunction(L, SceneGetSpotAngles);
+    lua_setfield(L, -2, "get_spot_angles");
+
+    lua_pushcfunction(L, SceneSetSpotAngles);
+    lua_setfield(L, -2, "set_spot_angles");
+
+    lua_pushcfunction(L, SceneGetLightDirection);
+    lua_setfield(L, -2, "get_light_direction");
+
+    lua_pushcfunction(L, SceneSetCastShadows);
+    lua_setfield(L, -2, "set_cast_shadows");
+
+    lua_pushcfunction(L, SceneRemoveLight);
+    lua_setfield(L, -2, "remove_light");
 
     lua_pop(L, 2);
 

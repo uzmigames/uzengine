@@ -1,6 +1,7 @@
 #include "lua_renderer_api.h"
 
 #include "log.h"
+#include "debug_view_mode.h"
 #include "scene_renderer.h"
 #include "stats_overlay.h"
 
@@ -130,6 +131,46 @@ static int RendererGetStats(lua_State* L) {
     return 1;
 }
 
+/// uz.renderer.set_debug_view(mode_name)
+///
+/// Sets the debug view mode on the SceneRenderer. `mode_name` is a string
+/// matching a `DebugViewMode` enum value (case-insensitive), e.g. "albedo",
+/// "depth", "overview", "lit" (to restore normal rendering).
+///
+/// Unrecognized names default to "Lit" (normal rendering).
+///
+/// # Arguments
+/// * `mode_name` (string) — Debug view mode name.
+static int RendererSetDebugView(lua_State* L) {
+    const char* name = luaL_checkstring(L, 1);
+    SceneRenderer* renderer = GetRenderer(L);
+    if (!renderer) {
+        UZ_LOG(Scripting, Warning, "uz.renderer.set_debug_view: SceneRenderer not set");
+        return 0;
+    }
+
+    const DebugViewMode mode = DebugViewModeFromString(std::string_view{name});
+    renderer->SetDebugViewMode(mode);
+    UZ_LOG(Scripting, Info, "[Lua] uz.renderer.set_debug_view: {}", DebugViewModeName(mode));
+    return 0;
+}
+
+/// uz.renderer.get_debug_view() -> string
+///
+/// Returns the current debug view mode name as a lowercase string.
+///
+/// # Returns
+/// String — current mode name (e.g. "Lit", "Albedo", "Depth").
+static int RendererGetDebugView(lua_State* L) {
+    SceneRenderer* renderer = GetRenderer(L);
+    if (renderer) {
+        lua_pushstring(L, DebugViewModeName(renderer->GetDebugViewMode()));
+    } else {
+        lua_pushstring(L, "Lit");
+    }
+    return 1;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Lua C functions — uz.mesh.*
 // ─────────────────────────────────────────────────────────────────────────────
@@ -233,6 +274,12 @@ void LuaRegisterRendererAPI(lua_State* L) {
 
     lua_pushcfunction(L, RendererGetStats);
     lua_setfield(L, -2, "get_stats");
+
+    lua_pushcfunction(L, RendererSetDebugView);
+    lua_setfield(L, -2, "set_debug_view");
+
+    lua_pushcfunction(L, RendererGetDebugView);
+    lua_setfield(L, -2, "get_debug_view");
 
     lua_setfield(L, -2, "renderer");
 

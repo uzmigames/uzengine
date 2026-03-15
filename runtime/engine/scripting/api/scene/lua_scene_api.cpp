@@ -278,6 +278,36 @@ static int SceneSetScale(lua_State* L) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Internal helpers — read-only StaticMeshComponent access
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Retrieves the StaticMeshComponent for the entity at stack index 1 (read-only).
+///
+/// Returns nullptr without logging if the entity simply lacks the component —
+/// callers distinguish "no component" (nil return) from errors (logged here).
+[[nodiscard]] static StaticMeshComponent* GetMeshComponent(
+    lua_State* L, const char* funcName)
+{
+    World* world = GetWorld(L);
+    if (!world) {
+        UZ_LOG(Scripting, Warning, "uz.scene.{}: World not set", funcName);
+        return nullptr;
+    }
+
+    const Entity entity = CheckEntity(L, 1, funcName);
+    if (!entity.IsValid() || !world->IsValid(entity)) {
+        UZ_LOG(Scripting, Warning, "uz.scene.{}: invalid or stale entity", funcName);
+        return nullptr;
+    }
+
+    if (!world->HasComponent<StaticMeshComponent>(entity)) {
+        return nullptr;  // Not an error — caller pushes nil.
+    }
+
+    return &world->GetComponent<StaticMeshComponent>(entity);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Lua C functions — uz.scene.set_mesh / uz.scene.set_material
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -365,6 +395,135 @@ static int SceneSetMaterial(lua_State* L) {
     return 0;
 }
 
+/// uz.scene.get_mesh(entity) -> mesh_id (integer) | nil
+///
+/// Returns the `meshId` from the entity's `StaticMeshComponent` when the mesh
+/// has been uploaded to the GPU (i.e., `meshLoaded == true`). Returns nil if
+/// the entity has no `StaticMeshComponent` or the mesh has not been loaded yet.
+///
+/// # Arguments
+/// * `entity` (lightuserdata) — Target entity.
+///
+/// # Returns
+/// - Integer `mesh_id` on success.
+/// - `nil` if the component is missing or `meshLoaded` is false.
+static int SceneGetMesh(lua_State* L) {
+    StaticMeshComponent* meshComp = GetMeshComponent(L, "get_mesh");
+    if (!meshComp || !meshComp->meshLoaded) {
+        lua_pushnil(L);
+        return 1;
+    }
+    lua_pushinteger(L, static_cast<lua_Integer>(meshComp->meshId));
+    return 1;
+}
+
+/// uz.scene.get_material(entity) -> table | nil
+///
+/// Returns a table of non-zero texture IDs from the entity's `StaticMeshComponent`
+/// when the material has been loaded (`materialLoaded == true`). Only fields with
+/// a non-zero ID are included in the returned table (albedo, normal, roughness,
+/// metallic, ao). Returns nil if the component is missing or not yet loaded.
+///
+/// # Arguments
+/// * `entity` (lightuserdata) — Target entity.
+///
+/// # Returns
+/// - Table `{albedo?, normal?, roughness?, metallic?, ao?}` on success.
+///   Each field is an integer texture ID. Fields whose ID is 0 are omitted.
+/// - `nil` if the component is missing or `materialLoaded` is false.
+static int SceneGetMaterial(lua_State* L) {
+    StaticMeshComponent* meshComp = GetMeshComponent(L, "get_material");
+    if (!meshComp || !meshComp->materialLoaded) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    lua_newtable(L);
+
+    // Only emit non-zero IDs — zero is the sentinel "null" value.
+    // materialId is used as the albedo ID in the MVP asset system.
+    if (meshComp->materialId != 0) {
+        lua_pushinteger(L, static_cast<lua_Integer>(meshComp->materialId));
+        lua_setfield(L, -2, "albedo");
+    }
+
+    // Phase 2 texture slots are not yet stored as uint32_t IDs in the component
+    // (they are paths). Nothing else to emit until the asset system adds them.
+
+    return 1;
+}
+
+/// uz.scene.set_visible(entity, enabled)
+///
+/// Sets the `visible` flag on the entity's `StaticMeshComponent`. Logs a warning
+/// if the entity has no `StaticMeshComponent` — the component is NOT created
+/// automatically, because visibility is meaningless without mesh geometry.
+///
+/// # Arguments
+/// * `entity`  (lightuserdata) — Target entity.
+/// * `enabled` (boolean)       — True to show, false to hide.
+static int SceneSetVisible(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) {
+        UZ_LOG(Scripting, Warning, "uz.scene.set_visible: World not set");
+        return 0;
+    }
+
+    const Entity entity = CheckEntity(L, 1, "set_visible");
+    if (!entity.IsValid() || !world->IsValid(entity)) {
+        UZ_LOG(Scripting, Warning, "uz.scene.set_visible: invalid or stale entity");
+        return 0;
+    }
+
+    if (!world->HasComponent<StaticMeshComponent>(entity)) {
+        UZ_LOG(Scripting, Warning,
+            "uz.scene.set_visible: entity {} has no StaticMeshComponent — "
+            "call uz.scene.set_mesh first",
+            entity.id);
+        return 0;
+    }
+
+    const bool enabled = lua_toboolean(L, 2) != 0;
+    world->GetComponent<StaticMeshComponent>(entity).visible = enabled;
+    return 0;
+}
+
+/// uz.scene.is_visible(entity) -> bool
+///
+/// Returns the `visible` flag from the entity's `StaticMeshComponent`.
+/// Returns `true` (the default) when the entity has no `StaticMeshComponent`,
+/// matching the "assume visible until told otherwise" convention.
+///
+/// # Arguments
+/// * `entity` (lightuserdata) — Target entity.
+///
+/// # Returns
+/// - `true` if the entity is visible or has no mesh component.
+/// - `false` if the entity's mesh component has `visible = false`.
+static int SceneIsVisible(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) {
+        UZ_LOG(Scripting, Warning, "uz.scene.is_visible: World not set");
+        lua_pushboolean(L, 1);  // Default visible.
+        return 1;
+    }
+
+    const Entity entity = CheckEntity(L, 1, "is_visible");
+    if (!entity.IsValid() || !world->IsValid(entity)) {
+        lua_pushboolean(L, 1);  // Default visible for stale entities.
+        return 1;
+    }
+
+    if (!world->HasComponent<StaticMeshComponent>(entity)) {
+        lua_pushboolean(L, 1);  // No mesh component → default visible.
+        return 1;
+    }
+
+    const bool vis = world->GetComponent<StaticMeshComponent>(entity).visible;
+    lua_pushboolean(L, vis ? 1 : 0);
+    return 1;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Registration
 // ─────────────────────────────────────────────────────────────────────────────
@@ -408,6 +567,18 @@ void LuaRegisterSceneAPI(lua_State* L) {
 
     lua_pushcfunction(L, SceneSetMaterial);
     lua_setfield(L, -2, "set_material");
+
+    lua_pushcfunction(L, SceneGetMesh);
+    lua_setfield(L, -2, "get_mesh");
+
+    lua_pushcfunction(L, SceneGetMaterial);
+    lua_setfield(L, -2, "get_material");
+
+    lua_pushcfunction(L, SceneSetVisible);
+    lua_setfield(L, -2, "set_visible");
+
+    lua_pushcfunction(L, SceneIsVisible);
+    lua_setfield(L, -2, "is_visible");
 
     // uz.scene = { ... }
     lua_setfield(L, -2, "scene");

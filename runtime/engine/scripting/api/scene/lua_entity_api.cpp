@@ -4,6 +4,10 @@
 #include "world.h"
 #include "name_component.h"
 #include "scene_component.h"
+#include "static_mesh_component.h"
+#include "camera_component.h"
+#include "light_component.h"
+#include "script_component.h"
 
 extern "C" {
 #include <lua.h>
@@ -233,6 +237,189 @@ static int SceneEntityCount(lua_State* L) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Component name → type helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Supported component names and their meaning:
+///   "transform" → SceneComponent
+///   "camera"    → CameraComponent
+///   "light"     → any of DirectionalLightComponent / PointLightComponent / SpotLightComponent
+///   "mesh"      → StaticMeshComponent
+///   "script"    → CScript
+///   "name"      → CName
+
+/// Returns true if `entity` has the component identified by `name`.
+///
+/// Returns false and logs a warning for unrecognised component names.
+[[nodiscard]] static bool EntityHasNamedComponent(
+    World& world, Entity entity, const char* name)
+{
+    if (std::strcmp(name, "transform") == 0) {
+        return world.HasComponent<SceneComponent>(entity);
+    }
+    if (std::strcmp(name, "camera") == 0) {
+        return world.HasComponent<CameraComponent>(entity);
+    }
+    if (std::strcmp(name, "light") == 0) {
+        return world.HasComponent<DirectionalLightComponent>(entity)
+            || world.HasComponent<PointLightComponent>(entity)
+            || world.HasComponent<SpotLightComponent>(entity);
+    }
+    if (std::strcmp(name, "mesh") == 0) {
+        return world.HasComponent<StaticMeshComponent>(entity);
+    }
+    if (std::strcmp(name, "script") == 0) {
+        return world.HasComponent<CScript>(entity);
+    }
+    if (std::strcmp(name, "name") == 0) {
+        return world.HasComponent<CName>(entity);
+    }
+    return false;  // Unknown name — caller logs as needed.
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Lua C functions — uz.scene.has_component / uz.scene.remove_component
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// uz.scene.has_component(entity, component_name) -> bool
+///
+/// Returns true when the entity has the named component.
+///
+/// Supported component names:
+/// - `"transform"` — `SceneComponent`
+/// - `"camera"`    — `CameraComponent`
+/// - `"light"`     — any of the three light component types
+/// - `"mesh"`      — `StaticMeshComponent`
+/// - `"script"`    — `CScript`
+/// - `"name"`      — `CName`
+///
+/// Returns false for unknown names (with a Warning log) and for invalid entities.
+///
+/// # Arguments
+/// * `entity`         (lightuserdata) — Target entity.
+/// * `component_name` (string)        — One of the supported names above.
+///
+/// # Returns
+/// `true` if the component exists on the entity, `false` otherwise.
+static int SceneHasComponent(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) {
+        UZ_LOG(Scripting, Warning, "uz.scene.has_component: World not set");
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    const Entity entity = CheckEntity(L, 1, "has_component");
+    if (!entity.IsValid() || !world->IsValid(entity)) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    const char* name = luaL_checkstring(L, 2);
+    const bool has = EntityHasNamedComponent(*world, entity, name);
+
+    if (!has) {
+        // Distinguish "missing component" from "unknown name" by checking the name.
+        const bool knownName =
+            std::strcmp(name, "transform") == 0 ||
+            std::strcmp(name, "camera")    == 0 ||
+            std::strcmp(name, "light")     == 0 ||
+            std::strcmp(name, "mesh")      == 0 ||
+            std::strcmp(name, "script")    == 0 ||
+            std::strcmp(name, "name")      == 0;
+
+        if (!knownName) {
+            UZ_LOG(Scripting, Warning,
+                "uz.scene.has_component: unknown component name '{}'. "
+                "Supported: transform, camera, light, mesh, script, name",
+                name);
+        }
+    }
+
+    lua_pushboolean(L, has ? 1 : 0);
+    return 1;
+}
+
+/// uz.scene.remove_component(entity, component_name) -> void
+///
+/// Removes the named component from the entity. No-op if the entity does not
+/// have the component. For "light", removes whichever light component type is
+/// present (at most one type is expected per entity in MVP).
+///
+/// Supported component names:
+/// - `"transform"` — `SceneComponent`
+/// - `"camera"`    — `CameraComponent`
+/// - `"light"`     — whichever light type the entity has
+/// - `"mesh"`      — `StaticMeshComponent`
+/// - `"script"`    — `CScript`
+/// - `"name"`      — `CName`
+///
+/// Logs a Warning for unknown component names. Removing "transform" is logged
+/// at Warning level because it leaves the entity without spatial state and will
+/// break most scene API calls.
+///
+/// # Arguments
+/// * `entity`         (lightuserdata) — Target entity.
+/// * `component_name` (string)        — One of the supported names above.
+static int SceneRemoveComponent(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) {
+        UZ_LOG(Scripting, Warning, "uz.scene.remove_component: World not set");
+        return 0;
+    }
+
+    const Entity entity = CheckEntity(L, 1, "remove_component");
+    if (!entity.IsValid() || !world->IsValid(entity)) {
+        return 0;
+    }
+
+    const char* name = luaL_checkstring(L, 2);
+
+    if (std::strcmp(name, "transform") == 0) {
+        // Removing the transform breaks spatial API — warn the caller.
+        if (world->HasComponent<SceneComponent>(entity)) {
+            UZ_LOG(Scripting, Warning,
+                "uz.scene.remove_component: removing 'transform' from entity {} — "
+                "scene API calls on this entity will no longer work",
+                entity.id);
+            world->RemoveComponent<SceneComponent>(entity);
+        }
+    } else if (std::strcmp(name, "camera") == 0) {
+        if (world->HasComponent<CameraComponent>(entity)) {
+            world->RemoveComponent<CameraComponent>(entity);
+        }
+    } else if (std::strcmp(name, "light") == 0) {
+        // Remove whichever light type is present (MVP: one light type per entity).
+        if (world->HasComponent<DirectionalLightComponent>(entity)) {
+            world->RemoveComponent<DirectionalLightComponent>(entity);
+        } else if (world->HasComponent<PointLightComponent>(entity)) {
+            world->RemoveComponent<PointLightComponent>(entity);
+        } else if (world->HasComponent<SpotLightComponent>(entity)) {
+            world->RemoveComponent<SpotLightComponent>(entity);
+        }
+    } else if (std::strcmp(name, "mesh") == 0) {
+        if (world->HasComponent<StaticMeshComponent>(entity)) {
+            world->RemoveComponent<StaticMeshComponent>(entity);
+        }
+    } else if (std::strcmp(name, "script") == 0) {
+        if (world->HasComponent<CScript>(entity)) {
+            world->RemoveComponent<CScript>(entity);
+        }
+    } else if (std::strcmp(name, "name") == 0) {
+        if (world->HasComponent<CName>(entity)) {
+            world->RemoveComponent<CName>(entity);
+        }
+    } else {
+        UZ_LOG(Scripting, Warning,
+            "uz.scene.remove_component: unknown component name '{}'. "
+            "Supported: transform, camera, light, mesh, script, name",
+            name);
+    }
+
+    return 0;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Registration
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -273,6 +460,12 @@ void LuaRegisterEntityAPI(lua_State* L) {
 
     lua_pushcfunction(L, SceneEntityCount);
     lua_setfield(L, -2, "entity_count");
+
+    lua_pushcfunction(L, SceneHasComponent);
+    lua_setfield(L, -2, "has_component");
+
+    lua_pushcfunction(L, SceneRemoveComponent);
+    lua_setfield(L, -2, "remove_component");
 
     lua_pop(L, 2);  // pop scene and uz
 

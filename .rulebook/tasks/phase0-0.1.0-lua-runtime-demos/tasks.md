@@ -126,6 +126,84 @@ The goal: `uzengine.exe --project` renders a full PBR scene driven entirely by .
 - [ ] L.4 **Visual verification** — screenshot, compare with C++ PBR demo.
 - [ ] L.5 Document in `docs/guides/lua-project-guide.md`.
 
+## Phase N: Lua API Parity — Fill Gaps
+
+Goal: Every C++ engine capability accessible from Lua. Ordered by gameplay impact.
+
+### N-A: ECS Iteration & Component Access
+- [ ] N.A1 `uz.scene.get_entities()` → array of entity handles (all alive entities).
+- [ ] N.A2 `uz.scene.get_entities_with(component_name)` → filtered array. Supported names: "transform", "camera", "light", "mesh", "script".
+- [x] N.A3 `uz.scene.has_component(entity, component_name)` → bool. Supports: transform, camera, light, mesh, script, name.
+- [x] N.A4 `uz.scene.remove_component(entity, component_name)` — removes named component. Same name mapping.
+- [ ] N.A5 `uz.scene.clear()` — destroys all entities (World::Clear).
+- [ ] N.A6 Unit tests for ECS iteration/component access.
+
+### N-B: Transform Hierarchy
+- [ ] N.B1 `uz.scene.get_world_position(entity)` → x,y,z (computed from hierarchy).
+- [ ] N.B2 `uz.scene.get_world_matrix(entity)` → 16 numbers (row-major flat).
+- [ ] N.B3 `uz.scene.attach_to(child, parent)` — parent-child transform hierarchy.
+- [ ] N.B4 `uz.scene.detach(entity)` — unparent.
+- [ ] N.B5 `uz.scene.get_parent(entity)` → entity or nil.
+- [ ] N.B6 `uz.scene.get_children(entity)` → array of entity handles.
+- [ ] N.B7 Unit tests for hierarchy API.
+
+### N-C: Camera Extended
+- [ ] N.C1 `uz.camera.get_near()` / `uz.camera.set_near(n)` — near plane.
+- [ ] N.C2 `uz.camera.get_far()` / `uz.camera.set_far(f)` — far plane.
+- [ ] N.C3 `uz.camera.set_orthographic(enabled, size)` / `uz.camera.is_orthographic()`.
+- [ ] N.C4 `uz.camera.set_active(entity)` — switch active camera by entity.
+- [ ] N.C5 `uz.camera.get_view_matrix()` → 16 numbers.
+- [ ] N.C6 `uz.camera.get_projection_matrix()` → 16 numbers.
+- [ ] N.C7 Unit tests for camera extended API.
+
+### N-D: Input Extended
+- [x] N.D1 `uz.input.is_key_just_released(key)` → bool.
+- [x] N.D2 `uz.input.get_mouse_position()` → x, y (absolute screen coords).
+- [x] N.D3 `uz.input.get_scroll_delta()` → dx, dy.
+- [x] N.D4 `uz.input.set_mouse_capture(enabled)` / `uz.input.is_mouse_captured()`. *(set_mouse_capture is no-op from Lua — requires HWND, logged as warning)*
+- [x] N.D5 `uz.input.set_cursor_visible(enabled)` / `uz.input.is_cursor_visible()`.
+- [x] N.D6 `uz.input.is_gamepad_connected(index)` → bool.
+- [x] N.D7 `uz.input.get_gamepad_axis(index, axis_name)` → number (-1..1).
+- [x] N.D8 `uz.input.is_gamepad_button_down(index, button_name)` → bool.
+- [ ] N.D9 Unit tests for input extended API.
+
+### N-E: Lights Extended
+- [x] N.E1 `uz.scene.get_light_range(entity)` → number (point/spot only).
+- [x] N.E2 `uz.scene.get_spot_angles(entity)` → inner_deg, outer_deg.
+- [x] N.E3 `uz.scene.set_spot_angles(entity, inner_deg, outer_deg)`.
+- [x] N.E4 `uz.scene.get_light_direction(entity)` → x,y,z (directional only).
+- [x] N.E5 `uz.scene.set_cast_shadows(entity, enabled)` — toggle shadow casting.
+- [x] N.E6 `uz.scene.remove_light(entity)` — removes any light component.
+- [ ] N.E7 Unit tests for lights extended API.
+
+### N-F: Mesh/Material Extended
+- [x] N.F1 `uz.scene.get_mesh(entity)` → mesh_id or nil.
+- [x] N.F2 `uz.scene.get_material(entity)` → table {albedo=id, normal=id, ...} or nil.
+- [x] N.F3 `uz.scene.set_visible(entity, enabled)` — toggle StaticMeshComponent.visible.
+- [x] N.F4 `uz.scene.is_visible(entity)` → bool.
+- [x] N.F5 `uz.scene.set_cast_shadows(entity, enabled)` — toggle castShadows (shared with N.E5 for lights).
+- [ ] N.F6 Unit tests for mesh/material extended API.
+
+### N-G: Renderer Extended
+- [ ] N.G1 `uz.renderer.set_debug_view_mode(mode)` — DebugViewMode enum.
+- [ ] N.G2 `uz.renderer.get_debug_view_mode()` → integer.
+- [ ] N.G3 `uz.renderer.screenshot(path)` — capture current frame to PNG.
+- [ ] N.G4 Unit tests for renderer extended API.
+
+### N-H: Math Types (Vec3/Quat userdata with metatables)
+- [ ] N.H1 `uz.math.vec3(x,y,z)` → Vec3 userdata with __add, __sub, __mul, __div, __unm, __len, __tostring, __eq, __index (x,y,z fields).
+- [ ] N.H2 Vec3 methods: `v:dot(v2)`, `v:cross(v2)`, `v:normalize()`, `v:length()`, `v:distance(v2)`, `v:lerp(v2,t)`.
+- [ ] N.H3 Vec3 constants: `uz.math.vec3.ZERO`, `uz.math.vec3.ONE`, `uz.math.vec3.UP`, `uz.math.vec3.RIGHT`, `uz.math.vec3.FORWARD`.
+- [ ] N.H4 `uz.math.quat(x,y,z,w)` → Quat userdata with __mul (compose + rotate vec3), __tostring, __eq.
+- [ ] N.H5 Quat constructors: `uz.math.quat.from_euler(pitch,yaw,roll)`, `uz.math.quat.from_axis_angle(axis_vec3, angle)`, `uz.math.quat.identity()`.
+- [ ] N.H6 Quat methods: `q:slerp(q2,t)`, `q:inverse()`, `q:normalize()`, `q:to_euler()` → pitch,yaw,roll degrees.
+- [ ] N.H7 Unit tests for Vec3 and Quat userdata (arithmetic, methods, constants).
+
+### N-I: Scene Management
+- [ ] N.I1 `uz.scene.load(scene_path)` — load .uzscene file, replacing current world.
+- [ ] N.I2 `uz.scene.save(scene_path)` — save current world to .uzscene.
+- [ ] N.I3 Unit tests for scene load/save from Lua.
+
 ## Phase M: Cleanup & Polish
 
 - [ ] M.1 Hot-reload scaffolding — FileWatcher on `.lua` files, re-execute `on_stop` → reload → `on_start` (basic implementation, no full production polish needed).

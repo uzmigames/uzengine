@@ -197,6 +197,252 @@ static int InputIsMouseButtonDown(lua_State* L) {
     return 1;
 }
 
+/// uz.input.is_key_just_released(key) -> bool
+///
+/// Returns true only on the single frame the key transitions from down to up.
+/// Returns false if the InputSystem is not set or the key name is unrecognized.
+static int InputIsKeyJustReleased(lua_State* L) {
+    InputSystem* input = GetInputSystem(L);
+    if (!input) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    const char* name = luaL_checkstring(L, 1);
+    const Key key = KeyFromString(name);
+    if (key == Key::Unknown) {
+        UZ_LOG(Scripting, Debug,
+            "uz.input.is_key_just_released: unrecognized key name '{}'", name);
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    lua_pushboolean(L, input->IsKeyJustReleased(key) ? 1 : 0);
+    return 1;
+}
+
+/// uz.input.get_mouse_position() -> x, y
+///
+/// Returns the mouse cursor position in window-relative pixels.
+/// Returns 0, 0 if the InputSystem is not set.
+static int InputGetMousePosition(lua_State* L) {
+    InputSystem* input = GetInputSystem(L);
+    if (!input) {
+        lua_pushnumber(L, 0.0);
+        lua_pushnumber(L, 0.0);
+        return 2;
+    }
+    lua_pushnumber(L, static_cast<double>(input->GetMouseX()));
+    lua_pushnumber(L, static_cast<double>(input->GetMouseY()));
+    return 2;
+}
+
+/// uz.input.get_scroll_delta() -> delta, 0
+///
+/// Returns the accumulated scroll wheel delta since the last frame.
+/// Positive values indicate scroll up; negative indicate scroll down.
+/// The second return value is always 0 (horizontal scroll is not supported).
+/// Returns 0, 0 if the InputSystem is not set.
+static int InputGetScrollDelta(lua_State* L) {
+    InputSystem* input = GetInputSystem(L);
+    if (!input) {
+        lua_pushnumber(L, 0.0);
+        lua_pushnumber(L, 0.0);
+        return 2;
+    }
+    lua_pushnumber(L, static_cast<double>(input->GetScrollDelta()));
+    lua_pushnumber(L, 0.0); // Horizontal scroll not supported by InputSystem
+    return 2;
+}
+
+/// uz.input.set_mouse_capture(enabled) — no-op from Lua
+///
+/// Mouse capture requires a platform window handle (HWND on Windows) which is
+/// not available in the Lua sandbox. This function logs a warning and returns
+/// immediately. Use the C++ layer (`InputSystem::SetMouseCapture`) directly from
+/// engine code when capture state needs to change.
+static int InputSetMouseCapture(lua_State* L) {
+    // Intentionally unused parameter — document it exists but cannot be acted on.
+    (void)lua_toboolean(L, 1);
+    UZ_LOG(Scripting, Warning,
+        "uz.input.set_mouse_capture: cannot set capture from Lua "
+        "(requires platform HWND — call from C++ engine code instead)");
+    return 0;
+}
+
+/// uz.input.is_mouse_captured() -> bool
+///
+/// Returns true if mouse capture is currently active (cursor confined to window).
+/// Returns false if the InputSystem is not set.
+static int InputIsMouseCaptured(lua_State* L) {
+    InputSystem* input = GetInputSystem(L);
+    if (!input) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+    lua_pushboolean(L, input->IsMouseCaptured() ? 1 : 0);
+    return 1;
+}
+
+/// uz.input.set_cursor_visible(enabled) — sets cursor visibility
+///
+/// Shows or hides the OS mouse cursor. The visibility state is applied the
+/// next time the WM_SETCURSOR message fires (handled by the platform layer).
+///
+/// # Arguments
+/// * `enabled` — `true` to show the cursor, `false` to hide it.
+static int InputSetCursorVisible(lua_State* L) {
+    InputSystem* input = GetInputSystem(L);
+    if (!input) {
+        return 0;
+    }
+    const bool visible = lua_toboolean(L, 1) != 0;
+    input->SetCursorVisible(visible);
+    return 0;
+}
+
+/// uz.input.is_cursor_visible() -> bool
+///
+/// Returns true if the cursor is configured to be visible.
+/// Returns false if the InputSystem is not set.
+static int InputIsCursorVisible(lua_State* L) {
+    InputSystem* input = GetInputSystem(L);
+    if (!input) {
+        lua_pushboolean(L, 1); // Default: visible
+        return 1;
+    }
+    lua_pushboolean(L, input->IsCursorVisible() ? 1 : 0);
+    return 1;
+}
+
+/// uz.input.is_gamepad_connected(index) -> bool
+///
+/// Returns true if the gamepad at the given player index (0-based) is connected.
+/// Returns false if the InputSystem is not set or the index is out of range [0, 3].
+static int InputIsGamepadConnected(lua_State* L) {
+    InputSystem* input = GetInputSystem(L);
+    if (!input) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+    const int index = static_cast<int>(luaL_checkinteger(L, 1));
+    lua_pushboolean(L, input->IsGamepadConnected(index) ? 1 : 0);
+    return 1;
+}
+
+/// Maps a Lua axis name string to a `GamepadAxis` enum value.
+///
+/// Returns `GamepadAxis::Count` for unrecognized names (used as "invalid" sentinel).
+/// Valid names: `"LeftX"`, `"LeftY"`, `"RightX"`, `"RightY"`,
+///              `"LeftTrigger"`, `"RightTrigger"`.
+[[nodiscard]] static GamepadAxis GamepadAxisFromString(const char* name) noexcept {
+    if (!name) return GamepadAxis::Count;
+    if (std::strcmp(name, "LeftX")         == 0) return GamepadAxis::LeftX;
+    if (std::strcmp(name, "LeftY")         == 0) return GamepadAxis::LeftY;
+    if (std::strcmp(name, "RightX")        == 0) return GamepadAxis::RightX;
+    if (std::strcmp(name, "RightY")        == 0) return GamepadAxis::RightY;
+    if (std::strcmp(name, "LeftTrigger")   == 0) return GamepadAxis::LeftTrigger;
+    if (std::strcmp(name, "RightTrigger")  == 0) return GamepadAxis::RightTrigger;
+    return GamepadAxis::Count;
+}
+
+/// Maps a Lua button name string to a `GamepadButton` enum value.
+///
+/// Returns `GamepadButton::Count` for unrecognized names (used as "invalid" sentinel).
+/// Valid names: `"A"`, `"B"`, `"X"`, `"Y"`, `"LB"`, `"RB"`, `"Start"`, `"Back"`,
+///              `"LeftStick"`, `"RightStick"`, `"DPadUp"`, `"DPadDown"`,
+///              `"DPadLeft"`, `"DPadRight"`.
+[[nodiscard]] static GamepadButton GamepadButtonFromString(const char* name) noexcept {
+    if (!name) return GamepadButton::Count;
+    if (std::strcmp(name, "A")          == 0) return GamepadButton::A;
+    if (std::strcmp(name, "B")          == 0) return GamepadButton::B;
+    if (std::strcmp(name, "X")          == 0) return GamepadButton::X;
+    if (std::strcmp(name, "Y")          == 0) return GamepadButton::Y;
+    if (std::strcmp(name, "LB")         == 0) return GamepadButton::LB;
+    if (std::strcmp(name, "RB")         == 0) return GamepadButton::RB;
+    if (std::strcmp(name, "Start")      == 0) return GamepadButton::Start;
+    if (std::strcmp(name, "Back")       == 0) return GamepadButton::Back;
+    if (std::strcmp(name, "LeftStick")  == 0) return GamepadButton::LThumb;
+    if (std::strcmp(name, "RightStick") == 0) return GamepadButton::RThumb;
+    if (std::strcmp(name, "DPadUp")     == 0) return GamepadButton::DPadUp;
+    if (std::strcmp(name, "DPadDown")   == 0) return GamepadButton::DPadDown;
+    if (std::strcmp(name, "DPadLeft")   == 0) return GamepadButton::DPadLeft;
+    if (std::strcmp(name, "DPadRight")  == 0) return GamepadButton::DPadRight;
+    return GamepadButton::Count;
+}
+
+/// uz.input.get_gamepad_axis(index, axis_name) -> number
+///
+/// Returns the value of a gamepad axis with deadzone applied.
+/// Thumbstick axes return values in the range -1.0 to 1.0.
+/// Trigger axes return values in the range 0.0 to 1.0.
+///
+/// # Arguments
+/// * `index` — Player index (0..3, 0-based).
+/// * `axis_name` — One of: `"LeftX"`, `"LeftY"`, `"RightX"`, `"RightY"`,
+///                          `"LeftTrigger"`, `"RightTrigger"`.
+///
+/// Returns 0.0 if the InputSystem is not set, the index is out of range,
+/// the gamepad is disconnected, or the axis name is unrecognized.
+static int InputGetGamepadAxis(lua_State* L) {
+    InputSystem* input = GetInputSystem(L);
+    if (!input) {
+        lua_pushnumber(L, 0.0);
+        return 1;
+    }
+
+    const int index = static_cast<int>(luaL_checkinteger(L, 1));
+    const char* axisName = luaL_checkstring(L, 2);
+    const GamepadAxis axis = GamepadAxisFromString(axisName);
+    if (axis == GamepadAxis::Count) {
+        UZ_LOG(Scripting, Debug,
+            "uz.input.get_gamepad_axis: unrecognized axis name '{}' "
+            "(valid: \"LeftX\", \"LeftY\", \"RightX\", \"RightY\", "
+            "\"LeftTrigger\", \"RightTrigger\")", axisName);
+        lua_pushnumber(L, 0.0);
+        return 1;
+    }
+
+    lua_pushnumber(L, static_cast<double>(input->GetGamepadAxis(index, axis)));
+    return 1;
+}
+
+/// uz.input.is_gamepad_button_down(index, button_name) -> bool
+///
+/// Returns true while the named gamepad button is held on the specified controller.
+///
+/// # Arguments
+/// * `index` — Player index (0..3, 0-based).
+/// * `button_name` — One of: `"A"`, `"B"`, `"X"`, `"Y"`, `"LB"`, `"RB"`,
+///                   `"Start"`, `"Back"`, `"LeftStick"`, `"RightStick"`,
+///                   `"DPadUp"`, `"DPadDown"`, `"DPadLeft"`, `"DPadRight"`.
+///
+/// Returns false if the InputSystem is not set, the index is out of range,
+/// the gamepad is disconnected, or the button name is unrecognized.
+static int InputIsGamepadButtonDown(lua_State* L) {
+    InputSystem* input = GetInputSystem(L);
+    if (!input) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    const int index = static_cast<int>(luaL_checkinteger(L, 1));
+    const char* buttonName = luaL_checkstring(L, 2);
+    const GamepadButton button = GamepadButtonFromString(buttonName);
+    if (button == GamepadButton::Count) {
+        UZ_LOG(Scripting, Debug,
+            "uz.input.is_gamepad_button_down: unrecognized button name '{}' "
+            "(valid: \"A\", \"B\", \"X\", \"Y\", \"LB\", \"RB\", \"Start\", "
+            "\"Back\", \"LeftStick\", \"RightStick\", \"DPadUp\", \"DPadDown\", "
+            "\"DPadLeft\", \"DPadRight\")", buttonName);
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    lua_pushboolean(L, input->IsGamepadButtonDown(index, button) ? 1 : 0);
+    return 1;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Registration
 // ─────────────────────────────────────────────────────────────────────────────
@@ -223,6 +469,36 @@ void LuaRegisterInputAPI(lua_State* L) {
 
     lua_pushcfunction(L, InputIsMouseButtonDown);
     lua_setfield(L, -2, "is_mouse_button_down");
+
+    lua_pushcfunction(L, InputIsKeyJustReleased);
+    lua_setfield(L, -2, "is_key_just_released");
+
+    lua_pushcfunction(L, InputGetMousePosition);
+    lua_setfield(L, -2, "get_mouse_position");
+
+    lua_pushcfunction(L, InputGetScrollDelta);
+    lua_setfield(L, -2, "get_scroll_delta");
+
+    lua_pushcfunction(L, InputSetMouseCapture);
+    lua_setfield(L, -2, "set_mouse_capture");
+
+    lua_pushcfunction(L, InputIsMouseCaptured);
+    lua_setfield(L, -2, "is_mouse_captured");
+
+    lua_pushcfunction(L, InputSetCursorVisible);
+    lua_setfield(L, -2, "set_cursor_visible");
+
+    lua_pushcfunction(L, InputIsCursorVisible);
+    lua_setfield(L, -2, "is_cursor_visible");
+
+    lua_pushcfunction(L, InputIsGamepadConnected);
+    lua_setfield(L, -2, "is_gamepad_connected");
+
+    lua_pushcfunction(L, InputGetGamepadAxis);
+    lua_setfield(L, -2, "get_gamepad_axis");
+
+    lua_pushcfunction(L, InputIsGamepadButtonDown);
+    lua_setfield(L, -2, "is_gamepad_button_down");
 
     lua_setfield(L, -2, "input"); // uz.input = { ... }
     lua_pop(L, 1);                // pop uz table

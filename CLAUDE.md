@@ -538,6 +538,56 @@ docs/analysis/
 4. **Update the directory's README.md** — add an entry for the new doc
 5. **After bulk doc creation, run docs-reviewer agent** to audit compliance
 
+## ⚠️ CRITICAL: Lua API Parity — Every C++ Feature Gets a Lua Binding
+
+**MANDATORY**: Every engine feature implemented in C++ MUST also be exposed to Lua. Both languages must have access to the same capabilities. No exceptions.
+
+### Why
+
+UzEngine is a scripted engine — Lua is the primary authoring language for gameplay. If a feature exists in C++ but not in Lua, it's invisible to game developers. Feature parity between C++ and Lua is a core design principle: **if C++ can do it, Lua must be able to do it too**.
+
+### What To Do
+
+1. **After implementing any C++ system/feature**, immediately create the corresponding Lua API bindings.
+2. **Lua API files go in the themed subdirectories**:
+   - `engine/scripting/api/scene/` — entities, transforms, lights, meshes, materials
+   - `engine/scripting/api/core/` — camera, input, time, math, physics, audio
+   - `engine/scripting/api/renderer/` — render path, debug modes, stats, window
+3. **Registration pattern**: Each API module has a `LuaRegister*API(lua_State* L)` function called from `LuaVM::Init()`.
+4. **Follow existing patterns**: Extend `uz.*` tables (uz.scene, uz.camera, uz.input, uz.renderer, uz.math, uz.time, uz.window). Never create new top-level globals.
+5. **Test both sides**: Unit tests for C++ logic + unit tests for Lua bindings.
+
+### Checklist (apply to every new feature)
+
+```
+☐ C++ implementation complete and tested
+☐ Lua binding created in correct api/ subdirectory
+☐ Registration function added to LuaVM::Init()
+☐ Lua unit tests written (test via embedded Lua scripts)
+☐ Lua API documented in docs/engine/15-scripting/06-lua-api.md
+```
+
+### Examples
+
+```
+Feature: "Add point light shadows"
+  ✅ C++ ShadowPass renders point light shadow maps
+  ✅ uz.scene.set_light_shadow(entity, enabled) — Lua can toggle shadows per light
+  ✅ uz.scene.set_shadow_resolution(entity, res) — Lua can control shadow quality
+
+Feature: "Add physics raycasts"
+  ✅ C++ PhysicsWorld::Raycast() implementation
+  ✅ uz.physics.raycast(ox,oy,oz, dx,dy,dz, max_dist) → hit, px,py,pz, nx,ny,nz, entity
+  ✅ uz.physics.overlap_sphere(x,y,z, radius) → {entity, ...}
+```
+
+### Rules
+
+- **NEVER mark a C++ feature as complete** without its Lua binding
+- **NEVER create Lua-only features** — always implement in C++ first, then bind
+- **Delegate Lua binding work** to `lua-scripting-engineer` agent (sonnet) after C++ is done
+- **API naming**: Lua uses `snake_case` (uz.scene.get_position), C++ uses `PascalCase` (GetPosition)
+
 ## Critical Rules
 
 1. **ALWAYS read AGENTS.md first** - Contains all project standards and patterns
