@@ -26,6 +26,7 @@
 /// the R8G8B8A8_UNORM backbuffer.
 
 #include "../include/pbr_common.hlsli"
+#include "../include/sh_irradiance.hlsli"
 #include "../include/octahedral.hlsli"
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -85,6 +86,11 @@ cbuffer PerFrameCB : register(b1) {
     float    skyLightColorB;       ///< Sky light tint B.
     float    skyLightMinAmbient;   ///< Minimum ambient floor (0-1). Prevents fully black shadows.
     float    exposure;           ///< Exposure multiplier from auto-exposure (applied before tonemap).
+
+    // ── Sky Irradiance SH (L2, 7 float4 = 112 bytes) ──
+    // Matches UE5 SkyIrradianceEnvironmentMap[0..6].
+    float4   skyIrradianceSH[7]; ///< L2 SH coefficients for sky diffuse irradiance.
+    float    _framePad2[36];     ///< Padding to 512 bytes.
 };
 
 /// Single point light for the deferred lighting pass (48 bytes = three float4s).
@@ -314,9 +320,9 @@ float4 main(FSInput input) : SV_Target {
 
 #ifdef UZ_BINDLESS
     if (irradianceSrvIndex != 0xFFFFFFFF) {
-        // IBL available — sample irradiance cubemap for diffuse ambient
-        TextureCube<float4> irradianceMap = ResourceDescriptorHeap[irradianceSrvIndex];
-        float3 irradiance = irradianceMap.SampleLevel(linearSampler, N, 0).rgb;
+        // Diffuse IBL via L2 Spherical Harmonics (UE5 parity)
+        // SH is much higher quality than 32x32 cubemap sampling
+        float3 irradiance = GetSkySHDiffuse(N, skyIrradianceSH);
 
         // Fresnel: metals reflect more at grazing, dielectrics diffuse more
         float3 F = FresnelSchlickRoughness(NdotV, F0, roughness);

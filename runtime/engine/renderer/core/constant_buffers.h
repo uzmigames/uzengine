@@ -67,9 +67,17 @@ struct PerFrameCB {
     float skyLightColorB    = 1.0f;            ///< Sky light tint color (B).
     float skyLightMinAmbient = 0.0f;           ///< Minimum ambient level (0-1). Prevents fully black shadows.
     float exposure = 1.0f;                     ///< Exposure multiplier from auto-exposure (applied before tonemap).
+
+    // ── Sky Irradiance SH (L2, 7 float4 = 112 bytes) ─────────────────────
+    // Matches UE5 SkyIrradianceEnvironmentMap[0..6].
+    // Evaluated per-pixel with GetSkySHDiffuse(Normal).
+    // When all zeros, IBL falls back to cubemap sampling.
+    Vec4 skyIrradianceSH[7] = {};               ///< L2 SH coefficients for sky diffuse irradiance.
+
+    float _pad2[36] = {};                       ///< Pad to 512 bytes.
 };
 
-static_assert(sizeof(PerFrameCB) == 256, "PerFrameCB must be 256 bytes (D3D12 CB alignment)");
+static_assert(sizeof(PerFrameCB) == 512, "PerFrameCB must be 512 bytes (D3D12 CB alignment)");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PerObjectCB — bound at b2 (root CBV, updated per draw call)

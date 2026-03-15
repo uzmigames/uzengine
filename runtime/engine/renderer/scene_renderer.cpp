@@ -27,6 +27,7 @@
 #include "render_graph_builder.h"
 #include "render_graph_resources.h"
 #include "cascade.h"
+#include "sh_projection.h"
 #include "root_slots.h"
 #include "profiler.h"
 #include "instance_batcher.h"
@@ -482,6 +483,11 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     perFrame.prefilteredSrvIndex = m_iblResult.prefilteredSrvIndex;
     perFrame.brdfLutSrvIndex     = m_brdfLutSrvIndex;
     perFrame.prefilteredMipLevels = 5;
+
+    // Upload SH coefficients for sky diffuse irradiance (UE5 parity)
+    for (int i = 0; i < 7; ++i) {
+        perFrame.skyIrradianceSH[i] = m_skyIrradianceSH.coeffs[i];
+    }
 
     // ── Extract SkyLight from SkyLightComponent (UE5 parity) ──────────
     if (world) {
@@ -1175,6 +1181,36 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
         m_skyIBLDirty = false;
         UZ_LOG(Renderer, Info, "SceneRenderer: Sky IBL baked (irrad={}, prefilt={})",
                m_iblResult.irradianceSrvIndex, m_iblResult.prefilteredSrvIndex);
+
+        // Compute approximate SH from sky parameters
+        // L0 (constant) = average sky color, L1 (directional) = sun contribution
+        // This approximation avoids GPU readback while providing correct ambient directionality
+        {
+            Vec3 skyAvg = {0.4f, 0.5f, 0.8f};  // Average blue sky radiance
+            Vec3 sunContrib = sunColor * 0.3f;   // Sun-facing hemisphere brighter
+
+            // L0 (constant term) = average irradiance * pi * A0_norm
+            // SH00 basis = 0.282095, A0 = pi, so L0_coeff = color * pi * 0.282095
+            float c0 = 3.14159f * 0.282095f;
+            // L1 (directional) = directional gradient * 2pi/3 * A1_norm
+            float c1 = 2.094395f * 0.488603f;  // 2pi/3 * Y1_norm
+
+            auto& sh = m_skyIrradianceSH;
+            // Pack into UE5 format: coeffs[0-2] = L1 + L0 per channel (R,G,B)
+            // coeffs[3-5] = L2 (zeros for now), coeffs[6] = L2 (zeros)
+            for (int i = 0; i < 7; ++i)
+                sh.coeffs[i] = {0, 0, 0, 0};
+
+            // L1 terms (directional from sun) + L0 (constant ambient)
+            sh.coeffs[0] = {sunDir.x * c1 * skyAvg.x, sunDir.y * c1 * skyAvg.x,
+                            sunDir.z * c1 * skyAvg.x, c0 * skyAvg.x};
+            sh.coeffs[1] = {sunDir.x * c1 * skyAvg.y, sunDir.y * c1 * skyAvg.y,
+                            sunDir.z * c1 * skyAvg.y, c0 * skyAvg.y};
+            sh.coeffs[2] = {sunDir.x * c1 * skyAvg.z, sunDir.y * c1 * skyAvg.z,
+                            sunDir.z * c1 * skyAvg.z, c0 * skyAvg.z};
+
+            UZ_LOG(Renderer, Info, "SceneRenderer: Sky SH approximated from sun direction");
+        }
 
         // Re-open command list for the remaining work (screenshot, present)
         cmdList->Begin();

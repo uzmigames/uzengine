@@ -33,6 +33,7 @@
 #include "texture_loader.h"
 #include "screenshot_capture.h"
 #include "ibl/ibl_baker.h"
+#include "ibl/sh_projection.h"
 #include "postprocess/auto_exposure.h"
 
 #include <cstdint>
@@ -324,6 +325,7 @@ private:
     bool m_skyIBLDirty = true;                     ///< True when sky cubemap needs re-capture.
     IBLBaker::BakeResult m_iblResult;              ///< Irradiance + prefiltered SRV indices.
     uint32_t m_brdfLutSrvIndex = UINT32_MAX;       ///< BRDF LUT SRV (baked once at init).
+    SHCoefficients m_skyIrradianceSH;              ///< L2 SH for sky diffuse irradiance.
 
     // ── Auto-Exposure ──────────────────────────────────────────────────────
     std::unique_ptr<AutoExposure> m_autoExposure;   ///< GPU histogram-based eye adaptation.
