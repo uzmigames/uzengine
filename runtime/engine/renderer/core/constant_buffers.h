@@ -224,11 +224,16 @@ struct SkyAtmosphereCB {
     Vec4  mieScattering;        ///< x = coefficient (km^-1), y = anisotropy g, z = scale height (km), w = unused.
     Vec4  groundAlbedo;         ///< xyz = ground reflectance, w = unused.
     Vec4  sunIlluminance;       ///< xyz = sun color * illuminance, w = sun angular radius (rad).
-    float bottomRadiusKm;       ///< Planet radius in km (center to sea level). UE5: BottomRadiusKm.
-    float atmosphereHeightKm;   ///< Atmosphere thickness in km. UE5: AtmosphereHeightKm.
+    float bottomRadiusKm;       ///< Planet radius in km (center to sea level).
+    float atmosphereHeightKm;   ///< Atmosphere thickness in km.
     float sunDiskIntensity;     ///< Multiplier for the sun disk brightness.
-    float _skyPad[1] = {};      ///< Pad to 16-byte boundary.
-    float _skyPad2[44] = {};    ///< Pad to 256-byte alignment.
+    float multiScatteringFactor; ///< Multi-scattering approximation (0=single, 1=full). UE5 default: 1.0.
+    float rayleighScatteringScale; ///< Artistic multiplier for Rayleigh (default 1.0).
+    float mieScatteringScale;   ///< Artistic multiplier for Mie scattering (default 1.0).
+    float mieAbsorptionScale;   ///< Artistic multiplier for Mie absorption (default 1.0).
+    float mieAbsorption;        ///< Mie absorption coefficient in km^-1.
+    Vec4  skyLuminanceFactor;   ///< Per-channel sky brightness art direction (default 1,1,1,1).
+    float _skyPad[36] = {};     ///< Pad to 256-byte alignment.
 };
 
 static_assert(sizeof(SkyAtmosphereCB) == 256, "SkyAtmosphereCB must be 256 bytes (D3D12 CB alignment)");

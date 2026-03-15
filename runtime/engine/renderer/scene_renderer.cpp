@@ -916,9 +916,17 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
                                         skySunColor.y,
                                         skySunColor.z,
                                         skySunAngularRadius};
-            skyCB.bottomRadiusKm     = skyComp.bottomRadiusKm;
-            skyCB.atmosphereHeightKm = skyComp.atmosphereHeightKm;
-            skyCB.sunDiskIntensity   = skySunDiskIntensity;
+            skyCB.bottomRadiusKm        = skyComp.bottomRadiusKm;
+            skyCB.atmosphereHeightKm    = skyComp.atmosphereHeightKm;
+            skyCB.sunDiskIntensity      = skySunDiskIntensity;
+            skyCB.multiScatteringFactor = skyComp.multiScatteringFactor;
+            skyCB.rayleighScatteringScale = skyComp.rayleighScatteringScale;
+            skyCB.mieScatteringScale    = skyComp.mieScatteringScale;
+            skyCB.mieAbsorptionScale    = skyComp.mieAbsorptionScale;
+            skyCB.mieAbsorption         = skyComp.mieAbsorption;
+            skyCB.skyLuminanceFactor    = {skyComp.skyLuminanceFactor.x,
+                                            skyComp.skyLuminanceFactor.y,
+                                            skyComp.skyLuminanceFactor.z, 1.f};
 
             CBAllocation skyAlloc = m_cbRing->Allocate(sizeof(SkyAtmosphereCB));
             std::memcpy(skyAlloc.cpuPtr, &skyCB, sizeof(SkyAtmosphereCB));

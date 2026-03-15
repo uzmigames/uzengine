@@ -476,6 +476,31 @@ Large files with mixed responsibilities degrade LLM comprehension. Smaller, focu
 4. **Stat counters** — track allocations, draw calls, frame time, cache hits. Every system exposes its health via `StatCounter`.
 5. **Error context** — log messages include what failed, why, and what input caused it. `"Failed to load texture: path='{}', reason='{}'"` not `"Load failed"`.
 
+## ⚠️ CRITICAL: Unit & Coordinate Conventions
+
+**MANDATORY**: All code must follow these conventions. Mismatched units cause visual bugs that are hard to diagnose.
+
+### Coordinate System
+- **Z-up, X-forward, left-handed** — same as UE5
+- `Vec3::Forward() = (1, 0, 0)`, `Vec3::Up() = (0, 0, 1)`, `Vec3::Right() = (0, 1, 0)`
+- NEVER use Y-up when porting code from external sources (DirectXMath defaults, tutorials, etc.)
+
+### Units
+| Category | Convention | Notes |
+|----------|-----------|-------|
+| **Distances** | **Meters** | UE5 uses centimeters — divide by 100 when porting |
+| **Angles (ECS components)** | **Degrees** | SpotLight cones, FOV, sun disk angle — all in degrees |
+| **Angles (GPU/shaders)** | **Radians** | Convert deg→rad in proxy sync / CB upload |
+| **Atmosphere distances** | **Kilometers** | SkyAtmosphereComponent follows UE5 km convention |
+| **Color space** | **Linear RGB** | sRGB conversion only at final tonemap shader output |
+| **Temperature** | **Kelvin** | Blackbody: 3000K=warm, 6500K=daylight, 10000K=cool |
+| **Time** | **Seconds** | Delta time, total time, animation time |
+
+### Rules
+- Component stores degrees → `OnProxyCreated()` converts to radians for the proxy
+- Shaders NEVER convert units — they receive pre-converted values from CBs
+- When porting UE5 default values: distances ÷ 100, angles keep as degrees
+
 ## ⚠️ CRITICAL: Engine Systems — Use Engine APIs, Not Raw Libraries
 
 **MANDATORY**: Always use UzEngine's own abstractions. Never bypass them with raw library calls.

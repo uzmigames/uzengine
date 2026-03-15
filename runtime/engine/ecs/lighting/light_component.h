@@ -126,6 +126,10 @@ public:
     /// UE5: CascadeTransitionFraction. Default: 0.1.
     float cascadeTransitionFraction = 0.1f;
 
+    /// Shadow distance fadeout fraction (0-1). Fade at the far extent of CSM.
+    /// UE5: ShadowDistanceFadeoutFraction. Default: 0.1.
+    float shadowDistanceFadeoutFraction = 0.1f;
+
     /// Maximum CSM shadow distance in world units. 0 = engine default.
     /// UE5: DynamicShadowDistanceMovableLight. Default: 0.
     float dynamicShadowDistance = 0.f;

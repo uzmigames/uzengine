@@ -104,6 +104,22 @@ Then the system MUST return a JWT token
 
 ---
 
+## Unit & Coordinate Conventions
+
+**MANDATORY**: All code must follow these conventions. Mismatches cause visual bugs.
+
+| Category | Convention | Notes |
+|----------|-----------|-------|
+| **Distances** | **Meters** | UE5 uses centimeters — divide by 100 when porting values |
+| **Angles (components)** | **Degrees** | All ECS component angle params stored in degrees |
+| **Angles (GPU/shader)** | **Radians** | Convert deg→rad in proxy sync / CB upload, never in shaders |
+| **Coordinate system** | **Z-up, X-forward** | Left-handed. UE5 is also Z-up X-forward. Godot is Y-up |
+| **Color space** | **Linear RGB** | sRGB conversion only at final output (tonemapping shader) |
+| **Atmosphere distances** | **Kilometers** | SkyAtmosphereComponent follows UE5 km convention |
+| **Temperature** | **Kelvin** | Blackbody color temperature (3000K warm, 6500K daylight, 10000K cool) |
+
+---
+
 ## Core Rules
 
 This project uses @hivellm/rulebook standards.
