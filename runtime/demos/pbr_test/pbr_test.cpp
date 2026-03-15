@@ -17,6 +17,7 @@
 #include "scene_component.h"
 #include "light_component.h"
 #include "sky_atmosphere_component.h"
+#include "sky_light_component.h"
 #include "height_fog_component.h"
 #include "render_path.h"
 
@@ -108,6 +109,7 @@ void PBRTest::OnStart() {
         auto& light   = world.AddComponent<DirectionalLightComponent>(sun_);
         light.color     = {3.0f, 2.85f, 2.7f};
         light.intensity = 1.0f;
+        light.atmosphereSunLight = true;  // This light drives the sky atmosphere sun
     }
 
     // ── 4 colored point lights ────────────────────────────────────────────
@@ -141,6 +143,14 @@ void PBRTest::OnStart() {
         auto& atmo = world.AddComponent<SkyAtmosphereComponent>(sky);
         atmo.sunIlluminance = {100.f, 100.f, 100.f};
         // Earth-like defaults — Rayleigh/Mie already set by struct defaults.
+    }
+
+    // ── Sky light (IBL ambient fill — UE5 SkyLightComponent parity) ──────
+    Entity skyLightEnt = world.CreateEntity();
+    {
+        auto& sl = world.AddComponent<SkyLightComponent>(skyLightEnt);
+        sl.intensity    = 2.0f;   // Boost IBL ambient
+        sl.minOcclusion = 0.08f;  // Prevent fully black shadows (8% minimum ambient)
     }
 
     // ── Height fog (ground haze) ──────────────────────────────────────────

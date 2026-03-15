@@ -65,7 +65,7 @@ Frame N:
 - **Normal**: Changed from RGBA16F (8 bytes) to RGBA8 with octahedral encoding (4 bytes, <0.5° error)
 - **Velocity**: Added for TAA and motion blur via depth reprojection
 
-**See**: [10-deferred-pipeline.md](10-deferred-pipeline.md) for complete implementation and [GBuffer Layout Guide](../../user/guides/rendering/gbuffer-layout.md) for encoding details.
+**See**: [11-deferred-pipeline.md](11-deferred-pipeline.md) for complete implementation and [GBuffer Layout Guide](../../user/guides/rendering/gbuffer-layout.md) for encoding details.
 
 ### Why Deferred
 

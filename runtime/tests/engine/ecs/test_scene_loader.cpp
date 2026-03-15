@@ -547,9 +547,9 @@ TEST_F(SceneLoaderTest, SpotLightComponent_SetsAllFields_AnglesStoredAsRadians) 
     EXPECT_NEAR(light.color.z,    0.0f, 1e-4f);
     EXPECT_NEAR(light.intensity,  4.0f, 1e-4f);
     EXPECT_NEAR(light.range,     20.0f, 1e-4f);
-    // Loader converts degrees → radians before storing.
-    EXPECT_NEAR(light.innerAngle, 15.0f * kDegToRad, 1e-4f);
-    EXPECT_NEAR(light.outerAngle, 30.0f * kDegToRad, 1e-4f);
+    // Angles stored as degrees (UE5 parity — conversion happens in proxy sync).
+    EXPECT_NEAR(light.innerAngleDeg, 15.0f, 1e-4f);
+    EXPECT_NEAR(light.outerAngleDeg, 30.0f, 1e-4f);
 }
 
 TEST_F(SceneLoaderTest, SpotLightComponent_DefaultAngles_WhenAbsent) {
@@ -569,9 +569,9 @@ TEST_F(SceneLoaderTest, SpotLightComponent_DefaultAngles_WhenAbsent) {
     ASSERT_EQ(ViewCount(view), 1u);
 
     auto [enttEntity, light] = *view.each().begin();
-    // Default inner/outer angles from the implementation: 17° and 28°.
-    EXPECT_NEAR(light.innerAngle, 17.0f * kDegToRad, 1e-4f);
-    EXPECT_NEAR(light.outerAngle, 28.0f * kDegToRad, 1e-4f);
+    // Default inner/outer angles (UE5 parity: 30° and 45°).
+    EXPECT_NEAR(light.innerAngleDeg, 30.0f, 1e-4f);
+    EXPECT_NEAR(light.outerAngleDeg, 45.0f, 1e-4f);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

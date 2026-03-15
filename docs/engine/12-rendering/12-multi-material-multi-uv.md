@@ -616,6 +616,6 @@ No change to sort key structure; submesh ranges allow finer-grained batching.
 
 - [PBR Material System (§06)](06-pbr-material-system.md) — Material data layout and GPU binding
 - [Sort Key Architecture (§07)](07-sort-key-architecture.md) — 64-bit key design for batching
-- [Forward PBR Pass (§08)](08-forward-pbr-pass.md) — Draw call submission and PSO binding
+- [Forward PBR Pass (§09)](09-forward-pbr-pass.md) — Draw call submission and PSO binding
 - [Draw List (§04)](../04-draw-list/README.md) — DrawCommand collection and sorting
 - [Mesh Import Pipeline](../08-asset-system/mesh-import.md) — Submesh preservation during import

@@ -101,16 +101,18 @@ void SpotLightComponent::OnProxyCreated(RenderWorld& renderWorld,
     if (!proxy) {
         return;
     }
+    static constexpr float kDegToRad = 3.14159265358979323846f / 180.f;
+
     proxy->light.color      = color;
     proxy->light.intensity  = intensity;
     proxy->light.range      = range;
-    proxy->light.innerAngle = innerAngle;
-    proxy->light.outerAngle = outerAngle;
+    proxy->light.innerAngle = innerAngleDeg * kDegToRad;
+    proxy->light.outerAngle = outerAngleDeg * kDegToRad;
     // Spot direction follows the same convention as directional lights.
     proxy->light.direction  = GetRotation() * Vec3::Forward();
 
-    UZ_LOG(Light, Trace, "SpotLight proxy created: range={}, inner={}, outer={}",
-           range, innerAngle, outerAngle);
+    UZ_LOG(Light, Trace, "SpotLight proxy created: range={}, inner={}deg, outer={}deg",
+           range, innerAngleDeg, outerAngleDeg);
 }
 
 } // namespace uz

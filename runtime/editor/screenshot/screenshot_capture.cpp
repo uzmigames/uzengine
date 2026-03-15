@@ -139,13 +139,20 @@ bool ScreenshotCapture::SaveToPNG(const std::string& path) const {
     // Vulkan swapchains commonly use B8G8R8A8_UNORM when R8G8B8A8 is unavailable.
     const bool needsSwizzle = (m_captureFormat == RHIFormat::BGRA8Unorm ||
                                m_captureFormat == RHIFormat::BGRA8Srgb);
-    if (needsSwizzle) {
-        for (uint32_t i = 0; i < tightPitch * m_height; i += 4) {
+    for (uint32_t i = 0; i < tightPitch * m_height; i += 4) {
+        if (needsSwizzle) {
             std::swap(tight[i + 0], tight[i + 2]); // B↔R
         }
+        tight[i + 3] = 255; // Force alpha=1 — backbuffer alpha is undefined
     }
 
-    bool ok = stbi_write_png(path.c_str(),
+    // Save as JPG if path ends with .jpg/.jpeg, otherwise PNG
+    bool ok = false;
+    const auto dotPos = path.rfind('.');
+    const bool isJpg = (dotPos != std::string::npos) &&
+        (path.compare(dotPos, 4, ".jpg") == 0 || path.compare(dotPos, 5, ".jpeg") == 0);
+
+    ok = stbi_write_png(path.c_str(),
         static_cast<int>(m_width), static_cast<int>(m_height),
         4, tight.data(), static_cast<int>(tightPitch)) != 0;
 

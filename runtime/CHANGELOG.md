@@ -2,6 +2,43 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
+## [0.2.26] — 2026-03-15
+
+### GPU Instancing
+- **InstanceBatcher**: Groups sorted draw list commands by (meshId, material SRV indices) into batched `DrawIndexedInstanced` calls — O(N) linear scan over sorted commands
+- **InstanceData**: 128-byte per-instance GPU struct (world + normal matrices) uploaded to a persistent `StructuredBuffer` on Upload heap
+- **Shader variants**: `UZ_INSTANCED` define for `mesh_vs.hlsl` and `shadow_depth_vs.hlsl` — reads per-instance transforms from `ResourceDescriptorHeap[instanceBufferIndex]` via `SV_InstanceID` (SM6.6 bindless only)
+- **GBuffer + Shadow passes**: Both passes support instanced code path via `batchData`/`batchCount` in pass descriptors, with automatic fallback to per-object CB path for SM5
+- **Pipeline**: `GetGBufferInstanced()` and `GetShadowDepthInstanced()` in PipelineLibrary, `CreateShaderWithDefines()` in ShaderManager
+- **Performance**: 1001 objects → 2 draw calls, 310 FPS @ 3.22ms on RTX 4090
+- **Demo**: `demos/instancing_test/` — 1000 identical cubes in 10×10×10 grid
+
+### UE5 Component Parity (phase0-0.1.0)
+- **SkyLightComponent** (new): intensity, lightColor, indirectLightingIntensity, sourceType (CapturedScene/SpecifiedCubemap), cubemapResolution, lowerHemisphereIsBlack, minOcclusion, occlusionTint, occlusionExponent — wired into PerFrameCB + deferred lighting shader
+- **LightComponent base**: useTemperature, temperature (6500K), specularScale, diffuseScale, volumetricScatteringIntensity, indirectLightingIntensity
+- **DirectionalLightComponent**: atmosphereSunLight link, atmosphereSunLightIndex, lightSourceAngle, shadowCascades, cascadeDistributionExponent, cascadeTransitionFraction, dynamicShadowDistance, contactShadowLength, atmosphereSunDiskColorScale
+- **PointLightComponent**: useInverseSquaredFalloff, lightFalloffExponent, sourceRadius, softSourceRadius, sourceLength
+- **SpotLightComponent**: now inherits from PointLightComponent (UE5 pattern), angles stored in degrees (innerAngleDeg/outerAngleDeg), converted to radians in proxy sync
+- **HeightFogComponent**: UE5 defaults (color=white, heightFalloff=0.2, maxOpacity=1.0), second fog layer, directional inscattering (color/exponent/startDistance), fogCutoffDistance, enableVolumetricFog placeholder
+- **SkyAtmosphereComponent**: artistic multipliers (rayleigh/mie/absorption scales), multiScatteringFactor, skyLuminanceFactor, heightFogContribution, deprecated skyLight fields
+- **SceneComponent**: Mobility enum (Static/Stationary/Movable), hiddenInGame
+- **PrimitiveComponent**: minDrawDistance, maxDrawDistance, receivesDecals, renderInMainPass, renderInDepthPass
+
+### Sun-Atmosphere Link
+- DirectionalLight with `atmosphereSunLight=true` now drives sky atmosphere sun direction/color/intensity/angular radius — SkyAtmosphereComponent sun fields are fallback defaults
+
+### GPU Data & Shader Updates
+- **PointLightData**: expanded 32→48 bytes (3×float4) with sourceRadius, falloffExponent, specularScale, diffuseScale, flags
+- **HeightFogCB**: expanded with second fog layer, directional inscattering, cutoff distance
+- **Fog shader**: rewritten with Z-up height fix, two fog layers, directional inscattering (sun-facing glow)
+- **Deferred lighting**: point light attenuation supports inverse square toggle + custom falloff exponent
+- **Kelvin-to-RGB**: `color_utils.h` utility, wired into directional + point light gathering
+- **RenderProxy**: light struct extended with temperature, specularScale, diffuseScale, sourceRadius, falloffExponent, useInverseSquaredFalloff
+
+### Fixes
+- **Screenshot alpha**: force alpha=255 in readback buffer — backbuffer alpha was undefined, causing transparent PNG output
+- **Screenshot frame**: default capture frame increased from 5 to 400 to ensure IBL bake completes before capture
+
 ## [0.2.24] — 2026-03-15
 
 ### Sky Atmosphere Transmittance LUT & IBL Integration

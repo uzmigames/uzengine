@@ -61,7 +61,12 @@ struct PerFrameCB {
     uint32_t prefilteredSrvIndex = UINT32_MAX; ///< SRV index for prefiltered specular cubemap.
     uint32_t brdfLutSrvIndex     = UINT32_MAX; ///< SRV index for BRDF integration LUT.
     uint32_t prefilteredMipLevels = 5;         ///< Number of prefiltered mip levels (for LOD calculation).
-    float _pad[6]    = {};      ///< Remaining padding to 256-byte alignment.
+    float skyLightIntensity = 1.0f;            ///< Multiplier for IBL ambient (SkyLight intensity).
+    float skyLightColorR    = 1.0f;            ///< Sky light tint color (R).
+    float skyLightColorG    = 1.0f;            ///< Sky light tint color (G).
+    float skyLightColorB    = 1.0f;            ///< Sky light tint color (B).
+    float skyLightMinAmbient = 0.0f;           ///< Minimum ambient level (0-1). Prevents fully black shadows.
+    float _pad[1]    = {};      ///< Remaining padding to 256-byte alignment.
 };
 
 static_assert(sizeof(PerFrameCB) == 256, "PerFrameCB must be 256 bytes (D3D12 CB alignment)");
@@ -119,26 +124,38 @@ static constexpr uint32_t kMaxPointLights = 64;
 
 /// Point light data for the deferred lighting pass.
 ///
-/// Each point light contributes diffuse and specular illumination within its
-/// attenuation radius. Packed to 32 bytes (two float4s) for efficient GPU access.
+/// Each point light carries position, attenuation, color, and UE5-parity
+/// parameters (source radius for area approximation, falloff, per-light scales).
+/// Packed to 48 bytes (three float4s) for efficient GPU access.
 ///
 /// Matches the HLSL struct:
 /// ```hlsl
 /// struct PointLightData {
-///     float3 position;   // world-space position
-///     float  radius;     // attenuation radius
-///     float3 color;      // color * intensity (linear HDR)
-///     float  _pad;
+///     float3 position;        // world-space position
+///     float  radius;          // attenuation radius
+///     float3 color;           // color * intensity (linear HDR)
+///     float  sourceRadius;    // area light sphere radius (0=point)
+///     float  falloffExponent; // custom falloff (when inverse square disabled)
+///     float  specularScale;   // 0-1 specular multiplier
+///     float  diffuseScale;    // 0-1 diffuse multiplier
+///     uint   flags;           // bit0=useInverseSquared
 /// };
 /// ```
 struct PointLightData {
-    Vec3     position;    ///< World-space position of the light source.
-    float    radius;      ///< Attenuation radius — light contribution falls to zero at this distance.
-    Vec3     color;       ///< Light color multiplied by intensity (linear HDR, not clamped).
-    float    _pad = 0.0f; ///< Padding to align to 32 bytes (two float4s).
+    Vec3     position;         ///< World-space position of the light source.
+    float    radius;           ///< Attenuation radius — light contribution falls to zero at this distance.
+    Vec3     color;            ///< Light color multiplied by intensity (linear HDR, not clamped).
+    float    sourceRadius;     ///< Sphere radius for area light approximation. 0 = point light.
+    float    falloffExponent;  ///< Custom falloff exponent (used when inverse square is disabled).
+    float    specularScale;    ///< Per-light specular highlight multiplier (0-1). Default: 1.0.
+    float    diffuseScale;     ///< Per-light diffuse contribution multiplier (0-1). Default: 1.0.
+    uint32_t flags;            ///< Bit flags: bit 0 = useInverseSquaredFalloff.
 };
 
-static_assert(sizeof(PointLightData) == 32, "PointLightData must be 32 bytes (two float4s)");
+/// PointLightData flag bits.
+static constexpr uint32_t kLightFlag_InverseSquared = 1u << 0;
+
+static_assert(sizeof(PointLightData) == 48, "PointLightData must be 48 bytes (three float4s)");
 
 /// Lighting constant buffer for the deferred lighting pass, bound at register `b2`.
 ///
@@ -156,10 +173,10 @@ static_assert(sizeof(PointLightData) == 32, "PointLightData must be 32 bytes (tw
 /// };
 /// ```
 struct LightingCB {
-    PointLightData pointLights[kMaxPointLights]; ///< Point light array (64 * 32 = 2048 bytes).
+    PointLightData pointLights[kMaxPointLights]; ///< Point light array (64 * 48 = 3072 bytes).
     uint32_t       pointLightCount = 0;          ///< Number of active point lights in the array.
     uint32_t       _pad[3] = {};                 ///< Align count field to 16 bytes.
-    float          _pad2[60] = {};               ///< Pad to 2304 bytes (256-byte multiple).
+    float          _pad2[60] = {};               ///< Pad to 3328 bytes (256-byte multiple).
 };
 
 static_assert(sizeof(LightingCB) % 256 == 0, "LightingCB must be a multiple of 256 bytes (D3D12 CB alignment)");
@@ -270,14 +287,30 @@ static_assert(sizeof(AtmosphereLutCB) == 256, "AtmosphereLutCB must be 256 bytes
 ///
 /// Padded to 256 bytes as required by D3D12 constant buffer alignment.
 struct HeightFogCB {
+    // ── Primary fog layer (float4 + float4 + float4 = 48 bytes) ──────────
     Vec4  fogColor;             ///< xyz = fog color (linear), w = unused.
     float fogDensity;           ///< Exponential density factor.
     float fogHeightFalloff;     ///< Height falloff coefficient.
     float fogBaseHeight;        ///< World-space base height (meters).
     float fogMaxOpacity;        ///< Maximum fog opacity (0-1).
     float fogStartDistance;     ///< Minimum distance before fog begins.
-    float _fogPad[3] = {};      ///< Pad to 16-byte boundary.
-    float _fogPad2[52] = {};    ///< Pad to 256-byte alignment.
+    float fogCutoffDistance;    ///< Maximum fog distance. 0 = unlimited.
+    float _fogPad0[2] = {};     ///< Pad to 16-byte boundary.
+
+    // ── Second fog layer (float4 = 16 bytes) ────────────────────────────
+    float secondFogDensity;     ///< Second layer density. 0 = disabled.
+    float secondFogHeightFalloff; ///< Second layer height falloff.
+    float secondFogBaseHeight;  ///< Second layer base height.
+    float _fogPad1 = 0.f;      ///< Pad to 16-byte boundary.
+
+    // ── Directional inscattering (float4 + float4 = 32 bytes) ──────────
+    Vec4  directionalInscatteringColor; ///< xyz = sun-facing fog glow color, w = unused.
+    float directionalInscatteringExponent; ///< Cone tightness (higher = tighter halo).
+    float directionalInscatteringStartDistance; ///< Start distance for inscattering.
+    float _fogPad2[2] = {};     ///< Pad to 16-byte boundary.
+
+    // ── Remaining padding ──────────────────────────────────────────────
+    float _fogPad3[40] = {};    ///< Pad to 256-byte alignment.
 };
 
 static_assert(sizeof(HeightFogCB) == 256, "HeightFogCB must be 256 bytes (D3D12 CB alignment)");

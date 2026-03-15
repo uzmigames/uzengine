@@ -79,15 +79,27 @@ cbuffer PerFrameCB : register(b1) {
     uint     prefilteredSrvIndex;   ///< SRV index for prefiltered specular cubemap.
     uint     brdfLutSrvIndex;       ///< SRV index for BRDF integration LUT.
     uint     prefilteredMipLevels;  ///< Number of prefiltered mip levels.
-    float    _framePad[6];       ///< Remaining padding to 256-byte boundary
+    float    skyLightIntensity;    ///< Multiplier for IBL ambient (SkyLight).
+    float    skyLightColorR;       ///< Sky light tint R.
+    float    skyLightColorG;       ///< Sky light tint G.
+    float    skyLightColorB;       ///< Sky light tint B.
+    float    skyLightMinAmbient;   ///< Minimum ambient floor (0-1). Prevents fully black shadows.
+    float    _framePad[1];       ///< Remaining padding to 256-byte boundary
 };
 
-/// Single point light for the deferred lighting pass.
+/// Single point light for the deferred lighting pass (48 bytes = three float4s).
+/// Must match C++ PointLightData struct exactly.
+static const uint LIGHT_FLAG_INVERSE_SQUARED = 1u;
+
 struct PointLight {
-    float3 position;  ///< World-space position.
-    float  radius;    ///< Attenuation radius (light intensity reaches zero at this distance).
-    float3 color;     ///< Pre-multiplied color * intensity (radiance).
-    float  _pad;      ///< Padding to 16-byte alignment.
+    float3 position;        ///< World-space position.
+    float  radius;          ///< Attenuation radius.
+    float3 color;           ///< Pre-multiplied color * intensity (radiance).
+    float  sourceRadius;    ///< Area light sphere radius (0 = point light).
+    float  falloffExponent; ///< Custom falloff (when inverse square disabled).
+    float  specularScale;   ///< Per-light specular multiplier (0-1).
+    float  diffuseScale;    ///< Per-light diffuse multiplier (0-1).
+    uint   flags;           ///< Bit 0 = useInverseSquaredFalloff.
 };
 
 /// Maximum number of point lights evaluated per pixel.
@@ -273,16 +285,25 @@ float4 main(FSInput input) : SV_Target {
 
         float3 L_point = lightVec / dist; // normalise
 
-        // Smooth inverse-square attenuation with windowing function:
-        // attenuation = saturate(1 - (d/r)^4)^2 / (d^2 + 1)
-        // The windowing function ensures a smooth falloff to zero at radius
-        // while closely matching physical inverse-square near the light.
+        // Attenuation: inverse square (UE5 default) or custom exponent
+        float attenuation;
+        bool useInvSq = (pointLights[i].flags & LIGHT_FLAG_INVERSE_SQUARED) != 0;
         float distOverRadius = dist / radius;
-        float distRatio4     = distOverRadius * distOverRadius * distOverRadius * distOverRadius;
-        float windowing      = saturate(1.0f - distRatio4);
-        float attenuation    = (windowing * windowing) / (dist * dist + 1.0f);
+
+        if (useInvSq) {
+            // Smooth inverse-square with windowing function:
+            // attenuation = saturate(1 - (d/r)^4)^2 / (d^2 + 1)
+            float distRatio4 = distOverRadius * distOverRadius * distOverRadius * distOverRadius;
+            float windowing  = saturate(1.0f - distRatio4);
+            attenuation      = (windowing * windowing) / (dist * dist + 1.0f);
+        } else {
+            // Custom falloff exponent (non-physical, UE5 legacy)
+            attenuation = pow(saturate(1.0f - distOverRadius), pointLights[i].falloffExponent);
+        }
 
         float3 radiance = pointLights[i].color * attenuation;
+
+        // Evaluate BRDF
         Lo += EvaluateBRDF(N, V, L_point, radiance,
                            albedo, metallic, alpha, F0);
     }
@@ -314,12 +335,21 @@ float4 main(FSInput input) : SV_Target {
         float2 envBRDF = brdfLut.SampleLevel(linearSampler, float2(NdotV, roughness), 0);
         float3 specularIBL = prefilteredColor * (F * envBRDF.x + envBRDF.y);
 
-        ambient = (diffuseIBL + specularIBL) * ao;
+        float3 skyLightTint = float3(skyLightColorR, skyLightColorG, skyLightColorB);
+        ambient = (diffuseIBL + specularIBL) * ao * skyLightIntensity * skyLightTint;
     } else
 #endif
     {
         // Fallback: constant ambient (no IBL data available)
-        ambient = ambientColor.xyz * albedo * ao;
+        float3 skyLightTint = float3(skyLightColorR, skyLightColorG, skyLightColorB);
+        ambient = ambientColor.xyz * albedo * ao * skyLightIntensity * skyLightTint;
+    }
+
+    // ── Minimum ambient floor (SkyLight minOcclusion equivalent) ──
+    // Ensures shadowed surfaces never go fully black — adds a minimum fill light.
+    if (skyLightMinAmbient > 0.0f) {
+        float3 minFloor = albedo * skyLightMinAmbient;
+        ambient = max(ambient, minFloor);
     }
 
     // ── Combine ──

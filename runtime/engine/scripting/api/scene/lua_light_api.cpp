@@ -156,8 +156,8 @@ static int SceneAddSpotLight(lua_State* L) {
     light.color      = Vec3{r, g, b_val};
     light.intensity  = intensity;
     light.range      = range;
-    light.innerAngle = innerDeg * kDegToRad;
-    light.outerAngle = outerDeg * kDegToRad;
+    light.innerAngleDeg = innerDeg;
+    light.outerAngleDeg = outerDeg;
     return 0;
 }
 
@@ -305,8 +305,8 @@ static int SceneGetSpotAngles(lua_State* L) {
 
     constexpr float kRadToDeg = 180.f / 3.14159265358979323846f;
     const auto& spot = world->GetComponent<SpotLightComponent>(entity);
-    lua_pushnumber(L, static_cast<double>(spot.innerAngle * kRadToDeg));
-    lua_pushnumber(L, static_cast<double>(spot.outerAngle * kRadToDeg));
+    lua_pushnumber(L, static_cast<double>(spot.innerAngleDeg));
+    lua_pushnumber(L, static_cast<double>(spot.outerAngleDeg));
     return 2;
 }
 
@@ -333,8 +333,8 @@ static int SceneSetSpotAngles(lua_State* L) {
     const float outerDeg = static_cast<float>(luaL_checknumber(L, 3));
 
     auto& spot = world->GetComponent<SpotLightComponent>(entity);
-    spot.innerAngle = innerDeg * kDegToRad;
-    spot.outerAngle = outerDeg * kDegToRad;
+    spot.innerAngleDeg = innerDeg;
+    spot.outerAngleDeg = outerDeg;
     return 0;
 }
 

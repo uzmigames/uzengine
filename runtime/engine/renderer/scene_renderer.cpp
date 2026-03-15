@@ -37,7 +37,9 @@
 #include "scene_component.h"
 #include "static_mesh_component.h"
 #include "sky_atmosphere_component.h"
+#include "sky_light_component.h"
 #include "height_fog_component.h"
+#include "color_utils.h"
 #include "rhi.h"
 #include "shader_compiler.h"
 #include "shader_compiler_fxc.h"
@@ -433,6 +435,21 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     perFrame.brdfLutSrvIndex     = m_brdfLutSrvIndex;
     perFrame.prefilteredMipLevels = 5;
 
+    // ── Extract SkyLight from SkyLightComponent (UE5 parity) ──────────
+    if (world) {
+        auto skyLightView = world->GetRegistry().view<SkyLightComponent>();
+        for (auto enttEntity : skyLightView) {
+            auto& sl = skyLightView.get<SkyLightComponent>(enttEntity);
+            if (!sl.enabled) continue;
+            perFrame.skyLightIntensity  = sl.intensity;
+            perFrame.skyLightColorR     = sl.lightColor.x;
+            perFrame.skyLightColorG     = sl.lightColor.y;
+            perFrame.skyLightColorB     = sl.lightColor.z;
+            perFrame.skyLightMinAmbient = sl.minOcclusion;
+            break;  // First SkyLightComponent only
+        }
+    }
+
     // ── Extract directional light from ECS ──────────────────────────────
     Vec3 sunDir = Vec3{0.5f, 0.3f, 0.8f}.Normalized();  // default
     Vec3 sunColor = {3.0f, 2.85f, 2.7f};
@@ -451,7 +468,11 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
             } else {
                 sunDir = dirLight.GetDirection().Normalized();
             }
-            sunColor = dirLight.color * dirLight.intensity;
+            Vec3 dirCol = dirLight.color;
+            if (dirLight.useTemperature) {
+                dirCol = dirCol * KelvinToRgb(dirLight.temperature);
+            }
+            sunColor = dirCol * dirLight.intensity;
             break;  // Use first directional light found
         }
     }
@@ -484,9 +505,22 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
                 pos = pl.GetWorldPosition();
             }
 
-            const Vec3 col = pl.color * pl.intensity;
+            Vec3 lightCol = pl.color;
+            if (pl.useTemperature) {
+                lightCol = lightCol * KelvinToRgb(pl.temperature);
+            }
+            const Vec3 col = lightCol * pl.intensity;
             const uint32_t idx = lightingData.pointLightCount;
-            lightingData.pointLights[idx] = {pos, pl.range, col, 0.f};
+
+            PointLightData& pld = lightingData.pointLights[idx];
+            pld.position        = pos;
+            pld.radius          = pl.range;
+            pld.color           = col;
+            pld.sourceRadius    = pl.sourceRadius;
+            pld.falloffExponent = pl.lightFalloffExponent;
+            pld.specularScale   = pl.specularScale;
+            pld.diffuseScale    = pl.diffuseScale;
+            pld.flags           = pl.useInverseSquaredFalloff ? kLightFlag_InverseSquared : 0u;
             lightingData.pointLightCount++;
         }
     }
@@ -845,6 +879,28 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
             }
 
             // Build SkyAtmosphereCB — all distances in km (UE5 convention)
+            // Sun params come from the linked DirectionalLight (atmosphereSunLight=true)
+            // or fall back to the SkyAtmosphereComponent's own values.
+            Vec3 skySunColor = skyComp.sunIlluminance;
+            float skySunAngularRadius = skyComp.sunAngularRadius;
+            float skySunDiskIntensity = skyComp.sunDiskIntensity;
+
+            // Sun-Atmosphere link: DirectionalLight with atmosphereSunLight=true
+            // overrides the sky's sun parameters (UE5 parity).
+            if (world) {
+                auto dirView = world->GetRegistry().view<DirectionalLightComponent>();
+                for (auto e : dirView) {
+                    auto& dl = dirView.get<DirectionalLightComponent>(e);
+                    if (dl.atmosphereSunLight && dl.atmosphereSunLightIndex == 0) {
+                        skySunColor = dl.color * dl.intensity;
+                        static constexpr float kDegToRad = 3.14159265358979323846f / 180.f;
+                        skySunAngularRadius = dl.lightSourceAngle * kDegToRad;
+                        skySunDiskIntensity = dl.intensity;
+                        break;
+                    }
+                }
+            }
+
             SkyAtmosphereCB skyCB{};
             skyCB.rayleighScattering = {skyComp.rayleighScattering.x,
                                         skyComp.rayleighScattering.y,
@@ -856,13 +912,13 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
             skyCB.groundAlbedo       = {skyComp.groundAlbedo.x,
                                         skyComp.groundAlbedo.y,
                                         skyComp.groundAlbedo.z, 0.f};
-            skyCB.sunIlluminance     = {skyComp.sunIlluminance.x,
-                                        skyComp.sunIlluminance.y,
-                                        skyComp.sunIlluminance.z,
-                                        skyComp.sunAngularRadius};
+            skyCB.sunIlluminance     = {skySunColor.x,
+                                        skySunColor.y,
+                                        skySunColor.z,
+                                        skySunAngularRadius};
             skyCB.bottomRadiusKm     = skyComp.bottomRadiusKm;
             skyCB.atmosphereHeightKm = skyComp.atmosphereHeightKm;
-            skyCB.sunDiskIntensity   = skyComp.sunDiskIntensity;
+            skyCB.sunDiskIntensity   = skySunDiskIntensity;
 
             CBAllocation skyAlloc = m_cbRing->Allocate(sizeof(SkyAtmosphereCB));
             std::memcpy(skyAlloc.cpuPtr, &skyCB, sizeof(SkyAtmosphereCB));
@@ -901,6 +957,20 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
             fogCB.fogBaseHeight    = fogComp.baseHeight;
             fogCB.fogMaxOpacity    = fogComp.maxOpacity;
             fogCB.fogStartDistance = fogComp.startDistance;
+            fogCB.fogCutoffDistance = fogComp.fogCutoffDistance;
+
+            // Second fog layer
+            fogCB.secondFogDensity       = fogComp.secondFogDensity;
+            fogCB.secondFogHeightFalloff = fogComp.secondFogHeightFalloff;
+            fogCB.secondFogBaseHeight    = fogComp.secondFogBaseHeight;
+
+            // Directional inscattering
+            fogCB.directionalInscatteringColor = {
+                fogComp.directionalInscatteringColor.x,
+                fogComp.directionalInscatteringColor.y,
+                fogComp.directionalInscatteringColor.z, 0.f};
+            fogCB.directionalInscatteringExponent      = fogComp.directionalInscatteringExponent;
+            fogCB.directionalInscatteringStartDistance  = fogComp.directionalInscatteringStartDistance;
 
             CBAllocation fogAlloc = m_cbRing->Allocate(sizeof(HeightFogCB));
             std::memcpy(fogAlloc.cpuPtr, &fogCB, sizeof(HeightFogCB));

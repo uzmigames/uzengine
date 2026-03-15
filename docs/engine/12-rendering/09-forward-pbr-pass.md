@@ -2,7 +2,7 @@
 
 > **Status**: Implemented (Milestone 1.2)
 > **Source**: `runtime/engine/renderer/passes/pbr_pass.h`, `runtime/engine/renderer/constant_buffers.h`
-> **Depends on**: Render Graph (§04), Material System (§06), Sort Key Architecture (§07), BRDF (§09)
+> **Depends on**: Render Graph (§04), Material System (§06), Sort Key Architecture (§07), BRDF (§10)
 > **References**: DirectX 12 render passes, per-object constant buffer pattern
 
 ## Purpose
@@ -398,7 +398,7 @@ float4 main(PSInput input) : SV_Target {
     float3 H = normalize(V + L);
 
     // Cook-Torrance BRDF calculation
-    // (See §09-cook-torrance-brdf.md for complete shader)
+    // (See §10-cook-torrance-brdf.md for complete shader)
     float NdotL = max(dot(N, L), 0.001);
     float NdotV = max(dot(N, V), 0.001);
     float NdotH = saturate(dot(N, H));

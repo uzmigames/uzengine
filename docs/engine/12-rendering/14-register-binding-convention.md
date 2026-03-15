@@ -290,7 +290,7 @@ All engine render passes follow this binding convention:
 
 ## Related Documentation
 
-- [Shader Compatibility (§07-shader-compatibility.md)](07-shader-compatibility.md) — SM6.6 vs SM5 dual-path design
-- [Forward PBR Pass (§08-forward-pbr-pass.md)](08-forward-pbr-pass.md) — practical binding example
+- [Shader Compatibility (§20-shader-compatibility.md)](20-shader-compatibility.md) — SM6.6 vs SM5 dual-path design
+- [Forward PBR Pass (§09-forward-pbr-pass.md)](09-forward-pbr-pass.md) — practical binding example
 - [Shared Include Structure (§14-shader-includes.md)](14-shader-includes.md) — .hlsli file conventions
 - [Shadow System (§06-shadow-system.md)](06-shadow-system.md) — ShadowDataCB contents and cascade layout

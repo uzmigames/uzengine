@@ -165,18 +165,19 @@ TEST(SpotLightComponentTest, SyncCreatesProxyWithCorrectType) {
 TEST(SpotLightComponentTest, SyncPushesAllSpotFields) {
     RenderWorld world;
     SpotLightComponent light;
-    light.range      = 15.f;
-    light.innerAngle = 0.2f;
-    light.outerAngle = 0.6f;
-    light.color      = Vec3{0.f, 1.f, 0.f};
-    light.intensity  = 5.f;
+    light.range         = 15.f;
+    light.innerAngleDeg = 30.f;  // degrees (converted to radians in proxy)
+    light.outerAngleDeg = 45.f;
+    light.color         = Vec3{0.f, 1.f, 0.f};
+    light.intensity     = 5.f;
     light.SyncToRenderWorld(world);
 
+    static constexpr float kDegToRad = 3.14159265358979323846f / 180.f;
     const RenderProxy* proxy = world.GetProxy(light.GetProxyHandle());
     ASSERT_NE(proxy, nullptr);
     EXPECT_TRUE(NearlyEqual(proxy->light.range, 15.f));
-    EXPECT_TRUE(NearlyEqual(proxy->light.innerAngle, 0.2f));
-    EXPECT_TRUE(NearlyEqual(proxy->light.outerAngle, 0.6f));
+    EXPECT_TRUE(NearlyEqual(proxy->light.innerAngle, 30.f * kDegToRad));
+    EXPECT_TRUE(NearlyEqual(proxy->light.outerAngle, 45.f * kDegToRad));
     EXPECT_TRUE(NearlyEqualVec3(proxy->light.color, Vec3{0.f, 1.f, 0.f}));
     EXPECT_TRUE(NearlyEqual(proxy->light.intensity, 5.f));
 }

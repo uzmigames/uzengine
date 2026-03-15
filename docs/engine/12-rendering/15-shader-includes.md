@@ -329,8 +329,8 @@ When creating a new shared include file:
 
 ## Related Documentation
 
-- [Register Binding Convention (§13-register-binding-convention.md)](13-register-binding-convention.md) — how constants and textures are bound
-- [Shader Compatibility (§07-shader-compatibility.md)](07-shader-compatibility.md) — SM6.6 bindless vs SM5 dual-path design
-- [Forward PBR Pass (§08-forward-pbr-pass.md)](08-forward-pbr-pass.md) — practical rendering example using both includes
-- [Cook-Torrance BRDF (§09-cook-torrance-brdf.md)](09-cook-torrance-brdf.md) — detailed BRDF math and derivations
+- [Register Binding Convention (§14-register-binding-convention.md)](14-register-binding-convention.md) — how constants and textures are bound
+- [Shader Compatibility (§20-shader-compatibility.md)](20-shader-compatibility.md) — SM6.6 bindless vs SM5 dual-path design
+- [Forward PBR Pass (§09-forward-pbr-pass.md)](09-forward-pbr-pass.md) — practical rendering example using both includes
+- [Cook-Torrance BRDF (§10-cook-torrance-brdf.md)](10-cook-torrance-brdf.md) — detailed BRDF math and derivations
 - [Shadow System (§06-shadow-system.md)](06-shadow-system.md) — cascaded shadow map architecture and parameters

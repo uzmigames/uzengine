@@ -193,8 +193,8 @@ void ApplySpotLightFields(SpotLightComponent& light,
     light.color      = ReadVec3(comp, "color", 1.f, 1.f, 1.f);
     light.intensity  = ReadFloat(comp, "intensity",    1.f);
     light.range      = ReadFloat(comp, "range",       10.f);
-    light.innerAngle = ReadFloat(comp, "innerAngle", 17.f) * kDegToRad;
-    light.outerAngle = ReadFloat(comp, "outerAngle", 28.f) * kDegToRad;
+    light.innerAngleDeg = ReadFloat(comp, "innerAngle", 30.f);
+    light.outerAngleDeg = ReadFloat(comp, "outerAngle", 45.f);
 }
 
 /// Parses the `"light"` component JSON and emplaces the appropriate light type.

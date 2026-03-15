@@ -98,6 +98,20 @@ struct RenderProxy {
             float innerAngle;
             /// Outer cone half-angle in radians (spot lights only).
             float outerAngle;
+            /// Color temperature in Kelvin (only when useTemperature=true).
+            float temperature;
+            /// Whether to apply blackbody temperature tint.
+            bool useTemperature;
+            /// Specular highlight multiplier (0-1).
+            float specularScale;
+            /// Diffuse contribution multiplier (0-1).
+            float diffuseScale;
+            /// Sphere radius for area light approximation (point/spot lights).
+            float sourceRadius;
+            /// Custom falloff exponent (when useInverseSquaredFalloff=false).
+            float falloffExponent;
+            /// Use physically-correct inverse square law attenuation.
+            bool useInverseSquaredFalloff;
         } light;
     };
 

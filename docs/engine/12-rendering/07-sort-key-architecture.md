@@ -300,9 +300,67 @@ void DrawList::StableSort() {
 6. **ALWAYS sort once per frame** — after all commands are recorded, before iteration
 7. **NEVER rely on sort stability** — commands with equal keys may reorder
 
+## GPU Instancing Integration
+
+After sorting and batching, the sorted DrawList can be processed by the **InstanceBatcher** to collapse consecutive commands with identical mesh + material texture indices into instanced draw calls.
+
+### Batching Process
+
+```cpp
+// After sorting:
+drawList.Sort();
+
+// Group consecutive commands with the same mesh and material into batches
+std::vector<InstanceBatch> batches;
+std::vector<InstanceData> instances;
+BuildInstanceBatches(drawList, batches, instances);
+
+// Upload instances to GPU
+instanceBuffer.Upload(instances.data(), instances.size());
+
+// Issue one DrawIndexedInstanced per batch instead of N separate DrawIndexed calls
+for (const auto& batch : batches) {
+    pso->Bind();
+    instanceBuffer.Bind();  // Root slot 0: instanceBufferIndex
+    meshes[batch.meshId]->Bind();
+    materials[batch.materialId]->Bind();
+
+    // One draw call for N instances
+    cmd->DrawIndexedInstanced(
+        mesh->indexCount,     // Indices per instance
+        batch.instanceCount,  // Number of instances
+        0,                    // First index
+        0,                    // Vertex offset
+        batch.firstInstance   // First instance
+    );
+}
+```
+
+### Batching Criteria
+
+Two consecutive sorted commands merge into a single `InstanceBatch` if ALL of these match:
+
+- `meshId` — same mesh resource
+- `albedoSrvIndex` — same base color texture
+- `normalSrvIndex` — same normal map
+- `roughnessSrvIndex` — same roughness map
+- `metallicSrvIndex` — same metallic map
+- `aoSrvIndex` — same ambient occlusion map
+
+Material texture indices are shared across all instances in a batch (per-batch uniform), while per-instance transforms are stored in a `StructuredBuffer<InstanceData>` indexed by `SV_InstanceID`.
+
+### Performance Example
+
+**1001 identical cubes with Stonebricks material:**
+
+- **Without instancing**: 1001 separate `DrawIndexed` calls → 1001 root constant updates, 1001 descriptor table rebinds
+- **With instancing**: 1–2 `DrawIndexedInstanced` calls → near-zero state changes, 310 FPS @ 3.22ms on RTX 4090
+
+See [08-gpu-instancing.md](08-gpu-instancing.md) for full implementation details.
+
 ## Future Enhancements
 
 - **Adaptive key granularity** — use finer depth resolution (32 bits) if overdraw becomes a bottleneck
 - **Multi-pass sort keys** — encode shadow pass vs. deferred vs. forward in the pipeline ID
 - **Material atlasing** — reduce material ID range by grouping textures into atlases
-- **Geometry instances** — encode instance index in mesh ID bits for batched rendering
+- **Indirect draw buffers** — GPU-driven instance batching via compute shaders

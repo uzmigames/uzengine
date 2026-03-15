@@ -992,7 +992,7 @@ All passes are **NOT thread-safe**. Register passes from the render thread only.
 - [Render Graph](04-render-graph.md) — Pass registration and resource management
 - [PBR Material System](06-pbr-material-system.md) — Material struct and GPU upload
 - [Sort Key Architecture](07-sort-key-architecture.md) — Draw call ordering
-- [Shadow System](06-shadow-system.md) — Cascade generation and PCF filtering
+- [Shadow System](18-shadow-system.md) — Cascade generation and PCF filtering
 - [Shader Compatibility](07-shader-compatibility.md) — SM6.6 vs SM5 binding models
 
 ---

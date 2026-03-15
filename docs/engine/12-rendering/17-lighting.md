@@ -2,7 +2,7 @@
 
 > **Status**: Partial (Phase 1 base + Phase 2+ planned)
 > **Source**: `engine/lighting/`, `engine/subsystem/lighting_world.h`
-> **Implemented**: Deferred shading evaluation (GBuffer + Lighting pass) via [10-deferred-pipeline.md](10-deferred-pipeline.md)
+> **Implemented**: Deferred shading evaluation (GBuffer + Lighting pass) via [11-deferred-pipeline.md](11-deferred-pipeline.md)
 > **References**: UE5 Lumen, Virtual Shadow Maps, Light Channels; Godot VoxelGI, SDFGI, LightmapGI
 
 ## Purpose

@@ -160,6 +160,17 @@ public:
         return m_children;
     }
 
+    // ── Mobility & Visibility ────────────────────────────────────────────────
+
+    /// Component mobility — controls lighting/shadow bake eligibility.
+    /// UE5: EComponentMobility. Default: Movable (fully dynamic).
+    enum class Mobility : uint8_t { Static, Stationary, Movable };
+    Mobility mobility = Mobility::Movable;
+
+    /// When true, the component is hidden during gameplay but visible in editor.
+    /// UE5: bHiddenInGame. Default: false.
+    bool hiddenInGame = false;
+
     // ── Dirty Flag ────────────────────────────────────────────────────────────
 
     /// Marks this component and all descendants as dirty.

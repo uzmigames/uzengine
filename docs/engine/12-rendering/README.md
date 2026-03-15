@@ -17,20 +17,21 @@ The rendering pipeline system is split across multiple documents covering archit
 | [05-render-graph-guide.md](05-render-graph-guide.md) | Done (1.2) | Render graph usage guide, pass registration, execution | Implementing passes |
 | [06-pbr-material-system.md](06-pbr-material-system.md) | **Done (1.2)** | **PBRMaterial struct (48B), MaterialBuffer GPU upload, defaults** | **Material data** |
 | [07-sort-key-architecture.md](07-sort-key-architecture.md) | **Done (1.2)** | **64-bit sort key layout, opaque/transparent ordering, batching** | **Draw call ordering** |
-| [08-forward-pbr-pass.md](08-forward-pbr-pass.md) | **Done (1.2)** | **Forward PBR render pass, render graph integration, per-object CB binding** | **Forward rendering** |
-| [09-cook-torrance-brdf.md](09-cook-torrance-brdf.md) | **Done (1.2)** | **Cook-Torrance BRDF, GGX NDF, Smith geometry, Schlick Fresnel** | **PBR lighting math** |
-| [10-deferred-pipeline.md](10-deferred-pipeline.md) | Done (1.3) | Deferred rendering pipeline, GBuffer layout, lighting pass | Deferred rendering |
-| [11-multi-material-multi-uv.md](11-multi-material-multi-uv.md) | Planned (3+) | Submesh ranges, multi-material per mesh, UV channels (UV0–UV3), glTF import | Multi-material rendering |
-| [12-vertex-layout.md](12-vertex-layout.md) | Done (1.2) | Vertex layout system, format flags, input element generation, D3D12 binding | Vertex structure management |
-| [13-register-binding-convention.md](13-register-binding-convention.md) | **Done (1.2)** | **DX12 root signature layout, register allocation, root parameter binding** | **GPU shader binding** |
-| [14-shader-includes.md](14-shader-includes.md) | **Done (1.2)** | **Shared .hlsli structure, pbr_common.hlsli, shadow_common.hlsli** | **Shader code reuse** |
-| [15-material-system.md](15-material-system.md) | Planned (2.0) | High-level material system overview, .uzmat format, manager, hot-reload | Material management |
-| [16-lighting.md](16-lighting.md) | **Done (1.3+)** | **Multi-light system (8 lights max), light types, attenuation math, CPU culling** + Phase 2-4 roadmap | **Lighting systems** |
-| [17-shadow-system.md](17-shadow-system.md) | **Done (Phase 2)** | **Cascaded Shadow Maps, frustum splitting, atlas layout, PCF filtering, cascade blending** | **Directional light shadows** |
-| [18-post-processing.md](18-post-processing.md) | Planned (2.0) | Post-process chains, bloom, tonemap, SSAO, TAA, upscaling | Post-processing effects |
-| [19-shader-compatibility.md](19-shader-compatibility.md) | **Done (1.2)** | **Cross-backend shader compilation, SM6.6 bindless vs SM5, DXIL/DXBC/SPIR-V targets** | **Multi-target shaders** |
-| [20-renderer-passes.md](20-renderer-passes.md) | **Done (1.2–Phase 2.5)** | **PBR, GBuffer, Lighting, Shadow, Sky Atmosphere, Height Fog, Debug passes — complete reference** | **All render passes** |
-| [21-scene-lighting-helper.md](21-scene-lighting-helper.md) | **Done (1.2)** | **SceneLighting struct, BuildPerFrameCB() helper** | **Per-frame CB setup** |
+| [08-gpu-instancing.md](08-gpu-instancing.md) | **Done (1.2)** | **InstanceBatcher, InstanceData buffer layout, SM6.6 bindless shader integration** | **Draw call collapse via instancing** |
+| [09-forward-pbr-pass.md](09-forward-pbr-pass.md) | **Done (1.2)** | **Forward PBR render pass, render graph integration, per-object CB binding** | **Forward rendering** |
+| [10-cook-torrance-brdf.md](10-cook-torrance-brdf.md) | **Done (1.2)** | **Cook-Torrance BRDF, GGX NDF, Smith geometry, Schlick Fresnel** | **PBR lighting math** |
+| [11-deferred-pipeline.md](11-deferred-pipeline.md) | Done (1.3) | Deferred rendering pipeline, GBuffer layout, lighting pass | Deferred rendering |
+| [12-multi-material-multi-uv.md](12-multi-material-multi-uv.md) | Planned (3+) | Submesh ranges, multi-material per mesh, UV channels (UV0–UV3), glTF import | Multi-material rendering |
+| [13-vertex-layout.md](13-vertex-layout.md) | Done (1.2) | Vertex layout system, format flags, input element generation, D3D12 binding | Vertex structure management |
+| [14-register-binding-convention.md](14-register-binding-convention.md) | **Done (1.2)** | **DX12 root signature layout, register allocation, root parameter binding** | **GPU shader binding** |
+| [15-shader-includes.md](15-shader-includes.md) | **Done (1.2)** | **Shared .hlsli structure, pbr_common.hlsli, shadow_common.hlsli** | **Shader code reuse** |
+| [16-material-system.md](16-material-system.md) | Planned (2.0) | High-level material system overview, .uzmat format, manager, hot-reload | Material management |
+| [17-lighting.md](17-lighting.md) | **Done (1.3+)** | **Multi-light system (8 lights max), light types, attenuation math, CPU culling** + Phase 2-4 roadmap | **Lighting systems** |
+| [18-shadow-system.md](18-shadow-system.md) | **Done (Phase 2)** | **Cascaded Shadow Maps, frustum splitting, atlas layout, PCF filtering, cascade blending** | **Directional light shadows** |
+| [19-post-processing.md](19-post-processing.md) | Planned (2.0) | Post-process chains, bloom, tonemap, SSAO, TAA, upscaling | Post-processing effects |
+| [20-shader-compatibility.md](20-shader-compatibility.md) | **Done (1.2)** | **Cross-backend shader compilation, SM6.6 bindless vs SM5, DXIL/DXBC/SPIR-V targets** | **Multi-target shaders** |
+| [21-renderer-passes.md](21-renderer-passes.md) | **Done (1.2–Phase 2.5)** | **PBR, GBuffer, Lighting, Shadow, Sky Atmosphere, Height Fog, Debug passes — complete reference** | **All render passes** |
+| [22-scene-lighting-helper.md](22-scene-lighting-helper.md) | **Done (1.2)** | **SceneLighting struct, BuildPerFrameCB() helper** | **Per-frame CB setup** |
 
 ## Quick Navigation
 
@@ -45,14 +46,14 @@ The rendering pipeline system is split across multiple documents covering archit
 **Implement a custom render pass**
 
 1. Read [05-render-graph-guide.md](05-render-graph-guide.md) for pass registration
-2. Reference [08-forward-pbr-pass.md](08-forward-pbr-pass.md) as an example implementation
+2. Reference [09-forward-pbr-pass.md](09-forward-pbr-pass.md) as an example implementation
 3. Study [04-render-graph.md](04-render-graph.md) for resource management
 
 **Work with materials**
 
 1. Read [06-pbr-material-system.md](06-pbr-material-system.md) for data layout
-2. Read [09-cook-torrance-brdf.md](09-cook-torrance-brdf.md) for lighting calculations
-3. Reference [08-forward-pbr-pass.md](08-forward-pbr-pass.md) for shader integration
+2. Read [10-cook-torrance-brdf.md](10-cook-torrance-brdf.md) for lighting calculations
+3. Reference [09-forward-pbr-pass.md](09-forward-pbr-pass.md) for shader integration
 
 **Optimize draw call ordering**
 
@@ -62,9 +63,9 @@ The rendering pipeline system is split across multiple documents covering archit
 
 **Implement custom shader code**
 
-1. Read [09-cook-torrance-brdf.md](09-cook-torrance-brdf.md) for BRDF math
+1. Read [10-cook-torrance-brdf.md](10-cook-torrance-brdf.md) for BRDF math
 2. Reference `runtime/shaders/runtime/mesh_ps.hlsl` for implementation examples
-3. See [08-forward-pbr-pass.md](08-forward-pbr-pass.md) for GPU binding patterns
+3. See [09-forward-pbr-pass.md](09-forward-pbr-pass.md) for GPU binding patterns
 4. Study [13-register-binding-convention.md](13-register-binding-convention.md) for root signature layout
 5. Learn [14-shader-includes.md](14-shader-includes.md) for shared function reuse
 
@@ -269,7 +270,7 @@ A single render graph pass that:
 4. For each draw: allocates a per-object CB, sets transforms/material, issues DrawIndexed
 5. Outputs linearized Cook-Torrance BRDF, Reinhard tonemapped to sRGB
 
-**See**: [08-forward-pbr-pass.md](08-forward-pbr-pass.md)
+**See**: [09-forward-pbr-pass.md](09-forward-pbr-pass.md)
 
 ### Cook-Torrance BRDF
 
@@ -282,7 +283,7 @@ A physically-based lighting equation combining:
 
 Parameters: metallic, perceptual roughness, ambient occlusion, emissive.
 
-**See**: [09-cook-torrance-brdf.md](09-cook-torrance-brdf.md)
+**See**: [10-cook-torrance-brdf.md](10-cook-torrance-brdf.md)
 
 ## Architecture Decisions
 
@@ -377,8 +378,9 @@ Key decisions:
 ├── 05-render-graph-guide.md            # Render graph usage guide (done, 1.2)
 ├── 06-pbr-material-system.md           # ★ Material struct, GPU upload (1.2)
 ├── 07-sort-key-architecture.md         # ★ 64-bit sort key design (1.2)
-├── 08-forward-pbr-pass.md              # ★ Forward pass implementation (1.2)
-├── 09-cook-torrance-brdf.md            # ★ BRDF math & shaders (1.2)
+├── 08-gpu-instancing.md                # ★ Draw call collapse via instancing (1.2)
+├── 09-forward-pbr-pass.md              # ★ Forward pass implementation (1.2)
+├── 10-cook-torrance-brdf.md            # ★ BRDF math & shaders (1.2)
 ├── 10-deferred-pipeline.md             # Deferred rendering pipeline (1.3)
 ├── 11-multi-material-multi-uv.md       # ★★★ Submesh ranges, UV0/1/2, multi-material (Phase 3+)
 ├── 12-vertex-layout.md                 # ★ Vertex layout factory (1.2)

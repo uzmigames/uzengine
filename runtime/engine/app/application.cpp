@@ -355,7 +355,7 @@ void Application::ParseArgs(int argc, char* argv[]) {
     }
 
     if (!m_config.screenshotPath.empty() && m_config.maxFrames == 0) {
-        m_config.screenshotFrame = std::max(m_config.screenshotFrame, 5u);
+        m_config.screenshotFrame = std::max(m_config.screenshotFrame, 400u);
         m_config.maxFrames = m_config.screenshotFrame + 2;
     }
 

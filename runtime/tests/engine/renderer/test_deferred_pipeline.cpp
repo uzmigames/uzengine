@@ -111,48 +111,62 @@ TEST(PerFrameCB, LightingFields_WriteAndReadBack) {
 // PointLightData — layout
 // ─────────────────────────────────────────────────────────────────────────────
 
-TEST(PointLightData, SizeIs32Bytes) {
-    EXPECT_EQ(sizeof(PointLightData), 32u);
+TEST(PointLightData, SizeIs48Bytes) {
+    EXPECT_EQ(sizeof(PointLightData), 48u);
 }
 
-/// Field offsets must match the HLSL struct (two float4s).
+/// Field offsets must match the HLSL struct (three float4s = 48 bytes).
 ///
-///  0  position  float3  (12 B)
-/// 12  radius    float   ( 4 B)
-/// 16  color     float3  (12 B)
-/// 28  _pad      float   ( 4 B)
+///  0  position        float3  (12 B)
+/// 12  radius          float   ( 4 B)
+/// 16  color           float3  (12 B)
+/// 28  sourceRadius    float   ( 4 B)
+/// 32  falloffExponent float   ( 4 B)
+/// 36  specularScale   float   ( 4 B)
+/// 40  diffuseScale    float   ( 4 B)
+/// 44  flags           uint    ( 4 B)
 TEST(PointLightData, FieldLayout) {
-    EXPECT_EQ(offsetof(PointLightData, position),  0u);
-    EXPECT_EQ(offsetof(PointLightData, radius),   12u);
-    EXPECT_EQ(offsetof(PointLightData, color),    16u);
-    EXPECT_EQ(offsetof(PointLightData, _pad),     28u);
-}
-
-TEST(PointLightData, DefaultPadIsZero) {
-    PointLightData light{};
-    EXPECT_FLOAT_EQ(light._pad, 0.0f);
+    EXPECT_EQ(offsetof(PointLightData, position),        0u);
+    EXPECT_EQ(offsetof(PointLightData, radius),         12u);
+    EXPECT_EQ(offsetof(PointLightData, color),          16u);
+    EXPECT_EQ(offsetof(PointLightData, sourceRadius),   28u);
+    EXPECT_EQ(offsetof(PointLightData, falloffExponent),32u);
+    EXPECT_EQ(offsetof(PointLightData, specularScale),  36u);
+    EXPECT_EQ(offsetof(PointLightData, diffuseScale),   40u);
+    EXPECT_EQ(offsetof(PointLightData, flags),          44u);
+    EXPECT_EQ(sizeof(PointLightData),                   48u);
 }
 
 TEST(PointLightData, WriteAndReadBack) {
     PointLightData light{};
-    light.position = {10.0f, 5.0f, -3.0f};
-    light.radius   = 25.0f;
-    light.color    = {2.0f, 1.8f, 1.6f};
+    light.position       = {10.0f, 5.0f, -3.0f};
+    light.radius         = 25.0f;
+    light.color          = {2.0f, 1.8f, 1.6f};
+    light.sourceRadius   = 0.5f;
+    light.specularScale  = 0.8f;
+    light.diffuseScale   = 1.0f;
+    light.flags          = kLightFlag_InverseSquared;
 
-    EXPECT_FLOAT_EQ(light.position.x,  10.0f);
-    EXPECT_FLOAT_EQ(light.position.z,  -3.0f);
-    EXPECT_FLOAT_EQ(light.radius,      25.0f);
-    EXPECT_FLOAT_EQ(light.color.y,      1.8f);
-    EXPECT_FLOAT_EQ(light._pad,         0.0f); // must remain zero
+    EXPECT_FLOAT_EQ(light.position.x,    10.0f);
+    EXPECT_FLOAT_EQ(light.position.z,    -3.0f);
+    EXPECT_FLOAT_EQ(light.radius,        25.0f);
+    EXPECT_FLOAT_EQ(light.color.y,        1.8f);
+    EXPECT_FLOAT_EQ(light.sourceRadius,   0.5f);
+    EXPECT_EQ(light.flags, kLightFlag_InverseSquared);
 }
 
 TEST(PointLightData, MemcpyRoundTrip) {
     PointLightData src{};
-    src.position = {1.0f, 2.0f, 3.0f};
-    src.radius   = 50.0f;
-    src.color    = {0.5f, 0.6f, 0.7f};
+    src.position       = {1.0f, 2.0f, 3.0f};
+    src.radius         = 50.0f;
+    src.color          = {0.5f, 0.6f, 0.7f};
+    src.sourceRadius   = 1.0f;
+    src.falloffExponent = 8.0f;
+    src.specularScale  = 0.9f;
+    src.diffuseScale   = 1.0f;
+    src.flags          = kLightFlag_InverseSquared;
 
-    uint8_t blob[32];
+    uint8_t blob[48];
     std::memcpy(blob, &src, sizeof(src));
 
     PointLightData dst{};
@@ -164,6 +178,8 @@ TEST(PointLightData, MemcpyRoundTrip) {
     EXPECT_FLOAT_EQ(dst.radius,    50.0f);
     EXPECT_FLOAT_EQ(dst.color.x,    0.5f);
     EXPECT_FLOAT_EQ(dst.color.z,    0.7f);
+    EXPECT_FLOAT_EQ(dst.sourceRadius, 1.0f);
+    EXPECT_EQ(dst.flags, kLightFlag_InverseSquared);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

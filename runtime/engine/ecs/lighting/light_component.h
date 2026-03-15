@@ -33,14 +33,37 @@ namespace uz {
 class LightComponent : public PrimitiveComponent {
 public:
     /// Linear-space RGB color of the emitted light. Default: white (1, 1, 1).
-    ///
     /// Values outside [0, 1] are physically valid for HDR lights.
     Vec3 color{1.f, 1.f, 1.f};
 
     /// Intensity multiplier applied to the light color. Default: 1.0.
-    ///
     /// Units are lux for directional lights, candela for point/spot lights.
     float intensity = 1.0f;
+
+    /// When true, `temperature` is used to tint the light color via blackbody radiation.
+    /// UE5: bUseTemperature. Default: false.
+    bool useTemperature = false;
+
+    /// Blackbody color temperature in Kelvin. Only used when `useTemperature` is true.
+    /// 3000K = warm/candle, 6500K = daylight white (D65), 10000K = cool/blue.
+    /// UE5 default: 6500.0.
+    float temperature = 6500.f;
+
+    /// Non-physical multiplier for specular highlights from this light. Default: 1.0.
+    /// 0 = no specular, 1 = normal. UE5: SpecularScale.
+    float specularScale = 1.0f;
+
+    /// Non-physical multiplier for diffuse contribution from this light. Default: 1.0.
+    /// Useful for artistic control. Not in UE5 but common in other engines.
+    float diffuseScale = 1.0f;
+
+    /// Multiplier for volumetric scattering contribution. Default: 1.0.
+    /// UE5: VolumetricScatteringIntensity.
+    float volumetricScatteringIntensity = 1.0f;
+
+    /// Multiplier for indirect/GI contribution. Default: 1.0.
+    /// UE5: IndirectLightingIntensity.
+    float indirectLightingIntensity = 1.0f;
 
 protected:
     /// Writes `color` and `intensity` into the proxy's `light` union.
@@ -74,6 +97,47 @@ protected:
 /// ```
 class DirectionalLightComponent : public LightComponent {
 public:
+    /// When true, this directional light drives the SkyAtmosphereComponent sun.
+    /// Direction, color, and intensity are passed to the atmosphere rendering.
+    /// UE5: bAtmosphereSunLight. Default: false.
+    bool atmosphereSunLight = false;
+
+    /// Which atmosphere sun slot this light occupies (0=primary sun, 1=moon).
+    /// UE5: AtmosphereSunLightIndex. Default: 0.
+    int atmosphereSunLightIndex = 0;
+
+    /// Angular diameter of the sun disk in degrees (visual size in the sky).
+    /// UE5: LightSourceAngle. Default: 0.5357 deg (≈ Earth sun).
+    float lightSourceAngle = 0.5357f;
+
+    /// Soft edge angle of the sun disk in degrees.
+    /// UE5: LightSourceSoftAngle. Default: 0.0.
+    float lightSourceSoftAngle = 0.0f;
+
+    /// Number of CSM cascades (0 = no shadows, 1-4 = cascade count).
+    /// UE5: DynamicShadowCascades. Default: 4.
+    int shadowCascades = 4;
+
+    /// Cascade distribution exponent. 1.0 = linear split, >1 = more near camera.
+    /// UE5: CascadeDistributionExponent. Default: 2.0.
+    float cascadeDistributionExponent = 2.0f;
+
+    /// Cascade transition fade fraction (0-1). Smooth blend between cascades.
+    /// UE5: CascadeTransitionFraction. Default: 0.1.
+    float cascadeTransitionFraction = 0.1f;
+
+    /// Maximum CSM shadow distance in world units. 0 = engine default.
+    /// UE5: DynamicShadowDistanceMovableLight. Default: 0.
+    float dynamicShadowDistance = 0.f;
+
+    /// Screen-space contact shadow ray length (0 = disabled).
+    /// UE5: ContactShadowLength. Default: 0.
+    float contactShadowLength = 0.f;
+
+    /// Tint color applied to the sun disk in the sky atmosphere.
+    /// UE5: AtmosphereSunDiskColorScale. Default: (1,1,1).
+    Vec3 atmosphereSunDiskColorScale = {1.f, 1.f, 1.f};
+
     /// Returns the world-space unit direction vector of this light.
     ///
     /// Computed by rotating `Vec3::Forward()` by the component's world
@@ -107,10 +171,31 @@ protected:
 /// taken from the component's world transform.
 class PointLightComponent : public LightComponent {
 public:
-    /// Effective attenuation radius in world units.
-    ///
+    /// Effective attenuation radius in world units (meters).
     /// Light contribution becomes zero at or beyond this distance.
+    /// UE5: AttenuationRadius. Default: 10.0 (1000 cm in UE5).
     float range = 10.0f;
+
+    /// Use physically-correct inverse square falloff. Default: true.
+    /// When false, uses `lightFalloffExponent` instead.
+    /// UE5: bUseInverseSquaredFalloff. Default: true.
+    bool useInverseSquaredFalloff = true;
+
+    /// Custom falloff exponent when inverse squared is disabled.
+    /// UE5: LightFalloffExponent. Default: 8.0.
+    float lightFalloffExponent = 8.0f;
+
+    /// Sphere radius for area light approximation (representative point technique).
+    /// 0 = point light (no area). UE5: SourceRadius. Default: 0.
+    float sourceRadius = 0.f;
+
+    /// Soft edge sphere radius for smoother shadow penumbra.
+    /// UE5: SoftSourceRadius. Default: 0.
+    float softSourceRadius = 0.f;
+
+    /// Tube/capsule length for elongated area light approximation.
+    /// 0 = sphere only. UE5: SourceLength. Default: 0.
+    float sourceLength = 0.f;
 
 protected:
     /// Returns `RenderProxyType::PointLight`.
@@ -135,21 +220,15 @@ protected:
 /// The light direction follows the component's rotation (same convention as
 /// `DirectionalLightComponent`). Intensity transitions from full inside
 /// `innerAngle` to zero at `outerAngle`.
-class SpotLightComponent : public LightComponent {
+class SpotLightComponent : public PointLightComponent {
 public:
-    /// Effective attenuation radius in world units.
-    float range = 10.0f;
+    /// Inner cone half-angle in **degrees**. Full intensity inside this cone.
+    /// UE5: InnerConeAngle. Default: 30.0 deg. Range: [0, outerAngleDeg].
+    float innerAngleDeg = 30.0f;
 
-    /// Inner cone half-angle in radians.
-    ///
-    /// Within this angle from the light axis the intensity is at full `intensity`.
-    float innerAngle = 0.3f;
-
-    /// Outer cone half-angle in radians.
-    ///
-    /// Beyond this angle from the light axis the intensity drops to zero.
-    /// Must be >= `innerAngle`.
-    float outerAngle = 0.5f;
+    /// Outer cone half-angle in **degrees**. Zero intensity beyond this angle.
+    /// UE5: OuterConeAngle. Default: 45.0 deg. Range: [innerAngleDeg, 90].
+    float outerAngleDeg = 45.0f;
 
 protected:
     /// Returns `RenderProxyType::SpotLight`.

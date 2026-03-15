@@ -646,8 +646,8 @@ cbuffer MyBuffer : register(b0) {
 
 - [§05 Shader Pipeline](../05-shader-pipeline/README.md) — VFS, caching, hot reload
 - [§03 RHI](../03-rhi/) — GPU backend specifics
-- [08-forward-pbr-pass.md](08-forward-pbr-pass.md) — Render pass implementation
-- [09-cook-torrance-brdf.md](09-cook-torrance-brdf.md) — BRDF shader functions
+- [09-forward-pbr-pass.md](09-forward-pbr-pass.md) — Render pass implementation
+- [10-cook-torrance-brdf.md](10-cook-torrance-brdf.md) — BRDF shader functions
 
 ## Appendix: Full Compilation Matrix
 
