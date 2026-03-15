@@ -488,7 +488,7 @@ Large files with mixed responsibilities degrade LLM comprehension. Smaller, focu
 ### Units
 | Category | Convention | Notes |
 |----------|-----------|-------|
-| **Distances** | **Meters** | UE5 uses centimeters — divide by 100 when porting |
+| **Distances** | **Centimeters** | UE5 parity: 1 unit = 1 cm. No conversion needed when porting UE5 values |
 | **Angles (ECS components)** | **Degrees** | SpotLight cones, FOV, sun disk angle — all in degrees |
 | **Angles (GPU/shaders)** | **Radians** | Convert deg→rad in proxy sync / CB upload |
 | **Atmosphere distances** | **Kilometers** | SkyAtmosphereComponent follows UE5 km convention |
@@ -499,7 +499,8 @@ Large files with mixed responsibilities degrade LLM comprehension. Smaller, focu
 ### Rules
 - Component stores degrees → `OnProxyCreated()` converts to radians for the proxy
 - Shaders NEVER convert units — they receive pre-converted values from CBs
-- When porting UE5 default values: distances ÷ 100, angles keep as degrees
+- UE5 values port directly — no distance conversion needed (both use cm)
+- Sky atmosphere: world cm → km via `WORLD_TO_KM = 0.00001f` in shader
 
 ## ⚠️ CRITICAL: Engine Systems — Use Engine APIs, Not Raw Libraries
 

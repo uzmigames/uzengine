@@ -110,7 +110,7 @@ Then the system MUST return a JWT token
 
 | Category | Convention | Notes |
 |----------|-----------|-------|
-| **Distances** | **Meters** | UE5 uses centimeters — divide by 100 when porting values |
+| **Distances** | **Centimeters** | UE5 parity: 1 unit = 1 cm. UE5 values port directly |
 | **Angles (components)** | **Degrees** | All ECS component angle params stored in degrees |
 | **Angles (GPU/shader)** | **Radians** | Convert deg→rad in proxy sync / CB upload, never in shaders |
 | **Coordinate system** | **Z-up, X-forward** | Left-handed. UE5 is also Z-up X-forward. Godot is Y-up |
