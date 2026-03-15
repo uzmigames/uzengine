@@ -279,6 +279,38 @@ ctx.camera:play_shake({
 })
 ```
 
+## Debug Visualization
+
+### Debug System (Phase 2+)
+
+```lua
+-- Set debug view mode for rendering diagnostics
+ctx.debug:set_view_mode("albedo")   -- Visualize individual channels
+
+-- Get current debug view mode
+local current_mode = ctx.debug:get_view_mode()
+print("Current debug mode:", current_mode)
+
+-- Available modes (13 total):
+-- - "lit"           : Normal PBR rendering (default, no visualization)
+-- - "albedo"        : Base color texture without lighting
+-- - "worldnormal"   : Surface normals (decoded, mapped to RGB)
+-- - "metallic"      : Metallic parameter as grayscale
+-- - "roughness"     : Roughness parameter as grayscale
+-- - "ao"            : Ambient occlusion as grayscale
+-- - "depth"         : Linearized depth (black=near, white=far)
+-- - "worldposition" : Absolute world coordinates (false-color)
+-- - "lighting"      : Direct lighting contribution (Lo) without albedo
+-- - "shadows"       : Shadow factor visualization (0=shadowed, 1=lit)
+-- - "unlit"         : Albedo only (alias for "albedo")
+-- - "wireframe"     : Geometry edges on black background
+-- - "overview"      : Composite 4×2 grid of all major channels
+```
+
+**Keyboard Shortcuts**: F1–F11 toggle modes during interactive development.
+**CLI**: Use `--view-mode <name>` when launching for headless/automated testing.
+**Use Case**: Rapid iteration on rendering, material bugs, and lighting issues without shader recompilation.
+
 ## UI
 
 ### UI System (Phase 3+)
