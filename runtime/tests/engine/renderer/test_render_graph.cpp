@@ -131,7 +131,7 @@ public:
     void CopyBufferToTexture(uz::RHIBufferHandle, uint64_t, uint32_t,
                              uz::RHITextureHandle, uint32_t, uint32_t) override {}
     void CopyTextureToBuffer(uz::RHITextureHandle, uint32_t,
-                             uz::RHIBufferHandle, uint64_t, uint32_t) override {}
+                             uz::RHIBufferHandle, uint64_t, uint32_t, uint32_t) override {}
     void BeginRenderPass(const uz::RHIRenderPassDesc&) override {}
     void EndRenderPass() override {}
 };

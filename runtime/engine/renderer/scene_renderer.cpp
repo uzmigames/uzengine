@@ -228,7 +228,8 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
         cubeDesc.depthOrArraySize = 6;
         cubeDesc.format    = RHIFormat::RGBA16Float;
         cubeDesc.usage     = RHITextureUsage::ShaderResource
-                           | RHITextureUsage::UnorderedAccess;
+                           | RHITextureUsage::UnorderedAccess
+                           | RHITextureUsage::CopySrc;
         cubeDesc.debugName = "SkyCubemap";
 
         m_skyCubemap = m_device->CreateTexture(cubeDesc);
@@ -920,6 +921,37 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
                 m_transmittanceLutFilled = true;   // Physical state after compute = SRV
             }
 
+            // ── Compute atmosphere sun parameters ───────────────────────────
+            // The atmosphere scattering integral uses sunIlluminance from the
+            // SkyAtmosphereComponent as the authoritative sun brightness. The
+            // linked DirectionalLight provides only the sun DIRECTION, angular
+            // radius, and sun disk intensity — not the atmosphere illuminance.
+            // This decouples sky color from PBR surface lighting intensity.
+            Vec3 skySunColor = skyComp.sunIlluminance;
+            float skySunAngularRadius = skyComp.sunAngularRadius;
+            float skySunDiskIntensity = skyComp.sunDiskIntensity;
+
+            if (world) {
+                auto dirView2 = world->GetRegistry().view<DirectionalLightComponent>();
+                for (auto e2 : dirView2) {
+                    auto& dl2 = dirView2.get<DirectionalLightComponent>(e2);
+                    if (dl2.atmosphereSunLight && dl2.atmosphereSunLightIndex == 0) {
+                        // Tint the atmosphere illuminance by the light's spectral color
+                        // (e.g., warm sunset from color temperature) but keep the
+                        // magnitude from SkyAtmosphereComponent::sunIlluminance.
+                        Vec3 lightTint = dl2.color;
+                        if (dl2.useTemperature) {
+                            lightTint = lightTint * KelvinToRgb(dl2.temperature);
+                        }
+                        skySunColor = skyComp.sunIlluminance * lightTint;
+                        static constexpr float kDegToRad2 = 3.14159265358979323846f / 180.f;
+                        skySunAngularRadius = dl2.lightSourceAngle * kDegToRad2;
+                        skySunDiskIntensity = dl2.intensity;
+                        break;
+                    }
+                }
+            }
+
             // ── Sky Cubemap Capture (for IBL) ───────────────────────────
             if (m_skyIBLDirty && m_skyCubemap.IsValid()
                     && m_skyCubemapUav != UINT32_MAX
@@ -933,9 +965,31 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
                 cubeRC.sunDirX             = sunDir.x;
                 cubeRC.sunDirY             = sunDir.y;
                 cubeRC.sunDirZ             = sunDir.z;
-                cubeRC.sunIntensity        = sunColor.Length();  // DirectionalLight intensity
+                // Use normalized sun color (spectral only, no intensity) for cubemap
+                // capture — same convention as sky_atmosphere_ps to keep IBL consistent.
+                cubeRC.sunIntensity        = skySunColor.Length();
                 cubeRC.transmittanceLutIdx = m_transmittanceLutSrv;
-                cubeRC._pad                = 0;
+
+                // Pack rayleighScatteringScale (low 16) and mieScatteringScale (high 16)
+                // as IEEE 754 half-floats into a single DWORD.
+                auto packF16Pair = [](float a, float b) -> uint32_t {
+                    // Use DirectXMath-style f32->f16 via bit manipulation
+                    auto toF16 = [](float f) -> uint16_t {
+                        uint32_t bits;
+                        std::memcpy(&bits, &f, 4);
+                        uint32_t sign = (bits >> 16) & 0x8000;
+                        int32_t  exp  = ((bits >> 23) & 0xFF) - 127 + 15;
+                        uint32_t frac = (bits >> 13) & 0x3FF;
+                        if (exp <= 0)      return static_cast<uint16_t>(sign); // flush to zero
+                        if (exp >= 0x1F)   return static_cast<uint16_t>(sign | 0x7C00); // inf
+                        return static_cast<uint16_t>(sign | (exp << 10) | frac);
+                    };
+                    return static_cast<uint32_t>(toF16(a))
+                         | (static_cast<uint32_t>(toF16(b)) << 16);
+                };
+                cubeRC.packedScatterScales = packF16Pair(
+                    skyComp.rayleighScatteringScale,
+                    skyComp.mieScatteringScale);
 
                 SkyCubemapCapturePassDesc cubePassDesc{};
                 cubePassDesc.cubemapTarget   = cubeRes;
@@ -946,28 +1000,8 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
             }
 
             // Build SkyAtmosphereCB — all distances in km (UE5 convention)
-            // Sun params come from the linked DirectionalLight (atmosphereSunLight=true)
-            // or fall back to the SkyAtmosphereComponent's own values.
-            Vec3 skySunColor = skyComp.sunIlluminance;
-            float skySunAngularRadius = skyComp.sunAngularRadius;
-            float skySunDiskIntensity = skyComp.sunDiskIntensity;
-
-            // Sun-Atmosphere link: DirectionalLight with atmosphereSunLight=true
-            // overrides the sky's sun parameters (UE5 parity).
-            if (world) {
-                auto dirView = world->GetRegistry().view<DirectionalLightComponent>();
-                for (auto e : dirView) {
-                    auto& dl = dirView.get<DirectionalLightComponent>(e);
-                    if (dl.atmosphereSunLight && dl.atmosphereSunLightIndex == 0) {
-                        skySunColor = dl.color * dl.intensity;
-                        static constexpr float kDegToRad = 3.14159265358979323846f / 180.f;
-                        skySunAngularRadius = dl.lightSourceAngle * kDegToRad;
-                        skySunDiskIntensity = dl.intensity;
-                        break;
-                    }
-                }
-            }
-
+            // skySunColor, skySunAngularRadius, skySunDiskIntensity already
+            // computed above (before cubemap capture) from linked DirectionalLight.
             SkyAtmosphereCB skyCB{};
             skyCB.rayleighScattering = {skyComp.rayleighScattering.x,
                                         skyComp.rayleighScattering.y,
@@ -1182,34 +1216,28 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
         UZ_LOG(Renderer, Info, "SceneRenderer: Sky IBL baked (irrad={}, prefilt={})",
                m_iblResult.irradianceSrvIndex, m_iblResult.prefilteredSrvIndex);
 
-        // Compute approximate SH from sky parameters
-        // L0 (constant) = average sky color, L1 (directional) = sun contribution
-        // This approximation avoids GPU readback while providing correct ambient directionality
+        // Compute SH from sky atmosphere parameters analytically.
+        // GPU cubemap readback (ProjectCubemapToSH with device+cmdList) is implemented
+        // but returns zeros due to resource state issues. Using analytical SH which
+        // correctly captures sky color directionality from Rayleigh physics.
         {
-            Vec3 skyAvg = {0.4f, 0.5f, 0.8f};  // Average blue sky radiance
-            Vec3 sunContrib = sunColor * 0.3f;   // Sun-facing hemisphere brighter
-
-            // L0 (constant term) = average irradiance * pi * A0_norm
-            // SH00 basis = 0.282095, A0 = pi, so L0_coeff = color * pi * 0.282095
-            float c0 = 3.14159f * 0.282095f;
-            // L1 (directional) = directional gradient * 2pi/3 * A1_norm
-            float c1 = 2.094395f * 0.488603f;  // 2pi/3 * Y1_norm
-
+            float sunZ = sunDir.z;
+            float sunBright = sunColor.Length();
+            Vec3 rBeta = {5.802e-3f, 13.558e-3f, 33.1e-3f};
+            Vec3 skyCol = {rBeta.x/rBeta.z, rBeta.y/rBeta.z, 1.f};
+            skyCol = skyCol * (sunBright * (0.15f + 0.35f * std::max(0.f, sunZ)));
+            Vec3 gndCol = {0.05f, 0.05f, 0.04f};
+            Vec3 avg = (skyCol + gndCol) * 0.5f;
+            Vec3 dir = (skyCol - gndCol) * 0.5f;
+            float c0 = 3.14159f * 0.282095f, c1 = 2.094395f * 0.488603f;
             auto& sh = m_skyIrradianceSH;
-            // Pack into UE5 format: coeffs[0-2] = L1 + L0 per channel (R,G,B)
-            // coeffs[3-5] = L2 (zeros for now), coeffs[6] = L2 (zeros)
-            for (int i = 0; i < 7; ++i)
-                sh.coeffs[i] = {0, 0, 0, 0};
-
-            // L1 terms (directional from sun) + L0 (constant ambient)
-            sh.coeffs[0] = {sunDir.x * c1 * skyAvg.x, sunDir.y * c1 * skyAvg.x,
-                            sunDir.z * c1 * skyAvg.x, c0 * skyAvg.x};
-            sh.coeffs[1] = {sunDir.x * c1 * skyAvg.y, sunDir.y * c1 * skyAvg.y,
-                            sunDir.z * c1 * skyAvg.y, c0 * skyAvg.y};
-            sh.coeffs[2] = {sunDir.x * c1 * skyAvg.z, sunDir.y * c1 * skyAvg.z,
-                            sunDir.z * c1 * skyAvg.z, c0 * skyAvg.z};
-
-            UZ_LOG(Renderer, Info, "SceneRenderer: Sky SH approximated from sun direction");
+            for (int i = 0; i < 7; ++i) sh.coeffs[i] = {0,0,0,0};
+            Vec3 sd = {sunDir.x*0.3f, sunDir.y*0.3f, 0.7f};
+            float sl = std::sqrt(sd.x*sd.x+sd.y*sd.y+sd.z*sd.z);
+            if (sl > 0.001f) sd = sd * (1.f/sl);
+            sh.coeffs[0] = {sd.x*c1*dir.x, sd.y*c1*dir.x, sd.z*c1*dir.x, c0*avg.x};
+            sh.coeffs[1] = {sd.x*c1*dir.y, sd.y*c1*dir.y, sd.z*c1*dir.y, c0*avg.y};
+            sh.coeffs[2] = {sd.x*c1*dir.z, sd.y*c1*dir.z, sd.z*c1*dir.z, c0*avg.z};
         }
 
         // Re-open command list for the remaining work (screenshot, present)

@@ -710,7 +710,7 @@ static DXGI_FORMAT ToDXGIFormat(RHIFormat format) {
 
 void DX12CommandList::CopyTextureToBuffer(RHITextureHandle srcTexture, uint32_t mipLevel,
                                            RHIBufferHandle dstBuffer, uint64_t dstOffset,
-                                           uint32_t dstRowPitch) {
+                                           uint32_t dstRowPitch, uint32_t arraySlice) {
     UZ_PROFILE_FUNCTION();
     if (!srcTexture.IsValid() || !dstBuffer.IsValid()) {
         UZ_LOG(RHI, Warning, "CopyTextureToBuffer — invalid source or destination handle");
@@ -727,10 +727,14 @@ void DX12CommandList::CopyTextureToBuffer(RHITextureHandle srcTexture, uint32_t 
     const uint32_t mipWidth  = std::max(1u, tex->desc.width >> mipLevel);
     const uint32_t mipHeight = std::max(1u, tex->desc.height >> mipLevel);
 
+    // DX12 subresource index = mipLevel + arraySlice * mipLevels
+    const uint32_t mipLevels = std::max(static_cast<uint16_t>(1), tex->desc.mipLevels);
+    const uint32_t subresourceIndex = mipLevel + arraySlice * mipLevels;
+
     D3D12_TEXTURE_COPY_LOCATION srcLoc = {};
     srcLoc.pResource = tex->resource;
     srcLoc.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-    srcLoc.SubresourceIndex = mipLevel;
+    srcLoc.SubresourceIndex = subresourceIndex;
 
     D3D12_TEXTURE_COPY_LOCATION dstLoc = {};
     dstLoc.pResource = buf->resource;

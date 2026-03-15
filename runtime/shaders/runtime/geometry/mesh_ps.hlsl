@@ -22,6 +22,7 @@
 
 #include "../include/pbr_common.hlsli"
 #include "../include/ibl.hlsli"
+#include "../include/sh_irradiance.hlsli"
 
 struct PSInput {
     float4 positionCS : SV_Position;
@@ -40,7 +41,7 @@ ConstantBuffer<PushConstants> push : register(b0);
 #endif
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Per-Frame Constant Buffer — Multi-Light Layout (768 bytes = 3 x 256)
+// Per-Frame Constant Buffer — Multi-Light Layout (1024 bytes = 4 x 256)
 // ─────────────────────────────────────────────────────────────────────────────
 
 // LightData struct and MAX_LIGHTS are defined here (before cbuffer) because
@@ -49,24 +50,36 @@ ConstantBuffer<PushConstants> push : register(b0);
 
 /// Per-frame CB at b1 — must match C++ PerFrameMultiLightCB struct exactly.
 ///
-/// Contains camera transforms, time parameters, ambient color, and an array
-/// of up to MAX_LIGHTS (8) dynamic lights. Total size: 768 bytes (3 x 256
-/// byte aligned) to satisfy cbuffer packing rules.
+/// Contains camera transforms, time parameters, ambient color, an array
+/// of up to MAX_LIGHTS (8) dynamic lights, IBL descriptor indices,
+/// SkyLight parameters, and L2 SH coefficients for diffuse ambient.
+/// Total size: 1024 bytes (4 x 256 byte aligned) to satisfy cbuffer packing rules.
 cbuffer PerFrameCB : register(b1) {
-    row_major float4x4 viewProj;     // camera view-projection matrix
-    float4   cameraPos;              // xyz = world position, w = unused
-    float4   timeParams;             // x = totalTime, y = deltaTime, z = frameCount, w = unused
-    float4   ambientColor;           // xyz = ambient radiance, w = unused
-    uint     lightCount;             // number of active lights [0, MAX_LIGHTS]
-    uint     _pad0a;                 // pad to 16-byte boundary
-    uint     _pad0b;
-    uint     _pad0c;
-    LightData lights[MAX_LIGHTS];    // dynamic light array (64 bytes each = 512 bytes)
-    uint     irradianceSrvIndex;    // SRV index for irradiance cubemap (0xFFFFFFFF = no IBL)
-    uint     prefilteredSrvIndex;   // SRV index for prefiltered specular cubemap
-    uint     brdfLutSrvIndex;       // SRV index for BRDF LUT
-    uint     prefilteredMipLevels;  // mip count for prefiltered cubemap LOD
-    float4   _pad1[7];             // pad to 768 bytes total (16 + 112 = 128 bytes)
+    row_major float4x4 viewProj;     // camera view-projection matrix         [  0.. 63]
+    float4   cameraPos;              // xyz = world position, w = unused       [ 64.. 79]
+    float4   timeParams;             // x = totalTime, y = deltaTime, ...      [ 80.. 95]
+    float4   ambientColor;           // xyz = ambient radiance, w = unused     [ 96..111]
+    uint     lightCount;             // number of active lights [0, MAX_LIGHTS] [112..115]
+    uint     _pad0a;                 // pad to 16-byte boundary                [116..119]
+    uint     _pad0b;                 //                                         [120..123]
+    uint     _pad0c;                 //                                         [124..127]
+    LightData lights[MAX_LIGHTS];    // dynamic light array (64B each = 512B)  [128..639]
+    uint     irradianceSrvIndex;     // SRV index for irradiance cubemap       [640..643]
+    uint     prefilteredSrvIndex;    // SRV index for prefiltered specular     [644..647]
+    uint     brdfLutSrvIndex;        // SRV index for BRDF LUT                [648..651]
+    uint     prefilteredMipLevels;   // mip count for prefiltered cubemap LOD  [652..655]
+    float    skyLightIntensity;      // multiplier for IBL ambient (SkyLight)  [656..659]
+    float    skyLightColorR;         // sky light tint R                       [660..663]
+    float    skyLightColorG;         // sky light tint G                       [664..667]
+    float    skyLightColorB;         // sky light tint B                       [668..671]
+    float    skyLightMinAmbient;     // minimum ambient floor (0-1)            [672..675]
+    float    _pad1[3];              // align SH array to 16-byte boundary      [676..687]
+
+    // ── Sky Irradiance SH (L2, 7 float4 = 112 bytes) ──
+    // Matches UE5 SkyIrradianceEnvironmentMap[0..6].
+    float4   skyIrradianceSH[7];     // L2 SH for sky diffuse irradiance       [688..799]
+
+    float    _pad2[56];             // pad to 1024 bytes (4 x 256)             [800..1023]
 };
 
 // Per-object CB at b2 — scalars first to avoid SPIRV std140 offset corruption
@@ -208,47 +221,73 @@ float4 main(PSInput input) : SV_Target {
         lightCount, lights,
         cameraPos.xyz, cascadeCount);
 
-    // ── Ambient / IBL ──
+    // ── Ambient / IBL (SH9 diffuse + split-sum specular) ──
+    // Matches deferred_lighting_ps.hlsl ambient quality: L2 SH for diffuse,
+    // prefiltered cubemap + BRDF LUT for specular, skyLight tint/intensity.
     float3 ambient;
-    if (irradianceSrvIndex != 0xFFFFFFFF && brdfLutSrvIndex != 0xFFFFFFFF) {
-        // Diffuse IBL: sample irradiance cubemap at surface normal
-        float3 irradiance;
-        float3 kD = (1.0f - FresnelSchlickRoughness(NdotV, F0, roughness)) * (1.0f - metallic);
 
 #ifdef UZ_BINDLESS
-        TextureCube<float3> irradianceMap = ResourceDescriptorHeap[irradianceSrvIndex];
-        irradiance = irradianceMap.Sample(linearSampler, N).rgb;
-#else
-        irradiance = irradianceCubemap.Sample(linearSampler, N).rgb;
-#endif
+    if (irradianceSrvIndex != 0xFFFFFFFF) {
+        // Diffuse IBL via L2 Spherical Harmonics (UE5 parity)
+        // SH is much higher quality than 32x32 cubemap sampling
+        float3 irradiance = GetSkySHDiffuse(N, skyIrradianceSH);
+
+        // Fresnel: metals reflect more at grazing, dielectrics diffuse more
+        float3 F = FresnelSchlickRoughness(NdotV, F0, roughness);
+        float3 kD = (1.0f - F) * (1.0f - metallic);
+
         float3 diffuseIBL = kD * albedo * irradiance;
 
-        // Specular IBL: sample prefiltered cubemap at reflection direction
+        // Specular IBL — sample prefiltered environment map along reflection
         float3 R = reflect(-V, N);
+        TextureCube<float4> prefilteredMap = ResourceDescriptorHeap[prefilteredSrvIndex];
         float mipLevel = roughness * float(prefilteredMipLevels - 1);
-        float3 prefilteredColor;
+        float3 prefilteredColor = prefilteredMap.SampleLevel(linearSampler, R, mipLevel).rgb;
 
-#ifdef UZ_BINDLESS
-        TextureCube<float3> prefilteredMap = ResourceDescriptorHeap[prefilteredSrvIndex];
-        prefilteredColor = prefilteredMap.SampleLevel(linearSampler, R, mipLevel).rgb;
-#else
-        prefilteredColor = prefilteredCubemap.SampleLevel(linearSampler, R, mipLevel).rgb;
-#endif
-
-        // BRDF LUT: split-sum scale and bias
-        float2 envBRDF;
-#ifdef UZ_BINDLESS
+        // BRDF LUT: pre-integrated scale and bias terms for split-sum approximation
         Texture2D<float2> brdfLut = ResourceDescriptorHeap[brdfLutSrvIndex];
-        envBRDF = brdfLut.Sample(linearSampler, float2(NdotV, roughness)).rg;
-#else
-        envBRDF = brdfLutTexture.Sample(linearSampler, float2(NdotV, roughness)).rg;
-#endif
-        float3 specularIBL = prefilteredColor * (F0 * envBRDF.x + envBRDF.y);
+        float2 envBRDF = brdfLut.SampleLevel(linearSampler, float2(NdotV, roughness), 0);
+        float3 specularIBL = prefilteredColor * (F * envBRDF.x + envBRDF.y);
 
-        ambient = (diffuseIBL + specularIBL) * ao;
-    } else {
-        // Fallback: constant ambient (no SkyLight / IBL)
-        ambient = ambientColor.xyz * albedo * ao;
+        float3 skyLightTint = float3(skyLightColorR, skyLightColorG, skyLightColorB);
+        ambient = (diffuseIBL + specularIBL) * ao * skyLightIntensity * skyLightTint;
+    } else
+#endif
+    {
+        // SM5 fallback or no IBL: irradiance cubemap + specular IBL
+        float3 irradiance;
+        float3 F = FresnelSchlickRoughness(NdotV, F0, roughness);
+        float3 kD = (1.0f - F) * (1.0f - metallic);
+
+#ifndef UZ_BINDLESS
+        if (irradianceSrvIndex != 0xFFFFFFFF) {
+            irradiance = irradianceCubemap.Sample(linearSampler, N).rgb;
+            float3 diffuseIBL = kD * albedo * irradiance;
+
+            // Specular IBL
+            float3 R = reflect(-V, N);
+            float mipLevel = roughness * float(prefilteredMipLevels - 1);
+            float3 prefilteredColor = prefilteredCubemap.SampleLevel(linearSampler, R, mipLevel).rgb;
+
+            float2 envBRDF = brdfLutTexture.Sample(linearSampler, float2(NdotV, roughness)).rg;
+            float3 specularIBL = prefilteredColor * (F0 * envBRDF.x + envBRDF.y);
+
+            float3 skyLightTint = float3(skyLightColorR, skyLightColorG, skyLightColorB);
+            ambient = (diffuseIBL + specularIBL) * ao * skyLightIntensity * skyLightTint;
+        } else
+#endif
+        {
+            // Fallback: constant ambient (no IBL data available)
+            float3 skyLightTint = float3(skyLightColorR, skyLightColorG, skyLightColorB);
+            ambient = ambientColor.xyz * albedo * ao * skyLightIntensity * skyLightTint;
+        }
+    }
+
+    // ── Minimum ambient floor (SkyLight minOcclusion equivalent) ──
+    // Ensures shadowed surfaces never go fully black — adds a minimum fill light.
+    if (skyLightMinAmbient > 0.0f) {
+        float3 minFloor = albedo * skyLightMinAmbient;
+        ambient = max(ambient, minFloor);
     }
 
     // ── Combine ──

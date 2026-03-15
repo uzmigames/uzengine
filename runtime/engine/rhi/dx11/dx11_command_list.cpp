@@ -481,7 +481,7 @@ void DX11CommandList::CopyBufferToTexture(RHIBufferHandle srcBuffer, uint64_t sr
 
 void DX11CommandList::CopyTextureToBuffer(RHITextureHandle srcTexture, uint32_t mipLevel,
                                            RHIBufferHandle dstBuffer, uint64_t dstOffset,
-                                           uint32_t dstRowPitch) {
+                                           uint32_t dstRowPitch, uint32_t arraySlice) {
     UZ_PROFILE_FUNCTION();
     if (!m_ctx || !srcTexture.IsValid() || !dstBuffer.IsValid()) return;
 
@@ -523,7 +523,10 @@ void DX11CommandList::CopyTextureToBuffer(RHITextureHandle srcTexture, uint32_t 
     }
 
     // Copy the source subresource to staging (immediate context — executes now)
-    m_ctx->CopyResource(staging, tex->texture);
+    // DX11 subresource index = mipLevel + arraySlice * mipLevels
+    const uint32_t srcSubresource = D3D11CalcSubresource(mipLevel, arraySlice, srcDesc.MipLevels);
+    m_ctx->CopySubresourceRegion(staging, 0, 0, 0, 0,
+                                 tex->texture, srcSubresource, nullptr);
 
     // Map the staging texture for reading
     D3D11_MAPPED_SUBRESOURCE stagingMapped = {};

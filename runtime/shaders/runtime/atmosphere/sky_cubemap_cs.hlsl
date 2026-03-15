@@ -39,7 +39,7 @@ cbuffer SkyCubemapParams : register(b0) {
     float sunDirZ;              // DWORD 4: sun direction Z
     float sunIntensity;         // DWORD 5: sun illuminance (uniform RGB, from DirectionalLight)
     uint  transmittanceLutIdx;  // DWORD 6: bindless SRV index for transmittance LUT
-    uint  _pad;                 // DWORD 7: unused
+    uint  packedScatterScales;  // DWORD 7: packed f16 pair — low16 = rayleighScale, high16 = mieScale
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -277,6 +277,18 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     float  phaseR   = RayleighPhase(cosTheta);
     float  phaseM   = MiePhase(cosTheta, MIE_ANISOTROPY);
 
+    // ── Unpack artistic scattering scale factors from packed f16 pair ───────
+    // low 16 bits = rayleighScatteringScale, high 16 bits = mieScatteringScale
+    float rayleighScale = f16tof32(packedScatterScales & 0xFFFFu);
+    float mieScale      = f16tof32(packedScatterScales >> 16u);
+    // Guard against zero scales (default = 1.0 if not set)
+    rayleighScale = (rayleighScale > 0.0f) ? rayleighScale : 1.0f;
+    mieScale      = (mieScale > 0.0f)      ? mieScale      : 1.0f;
+
+    // Apply artistic scales to base scattering coefficients
+    float3 scaledRayleighBeta = RAYLEIGH_BETA * rayleighScale;
+    float  scaledMieBeta      = MIE_BETA * mieScale;
+
     // ── Bindless transmittance LUT ──────────────────────────────────────────
     Texture2D<float4> tLut = ResourceDescriptorHeap[transmittanceLutIdx];
 
@@ -302,8 +314,9 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
         float densM = DensityAtAltitude(altKm, MIE_SCALE_H);
 
         // Total extinction (Rayleigh + Mie with 1.11x extinction ratio)
-        float3 extR     = RAYLEIGH_BETA * densR;
-        float3 extM     = MIE_BETA * MIE_EXTINCTION_RATIO * densM;
+        // Uses artistically scaled coefficients for consistent sky appearance
+        float3 extR     = scaledRayleighBeta * densR;
+        float3 extM     = scaledMieBeta * MIE_EXTINCTION_RATIO * densM;
         float3 extTotal = extR + extM;
 
         // Transmittance over this single step
@@ -315,7 +328,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
 
         // Scattering weighted by phase functions
         float3 scatterR = extR * phaseR;
-        float3 scatterM = MIE_BETA * densM * phaseM;
+        float3 scatterM = scaledMieBeta * densM * phaseM;
         float3 scatter  = scatterR + scatterM;
 
         // Analytical in-scattering integral over the step:

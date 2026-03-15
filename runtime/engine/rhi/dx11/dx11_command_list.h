@@ -94,7 +94,7 @@ public:
                              uint32_t mipLevel, uint32_t arraySlice) override;
     void CopyTextureToBuffer(RHITextureHandle srcTexture, uint32_t mipLevel,
                              RHIBufferHandle dstBuffer, uint64_t dstOffset,
-                             uint32_t dstRowPitch) override;
+                             uint32_t dstRowPitch, uint32_t arraySlice = 0) override;
 
     void BeginRenderPass(const RHIRenderPassDesc& desc) override;
     void EndRenderPass() override;

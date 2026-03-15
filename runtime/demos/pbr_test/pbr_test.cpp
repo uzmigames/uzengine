@@ -154,14 +154,18 @@ void PBRTest::OnStart() {
         atmo.bottomRadiusKm          = 6360.0f;
         atmo.atmosphereHeightKm      = 60.0f;
         atmo.multiScatteringFactor   = 1.0f;
-        atmo.rayleighScatteringScale = 0.0331f;     // UE5: RayleighScatteringScale
+        // Scattering scales boost the physical Rayleigh/Mie coefficients.
+        // Values > 1.0 produce more vivid sky color; 1.0 = physically accurate.
+        atmo.rayleighScatteringScale = 2.0f;
         atmo.rayleighScaleHeightKm   = 8.0f;
-        atmo.mieScatteringScale      = 0.003996f;   // UE5: MieScatteringScale
-        atmo.mieAbsorptionScale      = 0.000444f;    // UE5: MieAbsorptionScale
+        atmo.mieScatteringScale      = 1.0f;
+        atmo.mieAbsorptionScale      = 1.0f;
         atmo.mieAnisotropy           = 0.8f;
         atmo.mieScaleHeightKm        = 1.2f;
-        // sunIlluminance driven by linked DirectionalLight (atmosphereSunLight=true)
-        atmo.sunIlluminance          = {3.f, 3.f, 3.f};  // fallback if no linked light
+        // Sun illuminance for atmosphere scattering (not PBR surface lighting).
+        // Lower values prevent ACES from desaturating the sky to white.
+        atmo.sunIlluminance          = {1.f, 1.f, 1.f};
+        atmo.skyLuminanceFactor       = {1.0f, 1.0f, 1.0f};
     }
 
     // ── Sky light (UE5 Basic Scene EXACT values) ─────────────────────────

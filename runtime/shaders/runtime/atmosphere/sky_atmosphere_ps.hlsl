@@ -72,13 +72,20 @@ cbuffer PerFrameCB : register(b1) {
 };
 
 cbuffer SkyAtmosphereCB : register(b2) {
-    float4 rayleighScattering;   // xyz = coefficients (km^-1), w = scale height (km)
-    float4 mieScattering;        // x = coefficient (km^-1), y = anisotropy g, z = scale height (km), w = unused
-    float4 groundAlbedo;         // xyz = ground reflectance, w = unused
-    float4 sunIlluminance;       // xyz = sun color * illuminance, w = angular radius (radians)
-    float  bottomRadiusKm;       // Planet radius in km (e.g. 6360.0)
-    float  atmosphereHeightKm;   // Atmosphere thickness in km (e.g. 60.0)
-    float  sunDiskIntensity;     // Sun disk brightness multiplier
+    float4 rayleighScattering;      // xyz = coefficients (km^-1), w = scale height (km)
+    float4 mieScattering;           // x = coefficient (km^-1), y = anisotropy g, z = scale height (km), w = unused
+    float4 groundAlbedo;            // xyz = ground reflectance, w = unused
+    float4 sunIlluminance;          // xyz = sun color * illuminance, w = angular radius (radians)
+    float  bottomRadiusKm;          // Planet radius in km (e.g. 6360.0)
+    float  atmosphereHeightKm;      // Atmosphere thickness in km (e.g. 60.0)
+    float  sunDiskIntensity;        // Sun disk brightness multiplier
+    float  multiScatteringFactor;   // Multi-scattering approximation (0=single, 1=full)
+    float  rayleighScatteringScale; // Artistic multiplier for Rayleigh scattering
+    float  mieScatteringScale;      // Artistic multiplier for Mie scattering
+    float  mieAbsorptionScale;      // Artistic multiplier for Mie absorption
+    float  mieAbsorption;           // Mie absorption coefficient (km^-1)
+    float4 skyLuminanceFactor;      // Per-channel sky brightness art direction (default 1,1,1)
+    float  _skyPad[36];             // Pad to 256-byte alignment
 };
 
 #ifndef UZ_BINDLESS
@@ -263,8 +270,21 @@ float4 main(FSInput input) : SV_Target {
     float  phaseR      = RayleighPhase(cosTheta);
     float  phaseM      = MiePhase(cosTheta, mieScattering.y);
 
-    float3 betaR   = rayleighScattering.xyz; // Rayleigh scatter coeff (km^-1)
-    float  betaM   = mieScattering.x;        // Mie scatter coeff (km^-1)
+    // Physical scattering coefficients (unscaled) — used for extinction.
+    // Extinction must use physical values so path transmittance is correct
+    // and matches the precomputed transmittance LUT.
+    float3 betaR_phys = rayleighScattering.xyz;
+    float  betaM_phys = mieScattering.x;
+
+    // Artistic scattering coefficients — used for in-scattering only.
+    // rayleighScatteringScale / mieScatteringScale boost or reduce the
+    // amount of light scattered toward the camera without changing the
+    // extinction (optical depth). This is how UE5 implements its artistic
+    // scale parameters: they affect "how much color" the sky has, not
+    // "how opaque" the atmosphere is.
+    float3 betaR_art = rayleighScattering.xyz * rayleighScatteringScale;
+    float  betaM_art = mieScattering.x * mieScatteringScale;
+
     float  scaleHR = rayleighScattering.w;   // Rayleigh scale height (km)
     float  scaleHM = mieScattering.z;        // Mie scale height (km)
 
@@ -291,9 +311,11 @@ float4 main(FSInput input) : SV_Target {
         float densR = DensityAtAltitude(altKm, scaleHR);
         float densM = DensityAtAltitude(altKm, scaleHM);
 
-        // Total extinction at this point (Rayleigh + Mie with 1.11 extinction ratio)
-        float3 extR      = betaR * densR;
-        float3 extM      = betaM * 1.11f * densM;
+        // Extinction uses PHYSICAL coefficients — must match transmittance LUT.
+        // Rayleigh extinction = betaR_phys (scattering IS extinction for Rayleigh).
+        // Mie extinction = betaM_phys * 1.11 (absorption ratio included).
+        float3 extR      = betaR_phys * densR;
+        float3 extM      = betaM_phys * 1.11f * densM;
         float3 extTotal  = extR + extM;
 
         // Transmittance over this single step
@@ -309,11 +331,10 @@ float4 main(FSInput input) : SV_Target {
             sampleKm, sunDir, bottomRadiusKm, topRadiusKm);
 #endif
 
-        // Analytical in-scattering integral over this step:
-        //   Sint = (scatter * dt) weighted by (1 - T_step) / (ext * dt)
-        //        = scatter * (1 - T_step) / ext
-        float3 scatterR = extR * phaseR;
-        float3 scatterM = betaM * densM * phaseM;  // Mie scatter (not extinction)
+        // In-scattering uses ARTISTIC coefficients — controlled by scale params.
+        // This decouples "how much color" (scattering) from "how opaque" (extinction).
+        float3 scatterR = betaR_art * densR * phaseR;
+        float3 scatterM = betaM_art * densM * phaseM;
         float3 scatter  = scatterR + scatterM;
 
         float3 Sint = (scatter - scatter * T_step) / max(extTotal, EXT_EPS);
@@ -322,6 +343,19 @@ float4 main(FSInput input) : SV_Target {
         L         += Throughput * sunT * Sint * sunIlluminance.xyz;
         Throughput *= T_step;
     }
+
+    // ── Multi-scattering approximation ──────────────────────────────────────
+    // Single-scatter integration underestimates sky luminance because it ignores
+    // photons that scatter multiple times before reaching the camera. UE5 uses
+    // a precomputed multi-scattering LUT; this is a simpler energy-conserving
+    // approximation that boosts luminance proportionally. The factor of 0.5
+    // was empirically tuned to approximate the full multi-scatter contribution.
+    L *= 1.0f + multiScatteringFactor * 0.5f;
+
+    // ── Sky luminance art direction ──────────────────────────────────────────
+    // Per-channel multiplier for artistic control of sky brightness and tint.
+    // Default (1,1,1) = physically correct. Can be used to warm/cool the sky.
+    L *= skyLuminanceFactor.xyz;
 
     // ── Ground contribution ─────────────────────────────────────────────────
     // When the view ray hits the planet surface, add Lambertian reflection of

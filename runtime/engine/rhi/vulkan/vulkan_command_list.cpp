@@ -961,7 +961,7 @@ void VulkanCommandList::CopyBufferToTexture(RHIBufferHandle srcBuffer, uint64_t 
 
 void VulkanCommandList::CopyTextureToBuffer(RHITextureHandle srcTexture, uint32_t mipLevel,
                                              RHIBufferHandle dstBuffer, uint64_t dstOffset,
-                                             uint32_t dstRowPitch) {
+                                             uint32_t dstRowPitch, uint32_t arraySlice) {
     if (!srcTexture.IsValid() || !dstBuffer.IsValid()) return;
 
     auto* tex = m_device->GetTexturePool().Get(srcTexture.index, srcTexture.generation);
@@ -982,7 +982,7 @@ void VulkanCommandList::CopyTextureToBuffer(RHITextureHandle srcTexture, uint32_
     region.bufferImageHeight = mipHeight;
     region.imageSubresource.aspectMask = GetAspectFlags(tex->desc.format);
     region.imageSubresource.mipLevel = mipLevel;
-    region.imageSubresource.baseArrayLayer = 0;
+    region.imageSubresource.baseArrayLayer = arraySlice;
     region.imageSubresource.layerCount = 1;
     region.imageOffset = {0, 0, 0};
     region.imageExtent = {mipWidth, mipHeight, 1};

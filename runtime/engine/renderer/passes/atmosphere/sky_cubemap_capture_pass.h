@@ -52,7 +52,7 @@ struct SkyCubemapCaptureRootConstants {
     float    sunDirZ;               ///< Sun direction Z component (normalised). DWORD 4.
     float    sunIntensity;          ///< Sun illuminance (uniform RGB). DWORD 5.
     uint32_t transmittanceLutIdx;   ///< SRV index for transmittance LUT texture. DWORD 6.
-    uint32_t _pad;                  ///< Unused. DWORD 7.
+    uint32_t packedScatterScales;   ///< Packed f16 pair: low16 = rayleighScatteringScale, high16 = mieScatteringScale. DWORD 7.
 };
 
 static_assert(sizeof(SkyCubemapCaptureRootConstants) == 32,

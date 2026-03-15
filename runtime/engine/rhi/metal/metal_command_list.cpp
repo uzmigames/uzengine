@@ -1140,7 +1140,7 @@ void MetalCommandList::SetRootCBV(uint32_t rootParamIndex, RHIBufferHandle buffe
 
 void MetalCommandList::CopyTextureToBuffer(RHITextureHandle srcTexture, uint32_t mipLevel,
                                            RHIBufferHandle dstBuffer, uint64_t dstOffset,
-                                           uint32_t dstRowPitch) {
+                                           uint32_t dstRowPitch, uint32_t arraySlice) {
     UZ_PROFILE_FUNCTION();
 
 #if defined(__APPLE__)
@@ -1164,7 +1164,7 @@ void MetalCommandList::CopyTextureToBuffer(RHITextureHandle srcTexture, uint32_t
     if (height == 0) height = 1;
 
     [enc copyFromTexture:srcTex
-              sourceSlice:0
+              sourceSlice:arraySlice
               sourceLevel:mipLevel
              sourceOrigin:MTLOriginMake(0, 0, 0)
                sourceSize:MTLSizeMake(width, height, 1)

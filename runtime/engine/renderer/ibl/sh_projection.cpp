@@ -2,13 +2,17 @@
 ///
 /// Projects cubemap faces into L2 Spherical Harmonics coefficients using
 /// the standard real SH basis, then packs into UE5-compatible 7-float4 format.
+/// Includes a GPU readback path that copies RGBA16F cubemap data to CPU,
+/// converts half-float to float, and runs the CPU SH projection.
 
 #include "sh_projection.h"
 
+#include "engine/rhi/rhi.h"
 #include "log.h"
 
 #include <cmath>
 #include <cstring>
+#include <vector>
 
 UZ_DEFINE_LOG_CATEGORY(SHProjection, Info);
 
@@ -329,6 +333,192 @@ SHCoefficients ProjectCubemapToSH(const float* faceData[6], uint32_t faceSize)
     UZ_LOG(SHProjection, Info,
            "SH projection complete: faceSize={}, totalWeight={:.4f} (expected {:.4f})",
            faceSize, totalWeight, 4.0f * kPI);
+
+    return result;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Half-float conversion
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Converts a single IEEE 754 half-precision float (16-bit) to single-precision (32-bit).
+///
+/// Handles normalized values, denormals, zero, and infinity/NaN.
+/// Uses bit manipulation rather than intrinsics for portability across all backends.
+static float HalfToFloat(uint16_t h)
+{
+    const uint32_t sign     = (static_cast<uint32_t>(h) & 0x8000u) << 16;
+    const uint32_t exponent = (static_cast<uint32_t>(h) >> 10) & 0x1Fu;
+    const uint32_t mantissa =  static_cast<uint32_t>(h) & 0x03FFu;
+
+    uint32_t result = 0;
+
+    if (exponent == 0) {
+        if (mantissa == 0) {
+            // Zero (positive or negative)
+            result = sign;
+        } else {
+            // Denormalized half → normalized float
+            // Count leading zeros in mantissa to find the implicit 1 position
+            uint32_t m = mantissa;
+            uint32_t e = 0;
+            while ((m & 0x0400u) == 0) {
+                m <<= 1;
+                ++e;
+            }
+            m &= 0x03FFu; // Remove the implicit leading 1
+            result = sign | ((127u - 15u + 1u - e) << 23) | (m << 13);
+        }
+    } else if (exponent == 31) {
+        // Inf or NaN — preserve mantissa bits for NaN distinction
+        result = sign | 0x7F800000u | (mantissa << 13);
+    } else {
+        // Normalized value: rebias exponent from half (bias 15) to float (bias 127)
+        result = sign | ((exponent + 127u - 15u) << 23) | (mantissa << 13);
+    }
+
+    float f;
+    std::memcpy(&f, &result, sizeof(f));
+    return f;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GPU Readback SH Projection
+// ─────────────────────────────────────────────────────────────────────────────
+
+SHCoefficients ProjectCubemapToSH(IRHIDevice* device, IRHICommandList* cmdList,
+                                  RHITextureHandle cubemap, uint32_t faceSize)
+{
+    SHCoefficients zeroResult = {};
+
+    if (!device || !cmdList || !cubemap.IsValid() || faceSize == 0) {
+        UZ_LOG(SHProjection, Error,
+               "ProjectCubemapToSH (GPU): invalid arguments (device={}, cmdList={}, cubemap={}, faceSize={})",
+               device != nullptr, cmdList != nullptr, cubemap.IsValid(), faceSize);
+        return zeroResult;
+    }
+
+    // RGBA16F = 8 bytes per texel
+    constexpr uint32_t kBytesPerTexel = 8;
+    const uint32_t faceRowBytes = faceSize * kBytesPerTexel;
+
+    // DX12 requires 256-byte aligned row pitch for readback
+    constexpr uint32_t kRowPitchAlignment = 256;
+    const uint32_t alignedRowPitch = (faceRowBytes + kRowPitchAlignment - 1) & ~(kRowPitchAlignment - 1);
+
+    const uint64_t faceBytes = static_cast<uint64_t>(alignedRowPitch) * faceSize;
+    const uint64_t totalBytes = faceBytes * 6;
+
+    // Create readback buffer large enough for all 6 faces
+    RHIBufferDesc bufDesc = {};
+    bufDesc.sizeBytes = totalBytes;
+    bufDesc.usage = RHIBufferUsage::CopyDst;
+    bufDesc.memory = RHIMemoryType::Readback;
+    bufDesc.debugName = "SH_CubemapReadback";
+
+    RHIBufferHandle readbackBuf = device->CreateBuffer(bufDesc);
+    if (!readbackBuf.IsValid()) {
+        UZ_LOG(SHProjection, Error,
+               "ProjectCubemapToSH (GPU): failed to create readback buffer ({}  bytes)", totalBytes);
+        return zeroResult;
+    }
+
+    // Transition cubemap to CopySrc state and copy each face to the readback buffer.
+    // The cubemap is typically in UnorderedAccess state after the sky capture compute
+    // pass. BakeEnvironment reads it as SRV via DX12 implicit promotion but does not
+    // transition it, so the tracked state remains UnorderedAccess.
+    cmdList->Begin();
+
+    RHIBarrierDesc toCopySrc = {};
+    toCopySrc.texture = cubemap;
+    toCopySrc.stateBefore = RHIResourceState::UnorderedAccess;
+    toCopySrc.stateAfter = RHIResourceState::CopySrc;
+    cmdList->ResourceBarrier(&toCopySrc, 1);
+
+    for (uint32_t face = 0; face < 6; ++face) {
+        const uint64_t offset = face * faceBytes;
+        cmdList->CopyTextureToBuffer(cubemap, 0, readbackBuf, offset, alignedRowPitch, face);
+    }
+
+    // Transition cubemap back to UnorderedAccess — the render graph imports it
+    // in this state for the next frame's sky capture compute pass.
+    RHIBarrierDesc toUAV = {};
+    toUAV.texture = cubemap;
+    toUAV.stateBefore = RHIResourceState::CopySrc;
+    toUAV.stateAfter = RHIResourceState::UnorderedAccess;
+    cmdList->ResourceBarrier(&toUAV, 1);
+
+    cmdList->End();
+    cmdList->Execute();
+    device->WaitIdle();
+
+    // Map the readback buffer and convert RGBA16F → float
+    const auto* mappedData = static_cast<const uint8_t*>(device->MapBuffer(readbackBuf));
+    if (!mappedData) {
+        UZ_LOG(SHProjection, Error, "ProjectCubemapToSH (GPU): failed to map readback buffer");
+        device->DestroyBuffer(readbackBuf);
+        return zeroResult;
+    }
+
+    // Convert half-float data to float and build face pointers for the CPU projection
+    const uint32_t floatsPerFace = faceSize * faceSize * 4; // RGBA
+    std::vector<float> faceFloats(floatsPerFace * 6);
+    const float* facePtrs[6] = {};
+
+    for (uint32_t face = 0; face < 6; ++face) {
+        float* dst = faceFloats.data() + face * floatsPerFace;
+        facePtrs[face] = dst;
+
+        const auto* faceBase = mappedData + face * faceBytes;
+        for (uint32_t y = 0; y < faceSize; ++y) {
+            // Row data starts at aligned row pitch offset
+            const auto* rowHalf = reinterpret_cast<const uint16_t*>(faceBase + y * alignedRowPitch);
+            float* rowFloat = dst + y * faceSize * 4;
+
+            for (uint32_t x = 0; x < faceSize; ++x) {
+                rowFloat[x * 4 + 0] = HalfToFloat(rowHalf[x * 4 + 0]); // R
+                rowFloat[x * 4 + 1] = HalfToFloat(rowHalf[x * 4 + 1]); // G
+                rowFloat[x * 4 + 2] = HalfToFloat(rowHalf[x * 4 + 2]); // B
+                rowFloat[x * 4 + 3] = HalfToFloat(rowHalf[x * 4 + 3]); // A (ignored by SH)
+            }
+        }
+    }
+
+    // Diagnostic: log a few sample pixels to verify readback data is non-zero
+    {
+        float maxVal = 0.0f;
+        uint32_t nonZeroCount = 0;
+        for (uint32_t face = 0; face < 6; ++face) {
+            const float* fp = facePtrs[face];
+            for (uint32_t i = 0; i < floatsPerFace; i += 4) {
+                const float r = fp[i], g = fp[i + 1], b = fp[i + 2];
+                if (r > 0.0f || g > 0.0f || b > 0.0f) ++nonZeroCount;
+                if (r > maxVal) maxVal = r;
+                if (g > maxVal) maxVal = g;
+                if (b > maxVal) maxVal = b;
+            }
+        }
+        // Also log raw half-float bytes from the first face center pixel
+        const auto* firstFaceCenter = mappedData + (faceSize / 2) * alignedRowPitch
+                                    + (faceSize / 2) * kBytesPerTexel;
+        const auto* halfPixel = reinterpret_cast<const uint16_t*>(firstFaceCenter);
+        UZ_LOG(SHProjection, Info,
+               "Readback diagnostic: nonZero={}/{}, maxVal={:.6f}, "
+               "face0_center_half=[0x{:04X}, 0x{:04X}, 0x{:04X}, 0x{:04X}]",
+               nonZeroCount, faceSize * faceSize * 6, maxVal,
+               halfPixel[0], halfPixel[1], halfPixel[2], halfPixel[3]);
+    }
+
+    device->UnmapBuffer(readbackBuf);
+    device->DestroyBuffer(readbackBuf);
+
+    // Run the CPU SH projection on the converted float data
+    SHCoefficients result = ProjectCubemapToSH(facePtrs, faceSize);
+
+    UZ_LOG(SHProjection, Info,
+           "ProjectCubemapToSH (GPU): readback + projection complete (faceSize={}, "
+           "L0_R={:.4f}, L0_G={:.4f}, L0_B={:.4f})",
+           faceSize, result.coeffs[0].w, result.coeffs[1].w, result.coeffs[2].w);
 
     return result;
 }

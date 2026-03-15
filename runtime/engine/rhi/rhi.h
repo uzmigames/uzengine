@@ -440,9 +440,11 @@ public:
     /// * `dstOffset` — Byte offset in the destination buffer.
     /// * `dstRowPitch` — Row pitch in the destination buffer (must meet backend
     ///   alignment requirements, e.g., 256 bytes for DX12).
+    /// * `arraySlice` — Array slice / cubemap face index (default 0).
+    ///   For cubemaps: 0=+X, 1=-X, 2=+Y, 3=-Y, 4=+Z, 5=-Z.
     virtual void CopyTextureToBuffer(RHITextureHandle srcTexture, uint32_t mipLevel,
                                      RHIBufferHandle dstBuffer, uint64_t dstOffset,
-                                     uint32_t dstRowPitch) = 0;
+                                     uint32_t dstRowPitch, uint32_t arraySlice = 0) = 0;
 
     // ── Render pass scope ────────────────────────────────────────────────
 

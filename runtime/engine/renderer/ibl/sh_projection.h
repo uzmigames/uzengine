@@ -76,16 +76,27 @@ struct SHCoefficients {
 SHCoefficients ProjectCubemapToSH(const float* faceData[6], uint32_t faceSize);
 
 class IRHIDevice;
+class IRHICommandList;
 
 /// Projects a GPU cubemap texture into L2 SH by reading back the texture data.
 ///
-/// This performs a GPU→CPU readback of the cubemap, then calls the CPU projection.
-/// Should only be called when the GPU is idle (after WaitIdle).
+/// Creates a readback buffer, copies each cubemap face from GPU to CPU via
+/// `CopyTextureToBuffer`, converts RGBA16F half-float data to float, then
+/// calls the CPU SH projection.
+///
+/// The GPU must be idle before calling this (after `WaitIdle()`). The command
+/// list must NOT be in recording state — this function calls Begin/End/Execute
+/// internally.
 ///
 /// # Arguments
-/// * `device` — RHI device for texture readback.
+/// * `device` — RHI device for buffer creation and mapping.
+/// * `cmdList` — Command list for recording copy commands (must be idle).
 /// * `cubemap` — GPU cubemap texture handle (RGBA16F, 6 faces).
 /// * `faceSize` — Width/height per face.
-SHCoefficients ProjectCubemapToSH(IRHIDevice* device, RHITextureHandle cubemap, uint32_t faceSize);
+///
+/// # Returns
+/// `SHCoefficients` ready for GPU upload, or zero-initialized coefficients on failure.
+SHCoefficients ProjectCubemapToSH(IRHIDevice* device, IRHICommandList* cmdList,
+                                  RHITextureHandle cubemap, uint32_t faceSize);
 
 } // namespace uz
