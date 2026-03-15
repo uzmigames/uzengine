@@ -108,8 +108,8 @@ void PBRTest::OnStart() {
 
         auto& light   = world.AddComponent<DirectionalLightComponent>(sun_);
         // UE5 defaults: Intensity=10 lux, white light, atmosphereSunLight=true
-        light.color     = {1.0f, 1.0f, 1.0f};
-        light.intensity = 10.0f;
+        light.color     = {1.0f, 0.98f, 0.95f};  // Slight warm tint
+        light.intensity = 20.0f;               // Strong sun to dominate over IBL ambient
         light.atmosphereSunLight = true;
         light.lightSourceAngle = 0.5357f;  // Earth sun angular diameter
     }
@@ -179,7 +179,7 @@ void PBRTest::OnStart() {
         // UE5: FogInscatteringColor = (0.447, 0.638, 1.0) — blue haze
         // UE5 cm-scale defaults.
         fogComp.color                             = {0.447f, 0.638f, 1.0f};
-        fogComp.density                           = 0.0f;      // TEMP: disabled for testing
+        fogComp.density                           = 0.02f;
         fogComp.heightFalloff                     = 0.2f;
         fogComp.baseHeight                        = 0.f;
         fogComp.maxOpacity                        = 1.0f;
