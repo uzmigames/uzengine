@@ -117,6 +117,18 @@ struct SkyAtmosphereComponent {
     /// UE5: HeightFogContribution.
     float heightFogContribution = 1.0f;
 
+    // ── Transform Mode ────────────────────────────────────────────────────
+
+    /// How the planet center is positioned relative to the world.
+    /// UE5: TransformMode.
+    enum class TransformMode : uint8_t {
+        /// Planet center at (0, 0, -bottomRadiusKm * 1000). World origin = sea level.
+        PlanetTopAtComponentTransform = 0,
+        /// Planet center at component world position. Useful for space views.
+        PlanetCenterAtComponentTransform = 1,
+    };
+    TransformMode transformMode = TransformMode::PlanetTopAtComponentTransform;
+
     // ── Sun (fallback — prefer DirectionalLight with atmosphereSunLight) ──
 
     /// Fallback sun illuminance when no DirectionalLight has atmosphereSunLight=true.
