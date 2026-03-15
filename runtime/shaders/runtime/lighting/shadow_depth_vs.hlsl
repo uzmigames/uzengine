@@ -25,10 +25,16 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Per-object transform — only the world matrix is used here.
+/// Scalars first to match C++ PerObjectCB layout (std140 compatibility).
 cbuffer PerObjectCB : register(b2) {
+    uint     albedoIndex;    // unused
+    uint     normalIndex;    // unused
+    uint     roughnessIndex; // unused
+    uint     metallicIndex;  // unused
+    uint     aoIndex;        // unused
+    float3   _pad;
     row_major float4x4 world;
-    row_major float4x4 normalMatrix; // unused, present for layout compatibility
-    uint               materialIndex; // unused
+    row_major float4x4 normalMatrix; // unused
 };
 
 /// Light view-projection matrix for the current shadow cascade.

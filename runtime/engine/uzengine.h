@@ -66,6 +66,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 #include "time_manager.h"
 #include "subsystem.h"
+#include "app_config.h"
+#include "application.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Platform
@@ -200,6 +202,7 @@
 #include "pbr_pass.h"
 #include "gbuffer_pass.h"
 #include "gbuffer_debug_pass.h"
+#include "debug_view_pass.h"
 #include "lighting_pass.h"
 #include "velocity_pass.h"
 #include "shadow_pass.h"

@@ -40,8 +40,9 @@ cbuffer PostProcessParams : register(b2) {
     /// +1.0 = 2x brighter, -1.0 = 2x darker. Default: 0.0.
     float exposureAdjust;
 
-    /// Unused padding.
-    float _pad0;
+    /// When > 0.5, bypasses ACES curve and outputs saturate(hdr * intensity).
+    /// Used for passthrough blit when tone mapping is disabled.
+    float bypassTonemap;
     float _pad1;
 };
 
@@ -115,14 +116,16 @@ float4 main(PSInput input) : SV_Target {
     // Apply exposure adjustment (linear scale: 2^exposureAdjust)
     hdrColor *= exp2(exposureAdjust);
 
-    // Apply ACES tone mapping
-    float3 ldrColor = ACESTonemapFast(hdrColor);
-
-    // Apply global intensity
-    ldrColor *= tonemapIntensity;
-
-    // Re-clamp in case intensity made it exceed [0, 1]
-    ldrColor = saturate(ldrColor);
+    float3 ldrColor;
+    if (bypassTonemap > 0.5f) {
+        // Passthrough — just clamp HDR to [0,1] without tone curve
+        ldrColor = saturate(hdrColor * tonemapIntensity);
+    } else {
+        // Apply ACES tone mapping
+        ldrColor = ACESTonemapFast(hdrColor);
+        ldrColor *= tonemapIntensity;
+        ldrColor = saturate(ldrColor);
+    }
 
     return float4(ldrColor, 1.0f);
 }

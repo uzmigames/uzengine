@@ -76,6 +76,20 @@ public:
     ///
     /// Used in log messages for diagnostics (e.g., "LooseFileVFS(/path/to/assets/)").
     [[nodiscard]] virtual std::string Name() const = 0;
+
+    /// Resolves a logical VFS path to an absolute filesystem path.
+    ///
+    /// Only meaningful for file-backed backends (LooseFileVFS).
+    /// Returns the input path unchanged for archive-backed backends (PakVFS).
+    ///
+    /// # Parameters
+    /// - `path`: Logical asset path relative to the VFS root.
+    ///
+    /// # Returns
+    /// Absolute filesystem path string, or `path` unchanged if not resolvable.
+    [[nodiscard]] virtual std::string ResolvePath(const std::string& path) const {
+        return path;
+    }
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -133,9 +147,13 @@ public:
     /// Returns `"LooseFileVFS(<rootDir>)"`.
     [[nodiscard]] std::string Name() const override;
 
-private:
     /// Concatenates the root directory with the logical path.
-    [[nodiscard]] std::string ResolvePath(const std::string& path) const;
+    ///
+    /// # Returns
+    /// Absolute filesystem path (`rootDir + path`).
+    [[nodiscard]] std::string ResolvePath(const std::string& path) const override;
+
+private:
 
     std::string m_rootDir;  ///< Absolute root directory, always ends with '/'
 };

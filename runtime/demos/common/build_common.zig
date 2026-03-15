@@ -31,6 +31,12 @@ pub const DemoConfig = struct {
     extra_sources: []const ExtraSource = &.{},
     /// Extra include paths beyond the standard engine/thirdparty set.
     extra_includes: []const []const u8 = &.{},
+    /// Extra preprocessor defines passed to all source files (e.g., "USE_APPLICATION").
+    /// Each entry is a bare name — the value is always "1".
+    extra_defines: []const []const u8 = &.{},
+    /// Whether to compile demo_application.cpp (the legacy DemoApplication base class).
+    /// Set to false for demos using the new uz::Application pattern.
+    use_demo_application: bool = true,
     /// Whether to deploy d3dcompiler_47.dll (FXC). Some demos need it, others don't.
     deploy_fxc: bool = false,
     /// Extra files to deploy to zig-out/bin/ (e.g., mesh assets).
@@ -126,12 +132,17 @@ pub fn createDemo(b: *std.Build, config: DemoConfig) DemoHandle {
         .flags = cpp_flags,
     });
 
-    // DemoApplication base class (shared across all demos)
-    mod.addCSourceFiles(.{
-        .root = b.path("../common"),
-        .files = &.{"demo_application.cpp"},
-        .flags = cpp_flags,
-    });
+    // DemoApplication base class — only needed for legacy DemoApplication-based demos.
+    if (config.use_demo_application) {
+        mod.addCSourceFiles(.{
+            .root = b.path("../common"),
+            .files = &.{"demo_application.cpp"},
+            .flags = cpp_flags,
+        });
+    }
+
+    // Extra preprocessor defines (applied module-wide)
+    for (config.extra_defines) |define| mod.addCMacro(define, "1");
 
     // Extra source groups
     for (config.extra_sources) |src| {
@@ -217,6 +228,7 @@ pub fn createDemo(b: *std.Build, config: DemoConfig) DemoHandle {
         "../../thirdparty/volk",
         "../../thirdparty/vma/include",
         "../../thirdparty/luajit/src",
+        "../../thirdparty/entt/single_include",
     };
     for (tp_dirs) |dir| mod.addIncludePath(b.path(dir));
 

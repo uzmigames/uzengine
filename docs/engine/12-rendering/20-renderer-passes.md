@@ -24,6 +24,9 @@ Each pass is registered in the render graph, manages resource transitions automa
 | Velocity | Motion vector generation | Depth, prev/cur view-proj | Velocity buffer (RG16F) | Fullscreen triangle | `velocity_pass.h` |
 | Lighting | Deferred composition | G-Buffers + lights | Lit backbuffer | Fullscreen triangle | `lighting_pass.h` |
 | Shadow | Shadow depth rendering | DrawList per cascade | 2×2 cascade atlas | Depth-only pass | `shadow_pass.h` |
+| Debug View | G-Buffer visualization | G-Buffers, Lighting buffer | Visualization output | Fullscreen triangle | `debug_view_pass.h` |
+
+> **ℹ️ Note**: The **Debug View pass** is inserted after Lighting, before Tonemapping, for real-time channel visualization without shader recompilation. See **[Debug View Modes Spec](../../specs/rendering/debug-view-modes.md)** for complete details (13 modes, F1–F11 shortcuts, zero overhead when disabled).
 
 ## PBR Pass — Forward Rendering
 

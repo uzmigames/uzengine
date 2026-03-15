@@ -245,6 +245,7 @@ std::vector<std::wstring> ShaderCompiler::BuildArguments(
         args.push_back(L"-fvk-t-shift"); args.push_back(L"0");  args.push_back(L"0");
         args.push_back(L"-fvk-s-shift"); args.push_back(L"16"); args.push_back(L"0");
         args.push_back(L"-fvk-b-shift"); args.push_back(L"32"); args.push_back(L"0");
+
     }
 
     // Debug info

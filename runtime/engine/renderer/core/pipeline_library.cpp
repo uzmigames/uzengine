@@ -80,6 +80,7 @@ void PipelineLibrary::Shutdown() {
     destroyPipeline(m_gbufferBindless);
     destroyPipeline(m_lighting);
     destroyPipeline(m_gbufferDebug);
+    destroyPipeline(m_debugView);
     destroyPipeline(m_shadowDepth);
     destroyPipeline(m_shadowDepthBindless);
 
@@ -97,6 +98,7 @@ void PipelineLibrary::Shutdown() {
     destroyShader(m_gbufferPS);
     destroyShader(m_lightingPS);
     destroyShader(m_gbufferDebugPS);
+    destroyShader(m_debugViewPS);
     destroyShader(m_shadowVS);
 
     m_psoCache.Shutdown();
@@ -162,6 +164,17 @@ bool PipelineLibrary::EnsureGBufferDebugPixelShader() {
         m_gbufferDebugPS = m_shaderMgr->CreateShader(EngineShader::GbufferDebugPS, RHIShaderStage::Pixel);
         if (!m_gbufferDebugPS.IsValid()) {
             UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile GbufferDebugPS");
+            return false;
+        }
+    }
+    return true;
+}
+
+bool PipelineLibrary::EnsureDebugViewPixelShader() {
+    if (!m_debugViewPS.IsValid()) {
+        m_debugViewPS = m_shaderMgr->CreateShader(EngineShader::DebugViewPS, RHIShaderStage::Pixel);
+        if (!m_debugViewPS.IsValid()) {
+            UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile DebugViewPS");
             return false;
         }
     }
@@ -355,6 +368,41 @@ RHIPipelineHandle PipelineLibrary::GetGBufferDebug() {
     return m_gbufferDebug;
 }
 
+RHIPipelineHandle PipelineLibrary::GetDebugView() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetDebugView called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_debugView.IsValid()) {
+        return m_debugView;
+    }
+
+    if (!EnsureFullscreenShaders() || !EnsureDebugViewPixelShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIGraphicsPipelineDesc desc{};
+    desc.vertexShader  = m_fullscreenVS;
+    desc.pixelShader   = m_debugViewPS;
+    desc.topology      = RHIPrimitiveTopology::TriangleList;
+    desc.rasterizer.cullMode      = RHICullMode::None;
+    desc.depthStencil.depthEnable = false;
+    desc.depthStencil.depthWrite  = false;
+    desc.renderTargetFormats[0]   = RHIFormat::RGBA8Unorm;
+    desc.renderTargetCount        = 1;
+    desc.debugName                = "DebugView";
+
+    m_debugView = CreateCachedPipeline(desc);
+    if (!m_debugView.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create DebugView pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created DebugView pipeline");
+    }
+
+    return m_debugView;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Shadow Depth Pipeline
 // ─────────────────────────────────────────────────────────────────────────────
@@ -492,6 +540,7 @@ uint32_t PipelineLibrary::WarmupAll() {
     warmup(GetGBuffer(bindless), "GBuffer");
     warmup(GetLighting(), "Lighting");
     warmup(GetGBufferDebug(), "GBufferDebug");
+    warmup(GetDebugView(), "DebugView");
     warmup(GetShadowDepth(bindless), "ShadowDepth");
 
     // SM5 variants if device is bindless (need both paths)

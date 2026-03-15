@@ -143,6 +143,19 @@ public:
     /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
     [[nodiscard]] RHIPipelineHandle GetGBufferDebug();
 
+    /// Returns the debug view mode pipeline (fullscreen_vs + debug_view_ps, 1 RT).
+    ///
+    /// Used by `AddDebugViewPass` to visualize individual G-Buffer channels
+    /// (albedo, normals, depth, etc.) selected at runtime via root constants.
+    ///
+    /// Rasterizer: no cull (fullscreen triangle).
+    /// Depth: disabled.
+    /// Render target: RGBA8Unorm.
+    ///
+    /// # Returns
+    /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
+    [[nodiscard]] RHIPipelineHandle GetDebugView();
+
     /// Returns the shadow depth pipeline (shadow_depth_vs, no pixel shader, depth-only).
     ///
     /// Rasterizer: back-face cull, clockwise front.
@@ -184,6 +197,7 @@ private:
     [[nodiscard]] bool EnsureGBufferPixelShader();
     [[nodiscard]] bool EnsureLightingPixelShader();
     [[nodiscard]] bool EnsureGBufferDebugPixelShader();
+    [[nodiscard]] bool EnsureDebugViewPixelShader();
     [[nodiscard]] bool EnsureForwardPixelShader();
     [[nodiscard]] bool EnsureShadowShaders();
 
@@ -209,6 +223,7 @@ private:
     RHIShaderHandle m_gbufferPS        = RHIShaderHandle::Invalid();
     RHIShaderHandle m_lightingPS       = RHIShaderHandle::Invalid();
     RHIShaderHandle m_gbufferDebugPS   = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_debugViewPS      = RHIShaderHandle::Invalid();
     RHIShaderHandle m_shadowVS         = RHIShaderHandle::Invalid();
 
     // ── Cached pipeline handles (one per bindless variant) ──────────────
@@ -218,6 +233,7 @@ private:
     RHIPipelineHandle m_gbufferBindless    = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_lighting              = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_gbufferDebug          = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_debugView             = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_shadowDepth           = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_shadowDepthBindless   = RHIPipelineHandle::Invalid();
 };

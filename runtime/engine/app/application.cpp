@@ -124,6 +124,10 @@ int Application::Run(int argc, char** argv) {
         m_renderer->SetDebugViewMode(static_cast<DebugViewMode>(0));
     }
 
+    // ── 7. Screenshot capture ──────────────────────────────────────────────
+    // Screenshots are captured inside SceneRenderer::RenderFrame() via
+    // RequestScreenshot() — no separate ScreenshotCapture needed here.
+
     auto loopStart = std::chrono::high_resolution_clock::now();
     auto prevFrame = loopStart;
 
@@ -191,6 +195,8 @@ int Application::Run(int argc, char** argv) {
             m_frameFences[allocFrame]->WaitCPU(m_fenceValues[allocFrame]);
         }
 
+        // (Screenshot save is handled inside SceneRenderer::RenderFrame after GPU idle)
+
         // ── Game update ───────────────────────────────────────────────────
         OnUpdate(dt);
 
@@ -198,6 +204,12 @@ int Application::Run(int argc, char** argv) {
         m_renderer->RenderFrame(m_cmdList, m_swapChain,
                                 m_world.get(), m_vfs.get(),
                                 dt, m_frameIndex);
+
+        // ── Request screenshot via SceneRenderer (captures inside render graph) ──
+        if (m_screenshotPending && m_frameIndex + 1 >= m_config.screenshotFrame) {
+            m_renderer->RequestScreenshot(m_config.screenshotPath);
+            m_screenshotPending = false;
+        }
 
         // ── Present ───────────────────────────────────────────────────────
         m_swapChain->Present(m_config.vsync);

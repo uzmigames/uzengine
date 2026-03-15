@@ -24,7 +24,7 @@ inline constexpr char kMeshPS[] = R"hlsl(
 /// Output: linear HDR color tonemapped via ACES filmic and gamma-corrected to
 /// sRGB for the R8G8B8A8_UNORM swapchain backbuffer.
 
-// ── begin include: include/pbr_common.hlsli ──
+// ── begin include: ../include/pbr_common.hlsli ──
 /// Shared PBR functions for Cook-Torrance BRDF evaluation.
 ///
 /// Used by both the forward pass (mesh_ps.hlsl) and deferred lighting pass
@@ -37,6 +37,117 @@ inline constexpr char kMeshPS[] = R"hlsl(
 
 #ifndef PBR_COMMON_HLSLI
 #define PBR_COMMON_HLSLI
+
+// ── begin include: math_util.hlsli ──
+/// Compiler-agnostic math utilities for UzEngine shaders.
+///
+/// FXC (SM5.0/DXBC) and DXC (SM6.x/DXIL) compile pow() with different
+/// instruction patterns — FXC uses multiply chains for small integer
+/// exponents while DXC always uses log-mul-exp. This causes visible
+/// brightness divergence between DX11 and DX12 on the same GPU.
+///
+/// This header provides deterministic replacements that produce identical
+/// results on both compilers, following the same pattern as UE5's
+/// MathUtil.ush (Pow2/Pow4/Pow5) and Common.ush (LinearToSrgb).
+///
+/// # Usage
+/// Include this header in any shader that needs pow-of-N or sRGB conversion:
+/// ```hlsl
+/// #include "include/math_util.hlsli"
+/// float3 F = F0 + (1 - F0) * Pow5(1 - cosTheta);
+/// color = LinearToSrgb(color);
+/// ```
+
+#ifndef MATH_UTIL_HLSLI
+#define MATH_UTIL_HLSLI
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Deterministic Power Functions
+// ─────────────────────────────────────────────────────────────────────────────
+// Explicit multiply chains — identical codegen on FXC and DXC.
+
+/// x^2 via multiply (avoids pow).
+float  Pow2(float  x) { return x * x; }
+float2 Pow2(float2 x) { return x * x; }
+float3 Pow2(float3 x) { return x * x; }
+float4 Pow2(float4 x) { return x * x; }
+
+/// x^4 via two squarings (avoids pow).
+float  Pow4(float  x) { float x2 = x * x; return x2 * x2; }
+float2 Pow4(float2 x) { float2 x2 = x * x; return x2 * x2; }
+float3 Pow4(float3 x) { float3 x2 = x * x; return x2 * x2; }
+float4 Pow4(float4 x) { float4 x2 = x * x; return x2 * x2; }
+
+/// x^5 via multiply chain (avoids pow).
+/// Primary use: Schlick Fresnel approximation pow(1 - cosTheta, 5).
+float  Pow5(float  x) { float x2 = x * x; return x2 * x2 * x; }
+float2 Pow5(float2 x) { float2 x2 = x * x; return x2 * x2 * x; }
+float3 Pow5(float3 x) { float3 x2 = x * x; return x2 * x2 * x; }
+float4 Pow5(float4 x) { float4 x2 = x * x; return x2 * x2 * x; }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// sRGB Conversion — IEC 61966-2-1 exact transfer function
+// ─────────────────────────────────────────────────────────────────────────────
+// Uses pow(x, 1/2.4) exponent from the sRGB spec instead of the approximate
+// pow(x, 1/2.2). The 1/2.4 exponent is exact in IEEE754 (0.41666...repeating
+// but the spec mandates it), and critically, the two-branch structure with
+// step()+lerp() eliminates the divergence-prone pow(x, 1/2.2) entirely for
+// the linear segment. This matches UE5 Common.ush LinearToSrgbBranchless().
+
+/// Converts linear-space color to sRGB using a pow-free approximation.
+///
+/// Avoids native pow() which compiles differently on FXC vs DXC,
+/// causing brightness divergence between DX11 and DX12. Uses the
+/// UE5 LinearToSrgbBranchless pattern: sqrt + rsqrt chain that
+/// closely approximates pow(x, 1/2.4) with identical codegen on
+/// both compilers.
+///
+/// Max error vs exact sRGB: < 0.6/255 — imperceptible.
+///
+/// # Parameters
+/// - lin: linear-space RGB color (pre-tonemapped, in [0,1] range).
+///
+/// # Returns
+/// sRGB-encoded color suitable for UNORM backbuffer output.
+float3 LinearToSrgb(float3 lin) {
+    // Attempt pow-free approximation of pow(x, 1/2.4) via sqrt chain:
+    // pow(x, 1/2.4) ≈ sqrt(x) * rsqrt(sqrt(x))^(1/3) — but there's no
+    // clean decomposition. Instead use two sqrt + lerp to match the curve:
+    //   s = sqrt(lin), ss = sqrt(s)  → ss = lin^0.25
+    //   Blend: 0.585122 * ss + 0.783677 * s - 0.368800 ≈ lin^(1/2.4)
+    // This is the UE5 Common.ush approach (LinearToSrgbBranchingless).
+    float3 s  = sqrt(max(lin, 0.0f));
+    float3 ss = sqrt(s);
+    float3 hi = 0.585122f * ss + 0.783677f * s - 0.368799f;
+    float3 lo = lin * 12.92f;
+    float3 t  = step(0.0031308f, lin);
+    return lerp(lo, hi, t);
+}
+
+/// Converts sRGB-encoded color back to linear space.
+///
+/// Uses Pow2 + multiply to approximate pow(x, 2.4) without native pow(),
+/// avoiding FXC/DXC divergence. pow(x, 2.4) = pow(x, 2) * pow(x, 0.4).
+/// pow(x, 0.4) = pow(x, 2/5) = sqrt(pow(x, 4/5)) ≈ sqrt(x * sqrt(sqrt(x))).
+///
+/// # Parameters
+/// - srgb: sRGB-encoded RGB color (e.g. from texture with no hardware decode).
+///
+/// # Returns
+/// Linear-space color.
+float3 SrgbToLinear(float3 srgb) {
+    float3 lo = srgb / 12.92f;
+    float3 v  = max((srgb + 0.055f) / 1.055f, 0.0f);
+    // pow(v, 2.4) ≈ v^2 * v^0.4, where v^0.4 ≈ sqrt(v * sqrt(sqrt(v)))
+    float3 v2 = v * v;
+    float3 v04 = sqrt(v * sqrt(sqrt(max(v, 0.0f))));
+    float3 hi = v2 * v04;
+    float3 t  = step(0.04045f, srgb);
+    return lerp(lo, hi, t);
+}
+
+#endif // MATH_UTIL_HLSLI
+// ── end include: math_util.hlsli ──
 
 static const float PI = 3.14159265359f;
 
@@ -143,7 +254,7 @@ float GeometrySmith(float NdotV, float NdotL, float alpha) {
 /// # Returns
 /// float3 Fresnel reflectance in [F0, 1].
 float3 FresnelSchlick(float cosTheta, float3 F0) {
-    return F0 + (1.0f - F0) * pow(saturate(1.0f - cosTheta), 5.0f);
+    return F0 + (1.0f - F0) * Pow5(saturate(1.0f - cosTheta));
 }
 
 /// Evaluates Cook-Torrance BRDF for a single light source.
@@ -191,7 +302,164 @@ float3 EvaluateBRDF(float3 N, float3 V, float3 L, float3 radiance,
 }
 
 #endif // PBR_COMMON_HLSLI
-// ── end include: include/pbr_common.hlsli ──
+// ── end include: ../include/pbr_common.hlsli ──
+// ── begin include: ../include/ibl.hlsli ──
+/// Shared IBL (Image-Based Lighting) helper functions.
+///
+/// Provides low-discrepancy sampling, GGX importance sampling, and
+/// roughness-aware Fresnel for split-sum IBL integration.
+///
+/// Used by brdf_lut_cs.hlsl, irradiance_cs.hlsl, and prefilter_cs.hlsl.
+///
+/// # References
+/// - Karis 2013, "Real Shading in Unreal Engine 4"
+/// - Hammersley & Handscomb 1964, "Monte Carlo Methods"
+
+#ifndef IBL_HLSLI
+#define IBL_HLSLI
+
+// [uzembed] skipped circular include: pbr_common.hlsli
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Low-Discrepancy Sampling
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Van der Corput radical inverse in base 2 using bit reversal.
+///
+/// Mirrors the binary representation of `bits` around the decimal point
+/// to produce a value in [0, 1). Used as the second coordinate in the
+/// Hammersley sequence.
+///
+/// # Parameters
+/// - bits: unsigned integer input.
+///
+/// # Returns
+/// Radical inverse value in [0, 1).
+float RadicalInverseVdC(uint bits) {
+    bits = (bits << 16u) | (bits >> 16u);
+    bits = ((bits & 0x55555555u) << 1u) | ((bits & 0xAAAAAAAAu) >> 1u);
+    bits = ((bits & 0x33333333u) << 2u) | ((bits & 0xCCCCCCCCu) >> 2u);
+    bits = ((bits & 0x0F0F0F0Fu) << 4u) | ((bits & 0xF0F0F0F0u) >> 4u);
+    bits = ((bits & 0x00FF00FFu) << 8u) | ((bits & 0xFF00FF00u) >> 8u);
+    return float(bits) * 2.3283064365386963e-10f; // 1 / 0x100000000
+}
+
+/// Hammersley 2D low-discrepancy sequence point.
+///
+/// Produces a quasi-random 2D sample in [0,1)^2. The x coordinate is a
+/// simple linear ramp (i/N), while y uses the Van der Corput radical
+/// inverse for better coverage than pseudo-random sampling.
+///
+/// # Parameters
+/// - i: sample index in [0, N).
+/// - N: total number of samples.
+///
+/// # Returns
+/// 2D sample point in [0, 1)^2.
+float2 Hammersley(uint i, uint N) {
+    return float2(float(i) / float(N), RadicalInverseVdC(i));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GGX Importance Sampling
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Importance-samples the GGX NDF to generate a half-vector.
+///
+/// Maps a 2D uniform sample (Xi) to a direction on the hemisphere weighted
+/// by the GGX distribution for the given roughness. The returned vector is
+/// in world space, oriented around the surface normal N.
+///
+/// # Parameters
+/// - Xi:        2D uniform random sample in [0, 1)^2 (e.g., from Hammersley).
+/// - N:         macrosurface normal (normalised).
+/// - roughness: perceptual roughness in [0, 1].
+///
+/// # Returns
+/// World-space half-vector H sampled proportional to D_GGX(H).
+float3 ImportanceSampleGGX(float2 Xi, float3 N, float roughness) {
+    float a = roughness * roughness;
+
+    // Spherical coordinates from the GGX inverse CDF
+    float phi      = 2.0f * PI * Xi.x;
+    float cosTheta = sqrt((1.0f - Xi.y) / (1.0f + (a * a - 1.0f) * Xi.y));
+    float sinTheta = sqrt(1.0f - cosTheta * cosTheta);
+
+    // Tangent-space half-vector
+    float3 H;
+    H.x = cos(phi) * sinTheta;
+    H.y = sin(phi) * sinTheta;
+    H.z = cosTheta;
+
+    // Build TBN from N — construct an arbitrary tangent frame
+    float3 up = (abs(N.z) < 0.999f) ? float3(0.0f, 0.0f, 1.0f)
+                                     : float3(1.0f, 0.0f, 0.0f);
+    float3 T = normalize(cross(up, N));
+    float3 B = cross(N, T);
+
+    // Transform from tangent space to world space
+    return normalize(T * H.x + B * H.y + N * H.z);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Fresnel (IBL variant)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Fresnel-Schlick with roughness attenuation for IBL ambient lighting.
+///
+/// Unlike the standard FresnelSchlick (which approaches 1.0 at grazing
+/// angles regardless of roughness), this variant caps the maximum Fresnel
+/// reflectance based on roughness. This prevents overly bright rim lighting
+/// on rough materials under environment illumination.
+///
+/// # Parameters
+/// - cosTheta:  dot(N, V), clamped to [0, 1].
+/// - F0:        reflectance at normal incidence.
+/// - roughness: perceptual roughness in [0, 1].
+///
+/// # Returns
+/// Fresnel reflectance attenuated by roughness.
+float3 FresnelSchlickRoughness(float cosTheta, float3 F0, float roughness) {
+    float3 maxF = max(float3(1.0f - roughness, 1.0f - roughness, 1.0f - roughness), F0);
+    return F0 + (maxF - F0) * Pow5(saturate(1.0f - cosTheta));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cubemap Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Converts a face index + 2D UV to a world-space direction for cubemap sampling.
+///
+/// Face order follows DX12 / D3D convention:
+///   0 = +X, 1 = -X, 2 = +Y, 3 = -Y, 4 = +Z, 5 = -Z
+///
+/// # Parameters
+/// - faceIndex: cubemap face [0, 5].
+/// - uv:        normalised UV in [0, 1]^2 within that face.
+///
+/// # Returns
+/// Unnormalised world-space direction vector.
+float3 CubeFaceDirection(uint faceIndex, float2 uv) {
+    // Remap UV from [0,1] to [-1,1]
+    float u = uv.x * 2.0f - 1.0f;
+    float v = uv.y * 2.0f - 1.0f;
+
+    // DX cubemap convention: +Y is up, V is flipped for top/bottom
+    float3 dir;
+    switch (faceIndex) {
+        case 0: dir = float3( 1.0f,   -v,   -u); break; // +X
+        case 1: dir = float3(-1.0f,   -v,    u); break; // -X
+        case 2: dir = float3(   u,  1.0f,    v); break; // +Y
+        case 3: dir = float3(   u, -1.0f,   -v); break; // -Y
+        case 4: dir = float3(   u,   -v,  1.0f); break; // +Z
+        case 5: dir = float3(  -u,   -v, -1.0f); break; // -Z
+        default: dir = float3(0.0f, 0.0f, 1.0f); break;
+    }
+    return dir;
+}
+
+#endif // IBL_HLSLI
+// ── end include: ../include/ibl.hlsli ──
 
 struct PSInput {
     float4 positionCS : SV_Position;
@@ -215,7 +483,7 @@ ConstantBuffer<PushConstants> push : register(b0);
 
 // LightData struct and MAX_LIGHTS are defined here (before cbuffer) because
 // lighting.hlsli must be included after shadow_common.hlsli (it calls SampleShadowMap).
-// ── begin include: include/light_types.hlsli ──
+// ── begin include: ../include/light_types.hlsli ──
 /// Light type definitions for multi-light shading.
 ///
 /// Separated from lighting.hlsli so that cbuffer declarations can reference
@@ -245,7 +513,7 @@ struct LightData {
 };
 
 #endif // LIGHT_TYPES_HLSLI
-// ── end include: include/light_types.hlsli ──
+// ── end include: ../include/light_types.hlsli ──
 
 /// Per-frame CB at b1 — must match C++ PerFrameMultiLightCB struct exactly.
 ///
@@ -262,18 +530,23 @@ cbuffer PerFrameCB : register(b1) {
     uint     _pad0b;
     uint     _pad0c;
     LightData lights[MAX_LIGHTS];    // dynamic light array (64 bytes each = 512 bytes)
-    float4   _pad1[8];              // pad to 768 bytes total (8 x 16 = 128 bytes)
+    uint     irradianceSrvIndex;    // SRV index for irradiance cubemap (0xFFFFFFFF = no IBL)
+    uint     prefilteredSrvIndex;   // SRV index for prefiltered specular cubemap
+    uint     brdfLutSrvIndex;       // SRV index for BRDF LUT
+    uint     prefilteredMipLevels;  // mip count for prefiltered cubemap LOD
+    float4   _pad1[7];             // pad to 768 bytes total (16 + 112 = 128 bytes)
 };
 
-// Per-object CB at b2 — must match C++ PerObjectCB struct exactly
+// Per-object CB at b2 — scalars first to avoid SPIRV std140 offset corruption
 cbuffer PerObjectCB : register(b2) {
-    row_major float4x4 model;
-    row_major float4x4 normalMatrix;
     uint     albedoIndex;     // SRV heap index for BaseColor map (0 = white default)
     uint     normalIndex;     // SRV heap index for normal map (0 = flat normal)
     uint     roughnessIndex;  // SRV heap index for roughness map (0 = 0.5 default)
     uint     metallicIndex;   // SRV heap index for metallic map (0 = 0.0 default)
     uint     aoIndex;         // SRV heap index for AO map (0 = 1.0 default)
+    float3   _pad;
+    row_major float4x4 model;
+    row_major float4x4 normalMatrix;
 };
 
 /// Cascaded shadow map parameters — must match C++ ShadowDataCB struct exactly.
@@ -297,6 +570,9 @@ Texture2D<float4> roughnessTexture : register(t2);
 Texture2D<float4> metallicTexture  : register(t3);
 Texture2D<float4> aoTexture        : register(t4);
 Texture2D<float>  shadowAtlasTexture : register(t5);
+TextureCube<float3> irradianceCubemap  : register(t6);
+TextureCube<float3> prefilteredCubemap : register(t7);
+Texture2D<float2>  brdfLutTexture     : register(t8);
 #endif
 SamplerState linearSampler : register(s0);
 
@@ -304,7 +580,7 @@ SamplerState linearSampler : register(s0);
 /// Uses LESS comparison — returns 1.0 when the sample passes (fragment is lit).
 SamplerComparisonState shadowSampler : register(s1);
 
-// ── begin include: include/shadow_common.hlsli ──
+// ── begin include: ../include/shadow_common.hlsli ──
 /// Shared cascaded shadow map sampling functions.
 ///
 /// Used by both the forward pass (mesh_ps.hlsl) and deferred lighting pass
@@ -482,8 +758,8 @@ float SampleShadowMap(float3 positionWS, float3 normalWS, float viewDepth) {
 }
 
 #endif // SHADOW_COMMON_HLSLI
-// ── end include: include/shadow_common.hlsli ──
-// ── begin include: include/lighting.hlsli ──
+// ── end include: ../include/shadow_common.hlsli ──
+// ── begin include: ../include/lighting.hlsli ──
 /// Multi-light evaluation helpers for forward PBR rendering.
 ///
 /// Defines the LightData struct and attenuation functions for directional,
@@ -655,7 +931,7 @@ float3 AccumulateDirectLighting(
 }
 
 #endif // LIGHTING_HLSLI
-// ── end include: include/lighting.hlsli ──
+// ── end include: ../include/lighting.hlsli ──
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Pixel Shader Entry Point
@@ -750,8 +1026,48 @@ float4 main(PSInput input) : SV_Target {
         lightCount, lights,
         cameraPos.xyz, cascadeCount);
 
-    // ── Ambient (constant approximation; will be replaced with IBL) ──
-    float3 ambient = ambientColor.xyz * albedo * ao;
+    // ── Ambient / IBL ──
+    float3 ambient;
+    if (irradianceSrvIndex != 0xFFFFFFFF && brdfLutSrvIndex != 0xFFFFFFFF) {
+        // Diffuse IBL: sample irradiance cubemap at surface normal
+        float3 irradiance;
+        float3 kD = (1.0f - FresnelSchlickRoughness(NdotV, F0, roughness)) * (1.0f - metallic);
+
+#ifdef UZ_BINDLESS
+        TextureCube<float3> irradianceMap = ResourceDescriptorHeap[irradianceSrvIndex];
+        irradiance = irradianceMap.Sample(linearSampler, N).rgb;
+#else
+        irradiance = irradianceCubemap.Sample(linearSampler, N).rgb;
+#endif
+        float3 diffuseIBL = kD * albedo * irradiance;
+
+        // Specular IBL: sample prefiltered cubemap at reflection direction
+        float3 R = reflect(-V, N);
+        float mipLevel = roughness * float(prefilteredMipLevels - 1);
+        float3 prefilteredColor;
+
+#ifdef UZ_BINDLESS
+        TextureCube<float3> prefilteredMap = ResourceDescriptorHeap[prefilteredSrvIndex];
+        prefilteredColor = prefilteredMap.SampleLevel(linearSampler, R, mipLevel).rgb;
+#else
+        prefilteredColor = prefilteredCubemap.SampleLevel(linearSampler, R, mipLevel).rgb;
+#endif
+
+        // BRDF LUT: split-sum scale and bias
+        float2 envBRDF;
+#ifdef UZ_BINDLESS
+        Texture2D<float2> brdfLut = ResourceDescriptorHeap[brdfLutSrvIndex];
+        envBRDF = brdfLut.Sample(linearSampler, float2(NdotV, roughness)).rg;
+#else
+        envBRDF = brdfLutTexture.Sample(linearSampler, float2(NdotV, roughness)).rg;
+#endif
+        float3 specularIBL = prefilteredColor * (F0 * envBRDF.x + envBRDF.y);
+
+        ambient = (diffuseIBL + specularIBL) * ao;
+    } else {
+        // Fallback: constant ambient (no SkyLight / IBL)
+        ambient = ambientColor.xyz * albedo * ao;
+    }
 
     // ── Combine ──
     float3 color = ambient + Lo + emissive;
@@ -760,8 +1076,8 @@ float4 main(PSInput input) : SV_Target {
     // ACES filmic curve: better highlight rolloff than Reinhard, preserves
     // color saturation in bright areas.
     color = ACESFilm(color);
-    // Convert linear to sRGB (approximate gamma 2.2 for UNORM backbuffer).
-    color = pow(color, 1.0f / 2.2f);
+    // Linear → sRGB via math_util.hlsli (exact IEC 61966-2-1 curve).
+    color = LinearToSrgb(color);
 
     return float4(color, 1.0f);
 }

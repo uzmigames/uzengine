@@ -5,6 +5,9 @@
 /// compile, and core functionality works end-to-end.
 
 #define STB_IMAGE_IMPLEMENTATION
+// Use STATIC variant to avoid duplicate extern symbols when linked alongside editor.lib,
+// which also defines STB_IMAGE_WRITE_IMPLEMENTATION. Each TU gets its own static copies.
+#define STB_IMAGE_WRITE_STATIC
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 
 // stb_image_resize2 requires 8-byte aligned allocations; override malloc to

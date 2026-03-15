@@ -87,15 +87,24 @@ static_assert(sizeof(PerFrameCB) == 256, "PerFrameCB must be 256 bytes (D3D12 CB
 ///     uint     aoIndex;
 /// };
 /// ```
+///
+/// # Layout Note
+/// Scalar members (indices) are placed BEFORE the float4x4 matrices to avoid
+/// SPIRV std140 offset corruption. In std140, `row_major float4x4` members
+/// may shift subsequent uint offsets on some DXC versions. By placing scalars
+/// first (at a well-known offset 0), both DX12 (DXIL) and Vulkan (SPIRV) read
+/// the correct values regardless of matrix storage qualifier handling.
 struct PerObjectCB {
-    Mat4     model;            ///< Object-to-world transform (column-major)
-    Mat4     normalMatrix;     ///< transpose(inverse(model)) — for lighting
+    // ── Scalar members first (offset 0) — immune to std140 matrix padding issues ──
     uint32_t albedoIndex;      ///< SRV heap index for BaseColor map (0 = white default)
     uint32_t normalIndex;      ///< SRV heap index for normal map (0 = flat normal)
     uint32_t roughnessIndex;   ///< SRV heap index for roughness map (0 = 0.5 default)
     uint32_t metallicIndex;    ///< SRV heap index for metallic map (0 = 0.0 default)
     uint32_t aoIndex;          ///< SRV heap index for AO map (0 = 1.0 default)
-    float    _pad[3] = {};     ///< Align to 16-byte boundary (5 uints = 20B + 12B pad = 32B)
+    float    _pad[3] = {};     ///< Align to 16-byte boundary before matrices
+    // ── Matrices after scalars (offset 32) ──
+    Mat4     model;            ///< Object-to-world transform
+    Mat4     normalMatrix;     ///< transpose(inverse(model)) — for lighting
     float    _pad2[24] = {};   ///< Padding to 256-byte alignment
 };
 

@@ -48,11 +48,16 @@ cbuffer PerFrameCB : register(b1) {
     float4   ambientColor;  // xyz = ambient radiance, w = unused
 };
 
-// Per-object CB at b2
+// Per-object CB at b2 — scalars first to avoid SPIRV std140 offset corruption
 cbuffer PerObjectCB : register(b2) {
+    uint     albedoIndex;
+    uint     normalIndex;
+    uint     roughnessIndex;
+    uint     metallicIndex;
+    uint     aoIndex;
+    float3   _pad;
     row_major float4x4 model;
     row_major float4x4 normalMatrix;
-    uint     materialIndex;
 };
 
 #ifdef UZ_BINDLESS

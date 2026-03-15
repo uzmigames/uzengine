@@ -8,29 +8,12 @@
         "transform": {
           "position": [0, 20, 0],
           "rotation": [50, -30, 0],
-          "scale": [1, 1, 1],
-          "mobility": "static"
+          "scale": [1, 1, 1]
         },
         "light": {
           "type": "directional",
           "color": [1.0, 0.96, 0.88],
-          "intensity": 3.14,
-          "cast_shadows": true,
-          "shadow_cascades": 4
-        }
-      }
-    },
-    {
-      "name": "SkyLight",
-      "components": {
-        "transform": {
-          "position": [0, 0, 0],
-          "mobility": "static"
-        },
-        "light": {
-          "type": "sky",
-          "color": [0.53, 0.81, 0.92],
-          "intensity": 1.0
+          "intensity": 3.14
         }
       }
     },
@@ -38,84 +21,62 @@
       "name": "Floor",
       "components": {
         "transform": {
-          "position": [0, 0, 0],
+          "position": [0, -0.5, 0],
           "rotation": [0, 0, 0],
-          "scale": [50, 1, 50],
-          "mobility": "static"
+          "scale": [20, 1, 20]
         },
         "mesh": {
-          "asset": "content/meshes/cube.uzmesh"
+          "asset": "meshes/cube.uzmesh"
         },
         "material": {
-          "asset": "content/materials/stone_floor.uzmaterial"
+          "albedo": "textures/Stonebricks/stonebricks_albedo.jpg",
+          "normal": "textures/Stonebricks/stonebricks_normal.jpg",
+          "roughness": "textures/Stonebricks/stonebricks_roughness.jpg",
+          "metallic": "textures/Stonebricks/stonebricks_metallic.jpg",
+          "ao": "textures/Stonebricks/stonebricks_ao.jpg"
         }
       }
     },
     {
-      "name": "Hero",
+      "name": "Sphere",
       "components": {
         "transform": {
-          "position": [0, 1, 0],
+          "position": [0, 1.5, 0],
           "rotation": [0, 0, 0],
           "scale": [1, 1, 1]
         },
-        "script": {
-          "path": "scripts/hello.lua"
-        },
         "mesh": {
-          "asset": "content/meshes/sphere.uzmesh"
+          "asset": "meshes/sphere.uzmesh"
         },
         "material": {
-          "asset": "content/materials/metal_rust.uzmaterial"
-        }
-      },
-      "children": [
-        {
-          "name": "MainCamera",
-          "components": {
-            "transform": {
-              "position": [0, 2.5, -8],
-              "rotation": [15, 0, 0]
-            },
-            "camera": {
-              "fov": 75,
-              "near": 0.1,
-              "far": 1000,
-              "active": true
-            }
-          }
-        }
-      ]
-    },
-    {
-      "name": "Pillar_A",
-      "components": {
-        "transform": {
-          "position": [-5, 2, 5],
-          "scale": [1, 4, 1],
-          "mobility": "static"
-        },
-        "mesh": {
-          "asset": "content/meshes/cube.uzmesh"
-        },
-        "material": {
-          "asset": "content/materials/marble.uzmaterial"
+          "albedo": "textures/Stonebricks/stonebricks_albedo.jpg",
+          "normal": "textures/Stonebricks/stonebricks_normal.jpg",
+          "roughness": "textures/Stonebricks/stonebricks_roughness.jpg",
+          "metallic": "textures/Stonebricks/stonebricks_metallic.jpg",
+          "ao": "textures/Stonebricks/stonebricks_ao.jpg"
         }
       }
     },
     {
-      "name": "Pillar_B",
+      "name": "MainCamera",
       "components": {
         "transform": {
-          "position": [5, 2, 5],
-          "scale": [1, 4, 1],
-          "mobility": "static"
+          "position": [0, 3, -8],
+          "rotation": [15, 0, 0]
         },
-        "mesh": {
-          "asset": "content/meshes/cube.uzmesh"
-        },
-        "material": {
-          "asset": "content/materials/marble.uzmaterial"
+        "camera": {
+          "fov": 75,
+          "near": 0.1,
+          "far": 1000,
+          "active": true
+        }
+      }
+    },
+    {
+      "name": "Controller",
+      "components": {
+        "script": {
+          "path": "scripts/pbr_controller.lua"
         }
       }
     },
@@ -129,8 +90,7 @@
           "type": "point",
           "color": [1.0, 0.85, 0.6],
           "intensity": 8.0,
-          "range": 20,
-          "cast_shadows": true
+          "range": 20
         }
       }
     },
@@ -144,17 +104,7 @@
           "type": "point",
           "color": [0.6, 0.8, 1.0],
           "intensity": 8.0,
-          "range": 20,
-          "cast_shadows": true
-        }
-      }
-    },
-    {
-      "name": "StreetLamp_01",
-      "prefab": "content/prefabs/street_lamp.uzprefab",
-      "components": {
-        "transform": {
-          "position": [10, 0, -3]
+          "range": 20
         }
       }
     }

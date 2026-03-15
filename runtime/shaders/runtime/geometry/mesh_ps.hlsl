@@ -69,15 +69,16 @@ cbuffer PerFrameCB : register(b1) {
     float4   _pad1[7];             // pad to 768 bytes total (16 + 112 = 128 bytes)
 };
 
-// Per-object CB at b2 — must match C++ PerObjectCB struct exactly
+// Per-object CB at b2 — scalars first to avoid SPIRV std140 offset corruption
 cbuffer PerObjectCB : register(b2) {
-    row_major float4x4 model;
-    row_major float4x4 normalMatrix;
     uint     albedoIndex;     // SRV heap index for BaseColor map (0 = white default)
     uint     normalIndex;     // SRV heap index for normal map (0 = flat normal)
     uint     roughnessIndex;  // SRV heap index for roughness map (0 = 0.5 default)
     uint     metallicIndex;   // SRV heap index for metallic map (0 = 0.0 default)
     uint     aoIndex;         // SRV heap index for AO map (0 = 1.0 default)
+    float3   _pad;
+    row_major float4x4 model;
+    row_major float4x4 normalMatrix;
 };
 
 /// Cascaded shadow map parameters — must match C++ ShadowDataCB struct exactly.

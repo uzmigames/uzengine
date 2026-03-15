@@ -267,6 +267,9 @@ size_t ProcessEntityJson(World& world,
     // ── Components ────────────────────────────────────────────────────────────
     auto compIt = entityJson.find("components");
     if (compIt != entityJson.end() && compIt->is_object()) {
+        // Two-pass dispatch: "mesh" must be processed before "material"
+        // because material data is stored on StaticMeshComponent.
+        // Pass 1: all components except "material".
         for (const auto& [compKey, compValue] : compIt->items()) {
             if (!compValue.is_object()) {
                 UZ_LOG(Scene, Warning,
@@ -275,7 +278,9 @@ size_t ProcessEntityJson(World& world,
                 continue;
             }
 
-            if (compKey == "transform") {
+            if (compKey == "material") {
+                continue; // deferred to pass 2
+            } else if (compKey == "transform") {
                 ParseTransformComponent(world, entity, compValue);
             } else if (compKey == "script") {
                 ParseScriptComponent(world, entity, compValue);
@@ -283,8 +288,6 @@ size_t ProcessEntityJson(World& world,
                 ParseCameraComponent(world, entity, compValue);
             } else if (compKey == "mesh") {
                 ParseMeshComponent(world, entity, compValue);
-            } else if (compKey == "material") {
-                ParseMaterialComponent(world, entity, compValue);
             } else if (compKey == "light") {
                 ParseLightComponent(world, entity, compValue, sourceName);
             } else {
@@ -292,6 +295,12 @@ size_t ProcessEntityJson(World& world,
                        "LoadScene: '{}': unknown component type '{}' — skipped",
                        sourceName, compKey);
             }
+        }
+
+        // Pass 2: "material" (requires StaticMeshComponent from pass 1).
+        auto matIt = compIt->find("material");
+        if (matIt != compIt->end() && matIt->is_object()) {
+            ParseMaterialComponent(world, entity, *matIt);
         }
     }
 

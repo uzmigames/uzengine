@@ -8,6 +8,7 @@ This directory contains architectural and rendering analysis documents from refe
 
 Analysis of rendering pipelines, visual effects, debug visualization, and shader patterns:
 
+- **unity-application-abstraction.md** — How Unity hides GPU boilerplate from game code (PlayerLoop, SRP, RenderPipelineAsset)
 - **godot-debug-modes-quick-reference.md** — Godot's debug view modes (wireframe, vertex colors, etc.)
 - **godot-debug-modes-taxonomy.md** — Complete taxonomy of Godot's debug visualization system
 - **godot4-debug-visualization-analysis.md** — Godot 4 implementation details for debug rendering

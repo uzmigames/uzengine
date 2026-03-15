@@ -17,6 +17,7 @@
 #include "gbuffer_pass.h"
 #include "gbuffer_debug_pass.h"
 #include "lighting_pass.h"
+#include "debug_view_pass.h"
 #include "pbr_pass.h"
 #include "shadow_pass.h"
 #include "render_graph_builder.h"
@@ -131,6 +132,28 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     // ── Shadow Atlas ────────────────────────────────────────────────────
     CreateShadowAtlas();
 
+    // ── Fallback Textures (SM5 unconditional sampling) ──────────────
+    // The SM5 shader path samples all PBR textures unconditionally (no
+    // index guards), so we must always bind valid textures. These 1x1
+    // fallbacks produce neutral defaults: white = identity for albedo/
+    // roughness/metallic/AO, flat normal = no perturbation.
+    {
+        RHITextureDesc fbDesc{};
+        fbDesc.width     = 1;
+        fbDesc.height    = 1;
+        fbDesc.format    = RHIFormat::RGBA8Unorm;
+        fbDesc.usage     = RHITextureUsage::ShaderResource | RHITextureUsage::CopyDst;
+
+        fbDesc.debugName = "FallbackWhite";
+        m_fallbackWhite  = m_device->CreateTexture(fbDesc);
+
+        fbDesc.debugName = "FallbackBlack";
+        m_fallbackBlack  = m_device->CreateTexture(fbDesc);
+
+        fbDesc.debugName = "FallbackNormal";
+        m_fallbackNormal = m_device->CreateTexture(fbDesc);
+    }
+
     UZ_LOG(Renderer, Info, "SceneRenderer initialized ({}x{}, {})",
            width, height, RenderPathToString(m_renderPath));
     return true;
@@ -167,6 +190,19 @@ void SceneRenderer::Shutdown() {
     if (!m_device) return;
 
     DestroyAssets();
+
+    if (m_fallbackWhite.IsValid()) {
+        m_device->DestroyTexture(m_fallbackWhite);
+        m_fallbackWhite = RHITextureHandle{};
+    }
+    if (m_fallbackBlack.IsValid()) {
+        m_device->DestroyTexture(m_fallbackBlack);
+        m_fallbackBlack = RHITextureHandle{};
+    }
+    if (m_fallbackNormal.IsValid()) {
+        m_device->DestroyTexture(m_fallbackNormal);
+        m_fallbackNormal = RHITextureHandle{};
+    }
 
     if (m_gbuffer.IsValid()) {
         m_gbuffer.Destroy(m_device);
@@ -211,7 +247,7 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     // ── Begin command list ──────────────────────────────────────────────
     cmdList->Begin();
 
-    // ── Deferred StatsOverlay init (first frame only) ───────────────────
+    // ── Deferred StatsOverlay + fallback texture init (first frame only) ─
     if (!m_statsOverlayInitialized && m_statsOverlay) {
         UploadContext upload(m_device);
         if (m_statsOverlay->Init(m_device, cmdList, upload,
@@ -221,6 +257,18 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
         } else {
             UZ_LOG(Renderer, Error, "SceneRenderer: failed to init stats overlay");
         }
+
+        // Upload 1x1 fallback textures for SM5 unconditional sampling.
+        {
+            const uint8_t whitePixel[4]  = {255, 255, 255, 255};
+            const uint8_t blackPixel[4]  = {  0,   0,   0, 255}; // metallic=0 fallback
+            const uint8_t normalPixel[4] = {128, 128, 255, 255}; // flat tangent-space normal
+
+            upload.UploadTexture(cmdList, m_fallbackWhite,  whitePixel,  sizeof(whitePixel));
+            upload.UploadTexture(cmdList, m_fallbackBlack,  blackPixel,  sizeof(blackPixel));
+            upload.UploadTexture(cmdList, m_fallbackNormal, normalPixel, sizeof(normalPixel));
+        }
+
         // Flush the upload commands
         cmdList->End();
         cmdList->Execute();
@@ -303,9 +351,18 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     Vec3 ambientColor = {0.03f, 0.03f, 0.05f};
 
     if (world) {
-        auto dirLightView = world->View<DirectionalLightComponent>();
-        for (auto [enttEntity, dirLight] : dirLightView.each()) {
-            sunDir = dirLight.GetDirection().Normalized();
+        auto dirLightView = world->GetRegistry().view<DirectionalLightComponent>();
+        for (auto enttEntity : dirLightView) {
+            auto& dirLight = dirLightView.get<DirectionalLightComponent>(enttEntity);
+
+            // Read rotation from entity's standalone SceneComponent if present,
+            // otherwise fall back to the SceneComponent embedded in DirectionalLightComponent.
+            if (world->GetRegistry().all_of<SceneComponent>(enttEntity)) {
+                auto& scene = world->GetRegistry().get<SceneComponent>(enttEntity);
+                sunDir = (scene.GetRotation() * Vec3::Forward()).Normalized();
+            } else {
+                sunDir = dirLight.GetDirection().Normalized();
+            }
             sunColor = dirLight.color * dirLight.intensity;
             break;  // Use first directional light found
         }
@@ -321,11 +378,24 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     // ── Build LightingCB from ECS point lights ──────────────────────────
     LightingCB lightingData{};
     if (world) {
-        auto pointLightView = world->View<PointLightComponent>();
-        for (auto [enttEntity, pl] : pointLightView.each()) {
+        // Iterate PointLightComponent entities and read position from the entity's
+        // standalone SceneComponent (added separately by the app).
+        auto pointLightView = world->GetRegistry().view<PointLightComponent>();
+        for (auto enttEntity : pointLightView) {
             if (lightingData.pointLightCount >= kMaxPointLights) break;
 
-            const Vec3 pos = pl.GetWorldPosition();
+            auto& pl = pointLightView.get<PointLightComponent>(enttEntity);
+
+            // Get position from entity's standalone SceneComponent if present,
+            // otherwise fall back to the SceneComponent embedded in PointLightComponent.
+            Vec3 pos{};
+            if (world->GetRegistry().all_of<SceneComponent>(enttEntity)) {
+                auto& scene = world->GetRegistry().get<SceneComponent>(enttEntity);
+                pos = scene.GetWorldPosition();
+            } else {
+                pos = pl.GetWorldPosition();
+            }
+
             const Vec3 col = pl.color * pl.intensity;
             const uint32_t idx = lightingData.pointLightCount;
             lightingData.pointLights[idx] = {pos, pl.range, col, 0.f};
@@ -380,9 +450,10 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     rg::RgBuilder rgBuilder(m_device, m_rgPool.get());
     auto bbRes = rgBuilder.ImportTexture("Backbuffer", backBuffer, RHIResourceState::Present);
 
-    auto albedoRes = rgBuilder.ImportTexture("GBuf_Albedo", m_gbuffer.albedo, RHIResourceState::ShaderResource);
-    auto normalRes = rgBuilder.ImportTexture("GBuf_Normal", m_gbuffer.normal, RHIResourceState::ShaderResource);
-    auto depthRes  = rgBuilder.ImportTexture("GBuf_Depth",  m_gbuffer.depth,  RHIResourceState::ShaderResource);
+    auto albedoRes   = rgBuilder.ImportTexture("GBuf_Albedo",    m_gbuffer.albedo,     RHIResourceState::ShaderResource);
+    auto normalRes   = rgBuilder.ImportTexture("GBuf_Normal",    m_gbuffer.normal,     RHIResourceState::ShaderResource);
+    auto depthRes    = rgBuilder.ImportTexture("GBuf_Depth",     m_gbuffer.depth,      RHIResourceState::ShaderResource);
+    auto positionRes = rgBuilder.ImportTexture("GBuf_Position",  m_gbuffer.positionWS, RHIResourceState::ShaderResource);
 
     auto* pipelines = m_pipelines.get();
 
@@ -395,7 +466,7 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
 
     // ── Shadow pass ─────────────────────────────────────────────────────
     auto shadowAtlasRes = rgBuilder.ImportTexture("ShadowAtlas", m_shadowAtlas, RHIResourceState::ShaderResource);
-    if (renderMesh.IsValid() && !drawList.GetCommands().empty()) {
+    if (renderMesh.IsValid()) {
         ShadowPassDesc shadowDesc{};
         shadowDesc.shadowAtlas          = shadowAtlasRes;
         shadowDesc.shadowAtlasTexture   = m_shadowAtlas;
@@ -418,10 +489,11 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
 
     if (m_renderPath == RenderPath::Deferred) {
         // ── Deferred: GBuffer + lighting/debug ──────────────────────────
-        if (renderMesh.IsValid() && !drawList.GetCommands().empty()) {
+        if (renderMesh.IsValid()) {
             GBufferPassDesc gbDesc{};
             gbDesc.albedoTarget         = albedoRes;
             gbDesc.normalTarget         = normalRes;
+            gbDesc.positionTarget       = positionRes;
             gbDesc.depthBuffer          = depthRes;
             gbDesc.depthTexture         = m_gbuffer.depth;
             gbDesc.drawList             = &drawList;
@@ -433,6 +505,9 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
             gbDesc.indexBuffer          = renderMesh.indexBuffer;
             gbDesc.indexFormat          = renderMesh.indexFormat;
             gbDesc.indexCount           = renderMesh.indexCount;
+            gbDesc.fallbackWhite        = m_fallbackWhite;
+            gbDesc.fallbackBlack        = m_fallbackBlack;
+            gbDesc.fallbackNormal       = m_fallbackNormal;
             gbDesc.bindless             = bindless;
             gbDesc.viewportWidth        = vpWidth;
             gbDesc.viewportHeight       = vpHeight;
@@ -440,22 +515,49 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
         }
 
         const bool debugActive = (m_debugMode != GBufferDebugMode::Count);
+        const bool debugViewActive = (m_debugViewMode != DebugViewMode::Lit);
 
-        if (!debugActive) {
+        if (debugViewActive) {
+            // ── Debug View Mode — replaces lighting with channel visualization ──
+            DebugViewPassDesc dvDesc{};
+            dvDesc.backbuffer        = bbRes;
+            dvDesc.albedoGBuffer     = albedoRes;
+            dvDesc.normalGBuffer     = normalRes;
+            dvDesc.depthGBuffer      = depthRes;
+            dvDesc.positionGBuffer   = positionRes;
+            dvDesc.perFrameAlloc     = perFrameAlloc;
+            dvDesc.pipeline          = pipelines->GetDebugView();
+            dvDesc.mode              = m_debugViewMode;
+            dvDesc.albedoSrvIndex    = m_gbuffer.albedoSRV;
+            dvDesc.normalSrvIndex    = m_gbuffer.normalSRV;
+            dvDesc.depthSrvIndex     = m_gbuffer.depthSRV;
+            dvDesc.positionSrvIndex  = m_gbuffer.positionWSSRV;
+            dvDesc.albedoTexture     = m_gbuffer.albedo;
+            dvDesc.normalTexture     = m_gbuffer.normal;
+            dvDesc.depthTexture      = m_gbuffer.depth;
+            dvDesc.positionTexture   = m_gbuffer.positionWS;
+            dvDesc.bindless          = bindless;
+            dvDesc.viewportWidth     = vpWidth;
+            dvDesc.viewportHeight    = vpHeight;
+            AddDebugViewPass(rgBuilder, dvDesc);
+        } else if (!debugActive) {
             LightingPassDesc lightDesc{};
             lightDesc.backbuffer          = bbRes;
             lightDesc.albedoGBuffer       = albedoRes;
             lightDesc.normalGBuffer       = normalRes;
             lightDesc.depthGBuffer        = depthRes;
+            lightDesc.positionGBuffer     = positionRes;
             lightDesc.perFrameAlloc       = perFrameAlloc;
             lightDesc.lightingAlloc       = lightingAlloc;
             lightDesc.pipeline            = pipelines->GetLighting();
             lightDesc.albedoSrvIndex      = m_gbuffer.albedoSRV;
             lightDesc.normalSrvIndex      = m_gbuffer.normalSRV;
             lightDesc.depthSrvIndex       = m_gbuffer.depthSRV;
+            lightDesc.positionSrvIndex    = m_gbuffer.positionWSSRV;
             lightDesc.albedoTexture       = m_gbuffer.albedo;
             lightDesc.normalTexture       = m_gbuffer.normal;
             lightDesc.depthTextureForSrv  = m_gbuffer.depth;
+            lightDesc.positionTexture     = m_gbuffer.positionWS;
             lightDesc.shadowAlloc         = shadowAlloc;
             lightDesc.shadowAtlasResource = shadowAtlasRes;
             lightDesc.shadowAtlasTexture  = m_shadowAtlas;
@@ -492,7 +594,7 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
         }
     } else {
         // ── Forward: single-pass PBR ────────────────────────────────────
-        if (renderMesh.IsValid() && !drawList.GetCommands().empty()) {
+        if (renderMesh.IsValid()) {
             PBRPassDesc fwdDesc{};
             fwdDesc.backbuffer           = bbRes;
             fwdDesc.depthBuffer          = depthRes;
@@ -552,6 +654,22 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
         });
     });
 
+    // ── Screenshot capture pass (injected before Present if requested) ──
+    if (m_screenshotPending) {
+        if (!m_screenshotCapture.IsInitialized()) {
+            m_screenshotCapture.Init(m_device, m_width, m_height);
+        }
+        rgBuilder.AddPass("ScreenshotCapture", [&](rg::RgPassBuilder& pb) {
+            pb.Read(bbRes, RHIResourceState::RenderTarget);
+            pb.SetExecutionCallback([&](IRHICommandList* cmd, const rg::RgPassResources& res) {
+                (void)res;
+                m_screenshotCapture.CaptureBackBuffer(cmd, swapChain);
+                m_screenshotSaveDeferred = true;
+                m_screenshotPending      = false;
+            });
+        });
+    }
+
     // ── Present transition ──────────────────────────────────────────────
     rgBuilder.AddPass("Present", [&](rg::RgPassBuilder& pb) {
         pb.Write(bbRes, RHIResourceState::Present);
@@ -564,6 +682,24 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     // ── End command list ────────────────────────────────────────────────
     cmdList->End();
     cmdList->Execute();
+
+    // ── Save screenshot after GPU execution ─────────────────────────────
+    // GPU commands were submitted above — wait for idle, then save PNG.
+    if (m_screenshotSaveDeferred) {
+        m_device->WaitIdle();
+        m_screenshotCapture.SaveToPNG(m_screenshotPath);
+        m_screenshotSaveDeferred = false;
+        m_screenshotPath.clear();
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RequestScreenshot
+// ─────────────────────────────────────────────────────────────────────────────
+
+void SceneRenderer::RequestScreenshot(const std::string& path) {
+    m_screenshotPath    = path;
+    m_screenshotPending = true;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -629,15 +765,21 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
             cmd.albedoTexture  = tex.handle;
         }
 
-        // Also check path-based texture loading results
-        if (!meshComp.albedoPath.empty()) {
-            auto texIt = m_textureMap.find(meshComp.albedoPath);
+        // Also check path-based texture loading results for all PBR channels.
+        auto bindTexFromPath = [&](const std::string& path, uint32_t& srvIndex, RHITextureHandle& handle) {
+            if (path.empty()) return;
+            auto texIt = m_textureMap.find(path);
             if (texIt != m_textureMap.end() && texIt->second < static_cast<uint32_t>(m_textures.size())) {
                 const auto& tex = m_textures[texIt->second];
-                cmd.albedoSrvIndex = tex.srvIndex;
-                cmd.albedoTexture  = tex.handle;
+                srvIndex = tex.srvIndex;
+                handle   = tex.handle;
             }
-        }
+        };
+        bindTexFromPath(meshComp.albedoPath,    cmd.albedoSrvIndex,    cmd.albedoTexture);
+        bindTexFromPath(meshComp.normalPath,    cmd.normalSrvIndex,    cmd.normalTexture);
+        bindTexFromPath(meshComp.roughnessPath, cmd.roughnessSrvIndex, cmd.roughnessTexture);
+        bindTexFromPath(meshComp.metallicPath,  cmd.metallicSrvIndex,  cmd.metallicTexture);
+        bindTexFromPath(meshComp.aoPath,        cmd.aoSrvIndex,        cmd.aoTexture);
 
         outDrawList.Add(cmd);
         drawIndex++;
@@ -648,7 +790,7 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
 // Asset Loading
 // ─────────────────────────────────────────────────────────────────────────────
 
-uint32_t SceneRenderer::LoadMesh(const std::string& path, IVFS* /*vfs*/,
+uint32_t SceneRenderer::LoadMesh(const std::string& path, IVFS* vfs,
                                   IRHICommandList* cmdList) {
     // Check cache
     auto it = m_meshMap.find(path);
@@ -656,9 +798,14 @@ uint32_t SceneRenderer::LoadMesh(const std::string& path, IVFS* /*vfs*/,
         return it->second;
     }
 
-    // Load from file path (VFS not used for mesh loading yet — requires
-    // LoadMesh-from-bytes overload in Phase 2)
-    Mesh cpuMesh = uz::LoadMesh(path);
+    // Resolve via VFS for relative paths so demos using VFS-relative asset names work.
+    const bool isAbsolute = !path.empty() && (path[0] == '/' || path[0] == '\\' ||
+                             (path.size() > 1 && path[1] == ':'));
+    const std::string resolvedPath = (vfs && !isAbsolute)
+        ? vfs->ResolvePath(path)
+        : path;
+
+    Mesh cpuMesh = uz::LoadMesh(resolvedPath);
     if (!cpuMesh.IsValid()) {
         UZ_LOG(Renderer, Error, "SceneRenderer: failed to load mesh: '{}'", path);
         return UINT32_MAX;
@@ -679,7 +826,7 @@ uint32_t SceneRenderer::LoadMesh(const std::string& path, IVFS* /*vfs*/,
     return index;
 }
 
-uint32_t SceneRenderer::LoadTexture(const std::string& path, IVFS* /*vfs*/,
+uint32_t SceneRenderer::LoadTexture(const std::string& path, IVFS* vfs,
                                      IRHICommandList* cmdList) {
     // Check cache
     auto it = m_textureMap.find(path);
@@ -687,7 +834,14 @@ uint32_t SceneRenderer::LoadTexture(const std::string& path, IVFS* /*vfs*/,
         return it->second;
     }
 
-    TextureLoadResult result = TextureLoader::Load(m_device, cmdList, path);
+    // Resolve via VFS for relative paths
+    const bool isAbsolute = !path.empty() && (path[0] == '/' || path[0] == '\\' ||
+                             (path.size() > 1 && path[1] == ':'));
+    const std::string resolvedPath = (vfs && !isAbsolute)
+        ? vfs->ResolvePath(path)
+        : path;
+
+    TextureLoadResult result = TextureLoader::Load(m_device, cmdList, resolvedPath);
     if (!result.handle.IsValid()) {
         UZ_LOG(Renderer, Error, "SceneRenderer: failed to load texture: '{}'", path);
         return UINT32_MAX;

@@ -28,8 +28,10 @@
 #include "draw_list.h"
 #include "render_path.h"
 #include "gbuffer_debug_pass.h"  // GBufferDebugMode
+#include "debug_view_mode.h"    // DebugViewMode
 #include "gpu_mesh.h"
 #include "texture_loader.h"
+#include "screenshot_capture.h"
 
 #include <cstdint>
 #include <memory>
@@ -167,6 +169,29 @@ public:
     /// Returns the current debug mode.
     [[nodiscard]] GBufferDebugMode GetDebugMode() const { return m_debugMode; }
 
+    /// Sets the debug view mode for G-Buffer channel visualization.
+    ///
+    /// When set to anything other than `DebugViewMode::Lit`, the debug view
+    /// pass replaces the lighting pass output with a diagnostic visualization
+    /// of the selected channel. Takes effect on the next `RenderFrame()` call.
+    ///
+    /// # Arguments
+    /// * `mode` — The debug view mode to activate. `Lit` disables debug view.
+    void SetDebugViewMode(DebugViewMode mode) { m_debugViewMode = mode; }
+
+    /// Requests a screenshot to be saved at the end of the next `RenderFrame()`.
+    ///
+    /// The capture is performed inside the render graph (before the Present
+    /// transition), so the command list is still open and the backbuffer is in
+    /// a valid state. The PNG is saved after the GPU fence wait.
+    ///
+    /// # Arguments
+    /// * `path` — Absolute or relative path for the output PNG file.
+    void RequestScreenshot(const std::string& path);
+
+    /// Returns the current debug view mode.
+    [[nodiscard]] DebugViewMode GetDebugViewMode() const { return m_debugViewMode; }
+
     // ── Accessors ──────────────────────────────────────────────────────────
 
     /// Returns the camera used for rendering. Must only be called after `Init()`.
@@ -181,6 +206,12 @@ public:
 
     /// Returns the stats overlay. May return null if `Init()` has not been called.
     [[nodiscard]] StatsOverlay* GetStatsOverlay() const;
+
+    /// Returns the current render target width in pixels.
+    [[nodiscard]] uint32_t GetWidth() const { return m_width; }
+
+    /// Returns the current render target height in pixels.
+    [[nodiscard]] uint32_t GetHeight() const { return m_height; }
 
     // ── Asset Management ───────────────────────────────────────────────────
 
@@ -257,6 +288,12 @@ private:
     std::unique_ptr<FPSCameraController> m_cameraCtrl;
     std::unique_ptr<rg::RgResourcePool> m_rgPool;
 
+    // ── Fallback Textures (SM5 unconditional sampling) ────────────────────
+
+    RHITextureHandle m_fallbackWhite;  ///< 1x1 RGBA8 white (255,255,255,255) — default for missing PBR maps.
+    RHITextureHandle m_fallbackBlack;  ///< 1x1 RGBA8 black (0,0,0,255) — default for metallic map.
+    RHITextureHandle m_fallbackNormal; ///< 1x1 RGBA8 flat normal (128,128,255,255) — default for missing normal maps.
+
     // ── GBuffer + Shadow Atlas ─────────────────────────────────────────────
 
     GBuffer m_gbuffer;
@@ -267,10 +304,18 @@ private:
 
     RenderPath m_renderPath = RenderPath::Deferred;
     GBufferDebugMode m_debugMode = GBufferDebugMode::Count;
+    DebugViewMode m_debugViewMode = DebugViewMode::Lit;
     uint32_t m_width = 0;
     uint32_t m_height = 0;
     float m_totalTime = 0.f;
     bool m_statsOverlayInitialized = false;
+
+    // ── Screenshot ─────────────────────────────────────────────────────────
+
+    ScreenshotCapture m_screenshotCapture;  ///< Readback capture helper (lazily initialized).
+    std::string m_screenshotPath;           ///< Path to save screenshot. Empty = no pending capture.
+    bool m_screenshotPending = false;       ///< True if a screenshot was requested via RequestScreenshot().
+    bool m_screenshotSaveDeferred = false;  ///< True after capture commands recorded; save on next fence wait.
 
     // ── Loaded Assets ──────────────────────────────────────────────────────
 
