@@ -22,6 +22,7 @@
 #include "../engine/scripting/script_system.h"
 #include "../engine/asset/vfs.h"
 #include "../engine/renderer/scene_renderer.h"
+#include "../engine/scripting/api/core/lua_input_api.h"
 
 #ifdef _WIN32
 #include "platform_window.h"
@@ -191,7 +192,9 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
                        const std::string& windowTitle,
                        const std::string& projectDir,
                        const std::string& contentRoot,
-                       const std::string& defaultScene) {
+                       const std::string& defaultScene,
+                       const std::string& screenshotPath = {},
+                       int screenshotFrame = 5) {
     // ── Window ──────────────────────────────────────────────────────────
     WindowDesc winDesc{};
     winDesc.title = windowTitle.empty() ? "UzEngine Runtime" : windowTitle.c_str();
@@ -291,7 +294,8 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
     // Bind SceneRenderer into the Lua VM so uz.renderer / uz.mesh / uz.texture work.
     if (sceneRendererReady && luaReady) {
         LuaSetSceneRenderer(LuaVM::GetState(), &sceneRenderer);
-        UZ_LOG(Engine, Info, "Lua renderer API connected to SceneRenderer");
+        LuaSetInputSystem(LuaVM::GetState(), sceneRenderer.GetInput());
+        UZ_LOG(Engine, Info, "Lua renderer + input API connected to SceneRenderer");
     }
 
     // ── Render Loop ─────────────────────────────────────────────────────
@@ -346,6 +350,12 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
             sceneRenderer.RenderFrame(cmdList, swapChain, &world, &vfs, dt, frameIndex);
         } else {
             RenderClearFrame(cmdList, swapChain, t);
+        }
+
+        // Screenshot capture (request on screenshotFrame, captured next frame by RenderFrame)
+        if (sceneRendererReady && !screenshotPath.empty()
+            && frameIndex == static_cast<uint32_t>(screenshotFrame)) {
+            sceneRenderer.RequestScreenshot(screenshotPath);
         }
 
         // Present + signal fence
@@ -443,8 +453,11 @@ int main(int argc, char** argv) {
         exitCode = uz::RunHeadless(deviceDesc);
     } else {
 #ifdef _WIN32
+        const std::string ssPath = config.GetString("screenshot");
+        const int ssFrame = config.GetInt("screenshot-frame", 5);
         exitCode = uz::RunWindowed(deviceDesc, width, height, maxFrames,
-                                    windowTitle, projectDir, contentRoot, defaultScene);
+                                    windowTitle, projectDir, contentRoot, defaultScene,
+                                    ssPath, ssFrame);
 #else
         UZ_LOG(Engine, Error, "Windowed mode not supported on this platform yet");
         exitCode = uz::kExitRenderError;

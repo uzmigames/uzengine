@@ -4,34 +4,50 @@
 // engine shader sources via the EngineShaders registry.
 #pragma once
 
-#include "compute/draw_compact_cs.hlsl.gen.h"
-#include "compute/gpu_cull_cs.hlsl.gen.h"
-#include "compute/mipgen_cs.hlsl.gen.h"
-#include "geometry/gbuffer_debug_ps.hlsl.gen.h"
-#include "geometry/gbuffer_ps.hlsl.gen.h"
-#include "geometry/mesh_ps.hlsl.gen.h"
-#include "geometry/mesh_vs.hlsl.gen.h"
-#include "ibl/brdf_lut_cs.hlsl.gen.h"
-#include "ibl/irradiance_cs.hlsl.gen.h"
-#include "ibl/prefilter_cs.hlsl.gen.h"
-#include "lighting/deferred_lighting_ps.hlsl.gen.h"
-#include "lighting/fullscreen_vs.hlsl.gen.h"
-#include "lighting/shadow_depth_vs.hlsl.gen.h"
-#include "post/bloom_blur_h_ps.hlsl.gen.h"
-#include "post/bloom_blur_v_ps.hlsl.gen.h"
-#include "post/bloom_composite_ps.hlsl.gen.h"
-#include "post/bloom_downsample_ps.hlsl.gen.h"
-#include "post/fxaa_ps.hlsl.gen.h"
-#include "post/tonemap_ps.hlsl.gen.h"
-#include "post/velocity_ps.hlsl.gen.h"
+#include "editor/grid_ps.hlsl.gen.h"
+#include "editor/grid_vs.hlsl.gen.h"
+#include "editor/overlay_rect_ps.hlsl.gen.h"
+#include "editor/overlay_text_ps.hlsl.gen.h"
+#include "editor/overlay_vs.hlsl.gen.h"
+#include "runtime/atmosphere/height_fog_ps.hlsl.gen.h"
+#include "runtime/atmosphere/sky_atmosphere_ps.hlsl.gen.h"
+#include "runtime/compute/draw_compact_cs.hlsl.gen.h"
+#include "runtime/compute/gpu_cull_cs.hlsl.gen.h"
+#include "runtime/compute/mipgen_cs.hlsl.gen.h"
+#include "runtime/debug/debug_view_ps.hlsl.gen.h"
+#include "runtime/geometry/gbuffer_debug_ps.hlsl.gen.h"
+#include "runtime/geometry/gbuffer_ps.hlsl.gen.h"
+#include "runtime/geometry/mesh_ps.hlsl.gen.h"
+#include "runtime/geometry/mesh_vs.hlsl.gen.h"
+#include "runtime/ibl/brdf_lut_cs.hlsl.gen.h"
+#include "runtime/ibl/irradiance_cs.hlsl.gen.h"
+#include "runtime/ibl/prefilter_cs.hlsl.gen.h"
+#include "runtime/lighting/deferred_lighting_ps.hlsl.gen.h"
+#include "runtime/lighting/fullscreen_vs.hlsl.gen.h"
+#include "runtime/lighting/shadow_depth_vs.hlsl.gen.h"
+#include "runtime/post/bloom_blur_h_ps.hlsl.gen.h"
+#include "runtime/post/bloom_blur_v_ps.hlsl.gen.h"
+#include "runtime/post/bloom_composite_ps.hlsl.gen.h"
+#include "runtime/post/bloom_downsample_ps.hlsl.gen.h"
+#include "runtime/post/fxaa_ps.hlsl.gen.h"
+#include "runtime/post/tonemap_ps.hlsl.gen.h"
+#include "runtime/post/velocity_ps.hlsl.gen.h"
 
 namespace uz {
 
 /// Identifies a built-in engine shader.
 enum class EngineShader {
+    GridPS,
+    GridVS,
+    OverlayRectPS,
+    OverlayTextPS,
+    OverlayVS,
+    HeightFogPS,
+    SkyAtmospherePS,
     DrawCompactCS,
     GpuCullCS,
     MipgenCS,
+    DebugViewPS,
     GbufferDebugPS,
     GbufferPS,
     MeshPS,
@@ -59,9 +75,17 @@ struct EngineShaders {
     /// Returns the HLSL source code for the given engine shader.
     static constexpr const char* GetSource(EngineShader shader) {
         switch (shader) {
+            case EngineShader::GridPS: return generated::kGridPS;
+            case EngineShader::GridVS: return generated::kGridVS;
+            case EngineShader::OverlayRectPS: return generated::kOverlayRectPS;
+            case EngineShader::OverlayTextPS: return generated::kOverlayTextPS;
+            case EngineShader::OverlayVS: return generated::kOverlayVS;
+            case EngineShader::HeightFogPS: return generated::kHeightFogPS;
+            case EngineShader::SkyAtmospherePS: return generated::kSkyAtmospherePS;
             case EngineShader::DrawCompactCS: return generated::kDrawCompactCS;
             case EngineShader::GpuCullCS: return generated::kGpuCullCS;
             case EngineShader::MipgenCS: return generated::kMipgenCS;
+            case EngineShader::DebugViewPS: return generated::kDebugViewPS;
             case EngineShader::GbufferDebugPS: return generated::kGbufferDebugPS;
             case EngineShader::GbufferPS: return generated::kGbufferPS;
             case EngineShader::MeshPS: return generated::kMeshPS;
@@ -86,9 +110,17 @@ struct EngineShaders {
     /// Returns the filename for the shader (for error messages and stage inference).
     static constexpr const char* GetName(EngineShader shader) {
         switch (shader) {
+            case EngineShader::GridPS: return "grid_ps.hlsl";
+            case EngineShader::GridVS: return "grid_vs.hlsl";
+            case EngineShader::OverlayRectPS: return "overlay_rect_ps.hlsl";
+            case EngineShader::OverlayTextPS: return "overlay_text_ps.hlsl";
+            case EngineShader::OverlayVS: return "overlay_vs.hlsl";
+            case EngineShader::HeightFogPS: return "height_fog_ps.hlsl";
+            case EngineShader::SkyAtmospherePS: return "sky_atmosphere_ps.hlsl";
             case EngineShader::DrawCompactCS: return "draw_compact_cs.hlsl";
             case EngineShader::GpuCullCS: return "gpu_cull_cs.hlsl";
             case EngineShader::MipgenCS: return "mipgen_cs.hlsl";
+            case EngineShader::DebugViewPS: return "debug_view_ps.hlsl";
             case EngineShader::GbufferDebugPS: return "gbuffer_debug_ps.hlsl";
             case EngineShader::GbufferPS: return "gbuffer_ps.hlsl";
             case EngineShader::MeshPS: return "mesh_ps.hlsl";

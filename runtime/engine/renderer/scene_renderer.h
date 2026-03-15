@@ -334,6 +334,9 @@ private:
 
     // ── Constants ──────────────────────────────────────────────────────────
 
+    bool m_hasSkyAtmosphere = false;  ///< True if a SkyAtmosphereComponent was found this frame.
+    bool m_hasFog = false;            ///< True if a HeightFogComponent (enabled) was found this frame.
+
     static constexpr uint32_t kShadowAtlasSize = 4096;
     static constexpr uint32_t kShadowResolution = 2048;
     static constexpr uint32_t kCBRingFrames = 3;

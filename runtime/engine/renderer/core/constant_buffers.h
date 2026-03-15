@@ -188,4 +188,55 @@ struct ShadowDataCB {
 
 static_assert(sizeof(ShadowDataCB) == 512, "ShadowDataCB must be 512 bytes (256-byte multiple)");
 
+// ─────────────────────────────────────────────────────────────────────────────
+// SkyAtmosphereCB — bound at b2 (reusing per-object slot in fullscreen sky pass)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Sky atmosphere constant buffer for the sky rendering pass.
+///
+/// Contains Rayleigh/Mie scattering parameters, sun properties, and planet
+/// geometry for single-scatter atmospheric sky rendering (Hillaire 2020 model).
+///
+/// Bound at register `b2` (reuses the per-object CBV slot, which is unused
+/// in fullscreen passes). All distance values are in meters.
+///
+/// Padded to 256 bytes as required by D3D12 constant buffer alignment.
+struct SkyAtmosphereCB {
+    Vec4  rayleighScattering;   ///< xyz = coefficients (m^-1), w = scale height (m).
+    Vec4  mieScattering;        ///< x = coefficient (m^-1), y = anisotropy g, z = scale height (m), w = unused.
+    Vec4  groundAlbedo;         ///< xyz = ground reflectance, w = unused.
+    Vec4  sunIlluminance;       ///< xyz = sun color * illuminance, w = sun angular radius (rad).
+    float planetRadius;         ///< Planet radius in meters (center to sea level).
+    float atmosphereHeight;     ///< Atmosphere thickness in meters (sea level to top).
+    float sunDiskIntensity;     ///< Multiplier for the sun disk brightness.
+    float _skyPad[1] = {};      ///< Pad to 16-byte boundary.
+    float _skyPad2[44] = {};    ///< Pad to 256-byte alignment.
+};
+
+static_assert(sizeof(SkyAtmosphereCB) == 256, "SkyAtmosphereCB must be 256 bytes (D3D12 CB alignment)");
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HeightFogCB — bound at b2 (reusing per-object slot in fullscreen fog pass)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Height fog constant buffer for the fog compositing pass.
+///
+/// Contains exponential height fog parameters. Bound at register `b2`
+/// (reuses the per-object CBV slot). The fog pass reads scene depth from
+/// the G-Buffer and blends fog color over the backbuffer.
+///
+/// Padded to 256 bytes as required by D3D12 constant buffer alignment.
+struct HeightFogCB {
+    Vec4  fogColor;             ///< xyz = fog color (linear), w = unused.
+    float fogDensity;           ///< Exponential density factor.
+    float fogHeightFalloff;     ///< Height falloff coefficient.
+    float fogBaseHeight;        ///< World-space base height (meters).
+    float fogMaxOpacity;        ///< Maximum fog opacity (0-1).
+    float fogStartDistance;     ///< Minimum distance before fog begins.
+    float _fogPad[3] = {};      ///< Pad to 16-byte boundary.
+    float _fogPad2[52] = {};    ///< Pad to 256-byte alignment.
+};
+
+static_assert(sizeof(HeightFogCB) == 256, "HeightFogCB must be 256 bytes (D3D12 CB alignment)");
+
 } // namespace uz

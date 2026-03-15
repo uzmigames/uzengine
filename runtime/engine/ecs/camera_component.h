@@ -81,6 +81,15 @@ public:
     /// camera should be active at a time per world.
     bool isActive = false;
 
+    /// When true, the renderer uses `lookTarget` instead of the quaternion
+    /// rotation to orient the camera. Set by `uz.camera.look_at()`.
+    bool hasLookTarget = false;
+
+    /// World-space look-at target point. Used when `hasLookTarget` is true.
+    /// Avoids Z-up ↔ Y-up quaternion conversion issues — the Camera::LookAt
+    /// method handles the coordinate system conversion internally.
+    Vec3 lookTarget{0.f, 0.f, 0.f};
+
     // ── Matrix Queries ────────────────────────────────────────────────────────
 
     /// Returns the view matrix (inverse of the world transform).

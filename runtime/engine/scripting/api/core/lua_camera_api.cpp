@@ -104,8 +104,8 @@ namespace uz {
 /// builds an orthonormal basis (forward, right, up) and derives the quaternion
 /// from the rotation matrix columns.
 ///
-/// Assumes left-handed coordinates (+X right, +Y up, +Z forward) matching
-/// the engine's DirectXMath convention. `worldUp` is (0, 1, 0).
+/// Assumes Z-up left-handed coordinates (+X forward, +Y right, +Z up)
+/// matching the engine's coordinate system. `worldUp` is (0, 0, 1).
 ///
 /// # Edge Case
 /// If `from == to` (or nearly so), returns the identity quaternion to avoid
@@ -119,16 +119,16 @@ namespace uz {
     }
     fwd = {fwd.x / len, fwd.y / len, fwd.z / len};
 
-    // World up = (0, 1, 0). Degenerate when forward is nearly vertical.
-    constexpr Vec3 kWorldUp{0.f, 1.f, 0.f};
-    const float upDot = std::abs(fwd.y); // dot(fwd, worldUp)
+    // World up = (0, 0, 1) for Z-up. Degenerate when forward is nearly vertical.
+    constexpr Vec3 kWorldUp{0.f, 0.f, 1.f};
+    const float upDot = std::abs(fwd.z); // dot(fwd, worldUp)
 
     Vec3 right;
     Vec3 up;
 
     if (upDot > 0.9999f) {
-        // Forward is nearly parallel to world-up — use world-right as reference.
-        constexpr Vec3 kWorldRight{1.f, 0.f, 0.f};
+        // Forward is nearly parallel to world-up — use world-forward as reference.
+        constexpr Vec3 kWorldRight{1.f, 0.f, 0.f}; // X=forward in Z-up
         // up = normalize(worldRight × fwd)  (left-handed cross)
         up = {
             kWorldRight.y * fwd.z - kWorldRight.z * fwd.y,
@@ -234,9 +234,9 @@ static int CameraSetPosition(lua_State* L) {
 
 /// uz.camera.look_at(x, y, z)
 ///
-/// Computes the rotation required for the active camera at its current position
-/// to look toward the world-space target point (x, y, z). No-op if the camera
-/// is coincident with the target (distance < 1e-6).
+/// Sets the camera's look-at target in world-space Z-up coordinates.
+/// The renderer will use Camera::LookAt() which handles Z-up → Y-up
+/// conversion internally, avoiding quaternion coordinate mismatches.
 static int CameraLookAt(lua_State* L) {
     CameraComponent* cam = FindActiveCamera(L, "look_at");
     if (!cam) return 0;
@@ -245,10 +245,8 @@ static int CameraLookAt(lua_State* L) {
     const float ty = static_cast<float>(luaL_checknumber(L, 2));
     const float tz = static_cast<float>(luaL_checknumber(L, 3));
 
-    const Vec3 from = cam->GetPosition();
-    const Vec3 to   = {tx, ty, tz};
-
-    cam->SetRotation(QuatLookAt(from, to));
+    cam->lookTarget = {tx, ty, tz};
+    cam->hasLookTarget = true;
     return 0;
 }
 

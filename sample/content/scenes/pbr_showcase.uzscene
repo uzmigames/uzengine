@@ -6,7 +6,7 @@
       "name": "Sun",
       "components": {
         "transform": {
-          "position": [0, 20, 0],
+          "position": [0, 0, 20],
           "rotation": [50, -30, 0],
           "scale": [1, 1, 1]
         },
@@ -22,11 +22,11 @@
       "name": "GroundPlane",
       "components": {
         "transform": {
-          "position": [0, -0.5, 0],
+          "position": [0, 0, -0.82],
           "rotation": [0, 0, 0],
-          "scale": [30, 0.04, 30]
+          "scale": [30, 30, 0.04]
         },
-        "mesh": { "asset": "meshes/cube.uzmesh" },
+        "mesh": { "asset": "builtin:cube" },
         "material": {
           "albedo": "textures/Concrete/Poliigon_ConcreteWorn_8690_BaseColor.jpg",
           "normal": "textures/Concrete/Poliigon_ConcreteWorn_8690_Normal.png",
@@ -41,11 +41,11 @@
       "name": "Cube_Stone_1",
       "components": {
         "transform": {
-          "position": [-4, 0.8, 0],
+          "position": [-4, 0, 0],
           "rotation": [0, 0, 0],
           "scale": [0.8, 0.8, 0.8]
         },
-        "mesh": { "asset": "meshes/cube.uzmesh" },
+        "mesh": { "asset": "builtin:cube" },
         "material": {
           "albedo": "textures/Stonebricks/stonebricks_albedo.jpg",
           "normal": "textures/Stonebricks/stonebricks_normal.jpg",
@@ -59,11 +59,11 @@
       "name": "Cube_Stone_2",
       "components": {
         "transform": {
-          "position": [-2, 0.8, 0],
+          "position": [-2, 0, 0],
           "rotation": [0, 0, 0],
           "scale": [0.8, 0.8, 0.8]
         },
-        "mesh": { "asset": "meshes/cube.uzmesh" },
+        "mesh": { "asset": "builtin:cube" },
         "material": {
           "albedo": "textures/Stonebricks/stonebricks_albedo.jpg",
           "normal": "textures/Stonebricks/stonebricks_normal.jpg",
@@ -77,11 +77,11 @@
       "name": "Cube_Metal_Center",
       "components": {
         "transform": {
-          "position": [0, 0.8, 0],
+          "position": [0, 0, 0],
           "rotation": [0, 0, 0],
           "scale": [0.8, 0.8, 0.8]
         },
-        "mesh": { "asset": "meshes/cube.uzmesh" },
+        "mesh": { "asset": "builtin:cube" },
         "material": {
           "albedo": "textures/MetalCorroded/MetalCorrodedHeavy001_COL_2K_METALNESS.jpg",
           "normal": "textures/MetalCorroded/MetalCorrodedHeavy001_NRM_2K_METALNESS.jpg",
@@ -94,11 +94,11 @@
       "name": "Cube_Stone_4",
       "components": {
         "transform": {
-          "position": [2, 0.8, 0],
+          "position": [2, 0, 0],
           "rotation": [0, 0, 0],
           "scale": [0.8, 0.8, 0.8]
         },
-        "mesh": { "asset": "meshes/cube.uzmesh" },
+        "mesh": { "asset": "builtin:cube" },
         "material": {
           "albedo": "textures/Stonebricks/stonebricks_albedo.jpg",
           "normal": "textures/Stonebricks/stonebricks_normal.jpg",
@@ -112,11 +112,11 @@
       "name": "Cube_Stone_5",
       "components": {
         "transform": {
-          "position": [4, 0.8, 0],
+          "position": [4, 0, 0],
           "rotation": [0, 0, 0],
           "scale": [0.8, 0.8, 0.8]
         },
-        "mesh": { "asset": "meshes/cube.uzmesh" },
+        "mesh": { "asset": "builtin:cube" },
         "material": {
           "albedo": "textures/Stonebricks/stonebricks_albedo.jpg",
           "normal": "textures/Stonebricks/stonebricks_normal.jpg",
@@ -131,11 +131,11 @@
       "name": "Sphere_Metal",
       "components": {
         "transform": {
-          "position": [0, 1.8, 3],
+          "position": [0, 3, 1],
           "rotation": [0, 0, 0],
           "scale": [1, 1, 1]
         },
-        "mesh": { "asset": "meshes/sphere.uzmesh" },
+        "mesh": { "asset": "builtin:sphere" },
         "material": {
           "albedo": "textures/MetalCorroded/MetalCorrodedHeavy001_COL_2K_METALNESS.jpg",
           "normal": "textures/MetalCorroded/MetalCorrodedHeavy001_NRM_2K_METALNESS.jpg",
@@ -148,11 +148,11 @@
       "name": "Sphere_Stone",
       "components": {
         "transform": {
-          "position": [-3, 1.8, 3],
+          "position": [-3, 3, 1],
           "rotation": [0, 0, 0],
           "scale": [1, 1, 1]
         },
-        "mesh": { "asset": "meshes/sphere.uzmesh" },
+        "mesh": { "asset": "builtin:sphere" },
         "material": {
           "albedo": "textures/Stonebricks/stonebricks_albedo.jpg",
           "normal": "textures/Stonebricks/stonebricks_normal.jpg",
@@ -166,11 +166,11 @@
       "name": "Sphere_Concrete",
       "components": {
         "transform": {
-          "position": [3, 1.8, 3],
+          "position": [3, 3, 1],
           "rotation": [0, 0, 0],
           "scale": [1, 1, 1]
         },
-        "mesh": { "asset": "meshes/sphere.uzmesh" },
+        "mesh": { "asset": "builtin:sphere" },
         "material": {
           "albedo": "textures/Concrete/Poliigon_ConcreteWorn_8690_BaseColor.jpg",
           "normal": "textures/Concrete/Poliigon_ConcreteWorn_8690_Normal.png",
@@ -185,8 +185,8 @@
       "name": "MainCamera",
       "components": {
         "transform": {
-          "position": [0, 3, -8],
-          "rotation": [15, 0, 0]
+          "position": [0, -8, 3],
+          "rotation": [-15, 0, 0]
         },
         "camera": {
           "fov": 75,
@@ -212,7 +212,7 @@
     {
       "name": "PointLight_Green",
       "components": {
-        "transform": { "position": [0, 3, -2] },
+        "transform": { "position": [0, -2, 3] },
         "light": {
           "type": "point",
           "color": [0.2, 4.0, 0.2],
@@ -236,7 +236,7 @@
     {
       "name": "PointLight_White",
       "components": {
-        "transform": { "position": [0, 1, 0] },
+        "transform": { "position": [0, 0, 1] },
         "light": {
           "type": "point",
           "color": [3.0, 3.0, 3.0],

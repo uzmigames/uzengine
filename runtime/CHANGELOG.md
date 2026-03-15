@@ -2,6 +2,25 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
+## [0.2.23] — 2026-03-15
+
+### Z-up Coordinate System Fixes & PBR Showcase Scene
+- **Camera ECS transform fix**: `CameraComponent` now inherits position/rotation from the entity's `SceneComponent` in scene_loader — previously the camera was always at origin
+- **Camera lookTarget**: `uz.camera.look_at()` now stores world-space target directly instead of computing a Y-up quaternion — eliminates Z-up ↔ Y-up conversion bugs
+- **Lua input connected**: `LuaSetInputSystem()` wired in `uzengine.cpp` — `uz.input.*` API was silently returning false for all queries
+- **Mouse/WASD axis fix**: Lua camera controller corrected for Z-up (yaw sign, pitch sign, right vector direction) to match `FPSCameraController`
+- **Builtin mesh primitives**: `SceneRenderer::LoadMesh()` supports `"builtin:cube"` and `"builtin:sphere"` asset paths — generates meshes at runtime without binary `.uzmesh` files
+- **cube_rotator.lua rewrite**: accumulates angle internally instead of read/modify/write Euler cycle that caused texture "jumping" from quat↔euler Y-up conversion drift
+- **CB padding fix**: `SkyAtmosphereCB` (80→256 bytes) and `HeightFogCB` (48→256 bytes) padding corrected to satisfy D3D12 constant buffer alignment
+- **PBR showcase scene**: `pbr_showcase.uzscene` updated with Z-up coordinates, builtin meshes, 3 material types (stone, metal, concrete), 4 point lights, Lua controller
+- **Project default scene**: `demo.uzproject` now loads `pbr_showcase.uzscene`
+
+### Sky Atmosphere & Height Fog Passes
+- **SkyAtmospherePass**: fullscreen Bruneton-style single-scatter atmosphere with Rayleigh/Mie, sun disk, configurable planet radius
+- **HeightFogPass**: exponential height fog with configurable density, height falloff, base height, max opacity, start distance
+- **ECS components**: `SkyAtmosphereComponent` (50+ params) and `HeightFogComponent` for scene-driven environment
+- **Pipeline integration**: both passes registered in `PipelineLibrary`, wired into render graph after lighting
+
 ## [0.2.22] — 2026-03-15
 
 ### Lua `uz.debug` API — Debug View Mode Scripting

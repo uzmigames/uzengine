@@ -67,7 +67,7 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
             passDesc.hasDepth = true;
             passDesc.depthAttachment.texture    = desc.depthTexture;
             passDesc.depthAttachment.clearDepth = 1.0f;
-            passDesc.depthAttachment.clear      = false;
+            passDesc.depthAttachment.clear      = true;
 
             cmd->BeginRenderPass(passDesc);
 

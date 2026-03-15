@@ -1,0 +1,14 @@
+{
+    "dependencies": [],
+    "importer": "texture",
+    "options": {
+        "entry_point": "",
+        "model": "",
+        "stage": ""
+    },
+    "outputs": {
+        "": "e:/UzEngine/sample/content_cooked/.cache/imported/1371e0fc3f273d68.bin"
+    },
+    "source_hash": "65ecaa82b733432d",
+    "version": 1
+}

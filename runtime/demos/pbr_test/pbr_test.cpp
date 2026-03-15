@@ -16,6 +16,8 @@
 #include "static_mesh_component.h"
 #include "scene_component.h"
 #include "light_component.h"
+#include "sky_atmosphere_component.h"
+#include "height_fog_component.h"
 #include "render_path.h"
 
 #include <cmath>
@@ -133,7 +135,26 @@ void PBRTest::OnStart() {
         light.range     = kPointLightDefs[i].range;
     }
 
-    UZ_LOG(Demo, Info, "PBR Test started — {} cubes, 4 point lights + directional sun",
+    // ── Sky atmosphere ────────────────────────────────────────────────────
+    Entity sky = world.CreateEntity();
+    {
+        auto& atmo = world.AddComponent<SkyAtmosphereComponent>(sky);
+        atmo.sunIlluminance = {20.f, 20.f, 20.f};
+        // Earth-like defaults — Rayleigh/Mie already set by struct defaults.
+    }
+
+    // ── Height fog (ground haze) ──────────────────────────────────────────
+    Entity fog = world.CreateEntity();
+    {
+        auto& fogComp = world.AddComponent<HeightFogComponent>(fog);
+        fogComp.density      = 0.008f;
+        fogComp.baseHeight   = -1.f;
+        fogComp.heightFalloff = 0.3f;
+        fogComp.maxOpacity   = 0.7f;
+        fogComp.color        = {0.75f, 0.80f, 0.90f};
+    }
+
+    UZ_LOG(Demo, Info, "PBR Test started — {} cubes, 4 point lights + directional sun + sky",
            kCubeCount);
 }
 

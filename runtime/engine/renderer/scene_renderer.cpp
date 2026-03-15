@@ -20,6 +20,8 @@
 #include "debug_view_pass.h"
 #include "pbr_pass.h"
 #include "shadow_pass.h"
+#include "sky_atmosphere_pass.h"
+#include "height_fog_pass.h"
 #include "render_graph_builder.h"
 #include "render_graph_resources.h"
 #include "cascade.h"
@@ -31,6 +33,8 @@
 #include "light_component.h"
 #include "scene_component.h"
 #include "static_mesh_component.h"
+#include "sky_atmosphere_component.h"
+#include "height_fog_component.h"
 #include "rhi.h"
 #include "shader_compiler.h"
 #include "shader_compiler_fxc.h"
@@ -315,10 +319,19 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
         auto cameraView = world->View<CameraComponent>();
         for (auto [enttEntity, cam] : cameraView.each()) {
             if (cam.isActive) {
-                // Sync ECS camera into our Camera object
+                // Sync ECS camera into our Camera object.
+                // Camera::LookAt handles Z-up → Y-up conversion internally.
                 const Vec3 camPos = cam.GetWorldPosition();
                 m_camera->SetPosition(camPos);
-                m_camera->SetOrientation(cam.GetRotation());
+                if (cam.hasLookTarget) {
+                    m_camera->LookAt(cam.lookTarget);
+                } else {
+                    // Fallback: use rotation quaternion to derive forward direction.
+                    // Note: FromEuler produces Y-up quaternions, so we convert via
+                    // the same yaw/pitch extraction that FPSCameraController uses.
+                    const Vec3 fwd = (cam.GetRotation() * Vec3::Forward()).Normalized();
+                    m_camera->LookAt(camPos + fwd * 10.f);
+                }
                 m_camera->SetPerspective(
                     cam.fov * (3.14159265f / 180.f),
                     static_cast<float>(m_width) / static_cast<float>(m_height),
@@ -612,6 +625,89 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
             fwdDesc.viewportWidth        = vpWidth;
             fwdDesc.viewportHeight       = vpHeight;
             AddPBRPass(rgBuilder, fwdDesc);
+        }
+    }
+
+    // ── Sky Atmosphere pass (after lighting, before fog/overlay) ─────────
+    if (world) {
+        auto skyView = world->GetRegistry().view<SkyAtmosphereComponent>();
+        for (auto enttEntity : skyView) {
+            auto& skyComp = skyView.get<SkyAtmosphereComponent>(enttEntity);
+            if (!skyComp.enabled) continue;
+
+            // Build SkyAtmosphereCB from component data
+            SkyAtmosphereCB skyCB{};
+            skyCB.rayleighScattering = {skyComp.rayleighScattering.x,
+                                        skyComp.rayleighScattering.y,
+                                        skyComp.rayleighScattering.z,
+                                        skyComp.rayleighScaleHeight};
+            skyCB.mieScattering      = {skyComp.mieScattering,
+                                        skyComp.mieAnisotropy,
+                                        skyComp.mieScaleHeight, 0.f};
+            skyCB.groundAlbedo       = {skyComp.groundAlbedo.x,
+                                        skyComp.groundAlbedo.y,
+                                        skyComp.groundAlbedo.z, 0.f};
+            skyCB.sunIlluminance     = {skyComp.sunIlluminance.x,
+                                        skyComp.sunIlluminance.y,
+                                        skyComp.sunIlluminance.z,
+                                        skyComp.sunAngularRadius};
+            skyCB.planetRadius       = skyComp.planetRadius;
+            skyCB.atmosphereHeight   = skyComp.atmosphereHeight;
+            skyCB.sunDiskIntensity   = skyComp.sunDiskIntensity;
+
+            CBAllocation skyAlloc = m_cbRing->Allocate(sizeof(SkyAtmosphereCB));
+            std::memcpy(skyAlloc.cpuPtr, &skyCB, sizeof(SkyAtmosphereCB));
+
+            SkyAtmospherePassDesc skyDesc{};
+            skyDesc.backbuffer      = bbRes;
+            skyDesc.depthGBuffer    = depthRes;
+            skyDesc.perFrameAlloc   = perFrameAlloc;
+            skyDesc.skyAtmosphereAlloc = skyAlloc;
+            skyDesc.pipeline        = pipelines->GetSkyAtmosphere();
+            skyDesc.depthSrvIndex   = m_gbuffer.depthSRV;
+            skyDesc.depthTexture    = m_gbuffer.depth;
+            skyDesc.bindless        = bindless;
+            skyDesc.viewportWidth   = vpWidth;
+            skyDesc.viewportHeight  = vpHeight;
+            AddSkyAtmospherePass(rgBuilder, skyDesc);
+
+            break;  // Only use first SkyAtmosphereComponent found
+        }
+    }
+
+    // ── Height Fog pass (after sky, before overlay) ──────────────────────
+    if (world) {
+        auto fogView = world->GetRegistry().view<HeightFogComponent>();
+        for (auto enttEntity : fogView) {
+            auto& fogComp = fogView.get<HeightFogComponent>(enttEntity);
+            if (!fogComp.enabled) continue;
+
+            // Build HeightFogCB from component data
+            HeightFogCB fogCB{};
+            fogCB.fogColor         = {fogComp.color.x, fogComp.color.y, fogComp.color.z, 0.f};
+            fogCB.fogDensity       = fogComp.density;
+            fogCB.fogHeightFalloff = fogComp.heightFalloff;
+            fogCB.fogBaseHeight    = fogComp.baseHeight;
+            fogCB.fogMaxOpacity    = fogComp.maxOpacity;
+            fogCB.fogStartDistance = fogComp.startDistance;
+
+            CBAllocation fogAlloc = m_cbRing->Allocate(sizeof(HeightFogCB));
+            std::memcpy(fogAlloc.cpuPtr, &fogCB, sizeof(HeightFogCB));
+
+            HeightFogPassDesc fogDesc{};
+            fogDesc.backbuffer    = bbRes;
+            fogDesc.depthGBuffer  = depthRes;
+            fogDesc.perFrameAlloc = perFrameAlloc;
+            fogDesc.fogAlloc      = fogAlloc;
+            fogDesc.pipeline      = pipelines->GetHeightFog();
+            fogDesc.depthSrvIndex = m_gbuffer.depthSRV;
+            fogDesc.depthTexture  = m_gbuffer.depth;
+            fogDesc.bindless      = bindless;
+            fogDesc.viewportWidth = vpWidth;
+            fogDesc.viewportHeight = vpHeight;
+            AddHeightFogPass(rgBuilder, fogDesc);
+
+            break;  // Only use first HeightFogComponent found
         }
     }
 

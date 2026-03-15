@@ -174,6 +174,27 @@ public:
     /// Returns the shadow depth pipeline using the device's default bindless mode.
     [[nodiscard]] RHIPipelineHandle GetShadowDepth();
 
+    /// Returns the sky atmosphere pipeline (fullscreen_vs + sky_atmosphere_ps, 1 RT, no depth).
+    ///
+    /// Rasterizer: no cull (fullscreen triangle).
+    /// Depth: disabled.
+    /// Render target: RGBA8Unorm.
+    ///
+    /// # Returns
+    /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
+    [[nodiscard]] RHIPipelineHandle GetSkyAtmosphere();
+
+    /// Returns the height fog pipeline (fullscreen_vs + height_fog_ps, 1 RT, alpha blend).
+    ///
+    /// Rasterizer: no cull (fullscreen triangle).
+    /// Depth: disabled.
+    /// Blend: SrcAlpha / InvSrcAlpha (fog compositing).
+    /// Render target: RGBA8Unorm.
+    ///
+    /// # Returns
+    /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
+    [[nodiscard]] RHIPipelineHandle GetHeightFog();
+
     /// Pre-creates all standard pipelines eagerly instead of on first use.
     ///
     /// Call at scene load time to avoid hitches during the first frame.
@@ -200,6 +221,8 @@ private:
     [[nodiscard]] bool EnsureDebugViewPixelShader();
     [[nodiscard]] bool EnsureForwardPixelShader();
     [[nodiscard]] bool EnsureShadowShaders();
+    [[nodiscard]] bool EnsureSkyAtmospherePixelShader();
+    [[nodiscard]] bool EnsureHeightFogPixelShader();
 
     /// Creates a pipeline through the PSO cache. On cache hit, returns the
     /// cached handle without calling the device. On miss, creates via the
@@ -225,6 +248,8 @@ private:
     RHIShaderHandle m_gbufferDebugPS   = RHIShaderHandle::Invalid();
     RHIShaderHandle m_debugViewPS      = RHIShaderHandle::Invalid();
     RHIShaderHandle m_shadowVS         = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_skyAtmospherePS  = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_heightFogPS      = RHIShaderHandle::Invalid();
 
     // ── Cached pipeline handles (one per bindless variant) ──────────────
     RHIPipelineHandle m_forwardPBR         = RHIPipelineHandle::Invalid();
@@ -236,6 +261,8 @@ private:
     RHIPipelineHandle m_debugView             = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_shadowDepth           = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_shadowDepthBindless   = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_skyAtmosphere         = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_heightFog             = RHIPipelineHandle::Invalid();
 };
 
 } // namespace uz

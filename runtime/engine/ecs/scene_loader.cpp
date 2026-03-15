@@ -128,16 +128,45 @@ void ParseScriptComponent(World& world,
 }
 
 /// Parses the `"camera"` component JSON and emplaces a `CameraComponent`.
+///
+/// If a `SceneComponent` (from "transform") already exists on this entity,
+/// its position/rotation/scale are copied into the `CameraComponent` (which
+/// inherits from `SceneComponent`), and the standalone `SceneComponent` is
+/// removed so that the renderer reads transform data from the camera directly.
 void ParseCameraComponent(World& world,
                            Entity entity,
                            const nlohmann::json& comp) {
-    // CameraComponent is non-copyable — use registry.emplace directly.
     auto enttEntity = static_cast<entt::entity>(static_cast<uint32_t>(entity.id));
-    auto& cam = world.GetRegistry().emplace<CameraComponent>(enttEntity);
+    auto& registry = world.GetRegistry();
+
+    // Capture transform from existing SceneComponent before emplacing camera.
+    Vec3 pos   = {0.f, 0.f, 0.f};
+    Quat rot   = Quat::Identity();
+    Vec3 scale = {1.f, 1.f, 1.f};
+    bool hasTransform = false;
+
+    if (auto* sc = registry.try_get<SceneComponent>(enttEntity)) {
+        pos   = sc->GetPosition();
+        rot   = sc->GetRotation();
+        scale = sc->GetScale();
+        hasTransform = true;
+    }
+
+    // CameraComponent is non-copyable — use registry.emplace directly.
+    auto& cam = registry.emplace<CameraComponent>(enttEntity);
     cam.fov       = ReadFloat(comp, "fov",    60.f);
     cam.nearPlane = ReadFloat(comp, "near",    0.1f);
     cam.farPlane  = ReadFloat(comp, "far",  1000.f);
     cam.isActive  = ReadBool (comp, "active", false);
+
+    // Copy transform into the CameraComponent's SceneComponent base.
+    if (hasTransform) {
+        cam.SetPosition(pos);
+        cam.SetRotation(rot);
+        cam.SetScale(scale);
+        // Remove standalone SceneComponent — CameraComponent IS a SceneComponent.
+        registry.erase<SceneComponent>(enttEntity);
+    }
 }
 
 /// Parses a `"directional"` light sub-object into the given component.
