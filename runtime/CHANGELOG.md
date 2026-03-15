@@ -2,6 +2,14 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
+## [0.2.22] — 2026-03-15
+
+### Lua `uz.debug` API — Debug View Mode Scripting
+- **`uz.debug.set_view_mode(mode_name)`**: sets the active debug view mode from Lua (delegates to `SceneRenderer::SetDebugViewMode`); accepts same names as `--view-mode` CLI flag (e.g. `"albedo"`, `"depth"`, `"overview"`, `"lit"`)
+- **`uz.debug.get_view_mode() → string`**: returns the current debug view mode name
+- **Registration**: `LuaRegisterRendererAPI()` now creates the `uz.debug` table alongside `uz.renderer`, `uz.mesh`, `uz.texture`
+- `uz.renderer.set_debug_view` / `uz.renderer.get_debug_view` still present for backwards compatibility; `uz.debug.*` is the canonical namespace per spec
+
 ## [0.2.21] — 2026-03-15
 
 ### Debug View Modes — G-Buffer Channel Visualization

@@ -294,6 +294,36 @@ static int TextureLoad(lua_State* L) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Lua C functions — uz.debug.*
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// uz.debug.set_view_mode(mode_name)
+///
+/// Sets the debug view mode. Equivalent to uz.renderer.set_debug_view() but
+/// exposed under the canonical `uz.debug` namespace for script authoring.
+///
+/// # Arguments
+/// * `mode_name` (string) — mode name: "lit", "albedo", "depth", "overview", etc.
+///   Unrecognized names default to "Lit" (normal rendering).
+///
+/// # Returns
+/// Nothing. Logs a warning if the SceneRenderer is not available.
+static int DebugSetViewMode(lua_State* L) {
+    return RendererSetDebugView(L);
+}
+
+/// uz.debug.get_view_mode() → string
+///
+/// Returns the current debug view mode name.
+///
+/// # Returns
+/// String — current mode name (e.g. "Lit", "Albedo", "Depth", "Overview").
+/// Returns "Lit" if the SceneRenderer is not available.
+static int DebugGetViewMode(lua_State* L) {
+    return RendererGetDebugView(L);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Registration
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -346,10 +376,21 @@ void LuaRegisterRendererAPI(lua_State* L) {
 
     lua_setfield(L, -2, "texture");
 
+    // ── uz.debug = { set_view_mode, get_view_mode } ────────────────────────
+    lua_newtable(L);
+
+    lua_pushcfunction(L, DebugSetViewMode);
+    lua_setfield(L, -2, "set_view_mode");
+
+    lua_pushcfunction(L, DebugGetViewMode);
+    lua_setfield(L, -2, "get_view_mode");
+
+    lua_setfield(L, -2, "debug");
+
     // Pop the uz table.
     lua_pop(L, 1);
 
-    UZ_LOG(Scripting, Info, "uz.renderer / uz.mesh / uz.texture API registered");
+    UZ_LOG(Scripting, Info, "uz.renderer / uz.mesh / uz.texture / uz.debug API registered");
 }
 
 void LuaSetSceneRenderer(lua_State* L, SceneRenderer* renderer) {
