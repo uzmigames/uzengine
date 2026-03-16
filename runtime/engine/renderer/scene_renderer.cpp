@@ -922,10 +922,15 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
             m_editorGrid->Draw(cmd, *m_cbRing, camera);
 
             if (m_statsOverlayInitialized) {
-                const uint32_t reportedDrawCalls = useInstancing
+                const uint32_t drawCount = useInstancing
                     ? static_cast<uint32_t>(instanceBatches.size())
                     : static_cast<uint32_t>(drawList.Count());
-                m_statsOverlay->SetDrawCalls(reportedDrawCalls);
+                const uint32_t objectCount = static_cast<uint32_t>(drawList.Count());
+                const uint32_t indicesPerMesh = renderMesh.indexCount;
+                const uint32_t verticesPerMesh = renderMesh.vertexCount;
+                m_statsOverlay->SetDrawCalls(drawCount);
+                m_statsOverlay->SetVertexCount(objectCount * verticesPerMesh);
+                m_statsOverlay->SetTriangleCount(objectCount * (indicesPerMesh / 3));
                 m_statsOverlay->Render(cmd, *m_cbRing, frameIndex);
             }
 
