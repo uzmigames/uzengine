@@ -112,7 +112,7 @@ void PBRTest::OnStart() {
 
         auto& light = world.AddComponent<DirectionalLightComponent>(sun_);
         light.color              = {1.0f, 1.0f, 1.0f};
-        light.intensity          = 8.0f;           // Higher than UE5 3.0 to dominate over ambient
+        light.intensity          = 3.0f;           // UE5 Basic Scene: EXACTLY 3.0 lux
         light.atmosphereSunLight = true;
         light.lightSourceAngle   = 0.7357f;        // UE5 Basic Scene: 0.7357
         light.useTemperature     = true;
@@ -156,14 +156,14 @@ void PBRTest::OnStart() {
         atmo.multiScatteringFactor   = 1.0f;
         // Scattering scales boost the in-scattering color without changing
         // extinction. Higher values = more vivid sky; 1.0 = physically accurate.
-        atmo.rayleighScatteringScale = 4.0f;     // boost blue sky color
+        atmo.rayleighScatteringScale = 1.0f;     // UE5: raw values already include scale
         atmo.rayleighScaleHeightKm   = 8.0f;
         atmo.mieScatteringScale      = 1.0f;
         atmo.mieAbsorptionScale      = 1.0f;
         atmo.mieAnisotropy           = 0.8f;
         atmo.mieScaleHeightKm        = 1.2f;
         // Sun illuminance for atmosphere scattering (decoupled from PBR lighting).
-        atmo.sunIlluminance          = {1.5f, 1.5f, 1.5f};
+        atmo.sunIlluminance          = {3.0f, 3.0f, 3.0f}; // Matches DirectionalLight intensity
         // Suppress red/green to make blue more vivid after ACES tonemapping.
         atmo.skyLuminanceFactor       = {1.0f, 1.0f, 1.0f};
     }
@@ -175,7 +175,7 @@ void PBRTest::OnStart() {
         scene.SetPosition({0.f, 0.f, 690.f});
 
         auto& sl = world.AddComponent<SkyLightComponent>(skyLightEnt);
-        sl.intensity                  = 2.0f;       // Moderate ambient fill
+        sl.intensity                  = 1.5f;       // UE5=1.0, +50% to compensate analytical SH vs real cubemap SH
         sl.indirectLightingIntensity  = 1.0f;
         sl.lightColor                 = {1.0f, 1.0f, 1.0f};
         sl.realTimeCapture            = true;       // UE5: Real Time Capture = true

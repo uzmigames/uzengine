@@ -604,7 +604,7 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     ShadowConfig shadowCfg{};
     shadowCfg.cascadeCount = 4;
     shadowCfg.resolution   = kShadowResolution;
-    shadowCfg.maxDistance   = 5000.0f;  // 50m in cm (UE5 parity)
+    shadowCfg.maxDistance   = 20000.0f;  // 200m in cm — large enough for outdoor scenes
     shadowCfg.splitLambda  = 0.75f;
     shadowCfg.normalBias   = 2.0f;    // 2cm normal offset (world-space, scales with cm)
     shadowCfg.depthBias    = 0.005f;  // NDC-space bias — does NOT scale with world units!
