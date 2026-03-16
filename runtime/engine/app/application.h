@@ -229,6 +229,7 @@ private:
     bool     m_quitRequested    = false;
     bool     m_screenshotPending = false;
     bool     m_screenshotBase64 = false;  ///< --screenshot-stdout: print base64 PNG to stdout
+    bool     m_headless = false;          ///< --headless: create window but keep it hidden (no GUI)
 
     // ── Deferred scene load ───────────────────────────────────────────────
     std::string m_pendingScenePath;

@@ -417,6 +417,8 @@ void Application::ParseArgs(int argc, char* argv[]) {
             }
         } else if (std::strcmp(argv[i], "--screenshot-stdout") == 0) {
             m_screenshotBase64 = true;
+        } else if (std::strcmp(argv[i], "--headless") == 0) {
+            m_headless = true;
         }
     }
 
@@ -429,6 +431,11 @@ void Application::ParseArgs(int argc, char* argv[]) {
     if (m_screenshotBase64 && m_config.maxFrames == 0) {
         m_config.screenshotFrame = std::max(m_config.screenshotFrame, 5u);
         m_config.maxFrames = m_config.screenshotFrame + 2;
+    }
+
+    // --screenshot-stdout implies --headless (LLM doesn't need a visible window)
+    if (m_screenshotBase64) {
+        m_headless = true;
     }
 
     // Suppress console logging when stdout is reserved for base64 output.
@@ -457,7 +464,11 @@ bool Application::InitPlatform() {
                m_config.title, m_config.width, m_config.height);
         return false;
     }
-    m_window->Show();
+    if (!m_headless) {
+        m_window->Show();
+    } else {
+        UZ_LOG(App, Info, "Headless mode: window created but hidden (HWND exists for swapchain)");
+    }
 
     RHIDeviceDesc deviceDesc{};
     deviceDesc.backend = m_config.backend.value_or(RHIBackend::DX12);

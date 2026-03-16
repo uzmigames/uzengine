@@ -18,15 +18,29 @@ Unit tests are NOT sufficient to validate rendering features. A test can pass wh
 ### Method 1: Base64 stdout (PREFERRED for LLM workflows)
 ```bash
 demo.exe --screenshot-stdout --screenshot-frame 5 --frames 8
+# Implies --headless (no window shown) + suppresses console logs
 # Output: SCREENSHOT_BASE64:iVBORw0KGgo...
 # Parse the base64 string after the prefix. No disk I/O.
 ```
 
-### Method 2: File to disk (when you need to compare/compose grids)
+### Method 2: Headless + file to disk
 ```bash
-demo.exe --screenshot e:/UzEngine/.screenshots/output.png --screenshot-frame 5 --frames 8
+demo.exe --headless --screenshot e:/UzEngine/.screenshots/output.png --screenshot-frame 5 --frames 8
+# Window created but hidden. Render works normally.
 # Then: Read tool on the PNG file
 # Then: rm e:/UzEngine/.screenshots/output.png
 ```
+
+### Method 3: Visible window + file to disk (interactive debugging)
+```bash
+demo.exe --screenshot e:/UzEngine/.screenshots/output.png --screenshot-frame 5 --frames 8
+# Window visible. Useful when you need to see the render live.
+```
+
+### Headless Mode
+`--headless` creates the HWND (required by DX12 swapchain) but never calls `ShowWindow`. The render pipeline works identically — just no GUI appears. Use for:
+- CI/CD automated testing
+- LLM-driven visual verification (no human interaction needed)
+- Batch rendering (multiple screenshots in sequence)
 
 Unit tests remain useful for math utilities, data structures, and non-visual logic.

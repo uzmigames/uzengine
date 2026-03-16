@@ -4,8 +4,12 @@
 
 ## [0.2.29] — 2026-03-16
 
+### New Feature: Headless Mode (`--headless`)
+- **`--headless` CLI flag**: Creates the window but keeps it hidden (HWND exists for DX12 swapchain, but no GUI appears). Rendering works normally — useful for CI, automated testing, and LLM-driven visual verification.
+- **Auto-headless**: `--screenshot-stdout` implies `--headless` automatically.
+
 ### New Feature: Base64 Screenshot Output (`--screenshot-stdout`)
-- **`--screenshot-stdout` CLI flag**: Captures the backbuffer as a PNG, base64-encodes it in memory, and prints to stdout with `SCREENSHOT_BASE64:` prefix. Eliminates filesystem round-trip for LLM/AI visual verification workflows.
+- **`--screenshot-stdout` CLI flag**: Captures the backbuffer as a PNG, base64-encodes it in memory, and prints to stdout with `SCREENSHOT_BASE64:` prefix. Eliminates filesystem round-trip for LLM/AI visual verification workflows. Implies `--headless` + suppresses all console logs (stdout is clean).
 - **`ScreenshotCapture::ToBase64PNG()`**: New public API — returns PNG as base64 string. Uses `stbi_write_png_to_func` for in-memory encoding + RFC 4648 base64 encoder. Zero disk I/O.
 - **`SceneRenderer::RequestScreenshotBase64()`**: Triggers base64 capture instead of file save.
 
