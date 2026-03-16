@@ -3,7 +3,7 @@ title: Application Layer Spec
 version: 1.0
 status: approved
 created: 2026-03-15
-updated: 2026-03-15
+updated: 2026-03-16
 authors: [engine-team]
 tags: [architecture, application, lifecycle, demos]
 -->
@@ -220,6 +220,57 @@ or uploads constant buffers. It only modifies ECS component data.
 
 ---
 
+## CLI Flags
+
+All flags are parsed by `Application::ParseArgs()` in `Run()`. They override `ApplicationConfig` fields.
+
+### Rendering & Backend
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--backend <name>` | string | `dx12` | RHI backend: `dx12`, `dx11`, `vulkan`, `metal` |
+| `--sm <version>` | string | auto | Force shader model: `5.0`, `6.0`, `6.6` |
+| `--view-mode <mode>` | string | `lit` | Debug view: `lit`, `albedo`, `normal`, `metallic`, `roughness`, `ao`, `depth`, `world_pos`, `overview`, `lighting`, `shadows` |
+| `--shadow-debug <N>` | int | `0` | Shadow debug mode: 0=off, 1=buffer viz grid, 2=atlas readback |
+
+### Screenshot & Visual Verification
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--screenshot <path>` | string | — | Capture backbuffer to PNG file at given path |
+| `--screenshot-frame <N>` | int | `5` | Frame number to capture on (0-based from OnStart) |
+| `--screenshot-stdout` | bool | off | Print base64-encoded PNG to stdout instead of saving file. Implies `--headless`. Suppresses console logs (stdout is clean for parsing). Output format: `SCREENSHOT_BASE64:<base64-data>\n` |
+| `--frames <N>` | int | `0` (unlimited) | Maximum frames to render before exiting |
+| `--all-modes <path>` | string | — | Capture all debug view modes and compose into labeled grid PNG |
+
+### Headless & Automation
+
+| Flag | Type | Default | Description |
+|------|------|---------|-------------|
+| `--headless` | bool | off | Create window but keep it hidden (HWND exists for DX12 swapchain). Rendering works normally. Use for CI, automated testing, LLM workflows |
+| `--renderdoc-capture <N>` | int | — | Auto-trigger RenderDoc capture on frame N |
+
+### Usage Examples
+
+```bash
+# LLM visual verification (no window, no logs, just base64 PNG)
+demo.exe --screenshot-stdout --screenshot-frame 5 --frames 8
+
+# Headless CI test with file screenshot
+demo.exe --headless --screenshot output.png --screenshot-frame 10 --frames 15
+
+# Debug view capture (buffer visualization grid)
+demo.exe --shadow-debug 1 --screenshot-stdout --frames 8
+
+# Force DX11 SM5.0 for compatibility testing
+demo.exe --backend dx11 --sm 5.0 --screenshot output.png --frames 10
+
+# RenderDoc automated capture
+demo.exe --renderdoc-capture 10 --frames 15
+```
+
+---
+
 ## Acceptance Scenarios
 
 **Given** the engine is uninitialized
@@ -253,3 +304,11 @@ or uploads constant buffers. It only modifies ECS component data.
 **Given** the pbr_test demo is migrated to `uz::Application`
 **When** built and run with `--screenshot`
 **Then** `pbr_test_demo.cpp` has fewer than 150 lines and output is pixel-equivalent (PSNR > 40 dB)
+
+**Given** `--headless` flag is passed
+**When** `Run()` initializes the platform
+**Then** the window HWND is created but never shown (no GUI appears); rendering works normally
+
+**Given** `--screenshot-stdout` flag is passed
+**When** the screenshot frame is reached
+**Then** the backbuffer is captured, PNG-encoded in memory, base64-encoded, and printed to stdout with `SCREENSHOT_BASE64:` prefix; console logging is suppressed; `--headless` is implied
