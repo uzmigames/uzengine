@@ -234,6 +234,7 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
         cubeDesc.format    = RHIFormat::RGBA16Float;
         cubeDesc.usage     = RHITextureUsage::ShaderResource
                            | RHITextureUsage::UnorderedAccess
+                           | RHITextureUsage::RenderTarget
                            | RHITextureUsage::CopySrc;
         cubeDesc.debugName = "SkyCubemap";
 

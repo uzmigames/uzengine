@@ -1001,6 +1001,8 @@ void MetalCommandList::BeginRenderPass(const RHIRenderPassDesc& desc) {
 
         id<MTLTexture> mtlTex = (__bridge id<MTLTexture>)tex->texture;
         rpDesc.colorAttachments[i].texture = mtlTex;
+        rpDesc.colorAttachments[i].level = att.mipLevel;
+        rpDesc.colorAttachments[i].slice = att.arraySlice;
         rpDesc.colorAttachments[i].loadAction = att.clear
             ? MTLLoadActionClear
             : MTLLoadActionLoad;

@@ -661,6 +661,11 @@ RHITextureHandle DX11Device::CreateTexture(const RHITextureDesc& desc) {
     if (HasFlag(desc.usage, RHITextureUsage::DepthStencil))    td.BindFlags |= D3D11_BIND_DEPTH_STENCIL;
     if (HasFlag(desc.usage, RHITextureUsage::UnorderedAccess)) td.BindFlags |= D3D11_BIND_UNORDERED_ACCESS;
 
+    // Cubemap flag — required for TextureCube SRV creation (6-face array = cubemap)
+    if (desc.depthOrArraySize == 6) {
+        td.MiscFlags |= D3D11_RESOURCE_MISC_TEXTURECUBE;
+    }
+
     ID3D11Texture2D* texture = nullptr;
     HRESULT hr = m_device->CreateTexture2D(&td, nullptr, &texture);
     if (FAILED(hr)) {

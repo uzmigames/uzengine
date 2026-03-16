@@ -144,6 +144,14 @@ private:
     /// used by SetFragmentTexture (SM5 descriptor table path).
     /// Allocated once in Init(), reused every frame via descriptor copies.
     uint32_t                             m_fragmentTexStagingBase = UINT32_MAX;
+
+    /// Maximum number of temporary per-slice/mip RTVs per render pass.
+    static constexpr uint32_t kMaxTempRtvs = 8;
+
+    /// Temporary RTV descriptor indices allocated during BeginRenderPass
+    /// for array slice or mip level targeting. Freed in EndRenderPass.
+    uint32_t m_tempRtvIndices[kMaxTempRtvs] = {};
+    uint32_t m_tempRtvCount = 0;
 };
 
 } // namespace uz

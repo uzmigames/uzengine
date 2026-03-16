@@ -632,9 +632,15 @@ struct RHIBarrierDesc {
 /// Render pass color attachment descriptor.
 ///
 /// Specifies a color render target and optional clear-on-load behavior.
+/// For array textures (cubemaps, texture arrays), use `arraySlice` to target
+/// a specific slice. When arraySlice is 0 and mipLevel is 0, the default
+/// RTV created at texture creation time is used (fast path, no per-frame
+/// descriptor allocation).
 struct RHIRenderPassColorAttachment {
     RHITextureHandle texture;                   ///< Render target texture
     float clearColor[4] = {0, 0, 0, 1};        ///< Clear color (used if loadOp is Clear)
+    uint32_t arraySlice = 0;                    ///< Target array slice / cubemap face (0 = default RTV)
+    uint32_t mipLevel = 0;                      ///< Target mip level (0 = full resolution)
     bool clear = false;                         ///< True to clear on load
 };
 

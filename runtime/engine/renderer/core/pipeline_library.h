@@ -220,6 +220,20 @@ public:
     /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
     [[nodiscard]] RHIPipelineHandle GetSkyCubemapCapture();
 
+    /// Returns the sky cubemap capture pixel shader pipeline (fullscreen_vs + sky_cubemap_ps).
+    ///
+    /// SM5-compatible alternative to the compute path. Renders 6 fullscreen
+    /// triangles (one per cubemap face) using explicit register(t0) binding
+    /// for the transmittance LUT — no bindless/ResourceDescriptorHeap required.
+    ///
+    /// Rasterizer: no cull (fullscreen triangle).
+    /// Depth: disabled.
+    /// Render target: RGBA16F (cubemap face).
+    ///
+    /// # Returns
+    /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
+    [[nodiscard]] RHIPipelineHandle GetSkyCubemapCapturePS();
+
     /// Returns the tonemap pipeline (fullscreen_vs + tonemap_ps, 1 RT RGBA8).
     ///
     /// Reads HDR scene color (RGBA16F) via bindless SRV, applies exposure + ACES
@@ -270,6 +284,7 @@ private:
     [[nodiscard]] bool EnsureHeightFogPixelShader();
     [[nodiscard]] bool EnsureTransmittanceLutShader();
     [[nodiscard]] bool EnsureSkyCubemapCaptureShader();
+    [[nodiscard]] bool EnsureSkyCubemapCapturePSShader();
 
     /// Creates a pipeline through the PSO cache. On cache hit, returns the
     /// cached handle without calling the device. On miss, creates via the
@@ -302,6 +317,7 @@ private:
     RHIShaderHandle m_heightFogPS          = RHIShaderHandle::Invalid();
     RHIShaderHandle m_transmittanceLutCS      = RHIShaderHandle::Invalid();
     RHIShaderHandle m_skyCubemapCaptureCS    = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_skyCubemapCapturePSShader = RHIShaderHandle::Invalid();
 
     // ── Cached pipeline handles (one per bindless variant) ──────────────
     RHIPipelineHandle m_forwardPBR         = RHIPipelineHandle::Invalid();
@@ -320,6 +336,7 @@ private:
     RHIPipelineHandle m_heightFog             = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_transmittanceLut      = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_skyCubemapCapture    = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_skyCubemapCapturePSPipeline = RHIPipelineHandle::Invalid();
 };
 
 } // namespace uz

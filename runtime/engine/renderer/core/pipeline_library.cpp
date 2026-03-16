@@ -90,6 +90,7 @@ void PipelineLibrary::Shutdown() {
     destroyPipeline(m_heightFog);
     destroyPipeline(m_transmittanceLut);
     destroyPipeline(m_skyCubemapCapture);
+    destroyPipeline(m_skyCubemapCapturePSPipeline);
 
     // Destroy cached shaders
     auto destroyShader = [this](RHIShaderHandle& h) {
@@ -114,6 +115,7 @@ void PipelineLibrary::Shutdown() {
     destroyShader(m_heightFogPS);
     destroyShader(m_transmittanceLutCS);
     destroyShader(m_skyCubemapCaptureCS);
+    destroyShader(m_skyCubemapCapturePSShader);
 
     m_psoCache.Shutdown();
     m_psoDiskCache.reset();
@@ -872,6 +874,58 @@ RHIPipelineHandle PipelineLibrary::GetSkyCubemapCapture() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Sky Cubemap Capture Pixel Shader Pipeline (SM5 fallback)
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool PipelineLibrary::EnsureSkyCubemapCapturePSShader() {
+    if (m_skyCubemapCapturePSShader.IsValid()) {
+        return true;
+    }
+
+    m_skyCubemapCapturePSShader = m_shaderMgr->CreateShader(EngineShader::SkyCubemapPS, RHIShaderStage::Pixel);
+    if (!m_skyCubemapCapturePSShader.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile SkyCubemapPS");
+        return false;
+    }
+    return true;
+}
+
+RHIPipelineHandle PipelineLibrary::GetSkyCubemapCapturePS() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetSkyCubemapCapturePS called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_skyCubemapCapturePSPipeline.IsValid()) {
+        return m_skyCubemapCapturePSPipeline;
+    }
+
+    if (!EnsureFullscreenShaders() || !EnsureSkyCubemapCapturePSShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIGraphicsPipelineDesc desc{};
+    desc.vertexShader  = m_fullscreenVS;
+    desc.pixelShader   = m_skyCubemapCapturePSShader;
+    desc.topology      = RHIPrimitiveTopology::TriangleList;
+    desc.rasterizer.cullMode      = RHICullMode::None;
+    desc.depthStencil.depthEnable = false;
+    desc.depthStencil.depthWrite  = false;
+    desc.renderTargetFormats[0]   = RHIFormat::RGBA16Float;
+    desc.renderTargetCount        = 1;
+    desc.debugName                = "SkyCubemapCapturePS";
+
+    m_skyCubemapCapturePSPipeline = CreateCachedPipeline(desc);
+    if (!m_skyCubemapCapturePSPipeline.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create SkyCubemapCapturePS pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created SkyCubemapCapturePS pipeline");
+    }
+
+    return m_skyCubemapCapturePSPipeline;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // PSO Cache Integration
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -952,6 +1006,7 @@ uint32_t PipelineLibrary::WarmupAll() {
     warmup(GetHeightFog(), "HeightFog");
     warmup(GetTransmittanceLut(), "TransmittanceLUT");
     warmup(GetSkyCubemapCapture(), "SkyCubemapCapture");
+    warmup(GetSkyCubemapCapturePS(), "SkyCubemapCapturePS");
 
     // SM5 variants if device is bindless (need both paths)
     if (bindless) {

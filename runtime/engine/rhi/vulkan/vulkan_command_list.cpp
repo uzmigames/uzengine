@@ -1009,6 +1009,11 @@ void VulkanCommandList::BeginRenderPass(const RHIRenderPassDesc& desc) {
         const auto& att = desc.colorAttachments[i];
         if (!att.texture.IsValid()) continue;
 
+        if (att.arraySlice != 0 || att.mipLevel != 0) {
+            UZ_LOG(RHI, Warning, "BeginRenderPass — Vulkan per-slice/mip RTVs not yet implemented "
+                   "(attachment {} requested slice={} mip={})", i, att.arraySlice, att.mipLevel);
+        }
+
         auto* tex = m_device->GetTexturePool().Get(att.texture.index, att.texture.generation);
         if (!tex || tex->imageView == VK_NULL_HANDLE) {
             UZ_LOG(RHI, Warning, "BeginRenderPass — color attachment {} has no image view", i);

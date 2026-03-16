@@ -755,6 +755,14 @@ void DX12CommandList::CopyTextureToBuffer(RHITextureHandle srcTexture, uint32_t 
 
 void DX12CommandList::BeginRenderPass(const RHIRenderPassDesc& desc) {
     UZ_PROFILE_FUNCTION();
+
+    // Free any lingering temp RTVs from a previous pass (defensive)
+    auto& rtvHeap = m_device->GetDescriptorAllocator(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+    for (uint32_t t = 0; t < m_tempRtvCount; ++t) {
+        rtvHeap.Free(m_tempRtvIndices[t]);
+    }
+    m_tempRtvCount = 0;
+
     // Resolve RTV CPU handles for each color attachment
     D3D12_CPU_DESCRIPTOR_HANDLE rtvHandles[8] = {};
     uint32_t validRtvCount = 0;
@@ -767,13 +775,57 @@ void DX12CommandList::BeginRenderPass(const RHIRenderPassDesc& desc) {
         }
 
         auto* tex = m_device->GetTexturePool().Get(att.texture.index, att.texture.generation);
-        if (!tex || tex->rtvIndex == UINT32_MAX) {
-            UZ_LOG(RHI, Warning, "BeginRenderPass — color attachment {} has no RTV", i);
+        if (!tex) {
+            UZ_LOG(RHI, Warning, "BeginRenderPass — color attachment {} texture not found", i);
             continue;
         }
 
-        rtvHandles[validRtvCount] = m_device->GetDescriptorAllocator(
-            D3D12_DESCRIPTOR_HEAP_TYPE_RTV).CpuHandle(tex->rtvIndex);
+        // Fast path: use the default RTV when targeting slice 0, mip 0
+        if (att.arraySlice == 0 && att.mipLevel == 0) {
+            if (tex->rtvIndex == UINT32_MAX) {
+                UZ_LOG(RHI, Warning, "BeginRenderPass — color attachment {} has no RTV", i);
+                continue;
+            }
+            rtvHandles[validRtvCount] = rtvHeap.CpuHandle(tex->rtvIndex);
+        } else {
+            // Slow path: create a temporary per-slice/mip RTV on the fly.
+            // This is needed for rendering into individual cubemap faces or
+            // specific mip levels of array textures.
+            uint32_t tempIdx = rtvHeap.Allocate();
+            if (tempIdx == DescriptorAllocator::kInvalidIndex) {
+                UZ_LOG(RHI, Error, "BeginRenderPass — failed to allocate temp RTV for slice={} mip={}",
+                       att.arraySlice, att.mipLevel);
+                continue;
+            }
+
+            D3D12_RENDER_TARGET_VIEW_DESC rtvDesc = {};
+            rtvDesc.Format = ToDxgiFormat(tex->desc.format);
+
+            if (tex->desc.depthOrArraySize > 1) {
+                rtvDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2DARRAY;
+                rtvDesc.Texture2DArray.MipSlice        = att.mipLevel;
+                rtvDesc.Texture2DArray.FirstArraySlice  = att.arraySlice;
+                rtvDesc.Texture2DArray.ArraySize        = 1;
+                rtvDesc.Texture2DArray.PlaneSlice       = 0;
+            } else {
+                rtvDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
+                rtvDesc.Texture2D.MipSlice   = att.mipLevel;
+                rtvDesc.Texture2D.PlaneSlice = 0;
+            }
+
+            m_device->GetDevice()->CreateRenderTargetView(
+                tex->resource, &rtvDesc, rtvHeap.CpuHandle(tempIdx));
+
+            rtvHandles[validRtvCount] = rtvHeap.CpuHandle(tempIdx);
+
+            // Track for cleanup in EndRenderPass
+            if (m_tempRtvCount < kMaxTempRtvs) {
+                m_tempRtvIndices[m_tempRtvCount++] = tempIdx;
+            } else {
+                UZ_LOG(RHI, Warning, "BeginRenderPass — exceeded max temp RTVs ({}), leaking descriptor",
+                       kMaxTempRtvs);
+            }
+        }
 
         if (att.clear) {
             m_cmdList->ClearRenderTargetView(rtvHandles[validRtvCount], att.clearColor, 0, nullptr);
@@ -807,7 +859,14 @@ void DX12CommandList::BeginRenderPass(const RHIRenderPassDesc& desc) {
 }
 
 void DX12CommandList::EndRenderPass() {
-    // DX12 has no matching end for OMSetRenderTargets — intentional no-op
+    // Free temporary per-slice/mip RTVs allocated during BeginRenderPass
+    if (m_tempRtvCount > 0) {
+        auto& rtvHeap = m_device->GetDescriptorAllocator(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+        for (uint32_t i = 0; i < m_tempRtvCount; ++i) {
+            rtvHeap.Free(m_tempRtvIndices[i]);
+        }
+        m_tempRtvCount = 0;
+    }
 }
 
 } // namespace uz

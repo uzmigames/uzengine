@@ -13,6 +13,7 @@
 #include "sky_atmosphere_pass.h"
 #include "transmittance_lut_pass.h"
 #include "sky_cubemap_capture_pass.h"
+#include "sky_cubemap_capture_ps_pass.h"
 #include "light_component.h"
 #include "color_utils.h"
 #include "ibl_baker.h"
@@ -105,21 +106,14 @@ void AddAtmospherePasses(
         }
 
         // ── Sky Cubemap Capture (for IBL) ─────────────────────────────────
+        // Two paths: compute shader (bindless, SM6.6) or pixel shader (SM5).
+        // The compute path dispatches all 6 faces in a single call via
+        // ResourceDescriptorHeap. The PS path draws 6 fullscreen triangles
+        // with explicit register(t0) binding — no bindless required.
         if (*ctx.skyIBLDirty && ctx.skyCubemap.IsValid()
-                && ctx.skyCubemapUav != UINT32_MAX
                 && ctx.transmittanceLutSrv != UINT32_MAX) {
-            auto cubeRes = rgBuilder.ImportTexture(
-                "SkyCubemap", ctx.skyCubemap, RHIResourceState::UnorderedAccess);
 
-            SkyCubemapCaptureRootConstants cubeRC{};
-            cubeRC.bottomRadiusKm      = skyComp.bottomRadiusKm;
-            cubeRC.topRadiusKm         = skyComp.bottomRadiusKm + skyComp.atmosphereHeightKm;
-            cubeRC.sunDirX             = sunDir.x;
-            cubeRC.sunDirY             = sunDir.y;
-            cubeRC.sunDirZ             = sunDir.z;
-            cubeRC.sunIntensity        = skySunColor.Length();
-            cubeRC.transmittanceLutIdx = ctx.transmittanceLutSrv;
-
+            // Shared f16 packing helper for scattering scale factors
             auto packF16Pair = [](float a, float b) -> uint32_t {
                 auto toF16 = [](float f) -> uint16_t {
                     uint32_t bits;
@@ -134,16 +128,55 @@ void AddAtmospherePasses(
                 return static_cast<uint32_t>(toF16(a))
                      | (static_cast<uint32_t>(toF16(b)) << 16);
             };
-            cubeRC.packedScatterScales = packF16Pair(
+
+            const uint32_t packed = packF16Pair(
                 skyComp.rayleighScatteringScale,
                 skyComp.mieScatteringScale);
 
-            SkyCubemapCapturePassDesc cubePassDesc{};
-            cubePassDesc.cubemapTarget   = cubeRes;
-            cubePassDesc.pipeline        = ctx.pipelines->GetSkyCubemapCapture();
-            cubePassDesc.rootConstants   = cubeRC;
-            cubePassDesc.cubemapUavIndex = ctx.skyCubemapUav;
-            AddSkyCubemapCapturePass(rgBuilder, cubePassDesc);
+            if (ctx.bindless && ctx.skyCubemapUav != UINT32_MAX) {
+                // ── Compute shader path (SM6.6 bindless) ─────────────────
+                auto cubeRes = rgBuilder.ImportTexture(
+                    "SkyCubemap", ctx.skyCubemap, RHIResourceState::UnorderedAccess);
+
+                SkyCubemapCaptureRootConstants cubeRC{};
+                cubeRC.bottomRadiusKm      = skyComp.bottomRadiusKm;
+                cubeRC.topRadiusKm         = skyComp.bottomRadiusKm + skyComp.atmosphereHeightKm;
+                cubeRC.sunDirX             = sunDir.x;
+                cubeRC.sunDirY             = sunDir.y;
+                cubeRC.sunDirZ             = sunDir.z;
+                cubeRC.sunIntensity        = skySunColor.Length();
+                cubeRC.transmittanceLutIdx = ctx.transmittanceLutSrv;
+                cubeRC.packedScatterScales = packed;
+
+                SkyCubemapCapturePassDesc cubePassDesc{};
+                cubePassDesc.cubemapTarget   = cubeRes;
+                cubePassDesc.pipeline        = ctx.pipelines->GetSkyCubemapCapture();
+                cubePassDesc.rootConstants   = cubeRC;
+                cubePassDesc.cubemapUavIndex = ctx.skyCubemapUav;
+                AddSkyCubemapCapturePass(rgBuilder, cubePassDesc);
+            } else {
+                // ── Pixel shader path (SM5, no bindless) ─────────────────
+                auto cubeRes = rgBuilder.ImportTexture(
+                    "SkyCubemap", ctx.skyCubemap, RHIResourceState::RenderTarget);
+
+                SkyCubemapCapturePSRootConstants psRC{};
+                psRC.bottomRadiusKm      = skyComp.bottomRadiusKm;
+                psRC.topRadiusKm         = skyComp.bottomRadiusKm + skyComp.atmosphereHeightKm;
+                psRC.sunDirX             = sunDir.x;
+                psRC.sunDirY             = sunDir.y;
+                psRC.sunDirZ             = sunDir.z;
+                psRC.sunIntensity        = skySunColor.Length();
+                psRC.cubeFaceIndex       = 0; // Updated per-face in the pass
+                psRC.packedScatterScales = packed;
+
+                SkyCubemapCapturePSPassDesc psPassDesc{};
+                psPassDesc.cubemapTarget       = cubeRes;
+                psPassDesc.transmittanceLut    = lutRes;
+                psPassDesc.pipeline            = ctx.pipelines->GetSkyCubemapCapturePS();
+                psPassDesc.transmittanceLutTex = ctx.transmittanceLut;
+                psPassDesc.rootConstants       = psRC;
+                AddSkyCubemapCapturePSPass(rgBuilder, psPassDesc);
+            }
         }
 
         // ── Build SkyAtmosphereCB ─────────────────────────────────────────

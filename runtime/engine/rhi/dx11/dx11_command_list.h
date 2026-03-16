@@ -118,6 +118,10 @@ private:
     static constexpr uint32_t kMaxCBSlots = 8;
     ID3D11Buffer*            m_scratchCBs[kMaxCBSlots] = {};
     uint32_t                 m_scratchCBSizes[kMaxCBSlots] = {};
+
+    /// Temporary per-slice RTVs created in BeginRenderPass, released in EndRenderPass.
+    ID3D11RenderTargetView*  m_tempRtvs[8] = {};
+    uint32_t                 m_tempRtvCount = 0;
 };
 
 } // namespace uz

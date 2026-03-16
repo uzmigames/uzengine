@@ -618,16 +618,57 @@ void DX11CommandList::BeginRenderPass(const RHIRenderPassDesc& desc) {
         if (!att.texture.IsValid()) continue;
 
         auto* tex = m_device->GetTexturePool().Get(att.texture.index, att.texture.generation);
-        if (!tex || !tex->rtv) {
+        if (!tex || !tex->texture) {
+            UZ_LOG(RHI, Warning, "BeginRenderPass — color attachment {} has no texture", i);
+            continue;
+        }
+
+        ID3D11RenderTargetView* rtv = tex->rtv;
+
+        // Per-slice/mip RTV: create a temporary RTV for the requested array slice and mip level.
+        // DX11 supports this natively via D3D11_RENDER_TARGET_VIEW_DESC with Texture2DArray.
+        if (att.arraySlice != 0 || att.mipLevel != 0) {
+            // Get the format from the existing resource
+            D3D11_TEXTURE2D_DESC texDesc;
+            tex->texture->GetDesc(&texDesc);
+
+            D3D11_RENDER_TARGET_VIEW_DESC rtvDesc = {};
+            rtvDesc.Format = texDesc.Format;
+            if (texDesc.ArraySize > 1) {
+                rtvDesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2DARRAY;
+                rtvDesc.Texture2DArray.MipSlice        = att.mipLevel;
+                rtvDesc.Texture2DArray.FirstArraySlice  = att.arraySlice;
+                rtvDesc.Texture2DArray.ArraySize        = 1;
+            } else {
+                rtvDesc.ViewDimension = D3D11_RTV_DIMENSION_TEXTURE2D;
+                rtvDesc.Texture2D.MipSlice = att.mipLevel;
+            }
+            ID3D11RenderTargetView* tempRtv = nullptr;
+            HRESULT hr = m_device->GetDevice()->CreateRenderTargetView(tex->texture, &rtvDesc, &tempRtv);
+            if (SUCCEEDED(hr) && tempRtv) {
+                rtv = tempRtv;
+                // Store for cleanup in EndRenderPass
+                if (m_tempRtvCount < 8) {
+                    m_tempRtvs[m_tempRtvCount++] = tempRtv;
+                }
+            } else {
+                UZ_LOG(RHI, Error, "BeginRenderPass — failed to create per-slice RTV "
+                       "(attachment {} slice={} mip={} hr=0x{:08X})", i, att.arraySlice, att.mipLevel, static_cast<uint32_t>(hr));
+                if (!tex->rtv) continue;
+                rtv = tex->rtv;
+            }
+        }
+
+        if (!rtv) {
             UZ_LOG(RHI, Warning, "BeginRenderPass — color attachment {} has no RTV", i);
             continue;
         }
 
         if (att.clear) {
-            m_ctx->ClearRenderTargetView(tex->rtv, att.clearColor);
+            m_ctx->ClearRenderTargetView(rtv, att.clearColor);
         }
 
-        rtvs[rtvCount++] = tex->rtv;
+        rtvs[rtvCount++] = rtv;
     }
 
     ID3D11DepthStencilView* dsv = nullptr;
@@ -649,6 +690,15 @@ void DX11CommandList::BeginRenderPass(const RHIRenderPassDesc& desc) {
 
 void DX11CommandList::EndRenderPass() {
     if (!m_ctx) return;
+
+    // Release temporary per-slice RTVs created in BeginRenderPass
+    for (uint32_t i = 0; i < m_tempRtvCount; ++i) {
+        if (m_tempRtvs[i]) {
+            m_tempRtvs[i]->Release();
+            m_tempRtvs[i] = nullptr;
+        }
+    }
+    m_tempRtvCount = 0;
 
     // Unbind all render targets and SRVs to prevent DX11 resource hazards.
     // DX11 automatically forces SRV slots to NULL when the same resource is
