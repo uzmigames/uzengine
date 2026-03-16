@@ -74,6 +74,30 @@ void LogInit(const char* logFilePath) {
     g_initialized = true;
 }
 
+/// Removes the console sink from all loggers so stdout stays clean.
+///
+/// Call after LogInit(). Existing loggers are updated to remove
+/// the console sink — only the file sink remains active.
+void LogSuppressConsole() {
+    if (!g_initialized) return;
+
+    std::lock_guard<std::mutex> lock(g_loggerMutex);
+
+    // Remove console sink (first sink added in LogInit is always the console)
+    if (!g_sinks.empty()) {
+        g_sinks.erase(g_sinks.begin());
+    }
+
+    // Rebuild all cached loggers with the remaining sinks
+    for (auto& [name, logger] : g_loggers) {
+        auto newLogger = std::make_shared<spdlog::logger>(
+            std::string(name), g_sinks.begin(), g_sinks.end());
+        newLogger->set_level(logger->level());
+        newLogger->flush_on(spdlog::level::err);
+        logger = newLogger;
+    }
+}
+
 /// Shuts down logging and releases all resources.
 ///
 /// # Behavior

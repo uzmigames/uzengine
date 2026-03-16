@@ -98,6 +98,20 @@ public:
     /// true if the PNG was written successfully, false on I/O error.
     bool SaveToPNG(const std::string& path) const;
 
+    /// Returns the captured pixels as a base64-encoded PNG string.
+    ///
+    /// Useful for LLM workflows where writing to disk and reading back is
+    /// slower than piping the image directly through stdout. The returned
+    /// string can be embedded in a `data:image/png;base64,...` URI or
+    /// passed directly to multimodal AI models.
+    ///
+    /// Must be called AFTER the GPU has finished executing the copy commands
+    /// (i.e., after a fence wait).
+    ///
+    /// # Returns
+    /// Base64-encoded PNG string on success, empty string on failure.
+    [[nodiscard]] std::string ToBase64PNG() const;
+
     /// Releases the readback buffer.
     void Shutdown();
 

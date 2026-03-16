@@ -193,6 +193,16 @@ public:
     /// * `path` — Absolute or relative path for the output PNG file.
     void RequestScreenshot(const std::string& path);
 
+    /// Requests a screenshot that will be printed to stdout as base64 PNG.
+    ///
+    /// Instead of writing a file to disk, the captured backbuffer is encoded
+    /// as a PNG in memory, base64-encoded, and printed to stdout with a
+    /// `SCREENSHOT_BASE64:` prefix. This is faster for LLM/AI workflows
+    /// that consume images without filesystem round-trips.
+    ///
+    /// Output format: `SCREENSHOT_BASE64:<base64-encoded-png-data>\n`
+    void RequestScreenshotBase64();
+
     /// Returns the current debug view mode.
     [[nodiscard]] DebugViewMode GetDebugViewMode() const { return m_debugViewMode; }
 
@@ -365,6 +375,7 @@ private:
     std::string m_screenshotPath;           ///< Path to save screenshot. Empty = no pending capture.
     bool m_screenshotPending = false;       ///< True if a screenshot was requested via RequestScreenshot().
     bool m_screenshotSaveDeferred = false;  ///< True after capture commands recorded; save on next fence wait.
+    bool m_screenshotBase64 = false;        ///< If true, print base64 PNG to stdout instead of saving to disk.
 
     // ── Loaded Assets ──────────────────────────────────────────────────────
 

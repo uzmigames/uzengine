@@ -77,7 +77,7 @@ Never write C++/shaders/docs directly in the main conversation. Delegate to the 
 
 The following rules are equally important but less frequently violated. Full details are in `.claude/rules/`:
 
-- **Visual Verification** — rendering features need demo + screenshot, not just unit tests. See `.claude/rules/visual-verification.md`
+- **Visual Verification** — rendering features need demo + screenshot. **Prefer `--screenshot-stdout`** (base64 to stdout, no disk I/O) over `--screenshot <path>`. See `.claude/rules/visual-verification.md`
 - **GPU Debugging** — never guess, use readback + RenderDoc/PIX. See `.claude/rules/gpu-debugging.md`
 - **Demo Build Order** — always rebuild runtime static lib before demo. See `.claude/rules/build-order.md`
 - **File Editing** — edit files sequentially, one at a time. See `.claude/rules/editing.md`

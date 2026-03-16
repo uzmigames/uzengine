@@ -165,4 +165,97 @@ bool ScreenshotCapture::SaveToPNG(const std::string& path) const {
     return true;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Base64 encoding
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// RFC 4648 base64 encoding table.
+static constexpr char kBase64Table[] =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+/// Encodes raw bytes to a base64 string.
+static std::string Base64Encode(const uint8_t* data, size_t length) {
+    std::string out;
+    out.reserve(((length + 2) / 3) * 4);
+
+    for (size_t i = 0; i < length; i += 3) {
+        const uint32_t b0 = data[i];
+        const uint32_t b1 = (i + 1 < length) ? data[i + 1] : 0;
+        const uint32_t b2 = (i + 2 < length) ? data[i + 2] : 0;
+        const uint32_t triplet = (b0 << 16) | (b1 << 8) | b2;
+
+        out += kBase64Table[(triplet >> 18) & 0x3F];
+        out += kBase64Table[(triplet >> 12) & 0x3F];
+        out += (i + 1 < length) ? kBase64Table[(triplet >> 6) & 0x3F] : '=';
+        out += (i + 2 < length) ? kBase64Table[triplet & 0x3F] : '=';
+    }
+    return out;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// stb_image_write callback for in-memory PNG
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Callback for stbi_write_png_to_func — appends bytes to a std::vector.
+static void StbiWriteToVector(void* context, void* data, int size) {
+    auto* vec = static_cast<std::vector<uint8_t>*>(context);
+    const auto* bytes = static_cast<const uint8_t*>(data);
+    vec->insert(vec->end(), bytes, bytes + size);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ToBase64PNG
+// ─────────────────────────────────────────────────────────────────────────────
+
+std::string ScreenshotCapture::ToBase64PNG() const {
+    if (!m_device || !m_readbackBuffer.IsValid()) {
+        UZ_LOG(Screenshot, Error, "ToBase64PNG: capture not initialized");
+        return {};
+    }
+
+    void* mapped = m_device->MapBuffer(m_readbackBuffer);
+    if (!mapped) {
+        UZ_LOG(Screenshot, Error, "ToBase64PNG: failed to map readback buffer");
+        return {};
+    }
+
+    const uint32_t tightPitch = m_width * 4;
+    const auto* srcBytes = static_cast<const uint8_t*>(mapped);
+
+    // Copy to tight buffer (remove row padding + BGRA swizzle)
+    std::vector<uint8_t> tight(tightPitch * m_height);
+    for (uint32_t row = 0; row < m_height; ++row) {
+        std::memcpy(tight.data() + row * tightPitch,
+                    srcBytes + row * m_rowPitch,
+                    tightPitch);
+    }
+
+    const bool needsSwizzle = (m_captureFormat == RHIFormat::BGRA8Unorm ||
+                               m_captureFormat == RHIFormat::BGRA8Srgb);
+    for (uint32_t i = 0; i < tightPitch * m_height; i += 4) {
+        if (needsSwizzle) {
+            std::swap(tight[i + 0], tight[i + 2]);
+        }
+        tight[i + 3] = 255;
+    }
+
+    // Encode to in-memory PNG
+    std::vector<uint8_t> pngData;
+    pngData.reserve(tightPitch * m_height / 2); // rough estimate
+    int ok = stbi_write_png_to_func(StbiWriteToVector, &pngData,
+        static_cast<int>(m_width), static_cast<int>(m_height),
+        4, tight.data(), static_cast<int>(tightPitch));
+
+    if (!ok || pngData.empty()) {
+        UZ_LOG(Screenshot, Error, "ToBase64PNG: stbi_write_png_to_func failed");
+        return {};
+    }
+
+    // Base64 encode the PNG bytes
+    std::string b64 = Base64Encode(pngData.data(), pngData.size());
+    UZ_LOG(Screenshot, Info, "ToBase64PNG: {}x{}, PNG={} bytes, base64={} chars",
+           m_width, m_height, pngData.size(), b64.size());
+    return b64;
+}
+
 } // namespace uz

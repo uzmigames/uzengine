@@ -2,6 +2,26 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
+## [0.2.29] — 2026-03-16
+
+### New Feature: Base64 Screenshot Output (`--screenshot-stdout`)
+- **`--screenshot-stdout` CLI flag**: Captures the backbuffer as a PNG, base64-encodes it in memory, and prints to stdout with `SCREENSHOT_BASE64:` prefix. Eliminates filesystem round-trip for LLM/AI visual verification workflows.
+- **`ScreenshotCapture::ToBase64PNG()`**: New public API — returns PNG as base64 string. Uses `stbi_write_png_to_func` for in-memory encoding + RFC 4648 base64 encoder. Zero disk I/O.
+- **`SceneRenderer::RequestScreenshotBase64()`**: Triggers base64 capture instead of file save.
+
+### Bug Fix: Screenshot Readback Buffer Leak
+- **D3D12MA assertion fix**: `ScreenshotCapture::Shutdown()` was never called in `SceneRenderer::Shutdown()` — the readback buffer (3.7MB) leaked every session. Now properly destroyed.
+- **IBL texture leak fix**: `irradianceTex` and `prefilteredMipTextures[0]` were local variables in `IBLBaker::BakeEnvironment()` that leaked on every sky re-bake. Now tracked as `m_irradianceTexture`/`m_prefilteredTexture` and destroyed in `Shutdown()`.
+- **WaitIdle before shutdown**: `SceneRenderer::Shutdown()` now calls `WaitIdle()` before destroying any GPU resources — prevents D3D12MA assertion when GPU is still processing the last frame.
+
+### Stats Overlay Fix
+- **Vertex/triangle count**: `SetVertexCount()`/`SetTriangleCount()` were never called — overlay always showed 0. Now computed per-frame from draw list.
+
+### UE5 Parity Enforcement
+- **CLAUDE.md refactored**: 846 → ~120 lines. Only TOP 5 RULES visible. Secondary rules moved to `.claude/rules/` (10 files).
+- **Agent checklists**: shader-engineer, cpp-core-expert, render-graph-engineer, rhi-engineer now have mandatory UE5 parity pre-flight checklists with `@source UE5 <file>:<line>` citation template.
+- **Codebase audit task**: `phase0-0.7.0-codebase-cleanup-ue5-parity` — 44 items covering all legacy code, dead systems, and UE5 incompatibilities.
+
 ## [0.2.28] — 2026-03-16
 
 ### Critical Bug Fix: Shadows Restored

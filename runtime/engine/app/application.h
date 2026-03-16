@@ -228,6 +228,7 @@ private:
     uint32_t m_height     = 0;
     bool     m_quitRequested    = false;
     bool     m_screenshotPending = false;
+    bool     m_screenshotBase64 = false;  ///< --screenshot-stdout: print base64 PNG to stdout
 
     // ── Deferred scene load ───────────────────────────────────────────────
     std::string m_pendingScenePath;

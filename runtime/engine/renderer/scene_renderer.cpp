@@ -59,6 +59,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 
 namespace uz {
@@ -299,6 +300,9 @@ void SceneRenderer::Shutdown() {
     // resources are destroyed while the GPU still references them.
     m_device->WaitIdle();
 
+    // Destroy screenshot readback buffer
+    m_screenshotCapture.Shutdown();
+
     // Destroy shadow readback buffer if still alive
     if (m_shadowReadbackBuffer.IsValid()) {
         m_device->DestroyBuffer(m_shadowReadbackBuffer);
@@ -531,7 +535,17 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
 
     perFrame.lightDir     = {sunDir.x, sunDir.y, sunDir.z, 0.f};
     perFrame.lightColor   = {sunColor.x, sunColor.y, sunColor.z, 0.f};
-    perFrame.ambientColor = {ambientColor.x, ambientColor.y, ambientColor.z, 0.f};
+
+    // When IBL compute is unavailable (DX11/Vulkan without compute pipelines),
+    // the shader falls back to ambientColor which is typically very dim (0.03).
+    // Boost ambient to approximate the IBL contribution for visual parity.
+    const bool hasIBL = (m_iblResult.irradianceSrvIndex != UINT32_MAX) && m_device->IsBindless();
+    if (!hasIBL) {
+        // Approximate sky irradiance as a constant ambient (~0.3 matches UE5 SH L0)
+        perFrame.ambientColor = {0.30f, 0.32f, 0.38f, 0.f};
+    } else {
+        perFrame.ambientColor = {ambientColor.x, ambientColor.y, ambientColor.z, 0.f};
+    }
 
     // ── Auto-Exposure ──────────────────────────────────────────────────
     // Run GPU histogram-based auto-exposure on the HDR scene color.
@@ -547,7 +561,10 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
             loggedOnce = true;
         }
     } else {
-        perFrame.exposure = 1.0f;
+        // Without auto-exposure (DX11/Vulkan compute unavailable), use a fixed
+        // exposure that approximates the auto-exposure result for a typical
+        // outdoor scene with skylight. DX12 auto-exposure typically settles ~2-4.
+        perFrame.exposure = 3.0f;
     }
 
     perFrame.shadowDebugMode = m_shadowDebugMode;
@@ -1000,7 +1017,16 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     // ── Save screenshot immediately after GPU finishes ──────────────────
     if (doScreenshot) {
         m_device->WaitIdle();
-        m_screenshotCapture.SaveToPNG(m_screenshotPath);
+        if (m_screenshotBase64) {
+            std::string b64 = m_screenshotCapture.ToBase64PNG();
+            if (!b64.empty()) {
+                std::printf("SCREENSHOT_BASE64:%s\n", b64.c_str());
+                std::fflush(stdout);
+            }
+            m_screenshotBase64 = false;
+        } else {
+            m_screenshotCapture.SaveToPNG(m_screenshotPath);
+        }
         m_screenshotPath.clear();
     }
 
@@ -1012,6 +1038,11 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
 
 void SceneRenderer::RequestScreenshot(const std::string& path) {
     m_screenshotPath    = path;
+    m_screenshotPending = true;
+}
+
+void SceneRenderer::RequestScreenshotBase64() {
+    m_screenshotBase64  = true;
     m_screenshotPending = true;
 }
 

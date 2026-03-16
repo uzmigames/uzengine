@@ -246,7 +246,11 @@ int Application::Run(int argc, char** argv) {
 
         // ── Request screenshot BEFORE RenderFrame so it captures THIS frame ──
         if (m_screenshotPending && m_frameIndex >= m_config.screenshotFrame) {
-            m_renderer->RequestScreenshot(m_config.screenshotPath);
+            if (m_screenshotBase64) {
+                m_renderer->RequestScreenshotBase64();
+            } else {
+                m_renderer->RequestScreenshot(m_config.screenshotPath);
+            }
             m_screenshotPending = false;
         }
 
@@ -411,6 +415,8 @@ void Application::ParseArgs(int argc, char* argv[]) {
                        "--renderdoc-capture requires a non-negative frame number, got '{}'",
                        argv[i]);
             }
+        } else if (std::strcmp(argv[i], "--screenshot-stdout") == 0) {
+            m_screenshotBase64 = true;
         }
     }
 
@@ -419,7 +425,19 @@ void Application::ParseArgs(int argc, char* argv[]) {
         m_config.maxFrames = m_config.screenshotFrame + 2;
     }
 
-    m_screenshotPending = !m_config.screenshotPath.empty();
+    // --screenshot-stdout uses the same frame/maxFrames logic as --screenshot
+    if (m_screenshotBase64 && m_config.maxFrames == 0) {
+        m_config.screenshotFrame = std::max(m_config.screenshotFrame, 5u);
+        m_config.maxFrames = m_config.screenshotFrame + 2;
+    }
+
+    // Suppress console logging when stdout is reserved for base64 output.
+    // Logs still go to the file sink (uzengine.log).
+    if (m_screenshotBase64) {
+        LogSuppressConsole();
+    }
+
+    m_screenshotPending = !m_config.screenshotPath.empty() || m_screenshotBase64;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

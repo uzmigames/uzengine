@@ -18,8 +18,11 @@ The grid is a permanent debug tool built into the deferred lighting shader. It s
 # Activate grid mode
 demo.exe --shadow-debug 1
 
-# Capture 4K grid for detailed analysis
-demo.exe --shadow-debug 1 --screenshot .screenshots/grid.png
+# Capture grid as base64 (PREFERRED — no disk I/O)
+demo.exe --shadow-debug 1 --screenshot-stdout --screenshot-frame 5 --frames 8
+
+# Capture grid to disk (when you need to compose grids)
+demo.exe --shadow-debug 1 --screenshot e:/UzEngine/.screenshots/grid.png --screenshot-frame 5 --frames 8
 ```
 
 **Grid layout (3x3):**

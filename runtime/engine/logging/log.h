@@ -58,6 +58,13 @@ struct LogCategory {
 /// - Safe to call multiple times (no-op if already initialized)
 void LogInit(const char* logFilePath = "uzengine.log");
 
+/// Suppresses console (stdout) logging output.
+///
+/// Removes the console sink so logs only go to the file. Call AFTER LogInit().
+/// Use when stdout must be reserved for structured output (e.g., --screenshot-stdout
+/// prints base64 PNG data that would be corrupted by interleaved log messages).
+void LogSuppressConsole();
+
 /// Shuts down the global logging system.
 ///
 /// # Behavior
