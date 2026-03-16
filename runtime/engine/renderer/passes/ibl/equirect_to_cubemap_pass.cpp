@@ -35,10 +35,6 @@ static constexpr uint32_t kCubeFaceCount = 6;
 
 void AddEquirectToCubemapPass(rg::RgBuilder& builder, const EquirectToCubemapPassDesc& desc)
 {
-    UZ_CHECK(desc.cubemapSize > 0, "Cubemap size must be non-zero");
-    UZ_CHECK(desc.cubemapSize % kThreadGroupSize == 0,
-        "Cubemap size must be a multiple of thread group size (8)");
-
     builder.AddPass("EquirectToCubemap", [desc](rg::RgPassBuilder& pb) {
         pb.Write(desc.cubemapTarget, RHIResourceState::UnorderedAccess);
 

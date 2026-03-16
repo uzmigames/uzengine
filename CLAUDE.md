@@ -44,6 +44,42 @@ User: "Implement clustered shading"
 5. Implement based on synthesized directive
 ```
 
+## ⚠️ CRITICAL: UE5 Exact Parity — Zero Creativity Policy
+
+**MANDATORY**: ALL engine code MUST use the EXACT same calculations, formulas, and parameter values as UE5. No creativity, no approximations, no "analytical fallbacks", no invented values.
+
+### Why
+
+UE5 has been tested and validated by hundreds of engineers over decades. Claude does not have the capability to improve on their work. Every time an approximation or "estimated value" is used instead of reading UE5 source, the visual result is visibly wrong. The user has provided full UE5 5.6 source at `W:\UE_5.6_Source` specifically so we can read and replicate the exact math.
+
+### Absolutely Forbidden
+
+1. **NEVER invent parameter values** — if UE5 uses `0.447, 0.638, 1.0` for fog color, we use exactly that
+2. **NEVER create "analytical approximations"** — if UE5 reads from a cubemap, we read from a cubemap. If readback is broken, FIX the readback
+3. **NEVER add compensation factors** — no `* 1.5` to "compensate for analytical SH vs real cubemap SH"
+4. **NEVER add minimum clamps** — no `max(value, 0.15)` unless UE5 does the same
+5. **NEVER guess coefficients** — every number must come from UE5 source with file path and line number
+6. **NEVER use "artistic multipliers"** — if something looks wrong, the CODE is wrong, not the parameters
+
+### What To Do Instead
+
+1. **Read UE5 source FIRST** — before writing ANY line of rendering/lighting/fog/physics code
+2. **Use unreal-architect agent** — to find the exact file, function, and line number in UE5
+3. **Copy the MATH exactly** — same formula, same coefficients, same edge case handling
+4. **Only change names** — rename variables/functions to avoid copyright, but the math stays identical
+5. **If GPU readback fails** — fix the readback, don't invent a fallback
+6. **Document the source** — every function should comment which UE5 file/line it mirrors
+
+### Verification Checklist
+
+Before any rendering code is committed, verify:
+```
+☐ Which UE5 file/function was this based on? (must have answer)
+☐ Are all coefficients identical to UE5? (no rounding, no "close enough")
+☐ Are there any invented fallbacks or approximations? (must be zero)
+☐ Does the visual result match UE5 screenshot? (must match)
+```
+
 ## ⚠️ CRITICAL: Visual Verification Over Unit Tests for Rendering
 
 **MANDATORY**: Unit tests are NOT sufficient to validate rendering features. A test can pass while the visual result is completely wrong.

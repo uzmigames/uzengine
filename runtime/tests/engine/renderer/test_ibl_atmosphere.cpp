@@ -193,8 +193,13 @@ TEST(SHProjection, AllBlackCubemap_AllCoefficientsAreZero) {
         EXPECT_FLOAT_EQ(sh.coeffs[i].x, 0.0f) << "coeffs[" << i << "].x should be 0 for black input";
         EXPECT_FLOAT_EQ(sh.coeffs[i].y, 0.0f) << "coeffs[" << i << "].y should be 0 for black input";
         EXPECT_FLOAT_EQ(sh.coeffs[i].z, 0.0f) << "coeffs[" << i << "].z should be 0 for black input";
-        EXPECT_FLOAT_EQ(sh.coeffs[i].w, 0.0f) << "coeffs[" << i << "].w should be 0 for black input";
+        // coeffs[6].w is always 1.0 (UE5 sentinel), all other .w fields should be 0
+        if (i < 6) {
+            EXPECT_FLOAT_EQ(sh.coeffs[i].w, 0.0f) << "coeffs[" << i << "].w should be 0 for black input";
+        }
     }
+    // UE5 packing sets coeffs[6].w = 1.0 unconditionally
+    EXPECT_FLOAT_EQ(sh.coeffs[6].w, 1.0f) << "coeffs[6].w is always 1.0 (UE5 sentinel)";
 }
 
 TEST(SHProjection, UniformWhiteCubemap_RGBChannelsAreEqual) {
@@ -363,8 +368,12 @@ TEST(SHProjection, AllFacesNull_ResultIsAllZero) {
         EXPECT_FLOAT_EQ(sh.coeffs[i].x, 0.0f) << "coeffs[" << i << "].x";
         EXPECT_FLOAT_EQ(sh.coeffs[i].y, 0.0f) << "coeffs[" << i << "].y";
         EXPECT_FLOAT_EQ(sh.coeffs[i].z, 0.0f) << "coeffs[" << i << "].z";
-        EXPECT_FLOAT_EQ(sh.coeffs[i].w, 0.0f) << "coeffs[" << i << "].w";
+        // coeffs[6].w is always 1.0 (UE5 sentinel)
+        if (i < 6) {
+            EXPECT_FLOAT_EQ(sh.coeffs[i].w, 0.0f) << "coeffs[" << i << "].w";
+        }
     }
+    EXPECT_FLOAT_EQ(sh.coeffs[6].w, 1.0f) << "coeffs[6].w is always 1.0 (UE5 sentinel)";
 }
 
 TEST(SHProjection, LastCoeffW_IsAlwaysOne_ForNonzeroInput) {

@@ -175,7 +175,7 @@ void PBRTest::OnStart() {
         scene.SetPosition({0.f, 0.f, 690.f});
 
         auto& sl = world.AddComponent<SkyLightComponent>(skyLightEnt);
-        sl.intensity                  = 1.5f;       // UE5=1.0, +50% to compensate analytical SH vs real cubemap SH
+        sl.intensity                  = 1.0f;       // UE5 Basic Scene: exactly 1.0
         sl.indirectLightingIntensity  = 1.0f;
         sl.lightColor                 = {1.0f, 1.0f, 1.0f};
         sl.realTimeCapture            = true;       // UE5: Real Time Capture = true
@@ -186,6 +186,12 @@ void PBRTest::OnStart() {
     }
 
     // ── Exponential Height Fog (UE5 Basic Scene EXACT values) ────────────
+    // UE5 fog actor is at Z=-6850 with density=0.0436, heightFalloff=0.2.
+    // At camera Z=200, RayOriginTerms = density * exp2(-0.2*(200-(-6850)))
+    //                                 = 0.0436 * exp2(-1410) ≈ 0
+    // So the fog has NO visual effect in UE5 Basic Scene either.
+    // The ground color comes from SkyLight SH irradiance, not fog.
+    // We keep UE5-exact values for correctness, even though fog won't render.
     Entity fog = world.CreateEntity();
     {
         auto& scene = world.AddComponent<SceneComponent>(fog);

@@ -36,6 +36,7 @@ The rendering pipeline system is split across multiple documents covering archit
 | [24-ibl-tuning-guide.md](24-ibl-tuning-guide.md) | **Done (1.3)** | **Practical IBL tuning: resolution tradeoffs, SH vs cubemaps, artist parameters, troubleshooting** | **IBL quality & performance** |
 | [25-hdr-pipeline.md](25-hdr-pipeline.md) | **Done (1.3)** | **HDR rendering, auto-exposure (histogram + percentile filter), ACES tonemap, manual EV override** | **Exposure control & color grading** |
 | [26-height-fog.md](26-height-fog.md) | **Done (1.3)** | **Height-based exponential fog, two layers, directional inscattering (sun halo), artist parameters** | **Atmospheric depth & distance** |
+| [27-sky-atmosphere.md](27-sky-atmosphere.md) | **Done (1.3)** | **Physical sky (Hillaire 2020), Rayleigh/Mie scattering, transmittance LUT, SkyAtmosphereComponent** | **Realistic sky rendering** |
 
 ## Quick Navigation
 
@@ -124,6 +125,15 @@ The rendering pipeline system is split across multiple documents covering archit
 3. Configure HeightFogComponent (color, density, height falloff, base height)
 4. Tune directional inscattering for sun halo effect
 5. Test against reference (UE5, Godot) for visual parity
+
+**Render a physically-based sky**
+
+1. Read [27-sky-atmosphere.md](27-sky-atmosphere.md) for Hillaire 2020 model and architecture
+2. Understand Rayleigh (blue) and Mie (haze) scattering, extinction, and phase functions
+3. Learn about the transmittance LUT (256×64, Bruneton 2017 parameterization)
+4. Configure SkyAtmosphereComponent (planet radius, atmosphere height, scattering coefficients)
+5. Link a DirectionalLight with atmosphereSunLight=true for sun position/color
+6. Tune artistic parameters (rayleighScatteringScale, mieScatteringScale, skyLuminanceFactor)
 
 ## Milestone Status
 

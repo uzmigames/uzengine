@@ -121,7 +121,7 @@ void ComputeFrustumCorners(
 Vec3 ChooseLightUp(const Vec3& lightDir) {
     const Vec3 worldUp{0.0f, 0.0f, 1.0f};  // Z-up (UE5 parity)
     if (std::abs(lightDir.Dot(worldUp)) > kVerticalThreshold) {
-        return Vec3{0.0f, 1.0f, 0.0f};  // fallback to Y when light is vertical
+        return Vec3{1.0f, 0.0f, 0.0f};  // fallback to X-forward when light is vertical in Z-up
     }
     return worldUp;
 }
@@ -206,6 +206,19 @@ void ComputeCascades(
         // 3d. Build the light view matrix.
         //     Position the light camera at `center - lightDir * radius` so the
         //     entire sub-frustum fits within the near-to-far range [0, 2*radius].
+        //
+        //     Mat4::LookAt uses XMMatrixLookAtLH which assumes Y-up. However,
+        //     this works correctly here because:
+        //     1. The shadow depth VS transforms with: posWS * cascadeViewProj
+        //     2. Both eye/target/up AND the vertex positions are in the same
+        //        Z-up coordinate space, so the LookAt constructs a consistent
+        //        basis (it only needs vectors to be in the SAME space, not Y-up)
+        //     3. The shadow sampling shader applies the same matrix to world pos
+        //
+        //     The key insight: XMMatrixLookAtLH builds right/up/forward from the
+        //     inputs regardless of which axis is "up" in the world. As long as
+        //     both the matrix construction and the vertex transform use the same
+        //     coordinate convention, the result is correct.
         const Vec3 lightEye = center - lightDirNorm * radius;
         const Mat4 lightView = Mat4::LookAt(lightEye, center, lightUp);
 
@@ -224,38 +237,30 @@ void ComputeCascades(
             orthoLeft, orthoRight, orthoBottom, orthoTop, orthoNear, orthoFar)};
 
         // 3f. Snap to texel grid to prevent shadow shimmer.
-        //     Compute world-space texel size, then round the light-space origin
-        //     to the nearest texel boundary.
+        //     The snapping operates on the FINAL view-projection matrix, not the
+        //     projection alone. We snap the translation (row 3) of the combined
+        //     VP matrix to texel boundaries.
         const float worldUnitsPerTexel = (2.0f * radius) / static_cast<float>(config.resolution);
 
-        Mat4 shadowMatrix = lightView * lightProj;
+        Mat4 shadowVP = lightView * lightProj;
 
-        // Transform the origin to shadow space, snap it, then adjust the matrix.
-        Vec4 origin = shadowMatrix * Vec4{0.0f, 0.0f, 0.0f, 1.0f};
-        origin.x /= worldUnitsPerTexel;
-        origin.y /= worldUnitsPerTexel;
-        origin.x = std::floor(origin.x);
-        origin.y = std::floor(origin.y);
-        origin.x *= worldUnitsPerTexel;
-        origin.y *= worldUnitsPerTexel;
+        // The VP maps world to clip space [-1,1]. Texel snapping rounds the
+        // translation so that the shadow map texel grid stays locked to a fixed
+        // world-space grid, preventing shadow edges from shifting with camera.
+        //
+        // Scale factor: shadow VP maps [-radius, radius] to [-1, 1].
+        // One texel in NDC = 2.0 / resolution.
+        const float texelNDC = 2.0f / static_cast<float>(config.resolution);
 
-        // Compute the rounding offset and apply as a translation to the projection.
-        Vec4 currentOrigin = shadowMatrix * Vec4{0.0f, 0.0f, 0.0f, 1.0f};
-        const float offsetX = origin.x - currentOrigin.x;
-        const float offsetY = origin.y - currentOrigin.y;
-
-        // Apply the texel-snapping offset directly to the projection matrix's
-        // translation row (row 3, columns 0 and 1 in row-major XMFLOAT4X4).
-        Mat4 snappedProj = lightProj;
-        snappedProj.m._41 += offsetX;
-        snappedProj.m._42 += offsetY;
+        // Snap the X and Y translation of the VP to texel boundaries in NDC.
+        shadowVP.m._41 = std::floor(shadowVP.m._41 / texelNDC) * texelNDC;
+        shadowVP.m._42 = std::floor(shadowVP.m._42 / texelNDC) * texelNDC;
 
         // 3g. Store results.
-        outCascades[cascade].viewProj  = lightView * snappedProj;
+        outCascades[cascade].viewProj  = shadowVP;
         outCascades[cascade].splitNear = splitNear;
         outCascades[cascade].splitFar  = splitFar;
         outCascades[cascade].texelSize = worldUnitsPerTexel;
-
     }
 }
 

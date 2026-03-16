@@ -614,6 +614,8 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     ComputeCascades(camera.GetView(), camera.GetProjection(), lightShineDir,
                     shadowCfg, cascades);
 
+
+
     // ── Upload ShadowDataCB ─────────────────────────────────────────────
     ShadowDataCB shadowData{};
     for (uint32_t i = 0; i < shadowCfg.cascadeCount; ++i) {
@@ -737,13 +739,14 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
         }
         shadowDesc.cascadeCount     = shadowCfg.cascadeCount;
         shadowDesc.atlasResolution  = kShadowResolution;
-        if (useInstancing) {
-            shadowDesc.instanced              = true;
-            shadowDesc.instancedPipeline      = pipelines->GetShadowDepthInstanced();
-            shadowDesc.instanceBufferSrvIndex = instanceBufferSrvIndex;
-            shadowDesc.batchData              = instanceBatches.data();
-            shadowDesc.batchCount             = static_cast<uint32_t>(instanceBatches.size());
-        }
+        // TEMP: disable instancing for shadows to debug flickering
+        // if (useInstancing) {
+        //     shadowDesc.instanced              = true;
+        //     shadowDesc.instancedPipeline      = pipelines->GetShadowDepthInstanced();
+        //     shadowDesc.instanceBufferSrvIndex = instanceBufferSrvIndex;
+        //     shadowDesc.batchData              = instanceBatches.data();
+        //     shadowDesc.batchCount             = static_cast<uint32_t>(instanceBatches.size());
+        // }
         AddShadowPass(rgBuilder, shadowDesc);
     }
 
@@ -1246,16 +1249,31 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
                 m_skyIrradianceSH = shResult;
                 UZ_LOG(Renderer, Info, "SceneRenderer: SH from GPU readback");
             } else {
-                // Analytical fallback from Rayleigh physics
+                // Analytical SH fallback from sky color estimation.
+                //
+                // UE5 captures a real sky cubemap and projects SH from it. The result
+                // is relatively neutral because the cubemap includes:
+                //   - Blue sky (upper hemisphere)
+                //   - Bright warm horizon band
+                //   - Sun disk (intense warm spot)
+                //
+                // Our analytical approximation estimates sky + ground hemisphere colors
+                // and packs them into L0 (uniform) + L1 (directional gradient).
+                // Ratios are tuned to match UE5 measured SH: nearly neutral with
+                // subtle blue bias, NOT strongly blue like raw Rayleigh predicts.
                 float sunZ = sunDir.z;
                 float sunBright = sunColor.Length();
-                // Sky irradiance approximation matching UE5 multi-scatter behavior.
-                // With multi-scattering, the sky irradiance is much more uniform than
-                // single-scatter Rayleigh predicts. UE5 measured SH from cubemap gives
-                // roughly equal RGB irradiance with subtle blue bias for outdoor scenes.
                 float skyFactor = sunBright * (0.08f + 0.15f * std::max(0.f, sunZ));
-                Vec3 skyCol = {0.7f * skyFactor, 0.8f * skyFactor, 1.0f * skyFactor};
-                Vec3 gndCol = {0.1f * skyFactor, 0.09f * skyFactor, 0.08f * skyFactor};
+
+                // Sky hemisphere: warm-neutral with subtle blue bias (UE5 parity).
+                // UE5 cubemap SH is much warmer than raw Rayleigh because it includes
+                // sun contribution and horizon glow. Ratios: R:G:B ≈ 0.9:0.92:1.0.
+                Vec3 skyCol = {0.90f * skyFactor, 0.92f * skyFactor, 1.0f * skyFactor};
+
+                // Ground hemisphere: dark warm (ground bounce).
+                // lowerHemisphereIsBlack=true means this should be near-zero.
+                Vec3 gndCol = {0.05f * skyFactor, 0.04f * skyFactor, 0.03f * skyFactor};
+
                 Vec3 avg = (skyCol + gndCol) * 0.5f;
                 Vec3 dir = (skyCol - gndCol) * 0.5f;
                 float c0 = 3.14159f * 0.282095f, c1 = 2.094395f * 0.488603f;

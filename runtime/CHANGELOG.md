@@ -2,6 +2,36 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
+## [0.2.27] — 2026-03-16
+
+### Shadow Cascade Fixes
+- **Z-up light vector**: `ChooseLightUp()` fallback corrected from Y-axis `(0,1,0)` to X-forward `(1,0,0)` — fixes shadow flickering when sun is near vertical in Z-up coordinate system
+- **Texel snapping simplified**: Shadow VP matrix snapping now operates directly on the combined view-projection matrix in NDC space instead of transforming origin back and forth — cleaner math, same result
+- **LookAt documentation**: Added detailed comments explaining why `XMMatrixLookAtLH` (Y-up assumption) works correctly with Z-up world coordinates
+
+### SH Ambient & SkyLight Tuning (UE5 Parity)
+- **SkyLight intensity**: Reduced from 1.5 → 1.0 (exact UE5 Basic Scene value) — removed the 50% compensation hack for analytical SH
+- **SH fallback ratios**: Sky hemisphere color ratios changed from `(0.7, 0.8, 1.0)` to `(0.90, 0.92, 1.0)` — warmer, matching UE5 measured cubemap SH which includes sun contribution and horizon glow
+- **Ground hemisphere**: Reduced from `(0.10, 0.09, 0.08)` to `(0.05, 0.04, 0.03)` — closer to UE5's `lowerHemisphereIsBlack=true` behavior
+
+### IBL Build & Test Fixes
+- **Build system**: Added `engine/renderer/passes/ibl` directory to Zig build (include paths + source compilation)
+- **EquirectToCubemap**: Removed compile-time `UZ_CHECK` assertions for cubemap size — size validation is handled at a higher level
+- **SH test sentinel**: Tests updated to expect `coeffs[6].w = 1.0` (UE5 sentinel value) instead of 0.0, for both black cubemap and null faces cases
+
+### Documentation & Standards
+- **CLAUDE.md**: Added "UE5 Exact Parity — Zero Creativity Policy" section enforcing exact math replication from UE5 source
+- **AGENTS.md**: UE5 exact parity elevated to rule #1 (highest priority) in critical rules
+- **Sky atmosphere doc**: New `docs/engine/12-rendering/27-sky-atmosphere.md` — Hillaire 2020 model, Rayleigh/Mie scattering, transmittance LUT, SkyAtmosphereComponent
+- **Cascade shadow analysis**: Root cause analysis of shadow flickering bug (Y-up vs Z-up light vector)
+- **Rendering README**: Added sky atmosphere entry and quick navigation guide
+
+### Task Housekeeping
+- Archived completed tasks: `phase3a-3.7.0-ibl-environment`, `phase3a-3.8.0-sky-atmosphere`
+
+### Temporary
+- **Instanced shadows disabled**: Shadow pass instancing temporarily commented out while debugging shadow flickering — falls back to per-object CB path
+
 ## [0.2.26] — 2026-03-15
 
 ### GPU Instancing

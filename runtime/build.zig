@@ -54,6 +54,7 @@ pub fn build(b: *std.Build) void {
         "engine/renderer/passes/atmosphere",
         "engine/renderer/passes/postprocess",
         "engine/renderer/passes/debug",
+        "engine/renderer/passes/ibl",
         "engine/asset",
         "engine/asset/formats",
         "engine/asset/importers",
@@ -183,6 +184,7 @@ pub fn build(b: *std.Build) void {
     addCppDir(runtime_mod, b, "engine/renderer/passes/atmosphere", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/passes/postprocess", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/passes/debug", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/renderer/passes/ibl", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/shadows", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/render_graph", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/ibl", cpp_flags);

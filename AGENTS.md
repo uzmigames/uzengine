@@ -125,9 +125,10 @@ Then the system MUST return a JWT token
 This project uses @hivellm/rulebook standards.
 
 **CRITICAL RULES:**
-1. **ALWAYS check `RULEBOOK.md` first** when creating tasks
-2. Write tests first (95%+ coverage required)
-3. Run quality checks before committing:
+1. **UE5 EXACT PARITY (HIGHEST PRIORITY)**: ALL engine code MUST use the EXACT same calculations, formulas, and parameter values as UE5. NEVER invent values, NEVER create "analytical approximations", NEVER add "compensation factors". Read UE5 source at `W:\UE_5.6_Source` FIRST, implement the SAME math. Zero creativity. See CLAUDE.md "UE5 Exact Parity" section.
+2. **ALWAYS check `RULEBOOK.md` first** when creating tasks
+3. Write tests first (95%+ coverage required)
+4. Run quality checks before committing:
    - Type check / Compiler check
    - Linter (no warnings allowed)
    - All tests (100% pass rate)
