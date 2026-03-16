@@ -112,7 +112,7 @@ void PBRTest::OnStart() {
 
         auto& light = world.AddComponent<DirectionalLightComponent>(sun_);
         light.color              = {1.0f, 1.0f, 1.0f};
-        light.intensity          = 3.0f;           // UE5 Basic Scene: 3.0 lux
+        light.intensity          = 8.0f;           // Higher than UE5 3.0 to dominate over ambient
         light.atmosphereSunLight = true;
         light.lightSourceAngle   = 0.7357f;        // UE5 Basic Scene: 0.7357
         light.useTemperature     = true;
@@ -165,7 +165,7 @@ void PBRTest::OnStart() {
         // Sun illuminance for atmosphere scattering (decoupled from PBR lighting).
         atmo.sunIlluminance          = {1.5f, 1.5f, 1.5f};
         // Suppress red/green to make blue more vivid after ACES tonemapping.
-        atmo.skyLuminanceFactor       = {0.7f, 0.85f, 1.2f};
+        atmo.skyLuminanceFactor       = {1.0f, 1.0f, 1.0f};
     }
 
     // ── Sky light (UE5 Basic Scene EXACT values) ─────────────────────────
@@ -175,7 +175,7 @@ void PBRTest::OnStart() {
         scene.SetPosition({0.f, 0.f, 690.f});
 
         auto& sl = world.AddComponent<SkyLightComponent>(skyLightEnt);
-        sl.intensity                  = 5.0f;       // UE5=1.0, boosted to compensate cubemap vs SH9 irradiance
+        sl.intensity                  = 2.0f;       // Moderate ambient fill
         sl.indirectLightingIntensity  = 1.0f;
         sl.lightColor                 = {1.0f, 1.0f, 1.0f};
         sl.realTimeCapture            = true;       // UE5: Real Time Capture = true

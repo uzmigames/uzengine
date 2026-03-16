@@ -543,7 +543,12 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
         float autoExp = m_autoExposure->Execute(cmdList, m_hdrSceneColorSrv,
             m_width, m_height, dt);
         perFrame.exposure = autoExp;
-        UZ_LOG(Renderer, Debug, "AutoExposure: exposure={:.4f}", perFrame.exposure);
+        // Log only on first adaptation (avoid per-frame spam)
+        static bool loggedOnce = false;
+        if (!loggedOnce) {
+            UZ_LOG(Renderer, Info, "AutoExposure: initial exposure={:.4f}", perFrame.exposure);
+            loggedOnce = true;
+        }
     } else {
         perFrame.exposure = 1.0f;
     }
@@ -601,8 +606,8 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     shadowCfg.resolution   = kShadowResolution;
     shadowCfg.maxDistance   = 5000.0f;  // 50m in cm (UE5 parity)
     shadowCfg.splitLambda  = 0.75f;
-    shadowCfg.normalBias   = 2.0f;    // 0.02m = 2cm (UE5 parity)
-    shadowCfg.depthBias    = 0.5f;    // 0.005m = 0.5cm (UE5 parity)
+    shadowCfg.normalBias   = 2.0f;    // 2cm normal offset (world-space, scales with cm)
+    shadowCfg.depthBias    = 0.005f;  // NDC-space bias — does NOT scale with world units!
 
     ShadowCascade cascades[kMaxShadowCascades];
     Vec3 lightShineDir = Vec3{-sunDir.x, -sunDir.y, -sunDir.z};
