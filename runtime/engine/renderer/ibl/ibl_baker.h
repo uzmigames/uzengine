@@ -144,6 +144,10 @@ private:
     RHITextureHandle m_brdfLutTexture = RHITextureHandle::Invalid();
     uint32_t         m_brdfLutSrvIndex = UINT32_MAX;
 
+    // ── Environment bake textures (persistent, re-baked on sky change) ──
+    RHITextureHandle m_irradianceTexture  = RHITextureHandle::Invalid();
+    RHITextureHandle m_prefilteredTexture = RHITextureHandle::Invalid();
+
     // ── Bake parameters ─────────────────────────────────────────────────
     static constexpr uint32_t kBRDFLutSize          = 512;
     static constexpr uint32_t kIrradianceSize       = 32;

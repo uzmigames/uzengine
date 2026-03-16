@@ -60,6 +60,14 @@ void IBLBaker::Shutdown() {
         m_device->DestroyTexture(m_brdfLutTexture);
         m_brdfLutTexture = RHITextureHandle::Invalid();
     }
+    if (m_irradianceTexture.IsValid()) {
+        m_device->DestroyTexture(m_irradianceTexture);
+        m_irradianceTexture = RHITextureHandle::Invalid();
+    }
+    if (m_prefilteredTexture.IsValid()) {
+        m_device->DestroyTexture(m_prefilteredTexture);
+        m_prefilteredTexture = RHITextureHandle::Invalid();
+    }
 
     // Destroy pipelines
     if (m_brdfLutPipeline.IsValid()) {
@@ -547,11 +555,17 @@ IBLBaker::BakeResult IBLBaker::BakeEnvironment(uint32_t envCubemapSrvIndex) {
     // Destroy final prefiltered tex (not used — per-mip approach)
     m_device->DestroyTexture(prefilteredTex);
 
-    // Note: irradianceTex and prefilteredMipTextures[0] are intentionally
-    // NOT destroyed — they are live GPU resources referenced by their SRV indices.
-    // Ownership of these textures transfers to the caller via the SRV indices.
-    // The caller is responsible for tracking and eventually destroying them,
-    // or they will be cleaned up when the device is destroyed.
+    // Destroy previous environment textures if re-baking (sky changed)
+    if (m_irradianceTexture.IsValid()) {
+        m_device->DestroyTexture(m_irradianceTexture);
+    }
+    if (m_prefilteredTexture.IsValid()) {
+        m_device->DestroyTexture(m_prefilteredTexture);
+    }
+
+    // Track texture handles for cleanup in Shutdown()
+    m_irradianceTexture  = irradianceTex;
+    m_prefilteredTexture = prefilteredMipTextures[0];
 
     UZ_LOG(Renderer, Info,
            "IBLBaker: environment baked (irradiance={}x{} SRV={}, prefiltered={}x{} SRV={})",

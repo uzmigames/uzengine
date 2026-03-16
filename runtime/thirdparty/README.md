@@ -301,6 +301,78 @@ Files extracted from upstream source:
 - `json.hpp` (single header)
 
 
+## renderdoc
+
+- Upstream: https://github.com/baldurk/renderdoc
+- Version: 1.35 (2025)
+- License: MIT
+
+RenderDoc in-application API. Single-header C API for triggering GPU frame
+captures from within the engine. Loads `renderdoc.dll` at runtime via
+`LoadLibrary` — no link-time dependency. When launched from the RenderDoc GUI,
+the DLL is pre-injected; otherwise, the engine attempts to load it from the
+default install path (`C:\Program Files\RenderDoc\`).
+
+Files extracted from upstream source:
+
+- `renderdoc_app.h` (single header, API version 1.6.0+)
+
+### Engine Integration
+
+The RenderDoc API is fully integrated into UzEngine via
+`engine/debug/renderdoc_capture.h` (9 public functions):
+
+| Function | Purpose |
+|----------|---------|
+| `RenderDocInit()` | Loads DLL from process (GUI injection) or default install path |
+| `RenderDocShutdown()` | Cleanup, module refcount management |
+| `RenderDocIsLoaded()` | Returns true if renderdoc.dll is present |
+| `RenderDocIsConnected()` | Returns true if RenderDoc GUI is actively connected |
+| `RenderDocSetCaptureOptions()` | Enables API validation, ref all resources, capture callstacks |
+| `RenderDocTriggerCapture()` | Single-frame capture (bound to F12) |
+| `RenderDocStartCapture()` | Begin multi-frame capture |
+| `RenderDocEndCapture()` | End multi-frame capture |
+| `RenderDocIsCapturing()` | Check if capture is in progress |
+
+### Usage
+
+**From RenderDoc GUI** (recommended):
+1. Open RenderDoc → File → Launch Application → select `UzEngine.exe`
+2. DLL is pre-injected, `RenderDocInit()` detects it automatically
+3. Press F12 in-engine or click Capture in RenderDoc GUI
+
+**Standalone** (engine finds RenderDoc on its own):
+1. Install RenderDoc to default path (`C:\Program Files\RenderDoc\`)
+2. Launch `UzEngine.exe` normally — `RenderDocInit()` loads `renderdoc.dll`
+3. Press F12 to trigger a capture, `.rdc` file saved to working directory
+
+**Auto-capture on specific frame** (headless/CI):
+```bash
+UzEngine.exe --renderdoc-capture 5   # Captures frame 5 automatically
+```
+
+### Shader Debugging in RenderDoc
+
+Compile shaders with debug info for step-through:
+- `ShaderCompileFlags::generateDebugInfo = true` → adds `-Zi` (debug symbols)
+- `ShaderCompileFlags::disableOptimizations = true` → adds `-Od` (no opt)
+
+With these flags, RenderDoc can display HLSL source and step through
+shader execution line-by-line.
+
+### Related GPU Debug Infrastructure
+
+| Component | Location | Status |
+|-----------|----------|--------|
+| DX12 Debug Layer | `rhi/dx12/dx12_device.cpp:225` | Enabled via `RHIDeviceDesc::enableValidation` |
+| GPU-Based Validation | `rhi/dx12/dx12_device.cpp:237` | Enabled via `RHIDeviceDesc::enableGpuValidation` |
+| DRED Breadcrumbs | `rhi/dx12/dx12_device.cpp:481` | Auto-breadcrumbs + page fault tracking |
+| Custom GPU Breadcrumbs | `rhi/dx12/dx12_gpu_breadcrumbs.h` | 256 markers/frame via WriteBufferImmediate |
+| Live Object Reporting | `rhi/dx12/dx12_device.cpp:97` | Reports leaked D3D12 objects on shutdown |
+
+See `docs/engine/03-rhi/09-debug-diagnostics.md` for the full GPU debugging guide.
+
+
 ## stb
 
 - Upstream: https://github.com/nothings/stb

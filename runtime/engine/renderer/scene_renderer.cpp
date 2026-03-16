@@ -294,6 +294,17 @@ void SceneRenderer::Resize(uint32_t width, uint32_t height) {
 void SceneRenderer::Shutdown() {
     if (!m_device) return;
 
+    // Wait for GPU to finish all in-flight work before destroying any resources.
+    // Without this, D3D12MA asserts "Some allocations were not freed" because
+    // resources are destroyed while the GPU still references them.
+    m_device->WaitIdle();
+
+    // Destroy shadow readback buffer if still alive
+    if (m_shadowReadbackBuffer.IsValid()) {
+        m_device->DestroyBuffer(m_shadowReadbackBuffer);
+        m_shadowReadbackBuffer = RHIBufferHandle{};
+    }
+
     DestroyAssets();
 
     if (m_fallbackWhite.IsValid()) {
@@ -533,6 +544,8 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
         perFrame.exposure = 1.0f;
     }
 
+    perFrame.shadowDebugMode = m_shadowDebugMode;
+
     CBAllocation perFrameAlloc = m_cbRing->Allocate(sizeof(PerFrameCB));
     std::memcpy(perFrameAlloc.cpuPtr, &perFrame, sizeof(PerFrameCB));
 
@@ -566,7 +579,10 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
 
     // Ensure instance buffer has enough capacity (recreate only when too small)
     const auto instanceCount = static_cast<uint32_t>(instanceDataVec.size());
-    const bool useInstancing = bindless && instanceCount > 0;
+    // Disable instancing when multiple mesh types are loaded — the instanced path
+    // currently only supports homogeneous batches (all mesh[0]). Per-mesh batching
+    // is future work. Fall back to per-draw-command path for multi-mesh scenes.
+    const bool useInstancing = bindless && instanceCount > 0 && m_meshes.size() <= 1;
 
     if (useInstancing && instanceCount > m_instanceBufferCapacity) {
         // Need a bigger buffer — wait for GPU idle before destroying the old one
@@ -633,27 +649,19 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
 
     auto* pipelines = m_pipelines.get();
 
-    // ── Determine mesh buffers for rendering ────────────────────────────
-    // For MVP: use the first loaded mesh's buffers, or skip if no meshes loaded
-    GPUMesh renderMesh{};
-    if (!m_meshes.empty()) {
-        renderMesh = m_meshes[0];
-    }
-
     // ── Shadow pass ─────────────────────────────────────────────────────
+    // Pass the full mesh array so each draw command can bind its own mesh.
+    // If no meshes are loaded, the passes skip all draw commands internally.
     auto shadowAtlasRes = rgBuilder.ImportTexture("ShadowAtlas", m_shadowAtlas.GetTexture(), RHIResourceState::ShaderResource);
-    if (renderMesh.IsValid()) {
+    if (!m_meshes.empty()) {
         ShadowPassDesc shadowDesc{};
         shadowDesc.shadowAtlas          = shadowAtlasRes;
         shadowDesc.shadowAtlasTexture   = m_shadowAtlas.GetTexture();
         shadowDesc.drawList             = &drawList;
         shadowDesc.cbAllocator          = m_cbRing.get();
         shadowDesc.pipeline             = pipelines->GetShadowDepth(bindless);
-        shadowDesc.vertexBufferSrvIndex = renderMesh.vbSrvIndex;
-        shadowDesc.vertexBuffer         = renderMesh.vertexBuffer;
-        shadowDesc.indexBuffer          = renderMesh.indexBuffer;
-        shadowDesc.indexFormat          = renderMesh.indexFormat;
-        shadowDesc.indexCount           = renderMesh.indexCount;
+        shadowDesc.meshes               = m_meshes.data();
+        shadowDesc.meshCount            = static_cast<uint32_t>(m_meshes.size());
         shadowDesc.bindless             = bindless;
         for (uint32_t i = 0; i < totalCascadeCount; ++i) {
             shadowDesc.cascades[i] = cascades[i];
@@ -670,11 +678,12 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
         //     shadowDesc.batchCount             = static_cast<uint32_t>(instanceBatches.size());
         // }
         AddShadowPass(rgBuilder, shadowDesc);
+
     }
 
     if (m_renderPath == RenderPath::Deferred) {
         // ── Deferred: GBuffer + lighting/debug ──────────────────────────
-        if (renderMesh.IsValid()) {
+        if (!m_meshes.empty()) {
             GBufferPassDesc gbDesc{};
             gbDesc.albedoTarget         = albedoRes;
             gbDesc.normalTarget         = normalRes;
@@ -685,11 +694,8 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
             gbDesc.cbAllocator          = m_cbRing.get();
             gbDesc.perFrameAlloc        = perFrameAlloc;
             gbDesc.pipeline             = pipelines->GetGBuffer(bindless);
-            gbDesc.vertexBufferSrvIndex = renderMesh.vbSrvIndex;
-            gbDesc.vertexBuffer         = renderMesh.vertexBuffer;
-            gbDesc.indexBuffer          = renderMesh.indexBuffer;
-            gbDesc.indexFormat          = renderMesh.indexFormat;
-            gbDesc.indexCount           = renderMesh.indexCount;
+            gbDesc.meshes               = m_meshes.data();
+            gbDesc.meshCount            = static_cast<uint32_t>(m_meshes.size());
             gbDesc.fallbackWhite        = m_fallbackWhite;
             gbDesc.fallbackBlack        = m_fallbackBlack;
             gbDesc.fallbackNormal       = m_fallbackNormal;
@@ -786,7 +792,7 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
         }
     } else {
         // ── Forward: single-pass PBR ────────────────────────────────────
-        if (renderMesh.IsValid()) {
+        if (!m_meshes.empty()) {
             PBRPassDesc fwdDesc{};
             fwdDesc.backbuffer           = hdrRes;
             fwdDesc.depthBuffer          = depthRes;
@@ -795,11 +801,8 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
             fwdDesc.cbAllocator          = m_cbRing.get();
             fwdDesc.perFrameAlloc        = perFrameAlloc;
             fwdDesc.pipeline             = pipelines->GetForwardPBR(bindless);
-            fwdDesc.vertexBufferSrvIndex = renderMesh.vbSrvIndex;
-            fwdDesc.vertexBuffer         = renderMesh.vertexBuffer;
-            fwdDesc.indexBuffer          = renderMesh.indexBuffer;
-            fwdDesc.indexFormat          = renderMesh.indexFormat;
-            fwdDesc.indexCount           = renderMesh.indexCount;
+            fwdDesc.meshes               = m_meshes.data();
+            fwdDesc.meshCount            = static_cast<uint32_t>(m_meshes.size());
             fwdDesc.bindless             = bindless;
             fwdDesc.viewportWidth        = vpWidth;
             fwdDesc.viewportHeight       = vpHeight;
@@ -834,13 +837,16 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     atmoCtx.depthSrvIndex       = m_gbuffer.depthSRV;
     atmoCtx.depthTexture        = m_gbuffer.depth;
 
-    AddAtmospherePasses(rgBuilder, hdrRes, depthRes, perFrameAlloc, atmoCtx);
+    // Skip sky + fog when buffer visualization grid is active — the grid
+    // takes over the entire HDR target and these passes would overwrite it.
+    if (m_shadowDebugMode == 0) {
+        AddAtmospherePasses(rgBuilder, hdrRes, depthRes, perFrameAlloc, atmoCtx);
 
-    // ── Height Fog pass — delegated to fog_renderer ─────────────────────
-    AddHeightFogFromECS(rgBuilder, hdrRes, depthRes, perFrameAlloc,
-                        world, camera, pipelines, *m_cbRing,
-                        m_gbuffer.depthSRV, m_gbuffer.depth,
-                        bindless, vpWidth, vpHeight);
+        AddHeightFogFromECS(rgBuilder, hdrRes, depthRes, perFrameAlloc,
+                            world, camera, pipelines, *m_cbRing,
+                            m_gbuffer.depthSRV, m_gbuffer.depth,
+                            bindless, vpWidth, vpHeight);
+    }
 
     // (atmosphere and fog passes registered above via AddAtmospherePasses + AddHeightFogFromECS)
 
@@ -892,6 +898,8 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     });
 
     // ── Overlay pass (editor grid + stats overlay) ──────────────────────
+    // Skip overlays when buffer visualization grid is active — grid owns the full screen.
+    if (m_shadowDebugMode == 0)
     rgBuilder.AddPass("OverlayPass", [&](rg::RgPassBuilder& pb) {
         pb.Write(bbRes, RHIResourceState::RenderTarget);
         pb.Write(depthRes, RHIResourceState::DepthStencilWrite);
@@ -925,12 +933,20 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
                 const uint32_t drawCount = useInstancing
                     ? static_cast<uint32_t>(instanceBatches.size())
                     : static_cast<uint32_t>(drawList.Count());
-                const uint32_t objectCount = static_cast<uint32_t>(drawList.Count());
-                const uint32_t indicesPerMesh = renderMesh.indexCount;
-                const uint32_t verticesPerMesh = renderMesh.vertexCount;
+                // Accumulate exact vertex/triangle counts across all draw commands.
+                // This correctly handles scenes with multiple distinct meshes.
+                uint32_t totalVertices  = 0;
+                uint32_t totalTriangles = 0;
+                for (const auto& dc : drawList.GetCommands()) {
+                    if (dc.meshId < m_meshes.size() && m_meshes[dc.meshId].IsValid()) {
+                        const GPUMesh& m = m_meshes[dc.meshId];
+                        totalVertices  += m.vertexCount;
+                        totalTriangles += m.indexCount / 3;
+                    }
+                }
                 m_statsOverlay->SetDrawCalls(drawCount);
-                m_statsOverlay->SetVertexCount(objectCount * verticesPerMesh);
-                m_statsOverlay->SetTriangleCount(objectCount * (indicesPerMesh / 3));
+                m_statsOverlay->SetVertexCount(totalVertices);
+                m_statsOverlay->SetTriangleCount(totalTriangles);
                 m_statsOverlay->Render(cmd, *m_cbRing, frameIndex);
             }
 
@@ -946,6 +962,11 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
 
     rgBuilder.Compile();
     rgBuilder.Execute(cmdList);
+
+    // Shadow Atlas Diagnostic Readback (shadowDebugMode >= 2).
+    // Currently disabled — requires render graph pass integration for safe
+    // barrier management. Use RenderDoc/PIX to inspect the shadow atlas.
+    // The readback infrastructure is in PerformShadowAtlasReadback().
 
     // HDR target now contains valid scene color for next frame's auto-exposure readback.
     m_hdrHasContent = true;
@@ -1267,5 +1288,107 @@ const Camera& SceneRenderer::GetCamera() const { return *m_camera; }
 FPSCameraController& SceneRenderer::GetCameraController() { return *m_cameraCtrl; }
 InputSystem* SceneRenderer::GetInput() const { return m_input.get(); }
 StatsOverlay* SceneRenderer::GetStatsOverlay() const { return m_statsOverlay.get(); }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Shadow Atlas Diagnostic Readback
+// ─────────────────────────────────────────────────────────────────────────────
+
+void SceneRenderer::PerformShadowAtlasReadback(IRHICommandList* cmdList) {
+    if (!m_shadowAtlas.GetTexture().IsValid()) {
+        m_shadowReadbackPhase = 2;
+        return;
+    }
+
+    if (m_shadowReadbackPhase == 0) {
+        // Phase 0: Create readback buffer, issue GPU copy.
+        // Buffer stays alive — destroyed only in phase 1 after GPU is done.
+        const uint32_t atlasWidth = kShadowResolution * GetAtlasColumns(4);
+        const uint32_t rowBytes   = atlasWidth * 4;
+        const uint32_t rowPitch   = (rowBytes + 255) & ~255u;
+        m_shadowReadbackRowPitch  = rowPitch;
+        m_shadowReadbackWidth     = atlasWidth;
+
+        RHIBufferDesc rbDesc{};
+        rbDesc.sizeBytes = rowPitch;
+        rbDesc.memory    = RHIMemoryType::Readback;
+        rbDesc.debugName = "ShadowAtlasReadback";
+        m_shadowReadbackBuffer = m_device->CreateBuffer(rbDesc);
+        if (!m_shadowReadbackBuffer.IsValid()) {
+            UZ_LOG(Shadow, Error, "ShadowAtlasReadback: failed to create buffer");
+            m_shadowReadbackPhase = 2;
+            return;
+        }
+
+        RHIBarrierDesc toCopy{};
+        toCopy.texture     = m_shadowAtlas.GetTexture();
+        toCopy.stateBefore = RHIResourceState::ShaderResource;
+        toCopy.stateAfter  = RHIResourceState::CopySrc;
+        cmdList->ResourceBarrier(&toCopy, 1);
+
+        cmdList->CopyTextureToBuffer(m_shadowAtlas.GetTexture(), 0,
+                                      m_shadowReadbackBuffer, 0, rowPitch);
+
+        RHIBarrierDesc toSrv{};
+        toSrv.texture     = m_shadowAtlas.GetTexture();
+        toSrv.stateBefore = RHIResourceState::CopySrc;
+        toSrv.stateAfter  = RHIResourceState::ShaderResource;
+        cmdList->ResourceBarrier(&toSrv, 1);
+
+        UZ_LOG(Shadow, Info, "ShadowAtlasReadback: GPU copy issued (phase 0)");
+        m_shadowReadbackPhase = 1;
+
+    } else if (m_shadowReadbackPhase >= 1 && m_shadowReadbackPhase <= 3) {
+        // Phases 1-3: Wait for GPU to finish the copy command.
+        // Triple-buffered = need 3 frames before the copy is guaranteed complete.
+        UZ_LOG(Shadow, Info, "ShadowAtlasReadback: waiting (phase {})", m_shadowReadbackPhase);
+        m_shadowReadbackPhase++;
+
+    } else if (m_shadowReadbackPhase == 4) {
+        // Phase 4: At least 3 full frames passed since the copy — safe to read.
+        // Buffer is NOT destroyed here — kept alive until Shutdown to avoid
+        // any possibility of destroying while GPU references it.
+        void* mapped = m_device->MapBuffer(m_shadowReadbackBuffer);
+        if (mapped) {
+            const float* row0 = reinterpret_cast<const float*>(mapped);
+            const uint32_t rowPixels = m_shadowReadbackWidth;
+            const uint32_t halfRes   = kShadowResolution / 2;
+
+            UZ_LOG(Shadow, Info, "=== Shadow Atlas Diagnostic Readback ===");
+            UZ_LOG(Shadow, Info, "Atlas: {}x{} D32Float", rowPixels, rowPixels);
+            UZ_LOG(Shadow, Info, "Row 0: px[0]={:.6f} px[{}]={:.6f} px[{}]={:.6f} px[{}]={:.6f}",
+                   row0[0],
+                   halfRes/2, row0[std::min(halfRes/2, rowPixels-1)],
+                   halfRes,   row0[std::min(halfRes, rowPixels-1)],
+                   kShadowResolution-1, row0[std::min(kShadowResolution-1, rowPixels-1)]);
+
+            uint32_t nCleared = 0, nGeom = 0, nZero = 0;
+            float minV = 1.0f, maxV = 0.0f;
+            for (uint32_t x = 0; x < std::min(rowPixels, kShadowResolution); ++x) {
+                float v = row0[x];
+                if (v >= 0.9999f) ++nCleared;
+                else if (v <= 0.0001f) ++nZero;
+                else ++nGeom;
+                minV = std::min(minV, v);
+                maxV = std::max(maxV, v);
+            }
+            UZ_LOG(Shadow, Info, "Stats: cleared(1.0)={} geometry={} zero(0.0)={} min={:.8f} max={:.8f}",
+                   nCleared, nGeom, nZero, minV, maxV);
+
+            if (nZero > 0 && nGeom == 0 && nCleared == 0)
+                UZ_LOG(Shadow, Error, "ALL ZERO — shadow atlas not written!");
+            else if (nGeom > 0)
+                UZ_LOG(Shadow, Info, "Shadow atlas contains valid depth data");
+            else
+                UZ_LOG(Shadow, Warning, "No geometry in row 0 — check cascade coverage");
+
+            m_device->UnmapBuffer(m_shadowReadbackBuffer);
+        } else {
+            UZ_LOG(Shadow, Error, "ShadowAtlasReadback: failed to map buffer");
+        }
+
+        // Keep buffer alive — destroyed in Shutdown() to avoid GPU reference issues.
+        m_shadowReadbackPhase = 5; // done
+    }
+}
 
 } // namespace uz
