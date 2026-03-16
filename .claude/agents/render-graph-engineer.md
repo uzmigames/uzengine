@@ -209,6 +209,21 @@ Before presenting code:
 - [ ] Pass callbacks receive resolved `RhiTexture` handles, not `RgTexture`
 - [ ] Circular dependencies detected and asserted at `rg_compile` time
 
+## ⚠️ MANDATORY: UE5 Parity Checklist (for pass implementations)
+
+When implementing or modifying any render pass (GBuffer, Lighting, SSAO, SSR, etc.):
+
+1. **Which UE5 pass/file is this based on?** (file path + function name)
+2. **Are all constants cited?** Every number must trace to UE5 source
+3. **No approximations?** If UE5 uses a LUT, we use a LUT — no analytical shortcuts
+4. **No `assert()`?** Use `UZ_CHECK`/`UZ_ENSURE`
+5. **No raw `new`/`delete`?** Use frame arena or engine allocators
+
+### Pass Source Citation
+```cpp
+/// @source UE5 <RenderPass.cpp>:<line> — <PassName>
+```
+
 ## Language & Communication
 
 Communicate in the same language the user writes in. If they write in Portuguese, respond in Portuguese.

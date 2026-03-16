@@ -82,10 +82,61 @@ When implementing shaders or graphics features:
 - Check for precision issues (floating point, depth buffer)
 - Ensure proper resource state transitions and synchronization
 
+## ⚠️ MANDATORY: UE5 Parity Pre-Flight Checklist
+
+**BEFORE returning ANY shader or rendering code, you MUST explicitly answer ALL of these questions in your response. If any answer is missing, your code is REJECTED.**
+
+### Source Verification
+1. **Which UE5 `.usf`/`.ush` file was this based on?** (full path + line number REQUIRED)
+2. **List every numeric constant** and its exact UE5 source (file:line for each)
+3. **Are there any `max()` clamps** not present in UE5? (answer must be "NONE")
+4. **Are there any scale/compensation factors** (`* 1.5`, `* 2.0`, `+ 0.1`) not in UE5? (answer must be "NONE")
+5. **Does this use an approximation** where UE5 uses a LUT/texture/precomputed data? (answer must be "NO")
+6. **Are there any "empirically tuned" or "estimated" values?** (answer must be "NO")
+
+### If You Cannot Answer Question 1
+**STOP.** Launch `unreal-architect` agent with the prompt:
+"Find the exact UE5 implementation of [feature] in W:\UE_5.6_Source. Return the file path, function name, and line numbers."
+
+Only proceed after receiving the UE5 reference.
+
+### Shader Source Citation Template (MANDATORY)
+
+Every shader function MUST start with this header:
+```hlsl
+/// @source UE5 <file.usf>:<line> — <FunctionName>
+/// @constants kFoo=0.5 (UE5 <file>:<line>), kBar=2.0 (UE5 <file>:<line>)
+/// @deviations NONE
+```
+
+If `@deviations` is not `NONE`, you must explain WHY and get user approval.
+
+### Examples of FORBIDDEN Patterns
+
+```hlsl
+// ❌ FORBIDDEN — invented constant without UE5 source
+static const float kShadowScale = 512.0f; // "tuned to look good"
+
+// ❌ FORBIDDEN — approximation where UE5 uses LUT
+L *= 1.0f + multiScatteringFactor * 0.5f; // "empirically tuned"
+
+// ❌ FORBIDDEN — compensation factor
+float3 opticalDepth = kRayleighBeta * distKm * 2.0f; // "scale to match UE5"
+
+// ❌ FORBIDDEN — minimum clamp not in UE5
+skyInscatter = max(skyInscatter, float3(0.15f, 0.2f, 0.35f));
+
+// ✅ CORRECT — cites UE5 source
+/// @source UE5 SkyAtmosphere.usf:245 — IntegrateScatteredLuminance
+/// @constants kRayleighScattering=(5.802e-3, 13.558e-3, 33.1e-3) (SkyAtmosphere.usf:89)
+/// @deviations NONE
+float3 ComputeRayleighScattering(float altitude) { ... }
+```
+
 ## Code Quality Standards
 
 - **Comments**: Every non-trivial operation must have a comment explaining the mathematical or algorithmic reasoning
-- **Constants**: No magic numbers — use named constants with units documented
+- **Constants**: No magic numbers — use named constants with units documented AND UE5 source citation
 - **Precision**: Explicitly choose float vs half precision with justification
 - **Branching**: Prefer branchless techniques; document when branches are necessary
 - **Memory**: Document memory access patterns (coalesced, scattered, etc.)

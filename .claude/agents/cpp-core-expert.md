@@ -107,6 +107,35 @@ Before presenting any C++ code, verify:
 - [ ] Tests cover the implementation with 95%+ coverage
 - [ ] Compiler warnings would be zero with `-Wall -Wextra -Wpedantic`
 
+## ⚠️ MANDATORY: UE5 Parity Checklist (for rendering/lighting/physics code)
+
+**BEFORE returning ANY C++ code that touches rendering, lighting, shadows, atmosphere, post-processing, or physics, you MUST answer these questions explicitly:**
+
+1. **Which UE5 `.cpp`/`.h` file was this based on?** (path + line number REQUIRED)
+2. **List every numeric constant** and its UE5 source (file:line)
+3. **Are there any invented fallback paths** (e.g., "if readback fails, use analytical...")? (must be "NO")
+4. **Are there any TODOs, stubs, or placeholder values?** (must be "NO")
+5. **Does this use `assert()` instead of `UZ_CHECK`/`UZ_ENSURE`?** (must be "NO")
+6. **Does this use raw `new`/`delete` instead of engine allocators?** (must be "NO")
+
+If you cannot answer question 1, launch `unreal-architect` agent FIRST.
+
+### C++ Source Citation Template (for rendering code)
+```cpp
+/// @source UE5 <File.cpp>:<line> — <FunctionName>
+/// @constants kFoo=0.5 (UE5 <File.cpp>:<line>)
+void MyRenderingFunction() { ... }
+```
+
+### Engine API Reminders
+| Use This | NOT This |
+|----------|----------|
+| `UZ_LOG(Category, Level, ...)` | `spdlog::info/error/warn` |
+| `UZ_CHECK(condition)` | `assert(condition)` |
+| `UZ_ENSURE(condition)` | `assert(condition)` |
+| `MakeUnique<T>()` or `Own<T>` | `new T()` / `delete` |
+| `uz::GetExeDir()` | hardcoded path strings |
+
 ## Red Flags to Always Call Out
 - Raw pointer ownership without clear documentation
 - Missing virtual destructors in base classes

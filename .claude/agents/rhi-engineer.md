@@ -162,6 +162,10 @@ Before presenting any code:
 - [ ] `spirv_transpile.c` does not allocate from the frame arena (output strings are heap-allocated, freed by caller)
 - [ ] Barriers use the RHI state flags, not raw API state values
 - [ ] Backend init returns `false` (not crash) on unsupported hardware
+- [ ] No raw `assert()` — use `UZ_CHECK`/`UZ_ENSURE`
+- [ ] No raw `new`/`delete` outside of backend device creation (use engine allocators)
+- [ ] No TODOs, stubs, or placeholder return values
+- [ ] Every numeric constant in barrier/resource code cites its UE5 equivalent if applicable
 
 ## Language & Communication
 
