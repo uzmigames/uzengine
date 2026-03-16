@@ -116,11 +116,12 @@ void ComputeFrustumCorners(
 }
 
 /// Chooses an up-vector for the light view matrix that avoids degeneracy
-/// when the light direction is nearly parallel to world-up (0,1,0).
+/// when the light direction is nearly parallel to world-up.
+/// UzEngine uses Z-up coordinate system (UE5 parity).
 Vec3 ChooseLightUp(const Vec3& lightDir) {
-    const Vec3 worldUp{0.0f, 1.0f, 0.0f};
+    const Vec3 worldUp{0.0f, 0.0f, 1.0f};  // Z-up (UE5 parity)
     if (std::abs(lightDir.Dot(worldUp)) > kVerticalThreshold) {
-        return Vec3{1.0f, 0.0f, 0.0f};
+        return Vec3{0.0f, 1.0f, 0.0f};  // fallback to Y when light is vertical
     }
     return worldUp;
 }
