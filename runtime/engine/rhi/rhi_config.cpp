@@ -20,11 +20,9 @@ namespace uz {
 // ─────────────────────────────────────────────────────────────────────────────
 
 bool IRHIDevice::IsBindless() const {
-    // Vulkan does not support DX12-style ResourceDescriptorHeap bindless;
-    // it uses descriptor sets instead (not yet implemented)
-    if (GetBackend() == RHIBackend::Vulkan) {
-        return false;
-    }
+    // All backends: bindless requires SM6.6+ (or Vulkan equivalent).
+    // Vulkan uses VK_EXT_descriptor_indexing + runtimeDescriptorArray
+    // which maps to the same capability as DX12 ResourceDescriptorHeap.
     return GetShaderModel() >= ShaderModel::SM6_6;
 }
 

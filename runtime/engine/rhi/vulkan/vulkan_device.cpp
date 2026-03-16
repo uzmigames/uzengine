@@ -555,12 +555,20 @@ bool VulkanDevice::CreateLogicalDevice() {
         VK_KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME,
     };
 
-    // Enable Vulkan 1.2 features (timeline semaphores, descriptor indexing)
+    // Enable Vulkan 1.2 features (timeline semaphores, descriptor indexing, bindless)
     VkPhysicalDeviceVulkan12Features vk12Features = {};
     vk12Features.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
     vk12Features.timelineSemaphore = VK_TRUE;
     vk12Features.descriptorIndexing = VK_TRUE;
     vk12Features.bufferDeviceAddress = VK_TRUE;
+    // Bindless descriptor features — equivalent to DX12 SM6.6 ResourceDescriptorHeap
+    vk12Features.runtimeDescriptorArray = VK_TRUE;
+    vk12Features.descriptorBindingPartiallyBound = VK_TRUE;
+    vk12Features.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
+    vk12Features.descriptorBindingVariableDescriptorCount = VK_TRUE;
+    vk12Features.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
+    vk12Features.descriptorBindingStorageImageUpdateAfterBind = VK_TRUE;
+    vk12Features.descriptorBindingUniformBufferUpdateAfterBind = VK_TRUE;
 
     // Enable dynamic rendering (VK_KHR_dynamic_rendering)
     VkPhysicalDeviceDynamicRenderingFeatures dynRenderingFeatures = {};
@@ -629,9 +637,12 @@ bool VulkanDevice::CreateLogicalDevice() {
                supported12.descriptorBindingVariableDescriptorCount ? "true" : "false",
                supported12.shaderSampledImageArrayNonUniformIndexing ? "true" : "false");
 
-        if (supported12.descriptorIndexing &&
-            supported12.runtimeDescriptorArray &&
-            supported12.descriptorBindingPartiallyBound) {
+        m_bindlessSupported = supported12.descriptorIndexing
+                           && supported12.runtimeDescriptorArray
+                           && supported12.descriptorBindingPartiallyBound
+                           && supported12.shaderSampledImageArrayNonUniformIndexing;
+
+        if (m_bindlessSupported) {
             UZ_LOG(RHI, Info, "Bindless descriptors: AVAILABLE (all required features supported)");
         } else {
             UZ_LOG(RHI, Warning, "Bindless descriptors: NOT AVAILABLE (missing required features)");
@@ -681,7 +692,8 @@ bool VulkanDevice::CreateDescriptorPool() {
 
     VkDescriptorPoolCreateInfo poolCI = {};
     poolCI.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    poolCI.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+    poolCI.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT
+                 | VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
     poolCI.maxSets = 32768;
     poolCI.poolSizeCount = static_cast<uint32_t>(std::size(poolSizes));
     poolCI.pPoolSizes = poolSizes;
@@ -791,7 +803,8 @@ bool VulkanDevice::CreateDescriptorSetLayout() {
     // bindings that were actually written via m_writtenBindingsMask).
     VkDescriptorBindingFlags bindingFlags[kTotalBindings] = {};
     for (uint32_t i = 0; i < kTotalBindings; ++i) {
-        bindingFlags[i] = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT;
+        bindingFlags[i] = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT
+                        | VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT;
     }
     VkDescriptorSetLayoutBindingFlagsCreateInfo bindingFlagsCI = {};
     bindingFlagsCI.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO;
@@ -800,6 +813,7 @@ bool VulkanDevice::CreateDescriptorSetLayout() {
 
     VkDescriptorSetLayoutCreateInfo layoutCI = {};
     layoutCI.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutCI.flags = VK_DESCRIPTOR_SET_LAYOUT_CREATE_UPDATE_AFTER_BIND_POOL_BIT;
     layoutCI.pNext = &bindingFlagsCI;
     layoutCI.bindingCount = kTotalBindings;
     layoutCI.pBindings = bindings;

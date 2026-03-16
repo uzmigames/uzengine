@@ -371,6 +371,7 @@ private:
     std::string                    m_adapterName;
     std::string                    m_apiVersionStr;
     bool                           m_validationEnabled = false;
+    bool                           m_bindlessSupported = false; ///< True if descriptor indexing + runtime arrays available.
 
     /// Tracy GPU context for Vulkan timestamp collection.
     /// nullptr when `TRACY_ENABLE` is not defined.
