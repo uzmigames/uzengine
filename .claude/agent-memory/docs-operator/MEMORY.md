@@ -1,6 +1,69 @@
 # UzEngine Documentation Operator Memory
 
-## Most Recent Work (2026-03-15)
+## Most Recent Work (2026-03-16)
+**Created 4 new rendering docs** — Complete IBL, HDR, and Height Fog documentation suite
+
+### New Files (1,869 total lines)
+1. **`23-ibl-lighting.md`** (437 lines) — IBL pipeline: BRDF LUT, irradiance cubemap, prefiltered specular, SH9 diffuse
+   - BRDF integration (512×512 RG16F, 1024 samples, GGX importance sampling)
+   - Irradiance cubemap (32×32, 64 samples, cosine-weighted)
+   - Prefiltered specular (128×128 base, 5 mips, GGX prefilter)
+   - Spherical Harmonics projection (L2 SH9 = 9 float4 coefficients)
+   - SkyLight component (intensity, color tint, min_ambient, DFAO strength)
+   - CPU readback + analytic Rayleigh fallback
+
+2. **`24-ibl-tuning-guide.md`** (426 lines) — Practical IBL tuning guide for artists
+   - Resolution tradeoffs: BRDF LUT (512 recommended), irradiance (32), prefiltered (128)
+   - Sample count tradeoffs: 1024 optimal (15-20ms bake time)
+   - Environment map sources: Procedural sky (current), HDR equirect (Phase 3), cubemap capture
+   - SH vs cubemap (SH for diffuse O(1), cubemap for specular LOD selection)
+   - SkyLight parameters tuning: intensity (0.5-4.0), color, min_ambient (0.02-0.1), DFAO (0.5)
+   - Artistic scattering: rayleighScatteringScale, mieScatteringScale, skyLuminanceFactor
+   - Common issues & solutions (black reflections, blue tint, over-bright, flat lighting)
+
+3. **`25-hdr-pipeline.md`** (483 lines) — HDR rendering and auto-exposure
+   - Two-pass GPU histogram: exposure_histogram_cs (64-bin log2 luminance) + exposure_average_cs (percentile filter)
+   - Temporal adaptation (exponential smoothing, 0.1 EV/second default)
+   - AutoExposureSettings: manualExposure, minBrightness, maxBrightness, histLogRange, adaptationRate
+   - ACES tonemap (split-sum approximation, graceful highlight rolloff)
+   - Exposure buffer (double-buffered, no GPU stalls)
+   - Manual EV override (for cutscenes, menus)
+   - Pixel-perfect usage: PerFrameCB receives currentEV and exposureMultiplier (2^-EV)
+
+4. **`26-height-fog.md`** (523 lines) — Height-based exponential fog system
+   - Density distribution: `Density(z) = fogDensity * exp(-fogHeightFalloff * (z - fogBaseHeight))`
+   - Transmission: `exp(-density * rayLength)` (exponential depth)
+   - Two-layer fog: primary + secondary layers
+   - Directional inscattering (sun-facing halo, Mie scattering)
+   - CPU precomputation: RayOriginTerms avoids per-pixel exp()
+   - HeightFogComponent parameters: fogColor, fogDensity, fogHeightFalloff, fogBaseHeight, etc.
+   - Fullscreen compute pass (after lighting, before tonemap)
+
+### README.md Updated
+- Added all 4 files to Section Overview table (lines 35-38)
+- Added 3 quick navigation sections:
+  - "Work with Image-Based Lighting (IBL)" (4 steps)
+  - "Set up exposure & tonemapping" (5 steps)
+  - "Add height fog to outdoor scenes" (5 steps)
+
+### Key Documentation Patterns Used
+- Kebab-case filenames, status badges (Done Phase 1.3)
+- Frontmatter with doc-meta blocks (title, category, theme, status)
+- Cross-references with relative paths
+- ASCII architecture diagrams (height fog density curve, exposure pipeline)
+- Performance tables (resolution/memory/time tradeoffs)
+- Common issues troubleshooting sections
+- Phase roadmap at end of each doc
+- Code examples with proper syntax highlighting (hlsl, cpp)
+
+### All Files Within Limits
+- 23-ibl-lighting.md: 437 lines (under 800)
+- 24-ibl-tuning-guide.md: 426 lines (under 800)
+- 25-hdr-pipeline.md: 483 lines (under 800)
+- 26-height-fog.md: 523 lines (under 800)
+- Total: 1,869 lines (avg 467 per doc)
+
+## Previous Work (2026-03-15)
 **[lua-scripting-phase1-complete.md](lua-scripting-phase1-complete.md)** — Updated all Lua scripting documentation to reflect Phase 1 complete state with full working API reference and user guide
 
 ## Project Structure

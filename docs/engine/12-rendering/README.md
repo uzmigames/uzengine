@@ -32,6 +32,10 @@ The rendering pipeline system is split across multiple documents covering archit
 | [20-shader-compatibility.md](20-shader-compatibility.md) | **Done (1.2)** | **Cross-backend shader compilation, SM6.6 bindless vs SM5, DXIL/DXBC/SPIR-V targets** | **Multi-target shaders** |
 | [21-renderer-passes.md](21-renderer-passes.md) | **Done (1.2–Phase 2.5)** | **PBR, GBuffer, Lighting, Shadow, Sky Atmosphere, Height Fog, Debug passes — complete reference** | **All render passes** |
 | [22-scene-lighting-helper.md](22-scene-lighting-helper.md) | **Done (1.2)** | **SceneLighting struct, BuildPerFrameCB() helper** | **Per-frame CB setup** |
+| [23-ibl-lighting.md](23-ibl-lighting.md) | **Done (1.3)** | **IBL pipeline: BRDF LUT, irradiance cubemap, prefiltered specular, SH9 diffuse** | **Ambient lighting & reflections** |
+| [24-ibl-tuning-guide.md](24-ibl-tuning-guide.md) | **Done (1.3)** | **Practical IBL tuning: resolution tradeoffs, SH vs cubemaps, artist parameters, troubleshooting** | **IBL quality & performance** |
+| [25-hdr-pipeline.md](25-hdr-pipeline.md) | **Done (1.3)** | **HDR rendering, auto-exposure (histogram + percentile filter), ACES tonemap, manual EV override** | **Exposure control & color grading** |
+| [26-height-fog.md](26-height-fog.md) | **Done (1.3)** | **Height-based exponential fog, two layers, directional inscattering (sun halo), artist parameters** | **Atmospheric depth & distance** |
 
 ## Quick Navigation
 
@@ -96,6 +100,30 @@ The rendering pipeline system is split across multiple documents covering archit
 2. Understand the practical split algorithm and texel snapping
 3. Learn cascade blending and PCF filtering for soft shadows
 4. Reference the shadow pass setup in render graph integration
+
+**Work with Image-Based Lighting (IBL)**
+
+1. Read [23-ibl-lighting.md](23-ibl-lighting.md) for BRDF LUT, irradiance, prefiltered cubemap architecture
+2. Reference [24-ibl-tuning-guide.md](24-ibl-tuning-guide.md) for practical tuning and troubleshooting
+3. Understand SH9 projection for diffuse ambient (L0 + L1 + L2 coefficients)
+4. Configure SkyLight component (intensity, color, min_ambient, DFAO strength)
+5. Monitor IBLBaker state in editor (exposure, environment map source)
+
+**Set up exposure & tonemapping**
+
+1. Read [25-hdr-pipeline.md](25-hdr-pipeline.md) for auto-exposure histogram and ACES tonemap
+2. Understand GPU exposure buffer (histogram + percentile filtering + temporal adaptation)
+3. Configure AutoExposureSettings (adaptation rate, min/max brightness, histLogRange)
+4. Use manual EV override for specific moods (cutscenes, menus)
+5. Integrate tonemap pass into render graph (final HDR→LDR step)
+
+**Add height fog to outdoor scenes**
+
+1. Read [26-height-fog.md](26-height-fog.md) for exponential fog density and inscattering
+2. Understand two-layer fog (primary + secondary) for complex atmospheres
+3. Configure HeightFogComponent (color, density, height falloff, base height)
+4. Tune directional inscattering for sun halo effect
+5. Test against reference (UE5, Godot) for visual parity
 
 ## Milestone Status
 

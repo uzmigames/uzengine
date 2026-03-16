@@ -361,7 +361,41 @@ float4 main(FSInput input) : SV_Target {
     // ── Combine ──
     float3 color = ambient + Lo;
 
-    // Output linear HDR — tonemap applied in separate fullscreen pass.
+    // ── Aerial Perspective (atmospheric scattering on geometry) ──────────
+    // Distant objects are tinted by the sky color due to atmospheric scattering
+    // between the camera and the surface. This creates the characteristic blue
+    // haze on distant geometry that UE5 achieves via a 3D volume texture.
+    // This is a simplified per-pixel approximation using Rayleigh scattering.
+    {
+        float dist = length(worldPos - cameraPos.xyz);
+        float distKm = dist * 0.00001f;  // cm to km (UE5 parity: 1 unit = 1cm)
 
+        // Rayleigh scattering coefficients (Earth atmosphere, km^-1)
+        // Same values used in sky_atmosphere_ps.hlsl
+        static const float3 kRayleighBeta = float3(5.802e-3f, 13.558e-3f, 33.1e-3f);
+
+        // Optical depth along the view ray (simplified: constant density at sea level)
+        // Scale by a factor to match UE5 aerial perspective intensity
+        float3 opticalDepth = kRayleighBeta * distKm * 2.0f;
+
+        // Transmittance: how much of the original surface color reaches the camera
+        float3 transmittance = exp(-opticalDepth);
+
+        // Inscattering: sky color accumulated along the ray
+        // Use the SH L0 (constant ambient) as the sky color source
+        float3 skyInscatter = float3(
+            skyIrradianceSH[0].w / (3.14159f * 0.282095f),  // undo the SH packing to get raw avg color
+            skyIrradianceSH[1].w / (3.14159f * 0.282095f),
+            skyIrradianceSH[2].w / (3.14159f * 0.282095f)
+        );
+        skyInscatter = max(skyInscatter, float3(0.15f, 0.2f, 0.35f));  // minimum sky color
+
+        float3 inscattering = skyInscatter * (1.0f - transmittance);
+
+        // Apply: surface fades toward sky color with distance
+        color = color * transmittance + inscattering;
+    }
+
+    // Output linear HDR — tonemap applied in separate fullscreen pass.
     return float4(color, 1.0f);
 }
