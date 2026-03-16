@@ -41,6 +41,11 @@ static const float g_HighPercent = 90.0;  // UE5: AutoExposureHighPercent = 90
 
 RWByteAddressBuffer g_ExposureUAV : register(u0);
 
+/// SM5 non-bindless: histogram SRV bound at t0.
+#ifndef UZ_BINDLESS
+ByteAddressBuffer g_HistogramSrvTex : register(t0);
+#endif
+
 #define NUM_BINS 64
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -51,7 +56,11 @@ RWByteAddressBuffer g_ExposureUAV : register(u0);
 void main()
 {
     // ── Read histogram ──────────────────────────────────────────────────────
+#ifdef UZ_BINDLESS
     ByteAddressBuffer histogramSRV = ResourceDescriptorHeap[g_HistogramSrvIdx];
+#else
+    ByteAddressBuffer histogramSRV = g_HistogramSrvTex;
+#endif
 
     uint bins[NUM_BINS];
     uint totalPixels = 0;

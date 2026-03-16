@@ -46,6 +46,11 @@ cbuffer ExposureParams : register(b0)
 /// Must be cleared to zero before each frame's dispatch.
 RWByteAddressBuffer g_HistogramUAV : register(u0);
 
+/// SM5 non-bindless: HDR scene color bound at t0 via SetFragmentTexture(0).
+#ifndef UZ_BINDLESS
+Texture2D<float4> g_HdrColorTex : register(t0);
+#endif
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
@@ -104,7 +109,11 @@ void main(uint3 dtid : SV_DispatchThreadID, uint gi : SV_GroupIndex)
     // Step 2: Accumulate this thread's pixel into the LDS histogram
     if (dtid.x < g_ScreenWidth && dtid.y < g_ScreenHeight)
     {
+#ifdef UZ_BINDLESS
         Texture2D<float4> hdrColor = ResourceDescriptorHeap[g_HdrSrvIndex];
+#else
+        Texture2D<float4> hdrColor = g_HdrColorTex;
+#endif
         float3 color = hdrColor.Load(int3(dtid.xy, 0)).rgb;
         float lum = Luminance(color);
 

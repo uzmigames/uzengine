@@ -950,6 +950,11 @@ RHIBufferHandle VulkanDevice::CreateBuffer(const RHIBufferDesc& desc) {
         slot->srvIndex = m_nextSrvIndex++;
     }
 
+    // Assign logical UAV index for storage/unordered access buffers
+    if (HasFlag(desc.usage, RHIBufferUsage::UnorderedAccess)) {
+        slot->uavIndex = m_nextSrvIndex++;
+    }
+
     UZ_LOG(RHI, Debug, "CreateBuffer: size={}, stride={} (name='{}')",
            desc.sizeBytes, desc.stride, desc.debugName ? desc.debugName : "");
 
@@ -1009,9 +1014,9 @@ uint32_t VulkanDevice::GetBufferSRVIndex(RHIBufferHandle handle) const {
 }
 
 uint32_t VulkanDevice::GetBufferUAVIndex(RHIBufferHandle handle) const {
-    // Vulkan uses descriptor sets, not bindless UAV indices
-    (void)handle;
-    return UINT32_MAX;
+    const VulkanBuffer* buf = m_bufferPool.Get(handle.index, handle.generation);
+    if (!buf) return UINT32_MAX;
+    return buf->uavIndex;
 }
 
 uint64_t VulkanDevice::GetBufferGPUAddress(RHIBufferHandle handle) const {

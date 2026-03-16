@@ -105,6 +105,9 @@ struct VulkanBuffer {
     /// Logical SRV binding index for `SetDescriptorIndex()`. Maps to a descriptor
     /// set binding. `UINT32_MAX` if no descriptor was allocated.
     uint32_t             srvIndex = UINT32_MAX;
+    /// Logical UAV binding index for compute storage buffers.
+    /// `UINT32_MAX` if no UAV descriptor was allocated.
+    uint32_t             uavIndex = UINT32_MAX;
     /// Generation counter — must match `RHIBufferHandle::generation`.
     uint32_t             generation = 0;
     /// Backend-agnostic creation parameters (size, usage flags, heap type).

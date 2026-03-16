@@ -51,6 +51,11 @@ RWTexture2DArray<float4> outputCubemap : register(u0);
 /// s0 = bilinear wrap sampler (D3D12_FILTER_MIN_MAG_MIP_LINEAR).
 SamplerState linearSampler : register(s0);
 
+/// SM5 non-bindless: transmittance LUT bound at t0 via SetFragmentTexture(0).
+#ifndef UZ_BINDLESS
+Texture2D<float4> g_TransmittanceLut : register(t0);
+#endif
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Standard Earth Atmosphere Constants
 // ─────────────────────────────────────────────────────────────────────────────
@@ -291,8 +296,12 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     float3 artRayleighBeta = RAYLEIGH_BETA * rayleighScale;
     float  artMieBeta      = MIE_BETA * mieScale;
 
-    // ── Bindless transmittance LUT ──────────────────────────────────────────
+    // ── Transmittance LUT ──────────────────────────────────────────────────
+#ifdef UZ_BINDLESS
     Texture2D<float4> tLut = ResourceDescriptorHeap[transmittanceLutIdx];
+#else
+    Texture2D<float4> tLut = g_TransmittanceLut;
+#endif
 
     // ── Frostbite analytical integration (UE5 SkyAtmosphere.usf pattern) ────
     //
