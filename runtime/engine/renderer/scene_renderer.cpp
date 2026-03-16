@@ -1249,13 +1249,13 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
                 // Analytical fallback from Rayleigh physics
                 float sunZ = sunDir.z;
                 float sunBright = sunColor.Length();
-                // Sky color from Rayleigh ratios, with multi-scatter and ground bounce
-                // approximation that reduces extreme blue bias. The sqrt softens the
-                // ratio to account for energy redistribution from multiple scattering.
-                Vec3 rBeta = {5.802e-3f, 13.558e-3f, 33.1e-3f};
-                Vec3 skyCol = {std::sqrt(rBeta.x/rBeta.z), std::sqrt(rBeta.y/rBeta.z), 1.f};
-                skyCol = skyCol * (sunBright * (0.1f + 0.2f * std::max(0.f, sunZ)));
-                Vec3 gndCol = {0.08f, 0.07f, 0.06f}; // warm ground bounce
+                // Sky irradiance approximation matching UE5 multi-scatter behavior.
+                // With multi-scattering, the sky irradiance is much more uniform than
+                // single-scatter Rayleigh predicts. UE5 measured SH from cubemap gives
+                // roughly equal RGB irradiance with subtle blue bias for outdoor scenes.
+                float skyFactor = sunBright * (0.08f + 0.15f * std::max(0.f, sunZ));
+                Vec3 skyCol = {0.7f * skyFactor, 0.8f * skyFactor, 1.0f * skyFactor};
+                Vec3 gndCol = {0.1f * skyFactor, 0.09f * skyFactor, 0.08f * skyFactor};
                 Vec3 avg = (skyCol + gndCol) * 0.5f;
                 Vec3 dir = (skyCol - gndCol) * 0.5f;
                 float c0 = 3.14159f * 0.282095f, c1 = 2.094395f * 0.488603f;
