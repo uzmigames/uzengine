@@ -55,16 +55,8 @@ void AddPBRPass(rg::RgBuilder& builder, const PBRPassDesc& desc)
             passDesc.depthAttachment.clear      = false;
             cmd->BeginRenderPass(passDesc);
 
-            // ── Bind pipeline and shared state ───────────────────────────
+            // ── Bind pipeline and shared per-frame state ─────────────────
             cmd->SetPipeline(desc.pipeline);
-
-            if (desc.bindless) {
-                cmd->SetDescriptorIndex(kSlotRootConstants, desc.vertexBufferSrvIndex);
-            } else {
-                cmd->SetVertexBuffer(0, desc.vertexBuffer, 0);
-            }
-
-            cmd->SetIndexBuffer(desc.indexBuffer, desc.indexFormat, 0);
 
             cmd->SetRootCBV(kSlotPerFrame, desc.perFrameAlloc.bufferHandle,
                             desc.perFrameAlloc.offsetBytes,
@@ -82,11 +74,37 @@ void AddPBRPass(rg::RgBuilder& builder, const PBRPassDesc& desc)
             sc.bottom = static_cast<int32_t>(desc.viewportHeight);
             cmd->SetScissor(sc);
 
-            // ── Draw loop — iterate sorted draw commands ─────────────────
+            // ── Draw loop — bind the correct mesh per draw command ────────
+            // Each command carries a `meshId` that indexes into `desc.meshes`.
+            // Commands referencing an out-of-range or invalid mesh are skipped.
             const auto& commands = desc.drawList->GetCommands();
             uint32_t drawCallCount = 0;
 
+            // Track last bound mesh to avoid redundant VB/IB rebinds for
+            // commands sorted by mesh ID (the sort key places mesh ID in LSBs).
+            uint32_t lastBoundMeshId = UINT32_MAX;
+
             for (const auto& drawCmd : commands) {
+                if (drawCmd.meshId >= desc.meshCount) {
+                    continue; // Guard: meshId out of range.
+                }
+                const GPUMesh& mesh = desc.meshes[drawCmd.meshId];
+                if (!mesh.IsValid()) {
+                    continue; // Guard: mesh not yet uploaded.
+                }
+
+                // Rebind vertex/index buffers only when the mesh changes.
+                // The DrawList is sorted so same-mesh commands are consecutive.
+                if (drawCmd.meshId != lastBoundMeshId) {
+                    if (desc.bindless) {
+                        cmd->SetDescriptorIndex(kSlotRootConstants, mesh.vbSrvIndex);
+                    } else {
+                        cmd->SetVertexBuffer(0, mesh.vertexBuffer, 0);
+                    }
+                    cmd->SetIndexBuffer(mesh.indexBuffer, mesh.indexFormat, 0);
+                    lastBoundMeshId = drawCmd.meshId;
+                }
+
                 PerObjectCB perObject{};
                 perObject.model        = drawCmd.worldMatrix;
                 perObject.normalMatrix = drawCmd.normalMatrix;
@@ -106,7 +124,7 @@ void AddPBRPass(rg::RgBuilder& builder, const PBRPassDesc& desc)
 
                 cmd->SetRootCBV(kSlotPerObject, objAlloc.bufferHandle, objAlloc.offsetBytes,
                                 objAlloc.cpuPtr, sizeof(PerObjectCB));
-                cmd->DrawIndexed(desc.indexCount);
+                cmd->DrawIndexed(mesh.indexCount);
                 ++drawCallCount;
             }
 

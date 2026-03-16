@@ -196,6 +196,16 @@ public:
     /// Returns the current debug view mode.
     [[nodiscard]] DebugViewMode GetDebugViewMode() const { return m_debugViewMode; }
 
+    /// Sets the shadow debug visualization mode (0=off, 1-8=debug views).
+    /// See shadow_debug.hlsli for mode descriptions.
+    void SetShadowDebugMode(uint32_t mode) { m_shadowDebugMode = mode; }
+
+    /// Returns the current shadow debug mode.
+    [[nodiscard]] uint32_t GetShadowDebugMode() const { return m_shadowDebugMode; }
+
+    /// Cycles through shadow debug modes (0 → 1 → ... → 8 → 0).
+    void CycleShadowDebugMode() { m_shadowDebugMode = (m_shadowDebugMode + 1) % 9; }
+
     // ── Accessors ──────────────────────────────────────────────────────────
 
     /// Returns the camera used for rendering. Must only be called after `Init()`.
@@ -233,6 +243,10 @@ public:
     /// Index into the mesh array on success, `UINT32_MAX` on failure.
     [[nodiscard]] uint32_t LoadMesh(const std::string& path, IVFS* vfs,
                                     IRHICommandList* cmdList);
+
+    /// Reads back the shadow atlas from GPU and logs diagnostic depth values.
+    /// Called when shadowDebugMode >= 2. One-shot per session (first frame only).
+    void PerformShadowAtlasReadback(IRHICommandList* cmdList);
 
     /// Loads a texture from the VFS and uploads it to the GPU.
     ///
@@ -335,6 +349,11 @@ private:
     RenderPath m_renderPath = RenderPath::Deferred;
     GBufferDebugMode m_debugMode = GBufferDebugMode::Count;
     DebugViewMode m_debugViewMode = DebugViewMode::Lit;
+    uint32_t m_shadowDebugMode = 0;   ///< Shadow debug view mode (0=off, 1=grid, 2=readback). See shadow_debug.hlsli.
+    RHIBufferHandle m_shadowReadbackBuffer;  ///< Persistent readback buffer for shadow atlas diagnostic (mode 2).
+    uint32_t m_shadowReadbackRowPitch = 0;   ///< Row pitch of the readback (256-aligned).
+    uint32_t m_shadowReadbackWidth = 0;      ///< Atlas width in pixels.
+    int m_shadowReadbackPhase = 0;           ///< 0=issue copy, 1=wait+read, 2=done.
     uint32_t m_width = 0;
     uint32_t m_height = 0;
     float m_totalTime = 0.f;

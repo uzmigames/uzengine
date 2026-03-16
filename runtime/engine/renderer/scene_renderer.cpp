@@ -326,6 +326,12 @@ void SceneRenderer::Shutdown() {
 
     m_shadowAtlas.Shutdown(m_device);
 
+    // ── Transmittance LUT ────────────────────────────────────────────
+    if (m_transmittanceLut.IsValid()) {
+        m_device->DestroyTexture(m_transmittanceLut);
+        m_transmittanceLut = RHITextureHandle{};
+    }
+
     // ── IBL resources ──────────────────────────────────────────────────
     if (m_iblBaker) m_iblBaker->Shutdown();
     if (m_skyCubemap.IsValid()) {

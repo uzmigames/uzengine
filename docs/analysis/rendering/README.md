@@ -89,14 +89,17 @@ Overview and architecture analysis of complete rendering systems, shader pattern
 
 ---
 
-### [godot/](godot/README.md) — Godot Engine Analysis
-Analysis of Godot rendering architecture as reference for comparison with UE5.
+### Godot Engine Analysis — High-Resolution Upscaling
+Complete analysis of Godot rendering architecture with focus on 4K upscaling (FSR 1.0/2.0, MetalFX) as reference for UzEngine implementation.
 
 **Key files**:
 - [godot-rendering-analysis.md](godot/godot-rendering-analysis.md) — Godot rendering overview
 - [godot-sky-atmosphere-architecture.md](godot/godot-sky-atmosphere-architecture.md) — Godot sky system
+- [godot-4k-upscaling-summary.md](godot-4k-upscaling-summary.md) — **Quick reference** (5 modes, decision tables, 4K profiles, key numbers)
+- [godot-high-resolution-upscaling.md](godot-high-resolution-upscaling.md) — **Technical deep-dive** (FSR 1.0/2.0 implementation, fallback chain, jitter management, mipmap bias)
+- [godot-upscaling-uzengine-adaptation.md](godot-upscaling-uzengine-adaptation.md) — **UzEngine adaptation guide** (C++23 code patterns, render graph integration, Lua API, motion vectors, capability detection)
 
-**2 files total** — rendering architecture, sky system
+**5 files total** — 19 KB summary + 19 KB technical analysis + 17 KB adaptation guide
 
 ---
 
@@ -114,14 +117,14 @@ Analysis of Unity rendering and application architecture as reference for compar
 
 ## Total Files
 
-**50+ analysis documents** organized into 8 topic directories:
+**53+ analysis documents** organized into 8 topic directories:
 - Shadows: 15 files
 - Atmosphere: 14 files
 - Post-Process: 3 files
 - Materials: 4 files
 - Debug Visualization: 5 files
 - General: 3 files
-- Godot: 2 files
+- Godot: 5 files (2 base + 3 new: summary, deep-dive, adaptation guide)
 - Unity: 4 files
 
 ## Quick Start by Task

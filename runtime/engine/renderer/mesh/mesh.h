@@ -155,6 +155,38 @@ Mesh LoadMesh(const std::string& path);
 bool SaveMesh(const std::string& path, const Mesh& mesh);
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Procedural mesh generators — convenience free functions
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Generates a UV sphere mesh with the given subdivision counts.
+///
+/// Vertices use the Standard format (position, normal, texcoord, tangent).
+/// The sphere has radius 1.0 centered at origin.
+/// Coordinate system: Z-up, X-forward, Y-right.
+///
+/// # Arguments
+/// * `slices` — Number of longitude divisions. Default 32.
+/// * `stacks` — Number of latitude divisions. Default 16.
+///
+/// # Returns
+/// A valid `Mesh` with Standard vertices and UInt16 indices (for slices=32,
+/// stacks=16 the result is 578 vertices and 3072 indices).
+[[nodiscard]] Mesh GenerateSphereMesh(uint32_t sectorCount = 32, uint32_t stackCount = 16);
+
+/// Generates a flat quad (plane) mesh lying in the XY plane (Z=0).
+///
+/// Uses the Standard vertex format. Normal points up (+Z). The quad spans
+/// [-1, 1] in X and Y. UV coordinates range from [0, uvScale] to allow
+/// tiled texturing without requiring a separate sampler or material param.
+///
+/// # Arguments
+/// * `uvScale` — UV coordinate range. Default 1.0. Pass 8.0 for 8x8 tiling.
+///
+/// # Returns
+/// A `Mesh` with 4 vertices and 6 indices (two CCW triangles).
+[[nodiscard]] Mesh GeneratePlaneMesh(float uvScale = 1.0f);
+
+// ─────────────────────────────────────────────────────────────────────────────
 // MeshBuilder — Programmatic mesh construction
 // ─────────────────────────────────────────────────────────────────────────────
 

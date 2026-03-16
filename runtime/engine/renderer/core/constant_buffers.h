@@ -74,7 +74,10 @@ struct PerFrameCB {
     // When all zeros, IBL falls back to cubemap sampling.
     Vec4 skyIrradianceSH[7] = {};               ///< L2 SH coefficients for sky diffuse irradiance.
 
-    float _pad2[36] = {};                       ///< Pad to 512 bytes.
+    /// Shadow debug visualization mode (0=off, see ShadowDebugMode enum).
+    /// When non-zero, deferred_lighting_ps outputs debug colors instead of lit result.
+    uint32_t shadowDebugMode = 0;
+    float _pad2[35] = {};                       ///< Pad to 512 bytes.
 };
 
 static_assert(sizeof(PerFrameCB) == 512, "PerFrameCB must be 512 bytes (D3D12 CB alignment)");

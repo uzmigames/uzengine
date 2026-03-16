@@ -23,6 +23,7 @@
 #include "constant_buffers.h"
 #include "render_graph_types.h"
 #include "engine/rhi/rhi_types.h"
+#include "mesh/gpu_mesh.h"
 
 #include <cstdint>
 
@@ -59,11 +60,18 @@ struct PBRPassDesc {
     CBRingAllocator*  cbAllocator;     ///< Per-object CB ring allocator. Must not be null.
     CBAllocation      perFrameAlloc;   ///< Pre-allocated per-frame CB (already filled by caller).
     RHIPipelineHandle pipeline;        ///< PSO handle for the PBR shader.
-    uint32_t          vertexBufferSrvIndex; ///< SRV index for bindless vertex fetch (SM6.6).
-    RHIBufferHandle   vertexBuffer;    ///< Vertex buffer handle (SM5 fallback path).
-    RHIBufferHandle   indexBuffer;     ///< Index buffer handle.
-    RHIIndexFormat    indexFormat;     ///< Index element format (Uint16 or Uint32).
-    uint32_t          indexCount;      ///< Total indices per mesh (single-mesh path).
+
+    /// Array of loaded GPU meshes, indexed by `DrawCommand::meshId`.
+    ///
+    /// Each draw command selects its mesh by `DrawCommand::meshId`. Commands
+    /// whose `meshId >= meshCount` or whose mesh `!IsValid()` are skipped.
+    /// Must not be null when `meshCount > 0`. The caller retains ownership;
+    /// the array must remain valid until `RgBuilder::Execute()` completes.
+    const GPUMesh*    meshes = nullptr;
+
+    /// Number of meshes in the `meshes` array.
+    uint32_t          meshCount = 0;
+
     bool              bindless;        ///< True if SM6.6 bindless path is active.
     float             viewportWidth;   ///< Viewport width in pixels.
     float             viewportHeight;  ///< Viewport height in pixels.
@@ -104,11 +112,8 @@ struct PBRPassDesc {
 /// desc.cbAllocator          = &perObjectAllocator;
 /// desc.perFrameAlloc        = perFrameCBAlloc;
 /// desc.pipeline             = pbrPSO;
-/// desc.vertexBufferSrvIndex = 100;
-/// desc.vertexBuffer         = vertexBufHandle;
-/// desc.indexBuffer          = indexBufHandle;
-/// desc.indexFormat          = RHIIndexFormat::Uint32;
-/// desc.indexCount           = meshIndexCount;
+/// desc.meshes               = loadedMeshes.data();
+/// desc.meshCount            = static_cast<uint32_t>(loadedMeshes.size());
 /// desc.bindless             = true;
 /// desc.viewportWidth        = 1920.0f;
 /// desc.viewportHeight       = 1080.0f;

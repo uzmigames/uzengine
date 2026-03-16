@@ -77,8 +77,26 @@ DX12Device::~DX12Device() {
         m_rootSignature = nullptr;
     }
 
-    // Release D3D12MA allocator before device
+    // Report any live allocations before releasing the allocator
     if (m_allocator) {
+        D3D12MA::TotalStatistics stats{};
+        m_allocator->CalculateStatistics(&stats);
+        const auto& total = stats.Total.Stats;
+        if (total.AllocationCount > 0) {
+            UZ_LOG(RHI, Warning,
+                   "D3D12MA: {} live allocations ({} bytes) at shutdown — LEAK!",
+                   total.AllocationCount, total.AllocationBytes);
+
+            // Log per-pool live objects to identify the leak
+            for (uint32_t heapType = 0; heapType < 3; ++heapType) {
+                const auto& heap = stats.HeapType[heapType].Stats;
+                if (heap.AllocationCount > 0) {
+                    static const char* kHeapNames[] = {"DEFAULT", "UPLOAD", "READBACK"};
+                    UZ_LOG(RHI, Warning, "  Heap {}: {} allocs, {} bytes",
+                           kHeapNames[heapType], heap.AllocationCount, heap.AllocationBytes);
+                }
+            }
+        }
         m_allocator->Release();
         m_allocator = nullptr;
     }

@@ -263,7 +263,7 @@ float SampleShadowMap(float3 positionWS, float3 normalWS, float viewDepth, float
     // Select cascade — search through all cascades (main + far, up to 8)
     uint cascadeIdx = cascadeCount - 1;
     for (uint i = 0; i < cascadeCount; i++) {
-        if (viewDepth <= cascadeSplits[i]) {
+        if (viewDepth <= cascadeSplits(i)) {
             cascadeIdx = i;
             break;
         }
@@ -272,7 +272,7 @@ float SampleShadowMap(float3 positionWS, float3 normalWS, float viewDepth, float
     float2 cascOff = GetCascadeOffset(cascadeIdx, cols, cascadeCount);
 
     // Normal bias offset
-    float3 biasedPos = positionWS + normalWS * cascadeNormalBias[cascadeIdx];
+    float3 biasedPos = positionWS + normalWS * cascadeNormalBias(cascadeIdx);
 
     // Project into light clip space (standard-Z ortho)
     float4 shadowClip = mul(float4(biasedPos, 1.0f), cascadeViewProj[cascadeIdx]);
@@ -287,7 +287,7 @@ float SampleShadowMap(float3 positionWS, float3 normalWS, float viewDepth, float
     // Clamp to 0.99999 to avoid false-positive shadow from comparing against the
     // cleared depth value (kShadowDepthClear=1.0). Without this clamp, pixels at
     // the exact far plane would compare equal to cleared texels and appear shadowed.
-    float sceneDepth = min(shadowNDC.z - cascadeDepthBias[cascadeIdx], 0.99999f);
+    float sceneDepth = min(shadowNDC.z - cascadeDepthBias(cascadeIdx), 0.99999f);
 
     // Sample with selected filter method (dynamic atlas)
     float shadow = SampleShadowFiltered(atlasUV, sceneDepth, texelSize,
@@ -300,19 +300,19 @@ float SampleShadowMap(float3 positionWS, float3 normalWS, float viewDepth, float
 
     // ── Cascade blending ──
     if (cascadeIdx < cascadeCount - 1) {
-        float blendStart = cascadeFadeStarts[cascadeIdx];
+        float blendStart = cascadeFadeStarts(cascadeIdx);
         if (viewDepth > blendStart) {
             uint nextIdx = cascadeIdx + 1;
             float2 nextOff = GetCascadeOffset(nextIdx, cols, cascadeCount);
 
-            float3 biasedPosNext = positionWS + normalWS * cascadeNormalBias[nextIdx];
+            float3 biasedPosNext = positionWS + normalWS * cascadeNormalBias(nextIdx);
             float4 nextClip = mul(float4(biasedPosNext, 1.0f), cascadeViewProj[nextIdx]);
             float3 nextNDC  = nextClip.xyz / nextClip.w;
 
             float2 nextUV = float2(nextNDC.x * 0.5f + 0.5f,
                                    -nextNDC.y * 0.5f + 0.5f);
             float2 nextAtlasUV = nextUV * tileSize + nextOff;
-            float nextSceneDepth = min(nextNDC.z - cascadeDepthBias[nextIdx], 0.99999f);
+            float nextSceneDepth = min(nextNDC.z - cascadeDepthBias(nextIdx), 0.99999f);
 
             float nextShadow = SampleShadowFiltered(nextAtlasUV, nextSceneDepth, texelSize,
                                                      nextOff, screenPos, tileSize);
@@ -322,7 +322,7 @@ float SampleShadowMap(float3 positionWS, float3 normalWS, float viewDepth, float
                                                  texelSize, nextOff, screenPos, tileSize);
 
             float blendFactor = saturate((viewDepth - blendStart) /
-                                         (cascadeSplits[cascadeIdx] - blendStart));
+                                         (cascadeSplits(cascadeIdx) - blendStart));
             shadow = lerp(shadow, nextShadow, blendFactor);
         }
     }

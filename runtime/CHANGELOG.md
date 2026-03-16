@@ -2,6 +2,42 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
+## [0.2.28] — 2026-03-16
+
+### Critical Bug Fix: Shadows Restored
+- **Reversed-Z frustum corners**: Fixed `ComputeFrustumCorners()` in `shadow_cascade.cpp` — NDC Z values were using standard-Z convention (near=0, far=1) instead of reversed-Z (near=1, far=0). This caused the cascade bounding sphere to be ~90x too large (114,000cm vs 1,274cm), making shadows invisible since geometry occupied <0.01% of the shadow atlas. **One-line fix** that restores all shadow projection.
+
+### Memory Leak Fix
+- **TransmittanceLUT leak**: Fixed 128KB D3D12MA leak at shutdown — `m_transmittanceLut` (256×64 RGBA16F) was never destroyed in `SceneRenderer::Shutdown()`. Added `DestroyTexture` call. Also added live allocation stats logging to `DX12Device::~DX12Device()` for future leak detection.
+
+### Shadow System Improvements
+- **ShadowDataCB HLSL packing fix**: Changed `float cascadeSplits[8]` to `float4 cascadeSplitsPacked[2]` in HLSL cbuffers — HLSL pads `float[8]` to 128 bytes (16B/element) while C++ packs to 32 bytes. Added accessor macros `cascadeSplits(i)` for transparent indexing.
+- **Shadow PSO depth func**: Changed from `Less` to `LessEqual` (UE5 parity, `ShadowDepthRendering.cpp:760`) — eliminates self-shadow acne on coplanar surfaces.
+- **Shadow depth constants**: Added `kShadowDepthClear`, `kShadowDepthNear`, `kShadowDepthFar` to `rhi_types.h`. Replaced magic `1.0f` in shadow_pass.cpp with named constants.
+- **Default clearDepth**: Changed `RHIRenderPassDepthAttachment::clearDepth` default from `1.0f` to `kDepthFar` (0.0) — new passes default to reversed-Z; shadow passes explicitly override.
+
+### Multi-Mesh Rendering Fix
+- **Per-draw mesh binding**: Shadow pass and GBuffer pass now bind vertex/index buffers per draw command using `DrawCommand::meshId`, instead of using a single mesh for all draws. Fixes rendering when scene contains multiple mesh types (e.g., sphere + cube ground).
+- **Instancing guard**: GPU instancing automatically disabled when multiple mesh types are loaded (`m_meshes.size() > 1`) — instanced path only supports homogeneous batches.
+
+### New Debug Infrastructure
+- **Buffer Visualization Grid** (`--shadow-debug 1`): 3x3 on-screen grid showing Albedo, Normal, Raw Atlas, Shadow, LIT, Depth, Cascade, AO, Roughness simultaneously. Permanent debug tool in `shadow_debug.hlsli`.
+- **RenderDoc integration** (`renderdoc_capture.h/cpp`): In-application API via `renderdoc_app.h`. F12 triggers capture, `--renderdoc-capture <N>` auto-captures frame N. DLL loaded only when injected by RenderDoc GUI or `renderdoccmd`.
+- **Sphere mesh generator**: `GenerateSphereMesh()` and `GeneratePlaneMesh()` in `mesh.h/cpp` — UV sphere (Songho pattern, Z-up) and tiled ground plane.
+
+### New Engine Features
+- **Far shadow cascades**: `ShadowConfig::farShadowCascadeCount/farShadowDistance` — extends shadow coverage from 400m to 3km with additional cascade tiers. Dynamic NxM atlas grid (2x2→4x2). Default disabled (zero cost).
+- **Static shadow cache**: `ShadowCacheManager` with per-cascade invalidation, VRAM budget tracking (150MB default), and compositing shader for static+dynamic shadow atlases. Infrastructure only — two-pass rendering deferred.
+- **Distance field shadow types**: `DistanceFieldShadowConfig`, `SdfBrick`, `MeshSdfAsset`, `SdfAtlasManager` — foundation types and atlas manager for future DFS cone tracing.
+- **OrthographicReversedZ()**: New `Mat4::OrthographicReversedZ()` for main-view orthographic projection (UE5 `FReversedZOrthoMatrix` parity).
+
+### Documentation
+- **PCSS soft shadows doc**: `docs/engine/12-rendering/28-pcss-soft-shadows.md` — 3-stage algorithm, parameters, performance analysis.
+- **Reversed-Z convention table**: Added to `docs/architecture/coding-standards.md` — main view vs shadow maps depth constants.
+- **UE5 reversed-Z shadow analysis**: `docs/analysis/rendering/ue5-reversed-z-shadow-maps.md` with adaptation status table.
+- **GPU debugging rules**: Updated `.claude/rules/gpu-debugging.md` with Buffer Viz Grid, RenderDoc CLI, and headless Python analysis patterns.
+- **RenderDoc thirdparty**: Added to `runtime/thirdparty/README.md` with integration documentation.
+
 ## [0.2.27] — 2026-03-16
 
 ### Shadow Cascade Fixes

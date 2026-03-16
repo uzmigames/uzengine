@@ -74,16 +74,18 @@ void ComputeFrustumCorners(
 
     const Mat4 invViewProj = (cameraView * cameraProj).Inverse();
 
-    // NDC corners of the full clip volume (DX: x,y in [-1,1], z in [0,1]).
+    // NDC corners of the full clip volume.
+    // Reversed-Z (UE5 parity): near plane = z=1.0, far plane = z=0.0.
+    // Standard DX would be near=0, far=1 — but Mat4::Perspective() outputs reversed-Z.
     static constexpr float kNdcCorners[kFrustumCornerCount][3] = {
-        {-1.0f, -1.0f, 0.0f}, // near bottom-left
-        { 1.0f, -1.0f, 0.0f}, // near bottom-right
-        { 1.0f,  1.0f, 0.0f}, // near top-right
-        {-1.0f,  1.0f, 0.0f}, // near top-left
-        {-1.0f, -1.0f, 1.0f}, // far bottom-left
-        { 1.0f, -1.0f, 1.0f}, // far bottom-right
-        { 1.0f,  1.0f, 1.0f}, // far top-right
-        {-1.0f,  1.0f, 1.0f}, // far top-left
+        {-1.0f, -1.0f, 1.0f}, // near bottom-left  (z=1 = near in reversed-Z)
+        { 1.0f, -1.0f, 1.0f}, // near bottom-right
+        { 1.0f,  1.0f, 1.0f}, // near top-right
+        {-1.0f,  1.0f, 1.0f}, // near top-left
+        {-1.0f, -1.0f, 0.0f}, // far bottom-left   (z=0 = far in reversed-Z)
+        { 1.0f, -1.0f, 0.0f}, // far bottom-right
+        { 1.0f,  1.0f, 0.0f}, // far top-right
+        {-1.0f,  1.0f, 0.0f}, // far top-left
     };
 
     Vec3 worldCorners[kFrustumCornerCount];

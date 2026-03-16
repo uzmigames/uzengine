@@ -14,6 +14,7 @@
 #include "compare_grid.h"
 #include "scene_loader.h"
 #include "world.h"
+#include "renderdoc_capture.h"
 
 
 #include <algorithm>
@@ -52,6 +53,15 @@ int Application::Run(int argc, char** argv) {
     m_config = Configure();
     ParseArgs(argc, argv);
 
+    // ── 2a. RenderDoc — must be initialised BEFORE device creation so that
+    //        its API hooks are in place when D3D12/Vulkan is initialised.
+    if (RenderDocInit()) {
+        RenderDocSetCaptureOptions();
+        UZ_LOG(App, Info, "RenderDoc: connected={}", RenderDocIsConnected());
+    } else {
+        UZ_LOG(App, Info, "RenderDoc: not available (launch from RenderDoc GUI to enable)");
+    }
+
     // ── 2. Platform (window, device, swapchain, fences, cmdlist) ─────────
     if (!InitPlatform()) {
         UZ_LOG(App, Error, "Application: platform initialization failed");
@@ -79,6 +89,10 @@ int Application::Run(int argc, char** argv) {
 
     m_renderer->SetRenderPath(m_config.renderPath);
     m_renderer->SetDebugViewMode(m_config.debugViewMode);
+    if (m_shadowDebugMode > 0) {
+        m_renderer->SetShadowDebugMode(m_shadowDebugMode);
+        UZ_LOG(App, Info, "Shadow debug mode set to {}", m_shadowDebugMode);
+    }
 
     // Apply camera defaults from config
     {
@@ -200,6 +214,36 @@ int Application::Run(int argc, char** argv) {
         // ── Game update ───────────────────────────────────────────────────
         OnUpdate(dt);
 
+        // ── RenderDoc: F12 single-frame capture ───────────────────────────
+        // Checked via raw Win32 GetAsyncKeyState so we have no dependency on
+        // the higher-level InputSystem (which may not be initialised yet in
+        // some code paths, and F12 is a debug-only binding).
+#ifdef _WIN32
+        if (RenderDocIsLoaded()) {
+            // VK_F12 = 0x7B. GetAsyncKeyState returns negative when pressed.
+            static bool s_f12WasDown = false;
+            const bool  f12Down      = (GetAsyncKeyState(0x7B) & 0x8000) != 0;
+            // Edge-detect: only trigger on the press edge, not while held.
+            if (f12Down && !s_f12WasDown) {
+                UZ_LOG(App, Info,
+                       "F12 pressed — triggering RenderDoc capture on frame {}",
+                       m_frameIndex);
+                RenderDocTriggerCapture();
+            }
+            s_f12WasDown = f12Down;
+        }
+#endif
+
+        // ── RenderDoc: auto-capture on the requested frame ────────────────
+        if (m_renderdocCaptureFrame != UINT32_MAX
+            && m_frameIndex == m_renderdocCaptureFrame
+            && RenderDocIsLoaded()) {
+            UZ_LOG(App, Info,
+                   "Auto-triggering RenderDoc capture on frame {} (--renderdoc-capture)",
+                   m_frameIndex);
+            RenderDocTriggerCapture();
+        }
+
         // ── Request screenshot BEFORE RenderFrame so it captures THIS frame ──
         if (m_screenshotPending && m_frameIndex >= m_config.screenshotFrame) {
             m_renderer->RequestScreenshot(m_config.screenshotPath);
@@ -255,6 +299,8 @@ int Application::Run(int argc, char** argv) {
     m_world.reset();
     m_vfs.reset();
     ShutdownPlatform();
+
+    RenderDocShutdown();
     return 0;
 }
 
@@ -351,6 +397,20 @@ void Application::ParseArgs(int argc, char* argv[]) {
             m_config.debugViewMode = DebugViewModeFromString(argv[++i]);
         } else if (std::strcmp(argv[i], "--all-modes") == 0 && i + 1 < argc) {
             m_config.allModesOutputPath = argv[++i];
+        } else if (std::strcmp(argv[i], "--shadow-debug") == 0 && i + 1 < argc) {
+            m_shadowDebugMode = static_cast<uint32_t>(std::atoi(argv[++i]));
+        } else if (std::strcmp(argv[i], "--renderdoc-capture") == 0 && i + 1 < argc) {
+            // --renderdoc-capture <frame_number>
+            // Automatically triggers a RenderDoc capture on the specified frame.
+            // Useful for headless CI pipelines or reproducible captures.
+            const int frameNum = std::atoi(argv[++i]);
+            if (frameNum >= 0) {
+                m_renderdocCaptureFrame = static_cast<uint32_t>(frameNum);
+            } else {
+                UZ_LOG(App, Warning,
+                       "--renderdoc-capture requires a non-negative frame number, got '{}'",
+                       argv[i]);
+            }
         }
     }
 

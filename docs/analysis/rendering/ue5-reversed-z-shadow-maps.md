@@ -645,5 +645,6 @@ All values, formulas, and semantics have been verified against actual UE5 5.6 so
 | Main-view ortho reversed-Z | FReversedZOrthoMatrix | ✅ `Mat4::OrthographicReversedZ()` in mat4.cpp | fix-reversed-z-shadow-consistency |
 | Depth constants separation | Implicit | ✅ `kShadowDepthClear/Near/Far` vs `kDepthFar/Near` | fix-reversed-z-shadow-consistency |
 | Default clearDepth | N/A | ✅ Defaults to `kDepthFar` (0.0) for reversed-Z safety | fix-reversed-z-shadow-consistency |
+| Frustum corner NDC Z | z=1 near, z=0 far (reversed-Z) | ✅ Fixed in shadow_cascade.cpp:78-87. Was using standard-Z which inflated cascade bounds 90x, making shadows invisible. One-line fix: swapped z=0↔z=1 in 8 NDC corner definitions. | fix-shadow-cascade-frustum-corners |
 | CSM vertex shader depth output | 1 - z*InvMaxSubjectDepth + bias | ❌ Not yet (uses standard ortho Z directly) | Planned |
 | Manual PCF (CalculateOcclusion) | saturate((shadow-scene)*scale+1) | ❌ Uses hardware SampleCmp instead | Planned |

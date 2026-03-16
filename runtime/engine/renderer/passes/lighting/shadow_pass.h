@@ -35,6 +35,7 @@
 #include "shadow_cache.h"
 #include "instance_batcher.h"
 #include "rhi_types.h"
+#include "mesh/gpu_mesh.h"
 
 #include <cstdint>
 
@@ -81,20 +82,16 @@ struct ShadowPassDesc {
     /// Pipeline state object for the depth-only shadow shader.
     RHIPipelineHandle  pipeline;
 
-    /// SRV index for bindless vertex fetch (SM6.6 path).
-    uint32_t           vertexBufferSrvIndex;
+    /// Array of loaded GPU meshes, indexed by `DrawCommand::meshId`.
+    ///
+    /// Each draw command selects its mesh by `DrawCommand::meshId`. Commands
+    /// whose `meshId >= meshCount` or whose mesh `!IsValid()` are skipped.
+    /// Must not be null when `meshCount > 0`. The caller retains ownership;
+    /// the array must remain valid until `RgBuilder::Execute()` completes.
+    const GPUMesh*     meshes = nullptr;
 
-    /// Vertex buffer handle (SM5 fallback path).
-    RHIBufferHandle    vertexBuffer;
-
-    /// Index buffer handle.
-    RHIBufferHandle    indexBuffer;
-
-    /// Index element format (Uint16 or Uint32).
-    RHIIndexFormat     indexFormat;
-
-    /// Total indices per mesh (single-mesh path).
-    uint32_t           indexCount;
+    /// Number of meshes in the `meshes` array.
+    uint32_t           meshCount = 0;
 
     /// True if SM6.6 bindless path is active.
     bool               bindless;
@@ -205,11 +202,8 @@ struct ShadowPassDesc {
 /// desc.drawList              = &sceneDrawList;
 /// desc.cbAllocator           = &perObjectAllocator;
 /// desc.pipeline              = shadowPSO;
-/// desc.vertexBufferSrvIndex  = 100;
-/// desc.vertexBuffer          = vertexBufHandle;
-/// desc.indexBuffer           = indexBufHandle;
-/// desc.indexFormat           = RHIIndexFormat::Uint32;
-/// desc.indexCount            = meshIndexCount;
+/// desc.meshes                = loadedMeshes.data();
+/// desc.meshCount             = static_cast<uint32_t>(loadedMeshes.size());
 /// desc.bindless              = true;
 /// for (uint32_t i = 0; i < cascadeCount; ++i) {
 ///     desc.cascades[i] = computedCascades[i];  // From ComputeCascades()

@@ -570,6 +570,13 @@ foreach ($lib in $ImageLibs) {
 }
 if (-not $allOk) { Write-Warning "Some image libraries are incomplete. Check above." }
 
+# ─── RenderDoc API ─────────────────────────────────────────────────────────
+# Single-header API for in-application frame capture integration.
+# Source: https://github.com/baldurk/renderdoc
+Download-Header -Name "renderdoc" `
+    -Url "https://raw.githubusercontent.com/baldurk/renderdoc/v1.35/renderdoc/api/app/renderdoc_app.h" `
+    -FileName "renderdoc_app.h"
+
 # ─── Summary ───────────────────────────────────────────────────────────────
 
 Write-Host ""

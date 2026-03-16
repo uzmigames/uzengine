@@ -115,26 +115,29 @@ void AddShadowPass(rg::RgBuilder& builder, const ShadowPassDesc& desc)
                 passDesc.depthAttachment.clear      = false; // Already cleared above
                 cmd->BeginRenderPass(passDesc);
 
-                // ── Bind pipeline and vertex/index state ──────────────────
-                const bool useInstanced = desc.instanced && desc.bindless && desc.batchData != nullptr && desc.batchCount > 0;
+                // ── Bind pipeline ─────────────────────────────────────────
+                // For the instanced path, use mesh[0] as the shared geometry
+                // (instanced batches are always homogeneous in mesh — future work
+                // will store per-batch meshId and bind accordingly).
+                const bool useInstanced = desc.instanced && desc.bindless
+                                          && desc.batchData != nullptr
+                                          && desc.batchCount > 0
+                                          && desc.meshCount > 0
+                                          && desc.meshes[0].IsValid();
 
                 if (useInstanced) {
+                    const GPUMesh& mesh0 = desc.meshes[0];
                     cmd->SetPipeline(desc.instancedPipeline);
                     const uint32_t rootConstants[2] = {
-                        desc.vertexBufferSrvIndex,
+                        mesh0.vbSrvIndex,
                         desc.instanceBufferSrvIndex
                     };
                     cmd->SetRootConstants(kSlotRootConstants, rootConstants, 2);
+                    cmd->SetIndexBuffer(mesh0.indexBuffer, mesh0.indexFormat, 0);
                 } else {
                     cmd->SetPipeline(desc.pipeline);
-                    if (desc.bindless) {
-                        cmd->SetDescriptorIndex(kSlotRootConstants, desc.vertexBufferSrvIndex);
-                    } else {
-                        cmd->SetVertexBuffer(0, desc.vertexBuffer, 0);
-                    }
+                    // Per-draw buffer binding handled inside the draw loop below.
                 }
-
-                cmd->SetIndexBuffer(desc.indexBuffer, desc.indexFormat, 0);
 
                 // ── Bind per-cascade shadow CB at slot 3 ──────────────────
                 ShadowCB shadowCb{};
@@ -153,7 +156,9 @@ void AddShadowPass(rg::RgBuilder& builder, const ShadowPassDesc& desc)
 
                 // ── Draw loop ─────────────────────────────────────────────
                 if (useInstanced) {
-                    // Instanced path — one draw per batch
+                    // Instanced path — one draw per batch, all using mesh[0].
+                    // DrawIndexed with batch.instanceCount and firstInstance offset.
+                    const GPUMesh& mesh0 = desc.meshes[0];
                     for (uint32_t bi = 0; bi < desc.batchCount; ++bi) {
                         const auto& batch = desc.batchData[bi];
                         // Shadow pass doesn't need material — just a dummy PerObjectCB
@@ -168,13 +173,35 @@ void AddShadowPass(rg::RgBuilder& builder, const ShadowPassDesc& desc)
                         std::memcpy(objAlloc.cpuPtr, &perObject, sizeof(PerObjectCB));
                         cmd->SetRootCBV(kSlotPerObject, objAlloc.bufferHandle, objAlloc.offsetBytes,
                                         objAlloc.cpuPtr, sizeof(PerObjectCB));
-                        cmd->DrawIndexed(desc.indexCount, batch.instanceCount,
+                        cmd->DrawIndexed(mesh0.indexCount, batch.instanceCount,
                                          0, 0, batch.firstInstance);
                         ++totalDrawCalls;
                     }
                 } else {
-                    // Non-instanced path — one draw per command
+                    // Non-instanced path — bind the correct mesh per draw command.
+                    // Each command carries a `meshId` that indexes into `desc.meshes`.
+                    // Commands referencing an out-of-range or invalid mesh are skipped.
+                    uint32_t lastBoundMeshId = UINT32_MAX; // Track to avoid redundant rebinds.
                     for (const auto& drawCmd : commands) {
+                        if (drawCmd.meshId >= desc.meshCount) {
+                            continue; // Guard: meshId out of range.
+                        }
+                        const GPUMesh& mesh = desc.meshes[drawCmd.meshId];
+                        if (!mesh.IsValid()) {
+                            continue; // Guard: mesh not yet uploaded.
+                        }
+
+                        // Rebind vertex/index buffers only when the mesh changes.
+                        if (drawCmd.meshId != lastBoundMeshId) {
+                            if (desc.bindless) {
+                                cmd->SetDescriptorIndex(kSlotRootConstants, mesh.vbSrvIndex);
+                            } else {
+                                cmd->SetVertexBuffer(0, mesh.vertexBuffer, 0);
+                            }
+                            cmd->SetIndexBuffer(mesh.indexBuffer, mesh.indexFormat, 0);
+                            lastBoundMeshId = drawCmd.meshId;
+                        }
+
                         PerObjectCB perObject{};
                         perObject.model = drawCmd.worldMatrix;
 
@@ -189,7 +216,7 @@ void AddShadowPass(rg::RgBuilder& builder, const ShadowPassDesc& desc)
 
                         cmd->SetRootCBV(kSlotPerObject, objAlloc.bufferHandle, objAlloc.offsetBytes,
                                         objAlloc.cpuPtr, sizeof(PerObjectCB));
-                        cmd->DrawIndexed(desc.indexCount);
+                        cmd->DrawIndexed(mesh.indexCount);
                         ++totalDrawCalls;
                     }
                 }

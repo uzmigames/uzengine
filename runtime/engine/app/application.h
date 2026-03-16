@@ -206,6 +206,7 @@ private:
 
     // ── Configuration ────────────────────────────────────────────────────
     ApplicationConfig m_config;
+    uint32_t m_shadowDebugMode = 0;  ///< Shadow/buffer debug mode from --shadow-debug CLI.
 
     // ── Platform objects (raw — matched lifetime to Run() scope) ─────────
     PlatformWindow*  m_window    = nullptr;
@@ -230,6 +231,11 @@ private:
 
     // ── Deferred scene load ───────────────────────────────────────────────
     std::string m_pendingScenePath;
+
+    // ── RenderDoc integration ─────────────────────────────────────────────
+    /// Frame on which to auto-trigger a RenderDoc capture (UINT32_MAX = disabled).
+    /// Set by the `--renderdoc-capture <N>` CLI flag.
+    uint32_t m_renderdocCaptureFrame = UINT32_MAX;
 
     // ── All-modes capture state ───────────────────────────────────────────
     bool     m_allModesActive    = false;

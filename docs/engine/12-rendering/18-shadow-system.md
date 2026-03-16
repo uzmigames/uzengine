@@ -97,6 +97,9 @@ All default values match UE5 5.6 DirectionalLightComponent.
 For each cascade, an optimal bounding sphere is computed around the sub-frustum:
 
 1. **Extract frustum corners**: Un-project 8 NDC corners to world space for the sub-frustum `[splitNear, splitFar]`.
+
+   **CRITICAL**: NDC corners must use **reversed-Z convention** (z=1 at near, z=0 at far). Using standard-Z (z=0 near, z=1 far) produces an inverted frustum that is ~90x too large and makes shadows invisible. See [Coding Standards: Critical NDC Z Values](../../architecture/coding-standards.md#critical-ndc-z-values-must-match-depth-convention) for details.
+
 2. **Compute near and far plane diagonals**:
    - `nearDiag = corners[2] - corners[0]` (top-right - bottom-left)
    - `farDiag  = corners[6] - corners[4]`
@@ -654,6 +657,7 @@ runtime/tests/engine/renderer/
 
 | Date | Change |
 |------|--------|
+| 2026-03-16 | **CRITICAL BUG FIX**: ComputeFrustumCorners() was using standard-Z NDC corners (z=0 near, z=1 far) instead of reversed-Z (z=1 near, z=0 far). This inflated cascade bounds 90x, making shadows invisible. Fixed by swapping z=0↔z=1 in lines 78-87 of shadow_cascade.cpp. Added critical NDC Z warning to Bounding Sphere section and Coding Standards. |
 | 2026-03-16 | Updated for UE5 exact parity: exponential accumulation splits, Z-up fix, per-cascade bias, cascade extension for blending |
 | 2026-03-08 | Z-up light up-vector fix (was Y-up, causing shadow flickering on camera rotation) |
 | 2026-03-04 | Shadow system documented with GPU Gems practical split scheme |

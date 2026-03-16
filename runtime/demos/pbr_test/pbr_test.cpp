@@ -1,7 +1,9 @@
 /// PBR Test — Application-based demo implementation.
 ///
-/// Creates 5 PBR cubes with Stonebricks material, a ground plane,
+/// Creates 5 PBR spheres with Stonebricks material, a tiled ground plane,
 /// a directional sun light, and 4 colored point lights that orbit the scene.
+/// Procedural sphere and plane meshes are generated on first run and cached
+/// as .uzmesh files in the assets directory.
 ///
 /// All rendering infrastructure (GBuffer, shadow atlas, render graph, CB uploads,
 /// draw list construction) is handled by SceneRenderer. This file contains
@@ -20,8 +22,12 @@
 #include "sky_light_component.h"
 #include "height_fog_component.h"
 #include "render_path.h"
+#include "mesh.h"
+#include "paths.h"
+#include "file_system.h"
 
 #include <cmath>
+#include <filesystem>
 
 UZ_DECLARE_LOG_CATEGORY(Demo);
 UZ_DEFINE_LOG_CATEGORY(Demo, Info);
@@ -52,12 +58,13 @@ ApplicationConfig PBRTest::Configure() {
     cfg.title           = "UzEngine \xe2\x80\x94 PBR Test";
     cfg.width           = 1280;
     cfg.height          = 720;
-    // Camera looking down at 45° to see shadow on ground clearly
-    cfg.cameraPositionX = -400.f;
-    cfg.cameraPositionY = 600.f;
-    cfg.cameraPositionZ = 500.f;
-    cfg.cameraYawDeg    = -55.f;
-    cfg.cameraPitchDeg  = -35.f;
+    // Camera in front of sphere on X axis, looking back toward origin.
+    // Sphere at (0,0,100). Camera at (400,0,150) looking toward (-X) = yaw 180°.
+    cfg.cameraPositionX = 400.f;
+    cfg.cameraPositionY = 0.f;
+    cfg.cameraPositionZ = 150.f;
+    cfg.cameraYawDeg    = 180.f;   // look toward -X (back toward origin/sphere)
+    cfg.cameraPitchDeg  = -5.f;
     cfg.renderPath      = RenderPath::Deferred;
     return cfg;
 }
@@ -69,16 +76,44 @@ ApplicationConfig PBRTest::Configure() {
 void PBRTest::OnStart() {
     auto& world = GetWorld();
 
-    // ── 5 PBR cubes with Stonebricks material ─────────────────────────────
-    for (int i = 0; i < kCubeCount; ++i) {
-        cubes_[i] = world.CreateEntity();
+    // ── Generate procedural meshes into the assets directory ──────────────
+    // These are written once and cached on disk. The VFS root is <exe>/assets/,
+    // so we write directly there so the renderer can load them by short name.
+    {
+        const std::filesystem::path assetsDir = uz::GetExeDir() / "assets";
 
-        auto& scene = world.AddComponent<SceneComponent>(cubes_[i]);
-        scene.SetPosition({kCubePositionsX[i], 0.f, 200.f});  // cubes elevated 200cm above ground
-        scene.SetScale({kCubeScale, kCubeScale, kCubeScale * 2.f});  // taller cubes for clear shadow
+        // sphere.uzmesh — 32 slices × 16 stacks UV sphere, radius=1 (scaled by SceneComponent)
+        const std::filesystem::path spherePath = assetsDir / "sphere.uzmesh";
+        if (!uz::FileExists(spherePath.string().c_str())) {
+            const Mesh sphere = uz::GenerateSphereMesh(32, 16);
+            if (uz::SaveMesh(spherePath.string(), sphere)) {
+                UZ_LOG(Demo, Info,
+                       "Generated sphere.uzmesh: vertices={}, indices={}",
+                       sphere.GetVertexCount(), sphere.GetIndexCount());
+            }
+        }
 
-        auto& mesh = world.AddComponent<StaticMeshComponent>(cubes_[i]);
-        mesh.meshPath      = "cube.uzmesh";
+        // plane_tiled.uzmesh — flat quad with UV range [0, 8] for checker tiling
+        const std::filesystem::path planePath = assetsDir / "plane_tiled.uzmesh";
+        if (!uz::FileExists(planePath.string().c_str())) {
+            const Mesh plane = uz::GeneratePlaneMesh(8.0f);
+            if (uz::SaveMesh(planePath.string(), plane)) {
+                UZ_LOG(Demo, Info,
+                       "Generated plane_tiled.uzmesh: vertices={}, indices={}",
+                       plane.GetVertexCount(), plane.GetIndexCount());
+            }
+        }
+    }
+
+    // ── Single PBR sphere — for shadow debug ────────────────────────────
+    cubes_[0] = world.CreateEntity();
+    {
+        auto& scene = world.AddComponent<SceneComponent>(cubes_[0]);
+        scene.SetPosition({0.f, 0.f, 100.f});     // Center, 100cm above ground
+        scene.SetScale({100.f, 100.f, 100.f});     // Radius = 100cm (1m sphere)
+
+        auto& mesh = world.AddComponent<StaticMeshComponent>(cubes_[0]);
+        mesh.meshPath      = "sphere.uzmesh";
         mesh.albedoPath    = "Stonebricks_BaseColor.jpg";
         mesh.normalPath    = "Stonebricks_Normal.jpg";
         mesh.roughnessPath = "Stonebricks_Roughness.jpg";
@@ -86,11 +121,11 @@ void PBRTest::OnStart() {
         mesh.aoPath        = "Stonebricks_AO.jpg";
     }
 
-    // ── Ground plane ──────────────────────────────────────────────────────
+    // ── Ground plane (cube.uzmesh flattened) ────────────────────────────
     ground_ = world.CreateEntity();
     {
         auto& scene = world.AddComponent<SceneComponent>(ground_);
-        scene.SetPosition({0.f, 0.f, 0.f});      // Ground at Z=0 (same as UE5 fogBaseHeight)
+        scene.SetPosition({0.f, 0.f, 0.f});
         scene.SetScale({1500.f, 1500.f, 2.f});
 
         auto& mesh = world.AddComponent<StaticMeshComponent>(ground_);

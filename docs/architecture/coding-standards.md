@@ -114,7 +114,57 @@ float shadowFactor = shadowTexture.SampleCmp(
 );
 ```
 
-### Migration Checklist
+### Critical: NDC Z Values Must Match Depth Convention
+
+**DANGER**: Any code that constructs clip-space or NDC positions with hardcoded Z values (0.0 or 1.0) MUST use the correct convention. Using the wrong convention produces an inverted or inflated frustum that causes silent rendering failures.
+
+#### Correct NDC Z Mapping
+
+| Convention | Near Plane Z | Far Plane Z | Why |
+|-----------|-------------|------------|-----|
+| Standard-Z (shadows) | 0.0 | 1.0 | Typical D3D projection: smaller = closer |
+| **Reversed-Z (main view)** | **1.0** | **0.0** | UE5 parity: larger = closer, better far precision |
+
+#### Bug Pattern: Inverted Frustum
+
+Using z=0 for near and z=1 for far with a reversed-Z `invViewProj` produces an inverted frustum:
+- The un-projected "near" point lands at the far plane distance
+- The bounding sphere becomes ~90x larger than correct
+- Shadows disappear or become invisible
+
+Example of the bug (from `shadow_cascade.cpp` prior to fix):
+```cpp
+// ❌ WRONG — these are standard-Z NDC corners, not reversed-Z
+// When un-projected with reversed-Z invViewProj, produces inverted frustum
+float3 ndcCorners[8] = {
+    {-1, -1, 0}, {+1, -1, 0},  // near plane (WRONG: z=0)
+    {-1, +1, 0}, {+1, +1, 0},
+    {-1, -1, 1}, {+1, -1, 1},  // far plane
+    {-1, +1, 1}, {+1, +1, 1}
+};
+```
+
+#### Fix: Use Correct Reversed-Z NDC Z Values
+
+```cpp
+// ✅ CORRECT — reversed-Z NDC corners
+float3 ndcCorners[8] = {
+    {-1, -1, 1}, {+1, -1, 1},  // near plane (z=1 in reversed-Z)
+    {-1, +1, 1}, {+1, +1, 1},
+    {-1, -1, 0}, {+1, -1, 0},  // far plane (z=0 in reversed-Z)
+    {-1, +1, 0}, {+1, +1, 0}
+};
+```
+
+#### Known Affected Code Paths
+
+All of these have been verified or fixed:
+- **Frustum corner computation** (`ComputeFrustumCorners`) — **FIXED in shadow_cascade.cpp:78-87**
+- **Sky shader depth output** — verified correct
+- **Depth linearization helpers** — verified correct
+- **Hi-Z pyramid (future)** — must use min() not max() for farthest value
+
+#### Migration Checklist
 
 When porting or adapting rendering code from other engines:
 
@@ -123,6 +173,7 @@ When porting or adapting rendering code from other engines:
 ☐ Check depth clear values (main view vs shadow context)
 ☐ Verify depth comparison function (GreaterEqual vs LessEqual)
 ☐ Check comparison sampler function (Less for shadows)
+☐ **☐ Check any hardcoded NDC Z values (0.0 or 1.0) match convention**
 ☐ Update depth normalization formulas if present
 ☐ Test with a demo and verify visually (no black/white depth artifacts)
 ```

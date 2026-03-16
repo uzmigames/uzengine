@@ -97,12 +97,14 @@ cbuffer PerObjectCB : register(b2) {
 /// Cascaded shadow map parameters — must match C++ ShadowDataCB struct exactly.
 /// Supports up to 8 cascades (4 main + 4 far shadow cascades).
 /// UE5 parity: per-cascade bias, fade starts, receiver bias, distance fade.
+/// Shadow data CB — MUST match C++ ShadowDataCB layout exactly.
+/// HLSL cbuffer packing: float arrays use float4 pairs to match C++ tight packing.
 cbuffer ShadowDataCB : register(b4) {
-    row_major float4x4 cascadeViewProj[8];  // light-space view-projection per cascade
-    float    cascadeSplits[8];               // view-space extended far split per cascade
-    float    cascadeFadeStarts[8];           // view-space original (un-extended) far split per cascade
-    float    cascadeDepthBias[8];            // per-cascade computed depth bias
-    float    cascadeNormalBias[8];           // per-cascade computed normal bias
+    row_major float4x4 cascadeViewProj[8];  // light-space view-projection per cascade (512B)
+    float4   cascadeSplitsPacked[2];         // view-space extended far split [0-3], [4-7] (32B)
+    float4   cascadeFadeStartsPacked[2];     // view-space original far split [0-3], [4-7] (32B)
+    float4   cascadeDepthBiasPacked[2];      // per-cascade depth bias [0-3], [4-7] (32B)
+    float4   cascadeNormalBiasPacked[2];     // per-cascade normal bias [0-3], [4-7] (32B)
     uint     shadowAtlasIndex;               // SRV heap index for shadow depth atlas (dynamic)
     uint     cascadeCount;                   // number of active cascades (1-8, main + far)
     float    shadowMapSize;                  // per-cascade resolution in texels
@@ -118,6 +120,12 @@ cbuffer ShadowDataCB : register(b4) {
     uint     dfsEnabled;                     // 1 = Distance Field Shadows active, 0 = disabled.
     uint     dfsOutputSrvIndex;              // SRV index for DFS result texture. 0xFFFFFFFF = not bound.
 };
+
+// ── Accessor helpers for packed float4 cascade arrays ──
+#define cascadeSplits(i)     (cascadeSplitsPacked[(i)/4][(i)%4])
+#define cascadeFadeStarts(i) (cascadeFadeStartsPacked[(i)/4][(i)%4])
+#define cascadeDepthBias(i)  (cascadeDepthBiasPacked[(i)/4][(i)%4])
+#define cascadeNormalBias(i) (cascadeNormalBiasPacked[(i)/4][(i)%4])
 
 #ifndef UZ_BINDLESS
 Texture2D<float4> albedoTexture    : register(t0);

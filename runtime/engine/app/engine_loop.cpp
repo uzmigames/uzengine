@@ -33,6 +33,14 @@ EngineConfig ParseCommandLine(int argc, char* argv[]) {
             config.configPath = argv[++i];
         } else if (std::strcmp(argv[i], "--frames") == 0 && i + 1 < argc) {
             config.maxFrames = std::atoi(argv[++i]);
+        } else if (std::strcmp(argv[i], "--shadow-debug") == 0 && i + 1 < argc) {
+            config.shadowDebugMode = std::atoi(argv[++i]);
+        } else if (std::strcmp(argv[i], "--renderdoc-capture") == 0 && i + 1 < argc) {
+            // --renderdoc-capture <frame_number>
+            // When EngineLoop consumers render via a renderer integration, they
+            // can read this field and call RenderDocTriggerCapture() on the
+            // appropriate frame boundary.
+            config.renderdocCaptureFrame = std::atoi(argv[++i]);
         }
     }
 

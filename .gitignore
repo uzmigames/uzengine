@@ -82,3 +82,4 @@ poc-napi/node_modules/
 
 # Screenshots — debug/comparison captures (never commit)
 /.screenshots/
+/.captures/

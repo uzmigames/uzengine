@@ -129,6 +129,134 @@ bool SaveMesh(const std::string& path, const Mesh& mesh) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// GenerateSphereMesh
+// ─────────────────────────────────────────────────────────────────────────────
+
+Mesh GenerateSphereMesh(uint32_t sectorCount, uint32_t stackCount) {
+    UZ_PROFILE_FUNCTION();
+    // UV sphere generation — based on songho.ca/opengl/gl_sphere.html
+    // Adapted for UzEngine Z-up coordinate system.
+    //
+    // stackAngle goes from +PI/2 (north pole, Z=+1) to -PI/2 (south pole, Z=-1).
+    // sectorAngle goes from 0 to 2*PI around the equator in XY plane.
+    //
+    // Position (Z-up, radius=1):
+    //   xy = cos(stackAngle)        — distance from Z axis
+    //   x  = xy * cos(sectorAngle)
+    //   y  = xy * sin(sectorAngle)
+    //   z  = sin(stackAngle)        — height (Z-up)
+
+    constexpr float kPi  = 3.14159265358979323846f;
+    constexpr float k2Pi = 6.28318530717958647693f;
+
+    const float sectorStep = k2Pi / static_cast<float>(sectorCount);
+    const float stackStep  = kPi  / static_cast<float>(stackCount);
+
+    std::vector<Vertex> vertices;
+    vertices.reserve((stackCount + 1) * (sectorCount + 1));
+
+    for (uint32_t i = 0; i <= stackCount; ++i) {
+        const float stackAngle = kPi / 2.0f - static_cast<float>(i) * stackStep;  // PI/2 to -PI/2
+        const float xy = std::cos(stackAngle);   // cos(stackAngle) = distance from Z axis
+        const float z  = std::sin(stackAngle);   // sin(stackAngle) = Z height
+
+        for (uint32_t j = 0; j <= sectorCount; ++j) {
+            const float sectorAngle = static_cast<float>(j) * sectorStep;  // 0 to 2PI
+
+            const float x = xy * std::cos(sectorAngle);
+            const float y = xy * std::sin(sectorAngle);
+
+            // Normal = position (unit sphere)
+            const float nx = x;
+            const float ny = y;
+            const float nz = z;
+
+            // UV: u = sector / sectorCount, v = stack / stackCount
+            const float u = static_cast<float>(j) / static_cast<float>(sectorCount);
+            const float v = static_cast<float>(i) / static_cast<float>(stackCount);
+
+            // Tangent: dP/dSectorAngle = (-y, x, 0) normalized
+            const float tx = -std::sin(sectorAngle);
+            const float ty =  std::cos(sectorAngle);
+
+            Vertex vert{};
+            vert.position = {x, y, z};
+            vert.normal   = {nx, ny, nz};
+            vert.texcoord = {u, v};
+            vert.tangent  = {tx, ty, 0.0f, 1.0f};
+            vertices.push_back(vert);
+        }
+    }
+
+    // Index generation — songho.ca pattern with pole triangle skip.
+    // k1 = first vertex of current stack row, k2 = first vertex of next stack row.
+    // Top pole (i==0): only one triangle per sector (k1→k2→k1+1).
+    // Bottom pole (i==stackCount-1): only one triangle per sector (k1+1→k2→k2+1).
+    // Middle stacks: two triangles per sector (quad).
+    std::vector<uint32_t> indices;
+    indices.reserve(stackCount * sectorCount * 6);
+
+    for (uint32_t i = 0; i < stackCount; ++i) {
+        uint32_t k1 = i * (sectorCount + 1);
+        uint32_t k2 = k1 + sectorCount + 1;
+
+        for (uint32_t j = 0; j < sectorCount; ++j, ++k1, ++k2) {
+            // Skip degenerate triangles at poles.
+            // Songho reference (CCW/OpenGL): k1→k2→k1+1 and k1+1→k2→k2+1
+            // DX12 frontCounterClockwise=false → CW = front face → reverse winding
+            if (i != 0) {
+                indices.push_back(k1);
+                indices.push_back(k2);
+                indices.push_back(k1 + 1);
+            }
+            if (i != (stackCount - 1)) {
+                indices.push_back(k1 + 1);
+                indices.push_back(k2);
+                indices.push_back(k2 + 1);
+            }
+        }
+    }
+
+    return MeshBuilder::CreateFromVertices(vertices, indices);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GeneratePlaneMesh
+// ─────────────────────────────────────────────────────────────────────────────
+
+Mesh GeneratePlaneMesh(float uvScale) {
+    UZ_PROFILE_FUNCTION();
+    // Flat quad lying in the XY plane (Z=0), Z-up coordinate system.
+    //
+    // Vertices span [-1, 1] in X and Y. The normal points up (+Z = up).
+    // Tangent points along +X (forward). Binormal (derived from cross) = +Y.
+    //
+    // UV ranges from [0, uvScale] so that wrapping samplers tile the texture
+    // uvScale times across the quad without shader changes.
+    //
+    // Winding: CCW from above (matches frontCounterClockwise = true default).
+
+    const Vec3 normal  = {0.f, 0.f, 1.f};          // +Z up
+    const Vec4 tangent = {1.f, 0.f, 0.f, 1.f};     // +X forward, w=1
+
+    const std::vector<Vertex> vertices = {
+        // Bottom-left
+        {{-1.f, -1.f, 0.f}, normal, {0.f,       0.f      }, tangent},
+        // Bottom-right
+        {{ 1.f, -1.f, 0.f}, normal, {uvScale,   0.f      }, tangent},
+        // Top-right
+        {{ 1.f,  1.f, 0.f}, normal, {uvScale,   uvScale  }, tangent},
+        // Top-left
+        {{-1.f,  1.f, 0.f}, normal, {0.f,       uvScale  }, tangent},
+    };
+
+    // Two CCW triangles: 0-1-2 and 0-2-3
+    const std::vector<uint32_t> indices = {0, 1, 2, 0, 2, 3};
+
+    return MeshBuilder::CreateFromVertices(vertices, indices);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // MeshBuilder helpers
 // ─────────────────────────────────────────────────────────────────────────────
 

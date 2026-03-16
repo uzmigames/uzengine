@@ -77,6 +77,7 @@ pub fn build(b: *std.Build) void {
         "engine/scripting/api/renderer",
         "engine/event",
         "engine/property",
+        "engine/debug",
         "editor/grid",
         "editor/font",
         "editor/stats",
@@ -107,6 +108,7 @@ pub fn build(b: *std.Build) void {
         tp ++ "meshoptimizer/src",
         tp ++ "entt/single_include",
         tp ++ "luajit/src",
+        tp ++ "renderdoc",
     };
 
     const linux_engine_include_dirs = [_][]const u8{
@@ -206,6 +208,7 @@ pub fn build(b: *std.Build) void {
     addCppDir(runtime_mod, b, "engine/scripting/api/core", cpp_flags);
     addCppDir(runtime_mod, b, "engine/scripting/api/renderer", cpp_flags);
     addCppDir(runtime_mod, b, "engine/property", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/debug",    cpp_flags);
 
     // Thirdparty — SPIRV-Reflect (C source, not C++)
     runtime_mod.addCSourceFiles(.{

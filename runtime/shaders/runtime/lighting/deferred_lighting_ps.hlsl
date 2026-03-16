@@ -90,7 +90,8 @@ cbuffer PerFrameCB : register(b1) {
     // ── Sky Irradiance SH (L2, 7 float4 = 112 bytes) ──
     // Matches UE5 SkyIrradianceEnvironmentMap[0..6].
     float4   skyIrradianceSH[7]; ///< L2 SH coefficients for sky diffuse irradiance.
-    float    _framePad2[36];     ///< Padding to 512 bytes.
+    uint     shadowDebugMode;    ///< Shadow debug visualization (0=off, 1-8=debug view).
+    float    _framePad2[35];     ///< Padding to 512 bytes.
 };
 
 /// Single point light for the deferred lighting pass (48 bytes = three float4s).
@@ -206,6 +207,7 @@ float3 ReconstructWorldPosition(float2 uv, float depth) {
 }
 
 #include "../include/shadow_common.hlsli"
+#include "../include/shadow_debug.hlsli"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // IBL Helpers
@@ -242,6 +244,25 @@ float3 FresnelSchlickRoughness(float cosTheta, float3 F0, float roughness) {
 float4 main(FSInput input) : SV_Target {
 
     float2 uv = input.texcoord;
+
+    // ── Buffer Visualization Grid ──
+    // When active, remap UV per-tile so each tile shows the full scene in miniature.
+    uint gridTileIdx = 4; // center = LIT (default)
+    bool gridActive = (shadowDebugMode != 0);
+    bool gridIsLabel = false;
+    if (gridActive) {
+        // Border check
+        float3 border = GetBorderColor(uv);
+        if (border.x >= 0.0f) return float4(border, 1.0f);
+
+        float2 tileUV;
+        GetBufferGridTile(uv, tileUV, gridTileIdx, gridIsLabel);
+        if (gridIsLabel) {
+            return float4(GetTileLabelColor(gridTileIdx), 1.0f);
+        }
+        // Remap UV so the G-Buffer is sampled for the full scene within this tile
+        uv = tileUV;
+    }
 
     // ── Read G-Buffer (2-RT packed layout) ──
 #ifdef UZ_BINDLESS
@@ -295,8 +316,6 @@ float4 main(FSInput input) : SV_Target {
     if (cascadeCount > 0) {
         shadow = SampleShadowMap(worldPos, N, viewDepth, input.positionCS.xy);
     }
-
-    // (debug removed)
 
     // ── Directional light (shadowed) ──
     float3 L_dir = normalize(lightDir.xyz);
@@ -418,6 +437,31 @@ float4 main(FSInput input) : SV_Target {
 
         // Apply: surface fades toward sky color with distance
         color = color * transmittance + inscattering;
+    }
+
+    // ── Buffer Visualization Grid — tile dispatch ──
+    if (gridActive) {
+        float3 tileColor;
+        if (gridTileIdx == 2) {
+            // Tile 2: RAW SHADOW ATLAS — display atlas content directly.
+            // Maps the tile UV to atlas UV [0,1] to show the entire atlas as-is.
+            // This bypasses all projection math — just shows what's in the depth texture.
+            float2 atlasDirectUV = uv; // uv is already remapped to [0,1] per tile
+#ifdef UZ_BINDLESS
+            Texture2D<float> dbgAtl = ResourceDescriptorHeap[shadowAtlasIndex];
+            float rawD = dbgAtl.SampleLevel(linearSampler, atlasDirectUV, 0).r;
+#else
+            float rawD = 0.0f;
+#endif
+            // Amplify to see depth variation: cleared=1.0→white, geometry<1.0→darker
+            tileColor = float3(rawD, rawD, rawD);
+        } else {
+            tileColor = GetTileColor(
+                gridTileIdx, albedo, N, metallic, roughness, ao,
+                shadow, viewDepth, depth, color,
+                nearPlane, farPlane, cascadeCount);
+        }
+        return float4(tileColor, 1.0f);
     }
 
     // Output linear HDR — tonemap applied in separate fullscreen pass.

@@ -75,7 +75,7 @@ TEST(PerFrameCB, InvViewProjField_WriteAndReadBack) {
         dst[i] = static_cast<float>(i + 1);
     }
 
-    uint8_t blob[256];
+    uint8_t blob[512]; // PerFrameCB is 512 bytes (two D3D12 256-byte CB slots)
     std::memcpy(blob, &cb, sizeof(cb));
 
     PerFrameCB restored{};
@@ -95,7 +95,7 @@ TEST(PerFrameCB, LightingFields_WriteAndReadBack) {
     cb.lightColor  = {1.0f,  0.9f, 0.8f, 0.0f};
     cb.ambientColor = {0.1f, 0.1f, 0.15f, 0.0f};
 
-    uint8_t blob[256];
+    uint8_t blob[512]; // PerFrameCB is 512 bytes (two D3D12 256-byte CB slots)
     std::memcpy(blob, &cb, sizeof(cb));
 
     PerFrameCB r{};
@@ -279,20 +279,22 @@ TEST(GBufferPassDesc, DefaultConstruction_HandlesAreInvalid) {
     GBufferPassDesc desc{};
     EXPECT_FALSE(desc.depthTexture.IsValid());
     EXPECT_FALSE(desc.pipeline.IsValid());
-    EXPECT_FALSE(desc.vertexBuffer.IsValid());
-    EXPECT_FALSE(desc.indexBuffer.IsValid());
+    // vertexBuffer and indexBuffer were removed in the multi-mesh refactor.
+    // The pass now uses desc.meshes[drawCmd.meshId] per draw command.
 }
 
 TEST(GBufferPassDesc, DefaultConstruction_PointersAreNull) {
     GBufferPassDesc desc{};
     EXPECT_EQ(desc.drawList,    nullptr);
     EXPECT_EQ(desc.cbAllocator, nullptr);
+    // The mesh array pointer defaults to null (no meshes loaded yet).
+    EXPECT_EQ(desc.meshes,      nullptr);
 }
 
 TEST(GBufferPassDesc, DefaultConstruction_NumericFieldsAreZero) {
     GBufferPassDesc desc{};
-    EXPECT_EQ(desc.vertexBufferSrvIndex, 0u);
-    EXPECT_EQ(desc.indexCount,           0u);
+    // meshCount replaces the old single-mesh indexCount/vertexBufferSrvIndex fields.
+    EXPECT_EQ(desc.meshCount,            0u);
     EXPECT_FLOAT_EQ(desc.viewportWidth,  0.0f);
     EXPECT_FLOAT_EQ(desc.viewportHeight, 0.0f);
 }
@@ -313,12 +315,13 @@ TEST(GBufferPassDesc, AllFieldsAccessible_WriteAndRead) {
     // Physical handles
     desc.depthTexture = {4u, 1u};
     desc.pipeline     = {5u, 1u};
-    desc.vertexBuffer = {6u, 1u};
-    desc.indexBuffer  = {7u, 1u};
+
+    // Multi-mesh array fields — the pass binds per drawCmd.meshId
+    GPUMesh fakeMeshes[2]{};
+    desc.meshes     = fakeMeshes;
+    desc.meshCount  = 2u;
 
     // Numeric params
-    desc.vertexBufferSrvIndex = 10u;
-    desc.indexCount           = 36u;
     desc.viewportWidth        = 1920.0f;
     desc.viewportHeight       = 1080.0f;
     desc.bindless             = true;
@@ -328,10 +331,8 @@ TEST(GBufferPassDesc, AllFieldsAccessible_WriteAndRead) {
     EXPECT_EQ(desc.depthBuffer.index,      3u);
     EXPECT_EQ(desc.depthTexture.index,     4u);
     EXPECT_EQ(desc.pipeline.index,         5u);
-    EXPECT_EQ(desc.vertexBuffer.index,     6u);
-    EXPECT_EQ(desc.indexBuffer.index,      7u);
-    EXPECT_EQ(desc.vertexBufferSrvIndex,  10u);
-    EXPECT_EQ(desc.indexCount,            36u);
+    EXPECT_EQ(desc.meshes,                 fakeMeshes);
+    EXPECT_EQ(desc.meshCount,              2u);
     EXPECT_FLOAT_EQ(desc.viewportWidth,  1920.0f);
     EXPECT_FLOAT_EQ(desc.viewportHeight, 1080.0f);
     EXPECT_TRUE(desc.bindless);
