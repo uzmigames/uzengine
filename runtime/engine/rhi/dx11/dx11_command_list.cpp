@@ -71,6 +71,7 @@ void DX11CommandList::Begin() {
     UZ_PROFILE_FUNCTION();
     // Store pointer to the device's immediate context — commands execute as recorded
     m_ctx = m_device->GetImmediateContext();
+    m_computePipelineBound = false;
 
     // Bind default samplers matching DX12 static samplers s0 (linear wrap) and s1 (shadow comparison)
     ID3D11SamplerState* defaultSamplers[2] = {
@@ -106,6 +107,26 @@ void DX11CommandList::SetPipeline(RHIPipelineHandle pipeline) {
         UZ_LOG(RHI, Warning, "SetPipeline — pipeline not found in pool");
         return;
     }
+
+    if (dx11Pipeline->isCompute) {
+        // Compute pipeline — bind only the compute shader.
+        // Unbind graphics shaders to avoid driver confusion.
+        m_computePipelineBound = true;
+
+        if (dx11Pipeline->computeShader.IsValid()) {
+            auto* cs = m_device->GetShaderPool().Get(
+                dx11Pipeline->computeShader.index, dx11Pipeline->computeShader.generation);
+            if (cs && cs->cs) {
+                m_ctx->CSSetShader(cs->cs, nullptr, 0);
+            } else {
+                UZ_LOG(RHI, Error, "SetPipeline — compute shader object not found in pool");
+            }
+        }
+        return;
+    }
+
+    // Graphics pipeline — bind all graphics state.
+    m_computePipelineBound = false;
 
     // Bind input layout
     m_ctx->IASetInputLayout(dx11Pipeline->inputLayout);
@@ -226,8 +247,12 @@ void DX11CommandList::SetRootConstants(uint32_t rootParamIndex, const uint32_t* 
     m_ctx->Unmap(scratch, 0);
 
     const uint32_t hlslRegister = m_device->GetRootLayout().params[rootParamIndex].shaderRegister;
-    m_ctx->VSSetConstantBuffers(hlslRegister, 1, &scratch);
-    m_ctx->PSSetConstantBuffers(hlslRegister, 1, &scratch);
+    if (m_computePipelineBound) {
+        m_ctx->CSSetConstantBuffers(hlslRegister, 1, &scratch);
+    } else {
+        m_ctx->VSSetConstantBuffers(hlslRegister, 1, &scratch);
+        m_ctx->PSSetConstantBuffers(hlslRegister, 1, &scratch);
+    }
 }
 
 void DX11CommandList::SetRootCBV(uint32_t rootParamIndex, uint64_t gpuAddress) {
@@ -262,8 +287,12 @@ void DX11CommandList::SetRootCBV(uint32_t rootParamIndex, RHIBufferHandle /*buff
     // Translate root param index to HLSL register via the root layout.
     // Root param 3 maps to b4 (shadow), not b3 — using the index directly was a bug.
     const uint32_t hlslRegister = m_device->GetRootLayout().params[rootParamIndex].shaderRegister;
-    m_ctx->VSSetConstantBuffers(hlslRegister, 1, &scratch);
-    m_ctx->PSSetConstantBuffers(hlslRegister, 1, &scratch);
+    if (m_computePipelineBound) {
+        m_ctx->CSSetConstantBuffers(hlslRegister, 1, &scratch);
+    } else {
+        m_ctx->VSSetConstantBuffers(hlslRegister, 1, &scratch);
+        m_ctx->PSSetConstantBuffers(hlslRegister, 1, &scratch);
+    }
 }
 
 ID3D11Buffer* DX11CommandList::GetOrCreateScratchCB(uint32_t slot, uint32_t requiredSize) {
@@ -301,15 +330,22 @@ ID3D11Buffer* DX11CommandList::GetOrCreateScratchCB(uint32_t slot, uint32_t requ
 }
 
 void DX11CommandList::SetDescriptorTable(uint32_t rootParamIndex, uint32_t descriptorIndex) {
-    // DX11 SM5: translate descriptor index into slot-based PSSetShaderResources/PSSetSamplers.
-    // Bind the SRV to PS t0 and auto-bind the first sampler to s0.
+    // DX11 SM5: translate descriptor index into slot-based SRV/sampler binding.
+    // When a compute pipeline is bound, use CSSet* instead of PSSet*.
     ID3D11ShaderResourceView* srv = m_device->FindTextureSRVByIndex(descriptorIndex);
     if (srv) {
-        m_ctx->PSSetShaderResources(0, 1, &srv);
-        // Auto-bind first sampler to s0 for SM5 texture sampling
-        ID3D11SamplerState* sampler = m_device->FindSamplerByIndex(0);
-        if (sampler) {
-            m_ctx->PSSetSamplers(0, 1, &sampler);
+        if (m_computePipelineBound) {
+            m_ctx->CSSetShaderResources(0, 1, &srv);
+            ID3D11SamplerState* sampler = m_device->FindSamplerByIndex(0);
+            if (sampler) {
+                m_ctx->CSSetSamplers(0, 1, &sampler);
+            }
+        } else {
+            m_ctx->PSSetShaderResources(0, 1, &srv);
+            ID3D11SamplerState* sampler = m_device->FindSamplerByIndex(0);
+            if (sampler) {
+                m_ctx->PSSetSamplers(0, 1, &sampler);
+            }
         }
     } else {
         UZ_LOG(RHI, Warning, "SetDescriptorTable: no SRV found for index {} (rootParam={})",

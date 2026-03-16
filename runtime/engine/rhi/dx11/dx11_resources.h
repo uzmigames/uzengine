@@ -207,20 +207,32 @@ struct DX11Sampler {
 struct DX11Pipeline {
     /// Input layout mapping vertex buffer elements to shader input semantics.
     /// Created from the vertex shader's DXBC input signature.
+    /// `nullptr` for compute pipelines.
     ID3D11InputLayout*           inputLayout = nullptr;
     /// Rasterizer state (fill mode, cull mode, depth bias, scissor enable).
+    /// `nullptr` for compute pipelines.
     ID3D11RasterizerState*       rasterizer = nullptr;
     /// Depth-stencil state (depth test, stencil ops, comparison func).
+    /// `nullptr` for compute pipelines.
     ID3D11DepthStencilState*     depthStencil = nullptr;
     /// Blend state (per-RT blend enable, blend factors, write mask).
+    /// `nullptr` for compute pipelines.
     ID3D11BlendState*            blend = nullptr;
     /// Handle to the vertex shader in `ResourcePool<DX11Shader>`. Not owned —
-    /// the shader must outlive the pipeline.
+    /// the shader must outlive the pipeline. Invalid for compute pipelines.
     RHIShaderHandle              vertexShader;
     /// Handle to the pixel shader in `ResourcePool<DX11Shader>`. Not owned.
+    /// Invalid for compute pipelines.
     RHIShaderHandle              pixelShader;
+    /// Handle to the compute shader in `ResourcePool<DX11Shader>`. Not owned.
+    /// Invalid for graphics pipelines.
+    RHIShaderHandle              computeShader;
     /// Primitive topology for the input assembler stage.
+    /// Unused for compute pipelines.
     D3D11_PRIMITIVE_TOPOLOGY     topology = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+    /// True if this is a compute pipeline, false for graphics.
+    /// Determines which binding path `SetPipeline()` takes.
+    bool                         isCompute = false;
     /// Generation counter — must match `RHIPipelineHandle::generation`.
     uint32_t                     generation = 0;
     /// Backend-agnostic creation parameters for debugging and hot-reload.

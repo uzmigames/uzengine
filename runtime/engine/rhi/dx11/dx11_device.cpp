@@ -778,8 +778,13 @@ uint32_t DX11Device::GetTextureSRVIndex(RHITextureHandle handle) const {
     return tex->srvIndex;
 }
 
-uint32_t DX11Device::GetTextureUAVIndex(RHITextureHandle /*handle*/) const {
-    return UINT32_MAX; // TODO: DX11 UAV not yet implemented
+uint32_t DX11Device::GetTextureUAVIndex(RHITextureHandle handle) const {
+    const auto* tex = m_texturePool.Get(handle.index, handle.generation);
+    if (!tex || !tex->uav) return UINT32_MAX;
+    // DX11 doesn't use bindless descriptor indices. Return the pool index
+    // as a sentinel so that callers can detect "UAV exists" (index != UINT32_MAX).
+    // Actual UAV binding uses the ID3D11UnorderedAccessView* directly.
+    return handle.index;
 }
 
 ID3D11ShaderResourceView* DX11Device::FindTextureSRVByIndex(uint32_t srvIndex) {
@@ -1013,9 +1018,35 @@ RHIPipelineHandle DX11Device::CreateGraphicsPipeline(const RHIGraphicsPipelineDe
 }
 
 RHIPipelineHandle DX11Device::CreateComputePipeline(const RHIComputePipelineDesc& desc) {
-    UZ_LOG(RHI, Warning, "CreateComputePipeline: not implemented in DX11 backend (name='{}')",
+    UZ_PROFILE_FUNCTION();
+
+    // Resolve compute shader from pool
+    const DX11Shader* cs = m_shaderPool.Get(desc.computeShader.index, desc.computeShader.generation);
+    if (!cs || !cs->cs) {
+        UZ_LOG(RHI, Error, "CreateComputePipeline: invalid compute shader handle (name='{}')",
+               desc.debugName ? desc.debugName : "");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    uint32_t generation = 0;
+    uint32_t index = m_pipelinePool.Allocate(generation);
+    DX11Pipeline* slot = m_pipelinePool.Get(index, generation);
+    if (!slot) {
+        UZ_LOG(RHI, Error, "CreateComputePipeline: pool allocation failed (name='{}')",
+               desc.debugName ? desc.debugName : "");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    // Compute pipelines have no graphics state objects — only the shader handle.
+    // inputLayout, rasterizer, depthStencil, blend remain nullptr.
+    slot->computeShader = desc.computeShader;
+    slot->isCompute = true;
+    slot->generation = generation;
+
+    UZ_LOG(RHI, Debug, "CreateComputePipeline: created (name='{}')",
            desc.debugName ? desc.debugName : "");
-    return RHIPipelineHandle::Invalid();
+
+    return RHIPipelineHandle{index, generation};
 }
 
 void DX11Device::DestroyPipeline(RHIPipelineHandle handle) {

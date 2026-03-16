@@ -108,6 +108,15 @@ public:
     /// Returns the BRDF LUT SRV index (`UINT32_MAX` if not yet baked).
     [[nodiscard]] uint32_t GetBRDFLutSrvIndex() const noexcept { return m_brdfLutSrvIndex; }
 
+    /// Returns the BRDF LUT texture handle (for SM5 texture binding).
+    [[nodiscard]] RHITextureHandle GetBRDFLutTexture() const noexcept { return m_brdfLutTexture; }
+
+    /// Returns the irradiance cubemap texture handle (for SM5 texture binding).
+    [[nodiscard]] RHITextureHandle GetIrradianceTexture() const noexcept { return m_irradianceTexture; }
+
+    /// Returns the prefiltered specular cubemap texture handle (for SM5 texture binding).
+    [[nodiscard]] RHITextureHandle GetPrefilteredTexture() const noexcept { return m_prefilteredTexture; }
+
     /// Destroys all GPU resources and pipelines owned by the baker.
     ///
     /// Safe to call multiple times or without prior `Init()`.

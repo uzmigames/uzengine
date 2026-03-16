@@ -28,6 +28,7 @@
 #include "../include/pbr_common.hlsli"
 #include "../include/sh_irradiance.hlsli"
 #include "../include/octahedral.hlsli"
+#include "../include/math_util.hlsli"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Input Structure
@@ -170,6 +171,12 @@ Texture2D<float4> gbufferNormal      : register(t1); ///< rg = octahedral normal
 Texture2D<float>  gbufferDepth       : register(t2); ///< Hardware depth as R32_FLOAT SRV
 Texture2D<float>  shadowAtlasTexture : register(t3); ///< CSM shadow depth atlas
 Texture2D<float4> gbufferPositionWS  : register(t4); ///< xyz = world-space position (RGBA32Float), a = 1
+
+/// SM5 IBL textures bound by ShaderParameterBinder at t5-t7.
+/// Only sampled when irradianceSrvIndex != 0xFFFFFFFF (IBL bake completed).
+TextureCube<float4> iblIrradiance    : register(t5); ///< Irradiance cubemap for diffuse IBL.
+TextureCube<float4> iblPrefiltered   : register(t6); ///< Prefiltered specular cubemap for specular IBL.
+Texture2D<float2>   iblBrdfLut      : register(t7); ///< BRDF integration LUT (split-sum approximation).
 #endif
 
 /// Linear (bilinear wrap) sampler at s0 — standard engine-wide sampler.
@@ -225,7 +232,7 @@ float3 ReconstructWorldPosition(float2 uv, float depth) {
 /// - roughness: perceptual roughness [0,1]
 float3 FresnelSchlickRoughness(float cosTheta, float3 F0, float roughness) {
     float smoothness = 1.0f - roughness;
-    return F0 + (max(float3(smoothness, smoothness, smoothness), F0) - F0) * pow(1.0f - cosTheta, 5.0f);
+    return F0 + (max(float3(smoothness, smoothness, smoothness), F0) - F0) * Pow5(1.0f - cosTheta);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -361,7 +368,6 @@ float4 main(FSInput input) : SV_Target {
     float  NdotV = max(dot(N, V), 0.0f);
     float3 ambient;
 
-#ifdef UZ_BINDLESS
     if (irradianceSrvIndex != 0xFFFFFFFF) {
         // Diffuse IBL via L2 Spherical Harmonics (UE5 parity)
         // SH is much higher quality than 32x32 cubemap sampling
@@ -375,20 +381,26 @@ float4 main(FSInput input) : SV_Target {
 
         // Specular IBL — sample prefiltered environment map along reflection
         float3 R = reflect(-V, N);
-        TextureCube<float4> prefilteredMap = ResourceDescriptorHeap[prefilteredSrvIndex];
         float mipLevel = roughness * float(prefilteredMipLevels - 1);
+
+#ifdef UZ_BINDLESS
+        TextureCube<float4> prefilteredMap = ResourceDescriptorHeap[prefilteredSrvIndex];
         float3 prefilteredColor = prefilteredMap.SampleLevel(linearSampler, R, mipLevel).rgb;
 
+        Texture2D<float2> brdfLutTex = ResourceDescriptorHeap[brdfLutSrvIndex];
+        float2 envBRDF = brdfLutTex.SampleLevel(linearSampler, float2(NdotV, roughness), 0);
+#else
+        // SM5: sample register-bound IBL textures at t5-t7
+        float3 prefilteredColor = iblPrefiltered.SampleLevel(linearSampler, R, mipLevel).rgb;
+        float2 envBRDF = iblBrdfLut.SampleLevel(linearSampler, float2(NdotV, roughness), 0);
+#endif
+
         // BRDF LUT: pre-integrated scale and bias terms for split-sum approximation
-        Texture2D<float2> brdfLut = ResourceDescriptorHeap[brdfLutSrvIndex];
-        float2 envBRDF = brdfLut.SampleLevel(linearSampler, float2(NdotV, roughness), 0);
         float3 specularIBL = prefilteredColor * (F * envBRDF.x + envBRDF.y);
 
         float3 skyLightTint = float3(skyLightColorR, skyLightColorG, skyLightColorB);
         ambient = (diffuseIBL + specularIBL) * ao * skyLightIntensity * skyLightTint;
-    } else
-#endif
-    {
+    } else {
         // Fallback: constant ambient (no IBL data available)
         float3 skyLightTint = float3(skyLightColorR, skyLightColorG, skyLightColorB);
         ambient = ambientColor.xyz * albedo * ao * skyLightIntensity * skyLightTint;

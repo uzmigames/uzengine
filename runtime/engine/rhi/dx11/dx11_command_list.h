@@ -109,6 +109,11 @@ private:
     ID3D11DeviceContext*     m_ctx = nullptr;
     RHIQueueType             m_queueType = RHIQueueType::Graphics;
 
+    /// True when the most recently bound pipeline is a compute pipeline.
+    /// Used by `SetRootCBV` / `SetRootConstants` to choose between
+    /// VS+PS constant buffer binding (graphics) and CS binding (compute).
+    bool                     m_computePipelineBound = false;
+
     /// Scratch constant buffers for SetRootCBV (one per slot, DYNAMIC usage).
     static constexpr uint32_t kMaxCBSlots = 8;
     ID3D11Buffer*            m_scratchCBs[kMaxCBSlots] = {};

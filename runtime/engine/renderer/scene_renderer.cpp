@@ -782,6 +782,12 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
             lightDesc.shadowAlloc         = shadowAlloc;
             lightDesc.shadowAtlasResource = shadowAtlasRes;
             lightDesc.shadowAtlasTexture  = m_shadowAtlas.GetTexture();
+            // IBL texture handles for SM5 fallback path (t5-t7)
+            if (m_iblBaker) {
+                lightDesc.iblIrradiance   = m_iblBaker->GetIrradianceTexture();
+                lightDesc.iblPrefiltered  = m_iblBaker->GetPrefilteredTexture();
+                lightDesc.iblBrdfLut      = m_iblBaker->GetBRDFLutTexture();
+            }
             lightDesc.bindless            = bindless;
             lightDesc.viewportWidth       = vpWidth;
             lightDesc.viewportHeight      = vpHeight;

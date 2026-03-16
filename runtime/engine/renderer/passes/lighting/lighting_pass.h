@@ -66,6 +66,9 @@ struct LightingPassDesc {
     CBAllocation      shadowAlloc;      ///< ShadowDataCB allocation (bound at b4 via root param 3). Zero-init if no shadows.
     rg::RgResourceId  shadowAtlasResource; ///< Render graph shadow atlas (read, ShaderResource state for barrier scheduling).
     RHITextureHandle  shadowAtlasTexture; ///< Physical shadow atlas texture handle (SM5 fallback, bound at t3).
+    RHITextureHandle  iblIrradiance;    ///< IBL irradiance cubemap (SM5 fallback, bound at t5).
+    RHITextureHandle  iblPrefiltered;   ///< IBL prefiltered specular cubemap (SM5 fallback, bound at t6).
+    RHITextureHandle  iblBrdfLut;       ///< BRDF integration LUT (SM5 fallback, bound at t7).
     bool              bindless;         ///< True if SM6.6 bindless path is active.
     float             viewportWidth;    ///< Viewport width in pixels.
     float             viewportHeight;   ///< Viewport height in pixels.

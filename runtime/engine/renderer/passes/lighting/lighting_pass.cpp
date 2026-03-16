@@ -90,6 +90,19 @@ void AddLightingPass(rg::RgBuilder& builder, const LightingPassDesc& desc)
                 cmd->SetFragmentTexture(2, desc.depthTextureForSrv);
                 cmd->SetFragmentTexture(3, desc.shadowAtlasTexture);
                 cmd->SetFragmentTexture(4, desc.positionTexture);
+
+                // SM5: bind IBL textures at t5-t7 for image-based lighting.
+                // These are only valid when IBL bake has completed; the shader
+                // checks irradianceSrvIndex != 0xFFFFFFFF before sampling.
+                if (desc.iblIrradiance.IsValid()) {
+                    cmd->SetFragmentTexture(5, desc.iblIrradiance);
+                }
+                if (desc.iblPrefiltered.IsValid()) {
+                    cmd->SetFragmentTexture(6, desc.iblPrefiltered);
+                }
+                if (desc.iblBrdfLut.IsValid()) {
+                    cmd->SetFragmentTexture(7, desc.iblBrdfLut);
+                }
             }
 
             // ── Viewport and scissor ─────────────────────────────────────

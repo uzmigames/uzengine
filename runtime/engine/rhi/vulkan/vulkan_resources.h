@@ -241,16 +241,22 @@ struct VulkanSampler {
 /// Destroyed via `vkDestroyPipeline()`. Must not be destroyed while GPU work
 /// referencing it is in flight.
 struct VulkanPipeline {
-    /// Native Vulkan graphics pipeline. Bakes VS, PS, rasterizer, blend,
-    /// depth-stencil, vertex input, viewport/scissor (if not dynamic), and
-    /// render pass compatibility.
+    /// Native Vulkan pipeline (graphics or compute). For graphics pipelines,
+    /// bakes VS, PS, rasterizer, blend, depth-stencil, vertex input,
+    /// viewport/scissor (if not dynamic), and render pass compatibility.
+    /// For compute pipelines, bakes only the compute shader stage.
     VkPipeline           pipeline = VK_NULL_HANDLE;
     /// Pipeline layout borrowed from `VulkanDevice`. Defines push constant
     /// ranges and descriptor set layouts shared by all pipelines.
     VkPipelineLayout     pipelineLayout = VK_NULL_HANDLE;
     /// Primitive topology for the input assembler. Stored separately because
     /// Vulkan bakes topology into the pipeline, and we need it for validation.
+    /// Unused for compute pipelines.
     RHIPrimitiveTopology topology = RHIPrimitiveTopology::TriangleList;
+    /// True if this is a compute pipeline, false for graphics.
+    /// Determines which bind point `SetPipeline()` uses
+    /// (`VK_PIPELINE_BIND_POINT_COMPUTE` vs `VK_PIPELINE_BIND_POINT_GRAPHICS`).
+    bool                 isCompute = false;
     /// Generation counter — must match `RHIPipelineHandle::generation`.
     uint32_t             generation = 0;
     /// Backend-agnostic creation parameters for debugging and hot-reload.

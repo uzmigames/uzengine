@@ -1175,8 +1175,12 @@ uint32_t VulkanDevice::GetTextureSRVIndex(RHITextureHandle handle) const {
     return tex->srvIndex;
 }
 
-uint32_t VulkanDevice::GetTextureUAVIndex(RHITextureHandle /*handle*/) const {
-    return UINT32_MAX; // TODO: Vulkan UAV not yet implemented
+uint32_t VulkanDevice::GetTextureUAVIndex(RHITextureHandle handle) const {
+    const auto* tex = m_texturePool.Get(handle.index, handle.generation);
+    if (!tex || !tex->imageView) return UINT32_MAX;
+    // Vulkan doesn't use bindless descriptor indices for UAV.
+    // Return pool index as sentinel so callers detect "UAV available".
+    return handle.index;
 }
 
 RHITextureDesc VulkanDevice::GetTextureDesc(RHITextureHandle handle) const {
@@ -1462,9 +1466,64 @@ RHIPipelineHandle VulkanDevice::CreateGraphicsPipeline(const RHIGraphicsPipeline
 }
 
 RHIPipelineHandle VulkanDevice::CreateComputePipeline(const RHIComputePipelineDesc& desc) {
-    UZ_LOG(RHI, Warning, "CreateComputePipeline: not yet implemented in Vulkan backend (name='{}')",
+    UZ_PROFILE_FUNCTION();
+
+    // Resolve compute shader module from pool
+    VulkanShader* csShader = m_shaderPool.Get(desc.computeShader.index, desc.computeShader.generation);
+    if (!csShader || csShader->module == VK_NULL_HANDLE) {
+        UZ_LOG(RHI, Error, "CreateComputePipeline: invalid compute shader handle (name='{}')",
+               desc.debugName ? desc.debugName : "");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    VkPipelineShaderStageCreateInfo stageCI = {};
+    stageCI.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stageCI.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    stageCI.module = csShader->module;
+    stageCI.pName = "main";
+
+    VkComputePipelineCreateInfo pipelineCI = {};
+    pipelineCI.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    pipelineCI.stage = stageCI;
+    pipelineCI.layout = m_pipelineLayout;
+
+    VkPipeline pipeline = VK_NULL_HANDLE;
+    VkResult result = vkCreateComputePipelines(m_device, VK_NULL_HANDLE, 1, &pipelineCI, nullptr, &pipeline);
+    if (result != VK_SUCCESS) {
+        UZ_LOG(RHI, Error, "vkCreateComputePipelines failed, result={} (name='{}')",
+               static_cast<int>(result), desc.debugName ? desc.debugName : "");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    // Debug name
+    if (desc.debugName && vkSetDebugUtilsObjectNameEXT) {
+        VkDebugUtilsObjectNameInfoEXT nameInfo = {};
+        nameInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT;
+        nameInfo.objectType = VK_OBJECT_TYPE_PIPELINE;
+        nameInfo.objectHandle = reinterpret_cast<uint64_t>(pipeline);
+        nameInfo.pObjectName = desc.debugName;
+        vkSetDebugUtilsObjectNameEXT(m_device, &nameInfo);
+    }
+
+    uint32_t generation = 0;
+    uint32_t index = m_pipelinePool.Allocate(generation);
+    VulkanPipeline* slot = m_pipelinePool.Get(index, generation);
+    if (!slot) {
+        vkDestroyPipeline(m_device, pipeline, nullptr);
+        UZ_LOG(RHI, Error, "CreateComputePipeline: pool allocation failed (name='{}')",
+               desc.debugName ? desc.debugName : "");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    slot->pipeline = pipeline;
+    slot->pipelineLayout = m_pipelineLayout;
+    slot->isCompute = true;
+    slot->generation = generation;
+
+    UZ_LOG(RHI, Debug, "CreateComputePipeline: created (name='{}')",
            desc.debugName ? desc.debugName : "");
-    return RHIPipelineHandle::Invalid();
+
+    return {index, generation};
 }
 
 void VulkanDevice::DestroyPipeline(RHIPipelineHandle handle) {

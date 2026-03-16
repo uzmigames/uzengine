@@ -292,7 +292,10 @@ void VulkanCommandList::SetPipeline(RHIPipelineHandle pipeline) {
         return;
     }
 
-    vkCmdBindPipeline(m_commandBuffers[m_frameIndex], VK_PIPELINE_BIND_POINT_GRAPHICS, vkPipeline->pipeline);
+    VkPipelineBindPoint bindPoint = vkPipeline->isCompute
+        ? VK_PIPELINE_BIND_POINT_COMPUTE
+        : VK_PIPELINE_BIND_POINT_GRAPHICS;
+    vkCmdBindPipeline(m_commandBuffers[m_frameIndex], bindPoint, vkPipeline->pipeline);
 }
 
 void VulkanCommandList::SetVertexBuffer(uint32_t slot, RHIBufferHandle buffer, uint32_t offset) {
