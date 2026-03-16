@@ -1,5 +1,3 @@
-#pragma once
-
 /// Render Graph Resource Pool — Transient texture/buffer pooling and aliasing.
 ///
 /// Physical GPU resources (textures and buffers) are expensive to create and destroy
@@ -16,6 +14,8 @@
 /// The pool is persistent (survives across frames). Physical resources are created
 /// on first use and returned to the pool after the GPU finishes the frame (signaled
 /// by fence). The pool can be trimmed to release unused resources.
+
+#pragma once
 
 #include <vector>
 #include <unordered_map>

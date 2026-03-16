@@ -2,8 +2,8 @@
 ///
 /// Registers a shadow map rendering pass in the render graph that renders
 /// depth-only geometry for each cascade of the Cascaded Shadow Map (CSM)
-/// system. The pass writes to a single shadow atlas texture laid out as a
-/// 2x2 grid of cascade tiles.
+/// system. The pass writes to a single shadow atlas texture with a dynamic
+/// NxM grid layout that scales with cascade count.
 ///
 /// # Render Graph Integration
 /// The pass declares:
@@ -13,12 +13,13 @@
 /// The pass execution callback receives resolved physical handles.
 ///
 /// # Atlas Layout
-/// A single 2D depth texture of size `(atlasResolution * 2) x (atlasResolution * 2)`.
-/// Four cascades are arranged in a 2x2 grid:
-/// - Cascade 0: top-left     `(0,   0)   to (res,   res)`
-/// - Cascade 1: top-right    `(res, 0)   to (2*res, res)`
-/// - Cascade 2: bottom-left  `(0,   res) to (res,   2*res)`
-/// - Cascade 3: bottom-right `(res, res) to (2*res, 2*res)`
+/// A single 2D depth texture with a dynamic grid layout based on cascade count:
+/// - 1-4 cascades: 2x2 grid (backward compatible with original layout)
+/// - 5-6 cascades: 3x2 grid
+/// - 7-8 cascades: 4x2 grid
+///
+/// Atlas texture size is `(cols * atlasResolution) x (rows * atlasResolution)`.
+/// The number of columns is determined by `GetAtlasColumns(cascadeCount)`.
 ///
 /// # Binding Model
 /// Supports both SM6.6 bindless (descriptor index via root constant at slot 0)
@@ -31,6 +32,7 @@
 
 #include "render_graph_types.h"
 #include "shadow_cascade.h"
+#include "shadow_cache.h"
 #include "instance_batcher.h"
 #include "rhi_types.h"
 
@@ -107,8 +109,26 @@ struct ShadowPassDesc {
 
     /// Shadow map resolution per cascade in texels (width = height).
     ///
-    /// The full atlas is `(atlasResolution * 2) x (atlasResolution * 2)`.
+    /// The full atlas is `(atlasResolution * cols) x (atlasResolution * rows)`
+    /// where cols/rows depend on cascadeCount via `GetAtlasColumns()`.
     uint32_t           atlasResolution;
+
+    /// Cache mode for this cascade's shadow depth rendering.
+    ///
+    /// When `Uncached`, behavior is identical to pre-cache (backward compatible).
+    /// When `StaticPrimitivesOnly`, the pass renders only static geometry into
+    /// the cached shadow texture. When `MovablePrimitivesOnly`, the pass renders
+    /// only dynamic geometry (the static cache is composited in the pixel shader).
+    ///
+    /// Default: `Uncached` — no behavioral change unless explicitly set.
+    ShadowCacheMode    cacheMode = ShadowCacheMode::Uncached;
+
+    /// LOD bias for far shadow cascades. Applied to meshes rendered in cascades
+    /// where `bFarShadowCascade == true`. Higher values = coarser geometry.
+    /// 0 = no bias (same LOD as main cascades). Only effective when the engine
+    /// has a LOD selection system.
+    /// @source UE5 DirectionalLightComponent.cpp:68 — GFarShadowStaticMeshLODBias
+    int32_t            farShadowLodBias = 0;
 
     // ── GPU Instancing (optional — set instanced=true to enable) ──────────
     bool               instanced = false;       ///< True to use instanced draw path.
@@ -117,6 +137,35 @@ struct ShadowPassDesc {
     const InstanceBatch* batchData = nullptr;  ///< Pointer to instanced draw batches array.
     uint32_t           batchCount = 0;         ///< Number of batches in the array.
 };
+
+/// Computes the number of columns in the shadow atlas grid for a given cascade count.
+///
+/// - 1-4 cascades: 2 columns (2x2 grid, backward compatible)
+/// - 5-6 cascades: 3 columns (3x2 grid)
+/// - 7-8 cascades: 4 columns (4x2 grid)
+///
+/// # Arguments
+/// * `totalCascades` — Total number of cascades (main + far), 1 to kMaxShadowCascades.
+///
+/// # Returns
+/// Number of columns in the atlas grid layout.
+[[nodiscard]] inline constexpr uint32_t GetAtlasColumns(uint32_t totalCascades) {
+    if (totalCascades <= 4) return 2;
+    if (totalCascades <= 6) return 3;
+    return 4;
+}
+
+/// Computes the number of rows in the shadow atlas grid for a given cascade count.
+///
+/// # Arguments
+/// * `totalCascades` — Total number of cascades (main + far), 1 to kMaxShadowCascades.
+///
+/// # Returns
+/// Number of rows in the atlas grid layout.
+[[nodiscard]] inline constexpr uint32_t GetAtlasRows(uint32_t totalCascades) {
+    const uint32_t cols = GetAtlasColumns(totalCascades);
+    return (totalCascades + cols - 1) / cols;
+}
 
 /// Registers a shadow depth pass in the render graph.
 ///
@@ -172,7 +221,7 @@ struct ShadowPassDesc {
 ///
 /// # Panics
 /// Asserts if `desc.drawList` or `desc.cbAllocator` is null.
-/// Asserts if `desc.cascadeCount` is 0 or exceeds `kMaxShadowCascades`.
+/// Asserts if `desc.cascadeCount` is 0 or exceeds `kMaxShadowCascades` (8).
 void AddShadowPass(rg::RgBuilder& builder, const ShadowPassDesc& desc);
 
 } // namespace uz

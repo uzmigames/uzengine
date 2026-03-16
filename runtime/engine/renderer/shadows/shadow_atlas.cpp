@@ -2,6 +2,7 @@
 
 #include "shadow_atlas.h"
 
+#include "shadow_pass.h"
 #include "rhi.h"
 #include "log.h"
 
@@ -9,12 +10,17 @@ UZ_DECLARE_LOG_CATEGORY(Shadow);
 
 namespace uz {
 
-bool ShadowAtlas::Init(IRHIDevice* device) {
+bool ShadowAtlas::Init(IRHIDevice* device, uint32_t totalCascades) {
     if (!device) return false;
 
+    const uint32_t cols = GetAtlasColumns(totalCascades);
+    const uint32_t rows = GetAtlasRows(totalCascades);
+    const uint32_t atlasWidth  = kShadowResolution * cols;
+    const uint32_t atlasHeight = kShadowResolution * rows;
+
     RHITextureDesc desc{};
-    desc.width     = kShadowAtlasSize;
-    desc.height    = kShadowAtlasSize;
+    desc.width     = atlasWidth;
+    desc.height    = atlasHeight;
     desc.format    = RHIFormat::D32Float;
     desc.usage     = RHITextureUsage::DepthStencil | RHITextureUsage::ShaderResource;
     desc.debugName = "ShadowAtlas";
@@ -24,12 +30,13 @@ bool ShadowAtlas::Init(IRHIDevice* device) {
 
     if (!m_texture.IsValid()) {
         UZ_LOG(Shadow, Error, "ShadowAtlas: failed to create {}x{} D32Float texture",
-               kShadowAtlasSize, kShadowAtlasSize);
+               atlasWidth, atlasHeight);
         return false;
     }
 
-    UZ_LOG(Shadow, Info, "ShadowAtlas: created {}x{} D32Float (srv={})",
-           kShadowAtlasSize, kShadowAtlasSize, m_srvIndex);
+    m_cascadeCount = totalCascades;
+    UZ_LOG(Shadow, Info, "ShadowAtlas: created {}x{} D32Float (srv={}, cascades={}, grid={}x{})",
+           atlasWidth, atlasHeight, m_srvIndex, totalCascades, cols, rows);
     return true;
 }
 
@@ -39,6 +46,17 @@ void ShadowAtlas::Shutdown(IRHIDevice* device) {
     }
     m_texture  = RHITextureHandle{};
     m_srvIndex = UINT32_MAX;
+    m_cascadeCount = 0;
+}
+
+bool ShadowAtlas::Resize(IRHIDevice* device, uint32_t totalCascades) {
+    if (totalCascades == m_cascadeCount && m_texture.IsValid()) {
+        return true; // No change needed
+    }
+
+    // Cascade count changed — recreate the atlas with new dimensions
+    Shutdown(device);
+    return Init(device, totalCascades);
 }
 
 } // namespace uz

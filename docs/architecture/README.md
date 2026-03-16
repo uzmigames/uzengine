@@ -5,6 +5,14 @@ Reference architecture analysis from UE5, Godot, and Unity. These documents info
 > For the main architecture overview, see [../architecture.md](../architecture.md).
 > For engine system architecture, see [../engine/](../engine/).
 
+## Standards & Conventions
+
+Guidelines for coding style, naming, memory management, and coordinate conventions:
+
+| Document | Topic |
+|----------|-------|
+| [coding-standards.md](coding-standards.md) | C++ standards, naming conventions, depth conventions (reversed-Z), error handling, memory management, and SOLID principles |
+
 ## RHI & GPU Binding
 
 Core reference documents for rendering hardware interface design:

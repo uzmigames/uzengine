@@ -148,6 +148,23 @@ public:
     /// UE5: ContactShadowLength. Default: 0.
     float contactShadowLength = 0.f;
 
+    /// Number of far shadow cascades beyond the main CSM distance (0 = disabled).
+    /// Far cascades cover [dynamicShadowDistance, farShadowDistance] with lower
+    /// geometry detail (LOD bias). UE5: FarShadowCascadeCount. Default: 0.
+    /// @source UE5 DirectionalLightComponent.h:112
+    uint32_t farShadowCascadeCount = 0;
+
+    /// Maximum far shadow distance in centimeters. Only used when
+    /// farShadowCascadeCount > 0. UE5: FarShadowDistance. Default: 300000 (3km).
+    /// @source UE5 DirectionalLightComponent.cpp:1023
+    float farShadowDistance = 300000.0f;
+
+    /// LOD bias applied to static meshes rendered in far shadow cascades.
+    /// Higher values = coarser geometry = cheaper. Only active when
+    /// farShadowCascadeCount > 0. UE5: GFarShadowStaticMeshLODBias. Default: 0.
+    /// @source UE5 DirectionalLightComponent.cpp:68
+    int32_t farShadowLodBias = 0;
+
     /// Tint color applied to the sun disk in the sky atmosphere.
     /// UE5: AtmosphereSunDiskColorScale. Default: (1,1,1).
     Vec3 atmosphereSunDiskColorScale = {1.f, 1.f, 1.f};

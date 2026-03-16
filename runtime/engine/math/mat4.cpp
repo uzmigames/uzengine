@@ -72,6 +72,21 @@ Mat4 Mat4::Orthographic(float width, float height, float near_plane, float far_p
     return Mat4(XMMatrixOrthographicLH(width, height, near_plane, far_plane));
 }
 
+Mat4 Mat4::OrthographicReversedZ(float width, float height, float near_plane, float far_plane) {
+    // UE5 FReversedZOrthoMatrix (OrthoMatrix.h:65-82):
+    // Negates the Z scale so near maps to 1.0 and far maps to 0.0.
+    const float range = far_plane - near_plane;
+    const float invRange = 1.0f / range;
+
+    Mat4 result{};
+    result.m._11 = 2.0f / width;
+    result.m._22 = 2.0f / height;
+    result.m._33 = -invRange;                          // Negated vs standard: maps near→1, far→0
+    result.m._43 = 1.0f - near_plane * (-invRange);   // = 1.0 + near/range
+    result.m._44 = 1.0f;
+    return result;
+}
+
 Mat4 Mat4::operator*(const Mat4& other) const {
     XMMATRIX m1 = toXM();
     XMMATRIX m2 = other.toXM();

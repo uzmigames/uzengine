@@ -85,7 +85,7 @@ float2 MapToUnitDisk(float2 sample) {
 /// # Returns
 /// x = average blocker depth, y = blocker count (0 = fully lit)
 float2 FindBlockerDepth(float2 atlasUV, float pixelDepth, float searchRadius,
-                         float2 cascadeOffset, float2 screenPos) {
+                         float2 cascadeOffset, float2 screenPos, float2 tileSize) {
 #ifdef UZ_BINDLESS
     Texture2D<float> shadowAtlas = ResourceDescriptorHeap[shadowAtlasIndex];
 #else
@@ -94,7 +94,7 @@ float2 FindBlockerDepth(float2 atlasUV, float pixelDepth, float searchRadius,
 
     float halfTexel = searchRadius * 0.1f;
     float2 atlasMin = cascadeOffset + halfTexel;
-    float2 atlasMax = cascadeOffset + float2(0.5f, 0.5f) - halfTexel;
+    float2 atlasMax = cascadeOffset + tileSize - halfTexel;
 
     // Per-pixel scramble from screen position
     uint scramble = uint(screenPos.x * 7.3f + screenPos.y * 97.1f) * 1664525u + 1013904223u;
@@ -143,7 +143,7 @@ float EstimatePenumbra(float pixelDepth, float avgBlockerDepth,
 
 /// Performs PCF filtering with an adaptive radius determined by the penumbra.
 float AdaptivePCF(float2 atlasUV, float depth, float filterRadius,
-                   float2 cascadeOffset, float2 screenPos) {
+                   float2 cascadeOffset, float2 screenPos, float2 tileSize) {
 #ifdef UZ_BINDLESS
     Texture2D<float> shadowAtlas = ResourceDescriptorHeap[shadowAtlasIndex];
 #else
@@ -152,7 +152,7 @@ float AdaptivePCF(float2 atlasUV, float depth, float filterRadius,
 
     float halfTexel = filterRadius * 0.1f;
     float2 atlasMin = cascadeOffset + halfTexel;
-    float2 atlasMax = cascadeOffset + float2(0.5f, 0.5f) - halfTexel;
+    float2 atlasMax = cascadeOffset + tileSize - halfTexel;
 
     uint scramble = uint(screenPos.x * 13.7f + screenPos.y * 53.3f) * 1664525u + 1013904223u;
 
@@ -180,13 +180,13 @@ float AdaptivePCF(float2 atlasUV, float depth, float filterRadius,
 /// Full PCSS: blocker search → penumbra estimation → adaptive PCF.
 /// Returns shadow factor [0,1]: 1.0 = fully lit, 0.0 = fully shadowed.
 float SampleShadowPCSS(float2 atlasUV, float depth, float texelSize,
-                        float2 cascadeOffset, float2 screenPos) {
+                        float2 cascadeOffset, float2 screenPos, float2 tileSize) {
     // Search radius = maxSoftKernelSize texels (in atlas UV space)
     float searchRadius = maxSoftKernelSize * texelSize;
 
     // Stage 1: Find blockers
     float2 blockerResult = FindBlockerDepth(atlasUV, depth, searchRadius,
-                                             cascadeOffset, screenPos);
+                                             cascadeOffset, screenPos, tileSize);
     float totalBlockerDepth = blockerResult.x;
     float blockerCount      = blockerResult.y;
 
@@ -215,7 +215,7 @@ float SampleShadowPCSS(float2 atlasUV, float depth, float texelSize,
     }
 
     // Stage 3: Adaptive PCF with estimated penumbra radius
-    return AdaptivePCF(atlasUV, depth, filterRadius, cascadeOffset, screenPos);
+    return AdaptivePCF(atlasUV, depth, filterRadius, cascadeOffset, screenPos, tileSize);
 }
 
 #endif // PCSS_HLSLI

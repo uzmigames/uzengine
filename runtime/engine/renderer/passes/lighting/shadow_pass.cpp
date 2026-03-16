@@ -38,22 +38,25 @@ struct ShadowCB {
 // Atlas tile helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Computes the top-left pixel offset of a cascade tile in the 2x2 atlas.
+/// Computes the top-left pixel offset of a cascade tile in the dynamic NxM atlas.
 ///
 /// # Arguments
-/// * `cascadeIndex` — Cascade index (0–3).
-/// * `resolution`   — Per-cascade resolution in texels.
-/// * `outX`         — Receives the horizontal pixel offset.
-/// * `outY`         — Receives the vertical pixel offset.
+/// * `cascadeIndex`   — Cascade index (0 to totalCascades-1).
+/// * `totalCascades`  — Total number of cascades (determines grid dimensions).
+/// * `resolution`     — Per-cascade resolution in texels.
+/// * `outX`           — Receives the horizontal pixel offset.
+/// * `outY`           — Receives the vertical pixel offset.
 ///
 /// # Layout
-/// Index 0 = top-left, 1 = top-right, 2 = bottom-left, 3 = bottom-right.
-static void GetCascadeTileOffset(uint32_t cascadeIndex, uint32_t resolution,
+/// Grid columns determined by `GetAtlasColumns(totalCascades)`.
+/// Cascades fill left-to-right, top-to-bottom.
+static void GetCascadeTileOffset(uint32_t cascadeIndex, uint32_t totalCascades,
+                                 uint32_t resolution,
                                  uint32_t& outX, uint32_t& outY)
 {
-    // Column = index % 2, Row = index / 2
-    outX = (cascadeIndex % 2) * resolution;
-    outY = (cascadeIndex / 2) * resolution;
+    const uint32_t cols = GetAtlasColumns(totalCascades);
+    outX = (cascadeIndex % cols) * resolution;
+    outY = (cascadeIndex / cols) * resolution;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -65,7 +68,7 @@ void AddShadowPass(rg::RgBuilder& builder, const ShadowPassDesc& desc)
     UZ_CHECKF(desc.drawList != nullptr, "ShadowPass: drawList must not be null");
     UZ_CHECKF(desc.cbAllocator != nullptr, "ShadowPass: cbAllocator must not be null");
     UZ_CHECKF(desc.cascadeCount > 0 && desc.cascadeCount <= kMaxShadowCascades,
-              "ShadowPass: cascadeCount must be 1..4");
+              "ShadowPass: cascadeCount must be 1..{}", kMaxShadowCascades);
 
     builder.AddPass("Shadow", [desc](rg::RgPassBuilder& pb) {
         pb.Write(desc.shadowAtlas, RHIResourceState::DepthStencilWrite);
@@ -73,8 +76,8 @@ void AddShadowPass(rg::RgBuilder& builder, const ShadowPassDesc& desc)
         pb.SetExecutionCallback([desc](IRHICommandList* cmd, const rg::RgPassResources& res) {
             UZ_PROFILE_SCOPE("ShadowPass::Execute");
 
-            // ── Clear the entire shadow atlas to max depth ────────────────
-            cmd->ClearDepthStencil(desc.shadowAtlasTexture, 1.0f, 0);
+            // ── Clear the entire shadow atlas to max depth (standard-Z far=1.0) ──
+            cmd->ClearDepthStencil(desc.shadowAtlasTexture, kShadowDepthClear, 0);
 
             const auto& commands = desc.drawList->GetCommands();
             const uint32_t resolution = desc.atlasResolution;
@@ -84,7 +87,7 @@ void AddShadowPass(rg::RgBuilder& builder, const ShadowPassDesc& desc)
             for (uint32_t cascade = 0; cascade < desc.cascadeCount; ++cascade) {
                 uint32_t tileX = 0;
                 uint32_t tileY = 0;
-                GetCascadeTileOffset(cascade, resolution, tileX, tileY);
+                GetCascadeTileOffset(cascade, desc.cascadeCount, resolution, tileX, tileY);
 
                 // ── Viewport: cascade tile region ─────────────────────────
                 RHIViewport vp{};
@@ -108,7 +111,7 @@ void AddShadowPass(rg::RgBuilder& builder, const ShadowPassDesc& desc)
                 passDesc.colorAttachmentCount = 0;
                 passDesc.hasDepth = true;
                 passDesc.depthAttachment.texture    = desc.shadowAtlasTexture;
-                passDesc.depthAttachment.clearDepth = 1.0f;
+                passDesc.depthAttachment.clearDepth = kShadowDepthClear;
                 passDesc.depthAttachment.clear      = false; // Already cleared above
                 cmd->BeginRenderPass(passDesc);
 

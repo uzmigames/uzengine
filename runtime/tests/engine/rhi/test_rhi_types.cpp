@@ -1,6 +1,7 @@
 /// Unit tests for RHI type definitions — handle validity sentinel values,
-/// enum numeric stability, descriptor struct field defaults, and
-/// backend-independent type size/alignment constraints.
+/// enum numeric stability, descriptor struct field defaults, depth convention
+/// constants (reversed-Z and shadow-Z), and backend-independent type
+/// size/alignment constraints.
 #include "rhi_types.h"
 #include "rhi.h"
 #include "rhi_backend.h"
@@ -137,7 +138,7 @@ TEST(RHIGraphicsPipelineDesc, DefaultValues) {
     EXPECT_EQ(desc.rasterizer.fillMode, RHIFillMode::Solid);
     EXPECT_TRUE(desc.depthStencil.depthEnable);
     EXPECT_TRUE(desc.depthStencil.depthWrite);
-    EXPECT_EQ(desc.depthStencil.depthFunc, RHICompareFunc::Less);
+    EXPECT_EQ(desc.depthStencil.depthFunc, RHICompareFunc::Greater); // Reversed-Z default
     EXPECT_EQ(desc.renderTargetCount, 1u);
     EXPECT_EQ(desc.depthStencilFormat, RHIFormat::Unknown);
 }
@@ -167,7 +168,7 @@ TEST(RHIRenderPassDesc, DefaultValues) {
     RHIRenderPassDesc desc{};
     EXPECT_EQ(desc.colorAttachmentCount, 0u);
     EXPECT_FALSE(desc.hasDepth);
-    EXPECT_FLOAT_EQ(desc.depthAttachment.clearDepth, 1.0f);
+    EXPECT_FLOAT_EQ(desc.depthAttachment.clearDepth, kDepthFar); // Reversed-Z default (0.0)
     EXPECT_EQ(desc.depthAttachment.clearStencil, 0u);
 }
 
@@ -261,4 +262,124 @@ TEST(BytesPerTexel, IsConstexpr) {
     static_assert(rgba8 == 4, "RGBA8Unorm should be 4 bytes");
     constexpr uint32_t unknown = BytesPerTexel(RHIFormat::Unknown);
     static_assert(unknown == 0, "Unknown should be 0 bytes");
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Depth Convention Constants — reversed-Z (main view) and shadow-Z
+//
+// UzEngine uses two depth conventions side-by-side:
+//
+//   Main view (reversed-Z):  near=1.0, far=0.0  — kDepthNear/kDepthFar
+//   Shadow maps (standard-Z): near=0.0, far=1.0  — kShadowDepthNear/kShadowDepthFar
+//   Shadow map clear value:   1.0               — kShadowDepthClear
+//
+// Source: UE5 RHIDefinitions.h:278-287, ShadowDepthRendering.cpp:704.
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST(DepthConventionConstants, kDepthFar_IsZero) {
+    // Main-view reversed-Z: the far plane is depth 0.0 — the clear target.
+    EXPECT_FLOAT_EQ(kDepthFar, 0.0f)
+        << "kDepthFar must be 0.0 for reversed-Z depth convention";
+}
+
+TEST(DepthConventionConstants, kDepthNear_IsOne) {
+    // Main-view reversed-Z: the near plane is depth 1.0.
+    EXPECT_FLOAT_EQ(kDepthNear, 1.0f)
+        << "kDepthNear must be 1.0 for reversed-Z depth convention";
+}
+
+TEST(DepthConventionConstants, kShadowDepthClear_IsOne) {
+    // Shadow maps use standard-Z: clearing to 1.0 represents the far plane.
+    // The shadow sampler (CmpLess) compares shadow depth < scene depth, so
+    // unrendered (cleared) shadow texels never occlude geometry.
+    EXPECT_FLOAT_EQ(kShadowDepthClear, 1.0f)
+        << "kShadowDepthClear must be 1.0 (standard-Z shadow far plane)";
+}
+
+TEST(DepthConventionConstants, kShadowDepthNear_IsZero) {
+    // Shadow maps use standard-Z: the near boundary is 0.0.
+    EXPECT_FLOAT_EQ(kShadowDepthNear, 0.0f)
+        << "kShadowDepthNear must be 0.0 for standard-Z shadow convention";
+}
+
+TEST(DepthConventionConstants, kShadowDepthFar_IsOne) {
+    // Shadow maps use standard-Z: the far boundary is 1.0.
+    EXPECT_FLOAT_EQ(kShadowDepthFar, 1.0f)
+        << "kShadowDepthFar must be 1.0 for standard-Z shadow convention";
+}
+
+TEST(DepthConventionConstants, kReversedZ_IsTrue) {
+    // The compile-time flag must be true — the engine is wired for reversed-Z.
+    static_assert(kReversedZ == true,
+        "kReversedZ must be true at compile time — engine uses reversed-Z depth");
+    EXPECT_TRUE(kReversedZ)
+        << "kReversedZ must be true: depth test uses GreaterEqual, not Less";
+}
+
+TEST(DepthConventionConstants, ShadowClear_NotEqualTo_MainViewFar) {
+    // This is the critical consistency check: the shadow clear value (1.0) and
+    // the main-view far depth value (0.0) MUST differ.  If they were equal the
+    // engine would be using the same depth convention for both, defeating the
+    // purpose of the dual-convention design.
+    EXPECT_NE(kShadowDepthClear, kDepthFar)
+        << "Shadow clear value (standard-Z far=1.0) must differ from main-view "
+           "far depth (reversed-Z far=0.0) — these are different conventions";
+}
+
+TEST(DepthConventionConstants, MainViewNear_NotEqualTo_MainViewFar) {
+    // Sanity check: near and far must not be the same value; a zero-range
+    // depth buffer would produce divide-by-zero in projection math.
+    EXPECT_NE(kDepthNear, kDepthFar)
+        << "kDepthNear (1.0) and kDepthFar (0.0) must be distinct values";
+}
+
+TEST(DepthConventionConstants, ShadowNear_NotEqualTo_ShadowFar) {
+    // Sanity check: shadow near and far must differ for a valid frustum range.
+    EXPECT_NE(kShadowDepthNear, kShadowDepthFar)
+        << "kShadowDepthNear (0.0) and kShadowDepthFar (1.0) must be distinct values";
+}
+
+TEST(DepthConventionConstants, MainViewConvention_IsInverted_RelativeToShadow) {
+    // The main-view near (1.0) equals the shadow far (1.0) and
+    // the main-view far (0.0) equals the shadow near (0.0).
+    // This confirms the conventions are exactly inverted from each other.
+    EXPECT_FLOAT_EQ(kDepthNear, kShadowDepthFar)
+        << "Main-view near (1.0) must equal shadow far (1.0)";
+    EXPECT_FLOAT_EQ(kDepthFar, kShadowDepthNear)
+        << "Main-view far (0.0) must equal shadow near (0.0)";
+}
+
+TEST(DepthConventionConstants, AllConstantsAreConstexpr) {
+    // All depth constants must be usable in compile-time contexts —
+    // they are used in static_assert and constexpr branches throughout
+    // the renderer.
+    static_assert(kDepthFar  == 0.0f, "kDepthFar must be constexpr 0.0f");
+    static_assert(kDepthNear == 1.0f, "kDepthNear must be constexpr 1.0f");
+    static_assert(kShadowDepthClear == 1.0f, "kShadowDepthClear must be constexpr 1.0f");
+    static_assert(kShadowDepthNear  == 0.0f, "kShadowDepthNear must be constexpr 0.0f");
+    static_assert(kShadowDepthFar   == 1.0f, "kShadowDepthFar must be constexpr 1.0f");
+
+    // Runtime check to satisfy gtest output (static_assert is silent on pass).
+    EXPECT_FLOAT_EQ(kDepthFar,         0.0f);
+    EXPECT_FLOAT_EQ(kDepthNear,        1.0f);
+    EXPECT_FLOAT_EQ(kShadowDepthClear, 1.0f);
+    EXPECT_FLOAT_EQ(kShadowDepthNear,  0.0f);
+    EXPECT_FLOAT_EQ(kShadowDepthFar,   1.0f);
+}
+
+TEST(DepthConventionConstants, RenderPassDepthAttachment_DefaultClearIsDepthFar) {
+    // The default clear depth in RHIRenderPassDepthAttachment must match kDepthFar
+    // (0.0 for the reversed-Z main view).  Shadow passes must explicitly override
+    // this to kShadowDepthClear (1.0).
+    RHIRenderPassDepthAttachment attachment{};
+    EXPECT_FLOAT_EQ(attachment.clearDepth, kDepthFar)
+        << "RHIRenderPassDepthAttachment default clearDepth must equal kDepthFar (0.0)";
+}
+
+TEST(DepthConventionConstants, RHIDepthStencilDesc_DefaultCompareFunc_IsGreater) {
+    // For reversed-Z the closer-fragment wins with a GREATER depth value.
+    // The pipeline default must be RHICompareFunc::Greater (not Less).
+    RHIDepthStencilDesc dss{};
+    EXPECT_EQ(dss.depthFunc, RHICompareFunc::Greater)
+        << "Default depth compare func must be Greater for reversed-Z (closer = larger depth)";
 }

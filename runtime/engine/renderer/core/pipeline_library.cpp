@@ -464,7 +464,9 @@ RHIPipelineHandle PipelineLibrary::GetShadowDepth(bool bindless) {
     desc.rasterizer.depthBias             = 10.0f;
     desc.depthStencil.depthEnable         = true;
     desc.depthStencil.depthWrite          = true;
-    desc.depthStencil.depthFunc           = RHICompareFunc::Less; // Shadow maps use standard-Z (UE5 parity)
+    // Shadow maps use standard-Z (0=near, 1=far). LessEqual matches UE5 CF_LessEqual
+    // (ShadowDepthRendering.cpp:760) — avoids self-shadow acne on coplanar surfaces.
+    desc.depthStencil.depthFunc           = RHICompareFunc::LessEqual;
     desc.renderTargetCount                = 0;
     desc.depthStencilFormat               = RHIFormat::D32Float;
     desc.debugName                        = bindless ? "ShadowDepth_Bindless" : "ShadowDepth";
@@ -577,7 +579,9 @@ RHIPipelineHandle PipelineLibrary::GetShadowDepthInstanced() {
     desc.rasterizer.depthBias             = 10.0f;
     desc.depthStencil.depthEnable         = true;
     desc.depthStencil.depthWrite          = true;
-    desc.depthStencil.depthFunc           = RHICompareFunc::Less; // Shadow maps use standard-Z (UE5 parity)
+    // Shadow maps use standard-Z (0=near, 1=far). LessEqual matches UE5 CF_LessEqual
+    // (ShadowDepthRendering.cpp:760) — avoids self-shadow acne on coplanar surfaces.
+    desc.depthStencil.depthFunc           = RHICompareFunc::LessEqual;
     desc.renderTargetCount                = 0;
     desc.depthStencilFormat               = RHIFormat::D32Float;
     desc.debugName                        = "ShadowDepth_Instanced";

@@ -42,6 +42,7 @@ struct ShadowFrameData {
     ShadowCascade cascades[kMaxShadowCascades]; ///< Per-cascade view-proj, splits, and biases.
     ShadowConfig  config;                       ///< Shadow configuration used for this frame.
     CBAllocation  cbAllocation;                  ///< ShadowDataCB upload location in the CB ring.
+    uint32_t      totalCascadeCount = 0;        ///< Actual cascade count (main + far). Set by ComputeCascades.
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -77,6 +78,9 @@ struct ShadowFrameData {
     float lightSourceAngleDeg,
     uint32_t shadowAtlasSrv,
     uint32_t shadowResolution,
-    CBRingAllocator& cbRing);
+    CBRingAllocator& cbRing,
+    uint32_t farShadowCascadeCount = 0,
+    float farShadowDistance = 300000.0f,
+    int32_t farShadowLodBias = 0);
 
 } // namespace uz

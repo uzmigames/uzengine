@@ -1,5 +1,3 @@
-#pragma once
-
 /// UzEngine Frame Pacer — Measures present-to-display latency and manages VRR/tearing.
 ///
 /// Tracks frame timing, measures present latency, and provides VRR (Variable
@@ -7,6 +5,8 @@
 ///
 /// # Thread Safety
 /// NOT thread-safe. Render thread only.
+
+#pragma once
 
 #include <chrono>
 #include <cstdint>

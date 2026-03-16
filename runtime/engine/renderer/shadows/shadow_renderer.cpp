@@ -6,6 +6,7 @@
 #include "shadow_renderer.h"
 
 #include "camera.h"
+#include "shadow_pass.h"
 #include "log.h"
 
 UZ_DECLARE_LOG_CATEGORY(Shadow);
@@ -23,7 +24,10 @@ ShadowFrameData SetupShadowFrame(
     float lightSourceAngleDeg,
     uint32_t shadowAtlasSrv,
     uint32_t shadowResolution,
-    CBRingAllocator& cbRing)
+    CBRingAllocator& cbRing,
+    uint32_t farShadowCascadeCount,
+    float farShadowDistance,
+    int32_t farShadowLodBias)
 {
     ShadowFrameData result{};
 
@@ -41,21 +45,28 @@ ShadowFrameData SetupShadowFrame(
     cfg.cascadeBiasDistribution     = 1.0f;      // Fully world-scaled (ShadowSetup.cpp:1846)
     cfg.receiverBias                = 0.9f;      // UE5 default (ShadowRendering.cpp:76)
 
+    // ── Far shadow cascades — wired from DirectionalLightComponent ───────
+    // @source UE5 DirectionalLightComponent.cpp:1023,1076 — FarShadowDistance, FarShadowCascadeCount
+    cfg.farShadowCascadeCount       = farShadowCascadeCount;
+    cfg.farShadowDistance           = farShadowDistance;
+    cfg.farShadowLodBias            = farShadowLodBias;
+
     // ── Compute cascade splits and light-space matrices ──────────────────
     // lightDir for ComputeCascades is the direction the light shines toward
     // (opposite of sun direction). sunDir points TOWARD the sun, so we negate it.
     const Vec3 lightShineDir = Vec3{-sunDir.x, -sunDir.y, -sunDir.z};
     ComputeCascades(camera.GetView(), camera.GetProjection(), lightShineDir,
-                    cfg, result.cascades);
+                    cfg, result.cascades, &result.totalCascadeCount);
 
     // DEBUG: log cascade split distances and bias to verify correctness
     static bool loggedOnce = false;
     if (!loggedOnce) {
-        for (uint32_t i = 0; i < cfg.cascadeCount; ++i) {
+        for (uint32_t i = 0; i < result.totalCascadeCount; ++i) {
             UZ_LOG(Shadow, Info,
-                "Cascade[{}]: splitNear={:.1f} splitFar={:.1f} fadeStart={:.1f} "
+                "Cascade[{}]{}: splitNear={:.1f} splitFar={:.1f} fadeStart={:.1f} "
                 "texelSize={:.4f} depthBias={:.6f} normalBias={:.4f}",
                 i,
+                result.cascades[i].bFarShadowCascade ? " (far)" : "",
                 result.cascades[i].splitNear,
                 result.cascades[i].splitFar,
                 result.cascades[i].splitFarFadeStart,
@@ -67,49 +78,26 @@ ShadowFrameData SetupShadowFrame(
     }
 
     // ── Upload ShadowDataCB — UE5 parity ─────────────────────────────────
+    const uint32_t totalCascades = result.totalCascadeCount;
+
     ShadowDataCB shadowData{};
-    for (uint32_t i = 0; i < cfg.cascadeCount; ++i) {
-        shadowData.cascadeViewProj[i] = result.cascades[i].viewProj;
+    for (uint32_t i = 0; i < totalCascades; ++i) {
+        shadowData.cascadeViewProj[i]  = result.cascades[i].viewProj;
+        shadowData.cascadeSplits[i]    = result.cascades[i].splitFar;
+        shadowData.cascadeFadeStarts[i] = result.cascades[i].splitFarFadeStart;
+        shadowData.cascadeDepthBias[i] = result.cascades[i].computedDepthBias;
+        shadowData.cascadeNormalBias[i] = result.cascades[i].computedNormalBias;
     }
 
-    // Extended far splits (include blend overlap)
-    shadowData.cascadeSplits = {
-        result.cascades[0].splitFar,
-        result.cascades[1].splitFar,
-        result.cascades[2].splitFar,
-        result.cascades[3].splitFar
-    };
-
-    // Original un-extended far splits (blend start points)
-    shadowData.cascadeFadeStarts = {
-        result.cascades[0].splitFarFadeStart,
-        result.cascades[1].splitFarFadeStart,
-        result.cascades[2].splitFarFadeStart,
-        result.cascades[3].splitFarFadeStart
-    };
-
-    // Per-cascade computed biases
-    shadowData.cascadeDepthBias = {
-        result.cascades[0].computedDepthBias,
-        result.cascades[1].computedDepthBias,
-        result.cascades[2].computedDepthBias,
-        result.cascades[3].computedDepthBias
-    };
-    shadowData.cascadeNormalBias = {
-        result.cascades[0].computedNormalBias,
-        result.cascades[1].computedNormalBias,
-        result.cascades[2].computedNormalBias,
-        result.cascades[3].computedNormalBias
-    };
-
     shadowData.shadowAtlasIndex = shadowAtlasSrv;
-    shadowData.cascadeCount     = cfg.cascadeCount;
+    shadowData.cascadeCount     = totalCascades;
     shadowData.shadowMapSize    = static_cast<float>(shadowResolution);
     shadowData.receiverBias     = cfg.receiverBias;
 
-    // Last cascade fade — compute world-space fade start/end
-    const float lastCascadeFar  = result.cascades[cfg.cascadeCount - 1].splitFarFadeStart;
-    const float lastCascadeNear = result.cascades[cfg.cascadeCount - 1].splitNear;
+    // Last cascade fade — compute world-space fade start/end using the
+    // last cascade in the full chain (could be a far cascade)
+    const float lastCascadeFar  = result.cascades[totalCascades - 1].splitFarFadeStart;
+    const float lastCascadeNear = result.cascades[totalCascades - 1].splitNear;
     const float fadeExtension   = (lastCascadeFar - lastCascadeNear) * cfg.shadowDistanceFadeoutFraction;
     shadowData.shadowFadeStart  = lastCascadeFar - fadeExtension;
     shadowData.shadowFadeEnd    = lastCascadeFar;
@@ -119,6 +107,9 @@ ShadowFrameData SetupShadowFrame(
     static constexpr float kDegToRad = 3.14159265358979323846f / 180.0f;
     shadowData.tanLightSourceAngle = std::tan(lightSourceAngleDeg * kDegToRad);
     shadowData.maxSoftKernelSize   = cfg.maxSoftKernelSize;
+
+    // Atlas grid layout — needed by the shader to compute cascade UV offsets
+    shadowData.atlasColumns = GetAtlasColumns(totalCascades);
 
     result.cbAllocation = cbRing.Allocate(sizeof(ShadowDataCB));
     std::memcpy(result.cbAllocation.cpuPtr, &shadowData, sizeof(ShadowDataCB));

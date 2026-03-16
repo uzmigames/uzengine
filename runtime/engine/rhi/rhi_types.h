@@ -40,6 +40,14 @@ constexpr bool     kReversedZ = true;      ///< Compile-time flag: depth buffer 
 constexpr float    kDepthFar  = 0.0f;      ///< Far plane depth value (clear target).
 constexpr float    kDepthNear = 1.0f;      ///< Near plane depth value.
 
+/// Shadow maps use standard-Z (0=near, 1=far) even though the main view uses reversed-Z.
+/// This matches UE5 (ShadowDepthRendering.cpp:704, ShadowSetup.cpp:907).
+/// Shadow ortho projections (XMMatrixOrthographicLH) naturally produce standard-Z.
+/// The shadow comparison sampler (SCF_Less) and clear value (1.0) are tuned for this space.
+constexpr float    kShadowDepthClear = 1.0f;  ///< Shadow map clear value (standard-Z far plane).
+constexpr float    kShadowDepthNear  = 0.0f;  ///< Shadow depth near (standard-Z).
+constexpr float    kShadowDepthFar   = 1.0f;  ///< Shadow depth far (standard-Z).
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Resource Handles — typed generational IDs for GPU objects
 // ─────────────────────────────────────────────────────────────────────────────
@@ -635,7 +643,7 @@ struct RHIRenderPassColorAttachment {
 /// Specifies a depth-stencil target and optional clear-on-load behavior.
 struct RHIRenderPassDepthAttachment {
     RHITextureHandle texture;                   ///< Depth-stencil texture
-    float clearDepth = 1.0f;                    ///< Clear depth value
+    float clearDepth = kDepthFar;               ///< Clear depth value (defaults to reversed-Z far=0.0; shadow passes override to kShadowDepthClear=1.0).
     uint8_t clearStencil = 0;                   ///< Clear stencil value
     bool clear = false;                         ///< True to clear on load
 };

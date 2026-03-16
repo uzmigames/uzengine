@@ -174,10 +174,14 @@ void ComputeCascades(
     const Mat4& cameraProj,
     const Vec3& lightDir,
     const ShadowConfig& config,
-    ShadowCascade* outCascades) {
+    ShadowCascade* outCascades,
+    uint32_t* outTotalCascadeCount) {
 
-    UZ_CHECK(config.cascadeCount > 0 && config.cascadeCount <= kMaxShadowCascades);
+    UZ_CHECK(config.cascadeCount > 0 && config.cascadeCount <= kMaxMainCascades);
+    UZ_CHECK(config.farShadowCascadeCount <= kMaxFarCascades);
+    UZ_CHECK((config.cascadeCount + config.farShadowCascadeCount) <= kMaxShadowCascades);
     UZ_CHECK(lightDir.LengthSq() > 1e-6f);
+    UZ_CHECK(outTotalCascadeCount != nullptr);
 
     const Vec3 lightDirNorm = lightDir.Normalized();
     const Vec3 lightUp = ChooseLightUp(lightDirNorm);
@@ -196,7 +200,7 @@ void ComputeCascades(
     // Source: DirectionalLightComponent.cpp:784-814
 
     const uint32_t N = config.cascadeCount;
-    float splits[kMaxShadowCascades + 1];
+    float splits[kMaxMainCascades + 1];
     splits[0] = shadowNear;
 
     for (uint32_t i = 1; i <= N; ++i) {
@@ -276,8 +280,11 @@ void ComputeCascades(
         const Mat4 lightView = Mat4::LookAt(lightEye, center, lightUp);
 
         // 3e. Build the orthographic projection from the bounding sphere.
-        // Shadow maps use STANDARD-Z (0=near, 1=far) — UE5 parity.
-        // Only the main view uses reversed-Z. Shadow depth clears to 1.0.
+        // Shadow maps use STANDARD-Z (0=near, 1=far) while main view uses reversed-Z (1=near, 0=far).
+        // This matches UE5 (ShadowSetup.cpp:907): XMMatrixOrthographicLH naturally produces
+        // standard-Z. The shadow comparison sampler (SCF_Less) and clear value (kShadowDepthClear=1.0)
+        // are tuned for this space. Scene depth is reprojected into light-space (standard-Z)
+        // before shadow comparison, so both sides of SampleCmp are in the same depth space.
         const float orthoNear = 0.0f;
         const float orthoFar  = 2.0f * radius;
 
@@ -312,13 +319,127 @@ void ComputeCascades(
         const float finalNormalBias = config.normalBias + config.normalBias * normalBiasScale;
 
         // 3h. Store results.
-        outCascades[cascade].viewProj          = shadowVP;
-        outCascades[cascade].splitNear         = splitNear;
-        outCascades[cascade].splitFar          = extendedFar;
-        outCascades[cascade].splitFarFadeStart = splitFar; // original, un-extended
-        outCascades[cascade].texelSize         = worldUnitsPerTexel;
-        outCascades[cascade].computedDepthBias = cascadeDepthBias;
+        outCascades[cascade].viewProj           = shadowVP;
+        outCascades[cascade].splitNear          = splitNear;
+        outCascades[cascade].splitFar           = extendedFar;
+        outCascades[cascade].splitFarFadeStart  = splitFar; // original, un-extended
+        outCascades[cascade].texelSize          = worldUnitsPerTexel;
+        outCascades[cascade].computedDepthBias  = cascadeDepthBias;
         outCascades[cascade].computedNormalBias = finalNormalBias;
+        outCascades[cascade].bFarShadowCascade  = false;
+    }
+
+    // --- Step 4: Far shadow cascades (UE5 parity) ---
+    // Source: DLC.cpp:1023 (FarShadowDistance), DLC.h:112 (FarShadowCascadeCount)
+    //
+    // Far cascades extend shadow coverage beyond maxDistance up to farShadowDistance.
+    // They use the same split formula and matrix construction as main cascades,
+    // just over a different distance range. The renderer can apply farShadowLodBias
+    // to select coarser mesh LODs for these cascades.
+
+    const uint32_t farN = config.farShadowCascadeCount;
+    const float farStart = shadowFar;
+    const float farEnd = config.farShadowDistance;
+    const float kMinFarRange = 100.0f; // Minimum range in cm to justify far cascades
+
+    if (farN > 0 && (farEnd - farStart) > kMinFarRange) {
+        float farSplits[kMaxFarCascades + 1];
+        farSplits[0] = farStart;
+        const float farRange = farEnd - farStart;
+
+        for (uint32_t i = 1; i <= farN; ++i) {
+            const float scale = ComputeAccumulatedScale(
+                config.cascadeDistributionExponent, i, farN);
+            farSplits[i] = farStart + scale * farRange;
+        }
+
+        for (uint32_t fc = 0; fc < farN; ++fc) {
+            const uint32_t outIdx = N + fc;
+            const float fSplitNear = farSplits[fc];
+            const float fSplitFar  = farSplits[fc + 1];
+
+            // Extend non-last far cascades for cascade blending overlap
+            float fExtendedFar = fSplitFar;
+            if (fc < farN - 1) {
+                const float fadeExtension = (fSplitFar - fSplitNear) * config.cascadeTransitionFraction;
+                fExtendedFar = fSplitFar + fadeExtension;
+            }
+
+            // Compute frustum corners using the extended far for matrix construction
+            Vec3 corners[kFrustumCornerCount];
+            ComputeFrustumCorners(cameraView, cameraProj, fSplitNear, fExtendedFar, corners);
+
+            // Optimal bounding sphere center (same algorithm as main cascades)
+            const Vec3 nearDiag = corners[2] - corners[0];
+            const Vec3 farDiag  = corners[6] - corners[4];
+            const float diagASq = nearDiag.Dot(nearDiag);
+            const float diagBSq = farDiag.Dot(farDiag);
+            const float frustumLength = fExtendedFar - fSplitNear;
+
+            float optimalOffset = frustumLength * 0.5f;
+            if (frustumLength > 1e-6f) {
+                optimalOffset = (diagBSq - diagASq) / (2.0f * frustumLength) + frustumLength * 0.5f;
+                optimalOffset = std::clamp(optimalOffset, 0.0f, frustumLength);
+            }
+
+            Vec3 nearCenter = Vec3::Zero();
+            Vec3 farCenter  = Vec3::Zero();
+            for (uint32_t i = 0; i < 4; ++i) {
+                nearCenter += corners[i];
+                farCenter  += corners[i + 4];
+            }
+            nearCenter = nearCenter * 0.25f;
+            farCenter  = farCenter  * 0.25f;
+
+            const float t = (frustumLength > 1e-6f) ? (optimalOffset / frustumLength) : 0.5f;
+            const Vec3 center = nearCenter + (farCenter - nearCenter) * t;
+
+            float radius = 0.0f;
+            for (uint32_t i = 0; i < kFrustumCornerCount; ++i) {
+                const float dist = (corners[i] - center).Length();
+                radius = std::max(radius, dist);
+            }
+            radius = std::max(radius, 1.0f);
+
+            const Vec3 lightEye = center - lightDirNorm * radius;
+            const Mat4 lightView = Mat4::LookAt(lightEye, center, lightUp);
+
+            const float orthoNear = 0.0f;
+            const float orthoFar  = 2.0f * radius;
+
+            const Mat4 lightProj{XMMatrixOrthographicOffCenterLH(
+                -radius, radius, -radius, radius, orthoNear, orthoFar)};
+
+            // Texel snap grid (same formula as main cascades)
+            const float snapGrid = 2.0f * kMaxDownsampleFactor / static_cast<float>(config.resolution);
+
+            Mat4 shadowVP = lightView * lightProj;
+            shadowVP.m._41 = std::floor(shadowVP.m._41 / snapGrid) * snapGrid;
+            shadowVP.m._42 = std::floor(shadowVP.m._42 / snapGrid) * snapGrid;
+
+            // Per-cascade bias (same formula as main cascades)
+            const float worldUnitsPerTexel = (2.0f * radius) / static_cast<float>(config.resolution);
+            const float depthRange = orthoFar - orthoNear;
+            const float constantBias = (depthRange > 1e-6f) ? (config.csmDepthBias / depthRange) : 0.0f;
+            const float worldScaledBias = constantBias * worldUnitsPerTexel;
+            const float cascadeDepthBias = constantBias * (1.0f - config.cascadeBiasDistribution)
+                                         + worldScaledBias * config.cascadeBiasDistribution;
+            const float normalBiasScale = std::min(worldUnitsPerTexel * 0.01f, 2.0f);
+            const float finalNormalBias = config.normalBias + config.normalBias * normalBiasScale;
+
+            outCascades[outIdx].viewProj           = shadowVP;
+            outCascades[outIdx].splitNear          = fSplitNear;
+            outCascades[outIdx].splitFar           = fExtendedFar;
+            outCascades[outIdx].splitFarFadeStart  = fSplitFar;
+            outCascades[outIdx].texelSize          = worldUnitsPerTexel;
+            outCascades[outIdx].computedDepthBias  = cascadeDepthBias;
+            outCascades[outIdx].computedNormalBias = finalNormalBias;
+            outCascades[outIdx].bFarShadowCascade  = true;
+        }
+
+        *outTotalCascadeCount = N + farN;
+    } else {
+        *outTotalCascadeCount = N;
     }
 }
 

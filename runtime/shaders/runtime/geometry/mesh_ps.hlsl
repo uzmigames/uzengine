@@ -95,15 +95,16 @@ cbuffer PerObjectCB : register(b2) {
 };
 
 /// Cascaded shadow map parameters — must match C++ ShadowDataCB struct exactly.
+/// Supports up to 8 cascades (4 main + 4 far shadow cascades).
 /// UE5 parity: per-cascade bias, fade starts, receiver bias, distance fade.
 cbuffer ShadowDataCB : register(b4) {
-    row_major float4x4 cascadeViewProj[4];  // light-space view-projection per cascade
-    float4   cascadeSplits;                  // view-space extended far split per cascade
-    float4   cascadeFadeStarts;              // view-space original (un-extended) far split per cascade
-    float4   cascadeDepthBias;               // per-cascade computed depth bias
-    float4   cascadeNormalBias;              // per-cascade computed normal bias
-    uint     shadowAtlasIndex;               // SRV heap index for shadow depth atlas
-    uint     cascadeCount;                   // number of active cascades (1-4)
+    row_major float4x4 cascadeViewProj[8];  // light-space view-projection per cascade
+    float    cascadeSplits[8];               // view-space extended far split per cascade
+    float    cascadeFadeStarts[8];           // view-space original (un-extended) far split per cascade
+    float    cascadeDepthBias[8];            // per-cascade computed depth bias
+    float    cascadeNormalBias[8];           // per-cascade computed normal bias
+    uint     shadowAtlasIndex;               // SRV heap index for shadow depth atlas (dynamic)
+    uint     cascadeCount;                   // number of active cascades (1-8, main + far)
     float    shadowMapSize;                  // per-cascade resolution in texels
     float    receiverBias;                   // shadow receiver bias (UE5 default: 0.9)
     float    shadowFadeStart;                // world distance where last-cascade fade begins
@@ -111,6 +112,11 @@ cbuffer ShadowDataCB : register(b4) {
     uint     filterMethod;                   // 0=5x5 PCF, 1=Poisson 16-tap, 2=PCSS
     float    tanLightSourceAngle;            // tan(sun disk angle) for PCSS
     float    maxSoftKernelSize;              // max PCSS kernel radius in texels
+    uint     atlasColumns;                   // number of columns in the atlas grid (2, 3, or 4)
+    uint     staticShadowAtlasIndex;         // SRV index for cached static shadow atlas. 0xFFFFFFFF = no cache.
+    uint     useShadowCache;                 // 0 = no cache (single atlas), 1 = composite static + dynamic.
+    uint     dfsEnabled;                     // 1 = Distance Field Shadows active, 0 = disabled.
+    uint     dfsOutputSrvIndex;              // SRV index for DFS result texture. 0xFFFFFFFF = not bound.
 };
 
 #ifndef UZ_BINDLESS

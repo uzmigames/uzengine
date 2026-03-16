@@ -92,7 +92,10 @@ struct Mat4 {
     /// * `up` - World up direction (typically `Vec3::Up()`).
     static Mat4 LookAt(const Vec3& eye, const Vec3& target, const Vec3& up);
 
-    /// Creates a left-handed orthographic projection matrix.
+    /// Creates a left-handed orthographic projection matrix (standard-Z: near→0, far→1).
+    ///
+    /// Used for shadow map projections where standard-Z convention is required.
+    /// For main-view orthographic projection, use OrthographicReversedZ() instead.
     ///
     /// # Arguments
     /// * `width` - View width in world units.
@@ -100,6 +103,19 @@ struct Mat4 {
     /// * `near_plane` - Near clipping plane distance.
     /// * `far_plane` - Far clipping plane distance.
     static Mat4 Orthographic(float width, float height, float near_plane, float far_plane);
+
+    /// Creates a left-handed orthographic projection matrix with reversed-Z (near→1, far→0).
+    ///
+    /// Matches UE5 FReversedZOrthoMatrix (OrthoMatrix.h:65-82). Use for main-view
+    /// orthographic rendering (debug views, 2D overlays, UI) where reversed-Z is active.
+    /// Shadow maps should use the standard Orthographic() instead.
+    ///
+    /// # Arguments
+    /// * `width` - View width in world units.
+    /// * `height` - View height in world units.
+    /// * `near_plane` - Near clipping plane distance.
+    /// * `far_plane` - Far clipping plane distance.
+    static Mat4 OrthographicReversedZ(float width, float height, float near_plane, float far_plane);
 
     /// Converts to XMMATRIX for SIMD operations (zero-cost in release).
     DirectX::XMMATRIX toXM() const { return DirectX::XMLoadFloat4x4(&m); }

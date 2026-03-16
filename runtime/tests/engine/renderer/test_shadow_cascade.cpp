@@ -7,6 +7,7 @@
 /// clamping. No GPU, no window, no graphics API required.
 
 #include "shadow_cascade.h"
+#include "shadow_pass.h"
 #include "constant_buffers.h"
 
 #include <gtest/gtest.h>
@@ -117,6 +118,21 @@ TEST(ShadowConfig, DefaultReceiverBias_Is0_9) {
     EXPECT_FLOAT_EQ(cfg.receiverBias, 0.9f);
 }
 
+TEST(ShadowConfig, DefaultFarShadowDistance_Is300000) {
+    ShadowConfig cfg;
+    EXPECT_FLOAT_EQ(cfg.farShadowDistance, 300000.0f);
+}
+
+TEST(ShadowConfig, DefaultFarShadowCascadeCount_Is0) {
+    ShadowConfig cfg;
+    EXPECT_EQ(cfg.farShadowCascadeCount, 0u);
+}
+
+TEST(ShadowConfig, DefaultFarShadowLodBias_Is0) {
+    ShadowConfig cfg;
+    EXPECT_EQ(cfg.farShadowLodBias, 0);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // ShadowCascade defaults
 // ─────────────────────────────────────────────────────────────────────────────
@@ -151,12 +167,17 @@ TEST(ShadowCascade, DefaultComputedNormalBias_IsZero) {
     EXPECT_FLOAT_EQ(cascade.computedNormalBias, 0.0f);
 }
 
+TEST(ShadowCascade, DefaultFarShadowCascade_IsFalse) {
+    ShadowCascade cascade{};
+    EXPECT_FALSE(cascade.bFarShadowCascade);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // ShadowDataCB layout
 // ─────────────────────────────────────────────────────────────────────────────
 
-TEST(ShadowDataCB, SizeIs512Bytes) {
-    EXPECT_EQ(sizeof(ShadowDataCB), 512u);
+TEST(ShadowDataCB, SizeIs768Bytes) {
+    EXPECT_EQ(sizeof(ShadowDataCB), 768u);
 }
 
 TEST(ShadowDataCB, SizeIsMultipleOf256) {
@@ -164,23 +185,24 @@ TEST(ShadowDataCB, SizeIsMultipleOf256) {
 }
 
 TEST(ShadowDataCB, FieldOffsets) {
-    // cascadeViewProj[4] starts at 0 (4 * 64B = 256B).
+    // cascadeViewProj[8] starts at 0 (8 * 64B = 512B).
     EXPECT_EQ(offsetof(ShadowDataCB, cascadeViewProj), 0u);
-    // cascadeSplits at 256
-    EXPECT_EQ(offsetof(ShadowDataCB, cascadeSplits), 256u);
-    // cascadeFadeStarts at 272
-    EXPECT_EQ(offsetof(ShadowDataCB, cascadeFadeStarts), 272u);
-    // cascadeDepthBias at 288
-    EXPECT_EQ(offsetof(ShadowDataCB, cascadeDepthBias), 288u);
-    // cascadeNormalBias at 304
-    EXPECT_EQ(offsetof(ShadowDataCB, cascadeNormalBias), 304u);
-    // shadowAtlasIndex at 320
-    EXPECT_EQ(offsetof(ShadowDataCB, shadowAtlasIndex), 320u);
-    EXPECT_EQ(offsetof(ShadowDataCB, cascadeCount), 324u);
-    EXPECT_EQ(offsetof(ShadowDataCB, shadowMapSize), 328u);
-    EXPECT_EQ(offsetof(ShadowDataCB, receiverBias), 332u);
-    EXPECT_EQ(offsetof(ShadowDataCB, shadowFadeStart), 336u);
-    EXPECT_EQ(offsetof(ShadowDataCB, shadowFadeEnd), 340u);
+    // cascadeSplits[8] at 512 (8 * 4B = 32B)
+    EXPECT_EQ(offsetof(ShadowDataCB, cascadeSplits), 512u);
+    // cascadeFadeStarts[8] at 544 (8 * 4B = 32B)
+    EXPECT_EQ(offsetof(ShadowDataCB, cascadeFadeStarts), 544u);
+    // cascadeDepthBias[8] at 576 (8 * 4B = 32B)
+    EXPECT_EQ(offsetof(ShadowDataCB, cascadeDepthBias), 576u);
+    // cascadeNormalBias[8] at 608 (8 * 4B = 32B)
+    EXPECT_EQ(offsetof(ShadowDataCB, cascadeNormalBias), 608u);
+    // shadowAtlasIndex at 640
+    EXPECT_EQ(offsetof(ShadowDataCB, shadowAtlasIndex), 640u);
+    EXPECT_EQ(offsetof(ShadowDataCB, cascadeCount), 644u);
+    EXPECT_EQ(offsetof(ShadowDataCB, shadowMapSize), 648u);
+    EXPECT_EQ(offsetof(ShadowDataCB, receiverBias), 652u);
+    EXPECT_EQ(offsetof(ShadowDataCB, shadowFadeStart), 656u);
+    EXPECT_EQ(offsetof(ShadowDataCB, shadowFadeEnd), 660u);
+    EXPECT_EQ(offsetof(ShadowDataCB, atlasColumns), 672u);
 }
 
 TEST(ShadowDataCB, DefaultInitialization_AllZero) {
@@ -201,8 +223,9 @@ TEST(ComputeCascades, SplitNear_FirstCascade_EqualsCameraNear) {
     const auto tc = MakeStandardCamera(1.0f, 500.0f);
     ShadowConfig cfg = DefaultConfig();
     ShadowCascade cascades[4];
+    uint32_t totalCount = 0;
 
-    ComputeCascades(tc.view, tc.proj, tc.lightDir, cfg, cascades);
+    ComputeCascades(tc.view, tc.proj, tc.lightDir, cfg, cascades, &totalCount);
 
     EXPECT_NEAR(cascades[0].splitNear, 1.0f, 1e-4f);
 }
@@ -210,8 +233,9 @@ TEST(ComputeCascades, SplitNear_FirstCascade_EqualsCameraNear) {
 TEST(ComputeCascades, SplitDistances_AreMonotonicallyIncreasing) {
     const auto tc = MakeStandardCamera();
     ShadowCascade cascades[4];
+    uint32_t totalCount = 0;
 
-    ComputeCascades(tc.view, tc.proj, tc.lightDir, DefaultConfig(), cascades);
+    ComputeCascades(tc.view, tc.proj, tc.lightDir, DefaultConfig(), cascades, &totalCount);
 
     for (uint32_t i = 1; i < 4; ++i) {
         EXPECT_GT(cascades[i].splitNear, cascades[i - 1].splitNear)
@@ -228,8 +252,9 @@ TEST(ComputeCascades, ExponentialSplit_FirstCascade_IsTighterThanLinear) {
     ShadowConfig cfg = DefaultConfig();
     cfg.maxDistance = 500.0f;
     ShadowCascade cascades[4];
+    uint32_t totalCount = 0;
 
-    ComputeCascades(tc.view, tc.proj, tc.lightDir, cfg, cascades);
+    ComputeCascades(tc.view, tc.proj, tc.lightDir, cfg, cascades, &totalCount);
 
     const float range = cascades[3].splitFarFadeStart - cascades[0].splitNear;
     const float firstCascadeRange = cascades[0].splitFarFadeStart - cascades[0].splitNear;
@@ -245,8 +270,9 @@ TEST(ComputeCascades, ExponentialSplit_LastCascade_IsWiderThanFirst) {
     ShadowConfig cfg = DefaultConfig();
     cfg.maxDistance = 500.0f;
     ShadowCascade cascades[4];
+    uint32_t totalCount = 0;
 
-    ComputeCascades(tc.view, tc.proj, tc.lightDir, cfg, cascades);
+    ComputeCascades(tc.view, tc.proj, tc.lightDir, cfg, cascades, &totalCount);
 
     const float firstWidth = cascades[0].splitFarFadeStart - cascades[0].splitNear;
     const float lastWidth = cascades[3].splitFarFadeStart - cascades[3].splitNear;
@@ -264,8 +290,9 @@ TEST(ComputeCascades, NonLastCascades_HaveExtendedSplitFar) {
     ShadowConfig cfg = DefaultConfig();
     cfg.maxDistance = 500.0f;
     ShadowCascade cascades[4];
+    uint32_t totalCount = 0;
 
-    ComputeCascades(tc.view, tc.proj, tc.lightDir, cfg, cascades);
+    ComputeCascades(tc.view, tc.proj, tc.lightDir, cfg, cascades, &totalCount);
 
     // Non-last cascades should have splitFar > splitFarFadeStart (extended)
     for (uint32_t i = 0; i < 3; ++i) {
@@ -279,8 +306,9 @@ TEST(ComputeCascades, LastCascade_SplitFar_EqualsFadeStart) {
     ShadowConfig cfg = DefaultConfig();
     cfg.maxDistance = 500.0f;
     ShadowCascade cascades[4];
+    uint32_t totalCount = 0;
 
-    ComputeCascades(tc.view, tc.proj, tc.lightDir, cfg, cascades);
+    ComputeCascades(tc.view, tc.proj, tc.lightDir, cfg, cascades, &totalCount);
 
     // Last cascade should NOT be extended
     EXPECT_FLOAT_EQ(cascades[3].splitFar, cascades[3].splitFarFadeStart);
@@ -293,8 +321,9 @@ TEST(ComputeCascades, LastCascade_SplitFar_EqualsFadeStart) {
 TEST(ComputeCascades, ComputedDepthBias_AllPositive) {
     const auto tc = MakeStandardCamera();
     ShadowCascade cascades[4];
+    uint32_t totalCount = 0;
 
-    ComputeCascades(tc.view, tc.proj, tc.lightDir, DefaultConfig(), cascades);
+    ComputeCascades(tc.view, tc.proj, tc.lightDir, DefaultConfig(), cascades, &totalCount);
 
     for (uint32_t i = 0; i < 4; ++i) {
         EXPECT_GT(cascades[i].computedDepthBias, 0.0f)
@@ -305,8 +334,9 @@ TEST(ComputeCascades, ComputedDepthBias_AllPositive) {
 TEST(ComputeCascades, ComputedNormalBias_AllPositive) {
     const auto tc = MakeStandardCamera();
     ShadowCascade cascades[4];
+    uint32_t totalCount = 0;
 
-    ComputeCascades(tc.view, tc.proj, tc.lightDir, DefaultConfig(), cascades);
+    ComputeCascades(tc.view, tc.proj, tc.lightDir, DefaultConfig(), cascades, &totalCount);
 
     for (uint32_t i = 0; i < 4; ++i) {
         EXPECT_GT(cascades[i].computedNormalBias, 0.0f)
@@ -318,8 +348,9 @@ TEST(ComputeCascades, ComputedDepthBias_IncreasesWithCascadeIndex) {
     // With cascadeBiasDistribution=1.0, far cascades get larger bias
     const auto tc = MakeStandardCamera();
     ShadowCascade cascades[4];
+    uint32_t totalCount = 0;
 
-    ComputeCascades(tc.view, tc.proj, tc.lightDir, DefaultConfig(), cascades);
+    ComputeCascades(tc.view, tc.proj, tc.lightDir, DefaultConfig(), cascades, &totalCount);
 
     for (uint32_t i = 1; i < 4; ++i) {
         EXPECT_GT(cascades[i].computedDepthBias, cascades[i - 1].computedDepthBias)
@@ -334,8 +365,9 @@ TEST(ComputeCascades, ComputedDepthBias_IncreasesWithCascadeIndex) {
 TEST(ComputeCascades, ViewProj_AllCascades_AreFinite) {
     const auto tc = MakeStandardCamera();
     ShadowCascade cascades[4];
+    uint32_t totalCount = 0;
 
-    ComputeCascades(tc.view, tc.proj, tc.lightDir, DefaultConfig(), cascades);
+    ComputeCascades(tc.view, tc.proj, tc.lightDir, DefaultConfig(), cascades, &totalCount);
 
     for (uint32_t i = 0; i < 4; ++i) {
         EXPECT_TRUE(IsFiniteMatrix(cascades[i].viewProj))
@@ -346,8 +378,9 @@ TEST(ComputeCascades, ViewProj_AllCascades_AreFinite) {
 TEST(ComputeCascades, ViewProj_AllCascades_NonZeroDeterminant) {
     const auto tc = MakeStandardCamera();
     ShadowCascade cascades[4];
+    uint32_t totalCount = 0;
 
-    ComputeCascades(tc.view, tc.proj, tc.lightDir, DefaultConfig(), cascades);
+    ComputeCascades(tc.view, tc.proj, tc.lightDir, DefaultConfig(), cascades, &totalCount);
 
     for (uint32_t i = 0; i < 4; ++i) {
         const float det = MatDet(cascades[i].viewProj);
@@ -363,8 +396,9 @@ TEST(ComputeCascades, ViewProj_AllCascades_NonZeroDeterminant) {
 TEST(ComputeCascades, TexelSize_AllCascades_Positive) {
     const auto tc = MakeStandardCamera();
     ShadowCascade cascades[4];
+    uint32_t totalCount = 0;
 
-    ComputeCascades(tc.view, tc.proj, tc.lightDir, DefaultConfig(), cascades);
+    ComputeCascades(tc.view, tc.proj, tc.lightDir, DefaultConfig(), cascades, &totalCount);
 
     for (uint32_t i = 0; i < 4; ++i) {
         EXPECT_GT(cascades[i].texelSize, 0.0f)
@@ -375,8 +409,9 @@ TEST(ComputeCascades, TexelSize_AllCascades_Positive) {
 TEST(ComputeCascades, TexelSize_IncreasesWithCascadeIndex) {
     const auto tc = MakeStandardCamera();
     ShadowCascade cascades[4];
+    uint32_t totalCount = 0;
 
-    ComputeCascades(tc.view, tc.proj, tc.lightDir, DefaultConfig(), cascades);
+    ComputeCascades(tc.view, tc.proj, tc.lightDir, DefaultConfig(), cascades, &totalCount);
 
     for (uint32_t i = 1; i < 4; ++i) {
         EXPECT_GT(cascades[i].texelSize, cascades[i - 1].texelSize)
@@ -398,8 +433,10 @@ TEST(ComputeCascades, HigherResolution_ProducesSmallerTexels) {
     cfgHigh.maxDistance = 500.0f;
 
     ShadowCascade lowRes[4], highRes[4];
-    ComputeCascades(tc.view, tc.proj, tc.lightDir, cfgLow, lowRes);
-    ComputeCascades(tc.view, tc.proj, tc.lightDir, cfgHigh, highRes);
+    uint32_t totalCountLow = 0;
+    ComputeCascades(tc.view, tc.proj, tc.lightDir, cfgLow, lowRes, &totalCountLow);
+    uint32_t totalCountHigh = 0;
+    ComputeCascades(tc.view, tc.proj, tc.lightDir, cfgHigh, highRes, &totalCountHigh);
 
     for (uint32_t i = 0; i < 4; ++i) {
         EXPECT_GT(lowRes[i].texelSize, highRes[i].texelSize)
@@ -417,8 +454,9 @@ TEST(ComputeCascades, MaxDistance_LessThan_CameraFar_ClampsLastSplit) {
     cfg.cascadeCount = 4;
     cfg.maxDistance = 50.0f;
     ShadowCascade cascades[4];
+    uint32_t totalCount = 0;
 
-    ComputeCascades(tc.view, tc.proj, tc.lightDir, cfg, cascades);
+    ComputeCascades(tc.view, tc.proj, tc.lightDir, cfg, cascades, &totalCount);
 
     // Last cascade splitFarFadeStart should be near maxDistance
     EXPECT_NEAR(cascades[3].splitFarFadeStart, 50.0f, 1e-4f);
@@ -434,8 +472,9 @@ TEST(ComputeCascades, SingleCascade_SplitNear_EqualsCameraNear) {
     cfg.cascadeCount = 1;
     cfg.maxDistance = 100.0f;
     ShadowCascade cascades[1];
+    uint32_t totalCount = 0;
 
-    ComputeCascades(tc.view, tc.proj, tc.lightDir, cfg, cascades);
+    ComputeCascades(tc.view, tc.proj, tc.lightDir, cfg, cascades, &totalCount);
 
     EXPECT_NEAR(cascades[0].splitNear, 1.0f, 1e-4f);
 }
@@ -446,8 +485,9 @@ TEST(ComputeCascades, SingleCascade_SplitFar_EqualsMaxDistance) {
     cfg.cascadeCount = 1;
     cfg.maxDistance = 100.0f;
     ShadowCascade cascades[1];
+    uint32_t totalCount = 0;
 
-    ComputeCascades(tc.view, tc.proj, tc.lightDir, cfg, cascades);
+    ComputeCascades(tc.view, tc.proj, tc.lightDir, cfg, cascades, &totalCount);
 
     // Single cascade = last cascade, so splitFar should equal splitFarFadeStart
     EXPECT_NEAR(cascades[0].splitFarFadeStart, 100.0f, 1e-4f);
@@ -459,7 +499,8 @@ TEST(ComputeCascades, SingleCascade_ViewProj_IsInvertible) {
     cfg.cascadeCount = 1;
     ShadowCascade cascade[1];
 
-    ComputeCascades(tc.view, tc.proj, tc.lightDir, cfg, cascade);
+    uint32_t totalCount = 0;
+    ComputeCascades(tc.view, tc.proj, tc.lightDir, cfg, cascade, &totalCount);
 
     EXPECT_TRUE(IsFiniteMatrix(cascade[0].viewProj));
     EXPECT_GT(std::abs(MatDet(cascade[0].viewProj)), 1e-10f);
@@ -475,8 +516,9 @@ TEST(ComputeCascades, SmallNearFar_NoDegenerate) {
     cfg.cascadeCount = 4;
     cfg.maxDistance = 10.0f;
     ShadowCascade cascades[4];
+    uint32_t totalCount = 0;
 
-    ComputeCascades(tc.view, tc.proj, tc.lightDir, cfg, cascades);
+    ComputeCascades(tc.view, tc.proj, tc.lightDir, cfg, cascades, &totalCount);
 
     for (uint32_t i = 0; i < 4; ++i) {
         EXPECT_TRUE(IsFiniteMatrix(cascades[i].viewProj))
@@ -486,4 +528,188 @@ TEST(ComputeCascades, SmallNearFar_NoDegenerate) {
         EXPECT_GT(cascades[i].texelSize, 0.0f)
             << "Cascade " << i << " texelSize is non-positive for small near/far";
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Far shadow cascades — backward compatibility
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST(ComputeCascades, FarShadowsDisabled_TotalCount_EqualsMainCount) {
+    const auto tc = MakeStandardCamera(1.0f, 500.0f);
+    ShadowConfig cfg = DefaultConfig();
+    cfg.maxDistance = 500.0f;
+    cfg.farShadowCascadeCount = 0; // Explicitly disabled (default)
+    ShadowCascade cascades[kMaxShadowCascades];
+    uint32_t totalCount = 0;
+
+    ComputeCascades(tc.view, tc.proj, tc.lightDir, cfg, cascades, &totalCount);
+
+    EXPECT_EQ(totalCount, cfg.cascadeCount);
+}
+
+TEST(ComputeCascades, FarShadowsDisabled_NoCascadesMarkedFar) {
+    const auto tc = MakeStandardCamera(1.0f, 500.0f);
+    ShadowConfig cfg = DefaultConfig();
+    cfg.maxDistance = 500.0f;
+    ShadowCascade cascades[kMaxShadowCascades];
+    uint32_t totalCount = 0;
+
+    ComputeCascades(tc.view, tc.proj, tc.lightDir, cfg, cascades, &totalCount);
+
+    for (uint32_t i = 0; i < totalCount; ++i) {
+        EXPECT_FALSE(cascades[i].bFarShadowCascade)
+            << "Cascade " << i << " should not be marked as far shadow";
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Far shadow cascades — enabled
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST(ComputeCascades, FarShadowsEnabled_TotalCount_IsMainPlusFar) {
+    const auto tc = MakeStandardCamera(1.0f, 500.0f);
+    ShadowConfig cfg = DefaultConfig();
+    cfg.maxDistance = 400.0f;
+    cfg.farShadowCascadeCount = 2;
+    cfg.farShadowDistance = 3000.0f;
+    ShadowCascade cascades[kMaxShadowCascades];
+    uint32_t totalCount = 0;
+
+    ComputeCascades(tc.view, tc.proj, tc.lightDir, cfg, cascades, &totalCount);
+
+    EXPECT_EQ(totalCount, cfg.cascadeCount + cfg.farShadowCascadeCount);
+}
+
+TEST(ComputeCascades, FarShadowsEnabled_FarCascadesMarkedCorrectly) {
+    const auto tc = MakeStandardCamera(1.0f, 500.0f);
+    ShadowConfig cfg = DefaultConfig();
+    cfg.maxDistance = 400.0f;
+    cfg.farShadowCascadeCount = 2;
+    cfg.farShadowDistance = 3000.0f;
+    ShadowCascade cascades[kMaxShadowCascades];
+    uint32_t totalCount = 0;
+
+    ComputeCascades(tc.view, tc.proj, tc.lightDir, cfg, cascades, &totalCount);
+
+    // Main cascades (0..3) should NOT be marked far
+    for (uint32_t i = 0; i < cfg.cascadeCount; ++i) {
+        EXPECT_FALSE(cascades[i].bFarShadowCascade)
+            << "Main cascade " << i << " should not be far";
+    }
+    // Far cascades (4..5) should be marked far
+    for (uint32_t i = cfg.cascadeCount; i < totalCount; ++i) {
+        EXPECT_TRUE(cascades[i].bFarShadowCascade)
+            << "Far cascade " << i << " should be marked far";
+    }
+}
+
+TEST(ComputeCascades, FarShadowsEnabled_SplitsAreContinuous) {
+    const auto tc = MakeStandardCamera(1.0f, 500.0f);
+    ShadowConfig cfg = DefaultConfig();
+    cfg.maxDistance = 400.0f;
+    cfg.farShadowCascadeCount = 2;
+    cfg.farShadowDistance = 3000.0f;
+    ShadowCascade cascades[kMaxShadowCascades];
+    uint32_t totalCount = 0;
+
+    ComputeCascades(tc.view, tc.proj, tc.lightDir, cfg, cascades, &totalCount);
+
+    // First far cascade starts where main cascades end (maxDistance)
+    // The splitNear of far cascade 0 should be the un-extended splitFar of the last main cascade
+    const float lastMainSplitFar = cascades[cfg.cascadeCount - 1].splitFarFadeStart;
+    EXPECT_NEAR(cascades[cfg.cascadeCount].splitNear, lastMainSplitFar, 1e-2f);
+}
+
+TEST(ComputeCascades, FarShadowsEnabled_AllCascades_MonotonicallyIncreasing) {
+    const auto tc = MakeStandardCamera(1.0f, 500.0f);
+    ShadowConfig cfg = DefaultConfig();
+    cfg.maxDistance = 400.0f;
+    cfg.farShadowCascadeCount = 4;
+    cfg.farShadowDistance = 3000.0f;
+    ShadowCascade cascades[kMaxShadowCascades];
+    uint32_t totalCount = 0;
+
+    ComputeCascades(tc.view, tc.proj, tc.lightDir, cfg, cascades, &totalCount);
+
+    EXPECT_EQ(totalCount, 8u);
+    for (uint32_t i = 1; i < totalCount; ++i) {
+        EXPECT_GT(cascades[i].splitNear, cascades[i - 1].splitNear)
+            << "splitNear not increasing at index " << i;
+    }
+}
+
+TEST(ComputeCascades, FarShadowsEnabled_ViewProj_AllFinite) {
+    const auto tc = MakeStandardCamera(1.0f, 500.0f);
+    ShadowConfig cfg = DefaultConfig();
+    cfg.maxDistance = 400.0f;
+    cfg.farShadowCascadeCount = 4;
+    cfg.farShadowDistance = 3000.0f;
+    ShadowCascade cascades[kMaxShadowCascades];
+    uint32_t totalCount = 0;
+
+    ComputeCascades(tc.view, tc.proj, tc.lightDir, cfg, cascades, &totalCount);
+
+    for (uint32_t i = 0; i < totalCount; ++i) {
+        EXPECT_TRUE(IsFiniteMatrix(cascades[i].viewProj))
+            << "Cascade " << i << " viewProj contains NaN or Inf";
+        EXPECT_GT(std::abs(MatDet(cascades[i].viewProj)), 1e-10f)
+            << "Cascade " << i << " viewProj is singular";
+    }
+}
+
+TEST(ComputeCascades, FarShadowDistance_TooClose_NoFarCascades) {
+    // If farShadowDistance - maxDistance < 100cm, no far cascades should be produced
+    const auto tc = MakeStandardCamera(1.0f, 500.0f);
+    ShadowConfig cfg = DefaultConfig();
+    cfg.maxDistance = 400.0f;
+    cfg.farShadowCascadeCount = 2;
+    cfg.farShadowDistance = 400.05f; // Only 0.05cm beyond maxDistance
+    ShadowCascade cascades[kMaxShadowCascades];
+    uint32_t totalCount = 0;
+
+    ComputeCascades(tc.view, tc.proj, tc.lightDir, cfg, cascades, &totalCount);
+
+    // Should fall back to main-only
+    EXPECT_EQ(totalCount, cfg.cascadeCount);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GetAtlasColumns / GetAtlasRows
+// ─────────────────────────────────────────────────────────────────────────────
+
+TEST(AtlasLayout, GetAtlasColumns_1to4_Returns2) {
+    EXPECT_EQ(GetAtlasColumns(1), 2u);
+    EXPECT_EQ(GetAtlasColumns(2), 2u);
+    EXPECT_EQ(GetAtlasColumns(3), 2u);
+    EXPECT_EQ(GetAtlasColumns(4), 2u);
+}
+
+TEST(AtlasLayout, GetAtlasColumns_5to6_Returns3) {
+    EXPECT_EQ(GetAtlasColumns(5), 3u);
+    EXPECT_EQ(GetAtlasColumns(6), 3u);
+}
+
+TEST(AtlasLayout, GetAtlasColumns_7to8_Returns4) {
+    EXPECT_EQ(GetAtlasColumns(7), 4u);
+    EXPECT_EQ(GetAtlasColumns(8), 4u);
+}
+
+TEST(AtlasLayout, GetAtlasRows_4Cascades_Returns2) {
+    EXPECT_EQ(GetAtlasRows(4), 2u);
+}
+
+TEST(AtlasLayout, GetAtlasRows_6Cascades_Returns2) {
+    EXPECT_EQ(GetAtlasRows(6), 2u);
+}
+
+TEST(AtlasLayout, GetAtlasRows_8Cascades_Returns2) {
+    EXPECT_EQ(GetAtlasRows(8), 2u);
+}
+
+TEST(AtlasLayout, GetAtlasRows_5Cascades_Returns2) {
+    EXPECT_EQ(GetAtlasRows(5), 2u);
+}
+
+TEST(AtlasLayout, GetAtlasRows_7Cascades_Returns2) {
+    EXPECT_EQ(GetAtlasRows(7), 2u);
 }

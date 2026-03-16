@@ -38,11 +38,21 @@ namespace uz {
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Hard limit on the number of shadow cascades.
+/// Hard limit on the total number of shadow cascades (main + far).
 ///
 /// GPU constant buffer layouts and shader arrays are sized to this value.
 /// Requesting more cascades than this is a programming error.
-constexpr uint32_t kMaxShadowCascades = 4;
+/// Supports up to 4 main cascades + 4 far shadow cascades.
+/// Source: UE5 DLC.h:112 (FarShadowCascadeCount), DLC.cpp:1023 (FarShadowDistance).
+constexpr uint32_t kMaxShadowCascades = 8;
+
+/// Maximum number of main (near) shadow cascades.
+///
+/// Far shadow cascades extend beyond this limit using `farShadowCascadeCount`.
+constexpr uint32_t kMaxMainCascades = 4;
+
+/// Maximum number of far shadow cascades.
+constexpr uint32_t kMaxFarCascades = 4;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ShadowCascade — per-cascade output data
@@ -86,6 +96,12 @@ struct ShadowCascade {
 
     /// Per-cascade normal bias, scaled proportionally to texel size.
     float computedNormalBias = 0.0f;
+
+    /// True if this cascade is a far shadow cascade (extended range, lower LOD).
+    /// Far cascades cover the distance beyond the main CSM `maxDistance` up to
+    /// `farShadowDistance`. Renderers can use this flag to select coarser mesh LODs.
+    /// Source: UE5 DLC.cpp:68 (FarShadowLODBias).
+    bool bFarShadowCascade = false;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -161,6 +177,28 @@ struct ShadowConfig {
     /// Controls the search radius for blocker search and caps the PCF filter radius.
     /// UE5 default: 40.0. Source: ShadowRendering.cpp:188-192.
     float maxSoftKernelSize = 40.0f;
+
+    // ── Far Shadow Cascades — UE5 parity ────────────────────────────────
+
+    /// Maximum far shadow distance from the camera in cm.
+    /// Far cascades cover the range [maxDistance, farShadowDistance] using
+    /// additional cascade tiers with coarser mesh LODs.
+    /// UE5 default: 300000 cm (3km). Source: DLC.cpp:1023.
+    /// Only used when `farShadowCascadeCount > 0`.
+    float farShadowDistance = 300000.0f;
+
+    /// Number of far shadow cascades to compute (0 to kMaxFarCascades).
+    /// 0 = far shadows disabled (default — backward compatible).
+    /// Far cascades are appended after the main cascades in the output array.
+    /// Total cascade count = cascadeCount + farShadowCascadeCount.
+    /// Source: UE5 DLC.h:112 (FarShadowCascadeCount).
+    uint32_t farShadowCascadeCount = 0;
+
+    /// LOD bias applied to meshes rendered into far shadow cascades.
+    /// Positive values select coarser mesh LODs, reducing GPU cost for the
+    /// extended range where per-texel resolution is much lower.
+    /// UE5 default: 0. Source: DLC.cpp:68 (FarShadowLODBias).
+    int32_t farShadowLodBias = 0;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -169,6 +207,10 @@ struct ShadowConfig {
 
 /// Computes cascade split distances and light-space matrices for CSM.
 ///
+/// When `config.farShadowCascadeCount > 0`, far cascades are appended after
+/// the main cascades in `outCascades`. The total number of cascades written
+/// is returned via `outTotalCascadeCount`.
+///
 /// # Arguments
 /// * `cameraView`  — The camera's view matrix (world-to-view).
 /// * `cameraProj`  — The camera's perspective projection matrix.
@@ -176,11 +218,15 @@ struct ShadowConfig {
 /// * `lightDir`    — Normalized direction the light is shining **toward**
 ///   (e.g., for a sun at noon pointing down: `{0, -1, 0}`). Must not be zero.
 /// * `config`      — Shadow configuration (cascade count, resolution, etc.).
-/// * `outCascades` — Output array with at least `config.cascadeCount` elements.
+/// * `outCascades` — Output array with at least
+///   `config.cascadeCount + config.farShadowCascadeCount` elements.
 ///   Each element is fully written; no prior initialization is required.
+/// * `outTotalCascadeCount` — Receives the total number of cascades written
+///   (main + far). Must not be null.
 ///
 /// # Panics
-/// - `UZ_CHECK` if `config.cascadeCount` is 0 or exceeds `kMaxShadowCascades`.
+/// - `UZ_CHECK` if `config.cascadeCount` is 0 or exceeds `kMaxMainCascades`.
+/// - `UZ_CHECK` if total cascade count exceeds `kMaxShadowCascades`.
 /// - `UZ_CHECK` if `lightDir` is approximately zero-length.
 ///
 /// # Shadow Shimmer Prevention
@@ -188,11 +234,17 @@ struct ShadowConfig {
 /// boundaries so that sub-pixel camera movement does not cause shadow edges to
 /// flicker. This is achieved by rounding the light-space AABB min/max to
 /// multiples of the world-space texel size.
+///
+/// # Backward Compatibility
+/// When `config.farShadowCascadeCount == 0` (default), this function behaves
+/// identically to the previous version — `outTotalCascadeCount` equals
+/// `config.cascadeCount` and no far cascades are produced.
 void ComputeCascades(
     const Mat4& cameraView,
     const Mat4& cameraProj,
     const Vec3& lightDir,
     const ShadowConfig& config,
-    ShadowCascade* outCascades);
+    ShadowCascade* outCascades,
+    uint32_t* outTotalCascadeCount);
 
 } // namespace uz

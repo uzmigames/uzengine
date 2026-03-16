@@ -1,5 +1,3 @@
-#pragma once
-
 /// GBuffer — Manages deferred rendering targets (albedo+AO, packed normal+metal+rough, depth, velocity).
 ///
 /// Owns four GPU textures and their SRV heap indices for the lighting and post-process passes.
@@ -7,6 +5,8 @@
 ///
 /// # Thread Safety
 /// Not thread-safe. All calls must happen on the render thread.
+
+#pragma once
 
 #include "rhi_types.h"
 

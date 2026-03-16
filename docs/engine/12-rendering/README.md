@@ -28,6 +28,8 @@ The rendering pipeline system is split across multiple documents covering archit
 | [16-material-system.md](16-material-system.md) | Planned (2.0) | High-level material system overview, .uzmat format, manager, hot-reload | Material management |
 | [17-lighting.md](17-lighting.md) | **Done (1.3+)** | **Multi-light system (8 lights max), light types, attenuation math, CPU culling** + Phase 2-4 roadmap | **Lighting systems** |
 | [18-shadow-system.md](18-shadow-system.md) | **Done (Phase 2)** | **UE5 Exact Parity: exponential accumulation splits, Z-up light up-vector, per-cascade bias, cascade blending** | **Directional light shadows** |
+| [28-pcss-soft-shadows.md](28-pcss-soft-shadows.md) | Planned (2.2) | PCSS algorithm (blocker search, penumbra estimation, adaptive PCF), performance tuning, parameter reference | Soft shadow filtering |
+| [29-far-shadow-cascades.md](29-far-shadow-cascades.md) | **Done (Phase 2.3)** | **Far shadow cascades: extended distance (0–3km), 4–8 total cascades, atlas layout, UE5 exact parity** | **Extended shadow coverage** |
 | [19-post-processing.md](19-post-processing.md) | Planned (2.0) | Post-process chains, bloom, tonemap, SSAO, TAA, upscaling | Post-processing effects |
 | [20-shader-compatibility.md](20-shader-compatibility.md) | **Done (1.2)** | **Cross-backend shader compilation, SM6.6 bindless vs SM5, DXIL/DXBC/SPIR-V targets** | **Multi-target shaders** |
 | [21-renderer-passes.md](21-renderer-passes.md) | **Done (1.2–Phase 2.5)** | **PBR, GBuffer, Lighting, Shadow, Sky Atmosphere, Height Fog, Debug passes — complete reference** | **All render passes** |
@@ -101,6 +103,22 @@ The rendering pipeline system is split across multiple documents covering archit
 2. Understand the practical split algorithm and texel snapping
 3. Learn cascade blending and PCF filtering for soft shadows
 4. Reference the shadow pass setup in render graph integration
+
+**Implement cinematic soft shadows (PCSS)**
+
+1. Read [28-pcss-soft-shadows.md](28-pcss-soft-shadows.md) for three-stage algorithm (blocker search, penumbra, PCF)
+2. Understand light source angle and adaptive kernel sizing
+3. Configure CVar parameters: FilterMethod, MaxSoftKernelSize, LightSourceAngle, CSMSplitPenumbraScale
+4. Compare performance (1.33× vs. uniform PCF) and decide per-platform
+5. Reference blocker search implementation for Sobol sampling patterns
+
+**Extend shadow coverage with far cascades**
+
+1. Read [29-far-shadow-cascades.md](29-far-shadow-cascades.md) for parameters, data flow, and atlas layout
+2. Understand the activation guard (gap > 100cm between maxDistance and farShadowDistance)
+3. Learn atlas grid layout for 5–8 total cascades (2×2 → 3×2 → 4×2)
+4. Configure DirectionalLight: farShadowCascadeCount (0–4), farShadowDistance (km scale), farShadowLodBias
+5. Set farShadowCascadeCount=2 as a good default for open worlds; disable for indoor games
 
 **Work with Image-Based Lighting (IBL)**
 

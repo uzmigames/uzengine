@@ -541,10 +541,17 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
         camera, sunDir,
         lightData.perLightShadowBias, lightData.perLightShadowSlopeBias,
         lightData.lightSourceAngleDeg,
-        m_shadowAtlas.GetSrvIndex(), kShadowResolution, *m_cbRing);
+        m_shadowAtlas.GetSrvIndex(), kShadowResolution, *m_cbRing,
+        lightData.farShadowCascadeCount,
+        lightData.farShadowDistance,
+        lightData.farShadowLodBias);
     const auto& shadowCfg  = shadowFrame.config;
     const auto* cascades    = shadowFrame.cascades;
+    const uint32_t totalCascadeCount = shadowFrame.totalCascadeCount;
     CBAllocation shadowAlloc = shadowFrame.cbAllocation;
+
+    // Resize shadow atlas if cascade count changed (e.g., far shadows toggled)
+    m_shadowAtlas.Resize(m_device, totalCascadeCount);
 
     // ── Build draw list from ECS ────────────────────────────────────────
     DrawList drawList;
@@ -648,11 +655,12 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
         shadowDesc.indexFormat          = renderMesh.indexFormat;
         shadowDesc.indexCount           = renderMesh.indexCount;
         shadowDesc.bindless             = bindless;
-        for (uint32_t i = 0; i < shadowCfg.cascadeCount; ++i) {
+        for (uint32_t i = 0; i < totalCascadeCount; ++i) {
             shadowDesc.cascades[i] = cascades[i];
         }
-        shadowDesc.cascadeCount     = shadowCfg.cascadeCount;
+        shadowDesc.cascadeCount     = totalCascadeCount;
         shadowDesc.atlasResolution  = kShadowResolution;
+        shadowDesc.farShadowLodBias = shadowFrame.config.farShadowLodBias;
         // TEMP: disable instancing for shadows to debug flickering
         // if (useInstancing) {
         //     shadowDesc.instanced              = true;

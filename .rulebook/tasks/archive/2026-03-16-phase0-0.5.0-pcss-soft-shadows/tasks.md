@@ -49,6 +49,6 @@
 
 ## 9. Documentation
 
-- [ ] 9.1 Document PCSS algorithm (blocker search → penumbra → adaptive PCF)
-- [ ] 9.2 Document parameters: filterMethod, maxSoftKernelSize, lightSourceAngle with UE5 equivalents
-- [ ] 9.3 Performance guide: PCSS cost vs PCF
+- [x] 9.1 Document PCSS algorithm (blocker search → penumbra → adaptive PCF) — docs/engine/12-rendering/28-pcss-soft-shadows.md
+- [x] 9.2 Document parameters: filterMethod, maxSoftKernelSize, lightSourceAngle with UE5 equivalents — included in 28-pcss-soft-shadows.md
+- [x] 9.3 Performance guide: PCSS cost vs PCF — included in 28-pcss-soft-shadows.md (benchmark table + platform analysis)

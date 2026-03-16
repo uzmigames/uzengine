@@ -1,5 +1,3 @@
-#pragma once
-
 /// Render Graph Type Definitions — Virtual resource handles, descriptors, and pass resource access.
 ///
 /// These types form the public vocabulary of the render graph. Resources are referenced
@@ -9,6 +7,8 @@
 /// # Ownership
 /// All render graph types are value types with trivial copy semantics.
 /// The `RgBuilder` owns the storage backing descriptors and resource metadata.
+
+#pragma once
 
 #include <cstdint>
 #include <functional>

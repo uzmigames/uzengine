@@ -34,6 +34,14 @@ struct LightFrameData {
     float perLightShadowBias      = 0.5f; ///< Per-light shadow bias (UE5: ShadowBias).
     float perLightShadowSlopeBias = 0.5f; ///< Per-light slope bias (UE5: ShadowSlopeBias).
     float lightSourceAngleDeg     = 0.5357f; ///< Sun disk angular diameter in degrees (UE5: LightSourceAngle).
+
+    /// Far shadow cascade count (0 = disabled). @source UE5 DirectionalLightComponent.h:112
+    uint32_t farShadowCascadeCount = 0;
+    /// Far shadow max distance in cm. @source UE5 DirectionalLightComponent.cpp:1023
+    float farShadowDistance = 300000.0f;
+    /// LOD bias for far shadow cascades. @source UE5 DirectionalLightComponent.cpp:68
+    int32_t farShadowLodBias = 0;
+
     CBAllocation lightingCBAlloc;          ///< LightingCB upload in CB ring.
 };
 

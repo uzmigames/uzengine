@@ -19,6 +19,7 @@ Complete architectural analysis of UE5 5.6 rendering systems extracted from sour
 Analysis of cascade shadow maps (CSM), PCF filtering, PCSS soft shadows, reversed-Z depth handling, and static shadow caching.
 
 **Key files**:
+- [ue5-reversed-z-shadow-maps.md](ue5-reversed-z-shadow-maps.md) — **Complete reversed-Z implementation** (clear values, projection matrices, depth tests, samplers, PCF logic)
 - [shadow-comparison-semantics.md](shadows/shadow-comparison-semantics.md) — Three-phase depth conversion pattern
 - [ue5-far-shadow-cascades-analysis.md](shadows/ue5-far-shadow-cascades-analysis.md) — Far cascade system
 - [ue5-pcss-implementation-analysis.md](shadows/ue5-pcss-implementation-analysis.md) — Percentage-Closer Soft Shadows

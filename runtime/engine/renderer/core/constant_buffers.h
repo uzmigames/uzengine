@@ -197,30 +197,45 @@ static_assert(sizeof(LightingCB) % 256 == 0, "LightingCB must be a multiple of 2
 ///
 /// Contains per-cascade light-space view-projection matrices, split distances,
 /// per-cascade bias, fade parameters, and shadow atlas SRV index.
+/// Supports up to 8 cascades (4 main + 4 far shadow cascades).
 /// Bound at register `b4`. UE5 parity — all parameters match UE5 5.6 defaults.
 ///
 /// Padded to a 256-byte multiple as required by D3D12 constant buffer alignment.
+///
+/// # Layout (768 bytes = 3 * 256)
+/// - cascadeViewProj[8]:    8 * 64 = 512 bytes
+/// - cascadeSplits[8]:      8 * 4  = 32 bytes
+/// - cascadeFadeStarts[8]:  8 * 4  = 32 bytes
+/// - cascadeDepthBias[8]:   8 * 4  = 32 bytes
+/// - cascadeNormalBias[8]:  8 * 4  = 32 bytes
+/// - scalar params:                  56 bytes
+/// - padding:                        72 bytes
+/// Total: 768 bytes
 struct ShadowDataCB {
-    Mat4     cascadeViewProj[4];   ///< Light-space viewProj per cascade (4 * 64 = 256B).
-    Vec4     cascadeSplits;        ///< View-space extended far split per cascade (x=0, y=1, z=2, w=3).
-    Vec4     cascadeFadeStarts;    ///< View-space original (un-extended) far split per cascade.
-                                   ///< Blending starts at fadeStart, ends at split (extended).
-    Vec4     cascadeDepthBias;     ///< Per-cascade computed depth bias (normalized + distributed).
-    Vec4     cascadeNormalBias;    ///< Per-cascade computed normal bias (scaled by texel size).
-    uint32_t shadowAtlasIndex;     ///< SRV heap index for shadow atlas depth texture.
-    uint32_t cascadeCount;         ///< Number of active cascades (1 to 4).
-    float    shadowMapSize;        ///< Per-cascade resolution in texels (e.g., 2048).
-    float    receiverBias;         ///< Shadow receiver bias (UE5 default: 0.9).
-    float    shadowFadeStart;      ///< World distance where last-cascade fade begins.
-    float    shadowFadeEnd;        ///< World distance where shadows fully disappear (maxDistance).
-    uint32_t filterMethod;         ///< 0=5x5 PCF (default), 1=Poisson 16-tap, 2=PCSS.
-    float    tanLightSourceAngle;  ///< tan(sun disk angle) for PCSS penumbra estimation.
-    float    maxSoftKernelSize;    ///< Max PCSS kernel radius in texels (UE5 default: 40).
-    float    _pad[3] = {};         ///< Padding to 16-byte boundary.
-    float    _pad2[36] = {};       ///< Pad to 512 bytes (256-byte multiple).
+    Mat4     cascadeViewProj[8];    ///< Light-space viewProj per cascade (8 * 64 = 512B).
+    float    cascadeSplits[8];      ///< View-space extended far split per cascade.
+    float    cascadeFadeStarts[8];  ///< View-space original (un-extended) far split per cascade.
+                                    ///< Blending starts at fadeStart, ends at split (extended).
+    float    cascadeDepthBias[8];   ///< Per-cascade computed depth bias (normalized + distributed).
+    float    cascadeNormalBias[8];  ///< Per-cascade computed normal bias (scaled by texel size).
+    uint32_t shadowAtlasIndex;      ///< SRV heap index for shadow atlas depth texture (dynamic).
+    uint32_t cascadeCount;          ///< Number of active cascades (1 to 8, main + far).
+    float    shadowMapSize;         ///< Per-cascade resolution in texels (e.g., 2048).
+    float    receiverBias;          ///< Shadow receiver bias (UE5 default: 0.9).
+    float    shadowFadeStart;       ///< World distance where last-cascade fade begins.
+    float    shadowFadeEnd;         ///< World distance where shadows fully disappear.
+    uint32_t filterMethod;          ///< 0=5x5 PCF (default), 1=Poisson 16-tap, 2=PCSS.
+    float    tanLightSourceAngle;   ///< tan(sun disk angle) for PCSS penumbra estimation.
+    float    maxSoftKernelSize;     ///< Max PCSS kernel radius in texels (UE5 default: 40).
+    uint32_t atlasColumns;          ///< Number of columns in the atlas grid (2, 3, or 4).
+    uint32_t staticShadowAtlasIndex = UINT32_MAX; ///< SRV heap index for cached static shadow atlas. UINT32_MAX = no cache.
+    uint32_t useShadowCache = 0;    ///< 0 = no cache (single atlas), 1 = composite static + dynamic.
+    uint32_t dfsEnabled = 0;        ///< 1 = Distance Field Shadows active, 0 = disabled.
+    uint32_t dfsOutputSrvIndex = UINT32_MAX; ///< SRV index for DFS result texture (R16_FLOAT screen-space). UINT32_MAX = not bound.
+    float    _pad2[18] = {};        ///< Pad to 768 bytes (256-byte multiple).
 };
 
-static_assert(sizeof(ShadowDataCB) == 512, "ShadowDataCB must be 512 bytes (256-byte multiple)");
+static_assert(sizeof(ShadowDataCB) == 768, "ShadowDataCB must be 768 bytes (256-byte multiple)");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SkyAtmosphereCB — bound at b2 (reusing per-object slot in fullscreen sky pass)
