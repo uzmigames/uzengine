@@ -136,7 +136,8 @@ This project uses @hivellm/rulebook standards.
 4. Update docs/ when implementing features
 5. Follow strict documentation structure
 6. **NEVER run destructive deletions (`rm -rf`) in this repository; when adding submodules always use `git submodule add`.**
-7. **Temporary files and scripts**:
+7. **NEVER switch git branches autonomously** (`git checkout <branch>`, `git switch`, `git checkout -b`). Multiple Claude tabs share the same working tree — switching branch breaks all concurrent sessions. Only the user may switch branches.
+8. **Temporary files and scripts**:
    - ✅ ALL scripts MUST be created in `/scripts` directory
    - ✅ ALL temporary files (test, log, debug) MUST be in `/scripts`
    - ✅ ALL temporary files MUST be removed immediately after use (MANDATORY)

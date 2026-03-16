@@ -308,6 +308,20 @@ All thirdparty dependencies are managed by `scripts/setup.ps1`. Manual clones cr
 - **Use branches**: `git checkout -b temp-branch && git commit -am "wip"` if you need to test something on a clean tree.
 - **Never touch uncommitted work**: If you need a clean working tree, ask the user to commit or stash manually.
 
+## ⚠️ CRITICAL: NEVER Switch Git Branch Without User Command
+
+**ABSOLUTELY FORBIDDEN**: No agent or conversation may run `git checkout <branch>`, `git switch`, `git checkout -b`, or any command that changes the current branch. **No exceptions** — only the user may switch branches.
+
+### Why
+
+Multiple Claude Code tabs run simultaneously in the same working tree. Switching branch in one tab instantly breaks all other tabs' work, causes merge conflicts, and can result in data loss. The working tree is shared — branch changes are destructive to all concurrent sessions.
+
+### What To Do Instead
+
+- **Use `git diff`** to compare against previous commits without switching.
+- **Ask the user** to switch branches manually if you need to test a different state.
+- **Never create branches autonomously** — only commit to the current branch when the user asks.
+
 ## ⚠️ CRITICAL: File Editing Rules
 
 **MANDATORY**: When editing multiple files, you MUST edit files **SEQUENTIALLY**, one at a time.
