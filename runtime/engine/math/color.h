@@ -78,11 +78,19 @@ struct LinearColor {
     /// 8-bit sRGB color. Values are clamped to [0, 255]. HDR values above 1.0 saturate to 255.
     sRGBColor ToSRGB() const;
 
-    /// Predefined named colors in linear space.
+    // ─────────────────────────────────────────────────────────────────────────
+    // Predefined named colors (linear space)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Returns pure white (1, 1, 1, 1) in linear space.
     static LinearColor White() { return {1, 1, 1, 1}; }
+    /// Returns pure black (0, 0, 0, 1) in linear space — fully opaque, zero luminance.
     static LinearColor Black() { return {0, 0, 0, 1}; }
+    /// Returns pure red (1, 0, 0, 1) in linear space — full red channel only.
     static LinearColor Red() { return {1, 0, 0, 1}; }
+    /// Returns pure green (0, 1, 0, 1) in linear space — full green channel only.
     static LinearColor Green() { return {0, 1, 0, 1}; }
+    /// Returns pure blue (0, 0, 1, 1) in linear space — full blue channel only.
     static LinearColor Blue() { return {0, 0, 1, 1}; }
 
     /// Linear interpolation between two colors in linear space.
@@ -139,17 +147,31 @@ struct sRGBColor {
     uint32_t ToHex() const {
         return ((uint32_t)r << 24) | ((uint32_t)g << 16) | ((uint32_t)b << 8) | (uint32_t)a;
     }
-    /// Unpacks RGBA from a 32-bit integer.
+    /// Unpacks RGBA from a 32-bit integer in `0xRRGGBBAA` layout.
+    ///
+    /// # Arguments
+    /// * `hex` — Packed color (e.g., `0xFF0000FF` = red, `0xFFFFFFFF` = white).
+    ///
+    /// # Returns
+    /// sRGBColor with each channel extracted from the corresponding byte.
     static sRGBColor FromHex(uint32_t hex) {
         return {(uint8_t)((hex >> 24) & 0xFF), (uint8_t)((hex >> 16) & 0xFF),
                 (uint8_t)((hex >> 8) & 0xFF), (uint8_t)(hex & 0xFF)};
     }
 
-    /// Named colors
+    // ─────────────────────────────────────────────────────────────────────────
+    // Predefined named colors (sRGB space)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Returns pure white (255, 255, 255, 255) in sRGB space.
     static sRGBColor White() { return {255, 255, 255, 255}; }
+    /// Returns pure black (0, 0, 0, 255) in sRGB space — fully opaque, zero luminance.
     static sRGBColor Black() { return {0, 0, 0, 255}; }
+    /// Returns pure red (255, 0, 0, 255) in sRGB space — full red channel only.
     static sRGBColor Red() { return {255, 0, 0, 255}; }
+    /// Returns pure green (0, 255, 0, 255) in sRGB space — full green channel only.
     static sRGBColor Green() { return {0, 255, 0, 255}; }
+    /// Returns pure blue (0, 0, 255, 255) in sRGB space — full blue channel only.
     static sRGBColor Blue() { return {0, 0, 255, 255}; }
 };
 

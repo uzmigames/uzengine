@@ -81,7 +81,7 @@ bool EditorGrid::Init(IRHIDevice* device, ShaderPipeline& pipeline,
     // Depth: test only, no write — grid must not occlude geometry at Z=0
     desc.depthStencil.depthEnable = true;
     desc.depthStencil.depthWrite = false;
-    desc.depthStencil.depthFunc = RHICompareFunc::LessEqual;
+    desc.depthStencil.depthFunc = RHICompareFunc::GreaterEqual; // Reversed-Z
 
     // Rasterizer: no culling for fullscreen tri
     desc.rasterizer.cullMode = RHICullMode::None;

@@ -30,7 +30,7 @@
 #pragma once
 
 #include "render_graph_types.h"
-#include "cascade.h"
+#include "shadow_cascade.h"
 #include "instance_batcher.h"
 #include "rhi_types.h"
 

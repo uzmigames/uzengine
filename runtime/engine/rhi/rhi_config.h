@@ -36,15 +36,19 @@ enum class ShaderModel : uint8_t {
 
 /// Resolved RHI configuration from all sources.
 ///
-/// Produced by ResolveRHIConfig(), consumed by device creation.
-/// All fields have safe defaults matching the highest-capability path.
+/// Produced by `ResolveRHIConfig()`, consumed by `ToDeviceDesc()` for device creation.
+/// All fields have safe defaults matching the highest-capability path (DX12 + SM6.6).
+///
+/// # Lifetime
+/// Transient value type — created once during startup and passed to device creation.
+/// Not stored long-term; the device remembers its own backend and shader model.
 struct RHIConfig {
-    RHIBackend backend = RHIBackend::DX12;
-    ShaderModel shaderModel = ShaderModel::SM6_6;
-    bool enableValidation = false;
-    bool enableGpuValidation = false;
-    bool enableBreadcrumbs = false;
-    uint32_t adapterIndex = 0;
+    RHIBackend backend = RHIBackend::DX12;           ///< GPU API backend to initialize.
+    ShaderModel shaderModel = ShaderModel::SM6_6;    ///< Target shader model (may be clamped by GPU caps).
+    bool enableValidation = false;                   ///< Enable API validation layer (DX12 debug, Vulkan VK_LAYER_KHRONOS_validation).
+    bool enableGpuValidation = false;                ///< Enable GPU-based validation (DX12 only; expensive, catches shader errors).
+    bool enableBreadcrumbs = false;                  ///< Enable DRED auto-breadcrumbs for device-removed diagnosis (DX12 only).
+    uint32_t adapterIndex = 0;                       ///< GPU adapter index (0 = system default / high-performance preference).
 };
 
 /// Resolves RHI configuration from all available sources.

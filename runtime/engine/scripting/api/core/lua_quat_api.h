@@ -32,8 +32,13 @@ struct lua_State;
 namespace uz {
 
 /// Registers Quat constructors into the existing `uz.math` table and installs
-/// the `uz.Quat` metatable. Must be called after LuaRegisterMathAPI so that
-/// the `uz.math` table already exists on the Lua state.
+/// the `uz.Quat` metatable with slerp, inverse, normalize, to_euler, dot,
+/// length methods and __mul/__eq/__tostring metamethods.
+/// Must be called after LuaRegisterMathAPI so that the `uz.math` table
+/// already exists on the Lua state.
+///
+/// # Arguments
+/// * `L` — Active Lua state. Must not be null.
 void LuaRegisterQuatAPI(lua_State* L);
 
 } // namespace uz

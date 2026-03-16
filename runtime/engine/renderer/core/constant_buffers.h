@@ -195,20 +195,29 @@ static_assert(sizeof(LightingCB) % 256 == 0, "LightingCB must be a multiple of 2
 
 /// Shadow data constant buffer for cascade shadow map sampling in pixel shaders.
 ///
-/// Contains per-cascade light-space view-projection matrices and split distances,
-/// plus the shadow atlas SRV index for bindless sampling. Bound at register `b4`.
+/// Contains per-cascade light-space view-projection matrices, split distances,
+/// per-cascade bias, fade parameters, and shadow atlas SRV index.
+/// Bound at register `b4`. UE5 parity — all parameters match UE5 5.6 defaults.
 ///
 /// Padded to a 256-byte multiple as required by D3D12 constant buffer alignment.
 struct ShadowDataCB {
-    Mat4     cascadeViewProj[4]; ///< Light-space viewProj per cascade (4 * 64 = 256B).
-    Vec4     cascadeSplits;       ///< View-space far split distance per cascade (x=0, y=1, z=2, w=3).
-    uint32_t shadowAtlasIndex;    ///< SRV heap index for shadow atlas depth texture.
-    uint32_t cascadeCount;        ///< Number of active cascades (1 to 4).
-    float    normalBias;          ///< World-space normal bias applied before shadow comparison.
-    float    depthBias;           ///< Depth bias added during shadow comparison.
-    float    shadowMapSize;       ///< Per-cascade resolution in texels (e.g., 2048).
-    float    _pad[3] = {};        ///< Padding to 16-byte boundary.
-    float    _pad2[52] = {};      ///< Pad to 512 bytes (256-byte multiple).
+    Mat4     cascadeViewProj[4];   ///< Light-space viewProj per cascade (4 * 64 = 256B).
+    Vec4     cascadeSplits;        ///< View-space extended far split per cascade (x=0, y=1, z=2, w=3).
+    Vec4     cascadeFadeStarts;    ///< View-space original (un-extended) far split per cascade.
+                                   ///< Blending starts at fadeStart, ends at split (extended).
+    Vec4     cascadeDepthBias;     ///< Per-cascade computed depth bias (normalized + distributed).
+    Vec4     cascadeNormalBias;    ///< Per-cascade computed normal bias (scaled by texel size).
+    uint32_t shadowAtlasIndex;     ///< SRV heap index for shadow atlas depth texture.
+    uint32_t cascadeCount;         ///< Number of active cascades (1 to 4).
+    float    shadowMapSize;        ///< Per-cascade resolution in texels (e.g., 2048).
+    float    receiverBias;         ///< Shadow receiver bias (UE5 default: 0.9).
+    float    shadowFadeStart;      ///< World distance where last-cascade fade begins.
+    float    shadowFadeEnd;        ///< World distance where shadows fully disappear (maxDistance).
+    uint32_t filterMethod;         ///< 0=5x5 PCF (default), 1=Poisson 16-tap, 2=PCSS.
+    float    tanLightSourceAngle;  ///< tan(sun disk angle) for PCSS penumbra estimation.
+    float    maxSoftKernelSize;    ///< Max PCSS kernel radius in texels (UE5 default: 40).
+    float    _pad[3] = {};         ///< Padding to 16-byte boundary.
+    float    _pad2[36] = {};       ///< Pad to 512 bytes (256-byte multiple).
 };
 
 static_assert(sizeof(ShadowDataCB) == 512, "ShadowDataCB must be 512 bytes (256-byte multiple)");

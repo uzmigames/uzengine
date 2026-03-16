@@ -75,49 +75,105 @@ public:
     bool Init(const RHIDeviceDesc& desc);
 
     // ── IRHIDevice: Buffer operations ────────────────────────────────────
+
+    /// Creates a GPU buffer on the Vulkan device via VMA. See `IRHIDevice::CreateBuffer`.
     RHIBufferHandle CreateBuffer(const RHIBufferDesc& desc) override;
+
+    /// Destroys a Vulkan buffer, releasing its VMA allocation.
     void DestroyBuffer(RHIBufferHandle handle) override;
+
+    /// Returns a persistently mapped CPU pointer for Vulkan Upload/Readback buffers.
     void* MapBuffer(RHIBufferHandle handle) override;
+
+    /// No-op on Vulkan — buffers are persistently mapped via VMA. See `IRHIDevice::UnmapBuffer`.
     void UnmapBuffer(RHIBufferHandle handle) override;
+
+    /// Returns the logical SRV index assigned at buffer creation time.
     uint32_t GetBufferSRVIndex(RHIBufferHandle handle) const override;
+
+    /// Returns the logical UAV index assigned at buffer creation time.
     uint32_t GetBufferUAVIndex(RHIBufferHandle handle) const override;
+
+    /// Returns the Vulkan buffer device address (via `vkGetBufferDeviceAddress`).
     uint64_t GetBufferGPUAddress(RHIBufferHandle handle) const override;
 
     // ── IRHIDevice: Texture operations ───────────────────────────────────
+
+    /// Creates a GPU texture on the Vulkan device via VMA. See `IRHIDevice::CreateTexture`.
     RHITextureHandle CreateTexture(const RHITextureDesc& desc) override;
+
+    /// Destroys a Vulkan texture, releasing its VMA allocation and image views.
     void DestroyTexture(RHITextureHandle handle) override;
+
+    /// Returns the logical SRV index assigned at texture creation time.
     uint32_t GetTextureSRVIndex(RHITextureHandle handle) const override;
+
+    /// Returns the logical UAV index assigned at texture creation time.
     uint32_t GetTextureUAVIndex(RHITextureHandle handle) const override;
+
+    /// Returns the creation descriptor for a Vulkan texture. See `IRHIDevice::GetTextureDesc`.
     RHITextureDesc GetTextureDesc(RHITextureHandle handle) const override;
 
     // ── IRHIDevice: Shader operations ────────────────────────────────────
+
+    /// Creates a shader module from SPIR-V bytecode. See `IRHIDevice::CreateShader`.
     RHIShaderHandle CreateShader(const RHIShaderDesc& desc) override;
+
+    /// Destroys a Vulkan shader module. See `IRHIDevice::DestroyShader`.
     void DestroyShader(RHIShaderHandle handle) override;
 
     // ── IRHIDevice: Pipeline operations ──────────────────────────────────
+
+    /// Creates a Vulkan graphics pipeline via `vkCreateGraphicsPipelines`.
     RHIPipelineHandle CreateGraphicsPipeline(const RHIGraphicsPipelineDesc& desc) override;
+
+    /// Creates a Vulkan compute pipeline via `vkCreateComputePipelines`.
     RHIPipelineHandle CreateComputePipeline(const RHIComputePipelineDesc& desc) override;
+
+    /// Destroys a Vulkan pipeline object. See `IRHIDevice::DestroyPipeline`.
     void DestroyPipeline(RHIPipelineHandle handle) override;
+
+    /// Returns empty — Vulkan uses `VkPipelineCache` for caching natively.
     std::vector<uint8_t> GetPipelineCachedBlob(RHIPipelineHandle handle) override;
 
     // ── IRHIDevice: Sampler operations ───────────────────────────────────
+
+    /// Creates a Vulkan sampler via `vkCreateSampler`. See `IRHIDevice::CreateSampler`.
     RHISamplerHandle CreateSampler(const RHISamplerDesc& desc) override;
+
+    /// Destroys a Vulkan sampler. See `IRHIDevice::DestroySampler`.
     void DestroySampler(RHISamplerHandle handle) override;
+
+    /// Returns the logical sampler index assigned at creation time.
     uint32_t GetSamplerIndex(RHISamplerHandle handle) const override;
 
     // ── IRHIDevice: Swap chain operations ────────────────────────────────
+
+    /// Creates a Vulkan swap chain (VkSurfaceKHR + VkSwapchainKHR).
     IRHISwapChain* CreateSwapChain(const RHISwapChainDesc& desc) override;
+
+    /// Destroys a Vulkan swap chain. See `IRHIDevice::DestroySwapChain`.
     void DestroySwapChain(IRHISwapChain* swapChain) override;
 
     // ── IRHIDevice: Fence operations ─────────────────────────────────────
+
+    /// Creates a Vulkan fence using timeline semaphores (`VK_SEMAPHORE_TYPE_TIMELINE`).
     IRHIFence* CreateFence() override;
+
+    /// Destroys a Vulkan timeline semaphore fence. See `IRHIDevice::DestroyFence`.
     void DestroyFence(IRHIFence* fence) override;
 
     // ── IRHIDevice: Command list operations ──────────────────────────────
+
+    /// Creates a Vulkan command list (command pool + command buffer pair).
     IRHICommandList* CreateCommandList(RHIQueueType queue) override;
+
+    /// Destroys a Vulkan command list and its command pool. See `IRHIDevice::DestroyCommandList`.
     void DestroyCommandList(IRHICommandList* cmdList) override;
 
     // ── IRHIDevice: Synchronization ──────────────────────────────────────
+
+    /// Calls `vkDeviceWaitIdle` to block until all GPU queues are idle.
     void WaitIdle() override;
 
     // ── IRHIDevice: Copy queue (async uploads) ───────────────────────────
@@ -145,10 +201,20 @@ public:
     void ComputeWaitForGraphics(uint64_t value) override;
 
     // ── IRHIDevice: Device queries ───────────────────────────────────────
+
+    /// Returns the Vulkan physical device name (e.g., "NVIDIA GeForce RTX 4090").
     const char* GetAdapterName() const override;
+
+    /// Returns the Vulkan API version string (e.g., "Vulkan 1.3.280").
     const char* GetFeatureLevel() const override;
+
+    /// Queries GPU memory via `VK_EXT_memory_budget` and returns budget/usage.
     RHIMemoryBudget GetMemoryBudget() const override;
+
+    /// Returns the Vulkan shader model (default SM6_6). See `IRHIDevice::GetShaderModel`.
     ShaderModel GetShaderModel() const override { return m_shaderModel; }
+
+    /// Returns `RHIBackend::Vulkan`. See `IRHIDevice::GetBackend`.
     RHIBackend GetBackend() const override { return RHIBackend::Vulkan; }
 
     // ── Tracy GPU Profiling ─────────────────────────────────────────────

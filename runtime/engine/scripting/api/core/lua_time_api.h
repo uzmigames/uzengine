@@ -23,9 +23,26 @@ namespace uz {
 class TimeManager;
 
 /// Registers the `uz.time` sub-table into the existing `uz` global table.
+///
+/// Populates `uz.time` with bindings for time scale control, frame count,
+/// fixed/raw delta time queries, and pause/unpause.
+/// Must be called during LuaVM initialization.
+///
+/// # Arguments
+/// * `L` — Active Lua state. Must not be null.
 void LuaRegisterTimeAPI(lua_State* L);
 
 /// Stores a TimeManager pointer in the Lua registry for use by time callbacks.
+///
+/// The pointer is stored as a light userdata in the Lua registry so that
+/// `uz.time.*` callback implementations can retrieve it without globals.
+/// Must be called after `LuaRegisterTimeAPI()` and before any Lua script
+/// invokes time functions.
+///
+/// # Arguments
+/// * `L` — Active Lua state. Must not be null.
+/// * `timeManager` — Pointer to the engine TimeManager instance. Must not be
+///   null and must outlive the Lua state.
 void LuaSetTimeManager(lua_State* L, TimeManager* timeManager);
 
 } // namespace uz

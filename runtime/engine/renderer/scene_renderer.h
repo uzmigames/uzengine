@@ -32,6 +32,7 @@
 #include "gpu_mesh.h"
 #include "texture_loader.h"
 #include "screenshot_capture.h"
+#include "shadow_atlas.h"
 #include "ibl/ibl_baker.h"
 #include "ibl/sh_projection.h"
 #include "postprocess/auto_exposure.h"
@@ -300,8 +301,7 @@ private:
     // ── GBuffer + Shadow Atlas ─────────────────────────────────────────────
 
     GBuffer m_gbuffer;
-    RHITextureHandle m_shadowAtlas;
-    uint32_t m_shadowAtlasSrv = UINT32_MAX;
+    ShadowAtlas m_shadowAtlas;                     ///< Cascade shadow map depth atlas.
 
     // ── HDR Scene Color (intermediate before tonemap) ───────────────────
     RHITextureHandle m_hdrSceneColor;           ///< RGBA16F HDR render target for scene color.
@@ -372,8 +372,7 @@ private:
     uint32_t m_instanceBufferCapacity = 0;   ///< Current capacity in number of InstanceData elements.
     uint32_t m_instanceBufferSrvIndex = UINT32_MAX; ///< Cached SRV index for the instance buffer.
 
-    static constexpr uint32_t kShadowAtlasSize = 4096;
-    static constexpr uint32_t kShadowResolution = 2048;
+    // Shadow constants moved to shadow_atlas.h (kShadowResolution, kShadowAtlasSize)
     static constexpr uint32_t kCBRingFrames = 3;
     static constexpr uint64_t kCBRingBytesPerFrame = 2 * 1024 * 1024;
 
@@ -391,7 +390,7 @@ private:
     void FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs);
 
     /// Creates the shadow atlas depth texture.
-    void CreateShadowAtlas();
+    // Shadow atlas creation moved to ShadowAtlas::Init()
 
     /// Destroys loaded GPU meshes and textures.
     void DestroyAssets();

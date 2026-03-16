@@ -21,7 +21,12 @@ namespace uz {
 
 /// Registers light manipulation functions into the existing `uz.scene` table.
 ///
+/// Populates `uz.scene` with bindings for creating directional, point, and spot
+/// lights, and for querying/modifying light color, intensity, and range.
 /// Must be called AFTER `LuaRegisterSceneAPI()` has created the `uz.scene` table.
+///
+/// # Arguments
+/// * `L` — Active Lua state. Must not be null.
 void LuaRegisterLightAPI(lua_State* L);
 
 } // namespace uz

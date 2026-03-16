@@ -276,7 +276,7 @@ bool DX11Device::Init(const RHIDeviceDesc& desc) {
         sd.AddressV = D3D11_TEXTURE_ADDRESS_BORDER;
         sd.AddressW = D3D11_TEXTURE_ADDRESS_BORDER;
         sd.MaxAnisotropy = 1;
-        sd.ComparisonFunc = D3D11_COMPARISON_LESS;
+        sd.ComparisonFunc = D3D11_COMPARISON_LESS; // Shadow maps use standard-Z (UE5 parity)
         sd.BorderColor[0] = 0.0f; // Outside shadow atlas = no occlusion
         sd.BorderColor[1] = 0.0f;
         sd.BorderColor[2] = 0.0f;

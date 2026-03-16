@@ -73,19 +73,42 @@ struct PermutationExpandResult {
 
 /// Computes the total number of variants from a set of permutation axes.
 ///
+/// Multiplies the value count of each axis together (Cartesian product size).
 /// Returns 1 for an empty permutation list (the "no permutations" base variant).
+///
+/// # Arguments
+/// * `perms` — Permutation axes parsed from `#pragma uz_permutation` directives.
+///
+/// # Returns
+/// Product of all axis value counts. Always >= 1 (empty list yields 1).
 [[nodiscard]] size_t VariantCount(const std::vector<ShaderPermutation>& perms);
 
 /// Expands permutation axes into the full Cartesian product of define sets.
 ///
-/// Each variant is a sorted vector of (name, value) pairs for deterministic hashing.
-/// Returns an error if the total variant count exceeds kMaxPermutationVariants.
+/// Each variant is a sorted vector of (name, value) pairs for deterministic
+/// hashing. The sort is lexicographic by define name, ensuring identical
+/// define sets always produce the same hash regardless of parse order.
+///
+/// # Arguments
+/// * `perms` — Permutation axes to expand. May be empty (yields one empty variant).
+///
+/// # Returns
+/// `PermutationExpandResult` with `Ok() == true` and populated `variants` on
+/// success, or `Ok() == false` with a descriptive `error` string if the total
+/// variant count exceeds `kMaxPermutationVariants`.
 [[nodiscard]] PermutationExpandResult ExpandPermutations(const std::vector<ShaderPermutation>& perms);
 
 /// Formats a variant's define pairs into a deterministic semicolon-separated string.
 ///
-/// Example output: "HAS_NORMAL_MAP=0;SHADOW_QUALITY=LOW"
-/// The input pairs are assumed to already be sorted by name.
+/// Example output: `"HAS_NORMAL_MAP=0;SHADOW_QUALITY=LOW"`.
+/// The input pairs are assumed to already be sorted by name (as produced by
+/// `ExpandPermutations()`).
+///
+/// # Arguments
+/// * `defines` — Sorted list of (define_name, define_value) pairs for one variant.
+///
+/// # Returns
+/// Semicolon-separated `"NAME=VALUE;..."` string. Empty string for an empty input.
 [[nodiscard]] std::string FormatDefines(const std::vector<std::pair<std::string, std::string>>& defines);
 
 } // namespace uz

@@ -118,19 +118,20 @@ float4 main(FSInput input) : SV_Target {
 #endif
 
     // ── Reconstruct world position ──
-    // For sky pixels (depth >= 0.9999), use a far-away point along the view ray.
-    // This allows fog to produce horizon haze on the sky (UE5 behavior).
+    // Reversed-Z: sky pixels have depth ≈ 0.0 (far plane).
+    // For sky pixels, use a far-away point along the view ray for fog integration.
     float3 camPos3 = cameraPos.xyz;
     float3 worldPos;
     float3 viewVec;
     float  dist;
 
-    bool isSky = (depth >= 0.9999f);
+    bool isSky = (depth <= 0.0001f);
 
     if (isSky) {
         // Sky pixel: project ray to a very far distance for fog integration.
-        // UE5 uses the actual far plane or EndDistance for sky fog.
-        float3 farWorldPos = ReconstructWorldPosition(uv, 0.9998f);
+        // Use depth near 1.0 (near plane in reversed-Z) to get a valid world position,
+        // then extend the ray direction to a far distance.
+        float3 farWorldPos = ReconstructWorldPosition(uv, 0.0002f);
         float3 rayDir = normalize(farWorldPos - camPos3);
         float  skyDist = 50000.0f;  // 500m — far enough for visible haze
         worldPos = camPos3 + rayDir * skyDist;

@@ -1,81 +1,64 @@
-/// Shared cascaded shadow map sampling functions.
+/// Shared cascaded shadow map sampling — UE5 parity.
 ///
-/// Used by both the forward pass (mesh_ps.hlsl) and deferred lighting pass
-/// (deferred_lighting_ps.hlsl). Implements cascade selection, 3x3 PCF with
-/// atlas boundary clamping, and inter-cascade blending.
-///
-/// # Prerequisites
-/// The including shader must declare:
-/// - `ShadowDataCB` cbuffer with: cascadeViewProj[4], cascadeSplits, shadowAtlasIndex,
-///   cascadeCount, normalBias, depthBias, shadowMapSize
-/// - `SamplerComparisonState shadowSampler : register(s1)`
-/// - For UZ_BINDLESS: nothing extra (uses ResourceDescriptorHeap)
-/// - For SM5: `Texture2D<float> shadowAtlasTexture : register(t4 or t5)`
+/// Uses manual PCF with soft transition (NOT hardware SampleCmpLevelZero).
+/// UE5 uses SF_Point sampler + manual comparison in CalculateOcclusion().
+/// Source: ShadowFilteringCommon.ush:162, ShadowProjectionPixelShader.usf:147.
 
 #ifndef SHADOW_COMMON_HLSLI
 #define SHADOW_COMMON_HLSLI
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Shadow Constants
-// ─────────────────────────────────────────────────────────────────────────────
+#include "pcss.hlsli"
 
-/// Fraction of each cascade's range used for blending with the next cascade.
-/// At 10%, a cascade covering [0, 100] units begins blending at 90 units.
-static const float CASCADE_BLEND_BAND = 0.1f;
+// ─────────────────────────────────────────────────────────────────────────────
+// Constants
+// ─────────────────────────────────────────────────────────────────────────────
 
 /// Atlas quadrant offsets for 2x2 cascade layout.
-/// 0 = top-left, 1 = top-right, 2 = bottom-left, 3 = bottom-right.
 static const float2 kCascadeOffsets[4] = {
     float2(0.0f, 0.0f), float2(0.5f, 0.0f),
     float2(0.0f, 0.5f), float2(0.5f, 0.5f)
 };
 
+/// Shadow transition scale. Controls the fade region width.
+/// UE5 uses 60.0 WITH a depth bias of ~0.004 in the shadow VS.
+/// Since we apply bias via rasterizer state (smaller effect), we use
+/// a lower scale to avoid over-shadowing. This will be tuned after
+/// implementing UE5's shadow VS depth bias.
+static const float kShadowTransitionScale = 512.0f;
+
 // ─────────────────────────────────────────────────────────────────────────────
-// PCF Shadow Sampling
+// Shadow Occlusion — UE5 Manual Comparison (CalculateOcclusion)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Samples the shadow atlas with 3x3 PCF at the given atlas UV and depth.
-///
-/// Performs 9 taps in a 3x3 grid around the sample point, each offset by one
-/// texel. The comparison sampler returns 1.0 for lit and 0.0 for shadowed per
-/// tap, and the results are averaged for a soft penumbra.
-///
-/// PCF kernel UVs are clamped to the current cascade's atlas quadrant to
-/// prevent sampling from adjacent cascades at quadrant boundaries.
-///
-/// # Parameters
-/// - atlasUV:       UV coordinates within the full shadow atlas, in [0,1].
-/// - depth:         light-space depth to compare against, in [0,1].
-/// - texelSize:     1.0 / shadow atlas width in texels.
-/// - cascadeOffset: atlas quadrant origin for the current cascade (from kCascadeOffsets).
-///
-/// # Returns
-/// Shadow factor in [0,1]: 1.0 = fully lit, 0.0 = fully shadowed.
-float SampleShadowPCF(float2 atlasUV, float depth, float texelSize, float2 cascadeOffset) {
+/// Shadow occlusion placeholder — actual comparison done via SampleCmpLevelZero.
+/// The hardware comparison sampler (LESS) handles: reference < stored → 1.0 (lit).
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PCF Shadow Sampling — 5x5 Manual Comparison (UE5 parity)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Samples the shadow atlas with 5x5 PCF using hardware comparison sampler (LESS).
+/// Shadow maps use standard-Z (D32Float), sampled via SampleCmpLevelZero.
+/// Comparison: reference < stored → 1.0 (lit), reference >= stored → 0.0 (shadowed).
+float SampleShadowPCF5x5(float2 atlasUV, float sceneDepth, float texelSize, float2 cascadeOffset) {
 #ifdef UZ_BINDLESS
     Texture2D<float> shadowAtlas = ResourceDescriptorHeap[shadowAtlasIndex];
 #else
-    // SM5 path uses register-bound texture
     #define shadowAtlas shadowAtlasTexture
 #endif
 
-    // Cascade quadrant bounds: each quadrant spans [offset, offset + 0.5]
-    // Inset by half a texel to avoid bilinear bleed at the boundary
     float halfTexel = texelSize * 0.5f;
     float2 atlasMin = cascadeOffset + halfTexel;
     float2 atlasMax = cascadeOffset + float2(0.5f, 0.5f) - halfTexel;
 
     float shadow = 0.0f;
-
-    // 3x3 PCF kernel — 9 taps centered on the sample point
     [unroll]
-    for (int y = -1; y <= 1; y++) {
+    for (int y = -2; y <= 2; y++) {
         [unroll]
-        for (int x = -1; x <= 1; x++) {
+        for (int x = -2; x <= 2; x++) {
             float2 offset = float2((float)x, (float)y) * texelSize;
             float2 sampleUV = clamp(atlasUV + offset, atlasMin, atlasMax);
-            shadow += shadowAtlas.SampleCmpLevelZero(
-                shadowSampler, sampleUV, depth);
+            shadow += shadowAtlas.SampleCmpLevelZero(shadowSampler, sampleUV, sceneDepth);
         }
     }
 
@@ -83,37 +66,91 @@ float SampleShadowPCF(float2 atlasUV, float depth, float texelSize, float2 casca
     #undef shadowAtlas
 #endif
 
-    return shadow / 9.0f;
+    return shadow / 25.0f;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Cascade Shadow Map Sampling
+// Poisson Disk Shadow Sampling — 16 taps with per-pixel rotation
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Computes the shadow factor for a world-space position using cascaded shadow maps.
-///
-/// Selects the tightest cascade that contains the fragment based on view-space
-/// depth, projects into light space, applies normal and depth bias, then samples
-/// with 3x3 PCF. In the last 10% of each cascade's range, the result is blended
-/// with the next cascade to eliminate visible seams.
-///
-/// # Parameters
-/// - positionWS: fragment world-space position.
-/// - normalWS:   fragment world-space surface normal (normalized).
-/// - viewDepth:  distance from camera to fragment along the view axis.
-///
-/// # Returns
-/// Shadow factor in [0,1]: 1.0 = fully lit, 0.0 = fully shadowed.
-float SampleShadowMap(float3 positionWS, float3 normalWS, float viewDepth) {
-    // Per-cascade atlas texel size: atlas is 2x the cascade resolution
+static const float2 kPoissonDisk[16] = {
+    float2(-0.9420f, -0.3990f), float2( 0.9454f, -0.7689f),
+    float2(-0.0942f, -0.9294f), float2( 0.3448f,  0.2932f),
+    float2(-0.9158f,  0.4573f), float2(-0.8154f, -0.8792f),
+    float2(-0.3826f,  0.2769f), float2( 0.9746f,  0.5685f),
+    float2( 0.4434f, -0.1671f), float2( 0.2617f, -0.5533f),
+    float2(-0.4976f, -0.6588f), float2(-0.2738f,  0.8649f),
+    float2( 0.7918f,  0.1906f), float2( 0.0686f,  0.6317f),
+    float2(-0.5978f,  0.7961f), float2( 0.5331f,  0.8979f)
+};
+
+float SampleShadowPoisson(float2 atlasUV, float sceneDepth, float texelSize,
+                           float2 cascadeOffset, float2 screenPos) {
+#ifdef UZ_BINDLESS
+    Texture2D<float> shadowAtlas = ResourceDescriptorHeap[shadowAtlasIndex];
+#else
+    #define shadowAtlas shadowAtlasTexture
+#endif
+
+    float halfTexel = texelSize * 0.5f;
+    float2 atlasMin = cascadeOffset + halfTexel;
+    float2 atlasMax = cascadeOffset + float2(0.5f, 0.5f) - halfTexel;
+
+    float angle = frac(52.9829189f * frac(dot(screenPos, float2(0.06711056f, 0.00583715f)))) * 6.28318f;
+    float sinA, cosA;
+    sincos(angle, sinA, cosA);
+    float radius = texelSize * 2.5f;
+
+    float shadow = 0.0f;
+    [unroll]
+    for (int i = 0; i < 16; i++) {
+        float2 rotated = float2(
+            kPoissonDisk[i].x * cosA - kPoissonDisk[i].y * sinA,
+            kPoissonDisk[i].x * sinA + kPoissonDisk[i].y * cosA
+        );
+        float2 sampleUV = clamp(atlasUV + rotated * radius, atlasMin, atlasMax);
+        shadow += shadowAtlas.SampleCmpLevelZero(shadowSampler, sampleUV, sceneDepth);
+    }
+
+#ifndef UZ_BINDLESS
+    #undef shadowAtlas
+#endif
+
+    return shadow / 16.0f;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Unified Shadow Sample — dispatches based on filterMethod
+// ─────────────────────────────────────────────────────────────────────────────
+
+float SampleShadowFiltered(float2 atlasUV, float sceneDepth, float texelSize,
+                            float2 cascadeOffset, float2 screenPos) {
+    if (filterMethod == 2) {
+        return SampleShadowPCSS(atlasUV, sceneDepth, texelSize, cascadeOffset, screenPos);
+    }
+    if (filterMethod == 1) {
+        return SampleShadowPoisson(atlasUV, sceneDepth, texelSize, cascadeOffset, screenPos);
+    }
+    return SampleShadowPCF5x5(atlasUV, sceneDepth, texelSize, cascadeOffset);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cascade Shadow Map Sampling — UE5 Parity
+// ─────────────────────────────────────────────────────────────────────────────
+
+float SampleShadowMap(float3 positionWS, float3 normalWS, float viewDepth, float2 screenPos) {
     float texelSize = 1.0f / (shadowMapSize * 2.0f);
 
-    // Access cascade split distances as an array
     float splits[4] = { cascadeSplits.x, cascadeSplits.y,
                          cascadeSplits.z, cascadeSplits.w };
+    float fadeStarts[4] = { cascadeFadeStarts.x, cascadeFadeStarts.y,
+                            cascadeFadeStarts.z, cascadeFadeStarts.w };
+    float depthBiases[4] = { cascadeDepthBias.x, cascadeDepthBias.y,
+                             cascadeDepthBias.z, cascadeDepthBias.w };
+    float normalBiases[4] = { cascadeNormalBias.x, cascadeNormalBias.y,
+                              cascadeNormalBias.z, cascadeNormalBias.w };
 
-    // Select the first cascade whose far split exceeds the fragment depth.
-    // Default to the last cascade for fragments beyond all split distances.
+    // Select cascade
     uint cascadeIdx = cascadeCount - 1;
     for (uint i = 0; i < cascadeCount; i++) {
         if (viewDepth <= splits[i]) {
@@ -122,53 +159,54 @@ float SampleShadowMap(float3 positionWS, float3 normalWS, float viewDepth) {
         }
     }
 
-    // Offset position along surface normal to reduce shadow acne on slopes
-    float3 biasedPos = positionWS + normalWS * normalBias;
+    // Normal bias offset
+    float3 biasedPos = positionWS + normalWS * normalBiases[cascadeIdx];
 
-    // Project into light clip space for the selected cascade
+    // Project into light clip space (standard-Z ortho)
     float4 shadowClip = mul(float4(biasedPos, 1.0f), cascadeViewProj[cascadeIdx]);
     float3 shadowNDC  = shadowClip.xyz / shadowClip.w;
 
-    // Convert from NDC [-1,1] to UV [0,1], flipping Y for texture space
+    // NDC to atlas UV
     float2 shadowUV = float2(shadowNDC.x * 0.5f + 0.5f,
                              -shadowNDC.y * 0.5f + 0.5f);
-
-    // Map UV into the cascade's atlas quadrant (each quadrant is 0.5 x 0.5)
     float2 atlasUV = shadowUV * 0.5f + kCascadeOffsets[cascadeIdx];
 
-    // Apply depth bias before comparison
-    float shadowDepth = shadowNDC.z - depthBias;
+    // Scene depth with bias subtracted (pushes toward light = more lit = less acne)
+    // UE5 clamps to 0.99999 to avoid comparing against cleared depth (1.0)
+    float sceneDepth = min(shadowNDC.z - depthBiases[cascadeIdx], 0.99999f);
 
-    float shadow = SampleShadowPCF(atlasUV, shadowDepth, texelSize, kCascadeOffsets[cascadeIdx]);
+    // Sample with selected filter method
+    float shadow = SampleShadowFiltered(atlasUV, sceneDepth, texelSize,
+                                         kCascadeOffsets[cascadeIdx], screenPos);
 
     // ── Cascade blending ──
-    // In the last CASCADE_BLEND_BAND fraction of the cascade range, lerp
-    // toward the next cascade's shadow to avoid hard seams between cascades.
     if (cascadeIdx < cascadeCount - 1) {
-        float cascadeNear = (cascadeIdx == 0) ? 0.0f : splits[cascadeIdx - 1];
-        float cascadeFar  = splits[cascadeIdx];
-        float cascadeRange = cascadeFar - cascadeNear;
-        float blendStart  = cascadeFar - cascadeRange * CASCADE_BLEND_BAND;
-
+        float blendStart = fadeStarts[cascadeIdx];
         if (viewDepth > blendStart) {
-            // Compute next cascade's shadow
             uint nextIdx = cascadeIdx + 1;
-            float3 biasedPosNext = positionWS + normalWS * normalBias;
+            float3 biasedPosNext = positionWS + normalWS * normalBiases[nextIdx];
             float4 nextClip = mul(float4(biasedPosNext, 1.0f), cascadeViewProj[nextIdx]);
             float3 nextNDC  = nextClip.xyz / nextClip.w;
 
             float2 nextUV = float2(nextNDC.x * 0.5f + 0.5f,
                                    -nextNDC.y * 0.5f + 0.5f);
             float2 nextAtlasUV = nextUV * 0.5f + kCascadeOffsets[nextIdx];
-            float nextDepth = nextNDC.z - depthBias;
+            float nextSceneDepth = min(nextNDC.z - depthBiases[nextIdx], 0.99999f);
 
-            float nextShadow = SampleShadowPCF(nextAtlasUV, nextDepth, texelSize, kCascadeOffsets[nextIdx]);
+            float nextShadow = SampleShadowFiltered(nextAtlasUV, nextSceneDepth, texelSize,
+                                                     kCascadeOffsets[nextIdx], screenPos);
 
-            // Blend factor: 0 at blendStart, 1 at cascadeFar
             float blendFactor = saturate((viewDepth - blendStart) /
-                                         (cascadeFar - blendStart));
+                                         (splits[cascadeIdx] - blendStart));
             shadow = lerp(shadow, nextShadow, blendFactor);
         }
+    }
+
+    // ── Last cascade fade-to-nothing ──
+    if (shadowFadeEnd > shadowFadeStart) {
+        float fadeFactor = saturate((viewDepth - shadowFadeStart) /
+                                    (shadowFadeEnd - shadowFadeStart));
+        shadow = lerp(shadow, 1.0f, fadeFactor);
     }
 
     return shadow;

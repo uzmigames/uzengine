@@ -85,63 +85,136 @@ public:
     bool Init(const RHIDeviceDesc& desc);
 
     // ── IRHIDevice: Buffer operations ────────────────────────────────────
+
+    /// Creates a GPU buffer on the DX12 device via D3D12MA. See `IRHIDevice::CreateBuffer`.
     RHIBufferHandle CreateBuffer(const RHIBufferDesc& desc) override;
+
+    /// Destroys a DX12 buffer, releasing its D3D12MA allocation and descriptor slots.
     void DestroyBuffer(RHIBufferHandle handle) override;
+
+    /// Returns a persistently mapped CPU pointer for Upload/Readback DX12 buffers.
+    /// DX12 buffers are mapped at creation and stay mapped — no Unmap needed.
     void* MapBuffer(RHIBufferHandle handle) override;
+
+    /// No-op on DX12 — buffers are persistently mapped. See `IRHIDevice::UnmapBuffer`.
     void UnmapBuffer(RHIBufferHandle handle) override;
+
+    /// Returns the SRV index in the global CBV_SRV_UAV descriptor heap for a buffer.
     uint32_t GetBufferSRVIndex(RHIBufferHandle handle) const override;
+
+    /// Returns the UAV index in the global CBV_SRV_UAV descriptor heap for a buffer.
     uint32_t GetBufferUAVIndex(RHIBufferHandle handle) const override;
+
+    /// Returns the GPU virtual address of a DX12 buffer (from `ID3D12Resource::GetGPUVirtualAddress`).
     uint64_t GetBufferGPUAddress(RHIBufferHandle handle) const override;
 
     // ── IRHIDevice: Texture operations ───────────────────────────────────
+
+    /// Creates a GPU texture on the DX12 device via D3D12MA. See `IRHIDevice::CreateTexture`.
     RHITextureHandle CreateTexture(const RHITextureDesc& desc) override;
+
+    /// Destroys a DX12 texture, releasing its D3D12MA allocation and descriptor slots.
     void DestroyTexture(RHITextureHandle handle) override;
+
+    /// Returns the SRV index in the global CBV_SRV_UAV descriptor heap for a texture.
     uint32_t GetTextureSRVIndex(RHITextureHandle handle) const override;
+
+    /// Returns the UAV index in the global CBV_SRV_UAV descriptor heap for a texture.
     uint32_t GetTextureUAVIndex(RHITextureHandle handle) const override;
+
+    /// Returns the creation descriptor for a DX12 texture. See `IRHIDevice::GetTextureDesc`.
     RHITextureDesc GetTextureDesc(RHITextureHandle handle) const override;
 
     // ── IRHIDevice: Shader operations ────────────────────────────────────
+
+    /// Creates a shader module from DXIL bytecode. See `IRHIDevice::CreateShader`.
     RHIShaderHandle CreateShader(const RHIShaderDesc& desc) override;
+
+    /// Destroys a DX12 shader module and frees its bytecode storage.
     void DestroyShader(RHIShaderHandle handle) override;
 
     // ── IRHIDevice: Pipeline operations ──────────────────────────────────
+
+    /// Creates a DX12 graphics PSO via `ID3D12Device::CreateGraphicsPipelineState`.
     RHIPipelineHandle CreateGraphicsPipeline(const RHIGraphicsPipelineDesc& desc) override;
+
+    /// Creates a DX12 compute PSO via `ID3D12Device::CreateComputePipelineState`.
     RHIPipelineHandle CreateComputePipeline(const RHIComputePipelineDesc& desc) override;
+
+    /// Destroys a DX12 pipeline state object. See `IRHIDevice::DestroyPipeline`.
     void DestroyPipeline(RHIPipelineHandle handle) override;
+
+    /// Extracts the cached blob from a DX12 PSO via `GetCachedBlob()` for disk caching.
     std::vector<uint8_t> GetPipelineCachedBlob(RHIPipelineHandle handle) override;
 
     // ── IRHIDevice: Copy queue ──────────────────────────────────────────
+
+    /// Signals the DX12 copy queue fence and returns the signaled value.
     uint64_t SignalCopyQueue() override;
+
+    /// Inserts a GPU-side wait on the direct queue until the copy fence reaches `value`.
     void GraphicsWaitForCopy(uint64_t value) override;
 
     // ── IRHIDevice: Compute queue ─────────────────────────────────────
+
+    /// Signals the DX12 async compute queue fence and returns the signaled value.
     uint64_t SignalComputeQueue() override;
+
+    /// Inserts a GPU-side wait on the direct queue until the compute fence reaches `value`.
     void GraphicsWaitForCompute(uint64_t value) override;
+
+    /// Inserts a GPU-side wait on the compute queue until the direct fence reaches `value`.
     void ComputeWaitForGraphics(uint64_t value) override;
 
     // ── IRHIDevice: Sampler operations ───────────────────────────────────
+
+    /// Creates a DX12 sampler in the global sampler descriptor heap.
     RHISamplerHandle CreateSampler(const RHISamplerDesc& desc) override;
+
+    /// Destroys a DX12 sampler and frees its descriptor slot.
     void DestroySampler(RHISamplerHandle handle) override;
+
+    /// Returns the index of a sampler in the global sampler descriptor heap.
     uint32_t GetSamplerIndex(RHISamplerHandle handle) const override;
 
     // ── IRHIDevice: Swap chain operations ────────────────────────────────
+
+    /// Creates a DXGI swap chain for the given window. See `IRHIDevice::CreateSwapChain`.
     IRHISwapChain* CreateSwapChain(const RHISwapChainDesc& desc) override;
+
+    /// Destroys a DX12 swap chain and releases its back buffer resources.
     void DestroySwapChain(IRHISwapChain* swapChain) override;
 
     // ── IRHIDevice: Fence operations ─────────────────────────────────────
+
+    /// Creates a DX12 fence via `ID3D12Device::CreateFence` with initial value 0.
     IRHIFence* CreateFence() override;
+
+    /// Destroys a DX12 fence and releases its OS event handle.
     void DestroyFence(IRHIFence* fence) override;
 
     // ── IRHIDevice: Command list operations ──────────────────────────────
+
+    /// Creates a DX12 command list with its own allocator for the given queue type.
     IRHICommandList* CreateCommandList(RHIQueueType queue) override;
+
+    /// Destroys a DX12 command list and its command allocators.
     void DestroyCommandList(IRHICommandList* cmdList) override;
 
     // ── IRHIDevice: Synchronization ──────────────────────────────────────
+
+    /// Flushes all DX12 queues (direct, copy, compute) and blocks until idle.
     void WaitIdle() override;
 
     // ── IRHIDevice: Device queries ───────────────────────────────────────
+
+    /// Returns the DXGI adapter description string (e.g., "NVIDIA GeForce RTX 4090").
     const char* GetAdapterName() const override;
+
+    /// Returns the D3D feature level string (e.g., "D3D_FEATURE_LEVEL_12_2").
     const char* GetFeatureLevel() const override;
+
+    /// Queries DXGI adapter memory via `QueryVideoMemoryInfo` and returns budget/usage.
     RHIMemoryBudget GetMemoryBudget() const override;
 
     // ── Accessors for sibling DX12 classes ───────────────────────────────
@@ -196,6 +269,8 @@ public:
     /// Determined during device creation by probing GPU capabilities.
     /// SM6.6+ enables bindless resource access; SM5.x uses traditional binding.
     ShaderModel GetShaderModel() const override { return m_shaderModel; }
+
+    /// Returns `RHIBackend::DX12`. See `IRHIDevice::GetBackend`.
     RHIBackend GetBackend() const override { return RHIBackend::DX12; }
 
     /// Queries and logs DRED diagnostic data after device removal.

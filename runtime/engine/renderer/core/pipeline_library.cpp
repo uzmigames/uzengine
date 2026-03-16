@@ -456,8 +456,15 @@ RHIPipelineHandle PipelineLibrary::GetShadowDepth(bool bindless) {
     desc.topology      = RHIPrimitiveTopology::TriangleList;
     desc.rasterizer.cullMode              = RHICullMode::Back;
     desc.rasterizer.frontCounterClockwise = false;
+    // UE5 parity: slope-scaled depth bias in rasterizer state.
+    // Source: ShadowRendering.cpp:38 — CSMSlopeScaleDepthBias default 3.0
+    // UE5 parity: CSMSlopeScaleDepthBias=3.0 (ShadowRendering.cpp:38)
+    // UE5 parity: CSMDepthBias=10.0 applied as rasterizer constant bias (ShadowRendering.cpp:32)
+    desc.rasterizer.slopeScaledDepthBias  = 3.0f;
+    desc.rasterizer.depthBias             = 10.0f;
     desc.depthStencil.depthEnable         = true;
     desc.depthStencil.depthWrite          = true;
+    desc.depthStencil.depthFunc           = RHICompareFunc::Less; // Shadow maps use standard-Z (UE5 parity)
     desc.renderTargetCount                = 0;
     desc.depthStencilFormat               = RHIFormat::D32Float;
     desc.debugName                        = bindless ? "ShadowDepth_Bindless" : "ShadowDepth";
@@ -565,8 +572,12 @@ RHIPipelineHandle PipelineLibrary::GetShadowDepthInstanced() {
     desc.topology      = RHIPrimitiveTopology::TriangleList;
     desc.rasterizer.cullMode              = RHICullMode::Back;
     desc.rasterizer.frontCounterClockwise = false;
+    // UE5 parity: same bias as non-instanced shadow PSO
+    desc.rasterizer.slopeScaledDepthBias  = 3.0f;
+    desc.rasterizer.depthBias             = 10.0f;
     desc.depthStencil.depthEnable         = true;
     desc.depthStencil.depthWrite          = true;
+    desc.depthStencil.depthFunc           = RHICompareFunc::Less; // Shadow maps use standard-Z (UE5 parity)
     desc.renderTargetCount                = 0;
     desc.depthStencilFormat               = RHIFormat::D32Float;
     desc.debugName                        = "ShadowDepth_Instanced";

@@ -72,8 +72,8 @@ struct SlangCompileDesc {
     const char* source = nullptr;       ///< HLSL source code (null-terminated)
     const char* entryPoint = "main";    ///< Entry point function name
     const char* sourceName = "shader";  ///< Source filename for error messages
-    SlangShaderStage stage = SlangShaderStage::Vertex;
-    SlangOutputFormat outputFormat = SlangOutputFormat::MSL;
+    SlangShaderStage stage = SlangShaderStage::Vertex;       ///< Pipeline stage (vertex, pixel, compute)
+    SlangOutputFormat outputFormat = SlangOutputFormat::MSL; ///< Target output format (MSL, SPIRV, or HLSL re-emit)
 };
 
 /// Result of a Slang compilation.

@@ -42,7 +42,7 @@ void AddPBRPass(rg::RgBuilder& builder, const PBRPassDesc& desc)
             // ── Clear render targets ─────────────────────────────────────
             constexpr float kClearColor[4] = {0.05f, 0.05f, 0.08f, 1.0f};
             cmd->ClearRenderTarget(bb, kClearColor);
-            cmd->ClearDepthStencil(desc.depthTexture, 1.0f, 0);
+            cmd->ClearDepthStencil(desc.depthTexture, kDepthFar, 0);
 
             // ── Begin render pass ────────────────────────────────────────
             RHIRenderPassDesc passDesc{};
@@ -51,7 +51,7 @@ void AddPBRPass(rg::RgBuilder& builder, const PBRPassDesc& desc)
             passDesc.colorAttachments[0].clear   = false;
             passDesc.hasDepth = true;
             passDesc.depthAttachment.texture    = desc.depthTexture;
-            passDesc.depthAttachment.clearDepth = 1.0f;
+            passDesc.depthAttachment.clearDepth = kDepthFar;
             passDesc.depthAttachment.clear      = false;
             cmd->BeginRenderPass(passDesc);
 

@@ -52,11 +52,12 @@ ApplicationConfig PBRTest::Configure() {
     cfg.title           = "UzEngine \xe2\x80\x94 PBR Test";
     cfg.width           = 1280;
     cfg.height          = 720;
-    cfg.cameraPositionX = 0.f;
-    cfg.cameraPositionY = 500.f;
-    cfg.cameraPositionZ = 200.f;
-    cfg.cameraYawDeg    = -90.f;
-    cfg.cameraPitchDeg  = -20.f;
+    // Camera looking down at 45° to see shadow on ground clearly
+    cfg.cameraPositionX = -400.f;
+    cfg.cameraPositionY = 600.f;
+    cfg.cameraPositionZ = 500.f;
+    cfg.cameraYawDeg    = -55.f;
+    cfg.cameraPitchDeg  = -35.f;
     cfg.renderPath      = RenderPath::Deferred;
     return cfg;
 }
@@ -73,8 +74,8 @@ void PBRTest::OnStart() {
         cubes_[i] = world.CreateEntity();
 
         auto& scene = world.AddComponent<SceneComponent>(cubes_[i]);
-        scene.SetPosition({kCubePositionsX[i], 0.f, 80.f});  // cubes on top of ground (Z=80cm)
-        scene.SetScale({kCubeScale, kCubeScale, kCubeScale});
+        scene.SetPosition({kCubePositionsX[i], 0.f, 200.f});  // cubes elevated 200cm above ground
+        scene.SetScale({kCubeScale, kCubeScale, kCubeScale * 2.f});  // taller cubes for clear shadow
 
         auto& mesh = world.AddComponent<StaticMeshComponent>(cubes_[i]);
         mesh.meshPath      = "cube.uzmesh";
@@ -102,12 +103,11 @@ void PBRTest::OnStart() {
     {
         auto& scene = world.AddComponent<SceneComponent>(sun_);
         scene.SetPosition({0.f, 0.f, 920.f});
-        // UE5 rotation: (25.555, -60.779, -14.988) degrees
-        // Convert Euler (pitch=25.555, yaw=-60.779, roll=-14.988) to quaternion
+        // Sun at 45° elevation, pointing south-east — clear diagonal shadow on ground
         constexpr float kD2R = 3.14159265f / 180.f;
-        float pitch = 25.555f * kD2R;
-        float yaw   = -60.779f * kD2R;
-        float roll  = -14.988f * kD2R;
+        float pitch = 45.0f * kD2R;    // 45° down from horizon
+        float yaw   = -45.0f * kD2R;   // South-east
+        float roll  = 0.0f * kD2R;
         scene.SetRotation(Quat::FromEuler(pitch, yaw, roll));
 
         auto& light = world.AddComponent<DirectionalLightComponent>(sun_);

@@ -67,7 +67,7 @@ struct ImportSidecar {
 /// The output is human-readable (4-space indent) and suitable for writing
 /// to a .uzimport file.
 ///
-/// # Parameters
+/// # Arguments
 /// - `sidecar`: The sidecar data to serialize. All fields are written,
 ///   including empty maps/vectors (as `{}` / `[]`).
 ///
@@ -91,7 +91,7 @@ struct SidecarParseResult {
 /// Tolerant of missing fields — unrecognized keys are ignored, missing
 /// keys get default values (empty string, 0, empty containers).
 ///
-/// # Parameters
+/// # Arguments
 /// - `json`: Raw JSON string to parse.
 ///
 /// # Returns
@@ -103,7 +103,7 @@ struct SidecarParseResult {
 ///
 /// Serializes the sidecar to JSON and writes it atomically to the given path.
 ///
-/// # Parameters
+/// # Arguments
 /// - `path`: Absolute or relative file path for the .uzimport output.
 /// - `sidecar`: The sidecar data to write.
 ///
@@ -117,7 +117,7 @@ bool WriteSidecarFile(const std::string& path, const ImportSidecar& sidecar);
 
 /// Reads and parses a .uzimport file from disk.
 ///
-/// # Parameters
+/// # Arguments
 /// - `path`: Absolute or relative path to the .uzimport file.
 ///
 /// # Returns
@@ -136,7 +136,7 @@ bool WriteSidecarFile(const std::string& path, const ImportSidecar& sidecar);
 /// - `currentVersion != sidecar.version` — importer was updated
 /// - Any output file listed in `sidecar.outputs` is missing from disk
 ///
-/// # Parameters
+/// # Arguments
 /// - `sidecar`: Previously saved sidecar data to check against.
 /// - `currentSourceHash`: xxHash64 hex string of the current source content.
 /// - `currentVersion`: Current version of the importer.
@@ -165,7 +165,7 @@ bool WriteSidecarFile(const std::string& path, const ImportSidecar& sidecar);
 
 /// Parses a 16-character lowercase hex string back to a uint64_t.
 ///
-/// # Parameters
+/// # Arguments
 /// - `hex`: Must be exactly 16 characters of valid hex digits [0-9a-f].
 ///
 /// # Returns

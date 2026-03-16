@@ -219,8 +219,9 @@ float4 main(FSInput input) : SV_Target {
     float depth = sceneDepth.Sample(linearSampler, uv).r;
 #endif
 
-    // Only render sky where there is no geometry (depth == 1.0 = far plane)
-    if (depth < 0.9999f)
+    // Only render sky where there is no geometry.
+    // Reversed-Z: far plane = 0.0, so sky pixels have depth near 0.
+    if (depth > 0.0001f)
         discard;
 
     // ── Reconstruct world-space ray direction ────────────────────────────────

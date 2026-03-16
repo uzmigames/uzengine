@@ -27,7 +27,7 @@ The rendering pipeline system is split across multiple documents covering archit
 | [15-shader-includes.md](15-shader-includes.md) | **Done (1.2)** | **Shared .hlsli structure, pbr_common.hlsli, shadow_common.hlsli** | **Shader code reuse** |
 | [16-material-system.md](16-material-system.md) | Planned (2.0) | High-level material system overview, .uzmat format, manager, hot-reload | Material management |
 | [17-lighting.md](17-lighting.md) | **Done (1.3+)** | **Multi-light system (8 lights max), light types, attenuation math, CPU culling** + Phase 2-4 roadmap | **Lighting systems** |
-| [18-shadow-system.md](18-shadow-system.md) | **Done (Phase 2)** | **Cascaded Shadow Maps, frustum splitting, atlas layout, PCF filtering, cascade blending** | **Directional light shadows** |
+| [18-shadow-system.md](18-shadow-system.md) | **Done (Phase 2)** | **UE5 Exact Parity: exponential accumulation splits, Z-up light up-vector, per-cascade bias, cascade blending** | **Directional light shadows** |
 | [19-post-processing.md](19-post-processing.md) | Planned (2.0) | Post-process chains, bloom, tonemap, SSAO, TAA, upscaling | Post-processing effects |
 | [20-shader-compatibility.md](20-shader-compatibility.md) | **Done (1.2)** | **Cross-backend shader compilation, SM6.6 bindless vs SM5, DXIL/DXBC/SPIR-V targets** | **Multi-target shaders** |
 | [21-renderer-passes.md](21-renderer-passes.md) | **Done (1.2–Phase 2.5)** | **PBR, GBuffer, Lighting, Shadow, Sky Atmosphere, Height Fog, Debug passes — complete reference** | **All render passes** |

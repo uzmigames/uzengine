@@ -65,13 +65,23 @@ public:
     /// UE5: IndirectLightingIntensity.
     float indirectLightingIntensity = 1.0f;
 
+    /// Per-light shadow depth bias multiplier. Default: 0.5.
+    /// Applied on top of the global CSM depth bias: `finalBias = csmBias * shadowBias`.
+    /// UE5: ShadowBias (range 0.0–10.0). Source: LightComponent.h:105.
+    float shadowBias = 0.5f;
+
+    /// Per-light shadow slope-scaled bias multiplier. Default: 0.5.
+    /// Applied on top of the global CSM slope bias: `finalSlopeBias = csmSlopeBias * shadowSlopeBias`.
+    /// UE5: ShadowSlopeBias (range 0.0–10.0). Source: LightComponent.h:115.
+    float shadowSlopeBias = 0.5f;
+
 protected:
     /// Writes `color` and `intensity` into the proxy's `light` union.
     ///
     /// Must be called after the proxy exists (i.e., inside or after
     /// `OnProxyCreated()`). No-op if the handle is stale.
     ///
-    /// # Parameters
+    /// # Arguments
     /// - `renderWorld`: The `RenderWorld` that owns the proxy.
     void SyncLightData(RenderWorld& renderWorld);
 };
@@ -159,7 +169,7 @@ protected:
 
     /// Writes direction, color, and intensity into the newly created proxy.
     ///
-    /// # Parameters
+    /// # Arguments
     /// - `renderWorld`: The `RenderWorld` that owns the proxy.
     /// - `handle`: Freshly created proxy handle. Guaranteed valid.
     void OnProxyCreated(RenderWorld& renderWorld, RenderProxyHandle handle) override;
@@ -209,7 +219,7 @@ protected:
 
     /// Writes color, intensity, and range into the newly created proxy.
     ///
-    /// # Parameters
+    /// # Arguments
     /// - `renderWorld`: The `RenderWorld` that owns the proxy.
     /// - `handle`: Freshly created proxy handle. Guaranteed valid.
     void OnProxyCreated(RenderWorld& renderWorld, RenderProxyHandle handle) override;
@@ -242,7 +252,7 @@ protected:
 
     /// Writes color, intensity, range, and cone angles into the newly created proxy.
     ///
-    /// # Parameters
+    /// # Arguments
     /// - `renderWorld`: The `RenderWorld` that owns the proxy.
     /// - `handle`: Freshly created proxy handle. Guaranteed valid.
     void OnProxyCreated(RenderWorld& renderWorld, RenderProxyHandle handle) override;

@@ -26,7 +26,11 @@
 #include "height_fog_pass.h"
 #include "render_graph_builder.h"
 #include "render_graph_resources.h"
-#include "cascade.h"
+#include "shadow_cascade.h"
+#include "shadow_renderer.h"
+#include "light_renderer.h"
+#include "atmosphere_renderer.h"
+#include "fog_renderer.h"
 #include "sh_projection.h"
 #include "root_slots.h"
 #include "profiler.h"
@@ -160,7 +164,7 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     }
 
     // ── Shadow Atlas ────────────────────────────────────────────────────
-    CreateShadowAtlas();
+    m_shadowAtlas.Init(m_device);
 
     // ── Fallback Textures (SM5 unconditional sampling) ──────────────
     // The SM5 shader path samples all PBR textures unconditionally (no
@@ -309,11 +313,7 @@ void SceneRenderer::Shutdown() {
         m_gbuffer.Destroy(m_device);
     }
 
-    if (m_shadowAtlas.IsValid()) {
-        m_device->DestroyTexture(m_shadowAtlas);
-        m_shadowAtlas = RHITextureHandle{};
-        m_shadowAtlasSrv = UINT32_MAX;
-    }
+    m_shadowAtlas.Shutdown(m_device);
 
     // ── IBL resources ──────────────────────────────────────────────────
     if (m_iblBaker) m_iblBaker->Shutdown();
@@ -505,32 +505,12 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
         }
     }
 
-    // ── Extract directional light from ECS ──────────────────────────────
-    Vec3 sunDir = Vec3{0.5f, 0.3f, 0.8f}.Normalized();  // default
-    Vec3 sunColor = {3.0f, 2.85f, 2.7f};
-    Vec3 ambientColor = {0.03f, 0.03f, 0.05f};
-
-    if (world) {
-        auto dirLightView = world->GetRegistry().view<DirectionalLightComponent>();
-        for (auto enttEntity : dirLightView) {
-            auto& dirLight = dirLightView.get<DirectionalLightComponent>(enttEntity);
-
-            // Read rotation from entity's standalone SceneComponent if present,
-            // otherwise fall back to the SceneComponent embedded in DirectionalLightComponent.
-            if (world->GetRegistry().all_of<SceneComponent>(enttEntity)) {
-                auto& scene = world->GetRegistry().get<SceneComponent>(enttEntity);
-                sunDir = (scene.GetRotation() * Vec3::Forward()).Normalized();
-            } else {
-                sunDir = dirLight.GetDirection().Normalized();
-            }
-            Vec3 dirCol = dirLight.color;
-            if (dirLight.useTemperature) {
-                dirCol = dirCol * KelvinToRgb(dirLight.temperature);
-            }
-            sunColor = dirCol * dirLight.intensity;
-            break;  // Use first directional light found
-        }
-    }
+    // ── Extract lighting from ECS (directional + point lights) ─────────
+    LightFrameData lightData = ExtractLightingFromECS(world, *m_cbRing);
+    const Vec3& sunDir      = lightData.sunDir;
+    const Vec3& sunColor    = lightData.sunColor;
+    const Vec3& ambientColor = lightData.ambientColor;
+    CBAllocation lightingAlloc = lightData.lightingCBAlloc;
 
     perFrame.lightDir     = {sunDir.x, sunDir.y, sunDir.z, 0.f};
     perFrame.lightColor   = {sunColor.x, sunColor.y, sunColor.z, 0.f};
@@ -556,81 +536,15 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     CBAllocation perFrameAlloc = m_cbRing->Allocate(sizeof(PerFrameCB));
     std::memcpy(perFrameAlloc.cpuPtr, &perFrame, sizeof(PerFrameCB));
 
-    // ── Build LightingCB from ECS point lights ──────────────────────────
-    LightingCB lightingData{};
-    if (world) {
-        // Iterate PointLightComponent entities and read position from the entity's
-        // standalone SceneComponent (added separately by the app).
-        auto pointLightView = world->GetRegistry().view<PointLightComponent>();
-        for (auto enttEntity : pointLightView) {
-            if (lightingData.pointLightCount >= kMaxPointLights) break;
-
-            auto& pl = pointLightView.get<PointLightComponent>(enttEntity);
-
-            // Get position from entity's standalone SceneComponent if present,
-            // otherwise fall back to the SceneComponent embedded in PointLightComponent.
-            Vec3 pos{};
-            if (world->GetRegistry().all_of<SceneComponent>(enttEntity)) {
-                auto& scene = world->GetRegistry().get<SceneComponent>(enttEntity);
-                pos = scene.GetWorldPosition();
-            } else {
-                pos = pl.GetWorldPosition();
-            }
-
-            Vec3 lightCol = pl.color;
-            if (pl.useTemperature) {
-                lightCol = lightCol * KelvinToRgb(pl.temperature);
-            }
-            const Vec3 col = lightCol * pl.intensity;
-            const uint32_t idx = lightingData.pointLightCount;
-
-            PointLightData& pld = lightingData.pointLights[idx];
-            pld.position        = pos;
-            pld.radius          = pl.range;
-            pld.color           = col;
-            pld.sourceRadius    = pl.sourceRadius;
-            pld.falloffExponent = pl.lightFalloffExponent;
-            pld.specularScale   = pl.specularScale;
-            pld.diffuseScale    = pl.diffuseScale;
-            pld.flags           = pl.useInverseSquaredFalloff ? kLightFlag_InverseSquared : 0u;
-            lightingData.pointLightCount++;
-        }
-    }
-
-    CBAllocation lightingAlloc = m_cbRing->Allocate(sizeof(LightingCB));
-    std::memcpy(lightingAlloc.cpuPtr, &lightingData, sizeof(LightingCB));
-
-    // ── Shadow cascades ─────────────────────────────────────────────────
-    ShadowConfig shadowCfg{};
-    shadowCfg.cascadeCount = 4;
-    shadowCfg.resolution   = kShadowResolution;
-    shadowCfg.maxDistance   = 20000.0f;  // 200m in cm — large enough for outdoor scenes
-    shadowCfg.splitLambda  = 0.75f;
-    shadowCfg.normalBias   = 2.0f;    // 2cm normal offset (world-space, scales with cm)
-    shadowCfg.depthBias    = 0.005f;  // NDC-space bias — does NOT scale with world units!
-
-    ShadowCascade cascades[kMaxShadowCascades];
-    Vec3 lightShineDir = Vec3{-sunDir.x, -sunDir.y, -sunDir.z};
-    ComputeCascades(camera.GetView(), camera.GetProjection(), lightShineDir,
-                    shadowCfg, cascades);
-
-
-
-    // ── Upload ShadowDataCB ─────────────────────────────────────────────
-    ShadowDataCB shadowData{};
-    for (uint32_t i = 0; i < shadowCfg.cascadeCount; ++i) {
-        shadowData.cascadeViewProj[i] = cascades[i].viewProj;
-    }
-    shadowData.cascadeSplits   = {cascades[0].splitFar, cascades[1].splitFar,
-                                  cascades[2].splitFar, cascades[3].splitFar};
-    shadowData.shadowAtlasIndex = m_shadowAtlasSrv;
-    shadowData.cascadeCount     = shadowCfg.cascadeCount;
-    shadowData.normalBias       = shadowCfg.normalBias;
-    shadowData.depthBias        = shadowCfg.depthBias;
-    shadowData.shadowMapSize    = static_cast<float>(kShadowResolution);
-
-    CBAllocation shadowAlloc = m_cbRing->Allocate(sizeof(ShadowDataCB));
-    std::memcpy(shadowAlloc.cpuPtr, &shadowData, sizeof(ShadowDataCB));
+    // ── Shadow cascades — delegated to shadow_renderer ─────────────────
+    ShadowFrameData shadowFrame = SetupShadowFrame(
+        camera, sunDir,
+        lightData.perLightShadowBias, lightData.perLightShadowSlopeBias,
+        lightData.lightSourceAngleDeg,
+        m_shadowAtlas.GetSrvIndex(), kShadowResolution, *m_cbRing);
+    const auto& shadowCfg  = shadowFrame.config;
+    const auto* cascades    = shadowFrame.cascades;
+    CBAllocation shadowAlloc = shadowFrame.cbAllocation;
 
     // ── Build draw list from ECS ────────────────────────────────────────
     DrawList drawList;
@@ -720,11 +634,11 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     }
 
     // ── Shadow pass ─────────────────────────────────────────────────────
-    auto shadowAtlasRes = rgBuilder.ImportTexture("ShadowAtlas", m_shadowAtlas, RHIResourceState::ShaderResource);
+    auto shadowAtlasRes = rgBuilder.ImportTexture("ShadowAtlas", m_shadowAtlas.GetTexture(), RHIResourceState::ShaderResource);
     if (renderMesh.IsValid()) {
         ShadowPassDesc shadowDesc{};
         shadowDesc.shadowAtlas          = shadowAtlasRes;
-        shadowDesc.shadowAtlasTexture   = m_shadowAtlas;
+        shadowDesc.shadowAtlasTexture   = m_shadowAtlas.GetTexture();
         shadowDesc.drawList             = &drawList;
         shadowDesc.cbAllocator          = m_cbRing.get();
         shadowDesc.pipeline             = pipelines->GetShadowDepth(bindless);
@@ -830,7 +744,7 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
             lightDesc.positionTexture     = m_gbuffer.positionWS;
             lightDesc.shadowAlloc         = shadowAlloc;
             lightDesc.shadowAtlasResource = shadowAtlasRes;
-            lightDesc.shadowAtlasTexture  = m_shadowAtlas;
+            lightDesc.shadowAtlasTexture  = m_shadowAtlas.GetTexture();
             lightDesc.bindless            = bindless;
             lightDesc.viewportWidth       = vpWidth;
             lightDesc.viewportHeight      = vpHeight;
@@ -885,237 +799,42 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
         }
     }
 
-    // ── Sky Atmosphere pass (after lighting, before fog/overlay) ─────────
-    if (world) {
-        auto skyView = world->GetRegistry().view<SkyAtmosphereComponent>();
-        for (auto enttEntity : skyView) {
-            auto& skyComp = skyView.get<SkyAtmosphereComponent>(enttEntity);
-            if (!skyComp.enabled) continue;
+    // ── Sky Atmosphere passes — delegated to atmosphere_renderer ────────
+    AtmosphereFrameContext atmoCtx{};
+    atmoCtx.device              = m_device;
+    atmoCtx.world               = world;
+    atmoCtx.cbRing              = m_cbRing.get();
+    atmoCtx.pipelines           = pipelines;
+    atmoCtx.sunDir              = &sunDir;
+    atmoCtx.sunColor            = &sunColor;
+    atmoCtx.bindless            = bindless;
+    atmoCtx.vpWidth             = vpWidth;
+    atmoCtx.vpHeight            = vpHeight;
+    atmoCtx.transmittanceLut    = m_transmittanceLut;
+    atmoCtx.transmittanceLutSrv = m_transmittanceLutSrv;
+    atmoCtx.transmittanceLutUav = m_transmittanceLutUav;
+    atmoCtx.transmittanceLutDirty  = &m_transmittanceLutDirty;
+    atmoCtx.transmittanceLutFilled = &m_transmittanceLutFilled;
+    atmoCtx.skyCubemap          = m_skyCubemap;
+    atmoCtx.skyCubemapSrv       = m_skyCubemapSrv;
+    atmoCtx.skyCubemapUav       = m_skyCubemapUav;
+    atmoCtx.skyIBLDirty         = &m_skyIBLDirty;
+    atmoCtx.iblBaker            = m_iblBaker.get();
+    atmoCtx.iblResult           = &m_iblResult;
+    atmoCtx.brdfLutSrvIndex     = m_brdfLutSrvIndex;
+    atmoCtx.skyIrradianceSH     = &m_skyIrradianceSH;
+    atmoCtx.depthSrvIndex       = m_gbuffer.depthSRV;
+    atmoCtx.depthTexture        = m_gbuffer.depth;
 
-            // ── Transmittance LUT — import every frame so RG can track state ─
-            // Always import the LUT so the render graph emits correct UAV→SRV barriers.
-            // Import state must match the actual physical state of the texture:
-            //   - dirty (not yet computed): UAV (compute will write it this frame)
-            //   - filled (already computed): SRV (sky pass reads it, no compute needed)
-            rg::RgResourceId lutRes;
-            if (m_transmittanceLut.IsValid()) {
-                RHIResourceState lutImportState = m_transmittanceLutFilled
-                    ? RHIResourceState::ShaderResource
-                    : RHIResourceState::UnorderedAccess;
-                lutRes = rgBuilder.ImportTexture("TransmittanceLUT",
-                    m_transmittanceLut, lutImportState);
-            }
+    AddAtmospherePasses(rgBuilder, hdrRes, depthRes, perFrameAlloc, atmoCtx);
 
-            if (m_transmittanceLutDirty && m_transmittanceLut.IsValid()
-                    && m_transmittanceLutUav != UINT32_MAX) {
-                TransmittanceLutRootConstants lutRC{};
-                lutRC.rayleighBetaX  = skyComp.rayleighScattering.x;
-                lutRC.rayleighBetaY  = skyComp.rayleighScattering.y;
-                lutRC.rayleighBetaZ  = skyComp.rayleighScattering.z;
-                lutRC.rayleighScaleH = skyComp.rayleighScaleHeightKm;
-                lutRC.mieBeta        = skyComp.mieScattering;
-                lutRC.mieScaleH      = skyComp.mieScaleHeightKm;
-                lutRC.bottomRadiusKm = skyComp.bottomRadiusKm;
-                lutRC.topRadiusKm    = skyComp.bottomRadiusKm + skyComp.atmosphereHeightKm;
+    // ── Height Fog pass — delegated to fog_renderer ─────────────────────
+    AddHeightFogFromECS(rgBuilder, hdrRes, depthRes, perFrameAlloc,
+                        world, camera, pipelines, *m_cbRing,
+                        m_gbuffer.depthSRV, m_gbuffer.depth,
+                        bindless, vpWidth, vpHeight);
 
-                TransmittanceLutPassDesc lutPassDesc{};
-                lutPassDesc.lutTarget      = lutRes;
-                lutPassDesc.pipeline       = pipelines->GetTransmittanceLut();
-                lutPassDesc.rootConstants  = lutRC;
-                lutPassDesc.lutUavIndex    = m_transmittanceLutUav;
-                AddTransmittanceLutPass(rgBuilder, lutPassDesc);
-
-                m_transmittanceLutDirty  = false;
-                m_transmittanceLutFilled = true;   // Physical state after compute = SRV
-            }
-
-            // ── Compute atmosphere sun parameters ───────────────────────────
-            // The atmosphere scattering integral uses sunIlluminance from the
-            // SkyAtmosphereComponent as the authoritative sun brightness. The
-            // linked DirectionalLight provides only the sun DIRECTION, angular
-            // radius, and sun disk intensity — not the atmosphere illuminance.
-            // This decouples sky color from PBR surface lighting intensity.
-            Vec3 skySunColor = skyComp.sunIlluminance;
-            float skySunAngularRadius = skyComp.sunAngularRadius;
-            float skySunDiskIntensity = skyComp.sunDiskIntensity;
-
-            if (world) {
-                auto dirView2 = world->GetRegistry().view<DirectionalLightComponent>();
-                for (auto e2 : dirView2) {
-                    auto& dl2 = dirView2.get<DirectionalLightComponent>(e2);
-                    if (dl2.atmosphereSunLight && dl2.atmosphereSunLightIndex == 0) {
-                        // Tint the atmosphere illuminance by the light's spectral color
-                        // (e.g., warm sunset from color temperature) but keep the
-                        // magnitude from SkyAtmosphereComponent::sunIlluminance.
-                        Vec3 lightTint = dl2.color;
-                        if (dl2.useTemperature) {
-                            lightTint = lightTint * KelvinToRgb(dl2.temperature);
-                        }
-                        skySunColor = skyComp.sunIlluminance * lightTint;
-                        static constexpr float kDegToRad2 = 3.14159265358979323846f / 180.f;
-                        skySunAngularRadius = dl2.lightSourceAngle * kDegToRad2;
-                        skySunDiskIntensity = dl2.intensity;
-                        break;
-                    }
-                }
-            }
-
-            // ── Sky Cubemap Capture (for IBL) ───────────────────────────
-            if (m_skyIBLDirty && m_skyCubemap.IsValid()
-                    && m_skyCubemapUav != UINT32_MAX
-                    && m_transmittanceLutSrv != UINT32_MAX) {
-                auto cubeRes = rgBuilder.ImportTexture(
-                    "SkyCubemap", m_skyCubemap, RHIResourceState::UnorderedAccess);
-
-                SkyCubemapCaptureRootConstants cubeRC{};
-                cubeRC.bottomRadiusKm      = skyComp.bottomRadiusKm;
-                cubeRC.topRadiusKm         = skyComp.bottomRadiusKm + skyComp.atmosphereHeightKm;
-                cubeRC.sunDirX             = sunDir.x;
-                cubeRC.sunDirY             = sunDir.y;
-                cubeRC.sunDirZ             = sunDir.z;
-                // Use normalized sun color (spectral only, no intensity) for cubemap
-                // capture — same convention as sky_atmosphere_ps to keep IBL consistent.
-                cubeRC.sunIntensity        = skySunColor.Length();
-                cubeRC.transmittanceLutIdx = m_transmittanceLutSrv;
-
-                // Pack rayleighScatteringScale (low 16) and mieScatteringScale (high 16)
-                // as IEEE 754 half-floats into a single DWORD.
-                auto packF16Pair = [](float a, float b) -> uint32_t {
-                    // Use DirectXMath-style f32->f16 via bit manipulation
-                    auto toF16 = [](float f) -> uint16_t {
-                        uint32_t bits;
-                        std::memcpy(&bits, &f, 4);
-                        uint32_t sign = (bits >> 16) & 0x8000;
-                        int32_t  exp  = ((bits >> 23) & 0xFF) - 127 + 15;
-                        uint32_t frac = (bits >> 13) & 0x3FF;
-                        if (exp <= 0)      return static_cast<uint16_t>(sign); // flush to zero
-                        if (exp >= 0x1F)   return static_cast<uint16_t>(sign | 0x7C00); // inf
-                        return static_cast<uint16_t>(sign | (exp << 10) | frac);
-                    };
-                    return static_cast<uint32_t>(toF16(a))
-                         | (static_cast<uint32_t>(toF16(b)) << 16);
-                };
-                cubeRC.packedScatterScales = packF16Pair(
-                    skyComp.rayleighScatteringScale,
-                    skyComp.mieScatteringScale);
-
-                SkyCubemapCapturePassDesc cubePassDesc{};
-                cubePassDesc.cubemapTarget   = cubeRes;
-                cubePassDesc.pipeline        = pipelines->GetSkyCubemapCapture();
-                cubePassDesc.rootConstants   = cubeRC;
-                cubePassDesc.cubemapUavIndex = m_skyCubemapUav;
-                AddSkyCubemapCapturePass(rgBuilder, cubePassDesc);
-            }
-
-            // Build SkyAtmosphereCB — all distances in km (UE5 convention)
-            // skySunColor, skySunAngularRadius, skySunDiskIntensity already
-            // computed above (before cubemap capture) from linked DirectionalLight.
-            SkyAtmosphereCB skyCB{};
-            skyCB.rayleighScattering = {skyComp.rayleighScattering.x,
-                                        skyComp.rayleighScattering.y,
-                                        skyComp.rayleighScattering.z,
-                                        skyComp.rayleighScaleHeightKm};
-            skyCB.mieScattering      = {skyComp.mieScattering,
-                                        skyComp.mieAnisotropy,
-                                        skyComp.mieScaleHeightKm, 0.f};
-            skyCB.groundAlbedo       = {skyComp.groundAlbedo.x,
-                                        skyComp.groundAlbedo.y,
-                                        skyComp.groundAlbedo.z, 0.f};
-            skyCB.sunIlluminance     = {skySunColor.x,
-                                        skySunColor.y,
-                                        skySunColor.z,
-                                        skySunAngularRadius};
-            skyCB.bottomRadiusKm        = skyComp.bottomRadiusKm;
-            skyCB.atmosphereHeightKm    = skyComp.atmosphereHeightKm;
-            skyCB.sunDiskIntensity      = skySunDiskIntensity;
-            skyCB.multiScatteringFactor = skyComp.multiScatteringFactor;
-            skyCB.rayleighScatteringScale = skyComp.rayleighScatteringScale;
-            skyCB.mieScatteringScale    = skyComp.mieScatteringScale;
-            skyCB.mieAbsorptionScale    = skyComp.mieAbsorptionScale;
-            skyCB.mieAbsorption         = skyComp.mieAbsorption;
-            skyCB.skyLuminanceFactor    = {skyComp.skyLuminanceFactor.x,
-                                            skyComp.skyLuminanceFactor.y,
-                                            skyComp.skyLuminanceFactor.z, 1.f};
-
-            CBAllocation skyAlloc = m_cbRing->Allocate(sizeof(SkyAtmosphereCB));
-            std::memcpy(skyAlloc.cpuPtr, &skyCB, sizeof(SkyAtmosphereCB));
-
-            SkyAtmospherePassDesc skyDesc{};
-            skyDesc.backbuffer              = hdrRes;
-            skyDesc.depthGBuffer            = depthRes;
-            skyDesc.perFrameAlloc           = perFrameAlloc;
-            skyDesc.skyAtmosphereAlloc      = skyAlloc;
-            skyDesc.pipeline                = pipelines->GetSkyAtmosphere();
-            skyDesc.depthSrvIndex           = m_gbuffer.depthSRV;
-            skyDesc.depthTexture            = m_gbuffer.depth;
-            skyDesc.transmittanceLutSrvIndex = m_transmittanceLutSrv;
-            skyDesc.transmittanceLutRes      = lutRes;
-            skyDesc.bindless                = bindless;
-            skyDesc.viewportWidth           = vpWidth;
-            skyDesc.viewportHeight          = vpHeight;
-            AddSkyAtmospherePass(rgBuilder, skyDesc);
-
-            break;  // Only use first SkyAtmosphereComponent found
-        }
-    }
-
-    // ── Height Fog pass (after sky, before overlay) ──────────────────────
-    if (world) {
-        auto fogView = world->GetRegistry().view<HeightFogComponent>();
-        for (auto enttEntity : fogView) {
-            auto& fogComp = fogView.get<HeightFogComponent>(enttEntity);
-            if (!fogComp.enabled) continue;
-
-            // Build HeightFogCB with UE5-style pre-computed RayOriginTerms.
-            // UE5 (FSceneRenderer::InitFogConstants):
-            //   ExponentialFogParameters.x = FogDensity * exp2(-FogHeightFalloff * (CamZ - FogHeight))
-            // This pre-computation avoids computing exp2(-1400) on GPU (which underflows to 0).
-            float camZ = camera.GetPosition().z;
-            float fogHeightDiff = camZ - fogComp.baseHeight;
-            float clampedPower = std::max(-126.f, -fogComp.heightFalloff * fogHeightDiff);
-            float rayOriginTerms = fogComp.density * std::pow(2.0f, clampedPower);
-
-            HeightFogCB fogCB{};
-            fogCB.fogColor         = {fogComp.color.x, fogComp.color.y, fogComp.color.z, 0.f};
-            fogCB.fogDensity       = rayOriginTerms;  // PRE-COMPUTED (UE5: ExponentialFogParameters.x)
-            fogCB.fogHeightFalloff = fogComp.heightFalloff;
-            fogCB.fogBaseHeight    = fogComp.baseHeight;
-            fogCB.fogMaxOpacity    = fogComp.maxOpacity;
-            fogCB.fogStartDistance = fogComp.startDistance;
-            fogCB.fogCutoffDistance = fogComp.fogCutoffDistance;
-
-            // Second fog layer
-            fogCB.secondFogDensity       = fogComp.secondFogDensity;
-            fogCB.secondFogHeightFalloff = fogComp.secondFogHeightFalloff;
-            fogCB.secondFogBaseHeight    = fogComp.secondFogBaseHeight;
-
-            // Directional inscattering
-            fogCB.directionalInscatteringColor = {
-                fogComp.directionalInscatteringColor.x,
-                fogComp.directionalInscatteringColor.y,
-                fogComp.directionalInscatteringColor.z, 0.f};
-            fogCB.directionalInscatteringExponent      = fogComp.directionalInscatteringExponent;
-            fogCB.directionalInscatteringStartDistance  = fogComp.directionalInscatteringStartDistance;
-
-            CBAllocation fogAlloc = m_cbRing->Allocate(sizeof(HeightFogCB));
-            std::memcpy(fogAlloc.cpuPtr, &fogCB, sizeof(HeightFogCB));
-
-            HeightFogPassDesc fogDesc{};
-            fogDesc.backbuffer    = hdrRes;
-            fogDesc.depthGBuffer  = depthRes;
-            fogDesc.perFrameAlloc = perFrameAlloc;
-            fogDesc.fogAlloc      = fogAlloc;
-            fogDesc.pipeline      = pipelines->GetHeightFog();
-            fogDesc.depthSrvIndex = m_gbuffer.depthSRV;
-            fogDesc.depthTexture  = m_gbuffer.depth;
-            fogDesc.bindless      = bindless;
-            fogDesc.viewportWidth = vpWidth;
-            fogDesc.viewportHeight = vpHeight;
-            AddHeightFogPass(rgBuilder, fogDesc);
-
-            break;  // Only use first HeightFogComponent found
-        }
-    }
+    // (atmosphere and fog passes registered above via AddAtmospherePasses + AddHeightFogFromECS)
 
     // ── Tonemap pass (HDR → LDR backbuffer) ────────────────────────────
     // Reads HDR scene color (RGBA16F), applies auto-exposure + ACES filmic
@@ -1218,79 +937,8 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     // HDR target now contains valid scene color for next frame's auto-exposure readback.
     m_hdrHasContent = true;
 
-    // ── IBL bake from sky cubemap (outside render graph — own GPU work) ──
-    // Must happen after render graph executes so the cubemap is filled.
-    // BakeEnvironment submits its own commands synchronously.
-    if (m_skyIBLDirty && m_iblBaker && m_iblBaker->IsInitialized()
-            && m_skyCubemapSrv != UINT32_MAX) {
-        cmdList->End();
-        cmdList->Execute();
-        m_device->WaitIdle();  // ensure cubemap compute is finished
-
-        m_iblResult = m_iblBaker->BakeEnvironment(m_skyCubemapSrv);
-        m_skyIBLDirty = false;
-        UZ_LOG(Renderer, Info, "SceneRenderer: Sky IBL baked (irrad={}, prefilt={})",
-               m_iblResult.irradianceSrvIndex, m_iblResult.prefilteredSrvIndex);
-
-        // Try GPU cubemap readback for SH projection.
-        // Falls back to analytical approximation if readback returns zeros
-        // (known DX12 resource state issue with cubemap CopyTextureToBuffer).
-        {
-            constexpr uint32_t kSkyCubeFaceSize = 64;
-            auto shResult = ProjectCubemapToSH(m_device, cmdList,
-                                                m_skyCubemap, kSkyCubeFaceSize);
-
-            // Check if readback produced valid data (L0 coefficient > 0)
-            bool shValid = (std::abs(shResult.coeffs[0].w) > 1e-6f ||
-                           std::abs(shResult.coeffs[1].w) > 1e-6f ||
-                           std::abs(shResult.coeffs[2].w) > 1e-6f);
-
-            if (shValid) {
-                m_skyIrradianceSH = shResult;
-                UZ_LOG(Renderer, Info, "SceneRenderer: SH from GPU readback");
-            } else {
-                // Analytical SH fallback from sky color estimation.
-                //
-                // UE5 captures a real sky cubemap and projects SH from it. The result
-                // is relatively neutral because the cubemap includes:
-                //   - Blue sky (upper hemisphere)
-                //   - Bright warm horizon band
-                //   - Sun disk (intense warm spot)
-                //
-                // Our analytical approximation estimates sky + ground hemisphere colors
-                // and packs them into L0 (uniform) + L1 (directional gradient).
-                // Ratios are tuned to match UE5 measured SH: nearly neutral with
-                // subtle blue bias, NOT strongly blue like raw Rayleigh predicts.
-                float sunZ = sunDir.z;
-                float sunBright = sunColor.Length();
-                float skyFactor = sunBright * (0.08f + 0.15f * std::max(0.f, sunZ));
-
-                // Sky hemisphere: warm-neutral with subtle blue bias (UE5 parity).
-                // UE5 cubemap SH is much warmer than raw Rayleigh because it includes
-                // sun contribution and horizon glow. Ratios: R:G:B ≈ 0.9:0.92:1.0.
-                Vec3 skyCol = {0.90f * skyFactor, 0.92f * skyFactor, 1.0f * skyFactor};
-
-                // Ground hemisphere: dark warm (ground bounce).
-                // lowerHemisphereIsBlack=true means this should be near-zero.
-                Vec3 gndCol = {0.05f * skyFactor, 0.04f * skyFactor, 0.03f * skyFactor};
-
-                Vec3 avg = (skyCol + gndCol) * 0.5f;
-                Vec3 dir = (skyCol - gndCol) * 0.5f;
-                float c0 = 3.14159f * 0.282095f, c1 = 2.094395f * 0.488603f;
-                for (int i = 0; i < 7; ++i) m_skyIrradianceSH.coeffs[i] = {0,0,0,0};
-                Vec3 sd = {sunDir.x*0.3f, sunDir.y*0.3f, 0.7f};
-                float sl = std::sqrt(sd.x*sd.x+sd.y*sd.y+sd.z*sd.z);
-                if (sl > 0.001f) sd = sd * (1.f/sl);
-                m_skyIrradianceSH.coeffs[0] = {sd.x*c1*dir.x, sd.y*c1*dir.x, sd.z*c1*dir.x, c0*avg.x};
-                m_skyIrradianceSH.coeffs[1] = {sd.x*c1*dir.y, sd.y*c1*dir.y, sd.z*c1*dir.y, c0*avg.y};
-                m_skyIrradianceSH.coeffs[2] = {sd.x*c1*dir.z, sd.y*c1*dir.z, sd.z*c1*dir.z, c0*avg.z};
-                UZ_LOG(Renderer, Info, "SceneRenderer: SH from analytical fallback");
-            }
-        }
-
-        // Re-open command list for the remaining work (screenshot, present)
-        cmdList->Begin();
-    }
+    // ── IBL bake + SH projection — delegated to atmosphere_renderer ────
+    PostFrameAtmosphereBake(cmdList, atmoCtx);
 
     // ── Screenshot capture (after all passes, before End) ───────────────
     // Capture directly from the backbuffer after the render graph executed
@@ -1579,16 +1227,7 @@ void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {
 // Internal Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-void SceneRenderer::CreateShadowAtlas() {
-    RHITextureDesc desc{};
-    desc.width     = kShadowAtlasSize;
-    desc.height    = kShadowAtlasSize;
-    desc.format    = RHIFormat::D32Float;
-    desc.usage     = RHITextureUsage::DepthStencil | RHITextureUsage::ShaderResource;
-    desc.debugName = "ShadowAtlas";
-    m_shadowAtlas    = m_device->CreateTexture(desc);
-    m_shadowAtlasSrv = m_device->GetTextureSRVIndex(m_shadowAtlas);
-}
+// CreateShadowAtlas() moved to ShadowAtlas::Init() in shadows/shadow_atlas.cpp
 
 void SceneRenderer::DestroyAssets() {
     for (auto& mesh : m_meshes) {

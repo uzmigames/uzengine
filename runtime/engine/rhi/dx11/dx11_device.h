@@ -66,56 +66,123 @@ public:
     bool Init(const RHIDeviceDesc& desc);
 
     // ── IRHIDevice: Buffer operations ────────────────────────────────────
+
+    /// Creates a GPU buffer on the DX11 device. See `IRHIDevice::CreateBuffer`.
     RHIBufferHandle CreateBuffer(const RHIBufferDesc& desc) override;
+
+    /// Destroys a DX11 buffer and releases its ID3D11Buffer resource.
     void DestroyBuffer(RHIBufferHandle handle) override;
+
+    /// Returns a transiently mapped pointer for DX11 Upload/Readback buffers.
+    /// Unlike DX12, DX11 requires `UnmapBuffer()` after writing.
     void* MapBuffer(RHIBufferHandle handle) override;
+
+    /// Unmaps a DX11 buffer via `ID3D11DeviceContext::Unmap`. Required after writing.
     void UnmapBuffer(RHIBufferHandle handle) override;
+
+    /// Returns the logical SRV index assigned at buffer creation time.
     uint32_t GetBufferSRVIndex(RHIBufferHandle handle) const override;
+
+    /// Returns the logical UAV index assigned at buffer creation time.
     uint32_t GetBufferUAVIndex(RHIBufferHandle handle) const override;
+
+    /// Returns 0 — DX11 does not support GPU virtual addresses.
     uint64_t GetBufferGPUAddress(RHIBufferHandle handle) const override;
 
     // ── IRHIDevice: Texture operations ───────────────────────────────────
+
+    /// Creates a GPU texture on the DX11 device. See `IRHIDevice::CreateTexture`.
     RHITextureHandle CreateTexture(const RHITextureDesc& desc) override;
+
+    /// Destroys a DX11 texture and releases its ID3D11Texture2D and view resources.
     void DestroyTexture(RHITextureHandle handle) override;
+
+    /// Returns the logical SRV index assigned at texture creation time.
     uint32_t GetTextureSRVIndex(RHITextureHandle handle) const override;
+
+    /// Returns the logical UAV index assigned at texture creation time.
     uint32_t GetTextureUAVIndex(RHITextureHandle handle) const override;
+
+    /// Returns the creation descriptor for a DX11 texture. See `IRHIDevice::GetTextureDesc`.
     RHITextureDesc GetTextureDesc(RHITextureHandle handle) const override;
 
     // ── IRHIDevice: Shader operations ────────────────────────────────────
+
+    /// Creates a shader module from DXBC/DXIL bytecode. See `IRHIDevice::CreateShader`.
     RHIShaderHandle CreateShader(const RHIShaderDesc& desc) override;
+
+    /// Destroys a DX11 shader module and frees its bytecode storage.
     void DestroyShader(RHIShaderHandle handle) override;
 
     // ── IRHIDevice: Pipeline operations ──────────────────────────────────
+
+    /// Creates a DX11 graphics pipeline (rasterizer + blend + depth-stencil + input layout).
     RHIPipelineHandle CreateGraphicsPipeline(const RHIGraphicsPipelineDesc& desc) override;
+
+    /// Creates a DX11 compute pipeline (compute shader only).
     RHIPipelineHandle CreateComputePipeline(const RHIComputePipelineDesc& desc) override;
+
+    /// Destroys a DX11 pipeline and its state objects. See `IRHIDevice::DestroyPipeline`.
     void DestroyPipeline(RHIPipelineHandle handle) override;
+
+    /// Returns empty — DX11 does not support pipeline cached blobs.
     std::vector<uint8_t> GetPipelineCachedBlob(RHIPipelineHandle handle) override;
 
     // ── IRHIDevice: Sampler operations ───────────────────────────────────
+
+    /// Creates a DX11 sampler state via `ID3D11Device::CreateSamplerState`.
     RHISamplerHandle CreateSampler(const RHISamplerDesc& desc) override;
+
+    /// Destroys a DX11 sampler state. See `IRHIDevice::DestroySampler`.
     void DestroySampler(RHISamplerHandle handle) override;
+
+    /// Returns the logical sampler index assigned at creation time.
     uint32_t GetSamplerIndex(RHISamplerHandle handle) const override;
 
     // ── IRHIDevice: Swap chain operations ────────────────────────────────
+
+    /// Creates a DXGI swap chain for DX11. See `IRHIDevice::CreateSwapChain`.
     IRHISwapChain* CreateSwapChain(const RHISwapChainDesc& desc) override;
+
+    /// Destroys a DX11 swap chain. See `IRHIDevice::DestroySwapChain`.
     void DestroySwapChain(IRHISwapChain* swapChain) override;
 
     // ── IRHIDevice: Fence operations ─────────────────────────────────────
+
+    /// Creates a DX11 fence (emulated via ID3D11Query event queries).
     IRHIFence* CreateFence() override;
+
+    /// Destroys a DX11 fence. See `IRHIDevice::DestroyFence`.
     void DestroyFence(IRHIFence* fence) override;
 
     // ── IRHIDevice: Command list operations ──────────────────────────────
+
+    /// Creates a DX11 command list wrapping the immediate context.
     IRHICommandList* CreateCommandList(RHIQueueType queue) override;
+
+    /// Destroys a DX11 command list. See `IRHIDevice::DestroyCommandList`.
     void DestroyCommandList(IRHICommandList* cmdList) override;
 
     // ── IRHIDevice: Synchronization ──────────────────────────────────────
+
+    /// Flushes the DX11 immediate context and blocks until the GPU is idle.
     void WaitIdle() override;
 
     // ── IRHIDevice: Device queries ───────────────────────────────────────
+
+    /// Returns the DXGI adapter description string (e.g., "NVIDIA GeForce RTX 4090").
     const char* GetAdapterName() const override;
+
+    /// Returns the D3D feature level string (e.g., "D3D_FEATURE_LEVEL_11_1").
     const char* GetFeatureLevel() const override;
+
+    /// Queries DXGI adapter memory via `IDXGIAdapter3::QueryVideoMemoryInfo`.
     RHIMemoryBudget GetMemoryBudget() const override;
+
+    /// Returns the DX11 shader model (always SM5_0). See `IRHIDevice::GetShaderModel`.
     ShaderModel GetShaderModel() const override { return m_shaderModel; }
+
+    /// Returns `RHIBackend::DX11`. See `IRHIDevice::GetBackend`.
     RHIBackend GetBackend() const override { return RHIBackend::DX11; }
 
     // ── Accessors for sibling DX11 classes ───────────────────────────────

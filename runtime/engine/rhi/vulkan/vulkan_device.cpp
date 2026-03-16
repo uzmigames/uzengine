@@ -730,7 +730,7 @@ bool VulkanDevice::CreateDescriptorSetLayout() {
         ci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
         ci.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
         ci.compareEnable = VK_TRUE;
-        ci.compareOp = VK_COMPARE_OP_LESS;
+        ci.compareOp = VK_COMPARE_OP_LESS; // Shadow maps use standard-Z (UE5 parity)
         ci.maxAnisotropy = 1.0f;
         ci.minLod = 0.0f;
         ci.maxLod = VK_LOD_CLAMP_NONE;

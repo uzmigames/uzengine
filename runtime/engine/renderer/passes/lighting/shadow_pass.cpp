@@ -194,7 +194,13 @@ void AddShadowPass(rg::RgBuilder& builder, const ShadowPassDesc& desc)
                 cmd->EndRenderPass();
             }
 
-            // Draw call count available via stat counters — no per-frame log.
+            // DEBUG: log shadow draw calls once
+            static bool loggedShadowDraws = false;
+            if (!loggedShadowDraws) {
+                UZ_LOG(Renderer, Info, "ShadowPass: {} cascades, {} total draw calls, {} commands in drawList",
+                       desc.cascadeCount, totalDrawCalls, commands.size());
+                loggedShadowDraws = true;
+            }
         });
     });
 }

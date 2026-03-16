@@ -1,4 +1,7 @@
 /// UzEngine Transform — Decomposed TRS (Position + Rotation + Scale).
+///
+/// Stores position, rotation (Quat), and scale separately for efficient manipulation,
+/// interpolation, and scene-graph hierarchy composition. Converts to/from Mat4 on demand.
 
 #pragma once
 
@@ -69,9 +72,26 @@ struct Transform {
     /// Uppercase alias for `inverse()`.
     Transform Inverse() const { return inverse(); }
 
-    /// Transforms a point by applying scale, rotation, then translation.
+    /// Transforms a 3D point from local space to world space.
+    ///
+    /// Applies scale, then rotation, then translation: `pos + rot * (scale * p)`.
+    ///
+    /// # Arguments
+    /// * `p` — Point in local space.
+    ///
+    /// # Returns
+    /// Point in world space after the full TRS transform.
     Vec3 TransformPoint(const Vec3& p) const { return position + rotation * (scale * p); }
-    /// Transforms a direction by applying scale and rotation (no translation).
+    /// Transforms a 3D direction vector from local space to world space.
+    ///
+    /// Applies scale and rotation only (no translation), since directions
+    /// are displacement vectors without a fixed origin.
+    ///
+    /// # Arguments
+    /// * `d` — Direction in local space.
+    ///
+    /// # Returns
+    /// Direction in world space: `rot * (scale * d)`.
     Vec3 TransformDirection(const Vec3& d) const { return rotation * (scale * d); }
 
     /// Returns a copy with position offset by `delta`.

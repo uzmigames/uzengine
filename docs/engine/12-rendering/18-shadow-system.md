@@ -1,17 +1,28 @@
+<!-- doc-meta
+title: Shadow System — Cascaded Shadow Maps (UE5 Exact Parity)
+category: reference
+engine: uzengine
+theme: rendering
+created: 2026-03-16
+updated: 2026-03-16
+status: active
+author: claude-opus
+-->
+
 # Cascaded Shadow Map System
 
 > **Status**: Done (Phase 2)
-> **Source**: `engine/renderer/shadows/`, `engine/renderer/passes/shadow_pass.h/.cpp`, `shaders/runtime/shadow_depth_vs.hlsl`
-> **Implemented**: Cascade frustum splitting, shadow depth pass, PCF filtering, cascade blending
-> **Tests**: 35 unit tests in `tests/engine/renderer/test_shadow_cascade.cpp`
+> **Source**: `runtime/engine/renderer/shadows/shadow_cascade.h/.cpp`, `runtime/engine/renderer/shadows/shadow_renderer.h/.cpp`, `runtime/engine/renderer/passes/lighting/shadow_pass.h/.cpp`
+> **Implemented**: UE5 exact parity cascade splitting, shadow depth pass, PCF filtering, cascade blending
+> **Tests**: 35 unit tests in `runtime/tests/engine/renderer/test_shadow_cascade.cpp`
 
-## Purpose
+## Overview
 
-The Cascaded Shadow Map (CSM) system provides realistic shadow casting from directional lights (sun, moon). It splits the camera's view frustum into 4 cascades, rendering separate shadow maps at different scales to maintain detail near the camera while covering the full scene depth range.
+The Cascaded Shadow Map (CSM) system provides realistic shadow casting from directional lights (sun, moon). It splits the camera's view frustum into up to 4 cascades, rendering separate shadow maps at different scales to maintain detail near the camera while covering the full scene depth range. The implementation uses **UE5 5.6 exact parity** — all algorithms, parameters, and formulas are copied directly from Unreal Engine 5.6 source code.
 
 ## Architecture Overview
 
-CSM solves the fundamental problem of shadow map resolution: a single shadow map cannot achieve detail near the camera **and** coverage at the far distance simultaneously. The solution is to split the frustum and use tighter projections for nearby geometry.
+CSM solves the fundamental problem of shadow map resolution: a single shadow map cannot achieve detail near the camera **and** coverage at the far distance simultaneously. The solution is to split the frustum and use tighter projections for nearby geometry, with each cascade covering progressively larger world areas.
 
 ```
 Cascade 0 (near)   ← High-res shadow map, tight projection, fine detail
@@ -24,64 +35,144 @@ At sample time, the pixel shader selects cascade based on view-space depth.
 Blend zone at cascade boundaries smooths transitions.
 ```
 
-## Cascade Frustum Splitting
+## Cascade Splitting — UE5 Exponential Accumulation
 
-### Practical Split Scheme (GPU Gems 3, Ch. 10)
+UzEngine uses **UE5's exponential accumulation split scheme** (not the Nvidia GPU Gems lerp scheme), controlled by the `cascadeDistributionExponent` parameter.
 
-The split distances use the **practical split scheme**, which blends logarithmic and linear splitting:
+### Algorithm
 
+Split boundaries are computed iteratively:
+
+```cpp
+// Source: DirectionalLightComponent.cpp:753-776
+float ComputeAccumulatedScale(float exponent, uint32_t splitIndex, uint32_t cascadeCount) {
+    float currentScale = 1.0f;
+    float accumulated = 0.0f;
+    float totalScale = 0.0f;
+
+    for (uint32_t i = 0; i < cascadeCount; ++i) {
+        if (i < splitIndex) {
+            accumulated += currentScale;
+        }
+        totalScale += currentScale;
+        currentScale *= exponent;
+    }
+
+    return accumulated / totalScale;
+}
+
+// Then for each split i = 1 to N:
+// splits[i] = shadowNear + ComputeAccumulatedScale(exponent, i, N) * shadowRange
 ```
-Logarithmic: near * (far / near)^(i/N)
-Linear:      near + (far - near) * (i/N)
 
-Blend:       splits[i] = lambda * log + (1 - lambda) * linear
-```
+**Why exponential accumulation?**
+- Higher exponent (e.g., 3.0) concentrates cascades near the camera, preserving detail.
+- Lower exponent (e.g., 1.2) distributes cascades more uniformly.
+- Produces smoother transitions than piecewise logarithmic/linear blending.
+- Default exponent 3.0 balances near-detail and far-coverage without tuning.
 
-**Configuration:**
+### Configuration
+
 ```cpp
 struct ShadowConfig {
-    uint32_t cascadeCount = 4;       // 1 to 4 cascades (hard limit kMaxShadowCascades)
-    uint32_t resolution = 2048;      // Per-cascade resolution (e.g., 1024, 2048, 4096)
-    float maxDistance = 100.0f;      // Clamp shadow rendering beyond this distance
-    float splitLambda = 0.75f;       // 0=linear (uniform), 1=log (detail-biased)
-    float normalBias = 0.02f;        // Normal bias (world units, per cascade)
-    float depthBias = 0.005f;        // Depth bias for shadow comparison
+    uint32_t cascadeCount = 4;                    // 1 to 4 cascades
+    uint32_t resolution = 2048;                   // Per-cascade resolution (1024–4096)
+    float maxDistance = 40000.0f;                 // Max shadow distance in cm (UE5: 400m)
+    float cascadeDistributionExponent = 3.0f;     // Split distribution control (UE5: 3.0)
+    float cascadeTransitionFraction = 0.1f;       // Cascade blend zone (10% of cascade range)
+    float shadowDistanceFadeoutFraction = 0.1f;   // Fade zone at max distance (10%)
+    float normalBias = 2.0f;                      // Normal-direction bias in cm
+    float csmDepthBias = 10.0f;                   // Constant depth bias (UE5: 10.0)
+    float slopeScaleDepthBias = 3.0f;             // Slope-scaled depth bias (UE5: 3.0)
+    float cascadeBiasDistribution = 1.0f;         // 0=constant, 1=world-scaled (UE5: 1.0)
+    float receiverBias = 0.9f;                    // Shadow sample bias (UE5: 0.9)
+    uint32_t filterMethod = 0;                    // 0=5x5 PCF, 1=16-tap Poisson
 };
 ```
 
-**Why this scheme?**
-- **Logarithmic splits** (lambda=1) concentrate cascades near the camera, preserving detail.
-- **Linear splits** (lambda=0) distribute cascades uniformly, covering far distance.
-- **Blend** (lambda=0.75, recommended) balances near-detail and far-coverage.
+All default values match UE5 5.6 DirectionalLightComponent.
 
-The `splitLambda` parameter is directly configurable, allowing artists to tune the cascade distribution.
+### Bounding Sphere & Optimal Center Offset
+
+For each cascade, an optimal bounding sphere is computed around the sub-frustum:
+
+1. **Extract frustum corners**: Un-project 8 NDC corners to world space for the sub-frustum `[splitNear, splitFar]`.
+2. **Compute near and far plane diagonals**:
+   - `nearDiag = corners[2] - corners[0]` (top-right - bottom-left)
+   - `farDiag  = corners[6] - corners[4]`
+3. **Calculate optimal center offset** along the view axis (UE5 formula):
+   ```
+   OptimalOffset = (DiagonalBSq - DiagonalASq) / (2 * FrustumLength) + FrustumLength * 0.5
+   ```
+   This minimizes the bounding sphere radius and maximizes shadow detail.
+4. **Interpolate to get center**: `center = nearCenter + (farCenter - nearCenter) * t` where `t = optimalOffset / frustumLength`.
+5. **Compute radius**: Maximum distance from center to any frustum corner.
+
+**Why this approach?**
+- Spheres are rotationally stable (no jitter when camera rotates).
+- Optimal offset minimizes wasted shadow map space.
+- Consistent radius across all light angles.
 
 ### Texel Snapping
 
-To prevent shadow "swimming" (shadow edges flickering as the camera moves), each cascade's orthographic projection is **snapped to texel boundaries**:
+To prevent shadow "swimming" (flickering edges as the camera moves), the projection matrix is **snapped to texel boundaries**:
 
-1. Compute world-space texel size: `texelSize = (2 * radius) / resolution`
-2. Transform world origin to shadow-map space.
-3. Round to nearest texel boundary.
-4. Apply rounding offset back to the projection matrix.
+```cpp
+// Compute snap grid size (accounts for max 4x downsampling)
+float snapGrid = 2.0f * MaxDownsampleFactor / resolution;  // 8.0 / 2048 = 0.00390625
 
-This ensures sub-pixel camera movement never causes shadow patterns to shift.
+// Snap the projection matrix translation
+shadowVP.m._41 = floor(shadowVP.m._41 / snapGrid) * snapGrid;
+shadowVP.m._42 = floor(shadowVP.m._42 / snapGrid) * snapGrid;
+```
+
+This ensures sub-pixel camera movement never causes shadow patterns to shift, eliminating shimmer.
+
+### Per-Cascade Bias Distribution
+
+Bias is computed per-cascade and varies with world-space texel size:
+
+```cpp
+float worldUnitsPerTexel = (2.0f * radius) / resolution;
+float depthRange = orthoFar - orthoNear;
+float constantBias = csmDepthBias / depthRange;
+float worldScaledBias = constantBias * worldUnitsPerTexel;
+
+// Lerp between constant and world-scaled based on distribution
+float cascadeDepthBias = constantBias * (1.0f - cascadeBiasDistribution)
+                       + worldScaledBias * cascadeBiasDistribution;
+```
+
+**UE5 default** (cascadeBiasDistribution = 1.0) uses fully world-scaled bias, ensuring consistent shadow thickness across all cascades.
+
+### Cascade Extension for Blending
+
+Non-last cascades extend their `splitFar` to create real geometric overlap:
+
+```cpp
+float fadeExtension = (splitFar - splitNear) * cascadeTransitionFraction;
+extendedFar = splitFar + fadeExtension;
+```
+
+The shader then blends between cascades in the transition zone `[splitFar, extendedFar]`, producing smooth transitions without visible seams.
 
 ### Split Distances in Shaders
 
-The pixel shader needs to know which cascade to sample. Each cascade stores view-space split distances:
+Each cascade outputs split information to the constant buffer:
 
 ```cpp
 struct ShadowCascade {
-    Mat4   viewProj;      // Light-space view-projection (for PCF sampling)
-    float  splitNear;     // View-space distance to near split
-    float  splitFar;      // View-space distance to far split
-    float  texelSize;     // World-space texel size (for bias scaling)
+    Mat4   viewProj;          // Light-space view-projection
+    float  splitNear;         // View-space near distance
+    float  splitFar;          // View-space far distance (extended for overlap)
+    float  splitFarFadeStart; // Original un-extended far (blend starts here)
+    float  texelSize;         // World-space size of one texel
+    float  computedDepthBias; // Per-cascade computed bias
+    float  computedNormalBias;// Per-cascade computed normal bias
 };
 ```
 
-The shader compares pixel view-space depth (`pixelDepth = dot(pixelPos, cameraDir)`) against split distances to determine cascade index:
-
+Shader cascade selection:
 ```hlsl
 uint cascadeIndex = 0;
 if (pixelDepth > cascades[0].splitFar) cascadeIndex = 1;
@@ -257,42 +348,61 @@ float GetCascadeShadow(float3 worldPos, float3 viewDir) {
 }
 ```
 
+## UE5 Parameters Table
+
+All parameters and their UE5 5.6 source locations:
+
+| Parameter | UE5 Name | Default | Source |
+|-----------|----------|---------|--------|
+| cascadeCount | DynamicShadowCascades | 4 | DLC.cpp:1019 |
+| resolution | r.Shadow.MaxCSMResolution | 2048 | ShadowRendering.cpp |
+| maxDistance | DynamicShadowDistanceMovableLight | 40000 cm | DLC.cpp:1017 |
+| cascadeDistributionExponent | CascadeDistributionExponent | 3.0 | DLC.cpp:1029 |
+| cascadeTransitionFraction | CascadeTransitionFraction | 0.1 | DLC.cpp:1030 |
+| shadowDistanceFadeoutFraction | ShadowDistanceFadeoutFraction | 0.1 | DLC.cpp:1031 |
+| normalBias | ShadowNormalBias | 2.0 cm | Not per-parameter, computed |
+| csmDepthBias | r.Shadow.CSMDepthBias | 10.0 | ShadowRendering.cpp:32 |
+| slopeScaleDepthBias | r.Shadow.CSMSlopeScaleDepthBias | 3.0 | ShadowRendering.cpp:38 |
+| cascadeBiasDistribution | ShadowCascadeBiasDistribution | 1.0 | ShadowSetup.cpp:1846 |
+| receiverBias | r.Shadow.CSMReceiverBias | 0.9 | ShadowRendering.cpp:76 |
+| filterMethod | r.Shadow.FilterMethod | 0 (PCF) | ShadowRendering.cpp:182 |
+
 ## Constant Buffers
 
-### ShadowDataCB (Root CBV at b4)
+### ShadowDataCB (Root param b4, pixel shader)
 
-Bound once per frame in the pixel shader to provide cascade data:
+Uploaded once per frame to provide cascade data to the pixel shader:
 
 ```cpp
 struct ShadowDataCB {
-    Mat4     cascadeViewProj[4];  // 256 bytes — light-space viewProj per cascade
-    Vec4     cascadeSplits;        // 16 bytes — view-space far distances per cascade
-    uint32_t shadowAtlasIndex;     // 4 bytes — SRV heap index (bindless)
-    uint32_t cascadeCount;         // 4 bytes — active cascades (1–4)
-    float    normalBias;           // 4 bytes — normal bias (world units)
-    float    depthBias;            // 4 bytes — depth bias (for comparison)
-    float    shadowMapSize;        // 4 bytes — cascade resolution (e.g., 2048)
-    float    _pad[3];              // 12 bytes — alignment
-    // Padded to 512 bytes (256-byte multiple for constant buffer alignment)
+    Mat4     cascadeViewProj[4];     // 256 bytes — light-space viewProj per cascade
+    Vec4     cascadeSplits;          // 16 bytes — extended far distances (for cascade selection)
+    Vec4     cascadeFadeSplits;      // 16 bytes — original far distances (for blend start)
+    Vec4     cascadeDepthBias;       // 16 bytes — per-cascade computed bias
+    Vec4     cascadeNormalBias;      // 16 bytes — per-cascade computed normal bias
+    uint32_t shadowAtlasIndex;       // 4 bytes — SRV heap index (bindless)
+    uint32_t cascadeCount;           // 4 bytes — active cascades (1–4)
+    float    shadowMapSize;          // 4 bytes — cascade resolution (e.g., 2048)
+    float    receiverBias;           // 4 bytes — receiver bias (default 0.9)
+    float    shadowFadeStart;        // 4 bytes — distance at which shadow fade begins
+    float    shadowFadeEnd;          // 4 bytes — distance at which shadow is fully faded
+    uint32_t filterMethod;           // 4 bytes — 0=PCF, 1=Poisson
+    float    _pad[2];                // 8 bytes — alignment
+    // Total: 512 bytes (256-byte CB alignment)
 };
 
 static_assert(sizeof(ShadowDataCB) == 512);
 ```
 
-### PerObjectCB (Root CBV at b2, shadow pass)
+### PerObjectCB (Root param b2, shadow pass)
 
-In the shadow depth pass, each draw allocates a PerObjectCB:
+Allocated per-draw in the shadow depth pass:
 
 ```cpp
 struct PerObjectCB {
     Mat4 worldMatrix;  // 64 bytes
-    // ... (may include other per-object data)
 };
 ```
-
-### ShadowCB (Implicit)
-
-The shadow depth pass binds `cascadeViewProj[cascadeIndex]` at root param 3 during the pass execution callback. This is logically a per-cascade, per-frame update (not per-object).
 
 ## PCF Filtering
 
@@ -313,19 +423,43 @@ Each sample offsets the UV by one texel and compares depth. The average of 9 com
 
 Together, they ensure shadows align with geometry silhouettes.
 
-## Cascade Blending
+## Cascade Blending in Shaders
 
-Cascades are blended in the **last 10% of each cascade's depth range** to hide visible seams:
+Cascades are blended smoothly where the extended splitFar overlaps the next cascade. The shader implements this via the `splitFarFadeStart` (original) and `splitFar` (extended) values:
 
-1. If pixel is in transition zone (last 10% of cascade i's depth range):
-   - Sample both cascade i and cascade i+1.
-   - Interpolate based on depth within the transition zone.
-   - Blend the two shadow samples smoothly.
+```hlsl
+// Transition zone: [splitFarFadeStart, splitFar]
+if (pixelDepth > splitFarFadeStart && cascade < maxCascade) {
+    // Sample both current and next cascade
+    float shadow0 = SampleCascade(cascadeIndex);
+    float shadow1 = SampleCascade(cascadeIndex + 1);
 
-2. If outside transition zone:
-   - Sample only the current cascade.
+    // Blend factor: 0 at splitFarFadeStart, 1 at splitFar
+    float cascadeRange = splitFar - splitFarFadeStart;
+    float blendFactor = (pixelDepth - splitFarFadeStart) / cascadeRange;
+    blendFactor = clamp(blendFactor, 0.0f, 1.0f);
 
-This produces a smooth cascade transition without visible banding.
+    return lerp(shadow0, shadow1, blendFactor);
+}
+
+// Outside transition zone: use single cascade
+return SampleCascade(cascadeIndex);
+```
+
+This produces smooth transitions without visible banding or seams.
+
+## Distance Fadeout
+
+The last cascade fades to nothing over the `shadowDistanceFadeoutFraction` range to avoid hard cutoff:
+
+```hlsl
+float fadeZoneStart = cascades[N-1].splitFarFadeStart;
+float fadeZoneEnd   = cascades[N-1].splitFar;
+if (pixelDepth > fadeZoneStart && pixelDepth < fadeZoneEnd) {
+    float fadeFactor = (pixelDepth - fadeZoneStart) / (fadeZoneEnd - fadeZoneStart);
+    shadowAmount *= (1.0f - fadeFactor);
+}
+```
 
 ## Configuration & Usage
 
@@ -336,14 +470,20 @@ This produces a smooth cascade transition without visible banding.
 ShadowConfig shadowConfig;
 shadowConfig.cascadeCount = 4;
 shadowConfig.resolution = 2048;
-shadowConfig.maxDistance = 100.0f;
-shadowConfig.splitLambda = 0.75f;  // Tune near vs. far detail
-shadowConfig.normalBias = 0.02f;
-shadowConfig.depthBias = 0.005f;
+shadowConfig.maxDistance = 40000.0f;  // UE5 default: 400m in cm
+shadowConfig.cascadeDistributionExponent = 3.0f;  // UE5 default
+shadowConfig.cascadeTransitionFraction = 0.1f;   // 10% blend zone
+shadowConfig.shadowDistanceFadeoutFraction = 0.1f; // 10% fade zone
+shadowConfig.normalBias = 2.0f;  // UE5 default in cm
+shadowConfig.csmDepthBias = 10.0f;  // UE5 default
+shadowConfig.slopeScaleDepthBias = 3.0f;  // UE5 default
+shadowConfig.cascadeBiasDistribution = 1.0f;  // UE5 default (world-scaled)
+shadowConfig.receiverBias = 0.9f;  // UE5 default
+shadowConfig.filterMethod = 0;  // 0=PCF (default)
 
 // Compute cascade matrices each frame:
 ShadowCascade cascades[4];
-ComputeCascades(cameraView, cameraProj, sunDirection, shadowConfig, cascades);
+ComputeCascades(cameraView, cameraProj, lightDir, shadowConfig, cascades);
 
 // Register shadow pass in render graph:
 ShadowPassDesc shadowPassDesc{
@@ -367,27 +507,36 @@ AddShadowPass(rgBuilder, shadowPassDesc);
 
 // Upload ShadowDataCB for pixel shader:
 ShadowDataCB shadowDataCB{};
-for (uint32_t i = 0; i < 4; i++) {
+for (uint32_t i = 0; i < cascadeCount; i++) {
     shadowDataCB.cascadeViewProj[i] = cascades[i].viewProj;
     shadowDataCB.cascadeSplits[i] = cascades[i].splitFar;
+    shadowDataCB.cascadeFadeSplits[i] = cascades[i].splitFarFadeStart;
+    shadowDataCB.cascadeDepthBias[i] = cascades[i].computedDepthBias;
+    shadowDataCB.cascadeNormalBias[i] = cascades[i].computedNormalBias;
 }
-shadowDataCB.cascadeCount = 4;
+shadowDataCB.cascadeCount = cascadeCount;
 shadowDataCB.shadowAtlasIndex = shadowAtlasSrvIndex;
-shadowDataCB.normalBias = shadowConfig.normalBias;
-shadowDataCB.depthBias = shadowConfig.depthBias;
-shadowDataCB.shadowMapSize = 2048.0f;
+shadowDataCB.shadowMapSize = static_cast<float>(shadowConfig.resolution);
+shadowDataCB.receiverBias = shadowConfig.receiverBias;
+shadowDataCB.filterMethod = shadowConfig.filterMethod;
 ```
 
 ### Tuning Parameters
 
-| Parameter | Default | Effect |
-|-----------|---------|--------|
-| `cascadeCount` | 4 | More cascades = higher quality but more cost. 2–4 typical. |
-| `resolution` | 2048 | Higher = sharper shadows, more memory. 1024–4096 typical. |
-| `maxDistance` | 100 | Clamps shadow rendering. Set based on level size. |
-| `splitLambda` | 0.75 | 0 = uniform coverage, 1 = detail-biased. 0.5–0.9 typical. |
-| `normalBias` | 0.02 | Increase if shadows creep on slanted surfaces. |
-| `depthBias` | 0.005 | Increase if shadow acne (sparkles) appears. |
+| Parameter | Default | Effect | Notes |
+|-----------|---------|--------|-------|
+| `cascadeCount` | 4 | More cascades = finer detail but more cost | 2–4 typical; 4 for AAA |
+| `resolution` | 2048 | Higher = sharper shadows, more memory | 1024–4096 typical |
+| `maxDistance` | 40000 cm | Max shadow distance from camera | Set based on level size; UE5 default 400m |
+| `cascadeDistributionExponent` | 3.0 | Higher = more detail near camera | Range 0.5–5.0; UE5 default 3.0 |
+| `cascadeTransitionFraction` | 0.1 | Blend zone size (fraction of cascade range) | Range 0.001–0.3; UE5 default 0.1 |
+| `shadowDistanceFadeoutFraction` | 0.1 | Last cascade fade zone (fraction) | Range 0.0–0.3; UE5 default 0.1 |
+| `normalBias` | 2.0 cm | Surface normal offset for bias | Increase if shadows creep |
+| `csmDepthBias` | 10.0 | Normalized depth bias | UE5 default 10.0; tune if acne appears |
+| `slopeScaleDepthBias` | 3.0 | Slope-dependent bias | UE5 default 3.0 |
+| `cascadeBiasDistribution` | 1.0 | 0=constant, 1=world-scaled per cascade | UE5 default 1.0 (world-scaled) |
+| `receiverBias` | 0.9 | Shadow sample bias | UE5 default 0.9; reduce if shadows too soft |
+| `filterMethod` | 0 | 0=5x5 PCF, 1=16-tap Poisson | 1 produces softer shadows |
 
 ## Performance Considerations
 
@@ -406,15 +555,36 @@ shadowDataCB.shadowMapSize = 2048.0f;
 4. **Two-pass rendering**: Render to shadow maps, then render to backbuffer (amortizes culling).
 5. **Async compute**: Shadow rendering can overlap with visibility pass on modern GPU.
 
+## Z-Up Coordinate System
+
+**CRITICAL**: UzEngine uses Z-up coordinates (UE5 parity). The light up-vector is **always computed relative to Z-up**:
+
+```cpp
+// Correct: Z-up (0, 0, 1)
+Vec3 ChooseLightUp(const Vec3& lightDir) {
+    const Vec3 worldUp{0.0f, 0.0f, 1.0f};  // Z-up
+    if (abs(dot(lightDir, worldUp)) > 0.999f) {
+        return Vec3{1.0f, 0.0f, 0.0f};  // Fallback to X-up if light is vertical
+    }
+    return worldUp;
+}
+
+// WRONG: Y-up causes shadow flickering when camera rotates
+// const Vec3 worldUp{0.0f, 1.0f, 0.0f};  // ❌ NEVER USE
+```
+
+When porting shadow code from external sources (tutorials, other engines), **always verify the up-vector** is Z-up. Mismatched coordinate systems cause shadows to disappear or flicker when the camera rotates.
+
 ## Rules & Best Practices
 
-1. **ALWAYS recompute cascades every frame** — camera movement changes frustum splits.
-2. **ALWAYS clamp `maxDistance`** — prevents wasted shadow coverage beyond visible distance.
-3. **NEVER use cascadeCount > 4** — root cause: `kMaxShadowCascades = 4` hard limit.
-4. **ALWAYS validate cascade matrices** — degenerate projections (e.g., zero radius) cause render failures.
-5. **NEVER sample outside the atlas tile** — ensure UV clamping or border color handling.
+1. **ALWAYS recompute cascades every frame** — camera movement changes frustum splits and requires new projection matrices.
+2. **ALWAYS use Z-up (0, 0, 1) for world up-vector** — Y-up causes shadow shimmer when camera rotates.
+3. **ALWAYS clamp `maxDistance`** — prevents wasted shadow coverage beyond visible distance.
+4. **NEVER use cascadeCount > 4** — hard limit at `kMaxShadowCascades = 4`.
+5. **ALWAYS validate cascade matrices** — degenerate projections cause silent render failures.
 6. **ALWAYS use per-cascade bias** — single bias doesn't work across resolution changes.
-7. **PREFER split lambda = 0.75** — proven to balance detail and coverage.
+7. **PREFER cascadeDistributionExponent = 3.0** — UE5 default; proven to balance near-detail and far-coverage.
+8. **NEVER implement custom split schemes** — use UE5's exponential accumulation for visual parity.
 
 ## Limitations & Future
 
@@ -435,54 +605,55 @@ shadowDataCB.shadowMapSize = 2048.0f;
 - **Virtual shadow maps** — tile-based, cached, handles 100+ lights
 - **Contact shadows** — screen-space shadows from nearby occluders
 
-## Implementation Notes
+## Key Takeaways
 
-### Frustum Corner Computation
-
-Corners are computed by un-projecting NDC corners to world space:
-
-1. Build NDC corners: `{-1, -1, 0}` to `{1, 1, 1}` (DX clip space).
-2. Multiply by `inverse(viewProj)` to recover world positions.
-3. Interpolate along near-to-far rays for the sub-frustum `[splitNear, splitFar]`.
-
-This approach is robust and avoids angle/distance calculations.
-
-### Bounding Sphere vs. AABB
-
-CSM uses a **bounding sphere** rather than a tight AABB because:
-- Spheres are rotationally stable (no jitter when camera rotates).
-- Sphere radius is constant regardless of light angle.
-- Ensures cascade remain valid across all rotations.
-
-### Orthographic Projection Snapping
-
-The snapping offset is applied directly to the projection matrix's translation row, avoiding a separate matrix multiplication per frame.
+- **UE5 Exact Parity**: All formulas, parameters, and constants match UE5 5.6 DirectionalLightComponent.
+- **Exponential Accumulation**: Split scheme controlled by `cascadeDistributionExponent` (default 3.0), concentrating detail near camera.
+- **Optimal Bounding Sphere**: Minimizes shadow map waste via diagonal-offset center calculation.
+- **Texel Snapping**: Eliminates shadow shimmer by quantizing projection to texel grid.
+- **Per-Cascade Bias**: Scales with world texel size to maintain consistency across cascades.
+- **Extended Splits + Blending**: Non-last cascades overlap with next via `cascadeTransitionFraction`, enabling smooth blending.
+- **Z-Up Critical**: Light up-vector must be Z-up; Y-up causes shadow rotation artifacts.
+- **2×2 Atlas Layout**: Single 4096×4096 (or 2048×2048) depth texture holds all cascades as grid tiles.
 
 ## References
 
-1. **"Cascaded Shadow Maps"** (Nvidia GPU Gems 3, Ch. 10) — foundational algorithm
-2. **"Practical Cascaded Splitting"** — practical split scheme derivation
-3. **DirectX 12 Documentation** — orthographic projection, depth comparison samplers
-4. **UE5 Shadow Maps** (`W:\UE_5.6_Source`) — reference implementation patterns
-5. **Godot ShadowAtlas** (`E:\godot`) — alternative atlas layout approaches
+1. **UE5 5.6 Source** (`W:\UE_5.6_Source`)
+   - DirectionalLightComponent.cpp:753–976 — cascade splitting, frustum fitting, bias
+   - ShadowSetup.cpp:1820–1900 — optimal center offset, per-cascade bias computation
+   - ShadowRendering.cpp:32–182 — depth bias, filtering, receiver bias
+
+2. **External References**
+   - "Cascaded Shadow Maps" (Nvidia GPU Gems 3, Ch. 10) — foundational cascade algorithm
+   - DirectX 12 Documentation — orthographic projection, depth comparison samplers
+   - Godot Engine (`E:\godot`) — alternative shadow atlas implementations
 
 ## File Manifest
 
 ```
-engine/renderer/shadows/
-├── cascade.h              # ComputeCascades, ShadowConfig, ShadowCascade types
-├── cascade.cpp            # Practical split scheme implementation
+runtime/engine/renderer/shadows/
+├── shadow_cascade.h       # ShadowConfig, ShadowCascade, ComputeCascades
+├── shadow_cascade.cpp     # UE5 parity implementation
+├── shadow_atlas.h         # Shadow atlas GPU texture management
+├── shadow_atlas.cpp
+├── shadow_renderer.h      # Per-frame shadow configuration + CB upload
+└── shadow_renderer.cpp
 
-engine/renderer/passes/
-├── shadow_pass.h          # ShadowPassDesc, AddShadowPass
-├── shadow_pass.cpp        # Shadow depth pass execution
+runtime/engine/renderer/passes/lighting/
+├── shadow_pass.h          # ShadowPassDesc, AddShadowPass (render graph)
+└── shadow_pass.cpp        # Shadow depth pass execution
 
-shaders/runtime/
-├── shadow_depth_vs.hlsl   # Depth-only vertex shader (bindless + SM5)
+runtime/shaders/runtime/
+└── shadow_depth_vs.hlsl   # Depth-only vertex shader
 
-engine/renderer/
-├── constant_buffers.h     # ShadowDataCB definition (512 bytes)
-
-tests/engine/renderer/
-├── test_shadow_cascade.cpp # 35 unit tests — split distances, matrices, bias
+runtime/tests/engine/renderer/
+└── test_shadow_cascade.cpp # 35 unit tests — splits, matrices, bias
 ```
+
+## Changelog
+
+| Date | Change |
+|------|--------|
+| 2026-03-16 | Updated for UE5 exact parity: exponential accumulation splits, Z-up fix, per-cascade bias, cascade extension for blending |
+| 2026-03-08 | Z-up light up-vector fix (was Y-up, causing shadow flickering on camera rotation) |
+| 2026-03-04 | Shadow system documented with GPU Gems practical split scheme |

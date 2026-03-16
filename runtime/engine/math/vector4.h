@@ -1,4 +1,7 @@
 /// UzEngine Vec4 — 4D floating-point vector for homogeneous coordinates.
+///
+/// Provides arithmetic operators, dot product, length, and normalization for 4D vectors.
+/// Used for homogeneous coordinates (w=1 points, w=0 directions), RGBA colors, and SIMD interop.
 
 #pragma once
 
@@ -75,21 +78,39 @@ struct Vec4 {
     /// Get W component.
     float W() const { return w; }
 
-    /// Vector addition.
+    /// Component-wise vector addition.
+    ///
+    /// # Returns
+    /// New Vec4 where each component is the sum of the corresponding components.
     Vec4 operator+(const Vec4& other) const {
         return {x + other.x, y + other.y, z + other.z, w + other.w};
     }
-    /// Vector subtraction.
+    /// Component-wise vector subtraction.
+    ///
+    /// # Returns
+    /// New Vec4 where each component is the difference of the corresponding components.
     Vec4 operator-(const Vec4& other) const {
         return {x - other.x, y - other.y, z - other.z, w - other.w};
     }
-    /// Scalar multiplication.
+    /// Scalar multiplication (scales all components uniformly).
+    ///
+    /// # Returns
+    /// New Vec4 with each component multiplied by `scalar`.
     Vec4 operator*(float scalar) const { return {x * scalar, y * scalar, z * scalar, w * scalar}; }
-    /// Scalar division.
+    /// Scalar division (divides all components uniformly).
+    ///
+    /// # Returns
+    /// New Vec4 with each component divided by `scalar`. Undefined if `scalar` is zero.
     Vec4 operator/(float scalar) const { return {x / scalar, y / scalar, z / scalar, w / scalar}; }
-    /// Negation.
+    /// Unary negation (flips sign of all components).
+    ///
+    /// # Returns
+    /// New Vec4 with all components negated: `(-x, -y, -z, -w)`.
     Vec4 operator-() const { return {-x, -y, -z, -w}; }
-    /// In-place addition.
+    /// In-place component-wise addition.
+    ///
+    /// # Returns
+    /// Reference to `*this` after adding `other` component-wise.
     Vec4& operator+=(const Vec4& other) {
         x += other.x;
         y += other.y;
@@ -97,7 +118,10 @@ struct Vec4 {
         w += other.w;
         return *this;
     }
-    /// In-place subtraction.
+    /// In-place component-wise subtraction.
+    ///
+    /// # Returns
+    /// Reference to `*this` after subtracting `other` component-wise.
     Vec4& operator-=(const Vec4& other) {
         x -= other.x;
         y -= other.y;
@@ -106,6 +130,9 @@ struct Vec4 {
         return *this;
     }
     /// In-place scalar multiplication.
+    ///
+    /// # Returns
+    /// Reference to `*this` after multiplying all components by `scalar`.
     Vec4& operator*=(float scalar) {
         x *= scalar;
         y *= scalar;
@@ -114,11 +141,17 @@ struct Vec4 {
         return *this;
     }
 
-    /// Exact equality comparison.
+    /// Exact equality comparison (no epsilon tolerance).
+    ///
+    /// # Returns
+    /// `true` if all four components are bitwise equal.
     bool operator==(const Vec4& other) const {
         return x == other.x && y == other.y && z == other.z && w == other.w;
     }
-    /// Inequality.
+    /// Exact inequality comparison.
+    ///
+    /// # Returns
+    /// `true` if any component differs.
     bool operator!=(const Vec4& other) const { return !(*this == other); }
 
     /// Computes the 4D dot product (SIMD-accelerated).
@@ -129,14 +162,23 @@ struct Vec4 {
     /// Uppercase alias for `dot()`.
     float Dot(const Vec4& other) const { return dot(other); }
     /// Computes the 4D Euclidean length (SIMD-accelerated).
+    ///
+    /// # Returns
+    /// `sqrt(x*x + y*y + z*z + w*w)`. Always non-negative.
     float length() const;
     /// Uppercase alias for `length()`.
     float Length() const { return length(); }
     /// Computes the squared 4D length (avoids sqrt).
+    ///
+    /// # Returns
+    /// `x*x + y*y + z*z + w*w`. Useful for distance comparisons without the sqrt cost.
     float lengthSq() const { return x * x + y * y + z * z + w * w; }
     /// Uppercase alias for `lengthSq()`.
     float LengthSq() const { return lengthSq(); }
     /// Returns a unit-length copy (SIMD-accelerated).
+    ///
+    /// # Returns
+    /// Normalized vector with length 1.0. Result is undefined if the input has zero length.
     Vec4 normalize() const;
     /// Uppercase alias for `normalize()`.
     Vec4 Normalized() const { return normalize(); }

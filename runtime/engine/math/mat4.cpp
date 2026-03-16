@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cmath>
 
 namespace uz {
 using namespace DirectX;
@@ -48,7 +49,19 @@ Mat4 Mat4::RotationZ(float angle) {
 }
 
 Mat4 Mat4::Perspective(float fov, float aspect, float near_plane, float far_plane) {
-    return Mat4(XMMatrixPerspectiveFovLH(fov, aspect, near_plane, far_plane));
+    // Reversed-Z perspective (UE5 parity): near maps to 1.0, far maps to 0.0.
+    // Source: UE5 FReversedZPerspectiveMatrix in PerspectiveMatrix.h.
+    const float h = 1.0f / std::tan(fov * 0.5f);
+    const float w = h / aspect;
+    const float range = far_plane - near_plane;
+
+    Mat4 result{};
+    result.m._11 = w;
+    result.m._22 = h;
+    result.m._33 = -near_plane / range;                // Reversed-Z: maps near→1, far→0
+    result.m._43 = (near_plane * far_plane) / range;   // Reversed-Z: positive offset
+    result.m._34 = 1.0f;                               // Perspective divide (w = z)
+    return result;
 }
 
 Mat4 Mat4::LookAt(const Vec3& eye, const Vec3& target, const Vec3& up) {

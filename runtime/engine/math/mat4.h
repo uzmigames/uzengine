@@ -1,4 +1,7 @@
 /// UzEngine Mat4 — 4x4 matrix for transforms, projections, and view calculations.
+///
+/// Wraps DirectXMath XMFLOAT4X4 with SIMD-accelerated operations for model/view/projection
+/// math, TRS construction, inversion, and point/direction transforms.
 
 #pragma once
 
@@ -137,6 +140,17 @@ struct Mat4 {
 
     /// Transforms a point by this matrix (applies full 4x4 including translation).
     Vec3 TransformPoint(const Vec3& p) const { return *this * p; }
+    /// Transforms a direction vector using only the 3x3 rotation/scale part (no translation).
+    ///
+    /// Internally sets w=0 before multiplying to exclude the translation row.
+    /// Use this for normals, tangents, and displacement vectors that should not be affected
+    /// by the matrix's position component.
+    ///
+    /// # Arguments
+    /// * `d` — Direction vector to transform.
+    ///
+    /// # Returns
+    /// Direction vector transformed by the upper-left 3x3 submatrix.
     Vec3 TransformDirection(const Vec3& d) const {
         // Transform direction (no translation) — use only 3x3 part
         DirectX::XMMATRIX m = toXM();

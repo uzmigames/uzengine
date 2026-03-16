@@ -123,17 +123,22 @@ cbuffer LightingCB : register(b2) {
 };
 
 /// Cascaded shadow map parameters — must match C++ ShadowDataCB struct exactly.
-///
-/// Supports 1-4 cascades arranged in a 2x2 atlas layout. Each cascade occupies
-/// one quadrant of the shadow depth atlas texture.
+/// UE5 parity: per-cascade bias, fade starts, receiver bias, distance fade.
 cbuffer ShadowDataCB : register(b4) {
     row_major float4x4 cascadeViewProj[4];  ///< Light-space view-projection per cascade.
-    float4   cascadeSplits;                  ///< View-space far distance per cascade (x=C0, y=C1, z=C2, w=C3).
+    float4   cascadeSplits;                  ///< View-space extended far split per cascade.
+    float4   cascadeFadeStarts;              ///< View-space original (un-extended) far split per cascade.
+    float4   cascadeDepthBias;               ///< Per-cascade computed depth bias.
+    float4   cascadeNormalBias;              ///< Per-cascade computed normal bias.
     uint     shadowAtlasIndex;               ///< SRV heap index for shadow depth atlas.
     uint     cascadeCount;                   ///< Number of active cascades (1-4).
-    float    normalBias;                     ///< World-space offset along surface normal.
-    float    depthBias;                      ///< Bias subtracted from shadow depth comparison.
     float    shadowMapSize;                  ///< Per-cascade resolution in texels.
+    float    receiverBias;                   ///< Shadow receiver bias (UE5 default: 0.9).
+    float    shadowFadeStart;                ///< World distance where last-cascade fade begins.
+    float    shadowFadeEnd;                  ///< World distance where shadows fully disappear.
+    uint     filterMethod;                   ///< 0=5x5 PCF, 1=Poisson 16-tap, 2=PCSS.
+    float    tanLightSourceAngle;            ///< tan(sun disk angle) for PCSS.
+    float    maxSoftKernelSize;              ///< Max PCSS kernel radius in texels.
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -271,8 +276,10 @@ float4 main(FSInput input) : SV_Target {
     float viewDepth = length(worldPos - cameraPos.xyz);
     float shadow = 1.0f;
     if (cascadeCount > 0) {
-        shadow = SampleShadowMap(worldPos, N, viewDepth);
+        shadow = SampleShadowMap(worldPos, N, viewDepth, input.positionCS.xy);
     }
+
+    // (debug removed)
 
     // ── Directional light (shadowed) ──
     float3 L_dir = normalize(lightDir.xyz);

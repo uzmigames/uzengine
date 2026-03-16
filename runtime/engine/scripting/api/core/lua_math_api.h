@@ -23,6 +23,13 @@ struct lua_State;
 namespace uz {
 
 /// Registers the `uz.math` sub-table into the existing `uz` global table.
+///
+/// Populates `uz.math` with vector math utilities (normalize, dot, cross,
+/// length, distance, lerp, clamp, angle conversion) that benefit from
+/// engine-side SIMD. Must be called during LuaVM initialization.
+///
+/// # Arguments
+/// * `L` — Active Lua state. Must not be null.
 void LuaRegisterMathAPI(lua_State* L);
 
 } // namespace uz

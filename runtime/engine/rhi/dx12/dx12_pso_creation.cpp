@@ -220,7 +220,7 @@ ID3D12RootSignature* CreateBindlessRootSignature(ID3D12Device* device, ShaderMod
     staticSamplers[1].AddressW = D3D12_TEXTURE_ADDRESS_MODE_BORDER;
     staticSamplers[1].MipLODBias = 0.f;
     staticSamplers[1].MaxAnisotropy = 1;
-    staticSamplers[1].ComparisonFunc = D3D12_COMPARISON_FUNC_LESS;
+    staticSamplers[1].ComparisonFunc = D3D12_COMPARISON_FUNC_LESS; // Shadow comparison: pixel lit when reference < stored (standard convention with reversed-Z ortho)
     staticSamplers[1].BorderColor = D3D12_STATIC_BORDER_COLOR_OPAQUE_BLACK;
     staticSamplers[1].MinLOD = 0.f;
     staticSamplers[1].MaxLOD = D3D12_FLOAT32_MAX;

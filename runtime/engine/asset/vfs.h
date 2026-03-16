@@ -53,7 +53,7 @@ public:
 
     /// Reads an entire file into memory as a byte buffer.
     ///
-    /// # Parameters
+    /// # Arguments
     /// - `path`: Logical asset path relative to the VFS root.
     ///   Uses forward slashes (e.g., "shaders/pbr_vs.uzshader").
     ///
@@ -64,7 +64,7 @@ public:
 
     /// Checks if a file exists at the given path without reading it.
     ///
-    /// # Parameters
+    /// # Arguments
     /// - `path`: Logical asset path relative to the VFS root.
     ///
     /// # Returns
@@ -82,7 +82,7 @@ public:
     /// Only meaningful for file-backed backends (LooseFileVFS).
     /// Returns the input path unchanged for archive-backed backends (PakVFS).
     ///
-    /// # Parameters
+    /// # Arguments
     /// - `path`: Logical asset path relative to the VFS root.
     ///
     /// # Returns
@@ -118,7 +118,7 @@ class LooseFileVFS : public IVFS {
 public:
     /// Creates a loose file VFS rooted at the given directory.
     ///
-    /// # Parameters
+    /// # Arguments
     /// - `rootDir`: Absolute path to the root directory. Trailing slashes
     ///   are normalized (a slash is appended if missing).
     ///
@@ -186,7 +186,7 @@ class PakVFS : public IVFS {
 public:
     /// Creates a pak VFS from an already-loaded PakReader.
     ///
-    /// # Parameters
+    /// # Arguments
     /// - `reader`: A loaded PakReader. Ownership is transferred via move.
     ///   The reader must have been successfully loaded (`IsLoaded() == true`).
     ///
@@ -198,7 +198,7 @@ public:
     ///
     /// Validates the pak header, reads the index, and builds the lookup map.
     ///
-    /// # Parameters
+    /// # Arguments
     /// - `path`: Absolute or relative path to the .uzpak file on disk.
     ///
     /// # Returns
@@ -277,7 +277,7 @@ public:
     /// The mount list is re-sorted after insertion so that higher-priority
     /// backends are queried first during `Read()` and `Exists()`.
     ///
-    /// # Parameters
+    /// # Arguments
     /// - `vfs`: Shared pointer to the VFS backend. Must not be null.
     /// - `priority`: Numeric priority. Higher values = higher precedence.
     ///   Typical values: 0 (base pak), 50 (DLC), 100 (dev overlay).

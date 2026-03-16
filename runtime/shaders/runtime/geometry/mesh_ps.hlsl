@@ -95,17 +95,22 @@ cbuffer PerObjectCB : register(b2) {
 };
 
 /// Cascaded shadow map parameters — must match C++ ShadowDataCB struct exactly.
-///
-/// Supports 1-4 cascades arranged in a 2x2 atlas layout. Each cascade occupies
-/// one quadrant of the shadow depth atlas texture.
+/// UE5 parity: per-cascade bias, fade starts, receiver bias, distance fade.
 cbuffer ShadowDataCB : register(b4) {
     row_major float4x4 cascadeViewProj[4];  // light-space view-projection per cascade
-    float4   cascadeSplits;                  // view-space far distance per cascade (x=C0, y=C1, z=C2, w=C3)
+    float4   cascadeSplits;                  // view-space extended far split per cascade
+    float4   cascadeFadeStarts;              // view-space original (un-extended) far split per cascade
+    float4   cascadeDepthBias;               // per-cascade computed depth bias
+    float4   cascadeNormalBias;              // per-cascade computed normal bias
     uint     shadowAtlasIndex;               // SRV heap index for shadow depth atlas
     uint     cascadeCount;                   // number of active cascades (1-4)
-    float    normalBias;                     // world-space offset along surface normal
-    float    depthBias;                      // bias subtracted from shadow depth comparison
     float    shadowMapSize;                  // per-cascade resolution in texels
+    float    receiverBias;                   // shadow receiver bias (UE5 default: 0.9)
+    float    shadowFadeStart;                // world distance where last-cascade fade begins
+    float    shadowFadeEnd;                  // world distance where shadows fully disappear
+    uint     filterMethod;                   // 0=5x5 PCF, 1=Poisson 16-tap, 2=PCSS
+    float    tanLightSourceAngle;            // tan(sun disk angle) for PCSS
+    float    maxSoftKernelSize;              // max PCSS kernel radius in texels
 };
 
 #ifndef UZ_BINDLESS
@@ -219,7 +224,7 @@ float4 main(PSInput input) : SV_Target {
         input.positionWS, N, V, NdotV,
         albedo, metallic, alpha, F0,
         lightCount, lights,
-        cameraPos.xyz, cascadeCount);
+        cameraPos.xyz, cascadeCount, input.positionCS.xy);
 
     // ── Ambient / IBL (SH9 diffuse + split-sum specular) ──
     // Matches deferred_lighting_ps.hlsl ambient quality: L2 SH for diffuse,

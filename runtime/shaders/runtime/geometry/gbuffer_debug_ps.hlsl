@@ -154,10 +154,10 @@ static const uint kModeVelocity  = 7;
 /// # Returns
 /// Linear depth normalized to [0, 1] within [nearPlane, farPlane].
 float LinearizeDepth(float depth) {
-    // Perspective depth is stored as: z_ndc = (far*(z-near)) / (z*(far-near))
-    // Solving for linear z:  z_linear = (near * far) / (far - depth*(far-near))
+    // Reversed-Z: z ∈ [1,0], near=1, far=0.
+    // z_linear = (near * far) / (near + depth * (far - near))
     float linearZ = (nearPlane * farPlane) /
-                    (farPlane - depth * (farPlane - nearPlane));
+                    (nearPlane + depth * (farPlane - nearPlane));
     // Normalize to [0,1] so 0=near, 1=far
     return saturate((linearZ - nearPlane) / (farPlane - nearPlane));
 }

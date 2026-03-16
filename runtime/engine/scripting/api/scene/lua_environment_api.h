@@ -32,7 +32,14 @@ namespace uz {
 
 /// Registers environment component functions into the existing `uz.scene` table.
 ///
+/// Populates `uz.scene` with bindings for controlling HeightFogComponent
+/// (density, color, height falloff, max opacity), SkyLightComponent
+/// (intensity, color, min occlusion), and SkyAtmosphereComponent artistic
+/// multipliers (Rayleigh scale, Mie scale, multi-scattering factor).
 /// Must be called AFTER `LuaRegisterSceneAPI()` has created the `uz.scene` table.
+///
+/// # Arguments
+/// * `L` — Active Lua state. Must not be null.
 void LuaRegisterEnvironmentAPI(lua_State* L);
 
 } // namespace uz

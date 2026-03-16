@@ -121,7 +121,7 @@ class AssetManifestWriter {
 public:
     /// Adds an asset entry to the manifest.
     ///
-    /// # Parameters
+    /// # Arguments
     /// - `entry`: Asset metadata including path, size, type, and dependencies.
     ///   The path is hashed via xxHash64 for the binary format.
     void AddEntry(const ManifestWriteEntry& entry);
@@ -144,7 +144,7 @@ private:
 
 /// Writes a .uzmanifest file to disk.
 ///
-/// # Parameters
+/// # Arguments
 /// - `path`: Output file path.
 /// - `writer`: The manifest writer containing all entries.
 ///
@@ -183,7 +183,7 @@ public:
     /// Validates header, reads all entries, and builds the lookup structure.
     /// Entries must be sorted by pathHash (as produced by `AssetManifestWriter`).
     ///
-    /// # Parameters
+    /// # Arguments
     /// - `data`: Complete .uzmanifest bytes.
     ///
     /// # Returns
@@ -196,7 +196,7 @@ public:
 
     /// Loads a manifest from a file on disk.
     ///
-    /// # Parameters
+    /// # Arguments
     /// - `path`: Absolute or relative path to the .uzmanifest file.
     ///
     /// # Returns
@@ -210,7 +210,7 @@ public:
     ///
     /// Computes xxHash64 of the path and performs binary search.
     ///
-    /// # Parameters
+    /// # Arguments
     /// - `path`: Logical asset path (e.g., "shaders/pbr.uzshader").
     ///
     /// # Returns
@@ -231,7 +231,7 @@ public:
     /// Equivalent to `Find(path) != nullptr`. Does not return metadata —
     /// use `Find()` if you need size, type, or dependencies.
     ///
-    /// # Parameters
+    /// # Arguments
     /// - `path`: Logical asset path (e.g., "textures/brick.uztexture").
     ///
     /// # Returns

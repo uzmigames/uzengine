@@ -49,7 +49,7 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
             cmd->ClearRenderTarget(albedo,    kClearBlack);
             cmd->ClearRenderTarget(normal,    kClearBlack);
             cmd->ClearRenderTarget(positionT, kClearBlack);
-            cmd->ClearDepthStencil(desc.depthTexture, 1.0f, 0);
+            cmd->ClearDepthStencil(desc.depthTexture, kDepthFar, 0);
 
             // ── Begin render pass with 3 color attachments + depth ───────
             RHIRenderPassDesc passDesc{};
@@ -66,7 +66,7 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
 
             passDesc.hasDepth = true;
             passDesc.depthAttachment.texture    = desc.depthTexture;
-            passDesc.depthAttachment.clearDepth = 1.0f;
+            passDesc.depthAttachment.clearDepth = kDepthFar;
             passDesc.depthAttachment.clear      = true;
 
             cmd->BeginRenderPass(passDesc);

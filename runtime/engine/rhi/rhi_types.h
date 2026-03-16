@@ -24,6 +24,23 @@
 namespace uz {
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Depth Convention — Reversed-Z (UE5 Parity)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// UzEngine uses reversed-Z depth: near plane maps to 1.0, far plane maps to 0.0.
+/// This provides ~100x better depth precision near the camera, eliminating
+/// Z-fighting on close geometry. Matches UE5 (RHIDefinitions.h:278-287).
+///
+/// # Rules
+/// - NEVER use raw `0.0f` or `1.0f` for depth clear/compare — use these constants.
+/// - Depth test for "closer" uses GreaterEqual (larger value = closer).
+/// - Clear depth to kDepthFar (0.0) for the far plane.
+/// - Projection matrices output Z in [1, 0] range (near=1, far=0).
+constexpr bool     kReversedZ = true;      ///< Compile-time flag: depth buffer is reversed.
+constexpr float    kDepthFar  = 0.0f;      ///< Far plane depth value (clear target).
+constexpr float    kDepthNear = 1.0f;      ///< Near plane depth value.
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Resource Handles — typed generational IDs for GPU objects
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -435,7 +452,7 @@ struct RHIBlendDesc {
 struct RHIDepthStencilDesc {
     bool depthEnable = true;
     bool depthWrite = true;
-    RHICompareFunc depthFunc = RHICompareFunc::Less;
+    RHICompareFunc depthFunc = RHICompareFunc::Greater; ///< Reversed-Z: closer = greater depth value.
 };
 
 /// Rasterizer state for pipeline creation.

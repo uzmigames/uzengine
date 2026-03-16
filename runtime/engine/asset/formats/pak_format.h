@@ -55,10 +55,10 @@ static constexpr size_t kPakAlignment = 64;
 /// .uzpak file header — exactly 16 bytes.
 #pragma pack(push, 1)
 struct PakHeader {
-    uint32_t magic = kPakMagic;
-    uint32_t version = kPakVersion;
-    uint32_t entryCount = 0;
-    uint32_t flags = 0;
+    uint32_t magic = kPakMagic;          ///< Must be kPakMagic ("UZPK" = 0x4B505A55)
+    uint32_t version = kPakVersion;      ///< Format version (currently 1)
+    uint32_t entryCount = 0;             ///< Number of assets stored in this archive
+    uint32_t flags = 0;                  ///< Reserved for future use (bit 0 reserved)
 };
 #pragma pack(pop)
 
@@ -106,7 +106,7 @@ struct PakWriteEntry {
 /// (each 64-byte aligned), index (40 bytes per entry, sorted by pathHash),
 /// and trailer (16 bytes).
 ///
-/// # Parameters
+/// # Arguments
 /// - `entries`: Assets to pack. Each entry provides a logical path,
 ///   raw byte data, and an optional type identifier.
 ///
@@ -122,7 +122,7 @@ struct PakWriteEntry {
 ///
 /// Calls `WritePak()` internally, then writes the result to `path`.
 ///
-/// # Parameters
+/// # Arguments
 /// - `path`: Absolute or relative file path for the output .uzpak.
 /// - `entries`: Assets to pack (see `WritePak()` for details).
 ///
@@ -145,7 +145,7 @@ public:
     /// the index offset, parses all index entries, and builds the hash
     /// lookup map. The input data is copied into internal storage.
     ///
-    /// # Parameters
+    /// # Arguments
     /// - `data`: Complete .uzpak archive bytes (header + data + index + trailer).
     ///
     /// # Returns
@@ -160,7 +160,7 @@ public:
     ///
     /// Reads the entire file into memory, then calls `Load()`.
     ///
-    /// # Parameters
+    /// # Arguments
     /// - `path`: Absolute or relative path to the .uzpak file.
     ///
     /// # Returns
@@ -174,7 +174,7 @@ public:
     ///
     /// Computes `xxHash64(path)` and queries the in-memory index.
     ///
-    /// # Parameters
+    /// # Arguments
     /// - `path`: Logical asset path (e.g., "shaders/simple_vs.uzshader").
     ///
     /// # Returns

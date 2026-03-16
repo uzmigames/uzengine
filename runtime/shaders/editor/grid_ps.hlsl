@@ -40,8 +40,9 @@ PSOutput main(PSInput input) {
     float majorSpacing = minorSpacing * majorInterval;
 
     // ── Reconstruct world ray from NDC ───────────────────────────────────
-    float4 nearNDC = float4(input.ndc, 0.0, 1.0);
-    float4 farNDC  = float4(input.ndc, 1.0, 1.0);
+    // Reversed-Z: near plane = 1.0, far plane = 0.0
+    float4 nearNDC = float4(input.ndc, 1.0, 1.0);
+    float4 farNDC  = float4(input.ndc, 0.0, 1.0);
 
     float4 nearWorld = mul(nearNDC, invViewProj);
     float4 farWorld  = mul(farNDC,  invViewProj);

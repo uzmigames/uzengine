@@ -1,4 +1,7 @@
 /// UzEngine Quat — Unit quaternion for 3D rotation.
+///
+/// Provides construction from axis-angle/Euler/matrix, multiplication, slerp/lerp interpolation,
+/// vector rotation, and conversion to Mat4. Backed by DirectXMath SIMD intrinsics where applicable.
 
 #pragma once
 
@@ -78,9 +81,17 @@ struct Quat {
     Quat operator*(const Quat& other) const;
     /// Rotates a vector by this quaternion.
     Vec3 operator*(const Vec3& v) const;
+    /// Exact equality comparison (no epsilon tolerance).
+    ///
+    /// # Returns
+    /// `true` if all four components (x, y, z, w) are bitwise equal.
     bool operator==(const Quat& other) const {
         return x == other.x && y == other.y && z == other.z && w == other.w;
     }
+    /// Exact inequality comparison.
+    ///
+    /// # Returns
+    /// `true` if any component differs.
     bool operator!=(const Quat& other) const { return !(*this == other); }
 
     /// Returns the conjugate (negated imaginary part). For unit quaternions, equals inverse.
@@ -93,12 +104,41 @@ struct Quat {
     Quat normalize() const;
     /// Uppercase alias for `normalize()`.
     Quat Normalized() const { return normalize(); }
+    /// Computes the 4D dot product of two quaternions.
+    ///
+    /// Useful for measuring alignment: `dot ≈ 1` means same rotation,
+    /// `dot ≈ -1` means opposite hemisphere (same rotation, negated representation).
+    ///
+    /// # Arguments
+    /// * `other` — Quaternion to dot against.
+    ///
+    /// # Returns
+    /// `x*other.x + y*other.y + z*other.z + w*other.w`.
     float dot(const Quat& other) const {
         return x * other.x + y * other.y + z * other.z + w * other.w;
     }
+    /// Uppercase alias for `dot()`.
     float Dot(const Quat& other) const { return dot(other); }
+    /// Computes the Euclidean length (4D magnitude) of this quaternion.
+    ///
+    /// For unit quaternions this should be approximately 1.0.
+    /// Use `is_normalized()` for a tolerance-based check.
+    ///
+    /// # Returns
+    /// `sqrt(x*x + y*y + z*z + w*w)`. Always non-negative.
     float length() const { return std::sqrt(x * x + y * y + z * z + w * w); }
+    /// Uppercase alias for `length()`.
     float Length() const { return length(); }
+    /// Rotates a 3D vector by this quaternion.
+    ///
+    /// Equivalent to `operator*(const Vec3&)`. Provided as a named alternative
+    /// for readability when the intent is explicitly vector rotation.
+    ///
+    /// # Arguments
+    /// * `v` — Vector to rotate.
+    ///
+    /// # Returns
+    /// Rotated vector `q * v * q^-1` (computed via `operator*`).
     Vec3 RotateVector(const Vec3& v) const { return *this * v; }
 
     /// Spherical linear interpolation (constant angular velocity, SIMD-accelerated).

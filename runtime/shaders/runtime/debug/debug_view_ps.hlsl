@@ -128,7 +128,8 @@ float LinearizeDepth(float depth, float near, float far) {
     float range = far - near;
     if (abs(range) < 1e-6f) return near;
 
-    return (near * far) / (far - depth * range);
+    // Reversed-Z: z ∈ [1,0], near=1, far=0.
+    return (near * far) / (near + depth * range);
 }
 
 // -------------------------------------------------------------------------

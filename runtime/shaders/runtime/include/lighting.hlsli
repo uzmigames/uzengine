@@ -109,7 +109,7 @@ float3 AccumulateDirectLighting(
     float3 positionWS, float3 N, float3 V, float NdotV,
     float3 albedo, float metallic, float alpha, float3 F0,
     uint lightCount, LightData lights[MAX_LIGHTS],
-    float3 cameraPos, uint cascadeCount)
+    float3 cameraPos, uint cascadeCount, float2 screenPos)
 {
     float3 Lo = float3(0.0f, 0.0f, 0.0f);
 
@@ -127,7 +127,7 @@ float3 AccumulateDirectLighting(
             // Shadow mapping only for the first directional light
             if (i == 0 && cascadeCount > 0) {
                 float viewDepth = length(positionWS - cameraPos);
-                attenuation = SampleShadowMap(positionWS, N, viewDepth);
+                attenuation = SampleShadowMap(positionWS, N, viewDepth, screenPos);
             }
         } else {
             // ── Point or Spot light ──

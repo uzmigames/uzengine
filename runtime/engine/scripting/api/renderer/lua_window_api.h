@@ -18,7 +18,13 @@ class SceneRenderer;
 
 /// Registers the `uz.window` sub-table into the existing `uz` global table.
 ///
-/// Reuses the SceneRenderer* already stored by LuaSetSceneRenderer.
+/// Populates `uz.window` with bindings for querying window dimensions,
+/// render path, and debug mode. Reuses the SceneRenderer* already stored
+/// in the Lua registry by LuaSetSceneRenderer.
+/// Must be called during LuaVM initialization, after LuaSetSceneRenderer.
+///
+/// # Arguments
+/// * `L` — Active Lua state. Must not be null.
 void LuaRegisterWindowAPI(lua_State* L);
 
 } // namespace uz

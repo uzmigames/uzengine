@@ -73,55 +73,119 @@ public:
     bool Init(const RHIDeviceDesc& desc);
 
     // ── IRHIDevice: Buffer operations ────────────────────────────────────
+
+    /// Creates a Metal buffer via `MTLDevice::newBuffer`. See `IRHIDevice::CreateBuffer`.
     RHIBufferHandle CreateBuffer(const RHIBufferDesc& desc) override;
+
+    /// Destroys a Metal buffer and frees its SRV/UAV descriptor indices.
     void DestroyBuffer(RHIBufferHandle handle) override;
+
+    /// Returns the `MTLBuffer::contents()` pointer for Shared/Managed storage mode buffers.
     void* MapBuffer(RHIBufferHandle handle) override;
+
+    /// No-op on Metal — Shared-mode buffers are always CPU-accessible.
     void UnmapBuffer(RHIBufferHandle handle) override;
+
+    /// Returns the SRV index in the texture argument buffer for a buffer.
     uint32_t GetBufferSRVIndex(RHIBufferHandle handle) const override;
+
+    /// Returns the UAV index for a buffer (same descriptor space as SRV on Metal).
     uint32_t GetBufferUAVIndex(RHIBufferHandle handle) const override;
+
+    /// Returns the `MTLBuffer::gpuAddress` for buffer device address usage.
     uint64_t GetBufferGPUAddress(RHIBufferHandle handle) const override;
 
     // ── IRHIDevice: Texture operations ───────────────────────────────────
+
+    /// Creates a Metal texture via `MTLDevice::newTexture`. See `IRHIDevice::CreateTexture`.
     RHITextureHandle CreateTexture(const RHITextureDesc& desc) override;
+
+    /// Destroys a Metal texture and frees its SRV/UAV descriptor indices.
     void DestroyTexture(RHITextureHandle handle) override;
+
+    /// Returns the SRV index in the texture argument buffer for a texture.
     uint32_t GetTextureSRVIndex(RHITextureHandle handle) const override;
+
+    /// Returns the UAV index in the texture argument buffer for a texture.
     uint32_t GetTextureUAVIndex(RHITextureHandle handle) const override;
+
+    /// Returns the creation descriptor for a Metal texture. See `IRHIDevice::GetTextureDesc`.
     RHITextureDesc GetTextureDesc(RHITextureHandle handle) const override;
 
     // ── IRHIDevice: Shader operations ────────────────────────────────────
+
+    /// Creates a shader module from MSL source or metallib bytecode.
     RHIShaderHandle CreateShader(const RHIShaderDesc& desc) override;
+
+    /// Destroys a Metal shader module. See `IRHIDevice::DestroyShader`.
     void DestroyShader(RHIShaderHandle handle) override;
 
     // ── IRHIDevice: Pipeline operations ──────────────────────────────────
+
+    /// Creates a Metal render pipeline state via `MTLDevice::newRenderPipelineState`.
     RHIPipelineHandle CreateGraphicsPipeline(const RHIGraphicsPipelineDesc& desc) override;
+
+    /// Creates a Metal compute pipeline state via `MTLDevice::newComputePipelineState`.
     RHIPipelineHandle CreateComputePipeline(const RHIComputePipelineDesc& desc) override;
+
+    /// Destroys a Metal pipeline state. See `IRHIDevice::DestroyPipeline`.
     void DestroyPipeline(RHIPipelineHandle handle) override;
 
     // ── IRHIDevice: Sampler operations ───────────────────────────────────
+
+    /// Creates a Metal sampler via `MTLDevice::newSamplerState`. See `IRHIDevice::CreateSampler`.
     RHISamplerHandle CreateSampler(const RHISamplerDesc& desc) override;
+
+    /// Destroys a Metal sampler state. See `IRHIDevice::DestroySampler`.
     void DestroySampler(RHISamplerHandle handle) override;
+
+    /// Returns the index in the sampler argument buffer for a sampler.
     uint32_t GetSamplerIndex(RHISamplerHandle handle) const override;
 
     // ── IRHIDevice: Swap chain operations ────────────────────────────────
+
+    /// Creates a Metal swap chain backed by a CAMetalLayer. See `IRHIDevice::CreateSwapChain`.
     IRHISwapChain* CreateSwapChain(const RHISwapChainDesc& desc) override;
+
+    /// Destroys a Metal swap chain. See `IRHIDevice::DestroySwapChain`.
     void DestroySwapChain(IRHISwapChain* swapChain) override;
 
     // ── IRHIDevice: Fence operations ─────────────────────────────────────
+
+    /// Creates a Metal fence using `MTLSharedEvent` (monotonic counter).
     IRHIFence* CreateFence() override;
+
+    /// Destroys a Metal shared event fence. See `IRHIDevice::DestroyFence`.
     void DestroyFence(IRHIFence* fence) override;
 
     // ── IRHIDevice: Command list operations ──────────────────────────────
+
+    /// Creates a Metal command list (wraps MTLCommandBuffer from the queue).
     IRHICommandList* CreateCommandList(RHIQueueType queue) override;
+
+    /// Destroys a Metal command list. See `IRHIDevice::DestroyCommandList`.
     void DestroyCommandList(IRHICommandList* cmdList) override;
 
     // ── IRHIDevice: Synchronization ──────────────────────────────────────
+
+    /// Commits a command buffer with a completion handler and blocks until done.
     void WaitIdle() override;
 
     // ── IRHIDevice: Device queries ───────────────────────────────────────
+
+    /// Returns the Metal GPU name (e.g., "Apple M2 Max").
     const char* GetAdapterName() const override;
+
+    /// Returns the Metal GPU family string (e.g., "Apple9").
     const char* GetFeatureLevel() const override;
+
+    /// Queries Metal GPU memory via `recommendedMaxWorkingSetSize` and `currentAllocatedSize`.
     RHIMemoryBudget GetMemoryBudget() const override;
+
+    /// Returns the Metal shader model (default SM6_6). See `IRHIDevice::GetShaderModel`.
     ShaderModel GetShaderModel() const override { return m_shaderModel; }
+
+    /// Returns `RHIBackend::Metal`. See `IRHIDevice::GetBackend`.
     RHIBackend GetBackend() const override { return RHIBackend::Metal; }
 
     // ── Accessors for sibling Metal classes ──────────────────────────────
