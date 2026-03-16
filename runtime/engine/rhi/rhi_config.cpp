@@ -20,9 +20,15 @@ namespace uz {
 // ─────────────────────────────────────────────────────────────────────────────
 
 bool IRHIDevice::IsBindless() const {
-    // All backends: bindless requires SM6.6+ (or Vulkan equivalent).
-    // Vulkan uses VK_EXT_descriptor_indexing + runtimeDescriptorArray
-    // which maps to the same capability as DX12 ResourceDescriptorHeap.
+    // Vulkan: descriptor indexing features are ENABLED at device creation,
+    // but the command list does not yet implement ResourceDescriptorHeap-style
+    // bindless (shaders use register-bound descriptors via -fvk-*-shift).
+    // Return false until the SPIR-V shader path supports UZ_BINDLESS.
+    if (GetBackend() == RHIBackend::Vulkan) {
+        return false;
+    }
+    // DX12: SM6.6+ enables ResourceDescriptorHeap bindless.
+    // DX11/Metal: always false (no SM6.6 support).
     return GetShaderModel() >= ShaderModel::SM6_6;
 }
 
