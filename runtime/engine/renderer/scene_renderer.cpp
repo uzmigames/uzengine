@@ -1063,10 +1063,18 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
             auto& fogComp = fogView.get<HeightFogComponent>(enttEntity);
             if (!fogComp.enabled) continue;
 
-            // Build HeightFogCB from component data
+            // Build HeightFogCB with UE5-style pre-computed RayOriginTerms.
+            // UE5 (FSceneRenderer::InitFogConstants):
+            //   ExponentialFogParameters.x = FogDensity * exp2(-FogHeightFalloff * (CamZ - FogHeight))
+            // This pre-computation avoids computing exp2(-1400) on GPU (which underflows to 0).
+            float camZ = camera.GetPosition().z;
+            float fogHeightDiff = camZ - fogComp.baseHeight;
+            float clampedPower = std::max(-126.f, -fogComp.heightFalloff * fogHeightDiff);
+            float rayOriginTerms = fogComp.density * std::pow(2.0f, clampedPower);
+
             HeightFogCB fogCB{};
             fogCB.fogColor         = {fogComp.color.x, fogComp.color.y, fogComp.color.z, 0.f};
-            fogCB.fogDensity       = fogComp.density;
+            fogCB.fogDensity       = rayOriginTerms;  // PRE-COMPUTED (UE5: ExponentialFogParameters.x)
             fogCB.fogHeightFalloff = fogComp.heightFalloff;
             fogCB.fogBaseHeight    = fogComp.baseHeight;
             fogCB.fogMaxOpacity    = fogComp.maxOpacity;
