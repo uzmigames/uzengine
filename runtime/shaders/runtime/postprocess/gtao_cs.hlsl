@@ -61,51 +61,25 @@
 // Root Constants (b0, 8 DWORDs = 32 bytes)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Minimal root constants for SRV indices and frame data.
-/// Uses the 8-DWORD limit of the compute root signature slot 0.
+/// All GTAO parameters in 16 DWORDs (64 bytes) — compute root constant limit.
+/// No CBV used — compute root sig only has root constants at slot 0.
 cbuffer GTAORootCB : register(b0) {
-    uint     depthSrvIndex;   ///< SRV descriptor index for depth buffer.
-    uint     normalSrvIndex;  ///< SRV descriptor index for normal G-Buffer.
-    uint     frameIndex;      ///< Monotonic frame counter (for temporal jitter).
-    uint     _rootPad0;
-    uint     _rootPad1;
-    uint     _rootPad2;
-    uint     _rootPad3;
-    uint     _rootPad4;
-};
-
-// ─────────────────────────────────────────────────────────────────────────────
-// CBV at b2 — bulk GTAO parameters (256 bytes, 16-byte aligned)
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// @source UE5 PostProcessAmbientOcclusion.usf:566-571 — GTAOParams layout
-cbuffer GTAOParams : register(b2) {
-    // Temporal jitter
-    float    temporalCos;       ///< cos(TemporalAngle).
-    float    temporalSin;       ///< sin(TemporalAngle).
-    float    temporalOffset;    ///< Per-frame spatial offset.
-    float    thicknessBlend;    ///< Thickness heuristic (0..1). UE5 ~0.5.
-
-    // Target size
-    float    targetSizeX;       ///< Output width in pixels.
-    float    targetSizeY;       ///< Output height in pixels.
-    float    invTargetSizeX;    ///< 1.0 / width.
-    float    invTargetSizeY;    ///< 1.0 / height.
-
-    // World radius + falloff
-    float    worldRadius;       ///< AO search radius (cm). UE5 default: 200.
-    float    invTanHalfFov;     ///< 1 / tan(fovY / 2).
-    float    nearPlane;         ///< Near clip (cm).
-    float    farPlane;          ///< Far clip (cm).
-
-    // Distance fade
-    float    fadeMul;           ///< Distance fade multiplier.
-    float    fadeAdd;           ///< Distance fade additive.
-    float    maxFadeDepth;      ///< Skip AO beyond this depth.
-    float    aoIntensity;       ///< Final multiplier.
-
-    // View matrix (4x4 row-major = 16 floats = 64 bytes)
-    row_major float4x4 viewMatrix;
+    uint     depthSrvIndex;     // DWORD 0
+    uint     normalSrvIndex;    // DWORD 1
+    uint     frameIndex;        // DWORD 2
+    uint     outputWidth;       // DWORD 3
+    float    outputHeight;      // DWORD 4
+    float    invWidth;          // DWORD 5
+    float    invHeight;         // DWORD 6
+    float    worldRadius;       // DWORD 7
+    float    invTanHalfFov;     // DWORD 8
+    float    nearPlane;         // DWORD 9
+    float    farPlane;          // DWORD 10
+    float    aoIntensity;       // DWORD 11
+    float    temporalCos;       // DWORD 12
+    float    temporalSin;       // DWORD 13
+    float    temporalOffset;    // DWORD 14
+    float    thicknessBlend;    // DWORD 15
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -176,19 +150,18 @@ float3 ScreenToViewPos(float2 uv, float linearDepth) {
     ndc.y = -ndc.y;
 
     float3 viewPos;
-    float aspect = targetSizeX * invTargetSizeY;
+    float aspect = float(outputWidth) * invHeight;
     viewPos.x = ndc.x * linearDepth / (invTanHalfFov / aspect);
     viewPos.y = ndc.y * linearDepth / invTanHalfFov;
     viewPos.z = linearDepth;
     return viewPos;
 }
 
-/// Reconstruct view-space normal from G-Buffer octahedral normal.
-float3 GetViewSpaceNormal(float2 uv) {
+/// Reconstruct world-space normal from G-Buffer octahedral encoding.
+/// GTAO works in screen-space with world normals — no view matrix needed.
+float3 GetWorldNormal(float2 uv) {
     float4 normalPacked = SampleNormal(uv);
-    float3 worldNormal = OctDecode(normalPacked.rg);
-    float3 viewNormal = normalize(mul(float4(worldNormal, 0.0f), viewMatrix).xyz);
-    return viewNormal;
+    return OctDecode(normalPacked.rg);
 }
 
 /// Interleaved Gradient Noise — spatially varying pseudo-random value.
@@ -329,31 +302,32 @@ void main(
     uint2 dispatchId     : SV_DispatchThreadID,
     uint2 groupThreadId  : SV_GroupThreadID)
 {
-    if (dispatchId.x >= (uint)targetSizeX || dispatchId.y >= (uint)targetSizeY) {
+    if (dispatchId.x >= (uint)float(outputWidth) || dispatchId.y >= (uint)outputHeight) {
         return;
     }
 
     float2 pixelCenter = (float2)dispatchId + float2(0.5f, 0.5f);
-    float2 uv = pixelCenter * float2(invTargetSizeX, invTargetSizeY);
+    float2 uv = pixelCenter * float2(invWidth, invHeight);
 
     // ── Early depth check ──
     /// @source UE5 PostProcessAmbientOcclusion.usf:855-862
     float deviceZ = SampleDepth(uv);
     float sceneDepth = LinearizeDepth(deviceZ);
 
-    if (sceneDepth > maxFadeDepth) {
+    // Skip very distant pixels (simplified fade — no fadeMul/fadeAdd in root constants)
+    if (sceneDepth > 100000.0f) {
         aoOutput[dispatchId] = 1.0f;
         return;
     }
 
     // ── Reconstruct view-space position and normal ──
     float3 viewSpacePos = ScreenToViewPos(uv, sceneDepth);
-    float3 viewSpaceNormal = GetViewSpaceNormal(uv);
+    float3 viewSpaceNormal = GetWorldNormal(uv);
     float3 viewDir = normalize(-viewSpacePos);
 
     // ── Compute screen-space radius ──
     /// @source UE5 PostProcessAmbientOcclusion.usf:870-877
-    float fovScale = targetSizeY * invTanHalfFov;
+    float fovScale = outputHeight * invTanHalfFov;
     float worldRadiusAdj = worldRadius * fovScale;
     float pixelRadius = max(min(worldRadiusAdj / viewSpacePos.z, GTAO_MAX_PIXEL_SCREEN_RADIUS), (float)GTAO_NUMTAPS);
     float stepRadius = pixelRadius / ((float)GTAO_NUMTAPS + 1.0f);
@@ -380,7 +354,7 @@ void main(
         float2 horizonAngles = SearchForLargestAngleDual(
             GTAO_NUMTAPS,
             uv,
-            screenDir * float2(invTargetSizeX, invTargetSizeY),
+            screenDir * float2(invWidth, invHeight),
             stepRadius,
             offset,
             viewSpacePos,
@@ -406,7 +380,9 @@ void main(
 
     // ── Distance fade ──
     /// @source UE5 PostProcessAmbientOcclusion.usf:913-915
-    ao = lerp(ao, 1.0f, saturate(sceneDepth * fadeMul + fadeAdd));
+    // Distance fade (simplified — linear fade beyond 50000cm)
+    float distFade = saturate((sceneDepth - 50000.0f) / 50000.0f);
+    ao = lerp(ao, 1.0f, distFade);
 
     aoOutput[dispatchId] = saturate(ao);
 }

@@ -312,40 +312,26 @@ uint32_t GTAOPass::Execute(IRHICommandList* cmdList, CBRingAllocator* cbRing,
     {
         cmdList->SetPipeline(m_gtaoPipeline);
 
-        // ── Root constants at b0 (slot 0, 8 DWORDs) ──
+        // ── Root constants at b0 (slot 0, 16 DWORDs) ──
+        // All GTAO params packed into root constants — compute root sig has no CBV slots.
         GTAORootConstants rc{};
         rc.depthSrvIndex  = depthSrvIndex;
         rc.normalSrvIndex = normalSrvIndex;
         rc.frameIndex     = frameIndex;
-        cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 8);
-
-        // ── CBV at b2 (slot 2) ──
-        GTAOParamsCBV params{};
-        params.temporalCos    = temporalCos;
-        params.temporalSin    = temporalSin;
-        params.temporalOffset = temporalOffset;
-        params.thicknessBlend = settings.thicknessBlend;
-        params.targetSizeX    = static_cast<float>(width);
-        params.targetSizeY    = static_cast<float>(height);
-        params.invTargetSizeX = 1.0f / static_cast<float>(width);
-        params.invTargetSizeY = 1.0f / static_cast<float>(height);
-        params.worldRadius    = settings.worldRadius;
-        params.invTanHalfFov  = invTanHalfFov;
-        params.nearPlane      = nearPlane;
-        params.farPlane       = farPlane;
-        params.fadeMul        = fadeMul;
-        params.fadeAdd         = fadeAdd;
-        params.maxFadeDepth   = settings.maxFadeDepth;
-        params.aoIntensity    = settings.intensity;
-
-        // Copy view matrix (row-major 4x4)
-        std::memcpy(params.viewMatrix, viewMatrix, 16 * sizeof(float));
-        // Zero padding
-        std::memset(params._pad, 0, sizeof(params._pad));
-
-        CBAllocation cbAlloc = cbRing->Allocate(sizeof(GTAOParamsCBV));
-        std::memcpy(cbAlloc.cpuPtr, &params, sizeof(GTAOParamsCBV));
-        cmdList->SetRootCBV(2, cbAlloc.gpuAddr);
+        rc.outputWidth    = width;
+        rc.outputHeight   = static_cast<float>(height);
+        rc.invWidth       = 1.0f / static_cast<float>(width);
+        rc.invHeight      = 1.0f / static_cast<float>(height);
+        rc.worldRadius    = settings.worldRadius;
+        rc.invTanHalfFov  = invTanHalfFov;
+        rc.nearPlane      = nearPlane;
+        rc.farPlane       = farPlane;
+        rc.aoIntensity    = settings.intensity;
+        rc.temporalCos    = temporalCos;
+        rc.temporalSin    = temporalSin;
+        rc.temporalOffset = temporalOffset;
+        rc.thicknessBlend = settings.thicknessBlend;
+        cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 16);
 
         // ── Bind UAV (slot 4) — raw AO output at u0 ──
         cmdList->SetDescriptorTable(4, m_rawAOUavIndex);
