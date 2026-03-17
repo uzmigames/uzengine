@@ -1263,6 +1263,65 @@ RHIPipelineHandle PipelineLibrary::GetDfsConeTrace() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// TAA Resolve Compute Pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool PipelineLibrary::EnsureTaaResolveShader() {
+    if (m_taaResolveCS.IsValid()) {
+        return true;
+    }
+
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::TaaResolveCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile TaaResolveCS");
+        return false;
+    }
+
+    RHIShaderDesc shaderDesc{};
+    shaderDesc.bytecode     = bytecode.data();
+    shaderDesc.bytecodeSize = bytecode.size();
+    shaderDesc.stage        = RHIShaderStage::Compute;
+    shaderDesc.entryPoint   = "main";
+    shaderDesc.debugName    = "taa_resolve_cs";
+
+    m_taaResolveCS = m_device->CreateShader(shaderDesc);
+    if (!m_taaResolveCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create TaaResolveCS shader");
+        return false;
+    }
+    return true;
+}
+
+/// @source UE5 TemporalAA.cpp:395-396 — IMPLEMENT_GLOBAL_SHADER(FTemporalAACS, ..., "MainCS", SF_Compute)
+RHIPipelineHandle PipelineLibrary::GetTaaResolve() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetTaaResolve called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_taaResolve.IsValid()) {
+        return m_taaResolve;
+    }
+
+    if (!EnsureTaaResolveShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_taaResolveCS;
+    desc.debugName     = "TAA_Resolve";
+
+    m_taaResolve = m_device->CreateComputePipeline(desc);
+    if (!m_taaResolve.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create TAA_Resolve pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created TAA_Resolve pipeline");
+    }
+
+    return m_taaResolve;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // PSO Cache Integration
 // ─────────────────────────────────────────────────────────────────────────────
 

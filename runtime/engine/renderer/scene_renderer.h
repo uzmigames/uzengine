@@ -267,6 +267,17 @@ public:
     /// The atlas manager must outlive this renderer. Set to nullptr to disable DFS.
     void SetSdfAtlasManager(SdfAtlasManager* atlas) { m_sdfAtlas = atlas; }
 
+    /// Enables or disables Temporal Anti-Aliasing (TAA) at runtime.
+    ///
+    /// @source UE5 TemporalAA.cpp:40-44 — r.TemporalAACurrentFrameWeight CVar
+    ///
+    /// When disabled, the render pipeline outputs the raw jittered frame
+    /// without temporal accumulation (jitter is also disabled).
+    void SetTaaEnabled(bool enabled) { m_taaEnabled = enabled; }
+
+    /// Returns whether TAA is currently enabled.
+    [[nodiscard]] bool IsTaaEnabled() const { return m_taaEnabled; }
+
 
     // ── Accessors ──────────────────────────────────────────────────────────
 
@@ -445,6 +456,24 @@ private:
     RHIBufferHandle  m_dfsIndirectArgsBuffer;          ///< RWByteAddressBuffer for indirect dispatch args.
     uint32_t m_dfsIndirectArgsUavIndex = UINT32_MAX;   ///< UAV for cull pass to write indirect args.
 
+
+    // ── TAA (Temporal Anti-Aliasing) ─────────────────────────────────────────
+
+    /// @source UE5 TemporalAA.cpp:41 — CurrentFrameWeight default 0.04
+    RHITextureHandle m_taaHistory[2];          ///< Ping-pong RGBA16F history textures.
+    uint32_t m_taaHistorySrv[2] = {UINT32_MAX, UINT32_MAX}; ///< SRV indices for history read.
+    uint32_t m_taaHistoryUav[2] = {UINT32_MAX, UINT32_MAX}; ///< UAV indices for history write.
+    uint32_t m_taaHistoryIndex = 0;            ///< Index of current write target (0 or 1).
+    bool     m_taaEnabled = true;              ///< Runtime toggle for TAA.
+    Mat4     m_prevViewProj;                   ///< Previous frame's unjittered viewProj for reprojection.
+    bool     m_prevViewProjValid = false;      ///< False on first frame (no valid previous viewProj).
+
+    /// Creates TAA history textures at the given resolution.
+    /// Called from Init() and Resize().
+    void CreateTaaResources(uint32_t width, uint32_t height);
+
+    /// Destroys TAA history textures. Called from Shutdown() and Resize().
+    void DestroyTaaResources();
 
     // ── Depth Prepass + Hi-Z Pyramid ────────────────────────────────────────
 

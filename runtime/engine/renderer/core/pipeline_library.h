@@ -317,6 +317,17 @@ public:
     /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
     [[nodiscard]] RHIPipelineHandle GetDfsConeTrace();
 
+    /// Returns the TAA resolve compute pipeline (taa_resolve_cs.hlsl).
+    ///
+    /// Temporal anti-aliasing resolve pass: samples current frame and history,
+    /// performs YCoCg neighborhood clamping, and blends with HDR weighting.
+    ///
+    /// @source UE5 TemporalAA.usf:2327-2407 — MainCS entry point
+    ///
+    /// # Returns
+    /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
+    [[nodiscard]] RHIPipelineHandle GetTaaResolve();
+
     /// Pre-creates all standard pipelines eagerly instead of on first use.
     ///
     /// Call at scene load time to avoid hitches during the first frame.
@@ -355,6 +366,7 @@ private:
     [[nodiscard]] bool EnsureHiZPyramidShader();
     [[nodiscard]] bool EnsureDfsCullObjectsShader();
     [[nodiscard]] bool EnsureDfsConeTraceShader();
+    [[nodiscard]] bool EnsureTaaResolveShader();
 
     /// Creates a pipeline through the PSO cache. On cache hit, returns the
     /// cached handle without calling the device. On miss, creates via the
@@ -392,6 +404,7 @@ private:
     RHIShaderHandle m_hizPyramidCS             = RHIShaderHandle::Invalid();
     RHIShaderHandle m_dfsCullObjectsCS         = RHIShaderHandle::Invalid();
     RHIShaderHandle m_dfsConeTraceCS           = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_taaResolveCS             = RHIShaderHandle::Invalid();
 
     // ── Cached pipeline handles (one per bindless variant) ──────────────
     RHIPipelineHandle m_forwardPBR         = RHIPipelineHandle::Invalid();
@@ -418,6 +431,7 @@ private:
     RHIPipelineHandle m_hizPyramid            = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_dfsCullObjects        = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_dfsConeTrace          = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_taaResolve            = RHIPipelineHandle::Invalid();
 };
 
 } // namespace uz

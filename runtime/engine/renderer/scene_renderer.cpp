@@ -342,6 +342,9 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     // ── Hi-Z Pyramid (per-mip R32F textures) ────────────────────────────
     CreateHiZPyramid(width, height);
 
+    // ── TAA History Textures (ping-pong RGBA16F) ────────────────────────
+    CreateTaaResources(width, height);
+
     UZ_LOG(Renderer, Info, "SceneRenderer initialized ({}x{}, {})",
            width, height, RenderPathToString(m_renderPath));
     return true;
@@ -491,6 +494,49 @@ void SceneRenderer::CreateDfsResources(uint32_t width, uint32_t height) {
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// TAA Resource Creation / Destruction
+// ─────────────────────────────────────────────────────────────────────────────
+
+void SceneRenderer::CreateTaaResources(uint32_t width, uint32_t height) {
+    DestroyTaaResources();
+
+    for (int i = 0; i < 2; ++i) {
+        RHITextureDesc taaDesc{};
+        taaDesc.width     = width;
+        taaDesc.height    = height;
+        taaDesc.format    = RHIFormat::RGBA16Float;
+        taaDesc.usage     = RHITextureUsage::ShaderResource | RHITextureUsage::UnorderedAccess;
+        taaDesc.debugName = (i == 0) ? "TAA_History_0" : "TAA_History_1";
+
+        m_taaHistory[i] = m_device->CreateTexture(taaDesc);
+        if (m_taaHistory[i].IsValid()) {
+            m_taaHistorySrv[i] = m_device->GetTextureSRVIndex(m_taaHistory[i]);
+            m_taaHistoryUav[i] = m_device->GetTextureUAVIndex(m_taaHistory[i]);
+        } else {
+            UZ_LOG(Renderer, Error, "SceneRenderer: failed to create TAA history texture {}", i);
+        }
+    }
+
+    m_taaHistoryIndex = 0;
+    m_prevViewProjValid = false;
+
+    UZ_LOG(Renderer, Info, "SceneRenderer: TAA history textures created ({}x{}, RGBA16F)", width, height);
+}
+
+void SceneRenderer::DestroyTaaResources() {
+    for (int i = 0; i < 2; ++i) {
+        if (m_taaHistory[i].IsValid()) {
+            m_device->DestroyTexture(m_taaHistory[i]);
+            m_taaHistory[i] = RHITextureHandle{};
+            m_taaHistorySrv[i] = UINT32_MAX;
+            m_taaHistoryUav[i] = UINT32_MAX;
+        }
+    }
+    m_taaHistoryIndex = 0;
+    m_prevViewProjValid = false;
+}
+
 void SceneRenderer::DestroyDfsResources() {
     if (m_dfsOutputTexture.IsValid()) {
         m_device->DestroyTexture(m_dfsOutputTexture);
@@ -544,12 +590,15 @@ void SceneRenderer::Resize(uint32_t width, uint32_t height) {
 
     // Recreate GTAO textures at new resolution
     if (m_gtaoPass && m_gtaoPass->IsInitialized()) {
-        m_gtaoPass->Resize(width, height);
+        [[maybe_unused]] bool gtaoOk = m_gtaoPass->Resize(width, height);
     }
 
     // Recreate DFS output texture at new resolution
     DestroyDfsResources();
     CreateDfsResources(width, height);
+
+    // Recreate TAA history textures at new resolution
+    CreateTaaResources(width, height);
 
     const float aspect = static_cast<float>(width) / static_cast<float>(height);
     m_camera->SetAspectRatio(aspect);
@@ -635,6 +684,9 @@ void SceneRenderer::Shutdown() {
 
     // ── DFS cleanup ─────────────────────────────────────────────────
     DestroyDfsResources();
+
+    // ── TAA cleanup ──────────────────────────────────────────────────
+    DestroyTaaResources();
 
     // ── Auto-Exposure cleanup ─────────────────────────────────────
     if (m_autoExposure) m_autoExposure->Shutdown();
@@ -779,10 +831,67 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
 
     auto& camera = *m_camera;
 
+    // ── TAA Jitter — Halton(2,3) sub-pixel offset on the projection matrix ──
+    // @source UE5 SceneVisibility.cpp:5240-5243 — TemporalJitterPixels
+    // @source UE5 SceneVisibility.cpp:5243 — HackAddTemporalAAProjectionJitter(SampleX * 2/W, SampleY * -2/H)
+    //
+    // Halton(2,3) 8-sample sequence pre-computed, centered around 0.
+    // UE5 uses a full Halton sequence with Faure permutations (HaltonUtilities.cpp),
+    // but the standard Halton(2,3) 8-sample cycle produces equivalent low-discrepancy
+    // jitter for TAA convergence.
+    //
+    // Values: Halton base-2 = {1/2, 1/4, 3/4, 1/8, 5/8, 3/8, 7/8, ...}
+    //         Halton base-3 = {1/3, 2/3, 1/9, 4/9, 7/9, 2/9, 5/9, ...}
+    // Centered by subtracting 0.5 to get [-0.5, 0.5] range.
+    static const float kHalton23[8][2] = {
+        { 0.5f - 0.5f,   1.0f/3.0f - 0.5f },  // {0.0,  -0.167}
+        { 0.25f - 0.5f,  2.0f/3.0f - 0.5f },  // {-0.25, 0.167}
+        { 0.75f - 0.5f,  1.0f/9.0f - 0.5f },  // {0.25, -0.389}
+        { 0.125f - 0.5f, 4.0f/9.0f - 0.5f },  // {-0.375, -0.056}
+        { 0.625f - 0.5f, 7.0f/9.0f - 0.5f },  // {0.125,  0.278}
+        { 0.375f - 0.5f, 2.0f/9.0f - 0.5f },  // {-0.125, -0.278}
+        { 0.875f - 0.5f, 5.0f/9.0f - 0.5f },  // {0.375,  0.056}
+        { 0.0625f - 0.5f, 8.0f/9.0f - 0.5f }, // {-0.4375, 0.389}
+    };
+
+    float jitterX = 0.f;
+    float jitterY = 0.f;
+
+    const bool taaActive = m_taaEnabled
+                        && m_taaHistory[0].IsValid()
+                        && m_taaHistory[1].IsValid()
+                        && m_device->IsBindless();  // TAA compute requires bindless
+
+    if (taaActive) {
+        const uint32_t jitterIdx = frameIndex % 8;
+        jitterX = kHalton23[jitterIdx][0];
+        jitterY = kHalton23[jitterIdx][1];
+    }
+
+    // Store unjittered viewProj for reprojection and velocity computation.
+    Mat4 unjitteredViewProj = camera.GetViewProjection();
+
+    // Apply jitter to the projection matrix as a sub-pixel translation in clip space.
+    // @source UE5 SceneVisibility.cpp:5243 — HackAddTemporalAAProjectionJitter
+    // The jitter is applied as an offset to the projection matrix's [2][0] and [2][1]
+    // elements, which translates the clip-space output by a sub-pixel amount.
+    Mat4 jitteredViewProj = unjitteredViewProj;
+    if (taaActive) {
+        const float vpW = static_cast<float>(m_width);
+        const float vpH = static_cast<float>(m_height);
+        // UE5: SampleX * 2.0 / ViewRect.Width(), SampleY * -2.0 / ViewRect.Height()
+        // The *2 converts from pixel units to NDC (-1 to 1 range = 2 units per viewport dim).
+        // Y is negated because clip-space Y increases upward but pixel Y increases downward.
+        jitteredViewProj.m.m[2][0] += jitterX * 2.0f / vpW;
+        jitteredViewProj.m.m[2][1] += jitterY * -2.0f / vpH;
+    }
+
     // ── Build PerFrameParams (scalar section byte-identical to PerFrameCB) ──
     PerFrameParams perFrame{};
-    perFrame.viewProj    = camera.GetViewProjection();
-    perFrame.invViewProj = perFrame.viewProj.Inverse();
+    // Use the jittered viewProj for rendering (geometry pass, lighting).
+    // The unjittered version is stored in m_prevViewProj for next frame's reprojection.
+    perFrame.viewProj    = jitteredViewProj;
+    perFrame.invViewProj = jitteredViewProj.Inverse();
     Vec3 camPos          = camera.GetPosition();
     perFrame.cameraPos   = {camPos.x, camPos.y, camPos.z, 0.f};
     perFrame.timeParams  = {m_totalTime, dt, static_cast<float>(frameIndex), 0.f};
@@ -1974,6 +2083,115 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
         });
     }
 
+    // ── TAA Resolve pass (compute: temporal accumulation) ────────────────
+    // @source UE5 TemporalAA.cpp:395-396 — FTemporalAACS compute shader
+    // @source UE5 TemporalAA.cpp:41 — r.TemporalAACurrentFrameWeight default 0.04
+    //
+    // Reads the current HDR scene color and the previous frame's TAA history,
+    // performs YCoCg neighborhood clamping, HDR-weighted blend, and writes
+    // the new history. The tonemap pass then reads from the TAA output.
+    //
+    // The current write target is m_taaHistory[m_taaHistoryIndex].
+    // The previous read target is m_taaHistory[1 - m_taaHistoryIndex].
+    uint32_t taaSrvForTonemap = m_hdrSceneColorSrv;  // fallback if TAA off
+
+    if (taaActive && m_shadowDebugMode == 0) {
+        const uint32_t writeIdx = m_taaHistoryIndex;
+        const uint32_t readIdx  = 1 - m_taaHistoryIndex;
+
+        rgBuilder.AddPass("TAA_Resolve", [&, writeIdx, readIdx, jitterX, jitterY](rg::RgPassBuilder& pb) {
+            pb.Read(hdrRes, RHIResourceState::ShaderResource);
+
+            pb.SetExecutionCallback([&, writeIdx, readIdx, jitterX, jitterY](IRHICommandList* cmd, const rg::RgPassResources& /*res*/) {
+                UZ_PROFILE_SCOPE("TAA::Resolve");
+
+                auto taaPSO = pipelines->GetTaaResolve();
+                if (!taaPSO.IsValid()) return;
+
+                // Transition TAA history textures:
+                // - Write target: SRV → UAV (will be written by compute)
+                // - Read target stays in SRV (sampled by compute)
+                {
+                    RHIBarrierDesc barriers[2]{};
+
+                    // Write target → UAV
+                    barriers[0].texture     = m_taaHistory[writeIdx];
+                    barriers[0].buffer      = RHIBufferHandle::Invalid();
+                    barriers[0].stateBefore = RHIResourceState::ShaderResource;
+                    barriers[0].stateAfter  = RHIResourceState::UnorderedAccess;
+
+                    // Read target → SRV (may already be SRV, but be explicit)
+                    barriers[1].texture     = m_taaHistory[readIdx];
+                    barriers[1].buffer      = RHIBufferHandle::Invalid();
+                    barriers[1].stateBefore = RHIResourceState::UnorderedAccess;
+                    barriers[1].stateAfter  = RHIResourceState::ShaderResource;
+
+                    cmd->ResourceBarrier(barriers, 2);
+                }
+
+                cmd->SetPipeline(taaPSO);
+
+                // Root constants: 10 DWORDs (matches TAARootConstants cbuffer)
+                // [0-1] = jitterOffset (float2)
+                // [2-3] = texelSize (float2)
+                // [4]   = currentFrameWeight (float)
+                // [5]   = sceneSrvIndex (uint)
+                // [6]   = depthSrvIndex (uint)
+                // [7]   = historySrvIndex (uint)
+                // [8]   = outputUavIndex (uint)
+                // [9]   = padding
+                struct TaaConstants {
+                    float jitterX, jitterY;
+                    float texelSizeX, texelSizeY;
+                    float blendWeight;
+                    uint32_t sceneSrv;
+                    uint32_t depthSrv;
+                    uint32_t historySrv;
+                    uint32_t outputUav;
+                    uint32_t pad0;
+                } constants;
+                constants.jitterX    = jitterX;
+                constants.jitterY    = jitterY;
+                constants.texelSizeX = 1.0f / static_cast<float>(vpWidth);
+                constants.texelSizeY = 1.0f / static_cast<float>(vpHeight);
+                /// @source UE5 TemporalAA.cpp:41 — CurrentFrameWeight = 0.04
+                constants.blendWeight = m_prevViewProjValid ? 0.04f : 1.0f;  // First frame: use current only
+                constants.sceneSrv   = m_hdrSceneColorSrv;
+                constants.depthSrv   = m_gbuffer.depthSRV;
+                constants.historySrv = m_taaHistorySrv[readIdx];
+                constants.outputUav  = m_taaHistoryUav[writeIdx];
+                constants.pad0       = 0;
+
+                cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&constants), 10);
+
+                // Dispatch thread groups (8x8 per group)
+                const uint32_t groupsX = (vpWidth  + 7) / 8;
+                const uint32_t groupsY = (vpHeight + 7) / 8;
+                cmd->Dispatch(groupsX, groupsY, 1);
+
+                // Transition write target back to SRV for tonemap to read.
+                {
+                    RHIBarrierDesc barrier{};
+                    barrier.texture     = m_taaHistory[writeIdx];
+                    barrier.buffer      = RHIBufferHandle::Invalid();
+                    barrier.stateBefore = RHIResourceState::UnorderedAccess;
+                    barrier.stateAfter  = RHIResourceState::ShaderResource;
+                    cmd->ResourceBarrier(&barrier, 1);
+                }
+            });
+        });
+
+        // Tonemap reads from the TAA output instead of raw HDR scene color.
+        taaSrvForTonemap = m_taaHistorySrv[writeIdx];
+
+        // Flip ping-pong index for next frame.
+        m_taaHistoryIndex = 1 - m_taaHistoryIndex;
+
+        // Store unjittered viewProj for next frame's reprojection.
+        m_prevViewProj = unjitteredViewProj;
+        m_prevViewProjValid = true;
+    }
+
     // ── Tonemap pass (HDR → LDR backbuffer) ────────────────────────────
     // Reads HDR scene color (RGBA16F) + optional bloom result, applies
     // bloom composite + auto-exposure + ACES filmic tonemap + sRGB gamma,
@@ -2018,10 +2236,12 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
             uint32_t bloomIntensityBits = 0;
             std::memcpy(&bloomIntensityBits, &bloomIntensity, sizeof(float));
 
-            uint32_t indices[4] = { m_hdrSceneColorSrv, bloomSrvIdx, bloomIntensityBits, 0 };
+            // When TAA is active, read from TAA resolve output; otherwise raw HDR.
+            uint32_t indices[4] = { taaSrvForTonemap, bloomSrvIdx, bloomIntensityBits, 0 };
             cmd->SetRootConstants(kSlotRootConstants, indices, 4);
 
             // SM5: bind HDR scene color texture at t0 directly
+            // (TAA not available on SM5 path since it requires bindless)
             if (!bindless) {
                 cmd->SetFragmentTexture(0, m_hdrSceneColor);
             }
