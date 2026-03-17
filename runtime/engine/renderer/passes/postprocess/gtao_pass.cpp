@@ -15,8 +15,6 @@
 #include "log.h"
 #include "profiler.h"
 
-#include <cmath>
-#include <cstring>
 
 UZ_DECLARE_LOG_CATEGORY(Renderer);
 
@@ -368,23 +366,6 @@ uint32_t GTAOPass::Execute(IRHICommandList* cmdList, CBRingAllocator* cbRing,
     if (!EnsureGTAOPipeline() || !EnsureDenoisePipeline()) {
         return UINT32_MAX;
     }
-
-    // ── Compute temporal jitter rotation ──
-    // Rotate the per-pixel noise pattern each frame to distribute samples
-    // over time (works with TAA to converge).
-    /// @source UE5 PostProcessAmbientOcclusion.usf:820-833
-    const float temporalAngle = static_cast<float>(frameIndex % 6) * (3.14159265f / 3.0f);
-    const float temporalCos = std::cos(temporalAngle);
-    const float temporalSin = std::sin(temporalAngle);
-    const float temporalOffset = static_cast<float>((frameIndex / 6) % 4) * 0.25f;
-
-    // ── Compute distance fade parameters ──
-    // fadeMul and fadeAdd are precomputed so the shader can do:
-    //   fade = saturate(depth * fadeMul + fadeAdd)
-    /// @source UE5 PostProcessAmbientOcclusion.usf:913-915
-    const float fadeRange = settings.fadeEndDist - settings.fadeStartDist;
-    const float fadeMul = (fadeRange > 0.0f) ? (1.0f / fadeRange) : 0.0f;
-    const float fadeAdd = -settings.fadeStartDist * fadeMul;
 
     // ══════════════════════════════════════════════════════════════════════
     // STEP 1: GTAO Compute Pass

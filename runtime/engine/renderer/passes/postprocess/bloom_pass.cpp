@@ -228,7 +228,7 @@ bool BloomPass::EnsureThresholdPipeline() {
     shaderDesc.bytecode     = bytecode.data();
     shaderDesc.bytecodeSize = bytecode.size();
     shaderDesc.stage        = RHIShaderStage::Compute;
-    shaderDesc.entryPoint   = "CSMain";
+    shaderDesc.entryPoint   = "main";
     shaderDesc.debugName    = "bloom_threshold_cs";
 
     m_thresholdCS = m_device->CreateShader(shaderDesc);
@@ -267,7 +267,7 @@ bool BloomPass::EnsureDownsamplePipeline() {
     shaderDesc.bytecode     = bytecode.data();
     shaderDesc.bytecodeSize = bytecode.size();
     shaderDesc.stage        = RHIShaderStage::Compute;
-    shaderDesc.entryPoint   = "CSMain";
+    shaderDesc.entryPoint   = "main";
     shaderDesc.debugName    = "bloom_downsample_cs";
 
     m_downsampleCS = m_device->CreateShader(shaderDesc);
@@ -306,7 +306,7 @@ bool BloomPass::EnsureUpsamplePipeline() {
     shaderDesc.bytecode     = bytecode.data();
     shaderDesc.bytecodeSize = bytecode.size();
     shaderDesc.stage        = RHIShaderStage::Compute;
-    shaderDesc.entryPoint   = "CSMain";
+    shaderDesc.entryPoint   = "main";
     shaderDesc.debugName    = "bloom_upsample_cs";
 
     m_upsampleCS = m_device->CreateShader(shaderDesc);

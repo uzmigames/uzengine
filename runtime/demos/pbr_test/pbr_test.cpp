@@ -147,11 +147,10 @@ void PBRTest::OnStart() {
 
         auto& light = world.AddComponent<DirectionalLightComponent>(sun_);
         light.color              = {1.0f, 1.0f, 1.0f};
-        light.intensity          = 3.0f;           // UE5 Basic Scene: EXACTLY 3.0 lux
+        light.intensity          = 10.0f;          /// @source UE5 DirectionalLightComponent.cpp:1043
         light.atmosphereSunLight = true;
-        light.lightSourceAngle   = 1.0f;           // Wider sun angle for softer PCSS shadows
-        light.useTemperature     = true;
-        light.temperature        = 6500.f;
+        light.lightSourceAngle   = 0.5357f;        /// @source UE5 DirectionalLightComponent.h:138 — Earth sun angular diameter
+        light.useTemperature     = false;           /// @source UE5 LightComponent.h:61 — disabled by default
     }
 
     // ── 4 colored point lights ────────────────────────────────────────────
@@ -210,14 +209,14 @@ void PBRTest::OnStart() {
         scene.SetPosition({0.f, 0.f, 690.f});
 
         auto& sl = world.AddComponent<SkyLightComponent>(skyLightEnt);
-        sl.intensity                  = 1.5f;       // Boosted for brighter ambient
-        sl.indirectLightingIntensity  = 1.0f;
+        sl.intensity                  = 1.0f;       /// @source UE5 SkyLightComponent.cpp:1195
+        sl.indirectLightingIntensity  = 1.0f;       /// @source UE5 SkyLightComponent.cpp:1196
         sl.lightColor                 = {1.0f, 1.0f, 1.0f};
-        sl.realTimeCapture            = true;       // UE5: Real Time Capture = true
+        sl.realTimeCapture            = false;       /// @source UE5 SkyLightComponent.cpp:1213
         sl.sourceType                 = ESkyLightSourceType::CapturedScene;
-        sl.cubemapResolution          = 128;
-        sl.lowerHemisphereIsBlack     = true;
-        sl.minOcclusion               = 0.03f;      // Shadows never pitch black
+        sl.cubemapResolution          = 128;         /// @source UE5 SkyLightComponent.cpp:1210
+        sl.lowerHemisphereIsBlack     = true;        /// @source UE5 SkyLightComponent.cpp:1199
+        sl.minOcclusion               = 0.0f;        /// @source UE5 SkyLightComponent.cpp:1202
     }
 
     // ── Exponential Height Fog ─────────────────────────────────────────
@@ -231,16 +230,16 @@ void PBRTest::OnStart() {
         scene.SetPosition({0.f, 0.f, 0.f});
 
         auto& fogComp = world.AddComponent<HeightFogComponent>(fog);
-        fogComp.density                           = 0.02f;      // UE5 default (ExponentialHeightFogComponent.cpp)
-        fogComp.heightFalloff                     = 0.2f;       // UE5 default
-        fogComp.baseHeight                        = 0.f;        // Ground level — fog visible at camera height
-        fogComp.maxOpacity                        = 1.0f;       // UE5 default
-        fogComp.startDistance                     = 500.f;      // 500 cm — near objects stay clear
-        fogComp.fogCutoffDistance                 = 0.f;        // No cutoff
-        fogComp.color                             = {0.45f, 0.55f, 0.68f};  // Slightly blue, sky inscattering tint
-        fogComp.directionalInscatteringColor      = {1.0f, 0.9f, 0.7f};     // Warm sun-colored glow
-        fogComp.directionalInscatteringExponent   = 8.0f;       // UE5 default
-        fogComp.directionalInscatteringStartDistance = 10000.f;  // UE5 default
+        fogComp.density                           = 0.02f;      /// @source UE5 ExponentialHeightFogComponent.cpp:1250
+        fogComp.heightFalloff                     = 0.2f;       /// @source UE5 ExponentialHeightFogComponent.cpp:1251
+        fogComp.baseHeight                        = 0.f;        // Ground level
+        fogComp.maxOpacity                        = 1.0f;       /// @source UE5 ExponentialHeightFogComponent.cpp:1253
+        fogComp.startDistance                     = 0.f;        /// @source UE5 ExponentialHeightFogComponent.cpp:1254
+        fogComp.fogCutoffDistance                 = 0.f;        /// @source UE5 ExponentialHeightFogComponent.cpp:1256
+        fogComp.color                             = {0.45f, 0.55f, 0.68f};  // Sky-tinted inscattering
+        fogComp.directionalInscatteringColor      = {0.25f, 0.25f, 0.125f}; /// @source UE5 ExponentialHeightFogComponent.cpp:1247
+        fogComp.directionalInscatteringExponent   = 4.0f;       /// @source UE5 ExponentialHeightFogComponent.cpp:1245
+        fogComp.directionalInscatteringStartDistance = 10000.f;  /// @source UE5 ExponentialHeightFogComponent.cpp:1246
     }
 
     UZ_LOG(Demo, Info, "PBR Test started — {} cubes, 4 point lights + directional sun + sky",
