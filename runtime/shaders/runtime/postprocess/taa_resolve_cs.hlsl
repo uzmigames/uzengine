@@ -19,12 +19,13 @@ cbuffer TAARootConstants : register(b0) {
     uint   sceneSrvIndex;       ///< Bindless SRV index for HDR scene color (RGBA16F).
     uint   depthSrvIndex;       ///< Bindless SRV index for depth buffer (R32F or D32F).
     uint   historySrvIndex;     ///< Bindless SRV index for previous frame TAA output (RGBA16F).
-    uint   outputUavIndex;      ///< Bindless UAV index for TAA output (RGBA16F).
-    uint   _pad0;               ///< Pad to 10 DWORDs for alignment.
 };
 
 /// Bilinear clamp sampler for history texture sampling.
 SamplerState LinearClampSampler : register(s0);
+
+/// TAA output UAV — bound via descriptor table at root param 4 (u0).
+RWTexture2D<float4> taaOutput : register(u0);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Color Space Transforms
@@ -368,6 +369,5 @@ void main(
     outputRGB = -min(-outputRGB, 0.0);
 
     // ── Write Output ────────────────────────────────────────────────────────
-    RWTexture2D<float4> OutputTex = ResourceDescriptorHeap[outputUavIndex];
-    OutputTex[DispatchThreadId] = float4(outputRGB, 1.0);
+    taaOutput[DispatchThreadId] = float4(outputRGB, 1.0);
 }

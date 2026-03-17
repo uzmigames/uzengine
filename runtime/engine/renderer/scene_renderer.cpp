@@ -2403,22 +2403,21 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
                     uint32_t sceneSrv;
                     uint32_t depthSrv;
                     uint32_t historySrv;
-                    uint32_t outputUav;
-                    uint32_t pad0;
                 } constants;
                 constants.jitterX    = jitterX;
                 constants.jitterY    = jitterY;
                 constants.texelSizeX = 1.0f / static_cast<float>(vpWidth);
                 constants.texelSizeY = 1.0f / static_cast<float>(vpHeight);
                 /// @source UE5 TemporalAA.cpp:41 — CurrentFrameWeight = 0.04
-                constants.blendWeight = m_prevViewProjValid ? 0.04f : 1.0f;  // First frame: use current only
+                constants.blendWeight = m_prevViewProjValid ? 0.04f : 1.0f;
                 constants.sceneSrv   = m_hdrSceneColorSrv;
                 constants.depthSrv   = m_gbuffer.depthSRV;
                 constants.historySrv = m_taaHistorySrv[readIdx];
-                constants.outputUav  = m_taaHistoryUav[writeIdx];
-                constants.pad0       = 0;
 
-                cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&constants), 10);
+                cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&constants), 8);
+
+                // Bind TAA output UAV at descriptor table slot 4 (u0)
+                cmd->SetDescriptorTable(4, m_taaHistoryUav[writeIdx]);
 
                 // Dispatch thread groups (8x8 per group)
                 const uint32_t groupsX = (vpWidth  + 7) / 8;
