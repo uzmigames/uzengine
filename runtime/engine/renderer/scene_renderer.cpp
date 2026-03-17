@@ -16,8 +16,10 @@
 #include "shader_manager.h"
 #include "mesh.h"
 #include "gpu_mesh.h"
+#include "depth_prepass.h"
 #include "gbuffer_pass.h"
 #include "gbuffer_debug_pass.h"
+#include "hiz_pyramid_pass.h"
 #include "lighting_pass.h"
 #include "debug_view_pass.h"
 #include "pbr_pass.h"
@@ -292,9 +294,83 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
         }
     }
 
+    // ── Hi-Z Pyramid (per-mip R32F textures) ────────────────────────────
+    CreateHiZPyramid(width, height);
+
     UZ_LOG(Renderer, Info, "SceneRenderer initialized ({}x{}, {})",
            width, height, RenderPathToString(m_renderPath));
     return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Hi-Z Pyramid Creation / Destruction
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Helper that computes the number of mip levels for a given resolution.
+static uint32_t ComputeMipCount(uint32_t width, uint32_t height) {
+    uint32_t mips = 0;
+    uint32_t w = width;
+    uint32_t h = height;
+    while (w > 1 || h > 1) {
+        w = (w > 1) ? (w >> 1) : 1;
+        h = (h > 1) ? (h >> 1) : 1;
+        ++mips;
+        if (mips >= kHiZMaxMipLevels) break;
+    }
+    return mips;
+}
+
+void SceneRenderer::CreateHiZPyramid(uint32_t width, uint32_t height) {
+    // Destroy any existing Hi-Z mips.
+    DestroyHiZPyramid();
+
+    m_hizMipCount = ComputeMipCount(width, height);
+    if (m_hizMipCount == 0) return;
+
+    uint32_t mipW = width;
+    uint32_t mipH = height;
+
+    for (uint32_t i = 0; i < m_hizMipCount; ++i) {
+        mipW = (mipW > 1) ? (mipW >> 1) : 1;
+        mipH = (mipH > 1) ? (mipH >> 1) : 1;
+
+        RHITextureDesc texDesc{};
+        texDesc.width     = mipW;
+        texDesc.height    = mipH;
+        texDesc.format    = RHIFormat::R32Float;
+        texDesc.usage     = RHITextureUsage::ShaderResource
+                          | RHITextureUsage::UnorderedAccess;
+        texDesc.debugName = "HiZ_Mip";  // Device may append index for debug.
+
+        RHITextureHandle tex = m_device->CreateTexture(texDesc);
+        if (!tex.IsValid()) {
+            UZ_LOG(Renderer, Error, "SceneRenderer: failed to create Hi-Z mip {} ({}x{})", i, mipW, mipH);
+            // Partial creation — clean up and disable.
+            DestroyHiZPyramid();
+            return;
+        }
+
+        m_hizMipLevels[i].texture  = tex;
+        m_hizMipLevels[i].srvIndex = m_device->GetTextureSRVIndex(tex);
+        m_hizMipLevels[i].uavIndex = m_device->GetTextureUAVIndex(tex);
+        m_hizMipLevels[i].width    = mipW;
+        m_hizMipLevels[i].height   = mipH;
+    }
+
+    UZ_LOG(Renderer, Info, "SceneRenderer: Hi-Z pyramid created ({} mips, {}x{} -> {}x{})",
+           m_hizMipCount, width, height,
+           m_hizMipLevels[m_hizMipCount - 1].width,
+           m_hizMipLevels[m_hizMipCount - 1].height);
+}
+
+void SceneRenderer::DestroyHiZPyramid() {
+    for (uint32_t i = 0; i < m_hizMipCount; ++i) {
+        if (m_hizMipLevels[i].texture.IsValid()) {
+            m_device->DestroyTexture(m_hizMipLevels[i].texture);
+            m_hizMipLevels[i] = {};
+        }
+    }
+    m_hizMipCount = 0;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -108,4 +108,20 @@ struct SdfBakerConfig {
     uint32_t indexCount,
     const SdfBakerConfig& config = {});
 
+/// Generates MIP levels for an existing MeshSdfAsset.
+///
+/// Downsamples the base-level (MIP 0) brick grid up to 3 times, halving
+/// the brick resolution each time: 8x8x8 -> 4x4x4 -> 2x2x2 -> 1x1x1.
+/// Each 2x2x2 block of parent voxels is reduced to 1 voxel by selecting
+/// the minimum absolute distance (preserves the nearest surface).
+///
+/// MIP generation stops early if a dimension reaches 1 brick.
+///
+/// # Parameters
+/// - asset: The SDF asset to generate MIPs for. Must be valid.
+///   Modified in place — populates `mipBricks[0..N]` and sets `mipLevels`.
+///
+/// @source UE5 DistanceFieldAtlas.h — MIP chain for LOD cone tracing
+void GenerateSdfMips(MeshSdfAsset& asset);
+
 } // namespace uz

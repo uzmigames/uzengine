@@ -87,14 +87,43 @@ struct MeshSdfAsset {
     uint32_t resolutionY    = 0;     ///< Grid resolution Y (in bricks).
     uint32_t resolutionZ    = 0;     ///< Grid resolution Z (in bricks).
 
-    std::vector<SdfBrick>  bricks;       ///< Sparse brick data (surface-band bricks only).
-    std::vector<uint32_t>  indirection;  ///< Flat 3D indirection: grid index -> brick index (UINT32_MAX = empty).
+    std::vector<SdfBrick>  bricks;       ///< Sparse brick data (surface-band bricks only) — MIP 0.
+    std::vector<uint32_t>  indirection;  ///< Flat 3D indirection: grid index -> brick index (UINT32_MAX = empty) — MIP 0.
 
-    uint32_t mipLevels = 1;              ///< Number of MIP levels (1-3). Each mip halves resolution.
+    /// MIP level data. Each MIP halves the brick resolution per axis.
+    /// MIP 0 is stored in `bricks`/`indirection` above.
+    /// `mipBricks[0]` = MIP 1 (4x4x4 voxels per brick), etc.
+    ///
+    /// # Downsample Algorithm
+    /// Each 2x2x2 block of parent-MIP voxels is reduced to 1 voxel via
+    /// minimum absolute distance (preserves the nearest surface).
+    ///
+    /// @source UE5 DistanceFieldAtlas.h — MIP chain for LOD tracing
+    static constexpr uint32_t kMaxMipLevels = 3;
 
-    /// Returns the total number of grid cells in the indirection table.
+    struct MipLevel {
+        std::vector<SdfBrick>  bricks;       ///< Sparse brick data for this MIP level.
+        std::vector<uint32_t>  indirection;  ///< Flat 3D indirection for this MIP level.
+        uint32_t resolutionX = 0;            ///< Brick resolution X at this MIP.
+        uint32_t resolutionY = 0;            ///< Brick resolution Y at this MIP.
+        uint32_t resolutionZ = 0;            ///< Brick resolution Z at this MIP.
+    };
+
+    MipLevel mipBricks[kMaxMipLevels];       ///< MIP levels 1-3 (MIP 0 is in bricks/indirection).
+    uint32_t mipLevels = 1;                  ///< Number of MIP levels including base (1 = base only, 4 = base + 3 MIPs).
+
+    /// Returns the total number of grid cells in the base indirection table.
     [[nodiscard]] uint32_t GetGridCellCount() const noexcept {
         return resolutionX * resolutionY * resolutionZ;
+    }
+
+    /// Returns the total number of bricks across all MIP levels.
+    [[nodiscard]] uint32_t GetTotalBrickCount() const noexcept {
+        uint32_t total = static_cast<uint32_t>(bricks.size());
+        for (uint32_t m = 0; m < mipLevels - 1 && m < kMaxMipLevels; ++m) {
+            total += static_cast<uint32_t>(mipBricks[m].bricks.size());
+        }
+        return total;
     }
 
     /// Returns true if the asset contains valid SDF data (non-zero resolution, non-empty bricks).

@@ -75,50 +75,6 @@ float DistributionGGX(float NdotH, float alpha) {
     return a2 / (PI * denom * denom);
 }
 
-/// Schlick-GGX single-direction geometry masking/shadowing term.
-///
-/// @source UE5 BRDF.ush:346 — Vis_SmithJointApprox (UE5 uses joint approx, but
-///   for our separate G1*G1 formulation we use the Karis 2013 direct-light k-remapping)
-/// @constants k = (roughness+1)^2/8 for direct (analytic) lights (Karis 2013, "Real Shading in UE4", slide 10)
-/// @deviations UE5 uses Vis_SmithJointApprox with a2=Pow4(roughness) instead of separate G1*G1. Both converge for the same roughness range.
-///
-/// Approximates the fraction of microfacets visible from direction v that
-/// are not shadowed or masked by other microfacets.
-///
-/// G1(v) = N.V / (N.V * (1 - k) + k)
-///   where k = (roughness + 1)^2 / 8 for direct lighting (analytic lights)
-///
-/// # Parameters
-/// - NdotV: saturated dot product of N and the view or light direction.
-/// - alpha: perceptual roughness squared (r^2). Roughness is recovered as sqrt(alpha).
-///
-/// # Returns
-/// Scalar in (0, 1].
-float GeometrySchlickGGX(float NdotV, float alpha) {
-    // k remapping for direct (analytic) lights per Karis 2013 Real Shading in UE4
-    // alpha = roughness^2, so roughness = sqrt(alpha)
-    float roughness = sqrt(alpha);
-    float r1 = roughness + 1.0f;
-    float k = (r1 * r1) / 8.0f;
-    return NdotV / (NdotV * (1.0f - k) + k);
-}
-
-/// Smith combined geometry function for both view and light directions.
-///
-/// Multiplies two independent Schlick-GGX terms: one for the view direction
-/// (masking) and one for the light direction (shadowing).
-///
-/// # Parameters
-/// - NdotV: saturated dot(N, V).
-/// - NdotL: saturated dot(N, L).
-/// - alpha: perceptual roughness squared (r^2).
-///
-/// # Returns
-/// Scalar geometry attenuation in (0, 1].
-float GeometrySmith(float NdotV, float NdotL, float alpha) {
-    return GeometrySchlickGGX(NdotV, alpha) * GeometrySchlickGGX(NdotL, alpha);
-}
-
 /// Schlick Fresnel approximation.
 ///
 /// Computes the fraction of light reflected (vs. refracted) at a microfacet
@@ -139,10 +95,64 @@ float3 FresnelSchlick(float cosTheta, float3 F0) {
     return F0 + (1.0f - F0) * Pow5(saturate(1.0f - cosTheta));
 }
 
+/// Disney Burley diffuse BRDF.
+///
+/// @source UE5 BRDF.ush:183-188 — Diffuse_Burley
+/// @constants FD90 = 0.5 + 2 * VoH^2 * Roughness (BRDF.ush:185)
+/// @deviations NONE
+///
+/// Adds roughness-dependent retroreflection at grazing angles compared to
+/// plain Lambertian. At roughness=0 this reduces to Lambert diffuse.
+///
+/// # Parameters
+/// - albedo:    surface base color (linear).
+/// - roughness: perceptual roughness [0,1] (NOT alpha = roughness^2).
+/// - NdotV:     saturated dot(N, V).
+/// - NdotL:     saturated dot(N, L).
+/// - VdotH:     saturated dot(V, H).
+///
+/// # Returns
+/// Diffuse BRDF value (includes 1/PI normalization).
+float3 DiffuseBurley(float3 albedo, float roughness, float NdotV, float NdotL, float VdotH) {
+    float FD90 = 0.5f + 2.0f * VdotH * VdotH * roughness;
+    float FdV = 1.0f + (FD90 - 1.0f) * Pow5(1.0f - NdotV);
+    float FdL = 1.0f + (FD90 - 1.0f) * Pow5(1.0f - NdotL);
+    return albedo * (1.0f / PI) * FdV * FdL;
+}
+
+/// Approximate joint Smith visibility term for GGX.
+///
+/// @source UE5 BRDF.ush:346-351 — Vis_SmithJointApprox
+/// @constants NONE (pure formula)
+/// @deviations NONE
+///
+/// Returns Vis = G / (4*NoV*NoL), so the specular BRDF is D*Vis*F.
+/// This is a cheaper approximation of the exact height-correlated Smith
+/// that UE5 uses everywhere for direct and IBL lighting.
+///
+/// # Parameters
+/// - a2:   roughness alpha squared (roughness^4 in UE5 convention, or alpha^2).
+/// - NoV:  saturated dot(N, V).
+/// - NoL:  saturated dot(N, L).
+///
+/// # Returns
+/// Visibility term in [0, +inf).
+float Vis_SmithJointApprox(float a2, float NoV, float NoL) {
+    float a = sqrt(a2);
+    float Vis_SmithV = NoL * (NoV * (1.0f - a) + a);
+    float Vis_SmithL = NoV * (NoL * (1.0f - a) + a);
+    return 0.5f * rcp(Vis_SmithV + Vis_SmithL);
+}
+
 /// Evaluates Cook-Torrance BRDF for a single light source.
 ///
+/// @source UE5 ShadingModels.ush:220 — DefaultLitBxDF (D_GGX * Vis_SmithJointApprox * F_Schlick)
+/// @source UE5 BRDF.ush:183 — Diffuse_Burley
+/// @constants F0_dielectric = 0.04 (BRDF.ush:209)
+/// @deviations NONE
+///
 /// Computes the full outgoing radiance from a single analytic light, including
-/// both diffuse (Lambertian) and specular (GGX) lobes with energy conservation.
+/// both diffuse (Burley) and specular (GGX) lobes with energy conservation.
 ///
 /// # Parameters
 /// - N:         world-space surface normal (normalised).
@@ -165,20 +175,22 @@ float3 EvaluateBRDF(float3 N, float3 V, float3 L, float3 radiance,
     float NdotH = saturate(dot(N, H));
     float VdotH = saturate(dot(V, H));
 
-    // Cook-Torrance specular BRDF
-    float  D = DistributionGGX(NdotH, alpha);
-    float  G = GeometrySmith(NdotV, NdotL, alpha);
-    float3 F = FresnelSchlick(VdotH, F0);
+    // Cook-Torrance specular BRDF: D * Vis * F
+    // Vis_SmithJointApprox already includes the 1/(4*NoV*NoL) denominator
+    float  D   = DistributionGGX(NdotH, alpha);
+    float  Vis = Vis_SmithJointApprox(alpha, NdotV, NdotL);
+    float3 F   = FresnelSchlick(VdotH, F0);
 
-    // D*G*F / (4 * N.V * N.L) — the 4 is the half-vector Jacobian
-    float3 specular = (D * G * F) / max(4.0f * NdotV * NdotL, 0.001f);
+    float3 specular = D * Vis * F;
 
     // Energy conservation: kD zeroed for metals (no diffuse lobe)
     float3 kS = F;
     float3 kD = (1.0f - kS) * (1.0f - metallic);
 
-    // Lambertian diffuse normalised by PI
-    float3 diffuse = kD * albedo / PI;
+    // Disney Burley diffuse (roughness-dependent retroreflection)
+    // Recover perceptual roughness from alpha for Burley formula
+    float roughness = sqrt(alpha);
+    float3 diffuse = kD * DiffuseBurley(albedo, roughness, NdotV, NdotL, VdotH);
 
     return (diffuse + specular) * radiance * NdotL;
 }

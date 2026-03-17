@@ -3,7 +3,7 @@
 - [ ] 1.1 Create depth_prepass.h/cpp — render graph pass that renders all opaque meshes with depth-only PSO (no pixel shader, no color RT). Output: D32F depth buffer shared with GBuffer pass.
 - [ ] 1.2 Create depth-only PSO variant — vertex shader only (mesh_vs.hlsl), null pixel shader, depth write enabled, depth test LESS.
 - [ ] 1.3 Modify GBuffer pass depth test — change from LESS to EQUAL when depth prepass is enabled. Depth writes disabled in GBuffer pass (already written).
-- [ ] 1.4 Create hiz_pyramid_cs.hlsl — compute shader that downsamples depth buffer by 2x per mip level. Each output texel = min(2x2 input texels). Dispatch per-mip with SRV→UAV binding.
+- [x] 1.4 Create hiz_pyramid_cs.hlsl — compute shader that downsamples depth buffer by 2x per mip level. Each output texel = min(2x2 input texels). Dispatch per-mip with SRV→UAV binding. Implemented at runtime/shaders/runtime/compute/hiz_pyramid_cs.hlsl, based on UE5 HZB.usf:183-293 HZBBuildCS. Uses Load() with 4 explicit taps, min() reduction for reversed-Z conservative depth, odd-dimension clamping.
 - [ ] 1.5 Create HiZPyramidPass — render graph compute pass that generates full mip chain from depth prepass output. Allocate R32F texture with log2(max(width,height)) mip levels.
 - [ ] 1.6 Register Hi-Z pyramid as persistent render graph resource — available to SSAO, SSR, contact shadows, and occlusion culling passes.
 - [ ] 1.7 Wire into frame pipeline — insert DepthPrepass before GBuffer, HiZPyramid after DepthPrepass. Ensure barriers (depth write → SRV read → UAV write per mip).

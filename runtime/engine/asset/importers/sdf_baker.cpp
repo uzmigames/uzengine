@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <limits>
 #include <numeric>
 
@@ -495,7 +496,7 @@ MeshSdfAsset BakeMeshSdf(
     result.resolutionX = brickResX;
     result.resolutionY = brickResY;
     result.resolutionZ = brickResZ;
-    result.mipLevels = 1; // Single mip for now — MIP generation is a future optimization
+    result.mipLevels = 1; // Updated by GenerateSdfMips() below
 
     float sparsity = 1.0f - static_cast<float>(result.bricks.size()) / static_cast<float>(totalBricks);
     UZ_LOG(Asset, Info,
@@ -506,7 +507,243 @@ MeshSdfAsset BakeMeshSdf(
            sparsity * 100.0f,
            voxelSize, bandWidth);
 
+    // Generate MIP levels after base SDF is complete.
+    GenerateSdfMips(result);
+
     return result;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GenerateSdfMips — downsample brick grid up to 3 times
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Downsamples a single brick's voxels by 2x in each dimension.
+///
+/// Takes a source brick (8x8x8 = 512 voxels) and produces a destination
+/// region of 4x4x4 = 64 voxels at the specified offset within the destination brick.
+/// Each 2x2x2 block of source voxels is reduced to 1 voxel using minimum
+/// absolute distance from the zero-crossing (value 128).
+///
+/// The "minimum absolute distance" rule preserves the nearest surface:
+/// among the 8 source voxels in a 2x2x2 block, the one closest to 128
+/// (the zero-crossing) wins, because it represents the shortest distance
+/// to the mesh surface.
+///
+/// @source UE5 DistanceFieldAtlas.h — min-distance MIP downsampling
+static void DownsampleBrick2x(const SdfBrick& src, uint8_t* dstVoxels) {
+    constexpr uint32_t kHalf = SdfBrick::kSize / 2; // 4
+
+    for (uint32_t dz = 0; dz < kHalf; ++dz) {
+        for (uint32_t dy = 0; dy < kHalf; ++dy) {
+            for (uint32_t dx = 0; dx < kHalf; ++dx) {
+                // Sample the 2x2x2 block from source
+                uint32_t sx = dx * 2;
+                uint32_t sy = dy * 2;
+                uint32_t sz = dz * 2;
+
+                // Find the voxel with minimum absolute distance from 128 (zero-crossing)
+                uint8_t bestVal = 128;
+                int bestAbsDist = 256; // Larger than any possible |val - 128|
+
+                for (uint32_t oz = 0; oz < 2; ++oz) {
+                    for (uint32_t oy = 0; oy < 2; ++oy) {
+                        for (uint32_t ox = 0; ox < 2; ++ox) {
+                            uint32_t srcIdx = (sz + oz) * 64 + (sy + oy) * 8 + (sx + ox);
+                            uint8_t val = src.data[srcIdx];
+                            int absDist = std::abs(static_cast<int>(val) - 128);
+                            if (absDist < bestAbsDist) {
+                                bestAbsDist = absDist;
+                                bestVal = val;
+                            }
+                        }
+                    }
+                }
+
+                uint32_t dstIdx = dz * 16 + dy * 4 + dx; // 4x4x4 layout
+                dstVoxels[dstIdx] = bestVal;
+            }
+        }
+    }
+}
+
+/// Reconstructs a full 8x8x8 brick from 2x2x2 arrangement of downsampled 4x4x4 sub-blocks.
+///
+/// When the parent MIP has multiple adjacent bricks that map to one brick at
+/// the child MIP level, we need to gather the 4x4x4 contributions from each
+/// parent brick into different octants of the child's 8x8x8 brick.
+///
+/// If a parent brick is empty (indirection = UINT32_MAX), its octant is filled
+/// with 255 (maximum outside distance).
+static void PlaceSubBlock(SdfBrick& dst, const uint8_t* subVoxels,
+                           uint32_t octantX, uint32_t octantY, uint32_t octantZ) {
+    constexpr uint32_t kHalf = SdfBrick::kSize / 2; // 4
+    uint32_t baseX = octantX * kHalf;
+    uint32_t baseY = octantY * kHalf;
+    uint32_t baseZ = octantZ * kHalf;
+
+    for (uint32_t lz = 0; lz < kHalf; ++lz) {
+        for (uint32_t ly = 0; ly < kHalf; ++ly) {
+            for (uint32_t lx = 0; lx < kHalf; ++lx) {
+                uint32_t dstIdx = (baseZ + lz) * 64 + (baseY + ly) * 8 + (baseX + lx);
+                uint32_t srcIdx = lz * 16 + ly * 4 + lx;
+                dst.data[dstIdx] = subVoxels[srcIdx];
+            }
+        }
+    }
+}
+
+void GenerateSdfMips(MeshSdfAsset& asset) {
+    if (!asset.IsValid()) {
+        return;
+    }
+
+    // Determine how many MIP levels we can generate (up to 3).
+    // Stop when any dimension reaches 1 brick (can't halve further).
+    uint32_t parentResX = asset.resolutionX;
+    uint32_t parentResY = asset.resolutionY;
+    uint32_t parentResZ = asset.resolutionZ;
+
+    uint32_t mipCount = 0;
+    {
+        uint32_t rx = parentResX, ry = parentResY, rz = parentResZ;
+        for (uint32_t m = 0; m < MeshSdfAsset::kMaxMipLevels; ++m) {
+            // Each MIP halves the brick grid. We use ceiling division so that
+            // a 3-brick axis becomes 2-brick at the next MIP, not 1.
+            uint32_t nrx = (rx + 1) / 2;
+            uint32_t nry = (ry + 1) / 2;
+            uint32_t nrz = (rz + 1) / 2;
+            if (nrx == 0 || nry == 0 || nrz == 0) break;
+            mipCount = m + 1;
+            rx = nrx;
+            ry = nry;
+            rz = nrz;
+            // If all dimensions are 1, this is the last MIP
+            if (rx == 1 && ry == 1 && rz == 1) {
+                break;
+            }
+        }
+    }
+
+    if (mipCount == 0) {
+        asset.mipLevels = 1;
+        return;
+    }
+
+    // For each MIP level, downsample the parent level's bricks.
+    // Parent for MIP 1 = base (bricks/indirection), parent for MIP 2 = mipBricks[0], etc.
+
+    const std::vector<SdfBrick>* parentBricks = &asset.bricks;
+    const std::vector<uint32_t>* parentIndirection = &asset.indirection;
+    uint32_t pResX = asset.resolutionX;
+    uint32_t pResY = asset.resolutionY;
+    uint32_t pResZ = asset.resolutionZ;
+
+    for (uint32_t m = 0; m < mipCount; ++m) {
+        uint32_t childResX = (pResX + 1) / 2;
+        uint32_t childResY = (pResY + 1) / 2;
+        uint32_t childResZ = (pResZ + 1) / 2;
+
+        uint32_t childTotalBricks = childResX * childResY * childResZ;
+
+        auto& mip = asset.mipBricks[m];
+        mip.resolutionX = childResX;
+        mip.resolutionY = childResY;
+        mip.resolutionZ = childResZ;
+        mip.indirection.resize(childTotalBricks, UINT32_MAX);
+        mip.bricks.clear();
+        mip.bricks.reserve(childTotalBricks / 4);
+
+        // Temporary buffer for 4x4x4 downsampled sub-blocks
+        uint8_t subBlock[64]; // 4x4x4
+
+        for (uint32_t cbz = 0; cbz < childResZ; ++cbz) {
+            for (uint32_t cby = 0; cby < childResY; ++cby) {
+                for (uint32_t cbx = 0; cbx < childResX; ++cbx) {
+                    // The child brick at (cbx, cby, cbz) is formed from up to
+                    // 2x2x2 = 8 parent bricks at (cbx*2+ox, cby*2+oy, cbz*2+oz).
+                    SdfBrick childBrick{};
+                    // Fill with 255 (max outside) by default
+                    std::memset(childBrick.data, 255, SdfBrick::kVoxelCount);
+
+                    bool hasSurfaceVoxel = false;
+
+                    for (uint32_t oz = 0; oz < 2; ++oz) {
+                        for (uint32_t oy = 0; oy < 2; ++oy) {
+                            for (uint32_t ox = 0; ox < 2; ++ox) {
+                                uint32_t pbx = cbx * 2 + ox;
+                                uint32_t pby = cby * 2 + oy;
+                                uint32_t pbz = cbz * 2 + oz;
+
+                                // Check bounds (parent grid may be odd-sized)
+                                if (pbx >= pResX || pby >= pResY || pbz >= pResZ) {
+                                    // Out of bounds — fill octant with 255
+                                    std::memset(subBlock, 255, sizeof(subBlock));
+                                    PlaceSubBlock(childBrick, subBlock, ox, oy, oz);
+                                    continue;
+                                }
+
+                                uint32_t parentBrickIdx = pbz * pResY * pResX + pby * pResX + pbx;
+                                uint32_t parentStoredIdx = (*parentIndirection)[parentBrickIdx];
+
+                                if (parentStoredIdx == UINT32_MAX) {
+                                    // Empty parent brick — fill octant with 255
+                                    std::memset(subBlock, 255, sizeof(subBlock));
+                                    PlaceSubBlock(childBrick, subBlock, ox, oy, oz);
+                                    continue;
+                                }
+
+                                // Downsample parent brick 8x8x8 -> 4x4x4
+                                DownsampleBrick2x((*parentBricks)[parentStoredIdx], subBlock);
+                                PlaceSubBlock(childBrick, subBlock, ox, oy, oz);
+
+                                // Check if any voxel is near the surface
+                                for (uint32_t i = 0; i < 64; ++i) {
+                                    if (subBlock[i] != 255 && subBlock[i] != 0) {
+                                        hasSurfaceVoxel = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Also check if any voxel in the assembled brick is near-surface
+                    // (the sub-block check above catches most cases but let's be thorough)
+                    if (!hasSurfaceVoxel) {
+                        for (uint32_t i = 0; i < SdfBrick::kVoxelCount; ++i) {
+                            int absDist = std::abs(static_cast<int>(childBrick.data[i]) - 128);
+                            if (absDist < 127) { // Not at the extreme boundary values
+                                hasSurfaceVoxel = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    uint32_t childBrickIdx = cbz * childResY * childResX + cby * childResX + cbx;
+
+                    if (hasSurfaceVoxel) {
+                        uint32_t storedIdx = static_cast<uint32_t>(mip.bricks.size());
+                        mip.bricks.push_back(childBrick);
+                        mip.indirection[childBrickIdx] = storedIdx;
+                    }
+                    // else: indirection stays UINT32_MAX
+                }
+            }
+        }
+
+        UZ_LOG(Asset, Info,
+               "SdfBaker: MIP {} — {}x{}x{} bricks ({} surface bricks / {} total)",
+               m + 1, childResX, childResY, childResZ,
+               mip.bricks.size(), childTotalBricks);
+
+        // Next iteration: this MIP becomes the parent
+        parentBricks = &mip.bricks;
+        parentIndirection = &mip.indirection;
+        pResX = childResX;
+        pResY = childResY;
+        pResZ = childResZ;
+    }
+
+    asset.mipLevels = 1 + mipCount; // base + N mips
 }
 
 } // namespace uz

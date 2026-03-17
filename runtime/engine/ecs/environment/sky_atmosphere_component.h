@@ -77,9 +77,10 @@ struct SkyAtmosphereComponent {
     /// UE5: MieScatteringScale. Scale > 1 = more haze/glow.
     float mieScatteringScale = 1.0f;
 
-    /// Mie absorption coefficient in km^-1. UE5 default: 4.4e-3.
+    /// Mie absorption coefficient in km^-1.
+    /// @source UE5 SkyAtmosphereComponent.cpp:114 — MieAbsorptionScale = 0.000444f
     /// Controls how much light is absorbed (not scattered) by aerosols.
-    float mieAbsorption = 4.4e-3f;
+    float mieAbsorption = 4.44e-4f;
 
     /// Artistic multiplier for Mie absorption. Default: 1.0.
     /// UE5: MieAbsorptionScale.

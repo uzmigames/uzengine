@@ -37,6 +37,7 @@
 #include "ibl/ibl_baker.h"
 #include "ibl/sh_projection.h"
 #include "postprocess/auto_exposure.h"
+#include "postprocess/hiz_pyramid_pass.h"
 
 #include <cstdint>
 #include <memory>
@@ -228,8 +229,18 @@ public:
     /// Returns whether shadow caching is currently enabled.
     [[nodiscard]] bool IsShadowCacheEnabled() const { return m_shadowCacheManager.IsEnabled(); }
 
-    /// Cycles through shadow debug modes (0 → 1 → ... → 8 → 0).
+    /// Cycles through shadow debug modes (0 -> 1 -> ... -> 8 -> 0).
     void CycleShadowDebugMode() { m_shadowDebugMode = (m_shadowDebugMode + 1) % 9; }
+
+    /// Enables or disables the depth prepass.
+    ///
+    /// When enabled, a depth-only pass executes before the GBuffer pass,
+    /// populating the depth buffer to enable early-Z rejection and Hi-Z
+    /// pyramid generation.
+    void SetDepthPrepassEnabled(bool enabled) { m_depthPrepassEnabled = enabled; }
+
+    /// Returns whether the depth prepass is currently enabled.
+    [[nodiscard]] bool IsDepthPrepassEnabled() const { return m_depthPrepassEnabled; }
 
     // ── Accessors ──────────────────────────────────────────────────────────
 
@@ -381,6 +392,17 @@ private:
     // ── Auto-Exposure ──────────────────────────────────────────────────────
     std::unique_ptr<AutoExposure> m_autoExposure;   ///< GPU histogram-based eye adaptation.
 
+    // ── Depth Prepass + Hi-Z Pyramid ────────────────────────────────────────
+
+    bool m_depthPrepassEnabled = true;  ///< When true, depth prepass runs before GBuffer.
+
+    /// Per-mip R32_FLOAT textures for the Hi-Z pyramid.
+    /// mipLevels[0] = half-res, mipLevels[1] = quarter-res, etc.
+    HiZMipLevel m_hizMipLevels[kHiZMaxMipLevels] = {};
+
+    /// Number of mip levels in the Hi-Z pyramid (depends on render target size).
+    uint32_t m_hizMipCount = 0;
+
     // ── Render State ───────────────────────────────────────────────────────
 
     RenderPath m_renderPath = RenderPath::Deferred;
@@ -452,6 +474,13 @@ private:
 
     /// Destroys loaded GPU meshes and textures.
     void DestroyAssets();
+
+    /// Creates the Hi-Z pyramid per-mip textures for the given resolution.
+    /// Called from Init() and Resize().
+    void CreateHiZPyramid(uint32_t width, uint32_t height);
+
+    /// Destroys all Hi-Z pyramid textures. Called from Shutdown() and Resize().
+    void DestroyHiZPyramid();
 };
 
 } // namespace uz

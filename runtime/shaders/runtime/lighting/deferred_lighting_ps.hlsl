@@ -414,6 +414,15 @@ float4 main(FSInput input) : SV_Target {
         // BRDF LUT: pre-integrated scale and bias terms for split-sum approximation
         float3 specularIBL = prefilteredColor * (F * envBRDF.x + envBRDF.y);
 
+        // Karis 2013 multi-scatter energy compensation
+        // @source Karis 2013 "Real Shading in Unreal Engine 4" — multi-scatter approximation
+        // Compensates for energy lost to single-scatter assumption in split-sum IBL.
+        // Ems = fraction of energy NOT accounted for by single scatter.
+        // Favg = average Fresnel reflectance over the hemisphere.
+        float Ems = 1.0f - (envBRDF.x + envBRDF.y);
+        float3 Favg = F0 + (1.0f - F0) / 21.0f;
+        specularIBL *= 1.0f + Favg * Ems / (1.0f - Favg * Ems);
+
         float3 skyLightTint = float3(skyLightColorR, skyLightColorG, skyLightColorB);
         ambient = (diffuseIBL + specularIBL) * ao * skyLightIntensity * skyLightTint;
     } else {

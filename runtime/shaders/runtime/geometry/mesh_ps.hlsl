@@ -264,6 +264,11 @@ float4 main(PSInput input) : SV_Target {
         float2 envBRDF = brdfLut.SampleLevel(linearSampler, float2(NdotV, roughness), 0);
         float3 specularIBL = prefilteredColor * (F * envBRDF.x + envBRDF.y);
 
+        // Karis 2013 multi-scatter energy compensation
+        float Ems = 1.0f - (envBRDF.x + envBRDF.y);
+        float3 Favg = F0 + (1.0f - F0) / 21.0f;
+        specularIBL *= 1.0f + Favg * Ems / (1.0f - Favg * Ems);
+
         float3 skyLightTint = float3(skyLightColorR, skyLightColorG, skyLightColorB);
         ambient = (diffuseIBL + specularIBL) * ao * skyLightIntensity * skyLightTint;
     } else
@@ -286,6 +291,11 @@ float4 main(PSInput input) : SV_Target {
 
             float2 envBRDF = brdfLutTexture.Sample(linearSampler, float2(NdotV, roughness)).rg;
             float3 specularIBL = prefilteredColor * (F0 * envBRDF.x + envBRDF.y);
+
+            // Karis 2013 multi-scatter energy compensation
+            float Ems_sm5 = 1.0f - (envBRDF.x + envBRDF.y);
+            float3 Favg_sm5 = F0 + (1.0f - F0) / 21.0f;
+            specularIBL *= 1.0f + Favg_sm5 * Ems_sm5 / (1.0f - Favg_sm5 * Ems_sm5);
 
             float3 skyLightTint = float3(skyLightColorR, skyLightColorG, skyLightColorB);
             ambient = (diffuseIBL + specularIBL) * ao * skyLightIntensity * skyLightTint;

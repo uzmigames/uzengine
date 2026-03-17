@@ -36,9 +36,10 @@ public:
     /// Values outside [0, 1] are physically valid for HDR lights.
     Vec3 color{1.f, 1.f, 1.f};
 
-    /// Intensity multiplier applied to the light color. Default: 1.0.
+    /// Intensity multiplier applied to the light color. Default: 10.0.
     /// Units are lux for directional lights, candela for point/spot lights.
-    float intensity = 1.0f;
+    /// @source UE5 DirectionalLightComponent.cpp:1004 — Intensity = 10
+    float intensity = 10.0f;
 
     /// When true, `temperature` is used to tint the light color via blackbody radiation.
     /// UE5: bUseTemperature. Default: false.

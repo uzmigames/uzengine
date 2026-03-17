@@ -151,22 +151,28 @@ float3 AccumulateDirectLighting(
         }
 
         // ── Per-light BRDF evaluation ──
+        // @source UE5 ShadingModels.ush:220 — D_GGX * Vis_SmithJointApprox * F_Schlick
+        // @source UE5 BRDF.ush:183 — Diffuse_Burley
         float3 H     = normalize(V + L);
         float  NdotL = max(dot(N, L), 0.001f);
         float  NdotH = saturate(dot(N, H));
         float  VdotH = saturate(dot(V, H));
 
-        float  D = DistributionGGX(NdotH, alpha);
-        float  G = GeometrySmith(NdotV, NdotL, alpha);
-        float3 F = FresnelSchlick(VdotH, F0);
+        // Cook-Torrance specular: D * Vis * F
+        // Vis_SmithJointApprox already includes 1/(4*NoV*NoL)
+        float  D   = DistributionGGX(NdotH, alpha);
+        float  Vis = Vis_SmithJointApprox(alpha, NdotV, NdotL);
+        float3 F   = FresnelSchlick(VdotH, F0);
 
-        // Cook-Torrance specular: D*G*F / (4 * N.V * N.L)
-        float3 specular = (D * G * F) / max(4.0f * NdotV * NdotL, 0.001f);
+        float3 specular = D * Vis * F;
 
         // Energy conservation: metals have no diffuse lobe
         float3 kS = F;
         float3 kD = (1.0f - kS) * (1.0f - metallic);
-        float3 diffuse = kD * albedo / PI;
+
+        // Disney Burley diffuse (roughness-dependent retroreflection)
+        float roughness = sqrt(alpha);
+        float3 diffuse = kD * DiffuseBurley(albedo, roughness, NdotV, NdotL, VdotH);
 
         Lo += (diffuse + specular) * light.color * NdotL * attenuation;
     }

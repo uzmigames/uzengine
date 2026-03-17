@@ -251,6 +251,36 @@ public:
     /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
     [[nodiscard]] RHIPipelineHandle GetHeightFog();
 
+    /// Returns the depth prepass pipeline (shadow_depth_vs, no pixel shader, depth-only).
+    ///
+    /// Similar to the shadow depth pipeline but WITHOUT depth bias (no slope-scaled
+    /// or constant bias) since the prepass writes to the GBuffer depth, not a shadow
+    /// atlas. Uses LessEqual comparison (reversed-Z).
+    ///
+    /// @source UE5 DepthRendering.cpp — FDepthPassMeshProcessor
+    ///
+    /// # Arguments
+    /// * `bindless` — If true, omits vertex input layout (SM6.6 path).
+    ///   Defaults to the device's bindless capability.
+    ///
+    /// # Returns
+    /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
+    [[nodiscard]] RHIPipelineHandle GetDepthPrepass(bool bindless);
+
+    /// Returns the depth prepass pipeline using the device's default bindless mode.
+    [[nodiscard]] RHIPipelineHandle GetDepthPrepass();
+
+    /// Returns the Hi-Z pyramid compute pipeline (hiz_pyramid_cs.hlsl).
+    ///
+    /// Compute pipeline dispatched once per mip level to downsample the depth
+    /// buffer into a hierarchical Z-buffer for occlusion culling, SSAO, and SSR.
+    ///
+    /// @source UE5 HZBOcclusion.cpp — BuildHZB pipeline creation
+    ///
+    /// # Returns
+    /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
+    [[nodiscard]] RHIPipelineHandle GetHiZPyramid();
+
     /// Pre-creates all standard pipelines eagerly instead of on first use.
     ///
     /// Call at scene load time to avoid hitches during the first frame.
@@ -285,6 +315,7 @@ private:
     [[nodiscard]] bool EnsureTransmittanceLutShader();
     [[nodiscard]] bool EnsureSkyCubemapCaptureShader();
     [[nodiscard]] bool EnsureSkyCubemapCapturePSShader();
+    [[nodiscard]] bool EnsureHiZPyramidShader();
 
     /// Creates a pipeline through the PSO cache. On cache hit, returns the
     /// cached handle without calling the device. On miss, creates via the
@@ -318,6 +349,7 @@ private:
     RHIShaderHandle m_transmittanceLutCS      = RHIShaderHandle::Invalid();
     RHIShaderHandle m_skyCubemapCaptureCS    = RHIShaderHandle::Invalid();
     RHIShaderHandle m_skyCubemapCapturePSShader = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_hizPyramidCS             = RHIShaderHandle::Invalid();
 
     // ── Cached pipeline handles (one per bindless variant) ──────────────
     RHIPipelineHandle m_forwardPBR         = RHIPipelineHandle::Invalid();
@@ -337,6 +369,9 @@ private:
     RHIPipelineHandle m_transmittanceLut      = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_skyCubemapCapture    = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_skyCubemapCapturePSPipeline = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_depthPrepass         = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_depthPrepassBindless = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_hizPyramid           = RHIPipelineHandle::Invalid();
 };
 
 } // namespace uz

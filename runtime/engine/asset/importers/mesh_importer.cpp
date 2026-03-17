@@ -6,7 +6,9 @@
 #include "mesh_importer.h"
 #include "log.h"
 #include "profiler.h"
+#include "sdf_baker.h"
 #include "uzmesh_format.h"
+#include "uzsdf_format.h"
 
 #include <fastgltf/core.hpp>
 #include <fastgltf/tools.hpp>
@@ -249,6 +251,44 @@ AssetImportResult MeshImporter::Import(
 
     UZ_LOG(Asset, Info, "Imported mesh '{}': {} vertices, {} indices, {} bytes",
            sourceName, finalVertexCount, optimizedIndices.size(), result.data.size());
+
+    // ── Generate SDF sidecar ──
+    // Extract position data from optimized vertices for SDF baking.
+    // SdfBaker expects a flat float array of positions [x0,y0,z0,x1,...].
+    {
+        std::vector<float> positions(finalVertexCount * 3);
+        for (size_t i = 0; i < finalVertexCount; ++i) {
+            positions[i * 3 + 0] = optimizedVertices[i].position[0];
+            positions[i * 3 + 1] = optimizedVertices[i].position[1];
+            positions[i * 3 + 2] = optimizedVertices[i].position[2];
+        }
+
+        SdfBakerConfig sdfConfig;
+        sdfConfig.maxResolution = 64;
+
+        MeshSdfAsset sdfAsset = BakeMeshSdf(
+            positions.data(),
+            static_cast<uint32_t>(finalVertexCount),
+            optimizedIndices.data(),
+            static_cast<uint32_t>(optimizedIndices.size()),
+            sdfConfig);
+
+        if (sdfAsset.IsValid()) {
+            std::vector<uint8_t> sdfData = WriteUzSdf(sdfAsset);
+            if (!sdfData.empty()) {
+                AssetImportSidecar sidecar;
+                sidecar.extension = ".uzsdf";
+                sidecar.data = std::move(sdfData);
+                result.sidecars.push_back(std::move(sidecar));
+
+                UZ_LOG(Asset, Info, "Generated SDF sidecar for '{}': {} bricks, {} MIP levels, {:.1f} KB",
+                       sourceName, sdfAsset.GetTotalBrickCount(), sdfAsset.mipLevels,
+                       static_cast<double>(result.sidecars.back().data.size()) / 1024.0);
+            }
+        } else {
+            UZ_LOG(Asset, Warning, "SDF generation failed for '{}' — skipping .uzsdf sidecar", sourceName);
+        }
+    }
 
     return result;
 }

@@ -91,6 +91,9 @@ void PipelineLibrary::Shutdown() {
     destroyPipeline(m_transmittanceLut);
     destroyPipeline(m_skyCubemapCapture);
     destroyPipeline(m_skyCubemapCapturePSPipeline);
+    destroyPipeline(m_depthPrepass);
+    destroyPipeline(m_depthPrepassBindless);
+    destroyPipeline(m_hizPyramid);
 
     // Destroy cached shaders
     auto destroyShader = [this](RHIShaderHandle& h) {
@@ -116,6 +119,7 @@ void PipelineLibrary::Shutdown() {
     destroyShader(m_transmittanceLutCS);
     destroyShader(m_skyCubemapCaptureCS);
     destroyShader(m_skyCubemapCapturePSShader);
+    destroyShader(m_hizPyramidCS);
 
     m_psoCache.Shutdown();
     m_psoDiskCache.reset();
@@ -926,6 +930,124 @@ RHIPipelineHandle PipelineLibrary::GetSkyCubemapCapturePS() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Depth Prepass Pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+RHIPipelineHandle PipelineLibrary::GetDepthPrepass() {
+    return GetDepthPrepass(m_device->IsBindless());
+}
+
+RHIPipelineHandle PipelineLibrary::GetDepthPrepass(bool bindless) {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetDepthPrepass called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    auto& cached = bindless ? m_depthPrepassBindless : m_depthPrepass;
+    if (cached.IsValid()) {
+        return cached;
+    }
+
+    // The depth prepass reuses the shadow depth vertex shader — it transforms
+    // vertices to clip space with only the model + viewProj matrices. No pixel
+    // shader is needed since we only write depth.
+    if (!EnsureShadowShaders()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIGraphicsPipelineDesc desc{};
+    desc.vertexShader  = m_shadowVS;
+    desc.topology      = RHIPrimitiveTopology::TriangleList;
+    desc.rasterizer.cullMode              = RHICullMode::Back;
+    desc.rasterizer.frontCounterClockwise = false;
+    // No depth bias — unlike the shadow pass, the depth prepass writes to the
+    // GBuffer depth and does not need bias to prevent self-shadowing.
+    /// @source UE5 DepthRendering.cpp — FDepthPassMeshProcessor uses no depth bias
+    desc.rasterizer.slopeScaledDepthBias  = 0.0f;
+    desc.rasterizer.depthBias             = 0.0f;
+    desc.depthStencil.depthEnable         = true;
+    desc.depthStencil.depthWrite          = true;
+    desc.depthStencil.depthFunc           = RHICompareFunc::LessEqual;
+    desc.renderTargetCount                = 0;
+    desc.depthStencilFormat               = RHIFormat::D32Float;
+    desc.debugName                        = bindless ? "DepthPrepass_Bindless" : "DepthPrepass";
+
+    if (!bindless) {
+        const auto layout = VertexLayout::Standard();
+        desc.inputElements     = layout.elements;
+        desc.inputElementCount = layout.count;
+        desc.vertexStride      = layout.stride;
+    }
+
+    cached = CreateCachedPipeline(desc);
+    if (!cached.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create DepthPrepass pipeline (bindless={})", bindless);
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created DepthPrepass pipeline (bindless={})", bindless);
+    }
+
+    return cached;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Hi-Z Pyramid Compute Pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool PipelineLibrary::EnsureHiZPyramidShader() {
+    if (m_hizPyramidCS.IsValid()) {
+        return true;
+    }
+
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::HizPyramidCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile HizPyramidCS");
+        return false;
+    }
+
+    RHIShaderDesc shaderDesc{};
+    shaderDesc.bytecode     = bytecode.data();
+    shaderDesc.bytecodeSize = bytecode.size();
+    shaderDesc.stage        = RHIShaderStage::Compute;
+    shaderDesc.entryPoint   = "CSMain";
+    shaderDesc.debugName    = "hiz_pyramid_cs";
+
+    m_hizPyramidCS = m_device->CreateShader(shaderDesc);
+    if (!m_hizPyramidCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create HizPyramidCS shader");
+        return false;
+    }
+    return true;
+}
+
+RHIPipelineHandle PipelineLibrary::GetHiZPyramid() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetHiZPyramid called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_hizPyramid.IsValid()) {
+        return m_hizPyramid;
+    }
+
+    if (!EnsureHiZPyramidShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_hizPyramidCS;
+    desc.debugName     = "HiZPyramid";
+
+    m_hizPyramid = m_device->CreateComputePipeline(desc);
+    if (!m_hizPyramid.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create HiZPyramid pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created HiZPyramid pipeline");
+    }
+
+    return m_hizPyramid;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // PSO Cache Integration
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1007,12 +1129,15 @@ uint32_t PipelineLibrary::WarmupAll() {
     warmup(GetTransmittanceLut(), "TransmittanceLUT");
     warmup(GetSkyCubemapCapture(), "SkyCubemapCapture");
     warmup(GetSkyCubemapCapturePS(), "SkyCubemapCapturePS");
+    warmup(GetDepthPrepass(bindless), "DepthPrepass");
+    warmup(GetHiZPyramid(), "HiZPyramid");
 
     // SM5 variants if device is bindless (need both paths)
     if (bindless) {
         warmup(GetForwardPBR(false), "ForwardPBR_SM5");
         warmup(GetGBuffer(false), "GBuffer_SM5");
         warmup(GetShadowDepth(false), "ShadowDepth_SM5");
+        warmup(GetDepthPrepass(false), "DepthPrepass_SM5");
     }
 
     UZ_LOG(Renderer, Info, "PipelineLibrary: warmed up {} pipelines", count);

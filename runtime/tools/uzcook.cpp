@@ -332,6 +332,34 @@ int main(int argc, char** argv) {
             {},
         });
 
+        // Write sidecar files (e.g., .uzsdf alongside .uzmesh)
+        for (const auto& sc : result.sidecars) {
+            std::string sidecarLogical = logicalPath;
+            auto scDot = sidecarLogical.rfind('.');
+            if (scDot != std::string::npos) {
+                sidecarLogical = sidecarLogical.substr(0, scDot) + sc.extension;
+            }
+
+            uint64_t scCacheKey = uz::AssetCache::ComputeKey(
+                (std::string(importer->Name()) + "_sidecar").c_str(),
+                importer->Version(), sourceHash, optionsHash);
+
+            cache.Store(scCacheKey, sc.data);
+
+            std::string scCachePath = cache.CacheDirectory() + "/imported/" +
+                                      uz::HashToHex(scCacheKey) + ".bin";
+
+            cookedAssets.push_back({
+                sidecarLogical,
+                scCachePath,
+                sc.data.size(),
+                uz::AssetType::Generic,
+                {},
+            });
+
+            UZ_LOG(Cook, Info, "Wrote sidecar: '{}' ({} bytes)", sidecarLogical, sc.data.size());
+        }
+
         ++imported;
     }
 

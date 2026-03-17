@@ -13,9 +13,19 @@
 
 #include <cstdint>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace uz {
+
+/// A sidecar file produced alongside the primary import output.
+///
+/// Some importers produce auxiliary data files in addition to the main asset
+/// (e.g., mesh importer produces a `.uzsdf` SDF sidecar alongside `.uzmesh`).
+struct AssetImportSidecar {
+    std::string extension;             ///< File extension including dot (e.g., ".uzsdf")
+    std::vector<uint8_t> data;         ///< Sidecar file bytes
+};
 
 /// Result of an asset import operation.
 ///
@@ -26,6 +36,7 @@ struct AssetImportResult {
     bool success = false;              ///< `true` if import completed without errors
     std::vector<uint8_t> data;         ///< Imported asset bytes in runtime format (empty on failure)
     std::string error;                 ///< Human-readable error message (empty on success)
+    std::vector<AssetImportSidecar> sidecars; ///< Optional sidecar files produced alongside the primary output
 };
 
 /// Configuration options for an import operation.

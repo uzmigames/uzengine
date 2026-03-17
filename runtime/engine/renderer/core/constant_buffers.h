@@ -95,7 +95,16 @@ struct PerFrameCB {
     float    apSunIntensity   = 1.0f;            ///< Sun illuminance for AP inscattering.
     float    apRayleighScale  = 1.0f;            ///< Artistic Rayleigh scattering multiplier.
     float    apMieScale       = 1.0f;            ///< Artistic Mie scattering multiplier.
-    float    _pad2[21] = {};                     ///< Pad to 512 bytes.
+
+    // ── Film Tonemap parameters (UE5 parity) ─────────────────────────────
+    /// @source UE5 PostProcessSettings.h — default values for FilmToneMap curve
+    float    filmSlope      = 0.88f;             ///< Steepness of the linear (straight) segment.
+    float    filmToe        = 0.55f;             ///< Size of the toe region (dark rolloff).
+    float    filmShoulder   = 0.26f;             ///< Size of the shoulder region (highlight rolloff).
+    float    filmBlackClip  = 0.0f;              ///< Lifts black level (adds to min output).
+    float    filmWhiteClip  = 0.04f;             ///< Lowers white ceiling (subtracts from max output).
+
+    float    _pad2[16] = {};                     ///< Pad to 512 bytes.
 };
 
 static_assert(sizeof(PerFrameCB) == 512, "PerFrameCB must be 512 bytes (D3D12 CB alignment)");
