@@ -64,7 +64,7 @@
 | **RayleighExponentialDistribution** | `8.0f` km (SkyAtmosphereComponent.cpp:96) | `8.0f` (sky_atmosphere_component.h:68) | ✅ YES | NONE | Both default to 8km scale height. |
 | **MieScattering** | `3.996e-3 km⁻¹` (SkyAtmosphereComponent.cpp:112) | `3.996e-3` (sky_atmosphere_component.h:74) | ✅ YES | NONE | Exact match for haze coefficient. |
 | **MieScatteringScale** | `1.0f` (SkyAtmosphereComponent.cpp:not explicit, default 1) | `1.0f` (sky_atmosphere_component.h:78) | ✅ YES | NONE | Both default no artistic scaling. |
-| **MieAbsorption** | `4.44e-3 km⁻¹` (SkyAtmosphereComponent.cpp:114) | `4.4e-3` (sky_atmosphere_component.h:82) | ⚠️ CLOSE | LOW | UE5 uses 0.000444f = 4.44e-4, not 4.44e-3. **UzEngine has 10x error**. |
+| **MieAbsorption** | `4.44e-4 km⁻¹` (SkyAtmosphereComponent.cpp:114) | `4.44e-4` (sky_atmosphere_component.h:83) | ✅ YES | NONE | **FIXED**: Was documented as 10x error but code already has correct value. |
 | **MieAbsorptionScale** | `1.0f` | `1.0f` (sky_atmosphere_component.h:86) | ✅ YES | NONE | Both default no scaling. |
 | **MieAnisotropy** | `0.8f` (SkyAtmosphereComponent.cpp:115) | `0.8f` (sky_atmosphere_component.h:90) | ✅ YES | NONE | Both default to 0.8 forward scattering. |
 | **MieDensityExpScale** | `1.2f` km (SkyAtmosphereComponent.cpp:116) | `1.2f` (sky_atmosphere_component.h:94) | ✅ YES | NONE | Both default to 1.2km scale height. |
@@ -72,7 +72,7 @@
 | **MultiScatteringFactor** | `1.0f` (SkyAtmosphereComponent.cpp:128) | `1.0f` (sky_atmosphere_component.h:107) | ✅ YES | NONE | Both default to full multi-scatter. |
 | **HeightFogContribution** | `1.0f` (SkyAtmosphereComponent.cpp:130) | `1.0f` (sky_atmosphere_component.h:118) | ✅ YES | NONE | Both default to full fog contribution. |
 
-**CRITICAL BUG FOUND**: UzEngine MieAbsorption is `4.4e-3` but should be `4.44e-4` (10x error). This causes excessive absorption in the atmosphere.
+**Previously reported bug was wrong**: UzEngine MieAbsorption is already `4.44e-4f` (correct). The analysis had a typo listing `4.4e-3`.
 
 ---
 
@@ -82,13 +82,13 @@
 |-----------|--------------------------------|------------------------|--------|--------|-------|
 | **D (Normal Distribution)** | `D_GGX` (BRDF.ush:284-288) | `DistributionGGX` (pbr_common.hlsli:72-76) | ✅ YES | NONE | Both use identical GGX formula: `a²/(π((N·H)²(a²-1)+1)²)` |
 | **D_GGX Alpha Parameter** | `a2 = roughness²` | `alpha = roughness²` | ✅ YES | NONE | Both square roughness to alpha. |
-| **G (Geometry Function)** | `Vis_SmithJointApprox` (BRDF.ush:346-352) | `GeometrySmith` (pbr_common.hlsli:118-120) using `GeometrySchlickGGX` | ⚠️ DIFFERENT | MEDIUM | **UE5 uses approximate joint Smith (Heitz 2014). UzEngine uses separate Schlick terms multiplied**. For direct lighting (analytic), they converge, but differ for IBL. |
-| **k (Geometry Remapping)** | UE5: `k = sqrt(a2) * 0.5` for IBL (BRDF.ush:329) | UzEngine: `k = (r+1)²/8` for direct (pbr_common.hlsli:102) | ⚠️ DIFFERENT | MEDIUM | **UE5 uses different k for direct vs IBL. UzEngine hardcodes direct-light k**. This is a known approximation in Karis 2013. |
-| **F (Fresnel)** | `F_Schlick` (BRDF.ush:376-383) | `FresnelSchlick` (pbr_common.hlsli:138-140) | ✅ YES | NONE | Both: `F0 + (1-F0)*(1-VoH)⁵` |
-| **Diffuse Model** | `Diffuse_Lambert` or `Diffuse_Burley` (BRDF.ush:177-189) | `Lambertian: albedo/π` (pbr_common.hlsli:181) | ⚠️ DIFFERENT | HIGH | **UE5 defaults to Burley diffuse (Disneyish) for better roughness feel. UzEngine uses pure Lambertian**. Burley includes retroreflection at grazing angles. |
+| **G (Geometry Function)** | `Vis_SmithJointApprox` (BRDF.ush:346-352) | `Vis_SmithJointApprox` (pbr_common.hlsli:140-145) | ✅ YES | NONE | **FIXED 2026-03-17**: Replaced old Schlick-GGX with UE5-exact Smith Joint approximation. |
+| **F (Fresnel)** | `F_Schlick` (BRDF.ush:376-383) | `FresnelSchlick` (pbr_common.hlsli:94-96) | ✅ YES | NONE | Both: `F0 + (1-F0)*(1-VoH)⁵` |
+| **Diffuse Model** | `Diffuse_Burley` (BRDF.ush:183-188) | `DiffuseBurley` (pbr_common.hlsli:116-121) | ✅ YES | NONE | **FIXED 2026-03-17**: Implemented UE5-exact Burley diffuse with retroreflection. |
+| **Multiscatter Energy** | `ComputeFresnelEnergyTerms` (ShadingEnergyConservation.ush:55) | `ComputeEnergyCompensation` (pbr_common.hlsli) | ✅ YES | NONE | **NEW 2026-03-17**: Kulla-Conty/Turquin 2018 compensation via analytic GGX energy lookup. |
 | **MIN_ROUGHNESS** | `0.04f` (BRDF.ush:20) | `0.04f` (pbr_common.hlsli:20) | ✅ YES | NONE | Both clamp minimum roughness to prevent singular specular delta. |
-| **ACES Tonemap** | Full RRT+ODT pipeline (ACES/*.ush) ~200 lines | Narkowicz polynomial fit (pbr_common.hlsli:45-52) | ❌ DIFFERENT | MEDIUM | **UE5 uses full ACES with color space transforms (sRGB→AP0→AP1), glow, red modifier, 5 artist params (FilmSlope/Toe/Shoulder/BlackClip/WhiteClip). UzEngine uses single-function approximation**. Visual difference for highlights. |
-| **ACES Constants (Narkowicz)** | (N/A - UE5 uses full pipeline) | a=2.51, b=0.03, c=2.43, d=0.59, e=0.14 | N/A | NONE | Narkowicz fit polynomial for default ACES (Slope=0.91, Toe=0.53, Shoulder=0.23). |
+| **ACES Tonemap** | `FilmToneMap` (TonemapCommon.ush:105-220) | `FilmToneMap` (film_tonemap.hlsli) | ✅ YES | NONE | **FIXED 2026-03-17**: Full ACES pipeline with glow, red modifier, 5 artist params. Narkowicz fallback via `#ifdef UZ_FAST_TONEMAP`. |
+| **sRGB Output** | `LinearToSrgb` (IEC 61966-2-1) | `LinearToSrgb` (math_util.hlsli:56-70) | ✅ YES | NONE | **FIXED 2026-03-17**: Proper pow(x,1/2.4) curve, not gamma 2.2 approximation. |
 
 ---
 
@@ -97,9 +97,9 @@
 | Parameter | UE5 Implementation (source:line) | UzEngine Current | Match? | Impact | Notes |
 |-----------|--------------------------------|-----------------|--------|--------|-------|
 | **Shadow Map Resolution** | 2048x2048 per cascade (typical) | 2048x2048 (shadow_renderer.cpp inferred) | ✅ ASSUMED | NONE | Not explicitly stated in headers but inferred from code. |
-| **PCF Filter Width** | Variable (adaptive per cascade) | 16-tap Poisson disk (shadow_renderer.cpp) | ⚠️ DIFFERENT | MEDIUM | UE5 uses dynamic PCF radius based on cascade distance. UzEngine hardcodes 16 taps. |
+| **PCF Filter Width** | Variable per cascade (ShadowRendering.cpp:1932) | Per-cascade: [2,3,4,6] texels (shadow_common.hlsli) | ✅ YES | NONE | **FIXED 2026-03-17**: `GetPCFRadiusTexels(cascadeIdx)` scales kernel per cascade. |
 | **PCSS Penumbra Scale** | Distance-based (ShadowRendering.cpp) | Distance-based penumbra (inferred from code) | ✅ YES | NONE | Both adjust penumbra based on light-to-occluder distance. |
-| **Bias (Depth Bias)** | Formula: `BaselineDepthBias * shadowCascadeResolution / 2048` (DirectionalLightComponent.cpp) | Per-material + global + per-light multiplier | ⚠️ PARTIAL | MEDIUM | UE5 scales bias by cascade resolution. UzEngine allows per-light override. |
+| **Bias (Depth Bias)** | Formula: `BaselineDepthBias * worldUnitsPerTexel` (ShadowRendering.cpp:1844-1846) | `constantBias * worldUnitsPerTexel` (shadow_cascade.cpp:308) | ✅ YES | NONE | **VERIFIED 2026-03-17**: Already correct — far cascades naturally get more bias. |
 | **Slope Bias** | Yes, adaptive (ShadowRendering.cpp) | Yes, per-material (constant_buffers.h) | ✅ YES | NONE | Both apply slope-scaled depth bias to reduce acne. |
 
 ---

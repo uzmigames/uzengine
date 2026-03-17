@@ -159,6 +159,8 @@ bool CreateDX12Buffer(ID3D12Device* device,
                 uavDesc.Buffer.NumElements = static_cast<UINT>(uavElements);
                 uavDesc.Buffer.StructureByteStride = desc.stride;
             } else {
+                // Raw byte address buffer (RWByteAddressBuffer in HLSL).
+                // D3D12 requires DXGI_FORMAT_R32_TYPELESS + RAW flag for raw UAV.
                 const uint64_t uavElements = desc.sizeBytes / 4;
                 if (uavElements > UINT_MAX) {
                     UZ_LOG(RHI, Error, "CreateBuffer: UAV element count {} exceeds UINT_MAX (name='{}')",
@@ -166,7 +168,9 @@ bool CreateDX12Buffer(ID3D12Device* device,
                     srvUavHeap.Free(uavIdx);
                     return false;
                 }
+                uavDesc.Format = DXGI_FORMAT_R32_TYPELESS;
                 uavDesc.Buffer.NumElements = static_cast<UINT>(uavElements);
+                uavDesc.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_RAW;
             }
             device->CreateUnorderedAccessView(resource, nullptr, &uavDesc,
                                                srvUavHeap.CpuHandle(uavIdx));

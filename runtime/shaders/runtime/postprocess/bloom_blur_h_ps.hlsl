@@ -1,3 +1,7 @@
+/// @deprecated Use bloom_threshold_cs.hlsl + bloom_downsample_cs.hlsl + bloom_upsample_cs.hlsl instead.
+/// This shader is part of the legacy 2-pass Gaussian blur bloom pipeline, replaced by the
+/// compute-based pyramid bloom (Karis average + 13-tap Jimenez downsample + 9-tap tent upsample).
+///
 /// Bloom Horizontal Gaussian Blur Pass
 ///
 /// Applies a separable Gaussian blur in the horizontal direction.

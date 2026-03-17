@@ -31,8 +31,10 @@
 /// @source UE5 DistanceFieldShadowing.usf:34-37,82-97 — CullObjectsForShadowCS parameters
 /// @constants UPDATEOBJECTS_THREADGROUP_SIZE=64 (UE5 default in C++, DistanceFieldShadowing.cpp:196)
 ///            NumShadowHullPlanes=up to 12 (DistanceFieldShadowing.usf:36)
-/// @deviations Combined convex hull + bounding sphere into single cbuffer
-cbuffer CullConstants : register(b0) {
+/// @deviations Combined convex hull + bounding sphere into single cbuffer.
+///             Bound at register(b1) via SetRootCBV (kSlotPerFrame) because the data
+///             exceeds the 8-DWORD root constant limit at b0.
+cbuffer CullConstants : register(b1) {
     /// Shadow frustum convex hull planes (up to 12).
     /// Each plane: float4(nx, ny, nz, d) where dot(n, p) - d < 0 means inside.
     /// @source UE5 DistanceFieldShadowing.usf:34 — ShadowConvexHull[12]

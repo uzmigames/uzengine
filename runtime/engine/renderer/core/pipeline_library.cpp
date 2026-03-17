@@ -1088,6 +1088,124 @@ RHIPipelineHandle PipelineLibrary::GetHiZPyramid() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// DFS Object Culling Compute Pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool PipelineLibrary::EnsureDfsCullObjectsShader() {
+    if (m_dfsCullObjectsCS.IsValid()) {
+        return true;
+    }
+
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::DfsCullObjectsCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile DfsCullObjectsCS");
+        return false;
+    }
+
+    RHIShaderDesc shaderDesc{};
+    shaderDesc.bytecode     = bytecode.data();
+    shaderDesc.bytecodeSize = bytecode.size();
+    shaderDesc.stage        = RHIShaderStage::Compute;
+    shaderDesc.entryPoint   = "CSMain";
+    shaderDesc.debugName    = "dfs_cull_objects_cs";
+
+    m_dfsCullObjectsCS = m_device->CreateShader(shaderDesc);
+    if (!m_dfsCullObjectsCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create DfsCullObjectsCS shader");
+        return false;
+    }
+    return true;
+}
+
+/// @source UE5 DistanceFieldShadowing.cpp:196-210 — CullObjectsForShadow pipeline creation
+RHIPipelineHandle PipelineLibrary::GetDfsCullObjects() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetDfsCullObjects called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_dfsCullObjects.IsValid()) {
+        return m_dfsCullObjects;
+    }
+
+    if (!EnsureDfsCullObjectsShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_dfsCullObjectsCS;
+    desc.debugName     = "DFS_CullObjects";
+
+    m_dfsCullObjects = m_device->CreateComputePipeline(desc);
+    if (!m_dfsCullObjects.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create DFS_CullObjects pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created DFS_CullObjects pipeline");
+    }
+
+    return m_dfsCullObjects;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DFS Cone Tracing Compute Pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool PipelineLibrary::EnsureDfsConeTraceShader() {
+    if (m_dfsConeTraceCS.IsValid()) {
+        return true;
+    }
+
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::DfsConeTraceCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile DfsConeTraceCS");
+        return false;
+    }
+
+    RHIShaderDesc shaderDesc{};
+    shaderDesc.bytecode     = bytecode.data();
+    shaderDesc.bytecodeSize = bytecode.size();
+    shaderDesc.stage        = RHIShaderStage::Compute;
+    shaderDesc.entryPoint   = "CSMain";
+    shaderDesc.debugName    = "dfs_cone_trace_cs";
+
+    m_dfsConeTraceCS = m_device->CreateShader(shaderDesc);
+    if (!m_dfsConeTraceCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create DfsConeTraceCS shader");
+        return false;
+    }
+    return true;
+}
+
+/// @source UE5 DistanceFieldShadowing.cpp:380-420 — DistanceFieldShadowing pipeline creation
+RHIPipelineHandle PipelineLibrary::GetDfsConeTrace() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetDfsConeTrace called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_dfsConeTrace.IsValid()) {
+        return m_dfsConeTrace;
+    }
+
+    if (!EnsureDfsConeTraceShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_dfsConeTraceCS;
+    desc.debugName     = "DFS_ConeTrace";
+
+    m_dfsConeTrace = m_device->CreateComputePipeline(desc);
+    if (!m_dfsConeTrace.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create DFS_ConeTrace pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created DFS_ConeTrace pipeline");
+    }
+
+    return m_dfsConeTrace;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // PSO Cache Integration
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1171,6 +1289,8 @@ uint32_t PipelineLibrary::WarmupAll() {
     warmup(GetSkyCubemapCapturePS(), "SkyCubemapCapturePS");
     warmup(GetDepthPrepass(bindless), "DepthPrepass");
     warmup(GetHiZPyramid(), "HiZPyramid");
+    warmup(GetDfsCullObjects(), "DFS_CullObjects");
+    warmup(GetDfsConeTrace(), "DFS_ConeTrace");
 
     // SM5 variants if device is bindless (need both paths)
     if (bindless) {

@@ -38,11 +38,30 @@ class ShaderManager;
 /// GPU compute bloom settings.
 ///
 /// @source UE5 PostProcessSettings.h — bloom default values
+/// @source UE5 Scene.cpp:426-437 — default per-stage tint weights
 struct BloomSettings {
     float threshold     = 1.0f;   ///< Luminance threshold for bright pixel extraction. UE5 default: 1.0.
     float intensity     = 0.675f; ///< Bloom contribution to final image. UE5 default: 0.675.
     float radius        = 1.0f;   ///< Upsample filter radius scale. UE5 default: 1.0.
+    float sizeScale     = 4.0f;   ///< Global bloom size scale (affects mip blur radius). UE5 default: 4.0.
     bool  enabled       = true;   ///< Master toggle.
+
+    /// Per-stage size multipliers — controls each mip's relative blur width.
+    /// @source UE5 PostProcessSettings.h — Bloom1Size..Bloom6Size
+    /// @constants Size1=0.3 (1/2 res), Size2=1.0 (1/4), Size3=2.0 (1/8),
+    ///   Size4=10.0 (1/16), Size5=30.0 (1/32), Size6=64.0 (1/64)
+    float stageSizes[6] = { 0.3f, 1.0f, 2.0f, 10.0f, 30.0f, 64.0f };
+
+    /// Per-stage tint weights applied during upsample accumulation.
+    /// Each stage's contribution is multiplied by its tint before additive blend.
+    /// Index 0 = stage 1 (1/2 res), ..., index 5 = stage 6 (1/64 res).
+    ///
+    /// @source UE5 Scene.cpp:426-437 — FPostProcessSettings constructor defaults
+    /// @constants Stage1=0.3465 (Scene.cpp:426), Stage2=0.138 (Scene.cpp:428),
+    ///   Stage3=0.1176 (Scene.cpp:430), Stage4=0.066 (Scene.cpp:432),
+    ///   Stage5=0.066 (Scene.cpp:434), Stage6=0.061 (Scene.cpp:436)
+    /// @deviations NONE — scalar weights match UE5 default tints (R=G=B)
+    float stageTints[6] = { 0.3465f, 0.138f, 0.1176f, 0.066f, 0.066f, 0.061f };
 };
 
 /// GPU compute bloom pass.

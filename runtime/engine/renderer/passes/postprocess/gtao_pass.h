@@ -44,7 +44,19 @@ struct GTAOSettings {
     float    fadeStartDist   = 50000.0f; ///< Distance where AO fades (cm).
     float    fadeEndDist     = 100000.0f;///< Distance where AO disappears (cm).
     float    maxFadeDepth    = 100000.0f;///< Skip AO beyond this depth (cm).
-    bool     enabled         = false;    ///< DISABLED — GPU hangs on dispatch. Needs RenderDoc capture to diagnose shader infinite loop.
+    bool     enabled         = true;     ///< Master toggle.
+
+    /// AO power curve exponent. UE5 default: 2.0 (Scene.cpp:528).
+    /// In GTAO path, shader multiplies by 0.5 → effective 1.0.
+    /// Currently hardcoded in gtao_cs.hlsl as GTAO_AO_POWER.
+    /// @source UE5 Scene.cpp:528 — AmbientOcclusionPower = 2.0f
+    float    aoPower         = 2.0f;
+
+    /// Enable multi-bounce colored AO approximation in deferred lighting.
+    /// Uses Jimenez 2016 polynomial fit to prevent over-darkening of colored
+    /// surfaces under occlusion. Currently hardcoded ON in deferred_lighting_ps.hlsl.
+    /// @source UE5 DeferredShadingCommon.ush:1220 — AOMultiBounce
+    bool     multiBounce     = true;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -211,6 +223,7 @@ private:
     uint32_t m_height = 0;
 
     bool m_initialized = false;
+    bool m_initialBarriersDone = false;
 
     // ── Constants ────────────────────────────────────────────────────────
     static constexpr uint32_t kThreadGroupSize = 8;

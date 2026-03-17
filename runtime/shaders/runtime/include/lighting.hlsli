@@ -90,10 +90,18 @@ float ComputeSpotFactor(float3 L, float3 spotDir, float innerCos, float outerCos
 
 /// Accumulates direct lighting from all active lights using Cook-Torrance BRDF.
 ///
+/// @source UE5 ShadingModels.ush:220 — DefaultLitBxDF
+/// @source UE5 ShadingEnergyConservationTemplate.ush:44-64 — ComputeFresnelEnergyTerms
+///
 /// Iterates over the light array, computes per-light direction and attenuation
-/// (distance + spot cone), evaluates the full Cook-Torrance BRDF, and sums the
-/// outgoing radiance. Shadow mapping is applied only to the first directional
-/// light (index 0) when cascadeCount > 0.
+/// (distance + spot cone), evaluates the full Cook-Torrance BRDF with multiscatter
+/// energy compensation (Kulla-Conty / Turquin 2018), and sums the outgoing radiance.
+/// Shadow mapping is applied only to the first directional light (index 0) when
+/// cascadeCount > 0.
+///
+/// Energy compensation is computed ONCE per pixel (view-dependent only), then
+/// applied to every light's specular contribution inside the loop. This avoids
+/// redundant GGXEnergyLookup calls per light.
 ///
 /// # Parameters
 /// - positionWS:  fragment world-space position.
@@ -118,6 +126,17 @@ float3 AccumulateDirectLighting(
     float3 cameraPos, uint cascadeCount, float2 screenPos)
 {
     float3 Lo = float3(0.0f, 0.0f, 0.0f);
+
+    // Multiscatter energy compensation — computed ONCE per pixel (view-dependent only)
+    // @source UE5 ShadingEnergyConservationTemplate.ush:55
+    // @source Turquin 2018 Eq.16 — non-reciprocal Kulla-Conty multiscatter
+    float roughness = sqrt(alpha);
+    float4 energyComp = ComputeEnergyCompensation(F0, roughness, NdotV);
+
+    // Diffuse attenuation: (1 - specularAlbedoLuminance) * (1 - metallic)
+    // Metals have no diffuse lobe; non-metals are attenuated by how much
+    // energy the specular lobe already reflects (including multiscatter).
+    float3 kD = (1.0f - energyComp.w) * (1.0f - metallic);
 
     for (uint i = 0; i < lightCount && i < MAX_LIGHTS; i++) {
         LightData light = lights[i];
@@ -164,14 +183,12 @@ float3 AccumulateDirectLighting(
         float  Vis = Vis_SmithJointApprox(alpha, NdotV, NdotL);
         float3 F   = FresnelSchlick(VdotH, F0);
 
-        float3 specular = D * Vis * F;
-
-        // Energy conservation: metals have no diffuse lobe
-        float3 kS = F;
-        float3 kD = (1.0f - kS) * (1.0f - metallic);
+        // Apply multiscatter energy compensation to specular
+        // energyComp.xyz scales the specular to recover multi-bounce energy
+        float3 specular = D * Vis * F * energyComp.xyz;
 
         // Disney Burley diffuse (roughness-dependent retroreflection)
-        float roughness = sqrt(alpha);
+        // kD already includes energy preservation and metallic attenuation
         float3 diffuse = kD * DiffuseBurley(albedo, roughness, NdotV, NdotL, VdotH);
 
         Lo += (diffuse + specular) * light.color * NdotL * attenuation;

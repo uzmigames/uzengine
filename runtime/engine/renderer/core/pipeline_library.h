@@ -291,6 +291,28 @@ public:
     /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
     [[nodiscard]] RHIPipelineHandle GetHiZPyramid();
 
+    /// Returns the DFS object culling compute pipeline (dfs_cull_objects_cs.hlsl).
+    ///
+    /// Frustum-culls SDF objects against the shadow convex hull and appends
+    /// surviving indices to a compacted buffer for the cone tracing pass.
+    ///
+    /// @source UE5 DistanceFieldShadowing.usf:82-156 — CullObjectsForShadowCS
+    ///
+    /// # Returns
+    /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
+    [[nodiscard]] RHIPipelineHandle GetDfsCullObjects();
+
+    /// Returns the DFS cone tracing compute pipeline (dfs_cone_trace_cs.hlsl).
+    ///
+    /// Per-pixel ray march through mesh SDFs with cone expansion for soft shadows.
+    /// Reads the culled object list and outputs a shadow factor texture.
+    ///
+    /// @source UE5 DistanceFieldShadowing.usf:612-811 — DistanceFieldShadowingCS
+    ///
+    /// # Returns
+    /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
+    [[nodiscard]] RHIPipelineHandle GetDfsConeTrace();
+
     /// Pre-creates all standard pipelines eagerly instead of on first use.
     ///
     /// Call at scene load time to avoid hitches during the first frame.
@@ -326,6 +348,8 @@ private:
     [[nodiscard]] bool EnsureSkyCubemapCaptureShader();
     [[nodiscard]] bool EnsureSkyCubemapCapturePSShader();
     [[nodiscard]] bool EnsureHiZPyramidShader();
+    [[nodiscard]] bool EnsureDfsCullObjectsShader();
+    [[nodiscard]] bool EnsureDfsConeTraceShader();
 
     /// Creates a pipeline through the PSO cache. On cache hit, returns the
     /// cached handle without calling the device. On miss, creates via the
@@ -360,6 +384,8 @@ private:
     RHIShaderHandle m_skyCubemapCaptureCS    = RHIShaderHandle::Invalid();
     RHIShaderHandle m_skyCubemapCapturePSShader = RHIShaderHandle::Invalid();
     RHIShaderHandle m_hizPyramidCS             = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_dfsCullObjectsCS         = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_dfsConeTraceCS           = RHIShaderHandle::Invalid();
 
     // ── Cached pipeline handles (one per bindless variant) ──────────────
     RHIPipelineHandle m_forwardPBR         = RHIPipelineHandle::Invalid();
@@ -383,6 +409,8 @@ private:
     RHIPipelineHandle m_depthPrepassBindless  = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_depthPrepassInstanced = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_hizPyramid            = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_dfsCullObjects        = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_dfsConeTrace          = RHIPipelineHandle::Invalid();
 };
 
 } // namespace uz

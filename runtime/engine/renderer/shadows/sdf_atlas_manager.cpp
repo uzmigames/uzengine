@@ -380,6 +380,15 @@ uint32_t SdfAtlasManager::RegisterObject(uint32_t objectId, uint32_t meshId) {
     data.resY = asset.resolutionY;
     data.resZ = asset.resolutionZ;
 
+    // Per-object indirection offset: the starting index into the global indirection
+    // buffer for this object's brick indirection table.
+    // @source UE5 DistanceFieldLightingShared.ush:83 — IndirectionTableOffset
+    data.indirectionOffset = alloc.indirectionOffset;
+
+    // Number of available MIP levels (base level counts as 1).
+    // @source UE5 DistanceFieldLightingShared.ush:77 — NumMips
+    data.numMips = asset.mipLevels;
+
     m_objectDirty[slotIndex] = true;
 
     UZ_LOG(Shadow, Info,

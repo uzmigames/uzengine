@@ -79,7 +79,13 @@ struct SdfObjectData {
     uint     resX;               // Row 8.y: grid resolution X (in bricks)
     uint     resY;               // Row 8.z: grid resolution Y (in bricks)
     uint     resZ;               // Row 8.w: grid resolution Z (in bricks)
-    float4   reserved[3];        // Rows 9-11: padding to 192 bytes
+    uint     indirectionOffset;  // Row 9.x: offset into global indirection buffer for this object
+                                 // @source UE5 DistanceFieldLightingShared.ush:83 — IndirectionTableOffset
+    uint     numMips;            // Row 9.y: number of available MIP levels (1-3)
+                                 // @source UE5 DistanceFieldLightingShared.ush:77 — NumMips
+    float    pad3;               // Row 9.z: reserved
+    float    pad4;               // Row 9.w: reserved
+    float4   reserved[2];        // Rows 10-11: padding to 192 bytes
 };
 
 /// Loads an SdfObjectData from a raw float4 StructuredBuffer.
@@ -125,9 +131,15 @@ SdfObjectData LoadSdfObjectData(StructuredBuffer<float4> objectBuffer, uint obje
     obj.resY = asuint(v8.z);
     obj.resZ = asuint(v8.w);
 
-    obj.reserved[0] = objectBuffer[base + 9];
-    obj.reserved[1] = objectBuffer[base + 10];
-    obj.reserved[2] = objectBuffer[base + 11];
+    // Indirection offset + MIP count (row 9)
+    float4 v9 = objectBuffer[base + 9];
+    obj.indirectionOffset = asuint(v9.x);
+    obj.numMips           = asuint(v9.y);
+    obj.pad3              = v9.z;
+    obj.pad4              = v9.w;
+
+    obj.reserved[0] = objectBuffer[base + 10];
+    obj.reserved[1] = objectBuffer[base + 11];
 
     return obj;
 }
@@ -165,6 +177,45 @@ float3 BrickIndexToAtlasUV(uint brickIndex, float3 localUV, uint3 atlasSizeInBri
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// MIP Level Selection
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Computes the optimal SDF MIP level based on the current cone/step radius.
+///
+/// When the cone is wide (far from the ray origin), we can use a coarser MIP
+/// level (lower resolution, wider band) for faster tracing without loss of
+/// visual quality. When the cone is narrow (near the surface), we need the
+/// highest resolution MIP for accurate shadow edges.
+///
+/// UE5's shadow tracing (DistanceFieldShadowingShared.ush:132) always uses
+/// the highest resolution MIP via `LoadDFAssetDataHighestResolution`. However,
+/// the standalone distance query (DistanceFieldLightingShared.ush:458-469)
+/// cascades from coarse to fine: it starts at MIP 0 (coarsest) and refines
+/// only when the distance is within 25% of the band width.
+///
+/// For cone tracing, we select MIP based on the ratio of step distance to
+/// voxel size: when the step is large relative to the voxel grid, a coarser
+/// MIP provides the same information at lower cost.
+///
+/// @source UE5 DistanceFieldShadowingShared.ush:132 — LoadDFAssetDataHighestResolution (shadow always uses highest)
+/// @source UE5 DistanceFieldLightingShared.ush:458-469 — MIP cascade for culling queries
+/// @constants DF_MAX_NUM_MIPS=3 (DistanceFieldLightingShared.ush:98)
+/// @deviations UE5 shadow tracing uses highest MIP only; we add optional MIP
+///             selection for coarse tracing optimization. When numMips==1, this
+///             returns 0 and behaves identically to UE5.
+uint SelectSdfMipLevel(float stepDistance, float voxelSize, uint numMips) {
+    // Compute the MIP level where the voxel size matches the step distance.
+    // Each MIP doubles the voxel size (2x downsampling per level).
+    // mipLevel = log2(stepDistance / voxelSize), clamped to [0, numMips-1]
+    /// @source UE5 DistanceFieldLightingShared.ush:465 — abs(DistanceField) > .25 * MaxEncodedDistance threshold for MIP cascade
+    float ratio = stepDistance / max(voxelSize, 0.0001f);
+    // Use log2 of the ratio: when step distance == voxelSize, MIP 0 (finest).
+    // When step distance == 2*voxelSize, MIP 1. When == 4*voxelSize, MIP 2.
+    int mipLevel = max(int(log2(max(ratio, 1.0f))), 0);
+    return uint(min(uint(mipLevel), numMips - 1));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // SDF Sampling
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -192,17 +243,34 @@ float SampleSparseMeshSdf(
     uint3 atlasSizeInBricks,
     float3 atlasTexelSize)
 {
+    // Compute the maximum encodable distance for this SDF (the narrow band width)
+    // The distance range is ±(voxelSize * SDF_BRICK_SIZE / 2) = the narrow band
+    /// @source UE5 DistanceFieldLightingShared.ush:412 — MaxEncodedDistance = DistanceFieldToVolumeScaleBias.x + DistanceFieldToVolumeScaleBias.y
+    float maxEncodedDistance = obj.voxelSize * float(SDF_BRICK_SIZE) * 0.5f;
+
     // Compute the volume extent (half-size of the local AABB)
     float3 volumeExtent = (obj.localBoundsMax - obj.localBoundsMin) * 0.5f;
     float3 volumeCenter = (obj.localBoundsMax + obj.localBoundsMin) * 0.5f;
 
     // Transform from volume space [-extent, +extent] centered at volumeCenter
-    // to indirection grid space [0, resolution]
+    // to normalized [0, 1] space within the SDF volume
     /// @source UE5 DistanceFieldLightingShared.ush:395 — IndirectionPos = SampleVolumePosition * VolumeToIndirectionScale + VolumeToIndirectionAdd
     float3 normalizedPos = (volumePos - volumeCenter + volumeExtent) / (2.0f * volumeExtent);
+
+    // Guard: if the sample position is outside the SDF volume [0,1]^3,
+    // return max encoded distance (far from any surface).
+    // UE5 handles this via VolumePositionExtent clamping in the caller
+    // (DistanceFieldShadowingShared.ush:164) and relies on the indirection
+    // table boundary; we add an explicit early-out for safety.
+    /// @source UE5 DistanceFieldLightingShared.ush:413-416 — out-of-bounds returns MaxEncodedDistance
+    /// @deviations Explicit bounds check added as safety guard; UE5 relies on caller clamping
+    if (any(normalizedPos < 0.0f) || any(normalizedPos > 1.0f)) {
+        return maxEncodedDistance;
+    }
+
     float3 indirectionPos = normalizedPos * float3(obj.resX, obj.resY, obj.resZ);
 
-    // Clamp to valid indirection grid range
+    // Clamp to valid indirection grid range (prevent out-of-bounds indexing at edges)
     indirectionPos = clamp(indirectionPos, 0.0f, float3(obj.resX, obj.resY, obj.resZ) - 0.001f);
 
     int3 indirectionCoord = int3(indirectionPos);
@@ -212,12 +280,8 @@ float SampleSparseMeshSdf(
     uint indirectionIndex = (uint(indirectionCoord.z) * obj.resY + uint(indirectionCoord.y)) * obj.resX + uint(indirectionCoord.x);
     uint brickIndex = indirectionBuffer[indirectionOffset + indirectionIndex];
 
-    // Compute the maximum encodable distance for this SDF
-    // The distance range is ±(voxelSize * SDF_BRICK_SIZE / 2) = the narrow band
-    /// @source UE5 DistanceFieldLightingShared.ush:412 — MaxEncodedDistance = DistanceFieldToVolumeScaleBias.x + DistanceFieldToVolumeScaleBias.y
-    float maxEncodedDistance = obj.voxelSize * float(SDF_BRICK_SIZE) * 0.5f;
-
-    // If the brick is invalid, return max distance (far from surface)
+    // If the brick is invalid (INVALID_BRICK_INDEX = 0xFFFFFFFF), the region was empty
+    // during baking and had distance > bandWidth. Return max distance.
     /// @source UE5 DistanceFieldLightingShared.ush:413-416 — invalid brick returns MaxEncodedDistance
     if (brickIndex == INVALID_BRICK_INDEX) {
         return maxEncodedDistance;
@@ -241,6 +305,15 @@ float SampleSparseMeshSdf(
     // encoded 1.0 -> +maxEncodedDistance (outside)
     /// @source UE5 DistanceFieldLightingShared.ush:432 — DistanceField = EncodedDistanceField * ScaleBias.x + ScaleBias.y
     float distanceField = encodedDistance * (2.0f * maxEncodedDistance) - maxEncodedDistance;
+
+    // Clamp the returned distance to the valid band [-bandWidth, +bandWidth].
+    // UE5's encoding inherently constrains this via the R8_UNORM [0,1] range,
+    // but floating-point imprecision in the decode can produce values slightly
+    // outside the band. Explicit clamping ensures downstream cone tracing
+    // never sees distances beyond the reliable SDF range.
+    /// @source UE5 DistanceFieldLightingShared.ush:392 — "clamped to the band of the current mip"
+    /// @deviations Explicit clamp added for robustness; UE5 relies on UNORM encoding precision
+    distanceField = clamp(distanceField, -maxEncodedDistance, maxEncodedDistance);
 
     return distanceField;
 }

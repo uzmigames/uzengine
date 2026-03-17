@@ -179,8 +179,19 @@ struct SdfObjectGpuData {
     uint32_t resY = 0;                   ///< Grid resolution Y in bricks.
     uint32_t resZ = 0;                   ///< Grid resolution Z in bricks.
 
-    // ── Rows 9-11: padding to 192 bytes (48 bytes) ──
-    float    pad3[12] = {};              ///< Reserved for future use (e.g., LOD bias, flags).
+    // ── Row 9: indirection offset + MIP count + padding (16 bytes) ──
+    /// Offset into the global indirection buffer where this object's indirection
+    /// table starts. Analogous to UE5 FDFAssetData.IndirectionTableOffset.
+    /// @source UE5 DistanceFieldLightingShared.ush:83 — IndirectionTableOffset
+    uint32_t indirectionOffset = 0;
+    /// Number of available MIP levels (1-3). MIP 0 is finest resolution.
+    /// @source UE5 DistanceFieldLightingShared.ush:77 — NumMips
+    uint32_t numMips = 1;
+    float    pad3 = 0.0f;               ///< Pad to float4 boundary.
+    float    pad4 = 0.0f;               ///< Pad to float4 boundary.
+
+    // ── Rows 10-11: padding to 192 bytes (32 bytes) ──
+    float    pad5[8] = {};               ///< Reserved for future use (e.g., LOD bias, flags).
 };
 
 static_assert(sizeof(SdfObjectGpuData) == 192, "SdfObjectGpuData must be 192 bytes (12 x float4)");

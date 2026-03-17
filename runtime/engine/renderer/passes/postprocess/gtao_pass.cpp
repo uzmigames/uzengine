@@ -148,6 +148,7 @@ void GTAOPass::DestroyTextures() {
     m_filteredAOUavIndex = UINT32_MAX;
     m_width  = 0;
     m_height = 0;
+    m_initialBarriersDone = false;
 }
 
 bool GTAOPass::Resize(uint32_t width, uint32_t height) {
@@ -367,6 +368,24 @@ uint32_t GTAOPass::Execute(IRHICommandList* cmdList, CBRingAllocator* cbRing,
         return UINT32_MAX;
     }
 
+    // ── Initial barriers: Common → UAV for first use after texture creation ──
+    // DX12 textures are created in Common state. Unlike buffers, textures do NOT
+    // support implicit Common→UAV promotion. Without this barrier, the first
+    // compute dispatch writes to a texture in the wrong state → GPU hang/TDR.
+    if (!m_initialBarriersDone) {
+        RHIBarrierDesc initBarriers[2] = {};
+        initBarriers[0].texture     = m_rawAOTexture;
+        initBarriers[0].stateBefore = RHIResourceState::Common;
+        initBarriers[0].stateAfter  = RHIResourceState::UnorderedAccess;
+        initBarriers[1].texture     = m_filteredAOTexture;
+        initBarriers[1].stateBefore = RHIResourceState::Common;
+        initBarriers[1].stateAfter  = RHIResourceState::UnorderedAccess;
+        cmdList->ResourceBarrier(initBarriers, 2);
+
+        m_initialBarriersDone = true;
+        UZ_LOG(Renderer, Info, "GTAOPass: initial barriers — Common -> UAV for rawAO and filteredAO");
+    }
+
     // ══════════════════════════════════════════════════════════════════════
     // STEP 1: GTAO Compute Pass
     // ══════════════════════════════════════════════════════════════════════
@@ -404,17 +423,16 @@ uint32_t GTAOPass::Execute(IRHICommandList* cmdList, CBRingAllocator* cbRing,
         // ── Bind UAV (slot 4) — raw AO output at u0 ──
         cmdList->SetDescriptorTable(4, m_rawAOUavIndex);
 
-        // ── Bind SRV table (slot 5, SM5) — depth at t0, normal at t1 ──
-        cmdList->SetDescriptorTable(5, depthSrvIndex);
+        // ── Bind SRV table (slot 5, SM5 only) — depth at t0, normal at t1 ──
+        // In bindless (SM6.6+), root signature has only 5 params (0-4).
+        // Slot 5 only exists in SM5 mode. Bindless reads via ResourceDescriptorHeap[].
+        if (!m_device->IsBindless()) {
+            cmdList->SetDescriptorTable(5, depthSrvIndex);
+        }
 
         // ── Dispatch ──
         const uint32_t groupsX = (width  + kThreadGroupSize - 1) / kThreadGroupSize;
         const uint32_t groupsY = (height + kThreadGroupSize - 1) / kThreadGroupSize;
-
-        UZ_LOG(Renderer, Debug,
-               "GTAOPass: GTAO dispatch — groups=({}, {}, 1), threadGroup={}, UAV={}, SRV={}",
-               groupsX, groupsY, kThreadGroupSize, m_rawAOUavIndex, depthSrvIndex);
-
         cmdList->Dispatch(groupsX, groupsY, 1);
     }
 
@@ -425,9 +443,6 @@ uint32_t GTAOPass::Execute(IRHICommandList* cmdList, CBRingAllocator* cbRing,
         barrier.stateBefore = RHIResourceState::UnorderedAccess;
         barrier.stateAfter  = RHIResourceState::ShaderResource;
         cmdList->ResourceBarrier(&barrier, 1);
-
-        UZ_LOG(Renderer, Debug,
-               "GTAOPass: barrier rawAO — UnorderedAccess -> ShaderResource");
     }
 
     // ══════════════════════════════════════════════════════════════════════
@@ -464,17 +479,14 @@ uint32_t GTAOPass::Execute(IRHICommandList* cmdList, CBRingAllocator* cbRing,
         // ── Bind UAV (slot 4) — filtered AO output at u0 ──
         cmdList->SetDescriptorTable(4, m_filteredAOUavIndex);
 
-        // ── Bind SRV table (slot 5, SM5) — raw AO at t0, depth at t1 ──
-        cmdList->SetDescriptorTable(5, m_rawAOSrvIndex);
+        // ── Bind SRV table (slot 5, SM5 only) — raw AO at t0, depth at t1 ──
+        if (!m_device->IsBindless()) {
+            cmdList->SetDescriptorTable(5, m_rawAOSrvIndex);
+        }
 
         // ── Dispatch ──
         const uint32_t groupsX = (width  + kThreadGroupSize - 1) / kThreadGroupSize;
         const uint32_t groupsY = (height + kThreadGroupSize - 1) / kThreadGroupSize;
-
-        UZ_LOG(Renderer, Debug,
-               "GTAOPass: denoise dispatch — groups=({}, {}, 1), UAV={}, SRV={}",
-               groupsX, groupsY, m_filteredAOUavIndex, m_rawAOSrvIndex);
-
         cmdList->Dispatch(groupsX, groupsY, 1);
     }
 
@@ -485,9 +497,6 @@ uint32_t GTAOPass::Execute(IRHICommandList* cmdList, CBRingAllocator* cbRing,
         barrier.stateBefore = RHIResourceState::UnorderedAccess;
         barrier.stateAfter  = RHIResourceState::ShaderResource;
         cmdList->ResourceBarrier(&barrier, 1);
-
-        UZ_LOG(Renderer, Debug,
-               "GTAOPass: barrier filteredAO — UnorderedAccess -> ShaderResource");
     }
 
     // Log once for diagnostics — comprehensive first-frame summary

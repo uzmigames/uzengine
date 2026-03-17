@@ -40,6 +40,7 @@
 #include "postprocess/bloom_pass.h"
 #include "postprocess/gtao_pass.h"
 #include "postprocess/hiz_pyramid_pass.h"
+#include "shadows/distance_field_shadow_config.h"
 
 #include <cstdint>
 #include <memory>
@@ -66,6 +67,7 @@ class Camera;
 class FPSCameraController;
 class World;
 
+class SdfAtlasManager;
 namespace rg { class RgResourcePool; }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -234,6 +236,17 @@ public:
     /// Cycles through shadow debug modes (0 -> 1 -> ... -> 8 -> 0).
     void CycleShadowDebugMode() { m_shadowDebugMode = (m_shadowDebugMode + 1) % 9; }
 
+    /// Sets the BRDF debug mode (0=off, 1=split-screen: left=old, right=new).
+    ///
+    /// When enabled, the deferred lighting pass renders the left half with the
+    /// old BRDF (Lambertian diffuse + Schlick-GGX) and the right half with the
+    /// current BRDF (Burley diffuse + SmithJointApprox + multiscatter). A thin
+    /// white vertical line marks the center split.
+    void SetBrdfDebugMode(uint32_t mode) { m_brdfDebugMode = mode; }
+
+    /// Returns the current BRDF debug mode.
+    [[nodiscard]] uint32_t GetBrdfDebugMode() const { return m_brdfDebugMode; }
+
     /// Enables or disables the depth prepass.
     ///
     /// When enabled, a depth-only pass executes before the GBuffer pass,
@@ -243,6 +256,17 @@ public:
 
     /// Returns whether the depth prepass is currently enabled.
     [[nodiscard]] bool IsDepthPrepassEnabled() const { return m_depthPrepassEnabled; }
+
+    /// Sets the DFS configuration at runtime.
+    void SetDfsConfig(const DistanceFieldShadowConfig& cfg) { m_dfsConfig = cfg; }
+
+    /// Returns the current DFS configuration.
+    [[nodiscard]] const DistanceFieldShadowConfig& GetDfsConfig() const { return m_dfsConfig; }
+
+    /// Sets the SDF atlas manager for distance field shadows.
+    /// The atlas manager must outlive this renderer. Set to nullptr to disable DFS.
+    void SetSdfAtlasManager(SdfAtlasManager* atlas) { m_sdfAtlas = atlas; }
+
 
     // ── Accessors ──────────────────────────────────────────────────────────
 
@@ -400,6 +424,20 @@ private:
     // ── Bloom ────────────────────────────────────────────────────────────
     std::unique_ptr<BloomPass> m_bloomPass;          ///< GPU compute bloom (threshold + downsample + upsample).
 
+    // ── Distance Field Shadows ───────────────────────────────────────────
+
+    DistanceFieldShadowConfig m_dfsConfig;             ///< DFS runtime configuration.
+    SdfAtlasManager* m_sdfAtlas = nullptr;             ///< Externally-owned SDF atlas manager (may be null).
+    RHITextureHandle m_dfsOutputTexture;               ///< RG16F DFS output (shadow_factor, depth).
+    uint32_t m_dfsOutputSrvIndex = UINT32_MAX;         ///< SRV index for lighting pass to read DFS result.
+    uint32_t m_dfsOutputUavIndex = UINT32_MAX;         ///< UAV index for cone trace pass to write.
+    RHIBufferHandle  m_dfsCulledIndicesBuffer;         ///< StructuredBuffer<uint> culled SDF object indices.
+    uint32_t m_dfsCulledIndicesSrvIndex = UINT32_MAX;  ///< SRV for cone trace to read culled list.
+    uint32_t m_dfsCulledIndicesUavIndex = UINT32_MAX;  ///< UAV for cull pass to append indices.
+    RHIBufferHandle  m_dfsIndirectArgsBuffer;          ///< RWByteAddressBuffer for indirect dispatch args.
+    uint32_t m_dfsIndirectArgsUavIndex = UINT32_MAX;   ///< UAV for cull pass to write indirect args.
+
+
     // ── Depth Prepass + Hi-Z Pyramid ────────────────────────────────────────
 
     bool m_depthPrepassEnabled = true;  ///< When true, depth prepass runs before GBuffer.
@@ -417,6 +455,7 @@ private:
     GBufferDebugMode m_debugMode = GBufferDebugMode::Count;
     DebugViewMode m_debugViewMode = DebugViewMode::Lit;
     uint32_t m_shadowDebugMode = 0;   ///< Shadow debug view mode (0=off, 1=grid, 2=readback). See shadow_debug.hlsli.
+    uint32_t m_brdfDebugMode = 0;    ///< BRDF debug mode (0=off, 1=split-screen old vs new).
     RHIBufferHandle m_shadowReadbackBuffer;  ///< Persistent readback buffer for shadow atlas diagnostic (mode 2).
     uint32_t m_shadowReadbackRowPitch = 0;   ///< Row pitch of the readback (256-aligned).
     uint32_t m_shadowReadbackWidth = 0;      ///< Atlas width in pixels.
@@ -489,6 +528,13 @@ private:
 
     /// Destroys all Hi-Z pyramid textures. Called from Shutdown() and Resize().
     void DestroyHiZPyramid();
+
+    /// Creates DFS output texture, culled indices buffer, and indirect args buffer.
+    /// Called from Init() and Resize().
+    void CreateDfsResources(uint32_t width, uint32_t height);
+
+    /// Destroys all DFS GPU resources. Called from Shutdown() and Resize().
+    void DestroyDfsResources();
 };
 
 } // namespace uz

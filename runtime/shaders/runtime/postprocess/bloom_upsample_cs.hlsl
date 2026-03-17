@@ -24,7 +24,9 @@
 ///
 /// @source Jimenez 2014, "Next Generation Post-Processing in Call of Duty: AW"
 ///   slide 167 — 9-tap tent filter upsample
-/// @deviations NONE — standard tent filter, not UE5-specific
+/// @source UE5 PostProcessBloomSetup.cpp:268 — per-stage tint applied to each bloom level
+/// @source UE5 Scene.cpp:426-437 — default tint values per stage
+/// @deviations NONE — standard tent filter with UE5 per-stage tint weights
 
 #include "../include/math_util.hlsli"
 
@@ -38,7 +40,7 @@ cbuffer BloomUpsampleParams : register(b0) {
     uint  g_OutputWidth;       ///< Output texture width in pixels.
     uint  g_OutputHeight;      ///< Output texture height in pixels.
     float g_BloomRadius;       ///< Filter radius scale (default 1.0, increases blur spread).
-    float _pad0;
+    float g_StageTint;         ///< Per-stage tint weight from UE5 bloom settings (Scene.cpp:426-437).
     float _pad1;
     float _pad2;
 };
@@ -96,6 +98,11 @@ void main(uint3 dtid : SV_DispatchThreadID)
 
     // Normalize: total weights = 4*1 + 4*2 + 1*4 = 16
     upsampled *= (1.0f / 16.0f);
+
+    // Apply per-stage tint weight before accumulation.
+    // UE5 multiplies each bloom stage's contribution by its tint color during upsample.
+    // @source UE5 PostProcessBloomSetup.cpp:268 — PassInputs.TintColor = BloomStage.Tint * TintScale
+    upsampled *= g_StageTint;
 
     // Read the downsample result at this level via UAV load (same resource
     // as output — per-pixel 1:1 read-modify-write avoids SRV/UAV conflict)

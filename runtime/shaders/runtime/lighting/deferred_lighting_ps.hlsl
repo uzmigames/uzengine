@@ -116,7 +116,8 @@ cbuffer PerFrameCB : register(b1) {
     float    filmBlackClip;
     float    filmWhiteClip;
     uint     gtaoSrvIndex;       ///< SRV index for GTAO filtered AO (0xFFFFFFFF = no GTAO).
-    float    _framePad2[15];     ///< Padding to 512 bytes.
+    uint     brdfDebugMode;     ///< BRDF debug (0=off, 1=split-screen: left=old, right=new).
+    float    _framePad2[14];     ///< Padding to 512 bytes.
 };
 
 /// Single point light for the deferred lighting pass (48 bytes = three float4s).
@@ -263,6 +264,110 @@ float3 FresnelSchlickRoughness(float cosTheta, float3 F0, float roughness) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Multi-Bounce AO Approximation
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Approximates multi-bounce indirect occlusion using albedo-dependent curves.
+/// Single-scatter AO over-darkens colored surfaces because it ignores light
+/// that bounces multiple times within occluded crevices. This polynomial
+/// fit compensates by lifting the AO term toward the surface color.
+///
+/// @source UE5 DeferredShadingCommon.ush:1220-1226 — AOMultiBounce
+/// @constants a = 2.0404 * BaseColor - 0.3324 (ush:1222)
+///            b = -4.7951 * BaseColor + 0.6417 (ush:1223)
+///            c = 2.7552 * BaseColor + 0.6903 (ush:1224)
+/// @deviations NONE
+/// @reference Jimenez et al. 2016, "Practical Realtime Strategies for Accurate Indirect Occlusion"
+float3 AOMultiBounce(float ao, float3 baseColor) {
+    float3 a = 2.0404f * baseColor - 0.3324f;
+    float3 b = -4.7951f * baseColor + 0.6417f;
+    float3 c = 2.7552f * baseColor + 0.6903f;
+    return max(ao, ((ao * a + b) * ao + c) * ao);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Old BRDF Functions (for split-screen debug comparison)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Old BRDF: Lambertian diffuse (constant 1/PI).
+///
+/// The simplest physically-based diffuse model. Does not account for
+/// roughness-dependent retroreflection (unlike Burley). Used as the
+/// "before" reference in the split-screen BRDF comparison debug mode.
+///
+/// # Parameters
+/// - albedo: surface base color (linear).
+///
+/// # Returns
+/// Diffuse BRDF value (includes 1/PI normalization).
+float3 DiffuseLambertOld(float3 albedo) {
+    return albedo / PI;
+}
+
+/// Old BRDF: Schlick-GGX geometry/visibility term.
+///
+/// Uses the Schlick approximation to Smith's masking function with a
+/// remapped roughness parameter (k = alpha/2). This is the older visibility
+/// formulation that does NOT correlate the masking and shadowing terms
+/// (uncorrelated Smith). The newer Vis_SmithJointApprox (height-correlated)
+/// provides better energy conservation at grazing angles.
+///
+/// # Parameters
+/// - NdotV: saturated dot(N, V).
+/// - NdotL: saturated dot(N, L).
+/// - a2:    alpha squared (roughness^4 or roughness^2 depending on convention).
+///
+/// # Returns
+/// Combined visibility term including the 1/(4*NdotV*NdotL) denominator.
+float Vis_SchlickGGXOld(float NdotV, float NdotL, float a2) {
+    float k = sqrt(a2) * 0.5f; // Schlick approximation: k = alpha/2
+    float gv = NdotV / (NdotV * (1.0f - k) + k);
+    float gl = NdotL / (NdotL * (1.0f - k) + k);
+    return gv * gl * 0.25f; // 0.25 = 1/(4) from Cook-Torrance denominator
+}
+
+/// Evaluates the OLD Cook-Torrance BRDF (Lambertian diffuse + Schlick-GGX).
+///
+/// Used in split-screen BRDF debug mode (left half). Does NOT include
+/// multiscatter energy compensation — uses the simpler (1-F)*(1-metallic)
+/// energy conservation that was standard before Kulla-Conty.
+///
+/// # Parameters
+/// - N, V, L:   world-space normal, view, and light directions (normalised).
+/// - radiance:  incoming light radiance.
+/// - albedo:    surface base color (linear).
+/// - metallic:  metallic factor [0,1].
+/// - alpha:     roughness^2 (PBR alpha).
+/// - F0:        reflectance at normal incidence.
+///
+/// # Returns
+/// Outgoing radiance from this light using the old BRDF.
+float3 EvaluateBRDFOld(float3 N, float3 V, float3 L, float3 radiance,
+                       float3 albedo, float metallic, float alpha, float3 F0) {
+    float3 H = normalize(V + L);
+
+    float NdotL = max(dot(N, L), 0.001f);
+    float NdotV = max(dot(N, V), 0.001f);
+    float NdotH = saturate(dot(N, H));
+    float VdotH = saturate(dot(V, H));
+
+    // Specular: D * Vis * F (old Schlick-GGX visibility)
+    float  D   = DistributionGGX(NdotH, alpha);
+    float  Vis = Vis_SchlickGGXOld(NdotV, NdotL, alpha);
+    float3 F   = FresnelSchlick(VdotH, F0);
+
+    float3 specular = D * Vis * F;
+
+    // Old energy conservation: (1-F)*(1-metallic), no multiscatter
+    float3 kD = (1.0f - F) * (1.0f - metallic);
+
+    // Lambertian diffuse (constant 1/PI)
+    float3 diffuse = kD * DiffuseLambertOld(albedo);
+
+    return (diffuse + specular) * radiance * NdotL;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Pixel Shader Entry Point
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -324,15 +429,16 @@ float4 main(FSInput input) : SV_Target {
     // ── GTAO screen-space ambient occlusion ──
     // Multiply material AO with GTAO result when available.
     // GTAO texture stores visibility (1.0 = fully lit, 0.0 = fully occluded).
+    float gtaoValue = 1.0f;
     if (gtaoSrvIndex != 0xFFFFFFFF) {
 #ifdef UZ_BINDLESS
         Texture2D<float> gtaoTex = ResourceDescriptorHeap[gtaoSrvIndex];
-        float ssao = gtaoTex.Sample(linearSampler, uv).r;
+        gtaoValue = gtaoTex.Sample(linearSampler, uv).r;
 #else
         // SM5 path: GTAO bound at t9
-        float ssao = gtaoTexture.Sample(linearSampler, uv).r;
+        gtaoValue = gtaoTexture.Sample(linearSampler, uv).r;
 #endif
-        ao *= ssao;
+        ao *= gtaoValue;
     }
 
     // ── World-space position ──
@@ -365,10 +471,24 @@ float4 main(FSInput input) : SV_Target {
         shadow = SampleShadowMap(worldPos, N, viewDepth, input.positionCS.xy);
     }
 
+    // ── BRDF debug split-screen ──
+    // When brdfDebugMode == 1, the left half of the screen uses the old BRDF
+    // (Lambertian diffuse + Schlick-GGX) and the right half uses the current
+    // BRDF (Burley diffuse + SmithJointApprox + multiscatter). This allows
+    // direct visual comparison of the BRDF upgrade.
+    // Use the original (pre-grid-remap) texcoord for the split test.
+    bool useOldBRDF = (brdfDebugMode == 1 && input.texcoord.x < 0.5f);
+
     // ── Directional light (shadowed) ──
     float3 L_dir = normalize(lightDir.xyz);
-    float3 Lo = EvaluateBRDF(N, V, L_dir, lightColor.xyz,
-                             albedo, metallic, alpha, F0) * shadow;
+    float3 Lo;
+    if (useOldBRDF) {
+        Lo = EvaluateBRDFOld(N, V, L_dir, lightColor.xyz,
+                              albedo, metallic, alpha, F0) * shadow;
+    } else {
+        Lo = EvaluateBRDF(N, V, L_dir, lightColor.xyz,
+                          albedo, metallic, alpha, F0) * shadow;
+    }
 
     // ── Point lights ──
     for (uint i = 0; i < pointLightCount; ++i) {
@@ -400,9 +520,14 @@ float4 main(FSInput input) : SV_Target {
 
         float3 radiance = pointLights[i].color * attenuation;
 
-        // Evaluate BRDF
-        Lo += EvaluateBRDF(N, V, L_point, radiance,
-                           albedo, metallic, alpha, F0);
+        // Evaluate BRDF — old or new depending on split-screen side
+        if (useOldBRDF) {
+            Lo += EvaluateBRDFOld(N, V, L_point, radiance,
+                                   albedo, metallic, alpha, F0);
+        } else {
+            Lo += EvaluateBRDF(N, V, L_point, radiance,
+                               albedo, metallic, alpha, F0);
+        }
     }
 
     // ── Ambient: IBL or constant fallback ──────────────────────────────
@@ -448,12 +573,17 @@ float4 main(FSInput input) : SV_Target {
         float3 Favg = F0 + (1.0f - F0) / 21.0f;
         specularIBL *= 1.0f + Favg * Ems / (1.0f - Favg * Ems);
 
+        // Multi-bounce AO: use albedo-dependent AO when GTAO is active,
+        // otherwise plain scalar AO. This prevents over-darkening of colored surfaces.
+        // @source UE5 DeferredShadingCommon.ush:1220 — AOMultiBounce
         float3 skyLightTint = float3(skyLightColorR, skyLightColorG, skyLightColorB);
-        ambient = (diffuseIBL + specularIBL) * ao * skyLightIntensity * skyLightTint;
+        float3 aoTerm = (gtaoSrvIndex != 0xFFFFFFFF) ? AOMultiBounce(ao, albedo) : float3(ao, ao, ao);
+        ambient = (diffuseIBL + specularIBL) * aoTerm * skyLightIntensity * skyLightTint;
     } else {
         // Fallback: constant ambient (no IBL data available)
         float3 skyLightTint = float3(skyLightColorR, skyLightColorG, skyLightColorB);
-        ambient = ambientColor.xyz * albedo * ao * skyLightIntensity * skyLightTint;
+        float3 aoTerm = (gtaoSrvIndex != 0xFFFFFFFF) ? AOMultiBounce(ao, albedo) : float3(ao, ao, ao);
+        ambient = ambientColor.xyz * albedo * aoTerm * skyLightIntensity * skyLightTint;
     }
 
     // ── Minimum ambient floor (SkyLight minOcclusion equivalent) ──
@@ -530,6 +660,20 @@ float4 main(FSInput input) : SV_Target {
                 nearPlane, farPlane, cascadeCount);
         }
         return float4(tileColor, 1.0f);
+    }
+
+    // ── BRDF debug split line ──
+    // Draw a thin (2-pixel) vertical white line at the screen center to visually
+    // delineate old BRDF (left) from new BRDF (right) in split-screen mode.
+    if (brdfDebugMode == 1) {
+        float pixelX = input.positionCS.x;
+        // SV_Position is pixel center (e.g., 640.5 for pixel 640 on a 1280-wide RT).
+        // We don't have explicit outputWidth in the cbuffer, but we can use
+        // input.texcoord.x == 0.5 ± half-pixel tolerance for the divider.
+        float halfPixelU = fwidth(input.texcoord.x);
+        if (abs(input.texcoord.x - 0.5f) < halfPixelU) {
+            return float4(1.0f, 1.0f, 1.0f, 1.0f);
+        }
     }
 
     // Output linear HDR — tonemap applied in separate fullscreen pass.

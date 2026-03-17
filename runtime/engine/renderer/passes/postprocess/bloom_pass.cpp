@@ -56,13 +56,16 @@ static_assert(sizeof(BloomDownsampleConstants) == 16,
     "BloomDownsampleConstants must be 4 DWORDs");
 
 /// Root constants for bloom_upsample_cs.hlsl (8 DWORDs).
+///
+/// @source UE5 PostProcessBloomSetup.cpp:268 — per-stage tint applied during upsample
+/// @source UE5 Scene.cpp:426-437 — default tint values
 struct BloomUpsampleConstants {
     uint32_t lowerMipSrvIndex;
     uint32_t outputUavIndex;
     uint32_t outputWidth;
     uint32_t outputHeight;
     float    bloomRadius;
-    float    _pad0;
+    float    stageTint;     ///< Per-stage tint weight (UE5 BloomNTint scalar, Scene.cpp:426-437).
     float    _pad1;
     float    _pad2;
 };
@@ -355,6 +358,17 @@ void BloomPass::Execute(IRHICommandList* cmdList,
         return;
     }
 
+    // Bloom compute shaders require bindless (ResourceDescriptorHeap).
+    // On SM5/DX11, bloom is not available — skip silently.
+    if (!m_device->IsBindless()) {
+        static bool loggedOnce = false;
+        if (!loggedOnce) {
+            UZ_LOG(Renderer, Warning, "BloomPass: skipped — compute bloom requires bindless (SM6.6+)");
+            loggedOnce = true;
+        }
+        return;
+    }
+
     if (hdrSrvIndex == UINT32_MAX) {
         UZ_LOG(Renderer, Error, "BloomPass::Execute: hdrSrvIndex is UINT32_MAX — HDR SRV not allocated");
         return;
@@ -427,7 +441,6 @@ void BloomPass::Execute(IRHICommandList* cmdList,
     }
 
     // ── Step 2: Downsample chain — Mip[0] → Mip[1] → ... → Mip[5] ─────
-    static bool loggedDownsample = false;
     for (uint32_t i = 0; i < kMipCount - 1; ++i) {
         UZ_PROFILE_SCOPE("BloomPass::Downsample");
 
@@ -458,15 +471,6 @@ void BloomPass::Execute(IRHICommandList* cmdList,
 
         const uint32_t groupsX = (m_mipWidths[i + 1]  + kGroupSize - 1) / kGroupSize;
         const uint32_t groupsY = (m_mipHeights[i + 1] + kGroupSize - 1) / kGroupSize;
-
-        if (!loggedDownsample) {
-            UZ_LOG(Renderer, Debug,
-                   "BloomPass: downsample mip {} -> {} ({}x{}, inSRV={}, outUAV={}, groups={}x{})",
-                   i, i + 1, m_mipWidths[i + 1], m_mipHeights[i + 1],
-                   m_mipSrvIndices[i], m_mipUavIndices[i + 1], groupsX, groupsY);
-            if (i == kMipCount - 2) loggedDownsample = true;
-        }
-
         cmdList->Dispatch(groupsX, groupsY, 1);
     }
 
@@ -478,7 +482,6 @@ void BloomPass::Execute(IRHICommandList* cmdList,
     // Second: reads mip[4] (lower) + mip[3] (current), writes mip[3]
     // ...
     // Last: reads mip[1] (lower) + mip[0] (current), writes mip[0]
-    static bool loggedUpsample = false;
     for (uint32_t step = 0; step < kMipCount - 1; ++step) {
         UZ_PROFILE_SCOPE("BloomPass::Upsample");
 
@@ -519,19 +522,21 @@ void BloomPass::Execute(IRHICommandList* cmdList,
         rc.outputHeight     = m_mipHeights[currentIdx];
         rc.bloomRadius      = settings.radius;
 
+        // Map upsample step to stage tint index:
+        //   step 0: mip 5->4, uses stageTints[5] (stage 6, 1/64 res)
+        //   step 1: mip 4->3, uses stageTints[4] (stage 5, 1/32 res)
+        //   step 2: mip 3->2, uses stageTints[3] (stage 4, 1/16 res)
+        //   step 3: mip 2->1, uses stageTints[2] (stage 3, 1/8 res)
+        //   step 4: mip 1->0, uses stageTints[1] (stage 2, 1/4 res)
+        //
+        // lowerIdx goes 5,4,3,2,1 — which directly indexes stageTints[].
+        // @source UE5 Scene.cpp:426-437 — default tint values per stage
+        rc.stageTint = settings.stageTints[lowerIdx];
+
         cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 8);
 
         const uint32_t groupsX = (m_mipWidths[currentIdx]  + kGroupSize - 1) / kGroupSize;
         const uint32_t groupsY = (m_mipHeights[currentIdx] + kGroupSize - 1) / kGroupSize;
-
-        if (!loggedUpsample) {
-            UZ_LOG(Renderer, Debug,
-                   "BloomPass: upsample mip {} -> {} ({}x{}, lowerSRV={}, outUAV={}, groups={}x{})",
-                   lowerIdx, currentIdx, m_mipWidths[currentIdx], m_mipHeights[currentIdx],
-                   m_mipSrvIndices[lowerIdx], m_mipUavIndices[currentIdx], groupsX, groupsY);
-            if (step == kMipCount - 2) loggedUpsample = true;
-        }
-
         cmdList->Dispatch(groupsX, groupsY, 1);
     }
 

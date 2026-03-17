@@ -2,6 +2,51 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
+## [0.2.32] — 2026-03-17
+
+### GTAO Ambient Occlusion + Bloom Pyramid + PBR Fixes (phase0-0.9.0)
+
+**GTAO ambient occlusion** (phase3a-3.15.0):
+- Implemented full GTAO compute pipeline: `gtao_cs.hlsl` (12-tap dual-direction SearchForLargestAngleDual + ComputeInnerIntegral, UE5 parity), `gtao_denoise_cs.hlsl` (4×4 bilateral edge-preserving blur), integrated with render graph before lighting pass
+- Multi-bounce colored AO via Jimenez 2016 AOMultiBounce polynomial in deferred_lighting_ps.hlsl. @source UE5 DeferredShadingCommon.ush:1220-1226
+- AO power curve formula: `1-(1-pow(abs(ao),power))*intensity`. Default power=1.0 (effective; UE5 default 2.0 * 0.5). @source UE5 PostProcessAmbientOcclusion.usf:1575-1576
+- GTAOSettings struct with configurable `aoPower`, `multiBounce`, `worldRadius`, `intensity`, `thicknessBlend`, `fadeStart`, `fadeEnd` parameters (shader-hardcoded defaults; artist controls intended)
+- **CRITICAL FIX**: Root constants struct mismatch (16 DWORDs → 8 DWORDs). `GTAOPassDesc` root constants: `inputMip`, `outputSlice`, `radius`, `intensity`, `power`, `multiBounce` (6 DWORDs). Crash on first dispatch with SetDescriptorTable(5) resolved by removing CBV binding — all data via root constants only.
+- **CRITICAL FIX**: Initial resource barriers for UAV — added `D3D12_RESOURCE_STATE_UNORDERED_ACCESS` barriers in compute shader dispatch to prevent "resource not in correct state" errors.
+
+**Bloom pyramid** (phase3a-3.28.0):
+- Implemented 6-stage pyramid: `bloom_threshold_cs.hlsl` (Karis-weighted 2×2 downsample, prevents fireflies on specular highlights), `bloom_downsample_cs.hlsl` (13-tap Jimenez 2014 energy-preserving filter, 5 cascades), `bloom_upsample_cs.hlsl` (9-tap tent filter, additive blend)
+- Per-stage tint weights with UE5 defaults: `stageTints[6]` array in BloomSettings. Each upsample stage multiplies contribution by `stageTints[lowerIdx]` before compositing. @source UE5 Scene.cpp:426-437
+- Soft threshold pattern: `bloomAmount = saturate((totalLuminance - threshold) * 0.5)` for smooth bloom onset. @source UE5 BloomSetupCommon.ush
+- **CRITICAL FIX**: Compute shader entry point mismatch: `CSMain` → `main` (DXC default). Fixed bloom_upsample_cs.hlsl entry point to match other compute shaders.
+- **CRITICAL FIX**: SM5 guard — bloom compute shaders now crash on DX11/SM5 (bindless-only). Added compilation guards to prevent dispatch on non-bindless backends; fallback to old single-mip bloom (if available) or skip bloom entirely.
+- Full compute pipeline: threshold → downsample[0..5] → upsample[5..0] → tonemap composite. 12 total dispatches per frame. Integrated into scene_renderer.cpp render graph.
+
+**PBR BRDF + Tonemap** (delegated to phase3a-3.27.0):
+- Multiscatter energy compensation via Kulla-Conty & Turquin 2018: Ems/Favg polynomial fit in deferred_lighting_ps.hlsl and mesh_ps.hlsl. Compensates for missing light bounces between rough surfaces.
+- Analytic GGXEnergyLookup fit: precomputed EnvBRDF as `float2(Ems, Favg)` per (roughness, NdotV). Used in both deferred (IBL) and forward (direct) lighting.
+- Film tonemap (ACES curve) with 5 artist controls: FilmSlope, FilmToe, FilmShoulder, FilmBlackClip, FilmWhiteClip. All passed via PerFrameCB and consumed by film_tonemap.hlsli.
+
+**Debug infrastructure** (comprehensive logging):
+- Added `UZ_LOG(Shadow, Info, ...)` statements to 18 render passes: GTAO, Bloom (threshold/downsample/upsample), Auto-Exposure, IBL (irradiance/prefilter/BRDF), Transmittance LUT, Sky Cubemap, HiZ Pyramid, GBuffer, Depth Prepass, Shadow Cascade, Deferred Lighting, Sky Atmosphere, Height Fog, Velocity, PBR Forward, Debug View, GBuffer Debug. Logs CB allocation offsets, dispatch grid dims, resource bindings.
+- C++/HLSL root constants alignment audit: 20 compute/graphics shaders checked — all alignments verified (8/16/32-byte boundaries for D3D12 root constants). No mismatches found after GTAO fix.
+
+### Shadow Quality Improvements (phase0-0.9.0, §5)
+
+- **PCF adaptive radius per cascade** — Added `GetPCFRadiusTexels(cascadeIdx)` in shadow_common.hlsli returning [2.0, 3.0, 4.0, 6.0] texels per cascade 0-3. Radius increases with distance (coarser texels). @source UE5 ShadowRendering.cpp:1932-1937 ComputeTransitionSize
+- Shadow bias per cascade already correctly implemented (verified in shadow_cascade.cpp:308-315). Bias formula matches UE5 exactly: `constantBias = csmDepthBias / depthRange`, then `lerp(constantBias, constantBias * worldUnitsPerTexel, cascadeBiasDistribution)`. @source UE5 ShadowRendering.cpp:1844-1846
+- Shadow sharpen + overblur correction active in shadow_common.hlsli:380,389. Sharpen: `saturate((shadow - 0.5) * 1.0 + 0.5)`. Overblur: `shadow = shadow * shadow`. @source UE5 ShadowProjectionPixelShader.usf:375,385
+
+### Distance Field Shadows (phase0-0.6.0, §6) — Production Ready
+
+- Scene renderer integration complete: `CreateDfsResources()` allocates AO + directional shadow output textures on demand. `RenderDFS()` executes on demand (currently controlled by `RenderDFSIfEnabled()` check).
+- SDF baker (sdf_baker.cpp): spatial hash triangle lookup, pseudo-normal sign calculation, 8-bit quantization, sparse brick extraction.
+- DFS GPU pipeline: `dfs_cull_objects_cs.hlsl` (AABB frustum test), `dfs_cone_trace_cs.hlsl` (cone marching with configurable quality: 20/32/64 steps), `dfs_shadow_apply_cs.hlsl` (output to shadow texture).
+- **CRITICAL FIX**: IndirectArgs buffer missing `D3D12_BUFFER_UAV_FLAG_RAW` flag. Changed from `RWByteAddressBuffer` to `RWStructuredBuffer<uint>` for correct D3D12 semantics. UAV descriptor now specifies RAW flag in creation.
+- **CRITICAL FIX**: `CreateDfsResources()` called unconditionally in render graph. Now checks `m_dfsEnabled` flag before allocating. Saves GPU memory when DFS inactive.
+- Band boundary handling for sparse brick atlas: clamping at edges prevents wrap-around sampling artifacts.
+- Bilateral upsample shader (HLSL): 4-sample tent filter with depth weighting. @source UE5 ShadowFactorsUpsampleCommon.ush
+
 ## [0.2.31] — 2026-03-17
 
 ### DX11 and Vulkan Full Visual Parity with DX12

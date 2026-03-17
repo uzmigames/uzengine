@@ -39,8 +39,10 @@
 
 /// @source UE5 DistanceFieldShadowing.usf:293-319 — FDistanceFieldShadowingCS::FParameters
 /// @constants All values populated from DistanceFieldShadowConfig + scene state
-/// @deviations Combined into a single cbuffer (UE5 uses separate parameter structs)
-cbuffer DfsShadowParams : register(b0) {
+/// @deviations Combined into a single cbuffer (UE5 uses separate parameter structs).
+///             Bound at register(b1) via SetRootCBV (kSlotPerFrame) because the data
+///             exceeds the 8-DWORD root constant limit at b0.
+cbuffer DfsShadowParams : register(b1) {
     float4x4 g_InvViewProj;        // Inverse view-projection for world pos reconstruction
     float3   g_LightDir;           // World-space light direction (toward light, normalized)
     float    g_TanLightAngle;      // tan(LightSourceAngle), default tan(0.5357°) = 0.00935
@@ -90,6 +92,7 @@ SamplerState               g_LinearSampler     : register(s0);
 /// - Cone visibility: saturate(distance / cone_radius) where cone_radius grows with ray time
 /// - Self-shadow prevention: scales visibility near ray origin based on selfShadowBias
 /// - Early termination when fully occluded or past the object bounds
+/// - Per-object indirection offset for correct brick lookup in the global indirection buffer
 ///
 /// @source UE5 DistanceFieldShadowingShared.ush:66-221 — ShadowRayTraceThroughCulledObjects
 /// @constants MinSphereRadius=0.4 (DistanceFieldShadowing.usf:681)
@@ -161,13 +164,11 @@ float TraceSdfObject(
     // Get atlas parameters
     float3 atlasTexelSize = float3(g_AtlasTexelSizeX, g_AtlasTexelSizeY, g_AtlasTexelSizeZ);
 
-    // Compute indirection offset for this object in the global indirection buffer
-    // Each object's indirection table starts at: sum of all previous objects' grid cell counts
-    // For now, the indirection offset is stored implicitly — the atlasOffset field serves
-    // as the brick offset, and indirection is relative to the object's own table.
-    // The CPU sets up the indirection buffer with per-object offsets.
-    // We compute the indirection table start from obj.atlasOffset and grid cell count.
-    uint gridCellCount = obj.resX * obj.resY * obj.resZ;
+    // Use the per-object indirection offset stored in SdfObjectData.
+    // This is the starting index into the global indirection buffer for this object's
+    // brick indirection table, analogous to UE5's FDFAssetData.IndirectionTableOffset.
+    /// @source UE5 DistanceFieldLightingShared.ush:83,401 — IndirectionTableOffset used in SampleSparseMeshSignedDistanceField
+    uint indirectionOffset = obj.indirectionOffset;
 
     uint stepIndex = 0;
     LOOP
@@ -179,11 +180,12 @@ float TraceSdfObject(
         float3 clampedSamplePos = clamp(sampleVolumePos, obj.localBoundsMin, obj.localBoundsMax);
         float distanceToClamped = length(clampedSamplePos - sampleVolumePos);
 
-        // Sample the SDF atlas
+        // Sample the SDF atlas using the per-object indirection offset
         /// @source UE5 DistanceFieldShadowingShared.ush:166 — SampleSparseMeshSignedDistanceField + DistanceToClamped
+        /// @source UE5 DistanceFieldLightingShared.ush:401 — DistanceFieldIndirectionTable.Load((DFAssetData.IndirectionTableOffset + IndirectionIndex) * 4)
         float distanceField = SampleSparseMeshSdf(
             clampedSamplePos, obj,
-            g_IndirectionBuffer, 0, // indirection offset handled internally
+            g_IndirectionBuffer, indirectionOffset,
             g_SdfAtlas, g_LinearSampler,
             g_AtlasSizeInBricks, atlasTexelSize
         ) + distanceToClamped;
@@ -229,9 +231,9 @@ float TraceSdfObject(
 /// @constants THREADGROUP_SIZEX=8, THREADGROUP_SIZEY=8 (DistanceFieldShadowing.cpp:380-381)
 ///            RayStartOffset=2 (DistanceFieldShadowing.usf:696)
 ///            RayStartOffsetDepthScale (DistanceFieldShadowing.usf:696)
-/// @deviations Simplified: no tile-based object culling (processes all culled objects per pixel),
-///             no heightfield support, no SSS transmission, no scatter tile culling.
-///             These will be added when the tile culling infrastructure is implemented.
+/// @deviations No full tile-based scatter culling (UE5 ScatterObjectsToShadowTiles). Instead uses
+///             per-pixel sphere-vs-ray + AABB early-out to reject non-overlapping objects cheaply.
+///             No heightfield support, no SSS transmission.
 [numthreads(8, 8, 1)]
 void CSMain(uint3 DTid : SV_DispatchThreadID) {
     // Skip out-of-bounds threads
@@ -295,8 +297,36 @@ void CSMain(uint3 DTid : SV_DispatchThreadID) {
             uint objectIndex = g_CulledObjectIndices[listIndex];
             SdfObjectData obj = LoadSdfObjectData(g_ObjectData, objectIndex);
 
-            // Quick world-space AABB test: skip objects whose bounding box doesn't
-            // intersect the ray's world-space bounding box
+            // Two-stage spatial rejection: sphere-vs-ray then AABB-vs-ray.
+            // The sphere test is cheaper (dot + mad) and rejects distant objects
+            // before the more precise AABB overlap check.
+
+            // Stage 1: Sphere-vs-ray test — reject objects whose bounding sphere
+            // is entirely behind the ray origin or beyond max trace distance,
+            // or whose closest approach to the ray exceeds the bounding radius.
+            /// @source UE5 DistanceFieldShadowingShared.ush:88-95 — ObjectBounds cull
+            float3 boundsCenter = (obj.worldBoundsMin + obj.worldBoundsMax) * 0.5f;
+            float3 boundsExtent = (obj.worldBoundsMax - obj.worldBoundsMin) * 0.5f;
+            float boundsRadius = length(boundsExtent);
+
+            float3 rayToCenter = boundsCenter - worldPos;
+            float projDist = dot(rayToCenter, g_LightDir);
+
+            // Skip if the object sphere is entirely behind ray start or beyond max trace distance
+            if (projDist < -boundsRadius || projDist > g_MaxTraceDistance + boundsRadius) {
+                continue;
+            }
+
+            // Perpendicular distance from ray to sphere center — if greater than
+            // bounding radius, the ray cannot intersect the object's volume.
+            float3 closestPointOnRay = worldPos + g_LightDir * clamp(projDist, 0.0f, g_MaxTraceDistance);
+            float perpDistSq = dot(boundsCenter - closestPointOnRay, boundsCenter - closestPointOnRay);
+            if (perpDistSq > boundsRadius * boundsRadius) {
+                continue;
+            }
+
+            // Stage 2: AABB-vs-ray overlap — tighter rejection for elongated objects
+            // where the bounding sphere is overly conservative.
             float3 rayWorldMin = min(rayStart, rayEnd);
             float3 rayWorldMax = max(rayStart, rayEnd);
             bool aabbOverlap = all(obj.worldBoundsMax >= rayWorldMin) && all(obj.worldBoundsMin <= rayWorldMax);

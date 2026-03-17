@@ -144,15 +144,99 @@ float Vis_SmithJointApprox(float a2, float NoV, float NoL) {
     return 0.5f * rcp(Vis_SmithV + Vis_SmithL);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Multiscatter Energy Compensation (Kulla-Conty / Turquin 2018)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Analytic fit for GGX single-scattering directional albedo.
+///
+/// @source UE5 ShadingEnergyConservation.ush:58-63 — GGXEnergyLookup analytic fit
+/// @constants E fit: pow(r, c/r) * ((r*c + 0.0266916) / (0.466495 + c))
+///   (ShadingEnergyConservation.ush:60-61)
+/// @constants Ef fit: Pow5(1-c) * pow(2.36651 * pow(c, 4.7703*r) + 0.0387332, r)
+///   (ShadingEnergyConservation.ush:62-63)
+/// @deviations Uses analytic fit (USE_ENERGY_CONSERVATION==2) instead of BRDF LUT
+///   (USE_ENERGY_CONSERVATION==1). This matches UE5's non-LUT code path exactly.
+///
+/// Returns E (single-scattering directional albedo) and Ef (Fresnel-weighted
+/// single-scattering albedo) as a float2. These represent the fraction of energy
+/// accounted for by single-scattering; the remainder (1-E) is lost without
+/// multiscatter compensation.
+///
+/// # Parameters
+/// - roughness: perceptual roughness [0,1] (NOT alpha).
+/// - NoV:       saturated dot(N, V) in [0,1].
+///
+/// # Returns
+/// float2(E, Ef) where E = single-scatter albedo, Ef = Fresnel-weighted albedo.
+float2 GGXEnergyLookup(float roughness, float NoV) {
+    float r = roughness;
+    float c = NoV;
+    // Single-scattering directional albedo: fraction of energy from one bounce
+    float E = 1.0f - saturate(pow(r, c / r) * ((r * c + 0.0266916f) / (0.466495f + c)));
+    // Fresnel-weighted single-scattering albedo
+    float Ef = Pow5(1.0f - c) * pow(2.36651f * pow(c, 4.7703f * r) + 0.0387332f, r);
+    return float2(E, Ef);
+}
+
+/// Computes multiscatter energy compensation terms for specular and diffuse.
+///
+/// @source UE5 ShadingEnergyConservationTemplate.ush:44-64 — ComputeFresnelEnergyTerms
+/// @source UE5 ShadingEnergyConservationTemplate.ush:55 — Result.W = 1 + F0 * ((1-E.x)/E.x)
+/// @source Turquin 2018 Eq.16 — non-reciprocal Kulla-Conty multiscatter
+/// @constants luminance weights = (0.2126, 0.7152, 0.0722) (Rec.709 / sRGB)
+///   (ShadingEnergyConservationTemplate.ush:63)
+/// @deviations NONE
+///
+/// The single-scatter BRDF loses energy at higher roughness because it only
+/// models one bounce. This function computes a compensation weight W that scales
+/// the specular lobe to account for the missing multi-bounce energy.
+///
+/// It also computes the total specular albedo (fraction of energy reflected by
+/// specular) so that the diffuse lobe can be attenuated accordingly to preserve
+/// total energy.
+///
+/// # Parameters
+/// - F0:        reflectance at normal incidence.
+/// - roughness: perceptual roughness [0,1].
+/// - NoV:       saturated dot(N, V).
+///
+/// # Returns
+/// float4 where:
+///   .xyz = specular energy compensation weight (multiply specular by this)
+///   .w   = luminance of total specular albedo (diffuse *= 1 - w, metals excluded)
+float4 ComputeEnergyCompensation(float3 F0, float roughness, float NoV) {
+    float2 E = GGXEnergyLookup(roughness, NoV);
+
+    // Multiscatter compensation weight: accounts for energy lost after first bounce
+    // W = 1 + F0 * ((1 - E.x) / E.x)
+    // When E.x is high (smooth surface), W ~ 1 (little lost energy).
+    // When E.x is low (rough surface), W > 1 (significant compensation needed).
+    float3 W = 1.0f + F0 * ((1.0f - E.x) / max(E.x, 0.001f));
+
+    // Total specular albedo: energy reflected by specular (single + multi scatter)
+    // Used to attenuate diffuse for overall energy preservation
+    float3 specAlbedo = W * (E.x * F0 + E.y * (1.0f - F0));
+
+    // Rec.709 luminance of specular albedo for scalar diffuse attenuation
+    return float4(W, dot(specAlbedo, float3(0.2126f, 0.7152f, 0.0722f)));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cook-Torrance BRDF Evaluation
+// ─────────────────────────────────────────────────────────────────────────────
+
 /// Evaluates Cook-Torrance BRDF for a single light source.
 ///
 /// @source UE5 ShadingModels.ush:220 — DefaultLitBxDF (D_GGX * Vis_SmithJointApprox * F_Schlick)
 /// @source UE5 BRDF.ush:183 — Diffuse_Burley
+/// @source UE5 ShadingEnergyConservationTemplate.ush:55 — multiscatter compensation
 /// @constants F0_dielectric = 0.04 (BRDF.ush:209)
 /// @deviations NONE
 ///
 /// Computes the full outgoing radiance from a single analytic light, including
-/// both diffuse (Burley) and specular (GGX) lobes with energy conservation.
+/// both diffuse (Burley) and specular (GGX) lobes with multiscatter energy
+/// compensation (Kulla-Conty / Turquin 2018).
 ///
 /// # Parameters
 /// - N:         world-space surface normal (normalised).
@@ -183,13 +267,17 @@ float3 EvaluateBRDF(float3 N, float3 V, float3 L, float3 radiance,
 
     float3 specular = D * Vis * F;
 
-    // Energy conservation: kD zeroed for metals (no diffuse lobe)
-    float3 kS = F;
-    float3 kD = (1.0f - kS) * (1.0f - metallic);
+    // Multiscatter energy compensation (Kulla-Conty / Turquin 2018)
+    // Recovers energy lost by single-scatter BRDF at higher roughness
+    float roughness = sqrt(alpha);
+    float4 energyComp = ComputeEnergyCompensation(F0, roughness, NdotV);
+    specular *= energyComp.xyz;
+
+    // Energy preservation: attenuate diffuse by total specular albedo luminance
+    // Metals have no diffuse lobe (metallic=1 → kD=0)
+    float3 kD = (1.0f - energyComp.w) * (1.0f - metallic);
 
     // Disney Burley diffuse (roughness-dependent retroreflection)
-    // Recover perceptual roughness from alpha for Burley formula
-    float roughness = sqrt(alpha);
     float3 diffuse = kD * DiffuseBurley(albedo, roughness, NdotV, NdotL, VdotH);
 
     return (diffuse + specular) * radiance * NdotL;
