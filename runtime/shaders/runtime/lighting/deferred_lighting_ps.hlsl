@@ -93,7 +93,23 @@ cbuffer PerFrameCB : register(b1) {
     // Matches UE5 SkyIrradianceEnvironmentMap[0..6].
     float4   skyIrradianceSH[7]; ///< L2 SH coefficients for sky diffuse irradiance.
     uint     shadowDebugMode;    ///< Shadow debug visualization (0=off, 1-8=debug view).
-    float    _framePad2[35];     ///< Padding to 512 bytes.
+
+    // ── Aerial Perspective parameters ──
+    uint     aerialPerspectiveEnabled; ///< 1 = apply aerial perspective after lighting.
+    uint     transmittanceLutSrvIndex; ///< SRV index for transmittance LUT (256x64 RGBA16F).
+    float    apBottomRadiusKm;   ///< Planet surface radius (km).
+    float    apTopRadiusKm;      ///< Top of atmosphere radius (km).
+    float    apRayleighBetaX;    ///< Rayleigh scattering X (km^-1).
+    float    apRayleighBetaY;    ///< Rayleigh scattering Y (km^-1).
+    float    apRayleighBetaZ;    ///< Rayleigh scattering Z (km^-1).
+    float    apRayleighScaleH;   ///< Rayleigh scale height (km).
+    float    apMieBeta;          ///< Mie scattering coefficient (km^-1).
+    float    apMieScaleH;        ///< Mie scale height (km).
+    float    apMieAnisotropy;    ///< Mie HG anisotropy parameter.
+    float    apSunIntensity;     ///< Sun illuminance for AP inscattering.
+    float    apRayleighScale;    ///< Artistic Rayleigh scattering multiplier.
+    float    apMieScale;         ///< Artistic Mie scattering multiplier.
+    float    _framePad2[21];     ///< Padding to 512 bytes.
 };
 
 /// Single point light for the deferred lighting pass (48 bytes = three float4s).
@@ -173,6 +189,10 @@ Texture2D<float4> gbufferPositionWS  : register(t4); ///< xyz = world-space posi
 TextureCube<float4> iblIrradiance    : register(t5); ///< Irradiance cubemap for diffuse IBL.
 TextureCube<float4> iblPrefiltered   : register(t6); ///< Prefiltered specular cubemap for specular IBL.
 Texture2D<float2>   iblBrdfLut      : register(t7); ///< BRDF integration LUT (split-sum approximation).
+
+/// SM5 transmittance LUT for aerial perspective at t8.
+/// Only sampled when aerialPerspectiveEnabled == 1.
+Texture2D<float4>  transmittanceLutTex : register(t8); ///< Transmittance LUT (256x64 RGBA16F).
 #endif
 
 /// Linear (bilinear wrap) sampler at s0 — standard engine-wide sampler.
@@ -412,10 +432,46 @@ float4 main(FSInput input) : SV_Target {
     // ── Combine ──
     float3 color = ambient + Lo;
 
-    // Aerial Perspective: disabled. UE5 uses a precomputed AerialPerspectiveLUT
-    // (3D volume texture, SkyAtmosphere.usf). The simplified per-pixel Rayleigh
-    // approximation that was here had invented compensation factors (* 2.0f)
-    // and minimum clamps not present in UE5. Re-enable when proper LUT is implemented.
+    // ── Aerial Perspective ──
+    // Per-pixel ray-march through the atmosphere from camera to pixel.
+    // Adds distance-dependent inscattered luminance and applies transmittance
+    // to simulate atmospheric haze on distant geometry.
+    // @source UE5 SkyAtmosphereCommon.ush:42 — GetAerialPerspectiveLuminanceTransmittance
+    // @source UE5 SkyAtmosphere.usf:1466 — RenderCameraAerialPerspectiveVolumeCS
+    if (aerialPerspectiveEnabled != 0 && transmittanceLutSrvIndex != 0xFFFFFFFF) {
+        float3 apRayleighBeta3 = float3(apRayleighBetaX, apRayleighBetaY, apRayleighBetaZ);
+
+        // Fetch transmittance LUT
+#ifdef UZ_BINDLESS
+        Texture2D<float4> apTransLut = ResourceDescriptorHeap[transmittanceLutSrvIndex];
+#else
+        Texture2D<float4> apTransLut = transmittanceLutTex;
+#endif
+
+        // Sun direction reused from the directional light
+        float3 apSunDir = normalize(lightDir.xyz);
+
+        float4 ap = ComputeAerialPerspective(
+            worldPos,
+            cameraPos.xyz,
+            apSunDir,
+            apSunIntensity,
+            apBottomRadiusKm,
+            apTopRadiusKm,
+            apRayleighBeta3,
+            apRayleighScaleH,
+            apMieBeta,
+            apMieScaleH,
+            apMieAnisotropy,
+            apRayleighScale,
+            apMieScale,
+            apTransLut,
+            linearSampler);
+
+        // Apply: transmittance dims the scene, inscattering adds atmosphere glow
+        // @source UE5 SkyAtmosphereCommon.ush:107-108 — AP.rgb *= Weight; AP.a = 1-(Weight*(1-AP.a))
+        color = color * ap.a + ap.rgb;
+    }
 
     // ── Buffer Visualization Grid — tile dispatch ──
     if (gridActive) {

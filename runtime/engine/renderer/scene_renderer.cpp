@@ -617,6 +617,35 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
 
     perFrame.shadowDebugMode = m_shadowDebugMode;
 
+    // ── Aerial Perspective parameters (from SkyAtmosphereComponent) ───
+    // Populate AP atmosphere constants so deferred_lighting_ps can ray-march
+    // inscattering per pixel. Only enabled when a SkyAtmosphereComponent exists
+    // and the transmittance LUT has been baked.
+    if (world) {
+        auto skyView = world->GetRegistry().view<SkyAtmosphereComponent>();
+        for (auto enttEntity : skyView) {
+            auto& skyComp = skyView.get<SkyAtmosphereComponent>(enttEntity);
+            if (!skyComp.enabled) continue;
+            if (m_transmittanceLutSrv != UINT32_MAX && m_transmittanceLutFilled) {
+                perFrame.aerialPerspectiveEnabled = 1;
+                perFrame.transmittanceLutSrvIndex = m_transmittanceLutSrv;
+                perFrame.apBottomRadiusKm = skyComp.bottomRadiusKm;
+                perFrame.apTopRadiusKm    = skyComp.bottomRadiusKm + skyComp.atmosphereHeightKm;
+                perFrame.apRayleighBetaX  = skyComp.rayleighScattering.x;
+                perFrame.apRayleighBetaY  = skyComp.rayleighScattering.y;
+                perFrame.apRayleighBetaZ  = skyComp.rayleighScattering.z;
+                perFrame.apRayleighScaleH = skyComp.rayleighScaleHeightKm;
+                perFrame.apMieBeta        = skyComp.mieScattering;
+                perFrame.apMieScaleH      = skyComp.mieScaleHeightKm;
+                perFrame.apMieAnisotropy  = skyComp.mieAnisotropy;
+                perFrame.apSunIntensity   = sunColor.Length();
+                perFrame.apRayleighScale  = skyComp.rayleighScatteringScale;
+                perFrame.apMieScale       = skyComp.mieScatteringScale;
+            }
+            break; // First SkyAtmosphereComponent only
+        }
+    }
+
     // ── IBL texture handles (for SM5 binder path) ─────────────────────
     // The binder's BindResources() reads these handles and calls
     // SetFragmentTexture at the metadata-defined register slots (t5-t7).
