@@ -70,7 +70,7 @@ SamplerState linearSampler : register(s0);
 ///
 /// Weights are chosen to be energy-preserving (sum = 1.0).
 [numthreads(8, 8, 1)]
-void CSMain(uint3 dtid : SV_DispatchThreadID)
+void main(uint3 dtid : SV_DispatchThreadID)
 {
     if (dtid.x >= g_OutputWidth || dtid.y >= g_OutputHeight)
         return;

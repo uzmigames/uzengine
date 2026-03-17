@@ -62,7 +62,7 @@ SamplerState linearSampler : register(s0);
 ///
 /// Using bilinear hardware sampling, this requires only 9 taps.
 [numthreads(8, 8, 1)]
-void CSMain(uint3 dtid : SV_DispatchThreadID)
+void main(uint3 dtid : SV_DispatchThreadID)
 {
     if (dtid.x >= g_OutputWidth || dtid.y >= g_OutputHeight)
         return;

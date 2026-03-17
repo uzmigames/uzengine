@@ -62,7 +62,7 @@ float KarisWeight(float3 color)
 /// Reads a 2x2 block from the input, applies Karis-weighted average,
 /// then thresholds the result.
 [numthreads(8, 8, 1)]
-void CSMain(uint3 dtid : SV_DispatchThreadID)
+void main(uint3 dtid : SV_DispatchThreadID)
 {
     // Output is half-resolution
     uint outputWidth  = g_InputWidth / 2;
