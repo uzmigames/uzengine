@@ -154,7 +154,9 @@ struct PerFrameParams {
     /// Positive = screen-space fraction (0.02 = 2% of depth-scaled screen ray length).
     float    contactShadowLength = 0.0f;             ///< Contact shadow ray length (0=off, 0.02=typical).
 
-    float    _pad2[9]            = {};                ///< Pad scalar section to 512 bytes.
+    uint32_t ssrSrvIndex = UINT32_MAX;               ///< SRV index for resolved SSR texture (UINT32_MAX = no SSR).
+
+    float    _pad2[8]            = {};                ///< Pad scalar section to 512 bytes.
 
     // ── Resource handles (NOT copied to CB) ──────────────────────────────
     // These are bound by ShaderParameterBinder at their HLSL register slots.

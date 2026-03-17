@@ -170,7 +170,7 @@ float GetRoughnessFade(float roughness) {
 
 /// @source UE5 SSRTReflections.usf:441-462 — ScreenSpaceReflectionsCS (resolve path)
 [numthreads(8, 8, 1)]
-void CSMain(
+void main(
     uint3 dispatchThreadId : SV_DispatchThreadID)
 {
     if (dispatchThreadId.x >= outputWidth || dispatchThreadId.y >= outputHeight) {

@@ -127,7 +127,8 @@ struct PerFrameCB {
     /// Positive = screen-space fraction (0.02 = 2% of depth-scaled screen ray length).
     float    contactShadowLength = 0.0f;         ///< Contact shadow ray length (0=off, 0.02=typical).
 
-    float    _pad2[9] = {};                      ///< Pad to 512 bytes.
+    uint32_t ssrSrvIndex = UINT32_MAX;             ///< SRV index for resolved SSR texture (UINT32_MAX = no SSR).
+    float    _pad2[8] = {};                       ///< Pad to 512 bytes.
 };
 
 static_assert(sizeof(PerFrameCB) == 512, "PerFrameCB must be 512 bytes (D3D12 CB alignment)");

@@ -345,6 +345,9 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     // ── TAA History Textures (ping-pong RGBA16F) ────────────────────────
     CreateTaaResources(width, height);
 
+    // ── SSR Output Textures (trace + resolve, RGBA16F) ────────────────
+    CreateSsrResources(width, height);
+
     UZ_LOG(Renderer, Info, "SceneRenderer initialized ({}x{}, {})",
            width, height, RenderPathToString(m_renderPath));
     return true;
@@ -537,6 +540,68 @@ void SceneRenderer::DestroyTaaResources() {
     m_prevViewProjValid = false;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// SSR Resource Creation / Destruction
+// ─────────────────────────────────────────────────────────────────────────────
+
+void SceneRenderer::CreateSsrResources(uint32_t width, uint32_t height) {
+    DestroySsrResources();
+
+    // SSR trace output: RGBA16F full-res, rgb=hit color, a=confidence
+    {
+        RHITextureDesc traceDesc{};
+        traceDesc.width     = width;
+        traceDesc.height    = height;
+        traceDesc.format    = RHIFormat::RGBA16Float;
+        traceDesc.usage     = RHITextureUsage::ShaderResource | RHITextureUsage::UnorderedAccess;
+        traceDesc.debugName = "SSR_TraceOutput";
+
+        m_ssrTraceOutput = m_device->CreateTexture(traceDesc);
+        if (m_ssrTraceOutput.IsValid()) {
+            m_ssrTraceOutputSrv = m_device->GetTextureSRVIndex(m_ssrTraceOutput);
+            m_ssrTraceOutputUav = m_device->GetTextureUAVIndex(m_ssrTraceOutput);
+        } else {
+            UZ_LOG(Renderer, Error, "SceneRenderer: failed to create SSR trace output texture");
+        }
+    }
+
+    // SSR resolved output: RGBA16F full-res, rgb=Fresnel-weighted reflection, a=blend weight
+    {
+        RHITextureDesc resolveDesc{};
+        resolveDesc.width     = width;
+        resolveDesc.height    = height;
+        resolveDesc.format    = RHIFormat::RGBA16Float;
+        resolveDesc.usage     = RHITextureUsage::ShaderResource | RHITextureUsage::UnorderedAccess;
+        resolveDesc.debugName = "SSR_ResolvedOutput";
+
+        m_ssrResolvedOutput = m_device->CreateTexture(resolveDesc);
+        if (m_ssrResolvedOutput.IsValid()) {
+            m_ssrResolvedOutputSrv = m_device->GetTextureSRVIndex(m_ssrResolvedOutput);
+            m_ssrResolvedOutputUav = m_device->GetTextureUAVIndex(m_ssrResolvedOutput);
+        } else {
+            UZ_LOG(Renderer, Error, "SceneRenderer: failed to create SSR resolved output texture");
+        }
+    }
+
+    UZ_LOG(Renderer, Info, "SceneRenderer: SSR resources created ({}x{}, RGBA16F, trace SRV={}, resolve SRV={})",
+           width, height, m_ssrTraceOutputSrv, m_ssrResolvedOutputSrv);
+}
+
+void SceneRenderer::DestroySsrResources() {
+    if (m_ssrTraceOutput.IsValid()) {
+        m_device->DestroyTexture(m_ssrTraceOutput);
+        m_ssrTraceOutput = RHITextureHandle{};
+        m_ssrTraceOutputSrv = UINT32_MAX;
+        m_ssrTraceOutputUav = UINT32_MAX;
+    }
+    if (m_ssrResolvedOutput.IsValid()) {
+        m_device->DestroyTexture(m_ssrResolvedOutput);
+        m_ssrResolvedOutput = RHITextureHandle{};
+        m_ssrResolvedOutputSrv = UINT32_MAX;
+        m_ssrResolvedOutputUav = UINT32_MAX;
+    }
+}
+
 void SceneRenderer::DestroyDfsResources() {
     if (m_dfsOutputTexture.IsValid()) {
         m_device->DestroyTexture(m_dfsOutputTexture);
@@ -599,6 +664,10 @@ void SceneRenderer::Resize(uint32_t width, uint32_t height) {
 
     // Recreate TAA history textures at new resolution
     CreateTaaResources(width, height);
+
+    // Recreate SSR output textures at new resolution
+    DestroySsrResources();
+    CreateSsrResources(width, height);
 
     const float aspect = static_cast<float>(width) / static_cast<float>(height);
     m_camera->SetAspectRatio(aspect);
@@ -684,6 +753,9 @@ void SceneRenderer::Shutdown() {
 
     // ── DFS cleanup ─────────────────────────────────────────────────
     DestroyDfsResources();
+
+    // ── SSR cleanup ──────────────────────────────────────────────────
+    DestroySsrResources();
 
     // ── TAA cleanup ──────────────────────────────────────────────────
     DestroyTaaResources();
@@ -967,6 +1039,16 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
 
     perFrame.shadowDebugMode = m_shadowDebugMode;
     perFrame.brdfDebugMode   = m_brdfDebugMode;
+
+    // ── SSR SRV index (set early — actual compute runs in render graph) ──
+    // The resolved SSR texture SRV is set here so the lighting shader can
+    // sample it. When SSR is disabled or resources aren't ready, UINT32_MAX
+    // tells the shader to skip SSR sampling.
+    if (m_ssrEnabled && m_ssrResolvedOutput.IsValid()) {
+        perFrame.ssrSrvIndex = m_ssrResolvedOutputSrv;
+    } else {
+        perFrame.ssrSrvIndex = UINT32_MAX;
+    }
 
     // ── Aerial Perspective parameters (from SkyAtmosphereComponent) ───
     // Populate AP atmosphere constants so deferred_lighting_ps can ray-march
@@ -1885,6 +1967,180 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
                     outputBarrier.stateBefore = RHIResourceState::UnorderedAccess;
                     outputBarrier.stateAfter  = RHIResourceState::ShaderResource;
                     cmd->ResourceBarrier(&outputBarrier, 1);
+                });
+            });
+        }
+
+        // ── SSR Compute Passes (after GBuffer + depth prepass + HiZ, before lighting) ──
+        // Two compute passes:
+        //   1. SSR_Trace:   Hi-Z ray march → trace output (rgb=hit color, a=confidence)
+        //   2. SSR_Resolve: Fresnel weight + roughness fade → resolved SSR for lighting
+        //
+        // The lighting pass blends SSR with IBL specular via ssrSrvIndex in PerFrameCB.
+        //
+        // @source UE5 ScreenSpaceRayTracing.cpp:279-318 — SSR pass setup
+        // @source UE5 SSRTReflections.usf:441-462 — ScreenSpaceReflectionsCS
+        const bool ssrActive = m_ssrEnabled
+                             && m_ssrTraceOutput.IsValid()
+                             && m_ssrResolvedOutput.IsValid()
+                             && m_hdrHasContent  // Need scene color from previous frame or current
+                             && m_hizMipCount > 0
+                             && m_shadowDebugMode == 0;
+
+        if (ssrActive) {
+            // ── Pass 1: SSR Trace (compute) ──────────────────────────────────
+            /// @source UE5 ScreenSpaceRayTracing.cpp:279-318 — ComputeSSRParams
+            rgBuilder.AddPass("SSR_Trace", [&](rg::RgPassBuilder& pb) {
+                pb.Read(depthRes, RHIResourceState::ShaderResource);
+                pb.Read(normalRes, RHIResourceState::ShaderResource);
+                pb.Read(hdrRes, RHIResourceState::ShaderResource);
+
+                pb.SetExecutionCallback([&](IRHICommandList* cmd, const rg::RgPassResources& /*res*/) {
+                    UZ_PROFILE_SCOPE("SSR::Trace");
+
+                    auto ssrTracePSO = pipelines->GetSsrTrace();
+                    if (!ssrTracePSO.IsValid()) return;
+
+                    // Transition SSR trace output to UAV for writing
+                    {
+                        RHIBarrierDesc barrier{};
+                        barrier.texture     = m_ssrTraceOutput;
+                        barrier.buffer      = RHIBufferHandle::Invalid();
+                        barrier.stateBefore = RHIResourceState::ShaderResource;
+                        barrier.stateAfter  = RHIResourceState::UnorderedAccess;
+                        cmd->ResourceBarrier(&barrier, 1);
+                    }
+
+                    cmd->SetPipeline(ssrTracePSO);
+
+                    // Root constants: 8 DWORDs (matches SSRRootCB in ssr_trace_cs.hlsl)
+                    /// @source UE5 ScreenSpaceRayTracing.cpp:291-318 — ComputeSSRParams
+                    struct SsrTraceConstants {
+                        uint32_t depthSrvIdx;       // DWORD 0
+                        uint32_t normalSrvIdx;      // DWORD 1
+                        uint32_t hizSrvIdx;         // DWORD 2
+                        uint32_t sceneColorSrvIdx;  // DWORD 3
+                        uint32_t outputWidth;       // DWORD 4
+                        uint32_t outputHeight;      // DWORD 5
+                        float    intensity;         // DWORD 6
+                        float    roughnessMaskScale;// DWORD 7
+                    };
+
+                    SsrTraceConstants rc{};
+                    rc.depthSrvIdx      = m_gbuffer.depthSRV;
+                    rc.normalSrvIdx     = m_gbuffer.normalSRV;
+                    // Use depth buffer as HiZ source (single mip — no hierarchical
+                    // acceleration, but functionally correct). Proper HiZ with mip
+                    // chain is a follow-up when the RHI supports per-mip SRVs on
+                    // a single texture.
+                    rc.hizSrvIdx        = m_gbuffer.depthSRV;
+                    rc.sceneColorSrvIdx = m_hdrSceneColorSrv;
+                    rc.outputWidth      = vpWidth;
+                    rc.outputHeight     = vpHeight;
+                    /// @source UE5 ScreenSpaceRayTracing.cpp:314 — Clamp(Intensity * 0.01, 0, 1)
+                    rc.intensity        = 1.0f;
+                    /// @source UE5 ScreenSpaceRayTracing.cpp:287 — -2.0 / MaxRoughness
+                    rc.roughnessMaskScale = -2.0f / 0.4f;  // MaxRoughness = 0.4
+
+                    cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 8);
+
+                    // PerFrameCB at b1 (has viewProj, invViewProj, cameraPos, nearPlane, farPlane)
+                    cmd->SetRootCBV(kSlotPerFrame, perFrameAlloc.bufferHandle,
+                                    perFrameAlloc.offsetBytes, perFrameAlloc.cpuPtr,
+                                    sizeof(PerFrameCB));
+
+                    // UAV at descriptor table slot 4 (u0 in shader)
+                    cmd->SetDescriptorTable(4, m_ssrTraceOutputUav);
+
+                    // Dispatch: 8x8 thread groups
+                    const uint32_t groupsX = (vpWidth  + 7) / 8;
+                    const uint32_t groupsY = (vpHeight + 7) / 8;
+                    cmd->Dispatch(groupsX, groupsY, 1);
+
+                    // Transition trace output: UAV → SRV for resolve pass to read
+                    {
+                        RHIBarrierDesc barrier{};
+                        barrier.texture     = m_ssrTraceOutput;
+                        barrier.buffer      = RHIBufferHandle::Invalid();
+                        barrier.stateBefore = RHIResourceState::UnorderedAccess;
+                        barrier.stateAfter  = RHIResourceState::ShaderResource;
+                        cmd->ResourceBarrier(&barrier, 1);
+                    }
+                });
+            });
+
+            // ── Pass 2: SSR Resolve (compute) ────────────────────────────────
+            /// @source UE5 SSRTReflections.usf:105-416 — ScreenSpaceReflections resolve
+            rgBuilder.AddPass("SSR_Resolve", [&](rg::RgPassBuilder& pb) {
+                pb.Read(depthRes, RHIResourceState::ShaderResource);
+                pb.Read(normalRes, RHIResourceState::ShaderResource);
+
+                pb.SetExecutionCallback([&](IRHICommandList* cmd, const rg::RgPassResources& /*res*/) {
+                    UZ_PROFILE_SCOPE("SSR::Resolve");
+
+                    auto ssrResolvePSO = pipelines->GetSsrResolve();
+                    if (!ssrResolvePSO.IsValid()) return;
+
+                    // Transition SSR resolved output to UAV for writing
+                    {
+                        RHIBarrierDesc barrier{};
+                        barrier.texture     = m_ssrResolvedOutput;
+                        barrier.buffer      = RHIBufferHandle::Invalid();
+                        barrier.stateBefore = RHIResourceState::ShaderResource;
+                        barrier.stateAfter  = RHIResourceState::UnorderedAccess;
+                        cmd->ResourceBarrier(&barrier, 1);
+                    }
+
+                    cmd->SetPipeline(ssrResolvePSO);
+
+                    // Root constants: 8 DWORDs (matches SSRResolveCB in ssr_resolve_cs.hlsl)
+                    struct SsrResolveConstants {
+                        uint32_t ssrTraceSrvIdx;    // DWORD 0
+                        uint32_t normalSrvIdx;      // DWORD 1
+                        uint32_t depthSrvIdx;       // DWORD 2
+                        uint32_t reserved;          // DWORD 3
+                        uint32_t outputWidth;       // DWORD 4
+                        uint32_t outputHeight;      // DWORD 5
+                        float    intensity;         // DWORD 6
+                        float    roughnessMaskScale;// DWORD 7
+                    };
+
+                    SsrResolveConstants rc{};
+                    rc.ssrTraceSrvIdx   = m_ssrTraceOutputSrv;
+                    rc.normalSrvIdx     = m_gbuffer.normalSRV;
+                    rc.depthSrvIdx      = m_gbuffer.depthSRV;
+                    rc.reserved         = 0;
+                    rc.outputWidth      = vpWidth;
+                    rc.outputHeight     = vpHeight;
+                    /// @source UE5 ScreenSpaceRayTracing.cpp:314
+                    rc.intensity        = 1.0f;
+                    /// @source UE5 ScreenSpaceRayTracing.cpp:287
+                    rc.roughnessMaskScale = -2.0f / 0.4f;
+
+                    cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 8);
+
+                    // PerFrameCB at b1
+                    cmd->SetRootCBV(kSlotPerFrame, perFrameAlloc.bufferHandle,
+                                    perFrameAlloc.offsetBytes, perFrameAlloc.cpuPtr,
+                                    sizeof(PerFrameCB));
+
+                    // UAV at descriptor table slot 4 (u0 in shader)
+                    cmd->SetDescriptorTable(4, m_ssrResolvedOutputUav);
+
+                    // Dispatch: 8x8 thread groups
+                    const uint32_t groupsX = (vpWidth  + 7) / 8;
+                    const uint32_t groupsY = (vpHeight + 7) / 8;
+                    cmd->Dispatch(groupsX, groupsY, 1);
+
+                    // Transition resolved output: UAV → SRV for lighting pass to read
+                    {
+                        RHIBarrierDesc barrier{};
+                        barrier.texture     = m_ssrResolvedOutput;
+                        barrier.buffer      = RHIBufferHandle::Invalid();
+                        barrier.stateBefore = RHIResourceState::UnorderedAccess;
+                        barrier.stateAfter  = RHIResourceState::ShaderResource;
+                        cmd->ResourceBarrier(&barrier, 1);
+                    }
                 });
             });
         }

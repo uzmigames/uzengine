@@ -134,7 +134,8 @@ cbuffer PerFrameCB : register(b1) {
     /// Positive = screen-space fraction (0.02 = 2% of depth-scaled screen ray).
     float    contactShadowLength;
 
-    float    _framePad2[9];      ///< Padding to 512 bytes.
+    uint     ssrSrvIndex;        ///< SRV index for resolved SSR texture (0xFFFFFFFF = no SSR).
+    float    _framePad2[8];      ///< Padding to 512 bytes.
 };
 
 /// Single point light for the deferred lighting pass (48 bytes = three float4s).
@@ -616,6 +617,25 @@ float4 main(FSInput input) : SV_Target {
         float Ems = 1.0f - (envBRDF.x + envBRDF.y);
         float3 Favg = F0 + (1.0f - F0) / 21.0f;
         specularIBL *= 1.0f + Favg * Ems / (1.0f - Favg * Ems);
+
+        // ── SSR blend: replace IBL specular with screen-space reflection where available ──
+        // The resolve pass outputs rgb=Fresnel-weighted reflection, a=blend weight.
+        // We lerp between IBL specular and SSR based on the SSR confidence (alpha).
+        // @source UE5 ReflectionEnvironmentPixelShader.usf:247-249 — SSR composite
+        [branch]
+        if (ssrSrvIndex != 0xFFFFFFFF) {
+#ifdef UZ_BINDLESS
+            Texture2D<float4> ssrTex = ResourceDescriptorHeap[ssrSrvIndex];
+            float4 ssrData = ssrTex.SampleLevel(linearSampler, input.texCoord, 0);
+#else
+            float4 ssrData = float4(0, 0, 0, 0);
+#endif
+            // ssrData.rgb = resolved SSR color (already Fresnel-weighted)
+            // ssrData.a   = blend weight (confidence * roughnessFade * Fresnel average)
+            // When SSR has full confidence, completely replace IBL specular.
+            // When SSR misses (alpha=0), keep IBL specular unchanged.
+            specularIBL = lerp(specularIBL, ssrData.rgb, saturate(ssrData.a));
+        }
 
         // Multi-bounce AO: use albedo-dependent AO when GTAO is active,
         // otherwise plain scalar AO. This prevents over-darkening of colored surfaces.

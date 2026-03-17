@@ -328,6 +328,31 @@ public:
     /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
     [[nodiscard]] RHIPipelineHandle GetTaaResolve();
 
+    /// Returns the SSR trace compute pipeline (ssr_trace_cs.hlsl).
+    ///
+    /// Per-pixel screen-space reflection ray marching using the Hi-Z depth
+    /// pyramid for acceleration. Reads depth, normals, Hi-Z pyramid, and scene
+    /// color; writes ray-hit color + confidence to an RGBA16F output texture.
+    ///
+    /// @source UE5 SSRTRayCast.ush:255-627 — CastScreenSpaceRay
+    /// @source UE5 SSRTReflections.usf:441-462 — ScreenSpaceReflectionsCS
+    ///
+    /// # Returns
+    /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
+    [[nodiscard]] RHIPipelineHandle GetSsrTrace();
+
+    /// Returns the SSR resolve compute pipeline (ssr_resolve_cs.hlsl).
+    ///
+    /// Composites SSR trace output with Fresnel-weighted blending and
+    /// roughness-based filtering. Reads trace result + G-Buffer normals +
+    /// depth; writes final SSR reflection color with blend weight in alpha.
+    ///
+    /// @source UE5 SSRTReflections.usf:105-416 — ScreenSpaceReflections resolve
+    ///
+    /// # Returns
+    /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
+    [[nodiscard]] RHIPipelineHandle GetSsrResolve();
+
     /// Pre-creates all standard pipelines eagerly instead of on first use.
     ///
     /// Call at scene load time to avoid hitches during the first frame.
@@ -367,6 +392,8 @@ private:
     [[nodiscard]] bool EnsureDfsCullObjectsShader();
     [[nodiscard]] bool EnsureDfsConeTraceShader();
     [[nodiscard]] bool EnsureTaaResolveShader();
+    [[nodiscard]] bool EnsureSsrTraceShader();
+    [[nodiscard]] bool EnsureSsrResolveShader();
 
     /// Creates a pipeline through the PSO cache. On cache hit, returns the
     /// cached handle without calling the device. On miss, creates via the
@@ -405,6 +432,8 @@ private:
     RHIShaderHandle m_dfsCullObjectsCS         = RHIShaderHandle::Invalid();
     RHIShaderHandle m_dfsConeTraceCS           = RHIShaderHandle::Invalid();
     RHIShaderHandle m_taaResolveCS             = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_ssrTraceCS               = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_ssrResolveCS             = RHIShaderHandle::Invalid();
 
     // ── Cached pipeline handles (one per bindless variant) ──────────────
     RHIPipelineHandle m_forwardPBR         = RHIPipelineHandle::Invalid();
@@ -432,6 +461,8 @@ private:
     RHIPipelineHandle m_dfsCullObjects        = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_dfsConeTrace          = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_taaResolve            = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_ssrTrace              = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_ssrResolve            = RHIPipelineHandle::Invalid();
 };
 
 } // namespace uz

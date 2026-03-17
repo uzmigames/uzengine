@@ -1322,6 +1322,124 @@ RHIPipelineHandle PipelineLibrary::GetTaaResolve() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// SSR Trace Compute Pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool PipelineLibrary::EnsureSsrTraceShader() {
+    if (m_ssrTraceCS.IsValid()) {
+        return true;
+    }
+
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::SsrTraceCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile SsrTraceCS");
+        return false;
+    }
+
+    RHIShaderDesc shaderDesc{};
+    shaderDesc.bytecode     = bytecode.data();
+    shaderDesc.bytecodeSize = bytecode.size();
+    shaderDesc.stage        = RHIShaderStage::Compute;
+    shaderDesc.entryPoint   = "main";
+    shaderDesc.debugName    = "ssr_trace_cs";
+
+    m_ssrTraceCS = m_device->CreateShader(shaderDesc);
+    if (!m_ssrTraceCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create SsrTraceCS shader");
+        return false;
+    }
+    return true;
+}
+
+/// @source UE5 ScreenSpaceRayTracing.cpp:279-318 — SSR compute pipeline creation
+RHIPipelineHandle PipelineLibrary::GetSsrTrace() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetSsrTrace called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_ssrTrace.IsValid()) {
+        return m_ssrTrace;
+    }
+
+    if (!EnsureSsrTraceShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_ssrTraceCS;
+    desc.debugName     = "SSR_Trace";
+
+    m_ssrTrace = m_device->CreateComputePipeline(desc);
+    if (!m_ssrTrace.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create SSR_Trace pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created SSR_Trace pipeline");
+    }
+
+    return m_ssrTrace;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SSR Resolve Compute Pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool PipelineLibrary::EnsureSsrResolveShader() {
+    if (m_ssrResolveCS.IsValid()) {
+        return true;
+    }
+
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::SsrResolveCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile SsrResolveCS");
+        return false;
+    }
+
+    RHIShaderDesc shaderDesc{};
+    shaderDesc.bytecode     = bytecode.data();
+    shaderDesc.bytecodeSize = bytecode.size();
+    shaderDesc.stage        = RHIShaderStage::Compute;
+    shaderDesc.entryPoint   = "main";
+    shaderDesc.debugName    = "ssr_resolve_cs";
+
+    m_ssrResolveCS = m_device->CreateShader(shaderDesc);
+    if (!m_ssrResolveCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create SsrResolveCS shader");
+        return false;
+    }
+    return true;
+}
+
+/// @source UE5 SSRTReflections.usf:105-416 — SSR resolve compute pipeline
+RHIPipelineHandle PipelineLibrary::GetSsrResolve() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetSsrResolve called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_ssrResolve.IsValid()) {
+        return m_ssrResolve;
+    }
+
+    if (!EnsureSsrResolveShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_ssrResolveCS;
+    desc.debugName     = "SSR_Resolve";
+
+    m_ssrResolve = m_device->CreateComputePipeline(desc);
+    if (!m_ssrResolve.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create SSR_Resolve pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created SSR_Resolve pipeline");
+    }
+
+    return m_ssrResolve;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // PSO Cache Integration
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1407,6 +1525,8 @@ uint32_t PipelineLibrary::WarmupAll() {
     warmup(GetHiZPyramid(), "HiZPyramid");
     warmup(GetDfsCullObjects(), "DFS_CullObjects");
     warmup(GetDfsConeTrace(), "DFS_ConeTrace");
+    warmup(GetSsrTrace(), "SSR_Trace");
+    warmup(GetSsrResolve(), "SSR_Resolve");
 
     // SM5 variants if device is bindless (need both paths)
     if (bindless) {

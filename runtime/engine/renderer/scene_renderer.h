@@ -267,6 +267,18 @@ public:
     /// The atlas manager must outlive this renderer. Set to nullptr to disable DFS.
     void SetSdfAtlasManager(SdfAtlasManager* atlas) { m_sdfAtlas = atlas; }
 
+    /// Enables or disables Screen-Space Reflections (SSR) at runtime.
+    ///
+    /// @source UE5 ScreenSpaceRayTracing.cpp:279-318 — r.SSR.Quality CVar
+    ///
+    /// When disabled, the lighting pass uses only IBL cubemap reflections.
+    /// When enabled, a Hi-Z ray trace + resolve pass provides higher-fidelity
+    /// reflections for smooth surfaces, blending with IBL as fallback.
+    void SetSsrEnabled(bool enabled) { m_ssrEnabled = enabled; }
+
+    /// Returns whether SSR is currently enabled.
+    [[nodiscard]] bool IsSsrEnabled() const { return m_ssrEnabled; }
+
     /// Enables or disables Temporal Anti-Aliasing (TAA) at runtime.
     ///
     /// @source UE5 TemporalAA.cpp:40-44 — r.TemporalAACurrentFrameWeight CVar
@@ -474,6 +486,24 @@ private:
 
     /// Destroys TAA history textures. Called from Shutdown() and Resize().
     void DestroyTaaResources();
+
+    // ── SSR (Screen-Space Reflections) ─────────────────────────────────────
+
+    /// @source UE5 ScreenSpaceRayTracing.cpp:279-318 — SSR pipeline configuration
+    RHITextureHandle m_ssrTraceOutput;             ///< RGBA16F trace result (rgb=hit color, a=confidence).
+    uint32_t m_ssrTraceOutputSrv = UINT32_MAX;     ///< SRV for resolve pass to read trace result.
+    uint32_t m_ssrTraceOutputUav = UINT32_MAX;     ///< UAV for trace pass to write.
+    RHITextureHandle m_ssrResolvedOutput;           ///< RGBA16F resolved SSR (rgb=Fresnel-weighted, a=blend weight).
+    uint32_t m_ssrResolvedOutputSrv = UINT32_MAX;  ///< SRV for lighting pass to read SSR result.
+    uint32_t m_ssrResolvedOutputUav = UINT32_MAX;  ///< UAV for resolve pass to write.
+    bool     m_ssrEnabled = true;                  ///< Runtime toggle for SSR.
+
+    /// Creates SSR output textures at the given resolution.
+    /// Called from Init() and Resize().
+    void CreateSsrResources(uint32_t width, uint32_t height);
+
+    /// Destroys SSR output textures. Called from Shutdown() and Resize().
+    void DestroySsrResources();
 
     // ── Depth Prepass + Hi-Z Pyramid ────────────────────────────────────────
 
