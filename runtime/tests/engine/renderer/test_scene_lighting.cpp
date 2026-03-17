@@ -298,5 +298,5 @@ TEST(BuildPerFrameCB_CustomLighting, CustomSunDirection_IsReflectedInLightDir) {
 
 TEST(BuildPerFrameCB_StructSize, PerFrameCB_Is256Bytes) {
     // This verifies the D3D12 CB alignment requirement is met.
-    EXPECT_EQ(sizeof(PerFrameCB), 256u);
+    EXPECT_EQ(sizeof(PerFrameCB), 512u);
 }

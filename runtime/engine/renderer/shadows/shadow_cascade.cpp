@@ -328,6 +328,7 @@ void ComputeCascades(
         outCascades[cascade].texelSize          = worldUnitsPerTexel;
         outCascades[cascade].computedDepthBias  = cascadeDepthBias;
         outCascades[cascade].computedNormalBias = finalNormalBias;
+        outCascades[cascade].center             = center;
         outCascades[cascade].bFarShadowCascade  = false;
     }
 
@@ -436,6 +437,7 @@ void ComputeCascades(
             outCascades[outIdx].texelSize          = worldUnitsPerTexel;
             outCascades[outIdx].computedDepthBias  = cascadeDepthBias;
             outCascades[outIdx].computedNormalBias = finalNormalBias;
+            outCascades[outIdx].center             = center;
             outCascades[outIdx].bFarShadowCascade  = true;
         }
 

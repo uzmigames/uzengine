@@ -166,8 +166,10 @@ bool VulkanDevice::Init(const RHIDeviceDesc& desc) {
         m_shaderModel = *desc.forceShaderModel;
     }
 
-    // Tracy GPU context disabled — causes VMA assert on buffer operations.
-    // TODO: Investigate TracyVkContext interaction with VMA persistent mapping.
+    // Tracy GPU context disabled — TracyVkContext triggers a VMA assert when
+    // VMA_ALLOCATION_CREATE_MAPPED_BIT is used (persistent mapping conflicts with
+    // Tracy's internal buffer tracking). Disabling until Tracy 0.12+ resolves the
+    // VMA interop issue (TracyVulkan.hpp assumes non-persistently-mapped buffers).
     m_tracyVkCtx = nullptr;
 
     RHIMemoryBudget budget = GetMemoryBudget();

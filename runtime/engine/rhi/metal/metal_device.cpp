@@ -749,7 +749,10 @@ uint32_t MetalDevice::GetTextureSRVIndex(RHITextureHandle handle) const {
 }
 
 uint32_t MetalDevice::GetTextureUAVIndex(RHITextureHandle /*handle*/) const {
-    return UINT32_MAX; // TODO: Metal UAV not yet implemented
+    // Metal UAV (read-write texture) requires MTLTextureUsageShaderWrite and
+    // argument buffer binding. Returns UINT32_MAX (no UAV) until Metal compute
+    // pipelines are wired with read-write texture descriptors.
+    return UINT32_MAX;
 }
 
 RHITextureDesc MetalDevice::GetTextureDesc(RHITextureHandle handle) const {

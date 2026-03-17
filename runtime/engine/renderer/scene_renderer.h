@@ -214,6 +214,20 @@ public:
     /// Returns the current shadow debug mode.
     [[nodiscard]] uint32_t GetShadowDebugMode() const { return m_shadowDebugMode; }
 
+    /// Enables or disables shadow caching at runtime.
+    ///
+    /// Equivalent to UE5's `r.Shadow.CacheEnabled` CVar.
+    /// Takes effect on the next `RenderFrame()` call.
+    ///
+    /// @source UE5 ShadowSetup.cpp:393-398 — r.Shadow.CacheEnabled
+    ///
+    /// # Arguments
+    /// * `enabled` — True to enable shadow caching.
+    void SetShadowCacheEnabled(bool enabled) { m_shadowCacheManager.SetEnabled(enabled); }
+
+    /// Returns whether shadow caching is currently enabled.
+    [[nodiscard]] bool IsShadowCacheEnabled() const { return m_shadowCacheManager.IsEnabled(); }
+
     /// Cycles through shadow debug modes (0 → 1 → ... → 8 → 0).
     void CycleShadowDebugMode() { m_shadowDebugMode = (m_shadowDebugMode + 1) % 9; }
 

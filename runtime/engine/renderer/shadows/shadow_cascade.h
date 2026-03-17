@@ -97,6 +97,14 @@ struct ShadowCascade {
     /// Per-cascade normal bias, scaled proportionally to texel size.
     float computedNormalBias = 0.0f;
 
+    /// World-space center of the cascade bounding sphere.
+    ///
+    /// Computed from the optimal offset along the frustum near-to-far axis.
+    /// Used by CSM scrolling to determine overlap between old and new cascade bounds.
+    /// Corresponds to UE5's negative PreShadowTranslation.
+    /// @source UE5 ShadowSetup.cpp:5612-5613 — PreShadowTranslation
+    Vec3 center;
+
     /// True if this cascade is a far shadow cascade (extended range, lower LOD).
     /// Far cascades cover the distance beyond the main CSM `maxDistance` up to
     /// `farShadowDistance`. Renderers can use this flag to select coarser mesh LODs.

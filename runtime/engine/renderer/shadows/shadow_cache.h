@@ -45,6 +45,7 @@
 #include <array>
 #include <cstdint>
 #include <unordered_map>
+#include <vector>
 
 namespace uz {
 
@@ -91,6 +92,58 @@ struct ShadowCacheConfig {
     float scrollingOverlapThreshold = 0.75f;      ///< Min overlap ratio for CSM scrolling (0-1).
 };
 
+/// Maximum number of extra static shadow subjects allowed during CSM scrolling
+/// before falling back to a full static re-render.
+/// @source UE5 ShadowSetup.cpp:406-409 — CVarCSMScrollingMaxExtraStaticShadowSubjects (default 5)
+constexpr uint32_t kMaxCSMScrollingExtraStaticSubjects = 5;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CSMScrollingData — per-cascade scrolling parameters
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Per-cascade CSM scrolling parameters computed during UpdateCache.
+///
+/// Contains the UV overlap regions and culling planes needed to perform
+/// the GPU copy of the overlapping region and selective re-rendering of
+/// the exposed edge strips.
+///
+/// @source UE5 ShadowSetup.cpp:5600-5668 — CSMScrolling data computation
+/// @source UE5 ShadowDepthRendering.cpp:1000-1035 — GPU copy using overlap UVs
+struct CSMScrollingData {
+    /// UV region on the cached (old) shadow map that overlaps with the new map.
+    /// Format: (minU, minV, maxU, maxV) in [0,1] normalized texture coordinates.
+    /// @source UE5 ShadowSetup.cpp:5629-5632 — OverlappedUVOnCachedShadowMap
+    float overlappedUVOnCached[4] = {0.f, 0.f, 1.f, 1.f};
+
+    /// UV region on the current (new) shadow map that corresponds to the overlap.
+    /// Format: (minU, minV, maxU, maxV) in [0,1] normalized texture coordinates.
+    /// @source UE5 ShadowSetup.cpp:5636-5639 — OverlappedUVOnCurrentShadowMap
+    float overlappedUVOnCurrent[4] = {0.f, 0.f, 1.f, 1.f};
+
+    /// Z offset in light space between cached and current shadow maps.
+    /// Used by the scrolling shader to reconstruct depth values after the copy.
+    /// @source UE5 ShadowSetup.cpp:5616 — CSMScrollingZOffset
+    float zOffset = 0.f;
+
+    /// Culling planes for the non-overlapped edge strips (up to 4: top, bottom, left, right).
+    /// Each plane is defined by a point and a normal in world space.
+    /// Only static primitives that intersect these planes need re-rendering.
+    /// @source UE5 ShadowSetup.cpp:5641-5667 — CSMScrollingExtraCullingPlanes
+    struct CullingPlane {
+        Vec3 point;   ///< A point on the plane (world space).
+        Vec3 normal;  ///< Outward-facing normal of the plane.
+    };
+    CullingPlane cullingPlanes[4];
+    uint32_t cullingPlaneCount = 0;
+
+    /// Overlap area ratio: area of intersection / area of cached cascade.
+    /// If > scrollingOverlapThreshold, scrolling is used; otherwise full re-render.
+    float overlapRatio = 0.f;
+
+    /// True if scrolling data is valid and should be used.
+    bool active = false;
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // ShadowCacheKey — snapshot for invalidation comparison
 // ─────────────────────────────────────────────────────────────────────────────
@@ -105,6 +158,7 @@ struct ShadowCacheConfig {
 struct ShadowCacheKey {
     Vec3 lightDirection;       ///< Light direction when cached.
     Vec3 lightUp;              ///< Light up vector when cached.
+    Vec3 cascadeCenter;        ///< World-space cascade center (PreShadowTranslation equivalent).
     float subjectRadius;       ///< Cascade bounding sphere radius.
     float minSubjectZ;         ///< Min Z extent in light space.
     float maxSubjectZ;         ///< Max Z extent in light space.
@@ -128,6 +182,26 @@ struct CachedShadowMapData {
     ShadowCacheKey key;              ///< Initializer snapshot for invalidation.
     uint32_t lastUsedFrame = 0;      ///< Frame number when last validated/used.
     bool valid = false;              ///< True if cache is valid and can be reused.
+
+    /// Bitset tracking which primitive indices were rendered into the cached shadow map.
+    ///
+    /// Indexed by draw command index (position in the DrawList). When CSM scrolling
+    /// mode is active, this bitset determines which static primitives are already
+    /// present in the cached atlas, so only new or edge-strip primitives need
+    /// re-rendering.
+    ///
+    /// @source UE5 ScenePrivate.h:2697 — StaticShadowSubjectPersistentPrimitiveIdMap
+    std::vector<bool> staticPrimitiveMap;
+
+    /// Count of extra static shadow subjects added during CSM scrolling this frame.
+    /// If this exceeds `kMaxCSMScrollingExtraStaticSubjects`, fall back to full re-render.
+    /// @source UE5 ShadowSetup.cpp:406-409 — CVarCSMScrollingMaxExtraStaticShadowSubjects
+    uint32_t lastFrameExtraStaticShadowSubjects = 0;
+
+    /// Light-space center (PreShadowTranslation equivalent) when cached.
+    /// Used by CSM scrolling to compute the overlap between old and new cascade bounds.
+    /// @source UE5 ScenePrivate.h:2696 — PreShadowTranslation
+    Vec3 cachedPreShadowTranslation;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -140,6 +214,7 @@ struct CachedShadowMapData {
 /// allocation on the hot path. `cascadeCount` tracks how many entries are active.
 struct LightShadowCache {
     std::array<CachedShadowMapData, kMaxShadowCascades> cascades;
+    std::array<CSMScrollingData, kMaxShadowCascades> scrollingData;
     uint32_t cascadeCount = 0;
 };
 
@@ -324,6 +399,52 @@ public:
     /// * `olderThanFrame` — Evict caches not used since this frame number.
     void EvictStale(uint32_t olderThanFrame);
 
+    /// Records that a static primitive was rendered into the cached shadow map.
+    ///
+    /// Called during the static shadow pass for each draw command rendered.
+    /// The bitset is later used by CSM scrolling to determine which primitives
+    /// are already present in the overlap region.
+    ///
+    /// @source UE5 ShadowSetup.cpp:2364 — StaticShadowSubjectPersistentPrimitiveIdMap[...] = true
+    ///
+    /// # Arguments
+    /// * `lightId` — Unique identifier for the light source.
+    /// * `cascadeIndex` — Cascade index.
+    /// * `primitiveIndex` — Index of the primitive in the draw list.
+    /// * `totalPrimitives` — Total number of primitives (to size the bitset).
+    void MarkStaticPrimitiveRendered(uint32_t lightId, uint32_t cascadeIndex,
+                                     uint32_t primitiveIndex, uint32_t totalPrimitives);
+
+    /// Checks if a static primitive is recorded in the cached shadow map.
+    ///
+    /// @source UE5 ShadowSetup.cpp:5002 — StaticShadowSubjectPersistentPrimitiveIdMap[...]
+    ///
+    /// # Returns
+    /// `true` if the primitive was rendered into the cached shadow map.
+    [[nodiscard]] bool IsStaticPrimitiveRendered(uint32_t lightId, uint32_t cascadeIndex,
+                                                  uint32_t primitiveIndex) const;
+
+    /// Retrieves the CSM scrolling data computed during UpdateCache for a cascade.
+    ///
+    /// Only valid when UpdateCache returned `CSMScrolling` for this cascade.
+    ///
+    /// # Returns
+    /// Const reference to the scrolling data. Check `active` field before use.
+    [[nodiscard]] const CSMScrollingData& GetScrollingData(uint32_t lightId,
+                                                            uint32_t cascadeIndex) const;
+
+    /// Sets shadow caching enabled/disabled at runtime.
+    ///
+    /// Equivalent to UE5's `r.Shadow.CacheEnabled` CVar.
+    /// Takes effect on the next UpdateCache call.
+    ///
+    /// # Arguments
+    /// * `enabled` — True to enable shadow caching.
+    void SetEnabled(bool enabled) { m_config.enabled = enabled; }
+
+    /// Returns whether shadow caching is currently enabled.
+    [[nodiscard]] bool IsEnabled() const { return m_config.enabled; }
+
 private:
     /// Allocates a D32Float cached depth texture at the specified resolution.
     ///
@@ -337,11 +458,31 @@ private:
     /// Computes the VRAM footprint of a single cached shadow map in bytes.
     [[nodiscard]] static uint64_t ComputeTextureMemory(uint32_t resolution);
 
+    /// Computes scrolling overlap data between cached and current cascade bounds.
+    ///
+    /// Projects cascade centers into light space, computes AABB overlap, generates
+    /// overlap UV regions and edge-strip culling planes.
+    ///
+    /// @source UE5 ShadowSetup.cpp:3893-3931 — overlap computation
+    /// @source UE5 ShadowSetup.cpp:5600-5668 — UV + culling plane computation
+    ///
+    /// # Returns
+    /// CSMScrollingData with overlap UVs, culling planes, and overlap ratio.
+    [[nodiscard]] CSMScrollingData ComputeScrollingData(
+        const ShadowCacheKey& cachedKey,
+        const ShadowCacheKey& currentKey,
+        const Vec3& cachedCenter,
+        const Vec3& currentCenter,
+        const Vec3& lightDir) const;
+
     IRHIDevice* m_device = nullptr;
     ShadowCacheConfig m_config;
     std::unordered_map<uint32_t, LightShadowCache> m_caches;
     uint64_t m_totalMemoryBytes = 0;
     uint64_t m_budgetBytes = 0;
+
+    /// Default inactive scrolling data returned when no scrolling is active.
+    static const CSMScrollingData s_inactiveScrollingData;
 };
 
 } // namespace uz

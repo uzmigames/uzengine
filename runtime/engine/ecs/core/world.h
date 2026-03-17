@@ -280,11 +280,14 @@ private:
 template <typename T, typename... Args>
 T& World::AddComponent(Entity entity, Args&&... args) {
     UZ_CHECK(IsValid(entity));
-    // Use emplace (not emplace_or_replace) so that non-copyable/movable
-    // component types (e.g. StaticMeshComponent) compile correctly.
-    // Callers must not call AddComponent when the entity already owns T;
-    // use GetComponent for that.
-    return registry_.emplace<T>(ToEntt(entity), std::forward<Args>(args)...);
+    const auto entt = ToEntt(entity);
+    // If the entity already has this component, remove it first and re-emplace.
+    // This provides overwrite semantics while staying compatible with non-copyable
+    // component types (SceneComponent, etc.) that cannot use emplace_or_replace.
+    if (registry_.all_of<T>(entt)) {
+        registry_.erase<T>(entt);
+    }
+    return registry_.emplace<T>(entt, std::forward<Args>(args)...);
 }
 
 template <typename T>

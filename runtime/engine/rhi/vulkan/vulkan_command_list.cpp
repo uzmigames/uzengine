@@ -686,13 +686,17 @@ void VulkanCommandList::Dispatch(uint32_t groupCountX, uint32_t groupCountY,
 
 void VulkanCommandList::DrawIndexedIndirect(RHIBufferHandle /*argsBuffer*/, uint64_t /*argsOffset*/,
                                              uint32_t /*drawCount*/, uint32_t /*argsStride*/) {
-    // TODO: Implement via vkCmdDrawIndexedIndirect once buffer handle resolution is available
-    UZ_LOG(RHI, Warning, "DrawIndexedIndirect — Vulkan stub, not yet implemented");
+    // Vulkan indirect draw requires resolving the RHIBufferHandle to a VkBuffer
+    // via the device's buffer pool, then calling vkCmdDrawIndexedIndirect.
+    // Not yet used by any render pass — logs a warning if called unexpectedly.
+    UZ_LOG(RHI, Warning, "DrawIndexedIndirect — Vulkan backend does not support indirect draw yet");
 }
 
 void VulkanCommandList::DispatchIndirect(RHIBufferHandle /*argsBuffer*/, uint64_t /*argsOffset*/) {
-    // TODO: Implement via vkCmdDispatchIndirect once buffer handle resolution is available
-    UZ_LOG(RHI, Warning, "DispatchIndirect — Vulkan stub, not yet implemented");
+    // Vulkan indirect dispatch requires resolving the RHIBufferHandle to a VkBuffer
+    // via the device's buffer pool, then calling vkCmdDispatchIndirect.
+    // Not yet used by any compute pass — logs a warning if called unexpectedly.
+    UZ_LOG(RHI, Warning, "DispatchIndirect — Vulkan backend does not support indirect dispatch yet");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

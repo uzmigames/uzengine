@@ -735,13 +735,17 @@ void MetalCommandList::Dispatch(uint32_t groupCountX, uint32_t groupCountY,
 
 void MetalCommandList::DrawIndexedIndirect(RHIBufferHandle /*argsBuffer*/, uint64_t /*argsOffset*/,
                                             uint32_t /*drawCount*/, uint32_t /*argsStride*/) {
-    // TODO: Implement via drawIndexedPrimitives:indirectBuffer:indirectBufferOffset:
-    UZ_LOG(RHI, Warning, "DrawIndexedIndirect — Metal stub, not yet implemented");
+    // Metal indirect draw requires resolving the RHIBufferHandle to an MTLBuffer
+    // and calling drawIndexedPrimitives:indirectBuffer:indirectBufferOffset:.
+    // Not yet used by any render pass — logs a warning if called unexpectedly.
+    UZ_LOG(RHI, Warning, "DrawIndexedIndirect — Metal backend does not support indirect draw yet");
 }
 
 void MetalCommandList::DispatchIndirect(RHIBufferHandle /*argsBuffer*/, uint64_t /*argsOffset*/) {
-    // TODO: Implement via dispatchThreadgroups:indirectBuffer:indirectBufferOffset:
-    UZ_LOG(RHI, Warning, "DispatchIndirect — Metal stub, not yet implemented");
+    // Metal indirect dispatch requires resolving the RHIBufferHandle to an MTLBuffer
+    // and calling dispatchThreadgroups:indirectBuffer:indirectBufferOffset:.
+    // Not yet used by any compute pass — logs a warning if called unexpectedly.
+    UZ_LOG(RHI, Warning, "DispatchIndirect — Metal backend does not support indirect dispatch yet");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

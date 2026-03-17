@@ -16,7 +16,7 @@ using namespace uz;
 // ─────────────────────────────────────────────────────────────────────────────
 
 TEST(PerFrameCB, SizeIs256Bytes) {
-    EXPECT_EQ(sizeof(PerFrameCB), 256u);
+    EXPECT_EQ(sizeof(PerFrameCB), 512u);
 }
 
 TEST(PerFrameCB, FieldOffsets) {
@@ -55,7 +55,7 @@ TEST(PerFrameCB, MemcpyRoundTrip) {
     src.cameraPos = {1.0f, 2.0f, 3.0f, 0.0f};
     src.timeParams = {100.0f, 0.016f, 6000.0f, 0.0f};
 
-    uint8_t buffer[256];
+    uint8_t buffer[512];
     std::memcpy(buffer, &src, sizeof(src));
 
     PerFrameCB dst{};
@@ -75,13 +75,15 @@ TEST(PerObjectCB, SizeIs256Bytes) {
 }
 
 TEST(PerObjectCB, FieldOffsets) {
-    EXPECT_EQ(offsetof(PerObjectCB, model), 0u);
-    EXPECT_EQ(offsetof(PerObjectCB, normalMatrix), 64u);
-    EXPECT_EQ(offsetof(PerObjectCB, albedoIndex), 128u);
-    EXPECT_EQ(offsetof(PerObjectCB, normalIndex), 132u);
-    EXPECT_EQ(offsetof(PerObjectCB, roughnessIndex), 136u);
-    EXPECT_EQ(offsetof(PerObjectCB, metallicIndex), 140u);
-    EXPECT_EQ(offsetof(PerObjectCB, aoIndex), 144u);
+    // Scalars first (offset 0): 5 uint32 + 3 float padding = 32 bytes
+    EXPECT_EQ(offsetof(PerObjectCB, albedoIndex),    0u);
+    EXPECT_EQ(offsetof(PerObjectCB, normalIndex),    4u);
+    EXPECT_EQ(offsetof(PerObjectCB, roughnessIndex), 8u);
+    EXPECT_EQ(offsetof(PerObjectCB, metallicIndex), 12u);
+    EXPECT_EQ(offsetof(PerObjectCB, aoIndex),       16u);
+    // Matrices after scalars (offset 32)
+    EXPECT_EQ(offsetof(PerObjectCB, model),         32u);
+    EXPECT_EQ(offsetof(PerObjectCB, normalMatrix),  96u);
 }
 
 TEST(PerObjectCB, DefaultInitialization) {

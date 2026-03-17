@@ -60,10 +60,10 @@ TEST(PerFrameCB, FieldOffsets_MatchHLSL) {
 TEST(PerFrameCB, InvViewProjField_IsAfterAmbientColor_BeforePadding) {
     constexpr size_t kExpectedOffset = 128u + 16u; // ambientColor + sizeof(Vec4)
     EXPECT_EQ(offsetof(PerFrameCB, invViewProj), kExpectedOffset);
-    // Padding begins at 144 + 64 = 208, leaving 48 bytes to reach 256.
+    // Padding begins at 144 + 64 = 208, leaving 304 bytes to reach 512 (aerial perspective fields + pad).
     constexpr size_t kPaddingStart = offsetof(PerFrameCB, invViewProj) + 64u;
     EXPECT_EQ(kPaddingStart, 208u);
-    EXPECT_EQ(sizeof(PerFrameCB) - kPaddingStart, 48u);
+    EXPECT_EQ(sizeof(PerFrameCB) - kPaddingStart, 304u);
 }
 
 /// Write invViewProj and confirm round-trip through memcpy (simulates upload).
@@ -205,8 +205,9 @@ TEST(LightingCB, PointLightArrayOffset_IsZero) {
 /// pointLightCount must immediately follow the 64-element light array.
 /// 64 lights × 32 bytes = 2048 bytes.
 TEST(LightingCB, PointLightCountOffset_Is2048) {
+    // PointLightData is 48 bytes (three float4s), so 64 * 48 = 3072 bytes.
     constexpr size_t kExpected = kMaxPointLights * sizeof(PointLightData);
-    EXPECT_EQ(kExpected, 2048u);
+    EXPECT_EQ(kExpected, 3072u);
     EXPECT_EQ(offsetof(LightingCB, pointLightCount), kExpected);
 }
 

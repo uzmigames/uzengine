@@ -290,7 +290,7 @@ TEST(DrawList, GetCommandsReturnsCorrectReference) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 TEST(PerFrameCBLighting, SizeIsStill256Bytes) {
-    EXPECT_EQ(sizeof(PerFrameCB), 256u);
+    EXPECT_EQ(sizeof(PerFrameCB), 512u);
 }
 
 TEST(PerFrameCBLighting, LightingFieldOffsets) {

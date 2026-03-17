@@ -215,6 +215,39 @@ static int RendererGetDebugView(lua_State* L) {
     return 1;
 }
 
+/// uz.renderer.set_shadow_cache(enabled)
+///
+/// Enables or disables shadow caching at runtime.
+/// Equivalent to UE5's `r.Shadow.CacheEnabled` CVar.
+///
+/// @source UE5 ShadowSetup.cpp:393-398
+///
+/// # Arguments
+/// * `enabled` (boolean) — True to enable shadow caching.
+static int RendererSetShadowCache(lua_State* L) {
+    const bool enabled = lua_toboolean(L, 1) != 0;
+    SceneRenderer* renderer = GetRenderer(L);
+    if (!renderer) {
+        UZ_LOG(Scripting, Warning, "uz.renderer.set_shadow_cache: SceneRenderer not set");
+        return 0;
+    }
+    renderer->SetShadowCacheEnabled(enabled);
+    UZ_LOG(Scripting, Info, "[Lua] uz.renderer.set_shadow_cache: {}", enabled ? "enabled" : "disabled");
+    return 0;
+}
+
+/// uz.renderer.get_shadow_cache() -> boolean
+///
+/// Returns whether shadow caching is currently enabled.
+///
+/// # Returns
+/// Boolean — true if shadow caching is enabled.
+static int RendererGetShadowCache(lua_State* L) {
+    SceneRenderer* renderer = GetRenderer(L);
+    lua_pushboolean(L, renderer && renderer->IsShadowCacheEnabled());
+    return 1;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Lua C functions — uz.mesh.*
 // ─────────────────────────────────────────────────────────────────────────────
@@ -357,6 +390,12 @@ void LuaRegisterRendererAPI(lua_State* L) {
 
     lua_pushcfunction(L, RendererScreenshot);
     lua_setfield(L, -2, "screenshot");
+
+    lua_pushcfunction(L, RendererSetShadowCache);
+    lua_setfield(L, -2, "set_shadow_cache");
+
+    lua_pushcfunction(L, RendererGetShadowCache);
+    lua_setfield(L, -2, "get_shadow_cache");
 
     lua_setfield(L, -2, "renderer");
 

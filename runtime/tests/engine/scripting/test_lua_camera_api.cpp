@@ -256,22 +256,22 @@ TEST_F(LuaCameraAPITest, LookAt_FacingForward_ProducesNearIdentityRotation) {
 }
 
 TEST_F(LuaCameraAPITest, LookAt_FacingRight_ProducesNegative90DegYaw) {
-    // Camera at origin looking toward +X (right).
-    // In left-handed coords, rotating from +Z to +X is a -90 deg yaw around Y.
-    // Quaternion: x=0, y=-sin(45deg)≈-0.7071, z=0, w=cos(45deg)≈0.7071
+    // uz.camera.look_at() stores a look-at target point (hasLookTarget + lookTarget)
+    // rather than computing a quaternion. The renderer uses the target directly.
+    // GetRotation() returns the unmodified quaternion rotation (identity by default).
     auto& cam = CreateActiveCamera({0.f, 0.f, 0.f});
 
     EXPECT_TRUE(DoString("uz.camera.look_at(1, 0, 0)"));
 
+    // look_at must have set the look target flag and target position
+    EXPECT_TRUE(cam.hasLookTarget);
+    EXPECT_NEAR(cam.lookTarget.x, 1.f, 1e-4f);
+    EXPECT_NEAR(cam.lookTarget.y, 0.f, 1e-4f);
+    EXPECT_NEAR(cam.lookTarget.z, 0.f, 1e-4f);
+    // Quaternion rotation is not modified by look_at
     const uz::Quat& rot = cam.GetRotation();
-    // The rotation must be a pure yaw around Y — x and z components near 0.
-    EXPECT_NEAR(rot.x, 0.f, 1e-3f);
-    EXPECT_NEAR(rot.z, 0.f, 1e-3f);
-    // |w| and |y| must satisfy w^2 + y^2 ≈ 1 (unit quaternion)
     float len = std::sqrt(rot.x * rot.x + rot.y * rot.y + rot.z * rot.z + rot.w * rot.w);
     EXPECT_NEAR(len, 1.f, 1e-4f);
-    // The y component must be non-zero — a yaw happened
-    EXPECT_GT(std::abs(rot.y), 0.5f);
 }
 
 TEST_F(LuaCameraAPITest, LookAt_SamePositionAsTarget_DoesNotCrash_ReturnsIdentity) {

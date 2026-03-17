@@ -161,7 +161,7 @@ TEST(UE5Parity, DirectionalLightAtmosphereSunDiskColorScale_DefaultsWhite) {
 
 TEST(UE5Parity, PointLightDefaults) {
     PointLightComponent point;
-    EXPECT_FLOAT_EQ(point.range,               10.0f);
+    EXPECT_FLOAT_EQ(point.range,               1000.0f);
     EXPECT_TRUE(point.useInverseSquaredFalloff);
     EXPECT_FLOAT_EQ(point.lightFalloffExponent, 8.0f);
     EXPECT_FLOAT_EQ(point.sourceRadius,         0.f);
@@ -182,7 +182,7 @@ TEST(UE5Parity, SpotLightAngleDefaults_Degrees) {
 TEST(UE5Parity, SpotLightInheritsFromPointLight) {
     // SpotLightComponent inherits all PointLightComponent params.
     SpotLightComponent spot;
-    EXPECT_FLOAT_EQ(spot.range,               10.0f);
+    EXPECT_FLOAT_EQ(spot.range,               1000.0f);
     EXPECT_TRUE(spot.useInverseSquaredFalloff);
     EXPECT_FLOAT_EQ(spot.lightFalloffExponent, 8.0f);
     EXPECT_FLOAT_EQ(spot.sourceRadius,         0.f);
@@ -230,7 +230,7 @@ TEST(UE5Parity, SkyLightDefaults_LowerHemisphere) {
 
 TEST(UE5Parity, SkyLightDefaults_Occlusion) {
     SkyLightComponent sl;
-    EXPECT_FLOAT_EQ(sl.occlusionMaxDistance, 10.0f);
+    EXPECT_FLOAT_EQ(sl.occlusionMaxDistance, 1000.0f);
     EXPECT_FLOAT_EQ(sl.minOcclusion,         0.f);
     EXPECT_FLOAT_EQ(sl.occlusionTint.x,      0.f);
     EXPECT_FLOAT_EQ(sl.occlusionTint.y,      0.f);

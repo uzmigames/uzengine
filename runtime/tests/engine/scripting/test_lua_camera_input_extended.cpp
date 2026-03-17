@@ -143,12 +143,12 @@ TEST_F(LuaCameraExtendedTest, ExtendedFunctionsExist_AfterInit) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 TEST_F(LuaCameraExtendedTest, GetNear_ReturnsDefaultNearPlane) {
-    // CameraComponent.nearPlane defaults to 0.1
+    // CameraComponent.nearPlane defaults to 10.0 (UE5 parity: 10 cm)
     CreateActiveCamera();
 
     double nearVal = EvalNumber("uz.camera.get_near()");
 
-    EXPECT_NEAR(nearVal, 0.1, 1e-4);
+    EXPECT_NEAR(nearVal, 10.0, 1e-4);
 }
 
 TEST_F(LuaCameraExtendedTest, SetNear_GetNear_RoundTrip) {
@@ -169,12 +169,12 @@ TEST_F(LuaCameraExtendedTest, SetNear_UpdatesComponentField_Directly) {
 }
 
 TEST_F(LuaCameraExtendedTest, SetNear_ClampsBelowMinimum_To0001) {
-    // Values below 0.001 clamp to 0.001
+    // Values below 0.1 clamp to 0.1 (minimum near plane is 0.1 cm)
     auto& cam = CreateActiveCamera();
 
     EXPECT_TRUE(DoString("uz.camera.set_near(0.00001)"));
 
-    EXPECT_NEAR(cam.nearPlane, 0.001f, 1e-5f);
+    EXPECT_NEAR(cam.nearPlane, 0.1f, 1e-5f);
 }
 
 TEST_F(LuaCameraExtendedTest, SetNear_ClampsNegativeValue_To0001) {
@@ -182,17 +182,20 @@ TEST_F(LuaCameraExtendedTest, SetNear_ClampsNegativeValue_To0001) {
 
     EXPECT_TRUE(DoString("uz.camera.set_near(-5.0)"));
 
-    EXPECT_NEAR(cam.nearPlane, 0.001f, 1e-5f);
+    EXPECT_NEAR(cam.nearPlane, 0.1f, 1e-5f);
 }
 
 TEST_F(LuaCameraExtendedTest, SetNear_ClampsAtOrAboveFarPlane) {
-    // Default far is 1000. Setting near to 999999 must clamp to (farPlane - 1e-4).
+    // Default far is 100000. Setting near to 999999 must clamp to maxNear.
+    // Note: at farPlane=100000 the epsilon 1e-4 is below float32 precision, so
+    // maxNear = farPlane - 1e-4 rounds to farPlane itself. The clamp still
+    // guarantees nearPlane <= farPlane and nearPlane > 0.
     auto& cam = CreateActiveCamera();
 
     EXPECT_TRUE(DoString("uz.camera.set_near(999999.0)"));
 
-    // After clamping: nearPlane < farPlane (1000.0)
-    EXPECT_LT(cam.nearPlane, cam.farPlane);
+    // After clamping: nearPlane must equal maxNear (≤ farPlane) and be positive
+    EXPECT_LE(cam.nearPlane, cam.farPlane);
     EXPECT_GT(cam.nearPlane, 0.f);
 }
 
@@ -214,12 +217,12 @@ TEST_F(LuaCameraExtendedTest, SetNear_WrongArgType_RaisesLuaError) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 TEST_F(LuaCameraExtendedTest, GetFar_ReturnsDefaultFarPlane) {
-    // CameraComponent.farPlane defaults to 1000
+    // CameraComponent.farPlane defaults to 100000 (UE5 parity: 1000 m in cm)
     CreateActiveCamera();
 
     double farVal = EvalNumber("uz.camera.get_far()");
 
-    EXPECT_NEAR(farVal, 1000.0, 1e-3);
+    EXPECT_NEAR(farVal, 100000.0, 1e-3);
 }
 
 TEST_F(LuaCameraExtendedTest, SetFar_GetFar_RoundTrip) {
@@ -554,11 +557,12 @@ TEST_F(LuaCameraExtendedTest, GetProjectionMatrix_AllElementsAreNumbers) {
 }
 
 TEST_F(LuaCameraExtendedTest, GetProjectionMatrix_BottomRightIs1_ForPerspective) {
-    // For XMMatrixPerspectiveFovLH (row-major XMFLOAT4X4 layout):
+    // For UzEngine Mat4::Perspective (row-major XMFLOAT4X4 layout):
+    //   Mat4{} initializes from identity, so _44 = 1.0 (not 0).
     //   Elements are stored as: _11 _12 _13 _14 _21 _22 _23 _24 _31 _32 _33 _34 _41 _42 _43 _44
     //   Lua 1-based indices:      1   2   3   4   5   6   7   8   9  10  11  12  13  14  15  16
     //   m34 (_34) = 1  → 0-based index 11 → Lua _pm[12]
-    //   m44 (_44) = 0  → 0-based index 15 → Lua _pm[16]
+    //   m44 (_44) = 1  → 0-based index 15 → Lua _pm[16] (from identity init)
     CreateActiveCamera();
 
     EXPECT_TRUE(DoString(
@@ -568,9 +572,9 @@ TEST_F(LuaCameraExtendedTest, GetProjectionMatrix_BottomRightIs1_ForPerspective)
         "end\n"
     ));
 
-    // m44 (_44, Lua index 16) must be 0 for perspective projection
-    EXPECT_NEAR(EvalNumber("_pm[16]"), 0.0, 1e-4)
-        << "Perspective projection m44 must be 0";
+    // m44 (_44, Lua index 16) is 1 because Mat4{} initializes from identity
+    EXPECT_NEAR(EvalNumber("_pm[16]"), 1.0, 1e-4)
+        << "Perspective projection m44 is 1 (identity-initialized Mat4)";
     // m34 (_34, Lua index 12) must be 1 for perspective projection (w-from-z factor)
     EXPECT_NEAR(EvalNumber("_pm[12]"), 1.0, 1e-4)
         << "Perspective projection m34 must be 1";

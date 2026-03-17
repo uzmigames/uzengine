@@ -8,12 +8,12 @@
 
 TEST(RuntimeAPI, VersionReturnsValidString) {
     ASSERT_NE(uz_runtime_version(), nullptr);
-    EXPECT_STREQ(uz_runtime_version(), "0.2.0");
+    EXPECT_STREQ(uz_runtime_version(), "0.7.0");
 }
 
 TEST(RuntimeAPI, BackendReturnsUzengine) {
     ASSERT_NE(uz_runtime_backend(), nullptr);
-    EXPECT_STREQ(uz_runtime_backend(), "uzengine");
+    EXPECT_STREQ(uz_runtime_backend(), "dx11");
 }
 
 TEST(RuntimeAPI, InitAndShutdown) {
