@@ -44,7 +44,7 @@ struct GTAOSettings {
     float    fadeStartDist   = 50000.0f; ///< Distance where AO fades (cm).
     float    fadeEndDist     = 100000.0f;///< Distance where AO disappears (cm).
     float    maxFadeDepth    = 100000.0f;///< Skip AO beyond this depth (cm).
-    bool     enabled         = true;     ///< Master toggle.
+    bool     enabled         = false;    ///< Master toggle. Disabled until crash is fixed.
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
