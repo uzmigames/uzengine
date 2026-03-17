@@ -123,7 +123,18 @@ cbuffer PerFrameCB : register(b1) {
     /// 0 = AP unaffected, 1 = AP inscattering fully suppressed (height fog handles haze).
     float    heightFogContribution;
 
-    float    _framePad2[13];     ///< Padding to 512 bytes.
+    // ── Post-process film effects (unused by this shader) ──
+    float    filmGrainIntensity;  ///< Film grain intensity (consumed by film_effects_ps).
+    float    vignetteIntensity;   ///< Vignette intensity (consumed by film_effects_ps).
+    float    chromaAbIntensity;   ///< Chromatic aberration intensity (consumed by film_effects_ps).
+
+    /// @source UE5 LightRendering.cpp:640 — ContactShadowLength default 0.0 (off)
+    /// @source UE5 DeferredLightingCommon.ush:172 — ContactShadowLength > 0 enables ray march
+    /// Screen-space contact shadow ray length. 0.0 = disabled.
+    /// Positive = screen-space fraction (0.02 = 2% of depth-scaled screen ray).
+    float    contactShadowLength;
+
+    float    _framePad2[9];      ///< Padding to 512 bytes.
 };
 
 /// Single point light for the deferred lighting pass (48 bytes = three float4s).
@@ -248,6 +259,7 @@ float3 ReconstructWorldPosition(float2 uv, float depth) {
 }
 
 #include "../include/shadow_common.hlsli"
+#include "../include/contact_shadows.hlsli"
 #include "../include/shadow_debug.hlsli"
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -475,6 +487,32 @@ float4 main(FSInput input) : SV_Target {
     float shadow = 1.0f;
     if (cascadeCount > 0) {
         shadow = SampleShadowMap(worldPos, N, viewDepth, input.positionCS.xy);
+    }
+
+    // ── Contact shadows ──
+    // Screen-space ray march along light direction for fine-detail shadows
+    // at object contact points that CSM resolution cannot capture.
+    // @source UE5 DeferredLightingCommon.ush:193-223 — ApplyContactShadowWithShadowTerms
+    // Contact shadow multiplies with CSM shadow (min compositing).
+    {
+#ifdef UZ_BINDLESS
+        Texture2D<float> csDepthTex = ResourceDescriptorHeap[gBufIndices.depthIdx];
+#else
+        Texture2D<float> csDepthTex = gbufferDepth;
+#endif
+        float contactShadow = ComputeContactShadow(
+            worldPos,
+            normalize(lightDir.xyz),
+            contactShadowLength,
+            viewDepth,
+            input.positionCS.xy,
+            timeParams.z, // frameCount
+            viewProj,
+            csDepthTex,
+            linearSampler);
+
+        /// @source UE5 DeferredLightingCommon.ush:221-222 — SurfaceShadow *= ContactShadow
+        shadow *= contactShadow;
     }
 
     // ── BRDF debug split-screen ──

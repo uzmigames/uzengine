@@ -76,7 +76,11 @@ namespace uz {
 /// 456      4      gtaoSrvIndex
 /// 460      4      brdfDebugMode
 /// 464      4      heightFogContribution
-/// 468      52     _pad2[13]
+/// 468      4      filmGrainIntensity
+/// 472      4      vignetteIntensity
+/// 476      4      chromaAbIntensity
+/// 480      4      contactShadowLength
+/// 484      36     _pad2[9]
 /// ─── 512 bytes (CB boundary) ───
 /// 512      8      irradianceCubemap (RHITextureHandle, NOT in CB)
 /// 520      8      prefilteredSpecular (RHITextureHandle, NOT in CB)
@@ -135,7 +139,22 @@ struct PerFrameParams {
     uint32_t gtaoSrvIndex        = UINT32_MAX;         ///< SRV index for GTAO filtered AO texture (UINT32_MAX = no GTAO).
     uint32_t brdfDebugMode       = 0;                 ///< BRDF debug (0=off, 1=split-screen: left=old, right=new).
     float    heightFogContribution = 0.0f;            ///< AP reduction factor when height fog active (0=none, 1=full).
-    float    _pad2[13]           = {};                ///< Pad scalar section to 512 bytes.
+
+    // ── Post-process film effects (UE5 parity) ─────────────────────────
+    /// @source UE5 Scene.cpp:511 — FilmGrainIntensity default 0.0
+    float    filmGrainIntensity = 0.0f;              ///< Film grain intensity (0=off). UE5 default: 0.0.
+    /// @source UE5 Scene.cpp:505 — VignetteIntensity default 0.4
+    float    vignetteIntensity  = 0.4f;              ///< Vignette darkening intensity. UE5 default: 0.4.
+    /// @source UE5 Scene.cpp:419 — SceneFringeIntensity default 0.0
+    float    chromaAbIntensity  = 0.0f;              ///< Chromatic aberration / scene fringe intensity (0=off). UE5 default: 0.0.
+
+    /// @source UE5 LightRendering.cpp:640 — ContactShadowLength default 0.0 (off)
+    /// @source UE5 DeferredLightingCommon.ush:172 — ContactShadowLength > 0 enables ray march
+    /// Screen-space contact shadow ray length. 0.0 = disabled (UE5 default).
+    /// Positive = screen-space fraction (0.02 = 2% of depth-scaled screen ray length).
+    float    contactShadowLength = 0.0f;             ///< Contact shadow ray length (0=off, 0.02=typical).
+
+    float    _pad2[9]            = {};                ///< Pad scalar section to 512 bytes.
 
     // ── Resource handles (NOT copied to CB) ──────────────────────────────
     // These are bound by ShaderParameterBinder at their HLSL register slots.

@@ -5,7 +5,7 @@
 - [ ] 1.3 Implement luminance-dependent grain strength — compute pixel luminance, apply zone weighting: `grainMul = lerp(shadowIntensity, midtoneIntensity, smoothstep(shadowsMax*0.5, shadowsMax, luma)) * lerp(midtoneIntensity, highlightIntensity, smoothstep(highlightsMin, highlightsMax, luma))`. Multiply grain by `intensity * grainMul`.
 - [ ] 1.4 Implement chromatic grain — offset blue-noise UV slightly per R/G/B channel (e.g., +0.5 texel, +1.0 texel) for subtle color grain. Scale by `intensity * 0.3` for chromatic component.
 - [ ] 1.5 Implement grain texel scale — scale blue-noise UV by `texelSize` parameter (1.0=default, 0.5=fine grain, 2.0=coarse). UE5 default: 1.0.
-- [ ] 1.6 Integrate into final composite pass — film grain applied after tonemap + color grading, in SDR space. `output = saturate(tonemapped + grain)`.
+- [x] 1.6 Integrate into final composite pass — film grain applied after tonemap in tonemap_ps.hlsl. Uses UE5 procedural GrainFromUV (PostProcessTonemap.usf:114-117) with triangular distribution dithering (line 571). Applied as backbuffer quantization dithering (1/255). Intensity controlled via PerFrameCB.filmGrainIntensity (default 0.0).
 - [ ] 1.7 Add FilmGrainDesc to PostProcessStack — enabled/disabled, intensity, shadowIntensity, midtoneIntensity, highlightIntensity, shadowsMax, highlightsMin, highlightsMax, texelSize.
 - [ ] 1.8 Create film grain demo — scene with and without grain, intensity slider, zoom to see grain detail.
 

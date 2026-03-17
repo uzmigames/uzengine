@@ -113,7 +113,21 @@ struct PerFrameCB {
     // 0 = AP unaffected by fog, 1 = AP inscattering fully replaced by fog.
     float    heightFogContribution = 0.0f;       ///< AP reduction factor when height fog is active (0=no reduction, 1=full).
 
-    float    _pad2[13] = {};                     ///< Pad to 512 bytes.
+    // ── Post-process film effects (UE5 parity) ─────────────────────────
+    /// @source UE5 Scene.cpp:511 — FilmGrainIntensity default 0.0
+    float    filmGrainIntensity = 0.0f;         ///< Film grain intensity (0=off). UE5 default: 0.0.
+    /// @source UE5 Scene.cpp:505 — VignetteIntensity default 0.4
+    float    vignetteIntensity  = 0.4f;         ///< Vignette darkening intensity. UE5 default: 0.4.
+    /// @source UE5 Scene.cpp:419 — SceneFringeIntensity default 0.0
+    float    chromaAbIntensity  = 0.0f;         ///< Chromatic aberration / scene fringe intensity (0=off). UE5 default: 0.0.
+
+    /// @source UE5 LightRendering.cpp:640 — ContactShadowLength default 0.0 (off)
+    /// @source UE5 DeferredLightingCommon.ush:172 — ContactShadowLength > 0 enables ray march
+    /// Screen-space contact shadow ray length. 0.0 = disabled (UE5 default).
+    /// Positive = screen-space fraction (0.02 = 2% of depth-scaled screen ray length).
+    float    contactShadowLength = 0.0f;         ///< Contact shadow ray length (0=off, 0.02=typical).
+
+    float    _pad2[9] = {};                      ///< Pad to 512 bytes.
 };
 
 static_assert(sizeof(PerFrameCB) == 512, "PerFrameCB must be 512 bytes (D3D12 CB alignment)");
