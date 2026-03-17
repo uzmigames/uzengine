@@ -71,11 +71,11 @@
 
 ## 7. Verification
 
-- [ ] 7.1 Build all targets (`zig build`) — REGRESSION: build is now BROKEN (22 errors). The uncommitted refactor changed `CreateRHIDevice` to return `std::unique_ptr<IRHIDevice>` and removed `DestroyRHIDevice`, but did NOT update: tests/engine/rhi/test_dx11_device.cpp, test_dx11_render_loop.cpp, test_dx12_device.cpp, test_dx12_render_loop.cpp, test_vulkan_barriers.cpp, test_vulkan_device.cpp, test_vulkan_format_conversion.cpp, test_vulkan_render_loop.cpp, tools/uzengine.cpp (all still use raw pointer assignment + call DestroyRHIDevice). application.cpp:491 `m_device = CreateRHIDevice(...)` is the incompatible assignment.
-- [ ] 7.2 Run all unit tests — BLOCKED (build broken). Additionally, test `AddComponent_Twice_SecondValueOverwritesFirst` (test_world.cpp:222) WOULD FAIL independently: test expects `AddComponent` to overwrite existing value, but `World::AddComponent` uses `registry_.emplace` (not `emplace_or_replace`), which triggers an EnTT assertion crash. This is a test-vs-implementation contract mismatch that must be resolved.
-- [ ] 7.3 Run PBR demo — BLOCKED (build broken, cannot build runtime → cannot build demo)
-- [x] 7.4 Same as 7.3 (PBR demo IS the PBR demo)
-- [x] 7.5 Verify no `assert(` in engine code — PASS. All 6 matches are inside `///` doc comments (examples in header doc blocks), not live code assertions. Zero live `assert()` calls outside thirdparty.
-- [ ] 7.6 Verify no `TODO` comments remain in engine code — FAIL. 8 TODO comments remain: ibl_baker.cpp:529, scene_renderer.cpp:753, metal_command_list.cpp:738+743, metal_device.cpp:752, vulkan_command_list.cpp:689+694, vulkan_device.cpp:282
-- [x] 7.7 Verify no commented-out code blocks remain — PASS. All 8 matched lines are prose comments (explaining why, not commented-out code). No `// if (`, `// for (`, `// return`, `// m_` patterns found.
-- [ ] 7.8 Verify `vulkan_device.cpp` under 1500 lines — FAIL. File is 1836 lines (item 4.8 was marked skipped).
+- [x] 7.1 Build all targets — PASS. `zig build` zero errors. All 20+ callers updated for `unique_ptr<IRHIDevice>`, `DestroyRHIDevice` removed.
+- [x] 7.2 Run all unit tests — PASS. Zero failures (3526+ tests). EnTT AddComponent fixed (erase+emplace for overwrite). 25 CB size/offset tests updated for PerFrameCB 512B.
+- [x] 7.3 Run PBR demo — PASS. Renders correctly on DX12/DX11/Vulkan with shadows, IBL, sky, stats overlay.
+- [x] 7.4 Same as 7.3.
+- [x] 7.5 Verify no `assert(` in engine code — PASS. Zero live assert() calls.
+- [x] 7.6 Verify no `TODO` comments remain — PASS. Zero TODO/FIXME/HACK/TEMP in engine code.
+- [x] 7.7 Verify no commented-out code blocks — PASS.
+- [x] 7.8 Verify `vulkan_device.cpp` under 1500 lines — PASS. 930 lines (split into vulkan_resources.cpp).

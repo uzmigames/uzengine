@@ -2,6 +2,10 @@
 
 ## Priority: P0 — Technical debt, UE5 parity violations, dead code removal
 
+## Why
+
+Full codebase audit found 44 technical debt items including UE5-incompatible approximations, dead code, architecture violations, and stubs that violate CLAUDE.md rules. Must be cleaned up to maintain code quality and UE5 parity.
+
 ## Summary
 
 Full codebase audit identified **44 issues** across 6 categories: UE5-incompatible approximations, dead/orphaned code, architecture violations, stubs, magic numbers without citations, and Y-up documentation errors. These violations directly contradict CLAUDE.md rules (zero-creativity policy, no stubs, no TODOs, no analytical fallbacks). This task systematically resolves every item.
