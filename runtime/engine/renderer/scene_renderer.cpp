@@ -2035,8 +2035,8 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
                     // a single texture.
                     rc.hizSrvIdx        = m_gbuffer.depthSRV;
                     rc.sceneColorSrvIdx = m_hdrSceneColorSrv;
-                    rc.outputWidth      = vpWidth;
-                    rc.outputHeight     = vpHeight;
+                    rc.outputWidth      = m_width;
+                    rc.outputHeight     = m_height;
                     /// @source UE5 ScreenSpaceRayTracing.cpp:314 — Clamp(Intensity * 0.01, 0, 1)
                     rc.intensity        = 1.0f;
                     /// @source UE5 ScreenSpaceRayTracing.cpp:287 — -2.0 / MaxRoughness
@@ -2053,8 +2053,8 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
                     cmd->SetDescriptorTable(4, m_ssrTraceOutputUav);
 
                     // Dispatch: 8x8 thread groups
-                    const uint32_t groupsX = (vpWidth  + 7) / 8;
-                    const uint32_t groupsY = (vpHeight + 7) / 8;
+                    const uint32_t groupsX = (m_width  + 7) / 8;
+                    const uint32_t groupsY = (m_height + 7) / 8;
                     cmd->Dispatch(groupsX, groupsY, 1);
 
                     // Transition trace output: UAV → SRV for resolve pass to read
@@ -2110,8 +2110,8 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
                     rc.normalSrvIdx     = m_gbuffer.normalSRV;
                     rc.depthSrvIdx      = m_gbuffer.depthSRV;
                     rc.reserved         = 0;
-                    rc.outputWidth      = vpWidth;
-                    rc.outputHeight     = vpHeight;
+                    rc.outputWidth      = m_width;
+                    rc.outputHeight     = m_height;
                     /// @source UE5 ScreenSpaceRayTracing.cpp:314
                     rc.intensity        = 1.0f;
                     /// @source UE5 ScreenSpaceRayTracing.cpp:287
@@ -2128,8 +2128,8 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
                     cmd->SetDescriptorTable(4, m_ssrResolvedOutputUav);
 
                     // Dispatch: 8x8 thread groups
-                    const uint32_t groupsX = (vpWidth  + 7) / 8;
-                    const uint32_t groupsY = (vpHeight + 7) / 8;
+                    const uint32_t groupsX = (m_width  + 7) / 8;
+                    const uint32_t groupsY = (m_height + 7) / 8;
                     cmd->Dispatch(groupsX, groupsY, 1);
 
                     // Transition resolved output: UAV → SRV for lighting pass to read
