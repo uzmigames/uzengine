@@ -121,7 +121,7 @@ float CastContactShadowRay(
 
             if (bHit) {
                 /// @source UE5 ScreenSpaceShadowRayCast.ush:55 — off-screen masking
-                bool bValidPos = all(and(-1.0f < samplePos.xy, samplePos.xy < 1.0f));
+                bool bValidPos = all(samplePos.xy > -1.0f) && all(samplePos.xy < 1.0f);
                 return bValidPos ? (rayLength * sampleTime) : -1.0f;
             }
         }
