@@ -93,6 +93,7 @@ void PipelineLibrary::Shutdown() {
     destroyPipeline(m_skyCubemapCapturePSPipeline);
     destroyPipeline(m_depthPrepass);
     destroyPipeline(m_depthPrepassBindless);
+    destroyPipeline(m_depthPrepassInstanced);
     destroyPipeline(m_hizPyramid);
 
     // Destroy cached shaders
@@ -989,6 +990,45 @@ RHIPipelineHandle PipelineLibrary::GetDepthPrepass(bool bindless) {
     return cached;
 }
 
+RHIPipelineHandle PipelineLibrary::GetDepthPrepassInstanced() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetDepthPrepassInstanced called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_depthPrepassInstanced.IsValid()) {
+        return m_depthPrepassInstanced;
+    }
+
+    if (!EnsureInstancedShadowShaders()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIGraphicsPipelineDesc desc{};
+    desc.vertexShader  = m_instancedShadowVS;
+    desc.topology      = RHIPrimitiveTopology::TriangleList;
+    desc.rasterizer.cullMode              = RHICullMode::Back;
+    desc.rasterizer.frontCounterClockwise = false;
+    // No depth bias — same as non-instanced depth prepass.
+    desc.rasterizer.slopeScaledDepthBias  = 0.0f;
+    desc.rasterizer.depthBias             = 0.0f;
+    desc.depthStencil.depthEnable         = true;
+    desc.depthStencil.depthWrite          = true;
+    desc.depthStencil.depthFunc           = RHICompareFunc::LessEqual;
+    desc.renderTargetCount                = 0;
+    desc.depthStencilFormat               = RHIFormat::D32Float;
+    desc.debugName                        = "DepthPrepass_Instanced";
+
+    m_depthPrepassInstanced = CreateCachedPipeline(desc);
+    if (!m_depthPrepassInstanced.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create DepthPrepass_Instanced pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created DepthPrepass_Instanced pipeline");
+    }
+
+    return m_depthPrepassInstanced;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Hi-Z Pyramid Compute Pipeline
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1008,7 +1048,7 @@ bool PipelineLibrary::EnsureHiZPyramidShader() {
     shaderDesc.bytecode     = bytecode.data();
     shaderDesc.bytecodeSize = bytecode.size();
     shaderDesc.stage        = RHIShaderStage::Compute;
-    shaderDesc.entryPoint   = "CSMain";
+    shaderDesc.entryPoint   = "main";
     shaderDesc.debugName    = "hiz_pyramid_cs";
 
     m_hizPyramidCS = m_device->CreateShader(shaderDesc);

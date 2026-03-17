@@ -24,6 +24,7 @@ The rendering pipeline system is split across multiple documents covering archit
 | [12-multi-material-multi-uv.md](12-multi-material-multi-uv.md) | Planned (3+) | Submesh ranges, multi-material per mesh, UV channels (UV0–UV3), glTF import | Multi-material rendering |
 | [13-vertex-layout.md](13-vertex-layout.md) | Done (1.2) | Vertex layout system, format flags, input element generation, D3D12 binding | Vertex structure management |
 | [14-register-binding-convention.md](14-register-binding-convention.md) | **Done (1.2)** | **DX12 root signature layout, register allocation, root parameter binding** | **GPU shader binding** |
+| [15-depth-prepass-hiz.md](15-depth-prepass-hiz.md) | **Done (Phase 0.8.0)** | **Depth prepass (early-Z), Hi-Z pyramid (12-mip min-depth chain), downstream consumers (GTAO, SSR, occlusion)** | **Depth optimization & hierarchical depth** |
 | [15-shader-includes.md](15-shader-includes.md) | **Done (1.2)** | **Shared .hlsli structure, pbr_common.hlsli, shadow_common.hlsli** | **Shader code reuse** |
 | [16-material-system.md](16-material-system.md) | Planned (2.0) | High-level material system overview, .uzmat format, manager, hot-reload | Material management |
 | [17-lighting.md](17-lighting.md) | **Done (1.3+)** | **Multi-light system (8 lights max), light types, attenuation math, CPU culling** + Phase 2-4 roadmap | **Lighting systems** |
@@ -96,6 +97,13 @@ The rendering pipeline system is split across multiple documents covering archit
 2. Understand DrawCommand extensions (indexOffset, indexCount, vertexOffset)
 3. Learn vertex format flags and multi-UV layout (UV0, UV1, UV2)
 4. Study RHI backend changes (DX12, Vulkan, Metal input layouts)
+
+**Understand the depth prepass and Hi-Z pyramid**
+
+1. Read [15-depth-prepass-hiz.md](15-depth-prepass-hiz.md) for the full reference
+2. Understand how `AddDepthPrepass()` and `AddHiZPyramidPass()` wire into the render graph
+3. Learn which downstream effects consume the Hi-Z mip chain (GTAO, SSR, contact shadows)
+4. Toggle with `SceneRenderer::SetDepthPrepassEnabled(bool)` for profiling
 
 **Implement cascaded shadow maps**
 
@@ -442,6 +450,7 @@ Key decisions:
 ├── 12-vertex-layout.md                 # ★ Vertex layout factory (1.2)
 ├── 13-register-binding-convention.md   # ★ DX12 root signature, register layout (1.2)
 ├── 14-shader-includes.md               # ★ Shared .hlsli structure, pbr/shadow (1.2)
+├── 15-depth-prepass-hiz.md             # ★★ Depth prepass + Hi-Z pyramid (Phase 0.8.0)
 ├── 15-material-system.md               # High-level material system, .uzmat format (2.0)
 ├── 16-lighting.md                      # Multi-light system (1.3+)
 ├── 17-shadow-system.md                 # ★★ Cascaded shadow maps, atlas, PCF (Phase 2)

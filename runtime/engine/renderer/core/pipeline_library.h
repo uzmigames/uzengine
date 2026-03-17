@@ -270,6 +270,16 @@ public:
     /// Returns the depth prepass pipeline using the device's default bindless mode.
     [[nodiscard]] RHIPipelineHandle GetDepthPrepass();
 
+    /// Returns the instanced depth prepass pipeline (shadow_depth_vs+UZ_INSTANCED, depth-only, no bias).
+    ///
+    /// Uses `DrawIndexedInstanced` with per-instance world matrices. Only available
+    /// on SM6.6 bindless path. Identical to `GetDepthPrepass(true)` but with the
+    /// instanced vertex shader variant.
+    ///
+    /// # Returns
+    /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
+    [[nodiscard]] RHIPipelineHandle GetDepthPrepassInstanced();
+
     /// Returns the Hi-Z pyramid compute pipeline (hiz_pyramid_cs.hlsl).
     ///
     /// Compute pipeline dispatched once per mip level to downsample the depth
@@ -369,9 +379,10 @@ private:
     RHIPipelineHandle m_transmittanceLut      = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_skyCubemapCapture    = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_skyCubemapCapturePSPipeline = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_depthPrepass         = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_depthPrepassBindless = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_hizPyramid           = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_depthPrepass          = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_depthPrepassBindless  = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_depthPrepassInstanced = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_hizPyramid            = RHIPipelineHandle::Invalid();
 };
 
 } // namespace uz

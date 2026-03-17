@@ -13,13 +13,22 @@ This approach scales lighting linearly with light count rather than exponentiall
 
 ## Pipeline Architecture
 
-The deferred pipeline consists of two main passes:
+The deferred pipeline consists of two main passes, with an optional depth prepass and Hi-Z pyramid pass that execute before the GBuffer pass:
 
 ```
 Frame N:
     │
+    ├─ Depth Prepass (optional, enabled by default)
+    │   Render opaque geometry → depth-only, no color output
+    │   Fills depth buffer for early-Z rejection in GBuffer pass
+    │
+    ├─ Hi-Z Pyramid (compute, runs after Depth Prepass)
+    │   Per-mip min-depth downsample → 12 mip levels of Hi-Z data
+    │   Produces hierarchical depth for GTAO, SSR, contact shadows, occlusion culling
+    │
     ├─ GBuffer Pass (geometry)
     │   Render opaque geometry → write albedo, normal, metallic/roughness, depth
+    │   With depth prepass active: uses EQUAL depth test (early-Z rejection)
     │
     └─ Lighting Pass (fullscreen)
         Read GBuffer + evaluate directional + point lights → composite to backbuffer
@@ -581,6 +590,59 @@ This is highly efficient — leaves room for shadow passes, post-processing, and
 
 Modern GPUs execute this in parallel across millions of pixels, hiding latency via SIMD (wave-32 / warp-32).
 
+## Depth Prepass & Hi-Z Pyramid
+
+The depth prepass and Hi-Z pyramid are implemented as two dedicated render graph passes that execute between the shadow pass and the GBuffer pass. See [15-depth-prepass-hiz.md](15-depth-prepass-hiz.md) for the full reference.
+
+### Depth Prepass
+
+**Register**: `AddDepthPrepass(builder, desc)` (`depth_prepass.h/cpp`)
+
+**Purpose**: Render all opaque geometry to a depth-only target before the GBuffer pass. This fills the depth buffer so the subsequent GBuffer pass can use an `EQUAL` depth test, discarding fragments that lose the depth comparison without invoking the pixel shader. On scenes with significant overdraw this eliminates redundant texture sampling and BRDF evaluations.
+
+**State**: Enabled by default. Toggle at runtime:
+
+```cpp
+scene_renderer.SetDepthPrepassEnabled(true);   // default
+scene_renderer.SetDepthPrepassEnabled(false);  // disable for debugging
+```
+
+**Key properties**:
+- No color output — only depth is written
+- No depth bias (shadow pass sets its own bias independently)
+- Depth compare: `LessEqual` (reversed-Z: 1.0 = near, 0.0 = far)
+- Supports both bindless (SM6.6) and non-bindless (SM5) paths
+- Supports GPU instancing via the same instance buffer used by the GBuffer pass
+
+**GBuffer early-Z interaction**: When the depth prepass has populated the depth buffer, the GBuffer pass switches its depth function from `LessEqual` to `EQUAL`. Fragments that fail the depth test are culled before the pixel shader runs.
+
+> **ℹ️ Note**: The `EQUAL` optimization is tracked as item 1.3 pending in the implementation roadmap. The depth prepass writes depth correctly today; the GBuffer PSO depth function change is a one-line follow-up.
+
+### Hi-Z Pyramid
+
+**Register**: `AddHiZPyramidPass(builder, desc)` (`hiz_pyramid_pass.h/cpp`)
+
+**Purpose**: Build a hierarchical depth (Hi-Z) pyramid from the depth prepass output. Each mip level stores the minimum depth value of a 2x2 neighbourhood from the level above, making it possible for a shader to quickly determine whether a region of the screen is fully behind existing geometry.
+
+**Compute shader**: `hiz_pyramid_cs.hlsl` — based on `UE5/Engine/Shaders/Private/HZB.usf:183-293`.
+
+**Properties**:
+- Thread groups: [8, 8, 1]
+- Sampling: 4-tap `Load()` with `min()` — correct for reversed-Z (lower value = farther away)
+- Odd-dimension clamping: clamps the extra row/column rather than reading out-of-bounds
+- Mip count: up to `kHiZMaxMipLevels = 12` (covers resolutions up to 4096×4096)
+- Format: R32_FLOAT per mip (one texture per mip, each with SRV and UAV)
+- Storage: `m_hizMipLevels[]` array in `SceneRenderer`
+
+**Downstream consumers**:
+
+| Effect | Phase | How it uses Hi-Z |
+|---|---|---|
+| GTAO (ground truth ambient occlusion) | 3.15.0 | Hierarchical ray-march to find occluders |
+| Screen-space reflections (SSR) | 3.16.0 | Hi-Z ray march for reflected ray intersection |
+| Contact shadows | 3.29.0 | Depth comparison along shadow ray |
+| GPU occlusion culling | 3.x | Test object bounding box against Hi-Z mip |
+
 ## Limitations & Future Work
 
 ### Current (Milestone 1.3)
@@ -590,9 +652,12 @@ Modern GPUs execute this in parallel across millions of pixels, hiding latency v
 ✅ Cook-Torrance BRDF deferred evaluation
 ✅ Smooth attenuation (windowing function)
 
-### Phase 2 (Planned)
+### Phase 2 (Planned / In Progress)
 
-- [ ] Shadow mapping for directional light (cascaded, 4 cascades)
+- [x] Shadow mapping for directional light (cascaded, 4 cascades) — done
+- [x] Depth prepass (depth-only geometry pass before GBuffer) — done
+- [x] Hi-Z pyramid (min-depth mip chain, 12 levels) — done
+- [ ] GBuffer EQUAL depth test with depth prepass (item 1.3 pending)
 - [ ] Shadow mapping for point lights (cubemap atlasing)
 - [ ] Spot lights with cone attenuation
 - [ ] Light culling (tiled Forward+) to reduce point light iteration

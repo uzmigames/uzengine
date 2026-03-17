@@ -31,19 +31,27 @@ static constexpr uint32_t kHiZThreadGroupSize = 8;
 // HiZ Root Constants — matches cbuffer HiZConstants in hiz_pyramid_cs.hlsl
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Root constants for the Hi-Z compute shader (4 DWORDs at b0).
+/// Root constants for the Hi-Z compute shader (8 DWORDs at b0).
 ///
 /// Passed via SetRootConstants at slot 0. The shader uses integer
 /// dimensions for Load() addressing rather than UV-space transforms.
+///
+/// In bindless mode (SM6.6+), g_InputSrvIndex is used to access the input
+/// depth texture via ResourceDescriptorHeap[]. In SM5 mode, the input is
+/// bound via descriptor table at t0 and the extra fields are ignored.
 struct HiZRootConstants {
     uint32_t outputWidth;    ///< Width of the output mip level in texels.
     uint32_t outputHeight;   ///< Height of the output mip level in texels.
     uint32_t inputWidth;     ///< Width of the input mip level in texels (for clamping).
     uint32_t inputHeight;    ///< Height of the input mip level in texels (for clamping).
+    uint32_t inputSrvIndex;  ///< SRV index for bindless input depth texture.
+    uint32_t _pad0;
+    uint32_t _pad1;
+    uint32_t _pad2;
 };
 
-static_assert(sizeof(HiZRootConstants) == 16,
-              "HiZRootConstants must be exactly 4 DWORDs (16 bytes)");
+static_assert(sizeof(HiZRootConstants) == 32,
+              "HiZRootConstants must be exactly 8 DWORDs (32 bytes)");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AddHiZPyramidPass
@@ -74,16 +82,23 @@ void AddHiZPyramidPass(rg::RgBuilder& builder, const HiZPyramidPassDesc& desc)
             for (uint32_t mip = 0; mip < desc.mipCount; ++mip) {
                 const HiZMipLevel& level = desc.mipLevels[mip];
 
-                // ── Root constants: output and input dimensions ───────────
+                // ── Root constants: output/input dimensions + SRV index ───
                 HiZRootConstants rootConstants{};
                 rootConstants.outputWidth  = level.width;
                 rootConstants.outputHeight = level.height;
                 rootConstants.inputWidth   = inputWidth;
                 rootConstants.inputHeight  = inputHeight;
-                cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rootConstants), 4);
+                rootConstants.inputSrvIndex = inputSrvIndex;
+                rootConstants._pad0 = 0;
+                rootConstants._pad1 = 0;
+                rootConstants._pad2 = 0;
+                cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rootConstants), 8);
 
-                // ── Bind input SRV at descriptor table slot 2 (t0) ────────
-                cmd->SetDescriptorTable(2, inputSrvIndex);
+                // ── Bind input SRV via descriptor table (SM5 path) or
+                //    root constants (bindless path, index already set above)
+                if (!desc.bindless) {
+                    cmd->SetDescriptorTable(5, inputSrvIndex);
+                }
 
                 // ── Bind output UAV at descriptor table slot 4 (u0) ───────
                 cmd->SetDescriptorTable(4, level.uavIndex);

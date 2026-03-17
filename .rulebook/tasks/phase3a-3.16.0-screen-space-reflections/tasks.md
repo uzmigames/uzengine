@@ -1,6 +1,6 @@
 ## 1. Implementation
 
-- [ ] 1.1 Implement Hi-Z mip chain generation (`hiz_generate_cs.hlsl`) — compute shader, 2×2 min-depth reduction per mip level (6-8 mips). Output R32_FLOAT per mip. Dispatch per-mip with barrier between levels.
+- [x] 1.1 Implement Hi-Z mip chain generation — `hiz_pyramid_cs.hlsl` compute shader (existed), plus `hiz_pyramid_pass.h/.cpp` render graph pass, `depth_prepass.h/.cpp` depth-only prepass, PipelineLibrary `GetDepthPrepass()`/`GetHiZPyramid()`, SceneRenderer wiring with per-mip R32_FLOAT textures and UAV barriers. Dispatches per-mip with barrier between levels.
 - [ ] 1.2 Implement SSR ray trace compute shader (`ssr_trace_cs.hlsl`) — per pixel: reconstruct view-space position from depth, compute reflection direction from view + normal. Hi-Z march: start at mip 0, step ray, if ray behind depth go finer mip, if in front go coarser mip. Stop on hit or max steps.
 - [ ] 1.3 Implement binary refinement in trace shader — after Hi-Z finds approximate hit, bisect 8 times between last-in-front and first-behind positions for sub-pixel precision.
 - [ ] 1.4 Implement SSR resolve shader (`ssr_resolve_ps.hlsl`) — at hit UV: sample scene color (pre-tonemap HDR), apply Fresnel weighting `F0 + (1-F0)*pow(1-NdotV, 5)`, apply roughness-based mip for glossy blur, screen-edge fade `saturate((fadeEnd - edgeDist) / (fadeEnd - fadeStart))`.

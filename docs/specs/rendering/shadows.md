@@ -147,6 +147,30 @@ in `deferred_lighting_ps.hlsl`.
 | `runtime/shaders/runtime/include/shadow_debug.hlsli` | Debug visualization grid |
 | `runtime/shaders/runtime/include/dfs_common.hlsli` | DFS shader shared types |
 
+## Frame Pipeline Position
+
+The shadow pass executes before the depth prepass and GBuffer pass:
+
+```
+[Shadow Pass]      ← per-cascade, opaque geometry → shadow atlas
+      |
+      v
+[Depth Prepass]    ← all opaque geometry → depth buffer (see depth-prepass-hiz.md)
+      |
+      v
+[Hi-Z Pyramid]     ← compute, builds min-depth mip chain from depth prepass output
+      |
+      v
+[GBuffer Pass]     ← opaque geometry with early-Z (EQUAL depth test pending)
+      |
+      v
+[Lighting Pass]    ← reads shadow atlas SRV for shadow term evaluation
+```
+
+Shadow atlas SRV indices are passed to the lighting pass via `PerFrameCB` (shadow matrices, cascade splits, and atlas SRV index). The lighting pixel shader evaluates the shadow term per cascade and applies PCF or PCSS filtering.
+
+For depth prepass and Hi-Z details see [15-depth-prepass-hiz.md](../../../engine/12-rendering/15-depth-prepass-hiz.md).
+
 ## UE5 Reference
 
 | UzEngine System | UE5 Equivalent |

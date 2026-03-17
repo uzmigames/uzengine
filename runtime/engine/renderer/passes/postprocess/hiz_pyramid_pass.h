@@ -112,6 +112,11 @@ struct HiZPyramidPassDesc {
     /// Source depth buffer dimensions in texels.
     uint32_t           sourceWidth;
     uint32_t           sourceHeight;
+
+    /// Whether the device uses bindless (SM6.6+) resource access.
+    /// When true, the input SRV index is passed via root constants.
+    /// When false, the input SRV is bound via descriptor table at slot 5 (t0).
+    bool               bindless = false;
 };
 
 /// Registers a Hi-Z pyramid compute pass in the render graph.

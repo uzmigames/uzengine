@@ -401,6 +401,9 @@ void SceneRenderer::Resize(uint32_t width, uint32_t height) {
         m_hdrSceneColorSrv = m_device->GetTextureSRVIndex(m_hdrSceneColor);
     }
 
+    // Recreate Hi-Z pyramid at new resolution
+    CreateHiZPyramid(width, height);
+
     const float aspect = static_cast<float>(width) / static_cast<float>(height);
     m_camera->SetAspectRatio(aspect);
 
@@ -479,6 +482,9 @@ void SceneRenderer::Shutdown() {
         m_device->DestroyTexture(m_hdrSceneColor);
         m_hdrSceneColor = RHITextureHandle{};
     }
+
+    // ── Hi-Z Pyramid cleanup ─────────────────────────────────────
+    DestroyHiZPyramid();
 
     // ── Auto-Exposure cleanup ─────────────────────────────────────
     if (m_autoExposure) m_autoExposure->Shutdown();
@@ -1157,8 +1163,51 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     }
 
     if (m_renderPath == RenderPath::Deferred) {
-        // ── Deferred: GBuffer + lighting/debug ──────────────────────────
+        // ── Deferred: optional DepthPrepass + Hi-Z + GBuffer + lighting/debug ──
         if (!m_meshes.empty()) {
+            // ── Depth Prepass (optional, enabled by default) ─────────────
+            if (m_depthPrepassEnabled) {
+                DepthPrepassDesc zpDesc{};
+                zpDesc.depthBuffer      = depthRes;
+                zpDesc.depthTexture     = m_gbuffer.depth;
+                zpDesc.drawList         = &drawList;
+                zpDesc.cbAllocator      = m_cbRing.get();
+                zpDesc.perFrameAlloc    = perFrameAlloc;
+                zpDesc.pipeline         = pipelines->GetDepthPrepass(bindless);
+                zpDesc.meshes           = m_meshes.data();
+                zpDesc.meshCount        = static_cast<uint32_t>(m_meshes.size());
+                zpDesc.bindless         = bindless;
+                zpDesc.viewportWidth    = vpWidth;
+                zpDesc.viewportHeight   = vpHeight;
+                zpDesc.cbRingAllocator  = m_cbRing.get();
+                if (useInstancing) {
+                    zpDesc.instanced              = true;
+                    zpDesc.instancedPipeline      = pipelines->GetDepthPrepassInstanced();
+                    zpDesc.instanceBufferSrvIndex = instanceBufferSrvIndex;
+                    zpDesc.batchData              = instanceBatches.data();
+                    zpDesc.batchCount             = static_cast<uint32_t>(instanceBatches.size());
+                }
+                AddDepthPrepass(rgBuilder, zpDesc);
+
+                // ── Hi-Z Pyramid (runs after depth prepass) ─────────────
+                if (m_hizMipCount > 0) {
+                    HiZPyramidPassDesc hizDesc{};
+                    hizDesc.depthSource          = depthRes;
+                    hizDesc.depthSourceTexture   = m_gbuffer.depth;
+                    hizDesc.depthSourceSrvIndex  = m_gbuffer.depthSRV;
+                    hizDesc.mipCount             = m_hizMipCount;
+                    hizDesc.pipeline             = pipelines->GetHiZPyramid();
+                    hizDesc.sourceWidth          = m_width;
+                    hizDesc.sourceHeight         = m_height;
+                    hizDesc.bindless             = bindless;
+                    for (uint32_t i = 0; i < m_hizMipCount; ++i) {
+                        hizDesc.mipLevels[i] = m_hizMipLevels[i];
+                    }
+                    AddHiZPyramidPass(rgBuilder, hizDesc);
+                }
+            }
+
+            // ── GBuffer Pass ─────────────────────────────────────────────
             GBufferPassDesc gbDesc{};
             gbDesc.albedoTarget         = albedoRes;
             gbDesc.normalTarget         = normalRes;

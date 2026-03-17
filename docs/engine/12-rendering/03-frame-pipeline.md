@@ -33,20 +33,30 @@ Frame N:
     ├── 6. Shadow Pass
     │      Per shadow-casting light: frustum cull → shadow map render
     │
-    ├── 7. GBuffer Pass (Deferred)
-    │      Opaque geometry → Albedo, Normal, Metallic/Roughness, Emissive, Depth
+    ├── 7. Depth Prepass
+    │      Opaque geometry → depth-only, no color output
+    │      Fills depth buffer for early-Z rejection in GBuffer pass
+    │      Toggle: SceneRenderer::SetDepthPrepassEnabled(bool)
     │
-    ├── 8. Lighting Pass
+    ├── 7b. Hi-Z Pyramid
+    │      Compute pass: per-mip min-depth downsample (12 mip levels)
+    │      Produces Hi-Z mip chain for occlusion culling, SSAO, SSR, contact shadows
+    │
+    ├── 8. GBuffer Pass (Deferred)
+    │      Opaque geometry → Albedo, Normal, Metallic/Roughness, Emissive, Depth
+    │      With depth prepass active: uses EQUAL depth test for early-Z rejection
+    │
+    ├── 9. Lighting Pass
     │      Read GBuffer + shadow maps → lit result
     │      GI: light probes / screen-space / DXR (future)
     │
-    ├── 9. Transparent Pass (Forward)
-    │      Back-to-front sorted, forward shading
+    ├── 10. Transparent Pass (Forward)
+    │       Back-to-front sorted, forward shading
     │
-    ├── 10. Post-Processing
-    │       TAA → SSAO → SSR → Bloom → DoF → Motion Blur → Tonemap → DLSS/FSR
+    ├── 11. Post-Processing
+    │       TAA → SSAO (consumes Hi-Z) → SSR (consumes Hi-Z) → Bloom → DoF → Motion Blur → Tonemap → DLSS/FSR
     │
-    └── 11. Present
+    └── 12. Present
             Swapchain present → start Frame N+1
 ```
 
@@ -268,8 +278,8 @@ void OnRender() {
 | Phase | What Renders |
 |-------|-------------|
 | **Phase 1 (MVP)** | Forward shading, single light, no post-processing |
-| **Phase 2** | Deferred GBuffer, multiple lights, shadow maps, basic post (bloom + tonemap) |
-| **Phase 3** | Full post chain (TAA, SSAO, SSR), GPU culling, HZB |
+| **Phase 2** | Deferred GBuffer, multiple lights, shadow maps, depth prepass, Hi-Z pyramid, basic post (bloom + tonemap) |
+| **Phase 3** | Full post chain (TAA, SSAO, SSR using Hi-Z), GPU occlusion culling (using Hi-Z), contact shadows |
 | **Phase 4+** | Virtual geometry, visibility buffer, DLSS/FSR, DXR GI |
 
 ## Rules

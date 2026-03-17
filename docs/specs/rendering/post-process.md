@@ -25,6 +25,15 @@ in the geometry phase to populate the velocity buffer for future TAA.
 ### Pipeline Execution Order
 
 ```
+[Depth Prepass]          (geometry phase — depth-only opaque render, before GBuffer)
+         |
+         v
+[Hi-Z Pyramid]           (compute — min-depth mip chain from depth prepass output, 12 levels)
+         |                (feeds GTAO, SSR, contact shadows, GPU occlusion culling)
+         v
+[GBuffer Pass]           (geometry phase — writes albedo, normal, depth)
+         |
+         v
 [Velocity Pass]          (geometry phase — writes motion vectors to velocity buffer)
          |
          v
@@ -128,10 +137,13 @@ See `docs/specs/rendering/debug-view-modes.md` for the complete list of modes.
 
 | File | Purpose |
 |---|---|
+| `runtime/engine/renderer/passes/geometry/depth_prepass.h/cpp` | Depth-only geometry pass (DepthPrepassDesc + AddDepthPrepass) |
+| `runtime/engine/renderer/passes/postprocess/hiz_pyramid_pass.h/cpp` | Hi-Z min-depth mip chain compute pass |
 | `runtime/engine/renderer/passes/postprocess/postprocess_stack.h` | Stack descriptor and `AddPostProcessStack()` entry point |
 | `runtime/engine/renderer/passes/postprocess/auto_exposure.h/cpp` | Histogram + adapt compute passes |
 | `runtime/engine/renderer/passes/postprocess/velocity_pass.h/cpp` | Velocity buffer pass |
 | `runtime/engine/renderer/passes/postprocess/postprocess_math.h` | Shared math helpers (ACES, luminance) |
+| `runtime/shaders/runtime/compute/hiz_pyramid_cs.hlsl` | Hi-Z pyramid compute shader (UE5 HZB.usf:183-293) |
 | `runtime/shaders/runtime/postprocess/tonemap_ps.hlsl` | ACES tonemapper |
 | `runtime/shaders/runtime/postprocess/bloom_downsample_ps.hlsl` | Bloom downsample + threshold |
 | `runtime/shaders/runtime/postprocess/bloom_blur_h_ps.hlsl` | Horizontal Gaussian blur |
@@ -158,6 +170,8 @@ See `docs/specs/rendering/debug-view-modes.md` for the complete list of modes.
 
 | Feature | Status |
 |---|---|
+| Depth prepass (depth-only geometry pass) | Done |
+| Hi-Z pyramid (12-mip min-depth chain) | Done |
 | Auto-exposure histogram (64-bin) | Done |
 | Auto-exposure temporal adaptation | Done |
 | Manual EV override | Done |
@@ -166,6 +180,10 @@ See `docs/specs/rendering/debug-view-modes.md` for the complete list of modes.
 | FXAA | Done |
 | Velocity buffer pass | Done |
 | Debug view modes | Done |
+| GTAO (consumes Hi-Z) | Planned (Phase 3.15.0) |
+| Screen-space reflections (consumes Hi-Z) | Planned (Phase 3.16.0) |
+| Contact shadows (consumes Hi-Z) | Planned (Phase 3.29.0) |
+| GPU occlusion culling (consumes Hi-Z) | Planned (Phase 3.x) |
 | TAA (Halton-jittered temporal accumulation) | Planned (Phase 3) |
 | Motion blur | Planned (Phase 3) |
 | Screen-space lens flares | Planned |

@@ -276,14 +276,15 @@ half3 FilmToneMap(half3 LinearColor,
 
     // Select toe or straight based on position relative to ToeMatch
     // @source UE5 TonemapCommon.ush:207-208
-    // DXC SM6.6+ requires select() for vector conditional; UE5 uses same pattern.
-    ToeColor      = select(LogColor < ToeMatch,      ToeColor,      StraightColor);
-    ShoulderColor = select(LogColor > ShoulderMatch,  ShoulderColor, StraightColor);
+    // Use lerp+step for component-wise selection — works on both FXC (SM5) and DXC (SM6.6+).
+    // step(edge, x) returns 1 if x >= edge, 0 otherwise (per-component).
+    ToeColor      = lerp(ToeColor,      StraightColor, step(ToeMatch, LogColor));
+    ShoulderColor = lerp(ShoulderColor,  StraightColor, step(LogColor, ShoulderMatch));
 
     // Smooth blend between toe and shoulder using cubic Hermite interpolation
     // @source UE5 TonemapCommon.ush:210-213
     half3 t = saturate((LogColor - ToeMatch) / (ShoulderMatch - ToeMatch));
-    t = (ShoulderMatch < ToeMatch) ? 1 - t : t;
+    t = lerp(t, 1 - t, step(ShoulderMatch, ToeMatch));
     t = (3 - 2 * t) * t * t;
     half3 ToneColor = lerp(ToeColor, ShoulderColor, t);
 

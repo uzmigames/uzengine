@@ -43,20 +43,34 @@
 /// @source UE5 HZB.usf:13-16 — DispatchThreadIdToBufferUV, InvSize, InputViewportMaxBound
 /// UE5 passes UV-space transforms; we pass integer dimensions directly since we
 /// use Load() instead of SampleLevel(), avoiding UV coordinate arithmetic.
+#ifdef UZ_BINDLESS
+cbuffer HiZConstants : register(b0)
+{
+    uint2 g_OutputSize;      // Dimensions of the output mip level in texels
+    uint2 g_InputSize;       // Dimensions of the input mip level in texels (for clamping)
+    uint  g_InputSrvIndex;   // SRV index into ResourceDescriptorHeap for input depth
+    uint  _pad0;
+    uint  _pad1;
+    uint  _pad2;
+};
+#else
 cbuffer HiZConstants : register(b0)
 {
     uint2 g_OutputSize;  // Dimensions of the output mip level in texels
     uint2 g_InputSize;   // Dimensions of the input mip level in texels (for clamping)
 };
+#endif
 
 // ---------------------------------------------------------------------------
 // Resources
 // ---------------------------------------------------------------------------
 
-/// Source depth mip -- bound as SRV. For the first dispatch this is the depth
-/// prepass output; for subsequent dispatches it is the previous mip's UAV
-/// re-bound as SRV.
+#ifdef UZ_BINDLESS
+// Bindless: input depth accessed via ResourceDescriptorHeap[g_InputSrvIndex]
+#else
+/// Source depth mip -- bound as SRV via descriptor table (SM5 path).
 Texture2D<float>    g_InputDepth  : register(t0);
+#endif
 
 /// Destination mip -- half the resolution of g_InputDepth in each dimension.
 RWTexture2D<float>  g_OutputDepth : register(u0);
@@ -80,7 +94,7 @@ RWTexture2D<float>  g_OutputDepth : register(u0);
 /// choice for occlusion culling (if the closest depth in a tile is behind the
 /// occluder, everything in the tile is hidden).
 [numthreads(8, 8, 1)]
-void CSMain(uint3 dtid : SV_DispatchThreadID)
+void main(uint3 dtid : SV_DispatchThreadID)
 {
     // Early-out for threads beyond the output dimensions. This handles
     // non-power-of-two mip levels where the dispatch grid is rounded up.
@@ -107,10 +121,18 @@ void CSMain(uint3 dtid : SV_DispatchThreadID)
 
     // Load all 4 depth samples. Using Load (integer addressing, mip 0) avoids
     // any filtering -- we want exact texel values for the conservative reduction.
+#ifdef UZ_BINDLESS
+    Texture2D<float> inputDepth = ResourceDescriptorHeap[g_InputSrvIndex];
+    float z00 = inputDepth.Load(int3(c00, 0));
+    float z10 = inputDepth.Load(int3(c10, 0));
+    float z01 = inputDepth.Load(int3(c01, 0));
+    float z11 = inputDepth.Load(int3(c11, 0));
+#else
     float z00 = g_InputDepth.Load(int3(c00, 0));
     float z10 = g_InputDepth.Load(int3(c10, 0));
     float z01 = g_InputDepth.Load(int3(c01, 0));
     float z11 = g_InputDepth.Load(int3(c11, 0));
+#endif
 
     // Conservative reduction: min of all 4 samples.
     // Reversed-Z: min = closest to camera = most conservative for occlusion.
