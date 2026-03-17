@@ -16,6 +16,23 @@
 namespace uz {
 
 // ─────────────────────────────────────────────────────────────────────────────
+// EMobility — primitive mobility classification for shadow caching
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Primitive mobility for shadow cache draw list filtering.
+///
+/// Mirrors `SceneComponent::Mobility` at the renderer level to avoid coupling
+/// the draw list to ECS headers. The scene renderer maps from the ECS enum
+/// to this enum when building draw commands.
+///
+/// @source UE5 EngineTypes.h — EComponentMobility::Type
+enum class EMobility : uint8_t {
+    Static,      ///< Never moves — eligible for shadow map caching.
+    Stationary,  ///< Baked lighting but may have dynamic shadows. Treated as Static for shadow cache.
+    Movable      ///< Fully dynamic — re-rendered every frame.
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // DrawCommand — a single recorded draw invocation
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -50,6 +67,13 @@ struct DrawCommand {
     uint32_t metallicSrvIndex  = 0;
     /// SRV heap index for AO map (0 = 1.0 default).
     uint32_t aoSrvIndex        = 0;
+
+    /// Primitive mobility for shadow cache filtering.
+    ///
+    /// Static/Stationary primitives are cached in the static shadow atlas.
+    /// Movable primitives are rendered every frame into the dynamic shadow atlas.
+    /// Default: Movable (fully dynamic, backward compatible).
+    EMobility mobility = EMobility::Movable;
 
     /// Texture handles for SM5 (non-bindless) SetFragmentTexture binding.
     /// These are ignored on SM6.6 bindless where SRV indices are used directly.

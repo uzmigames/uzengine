@@ -68,8 +68,9 @@ void AddSkyAtmospherePass(rg::RgBuilder& builder, const SkyAtmospherePassDesc& d
             } else {
                 cmd->SetFragmentTexture(0, desc.depthTexture);
                 // t1: transmittance LUT (non-bindless, SM5 path)
-                // Note: SM5 sky shader uses USE_TRANSMITTANCE_LUT define — if LUT not
-                // available (UINT32_MAX) the shader falls back to the ray-march path.
+                if (desc.transmittanceLutTexture.IsValid()) {
+                    cmd->SetFragmentTexture(1, desc.transmittanceLutTexture);
+                }
             }
 
             // ── Viewport and scissor ─────────────────────────────────────

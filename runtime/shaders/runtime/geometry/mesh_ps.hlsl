@@ -121,11 +121,7 @@ cbuffer ShadowDataCB : register(b4) {
     uint     dfsOutputSrvIndex;              // SRV index for DFS result texture. 0xFFFFFFFF = not bound.
 };
 
-// ── Accessor helpers for packed float4 cascade arrays ──
-#define cascadeSplits(i)     (cascadeSplitsPacked[(i)/4][(i)%4])
-#define cascadeFadeStarts(i) (cascadeFadeStartsPacked[(i)/4][(i)%4])
-#define cascadeDepthBias(i)  (cascadeDepthBiasPacked[(i)/4][(i)%4])
-#define cascadeNormalBias(i) (cascadeNormalBiasPacked[(i)/4][(i)%4])
+// Cascade array accessors defined in shadow_common.hlsli (included below).
 
 #ifndef UZ_BINDLESS
 Texture2D<float4> albedoTexture    : register(t0);

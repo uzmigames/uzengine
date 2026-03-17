@@ -44,7 +44,7 @@ cbuffer ExposureParams : register(b0)
 
 /// Global luminance histogram — 64 bins x uint32.
 /// Must be cleared to zero before each frame's dispatch.
-RWByteAddressBuffer g_HistogramUAV : register(u0);
+RWStructuredBuffer<uint> g_HistogramUAV : register(u0);
 
 /// SM5 non-bindless: HDR scene color bound at t0 via SetFragmentTexture(0).
 #ifndef UZ_BINDLESS
@@ -137,7 +137,8 @@ void main(uint3 dtid : SV_DispatchThreadID, uint gi : SV_GroupIndex)
         uint count = g_LocalHistogram[gi];
         if (count > 0)
         {
-            g_HistogramUAV.InterlockedAdd(gi * 4, count);
+            uint unused;
+            InterlockedAdd(g_HistogramUAV[gi], count, unused);
         }
     }
 }

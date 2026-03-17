@@ -12,7 +12,6 @@
 /// - `SkyAtmosphereComponent`          — Earth-like defaults, TransformMode enum, enable flag
 /// - `HeightFogComponent`              — UE5 defaults, second layer, inscattering, control
 /// - `SkyLightComponent`               — intensity, source type, lower hemisphere, occlusion
-/// - `EquirectToCubemapRootConstants`  — size, field offsets, write/read, memcpy
 /// - `SkyCubemapCaptureRootConstants`  — size, field offsets, write/read, memcpy
 /// - `TransmittanceLutRootConstants`   — size, field offsets, write/read, memcpy, Earth invariant
 /// - `SkyAtmospherePassDesc`           — transmittanceLutSrvIndex default sentinel
@@ -26,7 +25,6 @@
 #include "height_fog_component.h"
 #include "sky_light_component.h"
 #include "sky_cubemap_capture_pass.h"
-#include "equirect_to_cubemap_pass.h"
 #include "transmittance_lut_pass.h"
 #include "sky_atmosphere_pass.h"
 #include "height_fog_pass.h"
@@ -713,44 +711,6 @@ TEST(SkyLightComponent, CanSetAllFields) {
     EXPECT_FLOAT_EQ(comp.occlusionTint.x, 0.02f);
     EXPECT_FLOAT_EQ(comp.occlusionExponent, 2.0f);
     EXPECT_FALSE(comp.enabled);
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// EquirectToCubemapRootConstants — size, field offsets, write/read, memcpy
-// ─────────────────────────────────────────────────────────────────────────────
-
-TEST(EquirectToCubemapRootConstants, SizeIs16Bytes) {
-    // 4 DWORDs: cubemapSize(4) + equirectSrvIndex(4) + _pad[2](8)
-    EXPECT_EQ(sizeof(EquirectToCubemapRootConstants), 16u);
-}
-
-TEST(EquirectToCubemapRootConstants, FieldOffsets) {
-    EXPECT_EQ(offsetof(EquirectToCubemapRootConstants, cubemapSize),      0u);
-    EXPECT_EQ(offsetof(EquirectToCubemapRootConstants, equirectSrvIndex), 4u);
-}
-
-TEST(EquirectToCubemapRootConstants, WriteAndReadBack) {
-    EquirectToCubemapRootConstants rc{};
-    rc.cubemapSize      = 256u;
-    rc.equirectSrvIndex = 15u;
-
-    EXPECT_EQ(rc.cubemapSize,      256u);
-    EXPECT_EQ(rc.equirectSrvIndex,  15u);
-}
-
-TEST(EquirectToCubemapRootConstants, MemcpyRoundTrip) {
-    EquirectToCubemapRootConstants src{};
-    src.cubemapSize      = 512u;
-    src.equirectSrvIndex = 31u;
-
-    uint8_t buffer[16];
-    std::memcpy(buffer, &src, sizeof(src));
-
-    EquirectToCubemapRootConstants dst{};
-    std::memcpy(&dst, buffer, sizeof(dst));
-
-    EXPECT_EQ(dst.cubemapSize,      512u);
-    EXPECT_EQ(dst.equirectSrvIndex,  31u);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

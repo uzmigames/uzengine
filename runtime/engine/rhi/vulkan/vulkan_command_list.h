@@ -122,6 +122,7 @@ private:
     RHIQueueType         m_queueType = RHIQueueType::Graphics;
     bool                 m_inRenderPass = false;
     bool                 m_descriptorsDirty = false;
+    bool                 m_computePipelineBound = false;
 
     /// Tracks all descriptor sets allocated this frame for batch-free on reset.
     static constexpr uint32_t kMaxDescriptorSetsPerFrame = 4096;
@@ -131,8 +132,14 @@ private:
     /// Bitmask of bindings that have been written to the current frame's working
     /// descriptor set. Only written bindings are copied in AllocateAndCopyDescriptorSet —
     /// copying unwritten (uninitialized) bindings is undefined behaviour in Vulkan.
-    static constexpr uint32_t kTotalBindings = 64;
+    static constexpr uint32_t kTotalBindings = 64; // 16 textures + 16 samplers + 16 CBVs + 16 UAVs
     uint64_t             m_writtenBindingsMask = 0; // bit i = binding i was written
+
+    /// Temporary per-slice/mip image views created in BeginRenderPass for
+    /// non-zero arraySlice or mipLevel. Destroyed in EndRenderPass.
+    static constexpr uint32_t kMaxTempImageViews = 8;
+    VkImageView          m_tempImageViews[kMaxTempImageViews] = {};
+    uint32_t             m_tempImageViewCount = 0;
 };
 
 } // namespace uz

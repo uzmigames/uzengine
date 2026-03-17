@@ -7,11 +7,14 @@
 #include "gbuffer_pass.h"
 
 #include "constant_buffers.h"
+#include "gbuffer_per_object_params.h"
 #include "multi_light.h"
 #include "draw_list.h"
+#include "per_frame_params.h"
 #include "render_graph_builder.h"
 #include "render_graph_pass.h"
 #include "root_slots.h"
+#include "shader_parameter_binder.h"
 #include "engine/rhi/rhi.h"
 
 #include "engine_assert.h"
@@ -74,9 +77,21 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
             // ── Bind pipeline and shared per-frame state ─────────────────
             cmd->SetPipeline(desc.pipeline);
 
-            cmd->SetRootCBV(kSlotPerFrame, desc.perFrameAlloc.bufferHandle,
-                            desc.perFrameAlloc.offsetBytes,
-                            desc.perFrameAlloc.cpuPtr, desc.perFrameAlloc.sizeBytes);
+            // ── Bind per-frame CB ────────────────────────────────────────
+            if (desc.perFrameParams != nullptr && desc.cbRingAllocator != nullptr) {
+                // Binder path: upload PerFrameParams CB via metadata.
+                // GBuffer VS only reads viewProj from b1 — no IBL textures
+                // needed here, but the binder handles the full struct uniformly.
+                ShaderParameterBinder::BindCB(
+                    cmd, desc.perFrameParams,
+                    PerFrameParams::GetMetadata(),
+                    *desc.cbRingAllocator, kSlotPerFrame);
+            } else {
+                // Legacy path: use pre-allocated CB allocation.
+                cmd->SetRootCBV(kSlotPerFrame, desc.perFrameAlloc.bufferHandle,
+                                desc.perFrameAlloc.offsetBytes,
+                                desc.perFrameAlloc.cpuPtr, desc.perFrameAlloc.sizeBytes);
+            }
 
             // ── Viewport and scissor ─────────────────────────────────────
             RHIViewport vp{};
@@ -115,26 +130,30 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
                 cmd->SetRootConstants(kSlotRootConstants, rootConstants, 2);
                 cmd->SetIndexBuffer(mesh0.indexBuffer, mesh0.indexFormat, 0);
 
+                // Select allocator: prefer cbRingAllocator (binder path), fall back to cbAllocator.
+                CBRingAllocator& ringAlloc = desc.cbRingAllocator != nullptr
+                                             ? *desc.cbRingAllocator : *desc.cbAllocator;
+
                 for (uint32_t bi = 0; bi < desc.batchCount; ++bi) {
                     const auto& batch = desc.batchData[bi];
-                    // Per-batch material in PerObjectCB (shared by all instances).
-                    PerObjectCB perObject{};
-                    perObject.albedoIndex    = batch.albedoSrvIndex;
-                    perObject.normalIndex    = batch.normalSrvIndex;
-                    perObject.roughnessIndex = batch.roughnessSrvIndex;
-                    perObject.metallicIndex  = batch.metallicSrvIndex;
-                    perObject.aoIndex        = batch.aoSrvIndex;
+                    // Per-batch material in GBufferPerObjectParams (shared by all instances).
+                    // Instanced path is bindless-only, so no SM5 texture handles needed.
+                    GBufferPerObjectParams perObjParams{};
+                    perObjParams.albedoIndex    = batch.albedoSrvIndex;
+                    perObjParams.normalIndex    = batch.normalSrvIndex;
+                    perObjParams.roughnessIndex = batch.roughnessSrvIndex;
+                    perObjParams.metallicIndex  = batch.metallicSrvIndex;
+                    perObjParams.aoIndex        = batch.aoSrvIndex;
 
-                    CBAllocation objAlloc = desc.cbAllocator->Allocate(sizeof(PerObjectCB));
+                    CBAllocation objAlloc = ShaderParameterBinder::BindCB(
+                        cmd, &perObjParams,
+                        GBufferPerObjectParams::GetMetadata(),
+                        ringAlloc, kSlotPerObject);
                     if (objAlloc.cpuPtr == nullptr) {
                         UZ_LOG(Renderer, Error,
                                "GBufferPass(instanced): CB ring exhausted at batch {}", drawCallCount);
                         break;
                     }
-                    std::memcpy(objAlloc.cpuPtr, &perObject, sizeof(PerObjectCB));
-
-                    cmd->SetRootCBV(kSlotPerObject, objAlloc.bufferHandle, objAlloc.offsetBytes,
-                                    objAlloc.cpuPtr, sizeof(PerObjectCB));
 
                     cmd->DrawIndexed(mesh0.indexCount, batch.instanceCount,
                                      0, 0, batch.firstInstance);
@@ -171,32 +190,63 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
                         lastBoundMeshId = drawCmd.meshId;
                     }
 
-                    PerObjectCB perObject{};
-                    perObject.model        = drawCmd.worldMatrix;
-                    perObject.normalMatrix = drawCmd.normalMatrix;
-                    perObject.albedoIndex    = drawCmd.albedoSrvIndex;
-                    perObject.normalIndex    = drawCmd.normalSrvIndex;
-                    perObject.roughnessIndex = drawCmd.roughnessSrvIndex;
-                    perObject.metallicIndex  = drawCmd.metallicSrvIndex;
-                    perObject.aoIndex        = drawCmd.aoSrvIndex;
+                    if (desc.cbRingAllocator != nullptr) {
+                        // Binder path: fill GBufferPerObjectParams and bind CB + textures via metadata.
+                        GBufferPerObjectParams perObjParams{};
+                        perObjParams.model          = drawCmd.worldMatrix;
+                        perObjParams.normalMatrix   = drawCmd.normalMatrix;
+                        perObjParams.albedoIndex    = drawCmd.albedoSrvIndex;
+                        perObjParams.normalIndex    = drawCmd.normalSrvIndex;
+                        perObjParams.roughnessIndex = drawCmd.roughnessSrvIndex;
+                        perObjParams.metallicIndex  = drawCmd.metallicSrvIndex;
+                        perObjParams.aoIndex        = drawCmd.aoSrvIndex;
 
-                    CBAllocation objAlloc = desc.cbAllocator->Allocate(sizeof(PerObjectCB));
-                    if (objAlloc.cpuPtr == nullptr) {
-                        UZ_LOG(Renderer, Error,
-                               "GBufferPass: CB ring exhausted at draw command {}", drawCallCount);
-                        break;
-                    }
-                    std::memcpy(objAlloc.cpuPtr, &perObject, sizeof(PerObjectCB));
+                        // Set texture handles with fallbacks for SM5 binding
+                        perObjParams.albedoTexture    = drawCmd.albedoTexture.IsValid()    ? drawCmd.albedoTexture    : desc.fallbackWhite;
+                        perObjParams.normalTexture    = drawCmd.normalTexture.IsValid()    ? drawCmd.normalTexture    : desc.fallbackNormal;
+                        perObjParams.roughnessTexture = drawCmd.roughnessTexture.IsValid() ? drawCmd.roughnessTexture : desc.fallbackWhite;
+                        perObjParams.metallicTexture  = drawCmd.metallicTexture.IsValid()  ? drawCmd.metallicTexture  : desc.fallbackBlack;
+                        perObjParams.aoTexture        = drawCmd.aoTexture.IsValid()        ? drawCmd.aoTexture        : desc.fallbackWhite;
 
-                    cmd->SetRootCBV(kSlotPerObject, objAlloc.bufferHandle, objAlloc.offsetBytes,
-                                    objAlloc.cpuPtr, sizeof(PerObjectCB));
+                        CBAllocation objAlloc = ShaderParameterBinder::Bind(
+                            cmd, &perObjParams,
+                            GBufferPerObjectParams::GetMetadata(),
+                            *desc.cbRingAllocator, kSlotPerObject,
+                            desc.bindless);
+                        if (objAlloc.cpuPtr == nullptr) {
+                            UZ_LOG(Renderer, Error,
+                                   "GBufferPass: CB ring exhausted at draw command {}", drawCallCount);
+                            break;
+                        }
+                    } else {
+                        // Legacy path: manual PerObjectCB + SetFragmentTexture.
+                        PerObjectCB perObject{};
+                        perObject.model        = drawCmd.worldMatrix;
+                        perObject.normalMatrix = drawCmd.normalMatrix;
+                        perObject.albedoIndex    = drawCmd.albedoSrvIndex;
+                        perObject.normalIndex    = drawCmd.normalSrvIndex;
+                        perObject.roughnessIndex = drawCmd.roughnessSrvIndex;
+                        perObject.metallicIndex  = drawCmd.metallicSrvIndex;
+                        perObject.aoIndex        = drawCmd.aoSrvIndex;
 
-                    if (!desc.bindless) {
-                        cmd->SetFragmentTexture(0, drawCmd.albedoTexture.IsValid()    ? drawCmd.albedoTexture    : desc.fallbackWhite);
-                        cmd->SetFragmentTexture(1, drawCmd.normalTexture.IsValid()    ? drawCmd.normalTexture    : desc.fallbackNormal);
-                        cmd->SetFragmentTexture(2, drawCmd.roughnessTexture.IsValid() ? drawCmd.roughnessTexture : desc.fallbackWhite);
-                        cmd->SetFragmentTexture(3, drawCmd.metallicTexture.IsValid()  ? drawCmd.metallicTexture  : desc.fallbackBlack);
-                        cmd->SetFragmentTexture(4, drawCmd.aoTexture.IsValid()        ? drawCmd.aoTexture        : desc.fallbackWhite);
+                        CBAllocation objAlloc = desc.cbAllocator->Allocate(sizeof(PerObjectCB));
+                        if (objAlloc.cpuPtr == nullptr) {
+                            UZ_LOG(Renderer, Error,
+                                   "GBufferPass: CB ring exhausted at draw command {}", drawCallCount);
+                            break;
+                        }
+                        std::memcpy(objAlloc.cpuPtr, &perObject, sizeof(PerObjectCB));
+
+                        cmd->SetRootCBV(kSlotPerObject, objAlloc.bufferHandle, objAlloc.offsetBytes,
+                                        objAlloc.cpuPtr, sizeof(PerObjectCB));
+
+                        if (!desc.bindless) {
+                            cmd->SetFragmentTexture(0, drawCmd.albedoTexture.IsValid()    ? drawCmd.albedoTexture    : desc.fallbackWhite);
+                            cmd->SetFragmentTexture(1, drawCmd.normalTexture.IsValid()    ? drawCmd.normalTexture    : desc.fallbackNormal);
+                            cmd->SetFragmentTexture(2, drawCmd.roughnessTexture.IsValid() ? drawCmd.roughnessTexture : desc.fallbackWhite);
+                            cmd->SetFragmentTexture(3, drawCmd.metallicTexture.IsValid()  ? drawCmd.metallicTexture  : desc.fallbackBlack);
+                            cmd->SetFragmentTexture(4, drawCmd.aoTexture.IsValid()        ? drawCmd.aoTexture        : desc.fallbackWhite);
+                        }
                     }
 
                     cmd->DrawIndexed(mesh.indexCount);
@@ -205,8 +255,6 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
             }
 
             cmd->EndRenderPass();
-
-            // Draw call count available via stat counters — no per-frame log.
         });
     });
 }

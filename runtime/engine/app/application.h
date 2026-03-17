@@ -209,7 +209,7 @@ private:
     uint32_t m_shadowDebugMode = 0;  ///< Shadow/buffer debug mode from --shadow-debug CLI.
 
     // ── Platform objects (raw — matched lifetime to Run() scope) ─────────
-    PlatformWindow*  m_window    = nullptr;
+    std::unique_ptr<PlatformWindow> m_window;
     IRHIDevice*      m_device    = nullptr;
     IRHISwapChain*   m_swapChain = nullptr;
     IRHICommandList* m_cmdList   = nullptr;

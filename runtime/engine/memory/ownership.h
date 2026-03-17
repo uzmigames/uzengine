@@ -70,7 +70,7 @@
 
 #ifndef UZ_SHIPPING
 #include <atomic>
-#include <cassert>
+#include "engine_assert.h"
 #include <cstdio>
 #endif
 
@@ -114,7 +114,7 @@ struct BorrowTracker {
         int32_t mut = mutableCount.load(std::memory_order_acquire);
         if (mut != 0) {
             std::fprintf(stderr, "UZ_BORROW: immutable borrow while mutable borrow active!\n");
-            assert(false && "Borrow violation: immutable borrow while mutable borrow active");
+            UZ_CHECK(false);
         }
         immutableCount.fetch_add(1, std::memory_order_release);
     }
@@ -125,7 +125,7 @@ struct BorrowTracker {
     /// Asserts if `immutableCount` was already 0 (double-release).
     void ReleaseImmutable() {
         int32_t prev = immutableCount.fetch_sub(1, std::memory_order_release);
-        assert(prev > 0 && "Released immutable borrow that wasn't held");
+        UZ_CHECK(prev > 0);
     }
 
     /// Registers a new mutable borrow (exclusive access).
@@ -138,11 +138,11 @@ struct BorrowTracker {
         if (imm != 0) {
             std::fprintf(stderr, "UZ_BORROW: mutable borrow while %d immutable borrows active!\n",
                          imm);
-            assert(false && "Borrow violation: mutable borrow while immutable borrows active");
+            UZ_CHECK(false);
         }
         if (mut != 0) {
             std::fprintf(stderr, "UZ_BORROW: double mutable borrow!\n");
-            assert(false && "Borrow violation: double mutable borrow");
+            UZ_CHECK(false);
         }
         mutableCount.fetch_add(1, std::memory_order_release);
     }
@@ -153,7 +153,7 @@ struct BorrowTracker {
     /// Asserts if `mutableCount` was already 0 (double-release).
     void ReleaseMutable() {
         int32_t prev = mutableCount.fetch_sub(1, std::memory_order_release);
-        assert(prev > 0 && "Released mutable borrow that wasn't held");
+        UZ_CHECK(prev > 0);
     }
 };
 

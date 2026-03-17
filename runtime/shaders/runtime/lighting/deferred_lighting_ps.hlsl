@@ -29,6 +29,7 @@
 #include "../include/sh_irradiance.hlsli"
 #include "../include/octahedral.hlsli"
 #include "../include/math_util.hlsli"
+#include "../include/aerial_perspective.hlsli"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Input Structure
@@ -153,12 +154,7 @@ cbuffer ShadowDataCB : register(b4) {
     uint     dfsOutputSrvIndex;              ///< SRV index for DFS result texture (R16_FLOAT screen-space). 0xFFFFFFFF = not bound.
 };
 
-// ── Accessor helpers for packed float4 cascade arrays ──
-// Indexes into float4[2] as if it were float[8].
-#define cascadeSplits(i)     (cascadeSplitsPacked[(i)/4][(i)%4])
-#define cascadeFadeStarts(i) (cascadeFadeStartsPacked[(i)/4][(i)%4])
-#define cascadeDepthBias(i)  (cascadeDepthBiasPacked[(i)/4][(i)%4])
-#define cascadeNormalBias(i) (cascadeNormalBiasPacked[(i)/4][(i)%4])
+// Cascade array accessors defined in shadow_common.hlsli (included below).
 
 // ─────────────────────────────────────────────────────────────────────────────
 // G-Buffer Textures & Sampler
@@ -416,40 +412,10 @@ float4 main(FSInput input) : SV_Target {
     // ── Combine ──
     float3 color = ambient + Lo;
 
-    // ── Aerial Perspective (atmospheric scattering on geometry) ──────────
-    // Distant objects are tinted by the sky color due to atmospheric scattering
-    // between the camera and the surface. This creates the characteristic blue
-    // haze on distant geometry that UE5 achieves via a 3D volume texture.
-    // This is a simplified per-pixel approximation using Rayleigh scattering.
-    {
-        float dist = length(worldPos - cameraPos.xyz);
-        float distKm = dist * 0.00001f;  // cm to km (UE5 parity: 1 unit = 1cm)
-
-        // Rayleigh scattering coefficients (Earth atmosphere, km^-1)
-        // Same values used in sky_atmosphere_ps.hlsl
-        static const float3 kRayleighBeta = float3(5.802e-3f, 13.558e-3f, 33.1e-3f);
-
-        // Optical depth along the view ray (simplified: constant density at sea level)
-        // Scale by a factor to match UE5 aerial perspective intensity
-        float3 opticalDepth = kRayleighBeta * distKm * 2.0f;
-
-        // Transmittance: how much of the original surface color reaches the camera
-        float3 transmittance = exp(-opticalDepth);
-
-        // Inscattering: sky color accumulated along the ray
-        // Use the SH L0 (constant ambient) as the sky color source
-        float3 skyInscatter = float3(
-            skyIrradianceSH[0].w / (3.14159f * 0.282095f),  // undo the SH packing to get raw avg color
-            skyIrradianceSH[1].w / (3.14159f * 0.282095f),
-            skyIrradianceSH[2].w / (3.14159f * 0.282095f)
-        );
-        skyInscatter = max(skyInscatter, float3(0.15f, 0.2f, 0.35f));  // minimum sky color
-
-        float3 inscattering = skyInscatter * (1.0f - transmittance);
-
-        // Apply: surface fades toward sky color with distance
-        color = color * transmittance + inscattering;
-    }
+    // Aerial Perspective: disabled. UE5 uses a precomputed AerialPerspectiveLUT
+    // (3D volume texture, SkyAtmosphere.usf). The simplified per-pixel Rayleigh
+    // approximation that was here had invented compensation factors (* 2.0f)
+    // and minimum clamps not present in UE5. Re-enable when proper LUT is implemented.
 
     // ── Buffer Visualization Grid — tile dispatch ──
     if (gridActive) {

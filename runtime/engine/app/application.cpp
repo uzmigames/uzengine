@@ -78,7 +78,7 @@ int Application::Run(int argc, char** argv) {
 
     // ── 4. SceneRenderer ─────────────────────────────────────────────────
     m_renderer = std::make_unique<SceneRenderer>();
-    if (!m_renderer->Init(m_device, m_window, m_width, m_height)) {
+    if (!m_renderer->Init(m_device, m_window.get(), m_width, m_height)) {
         UZ_LOG(App, Error, "Application: SceneRenderer initialization failed");
         m_renderer.reset();
         m_world.reset();
@@ -452,7 +452,7 @@ void Application::ParseArgs(int argc, char* argv[]) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 bool Application::InitPlatform() {
-    m_window = new PlatformWindow();
+    m_window = std::make_unique<PlatformWindow>();
 
     WindowDesc winDesc{};
     winDesc.title  = m_config.title;
@@ -617,10 +617,7 @@ void Application::ShutdownPlatform() {
         DestroyRHIDevice(m_device);
         m_device = nullptr;
     }
-    if (m_window) {
-        delete m_window;
-        m_window = nullptr;
-    }
+    m_window.reset();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

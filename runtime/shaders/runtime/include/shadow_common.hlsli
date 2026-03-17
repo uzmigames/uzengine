@@ -10,6 +10,39 @@
 #include "pcss.hlsli"
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Cascade Array Accessors
+// ─────────────────────────────────────────────────────────────────────────────
+//
+// ShadowDataCB stores per-cascade arrays as float4[2] packed pairs to match
+// C++ float[8] layout (32 bytes). These helpers replace the old #define macros
+// with proper functions. The cbuffer must declare:
+//   float4 cascadeSplitsPacked[2];
+//   float4 cascadeFadeStartsPacked[2];
+//   float4 cascadeDepthBiasPacked[2];
+//   float4 cascadeNormalBiasPacked[2];
+
+/// Unpacks cascade split distance at index i from packed float4[2] array.
+float GetCascadeSplit(uint i, float4 packed[2]) { return packed[i / 4][i % 4]; }
+
+/// Unpacks cascade fade start at index i from packed float4[2] array.
+float GetCascadeFadeStart(uint i, float4 packed[2]) { return packed[i / 4][i % 4]; }
+
+/// Unpacks cascade depth bias at index i from packed float4[2] array.
+float GetCascadeDepthBias(uint i, float4 packed[2]) { return packed[i / 4][i % 4]; }
+
+/// Unpacks cascade normal bias at index i from packed float4[2] array.
+float GetCascadeNormalBias(uint i, float4 packed[2]) { return packed[i / 4][i % 4]; }
+
+// Convenience macros using the cbuffer names directly.
+// These replace the old per-shader #define cascadeSplits(i) macros.
+#ifndef cascadeSplits
+#define cascadeSplits(i)     GetCascadeSplit((i), cascadeSplitsPacked)
+#define cascadeFadeStarts(i) GetCascadeFadeStart((i), cascadeFadeStartsPacked)
+#define cascadeDepthBias(i)  GetCascadeDepthBias((i), cascadeDepthBiasPacked)
+#define cascadeNormalBias(i) GetCascadeNormalBias((i), cascadeNormalBiasPacked)
+#endif
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -47,18 +80,14 @@ float2 GetCascadeTileSize(uint cols, uint totalCascades) {
 }
 
 /// Shadow transition scale. Controls the fade region width.
-/// UE5 uses 60.0 WITH a depth bias of ~0.004 in the shadow VS.
-/// Since we apply bias via rasterizer state (smaller effect), we use
-/// a lower scale to avoid over-shadowing. This will be tuned after
-/// implementing UE5's shadow VS depth bias.
+///
+/// @source UE5 LightSceneInfo.cpp:341 — SoftTransitionScale = 1.0f / TransitionSize
+///   UE5 computes this dynamically per shadow projection. Forward path uses 40
+///   (ForwardShadowingCommon.ush:30) for static shadows and 4000 for dynamic.
+/// @deviations UE5 uses a per-projection dynamic value, not a global constant.
+///   This fixed value is a placeholder until per-cascade transition scale is
+///   passed via ShadowDataCB.
 static const float kShadowTransitionScale = 512.0f;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Shadow Occlusion — UE5 Manual Comparison (CalculateOcclusion)
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Shadow occlusion placeholder — actual comparison done via SampleCmpLevelZero.
-/// The hardware comparison sampler (LESS) handles: reference < stored → 1.0 (lit).
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PCF Shadow Sampling — 5x5 Manual Comparison (UE5 parity)
@@ -127,6 +156,8 @@ float SampleShadowPoisson(float2 atlasUV, float sceneDepth, float texelSize,
     float2 atlasMin = cascadeOffset + halfTexel;
     float2 atlasMax = cascadeOffset + tileSize - halfTexel;
 
+    // Interleaved gradient noise (Jimenez 2014, "Next Generation Post Processing in Call of Duty")
+    // Also used in UE5 ShadowFilteringCommon.ush for per-pixel Poisson disk rotation.
     float angle = frac(52.9829189f * frac(dot(screenPos, float2(0.06711056f, 0.00583715f)))) * 6.28318f;
     float sinA, cosA;
     sincos(angle, sinA, cosA);
@@ -333,6 +364,43 @@ float SampleShadowMap(float3 positionWS, float3 normalWS, float viewDepth, float
                                     (shadowFadeEnd - shadowFadeStart));
         shadow = lerp(shadow, 1.0f, fadeFactor);
     }
+
+    // ── UE5 shadow post-processing pipeline ──────────────────────────────
+    // Applied in the same order as UE5 ShadowProjectionPixelShader.usf:372-387.
+
+    /// ShadowSharpen: sharpens soft PCF edges.
+    /// @source UE5 ShadowProjectionPixelShader.usf:375
+    ///   Shadow = saturate((Shadow - 0.5) * ShadowSharpen + 0.5)
+    /// @source UE5 ShadowRendering.h:1299 — ShadowSharpen = GetShadowSharpen() * 7.0 + 1.0
+    /// @source UE5 LightComponent.cpp:463 — ShadowSharpen default = 0.0
+    /// @constants ShadowSharpen default: 0.0 * 7.0 + 1.0 = 1.0 (identity)
+    /// With default 1.0: saturate((S - 0.5) * 1.0 + 0.5) = saturate(S) = S (no-op).
+    /// Higher values narrow the penumbra; lower widen it.
+    static const float kShadowSharpen = 1.0f; // UE5 default: 0.0 * 7.0 + 1.0
+    shadow = saturate((shadow - 0.5f) * kShadowSharpen + 0.5f);
+
+    /// PCF overblur correction: Square(Shadow).
+    /// @source UE5 ShadowProjectionPixelShader.usf:385,89-92
+    ///   Shadow = ApplyPCFOverBlurCorrection(Shadow) where
+    ///   ApplyPCFOverBlurCorrection(S) = Square(S) = S * S
+    /// @constants none — always applied to PCF and PCSS results.
+    /// PCF averaging produces overly soft penumbras; squaring restores
+    /// a more natural shadow falloff that reads better artistically.
+    shadow = shadow * shadow;
+
+    /// ShadowFadeFraction: per-projection fade (cascade distance fade).
+    /// @source UE5 ShadowProjectionPixelShader.usf:387
+    ///   FadedShadow = lerp(1.0, Shadow, ShadowFadeFraction * PerObjectDistanceFadeFraction)
+    /// In UzEngine, cascade distance fade is already handled above.
+    /// receiverBias serves as the fade fraction for the overall shadow intensity.
+    /// @source UE5 ShadowRendering.cpp:74-76 — CSMReceiverBias default 0.9
+    /// @source UE5 ShadowRendering.cpp:1983 — GetShaderReceiverDepthBias() = 1.0 - clamp(0.9) = 0.1
+    /// In UE5 deferred, receiverBias modulates TransitionScale via
+    ///   lerp(ReceiverDepthBias, 1.0, NoL) at ShadowProjectionPixelShader.usf:248.
+    /// Since UzEngine uses hardware SampleCmpLevelZero (binary comparison, no soft
+    /// transition), we approximate the effect as a final fade fraction.
+    /// With receiverBias=0.9: lerp(1.0, shadow, 0.9) → shadow floors at 0.1.
+    shadow = lerp(1.0f, shadow, receiverBias);
 
     return shadow;
 }

@@ -220,6 +220,21 @@ public:
     /// The ID3D11ShaderResourceView pointer, or `nullptr` if not found.
     ID3D11ShaderResourceView* FindTextureSRVByIndex(uint32_t srvIndex);
 
+    /// Finds a texture UAV by its pool index (returned by GetTextureUAVIndex).
+    ///
+    /// Iterates the texture pool to find a texture whose pool index matches.
+    /// Used by DX11CommandList::SetDescriptorTable to bind UAVs for compute dispatch.
+    ///
+    /// # Returns
+    /// The ID3D11UnorderedAccessView pointer, or `nullptr` if not found.
+    ID3D11UnorderedAccessView* FindTextureUAVByPoolIndex(uint32_t poolIndex);
+
+    /// Finds a buffer UAV by its pool index (returned by GetBufferUAVIndex).
+    ///
+    /// # Returns
+    /// The ID3D11UnorderedAccessView pointer, or `nullptr` if not found.
+    ID3D11UnorderedAccessView* FindBufferUAVByPoolIndex(uint32_t poolIndex);
+
     /// Finds a sampler by its logical sampler index (assigned at creation).
     ///
     /// # Returns

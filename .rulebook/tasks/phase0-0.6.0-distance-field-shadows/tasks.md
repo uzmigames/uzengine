@@ -1,8 +1,8 @@
 ## 1. Mesh SDF Generation (Import-Time)
 
-- [ ] 1.1 Implement SDF voxelizer: for each mesh, compute signed distance field on a 3D grid. (Deferred — requires import pipeline)
-- [ ] 1.2 Implement sparse brick encoding: 8x8x8 bricks, band-limited. Source: `DistanceFieldAtlas.h:34-50`. (Deferred)
-- [ ] 1.3 Quantize SDF values to 8-bit (`PF_G8`). (Deferred)
+- [x] 1.1 SDF voxelizer implemented in `sdf_baker.h/cpp` — spatial hash for triangle lookup, point-triangle distance, pseudo-normal sign, 8-bit quantization.
+- [x] 1.2 Sparse brick encoding (8x8x8 bricks, band-limited) implemented in `sdf_baker.cpp`.
+- [x] 1.3 Quantize SDF to 8-bit in `sdf_baker.cpp` (128 = zero-crossing, [0,255] maps to [-bandWidth, +bandWidth]).
 - [ ] 1.4 Generate 3 MIP levels of the SDF. (Deferred)
 - [ ] 1.5 Store SDF data in mesh asset file. (Deferred)
 - [ ] 1.6 Integrate SDF generation into asset import pipeline. (Deferred)
@@ -24,23 +24,23 @@
 
 ## 4. Tile-Based Object Culling (Compute)
 
-- [ ] 4.1 Implement `CullObjectsForShadow` compute shader. (Deferred — requires object buffers)
+- [x] 4.1 `dfs_cull_objects_cs.hlsl` — frustum culling compute shader with convex hull test, AABB culling, sphere fallback.
 - [ ] 4.2 Implement tile grid generation. (Deferred)
 - [ ] 4.3 Implement `ScatterObjectsToShadowTiles`. (Deferred)
 - [ ] 4.4 Output per-tile object count + index list. (Deferred)
 
 ## 5. Cone Tracing Compute Shader
 
-- [ ] 5.1 Implement `DistanceFieldShadowingCS` compute shader. (Deferred — requires atlas + culling)
-- [ ] 5.2 Construct ray from surface toward light. (Deferred)
-- [ ] 5.3 Sphere-tracing loop with cone expansion. (Deferred)
-- [ ] 5.4 Support quality levels (20/32/64 steps). (Deferred)
+- [x] 5.1 `dfs_cone_trace_cs.hlsl` — core cone tracing compute shader with UE5-parity algorithm.
+- [x] 5.2 Ray construction from surface toward light in cone trace shader.
+- [x] 5.3 Sphere-tracing loop with cone expansion, adaptive step size, early termination.
+- [x] 5.4 Quality levels via `DF_SHADOW_QUALITY` define (20/32/64 steps).
 - [ ] 5.5 Output `RWTexture2D<float2>` (shadow_factor, depth). (Deferred)
 - [ ] 5.6 Half-resolution mode with bilateral upsample. (Deferred)
 
 ## 6. SDF Sampling
 
-- [ ] 6.1 Implement `SampleSparseMeshSignedDistanceField()`. (Deferred — requires atlas upload)
+- [x] 6.1 `SampleSparseMeshSdf()` in `dfs_common.hlsli` — samples sparse brick atlas via indirection table.
 - [ ] 6.2 Handle band boundary. (Deferred)
 - [ ] 6.3 MIP selection. (Deferred)
 
@@ -74,4 +74,4 @@
 - [ ] 11.4 Document integration with CSM compositing. (Deferred)
 
 ## Note
-Core DFS infrastructure complete: config types, SDF data types, atlas manager (Init/Shutdown/Register/Unregister), compositing shader hook, CB expansion. The actual SDF baker, GPU compute shaders (culling + cone tracing), and scene integration are deferred — they require the import pipeline, mesh data access, and compute dispatch infrastructure.
+Major DFS progress: SDF baker now implemented (`sdf_baker.h/cpp`) with spatial hash voxelization, sparse brick encoding, and 8-bit quantization. GPU compute shaders written — `dfs_cull_objects_cs.hlsl` (frustum culling) and `dfs_cone_trace_cs.hlsl` (cone tracing with UE5-parity algorithm, quality levels). `SampleSparseMeshSdf()` helper in `dfs_common.hlsli`. Remaining: MIP generation, asset storage, atlas upload to GPU, tile grid scatter, output texture, half-res upsample, scene renderer integration, and documentation.

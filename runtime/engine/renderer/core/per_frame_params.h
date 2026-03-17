@@ -69,7 +69,10 @@ namespace uz {
 /// 252      4      exposure
 /// 256      112    skyIrradianceSH[7] (7 * Vec4)
 /// 368      4      shadowDebugMode
-/// 372      140    _pad2[35]
+/// 372      4      aerialPerspectiveEnabled
+/// 376      4      transmittanceLutSrvIndex
+/// 380      56     apBottomRadiusKm..apMieScale (14 floats)
+/// 428      84     _pad2[21]
 /// ─── 512 bytes (CB boundary) ───
 /// 512      8      irradianceCubemap (RHITextureHandle, NOT in CB)
 /// 520      8      prefilteredSpecular (RHITextureHandle, NOT in CB)
@@ -100,7 +103,23 @@ struct PerFrameParams {
     float    exposure             = 1.0f;              ///< Auto-exposure multiplier.
     Vec4     skyIrradianceSH[7]   = {};                ///< L2 SH coefficients for sky diffuse irradiance.
     uint32_t shadowDebugMode      = 0;                 ///< Shadow debug mode (0=off).
-    float    _pad2[35]            = {};                ///< Pad scalar section to 512 bytes.
+
+    // ── Aerial Perspective parameters (uses former padding) ───────────────
+    uint32_t aerialPerspectiveEnabled = 0;             ///< 1 = apply aerial perspective in deferred lighting.
+    uint32_t transmittanceLutSrvIndex = UINT32_MAX;    ///< SRV index for transmittance LUT.
+    float    apBottomRadiusKm = 6360.0f;               ///< Planet surface radius (km).
+    float    apTopRadiusKm    = 6420.0f;               ///< Top of atmosphere radius (km).
+    float    apRayleighBetaX  = 5.802e-3f;             ///< Rayleigh scattering X (km^-1).
+    float    apRayleighBetaY  = 13.558e-3f;            ///< Rayleigh scattering Y (km^-1).
+    float    apRayleighBetaZ  = 33.1e-3f;              ///< Rayleigh scattering Z (km^-1).
+    float    apRayleighScaleH = 8.0f;                  ///< Rayleigh scale height (km).
+    float    apMieBeta        = 3.996e-3f;             ///< Mie scattering coefficient (km^-1).
+    float    apMieScaleH      = 1.2f;                  ///< Mie scale height (km).
+    float    apMieAnisotropy  = 0.8f;                  ///< Mie HG anisotropy parameter.
+    float    apSunIntensity   = 1.0f;                  ///< Sun illuminance for AP inscattering.
+    float    apRayleighScale  = 1.0f;                  ///< Artistic Rayleigh scattering multiplier.
+    float    apMieScale       = 1.0f;                  ///< Artistic Mie scattering multiplier.
+    float    _pad2[21]            = {};                ///< Pad scalar section to 512 bytes.
 
     // ── Resource handles (NOT copied to CB) ──────────────────────────────
     // These are bound by ShaderParameterBinder at their HLSL register slots.

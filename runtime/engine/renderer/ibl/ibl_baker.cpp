@@ -350,7 +350,7 @@ uint32_t IBLBaker::BakeBRDFLut() {
 // BakeEnvironment
 // ─────────────────────────────────────────────────────────────────────────────
 
-IBLBaker::BakeResult IBLBaker::BakeEnvironment(uint32_t envCubemapSrvIndex) {
+IBLBaker::BakeResult IBLBaker::BakeEnvironment(uint32_t envCubemapSrvIndex, RHITextureHandle envCubemapTexture) {
     if (!m_initialized) {
         UZ_LOG(Renderer, Error, "IBLBaker::BakeEnvironment called before Init()");
         return {};
@@ -451,6 +451,11 @@ IBLBaker::BakeResult IBLBaker::BakeEnvironment(uint32_t envCubemapSrvIndex) {
     const uint32_t irradConstants[2] = { envCubemapSrvIndex, kIrradianceSize };
     cmdList->SetRootConstants(0, irradConstants, 2);
 
+    // SM5 path: bind environment cubemap at t0 (shader declares TextureCube envMap : register(t0))
+    if (!m_device->IsBindless()) {
+        cmdList->SetFragmentTexture(0, envCubemapTexture);
+    }
+
     // Bind irradiance cubemap UAV at root param 4
     uint32_t irradUavIndex = m_device->GetTextureUAVIndex(irradianceTex);
     cmdList->SetDescriptorTable(4, irradUavIndex);
@@ -469,6 +474,11 @@ IBLBaker::BakeResult IBLBaker::BakeEnvironment(uint32_t envCubemapSrvIndex) {
 
     // ── Prefiltered specular dispatch (per mip level) ───────────────────
     cmdList->SetPipeline(m_prefilterPipeline);
+
+    // SM5 path: bind environment cubemap at t0 for prefilter shader
+    if (!m_device->IsBindless()) {
+        cmdList->SetFragmentTexture(0, envCubemapTexture);
+    }
 
     for (uint32_t mip = 0; mip < kPrefilteredMipLevels; ++mip) {
         const uint32_t mipSize = kPrefilteredSize >> mip;

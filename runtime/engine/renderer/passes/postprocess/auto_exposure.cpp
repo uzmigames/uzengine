@@ -56,6 +56,7 @@ bool AutoExposure::Init(IRHIDevice* device, ShaderManager* shaderMgr) {
     m_shaderMgr = shaderMgr;
 
     // ── Create histogram buffer (64 x uint32 = 256 bytes, UAV + SRV) ────
+    // Created as StructuredBuffer<uint> — HLSL must use RWStructuredBuffer<uint>.
     {
         RHIBufferDesc desc{};
         desc.sizeBytes = kHistogramBytes;
@@ -88,11 +89,13 @@ bool AutoExposure::Init(IRHIDevice* device, ShaderManager* shaderMgr) {
     }
 
     // ── Create exposure buffer (2 x float = 8 bytes, UAV) ───────────────
+    // Created as StructuredBuffer<float> — HLSL uses RWStructuredBuffer<float>.
     {
         RHIBufferDesc desc{};
         desc.sizeBytes = kExposureBytes;
         desc.stride    = sizeof(float);
         desc.usage     = RHIBufferUsage::UnorderedAccess
+                       | RHIBufferUsage::StructuredBuffer
                        | RHIBufferUsage::CopySrc;
         desc.memory    = RHIMemoryType::Default;
         desc.debugName = "AutoExposure_Exposure";

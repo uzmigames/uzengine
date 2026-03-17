@@ -27,7 +27,9 @@ ShadowFrameData SetupShadowFrame(
     CBRingAllocator& cbRing,
     uint32_t farShadowCascadeCount,
     float farShadowDistance,
-    int32_t farShadowLodBias)
+    int32_t farShadowLodBias,
+    bool useShadowCache,
+    uint32_t staticShadowAtlasSrv)
 {
     ShadowFrameData result{};
 
@@ -44,6 +46,7 @@ ShadowFrameData SetupShadowFrame(
     cfg.slopeScaleDepthBias         = 3.0f * perLightShadowSlopeBias;  // UE5: CSMSlopeBias * per-light ShadowSlopeBias
     cfg.cascadeBiasDistribution     = 1.0f;      // Fully world-scaled (ShadowSetup.cpp:1846)
     cfg.receiverBias                = 0.9f;      // UE5 default (ShadowRendering.cpp:76)
+    cfg.filterMethod                = 2;         // PCSS — contact hardening (ShadowRendering.cpp:180-186)
 
     // ── Far shadow cascades — wired from DirectionalLightComponent ───────
     // @source UE5 DirectionalLightComponent.cpp:1023,1076 — FarShadowDistance, FarShadowCascadeCount
@@ -110,6 +113,12 @@ ShadowFrameData SetupShadowFrame(
 
     // Atlas grid layout — needed by the shader to compute cascade UV offsets
     shadowData.atlasColumns = GetAtlasColumns(totalCascades);
+
+    // Shadow cache compositing — @source UE5 ShadowSetup.cpp:3846-3970
+    // When active, the pixel shader samples both static (cached) and dynamic
+    // (per-frame) shadow atlases and takes min(static, dynamic).
+    shadowData.useShadowCache         = useShadowCache ? 1u : 0u;
+    shadowData.staticShadowAtlasIndex = staticShadowAtlasSrv;
 
     result.cbAllocation = cbRing.Allocate(sizeof(ShadowDataCB));
     std::memcpy(result.cbAllocation.cpuPtr, &shadowData, sizeof(ShadowDataCB));

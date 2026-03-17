@@ -23,6 +23,8 @@
 #pragma once
 
 #include "constant_buffers.h"
+#include "per_frame_params.h"
+#include "shadow_data_params.h"
 #include "render_graph_types.h"
 #include "engine/rhi/rhi_types.h"
 
@@ -33,6 +35,8 @@ class RgBuilder;
 } // namespace uz::rg
 
 namespace uz {
+
+class CBRingAllocator;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // LightingPassDesc — configuration for the deferred lighting pass
@@ -72,6 +76,15 @@ struct LightingPassDesc {
     bool              bindless;         ///< True if SM6.6 bindless path is active.
     float             viewportWidth;    ///< Viewport width in pixels.
     float             viewportHeight;   ///< Viewport height in pixels.
+
+    // ── Binder path (optional — set perFrameParams to enable) ─────────
+    // When perFrameParams is non-null, the pass uses ShaderParameterBinder
+    // to upload the CB and bind IBL textures automatically from metadata.
+    // The manual perFrameAlloc and ibl* texture handles are ignored.
+
+    const PerFrameParams*  perFrameParams   = nullptr; ///< If set, binder uploads this instead of perFrameAlloc.
+    CBRingAllocator*       cbRingAllocator   = nullptr; ///< Required when perFrameParams is set.
+    const ShadowDataParams* shadowDataParams = nullptr; ///< If set, binder uploads this instead of shadowAlloc.
 };
 
 /// Registers a deferred lighting pass in the render graph.

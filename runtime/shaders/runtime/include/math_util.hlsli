@@ -77,7 +77,8 @@ float3 LinearToSrgb(float3 lin) {
     // This is the UE5 Common.ush approach (LinearToSrgbBranchingless).
     float3 s  = sqrt(max(lin, 0.0f));
     float3 ss = sqrt(s);
-    float3 hi = 0.585122f * ss + 0.783677f * s - 0.368799f;
+    /// @source UE5 Common.ush — LinearToSrgbBranchless coefficients
+    float3 hi = 0.585122f * ss + 0.783677f * s - 0.368800f;
     float3 lo = lin * 12.92f;
     float3 t  = step(0.0031308f, lin);
     return lerp(lo, hi, t);

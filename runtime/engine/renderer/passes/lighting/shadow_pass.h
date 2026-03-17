@@ -127,6 +127,13 @@ struct ShadowPassDesc {
     /// @source UE5 DirectionalLightComponent.cpp:68 — GFarShadowStaticMeshLODBias
     int32_t            farShadowLodBias = 0;
 
+    // ── Binder path (optional — set cbRingAllocator to enable) ──────────
+    // When cbRingAllocator is non-null, the pass uses ShaderParameterBinder
+    // to upload per-cascade and per-object CBs via metadata instead of
+    // manual memcpy + SetRootCBV. Legacy path is used when null.
+
+    CBRingAllocator*   cbRingAllocator = nullptr; ///< If set, binder uploads CBs via metadata.
+
     // ── GPU Instancing (optional — set instanced=true to enable) ──────────
     bool               instanced = false;       ///< True to use instanced draw path.
     RHIPipelineHandle  instancedPipeline;       ///< PSO compiled with UZ_INSTANCED=1.

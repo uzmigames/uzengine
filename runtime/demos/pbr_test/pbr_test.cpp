@@ -220,27 +220,27 @@ void PBRTest::OnStart() {
         sl.minOcclusion               = 0.0f;
     }
 
-    // ── Exponential Height Fog (UE5 Basic Scene EXACT values) ────────────
-    // UE5 fog actor is at Z=-6850 with density=0.0436, heightFalloff=0.2.
-    // At camera Z=200, RayOriginTerms = density * exp2(-0.2*(200-(-6850)))
-    //                                 = 0.0436 * exp2(-1410) ≈ 0
-    // So the fog has NO visual effect in UE5 Basic Scene either.
-    // The ground color comes from SkyLight SH irradiance, not fog.
-    // We keep UE5-exact values for correctness, even though fog won't render.
+    // ── Exponential Height Fog ─────────────────────────────────────────
+    /// @source UE5 ExponentialHeightFogComponent.cpp — default parameter values
+    /// UE5 defaults: density=0.02, heightFalloff=0.2, startDistance=0.
+    /// Base height at ground level (0 cm) so fog is visible in the scene.
+    /// Directional inscattering adds sun-colored glow toward the light.
     Entity fog = world.CreateEntity();
     {
         auto& scene = world.AddComponent<SceneComponent>(fog);
-        scene.SetPosition({-5600.f, -50.f, -6850.f});  // UE5 fog actor position
+        scene.SetPosition({0.f, 0.f, 0.f});
 
         auto& fogComp = world.AddComponent<HeightFogComponent>(fog);
-        fogComp.density                           = 0.0436f;    // UE5: 0.0436
-        fogComp.heightFalloff                     = 0.2f;       // UE5: 0.2
-        fogComp.baseHeight                        = -6850.f;    // fog at actor Z position
-        fogComp.maxOpacity                        = 1.0f;
-        fogComp.startDistance                     = 0.f;
-        fogComp.color                             = {0.447f, 0.638f, 1.0f};  // UE5 FogInscatteringColor
-        fogComp.directionalInscatteringExponent   = 4.0f;
-        fogComp.directionalInscatteringStartDistance = 10000.f;
+        fogComp.density                           = 0.02f;      // UE5 default (ExponentialHeightFogComponent.cpp)
+        fogComp.heightFalloff                     = 0.2f;       // UE5 default
+        fogComp.baseHeight                        = 0.f;        // Ground level — fog visible at camera height
+        fogComp.maxOpacity                        = 1.0f;       // UE5 default
+        fogComp.startDistance                     = 500.f;      // 500 cm — near objects stay clear
+        fogComp.fogCutoffDistance                 = 0.f;        // No cutoff
+        fogComp.color                             = {0.45f, 0.55f, 0.68f};  // Slightly blue, sky inscattering tint
+        fogComp.directionalInscatteringColor      = {1.0f, 0.9f, 0.7f};     // Warm sun-colored glow
+        fogComp.directionalInscatteringExponent   = 8.0f;       // UE5 default
+        fogComp.directionalInscatteringStartDistance = 10000.f;  // UE5 default
     }
 
     UZ_LOG(Demo, Info, "PBR Test started — {} cubes, 4 point lights + directional sun + sky",

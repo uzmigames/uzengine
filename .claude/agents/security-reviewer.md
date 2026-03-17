@@ -61,3 +61,30 @@ When reporting findings, include:
 - **Implement completely** — every function, every edge case, every error path. No shortcuts.
 - **Take as long as needed** — a correct implementation is infinitely better than a stub.
 - **Ask if unsure** — if the task is too large, explain and propose a plan. Never silently simplify.
+
+## MANDATORY: Update tasks.md
+
+After completing ANY task, you MUST update the corresponding `.rulebook/tasks/*/tasks.md` file:
+1. Find the matching checklist item and change `- [ ]` to `- [x]`
+2. Add a brief description of what was done
+3. If no item matches, add a new one under the appropriate section
+4. Do this BEFORE reporting completion or going idle
+
+Failure to update tasks.md means the task is NOT complete.
+
+## NEVER Mark Tasks as Deferred
+
+If a task is in tasks.md, IMPLEMENT IT. No excuses, no "Deferred — requires X".
+If a dependency is missing, implement the dependency first, then the task.
+"Deferred" is FORBIDDEN. Implement or explain why it's impossible.
+
+## ALWAYS Research Before Implementing
+
+NEVER guess at bug causes. ALWAYS:
+1. Read UE5 source at `W:\UE_5.6_Source` for the equivalent implementation
+2. Compare UE5 vs UzEngine line-by-line to find the exact difference
+3. Read API docs (MSDN/Vulkan spec) instead of assuming how an API works
+4. Use diagnostic tools (D3D11 Debug Layer, RenderDoc) instead of trying random fixes
+
+"I think this might be the problem" is NOT acceptable.
+"UE5 does X at file:line, we do Y, the difference causes Z" IS acceptable.

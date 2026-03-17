@@ -30,6 +30,10 @@ cbuffer ExposureParams : register(b0)
 };
 
 /// UE5 defaults — hardcoded to stay within root constant budget
+/// @source UE5 Scene.cpp:484 — AutoExposureSpeedUp = 3.0f
+/// @source UE5 Scene.cpp:485 — AutoExposureSpeedDown = 1.0f
+/// @source UE5 Scene.cpp:459 — AutoExposureLowPercent = 10.0f
+/// @source UE5 Scene.cpp:460 — AutoExposureHighPercent = 90.0f
 static const float g_SpeedUp     = 3.0;   // Adaptation speed when brightening (seconds)
 static const float g_SpeedDown   = 1.0;   // Adaptation speed when darkening (seconds)
 static const float g_LowPercent  = 10.0;  // UE5: AutoExposureLowPercent = 10
@@ -39,11 +43,11 @@ static const float g_HighPercent = 90.0;  // UE5: AutoExposureHighPercent = 90
 // Resources
 // ─────────────────────────────────────────────────────────────────────────────
 
-RWByteAddressBuffer g_ExposureUAV : register(u0);
+RWStructuredBuffer<float> g_ExposureUAV : register(u0);
 
 /// SM5 non-bindless: histogram SRV bound at t0.
 #ifndef UZ_BINDLESS
-ByteAddressBuffer g_HistogramSrvTex : register(t0);
+StructuredBuffer<uint> g_HistogramSrvTex : register(t0);
 #endif
 
 #define NUM_BINS 64
@@ -57,9 +61,9 @@ void main()
 {
     // ── Read histogram ──────────────────────────────────────────────────────
 #ifdef UZ_BINDLESS
-    ByteAddressBuffer histogramSRV = ResourceDescriptorHeap[g_HistogramSrvIdx];
+    StructuredBuffer<uint> histogramSRV = ResourceDescriptorHeap[g_HistogramSrvIdx];
 #else
-    ByteAddressBuffer histogramSRV = g_HistogramSrvTex;
+    StructuredBuffer<uint> histogramSRV = g_HistogramSrvTex;
 #endif
 
     uint bins[NUM_BINS];
@@ -68,7 +72,7 @@ void main()
     [unroll]
     for (uint i = 0; i < NUM_BINS; ++i)
     {
-        bins[i] = histogramSRV.Load(i * 4);
+        bins[i] = histogramSRV[i];
         totalPixels += bins[i];
     }
 
@@ -131,7 +135,7 @@ void main()
     float targetExposure     = exposureBiasLinear * 0.18 / avgLum;
 
     // ── Temporal adaptation ─────────────────────────────────────────────
-    float prevExposure = asfloat(g_ExposureUAV.Load(0));
+    float prevExposure = g_ExposureUAV[0];
 
     // First-frame init: snap to target
     if (prevExposure < 1e-10)
@@ -148,6 +152,6 @@ void main()
     currentExposure = clamp(currentExposure, minExposure, maxExposure);
 
     // ── Write persistent state ──────────────────────────────────────────
-    g_ExposureUAV.Store(0, asuint(currentExposure));  // For next frame's adaptation
-    g_ExposureUAV.Store(4, asuint(currentExposure));  // For tonemap shader (same value)
+    g_ExposureUAV[0] = currentExposure;  // For next frame's adaptation
+    g_ExposureUAV[1] = currentExposure;  // For tonemap shader (same value)
 }

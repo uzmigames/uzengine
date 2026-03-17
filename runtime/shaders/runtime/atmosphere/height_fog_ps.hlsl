@@ -133,7 +133,8 @@ float4 main(FSInput input) : SV_Target {
         // then extend the ray direction to a far distance.
         float3 farWorldPos = ReconstructWorldPosition(uv, 0.0002f);
         float3 rayDir = normalize(farWorldPos - camPos3);
-        float  skyDist = 50000.0f;  // 500m — far enough for visible haze
+        /// @source UE5 HeightFogPixelShader.usf — uses camera far plane distance for sky fog ray length
+        float  skyDist = farPlane;
         worldPos = camPos3 + rayDir * skyDist;
         viewVec  = worldPos - camPos3;
         dist     = skyDist;
@@ -157,15 +158,10 @@ float4 main(FSInput input) : SV_Target {
         rayLength = dist - fogStartDistance;
         rayDirZ   = viewVec.z * (1.0f - excludeTime);
 
-        // Recompute RayOriginTerms at the exclusion intersection height
-        float exponent = max(-127.0f, fogHeightFalloff * (excludeZ - fogBaseHeight));
-        rayOriginTerms = fogDensity * exp2(-exponent) / max(fogDensity, 1e-10f);
-        // Simplified: use raw density at exclusion height
-        // fogDensity in CB is already pre-computed, so we need raw density
-        // Actually fogDensity = rawDensity * exp2(-falloff*(camZ-baseH))
+        // Recompute RayOriginTerms at the exclusion intersection height.
+        // fogDensity = rawDensity * exp2(-falloff*(camZ-baseH))  (pre-computed on CPU)
         // At exclusion point: rawDensity * exp2(-falloff*(exclZ-baseH))
-        // So ratio = exp2(-falloff*(exclZ-baseH)) / exp2(-falloff*(camZ-baseH))
-        //          = exp2(-falloff*(exclZ-camZ))
+        // Ratio = exp2(-falloff*(exclZ-camZ))
         float heightShift = excludeZ - camPos3.z;
         rayOriginTerms = fogDensity * exp2(-fogHeightFalloff * heightShift);
     } else if (fogStartDistance > 0.0f && dist <= fogStartDistance) {

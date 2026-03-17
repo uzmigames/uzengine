@@ -186,6 +186,7 @@ DX11Device::~DX11Device() {
         if (buf.uav) { buf.uav->Release(); buf.uav = nullptr; }
         if (buf.srv) { buf.srv->Release(); buf.srv = nullptr; }
         if (buf.buffer) { buf.buffer->Release(); buf.buffer = nullptr; }
+        if (buf.shadowCopy) { delete[] buf.shadowCopy; buf.shadowCopy = nullptr; }
     }
     for (auto& tex : m_texturePool.Slots()) {
         if (tex.uav) { tex.uav->Release(); tex.uav = nullptr; }
@@ -496,6 +497,12 @@ RHIBufferHandle DX11Device::CreateBuffer(const RHIBufferDesc& desc) {
         bd.StructureByteStride = desc.stride;
     }
 
+    // Raw byte-address buffer: required for UAV access on non-structured buffers
+    if (HasFlag(desc.usage, RHIBufferUsage::UnorderedAccess) &&
+        !HasFlag(desc.usage, RHIBufferUsage::StructuredBuffer)) {
+        bd.MiscFlags |= D3D11_RESOURCE_MISC_BUFFER_ALLOW_RAW_VIEWS;
+    }
+
     // Indirect args flag
     if (HasFlag(desc.usage, RHIBufferUsage::IndirectArgs)) {
         bd.MiscFlags |= D3D11_RESOURCE_MISC_DRAWINDIRECT_ARGS;
@@ -544,13 +551,29 @@ RHIBufferHandle DX11Device::CreateBuffer(const RHIBufferDesc& desc) {
     }
 
     // Create UAV if requested
-    if (HasFlag(desc.usage, RHIBufferUsage::UnorderedAccess) && desc.stride > 0) {
+    if (HasFlag(desc.usage, RHIBufferUsage::UnorderedAccess)) {
         D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
-        uavDesc.Format = DXGI_FORMAT_UNKNOWN;
         uavDesc.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
         uavDesc.Buffer.FirstElement = 0;
-        uavDesc.Buffer.NumElements = static_cast<UINT>(desc.sizeBytes / desc.stride);
-        m_device->CreateUnorderedAccessView(buffer, &uavDesc, &slot->uav);
+
+        if (HasFlag(desc.usage, RHIBufferUsage::StructuredBuffer) && desc.stride > 0) {
+            // Structured buffer UAV — format must be UNKNOWN, element count = size/stride.
+            // Buffer was created with D3D11_RESOURCE_MISC_BUFFER_STRUCTURED.
+            uavDesc.Format = DXGI_FORMAT_UNKNOWN;
+            uavDesc.Buffer.NumElements = static_cast<UINT>(desc.sizeBytes / desc.stride);
+        } else {
+            // Raw byte-address buffer UAV — R32_TYPELESS + RAW flag.
+            // Buffer was created with D3D11_RESOURCE_MISC_BUFFER_ALLOW_RAW_VIEWS.
+            uavDesc.Format = DXGI_FORMAT_R32_TYPELESS;
+            uavDesc.Buffer.NumElements = static_cast<UINT>(desc.sizeBytes / 4);
+            uavDesc.Buffer.Flags = D3D11_BUFFER_UAV_FLAG_RAW;
+        }
+
+        hr = m_device->CreateUnorderedAccessView(buffer, &uavDesc, &slot->uav);
+        if (FAILED(hr)) {
+            UZ_LOG(RHI, Error, "DX11 CreateUAV for buffer failed (size={}, stride={}, hr=0x{:08X})",
+                   desc.sizeBytes, desc.stride, static_cast<uint32_t>(hr));
+        }
     }
 
     UZ_LOG(RHI, Debug, "CreateBuffer: size={}, stride={} (name='{}')",
@@ -570,6 +593,7 @@ void DX11Device::DestroyBuffer(RHIBufferHandle handle) {
     if (buf->uav) { buf->uav->Release(); buf->uav = nullptr; }
     if (buf->srv) { buf->srv->Release(); buf->srv = nullptr; }
     if (buf->buffer) { buf->buffer->Release(); buf->buffer = nullptr; }
+    if (buf->shadowCopy) { delete[] buf->shadowCopy; buf->shadowCopy = nullptr; buf->shadowCopySize = 0; }
     buf->mappedPtr = nullptr;
     m_bufferPool.Free(handle.index);
 }
@@ -582,10 +606,31 @@ void* DX11Device::MapBuffer(RHIBufferHandle handle) {
     if (buf->desc.memory == RHIMemoryType::Upload) {
         // Staging buffers (CopySrc only) use MAP_WRITE; dynamic buffers use WRITE_DISCARD
         const bool isStaging = (buf->desc.usage == RHIBufferUsage::CopySrc);
+
+        // Vertex/index/structured buffers: map directly into the GPU buffer.
+        // The GPU reads from this buffer in Draw calls, so data must be written
+        // directly — a shadow copy would never reach the GPU.
+        //
+        // Constant buffer ring: uses a CPU-side shadow buffer because the CB ring
+        // allocator persistently maps and later reads back from the pointer in
+        // SetRootCBV. WC memory is write-only so reads return stale/zero data.
+        const bool needsShadow = !isStaging &&
+            HasFlag(buf->desc.usage, RHIBufferUsage::ConstantBuffer);
+
+        if (needsShadow) {
+            if (!buf->shadowCopy) {
+                buf->shadowCopy = new uint8_t[buf->desc.sizeBytes];
+                buf->shadowCopySize = buf->desc.sizeBytes;
+                std::memset(buf->shadowCopy, 0, buf->desc.sizeBytes);
+            }
+            return buf->shadowCopy;
+        }
+
         D3D11_MAP mapType = isStaging ? D3D11_MAP_WRITE : D3D11_MAP_WRITE_DISCARD;
         D3D11_MAPPED_SUBRESOURCE mapped = {};
         HRESULT hr = m_immediateContext->Map(buf->buffer, 0, mapType, 0, &mapped);
         if (SUCCEEDED(hr)) {
+            buf->mappedPtr = mapped.pData;
             return mapped.pData;
         }
         UZ_LOG(RHI, Error, "MapBuffer: Map failed, hr=0x{:08X}", static_cast<uint32_t>(hr));
@@ -609,8 +654,23 @@ void DX11Device::UnmapBuffer(RHIBufferHandle handle) {
     DX11Buffer* buf = m_bufferPool.Get(handle.index, handle.generation);
     if (!buf || !buf->buffer) return;
 
-    if (buf->desc.memory == RHIMemoryType::Upload ||
-        buf->desc.memory == RHIMemoryType::Readback) {
+    if (buf->desc.memory == RHIMemoryType::Upload) {
+        // Shadow-copied constant buffers: nothing to unmap — the shadow buffer
+        // is CPU-only and will be consumed by SetRootCBV.
+        if (buf->shadowCopy) return;
+
+        // Directly-mapped buffers (vertex, index, structured): unmap the GPU buffer.
+        if (buf->mappedPtr) {
+            m_immediateContext->Unmap(buf->buffer, 0);
+            buf->mappedPtr = nullptr;
+            return;
+        }
+
+        m_immediateContext->Unmap(buf->buffer, 0);
+        return;
+    }
+
+    if (buf->desc.memory == RHIMemoryType::Readback) {
         m_immediateContext->Unmap(buf->buffer, 0);
     }
 }
@@ -622,9 +682,9 @@ uint32_t DX11Device::GetBufferSRVIndex(RHIBufferHandle handle) const {
 }
 
 uint32_t DX11Device::GetBufferUAVIndex(RHIBufferHandle handle) const {
-    // DX11 does not use bindless descriptor indices for UAVs
-    (void)handle;
-    return UINT32_MAX;
+    const auto* buf = m_bufferPool.Get(handle.index, handle.generation);
+    if (!buf || !buf->uav) return UINT32_MAX;
+    return handle.index; // sentinel: UAV exists
 }
 
 uint64_t DX11Device::GetBufferGPUAddress(RHIBufferHandle handle) const {
@@ -749,9 +809,21 @@ RHITextureHandle DX11Device::CreateTexture(const RHITextureDesc& desc) {
     if (HasFlag(desc.usage, RHITextureUsage::UnorderedAccess)) {
         D3D11_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
         uavDesc.Format = ToDxgiFormat(desc.format);
-        uavDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
-        uavDesc.Texture2D.MipSlice = 0;
-        m_device->CreateUnorderedAccessView(texture, &uavDesc, &slot->uav);
+        if (desc.depthOrArraySize > 1) {
+            uavDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2DARRAY;
+            uavDesc.Texture2DArray.MipSlice        = 0;
+            uavDesc.Texture2DArray.FirstArraySlice  = 0;
+            uavDesc.Texture2DArray.ArraySize        = desc.depthOrArraySize;
+        } else {
+            uavDesc.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
+            uavDesc.Texture2D.MipSlice = 0;
+        }
+        hr = m_device->CreateUnorderedAccessView(texture, &uavDesc, &slot->uav);
+        if (FAILED(hr)) {
+            UZ_LOG(RHI, Error, "DX11 CreateUAV for texture failed ({}x{}, arraySize={}, fmt={}, hr=0x{:08X})",
+                   desc.width, desc.height, desc.depthOrArraySize,
+                   static_cast<int>(desc.format), static_cast<uint32_t>(hr));
+        }
     }
 
     UZ_LOG(RHI, Debug, "CreateTexture: {}x{}, mips={} (name='{}')",
@@ -798,6 +870,22 @@ ID3D11ShaderResourceView* DX11Device::FindTextureSRVByIndex(uint32_t srvIndex) {
     }
     for (auto& slot : m_bufferPool.Slots()) {
         if (slot.srvIndex == srvIndex && slot.srv) return slot.srv;
+    }
+    return nullptr;
+}
+
+ID3D11UnorderedAccessView* DX11Device::FindTextureUAVByPoolIndex(uint32_t poolIndex) {
+    auto& slots = m_texturePool.Slots();
+    if (poolIndex < static_cast<uint32_t>(slots.size()) && slots[poolIndex].uav) {
+        return slots[poolIndex].uav;
+    }
+    return nullptr;
+}
+
+ID3D11UnorderedAccessView* DX11Device::FindBufferUAVByPoolIndex(uint32_t poolIndex) {
+    auto& slots = m_bufferPool.Slots();
+    if (poolIndex < static_cast<uint32_t>(slots.size()) && slots[poolIndex].uav) {
+        return slots[poolIndex].uav;
     }
     return nullptr;
 }

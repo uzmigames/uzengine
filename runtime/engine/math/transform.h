@@ -27,7 +27,7 @@ namespace uz {
 /// ```cpp
 /// Transform t;
 /// t.position = {10, 0, 0};
-/// t.rotation = Quat::FromAxisAngle(Vec3::Up(), XM_PIDIV2);
+/// t.rotation = Quat::FromAxisAngle(Vec3::Up(), XM_PIDIV2); // 90 deg around Z (world up)
 /// t.scale = {2, 2, 2};
 /// Mat4 matrix = t.toMatrix();
 /// Vec3 worldPos = t.TransformPoint({1, 0, 0});

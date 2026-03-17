@@ -757,13 +757,16 @@ bool VulkanDevice::CreateDescriptorSetLayout() {
     //   binding 0..15  = SAMPLED_IMAGE  (t0..t15, via -fvk-t-shift 0 0)
     //   binding 16..31 = SAMPLER        (s0..s15, via -fvk-s-shift 16 0)
     //   binding 32..47 = UNIFORM_BUFFER (b0..b15, via -fvk-b-shift 32 0)
+    //   binding 48..63 = STORAGE_IMAGE  (u0..u15, via -fvk-u-shift 48 0)
     constexpr uint32_t kMaxTextureBindings = 16;
     constexpr uint32_t kSamplerBindingOffset = 16;
     constexpr uint32_t kMaxSamplerBindings = 16;
     constexpr uint32_t kCBBindingOffset = 32;
     constexpr uint32_t kMaxCBBindings = 16;
+    constexpr uint32_t kUAVBindingOffset = 48;
+    constexpr uint32_t kMaxUAVBindings = 16;
 
-    constexpr uint32_t kTotalBindings = kMaxTextureBindings + kMaxSamplerBindings + kMaxCBBindings;
+    constexpr uint32_t kTotalBindings = kMaxTextureBindings + kMaxSamplerBindings + kMaxCBBindings + kMaxUAVBindings;
     VkDescriptorSetLayoutBinding bindings[kTotalBindings] = {};
 
     for (uint32_t i = 0; i < kMaxTextureBindings; ++i) {
@@ -798,6 +801,15 @@ bool VulkanDevice::CreateDescriptorSetLayout() {
                      | VK_SHADER_STAGE_COMPUTE_BIT;
     }
 
+    // u registers (u0-u15) → bindings 48-63 as storage images (RWTexture2D / RWBuffer)
+    for (uint32_t i = 0; i < kMaxUAVBindings; ++i) {
+        auto& b = bindings[kMaxTextureBindings + kMaxSamplerBindings + kMaxCBBindings + i];
+        b.binding = kUAVBindingOffset + i;
+        b.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        b.descriptorCount = 1;
+        b.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT | VK_SHADER_STAGE_FRAGMENT_BIT;
+    }
+
     // Mark all bindings as PARTIALLY_BOUND so unwritten bindings in a new
     // descriptor set snapshot are not accessed by the GPU (we only copy
     // bindings that were actually written via m_writtenBindingsMask).
@@ -824,7 +836,7 @@ bool VulkanDevice::CreateDescriptorSetLayout() {
         return false;
     }
 
-    UZ_LOG(RHI, Info, "Vulkan descriptor set layout created (16 textures + 16 samplers [s0=linear, s1=shadow] + 16 CBVs)");
+    UZ_LOG(RHI, Info, "Vulkan descriptor set layout created (16 textures + 16 samplers [s0=linear, s1=shadow] + 16 CBVs + 16 UAVs)");
     return true;
 }
 
@@ -1760,6 +1772,17 @@ RHIMemoryBudget VulkanDevice::GetMemoryBudget() const {
 VulkanTexture* VulkanDevice::FindTextureBySrvIndex(uint32_t srvIndex) {
     for (auto& tex : m_texturePool.Slots()) {
         if (tex.srvIndex == srvIndex && tex.image != VK_NULL_HANDLE) {
+            return &tex;
+        }
+    }
+    return nullptr;
+}
+
+VulkanTexture* VulkanDevice::FindTextureByPoolIndex(uint32_t poolIndex) {
+    auto& slots = m_texturePool.Slots();
+    if (poolIndex < slots.size()) {
+        auto& tex = slots[poolIndex];
+        if (tex.image != VK_NULL_HANDLE && tex.imageView != VK_NULL_HANDLE) {
             return &tex;
         }
     }

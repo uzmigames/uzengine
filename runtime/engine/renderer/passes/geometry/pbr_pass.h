@@ -31,6 +31,7 @@ namespace uz {
 
 class DrawList;
 class CBRingAllocator;
+struct PerFrameParams;
 
 } // namespace uz
 
@@ -75,6 +76,13 @@ struct PBRPassDesc {
     bool              bindless;        ///< True if SM6.6 bindless path is active.
     float             viewportWidth;   ///< Viewport width in pixels.
     float             viewportHeight;  ///< Viewport height in pixels.
+
+    // ── Binder path (optional — set perFrameParams to enable) ──────────
+    // When perFrameParams is non-null, the pass uses ShaderParameterBinder
+    // to upload the per-frame CB and bind IBL textures automatically.
+
+    const PerFrameParams* perFrameParams   = nullptr; ///< If set, binder uploads this instead of perFrameAlloc.
+    CBRingAllocator*      cbRingAllocator   = nullptr; ///< Required when perFrameParams is set. Used by binder for per-object CB too.
 };
 
 /// Registers a forward PBR pass in the render graph.

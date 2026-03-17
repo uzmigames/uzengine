@@ -28,7 +28,7 @@ struct Mat4;
 ///
 /// # Examples
 /// ```cpp
-/// Quat q = Quat::FromAxisAngle(Vec3::Up(), XM_PIDIV2); // 90 deg around Y
+/// Quat q = Quat::FromAxisAngle(Vec3::Up(), XM_PIDIV2); // 90 deg around Z (world up)
 /// Vec3 rotated = q * Vec3::Forward();                    // rotates forward vector
 /// Mat4 rotMat = q.toMatrix();                            // convert to rotation matrix
 /// Quat blended = Quat::Slerp(a, b, 0.5f);              // smooth interpolation
@@ -55,12 +55,16 @@ struct Quat {
     /// * `axis` - Rotation axis (should be normalized).
     /// * `angle` - Rotation angle in radians.
     static Quat FromAxisAngle(const Vec3& axis, float angle);
-    /// Creates a quaternion from Euler angles.
+    /// Creates a quaternion from Euler angles (Z-up convention).
     ///
     /// # Arguments
-    /// * `pitch` - Rotation around X axis (radians).
-    /// * `yaw` - Rotation around Y axis (radians).
-    /// * `roll` - Rotation around Z axis (radians).
+    /// * `pitch` - Rotation around X axis (radians). Tilts forward/backward.
+    /// * `yaw` - Rotation around Z axis (radians). Turns left/right (world up in Z-up).
+    /// * `roll` - Rotation around Y axis (radians). Rolls side-to-side.
+    ///
+    /// Note: Internally uses DirectXMath which is Y-up. The mapping is:
+    /// UzEngine pitch(X) = DXMath pitch(X), UzEngine yaw(Z) = DXMath yaw(Y),
+    /// UzEngine roll(Y) = DXMath roll(Z). This conversion happens inside FromEuler().
     static Quat FromEuler(float pitch, float yaw, float roll);
     /// Extracts rotation quaternion from a rotation matrix.
     static Quat FromMatrix(const Mat4& m);

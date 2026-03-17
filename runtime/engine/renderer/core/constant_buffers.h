@@ -77,7 +77,25 @@ struct PerFrameCB {
     /// Shadow debug visualization mode (0=off, see ShadowDebugMode enum).
     /// When non-zero, deferred_lighting_ps outputs debug colors instead of lit result.
     uint32_t shadowDebugMode = 0;
-    float _pad2[35] = {};                       ///< Pad to 512 bytes.
+
+    // ── Aerial Perspective parameters (uses former padding) ───────────────
+    // These are populated from SkyAtmosphereComponent by AtmosphereRenderer
+    // and consumed by deferred_lighting_ps.hlsl for distance-based atmosphere fog.
+    uint32_t aerialPerspectiveEnabled = 0;       ///< 1 = apply aerial perspective in deferred lighting.
+    uint32_t transmittanceLutSrvIndex = UINT32_MAX; ///< SRV index for transmittance LUT (256x64 RGBA16F).
+    float    apBottomRadiusKm = 6360.0f;         ///< Planet surface radius (km).
+    float    apTopRadiusKm    = 6420.0f;         ///< Top of atmosphere radius (km).
+    float    apRayleighBetaX  = 5.802e-3f;       ///< Rayleigh scattering X (km^-1).
+    float    apRayleighBetaY  = 13.558e-3f;      ///< Rayleigh scattering Y (km^-1).
+    float    apRayleighBetaZ  = 33.1e-3f;        ///< Rayleigh scattering Z (km^-1).
+    float    apRayleighScaleH = 8.0f;            ///< Rayleigh scale height (km).
+    float    apMieBeta        = 3.996e-3f;       ///< Mie scattering coefficient (km^-1).
+    float    apMieScaleH      = 1.2f;            ///< Mie scale height (km).
+    float    apMieAnisotropy  = 0.8f;            ///< Mie HG anisotropy parameter.
+    float    apSunIntensity   = 1.0f;            ///< Sun illuminance for AP inscattering.
+    float    apRayleighScale  = 1.0f;            ///< Artistic Rayleigh scattering multiplier.
+    float    apMieScale       = 1.0f;            ///< Artistic Mie scattering multiplier.
+    float    _pad2[21] = {};                     ///< Pad to 512 bytes.
 };
 
 static_assert(sizeof(PerFrameCB) == 512, "PerFrameCB must be 512 bytes (D3D12 CB alignment)");

@@ -112,7 +112,10 @@ static const float PLANET_RADIUS_OFFSET_KM = 0.005f;
 /// Small epsilon to avoid division by zero in analytical integration.
 static const float EXT_EPS = 1e-7f;
 
-static const int NUM_STEPS_VIEW  = 16;
+/// @source UE5 SkyAtmosphere.usf:1039 — SkyAtmosphere.SampleCountMax (CB parameter)
+/// UE5 uses variable sample count per ray (lerp between Min/Max based on ray length).
+/// 32 is the typical MaxSampleCount for the render sky view pass.
+static const int NUM_STEPS_VIEW  = 32;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -345,13 +348,10 @@ float4 main(FSInput input) : SV_Target {
         Throughput *= T_step;
     }
 
-    // ── Multi-scattering approximation ──────────────────────────────────────
-    // Single-scatter integration underestimates sky luminance because it ignores
-    // photons that scatter multiple times before reaching the camera. UE5 uses
-    // a precomputed multi-scattering LUT; this is a simpler energy-conserving
-    // approximation that boosts luminance proportionally. The factor of 0.5
-    // was empirically tuned to approximate the full multi-scatter contribution.
-    L *= 1.0f + multiScatteringFactor * 0.5f;
+    // Multi-scattering: disabled. UE5 uses a precomputed MultiScatteredLuminanceLUT
+    // (SkyAtmosphere.usf:1255-1268) with geometric series 1/(1-R) energy redistribution.
+    // The empirical * 0.5 approximation that was here had no UE5 source.
+    // multiScatteringFactor is still available in the CB for when the LUT is implemented.
 
     // ── Sky luminance art direction ──────────────────────────────────────────
     // Per-channel multiplier for artistic control of sky brightness and tint.

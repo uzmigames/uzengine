@@ -82,6 +82,14 @@ struct DX11Buffer {
     /// DX11 uses `Map(D3D11_MAP_WRITE_NO_OVERWRITE)` for persistent mapping.
     /// `nullptr` for Default usage buffers.
     void*                        mappedPtr = nullptr;
+    /// CPU-side shadow copy for DYNAMIC buffers that need persistent read-back.
+    /// DX11 DYNAMIC buffers are often backed by write-combined (WC) memory,
+    /// making reads from the mapped pointer unreliable (may return zeros/stale).
+    /// The shadow copy is allocated on first MapBuffer call and freed on destroy.
+    /// When non-null, MapBuffer returns shadowCopy instead of the mapped WC pointer.
+    uint8_t*                     shadowCopy = nullptr;
+    /// Size of the shadow copy allocation (matches buffer size).
+    uint64_t                     shadowCopySize = 0;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

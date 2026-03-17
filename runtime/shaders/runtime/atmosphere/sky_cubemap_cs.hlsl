@@ -86,8 +86,10 @@ static const float RAYLEIGH_SCALE_H = 8.0f;   // km
 static const float MIE_SCALE_H      = 1.2f;   // km
 
 /// Ground albedo for Lambertian reflection when view ray hits the planet.
-/// Dark earth-tone average (~0.3).
-static const float3 GROUND_ALBEDO = float3(0.3f, 0.3f, 0.3f);
+/// @source UE5 SkyAtmosphereComponent.cpp:103 — GroundAlbedo = FColor(170,170,170) ≈ 0.4 linear
+/// @constants 0.4f (UE5 default: FColor(170,170,170) → sRGB 0.667 → linear ~0.4)
+/// @deviations Hardcoded here due to 8-DWORD root constant budget. UE5 passes via CB.
+static const float3 GROUND_ALBEDO = float3(0.4f, 0.4f, 0.4f);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Integration Constants

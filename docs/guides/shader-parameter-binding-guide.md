@@ -1,644 +1,333 @@
 <!-- doc-meta
-title: Shader Parameter Binding Implementation Guide
-category: Rendering
-tags: [Shader Parameters, Uniform Buffers, Implementation, C++]
----
+title: Shader Parameter Binding Guide
+category: guide
+theme: rendering
+status: active
+updated: 2026-03-16
+author: docs-operator
+-->
 
-# Shader Parameter Binding Implementation Guide for UzEngine
+# Shader Parameter Binding Guide
 
-This guide shows how to implement UE5's metadata-driven shader parameter binding system in UzEngine, adapted for C++23 and modern DX12.
-
----
-
-## Problem Statement
-
-**Current approach (bad):**
-```cpp
-// 5 separate RHI calls
-cmd_list->SetConstantBuffers(cb_data);
-cmd_list->SetShaderTexture(0, diffuse_map);
-cmd_list->SetShaderTexture(1, normal_map);
-cmd_list->SetSampler(0, linear_sampler);
-cmd_list->SetUAV(0, output_buffer);
-
-// Shader hot-reload breaks everything if you change parameter order
-// DX11 and DX12 require completely different binding code
-```
-
-**Better approach (UE5 pattern):**
-```cpp
-FMyMaterialParams params;
-params.DiffuseMap = diffuse_map;
-params.NormalMap = normal_map;
-params.Sampler = linear_sampler;
-params.OutputBuffer = output_buffer;
-
-// ONE call, metadata handles everything
-SetShaderParameters(cmd_list, shader, params);
-```
+This guide explains UzEngine's UE5-style shader parameter system: how to declare
+parameter structs with macros, define their metadata, and use `ShaderParameterBinder`
+to automatically upload constant buffer data and bind GPU resources.
 
 ---
 
-## Implementation Steps
+## Overview
 
-### Step 1: Define Metadata Structure
+The old approach required one RHI call per resource — change parameter order in a
+shader and all the binding code breaks. The new system declares parameter structs
+with macros, generates metadata once at startup, and binds everything with a single
+`ShaderParameterBinder::Bind()` call.
 
-**File: `src/engine/renderer/core/shader_parameters.h`**
+The system has four components:
 
-```cpp
-#pragma once
+| Component | File | Purpose |
+|-----------|------|---------|
+| Core types | `shader_parameters.h` | `ShaderParamType`, `ShaderParamMember`, `ShaderParameterMetadata` |
+| Macros | `shader_parameter_macros.h` | Struct declaration + metadata definition |
+| Binder | `shader_parameter_binder.h/.cpp` | CB upload + resource binding |
+| HLSL generation | `shader_parameter_hlsl.h/.cpp` | Generate HLSL for validation |
 
-#include "core/types.h"
-#include "core/containers.h"
+All files live in `runtime/engine/renderer/core/`.
 
-namespace uz::render {
+---
 
-/// Parameter type classification.
-enum class ParameterType : u8 {
-    /// Constant buffer data (float, vector, matrix)
-    CBuffer,
-    /// Texture SRV
-    Texture,
-    /// Texture UAV
-    TextureUAV,
-    /// Buffer SRV
-    BufferSRV,
-    /// Buffer UAV
-    BufferUAV,
-    /// Sampler state
-    Sampler,
-    /// Nested struct (CBV only)
-    NestedStruct,
-};
+## Struct Layout Contract
 
-/// Single parameter member metadata.
-struct ParameterMember {
-    /// C++ member name ("DiffuseMap", "Sampler", etc.)
-    const char* name = nullptr;
+Every parameter struct is split into two contiguous sections:
 
-    /// HLSL type annotation ("Texture2D", "SamplerState", "float4", etc.)
-    const char* shader_type = nullptr;
-
-    /// Byte offset in the C++ struct
-    u32 offset = 0;
-
-    /// Size in bytes for CB data, 0 for resources
-    u32 cb_size = 0;
-
-    /// Parameter classification
-    ParameterType type = ParameterType::CBuffer;
-
-    /// HLSL dimensions (rows/cols for matrices)
-    u8 rows = 1, cols = 1;
-};
-
-/// Complete reflection metadata for a shader parameter struct.
-struct ParameterStructMetadata {
-    /// Struct name ("FMaterialParams", etc.)
-    const char* struct_name = nullptr;
-
-    /// Total size of C++ struct in bytes
-    u32 struct_size = 0;
-
-    /// All members (mixed CB + resource)
-    TArray<ParameterMember> members;
-
-    /// Cached: only CB members (scalar/vector/matrix)
-    TArray<const ParameterMember*> cb_members;
-
-    /// Cached: only resource members (texture/sampler/etc.)
-    TArray<const ParameterMember*> resource_members;
-
-    /// Compute CB size from CB members
-    u32 GetCBufferSizeBytes() const {
-        u32 total = 0;
-        for (auto* mem : cb_members) {
-            total = std::max(total, mem->offset + mem->cb_size);
-        }
-        return (total + 15) & ~15;  // Round to 16 bytes (GPU requirement)
-    }
-};
-
-}  // namespace uz::render
+```
+[ 0 ──── cbSize )        Scalar section  — copied to the constant buffer
+[ cbSize ──── end ]      Resource section — bound as SRV/sampler/UAV, NOT in CB
 ```
 
-### Step 2: Macro System for Struct Definition
+Rules:
+- All `SHADER_PARAMETER` and `SHADER_PARAMETER_ARRAY` members **must come first**.
+- All `SHADER_PARAMETER_TEXTURE`, `SHADER_PARAMETER_SAMPLER`, and `SHADER_PARAMETER_UAV` members **must come after** `SHADER_PARAMETER_SCALAR_END()`.
+- `cbSize` must be a multiple of 256 (D3D12 constant buffer alignment requirement).
+- Users are responsible for padding the scalar section to 16-byte boundaries (HLSL `float4` alignment within cbuffers).
 
-**File: `src/engine/renderer/core/shader_parameter_macros.h`**
+---
+
+## Step 1 — Declare the Struct in a Header
+
+Use the macros to open the struct, list scalar members, mark the boundary, list resource members, and close the struct.
 
 ```cpp
+// my_pass_params.h
 #pragma once
+#include "engine/renderer/core/shader_parameter_macros.h"
+#include "math/mat4.h"
+#include "math/vector4.h"
 
-#include "shader_parameters.h"
+namespace uz {
 
-namespace uz::render {
+BEGIN_SHADER_PARAMETER_STRUCT(MyPassParams)
+    // ── Scalar section (goes into CB) ────────────────────────────────────
+    SHADER_PARAMETER(Mat4,     viewProj)
+    SHADER_PARAMETER(Vec4,     cameraPos)
+    SHADER_PARAMETER(float,    exposure)
+    SHADER_PARAMETER_ARRAY(float, _pad, 3)  // pad to 16-byte boundary
+SHADER_PARAMETER_SCALAR_END()
+    // ── Resource section (bound as SRV/sampler, NOT in CB) ───────────────
+    SHADER_PARAMETER_TEXTURE(TextureCube, envCubemap, 5)
+    SHADER_PARAMETER_TEXTURE(Texture2D,   brdfLut,    7)
+    SHADER_PARAMETER_SAMPLER(linearSampler, 0)
+END_SHADER_PARAMETER_STRUCT()
 
-/// Helper: Register metadata during static initialization
-class ParameterMetadataRegistrar {
-public:
-    explicit ParameterMetadataRegistrar(const ParameterStructMetadata* metadata) {
-        GetRegistry().Add(metadata);
-    }
-
-    static TArray<const ParameterStructMetadata*>& GetRegistry();
-};
-
-/// Helper: Collect members during struct definition
-class ParameterMemberCollector {
-private:
-    TArray<ParameterMember> members_;
-
-public:
-    void AddCBuffer(const char* name, const char* shader_type, u32 offset, u32 size) {
-        members_.Add({name, shader_type, offset, size, ParameterType::CBuffer, 1, 1});
-    }
-
-    void AddTexture(const char* name, const char* shader_type, u32 offset) {
-        members_.Add({name, shader_type, offset, 0, ParameterType::Texture, 0, 0});
-    }
-
-    void AddSampler(const char* name, u32 offset) {
-        members_.Add({name, "SamplerState", offset, 0, ParameterType::Sampler, 0, 0});
-    }
-
-    TArray<ParameterMember> Finalize() { return std::move(members_); }
-};
-
-}  // namespace uz::render
-
-// ============================================================================
-// PUBLIC MACROS for shader author
-// ============================================================================
-
-/// Begin a shader parameter struct declaration.
-///
-/// Example:
-///   BEGIN_SHADER_PARAMETER_STRUCT(FMaterialParams)
-///     SHADER_PARAMETER(float, Roughness)
-///     SHADER_PARAMETER_TEXTURE(Texture2D, DiffuseMap)
-///   END_SHADER_PARAMETER_STRUCT()
-#define BEGIN_SHADER_PARAMETER_STRUCT(StructName) \
-    struct StructName { \
-        static constexpr const char* kMetadataName = #StructName; \
-        /* Members declared here */ \
-        \
-        static const uz::render::ParameterStructMetadata* GetMetadata(); \
-        static uz::render::ParameterMemberCollector _StaticMemberCollector;
-
-/// End struct definition and register metadata.
-#define END_SHADER_PARAMETER_STRUCT() \
-    }; \
-    \
-    uz::render::ParameterMemberCollector StructName::_StaticMemberCollector; \
-    inline const uz::render::ParameterStructMetadata* StructName::GetMetadata() { \
-        static uz::render::ParameterStructMetadata metadata = _BuildMetadata(); \
-        return &metadata; \
-    } \
-    static uz::render::ParameterMetadataRegistrar StructName##_Registrar(StructName::GetMetadata());
-
-// Define this in .cpp file to register metadata
-#define IMPLEMENT_SHADER_PARAMETER_STRUCT(StructName) \
-    static uz::render::ParameterStructMetadata StructName##_Metadata = \
-        _BuildMetadata(); \
-    uz::render::ParameterMetadataRegistrar StructName##_Registrar(&StructName##_Metadata);
-
-/// Add a constant buffer parameter (float, vector, matrix, etc).
-///
-/// Example:
-///   SHADER_PARAMETER(float4, ViewProj)
-///   SHADER_PARAMETER(FMatrix44f, WorldToClip)
-#define SHADER_PARAMETER(Type, Name) \
-    Type Name = {}; \
-    struct _Param_##Name { \
-        static void Register(uz::render::ParameterMemberCollector& c) { \
-            c.AddCBuffer(#Name, #Type, offsetof(StructName, Name), sizeof(Type)); \
-        } \
-    };
-
-/// Add a texture parameter (SRV).
-///
-/// Example:
-///   SHADER_PARAMETER_TEXTURE(Texture2D, DiffuseMap)
-///   SHADER_PARAMETER_TEXTURE(TextureCube, EnvMap)
-#define SHADER_PARAMETER_TEXTURE(ShaderType, Name) \
-    ID3D12Resource* Name = nullptr; \
-    struct _Param_##Name { \
-        static void Register(uz::render::ParameterMemberCollector& c) { \
-            c.AddTexture(#Name, #ShaderType, offsetof(StructName, Name)); \
-        } \
-    };
-
-/// Add a sampler parameter.
-///
-/// Example:
-///   SHADER_PARAMETER_SAMPLER(SamplerState, LinearSampler)
-#define SHADER_PARAMETER_SAMPLER(ShaderType, Name) \
-    D3D12_SAMPLER_DESC* Name = nullptr; \
-    struct _Param_##Name { \
-        static void Register(uz::render::ParameterMemberCollector& c) { \
-            c.AddSampler(#Name, offsetof(StructName, Name)); \
-        } \
-    };
+} // namespace uz
 ```
 
-### Step 3: Parameter Binding Implementation
+### Macro Reference
 
-**File: `src/engine/renderer/core/shader_parameter_binding.h`**
+| Macro | Section | Description |
+|-------|---------|-------------|
+| `BEGIN_SHADER_PARAMETER_STRUCT(Name)` | — | Opens a `struct alignas(16) Name`. |
+| `SHADER_PARAMETER(Type, Name)` | Scalar | Declares `Type Name {}` — copied to CB. |
+| `SHADER_PARAMETER_ARRAY(Type, Name, Count)` | Scalar | Declares `Type Name[Count] {}` — copied to CB. |
+| `SHADER_PARAMETER_SCALAR_END()` | Boundary | Documentation marker only — no code generated. |
+| `SHADER_PARAMETER_TEXTURE(HlslType, Name, Slot)` | Resource | Declares `RHITextureHandle Name` — bound at tSlot on SM5. |
+| `SHADER_PARAMETER_SAMPLER(Name, Slot)` | Resource | Declares `RHISamplerHandle Name` — bound at sSlot. |
+| `SHADER_PARAMETER_UAV(Name, Slot)` | Resource | Declares `RHITextureHandle Name` — bound at uSlot. |
+| `END_SHADER_PARAMETER_STRUCT()` | — | Closes the struct, declares `static const ShaderParameterMetadata& GetMetadata()`. |
+
+---
+
+## Step 2 — Define Metadata in a .cpp File
+
+`GetMetadata()` is declared in the header by `END_SHADER_PARAMETER_STRUCT()` but must
+be defined in a `.cpp` file using the metadata macros. The metadata tells the binder
+exactly which bytes belong to the CB and which are resource slots.
 
 ```cpp
-#pragma once
+// my_pass_params.cpp
+#include "my_pass_params.h"
+#include "engine/renderer/core/shader_parameter_macros.h"
+#include <cstddef>  // offsetof
 
-#include "shader_parameters.h"
-#include "rhi/rhi.h"
+namespace uz {
 
-namespace uz::render {
+BEGIN_SHADER_PARAMETER_METADATA(MyPassParams)
+    // Scalars — list every member in the scalar section
+    METADATA_SCALAR      (MyPassParams, viewProj,      Mat4)
+    METADATA_SCALAR      (MyPassParams, cameraPos,     Vec4)
+    METADATA_SCALAR      (MyPassParams, exposure,      float)
+    METADATA_SCALAR_ARRAY(MyPassParams, _pad,          float, 3)
+    // Resources — list every texture, sampler, and UAV
+    METADATA_TEXTURE_CUBE(MyPassParams, envCubemap, 5)
+    METADATA_TEXTURE2D   (MyPassParams, brdfLut,    7)
+    METADATA_SAMPLER     (MyPassParams, linearSampler, 0)
+END_SHADER_PARAMETER_METADATA(
+    MyPassParams,
+    256,  // cbSize — must be 256-byte aligned; scalar section is 96 bytes, rounded up
+    2,    // textureCount (envCubemap + brdfLut)
+    1,    // samplerCount
+    0     // uavCount
+)
 
-/// Bind all shader parameters in one call.
-///
-/// This function:
-/// 1. Extracts CB data and uploads to GPU
-/// 2. Collects resource pointers and binds via descriptor heap
-/// 3. Works identically on DX11 and DX12 (implementation varies)
-///
-/// @param cmd_list      Active command list
-/// @param shader        Compiled shader program
-/// @param params        Parameter struct (any type with GetMetadata())
-/// @param metadata      Pre-computed metadata (optional, auto-fetched if nullptr)
-template <typename TParams>
-void SetShaderParameters(
-    RHICommandList& cmd_list,
-    const RHIShader& shader,
-    const TParams& params,
-    const ParameterStructMetadata* metadata = nullptr)
-{
-    if (!metadata) {
-        metadata = TParams::GetMetadata();
-    }
+} // namespace uz
+```
 
-    // Step 1: Upload constant buffer data
-    if (metadata->GetCBufferSizeBytes() > 0) {
-        UploadCBufferData(cmd_list, shader, params, metadata);
-    }
+`END_SHADER_PARAMETER_METADATA` contains a `static_assert` that verifies `cbSize % 256 == 0`
+at compile time.
 
-    // Step 2: Bind resources
-    BindResourceParameters(cmd_list, shader, params, metadata);
-}
+### Metadata Macro Reference
 
-/// Implementation: Upload CB data to GPU
-inline void UploadCBufferData(
-    RHICommandList& cmd_list,
-    const RHIShader& shader,
-    const void* params_data,
-    const ParameterStructMetadata* metadata)
-{
-    u32 cb_size = metadata->GetCBufferSizeBytes();
-    if (cb_size == 0) return;
+| Macro | Use for |
+|-------|---------|
+| `METADATA_SCALAR(Struct, Name, Type)` | Single scalar field. |
+| `METADATA_SCALAR_ARRAY(Struct, Name, Type, Count)` | Array of scalars or padding. |
+| `METADATA_TEXTURE2D(Struct, Name, Slot)` | `Texture2D` SRV at `register(tSlot)`. |
+| `METADATA_TEXTURE_CUBE(Struct, Name, Slot)` | `TextureCube` SRV at `register(tSlot)`. |
+| `METADATA_SAMPLER(Struct, Name, Slot)` | `SamplerState` at `register(sSlot)`. |
+| `METADATA_UAV(Struct, Name, Slot)` | UAV at `register(uSlot)`. |
 
-    // Allocate temp upload buffer (or use persistent ring buffer)
-    void* gpu_ptr = AllocateUploadMemory(cb_size);
-    memcpy(gpu_ptr, params_data, cb_size);
+> **Note**: The `BEGIN_SHADER_PARAMETER_METADATA` / `END_SHADER_PARAMETER_METADATA`
+> macros define `MyPassParams::GetMetadata()`. Do not write the function by hand.
 
-    // Bind to root parameter 0 (reserved for CB)
-    cmd_list.SetGraphicsRootConstantBufferView(0, GetGPUVirtualAddress(gpu_ptr));
-}
+---
 
-/// Implementation: Bind texture, sampler, and buffer resources
-inline void BindResourceParameters(
-    RHICommandList& cmd_list,
-    const RHIShader& shader,
-    const void* params_data,
-    const ParameterStructMetadata* metadata)
-{
-    if (metadata->resource_members.empty()) {
+## Step 3 — Use ShaderParameterBinder in a Render Pass
+
+```cpp
+#include "my_pass_params.h"
+#include "engine/renderer/core/shader_parameter_binder.h"
+
+void MyPass::Execute(IRHICommandList* cmd, bool bindless) {
+    MyPassParams params{};
+    params.viewProj      = camera.GetViewProj();
+    params.cameraPos     = Vec4(camera.GetPosition(), 1.0f);
+    params.exposure      = autoExposure.GetCurrentEV();
+    params.envCubemap    = ibl.irradianceCubemap;
+    params.brdfLut       = ibl.brdfLut;
+    params.linearSampler = globalSamplers.linear;
+
+    // Convenience: BindCB + BindResources in one call.
+    // Returns the CBAllocation in case you need the GPU address.
+    auto alloc = ShaderParameterBinder::Bind(
+        cmd,
+        &params,
+        MyPassParams::GetMetadata(),
+        m_cbRing,          // CBRingAllocator&
+        kSlotMyPassCB,     // root parameter slot index
+        bindless           // true = SM6.6; false = SM5 explicit binding
+    );
+
+    if (!alloc.cpuPtr) {
+        UZ_LOG(Renderer, Error, "MyPass: CB ring full");
         return;
     }
 
-    // Allocate descriptor heap for resources
-    ID3D12DescriptorHeap* heap = AllocateDescriptorHeap(
-        D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV,
-        metadata->resource_members.size());
-
-    u32 heap_offset = 0;
-
-    for (const auto* member : metadata->resource_members) {
-        void* member_ptr = (u8*)params_data + member->offset;
-
-        switch (member->type) {
-        case ParameterType::Texture: {
-            ID3D12Resource* tex = *(ID3D12Resource**)member_ptr;
-            if (tex) {
-                ID3D12ShaderResourceView* srv = GetOrCreateSRV(tex);
-                CopyDescriptor(heap, heap_offset, srv);
-            }
-            heap_offset++;
-            break;
-        }
-        case ParameterType::TextureUAV: {
-            ID3D12Resource* tex = *(ID3D12Resource**)member_ptr;
-            if (tex) {
-                ID3D12UnorderedAccessView* uav = GetOrCreateUAV(tex);
-                CopyDescriptor(heap, heap_offset, uav);
-            }
-            heap_offset++;
-            break;
-        }
-        case ParameterType::Sampler: {
-            D3D12_SAMPLER_DESC* sampler = *(D3D12_SAMPLER_DESC**)member_ptr;
-            if (sampler) {
-                ID3D12SamplerHeap* sampler_heap = GetSamplerHeap();
-                u32 sampler_index = RegisterSampler(sampler);
-                // Samplers are in separate heap, tracked separately
-            }
-            break;
-        }
-        // ... handle BufferSRV, BufferUAV similarly
-        }
-    }
-
-    // Bind descriptor heap to root parameter 1 (reserved for resources)
-    cmd_list.SetGraphicsRootDescriptorTable(1, heap->GetGPUDescriptorHandleForHeapStart());
+    cmd->DrawFullscreenTriangle();
 }
 ```
 
-### Step 4: HLSL Code Generation
-
-**File: `src/engine/renderer/core/shader_compiler.h`**
+You can also call the two steps separately when you need the CBAllocation before
+resource binding:
 
 ```cpp
-#pragma once
+// Step A: upload scalar data and bind CBV
+auto alloc = ShaderParameterBinder::BindCB(
+    cmd, &params, MyPassParams::GetMetadata(), m_cbRing, kSlotMyPassCB);
 
-#include "shader_parameters.h"
-#include "core/string.h"
+// ... set other root parameters ...
 
-namespace uz::render {
-
-/// Generate HLSL cbuffer declaration from metadata.
-///
-/// Output example:
-///   cbuffer MaterialParams : register(b0) {
-///       float Roughness;
-///       float4 BaseColor;
-///       Texture2D DiffuseMap;
-///       SamplerState LinearSampler;
-///   };
-inline String GenerateHLSLCBufferDeclaration(
-    const ParameterStructMetadata* metadata)
-{
-    String result;
-    result.AppendFormat("cbuffer %s : register(b0) {{\n", metadata->struct_name);
-
-    for (const auto* member : metadata->members) {
-        result.AppendFormat("    %s %s;\n", member->shader_type, member->name);
-    }
-
-    result.Append("};\n");
-    return result;
-}
-
-/// Inject parameter struct declaration into shader source.
-///
-/// Called before DXC compilation to ensure parameter names match C++.
-inline String InjectedParametersIntoShaderSource(
-    const String& original_source,
-    const ParameterStructMetadata* metadata)
-{
-    String cbuffer_decl = GenerateHLSLCBufferDeclaration(metadata);
-
-    // Insert right after any #includes, before cbuffer definitions
-    String result = original_source;
-    size_t insert_pos = 0;
-
-    // Find last #include line
-    size_t last_include = result.find_last_of("#include");
-    if (last_include != String::npos) {
-        insert_pos = result.find('\n', last_include) + 1;
-    }
-
-    result.insert(insert_pos, "\n// Auto-generated parameter struct\n");
-    result.insert(insert_pos, cbuffer_decl);
-
-    return result;
-}
-
-}  // namespace uz::render
+// Step B: bind textures/samplers at their HLSL register slots
+ShaderParameterBinder::BindResources(
+    cmd, &params, MyPassParams::GetMetadata(), bindless);
 ```
 
-### Step 5: Usage Example
+---
 
-**File: `src/engine/renderer/shaders/deferred_lighting.h`**
+## SM5 vs SM6.6 Binding Differences
+
+The `bindless` flag controls how textures are bound:
+
+| Mode | Textures | Samplers | How shaders access textures |
+|------|----------|----------|-----------------------------|
+| SM5 (`bindless=false`) | `SetFragmentTexture(slot, handle)` per member | `SetFragmentSampler(slot, handle)` per member | `Texture2D albedoMap : register(t0)` |
+| SM6.6 (`bindless=true`) | No explicit binding — skipped | `SetFragmentSampler(slot, handle)` per member | `ResourceDescriptorHeap[srvIndex]` |
+
+In SM5 mode, the `resourceSlot` in metadata determines the HLSL register index (`tN`,
+`sN`, `uN`). In SM6.6 mode, SRV indices are typically stored as scalar fields in the CB
+(e.g., `irradianceSrvIndex`) and read from the CB by the shader directly.
+
+UAV binding is intentionally excluded from `BindResources` — UAV binding requires the
+compute root signature path which varies per backend and is handled by each compute pass.
+
+---
+
+## Existing Parameter Structs
+
+Three structs have already been migrated from manual CB definitions:
+
+### PerFrameParams (`per_frame_params.h`)
+
+Mirrors `PerFrameCB` (512-byte scalar section) plus IBL texture handles.
+
+```
+cbSize: 512 bytes
+Textures: irradianceCubemap (t5), prefilteredSpecular (t6), brdfLut (t7)
+```
+
+Verified with:
+```cpp
+static_assert(offsetof(PerFrameParams, irradianceCubemap) == 512, ...);
+```
+
+### ShadowDataParams (`shadow_data_params.h`)
+
+Mirrors `ShadowDataCB` (768-byte scalar section) plus shadow atlas handles.
+
+```
+cbSize: 768 bytes
+Textures: shadowAtlas (t3), staticShadowAtlas (t8), dfsOutputTexture (t9)
+```
+
+Verified with:
+```cpp
+static_assert(offsetof(ShadowDataParams, shadowAtlas) == 768, ...);
+```
+
+### LightingParams (`lighting_params.h`)
+
+Mirrors `LightingCB` (3328-byte scalar section). No resource handles currently.
+
+```
+cbSize: 3328 bytes
+Textures: none
+```
+
+Verified with:
+```cpp
+static_assert(sizeof(LightingParams) == sizeof(LightingCB), ...);
+```
+
+---
+
+## HLSL Generation for Validation
+
+`GenerateHLSL()` converts metadata into an HLSL `cbuffer` + texture/sampler declarations.
+This is used to verify that the C++ struct layout agrees with the hand-written HLSL.
 
 ```cpp
-#pragma once
+#include "engine/renderer/core/shader_parameter_hlsl.h"
 
-#include "engine/renderer/core/shader_parameter_macros.h"
+// Generate HLSL for MyPassParams, bound to cbuffer register b2
+std::string hlsl = uz::GenerateHLSL(
+    MyPassParams::GetMetadata(),
+    "MyPassCB",   // cbuffer name in HLSL
+    2             // register slot (b2)
+);
+// hlsl now contains:
+// cbuffer MyPassCB : register(b2) {
+//     float4x4 viewProj;   // offset: 0, size: 64
+//     float4 cameraPos;    // offset: 64, size: 16
+//     float exposure;      // offset: 80, size: 4
+//     float _pad[3];       // offset: 84, size: 12
+// };
+// TextureCube envCubemap : register(t5);
+// Texture2D brdfLut : register(t7);
+// SamplerState linearSampler : register(s0);
+```
 
-namespace uz::render::shaders {
+> **Note**: HLSL type inference from byte size is a heuristic (4 bytes → `float`, 64 bytes
+> → `float4x4`, etc.). The generated output is for documentation and manual comparison
+> against shader source — it is not compiled or injected into shaders.
 
-/// Parameters for deferred lighting pass.
-BEGIN_SHADER_PARAMETER_STRUCT(FDeferredLightingParams)
-    /// Light world position
-    SHADER_PARAMETER(float3, LightPosition)
+---
 
-    /// Light color and intensity
-    SHADER_PARAMETER(float4, LightColorAndIntensity)
+## Alignment Rules and Padding
 
-    /// Attenuation radius
-    SHADER_PARAMETER(float, AttenuationRadius)
+HLSL cbuffers pack scalars into 16-byte rows. A single `float` at offset 80 occupies
+bytes 80–83; the next `float4` must start at offset 96 (not 84). Failing to pad correctly
+causes the C++ struct to disagree with the HLSL cbuffer layout, producing silent garbage values.
 
-    /// G-Buffer: diffuse + metallic
-    SHADER_PARAMETER_TEXTURE(Texture2D, GBufferDiffuse)
+**Correct padding pattern:**
 
-    /// G-Buffer: normals
-    SHADER_PARAMETER_TEXTURE(Texture2D, GBufferNormal)
-
-    /// G-Buffer: depth
-    SHADER_PARAMETER_TEXTURE(Texture2D, GBufferDepth)
-
-    /// Shadow map
-    SHADER_PARAMETER_TEXTURE(Texture2D, ShadowMap)
-
-    /// Linear sampler for reading
-    SHADER_PARAMETER_SAMPLER(SamplerState, LinearSampler)
-
-    /// Point sampler for shadow compare
-    SHADER_PARAMETER_SAMPLER(SamplerState, PointSampler)
+```cpp
+BEGIN_SHADER_PARAMETER_STRUCT(ExampleParams)
+    SHADER_PARAMETER(Vec4,  lightDir)         // 16 bytes, offset 0  — OK, 16-byte boundary
+    SHADER_PARAMETER(float, intensity)        // 4 bytes,  offset 16 — OK, 16-byte boundary
+    SHADER_PARAMETER_ARRAY(float, _pad0, 3)   // 12 bytes — pads to offset 32
+    SHADER_PARAMETER(Vec4,  lightColor)       // 16 bytes, offset 32 — OK
+SHADER_PARAMETER_SCALAR_END()
 END_SHADER_PARAMETER_STRUCT()
-
-}  // namespace uz::render::shaders
+// Total scalar: 48 bytes → cbSize = 256 (next 256-byte multiple)
 ```
 
-**File: `src/engine/renderer/shaders/deferred_lighting.cpp`** (Render pass using parameters)
-
-```cpp
-#include "deferred_lighting.h"
-#include "engine/renderer/core/shader_parameter_binding.h"
-
-namespace uz::render {
-
-void RenderDeferredLighting(
-    RHICommandList& cmd_list,
-    const LightInfo& light,
-    const GBufferResources& gbuffer,
-    const RHITexture& shadow_map)
-{
-    // Create parameter struct
-    shaders::FDeferredLightingParams params;
-    params.LightPosition = light.position;
-    params.LightColorAndIntensity = light.color_and_intensity;
-    params.AttenuationRadius = light.radius;
-    params.GBufferDiffuse = gbuffer.diffuse->GetRHI();
-    params.GBufferNormal = gbuffer.normal->GetRHI();
-    params.GBufferDepth = gbuffer.depth->GetRHI();
-    params.ShadowMap = shadow_map.GetRHI();
-    params.LinearSampler = GetGlobalLinearSampler();
-    params.PointSampler = GetGlobalPointSampler();
-
-    // One call binds everything
-    SetShaderParameters(cmd_list, GetDeferredLightingShader(), params);
-
-    // Render
-    cmd_list.DrawFullscreenTriangle();
-}
-
-}  // namespace uz::render
-```
-
----
-
-## DX11 vs DX12 Implementation Differences
-
-### DX12 Path (Descriptor Tables)
-
-```cpp
-void BindResourceParameters_DX12(
-    ID3D12GraphicsCommandList* cmd_list,
-    const void* params_data,
-    const ParameterStructMetadata* metadata)
-{
-    // Allocate heap for all resources
-    ID3D12DescriptorHeap* heap = device->CreateDescriptorHeap(...);
-
-    // Copy each resource into heap
-    for (auto* member : metadata->resource_members) {
-        ID3D12Resource* res = *(ID3D12Resource**)((u8*)params_data + member->offset);
-        ID3D12ShaderResourceView* srv = GetSRV(res);
-        device->CopyDescriptorsSimple(1, heap_handle, srv_handle, ...);
-    }
-
-    // Single descriptor table binding
-    cmd_list->SetGraphicsRootDescriptorTable(1, heap->GetGPUDescriptorHandleForHeapStart());
-}
-```
-
-### DX11 Path (Discrete Bindings)
-
-```cpp
-void BindResourceParameters_DX11(
-    ID3D11DeviceContext* ctx,
-    const void* params_data,
-    const ParameterStructMetadata* metadata)
-{
-    // Slot assignments come from shader reflection
-    u32 t_slot = 0, u_slot = 0, s_slot = 0;
-
-    for (auto* member : metadata->resource_members) {
-        if (member->type == ParameterType::Texture) {
-            ID3D11Resource* res = *(ID3D11Resource**)((u8*)params_data + member->offset);
-            ID3D11ShaderResourceView* srv = GetSRV(res);
-            ctx->PSSetShaderResources(t_slot++, 1, &srv);
-        }
-        else if (member->type == ParameterType::Sampler) {
-            ID3D11SamplerState* sampler = GetD3D11Sampler(...);
-            ctx->PSSetSamplers(s_slot++, 1, &sampler);
-        }
-    }
-}
-```
-
-**Key insight:** Metadata separates the *intent* (bind a texture) from the *mechanism* (DX12 descriptor table vs. DX11 PSSetShaderResources).
-
----
-
-## Testing
-
-**File: `src/engine/renderer/tests/test_shader_parameters.cpp`**
-
-```cpp
-#include <gtest/gtest.h>
-#include "engine/renderer/core/shader_parameter_macros.h"
-
-namespace uz::render {
-
-// Test struct
-BEGIN_SHADER_PARAMETER_STRUCT(FTestParams)
-    SHADER_PARAMETER(float, Scalar)
-    SHADER_PARAMETER(float4, Vector)
-    SHADER_PARAMETER_TEXTURE(Texture2D, DiffuseMap)
-END_SHADER_PARAMETER_STRUCT()
-
-TEST(ShaderParametersTest, MetadataGeneration) {
-    const auto* meta = FTestParams::GetMetadata();
-
-    ASSERT_NE(meta, nullptr);
-    EXPECT_EQ(meta->struct_name, "FTestParams");
-    EXPECT_EQ(meta->members.size(), 3);
-
-    // Verify CB members
-    EXPECT_EQ(meta->cb_members.size(), 2);  // Scalar + Vector
-    EXPECT_EQ(meta->resource_members.size(), 1);  // DiffuseMap
-}
-
-TEST(ShaderParametersTest, CBufferSize) {
-    const auto* meta = FTestParams::GetMetadata();
-    u32 cb_size = meta->GetCBufferSizeBytes();
-
-    // Scalar (4) + padding (12) + Vector (16) = 32 bytes
-    EXPECT_EQ(cb_size, 32);
-}
-
-TEST(ShaderParametersTest, HLSLGeneration) {
-    const auto* meta = FTestParams::GetMetadata();
-    String hlsl = GenerateHLSLCBufferDeclaration(meta);
-
-    EXPECT_TRUE(hlsl.Contains("cbuffer FTestParams"));
-    EXPECT_TRUE(hlsl.Contains("float Scalar"));
-    EXPECT_TRUE(hlsl.Contains("float4 Vector"));
-    EXPECT_TRUE(hlsl.Contains("Texture2D DiffuseMap"));
-}
-
-}  // namespace uz::render
-```
-
----
-
-## Migration Checklist
-
-- [ ] Implement `ParameterStructMetadata` struct
-- [ ] Implement macro system (`BEGIN_SHADER_PARAMETER_STRUCT`, etc.)
-- [ ] Implement `SetShaderParameters()` template
-- [ ] Implement DX12 descriptor table binding
-- [ ] Implement DX11 discrete binding (if DX11 support needed)
-- [ ] Implement `GenerateHLSLCBufferDeclaration()`
-- [ ] Integrate into shader compiler (inject before DXC)
-- [ ] Migrate existing shaders to new parameter struct syntax
-- [ ] Test CB data upload correctness
-- [ ] Test resource binding correctness
-- [ ] Verify shader hot-reload works with new system
-
----
-
-## Performance Notes
-
-- **CPU overhead:** Metadata iteration is O(num_members), typically 5-20 members per shader
-- **GPU overhead:** None — same descriptor binding as before
-- **Memory:** Metadata is static, allocated once at startup
-- **Hot-reload:** Regenerated HLSL ensures parameter order always matches C++
+The 256-byte alignment is enforced at compile time by `END_SHADER_PARAMETER_METADATA`.
 
 ---
 
 ## See Also
 
-- `docs/analysis/rendering/ue5-uniform-buffer-shader-binding-system.md` — Deep UE5 architecture analysis
-- `docs/specs/shader-system.md` — Shader system specification
-- `docs/specs/renderer.md` — Renderer pass infrastructure
-
+- `runtime/engine/renderer/core/shader_parameters.h` — Core types.
+- `runtime/engine/renderer/core/shader_parameter_macros.h` — Macro definitions.
+- `runtime/engine/renderer/core/shader_parameter_binder.h` — Binder API.
+- `runtime/engine/renderer/core/shader_parameter_hlsl.h` — HLSL generation.
+- [Shader Parameter Migration Guide](shader-parameter-migration-guide.md) — Step-by-step migration from manual CBs.
+- `docs/specs/shader-system.md` — Shader system specification.

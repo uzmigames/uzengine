@@ -7,16 +7,16 @@
 
 ## 2. Primitive Mobility Classification
 
-- [ ] 2.1 Add `EMobility` enum (`Static`, `Stationary`, `Movable`) to mesh/primitive component if not already present. (Deferred — requires scene system)
-- [ ] 2.2 Classify each draw command as static or movable in the shadow draw list. (Deferred — requires mobility enum)
-- [ ] 2.3 Split shadow draw commands into two lists: `staticDraws` and `movableDraws`. (Deferred — requires mobility enum)
+- [x] 2.1 Add `EMobility` enum (`Static`, `Stationary`, `Movable`) to `draw_list.h`.
+- [x] 2.2 Add `mobility` field to `DrawCommand`, classified in `SyncWorldToDrawList()`.
+- [x] 2.3 Shadow pass filters draws by `cacheMode` — `StaticPrimitivesOnly` skips Movable, `MovablePrimitivesOnly` skips Static/Stationary.
 
 ## 3. Two-Pass Shadow Rendering
 
 - [x] 3.1 Modify `ShadowPassDesc` to accept `cacheMode` parameter (default `Uncached` for backward compat).
-- [ ] 3.2 Allocate separate depth targets: one for cached static shadows, one for per-frame dynamic shadows. (Deferred — requires draw list split)
-- [ ] 3.3 For `StaticPrimitivesOnly` pass: only execute if cache is invalid. (Deferred — requires draw list split)
-- [ ] 3.4 For `MovablePrimitivesOnly` pass: always execute every frame. (Deferred — requires draw list split)
+- [x] 3.2 Separate static shadow atlas (`m_staticShadowAtlas`) created in `SceneRenderer::Init()`.
+- [x] 3.3 Static pass registered conditionally — only when cache invalid via `m_shadowCacheManager.UpdateCache()`.
+- [x] 3.4 Dynamic pass registered every frame with `cacheMode = MovablePrimitivesOnly`.
 - [ ] 3.5 Track rendered static primitives in bitset for CSM scrolling culling. (Deferred)
 
 ## 4. Cache Invalidation
@@ -58,4 +58,4 @@
 - [ ] 9.3 Performance guide
 
 ## Note
-Core cache infrastructure complete (types, invalidation, VRAM budget, compositing shader). Two-pass rendering and CSM scrolling deferred — require primitive mobility classification and GPU copy infrastructure that don't exist yet.
+Two-pass shadow rendering is now functional: primitive mobility classification (`EMobility` in `draw_list.h`), draw command filtering by cache mode, separate static shadow atlas, and conditional static/dynamic pass registration are all implemented. Remaining work: CSM scrolling (requires GPU copy infrastructure), rendered primitive bitset tracking, CVar runtime toggle, and documentation.

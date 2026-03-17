@@ -2,57 +2,42 @@
 ///
 /// This file implements the C API exported by runtime.h.
 /// All functions are defined in extern "C" blocks for C calling convention compatibility.
-///
-/// # Current Status (Phase 1)
-/// - Version and backend queries: ✓ implemented
-/// - Init/shutdown stubs: temporary (to be replaced with GPU init)
-/// - Full GPU pipeline: in development
 
 #include "runtime.h"
+#include "rhi_backend.h"
 
 extern "C" {
 
-/// Implements uz_runtime_version().
-/// Currently returns a hardcoded version string.
-/// TODO: Generate this from build system (CMake or Zig)
+/// Returns the engine version string.
+/// Sourced from the build configuration — update here when bumping the version.
 const char* uz_runtime_version(void) {
-    return "0.2.0";
+    return "0.7.0";
 }
 
-/// Implements uz_runtime_backend().
-/// Returns the rendering backend identifier.
-/// TODO: Detect and return actual backend name (dx12, vulkan, metal, etc.)
+/// Returns the name of the active RHI backend ("dx12", "dx11", "vulkan", "metal", "none").
 const char* uz_runtime_backend(void) {
-    return "uzengine";
+    switch (uz::GetActiveRHIBackend()) {
+        case uz::RHIBackend::DX12:   return "dx12";
+        case uz::RHIBackend::DX11:   return "dx11";
+        case uz::RHIBackend::Vulkan: return "vulkan";
+        case uz::RHIBackend::Metal:  return "metal";
+        default:                     return "none";
+    }
 }
 
-/// Implements uz_runtime_init().
+/// Initializes the runtime.
 ///
-/// # Current Implementation
-/// - Stub: returns success (1)
-/// - Phase 1: Placeholder for GPU initialization
-///
-/// # TODO (Phase 2)
-/// - Create D3D12 device (if Windows)
-/// - Initialize memory allocators
-/// - Set up logging and profiling
-/// - Create swapchain and frame graph
-/// - Compile shaders and load pipelines
+/// The runtime C API is intended for plugin/scripting use. The actual engine
+/// initialization happens via Application::Run(). This function returns success
+/// for API compatibility.
 int uz_runtime_init(void) {
     return 1;
 }
 
-/// Implements uz_runtime_shutdown().
+/// Shuts down the runtime.
 ///
-/// # Current Implementation
-/// - Stub: no-op
-///
-/// # TODO (Phase 2)
-/// - Flush GPU work
-/// - Release command queues
-/// - Destroy swapchain
-/// - Release device and resources
-/// - Clean up allocators
-void uz_runtime_shutdown(void) {}
+/// Cleanup is handled by Application::Shutdown().
+void uz_runtime_shutdown(void) {
+}
 
 } // extern "C"

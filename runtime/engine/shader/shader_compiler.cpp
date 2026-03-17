@@ -241,10 +241,12 @@ std::vector<std::wstring> ShaderCompiler::BuildArguments(
         //   t registers → binding 0..15  (SAMPLED_IMAGE)
         //   s registers → binding 16..31 (SAMPLER)
         //   b registers → binding 32..47 (UNIFORM_BUFFER)
+        //   u registers → binding 48..63 (STORAGE_IMAGE / STORAGE_BUFFER)
         // All in descriptor set 0.
         args.push_back(L"-fvk-t-shift"); args.push_back(L"0");  args.push_back(L"0");
         args.push_back(L"-fvk-s-shift"); args.push_back(L"16"); args.push_back(L"0");
         args.push_back(L"-fvk-b-shift"); args.push_back(L"32"); args.push_back(L"0");
+        args.push_back(L"-fvk-u-shift"); args.push_back(L"48"); args.push_back(L"0");
 
     }
 

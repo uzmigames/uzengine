@@ -42,6 +42,7 @@
 
 #include "rhi_types.h"
 #include <cstdint>
+#include <vector>
 
 namespace uz {
 
@@ -184,7 +185,7 @@ public:
     }
 
     /// Returns true if initialized and ready for use.
-    [[nodiscard]] bool IsInitialized() const { return m_slots != nullptr; }
+    [[nodiscard]] bool IsInitialized() const { return !m_slots.empty(); }
 
 private:
     struct Slot {
@@ -200,7 +201,7 @@ private:
     /// Rehashes to 2x capacity when load factor exceeds 70%.
     void Rehash();
 
-    Slot* m_slots = nullptr;        ///< Open-addressing slot array (power-of-2)
+    std::vector<Slot> m_slots;      ///< Open-addressing slot array (power-of-2)
     uint32_t m_capacity = 0;         ///< Total slot capacity
     uint32_t m_count = 0;            ///< Number of occupied slots
     uint32_t m_mask = 0;             ///< Capacity - 1 (for modulo via bitwise AND)

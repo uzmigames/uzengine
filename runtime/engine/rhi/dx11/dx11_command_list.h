@@ -69,6 +69,7 @@ public:
                     uint64_t offsetBytes, const void* cpuData, uint32_t dataSize) override;
     void SetDescriptorTable(uint32_t rootParamIndex, uint32_t descriptorIndex) override;
     void SetFragmentTexture(uint32_t slot, RHITextureHandle texture) override;
+    void SetFragmentSampler(uint32_t slot, RHISamplerHandle sampler) override;
 
     void DrawIndexed(uint32_t indexCount, uint32_t instanceCount,
                      uint32_t firstIndex, int32_t vertexOffset,

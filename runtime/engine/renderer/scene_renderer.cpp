@@ -10,6 +10,8 @@
 #include "fps_camera_controller.h"
 #include "cb_ring_allocator.h"
 #include "constant_buffers.h"
+#include "per_frame_params.h"
+#include "shadow_data_params.h"
 #include "pipeline_library.h"
 #include "shader_manager.h"
 #include "mesh.h"
@@ -166,6 +168,42 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
 
     // ── Shadow Atlas ────────────────────────────────────────────────────
     m_shadowAtlas.Init(m_device);
+
+    // ── Shadow Cache Manager + Static Shadow Atlas ──────────────────
+    // The static shadow atlas is a separate depth texture with the same
+    // dimensions as the dynamic atlas. Static geometry is rendered once
+    // (per invalidation) and reused across frames. The pixel shader
+    // composites both atlases: finalShadow = min(static, dynamic).
+    {
+        ShadowCacheConfig cacheConfig{};
+        cacheConfig.enabled = true;
+        cacheConfig.cacheBudgetMB = 150;
+        cacheConfig.scrollingOverlapThreshold = 0.75f;
+        m_shadowCacheManager.Init(m_device, cacheConfig);
+
+        // Create static shadow atlas with same dimensions as dynamic atlas
+        const uint32_t cols = GetAtlasColumns(4); // default 4 cascades
+        const uint32_t rows = GetAtlasRows(4);
+        const uint32_t atlasW = cols * kShadowResolution;
+        const uint32_t atlasH = rows * kShadowResolution;
+
+        RHITextureDesc staticAtlasDesc{};
+        staticAtlasDesc.width     = atlasW;
+        staticAtlasDesc.height    = atlasH;
+        staticAtlasDesc.format    = RHIFormat::D32Float;
+        staticAtlasDesc.usage     = RHITextureUsage::DepthStencil | RHITextureUsage::ShaderResource;
+        staticAtlasDesc.debugName = "StaticShadowAtlas";
+
+        m_staticShadowAtlas = m_device->CreateTexture(staticAtlasDesc);
+        if (m_staticShadowAtlas.IsValid()) {
+            m_staticShadowAtlasSrv = m_device->GetTextureSRVIndex(m_staticShadowAtlas);
+            UZ_LOG(Renderer, Info, "SceneRenderer: Static shadow atlas created ({}x{}, D32F, SRV={})",
+                   atlasW, atlasH, m_staticShadowAtlasSrv);
+        } else {
+            UZ_LOG(Renderer, Warning, "SceneRenderer: Failed to create static shadow atlas — shadow caching disabled");
+            m_staticShadowAtlasSrv = UINT32_MAX;
+        }
+    }
 
     // ── Fallback Textures (SM5 unconditional sampling) ──────────────
     // The SM5 shader path samples all PBR textures unconditionally (no
@@ -331,6 +369,14 @@ void SceneRenderer::Shutdown() {
 
     m_shadowAtlas.Shutdown(m_device);
 
+    // ── Shadow Cache + Static Shadow Atlas ───────────────────────────
+    m_shadowCacheManager.Shutdown();
+    if (m_staticShadowAtlas.IsValid()) {
+        m_device->DestroyTexture(m_staticShadowAtlas);
+        m_staticShadowAtlas = RHITextureHandle{};
+        m_staticShadowAtlasSrv = UINT32_MAX;
+    }
+
     // ── Transmittance LUT ────────────────────────────────────────────
     if (m_transmittanceLut.IsValid()) {
         m_device->DestroyTexture(m_transmittanceLut);
@@ -491,8 +537,8 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
 
     auto& camera = *m_camera;
 
-    // ── Build PerFrameCB ────────────────────────────────────────────────
-    PerFrameCB perFrame{};
+    // ── Build PerFrameParams (scalar section byte-identical to PerFrameCB) ──
+    PerFrameParams perFrame{};
     perFrame.viewProj    = camera.GetViewProjection();
     perFrame.invViewProj = perFrame.viewProj.Inverse();
     Vec3 camPos          = camera.GetPosition();
@@ -513,6 +559,7 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     }
 
     // ── Extract SkyLight from SkyLightComponent (UE5 parity) ──────────
+    // @source UE5 SkyLightComponent.cpp:308 — MinOcclusion default = 0.0
     if (world) {
         auto skyLightView = world->GetRegistry().view<SkyLightComponent>();
         for (auto enttEntity : skyLightView) {
@@ -570,10 +617,26 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
 
     perFrame.shadowDebugMode = m_shadowDebugMode;
 
+    // ── IBL texture handles (for SM5 binder path) ─────────────────────
+    // The binder's BindResources() reads these handles and calls
+    // SetFragmentTexture at the metadata-defined register slots (t5-t7).
+    if (m_iblBaker) {
+        perFrame.irradianceCubemap   = m_iblBaker->GetIrradianceTexture();
+        perFrame.prefilteredSpecular = m_iblBaker->GetPrefilteredTexture();
+        perFrame.brdfLut             = m_iblBaker->GetBRDFLutTexture();
+    }
+
+    // Allocate CB for per-frame data — only the scalar section (512 bytes)
+    // is copied to the GPU. Resource handles live after the CB boundary
+    // and are bound separately by BindResources().
     CBAllocation perFrameAlloc = m_cbRing->Allocate(sizeof(PerFrameCB));
     std::memcpy(perFrameAlloc.cpuPtr, &perFrame, sizeof(PerFrameCB));
 
     // ── Shadow cascades — delegated to shadow_renderer ─────────────────
+    // Determine shadow cache status early so ShadowDataCB gets the right fields.
+    const bool shadowCacheEnabled = m_shadowCacheManager.GetConfig().enabled
+                                  && m_staticShadowAtlas.IsValid()
+                                  && m_staticShadowAtlasSrv != UINT32_MAX;
     ShadowFrameData shadowFrame = SetupShadowFrame(
         camera, sunDir,
         lightData.perLightShadowBias, lightData.perLightShadowSlopeBias,
@@ -581,11 +644,25 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
         m_shadowAtlas.GetSrvIndex(), kShadowResolution, *m_cbRing,
         lightData.farShadowCascadeCount,
         lightData.farShadowDistance,
-        lightData.farShadowLodBias);
+        lightData.farShadowLodBias,
+        shadowCacheEnabled,
+        m_staticShadowAtlasSrv);
     const auto& shadowCfg  = shadowFrame.config;
     const auto* cascades    = shadowFrame.cascades;
     const uint32_t totalCascadeCount = shadowFrame.totalCascadeCount;
     CBAllocation shadowAlloc = shadowFrame.cbAllocation;
+
+    // ── Build ShadowDataParams for binder path ──────────────────────────
+    // Copy the 768-byte scalar section from the CB allocation, then attach
+    // the RHI texture handles so ShaderParameterBinder can bind them at
+    // their SM5 register slots (t3, t8, t9).
+    ShadowDataParams shadowDataParams{};
+    static_assert(offsetof(ShadowDataParams, shadowAtlas) == sizeof(ShadowDataCB),
+                  "ShadowDataParams scalar section must match ShadowDataCB size");
+    std::memcpy(&shadowDataParams, shadowAlloc.cpuPtr, sizeof(ShadowDataCB));
+    shadowDataParams.shadowAtlas       = m_shadowAtlas.GetTexture();
+    shadowDataParams.staticShadowAtlas = m_staticShadowAtlas;
+    // dfsOutputTexture left as default (invalid) — DFS not yet implemented.
 
     // Resize shadow atlas if cascade count changed (e.g., far shadows toggled)
     m_shadowAtlas.Resize(m_device, totalCascadeCount);
@@ -673,36 +750,89 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
 
     auto* pipelines = m_pipelines.get();
 
-    // ── Shadow pass ─────────────────────────────────────────────────────
-    // Pass the full mesh array so each draw command can bind its own mesh.
-    // If no meshes are loaded, the passes skip all draw commands internally.
+    // ── Shadow pass(es) — two-pass cache-aware rendering ───────────────
+    // When shadow caching is active and the static shadow atlas is available:
+    //   Pass 1 (conditional): Render static/stationary geometry into the
+    //     static shadow atlas. Only executes when the cache is invalidated
+    //     (light direction change, cascade parameter change, etc.).
+    //   Pass 2 (every frame): Render only movable geometry into the dynamic
+    //     shadow atlas. The pixel shader composites both atlases.
+    //
+    // When shadow caching is disabled or the static atlas is unavailable,
+    // a single uncached pass renders all geometry into the dynamic atlas
+    // (backward compatible behavior).
+    //
+    // @source UE5 ShadowSetup.cpp:3846-3970 — EShadowDepthCacheMode
     auto shadowAtlasRes = rgBuilder.ImportTexture("ShadowAtlas", m_shadowAtlas.GetTexture(), RHIResourceState::ShaderResource);
     if (!m_meshes.empty()) {
-        ShadowPassDesc shadowDesc{};
-        shadowDesc.shadowAtlas          = shadowAtlasRes;
-        shadowDesc.shadowAtlasTexture   = m_shadowAtlas.GetTexture();
-        shadowDesc.drawList             = &drawList;
-        shadowDesc.cbAllocator          = m_cbRing.get();
-        shadowDesc.pipeline             = pipelines->GetShadowDepth(bindless);
-        shadowDesc.meshes               = m_meshes.data();
-        shadowDesc.meshCount            = static_cast<uint32_t>(m_meshes.size());
-        shadowDesc.bindless             = bindless;
-        for (uint32_t i = 0; i < totalCascadeCount; ++i) {
-            shadowDesc.cascades[i] = cascades[i];
-        }
-        shadowDesc.cascadeCount     = totalCascadeCount;
-        shadowDesc.atlasResolution  = kShadowResolution;
-        shadowDesc.farShadowLodBias = shadowFrame.config.farShadowLodBias;
-        // TEMP: disable instancing for shadows to debug flickering
-        // if (useInstancing) {
-        //     shadowDesc.instanced              = true;
-        //     shadowDesc.instancedPipeline      = pipelines->GetShadowDepthInstanced();
-        //     shadowDesc.instanceBufferSrvIndex = instanceBufferSrvIndex;
-        //     shadowDesc.batchData              = instanceBatches.data();
-        //     shadowDesc.batchCount             = static_cast<uint32_t>(instanceBatches.size());
-        // }
-        AddShadowPass(rgBuilder, shadowDesc);
+        // Use the shadow cache status computed earlier (before SetupShadowFrame).
+        const bool shadowCacheActive = shadowCacheEnabled;
 
+        // Stable up vector for cache key construction (Z-up world up).
+        const Vec3 lightUp = Vec3{0.f, 0.f, 1.f};
+
+        // Query the cache manager for each cascade. If ANY cascade is invalid,
+        // re-render all cascades (single-pass architecture).
+        bool needStaticRerender = false;
+        if (shadowCacheActive) {
+            const uint32_t lightId = 0; // Primary directional light
+            for (uint32_t i = 0; i < totalCascadeCount; ++i) {
+                ShadowCacheMode mode = m_shadowCacheManager.UpdateCache(
+                    lightId, i, cascades[i], sunDir, lightUp,
+                    kShadowResolution, frameIndex);
+                if (mode == ShadowCacheMode::StaticPrimitivesOnly
+                    || mode == ShadowCacheMode::Uncached) {
+                    needStaticRerender = true;
+                }
+            }
+        }
+
+        // Common fields shared between shadow pass descriptors.
+        auto fillCommonShadowDesc = [&](ShadowPassDesc& desc) {
+            desc.drawList             = &drawList;
+            desc.cbAllocator          = m_cbRing.get();
+            desc.pipeline             = pipelines->GetShadowDepth(bindless);
+            desc.meshes               = m_meshes.data();
+            desc.meshCount            = static_cast<uint32_t>(m_meshes.size());
+            desc.bindless             = bindless;
+            for (uint32_t ci = 0; ci < totalCascadeCount; ++ci) {
+                desc.cascades[ci] = cascades[ci];
+            }
+            desc.cascadeCount     = totalCascadeCount;
+            desc.atlasResolution  = kShadowResolution;
+            desc.farShadowLodBias = shadowFrame.config.farShadowLodBias;
+        };
+
+        if (shadowCacheActive) {
+            // ── Pass 1: Static geometry into cached atlas (conditional) ──
+            if (needStaticRerender) {
+                auto staticAtlasRes = rgBuilder.ImportTexture(
+                    "StaticShadowAtlas", m_staticShadowAtlas, RHIResourceState::ShaderResource);
+
+                ShadowPassDesc staticDesc{};
+                staticDesc.shadowAtlas        = staticAtlasRes;
+                staticDesc.shadowAtlasTexture = m_staticShadowAtlas;
+                staticDesc.cacheMode          = ShadowCacheMode::StaticPrimitivesOnly;
+                fillCommonShadowDesc(staticDesc);
+                AddShadowPass(rgBuilder, staticDesc);
+            }
+
+            // ── Pass 2: Dynamic (movable) geometry into per-frame atlas ──
+            ShadowPassDesc dynamicDesc{};
+            dynamicDesc.shadowAtlas        = shadowAtlasRes;
+            dynamicDesc.shadowAtlasTexture = m_shadowAtlas.GetTexture();
+            dynamicDesc.cacheMode          = ShadowCacheMode::MovablePrimitivesOnly;
+            fillCommonShadowDesc(dynamicDesc);
+            AddShadowPass(rgBuilder, dynamicDesc);
+        } else {
+            // ── Single uncached pass — backward compatible ──────────────
+            ShadowPassDesc shadowDesc{};
+            shadowDesc.shadowAtlas        = shadowAtlasRes;
+            shadowDesc.shadowAtlasTexture = m_shadowAtlas.GetTexture();
+            shadowDesc.cacheMode          = ShadowCacheMode::Uncached;
+            fillCommonShadowDesc(shadowDesc);
+            AddShadowPass(rgBuilder, shadowDesc);
+        }
     }
 
     if (m_renderPath == RenderPath::Deferred) {
@@ -783,7 +913,8 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
             lightDesc.shadowAlloc         = shadowAlloc;
             lightDesc.shadowAtlasResource = shadowAtlasRes;
             lightDesc.shadowAtlasTexture  = m_shadowAtlas.GetTexture();
-            // IBL texture handles for SM5 fallback path (t5-t7)
+            // IBL texture handles for SM5 fallback path (t5-t7) — kept for
+            // backward compat; the binder path reads from perFrameParams instead.
             if (m_iblBaker) {
                 lightDesc.iblIrradiance   = m_iblBaker->GetIrradianceTexture();
                 lightDesc.iblPrefiltered  = m_iblBaker->GetPrefilteredTexture();
@@ -792,6 +923,12 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
             lightDesc.bindless            = bindless;
             lightDesc.viewportWidth       = vpWidth;
             lightDesc.viewportHeight      = vpHeight;
+            // Binder path — ShaderParameterBinder uploads per-frame CB and
+            // binds IBL textures via metadata. On SM5, BindResources calls
+            // SetFragmentTexture for each texture member automatically.
+            lightDesc.perFrameParams    = &perFrame;
+            lightDesc.shadowDataParams  = &shadowDataParams;
+            lightDesc.cbRingAllocator   = m_cbRing.get();
             AddLightingPass(rgBuilder, lightDesc);
         } else {
             GBufferDebugPassDesc dbgDesc{};
@@ -912,9 +1049,14 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
             sc.bottom = static_cast<int32_t>(swapChain->GetHeight());
             cmd->SetScissor(sc);
 
-            // Root constants: HDR scene color SRV index
+            // Root constants: HDR scene color SRV index (SM6.6 bindless path)
             uint32_t indices[4] = { m_hdrSceneColorSrv, 0, 0, 0 };
             cmd->SetRootConstants(kSlotRootConstants, indices, 4);
+
+            // SM5: bind HDR scene color texture at t0 directly
+            if (!bindless) {
+                cmd->SetFragmentTexture(0, m_hdrSceneColor);
+            }
 
             // PerFrameCB at b1 — contains exposure from auto-exposure
             cmd->SetRootCBV(kSlotPerFrame, perFrameAlloc.bufferHandle,
@@ -1108,6 +1250,21 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
         cmd.worldMatrix  = sceneComp.GetWorldMatrix();
         cmd.normalMatrix = cmd.worldMatrix.NormalMatrix();
         cmd.meshId       = meshId;
+
+        // Map ECS mobility to renderer-side EMobility for shadow cache filtering.
+        // Stationary is treated as Static for shadow caching (UE5 parity).
+        switch (sceneComp.mobility) {
+            case SceneComponent::Mobility::Static:
+                cmd.mobility = EMobility::Static;
+                break;
+            case SceneComponent::Mobility::Stationary:
+                cmd.mobility = EMobility::Stationary;
+                break;
+            case SceneComponent::Mobility::Movable:
+            default:
+                cmd.mobility = EMobility::Movable;
+                break;
+        }
 
         // Map materialId to texture SRV indices if textures are loaded
         if (!m_textures.empty() && meshComp.materialId < static_cast<uint32_t>(m_textures.size())) {

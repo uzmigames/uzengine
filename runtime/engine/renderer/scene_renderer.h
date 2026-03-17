@@ -33,6 +33,7 @@
 #include "texture_loader.h"
 #include "screenshot_capture.h"
 #include "shadow_atlas.h"
+#include "shadow_cache.h"
 #include "ibl/ibl_baker.h"
 #include "ibl/sh_projection.h"
 #include "postprocess/auto_exposure.h"
@@ -325,7 +326,10 @@ private:
     // ── GBuffer + Shadow Atlas ─────────────────────────────────────────────
 
     GBuffer m_gbuffer;
-    ShadowAtlas m_shadowAtlas;                     ///< Cascade shadow map depth atlas.
+    ShadowAtlas m_shadowAtlas;                     ///< Cascade shadow map depth atlas (dynamic per-frame).
+    ShadowCacheManager m_shadowCacheManager;       ///< Manages cached static shadow maps.
+    RHITextureHandle m_staticShadowAtlas;           ///< Separate depth atlas for cached static shadows.
+    uint32_t m_staticShadowAtlasSrv = UINT32_MAX;  ///< SRV heap index for static shadow atlas.
 
     // ── HDR Scene Color (intermediate before tonemap) ───────────────────
     RHITextureHandle m_hdrSceneColor;           ///< RGBA16F HDR render target for scene color.

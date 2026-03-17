@@ -219,6 +219,7 @@ void AddAtmospherePasses(
         skyDesc.depthSrvIndex           = ctx.depthSrvIndex;
         skyDesc.depthTexture            = ctx.depthTexture;
         skyDesc.transmittanceLutSrvIndex = ctx.transmittanceLutSrv;
+        skyDesc.transmittanceLutTexture  = ctx.transmittanceLut;
         skyDesc.transmittanceLutRes      = lutRes;
         skyDesc.bindless                = ctx.bindless;
         skyDesc.viewportWidth           = ctx.vpWidth;
@@ -246,7 +247,7 @@ void PostFrameAtmosphereBake(
     cmdList->Execute();
     ctx.device->WaitIdle();
 
-    *ctx.iblResult = ctx.iblBaker->BakeEnvironment(ctx.skyCubemapSrv);
+    *ctx.iblResult = ctx.iblBaker->BakeEnvironment(ctx.skyCubemapSrv, ctx.skyCubemap);
     *ctx.skyIBLDirty = false;
     UZ_LOG(Renderer, Info, "SceneRenderer: Sky IBL baked (irrad={}, prefilt={})",
            ctx.iblResult->irradianceSrvIndex, ctx.iblResult->prefilteredSrvIndex);
@@ -265,26 +266,11 @@ void PostFrameAtmosphereBake(
             *ctx.skyIrradianceSH = shResult;
             UZ_LOG(Renderer, Info, "SceneRenderer: SH from GPU readback");
         } else {
-            const Vec3& sunDir   = *ctx.sunDir;
-            const Vec3& sunColor = *ctx.sunColor;
-            float sunZ = sunDir.z;
-            float sunBright = sunColor.Length();
-            float skyFactor = sunBright * (0.08f + 0.15f * std::max(0.f, sunZ));
-
-            Vec3 skyCol = {0.90f * skyFactor, 0.92f * skyFactor, 1.0f * skyFactor};
-            Vec3 gndCol = {0.05f * skyFactor, 0.04f * skyFactor, 0.03f * skyFactor};
-
-            Vec3 avg = (skyCol + gndCol) * 0.5f;
-            Vec3 dir = (skyCol - gndCol) * 0.5f;
-            float c0 = 3.14159f * 0.282095f, c1 = 2.094395f * 0.488603f;
+            // GPU readback returned zero SH — use black ambient rather than
+            // invented analytical values. UE5 always projects from a cubemap
+            // and never falls back to analytical SH coefficients.
             for (int i = 0; i < 7; ++i) ctx.skyIrradianceSH->coeffs[i] = {0,0,0,0};
-            Vec3 sd = {sunDir.x*0.3f, sunDir.y*0.3f, 0.7f};
-            float sl = std::sqrt(sd.x*sd.x+sd.y*sd.y+sd.z*sd.z);
-            if (sl > 0.001f) sd = sd * (1.f/sl);
-            ctx.skyIrradianceSH->coeffs[0] = {sd.x*c1*dir.x, sd.y*c1*dir.x, sd.z*c1*dir.x, c0*avg.x};
-            ctx.skyIrradianceSH->coeffs[1] = {sd.x*c1*dir.y, sd.y*c1*dir.y, sd.z*c1*dir.y, c0*avg.y};
-            ctx.skyIrradianceSH->coeffs[2] = {sd.x*c1*dir.z, sd.y*c1*dir.z, sd.z*c1*dir.z, c0*avg.z};
-            UZ_LOG(Renderer, Info, "SceneRenderer: SH from analytical fallback");
+            UZ_LOG(Renderer, Warning, "SceneRenderer: SH readback returned zeros — using black ambient");
         }
     }
 

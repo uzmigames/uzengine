@@ -273,6 +273,13 @@ public:
     /// Returns nullptr if no texture has that SRV index.
     VulkanTexture* FindTextureBySrvIndex(uint32_t srvIndex);
 
+    /// Finds a texture by pool index for UAV binding.
+    ///
+    /// GetTextureUAVIndex returns pool index as sentinel; this resolves it
+    /// to the VulkanTexture for writing STORAGE_IMAGE descriptors.
+    /// Returns nullptr if the pool index is invalid or has no image view.
+    VulkanTexture* FindTextureByPoolIndex(uint32_t poolIndex);
+
     /// Finds a sampler by its logical sampler index.
     ///
     /// Iterates the sampler pool looking for a slot whose `samplerIndex` matches.

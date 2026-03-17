@@ -81,6 +81,8 @@ struct ShadowFrameData {
     CBRingAllocator& cbRing,
     uint32_t farShadowCascadeCount = 0,
     float farShadowDistance = 300000.0f,
-    int32_t farShadowLodBias = 0);
+    int32_t farShadowLodBias = 0,
+    bool useShadowCache = false,
+    uint32_t staticShadowAtlasSrv = UINT32_MAX);
 
 } // namespace uz

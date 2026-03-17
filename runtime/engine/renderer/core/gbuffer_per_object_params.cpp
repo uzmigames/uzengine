@@ -1,0 +1,59 @@
+/// UzEngine GBuffer Per-Object Params — Metadata definition for ShaderParameterBinder.
+
+#include "gbuffer_per_object_params.h"
+#include "constant_buffers.h"
+
+#include <cstddef>
+
+// Verify byte identity between GBufferPerObjectParams scalar section and PerObjectCB.
+static_assert(sizeof(uz::PerObjectCB) == 256,
+              "PerObjectCB size must be 256 bytes");
+static_assert(offsetof(uz::GBufferPerObjectParams, albedoIndex) == offsetof(uz::PerObjectCB, albedoIndex),
+              "albedoIndex offset mismatch");
+static_assert(offsetof(uz::GBufferPerObjectParams, model) == offsetof(uz::PerObjectCB, model),
+              "model offset mismatch");
+static_assert(offsetof(uz::GBufferPerObjectParams, normalMatrix) == offsetof(uz::PerObjectCB, normalMatrix),
+              "normalMatrix offset mismatch");
+
+namespace uz {
+
+/// SM5 material texture register slots — t0 through t4.
+static constexpr uint32_t kAlbedoSlot    = 0;
+static constexpr uint32_t kNormalSlot    = 1;
+static constexpr uint32_t kRoughnessSlot = 2;
+static constexpr uint32_t kMetallicSlot  = 3;
+static constexpr uint32_t kAoSlot        = 4;
+
+const ShaderParameterMetadata& GBufferPerObjectParams::GetMetadata()
+{
+    static const ShaderParamMember kMembers[] = {
+        // ── Scalar members (bulk-copied via cbSize) ──
+        {"albedoIndex",    ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(GBufferPerObjectParams, albedoIndex)),    sizeof(uint32_t), 0},
+        {"normalIndex",    ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(GBufferPerObjectParams, normalIndex)),    sizeof(uint32_t), 0},
+        {"roughnessIndex", ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(GBufferPerObjectParams, roughnessIndex)), sizeof(uint32_t), 0},
+        {"metallicIndex",  ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(GBufferPerObjectParams, metallicIndex)),  sizeof(uint32_t), 0},
+        {"aoIndex",        ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(GBufferPerObjectParams, aoIndex)),        sizeof(uint32_t), 0},
+        {"model",          ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(GBufferPerObjectParams, model)),          sizeof(Mat4),     0},
+        {"normalMatrix",   ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(GBufferPerObjectParams, normalMatrix)),   sizeof(Mat4),     0},
+
+        // ── Resource members (drive texture binding on SM5) ──
+        {"albedoTexture",    ShaderParamType::Texture2D, static_cast<uint32_t>(offsetof(GBufferPerObjectParams, albedoTexture)),    0, kAlbedoSlot},
+        {"normalTexture",    ShaderParamType::Texture2D, static_cast<uint32_t>(offsetof(GBufferPerObjectParams, normalTexture)),    0, kNormalSlot},
+        {"roughnessTexture", ShaderParamType::Texture2D, static_cast<uint32_t>(offsetof(GBufferPerObjectParams, roughnessTexture)), 0, kRoughnessSlot},
+        {"metallicTexture",  ShaderParamType::Texture2D, static_cast<uint32_t>(offsetof(GBufferPerObjectParams, metallicTexture)),  0, kMetallicSlot},
+        {"aoTexture",        ShaderParamType::Texture2D, static_cast<uint32_t>(offsetof(GBufferPerObjectParams, aoTexture)),        0, kAoSlot},
+    };
+
+    static const ShaderParameterMetadata kMetadata = {
+        kMembers,
+        sizeof(kMembers) / sizeof(kMembers[0]),
+        256,  // cbSize — matches sizeof(PerObjectCB), 256-byte aligned
+        5,    // textureCount (albedo + normal + roughness + metallic + ao)
+        0,    // samplerCount (uses static samplers in root sig)
+        0,    // uavCount
+    };
+
+    return kMetadata;
+}
+
+} // namespace uz

@@ -23,7 +23,16 @@ static const float MIN_ROUGHNESS = 0.04f;
 // ACES Filmic Tonemapping
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// ACES filmic tonemapping curve (Narkowicz 2015 fit).
+/// ACES filmic tonemapping curve (Narkowicz 2015 polynomial fit).
+///
+/// @source Narkowicz 2015 "ACES Filmic Tone Mapping Curve" — polynomial approximation
+/// @constants a=2.51, b=0.03, c=2.43, d=0.59, e=0.14 (Narkowicz 2015)
+/// @deviations UE5 uses a full ACES RRT+ODT pipeline with color space transforms
+///   (sRGB→AP0→AP1), glow module, red modifier, and custom S-curve with 5 artist
+///   parameters (FilmSlope/Toe/Shoulder/BlackClip/WhiteClip) in TonemapCommon.ush:105.
+///   Full UE5 FilmToneMap requires ~200 lines of ACES color space math + CB parameters.
+///   This Narkowicz fit is a single-function approximation that produces visually similar
+///   results for the default ACES settings (Slope=0.91, Toe=0.53, Shoulder=0.23).
 ///
 /// Maps HDR linear radiance to [0,1] LDR with a filmic S-curve that provides
 /// better highlight rolloff and color preservation than per-channel Reinhard.
@@ -68,20 +77,29 @@ float DistributionGGX(float NdotH, float alpha) {
 
 /// Schlick-GGX single-direction geometry masking/shadowing term.
 ///
+/// @source UE5 BRDF.ush:346 — Vis_SmithJointApprox (UE5 uses joint approx, but
+///   for our separate G1*G1 formulation we use the Karis 2013 direct-light k-remapping)
+/// @constants k = (roughness+1)^2/8 for direct (analytic) lights (Karis 2013, "Real Shading in UE4", slide 10)
+/// @deviations UE5 uses Vis_SmithJointApprox with a2=Pow4(roughness) instead of separate G1*G1. Both converge for the same roughness range.
+///
 /// Approximates the fraction of microfacets visible from direction v that
 /// are not shadowed or masked by other microfacets.
 ///
-/// G1(v) = N.V / (N.V * (1 - k) + k)   where k = alpha / 2 for direct lighting
+/// G1(v) = N.V / (N.V * (1 - k) + k)
+///   where k = (roughness + 1)^2 / 8 for direct lighting (analytic lights)
 ///
 /// # Parameters
 /// - NdotV: saturated dot product of N and the view or light direction.
-/// - alpha: perceptual roughness squared (r^2).
+/// - alpha: perceptual roughness squared (r^2). Roughness is recovered as sqrt(alpha).
 ///
 /// # Returns
 /// Scalar in (0, 1].
 float GeometrySchlickGGX(float NdotV, float alpha) {
     // k remapping for direct (analytic) lights per Karis 2013 Real Shading in UE4
-    float k = alpha / 2.0f;
+    // alpha = roughness^2, so roughness = sqrt(alpha)
+    float roughness = sqrt(alpha);
+    float r1 = roughness + 1.0f;
+    float k = (r1 * r1) / 8.0f;
     return NdotV / (NdotV * (1.0f - k) + k);
 }
 

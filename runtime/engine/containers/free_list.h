@@ -21,7 +21,7 @@
 /// particles.Free(p);
 /// ```
 
-#include <cassert>
+#include "engine_assert.h"
 #include <cstddef>
 #include <cstdint>
 #include <new>
@@ -142,9 +142,9 @@ template <typename T, size_t Capacity> class FreeList {
     ///
     /// Use asserts to catch these errors in development.
     void Free(T* ptr) {
-        assert(ptr != nullptr);
+        UZ_CHECK(ptr != nullptr);
         size_t idx = IndexOf(ptr);
-        assert(idx < Capacity && m_alive[idx]);
+        UZ_CHECK(idx < Capacity && m_alive[idx]);
         ptr->~T();
         m_alive[idx] = false;
         m_next[idx] = m_freeHead;
@@ -190,13 +190,13 @@ template <typename T, size_t Capacity> class FreeList {
     /// # Safety
     /// Asserts that index is valid and alive.
     T* At(size_t idx) {
-        assert(idx < Capacity && m_alive[idx]);
+        UZ_CHECK(idx < Capacity && m_alive[idx]);
         return &reinterpret_cast<T&>(m_storage[idx]);
     }
 
     /// Gets const pointer to element at index.
     const T* At(size_t idx) const {
-        assert(idx < Capacity && m_alive[idx]);
+        UZ_CHECK(idx < Capacity && m_alive[idx]);
         return &reinterpret_cast<const T&>(m_storage[idx]);
     }
 

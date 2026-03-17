@@ -29,7 +29,7 @@
 /// commands.Clear();  // Ready for next frame
 /// ```
 
-#include <cassert>
+#include "engine_assert.h"
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
@@ -71,7 +71,7 @@ template <typename T, size_t Capacity> class FrameArray {
     /// # Panics
     /// Asserts if the array is full (Count == Capacity).
     T& Push(const T& item) {
-        assert(m_count < Capacity && "FrameArray overflow");
+        UZ_CHECK(m_count < Capacity);
         T* ptr = new (&Storage(m_count)) T(item);
         ++m_count;
         return *ptr;
@@ -88,7 +88,7 @@ template <typename T, size_t Capacity> class FrameArray {
     /// # Panics
     /// Asserts if the array is full.
     T& Push(T&& item) {
-        assert(m_count < Capacity && "FrameArray overflow");
+        UZ_CHECK(m_count < Capacity);
         T* ptr = new (&Storage(m_count)) T(static_cast<T&&>(item));
         ++m_count;
         return *ptr;
@@ -105,7 +105,7 @@ template <typename T, size_t Capacity> class FrameArray {
     /// # Panics
     /// Asserts if the array is full.
     template <typename... Args> T& Emplace(Args&&... args) {
-        assert(m_count < Capacity && "FrameArray overflow");
+        UZ_CHECK(m_count < Capacity);
         T* ptr = new (&Storage(m_count)) T(static_cast<Args&&>(args)...);
         ++m_count;
         return *ptr;
@@ -124,7 +124,7 @@ template <typename T, size_t Capacity> class FrameArray {
     /// # Panics
     /// Asserts if `i >= Count()`.
     T& operator[](size_t i) {
-        assert(i < m_count);
+        UZ_CHECK(i < m_count);
         return At(i);
     }
     /// Const element access by index.
@@ -132,7 +132,7 @@ template <typename T, size_t Capacity> class FrameArray {
     /// # Panics
     /// Asserts if `i >= Count()`.
     const T& operator[](size_t i) const {
-        assert(i < m_count);
+        UZ_CHECK(i < m_count);
         return At(i);
     }
 

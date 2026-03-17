@@ -2,6 +2,12 @@
 ///
 /// Z-up coordinate system: +X forward, +Y right, +Z up (left-handed).
 ///
+/// WARNING: m_orientation is stored in Y-up (DirectXMath) space internally.
+/// This is because DirectXMath's XMMatrixLookToLH and XMQuaternionRotationMatrix
+/// operate in Y-up space. All public-facing methods (GetForward, GetRight, GetUp)
+/// convert back to Z-up via FromYUp(). The coordinate swap happens in UpdateView()
+/// via the swap matrix. Do NOT assume m_orientation is in Z-up space.
+///
 /// The view matrix converts Z-up world positions to Y-up clip space by
 /// applying a coordinate swap before the standard DX LookTo matrix.
 /// Swap: world(x,y,z) → view(y,z,x) which maps Y-right→screenX, Z-up→screenY, X-fwd→depth.

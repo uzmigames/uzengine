@@ -2,6 +2,142 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
+## [0.2.31] — 2026-03-17
+
+### DX11 and Vulkan Full Visual Parity with DX12
+
+All three RHI backends (DX12, DX11, Vulkan) now render identically — verified with PBR test demo side-by-side screenshots. Zero D3D11 Debug Layer errors. Zero Vulkan validation errors.
+
+**DX11 critical fixes (8 bugs)**:
+- **CB ring write-combined memory read-back** — DYNAMIC buffers use WC memory (write-only). `SetRootCBV` read from WC `alloc.cpuPtr` causing all matrices to arrive as zeros. Fix: CPU-side shadow copy for ConstantBuffer-usage DYNAMIC buffers.
+- **Stale SRV/UAV bindings** — DX11 immediate context leaked state between render graph passes and compute dispatches. Fix: clear all SRV/UAV bindings in `Begin()`, `SetPipeline(compute)`, and `BeginRenderPass()`. Matches UE5's `FD3D11DynamicRHI::CommitRenderTargets`.
+- **Buffer UAV creation** — non-structured buffers (auto-exposure) now use `D3D11_RESOURCE_MISC_BUFFER_ALLOW_RAW_VIEWS` + `DXGI_FORMAT_R32_TYPELESS` + `D3D11_BUFFER_UAV_FLAG_RAW`.
+- **Depth SRV/DSV conflict** — SRV clearing in `BeginRenderPass()` before `OMSetRenderTargets` prevents resource hazards.
+- **Tonemap SM5 path** — missing `SetFragmentTexture(0, m_hdrSceneColor)` for non-bindless path.
+- **Sky atmosphere transmittance LUT** — SM5 path never bound LUT at t1. Added `SetFragmentTexture(1, transmittanceLutTexture)`.
+- **`SetFragmentSampler` implementation** — was no-op default in `IRHICommandList`. Implemented DX11 override using `PSSetSamplers`/`CSSetSamplers`. Fixed stats overlay font rendering.
+- **`MapBuffer` scope** — shadow copy restricted to ConstantBuffer usage only. Vertex/index buffers use direct `MAP_WRITE_DISCARD`.
+
+**Auto-exposure buffer fix**:
+- Histogram and exposure buffers changed from `RWByteAddressBuffer` to `RWStructuredBuffer<uint>`/`RWStructuredBuffer<float>`. C++ buffers use `StructuredBuffer` flag with correct stride. Eliminates D3D11 RAW buffer mismatch errors.
+
+### Pass Migration to Shader Parameter Structs (7.1-7.3)
+
+All render passes now use `ShaderParameterBinder::Bind()` driven by metadata:
+- **GBuffer pass** — `GBufferPerObjectParams` (byte-identical to `PerObjectCB`, appends t0-t4 material textures). Handles both per-frame CB via `PerFrameParams::BindCB()` and per-object CB+textures via `Bind()`.
+- **Shadow pass** — `ShadowCascadeParams` (viewProj, 256B) and `ShadowPerObjectParams` (byte-identical to `PerObjectCB`, no textures — depth-only). Both use `BindCB()`.
+- **PBR forward pass** — reuses `GBufferPerObjectParams` (same CB layout + material textures).
+- Legacy fallback preserved: passes check `cbRingAllocator != nullptr` to choose binder vs manual path.
+
+### UE5 Parity Cleanup (phase0-0.7.0 — 34/43 items)
+
+- Removed analytical SH fallback with invented values, compensation factors, minimum clamps
+- Fixed light attenuation window `(d/r)^2` to `(d/r)^4` per UE5
+- Fixed k-remapping from `alpha/2` to `(roughness+1)^2/8` per Karis 2013
+- Fixed GROUND_ALBEDO, NUM_STEPS_VIEW, LinearToSrgb coefficient per UE5 source
+- Deleted 12 orphaned files (6 pairs of .h/.cpp)
+- Converted all `assert()` to `UZ_CHECK` (4 files)
+- Fixed Y-up documentation in quaternion.h and transform.h
+
+### Static Shadow Cache — Two-Pass Rendering (phase0-0.4.0)
+
+- `EMobility` enum (Static, Stationary, Movable) in `draw_list.h`
+- Draw commands classified by mobility in `SyncWorldToDrawList()`
+- Shadow pass filters by `cacheMode`: StaticPrimitivesOnly / MovablePrimitivesOnly / Uncached
+- Separate `m_staticShadowAtlas` texture with conditional re-render
+- Compositing via `ShadowDataCB::useShadowCache` + `staticShadowAtlasIndex`
+
+### Distance Field Shadows — GPU Pipeline (phase0-0.6.0)
+
+- SDF baker (`sdf_baker.h/cpp`): spatial hash triangle lookup, point-triangle distance, pseudo-normal sign, 8-bit quantization, sparse brick extraction
+- Cone tracing compute shader (`dfs_cone_trace_cs.hlsl`): UE5-parity algorithm with quality levels (20/32/64 steps), self-shadow bias, adaptive step size
+- Object culling compute shader (`dfs_cull_objects_cs.hlsl`): convex hull frustum test, AABB culling
+- SDF sampling functions (`dfs_common.hlsli`): sparse brick atlas sampling via indirection table
+
+---
+
+## [0.2.30] — 2026-03-16
+
+### New System: UE5-Style Shader Parameter Macros
+
+Introduces a metadata-driven shader parameter system modelled on UE5's
+`BEGIN_SHADER_PARAMETER_STRUCT` / `SHADER_PARAMETER` pattern. Eliminates per-pass
+boilerplate for constant buffer upload and resource binding.
+
+**Core types** (`runtime/engine/renderer/core/shader_parameters.h`):
+- `ShaderParamType` enum: `Scalar`, `Texture2D`, `TextureCube`, `Sampler`, `UAV`.
+- `ShaderParamMember` struct: name, type, byte offset, size, HLSL register slot.
+- `ShaderParameterMetadata` struct: member array, member count, `cbSize`, resource counts.
+- `AlignCBSize()` — constexpr round-up to 256-byte D3D12 CB alignment boundary.
+
+**Declaration macros** (`runtime/engine/renderer/core/shader_parameter_macros.h`):
+- `BEGIN_SHADER_PARAMETER_STRUCT(Name)` — opens `struct alignas(16) Name`.
+- `SHADER_PARAMETER(Type, Name)` — scalar member copied into the constant buffer.
+- `SHADER_PARAMETER_ARRAY(Type, Name, Count)` — scalar array (also used for padding).
+- `SHADER_PARAMETER_SCALAR_END()` — documentation boundary marker between scalar and resource sections.
+- `SHADER_PARAMETER_TEXTURE(HlslType, Name, Slot)` — `RHITextureHandle` bound at `register(tSlot)` on SM5.
+- `SHADER_PARAMETER_SAMPLER(Name, Slot)` — `RHISamplerHandle` bound at `register(sSlot)`.
+- `SHADER_PARAMETER_UAV(Name, Slot)` — `RHITextureHandle` bound at `register(uSlot)`.
+- `END_SHADER_PARAMETER_STRUCT()` — closes struct, declares `GetMetadata()`.
+- Metadata definition macros: `BEGIN_SHADER_PARAMETER_METADATA` / `METADATA_SCALAR` / `METADATA_SCALAR_ARRAY` / `METADATA_TEXTURE2D` / `METADATA_TEXTURE_CUBE` / `METADATA_SAMPLER` / `METADATA_UAV` / `END_SHADER_PARAMETER_METADATA`.
+  `END_SHADER_PARAMETER_METADATA` includes a `static_assert(cbSize % 256 == 0)`.
+
+**Binder** (`runtime/engine/renderer/core/shader_parameter_binder.h/.cpp`):
+- `ShaderParameterBinder::BindCB()` — suballocates from the CB ring, copies scalar data (exactly `cbSize` bytes from offset 0), binds root CBV. Returns `CBAllocation`.
+- `ShaderParameterBinder::BindResources()` — iterates metadata; on SM5 calls `SetFragmentTexture(slot)` / `SetFragmentSampler(slot)` per resource member; on SM6.6 bindless, texture binding is skipped (shaders fetch via `ResourceDescriptorHeap[index]`).
+- `ShaderParameterBinder::Bind()` — convenience: `BindCB` + `BindResources` in one call.
+
+**HLSL generation** (`runtime/engine/renderer/core/shader_parameter_hlsl.h/.cpp`):
+- `GenerateHLSL(meta, structName, cbRegister)` — converts `ShaderParameterMetadata` into an HLSL `cbuffer` declaration and `Texture2D`/`TextureCube`/`SamplerState` resource declarations. Used for manual validation that C++ layout matches hand-written HLSL. Not injected at compile time.
+
+### Migrated Parameter Structs
+
+Three existing constant buffer definitions migrated to the new system:
+
+- **`PerFrameParams`** (`per_frame_params.h/.cpp`) — 512-byte scalar section byte-identical to `PerFrameCB`, plus `RHITextureHandle` members for IBL textures at t5 (irradiance), t6 (prefiltered specular), t7 (BRDF LUT). Layout verified with `static_assert(offsetof(PerFrameParams, irradianceCubemap) == 512)`.
+- **`ShadowDataParams`** (`shadow_data_params.h/.cpp`) — 768-byte scalar section byte-identical to `ShadowDataCB`, plus shadow atlas handles at t3 (dynamic atlas), t8 (static shadow cache), t9 (DFS output). Layout verified with `static_assert(offsetof(ShadowDataParams, shadowAtlas) == 768)`.
+- **`LightingParams`** (`lighting_params.h/.cpp`) — 3328-byte scalar section byte-identical to `LightingCB`, no resource handles currently. Layout verified with `static_assert(sizeof(LightingParams) == sizeof(LightingCB))`.
+
+All three use `ShaderParameterBinder::Bind()` in their respective passes. Legacy CB structs coexist during migration; passes that have not adopted the binder yet continue using manual `SetRootCBV` + `SetFragmentTexture` calls.
+
+### RHI Backend Fixes for SM5 Compute Parity (4 Critical Bugs)
+
+**DX11 backend** (`runtime/engine/rhi/dx11/`):
+- `SetDescriptorTable` now correctly dispatches `UAV_Table` — previously always routed to the SRV binding path, causing compute UAV writes to silently no-op.
+- Added `FindTextureUAVByPoolIndex()` and `FindBufferUAVByPoolIndex()` — allows the command list to resolve UAV pool indices to `ID3D11UnorderedAccessView*` for compute dispatch.
+
+**Vulkan backend** (`runtime/engine/rhi/vulkan/`):
+- `Dispatch()` now calls `FlushDescriptorSet()` before `vkCmdDispatch` — compute shaders were reading stale descriptor sets from the previous graphics pass.
+- `FlushDescriptorSet()` now selects the correct bind point (`VK_PIPELINE_BIND_POINT_GRAPHICS` vs `VK_PIPELINE_BIND_POINT_COMPUTE`) based on whether the active pipeline is graphics or compute. Previously always bound to the graphics point, silently breaking compute dispatches.
+- Added `STORAGE_IMAGE` bindings at descriptor set slots 48–63 and `-fvk-u-shift 48 0` SPIR-V compile flag so UAV (`RWTexture2D`) registers map correctly to the Vulkan descriptor layout.
+
+### Vulkan Per-Slice Image Views for Cubemap Rendering
+
+- `BeginRenderPass()` now creates a per-face `VkImageView` (2D view of one array layer) when the render target is a cubemap texture. Previously used the whole-cubemap image view, causing Vulkan validation errors and rendering all six faces into face 0.
+
+### Static Shadow Cache — Two-Pass Rendering (phase0-0.4.0 infrastructure)
+
+`ShadowCacheManager` infrastructure completed:
+- Two-pass rendering protocol: Pass 1 renders only dirty static geometry into the static atlas; Pass 2 composites static + dynamic shadows. Dynamic geometry always renders into the dynamic atlas.
+- Per-cascade dirty flags invalidated on first render, geometry move, or material change.
+- VRAM budget tracking (150MB default) with LRU eviction of stale cascade slots.
+
+### Distance Field Shadows — Infrastructure (phase0-0.6.0)
+
+Foundation types and atlas manager for future DFS cone tracing:
+- `DistanceFieldShadowConfig` — max trace distance, cone angle, step count, fade range.
+- `SdfBrick` — 8×8×8 signed distance field brick (fp16 values).
+- `MeshSdfAsset` — per-mesh SDF baked from triangle geometry via GPU ray marching.
+- `SdfAtlasManager` — brick atlas with GPU buffer, handles mesh SDF upload, culls objects outside the view frustum before trace.
+- `dfsEnabled` / `dfsOutputSrvIndex` fields added to `ShadowDataCB` and `ShadowDataParams`; DFS output texture bound at t9 in SM5 path.
+
+### Documentation
+
+- `docs/guides/shader-parameter-binding-guide.md` — Complete rewrite. Now documents the actual implemented macro system, metadata definition workflow, `ShaderParameterBinder::Bind()` usage, SM5 vs SM6.6 binding differences, alignment rules, and all three migrated structs.
+- `docs/guides/shader-parameter-migration-guide.md` — New guide: step-by-step instructions for migrating an existing manual CB + resource binding to the new parameter struct system.
+
+---
+
 ## [0.2.29] — 2026-03-16
 
 ### New Feature: Headless Mode (`--headless`)

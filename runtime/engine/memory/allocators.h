@@ -3,7 +3,7 @@
 /// UzEngine Allocators — LinearAllocator, PoolAllocator, FrameAllocator.
 /// All allocators are named and tracked for memory budget debugging.
 
-#include <cassert>
+#include "engine_assert.h"
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -41,7 +41,7 @@ class LinearAllocator {
     LinearAllocator(const char* name, size_t sizeBytes)
         : m_name(name), m_size(sizeBytes), m_offset(0) {
         m_buffer = static_cast<uint8_t*>(std::malloc(sizeBytes));
-        assert(m_buffer && "LinearAllocator: allocation failed");
+        UZ_CHECK(m_buffer);
     }
 
     /// Frees the backing buffer.
@@ -132,7 +132,7 @@ template <typename T> class PoolAllocator {
         size_t blockSize = sizeof(T) > sizeof(void*) ? sizeof(T) : sizeof(void*);
         m_blockSize = blockSize;
         m_buffer = static_cast<uint8_t*>(std::malloc(blockSize * capacity));
-        assert(m_buffer && "PoolAllocator: allocation failed");
+        UZ_CHECK(m_buffer);
 
         // Build free chain
         m_freeHead = m_buffer;
@@ -168,8 +168,8 @@ template <typename T> class PoolAllocator {
     /// # Safety
     /// `ptr` must have been returned by `Alloc()` on this pool and not already freed.
     void Free(T* ptr) {
-        assert(ptr != nullptr);
-        assert(Contains(ptr));
+        UZ_CHECK(ptr != nullptr);
+        UZ_CHECK(Contains(ptr));
         ptr->~T();
         *reinterpret_cast<void**>(ptr) = m_freeHead;
         m_freeHead = ptr;

@@ -14,6 +14,8 @@
 #ifndef PCSS_HLSLI
 #define PCSS_HLSLI
 
+#include "pbr_common.hlsli" // for PI constant
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Sobol Low-Discrepancy Sequence (2D)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -65,10 +67,10 @@ float2 MapToUnitDisk(float2 sample) {
     float r, theta;
     if (abs(offset.x) > abs(offset.y)) {
         r = offset.x;
-        theta = (3.14159265f / 4.0f) * (offset.y / offset.x);
+        theta = (PI / 4.0f) * (offset.y / offset.x);
     } else {
         r = offset.y;
-        theta = (3.14159265f / 2.0f) - (3.14159265f / 4.0f) * (offset.x / offset.y);
+        theta = (PI / 2.0f) - (PI / 4.0f) * (offset.x / offset.y);
     }
 
     float sinT, cosT;

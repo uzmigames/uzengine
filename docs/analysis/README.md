@@ -24,6 +24,9 @@ Analysis of rendering pipelines, visual effects, debug visualization, and shader
 - **ue5-shader-patterns-analysis.md** — Common shader patterns and conventions in UE5
 - **ue5-default-scene-rendering-systems.md** — Default rendering systems in UE5's base scene
 - **parallel-ox-mapping-analysis.md** — Parallax Occlusion Mapping algorithm variants and analysis
+- **ue5-shadow-darkening-analysis.md** — Root cause analysis: why DX12/Vulkan shadows appear darker than DX11 in UzEngine; complete shadow pipeline explanation with file:line references
+- **ue5-shadow-parity-debugging-checklist.md** — Step-by-step debugging guide to identify shadow parity issues between backends (7 phases, RenderDoc integration, decision tree)
+- **ue5-shadow-receiver-bias-implementation.md** — Production-ready code snippets from UE5 for implementing receiver bias (C++ console vars, HLSL modulation, PCF gradient)
 
 ### `/rhi/` — Graphics API & RHI Abstraction
 

@@ -1,5 +1,12 @@
 /// FXAA (Fast Approximate Anti-Aliasing) — Fast GPU-based AA
 ///
+/// @source UE5 FXAAShader.usf — uses FXAA 3.11 (Timothy Lottes / NVIDIA)
+/// @deviations Current implementation is a simplified 3-tap directional blur,
+///   NOT the full FXAA 3.11 algorithm. The proper implementation requires
+///   edge-endpoint search (12+ steps along edge), sub-pixel anti-aliasing,
+///   and ~400 lines of shader code. This placeholder provides basic edge
+///   softening but lacks the quality of the real algorithm.
+///
 /// Implements a simplified version of FXAA to reduce aliasing artifacts
 /// without the cost of supersampling or temporal AA.
 ///

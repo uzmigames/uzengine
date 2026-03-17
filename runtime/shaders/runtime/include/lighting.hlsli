@@ -25,11 +25,15 @@
 
 /// Smooth distance attenuation for point and spot lights.
 ///
-/// Uses UE4-style inverse-square falloff with a smooth window function that
+/// @source UE5 DeferredLightingCommon.ush:265 — GetLocalLightAttenuation
+/// @constants window = saturate(1 - (d/r)^4)^2 (DeferredLightingCommon.ush:265)
+/// @deviations Includes 1/(d^2+1) inverse-square term for forward path (UE5 applies this via pre-multiplied light intensity on desktop deferred, but mobile uses the same formula: DeferredLightingCommon.ush:271)
+///
+/// Uses UE5-style inverse-square falloff with a smooth window function that
 /// reaches exactly zero at the light's range. This avoids popping artifacts
 /// when lights enter/exit the visible set.
 ///
-///   window = saturate(1 - (d/r)^2)^2
+///   window = saturate(1 - (d/r)^4)^2    (UE5: Square(saturate(1 - Square(d^2 * invR^2))))
 ///   atten  = window / (d^2 + 1)
 ///
 /// The +1 in the denominator prevents the singularity at d=0 and provides
@@ -45,7 +49,9 @@ float ComputePointAttenuation(float dist, float range) {
     if (range <= 0.0f) return 0.0f;
 
     float ratio  = dist / range;
-    float window = saturate(1.0f - ratio * ratio);
+    float ratio2 = ratio * ratio;
+    float ratio4 = ratio2 * ratio2;
+    float window = saturate(1.0f - ratio4);
     window *= window; // squared window for smooth falloff at range boundary
 
     // Inverse-square with +1 bias to avoid singularity at dist=0

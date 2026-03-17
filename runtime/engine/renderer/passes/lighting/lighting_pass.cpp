@@ -3,6 +3,12 @@
 /// Registers and executes a fullscreen lighting pass that reads G-Buffer
 /// textures, evaluates point lights, and writes the composited result to
 /// the backbuffer.
+///
+/// Supports two binding modes:
+/// 1. **Binder path** (perFrameParams != nullptr): Uses ShaderParameterBinder
+///    to upload per-frame CB and bind IBL textures automatically from metadata.
+/// 2. **Legacy path** (perFrameParams == nullptr): Uses pre-allocated CBAllocations
+///    and manual SetFragmentTexture calls for SM5 texture binding.
 
 #include "lighting_pass.h"
 
@@ -11,6 +17,7 @@
 #include "render_graph_builder.h"
 #include "render_graph_pass.h"
 #include "root_slots.h"
+#include "shader_parameter_binder.h"
 #include "engine/rhi/rhi.h"
 
 #include "engine_assert.h"
@@ -56,17 +63,49 @@ void AddLightingPass(rg::RgBuilder& builder, const LightingPassDesc& desc)
             // ── Bind pipeline ────────────────────────────────────────────
             cmd->SetPipeline(desc.pipeline);
 
-            // ── Bind constant buffers ────────────────────────────────────
-            cmd->SetRootCBV(kSlotPerFrame, desc.perFrameAlloc.bufferHandle,
-                            desc.perFrameAlloc.offsetBytes,
-                            desc.perFrameAlloc.cpuPtr, desc.perFrameAlloc.sizeBytes);
+            // ── Bind per-frame CB + IBL resources ────────────────────────
+            if (desc.perFrameParams != nullptr && desc.cbRingAllocator != nullptr) {
+                // Binder path: upload PerFrameParams CB + bind IBL textures via metadata.
+                ShaderParameterBinder::Bind(
+                    cmd, desc.perFrameParams,
+                    PerFrameParams::GetMetadata(),
+                    *desc.cbRingAllocator, kSlotPerFrame,
+                    desc.bindless);
+            } else {
+                // Legacy path: use pre-allocated CB allocation.
+                cmd->SetRootCBV(kSlotPerFrame, desc.perFrameAlloc.bufferHandle,
+                                desc.perFrameAlloc.offsetBytes,
+                                desc.perFrameAlloc.cpuPtr, desc.perFrameAlloc.sizeBytes);
 
+                // SM5 IBL textures — manual binding when not using the binder.
+                if (!desc.bindless) {
+                    if (desc.iblIrradiance.IsValid()) {
+                        cmd->SetFragmentTexture(5, desc.iblIrradiance);
+                    }
+                    if (desc.iblPrefiltered.IsValid()) {
+                        cmd->SetFragmentTexture(6, desc.iblPrefiltered);
+                    }
+                    if (desc.iblBrdfLut.IsValid()) {
+                        cmd->SetFragmentTexture(7, desc.iblBrdfLut);
+                    }
+                }
+            }
+
+            // ── Bind lighting CB ─────────────────────────────────────────
             cmd->SetRootCBV(kSlotPerObject, desc.lightingAlloc.bufferHandle,
                             desc.lightingAlloc.offsetBytes,
                             desc.lightingAlloc.cpuPtr, sizeof(LightingCB));
 
             // ── Bind shadow data at b4 (root param 3) ───────────────────
-            if (desc.shadowAlloc.cpuPtr != nullptr) {
+            if (desc.shadowDataParams != nullptr && desc.cbRingAllocator != nullptr) {
+                // Binder path: upload ShadowDataParams CB + bind shadow textures via metadata.
+                ShaderParameterBinder::Bind(
+                    cmd, desc.shadowDataParams,
+                    ShadowDataParams::GetMetadata(),
+                    *desc.cbRingAllocator, kSlotShadow,
+                    desc.bindless);
+            } else if (desc.shadowAlloc.cpuPtr != nullptr) {
+                // Legacy path: use pre-allocated shadow CB allocation.
                 cmd->SetRootCBV(kSlotShadow, desc.shadowAlloc.bufferHandle,
                                 desc.shadowAlloc.offsetBytes,
                                 desc.shadowAlloc.cpuPtr, sizeof(ShadowDataCB));
@@ -75,7 +114,6 @@ void AddLightingPass(rg::RgBuilder& builder, const LightingPassDesc& desc)
             // ── Bind G-Buffer textures ───────────────────────────────────
             if (desc.bindless) {
                 // SM6.6: push descriptor indices for G-Buffer SRVs.
-                // Pack 4 indices into root constants at slot 0.
                 const uint32_t indices[4] = {
                     desc.albedoSrvIndex,
                     desc.normalSrvIndex,
@@ -84,25 +122,12 @@ void AddLightingPass(rg::RgBuilder& builder, const LightingPassDesc& desc)
                 };
                 cmd->SetRootConstants(kSlotRootConstants, indices, 4);
             } else {
-                // SM5: bind textures directly at fragment texture slots t0-t4.
+                // SM5: bind G-Buffer textures directly at fragment texture slots t0-t4.
                 cmd->SetFragmentTexture(0, desc.albedoTexture);
                 cmd->SetFragmentTexture(1, desc.normalTexture);
                 cmd->SetFragmentTexture(2, desc.depthTextureForSrv);
                 cmd->SetFragmentTexture(3, desc.shadowAtlasTexture);
                 cmd->SetFragmentTexture(4, desc.positionTexture);
-
-                // SM5: bind IBL textures at t5-t7 for image-based lighting.
-                // These are only valid when IBL bake has completed; the shader
-                // checks irradianceSrvIndex != 0xFFFFFFFF before sampling.
-                if (desc.iblIrradiance.IsValid()) {
-                    cmd->SetFragmentTexture(5, desc.iblIrradiance);
-                }
-                if (desc.iblPrefiltered.IsValid()) {
-                    cmd->SetFragmentTexture(6, desc.iblPrefiltered);
-                }
-                if (desc.iblBrdfLut.IsValid()) {
-                    cmd->SetFragmentTexture(7, desc.iblBrdfLut);
-                }
             }
 
             // ── Viewport and scissor ─────────────────────────────────────
@@ -121,8 +146,6 @@ void AddLightingPass(rg::RgBuilder& builder, const LightingPassDesc& desc)
             cmd->Draw(3);
 
             cmd->EndRenderPass();
-
-            // No per-frame log — use GPU profiler for pass timing.
         });
     });
 }

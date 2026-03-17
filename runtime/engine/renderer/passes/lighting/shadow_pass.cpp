@@ -10,6 +10,8 @@
 #include "render_graph_builder.h"
 #include "render_graph_pass.h"
 #include "root_slots.h"
+#include "shader_parameter_binder.h"
+#include "shadow_pass_params.h"
 #include "engine/rhi/rhi.h"
 
 #include "engine_assert.h"
@@ -140,39 +142,60 @@ void AddShadowPass(rg::RgBuilder& builder, const ShadowPassDesc& desc)
                 }
 
                 // ── Bind per-cascade shadow CB at slot 3 ──────────────────
-                ShadowCB shadowCb{};
-                shadowCb.viewProj = desc.cascades[cascade].viewProj;
+                if (desc.cbRingAllocator != nullptr) {
+                    // Binder path: upload ShadowCascadeParams via metadata.
+                    ShadowCascadeParams cascadeParams{};
+                    cascadeParams.viewProj = desc.cascades[cascade].viewProj;
 
-                CBAllocation shadowAlloc = desc.cbAllocator->Allocate(sizeof(ShadowCB));
-                if (shadowAlloc.cpuPtr == nullptr) {
-                    UZ_LOG(Renderer, Error,
-                           "ShadowPass: CB ring exhausted for cascade {} shadow CB", cascade);
-                    cmd->EndRenderPass();
-                    break;
+                    CBAllocation shadowAlloc = ShaderParameterBinder::BindCB(
+                        cmd, &cascadeParams,
+                        ShadowCascadeParams::GetMetadata(),
+                        *desc.cbRingAllocator, kSlotShadow);
+                    if (shadowAlloc.cpuPtr == nullptr) {
+                        UZ_LOG(Renderer, Error,
+                               "ShadowPass: CB ring exhausted for cascade {} shadow CB", cascade);
+                        cmd->EndRenderPass();
+                        break;
+                    }
+                } else {
+                    // Legacy path: manual memcpy + SetRootCBV.
+                    ShadowCB shadowCb{};
+                    shadowCb.viewProj = desc.cascades[cascade].viewProj;
+
+                    CBAllocation shadowAlloc = desc.cbAllocator->Allocate(sizeof(ShadowCB));
+                    if (shadowAlloc.cpuPtr == nullptr) {
+                        UZ_LOG(Renderer, Error,
+                               "ShadowPass: CB ring exhausted for cascade {} shadow CB", cascade);
+                        cmd->EndRenderPass();
+                        break;
+                    }
+                    std::memcpy(shadowAlloc.cpuPtr, &shadowCb, sizeof(ShadowCB));
+                    cmd->SetRootCBV(kSlotShadow, shadowAlloc.bufferHandle, shadowAlloc.offsetBytes,
+                                    shadowAlloc.cpuPtr, sizeof(ShadowCB));
                 }
-                std::memcpy(shadowAlloc.cpuPtr, &shadowCb, sizeof(ShadowCB));
-                cmd->SetRootCBV(kSlotShadow, shadowAlloc.bufferHandle, shadowAlloc.offsetBytes,
-                                shadowAlloc.cpuPtr, sizeof(ShadowCB));
 
                 // ── Draw loop ─────────────────────────────────────────────
                 if (useInstanced) {
                     // Instanced path — one draw per batch, all using mesh[0].
-                    // DrawIndexed with batch.instanceCount and firstInstance offset.
                     const GPUMesh& mesh0 = desc.meshes[0];
+                    CBRingAllocator& ringAlloc = desc.cbRingAllocator != nullptr
+                                                 ? *desc.cbRingAllocator : *desc.cbAllocator;
+
                     for (uint32_t bi = 0; bi < desc.batchCount; ++bi) {
                         const auto& batch = desc.batchData[bi];
-                        // Shadow pass doesn't need material — just a dummy PerObjectCB
-                        PerObjectCB perObject{};
-                        CBAllocation objAlloc = desc.cbAllocator->Allocate(sizeof(PerObjectCB));
+                        // Shadow pass doesn't need material — zeroed ShadowPerObjectParams.
+                        ShadowPerObjectParams perObjParams{};
+
+                        CBAllocation objAlloc = ShaderParameterBinder::BindCB(
+                            cmd, &perObjParams,
+                            ShadowPerObjectParams::GetMetadata(),
+                            ringAlloc, kSlotPerObject);
                         if (objAlloc.cpuPtr == nullptr) {
                             UZ_LOG(Renderer, Error,
                                    "ShadowPass(instanced): CB ring exhausted at cascade {} batch {}",
                                    cascade, totalDrawCalls);
                             break;
                         }
-                        std::memcpy(objAlloc.cpuPtr, &perObject, sizeof(PerObjectCB));
-                        cmd->SetRootCBV(kSlotPerObject, objAlloc.bufferHandle, objAlloc.offsetBytes,
-                                        objAlloc.cpuPtr, sizeof(PerObjectCB));
                         cmd->DrawIndexed(mesh0.indexCount, batch.instanceCount,
                                          0, 0, batch.firstInstance);
                         ++totalDrawCalls;
@@ -181,8 +204,28 @@ void AddShadowPass(rg::RgBuilder& builder, const ShadowPassDesc& desc)
                     // Non-instanced path — bind the correct mesh per draw command.
                     // Each command carries a `meshId` that indexes into `desc.meshes`.
                     // Commands referencing an out-of-range or invalid mesh are skipped.
+                    //
+                    // When shadow caching is active, filter draw commands by mobility:
+                    // - StaticPrimitivesOnly: skip Movable primitives (render Static + Stationary)
+                    // - MovablePrimitivesOnly: skip Static + Stationary primitives (render Movable only)
+                    // - Uncached: render all (default, backward compatible)
                     uint32_t lastBoundMeshId = UINT32_MAX; // Track to avoid redundant rebinds.
                     for (const auto& drawCmd : commands) {
+                        // ── Mobility filter for shadow caching ───────────────
+                        if (desc.cacheMode == ShadowCacheMode::StaticPrimitivesOnly) {
+                            // Only render static/stationary primitives into cached atlas
+                            if (drawCmd.mobility == EMobility::Movable) {
+                                continue;
+                            }
+                        } else if (desc.cacheMode == ShadowCacheMode::MovablePrimitivesOnly) {
+                            // Only render movable primitives into per-frame atlas
+                            if (drawCmd.mobility == EMobility::Static ||
+                                drawCmd.mobility == EMobility::Stationary) {
+                                continue;
+                            }
+                        }
+                        // ShadowCacheMode::Uncached — render all (no filter)
+
                         if (drawCmd.meshId >= desc.meshCount) {
                             continue; // Guard: meshId out of range.
                         }
@@ -202,20 +245,38 @@ void AddShadowPass(rg::RgBuilder& builder, const ShadowPassDesc& desc)
                             lastBoundMeshId = drawCmd.meshId;
                         }
 
-                        PerObjectCB perObject{};
-                        perObject.model = drawCmd.worldMatrix;
+                        if (desc.cbRingAllocator != nullptr) {
+                            // Binder path: upload ShadowPerObjectParams via metadata.
+                            ShadowPerObjectParams perObjParams{};
+                            perObjParams.model = drawCmd.worldMatrix;
 
-                        CBAllocation objAlloc = desc.cbAllocator->Allocate(sizeof(PerObjectCB));
-                        if (objAlloc.cpuPtr == nullptr) {
-                            UZ_LOG(Renderer, Error,
-                                   "ShadowPass: CB ring exhausted at cascade {} draw {}",
-                                   cascade, totalDrawCalls);
-                            break;
+                            CBAllocation objAlloc = ShaderParameterBinder::BindCB(
+                                cmd, &perObjParams,
+                                ShadowPerObjectParams::GetMetadata(),
+                                *desc.cbRingAllocator, kSlotPerObject);
+                            if (objAlloc.cpuPtr == nullptr) {
+                                UZ_LOG(Renderer, Error,
+                                       "ShadowPass: CB ring exhausted at cascade {} draw {}",
+                                       cascade, totalDrawCalls);
+                                break;
+                            }
+                        } else {
+                            // Legacy path: manual PerObjectCB + SetRootCBV.
+                            PerObjectCB perObject{};
+                            perObject.model = drawCmd.worldMatrix;
+
+                            CBAllocation objAlloc = desc.cbAllocator->Allocate(sizeof(PerObjectCB));
+                            if (objAlloc.cpuPtr == nullptr) {
+                                UZ_LOG(Renderer, Error,
+                                       "ShadowPass: CB ring exhausted at cascade {} draw {}",
+                                       cascade, totalDrawCalls);
+                                break;
+                            }
+                            std::memcpy(objAlloc.cpuPtr, &perObject, sizeof(PerObjectCB));
+
+                            cmd->SetRootCBV(kSlotPerObject, objAlloc.bufferHandle, objAlloc.offsetBytes,
+                                            objAlloc.cpuPtr, sizeof(PerObjectCB));
                         }
-                        std::memcpy(objAlloc.cpuPtr, &perObject, sizeof(PerObjectCB));
-
-                        cmd->SetRootCBV(kSlotPerObject, objAlloc.bufferHandle, objAlloc.offsetBytes,
-                                        objAlloc.cpuPtr, sizeof(PerObjectCB));
                         cmd->DrawIndexed(mesh.indexCount);
                         ++totalDrawCalls;
                     }

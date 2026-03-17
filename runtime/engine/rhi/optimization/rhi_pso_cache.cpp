@@ -105,7 +105,7 @@ PsoCacheKey ComputePsoCacheKey(const RHIGraphicsPipelineDesc& desc) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void PsoCache::Init(uint32_t capacity) {
-    if (m_slots != nullptr) {
+    if (!m_slots.empty()) {
         UZ_LOG(RHI, Warning, "PsoCache::Init called while already initialized");
         return;
     }
@@ -127,18 +127,18 @@ void PsoCache::Init(uint32_t capacity) {
     m_capacity = c;
     m_mask = m_capacity - 1;
     m_count = 0;
-    m_slots = new Slot[m_capacity];  // NOLINT(cppcoreguidelines-owning-memory)
+    m_slots.resize(m_capacity);
 
     UZ_LOG(RHI, Info, "PsoCache initialized with capacity {}", m_capacity);
 }
 
 void PsoCache::Shutdown() {
-    if (m_slots == nullptr) {
+    if (m_slots.empty()) {
         return;
     }
 
-    delete[] m_slots;  // NOLINT(cppcoreguidelines-owning-memory)
-    m_slots = nullptr;
+    m_slots.clear();
+    m_slots.shrink_to_fit();
     m_capacity = 0;
     m_mask = 0;
     m_count = 0;
@@ -147,7 +147,7 @@ void PsoCache::Shutdown() {
 }
 
 RHIPipelineHandle PsoCache::Lookup(const PsoCacheKey& key) const {
-    if (m_slots == nullptr || key.hash == 0) {
+    if (m_slots.empty() || key.hash == 0) {
         return RHIPipelineHandle::Invalid();
     }
 
@@ -173,7 +173,7 @@ RHIPipelineHandle PsoCache::Lookup(const PsoCacheKey& key) const {
 }
 
 void PsoCache::Insert(const PsoCacheKey& key, RHIPipelineHandle pipeline) {
-    if (m_slots == nullptr || key.hash == 0) {
+    if (m_slots.empty() || key.hash == 0) {
         return;
     }
 
@@ -182,7 +182,7 @@ void PsoCache::Insert(const PsoCacheKey& key, RHIPipelineHandle pipeline) {
         Rehash();
     }
 
-    InsertIntoSlots(m_slots, m_mask, key, pipeline);
+    InsertIntoSlots(m_slots.data(), m_mask, key, pipeline);
 }
 
 void PsoCache::InsertIntoSlots(Slot* slots, uint32_t mask, const PsoCacheKey& key,
@@ -215,31 +215,29 @@ void PsoCache::InsertIntoSlots(Slot* slots, uint32_t mask, const PsoCacheKey& ke
 }
 
 void PsoCache::Rehash() {
-    if (m_slots == nullptr) {
+    if (m_slots.empty()) {
         return;
     }
 
     uint32_t oldCapacity = m_capacity;
-    Slot* oldSlots = m_slots;
+    std::vector<Slot> oldSlots = std::move(m_slots);
 
     m_capacity *= 2;
     m_mask = m_capacity - 1;
     m_count = 0;
-    m_slots = new Slot[m_capacity];  // NOLINT(cppcoreguidelines-owning-memory)
+    m_slots.resize(m_capacity);
 
     for (uint32_t i = 0; i < oldCapacity; ++i) {
-        if (oldSlots[i].occupied) {  // NOLINT(cppcoreguidelines-pro-bounds-pointer-arithmetic)
-            InsertIntoSlots(m_slots, m_mask, oldSlots[i].key, oldSlots[i].pipeline);
+        if (oldSlots[i].occupied) {
+            InsertIntoSlots(m_slots.data(), m_mask, oldSlots[i].key, oldSlots[i].pipeline);
         }
     }
-
-    delete[] oldSlots;  // NOLINT(cppcoreguidelines-owning-memory)
 
     UZ_LOG(RHI, Debug, "PsoCache rehashed: {} -> {} slots", oldCapacity, m_capacity);
 }
 
 uint32_t PsoCache::InvalidateByShader(RHIShaderHandle /*shader*/) {
-    if (m_slots == nullptr) {
+    if (m_slots.empty()) {
         return 0;
     }
 
@@ -256,7 +254,7 @@ uint32_t PsoCache::InvalidateByShader(RHIShaderHandle /*shader*/) {
 }
 
 void PsoCache::Clear() {
-    if (m_slots == nullptr) {
+    if (m_slots.empty()) {
         return;
     }
 

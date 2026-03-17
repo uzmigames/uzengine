@@ -100,7 +100,8 @@ public:
     /// # Returns
     /// `BakeResult` with valid SRV indices on success, or `UINT32_MAX` indices
     /// on failure (error logged).
-    [[nodiscard]] BakeResult BakeEnvironment(uint32_t envCubemapSrvIndex);
+    [[nodiscard]] BakeResult BakeEnvironment(uint32_t envCubemapSrvIndex,
+                                             RHITextureHandle envCubemapTexture = {});
 
     /// Returns true if the BRDF LUT has been baked.
     [[nodiscard]] bool HasBRDFLut() const noexcept { return m_brdfLutSrvIndex != UINT32_MAX; }

@@ -13,5 +13,5 @@
       "Agent(*)"
     ]
   },
-  "enabledMcpjsonServers": ["tml"]
+  "enabledMcpjsonServers": ["tml", "rulebook"]
 }

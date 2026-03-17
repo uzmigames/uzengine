@@ -73,12 +73,26 @@ void DX11CommandList::Begin() {
     m_ctx = m_device->GetImmediateContext();
     m_computePipelineBound = false;
 
+    // Clear all stale SRV/UAV/shader bindings from previous command list usage.
+    // DX11's immediate context is shared across all command lists — state persists
+    // between Begin/End/Execute cycles. Without this, a previous compute dispatch's
+    // SRV (e.g., HDR scene color 2D) can leak into a subsequent IBL bake's CS slot 0
+    // where a TextureCube is expected, causing DX11 debug layer dimension mismatches
+    // and producing black output.
+    ID3D11ShaderResourceView* nullSRVs[16] = {};
+    m_ctx->PSSetShaderResources(0, 16, nullSRVs);
+    m_ctx->VSSetShaderResources(0, 16, nullSRVs);
+    m_ctx->CSSetShaderResources(0, 16, nullSRVs);
+    ID3D11UnorderedAccessView* nullUAVs[8] = {};
+    m_ctx->CSSetUnorderedAccessViews(0, 8, nullUAVs, nullptr);
+
     // Bind default samplers matching DX12 static samplers s0 (linear wrap) and s1 (shadow comparison)
     ID3D11SamplerState* defaultSamplers[2] = {
         m_device->GetDefaultSampler(),
         m_device->GetShadowComparisonSampler(),
     };
     m_ctx->PSSetSamplers(0, 2, defaultSamplers);
+    m_ctx->CSSetSamplers(0, 2, defaultSamplers);
 }
 
 void DX11CommandList::End() {
@@ -110,8 +124,15 @@ void DX11CommandList::SetPipeline(RHIPipelineHandle pipeline) {
 
     if (dx11Pipeline->isCompute) {
         // Compute pipeline — bind only the compute shader.
-        // Unbind graphics shaders to avoid driver confusion.
+        // Clear stale compute SRV/UAV bindings from previous dispatch to prevent
+        // DX11 debug layer warnings about dimension mismatches (e.g., 2D SRV still
+        // bound when the new CS expects a TextureCube).
         m_computePipelineBound = true;
+
+        ID3D11ShaderResourceView* nullSRVs[8] = {};
+        m_ctx->CSSetShaderResources(0, 8, nullSRVs);
+        ID3D11UnorderedAccessView* nullUAVs[4] = {};
+        m_ctx->CSSetUnorderedAccessViews(0, 4, nullUAVs, nullptr);
 
         if (dx11Pipeline->computeShader.IsValid()) {
             auto* cs = m_device->GetShaderPool().Get(
@@ -330,8 +351,27 @@ ID3D11Buffer* DX11CommandList::GetOrCreateScratchCB(uint32_t slot, uint32_t requ
 }
 
 void DX11CommandList::SetDescriptorTable(uint32_t rootParamIndex, uint32_t descriptorIndex) {
-    // DX11 SM5: translate descriptor index into slot-based SRV/sampler binding.
-    // When a compute pipeline is bound, use CSSet* instead of PSSet*.
+    // DX11 SM5: translate descriptor index into slot-based SRV/UAV/sampler binding.
+    // Check root layout to determine if this is an SRV_Table or UAV_Table.
+    const auto& rootLayout = m_device->GetRootLayout();
+    if (rootParamIndex < rootLayout.paramCount &&
+        rootLayout.params[rootParamIndex].type == RHIRootParamDesc::Type::UAV_Table) {
+        // UAV binding — descriptorIndex is a pool index from GetTextureUAVIndex/GetBufferUAVIndex.
+        // Bind the UAV at register u0 for compute dispatch.
+        ID3D11UnorderedAccessView* uav = m_device->FindTextureUAVByPoolIndex(descriptorIndex);
+        if (!uav) {
+            uav = m_device->FindBufferUAVByPoolIndex(descriptorIndex);
+        }
+        if (uav) {
+            const uint32_t hlslRegister = rootLayout.params[rootParamIndex].shaderRegister;
+            m_ctx->CSSetUnorderedAccessViews(hlslRegister, 1, &uav, nullptr);
+        }
+        // No warning — caller may pass non-UAV texture indices when sky cubemap
+        // capture uses the compute path on backends that don't need UAV for this.
+        return;
+    }
+
+    // SRV binding — descriptorIndex is a logical SRV index from GetTextureSRVIndex.
     ID3D11ShaderResourceView* srv = m_device->FindTextureSRVByIndex(descriptorIndex);
     if (srv) {
         if (m_computePipelineBound) {
@@ -357,9 +397,11 @@ void DX11CommandList::SetFragmentTexture(uint32_t slot, RHITextureHandle texture
     if (!m_ctx) return;
 
     if (!texture.IsValid()) {
-        // Unbind the slot
         ID3D11ShaderResourceView* nullSrv = nullptr;
-        m_ctx->PSSetShaderResources(slot, 1, &nullSrv);
+        if (m_computePipelineBound)
+            m_ctx->CSSetShaderResources(slot, 1, &nullSrv);
+        else
+            m_ctx->PSSetShaderResources(slot, 1, &nullSrv);
         return;
     }
 
@@ -369,7 +411,34 @@ void DX11CommandList::SetFragmentTexture(uint32_t slot, RHITextureHandle texture
         return;
     }
 
-    m_ctx->PSSetShaderResources(slot, 1, &dx11Tex->srv);
+    if (m_computePipelineBound)
+        m_ctx->CSSetShaderResources(slot, 1, &dx11Tex->srv);
+    else
+        m_ctx->PSSetShaderResources(slot, 1, &dx11Tex->srv);
+}
+
+void DX11CommandList::SetFragmentSampler(uint32_t slot, RHISamplerHandle sampler) {
+    if (!m_ctx) return;
+
+    if (!sampler.IsValid()) {
+        ID3D11SamplerState* nullSampler = nullptr;
+        if (m_computePipelineBound)
+            m_ctx->CSSetSamplers(slot, 1, &nullSampler);
+        else
+            m_ctx->PSSetSamplers(slot, 1, &nullSampler);
+        return;
+    }
+
+    auto* dx11Sampler = m_device->GetSamplerPool().Get(sampler.index, sampler.generation);
+    if (!dx11Sampler || !dx11Sampler->sampler) {
+        UZ_LOG(RHI, Warning, "SetFragmentSampler: sampler not found at slot {}", slot);
+        return;
+    }
+
+    if (m_computePipelineBound)
+        m_ctx->CSSetSamplers(slot, 1, &dx11Sampler->sampler);
+    else
+        m_ctx->PSSetSamplers(slot, 1, &dx11Sampler->sampler);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -457,6 +526,32 @@ void DX11CommandList::CopyBuffer(RHIBufferHandle src, uint64_t srcOffset,
     if (!srcBuf || !srcBuf->buffer || !dstBuf || !dstBuf->buffer) {
         UZ_LOG(RHI, Warning, "CopyBuffer — could not resolve buffer handles");
         return;
+    }
+
+    // DX11 path: when source is a STAGING buffer (Upload+CopySrc) and destination
+    // is a DEFAULT buffer, use Map→UpdateSubresource instead of CopySubresourceRegion.
+    // CopySubresourceRegion from STAGING works per spec, but UpdateSubresource is
+    // more reliable across driver implementations for buffer-to-buffer copies.
+    if (srcBuf->desc.memory == RHIMemoryType::Upload &&
+        dstBuf->desc.memory == RHIMemoryType::Default) {
+        D3D11_MAPPED_SUBRESOURCE mapped = {};
+        HRESULT hr = m_ctx->Map(srcBuf->buffer, 0, D3D11_MAP_READ, 0, &mapped);
+        if (SUCCEEDED(hr)) {
+            const auto* srcData = static_cast<const uint8_t*>(mapped.pData) + srcOffset;
+            D3D11_BOX dstBox = {};
+            dstBox.left = static_cast<UINT>(dstOffset);
+            dstBox.right = static_cast<UINT>(dstOffset + size);
+            dstBox.top = 0;
+            dstBox.bottom = 1;
+            dstBox.front = 0;
+            dstBox.back = 1;
+            m_ctx->UpdateSubresource(dstBuf->buffer, 0, &dstBox, srcData, 0, 0);
+            m_ctx->Unmap(srcBuf->buffer, 0);
+            return;
+        }
+        UZ_LOG(RHI, Warning, "CopyBuffer: Map failed for staging→default, "
+               "falling back to CopySubresourceRegion (hr=0x{:08X})",
+               static_cast<uint32_t>(hr));
     }
 
     D3D11_BOX srcBox = {};
@@ -609,6 +704,19 @@ void DX11CommandList::CopyTextureToBuffer(RHITextureHandle srcTexture, uint32_t 
 void DX11CommandList::BeginRenderPass(const RHIRenderPassDesc& desc) {
     UZ_PROFILE_FUNCTION();
     if (!m_ctx) return;
+
+    // DX11 requires SRVs to be unbound before the same resource can be used as
+    // RTV or DSV. Clear all PS/VS/CS SRV slots up front to prevent the runtime
+    // error: "Resource being set to OM DepthStencil is still bound on input!"
+    // This matches UE5's D3D11 RHI behavior (FD3D11DynamicRHI::CommitRenderTargets).
+    ID3D11ShaderResourceView* nullSRVs[16] = {};
+    m_ctx->PSSetShaderResources(0, 16, nullSRVs);
+    m_ctx->VSSetShaderResources(0, 16, nullSRVs);
+    m_ctx->CSSetShaderResources(0, 16, nullSRVs);
+
+    // Also unbind any compute UAVs that may conflict with render targets
+    ID3D11UnorderedAccessView* nullUAVs[8] = {};
+    m_ctx->CSSetUnorderedAccessViews(0, 8, nullUAVs, nullptr);
 
     ID3D11RenderTargetView* rtvs[8] = {};
     uint32_t rtvCount = 0;

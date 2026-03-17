@@ -241,6 +241,7 @@ void VulkanCommandList::Begin() {
 
     m_descriptorsDirty = false;
     m_writtenBindingsMask = 0;
+    m_computePipelineBound = false;
 }
 
 void VulkanCommandList::End() {
@@ -292,7 +293,8 @@ void VulkanCommandList::SetPipeline(RHIPipelineHandle pipeline) {
         return;
     }
 
-    VkPipelineBindPoint bindPoint = vkPipeline->isCompute
+    m_computePipelineBound = vkPipeline->isCompute;
+    VkPipelineBindPoint bindPoint = m_computePipelineBound
         ? VK_PIPELINE_BIND_POINT_COMPUTE
         : VK_PIPELINE_BIND_POINT_GRAPHICS;
     vkCmdBindPipeline(m_commandBuffers[m_frameIndex], bindPoint, vkPipeline->pipeline);
@@ -446,8 +448,43 @@ void VulkanCommandList::SetRootCBV(uint32_t rootParamIndex, RHIBufferHandle buff
 }
 
 void VulkanCommandList::SetDescriptorTable(uint32_t rootParamIndex, uint32_t descriptorIndex) {
-    // For non-bindless paths: look up the texture by SRV index and write it
-    // (plus the first available sampler) to the per-frame descriptor set.
+    // Check root layout to determine if this is an SRV_Table or UAV_Table.
+    const auto& rootLayout = m_device->GetRootLayout();
+    if (rootParamIndex < rootLayout.paramCount &&
+        rootLayout.params[rootParamIndex].type == RHIRootParamDesc::Type::UAV_Table) {
+        // UAV binding — descriptorIndex is a pool index from GetTextureUAVIndex.
+        // Write a STORAGE_IMAGE descriptor at binding 48 + shaderRegister.
+        auto* tex = m_device->FindTextureByPoolIndex(descriptorIndex);
+        if (!tex || tex->imageView == VK_NULL_HANDLE) {
+            UZ_LOG(RHI, Warning, "SetDescriptorTable: no texture found for UAV pool index {}", descriptorIndex);
+            return;
+        }
+
+        const uint32_t hlslRegister = rootLayout.params[rootParamIndex].shaderRegister;
+        constexpr uint32_t kUAVBindingOffset = 48;
+        const uint32_t binding = kUAVBindingOffset + hlslRegister;
+
+        VkDescriptorImageInfo imageInfo = {};
+        imageInfo.imageView = tex->imageView;
+        imageInfo.imageLayout = VK_IMAGE_LAYOUT_GENERAL;
+
+        VkWriteDescriptorSet write = {};
+        write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        write.dstSet = m_descriptorSets[m_frameIndex];
+        write.dstBinding = binding;
+        write.descriptorCount = 1;
+        write.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE;
+        write.pImageInfo = &imageInfo;
+
+        vkUpdateDescriptorSets(m_device->GetVkDevice(), 1, &write, 0, nullptr);
+        UZ_STAT_INCREMENT(RHI, VkDescriptorWrites);
+        m_writtenBindingsMask |= (uint64_t(1) << binding);
+        m_descriptorsDirty = true;
+        return;
+    }
+
+    // SRV binding — For non-bindless paths: look up the texture by SRV index
+    // and write it (plus the first available sampler) to the per-frame descriptor set.
     auto* tex = m_device->FindTextureBySrvIndex(descriptorIndex);
     if (!tex || tex->imageView == VK_NULL_HANDLE) {
         UZ_LOG(RHI, Warning, "SetDescriptorTable: no texture found for SRV index {}", descriptorIndex);
@@ -604,14 +641,18 @@ VkDescriptorSet VulkanCommandList::AllocateAndCopyDescriptorSet() {
 void VulkanCommandList::FlushDescriptorSet() {
     if (!m_descriptorsDirty) return;
 
-    // Allocate a fresh descriptor set snapshot so each draw sees its own
+    // Allocate a fresh descriptor set snapshot so each draw/dispatch sees its own
     // descriptor state. Without this, all draws in the command buffer would
     // see the LAST vkUpdateDescriptorSets state (Vulkan descriptor sets are
     // mutable host objects, not command-buffer-local like DX12 root descriptors).
     VkDescriptorSet snapshot = AllocateAndCopyDescriptorSet();
 
+    VkPipelineBindPoint bindPoint = m_computePipelineBound
+        ? VK_PIPELINE_BIND_POINT_COMPUTE
+        : VK_PIPELINE_BIND_POINT_GRAPHICS;
+
     vkCmdBindDescriptorSets(m_commandBuffers[m_frameIndex],
-                            VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            bindPoint,
                             m_device->GetPipelineLayout(),
                             0, 1, &snapshot,
                             0, nullptr);
@@ -639,6 +680,7 @@ void VulkanCommandList::Draw(uint32_t vertexCount, uint32_t instanceCount,
 
 void VulkanCommandList::Dispatch(uint32_t groupCountX, uint32_t groupCountY,
                                   uint32_t groupCountZ) {
+    FlushDescriptorSet();
     vkCmdDispatch(m_commandBuffers[m_frameIndex], groupCountX, groupCountY, groupCountZ);
 }
 
@@ -1009,20 +1051,52 @@ void VulkanCommandList::BeginRenderPass(const RHIRenderPassDesc& desc) {
         const auto& att = desc.colorAttachments[i];
         if (!att.texture.IsValid()) continue;
 
-        if (att.arraySlice != 0 || att.mipLevel != 0) {
-            UZ_LOG(RHI, Warning, "BeginRenderPass — Vulkan per-slice/mip RTVs not yet implemented "
-                   "(attachment {} requested slice={} mip={})", i, att.arraySlice, att.mipLevel);
-        }
-
         auto* tex = m_device->GetTexturePool().Get(att.texture.index, att.texture.generation);
         if (!tex || tex->imageView == VK_NULL_HANDLE) {
             UZ_LOG(RHI, Warning, "BeginRenderPass — color attachment {} has no image view", i);
             continue;
         }
 
+        VkImageView attachmentView = tex->imageView;
+
+        // Per-slice/mip: create a temporary 2D image view targeting the
+        // requested array layer and mip level (e.g., cubemap face rendering).
+        if (att.arraySlice != 0 || att.mipLevel != 0) {
+            if (m_tempImageViewCount >= kMaxTempImageViews) {
+                UZ_LOG(RHI, Error, "BeginRenderPass — exceeded kMaxTempImageViews ({}), "
+                       "falling back to default view for attachment {}", kMaxTempImageViews, i);
+            } else {
+                VkImageViewCreateInfo viewCI = {};
+                viewCI.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+                viewCI.image = tex->image;
+                viewCI.viewType = VK_IMAGE_VIEW_TYPE_2D;
+                viewCI.format = ToVkFormat(tex->desc.format);
+                viewCI.components = {VK_COMPONENT_SWIZZLE_IDENTITY,
+                                     VK_COMPONENT_SWIZZLE_IDENTITY,
+                                     VK_COMPONENT_SWIZZLE_IDENTITY,
+                                     VK_COMPONENT_SWIZZLE_IDENTITY};
+                viewCI.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+                viewCI.subresourceRange.baseMipLevel = att.mipLevel;
+                viewCI.subresourceRange.levelCount = 1;
+                viewCI.subresourceRange.baseArrayLayer = att.arraySlice;
+                viewCI.subresourceRange.layerCount = 1;
+
+                VkImageView tempView = VK_NULL_HANDLE;
+                VkResult result = vkCreateImageView(m_device->GetVkDevice(), &viewCI, nullptr, &tempView);
+                if (result == VK_SUCCESS) {
+                    m_tempImageViews[m_tempImageViewCount++] = tempView;
+                    attachmentView = tempView;
+                } else {
+                    UZ_LOG(RHI, Error, "BeginRenderPass — vkCreateImageView failed for attachment {} "
+                           "(slice={} mip={}), result={}, falling back to default view",
+                           i, att.arraySlice, att.mipLevel, static_cast<int>(result));
+                }
+            }
+        }
+
         auto& vkAtt = colorAttachments[colorCount];
         vkAtt.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO;
-        vkAtt.imageView = tex->imageView;
+        vkAtt.imageView = attachmentView;
         vkAtt.imageLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
         vkAtt.loadOp = att.clear ? VK_ATTACHMENT_LOAD_OP_CLEAR : VK_ATTACHMENT_LOAD_OP_LOAD;
         vkAtt.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
@@ -1074,15 +1148,17 @@ void VulkanCommandList::BeginRenderPass(const RHIRenderPassDesc& desc) {
         }
     }
 
-    // Determine render area from first color attachment or depth
+    // Determine render area from first color attachment or depth.
+    // When rendering to a specific mip level, use that mip's dimensions.
     uint32_t renderWidth = 0;
     uint32_t renderHeight = 0;
     if (colorCount > 0 && desc.colorAttachments[0].texture.IsValid()) {
         auto* tex = m_device->GetTexturePool().Get(
             desc.colorAttachments[0].texture.index, desc.colorAttachments[0].texture.generation);
         if (tex) {
-            renderWidth = tex->desc.width;
-            renderHeight = tex->desc.height;
+            const uint32_t mip = desc.colorAttachments[0].mipLevel;
+            renderWidth  = std::max(1u, tex->desc.width >> mip);
+            renderHeight = std::max(1u, tex->desc.height >> mip);
         }
     } else if (hasDepth && desc.depthAttachment.texture.IsValid()) {
         auto* tex = m_device->GetTexturePool().Get(
@@ -1119,6 +1195,21 @@ void VulkanCommandList::EndRenderPass() {
     if (m_inRenderPass) {
         vkCmdEndRendering(m_commandBuffers[m_frameIndex]);
         m_inRenderPass = false;
+    }
+
+    // Destroy temporary per-slice/mip image views created in BeginRenderPass.
+    // Safe to destroy immediately — vkCmdEndRendering has recorded the commands
+    // referencing these views, so the driver holds internal references until
+    // the command buffer completes.
+    if (m_tempImageViewCount > 0) {
+        VkDevice device = m_device->GetVkDevice();
+        for (uint32_t i = 0; i < m_tempImageViewCount; ++i) {
+            if (m_tempImageViews[i] != VK_NULL_HANDLE) {
+                vkDestroyImageView(device, m_tempImageViews[i], nullptr);
+                m_tempImageViews[i] = VK_NULL_HANDLE;
+            }
+        }
+        m_tempImageViewCount = 0;
     }
 }
 

@@ -6,11 +6,14 @@
 #include "pbr_pass.h"
 
 #include "constant_buffers.h"
+#include "gbuffer_per_object_params.h"
 #include "multi_light.h"
 #include "draw_list.h"
+#include "per_frame_params.h"
 #include "render_graph_builder.h"
 #include "render_graph_pass.h"
 #include "root_slots.h"
+#include "shader_parameter_binder.h"
 #include "engine/rhi/rhi.h"
 
 #include "engine_assert.h"
@@ -58,9 +61,19 @@ void AddPBRPass(rg::RgBuilder& builder, const PBRPassDesc& desc)
             // ── Bind pipeline and shared per-frame state ─────────────────
             cmd->SetPipeline(desc.pipeline);
 
-            cmd->SetRootCBV(kSlotPerFrame, desc.perFrameAlloc.bufferHandle,
-                            desc.perFrameAlloc.offsetBytes,
-                            desc.perFrameAlloc.cpuPtr, desc.perFrameAlloc.sizeBytes);
+            // ── Bind per-frame CB ────────────────────────────────────────
+            if (desc.perFrameParams != nullptr && desc.cbRingAllocator != nullptr) {
+                // Binder path: upload PerFrameParams CB via metadata.
+                ShaderParameterBinder::BindCB(
+                    cmd, desc.perFrameParams,
+                    PerFrameParams::GetMetadata(),
+                    *desc.cbRingAllocator, kSlotPerFrame);
+            } else {
+                // Legacy path: use pre-allocated CB allocation.
+                cmd->SetRootCBV(kSlotPerFrame, desc.perFrameAlloc.bufferHandle,
+                                desc.perFrameAlloc.offsetBytes,
+                                desc.perFrameAlloc.cpuPtr, desc.perFrameAlloc.sizeBytes);
+            }
 
             // ── Viewport and scissor ─────────────────────────────────────
             RHIViewport vp{};
@@ -105,25 +118,56 @@ void AddPBRPass(rg::RgBuilder& builder, const PBRPassDesc& desc)
                     lastBoundMeshId = drawCmd.meshId;
                 }
 
-                PerObjectCB perObject{};
-                perObject.model        = drawCmd.worldMatrix;
-                perObject.normalMatrix = drawCmd.normalMatrix;
-                perObject.albedoIndex    = drawCmd.albedoSrvIndex;
-                perObject.normalIndex    = drawCmd.normalSrvIndex;
-                perObject.roughnessIndex = drawCmd.roughnessSrvIndex;
-                perObject.metallicIndex  = drawCmd.metallicSrvIndex;
-                perObject.aoIndex        = drawCmd.aoSrvIndex;
+                if (desc.cbRingAllocator != nullptr) {
+                    // Binder path: fill GBufferPerObjectParams and bind CB + textures via metadata.
+                    GBufferPerObjectParams perObjParams{};
+                    perObjParams.model          = drawCmd.worldMatrix;
+                    perObjParams.normalMatrix   = drawCmd.normalMatrix;
+                    perObjParams.albedoIndex    = drawCmd.albedoSrvIndex;
+                    perObjParams.normalIndex    = drawCmd.normalSrvIndex;
+                    perObjParams.roughnessIndex = drawCmd.roughnessSrvIndex;
+                    perObjParams.metallicIndex  = drawCmd.metallicSrvIndex;
+                    perObjParams.aoIndex        = drawCmd.aoSrvIndex;
 
-                CBAllocation objAlloc = desc.cbAllocator->Allocate(sizeof(PerObjectCB));
-                if (objAlloc.cpuPtr == nullptr) {
-                    UZ_LOG(Renderer, Error,
-                           "PBRPass: CB ring exhausted at draw command {}", drawCallCount);
-                    break;
+                    // Set texture handles for SM5 binding
+                    perObjParams.albedoTexture    = drawCmd.albedoTexture;
+                    perObjParams.normalTexture    = drawCmd.normalTexture;
+                    perObjParams.roughnessTexture = drawCmd.roughnessTexture;
+                    perObjParams.metallicTexture  = drawCmd.metallicTexture;
+                    perObjParams.aoTexture        = drawCmd.aoTexture;
+
+                    CBAllocation objAlloc = ShaderParameterBinder::Bind(
+                        cmd, &perObjParams,
+                        GBufferPerObjectParams::GetMetadata(),
+                        *desc.cbRingAllocator, kSlotPerObject,
+                        desc.bindless);
+                    if (objAlloc.cpuPtr == nullptr) {
+                        UZ_LOG(Renderer, Error,
+                               "PBRPass: CB ring exhausted at draw command {}", drawCallCount);
+                        break;
+                    }
+                } else {
+                    // Legacy path: manual PerObjectCB + SetRootCBV.
+                    PerObjectCB perObject{};
+                    perObject.model        = drawCmd.worldMatrix;
+                    perObject.normalMatrix = drawCmd.normalMatrix;
+                    perObject.albedoIndex    = drawCmd.albedoSrvIndex;
+                    perObject.normalIndex    = drawCmd.normalSrvIndex;
+                    perObject.roughnessIndex = drawCmd.roughnessSrvIndex;
+                    perObject.metallicIndex  = drawCmd.metallicSrvIndex;
+                    perObject.aoIndex        = drawCmd.aoSrvIndex;
+
+                    CBAllocation objAlloc = desc.cbAllocator->Allocate(sizeof(PerObjectCB));
+                    if (objAlloc.cpuPtr == nullptr) {
+                        UZ_LOG(Renderer, Error,
+                               "PBRPass: CB ring exhausted at draw command {}", drawCallCount);
+                        break;
+                    }
+                    std::memcpy(objAlloc.cpuPtr, &perObject, sizeof(PerObjectCB));
+
+                    cmd->SetRootCBV(kSlotPerObject, objAlloc.bufferHandle, objAlloc.offsetBytes,
+                                    objAlloc.cpuPtr, sizeof(PerObjectCB));
                 }
-                std::memcpy(objAlloc.cpuPtr, &perObject, sizeof(PerObjectCB));
-
-                cmd->SetRootCBV(kSlotPerObject, objAlloc.bufferHandle, objAlloc.offsetBytes,
-                                objAlloc.cpuPtr, sizeof(PerObjectCB));
                 cmd->DrawIndexed(mesh.indexCount);
                 ++drawCallCount;
             }

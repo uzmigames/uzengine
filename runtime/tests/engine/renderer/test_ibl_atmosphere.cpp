@@ -24,7 +24,6 @@
 #include "height_fog_component.h"
 #include "sky_light_component.h"
 #include "sky_cubemap_capture_pass.h"
-#include "equirect_to_cubemap_pass.h"
 
 #include <gtest/gtest.h>
 
