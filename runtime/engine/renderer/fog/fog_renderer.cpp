@@ -7,6 +7,7 @@
 
 #include "world.h"
 #include "height_fog_component.h"
+#include "sky_atmosphere_component.h"
 #include "height_fog_pass.h"
 #include "camera.h"
 #include "pipeline_library.h"
@@ -31,7 +32,10 @@ void AddHeightFogFromECS(
     RHITextureHandle depthTexture,
     bool bindless,
     float vpWidth,
-    float vpHeight)
+    float vpHeight,
+    float skyLightColorR,
+    float skyLightColorG,
+    float skyLightColorB)
 {
     if (!world) return;
 
@@ -56,9 +60,25 @@ void AddHeightFogFromECS(
         fogCB.fogStartDistance = fogComp.startDistance;
         fogCB.fogCutoffDistance = fogComp.fogCutoffDistance;
 
-        fogCB.secondFogDensity       = fogComp.secondFogDensity;
-        fogCB.secondFogHeightFalloff = fogComp.secondFogHeightFalloff;
-        fogCB.secondFogBaseHeight    = fogComp.secondFogBaseHeight;
+        // @source UE5 FogRendering.cpp:245-254 — InitFogConstants
+        // Second layer precomputation identical to first layer:
+        //   CollapsedFogParameter[1] = Density * pow(2, clamp(-Falloff*(ObserverH - FogH), -125, 126))
+        // @source UE5 FogRendering.cpp:257 — ExponentialFogParameters2.x = precomputed, .z = raw density, .w = height
+        // @deviations NONE
+        if (fogComp.secondFogDensity > 0.0f) {
+            float secondFogHeightDiff = camZ - fogComp.secondFogBaseHeight;
+            float secondClampedPower = std::max(-126.f, -fogComp.secondFogHeightFalloff * secondFogHeightDiff);
+            secondClampedPower = std::min(secondClampedPower, 126.f);
+            fogCB.secondFogDensity       = fogComp.secondFogDensity * std::pow(2.0f, secondClampedPower);
+            fogCB.secondFogHeightFalloff = fogComp.secondFogHeightFalloff;
+            fogCB.secondFogRawDensity    = fogComp.secondFogDensity;
+            fogCB.secondFogBaseHeight    = fogComp.secondFogBaseHeight;
+        } else {
+            fogCB.secondFogDensity       = 0.0f;
+            fogCB.secondFogHeightFalloff = 0.0f;
+            fogCB.secondFogRawDensity    = 0.0f;
+            fogCB.secondFogBaseHeight    = 0.0f;
+        }
 
         fogCB.directionalInscatteringColor = {
             fogComp.directionalInscatteringColor.x,
@@ -66,6 +86,23 @@ void AddHeightFogFromECS(
             fogComp.directionalInscatteringColor.z, 0.f};
         fogCB.directionalInscatteringExponent      = fogComp.directionalInscatteringExponent;
         fogCB.directionalInscatteringStartDistance  = fogComp.directionalInscatteringStartDistance;
+
+        // ── Sky atmosphere injection ──
+        /// @source UE5 HeightFogCommon.ush:174-180
+        /// @source UE5 FogRendering.cpp:85 — SkyAtmosphereAmbientContributionColorScale
+        /// When SkyAtmosphere exists, inject sky light color into fog inscattering.
+        fogCB.skyAtmContribColorScale = {1.f, 1.f, 1.f, 0.f}; // UE5 default: white
+        fogCB.heightFogContribution = 0.f; // Will be set if SkyAtmosphereComponent found
+        fogCB.skyLightColorR = skyLightColorR;
+        fogCB.skyLightColorG = skyLightColorG;
+        fogCB.skyLightColorB = skyLightColorB;
+
+        auto skyView = world->GetRegistry().view<SkyAtmosphereComponent>();
+        for (auto skyEnt : skyView) {
+            auto& skyComp = skyView.get<SkyAtmosphereComponent>(skyEnt);
+            fogCB.heightFogContribution = skyComp.heightFogContribution;
+            break;
+        }
 
         CBAllocation fogAlloc = cbRing.Allocate(sizeof(HeightFogCB));
         std::memcpy(fogAlloc.cpuPtr, &fogCB, sizeof(HeightFogCB));

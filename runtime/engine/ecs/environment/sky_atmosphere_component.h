@@ -100,6 +100,29 @@ struct SkyAtmosphereComponent {
     /// UE5 default: (0.3, 0.3, 0.3) (sRGB ~0.3 linear).
     Vec3 groundAlbedo = {0.3f, 0.3f, 0.3f};
 
+    // ── Ozone (Other Absorption) ────────────────────────────────────────────
+
+    /// Ozone absorption coefficients in km^-1 at peak density.
+    /// @source UE5 SkyAtmosphereComponent.cpp:119 — OtherAbsorptionRaw
+    /// UE5 default: (0.000650, 0.001881, 0.000085) km^-1.
+    /// Controls the blue-purple tint at high altitude due to ozone layer.
+    Vec3 ozoneAbsorption = {0.000650f, 0.001881f, 0.000085f};
+
+    /// Center altitude of the ozone tent distribution in km.
+    /// @source UE5 SkyAtmosphereComponent.cpp:122 — OtherTentDistribution.TipAltitude
+    /// UE5 default: 25.0 km.
+    float ozoneTipAltitude = 25.0f;
+
+    /// Peak value of the ozone tent distribution (dimensionless density).
+    /// @source UE5 SkyAtmosphereComponent.cpp:123 — OtherTentDistribution.TipValue
+    /// UE5 default: 1.0.
+    float ozoneTipValue = 1.0f;
+
+    /// Half-width of the ozone tent distribution in km.
+    /// @source UE5 SkyAtmosphereComponent.cpp:124 — OtherTentDistribution.Width
+    /// UE5 default: 15.0 km. Ozone density is 0 at tipAltitude +/- width.
+    float ozoneWidth = 15.0f;
+
     // ── Multi-scattering ───────────────────────────────────────────────────
 
     /// Multiple scattering approximation factor. 0 = single scatter only,

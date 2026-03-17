@@ -28,9 +28,11 @@ void AddSkyAtmospherePass(rg::RgBuilder& builder, const SkyAtmospherePassDesc& d
     builder.AddPass("SkyAtmosphere", [desc](rg::RgPassBuilder& pb) {
         pb.Write(desc.backbuffer, RHIResourceState::RenderTarget);
         pb.Read(desc.depthGBuffer, RHIResourceState::ShaderResource);
-        // Declare LUT as read so the render graph emits the UAV→SRV barrier after the compute pass.
+        // Declare LUTs as read so the render graph emits UAV→SRV barriers after compute passes.
         if (desc.transmittanceLutRes.IsValid())
             pb.Read(desc.transmittanceLutRes, RHIResourceState::ShaderResource);
+        if (desc.multiScatterLutRes.IsValid())
+            pb.Read(desc.multiScatterLutRes, RHIResourceState::ShaderResource);
 
         pb.SetExecutionCallback([desc](IRHICommandList* cmd, const rg::RgPassResources& res) {
             UZ_PROFILE_SCOPE("SkyAtmosphere::Execute");
@@ -59,12 +61,13 @@ void AddSkyAtmospherePass(rg::RgBuilder& builder, const SkyAtmospherePassDesc& d
                             desc.skyAtmosphereAlloc.offsetBytes,
                             desc.skyAtmosphereAlloc.cpuPtr, sizeof(SkyAtmosphereCB));
 
-            // ── Bind depth texture + transmittance LUT ──────────────────
+            // ── Bind depth texture + transmittance LUT + multi-scatter LUT ──
             if (desc.bindless) {
                 const uint32_t indices[4] = {
                     desc.depthSrvIndex,
                     desc.transmittanceLutSrvIndex,
-                    0, 0
+                    desc.multiScatterLutSrvIndex,
+                    0
                 };
                 cmd->SetRootConstants(kSlotRootConstants, indices, 4);
             } else {
@@ -72,6 +75,10 @@ void AddSkyAtmospherePass(rg::RgBuilder& builder, const SkyAtmospherePassDesc& d
                 // t1: transmittance LUT (non-bindless, SM5 path)
                 if (desc.transmittanceLutTexture.IsValid()) {
                     cmd->SetFragmentTexture(1, desc.transmittanceLutTexture);
+                }
+                // t2: multi-scattering LUT (non-bindless, SM5 path)
+                if (desc.multiScatterLutTexture.IsValid()) {
+                    cmd->SetFragmentTexture(2, desc.multiScatterLutTexture);
                 }
             }
 

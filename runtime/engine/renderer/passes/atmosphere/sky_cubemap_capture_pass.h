@@ -68,6 +68,7 @@ static_assert(sizeof(SkyCubemapCaptureRootConstants) == 32,
 /// does not take ownership of any pointed-to objects.
 struct SkyCubemapCapturePassDesc {
     rg::RgResourceId  cubemapTarget;    ///< Output texture (write, UnorderedAccess state). RGBA16F 64x64x6.
+    rg::RgResourceId  transmittanceLutDep; ///< Transmittance LUT (read dependency for correct execution order).
     RHIPipelineHandle pipeline;         ///< Compute PSO for sky_cubemap_cs.hlsl.
     SkyCubemapCaptureRootConstants rootConstants; ///< Atmosphere params (8 DWORDs at root param 0).
     uint32_t          cubemapUavIndex;  ///< UAV descriptor heap index for the output cubemap.

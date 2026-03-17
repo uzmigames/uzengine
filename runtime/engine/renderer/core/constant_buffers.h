@@ -106,7 +106,14 @@ struct PerFrameCB {
 
     uint32_t gtaoSrvIndex    = UINT32_MAX;       ///< SRV index for GTAO filtered AO texture (UINT32_MAX = no GTAO).
     uint32_t brdfDebugMode   = 0;               ///< BRDF debug (0=off, 1=split-screen: left=old Lambertian+SchlickGGX, right=new Burley+SmithJoint).
-    float    _pad2[14] = {};                     ///< Pad to 512 bytes.
+
+    // @source UE5 SceneRendering.cpp:1440 — SkyAtmosphereHeightFogContribution
+    // Controls how much aerial perspective inscattering is reduced when height fog
+    // is active, to prevent double-fogging (both AP and height fog adding haze).
+    // 0 = AP unaffected by fog, 1 = AP inscattering fully replaced by fog.
+    float    heightFogContribution = 0.0f;       ///< AP reduction factor when height fog is active (0=no reduction, 1=full).
+
+    float    _pad2[13] = {};                     ///< Pad to 512 bytes.
 };
 
 static_assert(sizeof(PerFrameCB) == 512, "PerFrameCB must be 512 bytes (D3D12 CB alignment)");
@@ -297,7 +304,19 @@ struct SkyAtmosphereCB {
     float mieAbsorptionScale;   ///< Artistic multiplier for Mie absorption (default 1.0).
     float mieAbsorption;        ///< Mie absorption coefficient in km^-1.
     Vec4  skyLuminanceFactor;   ///< Per-channel sky brightness art direction (default 1,1,1,1).
-    float _skyPad[36] = {};     ///< Pad to 256-byte alignment.
+
+    // ── Ozone (Other Absorption) ────────────────────────────────────────────
+    // @source UE5 SkyAtmosphereCommonData.h:38-42, SkyAtmosphereCommon.ush:316-318
+    // Tent distribution for ozone density: two piecewise-linear segments.
+    // DensityOzo = saturate(h < layerWidth ? linTerm0*h + constTerm0 : linTerm1*h + constTerm1)
+
+    Vec4  ozoneAbsorption;         ///< xyz = ozone absorption extinction (km^-1), w = layerWidth (km).
+    float ozoneLinTerm0;           ///< Linear coefficient for h < layerWidth.
+    float ozoneConstTerm0;         ///< Constant term for h < layerWidth.
+    float ozoneLinTerm1;           ///< Linear coefficient for h >= layerWidth.
+    float ozoneConstTerm1;         ///< Constant term for h >= layerWidth.
+
+    float _skyPad[28] = {};        ///< Pad to 256-byte alignment.
 };
 
 static_assert(sizeof(SkyAtmosphereCB) == 256, "SkyAtmosphereCB must be 256 bytes (D3D12 CB alignment)");
@@ -367,10 +386,15 @@ struct HeightFogCB {
     float _fogPad0[2] = {};     ///< Pad to 16-byte boundary.
 
     // ── Second fog layer (float4 = 16 bytes) ────────────────────────────
-    float secondFogDensity;     ///< Second layer density. 0 = disabled.
-    float secondFogHeightFalloff; ///< Second layer height falloff.
-    float secondFogBaseHeight;  ///< Second layer base height.
-    float _fogPad1 = 0.f;      ///< Pad to 16-byte boundary.
+    // @source UE5 FogRendering.cpp:257 — ExponentialFogParameters2
+    // .x = precomputed (density * pow(2, -falloff*(camZ-baseH)))
+    // .y = height falloff
+    // .z = raw density (for start distance recalculation)
+    // .w = base height (for start distance recalculation)
+    float secondFogDensity;         ///< PRE-COMPUTED: second density * exp2(-falloff*(camZ-baseH)). 0 = disabled.
+    float secondFogHeightFalloff;   ///< Second layer height falloff coefficient.
+    float secondFogRawDensity;      ///< Raw (un-precomputed) second layer density for start distance recalc.
+    float secondFogBaseHeight;      ///< Second layer base height (cm).
 
     // ── Directional inscattering (float4 + float4 = 32 bytes) ──────────
     Vec4  directionalInscatteringColor; ///< xyz = sun-facing fog glow color, w = unused.
@@ -378,8 +402,17 @@ struct HeightFogCB {
     float directionalInscatteringStartDistance; ///< Start distance for inscattering.
     float _fogPad2[2] = {};     ///< Pad to 16-byte boundary.
 
+    // ── Sky atmosphere injection (float4 + float4 = 32 bytes) ────────
+    /// @source UE5 HeightFogCommon.ush:174-180 — Sky ambient fog injection
+    /// @source UE5 FogRendering.cpp:85 — SkyAtmosphereAmbientContributionColorScale
+    Vec4  skyAtmContribColorScale = {1.f, 1.f, 1.f, 0.f}; ///< UE5: SkyAtmosphereAmbientContributionColorScale (default white).
+    float heightFogContribution = 1.0f;   ///< UE5: SkyAtmosphere.HeightFogContribution (0-1, default 1.0).
+    float skyLightColorR = 0.f;           ///< Sky light diffuse color R (from SH L0).
+    float skyLightColorG = 0.f;           ///< Sky light diffuse color G (from SH L0).
+    float skyLightColorB = 0.f;           ///< Sky light diffuse color B (from SH L0).
+
     // ── Remaining padding ──────────────────────────────────────────────
-    float _fogPad3[40] = {};    ///< Pad to 256-byte alignment.
+    float _fogPad3[32] = {};    ///< Pad to 256-byte alignment.
 };
 
 static_assert(sizeof(HeightFogCB) == 256, "HeightFogCB must be 256 bytes (D3D12 CB alignment)");

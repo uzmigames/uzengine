@@ -117,7 +117,13 @@ cbuffer PerFrameCB : register(b1) {
     float    filmWhiteClip;
     uint     gtaoSrvIndex;       ///< SRV index for GTAO filtered AO (0xFFFFFFFF = no GTAO).
     uint     brdfDebugMode;     ///< BRDF debug (0=off, 1=split-screen: left=old, right=new).
-    float    _framePad2[14];     ///< Padding to 512 bytes.
+
+    /// @source UE5 SceneRendering.cpp:1440 — SkyAtmosphereHeightFogContribution
+    /// Reduces AP inscattering when height fog is active to prevent double-fogging.
+    /// 0 = AP unaffected, 1 = AP inscattering fully suppressed (height fog handles haze).
+    float    heightFogContribution;
+
+    float    _framePad2[13];     ///< Padding to 512 bytes.
 };
 
 /// Single point light for the deferred lighting pass (48 bytes = three float4s).
@@ -632,9 +638,20 @@ float4 main(FSInput input) : SV_Target {
             apTransLut,
             linearSampler);
 
-        // Apply: transmittance dims the scene, inscattering adds atmosphere glow
+        // Apply: transmittance dims the scene, inscattering adds atmosphere glow.
         // @source UE5 SkyAtmosphereCommon.ush:107-108 — AP.rgb *= Weight; AP.a = 1-(Weight*(1-AP.a))
-        color = color * ap.a + ap.rgb;
+        //
+        // HeightFogContribution anti-double-fogging:
+        // When height fog is active, it provides its own inscattering haze. To prevent
+        // both AP and fog from independently adding haze (double-fogging), we reduce AP
+        // inscattering proportionally. Transmittance (ap.a) is always applied — only the
+        // additive inscattering (ap.rgb) is scaled down.
+        // @source UE5 HeightFogCommon.ush:175 — SkyAtmosphereHeightFogContribution scales atmosphere's
+        //   contribution to fog inscattering; here we use it inversely to reduce AP inscattering.
+        // @deviations UzEngine applies heightFogContribution as uniform AP reduction rather than
+        //   per-pixel fog opacity modulation (fog pass runs after deferred lighting, no fog opacity here).
+        float apInscatterScale = 1.0f - heightFogContribution;
+        color = color * ap.a + ap.rgb * apInscatterScale;
     }
 
     // ── Buffer Visualization Grid — tile dispatch ──

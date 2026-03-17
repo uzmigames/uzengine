@@ -41,6 +41,9 @@ void AddSkyCubemapCapturePass(rg::RgBuilder& builder, const SkyCubemapCapturePas
 {
     builder.AddPass("SkyCubemapCapture", [desc](rg::RgPassBuilder& pb) {
         pb.Write(desc.cubemapTarget, RHIResourceState::UnorderedAccess);
+        if (desc.transmittanceLutDep.IsValid()) {
+            pb.Read(desc.transmittanceLutDep, RHIResourceState::ShaderResource);
+        }
 
         pb.SetExecutionCallback([desc](IRHICommandList* cmd, const rg::RgPassResources& res) {
             UZ_PROFILE_SCOPE("SkyCubemapCapture::Execute");

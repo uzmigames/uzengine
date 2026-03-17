@@ -56,16 +56,27 @@ cbuffer HeightFogCB : register(b2) {
     float  _fogPad0[2];
 
     // Second layer
-    float  secondFogDensity;
+    // @source UE5 HeightFogCommon.ush:60 — ExponentialFogParameters2
+    // .x = precomputed RayOriginTermsSecond (density * exp2(-falloff*(camZ-baseH)))
+    // .y = secondFogHeightFalloff
+    // .z = secondFogDensity (raw, for start distance recalc)
+    // .w = secondFogBaseHeight (for start distance recalc)
+    float  secondFogDensity;         // PRE-COMPUTED: secondDensity * exp2(-secondFalloff*(camZ-secondBaseH))
     float  secondFogHeightFalloff;
+    float  secondFogRawDensity;      // Raw (un-precomputed) density for start distance recalculation
     float  secondFogBaseHeight;
-    float  _fogPad1;
 
     // Directional inscattering
     float4 directionalInscatteringColor;
     float  directionalInscatteringExponent;
     float  directionalInscatteringStartDistance;
     float  _fogPad2[2];
+
+    /// @source UE5 HeightFogCommon.ush:174-180 — Sky atmosphere ambient injection
+    /// @source UE5 FogRendering.cpp:85 — SkyAtmosphereAmbientContributionColorScale
+    float4 skyAtmContribColorScale;    // xyz = SkyAtmosphereAmbientContributionColorScale (default white)
+    float  heightFogContribution;      // SkyAtmosphere.HeightFogContribution (0-1, default 1.0)
+    float3 skyLightColor;             // SkyLight diffuse color (from SH L0 or cubemap average)
 };
 
 #ifndef UZ_BINDLESS
@@ -148,31 +159,52 @@ float4 main(FSInput input) : SV_Target {
     float rayLength = dist;
     float rayDirZ   = viewVec.z;
 
+    /// @source UE5 HeightFogCommon.ush:248-249 — RayOriginTerms and RayOriginTermsSecond
     float rayOriginTerms = fogDensity;  // Already pre-computed on CPU
+    float rayOriginTermsSecond = secondFogDensity; // Pre-computed on CPU for second layer
 
+    /// @source UE5 HeightFogCommon.ush:272-290 — Start distance exclusion
+    /// UE5 recalculates BOTH layers' RayOriginTerms from raw density at the
+    /// exclusion intersection height, not by ratio from precomputed terms.
     if (fogStartDistance > 0.0f && dist > fogStartDistance) {
-        // UE5: recalculate RayOriginTerms from the exclusion intersection point
         float excludeTime = fogStartDistance / dist;
         float excludeZ    = camPos3.z + excludeTime * viewVec.z;
 
         rayLength = dist - fogStartDistance;
         rayDirZ   = viewVec.z * (1.0f - excludeTime);
 
-        // Recompute RayOriginTerms at the exclusion intersection height.
-        // fogDensity = rawDensity * exp2(-falloff*(camZ-baseH))  (pre-computed on CPU)
-        // At exclusion point: rawDensity * exp2(-falloff*(exclZ-baseH))
-        // Ratio = exp2(-falloff*(exclZ-camZ))
-        float heightShift = excludeZ - camPos3.z;
-        rayOriginTerms = fogDensity * exp2(-fogHeightFalloff * heightShift);
+        // @source UE5 HeightFogCommon.ush:285-286 — Layer 1 recalc at exclusion height
+        // UE5: RayOriginTerms = rawDensity * exp2(-falloff * (exclZ - baseH))
+        // Equivalent: precomputed * exp2(-falloff * (exclZ - camZ)) since
+        //   precomputed = rawDensity * exp2(-falloff * (camZ - baseH))
+        rayOriginTerms = fogDensity * exp2(-fogHeightFalloff * (excludeZ - camPos3.z));
+
+        // @source UE5 HeightFogCommon.ush:288-289 — Layer 2 recalc from raw density
+        if (secondFogRawDensity > 0.0f) {
+            float exponent2 = max(-127.0f, secondFogHeightFalloff * (excludeZ - secondFogBaseHeight));
+            rayOriginTermsSecond = secondFogRawDensity * exp2(-exponent2);
+        }
     } else if (fogStartDistance > 0.0f && dist <= fogStartDistance) {
         discard;
     }
 
     // ── Line integral (UE5 CalculateLineIntegralShared) ──
+    /// @source UE5 HeightFogCommon.ush:294 — Layer 1 line integral
     float lineIntegral = CalculateLineIntegralShared(fogHeightFalloff, rayDirZ, rayOriginTerms);
+
+    /// @source UE5 HeightFogCommon.ush:296 — Layer 2 additive combination
+    /// @constants PERMUTATION_SUPPORT_FOG_SECOND_TERM = 1 (HeightFogCommon.ush:30)
+    /// @deviations NONE — guarded by density > 0 check instead of permutation define
+    if (secondFogRawDensity > 0.0f) {
+        lineIntegral += CalculateLineIntegralShared(secondFogHeightFalloff, rayDirZ, rayOriginTermsSecond);
+    }
+
+    /// @source UE5 HeightFogCommon.ush:299 — ExponentialHeightLineIntegral = shared * RayLength
     float fogAmount = lineIntegral * rayLength;
 
-    // ── Fog factor (UE5: ExpFogFactor) ──
+    /// @source UE5 HeightFogCommon.ush:362 — ExpFogFactor = max(saturate(exp2(-integral)), MinFogOpacity)
+    /// @constants MinFogOpacity = ExponentialFogColorParameter.w (HeightFogCommon.ush:230)
+    /// @deviations NONE
     float fogFactor = max(saturate(exp2(-fogAmount)), 1.0f - fogMaxOpacity);
 
     // ── Cutoff distance ──
@@ -187,6 +219,14 @@ float4 main(FSInput input) : SV_Target {
 
     // ── Inscattering color ──
     float3 inscatterColor = fogColor.xyz;
+
+    /// @source UE5 HeightFogCommon.ush:174-180 — Sky atmosphere ambient injection
+    /// When SkyAtmosphere is active, add sky color to fog inscattering.
+    /// This is what creates the blue/white horizon haze in UE5's Basic scene.
+    /// Inscattering += ColorScale * Contribution * SkyLightColor
+    inscatterColor += skyAtmContribColorScale.xyz
+                    * heightFogContribution
+                    * skyLightColor;
 
     // ── Directional inscattering (sun glow) ──
     if (directionalInscatteringExponent > 0.0f) {

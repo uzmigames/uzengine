@@ -25,8 +25,11 @@ Every numeric constant, formula, and algorithm in rendering/lighting/physics cod
 - Compensation factors (`* 2.0f` to "match UE5")
 - Minimum clamps (`max(value, 0.15f)` unless UE5 does the same)
 - Empirically tuned constants ("was tuned to approximate...")
+- **Visual workarounds** ("sky horizon blue-white", "warm sun glow") — if UE5 has a system that auto-computes a value, IMPLEMENT THAT SYSTEM instead of hardcoding a guess
+- **Supposing corrections** — if the render looks wrong, find the ROOT CAUSE in UE5 source, don't patch symptoms with invented numbers
+- **Creating alternatives** — if UE5 does X, do X. Don't invent Y because "it's simpler"
 
-**WHAT TO DO:** Read UE5 source FIRST → copy the exact math → cite the file:line.
+**WHAT TO DO:** Read UE5 source FIRST → copy the exact math → cite the file:line. If a feature requires a supporting system (e.g., UE5 auto-injects sky color into fog), implement that system — never substitute hardcoded values.
 
 ### RULE 2: ALWAYS Read UE5 Source BEFORE Writing Rendering Code
 

@@ -52,6 +52,10 @@ struct SkyAtmospherePassDesc {
     RHITextureHandle  transmittanceLutTexture;  ///< Physical transmittance LUT texture handle (SM5 fallback, bound at t1).
     rg::RgResourceId  transmittanceLutRes;      ///< Render graph resource handle for the LUT (triggers UAV→SRV barrier when valid).
 
+    uint32_t          multiScatterLutSrvIndex = UINT32_MAX; ///< SRV index for multi-scattering LUT.
+    RHITextureHandle  multiScatterLutTexture;   ///< Physical multi-scattering LUT texture handle (SM5 fallback, bound at t2).
+    rg::RgResourceId  multiScatterLutRes;       ///< Render graph resource handle for the multi-scatter LUT.
+
     bool              bindless;         ///< True if SM6.6 bindless path is active.
     float             viewportWidth;    ///< Viewport width in pixels.
     float             viewportHeight;   ///< Viewport height in pixels.

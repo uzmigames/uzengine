@@ -55,6 +55,13 @@ struct AtmosphereFrameContext {
     bool*             transmittanceLutDirty  = nullptr;
     bool*             transmittanceLutFilled = nullptr;
 
+    // Multi-scattering LUT state (owned by SceneRenderer, mutated by atmosphere)
+    RHITextureHandle  multiScatterLut;
+    uint32_t          multiScatterLutSrv = UINT32_MAX;
+    uint32_t          multiScatterLutUav = UINT32_MAX;
+    bool*             multiScatterLutDirty  = nullptr;
+    bool*             multiScatterLutFilled = nullptr;
+
     // Sky cubemap state (owned by SceneRenderer)
     RHITextureHandle  skyCubemap;
     uint32_t          skyCubemapSrv = UINT32_MAX;

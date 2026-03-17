@@ -42,6 +42,19 @@ cbuffer AtmosphereLutParams : register(b0) {
     float  topRadiusKm;      // Top of atmosphere radius (km)
 };
 
+/// Ozone absorption parameters at b2 — CBV (256-byte aligned).
+/// @source UE5 SkyAtmosphereCommonData.h:38-42
+/// @source UE5 SkyAtmosphereCommon.ush:316-318 — SampleAtmosphereMediumRGB
+/// Tent distribution for ozone density converted to piecewise-linear coefficients.
+cbuffer OzoneParams : register(b2) {
+    float3 ozoneAbsorption;  // Ozone absorption extinction (km^-1)
+    float  ozoneLayerWidth;  // Boundary altitude between two linear segments (km) = TipAltitude
+    float  ozoneLinTerm0;    // Linear coefficient for h < layerWidth
+    float  ozoneConstTerm0;  // Constant term for h < layerWidth
+    float  ozoneLinTerm1;    // Linear coefficient for h >= layerWidth
+    float  ozoneConstTerm1;  // Constant term for h >= layerWidth
+};
+
 /// LUT dimensions — hardcoded to match the texture allocation in scene_renderer.cpp.
 static const uint LUT_WIDTH  = 256;
 static const uint LUT_HEIGHT = 64;
@@ -145,11 +158,26 @@ void TransmittanceLutParamsToUv(float viewHeight, float viewZenithCosAngle,
     uv = float2(uU, uV);
 }
 
+/// Computes ozone density at a given altitude using the UE5 tent distribution.
+/// @source UE5 SkyAtmosphereCommon.ush:316-318 — SampleAtmosphereMediumRGB
+/// @constants ozoneLayerWidth=25.0 (SkyAtmosphereCommonData.cpp:38), ozoneLinTerm0=1/15 (cpp:39), etc.
+/// @deviations NONE
+float OzoneDensity(float altKm)
+{
+    return saturate(altKm < ozoneLayerWidth
+        ? ozoneLinTerm0 * altKm + ozoneConstTerm0
+        : ozoneLinTerm1 * altKm + ozoneConstTerm1);
+}
+
 /// Computes optical transmittance from a point to the top of the atmosphere.
 ///
-/// Integrates extinction (Rayleigh + Mie) along a ray from `pos` in direction
-/// `dir` until it exits the atmosphere sphere or hits the planet surface.
+/// Integrates extinction (Rayleigh + Mie + Ozone) along a ray from `pos`
+/// in direction `dir` until it exits the atmosphere sphere or hits the planet.
 /// Uses midpoint quadrature with NUM_TRANSMITTANCE_STEPS samples.
+///
+/// @source UE5 SkyAtmosphereCommonData.cpp:218-230 — FAtmosphereSetup::ComputeTransmittance
+/// @constants Mie extinction ratio = 1.11 (MieExtinction/MieScattering, UE5 convention)
+/// @deviations NONE
 ///
 /// # Arguments
 /// * `pos` — Start position in sky-space (km), relative to planet center at origin.
@@ -190,8 +218,13 @@ float3 ComputeTransmittanceToTopAtmosphere(float3 pos, float3 dir,
         float densR = exp(-altKm / scaleHR);
         float densM = exp(-altKm / scaleHM);
 
+        // @source UE5 SkyAtmosphereCommon.ush:316-318 — ozone density (tent distribution)
+        float densO = OzoneDensity(altKm);
+
+        // @source UE5 SkyAtmosphereCommonData.cpp:228
+        // Total extinction = Rayleigh + Mie (1.11x for absorption) + Ozone absorption
         // Mie extinction = 1.11 * Mie scattering (same ratio as sky_atmosphere_ps.hlsl)
-        opticalDepth += (betaR * densR + betaM_ * 1.11f * densM) * dt;
+        opticalDepth += (betaR * densR + betaM_ * 1.11f * densM + ozoneAbsorption * densO) * dt;
     }
 
     return exp(-opticalDepth);

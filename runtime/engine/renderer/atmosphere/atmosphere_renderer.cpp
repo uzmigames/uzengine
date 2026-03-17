@@ -69,11 +69,34 @@ void AddAtmospherePasses(
             lutRC.bottomRadiusKm = skyComp.bottomRadiusKm;
             lutRC.topRadiusKm    = skyComp.bottomRadiusKm + skyComp.atmosphereHeightKm;
 
+            // ── Ozone CBV for transmittance LUT ───────────────────────
+            // @source UE5 SkyAtmosphereCommonData.cpp:109-115
+            TransmittanceLutOzoneCB ozoneCB{};
+            {
+                const float px    = skyComp.ozoneTipAltitude;
+                const float py    = skyComp.ozoneTipValue;
+                const float width = skyComp.ozoneWidth;
+                if (width > 0.f && py > 0.f) {
+                    const float slope = py / width;
+                    ozoneCB.absorptionR = skyComp.ozoneAbsorption.x;
+                    ozoneCB.absorptionG = skyComp.ozoneAbsorption.y;
+                    ozoneCB.absorptionB = skyComp.ozoneAbsorption.z;
+                    ozoneCB.layerWidth  = px;
+                    ozoneCB.linTerm0    =  slope;
+                    ozoneCB.constTerm0  = py - px * slope;
+                    ozoneCB.linTerm1    = -slope;
+                    ozoneCB.constTerm1  = py - px * (-slope);
+                }
+            }
+            CBAllocation ozoneAlloc = ctx.cbRing->Allocate(sizeof(TransmittanceLutOzoneCB));
+            std::memcpy(ozoneAlloc.cpuPtr, &ozoneCB, sizeof(TransmittanceLutOzoneCB));
+
             TransmittanceLutPassDesc lutPassDesc{};
             lutPassDesc.lutTarget      = lutRes;
             lutPassDesc.pipeline       = ctx.pipelines->GetTransmittanceLut();
             lutPassDesc.rootConstants  = lutRC;
             lutPassDesc.lutUavIndex    = ctx.transmittanceLutUav;
+            lutPassDesc.ozoneCbAlloc   = ozoneAlloc;
             AddTransmittanceLutPass(rgBuilder, lutPassDesc);
 
             *ctx.transmittanceLutDirty  = false;
@@ -149,10 +172,11 @@ void AddAtmospherePasses(
                 cubeRC.packedScatterScales = packed;
 
                 SkyCubemapCapturePassDesc cubePassDesc{};
-                cubePassDesc.cubemapTarget   = cubeRes;
-                cubePassDesc.pipeline        = ctx.pipelines->GetSkyCubemapCapture();
-                cubePassDesc.rootConstants   = cubeRC;
-                cubePassDesc.cubemapUavIndex = ctx.skyCubemapUav;
+                cubePassDesc.cubemapTarget      = cubeRes;
+                cubePassDesc.transmittanceLutDep = lutRes;
+                cubePassDesc.pipeline           = ctx.pipelines->GetSkyCubemapCapture();
+                cubePassDesc.rootConstants      = cubeRC;
+                cubePassDesc.cubemapUavIndex    = ctx.skyCubemapUav;
                 AddSkyCubemapCapturePass(rgBuilder, cubePassDesc);
             } else {
                 // ── Pixel shader path (SM5, no bindless) ─────────────────
@@ -207,8 +231,119 @@ void AddAtmospherePasses(
                                         skyComp.skyLuminanceFactor.y,
                                         skyComp.skyLuminanceFactor.z, 1.f};
 
+        // ── Ozone absorption (UE5 "Other Absorption") ───────────────
+        // @source UE5 SkyAtmosphereCommonData.cpp:28-51 — TentToCoefficients
+        // Convert tent distribution to piecewise-linear coefficients.
+        // The tent is: density rises linearly from 0 to tipValue over
+        // [tipAltitude - width, tipAltitude], then falls to 0 over
+        // [tipAltitude, tipAltitude + width].
+        {
+            const float px    = skyComp.ozoneTipAltitude;
+            const float py    = skyComp.ozoneTipValue;
+            const float width = skyComp.ozoneWidth;
+
+            if (width > 0.f && py > 0.f) {
+                const float slope = py / width;
+                skyCB.ozoneAbsorption = {skyComp.ozoneAbsorption.x,
+                                         skyComp.ozoneAbsorption.y,
+                                         skyComp.ozoneAbsorption.z,
+                                         px};  // w = layerWidth (boundary altitude)
+                skyCB.ozoneLinTerm0   =  slope;
+                skyCB.ozoneConstTerm0 = py - px * slope;
+                skyCB.ozoneLinTerm1   = -slope;
+                skyCB.ozoneConstTerm1 = py - px * (-slope);
+            } else {
+                skyCB.ozoneAbsorption = {0.f, 0.f, 0.f, 0.f};
+                skyCB.ozoneLinTerm0   = 0.f;
+                skyCB.ozoneConstTerm0 = 0.f;
+                skyCB.ozoneLinTerm1   = 0.f;
+                skyCB.ozoneConstTerm1 = 0.f;
+            }
+        }
+
         CBAllocation skyAlloc = ctx.cbRing->Allocate(sizeof(SkyAtmosphereCB));
         std::memcpy(skyAlloc.cpuPtr, &skyCB, sizeof(SkyAtmosphereCB));
+
+        // ── Multi-Scattering LUT pass ─────────────────────────────────
+        rg::RgResourceId msLutRes;
+        if (ctx.multiScatterLut.IsValid()) {
+            RHIResourceState msImportState = *ctx.multiScatterLutFilled
+                ? RHIResourceState::ShaderResource
+                : RHIResourceState::UnorderedAccess;
+            msLutRes = rgBuilder.ImportTexture("MultiScatterLUT",
+                ctx.multiScatterLut, msImportState);
+        }
+
+        // ── Multi-Scattering LUT compute pass ─────────────────────
+        /// @source UE5 RenderSkyAtmosphereLookUpTablesCS.usf:280-380 — NewMultiScatCS
+        if (*ctx.multiScatterLutDirty && ctx.multiScatterLut.IsValid()
+                && ctx.multiScatterLutUav != UINT32_MAX
+                && *ctx.transmittanceLutFilled) {
+
+            // Build root constants (same atmosphere params as transmittance LUT)
+            TransmittanceLutRootConstants msRC{};
+            msRC.rayleighBetaX  = skyComp.rayleighScattering.x;
+            msRC.rayleighBetaY  = skyComp.rayleighScattering.y;
+            msRC.rayleighBetaZ  = skyComp.rayleighScattering.z;
+            msRC.rayleighScaleH = skyComp.rayleighScaleHeightKm;
+            msRC.mieBeta        = skyComp.mieScattering;
+            msRC.mieScaleH      = skyComp.mieScaleHeightKm;
+            msRC.bottomRadiusKm = skyComp.bottomRadiusKm;
+            msRC.topRadiusKm    = skyComp.bottomRadiusKm + skyComp.atmosphereHeightKm;
+
+            // Ozone CBV
+            TransmittanceLutOzoneCB msOzoneCB{};
+            {
+                const float px    = skyComp.ozoneTipAltitude;
+                const float py    = skyComp.ozoneTipValue;
+                const float width = skyComp.ozoneWidth;
+                if (width > 0.f && py > 0.f) {
+                    const float slope = py / width;
+                    msOzoneCB.absorptionR = skyComp.ozoneAbsorption.x;
+                    msOzoneCB.absorptionG = skyComp.ozoneAbsorption.y;
+                    msOzoneCB.absorptionB = skyComp.ozoneAbsorption.z;
+                    msOzoneCB.layerWidth  = px;
+                    msOzoneCB.linTerm0    =  slope;
+                    msOzoneCB.constTerm0  = py - px * slope;
+                    msOzoneCB.linTerm1    = -slope;
+                    msOzoneCB.constTerm1  = py - px * (-slope);
+                }
+            }
+            msOzoneCB.transmittanceLutSrvIdx = ctx.transmittanceLutSrv;
+            CBAllocation ozoneAllocMS = ctx.cbRing->Allocate(sizeof(TransmittanceLutOzoneCB));
+            std::memcpy(ozoneAllocMS.cpuPtr, &msOzoneCB, sizeof(TransmittanceLutOzoneCB));
+
+            rgBuilder.AddPass("MultiScatterLUT", [&, msRC, ozoneAllocMS](rg::RgPassBuilder& pb) {
+                pb.Write(msLutRes, RHIResourceState::UnorderedAccess);
+                pb.Read(lutRes, RHIResourceState::ShaderResource);
+
+                pb.SetExecutionCallback([&, msRC, ozoneAllocMS](IRHICommandList* cmd, const rg::RgPassResources&) {
+                    cmd->SetPipeline(ctx.pipelines->GetMultiScatterLut());
+
+                    // Root constants at slot 0 (b0)
+                    cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&msRC), 8);
+
+                    // Ozone CBV at slot 2 (b2)
+                    if (ozoneAllocMS.gpuAddr != 0) {
+                        cmd->SetRootCBV(2, ozoneAllocMS.gpuAddr);
+                    }
+
+                    // Transmittance LUT SRV at slot 5 (t0 descriptor table)
+                    if (!ctx.bindless) {
+                        cmd->SetDescriptorTable(5, ctx.transmittanceLutSrv);
+                    }
+
+                    // Output UAV at slot 4 (u0 descriptor table)
+                    cmd->SetDescriptorTable(4, ctx.multiScatterLutUav);
+
+                    // Dispatch 32x32 / [8,8] = [4,4,1]
+                    cmd->Dispatch(4, 4, 1);
+                });
+            });
+
+            *ctx.multiScatterLutDirty  = false;
+            *ctx.multiScatterLutFilled = true;
+        }
 
         SkyAtmospherePassDesc skyDesc{};
         skyDesc.backbuffer              = hdrRes;
@@ -221,6 +356,9 @@ void AddAtmospherePasses(
         skyDesc.transmittanceLutSrvIndex = ctx.transmittanceLutSrv;
         skyDesc.transmittanceLutTexture  = ctx.transmittanceLut;
         skyDesc.transmittanceLutRes      = lutRes;
+        skyDesc.multiScatterLutSrvIndex = ctx.multiScatterLutSrv;
+        skyDesc.multiScatterLutTexture  = ctx.multiScatterLut;
+        skyDesc.multiScatterLutRes      = msLutRes;
         skyDesc.bindless                = ctx.bindless;
         skyDesc.viewportWidth           = ctx.vpWidth;
         skyDesc.viewportHeight          = ctx.vpHeight;

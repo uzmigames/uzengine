@@ -211,6 +211,10 @@ public:
     /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
     [[nodiscard]] RHIPipelineHandle GetTransmittanceLut();
 
+    /// Returns the multi-scattering LUT compute pipeline (multi_scatter_lut_cs.hlsl).
+    /// 32x32 R11G11B10F, Hillaire 2020 isotropic integration + geometric series.
+    [[nodiscard]] RHIPipelineHandle GetMultiScatterLut();
+
     /// Returns the sky cubemap capture compute pipeline (sky_cubemap_cs.hlsl).
     ///
     /// Compute pipeline dispatched to capture sky radiance into a 64x64x6 RGBA16F
@@ -345,6 +349,7 @@ private:
     [[nodiscard]] bool EnsureTonemapPixelShader();
     [[nodiscard]] bool EnsureHeightFogPixelShader();
     [[nodiscard]] bool EnsureTransmittanceLutShader();
+    [[nodiscard]] bool EnsureMultiScatterLutShader();
     [[nodiscard]] bool EnsureSkyCubemapCaptureShader();
     [[nodiscard]] bool EnsureSkyCubemapCapturePSShader();
     [[nodiscard]] bool EnsureHiZPyramidShader();
@@ -381,6 +386,7 @@ private:
     RHIShaderHandle m_tonemapPS            = RHIShaderHandle::Invalid();
     RHIShaderHandle m_heightFogPS          = RHIShaderHandle::Invalid();
     RHIShaderHandle m_transmittanceLutCS      = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_multiScatterLutCS      = RHIShaderHandle::Invalid();
     RHIShaderHandle m_skyCubemapCaptureCS    = RHIShaderHandle::Invalid();
     RHIShaderHandle m_skyCubemapCapturePSShader = RHIShaderHandle::Invalid();
     RHIShaderHandle m_hizPyramidCS             = RHIShaderHandle::Invalid();
@@ -403,6 +409,7 @@ private:
     RHIPipelineHandle m_tonemap               = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_heightFog             = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_transmittanceLut      = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_multiScatterLut      = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_skyCubemapCapture    = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_skyCubemapCapturePSPipeline = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_depthPrepass          = RHIPipelineHandle::Invalid();

@@ -257,6 +257,30 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
         }
     }
 
+    // ── Multi-Scattering LUT texture (32x32 RGBA16F) ──────────────────────
+    // @source UE5 SkyAtmosphereRendering.cpp — MultiScatteredLuminanceLutTexture (32x32)
+    // Precomputed infinite-bounce multi-scattering transfer function.
+    // UE5 uses R11G11B10F but our RHI doesn't support that format;
+    // RGBA16F is the closest available (8 KB at 32x32, negligible overhead).
+    {
+        RHITextureDesc msDesc{};
+        msDesc.width     = 32;
+        msDesc.height    = 32;
+        msDesc.format    = RHIFormat::RGBA16Float;
+        msDesc.usage     = RHITextureUsage::ShaderResource
+                         | RHITextureUsage::UnorderedAccess;
+        msDesc.debugName = "MultiScatterLUT";
+
+        m_multiScatterLut = m_device->CreateTexture(msDesc);
+        if (!m_multiScatterLut.IsValid()) {
+            UZ_LOG(Renderer, Error, "SceneRenderer: failed to create MultiScatterLUT texture");
+        } else {
+            m_multiScatterLutSrv = m_device->GetTextureSRVIndex(m_multiScatterLut);
+            m_multiScatterLutUav = m_device->GetTextureUAVIndex(m_multiScatterLut);
+            UZ_LOG(Renderer, Info, "SceneRenderer: MultiScatterLUT created (32x32 RGBA16F)");
+        }
+    }
+
     // ── IBL Baker (bake BRDF LUT once) ────────────────────────────────
     m_iblBaker = std::make_unique<IBLBaker>();
     if (m_iblBaker->Init(device, m_shaderMgr.get())) {
@@ -868,6 +892,10 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
                 perFrame.apRayleighScale  = skyComp.rayleighScatteringScale;
                 perFrame.apMieScale       = skyComp.mieScatteringScale;
             }
+            // @source UE5 SceneRendering.cpp:1440 — SkyAtmosphereHeightFogContribution
+            // Propagate heightFogContribution to reduce AP inscattering when height fog
+            // is active, preventing double-fogging.
+            perFrame.heightFogContribution = skyComp.heightFogContribution;
             break; // First SkyAtmosphereComponent only
         }
     }
@@ -1887,6 +1915,11 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     atmoCtx.transmittanceLutUav = m_transmittanceLutUav;
     atmoCtx.transmittanceLutDirty  = &m_transmittanceLutDirty;
     atmoCtx.transmittanceLutFilled = &m_transmittanceLutFilled;
+    atmoCtx.multiScatterLut     = m_multiScatterLut;
+    atmoCtx.multiScatterLutSrv  = m_multiScatterLutSrv;
+    atmoCtx.multiScatterLutUav  = m_multiScatterLutUav;
+    atmoCtx.multiScatterLutDirty  = &m_multiScatterLutDirty;
+    atmoCtx.multiScatterLutFilled = &m_multiScatterLutFilled;
     atmoCtx.skyCubemap          = m_skyCubemap;
     atmoCtx.skyCubemapSrv       = m_skyCubemapSrv;
     atmoCtx.skyCubemapUav       = m_skyCubemapUav;
@@ -1903,10 +1936,17 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     if (m_shadowDebugMode == 0) {
         AddAtmospherePasses(rgBuilder, hdrRes, depthRes, perFrameAlloc, atmoCtx);
 
+        // Sky light color from SH L0 (DC term) — for fog sky atmosphere injection
+        /// @source UE5 HeightFogCommon.ush:175 — GetViewDistanceSkyLightColor()
+        float skyFogR = m_skyIrradianceSH.coeffs[0].w;
+        float skyFogG = m_skyIrradianceSH.coeffs[1].w;
+        float skyFogB = m_skyIrradianceSH.coeffs[2].w;
+
         AddHeightFogFromECS(rgBuilder, hdrRes, depthRes, perFrameAlloc,
                             world, camera, pipelines, *m_cbRing,
                             m_gbuffer.depthSRV, m_gbuffer.depth,
-                            bindless, vpWidth, vpHeight);
+                            bindless, vpWidth, vpHeight,
+                            skyFogR, skyFogG, skyFogB);
     }
 
     // (atmosphere and fog passes registered above via AddAtmospherePasses + AddHeightFogFromECS)

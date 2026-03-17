@@ -109,7 +109,7 @@
 - [ ] 2.6.1 Implement — spot light cone attenuation, perspective shadow maps, deferred accumulation.
 
 ### 2.7 Exponential Height Fog → task `phase3a-3.35.0-exponential-height-fog` (existing)
-- [ ] 2.7.1 Implement — 2-layer exp fog with directional inscattering, matching UE5 HeightFogComponent.
+- [x] 2.7.1 Implement — 2-layer exp fog with directional inscattering, matching UE5 HeightFogComponent. Second fog layer additive combination via CalculateLineIntegralShared, CPU precomputation of secondRayOriginTerms, HeightFogContribution AP anti-double-fogging in deferred lighting.
 
 ### 2.8 Motion Blur → task `phase3a-3.18.0-motion-blur` (existing)
 - [ ] 2.8.1 Implement — velocity buffer (already exists) + per-pixel blur.

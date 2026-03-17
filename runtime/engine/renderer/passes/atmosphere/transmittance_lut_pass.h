@@ -25,6 +25,7 @@
 #pragma once
 
 #include "render_graph_types.h"
+#include "cb_ring_allocator.h"
 #include "engine/rhi/rhi_types.h"
 #include "vector3.h"
 
@@ -61,6 +62,33 @@ static_assert(sizeof(TransmittanceLutRootConstants) == 32,
     "TransmittanceLutRootConstants must be exactly 8 DWORDs (32 bytes)");
 
 // ─────────────────────────────────────────────────────────────────────────────
+// TransmittanceLutOzoneCB — ozone absorption via CBV at b2
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Ozone (Other Absorption) parameters for the transmittance LUT compute shader.
+///
+/// @source UE5 SkyAtmosphereCommonData.h:38-42, SkyAtmosphereCommon.ush:316-318
+/// Bound at b2 as a root CBV. The tent distribution is converted to
+/// piecewise-linear coefficients on the CPU (same as UE5 TentToCoefficients).
+/// Padded to 256 bytes for D3D12 constant buffer alignment.
+struct TransmittanceLutOzoneCB {
+    float absorptionR;       ///< Ozone absorption R (km^-1).
+    float absorptionG;       ///< Ozone absorption G (km^-1).
+    float absorptionB;       ///< Ozone absorption B (km^-1).
+    float layerWidth;        ///< Boundary altitude between the two linear segments (km). = TipAltitude.
+    float linTerm0;          ///< Linear coefficient for h < layerWidth.
+    float constTerm0;        ///< Constant term for h < layerWidth.
+    float linTerm1;          ///< Linear coefficient for h >= layerWidth.
+    float constTerm1;        ///< Constant term for h >= layerWidth.
+    uint32_t transmittanceLutSrvIdx = UINT32_MAX; ///< SRV index for bindless (multi-scatter pass).
+    uint32_t _padU[3] = {};  ///< Align to float4 boundary.
+    float _pad[52] = {};     ///< Pad to 256-byte alignment.
+};
+
+static_assert(sizeof(TransmittanceLutOzoneCB) == 256,
+    "TransmittanceLutOzoneCB must be 256 bytes (D3D12 CB alignment)");
+
+// ─────────────────────────────────────────────────────────────────────────────
 // TransmittanceLutPassDesc
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -73,6 +101,7 @@ struct TransmittanceLutPassDesc {
     RHIPipelineHandle pipeline;        ///< Compute PSO for transmittance_lut_cs.hlsl.
     TransmittanceLutRootConstants rootConstants; ///< Atmosphere params (8 DWORDs at root param 0).
     uint32_t          lutUavIndex;     ///< UAV descriptor heap index for the LUT texture.
+    CBAllocation      ozoneCbAlloc;    ///< Ozone absorption CBV at b2 (TransmittanceLutOzoneCB).
 };
 
 /// Registers a transmittance LUT compute pass in the render graph.

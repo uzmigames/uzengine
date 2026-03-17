@@ -63,6 +63,13 @@ void AddTransmittanceLutPass(rg::RgBuilder& builder, const TransmittanceLutPassD
             // Same pattern as IBL baker: SetRootConstants(0, data, count).
             cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&desc.rootConstants), 8);
 
+            // ── Bind ozone CBV at root param 2 (b2) ────────────────────
+            // Ozone absorption uses the per-object CBV slot (b2), which is
+            // unused in compute passes. This avoids expanding root constants.
+            if (desc.ozoneCbAlloc.gpuAddr != 0) {
+                cmd->SetRootCBV(2, desc.ozoneCbAlloc.gpuAddr);
+            }
+
             // ── Bind output UAV at root param 4 (u0 descriptor table) ─
             cmd->SetDescriptorTable(4, desc.lutUavIndex);
 

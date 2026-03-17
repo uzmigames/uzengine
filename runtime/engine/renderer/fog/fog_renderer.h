@@ -37,6 +37,7 @@ namespace rg { class RgBuilder; }
 /// * `bindless`       — Whether SM6.6 bindless path is active.
 /// * `vpWidth`        — Viewport width.
 /// * `vpHeight`       — Viewport height.
+/// @param skyLightColorR/G/B — Sky light average color from SH L0 (for sky→fog injection).
 void AddHeightFogFromECS(
     rg::RgBuilder& rgBuilder,
     rg::RgResourceId hdrRes,
@@ -50,6 +51,9 @@ void AddHeightFogFromECS(
     RHITextureHandle depthTexture,
     bool bindless,
     float vpWidth,
-    float vpHeight);
+    float vpHeight,
+    float skyLightColorR = 0.f,
+    float skyLightColorG = 0.f,
+    float skyLightColorB = 0.f);
 
 } // namespace uz

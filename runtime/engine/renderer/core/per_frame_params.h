@@ -75,7 +75,8 @@ namespace uz {
 /// 436      20     filmSlope..filmWhiteClip (5 floats)
 /// 456      4      gtaoSrvIndex
 /// 460      4      brdfDebugMode
-/// 464      56     _pad2[14]
+/// 464      4      heightFogContribution
+/// 468      52     _pad2[13]
 /// ─── 512 bytes (CB boundary) ───
 /// 512      8      irradianceCubemap (RHITextureHandle, NOT in CB)
 /// 520      8      prefilteredSpecular (RHITextureHandle, NOT in CB)
@@ -133,7 +134,8 @@ struct PerFrameParams {
 
     uint32_t gtaoSrvIndex        = UINT32_MAX;         ///< SRV index for GTAO filtered AO texture (UINT32_MAX = no GTAO).
     uint32_t brdfDebugMode       = 0;                 ///< BRDF debug (0=off, 1=split-screen: left=old, right=new).
-    float    _pad2[14]           = {};                ///< Pad scalar section to 512 bytes.
+    float    heightFogContribution = 0.0f;            ///< AP reduction factor when height fog active (0=none, 1=full).
+    float    _pad2[13]           = {};                ///< Pad scalar section to 512 bytes.
 
     // ── Resource handles (NOT copied to CB) ──────────────────────────────
     // These are bound by ShaderParameterBinder at their HLSL register slots.

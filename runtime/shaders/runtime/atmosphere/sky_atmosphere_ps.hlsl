@@ -42,9 +42,9 @@ struct FSInput {
 #ifdef UZ_BINDLESS
 struct SkyIndices {
     uint depthIdx;
-    uint transmittanceLutIdx; // RGBA16F 256x64 precomputed transmittance LUT
+    uint transmittanceLutIdx;       // RGBA16F 256x64 precomputed transmittance LUT
+    uint multiScatteringLutIdx;     // R11G11B10F 32x32 multi-scattering LUT
     uint _pad1;
-    uint _pad2;
 };
 ConstantBuffer<SkyIndices> skyIndices : register(b0);
 #endif
@@ -85,12 +85,21 @@ cbuffer SkyAtmosphereCB : register(b2) {
     float  mieAbsorptionScale;      // Artistic multiplier for Mie absorption
     float  mieAbsorption;           // Mie absorption coefficient (km^-1)
     float4 skyLuminanceFactor;      // Per-channel sky brightness art direction (default 1,1,1)
-    float  _skyPad[36];             // Pad to 256-byte alignment
+    // ── Ozone absorption (UE5 "Other Absorption") ─────────────────────────
+    // @source UE5 SkyAtmosphereCommon.ush:316-318 — SampleAtmosphereMediumRGB
+    // @source UE5 SkyAtmosphereCommonData.h:38-42 — AbsorptionDensity tent coefficients
+    float4 ozoneAbsorptionPacked;   // xyz = ozone absorption (km^-1), w = layerWidth (km)
+    float  ozoneLinTerm0;           // Linear coefficient for h < layerWidth
+    float  ozoneConstTerm0;         // Constant term for h < layerWidth
+    float  ozoneLinTerm1;           // Linear coefficient for h >= layerWidth
+    float  ozoneConstTerm1;         // Constant term for h >= layerWidth
+    float  _skyPad[28];             // Pad to 256-byte alignment
 };
 
 #ifndef UZ_BINDLESS
-Texture2D<float>  sceneDepth      : register(t0);
-Texture2D<float4> transmittanceLut : register(t1); // 256x64 RGBA16F precomputed LUT
+Texture2D<float>  sceneDepth           : register(t0);
+Texture2D<float4> transmittanceLut     : register(t1); // 256x64 RGBA16F precomputed LUT
+Texture2D<float4> multiScatteringLut   : register(t2); // 32x32 R11G11B10F multi-scattering LUT
 #endif
 
 /// s0 = bilinear wrap sampler (D3D12_FILTER_MIN_MAG_MIP_LINEAR).
@@ -136,6 +145,33 @@ float MiePhase(float cosTheta, float g) {
 /// Exponential density profile: exp(-altitude / scaleHeight)
 float DensityAtAltitude(float altitudeKm, float scaleHeightKm) {
     return exp(-max(0.0f, altitudeKm) / scaleHeightKm);
+}
+
+/// Ozone density at a given altitude using the UE5 tent distribution.
+/// @source UE5 SkyAtmosphereCommon.ush:316-318 — SampleAtmosphereMediumRGB
+/// @constants ozoneLayerWidth=25.0 (SkyAtmosphereCommonData.cpp:38)
+/// @deviations NONE
+float OzoneDensityAtAltitude(float altKm) {
+    return saturate(altKm < ozoneAbsorptionPacked.w
+        ? ozoneLinTerm0 * altKm + ozoneConstTerm0
+        : ozoneLinTerm1 * altKm + ozoneConstTerm1);
+}
+
+/// Samples the precomputed multi-scattering LUT.
+/// @source UE5 SkyAtmosphere.usf:337-343 — GetMultipleScattering
+/// @constants UV mapping: x = dot(up,sunDir)*0.5+0.5, y = (h-bR)/(tR-bR)
+/// @deviations NONE
+float3 SampleMultiScatteringLut(Texture2D<float4> lut, SamplerState samp,
+    float3 samplePos, float3 sunDir_, float bRadius, float tRadius)
+{
+    float3 upVec = normalize(samplePos);
+    float viewZenithCos = dot(upVec, sunDir_);
+    float h = length(samplePos);
+    float2 uv = saturate(float2(
+        viewZenithCos * 0.5f + 0.5f,
+        (h - bRadius) / (tRadius - bRadius)
+    ));
+    return lut.SampleLevel(samp, uv, 0).rgb;
 }
 
 /// Ray-sphere intersection. Returns (tNear, tFar).
@@ -315,12 +351,16 @@ float4 main(FSInput input) : SV_Target {
         float densR = DensityAtAltitude(altKm, scaleHR);
         float densM = DensityAtAltitude(altKm, scaleHM);
 
+        // @source UE5 SkyAtmosphereCommon.ush:310-336 — SampleAtmosphereMediumRGB
         // Extinction uses PHYSICAL coefficients — must match transmittance LUT.
         // Rayleigh extinction = betaR_phys (scattering IS extinction for Rayleigh).
         // Mie extinction = betaM_phys * 1.11 (absorption ratio included).
+        // Ozone extinction = ozoneAbsorption * ozone tent density.
         float3 extR      = betaR_phys * densR;
         float3 extM      = betaM_phys * 1.11f * densM;
-        float3 extTotal  = extR + extM;
+        float  densO     = OzoneDensityAtAltitude(altKm);
+        float3 extO      = ozoneAbsorptionPacked.xyz * densO;
+        float3 extTotal  = extR + extM + extO;
 
         // Transmittance over this single step
         float3 T_step = exp(-extTotal * stepLenKm);
@@ -335,23 +375,43 @@ float4 main(FSInput input) : SV_Target {
             sampleKm, sunDir, bottomRadiusKm, topRadiusKm);
 #endif
 
+        // ── Multi-scattering contribution ───────────────────────────
+        // @source UE5 SkyAtmosphere.usf:651-655,697 — GetMultipleScattering + S integration
+        // Multi-scattering is NOT phase-weighted (isotropic) and NOT affected by
+        // PlanetShadow or TransmittanceToLight. It adds diffuse light after 1st scatter.
+        // Total scattering = Rayleigh + Mie (physical, not artistic, for energy conservation).
+        float3 multiScatteredLum = float3(0, 0, 0);
+        if (multiScatteringFactor > 0.0f) {
+#ifdef UZ_BINDLESS
+            Texture2D<float4> msLut = ResourceDescriptorHeap[skyIndices.multiScatteringLutIdx];
+            multiScatteredLum = SampleMultiScatteringLut(msLut, linearSampler,
+                sampleKm, sunDir, bottomRadiusKm, topRadiusKm);
+#else
+            multiScatteredLum = SampleMultiScatteringLut(multiScatteringLut, linearSampler,
+                sampleKm, sunDir, bottomRadiusKm, topRadiusKm);
+#endif
+        }
+
         // In-scattering uses ARTISTIC coefficients — controlled by scale params.
         // This decouples "how much color" (scattering) from "how opaque" (extinction).
         float3 scatterR = betaR_art * densR * phaseR;
         float3 scatterM = betaM_art * densM * phaseM;
-        float3 scatter  = scatterR + scatterM;
+
+        // Physical total scattering (for multi-scattering weighting)
+        float3 totalScatter = betaR_phys * densR + betaM_phys * densM;
+
+        // @source UE5 SkyAtmosphere.usf:697
+        // S = sunIlluminance * (sunTransmittance * phaseScattering + multiScatteredLum * totalScattering)
+        float3 singleScatter = sunT * (scatterR + scatterM);
+        float3 multiScatter  = multiScatteredLum * totalScatter;
+        float3 scatter = singleScatter + multiScatter;
 
         float3 Sint = (scatter - scatter * T_step) / max(extTotal, EXT_EPS);
 
-        // Accumulate luminance weighted by path throughput and sun transmittance
-        L         += Throughput * sunT * Sint * sunIlluminance.xyz;
+        // Accumulate luminance weighted by path throughput
+        L         += Throughput * Sint * sunIlluminance.xyz;
         Throughput *= T_step;
     }
-
-    // Multi-scattering: disabled. UE5 uses a precomputed MultiScatteredLuminanceLUT
-    // (SkyAtmosphere.usf:1255-1268) with geometric series 1/(1-R) energy redistribution.
-    // The empirical * 0.5 approximation that was here had no UE5 source.
-    // multiScatteringFactor is still available in the CB for when the LUT is implemented.
 
     // ── Sky luminance art direction ──────────────────────────────────────────
     // Per-channel multiplier for artistic control of sky brightness and tint.

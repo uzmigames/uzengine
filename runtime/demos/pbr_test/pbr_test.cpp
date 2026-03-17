@@ -196,10 +196,14 @@ void PBRTest::OnStart() {
         atmo.mieAbsorptionScale      = 1.0f;
         atmo.mieAnisotropy           = 0.8f;
         atmo.mieScaleHeightKm        = 1.2f;
-        // Sun illuminance for atmosphere scattering (decoupled from PBR lighting).
-        atmo.sunIlluminance          = {3.0f, 3.0f, 3.0f}; // Matches DirectionalLight intensity
-        // Suppress red/green to make blue more vivid after ACES tonemapping.
+        // Sun illuminance = DirectionalLight.Intensity * Color.
+        /// @source UE5 — SunIlluminance derived from DirectionalLight (10.0 * white)
+        atmo.sunIlluminance          = {10.0f, 10.0f, 10.0f};
         atmo.skyLuminanceFactor       = {1.0f, 1.0f, 1.0f};
+        /// @source UE5 SkyAtmosphereComponent.cpp:104 — GroundAlbedo = FColor(170,170,170)
+        atmo.groundAlbedo            = {0.667f, 0.667f, 0.667f};
+        /// @source UE5 SkyAtmosphereComponent.cpp:129 — HeightFogContribution = 1.0
+        atmo.heightFogContribution   = 1.0f;
     }
 
     // ── Sky light (UE5 Basic Scene EXACT values) ─────────────────────────
@@ -236,10 +240,11 @@ void PBRTest::OnStart() {
         fogComp.maxOpacity                        = 1.0f;       /// @source UE5 ExponentialHeightFogComponent.cpp:1253
         fogComp.startDistance                     = 0.f;        /// @source UE5 ExponentialHeightFogComponent.cpp:1254
         fogComp.fogCutoffDistance                 = 0.f;        /// @source UE5 ExponentialHeightFogComponent.cpp:1256
-        fogComp.color                             = {0.45f, 0.55f, 0.68f};  // Sky-tinted inscattering
-        fogComp.directionalInscatteringColor      = {0.25f, 0.25f, 0.125f}; /// @source UE5 ExponentialHeightFogComponent.cpp:1247
-        fogComp.directionalInscatteringExponent   = 4.0f;       /// @source UE5 ExponentialHeightFogComponent.cpp:1245
-        fogComp.directionalInscatteringStartDistance = 10000.f;  /// @source UE5 ExponentialHeightFogComponent.cpp:1246
+        /// @source UE5 ExponentialHeightFogComponent.cpp:64-103 — EXACT defaults
+        fogComp.color                             = {0.0f, 0.0f, 0.0f};    /// FogInscatteringLuminance = Black (0,0,0)
+        fogComp.directionalInscatteringColor      = {0.0f, 0.0f, 0.0f};    /// DirectionalInscatteringLuminance = Black (0,0,0)
+        fogComp.directionalInscatteringExponent   = 4.0f;       /// @source UE5 line 93
+        fogComp.directionalInscatteringStartDistance = 10000.f;  /// @source UE5 line 94
     }
 
     UZ_LOG(Demo, Info, "PBR Test started — {} cubes, 4 point lights + directional sun + sky",

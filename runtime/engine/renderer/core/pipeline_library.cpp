@@ -821,6 +821,63 @@ RHIPipelineHandle PipelineLibrary::GetTransmittanceLut() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Multi-Scattering LUT Compute Pipeline
+
+bool PipelineLibrary::EnsureMultiScatterLutShader() {
+    if (m_multiScatterLutCS.IsValid()) {
+        return true;
+    }
+
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::MultiScatterLutCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile MultiScatterLutCS");
+        return false;
+    }
+
+    RHIShaderDesc shaderDesc{};
+    shaderDesc.bytecode     = bytecode.data();
+    shaderDesc.bytecodeSize = bytecode.size();
+    shaderDesc.stage        = RHIShaderStage::Compute;
+    shaderDesc.entryPoint   = "main";
+    shaderDesc.debugName    = "multi_scatter_lut_cs";
+
+    m_multiScatterLutCS = m_device->CreateShader(shaderDesc);
+    if (!m_multiScatterLutCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create MultiScatterLutCS shader");
+        return false;
+    }
+    return true;
+}
+
+RHIPipelineHandle PipelineLibrary::GetMultiScatterLut() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetMultiScatterLut called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_multiScatterLut.IsValid()) {
+        return m_multiScatterLut;
+    }
+
+    if (!EnsureMultiScatterLutShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_multiScatterLutCS;
+    desc.debugName     = "MultiScatterLUT";
+
+    m_multiScatterLut = m_device->CreateComputePipeline(desc);
+    if (!m_multiScatterLut.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create MultiScatterLUT pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created MultiScatterLUT pipeline");
+    }
+
+    return m_multiScatterLut;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Sky Cubemap Capture Compute Pipeline
 // ─────────────────────────────────────────────────────────────────────────────
 

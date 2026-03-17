@@ -404,6 +404,14 @@ private:
     bool m_transmittanceLutDirty = true;         ///< True if LUT needs to be (re)computed.
     bool m_transmittanceLutFilled = false;       ///< True once the LUT has been computed at least once (state = SRV).
 
+    // ── Multi-Scattering LUT ──────────────────────────────────────────────
+
+    RHITextureHandle m_multiScatterLut;             ///< 32x32 R11G11B10F precomputed multi-scattering LUT.
+    uint32_t m_multiScatterLutSrv = UINT32_MAX;     ///< SRV index for sky shader sampling.
+    uint32_t m_multiScatterLutUav = UINT32_MAX;     ///< UAV index for compute write.
+    bool m_multiScatterLutDirty = true;             ///< True if multi-scatter LUT needs recompute.
+    bool m_multiScatterLutFilled = false;           ///< True once the LUT has been computed.
+
     // ── IBL (Image-Based Lighting from sky cubemap) ────────────────────
 
     std::unique_ptr<IBLBaker> m_iblBaker;            ///< GPU compute pipeline for IBL bake (irradiance + prefiltered).

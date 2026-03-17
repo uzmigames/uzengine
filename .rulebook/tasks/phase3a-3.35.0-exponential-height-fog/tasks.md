@@ -2,7 +2,7 @@
 
 - [ ] 1.1 Define FogParameters struct — density (0.02 default), falloff (0.5), height (0.0), startDistance (0.0), inscatteringColor (RGB), directionalInscatteringExponent (4.0), directionalInscatteringColor (RGB), maxOpacity (1.0).
 - [ ] 1.2 Add fog CB to root signature — single CBV slot with FogParameters, uploaded per-frame from SceneEnvironment gatherer.
-- [ ] 1.3 Implement exponential height fog formula in HLSL — `fogFactor = 1 - exp(-density * max(0, distance - startDistance))` with altitude falloff: `heightFactor = exp(-falloff * max(0, worldPos.y - fogHeight))`. Combined: `fog = fogFactor * heightFactor * maxOpacity`.
+- [x] 1.3 Implement exponential height fog formula in HLSL — UE5 CalculateLineIntegralShared with Taylor expansion fallback, 2-layer additive combination, start distance exclusion, cutoff distance. Second fog layer uses same line integral with separate density/falloff/height params.
 - [ ] 1.4 Implement directional inscattering — `dirFactor = pow(saturate(dot(viewDir, sunDir)), directionalInscatteringExponent)`. Blend inscatteringColor with directionalInscatteringColor by dirFactor.
 - [ ] 1.5 Integrate fog into deferred_lighting_ps.hlsl — after light accumulation, lerp final color toward fog color by fog factor. Preserve emissive (fog does not affect self-lit pixels).
 - [ ] 1.6 Add FogComponent to render world — collects fog parameters from scene, packs into CB.
