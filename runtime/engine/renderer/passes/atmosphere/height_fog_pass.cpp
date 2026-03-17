@@ -16,6 +16,8 @@
 #include "log.h"
 #include "profiler.h"
 
+UZ_DECLARE_LOG_CATEGORY(Renderer);
+
 namespace uz {
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -76,6 +78,20 @@ void AddHeightFogPass(rg::RgBuilder& builder, const HeightFogPassDesc& desc)
             sc.right  = static_cast<int32_t>(desc.viewportWidth);
             sc.bottom = static_cast<int32_t>(desc.viewportHeight);
             cmd->SetScissor(sc);
+
+            // First-frame diagnostic logging
+            static bool loggedOnce = false;
+            if (!loggedOnce) {
+                UZ_LOG(Renderer, Info,
+                       "HeightFogPass: first execution — viewport={}x{}, bindless={}, depthSRV={}",
+                       desc.viewportWidth, desc.viewportHeight, desc.bindless,
+                       desc.depthSrvIndex);
+                if (desc.bindless && desc.depthSrvIndex == UINT32_MAX) {
+                    UZ_LOG(Renderer, Error,
+                           "HeightFogPass: depthSrvIndex is UINT32_MAX in bindless mode");
+                }
+                loggedOnce = true;
+            }
 
             // ── Fullscreen triangle ──────────────────────────────────────
             cmd->Draw(3);

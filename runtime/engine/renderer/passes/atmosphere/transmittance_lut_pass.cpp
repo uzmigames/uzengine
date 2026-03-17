@@ -16,6 +16,8 @@
 #include "log.h"
 #include "profiler.h"
 
+UZ_DECLARE_LOG_CATEGORY(Renderer);
+
 namespace uz {
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -52,6 +54,23 @@ void AddTransmittanceLutPass(rg::RgBuilder& builder, const TransmittanceLutPassD
 
             // ── Bind output UAV at root param 4 (u0 descriptor table) ─
             cmd->SetDescriptorTable(4, desc.lutUavIndex);
+
+            // First-frame diagnostic logging
+            static bool loggedOnce = false;
+            if (!loggedOnce) {
+                const uint32_t groupsX = kLutWidth / kLutThreadGroupSize;
+                const uint32_t groupsY = kLutHeight / kLutThreadGroupSize;
+                UZ_LOG(Renderer, Info,
+                       "TransmittanceLutPass: first execution — "
+                       "dispatch=({}, {}, 1), UAV={}, LUT size={}x{}",
+                       groupsX, groupsY, desc.lutUavIndex,
+                       kLutWidth, kLutHeight);
+                if (desc.lutUavIndex == UINT32_MAX) {
+                    UZ_LOG(Renderer, Error,
+                           "TransmittanceLutPass: lutUavIndex is UINT32_MAX — UAV not allocated");
+                }
+                loggedOnce = true;
+            }
 
             // ── Dispatch: 256/8=32 groups X, 64/8=8 groups Y ──────────
             cmd->Dispatch(kLutWidth / kLutThreadGroupSize,

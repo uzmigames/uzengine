@@ -24,6 +24,8 @@
 #include "log.h"
 #include "profiler.h"
 
+UZ_DECLARE_LOG_CATEGORY(Renderer);
+
 namespace uz {
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -141,6 +143,34 @@ void AddLightingPass(rg::RgBuilder& builder, const LightingPassDesc& desc)
             sc.right  = static_cast<int32_t>(desc.viewportWidth);
             sc.bottom = static_cast<int32_t>(desc.viewportHeight);
             cmd->SetScissor(sc);
+
+            // First-frame diagnostic logging and SRV validation
+            static bool loggedOnce = false;
+            if (!loggedOnce) {
+                UZ_LOG(Renderer, Info,
+                       "LightingPass: first execution — viewport={}x{}, bindless={}, "
+                       "albedoSRV={}, normalSRV={}, depthSRV={}, positionSRV={}",
+                       desc.viewportWidth, desc.viewportHeight, desc.bindless,
+                       desc.albedoSrvIndex, desc.normalSrvIndex,
+                       desc.depthSrvIndex, desc.positionSrvIndex);
+
+                // Validate SRV indices in bindless mode
+                if (desc.bindless) {
+                    if (desc.albedoSrvIndex == UINT32_MAX)
+                        UZ_LOG(Renderer, Error, "LightingPass: albedoSrvIndex is UINT32_MAX");
+                    if (desc.normalSrvIndex == UINT32_MAX)
+                        UZ_LOG(Renderer, Error, "LightingPass: normalSrvIndex is UINT32_MAX");
+                    if (desc.depthSrvIndex == UINT32_MAX)
+                        UZ_LOG(Renderer, Error, "LightingPass: depthSrvIndex is UINT32_MAX");
+                    if (desc.positionSrvIndex == UINT32_MAX)
+                        UZ_LOG(Renderer, Error, "LightingPass: positionSrvIndex is UINT32_MAX");
+                }
+
+                if (desc.viewportWidth == 0.0f || desc.viewportHeight == 0.0f) {
+                    UZ_LOG(Renderer, Warning, "LightingPass: zero-size viewport");
+                }
+                loggedOnce = true;
+            }
 
             // ── Fullscreen triangle — 3 vertices from SV_VertexID ────────
             cmd->Draw(3);

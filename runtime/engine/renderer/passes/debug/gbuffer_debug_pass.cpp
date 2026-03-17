@@ -17,6 +17,8 @@
 #include "log.h"
 #include "profiler.h"
 
+UZ_DECLARE_LOG_CATEGORY(Renderer);
+
 namespace uz {
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -106,7 +108,29 @@ void AddGBufferDebugPass(rg::RgBuilder& builder, const GBufferDebugPassDesc& des
 
             cmd->EndRenderPass();
 
-            // No per-frame log — use GPU profiler for pass timing.
+            // First-frame diagnostic logging
+            static bool loggedOnce = false;
+            if (!loggedOnce) {
+                UZ_LOG(Renderer, Info,
+                       "GBufferDebugPass: first execution — mode={}, viewport={}x{}, bindless={}, "
+                       "albedoSRV={}, normalSRV={}, depthSRV={}, velocitySRV={}",
+                       static_cast<uint32_t>(desc.mode),
+                       desc.viewportWidth, desc.viewportHeight, desc.bindless,
+                       desc.albedoSrvIndex, desc.normalSrvIndex,
+                       desc.depthSrvIndex, desc.velocitySrvIndex);
+
+                if (desc.bindless) {
+                    if (desc.albedoSrvIndex == UINT32_MAX)
+                        UZ_LOG(Renderer, Error, "GBufferDebugPass: albedoSrvIndex is UINT32_MAX");
+                    if (desc.normalSrvIndex == UINT32_MAX)
+                        UZ_LOG(Renderer, Error, "GBufferDebugPass: normalSrvIndex is UINT32_MAX");
+                    if (desc.depthSrvIndex == UINT32_MAX)
+                        UZ_LOG(Renderer, Error, "GBufferDebugPass: depthSrvIndex is UINT32_MAX");
+                    if (desc.velocitySrvIndex == UINT32_MAX)
+                        UZ_LOG(Renderer, Error, "GBufferDebugPass: velocitySrvIndex is UINT32_MAX");
+                }
+                loggedOnce = true;
+            }
         });
     });
 }

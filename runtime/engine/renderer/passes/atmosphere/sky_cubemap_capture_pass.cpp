@@ -16,6 +16,8 @@
 #include "log.h"
 #include "profiler.h"
 
+UZ_DECLARE_LOG_CATEGORY(Renderer);
+
 namespace uz {
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -51,6 +53,22 @@ void AddSkyCubemapCapturePass(rg::RgBuilder& builder, const SkyCubemapCapturePas
 
             // ── Bind output UAV at root param 4 (u0 descriptor table) ──
             cmd->SetDescriptorTable(4, desc.cubemapUavIndex);
+
+            // First-frame diagnostic logging
+            static bool loggedOnce = false;
+            if (!loggedOnce) {
+                const uint32_t groupsXY = kCubeFaceSize / kCubeThreadGroupSize;
+                UZ_LOG(Renderer, Info,
+                       "SkyCubemapCapturePass: first execution — "
+                       "dispatch=({}, {}, {}), UAV={}, faceSize={}",
+                       groupsXY, groupsXY, kCubeFaceCount,
+                       desc.cubemapUavIndex, kCubeFaceSize);
+                if (desc.cubemapUavIndex == UINT32_MAX) {
+                    UZ_LOG(Renderer, Error,
+                           "SkyCubemapCapturePass: cubemapUavIndex is UINT32_MAX — UAV not allocated");
+                }
+                loggedOnce = true;
+            }
 
             // ── Dispatch: 64/8=8 groups X, 64/8=8 groups Y, 6 faces Z ──
             cmd->Dispatch(kCubeFaceSize / kCubeThreadGroupSize,

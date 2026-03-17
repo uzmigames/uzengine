@@ -222,6 +222,8 @@ bool BloomPass::EnsureThresholdPipeline() {
         return false;
     }
 
+    UZ_LOG(Renderer, Info, "BloomPass: threshold shader bytecode size = {} bytes", bytecode.size());
+
     RHIShaderDesc shaderDesc{};
     shaderDesc.bytecode     = bytecode.data();
     shaderDesc.bytecodeSize = bytecode.size();
@@ -245,7 +247,8 @@ bool BloomPass::EnsureThresholdPipeline() {
         return false;
     }
 
-    UZ_LOG(Renderer, Info, "BloomPass: created threshold pipeline");
+    UZ_LOG(Renderer, Info, "BloomPass: created threshold pipeline (shader={}, pipeline={})",
+           m_thresholdCS.index, m_thresholdPipeline.index);
     return true;
 }
 
@@ -257,6 +260,8 @@ bool BloomPass::EnsureDownsamplePipeline() {
         UZ_LOG(Renderer, Error, "BloomPass: failed to compile bloom_downsample_cs.hlsl");
         return false;
     }
+
+    UZ_LOG(Renderer, Info, "BloomPass: downsample shader bytecode size = {} bytes", bytecode.size());
 
     RHIShaderDesc shaderDesc{};
     shaderDesc.bytecode     = bytecode.data();
@@ -281,7 +286,8 @@ bool BloomPass::EnsureDownsamplePipeline() {
         return false;
     }
 
-    UZ_LOG(Renderer, Info, "BloomPass: created downsample pipeline");
+    UZ_LOG(Renderer, Info, "BloomPass: created downsample pipeline (shader={}, pipeline={})",
+           m_downsampleCS.index, m_downsamplePipeline.index);
     return true;
 }
 
@@ -293,6 +299,8 @@ bool BloomPass::EnsureUpsamplePipeline() {
         UZ_LOG(Renderer, Error, "BloomPass: failed to compile bloom_upsample_cs.hlsl");
         return false;
     }
+
+    UZ_LOG(Renderer, Info, "BloomPass: upsample shader bytecode size = {} bytes", bytecode.size());
 
     RHIShaderDesc shaderDesc{};
     shaderDesc.bytecode     = bytecode.data();
@@ -317,7 +325,8 @@ bool BloomPass::EnsureUpsamplePipeline() {
         return false;
     }
 
-    UZ_LOG(Renderer, Info, "BloomPass: created upsample pipeline");
+    UZ_LOG(Renderer, Info, "BloomPass: created upsample pipeline (shader={}, pipeline={})",
+           m_upsampleCS.index, m_upsamplePipeline.index);
     return true;
 }
 
@@ -332,12 +341,27 @@ void BloomPass::Execute(IRHICommandList* cmdList,
 {
     UZ_PROFILE_SCOPE("BloomPass::Execute");
 
+    if (!cmdList) {
+        UZ_LOG(Renderer, Error, "BloomPass::Execute: null command list");
+        return;
+    }
+
     if (!m_initialized) {
         UZ_LOG(Renderer, Error, "BloomPass::Execute called before Init()");
         return;
     }
 
     if (!settings.enabled) {
+        return;
+    }
+
+    if (hdrSrvIndex == UINT32_MAX) {
+        UZ_LOG(Renderer, Error, "BloomPass::Execute: hdrSrvIndex is UINT32_MAX — HDR SRV not allocated");
+        return;
+    }
+
+    if (width == 0 || height == 0) {
+        UZ_LOG(Renderer, Error, "BloomPass::Execute: zero-size viewport ({}x{}) — aborting", width, height);
         return;
     }
 
@@ -350,6 +374,26 @@ void BloomPass::Execute(IRHICommandList* cmdList,
     if (!EnsureThresholdPipeline() || !EnsureDownsamplePipeline() || !EnsureUpsamplePipeline()) {
         UZ_LOG(Renderer, Error, "BloomPass: pipeline compilation failed, skipping bloom");
         return;
+    }
+
+    // First-frame diagnostic dump
+    static bool loggedFirstFrame = false;
+    if (!loggedFirstFrame) {
+        UZ_LOG(Renderer, Info,
+               "BloomPass: first execution — {}x{}, hdrSRV={}, exposure={:.4f}, "
+               "threshold={:.3f}, radius={:.3f}, mip0={}x{} (SRV={}, UAV={}), "
+               "thresholdPipeline={}, downsamplePipeline={}, upsamplePipeline={}",
+               width, height, hdrSrvIndex, exposure,
+               settings.threshold, settings.radius,
+               m_mipWidths[0], m_mipHeights[0], m_mipSrvIndices[0], m_mipUavIndices[0],
+               m_thresholdPipeline.index, m_downsamplePipeline.index,
+               m_upsamplePipeline.index);
+        for (uint32_t i = 0; i < kMipCount; ++i) {
+            UZ_LOG(Renderer, Info,
+                   "BloomPass:   mip[{}] = {}x{}, SRV={}, UAV={}",
+                   i, m_mipWidths[i], m_mipHeights[i], m_mipSrvIndices[i], m_mipUavIndices[i]);
+        }
+        loggedFirstFrame = true;
     }
 
     // ── Step 1: Threshold — HDR (full-res) → Mip[0] (half-res) ─────────
@@ -373,6 +417,12 @@ void BloomPass::Execute(IRHICommandList* cmdList,
         rc.inputHeight    = height;
         rc.bloomThreshold = settings.threshold;
         rc.exposure       = exposure;
+
+        UZ_LOG(Renderer, Debug,
+               "BloomPass: threshold constants — hdrSRV={}, outputUAV={}, size={}x{}, "
+               "threshold={:.3f}, exposure={:.4f}",
+               rc.hdrSrvIndex, rc.outputUavIndex, rc.inputWidth, rc.inputHeight,
+               rc.bloomThreshold, rc.exposure);
 
         cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 8);
 

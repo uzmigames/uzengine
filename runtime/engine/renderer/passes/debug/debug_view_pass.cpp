@@ -14,6 +14,8 @@
 #include "log.h"
 #include "profiler.h"
 
+UZ_DECLARE_LOG_CATEGORY(Renderer);
+
 namespace uz {
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -90,6 +92,30 @@ void AddDebugViewPass(rg::RgBuilder& builder, const DebugViewPassDesc& desc)
             sc.right  = static_cast<int32_t>(desc.viewportWidth);
             sc.bottom = static_cast<int32_t>(desc.viewportHeight);
             cmd->SetScissor(sc);
+
+            // First-frame diagnostic logging
+            static bool loggedOnce = false;
+            if (!loggedOnce) {
+                UZ_LOG(Renderer, Info,
+                       "DebugViewPass: first execution — mode={}, viewport={}x{}, bindless={}, "
+                       "albedoSRV={}, normalSRV={}, depthSRV={}, positionSRV={}",
+                       static_cast<uint32_t>(desc.mode),
+                       desc.viewportWidth, desc.viewportHeight, desc.bindless,
+                       desc.albedoSrvIndex, desc.normalSrvIndex,
+                       desc.depthSrvIndex, desc.positionSrvIndex);
+
+                if (desc.bindless) {
+                    if (desc.albedoSrvIndex == UINT32_MAX)
+                        UZ_LOG(Renderer, Error, "DebugViewPass: albedoSrvIndex is UINT32_MAX");
+                    if (desc.normalSrvIndex == UINT32_MAX)
+                        UZ_LOG(Renderer, Error, "DebugViewPass: normalSrvIndex is UINT32_MAX");
+                    if (desc.depthSrvIndex == UINT32_MAX)
+                        UZ_LOG(Renderer, Error, "DebugViewPass: depthSrvIndex is UINT32_MAX");
+                    if (desc.positionSrvIndex == UINT32_MAX)
+                        UZ_LOG(Renderer, Error, "DebugViewPass: positionSrvIndex is UINT32_MAX");
+                }
+                loggedOnce = true;
+            }
 
             // ── Fullscreen triangle — 3 vertices from SV_VertexID ────────
             cmd->Draw(3);

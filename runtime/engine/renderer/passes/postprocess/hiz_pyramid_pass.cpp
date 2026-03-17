@@ -17,6 +17,8 @@
 #include "log.h"
 #include "profiler.h"
 
+UZ_DECLARE_LOG_CATEGORY(Renderer);
+
 namespace uz {
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -122,14 +124,22 @@ void AddHiZPyramidPass(rg::RgBuilder& builder, const HiZPyramidPassDesc& desc)
                 inputHeight   = level.height;
             }
 
-            // Log mip chain once for diagnostics.
+            // Log mip chain once for diagnostics (enhanced with per-mip SRV/UAV).
             static bool loggedOnce = false;
             if (!loggedOnce) {
                 UZ_LOG(Renderer, Info,
-                       "HiZPyramid: {} mip levels generated ({}x{} -> {}x{})",
+                       "HiZPyramid: first execution — {} mip levels, source={}x{} (SRV={}), "
+                       "bindless={}, final mip={}x{}",
                        desc.mipCount, desc.sourceWidth, desc.sourceHeight,
+                       desc.depthSourceSrvIndex, desc.bindless,
                        desc.mipLevels[desc.mipCount - 1].width,
                        desc.mipLevels[desc.mipCount - 1].height);
+                for (uint32_t m = 0; m < desc.mipCount; ++m) {
+                    UZ_LOG(Renderer, Info,
+                           "HiZPyramid:   mip[{}] = {}x{}, SRV={}, UAV={}",
+                           m, desc.mipLevels[m].width, desc.mipLevels[m].height,
+                           desc.mipLevels[m].srvIndex, desc.mipLevels[m].uavIndex);
+                }
                 loggedOnce = true;
             }
         });

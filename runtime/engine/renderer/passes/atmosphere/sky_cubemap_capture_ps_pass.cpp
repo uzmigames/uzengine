@@ -17,6 +17,8 @@
 #include "log.h"
 #include "profiler.h"
 
+UZ_DECLARE_LOG_CATEGORY(Renderer);
+
 namespace uz {
 
 // ---------------------------------------------------------------------------
@@ -67,6 +69,17 @@ void AddSkyCubemapCapturePSPass(rg::RgBuilder& builder, const SkyCubemapCaptureP
 
             // Mutable copy of root constants — cubeFaceIndex updated per face
             SkyCubemapCapturePSRootConstants rc = desc.rootConstants;
+
+            // First-frame diagnostic logging
+            static bool loggedOnce = false;
+            if (!loggedOnce) {
+                UZ_LOG(Renderer, Info,
+                       "SkyCubemapCapturePSPass: first execution — "
+                       "{} faces, faceSize={}, transmittanceLUT valid={}",
+                       kCubeFaceCount, kCubeFaceSize,
+                       desc.transmittanceLutTex.IsValid());
+                loggedOnce = true;
+            }
 
             // Render each face as a separate render pass targeting one array slice
             for (uint32_t face = 0; face < kCubeFaceCount; ++face) {

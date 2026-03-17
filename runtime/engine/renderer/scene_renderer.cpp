@@ -278,10 +278,12 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     }
 
     // ── Bloom ────────────────────────────────────────────────────────
+    UZ_LOG(Renderer, Info, "SceneRenderer: initializing BloomPass...");
     m_bloomPass = std::make_unique<BloomPass>();
     if (!m_bloomPass->Init(device, m_shaderMgr.get(), width, height)) {
         UZ_LOG(Renderer, Warning, "SceneRenderer: bloom init failed (bloom disabled)");
     }
+    UZ_LOG(Renderer, Info, "SceneRenderer: BloomPass initialized");
 
     // ── Sky cubemap (64x64x6 RGBA16F) for IBL capture ──────────────────
     {
@@ -1282,14 +1284,34 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
                     float invTanHalfFov = 1.0f / std::tan(cam.GetFovY() * 0.5f);
                     float aspectRatio = static_cast<float>(m_width) / static_cast<float>(m_height);
 
-                    m_gtaoPass->Execute(cmd, m_cbRing.get(),
-                                        m_gbuffer.depthSRV, m_gbuffer.normalSRV,
-                                        m_gbuffer.depth, m_gbuffer.normal,
-                                        viewMatrixData,
-                                        invTanHalfFov, aspectRatio,
-                                        perFrame.nearPlane, perFrame.farPlane,
-                                        m_width, m_height,
-                                        frameIndex);
+                    // Log input SRV indices being passed to GTAO on first frame
+                    static bool loggedGtaoInputs = false;
+                    if (!loggedGtaoInputs) {
+                        UZ_LOG(Renderer, Info,
+                               "SceneRenderer: GTAO inputs — depthSRV={}, normalSRV={}, "
+                               "depthHandle={}, normalHandle={}, size={}x{}, frame={}",
+                               m_gbuffer.depthSRV, m_gbuffer.normalSRV,
+                               m_gbuffer.depth.IsValid(), m_gbuffer.normal.IsValid(),
+                               m_width, m_height, frameIndex);
+                        loggedGtaoInputs = true;
+                    }
+
+                    const uint32_t gtaoResult = m_gtaoPass->Execute(
+                        cmd, m_cbRing.get(),
+                        m_gbuffer.depthSRV, m_gbuffer.normalSRV,
+                        m_gbuffer.depth, m_gbuffer.normal,
+                        viewMatrixData,
+                        invTanHalfFov, aspectRatio,
+                        perFrame.nearPlane, perFrame.farPlane,
+                        m_width, m_height,
+                        frameIndex);
+
+                    if (gtaoResult == UINT32_MAX) {
+                        UZ_LOG(Renderer, Warning,
+                               "SceneRenderer: GTAO Execute() returned UINT32_MAX — "
+                               "AO will not be applied this frame (depthSRV={}, normalSRV={})",
+                               m_gbuffer.depthSRV, m_gbuffer.normalSRV);
+                    }
                 });
             });
         }

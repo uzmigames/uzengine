@@ -20,6 +20,8 @@
 
 #include <cstring>
 
+UZ_DECLARE_LOG_CATEGORY(Renderer);
+
 namespace uz {
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -285,11 +287,25 @@ void AddShadowPass(rg::RgBuilder& builder, const ShadowPassDesc& desc)
                 cmd->EndRenderPass();
             }
 
-            // DEBUG: log shadow draw calls once
+            // First-frame diagnostic logging
             static bool loggedShadowDraws = false;
             if (!loggedShadowDraws) {
-                UZ_LOG(Renderer, Info, "ShadowPass: {} cascades, {} total draw calls, {} commands in drawList",
-                       desc.cascadeCount, totalDrawCalls, commands.size());
+                UZ_LOG(Renderer, Info,
+                       "ShadowPass: first execution — {} cascades, {} total draw calls, "
+                       "{} commands in drawList, atlasResolution={}, cacheMode={}, "
+                       "instanced={}, bindless={}",
+                       desc.cascadeCount, totalDrawCalls, commands.size(),
+                       desc.atlasResolution,
+                       static_cast<uint32_t>(desc.cacheMode),
+                       desc.instanced, desc.bindless);
+                // Log cascade tile offsets
+                for (uint32_t c = 0; c < desc.cascadeCount; ++c) {
+                    uint32_t tileX = 0, tileY = 0;
+                    GetCascadeTileOffset(c, desc.cascadeCount, desc.atlasResolution, tileX, tileY);
+                    UZ_LOG(Renderer, Info,
+                           "ShadowPass:   cascade[{}] tile offset=({}, {}), resolution={}",
+                           c, tileX, tileY, desc.atlasResolution);
+                }
                 loggedShadowDraws = true;
             }
         });

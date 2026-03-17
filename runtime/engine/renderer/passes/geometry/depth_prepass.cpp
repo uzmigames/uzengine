@@ -23,6 +23,8 @@
 
 #include <cstring>
 
+UZ_DECLARE_LOG_CATEGORY(Renderer);
+
 namespace uz {
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -183,7 +185,16 @@ void AddDepthPrepass(rg::RgBuilder& builder, const DepthPrepassDesc& desc)
             // Log draw count once for diagnostics.
             static bool loggedOnce = false;
             if (!loggedOnce) {
-                UZ_LOG(Renderer, Info, "DepthPrepass: {} draw calls", drawCallCount);
+                UZ_LOG(Renderer, Info,
+                       "DepthPrepass: first execution — {} draw calls, viewport={}x{}, "
+                       "instanced={}, bindless={}, meshCount={}",
+                       drawCallCount, desc.viewportWidth, desc.viewportHeight,
+                       useInstanced, desc.bindless, desc.meshCount);
+                if (drawCallCount == 0) {
+                    UZ_LOG(Renderer, Warning,
+                           "DepthPrepass: zero draw calls on first frame — "
+                           "drawList has {} commands", desc.drawList->GetCommands().size());
+                }
                 loggedOnce = true;
             }
         });

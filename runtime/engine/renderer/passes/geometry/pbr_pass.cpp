@@ -22,6 +22,8 @@
 
 #include <cstring>
 
+UZ_DECLARE_LOG_CATEGORY(Renderer);
+
 namespace uz {
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -174,7 +176,21 @@ void AddPBRPass(rg::RgBuilder& builder, const PBRPassDesc& desc)
 
             cmd->EndRenderPass();
 
-            // Draw call count available via stat counters — no per-frame log.
+            // First-frame diagnostic logging
+            static bool loggedOnce = false;
+            if (!loggedOnce) {
+                UZ_LOG(Renderer, Info,
+                       "PBRPass: first execution — {} draw calls, viewport={}x{}, "
+                       "bindless={}, meshCount={}",
+                       drawCallCount, desc.viewportWidth, desc.viewportHeight,
+                       desc.bindless, desc.meshCount);
+                if (drawCallCount == 0) {
+                    UZ_LOG(Renderer, Warning,
+                           "PBRPass: zero draw calls on first frame — "
+                           "drawList has {} commands", desc.drawList->GetCommands().size());
+                }
+                loggedOnce = true;
+            }
         });
     });
 }

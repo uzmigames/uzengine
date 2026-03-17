@@ -23,6 +23,8 @@
 
 #include <cstring>
 
+UZ_DECLARE_LOG_CATEGORY(Renderer);
+
 namespace uz {
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -255,6 +257,23 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
             }
 
             cmd->EndRenderPass();
+
+            // First-frame diagnostic logging
+            static bool loggedOnce = false;
+            if (!loggedOnce) {
+                UZ_LOG(Renderer, Info,
+                       "GBufferPass: first execution — {} draw calls, viewport={}x{}, "
+                       "instanced={}, bindless={}, meshCount={}",
+                       drawCallCount, desc.viewportWidth, desc.viewportHeight,
+                       useInstanced, desc.bindless, desc.meshCount);
+                if (drawCallCount == 0) {
+                    UZ_LOG(Renderer, Warning,
+                           "GBufferPass: zero draw calls on first frame — "
+                           "drawList has {} commands, meshCount={}",
+                           desc.drawList->GetCommands().size(), desc.meshCount);
+                }
+                loggedOnce = true;
+            }
         });
     });
 }

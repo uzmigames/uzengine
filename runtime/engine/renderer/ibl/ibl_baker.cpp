@@ -145,6 +145,8 @@ bool IBLBaker::EnsureBRDFLutPipeline() {
         return false;
     }
 
+    UZ_LOG(Renderer, Info, "IBLBaker: BRDF LUT shader bytecode size = {} bytes", bytecode.size());
+
     RHIShaderDesc shaderDesc;
     shaderDesc.bytecode = bytecode.data();
     shaderDesc.bytecodeSize = bytecode.size();
@@ -168,6 +170,8 @@ bool IBLBaker::EnsureBRDFLutPipeline() {
         return false;
     }
 
+    UZ_LOG(Renderer, Info, "IBLBaker: BRDF LUT pipeline created (shader={}, pipeline={})",
+           m_brdfLutCS.index, m_brdfLutPipeline.index);
     return true;
 }
 
@@ -181,6 +185,8 @@ bool IBLBaker::EnsureIrradiancePipeline() {
         UZ_LOG(Renderer, Error, "IBLBaker: failed to compile irradiance_cs.hlsl");
         return false;
     }
+
+    UZ_LOG(Renderer, Info, "IBLBaker: irradiance shader bytecode size = {} bytes", bytecode.size());
 
     RHIShaderDesc shaderDesc;
     shaderDesc.bytecode = bytecode.data();
@@ -205,6 +211,8 @@ bool IBLBaker::EnsureIrradiancePipeline() {
         return false;
     }
 
+    UZ_LOG(Renderer, Info, "IBLBaker: irradiance pipeline created (shader={}, pipeline={})",
+           m_irradianceCS.index, m_irradiancePipeline.index);
     return true;
 }
 
@@ -218,6 +226,8 @@ bool IBLBaker::EnsurePrefilterPipeline() {
         UZ_LOG(Renderer, Error, "IBLBaker: failed to compile prefilter_cs.hlsl");
         return false;
     }
+
+    UZ_LOG(Renderer, Info, "IBLBaker: prefilter shader bytecode size = {} bytes", bytecode.size());
 
     RHIShaderDesc shaderDesc;
     shaderDesc.bytecode = bytecode.data();
@@ -242,6 +252,8 @@ bool IBLBaker::EnsurePrefilterPipeline() {
         return false;
     }
 
+    UZ_LOG(Renderer, Info, "IBLBaker: prefilter pipeline created (shader={}, pipeline={})",
+           m_prefilterCS.index, m_prefilterPipeline.index);
     return true;
 }
 
@@ -310,6 +322,16 @@ uint32_t IBLBaker::BakeBRDFLut() {
         return UINT32_MAX;
     }
     cmdList->SetDescriptorTable(4, uavIndex);
+
+    // First-frame diagnostic dump
+    static bool loggedBrdfDispatch = false;
+    if (!loggedBrdfDispatch) {
+        const uint32_t groupsXY = kBRDFLutSize / kThreadGroupSize;
+        UZ_LOG(Renderer, Info,
+               "IBLBaker: BRDF LUT dispatch — groups=({}, {}, 1), UAV={}, size={}x{}",
+               groupsXY, groupsXY, uavIndex, kBRDFLutSize, kBRDFLutSize);
+        loggedBrdfDispatch = true;
+    }
 
     // Dispatch: (512/8, 512/8, 1) = (64, 64, 1)
     cmdList->Dispatch(kBRDFLutSize / kThreadGroupSize,
@@ -460,6 +482,18 @@ IBLBaker::BakeResult IBLBaker::BakeEnvironment(uint32_t envCubemapSrvIndex, RHIT
     uint32_t irradUavIndex = m_device->GetTextureUAVIndex(irradianceTex);
     cmdList->SetDescriptorTable(4, irradUavIndex);
 
+    // First-frame irradiance dispatch logging
+    static bool loggedIrradDispatch = false;
+    if (!loggedIrradDispatch) {
+        const uint32_t irradGroupsXY = kIrradianceSize / kThreadGroupSize;
+        UZ_LOG(Renderer, Info,
+               "IBLBaker: irradiance dispatch — groups=({}, {}, 6), envCubemapSRV={}, "
+               "irradianceUAV={}, faceSize={}",
+               irradGroupsXY, irradGroupsXY, envCubemapSrvIndex,
+               irradUavIndex, kIrradianceSize);
+        loggedIrradDispatch = true;
+    }
+
     // Dispatch (32/8, 32/8, 6) = (4, 4, 6) — one thread group per 8x8 tile per face
     cmdList->Dispatch(kIrradianceSize / kThreadGroupSize,
                       kIrradianceSize / kThreadGroupSize, 6);
@@ -501,6 +535,20 @@ IBLBaker::BakeResult IBLBaker::BakeEnvironment(uint32_t envCubemapSrvIndex, RHIT
 
         // Dispatch per-mip texture
         const uint32_t groupsXY = (mipSize + kThreadGroupSize - 1) / kThreadGroupSize;
+
+        // Log each prefilter mip dispatch on first bake
+        static bool loggedPrefilterMips = false;
+        if (!loggedPrefilterMips || mip == kPrefilteredMipLevels - 1) {
+            UZ_LOG(Renderer, Info,
+                   "IBLBaker: prefilter mip {} dispatch — size={}, roughness={:.4f}, "
+                   "groups=({}, {}, 6), envSRV={}, UAV={}",
+                   mip, mipSize, mipRoughness, groupsXY, groupsXY,
+                   envCubemapSrvIndex, mipUavIndex);
+            if (mip == kPrefilteredMipLevels - 1) {
+                loggedPrefilterMips = true;
+            }
+        }
+
         cmdList->Dispatch(groupsXY, groupsXY, 6);
 
         // Barrier: per-mip texture UAV -> CopySrc

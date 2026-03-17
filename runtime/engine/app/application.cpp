@@ -245,6 +245,10 @@ int Application::Run(int argc, char** argv) {
         }
 
         // ── Request screenshot BEFORE RenderFrame so it captures THIS frame ──
+        if (m_frameIndex <= 5) {
+            UZ_LOG(App, Trace, "Frame {}: screenshotPending={}, screenshotFrame={}, path='{}'",
+                   m_frameIndex, m_screenshotPending, m_config.screenshotFrame, m_config.screenshotPath);
+        }
         if (m_screenshotPending && m_frameIndex >= m_config.screenshotFrame) {
             if (m_screenshotBase64) {
                 m_renderer->RequestScreenshotBase64();

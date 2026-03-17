@@ -230,6 +230,8 @@ bool AutoExposure::EnsureHistogramPipeline() {
         return false;
     }
 
+    UZ_LOG(Renderer, Info, "AutoExposure: histogram shader bytecode size = {} bytes", bytecode.size());
+
     RHIShaderDesc shaderDesc{};
     shaderDesc.bytecode     = bytecode.data();
     shaderDesc.bytecodeSize = bytecode.size();
@@ -253,7 +255,8 @@ bool AutoExposure::EnsureHistogramPipeline() {
         return false;
     }
 
-    UZ_LOG(Renderer, Info, "AutoExposure: created histogram pipeline");
+    UZ_LOG(Renderer, Info, "AutoExposure: created histogram pipeline (shader={}, pipeline={})",
+           m_histogramCS.index, m_histogramPipeline.index);
     return true;
 }
 
@@ -267,6 +270,8 @@ bool AutoExposure::EnsureAveragePipeline() {
         UZ_LOG(Renderer, Error, "AutoExposure: failed to compile exposure_average_cs.hlsl");
         return false;
     }
+
+    UZ_LOG(Renderer, Info, "AutoExposure: average shader bytecode size = {} bytes", bytecode.size());
 
     RHIShaderDesc shaderDesc{};
     shaderDesc.bytecode     = bytecode.data();
@@ -291,7 +296,8 @@ bool AutoExposure::EnsureAveragePipeline() {
         return false;
     }
 
-    UZ_LOG(Renderer, Info, "AutoExposure: created average pipeline");
+    UZ_LOG(Renderer, Info, "AutoExposure: created average pipeline (shader={}, pipeline={})",
+           m_averageCS.index, m_averagePipeline.index);
     return true;
 }
 
@@ -304,9 +310,24 @@ float AutoExposure::Execute(IRHICommandList* cmdList, uint32_t hdrSrvIndex,
 {
     UZ_PROFILE_SCOPE("AutoExposure::Execute");
 
+    if (!cmdList) {
+        UZ_LOG(Renderer, Error, "AutoExposure::Execute: null command list");
+        return 1.0f;
+    }
+
     if (!m_initialized) {
         UZ_LOG(Renderer, Error, "AutoExposure::Execute called before Init()");
         return 1.0f;
+    }
+
+    if (hdrSrvIndex == UINT32_MAX) {
+        UZ_LOG(Renderer, Error, "AutoExposure::Execute: hdrSrvIndex is UINT32_MAX — HDR SRV not allocated");
+        return m_lastExposure;
+    }
+
+    if (width == 0 || height == 0) {
+        UZ_LOG(Renderer, Error, "AutoExposure::Execute: zero-size viewport ({}x{}) — aborting", width, height);
+        return m_lastExposure;
     }
 
     // ── Bypass paths (no GPU work) ──────────────────────────────────────
@@ -363,6 +384,16 @@ float AutoExposure::Execute(IRHICommandList* cmdList, uint32_t hdrSrvIndex,
         rc.screenHeight = height;
         rc.hdrSrvIndex  = hdrSrvIndex;
 
+        // Dump histogram root constants on first frame
+        static bool loggedHistogramConstants = false;
+        if (!loggedHistogramConstants) {
+            UZ_LOG(Renderer, Info,
+                   "AutoExposure: histogram root constants (first frame) — "
+                   "histLogMin={:.2f}, histLogMax={:.2f}, size={}x{}, hdrSRV={}",
+                   rc.histLogMin, rc.histLogMax, rc.screenWidth, rc.screenHeight, rc.hdrSrvIndex);
+            loggedHistogramConstants = true;
+        }
+
         cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 5);
 
         // Bind histogram UAV at root param 4 (u0 descriptor table)
@@ -371,6 +402,11 @@ float AutoExposure::Execute(IRHICommandList* cmdList, uint32_t hdrSrvIndex,
         // Dispatch: ceil(width/16) x ceil(height/16) x 1
         const uint32_t groupsX = (width  + kHistGroupSize - 1) / kHistGroupSize;
         const uint32_t groupsY = (height + kHistGroupSize - 1) / kHistGroupSize;
+
+        UZ_LOG(Renderer, Debug,
+               "AutoExposure: histogram dispatch — groups=({}, {}, 1), histogramUAV={}",
+               groupsX, groupsY, m_histogramUavIndex);
+
         cmdList->Dispatch(groupsX, groupsY, 1);
     }
 
@@ -398,10 +434,25 @@ float AutoExposure::Execute(IRHICommandList* cmdList, uint32_t hdrSrvIndex,
         rc.maxBrightness   = settings.maxBrightness;
         rc.deltaTime       = dt;
 
+        // Dump average root constants on first frame
+        static bool loggedAverageConstants = false;
+        if (!loggedAverageConstants) {
+            UZ_LOG(Renderer, Info,
+                   "AutoExposure: average root constants (first frame) — "
+                   "histLogMin={:.2f}, histLogMax={:.2f}, histogramSRV={}, "
+                   "exposureBias={:.2f}, minBright={:.4f}, maxBright={:.1f}, dt={:.4f}",
+                   rc.histLogMin, rc.histLogMax, rc.histogramSrvIdx,
+                   rc.exposureBias, rc.minBrightness, rc.maxBrightness, rc.deltaTime);
+            loggedAverageConstants = true;
+        }
+
         cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 8);
 
         // Bind exposure UAV at root param 4 (u0 descriptor table)
         cmdList->SetDescriptorTable(4, m_exposureUavIndex);
+
+        UZ_LOG(Renderer, Debug, "AutoExposure: average dispatch — (1, 1, 1), exposureUAV={}",
+               m_exposureUavIndex);
 
         // Single thread group — this shader runs as a single thread
         cmdList->Dispatch(1, 1, 1);
@@ -452,6 +503,20 @@ float AutoExposure::Execute(IRHICommandList* cmdList, uint32_t hdrSrvIndex,
                 m_lastExposure = readbackExposure;
             }
         }
+    }
+
+    // First-frame summary
+    static bool loggedOnce = false;
+    if (!loggedOnce) {
+        UZ_LOG(Renderer, Info,
+               "AutoExposure: first execution complete — "
+               "{}x{}, hdrSRV={}, histogramUAV={}, histogramSRV={}, exposureUAV={}, "
+               "histogramPipeline={}, averagePipeline={}, lastExposure={:.4f}",
+               width, height, hdrSrvIndex,
+               m_histogramUavIndex, m_histogramSrvIndex, m_exposureUavIndex,
+               m_histogramPipeline.index, m_averagePipeline.index,
+               m_lastExposure);
+        loggedOnce = true;
     }
 
     return m_lastExposure;

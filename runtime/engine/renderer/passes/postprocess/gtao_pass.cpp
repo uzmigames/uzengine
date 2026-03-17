@@ -80,6 +80,15 @@ bool GTAOPass::CreateTextures(uint32_t width, uint32_t height) {
         m_rawAOSrvIndex = m_device->GetTextureSRVIndex(m_rawAOTexture);
         m_rawAOUavIndex = m_device->GetTextureUAVIndex(m_rawAOTexture);
 
+        UZ_LOG(Renderer, Debug, "GTAOPass: raw AO texture created — SRV={}, UAV={}",
+               m_rawAOSrvIndex, m_rawAOUavIndex);
+
+        if (m_rawAOSrvIndex == UINT32_MAX) {
+            UZ_LOG(Renderer, Error, "GTAOPass: raw AO texture has no SRV descriptor");
+            DestroyTextures();
+            return false;
+        }
+
         if (m_rawAOUavIndex == UINT32_MAX) {
             UZ_LOG(Renderer, Error, "GTAOPass: raw AO texture has no UAV descriptor");
             DestroyTextures();
@@ -106,6 +115,15 @@ bool GTAOPass::CreateTextures(uint32_t width, uint32_t height) {
 
         m_filteredAOSrvIndex = m_device->GetTextureSRVIndex(m_filteredAOTexture);
         m_filteredAOUavIndex = m_device->GetTextureUAVIndex(m_filteredAOTexture);
+
+        UZ_LOG(Renderer, Debug, "GTAOPass: filtered AO texture created — SRV={}, UAV={}",
+               m_filteredAOSrvIndex, m_filteredAOUavIndex);
+
+        if (m_filteredAOSrvIndex == UINT32_MAX) {
+            UZ_LOG(Renderer, Error, "GTAOPass: filtered AO texture has no SRV descriptor");
+            DestroyTextures();
+            return false;
+        }
 
         if (m_filteredAOUavIndex == UINT32_MAX) {
             UZ_LOG(Renderer, Error, "GTAOPass: filtered AO texture has no UAV descriptor");
@@ -184,9 +202,11 @@ bool GTAOPass::EnsureGTAOPipeline() {
 
     auto bytecode = m_shaderMgr->GetBytecode(EngineShader::GtaoCS);
     if (bytecode.empty()) {
-        UZ_LOG(Renderer, Error, "GTAOPass: failed to compile gtao_cs.hlsl");
+        UZ_LOG(Renderer, Error, "GTAOPass: failed to compile gtao_cs.hlsl — bytecode is empty");
         return false;
     }
+
+    UZ_LOG(Renderer, Info, "GTAOPass: GTAO shader bytecode size = {} bytes", bytecode.size());
 
     RHIShaderDesc shaderDesc{};
     shaderDesc.bytecode     = bytecode.data();
@@ -197,9 +217,12 @@ bool GTAOPass::EnsureGTAOPipeline() {
 
     m_gtaoCS = m_device->CreateShader(shaderDesc);
     if (!m_gtaoCS.IsValid()) {
-        UZ_LOG(Renderer, Error, "GTAOPass: failed to create GTAO shader");
+        UZ_LOG(Renderer, Error, "GTAOPass: failed to create GTAO shader (bytecode={} bytes)",
+               bytecode.size());
         return false;
     }
+
+    UZ_LOG(Renderer, Debug, "GTAOPass: GTAO shader created (handle={})", m_gtaoCS.index);
 
     RHIComputePipelineDesc pipeDesc{};
     pipeDesc.computeShader = m_gtaoCS;
@@ -207,11 +230,12 @@ bool GTAOPass::EnsureGTAOPipeline() {
 
     m_gtaoPipeline = m_device->CreateComputePipeline(pipeDesc);
     if (!m_gtaoPipeline.IsValid()) {
-        UZ_LOG(Renderer, Error, "GTAOPass: failed to create GTAO pipeline");
+        UZ_LOG(Renderer, Error, "GTAOPass: failed to create GTAO pipeline (shader={})",
+               m_gtaoCS.index);
         return false;
     }
 
-    UZ_LOG(Renderer, Info, "GTAOPass: GTAO pipeline created");
+    UZ_LOG(Renderer, Info, "GTAOPass: GTAO pipeline created (handle={})", m_gtaoPipeline.index);
     return true;
 }
 
@@ -222,9 +246,11 @@ bool GTAOPass::EnsureDenoisePipeline() {
 
     auto bytecode = m_shaderMgr->GetBytecode(EngineShader::GtaoDenoiseCS);
     if (bytecode.empty()) {
-        UZ_LOG(Renderer, Error, "GTAOPass: failed to compile gtao_denoise_cs.hlsl");
+        UZ_LOG(Renderer, Error, "GTAOPass: failed to compile gtao_denoise_cs.hlsl — bytecode is empty");
         return false;
     }
+
+    UZ_LOG(Renderer, Info, "GTAOPass: denoise shader bytecode size = {} bytes", bytecode.size());
 
     RHIShaderDesc shaderDesc{};
     shaderDesc.bytecode     = bytecode.data();
@@ -235,9 +261,12 @@ bool GTAOPass::EnsureDenoisePipeline() {
 
     m_denoiseCS = m_device->CreateShader(shaderDesc);
     if (!m_denoiseCS.IsValid()) {
-        UZ_LOG(Renderer, Error, "GTAOPass: failed to create denoise shader");
+        UZ_LOG(Renderer, Error, "GTAOPass: failed to create denoise shader (bytecode={} bytes)",
+               bytecode.size());
         return false;
     }
+
+    UZ_LOG(Renderer, Debug, "GTAOPass: denoise shader created (handle={})", m_denoiseCS.index);
 
     RHIComputePipelineDesc pipeDesc{};
     pipeDesc.computeShader = m_denoiseCS;
@@ -245,11 +274,12 @@ bool GTAOPass::EnsureDenoisePipeline() {
 
     m_denoisePipeline = m_device->CreateComputePipeline(pipeDesc);
     if (!m_denoisePipeline.IsValid()) {
-        UZ_LOG(Renderer, Error, "GTAOPass: failed to create denoise pipeline");
+        UZ_LOG(Renderer, Error, "GTAOPass: failed to create denoise pipeline (shader={})",
+               m_denoiseCS.index);
         return false;
     }
 
-    UZ_LOG(Renderer, Info, "GTAOPass: denoise pipeline created");
+    UZ_LOG(Renderer, Info, "GTAOPass: denoise pipeline created (handle={})", m_denoisePipeline.index);
     return true;
 }
 
@@ -274,6 +304,57 @@ uint32_t GTAOPass::Execute(IRHICommandList* cmdList, CBRingAllocator* cbRing,
     }
 
     if (!settings.enabled) {
+        return UINT32_MAX;
+    }
+
+    // ── Validate inputs before touching the GPU ──
+    if (width == 0 || height == 0) {
+        UZ_LOG(Renderer, Error,
+               "GTAOPass::Execute: zero-size dispatch (width={}, height={}) — aborting",
+               width, height);
+        return UINT32_MAX;
+    }
+
+    if (!cmdList) {
+        UZ_LOG(Renderer, Error, "GTAOPass::Execute: null command list");
+        return UINT32_MAX;
+    }
+
+    if (depthSrvIndex == UINT32_MAX) {
+        UZ_LOG(Renderer, Error,
+               "GTAOPass::Execute: depthSrvIndex is UINT32_MAX — depth SRV not allocated");
+        return UINT32_MAX;
+    }
+
+    if (normalSrvIndex == UINT32_MAX) {
+        UZ_LOG(Renderer, Error,
+               "GTAOPass::Execute: normalSrvIndex is UINT32_MAX — normal SRV not allocated");
+        return UINT32_MAX;
+    }
+
+    if (!depthTexture.IsValid()) {
+        UZ_LOG(Renderer, Error, "GTAOPass::Execute: depthTexture handle is invalid");
+        return UINT32_MAX;
+    }
+
+    if (!normalTexture.IsValid()) {
+        UZ_LOG(Renderer, Error, "GTAOPass::Execute: normalTexture handle is invalid");
+        return UINT32_MAX;
+    }
+
+    if (m_rawAOUavIndex == UINT32_MAX || m_filteredAOUavIndex == UINT32_MAX) {
+        UZ_LOG(Renderer, Error,
+               "GTAOPass::Execute: internal UAV indices invalid (rawUAV={}, filteredUAV={}) "
+               "— CreateTextures() may have failed silently",
+               m_rawAOUavIndex, m_filteredAOUavIndex);
+        return UINT32_MAX;
+    }
+
+    if (m_rawAOSrvIndex == UINT32_MAX || m_filteredAOSrvIndex == UINT32_MAX) {
+        UZ_LOG(Renderer, Error,
+               "GTAOPass::Execute: internal SRV indices invalid (rawSRV={}, filteredSRV={}) "
+               "— CreateTextures() may have failed silently",
+               m_rawAOSrvIndex, m_filteredAOSrvIndex);
         return UINT32_MAX;
     }
 
@@ -331,6 +412,26 @@ uint32_t GTAOPass::Execute(IRHICommandList* cmdList, CBRingAllocator* cbRing,
         rc.temporalSin    = temporalSin;
         rc.temporalOffset = temporalOffset;
         rc.thicknessBlend = settings.thicknessBlend;
+
+        // Dump all root constants on first frame to diagnose bad shader inputs
+        static bool loggedGtaoConstants = false;
+        if (!loggedGtaoConstants) {
+            UZ_LOG(Renderer, Info,
+                   "GTAOPass: GTAO root constants (first frame) — "
+                   "depthSRV={}, normalSRV={}, frame={}, size={}x{:.0f}, "
+                   "invSize={:.6f}x{:.6f}, radius={:.1f}, invTanHalfFov={:.4f}, "
+                   "near={:.2f}, far={:.1f}, intensity={:.2f}, "
+                   "temporal(cos={:.4f}, sin={:.4f}, offset={:.4f}), thickness={:.2f}",
+                   rc.depthSrvIndex, rc.normalSrvIndex, rc.frameIndex,
+                   rc.outputWidth, rc.outputHeight,
+                   rc.invWidth, rc.invHeight,
+                   rc.worldRadius, rc.invTanHalfFov,
+                   rc.nearPlane, rc.farPlane, rc.aoIntensity,
+                   rc.temporalCos, rc.temporalSin, rc.temporalOffset,
+                   rc.thicknessBlend);
+            loggedGtaoConstants = true;
+        }
+
         cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 16);
 
         // ── Bind UAV (slot 4) — raw AO output at u0 ──
@@ -342,6 +443,11 @@ uint32_t GTAOPass::Execute(IRHICommandList* cmdList, CBRingAllocator* cbRing,
         // ── Dispatch ──
         const uint32_t groupsX = (width  + kThreadGroupSize - 1) / kThreadGroupSize;
         const uint32_t groupsY = (height + kThreadGroupSize - 1) / kThreadGroupSize;
+
+        UZ_LOG(Renderer, Debug,
+               "GTAOPass: GTAO dispatch — groups=({}, {}, 1), threadGroup={}, UAV={}, SRV={}",
+               groupsX, groupsY, kThreadGroupSize, m_rawAOUavIndex, depthSrvIndex);
+
         cmdList->Dispatch(groupsX, groupsY, 1);
     }
 
@@ -352,6 +458,9 @@ uint32_t GTAOPass::Execute(IRHICommandList* cmdList, CBRingAllocator* cbRing,
         barrier.stateBefore = RHIResourceState::UnorderedAccess;
         barrier.stateAfter  = RHIResourceState::ShaderResource;
         cmdList->ResourceBarrier(&barrier, 1);
+
+        UZ_LOG(Renderer, Debug,
+               "GTAOPass: barrier rawAO — UnorderedAccess -> ShaderResource");
     }
 
     // ══════════════════════════════════════════════════════════════════════
@@ -369,6 +478,20 @@ uint32_t GTAOPass::Execute(IRHICommandList* cmdList, CBRingAllocator* cbRing,
         drc.farPlane       = farPlane;
         drc.rawAOSrvIndex  = m_rawAOSrvIndex;
         drc.depthSrvIndex  = depthSrvIndex;
+
+        // Dump denoise constants on first frame
+        static bool loggedDenoiseConstants = false;
+        if (!loggedDenoiseConstants) {
+            UZ_LOG(Renderer, Info,
+                   "GTAOPass: denoise root constants (first frame) — "
+                   "texelSize=({:.6f}, {:.6f}), near={:.2f}, far={:.1f}, "
+                   "rawAOSRV={}, depthSRV={}",
+                   drc.texelSizeX, drc.texelSizeY,
+                   drc.nearPlane, drc.farPlane,
+                   drc.rawAOSrvIndex, drc.depthSrvIndex);
+            loggedDenoiseConstants = true;
+        }
+
         cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&drc), 8);
 
         // ── Bind UAV (slot 4) — filtered AO output at u0 ──
@@ -380,6 +503,11 @@ uint32_t GTAOPass::Execute(IRHICommandList* cmdList, CBRingAllocator* cbRing,
         // ── Dispatch ──
         const uint32_t groupsX = (width  + kThreadGroupSize - 1) / kThreadGroupSize;
         const uint32_t groupsY = (height + kThreadGroupSize - 1) / kThreadGroupSize;
+
+        UZ_LOG(Renderer, Debug,
+               "GTAOPass: denoise dispatch — groups=({}, {}, 1), UAV={}, SRV={}",
+               groupsX, groupsY, m_filteredAOUavIndex, m_rawAOSrvIndex);
+
         cmdList->Dispatch(groupsX, groupsY, 1);
     }
 
@@ -390,14 +518,24 @@ uint32_t GTAOPass::Execute(IRHICommandList* cmdList, CBRingAllocator* cbRing,
         barrier.stateBefore = RHIResourceState::UnorderedAccess;
         barrier.stateAfter  = RHIResourceState::ShaderResource;
         cmdList->ResourceBarrier(&barrier, 1);
+
+        UZ_LOG(Renderer, Debug,
+               "GTAOPass: barrier filteredAO — UnorderedAccess -> ShaderResource");
     }
 
-    // Log once for diagnostics
+    // Log once for diagnostics — comprehensive first-frame summary
     static bool loggedOnce = false;
     if (!loggedOnce) {
         UZ_LOG(Renderer, Info,
-               "GTAOPass: first execution ({}x{}, radius={:.0f}cm, rawUAV={}, filteredSRV={})",
-               width, height, settings.worldRadius, m_rawAOUavIndex, m_filteredAOSrvIndex);
+               "GTAOPass: first execution complete — "
+               "{}x{}, radius={:.0f}cm, intensity={:.2f}, thickness={:.2f}, "
+               "rawUAV={}, rawSRV={}, filteredUAV={}, filteredSRV={}, "
+               "gtaoPipeline={}, denoisePipeline={}, "
+               "inputDepthSRV={}, inputNormalSRV={}",
+               width, height, settings.worldRadius, settings.intensity, settings.thicknessBlend,
+               m_rawAOUavIndex, m_rawAOSrvIndex, m_filteredAOUavIndex, m_filteredAOSrvIndex,
+               m_gtaoPipeline.index, m_denoisePipeline.index,
+               depthSrvIndex, normalSrvIndex);
         loggedOnce = true;
     }
 
