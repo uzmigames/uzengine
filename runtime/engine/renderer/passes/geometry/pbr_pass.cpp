@@ -181,9 +181,9 @@ void AddPBRPass(rg::RgBuilder& builder, const PBRPassDesc& desc)
             if (!loggedOnce) {
                 UZ_LOG(Renderer, Info,
                        "PBRPass: first execution — {} draw calls, viewport={}x{}, "
-                       "bindless={}, meshCount={}",
+                       "pipeline={}, bindless={}, meshCount={}",
                        drawCallCount, desc.viewportWidth, desc.viewportHeight,
-                       desc.bindless, desc.meshCount);
+                       desc.pipeline.index, desc.bindless, desc.meshCount);
                 if (drawCallCount == 0) {
                     UZ_LOG(Renderer, Warning,
                            "PBRPass: zero draw calls on first frame — "

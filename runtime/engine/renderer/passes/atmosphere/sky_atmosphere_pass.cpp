@@ -87,14 +87,24 @@ void AddSkyAtmospherePass(rg::RgBuilder& builder, const SkyAtmospherePassDesc& d
             sc.bottom = static_cast<int32_t>(desc.viewportHeight);
             cmd->SetScissor(sc);
 
+            // ── Fullscreen triangle ──────────────────────────────────────
+            cmd->Draw(3);
+
             // First-frame diagnostic logging
             static bool loggedOnce = false;
             if (!loggedOnce) {
                 UZ_LOG(Renderer, Info,
                        "SkyAtmospherePass: first execution — viewport={}x{}, bindless={}, "
-                       "depthSRV={}, transmittanceLutSRV={}",
+                       "pipeline={}, depthSRV={}, transmittanceLutSRV={}",
                        desc.viewportWidth, desc.viewportHeight, desc.bindless,
+                       desc.pipeline.index,
                        desc.depthSrvIndex, desc.transmittanceLutSrvIndex);
+
+                UZ_LOG(Renderer, Info,
+                       "SkyAtmospherePass: skyAtmosphereAlloc valid={}, size={}, offset={}",
+                       desc.skyAtmosphereAlloc.cpuPtr != nullptr,
+                       desc.skyAtmosphereAlloc.sizeBytes,
+                       desc.skyAtmosphereAlloc.offsetBytes);
 
                 if (desc.bindless && desc.depthSrvIndex == UINT32_MAX) {
                     UZ_LOG(Renderer, Error, "SkyAtmospherePass: depthSrvIndex is UINT32_MAX");
@@ -106,9 +116,6 @@ void AddSkyAtmospherePass(rg::RgBuilder& builder, const SkyAtmospherePassDesc& d
                 }
                 loggedOnce = true;
             }
-
-            // ── Fullscreen triangle ──────────────────────────────────────
-            cmd->Draw(3);
 
             cmd->EndRenderPass();
         });

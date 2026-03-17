@@ -75,9 +75,29 @@ void AddSkyCubemapCapturePSPass(rg::RgBuilder& builder, const SkyCubemapCaptureP
             if (!loggedOnce) {
                 UZ_LOG(Renderer, Info,
                        "SkyCubemapCapturePSPass: first execution — "
-                       "{} faces, faceSize={}, transmittanceLUT valid={}",
+                       "{} faces, faceSize={}, pipeline={}, transmittanceLUT valid={}",
                        kCubeFaceCount, kCubeFaceSize,
+                       desc.pipeline.index,
                        desc.transmittanceLutTex.IsValid());
+
+                UZ_LOG(Renderer, Info,
+                       "SkyCubemapCapturePSPass: rootConstants — "
+                       "bottomRadiusKm={:.3f}, topRadiusKm={:.3f}, "
+                       "sunDir=({:.4f}, {:.4f}, {:.4f}), sunIntensity={:.3f}, "
+                       "packedScatterScales=0x{:08X}",
+                       desc.rootConstants.bottomRadiusKm,
+                       desc.rootConstants.topRadiusKm,
+                       desc.rootConstants.sunDirX,
+                       desc.rootConstants.sunDirY,
+                       desc.rootConstants.sunDirZ,
+                       desc.rootConstants.sunIntensity,
+                       desc.rootConstants.packedScatterScales);
+
+                if (!desc.transmittanceLutTex.IsValid()) {
+                    UZ_LOG(Renderer, Warning,
+                           "SkyCubemapCapturePSPass: transmittanceLutTex is invalid — "
+                           "LUT may not be baked yet");
+                }
                 loggedOnce = true;
             }
 

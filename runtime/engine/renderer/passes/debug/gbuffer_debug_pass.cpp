@@ -113,9 +113,10 @@ void AddGBufferDebugPass(rg::RgBuilder& builder, const GBufferDebugPassDesc& des
             if (!loggedOnce) {
                 UZ_LOG(Renderer, Info,
                        "GBufferDebugPass: first execution — mode={}, viewport={}x{}, bindless={}, "
-                       "albedoSRV={}, normalSRV={}, depthSRV={}, velocitySRV={}",
+                       "pipeline={}, albedoSRV={}, normalSRV={}, depthSRV={}, velocitySRV={}",
                        static_cast<uint32_t>(desc.mode),
                        desc.viewportWidth, desc.viewportHeight, desc.bindless,
+                       desc.pipeline.index,
                        desc.albedoSrvIndex, desc.normalSrvIndex,
                        desc.depthSrvIndex, desc.velocitySrvIndex);
 

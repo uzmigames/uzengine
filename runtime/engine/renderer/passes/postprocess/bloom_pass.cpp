@@ -432,6 +432,7 @@ void BloomPass::Execute(IRHICommandList* cmdList,
     }
 
     // ── Step 2: Downsample chain — Mip[0] → Mip[1] → ... → Mip[5] ─────
+    static bool loggedDownsample = false;
     for (uint32_t i = 0; i < kMipCount - 1; ++i) {
         UZ_PROFILE_SCOPE("BloomPass::Downsample");
 
@@ -462,6 +463,15 @@ void BloomPass::Execute(IRHICommandList* cmdList,
 
         const uint32_t groupsX = (m_mipWidths[i + 1]  + kGroupSize - 1) / kGroupSize;
         const uint32_t groupsY = (m_mipHeights[i + 1] + kGroupSize - 1) / kGroupSize;
+
+        if (!loggedDownsample) {
+            UZ_LOG(Renderer, Debug,
+                   "BloomPass: downsample mip {} -> {} ({}x{}, inSRV={}, outUAV={}, groups={}x{})",
+                   i, i + 1, m_mipWidths[i + 1], m_mipHeights[i + 1],
+                   m_mipSrvIndices[i], m_mipUavIndices[i + 1], groupsX, groupsY);
+            if (i == kMipCount - 2) loggedDownsample = true;
+        }
+
         cmdList->Dispatch(groupsX, groupsY, 1);
     }
 
@@ -473,6 +483,7 @@ void BloomPass::Execute(IRHICommandList* cmdList,
     // Second: reads mip[4] (lower) + mip[3] (current), writes mip[3]
     // ...
     // Last: reads mip[1] (lower) + mip[0] (current), writes mip[0]
+    static bool loggedUpsample = false;
     for (uint32_t step = 0; step < kMipCount - 1; ++step) {
         UZ_PROFILE_SCOPE("BloomPass::Upsample");
 
@@ -517,6 +528,15 @@ void BloomPass::Execute(IRHICommandList* cmdList,
 
         const uint32_t groupsX = (m_mipWidths[currentIdx]  + kGroupSize - 1) / kGroupSize;
         const uint32_t groupsY = (m_mipHeights[currentIdx] + kGroupSize - 1) / kGroupSize;
+
+        if (!loggedUpsample) {
+            UZ_LOG(Renderer, Debug,
+                   "BloomPass: upsample mip {} -> {} ({}x{}, lowerSRV={}, outUAV={}, groups={}x{})",
+                   lowerIdx, currentIdx, m_mipWidths[currentIdx], m_mipHeights[currentIdx],
+                   m_mipSrvIndices[lowerIdx], m_mipUavIndices[currentIdx], groupsX, groupsY);
+            if (step == kMipCount - 2) loggedUpsample = true;
+        }
+
         cmdList->Dispatch(groupsX, groupsY, 1);
     }
 

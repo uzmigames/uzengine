@@ -393,46 +393,32 @@ uint32_t GTAOPass::Execute(IRHICommandList* cmdList, CBRingAllocator* cbRing,
     {
         cmdList->SetPipeline(m_gtaoPipeline);
 
-        // ── Root constants at b0 (slot 0, 16 DWORDs) ──
-        // All GTAO params packed into root constants — compute root sig has no CBV slots.
+        // ── Root constants at b0 (slot 0, 8 DWORDs) ──
+        // Dynamic per-frame values only — shader hardcodes radius/intensity/etc.
         GTAORootConstants rc{};
         rc.depthSrvIndex  = depthSrvIndex;
         rc.normalSrvIndex = normalSrvIndex;
-        rc.frameIndex     = frameIndex;
         rc.outputWidth    = width;
-        rc.outputHeight   = static_cast<float>(height);
-        rc.invWidth       = 1.0f / static_cast<float>(width);
-        rc.invHeight      = 1.0f / static_cast<float>(height);
-        rc.worldRadius    = settings.worldRadius;
+        rc.outputHeight   = height;
         rc.invTanHalfFov  = invTanHalfFov;
         rc.nearPlane      = nearPlane;
         rc.farPlane       = farPlane;
-        rc.aoIntensity    = settings.intensity;
-        rc.temporalCos    = temporalCos;
-        rc.temporalSin    = temporalSin;
-        rc.temporalOffset = temporalOffset;
-        rc.thicknessBlend = settings.thicknessBlend;
+        rc.frameIndex     = frameIndex;
 
         // Dump all root constants on first frame to diagnose bad shader inputs
         static bool loggedGtaoConstants = false;
         if (!loggedGtaoConstants) {
             UZ_LOG(Renderer, Info,
                    "GTAOPass: GTAO root constants (first frame) — "
-                   "depthSRV={}, normalSRV={}, frame={}, size={}x{:.0f}, "
-                   "invSize={:.6f}x{:.6f}, radius={:.1f}, invTanHalfFov={:.4f}, "
-                   "near={:.2f}, far={:.1f}, intensity={:.2f}, "
-                   "temporal(cos={:.4f}, sin={:.4f}, offset={:.4f}), thickness={:.2f}",
-                   rc.depthSrvIndex, rc.normalSrvIndex, rc.frameIndex,
+                   "depthSRV={}, normalSRV={}, size={}x{}, "
+                   "invTanHalfFov={:.4f}, near={:.2f}, far={:.1f}, frame={}",
+                   rc.depthSrvIndex, rc.normalSrvIndex,
                    rc.outputWidth, rc.outputHeight,
-                   rc.invWidth, rc.invHeight,
-                   rc.worldRadius, rc.invTanHalfFov,
-                   rc.nearPlane, rc.farPlane, rc.aoIntensity,
-                   rc.temporalCos, rc.temporalSin, rc.temporalOffset,
-                   rc.thicknessBlend);
+                   rc.invTanHalfFov, rc.nearPlane, rc.farPlane, rc.frameIndex);
             loggedGtaoConstants = true;
         }
 
-        cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 16);
+        cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 8);
 
         // ── Bind UAV (slot 4) — raw AO output at u0 ──
         cmdList->SetDescriptorTable(4, m_rawAOUavIndex);

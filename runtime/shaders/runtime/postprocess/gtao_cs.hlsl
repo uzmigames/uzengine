@@ -8,7 +8,7 @@
 /// # Algorithm Overview
 /// 1. Reconstruct view-space position and normal from depth + normal buffer.
 /// 2. For each direction (NumAngles, rotated per-pixel via IGN):
-///    a. March along the direction (GTAO_NUMTAPS steps) sampling depth.
+///    a. March along the direction (GTAO_NUM_TAPS steps) sampling depth.
 ///    b. Find the largest horizon angle (with thickness heuristic + falloff).
 ///    c. Repeat in the negative direction (dual search).
 ///    d. Integrate the visible arc against the projected normal.
@@ -26,7 +26,7 @@
 ///         GetRandomVector, InterleavedGradientNoise
 /// @source UE5 PostProcessAmbientOcclusionCommon.ush:54-57 — ReconstructCSPos
 /// @source UE5 FastMathThirdParty.ush:108-114 — acosFast
-/// @constants GTAO_NUMTAPS=12 (usf:555), GTAO_MAX_PIXEL_SCREEN_RADIUS=256.0 (usf:557),
+/// @constants GTAO_NUM_TAPS=12 (usf:555), GTAO_MAX_PIXEL_SCREEN_RADIUS=256.0 (usf:557),
 ///            PI=3.14159265 (Common.ush), PI_HALF=PI*0.5 (usf:573),
 ///            ThicknessBlend from GTAOParams[1].y (usf:655),
 ///            AttenFactor=2.0/(WorldRadius*WorldRadius) (usf:877),
@@ -40,19 +40,8 @@
 // Quality Defines
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 PostProcessAmbientOcclusion.usf:555-557 — SHADER_QUALITY == 3 (high)
-#ifndef GTAO_NUMTAPS
-#define GTAO_NUMTAPS 12
-#endif
-
-/// @source UE5 PostProcessAmbientOcclusion.usf:557 — all quality levels
-#define GTAO_MAX_PIXEL_SCREEN_RADIUS 256.0f
-
-/// Number of search directions. Default 2 (UE5 uses 1-4, 2 = good quality/perf).
-/// @source UE5 PostProcessAmbientOcclusion.usf:886 — NumAngles from GTAOParams[4].y
-#ifndef GTAO_NUM_ANGLES
-#define GTAO_NUM_ANGLES 2
-#endif
+// Algorithm constants now hardcoded in cbuffer section below (after root constants).
+// Old #defines removed — they conflicted with the new hardcoded values.
 
 #define PI       3.14159265358979323846f
 #define PI_HALF  (PI * 0.5f)
@@ -61,26 +50,38 @@
 // Root Constants (b0, 8 DWORDs = 32 bytes)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// All GTAO parameters in 16 DWORDs (64 bytes) — compute root constant limit.
-/// No CBV used — compute root sig only has root constants at slot 0.
+/// Root constants — exactly 8 DWORDs (32 bytes).
+/// Compute root sig slot 0 supports max 8 DWORDs (dx12_pso_creation.cpp:135).
+/// All algorithm params (radius, intensity, etc.) hardcoded below via #defines.
+/// @source UE5 PostProcessAmbientOcclusion.usf:566 — GTAOParams layout
 cbuffer GTAORootCB : register(b0) {
     uint     depthSrvIndex;     // DWORD 0
     uint     normalSrvIndex;    // DWORD 1
-    uint     frameIndex;        // DWORD 2
-    uint     outputWidth;       // DWORD 3
-    float    outputHeight;      // DWORD 4
-    float    invWidth;          // DWORD 5
-    float    invHeight;         // DWORD 6
-    float    worldRadius;       // DWORD 7
-    float    invTanHalfFov;     // DWORD 8
-    float    nearPlane;         // DWORD 9
-    float    farPlane;          // DWORD 10
-    float    aoIntensity;       // DWORD 11
-    float    temporalCos;       // DWORD 12
-    float    temporalSin;       // DWORD 13
-    float    temporalOffset;    // DWORD 14
-    float    thicknessBlend;    // DWORD 15
+    uint     outputWidth;       // DWORD 2
+    uint     outputHeight;      // DWORD 3
+    float    invTanHalfFov;     // DWORD 4
+    float    nearPlane;         // DWORD 5
+    float    farPlane;          // DWORD 6
+    uint     frameIndex;        // DWORD 7
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Hardcoded Algorithm Parameters (UE5 defaults)
+// ─────────────────────────────────────────────────────────────────────────────
+// These are constants in UE5 controlled by CVars. Hardcoded here because
+// the compute root signature only supports 8 DWORDs of root constants.
+/// @source UE5 PostProcessAmbientOcclusion.cpp:465 — NumAngles clamped [1,16]
+#define GTAO_NUM_ANGLES     2       // UE5 medium quality
+/// @source UE5 PostProcessAmbientOcclusion.usf:555 — GTAO_NUM_TAPS
+#define GTAO_NUM_TAPS       4       // Steps per direction
+/// @source UE5 PostProcessAmbientOcclusion.usf:557
+#define GTAO_MAX_SCREEN_RADIUS 256.0f
+/// @source UE5 PostProcessAmbientOcclusion.cpp:416
+static const float GTAO_WORLD_RADIUS    = 200.0f;   // cm
+static const float GTAO_AO_INTENSITY    = 1.0f;
+static const float GTAO_THICKNESS_BLEND = 0.5f;
+static const float GTAO_FADE_START      = 50000.0f; // cm
+static const float GTAO_FADE_RANGE      = 50000.0f; // cm
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Resources
@@ -150,7 +151,7 @@ float3 ScreenToViewPos(float2 uv, float linearDepth) {
     ndc.y = -ndc.y;
 
     float3 viewPos;
-    float aspect = float(outputWidth) * invHeight;
+    float aspect = float(outputWidth) * (1.0f / float(outputHeight));
     viewPos.x = ndc.x * linearDepth / (invTanHalfFov / aspect);
     viewPos.y = ndc.y * linearDepth / invTanHalfFov;
     viewPos.z = linearDepth;
@@ -191,9 +192,15 @@ float3 GetRandomVector(uint2 iPos) {
 
     float3 result;
     /// @source UE5 PostProcessAmbientOcclusion.usf:831-833
-    result.x = dot(randomTexVec, float2(temporalCos, -temporalSin));
-    result.y = dot(randomTexVec, float2(temporalSin,  temporalCos));
-    result.z = frac(scaleOffset + temporalOffset);
+    // Compute temporal rotation from frameIndex (moved from root constants to shader)
+    /// @source UE5 PostProcessAmbientOcclusion.usf:820-833
+    float temporalAngle = float(frameIndex % 6) * (PI / 3.0f);
+    float tCos = cos(temporalAngle);
+    float tSin = sin(temporalAngle);
+    float tOffset = float((frameIndex / 6) % 4) * 0.25f;
+    result.x = dot(randomTexVec, float2(tCos, -tSin));
+    result.y = dot(randomTexVec, float2(tSin,  tCos));
+    result.z = frac(scaleOffset + tOffset);
 
     return result;
 }
@@ -235,7 +242,7 @@ float2 SearchForLargestAngleDual(
         float falloffPos = saturate(lenSqPos * attenFactor);
         angPos = lerp(angPos, bestAng.x, falloffPos);
         /// @source UE5 PostProcessAmbientOcclusion.usf:676 — thickness heuristic
-        bestAng.x = (angPos > bestAng.x) ? angPos : lerp(angPos, bestAng.x, thicknessBlend);
+        bestAng.x = (angPos > bestAng.x) ? angPos : lerp(angPos, bestAng.x, GTAO_THICKNESS_BLEND);
 
         // ── Negative direction ──
         /// @source UE5 PostProcessAmbientOcclusion.usf:679-687
@@ -246,7 +253,7 @@ float2 SearchForLargestAngleDual(
 
         float falloffNeg = saturate(lenSqNeg * attenFactor);
         angNeg = lerp(angNeg, bestAng.y, falloffNeg);
-        bestAng.y = (angNeg > bestAng.y) ? angNeg : lerp(angNeg, bestAng.y, thicknessBlend);
+        bestAng.y = (angNeg > bestAng.y) ? angNeg : lerp(angNeg, bestAng.y, GTAO_THICKNESS_BLEND);
     }
 
     /// @source UE5 PostProcessAmbientOcclusion.usf:690-691
@@ -307,7 +314,7 @@ void main(
     }
 
     float2 pixelCenter = (float2)dispatchId + float2(0.5f, 0.5f);
-    float2 uv = pixelCenter * float2(invWidth, invHeight);
+    float2 uv = pixelCenter * float2((1.0f / float(outputWidth)), (1.0f / float(outputHeight)));
 
     // ── Early depth check ──
     /// @source UE5 PostProcessAmbientOcclusion.usf:855-862
@@ -328,11 +335,11 @@ void main(
     // ── Compute screen-space radius ──
     /// @source UE5 PostProcessAmbientOcclusion.usf:870-877
     float fovScale = outputHeight * invTanHalfFov;
-    float worldRadiusAdj = worldRadius * fovScale;
-    float pixelRadius = max(min(worldRadiusAdj / viewSpacePos.z, GTAO_MAX_PIXEL_SCREEN_RADIUS), (float)GTAO_NUMTAPS);
-    float stepRadius = pixelRadius / ((float)GTAO_NUMTAPS + 1.0f);
+    float worldRadiusAdj = GTAO_WORLD_RADIUS * fovScale;
+    float pixelRadius = max(min(worldRadiusAdj / viewSpacePos.z, GTAO_MAX_SCREEN_RADIUS), (float)GTAO_NUM_TAPS);
+    float stepRadius = pixelRadius / ((float)GTAO_NUM_TAPS + 1.0f);
     /// @source UE5 PostProcessAmbientOcclusion.usf:877
-    float attenFactor = 2.0f / (worldRadius * worldRadius);
+    float attenFactor = 2.0f / (GTAO_WORLD_RADIUS * GTAO_WORLD_RADIUS);
 
     // ── Get per-pixel random direction and offset ──
     /// @source UE5 PostProcessAmbientOcclusion.usf:880-882
@@ -352,9 +359,9 @@ void main(
     for (uint angle = 0; angle < GTAO_NUM_ANGLES; angle++) {
         /// @source UE5 PostProcessAmbientOcclusion.usf:894-895
         float2 horizonAngles = SearchForLargestAngleDual(
-            GTAO_NUMTAPS,
+            GTAO_NUM_TAPS,
             uv,
-            screenDir * float2(invWidth, invHeight),
+            screenDir * float2((1.0f / float(outputWidth)), (1.0f / float(outputHeight))),
             stepRadius,
             offset,
             viewSpacePos,

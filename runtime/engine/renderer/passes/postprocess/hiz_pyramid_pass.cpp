@@ -73,6 +73,17 @@ void AddHiZPyramidPass(rg::RgBuilder& builder, const HiZPyramidPassDesc& desc)
         pb.SetExecutionCallback([desc](IRHICommandList* cmd, const rg::RgPassResources& res) {
             UZ_PROFILE_SCOPE("HiZPyramid::Execute");
 
+            if (desc.sourceWidth == 0 || desc.sourceHeight == 0) {
+                UZ_LOG(Renderer, Error, "HiZPyramid: zero source dimensions ({}x{})",
+                       desc.sourceWidth, desc.sourceHeight);
+                return;
+            }
+            if (desc.depthSourceSrvIndex == UINT32_MAX) {
+                UZ_LOG(Renderer, Error,
+                       "HiZPyramid: depthSourceSrvIndex is UINT32_MAX — depth prepass may have failed");
+                return;
+            }
+
             cmd->SetPipeline(desc.pipeline);
 
             // Track the current input SRV index and dimensions. For mip 0,
@@ -129,9 +140,9 @@ void AddHiZPyramidPass(rg::RgBuilder& builder, const HiZPyramidPassDesc& desc)
             if (!loggedOnce) {
                 UZ_LOG(Renderer, Info,
                        "HiZPyramid: first execution — {} mip levels, source={}x{} (SRV={}), "
-                       "bindless={}, final mip={}x{}",
+                       "pipeline={}, bindless={}, final mip={}x{}",
                        desc.mipCount, desc.sourceWidth, desc.sourceHeight,
-                       desc.depthSourceSrvIndex, desc.bindless,
+                       desc.depthSourceSrvIndex, desc.pipeline.index, desc.bindless,
                        desc.mipLevels[desc.mipCount - 1].width,
                        desc.mipLevels[desc.mipCount - 1].height);
                 for (uint32_t m = 0; m < desc.mipCount; ++m) {

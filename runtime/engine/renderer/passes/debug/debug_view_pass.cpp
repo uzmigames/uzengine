@@ -93,14 +93,18 @@ void AddDebugViewPass(rg::RgBuilder& builder, const DebugViewPassDesc& desc)
             sc.bottom = static_cast<int32_t>(desc.viewportHeight);
             cmd->SetScissor(sc);
 
+            // ── Fullscreen triangle — 3 vertices from SV_VertexID ────────
+            cmd->Draw(3);
+
             // First-frame diagnostic logging
             static bool loggedOnce = false;
             if (!loggedOnce) {
                 UZ_LOG(Renderer, Info,
                        "DebugViewPass: first execution — mode={}, viewport={}x{}, bindless={}, "
-                       "albedoSRV={}, normalSRV={}, depthSRV={}, positionSRV={}",
+                       "pipeline={}, albedoSRV={}, normalSRV={}, depthSRV={}, positionSRV={}",
                        static_cast<uint32_t>(desc.mode),
                        desc.viewportWidth, desc.viewportHeight, desc.bindless,
+                       desc.pipeline.index,
                        desc.albedoSrvIndex, desc.normalSrvIndex,
                        desc.depthSrvIndex, desc.positionSrvIndex);
 
@@ -116,9 +120,6 @@ void AddDebugViewPass(rg::RgBuilder& builder, const DebugViewPassDesc& desc)
                 }
                 loggedOnce = true;
             }
-
-            // ── Fullscreen triangle — 3 vertices from SV_VertexID ────────
-            cmd->Draw(3);
 
             cmd->EndRenderPass();
         });

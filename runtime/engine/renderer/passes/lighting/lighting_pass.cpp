@@ -144,15 +144,30 @@ void AddLightingPass(rg::RgBuilder& builder, const LightingPassDesc& desc)
             sc.bottom = static_cast<int32_t>(desc.viewportHeight);
             cmd->SetScissor(sc);
 
+            // ── Fullscreen triangle — 3 vertices from SV_VertexID ────────
+            cmd->Draw(3);
+
             // First-frame diagnostic logging and SRV validation
             static bool loggedOnce = false;
             if (!loggedOnce) {
                 UZ_LOG(Renderer, Info,
                        "LightingPass: first execution — viewport={}x{}, bindless={}, "
-                       "albedoSRV={}, normalSRV={}, depthSRV={}, positionSRV={}",
+                       "pipeline={}, albedoSRV={}, normalSRV={}, depthSRV={}, positionSRV={}",
                        desc.viewportWidth, desc.viewportHeight, desc.bindless,
+                       desc.pipeline.index,
                        desc.albedoSrvIndex, desc.normalSrvIndex,
                        desc.depthSrvIndex, desc.positionSrvIndex);
+
+                // CB allocation diagnostics
+                UZ_LOG(Renderer, Info,
+                       "LightingPass: lightingAlloc valid={}, size={}, offset={}",
+                       desc.lightingAlloc.cpuPtr != nullptr,
+                       desc.lightingAlloc.sizeBytes,
+                       desc.lightingAlloc.offsetBytes);
+                UZ_LOG(Renderer, Info,
+                       "LightingPass: shadowDataParams={}, shadowAlloc.cpuPtr={}",
+                       desc.shadowDataParams != nullptr,
+                       desc.shadowAlloc.cpuPtr != nullptr);
 
                 // Validate SRV indices in bindless mode
                 if (desc.bindless) {
@@ -171,9 +186,6 @@ void AddLightingPass(rg::RgBuilder& builder, const LightingPassDesc& desc)
                 }
                 loggedOnce = true;
             }
-
-            // ── Fullscreen triangle — 3 vertices from SV_VertexID ────────
-            cmd->Draw(3);
 
             cmd->EndRenderPass();
         });

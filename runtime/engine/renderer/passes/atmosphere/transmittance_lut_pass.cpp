@@ -45,6 +45,17 @@ void AddTransmittanceLutPass(rg::RgBuilder& builder, const TransmittanceLutPassD
         pb.SetExecutionCallback([desc](IRHICommandList* cmd, const rg::RgPassResources& res) {
             UZ_PROFILE_SCOPE("TransmittanceLUT::Execute");
 
+            if (!cmd) {
+                UZ_LOG(Renderer, Error, "TransmittanceLutPass: null command list");
+                return;
+            }
+
+            if (desc.lutUavIndex == UINT32_MAX) {
+                UZ_LOG(Renderer, Error,
+                       "TransmittanceLutPass: lutUavIndex is UINT32_MAX — UAV not allocated, skipping dispatch");
+                return;
+            }
+
             // ── Bind compute pipeline ──────────────────────────────────
             cmd->SetPipeline(desc.pipeline);
 
@@ -62,13 +73,9 @@ void AddTransmittanceLutPass(rg::RgBuilder& builder, const TransmittanceLutPassD
                 const uint32_t groupsY = kLutHeight / kLutThreadGroupSize;
                 UZ_LOG(Renderer, Info,
                        "TransmittanceLutPass: first execution — "
-                       "dispatch=({}, {}, 1), UAV={}, LUT size={}x{}",
-                       groupsX, groupsY, desc.lutUavIndex,
+                       "dispatch=({}, {}, 1), pipeline={}, UAV={}, LUT size={}x{}",
+                       groupsX, groupsY, desc.pipeline.index, desc.lutUavIndex,
                        kLutWidth, kLutHeight);
-                if (desc.lutUavIndex == UINT32_MAX) {
-                    UZ_LOG(Renderer, Error,
-                           "TransmittanceLutPass: lutUavIndex is UINT32_MAX — UAV not allocated");
-                }
                 loggedOnce = true;
             }
 

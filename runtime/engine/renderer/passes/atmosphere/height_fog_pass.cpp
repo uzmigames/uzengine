@@ -79,22 +79,30 @@ void AddHeightFogPass(rg::RgBuilder& builder, const HeightFogPassDesc& desc)
             sc.bottom = static_cast<int32_t>(desc.viewportHeight);
             cmd->SetScissor(sc);
 
+            // ── Fullscreen triangle ──────────────────────────────────────
+            cmd->Draw(3);
+
             // First-frame diagnostic logging
             static bool loggedOnce = false;
             if (!loggedOnce) {
                 UZ_LOG(Renderer, Info,
-                       "HeightFogPass: first execution — viewport={}x{}, bindless={}, depthSRV={}",
+                       "HeightFogPass: first execution — viewport={}x{}, bindless={}, "
+                       "pipeline={}, depthSRV={}",
                        desc.viewportWidth, desc.viewportHeight, desc.bindless,
-                       desc.depthSrvIndex);
+                       desc.pipeline.index, desc.depthSrvIndex);
+
+                UZ_LOG(Renderer, Info,
+                       "HeightFogPass: fogAlloc valid={}, size={}, offset={}",
+                       desc.fogAlloc.cpuPtr != nullptr,
+                       desc.fogAlloc.sizeBytes,
+                       desc.fogAlloc.offsetBytes);
+
                 if (desc.bindless && desc.depthSrvIndex == UINT32_MAX) {
                     UZ_LOG(Renderer, Error,
                            "HeightFogPass: depthSrvIndex is UINT32_MAX in bindless mode");
                 }
                 loggedOnce = true;
             }
-
-            // ── Fullscreen triangle ──────────────────────────────────────
-            cmd->Draw(3);
 
             cmd->EndRenderPass();
         });

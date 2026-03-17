@@ -187,9 +187,9 @@ void AddDepthPrepass(rg::RgBuilder& builder, const DepthPrepassDesc& desc)
             if (!loggedOnce) {
                 UZ_LOG(Renderer, Info,
                        "DepthPrepass: first execution — {} draw calls, viewport={}x{}, "
-                       "instanced={}, bindless={}, meshCount={}",
+                       "pipeline={}, instanced={}, bindless={}, meshCount={}",
                        drawCallCount, desc.viewportWidth, desc.viewportHeight,
-                       useInstanced, desc.bindless, desc.meshCount);
+                       desc.pipeline.index, useInstanced, desc.bindless, desc.meshCount);
                 if (drawCallCount == 0) {
                     UZ_LOG(Renderer, Warning,
                            "DepthPrepass: zero draw calls on first frame — "

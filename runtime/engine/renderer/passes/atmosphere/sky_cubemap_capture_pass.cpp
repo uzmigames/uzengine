@@ -45,6 +45,17 @@ void AddSkyCubemapCapturePass(rg::RgBuilder& builder, const SkyCubemapCapturePas
         pb.SetExecutionCallback([desc](IRHICommandList* cmd, const rg::RgPassResources& res) {
             UZ_PROFILE_SCOPE("SkyCubemapCapture::Execute");
 
+            if (!cmd) {
+                UZ_LOG(Renderer, Error, "SkyCubemapCapturePass: null command list");
+                return;
+            }
+
+            if (desc.cubemapUavIndex == UINT32_MAX) {
+                UZ_LOG(Renderer, Error,
+                       "SkyCubemapCapturePass: cubemapUavIndex is UINT32_MAX — UAV not allocated, skipping dispatch");
+                return;
+            }
+
             // ── Bind compute pipeline ──────────────────────────────────
             cmd->SetPipeline(desc.pipeline);
 
@@ -60,13 +71,9 @@ void AddSkyCubemapCapturePass(rg::RgBuilder& builder, const SkyCubemapCapturePas
                 const uint32_t groupsXY = kCubeFaceSize / kCubeThreadGroupSize;
                 UZ_LOG(Renderer, Info,
                        "SkyCubemapCapturePass: first execution — "
-                       "dispatch=({}, {}, {}), UAV={}, faceSize={}",
+                       "dispatch=({}, {}, {}), pipeline={}, UAV={}, faceSize={}",
                        groupsXY, groupsXY, kCubeFaceCount,
-                       desc.cubemapUavIndex, kCubeFaceSize);
-                if (desc.cubemapUavIndex == UINT32_MAX) {
-                    UZ_LOG(Renderer, Error,
-                           "SkyCubemapCapturePass: cubemapUavIndex is UINT32_MAX — UAV not allocated");
-                }
+                       desc.pipeline.index, desc.cubemapUavIndex, kCubeFaceSize);
                 loggedOnce = true;
             }
 

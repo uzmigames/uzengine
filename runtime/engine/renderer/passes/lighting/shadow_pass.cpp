@@ -292,10 +292,10 @@ void AddShadowPass(rg::RgBuilder& builder, const ShadowPassDesc& desc)
             if (!loggedShadowDraws) {
                 UZ_LOG(Renderer, Info,
                        "ShadowPass: first execution — {} cascades, {} total draw calls, "
-                       "{} commands in drawList, atlasResolution={}, cacheMode={}, "
+                       "{} commands in drawList, atlasResolution={}, pipeline={}, cacheMode={}, "
                        "instanced={}, bindless={}",
                        desc.cascadeCount, totalDrawCalls, commands.size(),
-                       desc.atlasResolution,
+                       desc.atlasResolution, desc.pipeline.index,
                        static_cast<uint32_t>(desc.cacheMode),
                        desc.instanced, desc.bindless);
                 // Log cascade tile offsets

@@ -44,7 +44,7 @@ struct GTAOSettings {
     float    fadeStartDist   = 50000.0f; ///< Distance where AO fades (cm).
     float    fadeEndDist     = 100000.0f;///< Distance where AO disappears (cm).
     float    maxFadeDepth    = 100000.0f;///< Skip AO beyond this depth (cm).
-    bool     enabled         = false;    ///< Master toggle. DISABLED — GPU hangs on first dispatch.
+    bool     enabled         = true;     ///< Master toggle.
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -52,29 +52,23 @@ struct GTAOSettings {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Matches `cbuffer GTAORootCB : register(b0)` in gtao_cs.hlsl.
-/// All GTAO parameters packed into 16 DWORDs (64 bytes) for compute root constants.
-/// Compute root sig only supports root constants at slot 0 — no CBV slots available.
+/// GTAO root constants — exactly 8 DWORDs (32 bytes).
+/// This is the compute root signature limit (dx12_pso_creation.cpp:135).
+/// All other params (radius, intensity, etc.) are hardcoded in the shader
+/// via #defines to match UE5 defaults. Only dynamic per-frame values here.
 struct GTAORootConstants {
-    uint32_t depthSrvIndex;     // DWORD 0
-    uint32_t normalSrvIndex;    // DWORD 1
-    uint32_t frameIndex;        // DWORD 2
-    uint32_t outputWidth;       // DWORD 3
-    float    outputHeight;      // DWORD 4 (as float for shader)
-    float    invWidth;          // DWORD 5
-    float    invHeight;         // DWORD 6
-    float    worldRadius;       // DWORD 7
-    float    invTanHalfFov;     // DWORD 8
-    float    nearPlane;         // DWORD 9
-    float    farPlane;          // DWORD 10
-    float    aoIntensity;       // DWORD 11
-    float    temporalCos;       // DWORD 12
-    float    temporalSin;       // DWORD 13
-    float    temporalOffset;    // DWORD 14
-    float    thicknessBlend;    // DWORD 15
+    uint32_t depthSrvIndex;     // DWORD 0: depth buffer SRV
+    uint32_t normalSrvIndex;    // DWORD 1: normal buffer SRV
+    uint32_t outputWidth;       // DWORD 2: output texture width
+    uint32_t outputHeight;      // DWORD 3: output texture height
+    float    invTanHalfFov;     // DWORD 4: 1/tan(fovY/2) for screen→view
+    float    nearPlane;         // DWORD 5: camera near plane (cm)
+    float    farPlane;          // DWORD 6: camera far plane (cm)
+    uint32_t frameIndex;        // DWORD 7: for temporal jitter
 };
 
-static_assert(sizeof(GTAORootConstants) == 64,
-    "GTAORootConstants must be 16 DWORDs (64 bytes) — compute root constant limit");
+static_assert(sizeof(GTAORootConstants) == 32,
+    "GTAORootConstants must be exactly 8 DWORDs (32 bytes) — compute root sig limit");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CBV at b2 — bulk GTAO parameters
