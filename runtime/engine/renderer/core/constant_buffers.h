@@ -184,6 +184,9 @@ static_assert(sizeof(PerObjectCB) == 256, "PerObjectCB must be 256 bytes (D3D12 
 /// Maximum number of point lights supported in the deferred lighting pass.
 static constexpr uint32_t kMaxPointLights = 64;
 
+/// Maximum number of spot lights supported in the deferred lighting pass.
+static constexpr uint32_t kMaxSpotLights = 16;
+
 /// Point light data for the deferred lighting pass.
 ///
 /// Each point light carries position, attenuation, color, and UE5-parity
@@ -219,26 +222,69 @@ static constexpr uint32_t kLightFlag_InverseSquared = 1u << 0;
 
 static_assert(sizeof(PointLightData) == 48, "PointLightData must be 48 bytes (three float4s)");
 
-/// Lighting constant buffer for the deferred lighting pass, bound at register `b2`.
+/// Spot light data for the deferred lighting pass.
 ///
-/// Contains an array of point lights and a count of active lights. The shader
-/// iterates `pointLightCount` entries and accumulates their contributions.
+/// Extends point light data with cone direction and angular attenuation.
+/// Uses UE5-parity SpotAngles packing: cosOuterAngle and invCosConeDifference
+/// are precomputed on the CPU.
 ///
-/// Padded to a 256-byte multiple as required by D3D12 constant buffer alignment.
+/// @source UE5 SpotLightComponent.cpp:67 — SpotAngles = FVector2f(CosOuterCone, InvCosConeDifference)
+/// @source UE5 DynamicLightingCommon.ush:62 — SpotAttenuation = Square(saturate((dot(L,-Dir) - CosOuter) * InvDiff))
+///
+/// Packed to 64 bytes (four float4s) for efficient GPU access.
 ///
 /// Matches the HLSL struct:
 /// ```hlsl
-/// cbuffer LightingCB : register(b2) {
-///     PointLightData pointLights[64];
-///     uint           pointLightCount;
-///     uint3          _pad;
+/// struct SpotLightData {
+///     float3 position;              // world-space position
+///     float  radius;                // attenuation radius
+///     float3 color;                 // color * intensity (linear HDR)
+///     float  cosOuterAngle;         // cosine of outer cone half-angle
+///     float3 direction;             // normalised world-space cone direction
+///     float  invCosConeDifference;  // 1 / (cosInner - cosOuter)
+///     float  falloffExponent;       // custom falloff (when inverse square disabled)
+///     float  specularScale;         // 0-1 specular multiplier
+///     float  diffuseScale;          // 0-1 diffuse multiplier
+///     uint   flags;                 // bit0=useInverseSquared
 /// };
 /// ```
+struct SpotLightData {
+    Vec3     position;              ///< World-space position of the light source.
+    float    radius;                ///< Attenuation radius — light contribution falls to zero at this distance.
+    Vec3     color;                 ///< Light color multiplied by intensity (linear HDR, not clamped).
+    float    cosOuterAngle;         ///< Cosine of the outer cone half-angle. @source UE5 SpotLightComponent.cpp:51
+    Vec3     direction;             ///< Normalised world-space cone direction. @source UE5 SpotLightComponent.cpp:65
+    float    invCosConeDifference;  ///< 1 / (cosInner - cosOuter). @source UE5 SpotLightComponent.cpp:54
+    float    falloffExponent;       ///< Custom falloff exponent (used when inverse square is disabled).
+    float    specularScale;         ///< Per-light specular highlight multiplier (0-1). Default: 1.0.
+    float    diffuseScale;          ///< Per-light diffuse contribution multiplier (0-1). Default: 1.0.
+    uint32_t flags;                 ///< Bit flags: bit 0 = useInverseSquaredFalloff.
+};
+
+static_assert(sizeof(SpotLightData) == 64, "SpotLightData must be 64 bytes (four float4s)");
+
+/// Lighting constant buffer for the deferred lighting pass, bound at register `b2`.
+///
+/// Contains arrays of point and spot lights with their respective counts.
+/// The shader iterates each array and accumulates contributions.
+///
+/// Padded to a 256-byte multiple as required by D3D12 constant buffer alignment.
+///
+/// # Layout (4352 bytes = 17 * 256)
+/// - pointLights[64]:  64 * 48 = 3072 bytes
+/// - pointLightCount:  4 bytes
+/// - spotLightCount:   4 bytes
+/// - _pad:             8 bytes
+/// - spotLights[16]:   16 * 64 = 1024 bytes
+/// - _pad2:            240 bytes
+/// Total: 4352 bytes
 struct LightingCB {
     PointLightData pointLights[kMaxPointLights]; ///< Point light array (64 * 48 = 3072 bytes).
     uint32_t       pointLightCount = 0;          ///< Number of active point lights in the array.
-    uint32_t       _pad[3] = {};                 ///< Align count field to 16 bytes.
-    float          _pad2[60] = {};               ///< Pad to 3328 bytes (256-byte multiple).
+    uint32_t       spotLightCount  = 0;          ///< Number of active spot lights in the array.
+    uint32_t       _pad[2] = {};                 ///< Align counts to 16 bytes.
+    SpotLightData  spotLights[kMaxSpotLights];   ///< Spot light array (16 * 64 = 1024 bytes).
+    float          _pad2[60] = {};               ///< Pad to 4352 bytes (256-byte multiple).
 };
 
 static_assert(sizeof(LightingCB) % 256 == 0, "LightingCB must be a multiple of 256 bytes (D3D12 CB alignment)");

@@ -4,9 +4,9 @@
 - [ ] 1.2 Implement velocity scaling — `velocityScale = 0.5 * targetFPS / currentFPS * shutterAngle / 360.0`. Applied to velocity buffer before blur. UE5 defaults: targetFPS=30, shutter=180°.
 - [ ] 1.3 Implement tile max compute shader (`motionblur_tilemax_cs.hlsl`) — 16×16 tiles, find max velocity magnitude in tile. Output RG16F (dominant velocity direction + magnitude).
 - [ ] 1.4 Implement neighbor max compute shader (`motionblur_neighbormax_cs.hlsl`) — for each tile, take max velocity from 3×3 tile neighborhood. Ensures fast object blur extends beyond its tile.
-- [ ] 1.5 Implement scatter-as-gather blur shader (`motionblur_gather_ps.hlsl`) — for each pixel: sample `sampleCount` points along velocity vector (jittered). Also sample along neighbor tile's dominant velocity. Weight by depth (foreground priority). Blend samples. Clamp to maxBlurRadius.
-- [ ] 1.6 Implement depth-aware weighting — when foreground (closer depth) and background overlap, foreground velocity dominates. Prevents background bleeding through fast foreground objects.
-- [ ] 1.7 Implement static skip — if pixel velocity < threshold (0.5 pixels) AND neighbor tile velocity < threshold, skip blur (passthrough). Saves cost on static regions.
+- [x] 1.5 Implement per-pixel motion blur compute shader (`motion_blur_cs.hlsl`) — bidirectional gather along velocity vector with IGN jitter, depth-aware weighting, velocity clamping, adaptive sample count (4-16). Based on UE5 MotionBlurApply.usf fast path (lines 432-454). 8 DWORD root constants, UZ_BINDLESS support, entry point `main`.
+- [x] 1.6 Implement depth-aware weighting — ComputeDepthWeight using UE5's center-vs-sample comparison (MotionBlurApply.usf:235-238) with SOFT_Z_EXTENT=1. Foreground priority prevents background bleeding.
+- [x] 1.7 Implement static skip — velocity < 0.5 pixels (CONFIG_MINIMAL_PIXEL_VELOCITY from MotionBlurCommon.ush:34) passthrough to center color. Saves cost on static regions.
 - [ ] 1.8 Add MotionBlurPassDesc to PostProcessStack — enabled/disabled, quality (Off/Low/Medium/High/VeryHigh), blurAmount, maxBlurRadius, targetFPS, shutterAngle, perObjectScale.
 - [ ] 1.9 Register motion blur passes in render graph — tile max → neighbor max → gather. After DoF, before TAA.
 - [ ] 1.10 Create motion blur demo — scene with rotating objects + orbital camera, toggle on/off, adjustable blur amount and target FPS.

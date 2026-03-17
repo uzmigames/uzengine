@@ -34,18 +34,22 @@ namespace uz {
 /// Offset   Size   Field
 /// 0        3072   pointLights[64] (64 * 48 bytes)
 /// 3072     4      pointLightCount
-/// 3076     12     _pad[3]
-/// 3088     240    _pad2[60]
-/// ─── 3328 bytes (CB boundary, 256-byte aligned) ───
+/// 3076     4      spotLightCount
+/// 3080     8      _pad[2]
+/// 3088     1024   spotLights[16] (16 * 64 bytes)
+/// 4112     240    _pad2[60]
+/// ─── 4352 bytes (CB boundary, 256-byte aligned) ───
 /// ```
 struct LightingParams {
-    // ── Scalar section (3328 bytes, copied to CB) ────────────────────────
+    // ── Scalar section (4352 bytes, copied to CB) ────────────────────────
     // Layout MUST match LightingCB exactly.
 
     PointLightData pointLights[kMaxPointLights];     ///< Point light array (3072 bytes).
     uint32_t       pointLightCount = 0;              ///< Number of active point lights.
-    uint32_t       _pad[3]         = {};             ///< Align count to 16 bytes.
-    float          _pad2[60]       = {};             ///< Pad to 3328 bytes (256-byte multiple).
+    uint32_t       spotLightCount  = 0;              ///< Number of active spot lights.
+    uint32_t       _pad[2]         = {};             ///< Align counts to 16 bytes.
+    SpotLightData  spotLights[kMaxSpotLights];       ///< Spot light array (1024 bytes).
+    float          _pad2[60]       = {};             ///< Pad to 4352 bytes (256-byte multiple).
 
     // ── Metadata ─────────────────────────────────────────────────────────
 

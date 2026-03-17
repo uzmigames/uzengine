@@ -1,8 +1,8 @@
 /// UzEngine Light Renderer — Per-Frame ECS Light Extraction
 ///
-/// Reads DirectionalLightComponent and PointLightComponent from the ECS World,
-/// builds the per-frame LightingCB (point light array), and extracts directional
-/// light parameters (direction, color, per-light shadow bias).
+/// Reads DirectionalLightComponent, PointLightComponent, and SpotLightComponent
+/// from the ECS World, builds the per-frame LightingCB (point and spot light arrays),
+/// and extracts directional light parameters (direction, color, per-light shadow bias).
 ///
 /// Factored out of `scene_renderer.cpp` to keep `RenderFrame()` as an orchestrator.
 /// Free functions — no class state.
@@ -53,8 +53,8 @@ struct LightFrameData {
 ///
 /// Iterates DirectionalLightComponent (first found) for sun direction, color,
 /// temperature tinting, and per-light shadow bias. Iterates PointLightComponent
-/// to build the LightingCB point light array (up to 64 lights). Uploads
-/// LightingCB to the CB ring.
+/// to build the point light array (up to 64 lights) and SpotLightComponent to
+/// build the spot light array (up to 16 lights). Uploads LightingCB to the CB ring.
 ///
 /// # Arguments
 /// * `world`  — The ECS World to query. May be null (uses defaults).

@@ -1,4 +1,4 @@
-/// Deferred lighting pixel shader — Cook-Torrance PBR with directional + point lights
+/// Deferred lighting pixel shader — Cook-Torrance PBR with directional + point + spot lights
 /// and cascaded shadow maps (CSM).
 ///
 /// Reads G-Buffer render targets (albedo+AO, octahedral normal+metallic+roughness)
@@ -153,10 +153,31 @@ struct PointLight {
     uint   flags;           ///< Bit 0 = useInverseSquaredFalloff.
 };
 
+/// Single spot light for the deferred lighting pass (64 bytes = four float4s).
+/// Must match C++ SpotLightData struct exactly.
+///
+/// @source UE5 DynamicLightingCommon.ush:58-66 — SpotAttenuation, SpotAttenuationMask
+/// @source UE5 SpotLightComponent.cpp:67 — SpotAngles = (CosOuterCone, InvCosConeDifference)
+struct SpotLight {
+    float3 position;              ///< World-space position.
+    float  radius;                ///< Attenuation radius.
+    float3 color;                 ///< Pre-multiplied color * intensity (radiance).
+    float  cosOuterAngle;         ///< Cosine of outer cone half-angle.
+    float3 direction;             ///< Normalised world-space cone direction.
+    float  invCosConeDifference;  ///< 1 / (cosInner - cosOuter).
+    float  falloffExponent;       ///< Custom falloff (when inverse square disabled).
+    float  specularScale;         ///< Per-light specular multiplier (0-1).
+    float  diffuseScale;          ///< Per-light diffuse multiplier (0-1).
+    uint   flags;                 ///< Bit 0 = useInverseSquaredFalloff.
+};
+
 /// Maximum number of point lights evaluated per pixel.
 static const uint MAX_POINT_LIGHTS = 64;
 
-/// Lighting CB at b2 — point light array and count.
+/// Maximum number of spot lights evaluated per pixel.
+static const uint MAX_SPOT_LIGHTS = 16;
+
+/// Lighting CB at b2 — point and spot light arrays with counts.
 ///
 /// Moved from b3 to b2 because fullscreen deferred passes do not use
 /// per-object data, and the SM6.6 root signature only has 3 root params
@@ -164,7 +185,9 @@ static const uint MAX_POINT_LIGHTS = 64;
 cbuffer LightingCB : register(b2) {
     PointLight pointLights[MAX_POINT_LIGHTS];
     uint       pointLightCount;
-    uint3      _lightPad;
+    uint       spotLightCount;
+    uint2      _lightPad;
+    SpotLight  spotLights[MAX_SPOT_LIGHTS];
 };
 
 /// Cascaded shadow map parameters — must match C++ ShadowDataCB struct exactly.
@@ -302,6 +325,38 @@ float3 AOMultiBounce(float ao, float3 baseColor) {
     float3 b = -4.7951f * baseColor + 0.6417f;
     float3 c = 2.7552f * baseColor + 0.6903f;
     return max(ao, ((ao * a + b) * ao + c) * ao);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Spot Light Attenuation
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Returns the spot cone angular attenuation factor.
+///
+/// Uses UE5's squared smooth-step falloff from full intensity inside the
+/// inner cone to zero at the outer cone edge.
+///
+/// @source UE5 DynamicLightingCommon.ush:58-65 — SpotAttenuationMask + SpotAttenuation
+/// @constants SpotAngles.x = CosOuterCone (DynamicLightingCommon.ush:56)
+///            SpotAngles.y = InvCosConeDifference (DynamicLightingCommon.ush:56)
+/// @deviations NONE
+///
+/// # Parameters
+/// - L:         normalised direction FROM surface TO light.
+/// - spotDir:   normalised world-space direction the spot cone points.
+/// - spotAngles: x = cosOuterAngle, y = invCosConeDifference.
+///
+/// # Returns
+/// [0, 1] attenuation factor: 1 inside inner cone, 0 outside outer cone.
+float SpotAttenuation(float3 L, float3 spotDir, float2 spotAngles)
+{
+    // @source UE5 DynamicLightingCommon.ush:60
+    // saturate((dot(L, -SpotDirection) - SpotAngles.x) * SpotAngles.y)
+    float ConeAngleFalloff = saturate((dot(L, -spotDir) - spotAngles.x) * spotAngles.y);
+
+    // @source UE5 DynamicLightingCommon.ush:64
+    // Square the linear ramp for a smoother visual falloff
+    return ConeAngleFalloff * ConeAngleFalloff;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -571,6 +626,58 @@ float4 main(FSInput input) : SV_Target {
                                    albedo, metallic, alpha, F0);
         } else {
             Lo += EvaluateBRDF(N, V, L_point, radiance,
+                               albedo, metallic, alpha, F0);
+        }
+    }
+
+    // ── Spot lights ──
+    // @source UE5 DeferredLightingCommon.ush:251-283 — GetLocalLightAttenuation (distance + spot cone)
+    // @source UE5 DynamicLightingCommon.ush:58-66 — SpotAttenuation
+    for (uint si = 0; si < spotLightCount; ++si) {
+        float3 lightVec  = spotLights[si].position - worldPos;
+        float  dist      = length(lightVec);
+        float  radius    = spotLights[si].radius;
+
+        // Skip lights beyond their attenuation radius
+        if (dist > radius)
+            continue;
+
+        float3 L_spot = lightVec / dist; // normalise
+
+        // Distance attenuation: same as point lights
+        // @source UE5 DeferredLightingCommon.ush:263-265 — inverse squared windowing
+        float distAttenuation;
+        bool useInvSq = (spotLights[si].flags & LIGHT_FLAG_INVERSE_SQUARED) != 0;
+        float distOverRadius = dist / radius;
+
+        if (useInvSq) {
+            float distRatio4 = distOverRadius * distOverRadius * distOverRadius * distOverRadius;
+            float windowing  = saturate(1.0f - distRatio4);
+            distAttenuation  = (windowing * windowing) / (dist * dist + 1.0f);
+        } else {
+            distAttenuation = pow(saturate(1.0f - distOverRadius), spotLights[si].falloffExponent);
+        }
+
+        // Cone attenuation: squared smooth-step falloff
+        // @source UE5 DeferredLightingCommon.ush:282 — LightMask *= SpotAttenuation(...)
+        float2 spotAngles = float2(spotLights[si].cosOuterAngle, spotLights[si].invCosConeDifference);
+        float coneAtten = SpotAttenuation(L_spot, spotLights[si].direction, spotAngles);
+
+        // Total attenuation = distance * cone
+        float attenuation = distAttenuation * coneAtten;
+
+        // Early-out if fully attenuated
+        if (attenuation <= 0.0f)
+            continue;
+
+        float3 radiance = spotLights[si].color * attenuation;
+
+        // Evaluate BRDF — old or new depending on split-screen side
+        if (useOldBRDF) {
+            Lo += EvaluateBRDFOld(N, V, L_spot, radiance,
+                                   albedo, metallic, alpha, F0);
+        } else {
+            Lo += EvaluateBRDF(N, V, L_spot, radiance,
                                albedo, metallic, alpha, F0);
         }
     }

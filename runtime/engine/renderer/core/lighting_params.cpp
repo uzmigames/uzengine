@@ -12,12 +12,14 @@ const ShaderParameterMetadata& LightingParams::GetMetadata()
         // ── Scalar members ──
         {"pointLights",     ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(LightingParams, pointLights)),     sizeof(PointLightData) * kMaxPointLights, 0},
         {"pointLightCount", ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(LightingParams, pointLightCount)), sizeof(uint32_t),                         0},
+        {"spotLightCount",  ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(LightingParams, spotLightCount)),  sizeof(uint32_t),                         0},
+        {"spotLights",      ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(LightingParams, spotLights)),      sizeof(SpotLightData) * kMaxSpotLights,   0},
     };
 
     static const ShaderParameterMetadata kMetadata = {
         kMembers,
         sizeof(kMembers) / sizeof(kMembers[0]),
-        3328,  // cbSize — matches sizeof(LightingCB), 256-byte aligned
+        4352,  // cbSize — matches sizeof(LightingCB), 256-byte aligned
         0,     // textureCount
         0,     // samplerCount
         0,     // uavCount

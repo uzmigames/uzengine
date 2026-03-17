@@ -1,3 +1,11 @@
+## 0. Spot Light Cone Attenuation (prerequisite)
+
+- [x] 0.1 Add SpotLightData struct to constant_buffers.h — 64 bytes (four float4s): position, radius, color, cosOuterAngle, direction, invCosConeDifference, falloffExponent, specularScale, diffuseScale, flags. UE5 SpotAngles packing (CosOuterCone + InvCosConeDifference). @source UE5 SpotLightComponent.cpp:51-54,67.
+- [x] 0.2 Expand LightingCB with spotLights[16] array + spotLightCount — CB grows from 3328 to 4352 bytes (still 256-byte aligned). LightingParams updated to match.
+- [x] 0.3 Extract SpotLightComponent from ECS in light_renderer.cpp — precomputes cosOuterAngle and invCosConeDifference on CPU, packs into SpotLightData. Skips SpotLightComponent entities in PointLightComponent view to avoid double-counting.
+- [x] 0.4 Add SpotAttenuation() to deferred_lighting_ps.hlsl — UE5-parity squared smooth-step cone falloff. @source UE5 DynamicLightingCommon.ush:58-65.
+- [x] 0.5 Add spot light evaluation loop in deferred_lighting_ps.hlsl — distance attenuation (same as point lights) * cone attenuation, full BRDF evaluation per spot light. Supports both old/new BRDF debug split-screen.
+
 ## 1. Implementation
 
 - [ ] 1.1 Implement shadow atlas allocation — single 4096×4096 D16_UNORM atlas. Tile allocator assigns rectangular regions per light: point=6×512² tiles (3072×1024), spot=1×1024² tile. Max ~16 spot or ~4 point lights in atlas.
