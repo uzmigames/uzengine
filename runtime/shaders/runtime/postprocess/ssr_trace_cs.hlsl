@@ -366,7 +366,7 @@ void CastScreenSpaceRay(
         // Hit test: abs(diff + tolerance) < tolerance  AND  not far plane
         // @source UE5 SSRTRayCast.ush:453
         bMultipleSampleHit = (abs(MultipleSampleDepthDiff + CompareTolerance) < CompareTolerance)
-                           && (SampleDepth != FAR_DEPTH_VALUE);
+                           & (SampleDepth != FAR_DEPTH_VALUE);
 
         // Check for any hit in this batch
         // @source UE5 SSRTRayCast.ush:462-463

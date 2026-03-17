@@ -252,8 +252,8 @@ TEST(HeightFogCB, FieldOffsets) {
     // _fogPad0[2] occupies bytes 40–47
     EXPECT_EQ(offsetof(HeightFogCB, secondFogDensity),        48u);
     EXPECT_EQ(offsetof(HeightFogCB, secondFogHeightFalloff),  52u);
-    EXPECT_EQ(offsetof(HeightFogCB, secondFogBaseHeight),     56u);
-    // _fogPad1 occupies bytes 60–63
+    EXPECT_EQ(offsetof(HeightFogCB, secondFogRawDensity),     56u);
+    EXPECT_EQ(offsetof(HeightFogCB, secondFogBaseHeight),     60u);
     EXPECT_EQ(offsetof(HeightFogCB, directionalInscatteringColor),         64u);
     EXPECT_EQ(offsetof(HeightFogCB, directionalInscatteringExponent),      80u);
     EXPECT_EQ(offsetof(HeightFogCB, directionalInscatteringStartDistance), 84u);

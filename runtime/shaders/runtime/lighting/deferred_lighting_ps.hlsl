@@ -626,7 +626,7 @@ float4 main(FSInput input) : SV_Target {
         if (ssrSrvIndex != 0xFFFFFFFF) {
 #ifdef UZ_BINDLESS
             Texture2D<float4> ssrTex = ResourceDescriptorHeap[ssrSrvIndex];
-            float4 ssrData = ssrTex.SampleLevel(linearSampler, input.texCoord, 0);
+            float4 ssrData = ssrTex.SampleLevel(linearSampler, input.texcoord, 0);
 #else
             float4 ssrData = float4(0, 0, 0, 0);
 #endif

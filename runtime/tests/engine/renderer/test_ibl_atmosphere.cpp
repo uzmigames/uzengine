@@ -536,12 +536,14 @@ TEST(AutoExposure, DefaultSettingsExposureBias) {
 
 TEST(AutoExposure, DefaultSettingsMinBrightness) {
     AutoExposure ae;
-    EXPECT_FLOAT_EQ(ae.settings.minBrightness, 0.001f);
+    /// @source UE5 Scene.cpp:196 — histogram method default
+    EXPECT_FLOAT_EQ(ae.settings.minBrightness, 0.03f);
 }
 
 TEST(AutoExposure, DefaultSettingsMaxBrightness) {
     AutoExposure ae;
-    EXPECT_FLOAT_EQ(ae.settings.maxBrightness, 1048576.0f);
+    /// @source UE5 Scene.cpp:197 — histogram method default
+    EXPECT_FLOAT_EQ(ae.settings.maxBrightness, 8.0f);
 }
 
 TEST(AutoExposure, DefaultSettingsHistLogMin) {
