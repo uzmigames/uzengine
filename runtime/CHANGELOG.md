@@ -2,6 +2,39 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
+## [0.2.33] — 2026-03-17
+
+### Sky Atmosphere UE5 Parity + Post-Process Stack + Contact Shadows
+
+**Sky Atmosphere** (multi-scatter, ozone, SH fix):
+- Multi-scattering LUT compute shader (32×32, Hillaire 2020 geometric series, 64 directions × 20 steps). @source UE5 RenderSkyAtmosphereLookUpTablesCS.usf:280-380
+- Ozone absorption layer with tent distribution (tipAltitude=25km, width=15km). @source UE5 SkyAtmosphereComponent.cpp:108
+- **CRITICAL FIX**: Render graph dependency — SkyCubemapCapture now reads TransmittanceLUT. SH L0 went from {0.0001} to {0.85}. Sky light now colors meshes correctly.
+- Pipeline wiring: PipelineLibrary::GetMultiScatterLut(), bindless+SM5 paths.
+
+**Height Fog** (sky injection, second layer):
+- UE5 sky→fog color injection: inscatterColor += skyAtmContribColorScale × heightFogContribution × skyLightColor. @source UE5 HeightFogCommon.ush:174-180
+- Second fog layer (additive CalculateLineIntegralShared). @source UE5 HeightFogCommon.ush:294-296
+- HeightFogContribution AP anti-double-fog in deferred lighting. @source UE5 SceneRendering.cpp:1440
+- Fog color from sky SH L0 (auto-computed, not hardcoded).
+
+**Post-Process Effects** (tonemap_ps.hlsl):
+- Film grain: UE5 GrainFromUV procedural noise + triangular dithering at 1/255. @source PostProcessTonemap.usf:114-117,571,595
+- Vignette: cosine⁴ natural vignetting, intensity=0.4 (UE5 default). @source PostProcessCommon.ush:142-150
+- Chromatic aberration: wavelength-based per-channel UV shift (R=611.3nm, G=549.1nm, B=464.3nm, scale=0.007). @source PostProcessTonemap.usf:320-342
+
+**Contact Shadows** (contact_shadows.hlsli):
+- Screen-space ray march (8 steps) along light direction in depth buffer. @source UE5 ScreenSpaceShadowRayCast.ush:9-64
+- Interleaved gradient noise for temporal jitter. @source RandomInterleavedGradientNoise.ush:11-18
+- Default off (contactShadowLength=0.0). Enable with 0.02 for 2% screen ray.
+
+**Demo** (pbr_test):
+- sunIlluminance set to UE5 exact {10,10,10}. groundAlbedo = 0.667.
+- Fog colors set to UE5 exact defaults (black — sky injection provides color).
+- Vignette active by default (0.4).
+
+---
+
 ## [0.2.32] — 2026-03-17
 
 ### GTAO Ambient Occlusion + Bloom Pyramid + PBR Fixes (phase0-0.9.0)
