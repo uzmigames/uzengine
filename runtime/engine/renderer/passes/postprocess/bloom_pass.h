@@ -40,7 +40,7 @@ class ShaderManager;
 /// @source UE5 PostProcessSettings.h — bloom default values
 /// @source UE5 Scene.cpp:426-437 — default per-stage tint weights
 struct BloomSettings {
-    float threshold     = 1.0f;   ///< Luminance threshold for bright pixel extraction. UE5 default: 1.0.
+    float threshold     = -1.0f;  ///< Luminance threshold. -1.0 = no threshold (UE5 default). @source UE5 Scene.cpp:423
     float intensity     = 0.675f; ///< Bloom contribution to final image. UE5 default: 0.675.
     float radius        = 1.0f;   ///< Upsample filter radius scale. UE5 default: 1.0.
     float sizeScale     = 4.0f;   ///< Global bloom size scale (affects mip blur radius). UE5 default: 4.0.
