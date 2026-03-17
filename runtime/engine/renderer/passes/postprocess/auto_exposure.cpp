@@ -451,9 +451,6 @@ float AutoExposure::Execute(IRHICommandList* cmdList, uint32_t hdrSrvIndex,
         // Bind exposure UAV at root param 4 (u0 descriptor table)
         cmdList->SetDescriptorTable(4, m_exposureUavIndex);
 
-        UZ_LOG(Renderer, Debug, "AutoExposure: average dispatch — (1, 1, 1), exposureUAV={}",
-               m_exposureUavIndex);
-
         // Single thread group — this shader runs as a single thread
         cmdList->Dispatch(1, 1, 1);
     }
