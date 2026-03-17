@@ -32,6 +32,7 @@
 #include "rhi_config.h"
 
 #include <gtest/gtest.h>
+#include <memory>
 
 #include <cstring>
 
@@ -47,7 +48,7 @@ using namespace uz;
 /// MetalDevice* via the IRHIDevice vtable. All CPU-only tests use plain TEST().
 class MetalGpuProfilerDeviceTest : public ::testing::Test {
 protected:
-    IRHIDevice* m_rhiDevice = nullptr;
+    std::unique_ptr<IRHIDevice> m_rhiDevice;
 
     void SetUp() override {
         RHIDeviceDesc desc{};
@@ -62,8 +63,7 @@ protected:
     void TearDown() override {
         if (m_rhiDevice) {
             m_rhiDevice->WaitIdle();
-            DestroyRHIDevice(m_rhiDevice);
-            m_rhiDevice = nullptr;
+            m_rhiDevice.reset();
         }
     }
 };

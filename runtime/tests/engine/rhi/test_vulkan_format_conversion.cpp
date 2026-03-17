@@ -31,6 +31,7 @@
 #include "rhi_types.h"
 
 #include <gtest/gtest.h>
+#include <memory>
 
 using namespace uz;
 
@@ -211,7 +212,7 @@ TEST(VulkanFormatConversion, OutOfRangeCast_MapsTo_VK_FORMAT_UNDEFINED_ViaDefaul
 /// creation fails (no GPU in CI or no Vulkan driver installed).
 class VulkanFormatGpuTest : public ::testing::Test {
 protected:
-    IRHIDevice* m_device = nullptr;
+    std::unique_ptr<IRHIDevice> m_device;
 
     void SetUp() override {
         RHIDeviceDesc desc{};
@@ -226,8 +227,7 @@ protected:
     void TearDown() override {
         if (m_device) {
             m_device->WaitIdle();
-            DestroyRHIDevice(m_device);
-            m_device = nullptr;
+            m_device.reset();
         }
     }
 

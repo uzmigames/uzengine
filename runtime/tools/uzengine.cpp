@@ -117,14 +117,13 @@ static void LogResolvedConfig(const RHIConfig& rhiCfg, bool headless, int frames
 static int RunHeadless(const RHIDeviceDesc& deviceDesc) {
     UZ_LOG(Engine, Info, "Headless mode — creating device only");
 
-    auto* device = CreateRHIDevice(deviceDesc);
+    auto device = CreateRHIDevice(deviceDesc);
     if (!device) {
         UZ_LOG(Engine, Error, "Failed to create RHI device in headless mode");
         return kExitRenderError;
     }
 
     UZ_LOG(Engine, Info, "Headless device created successfully");
-    DestroyRHIDevice(device);
     return kExitSuccess;
 }
 
@@ -210,12 +209,12 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
     window.Show();
 
     // ── Device ──────────────────────────────────────────────────────────
-    auto* rhiDevice = CreateRHIDevice(deviceDesc);
+    auto rhiDevice = CreateRHIDevice(deviceDesc);
     if (!rhiDevice) {
         UZ_LOG(Engine, Error, "Failed to create RHI device");
         return kExitRenderError;
     }
-    auto* device = static_cast<DX12Device*>(rhiDevice);
+    auto* device = static_cast<DX12Device*>(rhiDevice.get());
 
     // ── Swapchain ───────────────────────────────────────────────────────
     RHISwapChainDesc scDesc{};
@@ -230,7 +229,6 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
     auto* swapChain = static_cast<DX12SwapChain*>(device->CreateSwapChain(scDesc));
     if (!swapChain) {
         UZ_LOG(Engine, Error, "Failed to create swapchain");
-        DestroyRHIDevice(device);
         return kExitRenderError;
     }
 
@@ -239,7 +237,6 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
     if (!cmdList) {
         UZ_LOG(Engine, Error, "Failed to create command list");
         device->DestroySwapChain(swapChain);
-        DestroyRHIDevice(device);
         return kExitRenderError;
     }
 
@@ -250,7 +247,6 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
     if (!CreateFrameFences(device, frameFences, kFramesInFlight)) {
         device->DestroyCommandList(cmdList);
         device->DestroySwapChain(swapChain);
-        DestroyRHIDevice(device);
         return kExitRenderError;
     }
 
@@ -396,7 +392,6 @@ static int RunWindowed(const RHIDeviceDesc& deviceDesc, int width, int height, i
     }
     device->DestroyCommandList(cmdList);
     device->DestroySwapChain(swapChain);
-    DestroyRHIDevice(device);
 
     return kExitSuccess;
 }

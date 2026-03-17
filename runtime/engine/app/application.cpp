@@ -78,7 +78,7 @@ int Application::Run(int argc, char** argv) {
 
     // ── 4. SceneRenderer ─────────────────────────────────────────────────
     m_renderer = std::make_unique<SceneRenderer>();
-    if (!m_renderer->Init(m_device, m_window.get(), m_width, m_height)) {
+    if (!m_renderer->Init(m_device.get(), m_window.get(), m_width, m_height)) {
         UZ_LOG(App, Error, "Application: SceneRenderer initialization failed");
         m_renderer.reset();
         m_world.reset();
@@ -614,8 +614,7 @@ void Application::ShutdownPlatform() {
             m_device->DestroySwapChain(m_swapChain);
             m_swapChain = nullptr;
         }
-        DestroyRHIDevice(m_device);
-        m_device = nullptr;
+        m_device.reset();
     }
     m_window.reset();
 }

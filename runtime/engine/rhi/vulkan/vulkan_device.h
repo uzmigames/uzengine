@@ -17,7 +17,7 @@
 /// Callers must serialize access from multiple threads.
 ///
 /// # Lifetime
-/// Created via `CreateRHIDevice()`, destroyed via `DestroyRHIDevice()`.
+/// Created via `CreateRHIDevice()` which returns `std::unique_ptr<IRHIDevice>`.
 /// The destructor flushes the GPU and releases all resources.
 
 #include "../rhi.h"

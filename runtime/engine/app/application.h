@@ -210,7 +210,7 @@ private:
 
     // ── Platform objects (raw — matched lifetime to Run() scope) ─────────
     std::unique_ptr<PlatformWindow> m_window;
-    IRHIDevice*      m_device    = nullptr;
+    std::unique_ptr<IRHIDevice> m_device;
     IRHISwapChain*   m_swapChain = nullptr;
     IRHICommandList* m_cmdList   = nullptr;
     IRHIFence*       m_frameFences[kFramesInFlight] = {};

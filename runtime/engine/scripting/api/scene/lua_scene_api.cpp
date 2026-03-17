@@ -8,6 +8,7 @@
 #include "vector3.h"
 #include "quaternion.h"
 #include "scene_loader.h"
+#include "scene_renderer.h"
 #include "vfs.h"
 
 extern "C" {
@@ -17,6 +18,7 @@ extern "C" {
 }
 
 #include <cstdint>
+#include <cstdio>
 #include <cmath>
 #include <cstring>
 
@@ -41,6 +43,17 @@ static constexpr const char* kWorldRegistryKey = "uz_world";
 
 /// Key used to store the IVFS* in the Lua registry.
 static constexpr const char* kVfsRegistryKey = "uz_vfs";
+
+/// Key used to store the SceneRenderer* in the Lua registry (shared with lua_renderer_api.cpp).
+static constexpr const char* kRendererRegistryKey = "uz_scene_renderer";
+
+/// Retrieves the SceneRenderer* from the Lua registry. Returns null if not set.
+[[nodiscard]] static SceneRenderer* GetSceneRenderer(lua_State* L) {
+    lua_getfield(L, LUA_REGISTRYINDEX, kRendererRegistryKey);
+    void* p = lua_touserdata(L, -1);
+    lua_pop(L, 1);
+    return static_cast<SceneRenderer*>(p);
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Entity <-> lightuserdata encoding helpers
@@ -654,12 +667,31 @@ static int SceneSetMaterial(lua_State* L) {
     const uint32_t metallicId  = readTexId("metallic");
     const uint32_t aoId        = readTexId("ao");
 
-    // Apply only the fields that were provided (non-UINT32_MAX).
-    if (albedoId    != UINT32_MAX) { meshComp->materialId = albedoId; }
-    if (normalId    != UINT32_MAX) { (void)normalId;    /* future: normal tex slot */ }
-    if (roughnessId != UINT32_MAX) { (void)roughnessId; /* future: roughness slot  */ }
-    if (metallicId  != UINT32_MAX) { (void)metallicId;  /* future: metallic slot   */ }
-    if (aoId        != UINT32_MAX) { (void)aoId;        /* future: ao slot         */ }
+    // Resolve texture IDs back to VFS paths and set them on the component.
+    // The renderer's SyncWorldToDrawList uses these paths to bind textures.
+    SceneRenderer* renderer = GetSceneRenderer(L);
+
+    auto resolveAndSet = [&](uint32_t texId, std::string& pathField) {
+        if (texId == UINT32_MAX) return;
+        if (!renderer) {
+            UZ_LOG(Scripting, Warning,
+                "uz.scene.set_material: SceneRenderer not available, cannot resolve texture ID {}", texId);
+            return;
+        }
+        std::string path = renderer->GetTexturePath(texId);
+        if (!path.empty()) {
+            pathField = std::move(path);
+        }
+    };
+
+    if (albedoId != UINT32_MAX) {
+        meshComp->materialId = albedoId;
+        resolveAndSet(albedoId, meshComp->albedoPath);
+    }
+    resolveAndSet(normalId,    meshComp->normalPath);
+    resolveAndSet(roughnessId, meshComp->roughnessPath);
+    resolveAndSet(metallicId,  meshComp->metallicPath);
+    resolveAndSet(aoId,        meshComp->aoPath);
 
     meshComp->materialLoaded = true;
     return 0;
@@ -859,19 +891,66 @@ static int SceneLoadScene(lua_State* L) {
 
 /// uz.scene.save_scene(path) -> bool
 ///
-/// Placeholder — scene serialization is not yet implemented.
-/// Always returns false and logs a warning.
+/// Serializes the current scene to a `.uzscene` JSON file at the given VFS path.
 ///
 /// # Arguments
-/// * `path` (string) — VFS-relative destination path (ignored).
+/// * `path` (string) — VFS-relative destination path (e.g. "scenes/my_scene.uzscene").
 ///
 /// # Returns
-/// Always `false`.
+/// `true` on success, `false` on failure (error is logged).
 static int SceneSaveScene(lua_State* L) {
     const char* path = luaL_checkstring(L, 1);
-    UZ_LOG(Scripting, Warning,
-        "uz.scene.save_scene: not yet implemented — path='{}'", path);
-    lua_pushboolean(L, 0);
+
+    lua_getfield(L, LUA_REGISTRYINDEX, kWorldRegistryKey);
+    auto* world = static_cast<World*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    if (!world) {
+        UZ_LOG(Scripting, Warning,
+            "uz.scene.save_scene: World not set in Lua registry");
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    lua_getfield(L, LUA_REGISTRYINDEX, kVfsRegistryKey);
+    auto* vfs = static_cast<IVFS*>(lua_touserdata(L, -1));
+    lua_pop(L, 1);
+    if (!vfs) {
+        UZ_LOG(Scripting, Warning,
+            "uz.scene.save_scene: VFS not set in Lua registry");
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    const std::vector<uint8_t> data = uz::SaveScene(*world);
+    if (data.empty()) {
+        UZ_LOG(Scripting, Warning,
+            "uz.scene.save_scene: no entities to save — path='{}'", path);
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    const std::string resolvedPath = vfs->ResolvePath(path);
+    FILE* file = std::fopen(resolvedPath.c_str(), "wb");
+    if (!file) {
+        UZ_LOG(Scripting, Warning,
+            "uz.scene.save_scene: failed to open '{}' for writing", resolvedPath);
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+    const size_t written = std::fwrite(data.data(), 1, data.size(), file);
+    std::fclose(file);
+
+    if (written != data.size()) {
+        UZ_LOG(Scripting, Warning,
+            "uz.scene.save_scene: partial write — expected {} bytes, wrote {}",
+            data.size(), written);
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+
+    UZ_LOG(Scripting, Info,
+        "uz.scene.save_scene: saved {} bytes to '{}'", data.size(), resolvedPath);
+    lua_pushboolean(L, 1);
     return 1;
 }
 

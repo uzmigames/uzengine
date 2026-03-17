@@ -83,6 +83,8 @@ public:
     void CopyBuffer(RHIBufferHandle src, uint64_t srcOffset,
                     RHIBufferHandle dst, uint64_t dstOffset, uint64_t size) override;
     void CopyTexture(RHITextureHandle src, RHITextureHandle dst) override;
+    void CopyTextureRegion(RHITextureHandle src, uint32_t srcMip, uint32_t srcSlice,
+                           RHITextureHandle dst, uint32_t dstMip, uint32_t dstSlice) override;
     void CopyBufferToTexture(RHIBufferHandle srcBuffer, uint64_t srcOffset,
                              uint32_t srcRowPitch,
                              RHITextureHandle dstTexture,

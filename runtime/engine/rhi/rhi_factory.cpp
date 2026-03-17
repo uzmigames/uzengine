@@ -1,12 +1,13 @@
 /// Unified RHI Device Factory
 ///
-/// Dispatches `CreateRHIDevice()` / `DestroyRHIDevice()` to the correct
-/// backend implementation based on `RHIDeviceDesc::backend`.
-/// This replaces the per-backend factory functions that were previously
-/// defined in each backend's device.cpp file.
+/// Dispatches `CreateRHIDevice()` to the correct backend implementation
+/// based on `RHIDeviceDesc::backend`. Returns `std::unique_ptr<IRHIDevice>`
+/// for RAII-safe ownership transfer.
 
 #include "rhi_backend.h"
 #include "log.h"
+
+#include <memory>
 
 // Include backend device headers (Windows-only backends)
 #ifdef _WIN32
@@ -32,14 +33,13 @@ namespace {
 RHIBackend GetActiveRHIBackend() { return g_activeBackend; }
 ShaderModel GetActiveShaderModel() { return g_activeShaderModel; }
 
-IRHIDevice* CreateRHIDevice(const RHIDeviceDesc& desc) {
+std::unique_ptr<IRHIDevice> CreateRHIDevice(const RHIDeviceDesc& desc) {
     switch (desc.backend) {
 #ifdef _WIN32
         case RHIBackend::DX12: {
-            auto* device = new DX12Device();
+            auto device = std::make_unique<DX12Device>();
             if (!device->Init(desc)) {
                 UZ_LOG(RHI, Error, "CreateRHIDevice: DX12Device::Init failed");
-                delete device;
                 return nullptr;
             }
             g_activeBackend = desc.backend;
@@ -48,10 +48,9 @@ IRHIDevice* CreateRHIDevice(const RHIDeviceDesc& desc) {
         }
 
         case RHIBackend::DX11: {
-            auto* device = new DX11Device();
+            auto device = std::make_unique<DX11Device>();
             if (!device->Init(desc)) {
                 UZ_LOG(RHI, Error, "CreateRHIDevice: DX11Device::Init failed");
-                delete device;
                 return nullptr;
             }
             g_activeBackend = desc.backend;
@@ -61,10 +60,9 @@ IRHIDevice* CreateRHIDevice(const RHIDeviceDesc& desc) {
 #endif
 
         case RHIBackend::Vulkan: {
-            auto* device = new VulkanDevice();
+            auto device = std::make_unique<VulkanDevice>();
             if (!device->Init(desc)) {
                 UZ_LOG(RHI, Error, "CreateRHIDevice: VulkanDevice::Init failed");
-                delete device;
                 return nullptr;
             }
             g_activeBackend = desc.backend;
@@ -74,10 +72,9 @@ IRHIDevice* CreateRHIDevice(const RHIDeviceDesc& desc) {
 
 #if defined(__APPLE__)
         case RHIBackend::Metal: {
-            auto* device = new MetalDevice();
+            auto device = std::make_unique<MetalDevice>();
             if (!device->Init(desc)) {
                 UZ_LOG(RHI, Error, "CreateRHIDevice: MetalDevice::Init failed");
-                delete device;
                 return nullptr;
             }
             g_activeBackend = desc.backend;
@@ -94,10 +91,6 @@ IRHIDevice* CreateRHIDevice(const RHIDeviceDesc& desc) {
                    static_cast<int>(desc.backend));
             return nullptr;
     }
-}
-
-void DestroyRHIDevice(IRHIDevice* device) {
-    delete device;
 }
 
 } // namespace uz

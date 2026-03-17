@@ -113,4 +113,17 @@ class World;
                                 const std::vector<uint8_t>& sceneJson,
                                 const std::string& sourceName);
 
+/// Serializes the World's entities to `.uzscene` JSON format.
+///
+/// Iterates all entities in the World, serializes their components
+/// (transform, mesh, material, light, camera, script) to JSON, and
+/// returns the result as a UTF-8 byte vector.
+///
+/// # Parameters
+/// - `world`: The world to serialize.
+///
+/// # Returns
+/// UTF-8 JSON bytes. Empty if the world has no entities.
+[[nodiscard]] std::vector<uint8_t> SaveScene(const World& world);
+
 } // namespace uz

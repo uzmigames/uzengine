@@ -49,7 +49,7 @@ bool RunClearScreen(const ClearScreenConfig& config) {
     deviceDesc.backend = backend;
     deviceDesc.enableValidation = true;
 
-    IRHIDevice* device = CreateRHIDevice(deviceDesc);
+    auto device = CreateRHIDevice(deviceDesc);
     if (!device) {
         UZ_LOG(RHI, Error, "Failed to create RHI device (backend={})",
                static_cast<int>(backend));
@@ -69,7 +69,6 @@ bool RunClearScreen(const ClearScreenConfig& config) {
     IRHISwapChain* swapChain = device->CreateSwapChain(scDesc);
     if (!swapChain) {
         UZ_LOG(RHI, Error, "Failed to create swapchain");
-        DestroyRHIDevice(device);
         return false;
     }
 
@@ -78,7 +77,6 @@ bool RunClearScreen(const ClearScreenConfig& config) {
     if (!cmdList) {
         UZ_LOG(RHI, Error, "Failed to create command list");
         device->DestroySwapChain(swapChain);
-        DestroyRHIDevice(device);
         return false;
     }
 
@@ -93,7 +91,6 @@ bool RunClearScreen(const ClearScreenConfig& config) {
             for (uint32_t j = 0; j < i; ++j) device->DestroyFence(frameFences[j]);
             device->DestroyCommandList(cmdList);
             device->DestroySwapChain(swapChain);
-            DestroyRHIDevice(device);
             return false;
         }
     }
@@ -238,7 +235,6 @@ bool RunClearScreen(const ClearScreenConfig& config) {
     }
     device->DestroyCommandList(cmdList);
     device->DestroySwapChain(swapChain);
-    DestroyRHIDevice(device);
 
     return true;
 }

@@ -302,6 +302,15 @@ public:
     /// Stable texture ID on success. `UINT32_MAX` if the path is empty.
     [[nodiscard]] uint32_t QueueTextureLoad(const std::string& path);
 
+    /// Returns the VFS path for a texture loaded via `QueueTextureLoad`.
+    ///
+    /// Used by the Lua API to resolve texture IDs back to paths for
+    /// setting component texture path fields.
+    ///
+    /// # Returns
+    /// The texture path, or empty string if the ID is invalid.
+    [[nodiscard]] std::string GetTexturePath(uint32_t textureId) const;
+
 private:
     IRHIDevice* m_device = nullptr;
 
@@ -401,10 +410,11 @@ private:
     bool m_hasSkyAtmosphere = false;  ///< True if a SkyAtmosphereComponent was found this frame.
     bool m_hasFog = false;            ///< True if a HeightFogComponent (enabled) was found this frame.
 
-    // ── GPU Instancing ────────────────────────────────────────────────────
-    RHIBufferHandle m_instanceBuffer;        ///< Persistent instance buffer (resized on demand).
+    // ── GPU Instancing (triple-buffered) ─────────────────────────────────
+    static constexpr uint32_t kInstanceBufferCount = 3; ///< One per frame-in-flight.
+    RHIBufferHandle m_instanceBuffers[kInstanceBufferCount]; ///< Per-frame instance buffers.
     uint32_t m_instanceBufferCapacity = 0;   ///< Current capacity in number of InstanceData elements.
-    uint32_t m_instanceBufferSrvIndex = UINT32_MAX; ///< Cached SRV index for the instance buffer.
+    uint32_t m_instanceBufferSrvIndices[kInstanceBufferCount] = {UINT32_MAX, UINT32_MAX, UINT32_MAX};
 
     // Shadow constants moved to shadow_atlas.h (kShadowResolution, kShadowAtlasSize)
     static constexpr uint32_t kCBRingFrames = 3;

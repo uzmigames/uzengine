@@ -24,6 +24,7 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <memory>
 
 namespace {
 
@@ -49,7 +50,7 @@ constexpr double kMaxFrameTimeMs = 100.0;
 /// All tests are skipped if no GPU is available.
 class DX11RenderLoopTest : public ::testing::Test {
 protected:
-    static uz::IRHIDevice* s_device;
+    static std::unique_ptr<uz::IRHIDevice> s_device;
 
     static void SetUpTestSuite() {
         uz::RHIDeviceDesc desc{};
@@ -61,8 +62,7 @@ protected:
     static void TearDownTestSuite() {
         if (s_device) {
             s_device->WaitIdle();
-            uz::DestroyRHIDevice(s_device);
-            s_device = nullptr;
+            s_device.reset();
         }
     }
 
@@ -72,11 +72,11 @@ protected:
         if (!s_device) {
             GTEST_SKIP() << "DX11 device creation failed (no GPU or driver support)";
         }
-        m_device = s_device;
+        m_device = s_device.get();
     }
 };
 
-uz::IRHIDevice* DX11RenderLoopTest::s_device = nullptr;
+std::unique_ptr<uz::IRHIDevice> DX11RenderLoopTest::s_device;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Tests

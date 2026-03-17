@@ -14,7 +14,7 @@
 /// the current implementation. Callers must serialize access from multiple threads.
 ///
 /// # Lifetime
-/// Created via `CreateRHIDevice()`, destroyed via `DestroyRHIDevice()`.
+/// Created via `CreateRHIDevice()` which returns `std::unique_ptr<IRHIDevice>`.
 /// The destructor calls `WaitIdle()` and reports live objects in debug builds.
 
 #include "../rhi.h"
@@ -272,6 +272,9 @@ public:
 
     /// Returns `RHIBackend::DX12`. See `IRHIDevice::GetBackend`.
     RHIBackend GetBackend() const override { return RHIBackend::DX12; }
+
+    /// Queries DXGI for tearing/VRR support. See `IRHIDevice::SupportsVariableRefreshRate`.
+    bool SupportsVariableRefreshRate() const override;
 
     /// Queries and logs DRED diagnostic data after device removal.
     ///

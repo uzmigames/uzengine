@@ -40,6 +40,7 @@
 
 #include <cstring>
 #include <cstdint>
+#include <memory>
 
 namespace {
 
@@ -168,7 +169,7 @@ static const uint8_t kMinimalPsDXBC[] = {
 /// to avoid cross-test state leakage.
 class DX11DeviceTest : public ::testing::Test {
 protected:
-    static uz::IRHIDevice* s_device;
+    static std::unique_ptr<uz::IRHIDevice> s_device;
 
     static void SetUpTestSuite() {
         uz::RHIDeviceDesc desc{};
@@ -180,8 +181,7 @@ protected:
     static void TearDownTestSuite() {
         if (s_device) {
             s_device->WaitIdle();
-            uz::DestroyRHIDevice(s_device);
-            s_device = nullptr;
+            s_device.reset();
         }
     }
 
@@ -192,7 +192,7 @@ protected:
         if (!s_device) {
             GTEST_SKIP() << "DX11 device creation failed (no GPU or driver support)";
         }
-        m_device = s_device;
+        m_device = s_device.get();
     }
 
     /// Creates a minimal vertex shader from the pre-compiled DXBC blob.
@@ -220,7 +220,7 @@ protected:
     }
 };
 
-uz::IRHIDevice* DX11DeviceTest::s_device = nullptr;
+std::unique_ptr<uz::IRHIDevice> DX11DeviceTest::s_device;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Device Lifecycle

@@ -231,11 +231,27 @@ float3 VisualizeMode(
         return frac(abs(positionWS.xyz) * 0.1f);
 
     case DEBUG_MODE_LIGHTING:
+    {
+        /// Direct lighting only (no albedo): Lambertian N dot L using the
+        /// directional light direction and color from PerFrameCB. Shows the
+        /// pure lighting contribution without albedo modulation.
+        float3 worldN = OctDecode(normalMetalRough.rg);
+        float3 L = normalize(-lightDir.xyz);
+        float NdotL = saturate(dot(worldN, L));
+        float3 lighting = NdotL * lightColor.rgb * lightColor.a + ambientColor.rgb;
+        return lighting;
+    }
+
     case DEBUG_MODE_SHADOWS:
+        /// Shadow factor is not available as a separate buffer in the debug pass.
+        /// Output a diagnostic pattern: dark red indicates "shadow data unavailable".
+        /// Use --shadow-debug 1 for shadow visualization via the buffer debug grid.
+        return float3(0.3f, 0.05f, 0.05f);
+
     case DEBUG_MODE_WIREFRAME:
-        /// Placeholder mid-grey for modes that require buffers not available
-        /// in the G-Buffer debug pass (lighting result, shadow factor, wireframe).
-        return float3(0.5f, 0.5f, 0.5f);
+        /// Wireframe mode requires a separate PSO with wireframe rasterizer state.
+        /// The shader cannot produce wireframe — output diagnostic cyan.
+        return float3(0.05f, 0.3f, 0.3f);
 
     case DEBUG_MODE_UNLIT:
         /// Unlit mode -- same as Albedo (base colour without any lighting).

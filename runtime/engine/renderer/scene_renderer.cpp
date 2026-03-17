@@ -402,9 +402,11 @@ void SceneRenderer::Shutdown() {
     if (m_autoExposure) m_autoExposure->Shutdown();
 
     // ── Instance buffer cleanup ─────────────────────────────────────
-    if (m_instanceBuffer.IsValid()) {
-        m_device->DestroyBuffer(m_instanceBuffer);
-        m_instanceBuffer = RHIBufferHandle{};
+    for (uint32_t i = 0; i < kInstanceBufferCount; ++i) {
+        if (m_instanceBuffers[i].IsValid()) {
+            m_device->DestroyBuffer(m_instanceBuffers[i]);
+            m_instanceBuffers[i] = RHIBufferHandle{};
+        }
     }
 
     if (m_statsOverlay)  m_statsOverlay->Shutdown();
@@ -714,12 +716,20 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     // is future work. Fall back to per-draw-command path for multi-mesh scenes.
     const bool useInstancing = bindless && instanceCount > 0 && m_meshes.size() <= 1;
 
+    // Triple-buffered instance data: CPU writes to frame N's buffer while GPU
+    // reads from frame N-2. No WaitIdle needed — fence sync in the app layer
+    // guarantees frame N-2 is complete before we reach this point in frame N.
+    const uint32_t ibSlot = frameIndex % kInstanceBufferCount;
+
     if (useInstancing && instanceCount > m_instanceBufferCapacity) {
-        // Need a bigger buffer — wait for GPU idle before destroying the old one
-        if (m_instanceBuffer.IsValid()) {
-            m_device->WaitIdle();
-            m_device->DestroyBuffer(m_instanceBuffer);
-            m_instanceBuffer = RHIBufferHandle{};
+        // Need bigger buffers — wait for GPU idle before destroying all slots
+        m_device->WaitIdle();
+        for (uint32_t i = 0; i < kInstanceBufferCount; ++i) {
+            if (m_instanceBuffers[i].IsValid()) {
+                m_device->DestroyBuffer(m_instanceBuffers[i]);
+                m_instanceBuffers[i] = RHIBufferHandle{};
+                m_instanceBufferSrvIndices[i] = UINT32_MAX;
+            }
         }
 
         // Round up to next power of two for stable allocation
@@ -737,30 +747,32 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
         ibDesc.stride    = sizeof(InstanceData);
         ibDesc.usage     = RHIBufferUsage::StructuredBuffer;
         ibDesc.memory    = RHIMemoryType::Upload;
-        ibDesc.debugName = "InstanceBuffer";
 
-        m_instanceBuffer = m_device->CreateBuffer(ibDesc);
-        if (m_instanceBuffer.IsValid()) {
-            m_instanceBufferCapacity = newCapacity;
-            m_instanceBufferSrvIndex = m_device->GetBufferSRVIndex(m_instanceBuffer);
-        } else {
-            m_instanceBufferCapacity = 0;
-            m_instanceBufferSrvIndex = UINT32_MAX;
+        bool allCreated = true;
+        for (uint32_t i = 0; i < kInstanceBufferCount; ++i) {
+            ibDesc.debugName = (i == 0) ? "InstanceBuffer[0]"
+                             : (i == 1) ? "InstanceBuffer[1]"
+                                        : "InstanceBuffer[2]";
+            m_instanceBuffers[i] = m_device->CreateBuffer(ibDesc);
+            if (m_instanceBuffers[i].IsValid()) {
+                m_instanceBufferSrvIndices[i] = m_device->GetBufferSRVIndex(m_instanceBuffers[i]);
+            } else {
+                allCreated = false;
+            }
         }
+        m_instanceBufferCapacity = allCreated ? newCapacity : 0;
     }
 
-    // Upload instance data — must wait for GPU to finish reading from previous frame.
-    // TODO(perf): Replace with per-frame ring offset or triple-buffered instance buffers.
+    // Upload instance data to the current frame's buffer (no GPU sync needed)
     uint32_t instanceBufferSrvIndex = UINT32_MAX;
-    if (useInstancing && m_instanceBuffer.IsValid()) {
-        m_device->WaitIdle();
-        void* mapped = m_device->MapBuffer(m_instanceBuffer);
+    if (useInstancing && m_instanceBuffers[ibSlot].IsValid()) {
+        void* mapped = m_device->MapBuffer(m_instanceBuffers[ibSlot]);
         if (mapped) {
             std::memcpy(mapped, instanceDataVec.data(),
                         instanceCount * sizeof(InstanceData));
-            m_device->UnmapBuffer(m_instanceBuffer);
+            m_device->UnmapBuffer(m_instanceBuffers[ibSlot]);
         }
-        instanceBufferSrvIndex = m_instanceBufferSrvIndex;
+        instanceBufferSrvIndex = m_instanceBufferSrvIndices[ibSlot];
     }
 
     // ── Record frame via render graph ───────────────────────────────────
@@ -1448,6 +1460,13 @@ uint32_t SceneRenderer::QueueTextureLoad(const std::string& path) {
     m_pendingTexturePaths.push_back(path);
     UZ_LOG(Renderer, Debug, "SceneRenderer: queued texture load '{}' (slot={})", path, slotIndex);
     return slotIndex;
+}
+
+std::string SceneRenderer::GetTexturePath(uint32_t textureId) const {
+    for (const auto& [path, id] : m_textureMap) {
+        if (id == textureId) return path;
+    }
+    return {};
 }
 
 void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {

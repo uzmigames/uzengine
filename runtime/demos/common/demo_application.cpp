@@ -118,8 +118,8 @@ int DemoApplication::Run() {
     // by OnInit() (UploadMesh/TextureLoader leave it recording).
     // After init, flush all uploads.
     {
-        UploadContext upload(m_device);
-        if (m_statsOverlay && !m_statsOverlay->Init(m_device, m_cmdList, upload,
+        UploadContext upload(m_device.get());
+        if (m_statsOverlay && !m_statsOverlay->Init(m_device.get(), m_cmdList, upload,
                 m_shaderMgr->GetPipeline(), RHIFormat::RGBA8Unorm,
                 m_width, m_height, m_device->IsBindless())) {
             UZ_LOG(App, Error, "Failed to initialize stats overlay");
@@ -384,23 +384,23 @@ void DemoApplication::InitInfrastructure() {
 
     // ── Shader Manager ──────────────────────────────────────────────────
     m_shaderMgr = std::make_unique<ShaderManager>();
-    if (!m_shaderMgr->Init(m_device)) {
+    if (!m_shaderMgr->Init(m_device.get())) {
         UZ_LOG(App, Error, "Failed to init shader manager");
     }
 
     // ── Pipeline Library ────────────────────────────────────────────────
     m_pipelines = std::make_unique<PipelineLibrary>();
-    if (!m_pipelines->Init(m_device, m_shaderMgr.get())) {
+    if (!m_pipelines->Init(m_device.get(), m_shaderMgr.get())) {
         UZ_LOG(App, Error, "Failed to init pipeline library");
     }
 
     // ── CB Ring Allocator (3 frames, 2MB) ──────────────────────────────
     m_cbRing = std::make_unique<CBRingAllocator>();
-    m_cbRing->Init(m_device, 3, 2 * 1024 * 1024);
+    m_cbRing->Init(m_device.get(), 3, 2 * 1024 * 1024);
 
     // ── Editor Grid ─────────────────────────────────────────────────────
     m_editorGrid = std::make_unique<EditorGrid>();
-    if (!m_editorGrid->Init(m_device, m_shaderMgr->GetPipeline(),
+    if (!m_editorGrid->Init(m_device.get(), m_shaderMgr->GetPipeline(),
                             RHIFormat::RGBA8Unorm, RHIFormat::D32Float)) {
         UZ_LOG(App, Error, "Failed to initialize editor grid");
     }
@@ -416,13 +416,13 @@ void DemoApplication::InitInfrastructure() {
     m_screenshotPending = !m_config.screenshotPath.empty();
     if (m_screenshotPending || !m_config.allModesOutputPath.empty()) {
         m_screenshotCapture = std::make_unique<ScreenshotCapture>();
-        if (!m_screenshotCapture->Init(m_device, m_width, m_height)) {
+        if (!m_screenshotCapture->Init(m_device.get(), m_width, m_height)) {
             UZ_LOG(App, Error, "Failed to initialize screenshot capture");
         }
     }
 
     // ── Render Graph Resource Pool ──────────────────────────────────────
-    m_rgPool = std::make_unique<rg::RgResourcePool>(m_device);
+    m_rgPool = std::make_unique<rg::RgResourcePool>(m_device.get());
 
     // ── Camera ──────────────────────────────────────────────────────────
     m_camera = std::make_unique<Camera>();
@@ -591,10 +591,7 @@ void DemoApplication::ShutdownPlatform() {
     }
 
     // Device
-    if (m_device) {
-        DestroyRHIDevice(m_device);
-        m_device = nullptr;
-    }
+    m_device.reset();
 
     // Window
     if (m_window) {

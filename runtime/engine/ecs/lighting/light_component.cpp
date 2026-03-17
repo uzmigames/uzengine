@@ -33,18 +33,17 @@ void LightComponent::SyncLightData(RenderWorld& renderWorld) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 Vec3 DirectionalLightComponent::GetDirection() const {
-    // Rotate the engine's forward axis (X) by the component's LOCAL rotation.
-    // For a root component (no parent) this equals the world rotation.
-    // For a hierarchical component the world orientation is embedded in the
-    // world matrix, but we derive direction from local rotation to keep this
-    // operation cheap and hierarchy-agnostic at the component level.
-    // A proper world-space direction would require extracting rotation from
-    // GetWorldMatrix(), which is deferred to Phase 2.
-    const Vec3 dir = GetRotation() * Vec3::Forward();
+    // Extract the world-space forward direction from the world matrix.
+    // The world matrix encodes the full parent chain rotation, so this
+    // correctly handles hierarchical transforms (light parented to a rotating node).
+    // The engine's forward axis is +X (column 0 of the rotation part).
+    const Mat4& world = GetWorldMatrix();
 
-    // Normalize to protect against floating-point drift in accumulated
-    // rotations. The result should already be unit length for well-formed
-    // quaternions, but we normalize defensively.
+    // Row 0 of the XMFLOAT4X4 (row-major storage) corresponds to the
+    // transformed X axis (forward direction) in DirectXMath convention.
+    Vec3 dir{world.m._11, world.m._12, world.m._13};
+
+    // Normalize to remove any scale component from the world matrix.
     const XMVECTOR xm  = XMLoadFloat3(reinterpret_cast<const XMFLOAT3*>(&dir));
     const XMVECTOR norm = XMVector3Normalize(xm);
     Vec3 result;

@@ -409,6 +409,25 @@ public:
     /// * `dst` — Destination texture handle.
     virtual void CopyTexture(RHITextureHandle src, RHITextureHandle dst) = 0;
 
+    /// Copies a single subresource from one texture to a specific mip+slice of another.
+    ///
+    /// Source texture must be in CopySrc state, destination in CopyDst state.
+    /// The source and destination subresource dimensions must match (same width/height).
+    ///
+    /// # Arguments
+    /// * `src` — Source texture (full mip 0 of its only mip level).
+    /// * `srcMip` — Mip level to copy from in the source texture.
+    /// * `srcSlice` — Array slice to copy from in the source texture.
+    /// * `dst` — Destination texture (mipmapped).
+    /// * `dstMip` — Target mip level in the destination texture.
+    /// * `dstSlice` — Target array slice in the destination texture.
+    virtual void CopyTextureRegion(RHITextureHandle src, uint32_t srcMip, uint32_t srcSlice,
+                                    RHITextureHandle dst, uint32_t dstMip, uint32_t dstSlice) {
+        // Default: no-op. Backends override with actual implementation.
+        (void)src; (void)srcMip; (void)srcSlice;
+        (void)dst; (void)dstMip; (void)dstSlice;
+    }
+
     /// Copies pixel data from a staging buffer to a texture subresource.
     ///
     /// Used for uploading CPU image data to GPU textures. The source buffer must
@@ -554,21 +573,21 @@ public:
 /// also thread-safe.
 ///
 /// # Lifetime
-/// Created via `CreateRHIDevice()` (see `rhi_backend.h`), destroyed via
-/// `DestroyRHIDevice()`. The device must outlive all resources created from it.
+/// Created via `CreateRHIDevice()` (see `rhi_backend.h`), which returns a
+/// `std::unique_ptr<IRHIDevice>`. The device must outlive all resources
+/// created from it.
 ///
 /// # Examples
 /// ```cpp
 /// RHIDeviceDesc desc{};
 /// desc.backend = RHIBackend::DX12;
 /// desc.enableValidation = true;
-/// auto* device = CreateRHIDevice(desc);
+/// auto device = CreateRHIDevice(desc);
 ///
 /// auto buffer = device->CreateBuffer({.sizeBytes = 1024, .usage = RHIBufferUsage::VertexBuffer});
 /// // ... use buffer ...
 /// device->DestroyBuffer(buffer);
-///
-/// DestroyRHIDevice(device);
+/// // device is destroyed automatically when unique_ptr goes out of scope
 /// ```
 class IRHIDevice {
 public:
@@ -892,6 +911,12 @@ public:
 
     /// Defined out-of-line in rhi_config.h (needs full ShaderModel enum).
     bool IsBindless() const;
+
+    /// Returns true if the display supports variable refresh rate (VRR/FreeSync/G-Sync).
+    ///
+    /// DX12: queries `IDXGIFactory5::CheckFeatureSupport(DXGI_FEATURE_PRESENT_ALLOW_TEARING)`.
+    /// Other backends: returns false (no VRR query available).
+    virtual bool SupportsVariableRefreshRate() const { return false; }
 
     // ── Copy queue (async uploads) ──────────────────────────────────────
 

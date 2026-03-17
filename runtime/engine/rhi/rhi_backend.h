@@ -9,6 +9,7 @@
 #include "rhi.h"
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 
 namespace uz {
@@ -41,9 +42,10 @@ struct RHIDeviceDesc {
 /// Creates a backend-specific RHI device.
 ///
 /// # Returns
-/// A valid IRHIDevice pointer on success, nullptr on failure (unsupported hardware,
-/// missing drivers, etc.). The caller owns the returned pointer and must call
-/// DestroyRHIDevice() when done.
+/// A valid `std::unique_ptr<IRHIDevice>` on success, nullptr on failure
+/// (unsupported hardware, missing drivers, etc.). Ownership is transferred
+/// to the caller via `unique_ptr` — the device is destroyed when the
+/// `unique_ptr` goes out of scope or is reset.
 ///
 /// # Backend Selection
 /// The active backend is determined at compile time via UZ_BACKEND_* defines.
@@ -52,13 +54,7 @@ struct RHIDeviceDesc {
 /// # Logging
 /// Logs adapter info, feature level, and memory budget on success.
 /// Logs detailed error on failure (driver version, missing features, etc.).
-IRHIDevice* CreateRHIDevice(const RHIDeviceDesc& desc);
-
-/// Destroys an RHI device and all resources it owns.
-///
-/// Calls WaitIdle() internally before teardown to ensure no in-flight GPU work.
-/// After this call, all handles created from this device are invalid.
-void DestroyRHIDevice(IRHIDevice* device);
+std::unique_ptr<IRHIDevice> CreateRHIDevice(const RHIDeviceDesc& desc);
 
 /// Returns the currently active RHI backend.
 ///

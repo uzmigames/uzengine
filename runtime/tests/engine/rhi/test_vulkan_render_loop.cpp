@@ -16,6 +16,7 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <memory>
 
 namespace {
 
@@ -39,7 +40,7 @@ constexpr double kMaxFrameTimeMs = 100.0;
 /// Skips all tests if no GPU is available or no Vulkan driver is installed.
 class VulkanRenderLoopTest : public ::testing::Test {
 protected:
-    uz::IRHIDevice* m_device = nullptr;
+    std::unique_ptr<uz::IRHIDevice> m_device;
 
     void SetUp() override {
         uz::RHIDeviceDesc desc{};
@@ -54,8 +55,7 @@ protected:
     void TearDown() override {
         if (m_device) {
             m_device->WaitIdle();
-            uz::DestroyRHIDevice(m_device);
-            m_device = nullptr;
+            m_device.reset();
         }
     }
 };

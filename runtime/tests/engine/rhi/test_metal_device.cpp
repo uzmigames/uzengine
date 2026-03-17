@@ -31,6 +31,7 @@
 #include <gtest/gtest.h>
 
 #include <cstring>
+#include <memory>
 
 namespace {
 
@@ -44,7 +45,7 @@ namespace {
 /// GPU is available (CI headless, non-macOS), the test is skipped rather than failed.
 class MetalDeviceTest : public ::testing::Test {
 protected:
-    uz::IRHIDevice* m_device = nullptr;
+    std::unique_ptr<uz::IRHIDevice> m_device;
 
     void SetUp() override {
         uz::RHIDeviceDesc desc{};
@@ -59,8 +60,7 @@ protected:
     void TearDown() override {
         if (m_device) {
             m_device->WaitIdle();
-            uz::DestroyRHIDevice(m_device);
-            m_device = nullptr;
+            m_device.reset();
         }
     }
 };

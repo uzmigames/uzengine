@@ -21,6 +21,7 @@
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <memory>
 
 namespace {
 
@@ -47,7 +48,7 @@ constexpr double kMaxFrameTimeMs = 100.0;
 /// TearDown calls WaitIdle() before device destruction to ensure no in-flight work.
 class MetalRenderLoopTest : public ::testing::Test {
 protected:
-    uz::IRHIDevice* m_device = nullptr;
+    std::unique_ptr<uz::IRHIDevice> m_device;
 
     void SetUp() override {
         uz::RHIDeviceDesc desc{};
@@ -62,8 +63,7 @@ protected:
     void TearDown() override {
         if (m_device) {
             m_device->WaitIdle();
-            uz::DestroyRHIDevice(m_device);
-            m_device = nullptr;
+            m_device.reset();
         }
     }
 };

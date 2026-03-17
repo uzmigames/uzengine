@@ -140,7 +140,7 @@ bool RunTriangleDemo(const TriangleDemoConfig& config) {
         deviceDesc.forceShaderModel = ShaderModel::SM5_0;
     }
 
-    IRHIDevice* device = CreateRHIDevice(deviceDesc);
+    auto device = CreateRHIDevice(deviceDesc);
     if (!device) {
         UZ_LOG(Renderer, Error, "Failed to create RHI device (backend={})",
                static_cast<int>(backend));
@@ -160,7 +160,6 @@ bool RunTriangleDemo(const TriangleDemoConfig& config) {
     IRHISwapChain* swapChain = device->CreateSwapChain(scDesc);
     if (!swapChain) {
         UZ_LOG(Renderer, Error, "Failed to create swapchain");
-        DestroyRHIDevice(device);
         return false;
     }
 
@@ -169,7 +168,6 @@ bool RunTriangleDemo(const TriangleDemoConfig& config) {
     if (!cmdList) {
         UZ_LOG(Renderer, Error, "Failed to create command list");
         device->DestroySwapChain(swapChain);
-        DestroyRHIDevice(device);
         return false;
     }
 
@@ -184,7 +182,6 @@ bool RunTriangleDemo(const TriangleDemoConfig& config) {
             for (uint32_t j = 0; j < i; ++j) device->DestroyFence(frameFences[j]);
             device->DestroyCommandList(cmdList);
             device->DestroySwapChain(swapChain);
-            DestroyRHIDevice(device);
             return false;
         }
     }
@@ -212,7 +209,6 @@ bool RunTriangleDemo(const TriangleDemoConfig& config) {
         for (uint32_t i = 0; i < kFramesInFlight; ++i) device->DestroyFence(frameFences[i]);
         device->DestroyCommandList(cmdList);
         device->DestroySwapChain(swapChain);
-        DestroyRHIDevice(device);
         return false;
     }
 
@@ -232,7 +228,6 @@ bool RunTriangleDemo(const TriangleDemoConfig& config) {
             for (uint32_t i = 0; i < kFramesInFlight; ++i) device->DestroyFence(frameFences[i]);
             device->DestroyCommandList(cmdList);
             device->DestroySwapChain(swapChain);
-            DestroyRHIDevice(device);
             return false;
         }
         shaderPipeline.SetCompilerFXC(&compilerFXC);
@@ -248,7 +243,6 @@ bool RunTriangleDemo(const TriangleDemoConfig& config) {
         for (uint32_t i = 0; i < kFramesInFlight; ++i) device->DestroyFence(frameFences[i]);
         device->DestroyCommandList(cmdList);
         device->DestroySwapChain(swapChain);
-        DestroyRHIDevice(device);
         return false;
     }
 
@@ -259,7 +253,6 @@ bool RunTriangleDemo(const TriangleDemoConfig& config) {
         for (uint32_t i = 0; i < kFramesInFlight; ++i) device->DestroyFence(frameFences[i]);
         device->DestroyCommandList(cmdList);
         device->DestroySwapChain(swapChain);
-        DestroyRHIDevice(device);
         return false;
     }
 
@@ -314,7 +307,6 @@ bool RunTriangleDemo(const TriangleDemoConfig& config) {
         for (uint32_t i = 0; i < kFramesInFlight; ++i) device->DestroyFence(frameFences[i]);
         device->DestroyCommandList(cmdList);
         device->DestroySwapChain(swapChain);
-        DestroyRHIDevice(device);
         return false;
     }
 
@@ -355,7 +347,6 @@ bool RunTriangleDemo(const TriangleDemoConfig& config) {
         for (uint32_t i = 0; i < kFramesInFlight; ++i) device->DestroyFence(frameFences[i]);
         device->DestroyCommandList(cmdList);
         device->DestroySwapChain(swapChain);
-        DestroyRHIDevice(device);
         return false;
     }
     UZ_LOG(Renderer, Info, "Triangle pipeline created (bindless={})", bindless);
@@ -385,7 +376,6 @@ bool RunTriangleDemo(const TriangleDemoConfig& config) {
         for (uint32_t i = 0; i < kFramesInFlight; ++i) device->DestroyFence(frameFences[i]);
         device->DestroyCommandList(cmdList);
         device->DestroySwapChain(swapChain);
-        DestroyRHIDevice(device);
         return false;
     }
 
@@ -402,7 +392,6 @@ bool RunTriangleDemo(const TriangleDemoConfig& config) {
         for (uint32_t i = 0; i < kFramesInFlight; ++i) device->DestroyFence(frameFences[i]);
         device->DestroyCommandList(cmdList);
         device->DestroySwapChain(swapChain);
-        DestroyRHIDevice(device);
         return false;
     }
     std::memcpy(mapped, vertices, sizeof(vertices));
@@ -424,7 +413,6 @@ bool RunTriangleDemo(const TriangleDemoConfig& config) {
             for (uint32_t i = 0; i < kFramesInFlight; ++i) device->DestroyFence(frameFences[i]);
             device->DestroyCommandList(cmdList);
             device->DestroySwapChain(swapChain);
-            DestroyRHIDevice(device);
             return false;
         }
         UZ_LOG(Renderer, Info, "Vertex buffer SRV index: {}", vbSrvIndex);
@@ -594,7 +582,6 @@ bool RunTriangleDemo(const TriangleDemoConfig& config) {
     for (uint32_t i = 0; i < kFramesInFlight; ++i) device->DestroyFence(frameFences[i]);
     device->DestroyCommandList(cmdList);
     device->DestroySwapChain(swapChain);
-    DestroyRHIDevice(device);
 
     return true;
 }

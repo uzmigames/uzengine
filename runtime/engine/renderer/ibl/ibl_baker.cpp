@@ -513,28 +513,35 @@ IBLBaker::BakeResult IBLBaker::BakeEnvironment(uint32_t envCubemapSrvIndex, RHIT
     }
 
     // ── Copy per-mip textures into the final mipmapped cubemap ──────────
-    // Note: CopyTexture copies all subresources and requires matching dimensions.
-    // For per-mip copy, we'd need CopyBufferToTexture with mip targeting,
-    // or the backend's CopyTexture with mip-level specification.
-    //
-    // Since the current RHI CopyTexture copies ALL subresources and requires
-    // matching dimensions, and per-mip textures have different dimensions,
-    // we cannot use CopyTexture directly.
-    //
-    // Alternative: Use CopyBufferToTexture with per-subresource specification.
-    // But for the initial implementation, we skip the copy and use the
-    // per-mip textures directly as separate SRVs. The shader will need to
-    // sample from the correct mip texture based on roughness.
-    //
-    // TODO: When the RHI adds per-subresource CopyTexture, consolidate into
-    // a single mipmapped cubemap. For now, mip 0 is the primary prefiltered
-    // cubemap (mirror reflection), which is what most materials need.
-    //
-    // Actually, for the simplest working implementation: use mip 0 texture
-    // as the prefiltered cubemap SRV. The shader will sample it without
-    // mip-level LOD selection. This is a quality compromise but gets IBL
-    // working end-to-end. Full mip chain support requires RHI CopyTexture
-    // per-subresource support.
+    // Transition final cubemap to CopyDst for receiving per-mip data.
+    {
+        RHIBarrierDesc dstBarrier;
+        dstBarrier.texture = prefilteredTex;
+        dstBarrier.buffer = RHIBufferHandle::Invalid();
+        dstBarrier.stateBefore = RHIResourceState::Common;
+        dstBarrier.stateAfter = RHIResourceState::CopyDst;
+        cmdList->ResourceBarrier(&dstBarrier, 1);
+    }
+
+    // Copy each per-mip texture (all 6 faces) into the corresponding mip level
+    // of the final mipmapped cubemap using per-subresource CopyTextureRegion.
+    for (uint32_t mip = 0; mip < kPrefilteredMipLevels; ++mip) {
+        for (uint32_t face = 0; face < 6; ++face) {
+            cmdList->CopyTextureRegion(
+                prefilteredMipTextures[mip], 0, face,  // src: mip 0, face N
+                prefilteredTex, mip, face);             // dst: mip N, face N
+        }
+    }
+
+    // Transition final cubemap to ShaderResource for sampling
+    {
+        RHIBarrierDesc srvBarrier;
+        srvBarrier.texture = prefilteredTex;
+        srvBarrier.buffer = RHIBufferHandle::Invalid();
+        srvBarrier.stateBefore = RHIResourceState::CopyDst;
+        srvBarrier.stateAfter = RHIResourceState::ShaderResource;
+        cmdList->ResourceBarrier(&srvBarrier, 1);
+    }
 
     cmdList->End();
     cmdList->Execute();
@@ -547,8 +554,7 @@ IBLBaker::BakeResult IBLBaker::BakeEnvironment(uint32_t envCubemapSrvIndex, RHIT
 
     // ── Get SRV indices ─────────────────────────────────────────────────
     result.irradianceSrvIndex = m_device->GetTextureSRVIndex(irradianceTex);
-    // Use mip 0 texture as the prefiltered SRV for now
-    result.prefilteredSrvIndex = m_device->GetTextureSRVIndex(prefilteredMipTextures[0]);
+    result.prefilteredSrvIndex = m_device->GetTextureSRVIndex(prefilteredTex);
 
     if (result.irradianceSrvIndex == UINT32_MAX) {
         UZ_LOG(Renderer, Error, "IBLBaker: irradiance texture has no SRV");
@@ -557,13 +563,10 @@ IBLBaker::BakeResult IBLBaker::BakeEnvironment(uint32_t envCubemapSrvIndex, RHIT
         UZ_LOG(Renderer, Error, "IBLBaker: prefiltered texture has no SRV");
     }
 
-    // Cleanup temporary mip textures (keep mip 0 as it provides the SRV)
-    for (uint32_t i = 1; i < kPrefilteredMipLevels; ++i) {
+    // Cleanup all temporary per-mip textures (data is now in prefilteredTex)
+    for (uint32_t i = 0; i < kPrefilteredMipLevels; ++i) {
         m_device->DestroyTexture(prefilteredMipTextures[i]);
     }
-
-    // Destroy final prefiltered tex (not used — per-mip approach)
-    m_device->DestroyTexture(prefilteredTex);
 
     // Destroy previous environment textures if re-baking (sky changed)
     if (m_irradianceTexture.IsValid()) {

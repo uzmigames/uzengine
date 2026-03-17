@@ -391,4 +391,185 @@ size_t LoadScene(World& world,
     return totalCount;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// SaveScene — public entry point
+// ─────────────────────────────────────────────────────────────────────────────
+
+namespace {
+
+/// Radians-to-degrees conversion factor.
+static constexpr float kRadToDeg = 180.f / 3.14159265358979323846f;
+
+/// Writes a Vec3 as a JSON array [x, y, z].
+nlohmann::json WriteVec3(const Vec3& v) {
+    return nlohmann::json::array({v.x, v.y, v.z});
+}
+
+/// Converts a quaternion to Euler angles (degrees) for serialization.
+/// Returns [pitch, yaw, roll] matching the load convention.
+nlohmann::json WriteEulerDeg(const Quat& q) {
+    Vec3 euler = q.get_euler();
+    return nlohmann::json::array({
+        euler.x * kRadToDeg,
+        euler.y * kRadToDeg,
+        euler.z * kRadToDeg
+    });
+}
+
+/// Serializes a single entity and its components to JSON.
+nlohmann::json SerializeEntity(const entt::registry& registry, entt::entity enttEntity) {
+    nlohmann::json entityJson;
+
+    // Name
+    if (const auto* name = registry.try_get<CName>(enttEntity)) {
+        entityJson["name"] = name->name;
+    }
+
+    nlohmann::json components;
+
+    // Transform (SceneComponent or any subclass that provides position/rotation/scale)
+    if (const auto* sc = registry.try_get<SceneComponent>(enttEntity)) {
+        nlohmann::json transform;
+        transform["position"] = WriteVec3(sc->GetPosition());
+        transform["rotation"] = WriteEulerDeg(sc->GetRotation());
+        transform["scale"]    = WriteVec3(sc->GetScale());
+        components["transform"] = std::move(transform);
+    }
+
+    // Camera (CameraComponent inherits from SceneComponent — transform is already above)
+    if (const auto* cam = registry.try_get<CameraComponent>(enttEntity)) {
+        nlohmann::json camera;
+        camera["fov"]    = cam->fov;
+        camera["near"]   = cam->nearPlane;
+        camera["far"]    = cam->farPlane;
+        camera["active"] = cam->isActive;
+        components["camera"] = std::move(camera);
+
+        // CameraComponent IS a SceneComponent, so write transform from it
+        nlohmann::json transform;
+        transform["position"] = WriteVec3(cam->GetPosition());
+        transform["rotation"] = WriteEulerDeg(cam->GetRotation());
+        transform["scale"]    = WriteVec3(cam->GetScale());
+        components["transform"] = std::move(transform);
+    }
+
+    // Mesh
+    if (const auto* mesh = registry.try_get<StaticMeshComponent>(enttEntity)) {
+        if (!mesh->meshPath.empty()) {
+            nlohmann::json meshJson;
+            meshJson["asset"] = mesh->meshPath;
+            components["mesh"] = std::move(meshJson);
+        }
+
+        // Material (stored on StaticMeshComponent)
+        bool hasMaterial = !mesh->albedoPath.empty() || !mesh->normalPath.empty()
+                        || !mesh->roughnessPath.empty() || !mesh->metallicPath.empty()
+                        || !mesh->aoPath.empty();
+        if (hasMaterial) {
+            nlohmann::json material;
+            if (!mesh->albedoPath.empty())    material["albedo"]    = mesh->albedoPath;
+            if (!mesh->normalPath.empty())    material["normal"]    = mesh->normalPath;
+            if (!mesh->roughnessPath.empty()) material["roughness"] = mesh->roughnessPath;
+            if (!mesh->metallicPath.empty())  material["metallic"]  = mesh->metallicPath;
+            if (!mesh->aoPath.empty())        material["ao"]        = mesh->aoPath;
+            components["material"] = std::move(material);
+        }
+
+        // StaticMeshComponent also IS a SceneComponent, write its transform
+        nlohmann::json transform;
+        transform["position"] = WriteVec3(mesh->GetPosition());
+        transform["rotation"] = WriteEulerDeg(mesh->GetRotation());
+        transform["scale"]    = WriteVec3(mesh->GetScale());
+        components["transform"] = std::move(transform);
+    }
+
+    // Directional Light
+    if (const auto* light = registry.try_get<DirectionalLightComponent>(enttEntity)) {
+        nlohmann::json lightJson;
+        lightJson["type"]      = "directional";
+        lightJson["color"]     = WriteVec3(light->color);
+        lightJson["intensity"] = light->intensity;
+        components["light"] = std::move(lightJson);
+
+        nlohmann::json transform;
+        transform["position"] = WriteVec3(light->GetPosition());
+        transform["rotation"] = WriteEulerDeg(light->GetRotation());
+        transform["scale"]    = WriteVec3(light->GetScale());
+        components["transform"] = std::move(transform);
+    }
+
+    // Point Light
+    if (const auto* light = registry.try_get<PointLightComponent>(enttEntity);
+        light && !registry.all_of<SpotLightComponent>(enttEntity)) {
+        nlohmann::json lightJson;
+        lightJson["type"]      = "point";
+        lightJson["color"]     = WriteVec3(light->color);
+        lightJson["intensity"] = light->intensity;
+        lightJson["range"]     = light->range;
+        components["light"] = std::move(lightJson);
+
+        nlohmann::json transform;
+        transform["position"] = WriteVec3(light->GetPosition());
+        transform["rotation"] = WriteEulerDeg(light->GetRotation());
+        transform["scale"]    = WriteVec3(light->GetScale());
+        components["transform"] = std::move(transform);
+    }
+
+    // Spot Light (inherits from PointLightComponent)
+    if (const auto* light = registry.try_get<SpotLightComponent>(enttEntity)) {
+        nlohmann::json lightJson;
+        lightJson["type"]       = "spot";
+        lightJson["color"]      = WriteVec3(light->color);
+        lightJson["intensity"]  = light->intensity;
+        lightJson["range"]      = light->range;
+        lightJson["innerAngle"] = light->innerAngleDeg;
+        lightJson["outerAngle"] = light->outerAngleDeg;
+        components["light"] = std::move(lightJson);
+
+        nlohmann::json transform;
+        transform["position"] = WriteVec3(light->GetPosition());
+        transform["rotation"] = WriteEulerDeg(light->GetRotation());
+        transform["scale"]    = WriteVec3(light->GetScale());
+        components["transform"] = std::move(transform);
+    }
+
+    // Script
+    if (const auto* script = registry.try_get<CScript>(enttEntity)) {
+        if (!script->scriptPath.empty()) {
+            nlohmann::json scriptJson;
+            scriptJson["path"] = script->scriptPath;
+            components["script"] = std::move(scriptJson);
+        }
+    }
+
+    if (!components.empty()) {
+        entityJson["components"] = std::move(components);
+    }
+
+    entityJson["children"] = nlohmann::json::array();
+
+    return entityJson;
+}
+
+} // namespace
+
+std::vector<uint8_t> SaveScene(const World& world) {
+    const auto& registry = world.GetRegistry();
+
+    nlohmann::json root;
+    nlohmann::json entities = nlohmann::json::array();
+
+    const auto& entityStorage = *registry.storage<entt::entity>();
+    for (auto it = entityStorage.begin(); it != entityStorage.end(); ++it) {
+        const auto enttEntity = *it;
+        if (!registry.valid(enttEntity)) continue;
+        entities.push_back(SerializeEntity(registry, enttEntity));
+    }
+
+    root["entities"] = std::move(entities);
+
+    const std::string jsonStr = root.dump(2);
+    return {jsonStr.begin(), jsonStr.end()};
+}
+
 } // namespace uz

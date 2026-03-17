@@ -1,5 +1,6 @@
 #include "frame_pacer.h"
 
+#include "rhi.h"
 #include "log.h"
 #include "profiler.h"
 
@@ -35,9 +36,8 @@ bool FramePacer::Init(IRHIDevice* device, const FramePacerConfig& config)
     const uint32_t size = std::max(config.historySize, 1u);
     m_frameTimeHistory.assign(size, 0.0f);
 
-    // VRR detection placeholder — actual DXGI query (IDXGIFactory5::CheckFeatureSupport)
-    // should be added when the RHI exposes adapter capability queries.
-    m_vrrSupported = false;
+    // Query the RHI device for variable refresh rate (tearing) support.
+    m_vrrSupported = m_device && m_device->SupportsVariableRefreshRate();
 
     m_initialized = true;
     UZ_LOG(Renderer, Info, "FramePacer initialized: targetMs={:.2f}, vrrMode={}, swapInterval={}, historySize={}",

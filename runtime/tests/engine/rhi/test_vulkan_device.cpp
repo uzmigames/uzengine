@@ -24,6 +24,7 @@
 #include <gtest/gtest.h>
 
 #include <cstring>
+#include <memory>
 
 namespace {
 
@@ -42,7 +43,7 @@ namespace {
 /// allocations remain — which happens when a device outlives per-test resources.
 class VulkanDeviceTest : public ::testing::Test {
 protected:
-    uz::IRHIDevice* m_device = nullptr;
+    std::unique_ptr<uz::IRHIDevice> m_device;
 
     void SetUp() override {
         uz::RHIDeviceDesc desc{};
@@ -57,8 +58,7 @@ protected:
     void TearDown() override {
         if (m_device) {
             m_device->WaitIdle();
-            uz::DestroyRHIDevice(m_device);
-            m_device = nullptr;
+            m_device.reset();
         }
     }
 };

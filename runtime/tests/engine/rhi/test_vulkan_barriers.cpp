@@ -31,6 +31,7 @@
 #include "rhi_types.h"
 
 #include <gtest/gtest.h>
+#include <memory>
 
 using namespace uz;
 
@@ -484,7 +485,7 @@ TEST(VulkanBarriers_ToVkPipelineStage, IndirectArgument_MapsToDrawIndirect) {
 /// tests. Skips automatically when device creation fails (no GPU / CI).
 class VulkanBarrierGpuTest : public ::testing::Test {
 protected:
-    IRHIDevice*      m_device  = nullptr;
+    std::unique_ptr<IRHIDevice> m_device;
     IRHICommandList* m_cmdList = nullptr;
 
     void SetUp() override {
@@ -499,8 +500,7 @@ protected:
         m_cmdList = m_device->CreateCommandList(RHIQueueType::Graphics);
         if (!m_cmdList) {
             m_device->WaitIdle();
-            DestroyRHIDevice(m_device);
-            m_device = nullptr;
+            m_device.reset();
             GTEST_SKIP() << "Failed to create Vulkan command list";
         }
     }
@@ -512,8 +512,7 @@ protected:
                 m_device->DestroyCommandList(m_cmdList);
                 m_cmdList = nullptr;
             }
-            DestroyRHIDevice(m_device);
-            m_device = nullptr;
+            m_device.reset();
         }
     }
 };

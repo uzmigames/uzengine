@@ -638,6 +638,42 @@ void DX12CommandList::CopyTexture(RHITextureHandle src, RHITextureHandle dst) {
     m_cmdList->CopyResource(dstTex->resource, srcTex->resource);
 }
 
+void DX12CommandList::CopyTextureRegion(RHITextureHandle src, uint32_t srcMip, uint32_t srcSlice,
+                                         RHITextureHandle dst, uint32_t dstMip, uint32_t dstSlice) {
+    if (!src.IsValid() || !dst.IsValid()) {
+        UZ_LOG(RHI, Warning, "CopyTextureRegion — invalid source or destination handle");
+        return;
+    }
+
+    auto* srcTex = m_device->GetTexturePool().Get(src.index, src.generation);
+    auto* dstTex = m_device->GetTexturePool().Get(dst.index, dst.generation);
+    if (!srcTex || !srcTex->resource || !dstTex || !dstTex->resource) {
+        UZ_LOG(RHI, Warning, "CopyTextureRegion — could not resolve texture handles");
+        return;
+    }
+
+    D3D12_RESOURCE_DESC srcDesc = {};
+    srcTex->resource->GetDesc(&srcDesc);
+    D3D12_RESOURCE_DESC dstDesc = {};
+    dstTex->resource->GetDesc(&dstDesc);
+    const uint32_t srcSubresource = D3D12CalcSubresource(srcMip, srcSlice, 0,
+        srcDesc.MipLevels, static_cast<uint32_t>(srcDesc.DepthOrArraySize));
+    const uint32_t dstSubresource = D3D12CalcSubresource(dstMip, dstSlice, 0,
+        dstDesc.MipLevels, static_cast<uint32_t>(dstDesc.DepthOrArraySize));
+
+    D3D12_TEXTURE_COPY_LOCATION srcLoc = {};
+    srcLoc.pResource = srcTex->resource;
+    srcLoc.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+    srcLoc.SubresourceIndex = srcSubresource;
+
+    D3D12_TEXTURE_COPY_LOCATION dstLoc = {};
+    dstLoc.pResource = dstTex->resource;
+    dstLoc.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+    dstLoc.SubresourceIndex = dstSubresource;
+
+    m_cmdList->CopyTextureRegion(&dstLoc, 0, 0, 0, &srcLoc, nullptr);
+}
+
 void DX12CommandList::CopyBufferToTexture(RHIBufferHandle srcBuffer, uint64_t srcOffset,
                                            uint32_t srcRowPitch,
                                            RHITextureHandle dstTexture,

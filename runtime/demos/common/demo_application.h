@@ -264,7 +264,7 @@ protected:
     // ── Core RHI Accessors ──────────────────────────────────────────────
 
     /// Returns the RHI device. Valid after `Run()` enters the main loop.
-    [[nodiscard]] IRHIDevice* GetDevice() const { return m_device; }
+    [[nodiscard]] IRHIDevice* GetDevice() const { return m_device.get(); }
 
     /// Returns the primary graphics command list.
     [[nodiscard]] IRHICommandList* GetCommandList() const { return m_cmdList; }
@@ -382,7 +382,7 @@ private:
 
     // ── Core RHI objects (owned, destroyed in reverse creation order) ───
     PlatformWindow* m_window = nullptr;
-    IRHIDevice* m_device = nullptr;
+    std::unique_ptr<IRHIDevice> m_device;
     IRHISwapChain* m_swapChain = nullptr;
     IRHICommandList* m_cmdList = nullptr;
     IRHIFence* m_frameFences[kFramesInFlight] = {};

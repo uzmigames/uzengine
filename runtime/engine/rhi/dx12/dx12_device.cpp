@@ -1034,6 +1034,14 @@ RHIMemoryBudget DX12Device::GetMemoryBudget() const {
     return budget;
 }
 
+bool DX12Device::SupportsVariableRefreshRate() const {
+    if (!m_factory) return false;
+    BOOL allowTearing = FALSE;
+    HRESULT hr = m_factory->CheckFeatureSupport(
+        DXGI_FEATURE_PRESENT_ALLOW_TEARING, &allowTearing, sizeof(allowTearing));
+    return SUCCEEDED(hr) && allowTearing;
+}
+
 ID3D12DescriptorHeap* DX12Device::GetDescriptorHeap(D3D12_DESCRIPTOR_HEAP_TYPE type) const {
     switch (type) {
         case D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV: return m_cbvSrvUavHeap.Get();
