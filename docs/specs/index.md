@@ -1,4 +1,4 @@
-# UzEngine 0.2 — Specs Index
+# UzEngine 0.8 — Specs Index
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
@@ -17,16 +17,17 @@
 |------|-----------|--------|
 | [1.0-bootstrap.md](1.0-bootstrap.md) | Bootstrap & Project Setup | Complete |
 | [1.1-math-containers.md](1.1-math-containers.md) | Math & Containers | Complete |
-| [1.2-rhi.md](1.2-rhi.md) | RHI (DX12 SM6.6) | Complete |
-| [1.3-renderer.md](1.3-renderer.md) | Renderer (Triangle → Deferred → PostFX → Advanced) | In Progress |
-| [1.4-scene-system.md](1.4-scene-system.md) | Scene System (ECS, hierarchy, serialization) | Planned |
-| [1.5-gameplay.md](1.5-gameplay.md) | Gameplay Systems (Physics → Animation → Audio → Nav → Script → Terrain → VFX → UI) | Planned |
+| [1.2-rhi.md](1.2-rhi.md) | RHI (4 backends: DX12, DX11, Vulkan, Metal) | Complete |
+| [1.3-renderer.md](1.3-renderer.md) | Renderer (Deferred, IBL, shadows, atmosphere, post-process) | Mostly Complete |
+| [1.4-scene-system.md](1.4-scene-system.md) | Scene System (ECS core, components, scene loader) | Implemented |
+| [1.5-gameplay.md](1.5-gameplay.md) | Gameplay Systems (Physics → Animation → Audio → Nav → Script → Terrain → VFX → UI) | Partial (Lua scripting complete, physics/audio/animation pending) |
 
 ## Phase 1.5: Build Pipeline
 
 | Spec | Milestone | Status |
 |------|-----------|--------|
-| [1.5-build-pipeline.md](1.5-build-pipeline.md) | Shader Compiler, Asset Processor, Packager | Partial (Shader Compiler complete) |
+| [1.5-build-pipeline.md](1.5-build-pipeline.md) | Shader Compiler, Asset Processor, Packager | Partial |
+| [1.5.0-shader-pipeline.md](1.5.0-shader-pipeline.md) | Shader compilation, caching, hot-reload, VFS, permutations, FXC/DXC/Slang | Complete |
 
 ## Phase 2: Editor Extension
 

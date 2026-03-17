@@ -2,6 +2,10 @@
 
 ## Priority: P2 — Performance optimization, eliminates redundant shadow rendering
 
+## Why
+
+UzEngine re-renders ALL shadow geometry every frame, wasting 50-80% of shadow rendering cost on static meshes that never move. UE5 caches shadow maps for static geometry and only re-renders dynamic objects, then composites both. CSM scrolling further reduces cost by GPU-copying overlapping regions when the camera moves.
+
 ## Summary
 
 UzEngine re-renders all shadow geometry every frame, including static meshes that never move. UE5 caches shadow maps for static geometry and only re-renders dynamic/movable objects each frame, then composites both. This eliminates 50-80% of shadow rendering cost in scenes with mostly static geometry (buildings, terrain, props). UE5 also supports "CSM scrolling" — GPU-copying the overlapping region when the camera moves and only re-rendering the newly exposed edges.

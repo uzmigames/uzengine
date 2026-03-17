@@ -1,5 +1,16 @@
 # UzEngine Documentation Operator Memory
 
+## Most Recent Work (2026-03-17)
+**Created 4 rendering sub-spec files** under `docs/specs/rendering/`
+
+- **`shadows.md`** — CSM (4+4 cascades, UE5 parity), shadow atlas (2048 D32_FLOAT grid), shadow cache (4 modes: Uncached/StaticPrimitivesOnly/MovablePrimitivesOnly/CSMScrolling, 150MB budget), DFS (cone trace + object cull, 256^3 SDF atlas), PCF (5x5/16-tap Poisson/PCSS), debug grid (`--shadow-debug 1`)
+- **`ibl-pipeline.md`** — IBL baker (512 BRDF LUT, 32 irradiance, 128x5mip prefilter), SH projection (L2 → 7 float4, UE5 packing), sky cubemap capture (CS+PS variants), equirect-to-cubemap
+- **`atmosphere.md`** — Transmittance LUT compute, procedural sky pass, height fog (two layers, directional inscattering, CPU RayOriginTerms precompute), aerial perspective (`aerial_perspective.hlsli`)
+- **`post-process.md`** — Auto-exposure (64-bin histogram + temporal adapt), ACES tonemap, bloom (4 shaders), FXAA, velocity buffer for future TAA
+- Updated `docs/specs/README.md` — added `rendering/debug-view-modes.md` row (was in dir but missing from table)
+
+Key source locations confirmed: `runtime/engine/renderer/shadows/`, `runtime/engine/renderer/ibl/`, `runtime/engine/renderer/atmosphere/`, `runtime/engine/renderer/fog/`, `runtime/engine/renderer/passes/postprocess/`
+
 ## Most Recent Work (2026-03-16)
 **Created 4 new rendering docs** — Complete IBL, HDR, and Height Fog documentation suite
 
