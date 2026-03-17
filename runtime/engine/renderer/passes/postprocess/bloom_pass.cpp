@@ -418,11 +418,6 @@ void BloomPass::Execute(IRHICommandList* cmdList,
         rc.bloomThreshold = settings.threshold;
         rc.exposure       = exposure;
 
-        UZ_LOG(Renderer, Debug,
-               "BloomPass: threshold constants — hdrSRV={}, outputUAV={}, size={}x{}, "
-               "threshold={:.3f}, exposure={:.4f}",
-               rc.hdrSrvIndex, rc.outputUavIndex, rc.inputWidth, rc.inputHeight,
-               rc.bloomThreshold, rc.exposure);
 
         cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 8);
 

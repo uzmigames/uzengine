@@ -47,7 +47,7 @@ ShadowFrameData SetupShadowFrame(
     cfg.cascadeBiasDistribution     = 1.0f;      // Fully world-scaled (ShadowSetup.cpp:1846)
     cfg.receiverBias                = 0.9f;      // UE5 default (ShadowRendering.cpp:76)
     cfg.filterMethod                = 2;         // PCSS — contact hardening (ShadowRendering.cpp:180-186)
-    cfg.maxSoftKernelSize           = 60.0f;     // Wider kernel for softer shadows (default 40)
+    cfg.maxSoftKernelSize           = 40.0f;     // UE5 default (ShadowRendering.cpp:182)
 
     // ── Far shadow cascades — wired from DirectionalLightComponent ───────
     // @source UE5 DirectionalLightComponent.cpp:1023,1076 — FarShadowDistance, FarShadowCascadeCount

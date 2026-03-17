@@ -403,10 +403,6 @@ float AutoExposure::Execute(IRHICommandList* cmdList, uint32_t hdrSrvIndex,
         const uint32_t groupsX = (width  + kHistGroupSize - 1) / kHistGroupSize;
         const uint32_t groupsY = (height + kHistGroupSize - 1) / kHistGroupSize;
 
-        UZ_LOG(Renderer, Debug,
-               "AutoExposure: histogram dispatch — groups=({}, {}, 1), histogramUAV={}",
-               groupsX, groupsY, m_histogramUavIndex);
-
         cmdList->Dispatch(groupsX, groupsY, 1);
     }
 
