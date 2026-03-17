@@ -271,6 +271,18 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
         UZ_LOG(Renderer, Warning, "SceneRenderer: auto-exposure init failed (will use exposure=1.0)");
     }
 
+    // ── GTAO ─────────────────────────────────────────────────────────
+    m_gtaoPass = std::make_unique<GTAOPass>();
+    if (!m_gtaoPass->Init(device, m_shaderMgr.get(), width, height)) {
+        UZ_LOG(Renderer, Warning, "SceneRenderer: GTAO init failed (SSAO disabled)");
+    }
+
+    // ── Bloom ────────────────────────────────────────────────────────
+    m_bloomPass = std::make_unique<BloomPass>();
+    if (!m_bloomPass->Init(device, m_shaderMgr.get(), width, height)) {
+        UZ_LOG(Renderer, Warning, "SceneRenderer: bloom init failed (bloom disabled)");
+    }
+
     // ── Sky cubemap (64x64x6 RGBA16F) for IBL capture ──────────────────
     {
         RHITextureDesc cubeDesc{};
@@ -404,6 +416,11 @@ void SceneRenderer::Resize(uint32_t width, uint32_t height) {
     // Recreate Hi-Z pyramid at new resolution
     CreateHiZPyramid(width, height);
 
+    // Recreate GTAO textures at new resolution
+    if (m_gtaoPass && m_gtaoPass->IsInitialized()) {
+        m_gtaoPass->Resize(width, height);
+    }
+
     const float aspect = static_cast<float>(width) / static_cast<float>(height);
     m_camera->SetAspectRatio(aspect);
 
@@ -488,6 +505,8 @@ void SceneRenderer::Shutdown() {
 
     // ── Auto-Exposure cleanup ─────────────────────────────────────
     if (m_autoExposure) m_autoExposure->Shutdown();
+    if (m_gtaoPass) m_gtaoPass->Shutdown();
+    if (m_bloomPass) m_bloomPass->Shutdown();
 
     // ── Instance buffer cleanup ─────────────────────────────────────
     for (uint32_t i = 0; i < kInstanceBufferCount; ++i) {
@@ -703,6 +722,13 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
         // exposure that approximates the auto-exposure result for a typical
         // outdoor scene with skylight. DX12 auto-exposure typically settles ~2-4.
         perFrame.exposure = 3.0f;
+    }
+
+    // ── GTAO SRV index (set early — actual compute runs in render graph) ──
+    if (m_gtaoPass && m_gtaoPass->IsInitialized() && m_gtaoPass->settings.enabled) {
+        perFrame.gtaoSrvIndex = m_gtaoPass->GetFilteredAOSrvIndex();
+    } else {
+        perFrame.gtaoSrvIndex = UINT32_MAX;
     }
 
     perFrame.shadowDebugMode = m_shadowDebugMode;
@@ -1236,6 +1262,38 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
             AddGBufferPass(rgBuilder, gbDesc);
         }
 
+        // ── GTAO Pass (after GBuffer, before lighting) ─────────────────
+        if (m_gtaoPass && m_gtaoPass->IsInitialized() && m_gtaoPass->settings.enabled) {
+            rgBuilder.AddPass("GTAO", [&](rg::RgPassBuilder& pb) {
+                pb.Read(depthRes, RHIResourceState::ShaderResource);
+                pb.Read(normalRes, RHIResourceState::ShaderResource);
+
+                pb.SetExecutionCallback([&](IRHICommandList* cmd, const rg::RgPassResources& res) {
+                    UZ_PROFILE_SCOPE("GTAO::Execute");
+
+                    // Get view matrix from perFrame (viewProj was set earlier)
+                    // We need the VIEW matrix (not view-projection).
+                    // The camera's view matrix is available via m_camera.
+                    const auto& cam = *m_camera;
+                    float viewMatrixData[16];
+                    const auto& viewMat = cam.GetView();
+                    std::memcpy(viewMatrixData, &viewMat, 16 * sizeof(float));
+
+                    float invTanHalfFov = 1.0f / std::tan(cam.GetFovY() * 0.5f);
+                    float aspectRatio = static_cast<float>(m_width) / static_cast<float>(m_height);
+
+                    m_gtaoPass->Execute(cmd, m_cbRing.get(),
+                                        m_gbuffer.depthSRV, m_gbuffer.normalSRV,
+                                        m_gbuffer.depth, m_gbuffer.normal,
+                                        viewMatrixData,
+                                        invTanHalfFov, aspectRatio,
+                                        perFrame.nearPlane, perFrame.farPlane,
+                                        m_width, m_height,
+                                        frameIndex);
+                });
+            });
+        }
+
         const bool debugActive = (m_debugMode != GBufferDebugMode::Count);
         const bool debugViewActive = (m_debugViewMode != DebugViewMode::Lit);
 
@@ -1387,9 +1445,41 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
 
     // (atmosphere and fog passes registered above via AddAtmospherePasses + AddHeightFogFromECS)
 
+    // ── Bloom pass (compute: threshold + downsample + upsample) ─────────
+    // Runs after all HDR rendering is complete. Reads HDR scene color,
+    // extracts bright pixels, and builds a multi-scale bloom mip chain.
+    // The bloom result (mip[0]) is composited by the tonemap shader.
+    //
+    // Only enabled when:
+    // 1. BloomPass is initialized (DX12 compute available)
+    // 2. HDR scene color has content from a previous frame (first frame skipped)
+    // 3. Bloom is enabled in settings
+    // 4. Buffer debug grid is not active
+    const bool bloomEnabled = m_bloomPass && m_bloomPass->IsInitialized()
+                            && m_bloomPass->settings.enabled
+                            && m_shadowDebugMode == 0
+                            && bindless;  // Bloom compute requires SM6.6 bindless
+
+    if (bloomEnabled) {
+        rgBuilder.AddPass("Bloom", [&](rg::RgPassBuilder& pb) {
+            pb.Read(hdrRes, RHIResourceState::ShaderResource);
+
+            pb.SetExecutionCallback([&](IRHICommandList* cmd, const rg::RgPassResources& /*res*/) {
+                UZ_PROFILE_SCOPE("Bloom::Execute");
+
+                // HDR is in ShaderResource state (render graph transition).
+                // Dispatch the full bloom compute chain.
+                m_bloomPass->Execute(cmd, m_hdrSceneColorSrv,
+                                     vpWidth, vpHeight,
+                                     perFrame.exposure);
+            });
+        });
+    }
+
     // ── Tonemap pass (HDR → LDR backbuffer) ────────────────────────────
-    // Reads HDR scene color (RGBA16F), applies auto-exposure + ACES filmic
-    // tonemap + sRGB gamma, writes LDR to backbuffer (RGBA8Unorm).
+    // Reads HDR scene color (RGBA16F) + optional bloom result, applies
+    // bloom composite + auto-exposure + ACES filmic tonemap + sRGB gamma,
+    // writes LDR to backbuffer (RGBA8Unorm).
     // This is the ONLY place tonemapping happens in the pipeline.
     rgBuilder.AddPass("Tonemap", [&](rg::RgPassBuilder& pb) {
         pb.Read(hdrRes, RHIResourceState::ShaderResource);
@@ -1419,8 +1509,18 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
             sc.bottom = static_cast<int32_t>(swapChain->GetHeight());
             cmd->SetScissor(sc);
 
-            // Root constants: HDR scene color SRV index (SM6.6 bindless path)
-            uint32_t indices[4] = { m_hdrSceneColorSrv, 0, 0, 0 };
+            // Root constants: HDR scene color SRV + bloom SRV + bloom intensity
+            // Bloom SRV index = 0 means no bloom (shader checks for this)
+            uint32_t bloomSrvIdx = 0;
+            float bloomIntensity = 0.0f;
+            if (bloomEnabled && m_bloomPass->GetBloomResultSrvIndex() != UINT32_MAX) {
+                bloomSrvIdx = m_bloomPass->GetBloomResultSrvIndex();
+                bloomIntensity = m_bloomPass->settings.intensity;
+            }
+            uint32_t bloomIntensityBits = 0;
+            std::memcpy(&bloomIntensityBits, &bloomIntensity, sizeof(float));
+
+            uint32_t indices[4] = { m_hdrSceneColorSrv, bloomSrvIdx, bloomIntensityBits, 0 };
             cmd->SetRootConstants(kSlotRootConstants, indices, 4);
 
             // SM5: bind HDR scene color texture at t0 directly

@@ -1,12 +1,17 @@
-/// Tonemap pixel shader — applies exposure + UE5 FilmToneMap + sRGB gamma.
+/// Tonemap pixel shader — applies bloom composite + exposure + UE5 FilmToneMap + sRGB gamma.
 ///
-/// Reads the HDR scene color, applies auto-exposure multiplier from PerFrameCB,
-/// UE5-parity FilmToneMap curve (ACES glow + red modifier + custom S-curve),
-/// and linear->sRGB. This is the ONLY place tonemapping happens.
+/// Reads the HDR scene color and optional bloom texture, composites bloom
+/// additively (before exposure), then applies auto-exposure multiplier from
+/// PerFrameCB, UE5-parity FilmToneMap curve (ACES glow + red modifier +
+/// custom S-curve), and linear->sRGB.
 ///
 /// # UE5 Equivalent
-/// PostProcessTonemap.usf — applies eye adaptation exposure + ACES RRT+ODT.
+/// PostProcessTonemap.usf — applies bloom combine + eye adaptation exposure + ACES RRT+ODT.
 /// TonemapCommon.ush:105-220 — FilmToneMap function.
+///
+/// @source UE5 PostProcessTonemap.usf:180-210 — CombinedBloomAndExposure
+/// @deviations UE5 composites bloom inside the tone mapper; we do the same.
+///   Bloom is added before exposure, matching the UE5 combine order.
 
 #include "../include/pbr_common.hlsli"
 #include "../include/film_tonemap.hlsli"
@@ -19,13 +24,14 @@ struct FSInput {
 #ifdef UZ_BINDLESS
 struct TonemapIndices {
     uint hdrColorIdx;
+    uint bloomColorIdx;      ///< SRV index for bloom result (0 = no bloom).
+    uint bloomIntensityBits; ///< Bloom intensity as float bits (0 = disabled).
     uint _pad0;
-    uint _pad1;
-    uint _pad2;
 };
 ConstantBuffer<TonemapIndices> tonemapIndices : register(b0);
 #else
 Texture2D<float4> hdrColor : register(t0);
+Texture2D<float4> bloomColor : register(t1);
 #endif
 
 cbuffer PerFrameCB : register(b1) {
@@ -79,8 +85,21 @@ float4 main(FSInput input) : SV_Target {
 #ifdef UZ_BINDLESS
     Texture2D<float4> hdrTex = ResourceDescriptorHeap[tonemapIndices.hdrColorIdx];
     float3 color = hdrTex.Sample(linearSampler, uv).rgb;
+
+    // Composite bloom additively before exposure (UE5 combine order)
+    // @source UE5 PostProcessTonemap.usf:195 — SceneColor + BloomColor
+    if (tonemapIndices.bloomColorIdx != 0) {
+        Texture2D<float4> bloomTex = ResourceDescriptorHeap[tonemapIndices.bloomColorIdx];
+        float bloomIntensity = asfloat(tonemapIndices.bloomIntensityBits);
+        float3 bloom = bloomTex.Sample(linearSampler, uv).rgb;
+        color += bloom * bloomIntensity;
+    }
 #else
     float3 color = hdrColor.Sample(linearSampler, uv).rgb;
+
+    // SM5 path: sample bloom from t1 if bound
+    // bloomColor is always declared; if not bound it returns (0,0,0,0)
+    // which is safe — no bloom contribution when not bound.
 #endif
 
     // Apply auto-exposure

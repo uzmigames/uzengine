@@ -34,13 +34,13 @@
 
 cbuffer BloomUpsampleParams : register(b0) {
     uint  g_LowerMipSrvIndex;  ///< SRV index for the lower-res input (upsampled from previous level).
-    uint  g_CurrentMipSrvIndex;///< SRV index for the current downsample level to blend with.
-    uint  g_OutputUavIndex;    ///< UAV index for output texture (this level's result).
+    uint  g_OutputUavIndex;    ///< UAV index for output texture (this level's result, also read for blend).
     uint  g_OutputWidth;       ///< Output texture width in pixels.
     uint  g_OutputHeight;      ///< Output texture height in pixels.
     float g_BloomRadius;       ///< Filter radius scale (default 1.0, increases blur spread).
     float _pad0;
     float _pad1;
+    float _pad2;
 };
 
 SamplerState linearSampler : register(s0);
@@ -68,7 +68,6 @@ void CSMain(uint3 dtid : SV_DispatchThreadID)
         return;
 
     Texture2D<float4> lowerMipTex  = ResourceDescriptorHeap[g_LowerMipSrvIndex];
-    Texture2D<float4> currentMipTex = ResourceDescriptorHeap[g_CurrentMipSrvIndex];
     RWTexture2D<float4> outputTex  = ResourceDescriptorHeap[g_OutputUavIndex];
 
     float2 texelSize = g_BloomRadius / float2(g_OutputWidth, g_OutputHeight);
@@ -98,8 +97,9 @@ void CSMain(uint3 dtid : SV_DispatchThreadID)
     // Normalize: total weights = 4*1 + 4*2 + 1*4 = 16
     upsampled *= (1.0f / 16.0f);
 
-    // Read the downsample result at this level and blend additively
-    float3 currentLevel = currentMipTex.SampleLevel(linearSampler, uv, 0).rgb;
+    // Read the downsample result at this level via UAV load (same resource
+    // as output — per-pixel 1:1 read-modify-write avoids SRV/UAV conflict)
+    float3 currentLevel = outputTex[dtid.xy].rgb;
 
     float3 result = currentLevel + upsampled;
 

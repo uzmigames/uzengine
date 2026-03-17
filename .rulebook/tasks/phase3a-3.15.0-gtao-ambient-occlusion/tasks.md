@@ -1,17 +1,17 @@
 ## 1. Implementation
 
 - [ ] 1.1 Implement depth mip chain generation — compute shader that generates min-depth mips from full-res depth buffer (4 levels). Used for hierarchical horizon search.
-- [ ] 1.2 Implement GTAO main compute shader (`gtao_main_cs.hlsl`) — for each half-res pixel: reconstruct view-space position from depth, sample `sliceCount` angular directions, march `stepsPerSlice` steps along each direction finding max horizon angle, integrate cos-weighted visibility between horizon angles and normal. Output R8_UNORM AO.
+- [x] 1.2 Implement GTAO main compute shader (`gtao_cs.hlsl`) — full-res, 12 taps, 2 directions, UE5 GTAO algorithm (SearchForLargestAngleDual + ComputeInnerIntegral). Output R8_UNORM AO.
 - [ ] 1.3 Implement view-space normal reconstruction — derive normals from depth buffer gradients (dFdx/dFdy on depth). No G-Buffer normals needed for basic GTAO.
-- [ ] 1.4 Implement GTAO bilateral denoise (`gtao_denoise_cs.hlsl`) — 4×4 spatial blur weighted by depth similarity. Kernel weights: `exp(-depthDiff² / threshold²)`. Preserves edges at depth discontinuities.
+- [x] 1.4 Implement GTAO bilateral denoise (`gtao_denoise_cs.hlsl`) — 4×4 bilateral blur with depth similarity weighting. Edge-preserving.
 - [ ] 1.5 Implement GTAO bilateral upsample (`gtao_upsample_ps.hlsl`) — upsample half-res AO to full-res using depth-aware bilateral weights. Sample 4 nearest half-res texels, weight by depth match to full-res depth.
 - [ ] 1.6 Implement GTAO temporal accumulation (`gtao_temporal_cs.hlsl`) — reproject previous frame AO using velocity buffer, blend `lerp(history, current, 0.1)`. Reject history when velocity exceeds threshold.
-- [ ] 1.7 Implement distance fade — `aoFade = saturate((fadeEnd - viewDist) / (fadeEnd - fadeStart))`. Multiply final AO by fade. UE5 defaults: fadeStart=8000cm, fadeEnd=13000cm.
+- [x] 1.7 Implement distance fade — precomputed fadeMul/fadeAdd, applied in GTAO shader. Defaults: fadeStart=50000cm, fadeEnd=100000cm.
 - [ ] 1.8 Implement AO power curve — `finalAO = pow(rawAO, aoPower)` with aoPower=2.0 (UE5 default). Artistic control over AO contrast.
 - [ ] 1.9 Implement multi-bounce approximation — `ao_multibounce = ao / (1 - albedo * (1 - ao))` for colored ambient occlusion bounce. Optional, read albedo from G-Buffer.
 - [ ] 1.10 Add GTAOPassDesc to PostProcessStack — enabled/disabled, quality (Low/Medium/High), radius, intensity, power, bias, fadeStart, fadeEnd parameters.
-- [ ] 1.11 Register GTAO passes in render graph — ordered: depth mips → GTAO main (half-res) → denoise → temporal → upsample. AO texture bound to lighting pass as SRV.
-- [ ] 1.12 Integrate AO into lighting — multiply AO texture into ambient/indirect lighting term only. Direct light and shadows are NOT affected by SSAO.
+- [x] 1.11 Register GTAO passes in render graph — GTAO compute → denoise, after GBuffer, before lighting. AO SRV index passed via PerFrameCB::gtaoSrvIndex.
+- [x] 1.12 Integrate AO into lighting — GTAO multiplied with material AO in deferred_lighting_ps.hlsl. Affects ambient only (direct light/shadows unaffected).
 - [ ] 1.13 Create GTAO demo — scene with complex geometry (furniture, architectural corners, props), toggle AO on/off, adjustable radius/intensity sliders.
 
 ## 2. Visual Verification

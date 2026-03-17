@@ -109,7 +109,14 @@ cbuffer PerFrameCB : register(b1) {
     float    apSunIntensity;     ///< Sun illuminance for AP inscattering.
     float    apRayleighScale;    ///< Artistic Rayleigh scattering multiplier.
     float    apMieScale;         ///< Artistic Mie scattering multiplier.
-    float    _framePad2[21];     ///< Padding to 512 bytes.
+    // Film tonemap params (unused by this shader, consumed by tonemap_ps)
+    float    filmSlope;
+    float    filmToe;
+    float    filmShoulder;
+    float    filmBlackClip;
+    float    filmWhiteClip;
+    uint     gtaoSrvIndex;       ///< SRV index for GTAO filtered AO (0xFFFFFFFF = no GTAO).
+    float    _framePad2[15];     ///< Padding to 512 bytes.
 };
 
 /// Single point light for the deferred lighting pass (48 bytes = three float4s).
@@ -193,6 +200,10 @@ Texture2D<float2>   iblBrdfLut      : register(t7); ///< BRDF integration LUT (s
 /// SM5 transmittance LUT for aerial perspective at t8.
 /// Only sampled when aerialPerspectiveEnabled == 1.
 Texture2D<float4>  transmittanceLutTex : register(t8); ///< Transmittance LUT (256x64 RGBA16F).
+
+/// SM5 GTAO filtered AO at t9.
+/// Only sampled when gtaoSrvIndex != 0xFFFFFFFF.
+Texture2D<float>   gtaoTexture : register(t9); ///< GTAO filtered AO (R8_UNORM).
 #endif
 
 /// Linear (bilinear wrap) sampler at s0 — standard engine-wide sampler.
@@ -309,6 +320,20 @@ float4 main(FSInput input) : SV_Target {
     float3 N         = OctDecode(normalPacked.rg);
     float  metallic  = normalPacked.b;
     float  roughness = normalPacked.a;
+
+    // ── GTAO screen-space ambient occlusion ──
+    // Multiply material AO with GTAO result when available.
+    // GTAO texture stores visibility (1.0 = fully lit, 0.0 = fully occluded).
+    if (gtaoSrvIndex != 0xFFFFFFFF) {
+#ifdef UZ_BINDLESS
+        Texture2D<float> gtaoTex = ResourceDescriptorHeap[gtaoSrvIndex];
+        float ssao = gtaoTex.Sample(linearSampler, uv).r;
+#else
+        // SM5 path: GTAO bound at t9
+        float ssao = gtaoTexture.Sample(linearSampler, uv).r;
+#endif
+        ao *= ssao;
+    }
 
     // ── World-space position ──
     // UZ_WORLDPOS_GBUFFER: read directly from the position G-Buffer RT2 (debug / Vulkan verification).

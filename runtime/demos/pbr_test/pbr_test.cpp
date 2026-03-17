@@ -149,7 +149,7 @@ void PBRTest::OnStart() {
         light.color              = {1.0f, 1.0f, 1.0f};
         light.intensity          = 3.0f;           // UE5 Basic Scene: EXACTLY 3.0 lux
         light.atmosphereSunLight = true;
-        light.lightSourceAngle   = 0.7357f;        // UE5 Basic Scene: 0.7357
+        light.lightSourceAngle   = 1.0f;           // Wider sun angle for softer PCSS shadows
         light.useTemperature     = true;
         light.temperature        = 6500.f;
     }
@@ -210,14 +210,14 @@ void PBRTest::OnStart() {
         scene.SetPosition({0.f, 0.f, 690.f});
 
         auto& sl = world.AddComponent<SkyLightComponent>(skyLightEnt);
-        sl.intensity                  = 1.0f;       // UE5 Basic Scene: exactly 1.0
+        sl.intensity                  = 1.5f;       // Boosted for brighter ambient
         sl.indirectLightingIntensity  = 1.0f;
         sl.lightColor                 = {1.0f, 1.0f, 1.0f};
         sl.realTimeCapture            = true;       // UE5: Real Time Capture = true
         sl.sourceType                 = ESkyLightSourceType::CapturedScene;
         sl.cubemapResolution          = 128;
         sl.lowerHemisphereIsBlack     = true;
-        sl.minOcclusion               = 0.0f;
+        sl.minOcclusion               = 0.03f;      // Shadows never pitch black
     }
 
     // ── Exponential Height Fog ─────────────────────────────────────────

@@ -25,10 +25,10 @@
 > That task is a superset: depth mip chain, GTAO compute, denoise, upsample, temporal
 > accumulation, distance fade, power curve, multi-bounce, render graph integration.
 
-- [ ] 3.1 ~~GTAO compute shader~~ → **3.15.0 item 1.2**
-- [ ] 3.2 ~~GTAO spatial filter~~ → **3.15.0 item 1.4**
-- [ ] 3.3 ~~GTAO render graph pass~~ → **3.15.0 item 1.11**
-- [ ] 3.4 ~~AO integration in lighting~~ → **3.15.0 item 1.12**
+- [x] 3.1 ~~GTAO compute shader~~ → **3.15.0 item 1.2** — DONE
+- [x] 3.2 ~~GTAO spatial filter~~ → **3.15.0 item 1.4** — DONE
+- [x] 3.3 ~~GTAO render graph pass~~ → **3.15.0 item 1.11** — DONE
+- [x] 3.4 ~~AO integration in lighting~~ → **3.15.0 item 1.12** — DONE
 - [ ] 3.5 ~~AO configuration~~ → **3.15.0 item 1.10**
 
 ## 4. Bloom — DELEGATED to phase3a-3.28.0

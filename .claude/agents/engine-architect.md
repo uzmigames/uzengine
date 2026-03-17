@@ -137,3 +137,8 @@ NEVER guess at bug causes. ALWAYS:
 
 "I think this might be the problem" is NOT acceptable.
 "UE5 does X at file:line, we do Y, the difference causes Z" IS acceptable.
+
+## MANDATORY: Use Teams for Multiple Agents
+
+When spawning 2+ agents, ALWAYS use TeamCreate first. Never spawn parallel agents without a team.
+Each agent in a team MUST work on DIFFERENT files — no two agents editing the same file.

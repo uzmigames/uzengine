@@ -72,7 +72,9 @@ namespace uz {
 /// 372      4      aerialPerspectiveEnabled
 /// 376      4      transmittanceLutSrvIndex
 /// 380      56     apBottomRadiusKm..apMieScale (14 floats)
-/// 428      84     _pad2[21]
+/// 436      20     filmSlope..filmWhiteClip (5 floats)
+/// 456      4      gtaoSrvIndex
+/// 460      60     _pad2[15]
 /// ─── 512 bytes (CB boundary) ───
 /// 512      8      irradianceCubemap (RHITextureHandle, NOT in CB)
 /// 520      8      prefilteredSpecular (RHITextureHandle, NOT in CB)
@@ -128,7 +130,8 @@ struct PerFrameParams {
     float    filmBlackClip  = 0.0f;                    ///< Lifts black level (adds to min output).
     float    filmWhiteClip  = 0.04f;                   ///< Lowers white ceiling (subtracts from max output).
 
-    float    _pad2[16]            = {};                ///< Pad scalar section to 512 bytes.
+    uint32_t gtaoSrvIndex        = UINT32_MAX;         ///< SRV index for GTAO filtered AO texture (UINT32_MAX = no GTAO).
+    float    _pad2[15]           = {};                ///< Pad scalar section to 512 bytes.
 
     // ── Resource handles (NOT copied to CB) ──────────────────────────────
     // These are bound by ShaderParameterBinder at their HLSL register slots.

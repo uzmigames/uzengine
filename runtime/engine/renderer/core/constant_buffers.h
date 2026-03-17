@@ -104,7 +104,8 @@ struct PerFrameCB {
     float    filmBlackClip  = 0.0f;              ///< Lifts black level (adds to min output).
     float    filmWhiteClip  = 0.04f;             ///< Lowers white ceiling (subtracts from max output).
 
-    float    _pad2[16] = {};                     ///< Pad to 512 bytes.
+    uint32_t gtaoSrvIndex    = UINT32_MAX;       ///< SRV index for GTAO filtered AO texture (UINT32_MAX = no GTAO).
+    float    _pad2[15] = {};                     ///< Pad to 512 bytes.
 };
 
 static_assert(sizeof(PerFrameCB) == 512, "PerFrameCB must be 512 bytes (D3D12 CB alignment)");

@@ -37,6 +37,8 @@
 #include "ibl/ibl_baker.h"
 #include "ibl/sh_projection.h"
 #include "postprocess/auto_exposure.h"
+#include "postprocess/bloom_pass.h"
+#include "postprocess/gtao_pass.h"
 #include "postprocess/hiz_pyramid_pass.h"
 
 #include <cstdint>
@@ -391,6 +393,12 @@ private:
 
     // ── Auto-Exposure ──────────────────────────────────────────────────────
     std::unique_ptr<AutoExposure> m_autoExposure;   ///< GPU histogram-based eye adaptation.
+
+    // ── GTAO ─────────────────────────────────────────────────────────────
+    std::unique_ptr<GTAOPass> m_gtaoPass;            ///< GTAO ambient occlusion compute pass.
+
+    // ── Bloom ────────────────────────────────────────────────────────────
+    std::unique_ptr<BloomPass> m_bloomPass;          ///< GPU compute bloom (threshold + downsample + upsample).
 
     // ── Depth Prepass + Hi-Z Pyramid ────────────────────────────────────────
 
