@@ -20,6 +20,18 @@ AAA-quality game engine embedded in VSCode, with open file formats designed for 
 - **No GC** — deterministic memory via Rust-inspired ownership and borrow checking in C++
 - **AI-First** — MCP server integration for autonomous development workflows
 
+## Rendering Features (v0.2.33)
+
+| System | Features |
+|--------|----------|
+| **PBR** | GGX + Burley diffuse + SmithJoint + multiscatter energy compensation |
+| **Shadows** | 4-cascade CSM, per-cascade PCF, distance field shadows, contact shadows |
+| **Lighting** | Directional + point (64) + spot (16) lights, IBL (SH L2 + prefiltered specular) |
+| **Atmosphere** | Bruneton sky, multi-scatter LUT, ozone, aerial perspective, height fog (2-layer + sky injection) |
+| **Post-Process** | TAA, SSR, GTAO, bloom (6-mip Karis), FilmToneMap ACES, auto-exposure, DOF, motion blur |
+| **Film Effects** | Film grain, vignette, chromatic aberration, color grading LUT (32x32x32) |
+| **Backends** | DX12 SM6.8 (bindless), DX12 SM5, DX11, Vulkan |
+
 ## Monorepo Structure
 
 | Package | Description | Build |
