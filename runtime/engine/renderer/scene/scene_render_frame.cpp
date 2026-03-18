@@ -1,57 +1,28 @@
-/// UzEngine Scene Renderer — Implementation.
-///
-/// Bridges the ECS World to the GPU render pipeline. Follows the same patterns
-/// as `DemoApplication::InitInfrastructure()` and `PBRTestDemo::OnFrame()` but
-/// reads scene data from ECS components instead of hardcoded positions.
+/// UzEngine Scene Renderer — RenderFrame (main per-frame orchestration).
 
 #include "scene_renderer.h"
 
+// Umbrella headers
+#include "renderer_core.h"
+#include "passes.h"
+#include "subsystems.h"
+#include "components.h"
+
+// Remaining individual includes
 #include "camera.h"
 #include "fps_camera_controller.h"
-#include "cb_ring_allocator.h"
-#include "constant_buffers.h"
-#include "per_frame_params.h"
-#include "shadow_data_params.h"
-#include "pipeline_library.h"
-#include "shader_manager.h"
 #include "mesh.h"
 #include "gpu_mesh.h"
-#include "depth_prepass.h"
-#include "gbuffer_pass.h"
-#include "gbuffer_debug_pass.h"
-#include "hiz_pyramid_pass.h"
-#include "lighting_pass.h"
-#include "debug_view_pass.h"
-#include "pbr_pass.h"
-#include "shadow_pass.h"
-#include "sky_atmosphere_pass.h"
-#include "transmittance_lut_pass.h"
-#include "sky_cubemap_capture_pass.h"
-#include "height_fog_pass.h"
 #include "render_graph_builder.h"
 #include "render_graph_resources.h"
-#include "shadow_cascade.h"
-#include "shadow_renderer.h"
-#include "shadows/sdf_atlas_manager.h"
-#include "light_renderer.h"
-#include "atmosphere_renderer.h"
-#include "fog_renderer.h"
 #include "sh_projection.h"
-#include "root_slots.h"
 #include "profiler.h"
-#include "instance_batcher.h"
+#include "lod_selector.h"
 #include "texture_loader.h"
 #include "upload_context.h"
 #include "vfs.h"
 #include "world.h"
-#include "camera_component.h"
-#include "light_component.h"
-#include "scene_component.h"
-#include "static_mesh_component.h"
 #include "material_interface.h"
-#include "sky_atmosphere_component.h"
-#include "sky_light_component.h"
-#include "height_fog_component.h"
 #include "color_utils.h"
 #include "rhi.h"
 #include "shader_compiler.h"
@@ -75,901 +46,6 @@ namespace uz {
 struct ShadowCB {
     Mat4 viewProj;
 };
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Construction / Destruction
-// ─────────────────────────────────────────────────────────────────────────────
-
-SceneRenderer::SceneRenderer() = default;
-
-SceneRenderer::~SceneRenderer() {
-    Shutdown();
-}
-
-SceneRenderer::SceneRenderer(SceneRenderer&&) noexcept = default;
-SceneRenderer& SceneRenderer::operator=(SceneRenderer&&) noexcept = default;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Init
-// ─────────────────────────────────────────────────────────────────────────────
-
-bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
-                          uint32_t width, uint32_t height) {
-    if (!device || !window) {
-        UZ_LOG(Renderer, Error, "SceneRenderer::Init: null device or window");
-        return false;
-    }
-
-    m_device = device;
-    m_width = width;
-    m_height = height;
-
-    // ── Input ────────────────────────────────────────────────────────────
-    m_input = std::make_unique<InputSystem>();
-    m_input->Init();
-    window->SetInputSystem(m_input.get());
-
-    // ── Shader Manager ──────────────────────────────────────────────────
-    m_shaderMgr = std::make_unique<ShaderManager>();
-    if (!m_shaderMgr->Init(device)) {
-        UZ_LOG(Renderer, Error, "SceneRenderer: failed to init shader manager");
-        return false;
-    }
-
-    // ── Pipeline Library ────────────────────────────────────────────────
-    m_pipelines = std::make_unique<PipelineLibrary>();
-    if (!m_pipelines->Init(device, m_shaderMgr.get())) {
-        UZ_LOG(Renderer, Error, "SceneRenderer: failed to init pipeline library");
-        return false;
-    }
-
-    // ── CB Ring Allocator ───────────────────────────────────────────────
-    m_cbRing = std::make_unique<CBRingAllocator>();
-    m_cbRing->Init(device, kCBRingFrames, kCBRingBytesPerFrame);
-
-    // ── Editor Grid ─────────────────────────────────────────────────────
-    m_editorGrid = std::make_unique<EditorGrid>();
-    if (!m_editorGrid->Init(device, m_shaderMgr->GetPipeline(),
-                            RHIFormat::RGBA8Unorm, RHIFormat::D32Float)) {
-        UZ_LOG(Renderer, Error, "SceneRenderer: failed to init editor grid");
-    }
-
-    // ── Stats Overlay (deferred init — needs cmdList in recording state) ─
-    m_statsOverlay = std::make_unique<StatsOverlay>();
-    m_statsOverlayInitialized = false;
-
-    // ── Render Graph Resource Pool ──────────────────────────────────────
-    m_rgPool = std::make_unique<rg::RgResourcePool>(device);
-
-    // ── Camera ──────────────────────────────────────────────────────────
-    m_camera = std::make_unique<Camera>();
-    m_cameraCtrl = std::make_unique<FPSCameraController>();
-
-    const float aspect = static_cast<float>(width) / static_cast<float>(height);
-    m_camera->SetHorizontalFOV(90.f, aspect, 10.f, 100000.f);
-    m_camera->SetPosition({0.f, 200.f, -500.f});
-    m_camera->LookAt({0.f, 0.f, 0.f}, Vec3::Up());
-    m_cameraCtrl->InitFromCamera(*m_camera);
-    m_cameraCtrl->SetMoveSpeed(500.f);  // 500 cm/s = 5 m/s (UE5 parity)
-
-    // ── GBuffer ─────────────────────────────────────────────────────────
-    if (!m_gbuffer.Create(device, width, height)) {
-        UZ_LOG(Renderer, Error, "SceneRenderer: failed to create GBuffer");
-        return false;
-    }
-
-    // ── HDR Scene Color (RGBA16F — intermediate before tonemap) ────────
-    {
-        RHITextureDesc hdrDesc{};
-        hdrDesc.width     = width;
-        hdrDesc.height    = height;
-        hdrDesc.format    = RHIFormat::RGBA16Float;
-        hdrDesc.usage     = RHITextureUsage::ShaderResource | RHITextureUsage::RenderTarget;
-        hdrDesc.debugName = "HDR_SceneColor";
-        m_hdrSceneColor = device->CreateTexture(hdrDesc);
-        if (!m_hdrSceneColor.IsValid()) {
-            UZ_LOG(Renderer, Error, "SceneRenderer: failed to create HDR scene color texture");
-            return false;
-        }
-        m_hdrSceneColorSrv = device->GetTextureSRVIndex(m_hdrSceneColor);
-        UZ_LOG(Renderer, Info, "SceneRenderer: HDR scene color created ({}x{}, RGBA16F, SRV={})",
-               width, height, m_hdrSceneColorSrv);
-    }
-
-    // ── Shadow Atlas ────────────────────────────────────────────────────
-    m_shadowAtlas.Init(m_device);
-
-    // ── Shadow Cache Manager + Static Shadow Atlas ──────────────────
-    // The static shadow atlas is a separate depth texture with the same
-    // dimensions as the dynamic atlas. Static geometry is rendered once
-    // (per invalidation) and reused across frames. The pixel shader
-    // composites both atlases: finalShadow = min(static, dynamic).
-    {
-        ShadowCacheConfig cacheConfig{};
-        cacheConfig.enabled = true;
-        cacheConfig.cacheBudgetMB = 150;
-        cacheConfig.scrollingOverlapThreshold = 0.75f;
-        m_shadowCacheManager.Init(m_device, cacheConfig);
-
-        // Create static shadow atlas with same dimensions as dynamic atlas
-        const uint32_t cols = GetAtlasColumns(4); // default 4 cascades
-        const uint32_t rows = GetAtlasRows(4);
-        const uint32_t atlasW = cols * kShadowResolution;
-        const uint32_t atlasH = rows * kShadowResolution;
-
-        RHITextureDesc staticAtlasDesc{};
-        staticAtlasDesc.width     = atlasW;
-        staticAtlasDesc.height    = atlasH;
-        staticAtlasDesc.format    = RHIFormat::D32Float;
-        staticAtlasDesc.usage     = RHITextureUsage::DepthStencil | RHITextureUsage::ShaderResource;
-        staticAtlasDesc.debugName = "StaticShadowAtlas";
-
-        m_staticShadowAtlas = m_device->CreateTexture(staticAtlasDesc);
-        if (m_staticShadowAtlas.IsValid()) {
-            m_staticShadowAtlasSrv = m_device->GetTextureSRVIndex(m_staticShadowAtlas);
-            UZ_LOG(Renderer, Info, "SceneRenderer: Static shadow atlas created ({}x{}, D32F, SRV={})",
-                   atlasW, atlasH, m_staticShadowAtlasSrv);
-        } else {
-            UZ_LOG(Renderer, Warning, "SceneRenderer: Failed to create static shadow atlas — shadow caching disabled");
-            m_staticShadowAtlasSrv = UINT32_MAX;
-        }
-    }
-
-    // ── Fallback Textures (SM5 unconditional sampling) ──────────────
-    // The SM5 shader path samples all PBR textures unconditionally (no
-    // index guards), so we must always bind valid textures. These 1x1
-    // fallbacks produce neutral defaults: white = identity for albedo/
-    // roughness/metallic/AO, flat normal = no perturbation.
-    {
-        RHITextureDesc fbDesc{};
-        fbDesc.width     = 1;
-        fbDesc.height    = 1;
-        fbDesc.format    = RHIFormat::RGBA8Unorm;
-        fbDesc.usage     = RHITextureUsage::ShaderResource | RHITextureUsage::CopyDst;
-
-        fbDesc.debugName = "FallbackWhite";
-        m_fallbackWhite  = m_device->CreateTexture(fbDesc);
-
-        fbDesc.debugName = "FallbackBlack";
-        m_fallbackBlack  = m_device->CreateTexture(fbDesc);
-
-        fbDesc.debugName = "FallbackNormal";
-        m_fallbackNormal = m_device->CreateTexture(fbDesc);
-    }
-
-    // ── Transmittance LUT texture (256x64 RGBA16F) ──────────────────────────
-    // Created here; filled by the compute pass on first frame with sky atmosphere.
-    {
-        RHITextureDesc lutDesc{};
-        lutDesc.width     = 256;
-        lutDesc.height    = 64;
-        lutDesc.format    = RHIFormat::RGBA16Float;
-        lutDesc.usage     = RHITextureUsage::ShaderResource
-                          | RHITextureUsage::UnorderedAccess;
-        lutDesc.debugName = "TransmittanceLUT";
-
-        m_transmittanceLut = m_device->CreateTexture(lutDesc);
-        if (!m_transmittanceLut.IsValid()) {
-            UZ_LOG(Renderer, Error, "SceneRenderer: failed to create TransmittanceLUT texture");
-        } else {
-            m_transmittanceLutSrv = m_device->GetTextureSRVIndex(m_transmittanceLut);
-            m_transmittanceLutUav = m_device->GetTextureUAVIndex(m_transmittanceLut);
-            UZ_LOG(Renderer, Info, "SceneRenderer: TransmittanceLUT created (256x64 RGBA16F)");
-        }
-    }
-
-    // ── Multi-Scattering LUT texture (32x32 RGBA16F) ──────────────────────
-    // @source UE5 SkyAtmosphereRendering.cpp — MultiScatteredLuminanceLutTexture (32x32)
-    // Precomputed infinite-bounce multi-scattering transfer function.
-    // UE5 uses R11G11B10F but our RHI doesn't support that format;
-    // RGBA16F is the closest available (8 KB at 32x32, negligible overhead).
-    {
-        RHITextureDesc msDesc{};
-        msDesc.width     = 32;
-        msDesc.height    = 32;
-        msDesc.format    = RHIFormat::RGBA16Float;
-        msDesc.usage     = RHITextureUsage::ShaderResource
-                         | RHITextureUsage::UnorderedAccess;
-        msDesc.debugName = "MultiScatterLUT";
-
-        m_multiScatterLut = m_device->CreateTexture(msDesc);
-        if (!m_multiScatterLut.IsValid()) {
-            UZ_LOG(Renderer, Error, "SceneRenderer: failed to create MultiScatterLUT texture");
-        } else {
-            m_multiScatterLutSrv = m_device->GetTextureSRVIndex(m_multiScatterLut);
-            m_multiScatterLutUav = m_device->GetTextureUAVIndex(m_multiScatterLut);
-            UZ_LOG(Renderer, Info, "SceneRenderer: MultiScatterLUT created (32x32 RGBA16F)");
-        }
-    }
-
-    // ── IBL Baker (bake BRDF LUT once) ────────────────────────────────
-    m_iblBaker = std::make_unique<IBLBaker>();
-    if (m_iblBaker->Init(device, m_shaderMgr.get())) {
-        m_brdfLutSrvIndex = m_iblBaker->BakeBRDFLut();
-        UZ_LOG(Renderer, Info, "SceneRenderer: BRDF LUT baked (SRV={})", m_brdfLutSrvIndex);
-    } else {
-        UZ_LOG(Renderer, Error, "SceneRenderer: failed to init IBL baker");
-    }
-
-    // ── Auto-Exposure ────────────────────────────────────────────────
-    m_autoExposure = std::make_unique<AutoExposure>();
-    if (!m_autoExposure->Init(device, m_shaderMgr.get())) {
-        UZ_LOG(Renderer, Warning, "SceneRenderer: auto-exposure init failed (will use exposure=1.0)");
-    }
-
-    // ── GTAO ─────────────────────────────────────────────────────────
-    m_gtaoPass = std::make_unique<GTAOPass>();
-    if (!m_gtaoPass->Init(device, m_shaderMgr.get(), width, height)) {
-        UZ_LOG(Renderer, Warning, "SceneRenderer: GTAO init failed (SSAO disabled)");
-    }
-
-    // ── Bloom ────────────────────────────────────────────────────────
-    UZ_LOG(Renderer, Info, "SceneRenderer: initializing BloomPass...");
-    m_bloomPass = std::make_unique<BloomPass>();
-    if (!m_bloomPass->Init(device, m_shaderMgr.get(), width, height)) {
-        UZ_LOG(Renderer, Warning, "SceneRenderer: bloom init failed (bloom disabled)");
-    }
-    UZ_LOG(Renderer, Info, "SceneRenderer: BloomPass initialized");
-
-    // ── DFS Output Texture + Culling Buffers ──────────────────────────────
-    // Created here but only populated when DFS is enabled at runtime.
-    // The output texture starts at half-resolution by default; fullResolution
-    // mode can be toggled via DistanceFieldShadowConfig.
-    CreateDfsResources(width, height);
-
-    // ── Sky cubemap (64x64x6 RGBA16F) for IBL capture ──────────────────
-    {
-        RHITextureDesc cubeDesc{};
-        cubeDesc.width     = 64;
-        cubeDesc.height    = 64;
-        cubeDesc.depthOrArraySize = 6;
-        cubeDesc.format    = RHIFormat::RGBA16Float;
-        cubeDesc.usage     = RHITextureUsage::ShaderResource
-                           | RHITextureUsage::UnorderedAccess
-                           | RHITextureUsage::RenderTarget
-                           | RHITextureUsage::CopySrc;
-        cubeDesc.debugName = "SkyCubemap";
-
-        m_skyCubemap = m_device->CreateTexture(cubeDesc);
-        if (m_skyCubemap.IsValid()) {
-            m_skyCubemapSrv = m_device->GetTextureSRVIndex(m_skyCubemap);
-            m_skyCubemapUav = m_device->GetTextureUAVIndex(m_skyCubemap);
-            UZ_LOG(Renderer, Info, "SceneRenderer: Sky cubemap created (64x64x6 RGBA16F)");
-        } else {
-            UZ_LOG(Renderer, Error, "SceneRenderer: failed to create sky cubemap texture");
-        }
-    }
-
-    // ── Hi-Z Pyramid (per-mip R32F textures) ────────────────────────────
-    CreateHiZPyramid(width, height);
-
-    // ── TAA History Textures (ping-pong RGBA16F) ────────────────────────
-    CreateTaaResources(width, height);
-
-    // ── SSR Output Textures (trace + resolve, RGBA16F) ────────────────
-    CreateSsrResources(width, height);
-
-    // ── Color Grading LUT (32x32x32 3D texture) ────────────────────────
-    CreateColorGradingLutResources();
-
-    // ── Motion Blur Output (RGBA16F, same resolution as scene) ─────────
-    CreateMotionBlurResources(width, height);
-
-    // ── DOF Textures (CoC R16F + output RGBA16F) ───────────────────────
-    CreateDofResources(width, height);
-
-    UZ_LOG(Renderer, Info, "SceneRenderer initialized ({}x{}, {})",
-           width, height, RenderPathToString(m_renderPath));
-    return true;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Hi-Z Pyramid Creation / Destruction
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Helper that computes the number of mip levels for a given resolution.
-static uint32_t ComputeMipCount(uint32_t width, uint32_t height) {
-    uint32_t mips = 0;
-    uint32_t w = width;
-    uint32_t h = height;
-    while (w > 1 || h > 1) {
-        w = (w > 1) ? (w >> 1) : 1;
-        h = (h > 1) ? (h >> 1) : 1;
-        ++mips;
-        if (mips >= kHiZMaxMipLevels) break;
-    }
-    return mips;
-}
-
-void SceneRenderer::CreateHiZPyramid(uint32_t width, uint32_t height) {
-    // Destroy any existing Hi-Z mips.
-    DestroyHiZPyramid();
-
-    m_hizMipCount = ComputeMipCount(width, height);
-    if (m_hizMipCount == 0) return;
-
-    uint32_t mipW = width;
-    uint32_t mipH = height;
-
-    for (uint32_t i = 0; i < m_hizMipCount; ++i) {
-        mipW = (mipW > 1) ? (mipW >> 1) : 1;
-        mipH = (mipH > 1) ? (mipH >> 1) : 1;
-
-        RHITextureDesc texDesc{};
-        texDesc.width     = mipW;
-        texDesc.height    = mipH;
-        texDesc.format    = RHIFormat::R32Float;
-        texDesc.usage     = RHITextureUsage::ShaderResource
-                          | RHITextureUsage::UnorderedAccess;
-        texDesc.debugName = "HiZ_Mip";  // Device may append index for debug.
-
-        RHITextureHandle tex = m_device->CreateTexture(texDesc);
-        if (!tex.IsValid()) {
-            UZ_LOG(Renderer, Error, "SceneRenderer: failed to create Hi-Z mip {} ({}x{})", i, mipW, mipH);
-            // Partial creation — clean up and disable.
-            DestroyHiZPyramid();
-            return;
-        }
-
-        m_hizMipLevels[i].texture  = tex;
-        m_hizMipLevels[i].srvIndex = m_device->GetTextureSRVIndex(tex);
-        m_hizMipLevels[i].uavIndex = m_device->GetTextureUAVIndex(tex);
-        m_hizMipLevels[i].width    = mipW;
-        m_hizMipLevels[i].height   = mipH;
-    }
-
-    UZ_LOG(Renderer, Info, "SceneRenderer: Hi-Z pyramid created ({} mips, {}x{} -> {}x{})",
-           m_hizMipCount, width, height,
-           m_hizMipLevels[m_hizMipCount - 1].width,
-           m_hizMipLevels[m_hizMipCount - 1].height);
-}
-
-void SceneRenderer::DestroyHiZPyramid() {
-    for (uint32_t i = 0; i < m_hizMipCount; ++i) {
-        if (m_hizMipLevels[i].texture.IsValid()) {
-            m_device->DestroyTexture(m_hizMipLevels[i].texture);
-            m_hizMipLevels[i] = {};
-        }
-    }
-    m_hizMipCount = 0;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// DFS Resource Creation / Destruction
-// ─────────────────────────────────────────────────────────────────────────────
-
-void SceneRenderer::CreateDfsResources(uint32_t width, uint32_t height) {
-    // Only create DFS resources when DFS is enabled
-    if (!m_dfsConfig.enabled) return;
-
-    // Output texture: RG16Float (shadow_factor in R, scene_depth in G).
-    // Half-res by default unless fullResolution is set.
-    const uint32_t dfsWidth  = m_dfsConfig.fullResolution ? width  : width  / 2;
-    const uint32_t dfsHeight = m_dfsConfig.fullResolution ? height : height / 2;
-
-    if (dfsWidth == 0 || dfsHeight == 0) return;
-
-    // ── DFS Output Texture ──────────────────────────────────────────────
-    {
-        RHITextureDesc dfsDesc{};
-        dfsDesc.width     = dfsWidth;
-        dfsDesc.height    = dfsHeight;
-        dfsDesc.format    = RHIFormat::RG16Float;
-        dfsDesc.usage     = RHITextureUsage::ShaderResource | RHITextureUsage::UnorderedAccess;
-        dfsDesc.debugName = "DFS_Output";
-
-        m_dfsOutputTexture = m_device->CreateTexture(dfsDesc);
-        if (m_dfsOutputTexture.IsValid()) {
-            m_dfsOutputSrvIndex = m_device->GetTextureSRVIndex(m_dfsOutputTexture);
-            m_dfsOutputUavIndex = m_device->GetTextureUAVIndex(m_dfsOutputTexture);
-            UZ_LOG(Renderer, Info, "SceneRenderer: DFS output texture created ({}x{}, RG16F, SRV={}, UAV={})",
-                   dfsWidth, dfsHeight, m_dfsOutputSrvIndex, m_dfsOutputUavIndex);
-        } else {
-            UZ_LOG(Renderer, Warning, "SceneRenderer: failed to create DFS output texture — DFS disabled");
-        }
-    }
-
-    // ── DFS Culled Indices Buffer ────────────────────────────────────────
-    // AppendStructuredBuffer<uint> with capacity for all SDF objects.
-    // @source UE5 DistanceFieldShadowing.cpp:180 — CulledObjectBuffers allocation
-    {
-        RHIBufferDesc bufDesc{};
-        bufDesc.sizeBytes = kMaxSdfObjects * sizeof(uint32_t);
-        bufDesc.stride    = sizeof(uint32_t);
-        bufDesc.usage     = RHIBufferUsage::StructuredBuffer | RHIBufferUsage::UnorderedAccess;
-        bufDesc.debugName = "DFS_CulledIndices";
-
-        m_dfsCulledIndicesBuffer = m_device->CreateBuffer(bufDesc);
-        if (m_dfsCulledIndicesBuffer.IsValid()) {
-            m_dfsCulledIndicesSrvIndex = m_device->GetBufferSRVIndex(m_dfsCulledIndicesBuffer);
-            m_dfsCulledIndicesUavIndex = m_device->GetBufferUAVIndex(m_dfsCulledIndicesBuffer);
-        } else {
-            UZ_LOG(Renderer, Warning, "SceneRenderer: failed to create DFS culled indices buffer");
-        }
-    }
-
-    // ── DFS Indirect Args Buffer ─────────────────────────────────────────
-    // RWByteAddressBuffer for DispatchIndirect args (3 x uint32_t = 12 bytes).
-    // The cull pass atomically increments the X thread group count.
-    {
-        RHIBufferDesc argsDesc{};
-        argsDesc.sizeBytes = 3 * sizeof(uint32_t);
-        argsDesc.stride    = 0; // Raw byte address buffer
-        argsDesc.usage     = RHIBufferUsage::UnorderedAccess | RHIBufferUsage::IndirectArgs | RHIBufferUsage::CopyDst;
-        argsDesc.debugName = "DFS_IndirectArgs";
-
-        m_dfsIndirectArgsBuffer = m_device->CreateBuffer(argsDesc);
-        if (m_dfsIndirectArgsBuffer.IsValid()) {
-            m_dfsIndirectArgsUavIndex = m_device->GetBufferUAVIndex(m_dfsIndirectArgsBuffer);
-        } else {
-            UZ_LOG(Renderer, Warning, "SceneRenderer: failed to create DFS indirect args buffer");
-        }
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// TAA Resource Creation / Destruction
-// ─────────────────────────────────────────────────────────────────────────────
-
-void SceneRenderer::CreateTaaResources(uint32_t width, uint32_t height) {
-    DestroyTaaResources();
-
-    for (int i = 0; i < 2; ++i) {
-        RHITextureDesc taaDesc{};
-        taaDesc.width     = width;
-        taaDesc.height    = height;
-        taaDesc.format    = RHIFormat::RGBA16Float;
-        taaDesc.usage     = RHITextureUsage::ShaderResource | RHITextureUsage::UnorderedAccess;
-        taaDesc.debugName = (i == 0) ? "TAA_History_0" : "TAA_History_1";
-
-        m_taaHistory[i] = m_device->CreateTexture(taaDesc);
-        if (m_taaHistory[i].IsValid()) {
-            m_taaHistorySrv[i] = m_device->GetTextureSRVIndex(m_taaHistory[i]);
-            m_taaHistoryUav[i] = m_device->GetTextureUAVIndex(m_taaHistory[i]);
-        } else {
-            UZ_LOG(Renderer, Error, "SceneRenderer: failed to create TAA history texture {}", i);
-        }
-    }
-
-    m_taaHistoryIndex = 0;
-    m_prevViewProjValid = false;
-
-    UZ_LOG(Renderer, Info, "SceneRenderer: TAA history textures created ({}x{}, RGBA16F)", width, height);
-}
-
-void SceneRenderer::DestroyTaaResources() {
-    for (int i = 0; i < 2; ++i) {
-        if (m_taaHistory[i].IsValid()) {
-            m_device->DestroyTexture(m_taaHistory[i]);
-            m_taaHistory[i] = RHITextureHandle{};
-            m_taaHistorySrv[i] = UINT32_MAX;
-            m_taaHistoryUav[i] = UINT32_MAX;
-        }
-    }
-    m_taaHistoryIndex = 0;
-    m_prevViewProjValid = false;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// SSR Resource Creation / Destruction
-// ─────────────────────────────────────────────────────────────────────────────
-
-void SceneRenderer::CreateSsrResources(uint32_t width, uint32_t height) {
-    DestroySsrResources();
-
-    // SSR trace output: RGBA16F full-res, rgb=hit color, a=confidence
-    {
-        RHITextureDesc traceDesc{};
-        traceDesc.width     = width;
-        traceDesc.height    = height;
-        traceDesc.format    = RHIFormat::RGBA16Float;
-        traceDesc.usage     = RHITextureUsage::ShaderResource | RHITextureUsage::UnorderedAccess;
-        traceDesc.debugName = "SSR_TraceOutput";
-
-        m_ssrTraceOutput = m_device->CreateTexture(traceDesc);
-        if (m_ssrTraceOutput.IsValid()) {
-            m_ssrTraceOutputSrv = m_device->GetTextureSRVIndex(m_ssrTraceOutput);
-            m_ssrTraceOutputUav = m_device->GetTextureUAVIndex(m_ssrTraceOutput);
-        } else {
-            UZ_LOG(Renderer, Error, "SceneRenderer: failed to create SSR trace output texture");
-        }
-    }
-
-    // SSR resolved output: RGBA16F full-res, rgb=Fresnel-weighted reflection, a=blend weight
-    {
-        RHITextureDesc resolveDesc{};
-        resolveDesc.width     = width;
-        resolveDesc.height    = height;
-        resolveDesc.format    = RHIFormat::RGBA16Float;
-        resolveDesc.usage     = RHITextureUsage::ShaderResource | RHITextureUsage::UnorderedAccess;
-        resolveDesc.debugName = "SSR_ResolvedOutput";
-
-        m_ssrResolvedOutput = m_device->CreateTexture(resolveDesc);
-        if (m_ssrResolvedOutput.IsValid()) {
-            m_ssrResolvedOutputSrv = m_device->GetTextureSRVIndex(m_ssrResolvedOutput);
-            m_ssrResolvedOutputUav = m_device->GetTextureUAVIndex(m_ssrResolvedOutput);
-        } else {
-            UZ_LOG(Renderer, Error, "SceneRenderer: failed to create SSR resolved output texture");
-        }
-    }
-
-    UZ_LOG(Renderer, Info, "SceneRenderer: SSR resources created ({}x{}, RGBA16F, trace SRV={}, resolve SRV={})",
-           width, height, m_ssrTraceOutputSrv, m_ssrResolvedOutputSrv);
-}
-
-void SceneRenderer::DestroySsrResources() {
-    if (m_ssrTraceOutput.IsValid()) {
-        m_device->DestroyTexture(m_ssrTraceOutput);
-        m_ssrTraceOutput = RHITextureHandle{};
-        m_ssrTraceOutputSrv = UINT32_MAX;
-        m_ssrTraceOutputUav = UINT32_MAX;
-    }
-    if (m_ssrResolvedOutput.IsValid()) {
-        m_device->DestroyTexture(m_ssrResolvedOutput);
-        m_ssrResolvedOutput = RHITextureHandle{};
-        m_ssrResolvedOutputSrv = UINT32_MAX;
-        m_ssrResolvedOutputUav = UINT32_MAX;
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Color Grading LUT Resource Creation / Destruction
-// ─────────────────────────────────────────────────────────────────────────────
-
-void SceneRenderer::CreateColorGradingLutResources() {
-    DestroyColorGradingLutResources();
-
-    RHITextureDesc lutDesc{};
-    lutDesc.width            = kColorGradingLutSize;
-    lutDesc.height           = kColorGradingLutSize;
-    lutDesc.depthOrArraySize = static_cast<uint16_t>(kColorGradingLutSize);
-    lutDesc.is3D             = true;
-    lutDesc.format           = RHIFormat::RGBA8Unorm;
-    lutDesc.usage            = RHITextureUsage::ShaderResource
-                             | RHITextureUsage::UnorderedAccess;
-    lutDesc.debugName        = "ColorGradingLUT_3D";
-
-    m_colorGradingLut = m_device->CreateTexture(lutDesc);
-    if (m_colorGradingLut.IsValid()) {
-        m_colorGradingLutSrv = m_device->GetTextureSRVIndex(m_colorGradingLut);
-        m_colorGradingLutUav = m_device->GetTextureUAVIndex(m_colorGradingLut);
-        m_colorGradingLutDirty = true;
-        UZ_LOG(Renderer, Info, "SceneRenderer: Color grading LUT created ({}x{}x{}, RGBA8, 3D, SRV={}, UAV={})",
-               kColorGradingLutSize, kColorGradingLutSize, kColorGradingLutSize,
-               m_colorGradingLutSrv, m_colorGradingLutUav);
-    } else {
-        UZ_LOG(Renderer, Error, "SceneRenderer: failed to create color grading LUT texture");
-    }
-}
-
-void SceneRenderer::DestroyColorGradingLutResources() {
-    if (m_colorGradingLut.IsValid()) {
-        m_device->DestroyTexture(m_colorGradingLut);
-        m_colorGradingLut = RHITextureHandle{};
-        m_colorGradingLutSrv = UINT32_MAX;
-        m_colorGradingLutUav = UINT32_MAX;
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Motion Blur Resource Creation / Destruction
-// ─────────────────────────────────────────────────────────────────────────────
-
-void SceneRenderer::CreateMotionBlurResources(uint32_t width, uint32_t height) {
-    DestroyMotionBlurResources();
-
-    RHITextureDesc desc{};
-    desc.width     = width;
-    desc.height    = height;
-    desc.format    = RHIFormat::RGBA16Float;
-    desc.usage     = RHITextureUsage::ShaderResource
-                   | RHITextureUsage::UnorderedAccess;
-    desc.debugName = "MotionBlur_Output";
-
-    m_motionBlurOutput = m_device->CreateTexture(desc);
-    if (m_motionBlurOutput.IsValid()) {
-        m_motionBlurOutputSrv = m_device->GetTextureSRVIndex(m_motionBlurOutput);
-        m_motionBlurOutputUav = m_device->GetTextureUAVIndex(m_motionBlurOutput);
-        UZ_LOG(Renderer, Info, "SceneRenderer: Motion blur output created ({}x{}, RGBA16F, SRV={}, UAV={})",
-               width, height, m_motionBlurOutputSrv, m_motionBlurOutputUav);
-    } else {
-        UZ_LOG(Renderer, Error, "SceneRenderer: failed to create motion blur output texture");
-    }
-}
-
-void SceneRenderer::DestroyMotionBlurResources() {
-    if (m_motionBlurOutput.IsValid()) {
-        m_device->DestroyTexture(m_motionBlurOutput);
-        m_motionBlurOutput = RHITextureHandle{};
-        m_motionBlurOutputSrv = UINT32_MAX;
-        m_motionBlurOutputUav = UINT32_MAX;
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// DOF Resource Creation / Destruction
-// ─────────────────────────────────────────────────────────────────────────────
-
-void SceneRenderer::CreateDofResources(uint32_t width, uint32_t height) {
-    DestroyDofResources();
-
-    // CoC texture — R16F signed circle of confusion per pixel
-    {
-        RHITextureDesc cocDesc{};
-        cocDesc.width     = width;
-        cocDesc.height    = height;
-        cocDesc.format    = RHIFormat::R16Float;
-        cocDesc.usage     = RHITextureUsage::ShaderResource
-                          | RHITextureUsage::UnorderedAccess;
-        cocDesc.debugName = "DOF_CoC";
-
-        m_dofCocTexture = m_device->CreateTexture(cocDesc);
-        if (m_dofCocTexture.IsValid()) {
-            m_dofCocSrv = m_device->GetTextureSRVIndex(m_dofCocTexture);
-            m_dofCocUav = m_device->GetTextureUAVIndex(m_dofCocTexture);
-        } else {
-            UZ_LOG(Renderer, Error, "SceneRenderer: failed to create DOF CoC texture");
-        }
-    }
-
-    // DOF output — RGBA16F blurred result
-    {
-        RHITextureDesc outDesc{};
-        outDesc.width     = width;
-        outDesc.height    = height;
-        outDesc.format    = RHIFormat::RGBA16Float;
-        outDesc.usage     = RHITextureUsage::ShaderResource
-                          | RHITextureUsage::UnorderedAccess;
-        outDesc.debugName = "DOF_Output";
-
-        m_dofOutputTexture = m_device->CreateTexture(outDesc);
-        if (m_dofOutputTexture.IsValid()) {
-            m_dofOutputSrv = m_device->GetTextureSRVIndex(m_dofOutputTexture);
-            m_dofOutputUav = m_device->GetTextureUAVIndex(m_dofOutputTexture);
-        } else {
-            UZ_LOG(Renderer, Error, "SceneRenderer: failed to create DOF output texture");
-        }
-    }
-
-    UZ_LOG(Renderer, Info, "SceneRenderer: DOF textures created ({}x{}, CoC SRV={}, Output SRV={})",
-           width, height, m_dofCocSrv, m_dofOutputSrv);
-}
-
-void SceneRenderer::DestroyDofResources() {
-    if (m_dofCocTexture.IsValid()) {
-        m_device->DestroyTexture(m_dofCocTexture);
-        m_dofCocTexture = RHITextureHandle{};
-        m_dofCocSrv = UINT32_MAX;
-        m_dofCocUav = UINT32_MAX;
-    }
-    if (m_dofOutputTexture.IsValid()) {
-        m_device->DestroyTexture(m_dofOutputTexture);
-        m_dofOutputTexture = RHITextureHandle{};
-        m_dofOutputSrv = UINT32_MAX;
-        m_dofOutputUav = UINT32_MAX;
-    }
-}
-
-void SceneRenderer::DestroyDfsResources() {
-    if (m_dfsOutputTexture.IsValid()) {
-        m_device->DestroyTexture(m_dfsOutputTexture);
-        m_dfsOutputTexture = RHITextureHandle{};
-        m_dfsOutputSrvIndex = UINT32_MAX;
-        m_dfsOutputUavIndex = UINT32_MAX;
-    }
-    if (m_dfsCulledIndicesBuffer.IsValid()) {
-        m_device->DestroyBuffer(m_dfsCulledIndicesBuffer);
-        m_dfsCulledIndicesBuffer = RHIBufferHandle{};
-        m_dfsCulledIndicesSrvIndex = UINT32_MAX;
-        m_dfsCulledIndicesUavIndex = UINT32_MAX;
-    }
-    if (m_dfsIndirectArgsBuffer.IsValid()) {
-        m_device->DestroyBuffer(m_dfsIndirectArgsBuffer);
-        m_dfsIndirectArgsBuffer = RHIBufferHandle{};
-        m_dfsIndirectArgsUavIndex = UINT32_MAX;
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Resize
-// ─────────────────────────────────────────────────────────────────────────────
-
-void SceneRenderer::Resize(uint32_t width, uint32_t height) {
-    if (width == 0 || height == 0) return;
-
-    m_width = width;
-    m_height = height;
-
-    if (m_gbuffer.IsValid()) {
-        [[maybe_unused]] bool ok = m_gbuffer.Resize(m_device, width, height);
-        UZ_CHECK(ok);
-    }
-
-    // Recreate HDR scene color at new size
-    if (m_hdrSceneColor.IsValid()) {
-        m_device->DestroyTexture(m_hdrSceneColor);
-        RHITextureDesc hdrDesc{};
-        hdrDesc.width     = width;
-        hdrDesc.height    = height;
-        hdrDesc.format    = RHIFormat::RGBA16Float;
-        hdrDesc.usage     = RHITextureUsage::ShaderResource | RHITextureUsage::RenderTarget;
-        hdrDesc.debugName = "HDR_SceneColor";
-        m_hdrSceneColor = m_device->CreateTexture(hdrDesc);
-        m_hdrSceneColorSrv = m_device->GetTextureSRVIndex(m_hdrSceneColor);
-    }
-
-    // Recreate Hi-Z pyramid at new resolution
-    CreateHiZPyramid(width, height);
-
-    // Recreate GTAO textures at new resolution
-    if (m_gtaoPass && m_gtaoPass->IsInitialized()) {
-        [[maybe_unused]] bool gtaoOk = m_gtaoPass->Resize(width, height);
-    }
-
-    // Recreate DFS output texture at new resolution
-    DestroyDfsResources();
-    CreateDfsResources(width, height);
-
-    // Recreate TAA history textures at new resolution
-    CreateTaaResources(width, height);
-
-    // Recreate SSR output textures at new resolution
-    DestroySsrResources();
-    CreateSsrResources(width, height);
-
-    // Recreate motion blur output at new resolution
-    DestroyMotionBlurResources();
-    CreateMotionBlurResources(width, height);
-
-    // Recreate DOF textures at new resolution
-    DestroyDofResources();
-    CreateDofResources(width, height);
-
-    // Color grading LUT is resolution-independent (32x32x32 volume), no resize needed.
-    // Just mark dirty so it regenerates with any changed parameters.
-    m_colorGradingLutDirty = true;
-
-    const float aspect = static_cast<float>(width) / static_cast<float>(height);
-    m_camera->SetAspectRatio(aspect);
-
-    if (m_statsOverlay) {
-        m_statsOverlay->SetScreenSize(width, height);
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Shutdown
-// ─────────────────────────────────────────────────────────────────────────────
-
-void SceneRenderer::Shutdown() {
-    if (!m_device) return;
-
-    // Wait for GPU to finish all in-flight work before destroying any resources.
-    // Without this, D3D12MA asserts "Some allocations were not freed" because
-    // resources are destroyed while the GPU still references them.
-    m_device->WaitIdle();
-
-    // Destroy screenshot readback buffer
-    m_screenshotCapture.Shutdown();
-
-    // Destroy shadow readback buffer if still alive
-    if (m_shadowReadbackBuffer.IsValid()) {
-        m_device->DestroyBuffer(m_shadowReadbackBuffer);
-        m_shadowReadbackBuffer = RHIBufferHandle{};
-    }
-
-    DestroyAssets();
-
-    if (m_fallbackWhite.IsValid()) {
-        m_device->DestroyTexture(m_fallbackWhite);
-        m_fallbackWhite = RHITextureHandle{};
-    }
-    if (m_fallbackBlack.IsValid()) {
-        m_device->DestroyTexture(m_fallbackBlack);
-        m_fallbackBlack = RHITextureHandle{};
-    }
-    if (m_fallbackNormal.IsValid()) {
-        m_device->DestroyTexture(m_fallbackNormal);
-        m_fallbackNormal = RHITextureHandle{};
-    }
-
-    if (m_gbuffer.IsValid()) {
-        m_gbuffer.Destroy(m_device);
-    }
-
-    m_shadowAtlas.Shutdown(m_device);
-
-    // ── Shadow Cache + Static Shadow Atlas ───────────────────────────
-    m_shadowCacheManager.Shutdown();
-    if (m_staticShadowAtlas.IsValid()) {
-        m_device->DestroyTexture(m_staticShadowAtlas);
-        m_staticShadowAtlas = RHITextureHandle{};
-        m_staticShadowAtlasSrv = UINT32_MAX;
-    }
-
-    // ── Transmittance LUT ────────────────────────────────────────────
-    if (m_transmittanceLut.IsValid()) {
-        m_device->DestroyTexture(m_transmittanceLut);
-        m_transmittanceLut = RHITextureHandle{};
-    }
-
-    // ── Multi-Scatter LUT ────────────────────────────────────────────
-    if (m_multiScatterLut.IsValid()) {
-        m_device->DestroyTexture(m_multiScatterLut);
-        m_multiScatterLut = RHITextureHandle{};
-    }
-
-    // ── IBL resources ──────────────────────────────────────────────────
-    if (m_iblBaker) m_iblBaker->Shutdown();
-    if (m_skyCubemap.IsValid()) {
-        m_device->DestroyTexture(m_skyCubemap);
-        m_skyCubemap = RHITextureHandle{};
-        m_skyCubemapSrv = UINT32_MAX;
-        m_skyCubemapUav = UINT32_MAX;
-    }
-
-    // ── HDR Scene Color cleanup ─────────────────────────────────
-    if (m_hdrSceneColor.IsValid()) {
-        m_device->DestroyTexture(m_hdrSceneColor);
-        m_hdrSceneColor = RHITextureHandle{};
-    }
-
-    // ── Hi-Z Pyramid cleanup ─────────────────────────────────────
-    DestroyHiZPyramid();
-
-    // ── DFS cleanup ─────────────────────────────────────────────────
-    DestroyDfsResources();
-
-    // ── SSR cleanup ──────────────────────────────────────────────────
-    DestroySsrResources();
-
-    // ── TAA cleanup ──────────────────────────────────────────────────
-    DestroyTaaResources();
-
-    // ── Color Grading LUT cleanup ───────────────────────────────────
-    DestroyColorGradingLutResources();
-
-    // ── Motion Blur cleanup ─────────────────────────────────────────
-    DestroyMotionBlurResources();
-
-    // ── DOF cleanup ─────────────────────────────────────────────────
-    DestroyDofResources();
-
-    // ── Auto-Exposure cleanup ─────────────────────────────────────
-    if (m_autoExposure) m_autoExposure->Shutdown();
-    if (m_gtaoPass) m_gtaoPass->Shutdown();
-    if (m_bloomPass) m_bloomPass->Shutdown();
-
-    // ── Instance buffer cleanup ─────────────────────────────────────
-    for (uint32_t i = 0; i < kInstanceBufferCount; ++i) {
-        if (m_instanceBuffers[i].IsValid()) {
-            m_device->DestroyBuffer(m_instanceBuffers[i]);
-            m_instanceBuffers[i] = RHIBufferHandle{};
-        }
-    }
-
-    if (m_statsOverlay)  m_statsOverlay->Shutdown();
-    if (m_editorGrid)    m_editorGrid->Shutdown();
-    if (m_cbRing)        m_cbRing->Shutdown();
-    if (m_pipelines)     m_pipelines->Shutdown();
-    if (m_shaderMgr)     m_shaderMgr->Shutdown();
-
-    m_rgPool.reset();
-    m_cameraCtrl.reset();
-    m_camera.reset();
-    m_statsOverlay.reset();
-    m_editorGrid.reset();
-    m_cbRing.reset();
-    m_pipelines.reset();
-    m_shaderMgr.reset();
-    m_input.reset();
-
-    m_device = nullptr;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// RenderFrame
-// ─────────────────────────────────────────────────────────────────────────────
 
 void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapChain,
                                  World* world, IVFS* vfs, float dt, uint32_t frameIndex) {
@@ -1315,6 +391,88 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
         shadowDataParams.dfsOutputTexture  = m_dfsOutputTexture;
     }
 
+    // ── Local Light Shadows (spot lights with castShadows=true) ─────────
+    // For each spot light that requests shadows, build a perspective
+    // projection from the spot light's position, direction, and outer cone
+    // angle, allocate a tile in the local shadow atlas, and fill the
+    // LocalLightShadowData entry in the ShadowDataCB.
+    //
+    // @source UE5 SpotLightComponent.cpp:119-138 — GetWholeSceneProjectedShadowInitializer
+    //   MinLightW = 0.1f (near plane), MaxDistanceToCastInLightW = Radius (far plane)
+    //   Scales = (InvTanOuterCone, InvTanOuterCone) — perspective FOV from cone angle
+    // @source UE5 ShadowSetup.cpp:960-1048 — SetupWholeSceneProjection
+    m_localShadowAtlas.Reset();
+    if (m_localShadowAtlas.IsValid() && lightData.spotShadowCount > 0) {
+        static constexpr float kDegToRad = 3.14159265358979323846f / 180.f;
+        auto* shadowCBPtr = reinterpret_cast<ShadowDataCB*>(shadowAlloc.cpuPtr);
+        shadowCBPtr->localShadowAtlasIndex = m_localShadowAtlas.GetSrvIndex();
+        shadowDataParams.localShadowAtlasIndex = m_localShadowAtlas.GetSrvIndex();
+        shadowDataParams.localShadowAtlas      = m_localShadowAtlas.GetTexture();
+
+        for (uint32_t si = 0; si < lightData.spotShadowCount; ++si) {
+            const SpotLightShadowInfo& spotShadow = lightData.spotShadows[si];
+
+            ShadowTileInfo tile{};
+            if (!m_localShadowAtlas.AllocateTile(tile)) {
+                UZ_LOG(Renderer, Warning,
+                       "LocalShadow: atlas full — could not allocate tile for spot shadow {}",
+                       si);
+                break;
+            }
+
+            // Build perspective projection matrix for the spot light.
+            // FOV = 2 * outerAngle (full apex angle of the cone).
+            // Near = 0.1 cm (UE5 MinLightW), Far = radius (attenuation distance).
+            // @source UE5 SpotLightComponent.cpp:134 — MinLightW = 0.1f
+            // @source UE5 SpotLightComponent.cpp:135 — MaxDistanceToCastInLightW = Radius
+            const float fovY     = 2.0f * spotShadow.outerAngle;
+            const float nearZ    = 0.1f;
+            const float farZ     = spotShadow.radius;
+
+            // Build view matrix (lookAt from spot position along spot direction).
+            // Use Z-up world: pick an up vector that isn't collinear with direction.
+            Vec3 up = Vec3::Up(); // Z-up (0, 0, 1)
+            const float dotUp = std::abs(spotShadow.direction.Dot(up));
+            if (dotUp > 0.99f) {
+                // Direction is nearly vertical — use a horizontal up vector instead
+                up = Vec3{0.f, 1.f, 0.f};
+            }
+
+            const Vec3 target = spotShadow.position + spotShadow.direction;
+            Camera spotCamera;
+            spotCamera.SetPosition(spotShadow.position);
+            spotCamera.LookAt(target, up);
+            // outerAngle is in radians, convert to degrees for SetHorizontalFOV.
+            // For a square shadow map (aspect=1), horizontal FOV = vertical FOV.
+            const float fovDeg = fovY * (180.0f / 3.14159265358979323846f);
+            spotCamera.SetHorizontalFOV(fovDeg, 1.0f, nearZ, farZ);
+
+            const Mat4 lightViewProj = spotCamera.GetViewProjection();
+
+            // Fill LocalLightShadowData entry in ShadowDataCB
+            LocalLightShadowData& sd = shadowCBPtr->localShadows[si];
+            sd.viewProj     = lightViewProj;
+            sd.atlasOffsetX = tile.uvOffsetX;
+            sd.atlasOffsetY = tile.uvOffsetY;
+            sd.atlasScale   = tile.uvScale;
+            sd.bias         = spotShadow.bias;
+
+            // Also copy to shadowDataParams for the binder path
+            shadowDataParams.localShadows[si] = sd;
+        }
+
+        shadowCBPtr->localShadowCount = lightData.spotShadowCount;
+        shadowDataParams.localShadowCount = lightData.spotShadowCount;
+
+        static bool loggedLocalShadowOnce = false;
+        if (!loggedLocalShadowOnce) {
+            UZ_LOG(Renderer, Info,
+                   "LocalShadow: {} spot light shadows allocated (atlas SRV={})",
+                   lightData.spotShadowCount, m_localShadowAtlas.GetSrvIndex());
+            loggedLocalShadowOnce = true;
+        }
+    }
+
     // Resize shadow atlas if cascade count changed (e.g., far shadows toggled)
     m_shadowAtlas.Resize(m_device, totalCascadeCount);
 
@@ -1409,6 +567,7 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     auto depthRes    = rgBuilder.ImportTexture("GBuf_Depth",     m_gbuffer.depth,      RHIResourceState::ShaderResource);
     auto positionRes = rgBuilder.ImportTexture("GBuf_Position",  m_gbuffer.positionWS, RHIResourceState::ShaderResource);
     auto emissiveRes = rgBuilder.ImportTexture("GBuf_Emissive",  m_gbuffer.emissive,   RHIResourceState::ShaderResource);
+    auto velocityRes = rgBuilder.ImportTexture("GBuf_Velocity", m_gbuffer.velocity,   RHIResourceState::ShaderResource);
 
     auto* pipelines = m_pipelines.get();
 
@@ -1695,6 +854,149 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
         }
     }
 
+    // ── Local Light Shadow Passes (spot light shadow depth rendering) ────
+    // For each spot light that casts shadows, render the scene depth into
+    // the corresponding tile in the local shadow atlas. Uses the same
+    // shadow depth pipeline as the CSM pass (depth-only, no color).
+    //
+    // @source UE5 ShadowSetup.cpp:4300-4310 — SetupWholeSceneProjection for spot lights
+    // @source UE5 ShadowRendering.cpp:2500-2600 — RenderShadowDepthMap
+    if (m_localShadowAtlas.IsValid() && lightData.spotShadowCount > 0 && !m_meshes.empty()) {
+        auto localShadowAtlasRes = rgBuilder.ImportTexture(
+            "LocalShadowAtlas", m_localShadowAtlas.GetTexture(), RHIResourceState::ShaderResource);
+
+        const auto localAtlasTex = m_localShadowAtlas.GetTexture();
+        const auto localShadowPipeline = pipelines->GetShadowDepth(bindless);
+        const auto spotShadowCount = lightData.spotShadowCount;
+        const auto* shadowCBData = reinterpret_cast<const ShadowDataCB*>(shadowAlloc.cpuPtr);
+
+        // Build per-tile data for the lambda capture
+        struct LocalTileData {
+            uint32_t viewportX, viewportY, viewportSize;
+            Mat4     viewProj;
+        };
+        std::vector<LocalTileData> tileData(spotShadowCount);
+        for (uint32_t si = 0; si < spotShadowCount; ++si) {
+            const uint32_t col = si % kLocalShadowTileCols;
+            const uint32_t row = si / kLocalShadowTileCols;
+            tileData[si].viewportX    = col * kLocalShadowTileSize;
+            tileData[si].viewportY    = row * kLocalShadowTileSize;
+            tileData[si].viewportSize = kLocalShadowTileSize;
+            tileData[si].viewProj     = shadowCBData->localShadows[si].viewProj;
+        }
+
+        const DrawList* localDrawListPtr = &drawList;
+        auto* localCbRing = m_cbRing.get();
+        const GPUMesh* localMeshes = m_meshes.data();
+        const auto localMeshCount = static_cast<uint32_t>(m_meshes.size());
+        const bool localBindless = bindless;
+
+        rgBuilder.AddPass("LocalShadowDepth", [localShadowAtlasRes, localAtlasTex,
+                                                localShadowPipeline, tileData, spotShadowCount,
+                                                localDrawListPtr, localCbRing, localMeshes,
+                                                localMeshCount, localBindless](rg::RgPassBuilder& pb) {
+            pb.Write(localShadowAtlasRes, RHIResourceState::DepthStencilWrite);
+
+            pb.SetExecutionCallback([localAtlasTex, localShadowPipeline, tileData, spotShadowCount,
+                                     localDrawListPtr, localCbRing, localMeshes,
+                                     localMeshCount, localBindless](
+                                        IRHICommandList* cmd, const rg::RgPassResources& res) {
+                UZ_PROFILE_SCOPE("LocalShadowDepth::Execute");
+
+                // Clear the entire local shadow atlas to max depth (standard-Z far=1.0)
+                cmd->ClearDepthStencil(localAtlasTex, 1.0f, 0);
+
+                const auto& commands = localDrawListPtr->GetCommands();
+                uint32_t totalDrawCalls = 0;
+
+                // Render each spot light's shadow into its atlas tile
+                for (uint32_t si = 0; si < spotShadowCount; ++si) {
+                    const auto& tile = tileData[si];
+
+                    // Viewport: tile region in the atlas
+                    RHIViewport vp{};
+                    vp.x        = static_cast<float>(tile.viewportX);
+                    vp.y        = static_cast<float>(tile.viewportY);
+                    vp.width    = static_cast<float>(tile.viewportSize);
+                    vp.height   = static_cast<float>(tile.viewportSize);
+                    vp.maxDepth = 1.0f;
+                    cmd->SetViewport(vp);
+
+                    RHIScissorRect sc{};
+                    sc.left   = static_cast<int32_t>(tile.viewportX);
+                    sc.top    = static_cast<int32_t>(tile.viewportY);
+                    sc.right  = static_cast<int32_t>(tile.viewportX + tile.viewportSize);
+                    sc.bottom = static_cast<int32_t>(tile.viewportY + tile.viewportSize);
+                    cmd->SetScissor(sc);
+
+                    // Depth-only render pass (0 color attachments)
+                    RHIRenderPassDesc passDesc{};
+                    passDesc.colorAttachmentCount = 0;
+                    passDesc.hasDepth = true;
+                    passDesc.depthAttachment.texture    = localAtlasTex;
+                    passDesc.depthAttachment.clearDepth = 1.0f;
+                    passDesc.depthAttachment.clear      = false; // Already cleared above
+                    cmd->BeginRenderPass(passDesc);
+
+                    cmd->SetPipeline(localShadowPipeline);
+
+                    // Bind per-light shadow CB (viewProj matrix) at slot 3
+                    ShadowCB shadowCb{};
+                    shadowCb.viewProj = tile.viewProj;
+                    CBAllocation shadowCbAlloc = localCbRing->Allocate(sizeof(ShadowCB));
+                    if (shadowCbAlloc.cpuPtr == nullptr) {
+                        cmd->EndRenderPass();
+                        break;
+                    }
+                    std::memcpy(shadowCbAlloc.cpuPtr, &shadowCb, sizeof(ShadowCB));
+                    cmd->SetRootCBV(kSlotShadow, shadowCbAlloc.bufferHandle,
+                                    shadowCbAlloc.offsetBytes, shadowCbAlloc.cpuPtr, sizeof(ShadowCB));
+
+                    // Draw all scene geometry into this light's shadow tile
+                    uint32_t lastBoundMeshId = UINT32_MAX;
+                    for (const auto& drawCmd : commands) {
+                        if (drawCmd.meshId >= localMeshCount) continue;
+                        const GPUMesh& mesh = localMeshes[drawCmd.meshId];
+                        if (!mesh.IsValid()) continue;
+
+                        if (drawCmd.meshId != lastBoundMeshId) {
+                            if (localBindless) {
+                                cmd->SetDescriptorIndex(kSlotRootConstants, mesh.vbSrvIndex);
+                            } else {
+                                cmd->SetVertexBuffer(0, mesh.vertexBuffer, 0);
+                            }
+                            cmd->SetIndexBuffer(mesh.indexBuffer, mesh.indexFormat, 0);
+                            lastBoundMeshId = drawCmd.meshId;
+                        }
+
+                        // Per-object CB: world matrix
+                        PerObjectCB perObject{};
+                        perObject.model = drawCmd.worldMatrix;
+                        CBAllocation objAlloc = localCbRing->Allocate(sizeof(PerObjectCB));
+                        if (objAlloc.cpuPtr == nullptr) break;
+                        std::memcpy(objAlloc.cpuPtr, &perObject, sizeof(PerObjectCB));
+                        cmd->SetRootCBV(kSlotPerObject, objAlloc.bufferHandle,
+                                        objAlloc.offsetBytes, objAlloc.cpuPtr, sizeof(PerObjectCB));
+
+                        cmd->DrawIndexed(mesh.indexCount);
+                        ++totalDrawCalls;
+                    }
+
+                    cmd->EndRenderPass();
+                }
+
+                // First-frame diagnostic logging
+                static bool loggedLocalShadowPass = false;
+                if (!loggedLocalShadowPass) {
+                    UZ_LOG(Renderer, Info,
+                           "LocalShadowDepth: first execution — {} spot shadows, {} total draw calls",
+                           spotShadowCount, totalDrawCalls);
+                    loggedLocalShadowPass = true;
+                }
+            });
+        });
+    }
+
     if (m_renderPath == RenderPath::Deferred) {
         // ── Deferred: optional DepthPrepass + Hi-Z + GBuffer + lighting/debug ──
         if (!m_meshes.empty()) {
@@ -1768,6 +1070,35 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
                 gbDesc.batchCount             = static_cast<uint32_t>(instanceBatches.size());
             }
             AddGBufferPass(rgBuilder, gbDesc);
+        }
+
+        // ── Velocity Buffer Pass (after GBuffer, before GTAO) ─────────
+        // Generates per-pixel screen-space motion vectors by reprojecting
+        // depth-reconstructed world positions through prevViewProj.
+        // @source UE5 VelocityRendering.cpp — camera-only velocity pass
+        if (m_prevViewProjValid && m_gbuffer.velocity.IsValid()) {
+            VelocityCB velCB{};
+            velCB.prevViewProj = m_prevViewProj;
+            velCB.screenWidth  = static_cast<float>(vpWidth);
+            velCB.screenHeight = static_cast<float>(vpHeight);
+
+            CBAllocation velCBAlloc = m_cbRing->Allocate(sizeof(VelocityCB));
+            std::memcpy(velCBAlloc.cpuPtr, &velCB, sizeof(VelocityCB));
+
+            VelocityPassDesc velDesc{};
+            velDesc.velocityTarget  = velocityRes;
+            velDesc.depthBuffer     = depthRes;
+            velDesc.velocityTexture = m_gbuffer.velocity;
+            velDesc.depthTexture    = m_gbuffer.depth;
+            velDesc.depthSrvIndex   = m_gbuffer.depthSRV;
+            velDesc.perFrameAlloc   = perFrameAlloc;
+            velDesc.velocityCBAlloc = velCBAlloc;
+            velDesc.pipeline        = pipelines->GetVelocityPass();
+            velDesc.viewportWidth   = static_cast<float>(vpWidth);
+            velDesc.viewportHeight  = static_cast<float>(vpHeight);
+            velDesc.bindless        = bindless;
+
+            AddVelocityPass(rgBuilder, velDesc);
         }
 
         // ── GTAO Pass (after GBuffer, before lighting) ─────────────────
@@ -2621,11 +1952,13 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
 
         // Flip ping-pong index for next frame.
         m_taaHistoryIndex = 1 - m_taaHistoryIndex;
-
-        // Store unjittered viewProj for next frame's reprojection.
-        m_prevViewProj = unjitteredViewProj;
-        m_prevViewProjValid = true;
     }
+
+    // Store unjittered viewProj for next frame's reprojection.
+    // This runs every frame (not just when TAA is active) because the velocity
+    // buffer pass and motion blur also need the previous frame's viewProj.
+    m_prevViewProj = unjitteredViewProj;
+    m_prevViewProjValid = true;
 
     // ── Color Grading LUT generation (compute) ─────────────────────────
     // @source UE5 PostProcessCombineLUTs.cpp:322 — GroupSize = 8
@@ -2705,16 +2038,97 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
         m_colorGradingLutDirty = false;
     }
 
-    // ── Motion Blur pass (compute: per-pixel velocity gather blur) ──────
-    // @source UE5 MotionBlurApply.usf:269-714 — MainCS
+    // ── Motion Blur passes (tile max → neighbor max → per-pixel gather) ─
+    // @source UE5 PostProcessMotionBlur.cpp:607-621 — velocity scale + tile setup
+    // @source UE5 MotionBlurApply.usf:269-714 — MainCS (gather)
     // @source UE5 Scene.cpp:598-600 — MotionBlurAmount=0.5, MotionBlurMax=5.0
     uint32_t motionBlurSrvForTonemap = taaSrvForTonemap;
     const bool motionBlurActive = m_motionBlurEnabled && m_motionBlurOutput.IsValid()
+                                && m_motionBlurTileMax.IsValid() && m_motionBlurNeighborMax.IsValid()
                                 && m_gbuffer.velocity.IsValid() && bindless && m_shadowDebugMode == 0;
     if (motionBlurActive) {
+        // ── Compute velocity scale on CPU ────────────────────────────────
+        // @source UE5 SceneVisibility.cpp:5428-5431 — MotionBlurTimeScale
+        // @source UE5 PostProcessMotionBlur.cpp:610-613 — VelocityScale
+        //   MotionBlurTargetDeltaTime = 1.0 / MotionBlurTargetFPS  (line 5428)
+        //   MotionBlurTimeScale = MotionBlurTargetDeltaTime / DeltaRealTime  (line 5431)
+        //   VelocityScale = MotionBlurTimeScale * MotionBlurAmount * 0.5  (line 613)
+        const float clampedDt = std::max(dt, 0.001f);
+        const float targetDt = 1.0f / static_cast<float>(std::max(m_motionBlurTargetFPS, 1));
+        const float motionBlurTimeScale = targetDt / clampedDt;
+        const float motionBlurScale = motionBlurTimeScale * m_motionBlurAmount * 0.5f;
+        const float maxBlurPx = m_motionBlurMax * 0.01f * static_cast<float>(vpWidth);
+
+        // @source UE5 MotionBlurCommon.ush:24 — VELOCITY_FLATTEN_TILE_SIZE = 16
+        const uint32_t tileCountX = (vpWidth  + 15) / 16;
+        const uint32_t tileCountY = (vpHeight + 15) / 16;
+
+        // ── Pass 1: Tile Max (16x16 tiles, find max velocity per tile) ───
+        // @source UE5 MotionBlurVelocityFlatten.usf:79-165 — MainCS
+        rgBuilder.AddPass("MotionBlur_TileMax", [&](rg::RgPassBuilder& pb) {
+            pb.Read(hdrRes, RHIResourceState::ShaderResource);
+            pb.SetExecutionCallback([&, tileCountX, tileCountY](IRHICommandList* cmd, const rg::RgPassResources&) {
+                UZ_PROFILE_SCOPE("MotionBlur::TileMax");
+                auto pso = pipelines->GetMotionBlurTileMax();
+                if (!pso.IsValid()) return;
+
+                RHIBarrierDesc b{}; b.buffer = RHIBufferHandle::Invalid();
+                b.texture = m_motionBlurTileMax;
+                b.stateBefore = RHIResourceState::ShaderResource;
+                b.stateAfter = RHIResourceState::UnorderedAccess;
+                cmd->ResourceBarrier(&b, 1);
+
+                cmd->SetPipeline(pso);
+                struct { uint32_t velSrv, outUav, tcX, tcY; } rc;
+                rc.velSrv = m_gbuffer.velocitySRV;
+                rc.outUav = m_motionBlurTileMaxUav;
+                rc.tcX    = tileCountX;
+                rc.tcY    = tileCountY;
+                cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 4);
+                // Dispatch one thread group per tile (each group is 16x16 threads).
+                cmd->Dispatch(tileCountX, tileCountY, 1);
+
+                b.stateBefore = RHIResourceState::UnorderedAccess;
+                b.stateAfter = RHIResourceState::ShaderResource;
+                cmd->ResourceBarrier(&b, 1);
+            });
+        });
+
+        // ── Pass 2: Neighbor Max (3x3 tile neighborhood max) ─────────────
+        // @source UE5 MotionBlurTileGather.usf:24-91 — MainCS
+        rgBuilder.AddPass("MotionBlur_NeighborMax", [&](rg::RgPassBuilder& pb) {
+            pb.Read(hdrRes, RHIResourceState::ShaderResource);
+            pb.SetExecutionCallback([&, tileCountX, tileCountY](IRHICommandList* cmd, const rg::RgPassResources&) {
+                UZ_PROFILE_SCOPE("MotionBlur::NeighborMax");
+                auto pso = pipelines->GetMotionBlurNeighborMax();
+                if (!pso.IsValid()) return;
+
+                RHIBarrierDesc b{}; b.buffer = RHIBufferHandle::Invalid();
+                b.texture = m_motionBlurNeighborMax;
+                b.stateBefore = RHIResourceState::ShaderResource;
+                b.stateAfter = RHIResourceState::UnorderedAccess;
+                cmd->ResourceBarrier(&b, 1);
+
+                cmd->SetPipeline(pso);
+                struct { uint32_t tileSrv, outUav, tcX, tcY; } rc;
+                rc.tileSrv = m_motionBlurTileMaxSrv;
+                rc.outUav  = m_motionBlurNeighborMaxUav;
+                rc.tcX     = tileCountX;
+                rc.tcY     = tileCountY;
+                cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 4);
+                cmd->Dispatch((tileCountX + 7) / 8, (tileCountY + 7) / 8, 1);
+
+                b.stateBefore = RHIResourceState::UnorderedAccess;
+                b.stateAfter = RHIResourceState::ShaderResource;
+                cmd->ResourceBarrier(&b, 1);
+            });
+        });
+
+        // ── Pass 3: Per-Pixel Gather Blur ────────────────────────────────
+        // @source UE5 MotionBlurApply.usf:269-714 — MainCS
         rgBuilder.AddPass("MotionBlur", [&](rg::RgPassBuilder& pb) {
             pb.Read(hdrRes, RHIResourceState::ShaderResource);
-            pb.SetExecutionCallback([&](IRHICommandList* cmd, const rg::RgPassResources&) {
+            pb.SetExecutionCallback([&, motionBlurScale, maxBlurPx](IRHICommandList* cmd, const rg::RgPassResources&) {
                 UZ_PROFILE_SCOPE("MotionBlur::Execute");
                 auto mbPSO = pipelines->GetMotionBlur();
                 if (!mbPSO.IsValid()) return;
@@ -2724,10 +2138,9 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
                 cmd->ResourceBarrier(&b, 1);
 
                 cmd->SetPipeline(mbPSO);
-                const float maxBlurPx = m_motionBlurMax * 0.01f * static_cast<float>(vpWidth);
-                struct MBConstants { uint32_t scene, vel, depth, w, h; float amount, maxPx; uint32_t uav; } c;
+                struct MBConstants { uint32_t scene, vel, depth, w, h; float scale, maxPx; uint32_t uav; } c;
                 c.scene = taaSrvForTonemap; c.vel = m_gbuffer.velocitySRV; c.depth = m_gbuffer.depthSRV;
-                c.w = vpWidth; c.h = vpHeight; c.amount = m_motionBlurAmount; c.maxPx = maxBlurPx;
+                c.w = vpWidth; c.h = vpHeight; c.scale = motionBlurScale; c.maxPx = maxBlurPx;
                 c.uav = m_motionBlurOutputUav;
                 cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&c), 8);
                 cmd->Dispatch((vpWidth+7)/8, (vpHeight+7)/8, 1);
@@ -2968,468 +2381,5 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
 
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// RequestScreenshot
-// ─────────────────────────────────────────────────────────────────────────────
-
-void SceneRenderer::RequestScreenshot(const std::string& path) {
-    m_screenshotPath    = path;
-    m_screenshotPending = true;
-}
-
-void SceneRenderer::RequestScreenshotBase64() {
-    m_screenshotBase64  = true;
-    m_screenshotPending = true;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// SyncWorldToDrawList
-// ─────────────────────────────────────────────────────────────────────────────
-
-void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
-                                         IRHICommandList* cmdList,
-                                         DrawList& outDrawList) {
-    if (!world) return;
-
-    uint32_t drawIndex = 0;
-
-    // Use mutable registry view — we need to write meshLoaded/materialLoaded flags
-    // back into the components after lazy-loading assets.
-    auto meshView = world->GetRegistry().view<StaticMeshComponent, SceneComponent>();
-
-    for (auto [enttEntity, meshComp, sceneComp] : meshView.each()) {
-
-        // ── Lazy-load mesh from path ────────────────────────────────────────
-        if (!meshComp.meshLoaded && !meshComp.meshPath.empty()) {
-            const uint32_t loaded = LoadMesh(meshComp.meshPath, vfs, cmdList);
-            if (loaded != UINT32_MAX) {
-                meshComp.meshId     = loaded;
-                meshComp.meshLoaded = true;
-            } else {
-                // Mark loaded to avoid retrying every frame
-                meshComp.meshLoaded = true;
-            }
-        }
-
-        // ── Resolve material for slot 0 ────────────────────────────────────
-        // @source UE5 MeshComponent.cpp:37-54 — GetMaterial(slotIndex)
-        // All texture paths and parameters come from the MaterialInterface.
-        // If no material is assigned, the mesh renders with default fallback textures.
-        MaterialInterface* const mat = meshComp.GetMaterial(0);
-
-        // Empty fallback for meshes with no material assigned.
-        static const std::string s_emptyPath;
-
-        const std::string& effAlbedoPath    = mat ? mat->GetAlbedoPath()    : s_emptyPath;
-        const std::string& effNormalPath     = mat ? mat->GetNormalPath()     : s_emptyPath;
-        const std::string& effRoughnessPath  = mat ? mat->GetRoughnessPath()  : s_emptyPath;
-        const std::string& effMetallicPath   = mat ? mat->GetMetallicPath()   : s_emptyPath;
-        const std::string& effAoPath         = mat ? mat->GetAoPath()         : s_emptyPath;
-        const std::string& effEmissivePath   = mat ? mat->GetEmissivePath()   : s_emptyPath;
-
-        // ── Lazy-load material textures from paths ──────────────────────────
-        if (!meshComp.materialLoaded && !effAlbedoPath.empty()) {
-            auto tryLoad = [&](const std::string& path) -> uint32_t {
-                if (path.empty()) return UINT32_MAX;
-                return LoadTexture(path, vfs, cmdList);
-            };
-            tryLoad(effAlbedoPath);
-            tryLoad(effNormalPath);
-            tryLoad(effRoughnessPath);
-            tryLoad(effMetallicPath);
-            tryLoad(effAoPath);
-            tryLoad(effEmissivePath);
-            meshComp.materialLoaded = true;
-            if (mat) {
-                mat->SetGpuResourcesLoaded(true);
-            }
-        }
-
-        const uint32_t meshId = meshComp.meshId;
-
-        // Validate mesh index is within loaded meshes
-        if (m_meshes.empty()) continue;
-        if (meshId >= static_cast<uint32_t>(m_meshes.size())) continue;
-        if (!m_meshes[meshId].IsValid()) continue;
-
-        DrawCommand cmd{};
-        cmd.sortKey      = SortKey::Opaque(0, 0, 0.f, drawIndex);
-        cmd.worldMatrix  = sceneComp.GetWorldMatrix();
-        cmd.normalMatrix = cmd.worldMatrix.NormalMatrix();
-        cmd.meshId       = meshId;
-
-        // Map ECS mobility to renderer-side EMobility for shadow cache filtering.
-        // Stationary is treated as Static for shadow caching (UE5 parity).
-        switch (sceneComp.mobility) {
-            case SceneComponent::Mobility::Static:
-                cmd.mobility = EMobility::Static;
-                break;
-            case SceneComponent::Mobility::Stationary:
-                cmd.mobility = EMobility::Stationary;
-                break;
-            case SceneComponent::Mobility::Movable:
-            default:
-                cmd.mobility = EMobility::Movable;
-                break;
-        }
-
-        // Map materialId to texture SRV indices if textures are loaded
-        if (!m_textures.empty() && meshComp.materialId < static_cast<uint32_t>(m_textures.size())) {
-            const auto& tex = m_textures[meshComp.materialId];
-            cmd.albedoSrvIndex = tex.srvIndex;
-            cmd.albedoTexture  = tex.handle;
-        }
-
-        // Bind textures from effective paths (material system or legacy component paths).
-        auto bindTexFromPath = [&](const std::string& path, uint32_t& srvIndex, RHITextureHandle& handle) {
-            if (path.empty()) return;
-            auto texIt = m_textureMap.find(path);
-            if (texIt != m_textureMap.end() && texIt->second < static_cast<uint32_t>(m_textures.size())) {
-                const auto& tex = m_textures[texIt->second];
-                srvIndex = tex.srvIndex;
-                handle   = tex.handle;
-            }
-        };
-        bindTexFromPath(effAlbedoPath,    cmd.albedoSrvIndex,    cmd.albedoTexture);
-        bindTexFromPath(effNormalPath,    cmd.normalSrvIndex,    cmd.normalTexture);
-        bindTexFromPath(effRoughnessPath, cmd.roughnessSrvIndex, cmd.roughnessTexture);
-        bindTexFromPath(effMetallicPath,  cmd.metallicSrvIndex,  cmd.metallicTexture);
-        bindTexFromPath(effAoPath,        cmd.aoSrvIndex,        cmd.aoTexture);
-        bindTexFromPath(effEmissivePath,  cmd.emissiveSrvIndex,  cmd.emissiveTexture);
-
-        // ── Material parameters ─────────────────────────────────────────────
-        // Read from MaterialInterface if available, otherwise use legacy
-        // component fields for backward compatibility.
-        if (mat) {
-            mat->GetBaseColorTint(cmd.baseColorTintR, cmd.baseColorTintG, cmd.baseColorTintB);
-            cmd.roughnessMultiplier = mat->GetRoughnessMultiplier();
-            cmd.metallicMultiplier  = mat->GetMetallicMultiplier();
-            cmd.normalIntensity     = mat->GetNormalIntensity();
-            cmd.aoIntensity         = mat->GetAoIntensity();
-            cmd.opacity             = mat->GetOpacity();
-            cmd.uvScaleX            = mat->GetUvScaleX();
-            cmd.uvScaleY            = mat->GetUvScaleY();
-            cmd.uvOffsetX           = mat->GetUvOffsetX();
-            cmd.uvOffsetY           = mat->GetUvOffsetY();
-
-            mat->GetEmissiveColor(cmd.emissiveColorR, cmd.emissiveColorG, cmd.emissiveColorB);
-            cmd.emissiveIntensity = mat->GetEmissiveIntensity();
-        } else {
-            // No material assigned — use neutral defaults (no emission).
-            cmd.emissiveColorR    = 0.0f;
-            cmd.emissiveColorG    = 0.0f;
-            cmd.emissiveColorB    = 0.0f;
-            cmd.emissiveIntensity = 0.0f;
-        }
-
-        outDrawList.Add(cmd);
-        drawIndex++;
-    }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Asset Loading
-// ─────────────────────────────────────────────────────────────────────────────
-
-uint32_t SceneRenderer::LoadMesh(const std::string& path, IVFS* vfs,
-                                  IRHICommandList* cmdList) {
-    // Check cache
-    auto it = m_meshMap.find(path);
-    if (it != m_meshMap.end()) {
-        return it->second;
-    }
-
-    // Built-in primitives: "builtin:cube", "builtin:sphere"
-    Mesh cpuMesh{};
-    if (path.size() > 8 && path.compare(0, 8, "builtin:") == 0) {
-        const std::string primitive = path.substr(8);
-        if (primitive == "cube") {
-            cpuMesh = MeshBuilder::CreateCube(0.5f);
-        } else if (primitive == "sphere") {
-            cpuMesh = MeshBuilder::CreateSphere(0.5f, 32, 32);
-        } else {
-            UZ_LOG(Renderer, Error, "SceneRenderer: unknown builtin mesh: '{}'", primitive);
-            return UINT32_MAX;
-        }
-    } else {
-        // Resolve via VFS for relative paths so demos using VFS-relative asset names work.
-        const bool isAbsolute = !path.empty() && (path[0] == '/' || path[0] == '\\' ||
-                                 (path.size() > 1 && path[1] == ':'));
-        const std::string resolvedPath = (vfs && !isAbsolute)
-            ? vfs->ResolvePath(path)
-            : path;
-        cpuMesh = uz::LoadMesh(resolvedPath);
-    }
-    if (!cpuMesh.IsValid()) {
-        UZ_LOG(Renderer, Error, "SceneRenderer: failed to load mesh: '{}'", path);
-        return UINT32_MAX;
-    }
-
-    GPUMesh gpuMesh = UploadMesh(m_device, cmdList, cpuMesh);
-    if (!gpuMesh.IsValid()) {
-        UZ_LOG(Renderer, Error, "SceneRenderer: failed to upload mesh: '{}'", path);
-        return UINT32_MAX;
-    }
-
-    const auto index = static_cast<uint32_t>(m_meshes.size());
-    m_meshes.push_back(gpuMesh);
-    m_meshMap[path] = index;
-
-    UZ_LOG(Renderer, Info, "SceneRenderer: loaded mesh '{}' (id={}, {} vertices, {} indices)",
-           path, index, gpuMesh.vertexCount, gpuMesh.indexCount);
-    return index;
-}
-
-uint32_t SceneRenderer::LoadTexture(const std::string& path, IVFS* vfs,
-                                     IRHICommandList* cmdList) {
-    // Check cache
-    auto it = m_textureMap.find(path);
-    if (it != m_textureMap.end()) {
-        return it->second;
-    }
-
-    // Resolve via VFS for relative paths
-    const bool isAbsolute = !path.empty() && (path[0] == '/' || path[0] == '\\' ||
-                             (path.size() > 1 && path[1] == ':'));
-    const std::string resolvedPath = (vfs && !isAbsolute)
-        ? vfs->ResolvePath(path)
-        : path;
-
-    TextureLoadResult result = TextureLoader::Load(m_device, cmdList, resolvedPath);
-    if (!result.handle.IsValid()) {
-        UZ_LOG(Renderer, Error, "SceneRenderer: failed to load texture: '{}'", path);
-        return UINT32_MAX;
-    }
-
-    const auto index = static_cast<uint32_t>(m_textures.size());
-    m_textures.push_back(result);
-    m_textureMap[path] = index;
-
-    UZ_LOG(Renderer, Info, "SceneRenderer: loaded texture '{}' (id={}, {}x{}, srv={})",
-           path, index, result.width, result.height, result.srvIndex);
-    return index;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Deferred Load Queue — Lua API
-// ─────────────────────────────────────────────────────────────────────────────
-
-uint32_t SceneRenderer::QueueMeshLoad(const std::string& path) {
-    if (path.empty()) return UINT32_MAX;
-
-    // Return cached ID immediately — no need to queue.
-    auto it = m_meshMap.find(path);
-    if (it != m_meshMap.end()) {
-        return it->second;
-    }
-
-    // Reserve a stable slot before the GPU upload occurs.
-    // The slot will be filled by FlushPendingLoads() on the next RenderFrame().
-    // Insert a placeholder GPUMesh so the vector slot exists.
-    const uint32_t slotIndex = static_cast<uint32_t>(m_meshes.size());
-    m_meshes.emplace_back();          // placeholder (IsValid() == false)
-    m_meshMap[path] = slotIndex;
-
-    m_pendingMeshPaths.push_back(path);
-    UZ_LOG(Renderer, Debug, "SceneRenderer: queued mesh load '{}' (slot={})", path, slotIndex);
-    return slotIndex;
-}
-
-uint32_t SceneRenderer::QueueTextureLoad(const std::string& path) {
-    if (path.empty()) return UINT32_MAX;
-
-    // Return cached ID immediately — no need to queue.
-    auto it = m_textureMap.find(path);
-    if (it != m_textureMap.end()) {
-        return it->second;
-    }
-
-    // Reserve a stable slot before the GPU upload occurs.
-    const uint32_t slotIndex = static_cast<uint32_t>(m_textures.size());
-    m_textures.emplace_back();        // placeholder (handle.IsValid() == false)
-    m_textureMap[path] = slotIndex;
-
-    m_pendingTexturePaths.push_back(path);
-    UZ_LOG(Renderer, Debug, "SceneRenderer: queued texture load '{}' (slot={})", path, slotIndex);
-    return slotIndex;
-}
-
-std::string SceneRenderer::GetTexturePath(uint32_t textureId) const {
-    for (const auto& [path, id] : m_textureMap) {
-        if (id == textureId) return path;
-    }
-    return {};
-}
-
-void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {
-    // Flush pending mesh uploads.
-    for (const std::string& path : m_pendingMeshPaths) {
-        const uint32_t slotIndex = m_meshMap.at(path);
-        Mesh cpuMesh = uz::LoadMesh(path);
-        if (!cpuMesh.IsValid()) {
-            UZ_LOG(Renderer, Error, "SceneRenderer: failed to load queued mesh '{}'", path);
-            continue;
-        }
-        GPUMesh gpuMesh = UploadMesh(m_device, cmdList, cpuMesh);
-        if (!gpuMesh.IsValid()) {
-            UZ_LOG(Renderer, Error, "SceneRenderer: failed to upload queued mesh '{}'", path);
-            continue;
-        }
-        m_meshes[slotIndex] = gpuMesh;
-        UZ_LOG(Renderer, Info,
-            "SceneRenderer: flushed mesh '{}' (id={}, {} verts, {} indices)",
-            path, slotIndex, gpuMesh.vertexCount, gpuMesh.indexCount);
-    }
-    m_pendingMeshPaths.clear();
-
-    // Flush pending texture uploads.
-    for (const std::string& path : m_pendingTexturePaths) {
-        const uint32_t slotIndex = m_textureMap.at(path);
-        TextureLoadResult result = TextureLoader::Load(m_device, cmdList, path);
-        if (!result.handle.IsValid()) {
-            UZ_LOG(Renderer, Error, "SceneRenderer: failed to load queued texture '{}'", path);
-            continue;
-        }
-        m_textures[slotIndex] = result;
-        UZ_LOG(Renderer, Info,
-            "SceneRenderer: flushed texture '{}' (id={}, {}x{}, srv={})",
-            path, slotIndex, result.width, result.height, result.srvIndex);
-    }
-    m_pendingTexturePaths.clear();
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Internal Helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
-// CreateShadowAtlas() moved to ShadowAtlas::Init() in shadows/shadow_atlas.cpp
-
-void SceneRenderer::DestroyAssets() {
-    for (auto& mesh : m_meshes) {
-        DestroyGPUMesh(m_device, mesh);
-    }
-    m_meshes.clear();
-    m_meshMap.clear();
-
-    for (auto& tex : m_textures) {
-        if (tex.handle.IsValid()) {
-            m_device->DestroyTexture(tex.handle);
-        }
-    }
-    m_textures.clear();
-    m_textureMap.clear();
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Accessors
-// ─────────────────────────────────────────────────────────────────────────────
-
-Camera& SceneRenderer::GetCamera() { return *m_camera; }
-const Camera& SceneRenderer::GetCamera() const { return *m_camera; }
-FPSCameraController& SceneRenderer::GetCameraController() { return *m_cameraCtrl; }
-InputSystem* SceneRenderer::GetInput() const { return m_input.get(); }
-StatsOverlay* SceneRenderer::GetStatsOverlay() const { return m_statsOverlay.get(); }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Shadow Atlas Diagnostic Readback
-// ─────────────────────────────────────────────────────────────────────────────
-
-void SceneRenderer::PerformShadowAtlasReadback(IRHICommandList* cmdList) {
-    if (!m_shadowAtlas.GetTexture().IsValid()) {
-        m_shadowReadbackPhase = 2;
-        return;
-    }
-
-    if (m_shadowReadbackPhase == 0) {
-        // Phase 0: Create readback buffer, issue GPU copy.
-        // Buffer stays alive — destroyed only in phase 1 after GPU is done.
-        const uint32_t atlasWidth = kShadowResolution * GetAtlasColumns(4);
-        const uint32_t rowBytes   = atlasWidth * 4;
-        const uint32_t rowPitch   = (rowBytes + 255) & ~255u;
-        m_shadowReadbackRowPitch  = rowPitch;
-        m_shadowReadbackWidth     = atlasWidth;
-
-        RHIBufferDesc rbDesc{};
-        rbDesc.sizeBytes = rowPitch;
-        rbDesc.memory    = RHIMemoryType::Readback;
-        rbDesc.debugName = "ShadowAtlasReadback";
-        m_shadowReadbackBuffer = m_device->CreateBuffer(rbDesc);
-        if (!m_shadowReadbackBuffer.IsValid()) {
-            UZ_LOG(Shadow, Error, "ShadowAtlasReadback: failed to create buffer");
-            m_shadowReadbackPhase = 2;
-            return;
-        }
-
-        RHIBarrierDesc toCopy{};
-        toCopy.texture     = m_shadowAtlas.GetTexture();
-        toCopy.stateBefore = RHIResourceState::ShaderResource;
-        toCopy.stateAfter  = RHIResourceState::CopySrc;
-        cmdList->ResourceBarrier(&toCopy, 1);
-
-        cmdList->CopyTextureToBuffer(m_shadowAtlas.GetTexture(), 0,
-                                      m_shadowReadbackBuffer, 0, rowPitch);
-
-        RHIBarrierDesc toSrv{};
-        toSrv.texture     = m_shadowAtlas.GetTexture();
-        toSrv.stateBefore = RHIResourceState::CopySrc;
-        toSrv.stateAfter  = RHIResourceState::ShaderResource;
-        cmdList->ResourceBarrier(&toSrv, 1);
-
-        UZ_LOG(Shadow, Info, "ShadowAtlasReadback: GPU copy issued (phase 0)");
-        m_shadowReadbackPhase = 1;
-
-    } else if (m_shadowReadbackPhase >= 1 && m_shadowReadbackPhase <= 3) {
-        // Phases 1-3: Wait for GPU to finish the copy command.
-        // Triple-buffered = need 3 frames before the copy is guaranteed complete.
-        UZ_LOG(Shadow, Info, "ShadowAtlasReadback: waiting (phase {})", m_shadowReadbackPhase);
-        m_shadowReadbackPhase++;
-
-    } else if (m_shadowReadbackPhase == 4) {
-        // Phase 4: At least 3 full frames passed since the copy — safe to read.
-        // Buffer is NOT destroyed here — kept alive until Shutdown to avoid
-        // any possibility of destroying while GPU references it.
-        void* mapped = m_device->MapBuffer(m_shadowReadbackBuffer);
-        if (mapped) {
-            const float* row0 = reinterpret_cast<const float*>(mapped);
-            const uint32_t rowPixels = m_shadowReadbackWidth;
-            const uint32_t halfRes   = kShadowResolution / 2;
-
-            UZ_LOG(Shadow, Info, "=== Shadow Atlas Diagnostic Readback ===");
-            UZ_LOG(Shadow, Info, "Atlas: {}x{} D32Float", rowPixels, rowPixels);
-            UZ_LOG(Shadow, Info, "Row 0: px[0]={:.6f} px[{}]={:.6f} px[{}]={:.6f} px[{}]={:.6f}",
-                   row0[0],
-                   halfRes/2, row0[std::min(halfRes/2, rowPixels-1)],
-                   halfRes,   row0[std::min(halfRes, rowPixels-1)],
-                   kShadowResolution-1, row0[std::min(kShadowResolution-1, rowPixels-1)]);
-
-            uint32_t nCleared = 0, nGeom = 0, nZero = 0;
-            float minV = 1.0f, maxV = 0.0f;
-            for (uint32_t x = 0; x < std::min(rowPixels, kShadowResolution); ++x) {
-                float v = row0[x];
-                if (v >= 0.9999f) ++nCleared;
-                else if (v <= 0.0001f) ++nZero;
-                else ++nGeom;
-                minV = std::min(minV, v);
-                maxV = std::max(maxV, v);
-            }
-            UZ_LOG(Shadow, Info, "Stats: cleared(1.0)={} geometry={} zero(0.0)={} min={:.8f} max={:.8f}",
-                   nCleared, nGeom, nZero, minV, maxV);
-
-            if (nZero > 0 && nGeom == 0 && nCleared == 0)
-                UZ_LOG(Shadow, Error, "ALL ZERO — shadow atlas not written!");
-            else if (nGeom > 0)
-                UZ_LOG(Shadow, Info, "Shadow atlas contains valid depth data");
-            else
-                UZ_LOG(Shadow, Warning, "No geometry in row 0 — check cascade coverage");
-
-            m_device->UnmapBuffer(m_shadowReadbackBuffer);
-        } else {
-            UZ_LOG(Shadow, Error, "ShadowAtlasReadback: failed to map buffer");
-        }
-
-        // Keep buffer alive — destroyed in Shutdown() to avoid GPU reference issues.
-        m_shadowReadbackPhase = 5; // done
-    }
-}
 
 } // namespace uz

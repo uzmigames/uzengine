@@ -2,6 +2,26 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
+## [0.2.35] — 2026-03-18
+
+### SceneRenderer Split + Umbrella Headers
+
+**SceneRenderer decomposition** (3876 → 5 files under `renderer/scene/`):
+- `scene_lifecycle.cpp` (979 lines) — Init, Resize, Shutdown, resource helpers
+- `scene_render_frame.cpp` (2412 lines) — RenderFrame per-frame orchestration
+- `scene_sync.cpp` (208 lines) — SyncWorldToDrawList (ECS → DrawList)
+- `scene_assets.cpp` (210 lines) — LoadMesh, LoadTexture, Queue*, DestroyAssets
+- `scene_debug.cpp` (146 lines) — Accessors, Screenshot, Shadow readback
+- `scene_renderer.h` moved into `scene/` — no redirect stubs
+
+**Umbrella headers** (reduce include bloat across the codebase):
+- `passes/passes.h` — 19 includes: all geometry, lighting, debug, atmosphere, postprocess passes
+- `ecs/components.h` — 12 includes: all ECS component types
+- `renderer/core/renderer_core.h` — 25 includes: GBuffer, CBs, pipeline, shader params, LOD
+- `renderer/subsystems.h` — 12 includes: shadows, lighting, atmosphere, fog renderers
+
+---
+
 ## [0.2.34] — 2026-03-18
 
 ### Material System + PCSS Soft Shadows + Post-Process Wiring

@@ -34,6 +34,7 @@
 #include "screenshot_capture.h"
 #include "shadow_atlas.h"
 #include "shadow_cache.h"
+#include "local_light_shadow_atlas.h"
 #include "ibl/ibl_baker.h"
 #include "ibl/sh_projection.h"
 #include "postprocess/auto_exposure.h"
@@ -290,6 +291,20 @@ public:
     /// Returns whether TAA is currently enabled.
     [[nodiscard]] bool IsTaaEnabled() const { return m_taaEnabled; }
 
+    /// Sets the global LOD bias.
+    ///
+    /// @source UE5 StaticMeshSceneProxy.cpp:2662 — StaticMeshLODDistanceScale
+    /// The bias scales all LOD screen size thresholds:
+    /// - 1.0 = default UE5 behavior
+    /// - 0.5 = keep higher LODs 2x longer (higher quality, more draw calls)
+    /// - 2.0 = switch to lower LODs 2x sooner (lower quality, fewer draw calls)
+    ///
+    /// # Arguments
+    /// * `bias` — LOD bias multiplier. Clamped internally to [0.25, 4.0].
+    void SetLodBias(float bias) { m_lodBias = bias; }
+
+    /// Returns the current global LOD bias.
+    [[nodiscard]] float GetLodBias() const { return m_lodBias; }
 
     // ── Accessors ──────────────────────────────────────────────────────────
 
@@ -413,6 +428,7 @@ private:
     ShadowCacheManager m_shadowCacheManager;       ///< Manages cached static shadow maps.
     RHITextureHandle m_staticShadowAtlas;           ///< Separate depth atlas for cached static shadows.
     uint32_t m_staticShadowAtlasSrv = UINT32_MAX;  ///< SRV heap index for static shadow atlas.
+    LocalLightShadowAtlas m_localShadowAtlas;      ///< Local light (spot/point) shadow depth atlas.
 
     // ── HDR Scene Color (intermediate before tonemap) ───────────────────
     RHITextureHandle m_hdrSceneColor;           ///< RGBA16F HDR render target for scene color.
@@ -491,15 +507,31 @@ private:
     uint32_t m_motionBlurOutputSrv = UINT32_MAX;       ///< SRV index for subsequent passes to read.
     uint32_t m_motionBlurOutputUav = UINT32_MAX;       ///< UAV index for motion blur compute write.
 
+    /// @source UE5 MotionBlurVelocityFlatten.usf:156-160 — tile output
+    /// Tile max texture: RG16F at (width/16) x (height/16), max velocity per tile.
+    RHITextureHandle m_motionBlurTileMax;               ///< RG16F tile max velocity texture.
+    uint32_t m_motionBlurTileMaxSrv = UINT32_MAX;       ///< SRV for neighbor max pass to read.
+    uint32_t m_motionBlurTileMaxUav = UINT32_MAX;       ///< UAV for tile max compute to write.
+
+    /// @source UE5 MotionBlurTileGather.usf:87-89 — neighbor tile output
+    /// Neighbor max texture: RG16F at same tile dimensions, 3x3 neighborhood max.
+    RHITextureHandle m_motionBlurNeighborMax;            ///< RG16F neighbor max velocity texture.
+    uint32_t m_motionBlurNeighborMaxSrv = UINT32_MAX;   ///< SRV for motion blur gather to read.
+    uint32_t m_motionBlurNeighborMaxUav = UINT32_MAX;   ///< UAV for neighbor max compute to write.
+
     /// @source UE5 Scene.cpp:598-600 — MotionBlurAmount=0.5, MotionBlurMax=5.0
     float m_motionBlurAmount = 0.5f;                   ///< Motion blur intensity scale.
     float m_motionBlurMax    = 5.0f;                   ///< Maximum blur radius as percentage of viewport width.
     bool  m_motionBlurEnabled = true;                  ///< Runtime toggle for motion blur.
 
-    /// Creates motion blur output texture. Called from Init() and Resize().
+    /// @source UE5 Scene.cpp:600 — MotionBlurTargetFPS=30
+    int32_t m_motionBlurTargetFPS = 30;                ///< Target FPS for velocity time scaling.
+
+    /// Creates motion blur output, tile max, and neighbor max textures.
+    /// Called from Init() and Resize().
     void CreateMotionBlurResources(uint32_t width, uint32_t height);
 
-    /// Destroys motion blur output texture. Called from Shutdown() and Resize().
+    /// Destroys all motion blur textures. Called from Shutdown() and Resize().
     void DestroyMotionBlurResources();
 
     // ── Depth of Field ───────────────────────────────────────────────────
@@ -568,6 +600,11 @@ private:
 
     /// Number of mip levels in the Hi-Z pyramid (depends on render target size).
     uint32_t m_hizMipCount = 0;
+
+    // ── LOD System ────────────────────────────────────────────────────────
+
+    /// @source UE5 StaticMeshSceneProxy.cpp:2662 — StaticMeshLODDistanceScale
+    float m_lodBias = 1.0f;  ///< Global LOD bias multiplier (1.0 = UE5 default).
 
     // ── Render State ───────────────────────────────────────────────────────
 

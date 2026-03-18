@@ -21,7 +21,7 @@
 #include "lua_renderer_api.h"
 #include "../engine/scripting/script_system.h"
 #include "../engine/asset/vfs.h"
-#include "../engine/renderer/scene_renderer.h"
+#include "../engine/renderer/scene/scene_renderer.h"
 #include "../engine/scripting/api/core/lua_input_api.h"
 
 #ifdef _WIN32
