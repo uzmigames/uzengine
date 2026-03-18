@@ -36,18 +36,29 @@ void SceneRenderer::RegisterOverlayPasses(rg::RgBuilder& rgBuilder, FrameContext
     if (m_shadowDebugMode == 0)
     rgBuilder.AddPass("OverlayPass", [&](rg::RgPassBuilder& pb) {
         pb.Write(ctx.bbRes, RHIResourceState::RenderTarget);
-        pb.Write(ctx.depthRes, RHIResourceState::DepthStencilWrite);
-        pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources& res) {
-            auto bb    = res.GetTexture(ctx.bbRes);
-            auto depth = res.GetTexture(ctx.depthRes);
+        // Only attach depth when render res == display res (no screen percentage scaling).
+        // When screen percentage < 100, the depth buffer is at render resolution which
+        // doesn't match the display-resolution backbuffer — attaching it would cause a
+        // D3D12 render target / depth stencil dimension mismatch error.
+        const bool attachDepth = (m_renderWidth == m_width && m_renderHeight == m_height);
+        if (attachDepth) {
+            pb.Write(ctx.depthRes, RHIResourceState::DepthStencilWrite);
+        }
+        pb.SetExecutionCallback([this, &ctx, attachDepth](IRHICommandList* cmd, const rg::RgPassResources& res) {
+            auto bb = res.GetTexture(ctx.bbRes);
 
             RHIRenderPassDesc passDesc{};
             passDesc.colorAttachmentCount        = 1;
             passDesc.colorAttachments[0].texture = bb;
             passDesc.colorAttachments[0].clear   = false;
-            passDesc.hasDepth                    = true;
-            passDesc.depthAttachment.texture     = depth;
-            passDesc.depthAttachment.clear       = false;
+            if (attachDepth) {
+                auto depth = res.GetTexture(ctx.depthRes);
+                passDesc.hasDepth                    = true;
+                passDesc.depthAttachment.texture     = depth;
+                passDesc.depthAttachment.clear       = false;
+            } else {
+                passDesc.hasDepth = false;
+            }
             cmd->BeginRenderPass(passDesc);
 
             RHIViewport vp{};
