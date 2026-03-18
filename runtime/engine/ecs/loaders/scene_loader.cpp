@@ -14,6 +14,7 @@
 #include "static_mesh_component.h"
 #include "camera_component.h"
 #include "light_component.h"
+#include "material/material_asset.h"
 #include "../scripting/script_component.h"
 #include "../logging/log.h"
 #include "../math/vector3.h"
@@ -21,7 +22,9 @@
 
 #include <json.hpp>
 
+#include <memory>
 #include <string>
+#include <vector>
 
 namespace uz {
 
@@ -31,6 +34,15 @@ namespace uz {
 
 /// Degrees-to-radians conversion factor.
 static constexpr float kDegToRad = 3.14159265358979323846f / 180.f;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Scene-level material storage
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Materials created by the scene loader for entities that define a "material"
+/// component in JSON. These are owned here and referenced by StaticMeshComponent
+/// via non-owning pointers (overrideMaterials). Cleared when a new scene is loaded.
+static std::vector<std::unique_ptr<Material>> s_sceneLoadedMaterials;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Internal helpers
@@ -259,16 +271,22 @@ void ParseMaterialComponent(World& world,
         return;
     }
     auto& mesh = world.GetRegistry().get<StaticMeshComponent>(enttEntity);
-    mesh.albedoPath    = ReadString(comp, "albedo");
-    mesh.normalPath    = ReadString(comp, "normal");
-    mesh.roughnessPath = ReadString(comp, "roughness");
-    mesh.metallicPath  = ReadString(comp, "metallic");
-    mesh.aoPath        = ReadString(comp, "ao");
-    mesh.emissivePath  = ReadString(comp, "emissive");
-    mesh.emissiveColorR    = ReadFloat(comp, "emissiveColorR", 0.0f);
-    mesh.emissiveColorG    = ReadFloat(comp, "emissiveColorG", 0.0f);
-    mesh.emissiveColorB    = ReadFloat(comp, "emissiveColorB", 0.0f);
-    mesh.emissiveIntensity = ReadFloat(comp, "emissiveIntensity", 0.0f);
+
+    // Create a Material asset owned by the scene loader and assign it to slot 0.
+    auto mat = std::make_unique<Material>();
+    mat->albedoPath    = ReadString(comp, "albedo");
+    mat->normalPath    = ReadString(comp, "normal");
+    mat->roughnessPath = ReadString(comp, "roughness");
+    mat->metallicPath  = ReadString(comp, "metallic");
+    mat->aoPath        = ReadString(comp, "ao");
+    mat->emissivePath  = ReadString(comp, "emissive");
+    mat->emissiveColorR    = ReadFloat(comp, "emissiveColorR", 0.0f);
+    mat->emissiveColorG    = ReadFloat(comp, "emissiveColorG", 0.0f);
+    mat->emissiveColorB    = ReadFloat(comp, "emissiveColorB", 0.0f);
+    mat->emissiveIntensity = ReadFloat(comp, "emissiveIntensity", 0.0f);
+
+    mesh.SetMaterial(0, mat.get());
+    s_sceneLoadedMaterials.push_back(std::move(mat));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -358,6 +376,9 @@ size_t ProcessEntityJson(World& world,
 size_t LoadScene(World& world,
                  const std::vector<uint8_t>& sceneJson,
                  const std::string& sourceName) {
+    // Release materials from any previously loaded scene.
+    s_sceneLoadedMaterials.clear();
+
     if (sceneJson.empty()) {
         UZ_LOG(Scene, Error, "LoadScene: '{}': input byte buffer is empty", sourceName);
         return 0;
@@ -466,26 +487,39 @@ nlohmann::json SerializeEntity(const entt::registry& registry, entt::entity entt
             components["mesh"] = std::move(meshJson);
         }
 
-        // Material (stored on StaticMeshComponent)
-        bool hasMaterial = !mesh->albedoPath.empty() || !mesh->normalPath.empty()
-                        || !mesh->roughnessPath.empty() || !mesh->metallicPath.empty()
-                        || !mesh->aoPath.empty() || !mesh->emissivePath.empty()
-                        || mesh->emissiveIntensity > 0.0f;
-        if (hasMaterial) {
-            nlohmann::json material;
-            if (!mesh->albedoPath.empty())    material["albedo"]    = mesh->albedoPath;
-            if (!mesh->normalPath.empty())    material["normal"]    = mesh->normalPath;
-            if (!mesh->roughnessPath.empty()) material["roughness"] = mesh->roughnessPath;
-            if (!mesh->metallicPath.empty())  material["metallic"]  = mesh->metallicPath;
-            if (!mesh->aoPath.empty())        material["ao"]        = mesh->aoPath;
-            if (!mesh->emissivePath.empty())  material["emissive"]  = mesh->emissivePath;
-            if (mesh->emissiveIntensity > 0.0f) {
-                material["emissiveColorR"]    = mesh->emissiveColorR;
-                material["emissiveColorG"]    = mesh->emissiveColorG;
-                material["emissiveColorB"]    = mesh->emissiveColorB;
-                material["emissiveIntensity"] = mesh->emissiveIntensity;
+        // Material (read from MaterialInterface at slot 0)
+        const MaterialInterface* mat = mesh->GetMaterial(0);
+        if (mat) {
+            const auto& albedo    = mat->GetAlbedoPath();
+            const auto& normal    = mat->GetNormalPath();
+            const auto& roughness = mat->GetRoughnessPath();
+            const auto& metallic  = mat->GetMetallicPath();
+            const auto& ao        = mat->GetAoPath();
+            const auto& emissive  = mat->GetEmissivePath();
+            const float emIntensity = mat->GetEmissiveIntensity();
+
+            bool hasMaterial = !albedo.empty() || !normal.empty()
+                            || !roughness.empty() || !metallic.empty()
+                            || !ao.empty() || !emissive.empty()
+                            || emIntensity > 0.0f;
+            if (hasMaterial) {
+                nlohmann::json material;
+                if (!albedo.empty())    material["albedo"]    = albedo;
+                if (!normal.empty())    material["normal"]    = normal;
+                if (!roughness.empty()) material["roughness"] = roughness;
+                if (!metallic.empty())  material["metallic"]  = metallic;
+                if (!ao.empty())        material["ao"]        = ao;
+                if (!emissive.empty())  material["emissive"]  = emissive;
+                if (emIntensity > 0.0f) {
+                    float r, g, b;
+                    mat->GetEmissiveColor(r, g, b);
+                    material["emissiveColorR"]    = r;
+                    material["emissiveColorG"]    = g;
+                    material["emissiveColorB"]    = b;
+                    material["emissiveIntensity"] = emIntensity;
+                }
+                components["material"] = std::move(material);
             }
-            components["material"] = std::move(material);
         }
 
         // StaticMeshComponent also IS a SceneComponent, write its transform

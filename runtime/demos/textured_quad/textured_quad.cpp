@@ -12,12 +12,16 @@
 #include "static_mesh_component.h"
 #include "scene_component.h"
 #include "light_component.h"
+#include "material/material_asset.h"
 #include "render_path.h"
 
 UZ_DECLARE_LOG_CATEGORY(Demo);
 UZ_DEFINE_LOG_CATEGORY(Demo, Info);
 
 namespace uz {
+
+/// Shared checker material for the ground plane.
+static Material s_groundMat;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Configure
@@ -51,9 +55,11 @@ void TexturedQuad::OnStart() {
         scene.SetPosition({0.f, 0.f, 0.f});
         scene.SetScale({1000.f, 1000.f, 1.f});
 
+        s_groundMat.albedoPath = "checker.png";
+
         auto& mesh      = world.AddComponent<StaticMeshComponent>(ground_);
         mesh.meshPath    = "cube.uzmesh";
-        mesh.albedoPath  = "checker.png";
+        mesh.SetMaterial(0, &s_groundMat);
     }
 
     // ── Directional sun light ────────────────────────────────────────────

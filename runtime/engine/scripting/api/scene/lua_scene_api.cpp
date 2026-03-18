@@ -5,6 +5,7 @@
 #include "name_component.h"
 #include "scene_component.h"
 #include "static_mesh_component.h"
+#include "material/material_asset.h"
 #include "vector3.h"
 #include "quaternion.h"
 #include "scene_loader.h"
@@ -33,6 +34,15 @@ static_assert(sizeof(void*) >= 8,
 UZ_DECLARE_LOG_CATEGORY(Scripting);
 
 namespace uz {
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Lua-created material storage
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Materials created by Lua scripts via `uz.scene.set_material()`. Owned here;
+/// referenced by StaticMeshComponent via non-owning pointers. Cleared when the
+/// Lua VM shuts down (process exit or script reload).
+static std::vector<std::unique_ptr<Material>> s_luaCreatedMaterials;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Registry key constants
@@ -678,18 +688,22 @@ static int SceneSetMaterial(lua_State* L) {
         lua_pop(L, 1);
         return val;
     };
+
+    // Create a Material asset owned by the Lua material storage.
+    auto mat = std::make_unique<Material>();
+
     // Only set emissive params if emissive_intensity field is present.
     lua_getfield(L, 2, "emissive_intensity");
-    bool hasEmissiveParams = lua_isnumber(L, -1);
+    const bool hasEmissiveParams = lua_isnumber(L, -1);
     lua_pop(L, 1);
     if (hasEmissiveParams) {
-        meshComp->emissiveColorR    = readFloat("emissive_color_r", 1.0f);
-        meshComp->emissiveColorG    = readFloat("emissive_color_g", 1.0f);
-        meshComp->emissiveColorB    = readFloat("emissive_color_b", 1.0f);
-        meshComp->emissiveIntensity = readFloat("emissive_intensity", 0.0f);
+        mat->emissiveColorR    = readFloat("emissive_color_r", 1.0f);
+        mat->emissiveColorG    = readFloat("emissive_color_g", 1.0f);
+        mat->emissiveColorB    = readFloat("emissive_color_b", 1.0f);
+        mat->emissiveIntensity = readFloat("emissive_intensity", 0.0f);
     }
 
-    // Resolve texture IDs back to VFS paths and set them on the component.
+    // Resolve texture IDs back to VFS paths and set them on the Material.
     // The renderer's SyncWorldToDrawList uses these paths to bind textures.
     SceneRenderer* renderer = GetSceneRenderer(L);
 
@@ -708,13 +722,16 @@ static int SceneSetMaterial(lua_State* L) {
 
     if (albedoId != UINT32_MAX) {
         meshComp->materialId = albedoId;
-        resolveAndSet(albedoId, meshComp->albedoPath);
+        resolveAndSet(albedoId, mat->albedoPath);
     }
-    resolveAndSet(normalId,    meshComp->normalPath);
-    resolveAndSet(roughnessId, meshComp->roughnessPath);
-    resolveAndSet(metallicId,  meshComp->metallicPath);
-    resolveAndSet(aoId,        meshComp->aoPath);
-    resolveAndSet(emissiveId,  meshComp->emissivePath);
+    resolveAndSet(normalId,    mat->normalPath);
+    resolveAndSet(roughnessId, mat->roughnessPath);
+    resolveAndSet(metallicId,  mat->metallicPath);
+    resolveAndSet(aoId,        mat->aoPath);
+    resolveAndSet(emissiveId,  mat->emissivePath);
+
+    meshComp->SetMaterial(0, mat.get());
+    s_luaCreatedMaterials.push_back(std::move(mat));
 
     meshComp->materialLoaded = true;
     return 0;

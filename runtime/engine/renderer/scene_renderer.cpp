@@ -2681,18 +2681,19 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
 
         // ── Resolve material for slot 0 ────────────────────────────────────
         // @source UE5 MeshComponent.cpp:37-54 — GetMaterial(slotIndex)
-        // Priority: 1) overrideMaterials[0] via MaterialInterface
-        //           2) Legacy component texture paths (backward compat)
+        // All texture paths and parameters come from the MaterialInterface.
+        // If no material is assigned, the mesh renders with default fallback textures.
         MaterialInterface* const mat = meshComp.GetMaterial(0);
 
-        // Determine effective texture paths — material system takes priority
-        // over legacy component paths.
-        const std::string& effAlbedoPath    = mat ? mat->GetAlbedoPath()    : meshComp.albedoPath;
-        const std::string& effNormalPath     = mat ? mat->GetNormalPath()     : meshComp.normalPath;
-        const std::string& effRoughnessPath  = mat ? mat->GetRoughnessPath()  : meshComp.roughnessPath;
-        const std::string& effMetallicPath   = mat ? mat->GetMetallicPath()   : meshComp.metallicPath;
-        const std::string& effAoPath         = mat ? mat->GetAoPath()         : meshComp.aoPath;
-        const std::string& effEmissivePath   = mat ? mat->GetEmissivePath()   : meshComp.emissivePath;
+        // Empty fallback for meshes with no material assigned.
+        static const std::string s_emptyPath;
+
+        const std::string& effAlbedoPath    = mat ? mat->GetAlbedoPath()    : s_emptyPath;
+        const std::string& effNormalPath     = mat ? mat->GetNormalPath()     : s_emptyPath;
+        const std::string& effRoughnessPath  = mat ? mat->GetRoughnessPath()  : s_emptyPath;
+        const std::string& effMetallicPath   = mat ? mat->GetMetallicPath()   : s_emptyPath;
+        const std::string& effAoPath         = mat ? mat->GetAoPath()         : s_emptyPath;
+        const std::string& effEmissivePath   = mat ? mat->GetEmissivePath()   : s_emptyPath;
 
         // ── Lazy-load material textures from paths ──────────────────────────
         if (!meshComp.materialLoaded && !effAlbedoPath.empty()) {
@@ -2782,11 +2783,11 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
             mat->GetEmissiveColor(cmd.emissiveColorR, cmd.emissiveColorG, cmd.emissiveColorB);
             cmd.emissiveIntensity = mat->GetEmissiveIntensity();
         } else {
-            // Legacy path: emissive color and intensity from component fields.
-            cmd.emissiveColorR    = meshComp.emissiveColorR;
-            cmd.emissiveColorG    = meshComp.emissiveColorG;
-            cmd.emissiveColorB    = meshComp.emissiveColorB;
-            cmd.emissiveIntensity = meshComp.emissiveIntensity;
+            // No material assigned — use neutral defaults (no emission).
+            cmd.emissiveColorR    = 0.0f;
+            cmd.emissiveColorG    = 0.0f;
+            cmd.emissiveColorB    = 0.0f;
+            cmd.emissiveIntensity = 0.0f;
         }
 
         outDrawList.Add(cmd);

@@ -76,32 +76,6 @@ public:
     /// Set to `true` by `SceneRenderer` after the mesh has been uploaded to the GPU.
     bool meshLoaded = false;
 
-    /// VFS-relative path to the albedo texture (e.g., "textures/brick_albedo.png").
-    std::string albedoPath;
-
-    /// VFS-relative path to the normal map texture.
-    std::string normalPath;
-
-    /// VFS-relative path to the roughness texture.
-    std::string roughnessPath;
-
-    /// VFS-relative path to the metallic texture.
-    std::string metallicPath;
-
-    /// VFS-relative path to the ambient occlusion texture.
-    std::string aoPath;
-
-    /// VFS-relative path to the emissive texture.
-    std::string emissivePath;
-
-    /// Emissive tint color (linear RGB). Default (0,0,0) = no emission.
-    float emissiveColorR  = 0.0f;
-    float emissiveColorG  = 0.0f;
-    float emissiveColorB  = 0.0f;
-
-    /// Emissive brightness multiplier. 0 = no emission. Values > 1.0 drive bloom.
-    float emissiveIntensity = 0.0f;
-
     /// Set to `true` by `SceneRenderer` after all material textures have been uploaded.
     bool materialLoaded = false;
 

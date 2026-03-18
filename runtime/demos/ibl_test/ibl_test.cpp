@@ -12,6 +12,7 @@
 #include "static_mesh_component.h"
 #include "scene_component.h"
 #include "light_component.h"
+#include "material/material_asset.h"
 #include "render_path.h"
 
 UZ_DECLARE_LOG_CATEGORY(Demo);
@@ -26,6 +27,9 @@ namespace uz {
 /// Cube positions along the X axis, centered at origin (cm).
 static constexpr float kCubePositionsX[5] = {-400.f, -200.f, 0.f, 200.f, 400.f};
 static constexpr float kCubeScale = 80.f;
+
+/// Shared Stonebricks PBR material for all cubes.
+static Material s_stoneBrickMat;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Configure
@@ -52,6 +56,13 @@ ApplicationConfig IBLTest::Configure() {
 void IBLTest::OnStart() {
     auto& world = GetWorld();
 
+    // ── Initialize shared Stonebricks material ──────────────────────────
+    s_stoneBrickMat.albedoPath    = "Stonebricks_BaseColor.jpg";
+    s_stoneBrickMat.normalPath    = "Stonebricks_Normal.jpg";
+    s_stoneBrickMat.roughnessPath = "Stonebricks_Roughness.jpg";
+    s_stoneBrickMat.metallicPath  = "Stonebricks_Metallic.jpg";
+    s_stoneBrickMat.aoPath        = "Stonebricks_AO.jpg";
+
     // ── 5 PBR cubes with Stonebricks material ───────────────────────────
     for (int i = 0; i < kCubeCount; ++i) {
         cubes_[i] = world.CreateEntity();
@@ -61,12 +72,8 @@ void IBLTest::OnStart() {
         scene.SetScale({kCubeScale, kCubeScale, kCubeScale});
 
         auto& mesh = world.AddComponent<StaticMeshComponent>(cubes_[i]);
-        mesh.meshPath      = "cube.uzmesh";
-        mesh.albedoPath    = "Stonebricks_BaseColor.jpg";
-        mesh.normalPath    = "Stonebricks_Normal.jpg";
-        mesh.roughnessPath = "Stonebricks_Roughness.jpg";
-        mesh.metallicPath  = "Stonebricks_Metallic.jpg";
-        mesh.aoPath        = "Stonebricks_AO.jpg";
+        mesh.meshPath = "cube.uzmesh";
+        mesh.SetMaterial(0, &s_stoneBrickMat);
     }
 
     // ── Directional sun light ────────────────────────────────────────────

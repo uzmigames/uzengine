@@ -16,6 +16,7 @@
 #include "static_mesh_component.h"
 #include "scene_component.h"
 #include "light_component.h"
+#include "material/material_asset.h"
 #include "sky_atmosphere_component.h"
 #include "sky_light_component.h"
 #include "height_fog_component.h"
@@ -38,6 +39,12 @@ static constexpr float kCubeScale = 40.f;
 
 /// Vertical offset so the grid floats above the ground plane (cm).
 static constexpr float kGridLiftZ = 1200.f;
+
+/// Shared Stonebricks PBR material for all cubes.
+static Material s_stoneBrickMat;
+
+/// Shared checker material for the ground plane.
+static Material s_groundMat;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Configure
@@ -65,6 +72,15 @@ ApplicationConfig InstancingTest::Configure() {
 void InstancingTest::OnStart() {
     auto& world = GetWorld();
 
+    // ── Initialize shared materials ──────────────────────────────────────
+    s_stoneBrickMat.albedoPath    = "Stonebricks_BaseColor.jpg";
+    s_stoneBrickMat.normalPath    = "Stonebricks_Normal.jpg";
+    s_stoneBrickMat.roughnessPath = "Stonebricks_Roughness.jpg";
+    s_stoneBrickMat.metallicPath  = "Stonebricks_Metallic.jpg";
+    s_stoneBrickMat.aoPath        = "Stonebricks_AO.jpg";
+
+    s_groundMat.albedoPath = "checker.png";
+
     cubes_.resize(kCubeCount);
 
     // ── 1000 cubes in a 10x10x10 grid ──────────────────────────────────
@@ -86,12 +102,8 @@ void InstancingTest::OnStart() {
                 scene.SetScale({kCubeScale, kCubeScale, kCubeScale});
 
                 auto& mesh = world.AddComponent<StaticMeshComponent>(cubes_[idx]);
-                mesh.meshPath      = "cube.uzmesh";
-                mesh.albedoPath    = "Stonebricks_BaseColor.jpg";
-                mesh.normalPath    = "Stonebricks_Normal.jpg";
-                mesh.roughnessPath = "Stonebricks_Roughness.jpg";
-                mesh.metallicPath  = "Stonebricks_Metallic.jpg";
-                mesh.aoPath        = "Stonebricks_AO.jpg";
+                mesh.meshPath = "cube.uzmesh";
+                mesh.SetMaterial(0, &s_stoneBrickMat);
 
                 ++idx;
             }
@@ -106,8 +118,8 @@ void InstancingTest::OnStart() {
         scene.SetScale({5000.f, 5000.f, 2.f});
 
         auto& mesh = world.AddComponent<StaticMeshComponent>(ground_);
-        mesh.meshPath   = "cube.uzmesh";
-        mesh.albedoPath = "checker.png";
+        mesh.meshPath = "cube.uzmesh";
+        mesh.SetMaterial(0, &s_groundMat);
     }
 
     // ── Directional sun light ─────────────────────────────────────────────
