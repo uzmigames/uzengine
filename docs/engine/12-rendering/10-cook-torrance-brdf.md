@@ -148,6 +148,33 @@ float GeometrySmith(float NdotV, float NdotL, float alpha) {
 
 **Meaning**: Multiply the visibility from the view direction by the visibility from the light direction. If either is blocked, the surface contribution is reduced.
 
+### Critical: Vis_SmithJointApprox Input (Roughness⁴)
+
+> **IMPORTANT (v0.2.35)**: As of 2026-03-18, the Smith visibility function has been corrected to match UE5 exactly. This was the root cause of over-bright specular highlights on ALL surfaces.
+
+The visibility term in deferred lighting must receive **alpha² (roughness⁴)**, not alpha (roughness²):
+
+```hlsl
+// UE5 ShadingModels.ush:215 — correct form
+float alpha = max(roughness * roughness, MIN_ROUGHNESS * MIN_ROUGHNESS);
+float alphaSquared = alpha * alpha;  // THIS is what goes to Vis_SmithJointApprox
+float Vis = Vis_SmithJointApprox(NdotL, NdotV, alphaSquared);
+```
+
+**Why the fourth power?** The Smith visibility formula encodes roughness² inside its denominator. If you pass alpha (which is already roughness²), the function applies the squaring a second time, resulting in roughness⁴. This causes the visibility to collapse too much, making specular highlights 2–3 stops too bright.
+
+**Visual impact if incorrect:**
+- Specular highlights appear 2–3 stops (4–8x) brighter than they should be
+- Highlights are too narrow and too peaked (lack diffuse-like spread)
+- Low-roughness metals look over-saturated and artificial
+- All surfaces appear hyper-reflective
+
+**Fix applied in v0.2.35:**
+- `runtime/shaders/runtime/include/pbr_common.hlsli` — `Vis_SmithJointApprox()` now documents the roughness⁴ requirement
+- `runtime/shaders/runtime/include/lighting.hlsli` — deferred lighting compute now passes `Pow4(roughness)` (i.e., `alpha²`)
+- `runtime/shaders/runtime/postprocess/ssr_resolve_cs.hlsl` — SSR resolve updated to use the same visibility term
+- @source UE5 ShadingModels.ush:215, BRDF.ush:340–360
+
 ### Visual Example
 
 ```

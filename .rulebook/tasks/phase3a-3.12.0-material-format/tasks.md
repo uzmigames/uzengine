@@ -1,8 +1,16 @@
+## 0. Material Graph Core (prerequisite)
+
+- [x] 0.1 Implement MaterialExpression base struct with pin system, factory, and type enum (material_expression.h/.cpp)
+- [x] 0.2 Implement MaterialGraph class with connection management, cycle detection, topological sort, content hashing (material_graph.h/.cpp)
+- [x] 0.3 Implement JSON serialization/deserialization for material graphs (ToJson/FromJson)
+- [x] 0.4 Implement .uzmat file I/O (SaveToFile/LoadFromFile) using JSON format
+- [x] 0.5 Add Material log category to engine logging system (log.h)
+
 ## 1. Implementation
 
-- [ ] 1.1 Define .uzmat file format spec (INI/TOML-based, human-readable, LLM-friendly)
-- [ ] 1.2 Implement .uzmat parser (read shader, scalar params, texture paths)
-- [ ] 1.3 Implement .uzmat writer (serialize material back to file)
+- [x] 1.1 Define .uzmat file format spec — JSON-based material graph format with versioning, domain, shading model, expressions array with pins and connections
+- [x] 1.2 Implement .uzmat parser (MaterialGraph::FromJson + LoadFromFile)
+- [x] 1.3 Implement .uzmat writer (MaterialGraph::ToJson + SaveToFile)
 - [ ] 1.4 Implement MaterialManager (load by path, cache, reference counting)
 - [ ] 1.5 Implement texture path resolution (relative to .uzmat file or project root)
 - [ ] 1.6 Implement material-to-GPU upload (resolve textures → SRV indices, fill PBRMaterial)

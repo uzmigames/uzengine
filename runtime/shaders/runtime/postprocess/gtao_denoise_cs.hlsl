@@ -113,11 +113,13 @@ void main(
     float weightSum = 0.0f;
     float aoSum = 0.0f;
 
+    /// @source UE5 PostProcessAmbientOcclusion.usf:528-534 — centered 4x4 bilinear kernel
+    /// Centered offsets cover a 4x4 block via bilinear filtering (4 taps).
     static const float2 offsets[4] = {
-        float2( 0.0f, 0.0f),
-        float2( 2.0f, 0.0f),
-        float2( 0.0f, 2.0f),
-        float2( 2.0f, 2.0f)
+        float2(-1.0f, -1.0f),
+        float2( 1.0f, -1.0f),
+        float2(-1.0f,  1.0f),
+        float2( 1.0f,  1.0f)
     };
 
     [unroll]

@@ -35,7 +35,29 @@ struct TextureLoadResult {
     uint32_t srvIndex = UINT32_MAX;      ///< Bindless SRV index in global descriptor heap. UINT32_MAX on failure.
     uint32_t width = 0;                  ///< Texture width in texels.
     uint32_t height = 0;                 ///< Texture height in texels.
+    uint16_t mipLevels = 0;              ///< Number of mip levels in the texture (0 on failure).
 };
+
+/// Computes the full mip chain count for a texture of the given dimensions.
+///
+/// Returns floor(log2(max(width, height))) + 1, which is the number of mip
+/// levels from full resolution down to 1x1.
+///
+/// # Arguments
+/// * `width` — Texture width in texels. Must be > 0.
+/// * `height` — Texture height in texels. Must be > 0.
+///
+/// # Returns
+/// Number of mip levels (1 for 1x1, 11 for 1024x1024, 15 for 16384x16384).
+[[nodiscard]] constexpr uint16_t ComputeTextureMipCount(uint32_t width, uint32_t height) noexcept {
+    uint32_t maxDim = (width > height) ? width : height;
+    uint16_t levels = 1;
+    while (maxDim > 1) {
+        maxDim >>= 1;
+        ++levels;
+    }
+    return levels;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TextureLoader — Static utility for loading textures from disk or memory
@@ -120,16 +142,72 @@ public:
         size_t size,
         const char* debugName = "memory_texture");
 
-private:
-    /// Internal implementation shared by Load and LoadFromMemory.
-    /// Takes already-decoded RGBA pixels and handles GPU upload.
-    static TextureLoadResult UploadPixels(
+    /// Uploads pre-decoded RGBA8 pixels to a GPU texture with full mip chain.
+    ///
+    /// Creates the GPU texture, generates mips via CPU box filter, uploads all
+    /// mip levels through an UploadContext, transitions to ShaderResource state,
+    /// flushes the command list, and waits for GPU idle.
+    ///
+    /// This is the same internal pipeline used by `Load()` and `LoadFromMemory()`,
+    /// exposed publicly for use with pre-decoded pixel data (e.g., from
+    /// `AsyncTextureDecoder`).
+    ///
+    /// The command list is left in a recording state after this call.
+    ///
+    /// # Arguments
+    /// * `device` — RHI device for resource creation. Must not be null.
+    /// * `cmdList` — Command list in recording state. Must not be null.
+    /// * `pixels` — RGBA8 pixel data (width * height * 4 bytes). Must not be null.
+    ///   Ownership is NOT transferred — caller retains ownership and must free.
+    /// * `width` — Image width in texels. Must be > 0.
+    /// * `height` — Image height in texels. Must be > 0.
+    /// * `debugName` — Label for GPU debug tools. May be null.
+    ///
+    /// # Returns
+    /// `TextureLoadResult` with a valid handle and SRV index on success.
+    /// Returns default (invalid) result on failure.
+    [[nodiscard]] static TextureLoadResult UploadPixels(
         IRHIDevice* device,
         IRHICommandList* cmdList,
         unsigned char* pixels,
         uint32_t width,
         uint32_t height,
         const char* debugName);
+
+    /// Uploads pre-decoded RGBA8 pixels to a GPU texture WITHOUT flushing the
+    /// command list or waiting for GPU idle.
+    ///
+    /// Records all upload commands (staging copies, mip generation, barrier)
+    /// on the provided command list but does NOT call End/Execute/WaitIdle.
+    /// The caller is responsible for flushing the command list and releasing
+    /// staging buffers after all batched uploads are recorded.
+    ///
+    /// This is designed for batch uploading multiple textures in a single
+    /// command list submission (one WaitIdle for the entire batch).
+    ///
+    /// # Arguments
+    /// * `device` — RHI device for resource creation. Must not be null.
+    /// * `cmdList` — Command list in recording state. Must not be null.
+    /// * `pixels` — RGBA8 pixel data (width * height * 4 bytes). Must not be null.
+    ///   Ownership is NOT transferred.
+    /// * `width` — Image width in texels. Must be > 0.
+    /// * `height` — Image height in texels. Must be > 0.
+    /// * `debugName` — Label for GPU debug tools. May be null.
+    /// * `outUpload` — UploadContext to accumulate staging buffers. The caller
+    ///   must keep this alive until GPU submission completes, then call
+    ///   `ReleaseStaging()`. Must not be null.
+    ///
+    /// # Returns
+    /// `TextureLoadResult` with a valid handle and SRV index on success.
+    /// Returns default (invalid) result on failure.
+    [[nodiscard]] static TextureLoadResult UploadPixelsDeferred(
+        IRHIDevice* device,
+        IRHICommandList* cmdList,
+        unsigned char* pixels,
+        uint32_t width,
+        uint32_t height,
+        const char* debugName,
+        class UploadContext* outUpload);
 };
 
 } // namespace uz

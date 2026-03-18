@@ -40,9 +40,11 @@ cbuffer BloomUpsampleParams : register(b0) {
     uint  g_OutputWidth;       ///< Output texture width in pixels.
     uint  g_OutputHeight;      ///< Output texture height in pixels.
     float g_BloomRadius;       ///< Filter radius scale (default 1.0, increases blur spread).
-    float g_StageTint;         ///< Per-stage tint weight from UE5 bloom settings (Scene.cpp:426-437).
-    float _pad1;
-    float _pad2;
+    /// @source UE5 Scene.cpp:426-437 — per-stage Tint color (Bloom1Tint through Bloom6Tint)
+    /// RGB tint allows colored bloom per mip level (e.g., warm glow in lower mips).
+    float g_StageTintR;        ///< Per-stage tint red channel.
+    float g_StageTintG;        ///< Per-stage tint green channel.
+    float g_StageTintB;        ///< Per-stage tint blue channel.
 };
 
 SamplerState linearSampler : register(s0);
@@ -102,7 +104,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
     // Apply per-stage tint weight before accumulation.
     // UE5 multiplies each bloom stage's contribution by its tint color during upsample.
     // @source UE5 PostProcessBloomSetup.cpp:268 — PassInputs.TintColor = BloomStage.Tint * TintScale
-    upsampled *= g_StageTint;
+    upsampled *= float3(g_StageTintR, g_StageTintG, g_StageTintB);
 
     // Read the downsample result at this level via UAV load (same resource
     // as output — per-pixel 1:1 read-modify-write avoids SRV/UAV conflict)

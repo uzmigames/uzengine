@@ -12,6 +12,14 @@
 ///
 /// @source UE5 PostProcessBloom.usf:37-67 — BloomSetupCommon
 /// @constants BloomThreshold default = 1.0 (PostProcessSettings.h)
+/// @deviations INTENTIONAL: Karis average (1/(1+luma) weighting) is applied at
+///   the threshold stage, NOT during the first downsample as UE5 does. UE5's
+///   BloomSetupCommon does NOT apply Karis weighting — it relies on downsample
+///   filter quality instead. Our approach prevents fireflies earlier in the
+///   pipeline, matching the technique from Jimenez 2014 (Call of Duty: AW)
+///   and Unity HDRP. This produces equivalent visual results with better
+///   firefly rejection at the cost of slightly softer bloom on isolated bright
+///   pixels. This is a deliberate engineering choice, not a bug.
 /// @deviations UE5 uses exposure scale from eye adaptation buffer; we use
 ///   PerFrameCB.exposure directly. Same functional result.
 

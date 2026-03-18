@@ -1,8 +1,9 @@
-/// Tests for TextureLoadResult struct defaults and TextureLoader null-safety.
+/// Tests for TextureLoadResult struct defaults, ComputeTextureMipCount, and TextureLoader null-safety.
 ///
 /// These are pure CPU tests — no GPU device or command list is allocated.
-/// They verify struct field defaults and that null-pointer arguments produce
-/// safe, well-defined results (empty/invalid output, no crash).
+/// They verify struct field defaults, mip count computation correctness,
+/// and that null-pointer arguments produce safe, well-defined results
+/// (empty/invalid output, no crash).
 
 #include <gtest/gtest.h>
 
@@ -44,6 +45,12 @@ TEST(TextureLoadResult, Default_Height_IsZero) {
     EXPECT_EQ(r.height, 0u);
 }
 
+/// TextureLoadResult default mipLevels must be 0.
+TEST(TextureLoadResult, Default_MipLevels_IsZero) {
+    TextureLoadResult r;
+    EXPECT_EQ(r.mipLevels, 0u);
+}
+
 /// Two default-constructed TextureLoadResult values must compare identically.
 TEST(TextureLoadResult, TwoDefaults_AreEqual) {
     TextureLoadResult a;
@@ -53,6 +60,7 @@ TEST(TextureLoadResult, TwoDefaults_AreEqual) {
     EXPECT_EQ(a.srvIndex,          b.srvIndex);
     EXPECT_EQ(a.width,             b.width);
     EXPECT_EQ(a.height,            b.height);
+    EXPECT_EQ(a.mipLevels,         b.mipLevels);
 }
 
 /// Handle index field must be 0 on a default result.
@@ -262,4 +270,116 @@ TEST(RHITextureHandle, DifferentHandles_CompareNotEqual) {
     RHITextureHandle a{1u, 2u};
     RHITextureHandle b{1u, 3u};
     EXPECT_NE(a, b);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ComputeTextureMipCount — mip level computation
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// 1x1 texture has exactly 1 mip level.
+TEST(ComputeTextureMipCount, OneByOne_Returns1) {
+    EXPECT_EQ(ComputeTextureMipCount(1, 1), 1u);
+}
+
+/// 2x2 texture has 2 mip levels (2x2 + 1x1).
+TEST(ComputeTextureMipCount, TwoByTwo_Returns2) {
+    EXPECT_EQ(ComputeTextureMipCount(2, 2), 2u);
+}
+
+/// 4x4 texture has 3 mip levels (4x4 + 2x2 + 1x1).
+TEST(ComputeTextureMipCount, FourByFour_Returns3) {
+    EXPECT_EQ(ComputeTextureMipCount(4, 4), 3u);
+}
+
+/// 256x256 texture has 9 mip levels.
+TEST(ComputeTextureMipCount, SquarePow2_256) {
+    EXPECT_EQ(ComputeTextureMipCount(256, 256), 9u);
+}
+
+/// 1024x1024 texture has 11 mip levels (log2(1024) + 1 = 11).
+TEST(ComputeTextureMipCount, SquarePow2_1024) {
+    EXPECT_EQ(ComputeTextureMipCount(1024, 1024), 11u);
+}
+
+/// 2048x2048 texture has 12 mip levels.
+TEST(ComputeTextureMipCount, SquarePow2_2048) {
+    EXPECT_EQ(ComputeTextureMipCount(2048, 2048), 12u);
+}
+
+/// 4096x4096 texture has 13 mip levels.
+TEST(ComputeTextureMipCount, SquarePow2_4096) {
+    EXPECT_EQ(ComputeTextureMipCount(4096, 4096), 13u);
+}
+
+/// 16384x16384 texture has 15 mip levels (log2(16384) + 1 = 15).
+TEST(ComputeTextureMipCount, Max16K) {
+    EXPECT_EQ(ComputeTextureMipCount(16384, 16384), 15u);
+}
+
+/// Non-square texture: mip count based on largest dimension.
+TEST(ComputeTextureMipCount, NonSquare_WidthLarger) {
+    // 1024x512: max(1024,512) = 1024, log2(1024) + 1 = 11
+    EXPECT_EQ(ComputeTextureMipCount(1024, 512), 11u);
+}
+
+/// Non-square texture: height larger.
+TEST(ComputeTextureMipCount, NonSquare_HeightLarger) {
+    // 512x2048: max(512,2048) = 2048, log2(2048) + 1 = 12
+    EXPECT_EQ(ComputeTextureMipCount(512, 2048), 12u);
+}
+
+/// Non-power-of-two: 1920x1080 (common resolution).
+TEST(ComputeTextureMipCount, NonPow2_1920x1080) {
+    // max(1920,1080) = 1920. 2^10 = 1024, 2^11 = 2048.
+    // floor(log2(1920)) + 1 = 10 + 1 = 11
+    EXPECT_EQ(ComputeTextureMipCount(1920, 1080), 11u);
+}
+
+/// Non-power-of-two: 3x5.
+TEST(ComputeTextureMipCount, NonPow2_3x5) {
+    // max(3,5) = 5. floor(log2(5)) + 1 = 2 + 1 = 3
+    EXPECT_EQ(ComputeTextureMipCount(3, 5), 3u);
+}
+
+/// Asymmetric: 1x1024.
+TEST(ComputeTextureMipCount, Asymmetric_1x1024) {
+    // max(1,1024) = 1024, log2(1024) + 1 = 11
+    EXPECT_EQ(ComputeTextureMipCount(1, 1024), 11u);
+}
+
+/// Asymmetric: 2048x1.
+TEST(ComputeTextureMipCount, Asymmetric_2048x1) {
+    // max(2048,1) = 2048, log2(2048) + 1 = 12
+    EXPECT_EQ(ComputeTextureMipCount(2048, 1), 12u);
+}
+
+/// Standard PBR texture size: 2048x2048 matches expected mip count.
+TEST(ComputeTextureMipCount, StandardPBR_2048) {
+    // Common PBR texture size — 12 mips
+    EXPECT_EQ(ComputeTextureMipCount(2048, 2048), 12u);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TextureLoadResult — mipLevels field
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// mipLevels assignment round-trips correctly.
+TEST(TextureLoadResult, MipLevels_Assignment_RoundTrip) {
+    TextureLoadResult r;
+    r.mipLevels = 11;
+    EXPECT_EQ(r.mipLevels, 11u);
+}
+
+/// Null-device Load returns zero mipLevels.
+TEST(TextureLoader, Load_NullDevice_MipLevelsIsZero) {
+    TextureLoadResult result = TextureLoader::Load(nullptr, nullptr, "test.png");
+    EXPECT_EQ(result.mipLevels, 0u);
+}
+
+/// Null-device LoadFromMemory returns zero mipLevels.
+TEST(TextureLoader, LoadFromMemory_NullDevice_MipLevelsIsZero) {
+    const uint8_t kBytes[] = {0x01};
+    TextureLoadResult result = TextureLoader::LoadFromMemory(
+        nullptr, nullptr, kBytes, 1, "test");
+    EXPECT_EQ(result.mipLevels, 0u);
 }

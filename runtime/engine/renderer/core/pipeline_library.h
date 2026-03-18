@@ -464,6 +464,22 @@ public:
     /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
     [[nodiscard]] RHIPipelineHandle GetFxaa();
 
+    /// Returns the CAS sharpening pipeline (fullscreen_vs + cas_sharpen_ps, 1 RT RGBA8Unorm).
+    ///
+    /// Contrast Adaptive Sharpening pass that runs on LDR scene color after
+    /// tonemapping and before FXAA. Enhances edges without amplifying noise.
+    ///
+    /// Rasterizer: no cull (fullscreen triangle).
+    /// Depth: disabled.
+    /// Blend: None.
+    /// Render target: RGBA8Unorm (backbuffer or FXAA intermediate).
+    ///
+    /// @source AMD FidelityFX CAS — ffx_cas.h
+    ///
+    /// # Returns
+    /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
+    [[nodiscard]] RHIPipelineHandle GetCasSharpen();
+
     /// Pre-creates all standard pipelines eagerly instead of on first use.
     ///
     /// Call at scene load time to avoid hitches during the first frame.
@@ -514,6 +530,7 @@ private:
     [[nodiscard]] bool EnsureDofSetupShader();
     [[nodiscard]] bool EnsureDofBlurShader();
     [[nodiscard]] bool EnsureFxaaPixelShader();
+    [[nodiscard]] bool EnsureCasSharpenPixelShader();
 
     /// Creates a pipeline through the PSO cache. On cache hit, returns the
     /// cached handle without calling the device. On miss, creates via the
@@ -563,6 +580,7 @@ private:
     RHIShaderHandle m_dofSetupCS               = RHIShaderHandle::Invalid();
     RHIShaderHandle m_dofBlurCS                = RHIShaderHandle::Invalid();
     RHIShaderHandle m_fxaaPS                   = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_casSharpenPS             = RHIShaderHandle::Invalid();
 
     // ── Cached pipeline handles (one per bindless variant) ──────────────
     RHIPipelineHandle m_forwardPBR         = RHIPipelineHandle::Invalid();
@@ -601,6 +619,7 @@ private:
     RHIPipelineHandle m_dofSetup              = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_dofBlur               = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_fxaa                  = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_casSharpen            = RHIPipelineHandle::Invalid();
 };
 
 } // namespace uz

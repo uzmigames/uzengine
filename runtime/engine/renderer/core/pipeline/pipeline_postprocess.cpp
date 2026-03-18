@@ -935,4 +935,55 @@ RHIPipelineHandle PipelineLibrary::GetFxaa() {
     return m_fxaa;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// CAS (Contrast Adaptive Sharpening) Pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// @source AMD FidelityFX CAS — ffx_cas.h
+bool PipelineLibrary::EnsureCasSharpenPixelShader() {
+    if (!m_casSharpenPS.IsValid()) {
+        m_casSharpenPS = m_shaderMgr->CreateShader(EngineShader::CasSharpenPS, RHIShaderStage::Pixel);
+        if (!m_casSharpenPS.IsValid()) {
+            UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile CasSharpenPS");
+            return false;
+        }
+    }
+    return true;
+}
+
+RHIPipelineHandle PipelineLibrary::GetCasSharpen() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetCasSharpen called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_casSharpen.IsValid()) {
+        return m_casSharpen;
+    }
+
+    if (!EnsureFullscreenShaders() || !EnsureCasSharpenPixelShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIGraphicsPipelineDesc desc{};
+    desc.vertexShader  = m_fullscreenVS;
+    desc.pixelShader   = m_casSharpenPS;
+    desc.topology      = RHIPrimitiveTopology::TriangleList;
+    desc.rasterizer.cullMode      = RHICullMode::None;
+    desc.depthStencil.depthEnable = false;
+    desc.depthStencil.depthWrite  = false;
+    desc.renderTargetFormats[0]   = RHIFormat::RGBA8Unorm;
+    desc.renderTargetCount        = 1;
+    desc.debugName                = "CAS_Sharpen";
+
+    m_casSharpen = CreateCachedPipeline(desc);
+    if (!m_casSharpen.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create CAS_Sharpen pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created CAS_Sharpen pipeline");
+    }
+
+    return m_casSharpen;
+}
+
 } // namespace uz

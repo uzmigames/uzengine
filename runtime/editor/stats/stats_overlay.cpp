@@ -173,8 +173,9 @@ void StatsOverlay::BuildTextPanel() {
     // Rendering: Draw calls, Vertices, Triangles, VRAM used = 4
     // Separator = 1
     // Frame number = 1
-    // Total = ~17 lines + gaps
-    constexpr int kLineCount = 17;
+    // Camera: header + Pos + Yaw/Pitch = 3
+    // Total = ~20 lines + gaps
+    constexpr int kLineCount = 21;
     float panelH = kLineH * kLineCount + kSectionGap * 3.f + kPanelPadding * 2.f;
     m_textRenderer.AddRect(panelX, panelY, kPanelWidth, panelH,
                            {0.05f, 0.05f, 0.08f, 0.85f});
@@ -282,6 +283,19 @@ void StatsOverlay::BuildTextPanel() {
 
     // Frame number
     snprintf(buf, sizeof(buf), "Frame: %u", m_frameNumber);
+    m_textRenderer.AddText(m_font, buf, textX, textY, dimGray);
+    textY += kLineH;
+
+    // Camera info
+    textY += kLineH * 0.5f; // half-line gap
+    m_textRenderer.AddText(m_font, "CAMERA", textX, textY, header);
+    textY += kLineH;
+
+    snprintf(buf, sizeof(buf), "Pos: %.0f, %.0f, %.0f", m_camX, m_camY, m_camZ);
+    m_textRenderer.AddText(m_font, buf, textX, textY, dimGray);
+    textY += kLineH;
+
+    snprintf(buf, sizeof(buf), "Yaw: %.1f  Pitch: %.1f", m_camYaw, m_camPitch);
     m_textRenderer.AddText(m_font, buf, textX, textY, dimGray);
 }
 

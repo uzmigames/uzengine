@@ -2,7 +2,7 @@
 
 - [x] 1.1 Implement luminance histogram compute shader (`exposure_histogram_cs.hlsl`) — 64 bins, log2 luminance range [-10, +20], Rec.709 weights, LDS groupshared accumulation (16x16 thread groups), global UAV merge. Near-black exclusion (lum < 1e-5).
 - [x] 1.2 Implement percentile filter + target EV compute shader (`exposure_average_cs.hlsl`) — UE5 ComputeAverageLuminanceWithoutOutlier pattern. Skip lowest 10% and highest 10% (UE5 Scene.cpp:459-460). Weighted average in log2 space → exp2 → avg luminance. Clamp to [minBrightness, maxBrightness].
-- [x] 1.3 Implement temporal adaptation — asymmetric: speedUp=3.0 f-stops/sec (Scene.cpp:484), speedDown=1.0 (Scene.cpp:485). Exponential blend: `alpha = 1 - exp(-dt / adaptSpeed)`. First-frame snap to target. Persistent exposure buffer across frames.
+- [x] 1.3 Implement temporal adaptation — UE5 dual model: log2-space adaptation with exponential (small changes, M-multiplier for derivative continuity) and linear (large changes > 1.5 f-stops). SpeedUp=3.0 (Scene.cpp:484), SpeedDown=1.0 (Scene.cpp:485). First-frame snap to target. Persistent exposure buffer across frames. @source UE5 PostProcessHistogramCommon.ush:176-219, PostProcessEyeAdaptation.cpp:491-505.
 - [x] 1.4 Implement exposure multiplier — `targetExposure = exposureBiasLinear * 0.18 / avgLum` (Reinhard key-value). Applied in tonemap: `color *= exposure`. UE5 middle grey = 0.18 (PostProcessEyeAdaptation.usf:174).
 - [x] 1.5 Implement manual exposure override — when `manualExposure > 0`, skip histogram/adaptation, compute `exposure = 0.18 * pow(2, bias) / manualLuminance`. No GPU dispatch.
 - [ ] 1.6 Implement metering mask (optional) — center-weighted metering via texture.

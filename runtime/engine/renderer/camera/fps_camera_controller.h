@@ -87,7 +87,7 @@ public:
     [[nodiscard]] float GetPitch() const { return m_pitch; }
 
 private:
-    float m_moveSpeed = 5.0f;
+    float m_moveSpeed = 2.5f;  ///< Halved from 5.0 for smoother camera control at scene scale
     float m_mouseSensitivity = 0.003f;
     float m_sprintMultiplier = 3.0f;
     float m_yaw = 0.f;    ///< Horizontal rotation (radians, around world Z)

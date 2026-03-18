@@ -563,7 +563,10 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
                   && m_hizMipCount > 0
                   && m_shadowDebugMode == 0;
 
-    ctx.motionBlurActive = m_motionBlurEnabled && m_motionBlurOutput.IsValid()
+    // Gate motion blur on m_prevViewProjValid to avoid reading uninitialized velocity on frame 0.
+    // The velocity pass is skipped on the first frame (no prevViewProj yet), so velocity data is garbage.
+    ctx.motionBlurActive = m_motionBlurEnabled && m_prevViewProjValid
+                         && m_motionBlurOutput.IsValid()
                          && m_motionBlurTileMax.IsValid() && m_motionBlurNeighborMax.IsValid()
                          && m_gbuffer.velocity.IsValid() && ctx.bindless && m_shadowDebugMode == 0;
 
@@ -575,6 +578,13 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
                    && m_shadowDebugMode == 0
                    && m_fxaaLdrIntermediate.IsValid()
                    && m_fxaaLdrIntermediateSrv != UINT32_MAX;
+
+    // CAS (Contrast Adaptive Sharpening) — runs after tonemap, before FXAA.
+    // Enabled by default. Requires the LDR intermediate texture (shared with FXAA).
+    ctx.casActive = m_casEnabled && ctx.bindless
+                  && m_shadowDebugMode == 0
+                  && m_fxaaLdrIntermediate.IsValid()
+                  && m_fxaaLdrIntermediateSrv != UINT32_MAX;
 
     // Initialize SRV routing chain — each post-process pass may override these.
     ctx.taaSrvForTonemap = m_hdrSceneColorSrv;

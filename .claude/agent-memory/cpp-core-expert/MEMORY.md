@@ -198,6 +198,18 @@
 - **Build**: LuaJIT linked to both UzEngine and UzEngineTests, lua51.dll copied to output dirs
 - **Gotcha**: Scene struct is ~26MB (65536 SceneNodes) — NEVER stack-allocate, always heap
 
+## Async Texture Loading (runtime/engine/renderer/upload/)
+- **async_texture_decoder.h/.cpp**: Worker thread pool (2 threads) for parallel stbi_load
+  - Submit(path) -> worker does stbi_load -> PollCompleted() returns decoded RGBA8 pixels
+  - CPU-only, no RHI dependency. Thread-safe. Caller frees pixels via stbi_image_free()
+- **texture_loader.h/.cpp**: Added `UploadPixels` (public) + `UploadPixelsDeferred` (no-flush batch variant)
+  - Refactored: shared `UploadPixelsCore()` static function does mip gen + upload
+  - `UploadPixelsDeferred` takes external `UploadContext*` for batch staging
+- **scene_assets.cpp**: `LoadTexture()` submits to AsyncTextureDecoder, reserves slot
+  - `FlushPendingLoads()` polls completed decodes, batch-uploads with single WaitIdle
+  - `m_asyncPendingSlots` maps resolved path -> slot index
+- **Build**: Zig `addCppDir` auto-includes new .cpp files from upload/ directory
+
 ## User Preferences
 - Communicates in Portuguese (BR)
 - Prefers DX12 (not DX11)

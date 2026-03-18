@@ -100,34 +100,43 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
 
                 cmd->SetPipeline(taaPSO);
 
-                // Root constants: 10 DWORDs (matches TAARootConstants cbuffer)
-                // [0-1] = jitterOffset (float2)
-                // [2-3] = texelSize (float2)
-                // [4]   = currentFrameWeight (float)
-                // [5]   = sceneSrvIndex (uint)
-                // [6]   = depthSrvIndex (uint)
-                // [7]   = historySrvIndex (uint)
-                // [8]   = outputUavIndex (uint)
-                // [9]   = padding
-                struct TaaConstants {
-                    float jitterX, jitterY;
-                    float texelSizeX, texelSizeY;
-                    float blendWeight;
-                    uint32_t sceneSrv;
-                    uint32_t depthSrv;
-                    uint32_t historySrv;
-                } constants;
-                constants.jitterX    = jitterX;
-                constants.jitterY    = jitterY;
-                constants.texelSizeX = 1.0f / ctx.vpWidth;
-                constants.texelSizeY = 1.0f / ctx.vpHeight;
+                // TaaCB — uploaded via CBRingAllocator at kSlotPerObject (b2).
+                // Moved from root constants to CBV to accommodate velocitySrvIndex
+                // and outputWidth/outputHeight for bicubic history sampling.
+                //
+                // Layout matches the HLSL TaaCB cbuffer in taa_resolve_cs.hlsl.
+                struct TaaCB {
+                    float    jitterX, jitterY;       // 8 bytes
+                    float    texelSizeX, texelSizeY;  // 8 bytes
+                    float    blendWeight;              // 4 bytes
+                    uint32_t sceneSrv;                 // 4 bytes
+                    uint32_t depthSrv;                 // 4 bytes
+                    uint32_t historySrv;               // 4 bytes
+                    uint32_t velocitySrv;              // 4 bytes
+                    float    outputWidth;              // 4 bytes
+                    float    outputHeight;             // 4 bytes
+                    uint32_t _pad0;                    // 4 bytes (align to 16)
+                };
+                TaaCB taaCb{};
+                taaCb.jitterX    = jitterX;
+                taaCb.jitterY    = jitterY;
+                taaCb.texelSizeX = 1.0f / ctx.vpWidth;
+                taaCb.texelSizeY = 1.0f / ctx.vpHeight;
                 /// @source UE5 TemporalAA.cpp:41 — CurrentFrameWeight = 0.04
-                constants.blendWeight = m_prevViewProjValid ? 0.04f : 1.0f;
-                constants.sceneSrv   = m_hdrSceneColorSrv;
-                constants.depthSrv   = m_gbuffer.depthSRV;
-                constants.historySrv = m_taaHistorySrv[readIdx];
+                taaCb.blendWeight  = m_prevViewProjValid ? 0.04f : 1.0f;
+                taaCb.sceneSrv     = m_hdrSceneColorSrv;
+                taaCb.depthSrv     = m_gbuffer.depthSRV;
+                taaCb.historySrv   = m_taaHistorySrv[readIdx];
+                taaCb.velocitySrv  = m_gbuffer.velocitySRV;
+                taaCb.outputWidth  = ctx.vpWidth;
+                taaCb.outputHeight = ctx.vpHeight;
+                taaCb._pad0        = 0;
 
-                cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&constants), 8);
+                auto taaAlloc = m_cbRing->Allocate(sizeof(TaaCB));
+                std::memcpy(taaAlloc.cpuPtr, &taaCb, sizeof(TaaCB));
+                cmd->SetRootCBV(kSlotPerObject, taaAlloc.bufferHandle,
+                                taaAlloc.offsetBytes, taaAlloc.cpuPtr,
+                                sizeof(TaaCB));
 
                 // Bind TAA output UAV at descriptor table slot 4 (u0)
                 cmd->SetDescriptorTable(4, m_taaHistoryUav[writeIdx]);
@@ -339,10 +348,15 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
                 cmd->ResourceBarrier(&b, 1);
 
                 cmd->SetPipeline(mbPSO);
-                struct MBConstants { uint32_t scene, vel, depth, w, h; float scale, maxPx; uint32_t uav; } c;
+                const uint32_t vpW = static_cast<uint32_t>(ctx.vpWidth);
+                const uint32_t vpH = static_cast<uint32_t>(ctx.vpHeight);
+                /// @source UE5 MotionBlurApply.usf:269-285 — neighbor max for per-tile early-out
+                struct MBConstants { uint32_t scene, vel, depth, dimsPacked; float scale, maxPx; uint32_t uav, neighborMax; } c;
                 c.scene = ctx.taaSrvForTonemap; c.vel = m_gbuffer.velocitySRV; c.depth = m_gbuffer.depthSRV;
-                c.w = static_cast<uint32_t>(ctx.vpWidth); c.h = static_cast<uint32_t>(ctx.vpHeight); c.scale = motionBlurScale; c.maxPx = maxBlurPx;
+                c.dimsPacked = (vpW & 0xFFFFu) | (vpH << 16u);
+                c.scale = motionBlurScale; c.maxPx = maxBlurPx;
                 c.uav = m_motionBlurOutputUav;
+                c.neighborMax = m_motionBlurNeighborMaxSrv;
                 cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&c), 8);
                 cmd->Dispatch((static_cast<uint32_t>(ctx.vpWidth)+7)/8, (static_cast<uint32_t>(ctx.vpHeight)+7)/8, 1);
 
@@ -426,11 +440,14 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
         ctx.postDofSrvForTonemap = m_dofOutputSrv;
     }
 
-    // ── FXAA LDR intermediate import ─────────────────────────────────
-    // Import FXAA LDR intermediate into the render graph if FXAA is active.
-    // When FXAA is active, tonemap writes here instead of to the backbuffer.
-    if (ctx.fxaaActive) {
-        ctx.fxaaLdrRes = rgBuilder.ImportTexture("FXAA_LdrIntermediate",
+    // ── LDR intermediate import ─────────────────────────────────────────
+    // Import LDR intermediate into the render graph if CAS or FXAA is active.
+    // When either is active, tonemap writes here instead of to the backbuffer.
+    // The intermediate is shared between CAS and FXAA (both are fullscreen
+    // LDR passes that read from it).
+    const bool needsLdrIntermediate = ctx.casActive || ctx.fxaaActive;
+    if (needsLdrIntermediate) {
+        ctx.fxaaLdrRes = rgBuilder.ImportTexture("LDR_Intermediate",
                                                   m_fxaaLdrIntermediate,
                                                   RHIResourceState::ShaderResource);
     }
@@ -438,14 +455,14 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
     // ── Tonemap pass (HDR → LDR) ────────────────────────────────────────
     // Reads HDR scene color (RGBA16F) + optional bloom result, applies
     // bloom composite + auto-exposure + ACES filmic tonemap + sRGB gamma,
-    // writes LDR to FXAA intermediate (if FXAA active) or backbuffer.
+    // writes LDR to intermediate (if CAS/FXAA active) or backbuffer.
     // This is the ONLY place tonemapping happens in the pipeline.
     rgBuilder.AddPass("Tonemap", [&](rg::RgPassBuilder& pb) {
         pb.Read(ctx.hdrRes, RHIResourceState::ShaderResource);
 
-        // Tonemap writes to FXAA intermediate when FXAA is active,
-        // or directly to the backbuffer when FXAA is disabled.
-        const auto tonemapOutputRes = ctx.fxaaActive ? ctx.fxaaLdrRes : ctx.bbRes;
+        // Tonemap writes to LDR intermediate when CAS or FXAA needs it,
+        // or directly to the backbuffer when neither is active.
+        const auto tonemapOutputRes = needsLdrIntermediate ? ctx.fxaaLdrRes : ctx.bbRes;
         pb.Write(tonemapOutputRes, RHIResourceState::RenderTarget);
 
         pb.SetExecutionCallback([this, &ctx, tonemapOutputRes](IRHICommandList* cmd, const rg::RgPassResources& res) {
@@ -504,14 +521,81 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
         });
     });
 
+    // ── CAS pass (LDR sharpening → backbuffer) ─────────────────────────
+    // Contrast Adaptive Sharpening runs after tonemap on LDR content.
+    // Reads from the LDR intermediate and writes to the backbuffer.
+    // When CAS is active, it replaces FXAA (both achieve edge enhancement;
+    // running both would over-process the image).
+    //
+    // @source AMD FidelityFX CAS — ffx_cas.h
+    if (ctx.casActive) {
+        rgBuilder.AddPass("CAS_Sharpen", [&](rg::RgPassBuilder& pb) {
+            pb.Read(ctx.fxaaLdrRes, RHIResourceState::ShaderResource);
+            pb.Write(ctx.bbRes, RHIResourceState::RenderTarget);
+
+            pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources& res) {
+                UZ_PROFILE_SCOPE("CAS::Execute");
+
+                auto bb = res.GetTexture(ctx.bbRes);
+
+                RHIRenderPassDesc passDesc{};
+                passDesc.colorAttachmentCount        = 1;
+                passDesc.colorAttachments[0].texture = bb;
+                passDesc.colorAttachments[0].clear   = false;
+                cmd->BeginRenderPass(passDesc);
+
+                cmd->SetPipeline(ctx.pipelines->GetCasSharpen());
+
+                // Root constants at b0: LDR intermediate SRV index
+                uint32_t casIndices[4] = { m_fxaaLdrIntermediateSrv, 0, 0, 0 };
+                cmd->SetRootConstants(kSlotRootConstants, casIndices, 4);
+
+                // CASParams CB at b2 (kSlotPerObject)
+                struct CASParamsCB {
+                    float invScreenWidth;    ///< 1.0 / viewport width
+                    float invScreenHeight;   ///< 1.0 / viewport height
+                    float sharpenStrength;   ///< CAS sharpening intensity [0.0-1.0]
+                    float _pad0;
+                };
+                CASParamsCB casParams{};
+                casParams.invScreenWidth  = 1.0f / ctx.vpWidth;
+                casParams.invScreenHeight = 1.0f / ctx.vpHeight;
+                casParams.sharpenStrength = m_casSharpenStrength;
+                casParams._pad0           = 0.0f;
+
+                CBAllocation casAlloc = m_cbRing->Allocate(sizeof(CASParamsCB));
+                std::memcpy(casAlloc.cpuPtr, &casParams, sizeof(CASParamsCB));
+                cmd->SetRootCBV(kSlotPerObject, casAlloc.bufferHandle,
+                                casAlloc.offsetBytes, casAlloc.cpuPtr,
+                                sizeof(CASParamsCB));
+
+                RHIViewport vp{};
+                vp.width    = static_cast<uint32_t>(ctx.vpWidth);
+                vp.height   = static_cast<uint32_t>(ctx.vpHeight);
+                vp.maxDepth = 1.0f;
+                cmd->SetViewport(vp);
+
+                RHIScissorRect sc{};
+                sc.right  = static_cast<int32_t>(ctx.swapChain->GetWidth());
+                sc.bottom = static_cast<int32_t>(ctx.swapChain->GetHeight());
+                cmd->SetScissor(sc);
+
+                cmd->Draw(3); // fullscreen triangle
+
+                cmd->EndRenderPass();
+            });
+        });
+    }
+
     // ── FXAA pass (LDR → backbuffer) ────────────────────────────────────
-    // Reads the LDR tonemap output from the FXAA intermediate texture and
+    // Reads the LDR tonemap output from the intermediate texture and
     // writes the anti-aliased result to the backbuffer. Only runs when
-    // TAA is disabled (FXAA and TAA are mutually exclusive in UE5).
+    // TAA is disabled (FXAA and TAA are mutually exclusive in UE5) AND
+    // CAS is not active (CAS replaces FXAA when enabled).
     //
     // @source UE5 PostProcessAA.cpp:94-96 — default quality parameters
     // @source UE5 Fxaa3_11.ush:735-1252 — FxaaPixelShader
-    if (ctx.fxaaActive) {
+    if (ctx.fxaaActive && !ctx.casActive) {
         rgBuilder.AddPass("FXAA", [&](rg::RgPassBuilder& pb) {
             pb.Read(ctx.fxaaLdrRes, RHIResourceState::ShaderResource);
             pb.Write(ctx.bbRes, RHIResourceState::RenderTarget);
@@ -529,7 +613,7 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
 
                 cmd->SetPipeline(ctx.pipelines->GetFxaa());
 
-                // Root constants at b0: FXAA LDR intermediate SRV index
+                // Root constants at b0: LDR intermediate SRV index
                 uint32_t fxaaIndices[4] = { m_fxaaLdrIntermediateSrv, 0, 0, 0 };
                 cmd->SetRootConstants(kSlotRootConstants, fxaaIndices, 4);
 

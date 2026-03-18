@@ -10,6 +10,7 @@
 #include "components.h"
 
 #include "camera.h"
+#include "fps_camera_controller.h"
 #include "gpu_mesh.h"
 #include "render_graph_builder.h"
 #include "render_graph_resources.h"
@@ -80,6 +81,13 @@ void SceneRenderer::RegisterOverlayPasses(rg::RgBuilder& rgBuilder, FrameContext
                 m_statsOverlay->SetDrawCalls(drawCount);
                 m_statsOverlay->SetVertexCount(totalVertices);
                 m_statsOverlay->SetTriangleCount(totalTriangles);
+
+                // Camera position + rotation for artist positioning
+                const auto& camPos = m_camera->GetPosition();
+                float yawDeg   = m_cameraCtrl->GetYaw()   * (180.0f / 3.14159265f);
+                float pitchDeg = m_cameraCtrl->GetPitch() * (180.0f / 3.14159265f);
+                m_statsOverlay->SetCameraInfo(camPos.x, camPos.y, camPos.z, yawDeg, pitchDeg);
+
                 m_statsOverlay->Render(cmd, *m_cbRing, ctx.frameIndex);
             }
 

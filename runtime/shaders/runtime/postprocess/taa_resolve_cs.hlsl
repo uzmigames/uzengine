@@ -1,24 +1,30 @@
 /// UzEngine Temporal Anti-Aliasing Resolve Compute Shader
 ///
 /// @source UE5 TemporalAA.usf:70-2428 — MainCS / TemporalAASample
+/// @source UE5 TextureSampling.ush:101-126 — Bicubic2DCatmullRom
+/// @source UE5 TextureSampling.ush:148-186 — GetBicubic2DCatmullRomSamples
 /// @constants CurrentFrameWeight=0.04 (TemporalAA.cpp:41), velocityLerp=0.2 at v/40 (TemporalAA.usf:2233)
 /// @deviations Simplified: no LDS cache, no TAAU upsampling, no DOF CoC, no stencil responsive AA,
-///             no stochastic quantization, no bicubic history. UzEngine uses compute with VGPR 3x3 cache.
-///             Core algorithm (YCoCg clamp + HDR weighted blend + velocity rejection) is identical to UE5.
+///             no stochastic quantization. UzEngine uses compute with VGPR 3x3 cache.
+///             Core algorithm (YCoCg clamp + bicubic history + HDR weighted blend + velocity rejection)
+///             is identical to UE5.
 
-/// Root constants at b0 — packed into 8 DWORDs for the compute root signature.
+/// TAA constant buffer at b2 — uploaded via CBRingAllocator (kSlotPerObject).
 ///
-/// Layout matches UzEngine's compute root signature:
-///   b0 = 16 root constants (we use first 8)
-///   t0 = SRV descriptor table
-///   u0 = UAV descriptor table
-cbuffer TAARootConstants : register(b0) {
+/// Contains all TAA parameters including bindless SRV indices and texture dimensions.
+/// Moved from root constants to CBV to accommodate velocitySrvIndex beyond the
+/// 8-DWORD root constant limit.
+cbuffer TaaCB : register(b2) {
     float2 jitterOffset;        ///< Sub-pixel jitter applied to current frame's projection (pixels).
     float2 texelSize;           ///< 1.0 / float2(width, height).
     float  currentFrameWeight;  ///< Blend weight for current frame. UE5 default: 0.04.
     uint   sceneSrvIndex;       ///< Bindless SRV index for HDR scene color (RGBA16F).
     uint   depthSrvIndex;       ///< Bindless SRV index for depth buffer (R32F or D32F).
     uint   historySrvIndex;     ///< Bindless SRV index for previous frame TAA output (RGBA16F).
+    uint   velocitySrvIndex;    ///< Bindless SRV index for velocity buffer (RG16F, pixels).
+    float  outputWidth;         ///< Render target width in pixels (for bicubic history sampling).
+    float  outputHeight;        ///< Render target height in pixels (for bicubic history sampling).
+    uint   _pad0;               ///< Padding to 16-byte alignment.
 };
 
 /// Bilinear clamp sampler for history texture sampling.
@@ -100,29 +106,37 @@ float2 WeightedLerpFactors(float WeightA, float WeightB, float Blend)
 // Velocity Reprojection
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Reads depth and computes camera-only motion vector via depth reprojection.
+/// @source UE5 TemporalAA.usf:2087-2121 — Camera motion via ClipToPrevClip + velocity buffer
+/// @constants NONE (no numeric constants in this function)
+/// @deviations UE5 uses ClipToPrevClip for camera-only motion and overrides with velocity
+///             buffer for dynamic objects. UzEngine velocity buffer already encodes full
+///             per-pixel motion (camera + object) via depth reprojection in velocity_ps.hlsl,
+///             so we read it directly without a separate camera-only path.
 ///
-/// @source UE5 TemporalAA.usf:2087-2121 — Camera motion via ClipToPrevClip
+/// Reads the velocity buffer to obtain per-pixel screen-space motion in UV space.
 ///
-/// Since UzEngine does not yet have a velocity buffer (per-object motion),
-/// we reproject via the depth buffer and the prevViewProj matrix stored in
-/// PerFrameCB. This handles camera motion correctly. Object motion will be
-/// added when the velocity buffer pass is implemented (task 1.2/1.3).
+/// The velocity buffer (velocity_ps.hlsl) outputs motion vectors in pixel-space as
+/// `currScreen - prevScreen`. To reproject history, TAA needs to go FROM current TO
+/// previous, so the history UV = currentUV - velocity * texelSize.
 ///
-/// For now, we do NOT have prevViewProj in PerFrameCB, so we use a simple
-/// approach: treat the jitter offset as the only motion. This is sufficient
-/// for static scenes and provides correct TAA convergence. When the velocity
-/// buffer is added, this function will be replaced with a proper velocity read.
+/// # Arguments
+/// * `pixelCoord` — Integer pixel coordinate of the sample (after closest-depth dilation).
+/// * `uv` — UV coordinate of the sample (may include velocityOffset from depth dilation).
+///
+/// # Returns
+/// UV-space motion vector: positive = current pixel moved rightward/downward from previous frame.
 float2 ComputeMotionVector(int2 pixelCoord, float2 uv)
 {
-    // Without a velocity buffer or prevViewProj, we approximate by using
-    // zero motion (camera-only jitter is handled by the jitter offset).
-    // The jitter is already accounted for in the UV calculation.
-    //
-    // TODO(velocity-buffer): Replace with actual velocity buffer read when
-    // task 1.2 is implemented. For now, TAA still converges correctly for
-    // static scenes because the jitter offset is the dominant sub-pixel motion.
-    return float2(0.0, 0.0);
+    // Read velocity buffer at the dilated pixel coordinate.
+    // Velocity buffer is RG16F: velocity in pixels (currScreen - prevScreen).
+    Texture2D<float2> VelocityTex = ResourceDescriptorHeap[velocitySrvIndex];
+    float2 velocityPixels = VelocityTex.Load(int3(pixelCoord, 0));
+
+    // Convert pixel-space velocity to UV-space by dividing by screen dimensions.
+    // texelSize = 1.0 / float2(width, height), so multiply is equivalent to divide.
+    float2 motionUV = velocityPixels * texelSize;
+
+    return motionUV;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -149,8 +163,8 @@ static const int2 kOffsets3x3[9] =
 /// 1. Sample current frame HDR scene color at the jittered pixel position.
 /// 2. Gather 3x3 neighborhood in YCoCg space for color bounding box.
 /// 3. Find closest depth in a cross pattern for velocity dilation.
-/// 4. Compute reprojected UV from motion vector (or depth reprojection).
-/// 5. Sample history buffer at reprojected UV (bilinear).
+/// 4. Compute reprojected UV from velocity buffer (full camera+object motion).
+/// 5. Sample history buffer at reprojected UV (5-tap bicubic Catmull-Rom).
 /// 6. Convert history to YCoCg, clamp to neighborhood min/max box.
 /// 7. Compute blend weight (currentFrameWeight modulated by velocity).
 /// 8. HDR-weighted lerp between clamped history and filtered current.
@@ -161,12 +175,12 @@ void main(
     uint2 GroupId : SV_GroupID,
     uint2 GroupThreadId : SV_GroupThreadID)
 {
-    // Get output dimensions from texel size.
-    uint outputWidth  = uint(rcp(texelSize.x) + 0.5);
-    uint outputHeight = uint(rcp(texelSize.y) + 0.5);
+    // Get output dimensions from TaaCB (avoids rcp precision issues).
+    uint outW = uint(outputWidth  + 0.5);
+    uint outH = uint(outputHeight + 0.5);
 
     // Early out for threads outside the render target.
-    if (any(DispatchThreadId >= uint2(outputWidth, outputHeight)))
+    if (any(DispatchThreadId >= uint2(outW, outH)))
         return;
 
     // ── UV Computation ──────────────────────────────────────────────────────
@@ -197,7 +211,7 @@ void main(
     {
         int2 coord = centerCoord + kOffsets3x3[i];
         // Clamp to valid range to avoid sampling outside the render target.
-        coord = clamp(coord, int2(0, 0), int2(outputWidth - 1, outputHeight - 1));
+        coord = clamp(coord, int2(0, 0), int2(outW - 1, outH - 1));
 
         float3 rawColor = SceneColor.Load(int3(coord, 0)).rgb;
         // Transform to YCoCg for clamping (UE5 AA_YCOCG=1 for Main pass).
@@ -296,13 +310,15 @@ void main(
     }
 
     // ── Reprojection ────────────────────────────────────────────────────────
-    // @source UE5 TemporalAA.usf:2087-2121 — Camera motion via ClipToPrevClip
+    // @source UE5 TemporalAA.usf:2087-2121 — Camera motion + velocity buffer
     //
-    // Without a velocity buffer, the reprojected UV is simply the current UV
-    // with the jitter removed. The TAA jitter is the primary sub-pixel motion
-    // for static scenes, and removing it from the history lookup ensures
-    // correct temporal convergence.
-    float2 motionVector = ComputeMotionVector(centerCoord, uv + velocityOffset);
+    // Read the velocity buffer at the closest-depth dilated pixel (velocityOffset
+    // shifts to the foreground pixel found by the cross-pattern search above).
+    // The velocity buffer already encodes full camera + object motion via depth
+    // reprojection (velocity_ps.hlsl). ComputeMotionVector returns UV-space delta.
+    int2 dilatedCoord = centerCoord + int2(velocityOffset * rcp(texelSize) + 0.5);
+    dilatedCoord = clamp(dilatedCoord, int2(0, 0), int2(outW - 1, outH - 1));
+    float2 motionVector = ComputeMotionVector(dilatedCoord, uv + velocityOffset);
     float2 historyUV = uv - motionVector;
 
     // @source UE5 TemporalAA.usf:2108 — Velocity magnitude in pixels
@@ -313,11 +329,63 @@ void main(
     // @source UE5 TemporalAA.usf:2120 — OffScreen detection
     bool offScreen = any(historyUV < 0.0) || any(historyUV > 1.0);
 
-    // ── Sample History (Bilinear) ───────────────────────────────────────────
-    // @source UE5 TemporalAA.usf:1883-1895 — Bilinear history (non-bicubic path)
-    // Clamp UV to valid range before sampling to avoid reading garbage.
+    // ── Sample History (Bicubic Catmull-Rom — 5-tap) ────────────────────────
+    // @source UE5 TemporalAA.usf:1840-1880 — AA_BICUBIC path
+    // @source UE5 TextureSampling.ush:101-126 — Bicubic2DCatmullRom
+    // @source UE5 TextureSampling.ush:148-186 — GetBicubic2DCatmullRomSamples
+    //
+    // Uses 5 bilinear taps arranged in a plus pattern to approximate a 4x4
+    // Catmull-Rom kernel. The corner samples are omitted (their weights are
+    // small) and the remaining weights are renormalized via FinalMultiplier.
+    // This produces sharper temporal accumulation than single bilinear.
     float2 clampedHistoryUV = clamp(historyUV, texelSize * 0.5, 1.0 - texelSize * 0.5);
-    float3 rawHistory = HistoryTex.SampleLevel(LinearClampSampler, clampedHistoryUV, 0).rgb;
+    float3 rawHistory;
+    {
+        // History texture dimensions for Catmull-Rom weight computation.
+        float2 historySize    = float2(outputWidth, outputHeight);
+        float2 historyInvSize = texelSize;  // 1.0 / size = texelSize
+
+        // @source UE5 TextureSampling.ush:103-126 — Bicubic2DCatmullRom
+        // Compute Catmull-Rom basis weights and bilinear sample positions.
+        float2 samplePos = clampedHistoryUV * historySize;
+        float2 tc = floor(samplePos - 0.5) + 0.5;
+        float2 f  = samplePos - tc;
+        float2 f2 = f * f;
+        float2 f3 = f2 * f;
+
+        // Catmull-Rom basis weights (UE5 TextureSampling.ush:110-113).
+        float2 w0 = f2 - 0.5 * (f3 + f);
+        float2 w1 = 1.5 * f3 - 2.5 * f2 + 1.0;
+        float2 w3 = 0.5 * (f3 - f2);
+        float2 w2 = 1.0 - w0 - w1 - w3;
+
+        // Combined weights for bilinear trick (UE5 TextureSampling.ush:116).
+        float2 w12 = w1 + w2;
+
+        // Bilinear sample positions in texel space (UE5 TextureSampling.ush:119-121).
+        float2 sample0 = (tc - 1.0) * historyInvSize;
+        float2 sample1 = (tc + w2 * rcp(w12)) * historyInvSize;
+        float2 sample2 = (tc + 2.0) * historyInvSize;
+
+        // @source UE5 TextureSampling.ush:158-168 — 5-tap plus pattern UVs and weights.
+        // Optimized layout omits the 4 corner taps for 5 taps total.
+        float weight0 = w12.x * w0.y;    // top center
+        float weight1 = w0.x  * w12.y;   // left center
+        float weight2 = w12.x * w12.y;   // center (dominant)
+        float weight3 = w3.x  * w12.y;   // right center
+        float weight4 = w12.x * w3.y;    // bottom center
+
+        rawHistory  = HistoryTex.SampleLevel(LinearClampSampler, float2(sample1.x, sample0.y), 0).rgb * weight0;
+        rawHistory += HistoryTex.SampleLevel(LinearClampSampler, float2(sample0.x, sample1.y), 0).rgb * weight1;
+        rawHistory += HistoryTex.SampleLevel(LinearClampSampler, float2(sample1.x, sample1.y), 0).rgb * weight2;
+        rawHistory += HistoryTex.SampleLevel(LinearClampSampler, float2(sample2.x, sample1.y), 0).rgb * weight3;
+        rawHistory += HistoryTex.SampleLevel(LinearClampSampler, float2(sample1.x, sample2.y), 0).rgb * weight4;
+
+        // @source UE5 TextureSampling.ush:177-183 — FinalMultiplier renormalization.
+        // Corner taps were omitted so reweight to preserve energy.
+        float finalMultiplier = rcp(weight0 + weight1 + weight2 + weight3 + weight4);
+        rawHistory *= finalMultiplier;
+    }
 
     // Transform history to YCoCg.
     // @source UE5 TemporalAA.usf:1926 — TransformSceneColor(HistoryPayload.Color)

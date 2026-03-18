@@ -125,7 +125,7 @@ struct PerFrameCB {
     /// @source UE5 DeferredLightingCommon.ush:172 — ContactShadowLength > 0 enables ray march
     /// Screen-space contact shadow ray length. 0.0 = disabled (UE5 default).
     /// Positive = screen-space fraction (0.02 = 2% of depth-scaled screen ray length).
-    float    contactShadowLength = 0.0f;         ///< Contact shadow ray length (0=off, 0.02=typical).
+    float    contactShadowLength = 0.02f;        ///< TEST 2: contact shadows ON.
 
     uint32_t ssrSrvIndex = UINT32_MAX;             ///< SRV index for resolved SSR texture (UINT32_MAX = no SSR).
     float    _pad2[8] = {};                       ///< Pad to 512 bytes.

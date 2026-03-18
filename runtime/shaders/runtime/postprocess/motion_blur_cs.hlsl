@@ -80,18 +80,16 @@ static const uint MAX_SAMPLE_COUNT = 16;
 
 /// Root constants at b0 — 8 DWORDs matching the compute root signature limit.
 cbuffer MotionBlurParams : register(b0) {
-    uint   sceneSrvIndex;      ///< Descriptor heap index: HDR scene color (RGBA16F or R11G11B10F).
-    uint   velocitySrvIndex;   ///< Descriptor heap index: velocity buffer (RG16F, pixel-space).
-    uint   depthSrvIndex;      ///< Descriptor heap index: depth buffer (R32_FLOAT, reversed-Z).
-    uint   outputWidth;        ///< Output texture width in pixels.
-    uint   outputHeight;       ///< Output texture height in pixels.
+    uint   sceneSrvIndex;        ///< DWORD 0: HDR scene color SRV.
+    uint   velocitySrvIndex;     ///< DWORD 1: velocity buffer SRV (RG16F, pixel-space).
+    uint   depthSrvIndex;        ///< DWORD 2: depth buffer SRV (R32_FLOAT, reversed-Z).
+    uint   outputDimsPacked;     ///< DWORD 3: (width & 0xFFFF) | (height << 16). Packed to free a DWORD.
     /// @source UE5 PostProcessMotionBlur.cpp:613 — VelocityScale = MotionBlurTimeScale * MotionBlurAmount * 0.5
-    /// @source UE5 SceneVisibility.cpp:5428-5431 — MotionBlurTimeScale = (1/TargetFPS) / DeltaRealTime
-    /// Pre-computed on CPU: motionBlurScale = (1/TargetFPS) / dt * MotionBlurAmount * 0.5
-    /// At 60fps with defaults (targetFPS=30, amount=0.5): scale = (1/30)/(1/60) * 0.5 * 0.5 = 0.5
-    float  motionBlurScale;    ///< Combined velocity scale (time scale * amount * 0.5).
-    float  maxBlurPixels;      ///< Maximum blur radius in pixels. UE5 default: 5% of viewport width (Scene.cpp:599, MotionBlurMax=5.0 means 5% -> pixels = 0.05 * width).
-    uint   outputUavIndex;     ///< Descriptor heap index: output UAV.
+    float  motionBlurScale;      ///< DWORD 4: combined velocity scale (time * amount * 0.5).
+    float  maxBlurPixels;        ///< DWORD 5: max blur radius in pixels.
+    uint   outputUavIndex;       ///< DWORD 6: output UAV index.
+    /// @source UE5 MotionBlurApply.usf:269-285 — neighbor max tile texture for per-tile early-out
+    uint   neighborMaxSrvIndex;  ///< DWORD 7: neighbor max tile SRV (RG16F, 1/16 resolution). 0xFFFFFFFF = disabled.
 };
 
 /// Linear clamp sampler for bilinear scene color and depth sampling.
@@ -193,9 +191,32 @@ float ComputeDepthWeight(float centerDepth, float sampleDepth)
 [numthreads(8, 8, 1)]
 void main(uint3 dtid : SV_DispatchThreadID)
 {
+    // ── Unpack dimensions ────────────────────────────────────────────────
+    const uint outputWidth  = outputDimsPacked & 0xFFFFu;
+    const uint outputHeight = outputDimsPacked >> 16u;
+
     // ── Bounds check ─────────────────────────────────────────────────────
     if (dtid.x >= outputWidth || dtid.y >= outputHeight)
         return;
+
+    // ── Neighbor max tile early-out ──────────────────────────────────────
+    // @source UE5 MotionBlurApply.usf:269-285 — skip tiles with zero motion
+    if (neighborMaxSrvIndex != 0xFFFFFFFFu) {
+#ifdef UZ_BINDLESS
+        Texture2D<float2> neighborMaxTex = ResourceDescriptorHeap[neighborMaxSrvIndex];
+        uint2 tileCoord = dtid.xy / 16u;
+        float2 tileMaxVel = neighborMaxTex.Load(int3(tileCoord, 0));
+        float tileMaxSpeed = length(tileMaxVel) * motionBlurScale;
+        // @source UE5 MotionBlurCommon.ush:34 — CONFIG_MINIMAL_PIXEL_VELOCITY = 0.5
+        if (tileMaxSpeed < 0.5f) {
+            RWTexture2D<float4> outputTex = ResourceDescriptorHeap[outputUavIndex];
+            Texture2D<float4> sceneColorEarly = ResourceDescriptorHeap[sceneSrvIndex];
+            float2 earlyUV = (float2(dtid.xy) + 0.5f) / float2(outputWidth, outputHeight);
+            outputTex[dtid.xy] = sceneColorEarly.SampleLevel(linearSampler, earlyUV, 0);
+            return;
+        }
+#endif
+    }
 
     // ── Resource access (bindless via descriptor heap) ──────────────────
 #ifdef UZ_BINDLESS

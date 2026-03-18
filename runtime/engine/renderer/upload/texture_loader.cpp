@@ -1,14 +1,78 @@
 /// UzEngine Texture Loader — Implementation.
 ///
-/// Decodes images via stb_image and uploads to GPU via UploadContext.
+/// Decodes images via stb_image, generates a full mip chain on the CPU via
+/// box filtering, and uploads all mip levels to the GPU via UploadContext.
+///
+/// # Mipmap Generation
+/// CPU-side box filter (2x2 average) produces each mip level from the previous.
+/// This runs during asset load, not per-frame, so the CPU cost is acceptable.
+/// The full mip chain enables proper trilinear and anisotropic filtering at
+/// distance, eliminating texture shimmer and aliasing.
 
 #include "texture_loader.h"
 #include "upload_context.h"
 #include "log.h"
+#include "profiler.h"
 
 #include <stb_image.h>
 
+#include <algorithm>
+#include <cstring>
+#include <memory>
+#include <vector>
+
 namespace uz {
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Box filter mip generation — CPU side
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Generates the next mip level from the source using a 2x2 box filter.
+///
+/// Each output texel is the average of a 2x2 block of source texels.
+/// Handles non-power-of-two source dimensions correctly by clamping
+/// sample coordinates to source bounds.
+///
+/// # Arguments
+/// * `src` — Source RGBA8 pixel data (srcW * srcH * 4 bytes).
+/// * `srcW` — Source width in texels.
+/// * `srcH` — Source height in texels.
+/// * `dst` — Destination buffer (dstW * dstH * 4 bytes, must be pre-allocated).
+/// * `dstW` — Destination width (max(srcW >> 1, 1)).
+/// * `dstH` — Destination height (max(srcH >> 1, 1)).
+static void BoxFilterDownsample(const uint8_t* src, uint32_t srcW, uint32_t srcH,
+                                uint8_t* dst, uint32_t dstW, uint32_t dstH) noexcept
+{
+    constexpr uint32_t kBpp = 4; // RGBA8
+
+    for (uint32_t y = 0; y < dstH; ++y) {
+        for (uint32_t x = 0; x < dstW; ++x) {
+            // Source coordinates for the 2x2 block
+            const uint32_t sx0 = x * 2;
+            const uint32_t sy0 = y * 2;
+            const uint32_t sx1 = std::min(sx0 + 1, srcW - 1);
+            const uint32_t sy1 = std::min(sy0 + 1, srcH - 1);
+
+            // Fetch the four source texels
+            const uint8_t* p00 = src + (sy0 * srcW + sx0) * kBpp;
+            const uint8_t* p10 = src + (sy0 * srcW + sx1) * kBpp;
+            const uint8_t* p01 = src + (sy1 * srcW + sx0) * kBpp;
+            const uint8_t* p11 = src + (sy1 * srcW + sx1) * kBpp;
+
+            // Average each channel with rounding (add 2 before dividing by 4
+            // to get round-half-up behavior, reducing cumulative rounding bias
+            // across the mip chain)
+            uint8_t* out = dst + (y * dstW + x) * kBpp;
+            for (uint32_t c = 0; c < kBpp; ++c) {
+                const uint32_t sum = static_cast<uint32_t>(p00[c])
+                                   + static_cast<uint32_t>(p10[c])
+                                   + static_cast<uint32_t>(p01[c])
+                                   + static_cast<uint32_t>(p11[c]);
+                out[c] = static_cast<uint8_t>((sum + 2) / 4);
+            }
+        }
+    }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // TextureLoader::Load
@@ -51,8 +115,8 @@ TextureLoadResult TextureLoader::Load(
     stbi_image_free(pixels);
 
     if (result.handle.IsValid()) {
-        UZ_LOG(Renderer, Info, "Loaded texture: path='{}', {}x{}, SRV={}",
-               path, result.width, result.height, result.srvIndex);
+        UZ_LOG(Renderer, Info, "Loaded texture: path='{}', {}x{}, {} mips, SRV={}",
+               path, result.width, result.height, result.mipLevels, result.srvIndex);
     }
 
     return result;
@@ -112,15 +176,133 @@ TextureLoadResult TextureLoader::LoadFromMemory(
     stbi_image_free(pixels);
 
     if (result.handle.IsValid()) {
-        UZ_LOG(Renderer, Info, "Loaded texture: path='{}', {}x{}, SRV={}",
-               name, result.width, result.height, result.srvIndex);
+        UZ_LOG(Renderer, Info, "Loaded texture: path='{}', {}x{}, {} mips, SRV={}",
+               name, result.width, result.height, result.mipLevels, result.srvIndex);
     }
 
     return result;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// TextureLoader::UploadPixels — shared GPU upload logic
+// UploadPixelsCore — shared mip-gen + upload logic used by both variants
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Creates a GPU texture, generates the full mip chain via CPU box filter,
+/// uploads all mip levels through the provided UploadContext, and records
+/// a CopyDst -> ShaderResource barrier. Does NOT flush the command list.
+///
+/// Returns a TextureLoadResult with the SRV index populated on success.
+static TextureLoadResult UploadPixelsCore(
+    IRHIDevice* device,
+    IRHICommandList* cmdList,
+    unsigned char* pixels,
+    uint32_t width,
+    uint32_t height,
+    const char* debugName,
+    UploadContext& upload)
+{
+    UZ_PROFILE_FUNCTION();
+
+    constexpr uint32_t kBpp = 4; // RGBA8 = 4 bytes per texel
+
+    const uint16_t mipCount = ComputeTextureMipCount(width, height);
+
+    // Create GPU texture with full mip chain
+    RHITextureDesc desc{};
+    desc.width = width;
+    desc.height = height;
+    desc.mipLevels = mipCount;
+    desc.format = RHIFormat::RGBA8Unorm;
+    desc.usage = RHITextureUsage::ShaderResource | RHITextureUsage::CopyDst;
+    desc.debugName = debugName;
+
+    RHITextureHandle texture = device->CreateTexture(desc);
+    if (!texture.IsValid()) {
+        UZ_LOG(Renderer, Error, "TextureLoader: failed to create GPU texture: name='{}', {}x{}, {} mips",
+               debugName ? debugName : "unknown", width, height, mipCount);
+        return {};
+    }
+
+    // Upload mip 0 (original pixels)
+    const uint64_t mip0DataSize = static_cast<uint64_t>(width) * height * kBpp;
+
+    if (!upload.UploadTexture(cmdList, texture, pixels, mip0DataSize, 0)) {
+        UZ_LOG(Renderer, Error, "TextureLoader: mip 0 upload failed: name='{}', {}x{}",
+               debugName ? debugName : "unknown", width, height);
+        device->DestroyTexture(texture);
+        return {};
+    }
+
+    // Generate and upload remaining mip levels via CPU box filter.
+    // We keep two buffers: the "previous mip" source and the "current mip"
+    // destination. After generating each mip, the current buffer becomes the
+    // source for the next iteration.
+    if (mipCount > 1) {
+        UZ_PROFILE_SCOPE("TextureLoader::MipGenCPU");
+
+        // Allocate working buffer large enough for the largest mip we need to
+        // generate (mip 1 = half resolution). Subsequent mips reuse this buffer
+        // since each is smaller than the last.
+        const uint32_t mip1W = std::max(width >> 1, 1u);
+        const uint32_t mip1H = std::max(height >> 1, 1u);
+        const uint64_t maxMipBytes = static_cast<uint64_t>(mip1W) * mip1H * kBpp;
+
+        // Two ping-pong buffers: src is the previous mip's data, dst is where
+        // we generate the current mip. After each iteration, swap them.
+        auto bufA = std::make_unique<uint8_t[]>(maxMipBytes);
+        auto bufB = std::make_unique<uint8_t[]>(maxMipBytes);
+
+        // First iteration reads from the original pixel data (mip 0)
+        const uint8_t* srcData = pixels;
+        uint32_t srcW = width;
+        uint32_t srcH = height;
+        uint8_t* dstData = bufA.get();
+
+        for (uint16_t mip = 1; mip < mipCount; ++mip) {
+            const uint32_t dstW = std::max(width >> mip, 1u);
+            const uint32_t dstH = std::max(height >> mip, 1u);
+
+            BoxFilterDownsample(srcData, srcW, srcH, dstData, dstW, dstH);
+
+            const uint64_t mipDataSize = static_cast<uint64_t>(dstW) * dstH * kBpp;
+            if (!upload.UploadTexture(cmdList, texture, dstData, mipDataSize, mip)) {
+                UZ_LOG(Renderer, Warning,
+                       "TextureLoader: mip {} upload failed: name='{}', {}x{} — "
+                       "texture will have incomplete mip chain",
+                       mip, debugName ? debugName : "unknown", dstW, dstH);
+                break;
+            }
+
+            // Prepare for next iteration: current output becomes next input
+            srcData = dstData;
+            srcW = dstW;
+            srcH = dstH;
+
+            // Swap destination buffer so we don't overwrite the source we just set
+            dstData = (dstData == bufA.get()) ? bufB.get() : bufA.get();
+        }
+    }
+
+    // Transition from CopyDst to ShaderResource
+    RHIBarrierDesc barrier{};
+    barrier.texture = texture;
+    barrier.stateBefore = RHIResourceState::CopyDst;
+    barrier.stateAfter = RHIResourceState::ShaderResource;
+    cmdList->ResourceBarrier(&barrier, 1);
+
+    // Build result
+    TextureLoadResult result{};
+    result.handle = texture;
+    result.srvIndex = device->GetTextureSRVIndex(texture);
+    result.width = width;
+    result.height = height;
+    result.mipLevels = mipCount;
+
+    return result;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TextureLoader::UploadPixels — synchronous upload (flushes + waits)
 // ─────────────────────────────────────────────────────────────────────────────
 
 TextureLoadResult TextureLoader::UploadPixels(
@@ -131,38 +313,13 @@ TextureLoadResult TextureLoader::UploadPixels(
     uint32_t height,
     const char* debugName)
 {
-    // Create GPU texture with ShaderResource + CopyDst usage
-    RHITextureDesc desc{};
-    desc.width = width;
-    desc.height = height;
-    desc.format = RHIFormat::RGBA8Unorm;
-    desc.usage = RHITextureUsage::ShaderResource | RHITextureUsage::CopyDst;
-    desc.debugName = debugName;
-
-    RHITextureHandle texture = device->CreateTexture(desc);
-    if (!texture.IsValid()) {
-        UZ_LOG(Renderer, Error, "TextureLoader: failed to create GPU texture: name='{}', {}x{}",
-               debugName ? debugName : "unknown", width, height);
-        return {};
-    }
-
-    // Upload pixel data via staging buffer
-    const uint64_t dataSize = static_cast<uint64_t>(width) * height * 4;
-
     UploadContext upload(device);
-    if (!upload.UploadTexture(cmdList, texture, pixels, dataSize)) {
-        UZ_LOG(Renderer, Error, "TextureLoader: staging upload failed: name='{}', {}x{}",
-               debugName ? debugName : "unknown", width, height);
-        device->DestroyTexture(texture);
-        return {};
-    }
+    TextureLoadResult result = UploadPixelsCore(device, cmdList, pixels,
+                                                 width, height, debugName, upload);
 
-    // Transition from CopyDst to ShaderResource
-    RHIBarrierDesc barrier{};
-    barrier.texture = texture;
-    barrier.stateBefore = RHIResourceState::CopyDst;
-    barrier.stateAfter = RHIResourceState::ShaderResource;
-    cmdList->ResourceBarrier(&barrier, 1);
+    if (!result.handle.IsValid()) {
+        return result;
+    }
 
     // Flush the command list and wait for GPU completion
     cmdList->End();
@@ -175,14 +332,29 @@ TextureLoadResult TextureLoader::UploadPixels(
     // Reset command list to recording state for caller
     cmdList->Begin();
 
-    // Build result
-    TextureLoadResult result{};
-    result.handle = texture;
-    result.srvIndex = device->GetTextureSRVIndex(texture);
-    result.width = width;
-    result.height = height;
-
     return result;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TextureLoader::UploadPixelsDeferred — batched upload (no flush, no wait)
+// ─────────────────────────────────────────────────────────────────────────────
+
+TextureLoadResult TextureLoader::UploadPixelsDeferred(
+    IRHIDevice* device,
+    IRHICommandList* cmdList,
+    unsigned char* pixels,
+    uint32_t width,
+    uint32_t height,
+    const char* debugName,
+    UploadContext* outUpload)
+{
+    if (!device || !cmdList || !pixels || !outUpload) {
+        UZ_LOG(Renderer, Error, "TextureLoader::UploadPixelsDeferred: null argument");
+        return {};
+    }
+
+    return UploadPixelsCore(device, cmdList, pixels, width, height,
+                            debugName, *outUpload);
 }
 
 } // namespace uz

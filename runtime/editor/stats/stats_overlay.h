@@ -116,6 +116,12 @@ public:
     /// Sets GPU memory usage in bytes.
     void SetGPUMemoryUsage(uint64_t bytes) { m_gpuMemoryBytes = bytes; }
 
+    /// Sets camera position and rotation for display.
+    void SetCameraInfo(float x, float y, float z, float yawDeg, float pitchDeg) {
+        m_camX = x; m_camY = y; m_camZ = z;
+        m_camYaw = yawDeg; m_camPitch = pitchDeg;
+    }
+
     /// Renders the stats overlay (text panel + graphs).
     ///
     /// # Arguments
@@ -176,6 +182,10 @@ private:
     uint32_t m_triangleCount = 0;
     uint64_t m_gpuMemoryBytes = 0;
     uint32_t m_frameNumber = 0;
+
+    // ── Camera info ─────────────────────────────────────────────────────
+    float m_camX = 0.f, m_camY = 0.f, m_camZ = 0.f;
+    float m_camYaw = 0.f, m_camPitch = 0.f;
 
     // ── Smoothed FPS (EMA) ───────────────────────────────────────────────
     float m_smoothedFPS = 0.f;

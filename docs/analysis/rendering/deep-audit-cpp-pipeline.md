@@ -304,3 +304,15 @@ Pipeline order is correct and matches UE5's deferred pipeline:
   (gated by m_hdrHasContent). This produces a natural 1-frame latency for exposure
   adaptation, which is correct behavior (UE5 also has 1-frame latency for eye
   adaptation). No GPU stall — the previous frame's data is already available.
+
+---
+
+## Fix Status (2026-03-18)
+
+| # | Issue | Status |
+|---|-------|--------|
+| 1 | TAA does not read velocity buffer | **FIXED** — TaaCB at b2 includes velocitySrvIndex, shader reads velocity buffer |
+| 2 | Motion blur gather ignores neighbor max | **FIXED** — neighborMaxSrvIndex added to root constants, shader early-outs on zero-motion tiles |
+| 3 | HDR texture state ambiguity | NOT FIXED (needs AutoExposure barrier verification) |
+| 4 | Motion blur runs on first frame garbage | **FIXED** — m_prevViewProjValid added to motionBlurActive condition |
+| 5 | Static loggedOnce in lambdas | NOT FIXED (low priority, single renderer instance) |

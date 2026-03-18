@@ -34,10 +34,16 @@ cbuffer ExposureParams : register(b0)
 /// @source UE5 Scene.cpp:485 — AutoExposureSpeedDown = 1.0f
 /// @source UE5 Scene.cpp:459 — AutoExposureLowPercent = 10.0f
 /// @source UE5 Scene.cpp:460 — AutoExposureHighPercent = 90.0f
-static const float g_SpeedUp     = 3.0;   // Adaptation speed when brightening (seconds)
-static const float g_SpeedDown   = 1.0;   // Adaptation speed when darkening (seconds)
+static const float g_SpeedUp     = 3.0;   // f-stops/sec when LogDiff > 0 (target brighter than current)
+static const float g_SpeedDown   = 1.0;   // f-stops/sec when LogDiff <= 0 (target darker than current)
 static const float g_LowPercent  = 10.0;  // UE5: AutoExposureLowPercent = 10
 static const float g_HighPercent = 90.0;  // UE5: AutoExposureHighPercent = 90
+
+/// @source UE5 PostProcessEyeAdaptation.cpp:46-48 — CVarEyeAdaptationExponentialTransitionDistance default = 1.5
+/// Distance in f-stops at which we switch from exponential to linear adaptation.
+/// Below this threshold: exponential (smooth settle near target).
+/// Above this threshold: linear (constant speed for large jumps).
+static const float g_StartDistance = 1.5;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Resources
@@ -134,19 +140,64 @@ void main()
     float exposureBiasLinear = pow(2.0, g_ExposureBias);  // EV offset → linear multiplier
     float targetExposure     = exposureBiasLinear * 0.18 / avgLum;
 
-    // ── Temporal adaptation ─────────────────────────────────────────────
+    // ── Temporal adaptation (UE5 dual exponential/linear model in log2 space) ──
+    /// @source UE5 PostProcessHistogramCommon.ush:192-219 — ComputeEyeAdaptation
+    /// @source UE5 PostProcessEyeAdaptation.cpp:491-505 — ExponentialUpM/DownM computation
+    /// @constants g_StartDistance=1.5 (PostProcessEyeAdaptation.cpp:48)
+    /// @constants g_SpeedUp=3.0 (Scene.cpp:484), g_SpeedDown=1.0 (Scene.cpp:485)
+    /// @constants kFrameTimeEps=1/60 (PostProcessEyeAdaptation.cpp:503)
+    /// @deviations NONE
     float prevExposure = g_ExposureUAV[0];
 
-    // First-frame init: snap to target
+    // First-frame init: snap to target (no adaptation on first frame)
     if (prevExposure < 1e-10)
         prevExposure = targetExposure;
 
-    // Asymmetric adaptation: slower to brighten, faster to darken
-    float adaptSpeed = (targetExposure < prevExposure) ? g_SpeedUp : g_SpeedDown;
-    float alpha = 1.0 - exp(-g_DeltaTime / max(adaptSpeed, 0.001));
-    float currentExposure = lerp(prevExposure, targetExposure, alpha);
+    // Work entirely in log2 space for perceptually uniform adaptation
+    // @source UE5 PostProcessHistogramCommon.ush:194-197
+    float logTarget = log2(targetExposure);
+    float logPrev   = log2(prevExposure);
+    float logDiff   = logTarget - logPrev;
 
-    // Clamp to prevent extreme values
+    // Select speed based on direction of change
+    // LogDiff > 0: target is brighter than current → use SpeedUp
+    // LogDiff <= 0: target is darker than current → use SpeedDown
+    // @source UE5 PostProcessHistogramCommon.ush:199
+    float adaptSpeed = (logDiff > 0) ? g_SpeedUp : g_SpeedDown;
+
+    // ── Compute M multiplier for exponential curve derivative continuity ──
+    // M ensures the exponential curve's slope matches the linear curve's slope
+    // at the transition distance, preventing visual jumps between modes.
+    // @source UE5 PostProcessEyeAdaptation.cpp:492-505
+    float startTime = g_StartDistance / max(adaptSpeed, 0.001);
+    float kFrameTimeEps = 1.0 / 60.0;  // @source UE5 PostProcessEyeAdaptation.cpp:503
+    float exponentialM = kFrameTimeEps / ((1.0 - exp2(-kFrameTimeEps * adaptSpeed)) * startTime);
+
+    // ── Exponential adaptation (for small changes, smooth settle near target) ──
+    // @source UE5 PostProcessHistogramCommon.ush:176-181 — ExponentialAdaption
+    float expFactor = 1.0 - exp2(-g_DeltaTime * adaptSpeed);
+    float logAdaptedExp = logPrev + (logTarget - logPrev) * expFactor * exponentialM;
+
+    // ── Linear adaptation (for large changes, constant perceptual speed) ──
+    // @source UE5 PostProcessHistogramCommon.ush:183-190 — LinearAdaption
+    float linOffset = g_DeltaTime * adaptSpeed;
+    float logAdaptedLin = (logPrev < logTarget)
+        ? min(logTarget, logPrev + linOffset)
+        : max(logTarget, logPrev - linOffset);
+
+    // ── Select model based on f-stop distance ──
+    // Large jumps (> 1.5 f-stops): linear for constant speed
+    // Small adjustments (<= 1.5 f-stops): exponential for smooth convergence
+    // @source UE5 PostProcessHistogramCommon.ush:208
+    float absLogDiff = abs(logDiff);
+    float logAdapted = (absLogDiff > g_StartDistance) ? logAdaptedLin : logAdaptedExp;
+
+    // Convert back from log2 to linear exposure
+    // @source UE5 PostProcessHistogramCommon.ush:213
+    float currentExposure = exp2(logAdapted);
+
+    // Clamp to prevent extreme values (UE5 note: target is pre-clamped, but
+    // we clamp the result too as a safety net since we don't have postFX volumes)
     float minExposure = exposureBiasLinear * 0.18 / max(g_MaxBrightness, 0.001);
     float maxExposure = exposureBiasLinear * 0.18 / max(g_MinBrightness, 0.00001);
     currentExposure = clamp(currentExposure, minExposure, maxExposure);

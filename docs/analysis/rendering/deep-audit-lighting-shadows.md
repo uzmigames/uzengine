@@ -430,3 +430,22 @@ angles where Turquin more accurately recovers lost energy.
 10. **Issue 12** (IBL multiscatter method) — minor quality difference
 11. **Issue 10** (Parameter naming) — cosmetic
 12. **Issue 9** (AOMultiBounce order) — cosmetic
+
+---
+
+## Fix Status (2026-03-18)
+
+| # | Issue | Status |
+|---|-------|--------|
+| 1 | Vis_SmithJointApprox receives roughness² instead of roughness⁴ | **FIXED** — `alpha * alpha` passed to Vis in pbr_common.hlsli and lighting.hlsli |
+| 2 | F_Schlick missing F90 micro-occlusion | **FIXED** — `F90 = saturate(50*F0.g)` applied in EvaluateBRDF and EvaluateBRDFScaled |
+| 3 | SpecularScale/DiffuseScale never applied | **FIXED** — new EvaluateBRDFScaled() applies per-light scales |
+| 4 | NdotV uses max(0.001) | **FIXED** — changed to `saturate(abs(NoV) + 1e-5)` |
+| 5 | Always Burley diffuse vs UE5 Lambert default | NOT FIXED (intentional quality choice — Burley is superior) |
+| 6 | IBL EnvBRDF missing F90 micro-occlusion | **FIXED** — `saturate(50*F0.g)` applied to bias term in SSR/IBL compositing |
+| 7 | IBL diffuse energy preservation method | NOT FIXED (deferred — requires ComputeEnergyPreservation refactor) |
+| 8 | Contact shadow depth tolerance matrix | NOT FIXED (minor, deferred) |
+| 9 | AOMultiBounce param order | NOT FIXED (cosmetic) |
+| 10 | Naming conventions | NOT FIXED (cosmetic) |
+| 11 | NdotL 0.001 floor | NOT FIXED (minor) |
+| 12 | IBL multiscatter method | NOT FIXED (minor quality difference) |

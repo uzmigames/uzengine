@@ -65,9 +65,10 @@ struct BloomUpsampleConstants {
     uint32_t outputWidth;
     uint32_t outputHeight;
     float    bloomRadius;
-    float    stageTint;     ///< Per-stage tint weight (UE5 BloomNTint scalar, Scene.cpp:426-437).
-    float    _pad1;
-    float    _pad2;
+    /// @source UE5 Scene.cpp:426-437 — per-stage RGB tint (Bloom1Tint through Bloom6Tint)
+    float    stageTintR;
+    float    stageTintG;
+    float    stageTintB;
 };
 static_assert(sizeof(BloomUpsampleConstants) == 32,
     "BloomUpsampleConstants must be 8 DWORDs");
@@ -531,7 +532,11 @@ void BloomPass::Execute(IRHICommandList* cmdList,
         //
         // lowerIdx goes 5,4,3,2,1 — which directly indexes stageTints[].
         // @source UE5 Scene.cpp:426-437 — default tint values per stage
-        rc.stageTint = settings.stageTints[lowerIdx];
+        // For now, use scalar tint applied equally to all channels (existing BloomSettings stores scalar).
+        // Artists can extend BloomSettings with float3 tintColors[6] for colored bloom.
+        rc.stageTintR = settings.stageTints[lowerIdx];
+        rc.stageTintG = settings.stageTints[lowerIdx];
+        rc.stageTintB = settings.stageTints[lowerIdx];
 
         cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 8);
 

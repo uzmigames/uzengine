@@ -47,19 +47,24 @@ void FPSCameraController::Update(Camera& camera, const InputSystem& input, float
     Vec3 pos = camera.GetPosition();
     camera.LookAt(pos + forward, Vec3::Up());
 
-    // ── WASD movement (in Z-up world space) ──────────────────────────────────
+    // ── WASD movement — Fly camera (UE5 editor style) ─────────────────────
+    // W/S move along the camera's look direction (including pitch).
+    // A/D strafe perpendicular to look direction on the horizontal plane.
+    // Space/Ctrl move along world Z axis.
     Vec3 moveDir = {0.f, 0.f, 0.f};
 
-    // Horizontal forward/right (projected onto XY ground plane)
-    Vec3 flatForward = Vec3(std::cos(m_yaw), std::sin(m_yaw), 0.f);
-    Vec3 flatRight   = Vec3(-std::sin(m_yaw), std::cos(m_yaw), 0.f);
+    // Right vector: perpendicular to forward in the XY plane
+    Vec3 right = Vec3(-std::sin(m_yaw), std::cos(m_yaw), 0.f);
 
-    if (input.IsKeyDown(Key::W)) moveDir = moveDir + flatForward;
-    if (input.IsKeyDown(Key::S)) moveDir = moveDir - flatForward;
-    if (input.IsKeyDown(Key::D)) moveDir = moveDir + flatRight;
-    if (input.IsKeyDown(Key::A)) moveDir = moveDir - flatRight;
-    if (input.IsKeyDown(Key::Space))     moveDir = moveDir + Vec3::Up();   // +Z
-    if (input.IsKeyDown(Key::LeftCtrl))  moveDir = moveDir - Vec3::Up();   // -Z
+    // W/S: fly in the direction the camera is looking (follows pitch)
+    if (input.IsKeyDown(Key::W)) moveDir = moveDir + forward;
+    if (input.IsKeyDown(Key::S)) moveDir = moveDir - forward;
+    // A/D: strafe horizontally (no pitch influence)
+    if (input.IsKeyDown(Key::D)) moveDir = moveDir + right;
+    if (input.IsKeyDown(Key::A)) moveDir = moveDir - right;
+    // Space/Ctrl: vertical (world Z)
+    if (input.IsKeyDown(Key::Space))     moveDir = moveDir + Vec3::Up();
+    if (input.IsKeyDown(Key::LeftCtrl))  moveDir = moveDir - Vec3::Up();
 
     if (moveDir.length() > 0.001f) {
         moveDir = moveDir.normalize();

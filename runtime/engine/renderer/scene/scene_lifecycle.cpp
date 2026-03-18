@@ -5,6 +5,7 @@
 #include "renderer_core.h"
 #include "subsystems.h"
 
+#include "async_texture_decoder.h"
 #include "camera.h"
 #include "fps_camera_controller.h"
 #include "render_graph_resources.h"
@@ -311,6 +312,9 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
 
     // ── FXAA LDR Intermediate (RGBA8Unorm, same resolution as backbuffer) ─
     CreateFxaaResources(width, height);
+
+    // ── Async Texture Decoder (4 worker threads for parallel stbi_load) ──
+    m_asyncDecoder = std::make_unique<AsyncTextureDecoder>(4);
 
     UZ_LOG(Renderer, Info, "SceneRenderer initialized ({}x{}, {})",
            width, height, RenderPathToString(m_renderPath));
@@ -997,6 +1001,11 @@ void SceneRenderer::Shutdown() {
             m_instanceBuffers[i] = RHIBufferHandle{};
         }
     }
+
+    // ── Async Texture Decoder cleanup ─────────────────────────────
+    if (m_asyncDecoder) m_asyncDecoder->Shutdown();
+    m_asyncDecoder.reset();
+    m_asyncPendingSlots.clear();
 
     if (m_statsOverlay)  m_statsOverlay->Shutdown();
     if (m_editorGrid)    m_editorGrid->Shutdown();

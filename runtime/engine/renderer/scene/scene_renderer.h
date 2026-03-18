@@ -76,6 +76,7 @@ class UploadContext;
 class Camera;
 class FPSCameraController;
 class World;
+class AsyncTextureDecoder;
 
 class SdfAtlasManager;
 namespace rg { class RgResourcePool; }
@@ -558,10 +559,15 @@ private:
     /// Destroys all motion blur textures. Called from Shutdown() and Resize().
     void DestroyMotionBlurResources();
 
+    // ── CAS (Contrast Adaptive Sharpening) ─────────────────────────────
+
+    bool  m_casEnabled = true;              ///< CAS adaptive sharpening (default ON).
+    float m_casSharpenStrength = 0.15f;     ///< TEST 1: CAS only.
+
     // ── FXAA (LDR intermediate for post-tonemap AA) ────────────────────
 
-    RHITextureHandle m_fxaaLdrIntermediate;             ///< RGBA8Unorm LDR intermediate for FXAA input.
-    uint32_t m_fxaaLdrIntermediateSrv = UINT32_MAX;     ///< SRV for FXAA to read tonemap output.
+    RHITextureHandle m_fxaaLdrIntermediate;             ///< RGBA8Unorm LDR intermediate for CAS/FXAA input.
+    uint32_t m_fxaaLdrIntermediateSrv = UINT32_MAX;     ///< SRV for CAS/FXAA to read tonemap output.
 
     /// Creates the FXAA LDR intermediate texture at the given resolution.
     /// Called from Init() and Resize().
@@ -693,6 +699,19 @@ private:
     /// Paths enqueued via `QueueTextureLoad`; flushed at the start of `RenderFrame`.
     std::vector<std::string> m_pendingTexturePaths;
 
+    // ── Async Texture Decode (background CPU stbi_load) ───────────────────
+
+    /// Worker thread pool for background CPU texture decoding. Started in
+    /// Init() with 2 threads, shut down in Shutdown(). Textures are submitted
+    /// via Submit() when they need loading, and completed decodes are polled
+    /// and batch-uploaded to the GPU at the start of each RenderFrame().
+    std::unique_ptr<AsyncTextureDecoder> m_asyncDecoder;
+
+    /// Paths submitted to the async decoder that are still in-flight.
+    /// Maps path -> slot index in m_textures, so we know where to store
+    /// the TextureLoadResult when the decode completes.
+    std::unordered_map<std::string, uint32_t> m_asyncPendingSlots;
+
     // ── Constants ──────────────────────────────────────────────────────────
 
     bool m_hasSkyAtmosphere = false;  ///< True if a SkyAtmosphereComponent was found this frame.
@@ -822,8 +841,9 @@ private:
         bool motionBlurActive = false;
         bool dofActive = false;
         bool fxaaActive = false;
+        bool casActive = false;
 
-        // ── FXAA render graph resource ──────────────────────────────────
+        // ── FXAA/CAS render graph resource ──────────────────────────────
         rg::RgResourceId fxaaLdrRes{};
     };
 

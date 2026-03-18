@@ -178,10 +178,14 @@ float3 AccumulateDirectLighting(
         float  VdotH = saturate(dot(V, H));
 
         // Cook-Torrance specular: D * Vis * F
-        // Vis_SmithJointApprox already includes 1/(4*NoV*NoL)
+        // D_GGX uses a2 = alpha = roughness^2
+        // Vis_SmithJointApprox uses a2 = Pow4(roughness) = alpha^2
+        // @source UE5 ShadingModels.ush:215 — float a2 = Pow4(Material.Roughness)
         float  D   = DistributionGGX(NdotH, alpha);
-        float  Vis = Vis_SmithJointApprox(alpha, NdotV, NdotL);
-        float3 F   = FresnelSchlick(VdotH, F0);
+        float  Vis = Vis_SmithJointApprox(alpha * alpha, NdotV, NdotL);
+        /// @source UE5 BRDF.ush:382 — F90 micro-occlusion
+        float  F90_val = saturate(50.0f * F0.g);
+        float3 F   = F0 + (F90_val - F0) * Pow5(1.0f - VdotH);
 
         // Apply multiscatter energy compensation to specular
         // energyComp.xyz scales the specular to recover multi-bounce energy

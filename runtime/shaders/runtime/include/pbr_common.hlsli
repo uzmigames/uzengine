@@ -141,7 +141,8 @@ float Vis_SmithJointApprox(float a2, float NoV, float NoL) {
     float a = sqrt(a2);
     float Vis_SmithV = NoL * (NoV * (1.0f - a) + a);
     float Vis_SmithL = NoV * (NoL * (1.0f - a) + a);
-    return 0.5f * rcp(Vis_SmithV + Vis_SmithL);
+    /// @source PoC1 deferred_lighting.ps.hlsl:93 — epsilon prevents NaN/inf at grazing angles
+    return 0.5f * rcp(Vis_SmithV + Vis_SmithL + 1e-5f);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -255,15 +256,20 @@ float3 EvaluateBRDF(float3 N, float3 V, float3 L, float3 radiance,
     float3 H = normalize(V + L);
 
     float NdotL = max(dot(N, L), 0.001f);
-    float NdotV = max(dot(N, V), 0.001f);
+    /// @source UE5 ShadingModels.ush:204 — saturate(abs(NoV) + 1e-5) handles back-facing normals
+    float NdotV = saturate(abs(dot(N, V)) + 1e-5f);
     float NdotH = saturate(dot(N, H));
     float VdotH = saturate(dot(V, H));
 
     // Cook-Torrance specular BRDF: D * Vis * F
-    // Vis_SmithJointApprox already includes the 1/(4*NoV*NoL) denominator
+    // D_GGX uses a2 = roughness^2 (alpha squared)
+    // Vis_SmithJointApprox uses a2 = Pow4(roughness) = alpha^2
+    // @source UE5 ShadingModels.ush:215 — float a2 = Pow4(Material.Roughness)
     float  D   = DistributionGGX(NdotH, alpha);
-    float  Vis = Vis_SmithJointApprox(alpha, NdotV, NdotL);
-    float3 F   = FresnelSchlick(VdotH, F0);
+    float  Vis = Vis_SmithJointApprox(alpha * alpha, NdotV, NdotL);
+    /// @source UE5 BRDF.ush:382 — F90 = saturate(50.0 * SpecularColor.g) for micro-occlusion
+    float  F90 = saturate(50.0f * F0.g);
+    float3 F   = F0 + (F90 - F0) * Pow5(1.0f - VdotH);
 
     float3 specular = D * Vis * F;
 
@@ -281,6 +287,37 @@ float3 EvaluateBRDF(float3 N, float3 V, float3 L, float3 radiance,
     float3 diffuse = kD * DiffuseBurley(albedo, roughness, NdotV, NdotL, VdotH);
 
     return (diffuse + specular) * radiance * NdotL;
+}
+
+/// Evaluates Cook-Torrance BRDF with per-light SpecularScale and DiffuseScale.
+///
+/// @source UE5 DeferredLightingCommon.ush:447-448 — Lighting.Specular *= LightData.SpecularScale
+/// @source UE5 DeferredLightingCommon.ush:448 — Lighting.Diffuse *= AreaLight.DiffuseScale
+float3 EvaluateBRDFScaled(float3 N, float3 V, float3 L, float3 radiance,
+                          float3 albedo, float metallic, float alpha, float3 F0,
+                          float specularScale, float diffuseScale) {
+    float3 H = normalize(V + L);
+
+    float NdotL = max(dot(N, L), 0.001f);
+    float NdotV = saturate(abs(dot(N, V)) + 1e-5f);
+    float NdotH = saturate(dot(N, H));
+    float VdotH = saturate(dot(V, H));
+
+    float  D   = DistributionGGX(NdotH, alpha);
+    float  Vis = Vis_SmithJointApprox(alpha * alpha, NdotV, NdotL);
+    float  F90 = saturate(50.0f * F0.g);
+    float3 F   = F0 + (F90 - F0) * Pow5(1.0f - VdotH);
+
+    float3 specular = D * Vis * F;
+
+    float roughness = sqrt(alpha);
+    float4 energyComp = ComputeEnergyCompensation(F0, roughness, NdotV);
+    specular *= energyComp.xyz;
+
+    float3 kD = (1.0f - energyComp.w) * (1.0f - metallic);
+    float3 diffuse = kD * DiffuseBurley(albedo, roughness, NdotV, NdotL, VdotH);
+
+    return (diffuse * diffuseScale + specular * specularScale) * radiance * NdotL;
 }
 
 #endif // PBR_COMMON_HLSLI

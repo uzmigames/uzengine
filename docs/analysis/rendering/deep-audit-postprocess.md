@@ -420,3 +420,24 @@ IMPACT: LOW — Conservative approach may cause unnecessary blur computation in 
 12. GTAO temporal rotation computed in shader — minor perf, identical result.
 13. GTAO denoise asymmetric kernel — minor directional bias.
 14. NeighborMax 3x3 vs 7x7 — conservative, documented deviation.
+
+---
+
+## Fix Status (2026-03-18)
+
+| # | Issue | Status |
+|---|-------|--------|
+| 1 | Bloom threshold Karis average | **DOCUMENTED** as intentional deviation (Jimenez 2014 pattern) |
+| 2 | Bloom downsample 13-tap vs UE5 4-tap | No change needed (intentional improvement) |
+| 3 | Bloom upsample scalar tint | **FIXED** — changed to float3 RGB tint (R, G, B) |
+| 4 | Bloom composite legacy pass | No change needed (unused) |
+| 5 | Vignette after tonemapping | **FIXED** — moved to HDR space before exposure/tonemap |
+| 6 | Vignette missing aspect ratio | **FIXED** — VignetteSpace correction via ddx/ddy aspect ratio |
+| 7 | Film grain 1e10 vs POSITIVE_INFINITY | No change needed (functionally identical) |
+| 8 | Exposure temporal adaptation in linear | **FIXED** — log2 space with dual exponential/linear model |
+| 9 | Exposure speed semantics inverted | **FIXED** — SpeedUp now correctly selects when logDiff > 0 |
+| 10 | Color grading LUT explicit params | No change needed (architectural, not a bug) |
+| 11 | GTAO NUM_TAPS=4 | **FIXED** — increased to 8 (UE5 medium quality) |
+| 12 | GTAO temporal rotation in shader | No change needed (identical result) |
+| 13 | GTAO denoise asymmetric kernel | **FIXED** — centered offsets (-1,-1),(1,-1),(-1,1),(1,1) |
+| 14 | NeighborMax 3x3 vs 7x7 | No change needed (conservative, documented) |

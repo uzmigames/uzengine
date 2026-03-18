@@ -721,3 +721,32 @@ The following aspects match UE5 exactly:
 - **SlopeCompareToleranceScale=4.0** — matches SSR path (SSRTRayCast.ush:643)
 - **StepOffset bias=-0.5** — matches (SSRTReflections.usf:352)
 - **NumSteps=16 for SSR_QUALITY=2** — matches (SSRTReflections.usf:203)
+
+---
+
+## Fix Status (2026-03-18)
+
+| # | Issue | Status |
+|---|-------|--------|
+| 1 | ComputeMotionVector stub | **FIXED** — reads velocity buffer via ResourceDescriptorHeap, converts pixel→UV space |
+| 2 | Missing bicubic history | **FIXED** — 5-tap Catmull-Rom implemented |
+| 3 | Missing history clip | NOT FIXED (matches UE5 default !AA_CLIP path) |
+| 4 | Spatial weights in-shader | NOT FIXED (functionally equivalent) |
+| 5 | Missing responsive AA stencil | NOT FIXED (deferred to hair/translucency implementation) |
+| 6 | Missing dynamic anti-ghosting | NOT FIXED (deferred) |
+| 7 | Missing FilteredTemporalWeight | NOT FIXED (only affects TAAU path) |
+| 8 | Missing stochastic quantization | NOT FIXED (low priority for RGBA16F) |
+| 9 | NaN guard unconditional | NOT FIXED (harmless) |
+| 10 | Velocity magnitude wrong | **FIXED** — velocity buffer now provides real motion vectors |
+| 11 | Missing ray behind-camera clamp | NOT FIXED (deferred) |
+| 12 | Missing WorldTMaxClamp | NOT FIXED (minor) |
+| 13 | RayDepthScreen world Z vs view Z | NOT FIXED (deferred) |
+| 14 | Missing bUncertain tracking | NOT FIXED (low priority) |
+| 15 | Missing HZB UV factor | NOT FIXED (correct for full-viewport) |
+| 16 | SSR samples current frame | NOT FIXED (requires previous frame color buffer) |
+| 17 | Vignette single position | NOT FIXED (minor) |
+| 18 | Missing exposure correction | NOT FIXED (low priority) |
+| 19 | Fresnel F0 = lerp(0.04, 0.8, metallic) | **FIXED** — removed all Fresnel from SSR resolve |
+| 20 | roughnessFade and intensity applied TWICE | **FIXED** — removed from resolve (kept in trace only) |
+| 21 | G_SmithV dead code | NOT FIXED (dead code, harmless) |
+| 22 | Blend weight formula wrong | **FIXED** — alpha = saturate(confidence), no Fresnel |

@@ -87,8 +87,8 @@ cbuffer GTAORootCB : register(b0) {
 // the compute root signature only supports 8 DWORDs of root constants.
 /// @source UE5 PostProcessAmbientOcclusion.cpp:465 — NumAngles clamped [1,16]
 #define GTAO_NUM_ANGLES     2       // UE5 medium quality
-/// @source UE5 PostProcessAmbientOcclusion.usf:555 — GTAO_NUM_TAPS
-#define GTAO_NUM_TAPS       4       // Steps per direction
+/// @source UE5 PostProcessAmbientOcclusion.usf:542 — SHADER_QUALITY 2 (medium) uses GTAO_NUMTAPS=8
+#define GTAO_NUM_TAPS       8       // Steps per direction (UE5 medium quality)
 /// @source UE5 PostProcessAmbientOcclusion.usf:557
 #define GTAO_MAX_SCREEN_RADIUS 256.0f
 /// @source UE5 PostProcessAmbientOcclusion.cpp:416

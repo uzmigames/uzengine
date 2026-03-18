@@ -208,33 +208,21 @@ void main(
         return;
     }
 
-    // ── Compute Fresnel weight ──
-    // Reconstruct view direction for Fresnel evaluation
-    float3 worldPos = ReconstructWorldPos(uv, deviceZ);
-    float3 V = normalize(cameraPos.xyz - worldPos);
-    float  NoV = saturate(dot(worldNormal, V));
-
-    // F0: dielectric = 0.04, metals use albedo (approximated here with metallic lerp)
-    // @source UE5 BRDF.ush:209 — DielectricSpecularToF0(0.04)
-    // For the resolve pass, we use a scalar F0 approximation since we don't have
-    // albedo in this pass. The full Fresnel*albedo weighting happens when
-    // compositing SSR with IBL in the lighting pass.
-    float3 F0 = lerp(0.04f, 0.8f, metallic);
-    float3 F  = FresnelSchlick(NoV, F0);
-
     // ── Compose final SSR color ──
-    // Weight the hit color by Fresnel reflectance and confidence
-    float3 reflection = hitColor * F;
+    // SSR output is UNWEIGHTED scene color. No Fresnel is applied here.
+    // Fresnel weighting is deferred to the deferred lighting pass where EnvBRDF
+    // is applied during SSR/IBL compositing (matching UE5 pattern).
+    // @source UE5 SSRTReflections.usf:397-402 — no Fresnel in SSR resolve
+    //   OutColor = SampleScreenColor(...) * Vignette;
+    //   OutColor *= RoughnessFade;
+    //   OutColor *= SSRParams.r;
+    // NOTE: roughnessFade and intensity are already applied in ssr_trace_cs.hlsl:568-569.
+    // Do NOT apply them again here.
+    float3 reflection = hitColor;
 
-    // Apply roughness fade and intensity
-    // @source UE5 SSRTReflections.usf:401-402
-    reflection *= roughnessFade;
-    reflection *= ssrIntensity;
-
-    // Output: rgb = Fresnel-weighted reflection color, a = blend weight
-    // The blend weight is confidence * roughnessFade * intensity * average(F)
+    // Output: rgb = unweighted reflection color (already includes roughnessFade * intensity from trace)
+    //         a = blend weight = confidence from trace (vignette * roughnessFade * intensity)
     // The lighting pass uses this alpha to lerp between IBL and SSR:
-    //   finalReflection = lerp(iblReflection, ssrReflection / alpha, alpha)
-    float blendWeight = confidence * roughnessFade * ssrIntensity * dot(F, 1.0f / 3.0f);
-    resolvedSSR[dispatchThreadId.xy] = float4(reflection, saturate(blendWeight));
+    //   specularIBL = lerp(iblReflection, ssrData.rgb, ssrData.a)
+    resolvedSSR[dispatchThreadId.xy] = float4(reflection, saturate(confidence));
 }

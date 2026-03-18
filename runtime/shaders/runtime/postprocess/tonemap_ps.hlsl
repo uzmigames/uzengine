@@ -266,10 +266,28 @@ float4 main(FSInput input) : SV_Target {
     // which is safe — no bloom contribution when not bound.
 #endif
 
-    // ── 4. Apply auto-exposure ───────────────────────────────────────────
+    // ── 4. Vignette (BEFORE exposure, in HDR space) ────────────────────
+    // @source UE5 PostProcessTonemap.usf:515 — VignetteMask applied to HDR linear color
+    //   FinalLinearColor = SceneColor * SceneColorTint * (OneOverPreExposure * GlobalExposure * VignetteMask)
+    // @source UE5 PostProcessCommon.ush:142-150 — ComputeVignetteMask
+    // @source UE5 PostProcessCommon.ush:155-159 — VignetteSpace aspect ratio correction
+    if (vignetteIntensity > 0.0f) {
+        // @source UE5 PostProcessCommon.ush:142-150 — ComputeVignetteMask (cos⁴ natural vignetting)
+        // @source UE5 PostProcessCommon.ush:155-159 — VignetteSpace aspect ratio correction
+        // Simple cos⁴ vignette without aspect ratio derivation (avoids ddx/ddy ring artifacts).
+        // UE5 passes aspect ratio from CPU via View.VignetteSpace; we use the standard formula
+        // that only depends on the screen position, matching UE5's ComputeVignetteMask.
+        float2 screenPos = uv * 2.0f - 1.0f;
+        float2 vignettePos = screenPos * vignetteIntensity;
+        float tan2Angle = dot(vignettePos, vignettePos);
+        float cos4Angle = 1.0f / ((tan2Angle + 1.0f) * (tan2Angle + 1.0f));
+        color *= cos4Angle;
+    }
+
+    // ── 5. Apply auto-exposure ───────────────────────────────────────────
     color *= exposure;
 
-    // ── 5. FilmToneMap (ACES) ────────────────────────────────────────────
+    // ── 6. FilmToneMap (ACES) ────────────────────────────────────────────
 #ifdef UZ_FAST_TONEMAP
     // Narkowicz ACES fit — fast single-polynomial approximation (no color space transforms)
     color = ACESFilm(color);
@@ -279,19 +297,11 @@ float4 main(FSInput input) : SV_Target {
     color = FilmToneMap(color, filmSlope, filmToe, filmShoulder, filmBlackClip, filmWhiteClip);
 #endif
 
-    // ── 6. Film grain (after tonemap, on LDR linear) ─────────────────────
+    // ── 7. Film grain (after tonemap, on LDR linear) ─────────────────────
     // @source UE5 PostProcessTonemap.usf:560-596 — quantization dithering
     // UE5 applies procedural grain after tonemapping, before final output.
     if (filmGrainIntensity > 0.0f) {
         color = ApplyFilmGrain(color, uv, timeParams.x, filmGrainIntensity);
-    }
-
-    // ── 7. Vignette (after tonemap) ──────────────────────────────────────
-    // @source UE5 PostProcessTonemap.usf:506-515 — VignetteMask
-    // @source UE5 PostProcessCommon.ush:142-150 — ComputeVignetteMask
-    if (vignetteIntensity > 0.0f) {
-        float vignetteMask = ComputeVignetteMask(uv, vignetteIntensity);
-        color *= vignetteMask;
     }
 
     // ── 8. Linear -> sRGB ────────────────────────────────────────────────
