@@ -1,7 +1,8 @@
 # Build artifacts (Zig + CMake)
 .zig-cache/
 build/
-demos/**/*.png
+# Baked material textures (generated at runtime by MaterialBaker/MaterialBakerGpu)
+demos/**/mi_procgrid_*.png
 
 # vcpkg build artifacts (large, reproducible via setup.ps1)
 thirdparty/vcpkg/
