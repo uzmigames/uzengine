@@ -317,8 +317,16 @@ void AddAtmospherePasses(
                 pb.Write(msLutRes, RHIResourceState::UnorderedAccess);
                 pb.Read(lutRes, RHIResourceState::ShaderResource);
 
-                pb.SetExecutionCallback([&, msRC, ozoneAllocMS](IRHICommandList* cmd, const rg::RgPassResources&) {
-                    cmd->SetPipeline(ctx.pipelines->GetMultiScatterLut());
+                // Capture ctx members by value — ctx (AtmosphereFrameContext) lives on
+                // RegisterOverlayPasses stack and is destroyed before Execute().
+                auto* pipelines = ctx.pipelines;
+                const bool bindless = ctx.bindless;
+                const uint32_t transmittanceSrv = ctx.transmittanceLutSrv;
+                const uint32_t msLutUav = ctx.multiScatterLutUav;
+
+                pb.SetExecutionCallback([pipelines, bindless, transmittanceSrv, msLutUav,
+                                         msRC, ozoneAllocMS](IRHICommandList* cmd, const rg::RgPassResources&) {
+                    cmd->SetPipeline(pipelines->GetMultiScatterLut());
 
                     // Root constants at slot 0 (b0)
                     cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&msRC), 8);
@@ -329,12 +337,12 @@ void AddAtmospherePasses(
                     }
 
                     // Transmittance LUT SRV at slot 5 (t0 descriptor table)
-                    if (!ctx.bindless) {
-                        cmd->SetDescriptorTable(5, ctx.transmittanceLutSrv);
+                    if (!bindless) {
+                        cmd->SetDescriptorTable(5, transmittanceSrv);
                     }
 
                     // Output UAV at slot 4 (u0 descriptor table)
-                    cmd->SetDescriptorTable(4, ctx.multiScatterLutUav);
+                    cmd->SetDescriptorTable(4, msLutUav);
 
                     // Dispatch 32x32 / [8,8] = [4,4,1]
                     cmd->Dispatch(4, 4, 1);

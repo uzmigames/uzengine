@@ -1,0 +1,575 @@
+/// UzEngine Scene Renderer — Post-process passes: bloom, TAA, color grading LUT,
+/// motion blur (tile max + neighbor max + gather), DOF, tonemap, FXAA.
+
+#include "scene_renderer.h"
+
+// Umbrella headers
+#include "renderer_core.h"
+#include "passes.h"
+
+#include "camera.h"
+#include "render_graph_builder.h"
+#include "render_graph_resources.h"
+#include "profiler.h"
+#include "rhi.h"
+#include "log.h"
+
+#include <algorithm>
+#include <cmath>
+#include <cstring>
+
+namespace uz {
+
+void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx) {
+    UZ_PROFILE_FUNCTION();
+
+    // All locals (pipelines, bindless, vpWidth, etc.) are accessed via ctx.*
+    // to avoid dangling references in deferred execution callbacks.
+
+    // ── Bloom pass (compute: threshold + downsample + upsample) ─────────
+    // Runs after all HDR rendering is complete. Reads HDR scene color,
+    // extracts bright pixels, and builds a multi-scale bloom mip chain.
+    // The bloom result (mip[0]) is composited by the tonemap shader.
+    //
+    // Only enabled when:
+    // 1. BloomPass is initialized (DX12 compute available)
+    // 2. HDR scene color has content from a previous frame (first frame skipped)
+    // 3. Bloom is enabled in settings
+    // 4. Buffer debug grid is not active
+    if (ctx.bloomEnabled) {
+        rgBuilder.AddPass("Bloom", [&](rg::RgPassBuilder& pb) {
+            pb.Read(ctx.hdrRes, RHIResourceState::ShaderResource);
+
+            pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources& /*res*/) {
+                UZ_PROFILE_SCOPE("Bloom::Execute");
+
+                // HDR is in ShaderResource state (render graph transition).
+                // Dispatch the full bloom compute chain.
+                m_bloomPass->Execute(cmd, m_hdrSceneColorSrv,
+                                     static_cast<uint32_t>(ctx.vpWidth), static_cast<uint32_t>(ctx.vpHeight),
+                                     ctx.perFrame.exposure);
+            });
+        });
+    }
+
+    // ── TAA Resolve pass (compute: temporal accumulation) ────────────────
+    // @source UE5 TemporalAA.cpp:395-396 — FTemporalAACS compute shader
+    // @source UE5 TemporalAA.cpp:41 — r.TemporalAACurrentFrameWeight default 0.04
+    //
+    // Reads the current HDR scene color and the previous frame's TAA history,
+    // performs YCoCg neighborhood clamping, HDR-weighted blend, and writes
+    // the new history. The tonemap pass then reads from the TAA output.
+    //
+    // The current write target is m_taaHistory[m_taaHistoryIndex].
+    // The previous read target is m_taaHistory[1 - m_taaHistoryIndex].
+    if (ctx.taaActive && m_shadowDebugMode == 0) {
+        const uint32_t writeIdx = ctx.taaWriteIdx;
+        const uint32_t readIdx  = ctx.taaReadIdx;
+        const float jitterX = ctx.jitterX;
+        const float jitterY = ctx.jitterY;
+
+        rgBuilder.AddPass("TAA_Resolve", [&, writeIdx, readIdx, jitterX, jitterY](rg::RgPassBuilder& pb) {
+            pb.Read(ctx.hdrRes, RHIResourceState::ShaderResource);
+
+            pb.SetExecutionCallback([this, &ctx, writeIdx, readIdx, jitterX, jitterY](IRHICommandList* cmd, const rg::RgPassResources& /*res*/) {
+                UZ_PROFILE_SCOPE("TAA::Resolve");
+
+                auto taaPSO = ctx.pipelines->GetTaaResolve();
+                if (!taaPSO.IsValid()) return;
+
+                // Transition TAA history textures:
+                // - Write target: SRV → UAV (will be written by compute)
+                // - Read target stays in SRV (sampled by compute)
+                {
+                    RHIBarrierDesc barriers[2]{};
+
+                    // Write target → UAV
+                    barriers[0].texture     = m_taaHistory[writeIdx];
+                    barriers[0].buffer      = RHIBufferHandle::Invalid();
+                    barriers[0].stateBefore = RHIResourceState::ShaderResource;
+                    barriers[0].stateAfter  = RHIResourceState::UnorderedAccess;
+
+                    // Read target → SRV (may already be SRV, but be explicit)
+                    barriers[1].texture     = m_taaHistory[readIdx];
+                    barriers[1].buffer      = RHIBufferHandle::Invalid();
+                    barriers[1].stateBefore = RHIResourceState::UnorderedAccess;
+                    barriers[1].stateAfter  = RHIResourceState::ShaderResource;
+
+                    cmd->ResourceBarrier(barriers, 2);
+                }
+
+                cmd->SetPipeline(taaPSO);
+
+                // Root constants: 10 DWORDs (matches TAARootConstants cbuffer)
+                // [0-1] = jitterOffset (float2)
+                // [2-3] = texelSize (float2)
+                // [4]   = currentFrameWeight (float)
+                // [5]   = sceneSrvIndex (uint)
+                // [6]   = depthSrvIndex (uint)
+                // [7]   = historySrvIndex (uint)
+                // [8]   = outputUavIndex (uint)
+                // [9]   = padding
+                struct TaaConstants {
+                    float jitterX, jitterY;
+                    float texelSizeX, texelSizeY;
+                    float blendWeight;
+                    uint32_t sceneSrv;
+                    uint32_t depthSrv;
+                    uint32_t historySrv;
+                } constants;
+                constants.jitterX    = jitterX;
+                constants.jitterY    = jitterY;
+                constants.texelSizeX = 1.0f / ctx.vpWidth;
+                constants.texelSizeY = 1.0f / ctx.vpHeight;
+                /// @source UE5 TemporalAA.cpp:41 — CurrentFrameWeight = 0.04
+                constants.blendWeight = m_prevViewProjValid ? 0.04f : 1.0f;
+                constants.sceneSrv   = m_hdrSceneColorSrv;
+                constants.depthSrv   = m_gbuffer.depthSRV;
+                constants.historySrv = m_taaHistorySrv[readIdx];
+
+                cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&constants), 8);
+
+                // Bind TAA output UAV at descriptor table slot 4 (u0)
+                cmd->SetDescriptorTable(4, m_taaHistoryUav[writeIdx]);
+
+                // Dispatch thread groups (8x8 per group)
+                const uint32_t groupsX = (static_cast<uint32_t>(ctx.vpWidth)  + 7) / 8;
+                const uint32_t groupsY = (static_cast<uint32_t>(ctx.vpHeight) + 7) / 8;
+                cmd->Dispatch(groupsX, groupsY, 1);
+
+                // Transition write target back to SRV for tonemap to read.
+                {
+                    RHIBarrierDesc barrier{};
+                    barrier.texture     = m_taaHistory[writeIdx];
+                    barrier.buffer      = RHIBufferHandle::Invalid();
+                    barrier.stateBefore = RHIResourceState::UnorderedAccess;
+                    barrier.stateAfter  = RHIResourceState::ShaderResource;
+                    cmd->ResourceBarrier(&barrier, 1);
+                }
+            });
+        });
+
+        // Tonemap reads from the TAA output instead of raw HDR scene color.
+        ctx.taaSrvForTonemap = m_taaHistorySrv[writeIdx];
+
+        // Flip ping-pong index for next frame.
+        m_taaHistoryIndex = 1 - m_taaHistoryIndex;
+    }
+
+    // Update the SRV routing chain after TAA.
+    ctx.motionBlurSrvForTonemap = ctx.taaSrvForTonemap;
+
+    // Store unjittered viewProj for next frame's reprojection.
+    // This runs every frame (not just when TAA is active) because the velocity
+    // buffer pass and motion blur also need the previous frame's viewProj.
+    m_prevViewProj = ctx.unjitteredViewProj;
+    m_prevViewProjValid = true;
+
+    // ── Color Grading LUT generation (compute) ─────────────────────────
+    // @source UE5 PostProcessCombineLUTs.cpp:322 — GroupSize = 8
+    // Generated once when dirty, sampled by tonemap shader via LUT SRV.
+    if (m_colorGradingLutDirty && m_colorGradingLut.IsValid()
+        && ctx.bindless && m_shadowDebugMode == 0) {
+        rgBuilder.AddPass("ColorGradingLUT", [&](rg::RgPassBuilder& pb) {
+            pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources&) {
+                UZ_PROFILE_SCOPE("ColorGradingLUT::Generate");
+                auto lutPSO = ctx.pipelines->GetColorGradingLut();
+                if (!lutPSO.IsValid()) return;
+
+                // Transition to UAV
+                RHIBarrierDesc b{};
+                b.texture = m_colorGradingLut;
+                b.buffer = RHIBufferHandle::Invalid();
+                b.stateBefore = RHIResourceState::ShaderResource;
+                b.stateAfter = RHIResourceState::UnorderedAccess;
+                cmd->ResourceBarrier(&b, 1);
+
+                cmd->SetPipeline(lutPSO);
+
+                // Build LUT generation params (UE5 defaults).
+                // This struct matches the LutGenParams cbuffer in color_grading_lut_cs.hlsl.
+                // Too large for root constants, so uploaded via CB ring as root CBV.
+                struct LutGenParams {
+                    float whiteTemp, whiteTint;
+                    float colorSaturation[4], colorContrast[4], colorGamma[4], colorGain[4], colorOffset[4];
+                    float colorSaturationShadows[4], colorContrastShadows[4], colorGammaShadows[4], colorGainShadows[4], colorOffsetShadows[4];
+                    float colorSaturationMidtones[4], colorContrastMidtones[4], colorGammaMidtones[4], colorGainMidtones[4], colorOffsetMidtones[4];
+                    float colorSaturationHighlights[4], colorContrastHighlights[4], colorGammaHighlights[4], colorGainHighlights[4], colorOffsetHighlights[4];
+                    float ccShadowsMax, ccHighlightsMin, ccHighlightsMax;
+                    float filmSlope, filmToe, filmShoulder, filmBlackClip, filmWhiteClip;
+                    float blueCorrection, expandGamut, toneCurveAmount;
+                    float mappingPolynomial[3];
+                    float colorScale[3];
+                    float overlayColor[4];
+                    float inverseGammaY, lutSize;
+                    float outputExtentInverse[2];
+                };
+                LutGenParams p{};
+                p.whiteTemp = 6500.0f; p.whiteTint = 0.0f;
+                const float o[4] = {1,1,1,1}, z[4] = {0,0,0,0};
+                std::memcpy(p.colorSaturation,o,16); std::memcpy(p.colorContrast,o,16);
+                std::memcpy(p.colorGamma,o,16); std::memcpy(p.colorGain,o,16); std::memcpy(p.colorOffset,z,16);
+                std::memcpy(p.colorSaturationShadows,o,16); std::memcpy(p.colorContrastShadows,o,16);
+                std::memcpy(p.colorGammaShadows,o,16); std::memcpy(p.colorGainShadows,o,16); std::memcpy(p.colorOffsetShadows,z,16);
+                std::memcpy(p.colorSaturationMidtones,o,16); std::memcpy(p.colorContrastMidtones,o,16);
+                std::memcpy(p.colorGammaMidtones,o,16); std::memcpy(p.colorGainMidtones,o,16); std::memcpy(p.colorOffsetMidtones,z,16);
+                std::memcpy(p.colorSaturationHighlights,o,16); std::memcpy(p.colorContrastHighlights,o,16);
+                std::memcpy(p.colorGammaHighlights,o,16); std::memcpy(p.colorGainHighlights,o,16); std::memcpy(p.colorOffsetHighlights,z,16);
+                p.ccShadowsMax = 0.09f; p.ccHighlightsMin = 0.5f; p.ccHighlightsMax = 1.0f;
+                p.filmSlope = ctx.perFrame.filmSlope; p.filmToe = ctx.perFrame.filmToe;
+                p.filmShoulder = ctx.perFrame.filmShoulder; p.filmBlackClip = ctx.perFrame.filmBlackClip;
+                p.filmWhiteClip = ctx.perFrame.filmWhiteClip;
+                p.blueCorrection = 0.6f; p.expandGamut = 1.0f; p.toneCurveAmount = 1.0f;
+                p.mappingPolynomial[0] = 0; p.mappingPolynomial[1] = 1; p.mappingPolynomial[2] = 0;
+                p.colorScale[0] = 1; p.colorScale[1] = 1; p.colorScale[2] = 1;
+                p.overlayColor[0] = 0; p.overlayColor[1] = 0; p.overlayColor[2] = 0; p.overlayColor[3] = 0;
+                p.inverseGammaY = 1.0f;
+                p.lutSize = static_cast<float>(kColorGradingLutSize);
+                p.outputExtentInverse[0] = 1.0f / p.lutSize;
+                p.outputExtentInverse[1] = 1.0f / p.lutSize;
+
+                auto lutCb = m_cbRing->Allocate(sizeof(p));
+                std::memcpy(lutCb.cpuPtr, &p, sizeof(p));
+                cmd->SetRootCBV(0, lutCb.bufferHandle, lutCb.offsetBytes, lutCb.cpuPtr, lutCb.sizeBytes);
+                cmd->SetDescriptorTable(4, m_colorGradingLutUav);
+                cmd->Dispatch(kColorGradingLutSize / 8, kColorGradingLutSize / 8, kColorGradingLutSize / 8);
+
+                // Transition back to SRV
+                b.stateBefore = RHIResourceState::UnorderedAccess;
+                b.stateAfter = RHIResourceState::ShaderResource;
+                cmd->ResourceBarrier(&b, 1);
+            });
+        });
+        m_colorGradingLutDirty = false;
+    }
+
+    // ── Motion Blur passes (tile max → neighbor max → per-pixel gather) ─
+    // @source UE5 PostProcessMotionBlur.cpp:607-621 — velocity scale + tile setup
+    // @source UE5 MotionBlurApply.usf:269-714 — MainCS (gather)
+    // @source UE5 Scene.cpp:598-600 — MotionBlurAmount=0.5, MotionBlurMax=5.0
+    if (ctx.motionBlurActive) {
+        // ── Compute velocity scale on CPU ────────────────────────────────
+        // @source UE5 SceneVisibility.cpp:5428-5431 — MotionBlurTimeScale
+        // @source UE5 PostProcessMotionBlur.cpp:610-613 — VelocityScale
+        //   MotionBlurTargetDeltaTime = 1.0 / MotionBlurTargetFPS  (line 5428)
+        //   MotionBlurTimeScale = MotionBlurTargetDeltaTime / DeltaRealTime  (line 5431)
+        //   VelocityScale = MotionBlurTimeScale * MotionBlurAmount * 0.5  (line 613)
+        const float clampedDt = std::max(ctx.dt, 0.001f);
+        const float targetDt = 1.0f / static_cast<float>(std::max(m_motionBlurTargetFPS, 1));
+        const float motionBlurTimeScale = targetDt / clampedDt;
+        const float motionBlurScale = motionBlurTimeScale * m_motionBlurAmount * 0.5f;
+        const float maxBlurPx = m_motionBlurMax * 0.01f * static_cast<float>(static_cast<uint32_t>(ctx.vpWidth));
+
+        // @source UE5 MotionBlurCommon.ush:24 — VELOCITY_FLATTEN_TILE_SIZE = 16
+        const uint32_t tileCountX = (static_cast<uint32_t>(ctx.vpWidth)  + 15) / 16;
+        const uint32_t tileCountY = (static_cast<uint32_t>(ctx.vpHeight) + 15) / 16;
+
+        // ── Pass 1: Tile Max (16x16 tiles, find max velocity per tile) ───
+        // @source UE5 MotionBlurVelocityFlatten.usf:79-165 — MainCS
+        rgBuilder.AddPass("MotionBlur_TileMax", [&](rg::RgPassBuilder& pb) {
+            pb.Read(ctx.hdrRes, RHIResourceState::ShaderResource);
+            pb.SetExecutionCallback([this, &ctx, tileCountX, tileCountY](IRHICommandList* cmd, const rg::RgPassResources&) {
+                UZ_PROFILE_SCOPE("MotionBlur::TileMax");
+                auto pso = ctx.pipelines->GetMotionBlurTileMax();
+                if (!pso.IsValid()) return;
+
+                RHIBarrierDesc b{}; b.buffer = RHIBufferHandle::Invalid();
+                b.texture = m_motionBlurTileMax;
+                b.stateBefore = RHIResourceState::ShaderResource;
+                b.stateAfter = RHIResourceState::UnorderedAccess;
+                cmd->ResourceBarrier(&b, 1);
+
+                cmd->SetPipeline(pso);
+                struct { uint32_t velSrv, outUav, tcX, tcY; } rc;
+                rc.velSrv = m_gbuffer.velocitySRV;
+                rc.outUav = m_motionBlurTileMaxUav;
+                rc.tcX    = tileCountX;
+                rc.tcY    = tileCountY;
+                cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 4);
+                // Dispatch one thread group per tile (each group is 16x16 threads).
+                cmd->Dispatch(tileCountX, tileCountY, 1);
+
+                b.stateBefore = RHIResourceState::UnorderedAccess;
+                b.stateAfter = RHIResourceState::ShaderResource;
+                cmd->ResourceBarrier(&b, 1);
+            });
+        });
+
+        // ── Pass 2: Neighbor Max (3x3 tile neighborhood max) ─────────────
+        // @source UE5 MotionBlurTileGather.usf:24-91 — MainCS
+        rgBuilder.AddPass("MotionBlur_NeighborMax", [&](rg::RgPassBuilder& pb) {
+            pb.Read(ctx.hdrRes, RHIResourceState::ShaderResource);
+            pb.SetExecutionCallback([this, &ctx, tileCountX, tileCountY](IRHICommandList* cmd, const rg::RgPassResources&) {
+                UZ_PROFILE_SCOPE("MotionBlur::NeighborMax");
+                auto pso = ctx.pipelines->GetMotionBlurNeighborMax();
+                if (!pso.IsValid()) return;
+
+                RHIBarrierDesc b{}; b.buffer = RHIBufferHandle::Invalid();
+                b.texture = m_motionBlurNeighborMax;
+                b.stateBefore = RHIResourceState::ShaderResource;
+                b.stateAfter = RHIResourceState::UnorderedAccess;
+                cmd->ResourceBarrier(&b, 1);
+
+                cmd->SetPipeline(pso);
+                struct { uint32_t tileSrv, outUav, tcX, tcY; } rc;
+                rc.tileSrv = m_motionBlurTileMaxSrv;
+                rc.outUav  = m_motionBlurNeighborMaxUav;
+                rc.tcX     = tileCountX;
+                rc.tcY     = tileCountY;
+                cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 4);
+                cmd->Dispatch((tileCountX + 7) / 8, (tileCountY + 7) / 8, 1);
+
+                b.stateBefore = RHIResourceState::UnorderedAccess;
+                b.stateAfter = RHIResourceState::ShaderResource;
+                cmd->ResourceBarrier(&b, 1);
+            });
+        });
+
+        // ── Pass 3: Per-Pixel Gather Blur ────────────────────────────────
+        // @source UE5 MotionBlurApply.usf:269-714 — MainCS
+        rgBuilder.AddPass("MotionBlur", [&, motionBlurScale, maxBlurPx](rg::RgPassBuilder& pb) {
+            pb.Read(ctx.hdrRes, RHIResourceState::ShaderResource);
+            pb.SetExecutionCallback([this, &ctx, motionBlurScale, maxBlurPx](IRHICommandList* cmd, const rg::RgPassResources&) {
+                UZ_PROFILE_SCOPE("MotionBlur::Execute");
+                auto mbPSO = ctx.pipelines->GetMotionBlur();
+                if (!mbPSO.IsValid()) return;
+
+                RHIBarrierDesc b{}; b.texture = m_motionBlurOutput; b.buffer = RHIBufferHandle::Invalid();
+                b.stateBefore = RHIResourceState::ShaderResource; b.stateAfter = RHIResourceState::UnorderedAccess;
+                cmd->ResourceBarrier(&b, 1);
+
+                cmd->SetPipeline(mbPSO);
+                struct MBConstants { uint32_t scene, vel, depth, w, h; float scale, maxPx; uint32_t uav; } c;
+                c.scene = ctx.taaSrvForTonemap; c.vel = m_gbuffer.velocitySRV; c.depth = m_gbuffer.depthSRV;
+                c.w = static_cast<uint32_t>(ctx.vpWidth); c.h = static_cast<uint32_t>(ctx.vpHeight); c.scale = motionBlurScale; c.maxPx = maxBlurPx;
+                c.uav = m_motionBlurOutputUav;
+                cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&c), 8);
+                cmd->Dispatch((static_cast<uint32_t>(ctx.vpWidth)+7)/8, (static_cast<uint32_t>(ctx.vpHeight)+7)/8, 1);
+
+                b.stateBefore = RHIResourceState::UnorderedAccess; b.stateAfter = RHIResourceState::ShaderResource;
+                cmd->ResourceBarrier(&b, 1);
+            });
+        });
+        ctx.motionBlurSrvForTonemap = m_motionBlurOutputSrv;
+    }
+
+    // ── DOF passes (disabled by default, UE5: DepthOfFieldFocalDistance=0) ─
+    ctx.postDofSrvForTonemap = ctx.motionBlurSrvForTonemap;
+    if (ctx.dofActive) {
+        rgBuilder.AddPass("DOF_Setup", [&](rg::RgPassBuilder& pb) {
+            pb.Read(ctx.hdrRes, RHIResourceState::ShaderResource);
+            pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources&) {
+                UZ_PROFILE_SCOPE("DOF::Setup");
+                auto pso = ctx.pipelines->GetDofSetup(); if (!pso.IsValid()) return;
+                RHIBarrierDesc b{}; b.texture = m_dofCocTexture; b.buffer = RHIBufferHandle::Invalid();
+                b.stateBefore = RHIResourceState::ShaderResource; b.stateAfter = RHIResourceState::UnorderedAccess;
+                cmd->ResourceBarrier(&b, 1);
+                cmd->SetPipeline(pso);
+                // @source UE5 DiaphragmDOFUtils.cpp:102-199 — FPhysicalCocModel::Compile
+                // @source UE5 Scene.cpp:563 — SensorWidth = 24.576mm (APS-C)
+                const float sensorW = 24.576f;
+                const float fovRad = m_camera->GetFovY();
+                const float fMM = sensorW / (2.0f * std::tan(fovRad * 0.5f));
+                const float dMM = m_dofFocusDistance * 10.0f;
+                const float cocInf = (fMM*fMM) / (m_dofAperture * (dMM - fMM)) * static_cast<float>(static_cast<uint32_t>(ctx.vpWidth)) / sensorW * 0.5f;
+
+                // Pre-compute transition reciprocals for the focal region model.
+                // The focal region creates an in-focus dead zone centered on FocusDistance.
+                // NearTransition/FarTransition control the ramp width.
+                // @source UE5 Scene.cpp:579 — DepthOfFieldFocalRegion default 0.0
+                // @source UE5 Scene.cpp:580 — DepthOfFieldNearTransitionRegion default 300.0 cm
+                // @source UE5 Scene.cpp:581 — DepthOfFieldFarTransitionRegion default 500.0 cm
+                //
+                // When FocalRegion > 0, the focus distance for near/far transitions
+                // is shifted by half the focal region. The transition reciprocal encodes
+                // both the focal region offset and the transition width:
+                //   effectiveNearDistance = focusDistance - focalRegion/2
+                //   effectiveFarDistance  = focusDistance + focalRegion/2
+                // But since the shader computes |depth - focusDistance| * transitionRcp,
+                // we adjust the reciprocal to account for the focal region:
+                //   nearTransitionRcp = 1.0 / max(nearTransition + focalRegion/2, 0.001)
+                //   farTransitionRcp  = 1.0 / max(farTransition + focalRegion/2, 0.001)
+                // This way, depths within focalRegion/2 of focusDistance produce CoC ~ 0.
+                const float halfFocalRegion = m_dofFocalRegion * 0.5f;
+                const float nearTransRcp = 1.0f / std::max(m_dofNearTransition + halfFocalRegion, 0.001f);
+                const float farTransRcp  = 1.0f / std::max(m_dofFarTransition + halfFocalRegion, 0.001f);
+
+                struct C { uint32_t dSrv,oUav,w,h; float fd,cinf,nearRcp,farRcp; } c;
+                c.dSrv=m_gbuffer.depthSRV; c.oUav=m_dofCocUav; c.w=static_cast<uint32_t>(ctx.vpWidth); c.h=static_cast<uint32_t>(ctx.vpHeight);
+                c.fd=m_dofFocusDistance; c.cinf=cocInf;
+                c.nearRcp=nearTransRcp; c.farRcp=farTransRcp;
+                cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&c), 8);
+                cmd->Dispatch((static_cast<uint32_t>(ctx.vpWidth)+7)/8, (static_cast<uint32_t>(ctx.vpHeight)+7)/8, 1);
+                b.stateBefore = RHIResourceState::UnorderedAccess; b.stateAfter = RHIResourceState::ShaderResource;
+                cmd->ResourceBarrier(&b, 1);
+            });
+        });
+        rgBuilder.AddPass("DOF_Blur", [&](rg::RgPassBuilder& pb) {
+            pb.Read(ctx.hdrRes, RHIResourceState::ShaderResource);
+            pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources&) {
+                UZ_PROFILE_SCOPE("DOF::Blur");
+                auto pso = ctx.pipelines->GetDofBlur(); if (!pso.IsValid()) return;
+                RHIBarrierDesc b{}; b.texture = m_dofOutputTexture; b.buffer = RHIBufferHandle::Invalid();
+                b.stateBefore = RHIResourceState::ShaderResource; b.stateAfter = RHIResourceState::UnorderedAccess;
+                cmd->ResourceBarrier(&b, 1);
+                cmd->SetPipeline(pso);
+                const float maxCoc = 0.025f * static_cast<float>(static_cast<uint32_t>(ctx.vpWidth));
+                struct C { uint32_t sSrv,cSrv,oUav,w,h; float bScale,maxR; uint32_t pad; } c;
+                c.sSrv=ctx.motionBlurSrvForTonemap; c.cSrv=m_dofCocSrv; c.oUav=m_dofOutputUav;
+                c.w=static_cast<uint32_t>(ctx.vpWidth); c.h=static_cast<uint32_t>(ctx.vpHeight); c.bScale=1.0f; c.maxR=maxCoc; c.pad=0;
+                cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&c), 8);
+                cmd->Dispatch((static_cast<uint32_t>(ctx.vpWidth)+7)/8, (static_cast<uint32_t>(ctx.vpHeight)+7)/8, 1);
+                b.stateBefore = RHIResourceState::UnorderedAccess; b.stateAfter = RHIResourceState::ShaderResource;
+                cmd->ResourceBarrier(&b, 1);
+            });
+        });
+        ctx.postDofSrvForTonemap = m_dofOutputSrv;
+    }
+
+    // ── FXAA LDR intermediate import ─────────────────────────────────
+    // Import FXAA LDR intermediate into the render graph if FXAA is active.
+    // When FXAA is active, tonemap writes here instead of to the backbuffer.
+    if (ctx.fxaaActive) {
+        ctx.fxaaLdrRes = rgBuilder.ImportTexture("FXAA_LdrIntermediate",
+                                                  m_fxaaLdrIntermediate,
+                                                  RHIResourceState::ShaderResource);
+    }
+
+    // ── Tonemap pass (HDR → LDR) ────────────────────────────────────────
+    // Reads HDR scene color (RGBA16F) + optional bloom result, applies
+    // bloom composite + auto-exposure + ACES filmic tonemap + sRGB gamma,
+    // writes LDR to FXAA intermediate (if FXAA active) or backbuffer.
+    // This is the ONLY place tonemapping happens in the pipeline.
+    rgBuilder.AddPass("Tonemap", [&](rg::RgPassBuilder& pb) {
+        pb.Read(ctx.hdrRes, RHIResourceState::ShaderResource);
+
+        // Tonemap writes to FXAA intermediate when FXAA is active,
+        // or directly to the backbuffer when FXAA is disabled.
+        const auto tonemapOutputRes = ctx.fxaaActive ? ctx.fxaaLdrRes : ctx.bbRes;
+        pb.Write(tonemapOutputRes, RHIResourceState::RenderTarget);
+
+        pb.SetExecutionCallback([this, &ctx, tonemapOutputRes](IRHICommandList* cmd, const rg::RgPassResources& res) {
+            UZ_PROFILE_SCOPE("Tonemap::Execute");
+
+            auto tonemapTarget = res.GetTexture(tonemapOutputRes);
+
+            RHIRenderPassDesc passDesc{};
+            passDesc.colorAttachmentCount        = 1;
+            passDesc.colorAttachments[0].texture = tonemapTarget;
+            passDesc.colorAttachments[0].clear   = false;
+            cmd->BeginRenderPass(passDesc);
+
+            cmd->SetPipeline(ctx.pipelines->GetTonemap());
+
+            RHIViewport vp{};
+            vp.width    = static_cast<uint32_t>(ctx.vpWidth);
+            vp.height   = static_cast<uint32_t>(ctx.vpHeight);
+            vp.maxDepth = 1.0f;
+            cmd->SetViewport(vp);
+
+            RHIScissorRect sc{};
+            sc.right  = static_cast<int32_t>(ctx.swapChain->GetWidth());
+            sc.bottom = static_cast<int32_t>(ctx.swapChain->GetHeight());
+            cmd->SetScissor(sc);
+
+            // Root constants: HDR scene color SRV + bloom SRV + bloom intensity
+            // Bloom SRV index = 0 means no bloom (shader checks for this)
+            uint32_t bloomSrvIdx = 0;
+            float bloomIntensity = 0.0f;
+            if (ctx.bloomEnabled && m_bloomPass->GetBloomResultSrvIndex() != UINT32_MAX) {
+                bloomSrvIdx = m_bloomPass->GetBloomResultSrvIndex();
+                bloomIntensity = m_bloomPass->settings.intensity;
+            }
+            uint32_t bloomIntensityBits = 0;
+            std::memcpy(&bloomIntensityBits, &bloomIntensity, sizeof(float));
+
+            // Read from the final post-process output (DOF > motion blur > TAA > raw HDR).
+            uint32_t indices[4] = { ctx.postDofSrvForTonemap, bloomSrvIdx, bloomIntensityBits, 0 };
+            cmd->SetRootConstants(kSlotRootConstants, indices, 4);
+
+            // SM5: bind HDR scene color texture at t0 directly
+            // (TAA not available on SM5 path since it requires ctx.bindless)
+            if (!ctx.bindless) {
+                cmd->SetFragmentTexture(0, m_hdrSceneColor);
+            }
+
+            // PerFrameCB at b1 — contains exposure from auto-exposure
+            cmd->SetRootCBV(kSlotPerFrame, ctx.perFrameAlloc.bufferHandle,
+                            ctx.perFrameAlloc.offsetBytes, ctx.perFrameAlloc.cpuPtr,
+                            ctx.perFrameAlloc.sizeBytes);
+
+            cmd->Draw(3); // fullscreen triangle
+
+            cmd->EndRenderPass();
+        });
+    });
+
+    // ── FXAA pass (LDR → backbuffer) ────────────────────────────────────
+    // Reads the LDR tonemap output from the FXAA intermediate texture and
+    // writes the anti-aliased result to the backbuffer. Only runs when
+    // TAA is disabled (FXAA and TAA are mutually exclusive in UE5).
+    //
+    // @source UE5 PostProcessAA.cpp:94-96 — default quality parameters
+    // @source UE5 Fxaa3_11.ush:735-1252 — FxaaPixelShader
+    if (ctx.fxaaActive) {
+        rgBuilder.AddPass("FXAA", [&](rg::RgPassBuilder& pb) {
+            pb.Read(ctx.fxaaLdrRes, RHIResourceState::ShaderResource);
+            pb.Write(ctx.bbRes, RHIResourceState::RenderTarget);
+
+            pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources& res) {
+                UZ_PROFILE_SCOPE("FXAA::Execute");
+
+                auto bb = res.GetTexture(ctx.bbRes);
+
+                RHIRenderPassDesc passDesc{};
+                passDesc.colorAttachmentCount        = 1;
+                passDesc.colorAttachments[0].texture = bb;
+                passDesc.colorAttachments[0].clear   = false;
+                cmd->BeginRenderPass(passDesc);
+
+                cmd->SetPipeline(ctx.pipelines->GetFxaa());
+
+                // Root constants at b0: FXAA LDR intermediate SRV index
+                uint32_t fxaaIndices[4] = { m_fxaaLdrIntermediateSrv, 0, 0, 0 };
+                cmd->SetRootConstants(kSlotRootConstants, fxaaIndices, 4);
+
+                // FXAAParams CB at b2 (kSlotPerObject)
+                // @source UE5 PostProcessAA.cpp:94-96 — default parameter values
+                struct FXAAParamsCB {
+                    float invScreenWidth;   ///< 1.0 / viewport width
+                    float invScreenHeight;  ///< 1.0 / viewport height
+                    float edgeThreshold;    ///< Local contrast threshold (0.166 = UE5 default)
+                    float blurStrength;     ///< Unused by FXAA 3.11, kept for cbuffer alignment
+                };
+                FXAAParamsCB fxaaParams{};
+                fxaaParams.invScreenWidth  = 1.0f / ctx.vpWidth;
+                fxaaParams.invScreenHeight = 1.0f / ctx.vpHeight;
+                fxaaParams.edgeThreshold   = 0.166f;  // @source UE5 PostProcessAA.cpp:95
+                fxaaParams.blurStrength    = 0.0f;
+
+                CBAllocation fxaaAlloc = m_cbRing->Allocate(sizeof(FXAAParamsCB));
+                std::memcpy(fxaaAlloc.cpuPtr, &fxaaParams, sizeof(FXAAParamsCB));
+                cmd->SetRootCBV(kSlotPerObject, fxaaAlloc.bufferHandle,
+                                fxaaAlloc.offsetBytes, fxaaAlloc.cpuPtr,
+                                sizeof(FXAAParamsCB));
+
+                RHIViewport vp{};
+                vp.width    = static_cast<uint32_t>(ctx.vpWidth);
+                vp.height   = static_cast<uint32_t>(ctx.vpHeight);
+                vp.maxDepth = 1.0f;
+                cmd->SetViewport(vp);
+
+                RHIScissorRect sc{};
+                sc.right  = static_cast<int32_t>(ctx.swapChain->GetWidth());
+                sc.bottom = static_cast<int32_t>(ctx.swapChain->GetHeight());
+                cmd->SetScissor(sc);
+
+                cmd->Draw(3); // fullscreen triangle
+
+                cmd->EndRenderPass();
+            });
+        });
+    }
+}
+
+} // namespace uz

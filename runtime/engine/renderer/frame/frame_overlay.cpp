@@ -1,0 +1,159 @@
+/// UzEngine Scene Renderer — Overlay passes: sky atmosphere, fog, editor grid,
+/// stats overlay, screenshot capture, and present transition.
+
+#include "scene_renderer.h"
+
+// Umbrella headers
+#include "renderer_core.h"
+#include "passes.h"
+#include "subsystems.h"
+#include "components.h"
+
+#include "camera.h"
+#include "gpu_mesh.h"
+#include "render_graph_builder.h"
+#include "render_graph_resources.h"
+#include "sh_projection.h"
+#include "profiler.h"
+#include "rhi.h"
+#include "log.h"
+#include "editor_grid.h"
+#include "stats_overlay.h"
+
+#include <cstdio>
+#include <cstring>
+
+namespace uz {
+
+void SceneRenderer::RegisterOverlayPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx) {
+    UZ_PROFILE_FUNCTION();
+
+    auto& camera = *m_camera;
+
+    // ── Sky Atmosphere passes — delegated to atmosphere_renderer ────────
+    AtmosphereFrameContext atmoCtx{};
+    atmoCtx.device              = m_device;
+    atmoCtx.world               = ctx.world;
+    atmoCtx.cbRing              = m_cbRing.get();
+    atmoCtx.pipelines           = ctx.pipelines;
+    atmoCtx.sunDir              = &ctx.sunDir;
+    atmoCtx.sunColor            = &ctx.sunColor;
+    atmoCtx.bindless            = ctx.bindless;
+    atmoCtx.vpWidth             = ctx.vpWidth;
+    atmoCtx.vpHeight            = ctx.vpHeight;
+    atmoCtx.transmittanceLut    = m_transmittanceLut;
+    atmoCtx.transmittanceLutSrv = m_transmittanceLutSrv;
+    atmoCtx.transmittanceLutUav = m_transmittanceLutUav;
+    atmoCtx.transmittanceLutDirty  = &m_transmittanceLutDirty;
+    atmoCtx.transmittanceLutFilled = &m_transmittanceLutFilled;
+    atmoCtx.multiScatterLut     = m_multiScatterLut;
+    atmoCtx.multiScatterLutSrv  = m_multiScatterLutSrv;
+    atmoCtx.multiScatterLutUav  = m_multiScatterLutUav;
+    atmoCtx.multiScatterLutDirty  = &m_multiScatterLutDirty;
+    atmoCtx.multiScatterLutFilled = &m_multiScatterLutFilled;
+    atmoCtx.skyCubemap          = m_skyCubemap;
+    atmoCtx.skyCubemapSrv       = m_skyCubemapSrv;
+    atmoCtx.skyCubemapUav       = m_skyCubemapUav;
+    atmoCtx.skyIBLDirty         = &m_skyIBLDirty;
+    atmoCtx.iblBaker            = m_iblBaker.get();
+    atmoCtx.iblResult           = &m_iblResult;
+    atmoCtx.brdfLutSrvIndex     = m_brdfLutSrvIndex;
+    atmoCtx.skyIrradianceSH     = &m_skyIrradianceSH;
+    atmoCtx.depthSrvIndex       = m_gbuffer.depthSRV;
+    atmoCtx.depthTexture        = m_gbuffer.depth;
+
+    // Skip sky + fog when buffer visualization grid is active — the grid
+    // takes over the entire HDR target and these passes would overwrite it.
+    if (m_shadowDebugMode == 0) {
+        AddAtmospherePasses(rgBuilder, ctx.hdrRes, ctx.depthRes, ctx.perFrameAlloc, atmoCtx);
+
+        // Sky light color from SH L0 (DC term) — for fog sky atmosphere injection
+        /// @source UE5 HeightFogCommon.ush:175 — GetViewDistanceSkyLightColor()
+        float skyFogR = m_skyIrradianceSH.coeffs[0].w;
+        float skyFogG = m_skyIrradianceSH.coeffs[1].w;
+        float skyFogB = m_skyIrradianceSH.coeffs[2].w;
+
+        AddHeightFogFromECS(rgBuilder, ctx.hdrRes, ctx.depthRes, ctx.perFrameAlloc,
+                            ctx.world, camera, ctx.pipelines, *m_cbRing,
+                            m_gbuffer.depthSRV, m_gbuffer.depth,
+                            ctx.bindless, ctx.vpWidth, ctx.vpHeight,
+                            skyFogR, skyFogG, skyFogB);
+    }
+
+    // ── Overlay pass (editor grid + stats overlay) ──────────────────────
+    // Skip overlays when buffer visualization grid is active — grid owns the full screen.
+    if (m_shadowDebugMode == 0)
+    rgBuilder.AddPass("OverlayPass", [&](rg::RgPassBuilder& pb) {
+        pb.Write(ctx.bbRes, RHIResourceState::RenderTarget);
+        pb.Write(ctx.depthRes, RHIResourceState::DepthStencilWrite);
+        pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources& res) {
+            auto bb    = res.GetTexture(ctx.bbRes);
+            auto depth = res.GetTexture(ctx.depthRes);
+
+            RHIRenderPassDesc passDesc{};
+            passDesc.colorAttachmentCount        = 1;
+            passDesc.colorAttachments[0].texture = bb;
+            passDesc.colorAttachments[0].clear   = false;
+            passDesc.hasDepth                    = true;
+            passDesc.depthAttachment.texture     = depth;
+            passDesc.depthAttachment.clear       = false;
+            cmd->BeginRenderPass(passDesc);
+
+            RHIViewport vp{};
+            vp.width    = ctx.vpWidth;
+            vp.height   = ctx.vpHeight;
+            vp.maxDepth = 1.0f;
+            cmd->SetViewport(vp);
+
+            RHIScissorRect sc{};
+            sc.right  = static_cast<int32_t>(ctx.swapChain->GetWidth());
+            sc.bottom = static_cast<int32_t>(ctx.swapChain->GetHeight());
+            cmd->SetScissor(sc);
+
+            m_editorGrid->Draw(cmd, *m_cbRing, *m_camera);
+
+            if (m_statsOverlayInitialized) {
+                const uint32_t drawCount = ctx.useInstancing
+                    ? static_cast<uint32_t>(ctx.instanceBatches.size())
+                    : static_cast<uint32_t>(ctx.drawList.Count());
+                // Accumulate exact vertex/triangle counts across all draw commands.
+                // This correctly handles scenes with multiple distinct meshes.
+                uint32_t totalVertices  = 0;
+                uint32_t totalTriangles = 0;
+                for (const auto& dc : ctx.drawList.GetCommands()) {
+                    if (dc.meshId < m_meshes.size() && m_meshes[dc.meshId].IsValid()) {
+                        const GPUMesh& m = m_meshes[dc.meshId];
+                        totalVertices  += m.vertexCount;
+                        totalTriangles += m.indexCount / 3;
+                    }
+                }
+                m_statsOverlay->SetDrawCalls(drawCount);
+                m_statsOverlay->SetVertexCount(totalVertices);
+                m_statsOverlay->SetTriangleCount(totalTriangles);
+                m_statsOverlay->Render(cmd, *m_cbRing, ctx.frameIndex);
+            }
+
+            cmd->EndRenderPass();
+        });
+    });
+
+    // ── Present transition ──────────────────────────────────────────────
+    rgBuilder.AddPass("Present", [&](rg::RgPassBuilder& pb) {
+        pb.Write(ctx.bbRes, RHIResourceState::Present);
+        pb.SetExecutionCallback([](IRHICommandList*, const rg::RgPassResources&) {});
+    });
+
+    // ── IBL bake + SH projection — delegated to atmosphere_renderer ────
+    // This is deferred until after compile+execute, stored for post-frame.
+    // The actual call happens in RenderFrame after rgBuilder.Execute().
+    // We store the atmoCtx for the caller (RenderFrame) to use.
+    // Since atmoCtx is stack-local in this function, we need to copy it.
+    // Rather than storing it, we call PostFrameAtmosphereBake from RenderFrame
+    // after compile+execute. The atmoCtx is rebuilt there.
+    //
+    // NOTE: The atmosphere post-frame bake and screenshot capture are handled
+    // directly in the trimmed RenderFrame() after rgBuilder.Execute(), because
+    // they require the render graph to have already executed.
+}
+
+} // namespace uz
