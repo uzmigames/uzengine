@@ -15,7 +15,7 @@
 #include "auto_exposure.h"
 
 #include "engine/rhi/rhi.h"
-#include "engine/renderer/core/shader_manager.h"
+#include "shader_manager.h"
 #include "engine_shaders.h"
 #include "log.h"
 #include "profiler.h"

@@ -435,6 +435,22 @@ public:
     /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
     [[nodiscard]] RHIPipelineHandle GetDofBlur();
 
+    /// Returns the FXAA 3.11 pipeline (fullscreen_vs + fxaa_ps, 1 RT RGBA8Unorm).
+    ///
+    /// Fullscreen anti-aliasing pass that runs on LDR scene color after tonemapping.
+    /// Only used when TAA is disabled (FXAA and TAA are mutually exclusive).
+    ///
+    /// Rasterizer: no cull (fullscreen triangle).
+    /// Depth: disabled.
+    /// Blend: None.
+    /// Render target: RGBA8Unorm (backbuffer).
+    ///
+    /// @source UE5 PostProcessAA.cpp:94-96 — FXAA pass setup
+    ///
+    /// # Returns
+    /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
+    [[nodiscard]] RHIPipelineHandle GetFxaa();
+
     /// Pre-creates all standard pipelines eagerly instead of on first use.
     ///
     /// Call at scene load time to avoid hitches during the first frame.
@@ -483,6 +499,7 @@ private:
     [[nodiscard]] bool EnsureMotionBlurNeighborMaxShader();
     [[nodiscard]] bool EnsureDofSetupShader();
     [[nodiscard]] bool EnsureDofBlurShader();
+    [[nodiscard]] bool EnsureFxaaPixelShader();
 
     /// Creates a pipeline through the PSO cache. On cache hit, returns the
     /// cached handle without calling the device. On miss, creates via the
@@ -530,6 +547,7 @@ private:
     RHIShaderHandle m_motionBlurNeighborMaxCS  = RHIShaderHandle::Invalid();
     RHIShaderHandle m_dofSetupCS               = RHIShaderHandle::Invalid();
     RHIShaderHandle m_dofBlurCS                = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_fxaaPS                   = RHIShaderHandle::Invalid();
 
     // ── Cached pipeline handles (one per bindless variant) ──────────────
     RHIPipelineHandle m_forwardPBR         = RHIPipelineHandle::Invalid();
@@ -566,6 +584,7 @@ private:
     RHIPipelineHandle m_motionBlurNeighborMax = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_dofSetup              = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_dofBlur               = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_fxaa                  = RHIPipelineHandle::Invalid();
 };
 
 } // namespace uz
