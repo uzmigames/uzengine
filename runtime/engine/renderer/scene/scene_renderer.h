@@ -267,6 +267,21 @@ public:
     /// Returns whether the depth prepass is currently enabled.
     [[nodiscard]] bool IsDepthPrepassEnabled() const { return m_depthPrepassEnabled; }
 
+    /// Enables or disables GPU HiZ occlusion culling.
+    ///
+    /// @source UE5 HZBOcclusion.usf — HZBTestPS
+    ///
+    /// When enabled (and depth prepass + HiZ pyramid are active), the GPU
+    /// cull pass performs an additional HiZ occlusion test after frustum
+    /// culling. Requires SM6.6 bindless for per-mip HiZ texture access.
+    /// When disabled, only frustum culling is performed on the GPU.
+    ///
+    /// Default: false (disabled until visually verified).
+    void SetGpuOcclusionCullingEnabled(bool enabled) { m_gpuOcclusionCullingEnabled = enabled; }
+
+    /// Returns whether GPU HiZ occlusion culling is currently enabled.
+    [[nodiscard]] bool IsGpuOcclusionCullingEnabled() const { return m_gpuOcclusionCullingEnabled; }
+
     /// Sets the DFS configuration at runtime.
     void SetDfsConfig(const DistanceFieldShadowConfig& cfg) { m_dfsConfig = cfg; }
 
@@ -565,9 +580,18 @@ private:
     uint32_t m_dofOutputUav = UINT32_MAX;              ///< UAV for DOF blur to write.
 
     /// @source UE5 Scene.cpp:559-560 — default FocalDistance=0 (auto), FStop=4.0
-    float m_dofFocusDistance = 0.0f;                   ///< Focus distance in cm. 0 = disabled.
-    float m_dofAperture      = 4.0f;                   ///< F-stop number.
-    bool  m_dofEnabled       = false;                  ///< DOF is off by default (UE5 default).
+    float m_dofFocusDistance  = 0.0f;                  ///< Focus distance in cm. 0 = disabled.
+    float m_dofAperture       = 4.0f;                  ///< F-stop number.
+    bool  m_dofEnabled        = false;                 ///< DOF is off by default (UE5 default).
+
+    /// @source UE5 Scene.cpp:579 — DepthOfFieldFocalRegion default 0.0
+    float m_dofFocalRegion    = 0.0f;                  ///< Width of the in-focus zone in cm (centered on FocusDistance).
+
+    /// @source UE5 Scene.cpp:580 — DepthOfFieldNearTransitionRegion default 300.0 cm
+    float m_dofNearTransition = 300.0f;                ///< Near transition ramp width in cm.
+
+    /// @source UE5 Scene.cpp:581 — DepthOfFieldFarTransitionRegion default 500.0 cm
+    float m_dofFarTransition  = 500.0f;                ///< Far transition ramp width in cm.
 
     /// Creates DOF textures. Called from Init() and Resize().
     void CreateDofResources(uint32_t width, uint32_t height);
@@ -614,6 +638,9 @@ private:
     // ── Depth Prepass + Hi-Z Pyramid ────────────────────────────────────────
 
     bool m_depthPrepassEnabled = true;  ///< When true, depth prepass runs before GBuffer.
+
+    /// @source UE5 HZBOcclusion.usf — HZBTestPS pipeline
+    bool m_gpuOcclusionCullingEnabled = false;  ///< When true, GPU cull pass performs HiZ occlusion test.
 
     /// Per-mip R32_FLOAT textures for the Hi-Z pyramid.
     /// mipLevels[0] = half-res, mipLevels[1] = quarter-res, etc.

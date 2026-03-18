@@ -11,6 +11,11 @@
 - [ ] 1.9 Add SSRPassDesc to PostProcessStack — enabled/disabled, quality (Off/Low/Medium/High/Epic), maxRoughness, intensity, maxSteps, binarySteps, fadeStart, fadeEnd, thickness.
 - [x] 1.10 Register SSR passes in render graph — SSR_Trace + SSR_Resolve compute passes wired after DFS and before lighting. PipelineLibrary gains GetSsrTrace()/GetSsrResolve(). SceneRenderer creates RGBA16F trace+resolve textures with SRV/UAV, manages lifecycle in Init/Resize/Shutdown. PerFrameCB gains ssrSrvIndex. Shader entry points changed from CSMain to main. HiZ depth buffer used as mip-0 source for trace.
 - [ ] 1.11 Create SSR demo — reflective floor plane (roughness=0.05), various objects above it, camera showing clear reflections. Toggle SSR on/off, roughness slider.
+- [ ] 1.12 Fix SSR resolve double-application of roughnessFade and intensity — trace pass already applies these (lines 568-569), resolve applies again (lines 231-232). UE5 applies only once (SSRTReflections.usf:401-402). Remove from resolve. **CRITICAL: reflections are intensity^2.** See `docs/analysis/rendering/deep-audit-taa-ssr.md` Issue 20.
+- [ ] 1.13 Remove Fresnel weighting from SSR resolve — UE5 does NOT apply Fresnel in SSR pass; it applies EnvBRDF during compositing (SSRTReflections.usf:322). Current F0=lerp(0.04,0.8,metallic) uses invented constant 0.8. Remove Fresnel from resolve, output raw color*vignette. Fix alpha blend weight. **CRITICAL.** See audit Issue 19.
+- [ ] 1.14 Fix RayDepthScreen computation — uses world-Z offset instead of view-Z offset for compare tolerance. UE5 uses ViewToClip (SSRTRayCast.ush:93-94). See audit Issue 13.
+- [ ] 1.15 Add ray behind-camera clamp — UE5 clamps ray distance to prevent going behind camera (SSRTRayCast.ush:83). Missing in UzEngine. See audit Issue 11.
+- [ ] 1.16 Implement SSR hit reprojection — UE5 samples PREVIOUS frame scene color at reprojected hit UV via ClipToPrevClip+velocity (ReprojectHit, SSRTRayCast.ush:696-714). UzEngine samples current frame. **HIGH impact.** See audit Issue 16.
 
 ## 2. Visual Verification
 

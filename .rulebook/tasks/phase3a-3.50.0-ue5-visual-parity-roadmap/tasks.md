@@ -186,7 +186,8 @@
 
 ## 6. Documentation
 
-- [ ] 6.1 Update rendering parity analysis in `docs/analysis/`.
+- [x] 6.1 Update rendering parity analysis in `docs/analysis/`. Deep audit of all 15 post-process shaders vs UE5 5.6 — found 14 issues (2 critical, 5 medium, 7 low). Report: `docs/analysis/rendering/deep-audit-postprocess.md`.
+- [x] 6.1b Deep audit of lighting & shadow shaders vs UE5 5.6 — found 12 issues (3 HIGH, 5 MEDIUM, 4 LOW). Report: `docs/analysis/rendering/deep-audit-lighting-shadows.md`. Critical: Vis_SmithJointApprox wrong a2 param, F_Schlick missing micro-occlusion, SpecularScale/DiffuseScale ignored.
 - [ ] 6.2 Create visual comparison guide with before/after screenshots per feature.
 - [ ] 6.3 Update ROADMAP.md with revised completion estimates.
 

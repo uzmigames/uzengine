@@ -8,6 +8,10 @@
 - [x] 1.6 Register Hi-Z pyramid as persistent render graph resource — Per-mip R32_FLOAT textures stored in `m_hizMipLevels[]` on SceneRenderer. Created in Init(), recreated in Resize(), destroyed in Shutdown(). SRV+UAV descriptors per mip.
 - [x] 1.7 Wire into frame pipeline — DepthPrepass added before GBuffer in RenderFrame() (gated on `m_depthPrepassEnabled`), HiZPyramid dispatched after prepass. Instancing pass-through supported.
 - [x] 1.8 Add depth prepass toggle — `SceneRenderer::SetDepthPrepassEnabled(bool)` / `IsDepthPrepassEnabled()`. Default: enabled.
+- [x] 1.9 Add HiZ occlusion culling to gpu_cull_cs.hlsl — Extended existing frustum-only GPU cull shader with two-phase culling: frustum test + HiZ occlusion test. Sphere-to-screen-rect projection via Mara & Morgan 2013 (UE5 NaniteHZBCull.ush:565-595), MipLevelForRect (UE5 NaniteHZBCull.ush:40-69), 2x2 per-mip Load() sampling with reversed-Z comparison (UE5 NaniteHZBCull.ush:195-200). Uses per-mip SRV indices for bindless access (SM6.6 required for HiZ). CBV at b1 with 288-byte CullConstants (3 matrices + HiZ params + 12 mip SRV indices).
+- [x] 1.10 Create gpu_cull_pass.h/cpp — Render graph compute pass at `runtime/engine/renderer/passes/geometry/gpu_cull_pass.h/cpp`. GpuCullPassDesc + AddGpuCullPass(). GpuCullConstants struct mirrors shader cbuffer. Dispatches ceil(N/64) groups, emits UAV barriers on output buffers. Registered in passes.h umbrella include.
+- [x] 1.11 Add GetGpuCull() to PipelineLibrary — EnsureGpuCullShader() + GetGpuCull() in pipeline_postprocess.cpp. Compiles EngineShader::GpuCullCS, creates compute PSO. Added to warmup list in pipeline_lifecycle.cpp.
+- [x] 1.12 Add GPU occlusion culling toggle — `SceneRenderer::SetGpuOcclusionCullingEnabled(bool)` / `IsGpuOcclusionCullingEnabled()`. Default: false (disabled until visually verified). Pass registration point added to frame_geometry.cpp after HiZ pyramid.
 
 ## 2. Visual Verification
 

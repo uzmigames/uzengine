@@ -283,10 +283,44 @@ void main(uint3 dtid : SV_DispatchThreadID)
     }
 
     // Normalize by total weight.
-    float3 result = accumColor / max(accumWeight, 1e-5f);
+    float3 blurredColor = accumColor / max(accumWeight, 1e-5f);
 
     // Guard against NaN/Inf from degenerate inputs.
-    result = max(result, 0.0f);
+    blurredColor = max(blurredColor, 0.0f);
+
+    // ── Recombine: blend gathered result with sharp center pixel ──────────
+    //
+    // Composites the blurred DOF result with the sharp in-focus scene color
+    // based on the absolute CoC magnitude. This creates a smooth transition
+    // between the sharp focal region and the blurred out-of-focus areas,
+    // preventing the hard pop between "fully sharp" and "fully blurred".
+    //
+    // UE5's recombine pass (DOFRecombine.usf) handles this in a separate
+    // full-resolution pass with multiple layer compositing (foreground,
+    // background, slight out-of-focus). For simplicity, we integrate the
+    // recombine directly into the gather pass using the key blending logic:
+    //
+    // - |CoC| < 0.5px: pixel is in-focus → output sharp center color.
+    //   This matches the early-out threshold (COC_SKIP_THRESHOLD = 0.5)
+    //   and UE5's ComputeInFocusOpacity which returns 1.0 at CoC=0
+    //   and 0.0 at |CoC|=0.5 (DOFRecombine.usf:296).
+    //
+    // - |CoC| > MAX_RECOMBINE_ABS_COC_RADIUS (3.0px): fully blurred.
+    //   @source UE5 DOFCommon.ush:109 — MAX_RECOMBINE_ABS_COC_RADIUS 3.0
+    //
+    // - Between 0.5 and 3.0: smoothstep blend for a perceptually smooth
+    //   transition, matching UE5's ComputeSampleIntersection smoothstep
+    //   at DOFRecombine.usf:276.
+    //
+    // @source UE5 DOFRecombine.usf:296 — ComputeInFocusOpacity: saturate(2 - 4*|CoC|)
+    // @source UE5 DOFCommon.ush:109 — MAX_RECOMBINE_ABS_COC_RADIUS 3.0
+    // @source UE5 DOFRecombine.usf:276 — smoothstep(0, 1, LinearIntersection)
+    // @constants
+    //   COC_SKIP_THRESHOLD = 0.5 (matches in-focus opacity zero crossing)
+    //   MAX_RECOMBINE_ABS_COC_RADIUS = 3.0 (DOFCommon.ush:109)
+    // @deviations NONE
+    float recombineFactor = smoothstep(COC_SKIP_THRESHOLD, 3.0f, absCenterCoC);
+    float3 result = lerp(centerColor, blurredColor, recombineFactor);
 
     outputTex[dtid.xy] = float4(result, 1.0f);
 }

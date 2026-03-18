@@ -10,8 +10,11 @@
 - [ ] 1.8 Implement responsive AA stencil — mark UI/particle pixels with stencil bit, use faster convergence (weight=0.25) for marked pixels to reduce blur on alpha-tested content.
 - [x] 1.9 Add TAA pass to render graph — inserted after bloom, before tonemap. Reads: HDR scene color (SRV), depth (SRV), history[prev] (SRV). Writes: history[current] (UAV). Tonemap reads TAA output when active. Proper UAV/SRV barriers.
 - [x] 1.10 Add TAA toggle — SetTaaEnabled()/IsTaaEnabled() on SceneRenderer. TAA auto-disabled on SM5 (requires bindless). Pipeline created lazily via PipelineLibrary::GetTaaResolve().
-- [ ] 1.11 Wire FXAA as fallback — when TAA disabled, FXAA runs instead. When TAA enabled, FXAA is skipped.
+- [x] 1.11 Wire FXAA as fallback — when TAA disabled, FXAA runs instead. When TAA enabled, FXAA is skipped. Added FXAA LDR intermediate texture (RGBA8Unorm), GetFxaa() PSO in PipelineLibrary, FXAA render graph pass after tonemap. Tonemap conditionally writes to intermediate when FXAA active.
 - [ ] 1.12 Create TAA demo — scene with thin geometry (railings, wires, foliage), split-screen FXAA vs TAA comparison, camera orbit to show temporal stability.
+- [ ] 1.13 Fix ComputeMotionVector stub — currently returns float2(0,0), must implement depth-based camera reprojection using prevViewProj (UE5 TemporalAA.usf:2087-2121). Wire velocity buffer SRV when available. **CRITICAL: TAA is broken for camera motion without this.** See `docs/analysis/rendering/deep-audit-taa-ssr.md` Issue 1.
+- [ ] 1.14 Implement Catmull-Rom bicubic history sampling — UE5 uses 5-tap Catmull-Rom (AA_BICUBIC=1, TemporalAA.usf:1840-1880) instead of bilinear for history. Reduces blurriness. See audit Issue 2.
+- [ ] 1.15 Implement dynamic anti-ghosting — detect static/dynamic transitions via velocity buffer plus pattern, reset history when objects start/stop moving (UE5 TemporalAA.usf:2151-2166). See audit Issue 6.
 
 ## 2. Visual Verification
 

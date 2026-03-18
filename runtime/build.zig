@@ -56,7 +56,7 @@ pub fn build(b: *std.Build) void {
         "engine/renderer/atmosphere",
         "engine/renderer/fog",
         "engine/renderer/scene",
-        "engine/renderer/scene/frame",
+        "engine/renderer/frame",
         "engine/renderer/passes",
         "engine/renderer/passes/geometry",
         "engine/renderer/passes/lighting",
@@ -207,7 +207,7 @@ pub fn build(b: *std.Build) void {
     addCppDir(runtime_mod, b, "engine/renderer/render_graph", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/ibl", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/scene", cpp_flags);
-    addCppDir(runtime_mod, b, "engine/renderer/scene/frame", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/renderer/frame", cpp_flags);
     addCppDir(runtime_mod, b, "engine/job", cpp_flags);
     addCppDir(runtime_mod, b, "engine/ecs/core", cpp_flags);
     addCppDir(runtime_mod, b, "engine/ecs/scene", cpp_flags);

@@ -308,6 +308,19 @@ public:
     /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
     [[nodiscard]] RHIPipelineHandle GetHiZPyramid();
 
+    /// Returns the GPU frustum + HiZ occlusion culling compute pipeline (gpu_cull_cs.hlsl).
+    ///
+    /// Two-phase culling: frustum test (always) + HiZ occlusion test (optional,
+    /// requires bindless SM6.6). Projects bounding spheres to screen-space rects,
+    /// selects Hi-Z mip level, and rejects occluded instances.
+    ///
+    /// @source UE5 HZBOcclusion.usf — HZBTestPS pipeline
+    /// @source UE5 NaniteHZBCull.ush:565-595 — ProjectSphere, SphereToScreenRect
+    ///
+    /// # Returns
+    /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
+    [[nodiscard]] RHIPipelineHandle GetGpuCull();
+
     /// Returns the DFS object culling compute pipeline (dfs_cull_objects_cs.hlsl).
     ///
     /// Frustum-culls SDF objects against the shadow convex hull and appends
@@ -488,6 +501,7 @@ private:
     [[nodiscard]] bool EnsureSkyCubemapCaptureShader();
     [[nodiscard]] bool EnsureSkyCubemapCapturePSShader();
     [[nodiscard]] bool EnsureHiZPyramidShader();
+    [[nodiscard]] bool EnsureGpuCullShader();
     [[nodiscard]] bool EnsureDfsCullObjectsShader();
     [[nodiscard]] bool EnsureDfsConeTraceShader();
     [[nodiscard]] bool EnsureTaaResolveShader();
@@ -536,6 +550,7 @@ private:
     RHIShaderHandle m_skyCubemapCaptureCS    = RHIShaderHandle::Invalid();
     RHIShaderHandle m_skyCubemapCapturePSShader = RHIShaderHandle::Invalid();
     RHIShaderHandle m_hizPyramidCS             = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_gpuCullCS                = RHIShaderHandle::Invalid();
     RHIShaderHandle m_dfsCullObjectsCS         = RHIShaderHandle::Invalid();
     RHIShaderHandle m_dfsConeTraceCS           = RHIShaderHandle::Invalid();
     RHIShaderHandle m_taaResolveCS             = RHIShaderHandle::Invalid();
@@ -573,6 +588,7 @@ private:
     RHIPipelineHandle m_depthPrepassBindless  = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_depthPrepassInstanced = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_hizPyramid            = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_gpuCull              = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_dfsCullObjects        = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_dfsConeTrace          = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_taaResolve            = RHIPipelineHandle::Invalid();

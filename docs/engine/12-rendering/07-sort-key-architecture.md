@@ -302,7 +302,31 @@ void DrawList::StableSort() {
 
 ## GPU Instancing Integration
 
-After sorting and batching, the sorted DrawList can be processed by the **InstanceBatcher** to collapse consecutive commands with identical mesh + material texture indices into instanced draw calls.
+After sorting and batching, the sorted DrawList can be processed by the **InstanceBatcher** to collapse consecutive commands with identical mesh + material texture indices into instanced draw calls. This reduces thousands of draw calls to dozens while maintaining all per-object state.
+
+### InstanceData — Per-Instance Transforms
+
+Each instance carries its own world transform and normal matrix (required for per-vertex lighting):
+
+```cpp
+struct InstanceData {
+    Mat4 world;            // Object-to-world transform (64 bytes)
+    Mat4 normalMatrix;     // transpose(inverse(world)) for lighting (64 bytes)
+};
+// Total: 128 bytes per instance
+static_assert(sizeof(InstanceData) == 128);
+```
+
+These are stored in a GPU `StructuredBuffer<InstanceData>` (Upload heap) and indexed via `SV_InstanceID` in the vertex shader. All instances in a single batch share the same material (textures), but each has unique geometry transforms.
+
+### Instance Buffer Management
+
+The instance buffer grows dynamically in power-of-two increments (1024 → 2048 → 4096):
+
+- **Triple-buffered** — one buffer per frame-in-flight (prevents GPU stalls from CPU overwrites)
+- **Capacity**: Initially 1024, grows to 2× on demand (e.g., `1024 → 2048 → 4096`)
+- **Upload heap** — CPU-writable from `BuildInstanceBatches()` frame-local allocation
+- **Max per frame** — 16,384 instances; excess commands logged and dropped
 
 ### Batching Process
 
@@ -315,7 +339,7 @@ std::vector<InstanceBatch> batches;
 std::vector<InstanceData> instances;
 BuildInstanceBatches(drawList, batches, instances);
 
-// Upload instances to GPU
+// Upload instances to GPU (frame-local allocation, CPU-visible memory)
 instanceBuffer.Upload(instances.data(), instances.size());
 
 // Issue one DrawIndexedInstanced per batch instead of N separate DrawIndexed calls
@@ -338,16 +362,37 @@ for (const auto& batch : batches) {
 
 ### Batching Criteria
 
-Two consecutive sorted commands merge into a single `InstanceBatch` if ALL of these match:
+Two consecutive sorted commands merge into a single `InstanceBatch` if **ALL** of these match:
 
 - `meshId` — same mesh resource
-- `albedoSrvIndex` — same base color texture
+- `albedoSrvIndex` — same base color texture (SRV descriptor heap index)
 - `normalSrvIndex` — same normal map
 - `roughnessSrvIndex` — same roughness map
 - `metallicSrvIndex` — same metallic map
 - `aoSrvIndex` — same ambient occlusion map
 
-Material texture indices are shared across all instances in a batch (per-batch uniform), while per-instance transforms are stored in a `StructuredBuffer<InstanceData>` indexed by `SV_InstanceID`.
+**Why these criteria?** Material texture indices are shared across all instances in a batch via a single `PerObjectCB`, so they must be identical. Mesh ID is shared because one batch = one index buffer. Only the per-instance transforms (world matrix, normal matrix) differ.
+
+### Shader Integration (SM6.6 Bindless)
+
+The vertex shader accesses instance data via `SV_InstanceID` (built-in):
+
+```hlsl
+#ifdef UZ_INSTANCED
+    StructuredBuffer<InstanceData> instances : register(t0);
+
+    uint instanceID = input.instanceID;  // 0 to instanceCount-1
+    InstanceData inst = instances[instanceID];
+
+    float4x4 worldMatrix = inst.world;
+    float4x4 normalMatrix = inst.normalMatrix;
+
+    float3 worldPos = mul(float4(vert.position, 1.0), worldMatrix).xyz;
+    float3 worldNorm = normalize(mul(vert.normal, (float3x3)normalMatrix));
+#endif
+```
+
+**SM5 fallback** (non-bindless): Instancing is disabled on SM5 devices. The renderer falls back to per-object CB path (non-instanced draw calls).
 
 ### Performance Example
 
@@ -356,7 +401,9 @@ Material texture indices are shared across all instances in a batch (per-batch u
 - **Without instancing**: 1001 separate `DrawIndexed` calls → 1001 root constant updates, 1001 descriptor table rebinds
 - **With instancing**: 1–2 `DrawIndexedInstanced` calls → near-zero state changes, 310 FPS @ 3.22ms on RTX 4090
 
-See [08-gpu-instancing.md](08-gpu-instancing.md) for full implementation details.
+**Key insight**: The frame time is GPU-bound (not CPU-bound), so draw call reduction alone doesn't improve FPS. However, instancing **improves CPU efficiency** (enables larger scenes) and **enables better GPU caching** (fewer state transitions → better hit rates).
+
+See [08-gpu-instancing.md](08-gpu-instancing.md) for full implementation details, buffer layout, and integration checklist.
 
 ## Future Enhancements
 

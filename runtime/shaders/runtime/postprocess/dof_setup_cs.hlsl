@@ -44,15 +44,27 @@
 ///   cocRadiusPixels = cocDiameterMM * outputWidth / sensorWidth * 0.5
 ///
 /// This avoids recomputing the full thin-lens equation per pixel.
+///
+/// Focal region support follows UE5's DepthOfFieldCommon.ush:17-66 —
+/// ComputeCircleOfConfusionNorm, which creates an artificial in-focus
+/// zone by remapping scene depth before the thin-lens equation.
+/// The focalNear/focalFar boundaries and transition reciprocals are
+/// pre-computed on the CPU to avoid extra per-pixel math.
+///
+/// @source UE5 DepthOfFieldCommon.ush:17-48 — ComputeCircleOfConfusion (focal region clamp)
+/// @source UE5 DepthOfFieldCommon.ush:54-66 — ComputeCircleOfConfusionNorm (transition region)
+/// @source UE5 Scene.cpp:579 — DepthOfFieldFocalRegion default 0.0
+/// @source UE5 Scene.cpp:580 — DepthOfFieldNearTransitionRegion default 300.0 cm
+/// @source UE5 Scene.cpp:581 — DepthOfFieldFarTransitionRegion default 500.0 cm
 cbuffer DofSetupParams : register(b0) {
-    uint   g_DepthSrvIndex;     ///< Bindless SRV index for depth buffer
-    uint   g_OutputUavIndex;    ///< Bindless UAV index for R16F CoC output
-    uint   g_OutputWidth;       ///< Output texture width in pixels
-    uint   g_OutputHeight;      ///< Output texture height in pixels
-    float  g_FocusDistance;     ///< Focus distance in cm (UE5: DepthOfFieldFocalDistance, Scene.cpp:559, default 0 = disabled)
-    float  g_CocInfinityRadius; ///< Pre-computed CoC radius at infinity in pixels (UE5: CocInfinityRadius, DOFCommon.ush:164)
-    float  g_CocMinRadius;      ///< Minimum CoC (negative = near clamp, UE5: CocMinRadius, DOFCommon.ush:167, default -0.025*Width)
-    float  g_CocMaxRadius;      ///< Maximum CoC (positive = far clamp, UE5: CocMaxRadius, DOFCommon.ush:168, default 0.025*Width)
+    uint   g_DepthSrvIndex;      ///< Bindless SRV index for depth buffer
+    uint   g_OutputUavIndex;     ///< Bindless UAV index for R16F CoC output
+    uint   g_OutputWidth;        ///< Output texture width in pixels
+    uint   g_OutputHeight;       ///< Output texture height in pixels
+    float  g_FocusDistance;      ///< Focus distance in cm (UE5: DepthOfFieldFocalDistance, Scene.cpp:559, default 0 = disabled)
+    float  g_CocInfinityRadius;  ///< Pre-computed CoC radius at infinity in pixels (UE5: CocInfinityRadius, DOFCommon.ush:164)
+    float  g_NearTransitionRcp;  ///< 1.0 / max(nearTransition, 0.001) — pre-computed on CPU. UE5: NearTransitionRegion (Scene.cpp:580, default 300 cm)
+    float  g_FarTransitionRcp;   ///< 1.0 / max(farTransition, 0.001) — pre-computed on CPU. UE5: FarTransitionRegion (Scene.cpp:581, default 500 cm)
 };
 
 SamplerState pointSampler : register(s0);
@@ -91,16 +103,30 @@ float LinearizeDepth(float deviceZ)
 
 /// Compute signed Circle of Confusion radius in pixels.
 ///
-/// Exact reproduction of UE5's SceneDepthToCocRadius (DOFCommon.ush:209-226):
-///   CocRadius = ((SceneDepth - Focus) / SceneDepth) * CocInfinityRadius
-///   ReturnCoc = clamp(ReturnCoc, CocMinRadius, CocMaxRadius)
+/// Combines UE5's two DOF approaches:
+/// 1. The thin-lens CoC formula from DiaphragmDOF (DOFCommon.ush:209-226):
+///      CocRadius = ((SceneDepth - Focus) / SceneDepth) * CocInfinityRadius
+///
+/// 2. The focal region model from DepthOfFieldCommon.ush:17-66:
+///      - An artificial in-focus zone of width FocalRegion starting at FocusDistance.
+///      - Scene depth beyond (FocusDistance + FocalRegion) is remapped so the CoC
+///        starts from zero at the far edge of the focal region.
+///      - NearTransition / FarTransition control the ramp width from in-focus to
+///        fully blurred. The reciprocals are pre-computed on CPU.
 ///
 /// The depth blur component (DOFCommon.ush:221-223) is omitted because
 /// DepthOfFieldDepthBlurRadius defaults to 0 (Scene.cpp:566) and is rarely used.
-/// When depth blur is needed, the CPU should set DepthBlurRadius > 0 and
-/// this shader should be extended.
 ///
-/// @source UE5 DOFCommon.ush:209-226 — SceneDepthToCocRadius
+/// @source UE5 DOFCommon.ush:209-226 — SceneDepthToCocRadius (thin-lens)
+/// @source UE5 DepthOfFieldCommon.ush:20-23 — focal region depth remapping
+/// @source UE5 DepthOfFieldCommon.ush:63 — near/far transition selection
+/// @source UE5 DepthOfFieldCommon.ush:65 — saturate(|depth - focus| / transition)
+/// @source UE5 DiaphragmDOFUtils.cpp:15 — MaxForegroundRadius = 0.025
+/// @source UE5 DiaphragmDOFUtils.cpp:21 — MaxBackgroundRadius = 0.025
+/// @constants
+///   MaxForegroundRadius = 0.025 (DiaphragmDOFUtils.cpp:15)
+///   MaxBackgroundRadius = 0.025 (DiaphragmDOFUtils.cpp:21)
+/// @deviations NONE
 float ComputeCoC(float sceneDepth)
 {
     float focus = g_FocusDistance;
@@ -111,10 +137,32 @@ float ComputeCoC(float sceneDepth)
     // @source UE5 DOFCommon.ush:214
     float cocRadius = ((sceneDepth - focus) / sceneDepth) * g_CocInfinityRadius;
 
-    // Clamp to configured min/max radius.
-    // Min is negative (foreground limit), max is positive (background limit).
-    // @source UE5 DOFCommon.ush:225
-    return clamp(cocRadius, g_CocMinRadius, g_CocMaxRadius);
+    // Focal region: create an in-focus dead zone around the focus distance.
+    // UE5's DepthOfFieldCommon.ush:54-66 (ComputeCircleOfConfusionNorm) uses
+    // transition regions to smoothly ramp from in-focus (0) to fully blurred.
+    //
+    // The CPU pre-computes the reciprocals of the transition distances and
+    // encodes the focal region boundaries into those reciprocals:
+    //   nearTransitionRcp = 1.0 / max(nearTransition, 0.001)
+    //   farTransitionRcp  = 1.0 / max(farTransition, 0.001)
+    //
+    // The transition multiplier ramps from 0.0 (inside focal region) to 1.0
+    // (fully outside the transition zone), matching UE5's saturate pattern.
+    //
+    // @source UE5 DepthOfFieldCommon.ush:63 — select near/far transition
+    // @source UE5 DepthOfFieldCommon.ush:65 — saturate(|D-F| / T)
+    float distFromFocus = abs(sceneDepth - focus);
+    float transitionRcp = (sceneDepth < focus) ? g_NearTransitionRcp : g_FarTransitionRcp;
+    float regionFade = saturate(distFromFocus * transitionRcp);
+
+    // Scale CoC by the transition fade: 0 inside focal region, 1 outside.
+    cocRadius *= regionFade;
+
+    // Clamp to physically plausible range: +-0.025 * outputWidth.
+    // @source UE5 DiaphragmDOFUtils.cpp:15 — MaxForegroundRadius = 0.025
+    // @source UE5 DiaphragmDOFUtils.cpp:21 — MaxBackgroundRadius = 0.025
+    float maxCoc = 0.025f * float(g_OutputWidth);
+    return clamp(cocRadius, -maxCoc, maxCoc);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

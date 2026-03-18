@@ -19,5 +19,5 @@
 
 ## 3. Documentation
 
-- [ ] 3.1 Update `docs/engine/12-rendering/07-sort-key-architecture.md` with instancing batch logic
-- [ ] 3.2 Document instance buffer layout and shader access pattern
+- [x] 3.1 Update `docs/engine/12-rendering/07-sort-key-architecture.md` with instancing batch logic. Added comprehensive "GPU Instancing Integration" section covering InstanceData struct (128 bytes: world + normalMatrix), instance buffer management (triple-buffered, power-of-two growth), batching criteria, shader integration (SM6.6 bindless + SM5 fallback), and performance characteristics.
+- [x] 3.2 Document instance buffer layout and shader access pattern. Verified `docs/engine/12-rendering/08-gpu-instancing.md` is complete with InstanceData layout, InstanceBatch struct, BuildInstanceBatches algorithm, shader variants (-DUZ_INSTANCED), vertex shader integration (StructuredBuffer<InstanceData> via SV_InstanceID), and integration checklist.

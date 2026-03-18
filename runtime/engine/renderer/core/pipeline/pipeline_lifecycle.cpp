@@ -322,6 +322,7 @@ uint32_t PipelineLibrary::WarmupAll() {
     warmup(GetSkyCubemapCapturePS(), "SkyCubemapCapturePS");
     warmup(GetDepthPrepass(bindless), "DepthPrepass");
     warmup(GetHiZPyramid(), "HiZPyramid");
+    warmup(GetGpuCull(), "GpuCull");
     warmup(GetDfsCullObjects(), "DFS_CullObjects");
     warmup(GetDfsConeTrace(), "DFS_ConeTrace");
     warmup(GetSsrTrace(), "SSR_Trace");

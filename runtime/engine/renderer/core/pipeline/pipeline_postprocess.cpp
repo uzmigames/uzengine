@@ -177,6 +177,65 @@ RHIPipelineHandle PipelineLibrary::GetHiZPyramid() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// GPU Frustum + HiZ Occlusion Culling Compute Pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool PipelineLibrary::EnsureGpuCullShader() {
+    if (m_gpuCullCS.IsValid()) {
+        return true;
+    }
+
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::GpuCullCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile GpuCullCS");
+        return false;
+    }
+
+    RHIShaderDesc shaderDesc{};
+    shaderDesc.bytecode     = bytecode.data();
+    shaderDesc.bytecodeSize = bytecode.size();
+    shaderDesc.stage        = RHIShaderStage::Compute;
+    shaderDesc.entryPoint   = "main";
+    shaderDesc.debugName    = "gpu_cull_cs";
+
+    m_gpuCullCS = m_device->CreateShader(shaderDesc);
+    if (!m_gpuCullCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create GpuCullCS shader");
+        return false;
+    }
+    return true;
+}
+
+/// @source UE5 HZBOcclusion.usf — HZBTestPS pipeline creation
+RHIPipelineHandle PipelineLibrary::GetGpuCull() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetGpuCull called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_gpuCull.IsValid()) {
+        return m_gpuCull;
+    }
+
+    if (!EnsureGpuCullShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_gpuCullCS;
+    desc.debugName     = "GpuCull_FrustumHiZ";
+
+    m_gpuCull = m_device->CreateComputePipeline(desc);
+    if (!m_gpuCull.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create GpuCull pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created GpuCull pipeline");
+    }
+
+    return m_gpuCull;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // DFS Object Culling Compute Pipeline
 // ─────────────────────────────────────────────────────────────────────────────
 

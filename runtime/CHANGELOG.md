@@ -2,6 +2,34 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
+## [0.2.36] — 2026-03-18
+
+### RenderFrame Split, GPU Cull, DOF Params, Bug Fixes
+
+**RenderFrame split** (scene_render_frame.cpp → 6 files under `renderer/frame/`):
+- `frame_setup.cpp` — FrameContext initialization, CB uploads, instancing
+- `frame_shadows.cpp` — Shadow cascade + local light shadow passes
+- `frame_geometry.cpp` — Depth prepass, GBuffer, velocity, forward PBR
+- `frame_lighting.cpp` — GTAO, DFS, SSR, deferred lighting, sky atmosphere, height fog
+- `frame_postprocess.cpp` — Bloom, TAA, color grading LUT, motion blur, DOF, tonemap, FXAA
+- `frame_overlay.cpp` — Editor grid, stats overlay
+
+**GPU frustum + Hi-Z occlusion culling** (gpu_cull_pass.h/cpp):
+- Compute shader dispatches frustum + occlusion test per object
+- Pipeline wired through PipelineLibrary::GetGpuCull()
+
+**DOF parameter extensions** (scene_renderer.h):
+- Added focalRegion, nearTransition, farTransition params
+  @source UE5 Scene.cpp:579-581
+
+**Bug fixes**:
+- Fixed dangling lambda captures in all render graph execution callbacks
+  (frame/*.cpp + atmosphere_renderer.cpp) — `[&]` → `[this, &ctx]` / by-value
+- Fixed sky atmosphere pass order: moved before tonemap (was after, causing black sky)
+- Fixed FXAA pipeline missing implementation (GetFxaa + EnsureFxaaPixelShader)
+
+---
+
 ## [0.2.35] — 2026-03-18
 
 ### Codebase Reorganization — SceneRenderer, PipelineLibrary, Core
