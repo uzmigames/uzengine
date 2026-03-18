@@ -41,6 +41,7 @@ pub fn build(b: *std.Build) void {
         "engine/renderer",
         "engine/renderer/camera",
         "engine/renderer/core",
+        "engine/renderer/core/pipeline",
         "engine/renderer/material",
         "engine/renderer/memory",
         "engine/renderer/mesh",
@@ -181,6 +182,7 @@ pub fn build(b: *std.Build) void {
     addCppDir(runtime_mod, b, "engine/renderer", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/camera", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/core", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/renderer/core/pipeline", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/material", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/memory", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/mesh", cpp_flags);

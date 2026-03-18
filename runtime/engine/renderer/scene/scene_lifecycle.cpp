@@ -309,6 +309,9 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     // ── DOF Textures (CoC R16F + output RGBA16F) ───────────────────────
     CreateDofResources(width, height);
 
+    // ── FXAA LDR Intermediate (RGBA8Unorm, same resolution as backbuffer) ─
+    CreateFxaaResources(width, height);
+
     UZ_LOG(Renderer, Info, "SceneRenderer initialized ({}x{}, {})",
            width, height, RenderPathToString(m_renderPath));
     return true;
@@ -694,6 +697,38 @@ void SceneRenderer::DestroyMotionBlurResources() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// FXAA Resource Creation / Destruction
+// ─────────────────────────────────────────────────────────────────────────────
+
+void SceneRenderer::CreateFxaaResources(uint32_t width, uint32_t height) {
+    DestroyFxaaResources();
+
+    RHITextureDesc desc{};
+    desc.width     = width;
+    desc.height    = height;
+    desc.format    = RHIFormat::RGBA8Unorm;
+    desc.usage     = RHITextureUsage::ShaderResource | RHITextureUsage::RenderTarget;
+    desc.debugName = "FXAA_LdrIntermediate";
+
+    m_fxaaLdrIntermediate = m_device->CreateTexture(desc);
+    if (m_fxaaLdrIntermediate.IsValid()) {
+        m_fxaaLdrIntermediateSrv = m_device->GetTextureSRVIndex(m_fxaaLdrIntermediate);
+        UZ_LOG(Renderer, Info, "SceneRenderer: FXAA LDR intermediate created ({}x{}, RGBA8, SRV={})",
+               width, height, m_fxaaLdrIntermediateSrv);
+    } else {
+        UZ_LOG(Renderer, Error, "SceneRenderer: failed to create FXAA LDR intermediate texture");
+    }
+}
+
+void SceneRenderer::DestroyFxaaResources() {
+    if (m_fxaaLdrIntermediate.IsValid()) {
+        m_device->DestroyTexture(m_fxaaLdrIntermediate);
+        m_fxaaLdrIntermediate = RHITextureHandle{};
+        m_fxaaLdrIntermediateSrv = UINT32_MAX;
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // DOF Resource Creation / Destruction
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -832,6 +867,10 @@ void SceneRenderer::Resize(uint32_t width, uint32_t height) {
     DestroyDofResources();
     CreateDofResources(width, height);
 
+    // Recreate FXAA LDR intermediate at new resolution
+    DestroyFxaaResources();
+    CreateFxaaResources(width, height);
+
     // Color grading LUT is resolution-independent (32x32x32 volume), no resize needed.
     // Just mark dirty so it regenerates with any changed parameters.
     m_colorGradingLutDirty = true;
@@ -942,6 +981,9 @@ void SceneRenderer::Shutdown() {
 
     // ── DOF cleanup ─────────────────────────────────────────────────
     DestroyDofResources();
+
+    // ── FXAA cleanup ──────────────────────────────────────────────────
+    DestroyFxaaResources();
 
     // ── Auto-Exposure cleanup ─────────────────────────────────────
     if (m_autoExposure) m_autoExposure->Shutdown();

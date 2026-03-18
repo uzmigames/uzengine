@@ -43,6 +43,15 @@
 #include "postprocess/hiz_pyramid_pass.h"
 #include "shadows/distance_field_shadow_config.h"
 
+// Types needed by FrameContext struct (value members, not pointers)
+#include "per_frame_params.h"
+#include "shadow_data_params.h"
+#include "cb_ring_allocator.h"
+#include "instance_batcher.h"
+#include "light_renderer.h"        // LightFrameData
+#include "shadow_renderer.h"      // ShadowFrameData
+#include "render_graph_types.h"   // rg::RgResourceId
+
 #include <cstdint>
 #include <memory>
 #include <string>
@@ -534,6 +543,18 @@ private:
     /// Destroys all motion blur textures. Called from Shutdown() and Resize().
     void DestroyMotionBlurResources();
 
+    // ── FXAA (LDR intermediate for post-tonemap AA) ────────────────────
+
+    RHITextureHandle m_fxaaLdrIntermediate;             ///< RGBA8Unorm LDR intermediate for FXAA input.
+    uint32_t m_fxaaLdrIntermediateSrv = UINT32_MAX;     ///< SRV for FXAA to read tonemap output.
+
+    /// Creates the FXAA LDR intermediate texture at the given resolution.
+    /// Called from Init() and Resize().
+    void CreateFxaaResources(uint32_t width, uint32_t height);
+
+    /// Destroys the FXAA LDR intermediate texture. Called from Shutdown() and Resize().
+    void DestroyFxaaResources();
+
     // ── Depth of Field ───────────────────────────────────────────────────
 
     RHITextureHandle m_dofCocTexture;                  ///< R16F signed CoC per pixel.
@@ -692,6 +713,116 @@ private:
 
     /// Destroys all DFS GPU resources. Called from Shutdown() and Resize().
     void DestroyDfsResources();
+
+    // ── Frame Pipeline (split across frame/*.cpp) ─────────────────────────
+    //
+    // RenderFrame() is the orchestrator that calls each of these helpers in
+    // sequence.  They are defined in separate translation units under the
+    // `frame/` subdirectory to keep each file under ~500 lines.
+
+    /// Per-frame shared state passed between the RenderFrame sub-functions.
+    /// Lives on the stack inside RenderFrame() — never persisted across frames.
+    struct FrameContext {
+        // ── Externals (passed into RenderFrame) ─────────────────────────
+        IRHICommandList* cmdList = nullptr;
+        IRHISwapChain*   swapChain = nullptr;
+        World*           world = nullptr;
+        IVFS*            vfs = nullptr;
+        float            dt = 0.f;
+        uint32_t         frameIndex = 0;
+
+        // ── Resolved during SetupFrameData ──────────────────────────────
+        PipelineLibrary* pipelines = nullptr;
+        float            vpWidth = 0.f;
+        float            vpHeight = 0.f;
+        bool             bindless = false;
+
+        // ── CB allocations ──────────────────────────────────────────────
+        CBAllocation     perFrameAlloc{};
+        CBAllocation     lightingAlloc{};
+        CBAllocation     shadowAlloc{};
+
+        // ── Per-frame params (CPU mirror of PerFrameCB) ─────────────────
+        PerFrameParams   perFrame{};
+        ShadowDataParams shadowDataParams{};
+
+        // ── Shadow data ─────────────────────────────────────────────────
+        ShadowFrameData  shadowFrame{};
+        uint32_t         totalCascadeCount = 0;
+        Vec3             sunDir{};
+        Vec3             sunColor{};
+        Vec3             ambientColor{};
+        LightFrameData   lightData{};
+        bool             shadowCacheEnabled = false;
+
+        // ── Draw list + instancing ──────────────────────────────────────
+        DrawList                    drawList;
+        std::vector<InstanceBatch>  instanceBatches;
+        std::vector<InstanceData>   instanceDataVec;
+        uint32_t                    instanceBufferSrvIndex = UINT32_MAX;
+        bool                        useInstancing = false;
+
+        // ── Render graph resource IDs ───────────────────────────────────
+        rg::RgResourceId bbRes{};
+        rg::RgResourceId hdrRes{};
+        rg::RgResourceId depthRes{};
+        rg::RgResourceId normalRes{};
+        rg::RgResourceId albedoRes{};
+        rg::RgResourceId positionRes{};
+        rg::RgResourceId emissiveRes{};
+        rg::RgResourceId velocityRes{};
+        rg::RgResourceId shadowAtlasRes{};
+
+        // ── TAA state ───────────────────────────────────────────────────
+        bool     taaActive = false;
+        float    jitterX = 0.f;
+        float    jitterY = 0.f;
+        uint32_t taaWriteIdx = 0;
+        uint32_t taaReadIdx = 1;
+        Mat4     unjitteredViewProj{};
+
+        // ── Post-process chain SRV routing ──────────────────────────────
+        // Each pass in the post-process chain may override these to chain
+        // its output as the next pass's input.  The tonemap pass reads
+        // the final value.
+        uint32_t taaSrvForTonemap = UINT32_MAX;
+        uint32_t motionBlurSrvForTonemap = UINT32_MAX;
+        uint32_t postDofSrvForTonemap = UINT32_MAX;
+
+        // ── Post-process activation flags ───────────────────────────────
+        bool bloomEnabled = false;
+        bool ssrActive = false;
+        bool motionBlurActive = false;
+        bool dofActive = false;
+        bool fxaaActive = false;
+
+        // ── FXAA render graph resource ──────────────────────────────────
+        rg::RgResourceId fxaaLdrRes{};
+    };
+
+    /// Sets up per-frame data: camera, input, CB uploads, draw list build,
+    /// instancing, and all state that subsequent passes depend on.
+    /// Populates `ctx` with everything the pass registration helpers need.
+    void SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder);
+
+    /// Registers shadow depth passes (CSM cache-aware + local light shadows).
+    void RegisterShadowPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx);
+
+    /// Registers geometry passes: depth prepass, Hi-Z, GBuffer, velocity,
+    /// GTAO, DFS, SSR, and deferred lighting (or forward PBR).
+    void RegisterGeometryPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx);
+
+    /// Registers lighting-related compute passes: GTAO, DFS, SSR, and the
+    /// deferred lighting (or debug view) pass.
+    void RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx);
+
+    /// Registers post-process passes: bloom, TAA, color grading LUT,
+    /// motion blur, DOF, tonemap, and FXAA.
+    void RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx);
+
+    /// Registers overlay passes: atmosphere, fog, editor grid, stats overlay,
+    /// screenshot capture, and present transition.
+    void RegisterOverlayPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx);
 };
 
 } // namespace uz

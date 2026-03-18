@@ -2204,23 +2204,46 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
         postDofSrvForTonemap = m_dofOutputSrv;
     }
 
-    // ── Tonemap pass (HDR → LDR backbuffer) ────────────────────────────
+    // ── FXAA activation check ───────────────────────────────────────────
+    // FXAA runs after tonemap on LDR output, only when TAA is disabled.
+    // When TAA is active, it already provides anti-aliasing.
+    // Requires bindless for SRV heap access, and no debug grid overlay.
+    // @source UE5 PostProcessAA.cpp:83-92 — FXAA vs TAA selection
+    const bool fxaaActive = !taaActive && bindless
+                          && m_shadowDebugMode == 0
+                          && m_fxaaLdrIntermediate.IsValid()
+                          && m_fxaaLdrIntermediateSrv != UINT32_MAX;
+
+    // Import FXAA LDR intermediate into the render graph if FXAA is active.
+    // When FXAA is active, tonemap writes here instead of to the backbuffer.
+    rg::RgResourceId fxaaLdrRes{};
+    if (fxaaActive) {
+        fxaaLdrRes = rgBuilder.ImportTexture("FXAA_LdrIntermediate",
+                                              m_fxaaLdrIntermediate,
+                                              RHIResourceState::ShaderResource);
+    }
+
+    // ── Tonemap pass (HDR → LDR) ────────────────────────────────────────
     // Reads HDR scene color (RGBA16F) + optional bloom result, applies
     // bloom composite + auto-exposure + ACES filmic tonemap + sRGB gamma,
-    // writes LDR to backbuffer (RGBA8Unorm).
+    // writes LDR to FXAA intermediate (if FXAA active) or backbuffer.
     // This is the ONLY place tonemapping happens in the pipeline.
     rgBuilder.AddPass("Tonemap", [&](rg::RgPassBuilder& pb) {
         pb.Read(hdrRes, RHIResourceState::ShaderResource);
-        pb.Write(bbRes, RHIResourceState::RenderTarget);
 
-        pb.SetExecutionCallback([&](IRHICommandList* cmd, const rg::RgPassResources& res) {
+        // Tonemap writes to FXAA intermediate when FXAA is active,
+        // or directly to the backbuffer when FXAA is disabled.
+        const auto tonemapOutputRes = fxaaActive ? fxaaLdrRes : bbRes;
+        pb.Write(tonemapOutputRes, RHIResourceState::RenderTarget);
+
+        pb.SetExecutionCallback([&, tonemapOutputRes](IRHICommandList* cmd, const rg::RgPassResources& res) {
             UZ_PROFILE_SCOPE("Tonemap::Execute");
 
-            auto bb = res.GetTexture(bbRes);
+            auto tonemapTarget = res.GetTexture(tonemapOutputRes);
 
             RHIRenderPassDesc passDesc{};
             passDesc.colorAttachmentCount        = 1;
-            passDesc.colorAttachments[0].texture = bb;
+            passDesc.colorAttachments[0].texture = tonemapTarget;
             passDesc.colorAttachments[0].clear   = false;
             cmd->BeginRenderPass(passDesc);
 
@@ -2268,6 +2291,73 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
             cmd->EndRenderPass();
         });
     });
+
+    // ── FXAA pass (LDR → backbuffer) ────────────────────────────────────
+    // Reads the LDR tonemap output from the FXAA intermediate texture and
+    // writes the anti-aliased result to the backbuffer. Only runs when
+    // TAA is disabled (FXAA and TAA are mutually exclusive in UE5).
+    //
+    // @source UE5 PostProcessAA.cpp:94-96 — default quality parameters
+    // @source UE5 Fxaa3_11.ush:735-1252 — FxaaPixelShader
+    if (fxaaActive) {
+        rgBuilder.AddPass("FXAA", [&](rg::RgPassBuilder& pb) {
+            pb.Read(fxaaLdrRes, RHIResourceState::ShaderResource);
+            pb.Write(bbRes, RHIResourceState::RenderTarget);
+
+            pb.SetExecutionCallback([&](IRHICommandList* cmd, const rg::RgPassResources& res) {
+                UZ_PROFILE_SCOPE("FXAA::Execute");
+
+                auto bb = res.GetTexture(bbRes);
+
+                RHIRenderPassDesc passDesc{};
+                passDesc.colorAttachmentCount        = 1;
+                passDesc.colorAttachments[0].texture = bb;
+                passDesc.colorAttachments[0].clear   = false;
+                cmd->BeginRenderPass(passDesc);
+
+                cmd->SetPipeline(pipelines->GetFxaa());
+
+                // Root constants at b0: FXAA LDR intermediate SRV index
+                uint32_t fxaaIndices[4] = { m_fxaaLdrIntermediateSrv, 0, 0, 0 };
+                cmd->SetRootConstants(kSlotRootConstants, fxaaIndices, 4);
+
+                // FXAAParams CB at b2 (kSlotPerObject)
+                // @source UE5 PostProcessAA.cpp:94-96 — default parameter values
+                struct FXAAParamsCB {
+                    float invScreenWidth;   ///< 1.0 / viewport width
+                    float invScreenHeight;  ///< 1.0 / viewport height
+                    float edgeThreshold;    ///< Local contrast threshold (0.166 = UE5 default)
+                    float blurStrength;     ///< Unused by FXAA 3.11, kept for cbuffer alignment
+                };
+                FXAAParamsCB fxaaParams{};
+                fxaaParams.invScreenWidth  = 1.0f / vpWidth;
+                fxaaParams.invScreenHeight = 1.0f / vpHeight;
+                fxaaParams.edgeThreshold   = 0.166f;  // @source UE5 PostProcessAA.cpp:95
+                fxaaParams.blurStrength    = 0.0f;
+
+                CBAllocation fxaaAlloc = m_cbRing->Allocate(sizeof(FXAAParamsCB));
+                std::memcpy(fxaaAlloc.cpuPtr, &fxaaParams, sizeof(FXAAParamsCB));
+                cmd->SetRootCBV(kSlotPerObject, fxaaAlloc.bufferHandle,
+                                fxaaAlloc.offsetBytes, fxaaAlloc.cpuPtr,
+                                sizeof(FXAAParamsCB));
+
+                RHIViewport vp{};
+                vp.width    = vpWidth;
+                vp.height   = vpHeight;
+                vp.maxDepth = 1.0f;
+                cmd->SetViewport(vp);
+
+                RHIScissorRect sc{};
+                sc.right  = static_cast<int32_t>(swapChain->GetWidth());
+                sc.bottom = static_cast<int32_t>(swapChain->GetHeight());
+                cmd->SetScissor(sc);
+
+                cmd->Draw(3); // fullscreen triangle
+
+                cmd->EndRenderPass();
+            });
+        });
+    }
 
     // ── Overlay pass (editor grid + stats overlay) ──────────────────────
     // Skip overlays when buffer visualization grid is active — grid owns the full screen.
