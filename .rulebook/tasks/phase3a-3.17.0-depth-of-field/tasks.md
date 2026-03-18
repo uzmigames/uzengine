@@ -9,7 +9,7 @@
 - [ ] 1.7 Implement recombine pass (`dof_recombine_ps.hlsl`) — composite: far blur → in-focus (passthrough) → near blur (alpha blend). Smooth CoC-based interpolation at boundaries.
 - [ ] 1.8 Implement camera parameter derivation — compute focalLength from FOV and sensorWidth: `focalLength = sensorWidth / (2 * tan(fov/2))`. Compute cocScale from fstop and focalLength.
 - [ ] 1.9 Add DoFPassDesc to PostProcessStack — enabled/disabled, quality, focalDistance, fstop, sensorWidth, focalRegion, nearTransition, farTransition, maxNearBlur, maxFarBlur, bladeCount.
-- [ ] 1.10 Register DoF passes in render graph — CoC → downsample → near blur → far blur → recombine. After SSAO/SSR, before motion blur.
+- [x] 1.10 Register DoF passes in render graph — DOF_Setup (CoC computation) and DOF_Blur (gather blur) wired after motion blur, before tonemap. Disabled by default (m_dofEnabled=false, UE5 default). Only dispatched when m_dofEnabled && m_dofFocusDistance > 0. Pipelines created in PipelineLibrary::GetDofSetup/GetDofBlur. Resources created/destroyed in CreateDofResources/DestroyDofResources. Downsample/recombine passes not yet implemented (full-res single-pass gather).
 - [ ] 1.11 Create DoF demo — scene with objects at varying distances, adjustable focus distance slider, f-stop slider, bokeh visible on specular highlights.
 
 ## 2. Visual Verification

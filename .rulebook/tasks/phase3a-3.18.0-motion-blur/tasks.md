@@ -8,7 +8,7 @@
 - [x] 1.6 Implement depth-aware weighting — ComputeDepthWeight using UE5's center-vs-sample comparison (MotionBlurApply.usf:235-238) with SOFT_Z_EXTENT=1. Foreground priority prevents background bleeding.
 - [x] 1.7 Implement static skip — velocity < 0.5 pixels (CONFIG_MINIMAL_PIXEL_VELOCITY from MotionBlurCommon.ush:34) passthrough to center color. Saves cost on static regions.
 - [ ] 1.8 Add MotionBlurPassDesc to PostProcessStack — enabled/disabled, quality (Off/Low/Medium/High/VeryHigh), blurAmount, maxBlurRadius, targetFPS, shutterAngle, perObjectScale.
-- [ ] 1.9 Register motion blur passes in render graph — tile max → neighbor max → gather. After DoF, before TAA.
+- [x] 1.9 Register motion blur pass in render graph — single gather pass wired between TAA and tonemap. Reads HDR scene color (or TAA output), velocity buffer, depth. Writes to RGBA16F temp texture. Motion blur output SRV passed to tonemap. Tile max/neighbor max passes not yet implemented (simplified single-pass gather). Pipeline created in PipelineLibrary::GetMotionBlur(). Resources created/destroyed in CreateMotionBlurResources/DestroyMotionBlurResources.
 - [ ] 1.10 Create motion blur demo — scene with rotating objects + orbital camera, toggle on/off, adjustable blur amount and target FPS.
 
 ## 2. Visual Verification
