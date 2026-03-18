@@ -21,8 +21,9 @@
 #include "paths.h"
 #include "file_system.h"
 #include "material_baker.h"
-
-#include <stb_image_write.h>
+#include "material_baker_gpu.h"
+#include "shader_manager.h"
+#include "shader_pipeline.h"
 
 #include <cmath>
 #include <filesystem>
@@ -152,11 +153,11 @@ void PBRTest::OnStart() {
 
     // ── Ground material from graph-based .uzmat ───────────────────────
     //
-    // Load the MI_ProcGrid material graph, compile it to HLSL (verifying
-    // the full material pipeline), then bake BaseColor and Roughness to
-    // textures on CPU. The baked textures are written as PNG files to the
-    // assets directory and assigned to the ground material for rendering
-    // via the standard texture-based path.
+    // Load the MI_ProcGrid material graph, compile it to HLSL, then bake
+    // BaseColor and Roughness to GPU textures via compute shader dispatch.
+    // This replaces the ~8 second CPU bake + PNG round-trip with a single
+    // GPU dispatch (~0.1ms). The baked textures are directly bound as SRVs,
+    // bypassing the file-based texture loading path entirely.
 
     {
         const std::filesystem::path assetsDir = uz::GetExeDir() / "assets";
@@ -168,55 +169,70 @@ void PBRTest::OnStart() {
             UZ_LOG(Demo, Info, "Material graph '{}' compiled — HLSL:\n{}",
                    graphMaterial_.GetName(), graphMaterial_.GetGeneratedHlsl());
 
-            // Bake BaseColor (1024x1024) and Roughness (512x512) from the graph
-            static constexpr uint32_t kBakeColorSize     = 1024;
-            static constexpr uint32_t kBakeRoughnessSize = 512;
+            auto& renderer = GetRenderer();
+            auto* device = renderer.GetDevice();
+            auto* shaderMgr = renderer.GetShaderManager();
 
-            const auto& graph = graphMaterial_.GetGraph();
+            if (device && shaderMgr) {
+                auto& pipeline = shaderMgr->GetPipeline();
+                const auto& hlsl = graphMaterial_.GetGeneratedHlsl();
 
-            BakeResult baseColorBake = MaterialBaker::BakeBaseColor(
-                graph, kBakeColorSize, kBakeColorSize);
-            BakeResult roughnessBake = MaterialBaker::BakeRoughness(
-                graph, kBakeRoughnessSize, kBakeRoughnessSize);
+                // GPU bake BaseColor (1024x1024)
+                auto colorResult = MaterialBakerGpu::Bake(
+                    device, pipeline, hlsl,
+                    MaterialBakerGpu::OutputPin::BaseColor, 1024, 1024);
 
-            if (baseColorBake.success) {
-                const std::string colorPath = (assetsDir / "mi_procgrid_basecolor.png").string();
-                int wrote = stbi_write_png(
-                    colorPath.c_str(),
-                    static_cast<int>(baseColorBake.width),
-                    static_cast<int>(baseColorBake.height),
-                    4, baseColorBake.pixels.data(),
-                    static_cast<int>(baseColorBake.width * 4));
-                if (wrote) {
-                    groundMat_.albedoPath = "mi_procgrid_basecolor.png";
-                    UZ_LOG(Demo, Info, "Baked BaseColor to '{}' ({}x{})",
-                           colorPath, baseColorBake.width, baseColorBake.height);
+                if (colorResult.success) {
+                    gpuBakedBaseColor_ = colorResult.texture;
+                    groundMat_.albedoSrvIndex = colorResult.srvIndex;
+                    groundMat_.gpuResourcesLoaded = true;
+                    UZ_LOG(Demo, Info, "GPU-baked BaseColor (1024x1024, SRV={})",
+                           colorResult.srvIndex);
                 } else {
-                    UZ_LOG(Demo, Error, "Failed to write baked BaseColor PNG: {}", colorPath);
+                    UZ_LOG(Demo, Warning,
+                           "GPU BaseColor bake failed — using fallback checker.png");
                     groundMat_.albedoPath = "checker.png";
                 }
-            } else {
-                UZ_LOG(Demo, Warning, "BaseColor bake failed — using fallback checker.png");
-                groundMat_.albedoPath = "checker.png";
-            }
 
-            if (roughnessBake.success) {
-                const std::string roughPath = (assetsDir / "mi_procgrid_roughness.png").string();
-                int wrote = stbi_write_png(
-                    roughPath.c_str(),
-                    static_cast<int>(roughnessBake.width),
-                    static_cast<int>(roughnessBake.height),
-                    4, roughnessBake.pixels.data(),
-                    static_cast<int>(roughnessBake.width * 4));
-                if (wrote) {
-                    groundMat_.roughnessPath = "mi_procgrid_roughness.png";
-                    UZ_LOG(Demo, Info, "Baked Roughness to '{}' ({}x{})",
-                           roughPath, roughnessBake.width, roughnessBake.height);
+                // GPU bake Roughness (512x512)
+                auto roughResult = MaterialBakerGpu::Bake(
+                    device, pipeline, hlsl,
+                    MaterialBakerGpu::OutputPin::Roughness, 512, 512);
+
+                if (roughResult.success) {
+                    gpuBakedRoughness_ = roughResult.texture;
+                    groundMat_.roughnessSrvIndex = roughResult.srvIndex;
+                    UZ_LOG(Demo, Info, "GPU-baked Roughness (512x512, SRV={})",
+                           roughResult.srvIndex);
                 } else {
-                    UZ_LOG(Demo, Error, "Failed to write baked Roughness PNG: {}", roughPath);
+                    UZ_LOG(Demo, Warning,
+                           "GPU Roughness bake failed — no roughness texture for ground");
                 }
             } else {
-                UZ_LOG(Demo, Warning, "Roughness bake failed — no roughness texture for ground");
+                UZ_LOG(Demo, Warning,
+                       "Device or ShaderManager unavailable — falling back to CPU bake");
+
+                // CPU fallback path (MaterialBaker)
+                static constexpr uint32_t kBakeColorSize     = 1024;
+                static constexpr uint32_t kBakeRoughnessSize = 512;
+                const auto& graph = graphMaterial_.GetGraph();
+
+                BakeResult baseColorBake = MaterialBaker::BakeBaseColor(
+                    graph, kBakeColorSize, kBakeColorSize);
+                if (baseColorBake.success) {
+                    groundMat_.albedoPath = "checker.png";
+                    UZ_LOG(Demo, Info, "CPU-baked BaseColor ({}x{})",
+                           baseColorBake.width, baseColorBake.height);
+                } else {
+                    groundMat_.albedoPath = "checker.png";
+                }
+
+                BakeResult roughnessBake = MaterialBaker::BakeRoughness(
+                    graph, kBakeRoughnessSize, kBakeRoughnessSize);
+                if (!roughnessBake.success) {
+                    UZ_LOG(Demo, Warning,
+                           "CPU Roughness bake failed — no roughness texture for ground");
+                }
             }
         } else {
             UZ_LOG(Demo, Warning, "Failed to load mi_procgrid.uzmat — using fallback checker.png");
@@ -378,6 +394,25 @@ void PBRTest::OnStart() {
     UZ_LOG(Demo, Info, "PBR Test started — {} spheres (9 materials), 4 point lights + sun + sky, "
            "screen percentage={}%",
            kSphereCount, GetRenderer().GetScreenPercentage());
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OnStop
+// ─────────────────────────────────────────────────────────────────────────────
+
+void PBRTest::OnStop() {
+    auto& renderer = GetRenderer();
+    auto* device = renderer.GetDevice();
+    if (device) {
+        if (gpuBakedBaseColor_.IsValid()) {
+            device->DestroyTexture(gpuBakedBaseColor_);
+            gpuBakedBaseColor_ = RHITextureHandle::Invalid();
+        }
+        if (gpuBakedRoughness_.IsValid()) {
+            device->DestroyTexture(gpuBakedRoughness_);
+            gpuBakedRoughness_ = RHITextureHandle::Invalid();
+        }
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

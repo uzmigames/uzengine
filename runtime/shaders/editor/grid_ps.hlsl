@@ -8,8 +8,12 @@
 cbuffer GridCB : register(b1) {
     row_major float4x4 invViewProj;
     row_major float4x4 viewProj;
-    float4 cameraPos;   // xyz = world position
-    float4 gridParams;  // x = minorSpacing, y = majorInterval, z = fadeDistance
+    float4 cameraPos;       // xyz = world position
+    float4 gridParams;      // x = minorSpacing, y = majorInterval, z = fadeDistance
+    uint   sceneDepthSrv;   // Bindless SRV index for scene depth (0xFFFFFFFF = use hardware depth test)
+    float  displayWidth;    // Display-resolution width (for pixel-to-UV mapping)
+    float  displayHeight;   // Display-resolution height
+    float  _pad0;
 };
 
 struct PSInput {
@@ -104,10 +108,29 @@ PSOutput main(PSInput input) {
 
     // Project Z=0 hit point back to clip space for correct depth
     float4 clipPos = mul(float4(worldPos, 1.0), viewProj);
-    float depth = clipPos.z / clipPos.w;
+    float gridDepth = clipPos.z / clipPos.w;
+
+    // ── Manual depth occlusion when no hardware depth buffer is attached ──
+    // When screen percentage != 100%, the scene depth buffer is at render
+    // resolution which doesn't match the display-resolution backbuffer.
+    // Instead of hardware depth test, we sample the scene depth via bindless
+    // and discard pixels where geometry is closer than the grid plane.
+    // Reversed-Z: larger depth values are closer to the camera.
+    if (sceneDepthSrv != 0xFFFFFFFF) {
+        // Map display-resolution pixel coords to [0,1] UVs for depth sampling
+        float2 uv = input.position.xy / float2(displayWidth, displayHeight);
+        uv = saturate(uv);
+        Texture2D<float> depthTex = ResourceDescriptorHeap[sceneDepthSrv];
+        SamplerState pointSampler = SamplerDescriptorHeap[0];
+        float sceneDepth = depthTex.SampleLevel(pointSampler, uv, 0);
+        // Reversed-Z: scene geometry with depth > gridDepth is closer
+        if (sceneDepth > gridDepth) {
+            discard;
+        }
+    }
 
     PSOutput output;
     output.color = float4(color, alpha);
-    output.depth = depth;
+    output.depth = gridDepth;
     return output;
 }

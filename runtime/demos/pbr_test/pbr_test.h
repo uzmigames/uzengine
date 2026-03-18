@@ -17,6 +17,7 @@
 #include "material_asset_graph.h"
 #include "material_instance.h"
 #include "material_shader_cache.h"
+#include "rhi_types.h"
 
 namespace uz {
 
@@ -25,6 +26,7 @@ public:
     ApplicationConfig Configure() override;
     void OnStart() override;
     void OnUpdate(float dt) override;
+    void OnStop() override;
 
 private:
     static constexpr int kSphereCount = 9;
@@ -55,6 +57,10 @@ private:
 
     MaterialShaderCache materialCache_;     ///< Compilation cache for graph materials
     MaterialAssetGraph  graphMaterial_;     ///< Graph-based material loaded from .uzmat
+
+    // ── GPU-baked material textures (owned, must be destroyed at shutdown) ──
+    RHITextureHandle gpuBakedBaseColor_{};
+    RHITextureHandle gpuBakedRoughness_{};
 };
 
 } // namespace uz

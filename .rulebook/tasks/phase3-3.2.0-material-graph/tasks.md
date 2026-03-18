@@ -41,6 +41,7 @@
 - [x] 5.6 Implement `MaterialBaker` CPU-side graph evaluator (`material_baker.h/.cpp`). Walks the graph in topological order, evaluates all expression types per texel, produces RGBA8 pixel data. Supports BakeBaseColor/BakeRoughness/BakeMetallic/BakeNormal/BakeAO.
 - [x] 5.7 Wire MaterialGraph into PBR test demo: loads `mi_procgrid.uzmat`, compiles to HLSL, bakes BaseColor (512x512) and Roughness (256x256) via MaterialBaker, writes PNG textures to disk, assigns to ground material for rendering via standard texture path. End-to-end pipeline verified with visual screenshot.
 - [x] 5.8 Build system integration: added `engine/material` and `engine/material/compiler` to runtime build.zig (include paths + source compilation) and demo common build (include paths). Added `mi_procgrid.uzmat` to demo deploy list.
+- [x] 5.9 Implement `GpuMaterialBaker` (`gpu_material_baker.h/.cpp`): GPU compute dispatch replaces 8-second CPU MaterialBaker bottleneck. Generates compute shader wrapper around material HLSL, compiles via ShaderPipeline (cached), dispatches 8x8 thread groups, returns RGBA8 UAV+SRV texture directly. PBR test demo updated to use GPU bake for BaseColor (1024x1024) and Roughness (512x512). Added GetDevice()/GetShaderManager() accessors to SceneRenderer.
 
 ## 6. Testing
 - [ ] 6.1 Unit test: graph serialization round-trip (save → load → compare).

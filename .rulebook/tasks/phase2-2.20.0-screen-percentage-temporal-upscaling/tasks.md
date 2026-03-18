@@ -10,23 +10,23 @@
 
 ## 2. Camera Jitter (Halton Sequence)
 
-- [ ] 2.1 Create `halton.h` with `HaltonSequence(index, base)` function. @source UE5 Halton.ush / SceneView.cpp TemporalJitterPixels
-- [ ] 2.2 Add `m_jitterX`/`m_jitterY` (sub-pixel offset in [-0.5, 0.5]) to `Camera` class
-- [ ] 2.3 Add `Camera::SetJitter(float jx, float jy)` that applies jitter to projection matrix as a translation in clip space: `proj[2][0] += jx * 2.0/renderWidth`, `proj[2][1] += jy * 2.0/renderHeight`
-- [ ] 2.4 In `RenderFrame()`, advance Halton index each frame, compute jitter from `Halton(frameIndex, 2)` and `Halton(frameIndex, 3)`, call `camera.SetJitter(jx, jy)`. Only jitter when screen percentage < 100 or TAA enabled
-- [ ] 2.5 Upload jittered `viewProj` to `PerFrameCB`. Store un-jittered `viewProj` separately for effects that need stable projection (skybox, UI)
-- [ ] 2.6 Add `jitterOffset` (float2) to `PerFrameCB` — shaders need it for TAA resolve
+- [x] 2.1 Created `engine/math/halton.h` with `Halton(index, base)` and `Halton23(index, outX, outY)`. @source UE5 Math/Halton.h:9. Replaced static 8-sample table in frame_setup.cpp with runtime `Halton23()` call. Supports arbitrary sample counts via `kDefaultJitterSequenceLength`.
+- [x] 2.2 Jitter stored in `FrameContext::jitterX/jitterY` (sub-pixel offset in [-0.5, 0.5]). Not in Camera class — applied externally to viewProj in frame_setup.cpp. This matches UE5 approach (HackAddTemporalAAProjectionJitter modifies viewProj, not camera).
+- [x] 2.3 Jitter applied as clip-space translation in frame_setup.cpp:194-195: `viewProj[2][0] += jx * 2.0/renderW`, `viewProj[2][1] += jy * -2.0/renderH`. @source UE5 SceneVisibility.cpp:5243.
+- [x] 2.4 In frame_setup.cpp, Halton index advances each frame (`frameIndex % 8`), jitter computed from `kHalton23[jitterIdx]`. Only jitters when `taaActive` (TAA enabled + history valid + bindless).
+- [x] 2.5 Jittered `viewProj` uploaded to `PerFrameCB`. Unjittered stored in `ctx.unjitteredViewProj` for effects that need stable projection (velocity reprojection, skybox).
+- [x] 2.6 `jitterOffset` passed to TAA via separate `TaaCB` at b2 (not in PerFrameCB). This avoids growing PerFrameCB beyond 512 bytes.
 
 ## 3. Previous Frame ViewProj (Motion Vectors Support)
 
-- [ ] 3.1 Add `prevViewProj` (Mat4, 64 bytes) to `PerFrameCB` using space from `_pad2[35]`. Reduce padding accordingly
-- [ ] 3.2 Store `m_prevViewProj` in `SceneRenderer`, update each frame BEFORE computing new viewProj
-- [ ] 3.3 Upload `prevViewProj` to CB every frame. First frame: `prevViewProj = viewProj` (no motion)
+- [x] 3.1 `prevViewProj` stored as `m_prevViewProj` in SceneRenderer and passed to velocity pass via `VelocityCB` (separate CB at b2). NOT in PerFrameCB — only 28 bytes of padding available (7 floats), a Mat4 requires 64 bytes. Adding it would require growing PerFrameCB to 768 bytes.
+- [x] 3.2 `m_prevViewProj` updated each frame AFTER TAA resolve: `m_prevViewProj = ctx.unjitteredViewProj` (frame_postprocess.cpp:184).
+- [x] 3.3 First frame: `m_prevViewProjValid = false` → velocity pass skipped, TAA blendWeight = 1.0 (use only current frame). From frame 2+: `m_prevViewProjValid = true`.
 
 ## 4. Velocity Pass (Wire Existing Implementation)
 
-- [ ] 4.1 Call `AddVelocityPass()` in `RenderFrame()` after GBuffer pass and before Lighting pass
-- [ ] 4.2 Create `VelocityCB` each frame with `invViewProj` (current) + `prevViewProj` (previous). Upload to CB ring
+- [x] 4.1 `AddVelocityPass()` called in frame_geometry.cpp:147, after GBuffer pass, before GTAO/Lighting. Guarded by `m_prevViewProjValid && m_gbuffer.velocity.IsValid()`.
+- [x] 4.2 `VelocityCB` created each frame with `prevViewProj` + `screenWidth/Height`. Uploaded to CB ring and passed to velocity pass.
 - [ ] 4.3 Verify `velocity_ps.hlsl` correctly computes per-pixel motion vectors from depth reprojection
 - [ ] 4.4 Verify velocity texture (RG16F) contains valid motion vectors via GPU readback diagnostic
 
@@ -73,7 +73,8 @@
 - [x] 8.1 TAA resolve is the upscale point. Scene color (render res) -> TAA history (display res). TAA resolve reads render-res scene color, outputs display-res history. taa_resolve_cs.hlsl updated for resolution mismatch (GetDimensions, UV-based coord mapping, display-res dispatch).
 - [x] 8.2 Tonemap reads TAA output (display res). Post-process SRV chain routes TAA history SRV to tonemap.
 - [x] 8.3 At 100% screen percentage, render res == display res. All paths are identity — no overhead. SampleBias(mipBias=0) == Sample. TAA dispatch/coords identical.
-- [ ] 8.4 FXAA (if enabled) runs after tonemap at display resolution
+- [x] 8.4 Overlay pass grid depth occlusion when screen percentage != 100%. Grid was rendering on top of geometry because depth buffer (render res) couldn't be attached to display-res backbuffer. Fixed via manual bindless depth sampling in grid_ps.hlsl — shader samples scene depth SRV and discards pixels where geometry is closer. Added no-depth PSO variant to EditorGrid.
+- [x] 8.5 FXAA (if enabled) runs after tonemap at display resolution. LDR intermediate created at display res (scene_lifecycle.cpp:319,916). FXAA pass uses vpWidth/vpHeight for viewport and invScreen params. Already correct.
 
 ## 9. Dynamic Resolution (GPU-Bound Adaptive)
 

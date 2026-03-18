@@ -83,6 +83,11 @@ bool BitmapFont::Init(IRHIDevice* device, IRHICommandList* cmdList, UploadContex
         }
     }
 
+    // ── Solid white pixel at (0,0) for rect rendering ──────────────────
+    // Overlay rects use the text pipeline with UV=(0,0). Setting pixel (0,0)
+    // to 0xFF ensures atlas.Sample().r == 1.0, so rect output = vertexColor.
+    atlasPixels[0] = 0xFF;
+
     // ── Extract glyph metrics ────────────────────────────────────────────
     float invW = 1.f / static_cast<float>(m_atlasWidth);
     float invH = 1.f / static_cast<float>(m_atlasHeight);

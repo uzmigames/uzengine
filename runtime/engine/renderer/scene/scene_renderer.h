@@ -42,6 +42,7 @@
 #include "postprocess/gtao_pass.h"
 #include "postprocess/hiz_pyramid_pass.h"
 #include "shadows/distance_field_shadow_config.h"
+#include "async_texture_decoder.h"  // TextureDecodeResult for m_deferredDecoded
 
 // Types needed by FrameContext struct (value members, not pointers)
 #include "per_frame_params.h"
@@ -456,6 +457,20 @@ public:
     /// The texture path, or empty string if the ID is invalid.
     [[nodiscard]] std::string GetTexturePath(uint32_t textureId) const;
 
+    // ── Low-level accessors (for subsystems needing direct GPU access) ────
+
+    /// Returns the RHI device pointer. Valid from Init() through Shutdown().
+    ///
+    /// Used by subsystems that need to create GPU resources outside the render
+    /// graph (e.g., GPU material baking, IBL baking).
+    [[nodiscard]] IRHIDevice* GetDevice() const noexcept { return m_device; }
+
+    /// Returns the shader manager. Valid from Init() through Shutdown().
+    ///
+    /// Used by subsystems that need to compile shaders at runtime (e.g.,
+    /// GPU material baking with dynamically generated HLSL).
+    [[nodiscard]] ShaderManager* GetShaderManager() const noexcept { return m_shaderMgr.get(); }
+
 private:
     IRHIDevice* m_device = nullptr;
 
@@ -747,6 +762,11 @@ private:
     /// Maps path -> slot index in m_textures, so we know where to store
     /// the TextureLoadResult when the decode completes.
     std::unordered_map<std::string, uint32_t> m_asyncPendingSlots;
+
+    /// Decoded textures waiting for GPU upload. Fed by PollCompleted(),
+    /// drained incrementally (kMaxUploadsPerFrame per frame) to avoid
+    /// large WaitIdle stalls when many textures complete at once.
+    std::vector<TextureDecodeResult> m_deferredDecoded;
 
     // ── Constants ──────────────────────────────────────────────────────────
 

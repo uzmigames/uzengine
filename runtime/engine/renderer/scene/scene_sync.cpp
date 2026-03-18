@@ -158,7 +158,28 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
             cmd.albedoTexture  = tex.handle;
         }
 
+        // ── GPU-baked materials: use pre-set SRV indices directly ──────────
+        // When a material has GPU-baked textures (e.g., from MaterialBakerGpu),
+        // the SRV indices are already set on the material — use them directly
+        // instead of path-based lookup. This avoids the file-based texture
+        // loading path entirely.
+        if (mat && mat->IsGpuResourcesLoaded()) {
+            const uint32_t albSrv  = mat->GetAlbedoSrvIndex();
+            const uint32_t nrmSrv  = mat->GetNormalSrvIndex();
+            const uint32_t rghSrv  = mat->GetRoughnessSrvIndex();
+            const uint32_t metSrv  = mat->GetMetallicSrvIndex();
+            const uint32_t aoSrv   = mat->GetAoSrvIndex();
+            const uint32_t emiSrv  = mat->GetEmissiveSrvIndex();
+            if (albSrv > 0) cmd.albedoSrvIndex    = albSrv;
+            if (nrmSrv > 0) cmd.normalSrvIndex    = nrmSrv;
+            if (rghSrv > 0) cmd.roughnessSrvIndex = rghSrv;
+            if (metSrv > 0) cmd.metallicSrvIndex  = metSrv;
+            if (aoSrv  > 0) cmd.aoSrvIndex        = aoSrv;
+            if (emiSrv > 0) cmd.emissiveSrvIndex   = emiSrv;
+        }
+
         // Bind textures from effective paths (material system or legacy component paths).
+        // Skipped for slots already set by GPU-baked materials above.
         auto bindTexFromPath = [&](const std::string& path, uint32_t& srvIndex, RHITextureHandle& handle) {
             if (path.empty()) return;
             auto texIt = m_textureMap.find(path);

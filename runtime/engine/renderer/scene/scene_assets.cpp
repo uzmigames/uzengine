@@ -248,58 +248,69 @@ void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {
     m_pendingTexturePaths.clear();
 
     // ── Poll async decoder and batch-upload completed textures ──────────
-    // All decoded textures are uploaded in a single command list submission
-    // with one WaitIdle at the end, instead of one WaitIdle per texture.
+    // Upload up to kMaxUploadsPerFrame textures per frame to avoid stalling
+    // the render thread with a large WaitIdle. Remaining decoded textures
+    // are kept in m_deferredDecoded for the next frame. This spreads the
+    // GPU upload cost across multiple frames instead of one large stall.
     if (!m_asyncDecoder) return;
 
-    auto decoded = m_asyncDecoder->PollCompleted();
-    if (decoded.empty()) return;
+    // Append newly completed decodes to the deferred queue.
+    auto newlyDecoded = m_asyncDecoder->PollCompleted();
+    for (auto& d : newlyDecoded) {
+        m_deferredDecoded.push_back(std::move(d));
+    }
 
-    UZ_LOG(Renderer, Info, "SceneRenderer: batch-uploading {} async-decoded textures", decoded.size());
+    if (m_deferredDecoded.empty()) return;
 
-    // Accumulate all staging buffers in a single UploadContext so we can
-    // release them after a single GPU fence wait.
+    // Limit uploads per frame to avoid GPU stalls.
+    // 4 textures/frame at 500 FPS = all 43 textures loaded in ~0.2 seconds
+    // with no perceptible frame drops.
+    static constexpr uint32_t kMaxUploadsPerFrame = 4;
+
+    const uint32_t toProcess = std::min(
+        static_cast<uint32_t>(m_deferredDecoded.size()), kMaxUploadsPerFrame);
+
+    UZ_LOG(Renderer, Debug, "SceneRenderer: uploading {}/{} decoded textures this frame",
+           toProcess, m_deferredDecoded.size());
+
     UploadContext batchUpload(m_device);
     uint32_t uploadedCount = 0;
+    uint32_t processed = 0;
 
-    for (auto& d : decoded) {
-        // Look up which slot this decode result belongs to.
+    for (uint32_t i = 0; i < toProcess; ++i) {
+        auto& d = m_deferredDecoded[i];
+
         auto pendingIt = m_asyncPendingSlots.find(d.path);
         if (pendingIt == m_asyncPendingSlots.end()) {
-            // Orphaned result — path was removed from pending map (shouldn't
-            // happen, but handle gracefully).
             if (d.pixels) {
                 stbi_image_free(d.pixels);
+                d.pixels = nullptr;
             }
             UZ_LOG(Renderer, Warning,
                    "SceneRenderer: async decode completed for unknown path '{}' — discarding",
                    d.path);
+            ++processed;
             continue;
         }
 
         const uint32_t slotIndex = pendingIt->second;
 
         if (!d.pixels) {
-            // Decode failed — slot remains invalid (placeholder).
             UZ_LOG(Renderer, Error,
                    "SceneRenderer: async decode failed for '{}' (slot={})",
                    d.path, slotIndex);
             m_asyncPendingSlots.erase(pendingIt);
+            ++processed;
             continue;
         }
 
-        // Upload decoded pixels to GPU via deferred (non-flushing) upload.
-        // This records copy commands but does NOT call End/Execute/WaitIdle.
         TextureLoadResult result = TextureLoader::UploadPixelsDeferred(
             m_device, cmdList, d.pixels, d.width, d.height,
             d.path.c_str(), &batchUpload);
 
-        // Free the stbi-allocated pixel data — the upload context has already
-        // copied it into staging buffers.
         stbi_image_free(d.pixels);
         d.pixels = nullptr;
 
-        // Free pre-computed mipchain data (malloc'd by worker thread)
         for (auto* mip : d.mipData) {
             if (mip) std::free(mip);
         }
@@ -318,9 +329,16 @@ void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {
         }
 
         m_asyncPendingSlots.erase(pendingIt);
+        ++processed;
     }
 
-    // Flush the command list ONCE for all batched uploads, then wait.
+    // Remove processed entries from the front of the deferred queue.
+    if (processed > 0) {
+        m_deferredDecoded.erase(m_deferredDecoded.begin(),
+                                m_deferredDecoded.begin() + processed);
+    }
+
+    // Flush the command list ONCE for this frame's batch, then wait.
     if (uploadedCount > 0) {
         cmdList->End();
         cmdList->Execute();

@@ -67,7 +67,15 @@ public:
     /// - `cmdList` — Active command list with render target bound.
     /// - `cbRing` — CB ring allocator for uploading the grid constant buffer.
     /// - `camera` — Camera to extract inverse VP and position from.
-    void Draw(IRHICommandList* cmdList, CBRingAllocator& cbRing, const Camera& camera);
+    /// - `sceneDepthSrv` — Bindless SRV index for scene depth texture.
+    ///   Pass UINT32_MAX when hardware depth testing is active (depth buffer attached).
+    ///   When != UINT32_MAX, the shader performs manual depth occlusion via
+    ///   bindless sampling (used when screen percentage != 100%).
+    /// - `displayWidth` / `displayHeight` — Display resolution for pixel-to-UV
+    ///   mapping (only used when sceneDepthSrv != UINT32_MAX).
+    void Draw(IRHICommandList* cmdList, CBRingAllocator& cbRing, const Camera& camera,
+              uint32_t sceneDepthSrv = UINT32_MAX,
+              float displayWidth = 0.f, float displayHeight = 0.f);
 
     /// Releases GPU resources.
     void Shutdown();
@@ -83,7 +91,8 @@ public:
 
 private:
     IRHIDevice* m_device = nullptr;
-    RHIPipelineHandle m_pipeline{};
+    RHIPipelineHandle m_pipeline{};           ///< With hardware depth test (screen percentage == 100%).
+    RHIPipelineHandle m_pipelineNoDepth{};    ///< Without depth attachment (screen percentage != 100%).
     RHIShaderHandle m_vs{};
     RHIShaderHandle m_ps{};
 

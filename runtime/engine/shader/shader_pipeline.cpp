@@ -36,6 +36,9 @@
 #include <mutex>
 #include <sstream>
 
+#define XXH_INLINE_ALL
+#include <xxhash.h>
+
 namespace uz {
 
 UZ_DEFINE_STAT(RHI, ShaderCompiles);
@@ -710,6 +713,44 @@ std::vector<uint8_t> ShaderPipeline::LoadBytecodeFromSource(
         }
     }
 
+    // Compute identity hash from raw source text + defines + backend + bindless flag.
+    // Mirrors ShaderSourceManager::ComputeIdentityHash but operates on raw source
+    // instead of a VFS path, so inline shaders also benefit from the bytecode cache.
+    const uint64_t identityHash = [&]() {
+        XXH64_state_t* state = XXH64_createState();
+        XXH64_reset(state, 0);
+
+        // Source text
+        XXH64_update(state, hlslSource.data(), hlslSource.size());
+
+        // Defines (sorted for determinism, matching ComputeIdentityHash)
+        std::vector<std::string> sortedDefines = defineStrings;
+        std::sort(sortedDefines.begin(), sortedDefines.end());
+        for (const auto& def : sortedDefines) {
+            XXH64_update(state, def.data(), def.size());
+        }
+
+        // Target backend string
+        const auto& backend = m_impl->config.targetBackend;
+        XXH64_update(state, backend.data(), backend.size());
+
+        // Bindless flag
+        const uint8_t bindless = m_impl->config.bindless ? 1 : 0;
+        XXH64_update(state, &bindless, sizeof(bindless));
+
+        const uint64_t hash = XXH64_digest(state);
+        XXH64_freeState(state);
+        return hash;
+    }();
+
+    // Check the bytecode cache before compiling
+    auto cached = m_impl->cache.Lookup(m_impl->config.targetBackend, identityHash);
+    if (cached) {
+        UZ_STAT_INCREMENT(RHI, CacheHits);
+        return std::move(*cached);
+    }
+    UZ_STAT_INCREMENT(RHI, CacheMisses);
+
     ShaderCompileDesc desc;
     desc.source = hlslSource;
     desc.sourceName = name;
@@ -733,7 +774,10 @@ std::vector<uint8_t> ShaderPipeline::LoadBytecodeFromSource(
                name, compileResult.errors);
         return {};
     }
+    UZ_STAT_INCREMENT(RHI, ShaderCompiles);
 
+    m_impl->cache.Store(m_impl->config.targetBackend, identityHash,
+                        compileResult.bytecode, name);
     return compileResult.bytecode;
 }
 

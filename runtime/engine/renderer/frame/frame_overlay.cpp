@@ -43,6 +43,10 @@ void SceneRenderer::RegisterOverlayPasses(rg::RgBuilder& rgBuilder, FrameContext
         const bool attachDepth = (m_renderWidth == m_width && m_renderHeight == m_height);
         if (attachDepth) {
             pb.Write(ctx.depthRes, RHIResourceState::DepthStencilWrite);
+        } else {
+            // When depth can't be attached (dimension mismatch), read it as SRV
+            // so the grid shader can perform manual depth occlusion via bindless.
+            pb.Read(ctx.depthRes, RHIResourceState::ShaderResource);
         }
         pb.SetExecutionCallback([this, &ctx, attachDepth](IRHICommandList* cmd, const rg::RgPassResources& res) {
             auto bb = res.GetTexture(ctx.bbRes);
@@ -72,7 +76,12 @@ void SceneRenderer::RegisterOverlayPasses(rg::RgBuilder& rgBuilder, FrameContext
             sc.bottom = static_cast<int32_t>(ctx.swapChain->GetHeight());
             cmd->SetScissor(sc);
 
-            m_editorGrid->Draw(cmd, *m_cbRing, *m_camera);
+            // When hardware depth is attached (screen percentage == 100%),
+            // use UINT32_MAX so the shader uses hardware depth test.
+            // Otherwise pass the scene depth SRV for manual shader-based occlusion.
+            const uint32_t depthSrv = attachDepth ? UINT32_MAX : m_gbuffer.depthSRV;
+            m_editorGrid->Draw(cmd, *m_cbRing, *m_camera,
+                               depthSrv, ctx.vpWidth, ctx.vpHeight);
 
             if (m_statsOverlayInitialized) {
                 const uint32_t drawCount = ctx.useInstancing

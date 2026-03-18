@@ -55,14 +55,20 @@ struct PushConstants {
 ConstantBuffer<PushConstants> push : register(b0);
 #endif
 
-/// Per-frame CB at b1 — must match C++ PerFrameCB struct exactly.
+/// Per-frame CB at b1 — selective fields from C++ PerFrameCB using packoffset.
+/// Only the fields needed by the GBuffer PS are declared; the rest are
+/// accessed by lighting/post-process shaders that declare the full layout.
 cbuffer PerFrameCB : register(b1) {
-    row_major float4x4 viewProj;
-    float4   cameraPos;
-    float4   timeParams;
-    float4   lightDir;
-    float4   lightColor;
-    float4   ambientColor;
+    row_major float4x4 viewProj  : packoffset(c0);   // offset 0
+    float4   cameraPos           : packoffset(c4);    // offset 64
+    float4   timeParams          : packoffset(c5);    // offset 80
+    float4   lightDir            : packoffset(c6);    // offset 96
+    float4   lightColor          : packoffset(c7);    // offset 112
+    float4   ambientColor        : packoffset(c8);    // offset 128
+    /// @source UE5 ViewUniformShaderParameters.h — MaterialTextureMipBias
+    /// Global mip LOD bias for screen percentage compensation.
+    /// 0 at 100%, negative when rendering below native resolution.
+    float    mipBias             : packoffset(c30);   // offset 480
 };
 
 /// Per-object CB at b2 — must match C++ PerObjectCB struct exactly.
@@ -128,32 +134,35 @@ GBufferOutput main(PSInput input) {
     float2 uv = input.texcoord * uvScale + uvOffset;
 
     // ── Sample PBR texture maps (index 0 = use default value) ──
+    // SampleBias applies the global mipBias to compensate for screen percentage.
+    // At 100% screen percentage, mipBias = 0 and SampleBias is identical to Sample.
+    // @source UE5 ViewUniformShaderParameters.h — MaterialTextureMipBias
 #ifdef UZ_BINDLESS
     if (albedoIndex > 0) {
         Texture2D<float4> tex = ResourceDescriptorHeap[albedoIndex];
-        albedo = tex.Sample(linearSampler, uv).rgb;
+        albedo = tex.SampleBias(linearSampler, uv, mipBias).rgb;
     }
     if (roughnessIndex > 0) {
         Texture2D<float4> tex = ResourceDescriptorHeap[roughnessIndex];
-        roughness = tex.Sample(linearSampler, uv).r;
+        roughness = tex.SampleBias(linearSampler, uv, mipBias).r;
     }
     if (metallicIndex > 0) {
         Texture2D<float4> tex = ResourceDescriptorHeap[metallicIndex];
-        metallic = tex.Sample(linearSampler, uv).r;
+        metallic = tex.SampleBias(linearSampler, uv, mipBias).r;
     }
     if (aoIndex > 0) {
         Texture2D<float4> tex = ResourceDescriptorHeap[aoIndex];
-        ao = tex.Sample(linearSampler, uv).r;
+        ao = tex.SampleBias(linearSampler, uv, mipBias).r;
     }
 #else
     // SM5 (Vulkan non-bindless): textures are always bound via SetFragmentTexture
     // with fallback white/flat-normal when no material texture is assigned.
     // Sample unconditionally — index-based guards fail in Vulkan due to cbuffer
     // std140 layout differences for row_major float4x4 structs.
-    albedo    = albedoTexture.Sample(linearSampler, uv).rgb;
-    roughness = roughnessTexture.Sample(linearSampler, uv).r;
-    metallic  = metallicTexture.Sample(linearSampler, uv).r;
-    ao        = aoTexture.Sample(linearSampler, uv).r;
+    albedo    = albedoTexture.SampleBias(linearSampler, uv, mipBias).rgb;
+    roughness = roughnessTexture.SampleBias(linearSampler, uv, mipBias).r;
+    metallic  = metallicTexture.SampleBias(linearSampler, uv, mipBias).r;
+    ao        = aoTexture.SampleBias(linearSampler, uv, mipBias).r;
 #endif
 
     // ── Surface normal (with optional tangent-space normal mapping) ──
@@ -167,7 +176,7 @@ GBufferOutput main(PSInput input) {
         float3x3 TBN = float3x3(T, B, N);
 
         Texture2D<float4> nrmTex = ResourceDescriptorHeap[normalIndex];
-        float4 normalSample = nrmTex.Sample(linearSampler, uv);
+        float4 normalSample = nrmTex.SampleBias(linearSampler, uv, mipBias);
 
         float3 normalTS;
         normalTS.xy = normalSample.rg * 2.0f - 1.0f;
@@ -186,7 +195,7 @@ GBufferOutput main(PSInput input) {
         float3 B = cross(N, T) * input.tangentWS.w;
         float3x3 TBN = float3x3(T, B, N);
 
-        float4 normalSample = normalTexture.Sample(linearSampler, uv);
+        float4 normalSample = normalTexture.SampleBias(linearSampler, uv, mipBias);
 
         float3 normalTS;
         normalTS.xy = normalSample.rg * 2.0f - 1.0f;
@@ -227,12 +236,12 @@ GBufferOutput main(PSInput input) {
     if (emissiveIndex > 0) {
         // Sample emissive texture map (RGB, linear)
         Texture2D<float4> emissiveTex = ResourceDescriptorHeap[emissiveIndex];
-        emissive = emissiveTex.Sample(linearSampler, uv).rgb;
+        emissive = emissiveTex.SampleBias(linearSampler, uv, mipBias).rgb;
     }
 #else
     // SM5 path: emissiveTexture is always bound (real map or fallback black).
     // Fallback black (0,0,0) produces zero emissive contribution — correct default.
-    emissive = emissiveTexture.Sample(linearSampler, uv).rgb;
+    emissive = emissiveTexture.SampleBias(linearSampler, uv, mipBias).rgb;
 #endif
 
     // Apply emissive color tint and intensity multiplier.

@@ -323,10 +323,15 @@ void TextRenderer::Render(IRHICommandList* cmdList, CBRingAllocator& cbRing,
 
     if (m_bindless) {
         // ── SM6.6 bindless: vertex fetch via ResourceDescriptorHeap ──────
+        // Draw rects first (background), then text on top.
+        // Rects use the text pipeline with font atlas — rect UVs point to a
+        // solid-white region of the atlas so atlas.Sample().r == 1.0, giving
+        // output = (vertexColor.rgb, vertexColor.a * 1.0) = vertexColor.
+        // This avoids a separate rect PSO that was failing to rasterize.
         if (totalRectVerts > 0) {
-            cmdList->SetPipeline(m_rectPipeline);
-            uint32_t rectConsts[4] = {m_vbSrvIndices[fi], 0, 0, 0};
-            cmdList->SetRootConstants(0, rectConsts, 4, 0);
+            cmdList->SetPipeline(m_textPipeline);
+            uint32_t rectConsts[4] = {m_vbSrvIndices[fi], font.GetAtlasSRVIndex(), m_samplerIndex, 0};
+            cmdList->SetRootConstants(0, rectConsts, 4);
             cmdList->SetRootCBV(1, alloc.bufferHandle, alloc.offsetBytes, alloc.cpuPtr, sizeof(OverlayCB));
             cmdList->Draw(totalRectVerts);
         }
@@ -334,7 +339,7 @@ void TextRenderer::Render(IRHICommandList* cmdList, CBRingAllocator& cbRing,
         if (totalTextVerts > 0) {
             cmdList->SetPipeline(m_textPipeline);
             uint32_t textConsts[4] = {m_vbSrvIndices[fi], font.GetAtlasSRVIndex(), m_samplerIndex, totalRectVerts};
-            cmdList->SetRootConstants(0, textConsts, 4, 0);
+            cmdList->SetRootConstants(0, textConsts, 4);
             cmdList->SetRootCBV(1, alloc.bufferHandle, alloc.offsetBytes, alloc.cpuPtr, sizeof(OverlayCB));
             cmdList->Draw(totalTextVerts);
         }

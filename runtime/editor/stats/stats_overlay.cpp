@@ -162,6 +162,7 @@ void StatsOverlay::BuildTextPanel() {
     float panelX = static_cast<float>(m_screenWidth) - kPanelWidth - kPanelPadding;
     float panelY = kPanelPadding;
 
+
     constexpr float kLineH = 16.f;
     constexpr float kSectionGap = 6.f;
 
@@ -175,7 +176,7 @@ void StatsOverlay::BuildTextPanel() {
     // Frame number = 1
     // Camera: header + Pos + Yaw/Pitch = 3
     // Total = ~20 lines + gaps
-    constexpr int kLineCount = 21;
+    constexpr int kLineCount = 22;
     float panelH = kLineH * kLineCount + kSectionGap * 3.f + kPanelPadding * 2.f;
     m_textRenderer.AddRect(panelX, panelY, kPanelWidth, panelH,
                            {0.05f, 0.05f, 0.08f, 0.85f});
@@ -222,12 +223,17 @@ void StatsOverlay::BuildTextPanel() {
                            m_bindless ? green : yellow);
     textY += kLineH;
 
-    // Resolution + screen percentage
+    // Resolution (display)
+    snprintf(buf, sizeof(buf), "Res: %s", m_resolution.c_str());
+    m_textRenderer.AddText(m_font, buf, textX, textY, gray);
+    textY += kLineH;
+
+    // Render resolution + screen percentage (only when != 100%)
     if (m_screenPercentage < 99.5f || m_screenPercentage > 100.5f) {
-        snprintf(buf, sizeof(buf), "Res: %s (render: %ux%u @ %.0f%%)",
-                 m_resolution.c_str(), m_renderWidth, m_renderHeight, m_screenPercentage);
+        snprintf(buf, sizeof(buf), "  render: %ux%u @ %.0f%%",
+                 m_renderWidth, m_renderHeight, m_screenPercentage);
     } else {
-        snprintf(buf, sizeof(buf), "Res: %s", m_resolution.c_str());
+        buf[0] = '\0';  // skip line at 100%
     }
     m_textRenderer.AddText(m_font, buf, textX, textY, gray);
     textY += kLineH;

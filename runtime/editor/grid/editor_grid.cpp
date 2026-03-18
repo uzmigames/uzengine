@@ -25,10 +25,14 @@ UZ_DEFINE_LOG_CATEGORY(EditorGrid, Info);
 // ─────────────────────────────────────────────────────────────────────────────
 
 struct GridCB {
-    Mat4 invViewProj;
-    Mat4 viewProj;
-    Vec4 cameraPos;     // xyz = position, w = unused
-    Vec4 gridParams;    // x = minorSpacing, y = majorInterval, z = fadeDistance, w = unused
+    Mat4     invViewProj;
+    Mat4     viewProj;
+    Vec4     cameraPos;         // xyz = position, w = unused
+    Vec4     gridParams;        // x = minorSpacing, y = majorInterval, z = fadeDistance, w = unused
+    uint32_t sceneDepthSrv;     // Bindless SRV index (UINT32_MAX = use hardware depth test)
+    float    displayWidth;      // Display-resolution width (for pixel-to-UV mapping)
+    float    displayHeight;     // Display-resolution height
+    float    _pad0;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -103,6 +107,21 @@ bool EditorGrid::Init(IRHIDevice* device, ShaderPipeline& pipeline,
         return false;
     }
 
+    // No-depth PSO variant — used when screen percentage != 100% and the depth
+    // buffer dimensions don't match the display-resolution backbuffer.
+    // Depth occlusion is handled manually in the pixel shader via bindless
+    // scene depth sampling instead of hardware depth test.
+    desc.depthStencil.depthEnable = false;
+    desc.depthStencil.depthWrite  = false;
+    desc.depthStencilFormat       = RHIFormat::Unknown;
+    desc.debugName = "EditorGridPipeline_NoDepth";
+
+    m_pipelineNoDepth = device->CreateGraphicsPipeline(desc);
+    if (!m_pipelineNoDepth.IsValid()) {
+        UZ_LOG(EditorGrid, Error, "Failed to create grid no-depth pipeline");
+        return false;
+    }
+
     UZ_LOG(EditorGrid, Info, "Editor grid initialized (spacing={}, major={}, fade={})",
            m_minorSpacing, m_majorInterval, m_fadeDistance);
     return true;
@@ -117,21 +136,27 @@ void EditorGrid::Shutdown() {
 // Draw
 // ─────────────────────────────────────────────────────────────────────────────
 
-void EditorGrid::Draw(IRHICommandList* cmdList, CBRingAllocator& cbRing, const Camera& camera) {
+void EditorGrid::Draw(IRHICommandList* cmdList, CBRingAllocator& cbRing, const Camera& camera,
+                      uint32_t sceneDepthSrv, float displayWidth, float displayHeight) {
     Mat4 vp = camera.GetViewProjection();
     Mat4 invVP = vp.inverse();
     Vec3 camPos = camera.GetPosition();
 
     GridCB cb{};
-    cb.invViewProj = invVP;
-    cb.viewProj = vp;
-    cb.cameraPos = {camPos.x, camPos.y, camPos.z, 0.f};
-    cb.gridParams = {m_minorSpacing, static_cast<float>(m_majorInterval), m_fadeDistance, 0.f};
+    cb.invViewProj    = invVP;
+    cb.viewProj       = vp;
+    cb.cameraPos      = {camPos.x, camPos.y, camPos.z, 0.f};
+    cb.gridParams     = {m_minorSpacing, static_cast<float>(m_majorInterval), m_fadeDistance, 0.f};
+    cb.sceneDepthSrv  = sceneDepthSrv;
+    cb.displayWidth   = displayWidth;
+    cb.displayHeight  = displayHeight;
+    cb._pad0          = 0.f;
 
     CBAllocation alloc = cbRing.Allocate(sizeof(GridCB));
     std::memcpy(alloc.cpuPtr, &cb, sizeof(GridCB));
 
-    cmdList->SetPipeline(m_pipeline);
+    const bool useNoDepthPSO = (sceneDepthSrv != UINT32_MAX);
+    cmdList->SetPipeline(useNoDepthPSO ? m_pipelineNoDepth : m_pipeline);
     cmdList->SetRootCBV(1, alloc.bufferHandle, alloc.offsetBytes, alloc.cpuPtr, sizeof(GridCB));
     cmdList->Draw(3); // Fullscreen triangle — 3 vertices, no VB
 }

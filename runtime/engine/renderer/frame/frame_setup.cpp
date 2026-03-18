@@ -28,6 +28,7 @@
 #include "log.h"
 #include "editor_grid.h"
 #include "stats_overlay.h"
+#include "halton.h"
 
 #include <algorithm>
 #include <cmath>
@@ -141,25 +142,7 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
     // ── TAA Jitter — Halton(2,3) sub-pixel offset on the projection matrix ──
     // @source UE5 SceneVisibility.cpp:5240-5243 — TemporalJitterPixels
     // @source UE5 SceneVisibility.cpp:5243 — HackAddTemporalAAProjectionJitter(SampleX * 2/W, SampleY * -2/H)
-    //
-    // Halton(2,3) 8-sample sequence pre-computed, centered around 0.
-    // UE5 uses a full Halton sequence with Faure permutations (HaltonUtilities.cpp),
-    // but the standard Halton(2,3) 8-sample cycle produces equivalent low-discrepancy
-    // jitter for TAA convergence.
-    //
-    // Values: Halton base-2 = {1/2, 1/4, 3/4, 1/8, 5/8, 3/8, 7/8, ...}
-    //         Halton base-3 = {1/3, 2/3, 1/9, 4/9, 7/9, 2/9, 5/9, ...}
-    // Centered by subtracting 0.5 to get [-0.5, 0.5] range.
-    static const float kHalton23[8][2] = {
-        { 0.5f - 0.5f,   1.0f/3.0f - 0.5f },  // {0.0,  -0.167}
-        { 0.25f - 0.5f,  2.0f/3.0f - 0.5f },  // {-0.25, 0.167}
-        { 0.75f - 0.5f,  1.0f/9.0f - 0.5f },  // {0.25, -0.389}
-        { 0.125f - 0.5f, 4.0f/9.0f - 0.5f },  // {-0.375, -0.056}
-        { 0.625f - 0.5f, 7.0f/9.0f - 0.5f },  // {0.125,  0.278}
-        { 0.375f - 0.5f, 2.0f/9.0f - 0.5f },  // {-0.125, -0.278}
-        { 0.875f - 0.5f, 5.0f/9.0f - 0.5f },  // {0.375,  0.056}
-        { 0.0625f - 0.5f, 8.0f/9.0f - 0.5f }, // {-0.4375, 0.389}
-    };
+    // @source UE5 Math/Halton.h:9 — Halton(Index, Base) radical-inverse sequence
 
     ctx.jitterX = 0.f;
     ctx.jitterY = 0.f;
@@ -170,9 +153,10 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
                  && m_device->IsBindless();  // TAA compute requires bindless
 
     if (ctx.taaActive) {
-        const uint32_t jitterIdx = ctx.frameIndex % 8;
-        ctx.jitterX = kHalton23[jitterIdx][0];
-        ctx.jitterY = kHalton23[jitterIdx][1];
+        // 1-based index into Halton(2,3) sequence, cycled every 8 samples.
+        // @source UE5 SceneRendering.cpp:974 — TemporalJitterSequenceLength
+        const int32_t jitterIdx = static_cast<int32_t>((ctx.frameIndex % kDefaultJitterSequenceLength) + 1);
+        Halton23(jitterIdx, ctx.jitterX, ctx.jitterY);
     }
 
     // Store unjittered viewProj for reprojection and velocity computation.
