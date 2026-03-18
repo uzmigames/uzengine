@@ -692,16 +692,43 @@ static int SceneSetMaterial(lua_State* L) {
     // Create a Material asset owned by the Lua material storage.
     auto mat = std::make_unique<Material>();
 
-    // Only set emissive params if emissive_intensity field is present.
-    lua_getfield(L, 2, "emissive_intensity");
-    const bool hasEmissiveParams = lua_isnumber(L, -1);
-    lua_pop(L, 1);
-    if (hasEmissiveParams) {
-        mat->emissiveColorR    = readFloat("emissive_color_r", 1.0f);
-        mat->emissiveColorG    = readFloat("emissive_color_g", 1.0f);
-        mat->emissiveColorB    = readFloat("emissive_color_b", 1.0f);
-        mat->emissiveIntensity = readFloat("emissive_intensity", 0.0f);
-    }
+    // ── Material parameters (all optional, use Material defaults if absent) ──
+
+    // Emissive
+    mat->emissiveColorR    = readFloat("emissive_color_r", 0.0f);
+    mat->emissiveColorG    = readFloat("emissive_color_g", 0.0f);
+    mat->emissiveColorB    = readFloat("emissive_color_b", 0.0f);
+    mat->emissiveIntensity = readFloat("emissive_intensity", 0.0f);
+
+    // PBR multipliers
+    mat->roughnessMultiplier = readFloat("roughness_multiplier", 1.0f);
+    mat->metallicMultiplier  = readFloat("metallic_multiplier", 1.0f);
+    mat->normalIntensity     = readFloat("normal_intensity", 1.0f);
+    mat->aoIntensity         = readFloat("ao_intensity", 1.0f);
+    mat->opacity             = readFloat("opacity", 1.0f);
+
+    // Base color tint
+    mat->baseColorTintR = readFloat("base_color_r", 1.0f);
+    mat->baseColorTintG = readFloat("base_color_g", 1.0f);
+    mat->baseColorTintB = readFloat("base_color_b", 1.0f);
+
+    // UV transform
+    mat->uvScaleX  = readFloat("uv_scale_x", 1.0f);
+    mat->uvScaleY  = readFloat("uv_scale_y", 1.0f);
+    mat->uvOffsetX = readFloat("uv_offset_x", 0.0f);
+    mat->uvOffsetY = readFloat("uv_offset_y", 0.0f);
+
+    // Rendering flags
+    auto readBool = [&](const char* field, bool defaultVal) -> bool {
+        lua_getfield(L, 2, field);
+        bool val = defaultVal;
+        if (lua_isboolean(L, -1)) val = lua_toboolean(L, -1) != 0;
+        lua_pop(L, 1);
+        return val;
+    };
+    mat->twoSided           = readBool("two_sided", false);
+    mat->alphaTest           = readBool("alpha_test", false);
+    mat->alphaClipThreshold  = readFloat("alpha_clip_threshold", 0.3333f);
 
     // Resolve texture IDs back to VFS paths and set them on the Material.
     // The renderer's SyncWorldToDrawList uses these paths to bind textures.
