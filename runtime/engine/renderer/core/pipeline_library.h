@@ -244,6 +244,19 @@ public:
     /// tonemap + sRGB gamma, outputs LDR to backbuffer.
     [[nodiscard]] RHIPipelineHandle GetTonemap();
 
+    /// Returns the velocity buffer pipeline (fullscreen_vs + velocity_ps, 1 RT RG16Float, no depth).
+    ///
+    /// Rasterizer: no cull (fullscreen triangle).
+    /// Depth: disabled.
+    /// Blend: None (write velocity directly).
+    /// Render target: RG16Float.
+    ///
+    /// @source UE5 VelocityRendering.cpp — velocity buffer generation PSO
+    ///
+    /// # Returns
+    /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
+    [[nodiscard]] RHIPipelineHandle GetVelocityPass();
+
     /// Returns the height fog pipeline (fullscreen_vs + height_fog_ps, 1 RT, alpha blend).
     ///
     /// Rasterizer: no cull (fullscreen triangle).
@@ -377,6 +390,29 @@ public:
     /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
     [[nodiscard]] RHIPipelineHandle GetMotionBlur();
 
+    /// Returns the motion blur tile max compute pipeline (motionblur_tilemax_cs.hlsl).
+    ///
+    /// For each 16x16 tile of the velocity buffer, finds the maximum velocity
+    /// magnitude and outputs the dominant velocity vector. Produces a downsampled
+    /// velocity texture at (width/16) x (height/16).
+    ///
+    /// @source UE5 MotionBlurVelocityFlatten.usf:79-165 — MainCS
+    ///
+    /// # Returns
+    /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
+    [[nodiscard]] RHIPipelineHandle GetMotionBlurTileMax();
+
+    /// Returns the motion blur neighbor max compute pipeline (motionblur_neighbormax_cs.hlsl).
+    ///
+    /// For each tile, finds the maximum velocity from its 3x3 neighborhood.
+    /// Ensures fast-moving objects produce blur extending beyond their tile.
+    ///
+    /// @source UE5 MotionBlurTileGather.usf:24-91 — MainCS
+    ///
+    /// # Returns
+    /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
+    [[nodiscard]] RHIPipelineHandle GetMotionBlurNeighborMax();
+
     /// Returns the DOF setup compute pipeline (dof_setup_cs.hlsl).
     ///
     /// Computes per-pixel Circle of Confusion from the depth buffer using
@@ -429,6 +465,7 @@ private:
     [[nodiscard]] bool EnsureShadowShaders();
     [[nodiscard]] bool EnsureSkyAtmospherePixelShader();
     [[nodiscard]] bool EnsureTonemapPixelShader();
+    [[nodiscard]] bool EnsureVelocityPixelShader();
     [[nodiscard]] bool EnsureHeightFogPixelShader();
     [[nodiscard]] bool EnsureTransmittanceLutShader();
     [[nodiscard]] bool EnsureMultiScatterLutShader();
@@ -442,6 +479,8 @@ private:
     [[nodiscard]] bool EnsureSsrResolveShader();
     [[nodiscard]] bool EnsureColorGradingLutShader();
     [[nodiscard]] bool EnsureMotionBlurShader();
+    [[nodiscard]] bool EnsureMotionBlurTileMaxShader();
+    [[nodiscard]] bool EnsureMotionBlurNeighborMaxShader();
     [[nodiscard]] bool EnsureDofSetupShader();
     [[nodiscard]] bool EnsureDofBlurShader();
 
@@ -473,6 +512,7 @@ private:
     RHIShaderHandle m_shadowVS         = RHIShaderHandle::Invalid();
     RHIShaderHandle m_skyAtmospherePS      = RHIShaderHandle::Invalid();
     RHIShaderHandle m_tonemapPS            = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_velocityPS           = RHIShaderHandle::Invalid();
     RHIShaderHandle m_heightFogPS          = RHIShaderHandle::Invalid();
     RHIShaderHandle m_transmittanceLutCS      = RHIShaderHandle::Invalid();
     RHIShaderHandle m_multiScatterLutCS      = RHIShaderHandle::Invalid();
@@ -486,6 +526,8 @@ private:
     RHIShaderHandle m_ssrResolveCS             = RHIShaderHandle::Invalid();
     RHIShaderHandle m_colorGradingLutCS        = RHIShaderHandle::Invalid();
     RHIShaderHandle m_motionBlurCS             = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_motionBlurTileMaxCS      = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_motionBlurNeighborMaxCS  = RHIShaderHandle::Invalid();
     RHIShaderHandle m_dofSetupCS               = RHIShaderHandle::Invalid();
     RHIShaderHandle m_dofBlurCS                = RHIShaderHandle::Invalid();
 
@@ -503,6 +545,7 @@ private:
     RHIPipelineHandle m_shadowDepthInstanced  = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_skyAtmosphere         = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_tonemap               = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_velocityPass           = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_heightFog             = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_transmittanceLut      = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_multiScatterLut      = RHIPipelineHandle::Invalid();
@@ -519,6 +562,8 @@ private:
     RHIPipelineHandle m_ssrResolve            = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_colorGradingLut       = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_motionBlur            = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_motionBlurTileMax     = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_motionBlurNeighborMax = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_dofSetup              = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_dofBlur               = RHIPipelineHandle::Invalid();
 };

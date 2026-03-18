@@ -606,13 +606,15 @@ bool VulkanDevice::CreateDescriptorSetLayout() {
     {
         VkSamplerCreateInfo ci = {};
         ci.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        /// @source UE5 SceneTexturesConfig.cpp:145 — 16x anisotropic filtering
         ci.magFilter = VK_FILTER_LINEAR;
         ci.minFilter = VK_FILTER_LINEAR;
         ci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
         ci.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
         ci.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
         ci.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
-        ci.maxAnisotropy = 1.0f;
+        ci.anisotropyEnable = VK_TRUE;
+        ci.maxAnisotropy = 16.0f;
         ci.minLod = 0.0f;
         ci.maxLod = VK_LOD_CLAMP_NONE;
         if (vkCreateSampler(m_device, &ci, nullptr, &m_staticSamplerLinear) != VK_SUCCESS) {

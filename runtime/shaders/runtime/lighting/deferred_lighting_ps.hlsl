@@ -156,7 +156,7 @@ struct PointLight {
     uint   flags;           ///< Bit 0 = useInverseSquaredFalloff.
 };
 
-/// Single spot light for the deferred lighting pass (64 bytes = four float4s).
+/// Single spot light for the deferred lighting pass (80 bytes = five float4s).
 /// Must match C++ SpotLightData struct exactly.
 ///
 /// @source UE5 DynamicLightingCommon.ush:58-66 — SpotAttenuation, SpotAttenuationMask
@@ -172,6 +172,8 @@ struct SpotLight {
     float  specularScale;         ///< Per-light specular multiplier (0-1).
     float  diffuseScale;          ///< Per-light diffuse multiplier (0-1).
     uint   flags;                 ///< Bit 0 = useInverseSquaredFalloff.
+    uint   shadowIndex;           ///< Index into localShadows[]. 0xFFFFFFFF = no shadow.
+    float3 _spotPad;              ///< Pad to 80 bytes (5 float4s).
 };
 
 /// Maximum number of point lights evaluated per pixel.
@@ -220,6 +222,21 @@ cbuffer ShadowDataCB : register(b4) {
     uint     useShadowCache;                 ///< 0 = no cache (single atlas), 1 = composite static + dynamic.
     uint     dfsEnabled;                     ///< 1 = Distance Field Shadows active, 0 = disabled.
     uint     dfsOutputSrvIndex;              ///< SRV index for DFS result texture (R16_FLOAT screen-space). 0xFFFFFFFF = not bound.
+    uint     localShadowAtlasIndex;          ///< SRV heap index for local light shadow atlas. 0xFFFFFFFF = none.
+    uint     localShadowCount;               ///< Number of active local light shadows.
+    float4   _csmPad[4];                     ///< Pad CSM section to 768 bytes.
+
+    // ── Local Light Shadow Data (16 entries, 80 bytes each = 1280 bytes) ──
+    // C++ struct: { Mat4 viewProj; float atlasOffsetX, atlasOffsetY, atlasScale, bias; }
+    // In HLSL cbuffer, the struct is naturally 80 bytes (64B mat + 16B float4) = 5 float4s.
+    // We use raw float4 arrays indexed by shadow index to avoid HLSL struct alignment surprises.
+    //
+    // localShadowData[i*5 + 0..3] = viewProj rows 0-3
+    // localShadowData[i*5 + 4]    = (atlasOffsetX, atlasOffsetY, atlasScale, bias)
+    //
+    // @source UE5 ShadowRendering.h:449 — FProjectedShadowInfo per-light shadow data
+    float4   localShadowData[80];            ///< 16 shadows * 5 float4s each = 80 float4s (1280 bytes).
+    float4   _localShadowPad[16];            ///< Pad to 2304 total bytes (9 * 256).
 };
 
 // Cascade array accessors defined in shadow_common.hlsli (included below).
@@ -253,6 +270,10 @@ Texture2D<float>   gtaoTexture : register(t9); ///< GTAO filtered AO (R8_UNORM).
 /// SM5 emissive G-Buffer at t10.
 /// @source UE5 BasePassPixelShader.usf:1541 — Color += Emissive
 Texture2D<float4>  gbufferEmissive : register(t10); ///< HDR emissive color (R16G16B16A16_FLOAT).
+
+/// SM5 local light shadow atlas at t11.
+/// Used for spot light shadow sampling when localShadowAtlasIndex != 0xFFFFFFFF.
+Texture2D<float>   localShadowAtlasTexture : register(t11); ///< Local light shadow depth atlas (D32Float).
 #endif
 
 /// Linear (bilinear wrap) sampler at s0 — standard engine-wide sampler.
@@ -405,6 +426,73 @@ float Vis_SchlickGGXOld(float NdotV, float NdotL, float a2) {
     float gv = NdotV / (NdotV * (1.0f - k) + k);
     float gl = NdotL / (NdotL * (1.0f - k) + k);
     return gv * gl * 0.25f; // 0.25 = 1/(4) from Cook-Torrance denominator
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Local Light Shadow Sampling
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Samples the local light shadow atlas for a given spot light shadow.
+///
+/// Projects the world position through the light's view-projection matrix,
+/// transforms to atlas UV space, and performs a single hardware PCF sample
+/// using the comparison sampler.
+///
+/// @source UE5 ShadowRendering.h:449 — FProjectedShadowInfo atlas tile sampling
+/// @source UE5 ShadowProjectionPixelShader.usf:66-89 — WholeScene shadow projection
+/// @constants atlasParams.x = atlasOffsetX, .y = atlasOffsetY, .z = atlasScale, .w = bias
+/// @deviations NONE — single-tap PCF (same as UE5 default for local light shadows)
+///
+/// # Parameters
+/// - worldPos:     world-space fragment position.
+/// - shadowIdx:    index into localShadowData[] (0 to localShadowCount-1).
+///
+/// # Returns
+/// Shadow factor [0, 1]: 1.0 = fully lit, 0.0 = fully shadowed.
+float SampleLocalLightShadow(float3 worldPos, uint shadowIdx)
+{
+    // Decode the interleaved localShadowData array:
+    // [idx*5+0..3] = viewProj rows, [idx*5+4] = (offsetX, offsetY, scale, bias)
+    uint base = shadowIdx * 5;
+    float4 row0 = localShadowData[base + 0];
+    float4 row1 = localShadowData[base + 1];
+    float4 row2 = localShadowData[base + 2];
+    float4 row3 = localShadowData[base + 3];
+    float4 atlasParams = localShadowData[base + 4];
+
+    // Build view-projection matrix from rows
+    float4x4 lightViewProj = float4x4(row0, row1, row2, row3);
+
+    // Project world position to light clip space
+    float4 lightClip = mul(float4(worldPos, 1.0f), lightViewProj);
+    float3 lightNdc = lightClip.xyz / lightClip.w;
+
+    // Convert from NDC [-1,1] to UV [0,1], flip Y (D3D convention)
+    float2 shadowUV = lightNdc.xy * 0.5f + 0.5f;
+    shadowUV.y = 1.0f - shadowUV.y;
+
+    // Skip samples outside the shadow map frustum
+    if (any(shadowUV < 0.0f) || any(shadowUV > 1.0f) || lightNdc.z < 0.0f || lightNdc.z > 1.0f) {
+        return 1.0f; // Outside shadow frustum — lit
+    }
+
+    // Transform UV from [0,1] local space to atlas tile UV space
+    float atlasScale = atlasParams.z;
+    float2 atlasOffset = atlasParams.xy;
+    shadowUV = shadowUV * atlasScale + atlasOffset;
+
+    // Apply depth bias
+    float bias = atlasParams.w;
+    float compareDepth = lightNdc.z - bias * 0.001f;
+
+    // Sample shadow atlas with hardware PCF comparison
+#ifdef UZ_BINDLESS
+    Texture2D<float> localAtlas = ResourceDescriptorHeap[localShadowAtlasIndex];
+    return localAtlas.SampleCmpLevelZero(shadowSampler, shadowUV, compareDepth);
+#else
+    // SM5: local shadow atlas bound at t11
+    return localShadowAtlasTexture.SampleCmpLevelZero(shadowSampler, shadowUV, compareDepth);
+#endif
 }
 
 /// Evaluates the OLD Cook-Torrance BRDF (Lambertian diffuse + Schlick-GGX).
@@ -674,6 +762,22 @@ float4 main(FSInput input) : SV_Target {
         float attenuation = distAttenuation * coneAtten;
 
         // Early-out if fully attenuated
+        if (attenuation <= 0.0f)
+            continue;
+
+        // ── Spot light shadow sampling ──────────────────────────────
+        // If this spot light casts shadows (shadowIndex != 0xFFFFFFFF),
+        // sample the local shadow atlas and multiply attenuation by the shadow factor.
+        // @source UE5 ShadowProjectionPixelShader.usf:66-89 — WholeScene shadow projection
+        float spotShadow = 1.0f;
+        if (spotLights[si].shadowIndex != 0xFFFFFFFF
+            && localShadowAtlasIndex != 0xFFFFFFFF
+            && spotLights[si].shadowIndex < localShadowCount) {
+            spotShadow = SampleLocalLightShadow(worldPos, spotLights[si].shadowIndex);
+        }
+        attenuation *= spotShadow;
+
+        // Re-check after shadow application
         if (attenuation <= 0.0f)
             continue;
 

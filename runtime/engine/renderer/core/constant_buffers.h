@@ -312,9 +312,14 @@ struct SpotLightData {
     float    specularScale;         ///< Per-light specular highlight multiplier (0-1). Default: 1.0.
     float    diffuseScale;          ///< Per-light diffuse contribution multiplier (0-1). Default: 1.0.
     uint32_t flags;                 ///< Bit flags: bit 0 = useInverseSquaredFalloff.
+    /// Index into LocalShadowCB::shadows[] for this light's shadow data.
+    /// 0xFFFFFFFF = no shadow (light does not cast shadows).
+    /// @source UE5 ShadowRendering.h:449 — FProjectedShadowInfo per-light shadow reference
+    uint32_t shadowIndex = UINT32_MAX;
+    float    _spotPad[3] = {};      ///< Pad to 80 bytes (5 float4s).
 };
 
-static_assert(sizeof(SpotLightData) == 64, "SpotLightData must be 64 bytes (four float4s)");
+static_assert(sizeof(SpotLightData) == 80, "SpotLightData must be 80 bytes (five float4s)");
 
 /// Lighting constant buffer for the deferred lighting pass, bound at register `b2`.
 ///
@@ -323,24 +328,49 @@ static_assert(sizeof(SpotLightData) == 64, "SpotLightData must be 64 bytes (four
 ///
 /// Padded to a 256-byte multiple as required by D3D12 constant buffer alignment.
 ///
-/// # Layout (4352 bytes = 17 * 256)
+/// # Layout (4608 bytes = 18 * 256)
 /// - pointLights[64]:  64 * 48 = 3072 bytes
 /// - pointLightCount:  4 bytes
 /// - spotLightCount:   4 bytes
 /// - _pad:             8 bytes
-/// - spotLights[16]:   16 * 64 = 1024 bytes
+/// - spotLights[16]:   16 * 80 = 1280 bytes
 /// - _pad2:            240 bytes
-/// Total: 4352 bytes
+/// Total: 4608 bytes
 struct LightingCB {
     PointLightData pointLights[kMaxPointLights]; ///< Point light array (64 * 48 = 3072 bytes).
     uint32_t       pointLightCount = 0;          ///< Number of active point lights in the array.
     uint32_t       spotLightCount  = 0;          ///< Number of active spot lights in the array.
     uint32_t       _pad[2] = {};                 ///< Align counts to 16 bytes.
-    SpotLightData  spotLights[kMaxSpotLights];   ///< Spot light array (16 * 64 = 1024 bytes).
-    float          _pad2[60] = {};               ///< Pad to 4352 bytes (256-byte multiple).
+    SpotLightData  spotLights[kMaxSpotLights];   ///< Spot light array (16 * 80 = 1280 bytes).
+    float          _pad2[60] = {};               ///< Pad to 4608 bytes (256-byte multiple).
 };
 
 static_assert(sizeof(LightingCB) % 256 == 0, "LightingCB must be a multiple of 256 bytes (D3D12 CB alignment)");
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LocalLightShadowData — per-light shadow projection data for local lights
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Maximum number of local light shadows supported per frame.
+static constexpr uint32_t kMaxLocalLightShadows = 16;
+
+/// Per-light shadow data for a single local (point/spot) light.
+///
+/// Contains the light-space view-projection matrix for shadow depth comparison
+/// and the atlas UV rect for tile lookup. The `bias` field is applied as a
+/// depth offset before comparison.
+///
+/// @source UE5 ShadowRendering.h:449 — FProjectedShadowInfo viewProj + atlas rect
+/// @source UE5 ShadowSetup.cpp:134 — per-light shadow bias (MinLightW = 0.1f)
+struct LocalLightShadowData {
+    Mat4     viewProj;       ///< Light-space view-projection matrix (world -> clip).
+    float    atlasOffsetX;   ///< UV offset X in atlas [0,1].
+    float    atlasOffsetY;   ///< UV offset Y in atlas [0,1].
+    float    atlasScale;     ///< UV scale (tile size / atlas size, e.g., 0.25 for 1024/4096).
+    float    bias;           ///< Shadow depth bias. @source UE5 ShadowSetup.cpp:134 — default 0.5.
+};
+
+static_assert(sizeof(LocalLightShadowData) == 80, "LocalLightShadowData must be 80 bytes (Mat4 + 4 floats)");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ShadowDataCB — bound at b4 (root CBV, updated once per frame for shadow sampling)
@@ -355,15 +385,14 @@ static_assert(sizeof(LightingCB) % 256 == 0, "LightingCB must be a multiple of 2
 ///
 /// Padded to a 256-byte multiple as required by D3D12 constant buffer alignment.
 ///
-/// # Layout (768 bytes = 3 * 256)
-/// - cascadeViewProj[8]:    8 * 64 = 512 bytes
-/// - cascadeSplits[8]:      8 * 4  = 32 bytes
-/// - cascadeFadeStarts[8]:  8 * 4  = 32 bytes
-/// - cascadeDepthBias[8]:   8 * 4  = 32 bytes
-/// - cascadeNormalBias[8]:  8 * 4  = 32 bytes
-/// - scalar params:                  56 bytes
-/// - padding:                        72 bytes
-/// Total: 768 bytes
+/// # Layout (2304 bytes = 9 * 256)
+/// - cascadeViewProj[8]:                8 * 64 = 512 bytes
+/// - cascadeSplits/fades/biases:        128 bytes
+/// - scalar params + padding:           128 bytes
+/// ── CSM section subtotal:             768 bytes
+/// - localShadows[16]:                  16 * 80 = 1280 bytes
+/// - _pad3:                             256 bytes
+/// Total: 2304 bytes
 struct ShadowDataCB {
     Mat4     cascadeViewProj[8];    ///< Light-space viewProj per cascade (8 * 64 = 512B).
     float    cascadeSplits[8];      ///< View-space extended far split per cascade.
@@ -385,10 +414,21 @@ struct ShadowDataCB {
     uint32_t useShadowCache = 0;    ///< 0 = no cache (single atlas), 1 = composite static + dynamic.
     uint32_t dfsEnabled = 0;        ///< 1 = Distance Field Shadows active, 0 = disabled.
     uint32_t dfsOutputSrvIndex = UINT32_MAX; ///< SRV index for DFS result texture (R16_FLOAT screen-space). UINT32_MAX = not bound.
-    float    _pad2[18] = {};        ///< Pad to 768 bytes (256-byte multiple).
+    uint32_t localShadowAtlasIndex = UINT32_MAX; ///< SRV heap index for local light shadow atlas. UINT32_MAX = none.
+    uint32_t localShadowCount = 0;  ///< Number of active local light shadows (0 to kMaxLocalShadowTiles).
+    float    _pad2[16] = {};        ///< Pad CSM section to 768 bytes.
+
+    // ── Local Light Shadow Data (appended after CSM section) ──────────────
+    // Up to 16 local light shadows. Each entry stores the light-space viewProj
+    // matrix and the atlas UV rect for shadow sampling.
+    //
+    // @source UE5 ShadowRendering.h:449 — FProjectedShadowInfo per-light shadow info
+    // @source UE5 SpotLightComponent.cpp:119-138 — spot light shadow projection setup
+    LocalLightShadowData localShadows[kMaxLocalLightShadows]; ///< Per-light shadow data (16 * 80 = 1280B).
+    float    _pad3[64] = {};        ///< Pad to 2304 bytes (9 * 256).
 };
 
-static_assert(sizeof(ShadowDataCB) == 768, "ShadowDataCB must be 768 bytes (256-byte multiple)");
+static_assert(sizeof(ShadowDataCB) == 2304, "ShadowDataCB must be 2304 bytes (256-byte multiple)");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SkyAtmosphereCB — bound at b2 (reusing per-object slot in fullscreen sky pass)

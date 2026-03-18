@@ -34,6 +34,7 @@
 /// @source UE5 MotionBlurApply.usf:453 — MotionBlurColor = ColorAccum * InvSampleCount
 /// @source UE5 Scene.cpp:598-600 — MotionBlurAmount=0.5, MotionBlurMax=5.0, MotionBlurTargetFPS=30
 /// @source UE5 PostProcessMotionBlur.cpp:613 — VelocityScale = MotionBlurTimeScale * MotionBlurAmount * 0.5
+/// @source UE5 SceneVisibility.cpp:5428-5431 — MotionBlurTimeScale = (1/TargetFPS) / DeltaRealTime
 /// @source UE5 RandomInterleavedGradientNoise.ush:11-18 — InterleavedGradientNoise
 /// @constants CONFIG_MINIMAL_PIXEL_VELOCITY=0.5 (MotionBlurCommon.ush:34),
 ///            SOFT_Z_EXTENT=1 (MotionBlurApply.usf:54),
@@ -77,14 +78,18 @@ static const uint MAX_SAMPLE_COUNT = 16;
 // Parameters
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Root constants at b0 — 8 DWORDs matching the layout specified by the task.
+/// Root constants at b0 — 8 DWORDs matching the compute root signature limit.
 cbuffer MotionBlurParams : register(b0) {
     uint   sceneSrvIndex;      ///< Descriptor heap index: HDR scene color (RGBA16F or R11G11B10F).
     uint   velocitySrvIndex;   ///< Descriptor heap index: velocity buffer (RG16F, pixel-space).
     uint   depthSrvIndex;      ///< Descriptor heap index: depth buffer (R32_FLOAT, reversed-Z).
     uint   outputWidth;        ///< Output texture width in pixels.
     uint   outputHeight;       ///< Output texture height in pixels.
-    float  motionBlurAmount;   ///< Intensity scale. UE5 default: 0.5 (Scene.cpp:598).
+    /// @source UE5 PostProcessMotionBlur.cpp:613 — VelocityScale = MotionBlurTimeScale * MotionBlurAmount * 0.5
+    /// @source UE5 SceneVisibility.cpp:5428-5431 — MotionBlurTimeScale = (1/TargetFPS) / DeltaRealTime
+    /// Pre-computed on CPU: motionBlurScale = (1/TargetFPS) / dt * MotionBlurAmount * 0.5
+    /// At 60fps with defaults (targetFPS=30, amount=0.5): scale = (1/30)/(1/60) * 0.5 * 0.5 = 0.5
+    float  motionBlurScale;    ///< Combined velocity scale (time scale * amount * 0.5).
     float  maxBlurPixels;      ///< Maximum blur radius in pixels. UE5 default: 5% of viewport width (Scene.cpp:599, MotionBlurMax=5.0 means 5% -> pixels = 0.05 * width).
     uint   outputUavIndex;     ///< Descriptor heap index: output UAV.
 };
@@ -216,10 +221,14 @@ void main(uint3 dtid : SV_DispatchThreadID)
     // ── Velocity scaling ─────────────────────────────────────────────────
     // @source UE5 PostProcessMotionBlur.cpp:613
     //   VelocityScale = MotionBlurTimeScale * MotionBlurAmount * 0.5
+    // @source UE5 SceneVisibility.cpp:5428-5431
+    //   MotionBlurTimeScale = (1.0 / MotionBlurTargetFPS) / DeltaRealTime
     // The 0.5 factor accounts for blur samples going both directions.
-    // UzEngine velocity buffer already stores pixel-space velocity, so we
-    // only need to apply motionBlurAmount * 0.5.
-    float2 scaledVelocity = velocity * (motionBlurAmount * 0.5);
+    // motionBlurScale is pre-computed on CPU as:
+    //   (1.0 / targetFPS) / deltaTime * motionBlurAmount * 0.5
+    // This normalizes blur length to the target frame rate, so blur appears
+    // consistent regardless of actual framerate.
+    float2 scaledVelocity = velocity * motionBlurScale;
 
     // Compute velocity magnitude in pixels after scaling.
     float velocityLength = length(scaledVelocity);

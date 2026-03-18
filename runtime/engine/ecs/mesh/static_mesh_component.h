@@ -7,6 +7,7 @@
 #pragma once
 
 #include "primitive_component.h"
+#include "lod_group.h"
 
 #include <cstdint>
 #include <string>
@@ -128,6 +129,31 @@ public:
         }
         overrideMaterials[idx] = material;
     }
+
+    // ── Level of Detail ─────────────────────────────────────────────────
+
+    /// LOD group defining discrete detail levels for this mesh.
+    ///
+    /// @source UE5 StaticMeshResources.h — FStaticMeshRenderData::ScreenSize
+    /// Default is a single LOD level (LOD 0) at full detail, meaning the
+    /// LOD system is transparent for meshes that don't define multiple levels.
+    ///
+    /// Populate via `lodGroup.InitAutoThresholds()` or set levels manually.
+    LODGroup lodGroup;
+
+    /// Per-object LOD selection state, cached across frames.
+    ///
+    /// Updated by `SceneRenderer::SyncWorldToDrawList()` each frame.
+    /// Tracks current/previous LOD indices for crossfade transitions.
+    LODSelection lodSelection;
+
+    /// Bounding sphere radius in world-space centimeters.
+    ///
+    /// @source UE5 PrimitiveComponent.h — Bounds.SphereRadius
+    /// Used for LOD screen size computation. 0 = use mesh default bounds
+    /// (derived from vertex extents during mesh loading). When non-zero,
+    /// overrides the mesh-derived bounds for LOD selection only.
+    float boundingSphereRadius = 0.0f;
 
 protected:
     /// Returns `RenderProxyType::StaticMesh`.

@@ -49,28 +49,23 @@ void AddVelocityPass(rg::RgBuilder& builder, const VelocityPassDesc& desc)
             // ── Bind velocity PSO ─────────────────────────────────────────
             cmd->SetPipeline(desc.pipeline);
 
-            // ── Bind VelocityCB at b2 (root param 2) ─────────────────────
+            // ── Bind PerFrameCB at b1 (provides invViewProj for depth reconstruction) ──
+            cmd->SetRootCBV(kSlotPerFrame, desc.perFrameAlloc.bufferHandle,
+                            desc.perFrameAlloc.offsetBytes,
+                            desc.perFrameAlloc.cpuPtr, desc.perFrameAlloc.sizeBytes);
+
+            // ── Bind VelocityCB at b2 (prevViewProj + screen dimensions) ──
             cmd->SetRootCBV(kSlotPerObject, desc.velocityCBAlloc.bufferHandle,
                             desc.velocityCBAlloc.offsetBytes,
                             desc.velocityCBAlloc.cpuPtr, sizeof(VelocityCB));
 
-            // ── Bind depth SRV + screen dimensions ───────────────────────
+            // ── Bind depth SRV (root constants for bindless, or t0 for SM5) ──
             if (desc.bindless) {
-                // SM6.6: push [depthSrvIndex, screenWidth, screenHeight]
-                const uint32_t rootData[3] = {
-                    desc.depthSrvIndex,
-                    static_cast<uint32_t>(desc.viewportWidth),
-                    static_cast<uint32_t>(desc.viewportHeight),
+                const uint32_t rootData[4] = {
+                    desc.depthSrvIndex, 0, 0, 0
                 };
-                cmd->SetRootConstants(kSlotRootConstants, rootData, 3);
+                cmd->SetRootConstants(kSlotRootConstants, rootData, 4);
             } else {
-                // SM5: push screen dimensions as root constants, bind depth at t0
-                const uint32_t rootData[3] = {
-                    0, // unused in SM5 path
-                    static_cast<uint32_t>(desc.viewportWidth),
-                    static_cast<uint32_t>(desc.viewportHeight),
-                };
-                cmd->SetRootConstants(kSlotRootConstants, rootData, 3);
                 cmd->SetFragmentTexture(0, desc.depthTexture);
             }
 

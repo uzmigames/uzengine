@@ -95,6 +95,17 @@ void PipelineLibrary::Shutdown() {
     destroyPipeline(m_depthPrepassBindless);
     destroyPipeline(m_depthPrepassInstanced);
     destroyPipeline(m_hizPyramid);
+    destroyPipeline(m_dfsCullObjects);
+    destroyPipeline(m_dfsConeTrace);
+    destroyPipeline(m_taaResolve);
+    destroyPipeline(m_ssrTrace);
+    destroyPipeline(m_ssrResolve);
+    destroyPipeline(m_colorGradingLut);
+    destroyPipeline(m_motionBlur);
+    destroyPipeline(m_motionBlurTileMax);
+    destroyPipeline(m_motionBlurNeighborMax);
+    destroyPipeline(m_dofSetup);
+    destroyPipeline(m_dofBlur);
 
     // Destroy cached shaders
     auto destroyShader = [this](RHIShaderHandle& h) {
@@ -121,6 +132,19 @@ void PipelineLibrary::Shutdown() {
     destroyShader(m_skyCubemapCaptureCS);
     destroyShader(m_skyCubemapCapturePSShader);
     destroyShader(m_hizPyramidCS);
+    destroyShader(m_dfsCullObjectsCS);
+    destroyShader(m_dfsConeTraceCS);
+    destroyShader(m_taaResolveCS);
+    destroyShader(m_ssrTraceCS);
+    destroyShader(m_ssrResolveCS);
+    destroyShader(m_colorGradingLutCS);
+    destroyShader(m_motionBlurCS);
+    destroyShader(m_motionBlurTileMaxCS);
+    destroyShader(m_motionBlurNeighborMaxCS);
+    destroyShader(m_dofSetupCS);
+    destroyShader(m_dofBlurCS);
+    destroyShader(m_velocityPS);
+    destroyShader(m_multiScatterLutCS);
 
     m_psoCache.Shutdown();
     m_psoDiskCache.reset();
@@ -703,6 +727,60 @@ RHIPipelineHandle PipelineLibrary::GetTonemap() {
     }
 
     return m_tonemap;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Velocity Buffer Pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool PipelineLibrary::EnsureVelocityPixelShader() {
+    if (!m_velocityPS.IsValid()) {
+        m_velocityPS = m_shaderMgr->CreateShader(EngineShader::VelocityPS, RHIShaderStage::Pixel);
+        if (!m_velocityPS.IsValid()) {
+            UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile VelocityPS");
+            return false;
+        }
+    }
+    return true;
+}
+
+/// @source UE5 VelocityRendering.cpp — FVelocityPassMeshProcessor PSO creation
+RHIPipelineHandle PipelineLibrary::GetVelocityPass() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetVelocityPass called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_velocityPass.IsValid()) {
+        return m_velocityPass;
+    }
+
+    if (!EnsureFullscreenShaders() || !EnsureVelocityPixelShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIGraphicsPipelineDesc desc{};
+    desc.vertexShader                = m_fullscreenVS;
+    desc.pixelShader                 = m_velocityPS;
+    desc.topology                    = RHIPrimitiveTopology::TriangleList;
+    desc.rasterizer.cullMode         = RHICullMode::None;
+    desc.depthStencil.depthEnable    = false;
+    desc.depthStencil.depthWrite     = false;
+    desc.renderTargetFormats[0]      = RHIFormat::RG16Float;
+    desc.renderTargetCount           = 1;
+    desc.debugName                   = "VelocityBuffer";
+
+    // No blending — velocity is written directly for every pixel.
+    desc.renderTargetBlend[0].blendEnable = false;
+
+    m_velocityPass = CreateCachedPipeline(desc);
+    if (!m_velocityPass.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create VelocityBuffer pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created VelocityBuffer pipeline");
+    }
+
+    return m_velocityPass;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1560,6 +1638,124 @@ RHIPipelineHandle PipelineLibrary::GetMotionBlur() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Motion Blur Tile Max Compute Pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool PipelineLibrary::EnsureMotionBlurTileMaxShader() {
+    if (m_motionBlurTileMaxCS.IsValid()) {
+        return true;
+    }
+
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::MotionblurTilemaxCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: MotionblurTilemaxCS bytecode empty");
+        return false;
+    }
+
+    RHIShaderDesc shaderDesc{};
+    shaderDesc.bytecode     = bytecode.data();
+    shaderDesc.bytecodeSize = bytecode.size();
+    shaderDesc.stage        = RHIShaderStage::Compute;
+    shaderDesc.entryPoint   = "main";
+    shaderDesc.debugName    = "MotionBlurTileMaxCS";
+
+    m_motionBlurTileMaxCS = m_device->CreateShader(shaderDesc);
+    if (!m_motionBlurTileMaxCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create MotionBlurTileMaxCS shader");
+        return false;
+    }
+    return true;
+}
+
+/// @source UE5 MotionBlurVelocityFlatten.usf:79-165 — MainCS
+RHIPipelineHandle PipelineLibrary::GetMotionBlurTileMax() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetMotionBlurTileMax called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_motionBlurTileMax.IsValid()) {
+        return m_motionBlurTileMax;
+    }
+
+    if (!EnsureMotionBlurTileMaxShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_motionBlurTileMaxCS;
+    desc.debugName     = "MotionBlurTileMax";
+
+    m_motionBlurTileMax = m_device->CreateComputePipeline(desc);
+    if (!m_motionBlurTileMax.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create MotionBlurTileMax pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created MotionBlurTileMax pipeline");
+    }
+
+    return m_motionBlurTileMax;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Motion Blur Neighbor Max Compute Pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool PipelineLibrary::EnsureMotionBlurNeighborMaxShader() {
+    if (m_motionBlurNeighborMaxCS.IsValid()) {
+        return true;
+    }
+
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::MotionblurNeighbormaxCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: MotionblurNeighbormaxCS bytecode empty");
+        return false;
+    }
+
+    RHIShaderDesc shaderDesc{};
+    shaderDesc.bytecode     = bytecode.data();
+    shaderDesc.bytecodeSize = bytecode.size();
+    shaderDesc.stage        = RHIShaderStage::Compute;
+    shaderDesc.entryPoint   = "main";
+    shaderDesc.debugName    = "MotionBlurNeighborMaxCS";
+
+    m_motionBlurNeighborMaxCS = m_device->CreateShader(shaderDesc);
+    if (!m_motionBlurNeighborMaxCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create MotionBlurNeighborMaxCS shader");
+        return false;
+    }
+    return true;
+}
+
+/// @source UE5 MotionBlurTileGather.usf:24-91 — MainCS
+RHIPipelineHandle PipelineLibrary::GetMotionBlurNeighborMax() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetMotionBlurNeighborMax called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_motionBlurNeighborMax.IsValid()) {
+        return m_motionBlurNeighborMax;
+    }
+
+    if (!EnsureMotionBlurNeighborMaxShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_motionBlurNeighborMaxCS;
+    desc.debugName     = "MotionBlurNeighborMax";
+
+    m_motionBlurNeighborMax = m_device->CreateComputePipeline(desc);
+    if (!m_motionBlurNeighborMax.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create MotionBlurNeighborMax pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created MotionBlurNeighborMax pipeline");
+    }
+
+    return m_motionBlurNeighborMax;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // DOF Setup Compute Pipeline
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1755,6 +1951,7 @@ uint32_t PipelineLibrary::WarmupAll() {
     warmup(GetDebugView(), "DebugView");
     warmup(GetShadowDepth(bindless), "ShadowDepth");
     warmup(GetSkyAtmosphere(), "SkyAtmosphere");
+    warmup(GetVelocityPass(), "VelocityBuffer");
     warmup(GetHeightFog(), "HeightFog");
     warmup(GetTransmittanceLut(), "TransmittanceLUT");
     warmup(GetSkyCubemapCapture(), "SkyCubemapCapture");
@@ -1765,6 +1962,9 @@ uint32_t PipelineLibrary::WarmupAll() {
     warmup(GetDfsConeTrace(), "DFS_ConeTrace");
     warmup(GetSsrTrace(), "SSR_Trace");
     warmup(GetSsrResolve(), "SSR_Resolve");
+    warmup(GetMotionBlur(), "MotionBlur");
+    warmup(GetMotionBlurTileMax(), "MotionBlurTileMax");
+    warmup(GetMotionBlurNeighborMax(), "MotionBlurNeighborMax");
 
     // SM5 variants if device is bindless (need both paths)
     if (bindless) {

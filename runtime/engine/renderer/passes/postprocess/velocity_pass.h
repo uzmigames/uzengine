@@ -36,17 +36,34 @@ namespace uz {
 // VelocityCB — constant buffer for the velocity generation pass
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Constant buffer for the velocity generation pass.
+/// Constant buffer for the velocity generation pass, bound at register b2.
 ///
-/// Contains the current frame's inverse view-projection for reconstructing
-/// world positions from depth, and the previous frame's view-projection for
-/// reprojecting those positions to compute screen-space motion vectors.
+/// Contains the previous frame's view-projection matrix for reprojecting
+/// world positions to compute screen-space motion vectors, plus screen
+/// dimensions for NDC-to-pixel conversion.
+///
+/// The current frame's inverse view-projection (for depth -> world reconstruction)
+/// comes from PerFrameCB at b1 and is NOT duplicated here.
+///
+/// Layout matches the HLSL cbuffer VelocityCB in velocity_ps.hlsl:
+/// ```hlsl
+/// cbuffer VelocityCB : register(b2) {
+///     row_major float4x4 prevViewProj;  // 64 bytes
+///     float  screenWidth;               // +4
+///     float  screenHeight;              // +4
+///     float2 _velPad;                   // +8 = 80 bytes
+/// };
+/// ```
 ///
 /// Padded to 256-byte boundary as required by D3D12 constant buffer alignment.
+///
+/// @source UE5 VelocityRendering.cpp — FVelocityPassParameters
 struct VelocityCB {
-    Mat4 invViewProj;      ///< Current frame inverse view-projection matrix.
-    Mat4 prevViewProj;     ///< Previous frame view-projection matrix.
-    float _pad[32] = {};   ///< Padding to 256-byte alignment (128 + 128 = 256).
+    Mat4  prevViewProj;        ///< Previous frame's view-projection matrix.
+    float screenWidth  = 0.f;  ///< Render target width in pixels.
+    float screenHeight = 0.f;  ///< Render target height in pixels.
+    float _pad0[2]     = {};   ///< Align to 16-byte boundary after screen dims.
+    float _pad1[44]    = {};   ///< Pad to 256-byte alignment.
 };
 
 static_assert(sizeof(VelocityCB) == 256, "VelocityCB must be 256 bytes (D3D12 CB alignment)");
@@ -75,8 +92,9 @@ struct VelocityPassDesc {
     // ── Bindless SRV indices ──────────────────────────────────────────────
     uint32_t depthSrvIndex;            ///< SRV heap index for depth buffer.
 
-    // ── CB allocation ─────────────────────────────────────────────────────
-    CBAllocation velocityCBAlloc;      ///< VelocityCB allocation (bound at b2).
+    // ── CB allocations ────────────────────────────────────────────────────
+    CBAllocation perFrameAlloc;        ///< PerFrameCB allocation (bound at b1 — provides invViewProj).
+    CBAllocation velocityCBAlloc;      ///< VelocityCB allocation (bound at b2 — provides prevViewProj + screen dims).
 
     // ── Pipeline ──────────────────────────────────────────────────────────
     RHIPipelineHandle pipeline;        ///< Velocity PSO (fullscreen triangle, no depth).

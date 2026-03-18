@@ -146,6 +146,26 @@ LightFrameData ExtractLightingFromECS(
             sld.specularScale         = sl.specularScale;
             sld.diffuseScale          = sl.diffuseScale;
             sld.flags                 = sl.useInverseSquaredFalloff ? kLightFlag_InverseSquared : 0u;
+
+            // Shadow index — if the spot light casts shadows and we have room
+            // in the local shadow array, assign a shadow slot index. Otherwise
+            // mark as unshadowed (0xFFFFFFFF).
+            if (sl.castShadows && result.spotShadowCount < kMaxLocalLightShadows) {
+                const uint32_t shadowIdx = result.spotShadowCount;
+                sld.shadowIndex = shadowIdx;
+
+                SpotLightShadowInfo& shadowInfo = result.spotShadows[shadowIdx];
+                shadowInfo.position   = pos;
+                shadowInfo.direction  = dir;
+                shadowInfo.outerAngle = outerRad;
+                shadowInfo.radius     = sl.range;
+                shadowInfo.bias       = sl.spotShadowBias;
+                shadowInfo.lightIndex = idx;
+                result.spotShadowCount++;
+            } else {
+                sld.shadowIndex = UINT32_MAX;
+            }
+
             lightingData.spotLightCount++;
         }
     }

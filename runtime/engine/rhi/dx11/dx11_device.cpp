@@ -261,11 +261,12 @@ bool DX11Device::Init(const RHIDeviceDesc& desc) {
     // Create default samplers matching DX12 static samplers s0 and s1
     {
         D3D11_SAMPLER_DESC sd = {};
-        sd.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+        /// @source UE5 SceneTexturesConfig.cpp:145 — 16x anisotropic filtering
+        sd.Filter = D3D11_FILTER_ANISOTROPIC;
         sd.AddressU = D3D11_TEXTURE_ADDRESS_WRAP;
         sd.AddressV = D3D11_TEXTURE_ADDRESS_WRAP;
         sd.AddressW = D3D11_TEXTURE_ADDRESS_WRAP;
-        sd.MaxAnisotropy = 1;
+        sd.MaxAnisotropy = 16;
         sd.ComparisonFunc = D3D11_COMPARISON_NEVER;
         sd.MaxLOD = D3D11_FLOAT32_MAX;
         m_device->CreateSamplerState(&sd, &m_defaultSampler);

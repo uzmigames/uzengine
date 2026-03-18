@@ -26,6 +26,7 @@
 #pragma once
 
 #include "shader_parameter_macros.h"
+#include "constant_buffers.h"
 #include "mat4.h"
 
 #include <cstddef>
@@ -96,13 +97,20 @@ struct ShadowDataParams {
     uint32_t useShadowCache        = 0;                   ///< 0 = no cache, 1 = composite.
     uint32_t dfsEnabled            = 0;                   ///< 1 = DFS active.
     uint32_t dfsOutputSrvIndex     = UINT32_MAX;          ///< SRV index for DFS result texture.
-    float    _pad2[18]             = {};                  ///< Pad to 768 bytes.
+    uint32_t localShadowAtlasIndex = UINT32_MAX;          ///< SRV index for local light shadow atlas.
+    uint32_t localShadowCount      = 0;                   ///< Number of active local light shadows.
+    float    _pad2[16]             = {};                  ///< Pad CSM section to 768 bytes.
+
+    // ── Local Light Shadow Data ──────────────────────────────────────────
+    LocalLightShadowData localShadows[kMaxLocalLightShadows] = {}; ///< Per-light shadow data (16 * 80 = 1280B).
+    float    _pad3[64]             = {};                  ///< Pad to 2304 bytes.
 
     // ── Resource handles (NOT copied to CB) ──────────────────────────────
 
     RHITextureHandle shadowAtlas;                         ///< Shadow atlas depth texture (t3 on SM5).
     RHITextureHandle staticShadowAtlas;                   ///< Cached static shadow atlas (t8 on SM5).
     RHITextureHandle dfsOutputTexture;                    ///< DFS result texture (t9 on SM5).
+    RHITextureHandle localShadowAtlas;                    ///< Local light shadow atlas (t11 on SM5).
 
     // ── Metadata ─────────────────────────────────────────────────────────
 
@@ -111,7 +119,7 @@ struct ShadowDataParams {
 };
 
 // Verify scalar section matches ShadowDataCB exactly
-static_assert(offsetof(ShadowDataParams, shadowAtlas) == 768,
-              "ShadowDataParams resource section must start at byte 768 (after ShadowDataCB-compatible scalar section)");
+static_assert(offsetof(ShadowDataParams, shadowAtlas) == 2304,
+              "ShadowDataParams resource section must start at byte 2304 (after ShadowDataCB-compatible scalar section)");
 
 } // namespace uz

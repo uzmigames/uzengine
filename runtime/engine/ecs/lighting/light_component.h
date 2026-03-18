@@ -262,6 +262,17 @@ public:
     /// UE5: OuterConeAngle. Default: 45.0 deg. Range: [innerAngleDeg, 90].
     float outerAngleDeg = 45.0f;
 
+    /// When true, this spot light casts a shadow map into the local shadow atlas.
+    /// UE5: CastShadows. Default: false (shadows must be explicitly enabled).
+    /// @source UE5 LightComponent.h:84 — bCastShadows
+    bool castShadows = false;
+
+    /// Per-light shadow depth bias for this spot light's shadow map.
+    /// Applied as a constant depth offset before shadow comparison.
+    /// UE5: ShadowBias. Default: 0.5. Range: [0.0, 10.0].
+    /// @source UE5 LightComponent.h:105 — ShadowBias
+    float spotShadowBias = 0.5f;
+
 protected:
     /// Returns `RenderProxyType::SpotLight`.
     [[nodiscard]] RenderProxyType GetProxyType() const override {

@@ -23,10 +23,25 @@ class World;
 // LightFrameData — per-frame light extraction result
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Per-spot-light shadow info collected from ECS, used to build shadow passes.
+///
+/// Populated by `ExtractLightingFromECS()` for each spot light with castShadows=true.
+/// The scene renderer uses this data to set up the shadow depth render pass
+/// and fill the LocalShadowCB entry.
+struct SpotLightShadowInfo {
+    Vec3     position;    ///< World-space position of the spot light.
+    Vec3     direction;   ///< Normalised world-space cone direction.
+    float    outerAngle;  ///< Outer cone half-angle in radians (clamped).
+    float    radius;      ///< Attenuation radius (far plane for shadow projection).
+    float    bias;        ///< Shadow depth bias.
+    uint32_t lightIndex;  ///< Index into LightingCB::spotLights[] for this light.
+};
+
 /// Contains all lighting data extracted from the ECS for the current frame.
 ///
-/// Includes directional light parameters (direction, color, shadow bias) and
-/// the uploaded LightingCB allocation for point lights.
+/// Includes directional light parameters (direction, color, shadow bias),
+/// the uploaded LightingCB allocation for point/spot lights, and
+/// spot light shadow info for the scene renderer to build shadow passes.
 struct LightFrameData {
     Vec3  sunDir   = {0.5f, 0.3f, 0.8f}; ///< Normalized direction toward the sun.
     Vec3  sunColor = {3.0f, 2.85f, 2.7f}; ///< Sun color * intensity (linear HDR).
@@ -43,6 +58,11 @@ struct LightFrameData {
     int32_t farShadowLodBias = 0;
 
     CBAllocation lightingCBAlloc;          ///< LightingCB upload in CB ring.
+
+    /// Spot lights that want shadow maps (castShadows=true).
+    /// Limited to kMaxLocalLightShadows entries. Excess lights are unshadowed.
+    SpotLightShadowInfo spotShadows[kMaxLocalLightShadows];
+    uint32_t spotShadowCount = 0;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

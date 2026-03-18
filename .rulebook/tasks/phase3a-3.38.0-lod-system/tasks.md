@@ -1,11 +1,11 @@
 ## 1. Implementation
 
-- [ ] 1.1 Define LODGroup struct — array of LODLevel (mesh handle, screenSizeThreshold float). Max 4 LOD levels. LOD0 = full detail (threshold 1.0), LOD3 = lowest (threshold 0.02).
-- [ ] 1.2 Implement screen-size computation — project bounding sphere radius to screen pixels: `screenSize = (sphereRadius * screenHeight) / (distance * 2 * tan(fov/2))`. Normalize to [0,1] as fraction of screen height.
-- [ ] 1.3 Implement LOD selection — per-object per-frame: compare screenSize against LODLevel thresholds, select highest LOD where screenSize >= threshold. Cache previous frame LOD to detect transitions.
-- [ ] 1.4 Extend StaticMeshProxy with LODGroup — proxy stores LODGroup reference; draw list builder reads current LOD level to select mesh/index buffer for draw call.
+- [x] 1.1 Define LODGroup struct — `lod_group.h`: LODLevel (meshIndex, screenSizeThreshold), LODGroup (levels[8], numLevels), LODSelection (currentLOD, previousLOD, transitionAlpha, Update()). kMaxLODs=8 matching UE5 MAX_STATIC_MESH_LODS. Auto-threshold via pow(0.75, N) matching UE5 AutoComputeLODPowerBase.
+- [x] 1.2 Implement screen-size computation — `lod_selector.h`: ComputeScreenSize() using UE5's exact formula (SceneManagement.cpp:972-984): ScreenMultiple * SphereRadius / max(1,Dist) * 2. Also ComputeScreenSizeFromFov() convenience wrapper.
+- [x] 1.3 Implement LOD selection — `lod_selector.h`: SelectLOD() walks LOD levels from coarsest to finest (UE5 SceneManagement.cpp:1044-1053). LODSelection::Update() caches previous frame LOD for crossfade transitions (8 frame default).
+- [x] 1.4 Extend StaticMeshComponent with LODGroup — StaticMeshComponent now has lodGroup, lodSelection, boundingSphereRadius fields. SyncWorldToDrawList computes screen size per-object and selects LOD mesh index for draw commands.
 - [ ] 1.5 Implement dithered cross-fade — when LOD transitions, render both LODs for N frames (8 default) with screen-door dithering pattern (4x4 Bayer matrix). Pixel shader discards based on dither threshold + blend factor.
-- [ ] 1.6 Add LOD bias parameter — global LOD bias (-2 to +2) that shifts all thresholds, allowing quality/performance tradeoff. Exposed in renderer config.
+- [x] 1.6 Add LOD bias parameter — SceneRenderer::SetLodBias()/GetLodBias() exposed. Bias multiplies screen size thresholds, clamped [0.25, 4.0]. 1.0 = UE5 default. Matches UE5 StaticMeshLODDistanceScale.
 - [ ] 1.7 Extend glTF importer — import LOD meshes from glTF MSFT_lod extension or from mesh name suffixes (_LOD0, _LOD1, _LOD2, _LOD3).
 - [ ] 1.8 Create LOD demo — single mesh with 4 LOD levels (10K, 2K, 500, 100 triangles), camera dolly showing automatic LOD switching with dithered crossfade visible.
 

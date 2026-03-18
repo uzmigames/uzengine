@@ -1,7 +1,7 @@
 ## 1. Implementation
 
 - [x] 1.1 Implement Halton(2,3) jitter sequence generator — 8-sample cycle, centered [-0.5,0.5] range. Applied as projection matrix offset via `m[2][0]`/`m[2][1]` following UE5 `HackAddTemporalAAProjectionJitter` (SceneVisibility.cpp:5243). Jitter disabled when TAA off.
-- [ ] 1.2 Implement velocity buffer generation shader (`velocity_ps.hlsl`) — depth reprojection using current/previous ViewProj matrices. Output RG16F motion vectors in screen-space pixels. Handle camera-only motion first.
+- [x] 1.2 Implement velocity buffer generation shader (`velocity_ps.hlsl`) — depth reprojection using current/previous ViewProj matrices. Output RG16F motion vectors in screen-space pixels. Camera-only motion. Velocity pass wired into render graph after GBuffer (2026-03-18).
 - [ ] 1.3 Implement per-object velocity contribution — skeletal mesh and dynamic objects write object-space velocity to velocity buffer via vertex shader (prevWorldPos → currentWorldPos delta).
 - [x] 1.4 Implement TAA resolve compute shader (`taa_resolve_cs.hlsl`) — SM6.6 bindless compute. Samples current frame, reprojects history (camera-only for now), bilinear history sampling. Entry point CSMain, 8x8 thread groups.
 - [x] 1.5 Implement YCoCg neighborhood clamping — 3x3 VGPR cache in YCoCg space, plus+corner min/max AABB (UE5 HISTORY_CLAMPING_BOX_MIN_MAX), clamp history to box. All functions cite UE5 TemporalAA.usf line numbers.

@@ -7,9 +7,10 @@
 namespace uz {
 
 /// SM5 shadow texture register slots.
-static constexpr uint32_t kShadowAtlasSlot       = 3;
-static constexpr uint32_t kStaticShadowAtlasSlot = 8;
-static constexpr uint32_t kDfsOutputSlot          = 9;
+static constexpr uint32_t kShadowAtlasSlot        = 3;
+static constexpr uint32_t kStaticShadowAtlasSlot  = 8;
+static constexpr uint32_t kDfsOutputSlot           = 9;
+static constexpr uint32_t kLocalShadowAtlasSlot    = 11;
 
 const ShaderParameterMetadata& ShadowDataParams::GetMetadata()
 {
@@ -34,18 +35,21 @@ const ShaderParameterMetadata& ShadowDataParams::GetMetadata()
         {"useShadowCache",        ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(ShadowDataParams, useShadowCache)),        sizeof(uint32_t),   0},
         {"dfsEnabled",            ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(ShadowDataParams, dfsEnabled)),            sizeof(uint32_t),   0},
         {"dfsOutputSrvIndex",     ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(ShadowDataParams, dfsOutputSrvIndex)),     sizeof(uint32_t),   0},
+        {"localShadowAtlasIndex", ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(ShadowDataParams, localShadowAtlasIndex)), sizeof(uint32_t), 0},
+        {"localShadowCount",      ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(ShadowDataParams, localShadowCount)),      sizeof(uint32_t),   0},
 
         // ── Resource members (drive texture binding on SM5) ──
         {"shadowAtlas",           ShaderParamType::Texture2D, static_cast<uint32_t>(offsetof(ShadowDataParams, shadowAtlas)),        0, kShadowAtlasSlot},
         {"staticShadowAtlas",     ShaderParamType::Texture2D, static_cast<uint32_t>(offsetof(ShadowDataParams, staticShadowAtlas)),  0, kStaticShadowAtlasSlot},
         {"dfsOutputTexture",      ShaderParamType::Texture2D, static_cast<uint32_t>(offsetof(ShadowDataParams, dfsOutputTexture)),   0, kDfsOutputSlot},
+        {"localShadowAtlas",      ShaderParamType::Texture2D, static_cast<uint32_t>(offsetof(ShadowDataParams, localShadowAtlas)),   0, kLocalShadowAtlasSlot},
     };
 
     static const ShaderParameterMetadata kMetadata = {
         kMembers,
         sizeof(kMembers) / sizeof(kMembers[0]),
-        768,  // cbSize — matches sizeof(ShadowDataCB), 256-byte aligned
-        3,    // textureCount (shadowAtlas + staticShadowAtlas + dfsOutputTexture)
+        2304,  // cbSize — matches sizeof(ShadowDataCB), 256-byte aligned
+        4,    // textureCount (shadowAtlas + staticShadowAtlas + dfsOutputTexture + localShadowAtlas)
         0,    // samplerCount
         0,    // uavCount
     };
