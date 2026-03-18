@@ -184,13 +184,23 @@ void main(
         return;
 
     // ── UV Computation ──────────────────────────────────────────────────────
-    // Center of the output pixel in UV space.
-    float2 uv = (float2(DispatchThreadId) + 0.5) * texelSize;
+    // Center of the output pixel in UV space (display resolution).
+    // texelSize = 1/renderResolution (scene color input texel size).
+    // For UV computation in output space, use 1/outputResolution.
+    float2 outputTexelSize = float2(1.0 / outputWidth, 1.0 / outputHeight);
+    float2 uv = (float2(DispatchThreadId) + 0.5) * outputTexelSize;
 
     // ── Bindless Texture Access ─────────────────────────────────────────────
     Texture2D<float4> SceneColor = ResourceDescriptorHeap[sceneSrvIndex];
     Texture2D<float>  DepthTex   = ResourceDescriptorHeap[depthSrvIndex];
     Texture2D<float4> HistoryTex = ResourceDescriptorHeap[historySrvIndex];
+
+    // ── Scene Color Dimensions ──────────────────────────────────────────────
+    // Scene color and depth may be at render resolution (smaller than output
+    // when screen percentage < 100%). Use texture dimensions for coordinate
+    // conversion. When render res == display res, these equal outW/outH.
+    uint sceneW, sceneH;
+    SceneColor.GetDimensions(sceneW, sceneH);
 
     // ── Sample Current Frame + 3x3 Neighborhood ────────────────────────────
     // @source UE5 TemporalAA.usf:928-969 — VGPR_3X3 cache path
@@ -198,9 +208,15 @@ void main(
     // Cache the 3x3 neighborhood around the current pixel for:
     // 1. Filtered center sample (plus-weighted)
     // 2. Min/max bounding box for history clamping
+    //
+    // When screen percentage < 100%, the scene color is at lower resolution.
+    // Convert output UV to scene color pixel coordinates for Load().
+    // The UV space [0,1] maps identically across both resolutions.
     float3 neighbors[9];
     float neighborWeights[9];
-    int2 centerCoord = int2(DispatchThreadId);
+    // Map output pixel to scene color pixel space for neighborhood sampling.
+    int2 centerCoord = int2(uv * float2(sceneW, sceneH));
+    centerCoord = clamp(centerCoord, int2(0, 0), int2(sceneW - 1, sceneH - 1));
 
     // Exposure = 1.0 for now (auto-exposure is pre-applied to HDR).
     // @source UE5 TemporalAA.usf:1974 — FrameExposureScale * View.OneOverPreExposure
@@ -210,8 +226,8 @@ void main(
     for (uint i = 0; i < 9; i++)
     {
         int2 coord = centerCoord + kOffsets3x3[i];
-        // Clamp to valid range to avoid sampling outside the render target.
-        coord = clamp(coord, int2(0, 0), int2(outW - 1, outH - 1));
+        // Clamp to valid scene color range.
+        coord = clamp(coord, int2(0, 0), int2(sceneW - 1, sceneH - 1));
 
         float3 rawColor = SceneColor.Load(int3(coord, 0)).rgb;
         // Transform to YCoCg for clamping (UE5 AA_YCOCG=1 for Main pass).
@@ -277,15 +293,17 @@ void main(
     // Find the nearest depth in a 5-sample cross pattern (center + 4 diagonal).
     // This provides better silhouette handling by using the foreground pixel's
     // motion vector for reprojection.
+    // Depth is at render resolution (same as scene color).
     float centerDepth = DepthTex.Load(int3(centerCoord, 0)).x;
     float2 velocityOffset = float2(0, 0);
 
     {
+        // Cross pattern offsets in render-resolution pixels.
         float4 crossDepths;
-        crossDepths.x = DepthTex.Load(int3(centerCoord + int2(-2, -2), 0)).x;
-        crossDepths.y = DepthTex.Load(int3(centerCoord + int2( 2, -2), 0)).x;
-        crossDepths.z = DepthTex.Load(int3(centerCoord + int2(-2,  2), 0)).x;
-        crossDepths.w = DepthTex.Load(int3(centerCoord + int2( 2,  2), 0)).x;
+        crossDepths.x = DepthTex.Load(int3(clamp(centerCoord + int2(-2, -2), int2(0,0), int2(sceneW-1,sceneH-1)), 0)).x;
+        crossDepths.y = DepthTex.Load(int3(clamp(centerCoord + int2( 2, -2), int2(0,0), int2(sceneW-1,sceneH-1)), 0)).x;
+        crossDepths.z = DepthTex.Load(int3(clamp(centerCoord + int2(-2,  2), int2(0,0), int2(sceneW-1,sceneH-1)), 0)).x;
+        crossDepths.w = DepthTex.Load(int3(clamp(centerCoord + int2( 2,  2), int2(0,0), int2(sceneW-1,sceneH-1)), 0)).x;
 
         // Reversed-Z: nearest = largest depth value.
         float2 depthOffset = float2(2, 2);
@@ -304,6 +322,7 @@ void main(
         float depthsXYZW = max(depthsXY, depthsZW);
         if (depthsXYZW > centerDepth)
         {
+            // velocityOffset is in UV space (render-resolution texels).
             velocityOffset = depthOffset * texelSize;
             centerDepth = depthsXYZW;
         }
@@ -316,13 +335,15 @@ void main(
     // shifts to the foreground pixel found by the cross-pattern search above).
     // The velocity buffer already encodes full camera + object motion via depth
     // reprojection (velocity_ps.hlsl). ComputeMotionVector returns UV-space delta.
+    // Velocity buffer is at render resolution, so dilated coords use scene dims.
     int2 dilatedCoord = centerCoord + int2(velocityOffset * rcp(texelSize) + 0.5);
-    dilatedCoord = clamp(dilatedCoord, int2(0, 0), int2(outW - 1, outH - 1));
+    dilatedCoord = clamp(dilatedCoord, int2(0, 0), int2(sceneW - 1, sceneH - 1));
     float2 motionVector = ComputeMotionVector(dilatedCoord, uv + velocityOffset);
     float2 historyUV = uv - motionVector;
 
     // @source UE5 TemporalAA.usf:2108 — Velocity magnitude in pixels
-    float2 velocityPixels = motionVector * rcp(texelSize);
+    // Velocity is in UV space; convert to display-resolution pixels for magnitude.
+    float2 velocityPixels = motionVector * float2(outputWidth, outputHeight);
     float velocityMag = length(velocityPixels);
 
     // Detect off-screen reprojection.
@@ -338,12 +359,14 @@ void main(
     // Catmull-Rom kernel. The corner samples are omitted (their weights are
     // small) and the remaining weights are renormalized via FinalMultiplier.
     // This produces sharper temporal accumulation than single bilinear.
-    float2 clampedHistoryUV = clamp(historyUV, texelSize * 0.5, 1.0 - texelSize * 0.5);
+    // History is at display resolution, so use outputTexelSize for clamping.
+    float2 clampedHistoryUV = clamp(historyUV, outputTexelSize * 0.5, 1.0 - outputTexelSize * 0.5);
     float3 rawHistory;
     {
         // History texture dimensions for Catmull-Rom weight computation.
+        // History is at display resolution (outputWidth x outputHeight).
         float2 historySize    = float2(outputWidth, outputHeight);
-        float2 historyInvSize = texelSize;  // 1.0 / size = texelSize
+        float2 historyInvSize = outputTexelSize;
 
         // @source UE5 TextureSampling.ush:103-126 — Bicubic2DCatmullRom
         // Compute Catmull-Rom basis weights and bilinear sample positions.

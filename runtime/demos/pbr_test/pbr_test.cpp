@@ -370,8 +370,14 @@ void PBRTest::OnStart() {
         fogComp.directionalInscatteringStartDistance = 10000.f;
     }
 
-    UZ_LOG(Demo, Info, "PBR Test started — {} spheres (9 materials), 4 point lights + sun + sky",
-           kSphereCount);
+    // ── Screen percentage (render at lower internal resolution) ────────
+    // 67% = render at ~960p for 1440p display, TAA upscales to native.
+    // 100% = native resolution (no upscale, current default behavior).
+    GetRenderer().SetScreenPercentage(67.f);
+
+    UZ_LOG(Demo, Info, "PBR Test started — {} spheres (9 materials), 4 point lights + sun + sky, "
+           "screen percentage={}%",
+           kSphereCount, GetRenderer().GetScreenPercentage());
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

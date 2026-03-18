@@ -182,15 +182,17 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
     // @source UE5 SceneVisibility.cpp:5243 — HackAddTemporalAAProjectionJitter
     // The jitter is applied as an offset to the projection matrix's [2][0] and [2][1]
     // elements, which translates the clip-space output by a sub-pixel amount.
+    // Uses RENDER resolution (not display) because the jitter is in pixel units of the
+    // rendered image, which is the viewport the geometry is rasterized into.
     Mat4 jitteredViewProj = ctx.unjitteredViewProj;
     if (ctx.taaActive) {
-        const float vpW = static_cast<float>(m_width);
-        const float vpH = static_cast<float>(m_height);
+        const float renderW = static_cast<float>(m_renderWidth);
+        const float renderH = static_cast<float>(m_renderHeight);
         // UE5: SampleX * 2.0 / ViewRect.Width(), SampleY * -2.0 / ViewRect.Height()
         // The *2 converts from pixel units to NDC (-1 to 1 range = 2 units per viewport dim).
         // Y is negated because clip-space Y increases upward but pixel Y increases downward.
-        jitteredViewProj.m.m[2][0] += ctx.jitterX * 2.0f / vpW;
-        jitteredViewProj.m.m[2][1] += ctx.jitterY * -2.0f / vpH;
+        jitteredViewProj.m.m[2][0] += ctx.jitterX * 2.0f / renderW;
+        jitteredViewProj.m.m[2][1] += ctx.jitterY * -2.0f / renderH;
     }
 
     // ── Build PerFrameParams (scalar section byte-identical to PerFrameCB) ──
@@ -252,7 +254,7 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
     // On the first few frames before HDR is filled, use a sensible default.
     if (m_autoExposure && m_hdrSceneColorSrv != UINT32_MAX && m_hdrHasContent) {
         float autoExp = m_autoExposure->Execute(ctx.cmdList, m_hdrSceneColorSrv,
-            m_width, m_height, ctx.dt);
+            m_renderWidth, m_renderHeight, ctx.dt);
         perFrame.exposure = autoExp;
         // Log only on first adaptation (avoid per-frame spam)
         static bool loggedOnce = false;
@@ -265,6 +267,13 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
         // @source UE5 — default exposure = 1.0 (no bias applied)
         perFrame.exposure = 1.0f;
     }
+
+    // ── Mip bias for screen percentage texture LOD compensation ────────
+    // @source UE5 ViewUniformShaderParameters.h — MaterialTextureMipBias
+    // When rendering at lower internal resolution, textures are over-minified
+    // because the screen pixel density is lower than the display. A negative
+    // mip bias shifts sampling toward finer mip levels to compensate.
+    perFrame.mipBias = std::log2f(m_screenPercentage / 100.f);
 
     // ── GTAO SRV index (set early — actual compute runs in render graph) ──
     if (m_gtaoPass && m_gtaoPass->IsInitialized() && m_gtaoPass->settings.enabled) {
@@ -534,8 +543,10 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
     }
 
     // ── Resolve viewport dimensions ────────────────────────────────────
-    ctx.vpWidth = static_cast<float>(ctx.swapChain->GetWidth());
+    ctx.vpWidth  = static_cast<float>(ctx.swapChain->GetWidth());
     ctx.vpHeight = static_cast<float>(ctx.swapChain->GetHeight());
+    ctx.renderWidth  = static_cast<float>(m_renderWidth);
+    ctx.renderHeight = static_cast<float>(m_renderHeight);
     ctx.pipelines = m_pipelines.get();
 
     // ── Import render graph resources ──────────────────────────────────

@@ -346,11 +346,42 @@ public:
     /// Returns the stats overlay. May return null if `Init()` has not been called.
     [[nodiscard]] StatsOverlay* GetStatsOverlay() const;
 
-    /// Returns the current render target width in pixels.
+    /// Returns the current display resolution width in pixels.
     [[nodiscard]] uint32_t GetWidth() const { return m_width; }
 
-    /// Returns the current render target height in pixels.
+    /// Returns the current display resolution height in pixels.
     [[nodiscard]] uint32_t GetHeight() const { return m_height; }
+
+    /// Sets the screen percentage (render scale) for temporal upscaling.
+    ///
+    /// @source UE5 LegacyScreenPercentageDriver.cpp:10-61 — r.ScreenPercentage
+    ///
+    /// The internal render resolution is computed as:
+    ///   renderWidth  = max(1, displayWidth  * pct / 100)
+    ///   renderHeight = max(1, displayHeight * pct / 100)
+    ///
+    /// At 100% (default), render resolution equals display resolution and the
+    /// TAA resolve pass is a no-op identity upscale. Below 100%, geometry and
+    /// lighting run at lower resolution and TAA resolves/upscales to display res.
+    /// Above 100% (supersampling), rendering runs at higher res and TAA
+    /// downscales to display resolution.
+    ///
+    /// Triggers a full render target rebuild via Resize().
+    ///
+    /// # Arguments
+    /// * `pct` — Screen percentage [10, 200]. Clamped internally.
+    void SetScreenPercentage(float pct);
+
+    /// Returns the current screen percentage (10-200, default 100).
+    [[nodiscard]] float GetScreenPercentage() const { return m_screenPercentage; }
+
+    /// Returns the internal render resolution width in pixels.
+    /// When screen percentage is 100%, this equals GetWidth().
+    [[nodiscard]] uint32_t GetRenderWidth() const { return m_renderWidth; }
+
+    /// Returns the internal render resolution height in pixels.
+    /// When screen percentage is 100%, this equals GetHeight().
+    [[nodiscard]] uint32_t GetRenderHeight() const { return m_renderHeight; }
 
     // ── Asset Management ───────────────────────────────────────────────────
 
@@ -671,8 +702,13 @@ private:
     uint32_t m_shadowReadbackRowPitch = 0;   ///< Row pitch of the readback (256-aligned).
     uint32_t m_shadowReadbackWidth = 0;      ///< Atlas width in pixels.
     int m_shadowReadbackPhase = 0;           ///< 0=issue copy, 1=wait+read, 2=done.
-    uint32_t m_width = 0;
-    uint32_t m_height = 0;
+    uint32_t m_width = 0;                  ///< Display resolution width (backbuffer / swapchain).
+    uint32_t m_height = 0;                 ///< Display resolution height (backbuffer / swapchain).
+    uint32_t m_renderWidth = 0;            ///< Internal render resolution width (screen percentage applied).
+    uint32_t m_renderHeight = 0;           ///< Internal render resolution height (screen percentage applied).
+
+    /// @source UE5 LegacyScreenPercentageDriver.cpp:10 — r.ScreenPercentage default 100
+    float m_screenPercentage = 100.f;      ///< Render scale (10-200, default 100 = native resolution).
     float m_totalTime = 0.f;
     bool m_statsOverlayInitialized = false;
 
@@ -779,8 +815,10 @@ private:
 
         // ── Resolved during SetupFrameData ──────────────────────────────
         PipelineLibrary* pipelines = nullptr;
-        float            vpWidth = 0.f;
-        float            vpHeight = 0.f;
+        float            vpWidth = 0.f;          ///< Display resolution width (backbuffer).
+        float            vpHeight = 0.f;         ///< Display resolution height (backbuffer).
+        float            renderWidth = 0.f;      ///< Internal render resolution width (screen percentage applied).
+        float            renderHeight = 0.f;     ///< Internal render resolution height (screen percentage applied).
         bool             bindless = false;
 
         // ── CB allocations ──────────────────────────────────────────────

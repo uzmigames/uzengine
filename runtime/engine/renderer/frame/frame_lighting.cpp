@@ -48,7 +48,7 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
                 std::memcpy(viewMatrixData, &viewMat, 16 * sizeof(float));
 
                 float invTanHalfFov = 1.0f / std::tan(cam.GetFovY() * 0.5f);
-                float aspectRatio = static_cast<float>(m_width) / static_cast<float>(m_height);
+                float aspectRatio = static_cast<float>(m_renderWidth) / static_cast<float>(m_renderHeight);
 
                 // Log input SRV indices being passed to GTAO on first frame
                 static bool loggedGtaoInputs = false;
@@ -58,7 +58,7 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
                            "depthHandle={}, normalHandle={}, size={}x{}, frame={}",
                            m_gbuffer.depthSRV, m_gbuffer.normalSRV,
                            m_gbuffer.depth.IsValid(), m_gbuffer.normal.IsValid(),
-                           m_width, m_height, ctx.frameIndex);
+                           m_renderWidth, m_renderHeight, ctx.frameIndex);
                     loggedGtaoInputs = true;
                 }
 
@@ -69,7 +69,7 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
                     viewMatrixData,
                     invTanHalfFov, aspectRatio,
                     ctx.perFrame.nearPlane, ctx.perFrame.farPlane,
-                    m_width, m_height,
+                    m_renderWidth, m_renderHeight,
                     ctx.frameIndex);
 
                 if (gtaoResult == UINT32_MAX) {
@@ -100,8 +100,8 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
         m_sdfAtlas->UploadObjectBuffer();
 
         const uint32_t objectCount = m_sdfAtlas->GetRegisteredObjectCount();
-        const uint32_t dfsWidth  = m_dfsConfig.fullResolution ? m_width  : m_width  / 2;
-        const uint32_t dfsHeight = m_dfsConfig.fullResolution ? m_height : m_height / 2;
+        const uint32_t dfsWidth  = m_dfsConfig.fullResolution ? m_renderWidth  : m_renderWidth  / 2;
+        const uint32_t dfsHeight = m_dfsConfig.fullResolution ? m_renderHeight : m_renderHeight / 2;
         const uint32_t downsampleFactor = m_dfsConfig.fullResolution ? 1 : 2;
 
         // ── Async compute note (§8.3) ─────────────────────────────────────
@@ -466,8 +466,8 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
                 // a single texture.
                 rc.hizSrvIdx        = m_gbuffer.depthSRV;
                 rc.sceneColorSrvIdx = m_hdrSceneColorSrv;
-                rc.outputWidth      = m_width;
-                rc.outputHeight     = m_height;
+                rc.outputWidth      = m_renderWidth;
+                rc.outputHeight     = m_renderHeight;
                 /// @source UE5 ScreenSpaceRayTracing.cpp:314 — Clamp(Intensity * 0.01, 0, 1)
                 rc.intensity        = 1.0f;
                 /// @source UE5 ScreenSpaceRayTracing.cpp:287 — -2.0 / MaxRoughness
@@ -484,8 +484,8 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
                 cmd->SetDescriptorTable(4, m_ssrTraceOutputUav);
 
                 // Dispatch: 8x8 thread groups
-                const uint32_t groupsX = (m_width  + 7) / 8;
-                const uint32_t groupsY = (m_height + 7) / 8;
+                const uint32_t groupsX = (m_renderWidth  + 7) / 8;
+                const uint32_t groupsY = (m_renderHeight + 7) / 8;
                 cmd->Dispatch(groupsX, groupsY, 1);
 
                 // Transition trace output: UAV → SRV for resolve pass to read
@@ -541,8 +541,8 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
                 rc.normalSrvIdx     = m_gbuffer.normalSRV;
                 rc.depthSrvIdx      = m_gbuffer.depthSRV;
                 rc.reserved         = 0;
-                rc.outputWidth      = m_width;
-                rc.outputHeight     = m_height;
+                rc.outputWidth      = m_renderWidth;
+                rc.outputHeight     = m_renderHeight;
                 /// @source UE5 ScreenSpaceRayTracing.cpp:314
                 rc.intensity        = 1.0f;
                 /// @source UE5 ScreenSpaceRayTracing.cpp:287
@@ -559,8 +559,8 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
                 cmd->SetDescriptorTable(4, m_ssrResolvedOutputUav);
 
                 // Dispatch: 8x8 thread groups
-                const uint32_t groupsX = (m_width  + 7) / 8;
-                const uint32_t groupsY = (m_height + 7) / 8;
+                const uint32_t groupsX = (m_renderWidth  + 7) / 8;
+                const uint32_t groupsY = (m_renderHeight + 7) / 8;
                 cmd->Dispatch(groupsX, groupsY, 1);
 
                 // Transition resolved output: UAV → SRV for lighting pass to read
@@ -600,8 +600,8 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
         dvDesc.depthTexture      = m_gbuffer.depth;
         dvDesc.positionTexture   = m_gbuffer.positionWS;
         dvDesc.bindless          = ctx.bindless;
-        dvDesc.viewportWidth     = ctx.vpWidth;
-        dvDesc.viewportHeight    = ctx.vpHeight;
+        dvDesc.viewportWidth     = ctx.renderWidth;
+        dvDesc.viewportHeight    = ctx.renderHeight;
         AddDebugViewPass(rgBuilder, dvDesc);
     } else if (!debugActive) {
         LightingPassDesc lightDesc{};
@@ -635,8 +635,8 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
             lightDesc.iblBrdfLut      = m_iblBaker->GetBRDFLutTexture();
         }
         lightDesc.bindless            = ctx.bindless;
-        lightDesc.viewportWidth       = ctx.vpWidth;
-        lightDesc.viewportHeight      = ctx.vpHeight;
+        lightDesc.viewportWidth       = ctx.renderWidth;
+        lightDesc.viewportHeight      = ctx.renderHeight;
         // Binder path — ShaderParameterBinder uploads per-frame CB and
         // binds IBL textures via metadata. On SM5, BindResources calls
         // SetFragmentTexture for each texture member automatically.
@@ -667,8 +667,8 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
         dbgDesc.normalTexture      = m_gbuffer.normal;
         dbgDesc.depthTextureForSrv = m_gbuffer.depth;
         dbgDesc.bindless           = ctx.bindless;
-        dbgDesc.viewportWidth      = ctx.vpWidth;
-        dbgDesc.viewportHeight     = ctx.vpHeight;
+        dbgDesc.viewportWidth      = ctx.renderWidth;
+        dbgDesc.viewportHeight     = ctx.renderHeight;
         AddGBufferDebugPass(rgBuilder, dbgDesc);
     }
 
@@ -685,8 +685,8 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
         atmoCtx.sunDir              = &ctx.sunDir;
         atmoCtx.sunColor            = &ctx.sunColor;
         atmoCtx.bindless            = ctx.bindless;
-        atmoCtx.vpWidth             = ctx.vpWidth;
-        atmoCtx.vpHeight            = ctx.vpHeight;
+        atmoCtx.vpWidth             = ctx.renderWidth;
+        atmoCtx.vpHeight            = ctx.renderHeight;
         atmoCtx.transmittanceLut    = m_transmittanceLut;
         atmoCtx.transmittanceLutSrv = m_transmittanceLutSrv;
         atmoCtx.transmittanceLutUav = m_transmittanceLutUav;
@@ -724,7 +724,7 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
             AddHeightFogFromECS(rgBuilder, ctx.hdrRes, ctx.depthRes, ctx.perFrameAlloc,
                                 ctx.world, *m_camera, ctx.pipelines, *m_cbRing,
                                 m_gbuffer.depthSRV, m_gbuffer.depth,
-                                ctx.bindless, ctx.vpWidth, ctx.vpHeight,
+                                ctx.bindless, ctx.renderWidth, ctx.renderHeight,
                                 skyFogR, skyFogG, skyFogB);
         }
     }

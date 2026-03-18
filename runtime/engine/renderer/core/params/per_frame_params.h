@@ -156,7 +156,12 @@ struct PerFrameParams {
 
     uint32_t ssrSrvIndex = UINT32_MAX;               ///< SRV index for resolved SSR texture (UINT32_MAX = no SSR).
 
-    float    _pad2[8]            = {};                ///< Pad scalar section to 512 bytes.
+    /// @source UE5 ViewUniformShaderParameters.h — MaterialTextureMipBias
+    /// Global mipmap LOD bias for screen percentage compensation.
+    /// 0 at 100%, negative below native resolution, positive for supersampling.
+    float    mipBias = 0.0f;
+
+    float    _pad2[7]            = {};                ///< Pad scalar section to 512 bytes.
 
     // ── Resource handles (NOT copied to CB) ──────────────────────────────
     // These are bound by ShaderParameterBinder at their HLSL register slots.

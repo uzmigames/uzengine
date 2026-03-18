@@ -53,6 +53,11 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     m_width = width;
     m_height = height;
 
+    // Compute internal render resolution from screen percentage.
+    // At 100% (default), render resolution equals display resolution.
+    m_renderWidth  = std::max(1u, static_cast<uint32_t>(width  * m_screenPercentage / 100.f));
+    m_renderHeight = std::max(1u, static_cast<uint32_t>(height * m_screenPercentage / 100.f));
+
     // ── Input ────────────────────────────────────────────────────────────
     m_input = std::make_unique<InputSystem>();
     m_input->Init();
@@ -101,17 +106,17 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     m_cameraCtrl->InitFromCamera(*m_camera);
     m_cameraCtrl->SetMoveSpeed(500.f);  // 500 cm/s = 5 m/s (UE5 parity)
 
-    // ── GBuffer ─────────────────────────────────────────────────────────
-    if (!m_gbuffer.Create(device, width, height)) {
+    // ── GBuffer (at render resolution — upscaled to display res by TAA) ──
+    if (!m_gbuffer.Create(device, m_renderWidth, m_renderHeight)) {
         UZ_LOG(Renderer, Error, "SceneRenderer: failed to create GBuffer");
         return false;
     }
 
-    // ── HDR Scene Color (RGBA16F — intermediate before tonemap) ────────
+    // ── HDR Scene Color (RGBA16F — at render resolution, upscaled by TAA) ──
     {
         RHITextureDesc hdrDesc{};
-        hdrDesc.width     = width;
-        hdrDesc.height    = height;
+        hdrDesc.width     = m_renderWidth;
+        hdrDesc.height    = m_renderHeight;
         hdrDesc.format    = RHIFormat::RGBA16Float;
         hdrDesc.usage     = RHITextureUsage::ShaderResource | RHITextureUsage::RenderTarget;
         hdrDesc.debugName = "HDR_SceneColor";
@@ -122,7 +127,7 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
         }
         m_hdrSceneColorSrv = device->GetTextureSRVIndex(m_hdrSceneColor);
         UZ_LOG(Renderer, Info, "SceneRenderer: HDR scene color created ({}x{}, RGBA16F, SRV={})",
-               width, height, m_hdrSceneColorSrv);
+               m_renderWidth, m_renderHeight, m_hdrSceneColorSrv);
     }
 
     // ── Shadow Atlas ────────────────────────────────────────────────────
@@ -249,25 +254,25 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
         UZ_LOG(Renderer, Warning, "SceneRenderer: auto-exposure init failed (will use exposure=1.0)");
     }
 
-    // ── GTAO ─────────────────────────────────────────────────────────
+    // ── GTAO (at render resolution — operates on GBuffer depth/normals) ──
     m_gtaoPass = std::make_unique<GTAOPass>();
-    if (!m_gtaoPass->Init(device, m_shaderMgr.get(), width, height)) {
+    if (!m_gtaoPass->Init(device, m_shaderMgr.get(), m_renderWidth, m_renderHeight)) {
         UZ_LOG(Renderer, Warning, "SceneRenderer: GTAO init failed (SSAO disabled)");
     }
 
-    // ── Bloom ────────────────────────────────────────────────────────
+    // ── Bloom (at render resolution — operates on HDR scene color) ───
     UZ_LOG(Renderer, Info, "SceneRenderer: initializing BloomPass...");
     m_bloomPass = std::make_unique<BloomPass>();
-    if (!m_bloomPass->Init(device, m_shaderMgr.get(), width, height)) {
+    if (!m_bloomPass->Init(device, m_shaderMgr.get(), m_renderWidth, m_renderHeight)) {
         UZ_LOG(Renderer, Warning, "SceneRenderer: bloom init failed (bloom disabled)");
     }
     UZ_LOG(Renderer, Info, "SceneRenderer: BloomPass initialized");
 
-    // ── DFS Output Texture + Culling Buffers ──────────────────────────────
+    // ── DFS Output Texture + Culling Buffers (at render resolution) ──
     // Created here but only populated when DFS is enabled at runtime.
     // The output texture starts at half-resolution by default; fullResolution
     // mode can be toggled via DistanceFieldShadowConfig.
-    CreateDfsResources(width, height);
+    CreateDfsResources(m_renderWidth, m_renderHeight);
 
     // ── Sky cubemap (64x64x6 RGBA16F) for IBL capture ──────────────────
     {
@@ -292,33 +297,56 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
         }
     }
 
-    // ── Hi-Z Pyramid (per-mip R32F textures) ────────────────────────────
-    CreateHiZPyramid(width, height);
+    // ── Hi-Z Pyramid (at render resolution — used by depth prepass/occlusion) ──
+    CreateHiZPyramid(m_renderWidth, m_renderHeight);
 
-    // ── TAA History Textures (ping-pong RGBA16F) ────────────────────────
+    // ── TAA History Textures (at DISPLAY resolution — TAA is the upscale point) ──
     CreateTaaResources(width, height);
 
-    // ── SSR Output Textures (trace + resolve, RGBA16F) ────────────────
-    CreateSsrResources(width, height);
+    // ── SSR Output Textures (at render resolution — operates on GBuffer) ──
+    CreateSsrResources(m_renderWidth, m_renderHeight);
 
     // ── Color Grading LUT (32x32x32 3D texture) ────────────────────────
     CreateColorGradingLutResources();
 
-    // ── Motion Blur Output (RGBA16F, same resolution as scene) ─────────
-    CreateMotionBlurResources(width, height);
+    // ── Motion Blur Output (at render resolution — pre-upscale effect) ──
+    CreateMotionBlurResources(m_renderWidth, m_renderHeight);
 
-    // ── DOF Textures (CoC R16F + output RGBA16F) ───────────────────────
-    CreateDofResources(width, height);
+    // ── DOF Textures (at render resolution — pre-upscale effect) ─────
+    CreateDofResources(m_renderWidth, m_renderHeight);
 
-    // ── FXAA LDR Intermediate (RGBA8Unorm, same resolution as backbuffer) ─
+    // ── FXAA LDR Intermediate (at DISPLAY resolution — post-tonemap AA) ──
     CreateFxaaResources(width, height);
 
     // ── Async Texture Decoder (4 worker threads for parallel stbi_load) ──
     m_asyncDecoder = std::make_unique<AsyncTextureDecoder>(4);
 
-    UZ_LOG(Renderer, Info, "SceneRenderer initialized ({}x{}, {})",
-           width, height, RenderPathToString(m_renderPath));
+    UZ_LOG(Renderer, Info, "SceneRenderer initialized ({}x{} display, {}x{} render, {}% scale, {})",
+           width, height, m_renderWidth, m_renderHeight,
+           m_screenPercentage, RenderPathToString(m_renderPath));
     return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Screen Percentage
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// @source UE5 LegacyScreenPercentageDriver.cpp:10-61 — r.ScreenPercentage
+void SceneRenderer::SetScreenPercentage(float pct) {
+    // Clamp to valid range (UE5 allows 10-200).
+    pct = std::max(10.f, std::min(200.f, pct));
+
+    if (std::abs(pct - m_screenPercentage) < 0.01f) return;
+
+    m_screenPercentage = pct;
+
+    UZ_LOG(Renderer, Info, "SceneRenderer: screen percentage set to {:.1f}%", pct);
+
+    // Rebuild all render targets at the new render resolution.
+    // Resize() recomputes m_renderWidth/Height from m_screenPercentage.
+    if (m_device && m_width > 0 && m_height > 0) {
+        Resize(m_width, m_height);
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -826,17 +854,23 @@ void SceneRenderer::Resize(uint32_t width, uint32_t height) {
     m_width = width;
     m_height = height;
 
+    // Recompute internal render resolution from screen percentage.
+    m_renderWidth  = std::max(1u, static_cast<uint32_t>(width  * m_screenPercentage / 100.f));
+    m_renderHeight = std::max(1u, static_cast<uint32_t>(height * m_screenPercentage / 100.f));
+
+    // ── Render-resolution targets (GBuffer, HDR, effects before upscale) ──
+
     if (m_gbuffer.IsValid()) {
-        [[maybe_unused]] bool ok = m_gbuffer.Resize(m_device, width, height);
+        [[maybe_unused]] bool ok = m_gbuffer.Resize(m_device, m_renderWidth, m_renderHeight);
         UZ_CHECK(ok);
     }
 
-    // Recreate HDR scene color at new size
+    // Recreate HDR scene color at render resolution
     if (m_hdrSceneColor.IsValid()) {
         m_device->DestroyTexture(m_hdrSceneColor);
         RHITextureDesc hdrDesc{};
-        hdrDesc.width     = width;
-        hdrDesc.height    = height;
+        hdrDesc.width     = m_renderWidth;
+        hdrDesc.height    = m_renderHeight;
         hdrDesc.format    = RHIFormat::RGBA16Float;
         hdrDesc.usage     = RHITextureUsage::ShaderResource | RHITextureUsage::RenderTarget;
         hdrDesc.debugName = "HDR_SceneColor";
@@ -844,34 +878,40 @@ void SceneRenderer::Resize(uint32_t width, uint32_t height) {
         m_hdrSceneColorSrv = m_device->GetTextureSRVIndex(m_hdrSceneColor);
     }
 
-    // Recreate Hi-Z pyramid at new resolution
-    CreateHiZPyramid(width, height);
+    // Recreate Hi-Z pyramid at render resolution
+    CreateHiZPyramid(m_renderWidth, m_renderHeight);
 
-    // Recreate GTAO textures at new resolution
+    // Recreate GTAO textures at render resolution
     if (m_gtaoPass && m_gtaoPass->IsInitialized()) {
-        [[maybe_unused]] bool gtaoOk = m_gtaoPass->Resize(width, height);
+        [[maybe_unused]] bool gtaoOk = m_gtaoPass->Resize(m_renderWidth, m_renderHeight);
     }
 
-    // Recreate DFS output texture at new resolution
+    // Recreate DFS output texture at render resolution
     DestroyDfsResources();
-    CreateDfsResources(width, height);
+    CreateDfsResources(m_renderWidth, m_renderHeight);
 
-    // Recreate TAA history textures at new resolution
+    // ── Display-resolution targets (TAA output is the upscale point) ──
+
+    // Recreate TAA history textures at DISPLAY resolution (upscale target)
     CreateTaaResources(width, height);
 
-    // Recreate SSR output textures at new resolution
+    // ── Render-resolution targets (effects before upscale) ──
+
+    // Recreate SSR output textures at render resolution
     DestroySsrResources();
-    CreateSsrResources(width, height);
+    CreateSsrResources(m_renderWidth, m_renderHeight);
 
-    // Recreate motion blur output at new resolution
+    // Recreate motion blur output at render resolution
     DestroyMotionBlurResources();
-    CreateMotionBlurResources(width, height);
+    CreateMotionBlurResources(m_renderWidth, m_renderHeight);
 
-    // Recreate DOF textures at new resolution
+    // Recreate DOF textures at render resolution
     DestroyDofResources();
-    CreateDofResources(width, height);
+    CreateDofResources(m_renderWidth, m_renderHeight);
 
-    // Recreate FXAA LDR intermediate at new resolution
+    // ── Display-resolution targets (post-tonemap AA) ──
+
+    // Recreate FXAA LDR intermediate at display resolution
     DestroyFxaaResources();
     CreateFxaaResources(width, height);
 

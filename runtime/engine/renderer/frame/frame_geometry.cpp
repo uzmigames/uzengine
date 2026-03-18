@@ -25,8 +25,11 @@ void SceneRenderer::RegisterGeometryPasses(rg::RgBuilder& rgBuilder, FrameContex
 
     const bool bindless = ctx.bindless;
     auto* pipelines = ctx.pipelines;
-    const float vpWidth = ctx.vpWidth;
-    const float vpHeight = ctx.vpHeight;
+    // Geometry passes (GBuffer, depth prepass, velocity) render at internal
+    // render resolution, not display resolution. The TAA resolve pass upscales
+    // to display resolution later in the pipeline.
+    const float vpWidth = ctx.renderWidth;
+    const float vpHeight = ctx.renderHeight;
 
     if (m_renderPath == RenderPath::Deferred) {
         // ── Deferred: optional DepthPrepass + Hi-Z + GBuffer ──────────
@@ -63,8 +66,8 @@ void SceneRenderer::RegisterGeometryPasses(rg::RgBuilder& rgBuilder, FrameContex
                     hizDesc.depthSourceSrvIndex  = m_gbuffer.depthSRV;
                     hizDesc.mipCount             = m_hizMipCount;
                     hizDesc.pipeline             = pipelines->GetHiZPyramid();
-                    hizDesc.sourceWidth          = m_width;
-                    hizDesc.sourceHeight         = m_height;
+                    hizDesc.sourceWidth          = m_renderWidth;
+                    hizDesc.sourceHeight         = m_renderHeight;
                     hizDesc.bindless             = bindless;
                     for (uint32_t i = 0; i < m_hizMipCount; ++i) {
                         hizDesc.mipLevels[i] = m_hizMipLevels[i];

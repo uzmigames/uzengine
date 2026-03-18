@@ -116,6 +116,11 @@ public:
     /// Sets GPU memory usage in bytes.
     void SetGPUMemoryUsage(uint64_t bytes) { m_gpuMemoryBytes = bytes; }
 
+    /// Sets render resolution info (screen percentage, internal render size).
+    void SetRenderResolution(uint32_t renderW, uint32_t renderH, float screenPct) {
+        m_renderWidth = renderW; m_renderHeight = renderH; m_screenPercentage = screenPct;
+    }
+
     /// Sets camera position and rotation for display.
     void SetCameraInfo(float x, float y, float z, float yawDeg, float pitchDeg) {
         m_camX = x; m_camY = y; m_camZ = z;
@@ -167,7 +172,10 @@ private:
     std::string m_featureLevel;      ///< Feature level string (e.g., "D3D_FEATURE_LEVEL_12_2")
     std::string m_rhiBackend;        ///< RHI backend name (e.g., "DX12")
     std::string m_shaderModel;       ///< Shader model string (e.g., "SM6.8")
-    std::string m_resolution;        ///< Resolution string (e.g., "1280x720")
+    std::string m_resolution;        ///< Display resolution string (e.g., "2560x1421")
+    uint32_t m_renderWidth = 0;      ///< Internal render resolution width
+    uint32_t m_renderHeight = 0;     ///< Internal render resolution height
+    float m_screenPercentage = 100.f; ///< Screen percentage (render/display ratio)
     uint64_t m_vramTotalMB = 0;      ///< Total VRAM in MB
     bool m_bindless = false;         ///< Whether bindless is active
 

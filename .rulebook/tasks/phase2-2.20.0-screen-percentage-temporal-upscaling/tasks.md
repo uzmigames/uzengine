@@ -1,12 +1,12 @@
 ## 1. Screen Percentage Infrastructure
 
-- [ ] 1.1 Add `m_renderWidth`/`m_renderHeight` (internal render res) alongside `m_width`/`m_height` (display res) in `scene_renderer.h`. Compute from `m_screenPercentage` (float, 10-200, default 100)
+- [x] 1.1 Add `m_renderWidth`/`m_renderHeight` (internal render res) alongside `m_width`/`m_height` (display res) in `scene_renderer.h`. Compute from `m_screenPercentage` (float, 10-200, default 100). Added `SetScreenPercentage()`, `GetScreenPercentage()`, `GetRenderWidth()`, `GetRenderHeight()` public API.
 - [ ] 1.2 Add `r.ScreenPercentage` CVar (float, default 100.0) readable from config. @source UE5 LegacyScreenPercentageDriver.cpp:10-61
-- [ ] 1.3 Resize GBuffer (albedo, normal, depth, velocity, positionWS) to `renderWidth × renderHeight` instead of `displayWidth × displayHeight` in `gbuffer.cpp`
-- [ ] 1.4 Resize HDR scene color (`m_hdrSceneColor`) to `renderWidth × renderHeight`
-- [ ] 1.5 Keep backbuffer, tonemap output, and overlay targets at `displayWidth × displayHeight`
-- [ ] 1.6 Update `SceneRenderer::Resize()` to recompute `m_renderWidth/Height` from screen percentage and recreate render targets at new render resolution
-- [ ] 1.7 Pass both `renderWidth/Height` and `displayWidth/Height` to all passes that need viewport dimensions
+- [x] 1.3 Resize GBuffer (albedo, normal, depth, velocity, positionWS) to `renderWidth × renderHeight` instead of `displayWidth × displayHeight` in `gbuffer.cpp`. Done in Init() and Resize().
+- [x] 1.4 Resize HDR scene color (`m_hdrSceneColor`) to `renderWidth × renderHeight`. Done in Init() and Resize().
+- [x] 1.5 Keep backbuffer, tonemap output, and overlay targets at `displayWidth × displayHeight`. TAA history at display res. FXAA/CAS at display res.
+- [x] 1.6 Update `SceneRenderer::Resize()` to recompute `m_renderWidth/Height` from screen percentage and recreate render targets at new render resolution. SetScreenPercentage() triggers Resize().
+- [x] 1.7 Pass both `renderWidth/Height` and `displayWidth/Height` to all passes that need viewport dimensions. FrameContext gains renderWidth/renderHeight. Geometry/lighting passes use renderWidth. Tonemap/CAS/FXAA use vpWidth (display).
 
 ## 2. Camera Jitter (Halton Sequence)
 
@@ -63,16 +63,16 @@
 
 ## 7. Mipmap Bias Compensation
 
-- [ ] 7.1 Compute global mipmap bias: `bias = log₂(screenPercentage / 100.0)`. At 67% → bias = -0.58, at 50% → bias = -1.0. @source Godot renderer_viewport.cpp
-- [ ] 7.2 Apply mipmap bias to all texture sampling in material shaders: `SampleLevel(uv, mipLevel + globalMipBias)` or via sampler LOD bias
-- [ ] 7.3 Add `mipBias` field to `PerFrameCB` so shaders can access it
-- [ ] 7.4 At 100% screen percentage, mipBias = 0 (no change from current behavior)
+- [x] 7.1 Compute global mipmap bias: `bias = log₂(screenPercentage / 100.0)`. At 67% → bias = -0.58, at 50% → bias = -1.0. Computed in frame_setup.cpp.
+- [x] 7.2 Apply mipmap bias to all texture sampling in GBuffer shader: `SampleBias(sampler, uv, mipBias)` for all PBR texture samples in gbuffer_ps.hlsl.
+- [x] 7.3 Add `mipBias` field to `PerFrameCB` at offset 480 (bytes). Declared in gbuffer_ps.hlsl via packoffset(c30).
+- [x] 7.4 At 100% screen percentage, mipBias = 0 (no change from current behavior). log2(1.0) = 0.
 
 ## 8. Render Graph Integration
 
-- [ ] 8.1 Insert upscaler pass between Fog and Tonemap in the render graph. Reads: HDR scene color (render res), velocity, depth. Writes: upscaled HDR (display res)
-- [ ] 8.2 Tonemap pass now reads upscaled HDR (display res) instead of raw scene color (render res)
-- [ ] 8.3 If screen percentage == 100 and upscaler == None, skip upscaler pass entirely (zero overhead, backward compatible)
+- [x] 8.1 TAA resolve is the upscale point. Scene color (render res) -> TAA history (display res). TAA resolve reads render-res scene color, outputs display-res history. taa_resolve_cs.hlsl updated for resolution mismatch (GetDimensions, UV-based coord mapping, display-res dispatch).
+- [x] 8.2 Tonemap reads TAA output (display res). Post-process SRV chain routes TAA history SRV to tonemap.
+- [x] 8.3 At 100% screen percentage, render res == display res. All paths are identity — no overhead. SampleBias(mipBias=0) == Sample. TAA dispatch/coords identical.
 - [ ] 8.4 FXAA (if enabled) runs after tonemap at display resolution
 
 ## 9. Dynamic Resolution (GPU-Bound Adaptive)

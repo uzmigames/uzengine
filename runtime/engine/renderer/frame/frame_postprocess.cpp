@@ -44,9 +44,10 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
                 UZ_PROFILE_SCOPE("Bloom::Execute");
 
                 // HDR is in ShaderResource state (render graph transition).
-                // Dispatch the full bloom compute chain.
+                // Dispatch the full bloom compute chain at render resolution
+                // (bloom operates on the HDR scene color before TAA upscale).
                 m_bloomPass->Execute(cmd, m_hdrSceneColorSrv,
-                                     static_cast<uint32_t>(ctx.vpWidth), static_cast<uint32_t>(ctx.vpHeight),
+                                     static_cast<uint32_t>(ctx.renderWidth), static_cast<uint32_t>(ctx.renderHeight),
                                      ctx.perFrame.exposure);
             });
         });
@@ -105,6 +106,12 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
                 // and outputWidth/outputHeight for bicubic history sampling.
                 //
                 // Layout matches the HLSL TaaCB cbuffer in taa_resolve_cs.hlsl.
+                //
+                // When screen percentage < 100%, scene color is at render resolution
+                // (smaller) and history/output are at display resolution (larger).
+                // texelSize uses render resolution because that's the input texel size
+                // for neighborhood sampling. outputWidth/Height are display resolution
+                // because that's the dimensions of the TAA output/history textures.
                 struct TaaCB {
                     float    jitterX, jitterY;       // 8 bytes
                     float    texelSizeX, texelSizeY;  // 8 bytes
@@ -120,14 +127,17 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
                 TaaCB taaCb{};
                 taaCb.jitterX    = jitterX;
                 taaCb.jitterY    = jitterY;
-                taaCb.texelSizeX = 1.0f / ctx.vpWidth;
-                taaCb.texelSizeY = 1.0f / ctx.vpHeight;
+                // texelSize is 1/renderResolution — the input scene color texel size.
+                // The shader uses this for neighborhood sampling and jitter unjittering.
+                taaCb.texelSizeX = 1.0f / ctx.renderWidth;
+                taaCb.texelSizeY = 1.0f / ctx.renderHeight;
                 /// @source UE5 TemporalAA.cpp:41 — CurrentFrameWeight = 0.04
                 taaCb.blendWeight  = m_prevViewProjValid ? 0.04f : 1.0f;
                 taaCb.sceneSrv     = m_hdrSceneColorSrv;
                 taaCb.depthSrv     = m_gbuffer.depthSRV;
                 taaCb.historySrv   = m_taaHistorySrv[readIdx];
                 taaCb.velocitySrv  = m_gbuffer.velocitySRV;
+                // Output dimensions are DISPLAY resolution (TAA history lives at display res).
                 taaCb.outputWidth  = ctx.vpWidth;
                 taaCb.outputHeight = ctx.vpHeight;
                 taaCb._pad0        = 0;
@@ -267,11 +277,12 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
         const float targetDt = 1.0f / static_cast<float>(std::max(m_motionBlurTargetFPS, 1));
         const float motionBlurTimeScale = targetDt / clampedDt;
         const float motionBlurScale = motionBlurTimeScale * m_motionBlurAmount * 0.5f;
-        const float maxBlurPx = m_motionBlurMax * 0.01f * static_cast<float>(static_cast<uint32_t>(ctx.vpWidth));
+        // Motion blur operates at render resolution (pre-upscale effect).
+        const float maxBlurPx = m_motionBlurMax * 0.01f * static_cast<float>(static_cast<uint32_t>(ctx.renderWidth));
 
         // @source UE5 MotionBlurCommon.ush:24 — VELOCITY_FLATTEN_TILE_SIZE = 16
-        const uint32_t tileCountX = (static_cast<uint32_t>(ctx.vpWidth)  + 15) / 16;
-        const uint32_t tileCountY = (static_cast<uint32_t>(ctx.vpHeight) + 15) / 16;
+        const uint32_t tileCountX = (static_cast<uint32_t>(ctx.renderWidth)  + 15) / 16;
+        const uint32_t tileCountY = (static_cast<uint32_t>(ctx.renderHeight) + 15) / 16;
 
         // ── Pass 1: Tile Max (16x16 tiles, find max velocity per tile) ───
         // @source UE5 MotionBlurVelocityFlatten.usf:79-165 — MainCS
@@ -348,8 +359,8 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
                 cmd->ResourceBarrier(&b, 1);
 
                 cmd->SetPipeline(mbPSO);
-                const uint32_t vpW = static_cast<uint32_t>(ctx.vpWidth);
-                const uint32_t vpH = static_cast<uint32_t>(ctx.vpHeight);
+                const uint32_t vpW = static_cast<uint32_t>(ctx.renderWidth);
+                const uint32_t vpH = static_cast<uint32_t>(ctx.renderHeight);
                 /// @source UE5 MotionBlurApply.usf:269-285 — neighbor max for per-tile early-out
                 struct MBConstants { uint32_t scene, vel, depth, dimsPacked; float scale, maxPx; uint32_t uav, neighborMax; } c;
                 c.scene = ctx.taaSrvForTonemap; c.vel = m_gbuffer.velocitySRV; c.depth = m_gbuffer.depthSRV;
@@ -358,7 +369,7 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
                 c.uav = m_motionBlurOutputUav;
                 c.neighborMax = m_motionBlurNeighborMaxSrv;
                 cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&c), 8);
-                cmd->Dispatch((static_cast<uint32_t>(ctx.vpWidth)+7)/8, (static_cast<uint32_t>(ctx.vpHeight)+7)/8, 1);
+                cmd->Dispatch((static_cast<uint32_t>(ctx.renderWidth)+7)/8, (static_cast<uint32_t>(ctx.renderHeight)+7)/8, 1);
 
                 b.stateBefore = RHIResourceState::UnorderedAccess; b.stateAfter = RHIResourceState::ShaderResource;
                 cmd->ResourceBarrier(&b, 1);
@@ -385,7 +396,7 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
                 const float fovRad = m_camera->GetFovY();
                 const float fMM = sensorW / (2.0f * std::tan(fovRad * 0.5f));
                 const float dMM = m_dofFocusDistance * 10.0f;
-                const float cocInf = (fMM*fMM) / (m_dofAperture * (dMM - fMM)) * static_cast<float>(static_cast<uint32_t>(ctx.vpWidth)) / sensorW * 0.5f;
+                const float cocInf = (fMM*fMM) / (m_dofAperture * (dMM - fMM)) * static_cast<float>(static_cast<uint32_t>(ctx.renderWidth)) / sensorW * 0.5f;
 
                 // Pre-compute transition reciprocals for the focal region model.
                 // The focal region creates an in-focus dead zone centered on FocusDistance.
@@ -409,11 +420,11 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
                 const float farTransRcp  = 1.0f / std::max(m_dofFarTransition + halfFocalRegion, 0.001f);
 
                 struct C { uint32_t dSrv,oUav,w,h; float fd,cinf,nearRcp,farRcp; } c;
-                c.dSrv=m_gbuffer.depthSRV; c.oUav=m_dofCocUav; c.w=static_cast<uint32_t>(ctx.vpWidth); c.h=static_cast<uint32_t>(ctx.vpHeight);
+                c.dSrv=m_gbuffer.depthSRV; c.oUav=m_dofCocUav; c.w=static_cast<uint32_t>(ctx.renderWidth); c.h=static_cast<uint32_t>(ctx.renderHeight);
                 c.fd=m_dofFocusDistance; c.cinf=cocInf;
                 c.nearRcp=nearTransRcp; c.farRcp=farTransRcp;
                 cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&c), 8);
-                cmd->Dispatch((static_cast<uint32_t>(ctx.vpWidth)+7)/8, (static_cast<uint32_t>(ctx.vpHeight)+7)/8, 1);
+                cmd->Dispatch((static_cast<uint32_t>(ctx.renderWidth)+7)/8, (static_cast<uint32_t>(ctx.renderHeight)+7)/8, 1);
                 b.stateBefore = RHIResourceState::UnorderedAccess; b.stateAfter = RHIResourceState::ShaderResource;
                 cmd->ResourceBarrier(&b, 1);
             });
@@ -427,12 +438,12 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
                 b.stateBefore = RHIResourceState::ShaderResource; b.stateAfter = RHIResourceState::UnorderedAccess;
                 cmd->ResourceBarrier(&b, 1);
                 cmd->SetPipeline(pso);
-                const float maxCoc = 0.025f * static_cast<float>(static_cast<uint32_t>(ctx.vpWidth));
+                const float maxCoc = 0.025f * static_cast<float>(static_cast<uint32_t>(ctx.renderWidth));
                 struct C { uint32_t sSrv,cSrv,oUav,w,h; float bScale,maxR; uint32_t pad; } c;
                 c.sSrv=ctx.motionBlurSrvForTonemap; c.cSrv=m_dofCocSrv; c.oUav=m_dofOutputUav;
-                c.w=static_cast<uint32_t>(ctx.vpWidth); c.h=static_cast<uint32_t>(ctx.vpHeight); c.bScale=1.0f; c.maxR=maxCoc; c.pad=0;
+                c.w=static_cast<uint32_t>(ctx.renderWidth); c.h=static_cast<uint32_t>(ctx.renderHeight); c.bScale=1.0f; c.maxR=maxCoc; c.pad=0;
                 cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&c), 8);
-                cmd->Dispatch((static_cast<uint32_t>(ctx.vpWidth)+7)/8, (static_cast<uint32_t>(ctx.vpHeight)+7)/8, 1);
+                cmd->Dispatch((static_cast<uint32_t>(ctx.renderWidth)+7)/8, (static_cast<uint32_t>(ctx.renderHeight)+7)/8, 1);
                 b.stateBefore = RHIResourceState::UnorderedAccess; b.stateAfter = RHIResourceState::ShaderResource;
                 cmd->ResourceBarrier(&b, 1);
             });

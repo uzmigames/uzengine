@@ -128,7 +128,15 @@ struct PerFrameCB {
     float    contactShadowLength = 0.02f;        ///< TEST 2: contact shadows ON.
 
     uint32_t ssrSrvIndex = UINT32_MAX;             ///< SRV index for resolved SSR texture (UINT32_MAX = no SSR).
-    float    _pad2[8] = {};                       ///< Pad to 512 bytes.
+
+    /// @source UE5 ViewUniformShaderParameters.h — MaterialTextureMipBias
+    /// Global mipmap LOD bias applied to all material texture samples.
+    /// Computed as log2(screenPercentage / 100). At 100% = 0 (no bias).
+    /// At 50% = -1.0 (shift down one mip to compensate for lower render resolution).
+    /// At 200% = +1.0 (shift up one mip for supersampling).
+    float    mipBias = 0.0f;
+
+    float    _pad2[7] = {};                       ///< Pad to 512 bytes.
 };
 
 static_assert(sizeof(PerFrameCB) == 512, "PerFrameCB must be 512 bytes (D3D12 CB alignment)");

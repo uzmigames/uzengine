@@ -222,8 +222,13 @@ void StatsOverlay::BuildTextPanel() {
                            m_bindless ? green : yellow);
     textY += kLineH;
 
-    // Resolution
-    snprintf(buf, sizeof(buf), "Res: %s", m_resolution.c_str());
+    // Resolution + screen percentage
+    if (m_screenPercentage < 99.5f || m_screenPercentage > 100.5f) {
+        snprintf(buf, sizeof(buf), "Res: %s (render: %ux%u @ %.0f%%)",
+                 m_resolution.c_str(), m_renderWidth, m_renderHeight, m_screenPercentage);
+    } else {
+        snprintf(buf, sizeof(buf), "Res: %s", m_resolution.c_str());
+    }
     m_textRenderer.AddText(m_font, buf, textX, textY, gray);
     textY += kLineH;
 
