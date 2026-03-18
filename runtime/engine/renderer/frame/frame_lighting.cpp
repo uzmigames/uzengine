@@ -711,9 +711,15 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
         if (m_shadowDebugMode == 0) {
             AddAtmospherePasses(rgBuilder, ctx.hdrRes, ctx.depthRes, ctx.perFrameAlloc, atmoCtx);
 
-            float skyFogR = m_skyIrradianceSH.coeffs[0].w;
-            float skyFogG = m_skyIrradianceSH.coeffs[1].w;
-            float skyFogB = m_skyIrradianceSH.coeffs[2].w;
+            /// @source UE5 SkyAtmosphereCommon.ush:343-352 — GetViewDistanceSkyLightColor
+            /// UE5 uses DistantSkyLightLutBufferSRV (a precomputed 1-pixel LUT of sky
+            /// luminance at camera position). UzEngine doesn't have this LUT, so we use
+            /// the SkyLight component's color × intensity as an equivalent approximation.
+            /// The previous code used SH L0 coefficients (coeffs[N].w) which are scaled
+            /// by the diffuse convolution constant (~0.28), producing values too dim.
+            float skyFogR = ctx.perFrame.skyLightColorR * ctx.perFrame.skyLightIntensity;
+            float skyFogG = ctx.perFrame.skyLightColorG * ctx.perFrame.skyLightIntensity;
+            float skyFogB = ctx.perFrame.skyLightColorB * ctx.perFrame.skyLightIntensity;
 
             AddHeightFogFromECS(rgBuilder, ctx.hdrRes, ctx.depthRes, ctx.perFrameAlloc,
                                 ctx.world, *m_camera, ctx.pipelines, *m_cbRing,

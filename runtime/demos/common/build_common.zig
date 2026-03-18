@@ -182,6 +182,8 @@ pub fn createDemo(b: *std.Build, config: DemoConfig) DemoHandle {
         "../../engine/renderer/shadows",
         "../../engine/renderer/upload",
         "../../engine/renderer/material",
+        "../../engine/material",
+        "../../engine/material/compiler",
         "../../engine/renderer/ibl",
         "../../engine/renderer/lighting",
         "../../engine/renderer/atmosphere",

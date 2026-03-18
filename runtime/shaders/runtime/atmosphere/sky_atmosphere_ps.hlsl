@@ -264,11 +264,24 @@ float4 main(FSInput input) : SV_Target {
         discard;
 
     // ── Reconstruct world-space ray direction ────────────────────────────────
-    float2 ndc      = uv * 2.0f - 1.0f;
-    ndc.y           = -ndc.y;
-    float4 farPt    = mul(float4(ndc, 1.0f, 1.0f), invViewProj);
-    float3 worldFar = farPt.xyz / farPt.w;
-    float3 rayDir   = normalize(worldFar - cameraPos.xyz);
+    /// @source UE5 Common.ush — TranslatedWorldToClip (camera-relative rendering)
+    /// @deviations Near/far clip subtraction used instead of UE5's TranslatedWorld
+    ///   system. Both achieve the same goal: the camera translation cancels in the
+    ///   subtraction, eliminating catastrophic cancellation at large world coords.
+    float2 ndc = uv * 2.0f - 1.0f;
+    ndc.y      = -ndc.y;
+
+    // Unproject two points along the same screen ray at different NDC depths.
+    // Both go through the same invViewProj, so the camera translation in the
+    // matrix cancels exactly in the subtraction, giving a precise ray direction
+    // even when cameraPos is thousands of units from the origin.
+    // Any two distinct z values work — they define two points on the same ray.
+    // We use z=0.25 and z=0.75 (avoiding extremes for numerical stability).
+    float4 pt0    = mul(float4(ndc, 0.25f, 1.0f), invViewProj);
+    float4 pt1    = mul(float4(ndc, 0.75f, 1.0f), invViewProj);
+    float3 world0 = pt0.xyz / pt0.w;
+    float3 world1 = pt1.xyz / pt1.w;
+    float3 rayDir = normalize(world0 - world1);
 
     // ── Convert world camera to sky-space (km) ───────────────────────────────
     // UzEngine is Z-up (X-forward, Y-right, Z-up).

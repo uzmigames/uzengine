@@ -109,11 +109,13 @@ float GetPCFRadiusTexels(uint cascadeIdx) {
     /// @source UE5 ShadowRendering.cpp:1934 — WorldSpaceTexelScale = ShadowBounds.W / ResolutionX
     /// Far cascades cover more world space per texel, so their TransitionSize is larger.
     /// These radius values approximate the UE5 TransitionSize ratio for 4-cascade default config.
+    /// Increased radii for softer shadows matching PoC1 visual quality.
+    /// PoC1 used depth-dependent penumbra (0.5-2.5 texels * cascade scale).
     static const float kCascadePCFRadius[4] = {
-        2.0f,  // Cascade 0: near — sharp contact shadows (smallest world texel coverage)
-        3.0f,  // Cascade 1: mid-near — moderate softness
-        4.0f,  // Cascade 2: mid-far — wider kernel
-        6.0f   // Cascade 3: far — softest, largest world texel coverage
+        3.0f,  // Cascade 0: near — soft contact shadows
+        4.5f,  // Cascade 1: mid-near — moderate softness
+        6.0f,  // Cascade 2: mid-far — wider kernel
+        8.0f   // Cascade 3: far — softest
     };
     return kCascadePCFRadius[min(cascadeIdx, 3u)];
 }
@@ -417,11 +419,11 @@ float SampleShadowMap(float3 positionWS, float3 normalWS, float viewDepth, float
     /// PCF overblur correction: Square(Shadow).
     /// @source UE5 ShadowProjectionPixelShader.usf:385,89-92
     ///   Shadow = ApplyPCFOverBlurCorrection(Shadow) where
-    ///   ApplyPCFOverBlurCorrection(S) = Square(S) = S * S
-    /// @constants none — always applied to PCF and PCSS results.
-    /// PCF averaging produces overly soft penumbras; squaring restores
-    /// a more natural shadow falloff that reads better artistically.
-    shadow = shadow * shadow;
+    /// UE5 applies Square(shadow) for PCF over-blur correction
+    /// (ShadowProjectionPixelShader.usf:89-92). However, this makes shadows
+    /// significantly darker than PoC1 and most other engines. Disabled for now
+    /// to match PoC1 visual quality. Re-enable if shadows appear too soft.
+    // shadow = shadow * shadow;
 
     /// ShadowFadeFraction: per-projection fade (cascade distance fade).
     /// @source UE5 ShadowProjectionPixelShader.usf:387

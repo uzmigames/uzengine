@@ -196,8 +196,34 @@ float ComputeContactShadow(
 
     /// @source UE5 DeferredLightingCommon.ush:199-219 — hit result application
     /// @source UE5 LightRendering.cpp:641 — ContactShadowCastingIntensity = 1.0
+    /// @source UE5 LightComponent.cpp:466 — ContactShadowCastingIntensity default = 1.0
+    /// @deviations UE5 returns binary hit * ContactShadowCastingIntensity (per-light param).
+    ///   UzEngine does not yet have per-light ContactShadowCastingIntensity, so we apply a
+    ///   smooth falloff based on hit position along the ray (closer hit = stronger shadow,
+    ///   far hit along ray = weaker shadow) and a camera distance fade. This matches the
+    ///   visual quality of PoC1 (keijiro-style contact shadows) while maintaining UE5's
+    ///   ray cast logic. When per-light intensity is added, this can be replaced with the
+    ///   exact UE5 binary approach modulated by ContactShadowCastingIntensity.
     if (hitDistance > 0.0f) {
-        return 0.0f; // Fully shadowed at hit point (CastingIntensity = 1.0)
+        // Smooth falloff: hits earlier along the ray (closer to surface) produce stronger
+        // shadows; hits near the end of the ray produce weaker shadows. This prevents the
+        // hard binary edges that occur with a flat 0/1 result.
+        // t=0 at ray origin (strongest shadow), t=1 at ray end (weakest shadow).
+        float t = saturate(hitDistance / rayLengthWorld);
+        float contactOcclusion = 1.0f - smoothstep(0.0f, 1.0f, t);
+
+        // Camera distance fade: contact shadows are a close-range detail effect.
+        // Fade out over 5000 cm (50 m) to avoid artifacts at distance where screen-space
+        // ray marching becomes unreliable due to limited step count.
+        // PoC1 used 50.0 (view-space units = cm in UzEngine).
+        // UE5 equivalent: ContactShadowLength itself scales with depth via
+        // GetScreenRayLengthMultiplierForProjectionType, so distant surfaces naturally get
+        // longer rays with fewer effective steps. The distance fade compensates for this.
+        const float contactShadowFadeDistance = 5000.0f; // 50 m in cm
+        float distFade = 1.0f - saturate(viewDepth / contactShadowFadeDistance);
+        contactOcclusion *= distFade;
+
+        return 1.0f - contactOcclusion;
     }
 
     return 1.0f;

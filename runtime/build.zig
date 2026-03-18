@@ -46,6 +46,8 @@ pub fn build(b: *std.Build) void {
         "engine/renderer/core/shader",
         "engine/renderer/core/pipeline",
         "engine/renderer/material",
+        "engine/material",
+        "engine/material/compiler",
         "engine/renderer/memory",
         "engine/renderer/mesh",
         "engine/renderer/upload",
@@ -191,6 +193,8 @@ pub fn build(b: *std.Build) void {
     addCppDir(runtime_mod, b, "engine/renderer/core/shader", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/core/pipeline", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/material", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/material", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/material/compiler", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/memory", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/mesh", cpp_flags);
     addCppDir(runtime_mod, b, "engine/renderer/upload", cpp_flags);

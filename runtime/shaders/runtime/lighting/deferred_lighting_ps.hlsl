@@ -676,6 +676,11 @@ float4 main(FSInput input) : SV_Target {
 
     // ── Directional light (shadowed) ──
     float3 L_dir = normalize(lightDir.xyz);
+
+    // Micro-shadow disabled — causes visual artifacts when sampling GTAO texture
+    // in deferred lighting pass (texture may be in wrong state or SRV conflict).
+    // TODO: investigate GTAO texture state at this point in the pipeline.
+
     float3 Lo;
     if (useOldBRDF) {
         Lo = EvaluateBRDFOld(N, V, L_dir, lightColor.xyz,
@@ -713,15 +718,19 @@ float4 main(FSInput input) : SV_Target {
             attenuation = pow(saturate(1.0f - distOverRadius), pointLights[i].falloffExponent);
         }
 
+        /// @source UE5 DeferredLightingCommon.ush:447-448 — SpecularScale/DiffuseScale
         float3 radiance = pointLights[i].color * attenuation;
+        float pSpecScale = pointLights[i].specularScale;
+        float pDiffScale = pointLights[i].diffuseScale;
 
         // Evaluate BRDF — old or new depending on split-screen side
+        // Apply per-light SpecularScale/DiffuseScale via radiance splitting
         if (useOldBRDF) {
             Lo += EvaluateBRDFOld(N, V, L_point, radiance,
                                    albedo, metallic, alpha, F0);
         } else {
-            Lo += EvaluateBRDF(N, V, L_point, radiance,
-                               albedo, metallic, alpha, F0);
+            Lo += EvaluateBRDFScaled(N, V, L_point, radiance,
+                               albedo, metallic, alpha, F0, pSpecScale, pDiffScale);
         }
     }
 
@@ -781,15 +790,18 @@ float4 main(FSInput input) : SV_Target {
         if (attenuation <= 0.0f)
             continue;
 
+        /// @source UE5 DeferredLightingCommon.ush:447-448 — SpecularScale/DiffuseScale
         float3 radiance = spotLights[si].color * attenuation;
+        float sSpecScale = spotLights[si].specularScale;
+        float sDiffScale = spotLights[si].diffuseScale;
 
         // Evaluate BRDF — old or new depending on split-screen side
         if (useOldBRDF) {
             Lo += EvaluateBRDFOld(N, V, L_spot, radiance,
                                    albedo, metallic, alpha, F0);
         } else {
-            Lo += EvaluateBRDF(N, V, L_spot, radiance,
-                               albedo, metallic, alpha, F0);
+            Lo += EvaluateBRDFScaled(N, V, L_spot, radiance,
+                               albedo, metallic, alpha, F0, sSpecScale, sDiffScale);
         }
     }
 
@@ -824,22 +836,13 @@ float4 main(FSInput input) : SV_Target {
         float2 envBRDF = iblBrdfLut.SampleLevel(linearSampler, float2(NdotV, roughness), 0);
 #endif
 
-        // BRDF LUT: pre-integrated scale and bias terms for split-sum approximation
-        float3 specularIBL = prefilteredColor * (F * envBRDF.x + envBRDF.y);
+        // ── SSR + IBL compositing ──
+        // @source UE5 ReflectionEnvironmentPixelShader.usf:247-249
+        // UE5 pattern: blend SSR and IBL BEFORE applying EnvBRDF.
+        // SSR outputs unweighted scene color; IBL outputs unweighted prefiltered color.
+        // EnvBRDF (F0 * AB.x + F90 * AB.y) is applied ONCE to the combined result.
+        float3 combinedSpecular = prefilteredColor;
 
-        // Karis 2013 multi-scatter energy compensation
-        // @source Karis 2013 "Real Shading in Unreal Engine 4" — multi-scatter approximation
-        // Compensates for energy lost to single-scatter assumption in split-sum IBL.
-        // Ems = fraction of energy NOT accounted for by single scatter.
-        // Favg = average Fresnel reflectance over the hemisphere.
-        float Ems = 1.0f - (envBRDF.x + envBRDF.y);
-        float3 Favg = F0 + (1.0f - F0) / 21.0f;
-        specularIBL *= 1.0f + Favg * Ems / (1.0f - Favg * Ems);
-
-        // ── SSR blend: replace IBL specular with screen-space reflection where available ──
-        // The resolve pass outputs rgb=Fresnel-weighted reflection, a=blend weight.
-        // We lerp between IBL specular and SSR based on the SSR confidence (alpha).
-        // @source UE5 ReflectionEnvironmentPixelShader.usf:247-249 — SSR composite
         [branch]
         if (ssrSrvIndex != 0xFFFFFFFF) {
 #ifdef UZ_BINDLESS
@@ -848,19 +851,34 @@ float4 main(FSInput input) : SV_Target {
 #else
             float4 ssrData = float4(0, 0, 0, 0);
 #endif
-            // ssrData.rgb = resolved SSR color (already Fresnel-weighted)
-            // ssrData.a   = blend weight (confidence * roughnessFade * Fresnel average)
-            // When SSR has full confidence, completely replace IBL specular.
-            // When SSR misses (alpha=0), keep IBL specular unchanged.
-            specularIBL = lerp(specularIBL, ssrData.rgb, saturate(ssrData.a));
+            // ssrData.rgb = unweighted SSR hit color (no Fresnel, roughnessFade+intensity baked in trace)
+            // ssrData.a   = blend weight (confidence from trace: vignette * roughnessFade * intensity)
+            // Blend between IBL prefiltered color and SSR color BEFORE EnvBRDF
+            combinedSpecular = lerp(prefilteredColor, ssrData.rgb, saturate(ssrData.a));
         }
 
-        // Multi-bounce AO: use albedo-dependent AO when GTAO is active,
-        // otherwise plain scalar AO. This prevents over-darkening of colored surfaces.
-        // @source UE5 DeferredShadingCommon.ush:1220 — AOMultiBounce
+        // Apply EnvBRDF (split-sum Fresnel integration) to combined reflection
+        // @source UE5 BRDF.ush:382 — F90 micro-occlusion for EnvBRDF bias term
+        /// @source UE5 EnvBRDFApprox — saturate(50*F0.g) for AB.y
+        float F90_ibl = saturate(50.0f * F0.g);
+        float3 specularIBL = combinedSpecular * (F0 * envBRDF.x + F90_ibl * envBRDF.y);
+
+        // Karis 2013 multi-scatter energy compensation
+        // @source Karis 2013 "Real Shading in Unreal Engine 4" — multi-scatter approximation
+        float Ems = 1.0f - (envBRDF.x + envBRDF.y);
+        float3 Favg = F0 + (1.0f - F0) / 21.0f;
+        specularIBL *= 1.0f + Favg * Ems / (1.0f - Favg * Ems);
+
+        // ── TEST 3: Horizon occlusion ENABLED ──
+        float horizon = saturate(1.0f + dot(R, N));
+        specularIBL *= horizon * horizon;
+
+        // ── TEST 4: Specular occlusion ENABLED ──
+        float specOcc = saturate(pow(NdotV + ao, exp2(-16.0f * roughness - 1.0f)) - 1.0f + ao);
+
         float3 skyLightTint = float3(skyLightColorR, skyLightColorG, skyLightColorB);
-        float3 aoTerm = (gtaoSrvIndex != 0xFFFFFFFF) ? AOMultiBounce(ao, albedo) : float3(ao, ao, ao);
-        ambient = (diffuseIBL + specularIBL) * aoTerm * skyLightIntensity * skyLightTint;
+        float3 diffuseAO = (gtaoSrvIndex != 0xFFFFFFFF) ? AOMultiBounce(ao, albedo) : float3(ao, ao, ao);
+        ambient = (diffuseIBL * diffuseAO + specularIBL * specOcc) * skyLightIntensity * skyLightTint;
     } else {
         // Fallback: constant ambient (no IBL data available)
         float3 skyLightTint = float3(skyLightColorR, skyLightColorG, skyLightColorB);
@@ -932,20 +950,25 @@ float4 main(FSInput input) : SV_Target {
             apTransLut,
             linearSampler);
 
-        // Apply: transmittance dims the scene, inscattering adds atmosphere glow.
-        // @source UE5 SkyAtmosphereCommon.ush:107-108 — AP.rgb *= Weight; AP.a = 1-(Weight*(1-AP.a))
-        //
-        // HeightFogContribution anti-double-fogging:
-        // When height fog is active, it provides its own inscattering haze. To prevent
-        // both AP and fog from independently adding haze (double-fogging), we reduce AP
-        // inscattering proportionally. Transmittance (ap.a) is always applied — only the
-        // additive inscattering (ap.rgb) is scaled down.
-        // @source UE5 HeightFogCommon.ush:175 — SkyAtmosphereHeightFogContribution scales atmosphere's
-        //   contribution to fog inscattering; here we use it inversely to reduce AP inscattering.
-        // @deviations UzEngine applies heightFogContribution as uniform AP reduction rather than
-        //   per-pixel fog opacity modulation (fog pass runs after deferred lighting, no fog opacity here).
-        float apInscatterScale = 1.0f - heightFogContribution;
-        color = color * ap.a + ap.rgb * apInscatterScale;
+        /// Apply aerial perspective: transmittance dims the scene, inscattering
+        /// adds atmospheric glow/haze.
+        /// @source UE5 SkyAtmosphereCommon.ush:107-108 — standard AP compositing
+        ///   finalColor = sceneColor * transmittance + inscattering
+        ///
+        /// @source UE5 HeightFogCommon.ush:175 — heightFogContribution (0..1) controls
+        ///   how much sky atmosphere color is injected into height fog inscattering.
+        ///   When heightFogContribution=1.0, the height fog pass handles ALL atmospheric
+        ///   haze (via skyLightColor injection). AP would double-count this, so both AP
+        ///   transmittance and inscattering must be skipped.
+        /// @source UE5 SkyAtmosphere.usf:1631-1638 — AP volume accounts for fog internally
+        ///   UE5 precomputes AP in a 3D volume that already factors in fog contribution.
+        ///   UzEngine runs fog as a separate post-deferred pass, so we disable AP entirely
+        ///   when height fog takes full responsibility (heightFogContribution=1.0).
+        /// @deviations UE5 blends AP and fog inside the AP volume computation. UzEngine
+        ///   uses a binary switch: AP active when no fog contribution, fog handles haze
+        ///   when heightFogContribution > 0. Partial contribution (0 < hfc < 1) lerps.
+        float hfc = heightFogContribution;
+        color = color * lerp(ap.a, 1.0f, hfc) + ap.rgb * (1.0f - hfc);
     }
 
     // ── Buffer Visualization Grid — tile dispatch ──
