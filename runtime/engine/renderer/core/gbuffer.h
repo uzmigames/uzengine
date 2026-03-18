@@ -23,6 +23,7 @@ class IRHIDevice;
 /// - **Normal** (RGBA8Unorm) — octahedral-encoded normal (RG) + metallic (B) + roughness (A)
 /// - **Depth** (D32Float) — hardware depth buffer
 /// - **Velocity** (RG16Float) — screen-space motion vectors for TAA/motion blur
+/// - **Emissive** (RGBA16Float) — HDR emissive color (RGB), alpha unused
 ///
 /// Color and velocity targets are created with `RenderTarget | ShaderResource` usage
 /// so they can be written in their respective passes and read as SRVs downstream.
@@ -98,10 +99,10 @@ public:
     /// * `device` — RHI device. Must be the same device used for `Create()`.
     void Destroy(IRHIDevice* device);
 
-    /// Returns true if all four textures are allocated and valid.
+    /// Returns true if all textures are allocated and valid.
     ///
     /// # Returns
-    /// `true` if albedo, normal, depth, and velocity handles are all valid.
+    /// `true` if albedo, normal, depth, velocity, positionWS, and emissive handles are all valid.
     [[nodiscard]] bool IsValid() const;
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -113,6 +114,7 @@ public:
     RHITextureHandle depth;        ///< D32Float — depth buffer
     RHITextureHandle velocity;     ///< RG16Float — screen-space motion vectors (TAA / motion blur)
     RHITextureHandle positionWS;   ///< RGBA32Float — world-space position (RGB), debug/verification target
+    RHITextureHandle emissive;     ///< RGBA16Float — HDR emissive color (RGB), a unused
 
     // ─────────────────────────────────────────────────────────────────────────
     // SRV indices — bindless descriptor heap indices for lighting pass reads
@@ -123,6 +125,7 @@ public:
     uint32_t depthSRV       = UINT32_MAX;    ///< Bindless SRV index for depth texture.
     uint32_t velocitySRV    = UINT32_MAX;    ///< Bindless SRV index for velocity texture.
     uint32_t positionWSSRV  = UINT32_MAX;    ///< Bindless SRV index for world-space position texture.
+    uint32_t emissiveSRV    = UINT32_MAX;    ///< Bindless SRV index for emissive texture.
 
     uint32_t width = 0;   ///< Current render target width in texels.
     uint32_t height = 0;  ///< Current render target height in texels.

@@ -67,6 +67,16 @@ struct DrawCommand {
     uint32_t metallicSrvIndex  = 0;
     /// SRV heap index for AO map (0 = 1.0 default).
     uint32_t aoSrvIndex        = 0;
+    /// SRV heap index for emissive map (0 = no emissive texture, use color only).
+    uint32_t emissiveSrvIndex  = 0;
+
+    /// Emissive tint color (linear RGB). Default (0,0,0) = no emission.
+    /// @source UE5 BasePassPixelShader.usf:1480 — GetMaterialEmissive
+    float emissiveColorR  = 0.0f;
+    float emissiveColorG  = 0.0f;
+    float emissiveColorB  = 0.0f;
+    /// Emissive brightness multiplier. 0 = no emission. Values > 1.0 drive bloom.
+    float emissiveIntensity = 0.0f;
 
     /// Primitive mobility for shadow cache filtering.
     ///
@@ -82,6 +92,7 @@ struct DrawCommand {
     RHITextureHandle roughnessTexture;
     RHITextureHandle metallicTexture;
     RHITextureHandle aoTexture;
+    RHITextureHandle emissiveTexture;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

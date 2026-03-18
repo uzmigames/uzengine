@@ -4,7 +4,7 @@
 
 ## Why
 
-Comprehensive analysis (`.claude/analysis/ue5-uzengine-rendering-parity-comparison.md`) identified 12 concrete parameter and formula mismatches between UzEngine and UE5 5.6. Current parity is 81%. The PBR demo produces visibly darker, flatter, hazier output compared to an equivalent UE5 scene with default settings. Root causes are specific numeric constants, formula choices, and missing post-process stages — each traced to exact UE5 source file:line.
+Comprehensive analysis (`docs/analysis/ue5-uzengine-rendering-parity-comparison.md`) identified 12 concrete parameter and formula mismatches between UzEngine and UE5 5.6. Current parity is 81%. The PBR demo produces visibly darker, flatter, hazier output compared to an equivalent UE5 scene with default settings. Root causes are specific numeric constants, formula choices, and missing post-process stages — each traced to exact UE5 source file:line.
 
 ## What Changes
 

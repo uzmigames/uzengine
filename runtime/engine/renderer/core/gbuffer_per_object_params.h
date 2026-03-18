@@ -53,16 +53,20 @@ namespace uz {
 /// 8        4      roughnessIndex (uint32_t)
 /// 12       4      metallicIndex (uint32_t)
 /// 16       4      aoIndex (uint32_t)
-/// 20       12     _pad[3]
+/// 20       4      emissiveIndex (uint32_t)
+/// 24       8      _pad[2]
 /// 32       64     model (Mat4)
 /// 96       64     normalMatrix (Mat4)
-/// 160      96     _pad2[24]
+/// 160      12     emissiveColor (3 floats)
+/// 172      4      emissiveIntensity (float)
+/// 176      80     _pad2[20]
 /// ─── 256 bytes (CB boundary) ───
 /// 256      8      albedoTexture (RHITextureHandle, NOT in CB)
 /// 264      8      normalTexture (RHITextureHandle, NOT in CB)
 /// 272      8      roughnessTexture (RHITextureHandle, NOT in CB)
 /// 280      8      metallicTexture (RHITextureHandle, NOT in CB)
 /// 288      8      aoTexture (RHITextureHandle, NOT in CB)
+/// 296      8      emissiveTexture (RHITextureHandle, NOT in CB)
 /// ```
 struct GBufferPerObjectParams {
     // ── Scalar section (256 bytes, copied to CB) ─────────────────────────
@@ -74,10 +78,16 @@ struct GBufferPerObjectParams {
     uint32_t roughnessIndex = 0;    ///< SRV heap index for roughness map.
     uint32_t metallicIndex  = 0;    ///< SRV heap index for metallic map.
     uint32_t aoIndex        = 0;    ///< SRV heap index for AO map.
-    float    _pad[3]        = {};   ///< Align to 16-byte boundary before matrices.
+    uint32_t emissiveIndex  = 0;    ///< SRV heap index for emissive map (0 = no texture, use color only).
+    float    _pad[2]        = {};   ///< Align to 16-byte boundary before matrices.
     Mat4     model;                 ///< Object-to-world transform.
     Mat4     normalMatrix;          ///< transpose(inverse(model)) for lighting.
-    float    _pad2[24]      = {};   ///< Pad to 256-byte alignment.
+    /// @source UE5 BasePassPixelShader.usf:1480 — GetMaterialEmissive
+    float    emissiveColorR  = 0.0f; ///< Emissive tint R (linear). 0 = no emission.
+    float    emissiveColorG  = 0.0f; ///< Emissive tint G (linear).
+    float    emissiveColorB  = 0.0f; ///< Emissive tint B (linear).
+    float    emissiveIntensity = 0.0f; ///< Emissive brightness multiplier. Values > 1.0 drive bloom.
+    float    _pad2[20]      = {};   ///< Pad to 256-byte alignment.
 
     // ── Resource handles (NOT copied to CB) ──────────────────────────────
     // Bound by ShaderParameterBinder at their HLSL register slots on SM5.
@@ -87,6 +97,7 @@ struct GBufferPerObjectParams {
     RHITextureHandle roughnessTexture;  ///< Roughness map (bound at t2 on SM5).
     RHITextureHandle metallicTexture;   ///< Metallic map (bound at t3 on SM5).
     RHITextureHandle aoTexture;         ///< Ambient occlusion map (bound at t4 on SM5).
+    RHITextureHandle emissiveTexture;   ///< Emissive map (bound at t5 on SM5).
 
     // ── Metadata ─────────────────────────────────────────────────────────
 

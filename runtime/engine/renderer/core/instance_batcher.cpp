@@ -20,7 +20,8 @@ static bool IsSameBatch(const DrawCommand& a, const DrawCommand& b) noexcept
         && a.normalSrvIndex   == b.normalSrvIndex
         && a.roughnessSrvIndex == b.roughnessSrvIndex
         && a.metallicSrvIndex == b.metallicSrvIndex
-        && a.aoSrvIndex       == b.aoSrvIndex;
+        && a.aoSrvIndex       == b.aoSrvIndex
+        && a.emissiveSrvIndex == b.emissiveSrvIndex;
 }
 
 /// Fills an InstanceData struct from a DrawCommand.
@@ -44,11 +45,17 @@ static InstanceBatch MakeBatch(const DrawCommand& cmd, uint32_t firstInstance) n
     batch.roughnessSrvIndex  = cmd.roughnessSrvIndex;
     batch.metallicSrvIndex   = cmd.metallicSrvIndex;
     batch.aoSrvIndex         = cmd.aoSrvIndex;
+    batch.emissiveSrvIndex   = cmd.emissiveSrvIndex;
+    batch.emissiveColorR     = cmd.emissiveColorR;
+    batch.emissiveColorG     = cmd.emissiveColorG;
+    batch.emissiveColorB     = cmd.emissiveColorB;
+    batch.emissiveIntensity  = cmd.emissiveIntensity;
     batch.albedoTexture      = cmd.albedoTexture;
     batch.normalTexture      = cmd.normalTexture;
     batch.roughnessTexture   = cmd.roughnessTexture;
     batch.metallicTexture    = cmd.metallicTexture;
     batch.aoTexture          = cmd.aoTexture;
+    batch.emissiveTexture    = cmd.emissiveTexture;
     return batch;
 }
 

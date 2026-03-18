@@ -733,6 +733,12 @@ void SceneRenderer::Shutdown() {
         m_transmittanceLut = RHITextureHandle{};
     }
 
+    // ── Multi-Scatter LUT ────────────────────────────────────────────
+    if (m_multiScatterLut.IsValid()) {
+        m_device->DestroyTexture(m_multiScatterLut);
+        m_multiScatterLut = RHITextureHandle{};
+    }
+
     // ── IBL resources ──────────────────────────────────────────────────
     if (m_iblBaker) m_iblBaker->Shutdown();
     if (m_skyCubemap.IsValid()) {
@@ -1233,6 +1239,7 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     auto normalRes   = rgBuilder.ImportTexture("GBuf_Normal",    m_gbuffer.normal,     RHIResourceState::ShaderResource);
     auto depthRes    = rgBuilder.ImportTexture("GBuf_Depth",     m_gbuffer.depth,      RHIResourceState::ShaderResource);
     auto positionRes = rgBuilder.ImportTexture("GBuf_Position",  m_gbuffer.positionWS, RHIResourceState::ShaderResource);
+    auto emissiveRes = rgBuilder.ImportTexture("GBuf_Emissive",  m_gbuffer.emissive,   RHIResourceState::ShaderResource);
 
     auto* pipelines = m_pipelines.get();
 
@@ -1569,6 +1576,7 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
             gbDesc.albedoTarget         = albedoRes;
             gbDesc.normalTarget         = normalRes;
             gbDesc.positionTarget       = positionRes;
+            gbDesc.emissiveTarget       = emissiveRes;
             gbDesc.depthBuffer          = depthRes;
             gbDesc.depthTexture         = m_gbuffer.depth;
             gbDesc.drawList             = &drawList;
@@ -2178,6 +2186,7 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
             lightDesc.normalGBuffer       = normalRes;
             lightDesc.depthGBuffer        = depthRes;
             lightDesc.positionGBuffer     = positionRes;
+            lightDesc.emissiveGBuffer     = emissiveRes;
             lightDesc.perFrameAlloc       = perFrameAlloc;
             lightDesc.lightingAlloc       = lightingAlloc;
             lightDesc.pipeline            = pipelines->GetLighting();
@@ -2185,10 +2194,12 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
             lightDesc.normalSrvIndex      = m_gbuffer.normalSRV;
             lightDesc.depthSrvIndex       = m_gbuffer.depthSRV;
             lightDesc.positionSrvIndex    = m_gbuffer.positionWSSRV;
+            lightDesc.emissiveSrvIndex    = m_gbuffer.emissiveSRV;
             lightDesc.albedoTexture       = m_gbuffer.albedo;
             lightDesc.normalTexture       = m_gbuffer.normal;
             lightDesc.depthTextureForSrv  = m_gbuffer.depth;
             lightDesc.positionTexture     = m_gbuffer.positionWS;
+            lightDesc.emissiveTexture     = m_gbuffer.emissive;
             lightDesc.shadowAlloc         = shadowAlloc;
             lightDesc.shadowAtlasResource = shadowAtlasRes;
             lightDesc.shadowAtlasTexture  = m_shadowAtlas.GetTexture();
@@ -2731,6 +2742,13 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
         bindTexFromPath(meshComp.roughnessPath, cmd.roughnessSrvIndex, cmd.roughnessTexture);
         bindTexFromPath(meshComp.metallicPath,  cmd.metallicSrvIndex,  cmd.metallicTexture);
         bindTexFromPath(meshComp.aoPath,        cmd.aoSrvIndex,        cmd.aoTexture);
+        bindTexFromPath(meshComp.emissivePath,  cmd.emissiveSrvIndex,  cmd.emissiveTexture);
+
+        // Emissive color and intensity from component (default 0 = no emission).
+        cmd.emissiveColorR    = meshComp.emissiveColorR;
+        cmd.emissiveColorG    = meshComp.emissiveColorG;
+        cmd.emissiveColorB    = meshComp.emissiveColorB;
+        cmd.emissiveIntensity = meshComp.emissiveIntensity;
 
         outDrawList.Add(cmd);
         drawIndex++;

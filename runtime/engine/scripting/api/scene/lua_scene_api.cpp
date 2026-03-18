@@ -666,6 +666,28 @@ static int SceneSetMaterial(lua_State* L) {
     const uint32_t roughnessId = readTexId("roughness");
     const uint32_t metallicId  = readTexId("metallic");
     const uint32_t aoId        = readTexId("ao");
+    const uint32_t emissiveId  = readTexId("emissive");
+
+    // Read emissive color and intensity float fields (optional).
+    auto readFloat = [&](const char* field, float defaultVal) -> float {
+        lua_getfield(L, 2, field);
+        float val = defaultVal;
+        if (lua_isnumber(L, -1)) {
+            val = static_cast<float>(lua_tonumber(L, -1));
+        }
+        lua_pop(L, 1);
+        return val;
+    };
+    // Only set emissive params if emissive_intensity field is present.
+    lua_getfield(L, 2, "emissive_intensity");
+    bool hasEmissiveParams = lua_isnumber(L, -1);
+    lua_pop(L, 1);
+    if (hasEmissiveParams) {
+        meshComp->emissiveColorR    = readFloat("emissive_color_r", 1.0f);
+        meshComp->emissiveColorG    = readFloat("emissive_color_g", 1.0f);
+        meshComp->emissiveColorB    = readFloat("emissive_color_b", 1.0f);
+        meshComp->emissiveIntensity = readFloat("emissive_intensity", 0.0f);
+    }
 
     // Resolve texture IDs back to VFS paths and set them on the component.
     // The renderer's SyncWorldToDrawList uses these paths to bind textures.
@@ -692,6 +714,7 @@ static int SceneSetMaterial(lua_State* L) {
     resolveAndSet(roughnessId, meshComp->roughnessPath);
     resolveAndSet(metallicId,  meshComp->metallicPath);
     resolveAndSet(aoId,        meshComp->aoPath);
+    resolveAndSet(emissiveId,  meshComp->emissivePath);
 
     meshComp->materialLoaded = true;
     return 0;

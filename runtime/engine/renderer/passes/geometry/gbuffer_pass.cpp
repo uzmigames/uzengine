@@ -40,6 +40,7 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
         pb.Write(desc.albedoTarget,   RHIResourceState::RenderTarget);
         pb.Write(desc.normalTarget,   RHIResourceState::RenderTarget);
         pb.Write(desc.positionTarget, RHIResourceState::RenderTarget);
+        pb.Write(desc.emissiveTarget, RHIResourceState::RenderTarget);
         pb.Write(desc.depthBuffer,    RHIResourceState::DepthStencilWrite);
 
         pb.SetExecutionCallback([desc](IRHICommandList* cmd, const rg::RgPassResources& res) {
@@ -48,17 +49,19 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
             auto albedo    = res.GetTexture(desc.albedoTarget);
             auto normal    = res.GetTexture(desc.normalTarget);
             auto positionT = res.GetTexture(desc.positionTarget);
+            auto emissiveT = res.GetTexture(desc.emissiveTarget);
 
             // ── Clear render targets ─────────────────────────────────────
             constexpr float kClearBlack[4] = {0.0f, 0.0f, 0.0f, 0.0f};
             cmd->ClearRenderTarget(albedo,    kClearBlack);
             cmd->ClearRenderTarget(normal,    kClearBlack);
             cmd->ClearRenderTarget(positionT, kClearBlack);
+            cmd->ClearRenderTarget(emissiveT, kClearBlack);
             cmd->ClearDepthStencil(desc.depthTexture, kDepthFar, 0);
 
-            // ── Begin render pass with 3 color attachments + depth ───────
+            // ── Begin render pass with 4 color attachments + depth ───────
             RHIRenderPassDesc passDesc{};
-            passDesc.colorAttachmentCount = 3;
+            passDesc.colorAttachmentCount = 4;
 
             passDesc.colorAttachments[0].texture = albedo;
             passDesc.colorAttachments[0].clear   = false;
@@ -68,6 +71,9 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
 
             passDesc.colorAttachments[2].texture = positionT;
             passDesc.colorAttachments[2].clear   = false;
+
+            passDesc.colorAttachments[3].texture = emissiveT;
+            passDesc.colorAttachments[3].clear   = false;
 
             passDesc.hasDepth = true;
             passDesc.depthAttachment.texture    = desc.depthTexture;
@@ -146,6 +152,11 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
                     perObjParams.roughnessIndex = batch.roughnessSrvIndex;
                     perObjParams.metallicIndex  = batch.metallicSrvIndex;
                     perObjParams.aoIndex        = batch.aoSrvIndex;
+                    perObjParams.emissiveIndex  = batch.emissiveSrvIndex;
+                    perObjParams.emissiveColorR    = batch.emissiveColorR;
+                    perObjParams.emissiveColorG    = batch.emissiveColorG;
+                    perObjParams.emissiveColorB    = batch.emissiveColorB;
+                    perObjParams.emissiveIntensity = batch.emissiveIntensity;
 
                     CBAllocation objAlloc = ShaderParameterBinder::BindCB(
                         cmd, &perObjParams,
@@ -202,6 +213,11 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
                         perObjParams.roughnessIndex = drawCmd.roughnessSrvIndex;
                         perObjParams.metallicIndex  = drawCmd.metallicSrvIndex;
                         perObjParams.aoIndex        = drawCmd.aoSrvIndex;
+                        perObjParams.emissiveIndex  = drawCmd.emissiveSrvIndex;
+                        perObjParams.emissiveColorR    = drawCmd.emissiveColorR;
+                        perObjParams.emissiveColorG    = drawCmd.emissiveColorG;
+                        perObjParams.emissiveColorB    = drawCmd.emissiveColorB;
+                        perObjParams.emissiveIntensity = drawCmd.emissiveIntensity;
 
                         // Set texture handles with fallbacks for SM5 binding
                         perObjParams.albedoTexture    = drawCmd.albedoTexture.IsValid()    ? drawCmd.albedoTexture    : desc.fallbackWhite;
@@ -209,6 +225,7 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
                         perObjParams.roughnessTexture = drawCmd.roughnessTexture.IsValid() ? drawCmd.roughnessTexture : desc.fallbackWhite;
                         perObjParams.metallicTexture  = drawCmd.metallicTexture.IsValid()  ? drawCmd.metallicTexture  : desc.fallbackBlack;
                         perObjParams.aoTexture        = drawCmd.aoTexture.IsValid()        ? drawCmd.aoTexture        : desc.fallbackWhite;
+                        perObjParams.emissiveTexture  = drawCmd.emissiveTexture.IsValid()  ? drawCmd.emissiveTexture  : desc.fallbackBlack;
 
                         CBAllocation objAlloc = ShaderParameterBinder::Bind(
                             cmd, &perObjParams,
@@ -230,6 +247,11 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
                         perObject.roughnessIndex = drawCmd.roughnessSrvIndex;
                         perObject.metallicIndex  = drawCmd.metallicSrvIndex;
                         perObject.aoIndex        = drawCmd.aoSrvIndex;
+                        perObject.emissiveIndex  = drawCmd.emissiveSrvIndex;
+                        perObject.emissiveColorR    = drawCmd.emissiveColorR;
+                        perObject.emissiveColorG    = drawCmd.emissiveColorG;
+                        perObject.emissiveColorB    = drawCmd.emissiveColorB;
+                        perObject.emissiveIntensity = drawCmd.emissiveIntensity;
 
                         CBAllocation objAlloc = desc.cbAllocator->Allocate(sizeof(PerObjectCB));
                         if (objAlloc.cpuPtr == nullptr) {
@@ -248,6 +270,7 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
                             cmd->SetFragmentTexture(2, drawCmd.roughnessTexture.IsValid() ? drawCmd.roughnessTexture : desc.fallbackWhite);
                             cmd->SetFragmentTexture(3, drawCmd.metallicTexture.IsValid()  ? drawCmd.metallicTexture  : desc.fallbackBlack);
                             cmd->SetFragmentTexture(4, drawCmd.aoTexture.IsValid()        ? drawCmd.aoTexture        : desc.fallbackWhite);
+                            cmd->SetFragmentTexture(5, drawCmd.emissiveTexture.IsValid()  ? drawCmd.emissiveTexture  : desc.fallbackBlack);
                         }
                     }
 

@@ -297,7 +297,8 @@ RHIPipelineHandle PipelineLibrary::GetGBuffer(bool bindless) {
     desc.renderTargetFormats[0]           = RHIFormat::RGBA8Unorm;    // albedo+AO
     desc.renderTargetFormats[1]           = RHIFormat::RGBA8Unorm;    // octNormal+metallic+roughness
     desc.renderTargetFormats[2]           = RHIFormat::RGBA32Float;   // world-space position (debug)
-    desc.renderTargetCount                = 3;
+    desc.renderTargetFormats[3]           = RHIFormat::RGBA16Float;   // HDR emissive color
+    desc.renderTargetCount                = 4;
     desc.depthStencilFormat               = RHIFormat::D32Float;
     desc.debugName                        = bindless ? "GBuffer_Bindless" : "GBuffer";
 
@@ -548,7 +549,8 @@ RHIPipelineHandle PipelineLibrary::GetGBufferInstanced() {
     desc.renderTargetFormats[0]           = RHIFormat::RGBA8Unorm;
     desc.renderTargetFormats[1]           = RHIFormat::RGBA8Unorm;
     desc.renderTargetFormats[2]           = RHIFormat::RGBA32Float;
-    desc.renderTargetCount                = 3;
+    desc.renderTargetFormats[3]           = RHIFormat::RGBA16Float;   // HDR emissive color
+    desc.renderTargetCount                = 4;
     desc.depthStencilFormat               = RHIFormat::D32Float;
     desc.debugName                        = "GBuffer_Instanced";
 

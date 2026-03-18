@@ -40,6 +40,7 @@ void AddLightingPass(rg::RgBuilder& builder, const LightingPassDesc& desc)
         pb.Read(desc.normalGBuffer,   RHIResourceState::ShaderResource);
         pb.Read(desc.depthGBuffer,    RHIResourceState::ShaderResource);
         pb.Read(desc.positionGBuffer, RHIResourceState::ShaderResource);
+        pb.Read(desc.emissiveGBuffer, RHIResourceState::ShaderResource);
         if (desc.shadowAtlasResource.IsValid()) {
             pb.Read(desc.shadowAtlasResource, RHIResourceState::ShaderResource);
         }
@@ -116,20 +117,22 @@ void AddLightingPass(rg::RgBuilder& builder, const LightingPassDesc& desc)
             // ── Bind G-Buffer textures ───────────────────────────────────
             if (desc.bindless) {
                 // SM6.6: push descriptor indices for G-Buffer SRVs.
-                const uint32_t indices[4] = {
+                const uint32_t indices[5] = {
                     desc.albedoSrvIndex,
                     desc.normalSrvIndex,
                     desc.depthSrvIndex,
-                    desc.positionSrvIndex
+                    desc.positionSrvIndex,
+                    desc.emissiveSrvIndex
                 };
-                cmd->SetRootConstants(kSlotRootConstants, indices, 4);
+                cmd->SetRootConstants(kSlotRootConstants, indices, 5);
             } else {
-                // SM5: bind G-Buffer textures directly at fragment texture slots t0-t4.
+                // SM5: bind G-Buffer textures directly at fragment texture slots t0-t4, t10.
                 cmd->SetFragmentTexture(0, desc.albedoTexture);
                 cmd->SetFragmentTexture(1, desc.normalTexture);
                 cmd->SetFragmentTexture(2, desc.depthTextureForSrv);
                 cmd->SetFragmentTexture(3, desc.shadowAtlasTexture);
                 cmd->SetFragmentTexture(4, desc.positionTexture);
+                cmd->SetFragmentTexture(10, desc.emissiveTexture);
             }
 
             // ── Viewport and scissor ─────────────────────────────────────
@@ -152,11 +155,11 @@ void AddLightingPass(rg::RgBuilder& builder, const LightingPassDesc& desc)
             if (!loggedOnce) {
                 UZ_LOG(Renderer, Info,
                        "LightingPass: first execution — viewport={}x{}, bindless={}, "
-                       "pipeline={}, albedoSRV={}, normalSRV={}, depthSRV={}, positionSRV={}",
+                       "pipeline={}, albedoSRV={}, normalSRV={}, depthSRV={}, positionSRV={}, emissiveSRV={}",
                        desc.viewportWidth, desc.viewportHeight, desc.bindless,
                        desc.pipeline.index,
                        desc.albedoSrvIndex, desc.normalSrvIndex,
-                       desc.depthSrvIndex, desc.positionSrvIndex);
+                       desc.depthSrvIndex, desc.positionSrvIndex, desc.emissiveSrvIndex);
 
                 // CB allocation diagnostics
                 UZ_LOG(Renderer, Info,

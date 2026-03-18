@@ -145,13 +145,17 @@ static_assert(sizeof(PerFrameCB) == 512, "PerFrameCB must be 512 bytes (D3D12 CB
 /// Matches the HLSL struct:
 /// ```hlsl
 /// cbuffer PerObjectCB : register(b2) {
-///     float4x4 model;
-///     float4x4 normalMatrix;
 ///     uint     albedoIndex;
 ///     uint     normalIndex;
 ///     uint     roughnessIndex;
 ///     uint     metallicIndex;
 ///     uint     aoIndex;
+///     uint     emissiveIndex;
+///     float2   _pad;
+///     float4x4 model;
+///     float4x4 normalMatrix;
+///     float3   emissiveColor;
+///     float    emissiveIntensity;
 /// };
 /// ```
 ///
@@ -168,11 +172,20 @@ struct PerObjectCB {
     uint32_t roughnessIndex;   ///< SRV heap index for roughness map (0 = 0.5 default)
     uint32_t metallicIndex;    ///< SRV heap index for metallic map (0 = 0.0 default)
     uint32_t aoIndex;          ///< SRV heap index for AO map (0 = 1.0 default)
-    float    _pad[3] = {};     ///< Align to 16-byte boundary before matrices
+    uint32_t emissiveIndex;    ///< SRV heap index for emissive map (0 = no emissive texture, use color only)
+    float    _pad[2] = {};     ///< Align to 16-byte boundary before matrices
     // ── Matrices after scalars (offset 32) ──
     Mat4     model;            ///< Object-to-world transform
     Mat4     normalMatrix;     ///< transpose(inverse(model)) — for lighting
-    float    _pad2[24] = {};   ///< Padding to 256-byte alignment
+    // ── Emissive material parameters (offset 160) ──
+    /// @source UE5 BasePassPixelShader.usf:1480 — GetMaterialEmissive(PixelMaterialInputs)
+    /// UE5 computes emissive as EmissiveColor * EmissiveIntensity in material graph.
+    /// We replicate this as emissiveColor * emissiveIntensity.
+    float    emissiveColorR  = 0.0f;  ///< Emissive tint color R (linear). Default 0 = no emission.
+    float    emissiveColorG  = 0.0f;  ///< Emissive tint color G (linear).
+    float    emissiveColorB  = 0.0f;  ///< Emissive tint color B (linear).
+    float    emissiveIntensity = 0.0f; ///< Emissive brightness multiplier. 0 = no emission. Values > 1.0 drive bloom.
+    float    _pad2[20] = {};   ///< Padding to 256-byte alignment
 };
 
 static_assert(sizeof(PerObjectCB) == 256, "PerObjectCB must be 256 bytes (D3D12 CB alignment)");

@@ -1,9 +1,9 @@
 ## 1. Implementation
 
-- [ ] 1.1 Implement CoC computation shader (`dof_coc_ps.hlsl`) — thin-lens equation from depth buffer. Output R16F: positive=far blur, negative=near blur, zero=in-focus. Clamp to maxNearBlur/maxFarBlur in pixels.
+- [x] 1.1 Implement CoC computation shader (`dof_setup_cs.hlsl`) — thin-lens equation from depth buffer per UE5 DOFCommon.ush:209-226 SceneDepthToCocRadius. Output R16F signed CoC (negative=near, positive=far). Clamped to CocMinRadius/CocMaxRadius. 8 root constants, 8x8 thread groups, bindless UZ_BINDLESS support.
 - [ ] 1.2 Implement focal region support — flat zero-CoC zone of width `focalRegion` centered at `focalDistance`. Transitions ramp linearly over `nearTransition` and `farTransition` widths. Matches UE5's DepthOfFieldFocalRegion behavior.
 - [ ] 1.3 Implement near/far separation downsample (`dof_downsample_ps.hlsl`) — downsample scene to half-res, split into near layer (CoC < 0) and far layer (CoC > 0). Near layer includes alpha for compositing. Use max CoC in 2×2 block for near to prevent in-focus bleeding.
-- [ ] 1.4 Implement disk gather bokeh blur (`dof_bokeh_cs.hlsl`) — for each pixel, gather `gatherSamples` points on a disk of radius=abs(CoC). Weight by CoC of sampled texel (larger CoC = more contribution). Supports circular disk (fast) and diaphragm polygon (quality).
+- [x] 1.4 Implement disk gather bokeh blur (`dof_blur_cs.hlsl`) — 5-ring concentric disc gather per UE5 DOFGatherKernel.ush:37-53 ring pattern (6*ringId samples/ring, half-ring offsets). CoC-weighted accumulation with near/far field separation. InterleavedGradientNoise per-pixel rotation. 8 root constants, 8x8 threads, bindless support.
 - [ ] 1.5 Implement diaphragm blade shape — generate sample distribution matching N-blade aperture (N=bladeCount). 5 blades=pentagon bokeh, 6=hexagon, 8=octagon. Blade rotation angle configurable.
 - [ ] 1.6 Implement tile classification — 16×16 tiles, classify as foreground/background/mixed based on CoC range. Skip gather on in-focus tiles. Reduces cost by 30-50%.
 - [ ] 1.7 Implement recombine pass (`dof_recombine_ps.hlsl`) — composite: far blur → in-focus (passthrough) → near blur (alpha blend). Smooth CoC-based interpolation at boundaries.

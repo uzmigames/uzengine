@@ -185,7 +185,7 @@
 
 ## 6. Documentation
 
-- [ ] 6.1 Update rendering parity analysis in `.claude/analysis/`.
+- [ ] 6.1 Update rendering parity analysis in `docs/analysis/`.
 - [ ] 6.2 Create visual comparison guide with before/after screenshots per feature.
 - [ ] 6.3 Update ROADMAP.md with revised completion estimates.
 

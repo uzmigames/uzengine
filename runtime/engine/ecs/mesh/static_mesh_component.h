@@ -74,6 +74,17 @@ public:
     /// VFS-relative path to the ambient occlusion texture.
     std::string aoPath;
 
+    /// VFS-relative path to the emissive texture.
+    std::string emissivePath;
+
+    /// Emissive tint color (linear RGB). Default (0,0,0) = no emission.
+    float emissiveColorR  = 0.0f;
+    float emissiveColorG  = 0.0f;
+    float emissiveColorB  = 0.0f;
+
+    /// Emissive brightness multiplier. 0 = no emission. Values > 1.0 drive bloom.
+    float emissiveIntensity = 0.0f;
+
     /// Set to `true` by `SceneRenderer` after all material textures have been uploaded.
     bool materialLoaded = false;
 

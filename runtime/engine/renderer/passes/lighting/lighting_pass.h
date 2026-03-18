@@ -56,6 +56,7 @@ struct LightingPassDesc {
     rg::RgResourceId normalGBuffer;     ///< Normal G-Buffer input (read, ShaderResource state).
     rg::RgResourceId depthGBuffer;      ///< Depth G-Buffer input (read as SRV, not DSV).
     rg::RgResourceId positionGBuffer;   ///< World-space position G-Buffer input (read, ShaderResource state).
+    rg::RgResourceId emissiveGBuffer;  ///< Emissive G-Buffer input (read, ShaderResource state, RGBA16Float).
     CBAllocation      perFrameAlloc;    ///< Per-frame CB with invViewProj filled (bound at b1).
     CBAllocation      lightingAlloc;    ///< LightingCB with point light data (bound at b2).
     RHIPipelineHandle pipeline;         ///< Lighting PSO (fullscreen triangle, no depth).
@@ -63,10 +64,12 @@ struct LightingPassDesc {
     uint32_t          normalSrvIndex;    ///< SRV descriptor index for normal G-Buffer (SM6.6 bindless).
     uint32_t          depthSrvIndex;     ///< SRV descriptor index for depth G-Buffer (SM6.6 bindless).
     uint32_t          positionSrvIndex;  ///< SRV descriptor index for world-space position G-Buffer (SM6.6 bindless).
+    uint32_t          emissiveSrvIndex;  ///< SRV descriptor index for emissive G-Buffer (SM6.6 bindless).
     RHITextureHandle  albedoTexture;     ///< Physical albedo texture handle (SM5 fallback binding).
     RHITextureHandle  normalTexture;     ///< Physical normal texture handle (SM5 fallback binding).
     RHITextureHandle  depthTextureForSrv;///< Physical depth texture handle (SM5 fallback binding, read as SRV).
     RHITextureHandle  positionTexture;   ///< Physical world-space position texture handle (SM5 fallback, bound at t4).
+    RHITextureHandle  emissiveTexture;  ///< Physical emissive texture handle (SM5 fallback, bound at t10).
     CBAllocation      shadowAlloc;      ///< ShadowDataCB allocation (bound at b4 via root param 3). Zero-init if no shadows.
     rg::RgResourceId  shadowAtlasResource; ///< Render graph shadow atlas (read, ShaderResource state for barrier scheduling).
     RHITextureHandle  shadowAtlasTexture; ///< Physical shadow atlas texture handle (SM5 fallback, bound at t3).

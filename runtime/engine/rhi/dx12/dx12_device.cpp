@@ -96,6 +96,31 @@ DX12Device::~DX12Device() {
                            kHeapNames[heapType], heap.AllocationCount, heap.AllocationBytes);
                 }
             }
+
+            // Dump live textures for leak diagnosis
+            {
+                auto& slots = m_texturePool.Slots();
+                for (uint32_t i = 0; i < slots.size(); ++i) {
+                    if (slots[i].allocation) {
+                        UZ_LOG(RHI, Warning, "  LEAKED texture [{}]: '{}' {}x{} fmt={} ({} bytes)",
+                               i, slots[i].desc.debugName ? slots[i].desc.debugName : "(null)",
+                               slots[i].desc.width, slots[i].desc.height,
+                               static_cast<int>(slots[i].desc.format),
+                               slots[i].allocation->GetSize());
+                    }
+                }
+            }
+            // Dump live buffers
+            {
+                auto& slots = m_bufferPool.Slots();
+                for (uint32_t i = 0; i < slots.size(); ++i) {
+                    if (slots[i].allocation) {
+                        UZ_LOG(RHI, Warning, "  LEAKED buffer [{}]: '{}' {} bytes",
+                               i, slots[i].desc.debugName ? slots[i].desc.debugName : "(null)",
+                               slots[i].allocation->GetSize());
+                    }
+                }
+            }
         }
         m_allocator->Release();
         m_allocator = nullptr;

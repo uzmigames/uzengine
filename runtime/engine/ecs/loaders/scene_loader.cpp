@@ -264,6 +264,11 @@ void ParseMaterialComponent(World& world,
     mesh.roughnessPath = ReadString(comp, "roughness");
     mesh.metallicPath  = ReadString(comp, "metallic");
     mesh.aoPath        = ReadString(comp, "ao");
+    mesh.emissivePath  = ReadString(comp, "emissive");
+    mesh.emissiveColorR    = ReadFloat(comp, "emissiveColorR", 0.0f);
+    mesh.emissiveColorG    = ReadFloat(comp, "emissiveColorG", 0.0f);
+    mesh.emissiveColorB    = ReadFloat(comp, "emissiveColorB", 0.0f);
+    mesh.emissiveIntensity = ReadFloat(comp, "emissiveIntensity", 0.0f);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -464,7 +469,8 @@ nlohmann::json SerializeEntity(const entt::registry& registry, entt::entity entt
         // Material (stored on StaticMeshComponent)
         bool hasMaterial = !mesh->albedoPath.empty() || !mesh->normalPath.empty()
                         || !mesh->roughnessPath.empty() || !mesh->metallicPath.empty()
-                        || !mesh->aoPath.empty();
+                        || !mesh->aoPath.empty() || !mesh->emissivePath.empty()
+                        || mesh->emissiveIntensity > 0.0f;
         if (hasMaterial) {
             nlohmann::json material;
             if (!mesh->albedoPath.empty())    material["albedo"]    = mesh->albedoPath;
@@ -472,6 +478,13 @@ nlohmann::json SerializeEntity(const entt::registry& registry, entt::entity entt
             if (!mesh->roughnessPath.empty()) material["roughness"] = mesh->roughnessPath;
             if (!mesh->metallicPath.empty())  material["metallic"]  = mesh->metallicPath;
             if (!mesh->aoPath.empty())        material["ao"]        = mesh->aoPath;
+            if (!mesh->emissivePath.empty())  material["emissive"]  = mesh->emissivePath;
+            if (mesh->emissiveIntensity > 0.0f) {
+                material["emissiveColorR"]    = mesh->emissiveColorR;
+                material["emissiveColorG"]    = mesh->emissiveColorG;
+                material["emissiveColorB"]    = mesh->emissiveColorB;
+                material["emissiveIntensity"] = mesh->emissiveIntensity;
+            }
             components["material"] = std::move(material);
         }
 

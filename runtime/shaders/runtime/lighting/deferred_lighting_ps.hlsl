@@ -10,10 +10,11 @@
 /// using SRV descriptor indices passed as root constants at b0.
 /// SM5 (!UZ_BINDLESS): uses register-bound Texture2D at t0-t2, shadow atlas at t3.
 ///
-/// # G-Buffer Inputs (2-RT packed layout)
+/// # G-Buffer Inputs (4-RT packed layout)
 /// - AlbedoAO     (R8G8B8A8_UNORM) — rgb = base color (linear), a = AO
 /// - NormalMatPbr  (R8G8B8A8_UNORM) — rg = octahedral normal, b = metallic, a = roughness
 /// - Depth         (R32_FLOAT SRV)  — hardware depth sampled as float
+/// - Emissive      (R16G16B16A16_FLOAT) — rgb = HDR emissive, a = unused
 ///
 /// # Constant Buffers
 /// - b0: Root constants (UZ_BINDLESS only) — 3 x uint32 SRV descriptor indices
@@ -52,13 +53,15 @@ struct FSInput {
 /// Instead, each texture is accessed via ResourceDescriptorHeap[index] using
 /// indices pushed as 32-bit root constants.
 ///
-/// 4 indices for the 3-RT G-Buffer layout:
-/// albedo+AO in RT0, octahedral normal+metallic+roughness in RT1, depth, world-space position in RT2.
+/// 5 indices for the 4-RT G-Buffer layout:
+/// albedo+AO in RT0, octahedral normal+metallic+roughness in RT1, depth,
+/// world-space position in RT2, HDR emissive in RT3.
 struct GBufferIndices {
     uint albedoIdx;     ///< Descriptor index for albedo+AO G-Buffer (R8G8B8A8_UNORM).
     uint normalIdx;     ///< Descriptor index for normal+metallic+roughness G-Buffer (R8G8B8A8_UNORM).
     uint depthIdx;      ///< Descriptor index for depth buffer SRV (R32_FLOAT).
     uint positionIdx;   ///< Descriptor index for world-space position G-Buffer (R32G32B32A32_FLOAT).
+    uint emissiveIdx;   ///< Descriptor index for emissive G-Buffer (R16G16B16A16_FLOAT).
 };
 ConstantBuffer<GBufferIndices> gBufIndices : register(b0);
 #endif
@@ -246,6 +249,10 @@ Texture2D<float4>  transmittanceLutTex : register(t8); ///< Transmittance LUT (2
 /// SM5 GTAO filtered AO at t9.
 /// Only sampled when gtaoSrvIndex != 0xFFFFFFFF.
 Texture2D<float>   gtaoTexture : register(t9); ///< GTAO filtered AO (R8_UNORM).
+
+/// SM5 emissive G-Buffer at t10.
+/// @source UE5 BasePassPixelShader.usf:1541 — Color += Emissive
+Texture2D<float4>  gbufferEmissive : register(t10); ///< HDR emissive color (R16G16B16A16_FLOAT).
 #endif
 
 /// Linear (bilinear wrap) sampler at s0 — standard engine-wide sampler.
@@ -764,8 +771,26 @@ float4 main(FSInput input) : SV_Target {
         ambient = max(ambient, minFloor);
     }
 
+    // ── Emissive ──
+    // @source UE5 BasePassPixelShader.usf:1541 — Color += Emissive
+    // @source UE5 BasePassPixelShader.usf:2370 — clamp to MaterialMaxEmissiveValue
+    // UE5 adds emissive directly to SceneColor in the base pass. In our deferred
+    // pipeline, emissive was written to GBuffer RT3 (RGBA16Float) and is read here.
+    // Emissive bypasses all lighting — it is pure self-illumination.
+    // HDR values > 1.0 are expected and will drive the bloom post-process.
+    // @deviations Read from GBuffer RT3 instead of direct base pass SceneColor write.
+    float3 emissiveContrib = float3(0.0f, 0.0f, 0.0f);
+#ifdef UZ_BINDLESS
+    {
+        Texture2D<float4> gbEmissive = ResourceDescriptorHeap[gBufIndices.emissiveIdx];
+        emissiveContrib = gbEmissive.Sample(linearSampler, uv).rgb;
+    }
+#else
+    emissiveContrib = gbufferEmissive.Sample(linearSampler, uv).rgb;
+#endif
+
     // ── Combine ──
-    float3 color = ambient + Lo;
+    float3 color = ambient + Lo + emissiveContrib;
 
     // ── Aerial Perspective ──
     // Per-pixel ray-march through the atmosphere from camera to pixel.

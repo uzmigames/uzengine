@@ -66,6 +66,13 @@ struct InstanceBatch {
     uint32_t roughnessSrvIndex = 0;
     uint32_t metallicSrvIndex  = 0;
     uint32_t aoSrvIndex        = 0;
+    uint32_t emissiveSrvIndex  = 0;
+
+    /// Emissive material parameters (shared by all instances in the batch).
+    float emissiveColorR    = 0.0f;
+    float emissiveColorG    = 0.0f;
+    float emissiveColorB    = 0.0f;
+    float emissiveIntensity = 0.0f;
 
     /// SM5 texture handles for binding (all instances in a batch share the same material).
     RHITextureHandle albedoTexture;
@@ -73,6 +80,7 @@ struct InstanceBatch {
     RHITextureHandle roughnessTexture;
     RHITextureHandle metallicTexture;
     RHITextureHandle aoTexture;
+    RHITextureHandle emissiveTexture;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

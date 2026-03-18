@@ -10,19 +10,24 @@ static_assert(sizeof(uz::PerObjectCB) == 256,
               "PerObjectCB size must be 256 bytes");
 static_assert(offsetof(uz::GBufferPerObjectParams, albedoIndex) == offsetof(uz::PerObjectCB, albedoIndex),
               "albedoIndex offset mismatch");
+static_assert(offsetof(uz::GBufferPerObjectParams, emissiveIndex) == offsetof(uz::PerObjectCB, emissiveIndex),
+              "emissiveIndex offset mismatch");
 static_assert(offsetof(uz::GBufferPerObjectParams, model) == offsetof(uz::PerObjectCB, model),
               "model offset mismatch");
 static_assert(offsetof(uz::GBufferPerObjectParams, normalMatrix) == offsetof(uz::PerObjectCB, normalMatrix),
               "normalMatrix offset mismatch");
+static_assert(offsetof(uz::GBufferPerObjectParams, emissiveColorR) == offsetof(uz::PerObjectCB, emissiveColorR),
+              "emissiveColorR offset mismatch");
 
 namespace uz {
 
-/// SM5 material texture register slots — t0 through t4.
+/// SM5 material texture register slots — t0 through t5.
 static constexpr uint32_t kAlbedoSlot    = 0;
 static constexpr uint32_t kNormalSlot    = 1;
 static constexpr uint32_t kRoughnessSlot = 2;
 static constexpr uint32_t kMetallicSlot  = 3;
 static constexpr uint32_t kAoSlot        = 4;
+static constexpr uint32_t kEmissiveSlot  = 5;
 
 const ShaderParameterMetadata& GBufferPerObjectParams::GetMetadata()
 {
@@ -33,8 +38,13 @@ const ShaderParameterMetadata& GBufferPerObjectParams::GetMetadata()
         {"roughnessIndex", ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(GBufferPerObjectParams, roughnessIndex)), sizeof(uint32_t), 0},
         {"metallicIndex",  ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(GBufferPerObjectParams, metallicIndex)),  sizeof(uint32_t), 0},
         {"aoIndex",        ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(GBufferPerObjectParams, aoIndex)),        sizeof(uint32_t), 0},
+        {"emissiveIndex",  ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(GBufferPerObjectParams, emissiveIndex)),  sizeof(uint32_t), 0},
         {"model",          ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(GBufferPerObjectParams, model)),          sizeof(Mat4),     0},
         {"normalMatrix",   ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(GBufferPerObjectParams, normalMatrix)),   sizeof(Mat4),     0},
+        {"emissiveColorR",   ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(GBufferPerObjectParams, emissiveColorR)),   sizeof(float), 0},
+        {"emissiveColorG",   ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(GBufferPerObjectParams, emissiveColorG)),   sizeof(float), 0},
+        {"emissiveColorB",   ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(GBufferPerObjectParams, emissiveColorB)),   sizeof(float), 0},
+        {"emissiveIntensity", ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(GBufferPerObjectParams, emissiveIntensity)), sizeof(float), 0},
 
         // ── Resource members (drive texture binding on SM5) ──
         {"albedoTexture",    ShaderParamType::Texture2D, static_cast<uint32_t>(offsetof(GBufferPerObjectParams, albedoTexture)),    0, kAlbedoSlot},
@@ -42,13 +52,14 @@ const ShaderParameterMetadata& GBufferPerObjectParams::GetMetadata()
         {"roughnessTexture", ShaderParamType::Texture2D, static_cast<uint32_t>(offsetof(GBufferPerObjectParams, roughnessTexture)), 0, kRoughnessSlot},
         {"metallicTexture",  ShaderParamType::Texture2D, static_cast<uint32_t>(offsetof(GBufferPerObjectParams, metallicTexture)),  0, kMetallicSlot},
         {"aoTexture",        ShaderParamType::Texture2D, static_cast<uint32_t>(offsetof(GBufferPerObjectParams, aoTexture)),        0, kAoSlot},
+        {"emissiveTexture",  ShaderParamType::Texture2D, static_cast<uint32_t>(offsetof(GBufferPerObjectParams, emissiveTexture)),  0, kEmissiveSlot},
     };
 
     static const ShaderParameterMetadata kMetadata = {
         kMembers,
         sizeof(kMembers) / sizeof(kMembers[0]),
         256,  // cbSize — matches sizeof(PerObjectCB), 256-byte aligned
-        5,    // textureCount (albedo + normal + roughness + metallic + ao)
+        6,    // textureCount (albedo + normal + roughness + metallic + ao + emissive)
         0,    // samplerCount (uses static samplers in root sig)
         0,    // uavCount
     };

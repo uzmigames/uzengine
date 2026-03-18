@@ -15,11 +15,13 @@ GBuffer::GBuffer(GBuffer&& other) noexcept
     , depth(other.depth)
     , velocity(other.velocity)
     , positionWS(other.positionWS)
+    , emissive(other.emissive)
     , albedoSRV(other.albedoSRV)
     , normalSRV(other.normalSRV)
     , depthSRV(other.depthSRV)
     , velocitySRV(other.velocitySRV)
     , positionWSSRV(other.positionWSSRV)
+    , emissiveSRV(other.emissiveSRV)
     , width(other.width)
     , height(other.height)
 {
@@ -28,11 +30,13 @@ GBuffer::GBuffer(GBuffer&& other) noexcept
     other.depth = RHITextureHandle::Invalid();
     other.velocity = RHITextureHandle::Invalid();
     other.positionWS = RHITextureHandle::Invalid();
+    other.emissive = RHITextureHandle::Invalid();
     other.albedoSRV = UINT32_MAX;
     other.normalSRV = UINT32_MAX;
     other.depthSRV = UINT32_MAX;
     other.velocitySRV = UINT32_MAX;
     other.positionWSSRV = UINT32_MAX;
+    other.emissiveSRV = UINT32_MAX;
     other.width = 0;
     other.height = 0;
 }
@@ -44,11 +48,13 @@ GBuffer& GBuffer::operator=(GBuffer&& other) noexcept {
         depth = other.depth;
         velocity = other.velocity;
         positionWS = other.positionWS;
+        emissive = other.emissive;
         albedoSRV = other.albedoSRV;
         normalSRV = other.normalSRV;
         depthSRV = other.depthSRV;
         velocitySRV = other.velocitySRV;
         positionWSSRV = other.positionWSSRV;
+        emissiveSRV = other.emissiveSRV;
         width = other.width;
         height = other.height;
 
@@ -57,11 +63,13 @@ GBuffer& GBuffer::operator=(GBuffer&& other) noexcept {
         other.depth = RHITextureHandle::Invalid();
         other.velocity = RHITextureHandle::Invalid();
         other.positionWS = RHITextureHandle::Invalid();
+        other.emissive = RHITextureHandle::Invalid();
         other.albedoSRV = UINT32_MAX;
         other.normalSRV = UINT32_MAX;
         other.depthSRV = UINT32_MAX;
         other.velocitySRV = UINT32_MAX;
         other.positionWSSRV = UINT32_MAX;
+        other.emissiveSRV = UINT32_MAX;
         other.width = 0;
         other.height = 0;
     }
@@ -137,7 +145,22 @@ bool GBuffer::Create(IRHIDevice* device, uint32_t w, uint32_t h) {
         .debugName = "GBuffer_PositionWS",
     });
 
-    if (!albedo.IsValid() || !normal.IsValid() || !depth.IsValid() || !velocity.IsValid() || !positionWS.IsValid()) {
+    // Emissive — RGBA16Float HDR emissive color (RGB, A unused)
+    // @source UE5 BasePassPixelShader.usf:1541 — Color += Emissive
+    // UE5 writes emissive directly to SceneColor during base pass.
+    // In our deferred pipeline, we store it in a separate GBuffer RT
+    // and add it during the deferred lighting pass.
+    emissive = device->CreateTexture(RHITextureDesc{
+        .width = w,
+        .height = h,
+        .depthOrArraySize = 1,
+        .mipLevels = 1,
+        .format = RHIFormat::RGBA16Float,
+        .usage = colorUsage,
+        .debugName = "GBuffer_Emissive",
+    });
+
+    if (!albedo.IsValid() || !normal.IsValid() || !depth.IsValid() || !velocity.IsValid() || !positionWS.IsValid() || !emissive.IsValid()) {
         UZ_LOG(Renderer, Error, "GBuffer creation failed: one or more textures could not be allocated ({}x{})", w, h);
         Destroy(device);
         return false;
@@ -149,6 +172,7 @@ bool GBuffer::Create(IRHIDevice* device, uint32_t w, uint32_t h) {
     depthSRV      = device->GetTextureSRVIndex(depth);
     velocitySRV   = device->GetTextureSRVIndex(velocity);
     positionWSSRV = device->GetTextureSRVIndex(positionWS);
+    emissiveSRV   = device->GetTextureSRVIndex(emissive);
 
     UZ_LOG(Renderer, Info, "GBuffer created: {}x{}", w, h);
     return true;
@@ -165,25 +189,28 @@ void GBuffer::Destroy(IRHIDevice* device) {
     if (depth.IsValid())       { device->DestroyTexture(depth); }
     if (velocity.IsValid())    { device->DestroyTexture(velocity); }
     if (positionWS.IsValid())  { device->DestroyTexture(positionWS); }
+    if (emissive.IsValid())    { device->DestroyTexture(emissive); }
 
     albedo     = RHITextureHandle::Invalid();
     normal     = RHITextureHandle::Invalid();
     depth      = RHITextureHandle::Invalid();
     velocity   = RHITextureHandle::Invalid();
     positionWS = RHITextureHandle::Invalid();
+    emissive   = RHITextureHandle::Invalid();
 
     albedoSRV     = UINT32_MAX;
     normalSRV     = UINT32_MAX;
     depthSRV      = UINT32_MAX;
     velocitySRV   = UINT32_MAX;
     positionWSSRV = UINT32_MAX;
+    emissiveSRV   = UINT32_MAX;
 
     width = 0;
     height = 0;
 }
 
 bool GBuffer::IsValid() const {
-    return albedo.IsValid() && normal.IsValid() && depth.IsValid() && velocity.IsValid() && positionWS.IsValid();
+    return albedo.IsValid() && normal.IsValid() && depth.IsValid() && velocity.IsValid() && positionWS.IsValid() && emissive.IsValid();
 }
 
 } // namespace uz

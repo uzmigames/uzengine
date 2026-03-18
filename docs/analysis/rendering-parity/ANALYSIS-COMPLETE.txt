@@ -191,11 +191,11 @@ FOR REVIEWERS:
 FILES CREATED
 ================================================================================
 
-.claude/analysis/README.md (9 KB)
-.claude/analysis/VISUAL-IMPACT-SUMMARY.txt (16 KB)
-.claude/analysis/ue5-vs-uzengine-rendering-gap-analysis.md (34 KB)
-.claude/analysis/rendering-roadmap-next-30-days.md (17 KB)
-.claude/analysis/code-locations-for-improvements.md (17 KB)
+docs/analysis/README.md (9 KB)
+docs/analysis/VISUAL-IMPACT-SUMMARY.txt (16 KB)
+docs/analysis/ue5-vs-uzengine-rendering-gap-analysis.md (34 KB)
+docs/analysis/rendering-roadmap-next-30-days.md (17 KB)
+docs/analysis/code-locations-for-improvements.md (17 KB)
 
 Total: 93 KB of analysis
 All files ready to use immediately.
