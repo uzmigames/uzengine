@@ -1,119 +1,113 @@
 # @uzmigames/runtime
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
-[![C++17](https://img.shields.io/badge/C%2B%2B-17-blue.svg)]()
+[![C++23](https://img.shields.io/badge/C%2B%2B-23-blue.svg)]()
 [![Zig](https://img.shields.io/badge/Zig-0.15-orange.svg)]()
 [![MSVC](https://img.shields.io/badge/MSVC-17.14-blue.svg)]()
 [![Clang](https://img.shields.io/badge/Clang-21-green.svg)]()
 
-UzEngine core runtime — the engine itself. Contains rendering (RHI, deferred pipeline, post-processing), ECS, physics, audio, input, and all gameplay systems.
+UzEngine core runtime — deferred PBR renderer with UE5-parity lighting, atmosphere, and post-processing. Multi-backend RHI (DX12 SM6.8 bindless, DX12 SM5, DX11, Vulkan).
 
-**This is a standalone C++ library with zero Node/N-API dependency.** It compiles as a static library consumed by [`napi/`](../napi/) for VSCode integration, or by CLI tools and standalone game executables.
+**Standalone C++ static library.** Consumed by demos, CLI tools, or the VSCode extension via N-API.
 
 ## Build
 
-Three compilers are supported. Use `scripts/` for all operations.
-
 ```bash
-# Zig (default, recommended)
-scripts/build.ps1                        # or: cd runtime && zig build
-scripts/build.ps1 --compiler=msvc        # MSVC via CMake
-scripts/build.ps1 --compiler=clang       # Clang via CMake
+cd runtime && zig build           # Build runtime static lib
+cd demos/pbr_test && zig build    # Build PBR demo
+zig build test                    # Run all tests (~3600 tests)
 ```
 
-Output goes to `runtime/build/`:
-- Zig: `build/bin/`
-- CMake: `build/<preset>/Debug/` (or `Release/`)
+## Rendering Features (v0.2.33)
 
-## Test
+### Lighting
+- Deferred PBR: GGX D + Vis_SmithJointApprox + F_Schlick + DiffuseBurley
+- Multiscatter energy compensation (Kulla-Conty/Turquin 2018)
+- Directional light + 64 point lights + 16 spot lights (cone attenuation)
+- IBL: SH L2 irradiance + prefiltered specular (5 mips) + BRDF LUT
+- Contact shadows (screen-space ray march, 8 steps)
 
-```bash
-scripts/test.ps1                         # Zig (default)
-scripts/test.ps1 --compiler=msvc         # MSVC
-scripts/test.ps1 --compiler=clang        # Clang
-```
+### Shadows
+- 4-cascade CSM with per-cascade PCF radius
+- Distance field shadows (SDF atlas, cone trace, tile culling)
+- Per-cascade bias + sharpen + overblur correction
 
-## Lint & Format
+### Atmosphere
+- Sky atmosphere (Bruneton single-scatter + multi-scatter LUT + ozone)
+- Transmittance LUT (256x64 Bruneton 2017)
+- Aerial perspective (per-pixel 8-step ray march)
+- Height fog (2-layer exponential + directional inscattering + sky injection)
+- Sky cubemap capture (compute + PS paths) for IBL
 
-```bash
-scripts/lint.ps1                         # clang-tidy on all source dirs
-scripts/format.ps1                       # clang-format on all source files
-scripts/format.ps1 --check               # CI mode (check only, no write)
-```
+### Post-Processing
+- TAA (Halton jitter, YCoCg neighbourhood clamp, history ping-pong)
+- SSR (Hi-Z ray trace + Fresnel resolve)
+- GTAO (12-tap, bilateral denoise, temporal accumulation, multi-bounce)
+- Bloom (6-mip pyramid, Karis average, per-stage tints)
+- FilmToneMap (ACES 3-segment, 5 artist params)
+- Auto-exposure (histogram, percentile-based)
+- DOF (CoC setup + 5-ring gather blur)
+- Motion blur (velocity gather, depth-aware, adaptive samples)
+- Color grading LUT (32x32x32 3D, full CombineLUTs pipeline)
+- Film grain + vignette + chromatic aberration
 
-## Architecture
+### Materials
+- PBR textures: albedo, normal, roughness, metallic, AO, emissive
+- Emissive materials (HDR emission + bloom)
+- Material system with configurable parameters (in progress)
 
-The runtime exposes a **C API** (`extern "C"`) so it can be consumed by any language or build system:
-
-```c
-// runtime.h
-const char* uz_runtime_version(void);
-const char* uz_runtime_backend(void);
-int         uz_runtime_init(void);
-void        uz_runtime_shutdown(void);
-```
-
-As the engine grows, subsystem APIs (RHI, ECS, Scene, etc.) will follow the same pattern — C API surface, C++ implementation.
+### Backends
+- DX12 SM6.8 (bindless ResourceDescriptorHeap)
+- DX12 SM5 (descriptor tables)
+- DX11 (feature-level 11.1)
+- Vulkan (via volk + VMA)
 
 ## Directory Structure
 
 ```
 runtime/
-├── build.zig                      # Zig build system (compiles C++ via zig cc)
-├── build.zig.zon                  # Zig package manifest
-├── CMakeLists.txt                 # CMake build (MSVC, Clang)
-├── CMakePresets.json              # CMake presets (msvc-debug/release, clang-debug/release)
-├── .clang-format                  # Code formatting rules
-├── .clang-tidy                    # Linting rules (warnings-as-errors)
-├── src/
-│   ├── runtime.h                  # Public C API
-│   └── runtime.cpp                # Implementation
-├── core/
-│   ├── math/                      # SIMD math (Vec2/Vec3/Vec4, Mat4, Quat, Transform)
-│   ├── containers/                # Data structures (RingBuffer, FreeList, HandleMap, FrameArray)
-│   ├── memory/                    # Memory management (Own<T>, Ref<T>, allocators)
-│   ├── random/                    # PCG random number generator
-│   ├── logging/                   # Structured logging via spdlog
-│   ├── assertions/                # UZ_CHECK, UZ_ENSURE, UZ_VERIFY macros
-│   ├── profiling/                 # Tracy CPU profiler integration
-│   ├── config/                    # .uzproject JSON configuration
-│   ├── rhi/                       # Render Hardware Interface (DX12 backend)
-│   ├── shader/                    # Shader pipeline (VFS, cache, compiler, hot-reload)
-│   ├── paths/                     # Exe-relative resource resolution
-│   ├── renderer/                  # GPU upload context
-│   └── asset/                     # Asset pipeline (shader importer)
-├── platform/
-│   └── windows/                   # Win32 window, input system
-├── demos/
-│   ├── clear_screen/              # Animated clear color (6069 FPS on RTX 4090)
-│   └── triangle/                  # SM6.6 bindless triangle
-├── tools/
-│   └── uzengine.cpp               # Standalone runtime executable
-├── tests/
-│   ├── core/                      # Engine unit tests (64 test suites)
-│   └── thirdparty/                # Image library integration tests (22 tests)
-└── thirdparty/                    # All dependencies committed to repo
+├── engine/
+│   ├── app/              Application framework, engine loop
+│   ├── ecs/              EnTT ECS (scene, lighting, mesh, environment)
+│   ├── renderer/
+│   │   ├── core/         ConstantBuffers, PipelineLibrary, GBuffer, ShaderManager
+│   │   ├── passes/       Render graph passes (geometry, lighting, atmosphere, postprocess)
+│   │   ├── atmosphere/   AtmosphereRenderer, sky cubemap capture
+│   │   ├── fog/          FogRenderer (height fog + sky injection)
+│   │   ├── shadows/      ShadowRenderer, SDF atlas, shadow cascade
+│   │   ├── lighting/     LightRenderer (point + spot extraction)
+│   │   ├── ibl/          IBLBaker (irradiance + prefiltered + SH projection)
+│   │   ├── material/     Material system (in progress)
+│   │   ├── camera/       Camera, FPS controller
+│   │   └── render_graph/ RgBuilder, RgResources
+│   ├── rhi/              RHI abstraction
+│   │   ├── dx12/         DX12 backend (D3D12MA, Agility SDK)
+│   │   ├── dx11/         DX11 backend
+│   │   └── vulkan/       Vulkan backend (volk + VMA)
+│   ├── shader/           Shader compiler (DXC/FXC), hot-reload, cache
+│   ├── scripting/        LuaJIT 2.1 VM + API bindings
+│   ├── math/             Vec2/3/4, Mat4, Quaternion, Transform
+│   └── job/              Job system (fence + counter)
+├── shaders/runtime/      HLSL shaders
+│   ├── geometry/         gbuffer_ps, depth_prepass_ps
+│   ├── lighting/         deferred_lighting_ps, shadow shaders
+│   ├── atmosphere/       sky_atmosphere_ps, height_fog_ps, transmittance_lut_cs
+│   ├── postprocess/      bloom, gtao, taa, ssr, tonemap, dof, motion_blur
+│   ├── shadows/          dfs_cone_trace_cs, dfs_cull_objects_cs
+│   └── include/          pbr_common, lighting, shadow_common, film_tonemap
+├── demos/                Standalone demo apps (pbr_test, deferred_test, etc.)
+├── tests/                GoogleTest suites (~3600 tests)
+├── platform/windows/     Win32 window, input, crash handler
+└── thirdparty/           All dependencies committed (spdlog, tracy, entt, luajit, etc.)
 ```
-
-## Milestones
-
-| Milestone | Status | Features |
-|-----------|--------|----------|
-| **1.0** | ✅ Complete | Logging, assertions, profiling, memory, platform window, input, config |
-| **1.1** | ✅ Complete | Math (SIMD), Geometry, Color space, Containers, Allocators, Random |
-| **1.2** | ✅ Complete | RHI abstraction, DX12 SM6.6 backend, swapchain, clear screen demo |
-| **1.3** | ⏳ In Progress | Triangle demo, buffer upload, shader pipeline |
-| **1.4** | 📋 Planned | Asset pipeline (importers, DDC cache, .uzpak, VFS) |
 
 ## Code Quality
 
-- **661 tests passing** across 86 test suites
-- **Three compilers**: Zig (Clang/MinGW), MSVC, Clang (clang-cl)
-- **100% Rust-style documentation** (`///` comments on all public APIs)
-- **Zero compiler warnings** via clang-tidy (warnings-as-errors mode)
-- **clang-format** applied to all source files
-- **95%+ test coverage** required for all new code
-- **≤1500 lines per file** (single responsibility principle)
+- **~3600 tests** across 86+ suites (GoogleTest)
+- **Three compilers**: Zig, MSVC, Clang — all zero warnings
+- **95%+ coverage** required for all new code
+- **Rust-style `///` documentation** on all public APIs
+- **UE5 source citations** (`@source UE5 file:line`) on all rendering code
 
 ## License
 
