@@ -28,59 +28,9 @@ namespace uz {
 void SceneRenderer::RegisterOverlayPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx) {
     UZ_PROFILE_FUNCTION();
 
-    auto& camera = *m_camera;
-
-    // ── Sky Atmosphere passes — delegated to atmosphere_renderer ────────
-    AtmosphereFrameContext atmoCtx{};
-    atmoCtx.device              = m_device;
-    atmoCtx.world               = ctx.world;
-    atmoCtx.cbRing              = m_cbRing.get();
-    atmoCtx.pipelines           = ctx.pipelines;
-    atmoCtx.sunDir              = &ctx.sunDir;
-    atmoCtx.sunColor            = &ctx.sunColor;
-    atmoCtx.bindless            = ctx.bindless;
-    atmoCtx.vpWidth             = ctx.vpWidth;
-    atmoCtx.vpHeight            = ctx.vpHeight;
-    atmoCtx.transmittanceLut    = m_transmittanceLut;
-    atmoCtx.transmittanceLutSrv = m_transmittanceLutSrv;
-    atmoCtx.transmittanceLutUav = m_transmittanceLutUav;
-    atmoCtx.transmittanceLutDirty  = &m_transmittanceLutDirty;
-    atmoCtx.transmittanceLutFilled = &m_transmittanceLutFilled;
-    atmoCtx.multiScatterLut     = m_multiScatterLut;
-    atmoCtx.multiScatterLutSrv  = m_multiScatterLutSrv;
-    atmoCtx.multiScatterLutUav  = m_multiScatterLutUav;
-    atmoCtx.multiScatterLutDirty  = &m_multiScatterLutDirty;
-    atmoCtx.multiScatterLutFilled = &m_multiScatterLutFilled;
-    atmoCtx.skyCubemap          = m_skyCubemap;
-    atmoCtx.skyCubemapSrv       = m_skyCubemapSrv;
-    atmoCtx.skyCubemapUav       = m_skyCubemapUav;
-    atmoCtx.skyIBLDirty         = &m_skyIBLDirty;
-    atmoCtx.iblBaker            = m_iblBaker.get();
-    atmoCtx.iblResult           = &m_iblResult;
-    atmoCtx.brdfLutSrvIndex     = m_brdfLutSrvIndex;
-    atmoCtx.skyIrradianceSH     = &m_skyIrradianceSH;
-    atmoCtx.depthSrvIndex       = m_gbuffer.depthSRV;
-    atmoCtx.depthTexture        = m_gbuffer.depth;
-
-    // Skip sky + fog when buffer visualization grid is active — the grid
-    // takes over the entire HDR target and these passes would overwrite it.
-    if (m_shadowDebugMode == 0) {
-        AddAtmospherePasses(rgBuilder, ctx.hdrRes, ctx.depthRes, ctx.perFrameAlloc, atmoCtx);
-
-        // Sky light color from SH L0 (DC term) — for fog sky atmosphere injection
-        /// @source UE5 HeightFogCommon.ush:175 — GetViewDistanceSkyLightColor()
-        float skyFogR = m_skyIrradianceSH.coeffs[0].w;
-        float skyFogG = m_skyIrradianceSH.coeffs[1].w;
-        float skyFogB = m_skyIrradianceSH.coeffs[2].w;
-
-        AddHeightFogFromECS(rgBuilder, ctx.hdrRes, ctx.depthRes, ctx.perFrameAlloc,
-                            ctx.world, camera, ctx.pipelines, *m_cbRing,
-                            m_gbuffer.depthSRV, m_gbuffer.depth,
-                            ctx.bindless, ctx.vpWidth, ctx.vpHeight,
-                            skyFogR, skyFogG, skyFogB);
-    }
-
     // ── Overlay pass (editor grid + stats overlay) ──────────────────────
+    // Sky atmosphere + height fog are now in RegisterLightingPasses
+    // (before postprocess/tonemap) to ensure correct HDR pipeline order.
     // Skip overlays when buffer visualization grid is active — grid owns the full screen.
     if (m_shadowDebugMode == 0)
     rgBuilder.AddPass("OverlayPass", [&](rg::RgPassBuilder& pb) {

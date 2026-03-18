@@ -13,6 +13,8 @@
 #include "gpu_mesh.h"
 #include "render_graph_builder.h"
 #include "render_graph_resources.h"
+#include "atmosphere_renderer.h"
+#include "fog_renderer.h"
 #include "profiler.h"
 #include "rhi.h"
 #include "log.h"
@@ -668,6 +670,57 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
         dbgDesc.viewportWidth      = ctx.vpWidth;
         dbgDesc.viewportHeight     = ctx.vpHeight;
         AddGBufferDebugPass(rgBuilder, dbgDesc);
+    }
+
+    // ── Sky Atmosphere + Height Fog (HDR, before postprocess/tonemap) ────
+    // Must run after deferred lighting but before bloom/TAA/tonemap so the
+    // sky is included in the HDR scene color that postprocess operates on.
+    // @source UE5 SceneRendering.cpp — atmosphere passes after lighting, before post-process
+    {
+        AtmosphereFrameContext atmoCtx{};
+        atmoCtx.device              = m_device;
+        atmoCtx.world               = ctx.world;
+        atmoCtx.cbRing              = m_cbRing.get();
+        atmoCtx.pipelines           = ctx.pipelines;
+        atmoCtx.sunDir              = &ctx.sunDir;
+        atmoCtx.sunColor            = &ctx.sunColor;
+        atmoCtx.bindless            = ctx.bindless;
+        atmoCtx.vpWidth             = ctx.vpWidth;
+        atmoCtx.vpHeight            = ctx.vpHeight;
+        atmoCtx.transmittanceLut    = m_transmittanceLut;
+        atmoCtx.transmittanceLutSrv = m_transmittanceLutSrv;
+        atmoCtx.transmittanceLutUav = m_transmittanceLutUav;
+        atmoCtx.transmittanceLutDirty  = &m_transmittanceLutDirty;
+        atmoCtx.transmittanceLutFilled = &m_transmittanceLutFilled;
+        atmoCtx.multiScatterLut     = m_multiScatterLut;
+        atmoCtx.multiScatterLutSrv  = m_multiScatterLutSrv;
+        atmoCtx.multiScatterLutUav  = m_multiScatterLutUav;
+        atmoCtx.multiScatterLutDirty  = &m_multiScatterLutDirty;
+        atmoCtx.multiScatterLutFilled = &m_multiScatterLutFilled;
+        atmoCtx.skyCubemap          = m_skyCubemap;
+        atmoCtx.skyCubemapSrv       = m_skyCubemapSrv;
+        atmoCtx.skyCubemapUav       = m_skyCubemapUav;
+        atmoCtx.skyIBLDirty         = &m_skyIBLDirty;
+        atmoCtx.iblBaker            = m_iblBaker.get();
+        atmoCtx.iblResult           = &m_iblResult;
+        atmoCtx.brdfLutSrvIndex     = m_brdfLutSrvIndex;
+        atmoCtx.skyIrradianceSH     = &m_skyIrradianceSH;
+        atmoCtx.depthSrvIndex       = m_gbuffer.depthSRV;
+        atmoCtx.depthTexture        = m_gbuffer.depth;
+
+        if (m_shadowDebugMode == 0) {
+            AddAtmospherePasses(rgBuilder, ctx.hdrRes, ctx.depthRes, ctx.perFrameAlloc, atmoCtx);
+
+            float skyFogR = m_skyIrradianceSH.coeffs[0].w;
+            float skyFogG = m_skyIrradianceSH.coeffs[1].w;
+            float skyFogB = m_skyIrradianceSH.coeffs[2].w;
+
+            AddHeightFogFromECS(rgBuilder, ctx.hdrRes, ctx.depthRes, ctx.perFrameAlloc,
+                                ctx.world, *m_camera, ctx.pipelines, *m_cbRing,
+                                m_gbuffer.depthSRV, m_gbuffer.depth,
+                                ctx.bindless, ctx.vpWidth, ctx.vpHeight,
+                                skyFogR, skyFogG, skyFogB);
+        }
     }
 }
 
