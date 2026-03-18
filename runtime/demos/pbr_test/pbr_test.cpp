@@ -113,10 +113,10 @@ void PBRTest::OnStart() {
     stoneBrickMat_.roughnessPath = "Stonebricks_Roughness.jpg";
     stoneBrickMat_.metallicPath  = "Stonebricks_Metallic.jpg";
     stoneBrickMat_.aoPath        = "Stonebricks_AO.jpg";
-    stoneBrickMat_.normalIntensity     = 1.0f;
+    stoneBrickMat_.normalIntensity     = 1.5f;
     stoneBrickMat_.roughnessMultiplier = 1.0f;
-    stoneBrickMat_.uvScaleX            = 1.0f;
-    stoneBrickMat_.uvScaleY            = 1.0f;
+    stoneBrickMat_.uvScaleX            = 3.0f;
+    stoneBrickMat_.uvScaleY            = 3.0f;
 
     // Wet variant: inherits all textures from stoneBrickMat_, overrides roughness.
     wetBrickInst_.SetParent(&stoneBrickMat_);
