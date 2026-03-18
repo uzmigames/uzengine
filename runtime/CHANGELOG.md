@@ -4,7 +4,7 @@
 
 ## [0.2.35] — 2026-03-18
 
-### SceneRenderer Split + Umbrella Headers
+### Codebase Reorganization — SceneRenderer, PipelineLibrary, Core
 
 **SceneRenderer decomposition** (3876 → 5 files under `renderer/scene/`):
 - `scene_lifecycle.cpp` (979 lines) — Init, Resize, Shutdown, resource helpers
@@ -14,10 +14,23 @@
 - `scene_debug.cpp` (146 lines) — Accessors, Screenshot, Shadow readback
 - `scene_renderer.h` moved into `scene/` — no redirect stubs
 
+**PipelineLibrary decomposition** (2032 → 5 files under `core/pipeline/`):
+- `pipeline_lifecycle.cpp` (346 lines) — Init, Shutdown, shader helpers, PSO cache, warmup
+- `pipeline_geometry.cpp` (329 lines) — ForwardPBR, GBuffer, Lighting, Debug, DepthPrepass
+- `pipeline_shadow.cpp` (197 lines) — Shadow depth, instanced variants
+- `pipeline_atmosphere.cpp` (355 lines) — Sky, height fog, transmittance, multi-scatter, cubemap
+- `pipeline_postprocess.cpp` (879 lines) — Tonemap, velocity, HiZ, DFS, TAA, SSR, color grading, motion blur, DOF, FXAA
+
+**Renderer core reorganization** (40 flat files → 4 subdirectories):
+- `core/params/` — constant_buffers, per_frame_params, shadow_data_params, shadow_pass_params, lighting_params, gbuffer_per_object_params
+- `core/gbuffer/` — gbuffer, draw_list, render_path, debug_view_mode
+- `core/shader/` — shader_manager, shader_parameters, shader_parameter_binder, shader_parameter_hlsl, shader_parameter_macros
+- `core/pipeline/` — pipeline library split (5 files)
+
 **Umbrella headers** (reduce include bloat across the codebase):
-- `passes/passes.h` — 19 includes: all geometry, lighting, debug, atmosphere, postprocess passes
+- `passes/passes.h` — 19 includes: all render passes
 - `ecs/components.h` — 12 includes: all ECS component types
-- `renderer/core/renderer_core.h` — 25 includes: GBuffer, CBs, pipeline, shader params, LOD
+- `core/renderer_core.h` — 25 includes: GBuffer, CBs, pipeline, shader params, LOD
 - `renderer/subsystems.h` — 12 includes: shadows, lighting, atmosphere, fog renderers
 
 ---

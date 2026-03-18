@@ -1,8 +1,39 @@
 # Rendering — Frame Pipeline
 
-> **Status**: Planned (Milestone 2.0)
-> **Source**: `runtime/engine/renderer/`
+> **Status**: Implemented
+> **Source**: `runtime/engine/renderer/scene/` (SceneRenderer + frame orchestration)
 > **Depends on**: Render World (§12-01), Visibility (§12-02), RHI (§03), Shader Pipeline (§05)
+>
+> **Directory layout** (v0.2.35):
+> ```
+> renderer/
+> ├── scene/               — SceneRenderer class + split implementation
+> │   ├── scene_renderer.h — Main class definition
+> │   ├── scene_lifecycle.cpp
+> │   ├── scene_render_frame.cpp
+> │   ├── scene_sync.cpp
+> │   ├── scene_assets.cpp
+> │   └── scene_debug.cpp
+> ├── core/                — Renderer infrastructure
+> │   ├── params/          — CB structs (constant_buffers, per_frame_params, shadow_data_params, ...)
+> │   ├── gbuffer/         — GBuffer, draw list, render path, debug view mode
+> │   ├── shader/          — Shader manager + parameter system
+> │   ├── pipeline/        — PipelineLibrary split (lifecycle, geometry, shadow, atmosphere, postprocess)
+> │   └── (root)           — cb_ring_allocator, frame_pacer, instance_batcher, LOD, render_world
+> ├── passes/              — Render pass implementations
+> │   ├── geometry/        — depth_prepass, gbuffer_pass, pbr_pass
+> │   ├── lighting/        — shadow_pass, lighting_pass
+> │   ├── atmosphere/      — sky_atmosphere, transmittance_lut, sky_cubemap, height_fog
+> │   ├── postprocess/     — auto_exposure, bloom, gtao, hiz, velocity, motion blur, DOF
+> │   └── debug/           — gbuffer_debug, debug_view
+> ├── shadows/             — Shadow atlas, cascade, cache, SDF, local light shadows
+> ├── lighting/            — Light renderer, BRDF math
+> ├── atmosphere/          — Atmosphere renderer
+> ├── fog/                 — Fog renderer
+> ├── ibl/                 — IBL baker, SH projection
+> ├── render_graph/        — Render graph builder + resources
+> └── subsystems.h         — Umbrella header for all subsystem renderers
+> ```
 
 ## Purpose
 
