@@ -74,6 +74,14 @@ Never write C++/shaders/docs directly in the main conversation. Delegate to the 
 - **Docs** → `docs-operator` (haiku)
 - **Tests** → `test-engineer` (sonnet)
 
+### RULE 6: File Locations — NEVER create new directories
+
+- **Analysis files** → `docs/analysis/` (NEVER `.claude/analysis/`)
+- **Guides/reference docs** → `docs/guides/`
+- **Specs** → `docs/specs/`
+- **NEVER** create new top-level directories (no `.ue5-defaults/`, no `.claude/analysis/`)
+- Tell ALL agents to save output in `docs/analysis/` or `docs/guides/`
+
 ---
 
 ## Secondary Rules (see .claude/rules/ for details)

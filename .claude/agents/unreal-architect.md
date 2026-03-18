@@ -66,6 +66,17 @@ Produce a structured analysis with:
 
 Be extremely specific. Include file paths and line numbers from UE5 source.
 
+## ⚠️ OUTPUT FILE LOCATION (MANDATORY)
+
+When creating analysis documents, ALWAYS save to `docs/analysis/` — NEVER to `.claude/analysis/`.
+- General analysis → `docs/analysis/`
+- Material analysis → `docs/analysis/materials/`
+- Rendering analysis → `docs/analysis/rendering/`
+- Shadow analysis → `docs/analysis/shadows/`
+- RHI analysis → `docs/analysis/rhi/`
+
+**ABSOLUTELY FORBIDDEN:** Creating files in `.claude/analysis/` or any new top-level directory.
+
 
 ## ⚠️ CRITICAL: No Shortcuts — Quality Over Speed (HIGHEST PRECEDENCE)
 

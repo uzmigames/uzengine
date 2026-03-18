@@ -121,3 +121,8 @@ NEVER guess at bug causes. ALWAYS:
 
 When spawning 2+ agents, ALWAYS use TeamCreate first. Never spawn parallel agents without a team.
 Each agent in a team MUST work on DIFFERENT files — no two agents editing the same file.
+
+## ⚠️ OUTPUT FILE LOCATION (MANDATORY)
+
+When creating analysis documents, ALWAYS save to `docs/analysis/` — NEVER to `.claude/analysis/`.
+**ABSOLUTELY FORBIDDEN:** Creating files in `.claude/analysis/` or any new top-level directory.
