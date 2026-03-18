@@ -269,7 +269,7 @@ NEW FILES:
 
 REFACTOR:
 - runtime/engine/renderer/material/material_buffer.h
-- scene_renderer.cpp (call GetRenderProxy())
+- scene/scene_render_frame.cpp (call GetRenderProxy())
 
 RESULT:
 ✓ Same performance as current

@@ -39,7 +39,7 @@ This document translates findings from `unity-application-abstraction.md` into *
    - No changes needed
 
 4. **Render Path Selection** — Forward vs Deferred toggle (enum-based)
-   - Location: `runtime/engine/renderer/scene_renderer.h`
+   - Location: `runtime/engine/renderer/scene/scene_renderer.h`
    - Status: **Works but not pluggable** — uses if-statements, not polymorphism
    - **Needs upgrade** to `IRenderPipeline` interface
 
@@ -285,7 +285,7 @@ struct IRenderPipeline {
 
 **File**: `runtime/engine/renderer/passes/deferred_render_pipeline.h/.cpp`
 
-**Rename from**: The current deferred path implementation (scattered in `scene_renderer.cpp`)
+**Rename from**: The current deferred path implementation (scattered in `scene/scene_render_frame.cpp`)
 
 ```cpp
 class DeferredRenderPipeline : public IRenderPipeline {
@@ -373,7 +373,7 @@ private:
 
 #### Task 2.5: Remove SceneRenderer.h Render Path Enum
 
-**File**: `runtime/engine/renderer/scene_renderer.h`
+**File**: `runtime/engine/renderer/scene/scene_renderer.h`
 
 **Change**:
 ```cpp

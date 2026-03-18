@@ -283,7 +283,7 @@ accurate for `GenerateHLSL()` and debugging purposes.
 ## See Also
 
 - [Shader Parameter Binding Guide](shader-parameter-binding-guide.md) — Full reference for the macro system and binder API.
-- `runtime/engine/renderer/core/per_frame_params.h` — Migrated PerFrameParams example.
-- `runtime/engine/renderer/core/shadow_data_params.h` — Migrated ShadowDataParams example.
-- `runtime/engine/renderer/core/lighting_params.h` — Migrated LightingParams example.
+- `runtime/engine/renderer/core/params/per_frame_params.h` — Migrated PerFrameParams example.
+- `runtime/engine/renderer/core/params/shadow_data_params.h` — Migrated ShadowDataParams example.
+- `runtime/engine/renderer/core/params/lighting_params.h` — Migrated LightingParams example.
 - `docs/specs/shader-system.md` — Shader system specification.

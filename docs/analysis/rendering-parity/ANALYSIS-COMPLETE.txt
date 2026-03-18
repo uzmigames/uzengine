@@ -207,9 +207,9 @@ EVIDENCE BASE
 Analysis based on reading:
 
 UzEngine source:
-  - runtime/engine/renderer/scene_renderer.h/cpp
+  - runtime/engine/renderer/scene/scene_renderer.h/cpp
   - shaders/runtime/lighting/deferred_lighting_ps.hlsl
-  - engine/renderer/core/constant_buffers.h
+  - engine/renderer/core/params/constant_buffers.h
   - 73+ .h files analyzed
 
 UE5 5.6 source:

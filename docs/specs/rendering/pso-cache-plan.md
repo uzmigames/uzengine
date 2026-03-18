@@ -323,7 +323,7 @@ Engine shutdown (or explicit flush):
 |------|--------|-------|
 | `runtime/engine/rhi/rhi_types.h` | Add `PsoCacheKey` struct (or keep in pso_cache.h) | ~10 lines |
 | `runtime/engine/renderer/core/pipeline_library.h` | Add `PsoCache m_psoCache` member, add `CreateCachedPipeline()` helper | ~15 lines |
-| `runtime/engine/renderer/core/pipeline_library.cpp` | Route all `CreateGraphicsPipeline` through cache lookup | ~40 lines |
+| `runtime/engine/renderer/core/pipeline/ (split: pipeline_lifecycle.cpp, pipeline_geometry.cpp, pipeline_shadow.cpp, pipeline_atmosphere.cpp, pipeline_postprocess.cpp)` | Route all `CreateGraphicsPipeline` through cache lookup | ~40 lines |
 | `runtime/engine/rhi/rhi_dx12.cpp` | Add `ID3D12PipelineLibrary1` load/save, pass to PSO creation | ~80 lines |
 | `runtime/engine/rhi/rhi_vulkan.cpp` | Add `VkPipelineCache` load/save, pass to pipeline creation | ~60 lines |
 | `runtime/engine/profiling/profiler.h` | Add `UZ_DECLARE_STAT(RHI, PsoCacheHits/Misses/Evictions)` | ~5 lines |

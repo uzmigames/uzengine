@@ -264,8 +264,8 @@ The Hi-Z pyramid build is a fixed-cost compute pass regardless of scene complexi
 | `runtime/engine/renderer/passes/postprocess/hiz_pyramid_pass.h` | `HiZPyramidPassDesc` struct + `AddHiZPyramidPass()` declaration |
 | `runtime/engine/renderer/passes/postprocess/hiz_pyramid_pass.cpp` | Hi-Z pyramid compute pass implementation |
 | `runtime/shaders/runtime/compute/hiz_pyramid_cs.hlsl` | Hi-Z downsample compute shader (UE5 HZB.usf:183-293) |
-| `runtime/engine/renderer/scene_renderer.h` | `m_depthPrepassEnabled`, `m_hizMipLevels[]`, `SetDepthPrepassEnabled()` |
-| `runtime/engine/renderer/scene_renderer.cpp` | `CreateHiZPyramid()`, `DestroyHiZPyramid()`, wiring in `RenderFrame()` |
+| `runtime/engine/renderer/scene/scene_renderer.h` | `m_depthPrepassEnabled`, `m_hizMipLevels[]`, `SetDepthPrepassEnabled()` |
+| `runtime/engine/renderer/scene/ (split: scene_lifecycle.cpp, scene_render_frame.cpp, scene_sync.cpp, scene_assets.cpp, scene_debug.cpp)` | `CreateHiZPyramid()`, `DestroyHiZPyramid()`, wiring in `RenderFrame()` |
 | `runtime/engine/renderer/core/pipeline_library.h/cpp` | `GetDepthPrepass(bindless)`, `GetHiZPyramid()` PSO accessors |
 | `runtime/tests/engine/renderer/test_depth_prepass.cpp` | 30 unit tests covering pass setup, PSO selection, mip allocation |
 

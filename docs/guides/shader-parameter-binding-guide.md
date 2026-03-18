@@ -59,7 +59,7 @@ Use the macros to open the struct, list scalar members, mark the boundary, list 
 ```cpp
 // my_pass_params.h
 #pragma once
-#include "engine/renderer/core/shader_parameter_macros.h"
+#include "engine/renderer/core/shader/shader_parameter_macros.h"
 #include "math/mat4.h"
 #include "math/vector4.h"
 
@@ -105,7 +105,7 @@ exactly which bytes belong to the CB and which are resource slots.
 ```cpp
 // my_pass_params.cpp
 #include "my_pass_params.h"
-#include "engine/renderer/core/shader_parameter_macros.h"
+#include "engine/renderer/core/shader/shader_parameter_macros.h"
 #include <cstddef>  // offsetof
 
 namespace uz {
@@ -154,7 +154,7 @@ at compile time.
 
 ```cpp
 #include "my_pass_params.h"
-#include "engine/renderer/core/shader_parameter_binder.h"
+#include "engine/renderer/core/shader/shader_parameter_binder.h"
 
 void MyPass::Execute(IRHICommandList* cmd, bool bindless) {
     MyPassParams params{};
@@ -274,7 +274,7 @@ static_assert(sizeof(LightingParams) == sizeof(LightingCB), ...);
 This is used to verify that the C++ struct layout agrees with the hand-written HLSL.
 
 ```cpp
-#include "engine/renderer/core/shader_parameter_hlsl.h"
+#include "engine/renderer/core/shader/shader_parameter_hlsl.h"
 
 // Generate HLSL for MyPassParams, bound to cbuffer register b2
 std::string hlsl = uz::GenerateHLSL(
@@ -325,9 +325,9 @@ The 256-byte alignment is enforced at compile time by `END_SHADER_PARAMETER_META
 
 ## See Also
 
-- `runtime/engine/renderer/core/shader_parameters.h` — Core types.
-- `runtime/engine/renderer/core/shader_parameter_macros.h` — Macro definitions.
-- `runtime/engine/renderer/core/shader_parameter_binder.h` — Binder API.
-- `runtime/engine/renderer/core/shader_parameter_hlsl.h` — HLSL generation.
+- `runtime/engine/renderer/core/shader/shader_parameters.h` — Core types.
+- `runtime/engine/renderer/core/shader/shader_parameter_macros.h` — Macro definitions.
+- `runtime/engine/renderer/core/shader/shader_parameter_binder.h` — Binder API.
+- `runtime/engine/renderer/core/shader/shader_parameter_hlsl.h` — HLSL generation.
 - [Shader Parameter Migration Guide](shader-parameter-migration-guide.md) — Step-by-step migration from manual CBs.
 - `docs/specs/shader-system.md` — Shader system specification.

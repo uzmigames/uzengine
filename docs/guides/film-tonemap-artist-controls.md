@@ -106,7 +106,7 @@ For exact formulation, see UE5 source:
 
 ### Implementation in UzEngine
 
-**C++ side** (`runtime/engine/renderer/core/per_frame_params.h`):
+**C++ side** (`runtime/engine/renderer/core/params/per_frame_params.h`):
 ```cpp
 struct PerFrameParams {
     // ... other fields ...

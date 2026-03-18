@@ -418,7 +418,7 @@ for(int i = 0; i < stepCount; i++) {  // stepCount = dynamic input
 
 ### UzEngine Current State
 - **POM Implementation**: Per MEMORY.md, already complete (8-32 layers, linear interp)
-- **Material CB Structure**: `/e/UzEngine/runtime/engine/renderer/core/constant_buffers.h`
+- **Material CB Structure**: `/e/UzEngine/runtime/engine/renderer/core/params/constant_buffers.h`
 - **PBR Pass**: `/e/UzEngine/runtime/engine/renderer/passes/pbr_pass.cpp`
 
 ---

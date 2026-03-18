@@ -160,7 +160,7 @@ Frame N+1:
 
 **Code Locations**:
 - Create: `passes/postprocess/taa_pass.h`
-- Integrate: `scene_renderer.cpp:RenderFrame()` (after lighting, before bloom)
+- Integrate: `scene/scene_render_frame.cpp:RenderFrame()` (after lighting, before bloom)
 - Shader: `shaders/runtime/postprocess/taa_cs.hlsl`
 
 **Deliverable**: TAA reduces aliasing 3x, enables 1080p + 1.5x upsample = 1440p quality.
@@ -335,7 +335,7 @@ Deferred Decal Pass:
 
 4. **Integration** (1 hour):
    - Add to render graph: GBuffer → Decal → Lighting
-   - Iterate ECS DecalComponent in scene_renderer.cpp
+   - Iterate ECS DecalComponent in scene/scene_render_frame.cpp
 
 **Code Locations**:
 - Create: `passes/geometry/decal_pass.h`

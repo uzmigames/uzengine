@@ -168,7 +168,7 @@ runtime/engine/renderer/material/
 
 runtime/engine/renderer/
 ├── scene_renderer.h (UPDATE — call GetRenderProxy())
-├── scene_renderer.cpp (UPDATE — pass proxy to render passes)
+├── scene/scene_render_frame.cpp (UPDATE — pass proxy to render passes)
 └── passes/
     ├── gbuffer_pass.cpp (UPDATE — use proxy)
     ├── deferred_lighting_ps.cpp (UPDATE — use proxy)

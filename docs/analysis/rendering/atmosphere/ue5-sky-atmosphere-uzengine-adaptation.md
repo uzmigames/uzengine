@@ -414,7 +414,7 @@ void FSceneRenderer::Render(FRDGBuilder& GraphBuilder)
 UzEngine uses render graph. Sky atmosphere should integrate as:
 
 ```cpp
-// runtime/engine/renderer/scene_renderer.cpp
+// runtime/engine/renderer/scene/ (split: scene_lifecycle.cpp, scene_render_frame.cpp, scene_sync.cpp, scene_assets.cpp, scene_debug.cpp)
 
 void SceneRenderer::render_sky_atmosphere(RenderGraph& graph)
 {

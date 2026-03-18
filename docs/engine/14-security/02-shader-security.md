@@ -1,7 +1,7 @@
 # Security — Shader Compilation & Bytecode Safety
 
 > **Status**: Reference
-> **Source**: `runtime/engine/renderer/core/dx12_pso_creation.cpp`, `runtime/engine/renderer/core/shader_compiler.cpp`, `runtime/engine/renderer/core/shader_manager.cpp`
+> **Source**: `runtime/engine/renderer/core/dx12_pso_creation.cpp`, `runtime/engine/renderer/core/shader_compiler.cpp`, `runtime/engine/renderer/core/shader/shader_manager.cpp`
 > **Related**: [Shader Pipeline — Compilation](../05-shader-pipeline/03-compilation.md), [Asset Pipeline — Importers & Cooking](../08-resource-system/08-asset-cooking.md)
 
 ## Purpose

@@ -148,7 +148,7 @@ float3 srgb = LinearToSRGB(color);
 
 **Files to Modify**:
 - `e:\UzEngine\runtime\engine\renderer\scene_renderer.h` — Add m_taaPing, m_taaPong, m_taaPass
-- `e:\UzEngine\runtime\engine\renderer\scene_renderer.cpp` — Initialize + execute TAA pass
+- `e:\UzEngine\runtime\engine\renderer\scene/scene_render_frame.cpp` — Initialize + execute TAA pass
 - `e:\UzEngine\runtime\engine\renderer\camera\camera.h` — Add jitter to projection
 
 **Key Changes**:
@@ -165,7 +165,7 @@ float m_jitterX = 0.f;
 float m_jitterY = 0.f;
 ```
 
-In `scene_renderer.cpp` RenderFrame():
+In `scene/scene_render_frame.cpp` RenderFrame():
 ```cpp
 // Before rendering:
 float jitterOffsets[4][2] = {
@@ -222,7 +222,7 @@ outputColor[pixel] = float4(result, 1.0);
 
 **Files to Modify**:
 - `e:\UzEngine\runtime\engine\renderer\scene_renderer.h` — Add m_ssrPass
-- `e:\UzEngine\runtime\engine\renderer\scene_renderer.cpp` — Execute SSR after deferred lighting
+- `e:\UzEngine\runtime\engine\renderer\scene/scene_render_frame.cpp` — Execute SSR after deferred lighting
 - `e:\UzEngine\runtime\shaders\runtime\lighting\deferred_lighting_ps.hlsl` — Composite SSR result
 
 **Key Changes**:
@@ -334,7 +334,7 @@ float finalShadow = pcfShadow * contactShadow;
 - `e:\UzEngine\runtime\shaders\runtime\postprocess\motion_blur_ps.hlsl` (new)
 
 **Files to Modify**:
-- `e:\UzEngine\runtime\engine\renderer\scene_renderer.cpp` — Execute motion blur after tonemap
+- `e:\UzEngine\runtime\engine\renderer\scene/scene_render_frame.cpp` — Execute motion blur after tonemap
 - `e:\UzEngine\runtime\engine\renderer\core\constant_buffers.h` — Add motionBlurStrength
 
 **Key Changes**:
@@ -370,7 +370,7 @@ outputColor = float4(color, 1.0);
 - `e:\UzEngine\runtime\shaders\runtime\geometry\decal_ps.hlsl` (new)
 
 **Files to Modify**:
-- `e:\UzEngine\runtime\engine\renderer\scene_renderer.cpp` — Iterate decals, call decal pass
+- `e:\UzEngine\runtime\engine\renderer\scene/scene_render_frame.cpp` — Iterate decals, call decal pass
 
 **Key Changes**:
 
@@ -448,7 +448,7 @@ sceneColor += emissive; // Add before bloom threshold
 - `e:\UzEngine\runtime\shaders\runtime\postprocess\color_grading_ps.hlsl` (new)
 
 **Files to Modify**:
-- `e:\UzEngine\runtime\engine\renderer\scene_renderer.cpp` — Load neutral LUT, apply in tonemap
+- `e:\UzEngine\runtime\engine\renderer\scene/scene_render_frame.cpp` — Load neutral LUT, apply in tonemap
 
 **Key Changes**:
 

@@ -68,7 +68,7 @@ void RenderDeferredLighting(
 ```cpp
 // File: renderer/shaders/deferred_lighting.h
 #pragma once
-#include "engine/renderer/core/shader_parameter_macros.h"
+#include "engine/renderer/core/shader/shader_parameter_macros.h"
 
 namespace uz::render::shaders {
 
@@ -88,7 +88,7 @@ END_SHADER_PARAMETER_STRUCT()
 
 // File: renderer/passes/deferred_lighting.cpp
 #include "shaders/deferred_lighting.h"
-#include "engine/renderer/core/shader_parameter_binding.h"
+#include "engine/renderer/core/shader/shader_parameter_binder.h"
 
 void RenderDeferredLighting(
     RHICommandList& cmd_list,

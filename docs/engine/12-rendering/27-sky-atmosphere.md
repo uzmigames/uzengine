@@ -328,7 +328,7 @@ Frame time at 1440p (2560×1440):
 ## References
 
 - [SkyAtmosphereComponent Header](../../../runtime/engine/ecs/environment/sky_atmosphere_component.h)
-- [Constant Buffers](../../../runtime/engine/renderer/core/constant_buffers.h)
+- [Constant Buffers](../../../runtime/engine/renderer/core/params/constant_buffers.h)
 - [Sky Atmosphere Pixel Shader](../../../runtime/shaders/runtime/atmosphere/sky_atmosphere_ps.hlsl)
 - [Transmittance LUT Compute](../../../runtime/shaders/runtime/atmosphere/transmittance_lut_cs.hlsl)
 - [Sky Atmosphere Pass](../../../runtime/engine/renderer/passes/atmosphere/sky_atmosphere_pass.h)

@@ -329,7 +329,7 @@ UzEngine likely uses:
 Create a lightweight reflection system:
 
 ```cpp
-// uz/core/shader_parameter_metadata.h
+// uz/core/shader/shader_parameters.h
 
 enum class EShaderParameterType : uint8 {
     Float,
@@ -365,7 +365,7 @@ struct ShaderParameterMetadata {
 #### Phase 2: Macro System (inspired by UE5)
 
 ```cpp
-// uz/core/shader_parameters.h
+// uz/core/shader/shader_parameters.h
 
 #define BEGIN_SHADER_PARAMETER_STRUCT(StructName) \
     struct StructName { \
@@ -399,7 +399,7 @@ END_SHADER_PARAMETER_STRUCT()
 #### Phase 3: SetShaderParameters() Implementation
 
 ```cpp
-// uz/core/shader_parameter_binding.h
+// uz/core/shader/shader_parameter_binder.h
 
 void SetShaderParameters(
     uz::CommandList& cmd_list,

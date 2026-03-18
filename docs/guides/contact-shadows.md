@@ -73,5 +73,5 @@ perFrame.contactShadowLength = 0.02f; // 2% of screen depth
 
 - `runtime/shaders/runtime/include/contact_shadows.hlsli` -- ray march and noise functions
 - `runtime/shaders/runtime/lighting/deferred_lighting_ps.hlsl` -- integration point
-- `runtime/engine/renderer/core/constant_buffers.h` -- `contactShadowLength` field
-- `runtime/engine/renderer/core/per_frame_params.h` -- `contactShadowLength` field
+- `runtime/engine/renderer/core/params/constant_buffers.h` -- `contactShadowLength` field
+- `runtime/engine/renderer/core/params/per_frame_params.h` -- `contactShadowLength` field

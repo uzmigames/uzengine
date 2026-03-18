@@ -1,7 +1,7 @@
 # GBuffer Layout Guide
 
 > **Status**: Done (Milestone 1.3.1)
-> **Source**: `runtime/engine/renderer/core/gbuffer.h`, `runtime/engine/renderer/passes/gbuffer_pass.h`, `runtime/shaders/runtime/gbuffer_ps.hlsl`, `runtime/shaders/runtime/deferred_lighting_ps.hlsl`
+> **Source**: `runtime/engine/renderer/core/gbuffer/gbuffer.h`, `runtime/engine/renderer/passes/gbuffer_pass.h`, `runtime/shaders/runtime/gbuffer_ps.hlsl`, `runtime/shaders/runtime/deferred_lighting_ps.hlsl`
 > **Shader includes**: `runtime/shaders/runtime/include/octahedral.hlsli`
 
 ## Purpose

@@ -129,7 +129,7 @@ final_hdr = Tonemap(debug_output_rt)
 
 ### 1. Enum Definition
 
-**File**: `runtime/engine/renderer/core/debug_view_mode.h`
+**File**: `runtime/engine/renderer/core/gbuffer/debug_view_mode.h`
 
 ```cpp
 /// Debug visualization mode for rendering pipeline inspection.
@@ -446,7 +446,7 @@ float4 main_ps(VS_Output input) : SV_TARGET {
 #pragma once
 
 #include "../../rhi/rhi_types.h"
-#include "../core/debug_view_mode.h"
+#include "../core/gbuffer/debug_view_mode.h"
 
 /// Render pass for debug view mode visualization.
 /// Inputs: G-Buffer textures (GBuffer0, GBuffer1, GBuffer2, Depth, LightingBuffer)
@@ -609,7 +609,7 @@ public:
     DebugViewMode GetDebugViewMode() const noexcept { return m_debugViewMode; }
 };
 
-// In scene_renderer.cpp::Render()
+// In scene/scene_render_frame.cpp::Render()
 void SceneRenderer::Render(RenderContext& ctx) {
     // ... geometry pass, lighting pass ...
 
@@ -833,7 +833,7 @@ runtime/
     │   ├── core/
     │   │   ├── debug_view_mode.h           (new)
     │   │   ├── scene_renderer.h            (modified)
-    │   │   ├── scene_renderer.cpp          (modified)
+    │   │   ├── scene/scene_render_frame.cpp          (modified)
     │   │   └── pipeline_library.h/cpp      (modified)
     │   └── passes/
     │       ├── debug_view_pass.h           (new)

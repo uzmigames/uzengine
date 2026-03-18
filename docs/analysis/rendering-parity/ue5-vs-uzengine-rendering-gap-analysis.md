@@ -567,7 +567,7 @@ Deferred Path → Forward Path (transparent-only)
 
 ### UzEngine Source Files Analyzed
 - `e:\UzEngine\runtime\engine\renderer\scene_renderer.h`
-- `e:\UzEngine\runtime\engine\renderer\scene_renderer.cpp`
+- `e:\UzEngine\runtime\engine\renderer\scene/scene_render_frame.cpp`
 - `e:\UzEngine\runtime\shaders\runtime\lighting\deferred_lighting_ps.hlsl`
 - `e:\UzEngine\runtime\shaders\runtime\include\pbr_common.hlsli`
 - `e:\UzEngine\runtime\engine\renderer\passes\postprocess\bloom_pass.h`
