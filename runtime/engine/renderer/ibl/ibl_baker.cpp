@@ -626,7 +626,7 @@ IBLBaker::BakeResult IBLBaker::BakeEnvironment(uint32_t envCubemapSrvIndex, RHIT
 
     // Track texture handles for cleanup in Shutdown()
     m_irradianceTexture  = irradianceTex;
-    m_prefilteredTexture = prefilteredMipTextures[0];
+    m_prefilteredTexture = prefilteredTex;
 
     UZ_LOG(Renderer, Info,
            "IBLBaker: environment baked (irradiance={}x{} SRV={}, prefiltered={}x{} SRV={})",
