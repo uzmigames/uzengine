@@ -104,9 +104,8 @@ bool CreateDX12Texture(ID3D12Device* device,
 
     // Determine dimension
     D3D12_RESOURCE_DIMENSION dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-    if (desc.depthOrArraySize > 1 && desc.height > 1) {
-        // Could be 3D or array — arrays use TEXTURE2D with ArraySize > 1
-        // True 3D textures would need a separate flag; for now treat as 2D array
+    if (desc.is3D) {
+        dimension = D3D12_RESOURCE_DIMENSION_TEXTURE3D;
     }
 
     // Use typeless format for depth textures that also need SRV
@@ -196,7 +195,11 @@ bool CreateDX12Texture(ID3D12Device* device,
                 srvDesc.Format = ToDxgiFormat(desc.format);
             }
 
-            if (desc.depthOrArraySize == 6) {
+            if (desc.is3D) {
+                // Volume (3D) texture
+                srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE3D;
+                srvDesc.Texture3D.MipLevels = desc.mipLevels;
+            } else if (desc.depthOrArraySize == 6) {
                 // Cube map
                 srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
                 srvDesc.TextureCube.MipLevels = desc.mipLevels;
@@ -223,7 +226,13 @@ bool CreateDX12Texture(ID3D12Device* device,
             D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
             uavDesc.Format = ToDxgiFormat(desc.format);
 
-            if (desc.depthOrArraySize > 1) {
+            if (desc.is3D) {
+                // Volume (3D) texture — HLSL RWTexture3D
+                uavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE3D;
+                uavDesc.Texture3D.MipSlice = 0;
+                uavDesc.Texture3D.FirstWSlice = 0;
+                uavDesc.Texture3D.WSize = desc.depthOrArraySize;
+            } else if (desc.depthOrArraySize > 1) {
                 // Array texture or cubemap — HLSL RWTexture2DArray requires TEXTURE2DARRAY
                 uavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2DARRAY;
                 uavDesc.Texture2DArray.MipSlice = 0;

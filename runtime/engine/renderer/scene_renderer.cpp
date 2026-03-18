@@ -349,6 +349,15 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     // ── SSR Output Textures (trace + resolve, RGBA16F) ────────────────
     CreateSsrResources(width, height);
 
+    // ── Color Grading LUT (32x32x32 3D texture) ────────────────────────
+    CreateColorGradingLutResources();
+
+    // ── Motion Blur Output (RGBA16F, same resolution as scene) ─────────
+    CreateMotionBlurResources(width, height);
+
+    // ── DOF Textures (CoC R16F + output RGBA16F) ───────────────────────
+    CreateDofResources(width, height);
+
     UZ_LOG(Renderer, Info, "SceneRenderer initialized ({}x{}, {})",
            width, height, RenderPathToString(m_renderPath));
     return true;
@@ -603,6 +612,144 @@ void SceneRenderer::DestroySsrResources() {
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Color Grading LUT Resource Creation / Destruction
+// ─────────────────────────────────────────────────────────────────────────────
+
+void SceneRenderer::CreateColorGradingLutResources() {
+    DestroyColorGradingLutResources();
+
+    RHITextureDesc lutDesc{};
+    lutDesc.width            = kColorGradingLutSize;
+    lutDesc.height           = kColorGradingLutSize;
+    lutDesc.depthOrArraySize = static_cast<uint16_t>(kColorGradingLutSize);
+    lutDesc.is3D             = true;
+    lutDesc.format           = RHIFormat::RGBA8Unorm;
+    lutDesc.usage            = RHITextureUsage::ShaderResource
+                             | RHITextureUsage::UnorderedAccess;
+    lutDesc.debugName        = "ColorGradingLUT_3D";
+
+    m_colorGradingLut = m_device->CreateTexture(lutDesc);
+    if (m_colorGradingLut.IsValid()) {
+        m_colorGradingLutSrv = m_device->GetTextureSRVIndex(m_colorGradingLut);
+        m_colorGradingLutUav = m_device->GetTextureUAVIndex(m_colorGradingLut);
+        m_colorGradingLutDirty = true;
+        UZ_LOG(Renderer, Info, "SceneRenderer: Color grading LUT created ({}x{}x{}, RGBA8, 3D, SRV={}, UAV={})",
+               kColorGradingLutSize, kColorGradingLutSize, kColorGradingLutSize,
+               m_colorGradingLutSrv, m_colorGradingLutUav);
+    } else {
+        UZ_LOG(Renderer, Error, "SceneRenderer: failed to create color grading LUT texture");
+    }
+}
+
+void SceneRenderer::DestroyColorGradingLutResources() {
+    if (m_colorGradingLut.IsValid()) {
+        m_device->DestroyTexture(m_colorGradingLut);
+        m_colorGradingLut = RHITextureHandle{};
+        m_colorGradingLutSrv = UINT32_MAX;
+        m_colorGradingLutUav = UINT32_MAX;
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Motion Blur Resource Creation / Destruction
+// ─────────────────────────────────────────────────────────────────────────────
+
+void SceneRenderer::CreateMotionBlurResources(uint32_t width, uint32_t height) {
+    DestroyMotionBlurResources();
+
+    RHITextureDesc desc{};
+    desc.width     = width;
+    desc.height    = height;
+    desc.format    = RHIFormat::RGBA16Float;
+    desc.usage     = RHITextureUsage::ShaderResource
+                   | RHITextureUsage::UnorderedAccess;
+    desc.debugName = "MotionBlur_Output";
+
+    m_motionBlurOutput = m_device->CreateTexture(desc);
+    if (m_motionBlurOutput.IsValid()) {
+        m_motionBlurOutputSrv = m_device->GetTextureSRVIndex(m_motionBlurOutput);
+        m_motionBlurOutputUav = m_device->GetTextureUAVIndex(m_motionBlurOutput);
+        UZ_LOG(Renderer, Info, "SceneRenderer: Motion blur output created ({}x{}, RGBA16F, SRV={}, UAV={})",
+               width, height, m_motionBlurOutputSrv, m_motionBlurOutputUav);
+    } else {
+        UZ_LOG(Renderer, Error, "SceneRenderer: failed to create motion blur output texture");
+    }
+}
+
+void SceneRenderer::DestroyMotionBlurResources() {
+    if (m_motionBlurOutput.IsValid()) {
+        m_device->DestroyTexture(m_motionBlurOutput);
+        m_motionBlurOutput = RHITextureHandle{};
+        m_motionBlurOutputSrv = UINT32_MAX;
+        m_motionBlurOutputUav = UINT32_MAX;
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DOF Resource Creation / Destruction
+// ─────────────────────────────────────────────────────────────────────────────
+
+void SceneRenderer::CreateDofResources(uint32_t width, uint32_t height) {
+    DestroyDofResources();
+
+    // CoC texture — R16F signed circle of confusion per pixel
+    {
+        RHITextureDesc cocDesc{};
+        cocDesc.width     = width;
+        cocDesc.height    = height;
+        cocDesc.format    = RHIFormat::R16Float;
+        cocDesc.usage     = RHITextureUsage::ShaderResource
+                          | RHITextureUsage::UnorderedAccess;
+        cocDesc.debugName = "DOF_CoC";
+
+        m_dofCocTexture = m_device->CreateTexture(cocDesc);
+        if (m_dofCocTexture.IsValid()) {
+            m_dofCocSrv = m_device->GetTextureSRVIndex(m_dofCocTexture);
+            m_dofCocUav = m_device->GetTextureUAVIndex(m_dofCocTexture);
+        } else {
+            UZ_LOG(Renderer, Error, "SceneRenderer: failed to create DOF CoC texture");
+        }
+    }
+
+    // DOF output — RGBA16F blurred result
+    {
+        RHITextureDesc outDesc{};
+        outDesc.width     = width;
+        outDesc.height    = height;
+        outDesc.format    = RHIFormat::RGBA16Float;
+        outDesc.usage     = RHITextureUsage::ShaderResource
+                          | RHITextureUsage::UnorderedAccess;
+        outDesc.debugName = "DOF_Output";
+
+        m_dofOutputTexture = m_device->CreateTexture(outDesc);
+        if (m_dofOutputTexture.IsValid()) {
+            m_dofOutputSrv = m_device->GetTextureSRVIndex(m_dofOutputTexture);
+            m_dofOutputUav = m_device->GetTextureUAVIndex(m_dofOutputTexture);
+        } else {
+            UZ_LOG(Renderer, Error, "SceneRenderer: failed to create DOF output texture");
+        }
+    }
+
+    UZ_LOG(Renderer, Info, "SceneRenderer: DOF textures created ({}x{}, CoC SRV={}, Output SRV={})",
+           width, height, m_dofCocSrv, m_dofOutputSrv);
+}
+
+void SceneRenderer::DestroyDofResources() {
+    if (m_dofCocTexture.IsValid()) {
+        m_device->DestroyTexture(m_dofCocTexture);
+        m_dofCocTexture = RHITextureHandle{};
+        m_dofCocSrv = UINT32_MAX;
+        m_dofCocUav = UINT32_MAX;
+    }
+    if (m_dofOutputTexture.IsValid()) {
+        m_device->DestroyTexture(m_dofOutputTexture);
+        m_dofOutputTexture = RHITextureHandle{};
+        m_dofOutputSrv = UINT32_MAX;
+        m_dofOutputUav = UINT32_MAX;
+    }
+}
+
 void SceneRenderer::DestroyDfsResources() {
     if (m_dfsOutputTexture.IsValid()) {
         m_device->DestroyTexture(m_dfsOutputTexture);
@@ -669,6 +816,18 @@ void SceneRenderer::Resize(uint32_t width, uint32_t height) {
     // Recreate SSR output textures at new resolution
     DestroySsrResources();
     CreateSsrResources(width, height);
+
+    // Recreate motion blur output at new resolution
+    DestroyMotionBlurResources();
+    CreateMotionBlurResources(width, height);
+
+    // Recreate DOF textures at new resolution
+    DestroyDofResources();
+    CreateDofResources(width, height);
+
+    // Color grading LUT is resolution-independent (32x32x32 volume), no resize needed.
+    // Just mark dirty so it regenerates with any changed parameters.
+    m_colorGradingLutDirty = true;
 
     const float aspect = static_cast<float>(width) / static_cast<float>(height);
     m_camera->SetAspectRatio(aspect);
@@ -766,6 +925,15 @@ void SceneRenderer::Shutdown() {
 
     // ── TAA cleanup ──────────────────────────────────────────────────
     DestroyTaaResources();
+
+    // ── Color Grading LUT cleanup ───────────────────────────────────
+    DestroyColorGradingLutResources();
+
+    // ── Motion Blur cleanup ─────────────────────────────────────────
+    DestroyMotionBlurResources();
+
+    // ── DOF cleanup ─────────────────────────────────────────────────
+    DestroyDofResources();
 
     // ── Auto-Exposure cleanup ─────────────────────────────────────
     if (m_autoExposure) m_autoExposure->Shutdown();
@@ -2459,6 +2627,170 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
         m_prevViewProjValid = true;
     }
 
+    // ── Color Grading LUT generation (compute) ─────────────────────────
+    // @source UE5 PostProcessCombineLUTs.cpp:322 — GroupSize = 8
+    // Generated once when dirty, sampled by tonemap shader via LUT SRV.
+    if (m_colorGradingLutDirty && m_colorGradingLut.IsValid()
+        && bindless && m_shadowDebugMode == 0) {
+        rgBuilder.AddPass("ColorGradingLUT", [&](rg::RgPassBuilder& pb) {
+            pb.SetExecutionCallback([&](IRHICommandList* cmd, const rg::RgPassResources&) {
+                UZ_PROFILE_SCOPE("ColorGradingLUT::Generate");
+                auto lutPSO = pipelines->GetColorGradingLut();
+                if (!lutPSO.IsValid()) return;
+
+                // Transition to UAV
+                RHIBarrierDesc b{};
+                b.texture = m_colorGradingLut;
+                b.buffer = RHIBufferHandle::Invalid();
+                b.stateBefore = RHIResourceState::ShaderResource;
+                b.stateAfter = RHIResourceState::UnorderedAccess;
+                cmd->ResourceBarrier(&b, 1);
+
+                cmd->SetPipeline(lutPSO);
+
+                // Build LUT generation params (UE5 defaults).
+                // This struct matches the LutGenParams cbuffer in color_grading_lut_cs.hlsl.
+                // Too large for root constants, so uploaded via CB ring as root CBV.
+                struct LutGenParams {
+                    float whiteTemp, whiteTint;
+                    float colorSaturation[4], colorContrast[4], colorGamma[4], colorGain[4], colorOffset[4];
+                    float colorSaturationShadows[4], colorContrastShadows[4], colorGammaShadows[4], colorGainShadows[4], colorOffsetShadows[4];
+                    float colorSaturationMidtones[4], colorContrastMidtones[4], colorGammaMidtones[4], colorGainMidtones[4], colorOffsetMidtones[4];
+                    float colorSaturationHighlights[4], colorContrastHighlights[4], colorGammaHighlights[4], colorGainHighlights[4], colorOffsetHighlights[4];
+                    float ccShadowsMax, ccHighlightsMin, ccHighlightsMax;
+                    float filmSlope, filmToe, filmShoulder, filmBlackClip, filmWhiteClip;
+                    float blueCorrection, expandGamut, toneCurveAmount;
+                    float mappingPolynomial[3];
+                    float colorScale[3];
+                    float overlayColor[4];
+                    float inverseGammaY, lutSize;
+                    float outputExtentInverse[2];
+                };
+                LutGenParams p{};
+                p.whiteTemp = 6500.0f; p.whiteTint = 0.0f;
+                const float o[4] = {1,1,1,1}, z[4] = {0,0,0,0};
+                std::memcpy(p.colorSaturation,o,16); std::memcpy(p.colorContrast,o,16);
+                std::memcpy(p.colorGamma,o,16); std::memcpy(p.colorGain,o,16); std::memcpy(p.colorOffset,z,16);
+                std::memcpy(p.colorSaturationShadows,o,16); std::memcpy(p.colorContrastShadows,o,16);
+                std::memcpy(p.colorGammaShadows,o,16); std::memcpy(p.colorGainShadows,o,16); std::memcpy(p.colorOffsetShadows,z,16);
+                std::memcpy(p.colorSaturationMidtones,o,16); std::memcpy(p.colorContrastMidtones,o,16);
+                std::memcpy(p.colorGammaMidtones,o,16); std::memcpy(p.colorGainMidtones,o,16); std::memcpy(p.colorOffsetMidtones,z,16);
+                std::memcpy(p.colorSaturationHighlights,o,16); std::memcpy(p.colorContrastHighlights,o,16);
+                std::memcpy(p.colorGammaHighlights,o,16); std::memcpy(p.colorGainHighlights,o,16); std::memcpy(p.colorOffsetHighlights,z,16);
+                p.ccShadowsMax = 0.09f; p.ccHighlightsMin = 0.5f; p.ccHighlightsMax = 1.0f;
+                p.filmSlope = perFrame.filmSlope; p.filmToe = perFrame.filmToe;
+                p.filmShoulder = perFrame.filmShoulder; p.filmBlackClip = perFrame.filmBlackClip;
+                p.filmWhiteClip = perFrame.filmWhiteClip;
+                p.blueCorrection = 0.6f; p.expandGamut = 1.0f; p.toneCurveAmount = 1.0f;
+                p.mappingPolynomial[0] = 0; p.mappingPolynomial[1] = 1; p.mappingPolynomial[2] = 0;
+                p.colorScale[0] = 1; p.colorScale[1] = 1; p.colorScale[2] = 1;
+                p.overlayColor[0] = 0; p.overlayColor[1] = 0; p.overlayColor[2] = 0; p.overlayColor[3] = 0;
+                p.inverseGammaY = 1.0f;
+                p.lutSize = static_cast<float>(kColorGradingLutSize);
+                p.outputExtentInverse[0] = 1.0f / p.lutSize;
+                p.outputExtentInverse[1] = 1.0f / p.lutSize;
+
+                auto lutCb = m_cbRing->Allocate(sizeof(p));
+                std::memcpy(lutCb.cpuPtr, &p, sizeof(p));
+                cmd->SetRootCBV(0, lutCb.bufferHandle, lutCb.offsetBytes, lutCb.cpuPtr, lutCb.sizeBytes);
+                cmd->SetDescriptorTable(4, m_colorGradingLutUav);
+                cmd->Dispatch(kColorGradingLutSize / 8, kColorGradingLutSize / 8, kColorGradingLutSize / 8);
+
+                // Transition back to SRV
+                b.stateBefore = RHIResourceState::UnorderedAccess;
+                b.stateAfter = RHIResourceState::ShaderResource;
+                cmd->ResourceBarrier(&b, 1);
+            });
+        });
+        m_colorGradingLutDirty = false;
+    }
+
+    // ── Motion Blur pass (compute: per-pixel velocity gather blur) ──────
+    // @source UE5 MotionBlurApply.usf:269-714 — MainCS
+    // @source UE5 Scene.cpp:598-600 — MotionBlurAmount=0.5, MotionBlurMax=5.0
+    uint32_t motionBlurSrvForTonemap = taaSrvForTonemap;
+    const bool motionBlurActive = m_motionBlurEnabled && m_motionBlurOutput.IsValid()
+                                && m_gbuffer.velocity.IsValid() && bindless && m_shadowDebugMode == 0;
+    if (motionBlurActive) {
+        rgBuilder.AddPass("MotionBlur", [&](rg::RgPassBuilder& pb) {
+            pb.Read(hdrRes, RHIResourceState::ShaderResource);
+            pb.SetExecutionCallback([&](IRHICommandList* cmd, const rg::RgPassResources&) {
+                UZ_PROFILE_SCOPE("MotionBlur::Execute");
+                auto mbPSO = pipelines->GetMotionBlur();
+                if (!mbPSO.IsValid()) return;
+
+                RHIBarrierDesc b{}; b.texture = m_motionBlurOutput; b.buffer = RHIBufferHandle::Invalid();
+                b.stateBefore = RHIResourceState::ShaderResource; b.stateAfter = RHIResourceState::UnorderedAccess;
+                cmd->ResourceBarrier(&b, 1);
+
+                cmd->SetPipeline(mbPSO);
+                const float maxBlurPx = m_motionBlurMax * 0.01f * static_cast<float>(vpWidth);
+                struct MBConstants { uint32_t scene, vel, depth, w, h; float amount, maxPx; uint32_t uav; } c;
+                c.scene = taaSrvForTonemap; c.vel = m_gbuffer.velocitySRV; c.depth = m_gbuffer.depthSRV;
+                c.w = vpWidth; c.h = vpHeight; c.amount = m_motionBlurAmount; c.maxPx = maxBlurPx;
+                c.uav = m_motionBlurOutputUav;
+                cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&c), 8);
+                cmd->Dispatch((vpWidth+7)/8, (vpHeight+7)/8, 1);
+
+                b.stateBefore = RHIResourceState::UnorderedAccess; b.stateAfter = RHIResourceState::ShaderResource;
+                cmd->ResourceBarrier(&b, 1);
+            });
+        });
+        motionBlurSrvForTonemap = m_motionBlurOutputSrv;
+    }
+
+    // ── DOF passes (disabled by default, UE5: DepthOfFieldFocalDistance=0) ─
+    uint32_t postDofSrvForTonemap = motionBlurSrvForTonemap;
+    const bool dofActive = m_dofEnabled && m_dofFocusDistance > 0.0f
+                         && m_dofCocTexture.IsValid() && m_dofOutputTexture.IsValid()
+                         && bindless && m_shadowDebugMode == 0;
+    if (dofActive) {
+        rgBuilder.AddPass("DOF_Setup", [&](rg::RgPassBuilder& pb) {
+            pb.Read(hdrRes, RHIResourceState::ShaderResource);
+            pb.SetExecutionCallback([&](IRHICommandList* cmd, const rg::RgPassResources&) {
+                UZ_PROFILE_SCOPE("DOF::Setup");
+                auto pso = pipelines->GetDofSetup(); if (!pso.IsValid()) return;
+                RHIBarrierDesc b{}; b.texture = m_dofCocTexture; b.buffer = RHIBufferHandle::Invalid();
+                b.stateBefore = RHIResourceState::ShaderResource; b.stateAfter = RHIResourceState::UnorderedAccess;
+                cmd->ResourceBarrier(&b, 1);
+                cmd->SetPipeline(pso);
+                const float sensorW = 24.576f;
+                const float fovRad = m_camera->GetFovY();
+                const float fMM = sensorW / (2.0f * std::tan(fovRad * 0.5f));
+                const float dMM = m_dofFocusDistance * 10.0f;
+                const float cocInf = (fMM*fMM) / (m_dofAperture * (dMM - fMM)) * static_cast<float>(vpWidth) / sensorW * 0.5f;
+                const float maxCoc = 0.025f * static_cast<float>(vpWidth);
+                struct C { uint32_t dSrv,oUav,w,h; float fd,cinf,cmin,cmax; } c;
+                c.dSrv=m_gbuffer.depthSRV; c.oUav=m_dofCocUav; c.w=vpWidth; c.h=vpHeight;
+                c.fd=m_dofFocusDistance; c.cinf=cocInf; c.cmin=-maxCoc; c.cmax=maxCoc;
+                cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&c), 8);
+                cmd->Dispatch((vpWidth+7)/8, (vpHeight+7)/8, 1);
+                b.stateBefore = RHIResourceState::UnorderedAccess; b.stateAfter = RHIResourceState::ShaderResource;
+                cmd->ResourceBarrier(&b, 1);
+            });
+        });
+        rgBuilder.AddPass("DOF_Blur", [&](rg::RgPassBuilder& pb) {
+            pb.Read(hdrRes, RHIResourceState::ShaderResource);
+            pb.SetExecutionCallback([&](IRHICommandList* cmd, const rg::RgPassResources&) {
+                UZ_PROFILE_SCOPE("DOF::Blur");
+                auto pso = pipelines->GetDofBlur(); if (!pso.IsValid()) return;
+                RHIBarrierDesc b{}; b.texture = m_dofOutputTexture; b.buffer = RHIBufferHandle::Invalid();
+                b.stateBefore = RHIResourceState::ShaderResource; b.stateAfter = RHIResourceState::UnorderedAccess;
+                cmd->ResourceBarrier(&b, 1);
+                cmd->SetPipeline(pso);
+                const float maxCoc = 0.025f * static_cast<float>(vpWidth);
+                struct C { uint32_t sSrv,cSrv,oUav,w,h; float bScale,maxR; uint32_t pad; } c;
+                c.sSrv=motionBlurSrvForTonemap; c.cSrv=m_dofCocSrv; c.oUav=m_dofOutputUav;
+                c.w=vpWidth; c.h=vpHeight; c.bScale=1.0f; c.maxR=maxCoc; c.pad=0;
+                cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&c), 8);
+                cmd->Dispatch((vpWidth+7)/8, (vpHeight+7)/8, 1);
+                b.stateBefore = RHIResourceState::UnorderedAccess; b.stateAfter = RHIResourceState::ShaderResource;
+                cmd->ResourceBarrier(&b, 1);
+            });
+        });
+        postDofSrvForTonemap = m_dofOutputSrv;
+    }
+
     // ── Tonemap pass (HDR → LDR backbuffer) ────────────────────────────
     // Reads HDR scene color (RGBA16F) + optional bloom result, applies
     // bloom composite + auto-exposure + ACES filmic tonemap + sRGB gamma,
@@ -2503,8 +2835,8 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
             uint32_t bloomIntensityBits = 0;
             std::memcpy(&bloomIntensityBits, &bloomIntensity, sizeof(float));
 
-            // When TAA is active, read from TAA resolve output; otherwise raw HDR.
-            uint32_t indices[4] = { taaSrvForTonemap, bloomSrvIdx, bloomIntensityBits, 0 };
+            // Read from the final post-process output (DOF > motion blur > TAA > raw HDR).
+            uint32_t indices[4] = { postDofSrvForTonemap, bloomSrvIdx, bloomIntensityBits, 0 };
             cmd->SetRootConstants(kSlotRootConstants, indices, 4);
 
             // SM5: bind HDR scene color texture at t0 directly

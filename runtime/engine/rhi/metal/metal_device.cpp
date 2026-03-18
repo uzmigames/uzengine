@@ -628,15 +628,17 @@ RHITextureHandle MetalDevice::CreateTexture(const RHITextureDesc& desc) {
     // Dimensions
     texDesc.width = desc.width;
     texDesc.height = desc.height;
-    texDesc.depth = 1;
+    texDesc.depth = desc.is3D ? desc.depthOrArraySize : 1;
     texDesc.mipmapLevelCount = desc.mipLevels;
-    texDesc.arrayLength = desc.depthOrArraySize;
+    texDesc.arrayLength = desc.is3D ? 1 : desc.depthOrArraySize;
 
     // Pixel format
     texDesc.pixelFormat = static_cast<MTLPixelFormat>(ToMTLPixelFormat(desc.format));
 
     // Texture type
-    if (desc.depthOrArraySize == 6) {
+    if (desc.is3D) {
+        texDesc.textureType = MTLTextureType3D;
+    } else if (desc.depthOrArraySize == 6) {
         texDesc.textureType = MTLTextureTypeCube;
     } else if (desc.depthOrArraySize > 1) {
         texDesc.textureType = MTLTextureType2DArray;

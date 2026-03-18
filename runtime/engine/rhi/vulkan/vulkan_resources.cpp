@@ -218,11 +218,11 @@ RHITextureHandle VulkanDevice::CreateTexture(const RHITextureDesc& desc) {
 
     VkImageCreateInfo imageCI = {};
     imageCI.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
-    imageCI.imageType = VK_IMAGE_TYPE_2D;
+    imageCI.imageType = desc.is3D ? VK_IMAGE_TYPE_3D : VK_IMAGE_TYPE_2D;
     imageCI.format = ToVkFormat(desc.format);
-    imageCI.extent = {desc.width, desc.height, 1};
+    imageCI.extent = {desc.width, desc.height, desc.is3D ? static_cast<uint32_t>(desc.depthOrArraySize) : 1u};
     imageCI.mipLevels = desc.mipLevels;
-    imageCI.arrayLayers = desc.depthOrArraySize;
+    imageCI.arrayLayers = desc.is3D ? 1u : static_cast<uint32_t>(desc.depthOrArraySize);
     imageCI.samples = VK_SAMPLE_COUNT_1_BIT;
     imageCI.tiling = VK_IMAGE_TILING_OPTIMAL;
     imageCI.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
@@ -277,7 +277,7 @@ RHITextureHandle VulkanDevice::CreateTexture(const RHITextureDesc& desc) {
     viewCI.subresourceRange.baseMipLevel = 0;
     viewCI.subresourceRange.levelCount = desc.mipLevels;
     viewCI.subresourceRange.baseArrayLayer = 0;
-    viewCI.subresourceRange.layerCount = desc.depthOrArraySize;
+    viewCI.subresourceRange.layerCount = desc.is3D ? 1u : static_cast<uint32_t>(desc.depthOrArraySize);
 
     if (IsDepthFormat(desc.format)) {
         viewCI.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
@@ -288,7 +288,9 @@ RHITextureHandle VulkanDevice::CreateTexture(const RHITextureDesc& desc) {
         viewCI.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
     }
 
-    if (desc.depthOrArraySize == 6) {
+    if (desc.is3D) {
+        viewCI.viewType = VK_IMAGE_VIEW_TYPE_3D;
+    } else if (desc.depthOrArraySize == 6) {
         viewCI.viewType = VK_IMAGE_VIEW_TYPE_CUBE;
     } else if (desc.depthOrArraySize > 1) {
         viewCI.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;

@@ -353,6 +353,52 @@ public:
     /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
     [[nodiscard]] RHIPipelineHandle GetSsrResolve();
 
+    /// Returns the color grading LUT compute pipeline (color_grading_lut_cs.hlsl).
+    ///
+    /// Generates a 32x32x32 3D LUT that bakes the entire color grading +
+    /// tonemapping pipeline into a single texture lookup. Dispatched once
+    /// when settings change, then the tonemap shader samples the LUT.
+    ///
+    /// @source UE5 PostProcessCombineLUTs.usf:445-455 — MainCS
+    /// @source UE5 PostProcessCombineLUTs.cpp:322 — GroupSize = 8
+    ///
+    /// # Returns
+    /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
+    [[nodiscard]] RHIPipelineHandle GetColorGradingLut();
+
+    /// Returns the motion blur compute pipeline (motion_blur_cs.hlsl).
+    ///
+    /// Per-pixel velocity-based directional blur. Reads HDR scene color,
+    /// velocity buffer, and depth; writes blurred scene color.
+    ///
+    /// @source UE5 MotionBlurApply.usf:269-714 — MainCS
+    ///
+    /// # Returns
+    /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
+    [[nodiscard]] RHIPipelineHandle GetMotionBlur();
+
+    /// Returns the DOF setup compute pipeline (dof_setup_cs.hlsl).
+    ///
+    /// Computes per-pixel Circle of Confusion from the depth buffer using
+    /// the thin-lens equation. Outputs signed R16F CoC texture.
+    ///
+    /// @source UE5 DOFSetup.usf:396-437 — SetupCS
+    ///
+    /// # Returns
+    /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
+    [[nodiscard]] RHIPipelineHandle GetDofSetup();
+
+    /// Returns the DOF blur compute pipeline (dof_blur_cs.hlsl).
+    ///
+    /// Disc-shaped gather blur driven by the CoC texture. Samples in concentric
+    /// rings with per-sample CoC weighting.
+    ///
+    /// @source UE5 DOFGatherPass.usf:150-464 — GatherMainCS
+    ///
+    /// # Returns
+    /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
+    [[nodiscard]] RHIPipelineHandle GetDofBlur();
+
     /// Pre-creates all standard pipelines eagerly instead of on first use.
     ///
     /// Call at scene load time to avoid hitches during the first frame.
@@ -394,6 +440,10 @@ private:
     [[nodiscard]] bool EnsureTaaResolveShader();
     [[nodiscard]] bool EnsureSsrTraceShader();
     [[nodiscard]] bool EnsureSsrResolveShader();
+    [[nodiscard]] bool EnsureColorGradingLutShader();
+    [[nodiscard]] bool EnsureMotionBlurShader();
+    [[nodiscard]] bool EnsureDofSetupShader();
+    [[nodiscard]] bool EnsureDofBlurShader();
 
     /// Creates a pipeline through the PSO cache. On cache hit, returns the
     /// cached handle without calling the device. On miss, creates via the
@@ -434,6 +484,10 @@ private:
     RHIShaderHandle m_taaResolveCS             = RHIShaderHandle::Invalid();
     RHIShaderHandle m_ssrTraceCS               = RHIShaderHandle::Invalid();
     RHIShaderHandle m_ssrResolveCS             = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_colorGradingLutCS        = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_motionBlurCS             = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_dofSetupCS               = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_dofBlurCS                = RHIShaderHandle::Invalid();
 
     // ── Cached pipeline handles (one per bindless variant) ──────────────
     RHIPipelineHandle m_forwardPBR         = RHIPipelineHandle::Invalid();
@@ -463,6 +517,10 @@ private:
     RHIPipelineHandle m_taaResolve            = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_ssrTrace              = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_ssrResolve            = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_colorGradingLut       = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_motionBlur            = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_dofSetup              = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_dofBlur               = RHIPipelineHandle::Invalid();
 };
 
 } // namespace uz

@@ -699,6 +699,17 @@ uint64_t DX11Device::GetBufferGPUAddress(RHIBufferHandle handle) const {
 
 RHITextureHandle DX11Device::CreateTexture(const RHITextureDesc& desc) {
     UZ_PROFILE_FUNCTION();
+
+    // DX11 backend does not support 3D (volume) textures — they require
+    // ID3D11Texture3D which is a separate creation path. The color grading
+    // LUT and other 3D textures are only used on the DX12 bindless path.
+    if (desc.is3D) {
+        UZ_LOG(RHI, Warning, "DX11: 3D textures not supported, skipping '{}' ({}x{}x{})",
+               desc.debugName ? desc.debugName : "<unnamed>",
+               desc.width, desc.height, desc.depthOrArraySize);
+        return RHITextureHandle::Invalid();
+    }
+
     D3D11_TEXTURE2D_DESC td = {};
     td.Width = desc.width;
     td.Height = desc.height;

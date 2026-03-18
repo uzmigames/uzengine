@@ -408,8 +408,9 @@ struct RHIBufferDesc {
 
 /// Describes a GPU texture to create via `IRHIDevice::CreateTexture()`.
 ///
-/// Supports 2D textures, 2D arrays, and cube maps. The backend automatically
-/// creates appropriate descriptor views (SRV, RTV, DSV, UAV) based on usage flags.
+/// Supports 2D textures, 2D arrays, cube maps, and 3D (volume) textures.
+/// The backend automatically creates appropriate descriptor views (SRV, RTV,
+/// DSV, UAV) based on usage flags and the `is3D` flag.
 struct RHITextureDesc {
     uint32_t width = 1;                                 ///< Width in texels
     uint32_t height = 1;                                ///< Height in texels
@@ -417,6 +418,7 @@ struct RHITextureDesc {
     uint16_t mipLevels = 1;                             ///< Number of mip levels
     RHIFormat format = RHIFormat::RGBA8Unorm;           ///< Texel format
     RHITextureUsage usage = RHITextureUsage::ShaderResource; ///< Usage flags
+    bool is3D = false;                                  ///< True for volume (3D) textures. When true, depthOrArraySize is depth.
     const char* debugName = nullptr;                    ///< Debug label
 };
 

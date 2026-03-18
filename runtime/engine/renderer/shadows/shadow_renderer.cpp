@@ -107,10 +107,24 @@ ShadowFrameData SetupShadowFrame(
     shadowData.shadowFadeEnd    = lastCascadeFar;
     shadowData.filterMethod     = cfg.filterMethod;
 
-    // PCSS parameters
+    // ── PCSS parameters — UE5 parity ─────────────────────────────────────
+    // @source UE5 ShadowRendering.h:1732 — TanLightSourceAngle = tan(0.5 * deg2rad(LightSourceAngle))
+    //   UE5 uses half-angle because LightSourceAngle is the angular diameter (full apex angle).
+    //   The sun's angular diameter is 0.5357° (DirectionalLightComponent.cpp:1024).
+    // @source UE5 ShadowRendering.h:1738-1741 — PCSSParameters.x = TanLightSourceAngle * SZ / SW
+    //   SZ = MaxSubjectZ - MinSubjectZ (depth range of shadow ortho frustum)
+    //   SW = 2.0 * ShadowBounds.W (world width of shadow ortho frustum)
+    //   This scales the tangent from world-space to shadow tile UV/depth space.
+    //   In UzEngine, both SZ and SW equal 2*radius, so SZ/SW = 1.0.
     static constexpr float kDegToRad = 3.14159265358979323846f / 180.0f;
-    shadowData.tanLightSourceAngle = std::tan(lightSourceAngleDeg * kDegToRad);
-    shadowData.maxSoftKernelSize   = cfg.maxSoftKernelSize;
+    const float tanHalfAngle = std::tan(0.5f * lightSourceAngleDeg * kDegToRad);
+    // For our ortho CSM, SZ/SW = (2*radius)/(2*radius) = 1.0, so no additional scaling.
+    shadowData.tanLightSourceAngle = tanHalfAngle;
+
+    // @source UE5 ShadowRendering.h:1741 — MaxKernelSize / float(ResolutionX)
+    //   Convert from texels to tile UV space [0,1].
+    //   UE5 default: r.Shadow.MaxSoftKernelSize = 40 (ShadowRendering.cpp:188-192).
+    shadowData.maxSoftKernelSize = cfg.maxSoftKernelSize / static_cast<float>(shadowResolution);
 
     // Atlas grid layout — needed by the shader to compute cascade UV offsets
     shadowData.atlasColumns = GetAtlasColumns(totalCascades);

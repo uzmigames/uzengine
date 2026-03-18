@@ -469,6 +469,59 @@ private:
     uint32_t m_dfsIndirectArgsUavIndex = UINT32_MAX;   ///< UAV for cull pass to write indirect args.
 
 
+    // ── Color Grading LUT (3D volume texture) ──────────────────────────────
+
+    /// @source UE5 PostProcessCombineLUTs.cpp:39 — r.LUT.Size = 32
+    static constexpr uint32_t kColorGradingLutSize = 32;
+
+    RHITextureHandle m_colorGradingLut;                ///< 32x32x32 RGBA8 3D LUT for tonemapping.
+    uint32_t m_colorGradingLutSrv = UINT32_MAX;        ///< SRV index for tonemap shader sampling.
+    uint32_t m_colorGradingLutUav = UINT32_MAX;        ///< UAV index for LUT generation compute write.
+    bool m_colorGradingLutDirty = true;                ///< True when LUT needs (re)generation.
+
+    /// Creates the 3D LUT texture. Called from Init().
+    void CreateColorGradingLutResources();
+
+    /// Destroys the 3D LUT texture. Called from Shutdown().
+    void DestroyColorGradingLutResources();
+
+    // ── Motion Blur ──────────────────────────────────────────────────────
+
+    RHITextureHandle m_motionBlurOutput;               ///< RGBA16F temp texture for motion blur result.
+    uint32_t m_motionBlurOutputSrv = UINT32_MAX;       ///< SRV index for subsequent passes to read.
+    uint32_t m_motionBlurOutputUav = UINT32_MAX;       ///< UAV index for motion blur compute write.
+
+    /// @source UE5 Scene.cpp:598-600 — MotionBlurAmount=0.5, MotionBlurMax=5.0
+    float m_motionBlurAmount = 0.5f;                   ///< Motion blur intensity scale.
+    float m_motionBlurMax    = 5.0f;                   ///< Maximum blur radius as percentage of viewport width.
+    bool  m_motionBlurEnabled = true;                  ///< Runtime toggle for motion blur.
+
+    /// Creates motion blur output texture. Called from Init() and Resize().
+    void CreateMotionBlurResources(uint32_t width, uint32_t height);
+
+    /// Destroys motion blur output texture. Called from Shutdown() and Resize().
+    void DestroyMotionBlurResources();
+
+    // ── Depth of Field ───────────────────────────────────────────────────
+
+    RHITextureHandle m_dofCocTexture;                  ///< R16F signed CoC per pixel.
+    uint32_t m_dofCocSrv = UINT32_MAX;                 ///< SRV for DOF blur to read CoC.
+    uint32_t m_dofCocUav = UINT32_MAX;                 ///< UAV for DOF setup to write CoC.
+    RHITextureHandle m_dofOutputTexture;               ///< RGBA16F blurred DOF result.
+    uint32_t m_dofOutputSrv = UINT32_MAX;              ///< SRV for tonemap to read DOF result.
+    uint32_t m_dofOutputUav = UINT32_MAX;              ///< UAV for DOF blur to write.
+
+    /// @source UE5 Scene.cpp:559-560 — default FocalDistance=0 (auto), FStop=4.0
+    float m_dofFocusDistance = 0.0f;                   ///< Focus distance in cm. 0 = disabled.
+    float m_dofAperture      = 4.0f;                   ///< F-stop number.
+    bool  m_dofEnabled       = false;                  ///< DOF is off by default (UE5 default).
+
+    /// Creates DOF textures. Called from Init() and Resize().
+    void CreateDofResources(uint32_t width, uint32_t height);
+
+    /// Destroys DOF textures. Called from Shutdown() and Resize().
+    void DestroyDofResources();
+
     // ── TAA (Temporal Anti-Aliasing) ─────────────────────────────────────────
 
     /// @source UE5 TemporalAA.cpp:41 — CurrentFrameWeight default 0.04

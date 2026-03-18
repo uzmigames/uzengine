@@ -639,7 +639,7 @@ float4 CombineLUTsCommon(float2 InUV, uint InLayerIndex)
 /// @source UE5 PostProcessCombineLUTs.cpp:322 — GroupSize = 8
 /// @deviations NONE — same dispatch pattern as UE5 (8x8x8 thread groups for 32x32x32 = 4x4x4 groups)
 [numthreads(8, 8, 8)]
-void CSMain(uint3 DispatchThreadId : SV_DispatchThreadID)
+void main(uint3 DispatchThreadId : SV_DispatchThreadID)
 {
     // Compute UV from thread ID — maps [0, LUTSize) to [0.5/LUTSize, (LUTSize-0.5)/LUTSize]
     // @source UE5 PostProcessCombineLUTs.usf:448

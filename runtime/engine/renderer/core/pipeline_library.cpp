@@ -1442,6 +1442,242 @@ RHIPipelineHandle PipelineLibrary::GetSsrResolve() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Color Grading LUT Compute Pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool PipelineLibrary::EnsureColorGradingLutShader() {
+    if (m_colorGradingLutCS.IsValid()) {
+        return true;
+    }
+
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::ColorGradingLutCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: ColorGradingLutCS bytecode empty");
+        return false;
+    }
+
+    RHIShaderDesc shaderDesc{};
+    shaderDesc.bytecode     = bytecode.data();
+    shaderDesc.bytecodeSize = bytecode.size();
+    shaderDesc.stage        = RHIShaderStage::Compute;
+    shaderDesc.entryPoint   = "main";
+    shaderDesc.debugName    = "ColorGradingLutCS";
+
+    m_colorGradingLutCS = m_device->CreateShader(shaderDesc);
+    if (!m_colorGradingLutCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create ColorGradingLutCS shader");
+        return false;
+    }
+    return true;
+}
+
+/// @source UE5 PostProcessCombineLUTs.cpp:322 — GroupSize = 8, 32x32x32 LUT
+RHIPipelineHandle PipelineLibrary::GetColorGradingLut() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetColorGradingLut called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_colorGradingLut.IsValid()) {
+        return m_colorGradingLut;
+    }
+
+    if (!EnsureColorGradingLutShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_colorGradingLutCS;
+    desc.debugName     = "ColorGradingLUT";
+
+    m_colorGradingLut = m_device->CreateComputePipeline(desc);
+    if (!m_colorGradingLut.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create ColorGradingLUT pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created ColorGradingLUT pipeline");
+    }
+
+    return m_colorGradingLut;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Motion Blur Compute Pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool PipelineLibrary::EnsureMotionBlurShader() {
+    if (m_motionBlurCS.IsValid()) {
+        return true;
+    }
+
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::MotionBlurCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: MotionBlurCS bytecode empty");
+        return false;
+    }
+
+    RHIShaderDesc shaderDesc{};
+    shaderDesc.bytecode     = bytecode.data();
+    shaderDesc.bytecodeSize = bytecode.size();
+    shaderDesc.stage        = RHIShaderStage::Compute;
+    shaderDesc.entryPoint   = "main";
+    shaderDesc.debugName    = "MotionBlurCS";
+
+    m_motionBlurCS = m_device->CreateShader(shaderDesc);
+    if (!m_motionBlurCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create MotionBlurCS shader");
+        return false;
+    }
+    return true;
+}
+
+/// @source UE5 MotionBlurApply.usf:269 — MainCS
+RHIPipelineHandle PipelineLibrary::GetMotionBlur() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetMotionBlur called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_motionBlur.IsValid()) {
+        return m_motionBlur;
+    }
+
+    if (!EnsureMotionBlurShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_motionBlurCS;
+    desc.debugName     = "MotionBlur";
+
+    m_motionBlur = m_device->CreateComputePipeline(desc);
+    if (!m_motionBlur.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create MotionBlur pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created MotionBlur pipeline");
+    }
+
+    return m_motionBlur;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DOF Setup Compute Pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool PipelineLibrary::EnsureDofSetupShader() {
+    if (m_dofSetupCS.IsValid()) {
+        return true;
+    }
+
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::DofSetupCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: DofSetupCS bytecode empty");
+        return false;
+    }
+
+    RHIShaderDesc shaderDesc{};
+    shaderDesc.bytecode     = bytecode.data();
+    shaderDesc.bytecodeSize = bytecode.size();
+    shaderDesc.stage        = RHIShaderStage::Compute;
+    shaderDesc.entryPoint   = "main";
+    shaderDesc.debugName    = "DofSetupCS";
+
+    m_dofSetupCS = m_device->CreateShader(shaderDesc);
+    if (!m_dofSetupCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create DofSetupCS shader");
+        return false;
+    }
+    return true;
+}
+
+/// @source UE5 DOFSetup.usf:396-437 — SetupCS
+RHIPipelineHandle PipelineLibrary::GetDofSetup() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetDofSetup called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_dofSetup.IsValid()) {
+        return m_dofSetup;
+    }
+
+    if (!EnsureDofSetupShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_dofSetupCS;
+    desc.debugName     = "DOF_Setup";
+
+    m_dofSetup = m_device->CreateComputePipeline(desc);
+    if (!m_dofSetup.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create DOF_Setup pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created DOF_Setup pipeline");
+    }
+
+    return m_dofSetup;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DOF Blur Compute Pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool PipelineLibrary::EnsureDofBlurShader() {
+    if (m_dofBlurCS.IsValid()) {
+        return true;
+    }
+
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::DofBlurCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: DofBlurCS bytecode empty");
+        return false;
+    }
+
+    RHIShaderDesc shaderDesc{};
+    shaderDesc.bytecode     = bytecode.data();
+    shaderDesc.bytecodeSize = bytecode.size();
+    shaderDesc.stage        = RHIShaderStage::Compute;
+    shaderDesc.entryPoint   = "main";
+    shaderDesc.debugName    = "DofBlurCS";
+
+    m_dofBlurCS = m_device->CreateShader(shaderDesc);
+    if (!m_dofBlurCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create DofBlurCS shader");
+        return false;
+    }
+    return true;
+}
+
+/// @source UE5 DOFGatherPass.usf:150-464 — GatherMainCS
+RHIPipelineHandle PipelineLibrary::GetDofBlur() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetDofBlur called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_dofBlur.IsValid()) {
+        return m_dofBlur;
+    }
+
+    if (!EnsureDofBlurShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_dofBlurCS;
+    desc.debugName     = "DOF_Blur";
+
+    m_dofBlur = m_device->CreateComputePipeline(desc);
+    if (!m_dofBlur.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create DOF_Blur pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created DOF_Blur pipeline");
+    }
+
+    return m_dofBlur;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // PSO Cache Integration
 // ─────────────────────────────────────────────────────────────────────────────
 

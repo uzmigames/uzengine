@@ -28,7 +28,7 @@
 | 3 | Film Grain | Per-pixel noise overlay | None | 3/5 | S | 1 | **3.0x** | 3.21.0 (15 items) |
 | 4 | Vignette | Screen-edge darkening | None | 2/5 | S | 0.5 | **4.0x** | 3.22.0 (9 items) |
 | 5 | Chromatic Aberration | Lateral color shift | None | 2/5 | S | 0.5 | **4.0x** | 3.23.0 (10 items) |
-| 6 | Complete PCSS | Blocker search + penumbra | Poisson PCF only | 3/5 | S | 1 | **3.0x** | NEW (this task) |
+| 6 | ~~Complete PCSS~~ DONE | Blocker search + penumbra | UE5-parity PCSS | 3/5 | S | 1 | **3.0x** | DONE — pcss.hlsli rewritten |
 | 7 | Contact Shadows | Screen-space ray march | None | 4/5 | S | 2 | **2.0x** | 3.29.0 (15 items) |
 | 8 | Exponential Height Fog | 2 layers + directional inscattering | Basic aerial perspective | 3/5 | M | 2 | **1.5x** | 3.35.0 |
 | 9 | SSR (Screen-Space Reflections) | Hi-Z ray march + temporal | None | 5/5 | L | 4 | **1.25x** | 3.16.0 (20 items) |
@@ -71,11 +71,12 @@
 - [ ] 1.2.5 Screenshot: glowing object with bloom halo.
 
 ### 1.3 Complete PCSS — blocker search (NEW — no existing task)
-- [ ] 1.3.1 Read UE5 `ShadowFilteringCommon.ush` — extract blocker search algorithm.
-- [ ] 1.3.2 Implement `BlockerSearch()` in `shadow_common.hlsli` — sample N points in search radius, accumulate blocker depth.
-- [ ] 1.3.3 Compute penumbra width from `(receiverDepth - avgBlockerDepth) / avgBlockerDepth * lightSize`.
-- [ ] 1.3.4 Scale PCF filter radius by penumbra width — near contact = sharp, far = soft.
-- [ ] 1.3.5 Screenshot: soft shadows that get sharper near contact point.
+- [x] 1.3.1 Read UE5 `ShadowPercentageCloserFiltering.ush` — extracted full PCSS algorithm (blocker search, penumbra estimation, adaptive PCF, post-PCF sharpening).
+- [x] 1.3.2 Rewrite `pcss.hlsli` to UE5 parity — UE5 Sobol sampling via `SobolIndex()` direction numbers, `UniformSampleDiskConcentricApprox()` disk mapping, receiver plane depth bias from shadow derivatives.
+- [x] 1.3.3 Fix penumbra formula: directional light uses `TanLightSourceAngle * AverageOccluderDistance` (UE5 ShadowPercentageCloserFiltering.ush:274), not spot-light formula that divides by avgBlockerDepth.
+- [x] 1.3.4 Fix C++ PCSS parameter scaling: `tan(0.5 * deg2rad(angle))` half-angle (UE5 ShadowRendering.h:1732), `maxSoftKernelSize / resolution` tile-UV conversion (UE5 ShadowRendering.h:1741).
+- [x] 1.3.5 Add UE5 features: search radius = `sceneDepth * tanLightSourceAngle` (depth-dependent), early return for all-blockers (return 0), post-PCF sharpening (MaxSharpnessFactor=4, ShadowPercentageCloserFiltering.ush:437-459).
+- [x] 1.3.6 Screenshot verified: soft shadows get sharper near contact point, variable penumbra visible.
 
 ### 1.4 Film Grain → task `phase3a-3.21.0-film-grain` (15 items)
 - [ ] 1.4.1 Implement — see existing task checklist.
