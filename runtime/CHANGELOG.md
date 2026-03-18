@@ -2,6 +2,58 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
+## [0.2.34] — 2026-03-18
+
+### Material System + PCSS Soft Shadows + Post-Process Wiring
+
+**Material System** (MaterialInterface + Material + MaterialInstance):
+- MaterialInterface abstract base class — virtual GetScalarParam/GetVectorParam/GetTexturePath
+  @source UE5 MaterialInterface.h
+- Material: PBR params (baseColorTint, roughness/metallic multiplier, normalIntensity, UV scale/offset, emissive, opacity, twoSided, alphaTest)
+  @source UE5 Material.h
+- MaterialInstance: parent=MaterialInterface* (chaining), sparse bool-flagged overrides
+  @source UE5 MaterialInstance.h:700-731, MaterialInstance.cpp:1105-1148
+- StaticMeshComponent: overrideMaterials[] per-slot, GetMaterial(slotIdx)
+  @source UE5 MeshComponent.h:31, MeshComponent.cpp:37-54
+- Removed legacy texture paths from StaticMeshComponent — all textures on Material
+- All demos (pbr_test, deferred_test, instancing_test, ibl_test, textured_quad) converted
+- Lua API: all material params exposed (roughness_multiplier, uv_scale, base_color, etc.)
+
+**PCSS Soft Shadows** (pcss.hlsli + shadow_renderer.cpp):
+- Blocker search (16 Sobol samples) with depth-dependent search radius
+  @source UE5 ShadowPercentageCloserFiltering.ush:122-466
+- Variable penumbra: tanLightSourceAngle * averageOccluderDistance (directional light formula)
+- Receiver plane depth bias via shadow position derivatives
+- Post-PCF sharpening (MaxSharpnessFactor=4)
+- Fixed CPU params: half-angle tan, tile UV space conversion
+  @source UE5 ShadowRendering.h:1732, ShadowRendering.cpp:188-192
+
+**Color Grading LUT** (wired into render graph):
+- 32x32x32 3D texture (RGBA8), baked once per settings change
+- Full UE5 CombineLUTs pipeline (white balance, 3-zone correction, ACES)
+  @source UE5 PostProcessCombineLUTs.usf:159-423
+- RHI: added 3D texture support (DX12, Vulkan, Metal)
+
+**Motion Blur** (wired into render graph):
+- Per-pixel velocity gather (8-16 adaptive samples), depth-aware
+- Defaults: amount=0.5, maxBlurPixels=5.0 @source UE5 Scene.cpp:598-599
+
+**DOF** (pipelines ready, disabled by default):
+- CoC setup + 5-ring gather blur shaders created and wired
+- Disabled by default (UE5 default)
+
+**Emissive Materials** (GBuffer RT4):
+- 4th GBuffer render target (RGBA16Float) for emissive
+- emissive = texture.rgb * color * intensity, added in deferred lighting
+  @source UE5 BasePassPixelShader.usf:1480
+
+**Post-Process Defaults** corrected to UE5 exact:
+- BloomThreshold: -1.0 (was 1.0) @source Scene.cpp:423
+- AutoExposure: min=0.03, max=8.0 (was 0.001, 1048576) @source Scene.cpp:196-197
+- Removed invented ambient color fallback
+
+---
+
 ## [0.2.33] — 2026-03-17
 
 ### Sky Atmosphere UE5 Parity + Post-Process Stack + Contact Shadows
