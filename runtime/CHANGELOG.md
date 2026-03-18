@@ -2,6 +2,26 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
+## [0.2.37] — 2026-03-18
+
+### Material Graph System
+
+**New system** (`runtime/engine/material/`): node-based material compiler that generates HLSL from a DAG of expression nodes.
+
+- **MaterialExpression** — 37 built-in node types: constants, math (Add/Mul/Lerp/Clamp/Pow/etc.), texture sampling, coordinates (TexCoord/WorldPosition/VertexNormal/Time), procedural (CheckerPattern/NoisePerlin/Gradient), tri-planar mapping, utility (Fresnel/Panner/ComponentMask/Append), and runtime parameters (ScalarParameter/VectorParameter/TextureParameter).
+- **MaterialGraph** — DAG container with typed pin connections, cycle detection (DFS), topological sort with dead-code elimination, xxHash64 content hashing, `.uzmat` JSON serialization.
+- **HlslMaterialTranslator** — Compiles graph to HLSL `ComputeMaterialOutputs()`. Memoized emission, auto type promotion (float↔float3 splat), parameter/texture slot allocation.
+- **MaterialShaderCache** — Content-addressed compilation cache by xxHash64 of graph content.
+- **MaterialBaker** — CPU-side graph evaluator that bakes UV-based materials to RGBA8 textures.
+- **MI_ProcGrid.uzmat** — UE5 Basic Scene procedural checker floor: TexCoord → CheckerPattern(scale=16) → Lerp(0.85, 0.65) → BaseColor, roughness varies 0.3/0.65.
+
+### Rendering Fixes
+
+- **Contact shadows smooth falloff** — binary 0/1 replaced with `smoothstep` based on hit distance + camera distance fade at 50m. Matches PoC1 quality.
+- **Sky atmosphere jitter fix** — near/far clip subtraction eliminates catastrophic cancellation at large camera coordinates.
+- **Height fog UE5 parity** — density=0.0436, baseHeight=-5000, fogColor=black. Inscattering via SkyAtmosphere ambient injection using SkyLight color×intensity (was SH L0 coefficients scaled by ~0.28).
+- **Aerial perspective anti-double-fog** — `lerp(ap.a, 1.0, heightFogContribution)` disables AP transmittance darkening when height fog handles atmospheric haze.
+
 ## [0.2.36] — 2026-03-18
 
 ### RenderFrame Split, GPU Cull, DOF Params, Bug Fixes

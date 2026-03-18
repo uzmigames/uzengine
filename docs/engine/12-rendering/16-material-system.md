@@ -1,507 +1,293 @@
 # Material System — Overview
 
-> **Status**: Planned (Milestone 2.0)
-> **Source**: `runtime/engine/renderer/`
+> **Status**: Phase 1 implemented (graph compiler + CPU baker). Phase 2 planned (GPU shader integration).
+> **Source**: `runtime/engine/material/` (graph system), `runtime/engine/renderer/material/` (renderer integration)
 > **Depends on**: Shader Pipeline (§05), Render Graph (§32), Resource System (§08)
-> **References**: UE5 `UMaterial` / `UMaterialInstance`, Godot `VisualShader`, Substance Designer
+> **References**: UE5 `UMaterial` / `UMaterialExpression`, Godot `VisualShader`
 
 ## Purpose
 
-Artists and programmers need to author materials without writing low-level shader code. The Material System provides a **node-based graph compiler** that generates optimized HLSL shaders, manages permutations, and caches compiled PSOs.
+Artists and programmers author materials without writing low-level shader code. The Material System provides a **node-based graph compiler** that generates HLSL shaders, manages compilation, and caches results.
 
-A material is a **directed acyclic graph of nodes** that compose PBR parameters (BaseColor, Metallic, Roughness, etc.). The compiler:
-- Evaluates the graph at cook-time and runtime
-- Generates shader code with dead code elimination
-- Bakes permutation combinations into separate PSOs
-- Caches compiled code by content hash
-- Supports dynamic parameter tweaking via Material Instances
+A material is a **directed acyclic graph of expressions** that compute PBR parameters (BaseColor, Metallic, Roughness, etc.). The compiler:
+- Walks the graph in topological order
+- Generates HLSL code with dead-code elimination
+- Caches compiled code by xxHash64 content hash
+- Supports runtime parameter overrides via Material Instances (planned)
 
 ```
-Material Graph (Node-Based)
-────────────────────────────
-Texture Sample [diffuse.png]
+.uzmat (JSON)
        ▼
-    Multiply ◄─── Constant [0.8]
+MaterialGraph::LoadFromFile()
        ▼
-   BaseColor
-       │
+HlslMaterialTranslator::Compile()
        ▼
-Compile to HLSL + Cook to PSO
-       │
+ComputeMaterialOutputs() — HLSL function
        ▼
-Game loads material → selects appropriate PSO → renders with parameters
+MaterialBaker::BakeBaseColor() — CPU texture bake (current)
+       ▼
+Texture assigned to standard Material pipeline → renders
 ```
+
+## Architecture
+
+### File Layout
+
+```
+runtime/engine/material/
+├── material_expression.h/.cpp          # Base expression + 37 node types
+├── material_graph.h/.cpp               # DAG container + JSON serialization
+├── material_shader_cache.h/.cpp        # Content-addressed compilation cache
+├── material_asset_graph.h/.cpp         # .uzmat file loader + compile orchestrator
+├── material_baker.h/.cpp               # CPU-side graph evaluator → texture bake
+└── compiler/
+    └── hlsl_material_translator.h/.cpp # Graph → HLSL code generator
+```
+
+### UE5 Pattern
+
+The architecture follows UE5's separation of concerns:
+
+| UE5 | UzEngine | Role |
+|-----|----------|------|
+| `UMaterialExpression` | `MaterialExpression` | Data container (pins + params, no logic) |
+| `UMaterial` (expression array) | `MaterialGraph` (expression vector) | Owns nodes, manages connections |
+| `FHLSLMaterialTranslator` | `HlslMaterialTranslator` | Visitor that generates HLSL |
+| `FMaterialShaderMap` | `MaterialShaderCache` | Content-addressed compiled shader cache |
+| `UMaterialInstanceDynamic` | `MaterialAssetGraph` | Asset wrapper + compilation orchestrator |
+
+Expressions are **pure data containers** — they hold pins, parameters, and connections but have NO compilation logic. The compiler visits expressions to emit HLSL (visitor pattern).
 
 ## Material Domains
 
-A material operates in a specific rendering context:
-
 ```cpp
 enum class MaterialDomain : uint8_t {
-    /// Standard surface rendering (lit geometry)
-    Surface,
-
-    /// Post-process effect (fullscreen quad)
-    PostProcess,
-
-    /// Decal projection (blends onto surfaces)
-    Decal,
-
-    /// UI widget rendering (2D)
-    UI,
-
-    /// Particle / VFX rendering
-    Particle,
+    Surface,      ///< Standard lit geometry (deferred/forward)
+    PostProcess,  ///< Fullscreen post-process effect
+    Decal,        ///< Projected decal
+    UI,           ///< 2D UI widget
 };
-```
-
-**Example: Surface domain**
-
-```json
-{
-  "domain": "Surface",
-  "shading_model": "DefaultLit",
-  "nodes": [
-    {
-      "id": "tex_diffuse",
-      "type": "TextureSample",
-      "properties": { "texture": "res://textures/diffuse.uztexture" }
-    },
-    {
-      "id": "base_color",
-      "type": "Output",
-      "input": "tex_diffuse.rgba"
-    }
-  ]
-}
 ```
 
 ## Shading Models
 
-Different material types require different lighting models:
-
-| Model | Purpose | Parameters | Example |
-|-------|---------|------------|---------|
-| **DefaultLit** | Standard PBR | BaseColor, Metallic, Roughness, Normal, AO | Metal, plastic, stone |
-| **Unlit** | No lighting calculation | BaseColor, Emissive | UI, neon, holograms |
-| **Subsurface** | Light scattering through translucent geometry | BaseColor + Subsurface power | Skin, wax, marble |
-| **ClearCoat** | Dual-layer (clear coat over base) | BaseColor + CoatRoughness | Car paint, varnish |
-| **Hair** | Anisotropic specular + strand-based | TangentDirectionality, Specular | Hair, fur, grass |
-| **Cloth** | Velvet-like scattering | Cloth density + drape | Fabric, upholstery |
-| **Eye** | Iris caustics + corneal refraction | IrisNormal, Sclera mask | Character eyes |
-
-## Shading Model Selection
-
 ```cpp
-struct MaterialDesc {
-    MaterialDomain domain;
-    ShadingModel shading_model;
-    // ...
+enum class MaterialShadingModel : uint8_t {
+    DefaultLit,   ///< Standard PBR (Cook-Torrance + Burley)
+    Unlit,        ///< No lighting, emissive only
+    Subsurface,   ///< SSS approximation
 };
 ```
 
-**Example: Create a subsurface material (skin)**
+## Expression Types (37 implemented)
+
+### Constants
+| Type | Outputs | Parameters |
+|------|---------|------------|
+| `ScalarConstant` | Value(Float) | `value` |
+| `Vector2Constant` | Value(Float2) | `x`, `y` |
+| `Vector3Constant` | Value(Float3) | `x`, `y`, `z` |
+| `Vector4Constant` | Value(Float4) | `x`, `y`, `z`, `w` |
+| `ColorConstant` | Color(Float3) | `r`, `g`, `b` |
+
+### Math (20 operations)
+| Type | Inputs | Output |
+|------|--------|--------|
+| `Add`, `Subtract`, `Multiply`, `Divide` | A, B | Result |
+| `Lerp` | A, B, Alpha | Result |
+| `Clamp` | Value, Min, Max | Result |
+| `Saturate`, `Abs`, `OneMinus`, `Frac`, `Floor`, `Ceil`, `Sqrt` | Value | Result |
+| `Pow` | Base, Exp | Result |
+| `Min`, `Max` | A, B | Result |
+| `Dot` | A(Float3), B(Float3) | Result(Float) |
+| `Cross` | A(Float3), B(Float3) | Result(Float3) |
+| `Normalize`, `Length` | Value | Result |
+| `Step` | Edge, X | Result |
+| `SmoothStep` | Edge0, Edge1, X | Result |
+
+### Texture
+| Type | Inputs | Outputs | Parameters |
+|------|--------|---------|------------|
+| `TextureSample` | UV(Float2) | RGBA, R, G, B, A | `texturePath` |
+
+### Coordinates
+| Type | Outputs | Notes |
+|------|---------|-------|
+| `TexCoord` | UV(Float2) | `uvIndex` param |
+| `WorldPosition` | Position(Float3) | |
+| `ObjectPosition` | Position(Float3) | |
+| `VertexNormal` | Normal(Float3) | |
+| `VertexColor` | Color(Float4) | |
+| `CameraVector` | Direction(Float3) | |
+| `ScreenPosition` | UV(Float2) | |
+| `Time` | Seconds(Float) | |
+
+### Procedural
+| Type | Inputs | Output |
+|------|--------|--------|
+| `CheckerPattern` | UV, Scale(default=10) | Mask(Float) |
+| `NoisePerlin` | UV, Scale(default=1) | Value(Float) |
+| `GradientLinear` | UV | Value(Float) |
+| `GradientRadial` | UV | Value(Float) |
+
+### Utility
+| Type | Inputs | Outputs |
+|------|--------|---------|
+| `TriPlanarMapping` | WorldPos, WorldNormal, Sharpness | UV, BlendWeights |
+| `Fresnel` | Exponent(default=5) | Value(Float) |
+| `Panner` | UV, SpeedX, SpeedY | UV(Float2) |
+| `ComponentMask` | Input(Float4) | Result (type varies) |
+| `Append` | A, B | Result (A+B components) |
+
+### Parameters (runtime-tweakable)
+| Type | Outputs | Parameters |
+|------|---------|------------|
+| `ScalarParameter` | Value(Float) | `paramName`, `default` |
+| `VectorParameter` | Value(Float3) | `paramName`, `defaultR/G/B` |
+| `TextureParameter` | Texture | `paramName`, `texturePath` |
+
+## PBR Output Node
+
+Every material graph has exactly one PBR Output node (id=1) with these input pins:
+
+| Pin | Type | Default | Purpose |
+|-----|------|---------|---------|
+| BaseColor | Float3 | (1,1,1) | Diffuse albedo (linear) |
+| Metallic | Float | 0.0 | Metal vs dielectric |
+| Roughness | Float | 0.5 | Surface smoothness |
+| Normal | Float3 | (0,0,1) | Surface normal (tangent space) |
+| Emissive | Float3 | (0,0,0) | Self-illumination (HDR) |
+| Opacity | Float | 1.0 | Transparency |
+| AO | Float | 1.0 | Ambient occlusion |
+
+## .uzmat File Format
+
+Materials are serialized as JSON:
 
 ```json
 {
-  "domain": "Surface",
-  "shading_model": "Subsurface",
-  "parameters": [
-    { "name": "base_color", "type": "vec4", "default": [1, 0.8, 0.8, 1] },
-    { "name": "subsurface_power", "type": "float", "default": 2.5 }
-  ],
-  "nodes": [
-    {
-      "id": "diffuse_tex",
-      "type": "TextureSample",
-      "properties": { "path": "res://textures/skin_diffuse.png" }
-    },
-    {
-      "id": "out",
-      "type": "Output",
-      "connections": {
-        "base_color": "diffuse_tex.rgba",
-        "subsurface_power": "param:subsurface_power"
-      }
-    }
-  ]
+    "version": 1,
+    "name": "MI_ProcGrid",
+    "domain": "Surface",
+    "shadingModel": "DefaultLit",
+    "expressions": [
+        {
+            "id": 1,
+            "type": "PBROutput",
+            "pos": [400, 0],
+            "inputs": [
+                {"pin": 0, "srcExpr": 7, "srcPin": 0}
+            ]
+        },
+        {
+            "id": 2,
+            "type": "TexCoord",
+            "pos": [-400, 0]
+        },
+        {
+            "id": 3,
+            "type": "ScalarConstant",
+            "pos": [-400, 100],
+            "scalarParams": {"value": 16.0}
+        },
+        {
+            "id": 4,
+            "type": "CheckerPattern",
+            "pos": [-200, 0],
+            "inputs": [
+                {"pin": 0, "srcExpr": 2, "srcPin": 0},
+                {"pin": 1, "srcExpr": 3, "srcPin": 0}
+            ]
+        }
+    ]
 }
 ```
 
-## Material Graph — Node Types
+## HLSL Code Generation
 
-### Texture Sampling
+The `HlslMaterialTranslator` generates a `ComputeMaterialOutputs()` function:
 
-```cpp
-struct TextureSampleNode {
-    std::string texture_path;  // "res://textures/..."
-    SamplerMode sampler;       // Linear, Point, Aniso
-    bool use_virtual_texture;  // Megatexture streaming
-};
-
-// Generated HLSL:
-// float4 tex = tex2d(texture, uv);
-```
-
-### Math Operations
-
-```cpp
-struct MathNode {
-    enum Operation {
-        Add, Subtract, Multiply, Divide, Power,
-        Dot, Cross, Normalize, Length,
-        Min, Max, Clamp, Lerp,
-        Sin, Cos, Tan, Abs, Frac,
-    } op;
-};
-```
-
-### Texture Coordinate Manipulation
-
-```cpp
-struct TexCoordNode {
-    enum CoordType { UV0, UV1, UV2, UV3, WorldPos, Normal, Tangent };
-    CoordType type;
-};
-
-struct TriplanarNode {
-    std::string texture_path;
-    float scale;  // World space scale
-};
-
-struct WorldAlignedNode {
-    std::string texture_path;
-    enum Axis { X, Y, Z } dominant_axis;
-};
-```
-
-### Conditional / Control Flow
-
-```cpp
-struct SwitchNode {
-    std::string condition;  // bool or float parameter
-    // true branch + false branch inputs
-};
-```
-
-## Material Parameters
-
-Materials expose **named parameters** that can be:
-1. Statically baked into shader code (compile-time)
-2. Dynamically changed per-instance (runtime, via Material Instances)
-
-```json
+```hlsl
+/// Auto-generated by UzEngine MaterialCompiler
+/// Material: "MI_ProcGrid"
+void ComputeMaterialOutputs(
+    in float4 materialParams[16],
+    in float2 uv,
+    in float3 positionWS,
+    in float3 normalWS,
+    in float4 vertexColor,
+    in float3 objectPosition,
+    in float2 screenUV,
+    in float3 cameraPosition,
+    in float totalTime,
+    out float3 out_baseColor,
+    out float out_metallic,
+    out float out_roughness,
+    out float3 out_normal,
+    out float3 out_emissive,
+    out float out_opacity,
+    out float out_ao)
 {
-  "parameters": [
-    {
-      "name": "base_color",
-      "type": "vec4",
-      "default": [1, 1, 1, 1],
-      "ui_name": "Base Color",
-      "editable_at_runtime": true
-    },
-    {
-      "name": "metallic",
-      "type": "float",
-      "default": 0.0,
-      "range": [0, 1],
-      "editable_at_runtime": true
-    },
-    {
-      "name": "roughness",
-      "type": "float",
-      "default": 0.5,
-      "range": [0, 1],
-      "editable_at_runtime": true
-    },
-    {
-      "name": "use_normal_map",
-      "type": "bool",
-      "default": true,
-      "editable_at_compile_time_only": true
-    }
-  ]
+    float2 _node2_out0 = uv;
+    float _node3_out0 = 16.0;
+    float _node4_out0 = fmod(floor(_node2_out0.x * _node3_out0) +
+                             floor(_node2_out0.y * _node3_out0), 2.0);
+    float3 _node5_out0 = float3(0.85, 0.85, 0.85);
+    float3 _node6_out0 = float3(0.65, 0.65, 0.65);
+    float3 _node7_out0 = lerp(_node5_out0, _node6_out0,
+                              float3(_node4_out0, _node4_out0, _node4_out0));
+
+    out_baseColor = _node7_out0;
+    out_metallic = 0.0;
+    out_roughness = 0.5;
+    out_normal = normalWS;
+    out_emissive = float3(0.0, 0.0, 0.0);
+    out_opacity = 1.0;
+    out_ao = 1.0;
 }
 ```
 
-## Shader Permutations
+Key features:
+- **Memoized emission** — diamond dependencies emitted once
+- **Dead-code elimination** — only nodes reachable from PBR output are emitted
+- **Auto type promotion** — Float→Float3 splat, Float3→Float truncation
+- **Parameter slots** — `materialParams[N]` for runtime overrides
+- **Texture slots** — `ResourceDescriptorHeap[texIndex_N]` for bindless sampling
 
-Different feature combinations generate different shaders:
+## Material Baker (CPU)
 
-```cpp
-struct ShaderPermutation {
-    std::string material_path;      // "res://materials/rock.uzmaterial"
-    uint32_t feature_bits;          // Bitmask of enabled features
-    ShaderTarget target;            // SM5.0, SM6.6
-    uint64_t content_hash;          // Content-based cache key
-};
-```
-
-**Example: Compile permutations**
-
-```
-Material: "rock.uzmaterial"
-  ├─ Permutation 0: [Normal disabled, SM6.6]      → shader_0_sm66.dxil
-  ├─ Permutation 1: [Normal enabled, SM6.6]       → shader_1_sm66.dxil
-  ├─ Permutation 2: [Normal disabled, SM5.0]      → shader_0_sm50.dxbc
-  └─ Permutation 3: [Normal enabled, SM5.0]       → shader_1_sm50.dxbc
-
-Compiled PSOs:
-  ├─ PSO_rock_sm66_0 (no normal map)
-  ├─ PSO_rock_sm66_1 (with normal map)
-  ├─ PSO_rock_sm50_0 (SM5.0 path, no normal)
-  └─ PSO_rock_sm50_1 (SM5.0 path, with normal)
-```
-
-Permutation bits are typically derived from **feature toggles** in the material or scene:
+The `MaterialBaker` evaluates material graphs on CPU for each texel, producing RGBA8 texture data. Used for:
+- Material preview thumbnails
+- Fallback rendering (current — baked textures fed to standard pipeline)
+- Texture export for static UV-only materials
 
 ```cpp
-enum class MaterialFeature : uint32_t {
-    UseNormalMap     = 1 << 0,
-    UseParallaxMap   = 1 << 1,
-    UseAOMap         = 1 << 2,
-    UseDetailMap     = 1 << 3,
-    // ...
-};
-
-// Compiler generates HLSL with:
-// #if HAS_NORMAL_MAP
-//   float3 normal = tex2d(normal_map, uv).xyz;
-// #else
-//   float3 normal = float3(0, 0, 1);
-// #endif
-//
-// Dead code elimination removes branches not taken → smaller, faster shaders
+auto result = MaterialBaker::BakeBaseColor(graph, 1024, 1024);
+// result.pixels = RGBA8 data, result.width/height = dimensions
+stbi_write_png("baked.png", result.width, result.height, 4, result.pixels.data(), ...);
 ```
 
-## Material File Format (.uzmaterial)
+## Content Hashing
 
-```json
-{
-  "version": "1.0",
-  "domain": "Surface",
-  "shading_model": "DefaultLit",
-  "parameters": [
-    {
-      "name": "base_color",
-      "type": "vec4",
-      "default": [1, 1, 1, 1]
-    },
-    {
-      "name": "metallic",
-      "type": "float",
-      "default": 0.0,
-      "range": [0, 1]
-    }
-  ],
-  "nodes": [
-    {
-      "id": "base_color_tex",
-      "type": "TextureSample",
-      "properties": {
-        "texture": "res://textures/diffuse.uztexture",
-        "sampler": "LinearWrap"
-      }
-    },
-    {
-      "id": "metallic_tex",
-      "type": "TextureSample",
-      "properties": { "texture": "res://textures/metallic.uztexture" }
-    },
-    {
-      "id": "output",
-      "type": "Output",
-      "domain": "Surface",
-      "connections": {
-        "base_color": "base_color_tex.rgba",
-        "metallic": "metallic_tex.r",
-        "roughness": 0.6
-      }
-    }
-  ]
-}
-```
+Each graph is hashed via xxHash64 over:
+- All expression types (sorted by ID)
+- All scalar/string/int parameters
+- All pin connections
 
-## Material Instances (.uzmaterial_instance)
+Same hash = same shader. The `MaterialShaderCache` uses this to skip recompilation.
 
-Material Instances allow per-entity parameter overrides **without recompiling**:
+## Current Limitations (Phase 1)
 
-```json
-{
-  "material": "res://materials/rock.uzmaterial",
-  "parameters": {
-    "base_color": [0.5, 0.5, 0.5, 1.0],
-    "metallic": 0.1,
-    "roughness": 0.7
-  }
-}
-```
-
-**Usage in code:**
-
-```cpp
-// Load base material + instance
-auto rock_material = Assets::Load<Material>("res://materials/rock.uzmaterial");
-auto instance = Assets::Load<MaterialInstance>("res://materials/rock_mossy.uzmaterial_instance");
-
-// Render uses base shader (rock.uzmaterial) but with instance params (metallic=0.1)
-mesh_component.material_instance = instance;
-
-// Dynamic runtime changes (valid only for editable_at_runtime parameters)
-mesh_component.SetParameter("base_color", Vec4(0.8, 0.6, 0.4, 1.0));
-```
-
-## Material Functions (Reusable Subgraphs)
-
-Common patterns can be extracted into reusable functions:
-
-```json
-{
-  "type": "MaterialFunction",
-  "name": "NormalMapBlend",
-  "inputs": [
-    { "name": "normal1", "type": "vec3" },
-    { "name": "normal2", "type": "vec3" },
-    { "name": "blend", "type": "float" }
-  ],
-  "outputs": [
-    { "name": "result", "type": "vec3" }
-  ],
-  "nodes": [
-    {
-      "id": "lerp",
-      "type": "Lerp",
-      "connections": {
-        "a": "input:normal1",
-        "b": "input:normal2",
-        "t": "input:blend"
-      }
-    },
-    {
-      "id": "normalize",
-      "type": "Normalize",
-      "input": "lerp.output"
-    },
-    {
-      "id": "out",
-      "type": "FunctionOutput",
-      "connections": { "result": "normalize.output" }
-    }
-  ]
-}
-```
-
-**Using the function:**
-
-```json
-{
-  "nodes": [
-    {
-      "id": "normal1_tex",
-      "type": "TextureSample",
-      "properties": { "texture": "res://textures/normal1.png" }
-    },
-    {
-      "id": "normal2_tex",
-      "type": "TextureSample",
-      "properties": { "texture": "res://textures/normal2.png" }
-    },
-    {
-      "id": "blend_normal",
-      "type": "FunctionCall",
-      "function": "res://functions/NormalMapBlend.uzfunc",
-      "connections": {
-        "normal1": "normal1_tex.rgb",
-        "normal2": "normal2_tex.rgb",
-        "blend": 0.5
-      }
-    }
-  ]
-}
-```
-
-## PBR Parameter Set
-
-Standard PBR materials use this canonical parameter set:
-
-| Parameter | Type | Range | Purpose |
-|-----------|------|-------|---------|
-| **BaseColor** | vec4 | [0, 1] | Diffuse color (sRGB gamma space) |
-| **Metallic** | float | [0, 1] | Metal vs dielectric (0=matte, 1=mirror) |
-| **Roughness** | float | [0, 1] | Surface smoothness (0=mirror, 1=diffuse) |
-| **Normal** | vec3 | [-1, 1] | Perturbed surface normal (tangent space) |
-| **Emissive** | vec3 | [0, ∞] | Self-illumination (HDR) |
-| **AO** | float | [0, 1] | Ambient occlusion (darkens crevices) |
-| **Opacity** | float | [0, 1] | Transparency (0=transparent, 1=opaque) |
-
-## Material Parameter Blocks (GPU Storage)
-
-Per-instance parameters are stored in a constant buffer:
-
-```cpp
-struct MaterialParameterBlock {
-    Vec4 base_color;
-    float metallic;
-    float roughness;
-    float opacity;
-    float pad0;
-    Vec3 emissive;
-    float pad1;
-    // Total: 48 bytes (aligned to 256-byte slots for GPU)
-};
-```
-
-**GPU binding:**
-
-```cpp
-// During render pass execution:
-RgContext ctx;
-ctx.SetConstantBuffer(MATERIAL_PARAMS_SLOT, material_param_buffer);
-
-// Shader accesses:
-cbuffer MaterialParams : register(b0) {
-    float4 base_color;
-    float metallic;
-    float roughness;
-    float opacity;
-    float3 emissive;
-};
-```
-
-## Compilation Pipeline
-
-```
-.uzmaterial (JSON)
-    ▼
-Material Compiler
-  ├─► Parse graph (AST)
-  ├─► Validate (cycles, type checking)
-  ├─► Generate HLSL (for each permutation)
-  ├─► Compile HLSL → DXIL/DXBC (DXC/FXC)
-  ├─► Reflect PSO layout (descriptor tables, root signature)
-  └─► Create RHIPipeline (PSO)
-    ▼
-.uzmaterial_cooked (PSO cache)
-    ▼
-Runtime load .uzmaterial_cooked → RHIPipeline ready
-```
-
-## Engine Comparison
-
-| Feature | Unreal 5 | Godot 4 | **UzEngine** |
-|---------|----------|---------|--------------|
-| Graph representation | Node graph + custom C++ | VisualShader (visual nodes) | **JSON node graph** |
-| Material domains | 5 (Surface, PostProc, Decal, UI, Particle) | 3 (Spatial, CanvasItem, Particles) | **5 (Surface, PostProcess, Decal, UI, Particle)** |
-| Shading models | 7+ | 2 (Spatial, CanvasItem) | **7 (DefaultLit, Unlit, SubSurface, ClearCoat, Hair, Cloth, Eye)** |
-| Permutations | Shader permutation system | Shader variants | **Feature-bit permutations + dead code elimination** |
-| Material Instances | `UMaterialInstance` (param override) | `ShaderMaterial.set_shader_parameter` | **.uzmaterial_instance JSON** |
-| Parameter caching | FMaterialShaderMap | Material::set_shader_param | **MaterialParameterBlock (GPU constant buffer)** |
+- **CPU bake only** — materials are evaluated on CPU and baked to textures. No GPU shader permutation yet.
+- **No hot-reload** — `.uzmat` changes require restart (hot-reload planned for Phase 2).
+- **No editor UI** — materials authored via JSON. Visual editor planned for Phase 5.6.
+- **No normal mapping from graph** — normal output uses vertex normal; tangent-space perturbation from graph nodes not yet wired.
+- **Single shading model** — DefaultLit only. Subsurface/Unlit planned.
 
 ## Rules
 
 1. **NEVER manually author HLSL for materials** — use the node graph and compiler
-2. **ALWAYS validate parameter ranges** — GPU requires float/int normalization ([-1, 1], [0, 1])
-3. **NEVER create new Material assets per entity** — use Material Instances for per-entity tweaks
-4. **ALWAYS use named parameters** — undocumented magic values are technical debt
-5. **ALWAYS profile material permutations** — too many combinations → long compile times and large PSO cache
-6. **NEVER use dynamic branching in material graphs** — pre-compute all feature combinations at cook-time
+2. **ALWAYS use named parameters** for runtime-tweakable values
+3. **Expressions are data containers** — NO compilation logic in expression classes
+4. **The compiler is a visitor** — all HLSL generation lives in `HlslMaterialTranslator`
+5. **Content hash = identity** — same graph content = same compiled result
