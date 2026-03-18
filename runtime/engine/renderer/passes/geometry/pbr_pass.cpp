@@ -158,6 +158,22 @@ void AddPBRPass(rg::RgBuilder& builder, const PBRPassDesc& desc)
                     perObject.roughnessIndex = drawCmd.roughnessSrvIndex;
                     perObject.metallicIndex  = drawCmd.metallicSrvIndex;
                     perObject.aoIndex        = drawCmd.aoSrvIndex;
+                    perObject.emissiveColorR    = drawCmd.emissiveColorR;
+                    perObject.emissiveColorG    = drawCmd.emissiveColorG;
+                    perObject.emissiveColorB    = drawCmd.emissiveColorB;
+                    perObject.emissiveIntensity = drawCmd.emissiveIntensity;
+                    perObject.baseColorTintR      = drawCmd.baseColorTintR;
+                    perObject.baseColorTintG      = drawCmd.baseColorTintG;
+                    perObject.baseColorTintB      = drawCmd.baseColorTintB;
+                    perObject.roughnessMultiplier = drawCmd.roughnessMultiplier;
+                    perObject.metallicMultiplier  = drawCmd.metallicMultiplier;
+                    perObject.normalIntensity     = drawCmd.normalIntensity;
+                    perObject.uvScaleX            = drawCmd.uvScaleX;
+                    perObject.uvScaleY            = drawCmd.uvScaleY;
+                    perObject.uvOffsetX           = drawCmd.uvOffsetX;
+                    perObject.uvOffsetY           = drawCmd.uvOffsetY;
+                    perObject.aoIntensity         = drawCmd.aoIntensity;
+                    perObject.opacity             = drawCmd.opacity;
 
                     CBAllocation objAlloc = desc.cbAllocator->Allocate(sizeof(PerObjectCB));
                     if (objAlloc.cpuPtr == nullptr) {

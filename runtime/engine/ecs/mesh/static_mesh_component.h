@@ -8,15 +8,40 @@
 
 #include "primitive_component.h"
 
+#include <cstdint>
 #include <string>
+#include <vector>
 
 namespace uz {
+
+class MaterialInterface;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // StaticMeshComponent
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Renders a static (non-skinned) mesh with a single material.
+/// Renders a static (non-skinned) mesh with per-slot materials.
+///
+/// # Material System
+/// @source UE5 MeshComponent.h:31 — OverrideMaterials
+/// Each mesh can have multiple sections, each with its own material slot.
+/// `overrideMaterials` is a sparse array of `MaterialInterface*` pointers —
+/// null entries fall back to the mesh's default material, then to the legacy
+/// path-based system for backward compatibility.
+///
+/// ```cpp
+/// // New material system (preferred):
+/// Material stoneBrick;
+/// stoneBrick.albedoPath = "Stonebricks_BaseColor.jpg";
+/// mesh.overrideMaterials.push_back(&stoneBrick);
+///
+/// // Legacy path system (still works, lowest priority):
+/// mesh.albedoPath = "Stonebricks_BaseColor.jpg";
+/// ```
+///
+/// # Priority Order (per slot)
+/// 1. `overrideMaterials[slot]` if non-null
+/// 2. Legacy component texture paths (albedoPath, normalPath, etc.)
 ///
 /// `meshId` and `materialId` are opaque resource indices managed by the asset
 /// system. Set them after construction to point to the desired mesh and
@@ -25,14 +50,6 @@ namespace uz {
 /// # MVP Note
 /// Resource handles are `uint32_t` indices until the asset system defines
 /// typed handle wrappers. Default values (0, 0) are sentinel "null" resources.
-///
-/// # Examples
-/// ```cpp
-/// auto& mesh = entity.AddComponent<StaticMeshComponent>();
-/// mesh.meshId     = assetSystem.LoadMesh("cube.uzasset");
-/// mesh.materialId = assetSystem.LoadMaterial("red.uzmat");
-/// mesh.SetPosition({5.f, 0.f, 0.f});
-/// ```
 class StaticMeshComponent : public PrimitiveComponent {
 public:
     /// Opaque index into the engine mesh resource table.
@@ -87,6 +104,56 @@ public:
 
     /// Set to `true` by `SceneRenderer` after all material textures have been uploaded.
     bool materialLoaded = false;
+
+    // ── Material Slot System ─────────────────────────────────────────────
+
+    /// Per-slot material overrides. Each entry corresponds to a mesh section.
+    ///
+    /// @source UE5 MeshComponent.h:31 — OverrideMaterials
+    /// Sparse array: null entries use legacy path-based fallback (albedoPath, etc.).
+    /// Non-owning pointers — the caller is responsible for Material/MaterialInstance
+    /// lifetime (typically static or scene-lifetime objects).
+    ///
+    /// For single-material meshes, only slot 0 is used.
+    std::vector<MaterialInterface*> overrideMaterials;
+
+    /// Returns the material for a specific slot.
+    ///
+    /// @source UE5 MeshComponent.cpp:37-54 — GetMaterial(int32_t)
+    /// Returns the override material if set, or nullptr (caller should use
+    /// legacy path-based fallback).
+    ///
+    /// # Parameters
+    /// - `slotIndex`: Zero-based material slot index.
+    ///
+    /// # Returns
+    /// The `MaterialInterface*` for the slot, or nullptr if the slot index is
+    /// out of range or the entry is null.
+    [[nodiscard]] MaterialInterface* GetMaterial(int32_t slotIndex) const noexcept {
+        if (slotIndex < 0) return nullptr;
+        const auto idx = static_cast<size_t>(slotIndex);
+        if (idx >= overrideMaterials.size()) return nullptr;
+        return overrideMaterials[idx];
+    }
+
+    /// Returns the number of material slots.
+    [[nodiscard]] int32_t GetNumMaterialSlots() const noexcept {
+        return static_cast<int32_t>(overrideMaterials.size());
+    }
+
+    /// Sets a material for a specific slot, growing the array if necessary.
+    ///
+    /// # Parameters
+    /// - `slotIndex`: Zero-based slot index. The array grows to accommodate.
+    /// - `material`: Material to assign (may be null to clear the slot).
+    void SetMaterial(int32_t slotIndex, MaterialInterface* material) {
+        if (slotIndex < 0) return;
+        const auto idx = static_cast<size_t>(slotIndex);
+        if (idx >= overrideMaterials.size()) {
+            overrideMaterials.resize(idx + 1, nullptr);
+        }
+        overrideMaterials[idx] = material;
+    }
 
 protected:
     /// Returns `RenderProxyType::StaticMesh`.

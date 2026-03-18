@@ -105,6 +105,25 @@ void PBRTest::OnStart() {
         }
     }
 
+    // ── Initialize shared materials ──────────────────────────────────────
+    // Material objects are owned by this demo class (member variables) and
+    // outlive all entities that reference them via overrideMaterials.
+    stoneBrickMat_.albedoPath    = "Stonebricks_BaseColor.jpg";
+    stoneBrickMat_.normalPath    = "Stonebricks_Normal.jpg";
+    stoneBrickMat_.roughnessPath = "Stonebricks_Roughness.jpg";
+    stoneBrickMat_.metallicPath  = "Stonebricks_Metallic.jpg";
+    stoneBrickMat_.aoPath        = "Stonebricks_AO.jpg";
+    stoneBrickMat_.normalIntensity     = 1.0f;
+    stoneBrickMat_.roughnessMultiplier = 1.0f;
+    stoneBrickMat_.uvScaleX            = 1.0f;
+    stoneBrickMat_.uvScaleY            = 1.0f;
+
+    // Wet variant: inherits all textures from stoneBrickMat_, overrides roughness.
+    wetBrickInst_.SetParent(&stoneBrickMat_);
+    wetBrickInst_.SetRoughnessMultiplier(0.3f);  // Wet = smoother surface
+
+    groundMat_.albedoPath = "checker.png";
+
     // ── Single PBR sphere — for shadow debug ────────────────────────────
     cubes_[0] = world.CreateEntity();
     {
@@ -113,12 +132,8 @@ void PBRTest::OnStart() {
         scene.SetScale({100.f, 100.f, 100.f});     // Radius = 100cm (1m sphere)
 
         auto& mesh = world.AddComponent<StaticMeshComponent>(cubes_[0]);
-        mesh.meshPath      = "sphere.uzmesh";
-        mesh.albedoPath    = "Stonebricks_BaseColor.jpg";
-        mesh.normalPath    = "Stonebricks_Normal.jpg";
-        mesh.roughnessPath = "Stonebricks_Roughness.jpg";
-        mesh.metallicPath  = "Stonebricks_Metallic.jpg";
-        mesh.aoPath        = "Stonebricks_AO.jpg";
+        mesh.meshPath = "sphere.uzmesh";
+        mesh.SetMaterial(0, &stoneBrickMat_);
     }
 
     // ── Ground plane (cube.uzmesh flattened) ────────────────────────────
@@ -129,8 +144,8 @@ void PBRTest::OnStart() {
         scene.SetScale({1500.f, 1500.f, 2.f});
 
         auto& mesh = world.AddComponent<StaticMeshComponent>(ground_);
-        mesh.meshPath   = "cube.uzmesh";
-        mesh.albedoPath = "checker.png";
+        mesh.meshPath = "cube.uzmesh";
+        mesh.SetMaterial(0, &groundMat_);
     }
 
     // ── Directional sun light (UE5 Basic Scene EXACT values) ────────────

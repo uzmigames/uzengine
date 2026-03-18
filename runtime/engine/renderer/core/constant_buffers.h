@@ -156,6 +156,14 @@ static_assert(sizeof(PerFrameCB) == 512, "PerFrameCB must be 512 bytes (D3D12 CB
 ///     float4x4 normalMatrix;
 ///     float3   emissiveColor;
 ///     float    emissiveIntensity;
+///     float3   baseColorTint;
+///     float    roughnessMultiplier;
+///     float    metallicMultiplier;
+///     float    normalIntensity;
+///     float2   uvScale;
+///     float2   uvOffset;
+///     float    aoIntensity;
+///     float    opacity;
 /// };
 /// ```
 ///
@@ -185,7 +193,39 @@ struct PerObjectCB {
     float    emissiveColorG  = 0.0f;  ///< Emissive tint color G (linear).
     float    emissiveColorB  = 0.0f;  ///< Emissive tint color B (linear).
     float    emissiveIntensity = 0.0f; ///< Emissive brightness multiplier. 0 = no emission. Values > 1.0 drive bloom.
-    float    _pad2[20] = {};   ///< Padding to 256-byte alignment
+
+    // ── Material parameters (offset 176) ──
+    // These multiply/transform texture-sampled values in the GBuffer pass.
+    // Default values are neutral (multipliers=1, offsets=0) so existing
+    // rendering is unchanged when no Material/MaterialInstance is assigned.
+
+    /// @source UE5 MaterialTemplate.ush — BaseColor output * BaseColor tint
+    float    baseColorTintR   = 1.0f;  ///< Albedo color multiplier R. 1.0 = unmodified.
+    float    baseColorTintG   = 1.0f;  ///< Albedo color multiplier G.
+    float    baseColorTintB   = 1.0f;  ///< Albedo color multiplier B.
+
+    /// @source UE5 Material defaults — Roughness multiplied in material graph
+    float    roughnessMultiplier = 1.0f; ///< Roughness texture multiplier. 1.0 = unmodified.
+
+    /// @source UE5 Material defaults — Metallic multiplied in material graph
+    float    metallicMultiplier  = 1.0f; ///< Metallic texture multiplier. 1.0 = unmodified.
+
+    /// @source UE5 Material.FlattenNormalMap — controls normal map intensity
+    float    normalIntensity     = 1.0f; ///< Normal map strength (0=flat, 1=full).
+
+    /// @source UE5 MaterialTemplate.ush — TexCoord * TextureScale + TextureOffset
+    float    uvScaleX  = 1.0f;          ///< Texture tiling X. 1.0 = no tiling.
+    float    uvScaleY  = 1.0f;          ///< Texture tiling Y.
+    float    uvOffsetX = 0.0f;          ///< Texture offset X.
+    float    uvOffsetY = 0.0f;          ///< Texture offset Y.
+
+    /// @source UE5 Material defaults — AO output lerped with strength
+    float    aoIntensity = 1.0f;        ///< AO map strength. 1.0 = full AO effect.
+
+    /// Overall material opacity. 1.0 = fully opaque.
+    float    opacity     = 1.0f;        ///< Material opacity (1=opaque).
+
+    float    _pad2[8] = {};             ///< Padding to 256-byte alignment
 };
 
 static_assert(sizeof(PerObjectCB) == 256, "PerObjectCB must be 256 bytes (D3D12 CB alignment)");

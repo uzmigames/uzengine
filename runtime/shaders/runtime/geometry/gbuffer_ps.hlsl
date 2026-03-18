@@ -83,6 +83,16 @@ cbuffer PerObjectCB : register(b2) {
     /// @source UE5 BasePassPixelShader.usf:1480 — GetMaterialEmissive(PixelMaterialInputs)
     float3   emissiveColor;      ///< Emissive tint color (linear RGB). (0,0,0) = no emission.
     float    emissiveIntensity;  ///< Emissive brightness multiplier. 0 = no emission. >1 drives bloom.
+    // ── Material parameters (offset 176) ──
+    /// @source UE5 MaterialTemplate.ush — BaseColor output * tint, TexCoord * scale + offset
+    float3   baseColorTint;      ///< Albedo color multiplier (1,1,1 = unmodified).
+    float    roughnessMultiplier; ///< Roughness texture multiplier (1 = unmodified).
+    float    metallicMultiplier; ///< Metallic texture multiplier (1 = unmodified).
+    float    normalIntensity;    ///< Normal map strength (0=flat, 1=full).
+    float2   uvScale;            ///< Texture tiling (1,1 = no tiling).
+    float2   uvOffset;           ///< Texture offset (0,0 = no offset).
+    float    aoIntensity;        ///< AO map strength (1 = full AO effect).
+    float    matOpacity;         ///< Material opacity (1 = opaque).
 };
 
 #ifndef UZ_BINDLESS
@@ -113,7 +123,9 @@ GBufferOutput main(PSInput input) {
     float  roughness = 0.5f;
     float  ao        = 1.0f;
 
-    float2 uv = input.texcoord;
+    // ── UV transform (apply material tiling and offset) ──
+    // @source UE5 MaterialTemplate.ush — TexCoord * TextureScale + TextureOffset
+    float2 uv = input.texcoord * uvScale + uvOffset;
 
     // ── Sample PBR texture maps (index 0 = use default value) ──
 #ifdef UZ_BINDLESS
@@ -159,9 +171,10 @@ GBufferOutput main(PSInput input) {
 
         float3 normalTS;
         normalTS.xy = normalSample.rg * 2.0f - 1.0f;
-        normalTS.z = (normalSample.b > 0.0f)
-            ? normalSample.b * 2.0f - 1.0f
-            : sqrt(max(1.0f - dot(normalTS.xy, normalTS.xy), 0.0f));
+        // Apply normal intensity: 0 = flat (no normal map effect), 1 = full effect.
+        // @source UE5 Material.FlattenNormalMap — scales normalTS.xy by intensity
+        normalTS.xy *= normalIntensity;
+        normalTS.z = sqrt(max(1.0f - dot(normalTS.xy, normalTS.xy), 0.0f));
         N = normalize(mul(normalTS, TBN));
     }
 #else
@@ -177,12 +190,28 @@ GBufferOutput main(PSInput input) {
 
         float3 normalTS;
         normalTS.xy = normalSample.rg * 2.0f - 1.0f;
-        normalTS.z = (normalSample.b > 0.0f)
-            ? normalSample.b * 2.0f - 1.0f
-            : sqrt(max(1.0f - dot(normalTS.xy, normalTS.xy), 0.0f));
+        // Apply normal intensity: 0 = flat (no normal map effect), 1 = full effect.
+        // @source UE5 Material.FlattenNormalMap — scales normalTS.xy by intensity
+        normalTS.xy *= normalIntensity;
+        normalTS.z = sqrt(max(1.0f - dot(normalTS.xy, normalTS.xy), 0.0f));
         N = normalize(mul(normalTS, TBN));
     }
 #endif
+
+    // ── Apply material parameter multipliers ──
+    // All multipliers default to 1.0, so existing rendering is unchanged
+    // when no Material/MaterialInstance assigns overrides.
+
+    // @source UE5 MaterialTemplate.ush — BaseColor * BaseColorTint
+    albedo *= baseColorTint;
+
+    // @source UE5 Material defaults — Roughness/Metallic outputs multiplied in graph
+    roughness *= roughnessMultiplier;
+    metallic  *= metallicMultiplier;
+
+    // @source UE5 Material defaults — AO blended with strength
+    // ao_final = lerp(1.0, ao_sampled, aoIntensity)
+    ao = lerp(1.0f, ao, aoIntensity);
 
     // ── Emissive: texture * color * intensity ──
     // @source UE5 BasePassPixelShader.usf:1480 — Emissive = GetMaterialEmissive(PixelMaterialInputs)

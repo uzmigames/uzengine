@@ -48,6 +48,7 @@
 #include "light_component.h"
 #include "scene_component.h"
 #include "static_mesh_component.h"
+#include "material_interface.h"
 #include "sky_atmosphere_component.h"
 #include "sky_light_component.h"
 #include "height_fog_component.h"
@@ -2678,18 +2679,37 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
             }
         }
 
+        // ── Resolve material for slot 0 ────────────────────────────────────
+        // @source UE5 MeshComponent.cpp:37-54 — GetMaterial(slotIndex)
+        // Priority: 1) overrideMaterials[0] via MaterialInterface
+        //           2) Legacy component texture paths (backward compat)
+        MaterialInterface* const mat = meshComp.GetMaterial(0);
+
+        // Determine effective texture paths — material system takes priority
+        // over legacy component paths.
+        const std::string& effAlbedoPath    = mat ? mat->GetAlbedoPath()    : meshComp.albedoPath;
+        const std::string& effNormalPath     = mat ? mat->GetNormalPath()     : meshComp.normalPath;
+        const std::string& effRoughnessPath  = mat ? mat->GetRoughnessPath()  : meshComp.roughnessPath;
+        const std::string& effMetallicPath   = mat ? mat->GetMetallicPath()   : meshComp.metallicPath;
+        const std::string& effAoPath         = mat ? mat->GetAoPath()         : meshComp.aoPath;
+        const std::string& effEmissivePath   = mat ? mat->GetEmissivePath()   : meshComp.emissivePath;
+
         // ── Lazy-load material textures from paths ──────────────────────────
-        if (!meshComp.materialLoaded && !meshComp.albedoPath.empty()) {
+        if (!meshComp.materialLoaded && !effAlbedoPath.empty()) {
             auto tryLoad = [&](const std::string& path) -> uint32_t {
                 if (path.empty()) return UINT32_MAX;
                 return LoadTexture(path, vfs, cmdList);
             };
-            tryLoad(meshComp.albedoPath);
-            tryLoad(meshComp.normalPath);
-            tryLoad(meshComp.roughnessPath);
-            tryLoad(meshComp.metallicPath);
-            tryLoad(meshComp.aoPath);
+            tryLoad(effAlbedoPath);
+            tryLoad(effNormalPath);
+            tryLoad(effRoughnessPath);
+            tryLoad(effMetallicPath);
+            tryLoad(effAoPath);
+            tryLoad(effEmissivePath);
             meshComp.materialLoaded = true;
+            if (mat) {
+                mat->SetGpuResourcesLoaded(true);
+            }
         }
 
         const uint32_t meshId = meshComp.meshId;
@@ -2727,7 +2747,7 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
             cmd.albedoTexture  = tex.handle;
         }
 
-        // Also check path-based texture loading results for all PBR channels.
+        // Bind textures from effective paths (material system or legacy component paths).
         auto bindTexFromPath = [&](const std::string& path, uint32_t& srvIndex, RHITextureHandle& handle) {
             if (path.empty()) return;
             auto texIt = m_textureMap.find(path);
@@ -2737,18 +2757,37 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
                 handle   = tex.handle;
             }
         };
-        bindTexFromPath(meshComp.albedoPath,    cmd.albedoSrvIndex,    cmd.albedoTexture);
-        bindTexFromPath(meshComp.normalPath,    cmd.normalSrvIndex,    cmd.normalTexture);
-        bindTexFromPath(meshComp.roughnessPath, cmd.roughnessSrvIndex, cmd.roughnessTexture);
-        bindTexFromPath(meshComp.metallicPath,  cmd.metallicSrvIndex,  cmd.metallicTexture);
-        bindTexFromPath(meshComp.aoPath,        cmd.aoSrvIndex,        cmd.aoTexture);
-        bindTexFromPath(meshComp.emissivePath,  cmd.emissiveSrvIndex,  cmd.emissiveTexture);
+        bindTexFromPath(effAlbedoPath,    cmd.albedoSrvIndex,    cmd.albedoTexture);
+        bindTexFromPath(effNormalPath,    cmd.normalSrvIndex,    cmd.normalTexture);
+        bindTexFromPath(effRoughnessPath, cmd.roughnessSrvIndex, cmd.roughnessTexture);
+        bindTexFromPath(effMetallicPath,  cmd.metallicSrvIndex,  cmd.metallicTexture);
+        bindTexFromPath(effAoPath,        cmd.aoSrvIndex,        cmd.aoTexture);
+        bindTexFromPath(effEmissivePath,  cmd.emissiveSrvIndex,  cmd.emissiveTexture);
 
-        // Emissive color and intensity from component (default 0 = no emission).
-        cmd.emissiveColorR    = meshComp.emissiveColorR;
-        cmd.emissiveColorG    = meshComp.emissiveColorG;
-        cmd.emissiveColorB    = meshComp.emissiveColorB;
-        cmd.emissiveIntensity = meshComp.emissiveIntensity;
+        // ── Material parameters ─────────────────────────────────────────────
+        // Read from MaterialInterface if available, otherwise use legacy
+        // component fields for backward compatibility.
+        if (mat) {
+            mat->GetBaseColorTint(cmd.baseColorTintR, cmd.baseColorTintG, cmd.baseColorTintB);
+            cmd.roughnessMultiplier = mat->GetRoughnessMultiplier();
+            cmd.metallicMultiplier  = mat->GetMetallicMultiplier();
+            cmd.normalIntensity     = mat->GetNormalIntensity();
+            cmd.aoIntensity         = mat->GetAoIntensity();
+            cmd.opacity             = mat->GetOpacity();
+            cmd.uvScaleX            = mat->GetUvScaleX();
+            cmd.uvScaleY            = mat->GetUvScaleY();
+            cmd.uvOffsetX           = mat->GetUvOffsetX();
+            cmd.uvOffsetY           = mat->GetUvOffsetY();
+
+            mat->GetEmissiveColor(cmd.emissiveColorR, cmd.emissiveColorG, cmd.emissiveColorB);
+            cmd.emissiveIntensity = mat->GetEmissiveIntensity();
+        } else {
+            // Legacy path: emissive color and intensity from component fields.
+            cmd.emissiveColorR    = meshComp.emissiveColorR;
+            cmd.emissiveColorG    = meshComp.emissiveColorG;
+            cmd.emissiveColorB    = meshComp.emissiveColorB;
+            cmd.emissiveIntensity = meshComp.emissiveIntensity;
+        }
 
         outDrawList.Add(cmd);
         drawIndex++;

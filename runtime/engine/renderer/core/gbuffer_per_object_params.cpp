@@ -18,6 +18,18 @@ static_assert(offsetof(uz::GBufferPerObjectParams, normalMatrix) == offsetof(uz:
               "normalMatrix offset mismatch");
 static_assert(offsetof(uz::GBufferPerObjectParams, emissiveColorR) == offsetof(uz::PerObjectCB, emissiveColorR),
               "emissiveColorR offset mismatch");
+static_assert(offsetof(uz::GBufferPerObjectParams, baseColorTintR) == offsetof(uz::PerObjectCB, baseColorTintR),
+              "baseColorTintR offset mismatch");
+static_assert(offsetof(uz::GBufferPerObjectParams, roughnessMultiplier) == offsetof(uz::PerObjectCB, roughnessMultiplier),
+              "roughnessMultiplier offset mismatch");
+static_assert(offsetof(uz::GBufferPerObjectParams, normalIntensity) == offsetof(uz::PerObjectCB, normalIntensity),
+              "normalIntensity offset mismatch");
+static_assert(offsetof(uz::GBufferPerObjectParams, uvScaleX) == offsetof(uz::PerObjectCB, uvScaleX),
+              "uvScaleX offset mismatch");
+static_assert(offsetof(uz::GBufferPerObjectParams, aoIntensity) == offsetof(uz::PerObjectCB, aoIntensity),
+              "aoIntensity offset mismatch");
+static_assert(offsetof(uz::GBufferPerObjectParams, opacity) == offsetof(uz::PerObjectCB, opacity),
+              "opacity offset mismatch");
 
 namespace uz {
 
@@ -45,6 +57,20 @@ const ShaderParameterMetadata& GBufferPerObjectParams::GetMetadata()
         {"emissiveColorG",   ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(GBufferPerObjectParams, emissiveColorG)),   sizeof(float), 0},
         {"emissiveColorB",   ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(GBufferPerObjectParams, emissiveColorB)),   sizeof(float), 0},
         {"emissiveIntensity", ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(GBufferPerObjectParams, emissiveIntensity)), sizeof(float), 0},
+
+        // ── Material parameters (offset 176) ──
+        {"baseColorTintR",      ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(GBufferPerObjectParams, baseColorTintR)),      sizeof(float), 0},
+        {"baseColorTintG",      ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(GBufferPerObjectParams, baseColorTintG)),      sizeof(float), 0},
+        {"baseColorTintB",      ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(GBufferPerObjectParams, baseColorTintB)),      sizeof(float), 0},
+        {"roughnessMultiplier", ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(GBufferPerObjectParams, roughnessMultiplier)), sizeof(float), 0},
+        {"metallicMultiplier",  ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(GBufferPerObjectParams, metallicMultiplier)),  sizeof(float), 0},
+        {"normalIntensity",     ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(GBufferPerObjectParams, normalIntensity)),     sizeof(float), 0},
+        {"uvScaleX",            ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(GBufferPerObjectParams, uvScaleX)),            sizeof(float), 0},
+        {"uvScaleY",            ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(GBufferPerObjectParams, uvScaleY)),            sizeof(float), 0},
+        {"uvOffsetX",           ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(GBufferPerObjectParams, uvOffsetX)),           sizeof(float), 0},
+        {"uvOffsetY",           ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(GBufferPerObjectParams, uvOffsetY)),           sizeof(float), 0},
+        {"aoIntensity",         ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(GBufferPerObjectParams, aoIntensity)),         sizeof(float), 0},
+        {"opacity",             ShaderParamType::Scalar, static_cast<uint32_t>(offsetof(GBufferPerObjectParams, opacity)),             sizeof(float), 0},
 
         // ── Resource members (drive texture binding on SM5) ──
         {"albedoTexture",    ShaderParamType::Texture2D, static_cast<uint32_t>(offsetof(GBufferPerObjectParams, albedoTexture)),    0, kAlbedoSlot},

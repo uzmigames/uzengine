@@ -78,6 +78,22 @@ struct DrawCommand {
     /// Emissive brightness multiplier. 0 = no emission. Values > 1.0 drive bloom.
     float emissiveIntensity = 0.0f;
 
+    // ── Material parameters (defaults are neutral — no change to existing rendering) ──
+
+    /// @source UE5 MaterialTemplate.ush — BaseColor * BaseColorTint
+    float baseColorTintR      = 1.0f;  ///< Albedo color multiplier R.
+    float baseColorTintG      = 1.0f;  ///< Albedo color multiplier G.
+    float baseColorTintB      = 1.0f;  ///< Albedo color multiplier B.
+    float roughnessMultiplier = 1.0f;  ///< Roughness texture multiplier.
+    float metallicMultiplier  = 1.0f;  ///< Metallic texture multiplier.
+    float normalIntensity     = 1.0f;  ///< Normal map strength (0=flat, 1=full).
+    float uvScaleX            = 1.0f;  ///< Texture tiling X.
+    float uvScaleY            = 1.0f;  ///< Texture tiling Y.
+    float uvOffsetX           = 0.0f;  ///< Texture offset X.
+    float uvOffsetY           = 0.0f;  ///< Texture offset Y.
+    float aoIntensity         = 1.0f;  ///< AO map strength.
+    float opacity             = 1.0f;  ///< Material opacity (1=opaque).
+
     /// Primitive mobility for shadow cache filtering.
     ///
     /// Static/Stationary primitives are cached in the static shadow atlas.

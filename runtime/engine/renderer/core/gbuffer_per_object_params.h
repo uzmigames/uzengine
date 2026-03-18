@@ -59,7 +59,15 @@ namespace uz {
 /// 96       64     normalMatrix (Mat4)
 /// 160      12     emissiveColor (3 floats)
 /// 172      4      emissiveIntensity (float)
-/// 176      80     _pad2[20]
+/// 176      12     baseColorTint (3 floats)
+/// 188      4      roughnessMultiplier (float)
+/// 192      4      metallicMultiplier (float)
+/// 196      4      normalIntensity (float)
+/// 200      8      uvScale (2 floats)
+/// 208      8      uvOffset (2 floats)
+/// 216      4      aoIntensity (float)
+/// 220      4      opacity (float)
+/// 224      32     _pad2[8]
 /// ─── 256 bytes (CB boundary) ───
 /// 256      8      albedoTexture (RHITextureHandle, NOT in CB)
 /// 264      8      normalTexture (RHITextureHandle, NOT in CB)
@@ -87,7 +95,21 @@ struct GBufferPerObjectParams {
     float    emissiveColorG  = 0.0f; ///< Emissive tint G (linear).
     float    emissiveColorB  = 0.0f; ///< Emissive tint B (linear).
     float    emissiveIntensity = 0.0f; ///< Emissive brightness multiplier. Values > 1.0 drive bloom.
-    float    _pad2[20]      = {};   ///< Pad to 256-byte alignment.
+
+    // ── Material parameters (offset 176, must match PerObjectCB) ────────
+    float    baseColorTintR      = 1.0f; ///< Albedo color multiplier R.
+    float    baseColorTintG      = 1.0f; ///< Albedo color multiplier G.
+    float    baseColorTintB      = 1.0f; ///< Albedo color multiplier B.
+    float    roughnessMultiplier = 1.0f; ///< Roughness texture multiplier.
+    float    metallicMultiplier  = 1.0f; ///< Metallic texture multiplier.
+    float    normalIntensity     = 1.0f; ///< Normal map strength (0=flat, 1=full).
+    float    uvScaleX            = 1.0f; ///< Texture tiling X.
+    float    uvScaleY            = 1.0f; ///< Texture tiling Y.
+    float    uvOffsetX           = 0.0f; ///< Texture offset X.
+    float    uvOffsetY           = 0.0f; ///< Texture offset Y.
+    float    aoIntensity         = 1.0f; ///< AO map strength.
+    float    opacity             = 1.0f; ///< Material opacity (1=opaque).
+    float    _pad2[8]           = {};   ///< Pad to 256-byte alignment.
 
     // ── Resource handles (NOT copied to CB) ──────────────────────────────
     // Bound by ShaderParameterBinder at their HLSL register slots on SM5.
