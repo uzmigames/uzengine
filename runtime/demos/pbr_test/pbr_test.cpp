@@ -376,8 +376,8 @@ void PBRTest::OnStart() {
         ///   creating the smooth horizon haze gradient.
         /// @source UE5 ExponentialHeightFogComponent defaults
         fogComp.density         = 0.02f;     ///< @source UE5 default FogDensity
-        fogComp.heightFalloff   = 0.2f;      ///< @source UE5 default FogHeightFalloff
-        fogComp.baseHeight      = 0.f;       ///< Ground level
+        fogComp.heightFalloff   = 0.002f;    ///< Low falloff — fog persists at camera altitude
+        fogComp.baseHeight      = -500.f;    ///< Below scene — fog fills from below
         fogComp.maxOpacity      = 1.0f;
         fogComp.startDistance    = 0.f;
         fogComp.fogCutoffDistance = 0.f;
