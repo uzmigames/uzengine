@@ -112,8 +112,10 @@ Texture2D<float4> normalBuffer   : register(t1);
 Texture2D<float4> prevColorTex   : register(t2);
 #endif
 
+#ifndef UZ_BINDLESS
 RWTexture2D<float4> indirectOutput : register(u0);
 RWTexture2D<float>  aoOutput       : register(u1);
+#endif
 
 SamplerState pointSampler  : register(s0);
 SamplerState linearSampler : register(s1);
@@ -479,8 +481,15 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     // Skip sky pixels (reversed-Z: 0 = far plane)
     // @source UE5 SSRTDiffuseIndirect.usf:208-211
     if (deviceZ <= FAR_DEPTH_VALUE) {
+#ifdef UZ_BINDLESS
+        RWTexture2D<float4> outColor = ResourceDescriptorHeap[outputUavIndex];
+        RWTexture2D<float>  outAO   = ResourceDescriptorHeap[aoOutputUavIndex];
+        outColor[dispatchThreadId.xy] = float4(0.0f, 0.0f, 0.0f, 0.0f);
+        outAO[dispatchThreadId.xy]    = 1.0f; // Fully unoccluded for sky
+#else
         indirectOutput[dispatchThreadId.xy] = float4(0.0f, 0.0f, 0.0f, 0.0f);
         aoOutput[dispatchThreadId.xy] = 1.0f; // Fully unoccluded for sky
+#endif
         return;
     }
 
@@ -580,6 +589,13 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
 
     // Write outputs
     // @source UE5 SSRTDiffuseIndirect.usf:583-584
+#ifdef UZ_BINDLESS
+    RWTexture2D<float4> outColor = ResourceDescriptorHeap[outputUavIndex];
+    RWTexture2D<float>  outAO   = ResourceDescriptorHeap[aoOutputUavIndex];
+    outColor[dispatchThreadId.xy] = float4(indirectDiffuse, 1.0f);
+    outAO[dispatchThreadId.xy]    = ao;
+#else
     indirectOutput[dispatchThreadId.xy] = float4(indirectDiffuse, 1.0f);
     aoOutput[dispatchThreadId.xy] = ao;
+#endif
 }

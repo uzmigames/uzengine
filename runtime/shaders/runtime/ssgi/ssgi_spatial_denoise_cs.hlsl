@@ -102,8 +102,13 @@ Texture2D<float>  depthBuffer    : register(t2);
 Texture2D<float4> normalBuffer   : register(t3);
 #endif
 
+/// UAV outputs accessed via bindless ResourceDescriptorHeap.
+/// The root constants provide outputUavIndex and aoOutputUavIndex.
+/// In non-bindless SM5 mode, fallback to register-bound u0/u1.
+#ifndef UZ_BINDLESS
 RWTexture2D<float4> denoisedOutput   : register(u0);
 RWTexture2D<float>  denoisedAOOutput : register(u1);
+#endif
 
 SamplerState pointSampler : register(s0);
 
@@ -274,6 +279,13 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     float  denoisedAO    = totalAO * invWeight;
 
     // Write denoised outputs
+#ifdef UZ_BINDLESS
+    RWTexture2D<float4> outColor = ResourceDescriptorHeap[outputUavIndex];
+    RWTexture2D<float>  outAO   = ResourceDescriptorHeap[aoOutputUavIndex];
+    outColor[dispatchThreadId.xy] = denoisedColor;
+    outAO[dispatchThreadId.xy]    = denoisedAO;
+#else
     denoisedOutput[dispatchThreadId.xy]   = denoisedColor;
     denoisedAOOutput[dispatchThreadId.xy] = denoisedAO;
+#endif
 }

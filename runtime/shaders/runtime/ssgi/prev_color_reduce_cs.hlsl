@@ -67,7 +67,9 @@ cbuffer PerFrameCB : register(b1) {
 Texture2D<float4> prevColorTex : register(t0);
 #endif
 
+#ifndef UZ_BINDLESS
 RWTexture2D<float4> outputMip0 : register(u0);
+#endif
 
 SamplerState linearSampler : register(s0);
 
@@ -166,5 +168,10 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     float3 result = (c00 * w00 + c10 * w10 + c01 * w01 + c11 * w11) * invTotalWeight;
 
     // Write half-res mip 0
+#ifdef UZ_BINDLESS
+    RWTexture2D<float4> outMip0 = ResourceDescriptorHeap[outputMip0UavIndex];
+    outMip0[dispatchThreadId.xy] = float4(result, 1.0f);
+#else
     outputMip0[dispatchThreadId.xy] = float4(result, 1.0f);
+#endif
 }

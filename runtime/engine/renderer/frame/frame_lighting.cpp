@@ -801,14 +801,20 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
         // GBuffer targets
         m_passInspector.RegisterTarget("gbuffer.albedo",   m_gbuffer.albedo,   m_gbuffer.albedoSRV,   VisDisplayMode::Color,     rw, rh);
         m_passInspector.RegisterTarget("gbuffer.normal",   m_gbuffer.normal,   m_gbuffer.normalSRV,   VisDisplayMode::Normal,    rw, rh);
-        m_passInspector.RegisterTarget("gbuffer.depth",    m_gbuffer.depth,    m_gbuffer.depthSRV,    VisDisplayMode::Depth,     rw, rh);
+        // GBuffer depth ends the frame in DepthStencilWrite (the render graph
+        // does not emit restore barriers for imported depth resources).
+        m_passInspector.RegisterTarget("gbuffer.depth",    m_gbuffer.depth,    m_gbuffer.depthSRV,    VisDisplayMode::Depth,     rw, rh,
+                                        RHIResourceState::DepthStencilWrite);
         m_passInspector.RegisterTarget("gbuffer.velocity", m_gbuffer.velocity, m_gbuffer.velocitySRV, VisDisplayMode::Velocity,  rw, rh);
         m_passInspector.RegisterTarget("gbuffer.emissive", m_gbuffer.emissive, m_gbuffer.emissiveSRV, VisDisplayMode::Color,     rw, rh);
 
         // Shadow atlas (tile resolution used as approximate display dimensions)
         if (m_shadowAtlas.GetTexture().IsValid() && m_shadowAtlas.GetSrvIndex() != UINT32_MAX) {
+            // Shadow atlas ends the frame in DepthStencilWrite (the render graph
+            // does not emit restore barriers for imported depth resources).
             m_passInspector.RegisterTarget("shadow.atlas", m_shadowAtlas.GetTexture(), m_shadowAtlas.GetSrvIndex(),
-                                            VisDisplayMode::Grayscale, kShadowResolution, kShadowResolution);
+                                            VisDisplayMode::Grayscale, kShadowResolution, kShadowResolution,
+                                            RHIResourceState::DepthStencilWrite);
         }
 
         // GTAO

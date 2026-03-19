@@ -90,8 +90,10 @@ Texture2D<float>  depthFullTex   : register(t2);
 Texture2D<float4> normalFullTex  : register(t3);
 #endif
 
+#ifndef UZ_BINDLESS
 RWTexture2D<float4> fullResOutput   : register(u0);
 RWTexture2D<float>  fullResAOOutput : register(u1);
+#endif
 
 SamplerState pointSampler : register(s0);
 
@@ -267,6 +269,13 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     }
 
     // Write full-res outputs
+#ifdef UZ_BINDLESS
+    RWTexture2D<float4> outColor = ResourceDescriptorHeap[outputUavIndex];
+    RWTexture2D<float>  outAO   = ResourceDescriptorHeap[aoOutputUavIndex];
+    outColor[dispatchThreadId.xy] = resultColor;
+    outAO[dispatchThreadId.xy]    = resultAO;
+#else
     fullResOutput[dispatchThreadId.xy]   = resultColor;
     fullResAOOutput[dispatchThreadId.xy] = resultAO;
+#endif
 }

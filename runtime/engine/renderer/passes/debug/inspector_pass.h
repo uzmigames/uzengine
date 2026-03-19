@@ -49,12 +49,16 @@ enum class VisDisplayMode : uint32_t {
 
 /// Describes a single registered intermediate render target.
 struct RegisteredTarget {
-    std::string    name;      ///< Dotted name (e.g., "gbuffer.albedo", "ssgi.trace").
-    RHITextureHandle texture; ///< GPU texture handle.
-    uint32_t       srvIndex;  ///< Bindless SRV heap index.
-    VisDisplayMode mode;      ///< How to visualize this target.
-    uint32_t       width;     ///< Texture width in texels.
-    uint32_t       height;    ///< Texture height in texels.
+    std::string      name;      ///< Dotted name (e.g., "gbuffer.albedo", "ssgi.trace").
+    RHITextureHandle texture;   ///< GPU texture handle.
+    uint32_t         srvIndex;  ///< Bindless SRV heap index.
+    VisDisplayMode   mode;      ///< How to visualize this target.
+    uint32_t         width;     ///< Texture width in texels.
+    uint32_t         height;    ///< Texture height in texels.
+    /// Resource state the texture is expected to be in after the frame ends.
+    /// Used by Validate() to issue correct barrier transitions for readback.
+    /// Defaults to ShaderResource since most targets end the frame as SRV.
+    RHIResourceState lastState = RHIResourceState::ShaderResource;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -121,8 +125,11 @@ public:
     /// * `mode` — Display mode for visualization.
     /// * `width` — Texture width in texels.
     /// * `height` — Texture height in texels.
+    /// * `state` — Resource state the texture is expected to be in at frame end.
+    ///   Defaults to ShaderResource. Must be accurate for Validate() readback.
     void RegisterTarget(const char* name, RHITextureHandle texture, uint32_t srvIndex,
-                        VisDisplayMode mode, uint32_t width, uint32_t height);
+                        VisDisplayMode mode, uint32_t width, uint32_t height,
+                        RHIResourceState state = RHIResourceState::ShaderResource);
 
     // ── Visualization control ────────────────────────────────────────────
 

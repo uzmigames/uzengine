@@ -321,11 +321,14 @@ void SSGIRenderer::CopyPrevSceneColor(IRHICommandList* cmdList,
         cmdList->ResourceBarrier(&barrier, 1);
     }
 
-    // Transition: prev scene color SRV -> CopyDst
+    // Transition: prev scene color -> CopyDst.
+    // On the first frame the texture is in Common state (from creation);
+    // on subsequent frames it is in ShaderResource (from the restore barrier below).
     {
         RHIBarrierDesc barrier{};
         barrier.texture     = m_prevSceneColor;
-        barrier.stateBefore = RHIResourceState::ShaderResource;
+        barrier.stateBefore = m_hasPrevColor ? RHIResourceState::ShaderResource
+                                             : RHIResourceState::Common;
         barrier.stateAfter  = RHIResourceState::CopyDst;
         cmdList->ResourceBarrier(&barrier, 1);
     }
@@ -601,7 +604,8 @@ void SSGIRenderer::DispatchTemporalAccum(IRHICommandList* cmdList, const SSGIRen
 
     cmdList->SetPipeline(pso);
 
-    // Root constants: 8 DWORDs matching TemporalAccumRootCB
+    // Root constants: 8 DWORDs (DX12 root signature limit = 8 DWORDs)
+    // Pack width+height into a single DWORD (16 bits each, max 65535).
     struct TemporalAccumRC {
         uint32_t currentSrvIndex;
         uint32_t currentAOSrvIndex;
@@ -609,8 +613,8 @@ void SSGIRenderer::DispatchTemporalAccum(IRHICommandList* cmdList, const SSGIRen
         uint32_t historyAOSrvIndex;
         uint32_t velocitySrvIndex;
         uint32_t outputUavIndex;
-        uint32_t texWidth;
-        uint32_t texHeight;
+        uint32_t aoOutputUavIndex;
+        uint32_t packedDimensions;  // low 16 = width, high 16 = height
     };
     static_assert(sizeof(TemporalAccumRC) == 32, "Must be 8 DWORDs");
 
@@ -621,8 +625,8 @@ void SSGIRenderer::DispatchTemporalAccum(IRHICommandList* cmdList, const SSGIRen
     rc.historyAOSrvIndex = m_ssgiHistoryAOSrv[readIdx];
     rc.velocitySrvIndex  = params.velocitySrvIndex;
     rc.outputUavIndex    = m_ssgiHistoryUav[writeIdx];
-    rc.texWidth          = m_halfWidth;
-    rc.texHeight         = m_halfHeight;
+    rc.aoOutputUavIndex  = m_ssgiHistoryAOUav[writeIdx];
+    rc.packedDimensions  = (m_halfWidth & 0xFFFF) | ((m_halfHeight & 0xFFFF) << 16);
 
     cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 8);
 

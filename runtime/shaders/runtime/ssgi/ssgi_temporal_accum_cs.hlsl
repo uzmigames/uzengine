@@ -61,7 +61,7 @@
 #define VELOCITY_THRESHOLD 0.01f
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Root Constants (b0, 8 DWORDs = 32 bytes)
+// Root Constants (b0, 8 DWORDs = 32 bytes — DX12 root signature limit)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// @source UE5 ScreenSpaceDenoise.cpp:2967 — temporal accumulation params
@@ -71,10 +71,14 @@ cbuffer TemporalAccumRootCB : register(b0) {
     uint  historySrvIndex;     // DWORD 2 — previous frame history color SRV
     uint  historyAOSrvIndex;   // DWORD 3 — previous frame history AO SRV
     uint  velocitySrvIndex;    // DWORD 4 — velocity buffer SRV
-    uint  outputUavIndex;      // DWORD 5 — (unused for register-bound)
-    uint  texWidth;            // DWORD 6 — half-res width
-    uint  texHeight;           // DWORD 7 — half-res height
+    uint  outputUavIndex;      // DWORD 5 — accumulated color UAV (bindless heap index)
+    uint  aoOutputUavIndex;    // DWORD 6 — accumulated AO UAV (bindless heap index)
+    uint  packedDimensions;    // DWORD 7 — low 16 = width, high 16 = height
 };
+
+// Unpack dimensions from packed DWORD
+static const uint texWidth  = packedDimensions & 0xFFFF;
+static const uint texHeight = packedDimensions >> 16;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Per-Frame CB (b1)
@@ -107,8 +111,10 @@ Texture2D<float>  historyAOTex    : register(t3);
 Texture2D<float2> velocityTex     : register(t4);
 #endif
 
+#ifndef UZ_BINDLESS
 RWTexture2D<float4> accumOutput   : register(u0);
 RWTexture2D<float>  accumAOOutput : register(u1);
+#endif
 
 SamplerState pointSampler  : register(s0);
 SamplerState linearSampler : register(s1);
@@ -275,6 +281,13 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     float  resultAO    = lerp(historyAO, currentAO, alpha);
 
     // Write accumulated outputs (these become history for next frame)
+#ifdef UZ_BINDLESS
+    RWTexture2D<float4> outColor = ResourceDescriptorHeap[outputUavIndex];
+    RWTexture2D<float>  outAO   = ResourceDescriptorHeap[aoOutputUavIndex];
+    outColor[dispatchThreadId.xy] = resultColor;
+    outAO[dispatchThreadId.xy]    = resultAO;
+#else
     accumOutput[dispatchThreadId.xy]   = resultColor;
     accumAOOutput[dispatchThreadId.xy] = resultAO;
+#endif
 }
