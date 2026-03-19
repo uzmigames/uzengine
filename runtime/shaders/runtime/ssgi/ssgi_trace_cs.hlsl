@@ -44,14 +44,14 @@
 // Quality Defines
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 ScreenSpaceRayTracing.cpp:689 — Q1=4 rays
+/// @source UE5 ScreenSpaceRayTracing.cpp:695 — Q2=8 rays
 #ifndef SSGI_RAY_COUNT
-#define SSGI_RAY_COUNT 4
+#define SSGI_RAY_COUNT 8
 #endif
 
-/// @source UE5 SSRTDiffuseIndirect.usf:25 — Q1=8 steps
+/// @source UE5 SSRTDiffuseIndirect.usf:30 — Q2=8 steps, Q4=12 steps
 #ifndef SSGI_MARCH_STEPS
-#define SSGI_MARCH_STEPS 8
+#define SSGI_MARCH_STEPS 12
 #endif
 
 /// @source UE5 SSRTRayCast.ush:660 — StartMipLevel = 1.0
