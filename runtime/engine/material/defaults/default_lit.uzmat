@@ -1,0 +1,26 @@
+{
+    "version": 1,
+    "name": "Default Lit",
+    "domain": "Surface",
+    "shadingModel": "DefaultLit",
+    "expressions": [
+        {
+            "id": 1,
+            "type": "PBROutput"
+        },
+        {
+            "id": 2,
+            "type": "VectorConstant",
+            "params": { "x": 0.8, "y": 0.8, "z": 0.8 }
+        },
+        {
+            "id": 3,
+            "type": "ScalarConstant",
+            "params": { "value": 0.5 }
+        }
+    ],
+    "connections": [
+        { "fromId": 2, "fromPin": 0, "toId": 1, "toPin": 0 },
+        { "fromId": 3, "fromPin": 0, "toId": 1, "toPin": 2 }
+    ]
+}
