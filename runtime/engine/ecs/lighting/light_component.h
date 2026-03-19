@@ -229,6 +229,19 @@ public:
     /// 0 = sphere only. UE5: SourceLength. Default: 0.
     float sourceLength = 0.f;
 
+    /// When true, this point light casts cubemap shadow maps (6 faces) into
+    /// the local shadow atlas. Each face is a 90-degree FOV perspective
+    /// projection from the light position.
+    /// UE5: CastShadows. Default: false (shadows must be explicitly enabled).
+    /// @source UE5 LightComponent.h:84 — bCastShadows
+    bool castShadows = false;
+
+    /// Per-light shadow depth bias for this point light's shadow maps.
+    /// Applied as a constant depth offset before shadow comparison.
+    /// UE5: ShadowBias. Default: 0.5. Range: [0.0, 10.0].
+    /// @source UE5 LightComponent.h:105 — ShadowBias
+    float pointShadowBias = 0.5f;
+
 protected:
     /// Returns `RenderProxyType::PointLight`.
     [[nodiscard]] RenderProxyType GetProxyType() const override {
