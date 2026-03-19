@@ -65,8 +65,11 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
 
                 LensFlareSettings settings;
                 settings.enabled = true;
-                settings.intensity = 0.8f;
-                settings.ghostIntensity = 0.4f;
+                settings.intensity = 0.05f;
+                settings.ghostIntensity = 0.15f;
+                settings.haloRadius = 0.7f;
+                settings.haloWidth = 0.05f;
+                settings.chromaticShift = 0.01f;
 
                 m_lensFlarePass->Execute(cmd, *m_cbRing,
                                           m_bloomPass->GetBloomResultSrvIndex(),
