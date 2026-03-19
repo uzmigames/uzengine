@@ -277,7 +277,9 @@ void PBRTest::OnStart() {
     {
         auto& scene = world.AddComponent<SceneComponent>(ground_);
         scene.SetPosition({0.f, 0.f, 0.f});
-        scene.SetScale({1500.f, 1500.f, 2.f});
+        /// Scale large enough to cover the camera's visible ground plane.
+        /// UE5 Basic template uses a massive SM_Floor that extends to the horizon.
+        scene.SetScale({10000.f, 10000.f, 2.f});
 
         auto& mesh = world.AddComponent<StaticMeshComponent>(ground_);
         mesh.meshPath = "cube.uzmesh";
