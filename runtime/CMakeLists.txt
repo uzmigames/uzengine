@@ -66,6 +66,8 @@ file(GLOB SRC_SCRIPTING_API  engine/scripting/api/scene/*.cpp)
 file(GLOB SRC_SCRIPTING_API_CORE engine/scripting/api/core/*.cpp)
 file(GLOB SRC_ASSET          engine/asset/*.cpp)
 file(GLOB SRC_RHI_VULKAN     engine/rhi/vulkan/*.cpp)
+file(GLOB SRC_MATERIAL       engine/material/*.cpp)
+file(GLOB SRC_MATERIAL_COMPILER engine/material/compiler/*.cpp)
 
 # Metal backend (macOS/iOS only)
 if(APPLE)
@@ -97,6 +99,8 @@ set(RUNTIME_SOURCES
     ${SRC_SCRIPTING_API}
     ${SRC_SCRIPTING_API_CORE}
     ${SRC_ASSET}
+    ${SRC_MATERIAL}
+    ${SRC_MATERIAL_COMPILER}
     $<$<PLATFORM_ID:Darwin>:${SRC_RHI_METAL}>
 )
 
@@ -260,6 +264,8 @@ target_include_directories(uzengine_runtime PUBLIC
     engine/scripting/api/core
     engine/ecs
     engine/asset
+    engine/material
+    engine/material/compiler
     ${CMAKE_CURRENT_BINARY_DIR}/generated/shaders
 )
 
