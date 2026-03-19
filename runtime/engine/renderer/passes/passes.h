@@ -16,6 +16,7 @@
 #include "debug/debug_view_pass.h"
 
 // Atmosphere passes
+#include "atmosphere/cloud_pass.h"
 #include "atmosphere/sky_atmosphere_pass.h"
 #include "atmosphere/transmittance_lut_pass.h"
 #include "atmosphere/sky_cubemap_capture_pass.h"
