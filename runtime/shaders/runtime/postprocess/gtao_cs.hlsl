@@ -47,10 +47,15 @@
 /// at the cost of slightly less precise occlusion at distant steps.
 /// Default: OFF (not defined). Enable via -DGTAO_USE_HIZ=1.
 ///
-/// GTAO_RECONSTRUCT_NORMAL: When defined, reconstructs view-space normals from
-/// depth buffer gradients instead of reading the G-Buffer normal texture.
-/// Useful for lightweight AO-only passes or when G-Buffer is unavailable.
-/// Default: OFF (not defined). Enable via -DGTAO_RECONSTRUCT_NORMAL=1.
+/// GTAO_RECONSTRUCT_NORMAL: Reconstructs view-space normals from depth buffer
+/// gradients instead of reading the G-Buffer normal texture.
+/// MANDATORY: The GBuffer stores WORLD-space normals, but GTAO operates in
+/// VIEW-space (viewDir, viewSpacePos are all view-space). Using world normals
+/// directly causes incorrect dot products → severe over-darkening (AO avg=0.34
+/// instead of ~0.9 for flat surfaces). Reconstructing from depth gives correct
+/// view-space normals without needing a view matrix.
+/// @source UE5 PostProcessAmbientOcclusionCommon.ush:106 — COMPUTE_SHADER path
+#define GTAO_RECONSTRUCT_NORMAL 1
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Quality Defines
