@@ -1,0 +1,727 @@
+/// UzEngine SSGI Renderer — Implementation.
+///
+/// @source UE5 IndirectLightRendering.cpp:39-45 — SSGI method selection
+/// @source UE5 ScreenSpaceRayTracing.cpp:684-704 — quality presets
+
+#include "ssgi_renderer.h"
+
+#include "pipeline_library.h"
+#include "cb_ring_allocator.h"
+#include "root_slots.h"
+#include "constant_buffers.h"
+#include "rhi.h"
+#include "log.h"
+#include "engine_assert.h"
+#include "profiler.h"
+
+#include <cstring>
+
+UZ_DECLARE_LOG_CATEGORY(Renderer);
+
+namespace uz {
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Construction / Destruction
+// ─────────────────────────────────────────────────────────────────────────────
+
+SSGIRenderer::~SSGIRenderer() {
+    DestroyResources();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Resource Management
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool SSGIRenderer::CreateResources(IRHIDevice* device, uint32_t width, uint32_t height) {
+    if (!device || width == 0 || height == 0) {
+        UZ_LOG(Renderer, Error, "SSGIRenderer::CreateResources: invalid params");
+        return false;
+    }
+
+    m_device = device;
+    m_fullWidth  = width;
+    m_fullHeight = height;
+    m_halfWidth  = width / 2;
+    m_halfHeight = height / 2;
+
+    if (m_halfWidth == 0) m_halfWidth = 1;
+    if (m_halfHeight == 0) m_halfHeight = 1;
+
+    if (!CreateTextures(width, height)) {
+        UZ_LOG(Renderer, Error, "SSGIRenderer: failed to create textures");
+        DestroyTextures();
+        return false;
+    }
+
+    m_initialized = true;
+    m_hasPrevColor = false;
+    m_historyIndex = 0;
+
+    UZ_LOG(Renderer, Info,
+           "SSGIRenderer: initialized ({}x{} full, {}x{} half, result SRV={}, AO SRV={})",
+           m_fullWidth, m_fullHeight, m_halfWidth, m_halfHeight,
+           m_ssgiResultSrv, m_ssgiResultAOSrv);
+
+    return true;
+}
+
+void SSGIRenderer::DestroyResources() {
+    DestroyTextures();
+    m_initialized = false;
+    m_hasPrevColor = false;
+    m_device = nullptr;
+}
+
+void SSGIRenderer::OnResize(uint32_t width, uint32_t height) {
+    if (!m_device || width == 0 || height == 0) return;
+
+    DestroyTextures();
+
+    m_fullWidth  = width;
+    m_fullHeight = height;
+    m_halfWidth  = (width > 1) ? (width / 2) : 1;
+    m_halfHeight = (height > 1) ? (height / 2) : 1;
+
+    if (!CreateTextures(width, height)) {
+        UZ_LOG(Renderer, Error, "SSGIRenderer::OnResize: failed to recreate textures");
+        m_initialized = false;
+        return;
+    }
+
+    m_hasPrevColor = false;
+    m_historyIndex = 0;
+
+    UZ_LOG(Renderer, Info,
+           "SSGIRenderer: resized ({}x{} full, {}x{} half)",
+           m_fullWidth, m_fullHeight, m_halfWidth, m_halfHeight);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Texture Creation / Destruction
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool SSGIRenderer::CreateTextures(uint32_t width, uint32_t height) {
+    const uint32_t halfW = m_halfWidth;
+    const uint32_t halfH = m_halfHeight;
+
+    // Helper lambda for creating SRV+UAV textures
+    auto createTexSrvUav = [this](uint32_t w, uint32_t h, RHIFormat fmt,
+                                   const char* name,
+                                   RHITextureHandle& outTex,
+                                   uint32_t& outSrv, uint32_t& outUav) -> bool {
+        RHITextureDesc desc{};
+        desc.width     = w;
+        desc.height    = h;
+        desc.format    = fmt;
+        desc.usage     = RHITextureUsage::ShaderResource
+                       | RHITextureUsage::UnorderedAccess;
+        desc.debugName = name;
+
+        outTex = m_device->CreateTexture(desc);
+        if (!outTex.IsValid()) {
+            UZ_LOG(Renderer, Error, "SSGIRenderer: failed to create texture '{}'", name);
+            return false;
+        }
+        outSrv = m_device->GetTextureSRVIndex(outTex);
+        outUav = m_device->GetTextureUAVIndex(outTex);
+        return true;
+    };
+
+    // Helper for SRV-only textures (prev scene color copy source)
+    auto createTexSrvCopy = [this](uint32_t w, uint32_t h, RHIFormat fmt,
+                                    const char* name,
+                                    RHITextureHandle& outTex,
+                                    uint32_t& outSrv) -> bool {
+        RHITextureDesc desc{};
+        desc.width     = w;
+        desc.height    = h;
+        desc.format    = fmt;
+        desc.usage     = RHITextureUsage::ShaderResource
+                       | RHITextureUsage::CopyDst;
+        desc.debugName = name;
+
+        outTex = m_device->CreateTexture(desc);
+        if (!outTex.IsValid()) {
+            UZ_LOG(Renderer, Error, "SSGIRenderer: failed to create texture '{}'", name);
+            return false;
+        }
+        outSrv = m_device->GetTextureSRVIndex(outTex);
+        return true;
+    };
+
+    // ── Full-res textures ──────────────────────────────────────────────
+
+    // Previous frame scene color copy (full-res, CopyDst + SRV)
+    if (!createTexSrvCopy(width, height, RHIFormat::RGBA16Float,
+                          "SSGI_PrevSceneColor", m_prevSceneColor, m_prevSceneColorSrv))
+        return false;
+
+    // Final upsampled SSGI result (full-res RGBA16F)
+    if (!createTexSrvUav(width, height, RHIFormat::RGBA16Float,
+                         "SSGI_Result", m_ssgiResult, m_ssgiResultSrv, m_ssgiResultUav))
+        return false;
+
+    // Final upsampled SSGI AO result (full-res R16F)
+    if (!createTexSrvUav(width, height, RHIFormat::R16Float,
+                         "SSGI_ResultAO", m_ssgiResultAO, m_ssgiResultAOSrv, m_ssgiResultAOUav))
+        return false;
+
+    // ── Half-res textures ──────────────────────────────────────────────
+
+    // Reduced prev color (half-res RGBA16F)
+    if (!createTexSrvUav(halfW, halfH, RHIFormat::RGBA16Float,
+                         "SSGI_PrevColorReduced", m_prevColorReduced,
+                         m_prevColorReducedSrv, m_prevColorReducedUav))
+        return false;
+
+    // Trace output: indirect diffuse (half-res RGBA16F)
+    if (!createTexSrvUav(halfW, halfH, RHIFormat::RGBA16Float,
+                         "SSGI_Trace", m_ssgiTrace, m_ssgiTraceSrv, m_ssgiTraceUav))
+        return false;
+
+    // Trace output: AO (half-res R16F)
+    if (!createTexSrvUav(halfW, halfH, RHIFormat::R16Float,
+                         "SSGI_TraceAO", m_ssgiTraceAO, m_ssgiTraceAOSrv, m_ssgiTraceAOUav))
+        return false;
+
+    // Denoised: indirect diffuse (half-res RGBA16F)
+    if (!createTexSrvUav(halfW, halfH, RHIFormat::RGBA16Float,
+                         "SSGI_Denoised", m_ssgiDenoised, m_ssgiDenoisedSrv, m_ssgiDenoisedUav))
+        return false;
+
+    // Denoised: AO (half-res R16F)
+    if (!createTexSrvUav(halfW, halfH, RHIFormat::R16Float,
+                         "SSGI_DenoisedAO", m_ssgiDenoisedAO, m_ssgiDenoisedAOSrv, m_ssgiDenoisedAOUav))
+        return false;
+
+    // Temporal history ping-pong: color x2
+    for (int i = 0; i < 2; ++i) {
+        const char* names[2] = {"SSGI_History_0", "SSGI_History_1"};
+        if (!createTexSrvUav(halfW, halfH, RHIFormat::RGBA16Float,
+                             names[i], m_ssgiHistory[i],
+                             m_ssgiHistorySrv[i], m_ssgiHistoryUav[i]))
+            return false;
+    }
+
+    // Temporal history ping-pong: AO x2
+    for (int i = 0; i < 2; ++i) {
+        const char* names[2] = {"SSGI_HistoryAO_0", "SSGI_HistoryAO_1"};
+        if (!createTexSrvUav(halfW, halfH, RHIFormat::R16Float,
+                             names[i], m_ssgiHistoryAO[i],
+                             m_ssgiHistoryAOSrv[i], m_ssgiHistoryAOUav[i]))
+            return false;
+    }
+
+    return true;
+}
+
+void SSGIRenderer::DestroyTextures() {
+    if (!m_device) return;
+
+    auto destroyTex = [this](RHITextureHandle& tex) {
+        if (tex.IsValid()) {
+            m_device->DestroyTexture(tex);
+            tex = RHITextureHandle{};
+        }
+    };
+
+    destroyTex(m_prevSceneColor);
+    m_prevSceneColorSrv = UINT32_MAX;
+
+    destroyTex(m_prevColorReduced);
+    m_prevColorReducedSrv = UINT32_MAX;
+    m_prevColorReducedUav = UINT32_MAX;
+
+    destroyTex(m_ssgiTrace);
+    m_ssgiTraceSrv = UINT32_MAX;
+    m_ssgiTraceUav = UINT32_MAX;
+
+    destroyTex(m_ssgiTraceAO);
+    m_ssgiTraceAOSrv = UINT32_MAX;
+    m_ssgiTraceAOUav = UINT32_MAX;
+
+    destroyTex(m_ssgiDenoised);
+    m_ssgiDenoisedSrv = UINT32_MAX;
+    m_ssgiDenoisedUav = UINT32_MAX;
+
+    destroyTex(m_ssgiDenoisedAO);
+    m_ssgiDenoisedAOSrv = UINT32_MAX;
+    m_ssgiDenoisedAOUav = UINT32_MAX;
+
+    for (int i = 0; i < 2; ++i) {
+        destroyTex(m_ssgiHistory[i]);
+        m_ssgiHistorySrv[i] = UINT32_MAX;
+        m_ssgiHistoryUav[i] = UINT32_MAX;
+    }
+
+    for (int i = 0; i < 2; ++i) {
+        destroyTex(m_ssgiHistoryAO[i]);
+        m_ssgiHistoryAOSrv[i] = UINT32_MAX;
+        m_ssgiHistoryAOUav[i] = UINT32_MAX;
+    }
+
+    destroyTex(m_ssgiResult);
+    m_ssgiResultSrv = UINT32_MAX;
+    m_ssgiResultUav = UINT32_MAX;
+
+    destroyTex(m_ssgiResultAO);
+    m_ssgiResultAOSrv = UINT32_MAX;
+    m_ssgiResultAOUav = UINT32_MAX;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Render — dispatches all 5 SSGI passes
+// ─────────────────────────────────────────────────────────────────────────────
+
+void SSGIRenderer::Render(IRHICommandList* cmdList, const SSGIRenderParams& params) {
+    UZ_PROFILE_FUNCTION();
+
+    if (!m_initialized || !settings.enabled) return;
+
+    // Skip if no previous frame color is available yet (first frame).
+    if (!m_hasPrevColor) return;
+
+    // Pass 1: Downsample prev scene color to half-res
+    DispatchPrevColorReduce(cmdList, params);
+
+    // Pass 2: SSGI trace (half-res)
+    DispatchTrace(cmdList, params);
+
+    // Pass 3: Spatial denoise (half-res)
+    DispatchSpatialDenoise(cmdList, params);
+
+    // Pass 4: Temporal accumulation (half-res)
+    DispatchTemporalAccum(cmdList, params);
+
+    // Pass 5: Bilateral upsample (half-res -> full-res)
+    DispatchUpsample(cmdList, params);
+
+    // Flip history ping-pong for next frame
+    m_historyIndex = 1 - m_historyIndex;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CopyPrevSceneColor — copy HDR output for next frame
+// ─────────────────────────────────────────────────────────────────────────────
+
+void SSGIRenderer::CopyPrevSceneColor(IRHICommandList* cmdList,
+                                       RHITextureHandle hdrSceneColor,
+                                       uint32_t width, uint32_t height) {
+    if (!m_initialized || !settings.enabled) return;
+    if (!hdrSceneColor.IsValid() || !m_prevSceneColor.IsValid()) return;
+
+    UZ_PROFILE_SCOPE("SSGI::CopyPrevSceneColor");
+
+    // Transition: HDR scene color RTV/SRV -> CopySrc
+    {
+        RHIBarrierDesc barrier{};
+        barrier.texture     = hdrSceneColor;
+        barrier.stateBefore = RHIResourceState::RenderTarget;
+        barrier.stateAfter  = RHIResourceState::CopySrc;
+        cmdList->ResourceBarrier(&barrier, 1);
+    }
+
+    // Transition: prev scene color SRV -> CopyDst
+    {
+        RHIBarrierDesc barrier{};
+        barrier.texture     = m_prevSceneColor;
+        barrier.stateBefore = RHIResourceState::ShaderResource;
+        barrier.stateAfter  = RHIResourceState::CopyDst;
+        cmdList->ResourceBarrier(&barrier, 1);
+    }
+
+    cmdList->CopyTexture(hdrSceneColor, m_prevSceneColor);
+
+    // Transition back: HDR scene color CopySrc -> RenderTarget
+    {
+        RHIBarrierDesc barrier{};
+        barrier.texture     = hdrSceneColor;
+        barrier.stateBefore = RHIResourceState::CopySrc;
+        barrier.stateAfter  = RHIResourceState::RenderTarget;
+        cmdList->ResourceBarrier(&barrier, 1);
+    }
+
+    // Transition back: prev scene color CopyDst -> SRV
+    {
+        RHIBarrierDesc barrier{};
+        barrier.texture     = m_prevSceneColor;
+        barrier.stateBefore = RHIResourceState::CopyDst;
+        barrier.stateAfter  = RHIResourceState::ShaderResource;
+        cmdList->ResourceBarrier(&barrier, 1);
+    }
+
+    m_hasPrevColor = true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pass 1: Previous Frame Color Reduction
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// @source UE5 ScreenSpaceRayTracing.cpp:745-800 — SetupPrevSceneColorReduction
+void SSGIRenderer::DispatchPrevColorReduce(IRHICommandList* cmdList, const SSGIRenderParams& params) {
+    UZ_PROFILE_SCOPE("SSGI::PrevColorReduce");
+
+    auto pso = params.pipelines->GetSsgiPrevColorReduce();
+    if (!pso.IsValid()) return;
+
+    // Transition reduced output to UAV
+    {
+        RHIBarrierDesc barrier{};
+        barrier.texture     = m_prevColorReduced;
+        barrier.stateBefore = RHIResourceState::ShaderResource;
+        barrier.stateAfter  = RHIResourceState::UnorderedAccess;
+        cmdList->ResourceBarrier(&barrier, 1);
+    }
+
+    cmdList->SetPipeline(pso);
+
+    // Root constants: 8 DWORDs matching PrevColorReduceRootCB
+    struct PrevColorReduceRC {
+        uint32_t prevColorSrvIndex;
+        uint32_t outputMip0UavIndex;
+        uint32_t outputMip1UavIndex;
+        uint32_t outputMip2UavIndex;
+        uint32_t outputMip3UavIndex;
+        uint32_t outputMip4UavIndex;
+        uint32_t fullWidth;
+        uint32_t fullHeight;
+    };
+    static_assert(sizeof(PrevColorReduceRC) == 32, "Must be 8 DWORDs");
+
+    PrevColorReduceRC rc{};
+    rc.prevColorSrvIndex  = m_prevSceneColorSrv;
+    rc.outputMip0UavIndex = m_prevColorReducedUav;
+    // Mip 1-4 reserved for future multi-mip generation
+    rc.outputMip1UavIndex = 0;
+    rc.outputMip2UavIndex = 0;
+    rc.outputMip3UavIndex = 0;
+    rc.outputMip4UavIndex = 0;
+    rc.fullWidth          = m_fullWidth;
+    rc.fullHeight         = m_fullHeight;
+
+    cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 8);
+
+    // PerFrameCB at b1
+    cmdList->SetRootCBV(kSlotPerFrame, params.perFrameBuffer,
+                        params.perFrameOffset, params.perFrameCpuPtr,
+                        params.perFrameSize);
+
+    // UAV at descriptor table slot 4 (u0)
+    cmdList->SetDescriptorTable(4, m_prevColorReducedUav);
+
+    // Dispatch: 8x8 thread groups covering half-res output
+    const uint32_t groupsX = (m_halfWidth  + kThreadGroupSize - 1) / kThreadGroupSize;
+    const uint32_t groupsY = (m_halfHeight + kThreadGroupSize - 1) / kThreadGroupSize;
+    cmdList->Dispatch(groupsX, groupsY, 1);
+
+    // Transition reduced output: UAV -> SRV for trace pass
+    {
+        RHIBarrierDesc barrier{};
+        barrier.texture     = m_prevColorReduced;
+        barrier.stateBefore = RHIResourceState::UnorderedAccess;
+        barrier.stateAfter  = RHIResourceState::ShaderResource;
+        cmdList->ResourceBarrier(&barrier, 1);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pass 2: SSGI Trace
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// @source UE5 SSRTDiffuseIndirect.usf:1-586 — main SSGI trace
+void SSGIRenderer::DispatchTrace(IRHICommandList* cmdList, const SSGIRenderParams& params) {
+    UZ_PROFILE_SCOPE("SSGI::Trace");
+
+    auto pso = params.pipelines->GetSsgiTrace();
+    if (!pso.IsValid()) return;
+
+    // Transition trace outputs to UAV
+    {
+        RHIBarrierDesc barriers[2] = {};
+        barriers[0].texture     = m_ssgiTrace;
+        barriers[0].stateBefore = RHIResourceState::ShaderResource;
+        barriers[0].stateAfter  = RHIResourceState::UnorderedAccess;
+        barriers[1].texture     = m_ssgiTraceAO;
+        barriers[1].stateBefore = RHIResourceState::ShaderResource;
+        barriers[1].stateAfter  = RHIResourceState::UnorderedAccess;
+        cmdList->ResourceBarrier(barriers, 2);
+    }
+
+    cmdList->SetPipeline(pso);
+
+    // Root constants: 8 DWORDs matching SSGIRootCB
+    struct SSGITraceRC {
+        uint32_t depthSrvIndex;
+        uint32_t normalSrvIndex;
+        uint32_t prevColorSrvIndex;
+        uint32_t outputUavIndex;
+        uint32_t aoOutputUavIndex;
+        uint32_t outputWidth;
+        uint32_t outputHeight;
+        uint32_t frameIndex;
+    };
+    static_assert(sizeof(SSGITraceRC) == 32, "Must be 8 DWORDs");
+
+    SSGITraceRC rc{};
+    rc.depthSrvIndex    = params.depthSrvIndex;
+    rc.normalSrvIndex   = params.normalSrvIndex;
+    rc.prevColorSrvIndex = m_prevColorReducedSrv;
+    rc.outputUavIndex   = m_ssgiTraceUav;
+    rc.aoOutputUavIndex = m_ssgiTraceAOUav;
+    rc.outputWidth      = m_halfWidth;
+    rc.outputHeight     = m_halfHeight;
+    rc.frameIndex       = params.frameIndex;
+
+    cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 8);
+
+    // PerFrameCB at b1
+    cmdList->SetRootCBV(kSlotPerFrame, params.perFrameBuffer,
+                        params.perFrameOffset, params.perFrameCpuPtr,
+                        params.perFrameSize);
+
+    // UAV at descriptor table slot 4 (u0 = trace output)
+    cmdList->SetDescriptorTable(4, m_ssgiTraceUav);
+
+    const uint32_t groupsX = (m_halfWidth  + kThreadGroupSize - 1) / kThreadGroupSize;
+    const uint32_t groupsY = (m_halfHeight + kThreadGroupSize - 1) / kThreadGroupSize;
+    cmdList->Dispatch(groupsX, groupsY, 1);
+
+    // Transition trace outputs: UAV -> SRV for denoise pass
+    {
+        RHIBarrierDesc barriers[2] = {};
+        barriers[0].texture     = m_ssgiTrace;
+        barriers[0].stateBefore = RHIResourceState::UnorderedAccess;
+        barriers[0].stateAfter  = RHIResourceState::ShaderResource;
+        barriers[1].texture     = m_ssgiTraceAO;
+        barriers[1].stateBefore = RHIResourceState::UnorderedAccess;
+        barriers[1].stateAfter  = RHIResourceState::ShaderResource;
+        cmdList->ResourceBarrier(barriers, 2);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pass 3: Spatial Denoise
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// @source UE5 ScreenSpaceDenoise.cpp:2960-2985 — spatial denoise dispatch
+void SSGIRenderer::DispatchSpatialDenoise(IRHICommandList* cmdList, const SSGIRenderParams& params) {
+    UZ_PROFILE_SCOPE("SSGI::SpatialDenoise");
+
+    auto pso = params.pipelines->GetSsgiSpatialDenoise();
+    if (!pso.IsValid()) return;
+
+    // Transition denoised outputs to UAV
+    {
+        RHIBarrierDesc barriers[2] = {};
+        barriers[0].texture     = m_ssgiDenoised;
+        barriers[0].stateBefore = RHIResourceState::ShaderResource;
+        barriers[0].stateAfter  = RHIResourceState::UnorderedAccess;
+        barriers[1].texture     = m_ssgiDenoisedAO;
+        barriers[1].stateBefore = RHIResourceState::ShaderResource;
+        barriers[1].stateAfter  = RHIResourceState::UnorderedAccess;
+        cmdList->ResourceBarrier(barriers, 2);
+    }
+
+    cmdList->SetPipeline(pso);
+
+    // Root constants: 8 DWORDs matching SpatialDenoiseRootCB
+    struct SpatialDenoiseRC {
+        uint32_t inputSrvIndex;
+        uint32_t aoInputSrvIndex;
+        uint32_t depthSrvIndex;
+        uint32_t normalSrvIndex;
+        uint32_t outputUavIndex;
+        uint32_t aoOutputUavIndex;
+        uint32_t texWidth;
+        uint32_t texHeight;
+    };
+    static_assert(sizeof(SpatialDenoiseRC) == 32, "Must be 8 DWORDs");
+
+    SpatialDenoiseRC rc{};
+    rc.inputSrvIndex    = m_ssgiTraceSrv;
+    rc.aoInputSrvIndex  = m_ssgiTraceAOSrv;
+    rc.depthSrvIndex    = params.depthSrvIndex;
+    rc.normalSrvIndex   = params.normalSrvIndex;
+    rc.outputUavIndex   = m_ssgiDenoisedUav;
+    rc.aoOutputUavIndex = m_ssgiDenoisedAOUav;
+    rc.texWidth         = m_halfWidth;
+    rc.texHeight        = m_halfHeight;
+
+    cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 8);
+
+    cmdList->SetRootCBV(kSlotPerFrame, params.perFrameBuffer,
+                        params.perFrameOffset, params.perFrameCpuPtr,
+                        params.perFrameSize);
+
+    cmdList->SetDescriptorTable(4, m_ssgiDenoisedUav);
+
+    const uint32_t groupsX = (m_halfWidth  + kThreadGroupSize - 1) / kThreadGroupSize;
+    const uint32_t groupsY = (m_halfHeight + kThreadGroupSize - 1) / kThreadGroupSize;
+    cmdList->Dispatch(groupsX, groupsY, 1);
+
+    // Transition denoised outputs: UAV -> SRV for temporal pass
+    {
+        RHIBarrierDesc barriers[2] = {};
+        barriers[0].texture     = m_ssgiDenoised;
+        barriers[0].stateBefore = RHIResourceState::UnorderedAccess;
+        barriers[0].stateAfter  = RHIResourceState::ShaderResource;
+        barriers[1].texture     = m_ssgiDenoisedAO;
+        barriers[1].stateBefore = RHIResourceState::UnorderedAccess;
+        barriers[1].stateAfter  = RHIResourceState::ShaderResource;
+        cmdList->ResourceBarrier(barriers, 2);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pass 4: Temporal Accumulation
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// @source UE5 ScreenSpaceDenoise.cpp:2967 — temporal accumulation dispatch
+void SSGIRenderer::DispatchTemporalAccum(IRHICommandList* cmdList, const SSGIRenderParams& params) {
+    UZ_PROFILE_SCOPE("SSGI::TemporalAccum");
+
+    auto pso = params.pipelines->GetSsgiTemporalAccum();
+    if (!pso.IsValid()) return;
+
+    // Write index = current m_historyIndex, read index = 1 - m_historyIndex
+    const int writeIdx = m_historyIndex;
+    const int readIdx  = 1 - m_historyIndex;
+
+    // Transition write targets to UAV, read targets to SRV
+    {
+        RHIBarrierDesc barriers[2] = {};
+        barriers[0].texture     = m_ssgiHistory[writeIdx];
+        barriers[0].stateBefore = RHIResourceState::ShaderResource;
+        barriers[0].stateAfter  = RHIResourceState::UnorderedAccess;
+        barriers[1].texture     = m_ssgiHistoryAO[writeIdx];
+        barriers[1].stateBefore = RHIResourceState::ShaderResource;
+        barriers[1].stateAfter  = RHIResourceState::UnorderedAccess;
+        cmdList->ResourceBarrier(barriers, 2);
+    }
+
+    cmdList->SetPipeline(pso);
+
+    // Root constants: 8 DWORDs matching TemporalAccumRootCB
+    struct TemporalAccumRC {
+        uint32_t currentSrvIndex;
+        uint32_t currentAOSrvIndex;
+        uint32_t historySrvIndex;
+        uint32_t historyAOSrvIndex;
+        uint32_t velocitySrvIndex;
+        uint32_t outputUavIndex;
+        uint32_t texWidth;
+        uint32_t texHeight;
+    };
+    static_assert(sizeof(TemporalAccumRC) == 32, "Must be 8 DWORDs");
+
+    TemporalAccumRC rc{};
+    rc.currentSrvIndex   = m_ssgiDenoisedSrv;
+    rc.currentAOSrvIndex = m_ssgiDenoisedAOSrv;
+    rc.historySrvIndex   = m_ssgiHistorySrv[readIdx];
+    rc.historyAOSrvIndex = m_ssgiHistoryAOSrv[readIdx];
+    rc.velocitySrvIndex  = params.velocitySrvIndex;
+    rc.outputUavIndex    = m_ssgiHistoryUav[writeIdx];
+    rc.texWidth          = m_halfWidth;
+    rc.texHeight         = m_halfHeight;
+
+    cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 8);
+
+    cmdList->SetRootCBV(kSlotPerFrame, params.perFrameBuffer,
+                        params.perFrameOffset, params.perFrameCpuPtr,
+                        params.perFrameSize);
+
+    cmdList->SetDescriptorTable(4, m_ssgiHistoryUav[writeIdx]);
+
+    const uint32_t groupsX = (m_halfWidth  + kThreadGroupSize - 1) / kThreadGroupSize;
+    const uint32_t groupsY = (m_halfHeight + kThreadGroupSize - 1) / kThreadGroupSize;
+    cmdList->Dispatch(groupsX, groupsY, 1);
+
+    // Transition write targets: UAV -> SRV for upsample pass
+    {
+        RHIBarrierDesc barriers[2] = {};
+        barriers[0].texture     = m_ssgiHistory[writeIdx];
+        barriers[0].stateBefore = RHIResourceState::UnorderedAccess;
+        barriers[0].stateAfter  = RHIResourceState::ShaderResource;
+        barriers[1].texture     = m_ssgiHistoryAO[writeIdx];
+        barriers[1].stateBefore = RHIResourceState::UnorderedAccess;
+        barriers[1].stateAfter  = RHIResourceState::ShaderResource;
+        cmdList->ResourceBarrier(barriers, 2);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pass 5: Bilateral Upsample
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// @source UE5 IndirectLightRendering.cpp:1435-1438 — DIM_UPSCALE_DIFFUSE_INDIRECT
+void SSGIRenderer::DispatchUpsample(IRHICommandList* cmdList, const SSGIRenderParams& params) {
+    UZ_PROFILE_SCOPE("SSGI::BilateralUpsample");
+
+    auto pso = params.pipelines->GetSsgiBilateralUpsample();
+    if (!pso.IsValid()) return;
+
+    const int readIdx = m_historyIndex; // Just written by temporal pass
+
+    // Transition full-res outputs to UAV
+    {
+        RHIBarrierDesc barriers[2] = {};
+        barriers[0].texture     = m_ssgiResult;
+        barriers[0].stateBefore = RHIResourceState::ShaderResource;
+        barriers[0].stateAfter  = RHIResourceState::UnorderedAccess;
+        barriers[1].texture     = m_ssgiResultAO;
+        barriers[1].stateBefore = RHIResourceState::ShaderResource;
+        barriers[1].stateAfter  = RHIResourceState::UnorderedAccess;
+        cmdList->ResourceBarrier(barriers, 2);
+    }
+
+    cmdList->SetPipeline(pso);
+
+    // Root constants: 8 DWORDs matching UpsampleRootCB
+    struct UpsampleRC {
+        uint32_t ssgiHalfSrvIndex;
+        uint32_t ssgiAOHalfSrvIndex;
+        uint32_t depthFullSrvIndex;
+        uint32_t normalFullSrvIndex;
+        uint32_t outputUavIndex;
+        uint32_t aoOutputUavIndex;
+        uint32_t fullWidth;
+        uint32_t fullHeight;
+    };
+    static_assert(sizeof(UpsampleRC) == 32, "Must be 8 DWORDs");
+
+    UpsampleRC rc{};
+    rc.ssgiHalfSrvIndex   = m_ssgiHistorySrv[readIdx];
+    rc.ssgiAOHalfSrvIndex = m_ssgiHistoryAOSrv[readIdx];
+    rc.depthFullSrvIndex  = params.depthSrvIndex;
+    rc.normalFullSrvIndex = params.normalSrvIndex;
+    rc.outputUavIndex     = m_ssgiResultUav;
+    rc.aoOutputUavIndex   = m_ssgiResultAOUav;
+    rc.fullWidth          = m_fullWidth;
+    rc.fullHeight         = m_fullHeight;
+
+    cmdList->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 8);
+
+    cmdList->SetRootCBV(kSlotPerFrame, params.perFrameBuffer,
+                        params.perFrameOffset, params.perFrameCpuPtr,
+                        params.perFrameSize);
+
+    cmdList->SetDescriptorTable(4, m_ssgiResultUav);
+
+    const uint32_t groupsX = (m_fullWidth  + kThreadGroupSize - 1) / kThreadGroupSize;
+    const uint32_t groupsY = (m_fullHeight + kThreadGroupSize - 1) / kThreadGroupSize;
+    cmdList->Dispatch(groupsX, groupsY, 1);
+
+    // Transition full-res outputs: UAV -> SRV for deferred lighting
+    {
+        RHIBarrierDesc barriers[2] = {};
+        barriers[0].texture     = m_ssgiResult;
+        barriers[0].stateBefore = RHIResourceState::UnorderedAccess;
+        barriers[0].stateAfter  = RHIResourceState::ShaderResource;
+        barriers[1].texture     = m_ssgiResultAO;
+        barriers[1].stateBefore = RHIResourceState::UnorderedAccess;
+        barriers[1].stateAfter  = RHIResourceState::ShaderResource;
+        cmdList->ResourceBarrier(barriers, 2);
+    }
+}
+
+} // namespace uz

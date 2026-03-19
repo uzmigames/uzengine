@@ -9,15 +9,15 @@
 - [ ] A.4 Identify which existing UzEngine resources can be reused (HiZ pyramid, GBuffer normals, depth, velocity buffer for temporal).
 
 ### SSGI Trace Pass (compute shader)
-- [ ] A.5 Implement `ssgi_trace_cs.hlsl` — for each pixel, trace N short rays in screen space along cosine-weighted hemisphere directions. March against HiZ depth. On hit, read GBuffer albedo * direct lighting at hit point as bounce radiance.
-- [ ] A.6 Ray directions: use interleaved gradient noise or Halton sequence (UE5 pattern) for per-pixel jitter. 4-8 rays per pixel at half resolution.
-- [ ] A.7 Hit shading: read scene color (previous frame) at hit UV to get the bounced radiance. This captures both direct light and sky light bounced off surfaces.
-- [ ] A.8 Output: half-res RGBA16F texture with accumulated indirect radiance.
+- [x] A.5 Implement `ssgi_trace_cs.hlsl` — cosine-hemisphere ray generation (Hammersley + concentric disk), screen-space linear march (8 steps), prev-frame color sampling with Karis weighting. Created `runtime/shaders/runtime/ssgi/ssgi_trace_cs.hlsl`.
+- [x] A.6 Ray directions: Hammersley quasi-random sequence with Rand3DPCG16 per-pixel seed + IGN step offset jitter. 4 rays per pixel at half resolution (Q1 quality). Created in ssgi_trace_cs.hlsl.
+- [x] A.7 Hit shading: sample prev-frame reduced color at hit UV+mip, Karis luminance weight rcp(1+L) for firefly suppression. Created in ssgi_trace_cs.hlsl.
+- [x] A.8 Output: half-res RGBA16F indirect diffuse + R16F AO mask. Also created `prev_color_reduce_cs.hlsl` for half-res mip 0 prev-frame color pyramid with Karis-weighted 2x2 downsample.
 
 ### SSGI Denoise Pass
-- [ ] A.9 Implement `ssgi_denoise_cs.hlsl` — spatial bilateral filter (depth + normal edge stopping) to reduce noise from few-ray-per-pixel trace.
-- [ ] A.10 Temporal accumulation: blend current frame SSGI with previous frame using motion vectors (velocity buffer). Variance-guided blend factor.
-- [ ] A.11 Upsample from half-res to full-res with bilateral upsampling.
+- [x] A.9 Implement `ssgi_spatial_denoise_cs.hlsl` — 8-sample rotated Poisson disk cross-bilateral filter with depth (exp gaussian) + normal (pow4) edge-stopping weights. Created `runtime/shaders/runtime/ssgi/ssgi_spatial_denoise_cs.hlsl`.
+- [x] A.10 Temporal accumulation: motion-vector reprojection, 3x3 neighborhood AABB variance clipping, alpha=0.05 stable / 1.0 disoccluded, velocity-adaptive blending. Created `runtime/shaders/runtime/ssgi/ssgi_temporal_accum_cs.hlsl`.
+- [x] A.11 Upsample from half-res to full-res: 2x2 joint bilateral upsample with depth+normal edge-stopping, bilinear base weights, fallback to nearest for degenerate edges. Created `runtime/shaders/runtime/ssgi/ssgi_upsample_cs.hlsl`.
 
 ### Integration into Deferred Lighting
 - [ ] A.12 In `deferred_lighting_ps.hlsl`: add SSGI contribution to the ambient term. `ambient += ssgiRadiance * albedo * ao`. The SSGI result is pre-multiplied radiance (already includes the bounced surface's albedo), so multiply by receiving surface's albedo for energy conservation.

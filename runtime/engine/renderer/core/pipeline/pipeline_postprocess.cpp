@@ -1097,4 +1097,254 @@ RHIPipelineHandle PipelineLibrary::GetCasSharpen() {
     return m_casSharpen;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// SSGI Previous Frame Color Reduction Compute Pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// @source UE5 SSRTPrevFrameReduction.usf:1-130 — ReduceCS
+bool PipelineLibrary::EnsureSsgiPrevColorReduceShader() {
+    if (m_ssgiPrevColorReduceCS.IsValid()) return true;
+
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::PrevColorReduceCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile PrevColorReduceCS");
+        return false;
+    }
+
+    RHIShaderDesc shaderDesc{};
+    shaderDesc.bytecode     = bytecode.data();
+    shaderDesc.bytecodeSize = bytecode.size();
+    shaderDesc.stage        = RHIShaderStage::Compute;
+    shaderDesc.entryPoint   = "main";
+    shaderDesc.debugName    = "prev_color_reduce_cs";
+
+    m_ssgiPrevColorReduceCS = m_device->CreateShader(shaderDesc);
+    if (!m_ssgiPrevColorReduceCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create PrevColorReduceCS shader");
+        return false;
+    }
+    return true;
+}
+
+RHIPipelineHandle PipelineLibrary::GetSsgiPrevColorReduce() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetSsgiPrevColorReduce called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+    if (m_ssgiPrevColorReduce.IsValid()) return m_ssgiPrevColorReduce;
+    if (!EnsureSsgiPrevColorReduceShader()) return RHIPipelineHandle::Invalid();
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_ssgiPrevColorReduceCS;
+    desc.debugName     = "SSGI_PrevColorReduce";
+
+    m_ssgiPrevColorReduce = m_device->CreateComputePipeline(desc);
+    if (!m_ssgiPrevColorReduce.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create SSGI_PrevColorReduce pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created SSGI_PrevColorReduce pipeline");
+    }
+    return m_ssgiPrevColorReduce;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SSGI Trace Compute Pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// @source UE5 SSRTDiffuseIndirect.usf:1-586 — MainCS
+bool PipelineLibrary::EnsureSsgiTraceShader() {
+    if (m_ssgiTraceCS.IsValid()) return true;
+
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::SsgiTraceCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile SsgiTraceCS");
+        return false;
+    }
+
+    RHIShaderDesc shaderDesc{};
+    shaderDesc.bytecode     = bytecode.data();
+    shaderDesc.bytecodeSize = bytecode.size();
+    shaderDesc.stage        = RHIShaderStage::Compute;
+    shaderDesc.entryPoint   = "main";
+    shaderDesc.debugName    = "ssgi_trace_cs";
+
+    m_ssgiTraceCS = m_device->CreateShader(shaderDesc);
+    if (!m_ssgiTraceCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create SsgiTraceCS shader");
+        return false;
+    }
+    return true;
+}
+
+RHIPipelineHandle PipelineLibrary::GetSsgiTrace() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetSsgiTrace called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+    if (m_ssgiTrace.IsValid()) return m_ssgiTrace;
+    if (!EnsureSsgiTraceShader()) return RHIPipelineHandle::Invalid();
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_ssgiTraceCS;
+    desc.debugName     = "SSGI_Trace";
+
+    m_ssgiTrace = m_device->CreateComputePipeline(desc);
+    if (!m_ssgiTrace.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create SSGI_Trace pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created SSGI_Trace pipeline");
+    }
+    return m_ssgiTrace;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SSGI Spatial Denoise Compute Pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// @source UE5 ScreenSpaceDenoise.cpp:2960-2985 — spatial denoise
+bool PipelineLibrary::EnsureSsgiSpatialDenoiseShader() {
+    if (m_ssgiSpatialDenoiseCS.IsValid()) return true;
+
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::SsgiSpatialDenoiseCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile SsgiSpatialDenoiseCS");
+        return false;
+    }
+
+    RHIShaderDesc shaderDesc{};
+    shaderDesc.bytecode     = bytecode.data();
+    shaderDesc.bytecodeSize = bytecode.size();
+    shaderDesc.stage        = RHIShaderStage::Compute;
+    shaderDesc.entryPoint   = "main";
+    shaderDesc.debugName    = "ssgi_spatial_denoise_cs";
+
+    m_ssgiSpatialDenoiseCS = m_device->CreateShader(shaderDesc);
+    if (!m_ssgiSpatialDenoiseCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create SsgiSpatialDenoiseCS shader");
+        return false;
+    }
+    return true;
+}
+
+RHIPipelineHandle PipelineLibrary::GetSsgiSpatialDenoise() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetSsgiSpatialDenoise called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+    if (m_ssgiSpatialDenoise.IsValid()) return m_ssgiSpatialDenoise;
+    if (!EnsureSsgiSpatialDenoiseShader()) return RHIPipelineHandle::Invalid();
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_ssgiSpatialDenoiseCS;
+    desc.debugName     = "SSGI_SpatialDenoise";
+
+    m_ssgiSpatialDenoise = m_device->CreateComputePipeline(desc);
+    if (!m_ssgiSpatialDenoise.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create SSGI_SpatialDenoise pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created SSGI_SpatialDenoise pipeline");
+    }
+    return m_ssgiSpatialDenoise;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SSGI Temporal Accumulation Compute Pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// @source UE5 ScreenSpaceDenoise.cpp:2967 — temporal accumulation
+bool PipelineLibrary::EnsureSsgiTemporalAccumShader() {
+    if (m_ssgiTemporalAccumCS.IsValid()) return true;
+
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::SsgiTemporalAccumCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile SsgiTemporalAccumCS");
+        return false;
+    }
+
+    RHIShaderDesc shaderDesc{};
+    shaderDesc.bytecode     = bytecode.data();
+    shaderDesc.bytecodeSize = bytecode.size();
+    shaderDesc.stage        = RHIShaderStage::Compute;
+    shaderDesc.entryPoint   = "main";
+    shaderDesc.debugName    = "ssgi_temporal_accum_cs";
+
+    m_ssgiTemporalAccumCS = m_device->CreateShader(shaderDesc);
+    if (!m_ssgiTemporalAccumCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create SsgiTemporalAccumCS shader");
+        return false;
+    }
+    return true;
+}
+
+RHIPipelineHandle PipelineLibrary::GetSsgiTemporalAccum() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetSsgiTemporalAccum called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+    if (m_ssgiTemporalAccum.IsValid()) return m_ssgiTemporalAccum;
+    if (!EnsureSsgiTemporalAccumShader()) return RHIPipelineHandle::Invalid();
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_ssgiTemporalAccumCS;
+    desc.debugName     = "SSGI_TemporalAccum";
+
+    m_ssgiTemporalAccum = m_device->CreateComputePipeline(desc);
+    if (!m_ssgiTemporalAccum.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create SSGI_TemporalAccum pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created SSGI_TemporalAccum pipeline");
+    }
+    return m_ssgiTemporalAccum;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SSGI Bilateral Upsample Compute Pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// @source UE5 IndirectLightRendering.cpp:1435 — DIM_UPSCALE_DIFFUSE_INDIRECT
+bool PipelineLibrary::EnsureSsgiBilateralUpsampleShader() {
+    if (m_ssgiBilateralUpsampleCS.IsValid()) return true;
+
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::SsgiUpsampleCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile SsgiUpsampleCS");
+        return false;
+    }
+
+    RHIShaderDesc shaderDesc{};
+    shaderDesc.bytecode     = bytecode.data();
+    shaderDesc.bytecodeSize = bytecode.size();
+    shaderDesc.stage        = RHIShaderStage::Compute;
+    shaderDesc.entryPoint   = "main";
+    shaderDesc.debugName    = "ssgi_upsample_cs";
+
+    m_ssgiBilateralUpsampleCS = m_device->CreateShader(shaderDesc);
+    if (!m_ssgiBilateralUpsampleCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create SsgiUpsampleCS shader");
+        return false;
+    }
+    return true;
+}
+
+RHIPipelineHandle PipelineLibrary::GetSsgiBilateralUpsample() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetSsgiBilateralUpsample called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+    if (m_ssgiBilateralUpsample.IsValid()) return m_ssgiBilateralUpsample;
+    if (!EnsureSsgiBilateralUpsampleShader()) return RHIPipelineHandle::Invalid();
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_ssgiBilateralUpsampleCS;
+    desc.debugName     = "SSGI_BilateralUpsample";
+
+    m_ssgiBilateralUpsample = m_device->CreateComputePipeline(desc);
+    if (!m_ssgiBilateralUpsample.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create SSGI_BilateralUpsample pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created SSGI_BilateralUpsample pipeline");
+    }
+    return m_ssgiBilateralUpsample;
+}
+
 } // namespace uz

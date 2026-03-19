@@ -310,6 +310,11 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     // ── TAA History Textures (at DISPLAY resolution — TAA is the upscale point) ──
     CreateTaaResources(width, height);
 
+    // ── SSGI (at render resolution — half-res internal, full-res output) ──
+    if (!m_ssgiRenderer.CreateResources(device, m_renderWidth, m_renderHeight)) {
+        UZ_LOG(Renderer, Warning, "SceneRenderer: SSGI init failed (SSGI disabled)");
+    }
+
     // ── SSR Output Textures (at render resolution — operates on GBuffer) ──
     CreateSsrResources(m_renderWidth, m_renderHeight);
 
@@ -1002,6 +1007,9 @@ void SceneRenderer::Resize(uint32_t width, uint32_t height) {
 
     // ── Render-resolution targets (effects before upscale) ──
 
+    // Recreate SSGI textures at render resolution
+    m_ssgiRenderer.OnResize(m_renderWidth, m_renderHeight);
+
     // Recreate SSR output textures at render resolution
     DestroySsrResources();
     CreateSsrResources(m_renderWidth, m_renderHeight);
@@ -1115,6 +1123,9 @@ void SceneRenderer::Shutdown() {
 
     // ── DFS cleanup ─────────────────────────────────────────────────
     DestroyDfsResources();
+
+    // ── SSGI cleanup ──────────────────────────────────────────────────
+    m_ssgiRenderer.DestroyResources();
 
     // ── SSR cleanup ──────────────────────────────────────────────────
     DestroySsrResources();

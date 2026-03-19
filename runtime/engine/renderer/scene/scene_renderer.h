@@ -44,6 +44,7 @@
 #include "postprocess/gtao_pass.h"
 #include "postprocess/hiz_pyramid_pass.h"
 #include "shadows/distance_field_shadow_config.h"
+#include "gi/ssgi_renderer.h"
 #include "async_texture_decoder.h"  // TextureDecodeResult for m_deferredDecoded
 
 // Types needed by FrameContext struct (value members, not pointers)
@@ -296,6 +297,31 @@ public:
     /// Sets the SDF atlas manager for distance field shadows.
     /// The atlas manager must outlive this renderer. Set to nullptr to disable DFS.
     void SetSdfAtlasManager(SdfAtlasManager* atlas) { m_sdfAtlas = atlas; }
+
+    /// Enables or disables Screen-Space Global Illumination (SSGI) at runtime.
+    ///
+    /// @source UE5 IndirectLightRendering.cpp:39-45 — r.DynamicGlobalIlluminationMethod
+    ///
+    /// When enabled, a 5-pass compute pipeline provides one-bounce indirect
+    /// diffuse lighting from screen-space ray marching against the previous
+    /// frame's HDR scene color.
+    void SetSsgiEnabled(bool enabled) { m_ssgiRenderer.settings.enabled = enabled; }
+
+    /// Returns whether SSGI is currently enabled.
+    [[nodiscard]] bool IsSsgiEnabled() const { return m_ssgiRenderer.settings.enabled; }
+
+    /// Sets the SSGI quality level (1-4). Maps to ray count: Q1=4, Q2=8, Q3=16, Q4=32.
+    /// @source UE5 ScreenSpaceRayTracing.cpp:60-63 — r.SSGI.Quality
+    void SetSsgiQuality(int quality) { m_ssgiRenderer.settings.quality = quality; }
+
+    /// Returns the current SSGI quality level.
+    [[nodiscard]] int GetSsgiQuality() const { return m_ssgiRenderer.settings.quality; }
+
+    /// Sets the SSGI intensity multiplier.
+    void SetSsgiIntensity(float intensity) { m_ssgiRenderer.settings.intensity = intensity; }
+
+    /// Returns the current SSGI intensity.
+    [[nodiscard]] float GetSsgiIntensity() const { return m_ssgiRenderer.settings.intensity; }
 
     /// Enables or disables Screen-Space Reflections (SSR) at runtime.
     ///
@@ -696,6 +722,9 @@ private:
 
     /// Destroys TAA history textures. Called from Shutdown() and Resize().
     void DestroyTaaResources();
+
+    // ── SSGI (Screen-Space Global Illumination) ─────────────────────────────
+    SSGIRenderer m_ssgiRenderer;  ///< GPU SSGI subsystem (5 compute passes).
 
     // ── SSR (Screen-Space Reflections) ─────────────────────────────────────
 

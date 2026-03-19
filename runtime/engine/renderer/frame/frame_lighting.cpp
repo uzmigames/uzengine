@@ -10,6 +10,7 @@
 #include "components.h"
 
 #include "camera.h"
+#include "gi/ssgi_renderer.h"
 #include "gpu_mesh.h"
 #include "render_graph_builder.h"
 #include "render_graph_resources.h"
@@ -409,6 +410,47 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
         });
     }
 
+    // ── SSGI Compute Passes (after GTAO, before SSR and lighting) ────────────
+    // Dispatches 5 compute passes: PrevColorReduce, Trace, SpatialDenoise,
+    // TemporalAccum, BilateralUpsample. The result SRV indices are written
+    // to PerFrameCB in frame_setup.cpp for the deferred lighting shader.
+    //
+    // @source UE5 IndirectLightRendering.cpp:39-45 — SSGI method selection
+    const bool ssgiActive = m_ssgiRenderer.IsReady()
+                          && m_device->IsBindless();
+    if (ssgiActive) {
+        rgBuilder.AddPass("SSGI", [&](rg::RgPassBuilder& pb) {
+            pb.Read(ctx.depthRes, RHIResourceState::ShaderResource);
+            pb.Read(ctx.normalRes, RHIResourceState::ShaderResource);
+            pb.Read(ctx.velocityRes, RHIResourceState::ShaderResource);
+
+            pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources& /*res*/) {
+                UZ_PROFILE_SCOPE("SSGI::Execute");
+
+                SSGIRenderParams ssgiParams{};
+                ssgiParams.cbRing          = m_cbRing.get();
+                ssgiParams.pipelines       = ctx.pipelines;
+                ssgiParams.depthSrvIndex   = m_gbuffer.depthSRV;
+                ssgiParams.normalSrvIndex  = m_gbuffer.normalSRV;
+                ssgiParams.velocitySrvIndex = m_gbuffer.velocitySRV;
+                ssgiParams.depthTexture    = m_gbuffer.depth;
+                ssgiParams.normalTexture   = m_gbuffer.normal;
+                ssgiParams.velocityTexture = m_gbuffer.velocity;
+                ssgiParams.hdrSceneColor   = m_hdrSceneColor;
+                ssgiParams.hdrSceneColorSrv = m_hdrSceneColorSrv;
+                ssgiParams.perFrameBuffer  = ctx.perFrameAlloc.bufferHandle;
+                ssgiParams.perFrameOffset  = ctx.perFrameAlloc.offsetBytes;
+                ssgiParams.perFrameCpuPtr  = ctx.perFrameAlloc.cpuPtr;
+                ssgiParams.perFrameSize    = sizeof(PerFrameCB);
+                ssgiParams.frameIndex      = ctx.frameIndex;
+                ssgiParams.renderWidth     = static_cast<uint32_t>(ctx.renderWidth);
+                ssgiParams.renderHeight    = static_cast<uint32_t>(ctx.renderHeight);
+
+                m_ssgiRenderer.Render(cmd, ssgiParams);
+            });
+        });
+    }
+
     // ── SSR Compute Passes (after GBuffer + depth prepass + HiZ, before lighting) ──
     // Two compute passes:
     //   1. SSR_Trace:   Hi-Z ray march → trace output (rgb=hit color, a=confidence)
@@ -729,6 +771,26 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
                                 ctx.bindless, ctx.renderWidth, ctx.renderHeight,
                                 skyFogR, skyFogG, skyFogB);
         }
+    }
+
+    // ── SSGI Previous Frame Color Copy ──────────────────────────────────────
+    // Copy the current HDR scene color (after lighting + atmosphere) to the
+    // prev-frame buffer for SSGI to use next frame. This must happen AFTER
+    // all scene color contributions (lighting, atmosphere, fog) and BEFORE
+    // post-process modifies the HDR buffer (bloom, tonemap, etc.).
+    if (ssgiActive) {
+        rgBuilder.AddPass("SSGI_CopyPrevColor", [&](rg::RgPassBuilder& pb) {
+            pb.Read(ctx.hdrRes, RHIResourceState::RenderTarget);
+
+            pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources& /*res*/) {
+                UZ_PROFILE_SCOPE("SSGI::CopyPrevColor");
+
+                m_ssgiRenderer.CopyPrevSceneColor(
+                    cmd, m_hdrSceneColor,
+                    static_cast<uint32_t>(ctx.renderWidth),
+                    static_cast<uint32_t>(ctx.renderHeight));
+            });
+        });
     }
 }
 

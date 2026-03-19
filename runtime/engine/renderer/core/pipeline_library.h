@@ -549,6 +549,45 @@ public:
     /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
     [[nodiscard]] RHIPipelineHandle GetCasSharpen();
 
+    // ── SSGI Compute Pipelines ──────────────────────────────────────────
+
+    /// Returns the SSGI previous frame color reduction compute pipeline.
+    ///
+    /// Downsamples full-res prev-frame HDR to half-res with Karis luminance
+    /// weighting for firefly suppression.
+    ///
+    /// @source UE5 SSRTPrevFrameReduction.usf:1-130 — ReduceCS
+    [[nodiscard]] RHIPipelineHandle GetSsgiPrevColorReduce();
+
+    /// Returns the SSGI trace compute pipeline.
+    ///
+    /// Per-pixel cosine-hemisphere ray march in screen space against the HiZ
+    /// depth buffer. On hit, samples reduced prev-frame color with Karis weighting.
+    ///
+    /// @source UE5 SSRTDiffuseIndirect.usf:1-586 — MainCS
+    [[nodiscard]] RHIPipelineHandle GetSsgiTrace();
+
+    /// Returns the SSGI spatial denoise compute pipeline.
+    ///
+    /// Cross-bilateral spatial filter with depth+normal edge-stopping (8 samples).
+    ///
+    /// @source UE5 ScreenSpaceDenoise.cpp:2960-2985 — spatial denoise
+    [[nodiscard]] RHIPipelineHandle GetSsgiSpatialDenoise();
+
+    /// Returns the SSGI temporal accumulation compute pipeline.
+    ///
+    /// Velocity-reprojected temporal accumulation with neighborhood variance clipping.
+    ///
+    /// @source UE5 ScreenSpaceDenoise.cpp:2967 — temporal accumulation
+    [[nodiscard]] RHIPipelineHandle GetSsgiTemporalAccum();
+
+    /// Returns the SSGI bilateral upsample compute pipeline.
+    ///
+    /// Joint bilateral upsample from half-res to full-res using depth+normal weights.
+    ///
+    /// @source UE5 IndirectLightRendering.cpp:1435-1438 — DIM_UPSCALE_DIFFUSE_INDIRECT
+    [[nodiscard]] RHIPipelineHandle GetSsgiBilateralUpsample();
+
     /// Pre-creates all standard pipelines eagerly instead of on first use.
     ///
     /// Call at scene load time to avoid hitches during the first frame.
@@ -603,6 +642,11 @@ private:
     [[nodiscard]] bool EnsureDofBlurShader();
     [[nodiscard]] bool EnsureFxaaPixelShader();
     [[nodiscard]] bool EnsureCasSharpenPixelShader();
+    [[nodiscard]] bool EnsureSsgiPrevColorReduceShader();
+    [[nodiscard]] bool EnsureSsgiTraceShader();
+    [[nodiscard]] bool EnsureSsgiSpatialDenoiseShader();
+    [[nodiscard]] bool EnsureSsgiTemporalAccumShader();
+    [[nodiscard]] bool EnsureSsgiBilateralUpsampleShader();
 
     /// Creates a pipeline through the PSO cache. On cache hit, returns the
     /// cached handle without calling the device. On miss, creates via the
@@ -656,6 +700,11 @@ private:
     RHIShaderHandle m_dofBlurCS                = RHIShaderHandle::Invalid();
     RHIShaderHandle m_fxaaPS                   = RHIShaderHandle::Invalid();
     RHIShaderHandle m_casSharpenPS             = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_ssgiPrevColorReduceCS    = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_ssgiTraceCS              = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_ssgiSpatialDenoiseCS     = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_ssgiTemporalAccumCS      = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_ssgiBilateralUpsampleCS  = RHIShaderHandle::Invalid();
 
     // ── Cached pipeline handles (one per bindless variant) ──────────────
     RHIPipelineHandle m_forwardPBR         = RHIPipelineHandle::Invalid();
@@ -704,6 +753,11 @@ private:
     RHIPipelineHandle m_dofBlur               = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_fxaa                  = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_casSharpen            = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_ssgiPrevColorReduce   = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_ssgiTrace             = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_ssgiSpatialDenoise    = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_ssgiTemporalAccum     = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_ssgiBilateralUpsample = RHIPipelineHandle::Invalid();
 };
 
 } // namespace uz

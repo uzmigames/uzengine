@@ -136,7 +136,13 @@ struct PerFrameCB {
     /// At 200% = +1.0 (shift up one mip for supersampling).
     float    mipBias = 0.0f;
 
-    float    _pad2[7] = {};                       ///< Pad to 512 bytes.
+    // ── SSGI (Screen-Space Global Illumination) ────────────────────────
+    /// @source UE5 IndirectLightRendering.cpp:1454 — DiffuseIndirect composite
+    uint32_t ssgiSrvIndex   = UINT32_MAX;          ///< SRV index for upsampled SSGI indirect diffuse (UINT32_MAX = disabled).
+    uint32_t ssgiAOSrvIndex = UINT32_MAX;          ///< SRV index for SSGI ambient occlusion mask (UINT32_MAX = disabled).
+    uint32_t ssgiEnabled    = 0;                   ///< 1 = SSGI active, 0 = disabled.
+
+    float    _pad2[4] = {};                        ///< Pad to 512 bytes.
 };
 
 static_assert(sizeof(PerFrameCB) == 512, "PerFrameCB must be 512 bytes (D3D12 CB alignment)");

@@ -324,6 +324,18 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
         perFrame.ssrSrvIndex = UINT32_MAX;
     }
 
+    // ── SSGI SRV indices (set early — actual compute runs in render graph) ──
+    // @source UE5 IndirectLightRendering.cpp:1454 — DiffuseIndirect composite
+    if (m_ssgiRenderer.IsReady() && m_device->IsBindless()) {
+        perFrame.ssgiSrvIndex   = m_ssgiRenderer.GetResultSrvIndex();
+        perFrame.ssgiAOSrvIndex = m_ssgiRenderer.GetAOResultSrvIndex();
+        perFrame.ssgiEnabled    = 1;
+    } else {
+        perFrame.ssgiSrvIndex   = UINT32_MAX;
+        perFrame.ssgiAOSrvIndex = UINT32_MAX;
+        perFrame.ssgiEnabled    = 0;
+    }
+
     // ── Aerial Perspective parameters (from SkyAtmosphereComponent) ───
     // Populate AP atmosphere constants so deferred_lighting_ps can ray-march
     // inscattering per pixel. Only enabled when a SkyAtmosphereComponent exists

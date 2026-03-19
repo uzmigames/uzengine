@@ -138,7 +138,15 @@ cbuffer PerFrameCB : register(b1) {
     float    contactShadowLength;
 
     uint     ssrSrvIndex;        ///< SRV index for resolved SSR texture (0xFFFFFFFF = no SSR).
-    float    _framePad2[8];      ///< Padding to 512 bytes.
+    float    mipBias;            ///< Global mipmap LOD bias for screen percentage compensation.
+
+    // ── SSGI (Screen-Space Global Illumination) ────────────────────────
+    /// @source UE5 IndirectLightRendering.cpp:1454 — DiffuseIndirect composite
+    uint     ssgiSrvIndex;       ///< SRV index for upsampled SSGI indirect diffuse (0xFFFFFFFF = disabled).
+    uint     ssgiAOSrvIndex;     ///< SRV index for SSGI ambient occlusion mask (0xFFFFFFFF = disabled).
+    uint     ssgiEnabled;        ///< 1 = SSGI active, 0 = disabled.
+
+    float    _framePad2[4];      ///< Padding to 512 bytes.
 };
 
 /// Single point light for the deferred lighting pass (64 bytes = four float4s).
@@ -1025,6 +1033,30 @@ float4 main(FSInput input) : SV_Target {
 
         // ── TEST 4: Specular occlusion ENABLED ──
         float specOcc = saturate(pow(NdotV + ao, exp2(-16.0f * roughness - 1.0f)) - 1.0f + ao);
+
+        // ── SSGI compositing ──────────────────────────────────────────
+        // @source UE5 IndirectLightRendering.cpp:1454-1457
+        // When SSGI is active, add screen-space indirect diffuse bounce to
+        // the SH-based IBL diffuse. The SSGI output already includes the
+        // bouncing surface's albedo and lighting, so we apply the RECEIVING
+        // surface's kD (energy conservation) but NOT albedo again.
+        // SSGI AO modulates the existing AO — use min to combine.
+        [branch]
+        if (ssgiEnabled != 0 && ssgiSrvIndex != 0xFFFFFFFF) {
+#ifdef UZ_BINDLESS
+            Texture2D<float4> ssgiTex   = ResourceDescriptorHeap[ssgiSrvIndex];
+            float3 ssgiIndirect = ssgiTex.SampleLevel(linearSampler, input.texcoord, 0).rgb;
+
+            // Add SSGI indirect to SH-based diffuse IBL
+            diffuseIBL += ssgiIndirect * kD;
+
+            if (ssgiAOSrvIndex != 0xFFFFFFFF) {
+                Texture2D<float> ssgiAOTex = ResourceDescriptorHeap[ssgiAOSrvIndex];
+                float ssgiAO = ssgiAOTex.SampleLevel(linearSampler, input.texcoord, 0);
+                ao = min(ao, ssgiAO);
+            }
+#endif
+        }
 
         float3 skyLightTint = float3(skyLightColorR, skyLightColorG, skyLightColorB);
         float3 diffuseAO = (gtaoSrvIndex != 0xFFFFFFFF) ? AOMultiBounce(ao, albedo) : float3(ao, ao, ao);

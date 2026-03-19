@@ -161,7 +161,13 @@ struct PerFrameParams {
     /// 0 at 100%, negative below native resolution, positive for supersampling.
     float    mipBias = 0.0f;
 
-    float    _pad2[7]            = {};                ///< Pad scalar section to 512 bytes.
+    // ── SSGI (Screen-Space Global Illumination) ────────────────────────
+    /// @source UE5 IndirectLightRendering.cpp:1454 — DiffuseIndirect composite
+    uint32_t ssgiSrvIndex   = UINT32_MAX;             ///< SRV index for upsampled SSGI indirect diffuse (UINT32_MAX = disabled).
+    uint32_t ssgiAOSrvIndex = UINT32_MAX;             ///< SRV index for SSGI ambient occlusion mask (UINT32_MAX = disabled).
+    uint32_t ssgiEnabled    = 0;                      ///< 1 = SSGI active, 0 = disabled.
+
+    float    _pad2[4]            = {};                ///< Pad scalar section to 512 bytes.
 
     // ── Resource handles (NOT copied to CB) ──────────────────────────────
     // These are bound by ShaderParameterBinder at their HLSL register slots.
