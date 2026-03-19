@@ -123,6 +123,60 @@ public:
     /// Returns the G-Buffer pipeline using the device's default bindless mode.
     [[nodiscard]] RHIPipelineHandle GetGBuffer();
 
+    /// Returns the G-Buffer Masked pipeline (mesh_vs + gbuffer_ps, 4 RT + depth, no cull).
+    ///
+    /// Identical to the standard GBuffer pipeline except:
+    /// - Rasterizer cull mode is None (two-sided for masked materials).
+    /// - The pixel shader performs alpha test via `if (opacity < threshold) discard;`
+    ///   controlled by `blendMode == 1` in the per-object CB.
+    ///
+    /// @source UE5 BasePassRendering.cpp — FBasePassMeshProcessor uses CullMode::None for two-sided masked
+    ///
+    /// # Arguments
+    /// * `bindless` — If true, omits vertex input layout (SM6.6 path).
+    ///
+    /// # Returns
+    /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
+    [[nodiscard]] RHIPipelineHandle GetGBufferMasked(bool bindless);
+
+    /// Returns the G-Buffer Masked pipeline using the device's default bindless mode.
+    [[nodiscard]] RHIPipelineHandle GetGBufferMasked();
+
+    /// Returns the translucent forward pipeline (mesh_vs + mesh_ps, 1 HDR RT, depth read-only).
+    ///
+    /// Uses SrcAlpha/InvSrcAlpha blending for Porter-Duff alpha compositing.
+    /// Depth is read but NOT written (translucent objects do not occlude).
+    /// Must be drawn after the deferred lighting pass, sorted back-to-front.
+    ///
+    /// @source UE5 TranslucentRendering.cpp — FTranslucencyPassMeshProcessor
+    ///
+    /// # Arguments
+    /// * `bindless` — If true, omits vertex input layout (SM6.6 path).
+    ///
+    /// # Returns
+    /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
+    [[nodiscard]] RHIPipelineHandle GetTranslucent(bool bindless);
+
+    /// Returns the translucent pipeline using the device's default bindless mode.
+    [[nodiscard]] RHIPipelineHandle GetTranslucent();
+
+    /// Returns the additive forward pipeline (mesh_vs + mesh_ps, 1 HDR RT, depth read-only).
+    ///
+    /// Uses One/One additive blending for emissive/particle effects.
+    /// Depth is read but NOT written. No sorting required.
+    ///
+    /// @source UE5 TranslucentRendering.cpp — FTranslucencyPassMeshProcessor (Additive)
+    ///
+    /// # Arguments
+    /// * `bindless` — If true, omits vertex input layout (SM6.6 path).
+    ///
+    /// # Returns
+    /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
+    [[nodiscard]] RHIPipelineHandle GetAdditive(bool bindless);
+
+    /// Returns the additive pipeline using the device's default bindless mode.
+    [[nodiscard]] RHIPipelineHandle GetAdditive();
+
     /// Returns the deferred lighting pipeline (fullscreen_vs + deferred_lighting_ps, 1 RT).
     ///
     /// Rasterizer: no cull (fullscreen triangle).
@@ -608,6 +662,12 @@ private:
     RHIPipelineHandle m_forwardPBRBindless = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_gbuffer            = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_gbufferBindless    = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_gbufferMasked         = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_gbufferMaskedBindless = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_translucent           = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_translucentBindless   = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_additive              = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_additiveBindless      = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_lighting              = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_gbufferDebug          = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_debugView             = RHIPipelineHandle::Invalid();

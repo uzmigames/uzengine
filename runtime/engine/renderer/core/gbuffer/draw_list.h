@@ -99,6 +99,14 @@ struct DrawCommand {
     uint32_t heightmapSrvIndex = 0;     ///< SRV index for heightmap. 0 = none.
     float    pomSelfShadow     = 0.0f;  ///< Self-shadow strength [0,1].
 
+    // ── Blend Mode ─────────────────────────────────────────────────────────
+    /// @source UE5 EngineTypes.h:256 — EBlendMode enum
+    uint32_t blendMode         = 0;     ///< 0=Opaque, 1=Masked, 2=Translucent, 3=Additive.
+    /// @source UE5 Material.h:1891 — OpacityMaskClipValue default 0.3333
+    float    alphaClipThreshold = 0.3333f; ///< Alpha test discard threshold for Masked mode.
+    uint32_t twoSided          = 0;     ///< 0 = back-face cull, 1 = no cull (two-sided rendering).
+    uint32_t opacitySrvIndex   = 0;     ///< SRV index for opacity/alpha mask texture (0 = none, use opacity scalar).
+
     // ── Material Graph Support ────────────────────────────────────────────
 
     /// If valid, this draw command uses a material-graph-compiled PSO instead

@@ -76,6 +76,12 @@ void PipelineLibrary::Shutdown() {
     destroyPipeline(m_forwardPBRBindless);
     destroyPipeline(m_gbuffer);
     destroyPipeline(m_gbufferBindless);
+    destroyPipeline(m_gbufferMasked);
+    destroyPipeline(m_gbufferMaskedBindless);
+    destroyPipeline(m_translucent);
+    destroyPipeline(m_translucentBindless);
+    destroyPipeline(m_additive);
+    destroyPipeline(m_additiveBindless);
     destroyPipeline(m_lighting);
     destroyPipeline(m_gbufferDebug);
     destroyPipeline(m_debugView);
@@ -310,6 +316,9 @@ uint32_t PipelineLibrary::WarmupAll() {
 
     warmup(GetForwardPBR(bindless), "ForwardPBR");
     warmup(GetGBuffer(bindless), "GBuffer");
+    warmup(GetGBufferMasked(bindless), "GBufferMasked");
+    warmup(GetTranslucent(bindless), "Translucent");
+    warmup(GetAdditive(bindless), "Additive");
     warmup(GetLighting(), "Lighting");
     warmup(GetGBufferDebug(), "GBufferDebug");
     warmup(GetDebugView(), "DebugView");
@@ -336,6 +345,9 @@ uint32_t PipelineLibrary::WarmupAll() {
     if (bindless) {
         warmup(GetForwardPBR(false), "ForwardPBR_SM5");
         warmup(GetGBuffer(false), "GBuffer_SM5");
+        warmup(GetGBufferMasked(false), "GBufferMasked_SM5");
+        warmup(GetTranslucent(false), "Translucent_SM5");
+        warmup(GetAdditive(false), "Additive_SM5");
         warmup(GetShadowDepth(false), "ShadowDepth_SM5");
         warmup(GetDepthPrepass(false), "DepthPrepass_SM5");
     }

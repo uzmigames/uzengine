@@ -118,6 +118,201 @@ RHIPipelineHandle PipelineLibrary::GetGBuffer(bool bindless) {
     return cached;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// GBuffer Masked Pipeline (alpha test, two-sided)
+// ─────────────────────────────────────────────────────────────────────────────
+
+RHIPipelineHandle PipelineLibrary::GetGBufferMasked() {
+    return GetGBufferMasked(m_device->IsBindless());
+}
+
+RHIPipelineHandle PipelineLibrary::GetGBufferMasked(bool bindless) {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetGBufferMasked called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    auto& cached = bindless ? m_gbufferMaskedBindless : m_gbufferMasked;
+    if (cached.IsValid()) {
+        return cached;
+    }
+
+    if (!EnsureMeshShaders() || !EnsureGBufferPixelShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    // Masked materials use the same GBuffer pixel shader as opaque — the alpha
+    // test is driven by the blendMode field in PerObjectCB (shader reads blendMode
+    // and discards when opacity < alphaClipThreshold). The PSO differs only in
+    // rasterizer state: CullMode::None for two-sided masked foliage/fences.
+    //
+    // Note: [earlydepthstencil] is stripped when the compiler detects `discard`
+    // in the shader, so depth is correctly written only for surviving fragments.
+    // @source UE5 BasePassRendering.cpp — FBasePassMeshProcessor selects CullMode::None for masked+two-sided
+    RHIGraphicsPipelineDesc desc{};
+    desc.vertexShader  = m_meshVS;
+    desc.pixelShader   = m_gbufferPS;
+    desc.topology      = RHIPrimitiveTopology::TriangleList;
+    desc.rasterizer.cullMode              = RHICullMode::None; // Two-sided for masked materials
+    desc.rasterizer.frontCounterClockwise = false;
+    desc.depthStencil.depthEnable         = true;
+    desc.depthStencil.depthWrite          = true;
+    desc.renderTargetFormats[0]           = RHIFormat::RGBA8Unorm;    // albedo+AO
+    desc.renderTargetFormats[1]           = RHIFormat::RGBA8Unorm;    // octNormal+metallic+roughness
+    desc.renderTargetFormats[2]           = RHIFormat::RGBA32Float;   // world-space position
+    desc.renderTargetFormats[3]           = RHIFormat::RGBA16Float;   // HDR emissive
+    desc.renderTargetCount                = 4;
+    desc.depthStencilFormat               = RHIFormat::D32Float;
+    desc.debugName                        = bindless ? "GBufferMasked_Bindless" : "GBufferMasked";
+
+    if (!bindless) {
+        const auto layout = VertexLayout::Standard();
+        desc.inputElements     = layout.elements;
+        desc.inputElementCount = layout.count;
+        desc.vertexStride      = layout.stride;
+    }
+
+    cached = CreateCachedPipeline(desc);
+    if (!cached.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create GBufferMasked pipeline (bindless={})", bindless);
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created GBufferMasked pipeline (bindless={})", bindless);
+    }
+
+    return cached;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Translucent Forward Pipeline (SrcAlpha/InvSrcAlpha, depth read no write)
+// ─────────────────────────────────────────────────────────────────────────────
+
+RHIPipelineHandle PipelineLibrary::GetTranslucent() {
+    return GetTranslucent(m_device->IsBindless());
+}
+
+RHIPipelineHandle PipelineLibrary::GetTranslucent(bool bindless) {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetTranslucent called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    auto& cached = bindless ? m_translucentBindless : m_translucent;
+    if (cached.IsValid()) {
+        return cached;
+    }
+
+    if (!EnsureMeshShaders() || !EnsureForwardPixelShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    // Translucent objects use the forward PBR pixel shader (mesh_ps) since they
+    // cannot write to the GBuffer (deferred shading assumes opaque surfaces).
+    // They are rendered after the deferred lighting pass into the HDR scene color
+    // target with alpha blending, reading depth but not writing to it.
+    //
+    // @source UE5 TranslucentRendering.cpp:418 — SrcAlpha/InvSrcAlpha blend, no depth write
+    RHIGraphicsPipelineDesc desc{};
+    desc.vertexShader  = m_meshVS;
+    desc.pixelShader   = m_meshPS;
+    desc.topology      = RHIPrimitiveTopology::TriangleList;
+    desc.rasterizer.cullMode              = RHICullMode::None; // Translucent is typically two-sided
+    desc.rasterizer.frontCounterClockwise = false;
+    desc.depthStencil.depthEnable         = true;
+    desc.depthStencil.depthWrite          = false;  // Read depth, do NOT write
+    desc.renderTargetBlend[0].blendEnable = true;
+    desc.renderTargetBlend[0].srcColor    = RHIBlendFactor::SrcAlpha;
+    desc.renderTargetBlend[0].dstColor    = RHIBlendFactor::InvSrcAlpha;
+    desc.renderTargetBlend[0].colorOp     = RHIBlendOp::Add;
+    desc.renderTargetBlend[0].srcAlpha    = RHIBlendFactor::One;
+    desc.renderTargetBlend[0].dstAlpha    = RHIBlendFactor::InvSrcAlpha;
+    desc.renderTargetBlend[0].alphaOp     = RHIBlendOp::Add;
+    desc.renderTargetFormats[0]           = RHIFormat::RGBA16Float;  // HDR scene color
+    desc.renderTargetCount                = 1;
+    desc.depthStencilFormat               = RHIFormat::D32Float;
+    desc.debugName                        = bindless ? "Translucent_Bindless" : "Translucent";
+
+    if (!bindless) {
+        const auto layout = VertexLayout::Standard();
+        desc.inputElements     = layout.elements;
+        desc.inputElementCount = layout.count;
+        desc.vertexStride      = layout.stride;
+    }
+
+    cached = CreateCachedPipeline(desc);
+    if (!cached.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create Translucent pipeline (bindless={})", bindless);
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created Translucent pipeline (bindless={})", bindless);
+    }
+
+    return cached;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Additive Forward Pipeline (One/One, depth read no write)
+// ─────────────────────────────────────────────────────────────────────────────
+
+RHIPipelineHandle PipelineLibrary::GetAdditive() {
+    return GetAdditive(m_device->IsBindless());
+}
+
+RHIPipelineHandle PipelineLibrary::GetAdditive(bool bindless) {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetAdditive called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    auto& cached = bindless ? m_additiveBindless : m_additive;
+    if (cached.IsValid()) {
+        return cached;
+    }
+
+    if (!EnsureMeshShaders() || !EnsureForwardPixelShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    // Additive blending adds the fragment color to the existing scene color.
+    // Used for particle effects, laser beams, glow effects, etc.
+    // No sorting required since the blend operation is commutative.
+    //
+    // @source UE5 TranslucentRendering.cpp:425 — One/One blend for BM_Additive
+    RHIGraphicsPipelineDesc desc{};
+    desc.vertexShader  = m_meshVS;
+    desc.pixelShader   = m_meshPS;
+    desc.topology      = RHIPrimitiveTopology::TriangleList;
+    desc.rasterizer.cullMode              = RHICullMode::None; // Additive typically two-sided
+    desc.rasterizer.frontCounterClockwise = false;
+    desc.depthStencil.depthEnable         = true;
+    desc.depthStencil.depthWrite          = false;  // Read depth, do NOT write
+    desc.renderTargetBlend[0].blendEnable = true;
+    desc.renderTargetBlend[0].srcColor    = RHIBlendFactor::One;
+    desc.renderTargetBlend[0].dstColor    = RHIBlendFactor::One;
+    desc.renderTargetBlend[0].colorOp     = RHIBlendOp::Add;
+    desc.renderTargetBlend[0].srcAlpha    = RHIBlendFactor::One;
+    desc.renderTargetBlend[0].dstAlpha    = RHIBlendFactor::One;
+    desc.renderTargetBlend[0].alphaOp     = RHIBlendOp::Add;
+    desc.renderTargetFormats[0]           = RHIFormat::RGBA16Float;  // HDR scene color
+    desc.renderTargetCount                = 1;
+    desc.depthStencilFormat               = RHIFormat::D32Float;
+    desc.debugName                        = bindless ? "Additive_Bindless" : "Additive";
+
+    if (!bindless) {
+        const auto layout = VertexLayout::Standard();
+        desc.inputElements     = layout.elements;
+        desc.inputElementCount = layout.count;
+        desc.vertexStride      = layout.stride;
+    }
+
+    cached = CreateCachedPipeline(desc);
+    if (!cached.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create Additive pipeline (bindless={})", bindless);
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created Additive pipeline (bindless={})", bindless);
+    }
+
+    return cached;
+}
+
 RHIPipelineHandle PipelineLibrary::GetLighting() {
     if (!m_initialized) {
         UZ_LOG(Renderer, Error, "PipelineLibrary::GetLighting called before Init()");

@@ -159,7 +159,8 @@ static_assert(sizeof(PerFrameCB) == 512, "PerFrameCB must be 512 bytes (D3D12 CB
 ///     uint     metallicIndex;
 ///     uint     aoIndex;
 ///     uint     emissiveIndex;
-///     float2   _pad;
+///     float    alphaClipThreshold;
+///     uint     twoSided;
 ///     float4x4 model;
 ///     float4x4 normalMatrix;
 ///     float3   emissiveColor;
@@ -172,6 +173,8 @@ static_assert(sizeof(PerFrameCB) == 512, "PerFrameCB must be 512 bytes (D3D12 CB
 ///     float2   uvOffset;
 ///     float    aoIntensity;
 ///     float    opacity;
+///     // ... POM fields ...
+///     uint     blendMode;
 /// };
 /// ```
 ///
@@ -189,7 +192,9 @@ struct PerObjectCB {
     uint32_t metallicIndex;    ///< SRV heap index for metallic map (0 = 0.0 default)
     uint32_t aoIndex;          ///< SRV heap index for AO map (0 = 1.0 default)
     uint32_t emissiveIndex;    ///< SRV heap index for emissive map (0 = no emissive texture, use color only)
-    float    _pad[2] = {};     ///< Align to 16-byte boundary before matrices
+    /// @source UE5 Material.h:1891 — OpacityMaskClipValue default 0.3333
+    float    alphaClipThreshold = 0.3333f; ///< Alpha test threshold for Masked blend mode. Pixels with opacity below this are discarded.
+    uint32_t twoSided = 0;    ///< 0 = back-face cull (default), 1 = disable culling (two-sided rendering).
     // ── Matrices after scalars (offset 32) ──
     Mat4     model;            ///< Object-to-world transform
     Mat4     normalMatrix;     ///< transpose(inverse(model)) — for lighting
@@ -243,7 +248,14 @@ struct PerObjectCB {
     float    pomFadeStart      = 1000.0f; ///< Distance (cm) where POM begins fading.
     float    pomFadeEnd        = 2000.0f; ///< Distance (cm) where POM is fully disabled.
     float    pomSelfShadow     = 0.0f;  ///< Self-shadow strength. 0 = disabled, 1 = full.
-    float    _pad2             = 0.0f;  ///< Padding to 256-byte alignment
+
+    /// Blend mode for this material. Controls how the primitive is rendered:
+    /// 0 = Opaque (default, standard deferred GBuffer path),
+    /// 1 = Masked (alpha test with discard, still deferred),
+    /// 2 = Translucent (alpha blend, forward pass, sorted back-to-front),
+    /// 3 = Additive (additive blend, forward pass, no sorting needed).
+    /// @source UE5 EngineTypes.h:256 — EBlendMode enum (BM_Opaque=0, BM_Masked=1, BM_Translucent=2, BM_Additive=3)
+    uint32_t blendMode = 0;
 };
 
 static_assert(sizeof(PerObjectCB) == 256, "PerObjectCB must be 256 bytes (D3D12 CB alignment)");
