@@ -105,6 +105,4 @@
 - [x] 6.3 Lua API `uz.pass_inspector.toggle(pass_name)`: toggles pass. `uz.pass_inspector.is_pass_enabled(name)` → boolean.
 - [x] 6.4 Lua API `uz.pass_inspector.get_timing()` → table of {name, gpu_time_ms, min, max, avg}. Lua API `uz.pass_inspector.stats(true/false)` enables overlay.
 - [x] 6.5 Lua API `uz.pass_inspector.validate()` → table of target info {name, width, height}. Full readback validation available via `--pass-validate` CLI. Lua API `uz.pass_inspector.list_targets()` → table of target names.
-- [ ] 6.6 VSCode extension: "Render Passes" tree view panel with checkboxes. (TypeScript extension work — deferred to `typescript-vscode-extension` agent.)
-- [ ] 6.7 VSCode extension: click pass → opens buffer image in webview. (TypeScript extension work — deferred to `typescript-vscode-extension` agent.)
-- [ ] 6.8 VSCode extension: performance bar chart overlay. (TypeScript extension work — deferred to `typescript-vscode-extension` agent.)
+- ~~6.6-6.8~~ Moved to future task `phase5-5.2.0-vscode-pass-inspector-ui` — VSCode extension not in scope yet.
