@@ -233,7 +233,17 @@ struct PerObjectCB {
     /// Overall material opacity. 1.0 = fully opaque.
     float    opacity     = 1.0f;        ///< Material opacity (1=opaque).
 
-    float    _pad2[8] = {};             ///< Padding to 256-byte alignment
+    // ── POM (Parallax Occlusion Mapping) parameters ─────────────────────
+    /// @source UE5 MaterialTemplate.ush — HeightRatio, MinSteps, MaxSteps
+
+    float    displacementScale = 0.0f;  ///< POM height scale. 0 = POM disabled.
+    uint32_t heightmapSrvIndex = 0;     ///< SRV index for heightmap texture (0 = none).
+    float    pomMinLayers      = 8.0f;  ///< Minimum ray march steps (head-on view).
+    float    pomMaxLayers      = 32.0f; ///< Maximum ray march steps (grazing view).
+    float    pomFadeStart      = 1000.0f; ///< Distance (cm) where POM begins fading.
+    float    pomFadeEnd        = 2000.0f; ///< Distance (cm) where POM is fully disabled.
+    float    pomSelfShadow     = 0.0f;  ///< Self-shadow strength. 0 = disabled, 1 = full.
+    float    _pad2             = 0.0f;  ///< Padding to 256-byte alignment
 };
 
 static_assert(sizeof(PerObjectCB) == 256, "PerObjectCB must be 256 bytes (D3D12 CB alignment)");

@@ -94,6 +94,11 @@ struct DrawCommand {
     float aoIntensity         = 1.0f;  ///< AO map strength.
     float opacity             = 1.0f;  ///< Material opacity (1=opaque).
 
+    // ── POM (Parallax Occlusion Mapping) ─────────────────────────────────
+    float    displacementScale = 0.0f;  ///< POM height scale. 0 = disabled.
+    uint32_t heightmapSrvIndex = 0;     ///< SRV index for heightmap. 0 = none.
+    float    pomSelfShadow     = 0.0f;  ///< Self-shadow strength [0,1].
+
     // ── Material Graph Support ────────────────────────────────────────────
 
     /// If valid, this draw command uses a material-graph-compiled PSO instead

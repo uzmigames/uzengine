@@ -276,6 +276,9 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
                         perObject.uvOffsetY           = drawCmd.uvOffsetY;
                         perObject.aoIntensity         = drawCmd.aoIntensity;
                         perObject.opacity             = drawCmd.opacity;
+                        perObject.displacementScale   = drawCmd.displacementScale;
+                        perObject.heightmapSrvIndex   = drawCmd.heightmapSrvIndex;
+                        perObject.pomSelfShadow       = drawCmd.pomSelfShadow;
 
                         CBAllocation objAlloc = desc.cbAllocator->Allocate(sizeof(PerObjectCB));
                         if (objAlloc.cpuPtr == nullptr) {

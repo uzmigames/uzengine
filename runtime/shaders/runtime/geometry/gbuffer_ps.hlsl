@@ -22,6 +22,10 @@
 
 #include "../include/octahedral.hlsli"
 
+#ifdef UZ_POM
+#include "../include/pom.hlsli"
+#endif
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Input / Output Structures
 // ─────────────────────────────────────────────────────────────────────────────
@@ -99,6 +103,19 @@ cbuffer PerObjectCB : register(b2) {
     float2   uvOffset;           ///< Texture offset (0,0 = no offset).
     float    aoIntensity;        ///< AO map strength (1 = full AO effect).
     float    matOpacity;         ///< Material opacity (1 = opaque).
+#ifdef UZ_POM
+    // ── POM parameters (offset 200) ──
+    /// @source UE5 MaterialExpressionBumpOffset.h:28 — HeightRatio = 0.05f
+    /// @source UE5 ParallaxOcclusionMapping.uasset — MinSteps, MaxSteps, HeightScale
+    uint     heightmapIndex;     ///< Heightmap texture descriptor index (0 = no POM).
+    float    pomScale;           ///< Displacement scale in UV space. Default 0.05. Range [0.01, 0.1].
+    int      pomMinLayers;       ///< Minimum ray march steps (head-on view). Default 8.
+    int      pomMaxLayers;       ///< Maximum ray march steps (grazing view). Default 32.
+    float    pomFadeStart;       ///< Distance (cm) where POM begins fading. Default 1000.
+    float    pomFadeEnd;         ///< Distance (cm) where POM is fully disabled. Default 2000.
+    float    pomSelfShadow;      ///< Self-shadow strength (0 = off, 1 = full). Default 0.
+    float    _pomPad;            ///< Padding to 16-byte alignment.
+#endif
 };
 
 #ifdef UZ_MATERIAL_GRAPH
@@ -125,6 +142,9 @@ Texture2D<float4> roughnessTexture : register(t2);
 Texture2D<float4> metallicTexture  : register(t3);
 Texture2D<float4> aoTexture        : register(t4);
 Texture2D<float4> emissiveTexture  : register(t5);
+#ifdef UZ_POM
+Texture2D<float>  heightmapTexture : register(t6);
+#endif
 #endif
 SamplerState linearSampler : register(s0);
 
@@ -199,6 +219,107 @@ GBufferOutput main(PSInput input) {
     // ── UV transform (apply material tiling and offset) ──
     // @source UE5 MaterialTemplate.ush — TexCoord * TextureScale + TextureOffset
     float2 uv = input.texcoord * uvScale + uvOffset;
+
+#ifdef UZ_POM
+    // ── Parallax Occlusion Mapping ──────────────────────────────────
+    // Offsets UVs based on heightmap ray marching before all material
+    // texture sampling, so that albedo/normal/roughness/etc. read from
+    // the correct displaced location.
+    //
+    // @source UE5 ParallaxOcclusionMapping.uasset — UV offset applied
+    //         before all material texture reads in CalcPixelMaterialInputs.
+    // @deviations NONE
+
+    // Save the original flat UV for distance fading.
+    float2 originalUV = uv;
+
+    // POM self-shadow factor (1 = fully lit, applied during emissive/shadow).
+    float pomShadowFactor = 1.0f;
+
+    // Build TBN matrix for tangent-space view/light direction computation.
+    float3 pomN = normalize(input.normalWS);
+    float3 pomT = normalize(input.tangentWS.xyz);
+    float3 pomB = cross(pomN, pomT) * input.tangentWS.w;
+    float3x3 TBN_pom = float3x3(pomT, pomB, pomN);
+
+    // Compute tangent-space view direction.
+    // CameraVector = normalize(cameraPos - surfacePos), pointing from surface to camera.
+    // @source UE5 MaterialExpressions.cpp:5830 — TransformVector(World, Tangent, CameraVector)
+    float3 viewDirWS = normalize(cameraPos.xyz - input.positionWS);
+    float3 viewDirTS = normalize(mul(TBN_pom, viewDirWS));
+
+    // Distance from camera to surface for LOD fading.
+    float camDist = length(cameraPos.xyz - input.positionWS);
+
+    // Only apply POM if we have a heightmap bound.
+#ifdef UZ_BINDLESS
+    if (heightmapIndex > 0)
+    {
+        Texture2D<float> pomHeightmap = ResourceDescriptorHeap[heightmapIndex];
+
+        // Ray march to find displaced UV.
+        float2 pomUV = ParallaxOcclusionMapping(
+            pomHeightmap, linearSampler, uv, viewDirTS,
+            pomScale, pomMinLayers, pomMaxLayers);
+
+        // Blend with flat UV based on camera distance.
+        uv = POMDistanceFade(pomUV, originalUV, camDist, pomFadeStart, pomFadeEnd);
+
+        // Self-shadow computation (if enabled).
+        if (pomSelfShadow > 0.0f)
+        {
+            // Transform light direction to tangent space.
+            float3 lightDirTS = normalize(mul(TBN_pom, normalize(-lightDir.xyz)));
+
+            // Compute current depth at the displaced UV.
+            float currentDepth = POMComputeCurrentDepth(pomHeightmap, linearSampler, uv);
+
+            // Trace shadow ray through heightmap.
+            float rawShadow = POMSelfShadow(
+                pomHeightmap, linearSampler, uv, lightDirTS,
+                currentDepth, pomScale);
+
+            // Blend shadow with distance fade: no self-shadow at fadeEnd.
+            float fadeFactor = 1.0f - saturate((camDist - pomFadeStart) / max(pomFadeEnd - pomFadeStart, 0.001f));
+            pomShadowFactor = lerp(1.0f, rawShadow, pomSelfShadow * fadeFactor);
+        }
+    }
+#else
+    // SM5 path: heightmapTexture is always bound (real map or fallback black).
+    // When the heightmap is all-black (height=0), the ray march returns the
+    // original UV because the ray immediately goes below height 0 at the first step.
+    // However, to avoid wasted work, we check pomScale > 0.
+    if (pomScale > 0.0f)
+    {
+        // Ray march to find displaced UV.
+        float2 pomUV = ParallaxOcclusionMapping(
+            heightmapTexture, linearSampler, uv, viewDirTS,
+            pomScale, pomMinLayers, pomMaxLayers);
+
+        // Blend with flat UV based on camera distance.
+        uv = POMDistanceFade(pomUV, originalUV, camDist, pomFadeStart, pomFadeEnd);
+
+        // Self-shadow computation (if enabled).
+        if (pomSelfShadow > 0.0f)
+        {
+            // Transform light direction to tangent space.
+            float3 lightDirTS = normalize(mul(TBN_pom, normalize(-lightDir.xyz)));
+
+            // Compute current depth at the displaced UV.
+            float currentDepth = POMComputeCurrentDepth(heightmapTexture, linearSampler, uv);
+
+            // Trace shadow ray through heightmap.
+            float rawShadow = POMSelfShadow(
+                heightmapTexture, linearSampler, uv, lightDirTS,
+                currentDepth, pomScale);
+
+            // Blend shadow with distance fade: no self-shadow at fadeEnd.
+            float fadeFactor = 1.0f - saturate((camDist - pomFadeStart) / max(pomFadeEnd - pomFadeStart, 0.001f));
+            pomShadowFactor = lerp(1.0f, rawShadow, pomSelfShadow * fadeFactor);
+        }
+    }
+#endif // UZ_BINDLESS
+#endif // UZ_POM
 
     // ── Sample PBR texture maps (index 0 = use default value) ──
     // SampleBias applies the global mipBias to compensate for screen percentage.
@@ -288,6 +409,14 @@ GBufferOutput main(PSInput input) {
     // @source UE5 Material defaults — AO blended with strength
     // ao_final = lerp(1.0, ao_sampled, aoIntensity)
     ao = lerp(1.0f, ao, aoIntensity);
+
+#ifdef UZ_POM
+    // ── Apply POM self-shadow to AO ──
+    // In a deferred pipeline, POM self-shadow is stored in the AO channel
+    // so it modulates both direct and indirect lighting during the lighting pass.
+    // pomShadowFactor is 1.0 when no heightmap is bound or self-shadow is off.
+    ao *= pomShadowFactor;
+#endif
 
     // ── Emissive: texture * color * intensity ──
     // @source UE5 BasePassPixelShader.usf:1480 — Emissive = GetMaterialEmissive(PixelMaterialInputs)
