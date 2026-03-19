@@ -414,6 +414,9 @@ void SceneRenderer::SetUpscalerType(UpscalerType type) {
 
     m_upscalerType = type;
 
+    // Sync CVar so ApplyCVars() doesn't overwrite this value next frame
+    CVarRegistry::Get().Set("r.AntiAliasingMethod", static_cast<float>(type));
+
     // Create and initialize the new upscaler
     m_upscaler = CreateTemporalUpscaler(type);
     if (m_upscaler && m_device) {
@@ -437,6 +440,9 @@ void SceneRenderer::SetScreenPercentage(float pct) {
     if (std::abs(pct - m_screenPercentage) < 0.01f) return;
 
     m_screenPercentage = pct;
+
+    // Sync CVar so ApplyCVars() doesn't overwrite this value next frame
+    CVarRegistry::Get().Set("r.ScreenPercentage", pct);
 
     UZ_LOG(Renderer, Info, "SceneRenderer: screen percentage set to {:.1f}%", pct);
 
