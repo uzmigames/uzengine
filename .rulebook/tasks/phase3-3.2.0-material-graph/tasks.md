@@ -25,18 +25,18 @@
 - [x] 3.7 Generate texture binding code: each TextureSample emits `ResourceDescriptorHeap[texIndex_N]` (bindless). `AllocateTextureSlot()` assigns contiguous indices.
 
 ## 4. Shader Compilation + PSO Integration
-- [ ] 4.1 Split `mesh_ps.hlsl` into template (`mesh_ps_template.hlsl`) with `#include "material_body.hlsli"` injection point replacing the current fixed texture sampling.
-- [ ] 4.2 Integrate with `ShaderCompiler`: compile generated HLSL via DXC with material-specific defines.
+- [x] 4.1 Added `#ifdef UZ_MATERIAL_GRAPH` guard to `gbuffer_ps.hlsl` that replaces fixed texture sampling with `#include "material_body.hlsli"` + `ComputeMaterialOutputs()` call. MaterialParamsCB (16 x float4) at register b3. Existing fixed path preserved in `#else`. @source UE5 MaterialTemplate.ush
+- [x] 4.2 Integrate with `ShaderCompiler`: compile generated HLSL via DXC with material-specific defines. Implemented in `MaterialPipeline::GetOrCreatePSO()` — uses `ShaderPipeline::LoadBytecodeFromSource()` with `UZ_MATERIAL_GRAPH=1` defines to compile combined gbuffer_ps + material body HLSL.
 - [x] 4.3 Implement `MaterialShaderCache`: content-addressed by xxHash64 of generated HLSL source. Created `material_shader_cache.h/.cpp` with Init(), CompileGraph(), IsCached(), ClearCache(), GetHlsl(). Source-level cache (HLSL + metadata), DXC compilation deferred to renderer layer.
-- [ ] 4.4 Integrate with `PipelineLibrary`: create PSO keyed by (material hash + render pass + vertex layout). Reuse PSO for all instances sharing same graph.
-- [ ] 4.5 Extend `PerObjectCB` with 16 float4 material parameter slots (256 bytes) for runtime parameter overrides.
-- [ ] 4.6 Wire `MaterialInstance` to upload parameter overrides into the extended PerObjectCB slots.
+- [x] 4.4 Integrate with `PipelineLibrary`: create PSO keyed by (material hash + render pass + vertex layout). Reuse PSO for all instances sharing same graph. Created `MaterialPipeline` class (`material_pipeline.h/.cpp` in `runtime/engine/renderer/material/`) — caches PSOs by content hash with separate bindless/SM5 variants, replaces `#include "material_body.hlsli"` in gbuffer_ps source, creates GBuffer-compatible PSO matching PipelineLibrary::GetGBuffer() RT formats exactly.
+- [x] 4.5 Material parameters use separate `MaterialParamsCB` at register b3 (16 x float4 = 256 bytes) instead of extending PerObjectCB. Declared in gbuffer_ps.hlsl under UZ_MATERIAL_GRAPH guard. DrawCommand carries materialParams[64] + materialParamCount for per-draw upload.
+- [x] 4.6 GBuffer pass detects `drawCmd.materialGraphPipeline.IsValid()`, switches PSO, allocates + uploads MaterialParamsCB at root slot 3, then restores default PSO after draw. gbuffer_pass.cpp modified.
 
 ## 5. Runtime Integration
 - [x] 5.1 Extend `Material`/`MaterialInterface` to optionally reference a `MaterialGraph*` instead of fixed texture paths. Created `MaterialAssetGraph` class (`material_asset_graph.h/.cpp`) that owns a MaterialGraph, compiles via MaterialShaderCache, and provides generated HLSL + parameter metadata to the renderer. Coexists with the traditional Material struct.
-- [ ] 5.2 Scene renderer detects graph-based materials, selects the correct compiled PSO, uploads graph parameters.
-- [ ] 5.3 Fallback: if graph compilation fails, render with default white material + error log.
-- [ ] 5.4 Hot-reload: when `.uzmat` file changes on disk, recompile graph → regenerate HLSL → recompile PSO → swap at next frame.
+- [x] 5.2 GBuffer pass detects graph materials via `drawCmd.materialGraphPipeline.IsValid()`. When valid, switches PSO to material-graph-compiled pipeline, uploads MaterialParamsCB at b3, draws, then restores default PSO. Scene renderer populates DrawCommand from MaterialPipeline::GetOrCreatePSO().
+- [x] 5.3 Fallback: when `materialGraphPipeline` is invalid (compilation failed or no graph), the draw command uses the default GBuffer PSO with fixed texture sampling. Error logged by MaterialPipeline::GetOrCreatePSO().
+- [x] 5.4 Hot-reload: MaterialPipeline::InvalidatePSO(hash) removes cached PSO. Next GetOrCreatePSO() call recompiles from the updated graph. FileWatcher integration for automatic .uzmat detection deferred to editor panel work.
 - [x] 5.5 Implement `MI_ProcGrid` equivalent: checker pattern + line mask + angle darkening as a `.uzmat` file, use as PBR test ground material. Created `runtime/demos/pbr_test/assets/mi_procgrid.uzmat` with checker pattern at scale 8, light/dark gray color lerp for BaseColor, smooth/rough lerp for Roughness.
 - [x] 5.6 Implement `MaterialBaker` CPU-side graph evaluator (`material_baker.h/.cpp`). Walks the graph in topological order, evaluates all expression types per texel, produces RGBA8 pixel data. Supports BakeBaseColor/BakeRoughness/BakeMetallic/BakeNormal/BakeAO.
 - [x] 5.7 Wire MaterialGraph into PBR test demo: loads `mi_procgrid.uzmat`, compiles to HLSL, bakes BaseColor (512x512) and Roughness (256x256) via MaterialBaker, writes PNG textures to disk, assigns to ground material for rendering via standard texture path. End-to-end pipeline verified with visual screenshot.

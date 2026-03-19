@@ -298,7 +298,31 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
                         }
                     }
 
+                    // ── Material Graph PSO switch ─────────────────────────
+                    // If this draw command has a material-graph-compiled PSO,
+                    // switch to it and bind material params at b3.
+                    if (drawCmd.materialGraphPipeline.IsValid()) {
+                        cmd->SetPipeline(drawCmd.materialGraphPipeline);
+
+                        // Upload material params CB at b3 (kSlotMaterialParams = 3)
+                        if (drawCmd.materialParamCount > 0) {
+                            const uint32_t paramBytes = drawCmd.materialParamCount * 16; // float4 per slot
+                            auto matAlloc = desc.cbAllocator->Allocate(paramBytes);
+                            if (matAlloc.cpuPtr) {
+                                std::memcpy(matAlloc.cpuPtr, drawCmd.materialParams, paramBytes);
+                                cmd->SetRootCBV(3, matAlloc.bufferHandle, matAlloc.offsetBytes,
+                                                matAlloc.cpuPtr, paramBytes);
+                            }
+                        }
+                    }
+
                     cmd->DrawIndexed(mesh.indexCount);
+
+                    // Restore default GBuffer PSO if we switched for material graph
+                    if (drawCmd.materialGraphPipeline.IsValid()) {
+                        cmd->SetPipeline(desc.pipeline);
+                    }
+
                     ++drawCallCount;
                 }
             }

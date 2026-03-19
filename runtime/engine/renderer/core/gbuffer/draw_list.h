@@ -94,6 +94,20 @@ struct DrawCommand {
     float aoIntensity         = 1.0f;  ///< AO map strength.
     float opacity             = 1.0f;  ///< Material opacity (1=opaque).
 
+    // ── Material Graph Support ────────────────────────────────────────────
+
+    /// If valid, this draw command uses a material-graph-compiled PSO instead
+    /// of the default GBuffer PSO. The pipeline was compiled by MaterialPipeline
+    /// from the material's graph HLSL.
+    RHIPipelineHandle materialGraphPipeline;
+
+    /// Material graph parameter data (16 x float4 = 256 bytes, uploaded to b3).
+    /// Only used when materialGraphPipeline is valid.
+    float materialParams[64] = {};
+
+    /// Number of active material parameter float4 slots (0-16).
+    uint32_t materialParamCount = 0;
+
     /// Primitive mobility for shadow cache filtering.
     ///
     /// Static/Stationary primitives are cached in the static shadow atlas.

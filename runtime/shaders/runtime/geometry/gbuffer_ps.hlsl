@@ -101,6 +101,23 @@ cbuffer PerObjectCB : register(b2) {
     float    matOpacity;         ///< Material opacity (1 = opaque).
 };
 
+#ifdef UZ_MATERIAL_GRAPH
+/// Material graph parameter slots (16 x float4 = 256 bytes).
+/// Populated by MaterialInstance runtime overrides — each float4 slot
+/// maps to an exposed parameter in the visual shader graph.
+/// @source UE5 MaterialTemplate.ush — Material.PreshaderBuffer
+/// @constants 16 slots (UE5 uses PreshaderBuffer with variable count)
+/// @deviations Fixed 16-slot count vs UE5 variable-length PreshaderBuffer
+cbuffer MaterialParamsCB : register(b3) {
+    float4 materialParams[16];
+};
+
+/// Generated material graph body — provides ComputeMaterialOutputs().
+/// This file is emitted per-material by HlslMaterialTranslator and placed
+/// alongside the compiled shader variant.
+#include "material_body.hlsli"
+#endif
+
 #ifndef UZ_BINDLESS
 Texture2D<float4> albedoTexture    : register(t0);
 Texture2D<float4> normalTexture    : register(t1);
@@ -122,6 +139,56 @@ SamplerState linearSampler : register(s0);
 /// the raw material data with no lighting computation.
 [earlydepthstencil]
 GBufferOutput main(PSInput input) {
+
+#ifdef UZ_MATERIAL_GRAPH
+    // ── Material Graph Mode ──────────────────────────────────────────
+    // Generated HLSL provides ComputeMaterialOutputs() that evaluates
+    // the full material graph and writes all PBR channels.
+    //
+    // materialParams[] in MaterialParamsCB (b3) provides runtime parameter
+    // overrides set by MaterialInstance. Texture slots are accessed via
+    // ResourceDescriptorHeap[texIndex_N] inside the generated body.
+    //
+    // @source UE5 MaterialTemplate.ush — CalcMaterialParameters / GetMaterialXxx()
+    // @constants defaults: baseColor=(1,1,1), metallic=0, roughness=0.5, ao=1, emissive=(0,0,0), opacity=1
+    // @deviations NONE
+
+    float2 uv       = input.texcoord;
+    float3 worldPos  = input.positionWS;
+    float3 N         = normalize(input.normalWS);
+
+    // Material graph outputs — initialized to physically plausible defaults.
+    // ComputeMaterialOutputs() overwrites only the channels the graph connects.
+    float3 out_baseColor = float3(1.0f, 1.0f, 1.0f);
+    float  out_metallic  = 0.0f;
+    float  out_roughness = 0.5f;
+    float3 out_normal    = N;
+    float3 out_emissive  = float3(0.0f, 0.0f, 0.0f);
+    float  out_ao        = 1.0f;
+    float  out_opacity   = 1.0f;
+
+    // Invoke the generated material graph evaluation function.
+    // The function signature is fixed by HlslMaterialTranslator:
+    //   void ComputeMaterialOutputs(
+    //       float2 uv, float3 worldPos, float3 geometryNormal,
+    //       inout float3 baseColor, inout float metallic, inout float roughness,
+    //       inout float3 normal, inout float3 emissive, inout float ao,
+    //       inout float opacity);
+    ComputeMaterialOutputs(uv, worldPos, N,
+                           out_baseColor, out_metallic, out_roughness,
+                           out_normal, out_emissive, out_ao, out_opacity);
+
+    float3 albedo    = out_baseColor;
+    float  metallic  = out_metallic;
+    float  roughness = out_roughness;
+    float  ao        = out_ao;
+    float3 emissive  = out_emissive;
+    N = out_normal;
+
+#else
+    // ── Fixed Texture Mode (default) ─────────────────────────────────
+    // Traditional PBR texture sampling with per-material multipliers.
+    // Used when no material graph is assigned to the mesh.
 
     // ── Material defaults (when no texture is bound) ──
     float3 albedo    = float3(1.0f, 1.0f, 1.0f);
@@ -248,6 +315,8 @@ GBufferOutput main(PSInput input) {
     // When emissiveIntensity is 0 or emissiveColor is (0,0,0), result is zero.
     // HDR values > 1.0 are expected and will drive the bloom pass.
     emissive *= emissiveColor * emissiveIntensity;
+
+#endif // UZ_MATERIAL_GRAPH
 
     // ── Write G-Buffer (4-RT layout) ──
     GBufferOutput output;
