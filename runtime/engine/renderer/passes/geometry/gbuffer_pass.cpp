@@ -183,12 +183,26 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
                 uint32_t lastBoundMeshId = UINT32_MAX;
 
                 for (const auto& drawCmd : commands) {
+                    // Skip translucent and additive draws — they are rendered in
+                    // a separate forward pass after deferred lighting.
+                    if (drawCmd.blendMode >= 2) {
+                        continue;
+                    }
+
                     if (drawCmd.meshId >= desc.meshCount) {
                         continue; // Guard: meshId out of range.
                     }
                     const GPUMesh& mesh = desc.meshes[drawCmd.meshId];
                     if (!mesh.IsValid()) {
                         continue; // Guard: mesh not yet uploaded.
+                    }
+
+                    // Select PSO based on blend mode: Masked materials use the
+                    // two-sided (no cull) pipeline; alpha test is done in the
+                    // pixel shader via the blendMode CB field.
+                    const bool isMasked = (drawCmd.blendMode == 1) && desc.maskedPipeline.IsValid();
+                    if (isMasked) {
+                        cmd->SetPipeline(desc.maskedPipeline);
                     }
 
                     // Rebind vertex/index buffers only when the mesh changes.
@@ -230,6 +244,9 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
                         perObjParams.uvOffsetY           = drawCmd.uvOffsetY;
                         perObjParams.aoIntensity         = drawCmd.aoIntensity;
                         perObjParams.opacity             = drawCmd.opacity;
+                        perObjParams.alphaClipThreshold   = drawCmd.alphaClipThreshold;
+                        perObjParams.twoSided            = drawCmd.twoSided;
+                        perObjParams.blendMode           = drawCmd.blendMode;
 
                         // Set texture handles with fallbacks for SM5 binding
                         perObjParams.albedoTexture    = drawCmd.albedoTexture.IsValid()    ? drawCmd.albedoTexture    : desc.fallbackWhite;
@@ -279,6 +296,9 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
                         perObject.displacementScale   = drawCmd.displacementScale;
                         perObject.heightmapSrvIndex   = drawCmd.heightmapSrvIndex;
                         perObject.pomSelfShadow       = drawCmd.pomSelfShadow;
+                        perObject.alphaClipThreshold  = drawCmd.alphaClipThreshold;
+                        perObject.twoSided            = drawCmd.twoSided;
+                        perObject.blendMode           = drawCmd.blendMode;
 
                         CBAllocation objAlloc = desc.cbAllocator->Allocate(sizeof(PerObjectCB));
                         if (objAlloc.cpuPtr == nullptr) {
@@ -321,8 +341,8 @@ void AddGBufferPass(rg::RgBuilder& builder, const GBufferPassDesc& desc)
 
                     cmd->DrawIndexed(mesh.indexCount);
 
-                    // Restore default GBuffer PSO if we switched for material graph
-                    if (drawCmd.materialGraphPipeline.IsValid()) {
+                    // Restore default GBuffer PSO if we switched for material graph or masked
+                    if (drawCmd.materialGraphPipeline.IsValid() || isMasked) {
                         cmd->SetPipeline(desc.pipeline);
                     }
 
