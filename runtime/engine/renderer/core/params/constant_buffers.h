@@ -604,8 +604,24 @@ struct HeightFogCB {
     float skyLightColorG = 0.f;           ///< Sky light diffuse color G (from SH L0).
     float skyLightColorB = 0.f;           ///< Sky light diffuse color B (from SH L0).
 
+    // ── Sun transmittance injection (UE5 SkyAtmosphere → HeightFog) ──
+    /// @source UE5 SceneRendering.cpp:1451 — AtmosphereLightIlluminanceOnGroundPostTransmittance
+    /// Sun color * intensity * atmospheric transmittance at ground level toward the sun.
+    /// Used in HeightFogCommon.ush:319 for directional inscattering with sky atmosphere.
+    float sunIllumPostTransR = 0.f;       ///< Sun illuminance post-transmittance R.
+    float sunIllumPostTransG = 0.f;       ///< Sun illuminance post-transmittance G.
+    float sunIllumPostTransB = 0.f;       ///< Sun illuminance post-transmittance B.
+    float sunIllumPostTransA = 0.f;       ///< 1.0 = has atmosphere sun light, 0.0 = none.
+
+    /// @source UE5 HeightFogCommon.ush:119 — InscatteringLightDirection
+    /// Direction toward the sun for directional inscattering phase function.
+    float sunDirX = 0.f;                  ///< Sun direction X (world-space, toward sun).
+    float sunDirY = 0.f;                  ///< Sun direction Y.
+    float sunDirZ = 1.f;                  ///< Sun direction Z. Default: straight up.
+    float _sunPad = 0.f;                  ///< Pad to 16-byte boundary.
+
     // ── Remaining padding ──────────────────────────────────────────────
-    float _fogPad3[32] = {};    ///< Pad to 256-byte alignment.
+    float _fogPad3[24] = {};    ///< Pad to 256-byte alignment.
 };
 
 static_assert(sizeof(HeightFogCB) == 256, "HeightFogCB must be 256 bytes (D3D12 CB alignment)");
