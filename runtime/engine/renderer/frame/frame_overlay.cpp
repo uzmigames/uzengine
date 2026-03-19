@@ -117,6 +117,78 @@ void SceneRenderer::RegisterOverlayPasses(rg::RgBuilder& rgBuilder, FrameContext
         });
     });
 
+    // ── PassInspector: vis fullscreen pass ─────────────────────────────
+    // When vis is active, overwrite the backbuffer with the selected target.
+    // Runs after all rendering but before present.
+    if (m_passInspector.IsVisActive()) {
+        const RegisteredTarget* visTarget = m_passInspector.GetVisTarget();
+        if (visTarget) {
+            // Capture the target info by value for the deferred callback.
+            const uint32_t visSrvIndex   = visTarget->srvIndex;
+            const uint32_t visMode       = static_cast<uint32_t>(visTarget->mode);
+            const uint32_t visTexWidth   = visTarget->width;
+            const uint32_t visTexHeight  = visTarget->height;
+
+            rgBuilder.AddPass("VisFullscreen", [&, visSrvIndex, visMode, visTexWidth, visTexHeight](rg::RgPassBuilder& pb) {
+                pb.Write(ctx.bbRes, RHIResourceState::RenderTarget);
+
+                pb.SetExecutionCallback([this, &ctx, visSrvIndex, visMode, visTexWidth, visTexHeight](
+                        IRHICommandList* cmd, const rg::RgPassResources& res) {
+                    UZ_PROFILE_SCOPE("Vis::Fullscreen");
+
+                    auto visPipeline = ctx.pipelines->GetVisFullscreen();
+                    if (!visPipeline.IsValid()) return;
+
+                    auto bb = res.GetTexture(ctx.bbRes);
+
+                    RHIRenderPassDesc passDesc{};
+                    passDesc.colorAttachmentCount        = 1;
+                    passDesc.colorAttachments[0].texture = bb;
+                    passDesc.colorAttachments[0].clear   = true;
+                    passDesc.colorAttachments[0].clearColor[0] = 0.0f;
+                    passDesc.colorAttachments[0].clearColor[1] = 0.0f;
+                    passDesc.colorAttachments[0].clearColor[2] = 0.0f;
+                    passDesc.colorAttachments[0].clearColor[3] = 1.0f;
+                    cmd->BeginRenderPass(passDesc);
+
+                    cmd->SetPipeline(visPipeline);
+
+                    RHIViewport vp{};
+                    vp.width    = static_cast<uint32_t>(ctx.vpWidth);
+                    vp.height   = static_cast<uint32_t>(ctx.vpHeight);
+                    vp.maxDepth = 1.0f;
+                    cmd->SetViewport(vp);
+
+                    RHIScissorRect sc{};
+                    sc.right  = static_cast<int32_t>(ctx.swapChain->GetWidth());
+                    sc.bottom = static_cast<int32_t>(ctx.swapChain->GetHeight());
+                    cmd->SetScissor(sc);
+
+                    // Root constants: 8 DWORDs matching VisRootCB in vis_fullscreen_ps.hlsl.
+                    uint32_t nearBits = 0, farBits = 0;
+                    std::memcpy(&nearBits, &ctx.perFrame.nearPlane, sizeof(float));
+                    std::memcpy(&farBits, &ctx.perFrame.farPlane, sizeof(float));
+
+                    uint32_t rootConstants[8] = {
+                        visSrvIndex,   // textureSrv
+                        visMode,       // displayMode
+                        visTexWidth,   // texWidth
+                        visTexHeight,  // texHeight
+                        nearBits,      // nearPlane (as uint bits)
+                        farBits,       // farPlane (as uint bits)
+                        0,             // _pad0
+                        0              // _pad1
+                    };
+                    cmd->SetRootConstants(kSlotRootConstants, rootConstants, 8);
+
+                    cmd->Draw(3); // fullscreen triangle
+
+                    cmd->EndRenderPass();
+                });
+            });
+        }
+    }
+
     // ── Present transition ──────────────────────────────────────────────
     rgBuilder.AddPass("Present", [&](rg::RgPassBuilder& pb) {
         pb.Write(ctx.bbRes, RHIResourceState::Present);

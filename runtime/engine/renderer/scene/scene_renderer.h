@@ -46,6 +46,7 @@
 #include "shadows/distance_field_shadow_config.h"
 #include "gi/ssgi_renderer.h"
 #include "async_texture_decoder.h"  // TextureDecodeResult for m_deferredDecoded
+#include "inspector_pass.h"        // PassInspector for render target visualization
 
 // Types needed by FrameContext struct (value members, not pointers)
 #include "per_frame_params.h"
@@ -358,6 +359,10 @@ public:
 
     /// Returns the dynamic resolution controller.
     [[nodiscard]] DynamicResolutionController& GetDynamicResolution() { return *m_dynRes; }
+
+    /// Returns the pass inspector for render target visualization and validation.
+    [[nodiscard]] PassInspector& GetPassInspector() noexcept { return m_passInspector; }
+    [[nodiscard]] const PassInspector& GetPassInspector() const noexcept { return m_passInspector; }
 
     /// Sets the global LOD bias.
     ///
@@ -722,6 +727,9 @@ private:
 
     /// Destroys TAA history textures. Called from Shutdown() and Resize().
     void DestroyTaaResources();
+
+    // ── Pass Inspector (render target visualization + validation) ────────────
+    PassInspector m_passInspector;  ///< Visual GPU pipeline debugger.
 
     // ── SSGI (Screen-Space Global Illumination) ─────────────────────────────
     SSGIRenderer m_ssgiRenderer;  ///< GPU SSGI subsystem (5 compute passes).

@@ -231,6 +231,10 @@ private:
     bool     m_screenshotBase64 = false;  ///< --screenshot-stdout: print base64 PNG to stdout
     bool     m_headless = false;          ///< --headless: create window but keep it hidden (no GUI)
 
+    // ── Pass Inspector ─────────────────────────────────────────────────────
+    std::string m_visTarget;           ///< --vis <target>: visualization target name (empty = off).
+    bool        m_passValidate = false; ///< --pass-validate: run pass validation after rendering.
+
     // ── Deferred scene load ───────────────────────────────────────────────
     std::string m_pendingScenePath;
 

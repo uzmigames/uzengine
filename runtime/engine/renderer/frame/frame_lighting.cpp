@@ -792,6 +792,71 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
             });
         });
     }
+
+    // ── PassInspector: register intermediate targets for visualization ───
+    {
+        const uint32_t rw = static_cast<uint32_t>(ctx.renderWidth);
+        const uint32_t rh = static_cast<uint32_t>(ctx.renderHeight);
+
+        // GBuffer targets
+        m_passInspector.RegisterTarget("gbuffer.albedo",   m_gbuffer.albedo,   m_gbuffer.albedoSRV,   VisDisplayMode::Color,     rw, rh);
+        m_passInspector.RegisterTarget("gbuffer.normal",   m_gbuffer.normal,   m_gbuffer.normalSRV,   VisDisplayMode::Normal,    rw, rh);
+        m_passInspector.RegisterTarget("gbuffer.depth",    m_gbuffer.depth,    m_gbuffer.depthSRV,    VisDisplayMode::Depth,     rw, rh);
+        m_passInspector.RegisterTarget("gbuffer.velocity", m_gbuffer.velocity, m_gbuffer.velocitySRV, VisDisplayMode::Velocity,  rw, rh);
+        m_passInspector.RegisterTarget("gbuffer.emissive", m_gbuffer.emissive, m_gbuffer.emissiveSRV, VisDisplayMode::Color,     rw, rh);
+
+        // Shadow atlas (tile resolution used as approximate display dimensions)
+        if (m_shadowAtlas.GetTexture().IsValid() && m_shadowAtlas.GetSrvIndex() != UINT32_MAX) {
+            m_passInspector.RegisterTarget("shadow.atlas", m_shadowAtlas.GetTexture(), m_shadowAtlas.GetSrvIndex(),
+                                            VisDisplayMode::Grayscale, kShadowResolution, kShadowResolution);
+        }
+
+        // GTAO
+        if (m_gtaoPass && m_gtaoPass->IsInitialized() && m_gtaoPass->settings.enabled) {
+            const uint32_t gtaoSrv = m_gtaoPass->GetFilteredAOSrvIndex();
+            if (gtaoSrv != UINT32_MAX) {
+                m_passInspector.RegisterTarget("gtao.result", m_gtaoPass->GetFilteredAOTexture(), gtaoSrv,
+                                                VisDisplayMode::Grayscale, rw, rh);
+            }
+        }
+
+        // SSGI intermediate textures
+        if (ssgiActive) {
+            const uint32_t hw = m_ssgiRenderer.GetHalfWidth();
+            const uint32_t hh = m_ssgiRenderer.GetHalfHeight();
+
+            m_passInspector.RegisterTarget("ssgi.prev_color", m_ssgiRenderer.GetPrevColorTexture(),
+                                            m_ssgiRenderer.GetPrevColorSrvIndex(), VisDisplayMode::Color, rw, rh);
+            m_passInspector.RegisterTarget("ssgi.trace", m_ssgiRenderer.GetTraceTexture(),
+                                            m_ssgiRenderer.GetTraceSrvIndex(), VisDisplayMode::HDR, hw, hh);
+            m_passInspector.RegisterTarget("ssgi.denoised", m_ssgiRenderer.GetDenoisedTexture(),
+                                            m_ssgiRenderer.GetDenoisedSrvIndex(), VisDisplayMode::HDR, hw, hh);
+            m_passInspector.RegisterTarget("ssgi.result", m_ssgiRenderer.GetResultTexture(),
+                                            m_ssgiRenderer.GetResultSrvIndex(), VisDisplayMode::HDR, rw, rh);
+            m_passInspector.RegisterTarget("ssgi.ao", m_ssgiRenderer.GetAOResultTexture(),
+                                            m_ssgiRenderer.GetAOResultSrvForInspector(), VisDisplayMode::Grayscale, rw, rh);
+        }
+
+        // SSR
+        if (ctx.ssrActive) {
+            m_passInspector.RegisterTarget("ssr.trace", m_ssrTraceOutput, m_ssrTraceOutputSrv,
+                                            VisDisplayMode::Color, rw, rh);
+            m_passInspector.RegisterTarget("ssr.result", m_ssrResolvedOutput, m_ssrResolvedOutputSrv,
+                                            VisDisplayMode::Color, rw, rh);
+        }
+
+        // HDR scene color (after lighting + atmosphere, before postprocess)
+        m_passInspector.RegisterTarget("hdr", m_hdrSceneColor, m_hdrSceneColorSrv,
+                                        VisDisplayMode::HDR, rw, rh);
+
+        // DFS output
+        if (dfsEnabled && m_dfsOutputSrvIndex != UINT32_MAX) {
+            const uint32_t dfsW = m_dfsConfig.fullResolution ? rw : rw / 2;
+            const uint32_t dfsH = m_dfsConfig.fullResolution ? rh : rh / 2;
+            m_passInspector.RegisterTarget("dfs.result", m_dfsOutputTexture, m_dfsOutputSrvIndex,
+                                            VisDisplayMode::Grayscale, dfsW, dfsH);
+        }
+    }
 }
 
 } // namespace uz

@@ -141,6 +141,36 @@ public:
         return m_initialized && settings.enabled;
     }
 
+    // ── PassInspector accessors for intermediate textures ────────────────
+
+    /// Returns the previous frame color texture handle (full-res copy).
+    [[nodiscard]] RHITextureHandle GetPrevColorTexture() const noexcept { return m_prevSceneColor; }
+    /// Returns the SRV index for the previous frame color texture.
+    [[nodiscard]] uint32_t GetPrevColorSrvIndex() const noexcept { return m_prevSceneColorSrv; }
+
+    /// Returns the raw trace output texture handle (half-res indirect diffuse).
+    [[nodiscard]] RHITextureHandle GetTraceTexture() const noexcept { return m_ssgiTrace; }
+    /// Returns the SRV index for the raw trace output.
+    [[nodiscard]] uint32_t GetTraceSrvIndex() const noexcept { return m_ssgiTraceSrv; }
+
+    /// Returns the spatially denoised output texture handle (half-res).
+    [[nodiscard]] RHITextureHandle GetDenoisedTexture() const noexcept { return m_ssgiDenoised; }
+    /// Returns the SRV index for the denoised output.
+    [[nodiscard]] uint32_t GetDenoisedSrvIndex() const noexcept { return m_ssgiDenoisedSrv; }
+
+    /// Returns the final upsampled result texture handle (full-res).
+    [[nodiscard]] RHITextureHandle GetResultTexture() const noexcept { return m_ssgiResult; }
+
+    /// Returns the final upsampled AO result texture handle (full-res).
+    [[nodiscard]] RHITextureHandle GetAOResultTexture() const noexcept { return m_ssgiResultAO; }
+    /// Returns the SRV index for the AO result.
+    [[nodiscard]] uint32_t GetAOResultSrvForInspector() const noexcept { return m_ssgiResultAOSrv; }
+
+    /// Returns the half-res width used by SSGI.
+    [[nodiscard]] uint32_t GetHalfWidth() const noexcept { return m_halfWidth; }
+    /// Returns the half-res height used by SSGI.
+    [[nodiscard]] uint32_t GetHalfHeight() const noexcept { return m_halfHeight; }
+
     /// Public settings — modifiable per-frame before Render().
     SSGISettings settings;
 

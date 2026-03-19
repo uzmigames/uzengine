@@ -188,6 +188,9 @@ public:
 
     [[nodiscard]] uint32_t GetFilteredAOSrvIndex() const noexcept { return m_filteredAOSrvIndex; }
 
+    /// Returns the filtered AO texture handle (for PassInspector registration).
+    [[nodiscard]] RHITextureHandle GetFilteredAOTexture() const noexcept { return m_filteredAOTexture; }
+
     /// Settings (modifiable per-frame before Execute).
     GTAOSettings settings;
 

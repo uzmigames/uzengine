@@ -549,6 +549,15 @@ public:
     /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
     [[nodiscard]] RHIPipelineHandle GetCasSharpen();
 
+    // ── Pass Inspector Visualization Pipeline ───────────────────────────
+
+    /// Returns the vis fullscreen pipeline for PassInspector visualization.
+    ///
+    /// Renders any intermediate render target fullscreen with display-mode-specific
+    /// interpretation (color, grayscale, depth, HDR false-color, normal, velocity).
+    /// Uses fullscreen_vs + vis_fullscreen_ps.
+    [[nodiscard]] RHIPipelineHandle GetVisFullscreen();
+
     // ── SSGI Compute Pipelines ──────────────────────────────────────────
 
     /// Returns the SSGI previous frame color reduction compute pipeline.
@@ -647,6 +656,7 @@ private:
     [[nodiscard]] bool EnsureSsgiSpatialDenoiseShader();
     [[nodiscard]] bool EnsureSsgiTemporalAccumShader();
     [[nodiscard]] bool EnsureSsgiBilateralUpsampleShader();
+    [[nodiscard]] bool EnsureVisFullscreenPixelShader();
 
     /// Creates a pipeline through the PSO cache. On cache hit, returns the
     /// cached handle without calling the device. On miss, creates via the
@@ -705,6 +715,7 @@ private:
     RHIShaderHandle m_ssgiSpatialDenoiseCS     = RHIShaderHandle::Invalid();
     RHIShaderHandle m_ssgiTemporalAccumCS      = RHIShaderHandle::Invalid();
     RHIShaderHandle m_ssgiBilateralUpsampleCS  = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_visFullscreenPS           = RHIShaderHandle::Invalid();
 
     // ── Cached pipeline handles (one per bindless variant) ──────────────
     RHIPipelineHandle m_forwardPBR         = RHIPipelineHandle::Invalid();
@@ -758,6 +769,7 @@ private:
     RHIPipelineHandle m_ssgiSpatialDenoise    = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_ssgiTemporalAccum     = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_ssgiBilateralUpsample = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_visFullscreen         = RHIPipelineHandle::Invalid();
 };
 
 } // namespace uz

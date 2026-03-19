@@ -95,6 +95,16 @@ int Application::Run(int argc, char** argv) {
         UZ_LOG(App, Info, "Shadow debug mode set to {}", m_shadowDebugMode);
     }
 
+    // Apply pass inspector settings from CLI
+    if (!m_visTarget.empty()) {
+        m_renderer->GetPassInspector().SetVisTarget(m_visTarget.c_str());
+        UZ_LOG(App, Info, "Pass inspector vis target set to '{}'", m_visTarget);
+    }
+    if (m_passValidate) {
+        m_renderer->GetPassInspector().SetValidationEnabled(true);
+        UZ_LOG(App, Info, "Pass inspector validation enabled");
+    }
+
     // Apply camera defaults from config
     {
         Camera& cam  = m_renderer->GetCamera();
@@ -295,6 +305,21 @@ int Application::Run(int argc, char** argv) {
     // ── Shutdown ──────────────────────────────────────────────────────────
     m_device->WaitIdle();
 
+    // ── Pass validation (after GPU idle, before shutdown) ─────────────
+    if (m_passValidate && m_renderer) {
+        UZ_LOG(App, Info, "Running pass validation...");
+        auto results = m_renderer->GetPassInspector().Validate(m_device.get(), m_cmdList);
+        bool anyFail = false;
+        for (const auto& r : results) {
+            if (r.hasNaN || r.hasInf) anyFail = true;
+        }
+        if (anyFail) {
+            UZ_LOG(App, Error, "Pass validation: FAILURES detected");
+        } else {
+            UZ_LOG(App, Info, "Pass validation: all passes OK");
+        }
+    }
+
     const auto loopEnd  = std::chrono::high_resolution_clock::now();
     const float totalSec = std::chrono::duration<float>(loopEnd - loopStart).count();
     const float avgFps   = m_frameIndex > 0 ? static_cast<float>(m_frameIndex) / totalSec : 0.f;
@@ -434,6 +459,10 @@ void Application::ParseArgs(int argc, char* argv[]) {
             m_screenshotBase64 = true;
         } else if (std::strcmp(argv[i], "--headless") == 0) {
             m_headless = true;
+        } else if (std::strcmp(argv[i], "--vis") == 0 && i + 1 < argc) {
+            m_visTarget = argv[++i];
+        } else if (std::strcmp(argv[i], "--pass-validate") == 0) {
+            m_passValidate = true;
         }
     }
 
@@ -460,6 +489,17 @@ void Application::ParseArgs(int argc, char* argv[]) {
     }
 
     m_screenshotPending = !m_config.screenshotPath.empty() || m_screenshotBase64;
+
+    // --vis with --screenshot-stdout: auto-set frame limits for headless vis capture
+    if (!m_visTarget.empty() && m_screenshotBase64 && m_config.maxFrames == 0) {
+        m_config.screenshotFrame = std::max(m_config.screenshotFrame, 5u);
+        m_config.maxFrames = m_config.screenshotFrame + 2;
+    }
+
+    // --pass-validate: default to 120 frames then exit
+    if (m_passValidate && m_config.maxFrames == 0) {
+        m_config.maxFrames = 120;
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

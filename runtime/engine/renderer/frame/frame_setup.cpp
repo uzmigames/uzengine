@@ -43,6 +43,9 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
     ctx.bindless = m_device->IsBindless();
     m_totalTime += ctx.dt;
 
+    // ── Pass Inspector: reset per-frame target registrations ─────────────
+    m_passInspector.BeginFrame();
+
     // ── Deferred StatsOverlay + fallback texture init (first frame only) ─
     if (!m_statsOverlayInitialized && m_statsOverlay) {
         UploadContext upload(m_device);

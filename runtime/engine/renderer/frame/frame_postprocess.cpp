@@ -684,6 +684,42 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
             });
         });
     }
+
+    // ── PassInspector: register post-process targets ─────────────────────
+    {
+        const uint32_t rw = static_cast<uint32_t>(ctx.renderWidth);
+        const uint32_t rh = static_cast<uint32_t>(ctx.renderHeight);
+
+        // Bloom result
+        if (ctx.bloomEnabled && m_bloomPass && m_bloomPass->GetBloomResultSrvIndex() != UINT32_MAX) {
+            m_passInspector.RegisterTarget("bloom.result", m_bloomPass->GetBloomResultTexture(),
+                                            m_bloomPass->GetBloomResultSrvIndex(), VisDisplayMode::HDR, rw, rh);
+        }
+
+        // Motion blur output
+        if (ctx.motionBlurActive && m_motionBlurOutputSrv != UINT32_MAX) {
+            m_passInspector.RegisterTarget("motionblur.result", m_motionBlurOutput, m_motionBlurOutputSrv,
+                                            VisDisplayMode::Color, rw, rh);
+        }
+
+        // DOF output
+        if (ctx.dofActive && m_dofOutputSrv != UINT32_MAX) {
+            m_passInspector.RegisterTarget("dof.result", m_dofOutputTexture, m_dofOutputSrv,
+                                            VisDisplayMode::Color, rw, rh);
+        }
+        if (ctx.dofActive && m_dofCocSrv != UINT32_MAX) {
+            m_passInspector.RegisterTarget("dof.coc", m_dofCocTexture, m_dofCocSrv,
+                                            VisDisplayMode::Grayscale, rw, rh);
+        }
+
+        // LDR intermediate (after tonemap, before FXAA/CAS)
+        if (needsLdrIntermediate && m_fxaaLdrIntermediateSrv != UINT32_MAX) {
+            const uint32_t vpW = static_cast<uint32_t>(ctx.vpWidth);
+            const uint32_t vpH = static_cast<uint32_t>(ctx.vpHeight);
+            m_passInspector.RegisterTarget("final.ldr", m_fxaaLdrIntermediate, m_fxaaLdrIntermediateSrv,
+                                            VisDisplayMode::Color, vpW, vpH);
+        }
+    }
 }
 
 } // namespace uz

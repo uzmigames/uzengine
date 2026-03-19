@@ -136,6 +136,10 @@ public:
     /// Valid only after Execute() has been called at least once.
     [[nodiscard]] uint32_t GetBloomResultSrvIndex() const noexcept { return m_mipSrvIndices[0]; }
 
+    /// Returns the texture handle of the final bloom result (mip[0]).
+    /// Valid only after Execute() has been called at least once.
+    [[nodiscard]] RHITextureHandle GetBloomResultTexture() const noexcept { return m_mipTextures[0]; }
+
     /// Settings (can be modified per-frame before calling Execute).
     BloomSettings settings;
 
