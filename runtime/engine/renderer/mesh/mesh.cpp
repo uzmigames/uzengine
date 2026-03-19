@@ -257,6 +257,371 @@ Mesh GeneratePlaneMesh(float uvScale) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// GenerateConeMesh
+// ─────────────────────────────────────────────────────────────────────────────
+
+Mesh GenerateConeMesh(float radius, float height, uint32_t segments) {
+    UZ_PROFILE_FUNCTION();
+    // Cone with apex at (0, 0, height) and base circle at Z=0.
+    // Z-up coordinate system. Smooth normals on the side surface, flat -Z
+    // normals on the base cap.
+    //
+    // Side normal derivation via implicit surface:
+    //   F(x,y,z) = sqrt(x^2 + y^2) * height - z * radius = 0
+    //   grad F = (height * x/r, height * y/r, -radius) where r = sqrt(x^2+y^2)
+    //   At angle theta: grad = (height*cos(theta), height*sin(theta), -radius)
+    //   Outward (away from axis) flips the z sign:
+    //     Normal = (height*cos(theta), height*sin(theta), radius) / slantLength
+    //   where slantLength = sqrt(height^2 + radius^2).
+
+    constexpr float k2Pi = 6.28318530717958647693f;
+
+    const float slantLength = std::sqrt(radius * radius + height * height);
+    // Normal components: radial = height / slantLength, axial = radius / slantLength
+    const float nRadialScale = height / slantLength;
+    const float nAxial       = radius / slantLength;
+
+    std::vector<Vertex> vertices;
+    std::vector<uint32_t> indices;
+
+    // Reserve: side = (segments + 1) * 2 + 1 apex, cap = segments + 1 center
+    // Generous reserve
+    vertices.reserve((segments + 1) * 2 + segments + 2);
+    indices.reserve(segments * 3 * 2 + segments * 3);
+
+    // --- Side surface ---
+    // For each segment, we have a bottom ring vertex and an apex vertex.
+    // To get correct UV seam, we duplicate the first/last column.
+    // Bottom ring: one vertex per segment + 1 for UV wrap.
+    // Apex: one vertex per segment + 1 for UV wrap (each with different u).
+
+    const uint32_t sideBaseStart = 0;
+    for (uint32_t i = 0; i <= segments; ++i) {
+        const float theta = k2Pi * static_cast<float>(i) / static_cast<float>(segments);
+        const float cosT  = std::cos(theta);
+        const float sinT  = std::sin(theta);
+        const float u     = static_cast<float>(i) / static_cast<float>(segments);
+
+        // Bottom ring vertex
+        const Vec3 pos    = {radius * cosT, radius * sinT, 0.0f};
+        const Vec3 normal = {nRadialScale * cosT, nRadialScale * sinT, nAxial};
+
+        // Tangent: dPos/dU along the circumference = (-sin(theta), cos(theta), 0)
+        const Vec4 tangent = {-sinT, cosT, 0.0f, 1.0f};
+
+        Vertex vert{};
+        vert.position = pos;
+        vert.normal   = normal;
+        vert.texcoord = {u, 1.0f};
+        vert.tangent  = tangent;
+        vertices.push_back(vert);
+    }
+
+    const uint32_t sideApexStart = static_cast<uint32_t>(vertices.size());
+    for (uint32_t i = 0; i <= segments; ++i) {
+        const float theta = k2Pi * static_cast<float>(i) / static_cast<float>(segments);
+        const float cosT  = std::cos(theta);
+        const float sinT  = std::sin(theta);
+        const float u     = static_cast<float>(i) / static_cast<float>(segments);
+
+        // Apex vertex — same normal as the corresponding base edge for smooth shading
+        const Vec3 normal  = {nRadialScale * cosT, nRadialScale * sinT, nAxial};
+        const Vec4 tangent = {-sinT, cosT, 0.0f, 1.0f};
+
+        Vertex vert{};
+        vert.position = {0.0f, 0.0f, height};
+        vert.normal   = normal;
+        vert.texcoord = {u, 0.0f};
+        vert.tangent  = tangent;
+        vertices.push_back(vert);
+    }
+
+    // Side indices: triangle fan from apex to base ring
+    for (uint32_t i = 0; i < segments; ++i) {
+        const uint32_t b0 = sideBaseStart + i;
+        const uint32_t b1 = sideBaseStart + i + 1;
+        const uint32_t a0 = sideApexStart + i;
+
+        // Triangle: apex, base[i+1], base[i] — CW winding when viewed from outside
+        indices.push_back(a0);
+        indices.push_back(b1);
+        indices.push_back(b0);
+    }
+
+    // --- Base cap ---
+    // Center vertex at (0, 0, 0) with normal (0, 0, -1)
+    const uint32_t capCenterIdx = static_cast<uint32_t>(vertices.size());
+    {
+        Vertex center{};
+        center.position = {0.0f, 0.0f, 0.0f};
+        center.normal   = {0.0f, 0.0f, -1.0f};
+        center.texcoord = {0.5f, 0.5f};
+        center.tangent  = {1.0f, 0.0f, 0.0f, 1.0f};
+        vertices.push_back(center);
+    }
+
+    const uint32_t capRingStart = static_cast<uint32_t>(vertices.size());
+    for (uint32_t i = 0; i <= segments; ++i) {
+        const float theta = k2Pi * static_cast<float>(i) / static_cast<float>(segments);
+        const float cosT  = std::cos(theta);
+        const float sinT  = std::sin(theta);
+
+        Vertex vert{};
+        vert.position = {radius * cosT, radius * sinT, 0.0f};
+        vert.normal   = {0.0f, 0.0f, -1.0f};
+        // Planar UV: map circle to [0,1] range
+        vert.texcoord = {0.5f + 0.5f * cosT, 0.5f + 0.5f * sinT};
+        vert.tangent  = {1.0f, 0.0f, 0.0f, 1.0f};
+        vertices.push_back(vert);
+    }
+
+    // Base cap indices: triangle fan from center, wound so -Z normal faces outward
+    // When viewed from below (looking in +Z direction), winding should be CW
+    for (uint32_t i = 0; i < segments; ++i) {
+        indices.push_back(capCenterIdx);
+        indices.push_back(capRingStart + i);
+        indices.push_back(capRingStart + i + 1);
+    }
+
+    return MeshBuilder::CreateFromVertices(vertices, indices);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GenerateCylinderMesh
+// ─────────────────────────────────────────────────────────────────────────────
+
+Mesh GenerateCylinderMesh(float radius, float height, uint32_t segments) {
+    UZ_PROFILE_FUNCTION();
+    // Cylinder centered at origin, extends from Z = -height/2 to Z = +height/2.
+    // Z-up coordinate system. Side normals point radially outward.
+    // Top cap normal = +Z, bottom cap normal = -Z.
+
+    constexpr float k2Pi = 6.28318530717958647693f;
+
+    const float halfH = height * 0.5f;
+
+    std::vector<Vertex> vertices;
+    std::vector<uint32_t> indices;
+
+    // Reserve: side = 2 * (segments+1), top cap = segments+2, bottom cap = segments+2
+    vertices.reserve(2 * (segments + 1) + 2 * (segments + 2));
+    indices.reserve(segments * 6 + segments * 3 * 2);
+
+    // --- Side surface ---
+    // Two rings: bottom (Z = -halfH) and top (Z = +halfH).
+    // Vertices duplicated at the seam (i=0 and i=segments) for correct UVs.
+
+    const uint32_t sideBottomStart = 0;
+    for (uint32_t i = 0; i <= segments; ++i) {
+        const float theta = k2Pi * static_cast<float>(i) / static_cast<float>(segments);
+        const float cosT  = std::cos(theta);
+        const float sinT  = std::sin(theta);
+        const float u     = static_cast<float>(i) / static_cast<float>(segments);
+
+        const Vec3 normal  = {cosT, sinT, 0.0f};
+        const Vec4 tangent = {-sinT, cosT, 0.0f, 1.0f};
+
+        // Bottom ring
+        Vertex bot{};
+        bot.position = {radius * cosT, radius * sinT, -halfH};
+        bot.normal   = normal;
+        bot.texcoord = {u, 1.0f};
+        bot.tangent  = tangent;
+        vertices.push_back(bot);
+    }
+
+    const uint32_t sideTopStart = static_cast<uint32_t>(vertices.size());
+    for (uint32_t i = 0; i <= segments; ++i) {
+        const float theta = k2Pi * static_cast<float>(i) / static_cast<float>(segments);
+        const float cosT  = std::cos(theta);
+        const float sinT  = std::sin(theta);
+        const float u     = static_cast<float>(i) / static_cast<float>(segments);
+
+        const Vec3 normal  = {cosT, sinT, 0.0f};
+        const Vec4 tangent = {-sinT, cosT, 0.0f, 1.0f};
+
+        // Top ring
+        Vertex top{};
+        top.position = {radius * cosT, radius * sinT, halfH};
+        top.normal   = normal;
+        top.texcoord = {u, 0.0f};
+        top.tangent  = tangent;
+        vertices.push_back(top);
+    }
+
+    // Side indices: quads as two triangles
+    for (uint32_t i = 0; i < segments; ++i) {
+        const uint32_t b0 = sideBottomStart + i;
+        const uint32_t b1 = sideBottomStart + i + 1;
+        const uint32_t t0 = sideTopStart + i;
+        const uint32_t t1 = sideTopStart + i + 1;
+
+        // Two triangles per quad — CW winding from outside
+        indices.push_back(b0);
+        indices.push_back(t0);
+        indices.push_back(t1);
+
+        indices.push_back(b0);
+        indices.push_back(t1);
+        indices.push_back(b1);
+    }
+
+    // --- Top cap (Z = +halfH, normal = +Z) ---
+    const uint32_t topCenterIdx = static_cast<uint32_t>(vertices.size());
+    {
+        Vertex center{};
+        center.position = {0.0f, 0.0f, halfH};
+        center.normal   = {0.0f, 0.0f, 1.0f};
+        center.texcoord = {0.5f, 0.5f};
+        center.tangent  = {1.0f, 0.0f, 0.0f, 1.0f};
+        vertices.push_back(center);
+    }
+
+    const uint32_t topCapRingStart = static_cast<uint32_t>(vertices.size());
+    for (uint32_t i = 0; i <= segments; ++i) {
+        const float theta = k2Pi * static_cast<float>(i) / static_cast<float>(segments);
+        const float cosT  = std::cos(theta);
+        const float sinT  = std::sin(theta);
+
+        Vertex vert{};
+        vert.position = {radius * cosT, radius * sinT, halfH};
+        vert.normal   = {0.0f, 0.0f, 1.0f};
+        vert.texcoord = {0.5f + 0.5f * cosT, 0.5f - 0.5f * sinT};
+        vert.tangent  = {1.0f, 0.0f, 0.0f, 1.0f};
+        vertices.push_back(vert);
+    }
+
+    // Top cap: CCW from above (+Z looking down) so front face is +Z
+    for (uint32_t i = 0; i < segments; ++i) {
+        indices.push_back(topCenterIdx);
+        indices.push_back(topCapRingStart + i + 1);
+        indices.push_back(topCapRingStart + i);
+    }
+
+    // --- Bottom cap (Z = -halfH, normal = -Z) ---
+    const uint32_t botCenterIdx = static_cast<uint32_t>(vertices.size());
+    {
+        Vertex center{};
+        center.position = {0.0f, 0.0f, -halfH};
+        center.normal   = {0.0f, 0.0f, -1.0f};
+        center.texcoord = {0.5f, 0.5f};
+        center.tangent  = {1.0f, 0.0f, 0.0f, 1.0f};
+        vertices.push_back(center);
+    }
+
+    const uint32_t botCapRingStart = static_cast<uint32_t>(vertices.size());
+    for (uint32_t i = 0; i <= segments; ++i) {
+        const float theta = k2Pi * static_cast<float>(i) / static_cast<float>(segments);
+        const float cosT  = std::cos(theta);
+        const float sinT  = std::sin(theta);
+
+        Vertex vert{};
+        vert.position = {radius * cosT, radius * sinT, -halfH};
+        vert.normal   = {0.0f, 0.0f, -1.0f};
+        vert.texcoord = {0.5f + 0.5f * cosT, 0.5f + 0.5f * sinT};
+        vert.tangent  = {1.0f, 0.0f, 0.0f, 1.0f};
+        vertices.push_back(vert);
+    }
+
+    // Bottom cap: CW from below (-Z looking up) so front face is -Z
+    for (uint32_t i = 0; i < segments; ++i) {
+        indices.push_back(botCenterIdx);
+        indices.push_back(botCapRingStart + i);
+        indices.push_back(botCapRingStart + i + 1);
+    }
+
+    return MeshBuilder::CreateFromVertices(vertices, indices);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GenerateTorusMesh
+// ─────────────────────────────────────────────────────────────────────────────
+
+Mesh GenerateTorusMesh(float majorRadius, float minorRadius,
+                        uint32_t majorSegments, uint32_t minorSegments) {
+    UZ_PROFILE_FUNCTION();
+    // Standard parametric torus in Z-up coordinate system.
+    // Ring lies in the XY plane, tube sweeps around it.
+    //
+    // Parametric surface (u = major angle, v = minor angle):
+    //   x = (R + r * cos(v)) * cos(u)
+    //   y = (R + r * cos(v)) * sin(u)
+    //   z = r * sin(v)
+    //
+    // where R = majorRadius, r = minorRadius.
+    //
+    // Partial derivatives for normal computation:
+    //   dP/du = (-(R + r*cos(v))*sin(u), (R + r*cos(v))*cos(u), 0)
+    //   dP/dv = (-r*sin(v)*cos(u), -r*sin(v)*sin(u), r*cos(v))
+    //
+    //   Normal = dP/du x dP/dv (outward-pointing):
+    //     nx = cos(v) * cos(u)
+    //     ny = cos(v) * sin(u)
+    //     nz = sin(v)
+    //   (already unit length since it's just the direction from tube center to surface)
+
+    constexpr float k2Pi = 6.28318530717958647693f;
+
+    std::vector<Vertex> vertices;
+    std::vector<uint32_t> indices;
+
+    vertices.reserve((majorSegments + 1) * (minorSegments + 1));
+    indices.reserve(majorSegments * minorSegments * 6);
+
+    for (uint32_t i = 0; i <= majorSegments; ++i) {
+        const float u     = k2Pi * static_cast<float>(i) / static_cast<float>(majorSegments);
+        const float cosU  = std::cos(u);
+        const float sinU  = std::sin(u);
+        const float texU  = static_cast<float>(i) / static_cast<float>(majorSegments);
+
+        for (uint32_t j = 0; j <= minorSegments; ++j) {
+            const float v     = k2Pi * static_cast<float>(j) / static_cast<float>(minorSegments);
+            const float cosV  = std::cos(v);
+            const float sinV  = std::sin(v);
+            const float texV  = static_cast<float>(j) / static_cast<float>(minorSegments);
+
+            // Position on torus surface
+            const float dist = majorRadius + minorRadius * cosV;
+            const Vec3 pos   = {dist * cosU, dist * sinU, minorRadius * sinV};
+
+            // Normal: direction from tube center to surface point
+            const Vec3 normal = {cosV * cosU, cosV * sinU, sinV};
+
+            // Tangent: dP/du normalized = (-sin(u), cos(u), 0)
+            // This is the direction along the major circle at this point.
+            const Vec4 tangent = {-sinU, cosU, 0.0f, 1.0f};
+
+            Vertex vert{};
+            vert.position = pos;
+            vert.normal   = normal;
+            vert.texcoord = {texU, texV};
+            vert.tangent  = tangent;
+            vertices.push_back(vert);
+        }
+    }
+
+    // Indices: quads between adjacent rings
+    const uint32_t ringSize = minorSegments + 1;
+    for (uint32_t i = 0; i < majorSegments; ++i) {
+        for (uint32_t j = 0; j < minorSegments; ++j) {
+            const uint32_t a = i * ringSize + j;
+            const uint32_t b = a + ringSize;
+
+            // Two triangles per quad
+            indices.push_back(a);
+            indices.push_back(b);
+            indices.push_back(a + 1);
+
+            indices.push_back(a + 1);
+            indices.push_back(b);
+            indices.push_back(b + 1);
+        }
+    }
+
+    return MeshBuilder::CreateFromVertices(vertices, indices);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // MeshBuilder helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -496,6 +861,157 @@ Mesh MeshBuilder::CreateSphere(float radius, uint32_t stacks, uint32_t slices) {
     }
 
     return CreateFromVertices(vertices, indices);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GenerateTangents
+// ─────────────────────────────────────────────────────────────────────────────
+
+void GenerateTangents(std::vector<Vertex>& vertices, const std::vector<uint32_t>& indices) {
+    UZ_PROFILE_FUNCTION();
+
+    if (vertices.empty() || indices.size() < 3) {
+        return;
+    }
+
+    const size_t vertexCount = vertices.size();
+
+    // Accumulated tangent and bitangent vectors per vertex (not yet normalized).
+    // Using separate arrays avoids polluting the Vertex struct during accumulation.
+    std::vector<Vec3> tangentAccum(vertexCount, Vec3{0.f, 0.f, 0.f});
+    std::vector<Vec3> bitangentAccum(vertexCount, Vec3{0.f, 0.f, 0.f});
+
+    // Accumulate tangent/bitangent contributions from each triangle.
+    for (size_t i = 0; i + 2 < indices.size(); i += 3) {
+        const uint32_t i0 = indices[i];
+        const uint32_t i1 = indices[i + 1];
+        const uint32_t i2 = indices[i + 2];
+
+        // Bounds check — skip invalid indices rather than crashing.
+        if (i0 >= vertexCount || i1 >= vertexCount || i2 >= vertexCount) {
+            continue;
+        }
+
+        const Vec3& p0 = vertices[i0].position;
+        const Vec3& p1 = vertices[i1].position;
+        const Vec3& p2 = vertices[i2].position;
+
+        const Vec2& uv0 = vertices[i0].texcoord;
+        const Vec2& uv1 = vertices[i1].texcoord;
+        const Vec2& uv2 = vertices[i2].texcoord;
+
+        // Edge vectors in position space
+        const float e1x = p1.x - p0.x;
+        const float e1y = p1.y - p0.y;
+        const float e1z = p1.z - p0.z;
+
+        const float e2x = p2.x - p0.x;
+        const float e2y = p2.y - p0.y;
+        const float e2z = p2.z - p0.z;
+
+        // UV deltas
+        const float du1 = uv1.x - uv0.x;
+        const float dv1 = uv1.y - uv0.y;
+        const float du2 = uv2.x - uv0.x;
+        const float dv2 = uv2.y - uv0.y;
+
+        // Determinant of the UV matrix. If near-zero, the triangle has
+        // degenerate UVs (zero-area in UV space) — skip it.
+        const float det = du1 * dv2 - du2 * dv1;
+        if (std::abs(det) < 1e-12f) {
+            continue;
+        }
+        const float invDet = 1.0f / det;
+
+        // Tangent: T = (e1 * dv2 - e2 * dv1) / det
+        const Vec3 t = {
+            (e1x * dv2 - e2x * dv1) * invDet,
+            (e1y * dv2 - e2y * dv1) * invDet,
+            (e1z * dv2 - e2z * dv1) * invDet,
+        };
+
+        // Bitangent: B = (e2 * du1 - e1 * du2) / det
+        const Vec3 b = {
+            (e2x * du1 - e1x * du2) * invDet,
+            (e2y * du1 - e1y * du2) * invDet,
+            (e2z * du1 - e1z * du2) * invDet,
+        };
+
+        // Accumulate for all three vertices of the triangle.
+        // Weighting by triangle area is implicit in the unnormalized edge vectors.
+        tangentAccum[i0].x += t.x; tangentAccum[i0].y += t.y; tangentAccum[i0].z += t.z;
+        tangentAccum[i1].x += t.x; tangentAccum[i1].y += t.y; tangentAccum[i1].z += t.z;
+        tangentAccum[i2].x += t.x; tangentAccum[i2].y += t.y; tangentAccum[i2].z += t.z;
+
+        bitangentAccum[i0].x += b.x; bitangentAccum[i0].y += b.y; bitangentAccum[i0].z += b.z;
+        bitangentAccum[i1].x += b.x; bitangentAccum[i1].y += b.y; bitangentAccum[i1].z += b.z;
+        bitangentAccum[i2].x += b.x; bitangentAccum[i2].y += b.y; bitangentAccum[i2].z += b.z;
+    }
+
+    // Orthogonalize, normalize, and compute bitangent sign per vertex.
+    for (size_t v = 0; v < vertexCount; ++v) {
+        const Vec3& n = vertices[v].normal;
+        Vec3 t = tangentAccum[v];
+        const Vec3& b = bitangentAccum[v];
+
+        // Gram-Schmidt orthogonalization: T' = T - N * dot(N, T)
+        const float nDotT = n.x * t.x + n.y * t.y + n.z * t.z;
+        t.x -= n.x * nDotT;
+        t.y -= n.y * nDotT;
+        t.z -= n.z * nDotT;
+
+        // Normalize the tangent
+        const float len = std::sqrt(t.x * t.x + t.y * t.y + t.z * t.z);
+        if (len > 1e-8f) {
+            const float invLen = 1.0f / len;
+            t.x *= invLen;
+            t.y *= invLen;
+            t.z *= invLen;
+        } else {
+            // Fallback: generate an arbitrary tangent perpendicular to the normal.
+            // Choose the axis least aligned with the normal to minimize numerical error.
+            const float absX = std::abs(n.x);
+            const float absY = std::abs(n.y);
+            const float absZ = std::abs(n.z);
+
+            Vec3 up;
+            if (absX <= absY && absX <= absZ) {
+                up = Vec3{1.f, 0.f, 0.f};
+            } else if (absY <= absZ) {
+                up = Vec3{0.f, 1.f, 0.f};
+            } else {
+                up = Vec3{0.f, 0.f, 1.f};
+            }
+
+            // t = normalize(up - n * dot(n, up))
+            const float d = n.x * up.x + n.y * up.y + n.z * up.z;
+            t.x = up.x - n.x * d;
+            t.y = up.y - n.y * d;
+            t.z = up.z - n.z * d;
+
+            const float fallbackLen = std::sqrt(t.x * t.x + t.y * t.y + t.z * t.z);
+            if (fallbackLen > 1e-8f) {
+                const float invFallbackLen = 1.0f / fallbackLen;
+                t.x *= invFallbackLen;
+                t.y *= invFallbackLen;
+                t.z *= invFallbackLen;
+            } else {
+                // Extremely degenerate case (zero normal) — use +X as tangent.
+                t = Vec3{1.f, 0.f, 0.f};
+            }
+        }
+
+        // Compute bitangent sign: w = sign(dot(cross(N, T), B))
+        // cross(N, T):
+        const float cx = n.y * t.z - n.z * t.y;
+        const float cy = n.z * t.x - n.x * t.z;
+        const float cz = n.x * t.y - n.y * t.x;
+        // dot(cross(N, T), B):
+        const float sign = cx * b.x + cy * b.y + cz * b.z;
+        const float w = (sign < 0.0f) ? -1.0f : 1.0f;
+
+        vertices[v].tangent = Vec4{t.x, t.y, t.z, w};
+    }
 }
 
 } // namespace uz

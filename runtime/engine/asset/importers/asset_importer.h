@@ -18,6 +18,28 @@
 
 namespace uz {
 
+// ─────────────────────────────────────────────────────────────────────────────
+// ImportedMaterial — PBR metallic-roughness material data from glTF
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// PBR metallic-roughness material extracted from a glTF file.
+///
+/// Contains the core material parameters defined by the glTF 2.0 spec's
+/// `pbrMetallicRoughness` model. Texture paths are resolved URIs or image
+/// names from the glTF; empty strings mean no texture was specified.
+struct ImportedMaterial {
+    float baseColorR = 1.f;                         ///< Base color red channel [0, 1]
+    float baseColorG = 1.f;                         ///< Base color green channel [0, 1]
+    float baseColorB = 1.f;                         ///< Base color blue channel [0, 1]
+    float baseColorA = 1.f;                         ///< Base color alpha channel [0, 1]
+    float metallicFactor = 1.f;                     ///< Metallic factor [0, 1]
+    float roughnessFactor = 1.f;                    ///< Roughness factor [0, 1]
+    std::string baseColorTexturePath;               ///< URI/name of base color texture (empty = none)
+    std::string normalTexturePath;                  ///< URI/name of normal map texture (empty = none)
+    std::string metallicRoughnessTexturePath;       ///< URI/name of metallic-roughness texture (empty = none)
+    std::string name;                               ///< Material name from glTF (may be empty)
+};
+
 /// A sidecar file produced alongside the primary import output.
 ///
 /// Some importers produce auxiliary data files in addition to the main asset
@@ -37,6 +59,7 @@ struct AssetImportResult {
     std::vector<uint8_t> data;         ///< Imported asset bytes in runtime format (empty on failure)
     std::string error;                 ///< Human-readable error message (empty on success)
     std::vector<AssetImportSidecar> sidecars; ///< Optional sidecar files produced alongside the primary output
+    std::vector<ImportedMaterial> materials;    ///< Extracted materials (mesh imports only, empty for other asset types)
 };
 
 /// Configuration options for an import operation.

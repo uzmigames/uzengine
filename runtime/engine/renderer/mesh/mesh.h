@@ -86,6 +86,18 @@ static_assert(sizeof(MeshHeader) == 128, "MeshHeader must be exactly 128 bytes")
 // Mesh — Runtime mesh data (CPU side)
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Describes a contiguous range of indices within a mesh that share a material.
+///
+/// Each submesh maps to a single draw call (`DrawIndexedInstanced`).
+/// The `startIndex` and `indexCount` refer to the global index buffer.
+/// `materialIndex` is an opaque slot — the renderer maps it to a material
+/// at load time.
+struct SubMesh {
+    uint32_t startIndex = 0;       ///< First index in the index buffer
+    uint32_t indexCount = 0;       ///< Number of indices to draw
+    uint32_t materialIndex = 0;    ///< Material slot index
+};
+
 /// CPU-side mesh data loaded from a .uzmesh file or created programmatically.
 ///
 /// Contains vertex and index buffers as raw byte arrays, plus metadata
@@ -95,6 +107,7 @@ struct Mesh {
     MeshHeader             header;       ///< Parsed file header
     std::vector<uint8_t>   vertexData;   ///< Raw vertex bytes
     std::vector<uint8_t>   indexData;    ///< Raw index bytes
+    std::vector<SubMesh>   submeshes;    ///< Submesh ranges (empty = single draw call for entire mesh)
 
     /// Returns vertex count from header.
     [[nodiscard]] uint32_t GetVertexCount() const { return header.vertexCount; }
@@ -185,6 +198,83 @@ bool SaveMesh(const std::string& path, const Mesh& mesh);
 /// # Returns
 /// A `Mesh` with 4 vertices and 6 indices (two CCW triangles).
 [[nodiscard]] Mesh GeneratePlaneMesh(float uvScale = 1.0f);
+
+/// Generates a cone mesh with apex at (0,0,height) and base circle at Z=0.
+///
+/// Uses the Standard vertex format. The cone side surface has smooth normals
+/// computed from the cone half-angle. The base cap uses separate vertices with
+/// normals pointing down (-Z). UVs are cylindrical for the sides and planar
+/// for the cap.
+///
+/// # Arguments
+/// * `radius` — Radius of the base circle. Default 50.0 (cm).
+/// * `height` — Height from base to apex. Default 100.0 (cm).
+/// * `segments` — Number of divisions around the circumference. Default 32.
+///
+/// # Returns
+/// A valid `Mesh` with Standard vertices and UInt32 indices.
+[[nodiscard]] Mesh GenerateConeMesh(float radius = 50.0f, float height = 100.0f,
+                                     uint32_t segments = 32);
+
+/// Generates a cylinder mesh centered at origin, extending from Z=-height/2
+/// to Z=+height/2.
+///
+/// Uses the Standard vertex format. The side surface has smooth normals
+/// pointing radially outward. Top and bottom caps have separate vertices with
+/// flat normals (+Z and -Z respectively). UVs are cylindrical for sides and
+/// planar for caps.
+///
+/// # Arguments
+/// * `radius` — Radius of the cylinder. Default 50.0 (cm).
+/// * `height` — Total height of the cylinder. Default 100.0 (cm).
+/// * `segments` — Number of divisions around the circumference. Default 32.
+///
+/// # Returns
+/// A valid `Mesh` with Standard vertices and UInt32 indices.
+[[nodiscard]] Mesh GenerateCylinderMesh(float radius = 50.0f, float height = 100.0f,
+                                         uint32_t segments = 32);
+
+/// Generates a torus mesh centered at origin with the ring in the XY plane.
+///
+/// Uses the Standard vertex format. The torus is the surface of revolution
+/// of a circle of `minorRadius` around a circle of `majorRadius` in the XY
+/// plane. Normals are computed analytically from partial derivatives of the
+/// parametric surface. UV u wraps around the major circle, v around the minor.
+///
+/// # Arguments
+/// * `majorRadius` — Distance from the center of the torus to the center
+///                   of the tube. Default 100.0 (cm).
+/// * `minorRadius` — Radius of the tube. Default 30.0 (cm).
+/// * `majorSegments` — Divisions around the major circle. Default 32.
+/// * `minorSegments` — Divisions around the minor circle (tube). Default 16.
+///
+/// # Returns
+/// A valid `Mesh` with Standard vertices and UInt32 indices.
+[[nodiscard]] Mesh GenerateTorusMesh(float majorRadius = 100.0f, float minorRadius = 30.0f,
+                                      uint32_t majorSegments = 32, uint32_t minorSegments = 16);
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Tangent Generation — shared utility
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Generates tangent vectors for a triangle mesh using UV-space edge vectors.
+///
+/// For each triangle, computes the tangent and bitangent from the edge vectors
+/// and UV deltas, then accumulates per-vertex tangents (weighted by triangle
+/// contribution). After accumulation, tangents are orthogonalized against the
+/// vertex normal via Gram-Schmidt and normalized. The bitangent sign is stored
+/// in `tangent.w` (+1 or -1) so the shader can reconstruct the bitangent as
+/// `cross(normal, tangent.xyz) * tangent.w`.
+///
+/// Handles degenerate triangles (zero-area or zero-UV-area) gracefully by
+/// skipping them. Vertices that receive no tangent contribution (isolated or
+/// all-degenerate) get a fallback tangent perpendicular to their normal.
+///
+/// # Arguments
+/// * `vertices` - Vertex array with valid positions, normals, and texcoords.
+///                Tangent fields are overwritten.
+/// * `indices` - Triangle index buffer (size must be a multiple of 3).
+void GenerateTangents(std::vector<Vertex>& vertices, const std::vector<uint32_t>& indices);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MeshBuilder — Programmatic mesh construction

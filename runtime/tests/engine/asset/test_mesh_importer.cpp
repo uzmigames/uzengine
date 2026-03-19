@@ -90,9 +90,9 @@ TEST(MeshImporter, Name_ReturnsExactString) {
     EXPECT_STREQ(imp.Name(), "mesh");
 }
 
-TEST(MeshImporter, Version_ReturnsOne) {
+TEST(MeshImporter, Version_ReturnsTwo) {
     MeshImporter imp;
-    EXPECT_EQ(imp.Version(), 1u);
+    EXPECT_EQ(imp.Version(), 2u);
 }
 
 TEST(MeshImporter, Extensions_ContainsGlb) {
