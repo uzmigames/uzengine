@@ -48,11 +48,11 @@ ApplicationConfig PBRTest::Configure() {
     cfg.width           = 2560;
     cfg.height          = 1440;
     // Camera elevated and angled to see both rows of spheres
-    cfg.cameraPositionX = 700.f;
-    cfg.cameraPositionY = 100.f;
-    cfg.cameraPositionZ = 400.f;
-    cfg.cameraYawDeg    = 195.f;  // slightly rotated to center on sphere array
-    cfg.cameraPitchDeg  = -20.f;
+    cfg.cameraPositionX = 137.f;
+    cfg.cameraPositionY = -906.f;
+    cfg.cameraPositionZ = 335.f;
+    cfg.cameraYawDeg    = -263.3f;
+    cfg.cameraPitchDeg  = -19.8f;
     cfg.renderPath      = RenderPath::Deferred;
     return cfg;
 }

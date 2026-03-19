@@ -211,18 +211,18 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
     perFrame.brdfLutSrvIndex     = m_brdfLutSrvIndex;
     perFrame.prefilteredMipLevels = 5;
 
-    // Upload SH coefficients for sky diffuse irradiance (UE5 parity)
-    for (int i = 0; i < 7; ++i) {
-        perFrame.skyIrradianceSH[i] = m_skyIrradianceSH.coeffs[i];
-    }
-
     // ── Extract SkyLight from SkyLightComponent (UE5 parity) ──────────
+    // Must be done BEFORE SH upload so intensity can be baked into the SH coefficients.
     // @source UE5 SkyLightComponent.cpp:308 — MinOcclusion default = 0.0
+    float skyIntensity = 1.0f;
+    float skyIndirectIntensity = 1.0f;
     if (ctx.world) {
         auto skyLightView = ctx.world->GetRegistry().view<SkyLightComponent>();
         for (auto enttEntity : skyLightView) {
             auto& sl = skyLightView.get<SkyLightComponent>(enttEntity);
             if (!sl.enabled) continue;
+            skyIntensity = sl.intensity;
+            skyIndirectIntensity = sl.indirectLightingIntensity;
             perFrame.skyLightIntensity  = sl.intensity;
             perFrame.skyLightColorR     = sl.lightColor.x;
             perFrame.skyLightColorG     = sl.lightColor.y;
@@ -230,6 +230,38 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
             perFrame.skyLightMinAmbient = sl.minOcclusion;
             break;  // First SkyLightComponent only
         }
+    }
+
+    // Upload SH coefficients for sky diffuse irradiance (UE5 parity).
+    // The shader's deferred_lighting_ps.hlsl line 881 already multiplies
+    // by skyLightIntensity, so we only scale SH by indirectLightingIntensity
+    // here (which provides separate control of diffuse fill vs specular).
+    // @source UE5 SkyLightComponent.cpp — IndirectLightingIntensity separate from Intensity
+    const float shScale = skyIndirectIntensity;
+    for (int i = 0; i < 7; ++i) {
+        perFrame.skyIrradianceSH[i] = {
+            m_skyIrradianceSH.coeffs[i].x * shScale,
+            m_skyIrradianceSH.coeffs[i].y * shScale,
+            m_skyIrradianceSH.coeffs[i].z * shScale,
+            m_skyIrradianceSH.coeffs[i].w * shScale
+        };
+    }
+
+    // Log SH L0 coefficient once to diagnose shadow darkness.
+    // In UE5 packed format: coeffs[0].w = R_L0, coeffs[1].w = G_L0, coeffs[2].w = B_L0
+    static bool shLogged = false;
+    if (!shLogged && ctx.frameIndex > 100) {
+        UZ_LOG(Renderer, Info,
+               "SkyLight SH L0: R={:.4f} G={:.4f} B={:.4f}, scale={:.2f}, "
+               "scaled: R={:.4f} G={:.4f} B={:.4f}",
+               m_skyIrradianceSH.coeffs[0].w,
+               m_skyIrradianceSH.coeffs[1].w,
+               m_skyIrradianceSH.coeffs[2].w,
+               shScale,
+               m_skyIrradianceSH.coeffs[0].w * shScale,
+               m_skyIrradianceSH.coeffs[1].w * shScale,
+               m_skyIrradianceSH.coeffs[2].w * shScale);
+        shLogged = true;
     }
 
     // ── Extract lighting from ECS (directional + point lights) ─────────
