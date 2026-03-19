@@ -198,6 +198,11 @@ void main(uint3 dtid : SV_DispatchThreadID)
         // (larger ghosts = more chromatic spread).
         float3 ghostSample = SampleChromatic(bloomTex, ghostUV, chromaticShift);
 
+        // High-pass threshold: only very bright bloom pixels generate ghosts.
+        // This prevents the entire sky from creating ghost artifacts.
+        float ghostLuma = dot(ghostSample, float3(0.299, 0.587, 0.114));
+        ghostSample *= smoothstep(0.5, 2.0, ghostLuma);
+
         // Apply per-ghost rainbow tint and edge attenuation.
         ghostAccum += ghostSample * kGhostColors[i] * edgeFade;
     }
@@ -242,6 +247,10 @@ void main(uint3 dtid : SV_DispatchThreadID)
 
             // Chromatic aberration on halo as well.
             float3 haloSample = SampleChromatic(bloomTex, sampleUV, chromaticShift * 0.5);
+
+            // High-pass: only very bright sources create halo
+            float haloLuma = dot(haloSample, float3(0.299, 0.587, 0.114));
+            haloSample *= smoothstep(0.5, 2.0, haloLuma);
 
             haloAccum += haloSample * weight * edgeFade;
         }
