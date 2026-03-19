@@ -171,7 +171,7 @@ bool LensFlarePass::EnsurePipeline() {
     shaderDesc.bytecode     = bytecode.data();
     shaderDesc.bytecodeSize = bytecode.size();
     shaderDesc.stage        = RHIShaderStage::Compute;
-    shaderDesc.entryPoint   = "CSMain";
+    shaderDesc.entryPoint   = "main";
     shaderDesc.debugName    = "lensflare_cs";
 
     m_shader = m_device->CreateShader(shaderDesc);

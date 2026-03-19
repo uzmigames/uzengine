@@ -155,7 +155,7 @@ float3 SampleChromatic(Texture2D<float4> bloomTex, float2 uv, float shift)
 /// Compute shader entry point. Each thread writes one pixel of the lens flare
 /// output texture. Dispatched at full display resolution with 8x8 thread groups.
 [numthreads(8, 8, 1)]
-void CSMain(uint3 dtid : SV_DispatchThreadID)
+void main(uint3 dtid : SV_DispatchThreadID)
 {
     // Bounds check: skip threads outside the output dimensions.
     uint outW = (uint)outputWidth;
