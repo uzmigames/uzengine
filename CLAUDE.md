@@ -104,6 +104,8 @@ Never write C++/shaders/docs directly in the main conversation. Delegate to the 
 
 The following rules are equally important but less frequently violated. Full details are in `.claude/rules/`:
 
+- **Data Flow First** — multi-subsystem tasks (3+ files) require a data flow document BEFORE implementation. See `.claude/rules/data-flow-first.md`
+- **Task Decomposition** — break multi-file tasks into 1-2 file sub-tasks per subsystem. See `.claude/rules/task-decomposition.md`
 - **UE5 Component Parity** — every component replicates ALL UE5 parameters, defaults, and logic. No simplification. See `.claude/rules/ue5-component-parity.md`
 - **Visual Verification** — rendering features need demo + screenshot. **Prefer `--screenshot-stdout`** (base64 to stdout, no disk I/O) over `--screenshot <path>`. See `.claude/rules/visual-verification.md`
 - **GPU Debugging** — never guess, use readback + RenderDoc/PIX. See `.claude/rules/gpu-debugging.md`
@@ -139,6 +141,7 @@ The following rules are equally important but less frequently violated. Full det
 | Animation | animation-engineer | sonnet |
 | UI system | ui-engineer | sonnet |
 | Gameplay systems | gameplay-systems-engineer | sonnet |
+| Multi-subsystem integration | systems-integration | opus |
 | Project coordination | project-manager | haiku |
 
 ## Persistent Memory

@@ -80,6 +80,19 @@ cbuffer HeightFogCB : register(b2) {
     float4 skyAtmContribColorScale;    // xyz = SkyAtmosphereAmbientContributionColorScale (default white)
     float  heightFogContribution;      // SkyAtmosphere.HeightFogContribution (0-1, default 1.0)
     float3 skyLightColor;             // SkyLight diffuse color (from SH L0 or cubemap average)
+
+    /// @source UE5 SceneRendering.cpp:1451 — AtmosphereLightIlluminanceOnGroundPostTransmittance
+    /// Sun color * intensity * atmospheric transmittance at ground level.
+    float  sunIllumPostTransR;        // Post-transmittance sun illuminance R
+    float  sunIllumPostTransG;        // Post-transmittance sun illuminance G
+    float  sunIllumPostTransB;        // Post-transmittance sun illuminance B
+    float  sunIllumPostTransA;        // 1.0 = has atmosphere sun, 0.0 = none
+
+    /// @source UE5 HeightFogCommon.ush:119 — InscatteringLightDirection
+    float  sunDirX;                   // Sun direction X (world-space, toward sun)
+    float  sunDirY;                   // Sun direction Y
+    float  sunDirZ;                   // Sun direction Z
+    float  _sunPad;
 };
 
 #ifndef UZ_BINDLESS
@@ -235,18 +248,36 @@ float4 main(FSInput input) : SV_Target {
                     * heightFogContribution
                     * skyLightColor;
 
-    // ── Directional inscattering (sun glow) ──
-    if (directionalInscatteringExponent > 0.0f) {
+    // ── Directional inscattering with atmosphere transmittance ──
+    /// @source UE5 HeightFogCommon.ush:319 — DirectionalInscatteringColor
+    ///   + SkyAtmosphereHeightFogContribution * AtmosphereLightIlluminanceOnGroundPostTransmittance
+    /// The post-transmittance sun illuminance tints directional inscattering with
+    /// the atmosphere's color filtering (Rayleigh blue shift at sunset, warm at noon).
+    {
+        // Build the directional inscattering base color.
+        // UE5 adds the atmosphere-filtered sun illuminance to the artistic inscattering color.
+        float3 dirInscatterColor = directionalInscatteringColor.xyz;
+        if (sunIllumPostTransA > 0.0f) {
+            dirInscatterColor += heightFogContribution
+                * float3(sunIllumPostTransR, sunIllumPostTransG, sunIllumPostTransB);
+        }
+
+        // Compute directional phase and fog factor.
         float3 viewDir = viewVec / max(dist, 0.001f);
-        float3 sunDir  = normalize(lightDir.xyz);
-        float  cosAngle = saturate(dot(viewDir, sunDir));
-        float  dirFactor = pow(cosAngle, directionalInscatteringExponent);
+        float3 sunDirection = float3(sunDirX, sunDirY, sunDirZ);
+
+        /// @source UE5 HeightFogCommon.ush:323-330 — directional inscattering phase
+        /// UE5 uses pow(saturate(dot(ViewDir, LightDir)), Exponent) * UniformPhaseFunction.
+        /// @constants UniformPhaseFunction = 1 / (4 * PI) (HeightFogCommon.ush:324)
+        float cosAngle = saturate(dot(viewDir, sunDirection));
+        float dirExponent = max(directionalInscatteringExponent, 0.001f);
+        float phase = pow(cosAngle, dirExponent);
 
         // UE5: directional inscattering uses a separate line integral
         // with its own start distance
         float dirFogAmount = lineIntegral * max(rayLength - directionalInscatteringStartDistance, 0.0f);
         float dirFogFactor = saturate(exp2(-dirFogAmount));
-        float3 dirInscatter = directionalInscatteringColor.xyz * dirFactor * (1.0f - dirFogFactor);
+        float3 dirInscatter = dirInscatterColor * phase * (1.0f - dirFogFactor);
 
         // With SrcAlpha/InvSrcAlpha blending:
         //   result = src.rgb * src.a + dst.rgb * (1 - src.a)
@@ -255,8 +286,4 @@ float4 main(FSInput input) : SV_Target {
         float3 totalInscatter = inscatterColor + dirInscatter / max(fogOpacity, 0.001f);
         return float4(totalInscatter, fogOpacity);
     }
-
-    // No directional inscattering: simple fog
-    // With SrcAlpha/InvSrcAlpha: result = inscatterColor * fogOpacity + scene * (1-fogOpacity)
-    return float4(inscatterColor, fogOpacity);
 }

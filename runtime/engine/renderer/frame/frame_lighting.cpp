@@ -712,14 +712,14 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
             AddAtmospherePasses(rgBuilder, ctx.hdrRes, ctx.depthRes, ctx.perFrameAlloc, atmoCtx);
 
             /// @source UE5 SkyAtmosphereCommon.ush:343-352 — GetViewDistanceSkyLightColor
-            /// UE5 uses DistantSkyLightLutBufferSRV (a precomputed 1-pixel LUT of sky
-            /// luminance at camera position). UzEngine doesn't have this LUT, so we use
-            /// the SkyLight component's color × intensity as an equivalent approximation.
-            /// The previous code used SH L0 coefficients (coeffs[N].w) which are scaled
-            /// by the diffuse convolution constant (~0.28), producing values too dim.
-            float skyFogR = ctx.perFrame.skyLightColorR * ctx.perFrame.skyLightIntensity;
-            float skyFogG = ctx.perFrame.skyLightColorG * ctx.perFrame.skyLightIntensity;
-            float skyFogB = ctx.perFrame.skyLightColorB * ctx.perFrame.skyLightIntensity;
+            /// UE5 uses DistantSkyLightLutBufferSRV — a precomputed 1-pixel LUT of sky
+            /// luminance at camera position. Our equivalent: the SH L0 coefficient from
+            /// the IBL irradiance projection, which is the average color of the sky cubemap.
+            /// SH L0 in UE5 packed format: coeffs[0].w=R, coeffs[1].w=G, coeffs[2].w=B.
+            /// These are already the sky's average irradiance (blue for a daytime sky).
+            float skyFogR = m_skyIrradianceSH.coeffs[0].w;
+            float skyFogG = m_skyIrradianceSH.coeffs[1].w;
+            float skyFogB = m_skyIrradianceSH.coeffs[2].w;
 
             AddHeightFogFromECS(rgBuilder, ctx.hdrRes, ctx.depthRes, ctx.perFrameAlloc,
                                 ctx.world, *m_camera, ctx.pipelines, *m_cbRing,

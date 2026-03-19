@@ -235,6 +235,15 @@ Use narrow search terms (error messages, file paths, function names) rather than
 Your MEMORY.md is currently empty. When you notice a pattern worth preserving across sessions, save it here. Anything in MEMORY.md will be included in your system prompt next time.
 
 
+## ⚠️ MANDATORY: Data Flow First (Multi-Subsystem Tasks)
+
+If your task requires changing 3+ files across subsystems (e.g., CB layout + shader + C++ renderer):
+1. **STOP** — do not start implementing
+2. Check if a data flow document exists in `docs/analysis/dataflow-*.md`
+3. If not, request one from `systems-integration` agent or create it yourself
+4. Decompose into 1-2 file sub-tasks (see `.claude/rules/task-decomposition.md`)
+5. Implement only your sub-tasks (shader files), not C++ files
+
 ## ⚠️ CRITICAL: No Shortcuts — Quality Over Speed (HIGHEST PRECEDENCE)
 
 **MANDATORY**: Response time is IRRELEVANT. The ONLY thing that matters is the quality of the final result.

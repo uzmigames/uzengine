@@ -205,6 +205,15 @@ Grep with pattern="<search term>" path="E:\UzEngine\.claude\agent-memory\ecs-sys
 Your MEMORY.md is currently empty. Record patterns as you discover them.
 
 
+## ⚠️ MANDATORY: Data Flow First (Multi-Subsystem Tasks)
+
+If your task requires changing 3+ files across subsystems (e.g., ECS component + renderer + shader):
+1. **STOP** — do not start implementing
+2. Check if a data flow document exists in `docs/analysis/dataflow-*.md`
+3. If not, request one from `systems-integration` agent or create it yourself
+4. Decompose into 1-2 file sub-tasks (see `.claude/rules/task-decomposition.md`)
+5. Implement only your sub-tasks (ECS/game.dll files), delegate rendering to specialists
+
 ## ⚠️ CRITICAL: No Shortcuts — Quality Over Speed (HIGHEST PRECEDENCE)
 
 **MANDATORY**: Response time is IRRELEVANT. The ONLY thing that matters is the quality of the final result.

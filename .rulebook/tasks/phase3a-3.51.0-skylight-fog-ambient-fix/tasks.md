@@ -20,9 +20,9 @@
 
 - [ ] 3.1 Read UE5 `FogRendering.cpp:282-290` — extract the exact formula for `SkyAtmosphereAmbientContributionColorScale` injection into fog inscattering.
 - [ ] 3.2 Add `skyAtmosphereAmbientContributionColorScale` property to `HeightFogComponent` (Vec3, default {1,1,1}). @source UE5 ExponentialHeightFogComponent.h.
-- [ ] 3.3 In `fog_renderer.cpp`: when SkyAtmosphere exists, compute injected fog color = `skyLightColor * skyLightIntensity * heightFogContribution * skyAtmContribColorScale`. Pass to fog CB.
-- [ ] 3.4 In `height_fog_ps.hlsl`: add the injected sky color to the fog inscattering luminance before applying fog opacity.
-- [ ] 3.5 Read UE5 `HeightFogCommon.ush` — verify the injection happens in the same place in the fog computation (before or after density integration).
+- [x] 3.3 In `fog_renderer.cpp`: when SkyAtmosphere exists, compute injected fog color = `skyLightColor * skyLightIntensity * heightFogContribution * skyAtmContribColorScale`. Pass to fog CB. Implemented full UE5 SkyAtmosphere→HeightFog color injection: CPU-side analytical transmittance (ComputeTransmittanceToSun), DirectionalLightComponent ECS query, sunIllumPostTrans + sunDir CB fields.
+- [x] 3.4 In `height_fog_ps.hlsl`: add the injected sky color to the fog inscattering luminance before applying fog opacity. Shader now uses sunIllumPostTrans for atmosphere-tinted directional inscattering (UE5 HeightFogCommon.ush:319 parity).
+- [x] 3.5 Read UE5 `HeightFogCommon.ush` — verify the injection happens in the same place in the fog computation (before or after density integration). Confirmed: injection adds to directionalInscatteringColor before phase/fog factor, matching UE5 line 319.
 - [ ] 3.6 Visual verification: horizon should have smooth blue-white fog transition blending sky into ground, matching UE5 Basic template.
 
 ## Fix 3: Ambient Fallback Cleanup

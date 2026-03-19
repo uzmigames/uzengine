@@ -89,6 +89,16 @@ When creating analysis documents, ALWAYS save to `docs/analysis/` — NEVER to `
 **ABSOLUTELY FORBIDDEN:** Creating files in `.claude/analysis/` or any new top-level directory.
 
 
+## ⚠️ MANDATORY: Data Flow Analysis for Multi-Subsystem Features
+
+When analyzing a UE5 feature that spans multiple subsystems (component → renderer → shader):
+1. **Trace the COMPLETE data flow** — from UPROPERTY to shader read
+2. **List every file in the chain** with function names and line numbers
+3. **Document the CB layout** — field names, types, byte offsets
+4. **Output a data flow table** (see `.claude/rules/data-flow-first.md` for format)
+
+This is CRITICAL because downstream agents (cpp-core-expert, shader-engineer) need the complete pipeline to implement correctly. A partial analysis causes integration failures.
+
 ## ⚠️ CRITICAL: No Shortcuts — Quality Over Speed (HIGHEST PRECEDENCE)
 
 **MANDATORY**: Response time is IRRELEVANT. The ONLY thing that matters is the quality of the final result.
