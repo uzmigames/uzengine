@@ -166,7 +166,8 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
     ctx.taaActive = m_taaEnabled
                  && m_taaHistory[0].IsValid()
                  && m_taaHistory[1].IsValid()
-                 && m_device->IsBindless();  // TAA compute requires bindless
+                 && m_device->IsBindless()  // TAA compute requires bindless
+                 && m_passInspector.IsPassEnabled("taa");
 
     if (ctx.taaActive) {
         // 1-based index into Halton(2,3) sequence, cycled every 8 samples.
@@ -704,37 +705,43 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
     ctx.bloomEnabled = m_bloomPass && m_bloomPass->IsInitialized()
                      && m_bloomPass->settings.enabled
                      && m_shadowDebugMode == 0
-                     && ctx.bindless;
+                     && ctx.bindless
+                     && m_passInspector.IsPassEnabled("bloom");
 
     ctx.ssrActive = m_ssrEnabled
                   && m_ssrTraceOutput.IsValid()
                   && m_ssrResolvedOutput.IsValid()
                   && m_hdrHasContent
                   && m_hizMipCount > 0
-                  && m_shadowDebugMode == 0;
+                  && m_shadowDebugMode == 0
+                  && m_passInspector.IsPassEnabled("ssr");
 
     // Gate motion blur on m_prevViewProjValid to avoid reading uninitialized velocity on frame 0.
     // The velocity pass is skipped on the first frame (no prevViewProj yet), so velocity data is garbage.
     ctx.motionBlurActive = m_motionBlurEnabled && m_prevViewProjValid
                          && m_motionBlurOutput.IsValid()
                          && m_motionBlurTileMax.IsValid() && m_motionBlurNeighborMax.IsValid()
-                         && m_gbuffer.velocity.IsValid() && ctx.bindless && m_shadowDebugMode == 0;
+                         && m_gbuffer.velocity.IsValid() && ctx.bindless && m_shadowDebugMode == 0
+                         && m_passInspector.IsPassEnabled("motionblur");
 
     ctx.dofActive = m_dofEnabled && m_dofFocusDistance > 0.0f
                   && m_dofCocTexture.IsValid() && m_dofOutputTexture.IsValid()
-                  && ctx.bindless && m_shadowDebugMode == 0;
+                  && ctx.bindless && m_shadowDebugMode == 0
+                  && m_passInspector.IsPassEnabled("dof");
 
     ctx.fxaaActive = !ctx.taaActive && ctx.bindless
                    && m_shadowDebugMode == 0
                    && m_fxaaLdrIntermediate.IsValid()
-                   && m_fxaaLdrIntermediateSrv != UINT32_MAX;
+                   && m_fxaaLdrIntermediateSrv != UINT32_MAX
+                   && m_passInspector.IsPassEnabled("fxaa");
 
     // CAS (Contrast Adaptive Sharpening) — runs after tonemap, before FXAA.
     // Enabled by default. Requires the LDR intermediate texture (shared with FXAA).
     ctx.casActive = m_casEnabled && ctx.bindless
                   && m_shadowDebugMode == 0
                   && m_fxaaLdrIntermediate.IsValid()
-                  && m_fxaaLdrIntermediateSrv != UINT32_MAX;
+                  && m_fxaaLdrIntermediateSrv != UINT32_MAX
+                  && m_passInspector.IsPassEnabled("cas");
 
     // Initialize SRV routing chain — each post-process pass may override these.
     ctx.taaSrvForTonemap = m_hdrSceneColorSrv;

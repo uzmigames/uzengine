@@ -117,6 +117,105 @@ void SceneRenderer::RegisterOverlayPasses(rg::RgBuilder& rgBuilder, FrameContext
         });
     });
 
+    // ── PassInspector: pass grid visualization ──────────────────────────
+    // When grid is active, draw an NxM grid of all registered targets.
+    // Each cell is a vis fullscreen draw with a constrained viewport.
+    if (m_passInspector.IsGridEnabled() && !m_passInspector.IsVisActive()) {
+        auto gridTargets = m_passInspector.GetGridTargets();
+        const auto& gridCfg = m_passInspector.GetGridConfig();
+
+        if (!gridTargets.empty() && gridCfg.columns > 0 && gridCfg.rows > 0) {
+            // Capture all SRV indices, modes, and dimensions by value.
+            struct GridCell {
+                uint32_t srvIndex;
+                uint32_t mode;
+                uint32_t texWidth;
+                uint32_t texHeight;
+            };
+
+            std::vector<GridCell> cells;
+            cells.reserve(gridTargets.size());
+            for (const auto* t : gridTargets) {
+                cells.push_back({t->srvIndex, static_cast<uint32_t>(t->mode), t->width, t->height});
+            }
+
+            const uint32_t cols = gridCfg.columns;
+            const uint32_t rows = gridCfg.rows;
+
+            rgBuilder.AddPass("PassGrid", [&, cells = std::move(cells), cols, rows](rg::RgPassBuilder& pb) {
+                pb.Write(ctx.bbRes, RHIResourceState::RenderTarget);
+
+                pb.SetExecutionCallback([this, &ctx, cells, cols, rows](
+                        IRHICommandList* cmd, const rg::RgPassResources& res) {
+                    UZ_PROFILE_SCOPE("PassInspector::Grid");
+
+                    auto visPipeline = ctx.pipelines->GetVisFullscreen();
+                    if (!visPipeline.IsValid()) return;
+
+                    auto bb = res.GetTexture(ctx.bbRes);
+
+                    RHIRenderPassDesc passDesc{};
+                    passDesc.colorAttachmentCount        = 1;
+                    passDesc.colorAttachments[0].texture = bb;
+                    passDesc.colorAttachments[0].clear   = true;
+                    passDesc.colorAttachments[0].clearColor[0] = 0.05f;
+                    passDesc.colorAttachments[0].clearColor[1] = 0.05f;
+                    passDesc.colorAttachments[0].clearColor[2] = 0.05f;
+                    passDesc.colorAttachments[0].clearColor[3] = 1.0f;
+                    cmd->BeginRenderPass(passDesc);
+
+                    cmd->SetPipeline(visPipeline);
+
+                    const float totalW = ctx.vpWidth;
+                    const float totalH = ctx.vpHeight;
+                    const float cellW  = totalW / static_cast<float>(cols);
+                    const float cellH  = totalH / static_cast<float>(rows);
+
+                    uint32_t nearBits = 0, farBits = 0;
+                    std::memcpy(&nearBits, &ctx.perFrame.nearPlane, sizeof(float));
+                    std::memcpy(&farBits,  &ctx.perFrame.farPlane,  sizeof(float));
+
+                    for (uint32_t i = 0; i < static_cast<uint32_t>(cells.size()); ++i) {
+                        const uint32_t col = i % cols;
+                        const uint32_t row = i / cols;
+                        if (row >= rows) break;
+
+                        RHIViewport vp{};
+                        vp.x        = static_cast<float>(col) * cellW;
+                        vp.y        = static_cast<float>(row) * cellH;
+                        vp.width    = cellW;
+                        vp.height   = cellH;
+                        vp.maxDepth = 1.0f;
+                        cmd->SetViewport(vp);
+
+                        RHIScissorRect sc{};
+                        sc.left   = static_cast<int32_t>(vp.x);
+                        sc.top    = static_cast<int32_t>(vp.y);
+                        sc.right  = static_cast<int32_t>(vp.x + cellW);
+                        sc.bottom = static_cast<int32_t>(vp.y + cellH);
+                        cmd->SetScissor(sc);
+
+                        uint32_t rootConstants[8] = {
+                            cells[i].srvIndex,
+                            cells[i].mode,
+                            cells[i].texWidth,
+                            cells[i].texHeight,
+                            nearBits,
+                            farBits,
+                            0,
+                            0
+                        };
+                        cmd->SetRootConstants(kSlotRootConstants, rootConstants, 8);
+
+                        cmd->Draw(3); // fullscreen triangle, clipped by viewport
+                    }
+
+                    cmd->EndRenderPass();
+                });
+            });
+        }
+    }
+
     // ── PassInspector: vis fullscreen pass ─────────────────────────────
     // When vis is active, overwrite the backbuffer with the selected target.
     // Runs after all rendering but before present.

@@ -34,7 +34,8 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
     const auto& cascades = ctx.shadowFrame.cascades;
 
     // ── GTAO Pass (after GBuffer, before lighting) ─────────────────
-    if (m_gtaoPass && m_gtaoPass->IsInitialized() && m_gtaoPass->settings.enabled) {
+    if (m_gtaoPass && m_gtaoPass->IsInitialized() && m_gtaoPass->settings.enabled
+        && m_passInspector.IsPassEnabled("gtao")) {
         rgBuilder.AddPass("GTAO", [&](rg::RgPassBuilder& pb) {
             pb.Read(ctx.depthRes, RHIResourceState::ShaderResource);
             pb.Read(ctx.normalRes, RHIResourceState::ShaderResource);
@@ -95,7 +96,8 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
                           && m_sdfAtlas->GetRegisteredObjectCount() > 0
                           && m_dfsOutputTexture.IsValid()
                           && m_dfsCulledIndicesBuffer.IsValid()
-                          && m_dfsIndirectArgsBuffer.IsValid();
+                          && m_dfsIndirectArgsBuffer.IsValid()
+                          && m_passInspector.IsPassEnabled("dfs");
     if (dfsEnabled) {
         // Upload dirty SDF object transforms before dispatching cull/trace.
         m_sdfAtlas->UploadObjectBuffer();
@@ -417,7 +419,8 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
     //
     // @source UE5 IndirectLightRendering.cpp:39-45 — SSGI method selection
     const bool ssgiActive = m_ssgiRenderer.IsReady()
-                          && m_device->IsBindless();
+                          && m_device->IsBindless()
+                          && m_passInspector.IsPassEnabled("ssgi");
     if (ssgiActive) {
         rgBuilder.AddPass("SSGI", [&](rg::RgPassBuilder& pb) {
             pb.Read(ctx.depthRes, RHIResourceState::ShaderResource);
@@ -765,11 +768,13 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
             float skyFogG = m_skyIrradianceSH.coeffs[1].w * ctx.perFrame.skyLightIntensity;
             float skyFogB = m_skyIrradianceSH.coeffs[2].w * ctx.perFrame.skyLightIntensity;
 
-            AddHeightFogFromECS(rgBuilder, ctx.hdrRes, ctx.depthRes, ctx.perFrameAlloc,
-                                ctx.world, *m_camera, ctx.pipelines, *m_cbRing,
-                                m_gbuffer.depthSRV, m_gbuffer.depth,
-                                ctx.bindless, ctx.renderWidth, ctx.renderHeight,
-                                skyFogR, skyFogG, skyFogB);
+            if (m_passInspector.IsPassEnabled("fog")) {
+                AddHeightFogFromECS(rgBuilder, ctx.hdrRes, ctx.depthRes, ctx.perFrameAlloc,
+                                    ctx.world, *m_camera, ctx.pipelines, *m_cbRing,
+                                    m_gbuffer.depthSRV, m_gbuffer.depth,
+                                    ctx.bindless, ctx.renderWidth, ctx.renderHeight,
+                                    skyFogR, skyFogG, skyFogB);
+            }
         }
     }
 

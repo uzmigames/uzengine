@@ -3,6 +3,11 @@
 /// Registers intermediate render targets from each pass and provides:
 /// 1. `vis <target>` — fullscreen visualization of any registered target.
 /// 2. `pass.validate` — readback-based anomaly detection (zeros, NaN, Inf).
+/// 3. `pass.stats` — per-pass GPU timing and readback stats.
+/// 4. `pass.dump` — full pipeline snapshot to PNG files.
+/// 5. `pass.toggle` — enable/disable individual passes at runtime.
+/// 6. `pass.compare` — side-by-side A/B comparison with/without a pass.
+/// 7. `pass.grid` — NxM grid visualization of all render targets.
 ///
 /// # Integration
 /// Each pass in frame_lighting.cpp / frame_postprocess.cpp calls
@@ -22,6 +27,7 @@
 
 #include <cstdint>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace uz {
@@ -74,6 +80,29 @@ struct ValidationResult {
     float       minVal;    ///< Minimum value across all sampled channels.
     float       maxVal;    ///< Maximum value across all sampled channels.
     float       avgVal;    ///< Average value across all sampled channels.
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PassTimingEntry — per-pass GPU timing result
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// GPU timing and readback stats for a single pass.
+struct PassTimingEntry {
+    std::string name;      ///< Pass name.
+    float       gpuTimeMs; ///< GPU time in milliseconds (0 if timing unavailable).
+    float       minVal;    ///< Min channel value from readback sampling.
+    float       maxVal;    ///< Max channel value from readback sampling.
+    float       avgVal;    ///< Average channel value from readback sampling.
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PassGridConfig — layout configuration for pass.grid
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Configuration for the NxM pass grid visualization.
+struct PassGridConfig {
+    uint32_t columns = 4;  ///< Number of columns in the grid.
+    uint32_t rows    = 4;  ///< Number of rows in the grid.
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -179,16 +208,172 @@ public:
     /// One ValidationResult per registered target.
     [[nodiscard]] std::vector<ValidationResult> Validate(IRHIDevice* device, IRHICommandList* cmdList);
 
+    /// Validates a single pass by name. Returns empty vector if not found.
+    [[nodiscard]] std::vector<ValidationResult> ValidateByName(
+        IRHIDevice* device, IRHICommandList* cmdList, const std::string& passName);
+
     /// Returns true if pass validation is enabled (from CLI `--pass-validate`).
     [[nodiscard]] bool IsValidationEnabled() const noexcept { return m_validationEnabled; }
 
     /// Enables or disables pass validation.
     void SetValidationEnabled(bool enabled) { m_validationEnabled = enabled; }
 
+    // ── Pass Toggle (Phase 4) ────────────────────────────────────────────
+
+    /// Toggles a pass on or off. When disabled, the pass dispatch is skipped.
+    ///
+    /// The pass name uses a category prefix (e.g., "ssgi", "gtao", "ssr", "fog",
+    /// "bloom", "contact_shadow", "aerial_persp", "tonemap", "taa", "motionblur",
+    /// "dof", "fxaa", "cas", "dfs").
+    ///
+    /// # Arguments
+    /// * `passName` — Category name of the pass to toggle.
+    void TogglePass(const std::string& passName);
+
+    /// Returns true if a pass category is enabled. Passes not explicitly disabled
+    /// are considered enabled by default.
+    [[nodiscard]] bool IsPassEnabled(const std::string& passName) const;
+
+    /// Returns the set of disabled pass names for serialization.
+    [[nodiscard]] const std::unordered_set<std::string>& GetDisabledPasses() const noexcept {
+        return m_disabledPasses;
+    }
+
+    // ── Pass Compare (Phase 4) ───────────────────────────────────────────
+
+    /// Enters comparison mode for the given pass name.
+    ///
+    /// When active, the renderer captures two frames — one with the pass
+    /// enabled, one with it disabled — and composites them side-by-side.
+    /// The comparison pass name is stored until ClearCompare() is called.
+    ///
+    /// # Arguments
+    /// * `passName` — Category name of the pass to compare.
+    void SetComparePass(const std::string& passName);
+
+    /// Exits comparison mode.
+    void ClearCompare();
+
+    /// Returns true if comparison mode is active.
+    [[nodiscard]] bool IsCompareActive() const noexcept { return !m_comparePassName.empty(); }
+
+    /// Returns the pass being compared, or empty string if not in compare mode.
+    [[nodiscard]] const std::string& GetComparePassName() const noexcept { return m_comparePassName; }
+
+    /// Returns the current compare phase: 0 = render with pass disabled,
+    /// 1 = render with pass enabled, 2 = composite result.
+    [[nodiscard]] uint32_t GetComparePhase() const noexcept { return m_comparePhase; }
+
+    /// Advances the compare phase. Called by the renderer after each sub-frame.
+    void AdvanceComparePhase() { ++m_comparePhase; }
+
+    /// Resets compare phase to 0. Called when starting a new comparison.
+    void ResetComparePhase() { m_comparePhase = 0; }
+
+    // ── Pass Stats (Phase 2) ─────────────────────────────────────────────
+
+    /// Stores per-pass timing data collected from the GPU profiler.
+    ///
+    /// Called by the renderer at the end of each frame with the resolved
+    /// timing results from the backend's GPU profiler.
+    void SetTimingData(const std::vector<PassTimingEntry>& entries);
+
+    /// Returns the most recent per-pass timing data.
+    [[nodiscard]] const std::vector<PassTimingEntry>& GetTimingData() const noexcept {
+        return m_timingData;
+    }
+
+    /// Enables or disables the stats overlay.
+    void SetStatsOverlayEnabled(bool enabled) { m_statsOverlayEnabled = enabled; }
+
+    /// Returns true if the pass stats overlay should be rendered.
+    [[nodiscard]] bool IsStatsOverlayEnabled() const noexcept { return m_statsOverlayEnabled; }
+
+    // ── Pass Dump (Phase 3) ──────────────────────────────────────────────
+
+    /// Requests a full pipeline dump at the specified frame.
+    ///
+    /// All registered targets are copied to staging buffers and saved as
+    /// PNG files in `.screenshots/pass-dump-f{frame}/`.
+    ///
+    /// # Arguments
+    /// * `frame` — Frame number at which to capture. UINT32_MAX = next frame.
+    void RequestDump(uint32_t frame = UINT32_MAX);
+
+    /// Returns true if a dump is pending for the current frame.
+    [[nodiscard]] bool IsDumpPending(uint32_t currentFrame) const noexcept;
+
+    /// Clears the dump request after execution.
+    void ClearDumpRequest();
+
+    /// Returns the frame number of the pending dump, or UINT32_MAX if none.
+    [[nodiscard]] uint32_t GetDumpFrame() const noexcept { return m_dumpFrame; }
+
+    /// Performs the dump: reads back all targets and saves PNGs + INDEX.html.
+    ///
+    /// The caller must ensure the GPU is idle before calling this (fence wait).
+    ///
+    /// # Arguments
+    /// * `device` — RHI device for staging buffer creation and mapping.
+    /// * `cmdList` — Command list for copy commands.
+    /// * `frameNumber` — Current frame number (used in directory name).
+    /// * `outputDir` — Base output directory (e.g., ".screenshots").
+    void ExecuteDump(IRHIDevice* device, IRHICommandList* cmdList,
+                     uint32_t frameNumber, const std::string& outputDir);
+
+    // ── Pass Grid (Phase 5) ──────────────────────────────────────────────
+
+    /// Enables or disables grid visualization mode.
+    void SetGridEnabled(bool enabled) { m_gridEnabled = enabled; }
+
+    /// Returns true if grid mode is active.
+    [[nodiscard]] bool IsGridEnabled() const noexcept { return m_gridEnabled; }
+
+    /// Sets the grid layout (columns x rows).
+    void SetGridConfig(const PassGridConfig& config) { m_gridConfig = config; }
+
+    /// Returns the current grid configuration.
+    [[nodiscard]] const PassGridConfig& GetGridConfig() const noexcept { return m_gridConfig; }
+
+    /// Sets extended grid mode (shows additional targets like bloom mips, SSGI intermediate).
+    void SetGridExtended(bool extended) { m_gridExtended = extended; }
+
+    /// Returns true if extended grid mode is active.
+    [[nodiscard]] bool IsGridExtended() const noexcept { return m_gridExtended; }
+
+    /// Returns the maximum number of grid cells for the current configuration.
+    [[nodiscard]] uint32_t GetGridCellCount() const noexcept {
+        return m_gridConfig.columns * m_gridConfig.rows;
+    }
+
+    /// Returns the list of target names to display in the grid.
+    /// Up to GetGridCellCount() targets are returned, in registration order.
+    [[nodiscard]] std::vector<const RegisteredTarget*> GetGridTargets() const;
+
 private:
     std::vector<RegisteredTarget> m_targets;   ///< Targets registered this frame.
     std::string m_visTargetName;               ///< Currently selected vis target name (empty = off).
     bool m_validationEnabled = false;          ///< True if pass.validate is active.
+
+    // ── Pass Toggle ──────────────────────────────────────────────────────
+    std::unordered_set<std::string> m_disabledPasses;  ///< Pass categories that have been toggled off.
+
+    // ── Pass Compare ─────────────────────────────────────────────────────
+    std::string m_comparePassName;  ///< Pass being compared (empty = not comparing).
+    uint32_t m_comparePhase = 0;    ///< 0 = disabled frame, 1 = enabled frame, 2 = composite.
+
+    // ── Pass Stats ───────────────────────────────────────────────────────
+    std::vector<PassTimingEntry> m_timingData;    ///< Most recent per-pass timing.
+    bool m_statsOverlayEnabled = false;           ///< True if stats overlay should render.
+
+    // ── Pass Dump ────────────────────────────────────────────────────────
+    uint32_t m_dumpFrame = UINT32_MAX;   ///< Frame to dump (UINT32_MAX = none pending).
+    bool m_dumpNextFrame = false;        ///< True if dump requested for "current/next frame".
+
+    // ── Pass Grid ────────────────────────────────────────────────────────
+    bool m_gridEnabled = false;        ///< True if grid mode is active.
+    bool m_gridExtended = false;       ///< True if showing the extended 6x4 grid.
+    PassGridConfig m_gridConfig;       ///< Grid layout configuration.
 };
 
 } // namespace uz

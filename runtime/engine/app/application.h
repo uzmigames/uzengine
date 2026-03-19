@@ -234,6 +234,9 @@ private:
     // ── Pass Inspector ─────────────────────────────────────────────────────
     std::string m_visTarget;           ///< --vis <target>: visualization target name (empty = off).
     bool        m_passValidate = false; ///< --pass-validate: run pass validation after rendering.
+    uint32_t    m_passDumpFrame = UINT32_MAX; ///< --pass-dump <N>: frame to dump all targets.
+    std::string m_passToggle;          ///< --pass-toggle <name>: toggle a pass off at startup.
+    std::string m_passCompare;         ///< --pass-compare <name>: compare mode for a pass.
 
     // ── Deferred scene load ───────────────────────────────────────────────
     std::string m_pendingScenePath;

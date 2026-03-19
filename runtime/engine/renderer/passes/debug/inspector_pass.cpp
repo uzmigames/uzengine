@@ -1,7 +1,8 @@
 /// UzEngine Pass Inspector — Implementation.
 ///
 /// Manages per-frame target registration, visualization target lookup,
-/// and readback-based validation for the render pass inspector system.
+/// readback-based validation, pass toggling, comparison, dump to PNG,
+/// stats collection, and grid visualization for the render pass inspector.
 
 #include "inspector_pass.h"
 
@@ -11,7 +12,17 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
+#include <sstream>
+#include <string>
+
+// stb_image_write — implementation lives in screenshot_capture.cpp.
+// We only need the function declarations here for stbi_write_png.
+#include "stb_image_write.h"
 
 UZ_DEFINE_LOG_CATEGORY(PassInspector, Trace);
 
@@ -89,11 +100,6 @@ namespace {
 
 /// Reads a single channel value from raw readback data at the given byte offset,
 /// converting to float according to the texture format.
-///
-/// For half-float formats: reads uint16_t and converts via HalfToFloat.
-/// For 8-bit unorm formats: reads uint8_t and normalizes to [0,1].
-/// For 32-bit float/uint formats: reads float directly (uint reinterpret for uint formats).
-/// For depth formats: reads as the appropriate native type.
 [[nodiscard]] float ReadChannel(const uint8_t* texelBase, uint32_t channelIndex,
                                 RHIFormat format) noexcept
 {
@@ -163,6 +169,173 @@ namespace {
         default:
             return 0.0f;
     }
+}
+
+/// Returns true if the given format is a depth/stencil format.
+[[nodiscard]] bool IsDepthFormat(RHIFormat format) noexcept
+{
+    return format == RHIFormat::D16Unorm
+        || format == RHIFormat::D32Float
+        || format == RHIFormat::D24UnormS8Uint
+        || format == RHIFormat::D32FloatS8Uint;
+}
+
+/// Reads back a full texture to CPU memory.
+/// Returns an RGBA8 pixel buffer (width * height * 4 bytes) suitable for stbi_write_png.
+/// Returns empty vector on failure.
+[[nodiscard]] std::vector<uint8_t> ReadbackTextureToRGBA8(
+    IRHIDevice* device, IRHICommandList* cmdList,
+    const RegisteredTarget& target)
+{
+    std::vector<uint8_t> pixels;
+
+    const RHITextureDesc texDesc = device->GetTextureDesc(target.texture);
+    const RHIFormat format       = texDesc.format;
+    const uint32_t bytesPerTexel = BytesPerTexel(format);
+    const uint32_t channels      = ChannelCount(format);
+
+    if (bytesPerTexel == 0 || channels == 0 || IsDepthFormat(format)) {
+        return pixels;
+    }
+
+    const uint32_t rowPitch = ((target.width * bytesPerTexel + 255) & ~255u);
+    const uint64_t totalBytes = static_cast<uint64_t>(rowPitch) * target.height;
+
+    // Cap at 64MB to avoid excessive memory use during dumps.
+    if (totalBytes > 64u * 1024u * 1024u) {
+        return pixels;
+    }
+
+    RHIBufferDesc readbackDesc{};
+    readbackDesc.sizeBytes = totalBytes;
+    readbackDesc.stride    = bytesPerTexel;
+    readbackDesc.usage     = RHIBufferUsage::CopyDst;
+    readbackDesc.memory    = RHIMemoryType::Readback;
+    readbackDesc.debugName = "PassInspector_Dump";
+
+    RHIBufferHandle readbackBuffer = device->CreateBuffer(readbackDesc);
+    if (!readbackBuffer.IsValid()) {
+        return pixels;
+    }
+
+    // Record barrier + copy + restore barrier.
+    cmdList->Begin();
+    {
+        RHIBarrierDesc barrier{};
+        barrier.texture     = target.texture;
+        barrier.stateBefore = target.lastState;
+        barrier.stateAfter  = RHIResourceState::CopySrc;
+        cmdList->ResourceBarrier(&barrier, 1);
+
+        cmdList->CopyTextureToBuffer(target.texture, 0,
+                                      readbackBuffer, 0, rowPitch, 0);
+
+        barrier.stateBefore = RHIResourceState::CopySrc;
+        barrier.stateAfter  = target.lastState;
+        cmdList->ResourceBarrier(&barrier, 1);
+    }
+    cmdList->End();
+    cmdList->Execute();
+    device->WaitIdle();
+
+    void* mapped = device->MapBuffer(readbackBuffer);
+    if (!mapped) {
+        device->DestroyBuffer(readbackBuffer);
+        return pixels;
+    }
+
+    // Convert to RGBA8 for PNG output.
+    pixels.resize(static_cast<size_t>(target.width) * target.height * 4u);
+
+    for (uint32_t y = 0; y < target.height; ++y) {
+        const auto* rowBase = static_cast<const uint8_t*>(mapped)
+                            + static_cast<uint64_t>(y) * rowPitch;
+
+        for (uint32_t x = 0; x < target.width; ++x) {
+            const auto* texelBase = rowBase + x * bytesPerTexel;
+            const size_t pixelOffset = (static_cast<size_t>(y) * target.width + x) * 4u;
+
+            float r = 0.0f, g = 0.0f, b = 0.0f, a = 1.0f;
+
+            if (channels >= 1) r = ReadChannel(texelBase, 0, format);
+            if (channels >= 2) g = ReadChannel(texelBase, 1, format);
+            if (channels >= 3) b = ReadChannel(texelBase, 2, format);
+            if (channels >= 4) a = ReadChannel(texelBase, 3, format);
+
+            // Handle NaN/Inf by replacing with magenta (diagnostic color).
+            if (std::isnan(r) || std::isinf(r)) r = 1.0f;
+            if (std::isnan(g) || std::isinf(g)) g = 0.0f;
+            if (std::isnan(b) || std::isinf(b)) b = 1.0f;
+            if (std::isnan(a) || std::isinf(a)) a = 1.0f;
+
+            // For grayscale formats, replicate R across RGB.
+            if (channels == 1) { g = r; b = r; }
+            if (channels == 2) { b = 0.0f; }
+
+            // HDR tonemap for display: simple Reinhard per channel.
+            r = r / (1.0f + r);
+            g = g / (1.0f + g);
+            b = b / (1.0f + b);
+
+            // Clamp and convert to 8-bit.
+            auto clamp8 = [](float v) -> uint8_t {
+                return static_cast<uint8_t>(std::min(std::max(v, 0.0f), 1.0f) * 255.0f + 0.5f);
+            };
+
+            pixels[pixelOffset + 0] = clamp8(r);
+            pixels[pixelOffset + 1] = clamp8(g);
+            pixels[pixelOffset + 2] = clamp8(b);
+            pixels[pixelOffset + 3] = clamp8(a);
+        }
+    }
+
+    device->UnmapBuffer(readbackBuffer);
+    device->DestroyBuffer(readbackBuffer);
+
+    return pixels;
+}
+
+/// Generates an INDEX.html file for browsing dump PNGs.
+void GenerateIndexHtml(const std::string& dir, const std::vector<std::string>& filenames,
+                       uint32_t frameNumber)
+{
+    const std::string htmlPath = dir + "/INDEX.html";
+    std::ofstream ofs(htmlPath);
+    if (!ofs.is_open()) {
+        UZ_LOG(PassInspector, Warning, "PassInspector: failed to create {}", htmlPath);
+        return;
+    }
+
+    ofs << "<!DOCTYPE html>\n<html>\n<head>\n<title>Pass Dump — Frame " << frameNumber << "</title>\n";
+    ofs << "<style>\n";
+    ofs << "body { background: #1a1a1a; color: #e0e0e0; font-family: monospace; margin: 20px; }\n";
+    ofs << "h1 { color: #80ff80; }\n";
+    ofs << ".grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 10px; }\n";
+    ofs << ".cell { background: #2a2a2a; padding: 10px; border-radius: 6px; }\n";
+    ofs << ".cell img { width: 100%; cursor: pointer; }\n";
+    ofs << ".cell .label { font-size: 13px; margin-bottom: 5px; color: #80ff80; }\n";
+    ofs << ".fullscreen { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; ";
+    ofs << "background: rgba(0,0,0,0.9); z-index: 100; cursor: pointer; }\n";
+    ofs << ".fullscreen img { max-width: 95%; max-height: 95%; margin: auto; display: block; ";
+    ofs << "position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); }\n";
+    ofs << "</style>\n</head>\n<body>\n";
+    ofs << "<h1>Pass Dump — Frame " << frameNumber << " (" << filenames.size() << " targets)</h1>\n";
+    ofs << "<div class=\"grid\">\n";
+
+    for (const auto& fn : filenames) {
+        ofs << "  <div class=\"cell\">\n";
+        ofs << "    <div class=\"label\">" << fn << "</div>\n";
+        ofs << "    <img src=\"" << fn << "\" onclick=\"showFull(this.src)\">\n";
+        ofs << "  </div>\n";
+    }
+
+    ofs << "</div>\n";
+    ofs << "<div class=\"fullscreen\" id=\"fullview\" onclick=\"this.style.display='none'\">\n";
+    ofs << "  <img id=\"fullimg\">\n</div>\n";
+    ofs << "<script>\nfunction showFull(src) {\n";
+    ofs << "  document.getElementById('fullimg').src = src;\n";
+    ofs << "  document.getElementById('fullview').style.display = 'block';\n";
+    ofs << "}\n</script>\n</body>\n</html>\n";
 }
 
 } // anonymous namespace
@@ -252,14 +425,6 @@ std::vector<ValidationResult> PassInspector::Validate(IRHIDevice* device, IRHICo
 
     results.reserve(m_targets.size());
 
-    // Process each target individually: record a single barrier+copy pair,
-    // submit, wait, and read back. This per-target approach is necessary
-    // because the end-of-frame resource state may not match the declared
-    // lastState (pre-existing render graph state tracking gaps), and one
-    // invalid barrier would poison an entire batch submission.
-    //
-    // Row pitch must be 256-byte aligned for D3D12.
-
     static constexpr uint32_t kSampleDim = 4;
 
     // The command list may not be in recording state. Begin a fresh recording.
@@ -292,15 +457,7 @@ std::vector<ValidationResult> PassInspector::Validate(IRHIDevice* device, IRHICo
             continue;
         }
 
-        // Skip depth/stencil formats — the DX12 CopyTextureToBuffer footprint
-        // requires R32_FLOAT (not D32_FLOAT) for depth textures, which the RHI
-        // does not currently handle. Attempting to copy triggers E_INVALIDARG
-        // on Close and a subsequent device removed.
-        const bool isDepthFormat = (format == RHIFormat::D16Unorm
-                                 || format == RHIFormat::D32Float
-                                 || format == RHIFormat::D24UnormS8Uint
-                                 || format == RHIFormat::D32FloatS8Uint);
-        if (isDepthFormat) {
+        if (IsDepthFormat(format)) {
             result.minVal = 0.0f;
             result.maxVal = 0.0f;
             result.avgVal = 0.0f;
@@ -320,7 +477,7 @@ std::vector<ValidationResult> PassInspector::Validate(IRHIDevice* device, IRHICo
             result.minVal = 0.0f;
             result.maxVal = 0.0f;
             result.avgVal = 0.0f;
-            result.isZero = false; // Don't flag as zero — we just didn't check.
+            result.isZero = false;
             UZ_LOG(PassInspector, Info,
                    "[PASS VALIDATE] {}: SKIPPED (texture too large: {}x{}, {} bytes)",
                    target.name, target.width, target.height, totalBytes);
@@ -363,9 +520,6 @@ std::vector<ValidationResult> PassInspector::Validate(IRHIDevice* device, IRHICo
             cmdList->ResourceBarrier(&barrier, 1);
         }
 
-        // Submit and wait for this single copy. If the command list Close
-        // fails (barrier state mismatch from pre-existing render graph gaps),
-        // reset and skip this target rather than crashing.
         cmdList->End();
         cmdList->Execute();
         device->WaitIdle();
@@ -444,6 +598,205 @@ std::vector<ValidationResult> PassInspector::Validate(IRHIDevice* device, IRHICo
     }
 
     return results;
+}
+
+std::vector<ValidationResult> PassInspector::ValidateByName(
+    IRHIDevice* device, IRHICommandList* cmdList, const std::string& passName)
+{
+    if (!device || !cmdList || passName.empty()) {
+        return {};
+    }
+
+    // Filter targets that match the pass name prefix (e.g., "ssgi" matches
+    // "ssgi.trace", "ssgi.denoised", etc.) or exact name.
+    std::vector<RegisteredTarget> filteredTargets;
+    for (const auto& target : m_targets) {
+        if (target.name == passName ||
+            (target.name.size() > passName.size() &&
+             target.name.compare(0, passName.size(), passName) == 0 &&
+             target.name[passName.size()] == '.')) {
+            filteredTargets.push_back(target);
+        }
+    }
+
+    if (filteredTargets.empty()) {
+        UZ_LOG(PassInspector, Warning,
+               "[PASS VALIDATE] No targets found matching '{}'", passName);
+        return {};
+    }
+
+    // Temporarily replace m_targets with the filtered set, validate, then restore.
+    auto savedTargets = std::move(m_targets);
+    m_targets = std::move(filteredTargets);
+    auto results = Validate(device, cmdList);
+    m_targets = std::move(savedTargets);
+
+    return results;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pass Toggle (Phase 4)
+// ─────────────────────────────────────────────────────────────────────────────
+
+void PassInspector::TogglePass(const std::string& passName) {
+    if (passName.empty()) return;
+
+    auto it = m_disabledPasses.find(passName);
+    if (it != m_disabledPasses.end()) {
+        m_disabledPasses.erase(it);
+        UZ_LOG(PassInspector, Info, "PassInspector: pass '{}' enabled", passName);
+    } else {
+        m_disabledPasses.insert(passName);
+        UZ_LOG(PassInspector, Info, "PassInspector: pass '{}' disabled", passName);
+    }
+}
+
+bool PassInspector::IsPassEnabled(const std::string& passName) const {
+    return m_disabledPasses.find(passName) == m_disabledPasses.end();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pass Compare (Phase 4)
+// ─────────────────────────────────────────────────────────────────────────────
+
+void PassInspector::SetComparePass(const std::string& passName) {
+    if (passName.empty()) {
+        ClearCompare();
+        return;
+    }
+
+    m_comparePassName = passName;
+    m_comparePhase = 0;
+    UZ_LOG(PassInspector, Info, "PassInspector: comparison mode for '{}' — "
+           "next 2 frames will capture with/without", passName);
+}
+
+void PassInspector::ClearCompare() {
+    if (!m_comparePassName.empty()) {
+        UZ_LOG(PassInspector, Info, "PassInspector: comparison mode ended");
+    }
+    m_comparePassName.clear();
+    m_comparePhase = 0;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pass Stats (Phase 2)
+// ─────────────────────────────────────────────────────────────────────────────
+
+void PassInspector::SetTimingData(const std::vector<PassTimingEntry>& entries) {
+    m_timingData = entries;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pass Dump (Phase 3)
+// ─────────────────────────────────────────────────────────────────────────────
+
+void PassInspector::RequestDump(uint32_t frame) {
+    if (frame == UINT32_MAX) {
+        m_dumpNextFrame = true;
+        UZ_LOG(PassInspector, Info, "PassInspector: dump requested for next frame");
+    } else {
+        m_dumpFrame = frame;
+        m_dumpNextFrame = false;
+        UZ_LOG(PassInspector, Info, "PassInspector: dump scheduled for frame {}", frame);
+    }
+}
+
+bool PassInspector::IsDumpPending(uint32_t currentFrame) const noexcept {
+    if (m_dumpNextFrame) return true;
+    return m_dumpFrame != UINT32_MAX && m_dumpFrame == currentFrame;
+}
+
+void PassInspector::ClearDumpRequest() {
+    m_dumpFrame = UINT32_MAX;
+    m_dumpNextFrame = false;
+}
+
+void PassInspector::ExecuteDump(IRHIDevice* device, IRHICommandList* cmdList,
+                                 uint32_t frameNumber, const std::string& outputDir) {
+    if (!device || !cmdList || m_targets.empty()) {
+        UZ_LOG(PassInspector, Warning, "PassInspector: dump failed — no targets registered");
+        return;
+    }
+
+    // Create the output directory: outputDir/pass-dump-f{N}/
+    std::ostringstream dirStream;
+    dirStream << outputDir << "/pass-dump-f" << frameNumber;
+    const std::string dumpDir = dirStream.str();
+
+    std::error_code ec;
+    std::filesystem::create_directories(dumpDir, ec);
+    if (ec) {
+        UZ_LOG(PassInspector, Error, "PassInspector: failed to create directory '{}': {}",
+               dumpDir, ec.message());
+        return;
+    }
+
+    UZ_LOG(PassInspector, Info, "PassInspector: dumping {} targets to '{}'",
+           m_targets.size(), dumpDir);
+
+    std::vector<std::string> filenames;
+    filenames.reserve(m_targets.size());
+
+    for (uint32_t i = 0; i < static_cast<uint32_t>(m_targets.size()); ++i) {
+        const auto& target = m_targets[i];
+
+        // Build filename: XX-name.png (dots replaced with dashes)
+        std::ostringstream fnStream;
+        fnStream << std::setfill('0') << std::setw(2) << i << "-";
+        std::string safeName = target.name;
+        std::replace(safeName.begin(), safeName.end(), '.', '-');
+        fnStream << safeName << ".png";
+        const std::string filename = fnStream.str();
+
+        // Readback the texture to RGBA8.
+        auto pixels = ReadbackTextureToRGBA8(device, cmdList, target);
+        if (pixels.empty()) {
+            UZ_LOG(PassInspector, Warning, "PassInspector: dump skipped '{}' (readback failed or depth format)",
+                   target.name);
+            continue;
+        }
+
+        // Write PNG.
+        const std::string fullPath = dumpDir + "/" + filename;
+        const int writeResult = stbi_write_png(
+            fullPath.c_str(),
+            static_cast<int>(target.width),
+            static_cast<int>(target.height),
+            4,
+            pixels.data(),
+            static_cast<int>(target.width * 4));
+
+        if (writeResult) {
+            filenames.push_back(filename);
+            UZ_LOG(PassInspector, Info, "PassInspector: dumped {} ({}x{})",
+                   filename, target.width, target.height);
+        } else {
+            UZ_LOG(PassInspector, Warning, "PassInspector: failed to write '{}'", fullPath);
+        }
+    }
+
+    // Generate INDEX.html for browser-based viewing.
+    GenerateIndexHtml(dumpDir, filenames, frameNumber);
+
+    UZ_LOG(PassInspector, Info, "PassInspector: dump complete — {} PNGs + INDEX.html in '{}'",
+           filenames.size(), dumpDir);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pass Grid (Phase 5)
+// ─────────────────────────────────────────────────────────────────────────────
+
+std::vector<const RegisteredTarget*> PassInspector::GetGridTargets() const {
+    std::vector<const RegisteredTarget*> gridTargets;
+    const uint32_t maxCells = GetGridCellCount();
+    gridTargets.reserve(std::min(maxCells, static_cast<uint32_t>(m_targets.size())));
+
+    for (uint32_t i = 0; i < static_cast<uint32_t>(m_targets.size()) && i < maxCells; ++i) {
+        gridTargets.push_back(&m_targets[i]);
+    }
+
+    return gridTargets;
 }
 
 } // namespace uz

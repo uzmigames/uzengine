@@ -381,6 +381,35 @@ void SceneRenderer::RegisterCVars() {
     /// @source UE5 TemporalSuperResolution.cpp:72-76 — r.TSR.History.UpdateQuality
     cvars.Register("r.TSR.History.UpdateQuality", 2.f,
                    "TSR quality level: 0=Low, 1=Medium, 2=High, 3=Epic", 0.f, 3.f);
+
+    // ── Pass Inspector CVars ─────────────────────────────────────────────
+    // These CVars allow runtime control of the pass inspector via the CVar
+    // system (console, Lua, IPC). They act as the "console command" mechanism
+    // since UzEngine does not have a dedicated console command registry.
+
+    /// pass.stats: 0=off, 1=show pass timing overlay
+    cvars.Register("r.PassInspector.Stats", 0.f,
+                   "Show per-pass GPU timing overlay (0=off, 1=on)", 0.f, 1.f);
+
+    /// pass.validate: 0=off, 1=run validation this frame
+    cvars.Register("r.PassInspector.Validate", 0.f,
+                   "Run pass validation (0=off, 1=validate all)", 0.f, 1.f);
+
+    /// pass.dump: frame number to dump at (0=off/disabled)
+    cvars.Register("r.PassInspector.DumpFrame", 0.f,
+                   "Dump all targets at frame N (0=off)", 0.f, 1e6f);
+
+    /// pass.grid: 0=off, 1=4x4 grid, 2=6x4 extended grid
+    cvars.Register("r.PassInspector.Grid", 0.f,
+                   "Show pass grid overlay (0=off, 1=4x4, 2=6x4 extended)", 0.f, 2.f);
+
+    /// pass.grid columns
+    cvars.Register("r.PassInspector.GridColumns", 4.f,
+                   "Pass grid column count", 1.f, 8.f);
+
+    /// pass.grid rows
+    cvars.Register("r.PassInspector.GridRows", 4.f,
+                   "Pass grid row count", 1.f, 8.f);
 }
 
 void SceneRenderer::ApplyCVars() {
@@ -402,6 +431,33 @@ void SceneRenderer::ApplyCVars() {
     const bool dynResEnabled = cvars.GetBool("r.DynamicResolution.Enabled");
     m_dynRes->SetEnabled(dynResEnabled);
     m_dynRes->SetTargetFPS(cvars.GetFloat("r.DynamicResolution.TargetFPS", 60.f));
+
+    // ── Pass Inspector CVars ─────────────────────────────────────────────
+
+    // pass.stats overlay
+    m_passInspector.SetStatsOverlayEnabled(cvars.GetBool("r.PassInspector.Stats"));
+
+    // pass.grid
+    const int gridMode = cvars.GetInt("r.PassInspector.Grid");
+    if (gridMode == 0) {
+        m_passInspector.SetGridEnabled(false);
+        m_passInspector.SetGridExtended(false);
+    } else if (gridMode == 1) {
+        m_passInspector.SetGridEnabled(true);
+        m_passInspector.SetGridExtended(false);
+    } else {
+        m_passInspector.SetGridEnabled(true);
+        m_passInspector.SetGridExtended(true);
+    }
+
+    PassGridConfig gridCfg;
+    gridCfg.columns = static_cast<uint32_t>(cvars.GetInt("r.PassInspector.GridColumns", 4));
+    gridCfg.rows    = static_cast<uint32_t>(cvars.GetInt("r.PassInspector.GridRows", 4));
+    if (m_passInspector.IsGridExtended()) {
+        gridCfg.columns = 6;
+        gridCfg.rows    = 4;
+    }
+    m_passInspector.SetGridConfig(gridCfg);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
