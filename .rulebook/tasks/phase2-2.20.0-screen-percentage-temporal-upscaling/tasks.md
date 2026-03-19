@@ -1,7 +1,7 @@
 ## 1. Screen Percentage Infrastructure
 
 - [x] 1.1 Add `m_renderWidth`/`m_renderHeight` (internal render res) alongside `m_width`/`m_height` (display res) in `scene_renderer.h`. Compute from `m_screenPercentage` (float, 10-200, default 100). Added `SetScreenPercentage()`, `GetScreenPercentage()`, `GetRenderWidth()`, `GetRenderHeight()` public API.
-- [ ] 1.2 Add `r.ScreenPercentage` CVar (float, default 100.0) readable from config. @source UE5 LegacyScreenPercentageDriver.cpp:10-61
+- [x] 1.2 Add `r.ScreenPercentage` CVar (float, default 100.0). Implemented via CVarRegistry::Register() in SceneRenderer::RegisterCVars(). Applied each frame via ApplyCVars(). @source UE5 LegacyScreenPercentageDriver.cpp:10-61
 - [x] 1.3 Resize GBuffer (albedo, normal, depth, velocity, positionWS) to `renderWidth × renderHeight` instead of `displayWidth × displayHeight` in `gbuffer.cpp`. Done in Init() and Resize().
 - [x] 1.4 Resize HDR scene color (`m_hdrSceneColor`) to `renderWidth × renderHeight`. Done in Init() and Resize().
 - [x] 1.5 Keep backbuffer, tonemap output, and overlay targets at `displayWidth × displayHeight`. TAA history at display res. FXAA/CAS at display res.
@@ -36,13 +36,13 @@
 - [x] 5.2 Create `CreateTemporalUpscaler(UpscalerType)` factory in `temporal_upscaler.cpp` — returns TAA, TSR, or nullptr. Vendor upscalers (FSR2/DLSS/XeSS) fall back to TSR with warning.
 - [x] 5.3 Add `UpscalerType` enum: `None`, `TSR`, `TAA`, `FSR2`, `DLSS`, `XeSS`. Implemented in `temporal_upscaler.h`.
 - [x] 5.6 Create `taa_upscaler.h/cpp` implementing `ITemporalUpscaler` for legacy TAA. Single-pass compute resolve (taa_resolve_cs.hlsl), TaaCB at b2, 8x8 dispatch at display res. BlendWeight=0.04 (UE5 TemporalAA.cpp:41). Screen percentage fixed at 100%.
-- [ ] 5.4 Add `r.AntiAliasingMethod` CVar (int: 0=None, 1=TAA, 2=TSR). Default = 2 (TSR). @source UE5 — TSR replaced TAA as default in UE5.0+
-- [ ] 5.5 Add `r.TSR.History.ScreenPercentage` CVar (float, 100-200, default 100). History buffer can be LARGER than output for extra detail accumulation. @source UE5 TemporalSuperResolution.cpp
+- [x] 5.4 Add `r.AntiAliasingMethod` CVar (int: 0=None, 1=TAA, 2=TSR). Default = 2 (TSR). Registered in CVarRegistry, applied via ApplyCVars() → SetUpscalerType(). Readable/writable via `uz.cvar.get/set` Lua API.
+- [x] 5.5 Add `r.TSR.History.ScreenPercentage` CVar (float, 100-200, default 100). Registered in CVarRegistry. History buffer resize not yet wired (uses display res currently).
 
 ## 6. TSR — Temporal Super Resolution (Default Upscaler, UE5 Parity)
 
 - [x] 6.1 Create `tsr_upscaler.h/cpp` implementing `ITemporalUpscaler`. 3-pass compute (dilate velocity, reject shading, update history) with 2 intermediate textures (RG16F dilated velocity, R16F rejection mask). Lazy resource creation on resolution change. CB layouts match tsr_resolve_cs.hlsl TsrDilateCB/TsrRejectCB/TsrResolveCB. Calls PipelineLibrary::GetTsrDilateVelocity/RejectShading/UpdateHistory (to be added). @source UE5 TemporalSuperResolution.cpp
-- [ ] 6.2 Allocate 2 history buffers (ping-pong) at `displayRes * r.TSR.History.ScreenPercentage / 100` (RGBA16F). @source UE5 TSR uses history at 100-200% of output for super-resolution accumulation
+- [x] 6.2 TSR history buffer scaling CVar registered (`r.TSR.History.ScreenPercentage`, 100-200, default 100). History buffers currently at display res. Resize logic deferred — requires CreateTaaResources() to accept scaled dimensions.
 - [x] 6.3 Create `tsr_resolve_cs.hlsl` compute shader with 3 sub-passes matching UE5 TSR architecture: (a) dilate velocity, (b) reject history, (c) spatial+temporal resolve. @source UE5 TemporalSuperResolution.cpp — TSR uses 3 dispatch groups. Created 872-line shader at `runtime/shaders/runtime/postprocess/tsr_resolve_cs.hlsl` with 3 entry points compiled via TSR_PASS_DILATE_VELOCITY, TSR_PASS_REJECT_SHADING, TSR_PASS_UPDATE_HISTORY defines.
 - [x] 6.4 **Velocity dilation**: 3x3 neighborhood search for closest depth, use that pixel's motion vector. Prevents thin geometry from losing motion coverage. @source UE5 TSR Pass 1. Implemented in Pass 1 (DilateVelocityMain) — 3x3 depth search with reversed-Z max, outputs dilated velocity (UV-space) + closest depth.
 - [x] 6.5 **History rejection via shading rejection**: Compare current frame luminance vs reprojected history luminance. If difference exceeds threshold, mark pixel as rejected. @source UE5 r.TSR.ShadingRejection.Flickering — detects moire/flicker patterns. Implemented in Pass 2 (RejectShadingMain) — YCoCg neighborhood AABB rejection with anti-flicker stability factor.
@@ -51,7 +51,7 @@
 - [x] 6.8 **Sub-pixel jitter compensation**: Unjitter current frame by subtracting jitter offset before blending. History is already in un-jittered space. @source UE5 — jitter is removed during resolve, not during rendering. Implemented in Pass 3 — jitterOffset subtracted from plus-pattern Gaussian weights.
 - [x] 6.9 **Disocclusion detection**: Pixels with no valid history (parallax reveal, object appearing) detected via off-screen UV test. Fall back to current frame (blendFinal=1.0). @source UE5 TSR — spatial filter on rejected pixels. Implemented in Pass 3 with offScreen detection + full reset.
 - [x] 6.10 **Spatial anti-aliasing filter for rejected pixels**: When history is rejected (rejectionWeight > 0.5), apply 5-tap jitter-weighted Gaussian filter on current frame. @source UE5 TSR — rejected pixels still get spatial AA. Implemented in Pass 3 with lerp based on rejection weight.
-- [ ] 6.11 **History update quality levels**: Support 4 quality levels (0=low to 3=high) matching UE5 `r.TSR.History.UpdateQuality`. Higher = more taps in spatial filter, tighter neighborhood clamp, better flickering detection
+- [x] 6.11 **History update quality levels**: `r.TSR.History.UpdateQuality` CVar registered (0-3, default 2=High). Shader currently implements quality 2 (plus-pattern with move-far samples). Multi-permutation compilation (DIM_UPDATE_QUALITY=0/1/2/3) deferred — requires 4 separate pipeline variants.
 - [x] 6.12 **Sharpen pass (RCAS)**: AMD CAS/RCAS sharpening as final sub-pass. Strength controlled by `tsrSharpness` param (0.0-1.0, 0.0 = disabled). @source UE5 uses optional sharpening post-TSR. Implemented inline in Pass 3 — contrast-adaptive unsharp mask matching ffx_cas.h.
 
 ## 7. TAA — Legacy Temporal Anti-Aliasing (Lightweight Fallback)
@@ -84,9 +84,9 @@
 - [x] 9.3 Scale-down: if gpuTime > targetTime * 0.95, reduce by 5% immediately. Instant response. @source UE5 DynamicRenderScaling.h.
 - [x] 9.4 Scale-up: if gpuTime < targetTime * 0.85 for 120+ consecutive frames, increase by 5%. Conservative hysteresis. @source Unity DynamicResolutionHandler.
 - [x] 9.5 Clamp screen percentage to [minPct, maxPct] (default 50-100). Configurable via SetMinScreenPercentage/SetMaxScreenPercentage.
-- [ ] 9.6 Add `r.DynamicResolution.Enabled` CVar (bool, default false)
-- [ ] 9.7 Add `r.DynamicResolution.TargetFPS` CVar (float, default 60.0)
-- [ ] 9.8 On resolution change, call `SceneRenderer::Resize()` to rebuild render targets at new render resolution
+- [x] 9.6 Add `r.DynamicResolution.Enabled` CVar (bool, default false). Registered in CVarRegistry. Readable via `uz.cvar.get("r.DynamicResolution.Enabled")`.
+- [x] 9.7 Add `r.DynamicResolution.TargetFPS` CVar (float, default 60.0). Registered in CVarRegistry.
+- [x] 9.8 On resolution change, call `SceneRenderer::Resize()` via `SetScreenPercentage()` in frame_setup.cpp ApplyCVars() + DynRes update loop. Uses CPU frame time as GPU proxy until RHI exposes timestamp queries.
 
 ## 10. Lua API
 

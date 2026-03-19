@@ -5,6 +5,7 @@
 #include "scene_renderer.h"
 #include "stats_overlay.h"
 #include "postprocess/temporal_upscaler.h"
+#include "cvar.h"
 
 extern "C" {
 #include <lua.h>
@@ -326,8 +327,8 @@ static int RendererGetUpscaler(lua_State* L) {
 /// # Arguments
 /// * `enabled` (boolean) — True to enable dynamic resolution.
 static int RendererSetDynamicResolution(lua_State* L) {
-    (void)L;
-    UZ_LOG(Scripting, Warning, "uz.renderer.set_dynamic_resolution: not yet integrated with SceneRenderer");
+    const bool enabled = lua_toboolean(L, 1) != 0;
+    CVarRegistry::Get().Set("r.DynamicResolution.Enabled", enabled ? 1.f : 0.f);
     return 0;
 }
 
@@ -440,6 +441,40 @@ static int TextureLoad(lua_State* L) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Lua C functions — uz.cvar.*
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// uz.cvar.get(name) → number | nil
+///
+/// Returns the current value of a CVar, or nil if not found.
+static int CvarGet(lua_State* L) {
+    const char* name = luaL_checkstring(L, 1);
+    const auto* cvar = CVarRegistry::Get().Find(name);
+    if (cvar) {
+        lua_pushnumber(L, static_cast<double>(cvar->value));
+    } else {
+        lua_pushnil(L);
+    }
+    return 1;
+}
+
+/// uz.cvar.set(name, value)
+///
+/// Sets a CVar value. Clamped to the CVar's [min, max] range.
+/// Logs a warning if the CVar does not exist.
+static int CvarSet(lua_State* L) {
+    const char* name = luaL_checkstring(L, 1);
+    const float value = static_cast<float>(luaL_checknumber(L, 2));
+    auto& registry = CVarRegistry::Get();
+    if (registry.Find(name)) {
+        registry.Set(name, value);
+    } else {
+        UZ_LOG(Scripting, Warning, "uz.cvar.set: unknown CVar '{}'", name);
+    }
+    return 0;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Lua C functions — uz.debug.*
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -548,6 +583,17 @@ void LuaRegisterRendererAPI(lua_State* L) {
     lua_setfield(L, -2, "load");
 
     lua_setfield(L, -2, "texture");
+
+    // ── uz.cvar = { get, set } ───────────────────────────────────────────
+    lua_newtable(L);
+
+    lua_pushcfunction(L, CvarGet);
+    lua_setfield(L, -2, "get");
+
+    lua_pushcfunction(L, CvarSet);
+    lua_setfield(L, -2, "set");
+
+    lua_setfield(L, -2, "cvar");
 
     // ── uz.debug = { set_view_mode, get_view_mode } ────────────────────────
     lua_newtable(L);

@@ -38,6 +38,7 @@ pub fn build(b: *std.Build) void {
         "engine/rhi/optimization",
         "engine/shader",
         "engine/paths",
+        "engine/core",
         "engine/renderer",
         "engine/renderer/camera",
         "engine/renderer/core",
@@ -182,6 +183,7 @@ pub fn build(b: *std.Build) void {
     addCppDir(runtime_mod, b, "engine/rhi/optimization", cpp_flags);
     addCppDir(runtime_mod, b, "engine/paths", cpp_flags);
     addCppDir(runtime_mod, b, "engine/shader", cpp_flags);
+    addCppDir(runtime_mod, b, "engine/core", cpp_flags);
     addCppDir(runtime_mod, b, "engine/asset", cpp_flags);
     addCppDir(runtime_mod, b, "engine/asset/formats", cpp_flags);
     addCppDir(runtime_mod, b, "engine/asset/importers", cpp_flags);

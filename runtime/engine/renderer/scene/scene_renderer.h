@@ -952,6 +952,13 @@ private:
     /// Registers overlay passes: atmosphere, fog, editor grid, stats overlay,
     /// screenshot capture, and present transition.
     void RegisterOverlayPasses(rg::RgBuilder& rgBuilder, FrameContext& ctx);
+
+    /// Registers CVars in the global CVarRegistry. Called once from Init().
+    void RegisterCVars();
+
+    /// Reads CVars and applies changes (screen percentage, upscaler type, dynres).
+    /// Called once per frame at the start of SetupFrameData().
+    void ApplyCVars();
 };
 
 } // namespace uz

@@ -21,6 +21,7 @@
 #include "shader_compiler.h"
 #include "shader_compiler_fxc.h"
 #include "dynamic_resolution.h"
+#include "cvar.h"
 
 #include <cmath>
 
@@ -331,10 +332,66 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     // ── Dynamic Resolution Controller ────────────────────────────────────
     m_dynRes = std::make_unique<DynamicResolutionController>();
 
+    // ── Register CVars ───────────────────────────────────────────────────
+    RegisterCVars();
+
     UZ_LOG(Renderer, Info, "SceneRenderer initialized ({}x{} display, {}x{} render, {}% scale, {})",
            width, height, m_renderWidth, m_renderHeight,
            m_screenPercentage, RenderPathToString(m_renderPath));
     return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CVar Registration
+// ─────────────────────────────────────────────────────────────────────────────
+
+void SceneRenderer::RegisterCVars() {
+    auto& cvars = CVarRegistry::Get();
+
+    /// @source UE5 LegacyScreenPercentageDriver.cpp:10 — r.ScreenPercentage default 100
+    cvars.Register("r.ScreenPercentage", m_screenPercentage,
+                   "Render scale percentage (10-200)", 10.f, 200.f);
+
+    /// @source UE5 — r.AntiAliasingMethod: 0=None, 1=TAA, 2=TSR
+    cvars.Register("r.AntiAliasingMethod", static_cast<float>(m_upscalerType),
+                   "Anti-aliasing method: 0=None, 1=TAA, 2=TSR", 0.f, 5.f);
+
+    /// @source UE5 TemporalSuperResolution.cpp:52-60 — r.TSR.History.ScreenPercentage
+    cvars.Register("r.TSR.History.ScreenPercentage", 100.f,
+                   "TSR history buffer resolution multiplier (100-200)", 100.f, 200.f);
+
+    /// @source UE5 DynamicRenderScaling.h — r.DynamicResolution.Enabled
+    cvars.Register("r.DynamicResolution.Enabled", 0.f,
+                   "Enable GPU-bound adaptive resolution", 0.f, 1.f);
+
+    /// @source UE5 DynamicRenderScaling.h — target FPS
+    cvars.Register("r.DynamicResolution.TargetFPS", 60.f,
+                   "Target FPS for dynamic resolution", 15.f, 240.f);
+
+    /// @source UE5 TemporalSuperResolution.cpp:72-76 — r.TSR.History.UpdateQuality
+    cvars.Register("r.TSR.History.UpdateQuality", 2.f,
+                   "TSR quality level: 0=Low, 1=Medium, 2=High, 3=Epic", 0.f, 3.f);
+}
+
+void SceneRenderer::ApplyCVars() {
+    auto& cvars = CVarRegistry::Get();
+
+    // Screen percentage
+    const float pct = cvars.GetFloat("r.ScreenPercentage", 100.f);
+    if (std::abs(pct - m_screenPercentage) > 0.5f) {
+        SetScreenPercentage(pct);
+    }
+
+    // Anti-aliasing method → upscaler type
+    const auto aaMethod = static_cast<UpscalerType>(cvars.GetInt("r.AntiAliasingMethod", 2));
+    if (aaMethod != m_upscalerType) {
+        SetUpscalerType(aaMethod);
+    }
+
+    // Dynamic resolution
+    const bool dynResEnabled = cvars.GetBool("r.DynamicResolution.Enabled");
+    m_dynRes->SetEnabled(dynResEnabled);
+    m_dynRes->SetTargetFPS(cvars.GetFloat("r.DynamicResolution.TargetFPS", 60.f));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -23,6 +23,7 @@
 #include "world.h"
 #include "material_interface.h"
 #include "rhi.h"
+#include "dynamic_resolution.h"
 #include "input.h"
 #include "platform_window.h"
 #include "log.h"
@@ -74,6 +75,18 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
 
     // ── Flush deferred asset loads (queued from Lua callbacks) ─────────
     FlushPendingLoads(ctx.cmdList, ctx.vfs);
+
+    // ── Apply CVar changes ─────────────────────────────────────────────
+    ApplyCVars();
+
+    // ── Dynamic Resolution update ────────────────────────────────────────
+    // Uses CPU frame time as GPU time proxy until RHI exposes GPU timestamp queries.
+    if (m_dynRes && m_dynRes->IsEnabled()) {
+        const float newPct = m_dynRes->Update(ctx.dt);
+        if (std::abs(newPct - m_screenPercentage) > 0.5f) {
+            SetScreenPercentage(newPct);
+        }
+    }
 
     // ── CB Ring begin frame ─────────────────────────────────────────────
     m_cbRing->BeginFrame(ctx.frameIndex);
