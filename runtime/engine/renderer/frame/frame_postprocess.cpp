@@ -487,8 +487,15 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
             uint32_t bloomIntensityBits = 0;
             std::memcpy(&bloomIntensityBits, &bloomIntensity, sizeof(float));
 
+            // Lens flare SRV (additive contribution, 0 = disabled)
+            uint32_t lensFlareSrvIdx = 0;
+            if (m_lensFlarePass && m_lensFlarePass->IsInitialized()
+                && m_lensFlarePass->GetOutputSrv() != UINT32_MAX) {
+                lensFlareSrvIdx = m_lensFlarePass->GetOutputSrv();
+            }
+
             // Read from the final post-process output (DOF > motion blur > TAA > raw HDR).
-            uint32_t indices[4] = { ctx.postDofSrvForTonemap, bloomSrvIdx, bloomIntensityBits, 0 };
+            uint32_t indices[4] = { ctx.postDofSrvForTonemap, bloomSrvIdx, bloomIntensityBits, lensFlareSrvIdx };
             cmd->SetRootConstants(kSlotRootConstants, indices, 4);
 
             // SM5: bind HDR scene color texture at t0 directly

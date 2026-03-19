@@ -53,7 +53,7 @@ struct TonemapIndices {
     uint hdrColorIdx;
     uint bloomColorIdx;      ///< SRV index for bloom result (0 = no bloom).
     uint bloomIntensityBits; ///< Bloom intensity as float bits (0 = disabled).
-    uint _pad0;
+    uint lensFlareSrvIdx;    ///< SRV index for lens flare additive contribution (0 = disabled).
 };
 ConstantBuffer<TonemapIndices> tonemapIndices : register(b0);
 #else
@@ -264,6 +264,15 @@ float4 main(FSInput input) : SV_Target {
     // SM5 path: sample bloom from t1 if bound
     // bloomColor is always declared; if not bound it returns (0,0,0,0)
     // which is safe — no bloom contribution when not bound.
+#endif
+
+    // ── 3b. Composite lens flare (additive, after bloom) ─────────────────
+#ifdef UZ_BINDLESS
+    if (tonemapIndices.lensFlareSrvIdx != 0) {
+        Texture2D<float4> flareTex = ResourceDescriptorHeap[tonemapIndices.lensFlareSrvIdx];
+        float3 flare = flareTex.Sample(linearSampler, uv).rgb;
+        color += flare;
+    }
 #endif
 
     // ── 4. Vignette (BEFORE exposure, in HDR space) ────────────────────
