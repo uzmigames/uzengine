@@ -17,6 +17,7 @@
 #include "async_texture_decoder.h"
 #include "mesh.h"
 #include "gpu_mesh.h"
+#include "gi/mesh_sdf_baker.h"
 #include "texture_loader.h"
 #include "upload_context.h"
 #include "vfs.h"
@@ -72,6 +73,42 @@ uint32_t SceneRenderer::LoadMesh(const std::string& path, IVFS* vfs,
     if (!gpuMesh.IsValid()) {
         UZ_LOG(Renderer, Error, "SceneRenderer: failed to upload mesh: '{}'", path);
         return UINT32_MAX;
+    }
+
+    // ── Bake mesh SDF for GI system (Global Distance Field composite) ────
+    // Extract vertex positions and indices from the CPU mesh for the SDF baker.
+    // Position is the first 3 floats at each vertex (Vertex::position = Vec3).
+    // The baker produces a dense R16F 3D texture for sphere-march GI tracing.
+    if (cpuMesh.header.vertexFormat == MeshVertexFormat::Standard
+        && cpuMesh.GetVertexCount() > 0 && cpuMesh.GetIndexCount() >= 3)
+    {
+        const auto* positions = reinterpret_cast<const float*>(cpuMesh.vertexData.data());
+        const uint32_t vertexStride = cpuMesh.header.vertexStride;
+        const auto* indices = reinterpret_cast<const uint32_t*>(cpuMesh.indexData.data());
+
+        MeshSDFData sdfData = MeshSdfBaker::BakeMesh(
+            positions,
+            cpuMesh.GetVertexCount(),
+            vertexStride,
+            indices,
+            cpuMesh.GetIndexCount(),
+            32); // 32^3 resolution — balanced quality vs bake time
+
+        if (sdfData.IsValid()) {
+            gpuMesh.sdf = MeshSdfBaker::UploadToGPU(m_device, cmdList, sdfData);
+            if (gpuMesh.sdf.valid) {
+                UZ_LOG(Renderer, Info,
+                       "SceneRenderer: baked mesh SDF '{}' (res={}, SRV={})",
+                       path, sdfData.resolution, gpuMesh.sdf.srvIndex);
+            } else {
+                UZ_LOG(Renderer, Warning,
+                       "SceneRenderer: SDF GPU upload failed for '{}'", path);
+            }
+        } else {
+            UZ_LOG(Renderer, Warning,
+                   "SceneRenderer: SDF bake failed for '{}' ({} verts, {} indices)",
+                   path, cpuMesh.GetVertexCount(), cpuMesh.GetIndexCount());
+        }
     }
 
     const auto index = static_cast<uint32_t>(m_meshes.size());
@@ -210,7 +247,7 @@ std::string SceneRenderer::GetTexturePath(uint32_t textureId) const {
 void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {
     UZ_PROFILE_FUNCTION();
 
-    // ── Flush pending mesh uploads (synchronous, unchanged) ─────────────
+    // ── Flush pending mesh uploads (synchronous) ──────────────────────
     for (const std::string& path : m_pendingMeshPaths) {
         const uint32_t slotIndex = m_meshMap.at(path);
         Mesh cpuMesh = uz::LoadMesh(path);
@@ -223,6 +260,28 @@ void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {
             UZ_LOG(Renderer, Error, "SceneRenderer: failed to upload queued mesh '{}'", path);
             continue;
         }
+
+        // Bake mesh SDF for GI system (same logic as LoadMesh).
+        if (cpuMesh.header.vertexFormat == MeshVertexFormat::Standard
+            && cpuMesh.GetVertexCount() > 0 && cpuMesh.GetIndexCount() >= 3)
+        {
+            const auto* positions = reinterpret_cast<const float*>(cpuMesh.vertexData.data());
+            const auto* indices = reinterpret_cast<const uint32_t*>(cpuMesh.indexData.data());
+
+            MeshSDFData sdfData = MeshSdfBaker::BakeMesh(
+                positions, cpuMesh.GetVertexCount(), cpuMesh.header.vertexStride,
+                indices, cpuMesh.GetIndexCount(), 32);
+
+            if (sdfData.IsValid()) {
+                gpuMesh.sdf = MeshSdfBaker::UploadToGPU(m_device, cmdList, sdfData);
+                if (gpuMesh.sdf.valid) {
+                    UZ_LOG(Renderer, Info,
+                           "SceneRenderer: baked mesh SDF '{}' (res={}, SRV={})",
+                           path, sdfData.resolution, gpuMesh.sdf.srvIndex);
+                }
+            }
+        }
+
         m_meshes[slotIndex] = gpuMesh;
         UZ_LOG(Renderer, Info,
             "SceneRenderer: flushed mesh '{}' (id={}, {} verts, {} indices)",

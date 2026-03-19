@@ -167,7 +167,17 @@ struct PerFrameParams {
     uint32_t ssgiAOSrvIndex = UINT32_MAX;             ///< SRV index for SSGI ambient occlusion mask (UINT32_MAX = disabled).
     uint32_t ssgiEnabled    = 0;                      ///< 1 = SSGI active, 0 = disabled.
 
-    float    _pad2[4]            = {};                ///< Pad scalar section to 512 bytes.
+    // ── Radiance Cache (SDF-based GI) ─────────────────────────────────
+    /// @source UE5 LumenRadianceCacheInterpolation.ush:372-395 — SampleRadianceCacheInterpolated
+    uint32_t radianceCacheEnabled = 0;              ///< 1 = radiance cache GI active, 0 = disabled.
+    uint32_t rcProbeSHBufferSrv   = UINT32_MAX;     ///< SRV index for probe SH StructuredBuffer<float4>.
+    uint32_t rcProbesPerAxis      = 16;             ///< Probes per axis (16).
+    float    rcGridExtent         = 5000.0f;        ///< Half-size of the probe grid in world units (cm).
+    float    rcGridOriginX        = 0.0f;           ///< Probe grid origin X (minimum corner).
+    float    rcGridOriginY        = 0.0f;           ///< Probe grid origin Y.
+    float    rcGridOriginZ        = 0.0f;           ///< Probe grid origin Z.
+
+    float    _pad2[61]            = {};              ///< Pad scalar section to 768 bytes.
 
     // ── Resource handles (NOT copied to CB) ──────────────────────────────
     // These are bound by ShaderParameterBinder at their HLSL register slots.
@@ -190,7 +200,7 @@ struct PerFrameParams {
 };
 
 // Verify scalar section matches PerFrameCB exactly
-static_assert(offsetof(PerFrameParams, irradianceCubemap) == 512,
-              "PerFrameParams resource section must start at byte 512 (after PerFrameCB-compatible scalar section)");
+static_assert(offsetof(PerFrameParams, irradianceCubemap) == 768,
+              "PerFrameParams resource section must start at byte 768 (after PerFrameCB-compatible scalar section)");
 
 } // namespace uz

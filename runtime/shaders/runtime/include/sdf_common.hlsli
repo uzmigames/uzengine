@@ -197,4 +197,181 @@ bool SphereMarchMeshSDF(
     return false;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Global Distance Field Sampling
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Samples a single global distance field clipmap at a world position.
+///
+/// Returns the signed distance in world units (cm) from the nearest surface
+/// in the given clipmap. Returns a large positive distance if the query point
+/// is outside the clipmap volume.
+///
+/// @source UE5 GlobalDistanceFieldShared.ush:214-247 — GetDistanceToNearestSurfaceGlobal
+/// @constants NONE (volume parameters passed as arguments)
+/// @deviations Dense volume lookup instead of UE5's page-table indirection.
+float SampleGlobalSdfClipmap(
+    Texture3D<float> clipmapTexture,
+    SamplerState     clipmapSampler,
+    float3           worldPos,
+    float3           clipmapCenter,
+    float            clipmapExtent)
+{
+    // Transform world position to normalized [0,1]^3 UV space
+    float3 uvPos = (worldPos - clipmapCenter + clipmapExtent) / (clipmapExtent * 2.0f);
+
+    // Out-of-volume: return large distance
+    if (any(uvPos < 0.0f) || any(uvPos > 1.0f))
+    {
+        return 1e6f;
+    }
+
+    return clipmapTexture.SampleLevel(clipmapSampler, uvPos, 0).r;
+}
+
+/// Estimates the surface normal at a point in the global SDF via central differences.
+///
+/// @source UE5 GlobalDistanceFieldUtils.ush:60-85 — GetDistanceFieldGradient
+/// @constants kGradientEpsilon = 1.0 (1 cm offset for finite differences)
+/// @deviations Uses a single clipmap instead of cascaded lookup.
+float3 EstimateGlobalSdfNormal(
+    Texture3D<float> clipmapTexture,
+    SamplerState     clipmapSampler,
+    float3           worldPos,
+    float3           clipmapCenter,
+    float            clipmapExtent)
+{
+    /// @source UE5 GlobalDistanceFieldUtils.ush:62 — TexelOffset for gradient
+    float eps = clipmapExtent * 2.0f / 64.0f; // One voxel step
+
+    float3 gradient;
+    gradient.x = SampleGlobalSdfClipmap(clipmapTexture, clipmapSampler,
+                     worldPos + float3(eps, 0, 0), clipmapCenter, clipmapExtent)
+               - SampleGlobalSdfClipmap(clipmapTexture, clipmapSampler,
+                     worldPos - float3(eps, 0, 0), clipmapCenter, clipmapExtent);
+
+    gradient.y = SampleGlobalSdfClipmap(clipmapTexture, clipmapSampler,
+                     worldPos + float3(0, eps, 0), clipmapCenter, clipmapExtent)
+               - SampleGlobalSdfClipmap(clipmapTexture, clipmapSampler,
+                     worldPos - float3(0, eps, 0), clipmapCenter, clipmapExtent);
+
+    gradient.z = SampleGlobalSdfClipmap(clipmapTexture, clipmapSampler,
+                     worldPos + float3(0, 0, eps), clipmapCenter, clipmapExtent)
+               - SampleGlobalSdfClipmap(clipmapTexture, clipmapSampler,
+                     worldPos - float3(0, 0, eps), clipmapCenter, clipmapExtent);
+
+    float len = length(gradient);
+    return len > 1e-8f ? gradient / len : float3(0, 0, 1);
+}
+
+/// Sphere-marches a ray through the cascaded global distance field.
+///
+/// Traces from the finest cascade outward. For each cascade, clips the ray to
+/// the cascade volume, then sphere-marches. Falls through to coarser cascades
+/// when the ray exits the current cascade's volume.
+///
+/// # Arguments
+/// - clipmapTextures[4]: R16F 3D textures, one per cascade.
+/// - clipmapSampler: Trilinear clamp sampler.
+/// - clipmapCenters[4]: World-space center of each cascade.
+/// - clipmapExtents[4]: Half-size of each cascade in world units (cm).
+/// - numClipmaps: Number of cascades (1-4).
+/// - rayOrigin: World-space ray start.
+/// - rayDir: Normalized world-space ray direction.
+/// - maxDist: Maximum trace distance in world units (cm).
+/// - hitDist: [out] Distance along ray to hit (maxDist if no hit).
+/// - hitNormal: [out] Estimated surface normal at hit point.
+///
+/// # Returns
+/// true if a surface was hit, false otherwise.
+///
+/// @source UE5 GlobalDistanceFieldUtils.ush:90-200 — RayTraceGlobalDistanceField
+/// @constants MaxSteps=128, StepFactor=1.0, MinStepFactor=1.0
+/// @deviations Dense clipmap instead of paged; no coverage atlas; no mip early-out
+bool SphereMarchGlobalSDF(
+    Texture3D<float> clipmapTextures[4],
+    SamplerState     clipmapSampler,
+    float3           clipmapCenters[4],
+    float            clipmapExtents[4],
+    uint             numClipmaps,
+    float3           rayOrigin,
+    float3           rayDir,
+    float            maxDist,
+    out float        hitDist,
+    out float3       hitNormal)
+{
+    hitDist   = maxDist;
+    hitNormal = float3(0, 0, 1);
+
+    /// @source UE5 GlobalDistanceFieldUtils.ush:92 — MaxSteps = 256
+    /// We use 128 steps as a balance between quality and performance for 64^3 resolution.
+    static const uint kMaxSteps = 128;
+
+    float t = 0.0f;
+
+    // Try each clipmap from finest (0) to coarsest (numClipmaps-1)
+    for (uint clipIdx = 0; clipIdx < numClipmaps; clipIdx++)
+    {
+        float3 center = clipmapCenters[clipIdx];
+        float  extent = clipmapExtents[clipIdx];
+
+        /// @source UE5 GlobalDistanceFieldUtils.ush:108 — VoxelExtent = Extent * TexelSize
+        float voxelExtent = extent * 2.0f / 64.0f;
+
+        /// @source UE5 GlobalDistanceFieldUtils.ush:111 — InfluenceRange = 4 * 2 * VoxelExtent
+        float influenceRange = 4.0f * 2.0f * voxelExtent;
+
+        // Clip ray to this cascade's AABB
+        float3 boxMin = center - extent;
+        float3 boxMax = center + extent;
+        float2 boxT = LineBoxIntersect(rayOrigin, rayDir, boxMin, boxMax);
+
+        // Skip this cascade if ray doesn't intersect
+        if (boxT.x > boxT.y) continue;
+
+        // Start from either the current t or the box entry, whichever is later
+        float startT = max(t, boxT.x);
+        float endT   = min(boxT.y, maxDist);
+        float marchT = startT;
+
+        for (uint step = 0; step < kMaxSteps; step++)
+        {
+            if (marchT > endT) break;
+
+            float3 samplePos = rayOrigin + rayDir * marchT;
+
+            float dist = SampleGlobalSdfClipmap(
+                clipmapTextures[clipIdx], clipmapSampler,
+                samplePos, center, extent);
+
+            /// @source UE5 GlobalDistanceFieldUtils.ush:157-162 — surface expansion
+            float expandAmount = voxelExtent * saturate(marchT / (2.0f * voxelExtent));
+
+            if (dist < expandAmount)
+            {
+                // Surface hit
+                /// @source UE5 GlobalDistanceFieldUtils.ush:165
+                hitDist = max(marchT + dist - expandAmount, 0.0f);
+                float3 hitPos = rayOrigin + rayDir * hitDist;
+
+                // Estimate normal via central differences at the hit point
+                hitNormal = EstimateGlobalSdfNormal(
+                    clipmapTextures[clipIdx], clipmapSampler,
+                    hitPos, center, extent);
+
+                return true;
+            }
+
+            /// @source UE5 GlobalDistanceFieldUtils.ush:170-175 — step size
+            float minStep = voxelExtent; // MinStepFactor * VoxelExtent
+            marchT += max(dist, minStep);
+        }
+
+        // Continue to the next (coarser) cascade from where we left off
+        t = marchT;
+    }
+
+    return false;
+}
+
 #endif // SDF_COMMON_HLSLI

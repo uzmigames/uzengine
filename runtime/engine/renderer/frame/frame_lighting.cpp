@@ -11,7 +11,9 @@
 
 #include "camera.h"
 #include "gi/ssgi_renderer.h"
+#include "gi/mesh_sdf_baker.h"
 #include "gpu_mesh.h"
+#include "world.h"
 #include "render_graph_builder.h"
 #include "render_graph_resources.h"
 #include "atmosphere_renderer.h"
@@ -450,6 +452,91 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
                 ssgiParams.renderHeight    = static_cast<uint32_t>(ctx.renderHeight);
 
                 m_ssgiRenderer.Render(cmd, ssgiParams);
+            });
+        });
+    }
+
+    // ── SDF GI: GDF Composite + Radiance Cache Trace (after SSGI, before lighting) ──
+    // Updates the global distance field from mesh SDFs, then traces radiance
+    // probes. The probe SH buffer SRV is written to PerFrameCB for the
+    // deferred lighting pass.
+    //
+    // @source UE5 GlobalDistanceField.cpp:406-513 — GDF composite dispatch
+    // @source UE5 LumenRadianceCache.usf:210-300 — radiance cache probe trace
+    const bool sdfGiActive = m_sdfGiEnabled
+                           && m_globalDistanceField.IsInitialized()
+                           && m_radianceCache.IsInitialized()
+                           && m_device->IsBindless()
+                           && m_passInspector.IsPassEnabled("sdf_gi");
+    if (sdfGiActive) {
+        // ── Pass: GDF Composite ──────────────────────────────────────────
+        // Collect mesh SDFs and world transforms from all StaticMeshComponent
+        // entities, then composite them into the global distance field clipmaps.
+        // @source UE5 GlobalDistanceField.cpp:406-513 — composite dispatch
+        rgBuilder.AddPass("GDF_Composite", [&](rg::RgPassBuilder& pb) {
+            pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources& /*res*/) {
+                UZ_PROFILE_SCOPE("GDF::Composite");
+
+                auto gdfPipeline = ctx.pipelines->GetGdfComposite();
+                if (!gdfPipeline.IsValid()) return;
+
+                // Update clipmap centers to track camera
+                Vec3 camPos = ctx.perFrame.cameraPos.xyz();
+                m_globalDistanceField.Update(camPos);
+
+                // Collect mesh SDFs and their world transforms from the ECS.
+                // Only include meshes that have a valid baked SDF.
+                std::vector<MeshSDF> meshSDFs;
+                std::vector<Mat4> meshTransforms;
+
+                if (ctx.world) {
+                    auto meshView = ctx.world->GetRegistry().view<StaticMeshComponent, SceneComponent>();
+                    for (auto [enttEntity, meshComp, sceneComp] : meshView.each()) {
+                        if (meshComp.meshId >= m_meshes.size()) continue;
+                        const GPUMesh& gpuMesh = m_meshes[meshComp.meshId];
+                        if (!gpuMesh.HasSDF()) continue;
+
+                        meshSDFs.push_back(gpuMesh.sdf);
+                        meshTransforms.push_back(sceneComp.GetWorldMatrix());
+                    }
+                }
+
+                const auto sdfCount = static_cast<uint32_t>(meshSDFs.size());
+
+                m_globalDistanceField.CompositeFromMeshSDFs(
+                    cmd,
+                    sdfCount > 0 ? meshSDFs.data() : nullptr,
+                    sdfCount > 0 ? meshTransforms.data() : nullptr,
+                    sdfCount,
+                    gdfPipeline,
+                    m_cbRing.get(),
+                    ctx.perFrameAlloc.bufferHandle,
+                    ctx.perFrameAlloc.offsetBytes,
+                    ctx.perFrameAlloc.cpuPtr,
+                    sizeof(PerFrameCB));
+            });
+        });
+
+        // ── Pass: Radiance Cache Trace ─────────────────────────────────
+        rgBuilder.AddPass("RadianceCache_Trace", [&](rg::RgPassBuilder& pb) {
+            pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources& /*res*/) {
+                UZ_PROFILE_SCOPE("RadianceCache::Trace");
+
+                auto rcPipeline = ctx.pipelines->GetRadianceCacheTrace();
+                if (!rcPipeline.IsValid()) return;
+
+                // Update probe grid center to track camera
+                Vec3 camPos = ctx.perFrame.cameraPos.xyz();
+                m_radianceCache.Update(camPos);
+
+                m_radianceCache.UpdateProbes(
+                    cmd, m_globalDistanceField, rcPipeline,
+                    m_cbRing.get(),
+                    ctx.perFrameAlloc.bufferHandle,
+                    ctx.perFrameAlloc.offsetBytes,
+                    ctx.perFrameAlloc.cpuPtr,
+                    sizeof(PerFrameCB),
+                    ctx.frameIndex);
             });
         });
     }

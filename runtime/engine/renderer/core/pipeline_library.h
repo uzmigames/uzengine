@@ -597,6 +597,24 @@ public:
     /// @source UE5 IndirectLightRendering.cpp:1435-1438 — DIM_UPSCALE_DIFFUSE_INDIRECT
     [[nodiscard]] RHIPipelineHandle GetSsgiBilateralUpsample();
 
+    // ── GDF + Radiance Cache Compute Pipelines ─────────────────────────
+
+    /// Returns the GDF composite compute pipeline (global_sdf_composite_cs.hlsl).
+    ///
+    /// Per-voxel composite of mesh SDFs into a global distance field clipmap.
+    /// Dispatched once per dirty clipmap (4x4x4 thread groups for 64^3 voxels).
+    ///
+    /// @source UE5 GlobalDistanceField.cpp:406-513 — CompositeObjectDistanceFields
+    [[nodiscard]] RHIPipelineHandle GetGdfComposite();
+
+    /// Returns the radiance cache trace compute pipeline (radiance_cache_trace_cs.hlsl).
+    ///
+    /// Per-probe ray trace through the GDF, accumulates radiance into L2 SH.
+    /// 64 threads per group, one thread per probe.
+    ///
+    /// @source UE5 LumenRadianceCache.usf:210-300 — TraceRadianceProbe
+    [[nodiscard]] RHIPipelineHandle GetRadianceCacheTrace();
+
     /// Pre-creates all standard pipelines eagerly instead of on first use.
     ///
     /// Call at scene load time to avoid hitches during the first frame.
@@ -657,6 +675,8 @@ private:
     [[nodiscard]] bool EnsureSsgiTemporalAccumShader();
     [[nodiscard]] bool EnsureSsgiBilateralUpsampleShader();
     [[nodiscard]] bool EnsureVisFullscreenPixelShader();
+    [[nodiscard]] bool EnsureGdfCompositeShader();
+    [[nodiscard]] bool EnsureRadianceCacheTraceShader();
 
     /// Creates a pipeline through the PSO cache. On cache hit, returns the
     /// cached handle without calling the device. On miss, creates via the
@@ -716,6 +736,8 @@ private:
     RHIShaderHandle m_ssgiTemporalAccumCS      = RHIShaderHandle::Invalid();
     RHIShaderHandle m_ssgiBilateralUpsampleCS  = RHIShaderHandle::Invalid();
     RHIShaderHandle m_visFullscreenPS           = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_gdfCompositeCS            = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_radianceCacheTraceCS      = RHIShaderHandle::Invalid();
 
     // ── Cached pipeline handles (one per bindless variant) ──────────────
     RHIPipelineHandle m_forwardPBR         = RHIPipelineHandle::Invalid();
@@ -770,6 +792,8 @@ private:
     RHIPipelineHandle m_ssgiTemporalAccum     = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_ssgiBilateralUpsample = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_visFullscreen         = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_gdfComposite          = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_radianceCacheTrace    = RHIPipelineHandle::Invalid();
 };
 
 } // namespace uz

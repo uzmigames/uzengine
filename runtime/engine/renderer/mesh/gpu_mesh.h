@@ -18,6 +18,7 @@
 #pragma once
 
 #include "rhi_types.h"
+#include "gi/mesh_sdf_baker.h"
 
 #include <cstdint>
 
@@ -44,11 +45,18 @@ struct GPUMesh {
     uint32_t        vertexCount = 0;                    ///< Number of vertices.
     RHIIndexFormat  indexFormat = RHIIndexFormat::Uint32; ///< Index element format (`Uint16` or `Uint32`).
 
+    /// Baked signed distance field for this mesh (used by GDF composite for GI).
+    /// Valid only after MeshSdfBaker::UploadToGPU succeeds during mesh loading.
+    MeshSDF sdf;
+
     /// Returns true if the mesh has a valid vertex buffer on the GPU.
     [[nodiscard]] bool IsValid() const { return vertexBuffer.IsValid(); }
 
     /// Returns true if the mesh uses an index buffer.
     [[nodiscard]] bool IsIndexed() const { return indexBuffer.IsValid() && indexCount > 0; }
+
+    /// Returns true if this mesh has a valid baked SDF for GI tracing.
+    [[nodiscard]] bool HasSDF() const { return sdf.valid; }
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

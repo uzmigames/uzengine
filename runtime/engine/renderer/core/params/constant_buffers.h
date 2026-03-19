@@ -142,10 +142,20 @@ struct PerFrameCB {
     uint32_t ssgiAOSrvIndex = UINT32_MAX;          ///< SRV index for SSGI ambient occlusion mask (UINT32_MAX = disabled).
     uint32_t ssgiEnabled    = 0;                   ///< 1 = SSGI active, 0 = disabled.
 
-    float    _pad2[4] = {};                        ///< Pad to 512 bytes.
+    // ── Radiance Cache (SDF-based GI) ─────────────────────────────────
+    /// @source UE5 LumenRadianceCacheInterpolation.ush:372-395 — SampleRadianceCacheInterpolated
+    uint32_t radianceCacheEnabled = 0;              ///< 1 = radiance cache GI active, 0 = disabled.
+    uint32_t rcProbeSHBufferSrv   = UINT32_MAX;     ///< SRV index for probe SH StructuredBuffer<float4>.
+    uint32_t rcProbesPerAxis      = 16;             ///< Probes per axis (16).
+    float    rcGridExtent         = 5000.0f;        ///< Half-size of the probe grid in world units (cm).
+    float    rcGridOriginX        = 0.0f;           ///< Probe grid origin X (minimum corner).
+    float    rcGridOriginY        = 0.0f;           ///< Probe grid origin Y.
+    float    rcGridOriginZ        = 0.0f;           ///< Probe grid origin Z.
+
+    float    _pad2[61] = {};                        ///< Pad to 768 bytes.
 };
 
-static_assert(sizeof(PerFrameCB) == 512, "PerFrameCB must be 512 bytes (D3D12 CB alignment)");
+static_assert(sizeof(PerFrameCB) == 768, "PerFrameCB must be 768 bytes (D3D12 CB alignment)");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PerObjectCB — bound at b2 (root CBV, updated per draw call)

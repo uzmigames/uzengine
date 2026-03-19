@@ -146,7 +146,17 @@ cbuffer PerFrameCB : register(b1) {
     uint     ssgiAOSrvIndex;     ///< SRV index for SSGI ambient occlusion mask (0xFFFFFFFF = disabled).
     uint     ssgiEnabled;        ///< 1 = SSGI active, 0 = disabled.
 
-    float    _framePad2[4];      ///< Padding to 512 bytes.
+    // ── Radiance Cache (SDF-based GI) ─────────────────────────────────
+    /// @source UE5 LumenRadianceCacheInterpolation.ush:372-395 — SampleRadianceCacheInterpolated
+    uint     radianceCacheEnabled; ///< 1 = radiance cache GI active, 0 = disabled.
+    uint     rcProbeSHBufferSrv;   ///< SRV index for probe SH StructuredBuffer<float4>.
+    uint     rcProbesPerAxis;      ///< Probes per axis (16).
+    float    rcGridExtent;         ///< Half-size of the probe grid in world units (cm).
+    float    rcGridOriginX;        ///< Probe grid origin X (minimum corner).
+    float    rcGridOriginY;        ///< Probe grid origin Y.
+    float    rcGridOriginZ;        ///< Probe grid origin Z.
+
+    float    _framePad2[61];       ///< Padding to 768 bytes.
 };
 
 /// Single point light for the deferred lighting pass (64 bytes = four float4s).
@@ -1055,6 +1065,64 @@ float4 main(FSInput input) : SV_Target {
                 float ssgiAO = ssgiAOTex.SampleLevel(linearSampler, input.texcoord, 0);
                 ao = min(ao, ssgiAO);
             }
+#endif
+        }
+
+        // ── Radiance Cache blending ──────────────────────────────────
+        // @source UE5 LumenRadianceCacheInterpolation.ush:372-395 — SampleRadianceCacheInterpolated
+        // When radiance cache is active, blend probe-based GI with SH IBL.
+        // Use distance from probe grid center to control blend weight:
+        // probes provide better GI in the near/mid field, SH IBL covers far field.
+        [branch]
+        if (radianceCacheEnabled != 0 && rcProbeSHBufferSrv != 0xFFFFFFFF) {
+#ifdef UZ_BINDLESS
+            StructuredBuffer<float4> probeSH = ResourceDescriptorHeap[rcProbeSHBufferSrv];
+            float3 rcGridOrigin = float3(rcGridOriginX, rcGridOriginY, rcGridOriginZ);
+
+            // Compute fractional grid coordinates
+            float probeSpacing = (rcGridExtent * 2.0f) / float(rcProbesPerAxis);
+            float3 localPos = (worldPos - rcGridOrigin) / probeSpacing - 0.5f;
+            float3 maxCoord = float3(rcProbesPerAxis - 1, rcProbesPerAxis - 1, rcProbesPerAxis - 1);
+            localPos = clamp(localPos, 0.0f, maxCoord);
+
+            uint3 cell = uint3(floor(localPos));
+            float3 frac3 = localPos - float3(cell);
+            uint3 cellMax = min(cell + 1, uint3(rcProbesPerAxis - 1, rcProbesPerAxis - 1, rcProbesPerAxis - 1));
+
+            // Trilinear interpolation of probe SH at 8 corner probes
+            float3 rcIrradiance = (float3)0;
+            for (uint dz = 0; dz < 2; dz++) {
+                float wz = (dz == 0) ? (1.0f - frac3.z) : frac3.z;
+                uint pz = (dz == 0) ? cell.z : cellMax.z;
+                for (uint dy = 0; dy < 2; dy++) {
+                    float wy = (dy == 0) ? (1.0f - frac3.y) : frac3.y;
+                    uint py = (dy == 0) ? cell.y : cellMax.y;
+                    for (uint dx = 0; dx < 2; dx++) {
+                        float wx = (dx == 0) ? (1.0f - frac3.x) : frac3.x;
+                        uint px = (dx == 0) ? cell.x : cellMax.x;
+                        float weight = wx * wy * wz;
+                        if (weight <= 0.0f) continue;
+
+                        uint probeIdx = pz * rcProbesPerAxis * rcProbesPerAxis
+                                      + py * rcProbesPerAxis + px;
+                        uint base = probeIdx * 7;
+
+                        // Evaluate L0+L1 SH at normal direction
+                        float4 rSH = probeSH[base + 0];
+                        float4 gSH = probeSH[base + 1];
+                        float4 bSH = probeSH[base + 2];
+                        float4 nDir = float4(1.0f, N.x, N.z, N.y);
+                        float3 probeIrr = max(float3(dot(rSH, nDir), dot(gSH, nDir), dot(bSH, nDir)), 0.0f);
+                        rcIrradiance += probeIrr * weight;
+                    }
+                }
+            }
+
+            // Blend: use radiance cache in the near/mid field, SH IBL for far field
+            float3 rcGridCenter = rcGridOrigin + rcGridExtent;
+            float distFromCenter = length(worldPos - rcGridCenter);
+            float rcWeight = saturate(1.0f - distFromCenter / rcGridExtent);
+            diffuseIBL = lerp(diffuseIBL, kD * albedo * rcIrradiance, rcWeight);
 #endif
         }
 

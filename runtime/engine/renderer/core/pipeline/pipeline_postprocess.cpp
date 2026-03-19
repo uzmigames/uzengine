@@ -1347,4 +1347,122 @@ RHIPipelineHandle PipelineLibrary::GetSsgiBilateralUpsample() {
     return m_ssgiBilateralUpsample;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// GDF Composite Compute Pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool PipelineLibrary::EnsureGdfCompositeShader() {
+    if (m_gdfCompositeCS.IsValid()) {
+        return true;
+    }
+
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::GlobalSdfCompositeCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile GlobalSdfCompositeCS");
+        return false;
+    }
+
+    RHIShaderDesc shaderDesc{};
+    shaderDesc.bytecode     = bytecode.data();
+    shaderDesc.bytecodeSize = bytecode.size();
+    shaderDesc.stage        = RHIShaderStage::Compute;
+    shaderDesc.entryPoint   = "main";
+    shaderDesc.debugName    = "global_sdf_composite_cs";
+
+    m_gdfCompositeCS = m_device->CreateShader(shaderDesc);
+    if (!m_gdfCompositeCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create GlobalSdfCompositeCS shader");
+        return false;
+    }
+    return true;
+}
+
+/// @source UE5 GlobalDistanceField.cpp:406-513 — GDF composite pipeline creation
+RHIPipelineHandle PipelineLibrary::GetGdfComposite() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetGdfComposite called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_gdfComposite.IsValid()) {
+        return m_gdfComposite;
+    }
+
+    if (!EnsureGdfCompositeShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_gdfCompositeCS;
+    desc.debugName     = "GDF_Composite";
+
+    m_gdfComposite = m_device->CreateComputePipeline(desc);
+    if (!m_gdfComposite.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create GDF_Composite pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created GDF_Composite pipeline");
+    }
+
+    return m_gdfComposite;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Radiance Cache Trace Compute Pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool PipelineLibrary::EnsureRadianceCacheTraceShader() {
+    if (m_radianceCacheTraceCS.IsValid()) {
+        return true;
+    }
+
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::RadianceCacheTraceCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile RadianceCacheTraceCS");
+        return false;
+    }
+
+    RHIShaderDesc shaderDesc{};
+    shaderDesc.bytecode     = bytecode.data();
+    shaderDesc.bytecodeSize = bytecode.size();
+    shaderDesc.stage        = RHIShaderStage::Compute;
+    shaderDesc.entryPoint   = "main";
+    shaderDesc.debugName    = "radiance_cache_trace_cs";
+
+    m_radianceCacheTraceCS = m_device->CreateShader(shaderDesc);
+    if (!m_radianceCacheTraceCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create RadianceCacheTraceCS shader");
+        return false;
+    }
+    return true;
+}
+
+/// @source UE5 LumenRadianceCache.usf:210-300 — radiance cache trace pipeline creation
+RHIPipelineHandle PipelineLibrary::GetRadianceCacheTrace() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetRadianceCacheTrace called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_radianceCacheTrace.IsValid()) {
+        return m_radianceCacheTrace;
+    }
+
+    if (!EnsureRadianceCacheTraceShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_radianceCacheTraceCS;
+    desc.debugName     = "RadianceCache_Trace";
+
+    m_radianceCacheTrace = m_device->CreateComputePipeline(desc);
+    if (!m_radianceCacheTrace.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create RadianceCache_Trace pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created RadianceCache_Trace pipeline");
+    }
+
+    return m_radianceCacheTrace;
+}
+
 } // namespace uz

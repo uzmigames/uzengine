@@ -315,6 +315,19 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
         UZ_LOG(Renderer, Warning, "SceneRenderer: SSGI init failed (SSGI disabled)");
     }
 
+    // ── SDF-based GI (Global Distance Field + Radiance Cache) ──────────
+    if (!m_globalDistanceField.CreateResources(device)) {
+        UZ_LOG(Renderer, Warning, "SceneRenderer: GDF init failed (SDF GI disabled)");
+    }
+    if (!m_radianceCache.CreateResources(device, 5000.0f)) {
+        UZ_LOG(Renderer, Warning, "SceneRenderer: RadianceCache init failed (SDF GI disabled)");
+    }
+    // Enable SDF GI when both subsystems initialized successfully.
+    m_sdfGiEnabled = m_globalDistanceField.IsInitialized() && m_radianceCache.IsInitialized();
+    if (m_sdfGiEnabled) {
+        UZ_LOG(Renderer, Info, "SceneRenderer: SDF GI enabled (GDF + RadianceCache ready)");
+    }
+
     // ── SSR Output Textures (at render resolution — operates on GBuffer) ──
     CreateSsrResources(m_renderWidth, m_renderHeight);
 
@@ -1182,6 +1195,10 @@ void SceneRenderer::Shutdown() {
 
     // ── SSGI cleanup ──────────────────────────────────────────────────
     m_ssgiRenderer.DestroyResources();
+
+    // ── SDF GI cleanup ───────────────────────────────────────────────
+    m_radianceCache.DestroyResources();
+    m_globalDistanceField.DestroyResources();
 
     // ── SSR cleanup ──────────────────────────────────────────────────
     DestroySsrResources();

@@ -616,25 +616,37 @@ MeshSDF MeshSdfBaker::UploadToGPU(
     device->UnmapBuffer(staging);
 
     // ── Issue copy command: staging buffer -> 3D texture ──
-    // Transition texture to CopyDst state
+    // For DX12 3D textures, ALL depth slices are a single subresource (index 0).
+    // GetCopyableFootprints returns a footprint that includes the full volume
+    // (Width * Height * Depth). A single CopyBufferToTexture call at subresource 0
+    // copies the entire 3D volume. Per-slice copies would use invalid subresource
+    // indices (1, 2, ...) that don't exist on a 3D texture with 1 mip.
     RHIBarrierDesc barrier;
     barrier.texture = result.texture3D;
     barrier.stateBefore = RHIResourceState::Undefined;
     barrier.stateAfter = RHIResourceState::CopyDst;
     cmdList->ResourceBarrier(&barrier, 1);
 
-    // Copy each depth slice. CopyBufferToTexture copies one 2D slice at a time.
-    for (uint32_t z = 0; z < res; ++z) {
-        uint64_t sliceOffset = static_cast<uint64_t>(z) * slicePitch;
-        cmdList->CopyBufferToTexture(
-            staging, sliceOffset, alignedRowPitch,
-            result.texture3D, 0, z);
-    }
+    // Single copy for the entire 3D volume: mipLevel=0, arraySlice=0.
+    // The staging buffer layout (alignedRowPitch * height * depth) must match
+    // the DX12 footprint for subresource 0 of a TEXTURE3D.
+    cmdList->CopyBufferToTexture(
+        staging, 0, alignedRowPitch,
+        result.texture3D, 0, 0);
 
-    // Transition texture to ShaderResource state for sampling
     barrier.stateBefore = RHIResourceState::CopyDst;
     barrier.stateAfter = RHIResourceState::ShaderResource;
     cmdList->ResourceBarrier(&barrier, 1);
+
+    // Execute the copy commands and wait for GPU completion before releasing
+    // the staging buffer. The staging buffer resource is referenced by the
+    // recorded copy command — destroying it before execution would be a
+    // use-after-free on the DX12 command list.
+    cmdList->End();
+    cmdList->Execute();
+    device->WaitIdle();
+    device->DestroyBuffer(staging);
+    cmdList->Begin();
 
     // ── Fill result metadata ──
     std::memcpy(result.volumeOrigin, data.volumeOrigin, sizeof(result.volumeOrigin));
@@ -645,11 +657,6 @@ MeshSDF MeshSdfBaker::UploadToGPU(
     UZ_LOG(Renderer, Info,
            "MeshSdfBaker::UploadToGPU: created R16F 3D texture ({}^3, SRV={})",
            res, result.srvIndex);
-
-    // The staging buffer can be destroyed after the command list is executed.
-    // We destroy it here — the data has been copied to the GPU-side command queue.
-    // The actual GPU copy will complete when the command list is executed and synced.
-    device->DestroyBuffer(staging);
 
     return result;
 }

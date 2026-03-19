@@ -340,6 +340,21 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
         perFrame.ssgiEnabled    = 0;
     }
 
+    // ── Radiance Cache (SDF GI) parameters ────────────────────────────
+    if (m_sdfGiEnabled && m_radianceCache.IsInitialized() && m_device->IsBindless()) {
+        perFrame.radianceCacheEnabled = 1;
+        perFrame.rcProbeSHBufferSrv   = m_radianceCache.GetProbeSHBufferSrv();
+        perFrame.rcProbesPerAxis      = RadianceCache::kProbesPerAxis;
+        perFrame.rcGridExtent         = m_radianceCache.GetGridExtent();
+        const Vec3 origin = m_radianceCache.GetGridOrigin();
+        perFrame.rcGridOriginX        = origin.x;
+        perFrame.rcGridOriginY        = origin.y;
+        perFrame.rcGridOriginZ        = origin.z;
+    } else {
+        perFrame.radianceCacheEnabled = 0;
+        perFrame.rcProbeSHBufferSrv   = UINT32_MAX;
+    }
+
     // ── Aerial Perspective parameters (from SkyAtmosphereComponent) ───
     // Populate AP atmosphere constants so deferred_lighting_ps can ray-march
     // inscattering per pixel. Only enabled when a SkyAtmosphereComponent exists

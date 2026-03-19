@@ -145,6 +145,12 @@ void DestroyGPUMesh(IRHIDevice* device, GPUMesh& gpuMesh) {
     SafeDestroyBuffer(device, gpuMesh.vertexBuffer);
     SafeDestroyBuffer(device, gpuMesh.indexBuffer);
 
+    // Destroy the SDF 3D texture if it was baked for this mesh.
+    if (gpuMesh.sdf.texture3D.IsValid()) {
+        device->DestroyTexture(gpuMesh.sdf.texture3D);
+    }
+    gpuMesh.sdf = MeshSDF{};
+
     gpuMesh.vbSrvIndex  = UINT32_MAX;
     gpuMesh.indexCount   = 0;
     gpuMesh.vertexCount  = 0;

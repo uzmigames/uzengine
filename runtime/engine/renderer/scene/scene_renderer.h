@@ -45,6 +45,8 @@
 #include "postprocess/hiz_pyramid_pass.h"
 #include "shadows/distance_field_shadow_config.h"
 #include "gi/ssgi_renderer.h"
+#include "gi/global_distance_field.h"
+#include "gi/radiance_cache.h"
 #include "async_texture_decoder.h"  // TextureDecodeResult for m_deferredDecoded
 #include "inspector_pass.h"        // PassInspector for render target visualization
 
@@ -733,6 +735,11 @@ private:
 
     // ── SSGI (Screen-Space Global Illumination) ─────────────────────────────
     SSGIRenderer m_ssgiRenderer;  ///< GPU SSGI subsystem (5 compute passes).
+
+    // ── SDF-based GI (Global Distance Field + Radiance Cache) ──────────────
+    GlobalDistanceField m_globalDistanceField;   ///< 4-cascade clipmap GDF.
+    RadianceCache       m_radianceCache;         ///< 16^3 world-space probe grid for diffuse GI.
+    bool m_sdfGiEnabled = false;                 ///< Runtime toggle for SDF-based GI.
 
     // ── SSR (Screen-Space Reflections) ─────────────────────────────────────
 
