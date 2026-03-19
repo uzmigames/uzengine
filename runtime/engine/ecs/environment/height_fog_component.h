@@ -80,8 +80,9 @@ struct HeightFogComponent {
     Vec3 directionalInscatteringColor = {1.0f, 0.8f, 0.6f};
 
     /// Exponent controlling the tightness of the directional inscattering cone.
-    /// Higher = tighter sun halo. UE5: DirectionalInscatteringExponent. Default: 8.
-    float directionalInscatteringExponent = 8.0f;
+    /// Higher = tighter sun halo. UE5: DirectionalInscatteringExponent. Default: 4.
+    /// @source UE5 ExponentialHeightFogComponent.cpp — DirectionalInscatteringExponent=4
+    float directionalInscatteringExponent = 4.0f;
 
     /// Start distance for directional inscattering (cm from camera).
     /// UE5: DirectionalInscatteringStartDistance. Default: 0.

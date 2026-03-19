@@ -374,15 +374,19 @@ void PBRTest::OnStart() {
         ///   0.0436 * exp2(-0.2 * 5000) ≈ 0 — no visible fog on nearby geometry.
         ///   Fog only accumulates over very long horizontal rays (sky distance),
         ///   creating the smooth horizon haze gradient.
-        fogComp.density         = 0.0436f;
-        fogComp.heightFalloff   = 0.2f;
-        fogComp.baseHeight      = -5000.f;
+        /// @source UE5 ExponentialHeightFogComponent defaults
+        fogComp.density         = 0.02f;     ///< @source UE5 default FogDensity
+        fogComp.heightFalloff   = 0.2f;      ///< @source UE5 default FogHeightFalloff
+        fogComp.baseHeight      = 0.f;       ///< Ground level
         fogComp.maxOpacity      = 1.0f;
         fogComp.startDistance    = 0.f;
         fogComp.fogCutoffDistance = 0.f;
-        fogComp.color            = {0.0f, 0.0f, 0.0f};
-        fogComp.directionalInscatteringColor      = {0.0f, 0.0f, 0.0f};
-        fogComp.directionalInscatteringExponent   = 4.0f;
+        /// @source UE5 ExponentialHeightFogComponent — FogInscatteringLuminance
+        /// UE5 default inscattering color is a sky-blue haze that fills the distance.
+        fogComp.color            = {0.448f, 0.639f, 1.0f};
+        /// @source UE5 ExponentialHeightFogComponent — DirectionalInscatteringColor
+        fogComp.directionalInscatteringColor      = {1.0f, 0.9f, 0.7f};
+        fogComp.directionalInscatteringExponent   = 4.0f;  ///< @source UE5 default
         fogComp.directionalInscatteringStartDistance = 10000.f;
     }
 
