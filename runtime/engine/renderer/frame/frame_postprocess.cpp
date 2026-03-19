@@ -53,44 +53,35 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
         });
     }
 
-    // ── TAA Resolve pass (compute: temporal accumulation) ────────────────
-    // @source UE5 TemporalAA.cpp:395-396 — FTemporalAACS compute shader
-    // @source UE5 TemporalAA.cpp:41 — r.TemporalAACurrentFrameWeight default 0.04
+    // ── Temporal Upscaler pass (TAA or TSR via ITemporalUpscaler) ──────
+    // @source UE5 TemporalUpscaler.h — ITemporalUpscaler::AddPasses
     //
-    // Reads the current HDR scene color and the previous frame's TAA history,
-    // performs YCoCg neighborhood clamping, HDR-weighted blend, and writes
-    // the new history. The tonemap pass then reads from the TAA output.
-    //
-    // The current write target is m_taaHistory[m_taaHistoryIndex].
-    // The previous read target is m_taaHistory[1 - m_taaHistoryIndex].
-    if (ctx.taaActive && m_shadowDebugMode == 0) {
+    // Delegates to the active upscaler (TaaUpscaler or TsrUpscaler).
+    // The caller manages history texture barriers and ping-pong, the upscaler
+    // handles its own internal dispatches and intermediate resource transitions.
+    if (ctx.taaActive && m_shadowDebugMode == 0 && m_upscaler) {
         const uint32_t writeIdx = ctx.taaWriteIdx;
         const uint32_t readIdx  = ctx.taaReadIdx;
         const float jitterX = ctx.jitterX;
         const float jitterY = ctx.jitterY;
 
-        rgBuilder.AddPass("TAA_Resolve", [&, writeIdx, readIdx, jitterX, jitterY](rg::RgPassBuilder& pb) {
+        const char* passName = m_upscaler->GetName();
+        rgBuilder.AddPass(passName, [&, writeIdx, readIdx, jitterX, jitterY](rg::RgPassBuilder& pb) {
             pb.Read(ctx.hdrRes, RHIResourceState::ShaderResource);
 
             pb.SetExecutionCallback([this, &ctx, writeIdx, readIdx, jitterX, jitterY](IRHICommandList* cmd, const rg::RgPassResources& /*res*/) {
-                UZ_PROFILE_SCOPE("TAA::Resolve");
-
-                auto taaPSO = ctx.pipelines->GetTaaResolve();
-                if (!taaPSO.IsValid()) return;
+                UZ_PROFILE_SCOPE("Upscaler::Execute");
 
                 // Transition TAA history textures:
-                // - Write target: SRV → UAV (will be written by compute)
-                // - Read target stays in SRV (sampled by compute)
+                // - Write target: SRV → UAV (will be written by upscaler)
+                // - Read target → SRV (sampled by upscaler)
                 {
                     RHIBarrierDesc barriers[2]{};
-
-                    // Write target → UAV
                     barriers[0].texture     = m_taaHistory[writeIdx];
                     barriers[0].buffer      = RHIBufferHandle::Invalid();
                     barriers[0].stateBefore = RHIResourceState::ShaderResource;
                     barriers[0].stateAfter  = RHIResourceState::UnorderedAccess;
 
-                    // Read target → SRV (may already be SRV, but be explicit)
                     barriers[1].texture     = m_taaHistory[readIdx];
                     barriers[1].buffer      = RHIBufferHandle::Invalid();
                     barriers[1].stateBefore = RHIResourceState::UnorderedAccess;
@@ -99,62 +90,25 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
                     cmd->ResourceBarrier(barriers, 2);
                 }
 
-                cmd->SetPipeline(taaPSO);
+                // Fill UpscalerInput and dispatch
+                UpscalerInput input{};
+                input.sceneColorSrv    = m_hdrSceneColorSrv;
+                input.depthSrv         = m_gbuffer.depthSRV;
+                input.velocitySrv      = m_gbuffer.velocitySRV;
+                input.historyReadSrv   = m_taaHistorySrv[readIdx];
+                input.historyWriteUav  = m_taaHistoryUav[writeIdx];
+                input.historyReadTexture  = m_taaHistory[readIdx];
+                input.historyWriteTexture = m_taaHistory[writeIdx];
+                input.jitterX      = jitterX;
+                input.jitterY      = jitterY;
+                input.renderWidth  = ctx.renderWidth;
+                input.renderHeight = ctx.renderHeight;
+                input.outputWidth  = ctx.vpWidth;
+                input.outputHeight = ctx.vpHeight;
+                input.firstFrame   = !m_prevViewProjValid;
+                input.exposure     = ctx.perFrame.exposure;
 
-                // TaaCB — uploaded via CBRingAllocator at kSlotPerObject (b2).
-                // Moved from root constants to CBV to accommodate velocitySrvIndex
-                // and outputWidth/outputHeight for bicubic history sampling.
-                //
-                // Layout matches the HLSL TaaCB cbuffer in taa_resolve_cs.hlsl.
-                //
-                // When screen percentage < 100%, scene color is at render resolution
-                // (smaller) and history/output are at display resolution (larger).
-                // texelSize uses render resolution because that's the input texel size
-                // for neighborhood sampling. outputWidth/Height are display resolution
-                // because that's the dimensions of the TAA output/history textures.
-                struct TaaCB {
-                    float    jitterX, jitterY;       // 8 bytes
-                    float    texelSizeX, texelSizeY;  // 8 bytes
-                    float    blendWeight;              // 4 bytes
-                    uint32_t sceneSrv;                 // 4 bytes
-                    uint32_t depthSrv;                 // 4 bytes
-                    uint32_t historySrv;               // 4 bytes
-                    uint32_t velocitySrv;              // 4 bytes
-                    float    outputWidth;              // 4 bytes
-                    float    outputHeight;             // 4 bytes
-                    uint32_t _pad0;                    // 4 bytes (align to 16)
-                };
-                TaaCB taaCb{};
-                taaCb.jitterX    = jitterX;
-                taaCb.jitterY    = jitterY;
-                // texelSize is 1/renderResolution — the input scene color texel size.
-                // The shader uses this for neighborhood sampling and jitter unjittering.
-                taaCb.texelSizeX = 1.0f / ctx.renderWidth;
-                taaCb.texelSizeY = 1.0f / ctx.renderHeight;
-                /// @source UE5 TemporalAA.cpp:41 — CurrentFrameWeight = 0.04
-                taaCb.blendWeight  = m_prevViewProjValid ? 0.04f : 1.0f;
-                taaCb.sceneSrv     = m_hdrSceneColorSrv;
-                taaCb.depthSrv     = m_gbuffer.depthSRV;
-                taaCb.historySrv   = m_taaHistorySrv[readIdx];
-                taaCb.velocitySrv  = m_gbuffer.velocitySRV;
-                // Output dimensions are DISPLAY resolution (TAA history lives at display res).
-                taaCb.outputWidth  = ctx.vpWidth;
-                taaCb.outputHeight = ctx.vpHeight;
-                taaCb._pad0        = 0;
-
-                auto taaAlloc = m_cbRing->Allocate(sizeof(TaaCB));
-                std::memcpy(taaAlloc.cpuPtr, &taaCb, sizeof(TaaCB));
-                cmd->SetRootCBV(kSlotPerObject, taaAlloc.bufferHandle,
-                                taaAlloc.offsetBytes, taaAlloc.cpuPtr,
-                                sizeof(TaaCB));
-
-                // Bind TAA output UAV at descriptor table slot 4 (u0)
-                cmd->SetDescriptorTable(4, m_taaHistoryUav[writeIdx]);
-
-                // Dispatch thread groups (8x8 per group)
-                const uint32_t groupsX = (static_cast<uint32_t>(ctx.vpWidth)  + 7) / 8;
-                const uint32_t groupsY = (static_cast<uint32_t>(ctx.vpHeight) + 7) / 8;
-                cmd->Dispatch(groupsX, groupsY, 1);
+                m_upscaler->Execute(cmd, input);
 
                 // Transition write target back to SRV for tonemap to read.
                 {
@@ -168,7 +122,7 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
             });
         });
 
-        // Tonemap reads from the TAA output instead of raw HDR scene color.
+        // Tonemap reads from the upscaler output instead of raw HDR scene color.
         ctx.taaSrvForTonemap = m_taaHistorySrv[writeIdx];
 
         // Flip ping-pong index for next frame.

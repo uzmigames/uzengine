@@ -60,8 +60,8 @@ All post-process effects execute in this fixed order. Each effect reads from the
 6. Motion Blur
    └─ Streaks trailing fast motion
 
-7. Temporal Anti-Aliasing (TAA)
-   └─ Resolve jittered samples over time
+7. Temporal Upscaling (TAA or TSR)
+   └─ Resolve jittered samples over time with optional resolution scaling
 
 8. Tone Mapping
    └─ Convert HDR to SDR display range
@@ -81,46 +81,113 @@ All post-process effects execute in this fixed order. Each effect reads from the
 
 **Key invariant:** Each effect is optional and disabled by default. Effects only run if `enabled = true` in the active PostProcessVolume.
 
-## Temporal Anti-Aliasing (TAA) — Phase 2
+## Temporal Upscaling (TAA / TSR) — Phase 2+
 
-Smooth jagged edges by rendering at jittered sub-pixels and averaging over time:
+UzEngine abstracts temporal upscaling behind a unified `ITemporalUpscaler` interface, allowing seamless switching between TAA (lightweight single-pass) and TSR (multi-pass super-resolution).
 
 ```cpp
-/// TAA resolves aliasing via temporal history.
-struct TAASettings {
-    bool     enabled;
-    float    jitter_scale;      // offset sub-pixel amount (0.25-1.0 pixels)
-    float    feedback_min;      // minimum history weight (0.8 typical)
-    float    feedback_max;      // maximum history weight (0.95 typical)
-    float    ghosting_reduction; // reject old history if color changes too much
-    bool     use_velocity;       // enable velocity-based rejection (Phase 1.3.1+)
+/// Abstract temporal upscaler interface (runtime/engine/renderer/passes/postprocess/temporal_upscaler.h)
+enum class UpscalerType : uint32_t {
+    None = 0,  // No upscaling
+    TAA  = 1,  // Single-pass TAA (aliasing only)
+    TSR  = 2,  // Multi-pass TSR (aliasing + resolution scaling)
 };
+
+class ITemporalUpscaler {
+    virtual void Execute(IRHICommandList* cmd, const UpscalerInput& input) = 0;
+    virtual void OnResize(uint32_t displayWidth, uint32_t displayHeight) = 0;
+    virtual const char* GetName() const = 0;
+    virtual float GetMinScreenPercentage() const = 0;
+    virtual float GetMaxScreenPercentage() const = 0;
+};
+
+// Factory: CreateTemporalUpscaler(UpscalerType type)
 ```
 
+### TAA — Temporal Anti-Aliasing (Single-Pass, 100% Resolution Only)
+
 **How TAA works:**
-1. **Jitter camera projection** by random offset (0.25-1.0 pixels) each frame
-2. **Render scene** with jittered projection, save frame to history texture
-3. **Next frame**: reproject history using **velocity buffer** (from depth reprojection)
+1. **Jitter camera projection** via Halton sequence (0.25–1.0 pixels, deterministic per-frame)
+2. **Render scene** with jittered projection at display resolution
+3. **Next frame**: reproject previous frame's history using **velocity buffer** (screen-space pixel motion)
    ```hlsl
    float2 velocity = velocityBuffer.Sample(sampler, uv).rg;
-   float2 prevUV = uv - (velocity / screenDimensions);
-   float3 history = historyBuffer.Sample(sampler, prevUV).rgb;
+   float2 prevUV = uv - (velocity / displayDimensions);
+   float4 history = historyBuffer.Sample(sampler, prevUV);
    ```
-4. **Blend** jittered frame with reprojected history
+4. **Blend** current with reprojected history
    ```hlsl
-   float weight = mix(feedback_min, feedback_max, velocityLength);  // Reduce history weight for motion
-   output = mix(current, history, weight);
+   float blendWeight = 0.04;  // ~25-frame accumulation @source UE5 TemporalAA.cpp:41
+   blendWeight *= lerp(0.04, 0.2, velocityLength);  // Adaptive: reduce weight at high motion
+   output = lerp(current, history, blendWeight);
    ```
 5. **Repeat** — over 8+ frames, jagged edges become smooth (equivalent to 2x–4x MSAA)
 
-**Challenge:** Fast camera movement or object motion can cause ghosting.
-**Solution:** Velocity-based history rejection — if reprojected history differs significantly from current frame OR velocity is large, reduce history weight dynamically.
+**Characteristics:**
+- Single compute dispatch (~0.3ms)
+- Smooth temporal accumulation over time
+- No resolution scaling (screen percentage must be 100%)
+- Velocity dilation + 5-tap bicubic history sampling built-in
+- Good for stable rendering or when resolution scaling not needed
 
-**Velocity Buffer Integration** (Milestone 1.3.1+):
-- The velocity buffer (RG16Float) is generated via depth reprojection in a separate fullscreen pass
-- Stores screen-space motion vectors in pixels (positive X = rightward, positive Y = downward)
+### TSR — Temporal Super Resolution (Multi-Pass, 50–200% Screen Percentage)
+
+**How TSR works:**
+1. **Velocity dilation (Pass 1)**: Search 3×3 neighborhood for closest depth, output dilated motion vectors. Prevents thin geometry from losing motion coverage.
+2. **History rejection (Pass 2)**: Compare current frame luminance vs reprojected history in YCoCg color space. Compute neighborhood AABB to detect moire/flicker. Mark rejected pixels (>0.5 weight).
+3. **History update (Pass 3)**:
+   - Reproject history using dilated velocity
+   - Clamp reprojected history to current 3×3 neighborhood (YCoCg AABB)
+   - Adaptive blend: static pixels alpha~0.06, motion alpha~0.2, rejected alpha~1.0
+   - Apply spatial anti-aliasing filter on rejected pixels (5-tap Gaussian)
+   - Unjitter current frame by subtracting jitter offset
+   - Optional sharpening via contrast-adaptive unsharp mask (RCAS)
+
+**Characteristics:**
+- 3-stage compute pipeline (~1.2ms total)
+- Supports 50–200% screen percentage for resolution scaling
+- Reduces temporal noise via multi-pass rejection and filtering
+- Better handling of fast motion and disocclusion vs TAA
+- Default upscaler (recommended for production)
+
+### Screen Percentage System
+
+Decouples render resolution from display resolution:
+
+```
+Screen Percentage = 100% → renderRes = displayRes (1:1)
+Screen Percentage = 67%  → renderRes = 0.67 × displayRes (4K display, 1440p render)
+Screen Percentage = 50%  → renderRes = 0.5 × displayRes (1440p display, 720p render)
+```
+
+All geometry (GBuffer, lighting, shadows) renders at `renderRes`. Only the final upscaler pass outputs at `displayRes`. Mipmap bias (`bias = log₂(screenPercentage/100)`) adjusts texture LOD to maintain visual quality.
+
+**Velocity Buffer Integration**:
+- Generated via depth reprojection in separate compute pass
+- Stores screen-space motion vectors in pixels (RG16F)
 - Sky pixels (depth ≈ 0 or ≈ 1) output zero velocity to prevent ghosting at horizon
-- See [GBuffer Layout Guide](../../user/guides/rendering/gbuffer-layout.md#velocity-buffer-generation) for detailed velocity generation
+- See [temporal-upscaling.md guide](../../guides/temporal-upscaling.md) for implementation details
+
+### Dynamic Resolution Controller
+
+Optional GPU-bound adaptive resolution scaling:
+
+```cpp
+DynamicResolutionController controller;
+controller.SetTargetFPS(60.0);
+controller.SetEnabled(true);
+
+// Per frame:
+float gpuFrameTime = rhi_query_gpu_time();
+controller.Update(gpuFrameTime);
+float screenPercentage = controller.GetScreenPercentage();  // 50-100%
+```
+
+- **Scale-down**: if gpuTime > targetTime × 0.95, reduce 5% immediately (instant response)
+- **Scale-up**: if gpuTime < targetTime × 0.85 for 120+ frames, increase 5% (conservative hysteresis)
+- Clamped to [minPct, maxPct] (default 50–100%)
+
+For detailed API reference and configuration, see [temporal-upscaling.md guide](../../guides/temporal-upscaling.md).
 
 ## Screen-Space Ambient Occlusion (SSAO) — Phase 2
 

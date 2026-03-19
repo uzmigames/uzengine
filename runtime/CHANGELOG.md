@@ -2,6 +2,73 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
+## [0.2.38] — 2026-03-18
+
+### Temporal Upscaling System — ITemporalUpscaler, TSR, Dynamic Resolution
+
+**New abstraction layer** (`runtime/engine/renderer/passes/postprocess/temporal_upscaler.h`):
+- `ITemporalUpscaler` abstract interface with Init/Shutdown/OnResize/Execute methods, GetName/GetMinScreenPercentage/GetMaxScreenPercentage accessors. @source UE5 TemporalUpscaler.h
+- `UpscalerType` enum: None, TAA, TSR, FSR2 (future), DLSS (future), XeSS (future)
+- `UpscalerInput` struct containing bindless SRV indices for sceneColor, depth, velocity, historyRead, and output UAV indices (historyWrite, outputUav)
+- `CreateTemporalUpscaler(UpscalerType)` factory function returning unique_ptr<ITemporalUpscaler>. Vendor upscalers (FSR2/DLSS/XeSS) fall back to TSR with warning.
+
+**TSR — Temporal Super Resolution** (default upscaler, UE5 parity):
+- `TsrUpscaler` class implementing 3-pass compute architecture: (1) velocity dilation, (2) history rejection (shading rejection + YCoCg neighborhood clamp), (3) history update with responsive accumulation
+- `tsr_resolve_cs.hlsl` compute shader (872 lines) with 3 entry points compiled via TSR_PASS_* defines: DilateVelocityMain, RejectShadingMain, UpdateHistoryMain. @source UE5 TemporalSuperResolution.cpp
+- Velocity dilation: 3×3 neighborhood search for closest depth, outputs dilated velocity (UV-space) + depth to intermediate texture. Prevents thin geometry motion miss.
+- History rejection: YCoCg color space AABB neighborhood clamp with anti-flicker stability factor. Detects moire/flicker patterns via luminance threshold.
+- Responsive accumulation: Per-pixel blend factor adapts based on velocity magnitude, rejection flag, and disocclusion. Static pixels (alpha≈0.06), fast motion (lerp→0.2), rejected (→1.0). @source UE5 TheoricBlendFactor formula
+- Sub-pixel jitter compensation: Unjitter current frame by subtracting jitter offset during resolve. History already in un-jittered space.
+- Disocclusion detection: Off-screen UV test detects parallax reveals and objects appearing. Falls back to full current frame (blendFinal=1.0).
+- Spatial anti-aliasing filter: When history rejected (rejectionWeight>0.5), apply 5-tap jitter-weighted Gaussian filter on current frame for artifacts without ghosting.
+- Sharpening (RCAS): Inline contrast-adaptive unsharp mask matching FFX_CAS.h. Strength via `tsrSharpness` param (0.0-1.0, 0.0=disabled).
+- Lazy resource creation on resolution change. 2 history buffers (ping-pong, RGBA16F at displayRes).
+
+**TAA — Temporal Anti-Aliasing** (lightweight fallback, single-pass):
+- `TaaUpscaler` class wrapping legacy taa_resolve_cs.hlsl (465 lines) behind ITemporalUpscaler interface. Single compute dispatch at display resolution.
+- Blend factor: static 0.04 (UE5 TemporalAA.cpp:41, ~25-frame accumulation), velocity-adaptive lerp toward 0.2 at high motion. @source UE5 TemporalAA.cpp:1184
+- Built-in velocity dilation (5-tap cross-pattern closest depth) + 5-tap bicubic Catmull-Rom history sampling. No multi-pass rejection; lightweight (~0.3ms).
+- TAA supports 100% screen percentage only (GetMaxScreenPercentage=100.0).
+
+**Screen Percentage Infrastructure** (render res decoupling from display res):
+- `m_renderWidth`/`m_renderHeight` alongside `m_displayWidth`/`m_displayHeight` in SceneRenderer. Computed from `m_screenPercentage` (float, 10–200%, default 100%).
+- Public API: SetScreenPercentage(), GetScreenPercentage(), GetRenderWidth(), GetRenderHeight(), GetRenderResolution(), GetDisplayResolution().
+- GBuffer (albedo, normal, depth, velocity, positionWS) resized to renderRes. HDR scene color at renderRes. Backbuffer, tonemap output, overlay, TAA history, FXAA at displayRes. @source UE5 DynamicRenderScaling.h
+- Mipmap bias compensation: `bias = log₂(screenPercentage/100.0)`. Applied to all texture sampling in GBuffer (SampleBias for PBR textures). At 100%, bias=0 (no change). At 67%, bias≈-0.58.
+
+**Dynamic Resolution Controller** (GPU-bound adaptive scaling):
+- `DynamicResolutionController` CPU-only logic (renderer/core/dynamic_resolution.h/cpp). API: SetEnabled/SetTargetFPS/Update(gpuFrameTimeSeconds). @source UE5 DynamicRenderScaling.h, Unity DynamicResolutionHandler
+- Scale-down: if gpuTime > targetTime×0.95, reduce 5% immediately (instant response).
+- Scale-up: if gpuTime < targetTime×0.85 for 120+ consecutive frames, increase 5% (conservative hysteresis).
+- Clamp screen percentage to [minPct, maxPct] (default 50–100%).
+
+**Pipeline Integration**:
+- `PipelineLibrary` extended: GetTsrDilateVelocity(), GetTsrRejectShading(), GetTsrUpdateHistory() return PSOs for 3 TSR passes.
+- `SceneRenderer::RegisterPostProcessPasses()` wired ITemporalUpscaler instead of inline TAA. Factory creates upscaler from type setting.
+- Frame setup computes camera jitter via Halton23 sequence (supports arbitrary sample counts). Jitter applied as clip-space translation to viewProj. Unjittered viewProj stored for velocity reprojection.
+- Previous-frame viewProj (`m_prevViewProj`) updated after TAA resolve, enables motion vectors across temporal upscalers.
+
+**Stats Overlay** (frame_overlay.cpp):
+- Shows active upscaler name: "Upscaler: TAA" / "Upscaler: TSR" / "Upscaler: None". Displayed in overlay corner.
+
+**Lua API** (7 new functions, lua_renderer_api.cpp):
+- `uz.renderer.set_screen_percentage(pct)` — set render scale (10–200)
+- `uz.renderer.get_screen_percentage()` — get current render scale
+- `uz.renderer.set_upscaler(name)` — "none", "taa", "tsr". Integrates with ITemporalUpscaler type switching.
+- `uz.renderer.get_upscaler()` — current upscaler name
+- `uz.renderer.set_dynamic_resolution(enabled)` — toggle adaptive scaling
+- `uz.renderer.get_render_resolution()` — returns {width, height} at render res
+- `uz.renderer.get_display_resolution()` — returns {width, height} at display res
+
+**Comprehensive Documentation**:
+- `docs/guides/temporal-upscaling.md` (627 lines): architecture overview, screen percentage terminology, ITemporalUpscaler C++ interface, upscaler input/output structure, TSR 3-pass algorithm with UE5 citations, TAA vs TSR comparison table, dynamic resolution algorithm, pipeline order diagram, quality settings guide, Lua API reference, troubleshooting (ghosting, shimmer, performance issues).
+
+**Bug Fixes**:
+- Fixed `dfs_cone_trace_cs.hlsl` entry point (CSMain → main for DXC auto-discovery)
+- Added no-op fallback `main()` to `tsr_resolve_cs.hlsl` for shader auto-discovery
+
+---
+
 ## [0.2.37] — 2026-03-18
 
 ### Material Graph System

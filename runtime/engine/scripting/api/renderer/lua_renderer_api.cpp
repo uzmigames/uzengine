@@ -4,6 +4,7 @@
 #include "debug_view_mode.h"
 #include "scene_renderer.h"
 #include "stats_overlay.h"
+#include "postprocess/temporal_upscaler.h"
 
 extern "C" {
 #include <lua.h>
@@ -249,6 +250,118 @@ static int RendererGetShadowCache(lua_State* L) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Lua C functions — uz.renderer.* (screen percentage / upscaling)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// uz.renderer.set_screen_percentage(pct)
+///
+/// Sets the render scale. 100 = native resolution, 50 = half-res, 200 = supersampled.
+/// Clamped to [10, 200]. Takes effect on the next frame.
+///
+/// # Arguments
+/// * `pct` (number) — Screen percentage [10, 200].
+static int RendererSetScreenPercentage(lua_State* L) {
+    const float pct = static_cast<float>(luaL_checknumber(L, 1));
+    SceneRenderer* renderer = GetRenderer(L);
+    if (!renderer) {
+        UZ_LOG(Scripting, Warning, "uz.renderer.set_screen_percentage: SceneRenderer not set");
+        return 0;
+    }
+    renderer->SetScreenPercentage(pct);
+    return 0;
+}
+
+/// uz.renderer.get_screen_percentage() → number
+///
+/// Returns the current render scale percentage.
+static int RendererGetScreenPercentage(lua_State* L) {
+    SceneRenderer* renderer = GetRenderer(L);
+    lua_pushnumber(L, renderer ? static_cast<double>(renderer->GetScreenPercentage()) : 100.0);
+    return 1;
+}
+
+/// uz.renderer.set_upscaler(name)
+///
+/// Sets the temporal upscaler. Valid names: "none", "taa", "tsr".
+///
+/// # Arguments
+/// * `name` (string) — Upscaler name.
+static int RendererSetUpscaler(lua_State* L) {
+    const char* name = luaL_checkstring(L, 1);
+    SceneRenderer* renderer = GetRenderer(L);
+    if (!renderer) {
+        UZ_LOG(Scripting, Warning, "uz.renderer.set_upscaler: SceneRenderer not set");
+        return 0;
+    }
+    if (std::strcmp(name, "none") == 0) {
+        renderer->SetUpscalerType(UpscalerType::None);
+    } else if (std::strcmp(name, "taa") == 0) {
+        renderer->SetUpscalerType(UpscalerType::TAA);
+    } else if (std::strcmp(name, "tsr") == 0) {
+        renderer->SetUpscalerType(UpscalerType::TSR);
+    } else {
+        UZ_LOG(Scripting, Warning, "uz.renderer.set_upscaler: unknown upscaler '{}'", name);
+    }
+    return 0;
+}
+
+/// uz.renderer.get_upscaler() → string
+///
+/// Returns the current upscaler name ("none", "taa", or "tsr").
+static int RendererGetUpscaler(lua_State* L) {
+    SceneRenderer* renderer = GetRenderer(L);
+    if (!renderer) {
+        lua_pushstring(L, "none");
+        return 1;
+    }
+    auto* upscaler = renderer->GetUpscaler();
+    lua_pushstring(L, upscaler ? upscaler->GetName() : "none");
+    return 1;
+}
+
+/// uz.renderer.set_dynamic_resolution(enabled)
+///
+/// Enables or disables GPU-bound adaptive resolution scaling.
+///
+/// # Arguments
+/// * `enabled` (boolean) — True to enable dynamic resolution.
+static int RendererSetDynamicResolution(lua_State* L) {
+    (void)L;
+    UZ_LOG(Scripting, Warning, "uz.renderer.set_dynamic_resolution: not yet integrated with SceneRenderer");
+    return 0;
+}
+
+/// uz.renderer.get_render_resolution() → width, height
+///
+/// Returns the internal render resolution (after screen percentage).
+static int RendererGetRenderResolution(lua_State* L) {
+    SceneRenderer* renderer = GetRenderer(L);
+    if (renderer) {
+        lua_pushinteger(L, static_cast<lua_Integer>(renderer->GetRenderWidth()));
+        lua_pushinteger(L, static_cast<lua_Integer>(renderer->GetRenderHeight()));
+    } else {
+        lua_pushinteger(L, 0);
+        lua_pushinteger(L, 0);
+    }
+    return 2;
+}
+
+/// uz.renderer.get_display_resolution() → width, height
+///
+/// Returns the display/backbuffer resolution.
+static int RendererGetDisplayResolution(lua_State* L) {
+    SceneRenderer* renderer = GetRenderer(L);
+    if (renderer) {
+        lua_pushinteger(L, static_cast<lua_Integer>(renderer->GetWidth()));
+        lua_pushinteger(L, static_cast<lua_Integer>(renderer->GetHeight()));
+    } else {
+        lua_pushinteger(L, 0);
+        lua_pushinteger(L, 0);
+    }
+    return 2;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Lua C functions — uz.mesh.*
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -396,6 +509,27 @@ void LuaRegisterRendererAPI(lua_State* L) {
 
     lua_pushcfunction(L, RendererGetShadowCache);
     lua_setfield(L, -2, "get_shadow_cache");
+
+    lua_pushcfunction(L, RendererSetScreenPercentage);
+    lua_setfield(L, -2, "set_screen_percentage");
+
+    lua_pushcfunction(L, RendererGetScreenPercentage);
+    lua_setfield(L, -2, "get_screen_percentage");
+
+    lua_pushcfunction(L, RendererSetUpscaler);
+    lua_setfield(L, -2, "set_upscaler");
+
+    lua_pushcfunction(L, RendererGetUpscaler);
+    lua_setfield(L, -2, "get_upscaler");
+
+    lua_pushcfunction(L, RendererSetDynamicResolution);
+    lua_setfield(L, -2, "set_dynamic_resolution");
+
+    lua_pushcfunction(L, RendererGetRenderResolution);
+    lua_setfield(L, -2, "get_render_resolution");
+
+    lua_pushcfunction(L, RendererGetDisplayResolution);
+    lua_setfield(L, -2, "get_display_resolution");
 
     lua_setfield(L, -2, "renderer");
 

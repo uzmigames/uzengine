@@ -354,6 +354,21 @@ public:
     /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
     [[nodiscard]] RHIPipelineHandle GetTaaResolve();
 
+    /// Returns the TSR velocity dilation compute pipeline (tsr_resolve_cs.hlsl + TSR_PASS_DILATE_VELOCITY).
+    ///
+    /// @source UE5 TSRDilateVelocity.usf — closest depth search, velocity dilation
+    [[nodiscard]] RHIPipelineHandle GetTsrDilateVelocity();
+
+    /// Returns the TSR shading rejection compute pipeline (tsr_resolve_cs.hlsl + TSR_PASS_REJECT_SHADING).
+    ///
+    /// @source UE5 TSRRejectShading.usf — luminance-based shading rejection
+    [[nodiscard]] RHIPipelineHandle GetTsrRejectShading();
+
+    /// Returns the TSR history update compute pipeline (tsr_resolve_cs.hlsl + TSR_PASS_UPDATE_HISTORY).
+    ///
+    /// @source UE5 TSRUpdateHistory.usf — temporal resolve with neighborhood clamping
+    [[nodiscard]] RHIPipelineHandle GetTsrUpdateHistory();
+
     /// Returns the SSR trace compute pipeline (ssr_trace_cs.hlsl).
     ///
     /// Per-pixel screen-space reflection ray marching using the Hi-Z depth
@@ -521,6 +536,9 @@ private:
     [[nodiscard]] bool EnsureDfsCullObjectsShader();
     [[nodiscard]] bool EnsureDfsConeTraceShader();
     [[nodiscard]] bool EnsureTaaResolveShader();
+    [[nodiscard]] bool EnsureTsrDilateVelocityShader();
+    [[nodiscard]] bool EnsureTsrRejectShadingShader();
+    [[nodiscard]] bool EnsureTsrUpdateHistoryShader();
     [[nodiscard]] bool EnsureSsrTraceShader();
     [[nodiscard]] bool EnsureSsrResolveShader();
     [[nodiscard]] bool EnsureColorGradingLutShader();
@@ -571,6 +589,9 @@ private:
     RHIShaderHandle m_dfsCullObjectsCS         = RHIShaderHandle::Invalid();
     RHIShaderHandle m_dfsConeTraceCS           = RHIShaderHandle::Invalid();
     RHIShaderHandle m_taaResolveCS             = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_tsrDilateVelocityCS      = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_tsrRejectShadingCS       = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_tsrUpdateHistoryCS       = RHIShaderHandle::Invalid();
     RHIShaderHandle m_ssrTraceCS               = RHIShaderHandle::Invalid();
     RHIShaderHandle m_ssrResolveCS             = RHIShaderHandle::Invalid();
     RHIShaderHandle m_colorGradingLutCS        = RHIShaderHandle::Invalid();
@@ -610,6 +631,9 @@ private:
     RHIPipelineHandle m_dfsCullObjects        = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_dfsConeTrace          = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_taaResolve            = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_tsrDilateVelocity    = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_tsrRejectShading     = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_tsrUpdateHistory     = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_ssrTrace              = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_ssrResolve            = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_colorGradingLut       = RHIPipelineHandle::Invalid();

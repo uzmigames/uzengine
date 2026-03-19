@@ -235,7 +235,7 @@ float TraceSdfObject(
 ///             per-pixel sphere-vs-ray + AABB early-out to reject non-overlapping objects cheaply.
 ///             No heightfield support, no SSS transmission.
 [numthreads(8, 8, 1)]
-void CSMain(uint3 DTid : SV_DispatchThreadID) {
+void main(uint3 DTid : SV_DispatchThreadID) {
     // Skip out-of-bounds threads
     if (DTid.x >= g_OutputWidth || DTid.y >= g_OutputHeight) {
         return;

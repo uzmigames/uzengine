@@ -20,6 +20,7 @@
 #include "stats_overlay.h"
 #include "shader_compiler.h"
 #include "shader_compiler_fxc.h"
+#include "dynamic_resolution.h"
 
 #include <cmath>
 
@@ -321,6 +322,15 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     // ── Async Texture Decoder (4 worker threads for parallel stbi_load) ──
     m_asyncDecoder = std::make_unique<AsyncTextureDecoder>(4);
 
+    // ── Temporal Upscaler (default: TAA — matches existing behavior) ────
+    m_upscaler = CreateTemporalUpscaler(m_upscalerType);
+    if (m_upscaler) {
+        m_upscaler->Init(m_device, m_pipelines.get(), m_cbRing.get());
+    }
+
+    // ── Dynamic Resolution Controller ────────────────────────────────────
+    m_dynRes = std::make_unique<DynamicResolutionController>();
+
     UZ_LOG(Renderer, Info, "SceneRenderer initialized ({}x{} display, {}x{} render, {}% scale, {})",
            width, height, m_renderWidth, m_renderHeight,
            m_screenPercentage, RenderPathToString(m_renderPath));
@@ -332,6 +342,33 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// @source UE5 LegacyScreenPercentageDriver.cpp:10-61 — r.ScreenPercentage
+void SceneRenderer::SetUpscalerType(UpscalerType type) {
+    if (type == m_upscalerType && m_upscaler) return;
+
+    // Shut down the old upscaler
+    if (m_upscaler) {
+        m_upscaler->Shutdown();
+        m_upscaler.reset();
+    }
+
+    m_upscalerType = type;
+
+    // Create and initialize the new upscaler
+    m_upscaler = CreateTemporalUpscaler(type);
+    if (m_upscaler && m_device) {
+        m_upscaler->Init(m_device, m_pipelines.get(), m_cbRing.get());
+        if (m_width > 0 && m_height > 0) {
+            m_upscaler->OnResize(m_width, m_height);
+        }
+    }
+
+    // Enable/disable TAA jitter based on upscaler presence
+    m_taaEnabled = (type != UpscalerType::None);
+
+    UZ_LOG(Renderer, Info, "SceneRenderer: upscaler set to {}",
+           m_upscaler ? m_upscaler->GetName() : "None");
+}
+
 void SceneRenderer::SetScreenPercentage(float pct) {
     // Clamp to valid range (UE5 allows 10-200).
     pct = std::max(10.f, std::min(200.f, pct));
@@ -1016,6 +1053,15 @@ void SceneRenderer::Shutdown() {
 
     // ── TAA cleanup ──────────────────────────────────────────────────
     DestroyTaaResources();
+
+    // ── Temporal Upscaler cleanup ─────────────────────────────────────
+    if (m_upscaler) {
+        m_upscaler->Shutdown();
+        m_upscaler.reset();
+    }
+
+    // ── Dynamic Resolution cleanup ────────────────────────────────────
+    m_dynRes.reset();
 
     // ── Color Grading LUT cleanup ───────────────────────────────────
     DestroyColorGradingLutResources();

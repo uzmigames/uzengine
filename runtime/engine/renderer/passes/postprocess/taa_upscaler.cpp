@@ -1,0 +1,110 @@
+/// UzEngine Legacy TAA Upscaler — Implementation
+///
+/// Dispatches taa_resolve_cs.hlsl as a single compute pass. The constant
+/// buffer TaaCB is uploaded via CBRingAllocator and bound at slot b2
+/// (kSlotPerObject). Output UAV is bound at descriptor table slot 4 (u0).
+///
+/// @source UE5 TemporalAA.cpp:395-396 — FTemporalAACS dispatch
+/// @source UE5 TemporalAA.cpp:41 — CurrentFrameWeight = 0.04
+
+#include "taa_upscaler.h"
+
+#include "engine/rhi/rhi.h"
+#include "engine/renderer/core/pipeline_library.h"
+#include "engine/renderer/core/cb_ring_allocator.h"
+#include "log.h"
+#include "profiler.h"
+
+#include <cstring>
+
+UZ_DECLARE_LOG_CATEGORY(Renderer);
+
+namespace uz {
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Lifecycle
+// ─────────────────────────────────────────────────────────────────────────────
+
+TaaUpscaler::~TaaUpscaler() {
+    Shutdown();
+}
+
+void TaaUpscaler::Init(IRHIDevice* /*device*/, PipelineLibrary* pipelines, CBRingAllocator* cbRing) {
+    m_pipelines = pipelines;
+    m_cbRing    = cbRing;
+    UZ_LOG(Renderer, Info, "TaaUpscaler initialized (single-pass resolve)");
+}
+
+void TaaUpscaler::Shutdown() {
+    // TAA owns no GPU resources — pipeline and CB ring are external.
+    m_pipelines = nullptr;
+    m_cbRing    = nullptr;
+}
+
+void TaaUpscaler::OnResize(uint32_t /*displayWidth*/, uint32_t /*displayHeight*/) {
+    // TAA has no resolution-dependent intermediate buffers.
+    // History textures are managed externally by SceneRenderer.
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Execution
+// ─────────────────────────────────────────────────────────────────────────────
+
+void TaaUpscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
+    UZ_PROFILE_SCOPE("TAA::Resolve");
+
+    auto taaPSO = m_pipelines->GetTaaResolve();
+    if (!taaPSO.IsValid()) return;
+
+    cmd->SetPipeline(taaPSO);
+
+    // TaaCB layout matches taa_resolve_cs.hlsl cbuffer TaaCB at b2.
+    // 12 floats/uints = 48 bytes, padded to 16-byte alignment.
+    struct TaaCB {
+        float    jitterX, jitterY;
+        float    texelSizeX, texelSizeY;
+        float    blendWeight;
+        uint32_t sceneSrv;
+        uint32_t depthSrv;
+        uint32_t historySrv;
+        uint32_t velocitySrv;
+        float    outputWidth;
+        float    outputHeight;
+        uint32_t _pad0;
+    };
+
+    TaaCB taaCb{};
+    taaCb.jitterX      = input.jitterX;
+    taaCb.jitterY      = input.jitterY;
+    taaCb.texelSizeX   = 1.0f / input.renderWidth;
+    taaCb.texelSizeY   = 1.0f / input.renderHeight;
+
+    /// @source UE5 TemporalAA.cpp:41 — CurrentFrameWeight = 0.04
+    taaCb.blendWeight  = input.firstFrame ? 1.0f : 0.04f;
+
+    taaCb.sceneSrv     = input.sceneColorSrv;
+    taaCb.depthSrv     = input.depthSrv;
+    taaCb.historySrv   = input.historyReadSrv;
+    taaCb.velocitySrv  = input.velocitySrv;
+    taaCb.outputWidth  = input.outputWidth;
+    taaCb.outputHeight = input.outputHeight;
+    taaCb._pad0        = 0;
+
+    // Root signature slot 2 = b2 (per-object constant buffer).
+    constexpr uint32_t kSlotPerObject = 2;
+
+    auto taaAlloc = m_cbRing->Allocate(sizeof(TaaCB));
+    std::memcpy(taaAlloc.cpuPtr, &taaCb, sizeof(TaaCB));
+    cmd->SetRootCBV(kSlotPerObject, taaAlloc.bufferHandle, taaAlloc.offsetBytes,
+                    taaAlloc.cpuPtr, sizeof(TaaCB));
+
+    // Bind output UAV at descriptor table slot 4 (u0).
+    cmd->SetDescriptorTable(4, input.historyWriteUav);
+
+    // Dispatch 8x8 thread groups covering the full display resolution.
+    const uint32_t groupsX = (static_cast<uint32_t>(input.outputWidth)  + 7) / 8;
+    const uint32_t groupsY = (static_cast<uint32_t>(input.outputHeight) + 7) / 8;
+    cmd->Dispatch(groupsX, groupsY, 1);
+}
+
+} // namespace uz

@@ -167,7 +167,8 @@ void StatsOverlay::BuildTextPanel() {
     constexpr float kSectionGap = 6.f;
 
     // Count lines for panel height:
-    // System info: GPU, RHI+SM, Feature Level, VRAM, Resolution, Bindless = 6
+    // System info: GPU, RHI+SM, Feature Level, VRAM, Resolution, Bindless, Upscaler = 7
+    // (render res line conditional but always reserved)
     // Separator = 1
     // Performance: FPS, Frame time, Raw FPS = 3
     // Separator = 1
@@ -175,8 +176,8 @@ void StatsOverlay::BuildTextPanel() {
     // Separator = 1
     // Frame number = 1
     // Camera: header + Pos + Yaw/Pitch = 3
-    // Total = ~20 lines + gaps
-    constexpr int kLineCount = 22;
+    // Total = ~21 lines + gaps
+    constexpr int kLineCount = 23;
     float panelH = kLineH * kLineCount + kSectionGap * 3.f + kPanelPadding * 2.f;
     m_textRenderer.AddRect(panelX, panelY, kPanelWidth, panelH,
                            {0.05f, 0.05f, 0.08f, 0.85f});
@@ -236,6 +237,11 @@ void StatsOverlay::BuildTextPanel() {
         buf[0] = '\0';  // skip line at 100%
     }
     m_textRenderer.AddText(m_font, buf, textX, textY, gray);
+    textY += kLineH;
+
+    // Upscaler name
+    snprintf(buf, sizeof(buf), "Upscaler: %s", m_upscalerName.c_str());
+    m_textRenderer.AddText(m_font, buf, textX, textY, cyan);
     textY += kLineH;
 
     // ── Separator ────────────────────────────────────────────────────────

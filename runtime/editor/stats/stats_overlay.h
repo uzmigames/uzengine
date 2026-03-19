@@ -121,6 +121,9 @@ public:
         m_renderWidth = renderW; m_renderHeight = renderH; m_screenPercentage = screenPct;
     }
 
+    /// Sets the name of the active temporal upscaler for display.
+    void SetUpscalerName(const char* name) { m_upscalerName = name ? name : "None"; }
+
     /// Sets camera position and rotation for display.
     void SetCameraInfo(float x, float y, float z, float yawDeg, float pitchDeg) {
         m_camX = x; m_camY = y; m_camZ = z;
@@ -178,6 +181,7 @@ private:
     float m_screenPercentage = 100.f; ///< Screen percentage (render/display ratio)
     uint64_t m_vramTotalMB = 0;      ///< Total VRAM in MB
     bool m_bindless = false;         ///< Whether bindless is active
+    std::string m_upscalerName = "TAA"; ///< Active temporal upscaler name
 
     /// Captures static system info from the device (called once in Init).
     void CaptureSystemInfo(IRHIDevice* device);

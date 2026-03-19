@@ -413,6 +413,117 @@ RHIPipelineHandle PipelineLibrary::GetTaaResolve() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// TSR — Dilate Velocity Compute Pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// @source UE5 TSRDilateVelocity.usf — closest depth search, velocity dilation
+bool PipelineLibrary::EnsureTsrDilateVelocityShader() {
+    if (m_tsrDilateVelocityCS.IsValid()) return true;
+
+    m_tsrDilateVelocityCS = m_shaderMgr->CreateShaderWithDefines(
+        EngineShader::TsrResolveCS, RHIShaderStage::Compute, "TSR_PASS_DILATE_VELOCITY=1");
+    if (!m_tsrDilateVelocityCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create TSR DilateVelocity shader");
+        return false;
+    }
+    return true;
+}
+
+RHIPipelineHandle PipelineLibrary::GetTsrDilateVelocity() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetTsrDilateVelocity called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+    if (m_tsrDilateVelocity.IsValid()) return m_tsrDilateVelocity;
+    if (!EnsureTsrDilateVelocityShader()) return RHIPipelineHandle::Invalid();
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_tsrDilateVelocityCS;
+    desc.debugName = "TSR_DilateVelocity";
+    m_tsrDilateVelocity = m_device->CreateComputePipeline(desc);
+    if (!m_tsrDilateVelocity.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create TSR_DilateVelocity pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created TSR_DilateVelocity pipeline");
+    }
+    return m_tsrDilateVelocity;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TSR — Reject Shading Compute Pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// @source UE5 TSRRejectShading.usf — luminance-based shading rejection
+bool PipelineLibrary::EnsureTsrRejectShadingShader() {
+    if (m_tsrRejectShadingCS.IsValid()) return true;
+
+    m_tsrRejectShadingCS = m_shaderMgr->CreateShaderWithDefines(
+        EngineShader::TsrResolveCS, RHIShaderStage::Compute, "TSR_PASS_REJECT_SHADING=1");
+    if (!m_tsrRejectShadingCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create TSR RejectShading shader");
+        return false;
+    }
+    return true;
+}
+
+RHIPipelineHandle PipelineLibrary::GetTsrRejectShading() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetTsrRejectShading called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+    if (m_tsrRejectShading.IsValid()) return m_tsrRejectShading;
+    if (!EnsureTsrRejectShadingShader()) return RHIPipelineHandle::Invalid();
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_tsrRejectShadingCS;
+    desc.debugName = "TSR_RejectShading";
+    m_tsrRejectShading = m_device->CreateComputePipeline(desc);
+    if (!m_tsrRejectShading.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create TSR_RejectShading pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created TSR_RejectShading pipeline");
+    }
+    return m_tsrRejectShading;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TSR — Update History Compute Pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// @source UE5 TSRUpdateHistory.usf — temporal resolve with neighborhood clamping
+bool PipelineLibrary::EnsureTsrUpdateHistoryShader() {
+    if (m_tsrUpdateHistoryCS.IsValid()) return true;
+
+    m_tsrUpdateHistoryCS = m_shaderMgr->CreateShaderWithDefines(
+        EngineShader::TsrResolveCS, RHIShaderStage::Compute, "TSR_PASS_UPDATE_HISTORY=1");
+    if (!m_tsrUpdateHistoryCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create TSR UpdateHistory shader");
+        return false;
+    }
+    return true;
+}
+
+RHIPipelineHandle PipelineLibrary::GetTsrUpdateHistory() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetTsrUpdateHistory called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+    if (m_tsrUpdateHistory.IsValid()) return m_tsrUpdateHistory;
+    if (!EnsureTsrUpdateHistoryShader()) return RHIPipelineHandle::Invalid();
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_tsrUpdateHistoryCS;
+    desc.debugName = "TSR_UpdateHistory";
+    m_tsrUpdateHistory = m_device->CreateComputePipeline(desc);
+    if (!m_tsrUpdateHistory.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create TSR_UpdateHistory pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created TSR_UpdateHistory pipeline");
+    }
+    return m_tsrUpdateHistory;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // SSR Trace Compute Pipeline
 // ─────────────────────────────────────────────────────────────────────────────
 

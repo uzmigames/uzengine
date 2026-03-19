@@ -108,6 +108,7 @@ void SceneRenderer::RegisterOverlayPasses(rg::RgBuilder& rgBuilder, FrameContext
                 float pitchDeg = m_cameraCtrl->GetPitch() * (180.0f / 3.14159265f);
                 m_statsOverlay->SetCameraInfo(camPos.x, camPos.y, camPos.z, yawDeg, pitchDeg);
                 m_statsOverlay->SetRenderResolution(m_renderWidth, m_renderHeight, m_screenPercentage);
+                m_statsOverlay->SetUpscalerName(m_upscaler ? m_upscaler->GetName() : "None");
 
                 m_statsOverlay->Render(cmd, *m_cbRing, ctx.frameIndex);
             }

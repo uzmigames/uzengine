@@ -71,6 +71,7 @@ Located in [guides/](guides/):
 
 | Guide | Description |
 |-------|-------------|
+| [temporal-upscaling.md](guides/temporal-upscaling.md) | Temporal upscaling (TAA/TSR), screen percentage system, dynamic resolution, and Lua API |
 | [shader-parameter-binding-guide.md](guides/shader-parameter-binding-guide.md) | Macro system, metadata definition, and `ShaderParameterBinder` usage |
 | [shader-parameter-migration-guide.md](guides/shader-parameter-migration-guide.md) | Step-by-step migration from manual CB + resource binding to the new system |
 | [ue5-transmittance-lut-porting.md](guides/ue5-transmittance-lut-porting.md) | Porting the UE5 transmittance LUT pass to UzEngine |

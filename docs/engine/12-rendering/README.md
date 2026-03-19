@@ -31,7 +31,7 @@ The rendering pipeline system is split across multiple documents covering archit
 | [18-shadow-system.md](18-shadow-system.md) | **Done (Phase 2)** | **UE5 Exact Parity: exponential accumulation splits, Z-up light up-vector, per-cascade bias, cascade blending** | **Directional light shadows** |
 | [28-pcss-soft-shadows.md](28-pcss-soft-shadows.md) | Planned (2.2) | PCSS algorithm (blocker search, penumbra estimation, adaptive PCF), performance tuning, parameter reference | Soft shadow filtering |
 | [29-far-shadow-cascades.md](29-far-shadow-cascades.md) | **Done (Phase 2.3)** | **Far shadow cascades: extended distance (0–3km), 4–8 total cascades, atlas layout, UE5 exact parity** | **Extended shadow coverage** |
-| [19-post-processing.md](19-post-processing.md) | Planned (2.0) | Post-process chains, bloom, tonemap, SSAO, TAA, upscaling | Post-processing effects |
+| [19-post-processing.md](19-post-processing.md) | **Partial (Phase 2.20.0)** | **Post-process chains, bloom, tonemap, SSAO, TAA/TSR temporal upscaling, screen percentage scaling, dynamic resolution** | Post-processing effects |
 | [20-shader-compatibility.md](20-shader-compatibility.md) | **Done (1.2)** | **Cross-backend shader compilation, SM6.6 bindless vs SM5, DXIL/DXBC/SPIR-V targets** | **Multi-target shaders** |
 | [21-renderer-passes.md](21-renderer-passes.md) | **Done (1.2–Phase 2.5)** | **PBR, GBuffer, Lighting, Shadow, Sky Atmosphere, Height Fog, Debug passes — complete reference** | **All render passes** |
 | [22-scene-lighting-helper.md](22-scene-lighting-helper.md) | **Done (1.2)** | **SceneLighting struct, BuildPerFrameCB() helper** | **Per-frame CB setup** |
@@ -454,7 +454,7 @@ Key decisions:
 ├── 15-material-system.md               # High-level material system, .uzmat format (2.0)
 ├── 16-lighting.md                      # Multi-light system (1.3+)
 ├── 17-shadow-system.md                 # ★★ Cascaded shadow maps, atlas, PCF (Phase 2)
-├── 18-post-processing.md               # Post-processing effects (planned 2.0)
+├── 19-post-processing.md               # ★★★ Temporal upscaling (TAA/TSR), dynamic resolution (Phase 2.20.0)
 ├── 19-shader-compatibility.md          # ★ Cross-backend compilation, SM6.6/SM5 dual-path (1.2)
 ├── 20-renderer-passes.md               # ★★ Complete pass reference (1.2–Phase 2)
 └── 21-scene-lighting-helper.md         # ★ SceneLighting & BuildPerFrameCB() (1.2)

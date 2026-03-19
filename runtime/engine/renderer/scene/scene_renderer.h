@@ -39,6 +39,7 @@
 #include "ibl/sh_projection.h"
 #include "postprocess/auto_exposure.h"
 #include "postprocess/bloom_pass.h"
+#include "postprocess/temporal_upscaler.h"
 #include "postprocess/gtao_pass.h"
 #include "postprocess/hiz_pyramid_pass.h"
 #include "shadows/distance_field_shadow_config.h"
@@ -80,6 +81,7 @@ class World;
 class AsyncTextureDecoder;
 
 class SdfAtlasManager;
+class DynamicResolutionController;
 namespace rg { class RgResourcePool; }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -316,6 +318,19 @@ public:
 
     /// Returns whether TAA is currently enabled.
     [[nodiscard]] bool IsTaaEnabled() const { return m_taaEnabled; }
+
+    /// Sets the temporal upscaler type. Recreates the upscaler on change.
+    /// @source UE5 TemporalUpscaler.h — ITemporalUpscaler
+    void SetUpscalerType(UpscalerType type);
+
+    /// Returns the current upscaler type.
+    [[nodiscard]] UpscalerType GetUpscalerType() const { return m_upscalerType; }
+
+    /// Returns the current upscaler instance (may be null if type is None).
+    [[nodiscard]] ITemporalUpscaler* GetUpscaler() const { return m_upscaler.get(); }
+
+    /// Returns the dynamic resolution controller.
+    [[nodiscard]] DynamicResolutionController& GetDynamicResolution() { return *m_dynRes; }
 
     /// Sets the global LOD bias.
     ///
@@ -661,6 +676,15 @@ private:
     bool     m_taaEnabled = true;              ///< Runtime toggle for TAA.
     Mat4     m_prevViewProj;                   ///< Previous frame's unjittered viewProj for reprojection.
     bool     m_prevViewProjValid = false;      ///< False on first frame (no valid previous viewProj).
+
+    // ── Temporal Upscaler (ITemporalUpscaler) ────────────────────────────────
+
+    std::unique_ptr<ITemporalUpscaler> m_upscaler;         ///< Active temporal upscaler (TAA or TSR).
+    UpscalerType m_upscalerType = UpscalerType::TSR;       ///< Current upscaler type. Default: TSR (UE5 parity).
+
+    // ── Dynamic Resolution ───────────────────────────────────────────────────
+
+    std::unique_ptr<DynamicResolutionController> m_dynRes;  ///< GPU-bound adaptive resolution controller.
 
     /// Creates TAA history textures at the given resolution.
     /// Called from Init() and Resize().
