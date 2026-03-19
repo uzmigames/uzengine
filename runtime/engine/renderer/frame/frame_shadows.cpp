@@ -316,29 +316,35 @@ void SceneRenderer::RegisterShadowPasses(rg::RgBuilder& rgBuilder, FrameContext&
         }
     }
 
-    // ── Local Light Shadow Passes (spot light shadow depth rendering) ────
-    // For each spot light that casts shadows, render the scene depth into
-    // the corresponding tile in the local shadow atlas. Uses the same
+    // ── Local Light Shadow Passes (spot + point light shadow depth rendering) ──
+    // For each local light that casts shadows, render the scene depth into
+    // the corresponding tile(s) in the local shadow atlas. Uses the same
     // shadow depth pipeline as the CSM pass (depth-only, no color).
+    // Spot lights get 1 tile each; point lights get 6 tiles (one per cubemap face).
     //
     // @source UE5 ShadowSetup.cpp:4300-4310 — SetupWholeSceneProjection for spot lights
     // @source UE5 ShadowRendering.cpp:2500-2600 — RenderShadowDepthMap
-    if (m_localShadowAtlas.IsValid() && ctx.lightData.spotShadowCount > 0 && !m_meshes.empty()) {
+    const uint32_t totalLocalShadowEntries =
+        ctx.lightData.spotShadowCount +
+        ctx.lightData.pointShadowCount * kPointLightShadowFaces;
+    if (m_localShadowAtlas.IsValid() && totalLocalShadowEntries > 0 && !m_meshes.empty()) {
         auto localShadowAtlasRes = rgBuilder.ImportTexture(
             "LocalShadowAtlas", m_localShadowAtlas.GetTexture(), RHIResourceState::ShaderResource);
 
         const auto localAtlasTex = m_localShadowAtlas.GetTexture();
         const auto localShadowPipeline = pipelines->GetShadowDepth(bindless);
-        const auto spotShadowCount = ctx.lightData.spotShadowCount;
         const auto* shadowCBData = reinterpret_cast<const ShadowDataCB*>(ctx.shadowAlloc.cpuPtr);
 
-        // Build per-tile data for the lambda capture
+        // Build per-tile data for the lambda capture.
+        // All local shadow entries (spot tiles + point light face tiles) are stored
+        // sequentially in ShadowDataCB::localShadows[]. The atlas tile positions
+        // are derived from the sequential tile index (same 4x4 grid layout).
         struct LocalTileData {
             uint32_t viewportX, viewportY, viewportSize;
             Mat4     viewProj;
         };
-        std::vector<LocalTileData> tileData(spotShadowCount);
-        for (uint32_t si = 0; si < spotShadowCount; ++si) {
+        std::vector<LocalTileData> tileData(totalLocalShadowEntries);
+        for (uint32_t si = 0; si < totalLocalShadowEntries; ++si) {
             const uint32_t col = si % kLocalShadowTileCols;
             const uint32_t row = si / kLocalShadowTileCols;
             tileData[si].viewportX    = col * kLocalShadowTileSize;
@@ -352,14 +358,15 @@ void SceneRenderer::RegisterShadowPasses(rg::RgBuilder& rgBuilder, FrameContext&
         const GPUMesh* localMeshes = m_meshes.data();
         const auto localMeshCount = static_cast<uint32_t>(m_meshes.size());
         const bool localBindless = bindless;
+        const auto localTileCount = totalLocalShadowEntries;
 
         rgBuilder.AddPass("LocalShadowDepth", [localShadowAtlasRes, localAtlasTex,
-                                                localShadowPipeline, tileData, spotShadowCount,
+                                                localShadowPipeline, tileData, localTileCount,
                                                 localDrawListPtr, localCbRing, localMeshes,
                                                 localMeshCount, localBindless](rg::RgPassBuilder& pb) {
             pb.Write(localShadowAtlasRes, RHIResourceState::DepthStencilWrite);
 
-            pb.SetExecutionCallback([localAtlasTex, localShadowPipeline, tileData, spotShadowCount,
+            pb.SetExecutionCallback([localAtlasTex, localShadowPipeline, tileData, localTileCount,
                                      localDrawListPtr, localCbRing, localMeshes,
                                      localMeshCount, localBindless](
                                         IRHICommandList* cmd, const rg::RgPassResources& res) {
@@ -371,8 +378,8 @@ void SceneRenderer::RegisterShadowPasses(rg::RgBuilder& rgBuilder, FrameContext&
                 const auto& commands = localDrawListPtr->GetCommands();
                 uint32_t totalDrawCalls = 0;
 
-                // Render each spot light's shadow into its atlas tile
-                for (uint32_t si = 0; si < spotShadowCount; ++si) {
+                // Render each local shadow tile (spot tiles + point light face tiles)
+                for (uint32_t si = 0; si < localTileCount; ++si) {
                     const auto& tile = tileData[si];
 
                     // Viewport: tile region in the atlas
@@ -402,7 +409,7 @@ void SceneRenderer::RegisterShadowPasses(rg::RgBuilder& rgBuilder, FrameContext&
 
                     cmd->SetPipeline(localShadowPipeline);
 
-                    // Bind per-light shadow CB (viewProj matrix) at slot 3
+                    // Bind per-tile shadow CB (viewProj matrix) at slot 3
                     ShadowCB shadowCb{};
                     shadowCb.viewProj = tile.viewProj;
                     CBAllocation shadowCbAlloc = localCbRing->Allocate(sizeof(ShadowCB));
@@ -414,7 +421,7 @@ void SceneRenderer::RegisterShadowPasses(rg::RgBuilder& rgBuilder, FrameContext&
                     cmd->SetRootCBV(kSlotShadow, shadowCbAlloc.bufferHandle,
                                     shadowCbAlloc.offsetBytes, shadowCbAlloc.cpuPtr, sizeof(ShadowCB));
 
-                    // Draw all scene geometry into this light's shadow tile
+                    // Draw all scene geometry into this tile
                     uint32_t lastBoundMeshId = UINT32_MAX;
                     for (const auto& drawCmd : commands) {
                         if (drawCmd.meshId >= localMeshCount) continue;
@@ -451,8 +458,8 @@ void SceneRenderer::RegisterShadowPasses(rg::RgBuilder& rgBuilder, FrameContext&
                 static bool loggedLocalShadowPass = false;
                 if (!loggedLocalShadowPass) {
                     UZ_LOG(Renderer, Info,
-                           "LocalShadowDepth: first execution — {} spot shadows, {} total draw calls",
-                           spotShadowCount, totalDrawCalls);
+                           "LocalShadowDepth: first execution — {} tiles, {} total draw calls",
+                           localTileCount, totalDrawCalls);
                     loggedLocalShadowPass = true;
                 }
             });

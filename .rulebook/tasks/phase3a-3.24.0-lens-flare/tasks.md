@@ -1,10 +1,10 @@
 ## 1. Implementation
 
-- [ ] 1.1 Implement ghost generation shader (`lensflare_ps.hlsl`) — for each of 5 ghost scales (0.3, 0.5, 0.8, 1.2, 1.5): reflect UV through center `ghostUV = float2(0.5, 0.5) + (float2(0.5, 0.5) - uv) * scale`. Sample bloom threshold texture at ghostUV. Tint each ghost with per-ghost color (rainbow gradient: violet → blue → green → yellow → red).
-- [ ] 1.2 Implement chromatic fringe per ghost — sample R/G/B at slightly different ghost scales: `R = threshold(ghostUV * 0.98).r; G = threshold(ghostUV).g; B = threshold(ghostUV * 1.02).b`. Creates rainbow edge on each ghost.
-- [ ] 1.3 Implement halo ring — sample bloom threshold at `normalize(uv - 0.5) * haloRadius + 0.5`. Apply Gaussian blur along ring direction. Width controlled by haloWidth parameter. Creates ring artifact around bright sources.
+- [x] 1.1 Implement ghost generation shader (`lensflare_cs.hlsl`) — compute shader with 5 ghost scales (0.3, 0.5, 0.8, 1.2, 1.5), UV reflection through center, per-ghost rainbow tint, edge attenuation via smoothstep radial falloff. Bindless ResourceDescriptorHeap access. 8x8 thread groups.
+- [x] 1.2 Implement chromatic fringe per ghost — SampleChromatic() offsets R/G/B UVs along radial direction by (1-shift, 1, 1+shift) factors. chromaticShift parameter controls spread (default 0.02).
+- [x] 1.3 Implement halo ring — 3-sample Gaussian blur along ring tangent at haloRadius from center. Weights (0.4732, 0.2634) from sigma=0.65 Gaussian. Chromatic aberration at half strength on halo.
 - [ ] 1.4 Implement starburst pattern (optional) — modulate ghosts by radial starburst texture (precomputed 1D angular pattern). Rotates with camera. Creates star-shaped streaks on flares.
-- [ ] 1.5 Implement distance attenuation — ghosts falling outside [0,1] UV range are faded `weight *= smoothstep(0.0, 0.1, min(ghostUV.x, 1-ghostUV.x)) * smoothstep(0.0, 0.1, min(ghostUV.y, 1-ghostUV.y))`. Prevents hard cutoff at screen edges.
+- [x] 1.5 Implement distance attenuation — EdgeAttenuation() uses smoothstep(1.0, 0.5, length(uv-0.5)*2) for radial falloff. Applied to both ghosts and halo samples.
 - [ ] 1.6 Composite lens flare — additive blend all ghosts + halo onto scene: `output = sceneColor + flareColor * intensity * tint`. Uses bloom threshold as input (no new threshold pass needed).
 - [ ] 1.7 Add LensFlareDesc to PostProcessStack — enabled/disabled, intensity, tint, threshold (reuses bloom threshold), ghostCount, haloRadius, haloWidth, starburstEnabled.
 - [ ] 1.8 Register lens flare pass in render graph — after bloom threshold (reuse texture), before bloom composite. Additive blend into bloom output.

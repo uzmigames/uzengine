@@ -412,24 +412,32 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
         ctx.shadowDataParams.dfsOutputTexture  = m_dfsOutputTexture;
     }
 
-    // ── Local Light Shadows (spot lights with castShadows=true) ─────────
+    // ── Local Light Shadows (spot + point lights with castShadows=true) ─
     // For each spot light that requests shadows, build a perspective
     // projection from the spot light's position, direction, and outer cone
     // angle, allocate a tile in the local shadow atlas, and fill the
     // LocalLightShadowData entry in the ShadowDataCB.
     //
+    // For each point light that requests shadows, build 6 cubemap face
+    // perspective projections (90-degree FOV), allocate 6 tiles in the
+    // atlas, and fill 6 consecutive LocalLightShadowData entries.
+    //
     // @source UE5 SpotLightComponent.cpp:119-138 — GetWholeSceneProjectedShadowInitializer
     //   MinLightW = 0.1f (near plane), MaxDistanceToCastInLightW = Radius (far plane)
     //   Scales = (InvTanOuterCone, InvTanOuterCone) — perspective FOV from cone angle
     // @source UE5 ShadowSetup.cpp:960-1048 — SetupWholeSceneProjection
+    // @source UE5 ShadowRendering.cpp:2500-2600 — point light cubemap shadow setup
     m_localShadowAtlas.Reset();
-    if (m_localShadowAtlas.IsValid() && ctx.lightData.spotShadowCount > 0) {
-        static constexpr float kDegToRad = 3.14159265358979323846f / 180.f;
+    const uint32_t totalLocalShadowLights = ctx.lightData.spotShadowCount + ctx.lightData.pointShadowCount;
+    if (m_localShadowAtlas.IsValid() && totalLocalShadowLights > 0) {
         auto* shadowCBPtr = reinterpret_cast<ShadowDataCB*>(ctx.shadowAlloc.cpuPtr);
         shadowCBPtr->localShadowAtlasIndex = m_localShadowAtlas.GetSrvIndex();
         ctx.shadowDataParams.localShadowAtlasIndex = m_localShadowAtlas.GetSrvIndex();
         ctx.shadowDataParams.localShadowAtlas      = m_localShadowAtlas.GetTexture();
 
+        uint32_t totalLocalShadowEntries = 0;
+
+        // ── Spot light shadows (1 tile each) ────────────────────────────
         for (uint32_t si = 0; si < ctx.lightData.spotShadowCount; ++si) {
             const SpotLightShadowInfo& spotShadow = ctx.lightData.spotShadows[si];
 
@@ -480,16 +488,103 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
 
             // Also copy to shadowDataParams for the binder path
             ctx.shadowDataParams.localShadows[si] = sd;
+            ++totalLocalShadowEntries;
         }
 
-        shadowCBPtr->localShadowCount = ctx.lightData.spotShadowCount;
-        ctx.shadowDataParams.localShadowCount = ctx.lightData.spotShadowCount;
+        // ── Point light shadows (6 tiles each — one per cubemap face) ───
+        // Face layout matches HLSL SelectCubeFace():
+        //   Face 0 (+X): look toward +X, up = +Z
+        //   Face 1 (-X): look toward -X, up = +Z
+        //   Face 2 (+Y): look toward +Y, up = +Z
+        //   Face 3 (-Y): look toward -Y, up = +Z
+        //   Face 4 (+Z): look toward +Z, up = -Y
+        //   Face 5 (-Z): look toward -Z, up = +Y
+        //
+        // @source UE5 ShadowRendering.cpp:2500-2600 — point light cubemap face setup
+        // @source UE5 ShadowProjectionCommon.ush:132-147 — CalcCubemapVectorAndFaceIndex
+        //
+        // Each face uses a 90-degree FOV perspective projection (aspect=1) from the
+        // light position, with near=1.0cm and far=radius.
+        struct CubeFaceDir {
+            Vec3 forward;
+            Vec3 up;
+        };
+        static constexpr CubeFaceDir kCubeFaces[kPointLightShadowFaces] = {
+            {{ 1.f,  0.f,  0.f}, { 0.f,  0.f,  1.f}},  // +X
+            {{-1.f,  0.f,  0.f}, { 0.f,  0.f,  1.f}},  // -X
+            {{ 0.f,  1.f,  0.f}, { 0.f,  0.f,  1.f}},  // +Y
+            {{ 0.f, -1.f,  0.f}, { 0.f,  0.f,  1.f}},  // -Y
+            {{ 0.f,  0.f,  1.f}, { 0.f, -1.f,  0.f}},  // +Z (up = -Y to avoid collinear)
+            {{ 0.f,  0.f, -1.f}, { 0.f,  1.f,  0.f}},  // -Z (up = +Y to avoid collinear)
+        };
+
+        // 90-degree FOV for cubemap faces — standard cube projection.
+        // @source UE5 ShadowRendering.cpp:2510 — FOV = PI/2 (90 degrees)
+        static constexpr float kCubeFovDeg = 90.0f;
+        // Near plane for point light shadows (1.0 cm).
+        // @source UE5 PointLightComponent.cpp:78 — MinLightW for point lights
+        static constexpr float kPointShadowNear = 1.0f;
+
+        for (uint32_t pi = 0; pi < ctx.lightData.pointShadowCount; ++pi) {
+            const PointLightShadowInfo& ptShadow = ctx.lightData.pointShadows[pi];
+            const uint32_t baseIdx = totalLocalShadowEntries;
+
+            // Check that all 6 faces fit in the atlas
+            bool allFacesAllocated = true;
+            ShadowTileInfo faceTiles[kPointLightShadowFaces]{};
+            for (uint32_t face = 0; face < kPointLightShadowFaces; ++face) {
+                if (!m_localShadowAtlas.AllocateTile(faceTiles[face])) {
+                    UZ_LOG(Renderer, Warning,
+                           "LocalShadow: atlas full — could not allocate tile for point shadow {} face {}",
+                           pi, face);
+                    allFacesAllocated = false;
+                    break;
+                }
+            }
+
+            if (!allFacesAllocated) {
+                // Cannot fit all 6 faces — skip this point light entirely.
+                // The shadowIndex in PointLightData remains UINT32_MAX (unshadowed).
+                break;
+            }
+
+            for (uint32_t face = 0; face < kPointLightShadowFaces; ++face) {
+                const uint32_t entryIdx = baseIdx + face;
+                const auto& faceDir = kCubeFaces[face];
+                const ShadowTileInfo& tile = faceTiles[face];
+
+                // Build view matrix: lookAt from light position along face direction
+                const Vec3 target = ptShadow.position + faceDir.forward;
+                Camera faceCamera;
+                faceCamera.SetPosition(ptShadow.position);
+                faceCamera.LookAt(target, faceDir.up);
+                faceCamera.SetHorizontalFOV(kCubeFovDeg, 1.0f, kPointShadowNear, ptShadow.radius);
+
+                const Mat4 faceViewProj = faceCamera.GetViewProjection();
+
+                // Fill LocalLightShadowData entry in ShadowDataCB
+                LocalLightShadowData& sd = shadowCBPtr->localShadows[entryIdx];
+                sd.viewProj     = faceViewProj;
+                sd.atlasOffsetX = tile.uvOffsetX;
+                sd.atlasOffsetY = tile.uvOffsetY;
+                sd.atlasScale   = tile.uvScale;
+                sd.bias         = ptShadow.bias;
+
+                ctx.shadowDataParams.localShadows[entryIdx] = sd;
+            }
+
+            totalLocalShadowEntries += kPointLightShadowFaces;
+        }
+
+        shadowCBPtr->localShadowCount = totalLocalShadowEntries;
+        ctx.shadowDataParams.localShadowCount = totalLocalShadowEntries;
 
         static bool loggedLocalShadowOnce = false;
         if (!loggedLocalShadowOnce) {
             UZ_LOG(Renderer, Info,
-                   "LocalShadow: {} spot light shadows allocated (atlas SRV={})",
-                   ctx.lightData.spotShadowCount, m_localShadowAtlas.GetSrvIndex());
+                   "LocalShadow: {} spot + {} point light shadows allocated ({} tiles, atlas SRV={})",
+                   ctx.lightData.spotShadowCount, ctx.lightData.pointShadowCount,
+                   totalLocalShadowEntries, m_localShadowAtlas.GetSrvIndex());
             loggedLocalShadowOnce = true;
         }
     }
