@@ -64,7 +64,8 @@ struct GBufferPassDesc {
     const DrawList*   drawList;         ///< Sorted draw list to iterate. Must not be null.
     CBRingAllocator*  cbAllocator;      ///< Per-object CB ring allocator. Must not be null.
     CBAllocation      perFrameAlloc;    ///< Pre-allocated per-frame CB (already filled by caller).
-    RHIPipelineHandle pipeline;         ///< PSO handle for the G-Buffer shader.
+    RHIPipelineHandle pipeline;         ///< PSO handle for the standard opaque G-Buffer shader.
+    RHIPipelineHandle maskedPipeline;   ///< PSO handle for masked (alpha-test, two-sided) G-Buffer path. Invalid = no masked support.
 
     /// Array of loaded GPU meshes, indexed by `DrawCommand::meshId`.
     ///

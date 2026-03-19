@@ -75,15 +75,28 @@ TEST(PerObjectCB, SizeIs256Bytes) {
 }
 
 TEST(PerObjectCB, FieldOffsets) {
-    // Scalars first (offset 0): 5 uint32 + 3 float padding = 32 bytes
+    // Scalars first (offset 0): 6 uint32 indices + alphaClipThreshold + twoSided = 32 bytes
     EXPECT_EQ(offsetof(PerObjectCB, albedoIndex),    0u);
     EXPECT_EQ(offsetof(PerObjectCB, normalIndex),    4u);
     EXPECT_EQ(offsetof(PerObjectCB, roughnessIndex), 8u);
     EXPECT_EQ(offsetof(PerObjectCB, metallicIndex), 12u);
     EXPECT_EQ(offsetof(PerObjectCB, aoIndex),       16u);
+    EXPECT_EQ(offsetof(PerObjectCB, emissiveIndex), 20u);
+    EXPECT_EQ(offsetof(PerObjectCB, alphaClipThreshold), 24u);
+    EXPECT_EQ(offsetof(PerObjectCB, twoSided),      28u);
     // Matrices after scalars (offset 32)
     EXPECT_EQ(offsetof(PerObjectCB, model),         32u);
     EXPECT_EQ(offsetof(PerObjectCB, normalMatrix),  96u);
+    // Blend mode at end (offset 252)
+    EXPECT_EQ(offsetof(PerObjectCB, blendMode),    252u);
+}
+
+TEST(PerObjectCB, BlendModeDefaults) {
+    PerObjectCB cb{};
+    EXPECT_EQ(cb.blendMode, 0u);               // Opaque by default
+    EXPECT_NEAR(cb.alphaClipThreshold, 0.3333f, 1e-4f); // UE5 default
+    EXPECT_EQ(cb.twoSided, 0u);                // Back-face cull by default
+    EXPECT_FLOAT_EQ(cb.opacity, 1.0f);         // Fully opaque
 }
 
 TEST(PerObjectCB, DefaultInitialization) {
@@ -93,6 +106,10 @@ TEST(PerObjectCB, DefaultInitialization) {
     EXPECT_EQ(cb.roughnessIndex, 0u);
     EXPECT_EQ(cb.metallicIndex, 0u);
     EXPECT_EQ(cb.aoIndex, 0u);
+    EXPECT_EQ(cb.emissiveIndex, 0u);
+    EXPECT_NEAR(cb.alphaClipThreshold, 0.3333f, 1e-4f);
+    EXPECT_EQ(cb.twoSided, 0u);
+    EXPECT_EQ(cb.blendMode, 0u);
 }
 
 TEST(PerObjectCB, WriteTextureIndices) {

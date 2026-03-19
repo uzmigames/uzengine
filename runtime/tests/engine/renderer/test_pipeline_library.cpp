@@ -281,6 +281,58 @@ TEST(PipelineLibrary, GetLighting_CalledMultipleTimes_BeforeInit_AlwaysInvalid) 
     }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// New blend mode pipelines — before-Init guards
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// GetGBufferMasked(bool=false) before Init must return an invalid handle.
+TEST(PipelineLibrary, GetGBufferMasked_BeforeInit_ReturnsInvalidHandle) {
+    PipelineLibrary lib;
+    RHIPipelineHandle h = lib.GetGBufferMasked(false);
+    EXPECT_FALSE(h.IsValid())
+        << "GetGBufferMasked(false) before Init() must return an invalid handle";
+}
+
+/// GetGBufferMasked(bool=true) before Init must return an invalid handle.
+TEST(PipelineLibrary, GetGBufferMaskedBindless_BeforeInit_ReturnsInvalidHandle) {
+    PipelineLibrary lib;
+    RHIPipelineHandle h = lib.GetGBufferMasked(true);
+    EXPECT_FALSE(h.IsValid())
+        << "GetGBufferMasked(true) before Init() must return an invalid handle";
+}
+
+/// GetTranslucent(bool=false) before Init must return an invalid handle.
+TEST(PipelineLibrary, GetTranslucent_BeforeInit_ReturnsInvalidHandle) {
+    PipelineLibrary lib;
+    RHIPipelineHandle h = lib.GetTranslucent(false);
+    EXPECT_FALSE(h.IsValid())
+        << "GetTranslucent(false) before Init() must return an invalid handle";
+}
+
+/// GetTranslucent(bool=true) before Init must return an invalid handle.
+TEST(PipelineLibrary, GetTranslucentBindless_BeforeInit_ReturnsInvalidHandle) {
+    PipelineLibrary lib;
+    RHIPipelineHandle h = lib.GetTranslucent(true);
+    EXPECT_FALSE(h.IsValid())
+        << "GetTranslucent(true) before Init() must return an invalid handle";
+}
+
+/// GetAdditive(bool=false) before Init must return an invalid handle.
+TEST(PipelineLibrary, GetAdditive_BeforeInit_ReturnsInvalidHandle) {
+    PipelineLibrary lib;
+    RHIPipelineHandle h = lib.GetAdditive(false);
+    EXPECT_FALSE(h.IsValid())
+        << "GetAdditive(false) before Init() must return an invalid handle";
+}
+
+/// GetAdditive(bool=true) before Init must return an invalid handle.
+TEST(PipelineLibrary, GetAdditiveBindless_BeforeInit_ReturnsInvalidHandle) {
+    PipelineLibrary lib;
+    RHIPipelineHandle h = lib.GetAdditive(true);
+    EXPECT_FALSE(h.IsValid())
+        << "GetAdditive(true) before Init() must return an invalid handle";
+}
+
 /// Calling GetGBufferDebug() multiple times before Init must always return invalid.
 TEST(PipelineLibrary, GetGBufferDebug_CalledMultipleTimes_BeforeInit_AlwaysInvalid) {
     PipelineLibrary lib;

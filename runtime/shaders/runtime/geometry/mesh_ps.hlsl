@@ -82,16 +82,36 @@ cbuffer PerFrameCB : register(b1) {
     float    _pad2[56];             // pad to 1024 bytes (4 x 256)             [800..1023]
 };
 
-// Per-object CB at b2 — scalars first to avoid SPIRV std140 offset corruption
+// Per-object CB at b2 — scalars first to avoid SPIRV std140 offset corruption.
+// Must match C++ PerObjectCB layout. Only fields used by this shader are named;
+// the rest are declared as padding to keep offsets correct.
 cbuffer PerObjectCB : register(b2) {
-    uint     albedoIndex;     // SRV heap index for BaseColor map (0 = white default)
-    uint     normalIndex;     // SRV heap index for normal map (0 = flat normal)
-    uint     roughnessIndex;  // SRV heap index for roughness map (0 = 0.5 default)
-    uint     metallicIndex;   // SRV heap index for metallic map (0 = 0.0 default)
-    uint     aoIndex;         // SRV heap index for AO map (0 = 1.0 default)
-    float3   _pad;
-    row_major float4x4 model;
-    row_major float4x4 normalMatrix;
+    uint     albedoIndex;           // SRV heap index for BaseColor map (0 = white default) [  0..  3]
+    uint     normalIndex;           // SRV heap index for normal map (0 = flat normal)      [  4..  7]
+    uint     roughnessIndex;        // SRV heap index for roughness map                     [  8.. 11]
+    uint     metallicIndex;         // SRV heap index for metallic map                      [ 12.. 15]
+    uint     aoIndex;               // SRV heap index for AO map                            [ 16.. 19]
+    uint     emissiveIndex;         // SRV heap index for emissive map                      [ 20.. 23]
+    float    alphaClipThreshold;    // alpha test threshold for Masked mode                 [ 24.. 27]
+    uint     twoSided;              // 0=cull back, 1=no cull                               [ 28.. 31]
+    row_major float4x4 model;       //                                                      [ 32.. 95]
+    row_major float4x4 normalMatrix; //                                                     [ 96..159]
+    // ── Emissive parameters (offset 160) ──
+    float3   emissiveColor;         // emissive tint (linear RGB)                           [160..171]
+    float    emissiveIntensity;     // emissive brightness multiplier                       [172..175]
+    // ── Material parameters (offset 176) ──
+    float3   baseColorTint;         // albedo color multiplier                              [176..187]
+    float    roughnessMultiplier;   // roughness texture multiplier                         [188..191]
+    float    metallicMultiplier;    // metallic texture multiplier                          [192..195]
+    float    normalIntensity;       // normal map strength                                  [196..199]
+    float2   uvScale;               // texture tiling                                       [200..207]
+    float2   uvOffset;              // texture offset                                       [208..215]
+    float    aoIntensity;           // AO map strength                                      [216..219]
+    float    matOpacity;            // material opacity (1=opaque)                           [220..223]
+    // ── POM region (offset 224, not used by forward shader) ──
+    float    _pomRegion[7];         //                                                      [224..251]
+    /// @source UE5 EngineTypes.h:256 — EBlendMode
+    uint     blendMode;             // 0=Opaque, 1=Masked, 2=Translucent, 3=Additive       [252..255]
 };
 
 /// Cascaded shadow map parameters — must match C++ ShadowDataCB struct exactly.
@@ -147,7 +167,8 @@ SamplerComparisonState shadowSampler : register(s1);
 // Pixel Shader Entry Point
 // ─────────────────────────────────────────────────────────────────────────────
 
-[earlydepthstencil]
+// Note: [earlydepthstencil] omitted to support translucent/additive blend modes.
+// The depth prepass handles early Z for opaque geometry.
 float4 main(PSInput input) : SV_Target {
 
     // ── Material parameters (defaults when no texture is bound) ──
@@ -157,7 +178,9 @@ float4 main(PSInput input) : SV_Target {
     float  ao        = 1.0f;
     float3 emissive  = float3(0.0f, 0.0f, 0.0f);
 
-    float2 uv = input.texcoord;
+    // Apply UV transform (tiling + offset) from material parameters.
+    // @source UE5 MaterialTemplate.ush — TexCoord * TextureScale + TextureOffset
+    float2 uv = input.texcoord * uvScale + uvOffset;
 
     // ── Sample PBR texture maps (index 0 = use default value) ──
 #ifdef UZ_BINDLESS
@@ -184,6 +207,23 @@ float4 main(PSInput input) : SV_Target {
     if (aoIndex > 0)        ao        = aoTexture.Sample(linearSampler, uv).r;
 #endif
 
+    // ── Apply material parameter multipliers ──
+    // @source UE5 MaterialTemplate.ush — BaseColor * BaseColorTint, roughness * mult, etc.
+    albedo    *= baseColorTint;
+    roughness *= roughnessMultiplier;
+    metallic  *= metallicMultiplier;
+    ao         = lerp(1.0f, ao, aoIntensity);
+
+    // ── Emissive: texture * color * intensity ──
+    // @source UE5 BasePassPixelShader.usf:1480 — GetMaterialEmissive
+#ifdef UZ_BINDLESS
+    if (emissiveIndex > 0) {
+        Texture2D<float4> emissiveTex = ResourceDescriptorHeap[emissiveIndex];
+        emissive = emissiveTex.Sample(linearSampler, uv).rgb;
+    }
+#endif
+    emissive *= emissiveColor * emissiveIntensity;
+
     // ── Surface normal (with optional tangent-space normal mapping) ──
     float3 N = normalize(input.normalWS);
 
@@ -203,12 +243,13 @@ float4 main(PSInput input) : SV_Target {
         // Remap from [0,1] to [-1,1] tangent space
         float3 normalTS;
         normalTS.xy = normalSample.rg * 2.0f - 1.0f;
+        // Apply normal intensity: 0 = flat (no normal map effect), 1 = full effect.
+        // @source UE5 Material.FlattenNormalMap — scales normalTS.xy by intensity
+        normalTS.xy *= normalIntensity;
 
         // BC5 two-channel normal maps store only RG; reconstruct Z from unit length
         // constraint. For standard RGB normal maps, the sampled B channel is used.
-        normalTS.z = (normalSample.b > 0.0f)
-            ? normalSample.b * 2.0f - 1.0f
-            : sqrt(max(1.0f - dot(normalTS.xy, normalTS.xy), 0.0f));
+        normalTS.z = sqrt(max(1.0f - dot(normalTS.xy, normalTS.xy), 0.0f));
         N = normalize(mul(normalTS, TBN));
     }
 
@@ -318,6 +359,19 @@ float4 main(PSInput input) : SV_Target {
     // ── Combine ──
     float3 color = ambient + Lo + emissive;
 
+    // ── Alpha test for Masked blend mode ──
+    // @source UE5 BasePassPixelShader.usf:1510 — GetMaterialMask()
+    if (blendMode == 1) {
+        if (matOpacity < alphaClipThreshold) {
+            discard;
+        }
+    }
+
+    // Output alpha: for opaque/masked, alpha = 1.0 (fully opaque surviving fragments).
+    // For translucent (blendMode == 2), alpha = material opacity for SrcAlpha/InvSrcAlpha blend.
+    // For additive (blendMode == 3), alpha is irrelevant (One/One blend ignores it).
+    float outputAlpha = (blendMode == 2) ? matOpacity : 1.0f;
+
     // Output is linear HDR — tonemap_ps.hlsl handles ACES filmic + sRGB conversion.
-    return float4(color, 1.0f);
+    return float4(color, outputAlpha);
 }

@@ -174,6 +174,9 @@ void AddPBRPass(rg::RgBuilder& builder, const PBRPassDesc& desc)
                     perObject.uvOffsetY           = drawCmd.uvOffsetY;
                     perObject.aoIntensity         = drawCmd.aoIntensity;
                     perObject.opacity             = drawCmd.opacity;
+                    perObject.alphaClipThreshold  = drawCmd.alphaClipThreshold;
+                    perObject.twoSided            = drawCmd.twoSided;
+                    perObject.blendMode           = drawCmd.blendMode;
 
                     CBAllocation objAlloc = desc.cbAllocator->Allocate(sizeof(PerObjectCB));
                     if (objAlloc.cpuPtr == nullptr) {

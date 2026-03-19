@@ -30,6 +30,12 @@ static_assert(offsetof(uz::GBufferPerObjectParams, aoIntensity) == offsetof(uz::
               "aoIntensity offset mismatch");
 static_assert(offsetof(uz::GBufferPerObjectParams, opacity) == offsetof(uz::PerObjectCB, opacity),
               "opacity offset mismatch");
+static_assert(offsetof(uz::GBufferPerObjectParams, alphaClipThreshold) == offsetof(uz::PerObjectCB, alphaClipThreshold),
+              "alphaClipThreshold offset mismatch");
+static_assert(offsetof(uz::GBufferPerObjectParams, twoSided) == offsetof(uz::PerObjectCB, twoSided),
+              "twoSided offset mismatch");
+static_assert(offsetof(uz::GBufferPerObjectParams, blendMode) == offsetof(uz::PerObjectCB, blendMode),
+              "blendMode offset mismatch");
 
 namespace uz {
 

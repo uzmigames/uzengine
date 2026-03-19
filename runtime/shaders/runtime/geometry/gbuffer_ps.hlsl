@@ -86,7 +86,9 @@ cbuffer PerObjectCB : register(b2) {
     uint     metallicIndex;
     uint     aoIndex;
     uint     emissiveIndex;
-    float2   _pad;           // align to 16 bytes before matrices
+    /// @source UE5 Material.h:1891 — OpacityMaskClipValue default 0.3333
+    float    alphaClipThreshold; ///< Alpha test discard threshold for Masked blend mode.
+    uint     twoSided;           ///< 0 = back-face cull, 1 = two-sided (informational, cull set in PSO).
     row_major float4x4 model;
     row_major float4x4 normalMatrix;
     // ── Emissive parameters (offset 160) ──
@@ -104,7 +106,7 @@ cbuffer PerObjectCB : register(b2) {
     float    aoIntensity;        ///< AO map strength (1 = full AO effect).
     float    matOpacity;         ///< Material opacity (1 = opaque).
 #ifdef UZ_POM
-    // ── POM parameters (offset 200) ──
+    // ── POM parameters (offset 224) ──
     /// @source UE5 MaterialExpressionBumpOffset.h:28 — HeightRatio = 0.05f
     /// @source UE5 ParallaxOcclusionMapping.uasset — MinSteps, MaxSteps, HeightScale
     uint     heightmapIndex;     ///< Heightmap texture descriptor index (0 = no POM).
@@ -114,8 +116,13 @@ cbuffer PerObjectCB : register(b2) {
     float    pomFadeStart;       ///< Distance (cm) where POM begins fading. Default 1000.
     float    pomFadeEnd;         ///< Distance (cm) where POM is fully disabled. Default 2000.
     float    pomSelfShadow;      ///< Self-shadow strength (0 = off, 1 = full). Default 0.
-    float    _pomPad;            ///< Padding to 16-byte alignment.
+#else
+    // When POM is disabled, skip 28 bytes (7 floats) of padding to keep
+    // blendMode at the same offset (252) as the C++ PerObjectCB layout.
+    float    _pomPad[7];
 #endif
+    /// @source UE5 EngineTypes.h:256 — EBlendMode (BM_Opaque=0, BM_Masked=1, BM_Translucent=2, BM_Additive=3)
+    uint     blendMode;          ///< Blend mode: 0=Opaque, 1=Masked, 2=Translucent, 3=Additive.
 };
 
 #ifdef UZ_MATERIAL_GRAPH
@@ -157,7 +164,11 @@ SamplerState linearSampler : register(s0);
 /// Samples PBR texture maps (or uses defaults when index == 0), applies
 /// tangent-space normal mapping when a normal map is bound, and outputs
 /// the raw material data with no lighting computation.
-[earlydepthstencil]
+// Note: [earlydepthstencil] is intentionally omitted because the shader
+// may execute `discard` for Masked blend mode (blendMode == 1). Early depth
+// and discard are mutually exclusive — early depth would write depth before
+// the alpha test runs, causing invisible geometry to occlude. The depth
+// prepass handles early Z rejection for opaque geometry instead.
 GBufferOutput main(PSInput input) {
 
 #ifdef UZ_MATERIAL_GRAPH
@@ -446,6 +457,29 @@ GBufferOutput main(PSInput input) {
     emissive *= emissiveColor * emissiveIntensity;
 
 #endif // UZ_MATERIAL_GRAPH
+
+    // ── Alpha test for Masked blend mode ──
+    // When blendMode == 1 (Masked), compute effective opacity and discard
+    // fragments below the alpha clip threshold. This implements the UE5
+    // "Masked" material blend mode in the deferred pipeline.
+    //
+    // The opacity scalar (matOpacity) is always available. For textured opacity,
+    // an opacity texture can be sampled via opacityIndex (future extension —
+    // currently the opacity value comes from the material scalar only).
+    //
+    // @source UE5 BasePassPixelShader.usf:1510 — GetMaterialMask() calls clip(Opacity - OpacityMaskClipValue)
+    // @constants alphaClipThreshold default 0.3333 (UE5 Material.h:1891)
+    // @deviations NONE
+    if (blendMode == 1) {
+#ifdef UZ_MATERIAL_GRAPH
+        float effectiveOpacity = out_opacity;
+#else
+        float effectiveOpacity = matOpacity;
+#endif
+        if (effectiveOpacity < alphaClipThreshold) {
+            discard;
+        }
+    }
 
     // ── Write G-Buffer (4-RT layout) ──
     GBufferOutput output;

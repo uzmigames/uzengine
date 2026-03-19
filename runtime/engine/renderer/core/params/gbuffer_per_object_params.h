@@ -54,7 +54,8 @@ namespace uz {
 /// 12       4      metallicIndex (uint32_t)
 /// 16       4      aoIndex (uint32_t)
 /// 20       4      emissiveIndex (uint32_t)
-/// 24       8      _pad[2]
+/// 24       4      alphaClipThreshold (float)
+/// 28       4      twoSided (uint32_t)
 /// 32       64     model (Mat4)
 /// 96       64     normalMatrix (Mat4)
 /// 160      12     emissiveColor (3 floats)
@@ -67,7 +68,8 @@ namespace uz {
 /// 208      8      uvOffset (2 floats)
 /// 216      4      aoIntensity (float)
 /// 220      4      opacity (float)
-/// 224      32     _pad2[8]
+/// 224      28     _pad2[7] (POM-equivalent region, unused by binder path)
+/// 252      4      blendMode (uint32_t)
 /// ─── 256 bytes (CB boundary) ───
 /// 256      8      albedoTexture (RHITextureHandle, NOT in CB)
 /// 264      8      normalTexture (RHITextureHandle, NOT in CB)
@@ -87,7 +89,9 @@ struct GBufferPerObjectParams {
     uint32_t metallicIndex  = 0;    ///< SRV heap index for metallic map.
     uint32_t aoIndex        = 0;    ///< SRV heap index for AO map.
     uint32_t emissiveIndex  = 0;    ///< SRV heap index for emissive map (0 = no texture, use color only).
-    float    _pad[2]        = {};   ///< Align to 16-byte boundary before matrices.
+    /// @source UE5 Material.h:1891 — OpacityMaskClipValue default 0.3333
+    float    alphaClipThreshold = 0.3333f; ///< Alpha test threshold for Masked blend mode.
+    uint32_t twoSided       = 0;    ///< 0 = back-face cull (default), 1 = no cull (two-sided).
     Mat4     model;                 ///< Object-to-world transform.
     Mat4     normalMatrix;          ///< transpose(inverse(model)) for lighting.
     /// @source UE5 BasePassPixelShader.usf:1480 — GetMaterialEmissive
@@ -109,7 +113,9 @@ struct GBufferPerObjectParams {
     float    uvOffsetY           = 0.0f; ///< Texture offset Y.
     float    aoIntensity         = 1.0f; ///< AO map strength.
     float    opacity             = 1.0f; ///< Material opacity (1=opaque).
-    float    _pad2[8]           = {};   ///< Pad to 256-byte alignment.
+    float    _pad2[7]           = {};   ///< Pad (POM-equivalent region, unused by binder path).
+    /// @source UE5 EngineTypes.h:256 — EBlendMode (BM_Opaque=0, BM_Masked=1, BM_Translucent=2, BM_Additive=3)
+    uint32_t blendMode          = 0;    ///< Blend mode: 0=Opaque, 1=Masked, 2=Translucent, 3=Additive.
 
     // ── Resource handles (NOT copied to CB) ──────────────────────────────
     // Bound by ShaderParameterBinder at their HLSL register slots on SM5.

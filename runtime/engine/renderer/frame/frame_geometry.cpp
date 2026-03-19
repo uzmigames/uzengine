@@ -100,6 +100,7 @@ void SceneRenderer::RegisterGeometryPasses(rg::RgBuilder& rgBuilder, FrameContex
             gbDesc.cbAllocator          = m_cbRing.get();
             gbDesc.perFrameAlloc        = ctx.perFrameAlloc;
             gbDesc.pipeline             = pipelines->GetGBuffer(bindless);
+            gbDesc.maskedPipeline       = pipelines->GetGBufferMasked(bindless);
             gbDesc.meshes               = m_meshes.data();
             gbDesc.meshCount            = static_cast<uint32_t>(m_meshes.size());
             gbDesc.fallbackWhite        = m_fallbackWhite;
