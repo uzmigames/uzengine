@@ -1,5 +1,5 @@
 ## Mesh & Draw Command Layer
-- [ ] Add `Submesh` struct (indexOffset, indexCount, vertexOffset, materialIndex)
+- [x] Add `Submesh` struct (indexOffset, indexCount, vertexOffset, materialIndex). Added SubMesh struct to mesh.h with startIndex, indexCount, materialIndex fields. Also submeshes vector in Mesh struct.
 - [ ] Add `MeshAsset` with `std::vector<Submesh>` submesh storage
 - [ ] Extend `DrawCommand` with indexOffset, indexCount, vertexOffset fields
 - [ ] Update draw command generation to emit N commands per mesh (one per submesh)
