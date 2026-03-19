@@ -47,9 +47,9 @@ struct SceneLighting {
 
     /// Ambient light color contribution (constant term in lighting equation).
     ///
-    /// Represents indirect illumination. Keep low (0.01–0.1) for outdoor
-    /// scenes. Higher values flatten contrast.
-    Vec3 ambientColor = {0.08f, 0.09f, 0.12f};
+    /// @source UE5 SceneRendering.cpp — no hardcoded ambient minimum; all ambient
+    /// comes from the SkyLight SH system. Zero when no SkyLight exists.
+    Vec3 ambientColor = {0.0f, 0.0f, 0.0f};
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

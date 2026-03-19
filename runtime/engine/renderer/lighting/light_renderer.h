@@ -61,7 +61,8 @@ struct PointLightShadowInfo {
 struct LightFrameData {
     Vec3  sunDir   = {0.5f, 0.3f, 0.8f}; ///< Normalized direction toward the sun.
     Vec3  sunColor = {3.0f, 2.85f, 2.7f}; ///< Sun color * intensity (linear HDR).
-    Vec3  ambientColor = {0.08f, 0.09f, 0.12f}; ///< Ambient light color (sky-tinted fill for shadowed areas).
+    /// @source UE5 SceneRendering.cpp — no hardcoded ambient minimum; all ambient comes from SkyLight SH.
+    Vec3  ambientColor = {0.0f, 0.0f, 0.0f}; ///< Ambient light color (zero unless populated by SkyLight SH).
     float perLightShadowBias      = 0.5f; ///< Per-light shadow bias (UE5: ShadowBias).
     float perLightShadowSlopeBias = 0.5f; ///< Per-light slope bias (UE5: ShadowSlopeBias).
     float lightSourceAngleDeg     = 0.5357f; ///< Sun disk angular diameter in degrees (UE5: LightSourceAngle).

@@ -717,9 +717,11 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
             /// the IBL irradiance projection, which is the average color of the sky cubemap.
             /// SH L0 in UE5 packed format: coeffs[0].w=R, coeffs[1].w=G, coeffs[2].w=B.
             /// These are already the sky's average irradiance (blue for a daytime sky).
-            float skyFogR = m_skyIrradianceSH.coeffs[0].w;
-            float skyFogG = m_skyIrradianceSH.coeffs[1].w;
-            float skyFogB = m_skyIrradianceSH.coeffs[2].w;
+            /// Scale SH L0 sky color by SkyLight intensity to match UE5's pattern:
+            /// @source UE5 SkyLightComponent.cpp — SkyLightColor = Intensity * LightColor
+            float skyFogR = m_skyIrradianceSH.coeffs[0].w * ctx.perFrame.skyLightIntensity;
+            float skyFogG = m_skyIrradianceSH.coeffs[1].w * ctx.perFrame.skyLightIntensity;
+            float skyFogB = m_skyIrradianceSH.coeffs[2].w * ctx.perFrame.skyLightIntensity;
 
             AddHeightFogFromECS(rgBuilder, ctx.hdrRes, ctx.depthRes, ctx.perFrameAlloc,
                                 ctx.world, *m_camera, ctx.pipelines, *m_cbRing,
