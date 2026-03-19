@@ -302,7 +302,7 @@ TEST(ShaderParamLightingCB, SizeIs256Multiple) {
 }
 
 TEST(ShaderParamLightingCB, PointLightDataSize) {
-    EXPECT_EQ(sizeof(PointLightData), 48u);
+    EXPECT_EQ(sizeof(PointLightData), 64u);
 }
 
 TEST(ShaderParamLightingCB, MaxPointLights) {

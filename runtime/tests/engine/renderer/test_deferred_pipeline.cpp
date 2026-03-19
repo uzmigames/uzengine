@@ -111,11 +111,11 @@ TEST(PerFrameCB, LightingFields_WriteAndReadBack) {
 // PointLightData — layout
 // ─────────────────────────────────────────────────────────────────────────────
 
-TEST(PointLightData, SizeIs48Bytes) {
-    EXPECT_EQ(sizeof(PointLightData), 48u);
+TEST(PointLightData, SizeIs64Bytes) {
+    EXPECT_EQ(sizeof(PointLightData), 64u);
 }
 
-/// Field offsets must match the HLSL struct (three float4s = 48 bytes).
+/// Field offsets must match the HLSL struct (four float4s = 64 bytes).
 ///
 ///  0  position        float3  (12 B)
 /// 12  radius          float   ( 4 B)
@@ -125,6 +125,8 @@ TEST(PointLightData, SizeIs48Bytes) {
 /// 36  specularScale   float   ( 4 B)
 /// 40  diffuseScale    float   ( 4 B)
 /// 44  flags           uint    ( 4 B)
+/// 48  shadowIndex     uint    ( 4 B)
+/// 52  _pointPad[3]    float3  (12 B)
 TEST(PointLightData, FieldLayout) {
     EXPECT_EQ(offsetof(PointLightData, position),        0u);
     EXPECT_EQ(offsetof(PointLightData, radius),         12u);
@@ -134,7 +136,8 @@ TEST(PointLightData, FieldLayout) {
     EXPECT_EQ(offsetof(PointLightData, specularScale),  36u);
     EXPECT_EQ(offsetof(PointLightData, diffuseScale),   40u);
     EXPECT_EQ(offsetof(PointLightData, flags),          44u);
-    EXPECT_EQ(sizeof(PointLightData),                   48u);
+    EXPECT_EQ(offsetof(PointLightData, shadowIndex),    48u);
+    EXPECT_EQ(sizeof(PointLightData),                   64u);
 }
 
 TEST(PointLightData, WriteAndReadBack) {
@@ -203,11 +206,11 @@ TEST(LightingCB, PointLightArrayOffset_IsZero) {
 }
 
 /// pointLightCount must immediately follow the 64-element light array.
-/// 64 lights × 32 bytes = 2048 bytes.
-TEST(LightingCB, PointLightCountOffset_Is2048) {
-    // PointLightData is 48 bytes (three float4s), so 64 * 48 = 3072 bytes.
+/// 64 lights × 64 bytes = 4096 bytes.
+TEST(LightingCB, PointLightCountOffset_Is4096) {
+    // PointLightData is 64 bytes (four float4s), so 64 * 64 = 4096 bytes.
     constexpr size_t kExpected = kMaxPointLights * sizeof(PointLightData);
-    EXPECT_EQ(kExpected, 3072u);
+    EXPECT_EQ(kExpected, 4096u);
     EXPECT_EQ(offsetof(LightingCB, pointLightCount), kExpected);
 }
 

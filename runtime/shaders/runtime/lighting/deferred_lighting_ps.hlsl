@@ -141,7 +141,7 @@ cbuffer PerFrameCB : register(b1) {
     float    _framePad2[8];      ///< Padding to 512 bytes.
 };
 
-/// Single point light for the deferred lighting pass (48 bytes = three float4s).
+/// Single point light for the deferred lighting pass (64 bytes = four float4s).
 /// Must match C++ PointLightData struct exactly.
 static const uint LIGHT_FLAG_INVERSE_SQUARED = 1u;
 
@@ -154,6 +154,8 @@ struct PointLight {
     float  specularScale;   ///< Per-light specular multiplier (0-1).
     float  diffuseScale;    ///< Per-light diffuse multiplier (0-1).
     uint   flags;           ///< Bit 0 = useInverseSquaredFalloff.
+    uint   shadowIndex;     ///< Base index into localShadowData[] (6 consecutive face entries). 0xFFFFFFFF = no shadow.
+    float3 _pointPad;       ///< Pad to 64 bytes (4 float4s).
 };
 
 /// Single spot light for the deferred lighting pass (80 bytes = five float4s).
@@ -495,6 +497,136 @@ float SampleLocalLightShadow(float3 worldPos, uint shadowIdx)
 #endif
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Point Light Cubemap Shadow Sampling
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Selects the cubemap face index for a given direction vector.
+///
+/// Determines which of the 6 cube faces the direction vector points into
+/// by finding the dominant axis component and its sign.
+///
+/// Face indices: +X=0, -X=1, +Y=2, -Y=3, +Z=4, -Z=5.
+///
+/// @source UE5 ShadowProjectionCommon.ush:132-147 — CalcCubemapVectorAndFaceIndex
+/// @constants Face indices: +X=0,-X=1,+Y=2,-Y=3,+Z=4,-Z=5 (ShadowProjectionCommon.ush:138-146)
+/// @deviations NONE — identical face selection logic
+///
+/// # Parameters
+/// - dir: unnormalised direction vector (e.g., light-to-pixel or pixel-to-light).
+///
+/// # Returns
+/// Cubemap face index [0-5].
+uint SelectCubeFace(float3 dir)
+{
+    // @source UE5 ShadowProjectionCommon.ush:133 — AbsLightVector = abs(WorldSampleToLightVec)
+    float3 absDir = abs(dir);
+    // @source UE5 ShadowProjectionCommon.ush:134 — MaxCoordinate = max(abs.x, max(abs.y, abs.z))
+    float maxCoord = max(absDir.x, max(absDir.y, absDir.z));
+
+    // @source UE5 ShadowProjectionCommon.ush:136-147 — if/else chain on MaxCoordinate
+    if (maxCoord == absDir.x)
+    {
+        return absDir.x == dir.x ? 0 : 1;
+    }
+    else if (maxCoord == absDir.y)
+    {
+        return absDir.y == dir.y ? 2 : 3;
+    }
+    else
+    {
+        return absDir.z == dir.z ? 4 : 5;
+    }
+}
+
+/// Samples point light shadow from the atlas using cubemap face selection.
+///
+/// For point lights, the shadow atlas stores 6 tiles (one per cubemap face)
+/// at consecutive indices in localShadowData[]. The function selects the
+/// correct face based on the light-to-pixel direction, then projects
+/// through that face's view-projection matrix and samples the atlas.
+///
+/// @source UE5 ShadowProjectionCommon.ush:150-200 — CubemapHardwarePCF
+/// @constants Face selection (ShadowProjectionCommon.ush:172-187), projection (ush:190)
+/// @deviations Atlas-based sampling instead of TextureCube — UE5 uses a TextureCube for
+///   point light shadows while UzEngine stores 6 face tiles in the 2D shadow atlas.
+///   The face selection and depth comparison logic are identical.
+///
+/// # Parameters
+/// - worldPos:      world-space position of the shaded pixel.
+/// - lightPos:      point light world-space position.
+/// - lightInvRadius: 1.0 / light attenuation radius (for early-out).
+/// - shadowBaseIdx: base index into localShadowData[] (6 consecutive entries, one per face).
+///
+/// # Returns
+/// Shadow factor [0, 1]: 1.0 = fully lit, 0.0 = fully shadowed.
+float SamplePointLightShadow(float3 worldPos, float3 lightPos, float lightInvRadius, uint shadowBaseIdx)
+{
+    // @source UE5 ShadowProjectionCommon.ush:157 — WorldSampleToLightVec = LightPos - WorldPos
+    float3 worldSampleToLightVec = lightPos - worldPos;
+    float dist = length(worldSampleToLightVec);
+
+    // @source UE5 ShadowProjectionCommon.ush:162 — skip pixels outside light influence
+    if (dist * lightInvRadius >= 1.0f)
+        return 1.0f;
+
+    // @source UE5 ShadowProjectionCommon.ush:172-187 — face selection on pixel-to-light vector
+    uint face = SelectCubeFace(worldSampleToLightVec);
+    uint shadowIdx = shadowBaseIdx + face;
+
+    // Bounds check: ensure we don't read past the localShadowData array
+    if (shadowIdx >= localShadowCount)
+        return 1.0f;
+
+    // Decode the interleaved localShadowData array for this face:
+    // [idx*5+0..3] = viewProj rows, [idx*5+4] = (offsetX, offsetY, scale, bias)
+    uint base = shadowIdx * 5;
+    float4 row0 = localShadowData[base + 0];
+    float4 row1 = localShadowData[base + 1];
+    float4 row2 = localShadowData[base + 2];
+    float4 row3 = localShadowData[base + 3];
+    float4 atlasParams = localShadowData[base + 4];
+
+    // Build view-projection matrix from rows
+    float4x4 lightViewProj = float4x4(row0, row1, row2, row3);
+
+    // @source UE5 ShadowProjectionCommon.ush:190 — mul(float4(-WorldSampleToLightVec, 1), VP[face])
+    // UE5 uses -WorldSampleToLightVec (light-to-pixel direction) as input to the face VP matrix.
+    // Our localShadowData stores face VP matrices that expect world-space input directly,
+    // so we project the world position through the face VP matrix (same as spot lights).
+    float4 lightClip = mul(float4(worldPos, 1.0f), lightViewProj);
+    float3 lightNdc = lightClip.xyz / lightClip.w;
+
+    // Convert from NDC [-1,1] to UV [0,1], flip Y (D3D convention)
+    float2 shadowUV = lightNdc.xy * 0.5f + 0.5f;
+    shadowUV.y = 1.0f - shadowUV.y;
+
+    // Skip samples outside the shadow map frustum
+    if (any(shadowUV < 0.0f) || any(shadowUV > 1.0f) || lightNdc.z < 0.0f || lightNdc.z > 1.0f) {
+        return 1.0f; // Outside shadow frustum — lit
+    }
+
+    // Transform UV from [0,1] local space to atlas tile UV space
+    float atlasScale = atlasParams.z;
+    float2 atlasOffset = atlasParams.xy;
+    shadowUV = shadowUV * atlasScale + atlasOffset;
+
+    // Apply depth bias
+    // @source UE5 ShadowProjectionCommon.ush:194 — ShadowDepthBias = -(DepthBias + SlopeDepthBias) / w
+    float bias = atlasParams.w;
+    float compareDepth = lightNdc.z - bias * 0.001f;
+
+    // Sample shadow atlas with hardware PCF comparison
+    // @source UE5 ShadowProjectionCommon.ush:200 — SampleCmpLevelZero (SHADOW_QUALITY <= 2)
+#ifdef UZ_BINDLESS
+    Texture2D<float> localAtlas = ResourceDescriptorHeap[localShadowAtlasIndex];
+    return localAtlas.SampleCmpLevelZero(shadowSampler, shadowUV, compareDepth);
+#else
+    // SM5: local shadow atlas bound at t11
+    return localShadowAtlasTexture.SampleCmpLevelZero(shadowSampler, shadowUV, compareDepth);
+#endif
+}
+
 /// Evaluates the OLD Cook-Torrance BRDF (Lambertian diffuse + Schlick-GGX).
 ///
 /// Used in split-screen BRDF debug mode (left half). Does NOT include
@@ -717,6 +849,24 @@ float4 main(FSInput input) : SV_Target {
             // Custom falloff exponent (non-physical, UE5 legacy)
             attenuation = pow(saturate(1.0f - distOverRadius), pointLights[i].falloffExponent);
         }
+
+        // ── Point light shadow sampling ──────────────────────────────
+        // If this point light casts shadows (shadowIndex != 0xFFFFFFFF),
+        // sample the local shadow atlas using cubemap face selection and
+        // multiply attenuation by the shadow factor.
+        // @source UE5 ShadowProjectionCommon.ush:150-200 — CubemapHardwarePCF
+        float pointShadow = 1.0f;
+        if (pointLights[i].shadowIndex != 0xFFFFFFFF
+            && localShadowAtlasIndex != 0xFFFFFFFF
+            && pointLights[i].shadowIndex < localShadowCount) {
+            float lightInvRadius = 1.0f / radius;
+            pointShadow = SamplePointLightShadow(worldPos, pointLights[i].position, lightInvRadius, pointLights[i].shadowIndex);
+        }
+        attenuation *= pointShadow;
+
+        // Early-out if fully attenuated (distance + shadow)
+        if (attenuation <= 0.0f)
+            continue;
 
         /// @source UE5 DeferredLightingCommon.ush:447-448 — SpecularScale/DiffuseScale
         float3 radiance = pointLights[i].color * attenuation;

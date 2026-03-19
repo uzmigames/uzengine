@@ -419,9 +419,9 @@ TEST(UE5Parity, PointLightData_FlagBit_DoesNotClobberOtherFields) {
     EXPECT_EQ(pld.flags & kLightFlag_InverseSquared, kLightFlag_InverseSquared);
 }
 
-TEST(UE5Parity, PointLightData_StructSize_Is48Bytes) {
+TEST(UE5Parity, PointLightData_StructSize_Is64Bytes) {
     // The static_assert in constant_buffers.h guarantees this at compile time,
     // but a runtime check makes the expectation explicit in test output.
-    EXPECT_EQ(sizeof(PointLightData), 48u)
-        << "PointLightData must remain 48 bytes (three float4s for GPU packing)";
+    EXPECT_EQ(sizeof(PointLightData), 64u)
+        << "PointLightData must remain 64 bytes (four float4s for GPU packing, includes shadowIndex)";
 }

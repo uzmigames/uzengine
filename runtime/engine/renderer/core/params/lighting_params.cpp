@@ -19,7 +19,7 @@ const ShaderParameterMetadata& LightingParams::GetMetadata()
     static const ShaderParameterMetadata kMetadata = {
         kMembers,
         sizeof(kMembers) / sizeof(kMembers[0]),
-        4352,  // cbSize — matches sizeof(LightingCB), 256-byte aligned
+        sizeof(LightingCB),  // cbSize — matches sizeof(LightingCB), 256-byte aligned
         0,     // textureCount
         0,     // samplerCount
         0,     // uavCount

@@ -37,11 +37,27 @@ struct SpotLightShadowInfo {
     uint32_t lightIndex;  ///< Index into LightingCB::spotLights[] for this light.
 };
 
+/// Number of cubemap faces rendered per point light shadow (one per axis direction).
+/// @source UE5 ShadowRendering.h:35 — NumCubeShadowDepthSurfaces = 6
+static constexpr uint32_t kPointLightShadowFaces = 6;
+
+/// Per-point-light shadow info collected from ECS, used to build shadow passes.
+///
+/// Populated by `ExtractLightingFromECS()` for each point light with castShadows=true.
+/// The scene renderer uses this data to set up 6 cubemap face shadow depth passes
+/// and fill 6 consecutive LocalShadowCB entries.
+struct PointLightShadowInfo {
+    Vec3     position;    ///< World-space position of the point light.
+    float    radius;      ///< Attenuation radius (far plane for shadow projection).
+    float    bias;        ///< Shadow depth bias.
+    uint32_t lightIndex;  ///< Index into LightingCB::pointLights[] for this light.
+};
+
 /// Contains all lighting data extracted from the ECS for the current frame.
 ///
 /// Includes directional light parameters (direction, color, shadow bias),
 /// the uploaded LightingCB allocation for point/spot lights, and
-/// spot light shadow info for the scene renderer to build shadow passes.
+/// spot/point light shadow info for the scene renderer to build shadow passes.
 struct LightFrameData {
     Vec3  sunDir   = {0.5f, 0.3f, 0.8f}; ///< Normalized direction toward the sun.
     Vec3  sunColor = {3.0f, 2.85f, 2.7f}; ///< Sun color * intensity (linear HDR).
@@ -63,6 +79,14 @@ struct LightFrameData {
     /// Limited to kMaxLocalLightShadows entries. Excess lights are unshadowed.
     SpotLightShadowInfo spotShadows[kMaxLocalLightShadows];
     uint32_t spotShadowCount = 0;
+
+    /// Point lights that want cubemap shadow maps (castShadows=true).
+    /// Each point light consumes kPointLightShadowFaces (6) tiles in the local
+    /// shadow atlas, so the maximum number of shadowed point lights is
+    /// (kMaxLocalLightShadows - spotShadowCount) / kPointLightShadowFaces.
+    /// Excess lights beyond the tile budget are left unshadowed.
+    PointLightShadowInfo pointShadows[kMaxLocalLightShadows / kPointLightShadowFaces];
+    uint32_t pointShadowCount = 0;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

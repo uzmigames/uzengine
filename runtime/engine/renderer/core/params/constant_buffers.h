@@ -286,12 +286,18 @@ struct PointLightData {
     float    specularScale;    ///< Per-light specular highlight multiplier (0-1). Default: 1.0.
     float    diffuseScale;     ///< Per-light diffuse contribution multiplier (0-1). Default: 1.0.
     uint32_t flags;            ///< Bit flags: bit 0 = useInverseSquaredFalloff.
+    /// Index into LocalShadowCB::shadows[] for this light's shadow data.
+    /// For point lights, this is the base index — 6 consecutive entries (one per cubemap face).
+    /// 0xFFFFFFFF = no shadow (light does not cast shadows).
+    /// @source UE5 ShadowRendering.h:449 — FProjectedShadowInfo per-light shadow reference
+    uint32_t shadowIndex = UINT32_MAX;
+    float    _pointPad[3] = {};  ///< Pad to 64 bytes (4 float4s).
 };
 
 /// PointLightData flag bits.
 static constexpr uint32_t kLightFlag_InverseSquared = 1u << 0;
 
-static_assert(sizeof(PointLightData) == 48, "PointLightData must be 48 bytes (three float4s)");
+static_assert(sizeof(PointLightData) == 64, "PointLightData must be 64 bytes (four float4s)");
 
 /// Spot light data for the deferred lighting pass.
 ///
@@ -346,21 +352,21 @@ static_assert(sizeof(SpotLightData) == 80, "SpotLightData must be 80 bytes (five
 ///
 /// Padded to a 256-byte multiple as required by D3D12 constant buffer alignment.
 ///
-/// # Layout (4608 bytes = 18 * 256)
-/// - pointLights[64]:  64 * 48 = 3072 bytes
+/// # Layout (5632 bytes = 22 * 256)
+/// - pointLights[64]:  64 * 64 = 4096 bytes
 /// - pointLightCount:  4 bytes
 /// - spotLightCount:   4 bytes
 /// - _pad:             8 bytes
 /// - spotLights[16]:   16 * 80 = 1280 bytes
 /// - _pad2:            240 bytes
-/// Total: 4608 bytes
+/// Total: 5632 bytes
 struct LightingCB {
-    PointLightData pointLights[kMaxPointLights]; ///< Point light array (64 * 48 = 3072 bytes).
+    PointLightData pointLights[kMaxPointLights]; ///< Point light array (64 * 64 = 4096 bytes).
     uint32_t       pointLightCount = 0;          ///< Number of active point lights in the array.
     uint32_t       spotLightCount  = 0;          ///< Number of active spot lights in the array.
     uint32_t       _pad[2] = {};                 ///< Align counts to 16 bytes.
     SpotLightData  spotLights[kMaxSpotLights];   ///< Spot light array (16 * 80 = 1280 bytes).
-    float          _pad2[60] = {};               ///< Pad to 4608 bytes (256-byte multiple).
+    float          _pad2[60] = {};               ///< Pad to 5632 bytes (256-byte multiple).
 };
 
 static_assert(sizeof(LightingCB) % 256 == 0, "LightingCB must be a multiple of 256 bytes (D3D12 CB alignment)");

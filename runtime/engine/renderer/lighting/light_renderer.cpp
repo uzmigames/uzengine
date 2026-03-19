@@ -90,6 +90,23 @@ LightFrameData ExtractLightingFromECS(
             pld.specularScale   = pl.specularScale;
             pld.diffuseScale    = pl.diffuseScale;
             pld.flags           = pl.useInverseSquaredFalloff ? kLightFlag_InverseSquared : 0u;
+            pld.shadowIndex     = UINT32_MAX; // Assigned below after spot shadow count is known
+
+            // Collect shadow candidate — final shadowIndex assigned after spot lights
+            // are processed, since point lights occupy indices after spot shadows.
+            if (pl.castShadows) {
+                // Record candidate; budget check deferred until spot shadow count is known.
+                constexpr uint32_t kMaxPointShadows = kMaxLocalLightShadows / kPointLightShadowFaces;
+                if (result.pointShadowCount < kMaxPointShadows) {
+                    PointLightShadowInfo& shadowInfo = result.pointShadows[result.pointShadowCount];
+                    shadowInfo.position   = pos;
+                    shadowInfo.radius     = pl.range;
+                    shadowInfo.bias       = pl.pointShadowBias;
+                    shadowInfo.lightIndex = idx;
+                    result.pointShadowCount++;
+                }
+            }
+
             lightingData.pointLightCount++;
         }
 
@@ -167,6 +184,31 @@ LightFrameData ExtractLightingFromECS(
             }
 
             lightingData.spotLightCount++;
+        }
+
+        // ── Assign point light shadow indices (after spot shadow count is known) ──
+        // Point light shadow faces are stored consecutively in the localShadows[]
+        // array starting after all spot shadow entries. Each point light occupies
+        // kPointLightShadowFaces (6) consecutive entries.
+        //
+        // Total tile budget: kMaxLocalLightShadows (16)
+        // Spot lights occupy: spotShadowCount entries
+        // Available for point lights: remaining / 6
+        const uint32_t tilesUsedBySpots = result.spotShadowCount;
+        const uint32_t tilesRemaining = (tilesUsedBySpots < kMaxLocalLightShadows)
+            ? (kMaxLocalLightShadows - tilesUsedBySpots) : 0;
+        const uint32_t maxPointShadowsAfterSpots = tilesRemaining / kPointLightShadowFaces;
+
+        // Trim point shadow count if not enough tiles remain after spot lights
+        if (result.pointShadowCount > maxPointShadowsAfterSpots) {
+            result.pointShadowCount = maxPointShadowsAfterSpots;
+        }
+
+        // Write shadowIndex into PointLightData entries in the lighting CB
+        for (uint32_t pi = 0; pi < result.pointShadowCount; ++pi) {
+            const uint32_t baseIdx = tilesUsedBySpots + pi * kPointLightShadowFaces;
+            const uint32_t lightIdx = result.pointShadows[pi].lightIndex;
+            lightingData.pointLights[lightIdx].shadowIndex = baseIdx;
         }
     }
 
