@@ -50,6 +50,8 @@ cbuffer LensFlareCB : register(b2) {
     float  chromaticShift;    ///< Chromatic fringe offset per channel (default 0.02).
     float  outputWidth;       ///< Output texture width in pixels.
     float  outputHeight;      ///< Output texture height in pixels.
+    float2 sunScreenPos;      ///< Sun position in screen UV [0,1]. Ghosts reflect through this point.
+    float2 _pad;
 };
 
 /// Linear clamp sampler for bloom threshold texture reads.
@@ -179,10 +181,10 @@ void main(uint3 dtid : SV_DispatchThreadID)
     [unroll]
     for (uint i = 0; i < kGhostCount; ++i)
     {
-        // Reflect UV through screen center (0.5, 0.5) and scale.
-        // The formula: ghostUV = center + (center - uv) * scale
-        // flips the UV and scales the distance from center.
-        float2 ghostUV = 0.5 + (0.5 - uv) * kGhostScales[i];
+        // Reflect UV through sun screen position and scale.
+        // Ghosts are reflections of the sun through lens elements,
+        // so they always emanate from the sun's screen position.
+        float2 ghostUV = sunScreenPos + (sunScreenPos - uv) * kGhostScales[i];
 
         // Edge attenuation: ghosts that fall outside the screen should fade
         // out smoothly rather than producing hard-cut artifacts.
@@ -217,8 +219,8 @@ void main(uint3 dtid : SV_DispatchThreadID)
 
     float3 haloAccum = float3(0.0, 0.0, 0.0);
 
-    // Direction from screen center to current pixel.
-    float2 toCenter = uv - 0.5;
+    // Direction from sun position to current pixel.
+    float2 toCenter = uv - sunScreenPos;
     float centerDist = length(toCenter);
 
     // Only compute halo if the pixel is in a plausible range. Avoid
@@ -232,7 +234,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
 
         // Center sample: reflect through center, then offset to halo radius.
         // The halo UV is the reflected direction scaled to haloRadius.
-        float2 haloCenter = 0.5 + dir * haloRadius;
+        float2 haloCenter = sunScreenPos + dir * haloRadius;
 
         // 3-sample Gaussian blur along the ring tangent direction.
         // This softens the halo and prevents single-pixel aliasing.

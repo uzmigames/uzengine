@@ -292,6 +292,8 @@ void LensFlarePass::Execute(IRHICommandList* cmd, CBRingAllocator& cbRing,
     cb.chromaticShift    = settings.chromaticShift;
     cb.outputWidth       = static_cast<float>(m_width);
     cb.outputHeight      = static_cast<float>(m_height);
+    cb.sunScreenX        = settings.sunScreenX;
+    cb.sunScreenY        = settings.sunScreenY;
 
     auto alloc = cbRing.Allocate(sizeof(LensFlareCBV));
     if (!alloc.cpuPtr) {

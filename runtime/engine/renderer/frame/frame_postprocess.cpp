@@ -53,33 +53,61 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
         });
     }
 
-    // ── Lens Flare pass (after bloom, uses bloom threshold as input) ────
-    // DISABLED: Lens flare needs sun screen-space position + occlusion query
-    // to only generate ghosts when looking toward the sun. Currently triggers
-    // from any bright pixel (specular highlights, etc.) which is incorrect.
-    // TODO: implement sun occlusion query + directional ghost generation.
-    if (false && m_lensFlarePass && m_lensFlarePass->IsInitialized() && ctx.bloomEnabled
+    // ── Lens Flare pass (after bloom, only when looking toward the sun) ──
+    // Project sun direction to screen space. If the sun is on-screen,
+    // dispatch the lens flare shader. Ghosts reflect through the sun's
+    // screen position, not through arbitrary bright pixels.
+    if (m_lensFlarePass && m_lensFlarePass->IsInitialized() && ctx.bloomEnabled
         && m_bloomPass && m_bloomPass->GetBloomResultSrvIndex() != UINT32_MAX
-        && m_shadowDebugMode == 0) {
-        rgBuilder.AddPass("LensFlare", [&](rg::RgPassBuilder& pb) {
-            pb.Read(ctx.hdrRes, RHIResourceState::ShaderResource);
+        && m_shadowDebugMode == 0 && ctx.bindless) {
 
-            pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources&) {
-                UZ_PROFILE_SCOPE("LensFlare::Execute");
+        // Project sun position to clip space (sun is at infinity → use direction)
+        const Vec3& camPos = {ctx.perFrame.cameraPos.x, ctx.perFrame.cameraPos.y, ctx.perFrame.cameraPos.z};
+        const Vec3 sunWorldPos = {
+            camPos.x + ctx.sunDir.x * 100000.f,
+            camPos.y + ctx.sunDir.y * 100000.f,
+            camPos.z + ctx.sunDir.z * 100000.f
+        };
+        const Vec4 sunClip = ctx.unjitteredViewProj * Vec4{sunWorldPos.x, sunWorldPos.y, sunWorldPos.z, 1.f};
 
-                LensFlareSettings settings;
-                settings.enabled = true;
-                settings.intensity = 0.05f;
-                settings.ghostIntensity = 0.15f;
-                settings.haloRadius = 0.7f;
-                settings.haloWidth = 0.05f;
-                settings.chromaticShift = 0.01f;
+        // Check if sun is in front of camera (w > 0) and on-screen
+        const bool sunVisible = (sunClip.w > 0.01f);
+        float sunScreenX = 0.5f, sunScreenY = 0.5f;
+        if (sunVisible) {
+            sunScreenX = (sunClip.x / sunClip.w) *  0.5f + 0.5f;
+            sunScreenY = (sunClip.y / sunClip.w) * -0.5f + 0.5f; // Y flip for D3D
+        }
+        // Sun must be roughly on screen (allow some margin for ghost tails)
+        const bool sunOnScreen = sunVisible
+            && sunScreenX > -0.5f && sunScreenX < 1.5f
+            && sunScreenY > -0.5f && sunScreenY < 1.5f;
 
-                m_lensFlarePass->Execute(cmd, *m_cbRing,
-                                          m_bloomPass->GetBloomResultSrvIndex(),
-                                          settings);
+        if (sunOnScreen) {
+            const float capturedSunX = sunScreenX;
+            const float capturedSunY = sunScreenY;
+
+            rgBuilder.AddPass("LensFlare", [&, capturedSunX, capturedSunY](rg::RgPassBuilder& pb) {
+                pb.Read(ctx.hdrRes, RHIResourceState::ShaderResource);
+
+                pb.SetExecutionCallback([this, &ctx, capturedSunX, capturedSunY](IRHICommandList* cmd, const rg::RgPassResources&) {
+                    UZ_PROFILE_SCOPE("LensFlare::Execute");
+
+                    LensFlareSettings settings;
+                    settings.enabled = true;
+                    settings.intensity = 0.1f;
+                    settings.ghostIntensity = 0.3f;
+                    settings.haloRadius = 0.7f;
+                    settings.haloWidth = 0.05f;
+                    settings.chromaticShift = 0.015f;
+                    settings.sunScreenX = capturedSunX;
+                    settings.sunScreenY = capturedSunY;
+
+                    m_lensFlarePass->Execute(cmd, *m_cbRing,
+                                              m_bloomPass->GetBloomResultSrvIndex(),
+                                              settings);
+                });
             });
-        });
+        }
     }
 
     // ── Temporal Upscaler pass (TAA or TSR via ITemporalUpscaler) ──────

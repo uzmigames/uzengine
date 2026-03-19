@@ -56,6 +56,8 @@ struct LensFlareSettings {
     float haloRadius     = 0.6f;   ///< Halo ring radius in UV space, 0..1.
     float haloWidth      = 0.1f;   ///< Halo ring Gaussian width in UV space.
     float chromaticShift = 0.02f;  ///< Chromatic aberration offset per channel.
+    float sunScreenX     = 0.5f;   ///< Sun position in screen UV [0,1]. 0.5 = center.
+    float sunScreenY     = 0.5f;   ///< Sun position in screen UV [0,1]. 0.5 = center.
     bool  enabled        = false;  ///< Off by default — callers opt in.
 };
 
@@ -78,10 +80,13 @@ struct LensFlareCBV {
     float    chromaticShift;     ///< Chromatic fringe offset per channel.
     float    outputWidth;        ///< Output texture width in pixels.
     float    outputHeight;       ///< Output texture height in pixels.
+    float    sunScreenX;         ///< Sun screen UV X [0,1].
+    float    sunScreenY;         ///< Sun screen UV Y [0,1].
+    float    _pad0[2];           ///< Align to 16 bytes.
 
     /// Pad to 256 bytes (D3D12 CB alignment).
-    /// Current: 8 DWORDs = 32 bytes → need 224 bytes of padding.
-    float    _pad[56];
+    /// Current: 12 DWORDs = 48 bytes → need 208 bytes of padding.
+    float    _pad[52];
 };
 
 static_assert(sizeof(LensFlareCBV) == 256,
