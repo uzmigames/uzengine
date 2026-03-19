@@ -270,6 +270,10 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     }
     UZ_LOG(Renderer, Info, "SceneRenderer: BloomPass initialized");
 
+    // ── Lens Flare (at display resolution — post-bloom effect) ──────
+    m_lensFlarePass = std::make_unique<LensFlarePass>();
+    m_lensFlarePass->Init(device, m_shaderMgr.get(), width, height);
+
     // ── DFS Output Texture + Culling Buffers (at render resolution) ──
     // Created here but only populated when DFS is enabled at runtime.
     // The output texture starts at half-resolution by default; fullResolution
@@ -1135,6 +1139,7 @@ void SceneRenderer::Shutdown() {
     // ── Auto-Exposure cleanup ─────────────────────────────────────
     if (m_autoExposure) m_autoExposure->Shutdown();
     if (m_gtaoPass) m_gtaoPass->Shutdown();
+    if (m_lensFlarePass) m_lensFlarePass->Shutdown();
     if (m_bloomPass) m_bloomPass->Shutdown();
 
     // ── Instance buffer cleanup ─────────────────────────────────────

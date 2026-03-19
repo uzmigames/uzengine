@@ -53,6 +53,28 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
         });
     }
 
+    // ── Lens Flare pass (after bloom, uses bloom threshold as input) ────
+    if (m_lensFlarePass && m_lensFlarePass->IsInitialized() && ctx.bloomEnabled
+        && m_bloomPass && m_bloomPass->GetBloomResultSrvIndex() != UINT32_MAX
+        && m_shadowDebugMode == 0) {
+        rgBuilder.AddPass("LensFlare", [&](rg::RgPassBuilder& pb) {
+            pb.Read(ctx.hdrRes, RHIResourceState::ShaderResource);
+
+            pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources&) {
+                UZ_PROFILE_SCOPE("LensFlare::Execute");
+
+                LensFlareSettings settings;
+                settings.enabled = true;
+                settings.intensity = 0.8f;
+                settings.ghostIntensity = 0.4f;
+
+                m_lensFlarePass->Execute(cmd, *m_cbRing,
+                                          m_bloomPass->GetBloomResultSrvIndex(),
+                                          settings);
+            });
+        });
+    }
+
     // ── Temporal Upscaler pass (TAA or TSR via ITemporalUpscaler) ──────
     // @source UE5 TemporalUpscaler.h — ITemporalUpscaler::AddPasses
     //

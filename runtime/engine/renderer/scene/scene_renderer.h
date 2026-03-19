@@ -39,6 +39,7 @@
 #include "ibl/sh_projection.h"
 #include "postprocess/auto_exposure.h"
 #include "postprocess/bloom_pass.h"
+#include "postprocess/lens_flare_pass.h"
 #include "postprocess/temporal_upscaler.h"
 #include "postprocess/gtao_pass.h"
 #include "postprocess/hiz_pyramid_pass.h"
@@ -556,6 +557,9 @@ private:
 
     // ── Bloom ────────────────────────────────────────────────────────────
     std::unique_ptr<BloomPass> m_bloomPass;          ///< GPU compute bloom (threshold + downsample + upsample).
+
+    // ── Lens Flare ──────────────────────────────────────────────────────
+    std::unique_ptr<LensFlarePass> m_lensFlarePass;  ///< Screen-space lens flare (ghosts + halo).
 
     // ── Distance Field Shadows ───────────────────────────────────────────
 
