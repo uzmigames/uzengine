@@ -69,6 +69,46 @@
 
 ---
 
+## [0.2.37.1] — 2026-03-18
+
+### Material Graph PSO Pipeline Integration
+
+**MaterialPipeline system** (`runtime/engine/renderer/material/`): GPU-accelerated material graph compilation and PSO caching.
+
+- **MaterialPipeline** — Manages material graph compilation to DX12 PSOs. Content-hash caching via xxHash64 of graph + shader target + RenderPath settings. Per-material PSO allocation to avoid recompilation.
+- **DrawCommand extensions** — Added `materialGraphPipeline` handle and `materialParams[16]` register (float4[16] for runtime parameter binding at root constant slot b3).
+- **gbuffer_ps.hlsl** — Conditional material graph HLSL injection via `#ifdef UZ_MATERIAL_GRAPH` preprocessor. Replaces inline PBR math with `ComputeMaterialOutputs()` call when material graph is active.
+- **MaterialParamsCB** (register b3) — 16 x float4 = 64 bytes for runtime parameter binding. Supports ScalarParameter, VectorParameter, and TextureParameter overrides from Lua API and material instances.
+- **GBuffer Pass PSO Switching** — RenderGraph dynamically switches PSOs based on draw command's material graph handle. Fallback to standard material pipeline if no graph is active.
+- **Texture Parameter Binding** — TextureParameter nodes reference bindless descriptor heap indices (SM6.6). Fallback to dynamic descriptor tables for SM5 (planned Phase 2).
+
+**Architecture diagram**:
+```
+Material Graph + Runtime Parameters
+        ↓
+MaterialPipeline::GetOrCreatePSO(graphHash, shaderTarget, renderPath)
+        ↓
+Cache lookup by xxHash64(graphContent + target + path)
+        ↓
+If hit: return cached PSO
+If miss: Compile HLSL → DXC → DXIL → CreateGraphicsPipelineState()
+        ↓
+Bind per-draw via GBuffer RenderGraph pass callback
+        ↓
+GPU: gbuffer_ps.hlsl samples GBuffer inputs, calls ComputeMaterialOutputs(), writes RT0-3
+```
+
+**Rendering path improvements**:
+- Forward PBR + Deferred paths both support material graph PSOs (via conditional pipeline selection)
+- Material graph evaluation runs at GBuffer stage (PS output includes BaseColor, Metallic, Roughness, Normal, AO)
+- No performance penalty for non-graph materials (standard material path unchanged)
+
+**Documentation**:
+- `docs/guides/material-graph-authoring.md` (475 lines): JSON `.uzmat` format guide, node reference (37 types), step-by-step example (checker material), GPU baking, Lua API, troubleshooting.
+- Updated `docs/engine/12-rendering/16-material-system.md` to include MaterialPipeline architecture section.
+
+---
+
 ## [0.2.37] — 2026-03-18
 
 ### Material Graph System

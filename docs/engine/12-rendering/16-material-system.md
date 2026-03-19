@@ -276,6 +276,207 @@ Each graph is hashed via xxHash64 over:
 
 Same hash = same shader. The `MaterialShaderCache` uses this to skip recompilation.
 
+## Material Pipeline (Phase 1.5+) — GPU Integration
+
+The **MaterialPipeline** system compiles material graphs to DX12 PSOs and manages their lifecycle in the renderer. Instead of CPU baking, materials are evaluated on the GPU during the GBuffer pass.
+
+### Architecture
+
+```cpp
+// Material graph + runtime parameters
+MaterialAssetGraph* graph = ...;  // from .uzmat file
+
+// Get or create PSO
+auto psoHandle = g_materialPipeline.GetOrCreatePSO(
+    graph->GetContentHash(),
+    ShaderTarget::SM6_6,
+    RenderPath::Deferred);
+
+// PSO is cached by xxHash64(graphContent + shaderTarget + renderPath)
+// If cache hit: return cached PSO
+// If cache miss: Compile graph HLSL → DXC → DXIL → CreateGraphicsPipelineState()
+```
+
+### Render Graph Integration
+
+During the GBuffer pass, draw commands with material graphs trigger PSO switching:
+
+```cpp
+// In GBuffer RenderGraph callback:
+for (const auto& cmd : drawList.GetCommands()) {
+    if (cmd.materialGraphPipeline.IsValid()) {
+        // Switch to material graph PSO
+        cmdList->SetPipelineState(g_materialPipeline.GetPSO(cmd.materialGraphPipeline));
+
+        // Bind material parameters
+        auto matParamsCB = cbAllocator->Allocate(sizeof(MaterialParamsCB));
+        matParamsCB->params[0] = cmd.materialParams[0];  // ScalarParameter
+        matParamsCB->params[1] = cmd.materialParams[1];  // VectorParameter, etc.
+        cmdList->SetGraphicsRootConstantBufferView(3, matParamsCB.gpuAddr);
+    } else {
+        // Use standard material PSO (non-graph path)
+        cmdList->SetPipelineState(g_pipelineLibrary.GetForwardPBR());
+    }
+
+    // Draw as usual
+    cmdList->DrawIndexedInstanced(...);
+}
+```
+
+### HLSL Injection
+
+The `gbuffer_ps.hlsl` pixel shader includes conditional material graph evaluation:
+
+```hlsl
+// In gbuffer_ps.hlsl:
+#ifdef UZ_MATERIAL_GRAPH
+// Material-graph-generated function (injected at compile time)
+void ComputeMaterialOutputs(
+    in float4 materialParams[16],
+    in float2 uv,
+    in float3 positionWS,
+    in float3 normalWS,
+    in float4 vertexColor,
+    in float3 objectPosition,
+    in float2 screenUV,
+    in float3 cameraPosition,
+    in float totalTime,
+    out float3 out_baseColor,
+    out float out_metallic,
+    out float out_roughness,
+    out float3 out_normal,
+    out float3 out_emissive,
+    out float out_opacity,
+    out float out_ao);
+
+// Pixel shader main:
+void main(PS_INPUT input, out GBufferOutput output) {
+    // ... standard GBuffer setup ...
+
+    // Call material graph
+    float3 baseColor;
+    float metallic, roughness, ao, opacity;
+    float3 normal, emissive;
+
+    ComputeMaterialOutputs(
+        materialParams,
+        input.uv,
+        input.positionWS,
+        input.normalWS,
+        input.vertexColor,
+        input.objectPosition,
+        input.screenUV,
+        input.cameraVec.xyz,
+        g_perFrame.totalTime,
+        baseColor, metallic, roughness, normal, emissive, opacity, ao);
+
+    // Write GBuffer with computed values
+    output.rt0 = float4(baseColor, 1.0);  // Albedo
+    output.rt1 = float4(normal, metallic);  // Normal + Metallic
+    output.rt2 = float4(roughness, ao, 0, 0);  // Roughness + AO
+    output.rt3 = float4(emissive, opacity);  // Emissive + Opacity
+}
+#else
+// Standard material path (original gbuffer_ps.hlsl logic)
+// ...
+#endif
+```
+
+### Material Parameters Buffer (register b3)
+
+Runtime parameters are passed via a 16 x float4 constant buffer at register b3:
+
+```hlsl
+// Register b3: Material parameters (64 bytes)
+cbuffer MaterialParamsCB : register(b3) {
+    float4 params[16];  // 16 slots for ScalarParameter, VectorParameter, etc.
+};
+```
+
+C++ side:
+
+```cpp
+struct MaterialParamsCB {
+    Vec4 params[16];  // 16 x float4 = 64 bytes
+};
+
+// Fill from material instance overrides:
+MaterialParamsCB matParams{};
+matParams.params[0] = Vec4(roughnessMultiplier, 0, 0, 0);  // slot 0
+matParams.params[1] = Vec4(baseColorTint.x, baseColorTint.y, baseColorTint.z, 1.0);  // slot 1
+// ... etc up to 16 parameters
+```
+
+### Content Hash Stability
+
+Two material graphs with **identical structure and parameters** produce the same PSO:
+
+```cpp
+// Graph 1: TexCoord → CheckerPattern(16) → Lerp → BaseColor
+uint64_t hash1 = graph1->GetContentHash();
+
+// Graph 2: TexCoord → CheckerPattern(16) → Lerp → BaseColor (same)
+uint64_t hash2 = graph2->GetContentHash();
+
+// hash1 == hash2, so both share the same compiled PSO
+assert(hash1 == hash2);  // true
+```
+
+This enables **automatic deduplication** — multiple scenes with identical procedural materials only compile once.
+
+### Compilation Pipeline
+
+```
+.uzmat (JSON)
+    ↓
+MaterialGraph::LoadFromFile()
+    ↓
+HlslMaterialTranslator::Compile() → ComputeMaterialOutputs() HLSL text
+    ↓
+Inject into gbuffer_ps.hlsl template
+    ↓
+DXC compile with -D UZ_MATERIAL_GRAPH
+    ↓
+xxHash64(graphContent) → cache key
+    ↓
+MaterialPipelineCache lookup
+    ├─ Hit: return cached PSO, zero compilation cost
+    └─ Miss: CreateGraphicsPipelineState(), store in cache
+    ↓
+Bind PSO at render time via DrawCommand.materialGraphPipeline handle
+```
+
+### Texture Parameter Binding
+
+Material graphs that reference textures via `TextureParameter` nodes bind textures as follows:
+
+**SM6.6 (Bindless)**:
+- `TextureParameter` node emits `ResourceDescriptorHeap[heapIndex]` in generated HLSL
+- Heap indices allocated at material compile time
+- No root descriptor table overhead
+
+**SM5 (Fallback, Phase 2)**:
+- Use descriptor table slots (t0-t15) for texture parameters
+- Dynamic descriptor heap for per-draw overrides
+
+### Current Phase (1.5) Features
+
+- ✅ PSO caching by content hash
+- ✅ Material parameter binding (16 float4 slots)
+- ✅ HLSL injection via `#ifdef UZ_MATERIAL_GRAPH`
+- ✅ GBuffer pass PSO switching
+- ⚠️ Texture parameters (SM6.6 bindless only, SM5 fallback pending Phase 2)
+- ⚠️ Hot-reload of .uzmat files (Phase 2)
+- ⚠️ Visual editor (Phase 5)
+
+### Rules
+
+1. **Material graphs are GPU-first** — compiler targets DX12 PSO, not CPU evaluation
+2. **PSOs are cached forever** — same hash → same PSO. Delete cache manually to recompile.
+3. **Register b3 is reserved** — do not bind other buffers to this register in material graphs
+4. **Texture parameters require SM6.6** — SM5 fallback planned. Use ScalarParameter/VectorParameter for portability.
+5. **Compiled PSOs are immutable** — create new DrawCommand if parameters change (via MaterialInstance)
+
 ## Current Limitations (Phase 1)
 
 - **CPU bake only** — materials are evaluated on CPU and baked to textures. No GPU shader permutation yet.

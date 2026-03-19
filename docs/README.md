@@ -71,6 +71,7 @@ Located in [guides/](guides/):
 
 | Guide | Description |
 |-------|-------------|
+| [material-graph-authoring.md](guides/material-graph-authoring.md) | Material graph authoring — node types, `.uzmat` JSON format, procedural patterns, GPU baking, Lua API |
 | [temporal-upscaling.md](guides/temporal-upscaling.md) | Temporal upscaling (TAA/TSR), screen percentage system, dynamic resolution, and Lua API |
 | [shader-parameter-binding-guide.md](guides/shader-parameter-binding-guide.md) | Macro system, metadata definition, and `ShaderParameterBinder` usage |
 | [shader-parameter-migration-guide.md](guides/shader-parameter-migration-guide.md) | Step-by-step migration from manual CB + resource binding to the new system |

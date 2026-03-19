@@ -44,14 +44,14 @@
 - [x] 5.9 Implement `GpuMaterialBaker` (`gpu_material_baker.h/.cpp`): GPU compute dispatch replaces 8-second CPU MaterialBaker bottleneck. Generates compute shader wrapper around material HLSL, compiles via ShaderPipeline (cached), dispatches 8x8 thread groups, returns RGBA8 UAV+SRV texture directly. PBR test demo updated to use GPU bake for BaseColor (1024x1024) and Roughness (512x512). Added GetDevice()/GetShaderManager() accessors to SceneRenderer.
 
 ## 6. Testing
-- [ ] 6.1 Unit test: graph serialization round-trip (save → load → compare).
-- [ ] 6.2 Unit test: topological sort with diamond dependencies (A→B→D, A→C→D).
-- [ ] 6.3 Unit test: dead-code elimination removes disconnected nodes from HLSL output.
-- [ ] 6.4 Unit test: type promotion (float→float3 splat at Multiply node).
-- [ ] 6.5 Unit test: HLSL codegen for each math node (Add, Multiply, Lerp, Clamp, etc.) produces correct expressions.
-- [ ] 6.6 Unit test: CheckerPattern node generates correct HLSL (floor(uv * scale) mod 2 pattern).
-- [ ] 6.7 Unit test: MaterialShaderCache hit/miss (same graph → same hash, modified param → different hash).
-- [ ] 6.8 Unit test: parameter binding indices are contiguous and match PerObjectCB layout.
+- [x] 6.1 Unit test: graph serialization round-trip (save → load → compare). Written in `tests/material/test_material_graph.cpp`: verifies node count (3), connection wiring, ScalarConstant 'value' param (0.75), domain/shadingModel, graph name, malformed JSON, missing version.
+- [x] 6.2 Unit test: topological sort with diamond dependencies (A→B→D, A→C→D). Diamond test verifies A < B, A < C, B < D, C < D, D < PBROutput, all 5 IDs present. Also tests empty-connection (PBROutput only) case.
+- [x] 6.3 Unit test: dead-code elimination removes disconnected nodes from HLSL output. Tests single disconnected node and complex dead-path (C→D disconnected from PBR): only live-path nodes appear in TopologicalSort.
+- [x] 6.4 Unit test: type promotion (float→float3 splat at Multiply node). ScalarConstant(Float) → PBROutput BaseColor(Float3): asserts "float3(" and "0.5" appear in HLSL. Also tests Float3→Float3 (no extra wrapping needed).
+- [x] 6.5 Unit test: HLSL codegen for each math node (Add, Multiply, Lerp, Clamp, etc.) produces correct expressions. Tests Add(+), Multiply(*), Subtract(-), Divide(/), Lerp(lerp()), Clamp(clamp()), Saturate(saturate()). Also verifies explicit variable names and connected input references.
+- [x] 6.6 Unit test: CheckerPattern node generates correct HLSL (floor(uv * scale) mod 2 pattern). Asserts "floor(" and "fmod(" both present. Also tests custom scale wired via ScalarConstant.
+- [x] 6.7 Unit test: MaterialShaderCache hit/miss (same graph → same hash, modified param → different hash). Tests: same graph → same hash + cache size=1; modified param → different hash + cache size=2; IsCached before/after; ClearCache empties; GetHlsl matches result; GetHlsl unknown hash returns null; hash determinism.
+- [x] 6.8 Unit test: parameter binding indices are contiguous and match PerObjectCB layout. Three ScalarParameters → slots sorted must equal [0,1,2]; ScalarParameter type=Float; VectorParameter type=Float3; mixed scalar+vector slots contiguous; default value preserved in ParamInfo.
 - [ ] 6.9 Integration test: compile a simple graph (constant color → BaseColor) through full pipeline (graph → HLSL → DXC → PSO).
 - [ ] 6.10 Visual test: render MI_ProcGrid equivalent on ground plane, compare with UE5 screenshot.
 - [ ] 6.11 Verify 95%+ coverage on all new code.
