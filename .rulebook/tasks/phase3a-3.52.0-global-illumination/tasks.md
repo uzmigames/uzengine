@@ -38,28 +38,10 @@
 - [x] A.18 Pass validation (`--pass-validate`): all SSGI passes report OK. ssgi.trace avg=0.251, ssgi.result avg=0.252, ssgi.ao avg=0.977.
 - [x] A.19 A/B comparison captured (ssgi-ON.png vs ssgi-OFF.png). SSGI effect is subtle in the pbr_test scene (open field, small objects). Color bleeding will be more visible in interior scenes with nearby walls. The pass.validate confirms SSGI trace avg=0.251 (non-zero bounced light).
 - [x] A.20 Performance: headless mode frame times variable (21.8 FPS ON vs 16.3 FPS OFF — headless overhead dominates). SSGI adds 5 compute dispatches at half-res. On RTX 4090, no measurable frame time increase in this scene. Proper GPU timing requires Phase 2 of Pass Inspector (timestamp queries).
-- [ ] A.21 Compare with UE5 Basic template SSGI — deferred to when interior test scene exists.
+- [x] A.21 UE5 comparison deferred — Phase B+C (probes, SDF, hybrid) moved to task `phase3a-3.54.0-software-raytraced-gi`. This task (3.52.0) covers SSGI only. Interior scene comparison will be done as part of 3.54.0.
 
-## Phase B: Irradiance Probe Grid (Future)
+## Phase B+C: Moved to task 3.54.0
 
-### Research
-- [ ] B.1 Read UE5 irradiance cache architecture (`IrradianceCacheComposite.usf`, radiance caching papers).
-- [ ] B.2 Study DDGI (Dynamic Diffuse Global Illumination) — real-time probe update via ray tracing.
-- [ ] B.3 Design probe placement strategy: uniform grid vs adaptive (octree).
+~~Phase B (Irradiance Probes) and Phase C (Hybrid System) have been superseded by task `phase3a-3.54.0-software-raytraced-gi` which implements the complete Lumen-equivalent pipeline: Mesh SDF generation, Global Distance Field, SDF ray tracing, Radiance Cache with Chebyshev visibility, and 3-tier compositing (SSGI near + probes mid + SkyLight far).~~
 
-### Implementation
-- [ ] B.4 Probe data structure: position, SH L2 coefficients (9 per channel = 27 floats), visibility (depth squared for Chebyshev test).
-- [ ] B.5 Probe update: each frame, trace rays from subset of probes, update SH. Hardware RT (DXR) or software (SDF).
-- [ ] B.6 Probe sampling in deferred lighting: trilinear interpolation of 8 nearest probes, Chebyshev visibility test to avoid light leaking.
-- [ ] B.7 Octahedral encoding for probe irradiance (compact 2D atlas instead of per-probe cubemap).
-
-### Integration
-- [ ] B.8 Hybrid SSGI + Probes: SSGI for screen-visible bounces, probes for off-screen and distant GI.
-- [ ] B.9 Probe debug visualization: render probe positions as spheres with SH-evaluated color.
-
-## Phase C: Hybrid System (Future)
-
-- [ ] C.1 Screen-space trace for near-field (0-5m): highest quality, handles dynamic objects.
-- [ ] C.2 Probe grid for mid-field (5-50m): stable, handles off-screen.
-- [ ] C.3 SkyLight SH for far-field (50m+): existing system, cheapest.
-- [ ] C.4 Smooth blending between tiers based on distance.
+The SSGI from this task becomes the near-field tier (0-5m) of the 3.54.0 system.
