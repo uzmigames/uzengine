@@ -2,11 +2,11 @@
 
 ## 1. Mesh SDF Generation
 
-- [ ] 1.1 Read UE5 `MeshDistanceFieldUtilities.cpp` and `DistanceFieldAtlas.cpp` — extract the SDF generation pipeline (voxelization, JFA distance transform, atlas packing).
-- [ ] 1.2 Create `runtime/engine/renderer/gi/sdf_generator.h/.cpp` — MeshSDFGenerator class that takes a mesh (vertex/index buffer) and produces a 3D texture (R16F, 32^3 or 64^3) containing the signed distance to the mesh surface.
-- [ ] 1.3 Implement CPU-side SDF generation via JFA (Jump Flood Algorithm): voxelize mesh triangles → seed surface voxels → flood fill distances. Output is an R16F 3D texture.
+- [x] 1.1 Read UE5 `MeshDistanceFieldUtilities.cpp` and `DistanceFieldAtlas.cpp` — extract the SDF generation pipeline (voxelization, JFA distance transform, atlas packing). Analyzed UE5 DistanceFieldAtlas.h:36-50, MeshDistanceFieldCommon.ush:9-38, LumenSoftwareRayTracing.ush:124-259, Common.ush:1883-1903. Created dataflow doc at docs/analysis/dataflow-sdf-gi-pipeline.md.
+- [x] 1.2 Create `runtime/engine/renderer/gi/mesh_sdf_baker.h/.cpp` — MeshSdfBaker class with BakeMesh() (CPU dense SDF) and UploadToGPU() (R16F 3D texture). MeshSDFData struct for CPU data, MeshSDF struct for GPU handle.
+- [x] 1.3 Implement CPU-side SDF generation: spatial hash accelerated nearest-triangle queries, pseudo-normal sign determination, dense float grid output. No JFA needed — direct distance computation with O(V*T/B) complexity.
 - [ ] 1.4 Implement GPU-accelerated SDF generation (compute shader) for runtime baking — voxelize triangles via conservative rasterization or point splatting, then JFA compute passes.
-- [ ] 1.5 Per-mesh SDF storage: `MeshSDF` struct with 3D texture handle, local-to-SDF transform, resolution, max distance. Cached per mesh asset (bake once, reuse).
+- [x] 1.5 Per-mesh SDF storage: `MeshSDF` struct with R16F 3D texture handle, SRV index, volumeOrigin, volumeExtent, resolution. Created in mesh_sdf_baker.h.
 - [ ] 1.6 SDF atlas: pack multiple mesh SDFs into a single 3D texture atlas (or use individual textures with bindless access). UE5 uses a combined atlas (`DistanceFieldAtlas.cpp:234`).
 
 ## 2. Global Distance Field
@@ -19,6 +19,7 @@
 
 ## 3. SDF Ray Tracer
 
+- [x] 3.0 Create `runtime/shaders/runtime/include/sdf_common.hlsli` — SDF sampling, LineBoxIntersect, SphereMarchMeshSDF utilities. UE5 sources: Common.ush:1883-1903, MeshDistanceFieldCommon.ush:9-38, LumenSoftwareRayTracing.ush:124-259.
 - [ ] 3.1 Read UE5 `LumenTracingCommon.ush` and `LumenHardwareRayTracing.ush` — extract the sphere marching algorithm against the global SDF.
 - [ ] 3.2 Create `runtime/shaders/runtime/gi/sdf_trace_cs.hlsl` — sphere march compute shader. Per ray: start at origin, step by `SampleGlobalSDF(pos)` distance, repeat until hit (distance < epsilon) or max distance.
 - [ ] 3.3 Ray parameters: max distance = cascade 3 extent (~400m), max steps = 64, hit epsilon = 0.5cm. Output: hit position (float3), hit normal (float3 from SDF gradient), hit distance (float).
@@ -70,6 +71,6 @@
 ## 8. Documentation
 
 - [ ] 8.1 Create `docs/specs/rendering/gi-system.md` — full spec for the 3-tier GI system (SDF, radiance cache, SSGI).
-- [ ] 8.2 Create `docs/analysis/dataflow-gi-pipeline.md` — data flow document mapping UE5 Lumen → UzEngine GI.
+- [x] 8.2 Create `docs/analysis/dataflow-sdf-gi-pipeline.md` — data flow document mapping UE5 Lumen → UzEngine GI. Covers all 5 phases (A-E) with UE5 source citations.
 - [ ] 8.3 Update `docs/specs/rendering/renderer.md` — add GI passes to the render pipeline diagram.
 - [ ] 8.4 Update `ROADMAP.md` — mark SSGI as Phase A done, SDF GI as Phase B in progress.

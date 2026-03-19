@@ -20,7 +20,7 @@ When a task involves **3 or more files across different subsystems** (e.g., C++ 
 
 ## The Data Flow Document
 
-Create a markdown file in `docs/analysis/` named `dataflow-<feature>.md` with this structure:
+Create a markdown file in `docs/analysis/dataflow/` named `<feature>.md` with this structure:
 
 ```markdown
 # Data Flow: <Feature Name>
