@@ -94,11 +94,11 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
 
                     LensFlareSettings settings;
                     settings.enabled = true;
-                    settings.intensity = 0.1f;
-                    settings.ghostIntensity = 0.3f;
-                    settings.haloRadius = 0.7f;
-                    settings.haloWidth = 0.05f;
-                    settings.chromaticShift = 0.015f;
+                    settings.intensity = 0.15f;
+                    settings.ghostIntensity = 0.5f;
+                    settings.haloRadius = 0.65f;
+                    settings.haloWidth = 0.04f;
+                    settings.chromaticShift = 0.02f;
                     settings.sunScreenX = capturedSunX;
                     settings.sunScreenY = capturedSunY;
 

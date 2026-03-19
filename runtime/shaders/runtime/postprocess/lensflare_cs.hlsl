@@ -203,7 +203,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
         // High-pass threshold: only very bright bloom pixels generate ghosts.
         // This prevents the entire sky from creating ghost artifacts.
         float ghostLuma = dot(ghostSample, float3(0.299, 0.587, 0.114));
-        ghostSample *= smoothstep(3.0, 8.0, ghostLuma);
+        ghostSample *= smoothstep(1.5, 5.0, ghostLuma);
 
         // Apply per-ghost rainbow tint and edge attenuation.
         ghostAccum += ghostSample * kGhostColors[i] * edgeFade;
@@ -252,7 +252,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
 
             // High-pass: only very bright sources create halo
             float haloLuma = dot(haloSample, float3(0.299, 0.587, 0.114));
-            haloSample *= smoothstep(3.0, 8.0, haloLuma);
+            haloSample *= smoothstep(1.5, 5.0, haloLuma);
 
             haloAccum += haloSample * weight * edgeFade;
         }
