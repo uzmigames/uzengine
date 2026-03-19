@@ -1,56 +1,97 @@
 # UzEngine Analysis Documentation
 
-**Updated**: 2026-03-17
+<!-- doc-meta
+type: index
+category: analysis
+theme: master-index
+title: UzEngine Analysis — Complete Reference Index
+created: 2026-03-17
+updated: 2026-03-19
+status: complete
+author: Claude
+-->
 
-## Directory Structure
+**Updated**: 2026-03-19
 
-```
-docs/analysis/
-├── README.md                    (this file)
-├── materials/                   UE5 material system analysis
-│   ├── QUICK-REFERENCE-MATERIAL-DATA.txt
-│   ├── ue5-material-parameter-system-extraction.md
-│   ├── ue5-material-patterns-uzengine-adaptation.md
-│   └── ue5-material-struct-layouts-concrete.md
-├── rendering-parity/            UE5 vs UzEngine gap analysis + roadmap
-│   ├── VISUAL-IMPACT-SUMMARY.txt
-│   ├── ue5-vs-uzengine-rendering-gap-analysis.md
-│   ├── rendering-roadmap-next-30-days.md
-│   └── code-locations-for-improvements.md
-├── shadows/                     Shadow system analysis
-│   ├── ue5-shadow-darkening-analysis.md
-│   ├── ue5-shadow-parity-debugging-checklist.md
-│   └── ue5-shadow-receiver-bias-implementation.md
-├── application-layer/           App architecture analysis
-│   ├── ue5-application-layer-architecture.md
-│   └── ue5-dx11-readback-analysis.md
-├── rendering/                   Rendering subsystem analysis
-│   ├── atmosphere/              Sky atmosphere + transmittance LUT
-│   ├── shadows/                 CSM + PCSS + DFS analysis
-│   ├── materials/               POM + material analysis
-│   ├── post-process/            Tonemap + volumetrics
-│   ├── debug-visualization/     Buffer viz + debug modes
-│   ├── godot/                   Godot engine reference
-│   └── unity/                   Unity engine reference
-├── rhi/                         RHI abstraction analysis
-│   ├── ue5-cbuffer-layout-dx12-vulkan-analysis.md
-│   ├── ue5-sm5-fallback-patterns.md
-│   └── ue5-vulkan-bindless-analysis.md
-├── architecture/                Godot architecture patterns
-└── general/                     Cross-engine comparisons
-```
+Complete reference documentation for UzEngine rendering analysis, architecture patterns, and parity studies across UE5, Godot, and Unity.
 
-## Current Rendering State (2026-03-17)
+## Directory Structure (10 categories, 132 files)
 
-### Implemented (UE5 parity)
+### Rendering Analysis
+
+- **[atmosphere/](atmosphere/)** (21 files) — Sky rendering, Bruneton atmospheric scattering, transmittance LUT, sky-atmosphere integration, fog systems, SkyLight IBL component
+  - UE5 sky atmosphere system, transmittance LUT generation and sampling, coordinate system mapping, SkyLight component architecture, IBL cubemap capture, integration with height fog
+
+- **[post-process/](post-process/)** (11 files) — Tone mapping, FXAA, volumetric rendering, auto-exposure, color grading, bloom, motion blur, DOF, screen-space effects
+  - Auto-exposure histogram, ACES tone mapping, Frostbite volumetric approach, post-process pipeline integration, frame composition
+
+- **[rendering-pipeline/](rendering-pipeline/)** (10 files) — General rendering architecture, deferred rendering, forward rendering, GBuffer layouts, shader patterns, debug visualization, velocity generation
+  - UE5 rendering systems (depth prepass, shadow passes, base pass, lighting pass), shader compilation, debugging and profiling, view mode buffers, frame analysis
+
+- **[lighting/](lighting/)** (20 files) — Shadow mapping, cascaded shadows, PCSS, distance field shadows, point/spot lights, light transport, reversed-Z depth, skylight ambient
+  - UE5 shadow architecture, cascade selection and artifacts, PCF filtering, soft shadows, shadow receiver bias, static shadow caching, environment component defaults, fog-light integration
+
+### Asset & Platform Analysis
+
+- **[asset-pipeline/](asset-pipeline/)** (4 files) — Texture streaming, shader code library, PSO caching, material platform data, cooking pipeline
+  - UE5 loading architecture, async streaming patterns, texture format cooking (BC7/ASTC), shader bytecode caching, memory-mapped lookups
+
+- **[rhi/](rhi/)** (12 files) — RHI abstraction, constant buffers, bindless resources, shader model 5 fallbacks, Vulkan patterns, DX11/DX12 binding models
+  - UE5 cbuffer layout analysis, SM5 feature detection and fallbacks, Vulkan bindless analysis, resource binding patterns, platform-specific optimizations
+
+### Upscaling & Advanced Rendering
+
+- **[upscaling/](upscaling/)** (8 files) — Temporal super-resolution (TSR), FSR, DLSS, 4K rendering, blend factor tuning, rejection shading
+  - UE5 TSR architecture, blend factor analysis, temporal rejection heuristics, Godot upscaling patterns, frame composition for higher resolutions
+
+### Materials & Shading
+
+- **[materials/](materials/)** (15 files) — Material system architecture, material instances, material parameters, parallax occlusion mapping, shader authoring patterns
+  - UE5 material data model extraction, parameter system, material directory structure, POM implementation (heightmap parallax, ray stepping), material patterns for UzEngine
+
+### Project Parity & Roadmaps
+
+- **[parity/](parity/)** (7 files) — UE5 vs UzEngine rendering gap analysis, visual impact assessment, rendering roadmap, code location references
+  - Gap analysis with visual impact quantification, implementation priorities, code locations for improvements, 30-day roadmap, feature completeness matrix
+
+### Engine Comparison & Architecture
+
+- **[engine-comparison/](engine-comparison/)** (24 files) — Cross-engine architecture analysis (UE5, Godot, Unity), design patterns, rendering device abstractions, platform services
+  - Godot architecture decisions and patterns, UE5 architecture summary, Unity rendering device patterns, D3D12 abstraction layers, application-layer design, scene management architecture
+
+## Quick Navigation
+
+### New to UzEngine Analysis? Start Here
+1. [parity/](parity/) — Current rendering state and gap analysis
+2. [rendering-pipeline/](rendering-pipeline/) — How rendering works end-to-end
+3. [lighting/](lighting/) — Shadow and light systems
+4. [atmosphere/](atmosphere/) — Sky and fog rendering
+
+### Implementing a Specific Feature?
+- **Sky & Fog** → [atmosphere/](atmosphere/)
+- **Shadows & Lights** → [lighting/](lighting/)
+- **Tone Mapping, Bloom, TAA** → [post-process/](post-process/)
+- **Materials & Parallax** → [materials/](materials/)
+- **Upscaling (TSR/FSR)** → [upscaling/](upscaling/)
+- **RHI & Constant Buffers** → [rhi/](rhi/)
+- **Asset Loading** → [asset-pipeline/](asset-pipeline/)
+
+### Studying Engine Architecture?
+- [engine-comparison/](engine-comparison/) — UE5, Godot, Unity patterns
+- [engine-comparison/architecture/](engine-comparison/architecture/) — Application-layer design
+- [engine-comparison/application-layer/](engine-comparison/application-layer/) — Rendering device abstractions
+
+## Current Rendering State (2026-03-19)
+
+### Implemented (UE5 parity ✓)
 - Deferred PBR (GGX + Burley + SmithJoint + multiscatter energy compensation)
-- Cascaded Shadow Maps (4 cascades, per-cascade PCF radius)
+- Cascaded Shadow Maps (4 cascades, per-cascade PCF radius, cascade selection)
 - Distance Field Shadows (atlas, cone trace, tile culling)
-- IBL (irradiance SH L2 + prefiltered specular + BRDF LUT)
+- IBL (irradiance SH L2 + prefiltered specular + BRDF LUT, SkyLight component)
 - Bloom (6-mip pyramid, Karis average, per-stage tints)
 - FilmToneMap (ACES 3-segment, 5 artist params)
 - Sky Atmosphere (Bruneton, multi-scatter LUT, ozone, aerial perspective)
-- Height Fog (2-layer, directional inscattering, sky→fog injection)
+- Height Fog (2-layer, directional inscattering, sky→fog injection, volumetric integration)
 - TAA (Halton jitter, YCoCg clamp, history ping-pong)
 - SSR (Hi-Z ray trace, Fresnel resolve, deferred integration)
 - GTAO (compute pipeline, denoise, temporal, multi-bounce)
@@ -62,12 +103,10 @@ docs/analysis/
 - Motion Blur (velocity gather, depth-aware, adaptive samples)
 - DOF (CoC setup + gather blur)
 
-### Remaining gaps
-- Material system (implementing now)
-- Volumetric fog (froxel)
-- Volumetric clouds
-- Decals (DBuffer)
-- Area lights (LTC)
-- Shading models (SSS, ClearCoat, Hair)
-- LOD system
-- PostProcess volumes
+### Priority Gaps
+- Volumetric clouds (froxel grid, phase functions, lighting)
+- Decals (DBuffer projection, normal blending)
+- Area lights (LTC approximation)
+- Shading models (subsurface scattering, clear coat, hair)
+- LOD system (distance-based, screen-coverage metrics)
+- Post-process volumes (blendable parameters, camera triggers)

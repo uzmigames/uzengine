@@ -1,191 +1,85 @@
 <!-- doc-meta
-{
-  "author": "Claude Code",
-  "date": "2026-03-16",
-  "status": "final",
-  "priority": "P0",
-  "version": "1.0"
-}
+type: index
+category: analysis
+theme: rhi
+title: RHI & GPU Abstraction Analysis — Constant Buffers, Bindless, SM5
+created: 2026-03-19
+updated: 2026-03-19
+status: complete
+author: Claude
 -->
 
-# RHI Analysis: UE5 Patterns for UzEngine
+# RHI & GPU Abstraction Analysis
 
-This directory contains detailed architectural analyses of UE5 rendering systems, with focus on extracting patterns that UzEngine can adapt.
+Complete analysis of RHI (Render Hardware Interface) abstraction, constant buffer systems, bindless resources, shader model 5 fallbacks, and platform-specific patterns.
 
-## SM5 (Feature Level 11_0 / DX11) Fallback Patterns
+## Files
 
-**Problem**: UE5 supports older hardware (D3D11, mobile) that lacks compute shaders and bindless resources. How?
+- [cbuffer-quick-reference.md](cbuffer-quick-reference.md) — Quick reference for constant buffer layout and binding
+- [godot-rendering-device-resource-states.md](godot-rendering-device-resource-states.md) — Godot's RenderingDevice resource state management
+- [godot-renderingdevice-architecture.md](godot-renderingdevice-architecture.md) — Godot's RenderingDevice abstraction architecture
+- [index.md](index.md) — RHI analysis index
+- [ue5-cbuffer-layout-dx12-vulkan-analysis.md](ue5-cbuffer-layout-dx12-vulkan-analysis.md) — Constant buffer layout analysis for DX12 and Vulkan
+- [ue5-sm5-code-patterns.md](ue5-sm5-code-patterns.md) — SM5 (Shader Model 5) code patterns and idioms
+- [ue5-sm5-decision-tree.md](ue5-sm5-decision-tree.md) — Decision tree for SM5 feature availability and fallback paths
+- [ue5-sm5-fallback-patterns.md](ue5-sm5-fallback-patterns.md) — Patterns for graceful degradation on SM5 hardware
+- [ue5-sm5-summary.md](ue5-sm5-summary.md) — Summary of SM5 capabilities and limitations
+- [ue5-uniform-buffer-shader-binding-system.md](ue5-uniform-buffer-shader-binding-system.md) — UE5's uniform buffer binding and shader parameter system
+- [ue5-vulkan-bindless-analysis.md](ue5-vulkan-bindless-analysis.md) — Vulkan bindless resource binding analysis and techniques
 
-**Answer**: Pre-compute everything offline, load at runtime. This directory documents the exact patterns UE5 uses.
+## Quick Navigation
 
-### Documents
+### Understanding RHI Abstraction?
+1. [godot-renderingdevice-architecture.md](godot-renderingdevice-architecture.md) — Godot RHI pattern
+2. [ue5-cbuffer-layout-dx12-vulkan-analysis.md](ue5-cbuffer-layout-dx12-vulkan-analysis.md) — Buffer layout cross-platform
+3. [ue5-uniform-buffer-shader-binding-system.md](ue5-uniform-buffer-shader-binding-system.md) — Parameter binding
 
-1. **ue5-sm5-summary.md** — START HERE
-   - Answers to 8 key questions about SM5 support
-   - Quick statistics and values
-   - Critical design decisions for UzEngine
-   - **Read this first (5 min)**
+### Constant Buffers & Binding?
+- [cbuffer-quick-reference.md](cbuffer-quick-reference.md) — Quick reference
+- [ue5-cbuffer-layout-dx12-vulkan-analysis.md](ue5-cbuffer-layout-dx12-vulkan-analysis.md) — Layout analysis
 
-2. **ue5-sm5-fallback-patterns.md** — DETAILED ANALYSIS
-   - Full architectural breakdown of each subsystem
-   - Auto-exposure (histogram + fallback)
-   - BRDF LUT, irradiance SH, prefiltered specular
-   - Deferred lighting GBuffer binding
-   - Feature level detection patterns
-   - **Read this for deep understanding (20 min)**
+### SM5 Fallbacks?
+- [ue5-sm5-summary.md](ue5-sm5-summary.md) — SM5 capabilities
+- [ue5-sm5-decision-tree.md](ue5-sm5-decision-tree.md) — Feature detection
+- [ue5-sm5-fallback-patterns.md](ue5-sm5-fallback-patterns.md) — Fallback patterns
+- [ue5-sm5-code-patterns.md](ue5-sm5-code-patterns.md) — Code examples
 
-3. **ue5-sm5-code-patterns.md** — CONCRETE CODE
-   - C++ and HLSL code examples from UE5 source
-   - Feature level gating patterns
-   - Auto-exposure fallback computation
-   - BRDF LUT offline baking
-   - SH irradiance buffer management
-   - GBuffer static binding patterns
-   - Register allocation (SM5 vs SM6)
-   - **Read this when implementing (30 min)**
+### Bindless Resources?
+- [ue5-vulkan-bindless-analysis.md](ue5-vulkan-bindless-analysis.md) — Vulkan bindless techniques
 
-4. **ue5-sm5-decision-tree.md** — IMPLEMENTATION GUIDE
-   - Visual decision tree for each feature
-   - Feature level decision matrix
-   - Implementation checklist by subsystem
-   - Platform-specific variations (D3D11, D3D12, Vulkan)
-   - Debug checklist for common issues
-   - Validation checklist before shipping
-   - **Reference this while coding (ongoing)**
+### Godot's Approach?
+- [godot-renderingdevice-architecture.md](godot-renderingdevice-architecture.md) — Architecture
+- [godot-rendering-device-resource-states.md](godot-rendering-device-resource-states.md) — Resource states
 
-### Key Findings
+## Key Concepts
 
-#### Auto-Exposure
-- **SM5+**: Histogram compute shader → structured buffer (single thread group, 1x1x1)
-- **Fallback**: Fixed exposure = `(MinLum + MaxLum) / 2 / 0.18 ≈ 11.8×` brightness
-- **Feature check**: `IsFeatureLevelSupported(Platform, ERHIFeatureLevel::SM5)`
+### RHI Abstraction
+- **Platform abstraction**: DX11, DX12, Vulkan behind common interface
+- **Resource management**: Textures, buffers, samplers, render targets
+- **Pipeline state**: PSO caching, shader compilation, variant management
+- **Command recording**: Deferred rendering via command buffers/lists
 
-#### IBL Maps (BRDF, Irradiance, Prefiltered)
-- **No runtime generation on SM5** — all pre-baked offline
-- **BRDF LUT**: 256×256 RG16F, loaded from disk at startup
-- **Irradiance**: 9 SH coefficients packed as 7 float4s, pre-computed at level load
-- **Prefiltered**: 128×128 cubemap with 8 mips, sampled by roughness
+### Constant Buffers (CBuff)
+- **Root constants**: Small inline data (root signature, DX12 only)
+- **Constant buffers**: 256-byte aligned blocks of uniform data
+- **Layout rules**: Padding, alignment, row-major vs. column-major
+- **Binding**: Descriptors/slots for shader access
+- **Update**: CPU writes, GPU reads with proper synchronization
 
-#### Deferred Lighting
-- **GBuffer binding**: 8 named textures (t0-t7) register-bound at once (D3D11 limitation)
-- **Static samplers**: PointClamp (s0), no per-material variation
-- **IBL textures**: BRDF (t8), reflection captures (t9), sky irradiance (t10)
-- **No bindless indirection** — all registers allocated statically
+### Bindless Resources
+- **Descriptor tables**: Arrays of descriptors (Vulkan descriptor arrays, DX12 descriptor heaps)
+- **Dynamic indexing**: Shaders index into arrays via run-time values
+- **Advantages**: Reduces binding overhead, more flexible material parameters
+- **Trade-offs**: Performance varies by platform, requires careful layout
 
-#### Platform Support
-| Feature | SM5 (D3D11) | SM6 (D3D12) | SM6.6 (Bindless) |
-|---------|-----------|-----------|-----------------|
-| Auto-exposure | Histogram CS | Histogram CS | Histogram CS |
-| Fallback | Fixed 11.8× | Fixed 11.8× | Dynamic |
-| BRDF LUT | Pre-baked | Pre-baked | Pre-baked |
-| Irradiance | Buffer upload | Buffer upload | Dynamic compute |
-| Binding | Register slots | Register slots | GPU-driven |
+### SM5 (Shader Model 5)
+- **Generation**: DX11 generation (Fermi, Kepler, etc.)
+- **Missing features**: Typed UAVs, 64-bit operations, indirect dispatch
+- **Fallbacks**: Compute dispatches fixed size, UAV formats limited
+- **Detection**: Query device feature level at runtime
 
-### Source Files Analyzed
-
-**Auto-Exposure** (Eye Adaptation):
-- `W:\UE_5.6_Source\Engine\Source\Runtime\Renderer\Private\PostProcess\PostProcessEyeAdaptation.cpp` (1400+ lines)
-  - `GetBasicEyeAdaptationMinFeatureLevel()` — line 169
-  - `GetEyeAdaptationFixedExposure()` — line 567
-  - `AddHistogramEyeAdaptationPass()` — line 825
-  - `UpdatePreExposure()` — line 1197
-
-**IBL / Reflection Environment**:
-- `W:\UE_5.6_Source\Engine\Source\Runtime\Renderer\Private\ReflectionEnvironment.cpp` (715 lines)
-  - `SetupSkyIrradianceEnvironmentMapConstantsFromSkyIrradiance()` — line 623
-  - `FReflectionEnvironmentCubemapArray::InitRHI()` — line 148
-  - `UpdateSkyIrradianceGpuBuffer()` — line 671
-
-**Deferred Lighting**:
-- `W:\UE_5.6_Source\Engine\Shaders\Private\DeferredShadingCommon.ush` (250+ lines)
-  - GBuffer texture declarations — lines 32-51
-  - Static sampler definitions — lines 44-51
-- `W:\UE_5.6_Source\Engine\Shaders\Private\DeferredLightPixelShaders.usf`
-  - Deferred light pass entry point — line 230
-  - Shadow atlas access — lines 123-149
-
-### Design Pattern: "Offline-First"
-
-UE5 uses this architectural pattern for SM5 support:
-
-```
-┌─ Content Pipeline (Edit-Time)
-│  ├─ Bake BRDF LUT (256×256)
-│  ├─ Project environment to SH (9 coefficients)
-│  └─ Prefilter cubemap (8 mips)
-│
-└─ Runtime (Engine)
-   ├─ Load pre-baked textures from disk
-   ├─ Upload SH coefficients to GPU buffer
-   └─ Use fixed exposure fallback if no histogram
-```
-
-**Benefits**:
-- Zero runtime overhead on SM5
-- Same offline pipeline for all platforms
-- Predictable, baked-in quality
-- No dynamic generation bottlenecks
-
-**Trade-offs**:
-- Can't change lighting dynamically at runtime
-- Requires offline pre-processing step
-- Less flexible for content creators
-
-### Recommendations for UzEngine
-
-1. **Keep compute shader path** for histogram (currently working for SM6+)
-2. **Add pixel shader fallback** for mobile/SM5 with single-value exposure readback
-3. **Pre-bake BRDF LUT offline** using IblBaker compute shader on dev machine
-4. **Store SH as 7 float4 structured buffer** (9 coefficients, pre-multiplied)
-5. **Use fixed exposure fallback** = 11.8× when histogram unavailable
-6. **Register-bind GBuffer textures** (no dynamic indirection on SM5)
-7. **Load prefiltered cubemaps from disk** at level load (8 mips for 128×128)
-
-### Implementation Order
-
-For UzEngine SM5 support, implement in this order:
-
-1. **Feature level detection** — `SupportsComputeShaders()`, `SupportsBindless()`
-2. **Exposure fallback** — Fixed calculation, cache in View.PreExposure
-3. **GBuffer binding** — Register-based slots, static samplers
-4. **BRDF LUT loading** — Pre-baked texture from disk
-5. **Irradiance SH** — Structured buffer upload at level load
-6. **Prefiltered specular** — Cubemap mip sampling by roughness
-7. **Visual validation** — Screenshot comparison against UE5
-
----
-
-## Other RHI Analyses
-
-(To be added as more analyses are completed)
-
-### Related Documents
-
-- `docs/architecture/` — Architectural decision records
-- `docs/specs/rendering/` — Rendering subsystem specifications
-- `docs/guides/shader-authoring.md` — Shader development guide
-
----
-
-## Citation
-
-When using patterns from these documents in UzEngine code, cite the UE5 source:
-
-```cpp
-// Adapted from UE5 5.6 source:
-// W:\UE_5.6_Source\Engine\Source\Runtime\Renderer\Private\PostProcess\PostProcessEyeAdaptation.cpp
-// GetEyeAdaptationFixedExposure() — line 567
-float ComputeFixedExposure(float min_lum, float max_lum) {
-    // ... implementation ...
-}
-```
-
----
-
-## Questions?
-
-Refer to the decision tree in `ue5-sm5-decision-tree.md` for quick answers while implementing.
-
-For deep dives, start with `ue5-sm5-summary.md` then read `ue5-sm5-fallback-patterns.md`.
-
-Code examples are in `ue5-sm5-code-patterns.md`.
+### Resource States
+- **Read**: SRV (Shader Resource View), constant buffer read
+- **Write**: UAV (Unordered Access View), render target, depth target
+- **Transitions**: Barriers between passes for synchronization
+- **Hazards**: RAW, WAR, WAW data races require careful management
