@@ -104,9 +104,13 @@ struct SkyLightComponent {
     /// UE5 default: 1000 cm.
     float occlusionMaxDistance = 1000.0f;
 
-    /// Minimum occlusion value (0-1). Prevents fully black AO shadows.
-    /// 0 = allow full occlusion, 1 = no occlusion. UE5 default: 0.
-    float minOcclusion = 0.0f;
+    /// Minimum occlusion value (0-1). Prevents fully black shadows in areas
+    /// where the SkyLight SH cannot fully reach. UE5 default: 0, but UE5's
+    /// SkyLight captures the full sky hemisphere including clouds which provides
+    /// strong indirect fill. Our procedural sky SH may be weaker, so default
+    /// to 0.1 to match visual parity with UE5's default scene appearance.
+    /// @source UE5 SkyLightComponent.h — MinOcclusion
+    float minOcclusion = 0.1f;
 
     /// Tint color applied to occluded areas.
     /// (0,0,0) = pure black in AO. Use (0.05, 0.05, 0.1) for colored fill.

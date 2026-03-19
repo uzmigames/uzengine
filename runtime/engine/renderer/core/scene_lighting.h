@@ -49,7 +49,7 @@ struct SceneLighting {
     ///
     /// Represents indirect illumination. Keep low (0.01–0.1) for outdoor
     /// scenes. Higher values flatten contrast.
-    Vec3 ambientColor = {0.03f, 0.03f, 0.05f};
+    Vec3 ambientColor = {0.08f, 0.09f, 0.12f};
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
