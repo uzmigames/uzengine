@@ -54,7 +54,11 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
     }
 
     // ── Lens Flare pass (after bloom, uses bloom threshold as input) ────
-    if (m_lensFlarePass && m_lensFlarePass->IsInitialized() && ctx.bloomEnabled
+    // DISABLED: Lens flare needs sun screen-space position + occlusion query
+    // to only generate ghosts when looking toward the sun. Currently triggers
+    // from any bright pixel (specular highlights, etc.) which is incorrect.
+    // TODO: implement sun occlusion query + directional ghost generation.
+    if (false && m_lensFlarePass && m_lensFlarePass->IsInitialized() && ctx.bloomEnabled
         && m_bloomPass && m_bloomPass->GetBloomResultSrvIndex() != UINT32_MAX
         && m_shadowDebugMode == 0) {
         rgBuilder.AddPass("LensFlare", [&](rg::RgPassBuilder& pb) {
