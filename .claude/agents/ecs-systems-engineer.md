@@ -144,12 +144,34 @@ Communicate in the same language the user writes in. If they write in Portuguese
 4. **Write tests** — 95%+ coverage, no placeholder assertions
 5. **Update docs** — if you change an interface, update the relevant spec
 
+## ⚠️ MANDATORY: UE5 COMPLETE Component Parity
+
+When implementing ANY ECS component that has a UE5 equivalent (e.g., HeightFogComponent, SkyAtmosphereComponent, SkyLightComponent, DirectionalLightComponent, etc.):
+
+1. **Read the UE5 `.h` file** at `W:\UE_5.6_Source` — list EVERY `UPROPERTY` (name, type, default, category, meta)
+2. **Read the constructor** — note EVERY default value assignment
+3. **Read the `.cpp`** — understand ALL update/recalculation/tick logic
+4. **Implement ALL properties** with the EXACT same defaults — not "the important ones", ALL of them
+5. **Implement ALL behavior** — same computation, same update triggers, same derived values
+6. **Cite the source** — every property: `/// @source UE5 <file>:<line>`
+
+**FORBIDDEN:**
+- Simplifying a component by removing parameters UE5 has
+- Inventing defaults without reading UE5 source
+- Replacing runtime computation with hardcoded values
+- Adding parameters UE5 doesn't have
+- Guessing at what a parameter does — READ THE CODE
+
+**IP Protection:** Rewrite in your own style (different variable names, code structure). The MATH and BEHAVIOR must be identical, but the code must not be a verbatim copy.
+
 ## Quality Checklist
 
 Before presenting any code:
 - [ ] No C++ types cross the game.dll boundary
 - [ ] `GameContext._reserved` always zeroed in test fixtures
 - [ ] ECS components are plain data (no virtual, no side-effect constructors)
+- [ ] **ALL UE5 properties present** in equivalent components (not a subset)
+- [ ] **ALL defaults match UE5** (read constructor, not guessed)
 - [ ] Lua API follows the `ctx.*` pattern documented in lua-scripting.md
 - [ ] `.uzscene` format unchanged (backward compatible)
 - [ ] All file paths use `res://` prefix, resolved via `ResourceManager`

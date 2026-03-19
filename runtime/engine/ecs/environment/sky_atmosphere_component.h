@@ -97,8 +97,8 @@ struct SkyAtmosphereComponent {
     // ── Ground ─────────────────────────────────────────────────────────────
 
     /// Ground albedo — affects sky brightness near horizon.
-    /// UE5 default: (0.3, 0.3, 0.3) (sRGB ~0.3 linear).
-    Vec3 groundAlbedo = {0.3f, 0.3f, 0.3f};
+    /// @source UE5 SkyAtmosphereComponent.cpp:103 — FColor(170,170,170) = ~0.4 linear
+    Vec3 groundAlbedo = {0.4f, 0.4f, 0.4f};
 
     // ── Ozone (Other Absorption) ────────────────────────────────────────────
 

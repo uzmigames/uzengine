@@ -298,7 +298,8 @@ void PBRTest::OnStart() {
         light.color              = {1.0f, 1.0f, 1.0f};
         light.intensity          = 10.0f;
         light.atmosphereSunLight = true;
-        light.lightSourceAngle   = 2.0f;  // Wider than real sun (0.5357°) for softer artistic shadows
+        /// @source UE5 DirectionalLightComponent.cpp:1024 — LightSourceAngle = 0.5357 (Earth's sun)
+        light.lightSourceAngle   = 0.5357f;
         light.useTemperature     = false;
     }
 
@@ -338,7 +339,8 @@ void PBRTest::OnStart() {
         atmo.mieScaleHeightKm       = 1.2f;
         atmo.sunIlluminance         = {10.0f, 10.0f, 10.0f};
         atmo.skyLuminanceFactor     = {1.0f, 1.0f, 1.0f};
-        atmo.groundAlbedo           = {0.667f, 0.667f, 0.667f};
+        /// @source UE5 SkyAtmosphereComponent.cpp:103 — FColor(170,170,170) = ~0.4 linear
+        atmo.groundAlbedo           = {0.4f, 0.4f, 0.4f};
         atmo.heightFogContribution  = 1.0f;
     }
 
@@ -348,14 +350,16 @@ void PBRTest::OnStart() {
         auto& scene = world.AddComponent<SceneComponent>(skyLightEnt);
         scene.SetPosition({0.f, 0.f, 690.f});
         auto& sl = world.AddComponent<SkyLightComponent>(skyLightEnt);
-        sl.intensity                 = 1.0f;       /// @source UE5 SkyLightComponent.cpp:1195
-        sl.indirectLightingIntensity = 1.0f;       /// @source UE5 SkyLightComponent.cpp:1196
-        sl.lightColor                = {0.85f, 0.9f, 1.0f}; // Slight blue tint from sky — fills shadows with sky color
-        sl.realTimeCapture           = false;
+        /// @source UE5 SkyLightComponent.cpp:285-333 — all defaults
+        sl.intensity                 = 1.0f;       ///< @source UE5 SkyLightComponent.cpp:300
+        sl.indirectLightingIntensity = 1.0f;       ///< @source UE5 SkyLightComponent.cpp:301
+        sl.lightColor                = {1.0f, 1.0f, 1.0f}; ///< UE5 default: white
+        sl.realTimeCapture           = false;      ///< @source UE5 SkyLightComponent.cpp:322
         sl.sourceType                = ESkyLightSourceType::CapturedScene;
-        sl.cubemapResolution         = 128;
-        sl.lowerHemisphereIsBlack    = false;  // Allow ambient from below for better shadow fill
-        sl.minOcclusion              = 0.15f;  // Prevents fully black shadows — UE5 default 0.0 but 0.15 gives better fill
+        sl.cubemapResolution         = 128;        ///< @source UE5 SkyLightComponent.cpp:311
+        sl.lowerHemisphereIsBlack    = true;       ///< @source UE5 SkyLightComponent.cpp:304
+        sl.lowerHemisphereColor      = {0.0f, 0.0f, 0.0f}; ///< @source UE5 SkyLightComponent.cpp:312
+        sl.minOcclusion              = 0.0f;       ///< @source UE5 SkyLightComponent.cpp:308
     }
 
     // ── Exponential Height Fog ───────────────────────────────────────────
@@ -364,30 +368,24 @@ void PBRTest::OnStart() {
         auto& scene = world.AddComponent<SceneComponent>(fog);
         scene.SetPosition({0.f, 0.f, 0.f});
         auto& fogComp = world.AddComponent<HeightFogComponent>(fog);
-        /// @source UE5 Basic.json export — ExponentialHeightFog_0
-        ///   FogDensity=0.0436 (from Inspector screenshot)
-        ///   FogHeightFalloff=0.2
-        ///   Actor position Z=-5000 (baseHeight equivalent)
-        ///   FogInscatteringColor=black
-        ///   StartDistance=0
-        /// With baseHeight=-5000 and falloff=0.2, density at ground (Z=0):
-        ///   0.0436 * exp2(-0.2 * 5000) ≈ 0 — no visible fog on nearby geometry.
-        ///   Fog only accumulates over very long horizontal rays (sky distance),
-        ///   creating the smooth horizon haze gradient.
-        /// @source UE5 ExponentialHeightFogComponent defaults
-        fogComp.density         = 0.02f;     ///< @source UE5 default FogDensity
-        fogComp.heightFalloff   = 0.002f;    ///< Low falloff — fog persists at camera altitude
-        fogComp.baseHeight      = -500.f;    ///< Below scene — fog fills from below
-        fogComp.maxOpacity      = 1.0f;
-        fogComp.startDistance    = 0.f;
-        fogComp.fogCutoffDistance = 0.f;
-        /// @source UE5 ExponentialHeightFogComponent — FogInscatteringLuminance
-        /// UE5 default inscattering color is a sky-blue haze that fills the distance.
-        fogComp.color            = {0.448f, 0.639f, 1.0f};
-        /// @source UE5 ExponentialHeightFogComponent — DirectionalInscatteringColor
-        fogComp.directionalInscatteringColor      = {1.0f, 0.9f, 0.7f};
-        fogComp.directionalInscatteringExponent   = 4.0f;  ///< @source UE5 default
-        fogComp.directionalInscatteringStartDistance = 10000.f;
+        /// @source UE5 ExponentialHeightFogComponent.cpp:64-103 — modern defaults
+        /// FogInscatteringLuminance = black (line 68), color comes from SkyAtmosphere injection
+        /// DirectionalInscatteringLuminance = black (line 75)
+        /// The DEPRECATED values (0.447, 0.638, 1.0) are pre-SkyAtmosphere and must NOT be used
+        fogComp.density         = 0.02f;     ///< @source UE5 ExponentialHeightFogComponent.cpp:81
+        fogComp.heightFalloff   = 0.2f;      ///< @source UE5 ExponentialHeightFogComponent.cpp:82
+        fogComp.baseHeight      = 0.f;       ///< Actor Z position (scene.SetPosition above)
+        fogComp.maxOpacity      = 1.0f;      ///< @source UE5 ExponentialHeightFogComponent.cpp:86
+        fogComp.startDistance    = 0.f;       ///< @source UE5 ExponentialHeightFogComponent.cpp:87
+        fogComp.fogCutoffDistance = 0.f;      ///< @source UE5 ExponentialHeightFogComponent.cpp:91
+        /// @source UE5 ExponentialHeightFogComponent.cpp:68 — FogInscatteringLuminance = black
+        /// Sky atmosphere injection (skyAtmContribColorScale * heightFogContribution * skyLightColor)
+        /// provides all fog color when SkyAtmosphereComponent exists.
+        fogComp.color            = {0.0f, 0.0f, 0.0f};
+        /// @source UE5 ExponentialHeightFogComponent.cpp:75 — DirectionalInscatteringLuminance = black
+        fogComp.directionalInscatteringColor      = {0.0f, 0.0f, 0.0f};
+        fogComp.directionalInscatteringExponent   = 4.0f;  ///< @source UE5 ExponentialHeightFogComponent.cpp:72
+        fogComp.directionalInscatteringStartDistance = 10000.f; ///< @source UE5 ExponentialHeightFogComponent.cpp:73
     }
 
     // ── Screen percentage (render at lower internal resolution) ────────

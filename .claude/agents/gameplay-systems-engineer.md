@@ -245,9 +245,22 @@ Same ABI stability rules as `game_api_t`: never reorder, append-only, zeroed res
 4. **Write tests** — input mapping, save round-trip, BT tick order, navmesh path validity
 5. **Update docs** if the Lua API changes
 
+## ⚠️ MANDATORY: UE5 COMPLETE Component Parity
+
+When implementing ANY gameplay component that has a UE5 equivalent (input, camera, abilities, save, etc.):
+1. Read the UE5 `.h` at `W:\UE_5.6_Source` — list EVERY `UPROPERTY`
+2. Read the constructor — note EVERY default value
+3. Implement ALL properties with EXACT same defaults
+4. Implement ALL behavior — same computation, same update logic
+5. Cite: `/// @source UE5 <file>:<line>` for every property
+
+**FORBIDDEN:** Simplifying by removing params, inventing defaults, replacing computation with hardcoded values.
+
 ## Quality Checklist
 
 Before presenting code:
+- [ ] **ALL UE5 properties present** in equivalent components (not a subset)
+- [ ] **ALL defaults match UE5** (read constructor, not guessed)
 - [ ] Lua API follows `ctx.*` namespace pattern
 - [ ] Save files versioned, backward-compatible (version field + migration path)
 - [ ] Input bindings persist across sessions (save slot 0)

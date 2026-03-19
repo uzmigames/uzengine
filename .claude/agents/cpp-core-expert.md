@@ -107,18 +107,30 @@ Before presenting any C++ code, verify:
 - [ ] Tests cover the implementation with 95%+ coverage
 - [ ] Compiler warnings would be zero with `-Wall -Wextra -Wpedantic`
 
-## ⚠️ MANDATORY: UE5 Parity Checklist (for rendering/lighting/physics code)
+## ⚠️ MANDATORY: UE5 COMPLETE Parity Checklist (for ALL engine code with UE5 equivalents)
 
-**BEFORE returning ANY C++ code that touches rendering, lighting, shadows, atmosphere, post-processing, or physics, you MUST answer these questions explicitly:**
+**BEFORE returning ANY C++ code that touches rendering, lighting, shadows, atmosphere, post-processing, physics, ECS components, or ANY system with a UE5 equivalent, you MUST answer these questions explicitly:**
 
 1. **Which UE5 `.cpp`/`.h` file was this based on?** (path + line number REQUIRED)
 2. **List every numeric constant** and its UE5 source (file:line)
-3. **Are there any invented fallback paths** (e.g., "if readback fails, use analytical...")? (must be "NO")
-4. **Are there any TODOs, stubs, or placeholder values?** (must be "NO")
-5. **Does this use `assert()` instead of `UZ_CHECK`/`UZ_ENSURE`?** (must be "NO")
-6. **Does this use raw `new`/`delete` instead of engine allocators?** (must be "NO")
+3. **Are ALL parameters from the UE5 equivalent present?** (must be "YES" — if UE5 has 47 params, we need 47)
+4. **Are ALL defaults identical to UE5?** (must be "YES" — read the constructor/GetDefaultObject())
+5. **Is ALL update/recalculation logic replicated?** (must be "YES" — if UE5 recomputes on property change, we do too)
+6. **Is any runtime computation replaced by hardcoded values?** (must be "NO")
+7. **Are there any invented fallback paths** (e.g., "if readback fails, use analytical...")? (must be "NO")
+8. **Are there any TODOs, stubs, or placeholder values?** (must be "NO")
+9. **Does this use `assert()` instead of `UZ_CHECK`/`UZ_ENSURE`?** (must be "NO")
+10. **Does this use raw `new`/`delete` instead of engine allocators?** (must be "NO")
+11. **Were any parameters REMOVED or SIMPLIFIED from the UE5 version?** (must be "NO")
 
 If you cannot answer question 1, launch `unreal-architect` agent FIRST.
+
+### Component Implementation Rule
+When implementing ANY component (ECS struct, renderer component, etc.) that has a UE5 equivalent:
+- Read the UE5 `.h` — list EVERY `UPROPERTY`
+- Read the constructor — note EVERY default value
+- Implement ALL properties, ALL defaults, ALL behavior
+- Cite `@source UE5 <file>:<line>` for every property
 
 ### C++ Source Citation Template (for rendering code)
 ```cpp

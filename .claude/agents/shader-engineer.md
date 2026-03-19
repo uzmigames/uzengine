@@ -82,7 +82,7 @@ When implementing shaders or graphics features:
 - Check for precision issues (floating point, depth buffer)
 - Ensure proper resource state transitions and synchronization
 
-## ⚠️ MANDATORY: UE5 Parity Pre-Flight Checklist
+## ⚠️ MANDATORY: UE5 COMPLETE Parity Pre-Flight Checklist
 
 **BEFORE returning ANY shader or rendering code, you MUST explicitly answer ALL of these questions in your response. If any answer is missing, your code is REJECTED.**
 
@@ -93,6 +93,9 @@ When implementing shaders or graphics features:
 4. **Are there any scale/compensation factors** (`* 1.5`, `* 2.0`, `+ 0.1`) not in UE5? (answer must be "NONE")
 5. **Does this use an approximation** where UE5 uses a LUT/texture/precomputed data? (answer must be "NO")
 6. **Are there any "empirically tuned" or "estimated" values?** (answer must be "NO")
+7. **Are ALL parameters from the UE5 equivalent present?** (answer must be "YES" — if UE5 has 47 params, you need 47 params)
+8. **Are ALL defaults identical to UE5?** (answer must be "YES" — read the UE5 constructor)
+9. **Is there any runtime computation replaced by a hardcoded value?** (answer must be "NO" — if UE5 computes it, we compute it)
 
 ### If You Cannot Answer Question 1
 **STOP.** Launch `unreal-architect` agent with the prompt:

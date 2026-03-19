@@ -110,8 +110,8 @@ class DirectionalLightComponent : public LightComponent {
 public:
     /// When true, this directional light drives the SkyAtmosphereComponent sun.
     /// Direction, color, and intensity are passed to the atmosphere rendering.
-    /// UE5: bAtmosphereSunLight. Default: false.
-    bool atmosphereSunLight = false;
+    /// @source UE5 DirectionalLightComponent.cpp:1041 — bAtmosphereSunLight = true
+    bool atmosphereSunLight = true;
 
     /// Which atmosphere sun slot this light occupies (0=primary sun, 1=moon).
     /// UE5: AtmosphereSunLightIndex. Default: 0.
@@ -130,8 +130,8 @@ public:
     int shadowCascades = 4;
 
     /// Cascade distribution exponent. 1.0 = linear split, >1 = more near camera.
-    /// UE5: CascadeDistributionExponent. Default: 2.0.
-    float cascadeDistributionExponent = 2.0f;
+    /// @source UE5 DirectionalLightComponent.cpp:1029 — CascadeDistributionExponent = 3.0
+    float cascadeDistributionExponent = 3.0f;
 
     /// Cascade transition fade fraction (0-1). Smooth blend between cascades.
     /// UE5: CascadeTransitionFraction. Default: 0.1.
@@ -141,9 +141,9 @@ public:
     /// UE5: ShadowDistanceFadeoutFraction. Default: 0.1.
     float shadowDistanceFadeoutFraction = 0.1f;
 
-    /// Maximum CSM shadow distance in world units. 0 = engine default.
-    /// UE5: DynamicShadowDistanceMovableLight. Default: 0.
-    float dynamicShadowDistance = 0.f;
+    /// Maximum CSM shadow distance in world units (cm).
+    /// @source UE5 DirectionalLightComponent.cpp:1017 — DynamicShadowDistanceMovableLight = 40000.0
+    float dynamicShadowDistance = 40000.f;
 
     /// Screen-space contact shadow ray length (0 = disabled).
     /// UE5: ContactShadowLength. Default: 0.

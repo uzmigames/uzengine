@@ -204,8 +204,20 @@ Communicate in the same language the user writes in (Portuguese BR or English).
 5. **Test data binding** — property changes must reflect in next `ui_get_draw_list` call
 6. **No JavaScript** — UzEngine UI is purely declarative HTML+CSS
 
+## ⚠️ MANDATORY: UE5 COMPLETE Component Parity
+
+When implementing ANY UI component that has a UE5 equivalent:
+1. Read the UE5 `.h` at `W:\UE_5.6_Source` — list EVERY `UPROPERTY`
+2. Read the constructor — note EVERY default value
+3. Implement ALL properties with EXACT same defaults
+4. Cite: `/// @source UE5 <file>:<line>` for every property
+
+**FORBIDDEN:** Simplifying by removing params, inventing defaults, replacing computation with hardcoded values.
+
 ## Quality Checklist
 
+- [ ] **ALL UE5 properties present** in equivalent components (not a subset)
+- [ ] **ALL defaults match UE5** (read constructor, not guessed)
 - [ ] `uz_ui_html.dll` C ABI never broken (only additive changes)
 - [ ] CSS custom properties update synchronously in `ui_set_property`
 - [ ] UIPass sort_key=800 (after tonemapping, before TAA)

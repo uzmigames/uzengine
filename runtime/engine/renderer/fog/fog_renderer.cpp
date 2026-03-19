@@ -44,11 +44,14 @@ void AddHeightFogFromECS(
         auto& fogComp = fogView.get<HeightFogComponent>(enttEntity);
         if (!fogComp.enabled) continue;
 
-        // UE5 (FSceneRenderer::InitFogConstants):
-        //   ExponentialFogParameters.x = FogDensity * exp2(-FogHeightFalloff * (CamZ - FogHeight))
+        /// @source UE5 FogRendering.cpp:223-253 — InitFogConstants
+        /// MaxObserverHeightDifference clamp prevents fog from vanishing at high camera Z.
+        /// UE5: ObserverHeight = min(CameraZ, FogHeight + 65536.0f)
+        constexpr float kMaxObserverHeightDiff = 65536.0f;
         float camZ = camera.GetPosition().z;
-        float fogHeightDiff = camZ - fogComp.baseHeight;
-        float clampedPower = std::max(-126.f, -fogComp.heightFalloff * fogHeightDiff);
+        float observerHeight = std::min(camZ, fogComp.baseHeight + kMaxObserverHeightDiff);
+        float fogHeightDiff = observerHeight - fogComp.baseHeight;
+        float clampedPower = std::clamp(-fogComp.heightFalloff * fogHeightDiff, -126.f + 1.f, 127.f - 1.f);
         float rayOriginTerms = fogComp.density * std::pow(2.0f, clampedPower);
 
         HeightFogCB fogCB{};
@@ -59,6 +62,10 @@ void AddHeightFogFromECS(
         fogCB.fogMaxOpacity    = fogComp.maxOpacity;
         fogCB.fogStartDistance = fogComp.startDistance;
         fogCB.fogCutoffDistance = fogComp.fogCutoffDistance;
+        /// @source UE5 FogRendering.cpp:257 — ExponentialFogParameters.z = MaxObserverHeight
+        fogCB.maxObserverHeight = fogComp.baseHeight + kMaxObserverHeightDiff;
+        /// @source UE5 FogRendering.cpp:261 — ExponentialFogParameters3.x = raw density
+        fogCB.rawDensity = fogComp.density;
 
         // @source UE5 FogRendering.cpp:245-254 — InitFogConstants
         // Second layer precomputation identical to first layer:
@@ -66,9 +73,9 @@ void AddHeightFogFromECS(
         // @source UE5 FogRendering.cpp:257 — ExponentialFogParameters2.x = precomputed, .z = raw density, .w = height
         // @deviations NONE
         if (fogComp.secondFogDensity > 0.0f) {
-            float secondFogHeightDiff = camZ - fogComp.secondFogBaseHeight;
-            float secondClampedPower = std::max(-126.f, -fogComp.secondFogHeightFalloff * secondFogHeightDiff);
-            secondClampedPower = std::min(secondClampedPower, 126.f);
+            float secondObserverH = std::min(camZ, fogComp.secondFogBaseHeight + kMaxObserverHeightDiff);
+            float secondFogHeightDiff = secondObserverH - fogComp.secondFogBaseHeight;
+            float secondClampedPower = std::clamp(-fogComp.secondFogHeightFalloff * secondFogHeightDiff, -126.f + 1.f, 127.f - 1.f);
             fogCB.secondFogDensity       = fogComp.secondFogDensity * std::pow(2.0f, secondClampedPower);
             fogCB.secondFogHeightFalloff = fogComp.secondFogHeightFalloff;
             fogCB.secondFogRawDensity    = fogComp.secondFogDensity;

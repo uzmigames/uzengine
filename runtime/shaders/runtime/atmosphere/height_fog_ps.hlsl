@@ -53,7 +53,10 @@ cbuffer HeightFogCB : register(b2) {
     float  fogMaxOpacity;      // Max opacity (0-1)
     float  fogStartDistance;   // Start distance (cm)
     float  fogCutoffDistance;  // Cutoff distance (0 = unlimited)
-    float  _fogPad0[2];
+    // @source UE5 FogRendering.cpp:257 — ExponentialFogParameters.z
+    float  maxObserverHeight;  // Clamped max observer Z for shader-side height compensation
+    // @source UE5 FogRendering.cpp:261 — ExponentialFogParameters3.x
+    float  rawDensity;         // Raw (un-precomputed) density for start distance recalculation
 
     // Second layer
     // @source UE5 HeightFogCommon.ush:60 — ExponentialFogParameters2
@@ -155,8 +158,11 @@ float4 main(FSInput input) : SV_Target {
         dist     = length(viewVec);
     }
 
-    // ── Start distance exclusion ──
-    float rayLength = dist;
+    // ── Observer height clamp (UE5 parity) ──
+    /// @source UE5 HeightFogCommon.ush:237-239 — Clamp observer Z and compensate view vector
+    float3 observerOrigin = float3(camPos3.xy, min(camPos3.z, maxObserverHeight));
+    viewVec.z += camPos3.z - observerOrigin.z; // Compensate for clamped observer height
+    float rayLength = length(viewVec);
     float rayDirZ   = viewVec.z;
 
     /// @source UE5 HeightFogCommon.ush:248-249 — RayOriginTerms and RayOriginTermsSecond
@@ -166,26 +172,27 @@ float4 main(FSInput input) : SV_Target {
     /// @source UE5 HeightFogCommon.ush:272-290 — Start distance exclusion
     /// UE5 recalculates BOTH layers' RayOriginTerms from raw density at the
     /// exclusion intersection height, not by ratio from precomputed terms.
-    if (fogStartDistance > 0.0f && dist > fogStartDistance) {
-        float excludeTime = fogStartDistance / dist;
-        float excludeZ    = camPos3.z + excludeTime * viewVec.z;
+    /// @source UE5 HeightFogCommon.ush:270-290 — Start distance exclusion
+    float excludeDist = max(0.0f, fogStartDistance);
+    if (excludeDist > 0.0f) {
+        if (rayLength <= excludeDist) {
+            discard;
+        }
+        float excludeTime = excludeDist / rayLength;
+        float excludeZ    = observerOrigin.z + excludeTime * viewVec.z;
 
-        rayLength = dist - fogStartDistance;
-        rayDirZ   = viewVec.z * (1.0f - excludeTime);
+        rayLength = (1.0f - excludeTime) * rayLength;
+        rayDirZ   = viewVec.z - excludeTime * viewVec.z;
 
-        // @source UE5 HeightFogCommon.ush:285-286 — Layer 1 recalc at exclusion height
-        // UE5: RayOriginTerms = rawDensity * exp2(-falloff * (exclZ - baseH))
-        // Equivalent: precomputed * exp2(-falloff * (exclZ - camZ)) since
-        //   precomputed = rawDensity * exp2(-falloff * (camZ - baseH))
-        rayOriginTerms = fogDensity * exp2(-fogHeightFalloff * (excludeZ - camPos3.z));
+        /// @source UE5 HeightFogCommon.ush:285 — Recalc layer 1 from raw density at exclusion Z
+        float exponent1 = max(-127.0f, fogHeightFalloff * (excludeZ - fogBaseHeight));
+        rayOriginTerms = rawDensity * exp2(-exponent1);
 
-        // @source UE5 HeightFogCommon.ush:288-289 — Layer 2 recalc from raw density
+        /// @source UE5 HeightFogCommon.ush:288 — Recalc layer 2 from raw density at exclusion Z
         if (secondFogRawDensity > 0.0f) {
             float exponent2 = max(-127.0f, secondFogHeightFalloff * (excludeZ - secondFogBaseHeight));
             rayOriginTermsSecond = secondFogRawDensity * exp2(-exponent2);
         }
-    } else if (fogStartDistance > 0.0f && dist <= fogStartDistance) {
-        discard;
     }
 
     // ── Line integral (UE5 CalculateLineIntegralShared) ──

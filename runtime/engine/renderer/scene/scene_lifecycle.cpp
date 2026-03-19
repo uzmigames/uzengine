@@ -7,6 +7,7 @@
 
 #include "async_texture_decoder.h"
 #include "camera.h"
+#include "units.h"
 #include "fps_camera_controller.h"
 #include "render_graph_resources.h"
 #include "shadow_atlas.h"
@@ -102,7 +103,7 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     m_cameraCtrl = std::make_unique<FPSCameraController>();
 
     const float aspect = static_cast<float>(width) / static_cast<float>(height);
-    m_camera->SetHorizontalFOV(90.f, aspect, 10.f, 100000.f);
+    m_camera->SetHorizontalFOV(90.f, aspect, uz::Units::kDefaultNearPlaneCm, uz::Units::kDefaultFarPlaneCm);
     m_camera->SetPosition({0.f, 200.f, -500.f});
     m_camera->LookAt({0.f, 0.f, 0.f}, Vec3::Up());
     m_cameraCtrl->InitFromCamera(*m_camera);

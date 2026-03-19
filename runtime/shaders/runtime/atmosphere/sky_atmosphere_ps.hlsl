@@ -25,6 +25,7 @@
 /// Linear HDR color tonemapped via ACES and gamma-corrected to sRGB.
 
 #include "../include/pbr_common.hlsli"
+#include "../include/units.hlsli"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Input Structure
@@ -110,16 +111,10 @@ SamplerState linearSampler : register(s0);
 // Constants — UE5 convention
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// 1 world unit (centimeter) → km. UE5 parity: 1 unit = 1 cm.
-/// CmToKm = 0.00001 (same as UE5 CmToSkyUnit).
-static const float WORLD_TO_KM            = 0.00001f;
-
-/// Safety margin: always place camera at least 5m above ground in sky space.
-/// UE5 uses PlanetRadiusOffset = 0.005 km (5 meters).
-static const float PLANET_RADIUS_OFFSET_KM = 0.005f;
-
-/// Small epsilon to avoid division by zero in analytical integration.
-static const float EXT_EPS = 1e-7f;
+/// Local aliases for unit constants (from units.hlsli).
+static const float WORLD_TO_KM            = UZ_CM_TO_KM;
+static const float PLANET_RADIUS_OFFSET_KM = UZ_PLANET_RADIUS_OFFSET_KM;
+static const float EXT_EPS                 = UZ_EXTINCTION_EPS;
 
 /// @source UE5 SkyAtmosphere.usf:1039 — SkyAtmosphere.SampleCountMax (CB parameter)
 /// UE5 uses variable sample count per ray (lerp between Min/Max based on ray length).

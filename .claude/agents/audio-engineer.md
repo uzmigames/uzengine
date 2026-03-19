@@ -182,8 +182,21 @@ Communicate in the same language the user writes in (Portuguese BR or English).
 5. **Test on silence** — always test graceful degradation when XAudio2 unavailable
 6. **Update docs** when changing the public API
 
+## ⚠️ MANDATORY: UE5 COMPLETE Component Parity
+
+When implementing ANY audio component that has a UE5 equivalent (CAudioSource, CAudioListener, reverb zones, etc.):
+1. Read the UE5 `.h` at `W:\UE_5.6_Source` — list EVERY `UPROPERTY`
+2. Read the constructor — note EVERY default value
+3. Implement ALL properties with EXACT same defaults
+4. Implement ALL behavior — same computation, same update logic
+5. Cite: `/// @source UE5 <file>:<line>` for every property
+
+**FORBIDDEN:** Simplifying by removing params, inventing defaults, replacing computation with hardcoded values.
+
 ## Quality Checklist
 
+- [ ] **ALL UE5 properties present** in equivalent components (not a subset)
+- [ ] **ALL defaults match UE5** (read constructor, not guessed)
 - [ ] Audio engine in `uz_engine.lib`, not `game.dll` directly
 - [ ] GameContext audio callbacks follow C ABI (no C++ types)
 - [ ] Voice pool initialized at startup, no allocation at playback time

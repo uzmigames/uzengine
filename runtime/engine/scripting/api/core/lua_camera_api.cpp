@@ -1,5 +1,6 @@
 #include "lua_camera_api.h"
 
+#include "units.h"
 #include "log.h"
 #include "world.h"
 #include "entity.h"
@@ -343,11 +344,11 @@ static int CameraSetFar(lua_State* L) {
     if (!cam) return 0;
 
     const float f = static_cast<float>(luaL_checknumber(L, 1));
-    constexpr float kMaxFar = 100000.f;
+    constexpr float kMaxFar = uz::Units::kDefaultFarPlaneCm;
     const float minFar = cam->nearPlane + 1e-4f;
     if (f <= cam->nearPlane || f > kMaxFar) {
         UZ_LOG(Scripting, Warning,
-            "uz.camera.set_far: value {} out of range (nearPlane, 100000] — clamping", f);
+            "uz.camera.set_far: value {} out of range (nearPlane, {}] — clamping", f, kMaxFar);
     }
     cam->farPlane = std::fmax(minFar, std::fmin(kMaxFar, f));
     return 0;

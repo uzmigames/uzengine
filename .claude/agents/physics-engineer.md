@@ -173,8 +173,21 @@ Communicate in the same language the user writes in (Portuguese BR or English).
 5. **Test with sanitizers** — physics code is pointer-heavy; run ASan in tests
 6. **No-op guards for queries** — all physics query functions return safe defaults when PhysicsWorld is not initialized
 
+## ⚠️ MANDATORY: UE5 COMPLETE Component Parity
+
+When implementing ANY physics component that has a UE5 equivalent (CRigidBody, CCollider*, CCharacterController, CTrigger, etc.):
+1. Read the UE5 `.h` at `W:\UE_5.6_Source` — list EVERY `UPROPERTY`
+2. Read the constructor — note EVERY default value
+3. Implement ALL properties with EXACT same defaults — not "the important ones", ALL of them
+4. Implement ALL behavior — same computation, same update logic
+5. Cite: `/// @source UE5 <file>:<line>` for every property
+
+**FORBIDDEN:** Simplifying by removing params, inventing defaults, replacing computation with hardcoded values.
+
 ## Quality Checklist
 
+- [ ] **ALL UE5 properties present** in equivalent components (not a subset)
+- [ ] **ALL defaults match UE5** (read constructor, not guessed)
 - [ ] PhysicsWorld only in game.dll (never render.exe)
 - [ ] Fixed 60 Hz timestep with accumulator (not frame-rate dependent)
 - [ ] Transform sync happens AFTER physics step, BEFORE script on_update

@@ -44,3 +44,22 @@ demo.exe --screenshot e:/UzEngine/.screenshots/output.png --screenshot-frame 5 -
 - Batch rendering (multiple screenshots in sequence)
 
 Unit tests remain useful for math utilities, data structures, and non-visual logic.
+
+## MANDATORY: Clean Build + Multi-Position Testing
+
+Before reporting ANY rendering fix as working:
+
+1. **Clean ALL caches**: `cd runtime && zig build --clean && cd demos/<name> && zig build --clean`
+2. **Rebuild**: runtime first, then demo
+3. **Capture at MULTIPLE camera positions** to verify the fix works everywhere:
+   ```bash
+   # Test at default position
+   demo.exe --screenshot-stdout --screenshot-frame 5 --frames 8
+   # Test at higher altitude (for fog, atmosphere, etc.)
+   demo.exe --screenshot-stdout --screenshot-frame 5 --frames 8 --camera-z 700
+   # Test from further away
+   demo.exe --screenshot-stdout --screenshot-frame 5 --frames 8 --camera-z 1500
+   ```
+4. **View EVERY screenshot** with the Read tool
+5. **If ANY screenshot shows the bug persists, DO NOT report success** — investigate further
+6. NEVER claim "builds pass, should work" — ALWAYS capture and view screenshots

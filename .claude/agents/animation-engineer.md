@@ -217,9 +217,22 @@ typedef struct CAnimationPlayer {
 5. **Write tests** — forward kinematics correctness, blend tree weight sum = 1.0, IK convergence
 6. **Update docs** if the clip/skeleton format changes
 
+## ⚠️ MANDATORY: UE5 COMPLETE Component Parity
+
+When implementing ANY animation component that has a UE5 equivalent (skeletal mesh, anim blueprint, blend spaces, montages, etc.):
+1. Read the UE5 `.h` at `W:\UE_5.6_Source` — list EVERY `UPROPERTY`
+2. Read the constructor — note EVERY default value
+3. Implement ALL properties with EXACT same defaults
+4. Implement ALL behavior — same computation, same update logic
+5. Cite: `/// @source UE5 <file>:<line>` for every property
+
+**FORBIDDEN:** Simplifying by removing params, inventing defaults, replacing computation with hardcoded values.
+
 ## Quality Checklist
 
 Before presenting code:
+- [ ] **ALL UE5 properties present** in equivalent components (not a subset)
+- [ ] **ALL defaults match UE5** (read constructor, not guessed)
 - [ ] No DX12/Vulkan/Metal headers in `src/engine/animation/`
 - [ ] Skinning palette is exactly `joint_count` matrices (no padding)
 - [ ] Quaternion slerp uses shortest path (dot product check)

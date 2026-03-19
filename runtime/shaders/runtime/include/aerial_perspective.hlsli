@@ -27,22 +27,16 @@
 #ifndef AERIAL_PERSPECTIVE_HLSLI
 #define AERIAL_PERSPECTIVE_HLSLI
 
+#include "units.hlsli"
+
 // ─────────────────────────────────────────────────────────────────────────────
-// Constants
+// Constants — aliases from units.hlsli
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 SkyAtmosphereCommon.ush:6 — CM_TO_SKY_UNIT = 0.00001
-/// @constants 0.00001 (UE5 SkyAtmosphereCommon.ush:6)
-/// @deviations NONE
-static const float AP_WORLD_TO_KM = 0.00001f;
-
-/// @source UE5 SkyAtmosphere.usf:109 — PlanetRadiusOffset = 0.005 km (5 meters)
-/// @constants 0.005 (UE5 SkyAtmosphere.usf:109)
-/// @deviations NONE
-static const float AP_PLANET_RADIUS_OFFSET_KM = 0.005f;
-
-/// Small epsilon to prevent division by zero in analytical integration.
-static const float AP_EXT_EPS = 1e-7f;
+/// Local aliases for unit constants (source of truth in units.hlsli).
+static const float AP_WORLD_TO_KM            = UZ_CM_TO_KM;
+static const float AP_PLANET_RADIUS_OFFSET_KM = UZ_PLANET_RADIUS_OFFSET_KM;
+static const float AP_EXT_EPS                 = UZ_EXTINCTION_EPS;
 
 /// @source UE5 SkyAtmosphere.usf:1608 — CameraAerialPerspectiveSampleCountPerSlice
 /// Number of ray-march steps for aerial perspective per pixel.
@@ -206,7 +200,7 @@ float4 ComputeAerialPerspective(
     float3 rayVec   = pixelSkyKm - cameraSkyKm;
     float  rayLenKm = length(rayVec);
 
-    // Early out for very close pixels (< 1 meter in sky-space = 100 meters in world)
+    // Early out for very close pixels (< 0.001 km = 1 meter in world = 100 cm)
     if (rayLenKm < 0.001f) {
         return float4(0.0f, 0.0f, 0.0f, 1.0f);
     }

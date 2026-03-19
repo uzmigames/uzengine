@@ -12,6 +12,7 @@
 #endif
 
 #include "demo_application.h"
+#include "units.h"
 #include "uzengine.h"
 #include "compare_grid.h"
 
@@ -433,7 +434,7 @@ void DemoApplication::InitInfrastructure() {
     float vFovRad = 2.f * std::atan(std::tan(kHFovDeg * 0.5f * 3.14159265f / 180.f) / kAspect);
     m_camera->SetPerspective(vFovRad,
         static_cast<float>(m_width) / static_cast<float>(m_height),
-        10.f, 100000.f);
+        uz::Units::kDefaultNearPlaneCm, uz::Units::kDefaultFarPlaneCm);
 
     m_camera->SetPosition({m_config.cameraPositionX, m_config.cameraPositionY,
                            m_config.cameraPositionZ});
@@ -671,6 +672,16 @@ void DemoApplication::ParseCommonArgs(int argc, char* argv[], DemoConfig& config
             config.debugViewMode = DebugViewModeFromString(argv[++i]);
         } else if (std::strcmp(argv[i], "--all-modes") == 0 && i + 1 < argc) {
             config.allModesOutputPath = argv[++i];
+        } else if (std::strcmp(argv[i], "--camera-x") == 0 && i + 1 < argc) {
+            config.cameraPositionX = static_cast<float>(std::atof(argv[++i]));
+        } else if (std::strcmp(argv[i], "--camera-y") == 0 && i + 1 < argc) {
+            config.cameraPositionY = static_cast<float>(std::atof(argv[++i]));
+        } else if (std::strcmp(argv[i], "--camera-z") == 0 && i + 1 < argc) {
+            config.cameraPositionZ = static_cast<float>(std::atof(argv[++i]));
+        } else if (std::strcmp(argv[i], "--camera-yaw") == 0 && i + 1 < argc) {
+            config.cameraYawDeg = static_cast<float>(std::atof(argv[++i]));
+        } else if (std::strcmp(argv[i], "--camera-pitch") == 0 && i + 1 < argc) {
+            config.cameraPitchDeg = static_cast<float>(std::atof(argv[++i]));
         }
     }
 

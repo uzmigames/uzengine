@@ -31,9 +31,10 @@ namespace uz {
 /// The fog pass reads scene depth, reconstructs world position, computes
 /// fog density along the view ray, and blends the fog color over the scene.
 struct HeightFogComponent {
-    /// Fog color in linear space. Blended over the scene where fog is dense.
-    /// UE5 default: (1, 1, 1) white. Tinted by inscattering color in practice.
-    Vec3 color = {1.0f, 1.0f, 1.0f};
+    /// Fog inscattering luminance in linear space.
+    /// @source UE5 ExponentialHeightFogComponent.cpp:68 — FogInscatteringLuminance = black
+    /// Modern UE5 (post-SkyAtmosphere) defaults to black; color comes from sky injection.
+    Vec3 color = {0.0f, 0.0f, 0.0f};
 
     /// Base fog density factor. Higher = thicker fog. Typical range: 0.001 to 0.1.
     /// UE5 default: 0.02 (FogDensity).
@@ -76,8 +77,9 @@ struct HeightFogComponent {
     // ── Directional Inscattering (sun-facing fog glow) ────────────────────
 
     /// Color of the directional inscattering (sun-facing fog glow).
-    /// UE5: DirectionalInscatteringColor. Default: warm orange (1, 0.8, 0.6).
-    Vec3 directionalInscatteringColor = {1.0f, 0.8f, 0.6f};
+    /// @source UE5 ExponentialHeightFogComponent.cpp:75 — DirectionalInscatteringLuminance = black
+    /// Modern UE5 defaults to black (disabled).
+    Vec3 directionalInscatteringColor = {0.0f, 0.0f, 0.0f};
 
     /// Exponent controlling the tightness of the directional inscattering cone.
     /// Higher = tighter sun halo. UE5: DirectionalInscatteringExponent. Default: 4.
@@ -85,8 +87,8 @@ struct HeightFogComponent {
     float directionalInscatteringExponent = 4.0f;
 
     /// Start distance for directional inscattering (cm from camera).
-    /// UE5: DirectionalInscatteringStartDistance. Default: 0.
-    float directionalInscatteringStartDistance = 0.f;
+    /// @source UE5 ExponentialHeightFogComponent.cpp:73 — default 10000.0 cm
+    float directionalInscatteringStartDistance = 10000.f;
 
     // ── Volumetric Fog (placeholder — Phase 3+ implementation) ────────────
 

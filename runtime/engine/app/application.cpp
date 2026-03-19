@@ -9,6 +9,7 @@
 #endif
 
 #include "application.h"
+#include "units.h"
 #include "uzengine.h"
 #include "scene_renderer.h"
 #include "compare_grid.h"
@@ -100,7 +101,7 @@ int Application::Run(int argc, char** argv) {
         FPSCameraController& ctrl = m_renderer->GetCameraController();
 
         const float aspect = static_cast<float>(m_width) / static_cast<float>(m_height);
-        cam.SetHorizontalFOV(90.f, aspect, 10.f, 100000.f);
+        cam.SetHorizontalFOV(90.f, aspect, uz::Units::kDefaultNearPlaneCm, uz::Units::kDefaultFarPlaneCm);
         cam.SetPosition({m_config.cameraPositionX, m_config.cameraPositionY,
                          m_config.cameraPositionZ});
 
@@ -419,6 +420,16 @@ void Application::ParseArgs(int argc, char* argv[]) {
                        "--renderdoc-capture requires a non-negative frame number, got '{}'",
                        argv[i]);
             }
+        } else if (std::strcmp(argv[i], "--camera-x") == 0 && i + 1 < argc) {
+            m_config.cameraPositionX = static_cast<float>(std::atof(argv[++i]));
+        } else if (std::strcmp(argv[i], "--camera-y") == 0 && i + 1 < argc) {
+            m_config.cameraPositionY = static_cast<float>(std::atof(argv[++i]));
+        } else if (std::strcmp(argv[i], "--camera-z") == 0 && i + 1 < argc) {
+            m_config.cameraPositionZ = static_cast<float>(std::atof(argv[++i]));
+        } else if (std::strcmp(argv[i], "--camera-yaw") == 0 && i + 1 < argc) {
+            m_config.cameraYawDeg = static_cast<float>(std::atof(argv[++i]));
+        } else if (std::strcmp(argv[i], "--camera-pitch") == 0 && i + 1 < argc) {
+            m_config.cameraPitchDeg = static_cast<float>(std::atof(argv[++i]));
         } else if (std::strcmp(argv[i], "--screenshot-stdout") == 0) {
             m_screenshotBase64 = true;
         } else if (std::strcmp(argv[i], "--headless") == 0) {

@@ -573,7 +573,10 @@ struct HeightFogCB {
     float fogMaxOpacity;        ///< Maximum fog opacity (0-1).
     float fogStartDistance;     ///< Minimum distance before fog begins.
     float fogCutoffDistance;    ///< Maximum fog distance. 0 = unlimited.
-    float _fogPad0[2] = {};     ///< Pad to 16-byte boundary.
+    /// @source UE5 FogRendering.cpp:225 — MaxObserverHeight passed in ExponentialFogParameters.z
+    float maxObserverHeight;    ///< Clamped max observer Z for shader-side compensation.
+    /// @source UE5 FogRendering.cpp:261 — ExponentialFogParameters3.x = raw density layer 1
+    float rawDensity;           ///< Raw (un-precomputed) density for start distance recalculation.
 
     // ── Second fog layer (float4 = 16 bytes) ────────────────────────────
     // @source UE5 FogRendering.cpp:257 — ExponentialFogParameters2

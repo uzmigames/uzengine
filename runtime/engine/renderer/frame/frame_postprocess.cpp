@@ -8,6 +8,7 @@
 #include "passes.h"
 
 #include "camera.h"
+#include "units.h"
 #include "render_graph_builder.h"
 #include "render_graph_resources.h"
 #include "profiler.h"
@@ -64,9 +65,9 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
         // Project sun position to clip space (sun is at infinity → use direction)
         const Vec3& camPos = {ctx.perFrame.cameraPos.x, ctx.perFrame.cameraPos.y, ctx.perFrame.cameraPos.z};
         const Vec3 sunWorldPos = {
-            camPos.x + ctx.sunDir.x * 100000.f,
-            camPos.y + ctx.sunDir.y * 100000.f,
-            camPos.z + ctx.sunDir.z * 100000.f
+            camPos.x + ctx.sunDir.x * uz::Units::kDefaultFarPlaneCm,
+            camPos.y + ctx.sunDir.y * uz::Units::kDefaultFarPlaneCm,
+            camPos.z + ctx.sunDir.z * uz::Units::kDefaultFarPlaneCm
         };
         const Vec4 sunClip = ctx.unjitteredViewProj * Vec4{sunWorldPos.x, sunWorldPos.y, sunWorldPos.z, 1.f};
 

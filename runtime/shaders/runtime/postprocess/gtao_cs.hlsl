@@ -35,6 +35,7 @@
 
 #include "../include/math_util.hlsli"
 #include "../include/octahedral.hlsli"
+#include "../include/units.hlsli"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Optional Feature Defines (set by CPU-side compile flags)
@@ -424,7 +425,7 @@ void main(
     float sceneDepth = LinearizeDepth(deviceZ);
 
     // Skip very distant pixels (simplified fade — no fadeMul/fadeAdd in root constants)
-    if (sceneDepth > 100000.0f) {
+    if (sceneDepth > UZ_DEFAULT_FAR_PLANE_CM) {
         aoOutput[dispatchId] = 1.0f;
         return;
     }
