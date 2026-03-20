@@ -12,6 +12,7 @@
 #include "sky_atmosphere_component.h"
 #include "sky_atmosphere_pass.h"
 #include "transmittance_lut_pass.h"
+#include "aerial_perspective_volume_pass.h"
 #include "sky_cubemap_capture_pass.h"
 #include "sky_cubemap_capture_ps_pass.h"
 #include "light_component.h"
@@ -353,6 +354,56 @@ void AddAtmospherePasses(
             *ctx.multiScatterLutFilled = true;
         }
 
+        // ── Aerial Perspective Volume — precomputed 3D AP texture ─────────
+        // @source UE5 SkyAtmosphere.usf:1466 — RenderCameraAerialPerspectiveVolumeCS
+        // Dispatched every frame (view-dependent). Requires transmittance LUT filled.
+        if (ctx.apVolume.IsValid() && ctx.apVolumeUav != UINT32_MAX
+            && *ctx.transmittanceLutFilled && ctx.invViewProjData && ctx.cameraPos) {
+
+            rg::RgResourceId apRes = rgBuilder.ImportTexture("APVolume",
+                ctx.apVolume, RHIResourceState::UnorderedAccess);
+
+            APVolumeRootConstants apRC{};
+            apRC.rayleighBetaX  = skyComp.rayleighScattering.x;
+            apRC.rayleighBetaY  = skyComp.rayleighScattering.y;
+            apRC.rayleighBetaZ  = skyComp.rayleighScattering.z;
+            apRC.rayleighScaleH = skyComp.rayleighScaleHeightKm;
+            apRC.mieBeta        = skyComp.mieScattering;
+            apRC.mieScaleH      = skyComp.mieScaleHeightKm;
+            apRC.bottomRadiusKm = skyComp.bottomRadiusKm;
+            apRC.topRadiusKm    = skyComp.bottomRadiusKm + skyComp.atmosphereHeightKm;
+
+            APVolumeCB apCB{};
+            std::memcpy(&apCB.invViewProj, ctx.invViewProjData, 64);
+            apCB.cameraPosX         = ctx.cameraPos->x;
+            apCB.cameraPosY         = ctx.cameraPos->y;
+            apCB.cameraPosZ         = ctx.cameraPos->z;
+            apCB._camPadW           = 0.0f;
+            apCB.sunDirX            = sunDir.x;
+            apCB.sunDirY            = sunDir.y;
+            apCB.sunDirZ            = sunDir.z;
+            apCB.sunIntensity       = skyComp.sunIlluminance.x; // Use X as scalar (white sun)
+            apCB.mieAnisotropy      = skyComp.mieAnisotropy;
+            apCB.rayleighScale      = skyComp.rayleighScatteringScale;
+            apCB.mieScale           = skyComp.mieScatteringScale;
+            apCB.transmittanceLutIdx = ctx.transmittanceLutSrv;
+            apCB.outputUavIdx       = ctx.apVolumeUav;
+            apCB.depthSlices        = 16;
+            apCB.totalDepthKm       = 100.0f;
+
+            CBAllocation apAlloc = ctx.cbRing->Allocate(sizeof(APVolumeCB));
+            std::memcpy(apAlloc.cpuPtr, &apCB, sizeof(APVolumeCB));
+
+            APVolumePassDesc apPassDesc{};
+            apPassDesc.volumeTarget        = apRes;
+            apPassDesc.transmittanceLutDep = lutRes;
+            apPassDesc.pipeline            = ctx.pipelines->GetAerialPerspectiveVolume();
+            apPassDesc.rootConstants       = apRC;
+            apPassDesc.cbAlloc             = apAlloc;
+            apPassDesc.depthSlices         = 16;
+            AddAerialPerspectiveVolumePass(rgBuilder, apPassDesc);
+        }
+
         SkyAtmospherePassDesc skyDesc{};
         skyDesc.backbuffer              = hdrRes;
         skyDesc.depthGBuffer            = depthRes;
@@ -367,6 +418,7 @@ void AddAtmospherePasses(
         skyDesc.multiScatterLutSrvIndex = ctx.multiScatterLutSrv;
         skyDesc.multiScatterLutTexture  = ctx.multiScatterLut;
         skyDesc.multiScatterLutRes      = msLutRes;
+        skyDesc.apVolumeSrvIndex        = ctx.apVolumeSrv;
         skyDesc.bindless                = ctx.bindless;
         skyDesc.viewportWidth           = ctx.vpWidth;
         skyDesc.viewportHeight          = ctx.vpHeight;

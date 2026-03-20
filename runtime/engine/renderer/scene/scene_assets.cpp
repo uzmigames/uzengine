@@ -18,12 +18,16 @@
 #include "mesh.h"
 #include "gpu_mesh.h"
 #include "gi/mesh_sdf_baker.h"
+#include "pipeline_library.h"
 #include "texture_loader.h"
 #include "upload_context.h"
 #include "vfs.h"
 #include "rhi.h"
 #include "log.h"
 #include "profiler.h"
+
+#include <chrono>
+#include <thread>
 
 #include <stb_image.h>
 
@@ -86,25 +90,27 @@ uint32_t SceneRenderer::LoadMesh(const std::string& path, IVFS* vfs,
         const uint32_t vertexStride = cpuMesh.header.vertexStride;
         const auto* indices = reinterpret_cast<const uint32_t*>(cpuMesh.indexData.data());
 
-        MeshSDFData sdfData = MeshSdfBaker::BakeMesh(
-            positions,
-            cpuMesh.GetVertexCount(),
-            vertexStride,
-            indices,
-            cpuMesh.GetIndexCount(),
-            32); // 32^3 resolution — balanced quality vs bake time
-
-        if (sdfData.IsValid()) {
-            gpuMesh.sdf = MeshSdfBaker::UploadToGPU(m_device, cmdList, sdfData);
+        // GPU bake: dispatch compute shader for mesh SDF generation.
+        // Falls back to CPU bake if the pipeline isn't available.
+        auto bakePipeline = m_pipelines->GetMeshSdfBake();
+        if (bakePipeline.IsValid()) {
+            gpuMesh.sdf = MeshSdfBaker::BakeMeshGPU(
+                m_device, cmdList, bakePipeline,
+                positions, cpuMesh.GetVertexCount(), vertexStride,
+                indices, cpuMesh.GetIndexCount(), 32);
             if (gpuMesh.sdf.valid) {
+                // Defer tri buffer destruction until GPU finishes this command list
+                if (gpuMesh.sdf.pendingTriBuffer.IsValid()) {
+                    m_deferredDestroyBuffers.push_back(gpuMesh.sdf.pendingTriBuffer);
+                    gpuMesh.sdf.pendingTriBuffer = RHIBufferHandle{};
+                }
                 UZ_LOG(Renderer, Info,
-                       "SceneRenderer: baked mesh SDF '{}' (res={}, SRV={})",
-                       path, sdfData.resolution, gpuMesh.sdf.srvIndex);
-            } else {
-                UZ_LOG(Renderer, Warning,
-                       "SceneRenderer: SDF GPU upload failed for '{}'", path);
+                       "SceneRenderer: GPU-baked mesh SDF '{}' (res={}, SRV={})",
+                       path, 32, gpuMesh.sdf.srvIndex);
             }
-        } else {
+        }
+
+        if (!gpuMesh.sdf.valid) {
             UZ_LOG(Renderer, Warning,
                    "SceneRenderer: SDF bake failed for '{}' ({} verts, {} indices)",
                    path, cpuMesh.GetVertexCount(), cpuMesh.GetIndexCount());
@@ -268,17 +274,20 @@ void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {
             const auto* positions = reinterpret_cast<const float*>(cpuMesh.vertexData.data());
             const auto* indices = reinterpret_cast<const uint32_t*>(cpuMesh.indexData.data());
 
-            MeshSDFData sdfData = MeshSdfBaker::BakeMesh(
-                positions, cpuMesh.GetVertexCount(), cpuMesh.header.vertexStride,
-                indices, cpuMesh.GetIndexCount(), 32);
-
-            if (sdfData.IsValid()) {
-                gpuMesh.sdf = MeshSdfBaker::UploadToGPU(m_device, cmdList, sdfData);
-                if (gpuMesh.sdf.valid) {
-                    UZ_LOG(Renderer, Info,
-                           "SceneRenderer: baked mesh SDF '{}' (res={}, SRV={})",
-                           path, sdfData.resolution, gpuMesh.sdf.srvIndex);
+            auto bakePipeline2 = m_pipelines->GetMeshSdfBake();
+            if (bakePipeline2.IsValid()) {
+                gpuMesh.sdf = MeshSdfBaker::BakeMeshGPU(
+                    m_device, cmdList, bakePipeline2,
+                    positions, cpuMesh.GetVertexCount(), cpuMesh.header.vertexStride,
+                    indices, cpuMesh.GetIndexCount(), 32);
+                if (gpuMesh.sdf.valid && gpuMesh.sdf.pendingTriBuffer.IsValid()) {
+                    m_deferredDestroyBuffers.push_back(gpuMesh.sdf.pendingTriBuffer);
+                    gpuMesh.sdf.pendingTriBuffer = RHIBufferHandle{};
                 }
+            }
+            if (!gpuMesh.sdf.valid) {
+                UZ_LOG(Renderer, Warning,
+                       "SceneRenderer: GPU SDF bake failed for '{}'", path);
             }
         }
 
@@ -313,21 +322,30 @@ void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {
     // GPU upload cost across multiple frames instead of one large stall.
     if (!m_asyncDecoder) return;
 
-    // Append newly completed decodes to the deferred queue.
-    auto newlyDecoded = m_asyncDecoder->PollCompleted();
-    for (auto& d : newlyDecoded) {
-        m_deferredDecoded.push_back(std::move(d));
+    // Poll completed decodes. If there are still in-flight decodes, wait for
+    // ALL to complete so we can do a single batch GPU upload + single WaitIdle.
+    {
+        auto newlyDecoded = m_asyncDecoder->PollCompleted();
+        for (auto& d : newlyDecoded) {
+            m_deferredDecoded.push_back(std::move(d));
+        }
+
+        // If textures are still being decoded, block until all finish.
+        // This ensures a single batch upload instead of per-frame trickle.
+        while (m_asyncDecoder->PendingCount() > 0) {
+            auto more = m_asyncDecoder->PollCompleted();
+            for (auto& d : more) {
+                m_deferredDecoded.push_back(std::move(d));
+            }
+            if (m_asyncDecoder->PendingCount() > 0) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        }
     }
 
     if (m_deferredDecoded.empty()) return;
 
-    // Limit uploads per frame to avoid GPU stalls.
-    // 4 textures/frame at 500 FPS = all 43 textures loaded in ~0.2 seconds
-    // with no perceptible frame drops.
-    static constexpr uint32_t kMaxUploadsPerFrame = 4;
-
-    const uint32_t toProcess = std::min(
-        static_cast<uint32_t>(m_deferredDecoded.size()), kMaxUploadsPerFrame);
+    const uint32_t toProcess = static_cast<uint32_t>(m_deferredDecoded.size());
 
     UZ_LOG(Renderer, Debug, "SceneRenderer: uploading {}/{} decoded textures this frame",
            toProcess, m_deferredDecoded.size());
@@ -409,6 +427,20 @@ void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {
                "SceneRenderer: batch GPU upload complete ({} textures, 1 WaitIdle)",
                uploadedCount);
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// IsSceneFullyLoaded
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool SceneRenderer::IsSceneFullyLoaded() const {
+    // Pending mesh/texture queues must be empty
+    if (!m_pendingMeshPaths.empty()) return false;
+    if (!m_pendingTexturePaths.empty()) return false;
+    // Async texture decoder must have no in-flight decodes
+    if (m_asyncDecoder && m_asyncDecoder->PendingCount() > 0) return false;
+    // Must have rendered at least 2 frames (for pipeline creation + first dispatch)
+    return true;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

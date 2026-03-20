@@ -1407,6 +1407,64 @@ RHIPipelineHandle PipelineLibrary::GetGdfComposite() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Mesh SDF Bake Compute Pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool PipelineLibrary::EnsureMeshSdfBakeShader() {
+    if (m_meshSdfBakeCS.IsValid()) {
+        return true;
+    }
+
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::MeshSdfBakeCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile MeshSdfBakeCS");
+        return false;
+    }
+
+    RHIShaderDesc shaderDesc{};
+    shaderDesc.bytecode     = bytecode.data();
+    shaderDesc.bytecodeSize = bytecode.size();
+    shaderDesc.stage        = RHIShaderStage::Compute;
+    shaderDesc.entryPoint   = "main";
+    shaderDesc.debugName    = "mesh_sdf_bake_cs";
+
+    m_meshSdfBakeCS = m_device->CreateShader(shaderDesc);
+    if (!m_meshSdfBakeCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create MeshSdfBakeCS shader");
+        return false;
+    }
+    return true;
+}
+
+RHIPipelineHandle PipelineLibrary::GetMeshSdfBake() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetMeshSdfBake called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_meshSdfBake.IsValid()) {
+        return m_meshSdfBake;
+    }
+
+    if (!EnsureMeshSdfBakeShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_meshSdfBakeCS;
+    desc.debugName     = "MeshSDF_Bake";
+
+    m_meshSdfBake = m_device->CreateComputePipeline(desc);
+    if (!m_meshSdfBake.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create MeshSDF_Bake pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created MeshSDF_Bake pipeline");
+    }
+
+    return m_meshSdfBake;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Radiance Cache Trace Compute Pipeline
 // ─────────────────────────────────────────────────────────────────────────────
 

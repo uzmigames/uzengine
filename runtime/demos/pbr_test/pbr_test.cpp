@@ -45,8 +45,8 @@ static constexpr float kLightOrbitSpeed  = 0.5f;
 ApplicationConfig PBRTest::Configure() {
     ApplicationConfig cfg{};
     cfg.title           = "UzEngine \xe2\x80\x94 PBR Test";
-    cfg.width           = 2560;
-    cfg.height          = 1440;
+    cfg.width           = 1920;
+    cfg.height          = 1080;
     // Camera elevated and angled to see both rows of spheres
     cfg.cameraPositionX = 137.f;
     cfg.cameraPositionY = -906.f;
@@ -246,6 +246,8 @@ void PBRTest::OnStart() {
         &concreteMat_, &metalCorrodedMat_, &grassMat_, &sandMat_
     };
 
+    // ── Create spheres ──
+#if 0
     // ── Create 9 spheres in two rows (PoC1 layout) ─────────────────────
     // Back row (Y=-200): 5 smaller spheres, spaced 250cm apart
     // Front row (Y=200): 4 larger spheres, spaced 300cm apart
@@ -271,8 +273,10 @@ void PBRTest::OnStart() {
         mesh.meshPath = "sphere.uzmesh";
         mesh.SetMaterial(0, materials[i]);
     }
+#endif
 
     // ── Ground plane ─────────────────────────────────────────────────────
+#if 0 // ground plane
     ground_ = world.CreateEntity();
     {
         auto& scene = world.AddComponent<SceneComponent>(ground_);
@@ -285,6 +289,7 @@ void PBRTest::OnStart() {
         mesh.meshPath = "cube.uzmesh";
         mesh.SetMaterial(0, &groundMat_);
     }
+#endif
 
     // ── Directional sun light ────────────────────────────────────────────
     sun_ = world.CreateEntity();
@@ -306,7 +311,7 @@ void PBRTest::OnStart() {
     }
 
     // ── 4 colored point lights ───────────────────────────────────────────
-    struct PointLightDef { Vec3 position; float range; Vec3 color; };
+    /*struct PointLightDef { Vec3 position; float range; Vec3 color; };
     static constexpr PointLightDef kPointLightDefs[4] = {
         {{-300.f, 200.f,  200.f}, 800.f,  {2.f, 0.1f, 0.1f}},
         {{   0.f, 300.f, -200.f}, 1000.f, {0.1f, 2.f, 0.1f}},
@@ -322,9 +327,13 @@ void PBRTest::OnStart() {
         light.color     = kPointLightDefs[i].color;
         light.intensity = 1.0f;
         light.range     = kPointLightDefs[i].range;
-    }
+    }*/
+
+    // ── DIAGNOSTIC: Components gated by #if for horizon tint isolation ──
+    // Change these to 1 to enable each component, rebuild, screenshot.
 
     // ── Sky atmosphere ───────────────────────────────────────────────────
+#if 1 // DIAG: sky atmosphere
     Entity sky = world.CreateEntity();
     {
         auto& scene = world.AddComponent<SceneComponent>(sky);
@@ -345,8 +354,10 @@ void PBRTest::OnStart() {
         atmo.groundAlbedo           = {0.4f, 0.4f, 0.4f};
         atmo.heightFogContribution  = 1.0f;
     }
+#endif
 
     // ── Sky light ────────────────────────────────────────────────────────
+#if 1 // DIAG: sky light
     Entity skyLightEnt = world.CreateEntity();
     {
         auto& scene = world.AddComponent<SceneComponent>(skyLightEnt);
@@ -363,49 +374,33 @@ void PBRTest::OnStart() {
         sl.lowerHemisphereColor      = {0.0f, 0.0f, 0.0f}; ///< @source UE5 SkyLightComponent.cpp:312
         sl.minOcclusion              = 0.0f;       ///< @source UE5 SkyLightComponent.cpp:308
     }
+#endif
 
     // ── Exponential Height Fog ───────────────────────────────────────────
+#if 1 // DIAG: fog
     Entity fog = world.CreateEntity();
     {
         auto& scene = world.AddComponent<SceneComponent>(fog);
         /// @source UE5 Basic template — ExponentialHeightFog actor at Z=-5000
-        /// The fog base height is below the scene ground (Z=0). With heightFalloff=0.2,
-        /// the fog density at ground level is: density * exp2(-0.2 * (0 - (-5000))) ≈ 0
-        /// BUT the line integral along horizontal/downward view rays accumulates fog
-        /// through the dense lower altitudes, creating the horizon haze effect.
-        ///
-        /// For our small scene (camera Z=335, ground Z=0), we place the fog at ground
-        /// level with a lower heightFalloff so it's visible at camera altitude.
-        scene.SetPosition({0.f, 0.f, 0.f});
+        scene.SetPosition({0.f, 0.f, -5000.f});
         auto& fogComp = world.AddComponent<HeightFogComponent>(fog);
-        /// @source UE5 ExponentialHeightFogComponent.cpp:64-103 — modern defaults
-        /// FogInscatteringLuminance = black (line 68), color comes from SkyAtmosphere injection
-        /// DirectionalInscatteringLuminance = black (line 75)
-        /// The DEPRECATED values (0.447, 0.638, 1.0) are pre-SkyAtmosphere and must NOT be used
-        /// @source UE5 Basic template Details panel — FogDensity = 0.0436
-        fogComp.density         = 0.0436f;   ///< @source UE5 Basic template screenshot
-        /// Lower heightFalloff than UE5 default (0.2) because our scene is small-scale.
-        /// With falloff=0.02 and camera at Z=335: exp2(-0.02*335) = exp2(-6.7) ≈ 0.0096
-        /// This gives visible but subtle fog. UE5 default 0.2 would give exp2(-67) ≈ 0.
-        fogComp.heightFalloff   = 0.01f;
-        fogComp.baseHeight      = 0.f;       ///< Actor Z position (scene.SetPosition above)
-        fogComp.maxOpacity      = 1.0f;      ///< @source UE5 ExponentialHeightFogComponent.cpp:86
-        fogComp.startDistance    = 0.f;       ///< @source UE5 ExponentialHeightFogComponent.cpp:87
-        fogComp.fogCutoffDistance = 0.f;      ///< @source UE5 ExponentialHeightFogComponent.cpp:91
-        /// @source UE5 ExponentialHeightFogComponent.cpp:68 — FogInscatteringLuminance = black
-        /// Sky atmosphere injection (skyAtmContribColorScale * heightFogContribution * skyLightColor)
-        /// provides all fog color when SkyAtmosphereComponent exists.
+        fogComp.density         = 0.0436f;
+        fogComp.heightFalloff   = 0.2f;
+        fogComp.baseHeight      = -5000.f;
+        fogComp.maxOpacity      = 1.0f;
+        fogComp.startDistance    = 0.f;
+        fogComp.fogCutoffDistance = 0.f;
         fogComp.color            = {0.0f, 0.0f, 0.0f};
-        /// @source UE5 ExponentialHeightFogComponent.cpp:75 — DirectionalInscatteringLuminance = black
         fogComp.directionalInscatteringColor      = {0.0f, 0.0f, 0.0f};
-        fogComp.directionalInscatteringExponent   = 4.0f;  ///< @source UE5 ExponentialHeightFogComponent.cpp:72
-        fogComp.directionalInscatteringStartDistance = 10000.f; ///< @source UE5 ExponentialHeightFogComponent.cpp:73
+        fogComp.directionalInscatteringExponent   = 4.0f;
+        fogComp.directionalInscatteringStartDistance = 10000.f;
     }
+#endif
 
     // ── Screen percentage (render at lower internal resolution) ────────
     // 67% = render at ~960p for 1440p display, TAA upscales to native.
     // 100% = native resolution (no upscale, current default behavior).
-    GetRenderer().SetScreenPercentage(67.f);
+    GetRenderer().SetScreenPercentage(100.0f);
 
     UZ_LOG(Demo, Info, "PBR Test started — {} spheres (9 materials), 4 point lights + sun + sky, "
            "screen percentage={}%",

@@ -15,19 +15,24 @@
 #include "../include/sdf_common.hlsli"
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Constant buffer — composite parameters (bound at b0)
+// Root constants — composite parameters (bound at b0, root param [0])
+// Exactly 8 uint32s = 32 bytes to match the root signature layout.
 // ─────────────────────────────────────────────────────────────────────────────
+/// @deviations Packed from 12 to 8 uint32s to fit root param [0] (8x uint32).
+///   Removed g_meshSdfBufferSrv (unused), g_clipmapIndex (not consumed by shader
+///   logic), and 3x padding uint32s. clipmapCenter split into 3 scalar floats to
+///   avoid float3 16-byte alignment padding within root constants.
 
-cbuffer GdfCompositeConstants : register(b0)
+cbuffer RootConstants : register(b0)
 {
-    uint   g_outputUav;          // UAV index for target clipmap 3D texture
-    uint   g_meshSdfBufferSrv;   // (unused — mesh data passed via cbuffer)
-    uint   g_meshCount;          // Number of mesh SDFs to composite
-    uint   g_clipmapIndex;       // Index of the clipmap being composited (0-3)
-    float3 g_clipmapCenter;      // World-space clipmap center
-    float  g_clipmapExtent;      // Clipmap half-size in world units (cm)
-    uint   g_resolution;         // Voxels per axis (64)
-    uint3  _pad;
+    uint   g_outputUav;       // [0] Bindless UAV index for target clipmap 3D texture
+    uint   g_meshCount;       // [1] Number of mesh SDFs to composite
+    uint   g_clipmapIndex;    // [2] Index of the clipmap being composited (0-3)
+    uint   g_resolution;      // [3] Voxels per axis (64)
+    float  g_clipmapCenterX;  // [4] World-space clipmap center X (cm)
+    float  g_clipmapCenterY;  // [5] World-space clipmap center Y (cm)
+    float  g_clipmapCenterZ;  // [6] World-space clipmap center Z (cm)
+    float  g_clipmapExtent;   // [7] Clipmap half-size in world units (cm)
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -59,10 +64,9 @@ cbuffer MeshSdfData : register(b2)
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// UAV output — bindless 3D texture write
+// UAV output — accessed via bindless ResourceDescriptorHeap[g_outputUav]
+// No explicit register binding; the descriptor index comes from root constants.
 // ─────────────────────────────────────────────────────────────────────────────
-
-RWTexture3D<float> g_outputTexture : register(u0);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Sampler for mesh SDF trilinear sampling
@@ -123,9 +127,10 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     // ── Compute world position for this voxel ──────────────────────────
     // The clipmap covers [center - extent, center + extent] in each axis.
     // Each voxel is centered at: center - extent + (voxelIdx + 0.5) * voxelSize
+    float3 clipmapCenter = float3(g_clipmapCenterX, g_clipmapCenterY, g_clipmapCenterZ);
     float3 voxelCoord = float3(dispatchThreadId) + 0.5f;
     float voxelSize = (g_clipmapExtent * 2.0f) / float(g_resolution);
-    float3 worldPos = g_clipmapCenter - g_clipmapExtent + voxelCoord * voxelSize;
+    float3 worldPos = clipmapCenter - g_clipmapExtent + voxelCoord * voxelSize;
 
     // ── Find minimum distance across all mesh SDFs ─────────────────────
     /// @source UE5 GlobalDistanceFieldUtils.ush:90 — min distance composite
@@ -155,22 +160,10 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
             continue;
         }
 
-        // Note: in a fully bindless path, we would use:
-        //   Texture3D<float> sdfTex = ResourceDescriptorHeap[mesh.srvIndex];
-        // For now, the shader relies on the SDF sampling being done through
-        // the mesh's volume transform (UV-space approach in SampleMeshSdfLocal).
-        // The actual texture binding is handled by the engine setting descriptor
-        // tables before dispatch.
-
-        // For the initial implementation, we use the first mesh SDF texture
-        // bound at t0 and iterate. In a production path, this would be bindless.
-        // The distance is computed geometrically from the mesh's origin/extent.
-
-        // Geometric SDF approximation for non-bindless path:
-        // Compute signed distance to the mesh AABB as a conservative estimate.
-        // This produces correct results when all mesh SDFs are simple convex shapes.
-        float3 d = abs(worldPos - mesh.origin) - mesh.extent;
-        float meshDist = length(max(d, 0.0f)) + min(max(d.x, max(d.y, d.z)), 0.0f);
+        // Bindless mesh SDF sampling: fetch the per-mesh 3D texture from the
+        // descriptor heap using the SRV index stored in the mesh descriptor.
+        Texture3D<float> sdfTex = ResourceDescriptorHeap[mesh.srvIndex];
+        float meshDist = SampleMeshSdfLocal(sdfTex, mesh, worldPos);
 
         minDist = min(minDist, meshDist);
     }
@@ -178,5 +171,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     // ── Write result ───────────────────────────────────────────────────
     /// @source UE5 GlobalDistanceFieldShared.ush:183-191 — distance encoding
     /// We store raw float16 distance (the R16F texture handles encoding).
-    g_outputTexture[dispatchThreadId] = minDist;
+    /// Output texture accessed via bindless descriptor heap.
+    RWTexture3D<float> outputTex = ResourceDescriptorHeap[g_outputUav];
+    outputTex[dispatchThreadId] = minDist;
 }

@@ -537,7 +537,7 @@ when Lumen-style probes are available.
 ```
 runtime/engine/renderer/gi/
 ├── ssgi_renderer.h/.cpp          (EXISTS — screen-space GI, becomes near-field tier)
-├── mesh_sdf_baker.h/.cpp         (NEW — offline mesh SDF generation)
+├── mesh_sdf_baker.h/.cpp         (DONE — GPU compute bake via mesh_sdf_bake_cs.hlsl, CPU fallback)
 ├── mesh_sdf_atlas.h/.cpp         (NEW — GPU brick atlas for mesh SDFs)
 ├── global_distance_field.h/.cpp  (NEW — clipmap GDF management)
 ├── radiance_cache.h/.cpp         (NEW — world-space probe cache)
@@ -547,8 +547,9 @@ runtime/engine/renderer/gi/
 runtime/shaders/runtime/gi/
 ├── mesh_sdf_trace.hlsl           (NEW — sphere march per-mesh SDF)
 ├── global_sdf_trace.hlsl         (NEW — sphere march global SDF)
-├── global_sdf_composite_cs.hlsl  (NEW — composite mesh SDFs into GDF pages)
-├── radiance_cache_trace_cs.hlsl  (NEW — trace rays from probe centers)
+├── mesh_sdf_bake_cs.hlsl         (DONE — GPU SDF bake, brute-force O(V*T), task 3.0.2)
+├── global_sdf_composite_cs.hlsl  (DONE — composite mesh SDFs into GDF clipmaps, bindless)
+├── radiance_cache_trace_cs.hlsl  (DONE — probe trace through GDF, bindless SH + GDF textures)
 ├── radiance_cache_filter_cs.hlsl (NEW — spatial + octahedral filter)
 ├── screen_probe_trace_cs.hlsl    (NEW — trace screen probes via SDF)
 ├── screen_probe_gather_cs.hlsl   (NEW — interpolate probes per-pixel)

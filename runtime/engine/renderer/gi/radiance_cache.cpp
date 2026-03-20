@@ -11,6 +11,7 @@
 
 #include "global_distance_field.h"
 #include "cb_ring_allocator.h"
+#include "constant_buffers.h"
 #include "log.h"
 #include "rhi.h"
 
@@ -218,38 +219,48 @@ void RadianceCache::UpdateProbes(
         }
     }
 
-    // Sky color for rays that miss geometry (approximate from ambient)
-    // In a production path, this would come from the sky SH or cubemap.
-    constants.skyColorR = 0.1f;
-    constants.skyColorG = 0.15f;
-    constants.skyColorB = 0.3f;
+    // Read light/sky data from PerFrameCB for accurate GI bounce
+    const auto* pf = static_cast<const PerFrameCB*>(perFrameCpuPtr);
 
-    // Upload constants via CB ring
+    // Sky color for missed rays — use sky atmosphere color scaled by intensity.
+    // No attenuation factor — the probes should capture the full sky radiance.
+    constants.skyColorR = pf->skyLightColorR * pf->skyLightIntensity;
+    constants.skyColorG = pf->skyLightColorG * pf->skyLightIntensity;
+    constants.skyColorB = pf->skyLightColorB * pf->skyLightIntensity;
+
+
+    // Primary directional light for single-bounce GI at hit points
+    constants.lightDirX     = pf->lightDir.x;
+    constants.lightDirY     = pf->lightDir.y;
+    constants.lightDirZ     = pf->lightDir.z;
+    constants.lightColorR   = pf->lightColor.x;
+    constants.lightColorG   = pf->lightColor.y;
+    constants.lightColorB   = pf->lightColor.z;
+    constants.lightIntensity = 1.0f;
+    constants.groundAlbedo  = 0.18f; // Average scene albedo (18% grey card)
+
+    // Root constants at b0 (root param 0, 8 uint32s): SH UAV index + frame index
+    uint32_t rootConstants[8] = {};
+    rootConstants[0] = m_shBufferUav;  // g_shBufferUav
+    rootConstants[1] = m_shBufferSrv;  // g_shBufferSrv (unused in trace, for future)
+    rootConstants[2] = frameIndex;     // g_frameIndexRC
+    cmdList->SetRootConstants(0, rootConstants, 8);
+
+    // Upload bulk trace constants via CB ring and bind at b2 (root param 2)
     CBAllocation constAlloc = cbRing->Allocate(sizeof(RadianceCacheTraceConstants));
     if (!constAlloc.cpuPtr) {
         UZ_LOG(Renderer, Error, "RadianceCache: failed to allocate trace constants");
         return;
     }
     std::memcpy(constAlloc.cpuPtr, &constants, sizeof(constants));
-    cmdList->SetRootCBV(0, constAlloc.bufferHandle,
+    cmdList->SetRootCBV(2, constAlloc.bufferHandle,
                         constAlloc.offsetBytes,
                         constAlloc.cpuPtr, sizeof(constants));
-
-    // Bind per-frame CB at b1
-    cmdList->SetRootCBV(1, perFrameBuffer, perFrameOffset,
-                        perFrameCpuPtr, perFrameSize);
 
     // Dispatch: one thread per probe, 64 threads per group
     // 4096 probes / 64 threads = 64 groups
     const uint32_t groupCount = (kTotalProbes + 63) / 64;
     cmdList->Dispatch(groupCount, 1, 1);
-
-    // UAV barrier to ensure all probe writes complete
-    RHIBarrierDesc uavBarrier{};
-    uavBarrier.buffer      = m_shBuffer;
-    uavBarrier.stateBefore = RHIResourceState::UnorderedAccess;
-    uavBarrier.stateAfter  = RHIResourceState::UnorderedAccess;
-    cmdList->ResourceBarrier(&uavBarrier, 1);
 
     // Transition back to SRV for lighting shader reads
     RHIBarrierDesc toSrv{};

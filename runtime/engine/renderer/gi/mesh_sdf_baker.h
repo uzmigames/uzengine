@@ -29,48 +29,11 @@
 #include "rhi_types.h"
 
 #include <cstdint>
-#include <vector>
 
 namespace uz {
 
 class IRHIDevice;
 class IRHICommandList;
-
-// ─────────────────────────────────────────────────────────────────────────────
-// MeshSDFData — CPU-side dense distance field result
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Dense signed distance field for a single mesh, ready for GPU upload.
-///
-/// The distance data is stored as a flat array of `float` values in Z-major
-/// order: `distanceData[z * resolution * resolution + y * resolution + x]`.
-/// Negative values are inside the mesh, positive values are outside.
-/// Distances are in world units (centimeters).
-///
-/// # Memory Layout
-/// The data maps directly to a 3D texture of resolution^3 texels.
-/// Each texel is R16F on GPU (float16), converted from float32 during upload.
-struct MeshSDFData {
-    /// World-space center of the SDF volume.
-    float volumeOrigin[3] = {};
-
-    /// World-space half-extents of the SDF volume.
-    float volumeExtent[3] = {};
-
-    /// Voxels per axis (uniform cubic grid). Typically 32 or 64.
-    uint32_t resolution = 0;
-
-    /// Flat array of signed distances in world units (cm).
-    /// Size: resolution^3. Negative = inside, positive = outside.
-    /// Layout: distanceData[z * resolution * resolution + y * resolution + x].
-    std::vector<float> distanceData;
-
-    /// Returns true if the data contains valid SDF information.
-    [[nodiscard]] bool IsValid() const noexcept {
-        return resolution > 0
-            && distanceData.size() == static_cast<size_t>(resolution) * resolution * resolution;
-    }
-};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MeshSDF — GPU-side 3D texture handle
@@ -88,94 +51,65 @@ struct MeshSDF {
     float            volumeExtent[3] = {};     ///< World-space half-extents of the SDF volume.
     uint32_t         resolution = 0;           ///< Voxels per axis.
     bool             valid = false;            ///< True if texture is created and uploaded.
+
+    /// Cached world-to-local inverse transform (top 3 rows, row-major).
+    /// Precomputed to avoid per-frame Mat4::Inverse() in GDF composite.
+    /// Updated when the entity's world transform changes.
+    float            invTransform[12] = {};
+
+    /// Transient triangle buffer from GPU bake — must be destroyed after the
+    /// command list that references it has finished executing on the GPU.
+    /// Invalid handle means no pending destruction needed.
+    RHIBufferHandle  pendingTriBuffer;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MeshSdfBaker — CPU baking + GPU upload
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Bakes mesh triangles into a dense signed distance field and uploads to GPU.
+/// Bakes mesh triangles into a signed distance field on the GPU.
 ///
-/// The baker uses a spatial hash to accelerate nearest-triangle queries.
-/// For a 32^3 grid, typical bake time is ~10-50ms depending on triangle count.
+/// Uses a compute shader (mesh_sdf_bake_cs.hlsl) that dispatches one thread
+/// per voxel, brute-force iterating all triangles. 2500x faster than CPU path.
 ///
 /// # Usage
 /// ```cpp
-/// auto data = MeshSdfBaker::BakeMesh(positions, vertexCount, stride, indices, indexCount, 32);
-/// if (data.IsValid()) {
-///     MeshSDF gpu = MeshSdfBaker::UploadToGPU(device, cmdList, data);
-/// }
+/// auto pipeline = pipelines->GetMeshSdfBake();
+/// MeshSDF sdf = MeshSdfBaker::BakeMeshGPU(device, cmdList, pipeline,
+///     positions, vertexCount, stride, indices, indexCount, 32);
+/// // Defer destruction: sdf.pendingTriBuffer must be destroyed after GPU completes
 /// ```
 class MeshSdfBaker {
 public:
-    /// Bakes a mesh into a dense signed distance field.
+    /// Bakes a mesh SDF entirely on the GPU via compute shader.
+    ///
+    /// Uploads triangle data to a StructuredBuffer, dispatches the mesh_sdf_bake_cs
+    /// compute shader (one thread per voxel, brute-force closest-point-on-triangle),
+    /// and returns the MeshSDF with a populated R16F 3D texture.
+    ///
+    /// The returned `MeshSDF::pendingTriBuffer` must be destroyed by the caller
+    /// after the command list finishes executing (deferred to next frame).
     ///
     /// # Arguments
-    /// * `vertices` — Pointer to vertex data. Position is assumed to be the first
-    ///   3 floats at each vertex (float x, float y, float z).
+    /// * `device` — RHI device for resource creation.
+    /// * `cmdList` — Command list in recording state.
+    /// * `bakePipeline` — Compute pipeline from PipelineLibrary::GetMeshSdfBake().
+    /// * `vertices` — Pointer to vertex position data (float x, y, z per vertex).
     /// * `vertexCount` — Number of vertices.
-    /// * `vertexStride` — Byte stride between consecutive vertices.
-    /// * `indices` — Triangle index buffer (3 indices per triangle).
-    ///   If null, generates consecutive indices (0, 1, 2, 3, ...).
-    /// * `indexCount` — Number of indices. Must be a multiple of 3.
-    /// * `resolution` — Voxels per axis (uniform cubic grid). Typical: 32 or 64.
-    ///
-    /// # Returns
-    /// Dense SDF data ready for GPU upload. Check `IsValid()` before use.
-    /// Returns invalid data on failure (zero vertices, degenerate mesh, etc.).
-    [[nodiscard]] static MeshSDFData BakeMesh(
+    /// * `vertexStride` — Byte stride between vertices.
+    /// * `indices` — Triangle index buffer (3 per triangle). Null for non-indexed.
+    /// * `indexCount` — Number of indices.
+    /// * `resolution` — Voxels per axis (32 typical).
+    [[nodiscard]] static MeshSDF BakeMeshGPU(
+        IRHIDevice* device,
+        IRHICommandList* cmdList,
+        RHIPipelineHandle bakePipeline,
         const float* vertices,
         uint32_t vertexCount,
         uint32_t vertexStride,
         const uint32_t* indices,
         uint32_t indexCount,
         uint32_t resolution = 32);
-
-    /// Uploads baked SDF data to GPU as an R16F 3D texture.
-    ///
-    /// Creates the 3D texture, allocates a staging buffer, converts float32
-    /// distances to float16, and issues a copy command. The caller must
-    /// execute and synchronize the command list before the MeshSDF is usable.
-    ///
-    /// # Arguments
-    /// * `device` — RHI device for resource creation.
-    /// * `cmdList` — Command list for staging buffer copy. Must be in recording state.
-    /// * `data` — Baked SDF data from `BakeMesh()`. Must be valid.
-    ///
-    /// # Returns
-    /// GPU handle with texture, SRV index, and volume transform.
-    /// `valid == false` on allocation failure.
-    [[nodiscard]] static MeshSDF UploadToGPU(
-        IRHIDevice* device,
-        IRHICommandList* cmdList,
-        const MeshSDFData& data);
-
-private:
-    /// Compute distance from a point to the nearest triangle surface.
-    ///
-    /// Uses the Ericson closest-point-on-triangle algorithm (projection +
-    /// edge/vertex clamping). Returns unsigned distance.
-    ///
-    /// @source Standard algorithm — Real-Time Collision Detection, Ch 5.1.5
-    static float PointToTriangleDistance(
-        const float p[3],
-        const float a[3],
-        const float b[3],
-        const float c[3]);
-
-    /// Determines whether a point is inside a closed mesh via pseudo-normal sign.
-    ///
-    /// Computes the dot product of the displacement vector (from closest point
-    /// to the query point) with the face normal at the closest triangle. A
-    /// negative dot product means the query point is on the interior side.
-    ///
-    /// # Returns
-    /// Signed distance: negative inside, positive outside.
-    static float ComputeSignedDistance(
-        const float point[3],
-        const float closestPoint[3],
-        const float faceNormal[3],
-        float unsignedDistance);
 };
 
 } // namespace uz

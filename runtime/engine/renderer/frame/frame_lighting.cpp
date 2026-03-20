@@ -484,8 +484,7 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
                 Vec3 camPos = ctx.perFrame.cameraPos.xyz();
                 m_globalDistanceField.Update(camPos);
 
-                // Collect mesh SDFs and their world transforms from the ECS.
-                // Only include meshes that have a valid baked SDF.
+                // Collect mesh SDFs from the ECS, precompute inverse transforms.
                 std::vector<MeshSDF> meshSDFs;
                 std::vector<Mat4> meshTransforms;
 
@@ -496,8 +495,25 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
                         const GPUMesh& gpuMesh = m_meshes[meshComp.meshId];
                         if (!gpuMesh.HasSDF()) continue;
 
-                        meshSDFs.push_back(gpuMesh.sdf);
-                        meshTransforms.push_back(sceneComp.GetWorldMatrix());
+                        MeshSDF sdfCopy = gpuMesh.sdf;
+                        // Precompute world-to-local inverse transform (cached in MeshSDF)
+                        Mat4 worldMat = sceneComp.GetWorldMatrix();
+                        Mat4 inv = worldMat.Inverse();
+                        sdfCopy.invTransform[0]  = inv.m._11;
+                        sdfCopy.invTransform[1]  = inv.m._12;
+                        sdfCopy.invTransform[2]  = inv.m._13;
+                        sdfCopy.invTransform[3]  = inv.m._14;
+                        sdfCopy.invTransform[4]  = inv.m._21;
+                        sdfCopy.invTransform[5]  = inv.m._22;
+                        sdfCopy.invTransform[6]  = inv.m._23;
+                        sdfCopy.invTransform[7]  = inv.m._24;
+                        sdfCopy.invTransform[8]  = inv.m._31;
+                        sdfCopy.invTransform[9]  = inv.m._32;
+                        sdfCopy.invTransform[10] = inv.m._33;
+                        sdfCopy.invTransform[11] = inv.m._34;
+
+                        meshSDFs.push_back(sdfCopy);
+                        meshTransforms.push_back(worldMat);
                     }
                 }
 
@@ -837,6 +853,11 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
         atmoCtx.iblResult           = &m_iblResult;
         atmoCtx.brdfLutSrvIndex     = m_brdfLutSrvIndex;
         atmoCtx.skyIrradianceSH     = &m_skyIrradianceSH;
+        atmoCtx.apVolume            = m_apVolume;
+        atmoCtx.apVolumeSrv         = m_apVolumeSrv;
+        atmoCtx.apVolumeUav         = m_apVolumeUav;
+        atmoCtx.invViewProjData     = reinterpret_cast<const float*>(&ctx.perFrame.invViewProj);
+        atmoCtx.cameraPos           = reinterpret_cast<const Vec3*>(&ctx.perFrame.cameraPos);
         atmoCtx.depthSrvIndex       = m_gbuffer.depthSRV;
         atmoCtx.depthTexture        = m_gbuffer.depth;
 
@@ -854,6 +875,7 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
             float skyFogR = m_skyIrradianceSH.coeffs[0].w * ctx.perFrame.skyLightIntensity;
             float skyFogG = m_skyIrradianceSH.coeffs[1].w * ctx.perFrame.skyLightIntensity;
             float skyFogB = m_skyIrradianceSH.coeffs[2].w * ctx.perFrame.skyLightIntensity;
+
 
             if (m_passInspector.IsPassEnabled("fog")) {
                 AddHeightFogFromECS(rgBuilder, ctx.hdrRes, ctx.depthRes, ctx.perFrameAlloc,

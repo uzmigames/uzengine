@@ -269,6 +269,11 @@ public:
     /// 32x32 R11G11B10F, Hillaire 2020 isotropic integration + geometric series.
     [[nodiscard]] RHIPipelineHandle GetMultiScatterLut();
 
+    /// Returns the aerial perspective volume compute pipeline (aerial_perspective_volume_cs.hlsl).
+    /// 32x32x16 RGBA16F 3D texture, precomputed per-frame AP inscattering + transmittance.
+    /// @source UE5 SkyAtmosphere.usf:1466 — RenderCameraAerialPerspectiveVolumeCS
+    [[nodiscard]] RHIPipelineHandle GetAerialPerspectiveVolume();
+
     /// Returns the sky cubemap capture compute pipeline (sky_cubemap_cs.hlsl).
     ///
     /// Compute pipeline dispatched to capture sky radiance into a 64x64x6 RGBA16F
@@ -607,6 +612,10 @@ public:
     /// @source UE5 GlobalDistanceField.cpp:406-513 — CompositeObjectDistanceFields
     [[nodiscard]] RHIPipelineHandle GetGdfComposite();
 
+    /// Returns the mesh SDF bake compute pipeline (mesh_sdf_bake_cs.hlsl).
+    /// Per-voxel brute-force closest-point-on-triangle. 4x4x4 thread groups.
+    [[nodiscard]] RHIPipelineHandle GetMeshSdfBake();
+
     /// Returns the radiance cache trace compute pipeline (radiance_cache_trace_cs.hlsl).
     ///
     /// Per-probe ray trace through the GDF, accumulates radiance into L2 SH.
@@ -649,6 +658,7 @@ private:
     [[nodiscard]] bool EnsureHeightFogPixelShader();
     [[nodiscard]] bool EnsureTransmittanceLutShader();
     [[nodiscard]] bool EnsureMultiScatterLutShader();
+    [[nodiscard]] bool EnsureAPVolumeShader();
     [[nodiscard]] bool EnsureSkyCubemapCaptureShader();
     [[nodiscard]] bool EnsureSkyCubemapCapturePSShader();
     [[nodiscard]] bool EnsureHiZPyramidShader();
@@ -676,6 +686,7 @@ private:
     [[nodiscard]] bool EnsureSsgiBilateralUpsampleShader();
     [[nodiscard]] bool EnsureVisFullscreenPixelShader();
     [[nodiscard]] bool EnsureGdfCompositeShader();
+    [[nodiscard]] bool EnsureMeshSdfBakeShader();
     [[nodiscard]] bool EnsureRadianceCacheTraceShader();
 
     /// Creates a pipeline through the PSO cache. On cache hit, returns the
@@ -710,6 +721,7 @@ private:
     RHIShaderHandle m_heightFogPS          = RHIShaderHandle::Invalid();
     RHIShaderHandle m_transmittanceLutCS      = RHIShaderHandle::Invalid();
     RHIShaderHandle m_multiScatterLutCS      = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_apVolumeCS             = RHIShaderHandle::Invalid();
     RHIShaderHandle m_skyCubemapCaptureCS    = RHIShaderHandle::Invalid();
     RHIShaderHandle m_skyCubemapCapturePSShader = RHIShaderHandle::Invalid();
     RHIShaderHandle m_hizPyramidCS             = RHIShaderHandle::Invalid();
@@ -737,6 +749,7 @@ private:
     RHIShaderHandle m_ssgiBilateralUpsampleCS  = RHIShaderHandle::Invalid();
     RHIShaderHandle m_visFullscreenPS           = RHIShaderHandle::Invalid();
     RHIShaderHandle m_gdfCompositeCS            = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_meshSdfBakeCS             = RHIShaderHandle::Invalid();
     RHIShaderHandle m_radianceCacheTraceCS      = RHIShaderHandle::Invalid();
 
     // ── Cached pipeline handles (one per bindless variant) ──────────────
@@ -763,6 +776,7 @@ private:
     RHIPipelineHandle m_heightFog             = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_transmittanceLut      = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_multiScatterLut      = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_apVolume             = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_skyCubemapCapture    = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_skyCubemapCapturePSPipeline = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_depthPrepass          = RHIPipelineHandle::Invalid();
@@ -793,6 +807,7 @@ private:
     RHIPipelineHandle m_ssgiBilateralUpsample = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_visFullscreen         = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_gdfComposite          = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_meshSdfBake           = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_radianceCacheTrace    = RHIPipelineHandle::Invalid();
 };
 

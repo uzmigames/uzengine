@@ -176,8 +176,13 @@ struct PerFrameParams {
     float    rcGridOriginX        = 0.0f;           ///< Probe grid origin X (minimum corner).
     float    rcGridOriginY        = 0.0f;           ///< Probe grid origin Y.
     float    rcGridOriginZ        = 0.0f;           ///< Probe grid origin Z.
+    float    rcGiIntensity       = 1.0f;            ///< GI intensity multiplier (default 1.0).
 
-    float    _pad2[61]            = {};              ///< Pad scalar section to 768 bytes.
+    // ── Aerial Perspective Volume ─────────────────────────────────────
+    /// @source UE5 SkyAtmosphere.usf:1466 — RenderCameraAerialPerspectiveVolumeCS
+    uint32_t apVolumeSrvIndex = UINT32_MAX;          ///< SRV for precomputed 32x32x16 AP 3D volume.
+
+    float    _pad2[59]            = {};              ///< Pad scalar section to 768 bytes.
 
     // ── Resource handles (NOT copied to CB) ──────────────────────────────
     // These are bound by ShaderParameterBinder at their HLSL register slots.

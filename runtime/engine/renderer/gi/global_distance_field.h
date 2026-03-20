@@ -177,21 +177,22 @@ struct GdfMeshSdfGPU {
 
 static_assert(sizeof(GdfMeshSdfGPU) == 96, "GdfMeshSdfGPU must be 96 bytes");
 
-/// Root constants for the GDF composite compute shader.
-/// Passed via SetRootConstants or a small CB from the ring allocator.
+/// Root constants for the GDF composite compute shader (8 uint32s at b0).
+///
+/// Passed via SetRootConstants(0, ..., 8). Must exactly match the root
+/// constants layout in global_sdf_composite_cs.hlsl and fit within the
+/// 8x uint32 root parameter at slot 0.
 struct GdfCompositeConstants {
-    uint32_t outputUav;       ///< UAV index for the target clipmap 3D texture.
-    uint32_t meshSdfBufferSrv; ///< SRV index for the StructuredBuffer<GdfMeshSdfGPU>.
-    uint32_t meshCount;       ///< Number of mesh SDFs to composite.
-    uint32_t clipmapIndex;    ///< Index of the clipmap being composited (0-3).
-    float    clipmapCenterX;  ///< World-space clipmap center X.
-    float    clipmapCenterY;  ///< World-space clipmap center Y.
-    float    clipmapCenterZ;  ///< World-space clipmap center Z.
-    float    clipmapExtent;   ///< Clipmap half-size in world units (cm).
-    uint32_t resolution;      ///< Voxels per axis (64).
-    uint32_t _pad[3];         ///< Pad to 48 bytes (3 float4s).
+    uint32_t outputUav;       ///< [0] UAV index for the target clipmap 3D texture.
+    uint32_t meshCount;       ///< [1] Number of mesh SDFs to composite.
+    uint32_t clipmapIndex;    ///< [2] Index of the clipmap being composited (0-3).
+    uint32_t resolution;      ///< [3] Voxels per axis (64).
+    float    clipmapCenterX;  ///< [4] World-space clipmap center X.
+    float    clipmapCenterY;  ///< [5] World-space clipmap center Y.
+    float    clipmapCenterZ;  ///< [6] World-space clipmap center Z.
+    float    clipmapExtent;   ///< [7] Clipmap half-size in world units (cm).
 };
 
-static_assert(sizeof(GdfCompositeConstants) == 48, "GdfCompositeConstants must be 48 bytes");
+static_assert(sizeof(GdfCompositeConstants) == 32, "GdfCompositeConstants must be 32 bytes (8 uint32s)");
 
 } // namespace uz

@@ -40,7 +40,7 @@
 
 /// @source UE5 PostProcessCombineLUTs.usf:39-46,66-68 — parameter declarations
 /// @source UE5 Scene.cpp:373-407 — default values
-cbuffer LutGenParams : register(b0) {
+cbuffer LutGenParams : register(b2) {
     // ── White balance ────────────────────────────────────────────────────
     /// @source UE5 Scene.cpp:373 — WhiteTemp = 6500.0f
     float WhiteTemp;

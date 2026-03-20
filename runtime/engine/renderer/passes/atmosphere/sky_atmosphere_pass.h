@@ -56,6 +56,8 @@ struct SkyAtmospherePassDesc {
     RHITextureHandle  multiScatterLutTexture;   ///< Physical multi-scattering LUT texture handle (SM5 fallback, bound at t2).
     rg::RgResourceId  multiScatterLutRes;       ///< Render graph resource handle for the multi-scatter LUT.
 
+    uint32_t          apVolumeSrvIndex = UINT32_MAX; ///< SRV index for AP volume 3D texture (UINT32_MAX = none).
+
     bool              bindless;         ///< True if SM6.6 bindless path is active.
     float             viewportWidth;    ///< Viewport width in pixels.
     float             viewportHeight;   ///< Viewport height in pixels.

@@ -121,6 +121,10 @@ public:
     SceneRenderer(SceneRenderer&&) noexcept;
     SceneRenderer& operator=(SceneRenderer&&) noexcept;
 
+    /// Returns true when all meshes, textures, and async decodes are complete.
+    /// Used to gate screenshots — never capture before the scene is fully loaded.
+    [[nodiscard]] bool IsSceneFullyLoaded() const;
+
     /// Initializes all rendering infrastructure.
     ///
     /// Creates ShaderManager, PipelineLibrary, CBRingAllocator (3 frames, 2MB),
@@ -325,6 +329,12 @@ public:
 
     /// Returns the current SSGI intensity.
     [[nodiscard]] float GetSsgiIntensity() const { return m_ssgiRenderer.settings.intensity; }
+
+    /// Sets the SDF GI (radiance cache) intensity multiplier.
+    void SetGiIntensity(float intensity) { m_giIntensity = intensity; }
+
+    /// Returns the current SDF GI intensity.
+    [[nodiscard]] float GetGiIntensity() const { return m_giIntensity; }
 
     /// Enables or disables Screen-Space Reflections (SSR) at runtime.
     ///
@@ -563,6 +573,12 @@ private:
     bool m_transmittanceLutDirty = true;         ///< True if LUT needs to be (re)computed.
     bool m_transmittanceLutFilled = false;       ///< True once the LUT has been computed at least once (state = SRV).
 
+    // ── Aerial Perspective Volume ────────────────────────────────────────
+
+    RHITextureHandle m_apVolume;                   ///< 32x32x16 RGBA16F 3D AP volume texture.
+    uint32_t m_apVolumeSrv = UINT32_MAX;           ///< SRV index for deferred lighting sampling.
+    uint32_t m_apVolumeUav = UINT32_MAX;           ///< UAV index for compute write.
+
     // ── Multi-Scattering LUT ──────────────────────────────────────────────
 
     RHITextureHandle m_multiScatterLut;             ///< 32x32 R11G11B10F precomputed multi-scattering LUT.
@@ -740,6 +756,7 @@ private:
     GlobalDistanceField m_globalDistanceField;   ///< 4-cascade clipmap GDF.
     RadianceCache       m_radianceCache;         ///< 16^3 world-space probe grid for diffuse GI.
     bool m_sdfGiEnabled = false;                 ///< Runtime toggle for SDF-based GI.
+    float m_giIntensity = 1.0f;                  ///< GI intensity multiplier (default 1.0).
 
     // ── SSR (Screen-Space Reflections) ─────────────────────────────────────
 
@@ -806,6 +823,12 @@ private:
     bool m_screenshotPending = false;       ///< True if a screenshot was requested via RequestScreenshot().
     bool m_screenshotSaveDeferred = false;  ///< True after capture commands recorded; save on next fence wait.
     bool m_screenshotBase64 = false;        ///< If true, print base64 PNG to stdout instead of saving to disk.
+
+    // ── Deferred GPU Resource Destruction ──────────────────────────────────
+    /// Buffers whose destruction must be deferred until the GPU finishes the
+    /// command list that references them (e.g., SDF bake triangle upload buffers).
+    /// Flushed at the start of each frame after the previous frame's fence.
+    std::vector<RHIBufferHandle> m_deferredDestroyBuffers;
 
     // ── Loaded Assets ──────────────────────────────────────────────────────
 

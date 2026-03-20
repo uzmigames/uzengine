@@ -155,8 +155,13 @@ cbuffer PerFrameCB : register(b1) {
     float    rcGridOriginX;        ///< Probe grid origin X (minimum corner).
     float    rcGridOriginY;        ///< Probe grid origin Y.
     float    rcGridOriginZ;        ///< Probe grid origin Z.
+    float    rcGiIntensity;       ///< GI intensity multiplier (default 1.0).
 
-    float    _framePad2[61];       ///< Padding to 768 bytes.
+    // ── Aerial Perspective Volume ────────────────────────────────────
+    /// @source UE5 SkyAtmosphere.usf:1466 — RenderCameraAerialPerspectiveVolumeCS
+    uint     apVolumeSrvIndex;    ///< SRV for precomputed 32x32x16 AP 3D volume (0xFFFFFFFF = none).
+
+    float    _framePad2[59];       ///< Padding to 768 bytes.
 };
 
 /// Single point light for the deferred lighting pass (64 bytes = four float4s).
@@ -1107,22 +1112,40 @@ float4 main(FSInput input) : SV_Target {
                                       + py * rcProbesPerAxis + px;
                         uint base = probeIdx * 7;
 
-                        // Evaluate L0+L1 SH at normal direction
+                        // Evaluate L0+L1 SH with cosine lobe convolution for irradiance.
+                        // Raw SH stores radiance coefficients. To get irradiance (integral
+                        // of radiance * cos(theta) over hemisphere), apply ZH convolution:
+                        //   L0 band: multiply by PI (A0 = π)
+                        //   L1 band: multiply by 2π/3 (A1 = 2π/3)
+                        // @source UE5 SHCommon.ush — DiffuseTransferSH, cosine lobe factors
+                        // @source "Stupid Spherical Harmonics Tricks" — Sloan, Table 1
                         float4 rSH = probeSH[base + 0];
                         float4 gSH = probeSH[base + 1];
                         float4 bSH = probeSH[base + 2];
-                        float4 nDir = float4(1.0f, N.x, N.z, N.y);
+                        // nDir: L0 basis = 1.0 (scaled by A0=π), L1 basis = N.xyz (scaled by A1=2π/3)
+                        static const float kA0 = 3.14159265f;       // π
+                        static const float kA1 = 2.09439510f;       // 2π/3
+                        float4 nDir = float4(kA0, kA1 * N.x, kA1 * N.z, kA1 * N.y);
                         float3 probeIrr = max(float3(dot(rSH, nDir), dot(gSH, nDir), dot(bSH, nDir)), 0.0f);
                         rcIrradiance += probeIrr * weight;
                     }
                 }
             }
 
-            // Blend: use radiance cache in the near/mid field, SH IBL for far field
-            float3 rcGridCenter = rcGridOrigin + rcGridExtent;
-            float distFromCenter = length(worldPos - rcGridCenter);
-            float rcWeight = saturate(1.0f - distFromCenter / rcGridExtent);
-            diffuseIBL = lerp(diffuseIBL, kD * albedo * rcIrradiance, rcWeight);
+            // Weight = 1.0 inside the probe grid, fading to 0.0 at the boundary.
+            // Uses per-axis box distance so the entire grid interior gets full GI,
+            // with a smooth fade only in the last 10% near each face.
+            float3 rcGridCenter = rcGridOrigin + float3(rcGridExtent, rcGridExtent, rcGridExtent);
+            float3 rcLocalPos = abs(worldPos - rcGridCenter) / rcGridExtent;
+            // Per-axis fade: 1.0 when inside 90% of the grid, fades to 0 at the edge
+            float fadeX = saturate((1.0f - rcLocalPos.x) * 10.0f);
+            float fadeY = saturate((1.0f - rcLocalPos.y) * 10.0f);
+            float fadeZ = saturate((1.0f - rcLocalPos.z) * 10.0f);
+            float rcWeight = fadeX * fadeY * fadeZ;
+
+            float3 rcDiffuse = kD * albedo * rcIrradiance * rcGiIntensity;
+            float3 combined = max(diffuseIBL, rcDiffuse);
+            diffuseIBL = lerp(diffuseIBL, combined, rcWeight);
 #endif
         }
 
@@ -1165,60 +1188,68 @@ float4 main(FSInput input) : SV_Target {
     float3 color = ambient + Lo + emissiveContrib;
 
     // ── Aerial Perspective ──
-    // Per-pixel ray-march through the atmosphere from camera to pixel.
-    // Adds distance-dependent inscattered luminance and applies transmittance
-    // to simulate atmospheric haze on distant geometry.
     // @source UE5 SkyAtmosphereCommon.ush:42 — GetAerialPerspectiveLuminanceTransmittance
     // @source UE5 SkyAtmosphere.usf:1466 — RenderCameraAerialPerspectiveVolumeCS
-    if (aerialPerspectiveEnabled != 0 && transmittanceLutSrvIndex != 0xFFFFFFFF) {
-        float3 apRayleighBeta3 = float3(apRayleighBetaX, apRayleighBetaY, apRayleighBetaZ);
+    //
+    // When the precomputed AP volume is available (apVolumeSrvIndex != 0xFFFFFFFF),
+    // sample the 32x32x16 3D texture for inscattering + transmittance. This replaces
+    // the per-pixel 8-step ray march with a single trilinear texture fetch.
+    //
+    // When the volume is not available, fall back to per-pixel ray march.
+    if (aerialPerspectiveEnabled != 0) {
+        float4 ap = float4(0, 0, 0, 1);
 
-        // Fetch transmittance LUT
 #ifdef UZ_BINDLESS
-        Texture2D<float4> apTransLut = ResourceDescriptorHeap[transmittanceLutSrvIndex];
-#else
-        Texture2D<float4> apTransLut = transmittanceLutTex;
+        [branch]
+        if (apVolumeSrvIndex != 0xFFFFFFFF) {
+            // ── AP Volume path (UE5 parity) ──────────────────────────────
+            // @source UE5 SkyAtmosphereCommon.ush:70-108
+            Texture3D<float4> apVolume = ResourceDescriptorHeap[apVolumeSrvIndex];
+
+            // Screen UV from pixel position
+            float2 apScreenUV = input.texcoord;
+
+            // Linearize depth: world distance from camera to pixel (km)
+            float linearDepthKm = viewDepth * 0.00001f; // cm → km
+
+            // @source UE5 SkyAtmosphereCommon.ush:70-72 — squared depth distribution
+            // Forward: normalizedSlice = ((z+0.5)/16)^2, depth = normalizedSlice * totalDepthKm
+            // Inverse: normalizedSlice = sqrt(depth / totalDepthKm), w = normalizedSlice
+            float totalDepthKm = 100.0f; // Must match compute shader
+            float depthSlices  = 16.0f;  // Must match compute shader
+            float linearW = saturate(linearDepthKm / totalDepthKm);
+            float nonLinW = sqrt(linearW); // Inverse of squared distribution
+
+            float3 uvw = float3(apScreenUV, nonLinW);
+            ap = apVolume.SampleLevel(linearSampler, uvw, 0);
+
+            // @source UE5 SkyAtmosphereCommon.ush:96-100 — near-fade
+            // Fade out AP for very close pixels to avoid artifacts at near plane.
+            // UE5 uses AerialPerspectiveStartDepthKm (typically 0.0001 km = 10 cm).
+            float fadeWeight = saturate(linearDepthKm * 10000.0f); // 0→1 over first 0.0001 km
+            ap.rgb *= fadeWeight;
+            ap.a    = lerp(1.0f, ap.a, fadeWeight);
+        } else
 #endif
+        if (transmittanceLutSrvIndex != 0xFFFFFFFF) {
+            // ── Per-pixel ray march fallback ─────────────────────────────
+            float3 apRayleighBeta3 = float3(apRayleighBetaX, apRayleighBetaY, apRayleighBetaZ);
+#ifdef UZ_BINDLESS
+            Texture2D<float4> apTransLut = ResourceDescriptorHeap[transmittanceLutSrvIndex];
+#else
+            Texture2D<float4> apTransLut = transmittanceLutTex;
+#endif
+            float3 apSunDir = normalize(lightDir.xyz);
+            ap = ComputeAerialPerspective(
+                worldPos, cameraPos.xyz, apSunDir, apSunIntensity,
+                apBottomRadiusKm, apTopRadiusKm, apRayleighBeta3,
+                apRayleighScaleH, apMieBeta, apMieScaleH, apMieAnisotropy,
+                apRayleighScale, apMieScale, apTransLut, linearSampler);
+        }
 
-        // Sun direction reused from the directional light
-        float3 apSunDir = normalize(lightDir.xyz);
-
-        float4 ap = ComputeAerialPerspective(
-            worldPos,
-            cameraPos.xyz,
-            apSunDir,
-            apSunIntensity,
-            apBottomRadiusKm,
-            apTopRadiusKm,
-            apRayleighBeta3,
-            apRayleighScaleH,
-            apMieBeta,
-            apMieScaleH,
-            apMieAnisotropy,
-            apRayleighScale,
-            apMieScale,
-            apTransLut,
-            linearSampler);
-
-        /// Apply aerial perspective: transmittance dims the scene, inscattering
-        /// adds atmospheric glow/haze.
         /// @source UE5 SkyAtmosphereCommon.ush:107-108 — standard AP compositing
         ///   finalColor = sceneColor * transmittance + inscattering
-        ///
-        /// @source UE5 HeightFogCommon.ush:175 — heightFogContribution (0..1) controls
-        ///   how much sky atmosphere color is injected into height fog inscattering.
-        ///   When heightFogContribution=1.0, the height fog pass handles ALL atmospheric
-        ///   haze (via skyLightColor injection). AP would double-count this, so both AP
-        ///   transmittance and inscattering must be skipped.
-        /// @source UE5 SkyAtmosphere.usf:1631-1638 — AP volume accounts for fog internally
-        ///   UE5 precomputes AP in a 3D volume that already factors in fog contribution.
-        ///   UzEngine runs fog as a separate post-deferred pass, so we disable AP entirely
-        ///   when height fog takes full responsibility (heightFogContribution=1.0).
-        /// @deviations UE5 blends AP and fog inside the AP volume computation. UzEngine
-        ///   uses a binary switch: AP active when no fog contribution, fog handles haze
-        ///   when heightFogContribution > 0. Partial contribution (0 < hfc < 1) lerps.
-        float hfc = heightFogContribution;
-        color = color * lerp(ap.a, 1.0f, hfc) + ap.rgb * (1.0f - hfc);
+        color = color * ap.a + ap.rgb;
     }
 
     // ── Buffer Visualization Grid — tile dispatch ──

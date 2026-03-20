@@ -76,6 +76,16 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
         ctx.cmdList->Begin();
     }
 
+    // ── Destroy GPU buffers deferred from previous frame ────────────────
+    // Previous frame's fence has completed by now (Application::WaitForFrame),
+    // so it's safe to destroy buffers that were referenced by GPU commands.
+    for (auto& buf : m_deferredDestroyBuffers) {
+        if (buf.IsValid()) {
+            m_device->DestroyBuffer(buf);
+        }
+    }
+    m_deferredDestroyBuffers.clear();
+
     // ── Flush deferred asset loads (queued from Lua callbacks) ─────────
     FlushPendingLoads(ctx.cmdList, ctx.vfs);
 
@@ -350,6 +360,7 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
         perFrame.rcGridOriginX        = origin.x;
         perFrame.rcGridOriginY        = origin.y;
         perFrame.rcGridOriginZ        = origin.z;
+        perFrame.rcGiIntensity        = m_giIntensity;
     } else {
         perFrame.radianceCacheEnabled = 0;
         perFrame.rcProbeSHBufferSrv   = UINT32_MAX;
@@ -379,6 +390,10 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
                 perFrame.apSunIntensity   = ctx.sunColor.Length();
                 perFrame.apRayleighScale  = skyComp.rayleighScatteringScale;
                 perFrame.apMieScale       = skyComp.mieScatteringScale;
+                // AP volume SRV (precomputed 32x32x16 3D texture)
+                if (m_apVolumeSrv != UINT32_MAX) {
+                    perFrame.apVolumeSrvIndex = m_apVolumeSrv;
+                }
             }
             // @source UE5 SceneRendering.cpp:1440 — SkyAtmosphereHeightFogContribution
             // Propagate heightFogContribution to reduce AP inscattering when height fog

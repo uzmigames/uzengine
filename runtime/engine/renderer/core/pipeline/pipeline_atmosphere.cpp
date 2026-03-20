@@ -241,6 +241,64 @@ RHIPipelineHandle PipelineLibrary::GetMultiScatterLut() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Aerial Perspective Volume Compute Pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool PipelineLibrary::EnsureAPVolumeShader() {
+    if (m_apVolumeCS.IsValid()) {
+        return true;
+    }
+
+    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::AerialPerspectiveVolumeCS);
+    if (bytecode.empty()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile AerialPerspectiveVolumeCS");
+        return false;
+    }
+
+    RHIShaderDesc shaderDesc{};
+    shaderDesc.bytecode     = bytecode.data();
+    shaderDesc.bytecodeSize = bytecode.size();
+    shaderDesc.stage        = RHIShaderStage::Compute;
+    shaderDesc.entryPoint   = "main";
+    shaderDesc.debugName    = "aerial_perspective_volume_cs";
+
+    m_apVolumeCS = m_device->CreateShader(shaderDesc);
+    if (!m_apVolumeCS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create AerialPerspectiveVolumeCS shader");
+        return false;
+    }
+    return true;
+}
+
+RHIPipelineHandle PipelineLibrary::GetAerialPerspectiveVolume() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetAerialPerspectiveVolume called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_apVolume.IsValid()) {
+        return m_apVolume;
+    }
+
+    if (!EnsureAPVolumeShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIComputePipelineDesc desc{};
+    desc.computeShader = m_apVolumeCS;
+    desc.debugName     = "AerialPerspectiveVolume";
+
+    m_apVolume = m_device->CreateComputePipeline(desc);
+    if (!m_apVolume.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create AerialPerspectiveVolume pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created AerialPerspectiveVolume pipeline");
+    }
+
+    return m_apVolume;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Sky Cubemap Capture Compute Pipeline
 // ─────────────────────────────────────────────────────────────────────────────
 

@@ -242,6 +242,31 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
         }
     }
 
+    // ── Aerial Perspective Volume (32x32x16 RGBA16F 3D) ────────────────
+    // @source UE5 SkyAtmosphereRendering.cpp — CameraAerialPerspectiveVolume (32x32x16)
+    // Precomputed per-frame inscattering + transmittance 3D texture.
+    {
+        RHITextureDesc apDesc{};
+        apDesc.width            = 32;
+        apDesc.height           = 32;
+        apDesc.depthOrArraySize = 16;
+        apDesc.is3D             = true;
+        apDesc.format           = RHIFormat::RGBA16Float;
+        apDesc.usage            = RHITextureUsage::ShaderResource
+                                | RHITextureUsage::UnorderedAccess;
+        apDesc.debugName        = "APVolume_3D";
+
+        m_apVolume = m_device->CreateTexture(apDesc);
+        if (!m_apVolume.IsValid()) {
+            UZ_LOG(Renderer, Error, "SceneRenderer: failed to create APVolume 3D texture");
+        } else {
+            m_apVolumeSrv = m_device->GetTextureSRVIndex(m_apVolume);
+            m_apVolumeUav = m_device->GetTextureUAVIndex(m_apVolume);
+            UZ_LOG(Renderer, Info, "SceneRenderer: APVolume created (32x32x16 RGBA16F 3D, SRV={}, UAV={})",
+                   m_apVolumeSrv, m_apVolumeUav);
+        }
+    }
+
     // ── IBL Baker (bake BRDF LUT once) ────────────────────────────────
     m_iblBaker = std::make_unique<IBLBaker>();
     if (m_iblBaker->Init(device, m_shaderMgr.get())) {
@@ -1158,6 +1183,12 @@ void SceneRenderer::Shutdown() {
         m_device->DestroyTexture(m_staticShadowAtlas);
         m_staticShadowAtlas = RHITextureHandle{};
         m_staticShadowAtlasSrv = UINT32_MAX;
+    }
+
+    // ── Aerial Perspective Volume ────────────────────────────────────
+    if (m_apVolume.IsValid()) {
+        m_device->DestroyTexture(m_apVolume);
+        m_apVolume = RHITextureHandle{};
     }
 
     // ── Transmittance LUT ────────────────────────────────────────────

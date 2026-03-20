@@ -93,6 +93,7 @@ void PipelineLibrary::Shutdown() {
     destroyPipeline(m_tonemap);
     destroyPipeline(m_heightFog);
     destroyPipeline(m_transmittanceLut);
+    destroyPipeline(m_apVolume);
     destroyPipeline(m_skyCubemapCapture);
     destroyPipeline(m_skyCubemapCapturePSPipeline);
     destroyPipeline(m_depthPrepass);
@@ -134,6 +135,7 @@ void PipelineLibrary::Shutdown() {
     destroyShader(m_tonemapPS);
     destroyShader(m_heightFogPS);
     destroyShader(m_transmittanceLutCS);
+    destroyShader(m_apVolumeCS);
     destroyShader(m_skyCubemapCaptureCS);
     destroyShader(m_skyCubemapCapturePSShader);
     destroyShader(m_hizPyramidCS);

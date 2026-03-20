@@ -270,18 +270,18 @@ int Application::Run(int argc, char** argv) {
             RenderDocTriggerCapture();
         }
 
-        // ── Request screenshot BEFORE RenderFrame so it captures THIS frame ──
-        if (m_frameIndex <= 5) {
-            UZ_LOG(App, Trace, "Frame {}: screenshotPending={}, screenshotFrame={}, path='{}'",
-                   m_frameIndex, m_screenshotPending, m_config.screenshotFrame, m_config.screenshotPath);
-        }
-        if (m_screenshotPending && m_frameIndex >= m_config.screenshotFrame) {
+        // ── Request screenshot only after scene is fully loaded ──────────
+        // Never capture before all meshes, textures, and async decodes complete.
+        // This prevents black/missing textures in automated screenshots.
+        if (m_screenshotPending && m_renderer->IsSceneFullyLoaded() && m_frameIndex >= 2) {
             if (m_screenshotBase64) {
                 m_renderer->RequestScreenshotBase64();
             } else {
                 m_renderer->RequestScreenshot(m_config.screenshotPath);
             }
             m_screenshotPending = false;
+            // Exit 2 frames after capture (allow present + readback)
+            m_config.maxFrames = m_frameIndex + 3;
         }
 
         // ── Render frame (SceneRenderer drives Begin/End/Execute) ─────────
@@ -447,7 +447,9 @@ void Application::ParseArgs(int argc, char* argv[]) {
         } else if (std::strcmp(argv[i], "--screenshot") == 0 && i + 1 < argc) {
             m_config.screenshotPath = argv[++i];
         } else if (std::strcmp(argv[i], "--screenshot-frame") == 0 && i + 1 < argc) {
-            m_config.screenshotFrame = static_cast<uint32_t>(std::atoi(argv[++i]));
+            // Deprecated — screenshot now auto-triggers after scene fully loads.
+            // Argument consumed but ignored.
+            ++i;
         } else if (std::strcmp(argv[i], "--frames") == 0 && i + 1 < argc) {
             m_config.maxFrames = static_cast<uint32_t>(std::atoi(argv[++i]));
         } else if (std::strcmp(argv[i], "--view-mode") == 0 && i + 1 < argc) {
@@ -495,15 +497,12 @@ void Application::ParseArgs(int argc, char* argv[]) {
         }
     }
 
+    // Screenshot: auto-triggers after scene fully loads. Set enough frames to allow loading.
     if (!m_config.screenshotPath.empty() && m_config.maxFrames == 0) {
-        m_config.screenshotFrame = std::max(m_config.screenshotFrame, 400u);
-        m_config.maxFrames = m_config.screenshotFrame + 2;
+        m_config.maxFrames = 500; // Enough for async texture loading + convergence
     }
-
-    // --screenshot-stdout uses the same frame/maxFrames logic as --screenshot
     if (m_screenshotBase64 && m_config.maxFrames == 0) {
-        m_config.screenshotFrame = std::max(m_config.screenshotFrame, 5u);
-        m_config.maxFrames = m_config.screenshotFrame + 2;
+        m_config.maxFrames = 500;
     }
 
     // --screenshot-stdout implies --headless (LLM doesn't need a visible window)

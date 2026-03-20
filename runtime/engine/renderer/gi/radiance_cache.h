@@ -222,8 +222,18 @@ struct RadianceCacheTraceConstants {
     float    skyColorR;          ///< Sky color for rays that miss all geometry.
     float    skyColorG;
     float    skyColorB;
+
+    // Sun/light parameters for single-bounce GI at hit points
+    float    lightDirX;          ///< Primary directional light direction X (toward light).
+    float    lightDirY;
+    float    lightDirZ;
+    float    lightIntensity;     ///< Light color intensity (pre-multiplied RGB luminance).
+    float    lightColorR;        ///< Primary light color R.
+    float    lightColorG;
+    float    lightColorB;
+    float    groundAlbedo;       ///< Estimated average scene albedo for bounce (0.18 typical).
 };
 
-static_assert(sizeof(RadianceCacheTraceConstants) == 144, "RadianceCacheTraceConstants must be 144 bytes");
+static_assert(sizeof(RadianceCacheTraceConstants) == 176, "RadianceCacheTraceConstants must be 176 bytes");
 
 } // namespace uz

@@ -17,10 +17,26 @@
 #include "../include/sdf_common.hlsli"
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Constants (bound at b0)
+// Root Constants (root param [0], 8x uint32 at b0)
 // ─────────────────────────────────────────────────────────────────────────────
 
-cbuffer RadianceCacheTraceConstants : register(b0)
+cbuffer RootConstants : register(b0)
+{
+    uint g_shBufferUav;     // [0] UAV descriptor index for SH StructuredBuffer
+    uint g_shBufferSrv;     // [1] SRV index (unused in trace, reserved for future)
+    uint g_frameIndexRC;    // [2] Frame index via root constants fast path
+    uint _rc_pad;           // [3]
+    uint _rc_pad1;          // [4]
+    uint _rc_pad2;          // [5]
+    uint _rc_pad3;          // [6]
+    uint _rc_pad4;          // [7]
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Bulk Constants (root param [2], root CBV at b2 — supports up to 64KB)
+// ─────────────────────────────────────────────────────────────────────────────
+
+cbuffer RadianceCacheTraceConstants : register(b2)
 {
     float3  g_gridOrigin;        // World-space grid origin (minimum corner)
     float   g_probeSpacing;      // Distance between probes (cm)
@@ -32,7 +48,7 @@ cbuffer RadianceCacheTraceConstants : register(b0)
 
     float   g_maxTraceDistance;  // Maximum trace distance (cm)
     float   g_temporalBlendAlpha; // EMA blend factor (0.05)
-    uint    g_shBufferUav;       // UAV index for SH buffer
+    uint    _cb_reservedUav;     // Padding (UAV index now in root constants at b0)
     uint    _pad0;
 
     // GDF clipmap parameters (4 cascades)
@@ -41,7 +57,7 @@ cbuffer RadianceCacheTraceConstants : register(b0)
     float4  g_gdfClipmap2;
     float4  g_gdfClipmap3;
 
-    uint    g_gdfClipmapSrv0;   // SRV indices for GDF clipmap textures
+    uint    g_gdfClipmapSrv0;   // SRV descriptor indices for GDF clipmap textures
     uint    g_gdfClipmapSrv1;
     uint    g_gdfClipmapSrv2;
     uint    g_gdfClipmapSrv3;
@@ -50,15 +66,17 @@ cbuffer RadianceCacheTraceConstants : register(b0)
     float   g_skyColorR;        // Sky color for missed rays
     float   g_skyColorG;
     float   g_skyColorB;
+
+    // Sun/light parameters for single-bounce GI
+    float   g_lightDirX;        // Primary light direction (toward light)
+    float   g_lightDirY;
+    float   g_lightDirZ;
+    float   g_lightIntensity;
+    float   g_lightColorR;      // Primary light color
+    float   g_lightColorG;
+    float   g_lightColorB;
+    float   g_groundAlbedo;     // Average scene albedo for bounce estimate
 };
-
-// ─────────────────────────────────────────────────────────────────────────────
-// SH Buffer — read/write via UAV
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// StructuredBuffer<float4>: kTotalProbes * 7 float4 elements.
-/// Each probe occupies 7 consecutive float4s for L2 SH (3 channels packed).
-RWStructuredBuffer<float4> g_probeSHBuffer : register(u0);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Sampler for GDF clipmap textures
@@ -158,6 +176,12 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
         return;
     }
 
+    // ── Bindless SH buffer access via root constants UAV index ───────
+    RWStructuredBuffer<float4> shBuffer = ResourceDescriptorHeap[g_shBufferUav];
+
+    // ── Bindless GDF clipmap texture SRV indices ─────────────────────
+    uint gdfSrvIndices[4] = { g_gdfClipmapSrv0, g_gdfClipmapSrv1, g_gdfClipmapSrv2, g_gdfClipmapSrv3 };
+
     // ── Compute probe world position from its 3D grid index ────────────
     uint probeZ = probeIndex / (g_probesPerAxis * g_probesPerAxis);
     uint remain = probeIndex % (g_probesPerAxis * g_probesPerAxis);
@@ -179,62 +203,100 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
         // Generate ray direction via Fibonacci spiral with temporal jitter
         float3 rayDir = SphericalFibonacci(ray, g_raysPerProbe, seed);
 
-        // ── Simplified GDF trace (single cascade, inner-most that contains the probe) ──
-        // In a production path, SphereMarchGlobalSDF would be called with all 4 cascades.
-        // For the initial implementation, we do a simplified distance-based radiance estimate.
-        float3 radiance = float3(g_skyColorR, g_skyColorG, g_skyColorB);
-
-        // Try each GDF clipmap from finest to coarsest
-        // For each, sample the distance at the probe position + a step along the ray
-        // If we find a surface hit, darken the contribution (crude occlusion).
-        float occlusionFactor = 1.0f;
+        // ── Sphere march through GDF clipmaps (finest cascade first) ────
+        // Default radiance for rays that miss all geometry: full sky in all directions.
+        // For probes in open space, the lower hemisphere also sees sky (no ground plane
+        // in the SDF). When a ray hits geometry, the hit shading handles bounced light.
+        float3 skyColor = float3(g_skyColorR, g_skyColorG, g_skyColorB);
+        float3 lightDir = normalize(float3(g_lightDirX, g_lightDirY, g_lightDirZ));
+        float3 lightCol = float3(g_lightColorR, g_lightColorG, g_lightColorB);
+        // Lower hemisphere: Lambertian ground bounce = albedo * skyIrradiance.
+        // Upper hemisphere irradiance integral = PI * skyColor, then BRDF = albedo/PI,
+        // so reflected = albedo * skyColor. For missed downward rays, use this.
+        float3 groundBounce = g_groundAlbedo * skyColor;
+        float3 radiance = (rayDir.z >= 0.0f) ? skyColor : groundBounce;
 
         float4 clipmaps[4] = { g_gdfClipmap0, g_gdfClipmap1, g_gdfClipmap2, g_gdfClipmap3 };
 
         float t = 0.0f;
         static const uint kMaxMarchSteps = 32;
+        // Minimum step size = voxel size of the finest cascade (assumes 64^3 resolution)
         float voxelSize0 = (clipmaps[0].w * 2.0f) / 64.0f;
 
-        // Simple sphere march through the finest applicable cascade
         for (uint step = 0; step < kMaxMarchSteps; step++)
         {
             float3 samplePos = probePos + rayDir * t;
 
-            // Find which cascade contains this position
+            // Find the finest cascade that contains this sample position
+            // and sample its GDF texture via bindless descriptor heap access
             float dist = g_maxTraceDistance;
-            bool found = false;
 
             for (uint c = 0; c < g_numGdfClipmaps; c++)
             {
                 float3 center = clipmaps[c].xyz;
                 float extent = clipmaps[c].w;
 
-                // Check if sample position is inside this cascade
+                // Check if sample position is inside this cascade's AABB
                 float3 localPos = abs(samplePos - center);
                 if (all(localPos < extent))
                 {
-                    // Sample distance from the GDF clipmap
-                    // In a full bindless path, we'd use ResourceDescriptorHeap[srvIndex]
-                    // For now, use a simplified geometric distance model based on
-                    // the clipmap's global minimum distance field.
-                    // The actual texture sampling requires bindless support.
+                    // Compute normalized UVW coordinates within the cascade volume
+                    // Maps world position to [0,1]^3 texture space
                     float3 uvPos = (samplePos - center + extent) / (extent * 2.0f);
-                    // Approximate: distance from cascade center normalized
-                    dist = length(samplePos - center) * 0.1f;
-                    found = true;
+
+                    // Bindless GDF texture sampling — each cascade has its own
+                    // SRV index in the descriptor heap
+                    Texture3D<float> gdfTex = ResourceDescriptorHeap[gdfSrvIndices[c]];
+                    dist = gdfTex.SampleLevel(g_linearClamp, uvPos, 0).r;
                     break;
                 }
             }
 
             if (dist < voxelSize0)
             {
-                // Surface hit: use a simple diffuse color estimate
-                // In production, this would sample the surface cache or scene color
-                occlusionFactor = 0.3f;
-                radiance *= occlusionFactor;
+                // Surface hit: compute single-bounce diffuse GI.
+                // Estimate surface normal from the GDF gradient via central differences,
+                // then compute NdotL with the primary directional light.
+                // Radiance = lightColor * albedo * max(NdotL, 0) + ambient
+                float3 hitPos = samplePos;
+
+                // Estimate normal via central differences on the GDF
+                float eps = voxelSize0 * 2.0f;
+                float3 hitNormal = float3(0, 0, 1);
+                // Find the cascade that contains the hit point for gradient sampling
+                for (uint nc = 0; nc < g_numGdfClipmaps; nc++)
+                {
+                    float3 ctr = clipmaps[nc].xyz;
+                    float ext = clipmaps[nc].w;
+                    if (all(abs(hitPos - ctr) < ext))
+                    {
+                        Texture3D<float> gTex = ResourceDescriptorHeap[gdfSrvIndices[nc]];
+                        float invExt2 = 1.0f / (ext * 2.0f);
+                        float3 uvC = (hitPos - ctr + ext) * invExt2;
+                        float3 epsUV = float3(eps * invExt2, 0, 0);
+                        float dx = gTex.SampleLevel(g_linearClamp, uvC + epsUV.xyz, 0).r
+                                 - gTex.SampleLevel(g_linearClamp, uvC - epsUV.xyz, 0).r;
+                        float dy = gTex.SampleLevel(g_linearClamp, uvC + epsUV.yxz, 0).r
+                                 - gTex.SampleLevel(g_linearClamp, uvC - epsUV.yxz, 0).r;
+                        float dz = gTex.SampleLevel(g_linearClamp, uvC + epsUV.yzx, 0).r
+                                 - gTex.SampleLevel(g_linearClamp, uvC - epsUV.yzx, 0).r;
+                        hitNormal = normalize(float3(dx, dy, dz));
+                        break;
+                    }
+                }
+
+                float NdotL = max(dot(hitNormal, lightDir), 0.0f);
+                // Single-bounce Lambertian reflection: BRDF = albedo/PI
+                // Direct: (lightColor * NdotL) * (albedo/PI)
+                // Ambient: sky irradiance (PI * skyColor for uniform sky) * (albedo/PI) = albedo * skyColor
+                static const float kInvPI = 0.31830988f;
+                radiance = lightCol * g_groundAlbedo * kInvPI * NdotL
+                         + skyColor * g_groundAlbedo;
                 break;
             }
 
+            // Advance along the ray by the distance field value, clamped to
+            // the minimum voxel size to avoid zero-step stalling
             t += max(dist, voxelSize0);
             if (t > g_maxTraceDistance)
             {
@@ -246,11 +308,11 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
         float basis[9];
         GetSHBasis(rayDir, basis);
 
-        for (uint c = 0; c < 9; c++)
+        for (uint shIdx = 0; shIdx < 9; shIdx++)
         {
-            shR[c] += radiance.x * basis[c];
-            shG[c] += radiance.y * basis[c];
-            shB[c] += radiance.z * basis[c];
+            shR[shIdx] += radiance.x * basis[shIdx];
+            shG[shIdx] += radiance.y * basis[shIdx];
+            shB[shIdx] += radiance.z * basis[shIdx];
         }
     }
 
@@ -259,11 +321,11 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     /// (4 * pi / N) * sum(radiance * basis). The 4*pi factor accounts for
     /// the full sphere solid angle.
     float normFactor = (4.0f * 3.14159265f) / float(g_raysPerProbe);
-    for (uint c = 0; c < 9; c++)
+    for (uint shIdx = 0; shIdx < 9; shIdx++)
     {
-        shR[c] *= normFactor;
-        shG[c] *= normFactor;
-        shB[c] *= normFactor;
+        shR[shIdx] *= normFactor;
+        shG[shIdx] *= normFactor;
+        shB[shIdx] *= normFactor;
     }
 
     // ── Pack into 7 float4s ────────────────────────────────────────────
@@ -272,12 +334,18 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
 
     // ── Temporal blend with previous frame's SH (EMA) ──────────────────
     /// @source UE5 LumenRadianceCache.usf:156 — ProbeHistoryWeight = 0.95
-    float alpha = g_temporalBlendAlpha;
     uint baseIdx = probeIndex * 7;
+
+    // Detect uninitialized probes (L0 == 0 for all channels) and write
+    // directly without blending. This avoids 90+ frames of slow convergence
+    // from zero on first load or after probe grid scroll.
+    float4 prevL0 = shBuffer[baseIdx];
+    bool isUninitialized = (prevL0.x == 0.0f && prevL0.y == 0.0f && prevL0.z == 0.0f && prevL0.w == 0.0f);
+    float alpha = isUninitialized ? 1.0f : g_temporalBlendAlpha;
 
     for (uint i = 0; i < 7; i++)
     {
-        float4 prevSH = g_probeSHBuffer[baseIdx + i];
-        g_probeSHBuffer[baseIdx + i] = lerp(prevSH, newSH[i], alpha);
+        float4 prevSH = shBuffer[baseIdx + i];
+        shBuffer[baseIdx + i] = lerp(prevSH, newSH[i], alpha);
     }
 }

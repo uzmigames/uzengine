@@ -191,22 +191,9 @@ void GlobalDistanceField::CompositeFromMeshSDFs(
         entry.extentZ = sdf.volumeExtent[2];
         entry.padding1 = 0.0f;
 
-        // Compute inverse world transform (world-to-local) for transforming
-        // global voxel positions into the mesh's local SDF volume space.
-        // We store the top 3x4 rows of the inverse matrix in row-major order.
-        Mat4 invTransform = worldTransform.Inverse();
-        entry.invTransform[0]  = invTransform.m._11;
-        entry.invTransform[1]  = invTransform.m._12;
-        entry.invTransform[2]  = invTransform.m._13;
-        entry.invTransform[3]  = invTransform.m._14;
-        entry.invTransform[4]  = invTransform.m._21;
-        entry.invTransform[5]  = invTransform.m._22;
-        entry.invTransform[6]  = invTransform.m._23;
-        entry.invTransform[7]  = invTransform.m._24;
-        entry.invTransform[8]  = invTransform.m._31;
-        entry.invTransform[9]  = invTransform.m._32;
-        entry.invTransform[10] = invTransform.m._33;
-        entry.invTransform[11] = invTransform.m._34;
+        // Use cached inverse transform from MeshSDF (precomputed at collection time).
+        // Avoids per-frame Mat4::Inverse() for every mesh.
+        std::memcpy(entry.invTransform, sdf.invTransform, sizeof(entry.invTransform));
 
         entry.srvIndex   = sdf.srvIndex;
         entry.resolution = sdf.resolution;
@@ -237,30 +224,20 @@ void GlobalDistanceField::CompositeFromMeshSDFs(
         toUav.stateAfter  = RHIResourceState::UnorderedAccess;
         cmdList->ResourceBarrier(&toUav, 1);
 
-        // Build root constants for this clipmap
+        // Build root constants for this clipmap (8 uint32s at root param 0)
         GdfCompositeConstants constants{};
-        constants.outputUav        = clip.uavIndex;
-        constants.meshSdfBufferSrv = UINT32_MAX; // Mesh data passed via CB ring
-        constants.meshCount        = meshSdfCount;
-        constants.clipmapIndex     = i;
-        constants.clipmapCenterX   = clip.center.x;
-        constants.clipmapCenterY   = clip.center.y;
-        constants.clipmapCenterZ   = clip.center.z;
-        constants.clipmapExtent    = clip.extent;
-        constants.resolution       = kResolution;
+        constants.outputUav      = clip.uavIndex;
+        constants.meshCount      = meshSdfCount;
+        constants.clipmapIndex   = i;
+        constants.resolution     = kResolution;
+        constants.clipmapCenterX = clip.center.x;
+        constants.clipmapCenterY = clip.center.y;
+        constants.clipmapCenterZ = clip.center.z;
+        constants.clipmapExtent  = clip.extent;
 
-        // Upload constants via CB ring and bind as b0
-        CBAllocation constAlloc = cbRing->Allocate(sizeof(GdfCompositeConstants));
-        if (constAlloc.cpuPtr) {
-            std::memcpy(constAlloc.cpuPtr, &constants, sizeof(constants));
-            cmdList->SetRootCBV(0, constAlloc.bufferHandle,
-                                constAlloc.offsetBytes,
-                                constAlloc.cpuPtr, sizeof(constants));
-        }
-
-        // Bind per-frame CB at b1 so the shader can access camera data
-        cmdList->SetRootCBV(1, perFrameBuffer, perFrameOffset,
-                            perFrameCpuPtr, perFrameSize);
+        // Bind as root constants (slot 0, 8 uint32s)
+        cmdList->SetRootConstants(0,
+            reinterpret_cast<const uint32_t*>(&constants), 8);
 
         // Bind mesh SDF data at b2 (or via structured buffer descriptor)
         cmdList->SetRootCBV(2, meshDataAlloc.bufferHandle,
@@ -270,13 +247,6 @@ void GlobalDistanceField::CompositeFromMeshSDFs(
         // Dispatch: 4x4x4 thread groups to cover 64^3 voxels
         const uint32_t groupsPerAxis = (kResolution + 3) / 4;
         cmdList->Dispatch(groupsPerAxis, groupsPerAxis, groupsPerAxis);
-
-        // UAV barrier to ensure writes complete before the next clipmap or reads
-        RHIBarrierDesc uavBarrier{};
-        uavBarrier.texture     = clip.texture;
-        uavBarrier.stateBefore = RHIResourceState::UnorderedAccess;
-        uavBarrier.stateAfter  = RHIResourceState::UnorderedAccess;
-        cmdList->ResourceBarrier(&uavBarrier, 1);
 
         // Transition back to SRV for subsequent trace reads
         RHIBarrierDesc toSrv{};

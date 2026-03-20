@@ -13,7 +13,10 @@
 
 #include "math_util.hlsli"
 
+#ifndef UZ_PI_DEFINED
+#define UZ_PI_DEFINED
 static const float PI = 3.14159265359f;
+#endif
 
 /// Minimum roughness clamped before squaring to alpha, preventing a perfectly
 /// smooth (singular) specular lobe that collapses to a delta function on GPU.

@@ -11,29 +11,37 @@ status: complete
 author: Claude
 -->
 
-**Updated**: 2026-03-19
+**Updated**: 2026-03-20
 
 Complete reference documentation for UzEngine rendering analysis, architecture patterns, and parity studies across UE5, Godot, and Unity.
 
-## Directory Structure (10 categories, 132 files)
+## Directory Structure (12 categories, 135 files)
 
 ### Rendering Analysis
 
-- **[atmosphere/](atmosphere/)** (21 files) — Sky rendering, Bruneton atmospheric scattering, transmittance LUT, sky-atmosphere integration, fog systems, SkyLight IBL component
-  - UE5 sky atmosphere system, transmittance LUT generation and sampling, coordinate system mapping, SkyLight component architecture, IBL cubemap capture, integration with height fog
+- **[atmosphere/](atmosphere/)** (26 files) — Sky rendering, Bruneton atmospheric scattering, transmittance LUT, aerial perspective, fog systems, SkyLight IBL, height fog
+  - UE5 sky atmosphere system, transmittance LUT, coordinate system mapping, SkyLight component, IBL cubemap capture, height fog complete reference, aerial perspective volume, blue horizon tint
 
-- **[post-process/](post-process/)** (11 files) — Tone mapping, FXAA, volumetric rendering, auto-exposure, color grading, bloom, motion blur, DOF, screen-space effects
+- **[gi/](gi/)** (3 files) — Global illumination analysis, Lumen radiance cache, radiance compositing
+  - Lumen radiance cache compositing, radiance cache quick reference, UE5 ground radiance analysis
+
+- **[post-process/](post-process/)** (12 files) — Tone mapping, FXAA, volumetric rendering, auto-exposure, color grading, bloom, motion blur, DOF, screen-space effects
   - Auto-exposure histogram, ACES tone mapping, Frostbite volumetric approach, post-process pipeline integration, frame composition
 
-- **[rendering-pipeline/](rendering-pipeline/)** (10 files) — General rendering architecture, deferred rendering, forward rendering, GBuffer layouts, shader patterns, debug visualization, velocity generation
+- **[rendering-pipeline/](rendering-pipeline/)** (11 files) — General rendering architecture, deferred rendering, forward rendering, GBuffer layouts, shader patterns, debug visualization, velocity generation
   - UE5 rendering systems (depth prepass, shadow passes, base pass, lighting pass), shader compilation, debugging and profiling, view mode buffers, frame analysis
 
-- **[lighting/](lighting/)** (20 files) — Shadow mapping, cascaded shadows, PCSS, distance field shadows, point/spot lights, light transport, reversed-Z depth, skylight ambient
+- **[lighting/](lighting/)** (21 files) — Shadow mapping, cascaded shadows, PCSS, distance field shadows, point/spot lights, light transport, reversed-Z depth, skylight ambient
   - UE5 shadow architecture, cascade selection and artifacts, PCF filtering, soft shadows, shadow receiver bias, static shadow caching, environment component defaults, fog-light integration
+
+### Data Flow & Integration
+
+- **[dataflow/](dataflow/)** (5 files) — Cross-subsystem data flow documents for multi-file implementations
+  - SDF GI pipeline, GPU SDF bake, skylight-fog-ambient, SSGI, radiance cache dataflow
 
 ### Asset & Platform Analysis
 
-- **[asset-pipeline/](asset-pipeline/)** (4 files) — Texture streaming, shader code library, PSO caching, material platform data, cooking pipeline
+- **[asset-pipeline/](asset-pipeline/)** (5 files) — Texture streaming, shader code library, PSO caching, material platform data, cooking pipeline
   - UE5 loading architecture, async streaming patterns, texture format cooking (BC7/ASTC), shader bytecode caching, memory-mapped lookups
 
 - **[rhi/](rhi/)** (12 files) — RHI abstraction, constant buffers, bindless resources, shader model 5 fallbacks, Vulkan patterns, DX11/DX12 binding models
@@ -41,22 +49,22 @@ Complete reference documentation for UzEngine rendering analysis, architecture p
 
 ### Upscaling & Advanced Rendering
 
-- **[upscaling/](upscaling/)** (8 files) — Temporal super-resolution (TSR), FSR, DLSS, 4K rendering, blend factor tuning, rejection shading
+- **[upscaling/](upscaling/)** (9 files) — Temporal super-resolution (TSR), FSR, DLSS, 4K rendering, blend factor tuning, rejection shading
   - UE5 TSR architecture, blend factor analysis, temporal rejection heuristics, Godot upscaling patterns, frame composition for higher resolutions
 
 ### Materials & Shading
 
-- **[materials/](materials/)** (15 files) — Material system architecture, material instances, material parameters, parallax occlusion mapping, shader authoring patterns
+- **[materials/](materials/)** (16 files) — Material system architecture, material instances, material parameters, parallax occlusion mapping, shader authoring patterns
   - UE5 material data model extraction, parameter system, material directory structure, POM implementation (heightmap parallax, ray stepping), material patterns for UzEngine
 
 ### Project Parity & Roadmaps
 
-- **[parity/](parity/)** (7 files) — UE5 vs UzEngine rendering gap analysis, visual impact assessment, rendering roadmap, code location references
+- **[parity/](parity/)** (8 files) — UE5 vs UzEngine rendering gap analysis, visual impact assessment, rendering roadmap, code location references
   - Gap analysis with visual impact quantification, implementation priorities, code locations for improvements, 30-day roadmap, feature completeness matrix
 
 ### Engine Comparison & Architecture
 
-- **[engine-comparison/](engine-comparison/)** (24 files) — Cross-engine architecture analysis (UE5, Godot, Unity), design patterns, rendering device abstractions, platform services
+- **[engine-comparison/](engine-comparison/)** (25 files) — Cross-engine architecture analysis (UE5, Godot, Unity), design patterns, rendering device abstractions, platform services
   - Godot architecture decisions and patterns, UE5 architecture summary, Unity rendering device patterns, D3D12 abstraction layers, application-layer design, scene management architecture
 
 ## Quick Navigation
@@ -69,12 +77,14 @@ Complete reference documentation for UzEngine rendering analysis, architecture p
 
 ### Implementing a Specific Feature?
 - **Sky & Fog** → [atmosphere/](atmosphere/)
+- **Global Illumination** → [gi/](gi/)
 - **Shadows & Lights** → [lighting/](lighting/)
 - **Tone Mapping, Bloom, TAA** → [post-process/](post-process/)
 - **Materials & Parallax** → [materials/](materials/)
 - **Upscaling (TSR/FSR)** → [upscaling/](upscaling/)
 - **RHI & Constant Buffers** → [rhi/](rhi/)
 - **Asset Loading** → [asset-pipeline/](asset-pipeline/)
+- **Cross-Subsystem Data Flow** → [dataflow/](dataflow/)
 
 ### Studying Engine Architecture?
 - [engine-comparison/](engine-comparison/) — UE5, Godot, Unity patterns

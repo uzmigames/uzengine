@@ -261,7 +261,7 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
 
                 auto lutCb = m_cbRing->Allocate(sizeof(p));
                 std::memcpy(lutCb.cpuPtr, &p, sizeof(p));
-                cmd->SetRootCBV(0, lutCb.bufferHandle, lutCb.offsetBytes, lutCb.cpuPtr, lutCb.sizeBytes);
+                cmd->SetRootCBV(2, lutCb.bufferHandle, lutCb.offsetBytes, lutCb.cpuPtr, lutCb.sizeBytes);
                 cmd->SetDescriptorTable(4, m_colorGradingLutUav);
                 cmd->Dispatch(kColorGradingLutSize / 8, kColorGradingLutSize / 8, kColorGradingLutSize / 8);
 

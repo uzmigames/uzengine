@@ -45,7 +45,7 @@ struct SkyIndices {
     uint depthIdx;
     uint transmittanceLutIdx;       // RGBA16F 256x64 precomputed transmittance LUT
     uint multiScatteringLutIdx;     // R11G11B10F 32x32 multi-scattering LUT
-    uint _pad1;
+    uint apVolumeSrvIdx;            // SRV for 32x32x16 RGBA16F AP volume (0xFFFFFFFF = none)
 };
 ConstantBuffer<SkyIndices> skyIndices : register(b0);
 #endif
@@ -303,10 +303,27 @@ float4 main(FSInput input) : SV_Target {
     float tStart = max(atmoHit.x, 0.0f);
     float tEnd   = atmoHit.y;
 
-    // Clip to planet surface if ray points downward
+    // Check planet intersection (used for ground contribution decision, NOT for clipping).
+    // When the camera is near the surface, clipping at groundHit truncates the ray to
+    // near-zero length, killing inscattering for below-horizon pixels. Instead, let the
+    // ray march through the full atmosphere thickness — density at negative altitude is
+    // clamped to max by DensityAtAltitude(max(0,alt)), producing correct inscattering.
+    // At orbital altitude (> 10 km), clip normally for physical ground contribution.
     float2 groundHit = RaySphereIntersect(cameraSkyKm, rayDir, float3(0, 0, 0), bottomRadiusKm);
-    if (groundHit.x > 0.0f)
-        tEnd = min(tEnd, groundHit.x);
+    float cameraAltForClip = length(cameraSkyKm) - bottomRadiusKm;
+    if (groundHit.x > 0.0f) {
+        if (cameraAltForClip > 10.0f) {
+            // Orbital: clip at planet surface for physical ground contribution
+            tEnd = min(tEnd, groundHit.x);
+        } else {
+            // Ground level: don't clip at planet surface, but cap the ray march
+            // distance to prevent the path from spanning the full atmosphere diameter
+            // (hundreds of km) which would waste the 32 steps on a huge interval.
+            // Cap at 200 km — enough to capture all inscattering while keeping
+            // step size small enough for accurate density sampling near the surface.
+            tEnd = min(tEnd, tStart + 200.0f);
+        }
+    }
 
     float stepLenKm = (tEnd - tStart) / float(NUM_STEPS_VIEW);
     if (stepLenKm <= 0.0f)
@@ -426,16 +443,15 @@ float4 main(FSInput input) : SV_Target {
     // Default (1,1,1) = physically correct. Can be used to warm/cool the sky.
     L *= skyLuminanceFactor.xyz;
 
-    // ── Ground contribution ─────────────────────────────────────────────────
-    // When the view ray hits the planet surface, add Lambertian reflection of
-    // sunlight attenuated by atmosphere transmittance (both sun→ground and
-    // ground→camera). This gives the ground its base color when viewed from
-    // above or at the horizon. UE5: SkyAtmosphere.usf "PlanetSurfaceTransmittance".
-    if (groundHit.x > 0.0f) {
+    // ── Ground contribution (orbital/aerial view only) ─────────────────────
+    // @source UE5 SkyAtmosphere.usf:776-777
+    // At ground level (< 10 km), the ray march runs through the full atmosphere
+    // without ground clipping, producing correct Rayleigh inscattering for
+    // below-horizon pixels. No ground contribution needed.
+    // At orbital altitude (> 10 km), add Lambertian planet surface reflection.
+    if (groundHit.x > 0.0f && cameraAltForClip > 10.0f) {
         float3 groundPosKm = cameraSkyKm + rayDir * groundHit.x;
         float3 groundNormal = normalize(groundPosKm);
-
-        // Sun-to-ground transmittance via LUT
         float3 groundSunT;
 #ifdef UZ_BINDLESS
         Texture2D<float4> tLutGnd = ResourceDescriptorHeap[skyIndices.transmittanceLutIdx];
@@ -445,13 +461,9 @@ float4 main(FSInput input) : SV_Target {
         groundSunT = SampleTransmittanceLut(transmittanceLut, linearSampler,
             groundPosKm, sunDir, bottomRadiusKm, topRadiusKm);
 #endif
-
-        // Lambertian BRDF: albedo / π × max(dot(N, L), 0)
-        float NdotL = max(0.0f, dot(groundNormal, sunDir));
+        float NdotL = saturate(dot(groundNormal, sunDir));
         float3 groundRadiance = groundAlbedo.xyz * (1.0f / PI) * NdotL
                               * sunIlluminance.xyz * groundSunT;
-
-        // Attenuate by path transmittance from ground to camera
         L += Throughput * groundRadiance;
     }
 

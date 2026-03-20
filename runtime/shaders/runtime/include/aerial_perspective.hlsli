@@ -29,6 +29,11 @@
 
 #include "units.hlsli"
 
+#ifndef UZ_PI_DEFINED
+#define UZ_PI_DEFINED
+static const float PI = 3.14159265358979323846f;
+#endif
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants — aliases from units.hlsli
 // ─────────────────────────────────────────────────────────────────────────────

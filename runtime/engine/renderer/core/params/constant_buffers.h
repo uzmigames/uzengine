@@ -151,8 +151,16 @@ struct PerFrameCB {
     float    rcGridOriginX        = 0.0f;           ///< Probe grid origin X (minimum corner).
     float    rcGridOriginY        = 0.0f;           ///< Probe grid origin Y.
     float    rcGridOriginZ        = 0.0f;           ///< Probe grid origin Z.
+    float    rcGiIntensity       = 1.0f;            ///< GI intensity multiplier (default 1.0).
 
-    float    _pad2[61] = {};                        ///< Pad to 768 bytes.
+    // ── Aerial Perspective Volume ─────────────────────────────────────
+    /// @source UE5 SkyAtmosphere.usf:1466 — RenderCameraAerialPerspectiveVolumeCS
+    /// SRV index for the precomputed 32x32x16 RGBA16F 3D texture containing
+    /// per-voxel inscattering (RGB) + transmittance (A). Sampled in deferred
+    /// lighting to replace per-pixel AP ray march. UINT32_MAX = no volume.
+    uint32_t apVolumeSrvIndex = UINT32_MAX;
+
+    float    _pad2[59] = {};                        ///< Pad to 768 bytes.
 };
 
 static_assert(sizeof(PerFrameCB) == 768, "PerFrameCB must be 768 bytes (D3D12 CB alignment)");
