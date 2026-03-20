@@ -937,7 +937,7 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
                     cloudInput.lightSteps        = cloudComp.lightSteps;
                     cloudInput.depthSrv          = m_gbuffer.depthSRV;
                     cloudInput.globalCoverage    = cloudComp.coverage;
-                    cloudInput.temporalBlendFactor = 0.05f;
+                    cloudInput.temporalBlendFactor = 1.0f; // DEBUG: 100% current, skip temporal history
 
                     // Store cloud input for deferred execution after render graph.
                     // CloudPass::Execute() manages its own barriers on internally-owned
@@ -951,7 +951,8 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
                     // Cloud composite pass — fullscreen triangle that alpha-blends
                     // the half-res cloud output over the HDR scene color using
                     // premultiplied-alpha: final.rgb = cloud.rgb + scene.rgb * transmittance
-                    if (m_cloudOutputSrv != UINT32_MAX)
+                    // Composite disabled — debugging cloud output via pass dump
+                    if (false && m_cloudOutputSrv != UINT32_MAX)
                     rgBuilder.AddPass("CloudComposite", [this, &ctx](rg::RgPassBuilder& pb) {
                         pb.Write(ctx.hdrRes, RHIResourceState::RenderTarget);
 

@@ -201,11 +201,12 @@ float SampleCloudDensity(float3 posKm, float heightFraction)
     float3 shapeUV = (posKm + windOffset) * 0.0002;
     float4 shapeNoise = shapeNoiseTex.SampleLevel(LinearWrapSampler, shapeUV, 0);
 
-    /// Perlin-Worley composite: remap R channel using GBA FBM
-    /// @source Schneider & Vos 2015 slide 25 — remap(perlinWorley, worleyFBM - 1, 1, 0, 1)
-    /// FBM weights: 0.625, 0.25, 0.125 sum to 1.0
-    float worleyFBM = shapeNoise.g * 0.625 + shapeNoise.b * 0.25 + shapeNoise.a * 0.125;
-    float shapeSample = Remap(shapeNoise.r, worleyFBM - 1.0, 1.0, 0.0, 1.0);
+    /// Shape noise is single-channel (R=G=B=A from precomputed Perlin-Worley .bin).
+    /// Use R channel directly as the cloud shape density.
+    /// When multi-channel noise is available, restore the FBM remap:
+    ///   float worleyFBM = shapeNoise.g * 0.625 + shapeNoise.b * 0.25 + shapeNoise.a * 0.125;
+    ///   float shapeSample = Remap(shapeNoise.r, worleyFBM - 1.0, 1.0, 0.0, 1.0);
+    float shapeSample = shapeNoise.r;
 
     /// Weather map: large-scale coverage and cloud type
     /// UV scale 0.00005 gives ~20km weather tile period
@@ -234,8 +235,8 @@ float SampleCloudDensity(float3 posKm, float heightFraction)
         float3 detailUV = (posKm + windOffset * detailWindScale) * 0.001;
         float4 detailNoise = detailNoiseTex.SampleLevel(LinearWrapSampler, detailUV, 0);
 
-        /// Detail FBM: same 0.625/0.25/0.125 weights as shape
-        float detailFBM = detailNoise.r * 0.625 + detailNoise.g * 0.25 + detailNoise.b * 0.125;
+        /// Detail noise is single-channel. Use R directly.
+        float detailFBM = detailNoise.r;
 
         /// Erode edges: 0.35 erosion factor from Schneider 2015 slide 70
         coveredDensity = Remap(coveredDensity, detailFBM * 0.35, 1.0, 0.0, 1.0);
@@ -288,7 +289,10 @@ float LightMarch(float3 posKm, float heightFraction)
         previousNormT = currentNormT;
 
         /// Compute height fraction at shadow sample
-        float sampleAlt = length(samplePos) - layerBottomKm;
+        /// Planet center is at (0, 0, -planetRadius) in world space
+        static const float kLightPlanetR = 6360.0;
+        float3 lightPlanetCenter = float3(0.0, 0.0, -kLightPlanetR);
+        float sampleAlt = length(samplePos - lightPlanetCenter) - (kLightPlanetR + layerBottomKm);
         float sampleHeightFrac = saturate(sampleAlt / layerHeightKm);
 
         /// Skip if outside cloud layer
@@ -346,12 +350,15 @@ void main(uint2 DTid : SV_DispatchThreadID)
     float sceneDistKm = length(sceneClip.xyz - cameraPos);
 
     /// ─── Step 3: Intersect ray with cloud layer spheres ─────────────────
-    /// Cloud layer defined as two concentric spheres around planet center (0,0,0)
-    /// Bottom sphere: radius = layerBottomKm
-    /// Top sphere: radius = layerBottomKm + layerHeightKm
-    float3 planetCenter = float3(0.0, 0.0, 0.0);
-    float topRadius    = layerBottomKm + layerHeightKm;
-    float bottomRadius = layerBottomKm;
+    /// Cloud layer is a spherical shell around the planet.
+    /// UE5 approach: camera stays in world space, planet center is placed
+    /// BELOW the camera at (0, 0, -planetRadius). This way the camera is
+    /// at distance ~planetRadius from center (on the surface).
+    /// @ref VolumetricCloud.usf — RayIntersectSphereSolution
+    static const float kPlanetRadiusKm = 6360.0;
+    float3 planetCenter = float3(0.0, 0.0, -kPlanetRadiusKm);
+    float bottomRadius = kPlanetRadiusKm + layerBottomKm;
+    float topRadius    = bottomRadius + layerHeightKm;
 
     float tTopMin, tTopMax, tBotMin, tBotMax;
     bool hitTop = RaySphereIntersect(rayOrigin, rayDir, planetCenter, topRadius,    tTopMin, tTopMax);
@@ -360,7 +367,7 @@ void main(uint2 DTid : SV_DispatchThreadID)
     if (!hitTop)
     {
         /// No intersection with cloud volume at all
-        cloudOutput[DTid] = float4(0.0, 0.0, 0.0, 0.0);
+        cloudOutput[DTid] = float4(0.0, 0.0, 0.0, 1.0);
         return;
     }
 
@@ -445,7 +452,8 @@ void main(uint2 DTid : SV_DispatchThreadID)
         float3 samplePosKm = rayOrigin + t * rayDir;
 
         /// Compute normalized altitude within cloud layer [0,1]
-        float altitudeKm = length(samplePosKm) - layerBottomKm;
+        /// Distance from planet center minus inner shell radius
+        float altitudeKm = length(samplePosKm - planetCenter) - bottomRadius;
         float heightFraction = saturate(altitudeKm / layerHeightKm);
 
         /// Skip samples outside the cloud layer

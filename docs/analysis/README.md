@@ -1,122 +1,117 @@
-# UzEngine Analysis Documentation
+<!-- doc-meta: volumetric-clouds-analysis-index; date: 2026-03-20; author: unreal-architect -->
 
-<!-- doc-meta
-type: index
-category: analysis
-theme: master-index
-title: UzEngine Analysis — Complete Reference Index
-created: 2026-03-17
-updated: 2026-03-19
-status: complete
-author: Claude
--->
+# Volumetric Cloud Analysis Documents
 
-**Updated**: 2026-03-20
+This folder contains a complete analysis of UE5's volumetric cloud system, specifically how it handles ray-sphere intersection for the cloud layer shell.
 
-Complete reference documentation for UzEngine rendering analysis, architecture patterns, and parity studies across UE5, Godot, and Unity.
+## Documents
 
-## Directory Structure (12 categories, 135 files)
+### 1. **VOLUMETRIC-CLOUDS-SUMMARY.md** (START HERE)
+   - **Purpose**: High-level overview and diagnosis
+   - **Length**: ~300 lines
+   - **Contains**:
+     - TL;DR of the problem and solution
+     - Answers to your 4 specific questions
+     - Explanation of your bug
+     - Example setup
+   - **Best for**: Understanding the problem quickly
 
-### Rendering Analysis
+### 2. **volumetric-clouds-camera-positioning.md**
+   - **Purpose**: Detailed technical analysis with source code
+   - **Length**: ~200 lines
+   - **Contains**:
+     - How UE5 defines cloud layer shell (inner/outer radius)
+     - Camera position relative to planet center
+     - Coordinate system used in ray marching
+     - How UE5 converts world position to planet-relative (hint: it doesn't, at intersection time)
+     - Complete code excerpts from UE5 with line numbers
+   - **Best for**: Understanding the "why" and reviewing UE5 source
 
-- **[atmosphere/](atmosphere/)** (26 files) — Sky rendering, Bruneton atmospheric scattering, transmittance LUT, aerial perspective, fog systems, SkyLight IBL, height fog
-  - UE5 sky atmosphere system, transmittance LUT, coordinate system mapping, SkyLight component, IBL cubemap capture, height fog complete reference, aerial perspective volume, blue horizon tint
+### 3. **volumetric-clouds-coordinate-systems.md**
+   - **Purpose**: Visual explanations and diagrams
+   - **Length**: ~300 lines
+   - **Contains**:
+     - Diagram 1: UE5's correct world-space approach
+     - Diagram 2: Your current (incorrect) planet-relative approach
+     - Diagram 3: Ray-sphere intersection math
+     - Diagram 4: Why your offset fails
+     - Diagram 5: Correct fix
+     - Diagram 6: Altitude calculation comparison
+   - **Best for**: Visual learners and understanding the geometry
 
-- **[gi/](gi/)** (3 files) — Global illumination analysis, Lumen radiance cache, radiance compositing
-  - Lumen radiance cache compositing, radiance cache quick reference, UE5 ground radiance analysis
+### 4. **volumetric-clouds-fix-plan.md**
+   - **Purpose**: Step-by-step implementation guide
+   - **Length**: ~250 lines
+   - **Contains**:
+     - Before/after code comparison
+     - 5-step fix procedure
+     - Validation checklist
+     - Expected results for each test case
+     - Code references to UE5 source
+   - **Best for**: Implementing the fix in your codebase
 
-- **[post-process/](post-process/)** (12 files) — Tone mapping, FXAA, volumetric rendering, auto-exposure, color grading, bloom, motion blur, DOF, screen-space effects
-  - Auto-exposure histogram, ACES tone mapping, Frostbite volumetric approach, post-process pipeline integration, frame composition
+### 5. **volumetric-clouds-diagnostic-values.md**
+   - **Purpose**: Expected numerical values for validation
+   - **Length**: ~350 lines
+   - **Contains**:
+     - Test case: camera at 50 km altitude
+     - Step-by-step expected values for UE5 approach
+     - Step-by-step expected values for your broken approach
+     - Why your approach fails (explanation with math)
+     - Validation test sheet
+   - **Best for**: Debugging — if your values don't match, find where they diverge
 
-- **[rendering-pipeline/](rendering-pipeline/)** (11 files) — General rendering architecture, deferred rendering, forward rendering, GBuffer layouts, shader patterns, debug visualization, velocity generation
-  - UE5 rendering systems (depth prepass, shadow passes, base pass, lighting pass), shader compilation, debugging and profiling, view mode buffers, frame analysis
+---
 
-- **[lighting/](lighting/)** (21 files) — Shadow mapping, cascaded shadows, PCSS, distance field shadows, point/spot lights, light transport, reversed-Z depth, skylight ambient
-  - UE5 shadow architecture, cascade selection and artifacts, PCF filtering, soft shadows, shadow receiver bias, static shadow caching, environment component defaults, fog-light integration
+## Quick Diagnosis
 
-### Data Flow & Integration
+Run this mental checklist:
 
-- **[dataflow/](dataflow/)** (5 files) — Cross-subsystem data flow documents for multi-file implementations
-  - SDF GI pipeline, GPU SDF bake, skylight-fog-ambient, SSGI, radiance cache dataflow
+1. **Do you use `rayOriginPlanet = cameraPos + float3(0, 0, planetRadius)`?**
+   - YES → Your code is broken. Remove the offset.
+   - NO → Check if your planet center is in the same world space as camera pos.
 
-### Asset & Platform Analysis
+2. **Is your planet center passed as an explicit shader constant?**
+   - NO → It must be. Add it to your constant buffer.
+   - YES → Verify it's in world space (km), same coordinate system as camera.
 
-- **[asset-pipeline/](asset-pipeline/)** (5 files) — Texture streaming, shader code library, PSO caching, material platform data, cooking pipeline
-  - UE5 loading architecture, async streaming patterns, texture format cooking (BC7/ASTC), shader bytecode caching, memory-mapped lookups
+3. **Do your ray-sphere intersections use world-space-to-world-space?**
+   - Pseudo-code: `RayIntersect(cameraWorldPos, rayDir, float4(planetCenterWorldPos, radius))`
+   - YES → You're on the right track. Check the discriminant values in diagnostic doc.
+   - NO → You're mixing coordinate systems. See fix-plan.md.
 
-- **[rhi/](rhi/)** (12 files) — RHI abstraction, constant buffers, bindless resources, shader model 5 fallbacks, Vulkan patterns, DX11/DX12 binding models
-  - UE5 cbuffer layout analysis, SM5 feature detection and fallbacks, Vulkan bindless analysis, resource binding patterns, platform-specific optimizations
+4. **Are your altitude calculations using `distFromCenter - planetRadius`?**
+   - YES → Check if they're computed correctly with world-space distance.
+   - NO → You'll get wrong altitudes. See diagnostic-values.md for expected numbers.
 
-### Upscaling & Advanced Rendering
+---
 
-- **[upscaling/](upscaling/)** (9 files) — Temporal super-resolution (TSR), FSR, DLSS, 4K rendering, blend factor tuning, rejection shading
-  - UE5 TSR architecture, blend factor analysis, temporal rejection heuristics, Godot upscaling patterns, frame composition for higher resolutions
+## UE5 Source References
 
-### Materials & Shading
+All analysis is based on these files in `W:\UE_5.6_Source`:
 
-- **[materials/](materials/)** (16 files) — Material system architecture, material instances, material parameters, parallax occlusion mapping, shader authoring patterns
-  - UE5 material data model extraction, parameter system, material directory structure, POM implementation (heightmap parallax, ray stepping), material patterns for UzEngine
+- **Shader**: `Engine/Shaders/Private/VolumetricCloud.usf`
+  - Lines 231-253: `RayIntersectSphereSolution()` function
+  - Lines 490-493: Camera positioning (`RayWorldOriginKm`)
+  - Lines 531-560: Shell intersection logic
 
-### Project Parity & Roadmaps
+- **C++ Setup**: `Engine/Source/Runtime/Renderer/Private/VolumetricCloudRendering.cpp`
+  - Line ~250: Planet center and radii setup
 
-- **[parity/](parity/)** (8 files) — UE5 vs UzEngine rendering gap analysis, visual impact assessment, rendering roadmap, code location references
-  - Gap analysis with visual impact quantification, implementation priorities, code locations for improvements, 30-day roadmap, feature completeness matrix
+- **Data Structure**: `Engine/Source/Runtime/Engine/Public/Rendering/SkyAtmosphereCommonData.h`
+  - Lines 17-61: `FAtmosphereSetup` struct with `PlanetCenterKm`
 
-### Engine Comparison & Architecture
+---
 
-- **[engine-comparison/](engine-comparison/)** (25 files) — Cross-engine architecture analysis (UE5, Godot, Unity), design patterns, rendering device abstractions, platform services
-  - Godot architecture decisions and patterns, UE5 architecture summary, Unity rendering device patterns, D3D12 abstraction layers, application-layer design, scene management architecture
+## The One-Sentence Fix
 
-## Quick Navigation
+**Remove `rayOriginPlanet = rayOriginKm + float3(0, 0, planetRadius)` and pass planet center explicitly to the shader in the same world space as the camera.**
 
-### New to UzEngine Analysis? Start Here
-1. [parity/](parity/) — Current rendering state and gap analysis
-2. [rendering-pipeline/](rendering-pipeline/) — How rendering works end-to-end
-3. [lighting/](lighting/) — Shadow and light systems
-4. [atmosphere/](atmosphere/) — Sky and fog rendering
+---
 
-### Implementing a Specific Feature?
-- **Sky & Fog** → [atmosphere/](atmosphere/)
-- **Global Illumination** → [gi/](gi/)
-- **Shadows & Lights** → [lighting/](lighting/)
-- **Tone Mapping, Bloom, TAA** → [post-process/](post-process/)
-- **Materials & Parallax** → [materials/](materials/)
-- **Upscaling (TSR/FSR)** → [upscaling/](upscaling/)
-- **RHI & Constant Buffers** → [rhi/](rhi/)
-- **Asset Loading** → [asset-pipeline/](asset-pipeline/)
-- **Cross-Subsystem Data Flow** → [dataflow/](dataflow/)
+## File Reading Order
 
-### Studying Engine Architecture?
-- [engine-comparison/](engine-comparison/) — UE5, Godot, Unity patterns
-- [engine-comparison/architecture/](engine-comparison/architecture/) — Application-layer design
-- [engine-comparison/application-layer/](engine-comparison/application-layer/) — Rendering device abstractions
-
-## Current Rendering State (2026-03-19)
-
-### Implemented (UE5 parity ✓)
-- Deferred PBR (GGX + Burley + SmithJoint + multiscatter energy compensation)
-- Cascaded Shadow Maps (4 cascades, per-cascade PCF radius, cascade selection)
-- Distance Field Shadows (atlas, cone trace, tile culling)
-- IBL (irradiance SH L2 + prefiltered specular + BRDF LUT, SkyLight component)
-- Bloom (6-mip pyramid, Karis average, per-stage tints)
-- FilmToneMap (ACES 3-segment, 5 artist params)
-- Sky Atmosphere (Bruneton, multi-scatter LUT, ozone, aerial perspective)
-- Height Fog (2-layer, directional inscattering, sky→fog injection, volumetric integration)
-- TAA (Halton jitter, YCoCg clamp, history ping-pong)
-- SSR (Hi-Z ray trace, Fresnel resolve, deferred integration)
-- GTAO (compute pipeline, denoise, temporal, multi-bounce)
-- Contact Shadows (screen-space ray march, 8 steps)
-- Film Grain + Vignette + Chromatic Aberration
-- Auto-Exposure (histogram, min=0.03, max=8.0)
-- Color Grading LUT (full CombineLUTs pipeline, 32x32x32 3D)
-- Spot Lights (cone attenuation, UE5 SpotAngles packing)
-- Motion Blur (velocity gather, depth-aware, adaptive samples)
-- DOF (CoC setup + gather blur)
-
-### Priority Gaps
-- Volumetric clouds (froxel grid, phase functions, lighting)
-- Decals (DBuffer projection, normal blending)
-- Area lights (LTC approximation)
-- Shading models (subsurface scattering, clear coat, hair)
-- LOD system (distance-based, screen-coverage metrics)
-- Post-process volumes (blendable parameters, camera triggers)
+- **For quick fix**: SUMMARY → FIX-PLAN → implement
+- **For understanding**: SUMMARY → COORDINATE-SYSTEMS → CAMERA-POSITIONING → implement
+- **For validation**: DIAGNOSTIC-VALUES → run tests → adjust code
+- **For reference**: CAMERA-POSITIONING (has all UE5 source code)
