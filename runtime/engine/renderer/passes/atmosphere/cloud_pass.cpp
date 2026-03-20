@@ -1,9 +1,14 @@
 /// UzEngine Cloud Pass — Implementation.
 ///
-/// Creates noise textures, weather map, and cloud output textures, compiles
-/// 5 compute pipelines, and dispatches the full volumetric cloud pipeline
-/// each frame. The cloud output (half-res RGBA16F) is composited by a
-/// subsequent pass before tonemapping.
+/// Loads precomputed 3D noise textures from disk (avoiding GPU TDR from heavy
+/// compute bakes), creates weather map and cloud output textures, compiles
+/// 3 compute pipelines (weather, raymarch, temporal), and dispatches the full
+/// volumetric cloud pipeline each frame. The cloud output (half-res RGBA16F)
+/// is composited by a subsequent pass before tonemapping.
+///
+/// Noise textures sourced from three-geospatial (MIT license):
+///   - cloud_shape.bin: 128^3 R8 Perlin-Worley combined
+///   - cloud_shape_detail.bin: 32^3 R8 inverted Worley FBM
 ///
 /// @ref CloudGlobalShaderParams
 /// @ref MainCommon tracing loop
@@ -15,11 +20,14 @@
 #include "engine/renderer/core/cb_ring_allocator.h"
 #include "shader_manager.h"
 #include "engine_shaders.h"
+#include "file_system.h"
+#include "paths.h"
 #include "log.h"
 #include "profiler.h"
 
 #include <algorithm>
 #include <cstring>
+#include <filesystem>
 
 UZ_DECLARE_LOG_CATEGORY(Renderer);
 
@@ -28,18 +36,6 @@ namespace uz {
 // ─────────────────────────────────────────────────────────────────────────────
 // Root constant / CBV structures — must match HLSL cbuffer layouts exactly
 // ─────────────────────────────────────────────────────────────────────────────
-
-/// Root constants for cloud_noise_shape_cs.hlsl and cloud_noise_detail_cs.hlsl.
-/// Matches `cbuffer RootConstants : register(b0)` — 4 DWORDs.
-struct CloudNoiseRootConstants {
-    uint32_t texDimX;
-    uint32_t texDimY;
-    uint32_t texDimZ;
-    uint32_t outputUavIndex;   ///< Bindless descriptor index for output UAV
-};
-
-static_assert(sizeof(CloudNoiseRootConstants) == 16,
-    "CloudNoiseRootConstants must be 4 DWORDs (16 bytes)");
 
 /// Root constants for cloud_weather_cs.hlsl.
 /// Matches `cbuffer WeatherParams : register(b0)` — 4 DWORDs.
@@ -225,36 +221,28 @@ void CloudPass::Shutdown() {
 
     if (m_device) {
         // Destroy pipelines
-        if (m_shapeNoisePipeline.IsValid())  m_device->DestroyPipeline(m_shapeNoisePipeline);
-        if (m_detailNoisePipeline.IsValid()) m_device->DestroyPipeline(m_detailNoisePipeline);
         if (m_weatherMapPipeline.IsValid())  m_device->DestroyPipeline(m_weatherMapPipeline);
         if (m_raymarchPipeline.IsValid())    m_device->DestroyPipeline(m_raymarchPipeline);
         if (m_temporalPipeline.IsValid())    m_device->DestroyPipeline(m_temporalPipeline);
 
         // Destroy shaders
-        if (m_shapeNoiseCS.IsValid())  m_device->DestroyShader(m_shapeNoiseCS);
-        if (m_detailNoiseCS.IsValid()) m_device->DestroyShader(m_detailNoiseCS);
         if (m_weatherMapCS.IsValid())  m_device->DestroyShader(m_weatherMapCS);
         if (m_raymarchCS.IsValid())    m_device->DestroyShader(m_raymarchCS);
         if (m_temporalCS.IsValid())    m_device->DestroyShader(m_temporalCS);
     }
 
-    m_shapeNoisePipeline  = RHIPipelineHandle::Invalid();
-    m_detailNoisePipeline = RHIPipelineHandle::Invalid();
     m_weatherMapPipeline  = RHIPipelineHandle::Invalid();
     m_raymarchPipeline    = RHIPipelineHandle::Invalid();
     m_temporalPipeline    = RHIPipelineHandle::Invalid();
 
-    m_shapeNoiseCS  = RHIShaderHandle::Invalid();
-    m_detailNoiseCS = RHIShaderHandle::Invalid();
     m_weatherMapCS  = RHIShaderHandle::Invalid();
     m_raymarchCS    = RHIShaderHandle::Invalid();
     m_temporalCS    = RHIShaderHandle::Invalid();
 
     m_device    = nullptr;
     m_shaderMgr = nullptr;
-    m_initialized = false;
-    m_noisesBaked = false;
+    m_initialized  = false;
+    m_noisesLoaded = false;
     m_initialCloudBarriersDone  = false;
     m_initialWeatherBarrierDone = false;
     m_frameCount = 0;
@@ -288,6 +276,7 @@ void CloudPass::OnResize(uint32_t displayWidth, uint32_t displayHeight) {
 
 bool CloudPass::CreateNoiseTextures() {
     // ── Shape noise: 128^3 RGBA8 3D texture ──
+    // CopyDst is required because we upload precomputed data from a staging buffer.
     {
         RHITextureDesc desc{};
         desc.width            = kShapeNoiseSize;
@@ -295,7 +284,7 @@ bool CloudPass::CreateNoiseTextures() {
         desc.depthOrArraySize = static_cast<uint16_t>(kShapeNoiseSize);
         desc.format           = RHIFormat::RGBA8Unorm;
         desc.usage            = RHITextureUsage::ShaderResource
-                              | RHITextureUsage::UnorderedAccess;
+                              | RHITextureUsage::CopyDst;
         desc.is3D             = true;
         desc.debugName        = "Cloud_ShapeNoise_128";
 
@@ -306,17 +295,14 @@ bool CloudPass::CreateNoiseTextures() {
         }
 
         m_shapeNoiseSrv = m_device->GetTextureSRVIndex(m_shapeNoise);
-        m_shapeNoiseUav = m_device->GetTextureUAVIndex(m_shapeNoise);
 
-        if (m_shapeNoiseSrv == UINT32_MAX || m_shapeNoiseUav == UINT32_MAX) {
+        if (m_shapeNoiseSrv == UINT32_MAX) {
             UZ_LOG(Renderer, Error,
-                   "CloudPass: shape noise descriptor creation failed (SRV={}, UAV={})",
-                   m_shapeNoiseSrv, m_shapeNoiseUav);
+                   "CloudPass: shape noise SRV descriptor creation failed");
             return false;
         }
 
-        UZ_LOG(Renderer, Debug, "CloudPass: shape noise 3D — SRV={}, UAV={}",
-               m_shapeNoiseSrv, m_shapeNoiseUav);
+        UZ_LOG(Renderer, Debug, "CloudPass: shape noise 3D — SRV={}", m_shapeNoiseSrv);
     }
 
     // ── Detail noise: 32^3 RGBA8 3D texture ──
@@ -327,7 +313,7 @@ bool CloudPass::CreateNoiseTextures() {
         desc.depthOrArraySize = static_cast<uint16_t>(kDetailNoiseSize);
         desc.format           = RHIFormat::RGBA8Unorm;
         desc.usage            = RHITextureUsage::ShaderResource
-                              | RHITextureUsage::UnorderedAccess;
+                              | RHITextureUsage::CopyDst;
         desc.is3D             = true;
         desc.debugName        = "Cloud_DetailNoise_32";
 
@@ -338,17 +324,14 @@ bool CloudPass::CreateNoiseTextures() {
         }
 
         m_detailNoiseSrv = m_device->GetTextureSRVIndex(m_detailNoise);
-        m_detailNoiseUav = m_device->GetTextureUAVIndex(m_detailNoise);
 
-        if (m_detailNoiseSrv == UINT32_MAX || m_detailNoiseUav == UINT32_MAX) {
+        if (m_detailNoiseSrv == UINT32_MAX) {
             UZ_LOG(Renderer, Error,
-                   "CloudPass: detail noise descriptor creation failed (SRV={}, UAV={})",
-                   m_detailNoiseSrv, m_detailNoiseUav);
+                   "CloudPass: detail noise SRV descriptor creation failed");
             return false;
         }
 
-        UZ_LOG(Renderer, Debug, "CloudPass: detail noise 3D — SRV={}, UAV={}",
-               m_detailNoiseSrv, m_detailNoiseUav);
+        UZ_LOG(Renderer, Debug, "CloudPass: detail noise 3D — SRV={}", m_detailNoiseSrv);
     }
 
     return true;
@@ -426,21 +409,27 @@ bool CloudPass::CreateCloudOutputTextures(uint32_t halfW, uint32_t halfH) {
 void CloudPass::DestroyNoiseTextures() {
     if (!m_device) return;
 
+    // Release any staging buffers that were kept alive for the GPU copy
+    for (auto& buf : m_noiseStagingBuffers) {
+        if (buf.IsValid()) {
+            m_device->DestroyBuffer(buf);
+        }
+    }
+    m_noiseStagingBuffers.clear();
+
     if (m_shapeNoise.IsValid()) {
         m_device->DestroyTexture(m_shapeNoise);
         m_shapeNoise = RHITextureHandle{};
     }
     m_shapeNoiseSrv = UINT32_MAX;
-    m_shapeNoiseUav = UINT32_MAX;
 
     if (m_detailNoise.IsValid()) {
         m_device->DestroyTexture(m_detailNoise);
         m_detailNoise = RHITextureHandle{};
     }
     m_detailNoiseSrv = UINT32_MAX;
-    m_detailNoiseUav = UINT32_MAX;
 
-    m_noisesBaked = false;
+    m_noisesLoaded = false;
 }
 
 void CloudPass::DestroyWeatherMapTexture() {
@@ -474,80 +463,6 @@ void CloudPass::DestroyCloudOutputTextures() {
 // ─────────────────────────────────────────────────────────────────────────────
 // Pipeline Creation (lazy)
 // ─────────────────────────────────────────────────────────────────────────────
-
-bool CloudPass::EnsureShapeNoisePipeline() {
-    if (m_shapeNoisePipeline.IsValid()) return true;
-
-    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::CloudNoiseShapeCS);
-    if (bytecode.empty()) {
-        UZ_LOG(Renderer, Error, "CloudPass: failed to compile cloud_noise_shape_cs.hlsl");
-        return false;
-    }
-
-    RHIShaderDesc sd{};
-    sd.bytecode     = bytecode.data();
-    sd.bytecodeSize = bytecode.size();
-    sd.stage        = RHIShaderStage::Compute;
-    sd.entryPoint   = "main";
-    sd.debugName    = "cloud_noise_shape_cs";
-
-    m_shapeNoiseCS = m_device->CreateShader(sd);
-    if (!m_shapeNoiseCS.IsValid()) {
-        UZ_LOG(Renderer, Error, "CloudPass: failed to create shape noise shader");
-        return false;
-    }
-
-    RHIComputePipelineDesc pd{};
-    pd.computeShader = m_shapeNoiseCS;
-    pd.debugName     = "CloudPass_ShapeNoise";
-
-    m_shapeNoisePipeline = m_device->CreateComputePipeline(pd);
-    if (!m_shapeNoisePipeline.IsValid()) {
-        UZ_LOG(Renderer, Error, "CloudPass: failed to create shape noise pipeline");
-        return false;
-    }
-
-    UZ_LOG(Renderer, Info, "CloudPass: shape noise pipeline created (shader={}, pipeline={})",
-           m_shapeNoiseCS.index, m_shapeNoisePipeline.index);
-    return true;
-}
-
-bool CloudPass::EnsureDetailNoisePipeline() {
-    if (m_detailNoisePipeline.IsValid()) return true;
-
-    auto bytecode = m_shaderMgr->GetBytecode(EngineShader::CloudNoiseDetailCS);
-    if (bytecode.empty()) {
-        UZ_LOG(Renderer, Error, "CloudPass: failed to compile cloud_noise_detail_cs.hlsl");
-        return false;
-    }
-
-    RHIShaderDesc sd{};
-    sd.bytecode     = bytecode.data();
-    sd.bytecodeSize = bytecode.size();
-    sd.stage        = RHIShaderStage::Compute;
-    sd.entryPoint   = "main";
-    sd.debugName    = "cloud_noise_detail_cs";
-
-    m_detailNoiseCS = m_device->CreateShader(sd);
-    if (!m_detailNoiseCS.IsValid()) {
-        UZ_LOG(Renderer, Error, "CloudPass: failed to create detail noise shader");
-        return false;
-    }
-
-    RHIComputePipelineDesc pd{};
-    pd.computeShader = m_detailNoiseCS;
-    pd.debugName     = "CloudPass_DetailNoise";
-
-    m_detailNoisePipeline = m_device->CreateComputePipeline(pd);
-    if (!m_detailNoisePipeline.IsValid()) {
-        UZ_LOG(Renderer, Error, "CloudPass: failed to create detail noise pipeline");
-        return false;
-    }
-
-    UZ_LOG(Renderer, Info, "CloudPass: detail noise pipeline created (shader={}, pipeline={})",
-           m_detailNoiseCS.index, m_detailNoisePipeline.index);
-    return true;
-}
 
 bool CloudPass::EnsureWeatherMapPipeline() {
     if (m_weatherMapPipeline.IsValid()) return true;
@@ -661,101 +576,162 @@ bool CloudPass::EnsureTemporalPipeline() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Noise Baking
+// Noise Loading (from precomputed binary files)
 // ─────────────────────────────────────────────────────────────────────────────
 
-void CloudPass::BakeNoiseTextures(IRHICommandList* cmd) {
-    UZ_PROFILE_SCOPE("CloudPass::BakeNoiseTextures");
+bool CloudPass::LoadAndUploadNoise3D(IRHICommandList* cmd,
+                                     const char* filename,
+                                     RHITextureHandle dstTexture,
+                                     uint32_t dim,
+                                     const char* debugLabel)
+{
+    UZ_PROFILE_SCOPE("CloudPass::LoadAndUploadNoise3D");
 
-    if (m_noisesBaked) {
+    // ── Read the R8 binary file from disk ──
+    const std::filesystem::path filePath = uz::GetExeDir() / "assets" / filename;
+    const std::string pathStr = filePath.string();
+
+    std::vector<uint8_t> r8Data = uz::FileReadAll(pathStr.c_str());
+    if (r8Data.empty()) {
+        UZ_LOG(Renderer, Error,
+               "CloudPass: failed to read noise file '{}' for {}", pathStr, debugLabel);
+        return false;
+    }
+
+    const uint64_t expectedR8Size = static_cast<uint64_t>(dim) * dim * dim;
+    if (r8Data.size() != expectedR8Size) {
+        UZ_LOG(Renderer, Error,
+               "CloudPass: {} file size mismatch — expected {} bytes ({}^3 R8), got {}",
+               debugLabel, expectedR8Size, dim, r8Data.size());
+        return false;
+    }
+
+    UZ_LOG(Renderer, Info, "CloudPass: loaded {} from disk ({} bytes)", debugLabel, r8Data.size());
+
+    // ── Expand R8 → RGBA8 on CPU ──
+    // The raymarch shader reads all 4 channels (R, G, B, A) for FBM weighting.
+    // With single-channel precomputed data, replicate the value to all channels:
+    //   R=G=B=A=value → FBM = v*0.625 + v*0.25 + v*0.125 = v
+    constexpr uint32_t kBytesPerTexel = 4; // RGBA8
+
+    // DX12 requires 256-byte aligned row pitch for texture uploads.
+    // For a 3D texture, the staging layout must match GetCopyableFootprints:
+    //   - Each row: width * bytesPerTexel, padded to 256 bytes
+    //   - Each slice: alignedRowPitch * height
+    //   - Total: alignedRowPitch * height * depth
+    const uint32_t srcRowPitch = dim * kBytesPerTexel;
+    constexpr uint32_t kRowAlignment = 256;
+    const uint32_t alignedRowPitch = (srcRowPitch + kRowAlignment - 1) & ~(kRowAlignment - 1);
+    const uint64_t stagingSize = static_cast<uint64_t>(alignedRowPitch) * dim * dim;
+
+    // ── Create staging buffer ──
+    RHIBufferDesc stagingDesc{};
+    stagingDesc.sizeBytes = stagingSize;
+    stagingDesc.usage     = RHIBufferUsage::CopySrc;
+    stagingDesc.memory    = RHIMemoryType::Upload;
+    stagingDesc.debugName = debugLabel;
+
+    RHIBufferHandle staging = m_device->CreateBuffer(stagingDesc);
+    if (!staging.IsValid()) {
+        UZ_LOG(Renderer, Error,
+               "CloudPass: failed to create staging buffer for {} ({} bytes)",
+               debugLabel, stagingSize);
+        return false;
+    }
+
+    // ── Map staging buffer and copy expanded RGBA8 data ──
+    auto* mapped = static_cast<uint8_t*>(m_device->MapBuffer(staging));
+    if (!mapped) {
+        UZ_LOG(Renderer, Error, "CloudPass: failed to map staging buffer for {}", debugLabel);
+        m_device->DestroyBuffer(staging);
+        return false;
+    }
+
+    // Copy with row-pitch alignment. For each depth slice, for each row,
+    // expand R8 texels to RGBA8 and write to the aligned row in the staging buffer.
+    const uint8_t* srcPtr = r8Data.data();
+    for (uint32_t z = 0; z < dim; ++z) {
+        for (uint32_t y = 0; y < dim; ++y) {
+            const uint64_t sliceOffset = static_cast<uint64_t>(z) * alignedRowPitch * dim
+                                       + static_cast<uint64_t>(y) * alignedRowPitch;
+            uint8_t* dstRow = mapped + sliceOffset;
+
+            // Source offset: z * dim * dim + y * dim (row-major, Z outermost)
+            const uint64_t srcRowOffset = (static_cast<uint64_t>(z) * dim + y) * dim;
+            const uint8_t* srcRow = srcPtr + srcRowOffset;
+
+            for (uint32_t x = 0; x < dim; ++x) {
+                const uint8_t v = srcRow[x];
+                dstRow[x * 4 + 0] = v; // R
+                dstRow[x * 4 + 1] = v; // G
+                dstRow[x * 4 + 2] = v; // B
+                dstRow[x * 4 + 3] = v; // A
+            }
+        }
+    }
+
+    m_device->UnmapBuffer(staging);
+
+    // ── Barrier: Common → CopyDst ──
+    {
+        RHIBarrierDesc barrier{};
+        barrier.texture     = dstTexture;
+        barrier.stateBefore = RHIResourceState::Common;
+        barrier.stateAfter  = RHIResourceState::CopyDst;
+        cmd->ResourceBarrier(&barrier, 1);
+    }
+
+    // ── Record GPU copy: staging buffer → 3D texture (subresource 0 = all slices) ──
+    cmd->CopyBufferToTexture(staging, 0, alignedRowPitch, dstTexture, 0, 0);
+
+    // ── Barrier: CopyDst → SRV ──
+    {
+        RHIBarrierDesc barrier{};
+        barrier.texture     = dstTexture;
+        barrier.stateBefore = RHIResourceState::CopyDst;
+        barrier.stateAfter  = RHIResourceState::ShaderResource;
+        cmd->ResourceBarrier(&barrier, 1);
+    }
+
+    // Keep staging buffer alive until the GPU finishes the copy.
+    // It will be destroyed in DestroyNoiseTextures() or on the next frame after
+    // the command list has been submitted and fenced.
+    m_noiseStagingBuffers.push_back(staging);
+
+    UZ_LOG(Renderer, Info,
+           "CloudPass: uploaded {} to GPU ({}^3, staging={} bytes, alignedRowPitch={})",
+           debugLabel, dim, stagingSize, alignedRowPitch);
+    return true;
+}
+
+void CloudPass::LoadNoiseTextures(IRHICommandList* cmd) {
+    UZ_PROFILE_SCOPE("CloudPass::LoadNoiseTextures");
+
+    if (m_noisesLoaded) {
         return;
     }
 
     if (!cmd) {
-        UZ_LOG(Renderer, Error, "CloudPass::BakeNoiseTextures: null command list");
+        UZ_LOG(Renderer, Error, "CloudPass::LoadNoiseTextures: null command list");
         return;
     }
 
-    if (!EnsureShapeNoisePipeline() || !EnsureDetailNoisePipeline()) {
-        UZ_LOG(Renderer, Error, "CloudPass::BakeNoiseTextures: pipeline compilation failed");
+    // ── Load shape noise: 128^3 R8 → RGBA8 ──
+    if (!LoadAndUploadNoise3D(cmd, "cloud_shape.bin", m_shapeNoise,
+                              kShapeNoiseSize, "CloudShapeNoise")) {
+        UZ_LOG(Renderer, Error, "CloudPass::LoadNoiseTextures: shape noise load failed");
         return;
     }
 
-    // ── Barrier: Common → UAV for both noise textures ──
-    {
-        RHIBarrierDesc barriers[2] = {};
-        barriers[0].texture     = m_shapeNoise;
-        barriers[0].stateBefore = RHIResourceState::Common;
-        barriers[0].stateAfter  = RHIResourceState::UnorderedAccess;
-        barriers[1].texture     = m_detailNoise;
-        barriers[1].stateBefore = RHIResourceState::Common;
-        barriers[1].stateAfter  = RHIResourceState::UnorderedAccess;
-        cmd->ResourceBarrier(barriers, 2);
+    // ── Load detail noise: 32^3 R8 → RGBA8 ──
+    if (!LoadAndUploadNoise3D(cmd, "cloud_shape_detail.bin", m_detailNoise,
+                              kDetailNoiseSize, "CloudDetailNoise")) {
+        UZ_LOG(Renderer, Error, "CloudPass::LoadNoiseTextures: detail noise load failed");
+        return;
     }
 
-    // ── Shape noise: 128^3 dispatched as [32, 32, 32] groups of [4,4,4] threads ──
-    {
-        UZ_PROFILE_SCOPE("CloudPass::BakeShapeNoise");
-
-        cmd->SetPipeline(m_shapeNoisePipeline);
-
-        CloudNoiseRootConstants rc{};
-        rc.texDimX = kShapeNoiseSize;
-        rc.texDimY = kShapeNoiseSize;
-        rc.texDimZ = kShapeNoiseSize;
-        rc.outputUavIndex = m_shapeNoiseUav;
-
-        cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 4);
-
-        const uint32_t groups = kShapeNoiseSize / k3DGroupSize; // 128/4 = 32
-        cmd->Dispatch(groups, groups, groups);
-
-        UZ_LOG(Renderer, Info, "CloudPass: dispatched shape noise bake (128^3, {}^3 groups)",
-               groups);
-    }
-
-    // ── Detail noise: 32^3 dispatched as [8, 8, 8] groups of [4,4,4] threads ──
-    {
-        UZ_PROFILE_SCOPE("CloudPass::BakeDetailNoise");
-
-        // Barrier between the two dispatches — shape noise done, detail starts
-        RHIBarrierDesc uavBarrier{};
-        uavBarrier.texture     = m_shapeNoise;
-        uavBarrier.stateBefore = RHIResourceState::UnorderedAccess;
-        uavBarrier.stateAfter  = RHIResourceState::UnorderedAccess;
-        cmd->ResourceBarrier(&uavBarrier, 1);
-
-        cmd->SetPipeline(m_detailNoisePipeline);
-
-        CloudNoiseRootConstants rc{};
-        rc.texDimX = kDetailNoiseSize;
-        rc.texDimY = kDetailNoiseSize;
-        rc.texDimZ = kDetailNoiseSize;
-        rc.outputUavIndex = m_detailNoiseUav;
-
-        cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 4);
-
-        const uint32_t groups = kDetailNoiseSize / k3DGroupSize; // 32/4 = 8
-        cmd->Dispatch(groups, groups, groups);
-
-        UZ_LOG(Renderer, Info, "CloudPass: dispatched detail noise bake (32^3, {}^3 groups)",
-               groups);
-    }
-
-    // ── Barrier: UAV → SRV for both noise textures (ready for ray march reads) ──
-    {
-        RHIBarrierDesc barriers[2] = {};
-        barriers[0].texture     = m_shapeNoise;
-        barriers[0].stateBefore = RHIResourceState::UnorderedAccess;
-        barriers[0].stateAfter  = RHIResourceState::ShaderResource;
-        barriers[1].texture     = m_detailNoise;
-        barriers[1].stateBefore = RHIResourceState::UnorderedAccess;
-        barriers[1].stateAfter  = RHIResourceState::ShaderResource;
-        cmd->ResourceBarrier(barriers, 2);
-    }
-
-    m_noisesBaked = true;
-    UZ_LOG(Renderer, Info, "CloudPass: noise textures baked successfully");
+    m_noisesLoaded = true;
+    UZ_LOG(Renderer, Info, "CloudPass: noise textures loaded from disk successfully");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -799,12 +775,11 @@ void CloudPass::Execute(IRHICommandList* cmd, CBRingAllocator& cbRing,
         return;
     }
 
-    // ── Step 0: Bake noise textures if needed (one-time) ──
-    // ── Step 0: Bake noise textures if needed (one-time) ──
-    if (!m_noisesBaked) {
-        BakeNoiseTextures(cmd);
-        if (!m_noisesBaked) {
-            UZ_LOG(Renderer, Error, "CloudPass::Execute: noise bake failed, skipping clouds");
+    // ── Step 0: Load noise textures from disk if needed (one-time) ──
+    if (!m_noisesLoaded) {
+        LoadNoiseTextures(cmd);
+        if (!m_noisesLoaded) {
+            UZ_LOG(Renderer, Error, "CloudPass::Execute: noise load failed, skipping clouds");
             return;
         }
     }

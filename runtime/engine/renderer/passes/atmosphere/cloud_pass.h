@@ -1,11 +1,10 @@
-/// UzEngine Cloud Pass — Volumetric Cloud Rendering Pipeline (5 Compute Shaders)
+/// UzEngine Cloud Pass — Volumetric Cloud Rendering Pipeline (3 Compute Shaders)
 ///
-/// Implements a volumetric cloud system using compute shaders dispatched in order:
-/// 1. Shape Noise (128^3 RGBA8) — baked once at startup (Perlin-Worley hybrid)
-/// 2. Detail Noise (32^3 RGBA8) — baked once at startup (Worley FBM)
-/// 3. Weather Map (512^2 RGBA8) — updated each frame (wind-animated procedural)
-/// 4. Ray March (half-res RGBA16F) — main cloud density/lighting integration
-/// 5. Temporal Filter (half-res RGBA16F) — EMA temporal reprojection
+/// Implements a volumetric cloud system using:
+/// 1. Precomputed 3D Noise — loaded from disk at startup (shape 128^3, detail 32^3)
+/// 2. Weather Map (512^2 RGBA8) — updated each frame via compute (wind-animated)
+/// 3. Ray March (half-res RGBA16F) — main cloud density/lighting integration
+/// 4. Temporal Filter (half-res RGBA16F) — EMA temporal reprojection
 ///
 /// The final cloud output is a premultiplied-alpha RGBA16F texture at half display
 /// resolution, composited over the scene after deferred lighting and before tonemap.
@@ -20,6 +19,7 @@
 #include "engine/rhi/rhi_types.h"
 
 #include <cstdint>
+#include <vector>
 
 namespace uz {
 
@@ -122,14 +122,17 @@ public:
     /// affected by resize.
     void OnResize(uint32_t displayWidth, uint32_t displayHeight);
 
-    /// Bakes noise textures (call once after Init, or when noise params change).
+    /// Loads precomputed noise textures from disk.
     ///
-    /// Dispatches shape noise (128^3 = [16,16,16] groups) and detail noise
-    /// (32^3 = [4,4,4] groups) compute passes. Transitions textures from
-    /// Common → UAV → SRV.
+    /// Reads `cloud_shape.bin` (128^3 R8) and `cloud_shape_detail.bin` (32^3 R8)
+    /// from the `assets/` directory next to the executable. Expands single-channel
+    /// R8 data to RGBA8 (replicating the value to all four channels), uploads to
+    /// the GPU via staging buffers, and transitions textures to SRV state.
     ///
-    /// If noise is already baked, this is a no-op.
-    void BakeNoiseTextures(IRHICommandList* cmd);
+    /// If noise is already loaded, this is a no-op.
+    ///
+    /// The precomputed .bin files are MIT-licensed (three-geospatial).
+    void LoadNoiseTextures(IRHICommandList* cmd);
 
     /// Executes the full cloud rendering pipeline for one frame.
     ///
@@ -158,11 +161,17 @@ public:
 
 private:
     // ── Pipeline creation (lazy, on first Execute) ──────────────────────
-    [[nodiscard]] bool EnsureShapeNoisePipeline();
-    [[nodiscard]] bool EnsureDetailNoisePipeline();
     [[nodiscard]] bool EnsureWeatherMapPipeline();
     [[nodiscard]] bool EnsureRaymarchPipeline();
     [[nodiscard]] bool EnsureTemporalPipeline();
+
+    /// Loads a single R8 raw binary file from disk, expands to RGBA8, and
+    /// uploads to a 3D GPU texture via a staging buffer.
+    [[nodiscard]] bool LoadAndUploadNoise3D(IRHICommandList* cmd,
+                                            const char* filename,
+                                            RHITextureHandle dstTexture,
+                                            uint32_t dim,
+                                            const char* debugLabel);
 
     // ── Texture management ──────────────────────────────────────────────
     [[nodiscard]] bool CreateNoiseTextures();
@@ -175,17 +184,18 @@ private:
     IRHIDevice*    m_device    = nullptr;
     ShaderManager* m_shaderMgr = nullptr;
 
-    bool m_initialized = false;
-    bool m_noisesBaked = false;
+    bool m_initialized  = false;
+    bool m_noisesLoaded = false;
 
-    // ── Noise Textures (baked once) ─────────────────────────────────────
+    // ── Noise Textures (loaded from disk once) ──────────────────────────
     RHITextureHandle m_shapeNoise;                       ///< 128^3 RGBA8 3D texture
     uint32_t         m_shapeNoiseSrv = UINT32_MAX;
-    uint32_t         m_shapeNoiseUav = UINT32_MAX;
 
     RHITextureHandle m_detailNoise;                      ///< 32^3 RGBA8 3D texture
     uint32_t         m_detailNoiseSrv = UINT32_MAX;
-    uint32_t         m_detailNoiseUav = UINT32_MAX;
+
+    // ── Staging buffers for noise upload (kept alive until GPU copy completes) ──
+    std::vector<RHIBufferHandle> m_noiseStagingBuffers;
 
     // ── Weather Map (updated per frame) ─────────────────────────────────
     RHITextureHandle m_weatherMap;                       ///< 512^2 RGBA8 2D texture
@@ -201,15 +211,11 @@ private:
     uint32_t         m_halfHeight = 0;
 
     // ── Compute Pipelines (lazily created) ──────────────────────────────
-    RHIPipelineHandle m_shapeNoisePipeline  = RHIPipelineHandle::Invalid();
-    RHIPipelineHandle m_detailNoisePipeline = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_weatherMapPipeline  = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_raymarchPipeline    = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_temporalPipeline    = RHIPipelineHandle::Invalid();
 
     // ── Shader Handles ──────────────────────────────────────────────────
-    RHIShaderHandle m_shapeNoiseCS  = RHIShaderHandle::Invalid();
-    RHIShaderHandle m_detailNoiseCS = RHIShaderHandle::Invalid();
     RHIShaderHandle m_weatherMapCS  = RHIShaderHandle::Invalid();
     RHIShaderHandle m_raymarchCS    = RHIShaderHandle::Invalid();
     RHIShaderHandle m_temporalCS    = RHIShaderHandle::Invalid();
@@ -220,11 +226,10 @@ private:
     uint32_t m_frameCount = 0;                  ///< Total frames executed (for temporal history)
 
     // ── Constants ───────────────────────────────────────────────────────
-    static constexpr uint32_t kGroupSize         = 8;   ///< Compute thread group size (8x8x1 for 2D, 4x4x4 for 3D)
+    static constexpr uint32_t kGroupSize         = 8;   ///< Compute thread group size (8x8x1 for 2D)
     static constexpr uint32_t kShapeNoiseSize    = 128; ///< Shape noise 3D texture dimension
     static constexpr uint32_t kDetailNoiseSize   = 32;  ///< Detail noise 3D texture dimension
     static constexpr uint32_t kWeatherMapSize    = 512; ///< Weather map 2D texture dimension
-    static constexpr uint32_t k3DGroupSize       = 4;   ///< 3D noise dispatch group size (4x4x4 = 64 threads)
 };
 
 } // namespace uz

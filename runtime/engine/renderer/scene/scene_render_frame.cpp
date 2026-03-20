@@ -53,11 +53,22 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     ctx.frameIndex = frameIndex;
     SetupFrameData(ctx, rgBuilder);
 
-    // Cloud compute DISABLED — noise bake shaders (128^3 Worley) cause GPU TDR.
-    // Root cause: even 2x2x2 Worley loop × 128^3 threads × 4 channels is too heavy
-    // for a single dispatch. Needs: split into smaller dispatches, precompute offline,
-    // or use simpler noise (value noise FBM instead of Worley).
-    m_pendingCloudDispatch = false;
+    // ── Volumetric Cloud Compute (dedicated command list) ──────────────
+    // Noise textures are now loaded from disk (precomputed .bin files),
+    // no GPU TDR risk. Weather/raymarch/temporal run as lightweight 2D
+    // compute dispatches on a dedicated command list to isolate barrier
+    // state from the render graph.
+    if (m_pendingCloudDispatch && m_cloudPass && m_cloudPass->IsInitialized()
+        && m_pendingCloudInput && m_cloudCmdList) {
+        UZ_PROFILE_SCOPE("CloudPass::DedicatedDispatch");
+        m_cloudCmdList->Begin();
+        m_cloudPass->Execute(m_cloudCmdList, *m_cbRing, *m_pendingCloudInput);
+        m_cloudCmdList->End();
+        m_cloudCmdList->Execute();
+        m_device->WaitIdle();
+        m_cloudOutputSrv = m_cloudPass->GetCloudOutputSrv();
+        m_pendingCloudDispatch = false;
+    }
 
     // ── Register render graph passes in pipeline order ──────────────────
     RegisterShadowPasses(rgBuilder, ctx);
