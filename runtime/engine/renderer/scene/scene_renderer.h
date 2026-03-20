@@ -861,6 +861,14 @@ private:
     /// large WaitIdle stalls when many textures complete at once.
     std::vector<TextureDecodeResult> m_deferredDecoded;
 
+    /// Persistent upload context that accumulates staging buffers for texture
+    /// uploads across multiple frames. Flushed when enough textures accumulate
+    /// or when all decodes complete — avoids one WaitIdle per texture.
+    std::unique_ptr<UploadContext> m_textureBatchUpload;
+
+    /// Number of textures uploaded into m_textureBatchUpload since last flush.
+    uint32_t m_textureBatchCount = 0;
+
     // ── Constants ──────────────────────────────────────────────────────────
 
     bool m_hasSkyAtmosphere = false;  ///< True if a SkyAtmosphereComponent was found this frame.
