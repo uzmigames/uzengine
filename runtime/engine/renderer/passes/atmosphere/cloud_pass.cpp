@@ -816,6 +816,7 @@ void CloudPass::Execute(IRHICommandList* cmd, CBRingAllocator& cbRing,
         return;
     }
 
+
     // First-frame diagnostic dump
     static bool loggedFirstFrame = false;
     if (!loggedFirstFrame) {

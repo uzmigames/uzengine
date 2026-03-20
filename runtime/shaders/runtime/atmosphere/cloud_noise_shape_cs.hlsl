@@ -103,7 +103,12 @@ float3 VoronoiCornerSample(float3 cellPos)
 
     // Quality <= 2 path: points on sphere with radius 0.2588
     // This guarantees the closest point is always within a 2x2x2 search
-    return normalize(noise) * 0.2588;
+    // Guard against zero-length vector (all random values = 0.5 → noise = 0)
+    // which would cause normalize() to return NaN/Inf and crash the GPU.
+    float len2 = dot(noise, noise);
+    if (len2 < 1e-10)
+        return float3(0.2588, 0.0, 0.0);  // Arbitrary valid direction
+    return noise * (0.2588 * rsqrt(len2));
 }
 
 /// 3D tileable Worley noise. Returns distance to nearest feature point,
@@ -132,13 +137,13 @@ float WorleyNoise3D(float3 p, float frequency)
     // We use 3x3x3 instead of the reference engine's 2x2x2 because tiling with small
     // repeat sizes can place feature points at cell edges where a 2x2x2
     // search misses them. standard PCG hash:527-539 uses 3x3x3 for Quality==3.
-    [unroll]
+    [loop]
     for (int x = -1; x <= 1; ++x)
     {
-        [unroll]
+        [loop]
         for (int y = -1; y <= 1; ++y)
         {
-            [unroll]
+            [loop]
             for (int z = -1; z <= 1; ++z)
             {
                 float3 offset = float3(x, y, z);

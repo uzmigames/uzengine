@@ -219,6 +219,33 @@ static int RendererGetDebugView(lua_State* L) {
     return 1;
 }
 
+/// uz.renderer.set_lens_flare_enabled(enabled)
+///
+/// Enables or disables screen-space lens flare at runtime.
+/// Default: OFF. Must be explicitly enabled.
+static int RendererSetLensFlareEnabled(lua_State* L) {
+    const bool enabled = lua_toboolean(L, 1) != 0;
+    SceneRenderer* renderer = GetRenderer(L);
+    if (!renderer) {
+        UZ_LOG(Scripting, Warning, "uz.renderer.set_lens_flare_enabled: SceneRenderer not set");
+        return 0;
+    }
+    renderer->SetLensFlareEnabled(enabled);
+    UZ_LOG(Scripting, Info, "[Lua] uz.renderer.set_lens_flare_enabled: {}", enabled ? "ON" : "OFF");
+    return 0;
+}
+
+/// uz.renderer.is_lens_flare_enabled() -> boolean
+static int RendererIsLensFlareEnabled(lua_State* L) {
+    SceneRenderer* renderer = GetRenderer(L);
+    if (!renderer) {
+        lua_pushboolean(L, 0);
+        return 1;
+    }
+    lua_pushboolean(L, renderer->IsLensFlareEnabled() ? 1 : 0);
+    return 1;
+}
+
 /// uz.renderer.set_shadow_cache(enabled)
 ///
 /// Enables or disables shadow caching at runtime.
@@ -802,6 +829,12 @@ void LuaRegisterRendererAPI(lua_State* L) {
 
     lua_pushcfunction(L, RendererScreenshot);
     lua_setfield(L, -2, "screenshot");
+
+    lua_pushcfunction(L, RendererSetLensFlareEnabled);
+    lua_setfield(L, -2, "set_lens_flare_enabled");
+
+    lua_pushcfunction(L, RendererIsLensFlareEnabled);
+    lua_setfield(L, -2, "is_lens_flare_enabled");
 
     lua_pushcfunction(L, RendererSetShadowCache);
     lua_setfield(L, -2, "set_shadow_cache");

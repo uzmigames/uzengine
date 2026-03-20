@@ -312,6 +312,13 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
         UZ_LOG(Renderer, Warning, "SceneRenderer: CloudPass init failed (clouds disabled)");
         m_cloudPass.reset();
     }
+    // Dedicated command list for cloud compute — isolates cloud barrier
+    // management from the main render frame command list to avoid DX12
+    // debug layer state tracking conflicts.
+    m_cloudCmdList = m_device->CreateCommandList(RHIQueueType::Graphics);
+    if (!m_cloudCmdList) {
+        UZ_LOG(Renderer, Warning, "SceneRenderer: failed to create cloud command list");
+    }
 
     // ── DFS Output Texture + Culling Buffers (at render resolution) ──
     // Created here but only populated when DFS is enabled at runtime.
@@ -1270,6 +1277,7 @@ void SceneRenderer::Shutdown() {
     if (m_autoExposure) m_autoExposure->Shutdown();
     if (m_gtaoPass) m_gtaoPass->Shutdown();
     if (m_cloudPass) { m_cloudPass->Shutdown(); m_cloudPass.reset(); }
+    if (m_cloudCmdList) { m_device->DestroyCommandList(m_cloudCmdList); m_cloudCmdList = nullptr; }
     if (m_lensFlarePass) m_lensFlarePass->Shutdown();
     if (m_bloomPass) m_bloomPass->Shutdown();
 

@@ -58,8 +58,8 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
     // Project sun direction to screen space. If the sun is on-screen,
     // dispatch the lens flare shader. Ghosts reflect through the sun's
     // screen position, not through arbitrary bright pixels.
-    if (m_lensFlarePass && m_lensFlarePass->IsInitialized() && ctx.bloomEnabled
-        && m_bloomPass && m_bloomPass->GetBloomResultSrvIndex() != UINT32_MAX
+    if (m_lensFlareEnabled && m_lensFlarePass && m_lensFlarePass->IsInitialized()
+        && ctx.bloomEnabled && m_bloomPass && m_bloomPass->GetBloomResultSrvIndex() != UINT32_MAX
         && m_shadowDebugMode == 0 && ctx.bindless) {
 
         // Project sun position to clip space (sun is at infinity → use direction)

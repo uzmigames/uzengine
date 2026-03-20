@@ -93,7 +93,11 @@ float3 VoronoiCornerSample(float3 cellPos)
 
     // Quality <= 2 path: points on sphere with radius 0.2588
     // This guarantees the closest point is always within a 2x2x2 search
-    return normalize(noise) * 0.2588;
+    // Guard against zero-length vector to prevent NaN from normalize()
+    float len2 = dot(noise, noise);
+    if (len2 < 1e-10)
+        return float3(0.2588, 0.0, 0.0);
+    return noise * (0.2588 * rsqrt(len2));
 }
 
 /// 3D tileable Worley noise. Returns distance to nearest feature point,
@@ -119,13 +123,13 @@ float WorleyNoise3D(float3 p, float frequency)
 
     // 3x3x3 neighborhood search for correct tiling
     // @ref PCG hash quality 3 path
-    [unroll]
+    [loop]
     for (int x = -1; x <= 1; ++x)
     {
-        [unroll]
+        [loop]
         for (int y = -1; y <= 1; ++y)
         {
-            [unroll]
+            [loop]
             for (int z = -1; z <= 1; ++z)
             {
                 float3 offset = float3(x, y, z);
@@ -185,6 +189,7 @@ void main(uint3 DTid : SV_DispatchThreadID)
     // Early-out for out-of-bounds threads (safety for non-power-of-2 dims)
     if (any(DTid >= g_TextureDimensions))
         return;
+
 
     // Normalize dispatch ID to [0, 1]^3 UV space
     // Adding 0.5 to center the sample within each texel

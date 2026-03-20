@@ -356,6 +356,13 @@ public:
     /// Returns whether TAA is currently enabled.
     [[nodiscard]] bool IsTaaEnabled() const { return m_taaEnabled; }
 
+    /// Enables or disables screen-space lens flare at runtime.
+    /// Default: OFF. Enable via Lua `uz.renderer.set_lens_flare_enabled(true)`.
+    void SetLensFlareEnabled(bool enabled) { m_lensFlareEnabled = enabled; }
+
+    /// Returns whether lens flare is currently enabled.
+    [[nodiscard]] bool IsLensFlareEnabled() const { return m_lensFlareEnabled; }
+
     /// Sets the temporal upscaler type. Recreates the upscaler on change.
     void SetUpscalerType(UpscalerType type);
 
@@ -618,9 +625,11 @@ private:
 
     // ── Lens Flare ──────────────────────────────────────────────────────
     std::unique_ptr<LensFlarePass> m_lensFlarePass;  ///< Screen-space lens flare (ghosts + halo).
+    bool m_lensFlareEnabled = false;                  ///< Runtime toggle. Default OFF — enable via cvar or Lua.
 
     // ── Volumetric Clouds ───────────────────────────────────────────────
     std::unique_ptr<CloudPass> m_cloudPass;           ///< GPU volumetric cloud pipeline (5 compute shaders).
+    IRHICommandList* m_cloudCmdList = nullptr;         ///< Dedicated command list for cloud compute dispatches.
     uint32_t m_cloudOutputSrv = UINT32_MAX;           ///< SRV of the final cloud output for compositing.
     std::unique_ptr<CloudPassInput> m_pendingCloudInput; ///< Deferred cloud input for pre-graph compute dispatch.
     bool m_pendingCloudDispatch = false;               ///< True when cloud compute should run before render graph.
