@@ -10,7 +10,7 @@
 /// - `AtmosphereLutCB`                 — size, field offsets, defaults, memcpy
 /// - `HeightFogCB`                     — size, field offsets, defaults, write/readback, memcpy
 /// - `SkyAtmosphereComponent`          — Earth-like defaults, TransformMode enum, enable flag
-/// - `HeightFogComponent`              — UE5 defaults, second layer, inscattering, control
+/// - `HeightFogComponent`              — standard defaults, second layer, inscattering, control
 /// - `SkyLightComponent`               — intensity, source type, lower hemisphere, occlusion
 /// - `SkyCubemapCaptureRootConstants`  — size, field offsets, write/read, memcpy
 /// - `TransmittanceLutRootConstants`   — size, field offsets, write/read, memcpy, Earth invariant
@@ -351,7 +351,7 @@ TEST(SkyAtmosphereComponent, AtmosphereHeightKmIs60) {
     EXPECT_FLOAT_EQ(comp.atmosphereHeightKm, 60.0f);
 }
 
-TEST(SkyAtmosphereComponent, RayleighScatteringMatchesUE5Defaults) {
+TEST(SkyAtmosphereComponent, RayleighScatteringMatchesStandardDefaults) {
     SkyAtmosphereComponent comp{};
     EXPECT_FLOAT_EQ(comp.rayleighScattering.x, 5.802e-3f);
     EXPECT_FLOAT_EQ(comp.rayleighScattering.y, 13.558e-3f);
@@ -368,7 +368,7 @@ TEST(SkyAtmosphereComponent, RayleighScatteringScaleIsOne) {
     EXPECT_FLOAT_EQ(comp.rayleighScatteringScale, 1.0f);
 }
 
-TEST(SkyAtmosphereComponent, MieScatteringMatchesUE5Default) {
+TEST(SkyAtmosphereComponent, MieScatteringMatchesStandardDefault) {
     SkyAtmosphereComponent comp{};
     EXPECT_FLOAT_EQ(comp.mieScattering, 3.996e-3f);
 }
@@ -471,7 +471,7 @@ TEST(SkyAtmosphereComponent, DeprecatedSkyLightColorIsWhite) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// HeightFogComponent — UE5 defaults, second layer, inscattering, control
+// HeightFogComponent — standard defaults, second layer, inscattering, control
 // ─────────────────────────────────────────────────────────────────────────────
 
 TEST(HeightFogComponent, ColorDefaultIsWhite) {
@@ -811,7 +811,7 @@ TEST(TransmittanceLutRootConstants, FieldOffsets) {
 }
 
 TEST(TransmittanceLutRootConstants, WriteAndReadBack) {
-    // Earth-default values matching UE5 sky atmosphere defaults (Bruneton 2017).
+    // Earth-default values matching reference sky atmosphere defaults (Bruneton 2017).
     TransmittanceLutRootConstants rc{};
     rc.rayleighBetaX   = 5.802e-3f;
     rc.rayleighBetaY   = 13.558e-3f;

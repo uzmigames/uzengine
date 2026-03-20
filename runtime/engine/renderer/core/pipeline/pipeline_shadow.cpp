@@ -51,15 +51,15 @@ RHIPipelineHandle PipelineLibrary::GetShadowDepth(bool bindless) {
     desc.topology      = RHIPrimitiveTopology::TriangleList;
     desc.rasterizer.cullMode              = RHICullMode::Back;
     desc.rasterizer.frontCounterClockwise = false;
-    // UE5 parity: slope-scaled depth bias in rasterizer state.
+    // standard: slope-scaled depth bias in rasterizer state.
     // Source: ShadowRendering.cpp:38 — CSMSlopeScaleDepthBias default 3.0
-    // UE5 parity: CSMSlopeScaleDepthBias=3.0 (ShadowRendering.cpp:38)
-    // UE5 parity: CSMDepthBias=10.0 applied as rasterizer constant bias (ShadowRendering.cpp:32)
+    // standard: CSMSlopeScaleDepthBias=3.0 (ShadowRendering.cpp:38)
+    // standard: CSMDepthBias=10.0 applied as rasterizer constant bias (ShadowRendering.cpp:32)
     desc.rasterizer.slopeScaledDepthBias  = 3.0f;
     desc.rasterizer.depthBias             = 10.0f;
     desc.depthStencil.depthEnable         = true;
     desc.depthStencil.depthWrite          = true;
-    // Shadow maps use standard-Z (0=near, 1=far). LessEqual matches UE5 CF_LessEqual
+    // Shadow maps use standard-Z (0=near, 1=far). LessEqual matches reference CF_LessEqual
     // (ShadowDepthRendering.cpp:760) — avoids self-shadow acne on coplanar surfaces.
     desc.depthStencil.depthFunc           = RHICompareFunc::LessEqual;
     desc.renderTargetCount                = 0;
@@ -170,12 +170,12 @@ RHIPipelineHandle PipelineLibrary::GetShadowDepthInstanced() {
     desc.topology      = RHIPrimitiveTopology::TriangleList;
     desc.rasterizer.cullMode              = RHICullMode::Back;
     desc.rasterizer.frontCounterClockwise = false;
-    // UE5 parity: same bias as non-instanced shadow PSO
+    // standard: same bias as non-instanced shadow PSO
     desc.rasterizer.slopeScaledDepthBias  = 3.0f;
     desc.rasterizer.depthBias             = 10.0f;
     desc.depthStencil.depthEnable         = true;
     desc.depthStencil.depthWrite          = true;
-    // Shadow maps use standard-Z (0=near, 1=far). LessEqual matches UE5 CF_LessEqual
+    // Shadow maps use standard-Z (0=near, 1=far). LessEqual matches reference CF_LessEqual
     // (ShadowDepthRendering.cpp:760) — avoids self-shadow acne on coplanar surfaces.
     desc.depthStencil.depthFunc           = RHICompareFunc::LessEqual;
     desc.renderTargetCount                = 0;

@@ -7,7 +7,7 @@
 /// — DX11 manages these implicitly.
 ///
 /// # Immediate Context Model
-/// UE5 and Godot both use the immediate context on DX11 — deferred contexts
+/// and Godot both use the immediate context on DX11 — deferred contexts
 /// are unreliable for real rendering. `Begin()` stores the immediate context
 /// pointer, `End()` and `Execute()` are no-ops since commands are already
 /// submitted as they are recorded.

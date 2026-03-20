@@ -77,7 +77,6 @@ bool PipelineLibrary::EnsureVelocityPixelShader() {
     return true;
 }
 
-/// @source UE5 VelocityRendering.cpp — FVelocityPassMeshProcessor PSO creation
 RHIPipelineHandle PipelineLibrary::GetVelocityPass() {
     if (!m_initialized) {
         UZ_LOG(Renderer, Error, "PipelineLibrary::GetVelocityPass called before Init()");
@@ -206,7 +205,6 @@ bool PipelineLibrary::EnsureGpuCullShader() {
     return true;
 }
 
-/// @source UE5 HZBOcclusion.usf — HZBTestPS pipeline creation
 RHIPipelineHandle PipelineLibrary::GetGpuCull() {
     if (!m_initialized) {
         UZ_LOG(Renderer, Error, "PipelineLibrary::GetGpuCull called before Init()");
@@ -265,7 +263,6 @@ bool PipelineLibrary::EnsureDfsCullObjectsShader() {
     return true;
 }
 
-/// @source UE5 DistanceFieldShadowing.cpp:196-210 — CullObjectsForShadow pipeline creation
 RHIPipelineHandle PipelineLibrary::GetDfsCullObjects() {
     if (!m_initialized) {
         UZ_LOG(Renderer, Error, "PipelineLibrary::GetDfsCullObjects called before Init()");
@@ -324,7 +321,6 @@ bool PipelineLibrary::EnsureDfsConeTraceShader() {
     return true;
 }
 
-/// @source UE5 DistanceFieldShadowing.cpp:380-420 — DistanceFieldShadowing pipeline creation
 RHIPipelineHandle PipelineLibrary::GetDfsConeTrace() {
     if (!m_initialized) {
         UZ_LOG(Renderer, Error, "PipelineLibrary::GetDfsConeTrace called before Init()");
@@ -383,7 +379,6 @@ bool PipelineLibrary::EnsureTaaResolveShader() {
     return true;
 }
 
-/// @source UE5 TemporalAA.cpp:395-396 — IMPLEMENT_GLOBAL_SHADER(FTemporalAACS, ..., "MainCS", SF_Compute)
 RHIPipelineHandle PipelineLibrary::GetTaaResolve() {
     if (!m_initialized) {
         UZ_LOG(Renderer, Error, "PipelineLibrary::GetTaaResolve called before Init()");
@@ -416,7 +411,6 @@ RHIPipelineHandle PipelineLibrary::GetTaaResolve() {
 // TSR — Dilate Velocity Compute Pipeline
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 TSRDilateVelocity.usf — closest depth search, velocity dilation
 bool PipelineLibrary::EnsureTsrDilateVelocityShader() {
     if (m_tsrDilateVelocityCS.IsValid()) return true;
 
@@ -453,7 +447,6 @@ RHIPipelineHandle PipelineLibrary::GetTsrDilateVelocity() {
 // TSR — Reject Shading Compute Pipeline
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 TSRRejectShading.usf — luminance-based shading rejection
 bool PipelineLibrary::EnsureTsrRejectShadingShader() {
     if (m_tsrRejectShadingCS.IsValid()) return true;
 
@@ -490,7 +483,6 @@ RHIPipelineHandle PipelineLibrary::GetTsrRejectShading() {
 // TSR — Update History Compute Pipeline
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 TSRUpdateHistory.usf — temporal resolve with neighborhood clamping
 bool PipelineLibrary::EnsureTsrUpdateHistoryShader() {
     if (m_tsrUpdateHistoryCS.IsValid()) return true;
 
@@ -553,7 +545,6 @@ bool PipelineLibrary::EnsureSsrTraceShader() {
     return true;
 }
 
-/// @source UE5 ScreenSpaceRayTracing.cpp:279-318 — SSR compute pipeline creation
 RHIPipelineHandle PipelineLibrary::GetSsrTrace() {
     if (!m_initialized) {
         UZ_LOG(Renderer, Error, "PipelineLibrary::GetSsrTrace called before Init()");
@@ -612,7 +603,6 @@ bool PipelineLibrary::EnsureSsrResolveShader() {
     return true;
 }
 
-/// @source UE5 SSRTReflections.usf:105-416 — SSR resolve compute pipeline
 RHIPipelineHandle PipelineLibrary::GetSsrResolve() {
     if (!m_initialized) {
         UZ_LOG(Renderer, Error, "PipelineLibrary::GetSsrResolve called before Init()");
@@ -671,7 +661,6 @@ bool PipelineLibrary::EnsureColorGradingLutShader() {
     return true;
 }
 
-/// @source UE5 PostProcessCombineLUTs.cpp:322 — GroupSize = 8, 32x32x32 LUT
 RHIPipelineHandle PipelineLibrary::GetColorGradingLut() {
     if (!m_initialized) {
         UZ_LOG(Renderer, Error, "PipelineLibrary::GetColorGradingLut called before Init()");
@@ -730,7 +719,6 @@ bool PipelineLibrary::EnsureMotionBlurShader() {
     return true;
 }
 
-/// @source UE5 MotionBlurApply.usf:269 — MainCS
 RHIPipelineHandle PipelineLibrary::GetMotionBlur() {
     if (!m_initialized) {
         UZ_LOG(Renderer, Error, "PipelineLibrary::GetMotionBlur called before Init()");
@@ -789,7 +777,6 @@ bool PipelineLibrary::EnsureMotionBlurTileMaxShader() {
     return true;
 }
 
-/// @source UE5 MotionBlurVelocityFlatten.usf:79-165 — MainCS
 RHIPipelineHandle PipelineLibrary::GetMotionBlurTileMax() {
     if (!m_initialized) {
         UZ_LOG(Renderer, Error, "PipelineLibrary::GetMotionBlurTileMax called before Init()");
@@ -848,7 +835,6 @@ bool PipelineLibrary::EnsureMotionBlurNeighborMaxShader() {
     return true;
 }
 
-/// @source UE5 MotionBlurTileGather.usf:24-91 — MainCS
 RHIPipelineHandle PipelineLibrary::GetMotionBlurNeighborMax() {
     if (!m_initialized) {
         UZ_LOG(Renderer, Error, "PipelineLibrary::GetMotionBlurNeighborMax called before Init()");
@@ -907,7 +893,6 @@ bool PipelineLibrary::EnsureDofSetupShader() {
     return true;
 }
 
-/// @source UE5 DOFSetup.usf:396-437 — SetupCS
 RHIPipelineHandle PipelineLibrary::GetDofSetup() {
     if (!m_initialized) {
         UZ_LOG(Renderer, Error, "PipelineLibrary::GetDofSetup called before Init()");
@@ -966,7 +951,6 @@ bool PipelineLibrary::EnsureDofBlurShader() {
     return true;
 }
 
-/// @source UE5 DOFGatherPass.usf:150-464 — GatherMainCS
 RHIPipelineHandle PipelineLibrary::GetDofBlur() {
     if (!m_initialized) {
         UZ_LOG(Renderer, Error, "PipelineLibrary::GetDofBlur called before Init()");
@@ -999,7 +983,6 @@ RHIPipelineHandle PipelineLibrary::GetDofBlur() {
 // FXAA 3.11 Pipeline
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 PostProcessAA.cpp:94-96 — FXAA pass setup
 bool PipelineLibrary::EnsureFxaaPixelShader() {
     if (!m_fxaaPS.IsValid()) {
         m_fxaaPS = m_shaderMgr->CreateShader(EngineShader::FxaaPS, RHIShaderStage::Pixel);
@@ -1101,7 +1084,6 @@ RHIPipelineHandle PipelineLibrary::GetCasSharpen() {
 // SSGI Previous Frame Color Reduction Compute Pipeline
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 SSRTPrevFrameReduction.usf:1-130 — ReduceCS
 bool PipelineLibrary::EnsureSsgiPrevColorReduceShader() {
     if (m_ssgiPrevColorReduceCS.IsValid()) return true;
 
@@ -1151,7 +1133,6 @@ RHIPipelineHandle PipelineLibrary::GetSsgiPrevColorReduce() {
 // SSGI Trace Compute Pipeline
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 SSRTDiffuseIndirect.usf:1-586 — MainCS
 bool PipelineLibrary::EnsureSsgiTraceShader() {
     if (m_ssgiTraceCS.IsValid()) return true;
 
@@ -1201,7 +1182,6 @@ RHIPipelineHandle PipelineLibrary::GetSsgiTrace() {
 // SSGI Spatial Denoise Compute Pipeline
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 ScreenSpaceDenoise.cpp:2960-2985 — spatial denoise
 bool PipelineLibrary::EnsureSsgiSpatialDenoiseShader() {
     if (m_ssgiSpatialDenoiseCS.IsValid()) return true;
 
@@ -1251,7 +1231,6 @@ RHIPipelineHandle PipelineLibrary::GetSsgiSpatialDenoise() {
 // SSGI Temporal Accumulation Compute Pipeline
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 ScreenSpaceDenoise.cpp:2967 — temporal accumulation
 bool PipelineLibrary::EnsureSsgiTemporalAccumShader() {
     if (m_ssgiTemporalAccumCS.IsValid()) return true;
 
@@ -1301,7 +1280,6 @@ RHIPipelineHandle PipelineLibrary::GetSsgiTemporalAccum() {
 // SSGI Bilateral Upsample Compute Pipeline
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 IndirectLightRendering.cpp:1435 — DIM_UPSCALE_DIFFUSE_INDIRECT
 bool PipelineLibrary::EnsureSsgiBilateralUpsampleShader() {
     if (m_ssgiBilateralUpsampleCS.IsValid()) return true;
 
@@ -1377,7 +1355,6 @@ bool PipelineLibrary::EnsureGdfCompositeShader() {
     return true;
 }
 
-/// @source UE5 GlobalDistanceField.cpp:406-513 — GDF composite pipeline creation
 RHIPipelineHandle PipelineLibrary::GetGdfComposite() {
     if (!m_initialized) {
         UZ_LOG(Renderer, Error, "PipelineLibrary::GetGdfComposite called before Init()");
@@ -1494,7 +1471,6 @@ bool PipelineLibrary::EnsureRadianceCacheTraceShader() {
     return true;
 }
 
-/// @source UE5 LumenRadianceCache.usf:210-300 — radiance cache trace pipeline creation
 RHIPipelineHandle PipelineLibrary::GetRadianceCacheTrace() {
     if (!m_initialized) {
         UZ_LOG(Renderer, Error, "PipelineLibrary::GetRadianceCacheTrace called before Init()");

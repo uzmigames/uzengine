@@ -1,7 +1,7 @@
 /// UzEngine TSR (Temporal Super Resolution) Upscaler
 ///
-/// Multi-pass compute-based temporal upscaler targeting UE5 TSR parity. Uses
-/// three sequential compute dispatches compiled from `tsr_resolve_cs.hlsl`
+/// Multi-pass compute-based temporal upscaler. Uses three sequential compute
+/// dispatches compiled from `tsr_resolve_cs.hlsl`
 /// with different preprocessor defines:
 ///
 ///   Pass 1: `TSR_PASS_DILATE_VELOCITY` — 3x3 closest-depth velocity dilation
@@ -9,16 +9,12 @@
 ///   Pass 3: `TSR_PASS_UPDATE_HISTORY`  — temporal resolve with YCoCg clamping
 ///
 /// Supports screen percentages from 50% (2x upscale) to 200% (supersampling),
-/// matching UE5's supported range. Intermediate textures (dilated velocity and
-/// rejection mask) are owned by this class and recreated on resolution change.
+/// matching the supported screen percentage range. Intermediate textures
+/// (dilated velocity and rejection mask) are owned by this class and
+/// recreated on resolution change.
 ///
-/// @source UE5 TemporalSuperResolution.cpp — FTemporalSuperResolutionPass
-/// @source UE5 TSRDilateVelocity.usf — velocity dilation via closest depth
-/// @source UE5 TSRRejectShading.usf — luminance-based shading rejection
-/// @source UE5 TSRUpdateHistory.usf — temporal resolve with neighborhood clamp
-/// @deviations UE5 TSR uses 12+ passes with LDS spill, tensor half, moire
-///             detection, history resurrection, dual-pixel vectorization. We
-///             consolidate the core algorithm into 3 passes. Refer to
+/// @ref Yang et al. 2020 "Temporal Super Resolution"
+/// @deviations Consolidated from 12+ passes to 3 core passes. See
 ///             tsr_resolve_cs.hlsl @deviations for the full list.
 
 #pragma once
@@ -30,7 +26,7 @@ namespace uz {
 class PipelineLibrary;
 class CBRingAllocator;
 
-/// Temporal Super Resolution upscaler (multi-pass, UE5 parity).
+/// Temporal Super Resolution upscaler (multi-pass).
 ///
 /// Owns two intermediate textures between passes and three compute pipelines
 /// obtained from PipelineLibrary. The caller manages history texture ping-pong
@@ -43,7 +39,6 @@ class CBRingAllocator;
 ///   3. `OnResize()` — destroys and recreates intermediates at new resolution
 ///   4. `Shutdown()` — releases all GPU resources
 ///
-/// @source UE5 TemporalSuperResolution.cpp — FTemporalSuperResolutionPass
 class TsrUpscaler final : public ITemporalUpscaler {
 public:
     TsrUpscaler() = default;
@@ -55,7 +50,6 @@ public:
     [[nodiscard]] const char*  GetName() const noexcept override { return "TSR"; }
 
     /// TSR supports 50% to 200% screen percentage (2x upscale to 2x supersample).
-    /// @source UE5 TemporalSuperResolution.cpp:43 — CVarTSRResolutionFraction min/max
     [[nodiscard]] float GetMinScreenPercentage() const noexcept override { return 50.f; }
     [[nodiscard]] float GetMaxScreenPercentage() const noexcept override { return 200.f; }
 
@@ -103,7 +97,6 @@ public:
 
     /// Sets RCAS sharpening intensity applied during the final resolve pass.
     /// 0.0 = no sharpening (default), 1.0 = maximum sharpening.
-    /// @source UE5 TemporalSuperResolution.cpp — r.TSR.Sharpness CVar
     void SetSharpness(float s) noexcept { m_sharpness = (s < 0.f) ? 0.f : (s > 1.f ? 1.f : s); }
 
     /// Returns the current RCAS sharpness value [0, 1].

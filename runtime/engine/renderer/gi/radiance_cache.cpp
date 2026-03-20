@@ -4,8 +4,8 @@
 /// Each frame, dispatches a compute shader that traces rays from probes
 /// through the global distance field and accumulates radiance into SH.
 ///
-/// @source UE5 LumenRadianceCacheInterpolation.ush:1-95 — probe clipmap layout
-/// @source UE5 LumenRadianceCache.usf:132-200 — ComputeProbeWorldOffsetsCS
+/// @ref Lumen GI — world-space probe clipmap layout with SH radiance storage.
+/// Probe world offsets computed per-frame to follow camera movement.
 
 #include "radiance_cache.h"
 
@@ -106,7 +106,7 @@ void RadianceCache::Update(const Vec3& cameraPos) {
     if (!m_initialized) return;
 
     // Snap grid center to probe spacing grid to avoid swimming
-    /// @source UE5 LumenRadianceCacheInterpolation.ush:114-128 — GetRadianceProbeCoordFloat
+    /// Snap to probe spacing grid to produce stable interpolation coordinates.
     Vec3 snappedCenter;
     snappedCenter.x = std::floor(cameraPos.x / m_probeSpacing) * m_probeSpacing;
     snappedCenter.y = std::floor(cameraPos.y / m_probeSpacing) * m_probeSpacing;

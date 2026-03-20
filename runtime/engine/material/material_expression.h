@@ -4,11 +4,11 @@
 /// and connection topology but has NO compilation logic. The material
 /// compiler (HlslMaterialTranslator) visits expressions to emit HLSL.
 ///
-/// This follows UE5's pattern where UMaterialExpression holds pin metadata
+/// This follows the reference engine's pattern where UMaterialExpression holds pin metadata
 /// and the FHLSLMaterialTranslator walks the expression tree to generate
 /// shader code.
 ///
-/// @source UE5 MaterialExpression.h:146 — UMaterialExpression pattern
+/// Material expression node pattern (graph-based material authoring)
 ///
 /// # Thread Safety
 /// NOT thread-safe. Modify from the game thread only.
@@ -59,7 +59,7 @@ struct MatPin {
 // Expression Type Enum
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Expression type enum. Groups match UE5 material expression categories.
+/// Expression type enum. Groups match reference material expression categories.
 enum class MatExprType : uint16_t {
     // ── Output ──
     PBROutput = 0,
@@ -119,7 +119,7 @@ enum class MatExprType : uint16_t {
 /// and connection topology. It has NO compilation logic. The material
 /// compiler (HlslMaterialTranslator) visits expressions to emit HLSL.
 ///
-/// @source UE5 MaterialExpression.h:146 — UMaterialExpression pattern
+/// Material expression node pattern (graph-based material authoring)
 struct MaterialExpression {
     uint32_t    id   = 0;            ///< Unique ID within the graph (1, 2, 3, ...)
     MatExprType type = MatExprType::PBROutput;

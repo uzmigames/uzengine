@@ -273,7 +273,7 @@ TEST(BytesPerTexel, IsConstexpr) {
 //   Shadow maps (standard-Z): near=0.0, far=1.0  — kShadowDepthNear/kShadowDepthFar
 //   Shadow map clear value:   1.0               — kShadowDepthClear
 //
-// Source: UE5 RHIDefinitions.h:278-287, ShadowDepthRendering.cpp:704.
+// Source: RHIDefinitions.h:278-287, ShadowDepthRendering.cpp:704.
 // ─────────────────────────────────────────────────────────────────────────────
 
 TEST(DepthConventionConstants, kDepthFar_IsZero) {

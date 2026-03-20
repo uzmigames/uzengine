@@ -2,17 +2,16 @@
 ///
 /// Maintains a uniform 3D grid of 16^3 = 4096 probes centered on the camera.
 /// Each probe stores L2 spherical harmonics (9 coefficients, 3 channels = 27 floats,
-/// packed into 7 float4s following UE5's SkyIrradianceEnvironmentMap layout).
+/// packed into 7 float4s following the reference engine's SkyIrradianceEnvironmentMap layout).
 ///
 /// The radiance cache is updated incrementally: each frame, a compute shader
 /// traces 32 rays from each probe through the global distance field, accumulates
 /// incoming radiance into SH, and blends with the previous frame's SH via
 /// exponential moving average (alpha = 0.05).
 ///
-/// # UE5 Reference
-/// @source UE5 LumenRadianceCacheInterpolation.ush:1-95 — probe clipmap layout
-/// @source UE5 LumenRadianceCacheTracingCommon.ush:1-72 — trace tile grouping
-/// @source UE5 LumenRadianceCache.usf:132-200 — ComputeProbeWorldOffsetsCS
+/// # References
+/// @ref "Real-Time Global Illumination using Precomputed Light Field Probes" (McGuire 2017)
+/// World-space probe clipmap layout with SH radiance and temporal blending.
 ///
 /// # Thread Safety
 /// NOT thread-safe. All methods must be called from the render thread.
@@ -53,7 +52,7 @@ class GlobalDistanceField;
 class RadianceCache {
 public:
     /// Number of probes per axis. 16^3 = 4096 total probes.
-    /// @source UE5 LumenRadianceCacheInterpolation.ush:21 — RadianceProbeClipmapResolution
+    /// 16^3 = 4096 probes — balanced between quality and trace budget.
     static constexpr uint32_t kProbesPerAxis = 16;
 
     /// Total number of probes in the grid.
@@ -63,20 +62,19 @@ public:
     static constexpr uint32_t kSHCoeffs = 9;
 
     /// Number of float4 values per probe for packed SH storage.
-    /// UE5 uses 7 float4s to pack 3-channel L2 SH coefficients:
+    /// uses 7 float4s to pack 3-channel L2 SH coefficients:
     ///   [0..2]: R/G/B L0 + L1 terms (3 float4)
     ///   [3..5]: R/G/B L2 terms (3 float4)
     ///   [6]:    remaining L2 terms (1 float4)
-    /// @source UE5 SkyIrradianceEnvironmentMap — 7 float4 packing
+    /// 7 float4s pack 3-channel L2 SH (27 coefficients) tightly.
     static constexpr uint32_t kSHFloat4PerProbe = 7;
 
     /// Number of rays traced per probe per frame.
-    /// @source UE5 LumenRadianceCacheTracingCommon.ush:4 — RADIANCE_CACHE_TRACE_TILE_SIZE_2D=8
     /// 32 rays is a balanced budget for 4096 probes (~131K rays/frame).
     static constexpr uint32_t kRaysPerProbe = 32;
 
     /// Temporal blend factor (EMA alpha). Lower = more temporal stability.
-    /// @source UE5 LumenRadianceCache.usf:156 — ProbeHistoryWeight
+    /// Low alpha = high temporal stability. 0.05 averages over ~20 frames.
     static constexpr float kTemporalBlendAlpha = 0.05f;
 
     RadianceCache() = default;

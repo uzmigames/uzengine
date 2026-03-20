@@ -1,7 +1,7 @@
 /// Aerial Perspective Volume Compute Shader — Precomputed 3D AP texture.
 ///
-/// @source UE5 SkyAtmosphere.usf:1466 — RenderCameraAerialPerspectiveVolumeCS
-/// @source UE5 SkyAtmosphereCommon.ush:42 — GetAerialPerspectiveLuminanceTransmittance
+/// @ref RenderCameraAerialPerspectiveVolumeCS
+/// @ref GetAerialPerspectiveLuminanceTransmittance
 ///
 /// Fills a 32x32x16 RGBA16F 3D texture with per-voxel inscattering (RGB)
 /// and mean transmittance (A). Each voxel corresponds to a screen-space
@@ -11,8 +11,8 @@
 /// doing an inline 8-step ray march, amortizing the cost across all pixels
 /// that map to the same voxel.
 ///
-/// # Depth Distribution (UE5 parity)
-/// @source UE5 SkyAtmosphere.usf:1505 — Slice *= Slice (squared)
+/// # Depth Distribution (standard)
+/// @ref Slice *= Slice (squared)
 ///   normalizedSlice = (z + 0.5) / depthSlices
 ///   depthKm = normalizedSlice^2 * totalDepthKm
 /// This packs detail near the camera where AP changes most rapidly.
@@ -32,7 +32,7 @@
 // Root Constants (b0) — atmosphere scattering parameters
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 SkyAtmosphereCommonData.h — atmosphere medium coefficients
+/// @ref atmosphere medium coefficients
 /// Same layout as transmittance_lut_cs.hlsl root constants.
 cbuffer AtmosphereParams : register(b0) {
     float3 rayleighBeta;     ///< Rayleigh scattering coefficients (km^-1).
@@ -72,12 +72,12 @@ SamplerState linearSampler : register(s0);
 // Volume Dimensions
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 SkyAtmosphereRendering.cpp — CameraAerialPerspectiveVolumeScreenResolution = 32
+/// @ref CameraAerialPerspectiveVolumeScreenResolution = 32
 static const uint AP_VOL_XY = 32;
 
 /// Number of ray-march steps per depth slice.
-/// @source UE5 SkyAtmosphere.usf:1608 — CameraAerialPerspectiveSampleCountPerSlice
-/// UE5 uses (sliceIndex+1) * sampleCountPerSlice. We use a fixed 8 for simplicity
+/// @ref CameraAerialPerspectiveSampleCountPerSlice
+/// uses (sliceIndex+1) * sampleCountPerSlice. We use a fixed 8 for simplicity
 /// which matches the existing per-pixel AP step count and keeps dispatch cost low.
 static const int AP_STEPS_PER_VOXEL = 8;
 
@@ -99,7 +99,7 @@ void main(uint3 tid : SV_DispatchThreadID)
     float2 screenUV = (float2(tid.xy) + 0.5f) / float(AP_VOL_XY);
 
     // ── Depth from voxel Z (squared distribution) ────────────────────────
-    /// @source UE5 SkyAtmosphere.usf:1505 — Slice *= Slice
+    /// @ref Slice *= Slice
     float normalizedSlice = (float(tid.z) + 0.5f) / float(depthSlices);
     float squaredSlice = normalizedSlice * normalizedSlice; // Squared distribution
     float depthKm = squaredSlice * totalDepthKm;
@@ -143,14 +143,14 @@ void main(uint3 tid : SV_DispatchThreadID)
     float tStart = max(atmoHit.x, 0.0f);
     float tEnd   = min(depthKm, atmoHit.y);
 
-    // @source UE5 SkyAtmosphere.usf:1518-1571 — below-horizon voxel handling
-    // UE5 reprojects below-horizon voxels to the opposite hemisphere.
+    // @ref below-horizon voxel handling
+    // reprojects below-horizon voxels to the opposite hemisphere.
     // Simplified approach: do NOT clip to planet surface. Instead, let the ray
     // march through the full depthKm distance. For below-horizon rays near
     // the surface, the ray passes "through" the planet, but the density
     // samples at negative altitude (clamped to 0 by AP_DensityAtAltitude)
     // contribute maximum inscattering — producing the blue horizon haze.
-    // This is physically equivalent to UE5's reprojection for ground-level cameras.
+    // This is physically equivalent to the reference engine's reprojection for ground-level cameras.
 
     float marchLen = tEnd - tStart;
     if (marchLen <= 0.0f) {
@@ -208,8 +208,8 @@ void main(uint3 tid : SV_DispatchThreadID)
         Throughput *= T_step;
     }
 
-    // Mean transmittance (UE5 parity: average of RGB channels)
-    /// @source UE5 SkyAtmosphere.usf:1632 — dot(ss.Transmittance, float3(1/3, 1/3, 1/3))
+    // Mean transmittance (standard: average of RGB channels)
+    /// @ref dot(ss.Transmittance, float3(1/3, 1/3, 1/3))
     float meanTransmittance = dot(Throughput, float3(1.0f / 3.0f, 1.0f / 3.0f, 1.0f / 3.0f));
 
     outputVol[tid] = float4(L, meanTransmittance);

@@ -130,8 +130,6 @@ public:
     /// - The pixel shader performs alpha test via `if (opacity < threshold) discard;`
     ///   controlled by `blendMode == 1` in the per-object CB.
     ///
-    /// @source UE5 BasePassRendering.cpp — FBasePassMeshProcessor uses CullMode::None for two-sided masked
-    ///
     /// # Arguments
     /// * `bindless` — If true, omits vertex input layout (SM6.6 path).
     ///
@@ -148,8 +146,6 @@ public:
     /// Depth is read but NOT written (translucent objects do not occlude).
     /// Must be drawn after the deferred lighting pass, sorted back-to-front.
     ///
-    /// @source UE5 TranslucentRendering.cpp — FTranslucencyPassMeshProcessor
-    ///
     /// # Arguments
     /// * `bindless` — If true, omits vertex input layout (SM6.6 path).
     ///
@@ -164,8 +160,6 @@ public:
     ///
     /// Uses One/One additive blending for emissive/particle effects.
     /// Depth is read but NOT written. No sorting required.
-    ///
-    /// @source UE5 TranslucentRendering.cpp — FTranslucencyPassMeshProcessor (Additive)
     ///
     /// # Arguments
     /// * `bindless` — If true, omits vertex input layout (SM6.6 path).
@@ -271,7 +265,6 @@ public:
 
     /// Returns the aerial perspective volume compute pipeline (aerial_perspective_volume_cs.hlsl).
     /// 32x32x16 RGBA16F 3D texture, precomputed per-frame AP inscattering + transmittance.
-    /// @source UE5 SkyAtmosphere.usf:1466 — RenderCameraAerialPerspectiveVolumeCS
     [[nodiscard]] RHIPipelineHandle GetAerialPerspectiveVolume();
 
     /// Returns the sky cubemap capture compute pipeline (sky_cubemap_cs.hlsl).
@@ -310,8 +303,6 @@ public:
     /// Blend: None (write velocity directly).
     /// Render target: RG16Float.
     ///
-    /// @source UE5 VelocityRendering.cpp — velocity buffer generation PSO
-    ///
     /// # Returns
     /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
     [[nodiscard]] RHIPipelineHandle GetVelocityPass();
@@ -332,8 +323,6 @@ public:
     /// Similar to the shadow depth pipeline but WITHOUT depth bias (no slope-scaled
     /// or constant bias) since the prepass writes to the GBuffer depth, not a shadow
     /// atlas. Uses LessEqual comparison (reversed-Z).
-    ///
-    /// @source UE5 DepthRendering.cpp — FDepthPassMeshProcessor
     ///
     /// # Arguments
     /// * `bindless` — If true, omits vertex input layout (SM6.6 path).
@@ -361,8 +350,6 @@ public:
     /// Compute pipeline dispatched once per mip level to downsample the depth
     /// buffer into a hierarchical Z-buffer for occlusion culling, SSAO, and SSR.
     ///
-    /// @source UE5 HZBOcclusion.cpp — BuildHZB pipeline creation
-    ///
     /// # Returns
     /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
     [[nodiscard]] RHIPipelineHandle GetHiZPyramid();
@@ -373,9 +360,6 @@ public:
     /// requires bindless SM6.6). Projects bounding spheres to screen-space rects,
     /// selects Hi-Z mip level, and rejects occluded instances.
     ///
-    /// @source UE5 HZBOcclusion.usf — HZBTestPS pipeline
-    /// @source UE5 NaniteHZBCull.ush:565-595 — ProjectSphere, SphereToScreenRect
-    ///
     /// # Returns
     /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
     [[nodiscard]] RHIPipelineHandle GetGpuCull();
@@ -384,8 +368,6 @@ public:
     ///
     /// Frustum-culls SDF objects against the shadow convex hull and appends
     /// surviving indices to a compacted buffer for the cone tracing pass.
-    ///
-    /// @source UE5 DistanceFieldShadowing.usf:82-156 — CullObjectsForShadowCS
     ///
     /// # Returns
     /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
@@ -396,8 +378,6 @@ public:
     /// Per-pixel ray march through mesh SDFs with cone expansion for soft shadows.
     /// Reads the culled object list and outputs a shadow factor texture.
     ///
-    /// @source UE5 DistanceFieldShadowing.usf:612-811 — DistanceFieldShadowingCS
-    ///
     /// # Returns
     /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
     [[nodiscard]] RHIPipelineHandle GetDfsConeTrace();
@@ -407,7 +387,7 @@ public:
     /// Temporal anti-aliasing resolve pass: samples current frame and history,
     /// performs YCoCg neighborhood clamping, and blends with HDR weighting.
     ///
-    /// @source UE5 TemporalAA.usf:2327-2407 — MainCS entry point
+    /// @ref Karis 2014 "High Quality Temporal Supersampling" (SIGGRAPH Advances)
     ///
     /// # Returns
     /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
@@ -415,17 +395,13 @@ public:
 
     /// Returns the TSR velocity dilation compute pipeline (tsr_resolve_cs.hlsl + TSR_PASS_DILATE_VELOCITY).
     ///
-    /// @source UE5 TSRDilateVelocity.usf — closest depth search, velocity dilation
+    /// @ref Yang et al. 2020 "Temporal Super Resolution" — closest depth search, velocity dilation
     [[nodiscard]] RHIPipelineHandle GetTsrDilateVelocity();
 
     /// Returns the TSR shading rejection compute pipeline (tsr_resolve_cs.hlsl + TSR_PASS_REJECT_SHADING).
-    ///
-    /// @source UE5 TSRRejectShading.usf — luminance-based shading rejection
     [[nodiscard]] RHIPipelineHandle GetTsrRejectShading();
 
     /// Returns the TSR history update compute pipeline (tsr_resolve_cs.hlsl + TSR_PASS_UPDATE_HISTORY).
-    ///
-    /// @source UE5 TSRUpdateHistory.usf — temporal resolve with neighborhood clamping
     [[nodiscard]] RHIPipelineHandle GetTsrUpdateHistory();
 
     /// Returns the SSR trace compute pipeline (ssr_trace_cs.hlsl).
@@ -434,8 +410,7 @@ public:
     /// pyramid for acceleration. Reads depth, normals, Hi-Z pyramid, and scene
     /// color; writes ray-hit color + confidence to an RGBA16F output texture.
     ///
-    /// @source UE5 SSRTRayCast.ush:255-627 — CastScreenSpaceRay
-    /// @source UE5 SSRTReflections.usf:441-462 — ScreenSpaceReflectionsCS
+    /// @ref McGuire & Mara 2014 "Efficient GPU Screen-Space Ray Tracing"
     ///
     /// # Returns
     /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
@@ -447,8 +422,6 @@ public:
     /// roughness-based filtering. Reads trace result + G-Buffer normals +
     /// depth; writes final SSR reflection color with blend weight in alpha.
     ///
-    /// @source UE5 SSRTReflections.usf:105-416 — ScreenSpaceReflections resolve
-    ///
     /// # Returns
     /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
     [[nodiscard]] RHIPipelineHandle GetSsrResolve();
@@ -459,9 +432,6 @@ public:
     /// tonemapping pipeline into a single texture lookup. Dispatched once
     /// when settings change, then the tonemap shader samples the LUT.
     ///
-    /// @source UE5 PostProcessCombineLUTs.usf:445-455 — MainCS
-    /// @source UE5 PostProcessCombineLUTs.cpp:322 — GroupSize = 8
-    ///
     /// # Returns
     /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
     [[nodiscard]] RHIPipelineHandle GetColorGradingLut();
@@ -471,7 +441,6 @@ public:
     /// Per-pixel velocity-based directional blur. Reads HDR scene color,
     /// velocity buffer, and depth; writes blurred scene color.
     ///
-    /// @source UE5 MotionBlurApply.usf:269-714 — MainCS
     ///
     /// # Returns
     /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
@@ -483,8 +452,6 @@ public:
     /// magnitude and outputs the dominant velocity vector. Produces a downsampled
     /// velocity texture at (width/16) x (height/16).
     ///
-    /// @source UE5 MotionBlurVelocityFlatten.usf:79-165 — MainCS
-    ///
     /// # Returns
     /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
     [[nodiscard]] RHIPipelineHandle GetMotionBlurTileMax();
@@ -493,8 +460,6 @@ public:
     ///
     /// For each tile, finds the maximum velocity from its 3x3 neighborhood.
     /// Ensures fast-moving objects produce blur extending beyond their tile.
-    ///
-    /// @source UE5 MotionBlurTileGather.usf:24-91 — MainCS
     ///
     /// # Returns
     /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
@@ -505,7 +470,7 @@ public:
     /// Computes per-pixel Circle of Confusion from the depth buffer using
     /// the thin-lens equation. Outputs signed R16F CoC texture.
     ///
-    /// @source UE5 DOFSetup.usf:396-437 — SetupCS
+    /// @ref thin-lens Circle of Confusion model
     ///
     /// # Returns
     /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
@@ -515,8 +480,6 @@ public:
     ///
     /// Disc-shaped gather blur driven by the CoC texture. Samples in concentric
     /// rings with per-sample CoC weighting.
-    ///
-    /// @source UE5 DOFGatherPass.usf:150-464 — GatherMainCS
     ///
     /// # Returns
     /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
@@ -532,7 +495,7 @@ public:
     /// Blend: None.
     /// Render target: RGBA8Unorm (backbuffer).
     ///
-    /// @source UE5 PostProcessAA.cpp:94-96 — FXAA pass setup
+    /// @ref Lottes 2011 "FXAA 3.11"
     ///
     /// # Returns
     /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
@@ -570,7 +533,6 @@ public:
     /// Downsamples full-res prev-frame HDR to half-res with Karis luminance
     /// weighting for firefly suppression.
     ///
-    /// @source UE5 SSRTPrevFrameReduction.usf:1-130 — ReduceCS
     [[nodiscard]] RHIPipelineHandle GetSsgiPrevColorReduce();
 
     /// Returns the SSGI trace compute pipeline.
@@ -578,28 +540,24 @@ public:
     /// Per-pixel cosine-hemisphere ray march in screen space against the HiZ
     /// depth buffer. On hit, samples reduced prev-frame color with Karis weighting.
     ///
-    /// @source UE5 SSRTDiffuseIndirect.usf:1-586 — MainCS
     [[nodiscard]] RHIPipelineHandle GetSsgiTrace();
 
     /// Returns the SSGI spatial denoise compute pipeline.
     ///
     /// Cross-bilateral spatial filter with depth+normal edge-stopping (8 samples).
     ///
-    /// @source UE5 ScreenSpaceDenoise.cpp:2960-2985 — spatial denoise
     [[nodiscard]] RHIPipelineHandle GetSsgiSpatialDenoise();
 
     /// Returns the SSGI temporal accumulation compute pipeline.
     ///
     /// Velocity-reprojected temporal accumulation with neighborhood variance clipping.
     ///
-    /// @source UE5 ScreenSpaceDenoise.cpp:2967 — temporal accumulation
     [[nodiscard]] RHIPipelineHandle GetSsgiTemporalAccum();
 
     /// Returns the SSGI bilateral upsample compute pipeline.
     ///
     /// Joint bilateral upsample from half-res to full-res using depth+normal weights.
     ///
-    /// @source UE5 IndirectLightRendering.cpp:1435-1438 — DIM_UPSCALE_DIFFUSE_INDIRECT
     [[nodiscard]] RHIPipelineHandle GetSsgiBilateralUpsample();
 
     // ── GDF + Radiance Cache Compute Pipelines ─────────────────────────
@@ -609,7 +567,6 @@ public:
     /// Per-voxel composite of mesh SDFs into a global distance field clipmap.
     /// Dispatched once per dirty clipmap (4x4x4 thread groups for 64^3 voxels).
     ///
-    /// @source UE5 GlobalDistanceField.cpp:406-513 — CompositeObjectDistanceFields
     [[nodiscard]] RHIPipelineHandle GetGdfComposite();
 
     /// Returns the mesh SDF bake compute pipeline (mesh_sdf_bake_cs.hlsl).
@@ -621,7 +578,6 @@ public:
     /// Per-probe ray trace through the GDF, accumulates radiance into L2 SH.
     /// 64 threads per group, one thread per probe.
     ///
-    /// @source UE5 LumenRadianceCache.usf:210-300 — TraceRadianceProbe
     [[nodiscard]] RHIPipelineHandle GetRadianceCacheTrace();
 
     /// Pre-creates all standard pipelines eagerly instead of on first use.

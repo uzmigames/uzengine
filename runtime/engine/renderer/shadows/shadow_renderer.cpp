@@ -1,6 +1,6 @@
 /// UzEngine Shadow Renderer — Implementation.
 ///
-/// Builds the per-frame ShadowConfig with UE5-parity defaults, computes
+/// Builds the per-frame ShadowConfig with industry-standard defaults, computes
 /// cascade splits via `ComputeCascades`, and uploads ShadowDataCB.
 
 #include "shadow_renderer.h"
@@ -33,24 +33,24 @@ ShadowFrameData SetupShadowFrame(
 {
     ShadowFrameData result{};
 
-    // ── Shadow config — UE5 parity parameters ────────────────────────────
+    // ── Shadow config — standard parameters ────────────────────────────
     ShadowConfig& cfg = result.config;
     cfg.cascadeCount                = 4;
     cfg.resolution                  = shadowResolution;
-    cfg.maxDistance                  = 40000.0f;  // 400m — UE5 default (DLC.cpp:1017)
-    cfg.cascadeDistributionExponent = 3.0f;      // UE5 default (DLC.cpp:1029)
+    cfg.maxDistance                  = 40000.0f;  // 400m — reference default (DLC.cpp:1017)
+    cfg.cascadeDistributionExponent = 3.0f;      // default (DLC.cpp:1029)
     cfg.cascadeTransitionFraction   = 0.1f;      // 10% blend overlap (DLC.cpp:1030)
     cfg.shadowDistanceFadeoutFraction = 0.1f;    // 10% fade on last cascade (DLC.cpp:1031)
-    cfg.normalBias                  = 0.0f;      // UE5: NO normal bias in pixel shader. All bias in shadow VS via rasterizer state.
-    cfg.csmDepthBias                = 0.0f;      // UE5: bias applied in shadow VS via rasterizer, NOT in pixel shader sampling
-    cfg.slopeScaleDepthBias         = 3.0f * perLightShadowSlopeBias;  // UE5: CSMSlopeBias * per-light ShadowSlopeBias
+    cfg.normalBias                  = 0.0f;      // Equivalent: NO normal bias in pixel shader. All bias in shadow VS via rasterizer state.
+    cfg.csmDepthBias                = 0.0f;      // Equivalent: bias applied in shadow VS via rasterizer, NOT in pixel shader sampling
+    cfg.slopeScaleDepthBias         = 3.0f * perLightShadowSlopeBias;  // Equivalent: CSMSlopeBias * per-light ShadowSlopeBias
     cfg.cascadeBiasDistribution     = 1.0f;      // Fully world-scaled (ShadowSetup.cpp:1846)
-    cfg.receiverBias                = 0.9f;      // UE5 default (ShadowRendering.cpp:76)
+    cfg.receiverBias                = 0.9f;      // default (ShadowRendering.cpp:76)
     cfg.filterMethod                = 2;         // PCSS — contact hardening (ShadowRendering.cpp:180-186)
-    cfg.maxSoftKernelSize           = 40.0f;     // UE5 default (ShadowRendering.cpp:182)
+    cfg.maxSoftKernelSize           = 40.0f;     // default (ShadowRendering.cpp:182)
 
     // ── Far shadow cascades — wired from DirectionalLightComponent ───────
-    // @source UE5 DirectionalLightComponent.cpp:1023,1076 — FarShadowDistance, FarShadowCascadeCount
+    // FarShadowDistance, FarShadowCascadeCount — from DirectionalLightComponent
     cfg.farShadowCascadeCount       = farShadowCascadeCount;
     cfg.farShadowDistance           = farShadowDistance;
     cfg.farShadowLodBias            = farShadowLodBias;
@@ -81,7 +81,7 @@ ShadowFrameData SetupShadowFrame(
         loggedOnce = true;
     }
 
-    // ── Upload ShadowDataCB — UE5 parity ─────────────────────────────────
+    // ── Upload ShadowDataCB — standard ─────────────────────────────────
     const uint32_t totalCascades = result.totalCascadeCount;
 
     ShadowDataCB shadowData{};
@@ -107,11 +107,11 @@ ShadowFrameData SetupShadowFrame(
     shadowData.shadowFadeEnd    = lastCascadeFar;
     shadowData.filterMethod     = cfg.filterMethod;
 
-    // ── PCSS parameters — UE5 parity ─────────────────────────────────────
-    // @source UE5 ShadowRendering.h:1732 — TanLightSourceAngle = tan(0.5 * deg2rad(LightSourceAngle))
-    //   UE5 uses half-angle because LightSourceAngle is the angular diameter (full apex angle).
-    //   The sun's angular diameter is 0.5357° (DirectionalLightComponent.cpp:1024).
-    // @source UE5 ShadowRendering.h:1738-1741 — PCSSParameters.x = TanLightSourceAngle * SZ / SW
+    // ── PCSS parameters — standard ─────────────────────────────────────
+    // @ref Fernando 2005 — PCSS: TanLightSourceAngle = tan(0.5 * deg2rad(LightSourceAngle))
+    //   Half-angle because LightSourceAngle is the angular diameter (full apex angle).
+    //   The sun's angular diameter is ~0.5357 degrees.
+    // PCSSParameters.x = TanLightSourceAngle * SZ / SW
     //   SZ = MaxSubjectZ - MinSubjectZ (depth range of shadow ortho frustum)
     //   SW = 2.0 * ShadowBounds.W (world width of shadow ortho frustum)
     //   This scales the tangent from world-space to shadow tile UV/depth space.
@@ -121,15 +121,15 @@ ShadowFrameData SetupShadowFrame(
     // For our ortho CSM, SZ/SW = (2*radius)/(2*radius) = 1.0, so no additional scaling.
     shadowData.tanLightSourceAngle = tanHalfAngle;
 
-    // @source UE5 ShadowRendering.h:1741 — MaxKernelSize / float(ResolutionX)
+    // MaxKernelSize / float(ResolutionX) — convert from texels to tile UV space
     //   Convert from texels to tile UV space [0,1].
-    //   UE5 default: r.Shadow.MaxSoftKernelSize = 40 (ShadowRendering.cpp:188-192).
+    //   Default: r.Shadow.MaxSoftKernelSize = 40 (ShadowRendering.cpp:188-192).
     shadowData.maxSoftKernelSize = cfg.maxSoftKernelSize / static_cast<float>(shadowResolution);
 
     // Atlas grid layout — needed by the shader to compute cascade UV offsets
     shadowData.atlasColumns = GetAtlasColumns(totalCascades);
 
-    // Shadow cache compositing — @source UE5 ShadowSetup.cpp:3846-3970
+    // Shadow cache compositing — static + dynamic atlas min-compositing
     // When active, the pixel shader samples both static (cached) and dynamic
     // (per-frame) shadow atlases and takes min(static, dynamic).
     shadowData.useShadowCache         = useShadowCache ? 1u : 0u;

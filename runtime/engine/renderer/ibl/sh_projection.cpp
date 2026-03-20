@@ -1,7 +1,7 @@
 /// UzEngine SH Projection — Implementation.
 ///
 /// Projects cubemap faces into L2 Spherical Harmonics coefficients using
-/// the standard real SH basis, then packs into UE5-compatible 7-float4 format.
+/// the standard real SH basis, then packs into standard 7-float4 format.
 /// Includes a GPU readback path that copies RGBA16F cubemap data to CPU,
 /// converts half-float to float, and runs the CPU SH projection.
 
@@ -31,7 +31,7 @@ static constexpr float kPI = 3.14159265358979323846f;
 /// For m>0: Y_lm = sqrt(2) * K_lm * P_l^m(cos_theta) * cos(m*phi)
 /// For m<0: Y_l|m| = sqrt(2) * K_l|m| * P_l^|m|(cos_theta) * sin(|m|*phi)
 ///
-/// These are the standard constants used by UE5 (SHMath.cpp InitSHTables):
+/// These are the standard constants used by reference (SHMath.cpp InitSHTables):
 /// K_lm = sqrt((2l+1)/(4pi) * (l-|m|)!/(l+|m|)!) * (m!=0 ? sqrt(2) : 1)
 ///
 /// Precomputed for L0..L2:
@@ -39,7 +39,7 @@ static constexpr float kPI = 3.14159265358979323846f;
 /// V[1] = Y1-1: sqrt(3/(4*pi)) * sqrt(2) * sin(phi) * (-sqrt(1-z^2))
 ///             → but the combined constant = sqrt(3/(4*pi)) = 0.488603
 ///               (the sqrt(2) cancels with the 1/sqrt(2) from the complex->real conversion)
-/// ... and so on. The point is: UE5 uses the STANDARD real SH basis.
+/// ... and so on. The point is: the reference uses the STANDARD real SH basis.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SH Basis Evaluation (order 3 / L2, 9 coefficients)
@@ -47,8 +47,8 @@ static constexpr float kPI = 3.14159265358979323846f;
 
 /// Evaluates all 9 real SH basis functions at the given unit direction.
 ///
-/// Uses the standard real spherical harmonics (same as UE5 SHBasisFunction).
-/// Index ordering follows UE5: V[L*(L+1)+M] for L=0..2, M=-L..+L.
+/// Uses the standard real spherical harmonics (same as reference SHBasisFunction).
+/// Index ordering follows Equivalent: V[L*(L+1)+M] for L=0..2, M=-L..+L.
 ///
 /// # Arguments
 /// * `dir` — Unit direction vector (must be normalized).
@@ -131,21 +131,21 @@ static float CubemapTexelSolidAngle(float u, float v)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Packing into UE5 Format
+// Packing into reference Format
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Packs raw L2 SH coefficients (9 per channel) into UE5's 7-float4 format.
+/// Packs raw L2 SH coefficients (9 per channel) into the reference engine's 7-float4 format.
 ///
 /// The packing bakes in diffuse convolution (cosine lobe) scaling so that
 /// the shader only needs dot products with the normal to reconstruct irradiance.
 ///
-/// Matches UE5 SetupSkyIrradianceEnvironmentMapConstantsFromSkyIrradiance()
+/// Standard SetupSkyIrradianceEnvironmentMapConstantsFromSkyIrradiance()
 /// exactly (ReflectionEnvironment.cpp).
 ///
 /// # Arguments
 /// * `shR`, `shG`, `shB` — Raw SH coefficients per color channel (9 each).
 /// * `out` — Output 7 float4 values.
-static void PackSHToUE5Format(const float shR[9], const float shG[9],
+static void PackSHToCompactFormat(const float shR[9], const float shG[9],
                               const float shB[9], Vec4 out[7])
 {
     const float sqrtPI = std::sqrt(kPI);
@@ -269,7 +269,7 @@ SHCoefficients ProjectCubemapToSH(const float* faceData[6], uint32_t faceSize)
     }
 
     SHCoefficients result;
-    PackSHToUE5Format(shR, shG, shB, result.coeffs);
+    PackSHToCompactFormat(shR, shG, shB, result.coeffs);
 
     UZ_LOG(SHProjection, Info,
            "SH projection complete: faceSize={}, totalWeight={:.4f} (expected {:.4f})",

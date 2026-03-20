@@ -82,12 +82,12 @@
 |-----------|--------------------------------|------------------------|--------|--------|-------|
 | **D (Normal Distribution)** | `D_GGX` (BRDF.ush:284-288) | `DistributionGGX` (pbr_common.hlsli:72-76) | ✅ YES | NONE | Both use identical GGX formula: `a²/(π((N·H)²(a²-1)+1)²)` |
 | **D_GGX Alpha Parameter** | `a2 = roughness²` | `alpha = roughness²` | ✅ YES | NONE | Both square roughness to alpha. |
-| **G (Geometry Function)** | `Vis_SmithJointApprox` (BRDF.ush:346-352) | `Vis_SmithJointApprox` (pbr_common.hlsli:140-145) | ✅ YES | NONE | **FIXED 2026-03-17**: Replaced old Schlick-GGX with UE5-exact Smith Joint approximation. |
+| **G (Geometry Function)** | `VisibilitySmithGGX` (BRDF.ush:346-352) | `VisibilitySmithGGX` (pbr_common.hlsli:140-145) | ✅ YES | NONE | **FIXED 2026-03-17**: Replaced old Schlick-GGX with UE5-exact Smith Joint approximation. |
 | **F (Fresnel)** | `F_Schlick` (BRDF.ush:376-383) | `FresnelSchlick` (pbr_common.hlsli:94-96) | ✅ YES | NONE | Both: `F0 + (1-F0)*(1-VoH)⁵` |
-| **Diffuse Model** | `Diffuse_Burley` (BRDF.ush:183-188) | `DiffuseBurley` (pbr_common.hlsli:116-121) | ✅ YES | NONE | **FIXED 2026-03-17**: Implemented UE5-exact Burley diffuse with retroreflection. |
-| **Multiscatter Energy** | `ComputeFresnelEnergyTerms` (ShadingEnergyConservation.ush:55) | `ComputeEnergyCompensation` (pbr_common.hlsli) | ✅ YES | NONE | **NEW 2026-03-17**: Kulla-Conty/Turquin 2018 compensation via analytic GGX energy lookup. |
+| **Diffuse Model** | `Diffuse_Burley` (BRDF.ush:183-188) | `DiffuseDisneyBurley` (pbr_common.hlsli:116-121) | ✅ YES | NONE | **FIXED 2026-03-17**: Implemented UE5-exact Burley diffuse with retroreflection. |
+| **Multiscatter Energy** | `ComputeFresnelEnergyTerms` (ShadingEnergyConservation.ush:55) | `MultiscatterCompensation` (pbr_common.hlsli) | ✅ YES | NONE | **NEW 2026-03-17**: Kulla-Conty/Turquin 2018 compensation via analytic GGX energy lookup. |
 | **MIN_ROUGHNESS** | `0.04f` (BRDF.ush:20) | `0.04f` (pbr_common.hlsli:20) | ✅ YES | NONE | Both clamp minimum roughness to prevent singular specular delta. |
-| **ACES Tonemap** | `FilmToneMap` (TonemapCommon.ush:105-220) | `FilmToneMap` (film_tonemap.hlsli) | ✅ YES | NONE | **FIXED 2026-03-17**: Full ACES pipeline with glow, red modifier, 5 artist params. Narkowicz fallback via `#ifdef UZ_FAST_TONEMAP`. |
+| **ACES Tonemap** | `ApplyToneCurve` (TonemapCommon.ush:105-220) | `ApplyToneCurve` (film_tonemap.hlsli) | ✅ YES | NONE | **FIXED 2026-03-17**: Full ACES pipeline with glow, red modifier, 5 artist params. Narkowicz fallback via `#ifdef UZ_FAST_TONEMAP`. |
 | **sRGB Output** | `LinearToSrgb` (IEC 61966-2-1) | `LinearToSrgb` (math_util.hlsli:56-70) | ✅ YES | NONE | **FIXED 2026-03-17**: Proper pow(x,1/2.4) curve, not gamma 2.2 approximation. |
 
 ---

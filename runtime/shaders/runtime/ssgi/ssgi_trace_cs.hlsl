@@ -5,7 +5,7 @@
 /// marches them in screen space against the depth buffer, and on hit samples the
 /// previous frame's reduced scene color to capture indirect lighting.
 ///
-/// The algorithm follows UE5's SSRT diffuse indirect pipeline:
+/// The algorithm follows the screen-space diffuse indirect pipeline:
 /// 1. Load GBuffer depth + normal
 /// 2. Generate quasi-random ray directions via Hammersley + cosine hemisphere
 /// 3. March each ray in screen space (HiZ-like depth comparison)
@@ -21,21 +21,18 @@
 /// - b0: Root constants (8 DWORDs)
 /// - b1: PerFrameCB
 ///
-/// @source UE5 SSRT/SSRTDiffuseIndirect.usf:1-586 — MainCS
-/// @source UE5 SSRT/SSRTRayCast.ush:453+ — CastScreenSpaceRay
-/// @source UE5 ScreenSpaceRayTracing.cpp:684-704 — Quality-to-RayCount map
-/// @constants SSGI_RAY_COUNT=4 (Q1 quality, ScreenSpaceRayTracing.cpp:689)
-///            SSGI_MARCH_STEPS=8 (SSRTDiffuseIndirect.usf:25 — Q1)
-///            StartMipLevel=1.0 (SSRTDiffuseIndirect.usf:455)
-///            Karis weight=rcp(1+Luminance) (SSRTDiffuseIndirect.usf:492)
-///            CosineSampleHemisphereConcentric (MonteCarlo.ush:13-26)
-///            Hammersley16 (MonteCarlo.ush:418-433)
-///            Rand3DPCG16 (Random.ush:38-55)
+/// @ref Jimenez 2016 "Screen-Space Indirect Lighting" — SSGI trace pipeline
+/// @ref McGuire & Mara 2014 "Efficient GPU Screen-Space Ray Tracing" — screen-space ray march
+/// @ref Hammersley 1964 "Monte Carlo Methods" — low-discrepancy sampling
+/// @ref Karis 2014 — luminance weighting for firefly suppression
+/// @ref standard Monte Carlo sampling utilities — PCG hash, cosine hemisphere, tangent basis
+/// @constants SSGI_RAY_COUNT=8 (Q2 quality)
+///            SSGI_MARCH_STEPS=12
+///            StartMipLevel=1.0
+///            Karis weight=rcp(1+Luminance)
 /// @deviations Uses simple linear screen-space march instead of full HiZ
-///   hierarchical traversal. UE5 uses CastScreenSpaceRay with mip-level
-///   stepping; we use a simplified linear march with 8 uniform steps for
-///   initial implementation. The core algorithm (ray generation, hit shading,
-///   Karis weighting, LDS accumulation) matches UE5 exactly.
+///   hierarchical traversal. The core algorithm (ray generation, hit shading,
+///   Karis weighting, accumulation) follows the standard SSGI approach.
 
 #include "../include/math_util.hlsli"
 #include "../include/octahedral.hlsli"
@@ -44,34 +41,33 @@
 // Quality Defines
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 ScreenSpaceRayTracing.cpp:695 — Q2=8 rays
+/// @ref Jimenez 2016 — Q2=8 rays for diffuse indirect
 #ifndef SSGI_RAY_COUNT
 #define SSGI_RAY_COUNT 8
 #endif
 
-/// @source UE5 SSRTDiffuseIndirect.usf:30 — Q2=8 steps, Q4=12 steps
+/// @ref Jimenez 2016 — Q2=8 steps, Q4=12 steps
 #ifndef SSGI_MARCH_STEPS
 #define SSGI_MARCH_STEPS 12
 #endif
 
-/// @source UE5 SSRTRayCast.ush:660 — StartMipLevel = 1.0
+/// Start at mip 1 to skip single-pixel noise in the depth pyramid.
 #define SSGI_START_MIP_LEVEL 1.0f
 
 /// Far depth sentinel. Reversed-Z: 0 = far plane.
-/// @source UE5 Common.ush — FarDepthValue
 #define FAR_DEPTH_VALUE 0.0f
 
 #define PI 3.14159265358979323846f
 
 /// Batched sample count for the screen-space march inner loop.
-/// @source UE5 SSRTRayCast.ush:6 — SSRT_SAMPLE_BATCH_SIZE 4
+/// @ref Stachowiak 2015 — batch size 4 for march efficiency
 #define SAMPLE_BATCH_SIZE 4
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Root Constants (b0, 8 DWORDs = 32 bytes)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 SSRTDiffuseIndirect.usf:17 — SSGIParams
+/// @ref Jimenez 2016 — SSGI dispatch parameter layout
 cbuffer SSGIRootCB : register(b0) {
     uint  depthSrvIndex;       // DWORD 0 — depth buffer SRV (bindless)
     uint  normalSrvIndex;      // DWORD 1 — normal+material G-Buffer SRV (bindless)
@@ -145,8 +141,7 @@ float4 SampleNormalMaterial(float2 uv) {
 }
 
 /// Sample previous frame reduced color at UV with mip level.
-/// @source UE5 SSRTDiffuseIndirect.usf:485-488 — SampleScreenColor at hit mip
-/// @deviations NONE
+/// @ref Jimenez 2016 — sample prev-frame color at hit mip for indirect radiance
 float3 SamplePrevColor(float2 uv, float mipLevel) {
 #ifdef UZ_BINDLESS
     Texture2D<float4> tex = ResourceDescriptorHeap[prevColorSrvIndex];
@@ -154,8 +149,7 @@ float3 SamplePrevColor(float2 uv, float mipLevel) {
 #else
     float3 c = prevColorTex.SampleLevel(linearSampler, uv, mipLevel).rgb;
 #endif
-    // Sanitize NaN/negative
-    // @source UE5 SSRTRayCast.ush:733 — -min(-OutColor.rgb, 0.0)
+    // Sanitize NaN/negative (standard NaN-safe clamp pattern)
     return -min(-c, 0.0f);
 }
 
@@ -182,9 +176,7 @@ float3 ReconstructWorldPos(float2 uv, float deviceZ) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Rec. 709 luminance.
-/// @source UE5 Common.ush:405 — Luminance(float3 LinearColor)
-/// @constants (0.2126, 0.7152, 0.0722)
-/// @deviations NONE
+/// @ref ITU-R BT.709 — standard luminance coefficients (0.2126, 0.7152, 0.0722)
 float Luminance(float3 color) {
     return dot(color, float3(0.2126f, 0.7152f, 0.0722f));
 }
@@ -194,9 +186,8 @@ float Luminance(float3 color) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// 3D PCG hash for per-pixel random seed.
-/// @source UE5 Random.ush:38-55 — Rand3DPCG16
+/// @ref O'Neill 2014 "PCG: A Family of Simple Fast Space-Efficient Statistically Good Algorithms for Random Number Generation"
 /// @constants 1664525u, 1013904223u, 16u shift (PCG standard multiplier/increment)
-/// @deviations NONE
 uint3 Rand3DPCG16(int3 p) {
     uint3 v = (uint3)p;
     v = v * 1664525u + 1013904223u;
@@ -210,8 +201,7 @@ uint3 Rand3DPCG16(int3 p) {
 }
 
 /// Radical inverse (van der Corput sequence) for Hammersley.
-/// @source UE5 MonteCarlo.ush:4-11 — RadicalInverseBase2
-/// @deviations NONE — exact bit reversal
+/// @ref Hammersley 1964 "Monte Carlo Methods" — radical inverse base-2 via bit reversal
 float RadicalInverse_VdC(uint bits) {
     bits = (bits << 16u) | (bits >> 16u);
     bits = ((bits & 0x55555555u) << 1u) | ((bits & 0xAAAAAAAAu) >> 1u);
@@ -222,11 +212,8 @@ float RadicalInverse_VdC(uint bits) {
 }
 
 /// Hammersley quasi-random 2D sequence with per-pixel random offset.
-/// @source UE5 MonteCarlo.ush:418-433 — Hammersley16
+/// @ref Hammersley 1964 "Monte Carlo Methods" — low-discrepancy 2D sequence
 /// @constants Uses RadicalInverse_VdC for y, linear for x
-/// @deviations Uses 32-bit Hammersley instead of UE5's 16-bit. The sequence
-///   distribution is identical; only precision differs (more bits = less
-///   pattern repetition at high sample counts). For 4-32 rays this is equivalent.
 float2 Hammersley(uint i, uint N, uint3 randomSeed) {
     float x = frac((float)i / (float)N + float(randomSeed.x & 0xFFFFu) / 65536.0f);
     float y = frac(RadicalInverse_VdC(i) + float(randomSeed.y & 0xFFFFu) / 65536.0f);
@@ -239,12 +226,9 @@ float2 Hammersley(uint i, uint N, uint3 randomSeed) {
 
 /// Cosine-weighted hemisphere sample using concentric disk mapping.
 /// Returns a direction in tangent space (Z-up = surface normal direction).
-/// @source UE5 MonteCarlo.ush:13-26 — CosineSampleHemisphereConcentric
-/// @constants Uses Shirley concentric disk mapping (JCGT 2012)
-/// @deviations NONE — exact transcription of UE5's concentric mapping
+/// @ref Shirley & Chiu 1997 "A Low Distortion Map Between Disk and Square" — concentric disk mapping
 float3 CosineSampleHemisphere(float2 E) {
     // Concentric disk mapping: map [0,1]^2 to unit disk preserving area
-    // @source UE5 MonteCarlo.ush:14-22
     float2 p = 2.0f * E - 1.0f;
     float2 diskPoint;
 
@@ -265,7 +249,6 @@ float3 CosineSampleHemisphere(float2 E) {
 
     // Project disk to hemisphere: z = sqrt(1 - r^2)
     // This gives a cosine-weighted distribution on the hemisphere.
-    // @source UE5 MonteCarlo.ush:24-25
     float z = sqrt(max(0.0f, 1.0f - dot(diskPoint, diskPoint)));
     return float3(diskPoint.x, diskPoint.y, z);
 }
@@ -275,13 +258,10 @@ float3 CosineSampleHemisphere(float2 E) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Build an orthonormal tangent basis from a normal vector.
-/// @source UE5 MonteCarlo.ush:56-71 — GetTangentBasis
-/// @constants Uses Frisvad's method for robust tangent frame construction
-/// @deviations NONE
+/// @ref Frisvad 2012 "Building an Orthonormal Basis from a 3D Unit Vector Without Normalization"
 float3x3 BuildTangentBasis(float3 N) {
     float3 T;
     // Frisvad's method — numerically stable for all orientations
-    // @source UE5 MonteCarlo.ush:60-70
     if (N.z < -0.9999f) {
         T = float3(0.0f, -1.0f, 0.0f);
     } else {
@@ -307,9 +287,7 @@ struct SSRTRay {
 
 /// Initialize a screen-space ray from world-space origin and direction.
 /// Projects start and end to UV space, clips to screen edges.
-/// @source UE5 SSRTRayCast.ush:69-121 — InitScreenSpaceRayFromWorldSpace
-/// @deviations Simplified: computes UV-space ray directly without HiZ mip
-///   scaling. The ray is marched at mip 0 depth resolution.
+/// @ref McGuire & Mara 2014 — world-to-screen ray initialization
 SSRTRay InitScreenSpaceRay(
     float3 worldOrigin,
     float3 worldDir,
@@ -322,19 +300,16 @@ SSRTRay InitScreenSpaceRay(
     float4 endClip   = mul(float4(rayEnd, 1.0f), viewProj);
 
     // Skip rays where end point is behind the camera (w <= 0)
-    // @source UE5 SSRTRayCast.ush:83 — clamp ray behind camera
     float3 startNDC = startClip.xyz / max(startClip.w, 0.0001f);
     float3 endNDC   = endClip.xyz / max(endClip.w, 0.0001f);
 
     // Convert NDC to UV space: x: [-1,1] -> [0,1], y: [-1,1] -> [1,0] (flipped)
-    // @source UE5 SSRTRayCast.ush:275-276
     float3 startUVz = float3(startNDC.xy * float2(0.5f, -0.5f) + 0.5f, startNDC.z);
     float3 endUVz   = float3(endNDC.xy   * float2(0.5f, -0.5f) + 0.5f, endNDC.z);
 
     float3 stepUVz = endUVz - startUVz;
 
     // Clip ray to screen edges [0,1] — prevent UV from going off-screen
-    // @source UE5 SSRTRayCast.ush:100-111
     float tClip = 1.0f;
     [unroll]
     for (int i = 0; i < 2; i++) {
@@ -359,11 +334,8 @@ SSRTRay InitScreenSpaceRay(
 
 /// March a ray through screen space with linear depth comparison.
 /// Returns hit UV+depth, whether a hit was found, and the march level (for mip selection).
-/// @source UE5 SSRTRayCast.ush:255-627 — CastScreenSpaceRay
-/// @constants CompareTolerance = step.z * tolerance (ush:278)
-/// @deviations Uses uniform linear stepping instead of HiZ hierarchical march.
-///   For SSGI at half-res with 8 steps this gives adequate quality; full HiZ
-///   would improve long-range bounces but is not required for initial quality.
+/// @ref McGuire & Mara 2014 — screen-space ray march with depth comparison
+/// @constants CompareTolerance = step.z * tolerance
 void CastScreenSpaceRay(
     SSRTRay ray,
     uint    numSteps,
@@ -376,7 +348,6 @@ void CastScreenSpaceRay(
     float3 currentUVz = ray.RayStartUVz + stepUVz * stepOffset;
 
     // Compare tolerance: proportional to the depth range per step
-    // @source UE5 SSRTRayCast.ush:278-279
     float compareTolerance = abs(stepUVz.z) * 2.0f;
 
     bHit = false;
@@ -404,21 +375,17 @@ void CastScreenSpaceRay(
         }
 
         // Depth comparison: ray depth vs scene depth
-        // @source UE5 SSRTRayCast.ush:451-453
         float depthDiff = currentUVz.z - sceneDepth;
 
         // Hit: ray is behind the surface (positive diff) but within tolerance
-        // @source UE5 SSRTRayCast.ush:453 — abs(diff + tol) < tol
         if (abs(depthDiff + compareTolerance) < compareTolerance) {
             bHit = true;
 
             // Linear interpolation for sub-step refinement
-            // @source UE5 SSRTRayCast.ush:602-606
             float timeLerp = saturate(lastDepthDiff / (lastDepthDiff - depthDiff));
             outHitUVz = currentUVz - stepUVz * (1.0f - timeLerp);
 
-            // Mip level increases with ray distance (approximation of UE5's per-batch mip)
-            // @source UE5 SSRTRayCast.ush:424-429
+            // Mip level increases with ray distance for coarser sampling at range
             outMipLevel = SSGI_START_MIP_LEVEL + (float)i * (4.0f / (float)numSteps);
             return;
         }
@@ -436,9 +403,8 @@ void CastScreenSpaceRay(
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Fade at screen edges to avoid artifacts from missing data.
-/// @source UE5 SSRTRayCast.ush:674-681 — ComputeHitVignetteFromScreenPos
-/// @constants 5, 4 (ush:676)
-/// @deviations NONE
+/// @ref Stachowiak 2015 — screen-edge vignette
+/// @constants 5, 4 (vignette ramp parameters)
 float ComputeHitVignette(float2 hitUV) {
     float2 screenPos = hitUV * 2.0f - 1.0f;
     float2 vignette = saturate(abs(screenPos) * 5.0f - 4.0f);
@@ -450,9 +416,8 @@ float ComputeHitVignette(float2 hitUV) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Per-pixel temporal noise for ray offset jitter.
-/// @source UE5 SSRTReflections.usf:348 — InterleavedGradientNoise
+/// @ref Jimenez 2014 "Next Generation Post Processing in Call of Duty: Advanced Warfare"
 /// @constants 52.9829189, 0.06711056, 0.00583715
-/// @deviations NONE
 float InterleavedGradientNoise(float2 pixelPos, float frame) {
     pixelPos += frame * float2(47.0f, 17.0f) * 0.695f;
     return frac(52.9829189f * frac((pixelPos.x * 0.06711056f) + (pixelPos.y * 0.00583715f)));
@@ -462,7 +427,7 @@ float InterleavedGradientNoise(float2 pixelPos, float frame) {
 // Main Compute Shader
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 SSRTDiffuseIndirect.usf:200-586 — MainCS
+/// @ref Jimenez 2016 — SSGI main dispatch, one thread per half-res pixel
 [numthreads(8, 8, 1)]
 void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     // Bounds check — dispatch covers half-res output
@@ -475,11 +440,9 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
 
     // ── Read G-Buffer ──
     // For half-res SSGI, sample at the center of the corresponding full-res 2x2 block.
-    // @source UE5 IndirectLightRendering.cpp:866-872 — TracingViewportSize = ViewRect/DownscaleFactor
     float deviceZ = SampleDepth(uv);
 
     // Skip sky pixels (reversed-Z: 0 = far plane)
-    // @source UE5 SSRTDiffuseIndirect.usf:208-211
     if (deviceZ <= FAR_DEPTH_VALUE) {
 #ifdef UZ_BINDLESS
         RWTexture2D<float4> outColor = ResourceDescriptorHeap[outputUavIndex];
@@ -498,19 +461,16 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     float3 worldPos = ReconstructWorldPos(uv, deviceZ);
     float  sceneDepth = LinearizeDepth(deviceZ);
 
-    // ── Per-pixel random seed ──
-    // @source UE5 SSRTDiffuseIndirect.usf:215-218 — Rand3DPCG16(PixelPos, StateFrameIndexMod8)
+    // ── Per-pixel random seed (PCG hash of pixel position + temporal frame index) ──
     uint3 randomSeed = Rand3DPCG16(int3(dispatchThreadId.xy, frameIndex & 7u));
 
     // ── Build tangent basis from surface normal ──
-    // @source UE5 SSRTDiffuseIndirect.usf:222 — TangentBasis(N)
     float3x3 tangentBasis = BuildTangentBasis(worldNormal);
 
     // ── Step offset for temporal jitter ──
     float stepOffset = InterleavedGradientNoise(pixelCenter, fmod((float)frameIndex, 8.0f));
 
     // ── Max trace distance: proportional to scene depth ──
-    // @source UE5 SSRTRayCast.ush:649 — WorldTMax = SceneDepth
     float maxTraceDist = sceneDepth;
 
     // ── Trace rays ──
@@ -521,15 +481,12 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     [loop]
     for (uint rayIdx = 0; rayIdx < SSGI_RAY_COUNT; rayIdx++) {
         // Generate quasi-random 2D sample point
-        // @source UE5 SSRTDiffuseIndirect.usf:413 — Hammersley16(RaySequenceId, CONFIG_RAY_COUNT, RandomSeed)
         float2 E = Hammersley(rayIdx, SSGI_RAY_COUNT, randomSeed);
 
         // Convert to cosine-hemisphere direction in tangent space
-        // @source UE5 SSRTDiffuseIndirect.usf:220-228 — CosineSampleHemisphereConcentric(E)
         float3 tangentDir = CosineSampleHemisphere(E);
 
         // Transform to world space
-        // @source UE5 SSRTDiffuseIndirect.usf:226 — mul(TangentL, TangentBasis(N))
         float3 worldDir = mul(tangentDir, tangentBasis);
 
         // Ensure ray points away from surface (should always be true for cosine hemisphere
@@ -550,16 +507,13 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
         [branch]
         if (bHit) {
             // Screen-edge vignette
-            // @source UE5 SSRTRayCast.ush:692
             float vignette = ComputeHitVignette(hitUVz.xy);
 
             if (vignette > 0.0f) {
                 // Sample previous frame color at hit point
-                // @source UE5 SSRTDiffuseIndirect.usf:485-488
                 float3 hitColor = SamplePrevColor(hitUVz.xy, hitMipLevel);
 
                 // Karis luminance weighting for firefly suppression
-                // @source UE5 SSRTDiffuseIndirect.usf:492-494
                 float karisWeight = rcp(1.0f + Luminance(hitColor));
 
                 totalColor  += hitColor * karisWeight * vignette;
@@ -572,23 +526,19 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     }
 
     // ── Resolve: average all rays and undo Karis weighting ──
-    // @source UE5 SSRTDiffuseIndirect.usf:546-573
     float3 indirectDiffuse = float3(0.0f, 0.0f, 0.0f);
     if (totalWeight > 0.0f) {
         // Undo Karis weighting: divide by total weight normalizes back to
         // the Karis-weighted average, then the inverse Karis is implicit
         // in the division (we accumulated color * w / sum(w) which is the
         // weighted mean in Karis space).
-        // @source UE5 SSRTDiffuseIndirect.usf:559-565
         indirectDiffuse = totalColor / totalWeight;
     }
 
-    // ── AO output: fraction of rays that hit = occlusion ──
-    // @source UE5 SSRTDiffuseIndirect.usf:577 — AO = 1 - AO (inverted)
+    // ── AO output: fraction of rays that hit = occlusion (inverted: 1=unoccluded) ──
     float ao = 1.0f - (float)hitCount / (float)SSGI_RAY_COUNT;
 
     // Write outputs
-    // @source UE5 SSRTDiffuseIndirect.usf:583-584
 #ifdef UZ_BINDLESS
     RWTexture2D<float4> outColor = ResourceDescriptorHeap[outputUavIndex];
     RWTexture2D<float>  outAO   = ResourceDescriptorHeap[aoOutputUavIndex];

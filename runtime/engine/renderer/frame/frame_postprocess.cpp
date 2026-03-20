@@ -112,7 +112,7 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
     }
 
     // ── Temporal Upscaler pass (TAA or TSR via ITemporalUpscaler) ──────
-    // @source UE5 TemporalUpscaler.h — ITemporalUpscaler::AddPasses
+    // Temporal upscaler pass (TAA or TSR) — anti-aliasing + optional upscaling.
     //
     // Delegates to the active upscaler (TaaUpscaler or TsrUpscaler).
     // The caller manages history texture barriers and ping-pong, the upscaler
@@ -197,7 +197,7 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
     m_prevViewProjValid = true;
 
     // ── Color Grading LUT generation (compute) ─────────────────────────
-    // @source UE5 PostProcessCombineLUTs.cpp:322 — GroupSize = 8
+    // 3D LUT (32^3) for combined color grading + tonemap. Dispatch: 8x8 groups.
     // Generated once when dirty, sampled by tonemap shader via LUT SRV.
     if (m_colorGradingLutDirty && m_colorGradingLut.IsValid()
         && ctx.bindless && m_shadowDebugMode == 0) {
@@ -217,7 +217,7 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
 
                 cmd->SetPipeline(lutPSO);
 
-                // Build LUT generation params (UE5 defaults).
+                // Build LUT generation params (reference defaults).
                 // This struct matches the LutGenParams cbuffer in color_grading_lut_cs.hlsl.
                 // Too large for root constants, so uploaded via CB ring as root CBV.
                 struct LutGenParams {
@@ -247,9 +247,9 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
                 std::memcpy(p.colorSaturationHighlights,o,16); std::memcpy(p.colorContrastHighlights,o,16);
                 std::memcpy(p.colorGammaHighlights,o,16); std::memcpy(p.colorGainHighlights,o,16); std::memcpy(p.colorOffsetHighlights,z,16);
                 p.ccShadowsMax = 0.09f; p.ccHighlightsMin = 0.5f; p.ccHighlightsMax = 1.0f;
-                p.filmSlope = ctx.perFrame.filmSlope; p.filmToe = ctx.perFrame.filmToe;
-                p.filmShoulder = ctx.perFrame.filmShoulder; p.filmBlackClip = ctx.perFrame.filmBlackClip;
-                p.filmWhiteClip = ctx.perFrame.filmWhiteClip;
+                p.filmSlope = ctx.perFrame.toneCurveSlope; p.filmToe = ctx.perFrame.toneCurveToe;
+                p.filmShoulder = ctx.perFrame.toneCurveShoulder; p.filmBlackClip = ctx.perFrame.toneCurveBlackClip;
+                p.filmWhiteClip = ctx.perFrame.toneCurveWhiteClip;
                 p.blueCorrection = 0.6f; p.expandGamut = 1.0f; p.toneCurveAmount = 1.0f;
                 p.mappingPolynomial[0] = 0; p.mappingPolynomial[1] = 1; p.mappingPolynomial[2] = 0;
                 p.colorScale[0] = 1; p.colorScale[1] = 1; p.colorScale[2] = 1;
@@ -275,16 +275,12 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
     }
 
     // ── Motion Blur passes (tile max → neighbor max → per-pixel gather) ─
-    // @source UE5 PostProcessMotionBlur.cpp:607-621 — velocity scale + tile setup
-    // @source UE5 MotionBlurApply.usf:269-714 — MainCS (gather)
-    // @source UE5 Scene.cpp:598-600 — MotionBlurAmount=0.5, MotionBlurMax=5.0
+    // Motion blur: tile max → neighbor max → per-pixel gather.
+    // MotionBlurAmount=0.5, MotionBlurMax=5.0 (standard defaults).
     if (ctx.motionBlurActive) {
         // ── Compute velocity scale on CPU ────────────────────────────────
-        // @source UE5 SceneVisibility.cpp:5428-5431 — MotionBlurTimeScale
-        // @source UE5 PostProcessMotionBlur.cpp:610-613 — VelocityScale
-        //   MotionBlurTargetDeltaTime = 1.0 / MotionBlurTargetFPS  (line 5428)
-        //   MotionBlurTimeScale = MotionBlurTargetDeltaTime / DeltaRealTime  (line 5431)
-        //   VelocityScale = MotionBlurTimeScale * MotionBlurAmount * 0.5  (line 613)
+        // Velocity scale = (targetDt / realDt) * motionBlurAmount * 0.5
+        // This normalizes blur to a target framerate so faster/slower frames look consistent.
         const float clampedDt = std::max(ctx.dt, 0.001f);
         const float targetDt = 1.0f / static_cast<float>(std::max(m_motionBlurTargetFPS, 1));
         const float motionBlurTimeScale = targetDt / clampedDt;
@@ -292,12 +288,12 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
         // Motion blur operates at render resolution (pre-upscale effect).
         const float maxBlurPx = m_motionBlurMax * 0.01f * static_cast<float>(static_cast<uint32_t>(ctx.renderWidth));
 
-        // @source UE5 MotionBlurCommon.ush:24 — VELOCITY_FLATTEN_TILE_SIZE = 16
+        // Tile size = 16x16 pixels for velocity flattening (standard tile size).
         const uint32_t tileCountX = (static_cast<uint32_t>(ctx.renderWidth)  + 15) / 16;
         const uint32_t tileCountY = (static_cast<uint32_t>(ctx.renderHeight) + 15) / 16;
 
         // ── Pass 1: Tile Max (16x16 tiles, find max velocity per tile) ───
-        // @source UE5 MotionBlurVelocityFlatten.usf:79-165 — MainCS
+        // Pass 1: Find max velocity per 16x16 tile.
         rgBuilder.AddPass("MotionBlur_TileMax", [&](rg::RgPassBuilder& pb) {
             pb.Read(ctx.hdrRes, RHIResourceState::ShaderResource);
             pb.SetExecutionCallback([this, &ctx, tileCountX, tileCountY](IRHICommandList* cmd, const rg::RgPassResources&) {
@@ -328,7 +324,7 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
         });
 
         // ── Pass 2: Neighbor Max (3x3 tile neighborhood max) ─────────────
-        // @source UE5 MotionBlurTileGather.usf:24-91 — MainCS
+        // Pass 2: 3x3 neighbor max of tile velocities for scatter-as-gather.
         rgBuilder.AddPass("MotionBlur_NeighborMax", [&](rg::RgPassBuilder& pb) {
             pb.Read(ctx.hdrRes, RHIResourceState::ShaderResource);
             pb.SetExecutionCallback([this, &ctx, tileCountX, tileCountY](IRHICommandList* cmd, const rg::RgPassResources&) {
@@ -358,7 +354,7 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
         });
 
         // ── Pass 3: Per-Pixel Gather Blur ────────────────────────────────
-        // @source UE5 MotionBlurApply.usf:269-714 — MainCS
+        // Pass 3: Per-pixel gather blur using neighbor max for early-out.
         rgBuilder.AddPass("MotionBlur", [&, motionBlurScale, maxBlurPx](rg::RgPassBuilder& pb) {
             pb.Read(ctx.hdrRes, RHIResourceState::ShaderResource);
             pb.SetExecutionCallback([this, &ctx, motionBlurScale, maxBlurPx](IRHICommandList* cmd, const rg::RgPassResources&) {
@@ -373,7 +369,7 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
                 cmd->SetPipeline(mbPSO);
                 const uint32_t vpW = static_cast<uint32_t>(ctx.renderWidth);
                 const uint32_t vpH = static_cast<uint32_t>(ctx.renderHeight);
-                /// @source UE5 MotionBlurApply.usf:269-285 — neighbor max for per-tile early-out
+                /// Uses neighbor max for per-tile early-out (skip tiles with zero motion).
                 struct MBConstants { uint32_t scene, vel, depth, dimsPacked; float scale, maxPx; uint32_t uav, neighborMax; } c;
                 c.scene = ctx.taaSrvForTonemap; c.vel = m_gbuffer.velocitySRV; c.depth = m_gbuffer.depthSRV;
                 c.dimsPacked = (vpW & 0xFFFFu) | (vpH << 16u);
@@ -390,7 +386,7 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
         ctx.motionBlurSrvForTonemap = m_motionBlurOutputSrv;
     }
 
-    // ── DOF passes (disabled by default, UE5: DepthOfFieldFocalDistance=0) ─
+    // ── DOF passes (disabled by default, Equivalent: DepthOfFieldFocalDistance=0) ─
     ctx.postDofSrvForTonemap = ctx.motionBlurSrvForTonemap;
     if (ctx.dofActive) {
         rgBuilder.AddPass("DOF_Setup", [&](rg::RgPassBuilder& pb) {
@@ -402,8 +398,8 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
                 b.stateBefore = RHIResourceState::ShaderResource; b.stateAfter = RHIResourceState::UnorderedAccess;
                 cmd->ResourceBarrier(&b, 1);
                 cmd->SetPipeline(pso);
-                // @source UE5 DiaphragmDOFUtils.cpp:102-199 — FPhysicalCocModel::Compile
-                // @source UE5 Scene.cpp:563 — SensorWidth = 24.576mm (APS-C)
+                // Physical CoC model: thin-lens approximation with APS-C sensor.
+                // SensorWidth = 24.576mm (APS-C standard).
                 const float sensorW = 24.576f;
                 const float fovRad = m_camera->GetFovY();
                 const float fMM = sensorW / (2.0f * std::tan(fovRad * 0.5f));
@@ -413,9 +409,7 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
                 // Pre-compute transition reciprocals for the focal region model.
                 // The focal region creates an in-focus dead zone centered on FocusDistance.
                 // NearTransition/FarTransition control the ramp width.
-                // @source UE5 Scene.cpp:579 — DepthOfFieldFocalRegion default 0.0
-                // @source UE5 Scene.cpp:580 — DepthOfFieldNearTransitionRegion default 300.0 cm
-                // @source UE5 Scene.cpp:581 — DepthOfFieldFarTransitionRegion default 500.0 cm
+                // Focal region model defaults: FocalRegion=0, NearTransition=300cm, FarTransition=500cm.
                 //
                 // When FocalRegion > 0, the focus distance for near/far transitions
                 // is shifted by half the focal region. The transition reciprocal encodes
@@ -620,11 +614,10 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
     // ── FXAA pass (LDR → backbuffer) ────────────────────────────────────
     // Reads the LDR tonemap output from the intermediate texture and
     // writes the anti-aliased result to the backbuffer. Only runs when
-    // TAA is disabled (FXAA and TAA are mutually exclusive in UE5) AND
+    // TAA is disabled (FXAA and TAA are mutually exclusive in reference implementations) AND
     // CAS is not active (CAS replaces FXAA when enabled).
     //
-    // @source UE5 PostProcessAA.cpp:94-96 — default quality parameters
-    // @source UE5 Fxaa3_11.ush:735-1252 — FxaaPixelShader
+    // FXAA 3.11 — Lottes 2011, "Fast Approximate Anti-Aliasing" (NVIDIA).
     if (ctx.fxaaActive && !ctx.casActive) {
         rgBuilder.AddPass("FXAA", [&](rg::RgPassBuilder& pb) {
             pb.Read(ctx.fxaaLdrRes, RHIResourceState::ShaderResource);
@@ -648,17 +641,17 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
                 cmd->SetRootConstants(kSlotRootConstants, fxaaIndices, 4);
 
                 // FXAAParams CB at b2 (kSlotPerObject)
-                // @source UE5 PostProcessAA.cpp:94-96 — default parameter values
+                // FXAA quality parameters (standard defaults for quality preset 29).
                 struct FXAAParamsCB {
                     float invScreenWidth;   ///< 1.0 / viewport width
                     float invScreenHeight;  ///< 1.0 / viewport height
-                    float edgeThreshold;    ///< Local contrast threshold (0.166 = UE5 default)
+                    float edgeThreshold;    ///< Local contrast threshold (0.166 = reference default)
                     float blurStrength;     ///< Unused by FXAA 3.11, kept for cbuffer alignment
                 };
                 FXAAParamsCB fxaaParams{};
                 fxaaParams.invScreenWidth  = 1.0f / ctx.vpWidth;
                 fxaaParams.invScreenHeight = 1.0f / ctx.vpHeight;
-                fxaaParams.edgeThreshold   = 0.166f;  // @source UE5 PostProcessAA.cpp:95
+                fxaaParams.edgeThreshold   = 0.166f;  // Standard FXAA edge detection threshold.
                 fxaaParams.blurStrength    = 0.0f;
 
                 CBAllocation fxaaAlloc = m_cbRing->Allocate(sizeof(FXAAParamsCB));

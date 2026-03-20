@@ -4,7 +4,6 @@
 /// Uses the same GBuffer RT formats and rasterizer state as PipelineLibrary::GetGBuffer()
 /// to ensure seamless interop at draw time.
 ///
-/// @source UE5 MaterialShaderMap.cpp — FMaterialShaderMap::Compile()
 
 #include "material_pipeline.h"
 
@@ -343,7 +342,7 @@ std::string MaterialPipeline::BuildCombinedPixelShaderSource(const std::string& 
     }
 
     // Find the #include "material_body.hlsli" marker and replace it with the
-    // generated material HLSL. This is the same approach used by UE5's material
+    // generated material HLSL. This is the same approach used by a production engine's material
     // compilation, where each material graph produces a unique PS variant.
     auto pos = gbufferSource.find(kMaterialBodyInclude);
     if (pos == std::string::npos) {

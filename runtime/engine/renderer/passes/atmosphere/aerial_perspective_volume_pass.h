@@ -4,8 +4,8 @@
 /// RGBA16F 3D texture containing per-voxel inscattering (RGB) and mean
 /// transmittance (A) for the camera's aerial perspective.
 ///
-/// @source UE5 SkyAtmosphere.usf:1466 — RenderCameraAerialPerspectiveVolumeCS
-/// @source UE5 SkyAtmosphereCommon.ush:42 — GetAerialPerspectiveLuminanceTransmittance
+/// @ref RenderCameraAerialPerspectiveVolumeCS
+/// @ref GetAerialPerspectiveLuminanceTransmittance
 ///
 /// # Render Graph Integration
 /// The pass declares:

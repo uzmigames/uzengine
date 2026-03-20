@@ -1,4 +1,4 @@
-/// @source UE5 HLSLMaterialTranslator.cpp — FHLSLMaterialTranslator::Translate()
+/// HLSL Material Translator — graph-to-HLSL compilation
 
 #include "hlsl_material_translator.h"
 

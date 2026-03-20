@@ -5,22 +5,22 @@
 /// by 1/(1+luma)) to prevent firefly artifacts from extremely bright pixels
 /// dominating the bloom result.
 ///
-/// # UE5 Equivalent
+/// # Equivalent
 /// PostProcessBloom.usf — BloomSetupPS/BloomSetupCS
 /// The Karis average prevents single bright pixels from producing distracting
 /// bloom artifacts (the "firefly" problem common with HDR bloom).
 ///
-/// @source UE5 PostProcessBloom.usf:37-67 — BloomSetupCommon
+/// @ref Karis 2013 — bloom threshold/setup:37-67 — BloomSetupCommon
 /// @constants BloomThreshold default = 1.0 (PostProcessSettings.h)
 /// @deviations INTENTIONAL: Karis average (1/(1+luma) weighting) is applied at
-///   the threshold stage, NOT during the first downsample as UE5 does. UE5's
+///   the threshold stage, NOT during the first downsample as reference does. the reference implementation's
 ///   BloomSetupCommon does NOT apply Karis weighting — it relies on downsample
 ///   filter quality instead. Our approach prevents fireflies earlier in the
 ///   pipeline, matching the technique from Jimenez 2014 (Call of Duty: AW)
 ///   and Unity HDRP. This produces equivalent visual results with better
 ///   firefly rejection at the cost of slightly softer bloom on isolated bright
 ///   pixels. This is a deliberate engineering choice, not a bug.
-/// @deviations UE5 uses exposure scale from eye adaptation buffer; we use
+/// @deviations the reference uses exposure scale from eye adaptation buffer; we use
 ///   PerFrameCB.exposure directly. Same functional result.
 
 #include "../include/math_util.hlsli"
@@ -109,7 +109,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
     float3 color = (s0 * w0 + s1 * w1 + s2 * w2 + s3 * w3) / wSum;
 
     // Apply threshold: subtract threshold from luminance, scale remaining contribution
-    // @source UE5 PostProcessBloom.usf:59-63 — threshold and saturate pattern
+    // @ref Karis 2013 — bloom threshold/setup:59-63 — threshold and saturate pattern
     float totalLuminance = Luminance(color) * g_Exposure;
     float bloomLuminance = totalLuminance - g_BloomThreshold;
     float bloomAmount = saturate(bloomLuminance * 0.5f);

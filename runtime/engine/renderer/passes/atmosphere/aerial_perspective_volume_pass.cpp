@@ -3,7 +3,7 @@
 /// Registers and executes a compute pass that fills a 32x32x16 RGBA16F
 /// 3D texture via aerial_perspective_volume_cs.hlsl.
 ///
-/// @source UE5 SkyAtmosphere.usf:1466 — RenderCameraAerialPerspectiveVolumeCS
+/// @ref RenderCameraAerialPerspectiveVolumeCS
 
 #include "aerial_perspective_volume_pass.h"
 

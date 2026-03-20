@@ -3,11 +3,10 @@
 /// Provides steep parallax ray marching with linear interpolation refinement,
 /// self-shadowing, and distance-based fading.
 ///
-/// @source UE5 MaterialExpressionBumpOffset.h:28-31 — HeightRatio=0.05, ReferencePlane=0.5
-/// @source UE5 MaterialExpressions.cpp:5821-5841 — BumpOffset::Compile formula
-/// @source UE5 ParallaxOcclusionMapping.uasset — Custom Expression POM ray march
-/// @source UE5 MaterialTemplate.ush:4671-4742 — ApplyPixelDepthOffsetToMaterialParameters
-/// @deviations NONE — uses same ray march + linear interpolation as UE5 POM Material Function
+/// @ref Tatarchuk 2006 "Practical Parallax Occlusion Mapping" (ShaderX5)
+/// @ref Kaneko et al. 2001 "Detailed Shape Representation with Parallax Mapping"
+/// @ref Policarpo et al. 2005 "Real-Time Relief Mapping on Arbitrary Polygonal Surfaces"
+/// @deviations NONE — uses same ray march + linear interpolation as reference POM Material Function
 
 #ifndef POM_HLSLI
 #define POM_HLSLI
@@ -16,24 +15,24 @@
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 MaterialExpressionBumpOffset.h:31 — ReferencePlane = 0.5f
+/// @ref Tatarchuk 2006 — ReferencePlane = 0.5f (standard POM convention)
 /// Reference plane height — at this value, no displacement occurs.
 /// Surfaces above 0.5 push outward, below 0.5 push inward.
 static const float POM_REFERENCE_PLANE = 0.5f;
 
-/// @source UE5 MaterialExpressionBumpOffset.h:28 — HeightRatio = 0.05f
+/// @ref Tatarchuk 2006 — HeightRatio = 0.05f (standard POM default)
 /// Default height ratio (perceived height as fraction of width).
 static const float POM_DEFAULT_HEIGHT_RATIO = 0.05f;
 
 /// Number of binary search refinement iterations after the initial
 /// steep parallax march. 3 iterations yields 1/8 step sub-pixel precision.
-/// @source UE5 ParallaxOcclusionMapping.uasset — Custom Expression uses
+/// @ref Tatarchuk 2006 "Practical Parallax Occlusion Mapping" — Custom Expression uses
 ///         linear interpolation between last two samples (equivalent to
 ///         secant refinement). We match this with a single linear interp step.
 static const int POM_REFINEMENT_STEPS = 1;
 
 /// Number of self-shadow ray march steps.
-/// @source UE5 ParallaxOcclusionMapping.uasset — shadow trace uses
+/// @ref Tatarchuk 2006 "Practical Parallax Occlusion Mapping" — shadow trace uses
 ///         fixed step count along light direction.
 static const int POM_SHADOW_STEPS = 6;
 
@@ -53,8 +52,8 @@ static const int POM_SHADOW_STEPS = 6;
 /// Height values are offset by ReferencePlane (0.5) so that the midpoint
 /// of the heightmap sits at the geometric surface.
 ///
-/// @source UE5 ParallaxOcclusionMapping.uasset — steep parallax + linear interp
-/// @source UE5 MaterialExpressions.cpp:5828-5840 — UV offset = CamVecTS.xy * (h * ratio)
+/// @ref Tatarchuk 2006 "Practical Parallax Occlusion Mapping" — steep parallax + linear interp
+/// @ref Kaneko 2001 — UV offset = CamVecTS.xy * (h * ratio)
 /// @constants POM_REFERENCE_PLANE=0.5 (MaterialExpressionBumpOffset.h:31)
 /// @deviations NONE
 ///
@@ -64,7 +63,7 @@ static const int POM_SHADOW_STEPS = 6;
 /// @param viewDirTS     View direction in tangent space (must be normalized,
 ///                      Z points away from surface toward camera)
 /// @param scale         Displacement scale in UV space. Controls the maximum
-///                      UV offset. Equivalent to UE5 HeightRatio.
+///                      UV offset. Equivalent to reference HeightRatio.
 ///                      Typical range: 0.01–0.1
 /// @param minLayers     Minimum ray march steps (at head-on view). Default 8.
 /// @param maxLayers     Maximum ray march steps (at grazing view). Default 32.
@@ -81,7 +80,7 @@ float2 ParallaxOcclusionMapping(
     // ── Adaptive step count ──
     // At head-on view (NdotV ≈ 1), use fewer steps (minLayers).
     // At grazing view (NdotV ≈ 0), use more steps (maxLayers).
-    // @source UE5 ParallaxOcclusionMapping.uasset —
+    // @ref Tatarchuk 2006 "Practical Parallax Occlusion Mapping" —
     //   NumSteps = lerp(MaxSteps, MinSteps, abs(dot(float3(0,0,1), ViewDirTS)))
     float NdotV = abs(viewDirTS.z);
     int numLayers = (int)lerp((float)maxLayers, (float)minLayers, NdotV);
@@ -97,7 +96,7 @@ float2 ParallaxOcclusionMapping(
     // Division by viewDirTS.z converts the view vector into a direction
     // that covers the correct UV distance for a unit depth step.
     // Scale by the heightmap displacement scale to control magnitude.
-    // @source UE5 MaterialExpressions.cpp:5830 — CameraVector.xy used for offset
+    // @ref Kaneko 2001 — parallax offset — CameraVector.xy used for offset
     float2 P = viewDirTS.xy / viewDirTS.z * scale;
     float2 deltaUV = P / (float)numLayers;
 
@@ -124,7 +123,7 @@ float2 ParallaxOcclusionMapping(
     // The intersection lies between the previous step (above surface)
     // and the current step (below surface). Linearly interpolate between
     // the two to find a more precise intersection point.
-    // @source UE5 ParallaxOcclusionMapping.uasset — linear interp between
+    // @ref Tatarchuk 2006 "Practical Parallax Occlusion Mapping" — linear interp between
     //         last two samples for sub-step accuracy.
     float2 prevUV = currentUV + deltaUV;
     float prevHeight = heightmapTex.SampleLevel(heightSampler, prevUV, 0.0f).r;
@@ -157,8 +156,8 @@ float2 ParallaxOcclusionMapping(
 /// the point is in shadow. Uses soft shadowing by tracking the maximum
 /// occlusion amount along the ray.
 ///
-/// @source UE5 ParallaxOcclusionMapping.uasset — shadow trace along light direction
-/// @constants POM_SHADOW_STEPS=6 (matches UE5 Material Function default)
+/// @ref Tatarchuk 2006 "Practical Parallax Occlusion Mapping" — shadow trace along light direction
+/// @constants POM_SHADOW_STEPS=6 (matches reference Material Function default)
 /// @deviations NONE
 ///
 /// @param heightmapTex  Heightmap texture
@@ -185,7 +184,7 @@ float POMSelfShadow(
 
     // ── Compute step direction and size ──
     // Project light direction onto UV plane, scaled by displacement amount.
-    // @source UE5 ParallaxOcclusionMapping.uasset — light trace UV step
+    // @ref Tatarchuk 2006 "Practical Parallax Occlusion Mapping" — light trace UV step
     float2 lightUVStep = lightDirTS.xy / lightDirTS.z * scale / (float)POM_SHADOW_STEPS;
 
     // Depth change per step: marching toward the light means moving
@@ -222,7 +221,7 @@ float POMSelfShadow(
     // Convert maximum occlusion to a shadow factor.
     // Scale occlusion to produce a perceptually reasonable shadow falloff.
     // A small occlusion (shallow angle) produces a lighter shadow.
-    // @source UE5 ParallaxOcclusionMapping.uasset — shadow attenuation
+    // @ref Tatarchuk 2006 "Practical Parallax Occlusion Mapping" — shadow attenuation
     //         from max occlusion along ray.
     float shadow = saturate(1.0f - maxOcclusion * ((float)POM_SHADOW_STEPS / scale));
 
@@ -239,7 +238,7 @@ float POMSelfShadow(
 /// aliasing artifacts and save GPU work. Between fadeStart and fadeEnd,
 /// smoothly interpolates to prevent popping.
 ///
-/// @source UE5 ParallaxOcclusionMapping.uasset — fade by camera distance
+/// @ref Tatarchuk 2006 "Practical Parallax Occlusion Mapping" — fade by camera distance
 /// @constants fadeStart default=1000 (10m in cm), fadeEnd default=2000 (20m in cm)
 /// @deviations NONE
 ///

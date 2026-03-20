@@ -1,4 +1,4 @@
-/// Unit tests for UE5-parity component defaults and color utilities.
+/// Unit tests for industry-standard component defaults and color utilities.
 ///
 /// Coverage targets:
 ///   - height_fog_component.h    → 100% (all fields verified)
@@ -40,7 +40,7 @@ static bool Near(float a, float b, float eps = kEps) {
 // Test Suite: HeightFogComponent defaults
 // ─────────────────────────────────────────────────────────────────────────────
 
-TEST(UE5Parity, HeightFogDefaults_PrimaryLayer) {
+TEST(RenderingParity, HeightFogDefaults_PrimaryLayer) {
     HeightFogComponent fog;
     EXPECT_FLOAT_EQ(fog.heightFalloff,       0.2f);
     EXPECT_FLOAT_EQ(fog.color.x,             1.0f);
@@ -54,14 +54,14 @@ TEST(UE5Parity, HeightFogDefaults_PrimaryLayer) {
     EXPECT_TRUE(fog.enabled);
 }
 
-TEST(UE5Parity, HeightFogDefaults_SecondLayer) {
+TEST(RenderingParity, HeightFogDefaults_SecondLayer) {
     HeightFogComponent fog;
     EXPECT_FLOAT_EQ(fog.secondFogDensity,         0.f);
     EXPECT_FLOAT_EQ(fog.secondFogHeightFalloff,   0.2f);
     EXPECT_FLOAT_EQ(fog.secondFogBaseHeight,      0.f);
 }
 
-TEST(UE5Parity, HeightFogDefaults_DirectionalInscattering) {
+TEST(RenderingParity, HeightFogDefaults_DirectionalInscattering) {
     HeightFogComponent fog;
     // Warm orange inscattering default
     EXPECT_FLOAT_EQ(fog.directionalInscatteringColor.x, 1.0f);
@@ -76,14 +76,14 @@ TEST(UE5Parity, HeightFogDefaults_DirectionalInscattering) {
 // Test Suite: SkyAtmosphereComponent defaults
 // ─────────────────────────────────────────────────────────────────────────────
 
-TEST(UE5Parity, SkyAtmosphereDefaults_PlanetGeometry) {
+TEST(RenderingParity, SkyAtmosphereDefaults_PlanetGeometry) {
     SkyAtmosphereComponent sky;
     EXPECT_FLOAT_EQ(sky.bottomRadiusKm,      6360.0f);
     EXPECT_FLOAT_EQ(sky.atmosphereHeightKm,  60.0f);
     EXPECT_TRUE(sky.enabled);
 }
 
-TEST(UE5Parity, SkyAtmosphereDefaults_Rayleigh) {
+TEST(RenderingParity, SkyAtmosphereDefaults_Rayleigh) {
     SkyAtmosphereComponent sky;
     EXPECT_NEAR(sky.rayleighScattering.x, 5.802e-3f, 1e-6f);
     EXPECT_NEAR(sky.rayleighScattering.y, 13.558e-3f, 1e-6f);
@@ -92,7 +92,7 @@ TEST(UE5Parity, SkyAtmosphereDefaults_Rayleigh) {
     EXPECT_FLOAT_EQ(sky.rayleighScaleHeightKm,   8.0f);
 }
 
-TEST(UE5Parity, SkyAtmosphereDefaults_Mie) {
+TEST(RenderingParity, SkyAtmosphereDefaults_Mie) {
     SkyAtmosphereComponent sky;
     EXPECT_NEAR(sky.mieScattering,      3.996e-3f, 1e-7f);
     EXPECT_FLOAT_EQ(sky.mieScatteringScale, 1.0f);
@@ -102,7 +102,7 @@ TEST(UE5Parity, SkyAtmosphereDefaults_Mie) {
     EXPECT_FLOAT_EQ(sky.mieScaleHeightKm,   1.2f);
 }
 
-TEST(UE5Parity, SkyAtmosphereDefaults_GroundAndMultiScatter) {
+TEST(RenderingParity, SkyAtmosphereDefaults_GroundAndMultiScatter) {
     SkyAtmosphereComponent sky;
     EXPECT_FLOAT_EQ(sky.groundAlbedo.x,        0.3f);
     EXPECT_FLOAT_EQ(sky.groundAlbedo.y,        0.3f);
@@ -115,7 +115,7 @@ TEST(UE5Parity, SkyAtmosphereDefaults_GroundAndMultiScatter) {
 // Test Suite: LightComponent base defaults
 // ─────────────────────────────────────────────────────────────────────────────
 
-TEST(UE5Parity, LightComponentBaseDefaults) {
+TEST(RenderingParity, LightComponentBaseDefaults) {
     PointLightComponent light;
     EXPECT_FALSE(light.useTemperature);
     EXPECT_FLOAT_EQ(light.temperature,                   6500.f);
@@ -134,7 +134,7 @@ TEST(UE5Parity, LightComponentBaseDefaults) {
 // Test Suite: DirectionalLightComponent defaults
 // ─────────────────────────────────────────────────────────────────────────────
 
-TEST(UE5Parity, DirectionalLightDefaults) {
+TEST(RenderingParity, DirectionalLightDefaults) {
     DirectionalLightComponent dir;
     EXPECT_FALSE(dir.atmosphereSunLight);
     EXPECT_EQ(dir.atmosphereSunLightIndex, 0);
@@ -148,7 +148,7 @@ TEST(UE5Parity, DirectionalLightDefaults) {
     EXPECT_FLOAT_EQ(dir.contactShadowLength,            0.f);
 }
 
-TEST(UE5Parity, DirectionalLightAtmosphereSunDiskColorScale_DefaultsWhite) {
+TEST(RenderingParity, DirectionalLightAtmosphereSunDiskColorScale_DefaultsWhite) {
     DirectionalLightComponent dir;
     EXPECT_FLOAT_EQ(dir.atmosphereSunDiskColorScale.x, 1.f);
     EXPECT_FLOAT_EQ(dir.atmosphereSunDiskColorScale.y, 1.f);
@@ -159,7 +159,7 @@ TEST(UE5Parity, DirectionalLightAtmosphereSunDiskColorScale_DefaultsWhite) {
 // Test Suite: PointLightComponent defaults
 // ─────────────────────────────────────────────────────────────────────────────
 
-TEST(UE5Parity, PointLightDefaults) {
+TEST(RenderingParity, PointLightDefaults) {
     PointLightComponent point;
     EXPECT_FLOAT_EQ(point.range,               1000.0f);
     EXPECT_TRUE(point.useInverseSquaredFalloff);
@@ -173,13 +173,13 @@ TEST(UE5Parity, PointLightDefaults) {
 // Test Suite: SpotLightComponent defaults
 // ─────────────────────────────────────────────────────────────────────────────
 
-TEST(UE5Parity, SpotLightAngleDefaults_Degrees) {
+TEST(RenderingParity, SpotLightAngleDefaults_Degrees) {
     SpotLightComponent spot;
     EXPECT_FLOAT_EQ(spot.innerAngleDeg, 30.0f);
     EXPECT_FLOAT_EQ(spot.outerAngleDeg, 45.0f);
 }
 
-TEST(UE5Parity, SpotLightInheritsFromPointLight) {
+TEST(RenderingParity, SpotLightInheritsFromPointLight) {
     // SpotLightComponent inherits all PointLightComponent params.
     SpotLightComponent spot;
     EXPECT_FLOAT_EQ(spot.range,               1000.0f);
@@ -190,7 +190,7 @@ TEST(UE5Parity, SpotLightInheritsFromPointLight) {
     EXPECT_FLOAT_EQ(spot.sourceLength,         0.f);
 }
 
-TEST(UE5Parity, SpotLightInheritsLightBaseParams) {
+TEST(RenderingParity, SpotLightInheritsLightBaseParams) {
     // SpotLight must also expose LightComponent base params.
     SpotLightComponent spot;
     EXPECT_FALSE(spot.useTemperature);
@@ -203,7 +203,7 @@ TEST(UE5Parity, SpotLightInheritsLightBaseParams) {
 // Test Suite: SkyLightComponent defaults
 // ─────────────────────────────────────────────────────────────────────────────
 
-TEST(UE5Parity, SkyLightDefaults_IntensityAndColor) {
+TEST(RenderingParity, SkyLightDefaults_IntensityAndColor) {
     SkyLightComponent sl;
     EXPECT_FLOAT_EQ(sl.intensity,                 1.0f);
     EXPECT_FLOAT_EQ(sl.lightColor.x,              1.0f);
@@ -213,14 +213,14 @@ TEST(UE5Parity, SkyLightDefaults_IntensityAndColor) {
     EXPECT_TRUE(sl.enabled);
 }
 
-TEST(UE5Parity, SkyLightDefaults_Source) {
+TEST(RenderingParity, SkyLightDefaults_Source) {
     SkyLightComponent sl;
     EXPECT_EQ(sl.sourceType,        ESkyLightSourceType::CapturedScene);
     EXPECT_FALSE(sl.realTimeCapture);
     EXPECT_EQ(sl.cubemapResolution, 128u);
 }
 
-TEST(UE5Parity, SkyLightDefaults_LowerHemisphere) {
+TEST(RenderingParity, SkyLightDefaults_LowerHemisphere) {
     SkyLightComponent sl;
     EXPECT_TRUE(sl.lowerHemisphereIsBlack);
     EXPECT_FLOAT_EQ(sl.lowerHemisphereColor.x, 0.f);
@@ -228,7 +228,7 @@ TEST(UE5Parity, SkyLightDefaults_LowerHemisphere) {
     EXPECT_FLOAT_EQ(sl.lowerHemisphereColor.z, 0.f);
 }
 
-TEST(UE5Parity, SkyLightDefaults_Occlusion) {
+TEST(RenderingParity, SkyLightDefaults_Occlusion) {
     SkyLightComponent sl;
     EXPECT_FLOAT_EQ(sl.occlusionMaxDistance, 1000.0f);
     EXPECT_FLOAT_EQ(sl.minOcclusion,         0.f);
@@ -238,7 +238,7 @@ TEST(UE5Parity, SkyLightDefaults_Occlusion) {
     EXPECT_FLOAT_EQ(sl.occlusionExponent,    1.0f);
 }
 
-TEST(UE5Parity, SkyLightComponent_FieldMutation) {
+TEST(RenderingParity, SkyLightComponent_FieldMutation) {
     SkyLightComponent sl;
     sl.intensity              = 3.0f;
     sl.lightColor             = {0.9f, 0.95f, 1.0f};
@@ -259,25 +259,25 @@ TEST(UE5Parity, SkyLightComponent_FieldMutation) {
 // Test Suite: SceneComponent — mobility and visibility defaults
 // ─────────────────────────────────────────────────────────────────────────────
 
-TEST(UE5Parity, SceneComponentMobilityDefault) {
+TEST(RenderingParity, SceneComponentMobilityDefault) {
     SceneComponent sc;
     EXPECT_EQ(sc.mobility, SceneComponent::Mobility::Movable);
     EXPECT_FALSE(sc.hiddenInGame);
 }
 
-TEST(UE5Parity, SceneComponentMobility_CanBeSetToStatic) {
+TEST(RenderingParity, SceneComponentMobility_CanBeSetToStatic) {
     SceneComponent sc;
     sc.mobility = SceneComponent::Mobility::Static;
     EXPECT_EQ(sc.mobility, SceneComponent::Mobility::Static);
 }
 
-TEST(UE5Parity, SceneComponentMobility_CanBeSetToStationary) {
+TEST(RenderingParity, SceneComponentMobility_CanBeSetToStationary) {
     SceneComponent sc;
     sc.mobility = SceneComponent::Mobility::Stationary;
     EXPECT_EQ(sc.mobility, SceneComponent::Mobility::Stationary);
 }
 
-TEST(UE5Parity, SceneComponentHiddenInGame_CanBeToggled) {
+TEST(RenderingParity, SceneComponentHiddenInGame_CanBeToggled) {
     SceneComponent sc;
     sc.hiddenInGame = true;
     EXPECT_TRUE(sc.hiddenInGame);
@@ -381,27 +381,27 @@ TEST(KelvinToRgb, OutputAlwaysInZeroOneRange) {
 // Test Suite: PointLightData GPU struct — flag bits
 // ─────────────────────────────────────────────────────────────────────────────
 
-TEST(UE5Parity, PointLightData_FlagBit_InverseSquaredSet) {
+TEST(RenderingParity, PointLightData_FlagBit_InverseSquaredSet) {
     PointLightData pld{};
     pld.flags = kLightFlag_InverseSquared;
     EXPECT_EQ(pld.flags & kLightFlag_InverseSquared, kLightFlag_InverseSquared)
         << "kLightFlag_InverseSquared must be readable back from flags";
 }
 
-TEST(UE5Parity, PointLightData_FlagBit_InverseSquaredClear) {
+TEST(RenderingParity, PointLightData_FlagBit_InverseSquaredClear) {
     PointLightData pld{};
     pld.flags = 0u;
     EXPECT_EQ(pld.flags & kLightFlag_InverseSquared, 0u)
         << "kLightFlag_InverseSquared must be 0 when flags is 0";
 }
 
-TEST(UE5Parity, PointLightData_FlagBit_IsBit0) {
+TEST(RenderingParity, PointLightData_FlagBit_IsBit0) {
     // The flag must occupy exactly bit 0, so its value is 1.
     EXPECT_EQ(kLightFlag_InverseSquared, 1u)
         << "kLightFlag_InverseSquared must be bit 0 (value=1) per HLSL struct comment";
 }
 
-TEST(UE5Parity, PointLightData_FlagBit_DoesNotClobberOtherFields) {
+TEST(RenderingParity, PointLightData_FlagBit_DoesNotClobberOtherFields) {
     // Setting the flag must not corrupt adjacent float fields.
     PointLightData pld{};
     pld.position     = {1.f, 2.f, 3.f};
@@ -419,7 +419,7 @@ TEST(UE5Parity, PointLightData_FlagBit_DoesNotClobberOtherFields) {
     EXPECT_EQ(pld.flags & kLightFlag_InverseSquared, kLightFlag_InverseSquared);
 }
 
-TEST(UE5Parity, PointLightData_StructSize_Is64Bytes) {
+TEST(RenderingParity, PointLightData_StructSize_Is64Bytes) {
     // The static_assert in constant_buffers.h guarantees this at compile time,
     // but a runtime check makes the expectation explicit in test output.
     EXPECT_EQ(sizeof(PointLightData), 64u)

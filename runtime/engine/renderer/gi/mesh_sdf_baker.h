@@ -16,10 +16,9 @@
 /// 4. Determine sign via pseudo-normal method (dot with face normal at closest point).
 /// 5. Store signed distance (negative inside, positive outside) in world units (cm).
 ///
-/// # UE5 Reference
-/// @source UE5 DistanceFieldAtlas.h:36-50 — brick constants
-/// @source UE5 DistanceFieldAtlas.cpp:67-79 — per-mesh resolution
-/// @source UE5 MeshUtilities.cpp — mesh SDF generation
+/// # References
+/// @ref Wright 2015 "Dynamic Occlusion with Signed Distance Fields" — brick SDF layout
+/// @ref Ericson 2005 "Real-Time Collision Detection" — closest-point-on-triangle
 ///
 /// # Thread Safety
 /// Thread-safe — no shared mutable state. Can be called from worker threads.

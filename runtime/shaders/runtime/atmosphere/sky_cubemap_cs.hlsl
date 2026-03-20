@@ -60,7 +60,7 @@ Texture2D<float4> g_TransmittanceLut : register(t0);
 // Standard Earth Atmosphere Constants
 // ─────────────────────────────────────────────────────────────────────────────
 //
-// These are the canonical Bruneton 2017 / UE5 values for Earth's atmosphere.
+// These are the canonical Bruneton 2017 / standard values for Earth's atmosphere.
 // They match the coefficients used in transmittance_lut_cs.hlsl and
 // sky_atmosphere_ps.hlsl (via SkyAtmosphereCB). Hardcoding them here avoids
 // exceeding the 8 DWORD root constant budget while keeping physical accuracy.
@@ -86,9 +86,9 @@ static const float RAYLEIGH_SCALE_H = 8.0f;   // km
 static const float MIE_SCALE_H      = 1.2f;   // km
 
 /// Ground albedo for Lambertian reflection when view ray hits the planet.
-/// @source UE5 SkyAtmosphereComponent.cpp:103 — GroundAlbedo = FColor(170,170,170) ≈ 0.4 linear
-/// @constants 0.4f (UE5 default: FColor(170,170,170) → sRGB 0.667 → linear ~0.4)
-/// @deviations Hardcoded here due to 8-DWORD root constant budget. UE5 passes via CB.
+/// @ref GroundAlbedo = FColor(170,170,170) ≈ 0.4 linear
+/// @constants 0.4f (Default: FColor(170,170,170) → sRGB 0.667 → linear ~0.4)
+/// @deviations Hardcoded here due to 8-DWORD root constant budget. reference passes via CB.
 static const float3 GROUND_ALBEDO = float3(0.4f, 0.4f, 0.4f);
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -105,7 +105,7 @@ static const int NUM_STEPS = 16;
 /// Small epsilon to prevent division by zero in analytical integration.
 static const float EXT_EPS = 1e-7f;
 
-/// Safety margin: place camera at least 5m above ground in sky space (UE5 pattern).
+/// Safety margin: place camera at least 5m above ground in sky space (standard pattern).
 static const float PLANET_RADIUS_OFFSET_KM = 0.005f;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -305,7 +305,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     Texture2D<float4> tLut = g_TransmittanceLut;
 #endif
 
-    // ── Frostbite analytical integration (UE5 SkyAtmosphere.usf pattern) ────
+    // ── Frostbite analytical integration (Bruneton atmosphere pattern) ────
     //
     // Per-step analytical integral of in-scattered luminance:
     //   Sint = (scatter - scatter * T_step) / max(ext, eps)

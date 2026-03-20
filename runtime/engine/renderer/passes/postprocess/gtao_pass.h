@@ -13,8 +13,7 @@
 /// Created and owned by SceneRenderer. The filtered AO SRV index is passed
 /// to the deferred lighting pass via PerFrameCB::gtaoSrvIndex.
 ///
-/// @source UE5 PostProcessAmbientOcclusion.usf — GTAO algorithm
-/// @source UE5 PostProcessAmbientOcclusionCommon.ush — shared helpers
+/// @ref Jimenez 2016 "GTAO — Ground Truth Ambient Occlusion"
 
 #pragma once
 
@@ -35,10 +34,9 @@ class CBRingAllocator;
 
 /// Runtime-configurable GTAO parameters.
 ///
-/// Default values match UE5's "High" quality preset.
-/// @source UE5 PostProcessAmbientOcclusion.usf:553-557 — SHADER_QUALITY==3
+/// Default values match "High" quality preset.
 struct GTAOSettings {
-    float    worldRadius     = 200.0f;   ///< AO search radius in cm. UE5 default: 200.
+    float    worldRadius     = 200.0f;   ///< AO search radius in cm. Default: 200.
     float    intensity       = 1.0f;     ///< AO strength multiplier.
     float    thicknessBlend  = 0.5f;     ///< Thickness heuristic. 0=thin, 1=thick.
     float    fadeStartDist   = 50000.0f; ///< Distance where AO fades (cm).
@@ -46,16 +44,15 @@ struct GTAOSettings {
     float    maxFadeDepth    = 100000.0f;///< Skip AO beyond this depth (cm).
     bool     enabled         = true;     ///< Master toggle.
 
-    /// AO power curve exponent. UE5 default: 2.0 (Scene.cpp:528).
-    /// In GTAO path, shader multiplies by 0.5 → effective 1.0.
+    /// AO power curve exponent. Default: 2.0.
+    /// In GTAO path, shader multiplies by 0.5 -> effective 1.0.
     /// Currently hardcoded in gtao_cs.hlsl as GTAO_AO_POWER.
-    /// @source UE5 Scene.cpp:528 — AmbientOcclusionPower = 2.0f
     float    aoPower         = 2.0f;
 
     /// Enable multi-bounce colored AO approximation in deferred lighting.
     /// Uses Jimenez 2016 polynomial fit to prevent over-darkening of colored
     /// surfaces under occlusion. Currently hardcoded ON in deferred_lighting_ps.hlsl.
-    /// @source UE5 DeferredShadingCommon.ush:1220 — AOMultiBounce
+    /// @ref Jimenez 2016 — AOMultiBounce polynomial approximation
     bool     multiBounce     = true;
 };
 
@@ -67,7 +64,7 @@ struct GTAOSettings {
 /// GTAO root constants — exactly 8 DWORDs (32 bytes).
 /// This is the compute root signature limit (dx12_pso_creation.cpp:135).
 /// All other params (radius, intensity, etc.) are hardcoded in the shader
-/// via #defines to match UE5 defaults. Only dynamic per-frame values here.
+/// via #defines. Only dynamic per-frame values here.
 struct GTAORootConstants {
     uint32_t depthSrvIndex;     // DWORD 0: depth buffer SRV
     uint32_t normalSrvIndex;    // DWORD 1: normal buffer SRV

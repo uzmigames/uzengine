@@ -5,8 +5,7 @@
 /// - StructuredBuffer<SdfIndirectionEntry> mapping brick grid cells to atlas offsets
 /// - StructuredBuffer<SdfObjectGpuData> per-frame instance data for all SDF objects
 ///
-/// @source UE5 DistanceFieldAtlas.h — atlas management
-/// @source UE5 DistanceFieldLightingShared.h:78-94 — upload and object buffers
+/// SDF atlas management — 3D texture atlas + indirection + object buffers
 
 #include "sdf_atlas_manager.h"
 
@@ -382,11 +381,11 @@ uint32_t SdfAtlasManager::RegisterObject(uint32_t objectId, uint32_t meshId) {
 
     // Per-object indirection offset: the starting index into the global indirection
     // buffer for this object's brick indirection table.
-    // @source UE5 DistanceFieldLightingShared.ush:83 — IndirectionTableOffset
+    // IndirectionTableOffset — index into global indirection buffer
     data.indirectionOffset = alloc.indirectionOffset;
 
     // Number of available MIP levels (base level counts as 1).
-    // @source UE5 DistanceFieldLightingShared.ush:77 — NumMips
+    // NumMips — number of available MIP levels for this SDF object
     data.numMips = asset.mipLevels;
 
     m_objectDirty[slotIndex] = true;

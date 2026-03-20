@@ -1,12 +1,12 @@
 /// Auto-Exposure Average + Temporal Adaptation — Compute Shader
 ///
-/// UE5 Eye Adaptation parity (PostProcessEyeAdaptation.usf).
+/// Eye Adaptation parity (PostProcessEyeAdaptation.usf).
 ///
 /// Reads the 64-bin luminance histogram, applies percentile filtering,
 /// computes weighted average log2 luminance, clamps to brightness bounds,
 /// applies temporal adaptation, and outputs the final exposure multiplier.
 ///
-/// # UE5 Exposure Formula
+/// # reference Exposure Formula
 /// ```
 /// TargetExposure = AverageSceneLuminance / 0.18
 /// GlobalExposure = pow(2, AutoExposureBias) * 0.18 / AverageSceneLuminance
@@ -19,27 +19,25 @@
 
 cbuffer ExposureParams : register(b0)
 {
-    float g_HistLogMin;        // Log2 luminance range minimum (UE5: -10.0)
-    float g_HistLogMax;        // Log2 luminance range maximum (UE5: +20.0)
+    float g_HistLogMin;        // Log2 luminance range minimum (Equivalent: -10.0)
+    float g_HistLogMax;        // Log2 luminance range maximum (Equivalent: +20.0)
     uint  g_HistogramSrvIdx;   // Bindless SRV index for the histogram buffer
     uint  g_Padding;
-    float g_ExposureBias;      // EV offset — 0.0 = neutral (UE5 AutoExposureBias)
-    float g_MinBrightness;     // Min avg luminance clamp (UE5: 2^-10 ≈ 0.001)
-    float g_MaxBrightness;     // Max avg luminance clamp (UE5: 2^20 ≈ 1048576)
+    float g_ExposureBias;      // EV offset — 0.0 = neutral (reference AutoExposureBias)
+    float g_MinBrightness;     // Min avg luminance clamp (Equivalent: 2^-10 ≈ 0.001)
+    float g_MaxBrightness;     // Max avg luminance clamp (Equivalent: 2^20 ≈ 1048576)
     float g_DeltaTime;         // Frame delta time in seconds
 };
 
-/// UE5 defaults — hardcoded to stay within root constant budget
-/// @source UE5 Scene.cpp:484 — AutoExposureSpeedUp = 3.0f
-/// @source UE5 Scene.cpp:485 — AutoExposureSpeedDown = 1.0f
-/// @source UE5 Scene.cpp:459 — AutoExposureLowPercent = 10.0f
-/// @source UE5 Scene.cpp:460 — AutoExposureHighPercent = 90.0f
+/// defaults — hardcoded to stay within root constant budget
+/// @ref Reinhard et al. 2002 "Photographic Tone Reproduction" — auto-exposure defaults
+/// AutoExposureSpeedUp = 3.0f, SpeedDown = 1.0f, LowPercent = 10.0f, HighPercent = 90.0f
 static const float g_SpeedUp     = 3.0;   // f-stops/sec when LogDiff > 0 (target brighter than current)
 static const float g_SpeedDown   = 1.0;   // f-stops/sec when LogDiff <= 0 (target darker than current)
-static const float g_LowPercent  = 10.0;  // UE5: AutoExposureLowPercent = 10
-static const float g_HighPercent = 90.0;  // UE5: AutoExposureHighPercent = 90
+static const float g_LowPercent  = 10.0;  // Equivalent: AutoExposureLowPercent = 10
+static const float g_HighPercent = 90.0;  // Equivalent: AutoExposureHighPercent = 90
 
-/// @source UE5 PostProcessEyeAdaptation.cpp:46-48 — CVarEyeAdaptationExponentialTransitionDistance default = 1.5
+/// @ref Eye adaptation — ExponentialTransitionDistance default = 1.5 f-stops
 /// Distance in f-stops at which we switch from exponential to linear adaptation.
 /// Below this threshold: exponential (smooth settle near target).
 /// Above this threshold: linear (constant speed for large jumps).
@@ -85,14 +83,14 @@ void main()
     if (totalPixels == 0)
         return;
 
-    // ── Percentile filtering (UE5: skip lowest 10%, highest 10%) ────────
+    // ── Percentile filtering (Equivalent: skip lowest 10%, highest 10%) ────────
     float minFractionSum = float(totalPixels) * g_LowPercent  / 100.0;
     float maxFractionSum = float(totalPixels) * g_HighPercent / 100.0;
 
     float weightedLogLum = 0.0;
     float weightSum      = 0.0;
 
-    // UE5 pattern: ComputeAverageLuminanceWithoutOutlier
+    // standard pattern: ComputeAverageLuminanceWithoutOutlier
     for (uint b = 0; b < NUM_BINS; ++b)
     {
         float bucket = float(bins[b]);
@@ -126,7 +124,7 @@ void main()
     // Clamp to artist-defined brightness range
     avgLum = clamp(avgLum, g_MinBrightness, g_MaxBrightness);
 
-    // ── UE5 Exposure Formula ────────────────────────────────────────────
+    // ── reference Exposure Formula ────────────────────────────────────────────
     // TargetExposure = avgLum / 0.18 (the scene luminance that should map to 18% grey)
     // GlobalExposure = ExposureBiasLinear * 0.18 / avgLum
     //
@@ -140,9 +138,9 @@ void main()
     float exposureBiasLinear = pow(2.0, g_ExposureBias);  // EV offset → linear multiplier
     float targetExposure     = exposureBiasLinear * 0.18 / avgLum;
 
-    // ── Temporal adaptation (UE5 dual exponential/linear model in log2 space) ──
-    /// @source UE5 PostProcessHistogramCommon.ush:192-219 — ComputeEyeAdaptation
-    /// @source UE5 PostProcessEyeAdaptation.cpp:491-505 — ExponentialUpM/DownM computation
+    // ── Temporal adaptation (reference dual exponential/linear model in log2 space) ──
+    /// @ref Reinhard 2002 — exposure adaptation:192-219 — ComputeEyeAdaptation
+    /// @ref Eye adaptation —491-505 — ExponentialUpM/DownM computation
     /// @constants g_StartDistance=1.5 (PostProcessEyeAdaptation.cpp:48)
     /// @constants g_SpeedUp=3.0 (Scene.cpp:484), g_SpeedDown=1.0 (Scene.cpp:485)
     /// @constants kFrameTimeEps=1/60 (PostProcessEyeAdaptation.cpp:503)
@@ -154,7 +152,7 @@ void main()
         prevExposure = targetExposure;
 
     // Work entirely in log2 space for perceptually uniform adaptation
-    // @source UE5 PostProcessHistogramCommon.ush:194-197
+    // @ref Reinhard 2002 — exposure adaptation:194-197
     float logTarget = log2(targetExposure);
     float logPrev   = log2(prevExposure);
     float logDiff   = logTarget - logPrev;
@@ -162,24 +160,24 @@ void main()
     // Select speed based on direction of change
     // LogDiff > 0: target is brighter than current → use SpeedUp
     // LogDiff <= 0: target is darker than current → use SpeedDown
-    // @source UE5 PostProcessHistogramCommon.ush:199
+    // @ref Reinhard 2002 — exposure adaptation:199
     float adaptSpeed = (logDiff > 0) ? g_SpeedUp : g_SpeedDown;
 
     // ── Compute M multiplier for exponential curve derivative continuity ──
     // M ensures the exponential curve's slope matches the linear curve's slope
     // at the transition distance, preventing visual jumps between modes.
-    // @source UE5 PostProcessEyeAdaptation.cpp:492-505
+    // @ref Eye adaptation —492-505
     float startTime = g_StartDistance / max(adaptSpeed, 0.001);
-    float kFrameTimeEps = 1.0 / 60.0;  // @source UE5 PostProcessEyeAdaptation.cpp:503
+    float kFrameTimeEps = 1.0 / 60.0;  // @ref Eye adaptation —503
     float exponentialM = kFrameTimeEps / ((1.0 - exp2(-kFrameTimeEps * adaptSpeed)) * startTime);
 
     // ── Exponential adaptation (for small changes, smooth settle near target) ──
-    // @source UE5 PostProcessHistogramCommon.ush:176-181 — ExponentialAdaption
+    // @ref Reinhard 2002 — exposure adaptation:176-181 — ExponentialAdaption
     float expFactor = 1.0 - exp2(-g_DeltaTime * adaptSpeed);
     float logAdaptedExp = logPrev + (logTarget - logPrev) * expFactor * exponentialM;
 
     // ── Linear adaptation (for large changes, constant perceptual speed) ──
-    // @source UE5 PostProcessHistogramCommon.ush:183-190 — LinearAdaption
+    // @ref Reinhard 2002 — exposure adaptation:183-190 — LinearAdaption
     float linOffset = g_DeltaTime * adaptSpeed;
     float logAdaptedLin = (logPrev < logTarget)
         ? min(logTarget, logPrev + linOffset)
@@ -188,15 +186,15 @@ void main()
     // ── Select model based on f-stop distance ──
     // Large jumps (> 1.5 f-stops): linear for constant speed
     // Small adjustments (<= 1.5 f-stops): exponential for smooth convergence
-    // @source UE5 PostProcessHistogramCommon.ush:208
+    // @ref Reinhard 2002 — exposure adaptation:208
     float absLogDiff = abs(logDiff);
     float logAdapted = (absLogDiff > g_StartDistance) ? logAdaptedLin : logAdaptedExp;
 
     // Convert back from log2 to linear exposure
-    // @source UE5 PostProcessHistogramCommon.ush:213
+    // @ref Reinhard 2002 — exposure adaptation:213
     float currentExposure = exp2(logAdapted);
 
-    // Clamp to prevent extreme values (UE5 note: target is pre-clamped, but
+    // Clamp to prevent extreme values (reference note: target is pre-clamped, but
     // we clamp the result too as a safety net since we don't have postFX volumes)
     float minExposure = exposureBiasLinear * 0.18 / max(g_MaxBrightness, 0.001);
     float maxExposure = exposureBiasLinear * 0.18 / max(g_MinBrightness, 0.00001);

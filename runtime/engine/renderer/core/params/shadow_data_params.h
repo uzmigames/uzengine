@@ -86,7 +86,7 @@ struct ShadowDataParams {
     uint32_t shadowAtlasIndex;                             ///< SRV heap index for shadow atlas depth texture.
     uint32_t cascadeCount;                                ///< Number of active cascades (1 to 8).
     float    shadowMapSize;                               ///< Per-cascade resolution in texels.
-    float    receiverBias;                                ///< Shadow receiver bias (UE5 default: 0.9).
+    float    receiverBias;                                ///< Shadow receiver bias (Default: 0.9).
     float    shadowFadeStart;                             ///< World distance where last-cascade fade begins.
     float    shadowFadeEnd;                               ///< World distance where shadows fully disappear.
     uint32_t filterMethod;                                ///< 0=5x5 PCF, 1=Poisson, 2=PCSS.

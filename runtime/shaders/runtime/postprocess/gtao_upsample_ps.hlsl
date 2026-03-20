@@ -1,7 +1,7 @@
 /// GTAO Bilateral Upsample — upsamples half-res AO to full-res with depth-aware
 /// bilateral weights to preserve sharp AO edges at depth discontinuities.
 ///
-/// Implements UE5's GTAOUpsamplePSAndCS (min-filter path) and optionally the
+/// Implements the reference engine's GTAOUpsamplePSAndCS (min-filter path) and optionally the
 /// higher-quality ComputeUpsampleContribution bilateral depth-weighted path.
 ///
 /// # Algorithm
@@ -10,12 +10,12 @@
 /// 2. For each sample, read the corresponding half-res depth.
 /// 3. Compute bilateral weights via ComputeDepthSimilarity:
 ///    w = saturate(1 - abs(fullDepth - sampleDepth) * InvThreshold)
-///    where InvThreshold = 0.003 (UE5 default, see ref below).
+///    where InvThreshold = 0.003 (reference default, see ref below).
 /// 4. Weighted-average the 4 AO samples. If all weights are near zero (depth
 ///    discontinuity exceeds threshold), fall back to the darkest sample (min).
 ///
 /// # Quality Modes
-/// - GTAO_UPSAMPLE_QUALITY 0 (default): UE5 GTAO min filter — fast, conservative.
+/// - GTAO_UPSAMPLE_QUALITY 0 (default): GTAO min filter — fast, conservative.
 /// - GTAO_UPSAMPLE_QUALITY 1: Bilateral depth-weighted — sharper edges, slightly
 ///   more expensive (4 extra depth reads + weight computation).
 ///
@@ -28,23 +28,23 @@
 ///
 /// Paired with fullscreen_vs.hlsl (DrawInstanced(3,1,0,0), no vertex buffer).
 ///
-/// @source UE5 PostProcessAmbientOcclusion.usf:1350-1367 — GTAOUpsamplePSAndCS,
+/// @ref GTAOUpsamplePSAndCS,
 ///         GTAOUpsamplePS
-/// @source UE5 PostProcessAmbientOcclusionCommon.ush:60-63 — ComputeDepthSimilarity
-/// @source UE5 PostProcessAmbientOcclusionCommon.ush:132-200 — ComputeUpsampleContribution
+/// @ref ComputeDepthSimilarity
+/// @ref ComputeUpsampleContribution
 /// @constants GTAOUpsamplePixelSize (usf:1347, set by C++),
 ///            Offset = GTAOUpsamplePixelSize * 0.25 (usf:1352),
 ///            InvThreshold = 0.003 (ush:183, ComputeUpsampleContribution TweakScale),
 ///            SmallValue = 0.0001 (ush:159, avoids division by zero)
-/// @deviations NONE — min-filter path is exact UE5 GTAOUpsamplePSAndCS;
-///             bilateral path uses UE5 ComputeDepthSimilarity with same 0.003 scale.
+/// @deviations NONE — min-filter path is exact GTAOUpsamplePSAndCS;
+///             bilateral path uses reference ComputeDepthSimilarity with same 0.003 scale.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Quality Defines
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// GTAO_UPSAMPLE_QUALITY:
-/// 0 = UE5 GTAO min filter (default): sample 5 AO texels, output min of 4 corners.
+/// 0 = GTAO min filter (default): sample 5 AO texels, output min of 4 corners.
 /// 1 = Bilateral depth-weighted: weight 4 samples by depth similarity to full-res.
 /// Set via -DGTAO_UPSAMPLE_QUALITY=0 or =1 from CPU-side compile flags.
 #ifndef GTAO_UPSAMPLE_QUALITY
@@ -58,7 +58,7 @@
 /// Root constants — exactly 8 DWORDs (32 bytes).
 /// Matches the 8-DWORD root constant limit in dx12_pso_creation.cpp:135.
 ///
-/// @source UE5 PostProcessAmbientOcclusion.usf:1347 — GTAOUpsamplePixelSize
+/// @ref GTAOUpsamplePixelSize
 cbuffer GTAOUpsampleRootCB : register(b0) {
     uint  halfResAOSrvIndex;    // DWORD 0 — half-res AO SRV descriptor index
     uint  halfResDepthSrvIndex; // DWORD 1 — half-res depth SRV descriptor index
@@ -135,16 +135,16 @@ float SampleFullResDepth(float2 uv)
 /// Compute depth similarity between two depth values.
 /// Returns 0 when depths are very different (edge), 1 when identical.
 ///
-/// @source UE5 PostProcessAmbientOcclusionCommon.ush:60-63 — ComputeDepthSimilarity
+/// @ref ComputeDepthSimilarity
 /// @param DepthA  First depth value.
 /// @param DepthB  Second depth value.
 /// @param TweakScale  Inverse threshold controlling edge sensitivity.
-///                    UE5 uses 0.003 in ComputeUpsampleContribution (ush:183).
+///                    the reference uses 0.003 in ComputeUpsampleContribution (ush:183).
 /// @return Similarity in [0, 1].
 float ComputeDepthSimilarity(float DepthA, float DepthB, float TweakScale)
 {
-    // UE5 exact formula: saturate(1 - abs(DepthA - DepthB) * TweakScale)
-    // @source UE5 PostProcessAmbientOcclusionCommon.ush:62
+    // exact formula: saturate(1 - abs(DepthA - DepthB) * TweakScale)
+    // @ref implementation detail
     return saturate(1.0f - abs(DepthA - DepthB) * TweakScale);
 }
 
@@ -166,22 +166,22 @@ struct PSInput {
 ///
 /// Reads half-res AO and upsamples to full resolution. Two quality paths:
 ///
-/// Quality 0 (UE5 GTAO min filter):
+/// Quality 0 (reference GTAO min filter):
 ///   Samples center + 4 diagonal corners of the 2x2 half-res neighbourhood.
 ///   Returns the minimum of the 4 corner AO values. This is conservative
 ///   (never makes AO lighter than any contributing texel) and avoids haloing
-///   at depth edges. Matches UE5 GTAOUpsamplePSAndCS exactly.
+///   at depth edges. Standard GTAOUpsamplePSAndCS exactly.
 ///
 /// Quality 1 (bilateral depth-weighted):
 ///   Samples 4 diagonal corners of the 2x2 half-res neighbourhood.
 ///   Weights each sample by depth similarity to the full-res depth at the
 ///   current pixel. This preserves sharp AO boundaries at depth discontinuities
 ///   while producing smoother results on continuous surfaces.
-///   Uses ComputeDepthSimilarity with InvThreshold=0.003 from UE5.
+///   Uses ComputeDepthSimilarity with InvThreshold=0.003 from reference.
 ///
-/// @source UE5 PostProcessAmbientOcclusion.usf:1350-1367 — GTAOUpsamplePSAndCS
-/// @source UE5 PostProcessAmbientOcclusionCommon.ush:132-200 — ComputeUpsampleContribution
-/// @source UE5 PostProcessAmbientOcclusionCommon.ush:60-63 — ComputeDepthSimilarity
+/// @ref GTAOUpsamplePSAndCS
+/// @ref ComputeUpsampleContribution
+/// @ref ComputeDepthSimilarity
 /// @constants Offset = GTAOUpsamplePixelSize * 0.25 (usf:1352),
 ///            InvThreshold = 0.003 (ush:183),
 ///            SmallValue = 0.0001 (ush:159)
@@ -193,15 +193,15 @@ float main(PSInput input) : SV_Target0
     // Compute sample offsets: 0.25 * half-res texel size.
     // This places the 4 sample points at the diagonal corners of the 2x2
     // half-res texel neighbourhood surrounding the current full-res pixel.
-    // @source UE5 PostProcessAmbientOcclusion.usf:1352
+    // @ref implementation detail
     float2 offset = float2(halfResTexelSizeX, halfResTexelSizeY) * 0.25f;
 
 #if GTAO_UPSAMPLE_QUALITY == 0
     // ─────────────────────────────────────────────────────────────────────
-    // Quality 0: UE5 GTAO min filter (exact match to GTAOUpsamplePSAndCS)
+    // Quality 0: GTAO min filter (exact match to GTAOUpsamplePSAndCS)
     // ─────────────────────────────────────────────────────────────────────
     // Sample 4 corner AO values from the 2x2 half-res neighbourhood.
-    // @source UE5 PostProcessAmbientOcclusion.usf:1355-1358
+    // @ref implementation detail
     float AO0 = saturate(SampleHalfResAO(uv + float2(-offset.x, -offset.y)));
     float AO1 = saturate(SampleHalfResAO(uv + float2( offset.x, -offset.y)));
     float AO2 = saturate(SampleHalfResAO(uv + float2(-offset.x,  offset.y)));
@@ -210,7 +210,7 @@ float main(PSInput input) : SV_Target0
     // Conservative minimum: darkest of the 4 corners.
     // This prevents haloing at depth edges — AO never becomes lighter than
     // the darkest contributing half-res texel.
-    // @source UE5 PostProcessAmbientOcclusion.usf:1360
+    // @ref implementation detail
     float AO = min(min(AO0, AO1), min(AO2, AO3));
     return AO;
 
@@ -223,11 +223,11 @@ float main(PSInput input) : SV_Target0
 
     // Inverse depth threshold — controls how aggressively edges are detected.
     // When abs(depthA - depthB) * InvThreshold >= 1.0, the weight drops to 0.
-    // @source UE5 PostProcessAmbientOcclusionCommon.ush:183
+    // @ref implementation detail
     static const float InvThreshold = 0.003f;
 
     // Epsilon to prevent division by zero when all weights are zero.
-    // @source UE5 PostProcessAmbientOcclusionCommon.ush:159
+    // @ref implementation detail
     static const float SmallValue = 0.0001f;
 
     // 4-sample bilateral filter at the diagonal corners of the 2x2 neighbourhood.
@@ -257,7 +257,7 @@ float main(PSInput input) : SV_Target0
         float sampleDepth = SampleHalfResDepth(sampleUV);
 
         // Bilateral weight: high when depths match, zero at depth edges.
-        // @source UE5 PostProcessAmbientOcclusionCommon.ush:62
+        // @ref implementation detail
         float weight = ComputeDepthSimilarity(sampleDepth, fullDepth, InvThreshold);
 
         aoAccum   += sampleAO * weight;

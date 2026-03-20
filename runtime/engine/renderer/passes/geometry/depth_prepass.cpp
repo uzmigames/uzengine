@@ -4,7 +4,7 @@
 /// buffer before the main GBuffer pass. This enables Equal depth testing in the
 /// GBuffer pass to eliminate overdraw.
 ///
-/// @source UE5 DepthRendering.cpp — FDepthPassMeshProcessor / RenderPrePass
+/// @ref FDepthPassMeshProcessor / RenderPrePass
 
 #include "depth_prepass.h"
 

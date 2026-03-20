@@ -6,15 +6,14 @@
 /// upscaled result into the history write texture.
 ///
 /// The existing TAA resolve in frame_postprocess.cpp is the first concrete
-/// implementation. TSR (multi-pass, UE5 parity) is the primary target.
+/// implementation. TSR (multi-pass, production-quality) is the primary target.
 /// Vendor-specific upscalers (FSR2, DLSS, XeSS) will be added as plugins.
 ///
-/// @source UE5 TemporalUpscaler.h --- ITemporalUpscaler
-/// @deviations UE5 uses FRDGBuilder for resource management; we pass a raw
-///             IRHICommandList and bindless SRV/UAV indices. UE5 FInputs
+/// @deviations The reference uses FRDGBuilder for resource management; we pass a raw
+///             IRHICommandList and bindless SRV/UAV indices. The reference FInputs
 ///             bundles SceneTextures with dozens of fields; we use a minimal
 ///             UpscalerInput struct with only the textures temporal upscaling
-///             needs. UE5 integrates with FSceneViewState for history
+///             needs. Reference integrates with FSceneViewState for history
 ///             management; we manage history externally and pass handles in.
 
 #pragma once
@@ -39,12 +38,12 @@ class CBRingAllocator;
 ///
 /// `None` disables temporal upscaling entirely (scene color passes through).
 /// `TAA` is the lightweight single-pass fallback. `TSR` is the multi-pass
-/// algorithm targeting UE5 parity. Vendor upscalers are reserved for future
+/// algorithm targeting production-quality. Vendor upscalers are reserved for future
 /// plugin integration.
 enum class UpscalerType : uint32_t {
     None = 0,  ///< No temporal upscaling (raw scene color passed through)
     TAA  = 1,  ///< Legacy temporal anti-aliasing (single-pass, lightweight)
-    TSR  = 2,  ///< Temporal Super Resolution (multi-pass, UE5 parity)
+    TSR  = 2,  ///< Temporal Super Resolution (multi-pass, production-quality)
     FSR2 = 3,  ///< AMD FidelityFX Super Resolution 2 (future plugin)
     DLSS = 4,  ///< NVIDIA Deep Learning Super Sampling (future plugin)
     XeSS = 5,  ///< Intel Xe Super Sampling (future plugin)
@@ -110,8 +109,7 @@ struct UpscalerInput {
 ///   4. On resize: `OnResize(width, height)`
 ///   5. `Shutdown()` --- release GPU resources (also called by destructor)
 ///
-/// @source UE5 TemporalUpscaler.h --- ITemporalUpscaler
-/// @deviations UE5 passes FRDGBuilder + FSceneTextures; we pass raw
+/// @deviations Reference passes FRDGBuilder + FSceneTextures; we pass raw
 ///             IRHICommandList + UpscalerInput with bindless indices.
 class ITemporalUpscaler {
 public:
@@ -189,7 +187,6 @@ public:
 /// @return Owning pointer to the upscaler, or nullptr if the type is
 ///         None or not yet implemented.
 ///
-/// @source UE5 TemporalUpscaler.h --- ITemporalUpscaler
 [[nodiscard]] std::unique_ptr<ITemporalUpscaler> CreateTemporalUpscaler(UpscalerType type);
 
 } // namespace uz

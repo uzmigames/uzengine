@@ -289,7 +289,7 @@ The following architectural decisions are active in this project:
 - **ADR-009: Fallback Texture Color Convention for PBR Materials** (proposed) → [details](/.rulebook/decisions/009-fallback-texture-color-convention-for-pbr-materials.md)
 - **ADR-010: JSON Everywhere for Scene/Asset/Config Serialization** (proposed) → [details](/.rulebook/decisions/010-json-everywhere-for-scene-asset-config-serialization.md)
 - **ADR-011: N-API In-Process Addon for VSCode Integration** (proposed) → [details](/.rulebook/decisions/011-n-api-in-process-addon-for-vscode-integration.md)
-- **ADR-012: UE5 Exact Parity — Zero Creativity Policy** (proposed) → [details](/.rulebook/decisions/012-ue5-exact-parity-zero-creativity-policy.md)
+- **ADR-012: Rendering Parity — Zero Creativity Policy** (proposed) → [details](/.rulebook/decisions/012-ue5-exact-parity-zero-creativity-policy.md)
 
 ## Project Knowledge
 
@@ -316,7 +316,7 @@ The following patterns are enforced in this project:
 - **Thirdparty Dependencies via Setup Script Only** → [spec](/.rulebook/knowledge/patterns/thirdparty-dependencies-via-setup-script-only.md)
 - **Triple-Buffered CB Ring Allocator (256-byte aligned)** → [spec](/.rulebook/knowledge/patterns/triple-buffered-cb-ring-allocator-256-byte-aligned.md)
 - **Two-World Architecture (Game World + Render World)** → [spec](/.rulebook/knowledge/patterns/two-world-architecture-game-world-render-world.md)
-- **UE5 Source-First Implementation** → [spec](/.rulebook/knowledge/patterns/ue5-source-first-implementation.md)
+- **Reference-First Implementation** → [spec](/.rulebook/knowledge/patterns/ue5-source-first-implementation.md)
 - **uz::Application Abstraction for Demos and Runtime** → [spec](/.rulebook/knowledge/patterns/uz-application-abstraction-for-demos-and-runtime.md)
 - **Visual Verification via Demo + Screenshot + CompareGrid** → [spec](/.rulebook/knowledge/patterns/visual-verification-via-demo-screenshot-comparegrid.md)
 

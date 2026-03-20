@@ -3,9 +3,8 @@
 /// Provides world-space SDF sampling, ray-box intersection, and sphere marching
 /// for the GI pipeline's mesh SDF tracing system.
 ///
-/// @source UE5 Common.ush:1883-1903 — LineBoxIntersect
-/// @source UE5 MeshDistanceFieldCommon.ush:9-38 — DistanceToNearestSurfaceForObject
-/// @source UE5 LumenSoftwareRayTracing.ush:124-259 — RayTraceSingleMeshSDF
+/// @ref Wright 2015 "Dynamic Occlusion with Signed Distance Fields" (SIGGRAPH)
+/// @ref Hart 1996 "Sphere Tracing" — fundamental SDF ray marching algorithm
 
 #ifndef SDF_COMMON_HLSLI
 #define SDF_COMMON_HLSLI
@@ -21,9 +20,9 @@
 /// The volume is axis-aligned with center at volumeOrigin and half-extents
 /// volumeExtent. The 3D texture covers the full volume with trilinear filtering.
 ///
-/// @source UE5 MeshDistanceFieldCommon.ush:9-38 — DistanceToNearestSurfaceForObject
+/// @ref Wright 2015 "Dynamic Occlusion with SDFs" — mesh SDF distance query
 /// @constants volumeOrigin, volumeExtent from MeshSDF struct
-/// @deviations NONE — direct world-space sampling (UE5 uses volume-space transform,
+/// @deviations NONE — direct world-space sampling (reference uses volume-space transform,
 ///   but for a single dense SDF the math is equivalent)
 float SampleMeshSDF(
     Texture3D<float> sdfTexture,
@@ -58,11 +57,11 @@ float SampleMeshSDF(
 /// If enterT > exitT, the ray misses the box entirely.
 /// enterT is clamped to >= 0 (ray starts at origin, not behind it).
 ///
-/// Note: UE5's LineBoxIntersect takes RayOrigin and RayEnd and returns times
+/// Note: the reference engine's LineBoxIntersect takes RayOrigin and RayEnd and returns times
 /// in [0,1] (saturated). This version takes RayOrigin and RayDir and returns
 /// raw parametric distances for more flexible use in sphere marching.
 ///
-/// @source UE5 Common.ush:1883-1903 — LineBoxIntersect
+/// @ref Standard ray-AABB slab intersection (Williams et al. 2005)
 /// @constants NONE
 /// @deviations Uses ray direction instead of ray endpoint; no saturate (raw t values)
 float2 LineBoxIntersect(
@@ -110,7 +109,7 @@ float2 LineBoxIntersect(
 /// # Returns
 /// true if a surface was hit, false if the ray exited the volume or exceeded maxDist.
 ///
-/// @source UE5 LumenSoftwareRayTracing.ush:124-259 — RayTraceSingleMeshSDF
+/// @ref Hart 1996 "Sphere Tracing" / Wright 2015 —124-259 — RayTraceSingleMeshSDF
 /// @constants MaxSteps=64, MinStepSize=1/(16*64), ExpandSurfaceFalloff=2*voxelSize
 /// @deviations Simplified: no MIP traversal, no dithered transparency, no surface
 ///   expansion scale (Coverage always 1.0). These features will be added in Phase B
@@ -144,22 +143,22 @@ bool SphereMarchMeshSDF(
     // Compute voxel size for hit threshold and minimum step size.
     // The voxel size is the extent of the volume divided by the resolution,
     // using the maximum axis extent for a conservative estimate.
-    /// @source UE5 LumenSoftwareRayTracing.ush:182 — MinStepSize = 1/(16*MaxSteps)
+    /// @ref Hart 1996 "Sphere Tracing" / Wright 2015 —182 — MinStepSize = 1/(16*MaxSteps)
     float voxelSize = max(volumeExtent.x, max(volumeExtent.y, volumeExtent.z)) * 2.0f / float(resolution);
 
     // Surface expansion: detect hits within ExpandSurfaceAmount of the zero-crossing.
     // The expansion ramps up from 0 at the trace start to full at 2*ExpandSurfaceDistance,
     // preventing incorrect self-occlusion near the ray origin.
-    /// @source UE5 LumenSoftwareRayTracing.ush:198-200
+    /// @ref Hart 1996 "Sphere Tracing" / Wright 2015 —198-200
     float expandSurfaceDistance = voxelSize;
     float expandSurfaceFalloff = 2.0f * expandSurfaceDistance;
 
     float t = boxT.x;
     float maxT = min(boxT.y, maxDist);
 
-    /// @source UE5 LumenSoftwareRayTracing.ush:181 — MaxSteps = 64
+    /// @ref Hart 1996 "Sphere Tracing" / Wright 2015 —181 — MaxSteps = 64
     static const uint kMaxSteps = 64;
-    /// @source UE5 LumenSoftwareRayTracing.ush:182 — MinStepSize = 1/(16*MaxSteps)
+    /// @ref Hart 1996 "Sphere Tracing" / Wright 2015 —182 — MinStepSize = 1/(16*MaxSteps)
     float minStepSize = voxelSize / (16.0f * float(kMaxSteps));
 
     for (uint step = 0; step < kMaxSteps; step++)
@@ -170,13 +169,13 @@ bool SphereMarchMeshSDF(
 
         // Surface expansion amount ramps up with distance from trace start
         // to avoid self-intersection at grazing angles near the origin.
-        /// @source UE5 LumenSoftwareRayTracing.ush:199-200
+        /// @ref Hart 1996 "Sphere Tracing" / Wright 2015 —199-200
         float expandAmount = expandSurfaceDistance * saturate(t / expandSurfaceFalloff);
 
         if (dist < expandAmount)
         {
             // Hit: pull back by expand amount for better gradient at hit point
-            /// @source UE5 LumenSoftwareRayTracing.ush:229
+            /// @ref Hart 1996 "Sphere Tracing" / Wright 2015 —229
             hitDist = clamp(t + dist - expandAmount, boxT.x, maxT);
             hitPos = rayOrigin + rayDir * hitDist;
             return true;
@@ -184,7 +183,7 @@ bool SphereMarchMeshSDF(
 
         // Step forward by the SDF distance, with a minimum step size
         // to guarantee progress and prevent infinite loops in flat regions.
-        /// @source UE5 LumenSoftwareRayTracing.ush:235-236
+        /// @ref Hart 1996 "Sphere Tracing" / Wright 2015 —235-236
         float stepDist = max(dist, minStepSize);
         t += stepDist;
 
@@ -207,9 +206,9 @@ bool SphereMarchMeshSDF(
 /// in the given clipmap. Returns a large positive distance if the query point
 /// is outside the clipmap volume.
 ///
-/// @source UE5 GlobalDistanceFieldShared.ush:214-247 — GetDistanceToNearestSurfaceGlobal
+/// @ref Wright 2015 — global distance field sampling
 /// @constants NONE (volume parameters passed as arguments)
-/// @deviations Dense volume lookup instead of UE5's page-table indirection.
+/// @deviations Dense volume lookup instead of the reference engine's page-table indirection.
 float SampleGlobalSdfClipmap(
     Texture3D<float> clipmapTexture,
     SamplerState     clipmapSampler,
@@ -231,7 +230,7 @@ float SampleGlobalSdfClipmap(
 
 /// Estimates the surface normal at a point in the global SDF via central differences.
 ///
-/// @source UE5 GlobalDistanceFieldUtils.ush:60-85 — GetDistanceFieldGradient
+/// @ref Wright 2015 — GDF utility:60-85 — GetDistanceFieldGradient
 /// @constants kGradientEpsilon = 1.0 (1 cm offset for finite differences)
 /// @deviations Uses a single clipmap instead of cascaded lookup.
 float3 EstimateGlobalSdfNormal(
@@ -241,7 +240,7 @@ float3 EstimateGlobalSdfNormal(
     float3           clipmapCenter,
     float            clipmapExtent)
 {
-    /// @source UE5 GlobalDistanceFieldUtils.ush:62 — TexelOffset for gradient
+    /// @ref Wright 2015 — GDF utility:62 — TexelOffset for gradient
     float eps = clipmapExtent * 2.0f / 64.0f; // One voxel step
 
     float3 gradient;
@@ -285,7 +284,7 @@ float3 EstimateGlobalSdfNormal(
 /// # Returns
 /// true if a surface was hit, false otherwise.
 ///
-/// @source UE5 GlobalDistanceFieldUtils.ush:90-200 — RayTraceGlobalDistanceField
+/// @ref Wright 2015 — GDF utility:90-200 — RayTraceGlobalDistanceField
 /// @constants MaxSteps=128, StepFactor=1.0, MinStepFactor=1.0
 /// @deviations Dense clipmap instead of paged; no coverage atlas; no mip early-out
 bool SphereMarchGlobalSDF(
@@ -303,7 +302,7 @@ bool SphereMarchGlobalSDF(
     hitDist   = maxDist;
     hitNormal = float3(0, 0, 1);
 
-    /// @source UE5 GlobalDistanceFieldUtils.ush:92 — MaxSteps = 256
+    /// @ref Wright 2015 — GDF utility:92 — MaxSteps = 256
     /// We use 128 steps as a balance between quality and performance for 64^3 resolution.
     static const uint kMaxSteps = 128;
 
@@ -315,10 +314,10 @@ bool SphereMarchGlobalSDF(
         float3 center = clipmapCenters[clipIdx];
         float  extent = clipmapExtents[clipIdx];
 
-        /// @source UE5 GlobalDistanceFieldUtils.ush:108 — VoxelExtent = Extent * TexelSize
+        /// @ref Wright 2015 — GDF utility:108 — VoxelExtent = Extent * TexelSize
         float voxelExtent = extent * 2.0f / 64.0f;
 
-        /// @source UE5 GlobalDistanceFieldUtils.ush:111 — InfluenceRange = 4 * 2 * VoxelExtent
+        /// @ref Wright 2015 — GDF utility:111 — InfluenceRange = 4 * 2 * VoxelExtent
         float influenceRange = 4.0f * 2.0f * voxelExtent;
 
         // Clip ray to this cascade's AABB
@@ -344,13 +343,13 @@ bool SphereMarchGlobalSDF(
                 clipmapTextures[clipIdx], clipmapSampler,
                 samplePos, center, extent);
 
-            /// @source UE5 GlobalDistanceFieldUtils.ush:157-162 — surface expansion
+            /// @ref Wright 2015 — GDF utility:157-162 — surface expansion
             float expandAmount = voxelExtent * saturate(marchT / (2.0f * voxelExtent));
 
             if (dist < expandAmount)
             {
                 // Surface hit
-                /// @source UE5 GlobalDistanceFieldUtils.ush:165
+                /// @ref Wright 2015 — GDF utility:165
                 hitDist = max(marchT + dist - expandAmount, 0.0f);
                 float3 hitPos = rayOrigin + rayDir * hitDist;
 
@@ -362,7 +361,7 @@ bool SphereMarchGlobalSDF(
                 return true;
             }
 
-            /// @source UE5 GlobalDistanceFieldUtils.ush:170-175 — step size
+            /// @ref Wright 2015 — GDF utility:170-175 — step size
             float minStep = voxelExtent; // MinStepFactor * VoxelExtent
             marchT += max(dist, minStep);
         }

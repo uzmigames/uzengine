@@ -1,6 +1,6 @@
 /// UzEngine Shadow Renderer — Per-Frame Shadow Cascade Setup
 ///
-/// Extracts shadow configuration, computes cascade splits using UE5's exponential
+/// Extracts shadow configuration, computes cascade splits using the reference engine's exponential
 /// accumulation formula, and uploads ShadowDataCB to the CB ring allocator.
 ///
 /// Factored out of `scene_renderer.cpp` to keep `RenderFrame()` as an orchestrator.
@@ -11,7 +11,7 @@
 /// Stateless — safe to call from any thread. However, the `CBRingAllocator` is
 /// NOT thread-safe, so the caller must ensure single-threaded access.
 ///
-/// # UE5 Reference
+/// # Reference
 /// - Cascade splits: DLC.cpp:753-814 (exponential accumulation)
 /// - CSM depth bias: ShadowRendering.cpp:32
 /// - CSM slope bias: ShadowRendering.cpp:38
@@ -51,7 +51,7 @@ struct ShadowFrameData {
 
 /// Computes cascade shadow maps and uploads ShadowDataCB for the current frame.
 ///
-/// Builds the shadow configuration with UE5 parity defaults, computes cascade
+/// Builds the shadow configuration with standard defaults, computes cascade
 /// splits using the exponential accumulation formula, builds per-cascade bias
 /// values scaled by world texel size, and uploads the full ShadowDataCB to the
 /// CB ring allocator.
@@ -60,9 +60,9 @@ struct ShadowFrameData {
 /// * `camera` — Current frame camera (for view/projection matrices).
 /// * `sunDir` — World-space direction the sun is shining TOWARD (normalized).
 ///   For a sun at noon: `{0, 0, -1}` (Z-up, shining downward).
-/// * `perLightShadowBias` — Per-light shadow bias multiplier (UE5: ShadowBias,
+/// * `perLightShadowBias` — Per-light shadow bias multiplier (Equivalent: ShadowBias,
 ///   default 0.5). Read from `DirectionalLightComponent::shadowBias`.
-/// * `perLightShadowSlopeBias` — Per-light slope bias multiplier (UE5:
+/// * `perLightShadowSlopeBias` — Per-light slope bias multiplier (reference:
 ///   ShadowSlopeBias, default 0.5). Read from `DirectionalLightComponent::shadowSlopeBias`.
 /// * `shadowAtlasSrv` — SRV heap index of the shadow atlas depth texture.
 /// * `shadowResolution` — Per-cascade resolution in texels (e.g., 2048).

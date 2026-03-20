@@ -66,23 +66,23 @@ public:
     uint32_t renderLayer = 1;
 
     /// Minimum draw distance in meters. Object is culled if camera is closer.
-    /// UE5: MinDrawDistance. 0 = no minimum (always visible when close).
+    /// Equivalent: MinDrawDistance. 0 = no minimum (always visible when close).
     float minDrawDistance = 0.f;
 
     /// Maximum draw distance in meters. Object is culled if camera is farther.
-    /// UE5: LDMaxDrawDistance. 0 = unlimited (no distance culling).
+    /// Equivalent: LDMaxDrawDistance. 0 = unlimited (no distance culling).
     float maxDrawDistance = 0.f;
 
     /// Whether this component can receive decal projections.
-    /// UE5: bReceivesDecals. Default: true.
+    /// Equivalent: bReceivesDecals. Default: true.
     bool receivesDecals = true;
 
     /// Whether this component renders in the main opaque/translucent pass.
-    /// UE5: bRenderInMainPass. Default: true.
+    /// Equivalent: bRenderInMainPass. Default: true.
     bool renderInMainPass = true;
 
     /// Whether this component renders in the depth-only prepass.
-    /// UE5: bRenderInDepthPass. Default: true.
+    /// Equivalent: bRenderInDepthPass. Default: true.
     bool renderInDepthPass = true;
 
     // ── Sync ──────────────────────────────────────────────────────────────────

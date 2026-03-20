@@ -50,7 +50,7 @@ SamplerState linearSampler : register(s0);
 // Standard Earth Atmosphere Constants
 // ---------------------------------------------------------------------------
 //
-// Canonical Bruneton 2017 / UE5 values for Earth's atmosphere.
+// Canonical Bruneton 2017 / standard values for Earth's atmosphere.
 // Must match the coefficients used in transmittance_lut_cs.hlsl and
 // sky_cubemap_cs.hlsl exactly. Hardcoded to avoid exceeding root constant
 // budget while keeping physical accuracy.
@@ -88,7 +88,7 @@ static const int NUM_STEPS = 16;
 /// Small epsilon to prevent division by zero in analytical integration.
 static const float EXT_EPS = 1e-7f;
 
-/// Safety margin: place camera at least 5m above ground in sky space (UE5 pattern).
+/// Safety margin: place camera at least 5m above ground in sky space (standard pattern).
 static const float PLANET_RADIUS_OFFSET_KM = 0.005f;
 
 // ---------------------------------------------------------------------------
@@ -237,7 +237,7 @@ float4 main(PSInput input) : SV_Target
     float3 artRayleighBeta = RAYLEIGH_BETA * rayleighScale;
     float  artMieBeta      = MIE_BETA * mieScale;
 
-    // -- Frostbite analytical integration (UE5 SkyAtmosphere.usf pattern) --
+    // -- Frostbite analytical integration (Bruneton atmosphere pattern) --
     float3 L          = float3(0, 0, 0);
     float3 Throughput = float3(1, 1, 1);
 

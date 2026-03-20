@@ -10,26 +10,21 @@
 ///   - Near field (CoC < 0): Scatter-as-gather — foreground objects blur OVER
 ///     in-focus regions, so we use the maximum CoC in the neighborhood.
 ///
-/// The ring-based sampling pattern follows UE5's DOFGatherKernel.ush where
+/// The ring-based sampling pattern follows the reference engine's DOFGatherKernel.ush where
 /// each ring i has 2*i*PI samples distributed uniformly on a circle of radius
 /// i/ringCount, with half-ring offsets between adjacent rings to maximize
 /// minimal distance between all samples.
 ///
-/// @source UE5 DiaphragmDOF/DOFGatherKernel.ush:37-53 — GetDiskSampleOnUnitCircle
-/// @source UE5 DiaphragmDOF/DOFGatherKernel.ush:57-67 — GetSampleRotationMatrix
-/// @source UE5 DiaphragmDOF/DOFGatherPass.usf:150-464 — GatherMainCS
-/// @source UE5 DiaphragmDOF/DOFCommon.ush:96 — COC_TILE_SIZE = 8
-/// @source UE5 DiaphragmDOF/DOFCommon.ush:106 — MAIN_KERNEL_RING_COUNT = 5
-/// @source UE5 DiaphragmDOF/DOFGatherPass.usf:218-219 — InterleavedGradientNoise for per-pixel random rotation
-/// @source UE5 Scene.cpp:580 — NearTransitionRegion = 300.0 cm
-/// @source UE5 Scene.cpp:581 — FarTransitionRegion = 500.0 cm
-/// @source UE5 DiaphragmDOFUtils.cpp:15 — MaxForegroundRadius = 0.025
-/// @source UE5 DiaphragmDOFUtils.cpp:21 — MaxBackgroundRadius = 0.025
+/// @ref Lee & Eisemann 2013 "Practical Real-Time Lens-Flare and DoF"
+/// @ref Jimenez 2014 "Next Generation Post Processing in Call of Duty" — gather DoF
+/// @ref Jimenez 2016 "Interleaved Gradient Noise" — per-pixel random rotation
+/// @constants RING_COUNT=5, COC_TILE_SIZE=8, MaxForegroundRadius=0.025, MaxBackgroundRadius=0.025
+/// @constants NearTransitionRegion=300.0 cm, FarTransitionRegion=500.0 cm
 /// @constants
 ///   RING_COUNT=5 (DOFCommon.ush:106), COC_TILE_SIZE=8 (DOFCommon.ush:96),
 ///   half-ring offset = 0.5 (DOFGatherKernel.ush:44),
 ///   kCocRadiusToFullResFactor = 0.5 (DOFCommon.ush:131)
-/// @deviations NONE — ring sampling pattern matches UE5 DOFGatherKernel.ush
+/// @deviations NONE — ring sampling pattern matches reference DOFGatherKernel.ush
 
 #include "../include/math_util.hlsli"
 
@@ -38,28 +33,28 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Number of concentric rings in the gather kernel.
-/// UE5 default is 5 rings (DOFCommon.ush:106, r.DOF.Gather.RingCount CVar default).
+/// default is 5 rings (DOFCommon.ush:106, r.DOF.Gather.RingCount CVar default).
 /// Ring 0 is the center pixel, rings 1-5 expand outward.
 /// Total samples = 1 + sum(2*pi*i for i in 1..RING_COUNT) ≈ 1 + 2*PI*(1+2+3+4+5)
 /// For 5 rings with 6 samples per ring step: 1 + 6+12+18+24+30 = 91 samples.
 ///
-/// We use a simplified count of SAMPLES_PER_RING = 6*ringIndex to match UE5's
+/// We use a simplified count of SAMPLES_PER_RING = 6*ringIndex to match reference's
 /// angular density while keeping the kernel manageable.
 ///
-/// @source UE5 DOFCommon.ush:106 — MAIN_KERNEL_RING_COUNT 5
-/// @source UE5 DiaphragmDOF.cpp:76-78 — r.DOF.Gather.RingCount default 5, range [3;5]
+/// @ref DoF common —106 — MAIN_KERNEL_RING_COUNT 5
+/// @ref DoF gather config —76-78 — r.DOF.Gather.RingCount default 5, range [3;5]
 static const uint RING_COUNT = 5;
 
 /// Minimum absolute CoC radius (in pixels) below which blur is skipped.
 /// Pixels with |CoC| < this threshold are considered in-focus.
 /// This avoids wasting samples on nearly-sharp pixels.
 ///
-/// @source UE5 DOFCommon.ush:109 — MAX_RECOMBINE_ABS_COC_RADIUS 3.0
+/// @ref DoF common —109 — MAX_RECOMBINE_ABS_COC_RADIUS 3.0
 ///   (the recombine pass handles slight out-of-focus up to 3px)
 static const float COC_SKIP_THRESHOLD = 0.5f;
 
 /// Pi constant for angle computation.
-/// @source UE5 DOFGatherKernel.ush:51 — PI * SampleRingPos / float(RingSampleIteration)
+/// @ref DoF gather kernel —51 — PI * SampleRingPos / float(RingSampleIteration)
 #ifndef PI
 static const float PI = 3.14159265358979323846f;
 #endif
@@ -88,11 +83,11 @@ SamplerState linearSampler : register(s0);
 /// Interleaved gradient noise for per-pixel random rotation.
 /// Prevents banding artifacts by rotating the gather disc differently per pixel.
 ///
-/// @source UE5 DOFGatherPass.usf:218 — InterleavedGradientNoise(DispatchThreadId, 0)
-/// @source UE5 Random.ush — InterleavedGradientNoise implementation
+/// @ref DoF gather pass —218 — InterleavedGradientNoise(DispatchThreadId, 0)
+/// @ref Jimenez 2016 — InterleavedGradientNoise implementation
 float InterleavedGradientNoise(float2 pixelPos, uint frameIndex)
 {
-    // UE5's IGN: frac(52.9829189 * frac(dot(pixelPos, float2(0.06711056, 0.00583715))))
+    // the reference engine's IGN: frac(52.9829189 * frac(dot(pixelPos, float2(0.06711056, 0.00583715))))
     // with frame offset to vary across frames for temporal stability.
     float3 magic = float3(0.06711056f, 0.00583715f, 52.9829189f);
     return frac(magic.z * frac(dot(pixelPos + float(frameIndex) * 5.588238f, magic.xy)));
@@ -104,22 +99,22 @@ float InterleavedGradientNoise(float2 pixelPos, uint frameIndex)
 
 /// Compute a sample position on the unit disc for a given ring and sample index.
 ///
-/// Replicates UE5's ring-based sampling pattern where each ring has
+/// Replicates the reference engine's ring-based sampling pattern where each ring has
 /// (6 * ringId) samples distributed uniformly on a circle, with alternating
 /// half-sample offsets between odd/even rings to maximize minimal distance
 /// between all samples across all rings.
 ///
-/// @source UE5 DOFGatherKernel.ush:37-53 — GetDiskSampleOnUnitCirle
+/// @ref DoF gather kernel —37-53 — GetDiskSampleOnUnitCirle
 float2 GetDiskSample(uint ringId, uint sampleId, uint samplesInRing)
 {
     float samplePos = float(sampleId);
 
     // Half-sample offset for alternating rings to increase minimum sample distance.
-    // @source UE5 DOFGatherKernel.ush:44 — SampleRingPos += (RingId - 2*(RingId/2)) * 0.5
+    // @ref DoF gather kernel —44 — SampleRingPos += (RingId - 2*(RingId/2)) * 0.5
     samplePos += float(ringId - 2 * (ringId / 2)) * 0.5f;
 
     // Angle uniformly distributed over the full circle.
-    // @source UE5 DOFGatherKernel.ush:51 — PI * SampleRingPos / float(RingSampleIteration)
+    // @ref DoF gather kernel —51 — PI * SampleRingPos / float(RingSampleIteration)
     float angle = PI * samplePos / float(samplesInRing);
 
     return float2(cos(angle), sin(angle));
@@ -140,7 +135,7 @@ float2 GetDiskSample(uint ringId, uint sampleId, uint samplesInRing)
 /// achieved by comparing sample CoC against the gather radius rather than
 /// requiring the sample to overlap the center.
 ///
-/// @source UE5 DOFGatherPass.usf:150-464 — GatherMainCS
+/// @ref DoF gather pass —150-464 — GatherMainCS
 [numthreads(8, 8, 1)]
 void main(uint3 dtid : SV_DispatchThreadID)
 {
@@ -170,7 +165,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
     float3 centerColor = sceneTex.SampleLevel(linearSampler, centerUV, 0).rgb;
 
     // Early out: pixel is in-focus, no blur needed.
-    // @source UE5 DOFGatherPass.usf:262 — bSkipGathering = TileSuggestion.bCanEarlyReturn
+    // @ref DoF gather pass —262 — bSkipGathering = TileSuggestion.bCanEarlyReturn
     if (absCenterCoC < COC_SKIP_THRESHOLD)
     {
         outputTex[dtid.xy] = float4(centerColor, 1.0f);
@@ -182,7 +177,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
     float gatherRadius = min(absCenterCoC * g_BokehScale, g_MaxCoCRadius);
 
     // Per-pixel random rotation to break banding.
-    // @source UE5 DOFGatherPass.usf:218-219 — InterleavedGradientNoise for random rotation
+    // @ref DoF gather pass —218-219 — InterleavedGradientNoise for random rotation
     float rotationAngle = InterleavedGradientNoise(float2(dtid.xy), 0) * 2.0f * PI;
     float cosRot = cos(rotationAngle);
     float sinRot = sin(rotationAngle);
@@ -202,8 +197,8 @@ void main(uint3 dtid : SV_DispatchThreadID)
     // Each ring i has (6 * i) samples distributed uniformly on a circle
     // of radius (i / RING_COUNT) * gatherRadius.
     //
-    // @source UE5 DOFGatherKernel.ush:37-53 — ring-based disc sampling
-    // @source UE5 DOFCommon.ush:106 — MAIN_KERNEL_RING_COUNT = 5
+    // @ref DoF gather kernel —37-53 — ring-based disc sampling
+    // @ref DoF common —106 — MAIN_KERNEL_RING_COUNT = 5
     for (uint ring = 1; ring <= RING_COUNT; ring++)
     {
         // Number of samples in this ring: 6 * ring.
@@ -216,7 +211,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
         for (uint s = 0; s < samplesInRing; s++)
         {
             // Get sample position on unit disc.
-            // @source UE5 DOFGatherKernel.ush:37-53
+            // @ref DoF gather kernel —37-53
             float2 diskPos = GetDiskSample(ring, s, samplesInRing);
 
             // Apply per-pixel rotation to break pattern regularity.
@@ -295,26 +290,26 @@ void main(uint3 dtid : SV_DispatchThreadID)
     // between the sharp focal region and the blurred out-of-focus areas,
     // preventing the hard pop between "fully sharp" and "fully blurred".
     //
-    // UE5's recombine pass (DOFRecombine.usf) handles this in a separate
+    // the reference engine's recombine pass (DOFRecombine.usf) handles this in a separate
     // full-resolution pass with multiple layer compositing (foreground,
     // background, slight out-of-focus). For simplicity, we integrate the
     // recombine directly into the gather pass using the key blending logic:
     //
     // - |CoC| < 0.5px: pixel is in-focus → output sharp center color.
     //   This matches the early-out threshold (COC_SKIP_THRESHOLD = 0.5)
-    //   and UE5's ComputeInFocusOpacity which returns 1.0 at CoC=0
+    //   and the reference engine's ComputeInFocusOpacity which returns 1.0 at CoC=0
     //   and 0.0 at |CoC|=0.5 (DOFRecombine.usf:296).
     //
     // - |CoC| > MAX_RECOMBINE_ABS_COC_RADIUS (3.0px): fully blurred.
-    //   @source UE5 DOFCommon.ush:109 — MAX_RECOMBINE_ABS_COC_RADIUS 3.0
+    //   @ref DoF common —109 — MAX_RECOMBINE_ABS_COC_RADIUS 3.0
     //
     // - Between 0.5 and 3.0: smoothstep blend for a perceptually smooth
-    //   transition, matching UE5's ComputeSampleIntersection smoothstep
+    //   transition, matching the reference engine's ComputeSampleIntersection smoothstep
     //   at DOFRecombine.usf:276.
     //
-    // @source UE5 DOFRecombine.usf:296 — ComputeInFocusOpacity: saturate(2 - 4*|CoC|)
-    // @source UE5 DOFCommon.ush:109 — MAX_RECOMBINE_ABS_COC_RADIUS 3.0
-    // @source UE5 DOFRecombine.usf:276 — smoothstep(0, 1, LinearIntersection)
+    // @ref DoF recombine —296 — ComputeInFocusOpacity: saturate(2 - 4*|CoC|)
+    // @ref DoF common —109 — MAX_RECOMBINE_ABS_COC_RADIUS 3.0
+    // @ref DoF recombine —276 — smoothstep(0, 1, LinearIntersection)
     // @constants
     //   COC_SKIP_THRESHOLD = 0.5 (matches in-focus opacity zero crossing)
     //   MAX_RECOMBINE_ABS_COC_RADIUS = 3.0 (DOFCommon.ush:109)

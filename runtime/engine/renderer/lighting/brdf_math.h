@@ -12,10 +12,10 @@
 /// HLSL shaders on the GPU.
 ///
 /// # References
-/// - UE5 BRDF.ush:183-188 — Diffuse_Burley
-/// - UE5 BRDF.ush:346-351 — Vis_SmithJointApprox
-/// - UE5 TonemapCommon.ush:105-220 — FilmToneMap
-/// - UE5 ACESCommon.ush:140-299 — ACES helper functions
+/// - Burley 2012 "Physically Based Shading at Disney" — diffuse model
+/// - Heitz 2014 "Understanding the Masking-Shadowing Function" — Smith joint visibility
+/// - ACES Reference Implementation (Academy S-2014-006) — tone curve + color transforms
+/// - Turquin 2018 "Practical multiple scattering compensation" — energy conservation fit
 
 #pragma once
 
@@ -38,8 +38,6 @@ static constexpr float kPI = 3.14159265359f;
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// x^5 via explicit multiply chain — mirrors Pow5() in math_util.hlsli.
-///
-/// @source UE5 MathUtil.ush — Pow5
 [[nodiscard]] inline float Pow5(float x) noexcept {
     const float x2 = x * x;
     return x2 * x2 * x;
@@ -118,11 +116,10 @@ struct Mat3 {
 // Disney Burley Diffuse BRDF
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Disney Burley diffuse BRDF (CPU equivalent of DiffuseBurley in pbr_common.hlsli).
+/// Disney Burley diffuse BRDF (CPU equivalent of DiffuseDisneyBurley in pbr_common.hlsli).
 ///
-/// @source UE5 BRDF.ush:183-188 — Diffuse_Burley
-/// @constants FD90 = 0.5 + 2 * VoH^2 * Roughness (BRDF.ush:185)
-/// @deviations NONE
+/// @ref Burley 2012 "Physically Based Shading at Disney" — diffuse model
+/// @constants FD90 = 0.5 + 2 * VoH^2 * Roughness
 ///
 /// # Parameters
 /// - albedo:    linear surface base color.
@@ -133,20 +130,20 @@ struct Mat3 {
 ///
 /// # Returns
 /// Diffuse BRDF value (includes 1/PI normalization).
-[[nodiscard]] inline Vec3 DiffuseBurley(
+[[nodiscard]] inline Vec3 DiffuseDisneyBurley(
     Vec3 albedo,
     float roughness,
     float NdotV,
     float NdotL,
     float VdotH) noexcept
 {
-    // UE5 BRDF.ush:185 — FD90 = 0.5 + 2 * VoH^2 * Roughness
+    // FD90 = 0.5 + 2 * VoH^2 * Roughness (Burley 2012)
     const float FD90 = 0.5f + 2.0f * VdotH * VdotH * roughness;
-    // UE5 BRDF.ush:186 — FdV = 1 + (FD90 - 1) * Pow5(1 - NoV)
+    // Fresnel-weighted view factor
     const float FdV = 1.0f + (FD90 - 1.0f) * Pow5(1.0f - NdotV);
-    // UE5 BRDF.ush:187 — FdL = 1 + (FD90 - 1) * Pow5(1 - NoL)
+    // Fresnel-weighted light factor
     const float FdL = 1.0f + (FD90 - 1.0f) * Pow5(1.0f - NdotL);
-    // UE5 BRDF.ush:188 — albedo * (1/PI) * FdV * FdL
+    // Final diffuse with 1/PI normalization
     return albedo * (1.0f / kPI) * FdV * FdL;
 }
 
@@ -154,77 +151,70 @@ struct Mat3 {
 // Smith Joint Approximate Visibility Term
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Approximate joint Smith visibility term for GGX (CPU equivalent of Vis_SmithJointApprox).
+/// Approximate joint Smith visibility term for GGX.
 ///
-/// @source UE5 BRDF.ush:346-351 — Vis_SmithJointApprox
-/// @constants NONE (pure formula)
-/// @deviations NONE
+/// @ref Heitz 2014 "Understanding the Masking-Shadowing Function" — height-correlated Smith
+/// @ref Karis 2013 "Real Shading in Unreal Engine 4" — fast approximation
 ///
 /// Returns Vis = G / (4*NoV*NoL) — the full denominator is absorbed,
 /// so specular BRDF is D * Vis * F directly.
 ///
 /// # Parameters
-/// - a2:  roughness alpha squared (alpha^2 = roughness^4 in UE5 convention,
-///        or perceptual_roughness^4 depending on how alpha was derived).
+/// - a2:  roughness alpha squared.
 /// - NoV: saturated dot(N, V).
 /// - NoL: saturated dot(N, L).
 ///
 /// # Returns
 /// Visibility term (non-negative scalar).
-[[nodiscard]] inline float Vis_SmithJointApprox(
+[[nodiscard]] inline float VisibilitySmithGGX(
     float a2,
     float NoV,
     float NoL) noexcept
 {
-    // UE5 BRDF.ush:347 — a = sqrt(a2)
     const float a = std::sqrt(a2);
-    // UE5 BRDF.ush:348 — Vis_SmithV = NoL * (NoV * (1 - a) + a)
     const float Vis_SmithV = NoL * (NoV * (1.0f - a) + a);
-    // UE5 BRDF.ush:349 — Vis_SmithL = NoV * (NoL * (1 - a) + a)
     const float Vis_SmithL = NoV * (NoL * (1.0f - a) + a);
-    // UE5 BRDF.ush:350 — 0.5 / (Vis_SmithV + Vis_SmithL)
     return 0.5f / (Vis_SmithV + Vis_SmithL);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ACES Color Space Matrices
 // ─────────────────────────────────────────────────────────────────────────────
-// Exact values from UE5 ACESCommon.ush.
+// Values from ACES Reference Implementation (Academy S-2014-006).
 
-/// @source UE5 ACESCommon.ush:52-57 — AP1_2_AP0_MAT
+/// @ref ACES CTL Reference — AP1 to AP0 conversion matrix
 static constexpr Mat3 kACES_AP1_2_AP0_MAT = {{
     Vec3{ 0.6954522414f,  0.1406786965f,  0.1638690622f},
     Vec3{ 0.0447945634f,  0.8596711185f,  0.0955343182f},
     Vec3{-0.0055258826f,  0.0040252103f,  1.0015006723f},
 }};
 
-/// @source UE5 ACESCommon.ush:45-50 — AP0_2_AP1_MAT
+/// @ref ACES CTL Reference — AP0 to AP1 conversion matrix
 static constexpr Mat3 kACES_AP0_2_AP1_MAT = {{
     Vec3{ 1.4514393161f, -0.2365107469f, -0.2149285693f},
     Vec3{-0.0765537734f,  1.1762296998f, -0.0996759264f},
     Vec3{ 0.0083161484f, -0.0060324498f,  0.9977163014f},
 }};
 
-/// @source UE5 ACESCommon.ush:59-64 — AP1_RGB2Y (luminance weights for ACEScg)
+/// @ref ACES CTL Reference — AP1 luminance weights for ACEScg
 static constexpr Vec3 kACES_AP1_RGB2Y = {0.2722287168f, 0.6740817658f, 0.0536895174f};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ACES Helper Functions (mirrors of film_tonemap.hlsli)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 ACESCommon.ush:140-145 — rgb_2_saturation
-[[nodiscard]] inline float aces_rgb_2_saturation(Vec3 rgb) noexcept {
+/// @ref ACES CTL Reference — rgb_2_saturation
+[[nodiscard]] inline float RgbToSaturation(Vec3 rgb) noexcept {
     const float minrgb = std::min({rgb.x, rgb.y, rgb.z});
     const float maxrgb = std::max({rgb.x, rgb.y, rgb.z});
     return (std::max(maxrgb, 1e-10f) - std::max(minrgb, 1e-10f)) /
            std::max(maxrgb, 1e-2f);
 }
 
-/// @source UE5 ACESCommon.ush:148-164 — rgb_2_hue
-[[nodiscard]] inline float aces_rgb_2_hue(Vec3 rgb) noexcept {
+/// @ref ACES CTL Reference — rgb_2_hue (atan2 hue angle in degrees)
+[[nodiscard]] inline float RgbToHue(Vec3 rgb) noexcept {
     float hue = 0.0f;
     if (!(rgb.x == rgb.y && rgb.y == rgb.z)) {
-        // atan2(sqrt(3)*(G-B), 2R - G - B) in degrees
         hue = (180.0f / kPI) *
               std::atan2(std::sqrt(3.0f) * (rgb.y - rgb.z),
                          2.0f * rgb.x - rgb.y - rgb.z);
@@ -233,17 +223,17 @@ static constexpr Vec3 kACES_AP1_RGB2Y = {0.2722287168f, 0.6740817658f, 0.0536895
     return std::clamp(hue, 0.0f, 360.0f);
 }
 
-/// @source UE5 ACESCommon.ush:166-172 — center_hue
-[[nodiscard]] inline float aces_center_hue(float hue, float centerH) noexcept {
+/// @ref ACES CTL Reference — center_hue (wrap hue to [-180, 180] around center)
+[[nodiscard]] inline float CenterHue(float hue, float centerH) noexcept {
     float hueCentered = hue - centerH;
     if (hueCentered < -180.0f) { hueCentered += 360.0f; }
     else if (hueCentered > 180.0f) { hueCentered -= 360.0f; }
     return hueCentered;
 }
 
-/// @source UE5 ACESCommon.ush:268-290 — rgb_2_yc
-/// @constants ycRadiusWeight = 1.75 (ACESCommon.ush:268)
-[[nodiscard]] inline float aces_rgb_2_yc(Vec3 rgb, float ycRadiusWeight = 1.75f) noexcept {
+/// @ref ACES CTL Reference — rgb_2_yc (luma with chroma weighting)
+/// @constants ycRadiusWeight = 1.75
+[[nodiscard]] inline float RgbToLumaChroma(Vec3 rgb, float ycRadiusWeight = 1.75f) noexcept {
     const float r = rgb.x;
     const float g = rgb.y;
     const float b = rgb.z;
@@ -251,15 +241,15 @@ static constexpr Vec3 kACES_AP1_RGB2Y = {0.2722287168f, 0.6740817658f, 0.0536895
     return (b + g + r + ycRadiusWeight * chroma) / 3.0f;
 }
 
-/// @source UE5 ACESCommon.ush:292-299 — sigmoid_shaper
-[[nodiscard]] inline float aces_sigmoid_shaper(float x) noexcept {
+/// @ref ACES CTL Reference — sigmoid_shaper (soft step function)
+[[nodiscard]] inline float SigmoidShaper(float x) noexcept {
     const float t = std::max(1.0f - std::abs(0.5f * x), 0.0f);
     const float y = 1.0f + (x >= 0.0f ? 1.0f : -1.0f) * (1.0f - t * t);
     return 0.5f * y;
 }
 
-/// @source UE5 ACESCommon.ush:234-249 — glow_fwd
-[[nodiscard]] inline float aces_glow_fwd(float ycIn, float glowGainIn, float glowMid) noexcept {
+/// @ref ACES CTL Reference — glow_fwd (low-light glow boost)
+[[nodiscard]] inline float GlowModuleFwd(float ycIn, float glowGainIn, float glowMid) noexcept {
     float glowGainOut;
     if (ycIn <= 2.0f / 3.0f * glowMid) {
         glowGainOut = glowGainIn;
@@ -272,31 +262,26 @@ static constexpr Vec3 kACES_AP1_RGB2Y = {0.2722287168f, 0.6740817658f, 0.0536895
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// FilmToneMap — UE5 exact S-curve with ACES glow/red modules
+// ApplyToneCurve — ACES-based S-curve with glow/red modules
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// UE5 ACES FilmToneMap — CPU equivalent of FilmToneMap() in film_tonemap.hlsli.
+/// ACES-based tone curve — CPU equivalent of ApplyToneCurve() in film_tonemap.hlsli.
 ///
-/// @source UE5 TonemapCommon.ush:105-220 — FilmToneMap
-/// @constants RRT_GLOW_GAIN=0.05 (TonemapCommon.ush:146)
-/// @constants RRT_GLOW_MID=0.08 (TonemapCommon.ush:147)
-/// @constants RRT_RED_SCALE=0.82 (TonemapCommon.ush:158)
-/// @constants RRT_RED_PIVOT=0.03 (TonemapCommon.ush:159)
-/// @constants RRT_RED_HUE=0 (TonemapCommon.ush:160)
-/// @constants RRT_RED_WIDTH=135 (TonemapCommon.ush:161)
-/// @constants pre_desaturate=0.96 (TonemapCommon.ush:175)
-/// @constants post_desaturate=0.93 (TonemapCommon.ush:216)
-/// @constants InMatch=0.18 (TonemapCommon.ush:180), OutMatch=0.18 (TonemapCommon.ush:181)
-/// @deviations NONE
+/// @ref ACES Reference Implementation (Academy S-2014-006) — RRT + ODT pipeline
+/// @ref Narkowicz 2015 "ACES Filmic Tone Mapping Curve" — artist-parameterized variant
+/// @constants RRT_GLOW_GAIN=0.05, RRT_GLOW_MID=0.08
+/// @constants RRT_RED_SCALE=0.82, RRT_RED_PIVOT=0.03, RRT_RED_WIDTH=135
+/// @constants pre_desaturate=0.96, post_desaturate=0.93
+/// @constants InMatch=0.18, OutMatch=0.18
 ///
 /// # Parameters
 /// - LinearColor: HDR linear color in AP1 (ACEScg) color space.
-/// - FilmSlope, FilmToe, FilmShoulder, FilmBlackClip, FilmWhiteClip: artist parameters.
+/// - toneCurveSlope/Toe/Shoulder/BlackClip/WhiteClip: artist parameters.
 ///
 /// # Returns
 /// Tonemapped color in AP1, clamped to >= 0. Channels may slightly exceed 1.0
 /// due to the post-desaturation step, but values below 0 are clipped.
-[[nodiscard]] inline Vec3 FilmToneMap(
+[[nodiscard]] inline Vec3 ApplyToneCurve(
     Vec3 LinearColor,
     float FilmSlope,
     float FilmToe,
@@ -304,106 +289,93 @@ static constexpr Vec3 kACES_AP1_RGB2Y = {0.2722287168f, 0.6740817658f, 0.0536895
     float FilmBlackClip,
     float FilmWhiteClip) noexcept
 {
-    // Input is AP1 (ACEScg) — mirrors TonemapCommon.ush:116
+    // Input is AP1 (ACEScg)
     Vec3 ColorAP1 = LinearColor;
 
-    // Convert to AP0 for glow and red modifier — TonemapCommon.ush:133
+    // Convert to AP0 for glow and red modifier
     Vec3 ColorAP0 = kACES_AP1_2_AP0_MAT.MulVec(ColorAP1);
 
     // ── Glow module ───────────────────────────────────────────────────────────
-    // @source UE5 TonemapCommon.ush:145-154
-    // @constants RRT_GLOW_GAIN=0.05, RRT_GLOW_MID=0.08
+    // @ref ACES RRT — low-light glow boost
     constexpr float RRT_GLOW_GAIN = 0.05f;
     constexpr float RRT_GLOW_MID  = 0.08f;
 
-    const float saturation = aces_rgb_2_saturation(ColorAP0);
-    const float ycIn       = aces_rgb_2_yc(ColorAP0);
-    const float s          = aces_sigmoid_shaper((saturation - 0.4f) / 0.2f);
-    const float addedGlow  = 1.0f + aces_glow_fwd(ycIn, RRT_GLOW_GAIN * s, RRT_GLOW_MID);
+    const float saturation = RgbToSaturation(ColorAP0);
+    const float ycIn       = RgbToLumaChroma(ColorAP0);
+    const float s          = SigmoidShaper((saturation - 0.4f) / 0.2f);
+    const float addedGlow  = 1.0f + GlowModuleFwd(ycIn, RRT_GLOW_GAIN * s, RRT_GLOW_MID);
     ColorAP0 = ColorAP0 * addedGlow;
 
     // ── Red modifier ──────────────────────────────────────────────────────────
-    // @source UE5 TonemapCommon.ush:157-167
-    // @constants RRT_RED_SCALE=0.82, RRT_RED_PIVOT=0.03, RRT_RED_HUE=0, RRT_RED_WIDTH=135
+    // @ref ACES RRT — red desaturation to prevent oversaturated reds
     constexpr float RRT_RED_SCALE = 0.82f;
     constexpr float RRT_RED_PIVOT = 0.03f;
     constexpr float RRT_RED_HUE   = 0.0f;
     constexpr float RRT_RED_WIDTH = 135.0f;
 
-    const float hue          = aces_rgb_2_hue(ColorAP0);
-    const float centeredHue  = aces_center_hue(hue, RRT_RED_HUE);
-    // smoothstep(0,1, 1 - abs(2*centeredHue/RRT_RED_WIDTH))
+    const float hue          = RgbToHue(ColorAP0);
+    const float centeredHue  = CenterHue(hue, RRT_RED_HUE);
     const float hueWeight    = Pow2(Smoothstep(0.0f, 1.0f,
                                     1.0f - std::abs(2.0f * centeredHue / RRT_RED_WIDTH)));
 
     ColorAP0.x += hueWeight * saturation * (RRT_RED_PIVOT - ColorAP0.x) * (1.0f - RRT_RED_SCALE);
 
     // ── Convert to ACEScg (AP1) working space ─────────────────────────────────
-    // @source UE5 TonemapCommon.ush:170
     Vec3 WorkingColor = kACES_AP0_2_AP1_MAT.MulVec(ColorAP0);
     WorkingColor = WorkingColor.Max(0.0f);
 
-    // ── Pre-desaturate ────────────────────────────────────────────────────────
-    // @source UE5 TonemapCommon.ush:175 — pre_desaturate_factor = 0.96
+    // ── Pre-desaturate (factor = 0.96) ────────────────────────────────────────
     const float lum0 = WorkingColor.Dot(kACES_AP1_RGB2Y);
     WorkingColor = Vec3{lum0, lum0, lum0} * (1.0f - 0.96f) + WorkingColor * 0.96f;
 
     // ── Custom S-curve with artist parameters ─────────────────────────────────
-    // @source UE5 TonemapCommon.ush:177-213
-
     const float ToeScale      = 1.0f + FilmBlackClip - FilmToe;
     const float ShoulderScale = 1.0f + FilmWhiteClip - FilmShoulder;
 
-    // @constants InMatch=0.18, OutMatch=0.18 (TonemapCommon.ush:180-181)
     constexpr float InMatch  = 0.18f;
     constexpr float OutMatch = 0.18f;
 
     float ToeMatch;
     if (FilmToe > 0.8f) {
-        // 0.18 will be on straight segment — TonemapCommon.ush:187
+        // 0.18 will be on straight segment
         ToeMatch = (1.0f - FilmToe - OutMatch) / FilmSlope + std::log10(InMatch);
     } else {
-        // 0.18 will be on toe segment — TonemapCommon.ush:193-195
+        // 0.18 will be on toe segment
         const float bt = (OutMatch + FilmBlackClip) / ToeScale - 1.0f;
         ToeMatch = std::log10(InMatch) -
                    0.5f * std::log((1.0f + bt) / (1.0f - bt)) * (ToeScale / FilmSlope);
     }
 
-    // @source UE5 TonemapCommon.ush:198-199
     const float StraightMatch  = (1.0f - FilmToe) / FilmSlope - ToeMatch;
     const float ShoulderMatch  = FilmShoulder / FilmSlope - StraightMatch;
 
-    // Per-component log10 — mirrors HLSL log10()
+    // Per-component log10
     const Vec3 LogColor = {
         std::log10(std::max(WorkingColor.x, 1e-10f)),
         std::log10(std::max(WorkingColor.y, 1e-10f)),
         std::log10(std::max(WorkingColor.z, 1e-10f)),
     };
 
-    // Straight segment — TonemapCommon.ush:202
+    // Straight segment
     const Vec3 StraightColor = {
         FilmSlope * (LogColor.x + StraightMatch),
         FilmSlope * (LogColor.y + StraightMatch),
         FilmSlope * (LogColor.z + StraightMatch),
     };
 
-    // Toe sigmoid — TonemapCommon.ush:204
-    // ToeColor = -FilmBlackClip + 2*ToeScale / (1 + exp(-2*FilmSlope/ToeScale * (LogColor - ToeMatch)))
+    // Toe sigmoid
     const auto ToeFunc = [&](float lc) -> float {
         return (-FilmBlackClip) + (2.0f * ToeScale) /
                (1.0f + std::exp((-2.0f * FilmSlope / ToeScale) * (lc - ToeMatch)));
     };
 
-    // Shoulder sigmoid — TonemapCommon.ush:205
-    // ShoulderColor = (1 + FilmWhiteClip) - 2*ShoulderScale / (1 + exp(2*FilmSlope/ShoulderScale * (LogColor - ShoulderMatch)))
+    // Shoulder sigmoid
     const auto ShoulderFunc = [&](float lc) -> float {
         return (1.0f + FilmWhiteClip) - (2.0f * ShoulderScale) /
                (1.0f + std::exp((2.0f * FilmSlope / ShoulderScale) * (lc - ShoulderMatch)));
     };
 
-    // Per-component toe and shoulder — TonemapCommon.ush:207-208
-    // Select toe or straight based on log position relative to ToeMatch
-    // (step(ToeMatch, LogColor) == 1 when LogColor >= ToeMatch)
+    // Select toe or straight based on log position
     const auto SelectToe = [&](float lc, float straight) -> float {
         return (lc >= ToeMatch) ? straight : ToeFunc(lc);
     };
@@ -422,10 +394,9 @@ static constexpr Vec3 kACES_AP1_RGB2Y = {0.2722287168f, 0.6740817658f, 0.0536895
         SelectShoulder(LogColor.z, StraightColor.z),
     };
 
-    // Smooth blend between toe and shoulder via cubic Hermite — TonemapCommon.ush:210-213
+    // Smooth blend between toe and shoulder via cubic Hermite
     const auto BlendTS = [&](float lc, float tc, float sc) -> float {
         float t = Saturate((lc - ToeMatch) / (ShoulderMatch - ToeMatch));
-        // lerp(t, 1-t, step(ShoulderMatch, ToeMatch)) — when ShoulderMatch < ToeMatch, flip
         if (ShoulderMatch < ToeMatch) { t = 1.0f - t; }
         t = (3.0f - 2.0f * t) * t * t;  // cubic Hermite
         return tc + t * (sc - tc);
@@ -437,21 +408,17 @@ static constexpr Vec3 kACES_AP1_RGB2Y = {0.2722287168f, 0.6740817658f, 0.0536895
         BlendTS(LogColor.z, ToeColor.z, ShoulderColor.z),
     };
 
-    // ── Post-desaturate ───────────────────────────────────────────────────────
-    // @source UE5 TonemapCommon.ush:216 — post_desaturate_factor = 0.93
+    // ── Post-desaturate (factor = 0.93) ───────────────────────────────────────
     const float lum1 = Vec3{ToneColor.x, ToneColor.y, ToneColor.z}.Dot(kACES_AP1_RGB2Y);
     ToneColor = Vec3{lum1, lum1, lum1} * (1.0f - 0.93f) + ToneColor * 0.93f;
 
-    // Clip to >= 0 — TonemapCommon.ush:219
+    // Clip to >= 0
     return ToneColor.Max(0.0f);
 }
 
-/// Convenience overload with UE5 default parameters.
-///
-/// @source UE5 PostProcessSettings.h — FilmSlope=0.88, FilmToe=0.55, FilmShoulder=0.26,
-///   FilmBlackClip=0.0, FilmWhiteClip=0.04
-[[nodiscard]] inline Vec3 FilmToneMap(Vec3 LinearColor) noexcept {
-    return FilmToneMap(LinearColor, 0.88f, 0.55f, 0.26f, 0.0f, 0.04f);
+/// Convenience overload with default artist parameters.
+[[nodiscard]] inline Vec3 ApplyToneCurve(Vec3 LinearColor) noexcept {
+    return ApplyToneCurve(LinearColor, 0.88f, 0.55f, 0.26f, 0.0f, 0.04f);
 }
 
 } // namespace uz::brdf

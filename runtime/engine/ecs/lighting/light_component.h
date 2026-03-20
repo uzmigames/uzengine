@@ -38,42 +38,42 @@ public:
 
     /// Intensity multiplier applied to the light color. Default: 10.0.
     /// Units are lux for directional lights, candela for point/spot lights.
-    /// @source UE5 DirectionalLightComponent.cpp:1004 — Intensity = 10
+    /// Default: 10 lux (approximates clear-sky midday sun after exposure).
     float intensity = 10.0f;
 
     /// When true, `temperature` is used to tint the light color via blackbody radiation.
-    /// UE5: bUseTemperature. Default: false.
+    /// Equivalent: bUseTemperature. Default: false.
     bool useTemperature = false;
 
     /// Blackbody color temperature in Kelvin. Only used when `useTemperature` is true.
     /// 3000K = warm/candle, 6500K = daylight white (D65), 10000K = cool/blue.
-    /// UE5 default: 6500.0.
+    /// Default: 6500.0.
     float temperature = 6500.f;
 
     /// Non-physical multiplier for specular highlights from this light. Default: 1.0.
-    /// 0 = no specular, 1 = normal. UE5: SpecularScale.
+    /// 0 = no specular, 1 = normal. Equivalent: SpecularScale.
     float specularScale = 1.0f;
 
     /// Non-physical multiplier for diffuse contribution from this light. Default: 1.0.
-    /// Useful for artistic control. Not in UE5 but common in other engines.
+    /// Useful for artistic control. Not in reference engines but common in other engines.
     float diffuseScale = 1.0f;
 
     /// Multiplier for volumetric scattering contribution. Default: 1.0.
-    /// UE5: VolumetricScatteringIntensity.
+    /// Equivalent: VolumetricScatteringIntensity.
     float volumetricScatteringIntensity = 1.0f;
 
     /// Multiplier for indirect/GI contribution. Default: 1.0.
-    /// UE5: IndirectLightingIntensity.
+    /// Equivalent: IndirectLightingIntensity.
     float indirectLightingIntensity = 1.0f;
 
     /// Per-light shadow depth bias multiplier. Default: 0.5.
     /// Applied on top of the global CSM depth bias: `finalBias = csmBias * shadowBias`.
-    /// UE5: ShadowBias (range 0.0–10.0). Source: LightComponent.h:105.
+    /// Equivalent: ShadowBias (range 0.0–10.0). Source: LightComponent.h:105.
     float shadowBias = 0.5f;
 
     /// Per-light shadow slope-scaled bias multiplier. Default: 0.5.
     /// Applied on top of the global CSM slope bias: `finalSlopeBias = csmSlopeBias * shadowSlopeBias`.
-    /// UE5: ShadowSlopeBias (range 0.0–10.0). Source: LightComponent.h:115.
+    /// Equivalent: ShadowSlopeBias (range 0.0–10.0). Source: LightComponent.h:115.
     float shadowSlopeBias = 0.5f;
 
 protected:
@@ -110,64 +110,64 @@ class DirectionalLightComponent : public LightComponent {
 public:
     /// When true, this directional light drives the SkyAtmosphereComponent sun.
     /// Direction, color, and intensity are passed to the atmosphere rendering.
-    /// @source UE5 DirectionalLightComponent.cpp:1041 — bAtmosphereSunLight = true
+    /// Default: true — this directional light drives the atmosphere sun disk.
     bool atmosphereSunLight = true;
 
     /// Which atmosphere sun slot this light occupies (0=primary sun, 1=moon).
-    /// UE5: AtmosphereSunLightIndex. Default: 0.
+    /// Equivalent: AtmosphereSunLightIndex. Default: 0.
     int atmosphereSunLightIndex = 0;
 
     /// Angular diameter of the sun disk in degrees (visual size in the sky).
-    /// UE5: LightSourceAngle. Default: 0.5357 deg (≈ Earth sun).
+    /// Equivalent: LightSourceAngle. Default: 0.5357 deg (≈ Earth sun).
     float lightSourceAngle = 0.5357f;
 
     /// Soft edge angle of the sun disk in degrees.
-    /// UE5: LightSourceSoftAngle. Default: 0.0.
+    /// Equivalent: LightSourceSoftAngle. Default: 0.0.
     float lightSourceSoftAngle = 0.0f;
 
     /// Number of CSM cascades (0 = no shadows, 1-4 = cascade count).
-    /// UE5: DynamicShadowCascades. Default: 4.
+    /// Equivalent: DynamicShadowCascades. Default: 4.
     int shadowCascades = 4;
 
     /// Cascade distribution exponent. 1.0 = linear split, >1 = more near camera.
-    /// @source UE5 DirectionalLightComponent.cpp:1029 — CascadeDistributionExponent = 3.0
+    /// Default: 3.0 — exponential cascade split distribution (PSSM convention).
     float cascadeDistributionExponent = 3.0f;
 
     /// Cascade transition fade fraction (0-1). Smooth blend between cascades.
-    /// UE5: CascadeTransitionFraction. Default: 0.1.
+    /// Equivalent: CascadeTransitionFraction. Default: 0.1.
     float cascadeTransitionFraction = 0.1f;
 
     /// Shadow distance fadeout fraction (0-1). Fade at the far extent of CSM.
-    /// UE5: ShadowDistanceFadeoutFraction. Default: 0.1.
+    /// Equivalent: ShadowDistanceFadeoutFraction. Default: 0.1.
     float shadowDistanceFadeoutFraction = 0.1f;
 
     /// Maximum CSM shadow distance in world units (cm).
-    /// @source UE5 DirectionalLightComponent.cpp:1017 — DynamicShadowDistanceMovableLight = 40000.0
+    /// Default: 40000 cm (400 m) — maximum CSM coverage distance.
     float dynamicShadowDistance = 40000.f;
 
     /// Screen-space contact shadow ray length (0 = disabled).
-    /// UE5: ContactShadowLength. Default: 0.
+    /// Equivalent: ContactShadowLength. Default: 0.
     float contactShadowLength = 0.f;
 
     /// Number of far shadow cascades beyond the main CSM distance (0 = disabled).
     /// Far cascades cover [dynamicShadowDistance, farShadowDistance] with lower
-    /// geometry detail (LOD bias). UE5: FarShadowCascadeCount. Default: 0.
-    /// @source UE5 DirectionalLightComponent.h:112
+    /// geometry detail (LOD bias). Equivalent: FarShadowCascadeCount. Default: 0.
+    /// Default: 0 (far shadows disabled).
     uint32_t farShadowCascadeCount = 0;
 
     /// Maximum far shadow distance in centimeters. Only used when
-    /// farShadowCascadeCount > 0. UE5: FarShadowDistance. Default: 300000 (3km).
-    /// @source UE5 DirectionalLightComponent.cpp:1023
+    /// farShadowCascadeCount > 0. Equivalent: FarShadowDistance. Default: 300000 (3km).
+    /// Default: 300000 cm (3 km).
     float farShadowDistance = 300000.0f;
 
     /// LOD bias applied to static meshes rendered in far shadow cascades.
     /// Higher values = coarser geometry = cheaper. Only active when
-    /// farShadowCascadeCount > 0. UE5: GFarShadowStaticMeshLODBias. Default: 0.
-    /// @source UE5 DirectionalLightComponent.cpp:68
+    /// farShadowCascadeCount > 0. Equivalent: GFarShadowStaticMeshLODBias. Default: 0.
+    /// Default: 0 (no LOD bias for far shadow geometry).
     int32_t farShadowLodBias = 0;
 
     /// Tint color applied to the sun disk in the sky atmosphere.
-    /// UE5: AtmosphereSunDiskColorScale. Default: (1,1,1).
+    /// Equivalent: AtmosphereSunDiskColorScale. Default: (1,1,1).
     Vec3 atmosphereSunDiskColorScale = {1.f, 1.f, 1.f};
 
     /// Returns the world-space unit direction vector of this light.
@@ -203,43 +203,41 @@ protected:
 /// taken from the component's world transform.
 class PointLightComponent : public LightComponent {
 public:
-    /// Effective attenuation radius in world units (centimeters, UE5 parity).
+    /// Effective attenuation radius in world units (centimeters, standard).
     /// Light contribution becomes zero at or beyond this distance.
-    /// UE5: AttenuationRadius. Default: 1000 cm (= 10 m).
+    /// Equivalent: AttenuationRadius. Default: 1000 cm (= 10 m).
     float range = 1000.0f;
 
     /// Use physically-correct inverse square falloff. Default: true.
     /// When false, uses `lightFalloffExponent` instead.
-    /// UE5: bUseInverseSquaredFalloff. Default: true.
+    /// Equivalent: bUseInverseSquaredFalloff. Default: true.
     bool useInverseSquaredFalloff = true;
 
     /// Custom falloff exponent when inverse squared is disabled.
-    /// UE5: LightFalloffExponent. Default: 8.0.
+    /// Equivalent: LightFalloffExponent. Default: 8.0.
     float lightFalloffExponent = 8.0f;
 
     /// Sphere radius for area light approximation (representative point technique).
-    /// 0 = point light (no area). UE5: SourceRadius. Default: 0.
+    /// 0 = point light (no area). Equivalent: SourceRadius. Default: 0.
     float sourceRadius = 0.f;
 
     /// Soft edge sphere radius for smoother shadow penumbra.
-    /// UE5: SoftSourceRadius. Default: 0.
+    /// Equivalent: SoftSourceRadius. Default: 0.
     float softSourceRadius = 0.f;
 
     /// Tube/capsule length for elongated area light approximation.
-    /// 0 = sphere only. UE5: SourceLength. Default: 0.
+    /// 0 = sphere only. Equivalent: SourceLength. Default: 0.
     float sourceLength = 0.f;
 
     /// When true, this point light casts cubemap shadow maps (6 faces) into
     /// the local shadow atlas. Each face is a 90-degree FOV perspective
     /// projection from the light position.
-    /// UE5: CastShadows. Default: false (shadows must be explicitly enabled).
-    /// @source UE5 LightComponent.h:84 — bCastShadows
+    /// Default: false (shadows must be explicitly enabled per light).
     bool castShadows = false;
 
     /// Per-light shadow depth bias for this point light's shadow maps.
     /// Applied as a constant depth offset before shadow comparison.
-    /// UE5: ShadowBias. Default: 0.5. Range: [0.0, 10.0].
-    /// @source UE5 LightComponent.h:105 — ShadowBias
+    /// Default: 0.5. Range: [0.0, 10.0].
     float pointShadowBias = 0.5f;
 
 protected:
@@ -268,22 +266,20 @@ protected:
 class SpotLightComponent : public PointLightComponent {
 public:
     /// Inner cone half-angle in **degrees**. Full intensity inside this cone.
-    /// UE5: InnerConeAngle. Default: 30.0 deg. Range: [0, outerAngleDeg].
+    /// Equivalent: InnerConeAngle. Default: 30.0 deg. Range: [0, outerAngleDeg].
     float innerAngleDeg = 30.0f;
 
     /// Outer cone half-angle in **degrees**. Zero intensity beyond this angle.
-    /// UE5: OuterConeAngle. Default: 45.0 deg. Range: [innerAngleDeg, 90].
+    /// Equivalent: OuterConeAngle. Default: 45.0 deg. Range: [innerAngleDeg, 90].
     float outerAngleDeg = 45.0f;
 
     /// When true, this spot light casts a shadow map into the local shadow atlas.
-    /// UE5: CastShadows. Default: false (shadows must be explicitly enabled).
-    /// @source UE5 LightComponent.h:84 — bCastShadows
+    /// Default: false (shadows must be explicitly enabled per light).
     bool castShadows = false;
 
     /// Per-light shadow depth bias for this spot light's shadow map.
     /// Applied as a constant depth offset before shadow comparison.
-    /// UE5: ShadowBias. Default: 0.5. Range: [0.0, 10.0].
-    /// @source UE5 LightComponent.h:105 — ShadowBias
+    /// Default: 0.5. Range: [0.0, 10.0].
     float spotShadowBias = 0.5f;
 
 protected:

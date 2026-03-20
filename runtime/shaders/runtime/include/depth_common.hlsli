@@ -1,4 +1,4 @@
-/// Depth buffer utilities — Reversed-Z convention (UE5 parity).
+/// Depth buffer utilities — Reversed-Z convention (standard).
 ///
 /// UzEngine uses reversed-Z: near=1.0, far=0.0. This file provides helpers
 /// so shaders never hardcode depth direction assumptions.

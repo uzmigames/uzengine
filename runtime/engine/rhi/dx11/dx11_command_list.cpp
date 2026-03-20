@@ -708,7 +708,7 @@ void DX11CommandList::BeginRenderPass(const RHIRenderPassDesc& desc) {
     // DX11 requires SRVs to be unbound before the same resource can be used as
     // RTV or DSV. Clear all PS/VS/CS SRV slots up front to prevent the runtime
     // error: "Resource being set to OM DepthStencil is still bound on input!"
-    // This matches UE5's D3D11 RHI behavior (FD3D11DynamicRHI::CommitRenderTargets).
+    // This matches reference's D3D11 RHI behavior (FD3D11DynamicRHI::CommitRenderTargets).
     ID3D11ShaderResourceView* nullSRVs[16] = {};
     m_ctx->PSSetShaderResources(0, 16, nullSRVs);
     m_ctx->VSSetShaderResources(0, 16, nullSRVs);

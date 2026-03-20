@@ -89,12 +89,12 @@ struct GBufferPerObjectParams {
     uint32_t metallicIndex  = 0;    ///< SRV heap index for metallic map.
     uint32_t aoIndex        = 0;    ///< SRV heap index for AO map.
     uint32_t emissiveIndex  = 0;    ///< SRV heap index for emissive map (0 = no texture, use color only).
-    /// @source UE5 Material.h:1891 — OpacityMaskClipValue default 0.3333
+    /// Default alpha clip threshold: 1/3 (standard masked material convention).
     float    alphaClipThreshold = 0.3333f; ///< Alpha test threshold for Masked blend mode.
     uint32_t twoSided       = 0;    ///< 0 = back-face cull (default), 1 = no cull (two-sided).
     Mat4     model;                 ///< Object-to-world transform.
     Mat4     normalMatrix;          ///< transpose(inverse(model)) for lighting.
-    /// @source UE5 BasePassPixelShader.usf:1480 — GetMaterialEmissive
+    /// Emissive tint is added to scene color during the lighting pass.
     float    emissiveColorR  = 0.0f; ///< Emissive tint R (linear). 0 = no emission.
     float    emissiveColorG  = 0.0f; ///< Emissive tint G (linear).
     float    emissiveColorB  = 0.0f; ///< Emissive tint B (linear).
@@ -114,7 +114,7 @@ struct GBufferPerObjectParams {
     float    aoIntensity         = 1.0f; ///< AO map strength.
     float    opacity             = 1.0f; ///< Material opacity (1=opaque).
     float    _pad2[7]           = {};   ///< Pad (POM-equivalent region, unused by binder path).
-    /// @source UE5 EngineTypes.h:256 — EBlendMode (BM_Opaque=0, BM_Masked=1, BM_Translucent=2, BM_Additive=3)
+    /// Standard blend mode enum: 0=Opaque, 1=Masked, 2=Translucent, 3=Additive.
     uint32_t blendMode          = 0;    ///< Blend mode: 0=Opaque, 1=Masked, 2=Translucent, 3=Additive.
 
     // ── Resource handles (NOT copied to CB) ──────────────────────────────

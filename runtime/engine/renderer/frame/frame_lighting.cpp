@@ -92,7 +92,7 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
     //   1. CullObjects: frustum-cull SDF objects into a compacted index buffer
     //   2. ConeTrace: per-pixel ray march through culled SDFs → shadow texture
     //
-    // @source UE5 DistanceFieldShadowing.cpp — dispatch order
+    // Distance field shadow dispatch: cull objects first, then cone-trace.
     const bool dfsEnabled = m_dfsConfig.enabled
                           && m_sdfAtlas && m_sdfAtlas->IsInitialized()
                           && m_sdfAtlas->GetRegisteredObjectCount() > 0
@@ -110,7 +110,7 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
         const uint32_t downsampleFactor = m_dfsConfig.fullResolution ? 1 : 2;
 
         // ── Async compute note (§8.3) ─────────────────────────────────────
-        // UE5 dispatches DFS on an async compute queue overlapping GBuffer
+        // dispatches DFS on an async compute queue overlapping GBuffer
         // rendering (DistanceFieldShadowing.cpp:148 — FComputeFenceRHIRef).
         // Our render graph (RgBuilder) operates on a single IRHICommandList*
         // passed to Execute(), with no per-pass queue assignment. The RHI layer
@@ -125,7 +125,7 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
         // run on the direct (graphics) queue sequentially.
 
         // ── Pass 1: DFS Cull Objects (compute) ──────────────────────────
-        /// @source UE5 DistanceFieldShadowing.cpp:196-210 — CullObjectsForShadow dispatch
+        /// DFS Pass 1: Frustum-cull SDF objects into a compacted index buffer.
         rgBuilder.AddPass("DFS_CullObjects", [&, objectCount](rg::RgPassBuilder& pb) {
             pb.Read(ctx.depthRes, RHIResourceState::ShaderResource);
 
@@ -155,7 +155,7 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
 
                 // Extract 6 frustum planes from the first cascade's VP matrix.
                 // Each plane: float4(nx, ny, nz, d) where dot(n, p) - d < 0 = inside.
-                // @source UE5 DistanceFieldShadowing.cpp:230-260 — FrustumPlaneExtraction
+                // Extract 6 Gribb/Hartmann frustum planes from the VP matrix.
                 if (ctx.totalCascadeCount > 0) {
                     const Mat4& vp = ctx.shadowFrame.cascades[0].viewProj;
                     // Left plane
@@ -273,7 +273,7 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
         });
 
         // ── Pass 2: DFS Cone Trace (compute) ────────────────────────────
-        /// @source UE5 DistanceFieldShadowing.cpp:380-420 — DistanceFieldShadowing dispatch
+        /// DFS Pass 2: Per-pixel cone trace through culled SDFs to produce shadow mask.
         rgBuilder.AddPass("DFS_ConeTrace", [&, objectCount, dfsWidth, dfsHeight, downsampleFactor](rg::RgPassBuilder& pb) {
             pb.Read(ctx.depthRes, RHIResourceState::ShaderResource);
 
@@ -340,7 +340,7 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
                 traceCB.lightDirY = ctx.sunDir.y;
                 traceCB.lightDirZ = ctx.sunDir.z;
 
-                // @source UE5 DirectionalLightComponent.h — default LightSourceAngle = 0.5357 degrees
+                // Default sun angular diameter: 0.5357 degrees (Earth sun).
                 const float lightSourceAngleDeg = ctx.lightData.lightSourceAngleDeg > 0.001f
                                                 ? ctx.lightData.lightSourceAngleDeg : 0.5357f;
                 traceCB.tanLightAngle = std::tan(lightSourceAngleDeg * 3.14159265f / 180.0f);
@@ -372,7 +372,7 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
                 traceCB.atlasTexelSizeY = 1.0f / atlasTexelDim;
                 traceCB.atlasTexelSizeZ = 1.0f / atlasTexelDim;
 
-                // @source UE5 DistanceFieldShadowing.usf:696 — RayStartOffsetDepthScale
+                // Ray start offset scaled by depth to avoid self-intersection artifacts.
                 traceCB.rayStartOffsetDepthScale = 0.0005f;
                 traceCB.minDepth = 0.0f;
                 traceCB.maxDepth = m_dfsConfig.distance;
@@ -419,7 +419,7 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
     // TemporalAccum, BilateralUpsample. The result SRV indices are written
     // to PerFrameCB in frame_setup.cpp for the deferred lighting shader.
     //
-    // @source UE5 IndirectLightRendering.cpp:39-45 — SSGI method selection
+    // Screen-space global illumination — traces against the depth buffer for indirect light.
     const bool ssgiActive = m_ssgiRenderer.IsReady()
                           && m_device->IsBindless()
                           && m_passInspector.IsPassEnabled("ssgi");
@@ -461,8 +461,7 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
     // probes. The probe SH buffer SRV is written to PerFrameCB for the
     // deferred lighting pass.
     //
-    // @source UE5 GlobalDistanceField.cpp:406-513 — GDF composite dispatch
-    // @source UE5 LumenRadianceCache.usf:210-300 — radiance cache probe trace
+    // GDF composite + radiance cache probe trace for software-raytraced GI.
     const bool sdfGiActive = m_sdfGiEnabled
                            && m_globalDistanceField.IsInitialized()
                            && m_radianceCache.IsInitialized()
@@ -472,7 +471,7 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
         // ── Pass: GDF Composite ──────────────────────────────────────────
         // Collect mesh SDFs and world transforms from all StaticMeshComponent
         // entities, then composite them into the global distance field clipmaps.
-        // @source UE5 GlobalDistanceField.cpp:406-513 — composite dispatch
+        // Composite all per-mesh SDFs into the cascaded GDF clipmaps.
         rgBuilder.AddPass("GDF_Composite", [&](rg::RgPassBuilder& pb) {
             pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources& /*res*/) {
                 UZ_PROFILE_SCOPE("GDF::Composite");
@@ -564,11 +563,10 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
     //
     // The lighting pass blends SSR with IBL specular via ssrSrvIndex in PerFrameCB.
     //
-    // @source UE5 ScreenSpaceRayTracing.cpp:279-318 — SSR pass setup
-    // @source UE5 SSRTReflections.usf:441-462 — ScreenSpaceReflectionsCS
+    // Screen-space reflections: Hi-Z ray march + Fresnel-weighted resolve.
     if (ctx.ssrActive) {
         // ── Pass 1: SSR Trace (compute) ──────────────────────────────────
-        /// @source UE5 ScreenSpaceRayTracing.cpp:279-318 — ComputeSSRParams
+        /// SSR Trace: Hi-Z ray march producing (hitColor, confidence) per pixel.
         rgBuilder.AddPass("SSR_Trace", [&](rg::RgPassBuilder& pb) {
             pb.Read(ctx.depthRes, RHIResourceState::ShaderResource);
             pb.Read(ctx.normalRes, RHIResourceState::ShaderResource);
@@ -593,7 +591,7 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
                 cmd->SetPipeline(ssrTracePSO);
 
                 // Root constants: 8 DWORDs (matches SSRRootCB in ssr_trace_cs.hlsl)
-                /// @source UE5 ScreenSpaceRayTracing.cpp:291-318 — ComputeSSRParams
+                /// SSR trace root constants: texture indices, dimensions, quality params.
                 struct SsrTraceConstants {
                     uint32_t depthSrvIdx;       // DWORD 0
                     uint32_t normalSrvIdx;      // DWORD 1
@@ -616,9 +614,9 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
                 rc.sceneColorSrvIdx = m_hdrSceneColorSrv;
                 rc.outputWidth      = m_renderWidth;
                 rc.outputHeight     = m_renderHeight;
-                /// @source UE5 ScreenSpaceRayTracing.cpp:314 — Clamp(Intensity * 0.01, 0, 1)
+                /// Reflection intensity (1.0 = full strength).
                 rc.intensity        = 1.0f;
-                /// @source UE5 ScreenSpaceRayTracing.cpp:287 — -2.0 / MaxRoughness
+                /// Roughness fade: surfaces above MaxRoughness get no SSR.
                 rc.roughnessMaskScale = -2.0f / 0.4f;  // MaxRoughness = 0.4
 
                 cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 8);
@@ -649,7 +647,7 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
         });
 
         // ── Pass 2: SSR Resolve (compute) ────────────────────────────────
-        /// @source UE5 SSRTReflections.usf:105-416 — ScreenSpaceReflections resolve
+        /// SSR Resolve: Fresnel weight + roughness fade → final SSR contribution.
         rgBuilder.AddPass("SSR_Resolve", [&](rg::RgPassBuilder& pb) {
             pb.Read(ctx.depthRes, RHIResourceState::ShaderResource);
             pb.Read(ctx.normalRes, RHIResourceState::ShaderResource);
@@ -691,9 +689,9 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
                 rc.reserved         = 0;
                 rc.outputWidth      = m_renderWidth;
                 rc.outputHeight     = m_renderHeight;
-                /// @source UE5 ScreenSpaceRayTracing.cpp:314
+                /// Reflection intensity (1.0 = full strength).
                 rc.intensity        = 1.0f;
-                /// @source UE5 ScreenSpaceRayTracing.cpp:287
+                /// Roughness fade: surfaces above MaxRoughness get no SSR.
                 rc.roughnessMaskScale = -2.0f / 0.4f;
 
                 cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 8);
@@ -823,7 +821,7 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
     // ── Sky Atmosphere + Height Fog (HDR, before postprocess/tonemap) ────
     // Must run after deferred lighting but before bloom/TAA/tonemap so the
     // sky is included in the HDR scene color that postprocess operates on.
-    // @source UE5 SceneRendering.cpp — atmosphere passes after lighting, before post-process
+    // Atmosphere + fog render after deferred lighting, before postprocess/tonemap.
     {
         AtmosphereFrameContext atmoCtx{};
         atmoCtx.device              = m_device;
@@ -864,14 +862,14 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
         if (m_shadowDebugMode == 0) {
             AddAtmospherePasses(rgBuilder, ctx.hdrRes, ctx.depthRes, ctx.perFrameAlloc, atmoCtx);
 
-            /// @source UE5 SkyAtmosphereCommon.ush:343-352 — GetViewDistanceSkyLightColor
-            /// UE5 uses DistantSkyLightLutBufferSRV — a precomputed 1-pixel LUT of sky
-            /// luminance at camera position. Our equivalent: the SH L0 coefficient from
+            /// Sky light color for fog inscattering: uses the SH L0 coefficient from
+            /// the IBL irradiance projection as the average sky color. Our equivalent of
+            /// a precomputed 1-pixel distant-sky luminance LUT. The SH L0 from
             /// the IBL irradiance projection, which is the average color of the sky cubemap.
-            /// SH L0 in UE5 packed format: coeffs[0].w=R, coeffs[1].w=G, coeffs[2].w=B.
+            /// SH L0 in reference engines packed format: coeffs[0].w=R, coeffs[1].w=G, coeffs[2].w=B.
             /// These are already the sky's average irradiance (blue for a daytime sky).
-            /// Scale SH L0 sky color by SkyLight intensity to match UE5's pattern:
-            /// @source UE5 SkyLightComponent.cpp — SkyLightColor = Intensity * LightColor
+            /// Scale SH L0 sky color by SkyLight intensity:
+            /// SkyLightColor = Intensity * LightColor (standard sky light convention).
             float skyFogR = m_skyIrradianceSH.coeffs[0].w * ctx.perFrame.skyLightIntensity;
             float skyFogG = m_skyIrradianceSH.coeffs[1].w * ctx.perFrame.skyLightIntensity;
             float skyFogB = m_skyIrradianceSH.coeffs[2].w * ctx.perFrame.skyLightIntensity;

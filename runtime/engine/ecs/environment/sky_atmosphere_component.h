@@ -1,7 +1,7 @@
 /// UzEngine SkyAtmosphereComponent — ECS data for physical atmosphere rendering.
 ///
-/// Follows UE5 SkyAtmosphereComponent parameter conventions:
-/// - All distances in KILOMETERS (UE5: BottomRadiusKm, AtmosphereHeightKm, etc.)
+/// Follows industry-standard SkyAtmosphereComponent parameter conventions:
+/// - All distances in KILOMETERS (Equivalent: BottomRadiusKm, AtmosphereHeightKm, etc.)
 /// - Scattering coefficients in km^-1 (not m^-1)
 /// - Planet center is placed at (0, -bottomRadiusKm, 0) in sky-space so that
 ///   world Z=0 corresponds to sea level (Z-up world)
@@ -18,7 +18,7 @@
 /// deprecated and ignored when a SkyLightComponent exists.
 ///
 /// # Default Values
-/// Earth-like atmosphere. Matches UE5 SkyAtmosphereComponent defaults:
+/// Earth-like atmosphere. Standard SkyAtmosphereComponent defaults:
 /// - BottomRadius = 6360 km, AtmosphereHeight = 60 km
 /// - Rayleigh: (5.802, 13.558, 33.1) * 1e-3 km^-1, scale height 8 km
 /// - Mie: 3.996e-3 km^-1, anisotropy 0.8, scale height 1.2 km
@@ -38,113 +38,113 @@ namespace uz {
 
 /// Physical atmosphere parameters for the sky rendering pass.
 ///
-/// All distance fields are in **kilometers** to match UE5 SkyAtmosphereComponent
+/// All distance fields are in **kilometers** to match standard sky atmosphere
 /// and avoid floating-point precision issues at planetary scale.
 /// Scattering coefficients are in km^-1.
 struct SkyAtmosphereComponent {
     // ── Planet geometry ────────────────────────────────────────────────────
 
     /// Planet radius in km from center to sea level.
-    /// UE5 default: 6360.0 km (Earth). World Z=0 maps to sea level.
+    /// Default: 6360.0 km (Earth). World Z=0 maps to sea level.
     float bottomRadiusKm = 6360.0f;
 
     /// Atmosphere thickness in km above sea level.
-    /// UE5 default: 60.0 km. Top of atmosphere = bottomRadiusKm + atmosphereHeightKm.
+    /// Default: 60.0 km. Top of atmosphere = bottomRadiusKm + atmosphereHeightKm.
     float atmosphereHeightKm = 60.0f;
 
     // ── Rayleigh scattering ────────────────────────────────────────────────
 
     /// Rayleigh scattering coefficients in km^-1 at sea level.
-    /// UE5 default: (5.802, 13.558, 33.1) * 1e-3 km^-1.
+    /// Default: (5.802, 13.558, 33.1) * 1e-3 km^-1.
     /// Controls the blue color of the sky — higher blue coefficient = bluer sky.
     Vec3  rayleighScattering = {5.802e-3f, 13.558e-3f, 33.1e-3f};
 
     /// Artistic multiplier for Rayleigh scattering. Default: 1.0.
-    /// UE5: RayleighScatteringScale. Scale > 1 = more vivid blue.
+    /// Equivalent: RayleighScatteringScale. Scale > 1 = more vivid blue.
     float rayleighScatteringScale = 1.0f;
 
     /// Rayleigh scale height in km — density halves every this many km.
-    /// UE5 default: 8.0 km (RayleighExponentialDistribution).
+    /// Default: 8.0 km (RayleighExponentialDistribution).
     float rayleighScaleHeightKm = 8.0f;
 
     // ── Mie scattering ─────────────────────────────────────────────────────
 
     /// Mie scattering coefficient in km^-1 at sea level.
-    /// UE5 default: 3.996e-3 km^-1. Controls haze and sun glow intensity.
+    /// Default: 3.996e-3 km^-1. Controls haze and sun glow intensity.
     float mieScattering = 3.996e-3f;
 
     /// Artistic multiplier for Mie scattering. Default: 1.0.
-    /// UE5: MieScatteringScale. Scale > 1 = more haze/glow.
+    /// Equivalent: MieScatteringScale. Scale > 1 = more haze/glow.
     float mieScatteringScale = 1.0f;
 
     /// Mie absorption coefficient in km^-1.
-    /// @source UE5 SkyAtmosphereComponent.cpp:114 — MieAbsorptionScale = 0.000444f
+    /// @ref Bruneton 2008 "Precomputed Atmospheric Scattering" — Mie absorption term
     /// Controls how much light is absorbed (not scattered) by aerosols.
     float mieAbsorption = 4.44e-4f;
 
     /// Artistic multiplier for Mie absorption. Default: 1.0.
-    /// UE5: MieAbsorptionScale.
+    /// Equivalent: MieAbsorptionScale.
     float mieAbsorptionScale = 1.0f;
 
     /// Mie phase function anisotropy (Henyey-Greenstein g parameter).
-    /// Range [-1, 1]. UE5 default: 0.8 (forward scattering).
+    /// Range [-1, 1]. Default: 0.8 (forward scattering).
     float mieAnisotropy = 0.8f;
 
     /// Mie scale height in km — aerosol density profile.
-    /// UE5 default: 1.2 km (MieDensityExpScale).
+    /// Default: 1.2 km (MieDensityExpScale).
     float mieScaleHeightKm = 1.2f;
 
     // ── Ground ─────────────────────────────────────────────────────────────
 
     /// Ground albedo — affects sky brightness near horizon.
-    /// @source UE5 SkyAtmosphereComponent.cpp:103 — FColor(170,170,170) = ~0.4 linear
+    /// Default ground albedo ~0.4 linear (medium-grey Lambertian surface).
     Vec3 groundAlbedo = {0.4f, 0.4f, 0.4f};
 
     // ── Ozone (Other Absorption) ────────────────────────────────────────────
 
     /// Ozone absorption coefficients in km^-1 at peak density.
-    /// @source UE5 SkyAtmosphereComponent.cpp:119 — OtherAbsorptionRaw
-    /// UE5 default: (0.000650, 0.001881, 0.000085) km^-1.
+    /// @ref Bruneton 2008 — ozone absorption cross-section at peak density
+    /// Standard atmosphere default: (0.000650, 0.001881, 0.000085) km^-1.
     /// Controls the blue-purple tint at high altitude due to ozone layer.
     Vec3 ozoneAbsorption = {0.000650f, 0.001881f, 0.000085f};
 
     /// Center altitude of the ozone tent distribution in km.
-    /// @source UE5 SkyAtmosphereComponent.cpp:122 — OtherTentDistribution.TipAltitude
-    /// UE5 default: 25.0 km.
+    /// @ref Standard atmosphere ozone profile — tent distribution center
+    /// Default: 25.0 km (ozone layer peak altitude).
     float ozoneTipAltitude = 25.0f;
 
     /// Peak value of the ozone tent distribution (dimensionless density).
-    /// @source UE5 SkyAtmosphereComponent.cpp:123 — OtherTentDistribution.TipValue
-    /// UE5 default: 1.0.
+    /// @ref Standard atmosphere ozone profile — tent distribution peak density
+    /// Default: 1.0 (normalized peak).
     float ozoneTipValue = 1.0f;
 
     /// Half-width of the ozone tent distribution in km.
-    /// @source UE5 SkyAtmosphereComponent.cpp:124 — OtherTentDistribution.Width
-    /// UE5 default: 15.0 km. Ozone density is 0 at tipAltitude +/- width.
+    /// @ref Standard atmosphere ozone profile — tent distribution half-width
+    /// Default: 15.0 km. Ozone density is 0 at tipAltitude +/- width.
     float ozoneWidth = 15.0f;
 
     // ── Multi-scattering ───────────────────────────────────────────────────
 
     /// Multiple scattering approximation factor. 0 = single scatter only,
-    /// 1 = full multi-scatter (UE5 default). Reduces darkening at zenith.
-    /// UE5: MultiScatteringFactor.
+    /// 1 = full multi-scatter (reference default). Reduces darkening at zenith.
+    /// Equivalent: MultiScatteringFactor.
     float multiScatteringFactor = 1.0f;
 
     // ── Art direction ──────────────────────────────────────────────────────
 
     /// Per-channel sky luminance multiplier for artistic control.
-    /// UE5: SkyLuminanceFactor. Default: (1,1,1) = physically accurate.
+    /// Equivalent: SkyLuminanceFactor. Default: (1,1,1) = physically accurate.
     Vec3 skyLuminanceFactor = {1.0f, 1.0f, 1.0f};
 
     /// Contribution of the atmosphere to exponential height fog.
-    /// 0 = no contribution, 1 = full (UE5 default).
-    /// UE5: HeightFogContribution.
+    /// 0 = no contribution, 1 = full (reference default).
+    /// Equivalent: HeightFogContribution.
     float heightFogContribution = 1.0f;
 
     // ── Transform Mode ────────────────────────────────────────────────────
 
     /// How the planet center is positioned relative to the world.
-    /// UE5: TransformMode.
+    /// Equivalent: TransformMode.
     enum class TransformMode : uint8_t {
         /// Planet center at (0, 0, -bottomRadiusKm * 1000). World origin = sea level.
         PlanetTopAtComponentTransform = 0,

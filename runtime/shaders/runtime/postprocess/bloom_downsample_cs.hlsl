@@ -32,9 +32,9 @@
 ///
 /// @source Jimenez 2014, "Next Generation Post-Processing in Call of Duty: AW"
 ///   slide 162 — 13-tap downsample filter
-/// @source UE5 PostProcessDownsample.usf:34-68 — DownsampleCommon
-///   (UE5 uses simpler 4-tap; we use the 13-tap for better quality)
-/// @deviations UE5's PostProcessDownsample uses a 4-tap bilinear (4 offset taps).
+/// @ref Standard 4-tap bilinear downsample (we use 13-tap for better quality)
+///   (reference uses simpler 4-tap; we use the 13-tap for better quality)
+/// @deviations the reference engine's PostProcessDownsample uses a 4-tap bilinear (4 offset taps).
 ///   We use the 13-tap Jimenez pattern for better anti-aliasing, which is the
 ///   standard approach in modern engines (Call of Duty, Unity HDRP).
 

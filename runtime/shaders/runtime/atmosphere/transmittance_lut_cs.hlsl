@@ -43,8 +43,8 @@ cbuffer AtmosphereLutParams : register(b0) {
 };
 
 /// Ozone absorption parameters at b2 — CBV (256-byte aligned).
-/// @source UE5 SkyAtmosphereCommonData.h:38-42
-/// @source UE5 SkyAtmosphereCommon.ush:316-318 — SampleAtmosphereMediumRGB
+/// @ref implementation detail
+/// @ref SampleAtmosphereMediumRGB
 /// Tent distribution for ozone density converted to piecewise-linear coefficients.
 cbuffer OzoneParams : register(b2) {
     float3 ozoneAbsorption;  // Ozone absorption extinction (km^-1)
@@ -158,8 +158,8 @@ void TransmittanceLutParamsToUv(float viewHeight, float viewZenithCosAngle,
     uv = float2(uU, uV);
 }
 
-/// Computes ozone density at a given altitude using the UE5 tent distribution.
-/// @source UE5 SkyAtmosphereCommon.ush:316-318 — SampleAtmosphereMediumRGB
+/// Computes ozone density at a given altitude using the reference tent distribution.
+/// @ref SampleAtmosphereMediumRGB
 /// @constants ozoneLayerWidth=25.0 (SkyAtmosphereCommonData.cpp:38), ozoneLinTerm0=1/15 (cpp:39), etc.
 /// @deviations NONE
 float OzoneDensity(float altKm)
@@ -175,8 +175,8 @@ float OzoneDensity(float altKm)
 /// in direction `dir` until it exits the atmosphere sphere or hits the planet.
 /// Uses midpoint quadrature with NUM_TRANSMITTANCE_STEPS samples.
 ///
-/// @source UE5 SkyAtmosphereCommonData.cpp:218-230 — FAtmosphereSetup::ComputeTransmittance
-/// @constants Mie extinction ratio = 1.11 (MieExtinction/MieScattering, UE5 convention)
+/// @ref FAtmosphereSetup::ComputeTransmittance
+/// @constants Mie extinction ratio = 1.11 (MieExtinction/MieScattering, standard convention)
 /// @deviations NONE
 ///
 /// # Arguments
@@ -218,10 +218,10 @@ float3 ComputeTransmittanceToTopAtmosphere(float3 pos, float3 dir,
         float densR = exp(-altKm / scaleHR);
         float densM = exp(-altKm / scaleHM);
 
-        // @source UE5 SkyAtmosphereCommon.ush:316-318 — ozone density (tent distribution)
+        // @ref ozone density (tent distribution)
         float densO = OzoneDensity(altKm);
 
-        // @source UE5 SkyAtmosphereCommonData.cpp:228
+        // @ref implementation detail
         // Total extinction = Rayleigh + Mie (1.11x for absorption) + Ozone absorption
         // Mie extinction = 1.11 * Mie scattering (same ratio as sky_atmosphere_ps.hlsl)
         opticalDepth += (betaR * densR + betaM_ * 1.11f * densM + ozoneAbsorption * densO) * dt;

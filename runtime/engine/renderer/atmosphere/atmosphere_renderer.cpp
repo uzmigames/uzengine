@@ -71,7 +71,7 @@ void AddAtmospherePasses(
             lutRC.topRadiusKm    = skyComp.bottomRadiusKm + skyComp.atmosphereHeightKm;
 
             // ── Ozone CBV for transmittance LUT ───────────────────────
-            // @source UE5 SkyAtmosphereCommonData.cpp:109-115
+            // Convert ozone tent distribution to linear piecewise coefficients.
             TransmittanceLutOzoneCB ozoneCB{};
             {
                 const float px    = skyComp.ozoneTipAltitude;
@@ -232,9 +232,8 @@ void AddAtmospherePasses(
                                         skyComp.skyLuminanceFactor.y,
                                         skyComp.skyLuminanceFactor.z, 1.f};
 
-        // ── Ozone absorption (UE5 "Other Absorption") ───────────────
-        // @source UE5 SkyAtmosphereCommonData.cpp:28-51 — TentToCoefficients
-        // Convert tent distribution to piecewise-linear coefficients.
+        // ── Ozone absorption (reference "Other Absorption") ───────────────
+        // Convert ozone tent distribution to piecewise-linear coefficients.
         // The tent is: density rises linearly from 0 to tipValue over
         // [tipAltitude - width, tipAltitude], then falls to 0 over
         // [tipAltitude, tipAltitude + width].
@@ -276,7 +275,7 @@ void AddAtmospherePasses(
         }
 
         // ── Multi-Scattering LUT compute pass ─────────────────────
-        /// @source UE5 RenderSkyAtmosphereLookUpTablesCS.usf:280-380 — NewMultiScatCS
+        /// @ref Hillaire 2020 — multi-scattering LUT via hemispherical integration.
         if (*ctx.multiScatterLutDirty && ctx.multiScatterLut.IsValid()
                 && ctx.multiScatterLutUav != UINT32_MAX
                 && *ctx.transmittanceLutFilled) {
@@ -355,7 +354,7 @@ void AddAtmospherePasses(
         }
 
         // ── Aerial Perspective Volume — precomputed 3D AP texture ─────────
-        // @source UE5 SkyAtmosphere.usf:1466 — RenderCameraAerialPerspectiveVolumeCS
+        // @ref Hillaire 2020 — camera-relative aerial perspective volume (3D LUT).
         // Dispatched every frame (view-dependent). Requires transmittance LUT filled.
         if (ctx.apVolume.IsValid() && ctx.apVolumeUav != UINT32_MAX
             && *ctx.transmittanceLutFilled && ctx.invViewProjData && ctx.cameraPos) {
@@ -465,7 +464,7 @@ void PostFrameAtmosphereBake(
             UZ_LOG(Renderer, Info, "SceneRenderer: SH from GPU readback");
         } else {
             // GPU readback returned zero SH — use black ambient rather than
-            // invented analytical values. UE5 always projects from a cubemap
+            // invented analytical values. reference always projects from a cubemap
             // and never falls back to analytical SH coefficients.
             for (int i = 0; i < 7; ++i) ctx.skyIrradianceSH->coeffs[i] = {0,0,0,0};
             UZ_LOG(Renderer, Warning, "SceneRenderer: SH readback returned zeros — using black ambient");

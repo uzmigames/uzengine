@@ -17,10 +17,6 @@
 /// (|distance| < bandWidth) are stored. Empty bricks get UINT32_MAX in the
 /// indirection table.
 ///
-/// # UE5 Reference
-/// - DistanceFieldAtlas.h:34-50 — brick layout, sparse storage
-/// - MeshUtilities.cpp — mesh SDF generation (Embree-accelerated)
-///
 /// # Performance
 /// CPU-only, O(V * T/B) where V = voxel count, T = triangles, B = spatial hash
 /// bucket size. Typical: ~100ms for 64^3 on a medium-complexity mesh.
@@ -47,13 +43,12 @@ namespace uz {
 /// resolution. Higher `maxResolution` produces more accurate SDFs at the cost
 /// of bake time and storage.
 ///
-/// Default values match UE5's default mesh SDF settings for medium-complexity
 /// static meshes.
 struct SdfBakerConfig {
     /// Maximum grid resolution per axis (in voxels, not bricks).
     /// The actual resolution is adaptive: smaller meshes get fewer voxels.
     /// The grid is always a multiple of SdfBrick::kSize (8).
-    /// @source UE5 DistanceFieldAtlas.h — default mesh SDF resolution ~64-128
+    /// Typical mesh SDF resolution: 64-128 voxels per axis.
     uint32_t maxResolution = 64;
 
     /// Target voxel density: voxels per cm of mesh extent along the longest axis.
@@ -64,7 +59,7 @@ struct SdfBakerConfig {
     /// Surface band width multiplier. Bricks with all voxels farther than
     /// `bandWidthMultiplier * voxelSize * SdfBrick::kSize` from the surface
     /// are discarded (sparse encoding).
-    /// @source UE5 DistanceFieldAtlas.h:38 — band limited to ~4 voxels
+    /// Narrow-band SDF convention — discard bricks beyond ~4 voxels from surface.
     float bandWidthMultiplier = 4.0f;
 
     /// Spatial hash grid resolution (cells per axis). Higher values accelerate
@@ -121,7 +116,7 @@ struct SdfBakerConfig {
 /// - asset: The SDF asset to generate MIPs for. Must be valid.
 ///   Modified in place — populates `mipBricks[0..N]` and sets `mipLevels`.
 ///
-/// @source UE5 DistanceFieldAtlas.h — MIP chain for LOD cone tracing
+/// MIP chain enables LOD cone tracing at coarser resolutions.
 void GenerateSdfMips(MeshSdfAsset& asset);
 
 } // namespace uz

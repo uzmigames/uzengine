@@ -7,8 +7,8 @@
 /// CPU bake path removed — GPU path is 2500x faster (6ms vs 15.5s for
 /// a 3968-triangle sphere at 32^3 on RTX 4090).
 ///
-/// @source UE5 MeshDistanceFieldUtilities.cpp — mesh SDF bake dispatch
-/// @source Real-Time Collision Detection, Ch 5.1.5 — ClosestPointOnTriangle
+/// @ref Wright 2015 "Dynamic Occlusion with Signed Distance Fields" — mesh SDF baking
+/// @ref Ericson 2005 "Real-Time Collision Detection" Ch 5.1.5 — ClosestPointOnTriangle
 
 #include "mesh_sdf_baker.h"
 

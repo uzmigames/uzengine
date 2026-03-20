@@ -8,7 +8,6 @@
 /// # Thread Safety
 /// NOT thread-safe. Render thread only.
 ///
-/// @source UE5 DynamicRenderScaling.h — FDynamicRenderScaling
 /// @source Unity DynamicResolutionHandler — scale-up hysteresis (360 frames at 60Hz)
 
 #pragma once
@@ -31,7 +30,6 @@ namespace uz {
 /// A dead zone between the scale-up and scale-down thresholds prevents
 /// oscillation when the GPU is near the target.
 ///
-/// @source UE5 DynamicRenderScaling.h — FDynamicRenderScaling
 class DynamicResolutionController {
 public:
     DynamicResolutionController() = default;
@@ -95,7 +93,6 @@ public:
     /// recommended screen percentage for the next frame.
     ///
     /// # Algorithm
-    /// @source UE5 DynamicRenderScaling.h — FDynamicRenderScaling::Update
     /// @source Unity DynamicResolutionHandler — scale-up hysteresis
     ///
     /// - **Scale DOWN**: If `gpuTime > targetTime * kScaleDownRatio (0.95)`,
@@ -138,15 +135,12 @@ private:
     uint32_t m_framesUnderBudget = 0;
 
     /// Number of consecutive under-budget frames required before scaling up.
-    /// @source UE5 DynamicRenderScaling.h — UpperBound heuristic
     static constexpr uint32_t kScaleUpThreshold = 120;
 
     /// Scale-down fires when GPU exceeds 95% of the target frame time.
-    /// @source UE5 DynamicRenderScaling.h — BudgetMs_ScaleDown
     static constexpr float kScaleDownRatio = 0.95f;
 
     /// Scale-up fires when GPU is under 85% of the target frame time.
-    /// @source UE5 DynamicRenderScaling.h — BudgetMs_ScaleUp
     static constexpr float kScaleUpRatio = 0.85f;
 
     /// Resolution change per step (5 percentage points).

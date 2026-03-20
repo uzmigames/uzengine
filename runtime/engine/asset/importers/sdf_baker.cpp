@@ -3,8 +3,8 @@
 /// Generates sparse signed distance fields from mesh triangles.
 /// Uses a spatial hash for O(1) nearest-triangle lookups per voxel.
 ///
-/// @source UE5 DistanceFieldAtlas.h:34-50 — brick layout, sparse storage
-/// @source UE5 MeshUtilities.cpp — mesh SDF generation algorithm
+/// Brick layout: 8x8x8 voxels per brick, sparse storage via indirection table.
+/// @ref Wright 2015 "Dynamic Occlusion with Signed Distance Fields"
 
 #include "sdf_baker.h"
 
@@ -80,8 +80,6 @@ struct Triangle {
 ///
 /// Uses the projection + edge/vertex clamping method from
 /// Ericson, "Real-Time Collision Detection", Chapter 5.1.5.
-///
-/// @source Standard algorithm — no UE5-specific constants
 struct ClosestPointResult {
     Vec3f closestPoint;
     float distance;
@@ -340,7 +338,7 @@ MeshSdfAsset BakeMeshSdf(
     uint32_t brickResZ = resVoxelZ / SdfBrick::kSize;
 
     // Expand bounds by a half-brick margin for the narrow band
-    /// @source UE5 DistanceFieldAtlas.h — narrow band margin around mesh surface
+    /// Narrow-band margin: half a brick's extent around the mesh surface.
     float margin = voxelSize * static_cast<float>(SdfBrick::kSize) * 0.5f;
     Vec3f expandedMin = boundsMin - Vec3f{margin, margin, margin};
     Vec3f expandedMax = expandedMin + Vec3f{
@@ -464,7 +462,7 @@ MeshSdfAsset BakeMeshSdf(
 
                             // Quantize: map [-bandWidth, +bandWidth] to [0, 255]
                             // 128 = zero-crossing (surface)
-                            /// @source UE5 DistanceFieldAtlas.h:34-50 — 8-bit quantization
+                            /// 8-bit SDF quantization: 128 = zero-crossing surface.
                             float normalized = (signedDist + bandWidth) / (2.0f * bandWidth);
                             normalized = std::clamp(normalized, 0.0f, 1.0f);
                             brick.data[lz * 64 + ly * 8 + lx] = static_cast<uint8_t>(normalized * 255.0f + 0.5f);
@@ -529,7 +527,7 @@ MeshSdfAsset BakeMeshSdf(
 /// (the zero-crossing) wins, because it represents the shortest distance
 /// to the mesh surface.
 ///
-/// @source UE5 DistanceFieldAtlas.h — min-distance MIP downsampling
+/// Min-distance MIP downsampling — preserves nearest surface across LODs.
 static void DownsampleBrick2x(const SdfBrick& src, uint8_t* dstVoxels) {
     constexpr uint32_t kHalf = SdfBrick::kSize / 2; // 4
 

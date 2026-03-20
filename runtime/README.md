@@ -6,7 +6,7 @@
 [![MSVC](https://img.shields.io/badge/MSVC-17.14-blue.svg)]()
 [![Clang](https://img.shields.io/badge/Clang-21-green.svg)]()
 
-UzEngine core runtime — deferred PBR renderer with UE5-parity lighting, atmosphere, and post-processing. Multi-backend RHI (DX12 SM6.8 bindless, DX12 SM5, DX11, Vulkan).
+UzEngine core runtime — deferred PBR renderer with industry-standard lighting, atmosphere, and post-processing. Multi-backend RHI (DX12 SM6.8 bindless, DX12 SM5, DX11, Vulkan).
 
 **Standalone C++ static library.** Consumed by demos, CLI tools, or the VSCode extension via N-API.
 
@@ -21,7 +21,7 @@ zig build test                    # Run all tests (~3600 tests)
 ## Rendering Features (v0.2.33)
 
 ### Lighting
-- Deferred PBR: GGX D + Vis_SmithJointApprox + F_Schlick + DiffuseBurley
+- Deferred PBR: GGX NDF + Smith GGX visibility + Schlick Fresnel + Disney Burley diffuse
 - Multiscatter energy compensation (Kulla-Conty/Turquin 2018)
 - Directional light + 64 point lights + 16 spot lights (cone attenuation)
 - IBL: SH L2 irradiance + prefiltered specular (5 mips) + BRDF LUT
@@ -44,7 +44,7 @@ zig build test                    # Run all tests (~3600 tests)
 - SSR (Hi-Z ray trace + Fresnel resolve)
 - GTAO (12-tap, bilateral denoise, temporal accumulation, multi-bounce)
 - Bloom (6-mip pyramid, Karis average, per-stage tints)
-- FilmToneMap (ACES 3-segment, 5 artist params)
+- ACES tone curve (3-segment S-curve, 5 artist params)
 - Auto-exposure (histogram, percentile-based)
 - DOF (CoC setup + 5-ring gather blur)
 - Motion blur (velocity gather, depth-aware, adaptive samples)
@@ -107,7 +107,7 @@ runtime/
 - **Three compilers**: Zig, MSVC, Clang — all zero warnings
 - **95%+ coverage** required for all new code
 - **Rust-style `///` documentation** on all public APIs
-- **UE5 source citations** (`@source UE5 file:line`) on all rendering code
+- **Published reference citations** (`@ref Author Year "Title"`) on all rendering code
 
 ## License
 

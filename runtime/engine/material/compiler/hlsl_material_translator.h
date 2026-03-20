@@ -1,6 +1,5 @@
 /// UzEngine HLSL Material Translator — compiles MaterialGraph to HLSL.
-/// @source UE5 HLSLMaterialTranslator.h — FHLSLMaterialTranslator
-/// NOT thread-safe. Create one per compilation.
+/// HLSL material translator pattern. NOT thread-safe. Create one per compilation.
 
 #pragma once
 
@@ -49,7 +48,7 @@ struct MaterialCompileResult {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Compiles a MaterialGraph into a `ComputeMaterialOutputs()` HLSL function.
-/// @source UE5 HLSLMaterialTranslator.h — FHLSLMaterialTranslator
+/// Compiles a material expression graph into HLSL source.
 class HlslMaterialTranslator {
 public:
     /// Compile a material graph to HLSL.

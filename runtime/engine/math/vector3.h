@@ -2,7 +2,7 @@
 ///
 /// Primary vector type for positions, directions, normals, and scales.
 /// All arithmetic operations are SIMD-accelerated through DirectXMath XMVECTOR.
-/// Coordinate system: Z-up, X-forward, left-handed (UE5 parity).
+/// Coordinate system: Z-up, X-forward, left-handed (standard).
 
 #pragma once
 

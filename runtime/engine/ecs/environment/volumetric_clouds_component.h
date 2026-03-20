@@ -4,8 +4,8 @@
 /// entity to enable cloud rendering. Only the first entity with this component
 /// is used (singleton semantics via first-found gathering).
 ///
-/// @source UE5 VolumetricCloudComponent.h — UVolumetricCloudComponent
-/// @source Schneider & Vos 2015 — "Real-Time Volumetric Cloudscapes of Horizon Zero Dawn"
+/// @ref Schneider & Vos 2015 — "Real-Time Volumetric Cloudscapes of Horizon Zero Dawn"
+/// @ref Hillaire 2020 — "A Scalable and Production Ready Sky and Atmosphere Rendering Technique"
 ///
 /// # Cloud Layer Model
 /// Clouds occupy a spherical shell between two altitudes above sea level:
@@ -42,18 +42,18 @@ namespace uz {
 
 /// Volumetric cloud layer configuration for the cloud ray-march pass.
 ///
-/// All altitude and distance fields are in **kilometers** to match UE5
+/// All altitude and distance fields are in **kilometers** to match reference
 /// VolumetricCloudComponent conventions and avoid floating-point precision
 /// issues at planetary scale. Wind velocity is also in km/s.
 struct VolumetricCloudsComponent {
     // ── Cloud Layer Geometry ─────────────────────────────────────────────
 
     /// Bottom altitude of the cloud layer in km above sea level.
-    /// @source UE5 VolumetricCloudComponent.h — LayerBottomAltitude default 5.0 km
+    /// Standard cumulus cloud base altitude. Default: 5.0 km.
     float layerBottomAltitudeKm = 5.0f;
 
     /// Height (thickness) of the cloud layer in km.
-    /// @source UE5 VolumetricCloudComponent.h — LayerHeight default 10.0 km
+    /// Typical cumulonimbus vertical extent. Default: 10.0 km.
     float layerHeightKm = 10.0f;
 
     // ── Cloud Density ────────────────────────────────────────────────────
@@ -84,7 +84,7 @@ struct VolumetricCloudsComponent {
 
     /// Extinction coefficient for Beer-Lambert attenuation (km^-1).
     /// Higher values cause light to be absorbed more quickly inside clouds.
-    /// @source UE5 VolumetricCloudComponent.h — extinction defaults
+    /// @ref Beer-Lambert law — cloud extinction coefficient. Default: 0.04 km^-1.
     float extinction = 0.04f;
 
     /// Scattering albedo [0,1]. Ratio of scattered light to total extinction.
@@ -116,7 +116,7 @@ struct VolumetricCloudsComponent {
     // ── Ray March Parameters ─────────────────────────────────────────────
 
     /// Maximum ray march distance in km from the camera.
-    /// @source UE5 VolumetricCloudComponent.h — TracingMaxDistance default 50 km
+    /// Limit ray-march to 50 km for performance (beyond this clouds fade out).
     float tracingMaxDistanceKm = 50.0f;
 
     /// Number of primary ray march steps through the cloud shell.

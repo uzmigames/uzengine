@@ -1,6 +1,6 @@
-/// UzEngine Cascaded Shadow Map — UE5 Exact Parity Implementation
+/// UzEngine Cascaded Shadow Map — Standard Rendering Parity Implementation
 ///
-/// All formulas match UE5 5.6 source. See phase0-0.1.0-csm-ue5-parity for
+/// All formulas match reference 5.6 source. See phase0-0.1.0-csm-ue5-parity for
 /// exact file:line references.
 
 #include "shadow_cascade.h"
@@ -26,7 +26,7 @@ constexpr uint32_t kFrustumCornerCount = 8;
 /// Threshold for detecting a near-vertical light direction.
 constexpr float kVerticalThreshold = 0.999f;
 
-/// UE5 texel snap factor — accounts for maximum kernel filter downsampling.
+/// texel snap factor — accounts for maximum kernel filter downsampling.
 /// Source: ShadowSetup.cpp:1029 — MaxDownsampleFactor = 4.
 constexpr float kMaxDownsampleFactor = 4.0f;
 
@@ -75,7 +75,7 @@ void ComputeFrustumCorners(
     const Mat4 invViewProj = (cameraView * cameraProj).Inverse();
 
     // NDC corners of the full clip volume.
-    // Reversed-Z (UE5 parity): near plane = z=1.0, far plane = z=0.0.
+    // Reversed-Z (standard): near plane = z=1.0, far plane = z=0.0.
     // Standard DX would be near=0, far=1 — but Mat4::Perspective() outputs reversed-Z.
     static constexpr float kNdcCorners[kFrustumCornerCount][3] = {
         {-1.0f, -1.0f, 1.0f}, // near bottom-left  (z=1 = near in reversed-Z)
@@ -116,7 +116,7 @@ void ComputeFrustumCorners(
 
 /// Chooses an up-vector for the light view matrix that avoids degeneracy
 /// when the light direction is nearly parallel to world-up.
-/// UzEngine uses Z-up coordinate system (UE5 parity).
+/// UzEngine uses Z-up coordinate system (standard).
 Vec3 ChooseLightUp(const Vec3& lightDir) {
     const Vec3 worldUp{0.0f, 0.0f, 1.0f};  // Z-up
     if (std::abs(lightDir.Dot(worldUp)) > kVerticalThreshold) {
@@ -126,11 +126,11 @@ Vec3 ChooseLightUp(const Vec3& lightDir) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// UE5 Exponential Accumulation Split Scheme
+// Exponential Accumulation Split Scheme
 // Source: DirectionalLightComponent.cpp:753-776
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Computes the accumulated scale for a cascade split using UE5's exponential
+/// Computes the accumulated scale for a cascade split using the reference engine's exponential
 /// distribution formula.
 ///
 /// The formula iterates `currentScale *= exponent` for each cascade,
@@ -139,7 +139,7 @@ Vec3 ChooseLightUp(const Vec3& lightDir) {
 /// by the exponent value.
 ///
 /// # Arguments
-/// * `exponent`     — Distribution exponent (UE5 default: 3.0).
+/// * `exponent`     — Distribution exponent (Default: 3.0).
 /// * `splitIndex`   — Which split boundary (0 to cascadeCount).
 /// * `cascadeCount` — Total number of cascades.
 ///
@@ -168,7 +168,7 @@ float ComputeAccumulatedScale(float exponent, uint32_t splitIndex, uint32_t casc
 } // anonymous namespace
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ComputeCascades — UE5 Parity
+// ComputeCascades — Reference Parity
 // ─────────────────────────────────────────────────────────────────────────────
 
 void ComputeCascades(
@@ -198,7 +198,7 @@ void ComputeCascades(
     const float shadowNear = cameraNear;
     const float shadowRange = shadowFar - shadowNear;
 
-    // --- Step 2: Compute split distances (UE5 exponential accumulation) ---
+    // --- Step 2: Compute split distances (reference exponential accumulation) ---
     // Source: DirectionalLightComponent.cpp:784-814
 
     const uint32_t N = config.cascadeCount;
@@ -231,11 +231,11 @@ void ComputeCascades(
         Vec3 corners[kFrustumCornerCount];
         ComputeFrustumCorners(cameraView, cameraProj, splitNear, extendedFar, corners);
 
-        // 3b. Compute optimal bounding sphere center (UE5 diagonal offset).
+        // 3b. Compute optimal bounding sphere center (reference diagonal offset).
         // Source: DirectionalLightComponent.cpp:880
         //
         // Instead of using the centroid of the 8 corners (which wastes shadow map
-        // space), UE5 computes an optimal Z-offset along the view axis that
+        // space), reference computes an optimal Z-offset along the view axis that
         // minimizes the bounding sphere radius.
         //
         // DiagonalASq = length² of near-plane diagonal
@@ -273,7 +273,7 @@ void ComputeCascades(
             const float dist = (corners[i] - center).Length();
             radius = std::max(radius, dist);
         }
-        // UE5: clamp minimum radius to 1.0 to avoid division by zero.
+        // Equivalent: clamp minimum radius to 1.0 to avoid division by zero.
         // Source: DirectionalLightComponent.cpp:890
         radius = std::max(radius, 1.0f);
 
@@ -283,7 +283,7 @@ void ComputeCascades(
 
         // 3e. Build the orthographic projection from the bounding sphere.
         // Shadow maps use STANDARD-Z (0=near, 1=far) while main view uses reversed-Z (1=near, 0=far).
-        // This matches UE5 (ShadowSetup.cpp:907): XMMatrixOrthographicLH naturally produces
+        // This matches reference (ShadowSetup.cpp:907): XMMatrixOrthographicLH naturally produces
         // standard-Z. The shadow comparison sampler (SCF_Less) and clear value (kShadowDepthClear=1.0)
         // are tuned for this space. Scene depth is reprojected into light-space (standard-Z)
         // before shadow comparison, so both sides of SampleCmp are in the same depth space.
@@ -294,7 +294,7 @@ void ComputeCascades(
             -radius, radius, -radius, radius, orthoNear, orthoFar)};
 
         // 3f. Snap to texel grid to prevent shadow shimmer.
-        // UE5 uses MaxDownsampleFactor=4 for a coarser snap grid.
+        // uses MaxDownsampleFactor=4 for a coarser snap grid.
         // Source: ShadowSetup.cpp:1020-1036
         const float snapGrid = 2.0f * kMaxDownsampleFactor / static_cast<float>(config.resolution);
 
@@ -332,7 +332,7 @@ void ComputeCascades(
         outCascades[cascade].bFarShadowCascade  = false;
     }
 
-    // --- Step 4: Far shadow cascades (UE5 parity) ---
+    // --- Step 4: Far shadow cascades (standard) ---
     // Source: DLC.cpp:1023 (FarShadowDistance), DLC.h:112 (FarShadowCascadeCount)
     //
     // Far cascades extend shadow coverage beyond maxDistance up to farShadowDistance.

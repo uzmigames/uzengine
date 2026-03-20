@@ -124,7 +124,7 @@ struct ShadowPassDesc {
     /// where `bFarShadowCascade == true`. Higher values = coarser geometry.
     /// 0 = no bias (same LOD as main cascades). Only effective when the engine
     /// has a LOD selection system.
-    /// @source UE5 DirectionalLightComponent.cpp:68 — GFarShadowStaticMeshLODBias
+    /// LOD bias for static meshes in far shadow cascades. Default: 0.
     int32_t            farShadowLodBias = 0;
 
     // ── Binder path (optional — set cbRingAllocator to enable) ──────────

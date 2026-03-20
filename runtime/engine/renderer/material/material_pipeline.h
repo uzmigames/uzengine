@@ -7,8 +7,7 @@
 /// 4. Creating a graphics PSO matching the standard GBuffer layout
 /// 5. Caching the result by material content hash
 ///
-/// @source UE5 MaterialShaderMap.cpp — FMaterialShaderMap::Compile()
-/// UE5 compiles each material into its own shader map containing all
+/// Each material is compiled into its own shader map containing all
 /// required shader permutations. UzEngine simplifies this to a single
 /// GBuffer PS variant per material graph, since we use a fixed deferred
 /// pipeline with bindless resources.
@@ -43,7 +42,6 @@ class MaterialGraph;
 
 /// Compiles material graphs into cached GBuffer PSOs.
 ///
-/// @source UE5 MaterialShaderMap.cpp — FMaterialShaderMap::Compile()
 ///
 /// Each material graph produces a unique pixel shader that replaces the
 /// standard gbuffer_ps.hlsl material evaluation. The pipeline caches

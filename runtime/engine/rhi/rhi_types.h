@@ -24,12 +24,12 @@
 namespace uz {
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Depth Convention — Reversed-Z (UE5 Parity)
+// Depth Convention — Reversed-Z (reference Parity)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// UzEngine uses reversed-Z depth: near plane maps to 1.0, far plane maps to 0.0.
 /// This provides ~100x better depth precision near the camera, eliminating
-/// Z-fighting on close geometry. Matches UE5 (RHIDefinitions.h:278-287).
+/// Z-fighting on close geometry. Standard (RHIDefinitions.h:278-287).
 ///
 /// # Rules
 /// - NEVER use raw `0.0f` or `1.0f` for depth clear/compare — use these constants.
@@ -41,7 +41,7 @@ constexpr float    kDepthFar  = 0.0f;      ///< Far plane depth value (clear tar
 constexpr float    kDepthNear = 1.0f;      ///< Near plane depth value.
 
 /// Shadow maps use standard-Z (0=near, 1=far) even though the main view uses reversed-Z.
-/// This matches UE5 (ShadowDepthRendering.cpp:704, ShadowSetup.cpp:907).
+/// This matches reference (ShadowDepthRendering.cpp:704, ShadowSetup.cpp:907).
 /// Shadow ortho projections (XMMatrixOrthographicLH) naturally produce standard-Z.
 /// The shadow comparison sampler (SCF_Less) and clear value (1.0) are tuned for this space.
 constexpr float    kShadowDepthClear = 1.0f;  ///< Shadow map clear value (standard-Z far plane).

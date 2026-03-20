@@ -5,7 +5,7 @@
 ## Critical Fixes
 
 ### BRDF Foundation
-- **Vis_SmithJointApprox input corrected** — now receives `Pow4(roughness)` instead of `roughness²`. This was the most impactful bug: ALL specular highlights on every surface were too bright and too narrow. Fixed in `pbr_common.hlsli` and `lighting.hlsli`. @source UE5 ShadingModels.ush:215
+- **VisibilitySmithGGX input corrected** — now receives `Pow4(roughness)` instead of `roughness²`. This was the most impactful bug: ALL specular highlights on every surface were too bright and too narrow. Fixed in `pbr_common.hlsli` and `lighting.hlsli`. @source UE5 ShadingModels.ush:215
 - **F_Schlick F90 micro-occlusion** — `F90 = saturate(50.0 * F0.g)` replaces hardcoded 1.0. Prevents over-bright grazing reflections on low-F0 materials. @source UE5 BRDF.ush:382
 - **NdotV clamping** — `saturate(abs(NoV) + 1e-5)` replaces `max(dot, 0.001)`. Handles back-facing normals correctly. @source UE5 ShadingModels.ush:204
 

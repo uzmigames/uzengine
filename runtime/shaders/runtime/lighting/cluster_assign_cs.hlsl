@@ -3,25 +3,25 @@
 /// Assigns point and spot lights to a 3D cluster grid for Forward+ rendering.
 /// Each dispatch thread group processes one cluster cell. Threads within the
 /// group cooperate to test all lights against the cluster AABB via a parallel
-/// loop with prefix-sum compaction, matching UE5's thread-group-per-cell path.
+/// loop with prefix-sum compaction, matching the reference engine's thread-group-per-cell path.
 ///
-/// @source UE5 LightGridInjection.usf:794-903 — LightGridInjectionCS
-/// @source UE5 LightGridInjection.usf:147-201 — ComputeCellBounds
-/// @source UE5 LightGridInjection.usf:246-304 — OverlapsLight (sphere-AABB + cone test)
-/// @source UE5 LightGridInjection.usf:84-106  — ComputeCellNearViewDepthFromZSlice
-/// @source UE5 LightGridInjection.usf:634-721 — CullLights_ThreadGroup
-/// @source UE5 Common.ush:1918-1922 — ComputeSquaredDistanceFromBoxToPoint
-/// @source UE5 Common.ush:2384-2388 — ComputeDepthFromZSlice
-/// @source UE5 RenderUtils.h:641-660 — CalculateGridZParams (C++ side, ZParams derivation)
-/// @source UE5 LightGridInjection.cpp:67 — GLightGridPixelSize=64
-/// @source UE5 LightGridInjection.cpp:75 — GLightGridSizeZ=32
-/// @source UE5 LightGridInjection.cpp:119 — GMaxCulledLightsPerCell=32
-/// @source UE5 LightGridInjection.cpp:265 — NumCulledLightsGridStride=2
-/// @source UE5 LightGridInjection.cpp:267 — LightLinkStride=2
-/// @source UE5 LightGridInjection.cpp:386 — DepthDistributionScale=4.05
-/// @source UE5 RenderUtils.h:649 — NearOffset=9.5 (0.095*100 centimeters)
+/// @ref LightGridInjectionCS
+/// @ref ComputeCellBounds
+/// @ref OverlapsLight (sphere-AABB + cone test)
+/// @ref ComputeCellNearViewDepthFromZSlice
+/// @ref CullLights_ThreadGroup
+/// @ref ComputeSquaredDistanceFromBoxToPoint
+/// @ref ComputeDepthFromZSlice
+/// @ref CalculateGridZParams (C++ side, ZParams derivation)
+/// @ref GLightGridPixelSize=64
+/// @ref GLightGridSizeZ=32
+/// @ref GMaxCulledLightsPerCell=32
+/// @ref NumCulledLightsGridStride=2
+/// @ref LightLinkStride=2
+/// @ref DepthDistributionScale=4.05
+/// @ref NearOffset=9.5 (0.095*100 centimeters)
 /// @constants See individual function headers for per-constant citations.
-/// @deviations NONE — all algorithms match UE5 exactly. Simplified struct layout
+/// @deviations NONE — all algorithms match reference exactly. Simplified struct layout
 ///   (LightGPU vs FForwardLightData) since UzEngine does not yet have rect lights
 ///   or MegaLights; the sphere-AABB and cone culling math is identical.
 ///
@@ -42,16 +42,16 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Thread group size — 64 threads cooperate to cull lights for one cluster cell.
-/// UE5 uses 4x4x4=64 (LightGridInjection.cpp:346) or 4x4x2=32 depending on
+/// uses 4x4x4=64 (LightGridInjection.cpp:346) or 4x4x2=32 depending on
 /// permutation. We use flat 64 for simplicity.
 #define THREADGROUP_SIZE 64
 
 /// Maximum lights that can be stored per cluster in LDS before overflow.
-/// @source UE5 LightGridInjection.usf:534 — MAX_LDS_ITEMS 256
+/// @ref MAX_LDS_ITEMS 256
 #define MAX_LDS_ITEMS 256
 
 /// Stride for NumCulledLightsGrid entries (offset + count packed as 2 uint32s).
-/// @source UE5 LightGridInjection.cpp:265 — NumCulledLightsGridStride=2
+/// @ref NumCulledLightsGridStride=2
 #define NUM_CULLED_LIGHTS_GRID_STRIDE 2
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -60,7 +60,7 @@
 
 /// Per-light GPU data. Lights are pre-transformed to view space on the CPU.
 ///
-/// Matches the user-specified interface. UE5 equivalent is FForwardLightData
+/// Matches the user-specified interface. reference equivalent is FForwardLightData
 /// (LightGridCommon.ush:163) but we use a simplified layout since UzEngine
 /// does not yet support rect lights or IES profiles.
 struct LightGPU {
@@ -78,12 +78,12 @@ struct LightGPU {
 
 /// Cluster grid parameters. Bound at register b0 via root CBV.
 ///
-/// The grid uses a logarithmic depth distribution matching UE5's approach:
+/// The grid uses a logarithmic depth distribution matching the reference engine's approach:
 ///   sliceDepth = (exp2(slice / S) - O) / B
 /// where B, O, S are the LightGridZParams computed on the CPU via
 /// CalculateGridZParams() (RenderUtils.h:641-660).
 ///
-/// @source UE5 LightGridInjection.cpp:306-311 — pass parameter layout
+/// @ref pass parameter layout
 cbuffer ClusterCB : register(b0) {
     float4x4 g_InvProjection;    ///< Clip → view transform (inverse projection).
     float3   g_LightGridZParams; ///< (B, O, S) for logarithmic depth slicing.
@@ -108,16 +108,16 @@ cbuffer ClusterCB : register(b0) {
 StructuredBuffer<LightGPU> g_LightBuffer : register(t0);
 
 /// Per-cluster header: [0] = packed (count), [1] = packed (global offset).
-/// Stride is 2 uint32s per cluster, matching UE5's NumCulledLightsGridStride=2.
-/// @source UE5 LightGridInjection.usf:469-470 — RWNumCulledLightsGrid write
+/// Stride is 2 uint32s per cluster, matching the reference engine's NumCulledLightsGridStride=2.
+/// @ref RWNumCulledLightsGrid write
 RWStructuredBuffer<uint> g_ClusterLightGrid : register(u0);
 
 /// Global flat light index list. Clusters reference contiguous ranges.
-/// @source UE5 LightGridInjection.usf:28 — RWCulledLightDataGrid
+/// @ref RWCulledLightDataGrid
 RWStructuredBuffer<uint> g_LightIndexList : register(u1);
 
 /// Single-element buffer for atomic allocation of g_LightIndexList ranges.
-/// @source UE5 LightGridInjection.usf:31 — RWCulledLightDataAllocator
+/// @ref RWCulledLightDataAllocator
 RWStructuredBuffer<uint> g_GlobalCounter : register(u2);
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -125,19 +125,19 @@ RWStructuredBuffer<uint> g_GlobalCounter : register(u2);
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// LDS storage for light indices found to overlap this cluster cell.
-/// @source UE5 LightGridInjection.usf:536 — CellLDSItems[MAX_LDS_ITEMS]
+/// @ref CellLDSItems[MAX_LDS_ITEMS]
 groupshared uint gs_LightIndices[MAX_LDS_ITEMS];
 
 /// Running count of visible lights, incremented atomically by threads.
-/// @source UE5 LightGridInjection.usf:628 — CellNumVisibleLights
+/// @ref CellNumVisibleLights
 groupshared uint gs_NumVisibleLights;
 
 /// Prefix-sum offset counter — tracks next available LDS write slot.
-/// @source UE5 LightGridInjection.usf:625 — OutOffset
+/// @ref OutOffset
 groupshared uint gs_OutOffset;
 
 /// Globally allocated start index in g_LightIndexList for this cell.
-/// @source UE5 LightGridInjection.usf:632 — CulledLightDataStart
+/// @ref CulledLightDataStart
 groupshared uint gs_CulledLightDataStart;
 
 /// Prefix-sum scratch pad for parallel compaction (64 elements).
@@ -149,7 +149,7 @@ groupshared uint gs_PrefixScratch[THREADGROUP_SIZE];
 
 /// Converts a cluster depth slice index to a linear view-space depth.
 ///
-/// @source UE5 Common.ush:2384-2388 — ComputeDepthFromZSlice
+/// @ref ComputeDepthFromZSlice
 /// @constants B=ZParams.x, O=ZParams.y, S=ZParams.z (CPU-computed, no hardcoded values)
 /// @deviations NONE
 float ComputeDepthFromZSlice(float3 zParams, float zSlice)
@@ -161,22 +161,22 @@ float ComputeDepthFromZSlice(float3 zParams, float zSlice)
 /// for slice 0 (clamp to camera near plane) and the last slice (extend to
 /// world max distance).
 ///
-/// @source UE5 LightGridInjection.usf:84-106 — ComputeCellNearViewDepthFromZSlice
-/// @constants 2000000.0 = UE5 world max depth (LightGridInjection.usf:94)
+/// @ref ComputeCellNearViewDepthFromZSlice
+/// @constants 2000000.0 = reference world max depth (LightGridInjection.usf:94)
 /// @deviations NONE
 float ComputeCellNearViewDepth(uint zSlice, uint totalSlices)
 {
     float sliceDepth = ComputeDepthFromZSlice(g_LightGridZParams, (float)zSlice);
 
     // Last slice extends to world max to catch distant lights.
-    // @source UE5 LightGridInjection.usf:94
+    // @ref implementation detail
     if (zSlice == totalSlices)
     {
         sliceDepth = 2000000.0f;
     }
 
     // First slice starts at near plane to cover [0, nearOffset] range.
-    // @source UE5 LightGridInjection.usf:99-103
+    // @ref implementation detail
     if (zSlice == 0)
     {
         sliceDepth = g_NearPlane;
@@ -192,7 +192,7 @@ float ComputeCellNearViewDepth(uint zSlice, uint totalSlices)
 /// Computes the squared distance from a point to the surface of an AABB
 /// defined by (center, extent). Returns 0 if the point is inside the box.
 ///
-/// @source UE5 Common.ush:1918-1922 — ComputeSquaredDistanceFromBoxToPoint
+/// @ref ComputeSquaredDistanceFromBoxToPoint
 /// @constants NONE
 /// @deviations NONE
 float ComputeSquaredDistanceFromBoxToPoint(float3 boxCenter, float3 boxExtent, float3 point)
@@ -210,7 +210,7 @@ float ComputeSquaredDistanceFromBoxToPoint(float3 boxCenter, float3 boxExtent, f
 /// May produce false negatives (AABB reported as inside when actually outside),
 /// which is acceptable for culling (conservative).
 ///
-/// @source UE5 LightGridInjection.usf:233-244 — IsAabbOutsideInfiniteAcuteConeApprox
+/// @ref IsAabbOutsideInfiniteAcuteConeApprox
 /// @constants NONE
 /// @deviations NONE
 bool IsAabbOutsideInfiniteAcuteConeApprox(
@@ -221,16 +221,16 @@ bool IsAabbOutsideInfiniteAcuteConeApprox(
     float3 D = aabbCentre - coneVertex;
 
     // Perpendicular to cone axis, in the plane containing both cone axis and D.
-    // @source UE5 LightGridInjection.usf:239
+    // @ref implementation detail
     float3 M = -normalize(cross(cross(D, coneAxis), coneAxis));
 
     // Build a separating plane normal from cone surface.
-    // @source UE5 LightGridInjection.usf:240
+    // @ref implementation detail
     float3 N = -tanConeAngle * coneAxis + M;
     float4 plane = float4(N, 0.0f);
 
     // Test if AABB is fully in front of (outside) this plane.
-    // @source UE5 LightGridInjection.usf:219-223 — IsAabbInFrontOfPlane
+    // @ref IsAabbInFrontOfPlane
     float dist = dot(float4(D, 1.0f), plane);
     float radius = dot(aabbExt, abs(plane.xyz));
     return dist > radius;
@@ -244,7 +244,7 @@ bool IsAabbOutsideInfiniteAcuteConeApprox(
 /// corners of the cell's screen-space tile extruded between the near and far
 /// depth planes of its Z-slice.
 ///
-/// @source UE5 LightGridInjection.usf:147-201 — ComputeCellBounds
+/// @ref ComputeCellBounds
 /// @constants NONE
 /// @deviations NONE — identical corner unprojection via ClipToView (inv projection).
 void ComputeCellBounds(
@@ -255,7 +255,7 @@ void ComputeCellBounds(
     out float3 outViewExtent)
 {
     // Tile extents in unit-plane (NDC) coordinates.
-    // @source UE5 LightGridInjection.usf:150-151
+    // @ref implementation detail
     float2 invCulledGridSizeF = (float)g_TilePixelSize * g_ViewSizeInv;
     float2 tileSize = float2(2.0f, -2.0f) * invCulledGridSizeF;
     float2 unitPlaneMin = float2(-1.0f, 1.0f);
@@ -264,11 +264,11 @@ void ComputeCellBounds(
     float2 unitPlaneTileMax = (gridCoordinate.xy + 1) * tileSize + unitPlaneMin;
 
     // Unproject all 8 corners (4 at minZ, 4 at maxZ) through inverse projection.
-    // UE5 uses ConvertToDeviceZ here, but for non-reversed-Z the device Z is
+    // uses ConvertToDeviceZ here, but for non-reversed-Z the device Z is
     // just the clip Z. We use a fixed device Z of 0.5 for the clip-to-view
-    // multiplication and then scale XY by the actual depth. This follows UE5's
+    // multiplication and then scale XY by the actual depth. This follows the reference implementation's
     // approach of multiplying clip coords by ClipToView (View.ClipToView).
-    // @source UE5 LightGridInjection.usf:158-167
+    // @ref implementation detail
 
     // For a standard perspective projection, the clip-to-view transform maps
     // (ndc.x, ndc.y, deviceZ, 1) to view space after perspective division.
@@ -308,7 +308,7 @@ void ComputeCellBounds(
     float2 farCorner3 = viewMinCorner3 * scaleFar;
 
     // Compute the AABB across all 8 corners.
-    // @source UE5 LightGridInjection.usf:181-196
+    // @ref implementation detail
     float2 viewAabbMinXY = min(nearCorner0, nearCorner1);
     viewAabbMinXY = min(viewAabbMinXY, nearCorner2);
     viewAabbMinXY = min(viewAabbMinXY, nearCorner3);
@@ -328,7 +328,7 @@ void ComputeCellBounds(
     float3 viewAabbMin = float3(viewAabbMinXY, minTileZ);
     float3 viewAabbMax = float3(viewAabbMaxXY, maxTileZ);
 
-    // @source UE5 LightGridInjection.usf:197-198
+    // @ref implementation detail
     outViewCenter = 0.5f * (viewAabbMin + viewAabbMax);
     outViewExtent = viewAabbMax - outViewCenter;
 }
@@ -340,7 +340,7 @@ void ComputeCellBounds(
 /// Tests if a light sphere overlaps a cluster AABB. For spot lights, also
 /// performs an approximate cone test using a separating plane.
 ///
-/// @source UE5 LightGridInjection.usf:246-304 — OverlapsLight
+/// @ref OverlapsLight
 /// @constants NONE
 /// @deviations Simplified — no rect light or textured light flags (UzEngine
 ///   does not support these yet). Core sphere + cone math is identical.
@@ -350,7 +350,7 @@ bool OverlapsLight(
     float3 cellExtent)
 {
     // Primary test: sphere-AABB overlap.
-    // @source UE5 LightGridInjection.usf:253-254
+    // @ref implementation detail
     float boxDistSq = ComputeSquaredDistanceFromBoxToPoint(cellCenter, cellExtent, light.position);
 
     if (boxDistSq >= light.radius * light.radius)
@@ -359,7 +359,7 @@ bool OverlapsLight(
     }
 
     // For spot lights, refine with approximate cone test.
-    // @source UE5 LightGridInjection.usf:262-273 — REFINE_SPOTLIGHT_BOUNDS
+    // @ref REFINE_SPOTLIGHT_BOUNDS
     if (light.type > 0.5f)
     {
         // Derive tan(cone angle) from cos(outer angle).
@@ -369,12 +369,12 @@ bool OverlapsLight(
         float tanAngle = (cosAngle > 0.0001f) ? (sinAngle / cosAngle) : 0.0f;
 
         // Only apply cone culling for acute cones (< 90 degrees, tan > 0).
-        // @source UE5 LightGridInjection.usf:267 — if (TanConeAngle > 0.0f)
+        // @ref if (TanConeAngle > 0.0f)
         if (tanAngle > 0.0f)
         {
-            // UE5 uses -ViewSpaceDirAndPreprocAngle.xyz for the light direction.
+            // uses -ViewSpaceDirAndPreprocAngle.xyz for the light direction.
             // Our light.direction is already the cone axis in view space.
-            // @source UE5 LightGridInjection.usf:269-270
+            // @ref implementation detail
             if (IsAabbOutsideInfiniteAcuteConeApprox(
                     light.position, light.direction, tanAngle,
                     cellCenter, cellExtent))
@@ -394,12 +394,12 @@ bool OverlapsLight(
 /// Computes an exclusive prefix sum across the thread group, returning the
 /// per-thread offset and (via groupCount) the total sum.
 ///
-/// This replaces UE5's ThreadGroupPrefixSum.ush inclusion. The algorithm is
+/// This replaces the reference engine's ThreadGroupPrefixSum.ush inclusion. The algorithm is
 /// a standard Hillis-Steele scan in shared memory.
 ///
-/// @source UE5 ThreadGroupPrefixSum.ush — ThreadGroupPrefixSum
+/// @ref ThreadGroupPrefixSum
 /// @constants NONE
-/// @deviations Implementation detail differs (UE5 uses a separate .ush with
+/// @deviations Implementation detail differs (reference uses a separate .ush with
 ///   wave-op optimisations), but the interface is identical: returns exclusive
 ///   offset for this thread and total groupCount.
 uint ThreadGroupPrefixSum(uint value, uint threadIndex, out uint groupCount)
@@ -439,7 +439,7 @@ uint ThreadGroupPrefixSum(uint value, uint threadIndex, out uint groupCount)
 /// directly maps to a cluster cell coordinate. All 64 threads in the group
 /// cooperate to test all lights against this cell's AABB.
 ///
-/// The algorithm follows UE5's USE_THREAD_GROUP_PER_CELL path:
+/// The algorithm follows the reference engine's USE_THREAD_GROUP_PER_CELL path:
 /// 1. Compute cell AABB from grid coordinate + depth slice bounds.
 /// 2. Parallel loop: each iteration covers THREADGROUP_SIZE lights.
 ///    Each thread tests one light, prefix sum compacts survivors into LDS.
@@ -447,10 +447,10 @@ uint ThreadGroupPrefixSum(uint value, uint threadIndex, out uint groupCount)
 /// 4. Output LDS contents to global index list.
 /// 5. Write per-cluster header (count + offset).
 ///
-/// @source UE5 LightGridInjection.usf:634-721 — CullLights_ThreadGroup
-/// @source UE5 LightGridInjection.usf:800-903 — LightGridInjectionCS main
+/// @ref CullLights_ThreadGroup
+/// @ref LightGridInjectionCS main
 /// @constants NONE (all from cbuffer)
-/// @deviations NONE — follows UE5 thread-group-per-cell algorithm exactly.
+/// @deviations NONE — follows reference thread-group-per-cell algorithm exactly.
 
 [numthreads(THREADGROUP_SIZE, 1, 1)]
 void main(
@@ -458,7 +458,7 @@ void main(
     uint  GroupIndex : SV_GroupIndex)
 {
     // ── Early-out for out-of-bounds groups ──────────────────────────────────
-    // @source UE5 LightGridInjection.usf:807
+    // @ref implementation detail
     if (any(GroupId >= uint3(g_TilesX, g_TilesY, g_NumSlices)))
     {
         return;
@@ -468,11 +468,11 @@ void main(
     uint  threadIndex    = GroupIndex;
 
     // ── Compute linear grid index ───────────────────────────────────────────
-    // @source UE5 LightGridInjection.usf:809
+    // @ref implementation detail
     uint gridIndex = (gridCoordinate.z * g_TilesY + gridCoordinate.y) * g_TilesX + gridCoordinate.x;
 
     // ── Initialise group-shared state ───────────────────────────────────────
-    // @source UE5 LightGridInjection.usf:636-643
+    // @ref implementation detail
     if (threadIndex == 0)
     {
         gs_OutOffset        = 0;
@@ -481,20 +481,20 @@ void main(
     GroupMemoryBarrierWithGroupSync();
 
     // ── Compute cell depth bounds ───────────────────────────────────────────
-    // @source UE5 LightGridInjection.usf:815-816
+    // @ref implementation detail
     float minTileZ = ComputeCellNearViewDepth(gridCoordinate.z,     g_NumSlices);
     float maxTileZ = ComputeCellNearViewDepth(gridCoordinate.z + 1, g_NumSlices);
 
     // ── Compute cell view-space AABB ────────────────────────────────────────
-    // @source UE5 LightGridInjection.usf:857
+    // @ref implementation detail
     float3 cellCenter, cellExtent;
     ComputeCellBounds(gridCoordinate, minTileZ, maxTileZ, cellCenter, cellExtent);
 
     // ── Parallel light culling loop ─────────────────────────────────────────
     // Each iteration processes THREADGROUP_SIZE lights. Each thread tests one
     // light and a prefix sum compacts overlapping lights into contiguous LDS
-    // slots. This matches UE5's CullLights_ThreadGroup exactly.
-    // @source UE5 LightGridInjection.usf:656-698
+    // slots. This matches reference's CullLights_ThreadGroup exactly.
+    // @ref implementation detail
     uint localVisibleCount = 0;
 
     [loop]
@@ -512,7 +512,7 @@ void main(
 
         // Prefix sum to compute compacted write position.
         // Must NOT be under divergent branching.
-        // @source UE5 LightGridInjection.usf:671-672
+        // @ref implementation detail
         uint groupCount;
         uint prefixOffset = ThreadGroupPrefixSum(overlaps ? 1u : 0u, threadIndex, groupCount);
 
@@ -520,18 +520,18 @@ void main(
         uint indexInCell = gs_OutOffset + prefixOffset;
 
         // Wait for all threads to read gs_OutOffset before thread 0 updates it.
-        // @source UE5 LightGridInjection.usf:677
+        // @ref implementation detail
         GroupMemoryBarrierWithGroupSync();
 
         // Thread 0 advances the global LDS offset.
-        // @source UE5 LightGridInjection.usf:679-681
+        // @ref implementation detail
         if (threadIndex == 0)
         {
             gs_OutOffset += groupCount;
         }
 
         // Write surviving light index to LDS.
-        // @source UE5 LightGridInjection.usf:684-697
+        // @ref implementation detail
         if (overlaps)
         {
             // Respect the per-cluster cap and LDS capacity.
@@ -544,7 +544,7 @@ void main(
     }
 
     // ── Aggregate per-thread counts ─────────────────────────────────────────
-    // @source UE5 LightGridInjection.usf:702
+    // @ref implementation detail
     InterlockedAdd(gs_NumVisibleLights, localVisibleCount);
     GroupMemoryBarrierWithGroupSync();
 
@@ -553,7 +553,7 @@ void main(
     numVisibleLights = min(numVisibleLights, MAX_LDS_ITEMS);
 
     // ── Allocate global index list range ────────────────────────────────────
-    // @source UE5 LightGridInjection.usf:707-710
+    // @ref implementation detail
     if (threadIndex == 0)
     {
         if (numVisibleLights > 0)
@@ -569,7 +569,7 @@ void main(
 
     // ── Output LDS contents to global index list ────────────────────────────
     // Each thread copies a stride of the LDS to the global buffer.
-    // @source UE5 LightGridInjection.usf:588-601 — OutputCell LDS path
+    // @ref OutputCell LDS path
     [loop]
     for (uint outIdx = threadIndex; outIdx < numVisibleLights; outIdx += THREADGROUP_SIZE)
     {
@@ -578,8 +578,8 @@ void main(
 
     // ── Write per-cluster header ────────────────────────────────────────────
     // Two uint32s per cluster: [0] = light count, [1] = global list offset.
-    // @source UE5 LightGridInjection.usf:469-470 — RWNumCulledLightsGrid write
-    // UE5 packs more info (MegaLights count, rect/textured flags) but we use
+    // @ref RWNumCulledLightsGrid write
+    // packs more info (MegaLights count, rect/textured flags) but we use
     // a simple (count, offset) pair since UzEngine does not have those features.
     if (threadIndex == 0)
     {

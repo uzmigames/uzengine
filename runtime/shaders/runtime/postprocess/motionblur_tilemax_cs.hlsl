@@ -20,23 +20,23 @@
 ///   tileCountX, tileCountY.
 /// - No sampler needed (point-load via Load()).
 ///
-/// @source UE5 MotionBlurVelocityFlatten.usf:79-165 — MainCS
-/// @source UE5 MotionBlurVelocityFlatten.ush:67-135 — ReduceVelocityFlattenTile
-/// @source UE5 MotionBlurCommon.ush:24 — VELOCITY_FLATTEN_TILE_SIZE = 16
+/// @ref McGuire et al. 2012 — tile max velocity flatten:79-165 — MainCS
+/// @ref McGuire et al. 2012 — velocity tile reduce:67-135 — ReduceVelocityFlattenTile
+/// @ref Motion blur common —24 — VELOCITY_FLATTEN_TILE_SIZE = 16
 /// @constants TILE_SIZE=16 (MotionBlurCommon.ush:24),
 ///            THREAD_COUNT=256 (VELOCITY_FLATTEN_TILE_SIZE^2)
-/// @deviations UE5 uses polar velocity encoding and multi-direction range tracking
+/// @deviations the reference uses polar velocity encoding and multi-direction range tracking
 ///             (FVelocityRange with CONFIG_MAX_RANGE_SIZE directions). UzEngine uses
 ///             a simplified Cartesian max-magnitude approach since we only need a
 ///             single dominant velocity direction per tile for the neighbor max pass.
-///             UE5 also encodes velocity+depth into a flattened texture
+///             reference also encodes velocity+depth into a flattened texture
 ///             (MotionBlurVelocityFlatten.ush:137-145); we output raw Cartesian velocity.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 MotionBlurCommon.ush:24 — VELOCITY_FLATTEN_TILE_SIZE
+/// @ref Motion blur common —24 — VELOCITY_FLATTEN_TILE_SIZE
 static const uint TILE_SIZE = 16;
 static const uint THREAD_COUNT = TILE_SIZE * TILE_SIZE; // 256
 
@@ -65,7 +65,7 @@ RWTexture2D<float2> tileMaxOutput   : register(u0);
 // Groupshared Memory for Parallel Reduction
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 MotionBlurVelocityFlatten.ush:19-20 — SharedArray0/SharedArray1
+/// @ref McGuire et al. 2012 — velocity tile reduce:19-20 — SharedArray0/SharedArray1
 /// Stores velocity vector and squared magnitude for parallel reduction.
 groupshared float2 s_velocity[THREAD_COUNT];
 groupshared float  s_magnitudeSq[THREAD_COUNT];
@@ -74,8 +74,8 @@ groupshared float  s_magnitudeSq[THREAD_COUNT];
 // Entry Point
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 MotionBlurVelocityFlatten.usf:79-165 — MainCS
-/// @source UE5 MotionBlurVelocityFlatten.ush:67-135 — ReduceVelocityFlattenTile
+/// @ref McGuire et al. 2012 — tile max velocity flatten:79-165 — MainCS
+/// @ref McGuire et al. 2012 — velocity tile reduce:67-135 — ReduceVelocityFlattenTile
 /// @deviations Simplified: Cartesian max-magnitude reduction instead of polar
 ///             velocity range with multi-direction support.
 [numthreads(TILE_SIZE, TILE_SIZE, 1)]
@@ -95,8 +95,8 @@ void main(uint3 dtid : SV_DispatchThreadID, uint gi : SV_GroupIndex, uint3 gid :
     GroupMemoryBarrierWithGroupSync();
 
     // ── Parallel reduction to find max velocity magnitude ────────────────
-    // @source UE5 MotionBlurVelocityFlatten.ush:88-132 — VelocityFlattenStep cascade
-    // UE5 uses a cascade of VelocityFlattenStep calls with decreasing group sizes
+    // @ref McGuire et al. 2012 — velocity tile reduce:88-132 — VelocityFlattenStep cascade
+    // uses a cascade of VelocityFlattenStep calls with decreasing group sizes
     // (128, 64, 32, 16, 8, 4, 2, 1). We use the same pattern but simplified to
     // track only a single max velocity vector (not polar range with multiple directions).
     [unroll]
@@ -114,7 +114,7 @@ void main(uint3 dtid : SV_DispatchThreadID, uint gi : SV_GroupIndex, uint3 gid :
     }
 
     // ── Thread 0 writes the tile result ──────────────────────────────────
-    // @source UE5 MotionBlurVelocityFlatten.usf:156-160 — output tile
+    // @ref McGuire et al. 2012 — tile max velocity flatten:156-160 — output tile
     if (gi == 0)
     {
         // Bounds check: only write if tile is within the output dimensions.

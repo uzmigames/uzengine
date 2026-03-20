@@ -11,7 +11,7 @@
 /// 3. Keep the velocity with the largest squared magnitude.
 /// 4. Output the winning velocity to the neighbor max texture.
 ///
-/// UE5 uses a more sophisticated approach in MotionBlurTileGather.usf that
+/// uses a more sophisticated approach in MotionBlurTileGather.usf that
 /// considers velocity direction and projects tile offsets onto the velocity
 /// vector to determine which neighbors are relevant (scatter-as-gather with
 /// oriented quad intersection). Our simplified 3x3 approach is sufficient
@@ -23,10 +23,10 @@
 ///   tileCountX, tileCountY.
 /// - No sampler needed (point-load via Load()).
 ///
-/// @source UE5 MotionBlurTileGather.usf:24-91 — MainCS
-/// @source UE5 MotionBlurCommon.ush:24 — VELOCITY_FLATTEN_TILE_SIZE = 16
+/// @ref McGuire et al. 2012 — neighbor max tile gather:24-91 — MainCS
+/// @ref Motion blur common —24 — VELOCITY_FLATTEN_TILE_SIZE = 16
 /// @constants TILE_SIZE=16 (MotionBlurCommon.ush:24)
-/// @deviations UE5 uses a 7x7 neighborhood (-3..+3) with velocity-direction-aware
+/// @deviations the reference uses a 7x7 neighborhood (-3..+3) with velocity-direction-aware
 ///             quad intersection test to determine which neighbors contribute
 ///             (MotionBlurTileGather.usf:37-83). UzEngine uses a simpler 3x3
 ///             neighborhood (-1..+1) with unconditional max, which is conservative
@@ -58,8 +58,8 @@ RWTexture2D<float2> neighborMaxOut   : register(u0);
 // Entry Point
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 MotionBlurTileGather.usf:24-91 — MainCS
-/// @deviations 3x3 neighborhood instead of UE5's 7x7 direction-aware quad test.
+/// @ref McGuire et al. 2012 — neighbor max tile gather:24-91 — MainCS
+/// @deviations 3x3 neighborhood instead of the reference engine's 7x7 direction-aware quad test.
 [numthreads(8, 8, 1)]
 void main(uint3 dtid : SV_DispatchThreadID)
 {
@@ -74,7 +74,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
 #endif
 
     // ── Find max velocity in 3x3 neighborhood ───────────────────────────
-    // @source UE5 MotionBlurTileGather.usf:37-84 — 7x7 scatter-as-gather loop
+    // @ref McGuire et al. 2012 — neighbor max tile gather:37-84 — 7x7 scatter-as-gather loop
     // We use a simpler 3x3 kernel that is conservative but correct.
     float2 maxVel = float2(0.0, 0.0);
     float maxMagSq = 0.0;

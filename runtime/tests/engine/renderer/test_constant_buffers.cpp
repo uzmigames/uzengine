@@ -94,7 +94,7 @@ TEST(PerObjectCB, FieldOffsets) {
 TEST(PerObjectCB, BlendModeDefaults) {
     PerObjectCB cb{};
     EXPECT_EQ(cb.blendMode, 0u);               // Opaque by default
-    EXPECT_NEAR(cb.alphaClipThreshold, 0.3333f, 1e-4f); // UE5 default
+    EXPECT_NEAR(cb.alphaClipThreshold, 0.3333f, 1e-4f); // default
     EXPECT_EQ(cb.twoSided, 0u);                // Back-face cull by default
     EXPECT_FLOAT_EQ(cb.opacity, 1.0f);         // Fully opaque
 }

@@ -155,7 +155,7 @@ void InstancingTest::OnStart() {
     {
         Entity fog = world.CreateEntity();
         auto& fogComp = world.AddComponent<HeightFogComponent>(fog);
-        fogComp.density       = 0.02f;   // UE5 default
+        fogComp.density       = 0.02f;   
         fogComp.baseHeight    = -100.f;
         fogComp.heightFalloff = 0.1f;
         fogComp.maxOpacity    = 0.3f;

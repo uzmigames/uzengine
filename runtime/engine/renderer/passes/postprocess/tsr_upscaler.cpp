@@ -5,11 +5,6 @@
 /// a preprocessor define selecting the sub-pass. Constant buffer layouts match
 /// the shader's `TsrDilateCB`, `TsrRejectCB`, and `TsrResolveCB` at slot b2.
 ///
-/// @source UE5 TemporalSuperResolution.cpp:2858 — TheoricBlendFactor formula
-/// @source UE5 TemporalSuperResolution.cpp:44 — MaxHistorySampleCount = 16.0
-/// @source UE5 TSRDilateVelocity.usf — 3x3 closest-depth velocity dilation
-/// @source UE5 TSRRejectShading.usf — luminance-based rejection mask
-/// @source UE5 TSRUpdateHistory.usf — temporal resolve with YCoCg clamping
 
 #include "tsr_upscaler.h"
 
@@ -42,9 +37,8 @@ static constexpr uint32_t kSlotOutputUav = 4;
 /// Thread group size matching tsr_resolve_cs.hlsl [numthreads(8, 8, 1)].
 static constexpr uint32_t kThreadGroupSize = 8;
 
-/// @source UE5 TemporalSuperResolution.cpp:44 — MaxHistorySampleCount default
 /// Controls the theoretic blend factor: lower values = more responsive but
-/// noisier, higher values = smoother but more ghosting. UE5 clamps [8, 32].
+/// noisier, higher values = smoother but more ghosting. Clamped to [8, 32].
 static constexpr float kMaxHistorySampleCount = 16.0f;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -163,7 +157,6 @@ void TsrUpscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
     // Compute TheoricBlendFactor — controls history accumulation speed.
     // Higher screen percentages (larger rendered image) accumulate more samples
     // per output pixel, so the blend factor is adjusted by the resolution ratio.
-    // @source UE5 TemporalSuperResolution.cpp:2858 — TheoricBlendFactor
     const float resFracSq = (input.renderWidth * input.renderHeight)
                           / (input.outputWidth * input.outputHeight);
     const float theoricBlendFactor = 1.0f / (1.0f + kMaxHistorySampleCount / resFracSq);
@@ -183,7 +176,6 @@ void TsrUpscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
     // closest sample into the dilated velocity texture. This prevents thin
     // geometry (e.g., hair, fences) from losing motion information.
     //
-    // @source UE5 TSRDilateVelocity.usf — 3x3 closest depth search
     {
         UZ_PROFILE_SCOPE("TSR::DilateVelocity");
 
@@ -254,8 +246,6 @@ void TsrUpscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
     // get a high rejection weight, causing pass 3 to rely more on spatial AA
     // for those pixels instead of temporal accumulation.
     //
-    // @source UE5 TSRRejectShading.usf — luminance-based rejection
-    // @source UE5 TemporalSuperResolution.cpp:2858 — TheoricBlendFactor
     {
         UZ_PROFILE_SCOPE("TSR::RejectShading");
 
@@ -334,8 +324,6 @@ void TsrUpscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
     // The output is dispatched at display resolution (not render resolution)
     // since the history texture is at full display resolution.
     //
-    // @source UE5 TSRUpdateHistory.usf — temporal resolve
-    // @source UE5 TemporalSuperResolution.cpp:3067-3071 — parameter computation
     {
         UZ_PROFILE_SCOPE("TSR::UpdateHistory");
 

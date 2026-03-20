@@ -4,7 +4,7 @@
 /// signed distance field tracing. Each frame, dirty clipmaps are recomposited
 /// from all mesh SDFs via a compute shader dispatch.
 ///
-/// @source UE5 GlobalDistanceField.cpp:23-46, 120-126, 383-403, 446-457
+/// @ref Wright 2015 "Dynamic Occlusion with Signed Distance Fields" — cascaded GDF layout.
 
 #include "global_distance_field.h"
 
@@ -119,7 +119,7 @@ void GlobalDistanceField::Update(const Vec3& cameraPos) {
         auto& clip = m_clipmaps[i];
 
         // Voxel size for this cascade: full extent / resolution
-        /// @source UE5 GlobalDistanceField.cpp:383-403 — clipmap snapping
+        /// Snap clipmap center to voxel grid to prevent swimming artifacts.
         const float voxelSize = (clip.extent * 2.0f) / static_cast<float>(kResolution);
 
         // Snap the clipmap center to voxel grid to avoid swimming artifacts.

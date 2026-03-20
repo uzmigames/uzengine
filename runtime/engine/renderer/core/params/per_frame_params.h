@@ -72,7 +72,7 @@ namespace uz {
 /// 372      4      aerialPerspectiveEnabled
 /// 376      4      transmittanceLutSrvIndex
 /// 380      56     apBottomRadiusKm..apMieScale (14 floats)
-/// 436      20     filmSlope..filmWhiteClip (5 floats)
+/// 436      20     toneCurveSlope..toneCurveWhiteClip (5 floats)
 /// 456      4      gtaoSrvIndex
 /// 460      4      brdfDebugMode
 /// 464      4      heightFogContribution
@@ -128,47 +128,38 @@ struct PerFrameParams {
     float    apRayleighScale  = 1.0f;                  ///< Artistic Rayleigh scattering multiplier.
     float    apMieScale       = 1.0f;                  ///< Artistic Mie scattering multiplier.
 
-    // ── Film Tonemap parameters (UE5 parity) ─────────────────────────────
-    /// @source UE5 PostProcessSettings.h — default values for FilmToneMap curve
-    float    filmSlope      = 0.88f;                   ///< Steepness of the linear (straight) segment.
-    float    filmToe        = 0.55f;                   ///< Size of the toe region (dark rolloff).
-    float    filmShoulder   = 0.26f;                   ///< Size of the shoulder region (highlight rolloff).
-    float    filmBlackClip  = 0.0f;                    ///< Lifts black level (adds to min output).
-    float    filmWhiteClip  = 0.04f;                   ///< Lowers white ceiling (subtracts from max output).
+    // ── ACES tone curve parameters ──────────────────────────────────────
+    float    toneCurveSlope      = 0.88f;              ///< Steepness of the linear (straight) segment.
+    float    toneCurveToe        = 0.55f;              ///< Size of the toe region (dark rolloff).
+    float    toneCurveShoulder   = 0.26f;              ///< Size of the shoulder region (highlight rolloff).
+    float    toneCurveBlackClip  = 0.0f;               ///< Lifts black level (adds to min output).
+    float    toneCurveWhiteClip  = 0.04f;              ///< Lowers white ceiling (subtracts from max output).
 
     uint32_t gtaoSrvIndex        = UINT32_MAX;         ///< SRV index for GTAO filtered AO texture (UINT32_MAX = no GTAO).
     uint32_t brdfDebugMode       = 0;                 ///< BRDF debug (0=off, 1=split-screen: left=old, right=new).
     float    heightFogContribution = 0.0f;            ///< AP reduction factor when height fog active (0=none, 1=full).
 
-    // ── Post-process film effects (UE5 parity) ─────────────────────────
-    /// @source UE5 Scene.cpp:511 — FilmGrainIntensity default 0.0
-    float    filmGrainIntensity = 0.0f;              ///< Film grain intensity (0=off). UE5 default: 0.0.
-    /// @source UE5 Scene.cpp:505 — VignetteIntensity default 0.4
-    float    vignetteIntensity  = 0.4f;              ///< Vignette darkening intensity. UE5 default: 0.4.
-    /// @source UE5 Scene.cpp:419 — SceneFringeIntensity default 0.0
-    float    chromaAbIntensity  = 0.0f;              ///< Chromatic aberration / scene fringe intensity (0=off). UE5 default: 0.0.
+    // ── Post-process film effects ───────────────────────────────────────
+    float    filmGrainIntensity = 0.0f;              ///< Film grain intensity (0=off).
+    float    vignetteIntensity  = 0.4f;              ///< Vignette darkening intensity.
+    float    chromaAbIntensity  = 0.0f;              ///< Chromatic aberration / scene fringe intensity (0=off).
 
-    /// @source UE5 LightRendering.cpp:640 — ContactShadowLength default 0.0 (off)
-    /// @source UE5 DeferredLightingCommon.ush:172 — ContactShadowLength > 0 enables ray march
-    /// Screen-space contact shadow ray length. 0.0 = disabled (UE5 default).
+    /// Screen-space contact shadow ray length. 0.0 = disabled.
     /// Positive = screen-space fraction (0.02 = 2% of depth-scaled screen ray length).
     float    contactShadowLength = 0.0f;             ///< Contact shadow ray length (0=off, 0.02=typical).
 
     uint32_t ssrSrvIndex = UINT32_MAX;               ///< SRV index for resolved SSR texture (UINT32_MAX = no SSR).
 
-    /// @source UE5 ViewUniformShaderParameters.h — MaterialTextureMipBias
     /// Global mipmap LOD bias for screen percentage compensation.
     /// 0 at 100%, negative below native resolution, positive for supersampling.
     float    mipBias = 0.0f;
 
     // ── SSGI (Screen-Space Global Illumination) ────────────────────────
-    /// @source UE5 IndirectLightRendering.cpp:1454 — DiffuseIndirect composite
     uint32_t ssgiSrvIndex   = UINT32_MAX;             ///< SRV index for upsampled SSGI indirect diffuse (UINT32_MAX = disabled).
     uint32_t ssgiAOSrvIndex = UINT32_MAX;             ///< SRV index for SSGI ambient occlusion mask (UINT32_MAX = disabled).
     uint32_t ssgiEnabled    = 0;                      ///< 1 = SSGI active, 0 = disabled.
 
     // ── Radiance Cache (SDF-based GI) ─────────────────────────────────
-    /// @source UE5 LumenRadianceCacheInterpolation.ush:372-395 — SampleRadianceCacheInterpolated
     uint32_t radianceCacheEnabled = 0;              ///< 1 = radiance cache GI active, 0 = disabled.
     uint32_t rcProbeSHBufferSrv   = UINT32_MAX;     ///< SRV index for probe SH StructuredBuffer<float4>.
     uint32_t rcProbesPerAxis      = 16;             ///< Probes per axis (16).
@@ -179,7 +170,6 @@ struct PerFrameParams {
     float    rcGiIntensity       = 1.0f;            ///< GI intensity multiplier (default 1.0).
 
     // ── Aerial Perspective Volume ─────────────────────────────────────
-    /// @source UE5 SkyAtmosphere.usf:1466 — RenderCameraAerialPerspectiveVolumeCS
     uint32_t apVolumeSrvIndex = UINT32_MAX;          ///< SRV for precomputed 32x32x16 AP 3D volume.
 
     float    _pad2[59]            = {};              ///< Pad scalar section to 768 bytes.

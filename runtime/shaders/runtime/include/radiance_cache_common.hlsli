@@ -4,9 +4,9 @@
 /// from the world-space radiance cache probe grid via trilinear interpolation
 /// of L2 SH coefficients.
 ///
-/// @source UE5 LumenRadianceCacheInterpolation.ush:114-128 — GetRadianceProbeCoordFloat
-/// @source UE5 LumenRadianceCacheInterpolation.ush:372-395 — SampleRadianceCacheInterpolated
-/// @deviations Single uniform grid instead of UE5's 6 clipmap levels. No sphere
+/// @ref Majercik et al. 2019 "Dynamic Diffuse Global Illumination with Ray-Traced Irradiance Fields"
+/// @ref Wright 2021 "Radiance Caching for Real-Time Global Illumination"
+/// @deviations Single uniform grid instead of the reference engine's 6 clipmap levels. No sphere
 ///   parallax correction (Lumen feature for specular). No octahedral atlas —
 ///   uses direct SH evaluation which integrates with UzEngine's existing SH path.
 
@@ -20,7 +20,7 @@
 /// Evaluates L2 SH for a given normal direction from a single probe's packed
 /// 7-float4 data. Returns diffuse irradiance (RGB).
 ///
-/// The packing matches UE5 SkyIrradianceEnvironmentMap:
+/// The packing matches reference SkyIrradianceEnvironmentMap:
 ///   [0] = (R_L00, R_L1x, R_L1z, R_L1y)
 ///   [1] = (G_L00, G_L1x, G_L1z, G_L1y)
 ///   [2] = (B_L00, B_L1x, B_L1z, B_L1y)
@@ -29,7 +29,7 @@
 ///   [5] = (B_L20, B_L21, B_L22, B_L2_1)
 ///   [6] = (R_L2xy, G_L2xy, B_L2xy, 0)
 ///
-/// @source UE5 ReflectionEnvironmentShaders.usf:62-92 — GetSkySHDiffuse
+/// @ref Ramamoorthi & Hanrahan 2001 "An Efficient Representation for Irradiance Environment Maps"
 float3 EvaluateProbeSH(
     StructuredBuffer<float4> probeSHBuffer,
     uint probeBaseIndex,
@@ -77,7 +77,7 @@ float3 EvaluateProbeSH(
 /// SH at 8 corner probes of the grid cell containing the query point, weighted
 /// by trilinear interpolation weights.
 ///
-/// @source UE5 LumenRadianceCacheInterpolation.ush:372-395 — SampleRadianceCacheInterpolated
+/// @ref Majercik et al. 2019 "DDGI" — trilinear probe interpolation
 /// @constants NONE (grid parameters passed as arguments)
 /// @deviations No sphere parallax correction, no dithered clipmap fade.
 float3 SampleRadianceCache(

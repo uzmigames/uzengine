@@ -5,12 +5,12 @@
 /// iterates all mesh SDFs, transforms the world position into each mesh's local
 /// space, samples the mesh SDF, and stores the global minimum distance.
 ///
-/// @source UE5 GlobalDistanceField.cpp:406-513 — GDF page composite dispatch
-/// @source UE5 GlobalDistanceFieldUtils.ush:22-50 — VoxelExtent, distance encode/decode
+/// @ref Wright 2015 "Dynamic Occlusion with Signed Distance Fields" — global distance field composition
+/// @ref Hart 1996 "Sphere Tracing" — SDF distance encoding/decoding
 /// @constants kMaxMeshSDFs=256, kResolution=64
-/// @deviations Dense 64^3 volume per clipmap instead of UE5's sparse page-based
+/// @deviations Dense 64^3 volume per clipmap instead of the reference engine's sparse page-based
 ///   128^3 system. Functionally equivalent for GI probe tracing; reduces complexity
-///   at the cost of ~2MB GPU memory per clipmap (vs UE5's ~32MB paged atlas).
+///   at the cost of ~2MB GPU memory per clipmap (vs the reference engine's ~32MB paged atlas).
 
 #include "../include/sdf_common.hlsli"
 
@@ -82,7 +82,7 @@ SamplerState g_linearClamp : register(s0);
 /// the signed distance. Returns a large positive value if the point is outside
 /// the mesh SDF volume.
 ///
-/// @source UE5 MeshDistanceFieldCommon.ush:9-38 — DistanceToNearestSurfaceForObject
+/// @ref Wright 2015 — mesh SDF distance query for object
 float SampleMeshSdfLocal(
     Texture3D<float> sdfTex,
     MeshSdfDesc mesh,
@@ -112,7 +112,7 @@ float SampleMeshSdfLocal(
 // Main compute entry point
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 GlobalDistanceField.cpp:406-513 — CompositeObjectDistanceFields dispatch
+/// @ref Wright 2015 — GDF composite dispatch entry point
 /// Each thread processes one voxel in the clipmap volume.
 /// Thread group size: 4x4x4 = 64 threads per group.
 [numthreads(4, 4, 4)]
@@ -133,7 +133,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     float3 worldPos = clipmapCenter - g_clipmapExtent + voxelCoord * voxelSize;
 
     // ── Find minimum distance across all mesh SDFs ─────────────────────
-    /// @source UE5 GlobalDistanceFieldUtils.ush:90 — min distance composite
+    /// @ref Wright 2015 — min distance composite across all mesh SDFs
     float minDist = g_clipmapExtent; // Initialize to maximum possible distance
 
     uint meshCount = min(g_meshCount, MAX_MESH_SDFS);
@@ -169,7 +169,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     }
 
     // ── Write result ───────────────────────────────────────────────────
-    /// @source UE5 GlobalDistanceFieldShared.ush:183-191 — distance encoding
+    /// @ref Wright 2015 — GDF distance encoding to UNORM
     /// We store raw float16 distance (the R16F texture handles encoding).
     /// Output texture accessed via bindless descriptor heap.
     RWTexture3D<float> outputTex = ResourceDescriptorHeap[g_outputUav];

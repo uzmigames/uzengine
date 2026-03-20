@@ -2,7 +2,7 @@
 ///
 /// Applies a depth-aware spatial filter to the raw GTAO output to reduce
 /// the high-frequency noise from the per-pixel jittered sampling pattern.
-/// Uses a 4x4 box filter kernel (matching UE5's 4x4 random texture tiling)
+/// Uses a 4x4 box filter kernel (matching the reference engine's 4x4 random texture tiling)
 /// with bilateral depth weights to preserve edges at silhouettes.
 ///
 /// # Resources
@@ -11,9 +11,9 @@
 /// - u0: Filtered AO output (same format as input)
 /// - b0: Root constants (8 DWORDs — texel size, near/far, SRV indices)
 ///
-/// @source UE5 PostProcessAmbientOcclusion.usf:510-535 — MainSSAOSmoothCS
-/// @source UE5 PostProcessAmbientOcclusionCommon.ush:60-63 — ComputeDepthSimilarity
-/// @deviations Extended from UE5's simple box filter to include bilateral depth
+/// @ref MainSSAOSmoothCS
+/// @ref ComputeDepthSimilarity
+/// @deviations Extended from the reference engine's simple box filter to include bilateral depth
 ///             weighting for better edge preservation.
 
 #include "../include/math_util.hlsli"
@@ -76,8 +76,8 @@ float LinearizeDepth(float deviceZ) {
 }
 
 /// Depth similarity weight — 1.0 for same depth, 0.0 for very different.
-/// @source UE5 PostProcessAmbientOcclusionCommon.ush:60-63 — ComputeDepthSimilarity
-/// @constants 0.003 (UE5 PostProcessAmbientOcclusionCommon.ush:183)
+/// @ref ComputeDepthSimilarity
+/// @constants 0.003 (reference PostProcessAmbientOcclusionCommon.ush:183)
 /// @deviations NONE
 float ComputeDepthSimilarity(float depthA, float depthB) {
     return saturate(1.0f - abs(depthA - depthB) * 0.003f);
@@ -88,7 +88,7 @@ float ComputeDepthSimilarity(float depthA, float depthB) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// 4x4 bilateral blur kernel.
-/// @source UE5 PostProcessAmbientOcclusion.usf:528-534 — 4 bilinear samples
+/// @ref 4 bilinear samples
 /// @deviations Added bilateral depth weighting
 
 [numthreads(8, 8, 1)]
@@ -109,11 +109,11 @@ void main(
     float centerDepth = LinearizeDepth(SampleDepth(uv));
 
     // ── 4x4 bilateral blur via 4 bilinear taps ──
-    /// @source UE5 PostProcessAmbientOcclusion.usf:529-533
+    /// @ref implementation detail
     float weightSum = 0.0f;
     float aoSum = 0.0f;
 
-    /// @source UE5 PostProcessAmbientOcclusion.usf:528-534 — centered 4x4 bilinear kernel
+    /// @ref centered 4x4 bilinear kernel
     /// Centered offsets cover a 4x4 block via bilinear filtering (4 taps).
     static const float2 offsets[4] = {
         float2(-1.0f, -1.0f),

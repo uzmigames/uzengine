@@ -1,13 +1,13 @@
 # Architecture Rules
 
 ## Coordinate System
-- Z-up, X-forward, left-handed (same as UE5)
+- Z-up, X-forward, left-handed (same as reference)
 - NEVER use Y-up when porting from external sources
 
 ## Units
 | Category | Convention |
 |----------|-----------|
-| Distances | Centimeters (UE5 parity) |
+| Distances | Centimeters |
 | Angles (ECS) | Degrees |
 | Angles (GPU) | Radians |
 | Atmosphere | Kilometers |

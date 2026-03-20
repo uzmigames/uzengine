@@ -5,11 +5,10 @@
 /// overrides) inherit from `MaterialInterface`, enabling polymorphic material
 /// slot assignment on mesh components.
 ///
-/// # UE5 Equivalent
-/// @source UE5 MaterialInterface.h — UMaterialInterface
-/// UE5's UMaterialInterface is the common base for UMaterial and
+/// # Design Rationale
+/// IMaterialInterface is the common base for Material and
 /// UMaterialInstanceDynamic. UzEngine mirrors this hierarchy with a fixed PBR
-/// parameter set instead of UE5's material graph system.
+/// parameter set instead of a full material graph system.
 ///
 /// # Design Decisions
 /// - Pure virtuals for parameter queries — each subclass resolves values
@@ -39,7 +38,6 @@ struct Vec3;
 // MaterialInterface — abstract base for Material and MaterialInstance
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 MaterialInterface.h — UMaterialInterface
 /// Base interface for all material types. Both Material and MaterialInstance
 /// inherit from this, allowing polymorphic material slot assignment.
 ///
@@ -137,7 +135,6 @@ public:
     /// When true, enables alpha testing (discard pixels below clip threshold).
     [[nodiscard]] virtual bool IsAlphaTest() const { return false; }
 
-    /// @source UE5 Material.GetOpacityMaskClipValue() — default 0.3333
     /// Alpha clip threshold for masked blend mode.
     [[nodiscard]] virtual float GetAlphaClipThreshold() const { return 0.3333f; }
 

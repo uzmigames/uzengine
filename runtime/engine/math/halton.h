@@ -3,9 +3,8 @@
 /// Generates quasi-random point sequences for temporal jittering (TAA/TSR),
 /// importance sampling, and any application needing well-distributed samples.
 ///
-/// @source UE5 Math/Halton.h — Halton 1964, "Radical-inverse quasi-random point sequence"
-/// @source UE5 SceneRendering.cpp:974-976 — TemporalJitterSequenceLength, TemporalJitterIndex
-/// @source UE5 SceneVisibility.cpp:5240-5243 — HackAddTemporalAAProjectionJitter
+/// @ref Halton 1964 "Radical-inverse quasi-random point sequence"
+/// Used for TAA/TSR temporal jitter via Halton(2,3) sequence.
 
 #pragma once
 
@@ -20,7 +19,7 @@ namespace uz {
 /// For TAA jitter, use base 2 (X) and base 3 (Y) to get a 2D Halton(2,3)
 /// sequence with good coverage.
 ///
-/// @source UE5 Math/Halton.h:9 — constexpr float Halton(int32 Index, int32 Base)
+/// @ref Halton 1964 — radical-inverse quasi-random sequence
 ///
 /// # Parameters
 /// - `index` — Sample index (1-based for meaningful results; 0 always returns 0).
@@ -37,7 +36,7 @@ namespace uz {
 /// ```
 [[nodiscard]] constexpr float Halton(int32_t index, int32_t base)
 {
-    /// @source UE5 Math/Halton.h:9-21 — exact algorithm
+    /// Radical-inverse algorithm: reflect base-N digits about decimal point
     float result   = 0.0f;
     float invBase  = 1.0f / static_cast<float>(base);
     float fraction = invBase;
@@ -51,11 +50,10 @@ namespace uz {
 
 /// Computes a 2D Halton(2,3) sample centered in [-0.5, 0.5].
 ///
-/// This is the standard TAA/TSR jitter pattern used by UE5.
+/// This is the standard TAA/TSR jitter pattern used by reference.
 /// The sequence is 1-indexed (pass frameIndex + 1 for 0-based frame counts).
 ///
-/// @source UE5 SceneRendering.cpp:974 — TemporalJitterSequenceLength
-/// @source UE5 SceneVisibility.cpp:5240 — TemporalJitterPixels from Halton
+/// @ref Karis 2014 "High Quality Temporal Supersampling" — Halton(2,3) jitter pattern
 ///
 /// # Parameters
 /// - `index` — 1-based sample index. For cyclic jitter, use `(frameIndex % sequenceLength) + 1`.
@@ -69,8 +67,8 @@ constexpr void Halton23(int32_t index, float& outX, float& outY)
 
 /// Default TAA/TSR jitter sequence length.
 ///
-/// @source UE5 SceneRendering.cpp:1717 — TemporalJitterSequenceLength
-/// UE5 uses 8 for TAA, up to 32 for TSR high quality. 8 provides good
+/// TemporalJitterSequenceLength — standard TAA uses 8 samples
+/// uses 8 for TAA, up to 32 for TSR high quality. 8 provides good
 /// coverage for standard TAA with fast convergence.
 inline constexpr int32_t kDefaultJitterSequenceLength = 8;
 

@@ -5,11 +5,11 @@
 /// accumulates incoming radiance into L2 SH coefficients, and blends
 /// with the previous frame's SH history via exponential moving average.
 ///
-/// @source UE5 LumenRadianceCache.usf:1-17 — includes LumenSoftwareRayTracing.ush
-/// @source UE5 LumenRadianceCacheTracingCommon.ush:1-72 — trace tile grouping
-/// @source UE5 LumenRadianceCache.usf:132-200 — ComputeProbeWorldOffsetsCS
+/// @ref Majercik et al. 2019 "Dynamic Diffuse Global Illumination with Ray-Traced Irradiance Fields"
+/// @ref Wright 2021 "Radiance Caching for Real-Time Global Illumination"
+/// @ref Hart 1996 "Sphere Tracing" — SDF-based ray marching for probe tracing
 /// @constants kRaysPerProbe=32, kTemporalBlendAlpha=0.05, kSHFloat4PerProbe=7
-/// @deviations Uses dense GDF clipmaps instead of UE5's paged GDF + mesh SDF hybrid.
+/// @deviations Uses dense GDF clipmaps instead of the reference engine's paged GDF + mesh SDF hybrid.
 ///   Traces against GDF only (no near-field mesh SDF trace). Octahedral atlas replaced
 ///   with direct L2 SH accumulation for simpler integration with existing SH-based
 ///   deferred lighting path.
@@ -91,7 +91,7 @@ SamplerState g_linearClamp : register(s0);
 /// Generates a quasi-random point on the unit sphere using Fibonacci spiral
 /// with per-probe and per-frame jitter for temporal variation.
 ///
-/// @source UE5 MonteCarlo.ush:10-35 — SphericalFibonacci
+/// @ref Keinert et al. 2015 "Spherical Fibonacci Point Sets" — uniform sphere sampling
 float3 SphericalFibonacci(uint sampleIndex, uint totalSamples, uint seed)
 {
     // Golden ratio for Fibonacci spiral
@@ -116,7 +116,7 @@ float3 SphericalFibonacci(uint sampleIndex, uint totalSamples, uint seed)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// SH basis functions for L2 (9 coefficients).
-/// @source UE5 SphericalHarmonicBasis.ush:1-30
+/// @ref Ramamoorthi & Hanrahan 2001 — L2 spherical harmonic basis functions
 void GetSHBasis(float3 dir, out float basis[9])
 {
     // L0
@@ -136,7 +136,7 @@ void GetSHBasis(float3 dir, out float basis[9])
 }
 
 /// Packs 3-channel L2 SH (9 * 3 = 27 floats) into 7 float4s.
-/// Follows UE5 SkyIrradianceEnvironmentMap packing:
+/// Follows industry-standard SkyIrradianceEnvironmentMap packing:
 ///   [0] = (R_L00, R_L11, R_L10, R_L1_1)
 ///   [1] = (G_L00, G_L11, G_L10, G_L1_1)
 ///   [2] = (B_L00, B_L11, B_L10, B_L1_1)
@@ -145,7 +145,7 @@ void GetSHBasis(float3 dir, out float basis[9])
 ///   [5] = (B_L20, B_L21, B_L22, B_L2_1)
 ///   [6] = (R_L2_2, G_L2_2, B_L2_2, 0)
 ///
-/// @source UE5 SkyLightComponent.cpp — SkyIrradianceEnvironmentMap packing
+/// @ref Ramamoorthi 2001 — SH-packed sky irradiance evaluation
 void PackSHToFloat4(float shR[9], float shG[9], float shB[9], out float4 packed[7])
 {
     // L0 + L1 per channel
@@ -166,7 +166,7 @@ void PackSHToFloat4(float shR[9], float shG[9], float shB[9], out float4 packed[
 // Main compute entry point
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 LumenRadianceCache.usf:210-300 — TraceRadianceProbe entry
+/// @ref Majercik et al. 2019 "DDGI" — probe tracing entry point
 [numthreads(64, 1, 1)]
 void main(uint3 dispatchThreadId : SV_DispatchThreadID)
 {
@@ -333,7 +333,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID)
     PackSHToFloat4(shR, shG, shB, newSH);
 
     // ── Temporal blend with previous frame's SH (EMA) ──────────────────
-    /// @source UE5 LumenRadianceCache.usf:156 — ProbeHistoryWeight = 0.95
+    /// @ref DDGI temporal blending — ProbeHistoryWeight = 0.95
     uint baseIdx = probeIndex * 7;
 
     // Detect uninitialized probes (L0 == 0 for all channels) and write

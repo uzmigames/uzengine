@@ -4,11 +4,11 @@
 /// Each static mesh can have up to `kMaxLODs` (8) discrete LOD levels, each
 /// with a screen size threshold that controls when the level is selected.
 ///
-/// # UE5 Parity
-/// @source UE5 StaticMeshResources.h — FStaticMeshRenderData::ScreenSize[MAX_STATIC_MESH_LODS]
-/// @source UE5 StaticMesh.cpp:225 — LOD0ScreenSize = 2.0f, AutoComputeLODPowerBase = 0.75f
-/// @source UE5 SceneManagement.cpp:972 — ComputeBoundsScreenSize
-/// @source UE5 SceneManagement.cpp:1034 — ComputeStaticMeshLOD
+/// # Parity
+/// @ref FStaticMeshRenderData::ScreenSize[MAX_STATIC_MESH_LODS]
+/// @ref LOD0ScreenSize = 2.0f, AutoComputeLODPowerBase = 0.75f
+/// @ref ComputeBoundsScreenSize
+/// @ref ComputeStaticMeshLOD
 ///
 /// # Thread Safety
 /// These are plain data structs with no shared mutable state. They are
@@ -26,20 +26,20 @@ namespace uz {
 
 /// Maximum number of discrete LOD levels per mesh.
 ///
-/// @source UE5 SceneManagement.h — MAX_STATIC_MESH_LODS = 8
-/// UzEngine uses 8 to match UE5, though most meshes only define 2-4 levels.
+/// @ref MAX_STATIC_MESH_LODS = 8
+/// UzEngine uses 8 to match reference, though most meshes only define 2-4 levels.
 static constexpr uint32_t kMaxLODs = 8;
 
 /// Default screen size for LOD 0 (full detail).
 ///
-/// @source UE5 StaticMesh.cpp:225 — LOD0ScreenSize = 2.0f
+/// @ref LOD0ScreenSize = 2.0f
 /// This is a diameter metric: ScreenMultiple * SphereRadius / Distance * 2.
 static constexpr float kLOD0ScreenSize = 2.0f;
 
 /// Power base for auto-computing LOD screen sizes when no explicit thresholds
 /// are provided. LOD N gets screenSize = LOD0 * pow(base, N).
 ///
-/// @source UE5 StaticMesh.cpp:230 — AutoComputeLODPowerBase = 0.75f
+/// @ref AutoComputeLODPowerBase = 0.75f
 static constexpr float kAutoComputeLODPowerBase = 0.75f;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -53,7 +53,7 @@ static constexpr float kAutoComputeLODPowerBase = 0.75f;
 /// screen size falls below the threshold, the next coarser LOD is used.
 ///
 /// # Screen Size Metric
-/// @source UE5 SceneManagement.cpp:972-984 — ComputeBoundsScreenSize
+/// @ref ComputeBoundsScreenSize
 /// Screen size is defined as the projected diameter of the bounding sphere:
 ///   screenSize = ScreenMultiple * SphereRadius / max(1, Distance) * 2
 /// where ScreenMultiple = max(0.5 * ProjM[0][0], 0.5 * ProjM[1][1]).
@@ -69,9 +69,9 @@ struct LODLevel {
 
     /// Screen size threshold for this LOD level.
     ///
-    /// @source UE5 StaticMeshResources.h — FStaticMeshRenderData::ScreenSize
+    /// @ref FStaticMeshRenderData::ScreenSize
     /// The LOD is selected when the computed screen size is >= this threshold
-    /// (after applying LOD bias scaling). Units match UE5's projected diameter
+    /// (after applying LOD bias scaling). Units match reference's projected diameter
     /// metric (LOD 0 default = 2.0, not normalised to [0,1]).
     float screenSizeThreshold = 0.0f;
 };
@@ -84,9 +84,9 @@ struct LODLevel {
 ///
 /// LOD levels are sorted from highest detail (index 0, largest threshold)
 /// to lowest detail (index numLevels-1, smallest threshold). This matches
-/// UE5's convention where ScreenSize[0] > ScreenSize[1] > ... > ScreenSize[N].
+/// the reference engine's convention where ScreenSize[0] > ScreenSize[1] > ... > ScreenSize[N].
 ///
-/// @source UE5 StaticMeshResources.h — FStaticMeshRenderData
+/// @ref FStaticMeshRenderData
 ///
 /// # Default State
 /// A default-constructed LODGroup has 1 level (LOD 0 only) with meshIndex=0
@@ -108,7 +108,7 @@ struct LODGroup {
 
     /// Initializes a default single-LOD group.
     ///
-    /// LOD 0 has meshIndex=0 and the UE5 default screen size of 2.0.
+    /// LOD 0 has meshIndex=0 and the reference default screen size of 2.0.
     LODGroup() noexcept {
         levels[0].meshIndex = 0;
         levels[0].screenSizeThreshold = kLOD0ScreenSize;
@@ -116,10 +116,10 @@ struct LODGroup {
 
     /// Initializes the LODGroup with auto-computed screen size thresholds.
     ///
-    /// @source UE5 StaticMesh.cpp:2999 — pow(AutoComputeLODPowerBase, LODIndex)
+    /// @ref pow(AutoComputeLODPowerBase, LODIndex)
     ///
     /// LOD 0 gets kLOD0ScreenSize (2.0). Subsequent levels get
-    /// LOD0 * pow(0.75, N), matching UE5's auto-computation when
+    /// LOD0 * pow(0.75, N), matching the reference engine's auto-computation when
     /// no explicit screen sizes are authored.
     ///
     /// # Arguments
@@ -132,7 +132,7 @@ struct LODGroup {
             if (i == 0) {
                 levels[i].screenSizeThreshold = kLOD0ScreenSize;
             } else {
-                // @source UE5 StaticMesh.cpp:2999
+                // @ref implementation detail
                 float threshold = kLOD0ScreenSize;
                 for (uint32_t p = 0; p < i; ++p) {
                     threshold *= kAutoComputeLODPowerBase;
@@ -153,7 +153,7 @@ struct LODGroup {
 /// and provides a crossfade alpha for dithered LOD transitions.
 ///
 /// # Crossfade
-/// @source UE5 StaticMeshSceneProxy.cpp:2726-2731 — bUseDithered LOD transition
+/// @ref bUseDithered LOD transition
 /// When the LOD changes between frames, `transitionFramesRemaining` is set
 /// to `kDefaultTransitionFrames` and decremented each frame. During the
 /// transition, both the old and new LOD meshes are rendered with
@@ -181,7 +181,7 @@ struct LODSelection {
 
     /// Default number of frames for a LOD crossfade transition.
     ///
-    /// 8 frames at 60 FPS = ~133 ms transition, matching UE5's typical
+    /// 8 frames at 60 FPS = ~133 ms transition, matching the reference engine's typical
     /// temporal dithered LOD transition duration.
     static constexpr uint8_t kDefaultTransitionFrames = 8;
 

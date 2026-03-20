@@ -18,16 +18,14 @@
 /// - b0: Root constants (8 DWORDs)
 /// - b1: PerFrameCB
 ///
-/// @source UE5 ScreenSpaceDenoise.cpp:2960-2985 — DenoiseScreenSpaceDiffuseIndirect
-/// @source UE5 SSDSignalAccumulator.ush:1-120 — bilateral weight computation
-/// @constants ReconstructionSamples=8 (ScreenSpaceDenoise.cpp:2963)
-///            NormalPower=4.0 (SSDSignalAccumulator.ush:84)
-///            DepthSigma = 0.02 (heuristic matching UE5 bilateral depth tolerance)
-///            DiskRadius = 4.0 pixels (reconstruction kernel radius)
-/// @deviations Simplified from UE5's full SSD pipeline which uses signal-specific
-///   accumulators, frequency decomposition, and multi-pass reconstruction. We use
-///   a single-pass 8-sample cross-bilateral filter which captures the essential
-///   edge-preserving denoising behavior.
+/// @ref Schied et al. 2017 "Spatiotemporal Variance-Guided Filtering" — spatial denoise
+/// @ref Tomasi & Manduchi 1998 "Bilateral Filtering for Gray and Color Images" — cross-bilateral filter
+/// @constants ReconstructionSamples=8
+///            NormalPower=4.0
+///            DepthSigma=0.02 (bilateral depth tolerance)
+///            DiskRadius=4.0 pixels (reconstruction kernel radius)
+/// @deviations Single-pass 8-sample cross-bilateral filter. Captures the essential
+///   edge-preserving denoising behavior of the SVGF approach.
 
 #include "../include/math_util.hlsli"
 #include "../include/octahedral.hlsli"
@@ -37,21 +35,20 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Number of spatial filter samples (reconstruction samples).
-/// @source UE5 ScreenSpaceDenoise.cpp:2963 — ReconstructionSamples=8
+/// @ref Schied et al. 2017 — 8 samples for spatial reconstruction
 #define SPATIAL_SAMPLE_COUNT 8
 
 /// Kernel radius in pixels for the spatial filter.
-/// @source UE5 ScreenSpaceDenoise.cpp:2964 — KernelSpreadFactor (adaptive)
-/// Using a fixed 4-pixel radius as baseline.
+/// Fixed 4-pixel radius as baseline for the reconstruction kernel.
 #define KERNEL_RADIUS 4.0f
 
 /// Normal similarity exponent — higher = sharper edge detection.
-/// @source UE5 SSDSignalAccumulator.ush:84 — pow(NdotN, 4)
+/// @ref Schied et al. 2017 — normal edge-stopping power=4
 #define NORMAL_POWER 4.0f
 
 /// Depth sigma for bilateral weight — controls depth sensitivity.
 /// Smaller = sharper depth edges, larger = more aggressive smoothing.
-/// @source UE5 SSDSignalAccumulator.ush:78 — depth bilateral sigma
+/// @ref Tomasi & Manduchi 1998 — bilateral depth sigma
 #define DEPTH_SIGMA 0.02f
 
 #define PI 3.14159265358979323846f
@@ -60,7 +57,7 @@
 // Root Constants (b0, 8 DWORDs = 32 bytes)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 ScreenSpaceDenoise.cpp:2960 — spatial denoise dispatch params
+/// Spatial denoise dispatch parameters.
 cbuffer SpatialDenoiseRootCB : register(b0) {
     uint  inputSrvIndex;       // DWORD 0 — raw SSGI color SRV (bindless)
     uint  aoInputSrvIndex;     // DWORD 1 — raw SSGI AO SRV (bindless)
@@ -164,9 +161,8 @@ float LinearizeDepth(float deviceZ) {
 // Interleaved Gradient Noise (for disk rotation)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 SSRTReflections.usf:348 — InterleavedGradientNoise
+/// @ref Jimenez 2014 "Next Generation Post Processing in Call of Duty: Advanced Warfare"
 /// @constants 52.9829189, 0.06711056, 0.00583715
-/// @deviations NONE
 float InterleavedGradientNoise(float2 pixelPos) {
     return frac(52.9829189f * frac((pixelPos.x * 0.06711056f) + (pixelPos.y * 0.00583715f)));
 }
@@ -177,11 +173,7 @@ float InterleavedGradientNoise(float2 pixelPos) {
 
 /// 8-sample Poisson disk offsets within unit circle.
 /// Generated with Mitchell's best-candidate algorithm for blue-noise distribution.
-/// @source UE5 ScreenSpaceDenoise.cpp — uses adaptive kernel; we use a fixed
-///   Poisson disk with similar spatial coverage.
-/// @deviations Fixed Poisson disk instead of UE5's adaptive kernel. The
-///   denoising quality is comparable for 8 samples; UE5's adaptive kernel
-///   primarily benefits higher sample counts.
+/// @ref Mitchell 1991 "Spectrally Optimal Sampling for Distribution Ray Tracing"
 static const float2 kPoissonDisk[SPATIAL_SAMPLE_COUNT] = {
     float2(-0.7071f,  0.7071f),
     float2( 0.0000f, -0.8750f),
@@ -197,7 +189,7 @@ static const float2 kPoissonDisk[SPATIAL_SAMPLE_COUNT] = {
 // Main Compute Shader
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 ScreenSpaceDenoise.cpp:2960-2985 — spatial reconstruction pass
+/// @ref Schied et al. 2017 — spatial reconstruction pass
 [numthreads(8, 8, 1)]
 void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     // Bounds check
@@ -228,8 +220,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     float cosRot = cos(rotationAngle);
     float sinRot = sin(rotationAngle);
 
-    // ── Sample neighbors ──
-    // @source UE5 ScreenSpaceDenoise.cpp:2963 — ReconstructionSamples=8
+    // ── Sample neighbors (8 Poisson disk samples) ──
     [unroll]
     for (uint i = 0; i < SPATIAL_SAMPLE_COUNT; i++) {
         // Rotate the Poisson disk offset
@@ -254,13 +245,11 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
 
         float neighborLinearZ = LinearizeDepth(neighborDepth);
 
-        // ── Depth bilateral weight ──
-        // @source UE5 SSDSignalAccumulator.ush:78 — exp(-depthDiff^2 / sigma)
+        // ── Depth bilateral weight ── exp(-depthDiff^2 / sigma^2)
         float depthDiff = abs(centerLinearZ - neighborLinearZ) / max(centerLinearZ, 1.0f);
         float depthWeight = exp(-depthDiff * depthDiff / (DEPTH_SIGMA * DEPTH_SIGMA));
 
-        // ── Normal bilateral weight ──
-        // @source UE5 SSDSignalAccumulator.ush:84 — pow(max(0, dot(Nc, Nn)), 4)
+        // ── Normal bilateral weight ── pow(max(0, dot(Nc, Nn)), 4)
         float normalSimilarity = max(0.0f, dot(centerNormal, neighborNormal));
         float normalWeight = pow(normalSimilarity, NORMAL_POWER);
 

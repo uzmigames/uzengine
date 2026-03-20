@@ -1,12 +1,11 @@
-/// @source UE5 HeightFogCommon.ush:192-386 — GetExponentialHeightFog, CalculateLineIntegralShared
-/// @source UE5 HeightFogPixelShader.usf:39-139 — ExponentialPixelMain
-/// @constants FLT_EPSILON2=0.01 (HeightFogCommon.ush:57),
-///            Falloff clamp=-127.0f (HeightFogCommon.ush:194),
-///            rsqrt guard=0.00000001f (HeightFogCommon.ush:244),
-///            UniformPhaseFunction=1/(4*PI) (HeightFogCommon.ush:314)
+/// @ref Hillaire 2016 "Physically Based & Unified Volumetric Rendering in Frostbite" — exponential fog integration
+/// @constants FLT_EPSILON2=0.01 (Taylor expansion threshold),
+///            Falloff clamp=-127.0f (IEEE exp2 overflow guard),
+///            rsqrt guard=0.00000001f (zero-length ray guard),
+///            UniformPhaseFunction=1/(4*PI) (isotropic phase normalization)
 /// @deviations NONE
 ///
-/// Height fog pixel shader — faithful port of UE5 ExponentialHeightFog.
+/// Height fog pixel shader — exponential height fog with two density layers.
 ///
 /// Fullscreen pass that reads scene depth, reconstructs world position,
 /// and computes exponential height fog with:
@@ -77,7 +76,7 @@ cbuffer PerFrameCB : register(b1) {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// HeightFogCB at b2 — full UE5 ExponentialFogParameters parity
+// HeightFogCB at b2 — exponential height fog parameters
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Height fog constant buffer. Layout MUST match the C++ HeightFogCB struct
@@ -90,80 +89,78 @@ cbuffer PerFrameCB : register(b1) {
 /// base case (only for start-distance re-computation, which uses rawDensity).
 cbuffer HeightFogCB : register(b2) {
     // ── Primary fog layer ────────────────────────────────────────────────
-    /// @source UE5 FogRendering.cpp:256 — ExponentialFogColorParameter
+    /// Fog inscattering color (populated by fog constant buffer on CPU)
     float4 fogColor;                 // xyz = inscattering color, w = unused
 
-    /// @source UE5 FogRendering.cpp:249 — ExponentialFogParameters.x (precomputed RayOriginTerms)
+    /// Precomputed ray origin density: density * exp2(-falloff*(observerZ - fogHeight))
     float  fogDensity;               // PRE-COMPUTED: density * exp2(-falloff*(observerZ - fogHeight))
 
-    /// @source UE5 FogRendering.cpp:249 — ExponentialFogParameters.y
+    /// Height falloff coefficient for primary fog layer
     float  fogHeightFalloff;         // Height falloff coefficient
 
-    /// @source UE5 FogRendering.cpp:261 — ExponentialFogParameters3.y
+    /// Fog base height in world-space (cm)
     float  fogBaseHeight;            // Fog base height (world-space, cm)
 
-    /// @source UE5 FogRendering.cpp:256 — ExponentialFogColorParameter.w
-    /// In UE5 this is stored as (1 - FogMaxOpacity) but we store FogMaxOpacity
-    /// directly and compute MinFogOpacity in the shader as (1 - fogMaxOpacity).
+    /// Maximum fog opacity (0-1). MinFogOpacity is computed as (1 - fogMaxOpacity).
     float  fogMaxOpacity;            // Maximum fog opacity (0-1)
 
-    /// @source UE5 FogRendering.cpp:249 — ExponentialFogParameters.w
+    /// Minimum distance before fog begins (cm)
     float  fogStartDistance;         // Minimum distance before fog begins (cm)
 
-    /// @source UE5 FogRendering.cpp:261 — ExponentialFogParameters3.w
+    /// Beyond this distance, fog factor = 1 (0 = unlimited)
     float  fogCutoffDistance;        // Beyond this distance, fog factor = 1 (0 = unlimited)
 
-    /// @source UE5 FogRendering.cpp:249 — ExponentialFogParameters.z
+    /// Clamped max observer Z for shader-side height compensation
     float  maxObserverHeight;        // Clamped max observer Z for shader-side height compensation
 
-    /// @source UE5 FogRendering.cpp:261 — ExponentialFogParameters3.x
+    /// Raw (un-precomputed) density for start distance recalculation
     float  rawDensity;               // Raw (un-precomputed) density for start distance recalculation
 
     // ── Second fog layer ─────────────────────────────────────────────────
-    /// @source UE5 FogRendering.cpp:253 — ExponentialFogParameters2.x
+    /// Precomputed second layer density: secondDensity * exp2(-falloff*(observerZ-baseH))
     float  secondFogDensity;         // PRE-COMPUTED: secondDensity * exp2(-falloff*(observerZ-baseH))
 
-    /// @source UE5 FogRendering.cpp:253 — ExponentialFogParameters2.y
+    /// Second layer height falloff coefficient
     float  secondFogHeightFalloff;   // Second layer height falloff coefficient
 
-    /// @source UE5 FogRendering.cpp:253 — ExponentialFogParameters2.z
+    /// Raw density for start distance recalculation (second layer)
     float  secondFogRawDensity;      // Raw density for start distance recalculation
 
-    /// @source UE5 FogRendering.cpp:253 — ExponentialFogParameters2.w
+    /// Second layer base height (cm)
     float  secondFogBaseHeight;      // Second layer base height (cm)
 
     // ── Directional inscattering ─────────────────────────────────────────
-    /// @source UE5 FogRendering.cpp:273 — DirectionalInscatteringColor
-    float4 directionalInscatteringColor; // xyz = sun-facing fog glow color, w = exponent (UE5 packs exponent in .w)
+    /// Sun-facing fog glow color (xyz), exponent packed in w
+    float4 directionalInscatteringColor; // xyz = sun-facing fog glow color, w = exponent
 
-    /// @source UE5 FogRendering.cpp:270 — DirectionalInscatteringExponent
+    /// Phase function power (higher = tighter sun halo)
     float  directionalInscatteringExponent; // Phase function power (higher = tighter sun halo)
 
-    /// @source UE5 FogRendering.cpp:268 — InscatteringLightDirection.w
+    /// Start distance for directional inscattering
     float  directionalInscatteringStartDistance; // Start distance for directional inscattering
 
     float  _fogPad2[2];             // Pad to 16-byte boundary
 
     // ── Sky atmosphere injection ──────────────────────────────────────────
-    /// @source UE5 FogRendering.cpp:85 — SkyAtmosphereAmbientContributionColorScale
+    /// Scale for sky atmosphere ambient contribution to fog inscattering
     float4 skyAtmContribColorScale;  // xyz = scale for sky atmosphere ambient contribution
 
-    /// @source UE5 HeightFogCommon.ush:175 — View.SkyAtmosphereHeightFogContribution
+    /// Sky atmosphere height fog contribution factor (0-1, default 1.0)
     float  heightFogContribution;    // SkyAtmosphere.HeightFogContribution (0-1, default 1.0)
 
-    /// @source UE5 HeightFogCommon.ush:175 — GetViewDistanceSkyLightColor()
+    /// Sky light diffuse color (from SH L0 or cubemap average)
     float  skyLightColorR;           // Sky light diffuse color R (from SH L0 or cubemap average)
     float  skyLightColorG;           // Sky light diffuse color G
     float  skyLightColorB;           // Sky light diffuse color B
 
     // ── Sun post-transmittance illuminance ────────────────────────────────
-    /// @source UE5 HeightFogCommon.ush:319 — AtmosphereLightIlluminanceOnGroundPostTransmittance[0]
+    /// Post-transmittance sun illuminance (atmosphere-filtered sun color at ground level)
     float  sunIllumPostTransR;       // Post-transmittance sun illuminance R
     float  sunIllumPostTransG;       // Post-transmittance sun illuminance G
     float  sunIllumPostTransB;       // Post-transmittance sun illuminance B
     float  sunIllumPostTransA;       // 1.0 = has atmosphere sun, 0.0 = none
 
-    /// @source UE5 HeightFogCommon.ush:71 — InscatteringLightDirection
+    /// Sun direction in world-space (toward sun)
     float  sunDirX;                  // Sun direction X (world-space, toward sun)
     float  sunDirY;                  // Sun direction Y
     float  sunDirZ;                  // Sun direction Z
@@ -184,23 +181,21 @@ SamplerState linearSampler : register(s0);
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 HeightFogCommon.ush:57 — FLT_EPSILON2
-/// Threshold for Taylor expansion selection in CalculateLineIntegralShared.
+/// Threshold for Taylor expansion selection in IntegrateExponentialFogRay.
 /// When |Falloff| <= 0.01, the exact formula (1 - exp2(-x))/x is numerically
 /// unstable due to division near zero; the Taylor expansion is used instead.
 static const float FLT_EPSILON2 = 0.01f;
 
-/// @source UE5 HeightFogCommon.ush:314 — UniformPhaseFunction = 1 / (4 * PI)
-/// Normalization constant for the isotropic (uniform) phase function.
+/// Normalization constant for the isotropic (uniform) phase function: 1 / (4 * PI).
 /// Applied after the directional cosine-power phase when not matching volumetric fog.
 static const float UNIFORM_PHASE_FUNCTION = 1.0f / (4.0f * 3.14159265359f);
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CalculateLineIntegralShared
+// IntegrateExponentialFogRay
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 HeightFogCommon.ush:192-199 — CalculateLineIntegralShared
-/// @constants Falloff clamp = -127.0f (line 194), FLT_EPSILON2 = 0.01f (line 198)
+/// @ref Hillaire 2016 "Physically Based & Unified Volumetric Rendering in Frostbite" — exponential fog integration
+/// @constants Falloff clamp = -127.0f (IEEE exp2 overflow guard), FLT_EPSILON2 = 0.01f (Taylor threshold)
 /// @deviations NONE
 ///
 /// Calculates the line integral of exponential height fog along a ray segment.
@@ -213,32 +208,28 @@ static const float UNIFORM_PHASE_FUNCTION = 1.0f / (4.0f * 3.14159265359f);
 /// where Falloff = HeightFalloff * RayDirectionZ.
 ///
 /// When |Falloff| is very small (ray nearly horizontal), this formula is
-/// numerically unstable. UE5 uses a first-order Taylor expansion instead:
+/// numerically unstable; a first-order Taylor expansion is used instead:
 ///   integral = RayOriginTerms * (ln(2) - 0.5 * ln(2)^2 * Falloff)
 ///
 /// @param FogHeightFalloff  Height falloff coefficient for this fog layer.
 /// @param RayDirectionZ     Z component of the (unnormalized) ray direction.
 /// @param RayOriginTerms    Pre-computed density * exp2(-falloff * (originZ - fogHeight)).
 /// @return The line integral (optical depth per unit ray length) for this layer.
-float CalculateLineIntegralShared(float FogHeightFalloff, float RayDirectionZ, float RayOriginTerms)
+float IntegrateExponentialFogRay(float FogHeightFalloff, float RayDirectionZ, float RayOriginTerms)
 {
     // Clamp to prevent exp2() overflow (IEEE float max exponent).
-    // @source UE5 HeightFogCommon.ush:194
     float Falloff = max(-127.0f, FogHeightFalloff * RayDirectionZ);
 
     // Exact formula: (1 - exp2(-Falloff)) / Falloff
-    // @source UE5 HeightFogCommon.ush:195
     float LineIntegral = (1.0f - exp2(-Falloff)) / Falloff;
 
     // Taylor expansion around Falloff = 0:
     //   ln(2) - 0.5 * ln(2)^2 * Falloff
     // where log() is the natural logarithm (ln).
-    // @source UE5 HeightFogCommon.ush:196
     float Ln2 = log(2.0f);
     float LineIntegralTaylor = Ln2 - (0.5f * Ln2 * Ln2) * Falloff;
 
-    // Select exact or Taylor based on magnitude.
-    // @source UE5 HeightFogCommon.ush:198 — FLT_EPSILON2 = 0.01
+    // Select exact or Taylor based on magnitude (FLT_EPSILON2 = 0.01 threshold).
     return RayOriginTerms * (abs(Falloff) > FLT_EPSILON2 ? LineIntegral : LineIntegralTaylor);
 }
 
@@ -266,8 +257,7 @@ float3 ReconstructWorldPosition(float2 uv, float depth)
 // Main Entry Point
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 HeightFogPixelShader.usf:39-139 — ExponentialPixelMain
-/// @source UE5 HeightFogCommon.ush:213-386 — GetExponentialHeightFog
+/// @ref Hillaire 2016 "Physically Based & Unified Volumetric Rendering in Frostbite" — exponential fog integration
 /// @deviations NONE
 ///
 /// Computes exponential height fog for every pixel and outputs inscattering
@@ -300,9 +290,6 @@ float4 main(FSInput input) : SV_Target
         // Sky pixel: no geometry hit. Reconstruct a ray direction using a
         // small depth value (near the near plane in reversed-Z) to get a
         // valid direction vector, then extend to farPlane distance.
-        // UE5 uses ScreenVector * SceneDepth where SceneDepth comes from
-        // ConvertFromDeviceZ; for sky pixels the depth is effectively
-        // the far plane distance.
         float3 farWorldPos = ReconstructWorldPosition(uv, 0.0002f);
         float3 rayDir = normalize(farWorldPos - camPos3);
         float  skyDist = farPlane;
@@ -317,28 +304,23 @@ float4 main(FSInput input) : SV_Target
     }
 
     // ── Step 3: MinFogOpacity and MaxWorldObserverHeight ─────────────────
-    /// @source UE5 HeightFogCommon.ush:230-233
     /// MinFogOpacity is the minimum transmittance (fog factor) —
     /// it prevents fog from becoming fully opaque.
-    /// In UE5, ExponentialFogColorParameter.w stores MinFogOpacity directly.
-    /// We compute it from fogMaxOpacity (which is 1.0 - MinFogOpacity in UE5 terms).
+    /// We compute it from fogMaxOpacity (which is 1.0 - MinFogOpacity).
     float MinFogOpacity = 1.0f - fogMaxOpacity;
     float MaxWorldObserverHeight = maxObserverHeight;
 
     // ── Step 4: Observer height clamping ──────────────────────────────────
-    /// @source UE5 HeightFogCommon.ush:233 — Clamp camera Z to MaxWorldObserverHeight
+    /// Clamp camera Z to MaxWorldObserverHeight.
     float3 WorldObserverOrigin = float3(camPos3.xy, min(camPos3.z, MaxWorldObserverHeight));
 
     // ── Step 5: End distance (horizontal XY plane clamping) ──────────────
-    /// @source UE5 HeightFogCommon.ush:236-240 — EndDistance
     /// If EndDistance > 0 and the XY distance exceeds it, scale the ray
     /// so that the horizontal distance does not exceed EndDistance.
-    /// UE5 stores this in FogData.EndDistance; we don't currently expose it
-    /// in HeightFogCB. This block is ready for when EndDistance is added.
+    /// Not currently exposed in HeightFogCB. This block is ready for when EndDistance is added.
     // (EndDistance is not in our current CB — skip this step for now)
 
     // ── Step 6: Compensate ray for observer height clamping ──────────────
-    /// @source UE5 HeightFogCommon.ush:242-246
     /// When the observer is clamped downward, the Z component of the view
     /// vector must be adjusted so the fog integral starts from the clamped
     /// position rather than the true camera position.
@@ -350,14 +332,12 @@ float4 main(FSInput input) : SV_Target
     float3 CameraToReceiverNormalized = CameraToReceiver * CameraToReceiverLengthInv;
 
     // ── Step 7: Initialize ray parameters ────────────────────────────────
-    /// @source UE5 HeightFogCommon.ush:248-251
     float RayOriginTerms = fogDensity;              // Pre-computed on CPU
     float RayOriginTermsSecond = secondFogDensity;  // Pre-computed on CPU
     float RayLength = CameraToReceiverLength;
     float RayDirectionZ = CameraToReceiver.z;
 
     // ── Step 8: Start distance exclusion ─────────────────────────────────
-    /// @source UE5 HeightFogCommon.ush:272-291
     /// When fogStartDistance > 0, fog integration begins at the exclusion
     /// point rather than the camera. The ray is shortened and the density
     /// terms are re-computed at the exclusion intersection height using
@@ -366,66 +346,58 @@ float4 main(FSInput input) : SV_Target
 
     if (ExcludeDistance > 0.0f)
     {
-        /// @source UE5 HeightFogCommon.ush:276
+        // Parametric intersection time along the ray at the exclusion distance.
         float ExcludeIntersectionTime = ExcludeDistance * CameraToReceiverLengthInv;
 
-        /// @source UE5 HeightFogCommon.ush:277-279
+        // Compute Z height at exclusion intersection and remaining Z delta.
         float CameraToExclusionIntersectionZ = ExcludeIntersectionTime * CameraToReceiver.z;
         float ExclusionIntersectionZ = WorldObserverOrigin.z + CameraToExclusionIntersectionZ;
         float ExclusionIntersectionToReceiverZ = CameraToReceiver.z - CameraToExclusionIntersectionZ;
 
-        /// @source UE5 HeightFogCommon.ush:282-283
+        // Shorten ray to start at exclusion point.
         RayLength = (1.0f - ExcludeIntersectionTime) * CameraToReceiverLength;
         RayDirectionZ = ExclusionIntersectionToReceiverZ;
 
-        /// @source UE5 HeightFogCommon.ush:285-286
-        /// Re-compute primary layer density at the exclusion intersection height.
+        // Re-compute primary layer density at the exclusion intersection height.
         float Exponent = max(-127.0f, fogHeightFalloff * (ExclusionIntersectionZ - fogBaseHeight));
         RayOriginTerms = rawDensity * exp2(-Exponent);
 
-        /// @source UE5 HeightFogCommon.ush:288-289
-        /// Re-compute secondary layer density at the exclusion intersection height.
+        // Re-compute secondary layer density at the exclusion intersection height.
         float ExponentSecond = max(-127.0f, secondFogHeightFalloff * (ExclusionIntersectionZ - secondFogBaseHeight));
         RayOriginTermsSecond = secondFogRawDensity * exp2(-ExponentSecond);
     }
 
     // ── Step 9: Line integral (primary + secondary layers) ───────────────
-    /// @source UE5 HeightFogCommon.ush:294
     /// Calculate shared line integral — used for both base fog and directional inscattering.
-    float ExponentialHeightLineIntegralShared = CalculateLineIntegralShared(
+    float ExponentialHeightLineIntegralShared = IntegrateExponentialFogRay(
         fogHeightFalloff, RayDirectionZ, RayOriginTerms
     );
 
-    /// @source UE5 HeightFogCommon.ush:296 — PERMUTATION_SUPPORT_FOG_SECOND_TERM
     /// Add second layer's contribution. Guarded by density > 0 check
-    /// (equivalent to UE5's compile-time permutation).
+    /// (runtime equivalent of a compile-time permutation for two-layer fog).
     if (secondFogRawDensity > 0.0f || secondFogDensity > 0.0f)
     {
-        ExponentialHeightLineIntegralShared += CalculateLineIntegralShared(
+        ExponentialHeightLineIntegralShared += IntegrateExponentialFogRay(
             secondFogHeightFalloff, RayDirectionZ, RayOriginTermsSecond
         );
     }
 
-    /// @source UE5 HeightFogCommon.ush:299
     /// Scale by ray length to get total optical depth (tau).
     float ExponentialHeightLineIntegral = ExponentialHeightLineIntegralShared * RayLength;
 
     // ── Step 10: Inscattering color ──────────────────────────────────────
-    /// @source UE5 HeightFogCommon.ush:142 — ComputeInscatteringColor
     /// Base inscattering color from the fog component.
     float3 InscatteringColor = fogColor.xyz;
 
-    /// @source UE5 HeightFogCommon.ush:174-180 — Sky atmosphere ambient injection
-    /// When SkyAtmosphere affects height fog, add the sky ambient contribution:
+    /// Sky atmosphere ambient injection: add the sky ambient contribution.
     ///   Inscattering += ColorScale * Contribution * SkyLightColor
-    /// This creates the blue/white horizon haze characteristic of UE5.
+    /// This creates the blue/white horizon haze characteristic of atmospheric scattering.
     float3 SkyAmbient = skyAtmContribColorScale.xyz
                       * heightFogContribution
                       * float3(skyLightColorR, skyLightColorG, skyLightColorB);
     InscatteringColor += SkyAmbient;
 
     // ── Step 11: Directional inscattering ────────────────────────────────
-    /// @source UE5 HeightFogCommon.ush:304-355
     /// Directional inscattering simulates the sun glow visible through fog.
     /// Uses a cosine-power phase function directed toward the sun, with its
     /// own line integral that can have a different start distance.
@@ -434,54 +406,47 @@ float4 main(FSInput input) : SV_Target
     {
         float3 sunDirection = float3(sunDirX, sunDirY, sunDirZ);
 
-        /// @source UE5 HeightFogCommon.ush:313-325
         /// Build directional inscattering base color.
-        /// UE5 adds atmosphere-filtered sun illuminance to the artistic directional color:
+        /// Adds atmosphere-filtered sun illuminance to the artistic directional color:
         ///   DirectionalColor = DirectionalInscatteringColor
-        ///     + HeightFogContribution * AtmosphereLightIlluminanceOnGroundPostTransmittance[0].rgb
+        ///     + HeightFogContribution * PostTransmittanceSunIlluminance
         float3 DirectionalInscatteringBaseColor = directionalInscatteringColor.xyz;
         if (sunIllumPostTransA > 0.0f)
         {
-            /// @source UE5 HeightFogCommon.ush:319
+            // Add atmosphere-filtered post-transmittance sun illuminance.
             DirectionalInscatteringBaseColor += heightFogContribution
                 * float3(sunIllumPostTransR, sunIllumPostTransG, sunIllumPostTransB);
         }
 
-        /// @source UE5 HeightFogCommon.ush:323-324
         /// Power phase function: pow(saturate(dot(viewDir, lightDir)), exponent) * UniformPhase
-        /// UE5 uses CameraToReceiverNormalized (not negated) dotted with the light direction
-        /// (which points TOWARD the light). This means maximum inscattering occurs when the
+        /// CameraToReceiverNormalized (not negated) is dotted with the light direction
+        /// (which points TOWARD the light). Maximum inscattering occurs when the
         /// camera looks toward the sun.
         float CosAngle = saturate(dot(CameraToReceiverNormalized, sunDirection));
         float Phase = pow(CosAngle, directionalInscatteringExponent) * UNIFORM_PHASE_FUNCTION;
 
         float3 DirectionalLightInscattering = DirectionalInscatteringBaseColor * Phase;
 
-        /// @source UE5 HeightFogCommon.ush:348-349
         /// Directional inscattering uses the shared line integral but with a reduced
         /// ray length (subtracting its own start distance).
         float DirectionalInscatteringStartDist = directionalInscatteringStartDistance;
         float DirExponentialHeightLineIntegral = ExponentialHeightLineIntegralShared
             * max(RayLength - DirectionalInscatteringStartDist, 0.0f);
 
-        /// @source UE5 HeightFogCommon.ush:351
         /// Transmittance for directional inscattering.
         float DirectionalInscatteringFogFactor = saturate(exp2(-DirExponentialHeightLineIntegral));
 
-        /// @source UE5 HeightFogCommon.ush:353
         /// Final directional inscattering = color * (1 - transmittance).
         DirectionalInscattering = DirectionalLightInscattering * (1.0f - DirectionalInscatteringFogFactor);
     }
 
     // ── Step 12: Final fog factor (transmittance) ────────────────────────
-    /// @source UE5 HeightFogCommon.ush:362
     /// ExpFogFactor = max(saturate(exp2(-tau)), MinFogOpacity)
     /// This is the fraction of the scene color that survives through the fog.
     /// MinFogOpacity prevents the fog from becoming fully opaque.
     float ExpFogFactor = max(saturate(exp2(-ExponentialHeightLineIntegral)), MinFogOpacity);
 
     // ── Step 13: Cutoff distance ─────────────────────────────────────────
-    /// @source UE5 HeightFogCommon.ush:365-369
     /// Beyond FogCutoffDistance, disable fog entirely (transmittance = 1, no inscattering).
     /// Uses CameraToReceiverLength (before start-distance exclusion) for the distance test.
     [flatten]
@@ -492,7 +457,6 @@ float4 main(FSInput input) : SV_Target
     }
 
     // ── Step 14: Compose final color ─────────────────────────────────────
-    /// @source UE5 HeightFogCommon.ush:375
     /// FogColor = InscatteringColor * (1 - ExpFogFactor) + DirectionalInscattering
     ///
     /// This is the standard inscattering formula:
@@ -512,12 +476,9 @@ float4 main(FSInput input) : SV_Target
     ///   output.rgb = FogColor / fogOpacity (undo the opacity baked into inscattering)
     ///              = InscatteringColor + DirectionalInscattering / fogOpacity
     ///
-    /// However, UE5's ExponentialPixelMain (HeightFogPixelShader.usf:134) outputs:
-    ///   OutColor = float4(FogInscatteringAndOpacity.rgb, FogInscatteringAndOpacity.w)
-    /// where .w = ExpFogFactor (transmittance), NOT opacity.
-    ///
-    /// UE5 uses a custom blend state: One, SrcAlpha (additive inscattering + transmittance).
-    /// For our SrcAlpha/InvSrcAlpha blend, we must restructure the output.
+    /// Note: some engines output transmittance directly with a One, SrcAlpha blend.
+    /// We use SrcAlpha/InvSrcAlpha instead, so we must restructure the output
+    /// to divide inscattering by opacity.
     float fogOpacity = 1.0f - ExpFogFactor;
 
     // Early discard for fully transparent pixels.

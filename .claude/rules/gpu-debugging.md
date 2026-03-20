@@ -8,7 +8,7 @@ When rendering produces wrong output, follow this exact diagnostic order:
 
 3. **CPU Readback** — if shader-side visualization is insufficient, add a render graph pass that copies GPU data to a readback buffer. NEVER do readback outside the render graph (causes device removed).
 
-4. **Validate Against Known-Good Values** — compare with mathematically predictable values from UE5 reference.
+4. **Validate Against Known-Good Values** — compare with mathematically predictable values from reference reference.
 
 ## Buffer Visualization Grid
 

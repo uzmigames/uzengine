@@ -1,4 +1,4 @@
-/// UzEngine Shader Parameter Macros — UE5-style declarative CB + resource binding.
+/// UzEngine Shader Parameter Macros — engine-style declarative CB + resource binding.
 ///
 /// Provides macros for declaring shader parameter structs with automatic metadata
 /// generation. Each macro-declared struct has a static `GetMetadata()` method that
@@ -6,8 +6,8 @@
 /// to the constant buffer) and which are resource handles (bound as SRV/sampler/UAV).
 ///
 /// # Design
-/// Follows UE5's `BEGIN_SHADER_PARAMETER_STRUCT` / `SHADER_PARAMETER` pattern,
-/// simplified for UzEngine. Instead of UE5's typechain trick, each macro appends
+/// Follows industry-standard's `BEGIN_SHADER_PARAMETER_STRUCT` / `SHADER_PARAMETER` pattern,
+/// simplified for UzEngine. Instead of the reference engine's typechain trick, each macro appends
 /// to a static member list built inside `GetMetadata()`.
 ///
 /// The struct is split into two sections:

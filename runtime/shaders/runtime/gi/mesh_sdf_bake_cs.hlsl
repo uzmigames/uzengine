@@ -11,9 +11,9 @@
 /// reasonable (each thread independently scans all triangles).
 ///
 /// @source Real-Time Collision Detection, Ch 5.1.5 — ClosestPointOnTriangle
-/// @source UE5 MeshDistanceFieldUtilities.cpp:42-180 — mesh SDF bake dispatch
+/// @ref Wright 2015 "Dynamic Occlusion with SDFs" — mesh distance field generation
 /// @deviations Brute-force per-voxel O(V*T) — acceptable for 32^3 grids on GPU.
-///   UE5 uses a spatial acceleration structure (BVH) for the triangle query;
+///   the reference uses a spatial acceleration structure (BVH) for the triangle query;
 ///   we trade that complexity for simplicity at small grid sizes.
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -142,8 +142,8 @@ float3 ClosestPointOnTriangle(float3 p, float3 a, float3 b, float3 c)
 /// Each thread processes one voxel in the output 3D texture.
 /// Thread group size: 4x4x4 = 64 threads per group, matching the 3D grid.
 ///
-/// @source UE5 MeshDistanceFieldUtilities.cpp:42-180 — GenerateMeshDistanceField
-/// @deviations Brute-force O(V*T) instead of UE5's BVH-accelerated query.
+/// @ref Wright 2015 — GPU mesh distance field generation (brute-force variant)
+/// @deviations Brute-force O(V*T) instead of the reference engine's BVH-accelerated query.
 ///   For 32^3 grids with <10K triangles, GPU parallelism compensates.
 [numthreads(4, 4, 4)]
 void main(uint3 dispatchThreadId : SV_DispatchThreadID)

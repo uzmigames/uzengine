@@ -1,6 +1,6 @@
 /// UzEngine Static Shadow Cache — Implementation.
 ///
-/// UE5 Reference:
+/// Reference:
 /// - Cache validation: ShadowSetup.cpp:3869-3954
 /// - Cache config: ShadowSetup.cpp:69-100
 /// - Cached shadow map: ScenePrivate.h:2685-2722
@@ -19,7 +19,7 @@ UZ_DECLARE_LOG_CATEGORY(Shadow);
 namespace uz {
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Epsilon tolerances for cache invalidation — UE5 ShadowSetup.cpp:3869-3954
+// Epsilon tolerances for cache invalidation — reference shadow setup.cpp:3869-3954
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Tolerance for light direction vectors. Tight because even small angular
@@ -161,7 +161,7 @@ bool ShadowCacheManager::IsCacheValid(
 /// and resolution all match — but the cascade center has moved (camera movement).
 /// This is a weaker check than IsCacheValid (which also checks center equality).
 ///
-/// @source UE5 ShadowSetup.cpp:3862-3873 — bIsValidCachedViewDependentWholeSceneShadow
+/// Checks if cached shadow is valid for scrolling (weaker than full IsCacheValid)
 static bool IsCacheValidForScrolling(
     const ShadowCacheKey& cached,
     const ShadowCacheKey& current)
@@ -213,7 +213,7 @@ ShadowCacheMode ShadowCacheManager::UpdateCache(
         // Cache is stale for exact match — check if scrolling is possible.
         // Scrolling requires: same light dir, up, radius, resolution, but different center.
         // Also requires the extra static subjects from previous scrolling to be within budget.
-        /// @source UE5 ShadowSetup.cpp:3884-3919
+        /// CSM scrolling eligibility check — same direction/radius, different center
         if (IsCacheValidForScrolling(data.key, currentKey)
             && data.lastFrameExtraStaticShadowSubjects <= kMaxCSMScrollingExtraStaticSubjects)
         {
@@ -442,7 +442,7 @@ uint64_t ShadowCacheManager::ComputeTextureMemory(uint32_t resolution) {
 // ShadowCacheManager — Static primitive tracking
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 ShadowSetup.cpp:2364 — StaticShadowSubjectPersistentPrimitiveIdMap[...] = true
+/// Marks a primitive in StaticShadowSubjectPersistentPrimitiveIdMap
 void ShadowCacheManager::MarkStaticPrimitiveRendered(
     uint32_t lightId, uint32_t cascadeIndex,
     uint32_t primitiveIndex, uint32_t totalPrimitives)
@@ -465,7 +465,7 @@ void ShadowCacheManager::MarkStaticPrimitiveRendered(
     }
 }
 
-/// @source UE5 ShadowSetup.cpp:5002 — StaticShadowSubjectPersistentPrimitiveIdMap[...]
+/// Queries StaticShadowSubjectPersistentPrimitiveIdMap for cache hit
 bool ShadowCacheManager::IsStaticPrimitiveRendered(
     uint32_t lightId, uint32_t cascadeIndex,
     uint32_t primitiveIndex) const
@@ -509,8 +509,8 @@ const CSMScrollingData& ShadowCacheManager::GetScrollingData(
 /// Projects cascade centers into light space, computes AABB overlap ratio,
 /// and generates edge-strip culling planes for the non-overlapped regions.
 ///
-/// @source UE5 ShadowSetup.cpp:3893-3931 — overlap ratio computation
-/// @source UE5 ShadowSetup.cpp:5600-5668 — UV regions + culling planes
+/// @ref Engel 2006 "Cascaded Shadow Maps" — overlap ratio computation
+/// UV regions + culling planes for incremental scrolling
 CSMScrollingData ShadowCacheManager::ComputeScrollingData(
     const ShadowCacheKey& cachedKey,
     const ShadowCacheKey& currentKey,
@@ -521,7 +521,7 @@ CSMScrollingData ShadowCacheManager::ComputeScrollingData(
     CSMScrollingData result{};
 
     // Build a light-space basis from the light direction.
-    // @source UE5 ShadowSetup.cpp:3893-3896 — FaceDirection + FindBestAxisVectors
+    // FaceDirection + FindBestAxisVectors for light-space basis
     const Vec3 fwd = lightDir.Normalized();
 
     // Choose a stable right and up axis for the light-space basis.
@@ -536,7 +536,7 @@ CSMScrollingData ShadowCacheManager::ComputeScrollingData(
     const Vec3 lightRight = lightUp.Cross(fwd).Normalized();
 
     // Project cascade centers into light space (2D: right and up axes).
-    // @source UE5 ShadowSetup.cpp:3901-3904
+    // Project cascade centers into light space (2D: right and up)
     const Vec3 projCurrent = Vec3{
         currentCenter.Dot(lightRight),
         currentCenter.Dot(lightUp),
@@ -551,7 +551,7 @@ CSMScrollingData ShadowCacheManager::ComputeScrollingData(
 
     // Build 2D AABBs in light space for current and cached viewports.
     // Current viewport is centered at origin; cached is offset by delta.
-    // @source UE5 ShadowSetup.cpp:3906-3907
+    // Build 2D AABBs in light space
     const float currentRadius = currentKey.subjectRadius;
     const float cachedRadius = cachedKey.subjectRadius;
 
@@ -568,7 +568,7 @@ CSMScrollingData ShadowCacheManager::ComputeScrollingData(
     const float cacMaxY = projCenterDelta.y + cachedRadius;
 
     // Compute AABB intersection (overlap).
-    // @source UE5 ShadowSetup.cpp:3909
+    // AABB intersection (overlap)
     const float ovMinX = std::max(curMinX, cacMinX);
     const float ovMinY = std::max(curMinY, cacMinY);
     const float ovMaxX = std::min(curMaxX, cacMaxX);
@@ -581,14 +581,14 @@ CSMScrollingData ShadowCacheManager::ComputeScrollingData(
     }
 
     // Overlap area ratio = overlap area / cached area
-    // @source UE5 ShadowSetup.cpp:3911-3913
+    // Overlap area ratio = overlap area / cached area
     const float overlapArea = (ovMaxX - ovMinX) * (ovMaxY - ovMinY);
     const float cachedArea = cachedRadius * cachedRadius * 4.0f;
     result.overlapRatio = (cachedArea > 1e-6f) ? (overlapArea / cachedArea) : 0.f;
 
     // Compute UV regions for the overlap on both the cached and current shadow maps.
     // UV is in [0,1] normalized texture space.
-    // @source UE5 ShadowSetup.cpp:5618-5639
+    // Compute UV regions for overlap on cached and current maps
 
     const float cacWidth  = cacMaxX - cacMinX;
     const float cacHeight = cacMaxY - cacMinY;
@@ -608,19 +608,19 @@ CSMScrollingData ShadowCacheManager::ComputeScrollingData(
     result.overlappedUVOnCurrent[3] = (curMaxY - ovMinY) / curHeight;    // maxV (Y-flipped)
 
     // Z offset for depth reconstruction during scrolling copy.
-    // @source UE5 ShadowSetup.cpp:5616
+    // Z offset for depth reconstruction during scrolling copy
     result.zOffset = projCenterDelta.z;
 
     // Compute culling planes for the non-overlapped edge strips.
     // Each strip is a region of the new cascade that doesn't overlap with the cached one.
     // Only static primitives intersecting these strips need re-rendering.
-    // @source UE5 ShadowSetup.cpp:5641-5667
+    // Culling planes for non-overlapped edge strips (up to 4 sides)
 
     // Transform back to world space using the light basis vectors.
     result.cullingPlaneCount = 0;
 
     // Top strip: current extends above overlap
-    // @source UE5 ShadowSetup.cpp:5646-5649
+    // Top strip: current extends above overlap
     if (curMaxY > ovMaxY) {
         auto& plane = result.cullingPlanes[result.cullingPlaneCount++];
         // Plane at the overlap top edge, normal pointing inward (toward the strip)
@@ -629,7 +629,7 @@ CSMScrollingData ShadowCacheManager::ComputeScrollingData(
     }
 
     // Bottom strip: current extends below overlap
-    // @source UE5 ShadowSetup.cpp:5652-5655
+    // Bottom strip: current extends below overlap
     if (curMinY < ovMinY) {
         auto& plane = result.cullingPlanes[result.cullingPlaneCount++];
         plane.point = currentCenter + lightUp * ovMinY;
@@ -637,7 +637,7 @@ CSMScrollingData ShadowCacheManager::ComputeScrollingData(
     }
 
     // Left strip: current extends to the left of overlap
-    // @source UE5 ShadowSetup.cpp:5658-5661
+    // Left strip: current extends to the left of overlap
     if (curMinX < ovMinX) {
         auto& plane = result.cullingPlanes[result.cullingPlaneCount++];
         plane.point = currentCenter + lightRight * ovMinX;
@@ -645,7 +645,7 @@ CSMScrollingData ShadowCacheManager::ComputeScrollingData(
     }
 
     // Right strip: current extends to the right of overlap
-    // @source UE5 ShadowSetup.cpp:5663-5667
+    // Right strip: current extends to the right of overlap
     if (curMaxX > ovMaxX) {
         auto& plane = result.cullingPlanes[result.cullingPlaneCount++];
         plane.point = currentCenter + lightRight * ovMaxX;

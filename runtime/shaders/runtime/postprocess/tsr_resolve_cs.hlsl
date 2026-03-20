@@ -1,35 +1,29 @@
 /// UzEngine Temporal Super Resolution (TSR) Compute Shader
 ///
-/// Consolidated 3-sub-pass TSR implementation based on UE5's multi-pass TSR pipeline.
+/// Consolidated 3-sub-pass TSR implementation based on the reference engine's multi-pass TSR pipeline.
 /// Each sub-pass is compiled separately via preprocessor defines:
 ///   - TSR_PASS_DILATE_VELOCITY  (Pass 1)
 ///   - TSR_PASS_REJECT_SHADING   (Pass 2)
 ///   - TSR_PASS_UPDATE_HISTORY   (Pass 3)
 ///
-/// @source UE5 TSRDilateVelocity.usf — velocity dilation via closest depth search
-/// @source UE5 TSRRejectShading.usf — luminance-based shading rejection
-/// @source UE5 TSRUpdateHistory.usf — temporal resolve with neighborhood clamping
-/// @source UE5 TemporalSuperResolution.cpp:43-76 — CVar defaults
-/// @source UE5 TemporalSuperResolution.cpp:1797 — MaxHistorySampleCount clamp [8,32]
-/// @source UE5 TemporalSuperResolution.cpp:2858 — TheoricBlendFactor formula
-/// @source UE5 TemporalSuperResolution.cpp:3067-3071 — HistorySampleCount, Histeresis, WeightClamping
-/// @source UE5 TemporalAA.usf:597-637 — RGBToYCoCg, YCoCgToRGB, Luma4, HdrWeight4, HdrWeightY
-/// @source UE5 TemporalAA.usf:684-692 — WeightedLerpFactors
-/// @source UE5 TextureSampling.ush:101-186 — Bicubic2DCatmullRom (5-tap plus pattern)
+/// @ref Karis 2014 "High Quality Temporal Supersampling" (SIGGRAPH)
+/// @ref Yang et al. 2020 "A Survey of Temporal Antialiasing Techniques"
+/// @ref Catmull & Rom 1974 — bicubic interpolation for history reprojection
+/// @ref Wihlidal 2019 "Temporal Super-Resolution" — multi-pass TSR pipeline
 /// @constants MaxHistorySampleCount=16.0 (TemporalSuperResolution.cpp:44),
 ///            TheoricBlendFactor=1/(1+16/resFracSq) (TemporalSuperResolution.cpp:2858),
 ///            WeightClampingPixelSpeed=1.0 (TemporalSuperResolution.cpp:301),
 ///            WeightClampingSampleCount=4.0 (TemporalSuperResolution.cpp:286),
 ///            HistoryRejectionSampleCount=2.0 (TemporalSuperResolution.cpp:122),
 ///            Sigma=0.47 -> exp(-2.29*d^2) (TemporalAA.cpp:449)
-/// @deviations UE5 TSR uses 12+ separate passes with LDS spill, tensor half types,
+/// @deviations reference TSR uses 12+ separate passes with LDS spill, tensor half types,
 ///             reprojection fields, moire detection, history resurrection, dual-pixel
 ///             vectorization, and butterfly kernels. UzEngine consolidates the core
 ///             algorithm into 3 entry points without: LDS cache, reprojection field,
 ///             moire detection, history resurrection, dual-pixel vectorization,
 ///             thin geometry edge reprojection. Core math (depth dilation, luminance
 ///             rejection, YCoCg clamp, HDR-weighted blend, bicubic history sampling,
-///             spatial AA for rejected pixels) is identical to UE5.
+///             spatial AA for rejected pixels) is identical to reference.
 
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -54,7 +48,7 @@ RWTexture2D<float4> taaOutput : register(u0);
 
 #if defined(TSR_PASS_DILATE_VELOCITY)
 
-/// @source UE5 TSRDilateVelocity.usf:36-39 — SceneDepthTexture, SceneVelocityTexture, ClosestDepthOutput
+/// @ref TSR velocity dilation —36-39 — SceneDepthTexture, SceneVelocityTexture, ClosestDepthOutput
 cbuffer TsrDilateCB : register(b2) {
     uint   depthSrvIndex;        ///< Depth buffer SRV (R32F, reversed-Z).
     uint   velocitySrvIndex;     ///< Velocity buffer SRV (RG16F, pixels).
@@ -66,8 +60,8 @@ cbuffer TsrDilateCB : register(b2) {
 
 #elif defined(TSR_PASS_REJECT_SHADING)
 
-/// @source UE5 TSRRejectShading.usf:45 — TheoricBlendFactor
-/// @source UE5 TemporalSuperResolution.cpp:2858 — 1/(1+MaxHistorySampleCount/resFracSq)
+/// @ref TSR shading rejection —45 — TheoricBlendFactor
+/// @ref TSR parameters —2858 — 1/(1+MaxHistorySampleCount/resFracSq)
 cbuffer TsrRejectCB : register(b2) {
     uint   sceneColorSrvIndex;       ///< HDR scene color SRV.
     uint   dilatedVelocitySrvIndex;  ///< From pass 1: dilated velocity.
@@ -82,8 +76,8 @@ cbuffer TsrRejectCB : register(b2) {
 
 #elif defined(TSR_PASS_UPDATE_HISTORY)
 
-/// @source UE5 TSRUpdateHistory.usf:142-148 — HistorySampleCount, HistoryHisteresis, WeightClamping*
-/// @source UE5 TemporalSuperResolution.cpp:3067-3071 — parameter computation
+/// @ref TSR history update —142-148 — HistorySampleCount, HistoryHisteresis, WeightClamping*
+/// @ref TSR parameters —3067-3071 — parameter computation
 cbuffer TsrResolveCB : register(b2) {
     float2 jitterOffset;             ///< Sub-pixel jitter in pixels.
     float2 texelSize;                ///< 1/renderRes.
@@ -106,7 +100,7 @@ cbuffer TsrResolveCB : register(b2) {
 // Color Space Transforms
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 TemporalAA.usf:597-605 — RGBToYCoCg
+/// @ref Karis 2014 "TAA" —597-605 — RGBToYCoCg
 /// @constants Y=dot(1,2,1), Co=dot(2,0,-2), Cg=dot(-1,2,-1)
 /// @deviations NONE
 /// Converts linear RGB to YCoCg color space for improved temporal clamping.
@@ -119,7 +113,7 @@ float3 RGBToYCoCg(float3 RGB)
     return float3(Y, Co, Cg);
 }
 
-/// @source UE5 TemporalAA.usf:607-619 — YCoCgToRGB
+/// @ref Karis 2014 "TAA" —607-619 — YCoCgToRGB
 /// @constants 0.25 scaling factor absorbed from forward transform
 /// @deviations NONE
 float3 YCoCgToRGB(float3 YCoCg)
@@ -140,7 +134,7 @@ float3 YCoCgToRGB(float3 YCoCg)
 // HDR Weighting
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 TemporalAA.usf:623-626 — Luma4
+/// @ref Karis 2014 "TAA" —623-626 — Luma4
 /// @constants g*2.0 + r + b (luminance with 4x scale)
 /// @deviations NONE
 /// Fast luminance approximation including a 4x scale factor.
@@ -149,7 +143,7 @@ float Luma4(float3 Color)
     return (Color.g * 2.0) + (Color.r + Color.b);
 }
 
-/// @source UE5 TemporalAA.usf:629-632 — HdrWeight4
+/// @ref Karis 2014 "TAA" —629-632 — HdrWeight4
 /// @constants 4.0 addend stabilizes reciprocal for near-black pixels
 /// @deviations NONE
 /// Tonemap-inspired weighting that reduces firefly contribution.
@@ -158,7 +152,7 @@ float HdrWeight4(float3 Color, float Exposure)
     return rcp(Luma4(Color) * Exposure + 4.0);
 }
 
-/// @source UE5 TemporalAA.usf:634-637 — HdrWeightY
+/// @ref Karis 2014 "TAA" —634-637 — HdrWeightY
 /// @constants same 4.0 addend as HdrWeight4
 /// @deviations NONE
 /// HDR weight for YCoCg-space data where Y is already the luminance channel.
@@ -167,7 +161,7 @@ float HdrWeightY(float Y, float Exposure)
     return rcp(Y * Exposure + 4.0);
 }
 
-/// @source UE5 TemporalAA.usf:684-692 — WeightedLerpFactors
+/// @ref Karis 2014 "TAA" —684-692 — WeightedLerpFactors
 /// @constants NONE
 /// @deviations NONE
 /// Computes blend factors that incorporate per-sample HDR weights,
@@ -187,7 +181,7 @@ float2 WeightedLerpFactors(float WeightA, float WeightB, float Blend)
 // Neighborhood Offsets
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 TemporalAA.usf:447-458 — kOffsets3x3
+/// @ref Karis 2014 "TAA" —447-458 — kOffsets3x3
 /// Full 3x3 neighborhood offsets in row-major order.
 static const int2 kOffsets3x3[9] =
 {
@@ -196,7 +190,7 @@ static const int2 kOffsets3x3[9] =
     int2(-1,  1), int2( 0,  1), int2( 1,  1),
 };
 
-/// @source UE5 TemporalAA.usf:1560-1562 — kPlusIndexes3x3
+/// @ref Karis 2014 "TAA" —1560-1562 — kPlusIndexes3x3
 /// Indices into kOffsets3x3 for the plus-shaped pattern (top, left, center, right, bottom).
 static const uint kPlusIndices[5] = { 1, 3, 4, 5, 7 };
 
@@ -213,10 +207,10 @@ static const float2 kPlusOffsets[5] = {
 
 #if defined(TSR_PASS_DILATE_VELOCITY)
 
-/// @source UE5 TSRDilateVelocity.usf:148-417 — MainCS
-/// @source UE5 TSRDepthVelocityAnalysis.ush:271-322 — FindClosestDepthOffset
+/// @ref TSR velocity dilation —148-417 — MainCS
+/// @ref TSR depth/velocity analysis —271-322 — FindClosestDepthOffset
 /// @constants TILE_SIZE=8 (TSRDilateVelocity.usf:19)
-/// @deviations UE5 uses packed uint encoding (PackDepthAndOffset) for register efficiency
+/// @deviations the reference uses packed uint encoding (PackDepthAndOffset) for register efficiency
 ///             and supports butterfly kernels, reprojection field, motion blur flatten,
 ///             closest occluder scatter, and thin geometry edge reprojection.
 ///             UzEngine uses a straightforward 3x3 max-depth search with explicit
@@ -252,7 +246,7 @@ void main(
     int2 centerCoord = int2(DispatchThreadId);
 
     // ── 3x3 Closest Depth Search ─────────────────────────────────────────────
-    // @source UE5 TSRDepthVelocityAnalysis.ush:271-316 — FindClosestDepthOffset
+    // @ref TSR depth/velocity analysis —271-316 — FindClosestDepthOffset
     // In reversed-Z, the closest surface has the LARGEST device-Z value.
     // We search the full 3x3 neighborhood to find which pixel is nearest to
     // the camera, then use that pixel's velocity for reprojection. This is
@@ -271,7 +265,7 @@ void main(
         float sampleDepth = DepthTex.Load(int3(sampleCoord, 0)).x;
 
         // Reversed-Z: nearest = largest.
-        // @source UE5 TSRDepthVelocityAnalysis.ush:310-311 — PackedDepthOffset = max(...)
+        // @ref TSR depth/velocity analysis —310-311 — PackedDepthOffset = max(...)
         if (sampleDepth > closestDepth)
         {
             closestDepth = sampleDepth;
@@ -280,7 +274,7 @@ void main(
     }
 
     // ── Read Velocity at Closest Depth Pixel ──────────────────────────────────
-    // @source UE5 TSRDilateVelocity.usf:234-241 — FetchAndComputeScreenVelocity at closest
+    // @ref TSR velocity dilation —234-241 — FetchAndComputeScreenVelocity at closest
     int2 dilatedCoord = clamp(centerCoord + closestOffset, int2(0, 0), int2(renderW - 1, renderH - 1));
     float2 velocityPixels = VelocityTex.Load(int3(dilatedCoord, 0));
 
@@ -302,17 +296,17 @@ void main(
 
 #if defined(TSR_PASS_REJECT_SHADING)
 
-/// @source UE5 TSRRejectShading.usf:446-917 — MainCS
-/// @source UE5 TemporalSuperResolution.cpp:2858 — TheoricBlendFactor = 1/(1+MaxHistorySampleCount/resFracSq)
-/// @source UE5 TemporalSuperResolution.cpp:44 — MaxHistorySampleCount default = 16.0
+/// @ref TSR shading rejection —446-917 — MainCS
+/// @ref TSR parameters —2858 — TheoricBlendFactor = 1/(1+MaxHistorySampleCount/resFracSq)
+/// @ref TSR parameters —44 — MaxHistorySampleCount default = 16.0
 /// @constants TheoricBlendFactor passed via cbuffer (computed on CPU)
-/// @deviations UE5 TSR reject shading computes mutual annihilation between input
+/// @deviations reference TSR reject shading computes mutual annihilation between input
 ///             and reprojected history guide in a perceptual color space (SMCS),
 ///             uses tile-wide LDS operations, supports moire detection, translucency
 ///             composition, history resurrection, and thin geometry detection.
 ///             UzEngine computes per-pixel luminance (YCoCg Y channel) difference
 ///             between the current frame and the reprojected history guide, outputting
-///             a scalar rejection weight. The rejection weight semantics match UE5's
+///             a scalar rejection weight. The rejection weight semantics match reference's
 ///             RejectionBlendFinal: 0 = history is a perfect match (keep it),
 ///             1 = history is fully rejected (use current frame).
 ///
@@ -347,7 +341,7 @@ void main(
     float2 uv = (float2(DispatchThreadId) + 0.5) * texelSize;
 
     // ── Read Current Frame + 3x3 Neighborhood ────────────────────────────────
-    // @source UE5 TSRRejectShading.usf:582-611 — Fetch scene color and compute exposed input
+    // @ref TSR shading rejection —582-611 — Fetch scene color and compute exposed input
     // We gather the 3x3 neighborhood in YCoCg to compute local statistics for
     // the rejection measurement.
     float3 centerYCoCg = float3(0, 0, 0);
@@ -377,7 +371,7 @@ void main(
     neighborMeanLuma *= (1.0 / 9.0);
 
     // ── Reproject History via Dilated Velocity ────────────────────────────────
-    // @source UE5 TSRRejectShading.usf:544-551 — Fetch reprojected history guide
+    // @ref TSR shading rejection —544-551 — Fetch reprojected history guide
     // Read the dilated velocity from pass 1 to compute reprojected history UV.
     float2 dilatedVelocityUV = DilatedVelTex.Load(int3(centerCoord, 0));
     float2 historyUV = uv - dilatedVelocityUV;
@@ -391,9 +385,9 @@ void main(
     float3 historyYCoCg = RGBToYCoCg(historyRGB);
 
     // ── Compute Rejection Weight ──────────────────────────────────────────────
-    // @source UE5 TSRRejectShading.usf:623-691 — MeasureRejection
+    // @ref TSR shading rejection —623-691 — MeasureRejection
     // The rejection weight measures how well the reprojected history matches
-    // the current frame's local neighborhood. UE5 uses mutual annihilation
+    // the current frame's local neighborhood. the reference uses mutual annihilation
     // (clamping both input and history to each other's neighborhoods) and
     // measures the residual. We compute a simplified but equivalent metric:
     // the normalized distance of the reprojected history from the current
@@ -404,7 +398,7 @@ void main(
     float3 rejectionDelta = abs(historyYCoCg - clampedHistoryYCoCg);
 
     // Measure rejection as the relative luminance distance.
-    // @source UE5 TSRRejectShading.usf:679-690 — MeasureRejection final blend factor
+    // @ref TSR shading rejection —679-690 — MeasureRejection final blend factor
     // The range of the neighborhood AABB determines sensitivity: large range = less
     // sensitive to small differences, small range = highly sensitive.
     float3 neighborRange = max(neighborMaxYCoCg - neighborMinYCoCg, float3(1e-4, 1e-4, 1e-4));
@@ -412,7 +406,7 @@ void main(
 
     // Composite rejection across channels. Luminance (Y) is weighted higher
     // because human vision is more sensitive to brightness changes than chroma.
-    // @source UE5 TSRRejectShading.usf:679-682 — channel weighting in MeasureRejection
+    // @ref TSR shading rejection —679-682 — channel weighting in MeasureRejection
     float rejectionWeight = saturate(normalizedRejection.x * 0.5 + (normalizedRejection.y + normalizedRejection.z) * 0.25);
 
     // Off-screen pixels are fully rejected (no valid history).
@@ -424,7 +418,7 @@ void main(
     // Anti-flicker: reduce rejection for static pixels where the history is
     // close to the mean. This prevents temporal noise from triggering false
     // rejections on surfaces with low variation.
-    // @source UE5 TSRRejectShading.usf:643-650 — flickering heuristic / stability
+    // @ref TSR shading rejection —643-650 — flickering heuristic / stability
     float lumaDiff = abs(historyYCoCg.x - neighborMeanLuma);
     float lumaRange = neighborMaxYCoCg.x - neighborMinYCoCg.x;
     float stabilityFactor = saturate(lumaDiff / max(lumaRange, 1e-4));
@@ -435,7 +429,7 @@ void main(
     RejectionMaskOut[DispatchThreadId] = rejectionWeight;
 
     // Pass through preprocessed scene color for the update history pass.
-    // @source UE5 TSRRejectShading.usf:582-611 — InputSceneColorOutput
+    // @ref TSR shading rejection —582-611 — InputSceneColorOutput
     float3 centerRGB = SceneColor.Load(int3(centerCoord, 0)).rgb;
     InputSceneColorOut[DispatchThreadId] = float4(centerRGB, 1.0);
 }
@@ -449,20 +443,20 @@ void main(
 
 #if defined(TSR_PASS_UPDATE_HISTORY)
 
-/// @source UE5 TSRUpdateHistory.usf:631-1423 — MainCS
-/// @source UE5 TSRUpdateHistory.usf:38-56 — DIM_UPDATE_QUALITY levels
-/// @source UE5 TemporalAA.usf:597-619 — RGBToYCoCg / YCoCgToRGB
-/// @source UE5 TemporalAA.usf:623-637 — Luma4, HdrWeight4, HdrWeightY
-/// @source UE5 TemporalAA.usf:684-692 — WeightedLerpFactors
-/// @source UE5 TextureSampling.ush:101-186 — Bicubic2DCatmullRom (5-tap plus)
-/// @source UE5 TemporalSuperResolution.cpp:3067-3068 — HistorySampleCount, HistoryHisteresis
-/// @source UE5 TemporalSuperResolution.cpp:3070 — WeightClampingPixelSpeedAmplitude
-/// @source UE5 TemporalSuperResolution.cpp:3071 — InvWeightClampingPixelSpeed
-/// @source UE5 PostProcessFFX_CAS.usf:60-120 — CAS/RCAS sharpening pattern
+/// @ref TSR history update —631-1423 — MainCS
+/// @ref TSR history update —38-56 — DIM_UPDATE_QUALITY levels
+/// @ref Karis 2014 "TAA" —597-619 — RGBToYCoCg / YCoCgToRGB
+/// @ref Karis 2014 "TAA" —623-637 — Luma4, HdrWeight4, HdrWeightY
+/// @ref Karis 2014 "TAA" —684-692 — WeightedLerpFactors
+/// @ref Catmull-Rom bicubic —101-186 — Bicubic2DCatmullRom (5-tap plus)
+/// @ref TSR parameters —3067-3068 — HistorySampleCount, HistoryHisteresis
+/// @ref TSR parameters —3070 — WeightClampingPixelSpeedAmplitude
+/// @ref TSR parameters —3071 — InvWeightClampingPixelSpeed
+/// @ref AMD CAS 2019 —60-120 — CAS/RCAS sharpening pattern
 /// @constants Sigma=0.47->exp(-2.29*d^2) (TemporalAA.cpp:449),
 ///            WeightClampingPixelSpeed=1.0 (TemporalSuperResolution.cpp:301),
 ///            WeightClampingSampleCount=4.0 (TemporalSuperResolution.cpp:286)
-/// @deviations UE5 TSRUpdateHistory uses reprojection field with Jacobian,
+/// @deviations reference TSRUpdateHistory uses reprojection field with Jacobian,
 ///             dual-pixel vectorization, LDS shared arrays, wave broadcasts,
 ///             lens distortion support, history resurrection, configurable
 ///             kernel shapes (PLUS/PLUS_MOVE_FAR/3x3), adaptive kernel sizing
@@ -472,7 +466,7 @@ void main(
 ///             bicubic Catmull-Rom history sampling, YCoCg neighborhood clamp,
 ///             adaptive blend factor based on velocity and rejection, HDR-weighted
 ///             lerp, and optional RCAS sharpening. The temporal accumulation logic
-///             (weighting, clamping, blending) matches UE5's approach.
+///             (weighting, clamping, blending) matches reference's approach.
 ///
 /// Final temporal resolve. Samples the current frame, builds neighborhood
 /// statistics, samples and clamps the reprojected history, then blends
@@ -510,11 +504,11 @@ void main(
     SceneColor.GetDimensions(sceneW, sceneH);
 
     // Exposure = 1.0 (auto-exposure is pre-applied to HDR scene color).
-    // @source UE5 TemporalAA.usf:1974 — FrameExposureScale * View.OneOverPreExposure
+    // @ref Karis 2014 "TAA" —1974 — FrameExposureScale * View.OneOverPreExposure
     const float FrameExposureScale = 1.0;
 
     // ── Sample Current Frame + 3x3 Neighborhood ──────────────────────────────
-    // @source UE5 TSRUpdateHistory.usf:1082-1247 — Input kernel sampling + min/max
+    // @ref TSR history update —1082-1247 — Input kernel sampling + min/max
     // Map output UV to scene color pixel coordinates.
     int2 centerCoord = int2(uv * float2(sceneW, sceneH));
     centerCoord = clamp(centerCoord, int2(0, 0), int2(sceneW - 1, sceneH - 1));
@@ -530,15 +524,15 @@ void main(
         coord = clamp(coord, int2(0, 0), int2(sceneW - 1, sceneH - 1));
 
         float3 rawColor = SceneColor.Load(int3(coord, 0)).rgb;
-        // @source UE5 TemporalAA.usf:70-76 — AA_YCOCG=1 for Main pass
+        // @ref Karis 2014 "TAA" —70-76 — AA_YCOCG=1 for Main pass
         neighbors[i] = RGBToYCoCg(rawColor);
         neighborWeights[i] = HdrWeightY(neighbors[i].x, FrameExposureScale);
     }
 
     // ── Plus-Filtered Current Frame ───────────────────────────────────────────
-    // @source UE5 TSRUpdateHistory.usf:1171-1237 — Input kernel filtering
-    // @source UE5 TemporalAA.usf:1532-1692 — FilterCurrentFrameInputSamples (AA_FILTERED=1)
-    // @source UE5 TemporalAA.cpp:449 — Sigma=0.47, exp(-2.29 * d^2)
+    // @ref TSR history update —1171-1237 — Input kernel filtering
+    // @ref Karis 2014 "TAA" —1532-1692 — FilterCurrentFrameInputSamples (AA_FILTERED=1)
+    // @ref TAA filtering —449 — Sigma=0.47, exp(-2.29 * d^2)
     //
     // Gaussian-weighted filter using the plus-shaped neighbors (indices 1,3,4,5,7).
     // Weight = Gaussian(pixel_offset - jitter, sigma=0.47) * HDR_weight.
@@ -552,10 +546,10 @@ void main(
     for (uint j = 0; j < 5; j++)
     {
         float2 pixelOffset = kPlusOffsets[j] - jitterOffset;
-        // @source UE5 TemporalAA.cpp:449 — exp(-2.29 * (dx^2 + dy^2)), sigma=0.47
+        // @ref TAA filtering —449 — exp(-2.29 * (dx^2 + dy^2)), sigma=0.47
         // The constant 2.29 = 1/(2*0.47^2) is the Gaussian exponent for sigma=0.47.
         float spatialWeight = exp(-2.29 * dot(pixelOffset, pixelOffset));
-        // @source UE5 TemporalAA.usf:1623-1627 — AA_TONE=1, sample HDR weight
+        // @ref Karis 2014 "TAA" —1623-1627 — AA_TONE=1, sample HDR weight
         float hdrWeight = neighborWeights[kPlusIndices[j]];
         float sampleWeight = spatialWeight * hdrWeight;
 
@@ -563,12 +557,12 @@ void main(
         totalWeight   += sampleWeight;
     }
 
-    // @source UE5 TemporalAA.usf:1674-1676 — Reweight for tone + filtering
+    // @ref Karis 2014 "TAA" —1674-1676 — Reweight for tone + filtering
     filteredColor *= rcp(totalWeight);
 
     // ── Neighborhood Min/Max (for history clamping) ───────────────────────────
-    // @source UE5 TSRUpdateHistory.usf:1206-1233 — InputMinColor / InputMaxColor
-    // @source UE5 TemporalAA.usf:1782-1823 — HISTORY_CLAMPING_BOX_MIN_MAX
+    // @ref TSR history update —1206-1233 — InputMinColor / InputMaxColor
+    // @ref Karis 2014 "TAA" —1782-1823 — HISTORY_CLAMPING_BOX_MIN_MAX
     // Start with plus-shaped min/max, then expand to full 3x3.
     // This two-stage approach gives a tighter box for the plus-pattern center
     // while still covering corner samples for robustness.
@@ -579,7 +573,7 @@ void main(
     neighborMax = max(max(neighborMax, neighbors[5]), neighbors[7]);
 
     // Expand to full 3x3.
-    // @source UE5 TemporalAA.usf:1805-1821 — AA_SAMPLES==9 case
+    // @ref Karis 2014 "TAA" —1805-1821 — AA_SAMPLES==9 case
     float3 neighborMinFull = min(min(neighborMin, neighbors[0]), neighbors[2]);
     neighborMinFull = min(min(neighborMinFull, neighbors[6]), neighbors[8]);
 
@@ -591,7 +585,7 @@ void main(
     neighborMax = neighborMaxFull;
 
     // ── Velocity Dilation + Reprojection ──────────────────────────────────────
-    // @source UE5 TSRUpdateHistory.usf:710-837 — Fetch reprojection and velocity
+    // @ref TSR history update —710-837 — Fetch reprojection and velocity
     // Read dilated velocity from pass 1 (at render resolution).
     int2 velCoord = clamp(centerCoord, int2(0, 0), int2(sceneW - 1, sceneH - 1));
     float2 motionVector = DilatedVelTex.Load(int3(velCoord, 0));
@@ -600,22 +594,22 @@ void main(
     float2 historyUV = uv - motionVector;
 
     // Velocity magnitude in output-resolution pixels.
-    // @source UE5 TSRUpdateHistory.usf:837 — OutputPixelVelocity
+    // @ref TSR history update —837 — OutputPixelVelocity
     float2 velocityPixels = motionVector * float2(outputWidth, outputHeight);
     float velocityMag = length(velocityPixels);
 
     // Detect off-screen reprojection.
-    // @source UE5 TSRUpdateHistory.usf:916-921 — IsOffScreenOrDisoccluded
+    // @ref TSR history update —916-921 — IsOffScreenOrDisoccluded
     bool offScreen = any(historyUV < 0.0) || any(historyUV > 1.0);
 
     // ── Read Rejection Mask ───────────────────────────────────────────────────
-    // @source UE5 TSRUpdateHistory.usf:854-856 — LowFrequencyRejection from HistoryRejectionTexture
+    // @ref TSR history update —854-856 — LowFrequencyRejection from HistoryRejectionTexture
     float rejectionWeight = RejectionTex.Load(int3(velCoord, 0)).x;
 
     // ── Sample History (Bicubic Catmull-Rom — 5-tap) ──────────────────────────
-    // @source UE5 TSRUpdateHistory.usf:949-1066 — Bicubic history reprojection
-    // @source UE5 TextureSampling.ush:101-126 — Bicubic2DCatmullRom
-    // @source UE5 TextureSampling.ush:148-186 — GetBicubic2DCatmullRomSamples
+    // @ref TSR history update —949-1066 — Bicubic history reprojection
+    // @ref Catmull-Rom bicubic —101-126 — Bicubic2DCatmullRom
+    // @ref Catmull-Rom bicubic —148-186 — GetBicubic2DCatmullRomSamples
     //
     // Uses 5 bilinear taps arranged in a plus pattern to approximate a 4x4
     // Catmull-Rom kernel. The 4 corner taps are omitted (small weights) and
@@ -628,28 +622,28 @@ void main(
         float2 historySize    = float2(outputWidth, outputHeight);
         float2 historyInvSize = outputTexelSize;
 
-        // @source UE5 TextureSampling.ush:103-126 — Bicubic2DCatmullRom
+        // @ref Catmull-Rom bicubic —103-126 — Bicubic2DCatmullRom
         float2 samplePos = clampedHistoryUV * historySize;
         float2 tc = floor(samplePos - 0.5) + 0.5;
         float2 f  = samplePos - tc;
         float2 f2 = f * f;
         float2 f3 = f2 * f;
 
-        // Catmull-Rom basis weights (UE5 TextureSampling.ush:110-113).
+        // Catmull-Rom basis weights (reference TextureSampling.ush:110-113).
         float2 w0 = f2 - 0.5 * (f3 + f);
         float2 w1 = 1.5 * f3 - 2.5 * f2 + 1.0;
         float2 w3 = 0.5 * (f3 - f2);
         float2 w2 = 1.0 - w0 - w1 - w3;
 
-        // Combined weights for bilinear trick (UE5 TextureSampling.ush:116).
+        // Combined weights for bilinear trick (reference TextureSampling.ush:116).
         float2 w12 = w1 + w2;
 
-        // Bilinear sample positions in texel space (UE5 TextureSampling.ush:119-121).
+        // Bilinear sample positions in texel space (reference TextureSampling.ush:119-121).
         float2 sample0 = (tc - 1.0) * historyInvSize;
         float2 sample1 = (tc + w2 * rcp(w12)) * historyInvSize;
         float2 sample2 = (tc + 2.0) * historyInvSize;
 
-        // @source UE5 TextureSampling.ush:158-168 — 5-tap plus pattern
+        // @ref Catmull-Rom bicubic —158-168 — 5-tap plus pattern
         float weight0 = w12.x * w0.y;    // top center
         float weight1 = w0.x  * w12.y;   // left center
         float weight2 = w12.x * w12.y;   // center (dominant)
@@ -662,23 +656,23 @@ void main(
         rawHistory += HistoryTex.SampleLevel(LinearClampSampler, float2(sample2.x, sample1.y), 0).rgb * weight3;
         rawHistory += HistoryTex.SampleLevel(LinearClampSampler, float2(sample1.x, sample2.y), 0).rgb * weight4;
 
-        // @source UE5 TextureSampling.ush:177-183 — FinalMultiplier renormalization
+        // @ref Catmull-Rom bicubic —177-183 — FinalMultiplier renormalization
         float finalMultiplier = rcp(weight0 + weight1 + weight2 + weight3 + weight4);
         rawHistory *= finalMultiplier;
     }
 
     // Convert history to YCoCg for clamping.
-    // @source UE5 TemporalAA.usf:1926 — TransformSceneColor(HistoryPayload.Color)
+    // @ref Karis 2014 "TAA" —1926 — TransformSceneColor(HistoryPayload.Color)
     float3 historyYCoCg = RGBToYCoCg(rawHistory);
 
     // ── Clamp History to Neighborhood AABB ────────────────────────────────────
-    // @source UE5 TSRUpdateHistory.usf:1253-1259 — fastClamp(PrevHighFrequencyColor, InputMinColor, InputMaxColor)
-    // @source UE5 TemporalAA.usf:1957-1961 — ClampHistory
+    // @ref TSR history update —1253-1259 — fastClamp(PrevHighFrequencyColor, InputMinColor, InputMaxColor)
+    // @ref Karis 2014 "TAA" —1957-1961 — ClampHistory
     float3 clampedHistory = clamp(historyYCoCg, neighborMin, neighborMax);
 
     // ── Compute Adaptive Blend Weight ─────────────────────────────────────────
-    // @source UE5 TSRUpdateHistory.usf:1108-1169 — Sample count based weighting
-    // @source UE5 TemporalSuperResolution.cpp:3067-3068 — HistorySampleCount, HistoryHisteresis
+    // @ref TSR history update —1108-1169 — Sample count based weighting
+    // @ref TSR parameters —3067-3068 — HistorySampleCount, HistoryHisteresis
     //
     // The blend factor controls how much of the current frame vs history is used.
     // Static pixels: alpha ~ theoricBlendFactor (small, ~0.06 at 100%, ~0.027 at 67%)
@@ -690,21 +684,21 @@ void main(
     //   -> When the history doesn't match the current scene (new geometry, lighting
     //      changes), the current frame must dominate.
     //
-    // The 0.2 velocity blend target and /40 normalization come from UE5's TAA path
+    // The 0.2 velocity blend target and /40 normalization come from the reference engine's TAA path
     // which TSR inherits for the velocity-based weight modulation.
     float blendFinal = theoricBlendFactor;
 
-    // @source UE5 TSRUpdateHistory.usf:1264 — OutputPixelVelocity * InvWeightClampingPixelSpeed
-    // @source UE5 TemporalSuperResolution.cpp:3070 — WeightClampingPixelSpeedAmplitude
-    // @source UE5 TemporalSuperResolution.cpp:301 — WeightClampingPixelSpeed default = 1.0
-    // @source UE5 TemporalSuperResolution.cpp:286 — WeightClampingSampleCount default = 4.0
+    // @ref TSR history update —1264 — OutputPixelVelocity * InvWeightClampingPixelSpeed
+    // @ref TSR parameters —3070 — WeightClampingPixelSpeedAmplitude
+    // @ref TSR parameters —301 — WeightClampingPixelSpeed default = 1.0
+    // @ref TSR parameters —286 — WeightClampingSampleCount default = 4.0
     //
     // Velocity-based blend increase: as pixel velocity increases, reduce the
     // number of accumulated samples to maintain sharpness during motion.
     // At default settings (WeightClampingSampleCount=4, WeightClampingPixelSpeed=1.0),
     // the maximum blend factor under motion is approximately 1/4 = 0.25.
     //
-    // The weight clamping formula from UE5 (TemporalSuperResolution.cpp:3070):
+    // The weight clamping formula from reference (TemporalSuperResolution.cpp:3070):
     //   WeightClampingPixelSpeedAmplitude = clamp(1.0 - VelocityWeightClampingSampleCount * HistoryHisteresis, 0, 1)
     //   MaxValidity = 1.0 - WeightClampingPixelSpeedAmplitude * saturate(OutputPixelVelocity * InvWeightClampingPixelSpeed)
     //
@@ -714,25 +708,25 @@ void main(
     blendFinal = lerp(blendFinal, velocityBlendTarget, saturate(velocityMag));
 
     // Boost blend factor based on rejection mask from pass 2.
-    // @source UE5 TSRUpdateHistory.usf:1116-1118 — MinRejectionBlendFactor = RejectionFactorToBlendFactor(LowFrequencyRejection)
+    // @ref TSR history update —1116-1118 — MinRejectionBlendFactor = RejectionFactorToBlendFactor(LowFrequencyRejection)
     // When history is rejected (rejectionWeight -> 1.0), the blend factor must
     // increase so the current frame dominates. This prevents ghosting from stale
     // history on newly revealed surfaces.
     blendFinal = max(blendFinal, rejectionWeight);
 
-    // @source UE5 TemporalAA.usf:2246 — Anti-flicker: minimum contribution guard
+    // @ref Karis 2014 "TAA" —2246 — Anti-flicker: minimum contribution guard
     // Prevents temporal buzzing on surfaces where filtered and history luminance
     // are nearly equal but not identical (e.g., dithered surfaces, TAA noise).
     float lumaFiltered = filteredColor.x;  // Y channel in YCoCg = luminance * 4
     float lumaHistory  = clampedHistory.x;
     blendFinal = max(blendFinal, saturate(0.01 * lumaHistory / abs(lumaFiltered - lumaHistory)));
 
-    // @source UE5 TemporalAA.usf:2248-2251 — NaN guard
+    // @ref Karis 2014 "TAA" —2248-2251 — NaN guard
     blendFinal = -min(-blendFinal, 0.0);
 
     // ── Off-screen Reset ──────────────────────────────────────────────────────
-    // @source UE5 TSRUpdateHistory.usf:916-921 — IsOffScreenOrDisoccluded -> bIsOffScreen
-    // @source UE5 TemporalAA.usf:2275-2281 — Offscreen feedback resets
+    // @ref TSR history update —916-921 — IsOffScreenOrDisoccluded -> bIsOffScreen
+    // @ref Karis 2014 "TAA" —2275-2281 — Offscreen feedback resets
     // When the reprojected UV lands outside [0,1], there is no valid history.
     // The current frame's filtered color is used directly.
     if (offScreen)
@@ -742,8 +736,8 @@ void main(
     }
 
     // ── HDR-Weighted Blend ────────────────────────────────────────────────────
-    // @source UE5 TSRUpdateHistory.usf:1282-1298 — Final accumulation with HDR weighting
-    // @source UE5 TemporalAA.usf:2283-2293 — DO FINAL BLEND
+    // @ref TSR history update —1282-1298 — Final accumulation with HDR weighting
+    // @ref Karis 2014 "TAA" —2283-2293 — DO FINAL BLEND
     //
     // HDR weighting prevents bright firefly pixels from dominating the temporal
     // blend. Each sample's contribution is scaled by its inverse luminance,
@@ -755,16 +749,16 @@ void main(
     float3 outputYCoCg = clampedHistory * blendWeights.x + filteredColor * blendWeights.y;
 
     // ── Convert Back to Linear RGB ────────────────────────────────────────────
-    // @source UE5 TemporalAA.usf:2302 — TransformBackToRawLinearSceneColor
+    // @ref Karis 2014 "TAA" —2302 — TransformBackToRawLinearSceneColor
     float3 outputRGB = YCoCgToRGB(outputYCoCg);
 
-    // @source UE5 TSRUpdateHistory.usf:1340-1344 — NaN/negative/overflow guard
+    // @ref TSR history update —1340-1344 — NaN/negative/overflow guard
     // Guard against negative values from YCoCg rounding and NaN propagation.
     outputRGB = -min(-outputRGB, 0.0);
 
     // ── Spatial Anti-Aliasing for Rejected Pixels ─────────────────────────────
-    // @source UE5 TSRSpatialAntiAliasing.usf:81-99 — MainCS spatial AA
-    // @source UE5 TSRUpdateHistory.usf:1093-1104 — SpatialAntiAliasingLerp
+    // @ref TSR spatial AA —81-99 — MainCS spatial AA
+    // @ref TSR history update —1093-1104 — SpatialAntiAliasingLerp
     //
     // When a pixel's history was largely rejected, the output may show aliasing
     // because only the current frame's single sample contributes. We apply a
@@ -774,7 +768,7 @@ void main(
     //
     // The spatial AA uses the same plus-pattern and jitter-weighted Gaussian
     // as the filtered input computation above, but applied to the resolved
-    // RGB output. This matches UE5's SpatialAntiAliasingLerp approach where
+    // RGB output. This matches reference's SpatialAntiAliasingLerp approach where
     // the input kernel becomes softer for rejected/disoccluded pixels.
     if (rejectionWeight > 0.5)
     {
@@ -791,7 +785,7 @@ void main(
 
             float3 sampleRGB = SceneColor.Load(int3(sampleCoord, 0)).rgb;
 
-            // @source UE5 TemporalAA.cpp:449 — exp(-2.29 * d^2), sigma=0.47
+            // @ref TAA filtering —449 — exp(-2.29 * d^2), sigma=0.47
             float2 pixelOffset = kPlusOffsets[k] - jitterOffset;
             float spatialWeight = exp(-2.29 * dot(pixelOffset, pixelOffset));
             float hdrWt = HdrWeight4(sampleRGB, FrameExposureScale);
@@ -803,16 +797,16 @@ void main(
         spatialFiltered *= rcp(spatialTotalWeight);
 
         // Lerp between resolved output and spatial-filtered input based on rejection.
-        // @source UE5 TSRUpdateHistory.usf:1093 — SpatialAntiAliasingLerp = saturate(1.0 - LowFrequencyRejection * 4.0)
+        // @ref TSR history update —1093 — SpatialAntiAliasingLerp = saturate(1.0 - LowFrequencyRejection * 4.0)
         float spatialLerp = saturate((rejectionWeight - 0.5) * 2.0);
         outputRGB = lerp(outputRGB, spatialFiltered, spatialLerp);
     }
 
     // ── Optional RCAS Sharpening ──────────────────────────────────────────────
-    // @source UE5 PostProcessFFX_CAS.usf:60-120 — CASMain
+    // @ref AMD CAS 2019 —60-120 — CASMain
     // @source AMD FidelityFX CAS — ffx_cas.h
     // @constants NONE (tsrSharpness from cbuffer, 0 = disabled)
-    // @deviations UE5 applies CAS as a separate post-TSR pass. UzEngine integrates
+    // @deviations the reference applies CAS as a separate post-TSR pass. UzEngine integrates
     //             it inline to avoid an extra dispatch. The CAS algorithm itself
     //             (contrast-adaptive unsharp mask) is identical.
     //

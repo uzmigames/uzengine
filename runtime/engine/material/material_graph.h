@@ -7,7 +7,7 @@
 /// The graph always contains exactly one PBROutput expression (id=1) which
 /// serves as the root for topological sort and dead-code elimination.
 ///
-/// @source UE5 Material.h — UMaterial (owns array of UMaterialExpression*)
+/// Owns an array of material expressions with connection topology.
 ///
 /// # Thread Safety
 /// NOT thread-safe. Modify from the game thread only. The compiler takes
@@ -60,7 +60,7 @@ enum class MaterialShadingModel : uint8_t {
 
 /// A material graph — flat array of expressions with connection topology.
 ///
-/// @source UE5 Material.h — UMaterial (owns array of UMaterialExpression*)
+/// Owns an array of material expressions with connection topology.
 /// The graph always contains exactly one PBROutput expression (id=1).
 class MaterialGraph {
 public:

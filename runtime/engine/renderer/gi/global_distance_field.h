@@ -9,7 +9,7 @@
 /// indirect lighting and ambient occlusion.
 ///
 /// # Clipmap Extents (world units, cm)
-/// @source UE5 GlobalDistanceField.cpp:446-457
+/// Each cascade covers 4x the extent of the previous one:
 ///   Cascade 0: 2500 cm  (25 m  — near field, highest detail)
 ///   Cascade 1: 10000 cm (100 m — mid field)
 ///   Cascade 2: 40000 cm (400 m — far field)
@@ -57,15 +57,13 @@ struct MeshSDF;
 /// ```
 class GlobalDistanceField {
 public:
-    /// @source UE5 GlobalDistanceField.cpp:23 — NumClipmaps = 4
+    /// 4-level clipmap hierarchy covers near to distant field.
     static constexpr uint32_t kNumClipmaps = 4;
 
-    /// @source UE5 GlobalDistanceField.cpp:120 — r.AOGlobalDFResolution
-    /// Simplified from UE5's 128^3 paged system to 64^3 dense volumes.
+    /// 64^3 dense volume per clipmap (simplified from paged 128^3 systems).
     static constexpr uint32_t kResolution  = 64;
 
-    /// @source UE5 GlobalDistanceField.cpp:446-457 — Clipmap extent formula
-    /// Extents are half-sizes in world units (cm).
+    /// Clipmap half-extents in cm. Each cascade is 4x the previous one.
     static constexpr float kClipmapExtents[kNumClipmaps] = {
         2500.0f,    // Cascade 0: 25 m radius
         10000.0f,   // Cascade 1: 100 m radius
@@ -148,7 +146,7 @@ public:
     [[nodiscard]] bool IsInitialized() const noexcept { return m_initialized; }
 
     /// Returns the voxel size (world units per texel) for the given cascade.
-    /// @source UE5 GlobalDistanceFieldUtils.ush:22 — VoxelExtent = Extent * TexelSize
+    /// VoxelSize = (Extent * 2) / Resolution for the given cascade.
     [[nodiscard]] float GetVoxelSize(uint32_t cascadeIndex) const;
 
 private:

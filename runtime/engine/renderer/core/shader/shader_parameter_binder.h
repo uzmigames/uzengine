@@ -7,7 +7,7 @@
 /// 3. Binds texture, sampler, and UAV resources at their HLSL register slots.
 ///
 /// This eliminates per-pass boilerplate for CB upload and resource binding,
-/// matching UE5's `SetShaderParameters` pattern.
+/// matching the reference engine's `SetShaderParameters` pattern.
 ///
 /// # Binding Modes
 /// - **Bindless (SM6.6+)**: Texture SRV indices are available via

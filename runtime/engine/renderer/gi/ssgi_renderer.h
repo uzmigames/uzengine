@@ -19,8 +19,8 @@
 /// Created and owned by SceneRenderer. The final result SRV indices are passed
 /// to the deferred lighting pass via PerFrameCB::ssgiSrvIndex / ssgiAOSrvIndex.
 ///
-/// @source UE5 IndirectLightRendering.cpp:39-45 — r.DynamicGlobalIlluminationMethod=2
-/// @source UE5 ScreenSpaceRayTracing.cpp:684-704 — quality-to-ray-count map
+/// SSGI (r.DynamicGlobalIlluminationMethod=2) — screen-space ray-traced GI
+/// Quality-to-ray-count map: Q1=4, Q2=8, Q3=16, Q4=32
 
 #pragma once
 
@@ -41,11 +41,11 @@ class PipelineLibrary;
 
 /// Runtime-configurable SSGI parameters.
 ///
-/// @source UE5 ScreenSpaceRayTracing.cpp:60-83 — SSGI CVars
+/// SSGI CVars — runtime-configurable quality and intensity
 struct SSGISettings {
     bool     enabled   = true;    ///< Master toggle for SSGI.
     /// Quality level (1-4). Maps to ray count: Q1=4, Q2=8, Q3=16, Q4=32.
-    /// @source UE5 ScreenSpaceRayTracing.cpp:684-704
+    /// Quality maps to ray count: Q1=4, Q2=8, Q3=16, Q4=32
     int      quality   = 1;
     float    intensity = 1.0f;    ///< SSGI indirect diffuse intensity multiplier.
 };

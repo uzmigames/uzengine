@@ -247,7 +247,7 @@ void PBRTest::OnStart() {
     };
 
     // ── Create spheres ──
-#if 0
+#if 1
     // ── Create 9 spheres in two rows (PoC1 layout) ─────────────────────
     // Back row (Y=-200): 5 smaller spheres, spaced 250cm apart
     // Front row (Y=200): 4 larger spheres, spaced 300cm apart
@@ -276,13 +276,13 @@ void PBRTest::OnStart() {
 #endif
 
     // ── Ground plane ─────────────────────────────────────────────────────
-#if 0 // ground plane
+#if 1 // ground plane
     ground_ = world.CreateEntity();
     {
         auto& scene = world.AddComponent<SceneComponent>(ground_);
         scene.SetPosition({0.f, 0.f, 0.f});
         /// Scale large enough to cover the camera's visible ground plane.
-        /// UE5 Basic template uses a massive SM_Floor that extends to the horizon.
+        /// Standard infinite ground plane approach for outdoor scenes.
         scene.SetScale({10000.f, 10000.f, 2.f});
 
         auto& mesh = world.AddComponent<StaticMeshComponent>(ground_);
@@ -305,7 +305,7 @@ void PBRTest::OnStart() {
         light.color              = {1.0f, 1.0f, 1.0f};
         light.intensity          = 10.0f;
         light.atmosphereSunLight = true;
-        /// @source UE5 DirectionalLightComponent.cpp:1024 — LightSourceAngle = 0.5357 (Earth's sun)
+        /// @refDirectionalLightComponent.cpp:1024 — LightSourceAngle = 0.5357 (Earth's sun)
         light.lightSourceAngle   = 0.5357f;
         light.useTemperature     = false;
     }
@@ -350,7 +350,7 @@ void PBRTest::OnStart() {
         atmo.mieScaleHeightKm       = 1.2f;
         atmo.sunIlluminance         = {10.0f, 10.0f, 10.0f};
         atmo.skyLuminanceFactor     = {1.0f, 1.0f, 1.0f};
-        /// @source UE5 SkyAtmosphereComponent.cpp:103 — FColor(170,170,170) = ~0.4 linear
+        /// @refSkyAtmosphereComponent.cpp:103 — FColor(170,170,170) = ~0.4 linear
         atmo.groundAlbedo           = {0.4f, 0.4f, 0.4f};
         atmo.heightFogContribution  = 1.0f;
     }
@@ -363,16 +363,16 @@ void PBRTest::OnStart() {
         auto& scene = world.AddComponent<SceneComponent>(skyLightEnt);
         scene.SetPosition({0.f, 0.f, 690.f});
         auto& sl = world.AddComponent<SkyLightComponent>(skyLightEnt);
-        /// @source UE5 SkyLightComponent.cpp:285-333 — all defaults
-        sl.intensity                 = 1.0f;       ///< @source UE5 SkyLightComponent.cpp:300
-        sl.indirectLightingIntensity = 1.0f;       ///< @source UE5 SkyLightComponent.cpp:301
-        sl.lightColor                = {1.0f, 1.0f, 1.0f}; ///< UE5 default: white
-        sl.realTimeCapture           = false;      ///< @source UE5 SkyLightComponent.cpp:322
+        /// @refSkyLightComponent.cpp:285-333 — all defaults
+        sl.intensity                 = 1.0f;       ///< @refSkyLightComponent.cpp:300
+        sl.indirectLightingIntensity = 1.0f;       ///< @refSkyLightComponent.cpp:301
+        sl.lightColor                = {1.0f, 1.0f, 1.0f}; ///< default: white
+        sl.realTimeCapture           = false;      ///< @refSkyLightComponent.cpp:322
         sl.sourceType                = ESkyLightSourceType::CapturedScene;
-        sl.cubemapResolution         = 128;        ///< @source UE5 SkyLightComponent.cpp:311
-        sl.lowerHemisphereIsBlack    = true;       ///< @source UE5 SkyLightComponent.cpp:304
-        sl.lowerHemisphereColor      = {0.0f, 0.0f, 0.0f}; ///< @source UE5 SkyLightComponent.cpp:312
-        sl.minOcclusion              = 0.0f;       ///< @source UE5 SkyLightComponent.cpp:308
+        sl.cubemapResolution         = 128;        ///< @refSkyLightComponent.cpp:311
+        sl.lowerHemisphereIsBlack    = true;       ///< @refSkyLightComponent.cpp:304
+        sl.lowerHemisphereColor      = {0.0f, 0.0f, 0.0f}; ///< @refSkyLightComponent.cpp:312
+        sl.minOcclusion              = 0.0f;       ///< @refSkyLightComponent.cpp:308
     }
 #endif
 
@@ -381,7 +381,7 @@ void PBRTest::OnStart() {
     Entity fog = world.CreateEntity();
     {
         auto& scene = world.AddComponent<SceneComponent>(fog);
-        /// @source UE5 Basic template — ExponentialHeightFog actor at Z=-5000
+        /// @refBasic template — ExponentialHeightFog actor at Z=-5000
         scene.SetPosition({0.f, 0.f, -5000.f});
         auto& fogComp = world.AddComponent<HeightFogComponent>(fog);
         fogComp.density         = 0.0436f;

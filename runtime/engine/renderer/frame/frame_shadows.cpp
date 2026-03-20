@@ -46,7 +46,7 @@ void SceneRenderer::RegisterShadowPasses(rg::RgBuilder& rgBuilder, FrameContext&
     // a single uncached pass renders all geometry into the dynamic atlas
     // (backward compatible behavior).
     //
-    // @source UE5 ShadowSetup.cpp:3846-3970 — EShadowDepthCacheMode
+    // EShadowDepthCacheMode — determines static vs dynamic shadow rendering
     if (!m_meshes.empty()) {
         // Use the shadow cache status computed earlier (before SetupShadowFrame).
         const bool shadowCacheActive = ctx.shadowCacheEnabled;
@@ -56,7 +56,7 @@ void SceneRenderer::RegisterShadowPasses(rg::RgBuilder& rgBuilder, FrameContext&
 
         // Query the cache manager for each cascade.
         // Track per-cascade modes for CSM scrolling support.
-        // @source UE5 ShadowSetup.cpp:3846-3970 — EShadowDepthCacheMode
+        // EShadowDepthCacheMode — determines static vs dynamic shadow rendering
         bool needStaticRerender = false;
         bool anyScrolling = false;
         ShadowCacheMode cascadeModes[kMaxShadowCascades]{};
@@ -99,8 +99,8 @@ void SceneRenderer::RegisterShadowPasses(rg::RgBuilder& rgBuilder, FrameContext&
             // position (accounting for camera movement), then render only the
             // newly exposed edge strips.
             //
-            // @source UE5 ShadowDepthRendering.cpp:1121-1126 — CopyCachedShadowMap
-            // @source UE5 ShadowSetup.cpp:5600-5668 — scrolling data
+            // CopyCachedShadowMap — GPU copy of overlapping region
+            // Scrolling data — UV regions + culling planes for edge strips
             if (anyScrolling) {
                 const uint32_t lightId = 0;
 
@@ -145,7 +145,7 @@ void SceneRenderer::RegisterShadowPasses(rg::RgBuilder& rgBuilder, FrameContext&
 
                             // GPU copy: the overlapping region from the cached atlas
                             // is already in the same texture (we reuse the allocation).
-                            // UE5 draws a fullscreen quad with a copy shader; we use
+                            // draws a fullscreen quad with a copy shader; we use
                             // CopyTexture since our cached atlas is a separate texture
                             // from the per-frame atlas, and the overlap is the entire texture.
                             //
@@ -153,7 +153,7 @@ void SceneRenderer::RegisterShadowPasses(rg::RgBuilder& rgBuilder, FrameContext&
                             // the overlap data is already in place. We just need to render
                             // the edge strips to fill in the non-overlapped regions.
                             //
-                            // @source UE5 ShadowDepthRendering.cpp:1000-1035
+                            // Render edge strips for scrolling — only non-overlapped regions
 
                             // Set viewport/scissor to the cascade tile
                             uint32_t tileX = 0, tileY = 0;
@@ -200,7 +200,7 @@ void SceneRenderer::RegisterShadowPasses(rg::RgBuilder& rgBuilder, FrameContext&
                             // 1. Are NOT already in the cached map (new primitives), OR
                             // 2. Intersect the edge-strip culling planes (partially in the new region)
                             //
-                            // @source UE5 ShadowSetup.cpp:4997-5013
+                            // Filter static primitives for edge-strip re-render
                             uint32_t extraSubjects = 0;
                             uint32_t lastBoundMeshId = UINT32_MAX;
                             for (uint32_t di = 0; di < commands.size(); ++di) {
@@ -220,7 +220,7 @@ void SceneRenderer::RegisterShadowPasses(rg::RgBuilder& rgBuilder, FrameContext&
                                     // A more precise test would use the mesh's AABB, but this
                                     // is sufficient for most cases.
                                     //
-                                    // @source UE5 ShadowSetup.cpp:5007-5011
+                                    // Point test against edge-strip culling planes
                                     const Vec3 objPos{
                                         drawCmd.worldMatrix.m._41,
                                         drawCmd.worldMatrix.m._42,
@@ -322,8 +322,7 @@ void SceneRenderer::RegisterShadowPasses(rg::RgBuilder& rgBuilder, FrameContext&
     // shadow depth pipeline as the CSM pass (depth-only, no color).
     // Spot lights get 1 tile each; point lights get 6 tiles (one per cubemap face).
     //
-    // @source UE5 ShadowSetup.cpp:4300-4310 — SetupWholeSceneProjection for spot lights
-    // @source UE5 ShadowRendering.cpp:2500-2600 — RenderShadowDepthMap
+    // SetupWholeSceneProjection for spot lights + RenderShadowDepthMap
     const uint32_t totalLocalShadowEntries =
         ctx.lightData.spotShadowCount +
         ctx.lightData.pointShadowCount * kPointLightShadowFaces;

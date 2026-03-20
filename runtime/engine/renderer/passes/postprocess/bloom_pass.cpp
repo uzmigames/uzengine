@@ -10,7 +10,6 @@
 /// 3. Upsample x5: Mip[5]→Mip[4]→...→Mip[0] (9-tap tent + additive blend)
 /// 4. Tonemap reads mip[0] and composites bloom before exposure + tonemapping.
 ///
-/// @source UE5 PostProcessBloom.cpp:148-320 — dispatch pattern
 
 #include "bloom_pass.h"
 
@@ -57,15 +56,12 @@ static_assert(sizeof(BloomDownsampleConstants) == 16,
 
 /// Root constants for bloom_upsample_cs.hlsl (8 DWORDs).
 ///
-/// @source UE5 PostProcessBloomSetup.cpp:268 — per-stage tint applied during upsample
-/// @source UE5 Scene.cpp:426-437 — default tint values
 struct BloomUpsampleConstants {
     uint32_t lowerMipSrvIndex;
     uint32_t outputUavIndex;
     uint32_t outputWidth;
     uint32_t outputHeight;
     float    bloomRadius;
-    /// @source UE5 Scene.cpp:426-437 — per-stage RGB tint (Bloom1Tint through Bloom6Tint)
     float    stageTintR;
     float    stageTintG;
     float    stageTintB;
@@ -531,7 +527,6 @@ void BloomPass::Execute(IRHICommandList* cmdList,
         //   step 4: mip 1->0, uses stageTints[1] (stage 2, 1/4 res)
         //
         // lowerIdx goes 5,4,3,2,1 — which directly indexes stageTints[].
-        // @source UE5 Scene.cpp:426-437 — default tint values per stage
         // For now, use scalar tint applied equally to all channels (existing BloomSettings stores scalar).
         // Artists can extend BloomSettings with float3 tintColors[6] for colored bloom.
         rc.stageTintR = settings.stageTints[lowerIdx];

@@ -4,7 +4,6 @@
 /// and dispatches GPU work each frame. The filtered AO result is consumed
 /// by the deferred lighting pass to modulate ambient occlusion.
 ///
-/// @source UE5 PostProcessAmbientOcclusion.usf — GTAO algorithm
 
 #include "gtao_pass.h"
 

@@ -1,7 +1,7 @@
 /// UzEngine SH Projection — L2 Spherical Harmonics for Sky Irradiance.
 ///
 /// Projects a cubemap into 9 SH coefficients (L2 / order 3), then packs
-/// them into 7 float4 values matching UE5's SkyIrradianceEnvironmentMap[0..6].
+/// them into 7 float4 values matching the reference engine's SkyIrradianceEnvironmentMap[0..6].
 /// The packed format bakes in diffuse convolution (cosine lobe) so the
 /// shader only evaluates basis functions — no per-pixel convolution needed.
 ///
@@ -13,8 +13,8 @@
 /// ```
 ///
 /// # Reference
-/// - UE5 ReflectionEnvironmentCapture.cpp: SetupSkyIrradianceEnvironmentMapConstantsFromSkyIrradiance
-/// - UE5 ReflectionEnvironmentShared.ush: GetSkySHDiffuse
+/// - reference ReflectionEnvironmentCapture.cpp: SetupSkyIrradianceEnvironmentMapConstantsFromSkyIrradiance
+/// - reference ReflectionEnvironmentShared.ush: GetSkySHDiffuse
 /// - Peter-Pike Sloan, "Stupid Spherical Harmonics (SH) Tricks"
 
 #pragma once
@@ -32,7 +32,7 @@ namespace uz {
 
 /// L2 Spherical Harmonics coefficients for sky irradiance, packed for GPU.
 ///
-/// 7 float4 values matching UE5 SkyIrradianceEnvironmentMap[0..6].
+/// 7 float4 values matching reference SkyIrradianceEnvironmentMap[0..6].
 /// The diffuse convolution (cosine lobe) coefficients are baked in,
 /// so the shader only needs to evaluate basis functions via dot products.
 ///

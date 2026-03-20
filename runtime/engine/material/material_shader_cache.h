@@ -8,7 +8,7 @@
 /// metadata (parameter/texture slot info). Actual DXC compilation and PSO creation
 /// happen in the renderer layer when the material is first bound to a draw call.
 ///
-/// @source UE5 MaterialShaderMap.h — FMaterialShaderMap (content-addressed shader cache)
+/// Content-addressed shader cache pattern (FMaterialShaderMap equivalent)
 ///
 /// # Thread Safety
 /// NOT thread-safe. All calls must happen on the game/render thread.
@@ -44,7 +44,6 @@ namespace uz {
 
 /// Content-addressed cache for compiled material graphs.
 ///
-/// @source UE5 MaterialShaderMap.h — FMaterialShaderMap
 /// Stores generated HLSL source and MaterialCompileResult metadata, keyed by
 /// the graph's content hash. On cache hit (same topology + parameters), returns
 /// the previously compiled result without re-running the translator.

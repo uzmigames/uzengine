@@ -49,8 +49,8 @@ Mat4 Mat4::RotationZ(float angle) {
 }
 
 Mat4 Mat4::Perspective(float fov, float aspect, float near_plane, float far_plane) {
-    // Reversed-Z perspective (UE5 parity): near maps to 1.0, far maps to 0.0.
-    // Source: UE5 FReversedZPerspectiveMatrix in PerspectiveMatrix.h.
+    // Reversed-Z perspective (standard): near maps to 1.0, far maps to 0.0.
+    // Source: FReversedZPerspectiveMatrix in PerspectiveMatrix.h.
     const float h = 1.0f / std::tan(fov * 0.5f);
     const float w = h / aspect;
     const float range = far_plane - near_plane;
@@ -73,7 +73,7 @@ Mat4 Mat4::Orthographic(float width, float height, float near_plane, float far_p
 }
 
 Mat4 Mat4::OrthographicReversedZ(float width, float height, float near_plane, float far_plane) {
-    // UE5 FReversedZOrthoMatrix (OrthoMatrix.h:65-82):
+    // FReversedZOrthoMatrix (OrthoMatrix.h:65-82):
     // Negates the Z scale so near maps to 1.0 and far maps to 0.0.
     const float range = far_plane - near_plane;
     const float invRange = 1.0f / range;
