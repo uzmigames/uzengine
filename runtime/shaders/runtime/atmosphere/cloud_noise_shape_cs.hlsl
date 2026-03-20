@@ -313,6 +313,10 @@ void main(uint3 DTid : SV_DispatchThreadID)
     if (any(DTid >= g_TextureDimensions))
         return;
 
+    // DEBUG: trivial output to isolate noise shader crash
+    g_OutputTexture[DTid] = float4(0.5, 0.3, 0.2, 0.1);
+    return;
+
     // Normalize dispatch ID to [0, 1]^3 UV space
     // Adding 0.5 to center the sample within each texel
     float3 uvw = (float3(DTid) + 0.5) / float3(g_TextureDimensions);

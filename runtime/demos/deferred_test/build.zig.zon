@@ -1,9 +1,0 @@
-.{
-    .name = .deferred_test,
-    .version = "0.2.0",
-    .fingerprint = 0xc7d3d4a7c194a19d,
-    .dependencies = .{
-        .uz_demo_common = .{ .path = "../common" },
-    },
-    .paths = .{"build.zig"},
-}

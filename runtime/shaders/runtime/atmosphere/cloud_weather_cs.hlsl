@@ -121,6 +121,10 @@ float gradientNoise(float2 p)
 [numthreads(8, 8, 1)]
 void main(uint2 DTid : SV_DispatchThreadID)
 {
+    // DEBUG: trivial output to isolate GPU crash
+    outputWeather[DTid] = float4(0.5, 0.5, 0.0, 1.0);
+    return;
+
     // Weather map dimensions (must match dispatch: 64x64 groups of 8x8)
     static const float kWeatherMapSize = 512.0f;
 

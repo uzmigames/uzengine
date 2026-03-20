@@ -1,0 +1,112 @@
+{
+  "name": "IBL Test",
+  "version": "1.0",
+  "entities": [
+    {
+      "name": "Sun",
+      "components": {
+        "transform": {
+          "position": [0, 0, 20],
+          "rotation": [50, -30, 0],
+          "scale": [1, 1, 1]
+        },
+        "light": {
+          "type": "directional",
+          "color": [3.0, 2.85, 2.7],
+          "intensity": 1.0
+        }
+      }
+    },
+    {
+      "name": "Cube_1",
+      "components": {
+        "transform": { "position": [-400, 0, 0], "scale": [80, 80, 80] },
+        "mesh": { "asset": "meshes/cube.uzmesh" },
+        "material": {
+          "albedo": "textures/Stonebricks/stonebricks_albedo.jpg",
+          "normal": "textures/Stonebricks/stonebricks_normal.jpg",
+          "roughness": "textures/Stonebricks/stonebricks_roughness.jpg",
+          "metallic": "textures/Stonebricks/stonebricks_metallic.jpg",
+          "ao": "textures/Stonebricks/stonebricks_ao.jpg"
+        }
+      }
+    },
+    {
+      "name": "Cube_2",
+      "components": {
+        "transform": { "position": [-200, 0, 0], "scale": [80, 80, 80] },
+        "mesh": { "asset": "meshes/cube.uzmesh" },
+        "material": {
+          "albedo": "textures/Stonebricks/stonebricks_albedo.jpg",
+          "normal": "textures/Stonebricks/stonebricks_normal.jpg",
+          "roughness": "textures/Stonebricks/stonebricks_roughness.jpg",
+          "metallic": "textures/Stonebricks/stonebricks_metallic.jpg",
+          "ao": "textures/Stonebricks/stonebricks_ao.jpg"
+        }
+      }
+    },
+    {
+      "name": "Cube_3",
+      "components": {
+        "transform": { "position": [0, 0, 0], "scale": [80, 80, 80] },
+        "mesh": { "asset": "meshes/cube.uzmesh" },
+        "material": {
+          "albedo": "textures/Stonebricks/stonebricks_albedo.jpg",
+          "normal": "textures/Stonebricks/stonebricks_normal.jpg",
+          "roughness": "textures/Stonebricks/stonebricks_roughness.jpg",
+          "metallic": "textures/Stonebricks/stonebricks_metallic.jpg",
+          "ao": "textures/Stonebricks/stonebricks_ao.jpg"
+        }
+      }
+    },
+    {
+      "name": "Cube_4",
+      "components": {
+        "transform": { "position": [200, 0, 0], "scale": [80, 80, 80] },
+        "mesh": { "asset": "meshes/cube.uzmesh" },
+        "material": {
+          "albedo": "textures/Stonebricks/stonebricks_albedo.jpg",
+          "normal": "textures/Stonebricks/stonebricks_normal.jpg",
+          "roughness": "textures/Stonebricks/stonebricks_roughness.jpg",
+          "metallic": "textures/Stonebricks/stonebricks_metallic.jpg",
+          "ao": "textures/Stonebricks/stonebricks_ao.jpg"
+        }
+      }
+    },
+    {
+      "name": "Cube_5",
+      "components": {
+        "transform": { "position": [400, 0, 0], "scale": [80, 80, 80] },
+        "mesh": { "asset": "meshes/cube.uzmesh" },
+        "material": {
+          "albedo": "textures/Stonebricks/stonebricks_albedo.jpg",
+          "normal": "textures/Stonebricks/stonebricks_normal.jpg",
+          "roughness": "textures/Stonebricks/stonebricks_roughness.jpg",
+          "metallic": "textures/Stonebricks/stonebricks_metallic.jpg",
+          "ao": "textures/Stonebricks/stonebricks_ao.jpg"
+        }
+      }
+    },
+    {
+      "name": "MainCamera",
+      "components": {
+        "transform": {
+          "position": [0, -500, 200],
+          "rotation": [-20, 0, 0]
+        },
+        "camera": {
+          "fov": 90,
+          "near": 1,
+          "far": 100000,
+          "active": true
+        }
+      }
+    },
+    {
+      "name": "Controller",
+      "components": {
+        "script": { "path": "scripts/deferred_test_controller.lua" }
+      }
+    }
+  ]
+}

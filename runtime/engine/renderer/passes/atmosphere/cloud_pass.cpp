@@ -802,6 +802,7 @@ void CloudPass::Execute(IRHICommandList* cmd, CBRingAllocator& cbRing,
     }
 
     // ── Step 0: Bake noise textures if needed (one-time) ──
+    // ── Step 0: Bake noise textures if needed (one-time) ──
     if (!m_noisesBaked) {
         BakeNoiseTextures(cmd);
         if (!m_noisesBaked) {
@@ -882,6 +883,10 @@ void CloudPass::Execute(IRHICommandList* cmd, CBRingAllocator& cbRing,
         barrier.stateAfter  = RHIResourceState::ShaderResource;
         cmd->ResourceBarrier(&barrier, 1);
     }
+
+    // DEBUG: return after weather to isolate crash
+    UZ_LOG(Renderer, Info, "CloudPass: DEBUG — weather done, skipping raymarch+temporal");
+    m_frameCount++; return;
 
     // ══════════════════════════════════════════════════════════════════════
     // STEP 2: Ray March Clouds (half-res)

@@ -1,0 +1,27 @@
+{
+  "name": "Cornell Box",
+  "version": "1.0",
+  "entities": [
+    {
+      "name": "MainCamera",
+      "components": {
+        "transform": {
+          "position": [0, -500, 100],
+          "rotation": [0, 0, 0]
+        },
+        "camera": {
+          "fov": 90,
+          "near": 1,
+          "far": 100000,
+          "active": true
+        }
+      }
+    },
+    {
+      "name": "Setup",
+      "components": {
+        "script": { "path": "scripts/cornell_box_setup.lua" }
+      }
+    }
+  ]
+}

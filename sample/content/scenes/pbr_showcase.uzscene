@@ -22,7 +22,7 @@
       "name": "GroundPlane",
       "components": {
         "transform": {
-          "position": [0, 0, -0.82],
+          "position": [0, 0, 0],
           "rotation": [0, 0, 0],
           "scale": [30, 30, 0.04]
         },

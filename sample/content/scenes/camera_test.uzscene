@@ -1,0 +1,53 @@
+{
+  "name": "Camera Test",
+  "version": "1.0",
+  "entities": [
+    {
+      "name": "Sun",
+      "components": {
+        "transform": {
+          "position": [0, 0, 20],
+          "rotation": [50, -30, 0],
+          "scale": [1, 1, 1]
+        },
+        "light": {
+          "type": "directional",
+          "color": [3.0, 3.0, 3.0],
+          "intensity": 1.0
+        }
+      }
+    },
+    {
+      "name": "Cube",
+      "components": {
+        "transform": {
+          "position": [0, 0, 0],
+          "rotation": [0, 0, 0],
+          "scale": [100, 100, 100]
+        },
+        "mesh": { "asset": "meshes/cube.uzmesh" }
+      }
+    },
+    {
+      "name": "MainCamera",
+      "components": {
+        "transform": {
+          "position": [0, -500, 200],
+          "rotation": [-20, 0, 0]
+        },
+        "camera": {
+          "fov": 90,
+          "near": 1,
+          "far": 100000,
+          "active": true
+        }
+      }
+    },
+    {
+      "name": "Controller",
+      "components": {
+        "script": { "path": "scripts/camera_test_controller.lua" }
+      }
+    }
+  ]
+}

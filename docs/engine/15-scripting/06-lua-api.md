@@ -126,6 +126,42 @@ local name = uz.scene.get_name(entity)
 | `uz.scene.get_rotation(entity)` | entity | (pitch, yaw, roll) | Get rotation in Euler angles (degrees) |
 | `uz.scene.set_rotation(entity, pitch, yaw, roll)` | entity, pitch, yaw, roll | — | Set rotation in Euler angles (degrees) |
 
+### Material Properties
+
+Access and modify material properties on entities with StaticMeshComponent:
+
+```lua
+-- Get all material properties (returns table with 20 fields)
+local mat = uz.scene.get_material(entity)
+if mat then
+    -- Base color
+    print(mat.base_color_r, mat.base_color_g, mat.base_color_b)
+    -- PBR parameters
+    print(mat.roughness_multiplier)
+    print(mat.metallic_multiplier)
+    -- Normal and detail
+    print(mat.normal_intensity)
+    print(mat.ao_intensity)
+    -- Transparency
+    print(mat.opacity)
+    print(mat.alpha_clip_threshold)
+    print(mat.alpha_test)
+    print(mat.two_sided)
+    -- Emission
+    print(mat.emissive_color_r, mat.emissive_color_g, mat.emissive_color_b)
+    print(mat.emissive_intensity)
+    -- Texture coordinates
+    print(mat.uv_scale_x, mat.uv_scale_y)
+    print(mat.uv_offset_x, mat.uv_offset_y)
+end
+```
+
+### Material API Reference
+
+| Function | Parameters | Return | Notes |
+|----------|-----------|--------|-------|
+| `uz.scene.get_material(entity)` | entity | table or nil | Get all material fields: base_color_r/g/b, roughness_multiplier, metallic_multiplier, normal_intensity, ao_intensity, opacity, alpha_test, alpha_clip_threshold, two_sided, emissive_color_r/g/b, emissive_intensity, uv_scale_x/y, uv_offset_x/y |
+
 ### Entity Operations
 
 The scene API focuses on direct entity queries. For component-level access, use the entity directly in your scripts:
@@ -185,13 +221,23 @@ uz.scene.set_atmosphere_sun_light(entity, true)  -- This light drives the sky
 #### Height Fog
 
 ```lua
--- Configure height-based volumetric fog
-uz.scene.set_fog_density(entity, 0.01)          -- Fog density
-uz.scene.set_fog_color(entity, 0.8, 0.85, 0.95) -- Fog color (linear RGB)
-uz.scene.set_fog_height_falloff(entity, 0.2)    -- Exponential height falloff
-uz.scene.set_fog_base_height(entity, 100.0)     -- Fog base height in meters
-uz.scene.set_fog_max_opacity(entity, 1.0)       -- Maximum opacity (0-1)
-uz.scene.set_fog_enabled(entity, true)          -- Toggle fog on/off
+-- Create and configure height-based volumetric fog (exponential)
+uz.scene.create_fog(entity)                                        -- Add HeightFogComponent
+uz.scene.set_fog_density(entity, 0.01)                             -- Primary fog density
+uz.scene.set_fog_color(entity, 0.8, 0.85, 0.95)                   -- Fog color (linear RGB)
+uz.scene.set_fog_height_falloff(entity, 0.2)                       -- Exponential height falloff
+uz.scene.set_fog_base_height(entity, 100.0)                        -- Fog base height (cm)
+uz.scene.set_fog_max_opacity(entity, 1.0)                          -- Maximum opacity (0-1)
+uz.scene.set_fog_enabled(entity, true)                             -- Toggle fog on/off
+uz.scene.set_fog_start_distance(entity, 100.0)                     -- Minimum distance before fog begins
+uz.scene.set_fog_cutoff_distance(entity, 100000.0)                 -- Maximum fog distance
+uz.scene.set_fog_second_density(entity, 0.005)                     -- Second fog layer density (0 = disabled)
+uz.scene.set_fog_second_height_falloff(entity, 0.15)               -- Second layer height falloff
+uz.scene.set_fog_second_base_height(entity, 500.0)                 -- Second layer base height (cm)
+uz.scene.set_fog_directional_inscattering_color(entity, 1, 0.8, 0.6)  -- Sun-facing fog glow color
+uz.scene.set_fog_directional_inscattering_exponent(entity, 8.0)    -- Inscattering cone tightness
+uz.scene.set_fog_directional_inscattering_start_distance(entity, 1000.0)  -- Inscattering start dist (cm)
+uz.scene.set_fog_volumetric(entity, false)                         -- Enable volumetric fog (Phase 3+)
 ```
 
 #### Sky Light (IBL Ambient)
@@ -201,18 +247,71 @@ uz.scene.set_fog_enabled(entity, true)          -- Toggle fog on/off
 uz.scene.create_sky_light(entity)
 
 -- Configure sky light intensity and color
-uz.scene.set_sky_light_intensity(entity, 1.0)         -- Intensity multiplier
-uz.scene.set_sky_light_color(entity, 1.0, 1.0, 1.0)   -- Tint color (linear RGB)
-uz.scene.set_sky_light_min_occlusion(entity, 0.1)     -- Minimum ambient occlusion (floor)
+uz.scene.set_sky_light_intensity(entity, 1.0)                      -- Intensity multiplier
+uz.scene.set_sky_light_color(entity, 1.0, 1.0, 1.0)                -- Tint color (linear RGB)
+uz.scene.set_sky_light_min_occlusion(entity, 0.1)                  -- Minimum ambient occlusion (floor)
+uz.scene.set_sky_light_indirect_intensity(entity, 2.0)             -- Diffuse IBL multiplier
+uz.scene.set_sky_light_source_type(entity, "captured")             -- "captured" or "cubemap"
+uz.scene.set_sky_light_real_time_capture(entity, true)             -- Recapture every frame
+uz.scene.set_sky_light_cubemap_resolution(entity, 128)             -- Capture res per face (power of 2)
+uz.scene.set_sky_light_lower_hemisphere_black(entity, false)       -- Solid color below horizon
+uz.scene.set_sky_light_lower_hemisphere_color(entity, 0.1, 0.1, 0.15)  -- Lower hemisphere color
+uz.scene.set_sky_light_occlusion_max_distance(entity, 1000.0)      -- AO influence distance (cm)
+uz.scene.set_sky_light_occlusion_tint(entity, 0.3, 0.3, 0.3)       -- Occluded area tint
+uz.scene.set_sky_light_occlusion_exponent(entity, 2.0)             -- AO falloff exponent
+uz.scene.set_sky_light_enabled(entity, true)                       -- Enable/disable sky light
 ```
 
-#### Sky Atmosphere Artistic Parameters
+#### Sky Atmosphere (Physically-Based)
 
 ```lua
--- Artistic control over atmosphere scattering
-uz.scene.set_sky_rayleigh_scale(entity, 1.0)      -- Rayleigh (molecular) scattering
-uz.scene.set_sky_mie_scale(entity, 1.0)           -- Mie (aerosol) scattering
-uz.scene.set_sky_multi_scattering(entity, 1.0)    -- Multiple scattering approximation
+-- Create and configure physically-based sky atmosphere
+uz.scene.create_sky_atmosphere(entity)                             -- Add SkyAtmosphereComponent (idempotent)
+
+-- Core atmospheric parameters (Bruneton 2017 method)
+uz.scene.set_sky_bottom_radius(entity, 6360.0)                     -- Planet radius (km, default 6360)
+uz.scene.set_sky_atmosphere_height(entity, 60.0)                   -- Atmosphere thickness (km, default 60)
+
+-- Rayleigh scattering (molecular, causes blue sky)
+uz.scene.set_sky_rayleigh_scattering(entity, 5.8e-6, 13.5e-6, 33.1e-6)  -- Coefficients km^-1
+uz.scene.set_sky_rayleigh_scale_height(entity, 8.0)                -- Scale height (km, default 8)
+
+-- Mie scattering (aerosol, causes haze)
+uz.scene.set_sky_mie_scattering(entity, 10.0e-6)                   -- Coefficient km^-1
+uz.scene.set_sky_mie_absorption(entity, 4.4e-6)                    -- Absorption km^-1
+uz.scene.set_sky_mie_absorption_scale(entity, 1.0)                 -- Absorption multiplier
+uz.scene.set_sky_mie_anisotropy(entity, 0.8)                       -- HG phase function [-1,1]
+uz.scene.set_sky_mie_scale_height(entity, 1.2)                     -- Scale height (km, default 1.2)
+
+-- Ozone absorption (upper atmosphere)
+uz.scene.set_sky_ozone_absorption(entity, 1.36e-6, 0.0, 0.0)       -- Absorption km^-1 (only R)
+uz.scene.set_sky_ozone_tip_altitude(entity, 25.0)                  -- Peak altitude (km, default 25)
+uz.scene.set_sky_ozone_tip_value(entity, 0.08)                     -- Peak density
+uz.scene.set_sky_ozone_width(entity, 15.0)                         -- Half-width (km, default 15)
+
+-- Ground and sky
+uz.scene.set_sky_ground_albedo(entity, 0.1, 0.1, 0.1)              -- Ground reflectance
+uz.scene.set_sky_luminance_factor(entity, 1.0, 1.0, 1.0)           -- Per-channel sky luminance multiplier
+
+-- Integration
+uz.scene.set_sky_height_fog_contribution(entity, 0.5)              -- Atmosphere contribution to height fog
+```
+
+#### Light Extra Parameters
+
+```lua
+-- Volumetric light and indirect lighting
+uz.scene.set_light_volumetric_scattering(entity, 1.0)   -- Volumetric scattering intensity
+uz.scene.get_light_volumetric_scattering(entity)        -- Get volumetric scattering intensity
+uz.scene.set_light_indirect_intensity(entity, 1.0)      -- Indirect lighting multiplier
+uz.scene.get_light_indirect_intensity(entity)           -- Get indirect intensity
+uz.scene.set_light_shadow_bias(entity, 0.001)           -- Depth bias for shadow filtering
+uz.scene.get_light_shadow_bias(entity)                  -- Get shadow bias
+uz.scene.set_light_shadow_slope_bias(entity, 0.002)     -- Slope-based bias
+uz.scene.get_light_shadow_slope_bias(entity)            -- Get slope bias
+
+-- Cast shadows now works on StaticMeshComponent too
+uz.scene.set_cast_shadows(entity, true)                 -- Works on lights and static meshes
 ```
 
 #### Environment API Reference
@@ -226,19 +325,64 @@ uz.scene.set_sky_multi_scattering(entity, 1.0)    -- Multiple scattering approxi
 | `uz.scene.set_light_falloff(entity, use_inverse_squared, exponent)` | entity, use_inverse_squared: bool, exponent: float | — | Set light attenuation curve |
 | `uz.scene.set_light_source_radius(entity, radius)` | entity, radius: float (meters) | — | Area light sphere radius |
 | `uz.scene.set_atmosphere_sun_light(entity, enabled)` | entity, enabled: bool | — | Link directional light to sky as the sun |
-| `uz.scene.set_fog_density(entity, density)` | entity, density: float | — | Set height fog density |
-| `uz.scene.set_fog_color(entity, r, g, b)` | entity, r, g, b: float (0-1) | — | Set fog color (linear RGB) |
+| `uz.scene.set_light_volumetric_scattering(entity, intensity)` | entity, intensity: float | — | Volumetric light scattering |
+| `uz.scene.get_light_volumetric_scattering(entity)` | entity | float | Get volumetric scattering intensity |
+| `uz.scene.set_light_indirect_intensity(entity, intensity)` | entity, intensity: float | — | Indirect lighting multiplier |
+| `uz.scene.get_light_indirect_intensity(entity)` | entity | float | Get indirect intensity |
+| `uz.scene.set_light_shadow_bias(entity, bias)` | entity, bias: float | — | Depth bias for shadow filtering |
+| `uz.scene.get_light_shadow_bias(entity)` | entity | float | Get shadow bias |
+| `uz.scene.set_light_shadow_slope_bias(entity, bias)` | entity, bias: float | — | Slope-based depth bias |
+| `uz.scene.get_light_shadow_slope_bias(entity)` | entity | float | Get slope bias |
+| **Height Fog** | | | |
+| `uz.scene.create_fog(entity)` | entity | — | Add HeightFogComponent (idempotent) |
+| `uz.scene.set_fog_density(entity, density)` | entity, density: float | — | Primary fog density |
+| `uz.scene.set_fog_color(entity, r, g, b)` | entity, r, g, b: float (0-1) | — | Fog color (linear RGB) |
 | `uz.scene.set_fog_height_falloff(entity, falloff)` | entity, falloff: float | — | Exponential height falloff curve |
-| `uz.scene.set_fog_base_height(entity, height)` | entity, height: float (meters) | — | Fog base altitude |
+| `uz.scene.set_fog_base_height(entity, height)` | entity, height: float (cm) | — | Fog base altitude |
 | `uz.scene.set_fog_max_opacity(entity, opacity)` | entity, opacity: float (0-1) | — | Maximum fog opacity |
 | `uz.scene.set_fog_enabled(entity, enabled)` | entity, enabled: bool | — | Toggle fog on/off |
+| `uz.scene.set_fog_start_distance(entity, distance)` | entity, distance: float (cm) | — | Minimum distance before fog begins |
+| `uz.scene.set_fog_cutoff_distance(entity, distance)` | entity, distance: float (cm) | — | Maximum fog distance |
+| `uz.scene.set_fog_second_density(entity, density)` | entity, density: float | — | Second fog layer density (0 = disabled) |
+| `uz.scene.set_fog_second_height_falloff(entity, falloff)` | entity, falloff: float | — | Second layer height falloff |
+| `uz.scene.set_fog_second_base_height(entity, height)` | entity, height: float (cm) | — | Second layer base height |
+| `uz.scene.set_fog_directional_inscattering_color(entity, r, g, b)` | entity, r, g, b: float (0-1) | — | Sun-facing fog glow color |
+| `uz.scene.set_fog_directional_inscattering_exponent(entity, exponent)` | entity, exponent: float | — | Inscattering cone tightness |
+| `uz.scene.set_fog_directional_inscattering_start_distance(entity, distance)` | entity, distance: float (cm) | — | Inscattering start distance |
+| `uz.scene.set_fog_volumetric(entity, enabled)` | entity, enabled: bool | — | Enable volumetric fog (Phase 3+) |
+| **Sky Light (IBL)** | | | |
 | `uz.scene.create_sky_light(entity)` | entity | — | Add SkyLightComponent |
-| `uz.scene.set_sky_light_intensity(entity, intensity)` | entity, intensity: float | — | Set IBL ambient intensity |
-| `uz.scene.set_sky_light_color(entity, r, g, b)` | entity, r, g, b: float (0-1) | — | Set sky light tint (linear RGB) |
+| `uz.scene.set_sky_light_intensity(entity, intensity)` | entity, intensity: float | — | Intensity multiplier |
+| `uz.scene.set_sky_light_color(entity, r, g, b)` | entity, r, g, b: float (0-1) | — | Tint color (linear RGB) |
 | `uz.scene.set_sky_light_min_occlusion(entity, min_occlusion)` | entity, min_occlusion: float (0-1) | — | Minimum ambient occlusion floor |
-| `uz.scene.set_sky_rayleigh_scale(entity, scale)` | entity, scale: float | — | Rayleigh scattering artistic multiplier |
-| `uz.scene.set_sky_mie_scale(entity, scale)` | entity, scale: float | — | Mie scattering artistic multiplier |
-| `uz.scene.set_sky_multi_scattering(entity, factor)` | entity, factor: float | — | Multiple scattering approximation |
+| `uz.scene.set_sky_light_indirect_intensity(entity, v)` | entity, v: float | — | Diffuse IBL multiplier |
+| `uz.scene.set_sky_light_source_type(entity, type_str)` | entity, type_str: "captured"/"cubemap" | — | Cubemap source type |
+| `uz.scene.set_sky_light_real_time_capture(entity, bool)` | entity, bool: bool | — | Recapture every frame |
+| `uz.scene.set_sky_light_cubemap_resolution(entity, res)` | entity, res: uint (power of 2) | — | Capture resolution per face |
+| `uz.scene.set_sky_light_lower_hemisphere_black(entity, bool)` | entity, bool: bool | — | Solid color below horizon |
+| `uz.scene.set_sky_light_lower_hemisphere_color(entity, r, g, b)` | entity, r, g, b: float (0-1) | — | Lower hemisphere color |
+| `uz.scene.set_sky_light_occlusion_max_distance(entity, dist)` | entity, dist: float (cm) | — | AO influence distance |
+| `uz.scene.set_sky_light_occlusion_tint(entity, r, g, b)` | entity, r, g, b: float (0-1) | — | Occluded area tint |
+| `uz.scene.set_sky_light_occlusion_exponent(entity, exp)` | entity, exp: float | — | AO falloff exponent |
+| `uz.scene.set_sky_light_enabled(entity, bool)` | entity, bool: bool | — | Enable/disable sky light |
+| **Sky Atmosphere** | | | |
+| `uz.scene.create_sky_atmosphere(entity)` | entity | — | Add SkyAtmosphereComponent (idempotent) |
+| `uz.scene.set_sky_bottom_radius(entity, km)` | entity, km: float | — | Planet radius (default 6360 km) |
+| `uz.scene.set_sky_atmosphere_height(entity, km)` | entity, km: float | — | Atmosphere thickness (default 60 km) |
+| `uz.scene.set_sky_rayleigh_scattering(entity, r, g, b)` | entity, r, g, b: float | — | Rayleigh coefficients km^-1 |
+| `uz.scene.set_sky_rayleigh_scale_height(entity, km)` | entity, km: float | — | Rayleigh scale height (default 8 km) |
+| `uz.scene.set_sky_mie_scattering(entity, value)` | entity, value: float | — | Mie coefficient km^-1 |
+| `uz.scene.set_sky_mie_absorption(entity, value)` | entity, value: float | — | Mie absorption km^-1 |
+| `uz.scene.set_sky_mie_absorption_scale(entity, scale)` | entity, scale: float | — | Mie absorption multiplier |
+| `uz.scene.set_sky_mie_anisotropy(entity, g)` | entity, g: float [-1,1] | — | HG phase function |
+| `uz.scene.set_sky_mie_scale_height(entity, km)` | entity, km: float | — | Mie scale height (default 1.2 km) |
+| `uz.scene.set_sky_ground_albedo(entity, r, g, b)` | entity, r, g, b: float (0-1) | — | Ground reflectance |
+| `uz.scene.set_sky_ozone_absorption(entity, r, g, b)` | entity, r, g, b: float | — | Ozone absorption km^-1 |
+| `uz.scene.set_sky_ozone_tip_altitude(entity, km)` | entity, km: float | — | Ozone peak altitude (default 25 km) |
+| `uz.scene.set_sky_ozone_tip_value(entity, v)` | entity, v: float | — | Ozone peak density |
+| `uz.scene.set_sky_ozone_width(entity, km)` | entity, km: float | — | Ozone half-width (default 15 km) |
+| `uz.scene.set_sky_luminance_factor(entity, r, g, b)` | entity, r, g, b: float (0-1) | — | Per-channel sky luminance multiplier |
+| `uz.scene.set_sky_height_fog_contribution(entity, v)` | entity, v: float | — | Atmosphere contribution to height fog |
 
 ## Input
 
@@ -280,6 +424,93 @@ end
 ### Key Names
 
 Use lowercase key names: `"w"`, `"escape"`, `"shift"`, `"ctrl"`, etc. Special keys: `"Space"`, `"Tab"`, `"Return"`, `"Delete"`, `"Backspace"`, etc.
+
+## Volumetric Clouds
+
+### Cloud System
+
+Volumetric clouds provide realistic cloud rendering with physically-based scattering and wind-driven animation.
+
+```lua
+-- Create volumetric clouds
+uz.scene.create_clouds(entity)
+
+-- Configure cloud layer
+uz.scene.set_clouds_layer_bottom_altitude(entity, 5.0)   -- Base altitude (km, default 5)
+uz.scene.set_clouds_layer_height(entity, 10.0)           -- Layer thickness (km, default 10)
+uz.scene.set_clouds_coverage(entity, 0.5)                -- Global coverage [0,1]
+uz.scene.set_clouds_density(entity, 1.0)                 -- Density multiplier
+uz.scene.set_clouds_type(entity, 0.5)                    -- Cloud type: 0=stratus, 1=cumulus
+
+-- Wind and animation
+uz.scene.set_clouds_wind_velocity(entity, 0.1, 0.0, 0.0)    -- Wind in km/s (X, Y, Z)
+uz.scene.set_clouds_detail_wind_scale(entity, 2.0)          -- Detail noise wind multiplier
+
+-- Light interaction
+uz.scene.set_clouds_extinction(entity, 0.2)                  -- Extinction coefficient km^-1
+uz.scene.set_clouds_scattering_albedo(entity, 0.9)           -- Scattering ratio [0,1]
+uz.scene.set_clouds_ambient_multiplier(entity, 0.5)          -- Ambient fill multiplier
+
+-- Phase function (scattering directionality)
+uz.scene.set_clouds_phase_g(entity, 0.4)                     -- Primary HG phase eccentricity
+uz.scene.set_clouds_phase_g2(entity, -0.2)                   -- Secondary phase eccentricity
+uz.scene.set_clouds_phase_blend(entity, 0.8)                 -- Blend between phase lobes [0,1]
+
+-- Ray marching
+uz.scene.set_clouds_tracing_max_distance(entity, 50.0)       -- Max ray march distance (km)
+uz.scene.set_clouds_primary_steps(entity, 64)                -- Primary ray march steps
+uz.scene.set_clouds_light_steps(entity, 6)                   -- Light march steps
+
+-- Toggle
+uz.scene.set_clouds_enabled(entity, true)                    -- Enable/disable clouds
+```
+
+### Volumetric Clouds API Reference
+
+| Function | Parameters | Return | Notes |
+|----------|-----------|--------|-------|
+| `uz.scene.create_clouds(entity)` | entity | — | Add VolumetricCloudsComponent (idempotent) |
+| `uz.scene.set_clouds_layer_bottom_altitude(entity, km)` | entity, km: float | — | Cloud base altitude (default 5 km) |
+| `uz.scene.set_clouds_layer_height(entity, km)` | entity, km: float | — | Cloud layer thickness (default 10 km) |
+| `uz.scene.set_clouds_coverage(entity, v)` | entity, v: float [0,1] | — | Global coverage |
+| `uz.scene.set_clouds_density(entity, v)` | entity, v: float | — | Density multiplier |
+| `uz.scene.set_clouds_type(entity, v)` | entity, v: float [0,1] | — | Cloud type (0=stratus, 1=cumulus) |
+| `uz.scene.set_clouds_wind_velocity(entity, x, y, z)` | entity, x, y, z: float | — | Wind in km/s |
+| `uz.scene.set_clouds_detail_wind_scale(entity, v)` | entity, v: float | — | Detail noise wind multiplier |
+| `uz.scene.set_clouds_extinction(entity, v)` | entity, v: float | — | Extinction coefficient km^-1 |
+| `uz.scene.set_clouds_scattering_albedo(entity, v)` | entity, v: float [0,1] | — | Scattering ratio |
+| `uz.scene.set_clouds_phase_g(entity, v)` | entity, v: float | — | Primary HG phase eccentricity |
+| `uz.scene.set_clouds_phase_g2(entity, v)` | entity, v: float | — | Secondary phase eccentricity |
+| `uz.scene.set_clouds_phase_blend(entity, v)` | entity, v: float [0,1] | — | Blend between phase lobes |
+| `uz.scene.set_clouds_ambient_multiplier(entity, v)` | entity, v: float | — | Ambient fill multiplier |
+| `uz.scene.set_clouds_tracing_max_distance(entity, km)` | entity, km: float | — | Max ray march distance |
+| `uz.scene.set_clouds_primary_steps(entity, n)` | entity, n: integer | — | Primary ray march steps |
+| `uz.scene.set_clouds_light_steps(entity, n)` | entity, n: integer | — | Light march steps |
+| `uz.scene.set_clouds_enabled(entity, bool)` | entity, bool: bool | — | Enable/disable clouds |
+
+## Mesh Generation
+
+### Procedural Mesh API
+
+```lua
+-- Generate a UV sphere
+local mesh_id = uz.mesh.generate_sphere(32, 16)  -- sectors=32, stacks=16
+
+-- Generate a flat plane
+local mesh_id = uz.mesh.generate_plane(1.0)      -- uv_scale=1.0
+
+-- Use mesh in a StaticMeshComponent
+if mesh_id then
+    uz.scene.set_mesh(entity, mesh_id)
+end
+```
+
+### Mesh Generation API Reference
+
+| Function | Parameters | Return | Notes |
+|----------|-----------|--------|-------|
+| `uz.mesh.generate_sphere(sectors, stacks)` | sectors: integer, stacks: integer | mesh_id or nil | Generate UV sphere (default 32x16) |
+| `uz.mesh.generate_plane(uv_scale)` | uv_scale: float | mesh_id or nil | Generate flat quad (default uv_scale=1.0) |
 
 ## Physics (Planned Phase 3+)
 

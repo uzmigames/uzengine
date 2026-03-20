@@ -53,18 +53,6 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     ctx.frameIndex = frameIndex;
     SetupFrameData(ctx, rgBuilder);
 
-    // ── Volumetric Cloud Compute (pre-graph, same cmdList) ─────────────
-    // Runs AFTER SetupFrameData (cbRing->BeginFrame done) but BEFORE the
-    // render graph. CloudPass manages its own barriers on internally-owned
-    // textures. The main cmdList is open and ready for compute dispatches.
-    if (m_pendingCloudDispatch && m_cloudPass && m_cloudPass->IsInitialized()
-        && m_pendingCloudInput) {
-        UZ_PROFILE_SCOPE("CloudPass::PreGraphDispatch");
-        m_cloudPass->Execute(cmdList, *m_cbRing, *m_pendingCloudInput);
-        m_cloudOutputSrv = m_cloudPass->GetCloudOutputSrv();
-        m_pendingCloudDispatch = false;
-    }
-
     // ── Register render graph passes in pipeline order ──────────────────
     RegisterShadowPasses(rgBuilder, ctx);
     RegisterGeometryPasses(rgBuilder, ctx);
@@ -75,6 +63,10 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     // ── Compile + execute render graph ──────────────────────────────────
     rgBuilder.Compile();
     rgBuilder.Execute(cmdList);
+
+    // Cloud compute disabled — needs barrier/dispatch debugging before enabling.
+    // See phase0-3.1.0 tasks for the full cloud rewrite plan.
+    m_pendingCloudDispatch = false;
 
     // Shadow Atlas Diagnostic Readback (shadowDebugMode >= 2).
     // Currently disabled — requires render graph pass integration for safe
