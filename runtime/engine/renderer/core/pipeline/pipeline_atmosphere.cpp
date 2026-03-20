@@ -124,6 +124,67 @@ RHIPipelineHandle PipelineLibrary::GetHeightFog() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Cloud Composite Pipeline
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool PipelineLibrary::EnsureCloudCompositePixelShader() {
+    if (m_cloudCompositePS.IsValid()) {
+        return true;
+    }
+
+    m_cloudCompositePS = m_shaderMgr->CreateShader(EngineShader::CloudCompositePS, RHIShaderStage::Pixel);
+    if (!m_cloudCompositePS.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to compile CloudCompositePS");
+        return false;
+    }
+    return true;
+}
+
+RHIPipelineHandle PipelineLibrary::GetCloudComposite() {
+    if (!m_initialized) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary::GetCloudComposite called before Init()");
+        return RHIPipelineHandle::Invalid();
+    }
+
+    if (m_cloudComposite.IsValid()) {
+        return m_cloudComposite;
+    }
+
+    if (!EnsureFullscreenShaders() || !EnsureCloudCompositePixelShader()) {
+        return RHIPipelineHandle::Invalid();
+    }
+
+    RHIGraphicsPipelineDesc desc{};
+    desc.vertexShader  = m_fullscreenVS;
+    desc.pixelShader   = m_cloudCompositePS;
+    desc.topology      = RHIPrimitiveTopology::TriangleList;
+    desc.rasterizer.cullMode      = RHICullMode::None;
+    desc.depthStencil.depthEnable = false;
+    desc.depthStencil.depthWrite  = false;
+    desc.renderTargetFormats[0]   = RHIFormat::RGBA16Float;
+    desc.renderTargetCount        = 1;
+    desc.debugName                = "CloudComposite";
+
+    // Premultiplied-alpha compositing:
+    //   final.rgb = cloud.rgb * 1 + scene.rgb * cloud.a (transmittance)
+    // Where cloud output is: rgb = cloud_color (premultiplied), a = transmittance
+    desc.renderTargetBlend[0].blendEnable = true;
+    desc.renderTargetBlend[0].srcColor    = RHIBlendFactor::One;
+    desc.renderTargetBlend[0].dstColor    = RHIBlendFactor::SrcAlpha;
+    desc.renderTargetBlend[0].colorOp     = RHIBlendOp::Add;
+    desc.renderTargetBlend[0].srcAlpha    = RHIBlendFactor::One;
+    desc.renderTargetBlend[0].dstAlpha    = RHIBlendFactor::SrcAlpha;
+    desc.renderTargetBlend[0].alphaOp     = RHIBlendOp::Add;
+
+    m_cloudComposite = CreateCachedPipeline(desc);
+    if (!m_cloudComposite.IsValid()) {
+        UZ_LOG(Renderer, Error, "PipelineLibrary: failed to create CloudComposite pipeline");
+    } else {
+        UZ_LOG(Renderer, Info, "PipelineLibrary: created CloudComposite pipeline");
+    }
+
+    return m_cloudComposite;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Transmittance LUT Compute Pipeline

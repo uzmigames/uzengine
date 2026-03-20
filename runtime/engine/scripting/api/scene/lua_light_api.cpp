@@ -3,6 +3,7 @@
 #include "log.h"
 #include "world.h"
 #include "light_component.h"
+#include "static_mesh_component.h"
 
 extern "C" {
 #include <lua.h>
@@ -391,6 +392,11 @@ static int SceneSetCastShadows(lua_State* L) {
             lua_toboolean(L, 2) != 0;
         return 0;
     }
+    if (world->HasComponent<StaticMeshComponent>(entity)) {
+        world->GetComponent<StaticMeshComponent>(entity).castShadows =
+            lua_toboolean(L, 2) != 0;
+        return 0;
+    }
 
     UZ_LOG(Scripting, Warning,
         "uz.scene.set_cast_shadows: entity {} has no PrimitiveComponent", entity.id);
@@ -657,6 +663,199 @@ static int SceneSetAtmosphereSunLight(lua_State* L) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Lua C functions — volumetric scattering, indirect intensity, shadow bias
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// uz.scene.set_light_volumetric_scattering(entity, intensity)
+///
+/// Sets the volumetric scattering intensity multiplier for any light component.
+/// Controls how strongly the light contributes to volumetric fog scattering.
+///
+/// # Parameters
+/// - `entity`: Any entity with a light component.
+/// - `intensity`: Float multiplier. 1.0 = default contribution.
+///
+/// # Errors
+/// Logs a warning and no-ops if the entity has no light component.
+static int SceneSetLightVolumetricScattering(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { UZ_LOG(Scripting, Warning, "uz.scene.set_light_volumetric_scattering: World not set"); return 0; }
+
+    const Entity entity = CheckEntity(L, 1, "set_light_volumetric_scattering");
+    if (!entity.IsValid() || !world->IsValid(entity)) return 0;
+
+    LightComponent* light = GetAnyLight(world, entity);
+    if (!light) {
+        UZ_LOG(Scripting, Warning,
+            "uz.scene.set_light_volumetric_scattering: entity {} has no light component", entity.id);
+        return 0;
+    }
+
+    light->volumetricScatteringIntensity = static_cast<float>(luaL_checknumber(L, 2));
+    return 0;
+}
+
+/// uz.scene.get_light_volumetric_scattering(entity) -> number | nil
+///
+/// Returns the volumetric scattering intensity multiplier for any light entity.
+/// Returns nil if the entity has no light component.
+static int SceneGetLightVolumetricScattering(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+
+    const Entity entity = CheckEntity(L, 1, "get_light_volumetric_scattering");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+
+    const LightComponent* light = GetAnyLight(world, entity);
+    if (!light) { lua_pushnil(L); return 1; }
+
+    lua_pushnumber(L, static_cast<double>(light->volumetricScatteringIntensity));
+    return 1;
+}
+
+/// uz.scene.set_light_indirect_intensity(entity, intensity)
+///
+/// Sets the indirect lighting intensity multiplier for any light component.
+/// Controls the contribution of this light to indirect (bounced) illumination.
+///
+/// # Parameters
+/// - `entity`: Any entity with a light component.
+/// - `intensity`: Float multiplier. 1.0 = default contribution.
+///
+/// # Errors
+/// Logs a warning and no-ops if the entity has no light component.
+static int SceneSetLightIndirectIntensity(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { UZ_LOG(Scripting, Warning, "uz.scene.set_light_indirect_intensity: World not set"); return 0; }
+
+    const Entity entity = CheckEntity(L, 1, "set_light_indirect_intensity");
+    if (!entity.IsValid() || !world->IsValid(entity)) return 0;
+
+    LightComponent* light = GetAnyLight(world, entity);
+    if (!light) {
+        UZ_LOG(Scripting, Warning,
+            "uz.scene.set_light_indirect_intensity: entity {} has no light component", entity.id);
+        return 0;
+    }
+
+    light->indirectLightingIntensity = static_cast<float>(luaL_checknumber(L, 2));
+    return 0;
+}
+
+/// uz.scene.get_light_indirect_intensity(entity) -> number | nil
+///
+/// Returns the indirect lighting intensity multiplier for any light entity.
+/// Returns nil if the entity has no light component.
+static int SceneGetLightIndirectIntensity(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+
+    const Entity entity = CheckEntity(L, 1, "get_light_indirect_intensity");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+
+    const LightComponent* light = GetAnyLight(world, entity);
+    if (!light) { lua_pushnil(L); return 1; }
+
+    lua_pushnumber(L, static_cast<double>(light->indirectLightingIntensity));
+    return 1;
+}
+
+/// uz.scene.set_light_shadow_bias(entity, bias)
+///
+/// Sets the depth bias offset for shadow map sampling on any light component.
+/// Higher values reduce shadow acne at the cost of shadow detachment (peter-panning).
+///
+/// # Parameters
+/// - `entity`: Any entity with a light component.
+/// - `bias`: Float depth bias. Default: 0.5.
+///
+/// # Errors
+/// Logs a warning and no-ops if the entity has no light component.
+static int SceneSetLightShadowBias(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { UZ_LOG(Scripting, Warning, "uz.scene.set_light_shadow_bias: World not set"); return 0; }
+
+    const Entity entity = CheckEntity(L, 1, "set_light_shadow_bias");
+    if (!entity.IsValid() || !world->IsValid(entity)) return 0;
+
+    LightComponent* light = GetAnyLight(world, entity);
+    if (!light) {
+        UZ_LOG(Scripting, Warning,
+            "uz.scene.set_light_shadow_bias: entity {} has no light component", entity.id);
+        return 0;
+    }
+
+    light->shadowBias = static_cast<float>(luaL_checknumber(L, 2));
+    return 0;
+}
+
+/// uz.scene.get_light_shadow_bias(entity) -> number | nil
+///
+/// Returns the shadow depth bias for any light entity.
+/// Returns nil if the entity has no light component.
+static int SceneGetLightShadowBias(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+
+    const Entity entity = CheckEntity(L, 1, "get_light_shadow_bias");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+
+    const LightComponent* light = GetAnyLight(world, entity);
+    if (!light) { lua_pushnil(L); return 1; }
+
+    lua_pushnumber(L, static_cast<double>(light->shadowBias));
+    return 1;
+}
+
+/// uz.scene.set_light_shadow_slope_bias(entity, bias)
+///
+/// Sets the slope-scaled depth bias for shadow map sampling on any light component.
+/// Scales the bias proportionally to the surface slope relative to the light direction,
+/// reducing shadow acne on steeply angled surfaces.
+///
+/// # Parameters
+/// - `entity`: Any entity with a light component.
+/// - `bias`: Float slope-scaled bias. Default: 0.5.
+///
+/// # Errors
+/// Logs a warning and no-ops if the entity has no light component.
+static int SceneSetLightShadowSlopeBias(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { UZ_LOG(Scripting, Warning, "uz.scene.set_light_shadow_slope_bias: World not set"); return 0; }
+
+    const Entity entity = CheckEntity(L, 1, "set_light_shadow_slope_bias");
+    if (!entity.IsValid() || !world->IsValid(entity)) return 0;
+
+    LightComponent* light = GetAnyLight(world, entity);
+    if (!light) {
+        UZ_LOG(Scripting, Warning,
+            "uz.scene.set_light_shadow_slope_bias: entity {} has no light component", entity.id);
+        return 0;
+    }
+
+    light->shadowSlopeBias = static_cast<float>(luaL_checknumber(L, 2));
+    return 0;
+}
+
+/// uz.scene.get_light_shadow_slope_bias(entity) -> number | nil
+///
+/// Returns the shadow slope-scaled depth bias for any light entity.
+/// Returns nil if the entity has no light component.
+static int SceneGetLightShadowSlopeBias(lua_State* L) {
+    World* world = GetWorld(L);
+    if (!world) { lua_pushnil(L); return 1; }
+
+    const Entity entity = CheckEntity(L, 1, "get_light_shadow_slope_bias");
+    if (!entity.IsValid() || !world->IsValid(entity)) { lua_pushnil(L); return 1; }
+
+    const LightComponent* light = GetAnyLight(world, entity);
+    if (!light) { lua_pushnil(L); return 1; }
+
+    lua_pushnumber(L, static_cast<double>(light->shadowSlopeBias));
+    return 1;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Registration
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -737,6 +936,30 @@ void LuaRegisterLightAPI(lua_State* L) {
 
     lua_pushcfunction(L, SceneSetAtmosphereSunLight);
     lua_setfield(L, -2, "set_atmosphere_sun_light");
+
+    lua_pushcfunction(L, SceneSetLightVolumetricScattering);
+    lua_setfield(L, -2, "set_light_volumetric_scattering");
+
+    lua_pushcfunction(L, SceneGetLightVolumetricScattering);
+    lua_setfield(L, -2, "get_light_volumetric_scattering");
+
+    lua_pushcfunction(L, SceneSetLightIndirectIntensity);
+    lua_setfield(L, -2, "set_light_indirect_intensity");
+
+    lua_pushcfunction(L, SceneGetLightIndirectIntensity);
+    lua_setfield(L, -2, "get_light_indirect_intensity");
+
+    lua_pushcfunction(L, SceneSetLightShadowBias);
+    lua_setfield(L, -2, "set_light_shadow_bias");
+
+    lua_pushcfunction(L, SceneGetLightShadowBias);
+    lua_setfield(L, -2, "get_light_shadow_bias");
+
+    lua_pushcfunction(L, SceneSetLightShadowSlopeBias);
+    lua_setfield(L, -2, "set_light_shadow_slope_bias");
+
+    lua_pushcfunction(L, SceneGetLightShadowSlopeBias);
+    lua_setfield(L, -2, "get_light_shadow_slope_bias");
 
     lua_pop(L, 2);
 

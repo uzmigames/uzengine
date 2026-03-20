@@ -225,6 +225,27 @@ uint32_t SceneRenderer::QueueTextureLoad(const std::string& path) {
     return slotIndex;
 }
 
+uint32_t SceneRenderer::RegisterProceduralMesh(Mesh&& mesh, const std::string& key) {
+    if (key.empty() || !mesh.IsValid()) return UINT32_MAX;
+
+    // Return cached ID if this procedural mesh was already registered.
+    auto it = m_meshMap.find(key);
+    if (it != m_meshMap.end()) {
+        return it->second;
+    }
+
+    // Reserve a stable slot with a placeholder GPUMesh.
+    const auto index = static_cast<uint32_t>(m_meshes.size());
+    m_meshes.emplace_back();  // placeholder (IsValid() == false)
+    m_meshMap[key] = index;
+
+    // Queue the CPU mesh for GPU upload on the next FlushPendingLoads().
+    m_pendingProceduralMeshes.emplace_back(index, std::move(mesh));
+
+    UZ_LOG(Renderer, Debug, "SceneRenderer: registered procedural mesh '{}' (slot={})", key, index);
+    return index;
+}
+
 std::string SceneRenderer::GetTexturePath(uint32_t textureId) const {
     for (const auto& [path, id] : m_textureMap) {
         if (id == textureId) return path;
@@ -275,6 +296,22 @@ void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {
             path, slotIndex, m_meshes[slotIndex].vertexCount, m_meshes[slotIndex].indexCount);
     }
     m_pendingMeshPaths.clear();
+
+    // ── Flush procedural meshes (CPU-generated, queued by RegisterProceduralMesh) ──
+    for (auto& [meshIndex, cpuMesh] : m_pendingProceduralMeshes) {
+        DeferredMeshUpload deferred = UploadMeshDeferred(m_device, cmdList, cpuMesh);
+        if (!deferred.mesh.IsValid()) {
+            UZ_LOG(Renderer, Error, "SceneRenderer: failed to upload procedural mesh index {}", meshIndex);
+            continue;
+        }
+        m_meshes[meshIndex] = deferred.mesh;
+        m_deferredMeshUploads.push_back(std::move(deferred));
+
+        UZ_LOG(Renderer, Info,
+            "SceneRenderer: flushed procedural mesh (id={}, {} verts, {} indices)",
+            meshIndex, m_meshes[meshIndex].vertexCount, m_meshes[meshIndex].indexCount);
+    }
+    m_pendingProceduralMeshes.clear();
 
     // ── Batch-flush deferred mesh uploads in a single GPU submission ──────
     if (!m_deferredMeshUploads.empty()) {
@@ -466,6 +503,7 @@ void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {
 bool SceneRenderer::IsSceneFullyLoaded() const {
     // Pending mesh/texture queues must be empty
     if (!m_pendingMeshPaths.empty()) return false;
+    if (!m_pendingProceduralMeshes.empty()) return false;
     if (!m_pendingTexturePaths.empty()) return false;
     // Async texture decoder must have no in-flight decodes
     if (m_asyncDecoder && m_asyncDecoder->PendingCount() > 0) return false;

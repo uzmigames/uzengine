@@ -882,6 +882,125 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
                                     ctx.bindless, ctx.renderWidth, ctx.renderHeight,
                                     skyFogR, skyFogG, skyFogB);
             }
+
+            // ── Volumetric Clouds (compute, composited over HDR) ─────────────
+            if (m_cloudPass && m_cloudPass->IsInitialized()
+                && m_passInspector.IsPassEnabled("clouds") && ctx.world) {
+
+                auto cloudView = ctx.world->GetRegistry().view<VolumetricCloudsComponent>();
+                for (auto enttEntity : cloudView) {
+                    auto& cloudComp = cloudView.get<VolumetricCloudsComponent>(enttEntity);
+                    if (!cloudComp.enabled) continue;
+
+                    // Fill CloudPassInput from component + frame data
+                    CloudPassInput cloudInput{};
+                    std::memcpy(cloudInput.invViewProj, &ctx.perFrame.invViewProj, 64);
+                    // Use previous frame's unjittered view-projection for temporal reprojection.
+                    // On the first frame, m_prevViewProj is identity — the temporal filter
+                    // converges after a few frames regardless.
+                    std::memcpy(cloudInput.prevViewProj, &m_prevViewProj, 64);
+
+                    // Camera position: convert from cm (engine units) to km (cloud units)
+                    cloudInput.cameraPos[0] = ctx.perFrame.cameraPos.x * 0.00001f;
+                    cloudInput.cameraPos[1] = ctx.perFrame.cameraPos.y * 0.00001f;
+                    cloudInput.cameraPos[2] = ctx.perFrame.cameraPos.z * 0.00001f;
+
+                    // Sun direction and color from the scene's directional light
+                    cloudInput.sunDir[0] = ctx.sunDir.x;
+                    cloudInput.sunDir[1] = ctx.sunDir.y;
+                    cloudInput.sunDir[2] = ctx.sunDir.z;
+                    cloudInput.sunColor[0] = ctx.sunColor.x;
+                    cloudInput.sunColor[1] = ctx.sunColor.y;
+                    cloudInput.sunColor[2] = ctx.sunColor.z;
+
+                    // Sky ambient for multi-scatter approximation (SH L0 from IBL)
+                    cloudInput.ambientColor[0] = skyFogR;
+                    cloudInput.ambientColor[1] = skyFogG;
+                    cloudInput.ambientColor[2] = skyFogB;
+
+                    cloudInput.time              = m_totalTime;
+                    cloudInput.coverage          = cloudComp.coverage;
+                    cloudInput.density           = cloudComp.density;
+                    cloudInput.extinction        = cloudComp.extinction;
+                    cloudInput.scatteringAlbedo  = cloudComp.scatteringAlbedo;
+                    cloudInput.phaseG            = cloudComp.phaseG;
+                    cloudInput.phaseG2           = cloudComp.phaseG2;
+                    cloudInput.phaseBlend        = cloudComp.phaseBlend;
+                    cloudInput.layerBottomKm     = cloudComp.layerBottomAltitudeKm;
+                    cloudInput.layerHeightKm     = cloudComp.layerHeightKm;
+                    cloudInput.windVelocity[0]   = cloudComp.windVelocity.x;
+                    cloudInput.windVelocity[1]   = cloudComp.windVelocity.y;
+                    cloudInput.windVelocity[2]   = cloudComp.windVelocity.z;
+                    cloudInput.detailWindScale   = cloudComp.detailWindScale;
+                    cloudInput.ambientMultiplier = cloudComp.ambientMultiplier;
+                    cloudInput.primarySteps      = cloudComp.primarySteps;
+                    cloudInput.lightSteps        = cloudComp.lightSteps;
+                    cloudInput.depthSrv          = m_gbuffer.depthSRV;
+                    cloudInput.globalCoverage    = cloudComp.coverage;
+                    cloudInput.temporalBlendFactor = 0.05f;
+
+                    // Store cloud input for deferred execution after render graph.
+                    // CloudPass::Execute() manages its own barriers on internally-owned
+                    // textures (noise, weather, cloud output). Running it inside a render
+                    // graph callback conflicts with the graph's barrier tracking and causes
+                    // "closed command list" errors. Instead, we execute it as a standalone
+                    // compute dispatch after rgBuilder.Execute(), similar to the IBL bake.
+                    m_pendingCloudInput = std::make_unique<CloudPassInput>(cloudInput);
+                    m_pendingCloudDispatch = true;
+
+                    // Cloud composite pass — fullscreen triangle that alpha-blends
+                    // the half-res cloud output over the HDR scene color using
+                    // premultiplied-alpha: final.rgb = cloud.rgb + scene.rgb * transmittance
+                    if (m_cloudOutputSrv != UINT32_MAX)
+                    rgBuilder.AddPass("CloudComposite", [this, &ctx](rg::RgPassBuilder& pb) {
+                        pb.Write(ctx.hdrRes, RHIResourceState::RenderTarget);
+
+                        pb.SetExecutionCallback([this, &ctx](IRHICommandList* cmd, const rg::RgPassResources& res) {
+                            UZ_PROFILE_SCOPE("CloudPass::Composite");
+
+                            if (m_cloudOutputSrv == UINT32_MAX) return;
+
+                            auto compositePSO = ctx.pipelines->GetCloudComposite();
+                            if (!compositePSO.IsValid()) return;
+
+                            // Begin render pass — blend over existing HDR scene (no clear)
+                            auto hdrTex = res.GetTexture(ctx.hdrRes);
+                            RHIRenderPassDesc passDesc{};
+                            passDesc.colorAttachmentCount = 1;
+                            passDesc.colorAttachments[0].texture = hdrTex;
+                            passDesc.colorAttachments[0].clear   = false;
+                            passDesc.hasDepth = false;
+                            cmd->BeginRenderPass(passDesc);
+
+                            cmd->SetPipeline(compositePSO);
+
+                            // Root constants: cloud SRV index + depth SRV index
+                            const uint32_t rootConst[4] = { m_cloudOutputSrv, m_gbuffer.depthSRV, 0, 0 };
+                            cmd->SetRootConstants(kSlotRootConstants, rootConst, 4);
+                            cmd->SetRootCBV(kSlotPerFrame, ctx.perFrameAlloc.bufferHandle,
+                                            ctx.perFrameAlloc.offsetBytes, ctx.perFrameAlloc.cpuPtr,
+                                            sizeof(PerFrameCB));
+
+                            RHIViewport vp{};
+                            vp.width    = ctx.renderWidth;
+                            vp.height   = ctx.renderHeight;
+                            vp.maxDepth = 1.0f;
+                            cmd->SetViewport(vp);
+
+                            RHIScissorRect sc{};
+                            sc.right  = static_cast<int32_t>(ctx.renderWidth);
+                            sc.bottom = static_cast<int32_t>(ctx.renderHeight);
+                            cmd->SetScissor(sc);
+
+                            cmd->Draw(3);  // Fullscreen triangle
+
+                            cmd->EndRenderPass();
+                        });
+                    });
+
+                    break;  // First VolumetricCloudsComponent only (singleton semantics)
+                }
+            }
         }
     }
 

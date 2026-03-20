@@ -5,6 +5,7 @@
 #include "renderer_core.h"
 #include "subsystems.h"
 
+#include "atmosphere/cloud_pass.h"
 #include "async_texture_decoder.h"
 #include "camera.h"
 #include "units.h"
@@ -304,6 +305,13 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     // ── Lens Flare (at display resolution — post-bloom effect) ──────
     m_lensFlarePass = std::make_unique<LensFlarePass>();
     m_lensFlarePass->Init(device, m_shaderMgr.get(), width, height);
+
+    // ── Volumetric Clouds (compute pipeline, half-res output) ────────
+    m_cloudPass = std::make_unique<CloudPass>();
+    if (!m_cloudPass->Init(m_device, m_shaderMgr.get(), m_renderWidth, m_renderHeight)) {
+        UZ_LOG(Renderer, Warning, "SceneRenderer: CloudPass init failed (clouds disabled)");
+        m_cloudPass.reset();
+    }
 
     // ── DFS Output Texture + Culling Buffers (at render resolution) ──
     // Created here but only populated when DFS is enabled at runtime.
@@ -1099,6 +1107,11 @@ void SceneRenderer::Resize(uint32_t width, uint32_t height) {
     // Recreate SSGI textures at render resolution
     m_ssgiRenderer.OnResize(m_renderWidth, m_renderHeight);
 
+    // Recreate cloud output textures at render resolution
+    if (m_cloudPass && m_cloudPass->IsInitialized()) {
+        m_cloudPass->OnResize(m_renderWidth, m_renderHeight);
+    }
+
     // Recreate SSR output textures at render resolution
     DestroySsrResources();
     CreateSsrResources(m_renderWidth, m_renderHeight);
@@ -1256,6 +1269,7 @@ void SceneRenderer::Shutdown() {
     // ── Auto-Exposure cleanup ─────────────────────────────────────
     if (m_autoExposure) m_autoExposure->Shutdown();
     if (m_gtaoPass) m_gtaoPass->Shutdown();
+    if (m_cloudPass) { m_cloudPass->Shutdown(); m_cloudPass.reset(); }
     if (m_lensFlarePass) m_lensFlarePass->Shutdown();
     if (m_bloomPass) m_bloomPass->Shutdown();
 

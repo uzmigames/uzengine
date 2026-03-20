@@ -26,6 +26,7 @@
 
 #include "gbuffer.h"
 #include "draw_list.h"
+#include "mesh.h"
 #include "render_path.h"
 #include "gbuffer_debug_pass.h"  // GBufferDebugMode
 #include "debug_view_mode.h"    // DebugViewMode
@@ -87,6 +88,8 @@ class AsyncTextureDecoder;
 
 class SdfAtlasManager;
 class DynamicResolutionController;
+class CloudPass;
+struct CloudPassInput;
 namespace rg { class RgResourcePool; }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -470,6 +473,21 @@ public:
     [[nodiscard]] uint32_t LoadTexture(const std::string& path, IVFS* vfs,
                                        IRHICommandList* cmdList);
 
+    /// Registers a CPU-generated procedural mesh and queues it for GPU upload.
+    ///
+    /// Unlike `QueueMeshLoad` which loads from VFS, this takes an already-built
+    /// `Mesh` object (from `GenerateSphereMesh`, `GeneratePlaneMesh`, etc.) and
+    /// registers it with a synthetic key. The mesh is uploaded on the next
+    /// `FlushPendingLoads` call.
+    ///
+    /// # Arguments
+    /// * `mesh` — CPU mesh to upload. Moved into internal storage.
+    /// * `key` — Synthetic cache key (e.g. "procedural://sphere_32_16").
+    ///
+    /// # Returns
+    /// Stable mesh ID on success. `UINT32_MAX` on failure.
+    [[nodiscard]] uint32_t RegisterProceduralMesh(Mesh&& mesh, const std::string& key);
+
     /// Queues a mesh path for deferred GPU upload.
     ///
     /// Safe to call from outside the render loop (e.g., from a Lua callback).
@@ -600,6 +618,12 @@ private:
 
     // ── Lens Flare ──────────────────────────────────────────────────────
     std::unique_ptr<LensFlarePass> m_lensFlarePass;  ///< Screen-space lens flare (ghosts + halo).
+
+    // ── Volumetric Clouds ───────────────────────────────────────────────
+    std::unique_ptr<CloudPass> m_cloudPass;           ///< GPU volumetric cloud pipeline (5 compute shaders).
+    uint32_t m_cloudOutputSrv = UINT32_MAX;           ///< SRV of the final cloud output for compositing.
+    std::unique_ptr<CloudPassInput> m_pendingCloudInput; ///< Deferred cloud input for pre-graph compute dispatch.
+    bool m_pendingCloudDispatch = false;               ///< True when cloud compute should run before render graph.
 
     // ── Distance Field Shadows ───────────────────────────────────────────
 
@@ -839,6 +863,9 @@ private:
 
     /// Paths enqueued via `QueueMeshLoad`; flushed at the start of `RenderFrame`.
     std::vector<std::string> m_pendingMeshPaths;
+
+    /// Procedural meshes queued for GPU upload via RegisterProceduralMesh.
+    std::vector<std::pair<uint32_t, Mesh>> m_pendingProceduralMeshes;
 
     /// Paths enqueued via `QueueTextureLoad`; flushed at the start of `RenderFrame`.
     std::vector<std::string> m_pendingTexturePaths;

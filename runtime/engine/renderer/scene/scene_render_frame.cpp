@@ -60,6 +60,32 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     RegisterPostProcessPasses(rgBuilder, ctx);
     RegisterOverlayPasses(rgBuilder, ctx);
 
+    // ── Volumetric Cloud Compute (pre-graph standalone dispatch) ────────
+    // CloudPass::Execute() manages its own resource barriers on internally
+    // owned textures (noise, weather map, cloud output). It must run before
+    // the render graph so the CloudComposite pass can sample the result.
+    // CloudPass compute dispatch — disabled pending barrier fix.
+    // CloudPass::Execute() manages internal barriers on noise/weather/output
+    // textures. The DX12 debug layer reports state mismatches (COMMON vs SRV)
+    // because the internal barrier tracking doesn't account for cross-frame
+    // state persistence. Need to fix CloudPass to properly track resource
+    // states across frames, or integrate textures into the render graph.
+    // TODO(clouds): Re-enable after fixing DX12 debug layer barrier validation.
+    // CloudPass::Execute() dispatches pre-graph compute work (noise bake, weather,
+    // raymarch, temporal). On the first frame, barrier transitions (COMMON→UAV→SRV)
+    // succeed at recording time, but the DX12 debug layer at ExecuteCommandLists
+    // reports state mismatches that escalate to DEVICE REMOVED. This needs:
+    // 1. Investigation of why the debug layer sees COMMON when CloudPass set SRV
+    // 2. Possible integration of cloud textures into the render graph
+    // 3. Or a dedicated pre-frame command list for cloud compute
+    if (m_pendingCloudDispatch && m_cloudPass && m_cloudPass->IsInitialized()
+        && m_pendingCloudInput) {
+        UZ_PROFILE_SCOPE("CloudPass::PreGraphDispatch");
+        m_cloudPass->Execute(cmdList, *m_cbRing, *m_pendingCloudInput);
+        m_cloudOutputSrv = m_cloudPass->GetCloudOutputSrv();
+        m_pendingCloudDispatch = false;
+    }
+
     // ── Compile + execute render graph ──────────────────────────────────
     rgBuilder.Compile();
     rgBuilder.Execute(cmdList);

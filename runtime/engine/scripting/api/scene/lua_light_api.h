@@ -14,6 +14,15 @@
 /// - `uz.scene.get_light_color(entity)` → r, g, b | nil
 /// - `uz.scene.get_light_intensity(entity)` → number | nil
 /// - `uz.scene.set_light_range(entity, range)` → void (point/spot only)
+/// - `uz.scene.set_light_volumetric_scattering(entity, intensity)` → void
+/// - `uz.scene.get_light_volumetric_scattering(entity)` → number | nil
+/// - `uz.scene.set_light_indirect_intensity(entity, intensity)` → void
+/// - `uz.scene.get_light_indirect_intensity(entity)` → number | nil
+/// - `uz.scene.set_light_shadow_bias(entity, bias)` → void
+/// - `uz.scene.get_light_shadow_bias(entity)` → number | nil
+/// - `uz.scene.set_light_shadow_slope_bias(entity, bias)` → void
+/// - `uz.scene.get_light_shadow_slope_bias(entity)` → number | nil
+/// - `uz.scene.set_cast_shadows(entity, enabled)` → void (lights + static meshes)
 
 struct lua_State;
 

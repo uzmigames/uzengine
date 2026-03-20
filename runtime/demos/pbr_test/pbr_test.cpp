@@ -16,6 +16,7 @@
 #include "sky_atmosphere_component.h"
 #include "sky_light_component.h"
 #include "height_fog_component.h"
+#include "volumetric_clouds_component.h"
 #include "render_path.h"
 #include "mesh.h"
 #include "paths.h"
@@ -394,6 +395,22 @@ void PBRTest::OnStart() {
         fogComp.directionalInscatteringColor      = {0.0f, 0.0f, 0.0f};
         fogComp.directionalInscatteringExponent   = 4.0f;
         fogComp.directionalInscatteringStartDistance = 10000.f;
+    }
+#endif
+
+    // ── Volumetric Clouds ─────────────────────────────────────────────
+#if 1 // DIAG: volumetric clouds
+    {
+        auto cloudEntity = world.CreateEntity();
+        auto& scene = world.AddComponent<SceneComponent>(cloudEntity);
+        scene.SetPosition({0.f, 0.f, 0.f});
+        auto& clouds = world.AddComponent<VolumetricCloudsComponent>(cloudEntity);
+        /// @ref Schneider & Vos 2015 — standard cumulus defaults
+        clouds.coverage              = 0.5f;
+        clouds.density               = 1.0f;
+        clouds.layerBottomAltitudeKm = 5.0f;
+        clouds.layerHeightKm         = 10.0f;
+        clouds.enabled               = true;
     }
 #endif
 

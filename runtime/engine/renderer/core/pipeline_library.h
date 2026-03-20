@@ -318,6 +318,16 @@ public:
     /// Valid `RHIPipelineHandle` on success, invalid handle on failure (error logged).
     [[nodiscard]] RHIPipelineHandle GetHeightFog();
 
+    /// Returns the cloud composite pipeline (fullscreen triangle, premultiplied-alpha blend).
+    ///
+    /// Blends half-res volumetric cloud output over the HDR scene color.
+    /// Blend mode: Src=One, Dst=SrcAlpha (premultiplied alpha compositing):
+    ///   final.rgb = cloud.rgb + scene.rgb * transmittance
+    ///
+    /// Depth: disabled (no depth test or write).
+    /// Render target: RGBA16Float (HDR scene color).
+    [[nodiscard]] RHIPipelineHandle GetCloudComposite();
+
     /// Returns the depth prepass pipeline (shadow_depth_vs, no pixel shader, depth-only).
     ///
     /// Similar to the shadow depth pipeline but WITHOUT depth bias (no slope-scaled
@@ -644,6 +654,7 @@ private:
     [[nodiscard]] bool EnsureGdfCompositeShader();
     [[nodiscard]] bool EnsureMeshSdfBakeShader();
     [[nodiscard]] bool EnsureRadianceCacheTraceShader();
+    [[nodiscard]] bool EnsureCloudCompositePixelShader();
 
     /// Creates a pipeline through the PSO cache. On cache hit, returns the
     /// cached handle without calling the device. On miss, creates via the
@@ -675,6 +686,7 @@ private:
     RHIShaderHandle m_tonemapPS            = RHIShaderHandle::Invalid();
     RHIShaderHandle m_velocityPS           = RHIShaderHandle::Invalid();
     RHIShaderHandle m_heightFogPS          = RHIShaderHandle::Invalid();
+    RHIShaderHandle m_cloudCompositePS     = RHIShaderHandle::Invalid();
     RHIShaderHandle m_transmittanceLutCS      = RHIShaderHandle::Invalid();
     RHIShaderHandle m_multiScatterLutCS      = RHIShaderHandle::Invalid();
     RHIShaderHandle m_apVolumeCS             = RHIShaderHandle::Invalid();
@@ -730,6 +742,7 @@ private:
     RHIPipelineHandle m_tonemap               = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_velocityPass           = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_heightFog             = RHIPipelineHandle::Invalid();
+    RHIPipelineHandle m_cloudComposite        = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_transmittanceLut      = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_multiScatterLut      = RHIPipelineHandle::Invalid();
     RHIPipelineHandle m_apVolume             = RHIPipelineHandle::Invalid();

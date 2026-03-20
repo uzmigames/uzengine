@@ -92,6 +92,7 @@ void PipelineLibrary::Shutdown() {
     destroyPipeline(m_skyAtmosphere);
     destroyPipeline(m_tonemap);
     destroyPipeline(m_heightFog);
+    destroyPipeline(m_cloudComposite);
     destroyPipeline(m_transmittanceLut);
     destroyPipeline(m_apVolume);
     destroyPipeline(m_skyCubemapCapture);
@@ -134,6 +135,7 @@ void PipelineLibrary::Shutdown() {
     destroyShader(m_skyAtmospherePS);
     destroyShader(m_tonemapPS);
     destroyShader(m_heightFogPS);
+    destroyShader(m_cloudCompositePS);
     destroyShader(m_transmittanceLutCS);
     destroyShader(m_apVolumeCS);
     destroyShader(m_skyCubemapCaptureCS);
@@ -328,6 +330,7 @@ uint32_t PipelineLibrary::WarmupAll() {
     warmup(GetSkyAtmosphere(), "SkyAtmosphere");
     warmup(GetVelocityPass(), "VelocityBuffer");
     warmup(GetHeightFog(), "HeightFog");
+    warmup(GetCloudComposite(), "CloudComposite");
     warmup(GetTransmittanceLut(), "TransmittanceLUT");
     warmup(GetSkyCubemapCapture(), "SkyCubemapCapture");
     warmup(GetSkyCubemapCapturePS(), "SkyCubemapCapturePS");

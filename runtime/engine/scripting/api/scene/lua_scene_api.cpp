@@ -788,17 +788,15 @@ static int SceneGetMesh(lua_State* L) {
 
 /// uz.scene.get_material(entity) -> table | nil
 ///
-/// Returns a table of non-zero texture IDs from the entity's `StaticMeshComponent`
-/// when the material has been loaded (`materialLoaded == true`). Only fields with
-/// a non-zero ID are included in the returned table (albedo, normal, roughness,
-/// metallic, ao). Returns nil if the component is missing or not yet loaded.
+/// Returns a table with the entity's material parameters. Includes the albedo
+/// texture ID (from `materialId`) and, if a `Material` is assigned via the
+/// override material slot system, all scalar/boolean material parameters.
 ///
 /// # Arguments
 /// * `entity` (lightuserdata) — Target entity.
 ///
 /// # Returns
-/// - Table `{albedo?, normal?, roughness?, metallic?, ao?}` on success.
-///   Each field is an integer texture ID. Fields whose ID is 0 are omitted.
+/// - Table with material parameters on success.
 /// - `nil` if the component is missing or `materialLoaded` is false.
 static int SceneGetMaterial(lua_State* L) {
     StaticMeshComponent* meshComp = GetMeshComponent(L, "get_material");
@@ -809,15 +807,45 @@ static int SceneGetMaterial(lua_State* L) {
 
     lua_newtable(L);
 
-    // Only emit non-zero IDs — zero is the sentinel "null" value.
-    // materialId is used as the albedo ID in the MVP asset system.
+    // materialId is used as the albedo texture ID in the MVP asset system.
     if (meshComp->materialId != 0) {
         lua_pushinteger(L, static_cast<lua_Integer>(meshComp->materialId));
         lua_setfield(L, -2, "albedo");
     }
 
-    // Phase 2 texture slots are not yet stored as uint32_t IDs in the component
-    // (they are paths). Nothing else to emit until the asset system adds them.
+    // If a Material is assigned via the slot system, expose its parameters.
+    const MaterialInterface* matIface = meshComp->GetMaterial(0);
+    if (matIface) {
+        const auto* mat = static_cast<const Material*>(matIface);
+
+        auto pushFloat = [&](const char* name, float val) {
+            lua_pushnumber(L, static_cast<double>(val));
+            lua_setfield(L, -2, name);
+        };
+
+        pushFloat("roughness_multiplier", mat->roughnessMultiplier);
+        pushFloat("metallic_multiplier", mat->metallicMultiplier);
+        pushFloat("normal_intensity", mat->normalIntensity);
+        pushFloat("ao_intensity", mat->aoIntensity);
+        pushFloat("opacity", mat->opacity);
+        pushFloat("emissive_color_r", mat->emissiveColorR);
+        pushFloat("emissive_color_g", mat->emissiveColorG);
+        pushFloat("emissive_color_b", mat->emissiveColorB);
+        pushFloat("emissive_intensity", mat->emissiveIntensity);
+        pushFloat("base_color_r", mat->baseColorTintR);
+        pushFloat("base_color_g", mat->baseColorTintG);
+        pushFloat("base_color_b", mat->baseColorTintB);
+        pushFloat("uv_scale_x", mat->uvScaleX);
+        pushFloat("uv_scale_y", mat->uvScaleY);
+        pushFloat("uv_offset_x", mat->uvOffsetX);
+        pushFloat("uv_offset_y", mat->uvOffsetY);
+
+        lua_pushboolean(L, mat->twoSided ? 1 : 0);
+        lua_setfield(L, -2, "two_sided");
+        lua_pushboolean(L, mat->alphaTest ? 1 : 0);
+        lua_setfield(L, -2, "alpha_test");
+        pushFloat("alpha_clip_threshold", mat->alphaClipThreshold);
+    }
 
     return 1;
 }

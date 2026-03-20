@@ -3,6 +3,7 @@
 #include "log.h"
 #include "debug_view_mode.h"
 #include "scene_renderer.h"
+#include "mesh.h"
 #include "stats_overlay.h"
 #include "postprocess/temporal_upscaler.h"
 #include "cvar.h"
@@ -13,6 +14,7 @@ extern "C" {
 #include <lauxlib.h>
 }
 
+#include <cstdio>
 #include <cstring>
 
 // Scripting log category is defined in lua_vm.cpp — only declare here.
@@ -406,6 +408,90 @@ static int MeshLoad(lua_State* L) {
     return 1;
 }
 
+/// uz.mesh.generate_sphere(sectors, stacks) -> mesh_id | nil
+///
+/// Generates a UV sphere mesh and registers it for GPU upload.
+/// Returns a mesh_id that can be used with uz.scene.set_mesh().
+///
+/// # Arguments
+/// * `sectors` (integer, optional) — Longitudinal subdivisions. Default: 32.
+/// * `stacks` (integer, optional) — Latitudinal subdivisions. Default: 16.
+///
+/// # Returns
+/// Integer mesh ID on success; nil on failure.
+static int MeshGenerateSphere(lua_State* L) {
+    const uint32_t sectors = static_cast<uint32_t>(luaL_optinteger(L, 1, 32));
+    const uint32_t stacks  = static_cast<uint32_t>(luaL_optinteger(L, 2, 16));
+
+    SceneRenderer* renderer = GetRenderer(L);
+    if (!renderer) {
+        UZ_LOG(Scripting, Warning, "uz.mesh.generate_sphere: SceneRenderer not set");
+        lua_pushnil(L);
+        return 1;
+    }
+
+    Mesh cpuMesh = GenerateSphereMesh(sectors, stacks);
+    if (!cpuMesh.IsValid()) {
+        UZ_LOG(Scripting, Warning, "uz.mesh.generate_sphere: mesh generation failed");
+        lua_pushnil(L);
+        return 1;
+    }
+
+    // Build a cache key so identical params return the same ID.
+    char key[64];
+    std::snprintf(key, sizeof(key), "procedural://sphere_%u_%u", sectors, stacks);
+
+    const uint32_t id = renderer->RegisterProceduralMesh(std::move(cpuMesh), key);
+    if (id == UINT32_MAX) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    lua_pushinteger(L, static_cast<lua_Integer>(id));
+    return 1;
+}
+
+/// uz.mesh.generate_plane(uv_scale) -> mesh_id | nil
+///
+/// Generates a flat quad (plane) mesh lying in the XY plane (Z=0) and registers
+/// it for GPU upload. Returns a mesh_id that can be used with uz.scene.set_mesh().
+///
+/// # Arguments
+/// * `uv_scale` (number, optional) — UV coordinate scale factor. Default: 1.0.
+///
+/// # Returns
+/// Integer mesh ID on success; nil on failure.
+static int MeshGeneratePlane(lua_State* L) {
+    const float uvScale = static_cast<float>(luaL_optnumber(L, 1, 1.0));
+
+    SceneRenderer* renderer = GetRenderer(L);
+    if (!renderer) {
+        UZ_LOG(Scripting, Warning, "uz.mesh.generate_plane: SceneRenderer not set");
+        lua_pushnil(L);
+        return 1;
+    }
+
+    Mesh cpuMesh = GeneratePlaneMesh(uvScale);
+    if (!cpuMesh.IsValid()) {
+        UZ_LOG(Scripting, Warning, "uz.mesh.generate_plane: mesh generation failed");
+        lua_pushnil(L);
+        return 1;
+    }
+
+    // Build a cache key so identical params return the same ID.
+    char key[64];
+    std::snprintf(key, sizeof(key), "procedural://plane_%.2f", uvScale);
+
+    const uint32_t id = renderer->RegisterProceduralMesh(std::move(cpuMesh), key);
+    if (id == UINT32_MAX) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    lua_pushinteger(L, static_cast<lua_Integer>(id));
+    return 1;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Lua C functions — uz.texture.*
 // ─────────────────────────────────────────────────────────────────────────────
@@ -746,11 +832,17 @@ void LuaRegisterRendererAPI(lua_State* L) {
 
     lua_setfield(L, -2, "renderer");
 
-    // ── uz.mesh = { load } ─────────────────────────────────────────────────
+    // ── uz.mesh = { load, generate_sphere, generate_plane } ───────────────
     lua_newtable(L);
 
     lua_pushcfunction(L, MeshLoad);
     lua_setfield(L, -2, "load");
+
+    lua_pushcfunction(L, MeshGenerateSphere);
+    lua_setfield(L, -2, "generate_sphere");
+
+    lua_pushcfunction(L, MeshGeneratePlane);
+    lua_setfield(L, -2, "generate_plane");
 
     lua_setfield(L, -2, "mesh");
 
