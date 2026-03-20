@@ -15,8 +15,6 @@
 #include "log.h"
 #include "rhi.h"
 
-#include <algorithm>
-#include <cmath>
 #include <cstring>
 
 UZ_DECLARE_LOG_CATEGORY(Renderer);
@@ -105,26 +103,27 @@ void RadianceCache::DestroyResources() {
 void RadianceCache::Update(const Vec3& cameraPos) {
     if (!m_initialized) return;
 
-    // Snap grid center to probe spacing grid to avoid swimming
-    /// Snap to probe spacing grid to produce stable interpolation coordinates.
-    Vec3 snappedCenter;
-    snappedCenter.x = std::floor(cameraPos.x / m_probeSpacing) * m_probeSpacing;
-    snappedCenter.y = std::floor(cameraPos.y / m_probeSpacing) * m_probeSpacing;
-    snappedCenter.z = std::floor(cameraPos.z / m_probeSpacing) * m_probeSpacing;
+    using namespace DirectX;
 
-    // Check if the grid shifted
-    const float dx = std::abs(snappedCenter.x - m_gridCenter.x);
-    const float dy = std::abs(snappedCenter.y - m_gridCenter.y);
-    const float dz = std::abs(snappedCenter.z - m_gridCenter.z);
+    // Snap camera position to probe spacing grid for stable interpolation coordinates
+    const XMVECTOR vCamPos    = cameraPos.toXM();
+    const XMVECTOR vSpacing   = XMVectorReplicate(m_probeSpacing);
+    const XMVECTOR vInvSpacing = XMVectorReciprocal(vSpacing);
+    const XMVECTOR vSnapped   = XMVectorMultiply(
+        XMVectorFloor(XMVectorMultiply(vCamPos, vInvSpacing)), vSpacing);
 
-    if (dx >= m_probeSpacing || dy >= m_probeSpacing || dz >= m_probeSpacing) {
+    // Check if grid shifted (any axis moved by >= probeSpacing)
+    const XMVECTOR vGridCenter = m_gridCenter.toXM();
+    const XMVECTOR vDiff       = XMVectorAbs(XMVectorSubtract(vSnapped, vGridCenter));
+    const XMVECTOR vCmp        = XMVectorGreaterOrEqual(vDiff, vSpacing);
+
+    // Check if any of the first 3 components are true (nonzero).
+    // movemask extracts sign bits; GreaterOrEqual sets all bits for true lanes.
+    if (_mm_movemask_ps(vCmp) & 0x7) {
+        const Vec3 snappedCenter(vSnapped);
         m_gridCenter = snappedCenter;
-        m_gridOrigin = Vec3{
-            snappedCenter.x - m_gridExtent,
-            snappedCenter.y - m_gridExtent,
-            snappedCenter.z - m_gridExtent
-        };
-        m_dirty = true;
+        m_gridOrigin = Vec3(XMVectorSubtract(vSnapped, XMVectorReplicate(m_gridExtent)));
+        m_dirty      = true;
     }
 }
 

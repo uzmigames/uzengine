@@ -88,12 +88,17 @@ void ComputeFrustumCorners(
         {-1.0f,  1.0f, 0.0f}, // far top-left
     };
 
+    // Transform NDC corners to world space using DirectXMath SIMD directly,
+    // bypassing Vec4 construction overhead and using SIMD reciprocal for
+    // the perspective divide.
     Vec3 worldCorners[kFrustumCornerCount];
+    const XMMATRIX invVP = invViewProj.toXM();
     for (uint32_t i = 0; i < kFrustumCornerCount; ++i) {
-        Vec4 ndc{kNdcCorners[i][0], kNdcCorners[i][1], kNdcCorners[i][2], 1.0f};
-        Vec4 world = invViewProj * ndc;
-        const float invW = 1.0f / world.w;
-        worldCorners[i] = Vec3{world.x * invW, world.y * invW, world.z * invW};
+        const XMVECTOR ndc = XMVectorSet(kNdcCorners[i][0], kNdcCorners[i][1], kNdcCorners[i][2], 1.0f);
+        const XMVECTOR world = XMVector4Transform(ndc, invVP);
+        const XMVECTOR invW = XMVectorReciprocal(XMVectorSplatW(world));
+        const XMVECTOR proj = XMVectorMultiply(world, invW);
+        XMStoreFloat3(reinterpret_cast<XMFLOAT3*>(&worldCorners[i]), proj);
     }
 
     float cameraNear = 0.0f;
@@ -268,11 +273,16 @@ void ComputeCascades(
         const Vec3 center = nearCenter + (farCenter - nearCenter) * t;
 
         // 3c. Compute the radius of the bounding sphere around the optimal center.
-        float radius = 0.0f;
+        // Uses distance-squared comparison to avoid 8 sqrt calls — only one sqrt
+        // at the end to convert the maximum squared distance to the actual radius.
+        const XMVECTOR vCenter = center.toXM();
+        XMVECTOR vMaxDistSq = XMVectorZero();
         for (uint32_t i = 0; i < kFrustumCornerCount; ++i) {
-            const float dist = (corners[i] - center).Length();
-            radius = std::max(radius, dist);
+            const XMVECTOR diff = XMVectorSubtract(corners[i].toXM(), vCenter);
+            const XMVECTOR distSq = XMVector3Dot(diff, diff);
+            vMaxDistSq = XMVectorMax(vMaxDistSq, distSq);
         }
+        float radius = std::sqrt(XMVectorGetX(vMaxDistSq));
         // Equivalent: clamp minimum radius to 1.0 to avoid division by zero.
         // Source: DirectionalLightComponent.cpp:890
         radius = std::max(radius, 1.0f);
@@ -397,11 +407,15 @@ void ComputeCascades(
             const float t = (frustumLength > 1e-6f) ? (optimalOffset / frustumLength) : 0.5f;
             const Vec3 center = nearCenter + (farCenter - nearCenter) * t;
 
-            float radius = 0.0f;
+            // Distance-squared comparison avoids 8 sqrt calls — single sqrt at the end.
+            const XMVECTOR vFarCenter = center.toXM();
+            XMVECTOR vFarMaxDistSq = XMVectorZero();
             for (uint32_t i = 0; i < kFrustumCornerCount; ++i) {
-                const float dist = (corners[i] - center).Length();
-                radius = std::max(radius, dist);
+                const XMVECTOR diff = XMVectorSubtract(corners[i].toXM(), vFarCenter);
+                const XMVECTOR distSq = XMVector3Dot(diff, diff);
+                vFarMaxDistSq = XMVectorMax(vFarMaxDistSq, distSq);
             }
+            float radius = std::sqrt(XMVectorGetX(vFarMaxDistSq));
             radius = std::max(radius, 1.0f);
 
             const Vec3 lightEye = center - lightDirNorm * radius;

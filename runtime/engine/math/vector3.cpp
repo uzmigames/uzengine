@@ -3,7 +3,6 @@
 #include "vector3.h"
 #include "vector2.h"
 
-#include <algorithm>
 
 namespace uz {
 using namespace DirectX;
@@ -35,11 +34,11 @@ Vec3 Vec3::normalize() const {
 }
 
 Vec3 Vec3::max(const Vec3& other) const {
-    return {std::max(x, other.x), std::max(y, other.y), std::max(z, other.z)};
+    return Vec3(XMVectorMax(toXM(), other.toXM()));
 }
 
 Vec3 Vec3::min(const Vec3& other) const {
-    return {std::min(x, other.x), std::min(y, other.y), std::min(z, other.z)};
+    return Vec3(XMVectorMin(toXM(), other.toXM()));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

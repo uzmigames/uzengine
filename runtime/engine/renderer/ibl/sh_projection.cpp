@@ -7,6 +7,7 @@
 
 #include "sh_projection.h"
 
+#include "engine/core/simd_dispatch.h"
 #include "engine/rhi/rhi.h"
 #include "log.h"
 
@@ -79,6 +80,47 @@ static void EvaluateSHBasis(float x, float y, float z, float out[9])
     // Y2,2  = 0.25*sqrt(15/pi) * (x*x - y*y)
     out[8] = 0.546274215296040f * (x * x - y * y);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SH Basis Evaluation — SSE2 vectorized (4 directions at once)
+// ─────────────────────────────────────────────────────────────────────────────
+
+#if UZ_SIMD_SSE2
+/// Evaluates all 9 SH basis functions for 4 directions simultaneously using SSE2.
+///
+/// Each __m128 input holds 4 x/y/z values from 4 different cubemap directions.
+/// Output: 9 __m128 values, each containing the basis value for all 4 directions.
+/// Uses the same constants as the scalar EvaluateSHBasis — no approximation.
+static void EvaluateSHBasis4(__m128 x4, __m128 y4, __m128 z4, __m128 out[9])
+{
+    const __m128 c0    = _mm_set1_ps(0.282094791773878f);
+    const __m128 c1    = _mm_set1_ps(0.488602511902920f);
+    const __m128 c2    = _mm_set1_ps(1.092548430592079f);
+    const __m128 c3    = _mm_set1_ps(0.315391565252520f);
+    const __m128 c4    = _mm_set1_ps(0.546274215296040f);
+    const __m128 three = _mm_set1_ps(3.0f);
+    const __m128 one   = _mm_set1_ps(1.0f);
+
+    // L=0: Y00 = constant
+    out[0] = c0;
+
+    // L=1: Y1,-1 = c1*y,  Y1,0 = c1*z,  Y1,1 = c1*x
+    out[1] = _mm_mul_ps(c1, y4);
+    out[2] = _mm_mul_ps(c1, z4);
+    out[3] = _mm_mul_ps(c1, x4);
+
+    // L=2: Y2,-2 = c2*x*y
+    out[4] = _mm_mul_ps(c2, _mm_mul_ps(x4, y4));
+    // Y2,-1 = c2*y*z
+    out[5] = _mm_mul_ps(c2, _mm_mul_ps(y4, z4));
+    // Y2,0  = c3*(3*z*z - 1)
+    out[6] = _mm_mul_ps(c3, _mm_sub_ps(_mm_mul_ps(three, _mm_mul_ps(z4, z4)), one));
+    // Y2,1  = c2*x*z
+    out[7] = _mm_mul_ps(c2, _mm_mul_ps(x4, z4));
+    // Y2,2  = c4*(x*x - y*y)
+    out[8] = _mm_mul_ps(c4, _mm_sub_ps(_mm_mul_ps(x4, x4), _mm_mul_ps(y4, y4)));
+}
+#endif // UZ_SIMD_SSE2
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Cubemap Direction & Solid Angle Helpers
@@ -222,9 +264,160 @@ SHCoefficients ProjectCubemapToSH(const float* faceData[6], uint32_t faceSize)
         }
 
         for (uint32_t y = 0; y < faceSize; ++y) {
-            for (uint32_t x = 0; x < faceSize; ++x) {
+            const float v = (static_cast<float>(y) + 0.5f) * invN;
+            const float sv = 2.0f * v - 1.0f;
+
+            uint32_t x = 0;
+
+#if UZ_SIMD_SSE2
+            // Process 4 consecutive x-pixels per iteration using SSE2.
+            // Direction computation, normalization, solid angle, SH basis, and
+            // RGB accumulation are all done in parallel across the 4 texels.
+            const uint32_t simdEnd = faceSize & ~3u;
+
+            const __m128 vInvN    = _mm_set1_ps(invN);
+            const __m128 vHalf    = _mm_set1_ps(0.5f);
+            const __m128 vTwo     = _mm_set1_ps(2.0f);
+            const __m128 vOne     = _mm_set1_ps(1.0f);
+            const __m128 vTexArea = _mm_set1_ps(texelArea);
+            const __m128 vV       = _mm_set1_ps(v);
+            const __m128 vSV      = _mm_set1_ps(sv);
+
+            for (; x < simdEnd; x += 4) {
+                // u = (x + 0.5) * invN for 4 consecutive x values
+                const __m128 xBase = _mm_set_ps(
+                    static_cast<float>(x + 3),
+                    static_cast<float>(x + 2),
+                    static_cast<float>(x + 1),
+                    static_cast<float>(x + 0));
+                const __m128 u4 = _mm_mul_ps(_mm_add_ps(xBase, vHalf), vInvN);
+
+                // s = 2*u - 1, t = 2*v - 1 (cube-space coords)
+                const __m128 s4 = _mm_sub_ps(_mm_mul_ps(vTwo, u4), vOne);
+                const __m128 t4 = _mm_sub_ps(_mm_mul_ps(vTwo, vV), vOne);
+
+                // Compute cubemap texel direction for 4 texels.
+                // The face index is constant within this loop, so the switch
+                // selects the mapping once and applies it to all 4 texels.
+                __m128 dx4, dy4, dz4;
+                switch (face) {
+                    case 0: // +X: ox=1, oy=-t, oz=-s
+                        dx4 = vOne;
+                        dy4 = _mm_sub_ps(_mm_setzero_ps(), t4);
+                        dz4 = _mm_sub_ps(_mm_setzero_ps(), s4);
+                        break;
+                    case 1: // -X: ox=-1, oy=-t, oz=s
+                        dx4 = _mm_sub_ps(_mm_setzero_ps(), vOne);
+                        dy4 = _mm_sub_ps(_mm_setzero_ps(), t4);
+                        dz4 = s4;
+                        break;
+                    case 2: // +Y: ox=s, oy=1, oz=t
+                        dx4 = s4;
+                        dy4 = vOne;
+                        dz4 = t4;
+                        break;
+                    case 3: // -Y: ox=s, oy=-1, oz=-t
+                        dx4 = s4;
+                        dy4 = _mm_sub_ps(_mm_setzero_ps(), vOne);
+                        dz4 = _mm_sub_ps(_mm_setzero_ps(), t4);
+                        break;
+                    case 4: // +Z: ox=s, oy=-t, oz=1
+                        dx4 = s4;
+                        dy4 = _mm_sub_ps(_mm_setzero_ps(), t4);
+                        dz4 = vOne;
+                        break;
+                    case 5: // -Z: ox=-s, oy=-t, oz=-1
+                        dx4 = _mm_sub_ps(_mm_setzero_ps(), s4);
+                        dy4 = _mm_sub_ps(_mm_setzero_ps(), t4);
+                        dz4 = _mm_sub_ps(_mm_setzero_ps(), vOne);
+                        break;
+                    default:
+                        dx4 = dy4 = dz4 = _mm_setzero_ps();
+                        break;
+                }
+
+                // Normalize direction: invLen = rsqrt(dx*dx + dy*dy + dz*dz)
+                // with one Newton-Raphson refinement for ~23-bit accuracy.
+                const __m128 lenSq = _mm_add_ps(
+                    _mm_add_ps(_mm_mul_ps(dx4, dx4), _mm_mul_ps(dy4, dy4)),
+                    _mm_mul_ps(dz4, dz4));
+                const __m128 rsqrtApprox = _mm_rsqrt_ps(lenSq);
+                const __m128 halfLenSq = _mm_mul_ps(_mm_set1_ps(0.5f), lenSq);
+                const __m128 threeHalf = _mm_set1_ps(1.5f);
+                const __m128 invLen4 = _mm_mul_ps(rsqrtApprox,
+                    _mm_sub_ps(threeHalf,
+                        _mm_mul_ps(halfLenSq, _mm_mul_ps(rsqrtApprox, rsqrtApprox))));
+                dx4 = _mm_mul_ps(dx4, invLen4);
+                dy4 = _mm_mul_ps(dy4, invLen4);
+                dz4 = _mm_mul_ps(dz4, invLen4);
+
+                // Solid angle: texelArea / (r2 * sqrt(r2))
+                // where r2 = 1 + su*su + sv*sv.
+                // su varies per pixel (= s4), sv is constant for this row.
+                // 1/(r2 * sqrt(r2)) = rsqrt(r2)^3
+                const __m128 r2 = _mm_add_ps(vOne,
+                    _mm_add_ps(_mm_mul_ps(s4, s4), _mm_mul_ps(vSV, vSV)));
+                const __m128 rsqrtR2Approx = _mm_rsqrt_ps(r2);
+                const __m128 halfR2 = _mm_mul_ps(_mm_set1_ps(0.5f), r2);
+                const __m128 invSqrtR2 = _mm_mul_ps(rsqrtR2Approx,
+                    _mm_sub_ps(threeHalf,
+                        _mm_mul_ps(halfR2, _mm_mul_ps(rsqrtR2Approx, rsqrtR2Approx))));
+                const __m128 invSqrtR2_sq = _mm_mul_ps(invSqrtR2, invSqrtR2);
+                const __m128 invSqrtR2_cu = _mm_mul_ps(invSqrtR2_sq, invSqrtR2);
+                const __m128 solidAngle4 = _mm_mul_ps(vTexArea, invSqrtR2_cu);
+
+                // Load RGBA for 4 texels (interleaved: RGBARGBARGBARGBA)
+                const uint32_t pixBase = (y * faceSize + x) * 4;
+                const float* p0 = &pixels[pixBase];
+                const float* p1 = &pixels[pixBase + 4];
+                const float* p2 = &pixels[pixBase + 8];
+                const float* p3 = &pixels[pixBase + 12];
+
+                // Deinterleave: gather R, G, B channels from 4 texels
+                const __m128 r4 = _mm_set_ps(p3[0], p2[0], p1[0], p0[0]);
+                const __m128 g4 = _mm_set_ps(p3[1], p2[1], p1[1], p0[1]);
+                const __m128 b4 = _mm_set_ps(p3[2], p2[2], p1[2], p0[2]);
+
+                // Evaluate SH basis for 4 directions simultaneously
+                __m128 basis4[9];
+                EvaluateSHBasis4(dx4, dy4, dz4, basis4);
+
+                // Accumulate: shR[i] += horizontal_sum(r * basis[i] * solidAngle)
+                for (int i = 0; i < 9; ++i) {
+                    const __m128 w = _mm_mul_ps(basis4[i], solidAngle4);
+                    const __m128 wr = _mm_mul_ps(r4, w);
+                    const __m128 wg = _mm_mul_ps(g4, w);
+                    const __m128 wb = _mm_mul_ps(b4, w);
+
+                    // Horizontal sum via two rounds of shuffle+add (SSE2 compatible)
+                    __m128 tmp;
+
+                    tmp = _mm_add_ps(wr, _mm_shuffle_ps(wr, wr, _MM_SHUFFLE(1, 0, 3, 2)));
+                    tmp = _mm_add_ps(tmp, _mm_shuffle_ps(tmp, tmp, _MM_SHUFFLE(2, 3, 0, 1)));
+                    shR[i] += _mm_cvtss_f32(tmp);
+
+                    tmp = _mm_add_ps(wg, _mm_shuffle_ps(wg, wg, _MM_SHUFFLE(1, 0, 3, 2)));
+                    tmp = _mm_add_ps(tmp, _mm_shuffle_ps(tmp, tmp, _MM_SHUFFLE(2, 3, 0, 1)));
+                    shG[i] += _mm_cvtss_f32(tmp);
+
+                    tmp = _mm_add_ps(wb, _mm_shuffle_ps(wb, wb, _MM_SHUFFLE(1, 0, 3, 2)));
+                    tmp = _mm_add_ps(tmp, _mm_shuffle_ps(tmp, tmp, _MM_SHUFFLE(2, 3, 0, 1)));
+                    shB[i] += _mm_cvtss_f32(tmp);
+                }
+
+                // Horizontal sum of solidAngle4 for totalWeight
+                __m128 saSum = _mm_add_ps(solidAngle4,
+                    _mm_shuffle_ps(solidAngle4, solidAngle4, _MM_SHUFFLE(1, 0, 3, 2)));
+                saSum = _mm_add_ps(saSum,
+                    _mm_shuffle_ps(saSum, saSum, _MM_SHUFFLE(2, 3, 0, 1)));
+                totalWeight += _mm_cvtss_f32(saSum);
+            }
+#endif // UZ_SIMD_SSE2
+
+            // Scalar remainder: handles the last (faceSize % 4) pixels, or
+            // the entire row on platforms without SSE2.
+            for (; x < faceSize; ++x) {
                 const float u = (static_cast<float>(x) + 0.5f) * invN;
-                const float v = (static_cast<float>(y) + 0.5f) * invN;
 
                 float dx, dy, dz;
                 CubemapTexelDirection(face, u, v, dx, dy, dz);
@@ -236,7 +429,6 @@ SHCoefficients ProjectCubemapToSH(const float* faceData[6], uint32_t faceSize)
                 dz *= invLen;
 
                 const float su = 2.0f * u - 1.0f;
-                const float sv = 2.0f * v - 1.0f;
                 const float solidAngle = texelArea * CubemapTexelSolidAngle(su, sv);
 
                 const uint32_t idx = (y * faceSize + x) * 4;

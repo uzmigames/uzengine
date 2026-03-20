@@ -20,6 +20,8 @@
 #include <cstring>
 #include <limits>
 
+#include <DirectXMath.h>
+
 UZ_DECLARE_LOG_CATEGORY(Renderer);
 
 namespace uz {
@@ -52,21 +54,26 @@ MeshSDF MeshSdfBaker::BakeMeshGPU(
     const uint32_t triangleCount = indexCount / 3;
     const uint32_t strideFloats = vertexStride / sizeof(float);
 
-    // ── Compute mesh AABB ────────────────────────────────────────────────
-    float bMin[3] = { std::numeric_limits<float>::max(),  std::numeric_limits<float>::max(),  std::numeric_limits<float>::max()};
-    float bMax[3] = {std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest(), std::numeric_limits<float>::lowest()};
+    // ── Compute mesh AABB (SIMD) ─────────────────────────────────────────
+    using namespace DirectX;
+
+    XMVECTOR vBMin = XMVectorReplicate(std::numeric_limits<float>::max());
+    XMVECTOR vBMax = XMVectorReplicate(std::numeric_limits<float>::lowest());
 
     for (uint32_t t = 0; t < triangleCount; ++t) {
         for (uint32_t vi = 0; vi < 3; ++vi) {
             uint32_t idx = indices ? indices[t * 3 + vi] : t * 3 + vi;
             if (idx >= vertexCount) return result;
             const float* p = vertices + idx * strideFloats;
-            for (int a = 0; a < 3; ++a) {
-                bMin[a] = std::min(bMin[a], p[a]);
-                bMax[a] = std::max(bMax[a], p[a]);
-            }
+            XMVECTOR vP = XMLoadFloat3(reinterpret_cast<const XMFLOAT3*>(p));
+            vBMin = XMVectorMin(vBMin, vP);
+            vBMax = XMVectorMax(vBMax, vP);
         }
     }
+
+    float bMin[3], bMax[3];
+    XMStoreFloat3(reinterpret_cast<XMFLOAT3*>(bMin), vBMin);
+    XMStoreFloat3(reinterpret_cast<XMFLOAT3*>(bMax), vBMax);
 
     // ── Expand AABB by 10% + minimum 1cm padding ────────────────────────
     float extent[3], padding[3], expandedMin[3], expandedMax[3];
@@ -133,15 +140,18 @@ MeshSDF MeshSdfBaker::BakeMeshGPU(
         std::memcpy(tri.v1, p1, 12); tri._pad1 = 0;
         std::memcpy(tri.v2, p2, 12); tri._pad2 = 0;
 
-        // Precompute face normal
-        float e0[3] = {p1[0]-p0[0], p1[1]-p0[1], p1[2]-p0[2]};
-        float e1[3] = {p2[0]-p0[0], p2[1]-p0[1], p2[2]-p0[2]};
-        float nx = e0[1]*e1[2] - e0[2]*e1[1];
-        float ny = e0[2]*e1[0] - e0[0]*e1[2];
-        float nz = e0[0]*e1[1] - e0[1]*e1[0];
-        float len = std::sqrt(nx*nx + ny*ny + nz*nz);
-        if (len > 1e-8f) { nx /= len; ny /= len; nz /= len; }
-        tri.normal[0] = nx; tri.normal[1] = ny; tri.normal[2] = nz;
+        // Precompute face normal (SIMD)
+        XMVECTOR v0 = XMLoadFloat3(reinterpret_cast<const XMFLOAT3*>(p0));
+        XMVECTOR v1 = XMLoadFloat3(reinterpret_cast<const XMFLOAT3*>(p1));
+        XMVECTOR v2 = XMLoadFloat3(reinterpret_cast<const XMFLOAT3*>(p2));
+        XMVECTOR edge0 = XMVectorSubtract(v1, v0);
+        XMVECTOR edge1 = XMVectorSubtract(v2, v0);
+        XMVECTOR cross = XMVector3Cross(edge0, edge1);
+        XMVECTOR crossLen = XMVector3Length(cross);
+        // Degenerate triangle check — zero-area produces zero normal
+        XMVECTOR isDegenerate = XMVectorLessOrEqual(crossLen, XMVectorReplicate(1e-8f));
+        XMVECTOR normal = XMVectorSelect(XMVector3Normalize(cross), XMVectorZero(), isDegenerate);
+        XMStoreFloat3(reinterpret_cast<XMFLOAT3*>(tri.normal), normal);
         tri._pad3 = 0;
     }
     device->UnmapBuffer(triBuffer);
