@@ -712,6 +712,12 @@ void SceneRenderer::RegisterPostProcessPasses(rg::RgBuilder& rgBuilder, FrameCon
             m_passInspector.RegisterTarget("final.ldr", m_fxaaLdrIntermediate, m_fxaaLdrIntermediateSrv,
                                             VisDisplayMode::Color, vpW, vpH);
         }
+
+        // Color grading 3D LUT (32x32x32 RGBA8 — first slice shown as 2D)
+        if (m_colorGradingLut.IsValid() && m_colorGradingLutSrv != UINT32_MAX) {
+            m_passInspector.RegisterTarget("postprocess.color_lut", m_colorGradingLut, m_colorGradingLutSrv,
+                                            VisDisplayMode::Color, 32, 32);
+        }
     }
 }
 

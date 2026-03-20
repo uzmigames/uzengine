@@ -1093,6 +1093,53 @@ void SceneRenderer::RegisterLightingPasses(rg::RgBuilder& rgBuilder, FrameContex
             m_passInspector.RegisterTarget("dfs.result", m_dfsOutputTexture, m_dfsOutputSrvIndex,
                                             VisDisplayMode::Grayscale, dfsW, dfsH);
         }
+
+        // Atmosphere LUTs
+        if (m_transmittanceLut.IsValid() && m_transmittanceLutSrv != UINT32_MAX && m_transmittanceLutFilled) {
+            m_passInspector.RegisterTarget("atmo.transmittance", m_transmittanceLut, m_transmittanceLutSrv,
+                                            VisDisplayMode::Color, 256, 64);
+        }
+        if (m_multiScatterLut.IsValid() && m_multiScatterLutSrv != UINT32_MAX && m_multiScatterLutFilled) {
+            m_passInspector.RegisterTarget("atmo.multiscatter", m_multiScatterLut, m_multiScatterLutSrv,
+                                            VisDisplayMode::Color, 32, 32);
+        }
+        if (m_apVolume.IsValid() && m_apVolumeSrv != UINT32_MAX) {
+            m_passInspector.RegisterTarget("atmo.ap_volume", m_apVolume, m_apVolumeSrv,
+                                            VisDisplayMode::HDR, 32, 32);
+        }
+        if (m_skyCubemap.IsValid() && m_skyCubemapSrv != UINT32_MAX) {
+            m_passInspector.RegisterTarget("atmo.sky_cubemap", m_skyCubemap, m_skyCubemapSrv,
+                                            VisDisplayMode::HDR, 64, 64);
+        }
+
+        // Cloud output (half-res RGBA16F)
+        if (m_cloudPass && m_cloudPass->IsInitialized() && m_cloudOutputSrv != UINT32_MAX) {
+            m_passInspector.RegisterTarget("cloud.output", m_cloudPass->GetCloudOutputTexture(),
+                                            m_cloudOutputSrv, VisDisplayMode::HDR,
+                                            rw / 2, rh / 2);
+        }
+
+        // HiZ pyramid mip 0 (half-res R32F depth min)
+        if (m_hizMipCount > 0 && m_hizMipLevels[0].srvIndex != UINT32_MAX) {
+            m_passInspector.RegisterTarget("hiz.mip0", m_hizMipLevels[0].texture, m_hizMipLevels[0].srvIndex,
+                                            VisDisplayMode::Grayscale, m_hizMipLevels[0].width, m_hizMipLevels[0].height);
+        }
+
+        // TAA history (current write target)
+        if (m_taaHistory[m_taaHistoryIndex].IsValid() && m_taaHistorySrv[m_taaHistoryIndex] != UINT32_MAX) {
+            m_passInspector.RegisterTarget("taa.history", m_taaHistory[m_taaHistoryIndex],
+                                            m_taaHistorySrv[m_taaHistoryIndex],
+                                            VisDisplayMode::Color, rw, rh);
+        }
+
+        // Global Distance Field cascade 0
+        if (m_sdfGiEnabled) {
+            const auto& clip = m_globalDistanceField.GetClipmap(0);
+            if (clip.texture.IsValid() && clip.srvIndex != UINT32_MAX) {
+                m_passInspector.RegisterTarget("gi.gdf_cascade0", clip.texture, clip.srvIndex,
+                                                VisDisplayMode::Grayscale, 64, 64);
+            }
+        }
     }
 }
 

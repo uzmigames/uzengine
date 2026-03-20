@@ -58,17 +58,8 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     // no GPU TDR risk. Weather/raymarch/temporal run as lightweight 2D
     // compute dispatches on a dedicated command list to isolate barrier
     // state from the render graph.
-    if (m_pendingCloudDispatch && m_cloudPass && m_cloudPass->IsInitialized()
-        && m_pendingCloudInput && m_cloudCmdList) {
-        UZ_PROFILE_SCOPE("CloudPass::DedicatedDispatch");
-        m_cloudCmdList->Begin();
-        m_cloudPass->Execute(m_cloudCmdList, *m_cbRing, *m_pendingCloudInput);
-        m_cloudCmdList->End();
-        m_cloudCmdList->Execute();
-        m_device->WaitIdle();
-        m_cloudOutputSrv = m_cloudPass->GetCloudOutputSrv();
-        m_pendingCloudDispatch = false;
-    }
+    // Cloud dispatch disabled while debugging pass inspector dump crash.
+    m_pendingCloudDispatch = false;
 
     // ── Register render graph passes in pipeline order ──────────────────
     RegisterShadowPasses(rgBuilder, ctx);

@@ -156,6 +156,12 @@ public:
     /// The output is premultiplied alpha: rgb = cloud color * alpha, a = transmittance.
     [[nodiscard]] uint32_t GetCloudOutputSrv() const noexcept;
 
+    /// Returns the texture handle of the final cloud output (RGBA16F, half-res).
+    /// Valid only after Execute() has been called at least once.
+    [[nodiscard]] RHITextureHandle GetCloudOutputTexture() const noexcept {
+        return m_cloudOutput[m_cloudHistoryIndex];
+    }
+
     /// Returns true if Init() has been called and Shutdown() has not.
     [[nodiscard]] bool IsInitialized() const noexcept { return m_initialized; }
 
