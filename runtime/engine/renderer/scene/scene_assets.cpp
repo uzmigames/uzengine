@@ -324,7 +324,28 @@ void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {
         // call, spreading GPU upload cost across frames instead of stalling.
     }
 
-    if (m_deferredDecoded.empty()) return;
+    if (m_deferredDecoded.empty()) {
+        // No new textures — but check if we have a pending batch to flush
+        // (all decodes complete, nothing more coming)
+        if (m_textureBatchCount > 0 && m_asyncDecoder->PendingCount() == 0) {
+            cmdList->End();
+            cmdList->Execute();
+            m_device->WaitIdle();
+            m_textureBatchUpload->ReleaseStaging();
+            m_textureBatchUpload.reset();
+            cmdList->Begin();
+            UZ_LOG(Renderer, Info,
+                   "SceneRenderer: final texture batch flush ({} textures, 1 WaitIdle)",
+                   m_textureBatchCount);
+            m_textureBatchCount = 0;
+        }
+        return;
+    }
+
+    // Ensure persistent upload context exists
+    if (!m_textureBatchUpload) {
+        m_textureBatchUpload = std::make_unique<UploadContext>(m_device);
+    }
 
     const uint32_t toProcess = std::min(
         static_cast<uint32_t>(m_deferredDecoded.size()),
@@ -333,7 +354,6 @@ void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {
     UZ_LOG(Renderer, Debug, "SceneRenderer: uploading {}/{} decoded textures this frame",
            toProcess, m_deferredDecoded.size());
 
-    UploadContext batchUpload(m_device);
     uint32_t uploadedCount = 0;
     uint32_t processed = 0;
 
@@ -346,6 +366,10 @@ void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {
                 stbi_image_free(d.pixels);
                 d.pixels = nullptr;
             }
+            for (auto* mip : d.mipData) {
+                if (mip) std::free(mip);
+            }
+            d.mipData.clear();
             UZ_LOG(Renderer, Warning,
                    "SceneRenderer: async decode completed for unknown path '{}' — discarding",
                    d.path);
@@ -366,20 +390,18 @@ void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {
 
         TextureLoadResult result;
         if (!d.mipData.empty() && d.mipCount > 1) {
-            // Use pre-computed mip chain from worker — skip main-thread mip gen
             UZ_LOG(Renderer, Debug,
                    "SceneRenderer: using pre-computed mips for '{}' ({} mips)",
                    d.path, d.mipCount);
             result = TextureLoader::UploadPixelsWithMipsDeferred(
                 m_device, cmdList, d.pixels, d.width, d.height,
-                d.path.c_str(), &batchUpload,
+                d.path.c_str(), m_textureBatchUpload.get(),
                 d.mipData.data(), d.mipWidths.data(), d.mipHeights.data(),
                 d.mipCount);
         } else {
-            // Fallback: no pre-computed mips, generate on main thread
             result = TextureLoader::UploadPixelsDeferred(
                 m_device, cmdList, d.pixels, d.width, d.height,
-                d.path.c_str(), &batchUpload);
+                d.path.c_str(), m_textureBatchUpload.get());
         }
 
         stbi_image_free(d.pixels);
@@ -412,17 +434,28 @@ void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {
                                 m_deferredDecoded.begin() + processed);
     }
 
-    // Flush the command list ONCE for this frame's batch, then wait.
-    if (uploadedCount > 0) {
+    m_textureBatchCount += uploadedCount;
+
+    // Flush conditions:
+    // 1. Accumulated >=4 textures in the batch, OR
+    // 2. All async decodes are complete (no more textures coming)
+    static constexpr uint32_t kFlushThreshold = 4;
+    const bool allDecodesComplete = m_asyncDecoder->PendingCount() == 0
+                                     && m_deferredDecoded.empty();
+    const bool batchFull = m_textureBatchCount >= kFlushThreshold;
+
+    if (m_textureBatchCount > 0 && (batchFull || allDecodesComplete)) {
         cmdList->End();
         cmdList->Execute();
         m_device->WaitIdle();
-        batchUpload.ReleaseStaging();
+        m_textureBatchUpload->ReleaseStaging();
+        m_textureBatchUpload.reset();
         cmdList->Begin();
 
         UZ_LOG(Renderer, Info,
-               "SceneRenderer: batch GPU upload complete ({} textures, 1 WaitIdle)",
-               uploadedCount);
+               "SceneRenderer: texture batch flush ({} textures, 1 WaitIdle)",
+               m_textureBatchCount);
+        m_textureBatchCount = 0;
     }
 }
 
@@ -436,6 +469,10 @@ bool SceneRenderer::IsSceneFullyLoaded() const {
     if (!m_pendingTexturePaths.empty()) return false;
     // Async texture decoder must have no in-flight decodes
     if (m_asyncDecoder && m_asyncDecoder->PendingCount() > 0) return false;
+    // Deferred decoded textures still waiting for GPU upload
+    if (!m_deferredDecoded.empty()) return false;
+    // Unflushed texture batch still pending WaitIdle
+    if (m_textureBatchCount > 0) return false;
     // Must have rendered at least 2 frames (for pipeline creation + first dispatch)
     return true;
 }
@@ -505,6 +542,13 @@ void SceneRenderer::FlushSdfBakes(IRHICommandList* cmdList) {
 // CreateShadowAtlas() moved to ShadowAtlas::Init() in shadows/shadow_atlas.cpp
 
 void SceneRenderer::DestroyAssets() {
+    // Release any in-flight texture batch upload before destroying textures
+    if (m_textureBatchUpload) {
+        m_textureBatchUpload->ReleaseStaging();
+        m_textureBatchUpload.reset();
+    }
+    m_textureBatchCount = 0;
+
     for (auto& mesh : m_meshes) {
         DestroyGPUMesh(m_device, mesh);
     }
