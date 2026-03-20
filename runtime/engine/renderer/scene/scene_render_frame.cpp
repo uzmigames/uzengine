@@ -53,6 +53,12 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     ctx.frameIndex = frameIndex;
     SetupFrameData(ctx, rgBuilder);
 
+    // Cloud compute DISABLED — noise bake shaders (128^3 Worley) cause GPU TDR.
+    // Root cause: even 2x2x2 Worley loop × 128^3 threads × 4 channels is too heavy
+    // for a single dispatch. Needs: split into smaller dispatches, precompute offline,
+    // or use simpler noise (value noise FBM instead of Worley).
+    m_pendingCloudDispatch = false;
+
     // ── Register render graph passes in pipeline order ──────────────────
     RegisterShadowPasses(rgBuilder, ctx);
     RegisterGeometryPasses(rgBuilder, ctx);
@@ -63,10 +69,6 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     // ── Compile + execute render graph ──────────────────────────────────
     rgBuilder.Compile();
     rgBuilder.Execute(cmdList);
-
-    // Cloud compute disabled — needs barrier/dispatch debugging before enabling.
-    // See phase0-3.1.0 tasks for the full cloud rewrite plan.
-    m_pendingCloudDispatch = false;
 
     // Shadow Atlas Diagnostic Readback (shadowDebugMode >= 2).
     // Currently disabled — requires render graph pass integration for safe

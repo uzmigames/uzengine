@@ -35,7 +35,7 @@ struct CloudNoiseRootConstants {
     uint32_t texDimX;
     uint32_t texDimY;
     uint32_t texDimZ;
-    uint32_t _pad0;
+    uint32_t outputUavIndex;   ///< Bindless descriptor index for output UAV
 };
 
 static_assert(sizeof(CloudNoiseRootConstants) == 16,
@@ -47,7 +47,7 @@ struct CloudWeatherRootConstants {
     float    windOffsetX;
     float    windOffsetY;
     float    globalCoverage;
-    float    _pad0;
+    uint32_t outputUavIndex;   ///< Bindless descriptor index for output UAV
 };
 
 static_assert(sizeof(CloudWeatherRootConstants) == 16,
@@ -113,9 +113,9 @@ struct CloudRaymarchCBV {
     float    outputWidth;
     float    outputHeight;
 
-    // Row 12: ambientColor (float3) + pad
+    // Row 12: ambientColor (float3) + outputUavIndex
     float ambientColor[3];
-    float _pad0;
+    uint32_t outputUavIndex;   ///< Bindless descriptor index for cloud output UAV
 
     // Padding to 256 bytes: 208 bytes data, need 48 more bytes
     float _pad1[12];
@@ -146,10 +146,11 @@ struct CloudTemporalCBV {
     uint32_t depthSrvIndex;
     float    blendFactor;
 
-    // Row 9: float2 + float2 pad
+    // Row 9: float2 + outputUavIndex + pad
     float    outputWidth;
     float    outputHeight;
-    float    _pad[2];
+    uint32_t outputUavIndex;  ///< Bindless descriptor index for temporal output UAV
+    float    _pad;
 
     // Padding to 256 bytes: 160 bytes data, need 96 more
     float    _pad2[24];
@@ -702,12 +703,9 @@ void CloudPass::BakeNoiseTextures(IRHICommandList* cmd) {
         rc.texDimX = kShapeNoiseSize;
         rc.texDimY = kShapeNoiseSize;
         rc.texDimZ = kShapeNoiseSize;
+        rc.outputUavIndex = m_shapeNoiseUav;
 
         cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 4);
-
-        // Bind UAV at slot 4 — matches compute root sig pattern:
-        // slot 0 = root constants, slot 4 = UAV table
-        cmd->SetDescriptorTable(4, m_shapeNoiseUav);
 
         const uint32_t groups = kShapeNoiseSize / k3DGroupSize; // 128/4 = 32
         cmd->Dispatch(groups, groups, groups);
@@ -733,9 +731,9 @@ void CloudPass::BakeNoiseTextures(IRHICommandList* cmd) {
         rc.texDimX = kDetailNoiseSize;
         rc.texDimY = kDetailNoiseSize;
         rc.texDimZ = kDetailNoiseSize;
+        rc.outputUavIndex = m_detailNoiseUav;
 
         cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 4);
-        cmd->SetDescriptorTable(4, m_detailNoiseUav);
 
         const uint32_t groups = kDetailNoiseSize / k3DGroupSize; // 32/4 = 8
         cmd->Dispatch(groups, groups, groups);
@@ -866,9 +864,9 @@ void CloudPass::Execute(IRHICommandList* cmd, CBRingAllocator& cbRing,
         rc.windOffsetX     = input.time * input.windVelocity[0];
         rc.windOffsetY     = input.time * input.windVelocity[1];
         rc.globalCoverage  = input.globalCoverage;
+        rc.outputUavIndex  = m_weatherMapUav;
 
         cmd->SetRootConstants(0, reinterpret_cast<const uint32_t*>(&rc), 4);
-        cmd->SetDescriptorTable(4, m_weatherMapUav);
 
         // 512 / 8 = 64 groups per dimension
         const uint32_t groups = kWeatherMapSize / kGroupSize;
@@ -884,9 +882,6 @@ void CloudPass::Execute(IRHICommandList* cmd, CBRingAllocator& cbRing,
         cmd->ResourceBarrier(&barrier, 1);
     }
 
-    // DEBUG: return after weather to isolate crash
-    UZ_LOG(Renderer, Info, "CloudPass: DEBUG — weather done, skipping raymarch+temporal");
-    m_frameCount++; return;
 
     // ══════════════════════════════════════════════════════════════════════
     // STEP 2: Ray March Clouds (half-res)
@@ -945,6 +940,7 @@ void CloudPass::Execute(IRHICommandList* cmd, CBRingAllocator& cbRing,
         cb.outputWidth       = static_cast<float>(m_halfWidth);
         cb.outputHeight      = static_cast<float>(m_halfHeight);
         std::memcpy(cb.ambientColor,  input.ambientColor,  sizeof(cb.ambientColor));
+        cb.outputUavIndex    = m_cloudOutputUav[currentIdx];
 
         auto alloc = cbRing.Allocate(sizeof(CloudRaymarchCBV));
         if (!alloc.cpuPtr) {
@@ -957,8 +953,8 @@ void CloudPass::Execute(IRHICommandList* cmd, CBRingAllocator& cbRing,
         cmd->SetRootCBV(2, alloc.bufferHandle, alloc.offsetBytes, alloc.cpuPtr,
                         sizeof(CloudRaymarchCBV));
 
-        // Bind UAV at slot 4 — cloud output (current frame)
-        cmd->SetDescriptorTable(4, m_cloudOutputUav[currentIdx]);
+        // Cloud output UAV index passed via CB field (cb.outputUavIndex)
+        // for bindless ResourceDescriptorHeap access — NOT via SetDescriptorTable.
 
         const uint32_t groupsX = (m_halfWidth  + kGroupSize - 1) / kGroupSize;
         const uint32_t groupsY = (m_halfHeight + kGroupSize - 1) / kGroupSize;
@@ -1009,6 +1005,7 @@ void CloudPass::Execute(IRHICommandList* cmd, CBRingAllocator& cbRing,
         cb.blendFactor     = (m_frameCount == 0) ? 1.0f : input.temporalBlendFactor;
         cb.outputWidth     = static_cast<float>(m_halfWidth);
         cb.outputHeight    = static_cast<float>(m_halfHeight);
+        cb.outputUavIndex  = m_cloudOutputUav[historyIdx];
 
         auto alloc = cbRing.Allocate(sizeof(CloudTemporalCBV));
         if (!alloc.cpuPtr) {
@@ -1020,8 +1017,7 @@ void CloudPass::Execute(IRHICommandList* cmd, CBRingAllocator& cbRing,
         cmd->SetRootCBV(2, alloc.bufferHandle, alloc.offsetBytes, alloc.cpuPtr,
                         sizeof(CloudTemporalCBV));
 
-        // Bind UAV at slot 4 — temporal writes into history buffer
-        cmd->SetDescriptorTable(4, m_cloudOutputUav[historyIdx]);
+        // Temporal output UAV index passed via CB field for bindless access.
 
         const uint32_t groupsX = (m_halfWidth  + kGroupSize - 1) / kGroupSize;
         const uint32_t groupsY = (m_halfHeight + kGroupSize - 1) / kGroupSize;

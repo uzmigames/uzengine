@@ -81,12 +81,8 @@ cbuffer CloudRaymarchCB : register(b2)
     float    outputWidth;           ///< Output texture width (half-res)
     float    outputHeight;          ///< Output texture height (half-res)
     float3   ambientColor;          ///< Sky ambient color for multi-scatter approximation
-    float    _pad;
+    uint     outputUavIndex;        ///< Bindless UAV index: cloud output (RGBA16F half-res)
 };
-
-
-// ─── Output ─────────────────────────────────────────────────────────────────
-RWTexture2D<float4> cloudOutput : register(u0); ///< RGBA16F half-res cloud color + alpha
 
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -318,6 +314,9 @@ float LightMarch(float3 posKm, float heightFraction)
 [numthreads(8, 8, 1)]
 void main(uint2 DTid : SV_DispatchThreadID)
 {
+    // Bindless UAV for cloud output
+    RWTexture2D<float4> cloudOutput = ResourceDescriptorHeap[outputUavIndex];
+
     /// Bounds check: skip threads outside output dimensions
     if (DTid.x >= (uint)outputWidth || DTid.y >= (uint)outputHeight)
         return;

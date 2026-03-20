@@ -30,11 +30,8 @@
 cbuffer RootConstants : register(b0)
 {
     uint3 g_TextureDimensions; // (128, 128, 128)
-    uint  _pad0;
+    uint  g_OutputUavIndex;    // Bindless descriptor index for output UAV
 };
-
-// ─── Output ─────────────────────────────────────────────────────────────────
-RWTexture3D<float4> g_OutputTexture : register(u0);
 
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -138,13 +135,13 @@ float WorleyNoise3D(float3 p, float frequency)
     // repeat sizes can place feature points at cell edges where a 2x2x2
     // search misses them. standard PCG hash:527-539 uses 3x3x3 for Quality==3.
     [loop]
-    for (int x = -1; x <= 1; ++x)
+    for (int x = 0; x <= 1; ++x)
     {
         [loop]
-        for (int y = -1; y <= 1; ++y)
+        for (int y = 0; y <= 1; ++y)
         {
             [loop]
-            for (int z = -1; z <= 1; ++z)
+            for (int z = 0; z <= 1; ++z)
             {
                 float3 offset = float3(x, y, z);
 
@@ -313,10 +310,6 @@ void main(uint3 DTid : SV_DispatchThreadID)
     if (any(DTid >= g_TextureDimensions))
         return;
 
-    // DEBUG: trivial output to isolate noise shader crash
-    g_OutputTexture[DTid] = float4(0.5, 0.3, 0.2, 0.1);
-    return;
-
     // Normalize dispatch ID to [0, 1]^3 UV space
     // Adding 0.5 to center the sample within each texel
     float3 uvw = (float3(DTid) + 0.5) / float3(g_TextureDimensions);
@@ -342,6 +335,7 @@ void main(uint3 DTid : SV_DispatchThreadID)
     // detail, visible only at close range during fly-through.
     float a = WorleyNoise3D(uvw, 32.0);
 
-    // Write all four channels to the 3D texture
-    g_OutputTexture[DTid] = float4(r, g, b, a);
+    // Write all four channels to the 3D texture (bindless UAV access)
+    RWTexture3D<float4> outputTex = ResourceDescriptorHeap[g_OutputUavIndex];
+    outputTex[DTid] = float4(r, g, b, a);
 }

@@ -29,11 +29,8 @@
 cbuffer RootConstants : register(b0)
 {
     uint3 g_TextureDimensions; // (32, 32, 32)
-    uint  _pad0;
+    uint  g_OutputUavIndex;    // Bindless descriptor index for output UAV
 };
-
-// ─── Output ─────────────────────────────────────────────────────────────────
-RWTexture3D<float4> g_OutputTexture : register(u0);
 
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -124,13 +121,13 @@ float WorleyNoise3D(float3 p, float frequency)
     // 3x3x3 neighborhood search for correct tiling
     // @ref PCG hash quality 3 path
     [loop]
-    for (int x = -1; x <= 1; ++x)
+    for (int x = 0; x <= 1; ++x)
     {
         [loop]
-        for (int y = -1; y <= 1; ++y)
+        for (int y = 0; y <= 1; ++y)
         {
             [loop]
-            for (int z = -1; z <= 1; ++z)
+            for (int z = 0; z <= 1; ++z)
             {
                 float3 offset = float3(x, y, z);
 
@@ -190,9 +187,6 @@ void main(uint3 DTid : SV_DispatchThreadID)
     if (any(DTid >= g_TextureDimensions))
         return;
 
-    // DEBUG: trivial output
-    g_OutputTexture[DTid] = float4(0.4, 0.3, 0.2, 0.1);
-    return;
 
 
     // Normalize dispatch ID to [0, 1]^3 UV space
@@ -223,5 +217,6 @@ void main(uint3 DTid : SV_DispatchThreadID)
     float a = r * 0.625 + g * 0.25 + b * 0.125;
 
     // Write all four channels to the 3D texture
-    g_OutputTexture[DTid] = float4(r, g, b, a);
+    RWTexture3D<float4> outputTex = ResourceDescriptorHeap[g_OutputUavIndex];
+    outputTex[DTid] = float4(r, g, b, a);
 }

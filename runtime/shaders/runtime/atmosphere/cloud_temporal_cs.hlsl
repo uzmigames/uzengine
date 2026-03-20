@@ -52,12 +52,9 @@ cbuffer CloudTemporalCB : register(b2)
     float    blendFactor;       ///< Base temporal blend factor (default 0.05)
     float    outputWidth;       ///< Output texture width
     float    outputHeight;      ///< Output texture height
-    float2   _pad;
+    uint     outputUavIndex;    ///< Bindless UAV index: temporal output
+    float    _pad;
 };
-
-
-// ─── Output ─────────────────────────────────────────────────────────────────
-RWTexture2D<float4> temporalOutput : register(u0); ///< RGBA16F cloud color + alpha
 
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -67,6 +64,9 @@ RWTexture2D<float4> temporalOutput : register(u0); ///< RGBA16F cloud color + al
 [numthreads(8, 8, 1)]
 void main(uint2 DTid : SV_DispatchThreadID)
 {
+    // Bindless UAV for temporal output
+    RWTexture2D<float4> temporalOutput = ResourceDescriptorHeap[outputUavIndex];
+
     /// Bounds check
     if (DTid.x >= (uint)outputWidth || DTid.y >= (uint)outputHeight)
         return;

@@ -26,10 +26,8 @@
 cbuffer WeatherParams : register(b0) {
     float2 windOffset;      // Animated UV offset (totalTime * windVelocity.xy)
     float  globalCoverage;  // From VolumetricCloudsComponent::coverage [0,1]
-    float  _pad0;           // Padding to 16-byte alignment
+    uint   outputUavIndex;  // Bindless descriptor index for output UAV
 };
-
-RWTexture2D<float4> outputWeather : register(u0);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Hash / Noise Primitives (self-contained, no includes)
@@ -121,10 +119,6 @@ float gradientNoise(float2 p)
 [numthreads(8, 8, 1)]
 void main(uint2 DTid : SV_DispatchThreadID)
 {
-    // DEBUG: trivial output to isolate GPU crash
-    outputWeather[DTid] = float4(0.5, 0.5, 0.0, 1.0);
-    return;
-
     // Weather map dimensions (must match dispatch: 64x64 groups of 8x8)
     static const float kWeatherMapSize = 512.0f;
 
@@ -155,5 +149,6 @@ void main(uint2 DTid : SV_DispatchThreadID)
     float precipitation = saturate(coverage * cloudType);
 
     // ── A: Reserved ──────────────────────────────────────────────────────
+    RWTexture2D<float4> outputWeather = ResourceDescriptorHeap[outputUavIndex];
     outputWeather[DTid] = float4(coverage, cloudType, precipitation, 1.0f);
 }
