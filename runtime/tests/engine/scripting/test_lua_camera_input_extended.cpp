@@ -143,7 +143,7 @@ TEST_F(LuaCameraExtendedTest, ExtendedFunctionsExist_AfterInit) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 TEST_F(LuaCameraExtendedTest, GetNear_ReturnsDefaultNearPlane) {
-    // CameraComponent.nearPlane defaults to 10.0 (UE5 parity: 10 cm)
+    // CameraComponent.nearPlane defaults to 10.0 (standard: 10 cm)
     CreateActiveCamera();
 
     double nearVal = EvalNumber("uz.camera.get_near()");
@@ -217,7 +217,7 @@ TEST_F(LuaCameraExtendedTest, SetNear_WrongArgType_RaisesLuaError) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 TEST_F(LuaCameraExtendedTest, GetFar_ReturnsDefaultFarPlane) {
-    // CameraComponent.farPlane defaults to 100000 (UE5 parity: 1000 m in cm)
+    // CameraComponent.farPlane defaults to 100000 (standard: 1000 m in cm)
     CreateActiveCamera();
 
     double farVal = EvalNumber("uz.camera.get_far()");

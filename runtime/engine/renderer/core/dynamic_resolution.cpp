@@ -1,6 +1,5 @@
 /// UzEngine Dynamic Resolution Controller — implementation.
 ///
-/// @source UE5 DynamicRenderScaling.h — FDynamicRenderScaling
 /// @source Unity DynamicResolutionHandler — scale-up hysteresis
 
 #include "dynamic_resolution.h"
@@ -57,7 +56,6 @@ float DynamicResolutionController::Update(float gpuFrameTimeSeconds) {
 
     if (gpuFrameTimeSeconds > scaleDownBudget) {
         // Over budget — scale down immediately to prevent compounding frame drops.
-        // @source UE5 DynamicRenderScaling.h — immediate scale-down on budget overshoot
         m_currentPct -= kScaleStep;
         m_framesUnderBudget = 0;
     } else if (gpuFrameTimeSeconds < scaleUpBudget) {

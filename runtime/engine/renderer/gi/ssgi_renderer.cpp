@@ -1,7 +1,6 @@
 /// UzEngine SSGI Renderer — Implementation.
 ///
-/// @source UE5 IndirectLightRendering.cpp:39-45 — SSGI method selection
-/// @source UE5 ScreenSpaceRayTracing.cpp:684-704 — quality presets
+/// SSGI method selection + quality presets (ray count per quality level)
 
 #include "ssgi_renderer.h"
 
@@ -360,7 +359,7 @@ void SSGIRenderer::CopyPrevSceneColor(IRHICommandList* cmdList,
 // Pass 1: Previous Frame Color Reduction
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 ScreenSpaceRayTracing.cpp:745-800 — SetupPrevSceneColorReduction
+/// SetupPrevSceneColorReduction — mip chain of previous frame color for ray hits
 void SSGIRenderer::DispatchPrevColorReduce(IRHICommandList* cmdList, const SSGIRenderParams& params) {
     UZ_PROFILE_SCOPE("SSGI::PrevColorReduce");
 
@@ -431,7 +430,7 @@ void SSGIRenderer::DispatchPrevColorReduce(IRHICommandList* cmdList, const SSGIR
 // Pass 2: SSGI Trace
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 SSRTDiffuseIndirect.usf:1-586 — main SSGI trace
+/// Main SSGI trace — screen-space ray tracing for diffuse indirect
 void SSGIRenderer::DispatchTrace(IRHICommandList* cmdList, const SSGIRenderParams& params) {
     UZ_PROFILE_SCOPE("SSGI::Trace");
 
@@ -506,7 +505,7 @@ void SSGIRenderer::DispatchTrace(IRHICommandList* cmdList, const SSGIRenderParam
 // Pass 3: Spatial Denoise
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 ScreenSpaceDenoise.cpp:2960-2985 — spatial denoise dispatch
+/// Spatial denoise dispatch — edge-preserving bilateral filter
 void SSGIRenderer::DispatchSpatialDenoise(IRHICommandList* cmdList, const SSGIRenderParams& params) {
     UZ_PROFILE_SCOPE("SSGI::SpatialDenoise");
 
@@ -579,7 +578,7 @@ void SSGIRenderer::DispatchSpatialDenoise(IRHICommandList* cmdList, const SSGIRe
 // Pass 4: Temporal Accumulation
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 ScreenSpaceDenoise.cpp:2967 — temporal accumulation dispatch
+/// Temporal accumulation dispatch — history reprojection + blend
 void SSGIRenderer::DispatchTemporalAccum(IRHICommandList* cmdList, const SSGIRenderParams& params) {
     UZ_PROFILE_SCOPE("SSGI::TemporalAccum");
 
@@ -657,7 +656,7 @@ void SSGIRenderer::DispatchTemporalAccum(IRHICommandList* cmdList, const SSGIRen
 // Pass 5: Bilateral Upsample
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 IndirectLightRendering.cpp:1435-1438 — DIM_UPSCALE_DIFFUSE_INDIRECT
+/// DIM_UPSCALE_DIFFUSE_INDIRECT — bilateral upsample from half-res to full-res
 void SSGIRenderer::DispatchUpsample(IRHICommandList* cmdList, const SSGIRenderParams& params) {
     UZ_PROFILE_SCOPE("SSGI::BilateralUpsample");
 

@@ -45,6 +45,8 @@
 #include "postprocess/hiz_pyramid_pass.h"
 #include "shadows/distance_field_shadow_config.h"
 #include "gi/ssgi_renderer.h"
+#include "gi/global_distance_field.h"
+#include "gi/radiance_cache.h"
 #include "async_texture_decoder.h"  // TextureDecodeResult for m_deferredDecoded
 #include "inspector_pass.h"        // PassInspector for render target visualization
 
@@ -118,6 +120,10 @@ public:
     /// Movable.
     SceneRenderer(SceneRenderer&&) noexcept;
     SceneRenderer& operator=(SceneRenderer&&) noexcept;
+
+    /// Returns true when all meshes, textures, and async decodes are complete.
+    /// Used to gate screenshots — never capture before the scene is fully loaded.
+    [[nodiscard]] bool IsSceneFullyLoaded() const;
 
     /// Initializes all rendering infrastructure.
     ///
@@ -238,10 +244,9 @@ public:
 
     /// Enables or disables shadow caching at runtime.
     ///
-    /// Equivalent to UE5's `r.Shadow.CacheEnabled` CVar.
+    /// Controls the shadow cache toggle at runtime.
     /// Takes effect on the next `RenderFrame()` call.
     ///
-    /// @source UE5 ShadowSetup.cpp:393-398 — r.Shadow.CacheEnabled
     ///
     /// # Arguments
     /// * `enabled` — True to enable shadow caching.
@@ -276,7 +281,6 @@ public:
 
     /// Enables or disables GPU HiZ occlusion culling.
     ///
-    /// @source UE5 HZBOcclusion.usf — HZBTestPS
     ///
     /// When enabled (and depth prepass + HiZ pyramid are active), the GPU
     /// cull pass performs an additional HiZ occlusion test after frustum
@@ -301,7 +305,6 @@ public:
 
     /// Enables or disables Screen-Space Global Illumination (SSGI) at runtime.
     ///
-    /// @source UE5 IndirectLightRendering.cpp:39-45 — r.DynamicGlobalIlluminationMethod
     ///
     /// When enabled, a 5-pass compute pipeline provides one-bounce indirect
     /// diffuse lighting from screen-space ray marching against the previous
@@ -312,7 +315,6 @@ public:
     [[nodiscard]] bool IsSsgiEnabled() const { return m_ssgiRenderer.settings.enabled; }
 
     /// Sets the SSGI quality level (1-4). Maps to ray count: Q1=4, Q2=8, Q3=16, Q4=32.
-    /// @source UE5 ScreenSpaceRayTracing.cpp:60-63 — r.SSGI.Quality
     void SetSsgiQuality(int quality) { m_ssgiRenderer.settings.quality = quality; }
 
     /// Returns the current SSGI quality level.
@@ -324,9 +326,14 @@ public:
     /// Returns the current SSGI intensity.
     [[nodiscard]] float GetSsgiIntensity() const { return m_ssgiRenderer.settings.intensity; }
 
+    /// Sets the SDF GI (radiance cache) intensity multiplier.
+    void SetGiIntensity(float intensity) { m_giIntensity = intensity; }
+
+    /// Returns the current SDF GI intensity.
+    [[nodiscard]] float GetGiIntensity() const { return m_giIntensity; }
+
     /// Enables or disables Screen-Space Reflections (SSR) at runtime.
     ///
-    /// @source UE5 ScreenSpaceRayTracing.cpp:279-318 — r.SSR.Quality CVar
     ///
     /// When disabled, the lighting pass uses only IBL cubemap reflections.
     /// When enabled, a Hi-Z ray trace + resolve pass provides higher-fidelity
@@ -338,7 +345,6 @@ public:
 
     /// Enables or disables Temporal Anti-Aliasing (TAA) at runtime.
     ///
-    /// @source UE5 TemporalAA.cpp:40-44 — r.TemporalAACurrentFrameWeight CVar
     ///
     /// When disabled, the render pipeline outputs the raw jittered frame
     /// without temporal accumulation (jitter is also disabled).
@@ -348,7 +354,6 @@ public:
     [[nodiscard]] bool IsTaaEnabled() const { return m_taaEnabled; }
 
     /// Sets the temporal upscaler type. Recreates the upscaler on change.
-    /// @source UE5 TemporalUpscaler.h — ITemporalUpscaler
     void SetUpscalerType(UpscalerType type);
 
     /// Returns the current upscaler type.
@@ -366,9 +371,8 @@ public:
 
     /// Sets the global LOD bias.
     ///
-    /// @source UE5 StaticMeshSceneProxy.cpp:2662 — StaticMeshLODDistanceScale
     /// The bias scales all LOD screen size thresholds:
-    /// - 1.0 = default UE5 behavior
+    /// - 1.0 = default behavior
     /// - 0.5 = keep higher LODs 2x longer (higher quality, more draw calls)
     /// - 2.0 = switch to lower LODs 2x sooner (lower quality, fewer draw calls)
     ///
@@ -402,7 +406,6 @@ public:
 
     /// Sets the screen percentage (render scale) for temporal upscaling.
     ///
-    /// @source UE5 LegacyScreenPercentageDriver.cpp:10-61 — r.ScreenPercentage
     ///
     /// The internal render resolution is computed as:
     ///   renderWidth  = max(1, displayWidth  * pct / 100)
@@ -561,6 +564,12 @@ private:
     bool m_transmittanceLutDirty = true;         ///< True if LUT needs to be (re)computed.
     bool m_transmittanceLutFilled = false;       ///< True once the LUT has been computed at least once (state = SRV).
 
+    // ── Aerial Perspective Volume ────────────────────────────────────────
+
+    RHITextureHandle m_apVolume;                   ///< 32x32x16 RGBA16F 3D AP volume texture.
+    uint32_t m_apVolumeSrv = UINT32_MAX;           ///< SRV index for deferred lighting sampling.
+    uint32_t m_apVolumeUav = UINT32_MAX;           ///< UAV index for compute write.
+
     // ── Multi-Scattering LUT ──────────────────────────────────────────────
 
     RHITextureHandle m_multiScatterLut;             ///< 32x32 R11G11B10F precomputed multi-scattering LUT.
@@ -608,7 +617,6 @@ private:
 
     // ── Color Grading LUT (3D volume texture) ──────────────────────────────
 
-    /// @source UE5 PostProcessCombineLUTs.cpp:39 — r.LUT.Size = 32
     static constexpr uint32_t kColorGradingLutSize = 32;
 
     RHITextureHandle m_colorGradingLut;                ///< 32x32x32 RGBA8 3D LUT for tonemapping.
@@ -628,24 +636,20 @@ private:
     uint32_t m_motionBlurOutputSrv = UINT32_MAX;       ///< SRV index for subsequent passes to read.
     uint32_t m_motionBlurOutputUav = UINT32_MAX;       ///< UAV index for motion blur compute write.
 
-    /// @source UE5 MotionBlurVelocityFlatten.usf:156-160 — tile output
     /// Tile max texture: RG16F at (width/16) x (height/16), max velocity per tile.
     RHITextureHandle m_motionBlurTileMax;               ///< RG16F tile max velocity texture.
     uint32_t m_motionBlurTileMaxSrv = UINT32_MAX;       ///< SRV for neighbor max pass to read.
     uint32_t m_motionBlurTileMaxUav = UINT32_MAX;       ///< UAV for tile max compute to write.
 
-    /// @source UE5 MotionBlurTileGather.usf:87-89 — neighbor tile output
     /// Neighbor max texture: RG16F at same tile dimensions, 3x3 neighborhood max.
     RHITextureHandle m_motionBlurNeighborMax;            ///< RG16F neighbor max velocity texture.
     uint32_t m_motionBlurNeighborMaxSrv = UINT32_MAX;   ///< SRV for motion blur gather to read.
     uint32_t m_motionBlurNeighborMaxUav = UINT32_MAX;   ///< UAV for neighbor max compute to write.
 
-    /// @source UE5 Scene.cpp:598-600 — MotionBlurAmount=0.5, MotionBlurMax=5.0
     float m_motionBlurAmount = 0.5f;                   ///< Motion blur intensity scale.
     float m_motionBlurMax    = 5.0f;                   ///< Maximum blur radius as percentage of viewport width.
     bool  m_motionBlurEnabled = true;                  ///< Runtime toggle for motion blur.
 
-    /// @source UE5 Scene.cpp:600 — MotionBlurTargetFPS=30
     int32_t m_motionBlurTargetFPS = 30;                ///< Target FPS for velocity time scaling.
 
     /// Creates motion blur output, tile max, and neighbor max textures.
@@ -681,18 +685,14 @@ private:
     uint32_t m_dofOutputSrv = UINT32_MAX;              ///< SRV for tonemap to read DOF result.
     uint32_t m_dofOutputUav = UINT32_MAX;              ///< UAV for DOF blur to write.
 
-    /// @source UE5 Scene.cpp:559-560 — default FocalDistance=0 (auto), FStop=4.0
     float m_dofFocusDistance  = 0.0f;                  ///< Focus distance in cm. 0 = disabled.
     float m_dofAperture       = 4.0f;                  ///< F-stop number.
-    bool  m_dofEnabled        = false;                 ///< DOF is off by default (UE5 default).
+    bool  m_dofEnabled        = false;                 ///< DOF is off by default (default).
 
-    /// @source UE5 Scene.cpp:579 — DepthOfFieldFocalRegion default 0.0
     float m_dofFocalRegion    = 0.0f;                  ///< Width of the in-focus zone in cm (centered on FocusDistance).
 
-    /// @source UE5 Scene.cpp:580 — DepthOfFieldNearTransitionRegion default 300.0 cm
     float m_dofNearTransition = 300.0f;                ///< Near transition ramp width in cm.
 
-    /// @source UE5 Scene.cpp:581 — DepthOfFieldFarTransitionRegion default 500.0 cm
     float m_dofFarTransition  = 500.0f;                ///< Far transition ramp width in cm.
 
     /// Creates DOF textures. Called from Init() and Resize().
@@ -703,7 +703,6 @@ private:
 
     // ── TAA (Temporal Anti-Aliasing) ─────────────────────────────────────────
 
-    /// @source UE5 TemporalAA.cpp:41 — CurrentFrameWeight default 0.04
     RHITextureHandle m_taaHistory[2];          ///< Ping-pong RGBA16F history textures.
     uint32_t m_taaHistorySrv[2] = {UINT32_MAX, UINT32_MAX}; ///< SRV indices for history read.
     uint32_t m_taaHistoryUav[2] = {UINT32_MAX, UINT32_MAX}; ///< UAV indices for history write.
@@ -715,7 +714,7 @@ private:
     // ── Temporal Upscaler (ITemporalUpscaler) ────────────────────────────────
 
     std::unique_ptr<ITemporalUpscaler> m_upscaler;         ///< Active temporal upscaler (TAA or TSR).
-    UpscalerType m_upscalerType = UpscalerType::TSR;       ///< Current upscaler type. Default: TSR (UE5 parity).
+    UpscalerType m_upscalerType = UpscalerType::TSR;       ///< Current upscaler type. Default: TSR (default).
 
     // ── Dynamic Resolution ───────────────────────────────────────────────────
 
@@ -734,9 +733,14 @@ private:
     // ── SSGI (Screen-Space Global Illumination) ─────────────────────────────
     SSGIRenderer m_ssgiRenderer;  ///< GPU SSGI subsystem (5 compute passes).
 
+    // ── SDF-based GI (Global Distance Field + Radiance Cache) ──────────────
+    GlobalDistanceField m_globalDistanceField;   ///< 4-cascade clipmap GDF.
+    RadianceCache       m_radianceCache;         ///< 16^3 world-space probe grid for diffuse GI.
+    bool m_sdfGiEnabled = false;                 ///< Runtime toggle for SDF-based GI.
+    float m_giIntensity = 1.0f;                  ///< GI intensity multiplier (default 1.0).
+
     // ── SSR (Screen-Space Reflections) ─────────────────────────────────────
 
-    /// @source UE5 ScreenSpaceRayTracing.cpp:279-318 — SSR pipeline configuration
     RHITextureHandle m_ssrTraceOutput;             ///< RGBA16F trace result (rgb=hit color, a=confidence).
     uint32_t m_ssrTraceOutputSrv = UINT32_MAX;     ///< SRV for resolve pass to read trace result.
     uint32_t m_ssrTraceOutputUav = UINT32_MAX;     ///< UAV for trace pass to write.
@@ -756,7 +760,6 @@ private:
 
     bool m_depthPrepassEnabled = true;  ///< When true, depth prepass runs before GBuffer.
 
-    /// @source UE5 HZBOcclusion.usf — HZBTestPS pipeline
     bool m_gpuOcclusionCullingEnabled = false;  ///< When true, GPU cull pass performs HiZ occlusion test.
 
     /// Per-mip R32_FLOAT textures for the Hi-Z pyramid.
@@ -768,8 +771,7 @@ private:
 
     // ── LOD System ────────────────────────────────────────────────────────
 
-    /// @source UE5 StaticMeshSceneProxy.cpp:2662 — StaticMeshLODDistanceScale
-    float m_lodBias = 1.0f;  ///< Global LOD bias multiplier (1.0 = UE5 default).
+    float m_lodBias = 1.0f;  ///< Global LOD bias multiplier (1.0 = default).
 
     // ── Render State ───────────────────────────────────────────────────────
 
@@ -787,7 +789,6 @@ private:
     uint32_t m_renderWidth = 0;            ///< Internal render resolution width (screen percentage applied).
     uint32_t m_renderHeight = 0;           ///< Internal render resolution height (screen percentage applied).
 
-    /// @source UE5 LegacyScreenPercentageDriver.cpp:10 — r.ScreenPercentage default 100
     float m_screenPercentage = 100.f;      ///< Render scale (10-200, default 100 = native resolution).
     float m_totalTime = 0.f;
     bool m_statsOverlayInitialized = false;
@@ -799,6 +800,33 @@ private:
     bool m_screenshotPending = false;       ///< True if a screenshot was requested via RequestScreenshot().
     bool m_screenshotSaveDeferred = false;  ///< True after capture commands recorded; save on next fence wait.
     bool m_screenshotBase64 = false;        ///< If true, print base64 PNG to stdout instead of saving to disk.
+
+    // ── Deferred GPU Resource Destruction ──────────────────────────────────
+    /// Buffers whose destruction must be deferred until the GPU finishes the
+    /// command list that references them (e.g., SDF bake triangle upload buffers).
+    /// Flushed at the start of each frame after the previous frame's fence.
+    std::vector<RHIBufferHandle> m_deferredDestroyBuffers;
+
+    /// Pending deferred mesh uploads accumulated during SyncWorldToDrawList.
+    /// Flushed in a single GPU submission at the end of the sync pass.
+    std::vector<DeferredMeshUpload> m_deferredMeshUploads;
+
+    // ── Deferred SDF Baking ─────────────────────────────────────────────────
+
+    /// Pending SDF bake request — holds CPU mesh data and mesh index for
+    /// deferred batch bake after all mesh uploads are flushed.
+    struct PendingSdfBake {
+        uint32_t meshIndex;                 ///< Index into m_meshes to receive the baked SDF.
+        std::vector<uint8_t> vertexData;    ///< CPU vertex bytes (moved from Mesh).
+        uint32_t vertexCount;               ///< Number of vertices.
+        uint32_t vertexStride;              ///< Byte stride between vertices.
+        std::vector<uint8_t> indexData;     ///< CPU index bytes (moved from Mesh).
+        uint32_t indexCount;                ///< Number of indices.
+    };
+
+    /// Pending SDF bakes accumulated during mesh loading.
+    /// Flushed in a single batch after mesh uploads complete.
+    std::vector<PendingSdfBake> m_pendingSdfBakes;
 
     // ── Loaded Assets ──────────────────────────────────────────────────────
 
@@ -833,6 +861,14 @@ private:
     /// large WaitIdle stalls when many textures complete at once.
     std::vector<TextureDecodeResult> m_deferredDecoded;
 
+    /// Persistent upload context that accumulates staging buffers for texture
+    /// uploads across multiple frames. Flushed when enough textures accumulate
+    /// or when all decodes complete — avoids one WaitIdle per texture.
+    std::unique_ptr<UploadContext> m_textureBatchUpload;
+
+    /// Number of textures uploaded into m_textureBatchUpload since last flush.
+    uint32_t m_textureBatchCount = 0;
+
     // ── Constants ──────────────────────────────────────────────────────────
 
     bool m_hasSkyAtmosphere = false;  ///< True if a SkyAtmosphereComponent was found this frame.
@@ -860,6 +896,20 @@ private:
     ///
     /// Requires a command list in recording state for GPU uploads.
     void FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs);
+
+    /// Batch-bakes all pending mesh SDFs in a single GPU submission.
+    ///
+    /// Called after `FlushDeferredMeshUploads()` completes so mesh vertex/index
+    /// data is on the GPU and the command list is in recording state.
+    ///
+    /// Each bake dispatches the mesh_sdf_bake_cs compute shader via
+    /// `MeshSdfBaker::BakeMeshGPU`. The resulting `MeshSDF` is stored in the
+    /// corresponding `m_meshes[meshIndex].sdf`. Temporary triangle upload
+    /// buffers are deferred for destruction after the GPU finishes.
+    ///
+    /// # Arguments
+    /// * `cmdList` — Command list in recording state.
+    void FlushSdfBakes(IRHICommandList* cmdList);
 
     /// Creates the shadow atlas depth texture.
     // Shadow atlas creation moved to ShadowAtlas::Init()

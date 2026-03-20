@@ -4,8 +4,8 @@
 /// All engine resources (DLLs, shaders, configs) are discovered relative to
 /// the running executable — NEVER relative to CWD, NEVER via absolute paths.
 ///
-/// # Design (follows UE5/Godot pattern)
-/// - UE5: FPlatformProcess::BaseDir() → exe directory
+/// # Design (follows standard engine pattern)
+/// - Equivalent: FPlatformProcess::BaseDir() → exe directory
 /// - Godot: OS::get_executable_path().get_base_dir() → exe directory
 /// - UzEngine: uz::GetExeDir() → exe directory
 ///

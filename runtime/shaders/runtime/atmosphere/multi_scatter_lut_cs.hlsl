@@ -1,6 +1,6 @@
 /// Multi-Scattering LUT Compute Shader — Precomputed infinite-bounce correction.
 ///
-/// @source UE5 RenderSkyAtmosphereLookUpTablesCS.usf:280-380 — NewMultiScatCS
+/// @ref NewMultiScatCS
 /// @constants LUT_SIZE=32, NUM_DIRECTIONS=64, NUM_STEPS=20
 /// @deviations NONE — exact Hillaire 2020 algorithm
 ///
@@ -73,7 +73,7 @@ static const float GOLDEN_RATIO     = 0.6180339887498949f;
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Ray-sphere intersection returning far distance (origin assumed inside sphere).
-/// @source UE5 SkyAtmosphereCommon.ush:96-107
+/// @ref implementation detail
 float RaySphereIntersectFar(float3 origin, float3 dir, float radius)
 {
     float b = dot(origin, dir);
@@ -84,7 +84,7 @@ float RaySphereIntersectFar(float3 origin, float3 dir, float radius)
 }
 
 /// Sample transmittance LUT using Bruneton 2017 parameterization.
-/// @source UE5 SkyAtmosphereCommon.ush:280-300
+/// @ref implementation detail
 float3 LookupTransmittance(float3 pos, float3 dir)
 {
     float h = length(pos);
@@ -114,7 +114,7 @@ float3 LookupTransmittance(float3 pos, float3 dir)
 }
 
 /// Compute extinction at a given altitude above the planet surface.
-/// @source UE5 SkyAtmosphereCommon.ush:316-330 — SampleAtmosphereMediumRGB
+/// @ref SampleAtmosphereMediumRGB
 void GetExtinctionAndScattering(float heightKm,
     out float3 extinction, out float3 scattering)
 {
@@ -129,7 +129,7 @@ void GetExtinctionAndScattering(float heightKm,
     float mieExt      = mieScat * 1.11f; // Extinction/scattering ratio
 
     // Ozone — piecewise linear density
-    /// @source UE5 SkyAtmosphereCommonData.h:38-42
+    /// @ref implementation detail
     float ozoneDensity = (heightKm < ozoneLayerWidth)
         ? saturate(ozoneLinTerm0 * heightKm + ozoneConstTerm0)
         : saturate(ozoneLinTerm1 * heightKm + ozoneConstTerm1);
@@ -143,7 +143,7 @@ void GetExtinctionAndScattering(float heightKm,
 // Main
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 RenderSkyAtmosphereLookUpTablesCS.usf:280-380 — NewMultiScatCS
+/// @ref NewMultiScatCS
 /// Uses Hillaire 2020 "A Scalable and Production Ready Sky and Atmosphere
 /// Rendering Technique" — Section 4.1 Multi-Scattering Approximation.
 ///
@@ -176,7 +176,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
     );
 
     // ── Accumulate over 64 uniform sphere directions ──
-    /// @source UE5 RenderSkyAtmosphereLookUpTablesCS.usf:310 — SquareSampleUniformSphere
+    /// @ref SquareSampleUniformSphere
     float3 totalLuminance = float3(0, 0, 0);
     float3 totalFms       = float3(0, 0, 0);
 
@@ -234,14 +234,14 @@ void main(uint3 dtid : SV_DispatchThreadID)
             float3 sunTransmittance = LookupTransmittance(samplePos, sunDir);
 
             // Frostbite analytical in-scattering integration
-            /// @source UE5 SkyAtmosphereCommon.ush:344 — Frostbite analytical
+            /// @ref Frostbite analytical
             float3 expTerm = exp(-extinction * dt);
 
             // S_int = (scatter * T_sun - scatter * T_sun * exp(-ext*dt)) / ext
             // For multi-scatter: isotropic phase = 1/(4*PI), but it cancels out
             // in the geometric series because both L and f use the same phase.
-            // UE5 uses uniform phase (= 1) for the multi-scatter LUT.
-            /// @source UE5 RenderSkyAtmosphereLookUpTablesCS.usf:345
+            // uses uniform phase (= 1) for the multi-scatter LUT.
+            /// @ref implementation detail
             float3 sampleScatterInt = (scattering - scattering * expTerm)
                 / max(extinction, float3(1e-7f, 1e-7f, 1e-7f));
 
@@ -261,7 +261,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
     }
 
     // ── Average over all directions ──
-    /// @source UE5 RenderSkyAtmosphereLookUpTablesCS.usf:365
+    /// @ref implementation detail
     float invNumDir = 1.0f / float(NUM_DIRECTIONS);
     totalLuminance *= invNumDir;
     totalFms       *= invNumDir;

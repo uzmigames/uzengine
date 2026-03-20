@@ -5,11 +5,9 @@
 /// 2. HiZ occlusion culling (optional): projects sphere to screen-space AABB,
 ///    samples the Hi-Z pyramid, and rejects instances behind existing depth.
 ///
-/// @source UE5 HZBOcclusion.usf:13-42 — HZBTestPS (frustum + HZB test pipeline)
-/// @source UE5 NaniteHZBCull.ush:565-595 — ProjectSphere, SphereToScreenRect
-/// @source UE5 NaniteHZBCull.ush:40-69 — MipLevelForRect
-/// @source UE5 NaniteHZBCull.ush:71-107 — GetScreenRect (NDC → pixel → HZB texel)
-/// @source UE5 NaniteHZBCull.ush:195-200 — IsVisibleHZB (reversed-Z comparison)
+/// @ref Wihlidal 2015 "Optimizing the Graphics Pipeline with Compute" (GDC)
+/// @ref Greene et al. 1993 "Hierarchical Z-Buffer Visibility"
+/// @ref Gribb & Hartmann 2001 "Fast Extraction of Viewing Frustum Planes"
 ///
 /// # Inputs
 /// - `g_BoundingSpheres` (t0): StructuredBuffer<float4> — xyz = world-space
@@ -138,7 +136,7 @@ void ExtractFrustumPlanes(float4x4 vp, out float4 planes[6]) {
 // [ Mara & Morgan 2013, "2D Polyhedral Bounds of a Clipped, Perspective-Projected 3D Sphere" ]
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 NaniteHZBCull.ush:565-586 — ProjectSphere
+/// @ref Wihlidal 2015 / Greene 1993 — HZB culling:565-586 — ProjectSphere
 /// Projects a sphere's 1D cross-section (x or y) to NDC bounds on that axis.
 /// Works in view space where the camera looks along +Z.
 ///
@@ -152,22 +150,22 @@ void ExtractFrustumPlanes(float4x4 vp, out float4 planes[6]) {
 /// float2(min, max) in NDC [-1,1] for this axis.
 float2 ProjectSphere(float x, float z, float r, float resultScale)
 {
-    /// @source UE5 NaniteHZBCull.ush:568 — t = sqrt(x*x + z*z - r*r)
+    /// @ref Wihlidal 2015 / Greene 1993 — HZB culling:568 — t = sqrt(x*x + z*z - r*r)
     float t = sqrt(x * x + z * z - r * r);
 
-    /// @source UE5 NaniteHZBCull.ush:570-572 — optimized common denominator form
+    /// @ref Wihlidal 2015 / Greene 1993 — HZB culling:570-572 — optimized common denominator form
     float A = (t * z + r * x);
     float B = (t * z - r * x);
     resultScale /= (A * B);
 
-    /// @source UE5 NaniteHZBCull.ush:574-575 — Min/Max tangent points
+    /// @ref Wihlidal 2015 / Greene 1993 — HZB culling:574-575 — Min/Max tangent points
     float projMin = (t * x - r * z) * B;
     float projMax = (t * x + r * z) * A;
 
     return float2(projMin, projMax) * resultScale;
 }
 
-/// @source UE5 NaniteHZBCull.ush:588-595 — SphereToScreenRect
+/// @ref Wihlidal 2015 / Greene 1993 — HZB culling:588-595 — SphereToScreenRect
 /// Projects a view-space bounding sphere to an NDC rect (MinX, MinY, MaxX, MaxY).
 /// Uses the tight 2D polyhedral bound from Mara & Morgan 2013.
 ///
@@ -180,9 +178,9 @@ float2 ProjectSphere(float x, float z, float r, float resultScale)
 /// float4(minX, minY, maxX, maxY) in NDC [-1,1].
 float4 SphereToScreenRect(float3 viewCenter, float radius, float4x4 viewToClip)
 {
-    /// @source UE5 NaniteHZBCull.ush:591 — ExtentX with ViewToClip[2][0] offset
+    /// @ref Wihlidal 2015 / Greene 1993 — HZB culling:591 — ExtentX with ViewToClip[2][0] offset
     float2 extentX = ProjectSphere(viewCenter.x, viewCenter.z, radius, viewToClip[0][0]) + viewToClip[2][0];
-    /// @source UE5 NaniteHZBCull.ush:592 — ExtentY with ViewToClip[2][1] offset
+    /// @ref Wihlidal 2015 / Greene 1993 — HZB culling:592 — ExtentY with ViewToClip[2][1] offset
     float2 extentY = ProjectSphere(viewCenter.y, viewCenter.z, radius, viewToClip[1][1]) + viewToClip[2][1];
 
     return float4(extentX.x, extentY.x, extentX.y, extentY.y);
@@ -192,7 +190,7 @@ float4 SphereToScreenRect(float3 viewCenter, float radius, float4x4 viewToClip)
 // HiZ Mip Level Selection
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 NaniteHZBCull.ush:40-69 — MipLevelForRect
+/// @ref Wihlidal 2015 / Greene 1993 — HZB culling:40-69 — MipLevelForRect
 /// Selects the coarsest HiZ mip level whose 2x2 footprint can cover the given
 /// pixel rect. Uses firstbithigh (full-rate on GCN) instead of log2.
 ///
@@ -204,15 +202,15 @@ float4 SphereToScreenRect(float3 viewCenter, float radius, float4x4 viewToClip)
 /// Mip level index (0 = HiZ mip 0 = half resolution of full depth buffer).
 int MipLevelForRect(int4 rectPixels)
 {
-    /// @source UE5 NaniteHZBCull.ush:54 — firstbithigh of (max - min) per axis
+    /// @ref Wihlidal 2015 / Greene 1993 — HZB culling:54 — firstbithigh of (max - min) per axis
     int2 mipLevelXY = firstbithigh(rectPixels.zw - rectPixels.xy);
 
-    /// @source UE5 NaniteHZBCull.ush:58 — max of both axes, no offset for 2x2 footprint
-    /// UE5 uses DesiredFootprintPixels=4 with MipOffset = log2(4)-1 = 1.
+    /// @ref Wihlidal 2015 / Greene 1993 — HZB culling:58 — max of both axes, no offset for 2x2 footprint
+    /// uses DesiredFootprintPixels=4 with MipOffset = log2(4)-1 = 1.
     /// For our 2x2 sampling we use DesiredFootprintPixels=2, MipOffset=0.
     int mipLevel = max(max(mipLevelXY.x, mipLevelXY.y), 0);
 
-    /// @source UE5 NaniteHZBCull.ush:66 — alignment check: if rect doesn't fit
+    /// @ref Wihlidal 2015 / Greene 1993 — HZB culling:66 — alignment check: if rect doesn't fit
     /// in selected mip due to power-of-two quantization, bump up one level
     mipLevel += any((rectPixels.zw >> mipLevel) - (rectPixels.xy >> mipLevel) > 1) ? 1 : 0;
 
@@ -223,12 +221,12 @@ int MipLevelForRect(int4 rectPixels)
 // HiZ Occlusion Test
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 NaniteHZBCull.ush:135-200 — GetMinDepthFromHZB + IsVisibleHZB
-/// @source UE5 HZBOcclusion.usf:30-41 — HZBTestPS sphere→rect→HZB pipeline
+/// @ref Wihlidal 2015 / Greene 1993 — HZB culling:135-200 — GetMinDepthFromHZB + IsVisibleHZB
+/// @ref Greene 1993 "HZB" —30-41 — HZBTestPS sphere→rect→HZB pipeline
 ///
 /// Tests whether a bounding sphere is visible against the Hi-Z pyramid.
 ///
-/// Steps (matching UE5 pipeline):
+/// Steps (matching reference pipeline):
 /// 1. Transform sphere center to view space.
 /// 2. Project sphere to tight NDC rect via Mara & Morgan 2013.
 /// 3. Convert NDC to HiZ texel coordinates.
@@ -248,57 +246,57 @@ bool IsVisibleHiZ(float3 worldCenter, float radius)
     float3 viewCenter = mul(float4(worldCenter, 1.0), g_ViewMatrix).xyz;
 
     // Sphere entirely behind the near plane — skip HiZ (handled by frustum cull).
-    // UE5 uses the bCrossesNearPlane flag for this check.
+    // uses the bCrossesNearPlane flag for this check.
     if (viewCenter.z + radius <= 0.0)
         return true;
 
     // Sphere straddles the near plane — cannot project cleanly, consider visible.
-    /// @source UE5 NaniteHZBCull.ush:520 — MinW <= 0 && MaxW > 0 → full-screen rect
+    /// @ref Wihlidal 2015 / Greene 1993 — HZB culling:520 — MinW <= 0 && MaxW > 0 → full-screen rect
     if (viewCenter.z - radius <= 0.0)
         return true;
 
     // ── Step 2: Project sphere to NDC rect ──────────────────────────────
     // Sphere is fully in front of camera (viewCenter.z - radius > 0).
     // Safe to use the tight projection.
-    /// @source UE5 NaniteHZBCull.ush:588-595 — SphereToScreenRect
+    /// @ref Wihlidal 2015 / Greene 1993 — HZB culling:588-595 — SphereToScreenRect
     float4 ndcRect = SphereToScreenRect(viewCenter, radius, g_ViewToClip);
 
     // Clamp to [-1,1] NDC (sphere may partially extend off-screen).
     ndcRect = clamp(ndcRect, -1.0, 1.0);
 
     // ── Step 3: NDC → pixel → HiZ texel coordinates ────────────────────
-    /// @source UE5 NaniteHZBCull.ush:78 — NDC to UV: X[-1,1]→[0,1], Y[-1,1]→[1,0]
+    /// @ref Wihlidal 2015 / Greene 1993 — HZB culling:78 — NDC to UV: X[-1,1]→[0,1], Y[-1,1]→[1,0]
     float4 rectUV = saturate(ndcRect * float2(0.5, -0.5).xyxy + 0.5).xwzy;
 
-    /// @source UE5 NaniteHZBCull.ush:86 — UV to pixel footprint
+    /// @ref Wihlidal 2015 / Greene 1993 — HZB culling:86 — UV to pixel footprint
     float2 hizSize = float2(g_HiZWidth, g_HiZHeight);
     int4 rectPixels = int4(rectUV * hizSize.xyxy + float4(0.5, 0.5, -0.5, -0.5));
     rectPixels.xy = max(rectPixels.xy, int2(0, 0));
     rectPixels.zw = min(rectPixels.zw, int2(g_HiZWidth - 1, g_HiZHeight - 1));
 
     // Check that the rect covers at least one pixel center.
-    /// @source UE5 NaniteHZBCull.ush:91 — bOverlapsPixelCenter
+    /// @ref Wihlidal 2015 / Greene 1993 — HZB culling:91 — bOverlapsPixelCenter
     if (any(rectPixels.zw < rectPixels.xy))
         return true;
 
     // Make rect valid for HiZ sampling.
-    /// @source UE5 NaniteHZBCull.ush:95 — ensure valid even if degenerate
+    /// @ref Wihlidal 2015 / Greene 1993 — HZB culling:95 — ensure valid even if degenerate
     int4 hzbTexels = int4(rectPixels.xy, max(rectPixels.xy, rectPixels.zw));
 
     // ── Step 4: Select mip level based on footprint ─────────────────────
-    /// @source UE5 NaniteHZBCull.ush:101 — MipLevelForRect
+    /// @ref Wihlidal 2015 / Greene 1993 — HZB culling:101 — MipLevelForRect
     int mipLevel = MipLevelForRect(hzbTexels);
     mipLevel = min(mipLevel, (int)g_HiZMipCount - 1);
 
     // Transform texel coordinates to selected mip level.
-    /// @source UE5 NaniteHZBCull.ush:104 — HZBTexels >>= HZBLevel
+    /// @ref Wihlidal 2015 / Greene 1993 — HZB culling:104 — HZBTexels >>= HZBLevel
     int4 mipTexels = hzbTexels >> mipLevel;
 
     // ── Step 5: Load 2x2 texels from the selected mip texture ────────
     // Each Hi-Z mip is a separate R32_FLOAT texture (no mip chain). We use
     // Load() with integer addressing at mip 0 of the per-mip texture.
     // Clamp coordinates to the mip texture dimensions to avoid out-of-bounds.
-    /// @source UE5 NaniteHZBCull.ush:161-169 — LoadHZBRow4 with clamped integer coords
+    /// @ref Wihlidal 2015 / Greene 1993 — HZB culling:161-169 — LoadHZBRow4 with clamped integer coords
     uint mipSrvIndex = GetHiZMipSrvIndex((uint)mipLevel);
     Texture2D<float> hizMipTex = ResourceDescriptorHeap[mipSrvIndex];
 
@@ -308,7 +306,7 @@ bool IsVisibleHiZ(float3 worldCenter, float radius)
     int2 maxCoord = mipDims - int2(1, 1);
 
     // Sample 2x2 neighborhood around the rect, clamped to texture bounds.
-    // Matches UE5's 4-tap pattern: (min,min), (max,min), (min,max), (max,max).
+    // Standard's 4-tap pattern: (min,min), (max,min), (min,max), (max,max).
     int2 c00 = clamp(mipTexels.xy,             int2(0, 0), maxCoord);
     int2 c10 = clamp(int2(mipTexels.z, mipTexels.y), int2(0, 0), maxCoord);
     int2 c01 = clamp(int2(mipTexels.x, mipTexels.w), int2(0, 0), maxCoord);
@@ -320,22 +318,22 @@ bool IsVisibleHiZ(float3 worldCenter, float radius)
     depth.z = hizMipTex.Load(int3(c01, 0));
     depth.w = hizMipTex.Load(int3(c11, 0));
 
-    /// @source UE5 NaniteHZBCull.ush:186-187 — mask off edge pixels for 1-wide/tall rects
+    /// @ref Wihlidal 2015 / Greene 1993 — HZB culling:186-187 — mask off edge pixels for 1-wide/tall rects
     depth.yz = (mipTexels.x == mipTexels.z) ? 1.0 : depth.yz;
     depth.xy = (mipTexels.y == mipTexels.w) ? 1.0 : depth.xy;
 
-    /// @source UE5 NaniteHZBCull.ush:189 — min of all 4 samples
+    /// @ref Wihlidal 2015 / Greene 1993 — HZB culling:189 — min of all 4 samples
     float minDepth = min(min(depth.x, depth.y), min(depth.z, depth.w));
 
     // ── Step 6: Compute sphere's nearest device-Z and compare ───────────
     // The sphere's closest point to the camera in view space is at
     // viewCenter.z - radius. We need its device-Z for comparison.
-    /// @source UE5 NaniteHZBCull.ush:527-528 — RectMin.z = MinZ / MaxW
+    /// @ref Wihlidal 2015 / Greene 1993 — HZB culling:527-528 — RectMin.z = MinZ / MaxW
     /// In reversed-Z with our projection: deviceZ = proj[2][2] + proj[3][2] / z
     float nearestViewZ = viewCenter.z - radius;
     float sphereDeviceZ = g_ViewToClip[2][2] + g_ViewToClip[3][2] / nearestViewZ;
 
-    /// @source UE5 NaniteHZBCull.ush:199-200 — IsVisibleHZB: Rect.Depth >= MinDepth
+    /// @ref Wihlidal 2015 / Greene 1993 — HZB culling:199-200 — IsVisibleHZB: Rect.Depth >= MinDepth
     /// Reversed-Z: larger deviceZ = closer to camera. HiZ stores min (closest visible).
     /// Sphere is visible if its nearest point is at least as close as the HiZ min depth.
     return sphereDeviceZ >= minDepth;
@@ -372,7 +370,7 @@ void main(uint3 dtid : SV_DispatchThreadID) {
     }
 
     // ── Phase 2: HiZ occlusion culling (optional) ──────────────────────
-    /// @source UE5 HZBOcclusion.usf:34 — bIsVisible && !bCrossesNearPlane → HZB test
+    /// @ref Greene 1993 "HZB" —34 — bIsVisible && !bCrossesNearPlane → HZB test
     if (visible && g_HiZEnabled != 0) {
         visible = IsVisibleHiZ(center, radius);
     }

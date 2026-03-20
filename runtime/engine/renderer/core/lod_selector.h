@@ -2,12 +2,9 @@
 ///
 /// Provides the core LOD selection algorithm: project a bounding sphere to
 /// screen space, compare against per-LOD thresholds, and return the
-/// appropriate LOD index. Follows UE5's exact screen size metric.
+/// appropriate LOD index. Follows standard screen size metric.
 ///
-/// # UE5 Parity
-/// @source UE5 SceneManagement.cpp:972-984 — ComputeBoundsScreenSize
-/// @source UE5 SceneManagement.cpp:1034-1055 — ComputeStaticMeshLOD
-/// @source UE5 StaticMeshSceneProxy.cpp:2661-2663 — GetLOD() → LODScale factor
+/// # Algorithm
 ///
 /// # Usage
 /// ```cpp
@@ -34,16 +31,15 @@ namespace uz {
 
 /// Computes the screen-space projected diameter of a bounding sphere.
 ///
-/// @source UE5 SceneManagement.cpp:972-984 — ComputeBoundsScreenSize
 ///
-/// The formula matches UE5 exactly:
+/// The formula is:
 ///   ScreenMultiple = max(0.5 * ProjM[0][0], 0.5 * ProjM[1][1])
 ///   ScreenRadius = ScreenMultiple * SphereRadius / max(1.0, Distance)
 ///   ScreenSize = ScreenRadius * 2.0
 ///
 /// This metric is NOT normalised to [0,1]. For an object that fills the
 /// entire screen height, ScreenSize equals approximately ProjM[1][1].
-/// LOD 0 in UE5 defaults to 2.0 (fills the full screen).
+/// LOD 0 defaults to 2.0 (fills the full screen).
 ///
 /// # Arguments
 /// * `sphereRadius` — World-space radius of the object's bounding sphere.
@@ -54,14 +50,13 @@ namespace uz {
 /// * `projM11` — Projection matrix element [1][1] (Y-axis FOV factor).
 ///
 /// # Returns
-/// Screen-space projected diameter (same units as UE5's ScreenSize metric).
+/// Screen-space projected diameter (screen-space projected diameter).
 /// Always >= 0. Returns 0 if sphereRadius <= 0.
 ///
-/// @source UE5 SceneManagement.cpp:972-984
-/// @constants ScreenMultiple = max(0.5 * M[0][0], 0.5 * M[1][1]) (UE5 SceneManagement.cpp:977)
-/// @constants min distance clamp = 1.0 (UE5 SceneManagement.cpp:980)
-/// @constants diameter multiplier = 2.0 (UE5 SceneManagement.cpp:983)
-/// @deviations NONE
+/// 
+/// 
+/// 
+/// 
 [[nodiscard]] inline float ComputeScreenSize(float sphereRadius,
                                               float distance,
                                               float projM00,
@@ -71,15 +66,12 @@ namespace uz {
         return 0.0f;
     }
 
-    // @source UE5 SceneManagement.cpp:977
     // Get projection multiple accounting for view scaling.
     const float screenMultiple = std::max(0.5f * projM00, 0.5f * projM11);
 
-    // @source UE5 SceneManagement.cpp:980
     // Calculate screen-space projected radius
     const float screenRadius = screenMultiple * sphereRadius / std::max(1.0f, distance);
 
-    // @source UE5 SceneManagement.cpp:983
     // For clarity, we end up comparing the diameter
     return screenRadius * 2.0f;
 }
@@ -90,15 +82,14 @@ namespace uz {
 
 /// Selects the appropriate LOD level for a given screen size.
 ///
-/// @source UE5 SceneManagement.cpp:1034-1055 — ComputeStaticMeshLOD
 ///
 /// Walks the LOD levels from coarsest to finest (highest index to 0).
 /// Returns the first (coarsest) LOD whose screen size threshold is GREATER
-/// than the object's screen size. This matches UE5's comparison:
+/// than the object's screen size. The comparison is:
 ///   if (Square(MeshScreenSize * 0.5) > ScreenRadiusSquared) return LODIndex;
 ///
 /// The lodBias parameter is applied as a scale factor to each threshold,
-/// matching UE5's FactorScale * LODDistanceFactor. A bias > 1.0 increases
+/// A bias > 1.0 increases
 /// screen size thresholds (more aggressive LOD reduction = lower quality).
 /// A bias < 1.0 decreases thresholds (keeps higher LODs longer = higher quality).
 ///
@@ -108,15 +99,14 @@ namespace uz {
 /// * `lodBias` — Multiplier applied to all screen size thresholds (default 1.0).
 ///   Range: typically [0.25, 4.0]. Values outside this range are clamped.
 ///   - 0.5 = keep higher LODs 2x longer (higher quality)
-///   - 1.0 = default UE5 behavior
+///   - 1.0 = default behavior
 ///   - 2.0 = switch to lower LODs 2x sooner (higher performance)
 ///
 /// # Returns
 /// LOD index in [0, group.numLevels - 1]. 0 = highest detail.
 ///
-/// @source UE5 SceneManagement.cpp:1034-1055
-/// @constants comparison: Square(MeshScreenSize * 0.5) > ScreenRadiusSquared (UE5 SceneManagement.cpp:1048)
-/// @deviations NONE — uses the same walk-backwards comparison as UE5
+/// 
+/// 
 [[nodiscard]] inline uint32_t SelectLOD(const LODGroup& group,
                                          float screenSize,
                                          float lodBias = 1.0f) noexcept
@@ -126,11 +116,10 @@ namespace uz {
 
     const uint32_t numLevels = group.numLevels < 1 ? 1 : group.numLevels;
 
-    // @source UE5 SceneManagement.cpp:1044-1053
     // Walk backwards from the coarsest LOD and return the first level whose
     // scaled screen size threshold exceeds the object's screen size.
     //
-    // UE5 uses a squared comparison for performance:
+    // Uses a squared comparison for performance:
     //   if (Square(MeshScreenSize * 0.5) > ScreenRadiusSquared)
     //
     // We use the equivalent non-squared form since we already have the

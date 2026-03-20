@@ -76,7 +76,7 @@ void SceneRenderer::RegisterGeometryPasses(rg::RgBuilder& rgBuilder, FrameContex
                 }
 
                 // ── GPU Frustum + HiZ Occlusion Culling (after Hi-Z, before GBuffer) ──
-                // @source UE5 HZBOcclusion.usf:13-42 — HZBTestPS
+                // @ref HZBTestPS
                 //
                 // The GPU cull pass is registered when occlusion culling is enabled
                 // and bounding sphere data has been uploaded. The pass writes to a
@@ -122,7 +122,7 @@ void SceneRenderer::RegisterGeometryPasses(rg::RgBuilder& rgBuilder, FrameContex
         // ── Velocity Buffer Pass (after GBuffer, before GTAO) ─────────
         // Generates per-pixel screen-space motion vectors by reprojecting
         // depth-reconstructed world positions through prevViewProj.
-        // @source UE5 VelocityRendering.cpp — camera-only velocity pass
+        // @ref camera-only velocity pass
         if (m_prevViewProjValid && m_gbuffer.velocity.IsValid()) {
             VelocityCB velCB{};
             velCB.prevViewProj = m_prevViewProj;

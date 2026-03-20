@@ -1,13 +1,13 @@
-/// UzEngine Static Shadow Cache — UE5 Exact Parity
+/// UzEngine Static Shadow Cache — Standard Rendering Parity
 ///
 /// Caches shadow depth maps for static geometry to eliminate redundant shadow
-/// rendering when only dynamic objects move. UE5 implements this in
+/// rendering when only dynamic objects move. reference implements this in
 /// ShadowSetup.cpp:3869-3954 (cache validation) and ScenePrivate.h:2685-2722
 /// (cached shadow map data).
 ///
 /// # Architecture Overview
 ///
-/// UE5 separates shadow rendering into 4 modes per cascade:
+/// separates shadow rendering into 4 modes per cascade:
 /// 1. **Uncached** — Render all geometry every frame (fallback).
 /// 2. **StaticPrimitivesOnly** — Render only static meshes. Cached across frames.
 ///    Re-rendered only when the cache is invalidated (light direction change,
@@ -30,7 +30,7 @@
 ///
 /// NOT thread-safe. Must be called from the render thread only.
 ///
-/// # UE5 Reference
+/// # Reference
 /// - EShadowDepthCacheMode: ShadowRendering.h:183-189
 /// - FProjectedShadowInfo cache fields: ScenePrivate.h:2685-2722
 /// - Cache validation: ShadowSetup.cpp:3869-3954
@@ -52,16 +52,16 @@ namespace uz {
 class IRHIDevice;
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ShadowCacheMode — UE5 EShadowDepthCacheMode parity
+// ShadowCacheMode — EShadowDepthCacheMode parity
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Shadow depth cache mode — UE5 EShadowDepthCacheMode parity.
+/// Shadow depth cache mode — EShadowDepthCacheMode parity.
 ///
 /// Determines how a cascade's shadow depth rendering is handled this frame.
 /// The scene renderer checks this mode per cascade to decide whether to skip
 /// the static geometry pass.
 ///
-/// Source: UE5 ShadowRendering.h:183-189.
+/// Source: ShadowRendering.h:183-189.
 enum class ShadowCacheMode : uint8_t {
     Uncached,                ///< Render all geometry every frame (fallback).
     StaticPrimitivesOnly,    ///< Render only static meshes. Cached across frames.
@@ -76,7 +76,7 @@ enum class ShadowCacheMode : uint8_t {
 /// Configuration for the shadow cache system.
 ///
 /// Controls global enable, VRAM budget, and CSM scrolling thresholds.
-/// These map to UE5 CVars in ShadowSetup.cpp:69-100.
+/// These map to reference CVars in ShadowSetup.cpp:69-100.
 ///
 /// # Defaults
 /// - `enabled = true`: Shadow caching is ready to use but requires explicit
@@ -94,7 +94,7 @@ struct ShadowCacheConfig {
 
 /// Maximum number of extra static shadow subjects allowed during CSM scrolling
 /// before falling back to a full static re-render.
-/// @source UE5 ShadowSetup.cpp:406-409 — CVarCSMScrollingMaxExtraStaticShadowSubjects (default 5)
+/// CVarCSMScrollingMaxExtraStaticShadowSubjects (default 5)
 constexpr uint32_t kMaxCSMScrollingExtraStaticSubjects = 5;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -107,28 +107,28 @@ constexpr uint32_t kMaxCSMScrollingExtraStaticSubjects = 5;
 /// the GPU copy of the overlapping region and selective re-rendering of
 /// the exposed edge strips.
 ///
-/// @source UE5 ShadowSetup.cpp:5600-5668 — CSMScrolling data computation
-/// @source UE5 ShadowDepthRendering.cpp:1000-1035 — GPU copy using overlap UVs
+/// @ref Engel 2006 "Cascaded Shadow Maps" — CSMScrolling data computation
+/// GPU copy using overlap UVs for incremental shadow update
 struct CSMScrollingData {
     /// UV region on the cached (old) shadow map that overlaps with the new map.
     /// Format: (minU, minV, maxU, maxV) in [0,1] normalized texture coordinates.
-    /// @source UE5 ShadowSetup.cpp:5629-5632 — OverlappedUVOnCachedShadowMap
+    /// OverlappedUVOnCachedShadowMap — UV region on cached atlas that overlaps
     float overlappedUVOnCached[4] = {0.f, 0.f, 1.f, 1.f};
 
     /// UV region on the current (new) shadow map that corresponds to the overlap.
     /// Format: (minU, minV, maxU, maxV) in [0,1] normalized texture coordinates.
-    /// @source UE5 ShadowSetup.cpp:5636-5639 — OverlappedUVOnCurrentShadowMap
+    /// OverlappedUVOnCurrentShadowMap — UV region on current atlas
     float overlappedUVOnCurrent[4] = {0.f, 0.f, 1.f, 1.f};
 
     /// Z offset in light space between cached and current shadow maps.
     /// Used by the scrolling shader to reconstruct depth values after the copy.
-    /// @source UE5 ShadowSetup.cpp:5616 — CSMScrollingZOffset
+    /// CSMScrollingZOffset — depth offset for scrolled shadow reconstruction
     float zOffset = 0.f;
 
     /// Culling planes for the non-overlapped edge strips (up to 4: top, bottom, left, right).
     /// Each plane is defined by a point and a normal in world space.
     /// Only static primitives that intersect these planes need re-rendering.
-    /// @source UE5 ShadowSetup.cpp:5641-5667 — CSMScrollingExtraCullingPlanes
+    /// CSMScrollingExtraCullingPlanes — cull planes for non-overlapped edge strips
     struct CullingPlane {
         Vec3 point;   ///< A point on the plane (world space).
         Vec3 normal;  ///< Outward-facing normal of the plane.
@@ -154,7 +154,7 @@ struct CSMScrollingData {
 /// shadow map for a cascade. Each field is compared with epsilon tolerance
 /// to avoid unnecessary invalidation from floating-point drift.
 ///
-/// Source: UE5 ShadowSetup.cpp:3869-3954 (CompareShadowVolume).
+/// Source: ShadowSetup.cpp:3869-3954 (CompareShadowVolume).
 struct ShadowCacheKey {
     Vec3 lightDirection;       ///< Light direction when cached.
     Vec3 lightUp;              ///< Light up vector when cached.
@@ -175,7 +175,7 @@ struct ShadowCacheKey {
 /// Holds the GPU depth texture containing the rendered static geometry shadow,
 /// the key used for invalidation comparison, and bookkeeping metadata.
 ///
-/// Source: UE5 ScenePrivate.h:2685-2722.
+/// Source: ScenePrivate.h:2685-2722.
 struct CachedShadowMapData {
     RHITextureHandle cachedTexture;  ///< Cached depth texture (static geometry only).
     uint32_t srvIndex = UINT32_MAX;  ///< SRV heap index for the cached texture.
@@ -190,17 +190,17 @@ struct CachedShadowMapData {
     /// present in the cached atlas, so only new or edge-strip primitives need
     /// re-rendering.
     ///
-    /// @source UE5 ScenePrivate.h:2697 — StaticShadowSubjectPersistentPrimitiveIdMap
+    /// StaticShadowSubjectPersistentPrimitiveIdMap — tracks which primitives are cached
     std::vector<bool> staticPrimitiveMap;
 
     /// Count of extra static shadow subjects added during CSM scrolling this frame.
     /// If this exceeds `kMaxCSMScrollingExtraStaticSubjects`, fall back to full re-render.
-    /// @source UE5 ShadowSetup.cpp:406-409 — CVarCSMScrollingMaxExtraStaticShadowSubjects
+    /// CVarCSMScrollingMaxExtraStaticShadowSubjects limit check
     uint32_t lastFrameExtraStaticShadowSubjects = 0;
 
     /// Light-space center (PreShadowTranslation equivalent) when cached.
     /// Used by CSM scrolling to compute the overlap between old and new cascade bounds.
-    /// @source UE5 ScenePrivate.h:2696 — PreShadowTranslation
+    /// PreShadowTranslation — light-space center when shadow was cached
     Vec3 cachedPreShadowTranslation;
 };
 
@@ -290,7 +290,7 @@ public:
     /// Direction vectors use a tight tolerance (1e-4), distances use a looser
     /// tolerance (1e-2), and integer fields (resolution) use exact comparison.
     ///
-    /// Source: UE5 ShadowSetup.cpp:3869-3954.
+    /// Source: ShadowSetup.cpp:3869-3954.
     ///
     /// # Arguments
     /// * `cached` — The key stored when the shadow map was last rendered.
@@ -405,7 +405,7 @@ public:
     /// The bitset is later used by CSM scrolling to determine which primitives
     /// are already present in the overlap region.
     ///
-    /// @source UE5 ShadowSetup.cpp:2364 — StaticShadowSubjectPersistentPrimitiveIdMap[...] = true
+    /// Marks a primitive in StaticShadowSubjectPersistentPrimitiveIdMap
     ///
     /// # Arguments
     /// * `lightId` — Unique identifier for the light source.
@@ -417,7 +417,7 @@ public:
 
     /// Checks if a static primitive is recorded in the cached shadow map.
     ///
-    /// @source UE5 ShadowSetup.cpp:5002 — StaticShadowSubjectPersistentPrimitiveIdMap[...]
+    /// Queries StaticShadowSubjectPersistentPrimitiveIdMap for cache hit
     ///
     /// # Returns
     /// `true` if the primitive was rendered into the cached shadow map.
@@ -435,7 +435,7 @@ public:
 
     /// Sets shadow caching enabled/disabled at runtime.
     ///
-    /// Equivalent to UE5's `r.Shadow.CacheEnabled` CVar.
+    /// Equivalent to the reference engine's `r.Shadow.CacheEnabled` CVar.
     /// Takes effect on the next UpdateCache call.
     ///
     /// # Arguments
@@ -463,8 +463,8 @@ private:
     /// Projects cascade centers into light space, computes AABB overlap, generates
     /// overlap UV regions and edge-strip culling planes.
     ///
-    /// @source UE5 ShadowSetup.cpp:3893-3931 — overlap computation
-    /// @source UE5 ShadowSetup.cpp:5600-5668 — UV + culling plane computation
+    /// @ref Engel 2006 "Cascaded Shadow Maps" — overlap computation
+    /// UV + culling plane computation for incremental scrolling
     ///
     /// # Returns
     /// CSMScrollingData with overlap UVs, culling planes, and overlap ratio.

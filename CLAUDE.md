@@ -15,44 +15,38 @@ This project uses @hivehub/rulebook standards. All code generation should follow
 
 These are the most important rules. They override everything else. If you remember nothing else, remember these:
 
-### RULE 1: UE5 COMPLETE Behavioral Parity — Components, Parameters, Defaults, Logic
+### RULE 1: Industry-Standard Rendering Parity — Components, Parameters, Defaults, Logic
 
-Every UzEngine component, system, and feature that has a UE5 equivalent MUST replicate the **exact same behavior, ALL parameters, ALL defaults, and ALL logic**. This is NOT limited to numeric constants — it covers the ENTIRE component.
-
-**If UE5's component has 47 properties, ours has 47 properties. Not 12. Not "the important ones". ALL of them.**
+Every UzEngine rendering component, system, and feature MUST implement the **correct behavior, ALL relevant parameters, ALL standard defaults, and ALL computation logic** as described in published papers and industry-standard implementations.
 
 **ABSOLUTELY FORBIDDEN:**
-- **Simplifying components** by removing parameters UE5 has
-- **Inventing defaults** without reading UE5 source (constructor, `GetDefaultObject()`)
+- **Simplifying components** by removing parameters that the standard technique requires
+- **Inventing defaults** without researching the published reference
 - **Replacing runtime computation with hardcoded values** (e.g., auto sky color → hardcoded RGB)
-- Inventing parameter values (no `0.90f`, `0.5f` without UE5 source)
-- Analytical approximations where UE5 uses a LUT/texture
-- Compensation factors (`* 2.0f` to "match UE5")
-- Minimum clamps (`max(value, 0.15f)` unless UE5 does the same)
+- Inventing parameter values without a published reference
+- Analytical approximations where the technique uses a LUT/texture
+- Compensation factors (`* 2.0f` to "match reference")
+- Minimum clamps (`max(value, 0.15f)` unless the reference technique does the same)
 - Empirically tuned constants ("was tuned to approximate...")
-- **Visual workarounds** ("sky horizon blue-white", "warm sun glow") — if UE5 has a system that auto-computes a value, IMPLEMENT THAT SYSTEM instead of hardcoding a guess
-- **Supposing corrections** — if the render looks wrong, find the ROOT CAUSE in UE5 source, don't patch symptoms with invented numbers
-- **Creating alternatives** — if UE5 does X, do X. Don't invent Y because "it's simpler"
-- **Adding parameters UE5 doesn't have** (no "artistic controls", no "UzEngine enhancements")
-- **Guessing** at what a parameter does based on its name — READ THE CODE
+- **Visual workarounds** — if a technique auto-computes a value, IMPLEMENT THAT SYSTEM
+- **Guessing** at what a parameter does based on its name — READ THE PAPER
 
 **WHAT TO DO:**
-1. Read UE5 source FIRST — find the `.h` file, list EVERY `UPROPERTY`
-2. Read the constructor — note EVERY default value
-3. Read the `.cpp` — understand ALL update/recalculation logic
-4. Implement ALL properties with EXACT same defaults
-5. Implement ALL behavior — same computation, same update triggers
-6. Cite `@source UE5 <file>:<line>` for every property and function
-7. Rewrite in your own code style (different names, structure) to respect Epic's IP — but the MATH and BEHAVIOR must be identical
+1. Research the published paper/technique FIRST
+2. Identify ALL parameters and their default values from the reference
+3. Implement ALL properties with the correct defaults
+4. Implement ALL behavior — same computation, same update triggers
+5. Cite the paper/standard with `@ref Author Year "Title"` for every property and function
+6. Use UzEngine-specific naming (NEVER copy identifiers from proprietary codebases)
 
 See `.claude/rules/ue5-component-parity.md` for full details and examples.
 
-### RULE 2: ALWAYS Read UE5 Source BEFORE Writing Rendering Code
+### RULE 2: ALWAYS Research Published References BEFORE Writing Rendering Code
 
 Before writing ANY shader, render pass, lighting, atmosphere, shadow, or post-process code:
-1. Launch `unreal-architect` agent to find the exact UE5 implementation
-2. Read the actual UE5 `.usf`/`.ush`/`.cpp` file
-3. Only then write UzEngine code based on the UE5 reference
+1. Research the published paper or technique (SIGGRAPH, GDC, etc.)
+2. Use the `unreal-architect` agent for architectural pattern analysis (NOT for copying code)
+3. Only then write UzEngine code based on the published reference
 
 **NEVER rely on model knowledge** for rendering math — it is frequently wrong.
 
@@ -61,17 +55,16 @@ Before writing ANY shader, render pass, lighting, atmosphere, shadow, or post-pr
 Every shader function MUST start with this header:
 
 ```hlsl
-/// @source UE5 <file.usf>:<line> — <function name>
-/// @constants <list every numeric constant and its UE5 value>
-/// @deviations NONE
+/// @ref Author Year "Paper Title" — technique description
+/// @constants <list every numeric constant and its published value>
 ```
 
 Every C++ rendering function MUST have:
 ```cpp
-/// @source UE5 <file.cpp>:<line> — <function name>
+/// @ref Author Year "Paper Title" — technique description
 ```
 
-If you cannot fill in `@source`, you MUST launch `unreal-architect` BEFORE writing the code.
+**NEVER cite proprietary source files.** Always cite published papers, standards, or techniques.
 
 ### RULE 4: NEVER Use Stubs, TODOs, Placeholders, or Approximations
 
@@ -86,7 +79,7 @@ Never write C++/shaders/docs directly in the main conversation. Delegate to the 
 - **Shaders** → `shader-engineer` (opus)
 - **C++ engine code** → `cpp-core-expert` (opus)
 - **RHI backends** → `rhi-engineer` (opus)
-- **UE5 analysis** → `unreal-architect` (haiku)
+- **Architecture analysis** → `unreal-architect` (haiku)
 - **Docs** → `docs-operator` (haiku)
 - **Tests** → `test-engineer` (sonnet)
 
@@ -106,7 +99,7 @@ The following rules are equally important but less frequently violated. Full det
 
 - **Data Flow First** — multi-subsystem tasks (3+ files) require a data flow document BEFORE implementation. See `.claude/rules/data-flow-first.md`
 - **Task Decomposition** — break multi-file tasks into 1-2 file sub-tasks per subsystem. See `.claude/rules/task-decomposition.md`
-- **UE5 Component Parity** — every component replicates ALL UE5 parameters, defaults, and logic. No simplification. See `.claude/rules/ue5-component-parity.md`
+- **Rendering Parity** — every component replicates ALL standard parameters, defaults, and logic. No simplification. See `.claude/rules/ue5-component-parity.md`
 - **Visual Verification** — rendering features need demo + screenshot. **Prefer `--screenshot-stdout`** (base64 to stdout, no disk I/O) over `--screenshot <path>`. See `.claude/rules/visual-verification.md`
 - **GPU Debugging** — never guess, use readback + RenderDoc/PIX. See `.claude/rules/gpu-debugging.md`
 - **Demo Build Order** — always rebuild runtime static lib before demo. See `.claude/rules/build-order.md`
@@ -127,7 +120,7 @@ The following rules are equally important but less frequently violated. Full det
 | RHI backend work | rhi-engineer | opus |
 | Render graph passes | render-graph-engineer | opus |
 | ECS/game systems | ecs-systems-engineer | opus |
-| Analyze UE5 patterns | unreal-architect | haiku |
+| Analyze architecture patterns | unreal-architect | haiku |
 | Analyze Godot patterns | godot-architect | haiku |
 | Architecture synthesis | engine-architect | sonnet |
 | Write/update docs | docs-operator | haiku |

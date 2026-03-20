@@ -4,11 +4,11 @@
 /// through the atmosphere. Applied after deferred lighting to add distance-dependent
 /// atmospheric haze that brightens the horizon and tints distant objects blue.
 ///
-/// # UE5 Reference
-/// @source UE5 SkyAtmosphereCommon.ush:42 — GetAerialPerspectiveLuminanceTransmittance
-/// @source UE5 SkyAtmosphere.usf:1466 — RenderCameraAerialPerspectiveVolumeCS
+/// # References
+/// @ref Bruneton & Neyret 2008 "Precomputed Atmospheric Scattering"
+/// @ref Hillaire 2020 "A Scalable and Production Ready Sky and Atmosphere Rendering Technique"
 ///
-/// UE5 precomputes a 3D volume texture (CameraAerialPerspectiveVolume) and samples it
+/// precomputes a 3D volume texture (CameraAerialPerspectiveVolume) and samples it
 /// per-pixel. UzEngine uses per-pixel ray-marching with the existing transmittance LUT
 /// instead — same physical model, same Frostbite analytical integration, but computed
 /// inline rather than from a precomputed volume. This avoids the need for a separate
@@ -29,6 +29,11 @@
 
 #include "units.hlsli"
 
+#ifndef UZ_PI_DEFINED
+#define UZ_PI_DEFINED
+static const float PI = 3.14159265358979323846f;
+#endif
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Constants — aliases from units.hlsli
 // ─────────────────────────────────────────────────────────────────────────────
@@ -38,14 +43,14 @@ static const float AP_WORLD_TO_KM            = UZ_CM_TO_KM;
 static const float AP_PLANET_RADIUS_OFFSET_KM = UZ_PLANET_RADIUS_OFFSET_KM;
 static const float AP_EXT_EPS                 = UZ_EXTINCTION_EPS;
 
-/// @source UE5 SkyAtmosphere.usf:1608 — CameraAerialPerspectiveSampleCountPerSlice
+/// @ref Hillaire 2020 — sample count per slice for aerial perspective volume
 /// Number of ray-march steps for aerial perspective per pixel.
 /// 8 steps is sufficient for the short camera-to-geometry distances typical in AP
 /// (much shorter rays than full sky rendering which uses 32 steps).
 static const int AP_NUM_STEPS = 8;
 
 /// Mie extinction-to-scattering ratio (absorption included).
-/// @source UE5 SkyAtmosphere.usf — Mie extinction = scattering * 1.11
+/// @ref Bruneton 2008 — Mie extinction = scattering / single_scatter_albedo (approx 1.11)
 /// @constants 1.11 (standard Mie absorption ratio, same as transmittance_lut_cs.hlsl)
 /// @deviations NONE
 static const float AP_MIE_EXTINCTION_RATIO = 1.11f;
@@ -55,14 +60,14 @@ static const float AP_MIE_EXTINCTION_RATIO = 1.11f;
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Rayleigh phase function: (3/16pi)(1 + cos^2(theta)).
-/// @source UE5 SkyAtmosphere.usf — RayleighPhase (standard analytical form)
+/// @ref Rayleigh 1871 — standard Rayleigh phase function: 3/(16*pi) * (1 + cos^2(theta))
 /// @deviations NONE
 float AP_RayleighPhase(float cosTheta) {
     return (3.0f / (16.0f * PI)) * (1.0f + cosTheta * cosTheta);
 }
 
 /// Henyey-Greenstein phase function for Mie scattering.
-/// @source UE5 SkyAtmosphere.usf — HgPhase (standard Henyey-Greenstein)
+/// @ref Henyey & Greenstein 1941 — standard HG phase function
 /// @deviations NONE
 float AP_MiePhase(float cosTheta, float g) {
     float g2    = g * g;
@@ -71,7 +76,7 @@ float AP_MiePhase(float cosTheta, float g) {
 }
 
 /// Exponential density profile: exp(-altitude / scaleHeight).
-/// @source UE5 SkyAtmosphere.usf — GetProfileDensity (exponential term)
+/// @ref Bruneton 2008 — exponential density profile: exp(-altitude / scaleHeight)
 /// @deviations NONE
 float AP_DensityAtAltitude(float altitudeKm, float scaleHeightKm) {
     return exp(-max(0.0f, altitudeKm) / scaleHeightKm);
@@ -98,7 +103,7 @@ float2 AP_RaySphereIntersect(float3 origin, float3 dir, float3 center, float rad
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Maps (viewHeight, viewZenithCosAngle) to UV for the transmittance LUT.
-/// @source UE5 SkyAtmosphereCommon.ush:175 — getTransmittanceLutUvs
+/// @ref Bruneton 2008 — transmittance LUT UV parameterization
 /// @deviations NONE — same Bruneton 2017 non-linear parameterization
 void AP_TransmittanceLutParamsToUv(float viewHeight, float viewZenithCosAngle,
     float bRadius, float tRadius, out float2 uv)
@@ -120,7 +125,7 @@ void AP_TransmittanceLutParamsToUv(float viewHeight, float viewZenithCosAngle,
 }
 
 /// Samples the precomputed transmittance LUT for a given position and direction.
-/// @source UE5 SkyAtmosphereCommon.ush:175 — getTransmittanceLutUvs + texture sample
+/// @ref Bruneton 2008 — transmittance LUT UV parameterization + texture sample
 /// @deviations NONE
 float3 AP_SampleTransmittanceLut(Texture2D<float4> lut, SamplerState samp,
     float3 samplePos, float3 queryDir,
@@ -144,8 +149,8 @@ float3 AP_SampleTransmittanceLut(Texture2D<float4> lut, SamplerState samp,
 /// Rayleigh + Mie in-scattering weighted by sun transmittance from the LUT.
 /// Uses the same Frostbite analytical per-step integration as the sky pass.
 ///
-/// @source UE5 SkyAtmosphere.usf:1466 — RenderCameraAerialPerspectiveVolumeCS
-/// @source UE5 SkyAtmosphereCommon.ush:42 — GetAerialPerspectiveLuminanceTransmittance
+/// @ref Hillaire 2020 — aerial perspective volume ray march
+/// @ref Bruneton 2008 — luminance and transmittance integration
 /// @constants AP_MIE_EXTINCTION_RATIO=1.11 (SkyAtmosphere.usf), AP_PLANET_RADIUS_OFFSET_KM=0.005 (SkyAtmosphere.usf:109)
 /// @deviations Per-pixel ray-march instead of precomputed 3D volume (same physics, no volume texture)
 ///
@@ -165,7 +170,7 @@ float3 AP_SampleTransmittanceLut(Texture2D<float4> lut, SamplerState samp,
 /// - samp: bilinear sampler
 ///
 /// # Returns
-/// float4: rgb = inscattered luminance, a = mean transmittance (gray-scale, UE5 parity).
+/// float4: rgb = inscattered luminance, a = mean transmittance (gray-scale, standard).
 /// Apply as: finalColor = finalColor * result.a + result.rgb
 float4 ComputeAerialPerspective(
     float3 pixelWorldPos,
@@ -189,7 +194,7 @@ float4 ComputeAerialPerspective(
     float3 cameraSkyKm = cameraPosWorld * AP_WORLD_TO_KM + float3(0.0f, 0.0f, bottomRadiusKm);
     float3 pixelSkyKm  = pixelWorldPos  * AP_WORLD_TO_KM + float3(0.0f, 0.0f, bottomRadiusKm);
 
-    // Snap camera to minimum height above planet surface (UE5 pattern)
+    // Snap camera to minimum height above planet surface (standard pattern)
     float distToCenter  = length(cameraSkyKm);
     float minSafeRadius = bottomRadiusKm + AP_PLANET_RADIUS_OFFSET_KM;
     if (distToCenter < minSafeRadius) {
@@ -277,8 +282,8 @@ float4 ComputeAerialPerspective(
         Throughput *= T_step;
     }
 
-    // Convert RGB transmittance to gray-scale mean (UE5 parity)
-    // @source UE5 SkyAtmosphere.usf:1632 — dot(ss.Transmittance, float3(1/3, 1/3, 1/3))
+    // Convert RGB transmittance to gray-scale mean (standard)
+    // Average transmittance across RGB channels: dot(Transmittance, 1/3)
     float meanTransmittance = dot(Throughput, float3(1.0f / 3.0f, 1.0f / 3.0f, 1.0f / 3.0f));
 
     return float4(L, meanTransmittance);

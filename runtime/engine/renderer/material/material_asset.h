@@ -17,10 +17,9 @@
 /// `MaterialInstance`. This allows polymorphic material slot assignment on
 /// mesh components: a slot can hold either a Material or a MaterialInstance.
 ///
-/// # UE5 Equivalent
-/// @source UE5 MaterialInterface.h — UMaterialInterface / UMaterial
-/// UE5 uses a material graph system with unlimited parameters. UzEngine uses
-/// a fixed PBR parameter set matching the most common UE5 material outputs.
+/// # Design Rationale
+/// UzEngine uses
+/// a fixed PBR parameter set matching common PBR material outputs.
 ///
 /// # Thread Safety
 /// NOT thread-safe. Modify from the game thread only. The renderer reads
@@ -65,29 +64,24 @@ struct Material : public MaterialInterface {
 
     // ── Scalar parameters ────────────────────────────────────────────────
 
-    /// @source UE5 MaterialTemplate.ush — BaseColor multiplied by vertex color
     /// Base color tint (linear RGB). Multiplied with the albedo texture sample.
     /// Default (1,1,1) = no tint, texture color used as-is.
     float baseColorTintR = 1.0f;
     float baseColorTintG = 1.0f;
     float baseColorTintB = 1.0f;
 
-    /// @source UE5 Material defaults — Roughness output pin default 0.5
     /// Multiplier applied to the roughness texture sample. Default 1.0 = unmodified.
     /// Range [0, inf) but typically [0, 2]. Values > 1 increase roughness.
     float roughnessMultiplier = 1.0f;
 
-    /// @source UE5 Material defaults — Metallic output pin default 0.0
     /// Multiplier applied to the metallic texture sample. Default 1.0 = unmodified.
     /// Range [0, inf) but typically [0, 2].
     float metallicMultiplier = 1.0f;
 
-    /// @source UE5 Material.FlattenNormalMap — NormalIntensity parameter
     /// Normal map strength. 0 = flat surface (ignores normal map), 1 = full effect.
     /// Interpolates: finalNormal.xy = normalTS.xy * normalIntensity.
     float normalIntensity = 1.0f;
 
-    /// @source UE5 Material defaults — AO output pin default 1.0
     /// AO map strength. Lerps between 1.0 (no occlusion) and the AO texture value.
     /// ao_final = lerp(1.0, ao_texture, aoIntensity). Default 1.0 = full AO effect.
     float aoIntensity = 1.0f;
@@ -98,7 +92,6 @@ struct Material : public MaterialInterface {
 
     // ── Emissive parameters ──────────────────────────────────────────────
 
-    /// @source UE5 BasePassPixelShader.usf:1480 — GetMaterialEmissive
     /// Emissive tint color (linear RGB). Default (0,0,0) = no emission.
     float emissiveColorR = 0.0f;
     float emissiveColorG = 0.0f;
@@ -109,7 +102,6 @@ struct Material : public MaterialInterface {
 
     // ── UV Transform ─────────────────────────────────────────────────────
 
-    /// @source UE5 MaterialTemplate.ush — TexCoord * TextureScale + TextureOffset
     /// Texture tiling (scale) and offset. Applied to UV coordinates before sampling.
     /// Default (1,1,0,0) = unmodified UVs.
     float uvScaleX  = 1.0f;   ///< Texture tiling X (1.0 = no tiling).
@@ -126,9 +118,8 @@ struct Material : public MaterialInterface {
     /// Used for foliage, fences, grates, hair cards.
     bool alphaTest = false;
 
-    /// @source UE5 Material.GetOpacityMaskClipValue() — default 0.3333
     /// Alpha clip threshold for masked blend mode. Pixels with alpha below this
-    /// value are discarded. UE5 default is 0.3333.
+    /// value are discarded. Default is 0.3333.
     float alphaClipThreshold = 0.3333f;
 
     // ── GPU resource indices (populated by renderer, read-only for game code) ──

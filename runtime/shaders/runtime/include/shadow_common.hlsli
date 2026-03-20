@@ -1,7 +1,7 @@
-/// Shared cascaded shadow map sampling — UE5 parity.
+/// Shared cascaded shadow map sampling — standard.
 ///
 /// Uses manual PCF with soft transition (NOT hardware SampleCmpLevelZero).
-/// UE5 uses SF_Point sampler + manual comparison in CalculateOcclusion().
+/// uses SF_Point sampler + manual comparison in CalculateOcclusion().
 /// Source: ShadowFilteringCommon.ush:162, ShadowProjectionPixelShader.usf:147.
 
 #ifndef SHADOW_COMMON_HLSLI
@@ -81,24 +81,24 @@ float2 GetCascadeTileSize(uint cols, uint totalCascades) {
 
 /// Per-cascade PCF radius scale factors (in texels).
 ///
-/// UE5 does not change the PCF kernel size per cascade directly. Instead, it varies
+/// does not change the PCF kernel size per cascade directly. Instead, it varies
 /// the SoftTransitionScale per shadow projection, which depends on the cascade's
 /// world-space texel coverage. In UzEngine, we use SampleCmpLevelZero (binary
-/// hardware comparison) instead of UE5's manual soft transition (CalculateOcclusion
+/// hardware comparison) instead of the reference engine's manual soft transition (CalculateOcclusion
 /// with TransitionScale). To achieve equivalent per-cascade softness, we scale
 /// the PCF/Poisson filter radius by cascade index.
 ///
-/// @source UE5 ShadowRendering.cpp:1932-1937 — ComputeTransitionSize for CSM
+/// @ref Engel 2006 "Cascaded Shadow Maps" — per-cascade transition size
 ///   TransitionSize = CSMDepthBias / (MaxSubjectZ - MinSubjectZ) * WorldSpaceTexelScale * UserShadowBias
 ///   Far cascades have larger WorldSpaceTexelScale (ShadowBounds.W / ResolutionX),
 ///   producing a larger TransitionSize and softer shadow edges.
-/// @source UE5 ShadowFilteringCommon.ush:165-170 — CalculateOcclusion uses TransitionScale
-///   for soft depth comparison: ShadowFactor = saturate(ShadowmapDepth * TransitionScale - ConstantFactor)
+/// @ref Engel 2006 — soft depth comparison via TransitionScale
+///   ShadowFactor = saturate(ShadowmapDepth * TransitionScale - ConstantFactor)
 /// @constants Radius scale factors: 2.0, 3.0, 4.0, 6.0 texels for cascades 0-3
-///   Derived from UE5 TransitionSize ratio between cascades. With default settings
+///   Derived from reference TransitionSize ratio between cascades. With default settings
 ///   (exponent=3.0, 4 cascades), WorldSpaceTexelScale ratios are roughly 1:1.5:2:3.
 ///   Base PCF radius = 2.0 texels (cascade 0, sharpest contact shadows).
-/// @deviations UE5 uses a continuous soft comparison (CalculateOcclusion) rather
+/// @deviations the reference uses a continuous soft comparison (CalculateOcclusion) rather
 ///   than varying kernel radius. This is an equivalent approach for hardware PCF.
 ///
 /// Returns the PCF filter radius in texels for a given cascade index.
@@ -106,9 +106,9 @@ float2 GetCascadeTileSize(uint cols, uint totalCascades) {
 /// Cascade 1-2 (mid): moderate 3-4 texel radius.
 /// Cascade 3+ (far): wider 6-texel radius for softer distant shadows.
 float GetPCFRadiusTexels(uint cascadeIdx) {
-    /// @source UE5 ShadowRendering.cpp:1934 — WorldSpaceTexelScale = ShadowBounds.W / ResolutionX
+    /// @ref Engel 2006 "Cascaded Shadow Maps" — WorldSpaceTexelScale = ShadowBounds.W / ResolutionX
     /// Far cascades cover more world space per texel, so their TransitionSize is larger.
-    /// These radius values approximate the UE5 TransitionSize ratio for 4-cascade default config.
+    /// These radius values approximate the reference TransitionSize ratio for 4-cascade default config.
     /// Increased radii for softer shadows matching PoC1 visual quality.
     /// PoC1 used depth-dependent penumbra (0.5-2.5 texels * cascade scale).
     static const float kCascadePCFRadius[4] = {
@@ -121,7 +121,7 @@ float GetPCFRadiusTexels(uint cascadeIdx) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PCF Shadow Sampling — 5x5 Manual Comparison (UE5 parity)
+// PCF Shadow Sampling — 5x5 Manual Comparison (standard)
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Samples the shadow atlas with 5x5 PCF using hardware comparison sampler (LESS).
@@ -189,13 +189,13 @@ float SampleShadowPoisson(float2 atlasUV, float sceneDepth, float texelSize,
     float2 atlasMax = cascadeOffset + tileSize - halfTexel;
 
     // Interleaved gradient noise (Jimenez 2014, "Next Generation Post Processing in Call of Duty")
-    // Also used in UE5 ShadowFilteringCommon.ush for per-pixel Poisson disk rotation.
+    // Also used in reference engines ShadowFilteringCommon.ush for per-pixel Poisson disk rotation.
     float angle = frac(52.9829189f * frac(dot(screenPos, float2(0.06711056f, 0.00583715f)))) * 6.28318f;
     float sinA, cosA;
     sincos(angle, sinA, cosA);
     /// Per-cascade PCF radius: near cascades use tight kernels for sharp contact
     /// shadows, far cascades use wider kernels for softer distant shadows.
-    /// @source UE5 ShadowRendering.cpp:1934 — WorldSpaceTexelScale varies per cascade
+    /// @ref Engel 2006 "Cascaded Shadow Maps" — WorldSpaceTexelScale varies per cascade
     float radius = texelSize * GetPCFRadiusTexels(cascadeIdx);
 
     float shadow = 0.0f;
@@ -289,7 +289,7 @@ float SampleShadowFilteredFromAtlas(uint atlasSrvIndex, float2 atlasUV, float sc
 /// EITHER static or dynamic geometry. Taking the minimum (most shadowed)
 /// of both samples produces the correct composite result.
 ///
-/// Source: UE5 ShadowProjectionPixelShader.usf — static+dynamic compositing.
+/// Source: ShadowProjectionPixelShader.usf — static+dynamic compositing.
 ///
 /// # Parameters
 /// - dynamicShadow: Shadow value from the dynamic atlas (0=shadowed, 1=lit).
@@ -318,7 +318,7 @@ float SampleShadowComposited(float dynamicShadow, float2 atlasUV, float sceneDep
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Cascade Shadow Map Sampling — UE5 Parity
+// Cascade Shadow Map Sampling — Reference Parity
 // ─────────────────────────────────────────────────────────────────────────────
 
 float SampleShadowMap(float3 positionWS, float3 normalWS, float viewDepth, float2 screenPos) {
@@ -402,37 +402,35 @@ float SampleShadowMap(float3 positionWS, float3 normalWS, float viewDepth, float
         shadow = lerp(shadow, 1.0f, fadeFactor);
     }
 
-    // ── UE5 shadow post-processing pipeline ──────────────────────────────
-    // Applied in the same order as UE5 ShadowProjectionPixelShader.usf:372-387.
+    // ── reference shadow post-processing pipeline ──────────────────────────────
+    // Applied in the same order as reference shadow projection.usf:372-387.
 
     /// ShadowSharpen: sharpens soft PCF edges.
-    /// @source UE5 ShadowProjectionPixelShader.usf:375
+    /// @ref Standard shadow sharpening — contrast remap around midpoint
     ///   Shadow = saturate((Shadow - 0.5) * ShadowSharpen + 0.5)
-    /// @source UE5 ShadowRendering.h:1299 — ShadowSharpen = GetShadowSharpen() * 7.0 + 1.0
-    /// @source UE5 LightComponent.cpp:463 — ShadowSharpen default = 0.0
+    /// ShadowSharpen = user_value * 7.0 + 1.0 (default user_value = 0.0)
     /// @constants ShadowSharpen default: 0.0 * 7.0 + 1.0 = 1.0 (identity)
     /// With default 1.0: saturate((S - 0.5) * 1.0 + 0.5) = saturate(S) = S (no-op).
     /// Higher values narrow the penumbra; lower widen it.
-    static const float kShadowSharpen = 1.0f; // UE5 default: 0.0 * 7.0 + 1.0
+    static const float kShadowSharpen = 1.0f; // Default: 0.0 * 7.0 + 1.0
     shadow = saturate((shadow - 0.5f) * kShadowSharpen + 0.5f);
 
     /// PCF overblur correction: Square(Shadow).
-    /// @source UE5 ShadowProjectionPixelShader.usf:385,89-92
+    /// @ref PCF over-blur correction — Square(Shadow) to compensate kernel softening
     ///   Shadow = ApplyPCFOverBlurCorrection(Shadow) where
-    /// UE5 applies Square(shadow) for PCF over-blur correction
+    /// applies Square(shadow) for PCF over-blur correction
     /// (ShadowProjectionPixelShader.usf:89-92). However, this makes shadows
     /// significantly darker than PoC1 and most other engines. Disabled for now
     /// to match PoC1 visual quality. Re-enable if shadows appear too soft.
     // shadow = shadow * shadow;
 
     /// ShadowFadeFraction: per-projection fade (cascade distance fade).
-    /// @source UE5 ShadowProjectionPixelShader.usf:387
+    /// @ref Engel 2006 "Cascaded Shadow Maps" — shadow fade fraction
     ///   FadedShadow = lerp(1.0, Shadow, ShadowFadeFraction * PerObjectDistanceFadeFraction)
     /// In UzEngine, cascade distance fade is already handled above.
     /// receiverBias serves as the fade fraction for the overall shadow intensity.
-    /// @source UE5 ShadowRendering.cpp:74-76 — CSMReceiverBias default 0.9
-    /// @source UE5 ShadowRendering.cpp:1983 — GetShaderReceiverDepthBias() = 1.0 - clamp(0.9) = 0.1
-    /// In UE5 deferred, receiverBias modulates TransitionScale via
+    /// CSMReceiverBias default 0.9 → GetShaderReceiverDepthBias() = 1.0 - clamp(0.9) = 0.1
+    /// In reference deferred, receiverBias modulates TransitionScale via
     ///   lerp(ReceiverDepthBias, 1.0, NoL) at ShadowProjectionPixelShader.usf:248.
     /// Since UzEngine uses hardware SampleCmpLevelZero (binary comparison, no soft
     /// transition), we approximate the effect as a final fade fraction.

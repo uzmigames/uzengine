@@ -8,7 +8,7 @@
 /// Materials are referenced by a stable uint32_t ID. The same file path always
 /// returns the same ID (cached). IDs are NOT reused after UnloadMaterial().
 ///
-/// @source UE5 MaterialShared.h — FMaterialResourceCollection pattern
+/// Material resource collection pattern — caches compiled material graphs.
 ///
 /// # Thread Safety
 /// NOT thread-safe. Call from the game thread only, consistent with
@@ -43,7 +43,7 @@ inline constexpr uint32_t kInvalidMaterialId = UINT32_MAX;
 /// and supports hot-reload. Materials are referenced by path and shared across
 /// all objects using the same material.
 ///
-/// @source UE5 MaterialShared.h — FMaterialResourceCollection
+/// Central material resource collection — owns, compiles, and caches materials.
 class MaterialManager {
 public:
     MaterialManager() = default;

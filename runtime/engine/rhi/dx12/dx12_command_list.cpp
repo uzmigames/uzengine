@@ -255,6 +255,21 @@ void DX12CommandList::Execute() {
 // Pipeline and Resource Binding
 // ─────────────────────────────────────────────────────────────────────────────
 
+/// Maps RHIPrimitiveTopology to D3D_PRIMITIVE_TOPOLOGY for IASetPrimitiveTopology.
+/// Note: this is the IA-level topology (TriangleList, LineList, etc.), NOT the
+/// PSO-level D3D12_PRIMITIVE_TOPOLOGY_TYPE (Triangle, Line, Point).
+/// @source DX12 docs — ID3D12GraphicsCommandList::IASetPrimitiveTopology
+static D3D_PRIMITIVE_TOPOLOGY ToDx12Topology(RHIPrimitiveTopology topo) {
+    switch (topo) {
+        case RHIPrimitiveTopology::TriangleList:  return D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+        case RHIPrimitiveTopology::TriangleStrip: return D3D_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP;
+        case RHIPrimitiveTopology::LineList:       return D3D_PRIMITIVE_TOPOLOGY_LINELIST;
+        case RHIPrimitiveTopology::LineStrip:      return D3D_PRIMITIVE_TOPOLOGY_LINESTRIP;
+        case RHIPrimitiveTopology::PointList:      return D3D_PRIMITIVE_TOPOLOGY_POINTLIST;
+        default:                                   return D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+    }
+}
+
 void DX12CommandList::SetPipeline(RHIPipelineHandle pipeline) {
     if (!pipeline.IsValid()) {
         UZ_LOG(RHI, Warning, "SetPipeline — invalid pipeline handle");
@@ -278,6 +293,12 @@ void DX12CommandList::SetPipeline(RHIPipelineHandle pipeline) {
             m_cmdList->SetComputeRootSignature(rootSig);
         } else {
             m_cmdList->SetGraphicsRootSignature(rootSig);
+
+            // D3D12 requires the IA primitive topology to be set on the command
+            // list — the PSO only declares the topology TYPE (Triangle/Line/Point),
+            // not the actual topology (TriangleList/TriangleStrip/etc.).
+            // Without this, DrawIndexedInstanced fails with UNDEFINED topology.
+            m_cmdList->IASetPrimitiveTopology(ToDx12Topology(dx12Pipeline->desc.topology));
         }
     }
 }

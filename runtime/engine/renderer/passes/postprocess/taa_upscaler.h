@@ -8,7 +8,6 @@
 /// Screen percentage is fixed at 100% (no upscaling). For sub-native
 /// rendering with temporal upscale, use TsrUpscaler instead.
 ///
-/// @source UE5 TemporalAA.cpp:395-396 — FTemporalAACS
 
 #pragma once
 
@@ -29,7 +28,6 @@ class CBRingAllocator;
 /// resources — the history texture ping-pong is managed by SceneRenderer
 /// and the compute pipeline is owned by PipelineLibrary.
 ///
-/// @source UE5 TemporalAA.cpp:395-396 — FTemporalAACS
 class TaaUpscaler final : public ITemporalUpscaler {
 public:
     TaaUpscaler() = default;

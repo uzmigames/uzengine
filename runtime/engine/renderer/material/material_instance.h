@@ -14,13 +14,11 @@
 /// - Explicit flags are clearer and cheaper (bool vs isnan() per param)
 /// - Flags allow distinguishing "explicitly set to parent's default" from "inherited"
 ///
-/// # UE5 Equivalent
-/// @source UE5 MaterialInstanceDynamic.h — UMaterialInstanceDynamic
-/// UE5 uses sparse FHashMap<FName, value> for overrides. UzEngine uses a fixed
+/// # Design Rationale
+/// MaterialInstance uses a fixed
 /// parameter set with bool flags — simpler, zero allocations, cache-friendly.
 ///
 /// # Inheritance Chain
-/// @source UE5 MaterialInstance.h:23 — Parent is UMaterialInterface*
 /// The `parent` pointer is `MaterialInterface*` (not `Material*`), allowing
 /// multi-level chaining: MaterialInstance -> MaterialInstance -> Material.
 /// Each level only stores its own overrides; queries propagate up the chain
@@ -73,7 +71,6 @@ struct MaterialInstance : public MaterialInterface {
     /// Sets the parent material providing default values for non-overridden
     /// parameters. Must not be null when calling any getter.
     ///
-    /// @source UE5 MaterialInstance.h:23 — Parent is UMaterialInterface*
     void SetParent(MaterialInterface* p) noexcept { parent_ = p; }
 
     /// Returns the parent material, or nullptr if none is set.
@@ -367,7 +364,6 @@ struct MaterialInstance : public MaterialInterface {
     [[nodiscard]] const std::string& GetEffectiveEmissivePath() const noexcept   { return GetEmissivePath(); }
 
 private:
-    /// @source UE5 MaterialInstance.h:23 — Parent is UMaterialInterface*
     /// Allows chaining: MaterialInstance -> MaterialInstance -> Material.
     MaterialInterface* parent_ = nullptr;
 

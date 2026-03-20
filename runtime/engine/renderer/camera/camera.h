@@ -204,9 +204,9 @@ private:
     // ── Default projection constants ────────────────────────────────────────
     static constexpr float kDefaultFovY       = 0.7854f;  ///< XM_PIDIV4 (~45 degrees)
     static constexpr float kDefaultAspect     = 16.f / 9.f;
-    static constexpr float kDefaultNearPlane  = 10.0f;     ///< 10 cm (UE5 parity: 1 unit = 1 cm)
-    static constexpr float kDefaultFarPlane   = 100000.f;  ///< 100000 cm = 1 km (UE5 parity)
-    static constexpr float kDefaultOrthoSize  = 1000.f;  ///< 10m in cm (UE5 parity)
+    static constexpr float kDefaultNearPlane  = 10.0f;     ///< 10 cm (standard: 1 unit = 1 cm)
+    static constexpr float kDefaultFarPlane   = 100000.f;  ///< 100000 cm = 1 km (standard)
+    static constexpr float kDefaultOrthoSize  = 1000.f;  ///< 10m in cm (standard)
 
     ProjectionMode m_projMode = ProjectionMode::Perspective;
     float m_fovY = kDefaultFovY;

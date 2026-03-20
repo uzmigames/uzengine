@@ -1,14 +1,14 @@
 /// Sky atmosphere pixel shader — Hillaire 2020 single-scatter approximation.
 ///
-/// Follows UE5 SkyAtmosphere coordinate conventions:
-/// - All distances in KILOMETERS (1 world unit = 1 centimeter = 0.00001 km, UE5 parity)
+/// Follows industry-standard SkyAtmosphere coordinate conventions:
+/// - All distances in KILOMETERS (1 world unit = 1 centimeter = 0.00001 km, standard)
 /// - Planet center at (0, 0, 0) in sky-space; camera offset by bottomRadiusKm
 /// - Camera snapped to minimum 5m above planet surface (prevents near-surface artifacts)
 /// - Light direction points TOWARD the sun (PerFrameCB.lightDir = toward-sun direction)
 /// - Scattering coefficients in km^-1
 ///
 /// # Integration Method
-/// Uses Frostbite analytical per-step integration (same as UE5 SkyAtmosphere.usf):
+/// Uses Frostbite analytical per-step integration (same as reference SkyAtmosphere.usf):
 ///   Sint = (scatter - scatter * exp(-ext * dt)) / max(ext, eps)
 ///   L   += Throughput * Sint
 ///   T   *= exp(-ext * dt)
@@ -45,7 +45,7 @@ struct SkyIndices {
     uint depthIdx;
     uint transmittanceLutIdx;       // RGBA16F 256x64 precomputed transmittance LUT
     uint multiScatteringLutIdx;     // R11G11B10F 32x32 multi-scattering LUT
-    uint _pad1;
+    uint apVolumeSrvIdx;            // SRV for 32x32x16 RGBA16F AP volume (0xFFFFFFFF = none)
 };
 ConstantBuffer<SkyIndices> skyIndices : register(b0);
 #endif
@@ -86,9 +86,9 @@ cbuffer SkyAtmosphereCB : register(b2) {
     float  mieAbsorptionScale;      // Artistic multiplier for Mie absorption
     float  mieAbsorption;           // Mie absorption coefficient (km^-1)
     float4 skyLuminanceFactor;      // Per-channel sky brightness art direction (default 1,1,1)
-    // ── Ozone absorption (UE5 "Other Absorption") ─────────────────────────
-    // @source UE5 SkyAtmosphereCommon.ush:316-318 — SampleAtmosphereMediumRGB
-    // @source UE5 SkyAtmosphereCommonData.h:38-42 — AbsorptionDensity tent coefficients
+    // ── Ozone absorption (reference "Other Absorption") ─────────────────────────
+    // @ref SampleAtmosphereMediumRGB
+    // @ref AbsorptionDensity tent coefficients
     float4 ozoneAbsorptionPacked;   // xyz = ozone absorption (km^-1), w = layerWidth (km)
     float  ozoneLinTerm0;           // Linear coefficient for h < layerWidth
     float  ozoneConstTerm0;         // Constant term for h < layerWidth
@@ -108,7 +108,7 @@ Texture2D<float4> multiScatteringLut   : register(t2); // 32x32 R11G11B10F multi
 SamplerState linearSampler : register(s0);
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Constants — UE5 convention
+// Constants — standard convention
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Local aliases for unit constants (from units.hlsli).
@@ -116,8 +116,8 @@ static const float WORLD_TO_KM            = UZ_CM_TO_KM;
 static const float PLANET_RADIUS_OFFSET_KM = UZ_PLANET_RADIUS_OFFSET_KM;
 static const float EXT_EPS                 = UZ_EXTINCTION_EPS;
 
-/// @source UE5 SkyAtmosphere.usf:1039 — SkyAtmosphere.SampleCountMax (CB parameter)
-/// UE5 uses variable sample count per ray (lerp between Min/Max based on ray length).
+/// @ref SkyAtmosphere.SampleCountMax (CB parameter)
+/// uses variable sample count per ray (lerp between Min/Max based on ray length).
 /// 32 is the typical MaxSampleCount for the render sky view pass.
 static const int NUM_STEPS_VIEW  = 32;
 
@@ -142,8 +142,8 @@ float DensityAtAltitude(float altitudeKm, float scaleHeightKm) {
     return exp(-max(0.0f, altitudeKm) / scaleHeightKm);
 }
 
-/// Ozone density at a given altitude using the UE5 tent distribution.
-/// @source UE5 SkyAtmosphereCommon.ush:316-318 — SampleAtmosphereMediumRGB
+/// Ozone density at a given altitude using the reference tent distribution.
+/// @ref SampleAtmosphereMediumRGB
 /// @constants ozoneLayerWidth=25.0 (SkyAtmosphereCommonData.cpp:38)
 /// @deviations NONE
 float OzoneDensityAtAltitude(float altKm) {
@@ -153,7 +153,7 @@ float OzoneDensityAtAltitude(float altKm) {
 }
 
 /// Samples the precomputed multi-scattering LUT.
-/// @source UE5 SkyAtmosphere.usf:337-343 — GetMultipleScattering
+/// @ref GetMultipleScattering
 /// @constants UV mapping: x = dot(up,sunDir)*0.5+0.5, y = (h-bR)/(tR-bR)
 /// @deviations NONE
 float3 SampleMultiScatteringLut(Texture2D<float4> lut, SamplerState samp,
@@ -259,8 +259,8 @@ float4 main(FSInput input) : SV_Target {
         discard;
 
     // ── Reconstruct world-space ray direction ────────────────────────────────
-    /// @source UE5 Common.ush — TranslatedWorldToClip (camera-relative rendering)
-    /// @deviations Near/far clip subtraction used instead of UE5's TranslatedWorld
+    /// @ref TranslatedWorldToClip (camera-relative rendering)
+    /// @deviations Near/far clip subtraction used instead of the reference engine's TranslatedWorld
     ///   system. Both achieve the same goal: the camera translation cancels in the
     ///   subtraction, eliminating catastrophic cancellation at large world coords.
     float2 ndc = uv * 2.0f - 1.0f;
@@ -285,7 +285,7 @@ float4 main(FSInput input) : SV_Target {
     // cameraSkyKm = cameraPos_cm * 0.00001 + (0, 0, bottomRadiusKm)
     float3 cameraSkyKm = cameraPos.xyz * WORLD_TO_KM + float3(0.0f, 0.0f, bottomRadiusKm);
 
-    // ── Snap camera to minimum 5m above planet surface (UE5 pattern) ─────────
+    // ── Snap camera to minimum 5m above planet surface (standard pattern) ─────────
     float distToCenter  = length(cameraSkyKm);
     float minSafeRadius = bottomRadiusKm + PLANET_RADIUS_OFFSET_KM;
     if (distToCenter < minSafeRadius) {
@@ -303,10 +303,27 @@ float4 main(FSInput input) : SV_Target {
     float tStart = max(atmoHit.x, 0.0f);
     float tEnd   = atmoHit.y;
 
-    // Clip to planet surface if ray points downward
+    // Check planet intersection (used for ground contribution decision, NOT for clipping).
+    // When the camera is near the surface, clipping at groundHit truncates the ray to
+    // near-zero length, killing inscattering for below-horizon pixels. Instead, let the
+    // ray march through the full atmosphere thickness — density at negative altitude is
+    // clamped to max by DensityAtAltitude(max(0,alt)), producing correct inscattering.
+    // At orbital altitude (> 10 km), clip normally for physical ground contribution.
     float2 groundHit = RaySphereIntersect(cameraSkyKm, rayDir, float3(0, 0, 0), bottomRadiusKm);
-    if (groundHit.x > 0.0f)
-        tEnd = min(tEnd, groundHit.x);
+    float cameraAltForClip = length(cameraSkyKm) - bottomRadiusKm;
+    if (groundHit.x > 0.0f) {
+        if (cameraAltForClip > 10.0f) {
+            // Orbital: clip at planet surface for physical ground contribution
+            tEnd = min(tEnd, groundHit.x);
+        } else {
+            // Ground level: don't clip at planet surface, but cap the ray march
+            // distance to prevent the path from spanning the full atmosphere diameter
+            // (hundreds of km) which would waste the 32 steps on a huge interval.
+            // Cap at 200 km — enough to capture all inscattering while keeping
+            // step size small enough for accurate density sampling near the surface.
+            tEnd = min(tEnd, tStart + 200.0f);
+        }
+    }
 
     float stepLenKm = (tEnd - tStart) / float(NUM_STEPS_VIEW);
     if (stepLenKm <= 0.0f)
@@ -327,7 +344,7 @@ float4 main(FSInput input) : SV_Target {
     // Artistic scattering coefficients — used for in-scattering only.
     // rayleighScatteringScale / mieScatteringScale boost or reduce the
     // amount of light scattered toward the camera without changing the
-    // extinction (optical depth). This is how UE5 implements its artistic
+    // extinction (optical depth). This is how reference implements its artistic
     // scale parameters: they affect "how much color" the sky has, not
     // "how opaque" the atmosphere is.
     float3 betaR_art = rayleighScattering.xyz * rayleighScatteringScale;
@@ -336,7 +353,7 @@ float4 main(FSInput input) : SV_Target {
     float  scaleHR = rayleighScattering.w;   // Rayleigh scale height (km)
     float  scaleHM = mieScattering.z;        // Mie scale height (km)
 
-    // ── Frostbite analytical integration (UE5 SkyAtmosphere.usf pattern) ────
+    // ── Frostbite analytical integration (Bruneton atmosphere pattern) ────
     // For each step we compute the analytical integral of scattered luminance
     // over the step interval, weighting by the current path transmittance.
     //
@@ -359,7 +376,7 @@ float4 main(FSInput input) : SV_Target {
         float densR = DensityAtAltitude(altKm, scaleHR);
         float densM = DensityAtAltitude(altKm, scaleHM);
 
-        // @source UE5 SkyAtmosphereCommon.ush:310-336 — SampleAtmosphereMediumRGB
+        // @ref SampleAtmosphereMediumRGB
         // Extinction uses PHYSICAL coefficients — must match transmittance LUT.
         // Rayleigh extinction = betaR_phys (scattering IS extinction for Rayleigh).
         // Mie extinction = betaM_phys * 1.11 (absorption ratio included).
@@ -384,7 +401,7 @@ float4 main(FSInput input) : SV_Target {
 #endif
 
         // ── Multi-scattering contribution ───────────────────────────
-        // @source UE5 SkyAtmosphere.usf:651-655,697 — GetMultipleScattering + S integration
+        // @ref GetMultipleScattering + S integration
         // Multi-scattering is NOT phase-weighted (isotropic) and NOT affected by
         // PlanetShadow or TransmittanceToLight. It adds diffuse light after 1st scatter.
         // Total scattering = Rayleigh + Mie (physical, not artistic, for energy conservation).
@@ -408,7 +425,7 @@ float4 main(FSInput input) : SV_Target {
         // Physical total scattering (for multi-scattering weighting)
         float3 totalScatter = betaR_phys * densR + betaM_phys * densM;
 
-        // @source UE5 SkyAtmosphere.usf:697
+        // @ref implementation detail
         // S = sunIlluminance * (sunTransmittance * phaseScattering + multiScatteredLum * totalScattering)
         float3 singleScatter = sunT * (scatterR + scatterM);
         float3 multiScatter  = multiScatteredLum * totalScatter;
@@ -426,16 +443,15 @@ float4 main(FSInput input) : SV_Target {
     // Default (1,1,1) = physically correct. Can be used to warm/cool the sky.
     L *= skyLuminanceFactor.xyz;
 
-    // ── Ground contribution ─────────────────────────────────────────────────
-    // When the view ray hits the planet surface, add Lambertian reflection of
-    // sunlight attenuated by atmosphere transmittance (both sun→ground and
-    // ground→camera). This gives the ground its base color when viewed from
-    // above or at the horizon. UE5: SkyAtmosphere.usf "PlanetSurfaceTransmittance".
-    if (groundHit.x > 0.0f) {
+    // ── Ground contribution (orbital/aerial view only) ─────────────────────
+    // @ref implementation detail
+    // At ground level (< 10 km), the ray march runs through the full atmosphere
+    // without ground clipping, producing correct Rayleigh inscattering for
+    // below-horizon pixels. No ground contribution needed.
+    // At orbital altitude (> 10 km), add Lambertian planet surface reflection.
+    if (groundHit.x > 0.0f && cameraAltForClip > 10.0f) {
         float3 groundPosKm = cameraSkyKm + rayDir * groundHit.x;
         float3 groundNormal = normalize(groundPosKm);
-
-        // Sun-to-ground transmittance via LUT
         float3 groundSunT;
 #ifdef UZ_BINDLESS
         Texture2D<float4> tLutGnd = ResourceDescriptorHeap[skyIndices.transmittanceLutIdx];
@@ -445,13 +461,9 @@ float4 main(FSInput input) : SV_Target {
         groundSunT = SampleTransmittanceLut(transmittanceLut, linearSampler,
             groundPosKm, sunDir, bottomRadiusKm, topRadiusKm);
 #endif
-
-        // Lambertian BRDF: albedo / π × max(dot(N, L), 0)
-        float NdotL = max(0.0f, dot(groundNormal, sunDir));
+        float NdotL = saturate(dot(groundNormal, sunDir));
         float3 groundRadiance = groundAlbedo.xyz * (1.0f / PI) * NdotL
                               * sunIlluminance.xyz * groundSunT;
-
-        // Attenuate by path transmittance from ground to camera
         L += Throughput * groundRadiance;
     }
 

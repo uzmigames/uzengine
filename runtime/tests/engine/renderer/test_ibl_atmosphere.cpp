@@ -192,13 +192,13 @@ TEST(SHProjection, AllBlackCubemap_AllCoefficientsAreZero) {
         EXPECT_FLOAT_EQ(sh.coeffs[i].x, 0.0f) << "coeffs[" << i << "].x should be 0 for black input";
         EXPECT_FLOAT_EQ(sh.coeffs[i].y, 0.0f) << "coeffs[" << i << "].y should be 0 for black input";
         EXPECT_FLOAT_EQ(sh.coeffs[i].z, 0.0f) << "coeffs[" << i << "].z should be 0 for black input";
-        // coeffs[6].w is always 1.0 (UE5 sentinel), all other .w fields should be 0
+        // coeffs[6].w is always 1.0 (format sentinel), all other .w fields should be 0
         if (i < 6) {
             EXPECT_FLOAT_EQ(sh.coeffs[i].w, 0.0f) << "coeffs[" << i << "].w should be 0 for black input";
         }
     }
-    // UE5 packing sets coeffs[6].w = 1.0 unconditionally
-    EXPECT_FLOAT_EQ(sh.coeffs[6].w, 1.0f) << "coeffs[6].w is always 1.0 (UE5 sentinel)";
+    // packing sets coeffs[6].w = 1.0 unconditionally
+    EXPECT_FLOAT_EQ(sh.coeffs[6].w, 1.0f) << "coeffs[6].w is always 1.0 (format sentinel)";
 }
 
 TEST(SHProjection, UniformWhiteCubemap_RGBChannelsAreEqual) {
@@ -358,7 +358,7 @@ TEST(SHProjection, SingleFaceOnly_ResultIsFinite) {
 
 TEST(SHProjection, AllFacesNull_ResultIsAllZero) {
     // All-null face array: totalWeight remains zero, no accumulation occurs.
-    // PackSHToUE5Format is called with zero inputs — result should be all-zero.
+    // PackSHToCompactFormat is called with zero inputs — result should be all-zero.
     const float* facePtrs[6] = {};
 
     SHCoefficients sh = ProjectCubemapToSH(facePtrs, 4u);
@@ -367,17 +367,17 @@ TEST(SHProjection, AllFacesNull_ResultIsAllZero) {
         EXPECT_FLOAT_EQ(sh.coeffs[i].x, 0.0f) << "coeffs[" << i << "].x";
         EXPECT_FLOAT_EQ(sh.coeffs[i].y, 0.0f) << "coeffs[" << i << "].y";
         EXPECT_FLOAT_EQ(sh.coeffs[i].z, 0.0f) << "coeffs[" << i << "].z";
-        // coeffs[6].w is always 1.0 (UE5 sentinel)
+        // coeffs[6].w is always 1.0 (format sentinel)
         if (i < 6) {
             EXPECT_FLOAT_EQ(sh.coeffs[i].w, 0.0f) << "coeffs[" << i << "].w";
         }
     }
-    EXPECT_FLOAT_EQ(sh.coeffs[6].w, 1.0f) << "coeffs[6].w is always 1.0 (UE5 sentinel)";
+    EXPECT_FLOAT_EQ(sh.coeffs[6].w, 1.0f) << "coeffs[6].w is always 1.0 (format sentinel)";
 }
 
 TEST(SHProjection, LastCoeffW_IsAlwaysOne_ForNonzeroInput) {
-    // PackSHToUE5Format always sets out[6].w = 1.0f regardless of input.
-    // This matches the UE5 SkyIrradianceEnvironmentMap[6].w = 1 sentinel.
+    // PackSHToCompactFormat always sets out[6].w = 1.0f regardless of input.
+    // This matches the reference SkyIrradianceEnvironmentMap[6].w = 1 sentinel.
     const uint32_t faceSize      = 4u;
     const uint32_t floatsPerFace = faceSize * faceSize * 4u;
     std::vector<float> pixels(floatsPerFace * 6u);
@@ -395,9 +395,9 @@ TEST(SHProjection, LastCoeffW_IsAlwaysOne_ForNonzeroInput) {
 
     SHCoefficients sh = ProjectCubemapToSH(facePtrs, faceSize);
 
-    // UE5 packing convention: coeffs[6].w is always 1.0 (shader uses it as scale)
+    // packing convention: coeffs[6].w is always 1.0 (shader uses it as scale)
     EXPECT_FLOAT_EQ(sh.coeffs[6].w, 1.0f)
-        << "coeffs[6].w must be 1.0 (UE5 SH packing sentinel)";
+        << "coeffs[6].w must be 1.0 (reference SH packing sentinel)";
 }
 
 TEST(SHProjection, FaceSize1_SingleTexelPerFace_IsFinite) {
@@ -536,13 +536,13 @@ TEST(AutoExposure, DefaultSettingsExposureBias) {
 
 TEST(AutoExposure, DefaultSettingsMinBrightness) {
     AutoExposure ae;
-    /// @source UE5 Scene.cpp:196 — histogram method default
+    /// Histogram method default minBrightness = 0.03
     EXPECT_FLOAT_EQ(ae.settings.minBrightness, 0.03f);
 }
 
 TEST(AutoExposure, DefaultSettingsMaxBrightness) {
     AutoExposure ae;
-    /// @source UE5 Scene.cpp:197 — histogram method default
+    /// Histogram method default maxBrightness = 8.0
     EXPECT_FLOAT_EQ(ae.settings.maxBrightness, 8.0f);
 }
 

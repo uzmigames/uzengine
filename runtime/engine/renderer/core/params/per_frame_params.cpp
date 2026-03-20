@@ -51,7 +51,7 @@ const ShaderParameterMetadata& PerFrameParams::GetMetadata()
     static const ShaderParameterMetadata kMetadata = {
         kMembers,
         sizeof(kMembers) / sizeof(kMembers[0]),
-        512,  // cbSize — matches sizeof(PerFrameCB), 256-byte aligned
+        768,  // cbSize — matches sizeof(PerFrameCB), 256-byte aligned
         3,    // textureCount (irradiance + prefiltered + brdfLut)
         0,    // samplerCount (uses static samplers in root sig)
         0,    // uavCount

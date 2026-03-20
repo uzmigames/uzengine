@@ -4,8 +4,6 @@
 /// buffer TaaCB is uploaded via CBRingAllocator and bound at slot b2
 /// (kSlotPerObject). Output UAV is bound at descriptor table slot 4 (u0).
 ///
-/// @source UE5 TemporalAA.cpp:395-396 — FTemporalAACS dispatch
-/// @source UE5 TemporalAA.cpp:41 — CurrentFrameWeight = 0.04
 
 #include "taa_upscaler.h"
 
@@ -79,7 +77,6 @@ void TaaUpscaler::Execute(IRHICommandList* cmd, const UpscalerInput& input) {
     taaCb.texelSizeX   = 1.0f / input.renderWidth;
     taaCb.texelSizeY   = 1.0f / input.renderHeight;
 
-    /// @source UE5 TemporalAA.cpp:41 — CurrentFrameWeight = 0.04
     taaCb.blendWeight  = input.firstFrame ? 1.0f : 0.04f;
 
     taaCb.sceneSrv     = input.sceneColorSrv;

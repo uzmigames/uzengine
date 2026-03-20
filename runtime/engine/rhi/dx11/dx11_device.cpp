@@ -261,7 +261,7 @@ bool DX11Device::Init(const RHIDeviceDesc& desc) {
     // Create default samplers matching DX12 static samplers s0 and s1
     {
         D3D11_SAMPLER_DESC sd = {};
-        /// @source UE5 SceneTexturesConfig.cpp:145 — 16x anisotropic filtering
+        /// 16x anisotropic filtering — standard quality for material textures.
         sd.Filter = D3D11_FILTER_ANISOTROPIC;
         sd.AddressU = D3D11_TEXTURE_ADDRESS_WRAP;
         sd.AddressV = D3D11_TEXTURE_ADDRESS_WRAP;
@@ -278,7 +278,7 @@ bool DX11Device::Init(const RHIDeviceDesc& desc) {
         sd.AddressV = D3D11_TEXTURE_ADDRESS_BORDER;
         sd.AddressW = D3D11_TEXTURE_ADDRESS_BORDER;
         sd.MaxAnisotropy = 1;
-        sd.ComparisonFunc = D3D11_COMPARISON_LESS; // Shadow maps use standard-Z (UE5 parity)
+        sd.ComparisonFunc = D3D11_COMPARISON_LESS; // Shadow maps use standard-Z (standard)
         sd.BorderColor[0] = 0.0f; // Outside shadow atlas = no occlusion
         sd.BorderColor[1] = 0.0f;
         sd.BorderColor[2] = 0.0f;

@@ -1,7 +1,5 @@
 /// UzEngine PostProcessVolume — implementation.
 ///
-/// @source UE5 PostProcessing.cpp — OverridePostProcessSettings
-/// @source UE5 Scene.cpp — FScene::AddPostProcessVolume
 
 #include "post_process_volume.h"
 
@@ -153,7 +151,6 @@ PostProcessSettings PostProcessVolumeManager::ComputeBlendedSettings(
     // is applied last and therefore "wins" on contested fields.
     // We copy the entries because this is a const method and we need to sort.
     //
-    // @source UE5 PostProcessing.cpp — volumes sorted by priority, applied in order
     auto sorted = m_volumes;
     std::sort(sorted.begin(), sorted.end(),
         [](const VolumeEntry& a, const VolumeEntry& b) {

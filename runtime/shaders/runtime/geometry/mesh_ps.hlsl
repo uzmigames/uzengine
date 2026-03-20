@@ -76,7 +76,7 @@ cbuffer PerFrameCB : register(b1) {
     float    _pad1[3];              // align SH array to 16-byte boundary      [676..687]
 
     // ── Sky Irradiance SH (L2, 7 float4 = 112 bytes) ──
-    // Matches UE5 SkyIrradianceEnvironmentMap[0..6].
+    // Standard SkyIrradianceEnvironmentMap[0..6].
     float4   skyIrradianceSH[7];     // L2 SH for sky diffuse irradiance       [688..799]
 
     float    _pad2[56];             // pad to 1024 bytes (4 x 256)             [800..1023]
@@ -110,13 +110,13 @@ cbuffer PerObjectCB : register(b2) {
     float    matOpacity;            // material opacity (1=opaque)                           [220..223]
     // ── POM region (offset 224, not used by forward shader) ──
     float    _pomRegion[7];         //                                                      [224..251]
-    /// @source UE5 EngineTypes.h:256 — EBlendMode
+    /// Blend mode enum: 0=Opaque, 1=Masked, 2=Translucent, 3=Additive
     uint     blendMode;             // 0=Opaque, 1=Masked, 2=Translucent, 3=Additive       [252..255]
 };
 
 /// Cascaded shadow map parameters — must match C++ ShadowDataCB struct exactly.
 /// Supports up to 8 cascades (4 main + 4 far shadow cascades).
-/// UE5 parity: per-cascade bias, fade starts, receiver bias, distance fade.
+/// standard: per-cascade bias, fade starts, receiver bias, distance fade.
 /// Shadow data CB — MUST match C++ ShadowDataCB layout exactly.
 /// HLSL cbuffer packing: float arrays use float4 pairs to match C++ tight packing.
 cbuffer ShadowDataCB : register(b4) {
@@ -128,7 +128,7 @@ cbuffer ShadowDataCB : register(b4) {
     uint     shadowAtlasIndex;               // SRV heap index for shadow depth atlas (dynamic)
     uint     cascadeCount;                   // number of active cascades (1-8, main + far)
     float    shadowMapSize;                  // per-cascade resolution in texels
-    float    receiverBias;                   // shadow receiver bias (UE5 default: 0.9)
+    float    receiverBias;                   // shadow receiver bias (Default: 0.9)
     float    shadowFadeStart;                // world distance where last-cascade fade begins
     float    shadowFadeEnd;                  // world distance where shadows fully disappear
     uint     filterMethod;                   // 0=5x5 PCF, 1=Poisson 16-tap, 2=PCSS
@@ -179,7 +179,7 @@ float4 main(PSInput input) : SV_Target {
     float3 emissive  = float3(0.0f, 0.0f, 0.0f);
 
     // Apply UV transform (tiling + offset) from material parameters.
-    // @source UE5 MaterialTemplate.ush — TexCoord * TextureScale + TextureOffset
+    // Standard texture coordinate transform: TexCoord * TextureScale + TextureOffset
     float2 uv = input.texcoord * uvScale + uvOffset;
 
     // ── Sample PBR texture maps (index 0 = use default value) ──
@@ -208,14 +208,14 @@ float4 main(PSInput input) : SV_Target {
 #endif
 
     // ── Apply material parameter multipliers ──
-    // @source UE5 MaterialTemplate.ush — BaseColor * BaseColorTint, roughness * mult, etc.
+    // Material parameter application: BaseColor * tint, roughness * multiplier, etc.
     albedo    *= baseColorTint;
     roughness *= roughnessMultiplier;
     metallic  *= metallicMultiplier;
     ao         = lerp(1.0f, ao, aoIntensity);
 
     // ── Emissive: texture * color * intensity ──
-    // @source UE5 BasePassPixelShader.usf:1480 — GetMaterialEmissive
+    // Emissive contribution added to final color
 #ifdef UZ_BINDLESS
     if (emissiveIndex > 0) {
         Texture2D<float4> emissiveTex = ResourceDescriptorHeap[emissiveIndex];
@@ -244,7 +244,7 @@ float4 main(PSInput input) : SV_Target {
         float3 normalTS;
         normalTS.xy = normalSample.rg * 2.0f - 1.0f;
         // Apply normal intensity: 0 = flat (no normal map effect), 1 = full effect.
-        // @source UE5 Material.FlattenNormalMap — scales normalTS.xy by intensity
+        // Normal map intensity scaling — scales tangent-space XY by strength factor
         normalTS.xy *= normalIntensity;
 
         // BC5 two-channel normal maps store only RG; reconstruct Z from unit length
@@ -284,7 +284,7 @@ float4 main(PSInput input) : SV_Target {
 
 #ifdef UZ_BINDLESS
     if (irradianceSrvIndex != 0xFFFFFFFF) {
-        // Diffuse IBL via L2 Spherical Harmonics (UE5 parity)
+        // Diffuse IBL via L2 Spherical Harmonics (standard)
         // SH is much higher quality than 32x32 cubemap sampling
         float3 irradiance = GetSkySHDiffuse(N, skyIrradianceSH);
 
@@ -360,7 +360,7 @@ float4 main(PSInput input) : SV_Target {
     float3 color = ambient + Lo + emissive;
 
     // ── Alpha test for Masked blend mode ──
-    // @source UE5 BasePassPixelShader.usf:1510 — GetMaterialMask()
+    // Alpha masking: clip(opacity - clipValue) for masked blend mode
     if (blendMode == 1) {
         if (matOpacity < alphaClipThreshold) {
             discard;

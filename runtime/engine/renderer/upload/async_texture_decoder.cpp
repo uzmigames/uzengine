@@ -107,7 +107,7 @@ void AsyncTextureDecoder::WorkerLoop() {
             }
 
             path = std::move(m_queue.front());
-            m_queue.erase(m_queue.begin());
+            m_queue.pop_front();
             m_inFlight.fetch_add(1, std::memory_order_relaxed);
         }
 

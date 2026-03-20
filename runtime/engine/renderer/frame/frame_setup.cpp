@@ -76,6 +76,16 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
         ctx.cmdList->Begin();
     }
 
+    // ── Destroy GPU buffers deferred from previous frame ────────────────
+    // Previous frame's fence has completed by now (Application::WaitForFrame),
+    // so it's safe to destroy buffers that were referenced by GPU commands.
+    for (auto& buf : m_deferredDestroyBuffers) {
+        if (buf.IsValid()) {
+            m_device->DestroyBuffer(buf);
+        }
+    }
+    m_deferredDestroyBuffers.clear();
+
     // ── Flush deferred asset loads (queued from Lua callbacks) ─────────
     FlushPendingLoads(ctx.cmdList, ctx.vfs);
 
@@ -156,9 +166,8 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
     auto& camera = *m_camera;
 
     // ── TAA Jitter — Halton(2,3) sub-pixel offset on the projection matrix ──
-    // @source UE5 SceneVisibility.cpp:5240-5243 — TemporalJitterPixels
-    // @source UE5 SceneVisibility.cpp:5243 — HackAddTemporalAAProjectionJitter(SampleX * 2/W, SampleY * -2/H)
-    // @source UE5 Math/Halton.h:9 — Halton(Index, Base) radical-inverse sequence
+    // TAA jitter: Halton(2,3) sub-pixel offset applied to the projection matrix.
+    // Jitter = SampleXY * 2/Resolution, flipped Y for D3D convention.
 
     ctx.jitterX = 0.f;
     ctx.jitterY = 0.f;
@@ -171,7 +180,7 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
 
     if (ctx.taaActive) {
         // 1-based index into Halton(2,3) sequence, cycled every 8 samples.
-        // @source UE5 SceneRendering.cpp:974 — TemporalJitterSequenceLength
+        // 8-sample Halton sequence (standard TAA jitter length).
         const int32_t jitterIdx = static_cast<int32_t>((ctx.frameIndex % kDefaultJitterSequenceLength) + 1);
         Halton23(jitterIdx, ctx.jitterX, ctx.jitterY);
     }
@@ -180,7 +189,6 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
     ctx.unjitteredViewProj = camera.GetViewProjection();
 
     // Apply jitter to the projection matrix as a sub-pixel translation in clip space.
-    // @source UE5 SceneVisibility.cpp:5243 — HackAddTemporalAAProjectionJitter
     // The jitter is applied as an offset to the projection matrix's [2][0] and [2][1]
     // elements, which translates the clip-space output by a sub-pixel amount.
     // Uses RENDER resolution (not display) because the jitter is in pixel units of the
@@ -189,7 +197,7 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
     if (ctx.taaActive) {
         const float renderW = static_cast<float>(m_renderWidth);
         const float renderH = static_cast<float>(m_renderHeight);
-        // UE5: SampleX * 2.0 / ViewRect.Width(), SampleY * -2.0 / ViewRect.Height()
+        // Equivalent: SampleX * 2.0 / ViewRect.Width(), SampleY * -2.0 / ViewRect.Height()
         // The *2 converts from pixel units to NDC (-1 to 1 range = 2 units per viewport dim).
         // Y is negated because clip-space Y increases upward but pixel Y increases downward.
         jitteredViewProj.m.m[2][0] += ctx.jitterX * 2.0f / renderW;
@@ -215,9 +223,9 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
     perFrame.brdfLutSrvIndex     = m_brdfLutSrvIndex;
     perFrame.prefilteredMipLevels = 5;
 
-    // ── Extract SkyLight from SkyLightComponent (UE5 parity) ──────────
+    // ── Extract SkyLight from SkyLightComponent (standard) ──────────
     // Must be done BEFORE SH upload so intensity can be baked into the SH coefficients.
-    // @source UE5 SkyLightComponent.cpp:308 — MinOcclusion default = 0.0
+    // SkyLight extraction: intensity, color, minOcclusion from first SkyLightComponent.
     float skyIntensity = 1.0f;
     float skyIndirectIntensity = 1.0f;
     if (ctx.world) {
@@ -236,11 +244,11 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
         }
     }
 
-    // Upload SH coefficients for sky diffuse irradiance (UE5 parity).
+    // Upload SH coefficients for sky diffuse irradiance (standard).
     // The shader's deferred_lighting_ps.hlsl line 881 already multiplies
     // by skyLightIntensity, so we only scale SH by indirectLightingIntensity
     // here (which provides separate control of diffuse fill vs specular).
-    // @source UE5 SkyLightComponent.cpp — IndirectLightingIntensity separate from Intensity
+    // IndirectLightingIntensity scales SH separately from the main Intensity parameter.
     const float shScale = skyIndirectIntensity;
     for (int i = 0; i < 7; ++i) {
         perFrame.skyIrradianceSH[i] = {
@@ -252,7 +260,7 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
     }
 
     // Log SH L0 coefficient once to diagnose shadow darkness.
-    // In UE5 packed format: coeffs[0].w = R_L0, coeffs[1].w = G_L0, coeffs[2].w = B_L0
+    // In compact packed format: coeffs[0].w = R_L0, coeffs[1].w = G_L0, coeffs[2].w = B_L0
     static bool shLogged = false;
     if (!shLogged && ctx.frameIndex > 100) {
         UZ_LOG(Renderer, Info,
@@ -297,12 +305,12 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
         }
     } else {
         // Without auto-exposure, use neutral exposure.
-        // @source UE5 — default exposure = 1.0 (no bias applied)
+        // Default exposure = 1.0 (neutral, no bias applied).
         perFrame.exposure = 1.0f;
     }
 
     // ── Mip bias for screen percentage texture LOD compensation ────────
-    // @source UE5 ViewUniformShaderParameters.h — MaterialTextureMipBias
+    // Mip bias compensates for screen-percentage rendering (lower res → over-minified textures).
     // When rendering at lower internal resolution, textures are over-minified
     // because the screen pixel density is lower than the display. A negative
     // mip bias shifts sampling toward finer mip levels to compensate.
@@ -329,7 +337,7 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
     }
 
     // ── SSGI SRV indices (set early — actual compute runs in render graph) ──
-    // @source UE5 IndirectLightRendering.cpp:1454 — DiffuseIndirect composite
+    // SSGI result SRV indices — used by deferred lighting to add indirect diffuse.
     if (m_ssgiRenderer.IsReady() && m_device->IsBindless()) {
         perFrame.ssgiSrvIndex   = m_ssgiRenderer.GetResultSrvIndex();
         perFrame.ssgiAOSrvIndex = m_ssgiRenderer.GetAOResultSrvIndex();
@@ -338,6 +346,22 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
         perFrame.ssgiSrvIndex   = UINT32_MAX;
         perFrame.ssgiAOSrvIndex = UINT32_MAX;
         perFrame.ssgiEnabled    = 0;
+    }
+
+    // ── Radiance Cache (SDF GI) parameters ────────────────────────────
+    if (m_sdfGiEnabled && m_radianceCache.IsInitialized() && m_device->IsBindless()) {
+        perFrame.radianceCacheEnabled = 1;
+        perFrame.rcProbeSHBufferSrv   = m_radianceCache.GetProbeSHBufferSrv();
+        perFrame.rcProbesPerAxis      = RadianceCache::kProbesPerAxis;
+        perFrame.rcGridExtent         = m_radianceCache.GetGridExtent();
+        const Vec3 origin = m_radianceCache.GetGridOrigin();
+        perFrame.rcGridOriginX        = origin.x;
+        perFrame.rcGridOriginY        = origin.y;
+        perFrame.rcGridOriginZ        = origin.z;
+        perFrame.rcGiIntensity        = m_giIntensity;
+    } else {
+        perFrame.radianceCacheEnabled = 0;
+        perFrame.rcProbeSHBufferSrv   = UINT32_MAX;
     }
 
     // ── Aerial Perspective parameters (from SkyAtmosphereComponent) ───
@@ -364,8 +388,12 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
                 perFrame.apSunIntensity   = ctx.sunColor.Length();
                 perFrame.apRayleighScale  = skyComp.rayleighScatteringScale;
                 perFrame.apMieScale       = skyComp.mieScatteringScale;
+                // AP volume SRV (precomputed 32x32x16 3D texture)
+                if (m_apVolumeSrv != UINT32_MAX) {
+                    perFrame.apVolumeSrvIndex = m_apVolumeSrv;
+                }
             }
-            // @source UE5 SceneRendering.cpp:1440 — SkyAtmosphereHeightFogContribution
+            // HeightFogContribution reduces AP inscattering when height fog is active
             // Propagate heightFogContribution to reduce AP inscattering when height fog
             // is active, preventing double-fogging.
             perFrame.heightFogContribution = skyComp.heightFogContribution;
@@ -438,11 +466,8 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
     // perspective projections (90-degree FOV), allocate 6 tiles in the
     // atlas, and fill 6 consecutive LocalLightShadowData entries.
     //
-    // @source UE5 SpotLightComponent.cpp:119-138 — GetWholeSceneProjectedShadowInitializer
-    //   MinLightW = 0.1f (near plane), MaxDistanceToCastInLightW = Radius (far plane)
-    //   Scales = (InvTanOuterCone, InvTanOuterCone) — perspective FOV from cone angle
-    // @source UE5 ShadowSetup.cpp:960-1048 — SetupWholeSceneProjection
-    // @source UE5 ShadowRendering.cpp:2500-2600 — point light cubemap shadow setup
+    // Spot: perspective projection from cone angle, near=0.1cm, far=radius.
+    // Point: 6-face cubemap shadow, 90-deg FOV, near=1.0cm, far=radius.
     m_localShadowAtlas.Reset();
     const uint32_t totalLocalShadowLights = ctx.lightData.spotShadowCount + ctx.lightData.pointShadowCount;
     if (m_localShadowAtlas.IsValid() && totalLocalShadowLights > 0) {
@@ -467,9 +492,8 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
 
             // Build perspective projection matrix for the spot light.
             // FOV = 2 * outerAngle (full apex angle of the cone).
-            // Near = 0.1 cm (UE5 MinLightW), Far = radius (attenuation distance).
-            // @source UE5 SpotLightComponent.cpp:134 — MinLightW = 0.1f
-            // @source UE5 SpotLightComponent.cpp:135 — MaxDistanceToCastInLightW = Radius
+            // Near = 0.1 cm (reference MinLightW), Far = radius (attenuation distance).
+            // Near = 0.1 cm (minimum shadow near plane), Far = radius (light range).
             const float fovY     = 2.0f * spotShadow.outerAngle;
             const float nearZ    = 0.1f;
             const float farZ     = spotShadow.radius;
@@ -516,8 +540,7 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
         //   Face 4 (+Z): look toward +Z, up = -Y
         //   Face 5 (-Z): look toward -Z, up = +Y
         //
-        // @source UE5 ShadowRendering.cpp:2500-2600 — point light cubemap face setup
-        // @source UE5 ShadowProjectionCommon.ush:132-147 — CalcCubemapVectorAndFaceIndex
+        // Standard cubemap face layout: +X/-X/+Y/-Y/+Z/-Z with Z-up convention.
         //
         // Each face uses a 90-degree FOV perspective projection (aspect=1) from the
         // light position, with near=1.0cm and far=radius.
@@ -535,10 +558,10 @@ void SceneRenderer::SetupFrameData(FrameContext& ctx, rg::RgBuilder& rgBuilder) 
         };
 
         // 90-degree FOV for cubemap faces — standard cube projection.
-        // @source UE5 ShadowRendering.cpp:2510 — FOV = PI/2 (90 degrees)
+        // Standard cubemap face FOV: 90 degrees.
         static constexpr float kCubeFovDeg = 90.0f;
         // Near plane for point light shadows (1.0 cm).
-        // @source UE5 PointLightComponent.cpp:78 — MinLightW for point lights
+        // 1.0 cm near plane prevents self-intersection at light origin.
         static constexpr float kPointShadowNear = 1.0f;
 
         for (uint32_t pi = 0; pi < ctx.lightData.pointShadowCount; ++pi) {

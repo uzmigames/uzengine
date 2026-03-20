@@ -57,7 +57,7 @@ namespace uz {
 ///
 /// Padded to 256-byte boundary as required by D3D12 constant buffer alignment.
 ///
-/// @source UE5 VelocityRendering.cpp — FVelocityPassParameters
+/// Per-pixel motion vector pass parameters for TAA and motion blur.
 struct VelocityCB {
     Mat4  prevViewProj;        ///< Previous frame's view-projection matrix.
     float screenWidth  = 0.f;  ///< Render target width in pixels.

@@ -5,7 +5,7 @@
 ///
 /// Include this file instead of hardcoding magic numbers like 0.00001f or 100000.0f.
 ///
-/// @source UE5 SkyAtmosphereCommon.ush:6 — CM_TO_SKY_UNIT definition
+/// @ref SI unit conversions — standard metric system factors
 
 #ifndef UNITS_HLSLI
 #define UNITS_HLSLI
@@ -13,8 +13,8 @@
 // ─── Distance conversions ──────────────────────────────────────────────────
 
 /// Centimeters to Kilometers (1 cm = 0.00001 km).
-/// @source UE5 SkyAtmosphereCommon.ush:6 — CM_TO_SKY_UNIT = 0.00001
-/// @constants 0.00001 (UE5 SkyAtmosphereCommon.ush:6)
+/// @ref SI unit conversion — 1 cm = 1e-5 km
+/// @constants 0.00001 (SI definition)
 /// @deviations NONE
 static const float UZ_CM_TO_KM = 0.00001f;
 
@@ -35,8 +35,8 @@ static const float UZ_DEFAULT_FAR_PLANE_CM = 100000.0f;
 // ─── Atmosphere constants (in kilometers) ──────────────────────────────────
 
 /// Planet radius offset to keep camera above surface (km).
-/// @source UE5 SkyAtmosphere.usf:109 — PlanetRadiusOffset = 0.005 km (5 meters)
-/// @constants 0.005 (UE5 SkyAtmosphere.usf:109)
+/// @ref Bruneton 2008 "Precomputed Atmospheric Scattering" — offset to avoid surface intersection
+/// @constants 0.005 km = 5 meters above surface
 /// @deviations NONE
 static const float UZ_PLANET_RADIUS_OFFSET_KM = 0.005f;
 

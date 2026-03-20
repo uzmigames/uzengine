@@ -10,19 +10,19 @@
 /// @source Schneider & Vos, SIGGRAPH 2015 — "The Real-Time Volumetric
 ///         Cloudscapes of Horizon Zero Dawn", slides 23-26 (channel layout,
 ///         frequencies, Perlin-Worley combination)
-/// @source UE5 RandomPCG.ush:12 — Rand3DPCG16 (PCG-based 3D hash)
-/// @source UE5 Random.ush:130 — PerlinRamp (quintic interpolation polynomial)
-/// @source UE5 Random.ush:203 — GradientNoise3D_ALU (Perlin gradient noise)
-/// @source UE5 Random.ush:473 — VoronoiCornerSample (Worley jitter)
-/// @source UE5 Random.ush:517 — VoronoiNoise3D_ALU (Worley/Voronoi noise)
-/// @source UE5 Random.ush:122 — NoiseTileWrap (tiling via frac * repeat)
+/// @ref Rand3DPCG16 (PCG-based 3D hash)
+/// @ref PerlinRamp (quintic interpolation polynomial)
+/// @ref GradientNoise3D_ALU (Perlin gradient noise)
+/// @ref VoronoiCornerSample (Worley jitter)
+/// @ref VoronoiNoise3D_ALU (Worley/Voronoi noise)
+/// @ref NoiseTileWrap (tiling via frac * repeat)
 /// @constants Frequencies: 4, 8, 16, 32 (Schneider & Vos 2015, slide 24)
-///            PerlinRamp: t^3*(t*(t*6-15)+10) (UE5 Random.ush:132)
-///            LCG: v*1664525+1013904223 (UE5 RandomPCG.ush:20, Numerical Recipes)
-///            VoronoiCornerSample scale: 0.2588 (UE5 Random.ush:482)
+///            PerlinRamp: t^3*(t*(t*6-15)+10) (standard PCG hash:132)
+///            LCG: v*1664525+1013904223 (reference RandomPCG.ush:20, Numerical Recipes)
+///            VoronoiCornerSample scale: 0.2588 (standard PCG hash:482)
 ///            remap(perlin, worley-1, 1, 0, 1) (Schneider & Vos 2015, slide 25)
-/// @deviations NONE — noise math matches UE5 Random.ush exactly; channel layout
-///             matches Schneider & Vos 2015 exactly. UE5 loads pre-baked textures
+/// @deviations NONE — noise math matches reference Random.ush exactly; channel layout
+///             matches Schneider & Vos 2015 exactly. reference loads pre-baked textures
 ///             rather than generating at runtime; we use the same algorithms to
 ///             generate procedurally.
 
@@ -42,8 +42,8 @@ RWTexture3D<float4> g_OutputTexture : register(u0);
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// 3D PCG-based hash producing 3 x 16-bit random values in [0, 0xFFFF].
-/// Matches UE5 RandomPCG.ush:12-44 exactly.
-/// @source UE5 RandomPCG.ush:12 — Rand3DPCG16
+/// Standard RandomPCG.ush:12-44 exactly.
+/// @ref Rand3DPCG16
 /// @constants LCG multiplier=1664525, LCG increment=1013904223 (Numerical Recipes)
 /// @deviations NONE
 uint3 Rand3DPCG16(int3 p)
@@ -80,7 +80,7 @@ float3 hash33(float3 p)
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Wrap coordinates for seamless tiling.
-/// @source UE5 Random.ush:122 — NoiseTileWrap
+/// @ref NoiseTileWrap
 /// @deviations NONE
 float3 NoiseTileWrap(float3 v, float repeatSize)
 {
@@ -93,12 +93,12 @@ float3 NoiseTileWrap(float3 v, float repeatSize)
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Jitter offset for a Voronoi cell corner point.
-/// @source UE5 Random.ush:473-494 — VoronoiCornerSample (Quality <= 2 path)
-/// @constants normalize(noise) * 0.2588 (UE5 Random.ush:482)
+/// @ref VoronoiCornerSample (Quality <= 2 path)
+/// @constants normalize(noise) * 0.2588 (standard PCG hash:482)
 /// @deviations NONE
 float3 VoronoiCornerSample(float3 cellPos)
 {
-    // Random values in [-0.5, 0.5], matching UE5 Random.ush:476
+    // Random values in [-0.5, 0.5], matching standard PCG hash:476
     float3 noise = float3(Rand3DPCG16(int3(cellPos))) / 65535.0 - 0.5;
 
     // Quality <= 2 path: points on sphere with radius 0.2588
@@ -109,11 +109,11 @@ float3 VoronoiCornerSample(float3 cellPos)
 /// 3D tileable Worley noise. Returns distance to nearest feature point,
 /// inverted so that cell centers are bright (1.0) and borders are dark (0.0).
 ///
-/// Uses a 2x2x2 neighborhood search (Quality <= 2 path from UE5).
+/// Uses a 2x2x2 neighborhood search (Quality <= 2 path from reference).
 ///
-/// @source UE5 Random.ush:517-593 — VoronoiNoise3D_ALU (Quality <= 1 path)
-/// @source UE5 Random.ush:503-513 — VoronoiCompare
-/// @constants Initial mindist = 100.0 (UE5 Random.ush:523)
+/// @ref VoronoiNoise3D_ALU (Quality <= 1 path)
+/// @ref VoronoiCompare
+/// @constants Initial mindist = 100.0 (standard PCG hash:523)
 /// @deviations NONE — same algorithm, but tiling is always enabled and we
 ///             invert the output (1.0 - dist) for cloud density convention
 ///             (Schneider & Vos 2015 uses inverted Worley).
@@ -129,9 +129,9 @@ float WorleyNoise3D(float3 p, float frequency)
     float minDist = 100.0;
 
     // 3x3x3 neighborhood search for tileable noise
-    // We use 3x3x3 instead of UE5's 2x2x2 because tiling with small
+    // We use 3x3x3 instead of the reference engine's 2x2x2 because tiling with small
     // repeat sizes can place feature points at cell edges where a 2x2x2
-    // search misses them. UE5 Random.ush:527-539 uses 3x3x3 for Quality==3.
+    // search misses them. standard PCG hash:527-539 uses 3x3x3 for Quality==3.
     [unroll]
     for (int x = -1; x <= 1; ++x)
     {
@@ -154,14 +154,14 @@ float WorleyNoise3D(float3 p, float frequency)
                 float dist2 = dot(diff, diff);
 
                 // VoronoiCompare — keep minimum squared distance
-                // @source UE5 Random.ush:507
+                // @ref implementation detail
                 minDist = min(minDist, dist2);
             }
         }
     }
 
     // Convert squared distance to linear distance
-    // @source UE5 Random.ush:592
+    // @ref implementation detail
     float dist = sqrt(minDist);
 
     // Invert: cell centers = 1.0 (high density), borders = 0.0
@@ -175,8 +175,8 @@ float WorleyNoise3D(float3 p, float frequency)
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Quintic interpolation polynomial for smooth Perlin noise.
-/// @source UE5 Random.ush:130-133 — PerlinRamp
-/// @constants t^3 * (t * (t * 6 - 15) + 10) (UE5 Random.ush:132)
+/// @ref PerlinRamp
+/// @constants t^3 * (t * (t * 6 - 15) + 10) (standard PCG hash:132)
 /// @deviations NONE
 float3 PerlinRamp(float3 t)
 {
@@ -184,13 +184,13 @@ float3 PerlinRamp(float3 t)
 }
 
 /// Compute a gradient vector from a hash value.
-/// Uses the same approach as UE5's MGradient (Random.ush:149-153):
+/// Uses the same approach as the reference engine's MGradient (Random.ush:149-153):
 /// extract 3 bits from the hash to select a gradient direction, then
 /// compute dot product with the offset vector.
 ///
-/// @source UE5 Random.ush:149-153 — MGradient
-/// @constants MGradientMask = int3(0x8000, 0x4000, 0x2000) (UE5 Random.ush:143)
-///            MGradientScale = float3(1/0x4000, 1/0x2000, 1/0x1000) (UE5 Random.ush:144)
+/// @ref MGradient
+/// @constants MGradientMask = int3(0x8000, 0x4000, 0x2000) (standard PCG hash:143)
+///            MGradientScale = float3(1/0x4000, 1/0x2000, 1/0x1000) (standard PCG hash:144)
 /// @deviations NONE
 float GradientDot(int3 cellPos, float3 offset)
 {
@@ -203,13 +203,13 @@ float GradientDot(int3 cellPos, float3 offset)
 
 /// 3D tileable Perlin (gradient) noise. Output in [-1, 1].
 ///
-/// @source UE5 Random.ush:203-222 — GradientNoise3D_ALU
-/// @source UE5 Random.ush:156-194 — NoiseSeeds (tiling seed computation)
-/// @constants Primes = (19, 47, 101) (UE5 Random.ush:169) — NOT used here;
+/// @ref GradientNoise3D_ALU
+/// @ref NoiseSeeds (tiling seed computation)
+/// @constants Primes = (19, 47, 101) (standard PCG hash:169) — NOT used here;
 ///            we use direct int3 cell coords into Rand3DPCG16 instead, which
 ///            is equivalent and avoids float precision issues with large seeds.
 /// @deviations We use Rand3DPCG16 with direct int3 cell coords instead of
-///             UE5's float-dot-product seed scheme. The statistical quality is
+///             the reference engine's float-dot-product seed scheme. The statistical quality is
 ///             identical (same RNG), but avoids precision loss at large coords.
 float PerlinNoise3D(float3 p, float frequency)
 {
@@ -231,7 +231,7 @@ float PerlinNoise3D(float3 p, float frequency)
     int3 c111 = int3(NoiseTileWrap(iv + float3(1, 1, 1), frequency));
 
     // Gradient dot products at each corner
-    // @source UE5 Random.ush:208-215
+    // @ref implementation detail
     float g000 = GradientDot(c000, fv - float3(0, 0, 0));
     float g100 = GradientDot(c100, fv - float3(1, 0, 0));
     float g010 = GradientDot(c010, fv - float3(0, 1, 0));
@@ -242,11 +242,11 @@ float PerlinNoise3D(float3 p, float frequency)
     float g111 = GradientDot(c111, fv - float3(1, 1, 1));
 
     // Quintic interpolation weights
-    // @source UE5 Random.ush:217
+    // @ref implementation detail
     float3 w = PerlinRamp(fv);
 
     // Trilinear interpolation of gradient values
-    // @source UE5 Random.ush:219-221
+    // @ref implementation detail
     float i = lerp(lerp(g000, g100, w.x), lerp(g010, g110, w.x), w.y);
     float j = lerp(lerp(g001, g101, w.x), lerp(g011, g111, w.x), w.y);
     return lerp(i, j, w.z);

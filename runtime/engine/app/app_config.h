@@ -94,7 +94,7 @@ struct ApplicationConfig {
 
     // ── Camera Defaults ───────────────────────────────────────────────────
 
-    /// FPS camera movement speed in cm/second (UE5 parity: 1 unit = 1 cm).
+    /// FPS camera movement speed in cm/second.
     float cameraMoveSpeed = 1000.f;
 
     /// Default camera X position (cm).

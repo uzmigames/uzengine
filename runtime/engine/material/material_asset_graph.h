@@ -14,8 +14,8 @@
 /// Both types can coexist in the same scene — the renderer checks the material
 /// type and selects the appropriate shader/PSO.
 ///
-/// # UE5 Equivalent
-/// @source UE5 Material.h — UMaterial (owns UMaterialExpression graph + compiles to HLSL)
+/// # Equivalent
+/// Owns expression graph + compiles to HLSL (UMaterial pattern)
 ///
 /// # Thread Safety
 /// NOT thread-safe. Modify from the game thread only. The renderer reads a
@@ -53,7 +53,7 @@ namespace uz {
 /// Owns a MaterialGraph, compiles it on load/change, and provides the
 /// generated HLSL + parameter metadata to the renderer.
 ///
-/// @source UE5 Material.h — UMaterial (owns expression graph, compiles to shader map)
+/// Owns expression graph, compiles to shader map.
 class MaterialAssetGraph {
 public:
     /// Load a material graph from a .uzmat JSON file and compile it.

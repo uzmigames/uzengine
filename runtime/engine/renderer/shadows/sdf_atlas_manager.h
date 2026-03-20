@@ -33,7 +33,7 @@
 /// # Thread Safety
 /// NOT thread-safe. Must be called from the render thread only.
 ///
-/// # UE5 Reference
+/// # Reference
 /// - DistanceFieldAtlas.h — global atlas management
 /// - DistanceFieldLightingShared.h:78-94 — atlas upload and defragmentation
 
@@ -53,7 +53,7 @@ class IRHICommandList;
 
 /// Maximum number of SDF objects that can be registered simultaneously.
 /// Determines the size of the GPU StructuredBuffer for SdfObjectGpuData.
-/// @source UE5 DistanceFieldLightingShared.h — MAX_SDF_OBJECTS (2048)
+/// MAX_SDF_OBJECTS = 2048 — maximum registered distance field objects
 static constexpr uint32_t kMaxSdfObjects = 2048;
 
 /// Maximum indirection table entries across all registered meshes.

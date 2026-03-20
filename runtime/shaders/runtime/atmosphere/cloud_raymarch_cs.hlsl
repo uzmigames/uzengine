@@ -5,44 +5,44 @@
 /// Light contributions use Beer-Lambert transmittance with dual-lobe Henyey-Greenstein
 /// phase function and Frostbite-style analytical scattering integration.
 ///
-/// @source UE5 VolumetricCloud.usf:231-253 — RayIntersectSphereSolution
-/// @source UE5 VolumetricCloud.usf:329-338 — SamplePhaseFunction (dual-lobe HG + blend)
-/// @source UE5 VolumetricCloud.usf:376-404 — SetupParticipatingMediaContext (multi-scatter octaves)
-/// @source UE5 VolumetricCloud.usf:840-1455 — MainCommon tracing loop
-/// @source UE5 VolumetricCloud.usf:1402-1410 — Frostbite scattering integration (slide 28)
-/// @source UE5 VolumetricCloud.usf:1449 — StopTracingTransmittanceThreshold early exit
-/// @source UE5 ParticipatingMediaCommon.ush:85-88 — IsotropicPhase = 1/(4*PI)
-/// @source UE5 ParticipatingMediaCommon.ush:91-98 — HenyeyGreensteinPhase (PBRT reference)
-/// @source UE5 VolumetricCloudRendering.cpp:60-63 — ViewRaySampleMaxCount default=768
-/// @source UE5 VolumetricCloudRendering.cpp:50-53 — SampleMinCount default=2
-/// @source UE5 VolumetricCloudRendering.cpp:1692 — StopTracingTransmittanceThreshold from proxy
-/// @source UE5 VolumetricCloudRendering.cpp:1679 — SkyLightCloudBottomVisibility = 1 - occlusion
+/// @ref RayIntersectSphereSolution
+/// @ref SamplePhaseFunction (dual-lobe HG + blend)
+/// @ref SetupParticipatingMediaContext (multi-scatter octaves)
+/// @ref MainCommon tracing loop
+/// @ref Frostbite scattering integration (slide 28)
+/// @ref StopTracingTransmittanceThreshold early exit
+/// @ref IsotropicPhase = 1/(4*PI)
+/// @ref HenyeyGreensteinPhase (PBRT reference)
+/// @ref ViewRaySampleMaxCount default=768
+/// @ref SampleMinCount default=2
+/// @ref StopTracingTransmittanceThreshold from proxy
+/// @ref SkyLightCloudBottomVisibility = 1 - occlusion
 /// @source Schneider & Vos 2015 — "Real-Time Volumetric Cloudscapes of Horizon Zero Dawn"
 ///         slides 23-26 (noise channel layout), slide 70 (density remapping)
 /// @source Hillaire 2016 — "Physically Based and Unified Volumetric Rendering in Frostbite"
 ///         slide 28 (analytical scattering integration formula)
 ///
 /// @constants
-///   IsotropicPhase = 1/(4*PI)             (UE5 ParticipatingMediaCommon.ush:87)
-///   HG denom = 1+G^2+2*G*cos             (UE5 ParticipatingMediaCommon.ush:96)
-///   PhaseG clamp = -0.999..0.999          (UE5 VolumetricCloud.usf:331)
-///   PhaseBlend clamp = 0..1               (UE5 VolumetricCloud.usf:333)
-///   SafeExtinctionThreshold = 0.000001    (UE5 VolumetricCloud.usf:1405)
-///   ViewRaySampleMaxCount = 768           (UE5 VolumetricCloudRendering.cpp:61)
+///   IsotropicPhase = 1/(4*PI)             (reference ParticipatingMediaCommon.ush:87)
+///   HG denom = 1+G^2+2*G*cos             (reference ParticipatingMediaCommon.ush:96)
+///   PhaseG clamp = -0.999..0.999          (reference VolumetricCloud.usf:331)
+///   PhaseBlend clamp = 0..1               (reference VolumetricCloud.usf:333)
+///   SafeExtinctionThreshold = 0.000001    (reference VolumetricCloud.usf:1405)
+///   ViewRaySampleMaxCount = 768           (reference VolumetricCloudRendering.cpp:61)
 ///   Shape noise FBM weights 0.625/0.25/0.125 (Schneider 2015 slide 26)
 ///   Detail noise FBM weights 0.625/0.25/0.125 (Schneider 2015 slide 26)
 ///   Detail erosion factor 0.35            (Schneider 2015 slide 70)
 ///
 /// @deviations
-///   - UE5 evaluates cloud density through a full material graph; we use procedural
+///   - reference evaluates cloud density through a full material graph; we use procedural
 ///     noise sampling (shape + detail + weather map) following Schneider 2015.
-///   - UE5 default max sample count is 768; we allow runtime configuration via CB
+///   - reference default max sample count is 768; we allow runtime configuration via CB
 ///     (typical real-time value: 64-128 for 60fps).
-///   - UE5 uses per-sample atmosphere transmittance LUT; we omit that for simplicity.
-///   - UE5 supports multi-scattering octaves (MSCOUNT); we use a single-octave
+///   - the reference uses per-sample atmosphere transmittance LUT; we omit that for simplicity.
+///   - reference supports multi-scattering octaves (MSCOUNT); we use a single-octave
 ///     approximation with ambient term following Schneider 2015 depth probability.
 ///   - Wind/noise UV scaling uses artist-friendly km-based parameters rather than
-///     UE5's material graph driven transforms.
+///     the reference engine's material graph driven transforms.
 
 
 // ─── Samplers ───────────────────────────────────────────────────────────────
@@ -52,7 +52,7 @@ SamplerState LinearWrapSampler  : register(s1);
 
 // ─── Constant Buffer ────────────────────────────────────────────────────────
 
-/// @source UE5 VolumetricCloudRendering.cpp:1664-1700 — CloudGlobalShaderParams layout
+/// @ref CloudGlobalShaderParams layout
 cbuffer CloudRaymarchCB : register(b2)
 {
     float4x4 invViewProj;           ///< Camera inverse view-projection matrix
@@ -106,7 +106,7 @@ float Remap(float value, float oldMin, float oldMax, float newMin, float newMax)
 /// Ray-sphere intersection returning entry/exit distances along the ray.
 /// Returns false if the ray misses the sphere entirely.
 ///
-/// @source UE5 VolumetricCloud.usf:231-253 — RayIntersectSphereSolution
+/// @ref RayIntersectSphereSolution
 /// @constants QuadraticCoef.x = dot(d,d), .y = 2*dot(d,o-c), .z = dot(o-c,o-c) - r^2
 ///            discriminant = b^2 - 4ac, solutions = (-b +/- sqrt(disc)) / 2a
 /// @deviations NONE — exact same quadratic solver
@@ -140,10 +140,10 @@ bool RaySphereIntersect(float3 rayOrigin, float3 rayDir, float3 sphereCenter, fl
 /// Henyey-Greenstein phase function.
 /// Follows PBRT convention: CosTheta = dot(wi, wo) where wi is incoming light dir.
 ///
-/// @source UE5 ParticipatingMediaCommon.ush:91-98 — HenyeyGreensteinPhase
+/// @ref HenyeyGreensteinPhase
 /// @constants Numer = 1 - G^2, Denom = 1 + G^2 + 2*G*CosTheta
 ///            result = Numer / (4 * PI * Denom * sqrt(Denom))
-/// @deviations NONE — exact UE5 formula
+/// @deviations NONE — exact reference formula
 float HenyeyGreenstein(float G, float cosTheta)
 {
     float numer = 1.0 - G * G;
@@ -152,22 +152,22 @@ float HenyeyGreenstein(float G, float cosTheta)
 }
 
 
-/// Dual-lobe phase function blending two HG lobes, matching UE5's cloud phase.
+/// Dual-lobe phase function blending two HG lobes, matching the reference engine's cloud phase.
 ///
-/// @source UE5 VolumetricCloud.usf:329-338 — SamplePhaseFunction
+/// @ref SamplePhaseFunction
 /// @constants PhaseG clamped to [-0.999, 0.999] (line 331)
 ///            PhaseG2 clamped to [-0.999, 0.999] (line 332)
 ///            PhaseBlend clamped to [0, 1] (line 333)
 ///            cosTheta negated (line 334 comment: "negate due to WorldDir being 'in' direction")
 ///            result = HG(G, -cos) + blend * (HG(G2, -cos) - HG(G, -cos))
-/// @deviations NONE — exact UE5 formula
+/// @deviations NONE — exact reference formula
 float SamplePhaseFunction(float phaseCosTheta, float g1, float g2, float blend)
 {
     g1    = clamp(g1,    -0.999, 0.999);
     g2    = clamp(g2,    -0.999, 0.999);
     blend = clamp(blend,  0.0,   1.0);
 
-    /// UE5 negates cosTheta because ray direction is an "incoming" direction
+    /// negates cosTheta because ray direction is an "incoming" direction
     float hg0 = HenyeyGreenstein(g1, -phaseCosTheta);
     float hg1 = HenyeyGreenstein(g2, -phaseCosTheta);
     return hg0 + blend * (hg1 - hg0);
@@ -190,8 +190,8 @@ float SamplePhaseFunction(float phaseCosTheta, float g1, float g2, float blend)
 ///   Weather UV scale: 0.00005 per km (artist-tunable, large-scale coverage)
 ///   Detail UV scale: 0.001 per km (artist-tunable, fine erosion)
 /// @deviations
-///   UV scale factors are engine-specific (UE5 uses material graph transforms).
-///   Noise textures are generated procedurally; UE5 uses pre-baked assets.
+///   UV scale factors are engine-specific (reference uses material graph transforms).
+///   Noise textures are generated procedurally; the reference uses pre-baked assets.
 float SampleCloudDensity(float3 posKm, float heightFraction)
 {
     /// Bindless texture access
@@ -257,15 +257,15 @@ float SampleCloudDensity(float3 posKm, float heightFraction)
 /// Uses non-linear sample distribution (exponential spacing) to concentrate
 /// samples near the sample point where density variation matters most.
 ///
-/// @source UE5 VolumetricCloud.usf:1068-1154 — shadow ray march (non-linear t^2 distribution)
-/// @source UE5 VolumetricCloud.usf:1101-1113 — non-linear shadow sample distribution
+/// @ref shadow ray march (non-linear t^2 distribution)
+/// @ref non-linear shadow sample distribution
 /// @constants
 ///   Shadow march uses t^2 distribution: CurrentNormT = ShadowT * ShadowT
-///   (UE5 VolumetricCloud.usf:1106)
+///   (reference VolumetricCloud.usf:1106)
 /// @deviations
-///   UE5 shadow march length is driven by ShadowTracingMaxDistance parameter;
+///   reference shadow march length is driven by ShadowTracingMaxDistance parameter;
 ///   we use a fixed 1km reach appropriate for our layer height scale.
-///   UE5 multi-scatters across MSCOUNT octaves; we accumulate single extinction.
+///   reference multi-scatters across MSCOUNT octaves; we accumulate single extinction.
 float LightMarch(float3 posKm, float heightFraction)
 {
     /// Shadow march distance: reach across a significant portion of the cloud layer
@@ -273,7 +273,7 @@ float LightMarch(float3 posKm, float heightFraction)
     float opticalDepth = 0.0;
 
     /// Non-linear sample distribution (t^2) concentrates samples near origin
-    /// @source UE5 VolumetricCloud.usf:1101-1106
+    /// @ref implementation detail
     float invStepCount = 1.0 / float(lightSteps);
     float previousNormT = 0.0;
 
@@ -282,7 +282,7 @@ float LightMarch(float3 posKm, float heightFraction)
         float shadowT = float(i + 1) * invStepCount;
 
         /// Non-linear distribution: t^2
-        /// @source UE5 VolumetricCloud.usf:1106 — CurrentNormT = ShadowT * ShadowT
+        /// @ref CurrentNormT = ShadowT * ShadowT
         float currentNormT = shadowT * shadowT;
         float deltaNormT = currentNormT - previousNormT;
 
@@ -302,7 +302,7 @@ float LightMarch(float3 posKm, float heightFraction)
         float sampleDensity = SampleCloudDensity(samplePos, sampleHeightFrac);
 
         /// Accumulate optical depth with non-linear segment weight
-        /// @source UE5 VolumetricCloud.usf:1146 — ExtinctionAcc[ms] += ... * ExtinctionFactor
+        /// @ref ExtinctionAcc[ms] += ... * ExtinctionFactor
         opticalDepth += sampleDensity * extinction * shadowLengthKm * deltaNormT;
     }
 
@@ -365,8 +365,8 @@ void main(uint2 DTid : SV_DispatchThreadID)
         return;
     }
 
-    /// Compute entry/exit t values following UE5 logic
-    /// @source UE5 VolumetricCloud.usf:536-553
+    /// Compute entry/exit t values following reference logic
+    /// @ref implementation detail
     float tEntry, tExit;
     if (hitBot)
     {
@@ -395,7 +395,7 @@ void main(uint2 DTid : SV_DispatchThreadID)
     tExit  = max(0.0, tExit);
 
     /// Skip if zero-length segment or cloud is behind depth buffer
-    /// @source UE5 VolumetricCloud.usf:578
+    /// @ref implementation detail
     if (tExit <= tEntry)
     {
         cloudOutput[DTid] = float4(0.0, 0.0, 0.0, 0.0);
@@ -403,7 +403,7 @@ void main(uint2 DTid : SV_DispatchThreadID)
     }
 
     /// Clamp exit to depth buffer (don't trace behind opaque geometry)
-    /// @source UE5 VolumetricCloud.usf:643
+    /// @ref implementation detail
     if (sceneDistKm < tEntry)
     {
         /// Scene is entirely in front of cloud layer
@@ -413,24 +413,24 @@ void main(uint2 DTid : SV_DispatchThreadID)
     tExit = min(tExit, sceneDistKm);
 
     /// ─── Step 4: Setup march parameters ─────────────────────────────────
-    /// @source UE5 VolumetricCloud.usf:716-719 — step count and step size
+    /// @ref step count and step size
     uint stepCount = max(2u, primarySteps);
     float stepT = (tExit - tEntry) / float(stepCount);
     float dtKm = stepT; /// step size in kilometers
 
     /// Phase function: compute once per pixel (per-pixel phase, not per-sample)
-    /// @source UE5 VolumetricCloud.usf:771-788
+    /// @ref implementation detail
     float phaseCosTheta = dot(sunDir, rayDir);
     float phase = SamplePhaseFunction(phaseCosTheta, phaseG, phaseG2, phaseBlend);
 
     /// Sky light bottom visibility: reduce ambient at bottom of cloud layer
-    /// @source UE5 VolumetricCloud.usf:959 — SkyLightCloudBottomVisibility + NormAltitude
+    /// @ref SkyLightCloudBottomVisibility + NormAltitude
     /// We use 0.2 as a reasonable default for SkyLightCloudBottomVisibility
-    /// (UE5 default is 1.0 - CloudProxy.SkyLightCloudBottomOcclusion, typically ~0.3)
+    /// (reference default is 1.0 - CloudProxy.SkyLightCloudBottomOcclusion, typically ~0.3)
     static const float kSkyLightCloudBottomVisibility = 0.3;
 
     /// Scattering coefficient = albedo * extinction
-    /// @source UE5 VolumetricCloud.usf:378 — ScatteringCoefficients = BaseAlbedo * BaseExtinction
+    /// @ref ScatteringCoefficients = BaseAlbedo * BaseExtinction
     float scatteringCoeff = scatteringAlbedo * extinction;
 
     /// ─── Step 5: Ray march loop ─────────────────────────────────────────
@@ -438,7 +438,7 @@ void main(uint2 DTid : SV_DispatchThreadID)
     float transmittanceToView = 1.0;
 
     /// Start at half-step offset to center samples within their intervals
-    /// @source UE5 VolumetricCloud.usf:803 — t = TMin + 0.5 * StepT
+    /// @ref t = TMin + 0.5 * StepT
     float t = tEntry + 0.5 * stepT;
 
     for (uint i = 0; i < stepCount; ++i)
@@ -450,7 +450,7 @@ void main(uint2 DTid : SV_DispatchThreadID)
         float heightFraction = saturate(altitudeKm / layerHeightKm);
 
         /// Skip samples outside the cloud layer
-        /// @source UE5 VolumetricCloud.usf:898-904
+        /// @ref implementation detail
         if (heightFraction <= 0.0 || heightFraction >= 1.0)
         {
             t += stepT;
@@ -472,22 +472,22 @@ void main(uint2 DTid : SV_DispatchThreadID)
             /// ─── Scattered luminance computation ────────────────────────
 
             /// Direct sun illumination through cloud self-shadow
-            /// @source UE5 VolumetricCloud.usf:1372 — TransmittanceToLight0 * Light0Illuminance * Phase
+            /// @ref TransmittanceToLight0 * Light0Illuminance * Phase
             float3 sunScattered = transmittanceToSun * sunColor * phase;
 
             /// Distant sky light (ambient) with bottom-of-cloud visibility falloff
-            /// @source UE5 VolumetricCloud.usf:959
-            /// @source UE5 VolumetricCloud.usf:1381 — DistantLightLuminance added for ms==0 only
+            /// @ref implementation detail
+            /// @ref DistantLightLuminance added for ms==0 only
             float ambientVisibility = saturate(kSkyLightCloudBottomVisibility + heightFraction);
             float3 distantSkyLight = ambientColor * ambientMultiplier * ambientVisibility;
 
             /// Combined in-scattered luminance
-            /// @source UE5 VolumetricCloud.usf:1390
+            /// @ref implementation detail
             /// ScatteredLuminance = SunSkyLuminance * ScatteringCoefficients + EmissiveLuminance
             float3 scatteredLuminance = (sunScattered + distantSkyLight) * sampleScattering;
 
             /// ─── Frostbite analytical scattering integration ────────────
-            /// @source UE5 VolumetricCloud.usf:1403-1410
+            /// @ref implementation detail
             /// "Improved scattering integration. See slide 28 of
             ///  Physically Based and Unified Volumetric Rendering in Frostbite"
             ///
@@ -496,7 +496,7 @@ void main(uint2 DTid : SV_DispatchThreadID)
             /// LuminanceIntegral = (S - S * T) / safeExtinction
             /// LuminanceContribution = TransmittanceToView * LuminanceIntegral
 
-            /// @source UE5 VolumetricCloud.usf:1405 — SafeExtinctionThreshold = 0.000001
+            /// @ref SafeExtinctionThreshold = 0.000001
             static const float kSafeExtinctionThreshold = 0.000001;
             float safeExtinction = max(kSafeExtinctionThreshold, sampleExtinction);
             float safePathTransmittance = exp(-safeExtinction * dtKm);
@@ -507,17 +507,17 @@ void main(uint2 DTid : SV_DispatchThreadID)
             float3 luminanceIntegral = (scatteredLuminance - scatteredLuminance * safePathTransmittance) / safeExtinction;
 
             /// Accumulate with current transmittance-to-view
-            /// @source UE5 VolumetricCloud.usf:1409-1410
+            /// @ref implementation detail
             luminance += transmittanceToView * luminanceIntegral;
 
             /// Update transmittance
-            /// @source UE5 VolumetricCloud.usf:1440
+            /// @ref implementation detail
             transmittanceToView *= safePathTransmittance;
         }
 
         /// Early exit when cloud is nearly opaque
-        /// @source UE5 VolumetricCloud.usf:1449 — StopTracingTransmittanceThreshold
-        /// UE5 default threshold comes from CloudProxy; typical value is 0.01-0.03
+        /// @ref StopTracingTransmittanceThreshold
+        /// default threshold comes from CloudProxy; typical value is 0.01-0.03
         static const float kStopTracingThreshold = 0.01;
         if (transmittanceToView < kStopTracingThreshold)
             break;
@@ -526,8 +526,8 @@ void main(uint2 DTid : SV_DispatchThreadID)
     }
 
     /// ─── Step 6: Output premultiplied alpha ─────────────────────────────
-    /// UE5 cloud output format: RGB = luminance (premultiplied), A = transmittance
-    /// @source UE5 VolumetricCloud.usf:482 — OutColor0 = float4(0, 0, 0, 1) init
+    /// cloud output format: RGB = luminance (premultiplied), A = transmittance
+    /// @ref OutColor0 = float4(0, 0, 0, 1) init
     /// Our convention: A = 1 - transmittance (opacity) for standard over-compositing
     float alpha = 1.0 - transmittanceToView;
     cloudOutput[DTid] = float4(luminance, alpha);

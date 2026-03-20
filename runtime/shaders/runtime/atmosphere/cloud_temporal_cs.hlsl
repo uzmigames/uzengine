@@ -5,33 +5,33 @@
 /// exponential moving average. Handles disocclusion (off-screen reprojection,
 /// depth discontinuities) by increasing the blend factor toward the current frame.
 ///
-/// UE5 uses a more sophisticated checkerboard reconstruction approach
+/// uses a more sophisticated checkerboard reconstruction approach
 /// (VolumetricRenderTarget.usf) with per-pixel new-sample vs history decisions.
 /// Our temporal filter is a simplified EMA approach suitable for the engine's
 /// current half-res cloud pipeline.
 ///
-/// @source UE5 VolumetricRenderTarget.usf:174-547 — ReconstructVolumetricRenderTargetPS
-/// @source UE5 VolumetricRenderTarget.usf:209-211 — ClipToPrevClip reprojection
-/// @source UE5 VolumetricRenderTarget.usf:217-219 — bValidPreviousUVs check
-/// @source UE5 VolumetricRenderTarget.usf:167 — MaxDepthKm = 60000 threshold
-/// @source UE5 VolumetricRenderTarget.usf:318 — ThresholdToNewSampleKm = 2.0
-/// @source UE5 VolumetricCloud.usf:2472 — temporal blend: Prev + Factor * (Curr - Prev)
+/// @ref ReconstructVolumetricRenderTargetPS
+/// @ref ClipToPrevClip reprojection
+/// @ref bValidPreviousUVs check
+/// @ref MaxDepthKm = 60000 threshold
+/// @ref ThresholdToNewSampleKm = 2.0
+/// @ref temporal blend: Prev + Factor * (Curr - Prev)
 ///
 /// @constants
 ///   Default blend factor: 0.05 (accumulate ~20 frames for stable result)
 ///   Disocclusion blend (depth discontinuity): 0.3
 ///   Off-screen reprojection: 1.0 (use current frame only)
-///   Depth discontinuity threshold: 2.0 km (UE5 VolumetricRenderTarget.usf:318)
-///   MaxDepthKm safe threshold: 60000.0 (UE5 VolumetricRenderTarget.usf:167)
+///   Depth discontinuity threshold: 2.0 km (reference VolumetricRenderTarget.usf:318)
+///   MaxDepthKm safe threshold: 60000.0 (reference VolumetricRenderTarget.usf:167)
 ///
 /// @deviations
-///   - UE5 uses checkerboard pattern (DownSampleFactor x DownSampleFactor tiles,
+///   - the reference uses checkerboard pattern (DownSampleFactor x DownSampleFactor tiles,
 ///     rotating CurrentTracingPixelOffset each frame) with per-pixel new/history
 ///     decisions. We use a simpler full-frame EMA blend.
-///   - UE5 samples cloud front depth for reprojection quality; we reproject using
+///   - reference samples cloud front depth for reprojection quality; we reproject using
 ///     the depth buffer as a proxy.
-///   - UE5 applies HistoryPreExposureCorrection; we assume stable exposure.
-///   - Neighborhood clamping (AABB clamp in YCoCg) is not implemented; UE5
+///   - the reference applies HistoryPreExposureCorrection; we assume stable exposure.
+///   - Neighborhood clamping (AABB clamp in YCoCg) is not implemented; the reference
 ///     VolumetricRenderTarget.usf has USE_YCOCG=0 by default (line 130).
 
 
@@ -41,7 +41,7 @@ SamplerState LinearClampSampler : register(s0);
 
 // ─── Constant Buffer ────────────────────────────────────────────────────────
 
-/// @source UE5 VolumetricRenderTarget.usf:77-87 — previous frame textures + matrices
+/// @ref previous frame textures + matrices
 cbuffer CloudTemporalCB : register(b2)
 {
     float4x4 prevViewProj;      ///< Previous frame's view-projection matrix
@@ -95,7 +95,7 @@ void main(uint2 DTid : SV_DispatchThreadID)
     worldPos.xyz /= worldPos.w;
 
     /// Project world position into previous frame's clip space
-    /// @source UE5 VolumetricRenderTarget.usf:209-211 — CurrClip -> PrevClip via ClipToPrevClip
+    /// @ref CurrClip -> PrevClip via ClipToPrevClip
     float4 prevClip = mul(float4(worldPos.xyz, 1.0), prevViewProj);
     float2 prevNdc = prevClip.xy / prevClip.w;
 
@@ -108,7 +108,7 @@ void main(uint2 DTid : SV_DispatchThreadID)
     float adaptiveBlend = blendFactor;
 
     /// Check if reprojected UV is on-screen
-    /// @source UE5 VolumetricRenderTarget.usf:217-218 — bValidPreviousUVs
+    /// @ref bValidPreviousUVs
     bool validHistory = all(prevUV > 0.0) && all(prevUV < 1.0);
 
     if (!validHistory)
@@ -122,7 +122,7 @@ void main(uint2 DTid : SV_DispatchThreadID)
         /// When a previously-occluded area becomes visible, history is invalid.
         ///
         /// Sample depth at reprojected location and compare with current depth.
-        /// @source UE5 VolumetricRenderTarget.usf:318 — ThresholdToNewSampleKm = 2.0
+        /// @ref ThresholdToNewSampleKm = 2.0
         /// We convert the km threshold to a device-Z comparison for simplicity.
 
         /// Reproject the previous UV's depth to check for discontinuity
@@ -137,7 +137,7 @@ void main(uint2 DTid : SV_DispatchThreadID)
         float depthDiffKm = abs(length(currWorld.xyz) - length(prevWorld.xyz));
 
         /// Depth discontinuity threshold: 2.0 km
-        /// @source UE5 VolumetricRenderTarget.usf:318
+        /// @ref implementation detail
         static const float kDepthDiscontinuityThresholdKm = 2.0;
 
         if (depthDiffKm > kDepthDiscontinuityThresholdKm)
@@ -153,11 +153,11 @@ void main(uint2 DTid : SV_DispatchThreadID)
     if (validHistory)
     {
         /// Sample previous frame at reprojected position with bilinear filtering
-        /// @source UE5 VolumetricRenderTarget.usf:270 — SafeSamplePreviousFrameVolumetricTexture
+        /// @ref SafeSamplePreviousFrameVolumetricTexture
         historyColor = historyTex.SampleLevel(LinearClampSampler, prevUV, 0);
 
         /// Validate history: reject NaN/Inf values
-        /// @source UE5 VolumetricRenderTarget.usf:379 — IsFinite check
+        /// @ref IsFinite check
         if (!all(isfinite(historyColor)))
         {
             historyColor = float4(0.0, 0.0, 0.0, 0.0);
@@ -171,7 +171,7 @@ void main(uint2 DTid : SV_DispatchThreadID)
     }
 
     /// Temporal blend: exponential moving average
-    /// @source UE5 VolumetricCloud.usf:2472
+    /// @ref implementation detail
     /// FilteredData = PrevData + TemporalFactor * (CurrData - PrevData)
     /// This is equivalent to lerp(history, current, factor)
     float4 result = historyColor + adaptiveBlend * (currentColor - historyColor);

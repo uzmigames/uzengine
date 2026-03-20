@@ -18,19 +18,19 @@
 /// # Technique Reference
 /// @source John Chapman 2013 — "Real-Time Lens Flare Rendering" (ghost generation,
 ///   halo ring, chromatic aberration, edge attenuation). This is a screen-space
-///   post-process technique, distinct from UE5's bokeh-tile rasterization approach.
-/// @source UE5 PostProcessLensFlares.usf — UE5 uses a DIFFERENT technique: per-pixel
-///   bokeh quad rasterization with instanced draws. UE5's DiscMask() (line 23) is
-///   analogous to our edge attenuation. UE5's LensFlareCompositePS (line 22) applies
+///   post-process technique, distinct from the reference engine's bokeh-tile rasterization approach.
+/// @ref the reference uses a DIFFERENT technique: per-pixel
+///   bokeh quad rasterization with instanced draws. the reference engine's DiscMask() (line 23) is
+///   analogous to our edge attenuation. the reference engine's LensFlareCompositePS (line 22) applies
 ///   a FlareColor tint and DiscMask, similar in spirit to our per-ghost tinting +
-///   edge falloff. The ghost-based approach here is intentionally different from UE5
+///   edge falloff. The ghost-based approach here is intentionally different from reference
 ///   and follows the John Chapman / GPU Pro 5 technique instead.
 /// @constants kGhostScales, kGhostColors — user-specified in task description (not
-///   from UE5; UE5 uses LensFlareTints[] array from FPostProcessSettings, line 289
+///   from reference; the reference uses LensFlareTints[] array from FPostProcessSettings, line 289
 ///   of PostProcessLensFlares.cpp). kGhostCount=5 (user spec). kHaloSamples=3 (user
 ///   spec for Gaussian blur along ring).
 /// @deviations INTENTIONAL: This shader implements the John Chapman ghost-based
-///   technique, not UE5's bokeh-tile rasterization. UE5's approach rasterizes one
+///   technique, not the reference engine's bokeh-tile rasterization. the reference engine's approach rasterizes one
 ///   bokeh quad per bright pixel (PostProcessLensFlares.usf:LensFlareBlurVS), which
 ///   requires vertex buffer setup and instanced draw calls. The ghost-based approach
 ///   is a single compute dispatch, simpler to integrate, and produces a different

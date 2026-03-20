@@ -1,6 +1,6 @@
 /// UzEngine Fog Renderer — Height Fog ECS Extraction + Pass Setup
 ///
-/// Reads HeightFogComponent from the ECS, builds HeightFogCB with UE5-style
+/// Reads HeightFogComponent from the ECS, builds HeightFogCB with engine-style
 /// pre-computed RayOriginTerms, and registers the height fog render graph pass.
 
 #pragma once
@@ -20,7 +20,7 @@ namespace rg { class RgBuilder; }
 
 /// Adds the height fog render graph pass if a HeightFogComponent exists in the world.
 ///
-/// Iterates HeightFogComponent (first found), pre-computes UE5 RayOriginTerms
+/// Iterates HeightFogComponent (first found), pre-computes reference RayOriginTerms
 /// on CPU, builds HeightFogCB, and registers the fog pass in the render graph.
 ///
 /// # Arguments

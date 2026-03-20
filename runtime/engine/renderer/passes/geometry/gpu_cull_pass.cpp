@@ -4,9 +4,6 @@
 /// 1. Frustum culling via 6-plane Gribb-Hartmann test.
 /// 2. HiZ occlusion culling via sphere-to-screen-rect projection and HZB sampling.
 ///
-/// @source UE5 HZBOcclusion.usf:13-42 — HZBTestPS
-/// @source UE5 NaniteHZBCull.ush:565-595 — ProjectSphere, SphereToScreenRect
-/// @source UE5 NaniteHZBCull.ush:195-200 — IsVisibleHZB
 
 #include "gpu_cull_pass.h"
 

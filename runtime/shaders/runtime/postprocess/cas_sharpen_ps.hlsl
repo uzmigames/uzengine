@@ -12,7 +12,7 @@
 ///   4. Apply unsharp mask: output = (center + neighbors * w) / (1 + 4*w)
 ///
 /// @source AMD FidelityFX CAS — ffx_cas.h (GPUOpen-Effects/FidelityFX-CAS)
-/// @source UE5 PostProcessFFX_CAS.usf:60-120 — CASMain pixel shader
+/// @ref AMD 2019 "FidelityFX Contrast Adaptive Sharpening" (GPUOpen)
 /// @constants sharpenStrength=0.3 (PoC1 composite.ps.hlsl:107, project default)
 /// @deviations NONE — algorithm matches AMD reference ffx_cas.h
 
@@ -90,7 +90,7 @@ float3 CasTexSample(float2 uv) {
 /// Contrast Adaptive Sharpening — single-pass LDR sharpening filter.
 ///
 /// @source AMD FidelityFX CAS ffx_cas.h — CasFilter function
-/// @source UE5 PostProcessFFX_CAS.usf:60-120 — CASMain
+/// @ref AMD CAS 2019 — CASMain pixel shader
 ///
 /// The adaptive weight computation:
 ///   ampRGB = sqrt(saturate(minRGB / maxRGB))

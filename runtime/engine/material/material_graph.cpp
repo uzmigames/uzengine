@@ -242,7 +242,7 @@ bool MaterialGraph::IsTypeCompatible(MatPinType src, MatPinType dst) const {
     if (src == MatPinType::Float3 && dst == MatPinType::Float4) return true;
 
     // Higher-component source to lower-component destination: allow truncation.
-    // This matches UE5 behavior where a Float3 output can connect to a Float input
+    // This matches reference behavior where a Float3 output can connect to a Float input
     // (takes the first component).
     const uint32_t srcComponents = MatPinTypeComponents(src);
     const uint32_t dstComponents = MatPinTypeComponents(dst);

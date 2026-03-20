@@ -25,7 +25,7 @@ namespace uz {
 /// the draw list to ECS headers. The scene renderer maps from the ECS enum
 /// to this enum when building draw commands.
 ///
-/// @source UE5 EngineTypes.h — EComponentMobility::Type
+/// Standard mobility classification for shadow caching and culling.
 enum class EMobility : uint8_t {
     Static,      ///< Never moves — eligible for shadow map caching.
     Stationary,  ///< Baked lighting but may have dynamic shadows. Treated as Static for shadow cache.
@@ -71,7 +71,7 @@ struct DrawCommand {
     uint32_t emissiveSrvIndex  = 0;
 
     /// Emissive tint color (linear RGB). Default (0,0,0) = no emission.
-    /// @source UE5 BasePassPixelShader.usf:1480 — GetMaterialEmissive
+    /// Emissive tint is added to scene color during the lighting pass.
     float emissiveColorR  = 0.0f;
     float emissiveColorG  = 0.0f;
     float emissiveColorB  = 0.0f;
@@ -80,7 +80,7 @@ struct DrawCommand {
 
     // ── Material parameters (defaults are neutral — no change to existing rendering) ──
 
-    /// @source UE5 MaterialTemplate.ush — BaseColor * BaseColorTint
+    /// Albedo tint: BaseColor * BaseColorTint (industry-standard material model).
     float baseColorTintR      = 1.0f;  ///< Albedo color multiplier R.
     float baseColorTintG      = 1.0f;  ///< Albedo color multiplier G.
     float baseColorTintB      = 1.0f;  ///< Albedo color multiplier B.
@@ -100,9 +100,9 @@ struct DrawCommand {
     float    pomSelfShadow     = 0.0f;  ///< Self-shadow strength [0,1].
 
     // ── Blend Mode ─────────────────────────────────────────────────────────
-    /// @source UE5 EngineTypes.h:256 — EBlendMode enum
+    /// Standard blend mode enum: Opaque, Masked, Translucent, Additive.
     uint32_t blendMode         = 0;     ///< 0=Opaque, 1=Masked, 2=Translucent, 3=Additive.
-    /// @source UE5 Material.h:1891 — OpacityMaskClipValue default 0.3333
+    /// Default alpha clip threshold: 1/3 (industry convention for masked materials).
     float    alphaClipThreshold = 0.3333f; ///< Alpha test discard threshold for Masked mode.
     uint32_t twoSided          = 0;     ///< 0 = back-face cull, 1 = no cull (two-sided rendering).
     uint32_t opacitySrvIndex   = 0;     ///< SRV index for opacity/alpha mask texture (0 = none, use opacity scalar).

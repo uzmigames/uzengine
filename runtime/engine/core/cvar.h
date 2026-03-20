@@ -6,7 +6,7 @@
 /// runtime-configurable engine parameters. CVars are identified by
 /// dot-separated names (e.g., "r.ScreenPercentage", "r.Shadow.MaxResolution").
 ///
-/// @source UE5 IConsoleManager — simplified: no command callbacks, no thread
+/// Simplified console variable manager: no command callbacks, no thread
 ///         safety guarantees, no auto-registration macros. Render-thread only.
 ///
 /// # Usage
@@ -51,7 +51,7 @@ struct CVar {
 
 /// Global CVar registry — singleton accessed via CVarRegistry::Get().
 ///
-/// @source UE5 IConsoleManager — simplified: no command callbacks, no thread
+/// Simplified console variable manager: no command callbacks, no thread
 ///         safety, no auto-registration macros. Just a name-to-value map.
 ///
 /// NOT thread-safe. All access must occur on the render/game thread.

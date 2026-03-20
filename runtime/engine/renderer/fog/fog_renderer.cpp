@@ -1,7 +1,8 @@
 /// UzEngine Fog Renderer — Implementation.
 ///
-/// Extracts HeightFogComponent from ECS, pre-computes UE5 RayOriginTerms,
+/// Extracts HeightFogComponent from ECS, pre-computes RayOriginTerms,
 /// and registers the height fog render graph pass.
+/// @ref Hillaire 2016 "Physically Based & Unified Volumetric Rendering"
 
 #include "fog_renderer.h"
 
@@ -17,6 +18,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <cfloat>
 
 namespace uz {
 
@@ -24,9 +26,6 @@ namespace uz {
 // Analytical transmittance from sea level toward the sun
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 SkyAtmosphereRendering.cpp:454 — GetTransmittanceAtGroundLevel
-/// @source UE5 DirectionalLightComponent.cpp:605 — GetSunIlluminanceOnGroundPostTransmittance
-///
 /// Computes atmospheric transmittance from sea level toward the sun direction
 /// by numerically integrating optical depth (Rayleigh + Mie + Ozone extinction)
 /// along the ray from the planet surface to the top of atmosphere.
@@ -90,7 +89,6 @@ static Vec3 ComputeTransmittanceToSun(
         const float densityM = std::exp(-altitude / atmo.mieScaleHeightKm);
 
         // Ozone density (tent distribution).
-        // @source UE5 SkyAtmosphereCommonData.h:38-42 — tent distribution
         const float ozoneDist = std::abs(altitude - atmo.ozoneTipAltitude);
         const float densityO  = std::max(0.0f, 1.0f - ozoneDist / atmo.ozoneWidth) * atmo.ozoneTipValue;
 
@@ -118,6 +116,145 @@ static Vec3 ComputeTransmittanceToSun(
     return {std::exp(-optDepthR), std::exp(-optDepthG), std::exp(-optDepthB)};
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Luminance helper
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Compute Rec.709 luminance from linear RGB color.
+static float GetLuminance(const Vec3& color) noexcept
+{
+    return 0.2126f * color.x + 0.7152f * color.y + 0.0722f * color.z;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HeightFogCB population — exponential height fog constant setup
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// @ref Hillaire 2016 "Physically Based & Unified Volumetric Rendering"
+/// @constants MaxObserverHeightDifference=65536.0f, CollapsedFogParameter clamp=(-125.0f, +126.0f)
+///
+/// Fills HeightFogCB from a HeightFogComponent. Key pre-computations:
+///
+///   1. MaxObserverHeight = min across all active layers of (baseHeight + 65536)
+///   2. ObserverHeight = min(cameraZ, MaxObserverHeight)   [single shared value]
+///   3. Per-layer RayOriginTerms = density * pow(2, clamp(-falloff*(obsH-baseH), -125, 126))
+///
+/// The shader receives the pre-computed RayOriginTerms and also the raw density
+/// so it can re-compute RayOriginTerms at the start-distance exclusion point.
+static void PopulateHeightFogCB(
+    HeightFogCB& fogCB,
+    const HeightFogComponent& fogComp,
+    const Camera& camera,
+    const SkyAtmosphereComponent* skyAtmoPtr,
+    float skyLightColorR,
+    float skyLightColorG,
+    float skyLightColorB,
+    const Vec3& sunDir,
+    const Vec3& sunColor,
+    float sunIntensity,
+    bool hasSun) noexcept
+{
+    // ── MaxObserverHeight computation ────────────────────────────────────
+    // Starts at FLT_MAX and reduces per-layer. Only layers with density > 0
+    // contribute. Both layers share a single ObserverHeight.
+    constexpr float kMaxObserverHeightDiff = 65536.0f;
+
+    float maxObserverHeight = FLT_MAX;
+
+    if (fogComp.density > 0.0f) {
+        maxObserverHeight = std::min(maxObserverHeight,
+            fogComp.baseHeight + kMaxObserverHeightDiff);
+    }
+    if (fogComp.secondFogDensity > 0.0f) {
+        maxObserverHeight = std::min(maxObserverHeight,
+            fogComp.secondFogBaseHeight + kMaxObserverHeightDiff);
+    }
+
+    const float camZ = camera.GetPosition().z;
+    const float observerHeight = std::min(camZ, maxObserverHeight);
+
+    // ── Layer 1: CollapsedFogParameter (RayOriginTerms) ─────────────────
+    // Clamp exponent to IEEE float safe range: [-125, +126] (= -126+1, +127-1).
+    const float clampedPower0 = std::clamp(
+        -fogComp.heightFalloff * (observerHeight - fogComp.baseHeight),
+        -126.0f + 1.0f,
+        +127.0f - 1.0f);
+    const float rayOriginTerms0 = fogComp.density * std::pow(2.0f, clampedPower0);
+
+    // ── Layer 2: CollapsedFogParameter ──────────────────────────────────
+    float rayOriginTerms1 = 0.0f;
+    if (fogComp.secondFogDensity > 0.0f) {
+        const float clampedPower1 = std::clamp(
+            -fogComp.secondFogHeightFalloff * (observerHeight - fogComp.secondFogBaseHeight),
+            -126.0f + 1.0f,
+            +127.0f - 1.0f);
+        rayOriginTerms1 = fogComp.secondFogDensity * std::pow(2.0f, clampedPower1);
+    }
+
+    // ── Fill CB — Primary layer ─────────────────────────────────────────
+    fogCB.fogColor = {fogComp.color.x, fogComp.color.y, fogComp.color.z, 0.0f};
+    fogCB.fogDensity       = rayOriginTerms0;
+    fogCB.fogHeightFalloff = fogComp.heightFalloff;
+    fogCB.fogBaseHeight    = fogComp.baseHeight;
+
+    // Store FogMaxOpacity directly; the shader computes (1 - fogMaxOpacity).
+    fogCB.fogMaxOpacity    = fogComp.maxOpacity;
+    fogCB.fogStartDistance = fogComp.startDistance;
+    fogCB.fogCutoffDistance = fogComp.fogCutoffDistance;
+    fogCB.maxObserverHeight = maxObserverHeight;
+    fogCB.rawDensity = fogComp.density;
+
+    // ── Fill CB — Second layer ──────────────────────────────────────────
+    fogCB.secondFogDensity       = rayOriginTerms1;
+    fogCB.secondFogHeightFalloff = (fogComp.secondFogDensity > 0.0f)
+        ? fogComp.secondFogHeightFalloff : 0.0f;
+    fogCB.secondFogRawDensity    = fogComp.secondFogDensity;
+    fogCB.secondFogBaseHeight    = fogComp.secondFogBaseHeight;
+
+    // ── Directional inscattering ────────────────────────────────────────
+    // DirectionalInscatteringColor is scaled by the sun light's luminance.
+    const float sunLuminance = hasSun ? GetLuminance(sunColor) : 0.0f;
+
+    fogCB.directionalInscatteringColor = {
+        fogComp.directionalInscatteringColor.x * sunLuminance,
+        fogComp.directionalInscatteringColor.y * sunLuminance,
+        fogComp.directionalInscatteringColor.z * sunLuminance,
+        0.0f};
+
+    fogCB.directionalInscatteringExponent = fogComp.directionalInscatteringExponent;
+    fogCB.directionalInscatteringStartDistance = fogComp.directionalInscatteringStartDistance;
+
+    // ── Sky atmosphere injection ────────────────────────────────────────
+    fogCB.skyAtmContribColorScale = {1.0f, 1.0f, 1.0f, 0.0f};
+    fogCB.heightFogContribution = skyAtmoPtr ? skyAtmoPtr->heightFogContribution : 0.0f;
+
+    fogCB.skyLightColorR = skyLightColorR;
+    fogCB.skyLightColorG = skyLightColorG;
+    fogCB.skyLightColorB = skyLightColorB;
+
+    // ── Sun post-transmittance illuminance ──────────────────────────────
+    // SunIlluminancePostTransmittance = SunColor * Intensity * Transmittance
+    // Transmittance is computed analytically through the atmosphere toward the sun.
+    Vec3 transmittance = {1.0f, 1.0f, 1.0f};
+    if (hasSun && skyAtmoPtr) {
+        transmittance = ComputeTransmittanceToSun(*skyAtmoPtr, sunDir);
+    }
+
+    fogCB.sunIllumPostTransR = sunColor.x * sunIntensity * transmittance.x;
+    fogCB.sunIllumPostTransG = sunColor.y * sunIntensity * transmittance.y;
+    fogCB.sunIllumPostTransB = sunColor.z * sunIntensity * transmittance.z;
+    fogCB.sunIllumPostTransA = hasSun ? 1.0f : 0.0f;
+
+    // Our sunDir parameter already points toward the sun (negated from light forward).
+    fogCB.sunDirX = sunDir.x;
+    fogCB.sunDirY = sunDir.y;
+    fogCB.sunDirZ = sunDir.z;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Render graph pass registration
+// ─────────────────────────────────────────────────────────────────────────────
+
 void AddHeightFogFromECS(
     rg::RgBuilder& rgBuilder,
     rg::RgResourceId hdrRes,
@@ -143,120 +280,42 @@ void AddHeightFogFromECS(
         auto& fogComp = fogView.get<HeightFogComponent>(enttEntity);
         if (!fogComp.enabled) continue;
 
-        /// @source UE5 FogRendering.cpp:223-253 — InitFogConstants
-        /// MaxObserverHeightDifference clamp prevents fog from vanishing at high camera Z.
-        /// UE5: ObserverHeight = min(CameraZ, FogHeight + 65536.0f)
-        constexpr float kMaxObserverHeightDiff = 65536.0f;
-        float camZ = camera.GetPosition().z;
-        float observerHeight = std::min(camZ, fogComp.baseHeight + kMaxObserverHeightDiff);
-        float fogHeightDiff = observerHeight - fogComp.baseHeight;
-        float clampedPower = std::clamp(-fogComp.heightFalloff * fogHeightDiff, -126.f + 1.f, 127.f - 1.f);
-        float rayOriginTerms = fogComp.density * std::pow(2.0f, clampedPower);
-
-        HeightFogCB fogCB{};
-        fogCB.fogColor         = {fogComp.color.x, fogComp.color.y, fogComp.color.z, 0.f};
-        fogCB.fogDensity       = rayOriginTerms;
-        fogCB.fogHeightFalloff = fogComp.heightFalloff;
-        fogCB.fogBaseHeight    = fogComp.baseHeight;
-        fogCB.fogMaxOpacity    = fogComp.maxOpacity;
-        fogCB.fogStartDistance = fogComp.startDistance;
-        fogCB.fogCutoffDistance = fogComp.fogCutoffDistance;
-        /// @source UE5 FogRendering.cpp:257 — ExponentialFogParameters.z = MaxObserverHeight
-        fogCB.maxObserverHeight = fogComp.baseHeight + kMaxObserverHeightDiff;
-        /// @source UE5 FogRendering.cpp:261 — ExponentialFogParameters3.x = raw density
-        fogCB.rawDensity = fogComp.density;
-
-        // @source UE5 FogRendering.cpp:245-254 — InitFogConstants
-        // Second layer precomputation identical to first layer:
-        //   CollapsedFogParameter[1] = Density * pow(2, clamp(-Falloff*(ObserverH - FogH), -125, 126))
-        // @source UE5 FogRendering.cpp:257 — ExponentialFogParameters2.x = precomputed, .z = raw density, .w = height
-        // @deviations NONE
-        if (fogComp.secondFogDensity > 0.0f) {
-            float secondObserverH = std::min(camZ, fogComp.secondFogBaseHeight + kMaxObserverHeightDiff);
-            float secondFogHeightDiff = secondObserverH - fogComp.secondFogBaseHeight;
-            float secondClampedPower = std::clamp(-fogComp.secondFogHeightFalloff * secondFogHeightDiff, -126.f + 1.f, 127.f - 1.f);
-            fogCB.secondFogDensity       = fogComp.secondFogDensity * std::pow(2.0f, secondClampedPower);
-            fogCB.secondFogHeightFalloff = fogComp.secondFogHeightFalloff;
-            fogCB.secondFogRawDensity    = fogComp.secondFogDensity;
-            fogCB.secondFogBaseHeight    = fogComp.secondFogBaseHeight;
-        } else {
-            fogCB.secondFogDensity       = 0.0f;
-            fogCB.secondFogHeightFalloff = 0.0f;
-            fogCB.secondFogRawDensity    = 0.0f;
-            fogCB.secondFogBaseHeight    = 0.0f;
-        }
-
-        fogCB.directionalInscatteringColor = {
-            fogComp.directionalInscatteringColor.x,
-            fogComp.directionalInscatteringColor.y,
-            fogComp.directionalInscatteringColor.z, 0.f};
-        fogCB.directionalInscatteringExponent      = fogComp.directionalInscatteringExponent;
-        fogCB.directionalInscatteringStartDistance  = fogComp.directionalInscatteringStartDistance;
-
-        // ── Sky atmosphere injection ──
-        /// @source UE5 HeightFogCommon.ush:174-180
-        /// @source UE5 FogRendering.cpp:85 — SkyAtmosphereAmbientContributionColorScale
-        /// When SkyAtmosphere exists, inject sky light color into fog inscattering.
-        fogCB.skyAtmContribColorScale = {1.f, 1.f, 1.f, 0.f}; // UE5 default: white
-        fogCB.heightFogContribution = 0.f; // Will be set if SkyAtmosphereComponent found
-        fogCB.skyLightColorR = skyLightColorR;
-        fogCB.skyLightColorG = skyLightColorG;
-        fogCB.skyLightColorB = skyLightColorB;
-
-        // ── Find SkyAtmosphereComponent for height fog contribution + transmittance ──
+        // ── Find SkyAtmosphereComponent (first found, singleton semantics) ──
         const SkyAtmosphereComponent* skyAtmoPtr = nullptr;
         auto skyView = world->GetRegistry().view<SkyAtmosphereComponent>();
         for (auto skyEnt : skyView) {
-            auto& skyComp = skyView.get<SkyAtmosphereComponent>(skyEnt);
-            fogCB.heightFogContribution = skyComp.heightFogContribution;
-            skyAtmoPtr = &skyComp;
+            skyAtmoPtr = &skyView.get<SkyAtmosphereComponent>(skyEnt);
             break;
         }
 
-        // ── Sun transmittance injection ──
-        /// @source UE5 SkyAtmosphereRendering.cpp:454 — GetTransmittanceAtGroundLevel
-        /// @source UE5 DirectionalLightComponent.cpp:605 — GetSunIlluminanceOnGroundPostTransmittance
-        /// @source UE5 HeightFogCommon.ush:319 — AtmosphereLightIlluminanceOnGroundPostTransmittance
-        ///
-        /// Find the primary atmosphere DirectionalLight, compute analytical
-        /// transmittance through the atmosphere, and produce the post-transmittance
-        /// sun illuminance that the fog shader uses for directional inscattering.
-        {
-            Vec3 sunDir      = {0.f, 0.f, 1.f}; // Default: straight up (no inscattering)
-            Vec3 sunColor    = {1.f, 1.f, 1.f};
-            float sunIntensity = 10.0f;
-            bool hasSun = false;
+        // ── Find primary atmosphere DirectionalLight ────────────────────
+        // Fog only uses a single atmosphere light (index 0).
+        Vec3 sunDir      = {0.0f, 0.0f, 1.0f}; // Default: straight up (no inscattering)
+        Vec3 sunColor    = {1.0f, 1.0f, 1.0f};
+        float sunIntensity = 10.0f;
+        bool hasSun = false;
 
-            auto lightView = world->GetRegistry().view<DirectionalLightComponent>();
-            for (auto ent : lightView) {
-                auto& dl = lightView.get<DirectionalLightComponent>(ent);
-                if (dl.atmosphereSunLight) {
-                    sunDir       = dl.GetDirection();
-                    sunColor     = dl.color;
-                    sunIntensity = dl.intensity;
-                    hasSun       = true;
-                    break;
-                }
+        auto lightView = world->GetRegistry().view<DirectionalLightComponent>();
+        for (auto ent : lightView) {
+            auto& dl = lightView.get<DirectionalLightComponent>(ent);
+            if (dl.atmosphereSunLight) {
+                // GetDirection() returns the light's forward vector (toward scene).
+                // Negate to get direction toward the sun (away from scene).
+                sunDir       = {-dl.GetDirection().x, -dl.GetDirection().y, -dl.GetDirection().z};
+                sunColor     = dl.color;
+                sunIntensity = dl.intensity;
+                hasSun       = true;
+                break;
             }
-
-            // Compute atmospheric transmittance from sea level toward the sun.
-            Vec3 transmittance = {1.f, 1.f, 1.f};
-            if (hasSun && skyAtmoPtr) {
-                transmittance = ComputeTransmittanceToSun(*skyAtmoPtr, sunDir);
-            }
-
-            /// @source UE5 DirectionalLightComponent.cpp:605
-            /// SunIlluminanceOnGroundPostTransmittance = SunColor * Intensity * Transmittance
-            fogCB.sunIllumPostTransR = sunColor.x * sunIntensity * transmittance.x;
-            fogCB.sunIllumPostTransG = sunColor.y * sunIntensity * transmittance.y;
-            fogCB.sunIllumPostTransB = sunColor.z * sunIntensity * transmittance.z;
-            fogCB.sunIllumPostTransA = hasSun ? 1.0f : 0.0f;
-
-            fogCB.sunDirX = sunDir.x;
-            fogCB.sunDirY = sunDir.y;
-            fogCB.sunDirZ = sunDir.z;
         }
 
+        // ── Populate HeightFogCB ────────────────────────────────────────
+        HeightFogCB fogCB{};
+        PopulateHeightFogCB(fogCB, fogComp, camera, skyAtmoPtr,
+                            skyLightColorR, skyLightColorG, skyLightColorB,
+                            sunDir, sunColor, sunIntensity, hasSun);
+
+        // ── Upload to GPU and register render graph pass ────────────────
         CBAllocation fogAlloc = cbRing.Allocate(sizeof(HeightFogCB));
         std::memcpy(fogAlloc.cpuPtr, &fogCB, sizeof(HeightFogCB));
 
@@ -273,7 +332,7 @@ void AddHeightFogFromECS(
         fogDesc.viewportHeight = vpHeight;
         AddHeightFogPass(rgBuilder, fogDesc);
 
-        break;  // First HeightFogComponent only
+        break;  // First HeightFogComponent only (singleton semantics)
     }
 }
 

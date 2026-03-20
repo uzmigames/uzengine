@@ -111,7 +111,7 @@ LightFrameData ExtractLightingFromECS(
         }
 
         // ── Spot lights ──
-        // @source UE5 SpotLightComponent.cpp:48-54 — cone angle clamping and SpotAngles packing
+        // Cone angle clamping and SpotAngles packing.
         auto spotLightView = world->GetRegistry().view<SpotLightComponent>();
         for (auto enttEntity : spotLightView) {
             if (lightingData.spotLightCount >= kMaxSpotLights) break;
@@ -136,8 +136,8 @@ LightFrameData ExtractLightingFromECS(
             }
             const Vec3 col = lightCol * sl.intensity;
 
-            // UE5 SpotAngles packing:
-            // @source UE5 SpotLightComponent.cpp:48-54
+            // SpotAngles packing:
+            
             // ClampedInnerConeAngle in [0, 89] degrees → radians
             // ClampedOuterConeAngle in (inner+0.001, 89+0.001] degrees → radians
             static constexpr float kDegToRad = 3.14159265358979323846f / 180.f;
@@ -148,7 +148,7 @@ LightFrameData ExtractLightingFromECS(
 
             const float cosInner = std::cos(innerRad);
             const float cosOuter = std::cos(outerRad);
-            // @source UE5 SpotLightComponent.cpp:54
+            
             const float invDiff = 1.0f / (cosInner - cosOuter);
 
             const uint32_t idx = lightingData.spotLightCount;

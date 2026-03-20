@@ -47,8 +47,8 @@ struct SceneLighting {
 
     /// Ambient light color contribution (constant term in lighting equation).
     ///
-    /// @source UE5 SceneRendering.cpp — no hardcoded ambient minimum; all ambient
-    /// comes from the SkyLight SH system. Zero when no SkyLight exists.
+    /// No hardcoded ambient minimum — all ambient comes from the SkyLight SH
+    /// system. Zero when no SkyLight is present in the scene.
     Vec3 ambientColor = {0.0f, 0.0f, 0.0f};
 };
 

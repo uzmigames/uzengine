@@ -9,7 +9,7 @@
 /// The compute shader (lensflare_cs.hlsl) implements the John Chapman 2013
 /// ghost-based technique: UV reflection through screen center at multiple
 /// scales, chromatic aberration fringe, edge attenuation, and a 3-sample
-/// Gaussian-blurred halo ring. This is intentionally different from UE5's
+/// Gaussian-blurred halo ring. This is intentionally different from reference's
 /// bokeh-tile rasterization approach — see the shader header for rationale.
 ///
 /// # Integration

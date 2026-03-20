@@ -606,7 +606,7 @@ bool VulkanDevice::CreateDescriptorSetLayout() {
     {
         VkSamplerCreateInfo ci = {};
         ci.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
-        /// @source UE5 SceneTexturesConfig.cpp:145 — 16x anisotropic filtering
+        /// 16x anisotropic filtering — standard quality for material textures
         ci.magFilter = VK_FILTER_LINEAR;
         ci.minFilter = VK_FILTER_LINEAR;
         ci.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
@@ -634,7 +634,7 @@ bool VulkanDevice::CreateDescriptorSetLayout() {
         ci.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER;
         ci.borderColor = VK_BORDER_COLOR_FLOAT_OPAQUE_BLACK;
         ci.compareEnable = VK_TRUE;
-        ci.compareOp = VK_COMPARE_OP_LESS; // Shadow maps use standard-Z (UE5 parity)
+        ci.compareOp = VK_COMPARE_OP_LESS; // Shadow maps use standard-Z (standard)
         ci.maxAnisotropy = 1.0f;
         ci.minLod = 0.0f;
         ci.maxLod = VK_LOD_CLAMP_NONE;

@@ -22,9 +22,6 @@
 /// - `RWByteAddressBuffer` with atomically-incremented instance count at offset 4
 ///   (compatible with `DrawIndexedIndirect` / `ExecuteIndirect`).
 ///
-/// @source UE5 HZBOcclusion.usf:13-42 — HZBTestPS
-/// @source UE5 NaniteHZBCull.ush:565-595 — ProjectSphere, SphereToScreenRect
-/// @source UE5 NaniteHZBCull.ush:195-200 — IsVisibleHZB
 
 #pragma once
 

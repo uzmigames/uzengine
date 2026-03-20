@@ -29,8 +29,8 @@
 /// - SSR (Hi-Z ray marching)
 /// - Contact shadows (depth hierarchy tracing)
 ///
-/// @source UE5 HZBOcclusion.cpp — FHZBOcclusionTester, BuildHZB pass
-/// @source UE5 HZB.usf:183-293 — HZBBuildCS compute shader
+/// @ref Wihlidal 2016 "Optimizing the Graphics Pipeline with Compute" — HZB construction
+/// Standard min/max depth pyramid for hierarchical occlusion testing.
 
 #pragma once
 

@@ -4,8 +4,8 @@
 /// from the depth prepass output. Each mip is produced by a separate compute
 /// dispatch that reads the previous mip and writes the min of each 2x2 block.
 ///
-/// @source UE5 HZBOcclusion.cpp — BuildHZB pass
-/// @source UE5 HZB.usf:183-293 — HZBBuildCS
+/// @ref Wihlidal 2016 "Optimizing the Graphics Pipeline with Compute" — HZB construction
+/// Standard compute-based min-depth pyramid for hierarchical Z-buffer.
 
 #include "hiz_pyramid_pass.h"
 
@@ -26,7 +26,7 @@ namespace uz {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Thread group size matching [numthreads(8, 8, 1)] in hiz_pyramid_cs.hlsl.
-/// @source UE5 HZB.usf:10 — GROUP_TILE_SIZE
+/// Standard 8x8 thread group for 2D texture processing.
 static constexpr uint32_t kHiZThreadGroupSize = 8;
 
 // ─────────────────────────────────────────────────────────────────────────────

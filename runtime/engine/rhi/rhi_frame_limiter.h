@@ -2,7 +2,7 @@
 
 /// Frame Limiter — hybrid sleep/spin-wait frame pacing for consistent frame times.
 ///
-/// Uses a two-phase approach inspired by UE5's frame limiter:
+/// Uses a two-phase approach inspired by the reference engine's frame limiter:
 /// 1. Sleep phase: `std::this_thread::sleep_for` for the bulk of remaining time (minus 1ms margin)
 /// 2. Spin phase: `std::this_thread::yield()` busy-loop for sub-millisecond precision
 ///

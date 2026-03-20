@@ -1,16 +1,17 @@
 /// UzEngine Scene Renderer — Asset loading (LoadMesh, LoadTexture, Queue*, DestroyAssets).
 ///
+/// Mesh loading uses deferred uploads: `UploadMeshDeferred()` records copy
+/// commands on the command list but does NOT execute/WaitIdle. Staging buffers
+/// are kept alive in `m_deferredMeshUploads`. A single `FlushDeferredMeshUploads()`
+/// call at the end of the sync pass executes all copies in one GPU submission.
+///
 /// Texture loading uses a two-phase async pipeline:
 ///   1. Submit phase: `LoadTexture()` / `QueueTextureLoad()` reserve a slot in
 ///      m_textures and submit the path to the AsyncTextureDecoder for background
 ///      CPU decode (stbi_load on worker threads).
-///   2. Flush phase: `FlushPendingLoads()` polls completed decodes and batch-
-///      uploads all decoded pixels to the GPU in a single command list submission
-///      (one WaitIdle for the entire batch instead of one per texture).
-///
-/// This provides a 2-4x speedup for scenes with many textures (e.g., 45 textures
-/// for 9 PBR materials) by overlapping CPU decode work across 2 worker threads
-/// and batching GPU uploads.
+///   2. Flush phase: `FlushPendingLoads()` polls completed decodes (non-blocking)
+///      and uploads whatever is ready this frame. Remaining in-flight decodes are
+///      picked up on subsequent frames, spreading upload cost across frames.
 
 #include "scene_renderer.h"
 
@@ -23,6 +24,12 @@
 #include "rhi.h"
 #include "log.h"
 #include "profiler.h"
+#include "gi/mesh_sdf_baker.h"
+#include "pipeline_library.h"
+
+#include <algorithm>
+#include <chrono>
+#include <thread>
 
 #include <stb_image.h>
 
@@ -30,8 +37,13 @@
 
 namespace uz {
 
+/// Maximum textures to upload per frame. Spreads GPU upload cost across
+/// multiple frames instead of one large stall. Remaining decoded textures
+/// are kept in m_deferredDecoded for the next frame.
+static constexpr uint32_t kMaxTextureUploadsPerFrame = 8;
+
 // ─────────────────────────────────────────────────────────────────────────────
-// Asset Loading — Meshes (unchanged, synchronous)
+// Asset Loading — Meshes (deferred upload, flushed in batch)
 // ─────────────────────────────────────────────────────────────────────────────
 
 uint32_t SceneRenderer::LoadMesh(const std::string& path, IVFS* vfs,
@@ -68,18 +80,35 @@ uint32_t SceneRenderer::LoadMesh(const std::string& path, IVFS* vfs,
         return UINT32_MAX;
     }
 
-    GPUMesh gpuMesh = UploadMesh(m_device, cmdList, cpuMesh);
-    if (!gpuMesh.IsValid()) {
+    DeferredMeshUpload deferred = UploadMeshDeferred(m_device, cmdList, cpuMesh);
+    if (!deferred.mesh.IsValid()) {
         UZ_LOG(Renderer, Error, "SceneRenderer: failed to upload mesh: '{}'", path);
         return UINT32_MAX;
     }
 
     const auto index = static_cast<uint32_t>(m_meshes.size());
-    m_meshes.push_back(gpuMesh);
+    m_meshes.push_back(deferred.mesh);  // copy handles (GPUMesh is trivially copyable)
     m_meshMap[path] = index;
+    m_deferredMeshUploads.push_back(std::move(deferred));  // move staging ownership
+
+    // ── Queue SDF bake for GI system (deferred — runs after mesh upload flush) ──
+    // Only standard-format meshes with valid geometry are eligible for SDF baking.
+    // Read counts/stride from the header BEFORE moving the vectors (header is not moved).
+    if (cpuMesh.header.vertexFormat == MeshVertexFormat::Standard
+        && cpuMesh.GetVertexCount() > 0 && cpuMesh.GetIndexCount() >= 3)
+    {
+        PendingSdfBake sdfBake;
+        sdfBake.meshIndex    = index;
+        sdfBake.vertexCount  = cpuMesh.GetVertexCount();
+        sdfBake.vertexStride = cpuMesh.header.vertexStride;
+        sdfBake.indexCount   = cpuMesh.GetIndexCount();
+        sdfBake.vertexData   = std::move(cpuMesh.vertexData);
+        sdfBake.indexData    = std::move(cpuMesh.indexData);
+        m_pendingSdfBakes.push_back(std::move(sdfBake));
+    }
 
     UZ_LOG(Renderer, Info, "SceneRenderer: loaded mesh '{}' (id={}, {} vertices, {} indices)",
-           path, index, gpuMesh.vertexCount, gpuMesh.indexCount);
+           path, index, m_meshes[index].vertexCount, m_meshes[index].indexCount);
     return index;
 }
 
@@ -210,7 +239,7 @@ std::string SceneRenderer::GetTexturePath(uint32_t textureId) const {
 void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {
     UZ_PROFILE_FUNCTION();
 
-    // ── Flush pending mesh uploads (synchronous, unchanged) ─────────────
+    // ── Flush pending mesh uploads (deferred — batched into single submission) ──
     for (const std::string& path : m_pendingMeshPaths) {
         const uint32_t slotIndex = m_meshMap.at(path);
         Mesh cpuMesh = uz::LoadMesh(path);
@@ -218,17 +247,45 @@ void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {
             UZ_LOG(Renderer, Error, "SceneRenderer: failed to load queued mesh '{}'", path);
             continue;
         }
-        GPUMesh gpuMesh = UploadMesh(m_device, cmdList, cpuMesh);
-        if (!gpuMesh.IsValid()) {
+        DeferredMeshUpload deferred = UploadMeshDeferred(m_device, cmdList, cpuMesh);
+        if (!deferred.mesh.IsValid()) {
             UZ_LOG(Renderer, Error, "SceneRenderer: failed to upload queued mesh '{}'", path);
             continue;
         }
-        m_meshes[slotIndex] = gpuMesh;
+
+        m_meshes[slotIndex] = deferred.mesh;  // copy handles into slot
+        m_deferredMeshUploads.push_back(std::move(deferred));  // move staging ownership
+
+        // Queue SDF bake for the Lua-path loaded mesh (same logic as LoadMesh).
+        if (cpuMesh.header.vertexFormat == MeshVertexFormat::Standard
+            && cpuMesh.GetVertexCount() > 0 && cpuMesh.GetIndexCount() >= 3)
+        {
+            PendingSdfBake sdfBake;
+            sdfBake.meshIndex    = slotIndex;
+            sdfBake.vertexCount  = cpuMesh.GetVertexCount();
+            sdfBake.vertexStride = cpuMesh.header.vertexStride;
+            sdfBake.indexCount   = cpuMesh.GetIndexCount();
+            sdfBake.vertexData   = std::move(cpuMesh.vertexData);
+            sdfBake.indexData    = std::move(cpuMesh.indexData);
+            m_pendingSdfBakes.push_back(std::move(sdfBake));
+        }
+
         UZ_LOG(Renderer, Info,
             "SceneRenderer: flushed mesh '{}' (id={}, {} verts, {} indices)",
-            path, slotIndex, gpuMesh.vertexCount, gpuMesh.indexCount);
+            path, slotIndex, m_meshes[slotIndex].vertexCount, m_meshes[slotIndex].indexCount);
     }
     m_pendingMeshPaths.clear();
+
+    // ── Batch-flush deferred mesh uploads in a single GPU submission ──────
+    if (!m_deferredMeshUploads.empty()) {
+        FlushDeferredMeshUploads(m_device, cmdList, m_deferredMeshUploads);
+        m_deferredMeshUploads.clear();
+    }
+
+    // ── Batch SDF bake for queued meshes ─────────────────────────────────
+    if (!m_pendingSdfBakes.empty()) {
+        FlushSdfBakes(cmdList);
+    }
 
     // ── Flush pending synchronous texture uploads (fallback path) ───────
     // Only used if m_asyncDecoder was not available when QueueTextureLoad
@@ -254,26 +311,49 @@ void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {
     // GPU upload cost across multiple frames instead of one large stall.
     if (!m_asyncDecoder) return;
 
-    // Append newly completed decodes to the deferred queue.
-    auto newlyDecoded = m_asyncDecoder->PollCompleted();
-    for (auto& d : newlyDecoded) {
-        m_deferredDecoded.push_back(std::move(d));
+    // Poll completed decodes (non-blocking). Whatever is ready gets uploaded
+    // this frame; remaining in-flight decodes are picked up next frame.
+    {
+        auto newlyDecoded = m_asyncDecoder->PollCompleted();
+        for (auto& d : newlyDecoded) {
+            m_deferredDecoded.push_back(std::move(d));
+        }
+
+        // Non-blocking: upload whatever is ready this frame. Remaining
+        // in-flight decodes will be picked up on the next FlushPendingLoads()
+        // call, spreading GPU upload cost across frames instead of stalling.
     }
 
-    if (m_deferredDecoded.empty()) return;
+    if (m_deferredDecoded.empty()) {
+        // No new textures — but check if we have a pending batch to flush
+        // (all decodes complete, nothing more coming)
+        if (m_textureBatchCount > 0 && m_asyncDecoder->PendingCount() == 0) {
+            cmdList->End();
+            cmdList->Execute();
+            m_device->WaitIdle();
+            m_textureBatchUpload->ReleaseStaging();
+            m_textureBatchUpload.reset();
+            cmdList->Begin();
+            UZ_LOG(Renderer, Info,
+                   "SceneRenderer: final texture batch flush ({} textures, 1 WaitIdle)",
+                   m_textureBatchCount);
+            m_textureBatchCount = 0;
+        }
+        return;
+    }
 
-    // Limit uploads per frame to avoid GPU stalls.
-    // 4 textures/frame at 500 FPS = all 43 textures loaded in ~0.2 seconds
-    // with no perceptible frame drops.
-    static constexpr uint32_t kMaxUploadsPerFrame = 4;
+    // Ensure persistent upload context exists
+    if (!m_textureBatchUpload) {
+        m_textureBatchUpload = std::make_unique<UploadContext>(m_device);
+    }
 
     const uint32_t toProcess = std::min(
-        static_cast<uint32_t>(m_deferredDecoded.size()), kMaxUploadsPerFrame);
+        static_cast<uint32_t>(m_deferredDecoded.size()),
+        kMaxTextureUploadsPerFrame);
 
     UZ_LOG(Renderer, Debug, "SceneRenderer: uploading {}/{} decoded textures this frame",
            toProcess, m_deferredDecoded.size());
 
-    UploadContext batchUpload(m_device);
     uint32_t uploadedCount = 0;
     uint32_t processed = 0;
 
@@ -286,6 +366,10 @@ void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {
                 stbi_image_free(d.pixels);
                 d.pixels = nullptr;
             }
+            for (auto* mip : d.mipData) {
+                if (mip) std::free(mip);
+            }
+            d.mipData.clear();
             UZ_LOG(Renderer, Warning,
                    "SceneRenderer: async decode completed for unknown path '{}' — discarding",
                    d.path);
@@ -304,9 +388,21 @@ void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {
             continue;
         }
 
-        TextureLoadResult result = TextureLoader::UploadPixelsDeferred(
-            m_device, cmdList, d.pixels, d.width, d.height,
-            d.path.c_str(), &batchUpload);
+        TextureLoadResult result;
+        if (!d.mipData.empty() && d.mipCount > 1) {
+            UZ_LOG(Renderer, Debug,
+                   "SceneRenderer: using pre-computed mips for '{}' ({} mips)",
+                   d.path, d.mipCount);
+            result = TextureLoader::UploadPixelsWithMipsDeferred(
+                m_device, cmdList, d.pixels, d.width, d.height,
+                d.path.c_str(), m_textureBatchUpload.get(),
+                d.mipData.data(), d.mipWidths.data(), d.mipHeights.data(),
+                d.mipCount);
+        } else {
+            result = TextureLoader::UploadPixelsDeferred(
+                m_device, cmdList, d.pixels, d.width, d.height,
+                d.path.c_str(), m_textureBatchUpload.get());
+        }
 
         stbi_image_free(d.pixels);
         d.pixels = nullptr;
@@ -338,18 +434,105 @@ void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {
                                 m_deferredDecoded.begin() + processed);
     }
 
-    // Flush the command list ONCE for this frame's batch, then wait.
-    if (uploadedCount > 0) {
+    m_textureBatchCount += uploadedCount;
+
+    // Flush conditions:
+    // 1. Accumulated >=4 textures in the batch, OR
+    // 2. All async decodes are complete (no more textures coming)
+    static constexpr uint32_t kFlushThreshold = 4;
+    const bool allDecodesComplete = m_asyncDecoder->PendingCount() == 0
+                                     && m_deferredDecoded.empty();
+    const bool batchFull = m_textureBatchCount >= kFlushThreshold;
+
+    if (m_textureBatchCount > 0 && (batchFull || allDecodesComplete)) {
         cmdList->End();
         cmdList->Execute();
         m_device->WaitIdle();
-        batchUpload.ReleaseStaging();
+        m_textureBatchUpload->ReleaseStaging();
+        m_textureBatchUpload.reset();
         cmdList->Begin();
 
         UZ_LOG(Renderer, Info,
-               "SceneRenderer: batch GPU upload complete ({} textures, 1 WaitIdle)",
-               uploadedCount);
+               "SceneRenderer: texture batch flush ({} textures, 1 WaitIdle)",
+               m_textureBatchCount);
+        m_textureBatchCount = 0;
     }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// IsSceneFullyLoaded
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool SceneRenderer::IsSceneFullyLoaded() const {
+    // Pending mesh/texture queues must be empty
+    if (!m_pendingMeshPaths.empty()) return false;
+    if (!m_pendingTexturePaths.empty()) return false;
+    // Async texture decoder must have no in-flight decodes
+    if (m_asyncDecoder && m_asyncDecoder->PendingCount() > 0) return false;
+    // Deferred decoded textures still waiting for GPU upload
+    if (!m_deferredDecoded.empty()) return false;
+    // Unflushed texture batch still pending WaitIdle
+    if (m_textureBatchCount > 0) return false;
+    // Must have rendered at least 2 frames (for pipeline creation + first dispatch)
+    return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FlushSdfBakes — batch GPU SDF bake for all pending meshes
+// ─────────────────────────────────────────────────────────────────────────────
+
+void SceneRenderer::FlushSdfBakes(IRHICommandList* cmdList) {
+    if (m_pendingSdfBakes.empty()) return;
+
+    auto bakePipeline = m_pipelines->GetMeshSdfBake();
+    if (!bakePipeline.IsValid()) {
+        UZ_LOG(Renderer, Warning,
+               "SceneRenderer: SDF bake pipeline not available — skipping {} pending bakes",
+               m_pendingSdfBakes.size());
+        m_pendingSdfBakes.clear();
+        return;
+    }
+
+    UZ_LOG(Renderer, Info, "SceneRenderer: batch SDF bake — {} meshes",
+           m_pendingSdfBakes.size());
+
+    for (auto& bake : m_pendingSdfBakes) {
+        if (bake.meshIndex >= static_cast<uint32_t>(m_meshes.size())) continue;
+
+        const auto* positions = reinterpret_cast<const float*>(bake.vertexData.data());
+        const auto* indices   = reinterpret_cast<const uint32_t*>(bake.indexData.data());
+
+        MeshSDF sdf = MeshSdfBaker::BakeMeshGPU(
+            m_device, cmdList, bakePipeline,
+            positions, bake.vertexCount, bake.vertexStride,
+            indices, bake.indexCount, 32);
+
+        if (sdf.valid) {
+            // Defer destruction of the temporary triangle upload buffer until the
+            // GPU finishes the command list that references it.
+            if (sdf.pendingTriBuffer.IsValid()) {
+                m_deferredDestroyBuffers.push_back(sdf.pendingTriBuffer);
+                sdf.pendingTriBuffer = RHIBufferHandle{};
+            }
+            m_meshes[bake.meshIndex].sdf = sdf;
+            UZ_LOG(Renderer, Info,
+                   "SceneRenderer: GPU-baked mesh SDF (meshIdx={}, res={}, SRV={})",
+                   bake.meshIndex, 32, sdf.srvIndex);
+        } else {
+            UZ_LOG(Renderer, Warning,
+                   "SceneRenderer: SDF bake failed for meshIdx={} ({} verts, {} indices)",
+                   bake.meshIndex, bake.vertexCount, bake.indexCount);
+        }
+    }
+
+    // All SDF dispatches are on the command list — flush once and wait for GPU.
+    cmdList->End();
+    cmdList->Execute();
+    m_device->WaitIdle();
+    cmdList->Begin();
+
+    m_pendingSdfBakes.clear();
+    UZ_LOG(Renderer, Info, "SceneRenderer: SDF batch bake complete");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -359,6 +542,13 @@ void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {
 // CreateShadowAtlas() moved to ShadowAtlas::Init() in shadows/shadow_atlas.cpp
 
 void SceneRenderer::DestroyAssets() {
+    // Release any in-flight texture batch upload before destroying textures
+    if (m_textureBatchUpload) {
+        m_textureBatchUpload->ReleaseStaging();
+        m_textureBatchUpload.reset();
+    }
+    m_textureBatchCount = 0;
+
     for (auto& mesh : m_meshes) {
         DestroyGPUMesh(m_device, mesh);
     }

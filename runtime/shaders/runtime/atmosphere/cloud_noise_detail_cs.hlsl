@@ -13,16 +13,16 @@
 /// @source Schneider & Vos, SIGGRAPH 2015 — "The Real-Time Volumetric
 ///         Cloudscapes of Horizon Zero Dawn", slides 23-26 (detail texture
 ///         layout, frequencies, FBM weights)
-/// @source UE5 RandomPCG.ush:12 — Rand3DPCG16 (PCG-based 3D hash)
-/// @source UE5 Random.ush:473 — VoronoiCornerSample (Worley jitter)
-/// @source UE5 Random.ush:517 — VoronoiNoise3D_ALU (Worley/Voronoi noise)
-/// @source UE5 Random.ush:122 — NoiseTileWrap (tiling via frac * repeat)
+/// @ref Rand3DPCG16 (PCG-based 3D hash)
+/// @ref VoronoiCornerSample (Worley jitter)
+/// @ref VoronoiNoise3D_ALU (Worley/Voronoi noise)
+/// @ref NoiseTileWrap (tiling via frac * repeat)
 /// @constants Frequencies: 2, 4, 8 (Schneider & Vos 2015, slide 24)
 ///            FBM weights: 0.625, 0.25, 0.125 (Schneider & Vos 2015, slide 26)
-///            LCG: v*1664525+1013904223 (UE5 RandomPCG.ush:20, Numerical Recipes)
-///            VoronoiCornerSample scale: 0.2588 (UE5 Random.ush:482)
-/// @deviations NONE — noise math matches UE5 Random.ush exactly; channel layout
-///             and FBM weights match Schneider & Vos 2015 exactly. UE5 loads
+///            LCG: v*1664525+1013904223 (reference RandomPCG.ush:20, Numerical Recipes)
+///            VoronoiCornerSample scale: 0.2588 (standard PCG hash:482)
+/// @deviations NONE — noise math matches reference Random.ush exactly; channel layout
+///             and FBM weights match Schneider & Vos 2015 exactly. reference loads
 ///             pre-baked textures; we generate procedurally with the same algorithms.
 
 // ─── Root Constants ─────────────────────────────────────────────────────────
@@ -41,8 +41,8 @@ RWTexture3D<float4> g_OutputTexture : register(u0);
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// 3D PCG-based hash producing 3 x 16-bit random values in [0, 0xFFFF].
-/// Matches UE5 RandomPCG.ush:12-44 exactly.
-/// @source UE5 RandomPCG.ush:12 — Rand3DPCG16
+/// Standard RandomPCG.ush:12-44 exactly.
+/// @ref Rand3DPCG16
 /// @constants LCG multiplier=1664525, LCG increment=1013904223 (Numerical Recipes)
 /// @deviations NONE
 uint3 Rand3DPCG16(int3 p)
@@ -70,7 +70,7 @@ uint3 Rand3DPCG16(int3 p)
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Wrap coordinates for seamless tiling.
-/// @source UE5 Random.ush:122 — NoiseTileWrap
+/// @ref NoiseTileWrap
 /// @deviations NONE
 float3 NoiseTileWrap(float3 v, float repeatSize)
 {
@@ -83,12 +83,12 @@ float3 NoiseTileWrap(float3 v, float repeatSize)
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Jitter offset for a Voronoi cell corner point.
-/// @source UE5 Random.ush:473-494 — VoronoiCornerSample (Quality <= 2 path)
-/// @constants normalize(noise) * 0.2588 (UE5 Random.ush:482)
+/// @ref VoronoiCornerSample (Quality <= 2 path)
+/// @constants normalize(noise) * 0.2588 (standard PCG hash:482)
 /// @deviations NONE
 float3 VoronoiCornerSample(float3 cellPos)
 {
-    // Random values in [-0.5, 0.5], matching UE5 Random.ush:476
+    // Random values in [-0.5, 0.5], matching standard PCG hash:476
     float3 noise = float3(Rand3DPCG16(int3(cellPos))) / 65535.0 - 0.5;
 
     // Quality <= 2 path: points on sphere with radius 0.2588
@@ -101,10 +101,10 @@ float3 VoronoiCornerSample(float3 cellPos)
 ///
 /// Uses a 3x3x3 neighborhood search for correct tiling behavior.
 ///
-/// @source UE5 Random.ush:517-593 — VoronoiNoise3D_ALU
-/// @source UE5 Random.ush:503-513 — VoronoiCompare
-/// @constants Initial mindist = 100.0 (UE5 Random.ush:523)
-/// @deviations NONE — same algorithm as UE5 Quality==3 path; output is inverted
+/// @ref VoronoiNoise3D_ALU
+/// @ref VoronoiCompare
+/// @constants Initial mindist = 100.0 (standard PCG hash:523)
+/// @deviations NONE — same algorithm as reference Quality==3 path; output is inverted
 ///             (1.0 - dist) per Schneider & Vos 2015 convention.
 float WorleyNoise3D(float3 p, float frequency)
 {
@@ -118,7 +118,7 @@ float WorleyNoise3D(float3 p, float frequency)
     float minDist = 100.0;
 
     // 3x3x3 neighborhood search for correct tiling
-    // @source UE5 Random.ush:527-539 (Quality == 3 path)
+    // @ref PCG hash quality 3 path
     [unroll]
     for (int x = -1; x <= 1; ++x)
     {
@@ -141,14 +141,14 @@ float WorleyNoise3D(float3 p, float frequency)
                 float dist2 = dot(diff, diff);
 
                 // VoronoiCompare — keep minimum squared distance
-                // @source UE5 Random.ush:507
+                // @ref implementation detail
                 minDist = min(minDist, dist2);
             }
         }
     }
 
     // Convert squared distance to linear distance
-    // @source UE5 Random.ush:592
+    // @ref implementation detail
     float dist = sqrt(minDist);
 
     // Invert: cell centers = 1.0 (high density), borders = 0.0

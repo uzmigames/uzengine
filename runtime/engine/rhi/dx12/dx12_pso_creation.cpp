@@ -199,7 +199,7 @@ ID3D12RootSignature* CreateBindlessRootSignature(ID3D12Device* device, ShaderMod
 
     // Static sampler s0: linear wrap (used by mesh_ps and any textured shader)
     D3D12_STATIC_SAMPLER_DESC staticSamplers[2] = {};
-    /// @source UE5 SceneTexturesConfig.cpp:145 — 16x anisotropic filtering for material textures
+    /// 16x anisotropic filtering — standard quality for material textures.
     staticSamplers[0].Filter = D3D12_FILTER_ANISOTROPIC;
     staticSamplers[0].AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
     staticSamplers[0].AddressV = D3D12_TEXTURE_ADDRESS_MODE_WRAP;

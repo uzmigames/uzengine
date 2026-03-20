@@ -24,9 +24,9 @@
 ///
 /// @source Jimenez 2014, "Next Generation Post-Processing in Call of Duty: AW"
 ///   slide 167 — 9-tap tent filter upsample
-/// @source UE5 PostProcessBloomSetup.cpp:268 — per-stage tint applied to each bloom level
-/// @source UE5 Scene.cpp:426-437 — default tint values per stage
-/// @deviations NONE — standard tent filter with UE5 per-stage tint weights
+/// @ref Karis 2013 — bloom pyramid tint:268 — per-stage tint applied to each bloom level
+/// @ref Bloom defaults —426-437 — default tint values per stage
+/// @deviations NONE — standard tent filter with reference per-stage tint weights
 
 #include "../include/math_util.hlsli"
 
@@ -40,7 +40,7 @@ cbuffer BloomUpsampleParams : register(b0) {
     uint  g_OutputWidth;       ///< Output texture width in pixels.
     uint  g_OutputHeight;      ///< Output texture height in pixels.
     float g_BloomRadius;       ///< Filter radius scale (default 1.0, increases blur spread).
-    /// @source UE5 Scene.cpp:426-437 — per-stage Tint color (Bloom1Tint through Bloom6Tint)
+    /// @ref Bloom defaults —426-437 — per-stage Tint color (Bloom1Tint through Bloom6Tint)
     /// RGB tint allows colored bloom per mip level (e.g., warm glow in lower mips).
     float g_StageTintR;        ///< Per-stage tint red channel.
     float g_StageTintG;        ///< Per-stage tint green channel.
@@ -102,8 +102,8 @@ void main(uint3 dtid : SV_DispatchThreadID)
     upsampled *= (1.0f / 16.0f);
 
     // Apply per-stage tint weight before accumulation.
-    // UE5 multiplies each bloom stage's contribution by its tint color during upsample.
-    // @source UE5 PostProcessBloomSetup.cpp:268 — PassInputs.TintColor = BloomStage.Tint * TintScale
+    // multiplies each bloom stage's contribution by its tint color during upsample.
+    // @ref Karis 2013 — bloom pyramid tint:268 — PassInputs.TintColor = BloomStage.Tint * TintScale
     upsampled *= float3(g_StageTintR, g_StageTintG, g_StageTintB);
 
     // Read the downsample result at this level via UAV load (same resource

@@ -1,6 +1,6 @@
 /// Unit tests for the Cascaded Shadow Map frustum-splitting system.
 ///
-/// Validates ShadowConfig defaults (UE5 parity), ShadowCascade defaults,
+/// Validates ShadowConfig defaults (standard), ShadowCascade defaults,
 /// ShadowDataCB layout, and the correctness of ComputeCascades — split
 /// distances, monotonicity, viewProj invertibility, texel sizes, exponential
 /// distribution, per-cascade bias, cascade blending overlap, and maxDistance
@@ -60,7 +60,7 @@ ShadowConfig DefaultConfig() {
 } // namespace
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ShadowConfig defaults — UE5 parity values
+// ShadowConfig defaults — standard values
 // ─────────────────────────────────────────────────────────────────────────────
 
 TEST(ShadowConfig, DefaultCascadeCount_Is4) {
@@ -219,7 +219,7 @@ TEST(ShadowDataCB, DefaultInitialization_AllZero) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// ComputeCascades — split distances (UE5 exponential accumulation)
+// ComputeCascades — split distances (reference exponential accumulation)
 // ─────────────────────────────────────────────────────────────────────────────
 
 TEST(ComputeCascades, SplitNear_FirstCascade_EqualsCameraNear) {

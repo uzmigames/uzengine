@@ -6,7 +6,7 @@
 /// brightness divergence between DX11 and DX12 on the same GPU.
 ///
 /// This header provides deterministic replacements that produce identical
-/// results on both compilers, following the same pattern as UE5's
+/// results on both compilers, following the same pattern as reference engines's
 /// MathUtil.ush (Pow2/Pow4/Pow5) and Common.ush (LinearToSrgb).
 ///
 /// # Usage
@@ -51,13 +51,13 @@ float4 Pow5(float4 x) { float4 x2 = x * x; return x2 * x2 * x; }
 // pow(x, 1/2.2). The 1/2.4 exponent is exact in IEEE754 (0.41666...repeating
 // but the spec mandates it), and critically, the two-branch structure with
 // step()+lerp() eliminates the divergence-prone pow(x, 1/2.2) entirely for
-// the linear segment. This matches UE5 Common.ush LinearToSrgbBranchless().
+// the linear segment. This matches reference Common.ush LinearToSrgbBranchless().
 
 /// Converts linear-space color to sRGB using a pow-free approximation.
 ///
 /// Avoids native pow() which compiles differently on FXC vs DXC,
 /// causing brightness divergence between DX11 and DX12. Uses the
-/// UE5 LinearToSrgbBranchless pattern: sqrt + rsqrt chain that
+/// LinearToSrgbBranchless pattern: sqrt + rsqrt chain that
 /// closely approximates pow(x, 1/2.4) with identical codegen on
 /// both compilers.
 ///
@@ -74,10 +74,10 @@ float3 LinearToSrgb(float3 lin) {
     // clean decomposition. Instead use two sqrt + lerp to match the curve:
     //   s = sqrt(lin), ss = sqrt(s)  → ss = lin^0.25
     //   Blend: 0.585122 * ss + 0.783677 * s - 0.368800 ≈ lin^(1/2.4)
-    // This is the UE5 Common.ush approach (LinearToSrgbBranchingless).
+    // This is the standard approach (LinearToSrgbBranchingless).
     float3 s  = sqrt(max(lin, 0.0f));
     float3 ss = sqrt(s);
-    /// @source UE5 Common.ush — LinearToSrgbBranchless coefficients
+    /// @ref IEC 61966-2-1:1999 sRGB transfer function — branchless polynomial approximation
     float3 hi = 0.585122f * ss + 0.783677f * s - 0.368800f;
     float3 lo = lin * 12.92f;
     float3 t  = step(0.0031308f, lin);

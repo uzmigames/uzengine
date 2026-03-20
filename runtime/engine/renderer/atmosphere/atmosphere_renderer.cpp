@@ -12,6 +12,7 @@
 #include "sky_atmosphere_component.h"
 #include "sky_atmosphere_pass.h"
 #include "transmittance_lut_pass.h"
+#include "aerial_perspective_volume_pass.h"
 #include "sky_cubemap_capture_pass.h"
 #include "sky_cubemap_capture_ps_pass.h"
 #include "light_component.h"
@@ -70,7 +71,7 @@ void AddAtmospherePasses(
             lutRC.topRadiusKm    = skyComp.bottomRadiusKm + skyComp.atmosphereHeightKm;
 
             // ── Ozone CBV for transmittance LUT ───────────────────────
-            // @source UE5 SkyAtmosphereCommonData.cpp:109-115
+            // Convert ozone tent distribution to linear piecewise coefficients.
             TransmittanceLutOzoneCB ozoneCB{};
             {
                 const float px    = skyComp.ozoneTipAltitude;
@@ -231,9 +232,8 @@ void AddAtmospherePasses(
                                         skyComp.skyLuminanceFactor.y,
                                         skyComp.skyLuminanceFactor.z, 1.f};
 
-        // ── Ozone absorption (UE5 "Other Absorption") ───────────────
-        // @source UE5 SkyAtmosphereCommonData.cpp:28-51 — TentToCoefficients
-        // Convert tent distribution to piecewise-linear coefficients.
+        // ── Ozone absorption (reference "Other Absorption") ───────────────
+        // Convert ozone tent distribution to piecewise-linear coefficients.
         // The tent is: density rises linearly from 0 to tipValue over
         // [tipAltitude - width, tipAltitude], then falls to 0 over
         // [tipAltitude, tipAltitude + width].
@@ -275,7 +275,7 @@ void AddAtmospherePasses(
         }
 
         // ── Multi-Scattering LUT compute pass ─────────────────────
-        /// @source UE5 RenderSkyAtmosphereLookUpTablesCS.usf:280-380 — NewMultiScatCS
+        /// @ref Hillaire 2020 — multi-scattering LUT via hemispherical integration.
         if (*ctx.multiScatterLutDirty && ctx.multiScatterLut.IsValid()
                 && ctx.multiScatterLutUav != UINT32_MAX
                 && *ctx.transmittanceLutFilled) {
@@ -353,6 +353,56 @@ void AddAtmospherePasses(
             *ctx.multiScatterLutFilled = true;
         }
 
+        // ── Aerial Perspective Volume — precomputed 3D AP texture ─────────
+        // @ref Hillaire 2020 — camera-relative aerial perspective volume (3D LUT).
+        // Dispatched every frame (view-dependent). Requires transmittance LUT filled.
+        if (ctx.apVolume.IsValid() && ctx.apVolumeUav != UINT32_MAX
+            && *ctx.transmittanceLutFilled && ctx.invViewProjData && ctx.cameraPos) {
+
+            rg::RgResourceId apRes = rgBuilder.ImportTexture("APVolume",
+                ctx.apVolume, RHIResourceState::UnorderedAccess);
+
+            APVolumeRootConstants apRC{};
+            apRC.rayleighBetaX  = skyComp.rayleighScattering.x;
+            apRC.rayleighBetaY  = skyComp.rayleighScattering.y;
+            apRC.rayleighBetaZ  = skyComp.rayleighScattering.z;
+            apRC.rayleighScaleH = skyComp.rayleighScaleHeightKm;
+            apRC.mieBeta        = skyComp.mieScattering;
+            apRC.mieScaleH      = skyComp.mieScaleHeightKm;
+            apRC.bottomRadiusKm = skyComp.bottomRadiusKm;
+            apRC.topRadiusKm    = skyComp.bottomRadiusKm + skyComp.atmosphereHeightKm;
+
+            APVolumeCB apCB{};
+            std::memcpy(&apCB.invViewProj, ctx.invViewProjData, 64);
+            apCB.cameraPosX         = ctx.cameraPos->x;
+            apCB.cameraPosY         = ctx.cameraPos->y;
+            apCB.cameraPosZ         = ctx.cameraPos->z;
+            apCB._camPadW           = 0.0f;
+            apCB.sunDirX            = sunDir.x;
+            apCB.sunDirY            = sunDir.y;
+            apCB.sunDirZ            = sunDir.z;
+            apCB.sunIntensity       = skyComp.sunIlluminance.x; // Use X as scalar (white sun)
+            apCB.mieAnisotropy      = skyComp.mieAnisotropy;
+            apCB.rayleighScale      = skyComp.rayleighScatteringScale;
+            apCB.mieScale           = skyComp.mieScatteringScale;
+            apCB.transmittanceLutIdx = ctx.transmittanceLutSrv;
+            apCB.outputUavIdx       = ctx.apVolumeUav;
+            apCB.depthSlices        = 16;
+            apCB.totalDepthKm       = 100.0f;
+
+            CBAllocation apAlloc = ctx.cbRing->Allocate(sizeof(APVolumeCB));
+            std::memcpy(apAlloc.cpuPtr, &apCB, sizeof(APVolumeCB));
+
+            APVolumePassDesc apPassDesc{};
+            apPassDesc.volumeTarget        = apRes;
+            apPassDesc.transmittanceLutDep = lutRes;
+            apPassDesc.pipeline            = ctx.pipelines->GetAerialPerspectiveVolume();
+            apPassDesc.rootConstants       = apRC;
+            apPassDesc.cbAlloc             = apAlloc;
+            apPassDesc.depthSlices         = 16;
+            AddAerialPerspectiveVolumePass(rgBuilder, apPassDesc);
+        }
+
         SkyAtmospherePassDesc skyDesc{};
         skyDesc.backbuffer              = hdrRes;
         skyDesc.depthGBuffer            = depthRes;
@@ -367,6 +417,7 @@ void AddAtmospherePasses(
         skyDesc.multiScatterLutSrvIndex = ctx.multiScatterLutSrv;
         skyDesc.multiScatterLutTexture  = ctx.multiScatterLut;
         skyDesc.multiScatterLutRes      = msLutRes;
+        skyDesc.apVolumeSrvIndex        = ctx.apVolumeSrv;
         skyDesc.bindless                = ctx.bindless;
         skyDesc.viewportWidth           = ctx.vpWidth;
         skyDesc.viewportHeight          = ctx.vpHeight;
@@ -413,7 +464,7 @@ void PostFrameAtmosphereBake(
             UZ_LOG(Renderer, Info, "SceneRenderer: SH from GPU readback");
         } else {
             // GPU readback returned zero SH — use black ambient rather than
-            // invented analytical values. UE5 always projects from a cubemap
+            // invented analytical values. reference always projects from a cubemap
             // and never falls back to analytical SH coefficients.
             for (int i = 0; i < 7; ++i) ctx.skyIrradianceSH->coeffs[i] = {0,0,0,0};
             UZ_LOG(Renderer, Warning, "SceneRenderer: SH readback returned zeros — using black ambient");

@@ -20,14 +20,12 @@
 /// - b0: Root constants (8 DWORDs)
 /// - b1: PerFrameCB
 ///
-/// @source UE5 IndirectLightRendering.cpp:1435-1438 — DIM_UPSCALE_DIFFUSE_INDIRECT
-/// @source UE5 DiffuseIndirectComposite.usf:85-120 — bilateral upsample path
+/// @ref Jimenez 2016 "Screen-Space Indirect Lighting" — indirect composite with bilateral upsample
+/// @ref Tomasi & Manduchi 1998 "Bilateral Filtering" — joint bilateral upsampling
 /// @constants DepthSigma=0.01 (bilateral depth tolerance, relative)
 ///            NormalPower=2.0 (normal similarity exponent)
-/// @deviations Simplified from UE5's upscale which uses the full composite shader
-///   permutation (DIM_UPSCALE_DIFFUSE_INDIRECT=1). We separate upsampling into
-///   its own pass for clarity. The bilateral weighting logic matches UE5's
-///   joint bilateral approach.
+/// @deviations Upsampling is a separate pass for clarity. The bilateral
+///   weighting logic follows the standard joint bilateral approach.
 
 #include "../include/math_util.hlsli"
 #include "../include/octahedral.hlsli"
@@ -37,18 +35,16 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Depth bilateral sigma (relative). Controls depth sensitivity.
-/// @source UE5 DiffuseIndirectComposite.usf:95 — depth weight threshold
 #define DEPTH_SIGMA 0.01f
 
 /// Normal similarity exponent for bilateral weight.
-/// @source UE5 DiffuseIndirectComposite.usf:100 — normal weight
 #define NORMAL_POWER 2.0f
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Root Constants (b0, 8 DWORDs = 32 bytes)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 IndirectLightRendering.cpp:1435 — upsample dispatch params
+/// Upsample dispatch parameters.
 cbuffer UpsampleRootCB : register(b0) {
     uint  ssgiHalfSrvIndex;    // DWORD 0 — half-res SSGI color SRV
     uint  ssgiAOHalfSrvIndex;  // DWORD 1 — half-res SSGI AO SRV
@@ -169,8 +165,7 @@ float LinearizeDepth(float deviceZ) {
 // Main Compute Shader
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 DiffuseIndirectComposite.usf:85-120 — bilateral upsample
-/// @source UE5 IndirectLightRendering.cpp:1435 — DIM_UPSCALE_DIFFUSE_INDIRECT
+/// @ref Jimenez 2016 — bilateral upsample from half-res to full-res
 [numthreads(8, 8, 1)]
 void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     // Bounds check — dispatch covers full-res output
@@ -192,7 +187,6 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
 
     // ── Find the 4 nearest half-res texels ──
     // Map full-res pixel to half-res coordinate space
-    // @source UE5 DiffuseIndirectComposite.usf:90 — half-res texel lookup
     float2 halfCoordF = fullPixelCenter * 0.5f - 0.5f;
     int2   halfCoord00 = int2(floor(halfCoordF));
 
@@ -234,12 +228,10 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
         float  halfLinearZ = LinearizeDepth(halfDepth);
 
         // ── Depth bilateral weight ──
-        // @source UE5 DiffuseIndirectComposite.usf:95 — depth weight
         float depthDiff = abs(fullLinearZ - halfLinearZ) / max(fullLinearZ, 1.0f);
         float depthWeight = exp(-depthDiff * depthDiff / (DEPTH_SIGMA * DEPTH_SIGMA));
 
         // ── Normal bilateral weight ──
-        // @source UE5 DiffuseIndirectComposite.usf:100 — normal weight
         float normalSimilarity = max(0.0f, dot(fullNormal, halfNormal));
         float normalWeight = pow(normalSimilarity, NORMAL_POWER);
 

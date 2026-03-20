@@ -80,6 +80,13 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
         return false;
     }
 
+    // ── Pre-warm all pipelines eagerly ──────────────────────────────────
+    // Compile all standard shaders now to avoid lazy DXC invocations during
+    // the first rendered frame. This eliminates 20-35 cold shader compiles
+    // that would otherwise stall the render thread on first use.
+    const uint32_t warmedPipelines = m_pipelines->WarmupAll();
+    UZ_LOG(Renderer, Info, "SceneRenderer: pre-warmed {} pipelines at startup", warmedPipelines);
+
     // ── CB Ring Allocator ───────────────────────────────────────────────
     m_cbRing = std::make_unique<CBRingAllocator>();
     m_cbRing->Init(device, kCBRingFrames, kCBRingBytesPerFrame);
@@ -107,7 +114,7 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     m_camera->SetPosition({0.f, 200.f, -500.f});
     m_camera->LookAt({0.f, 0.f, 0.f}, Vec3::Up());
     m_cameraCtrl->InitFromCamera(*m_camera);
-    m_cameraCtrl->SetMoveSpeed(500.f);  // 500 cm/s = 5 m/s (UE5 parity)
+    m_cameraCtrl->SetMoveSpeed(500.f);  // 500 cm/s = 5 m/s 
 
     // ── GBuffer (at render resolution — upscaled to display res by TAA) ──
     if (!m_gbuffer.Create(device, m_renderWidth, m_renderHeight)) {
@@ -219,9 +226,8 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
     }
 
     // ── Multi-Scattering LUT texture (32x32 RGBA16F) ──────────────────────
-    // @source UE5 SkyAtmosphereRendering.cpp — MultiScatteredLuminanceLutTexture (32x32)
     // Precomputed infinite-bounce multi-scattering transfer function.
-    // UE5 uses R11G11B10F but our RHI doesn't support that format;
+    // R11G11B10F is ideal but our RHI doesn't support that format;
     // RGBA16F is the closest available (8 KB at 32x32, negligible overhead).
     {
         RHITextureDesc msDesc{};
@@ -239,6 +245,30 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
             m_multiScatterLutSrv = m_device->GetTextureSRVIndex(m_multiScatterLut);
             m_multiScatterLutUav = m_device->GetTextureUAVIndex(m_multiScatterLut);
             UZ_LOG(Renderer, Info, "SceneRenderer: MultiScatterLUT created (32x32 RGBA16F)");
+        }
+    }
+
+    // ── Aerial Perspective Volume (32x32x16 RGBA16F 3D) ────────────────
+    // Precomputed per-frame inscattering + transmittance 3D texture.
+    {
+        RHITextureDesc apDesc{};
+        apDesc.width            = 32;
+        apDesc.height           = 32;
+        apDesc.depthOrArraySize = 16;
+        apDesc.is3D             = true;
+        apDesc.format           = RHIFormat::RGBA16Float;
+        apDesc.usage            = RHITextureUsage::ShaderResource
+                                | RHITextureUsage::UnorderedAccess;
+        apDesc.debugName        = "APVolume_3D";
+
+        m_apVolume = m_device->CreateTexture(apDesc);
+        if (!m_apVolume.IsValid()) {
+            UZ_LOG(Renderer, Error, "SceneRenderer: failed to create APVolume 3D texture");
+        } else {
+            m_apVolumeSrv = m_device->GetTextureSRVIndex(m_apVolume);
+            m_apVolumeUav = m_device->GetTextureUAVIndex(m_apVolume);
+            UZ_LOG(Renderer, Info, "SceneRenderer: APVolume created (32x32x16 RGBA16F 3D, SRV={}, UAV={})",
+                   m_apVolumeSrv, m_apVolumeUav);
         }
     }
 
@@ -315,6 +345,19 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
         UZ_LOG(Renderer, Warning, "SceneRenderer: SSGI init failed (SSGI disabled)");
     }
 
+    // ── SDF-based GI (Global Distance Field + Radiance Cache) ──────────
+    if (!m_globalDistanceField.CreateResources(device)) {
+        UZ_LOG(Renderer, Warning, "SceneRenderer: GDF init failed (SDF GI disabled)");
+    }
+    if (!m_radianceCache.CreateResources(device, 5000.0f)) {
+        UZ_LOG(Renderer, Warning, "SceneRenderer: RadianceCache init failed (SDF GI disabled)");
+    }
+    // Enable SDF GI when both subsystems initialized successfully.
+    m_sdfGiEnabled = m_globalDistanceField.IsInitialized() && m_radianceCache.IsInitialized();
+    if (m_sdfGiEnabled) {
+        UZ_LOG(Renderer, Info, "SceneRenderer: SDF GI enabled (GDF + RadianceCache ready)");
+    }
+
     // ── SSR Output Textures (at render resolution — operates on GBuffer) ──
     CreateSsrResources(m_renderWidth, m_renderHeight);
 
@@ -358,27 +401,21 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
 void SceneRenderer::RegisterCVars() {
     auto& cvars = CVarRegistry::Get();
 
-    /// @source UE5 LegacyScreenPercentageDriver.cpp:10 — r.ScreenPercentage default 100
     cvars.Register("r.ScreenPercentage", m_screenPercentage,
                    "Render scale percentage (10-200)", 10.f, 200.f);
 
-    /// @source UE5 — r.AntiAliasingMethod: 0=None, 1=TAA, 2=TSR
     cvars.Register("r.AntiAliasingMethod", static_cast<float>(m_upscalerType),
                    "Anti-aliasing method: 0=None, 1=TAA, 2=TSR", 0.f, 5.f);
 
-    /// @source UE5 TemporalSuperResolution.cpp:52-60 — r.TSR.History.ScreenPercentage
     cvars.Register("r.TSR.History.ScreenPercentage", 100.f,
                    "TSR history buffer resolution multiplier (100-200)", 100.f, 200.f);
 
-    /// @source UE5 DynamicRenderScaling.h — r.DynamicResolution.Enabled
     cvars.Register("r.DynamicResolution.Enabled", 0.f,
                    "Enable GPU-bound adaptive resolution", 0.f, 1.f);
 
-    /// @source UE5 DynamicRenderScaling.h — target FPS
     cvars.Register("r.DynamicResolution.TargetFPS", 60.f,
                    "Target FPS for dynamic resolution", 15.f, 240.f);
 
-    /// @source UE5 TemporalSuperResolution.cpp:72-76 — r.TSR.History.UpdateQuality
     cvars.Register("r.TSR.History.UpdateQuality", 2.f,
                    "TSR quality level: 0=Low, 1=Medium, 2=High, 3=Epic", 0.f, 3.f);
 
@@ -464,7 +501,6 @@ void SceneRenderer::ApplyCVars() {
 // Screen Percentage
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 LegacyScreenPercentageDriver.cpp:10-61 — r.ScreenPercentage
 void SceneRenderer::SetUpscalerType(UpscalerType type) {
     if (type == m_upscalerType && m_upscaler) return;
 
@@ -496,7 +532,7 @@ void SceneRenderer::SetUpscalerType(UpscalerType type) {
 }
 
 void SceneRenderer::SetScreenPercentage(float pct) {
-    // Clamp to valid range (UE5 allows 10-200).
+    // Clamp to valid range (10-200).
     pct = std::max(10.f, std::min(200.f, pct));
 
     if (std::abs(pct - m_screenPercentage) < 0.01f) return;
@@ -623,7 +659,6 @@ void SceneRenderer::CreateDfsResources(uint32_t width, uint32_t height) {
 
     // ── DFS Culled Indices Buffer ────────────────────────────────────────
     // AppendStructuredBuffer<uint> with capacity for all SDF objects.
-    // @source UE5 DistanceFieldShadowing.cpp:180 — CulledObjectBuffers allocation
     {
         RHIBufferDesc bufDesc{};
         bufDesc.sizeBytes = kMaxSdfObjects * sizeof(uint32_t);
@@ -830,7 +865,6 @@ void SceneRenderer::CreateMotionBlurResources(uint32_t width, uint32_t height) {
     }
 
     // ── Tile max texture (1/16th resolution) ─────────────────────────────
-    // @source UE5 MotionBlurCommon.ush:24 — VELOCITY_FLATTEN_TILE_SIZE = 16
     const uint32_t tileW = (width  + 15) / 16;
     const uint32_t tileH = (height + 15) / 16;
 
@@ -853,7 +887,6 @@ void SceneRenderer::CreateMotionBlurResources(uint32_t width, uint32_t height) {
     }
 
     // ── Neighbor max texture (same tile resolution) ──────────────────────
-    // @source UE5 MotionBlurTileGather.usf:87-89 — output same tile dimensions
     RHITextureDesc neighborDesc{};
     neighborDesc.width     = tileW;
     neighborDesc.height    = tileH;
@@ -1147,6 +1180,12 @@ void SceneRenderer::Shutdown() {
         m_staticShadowAtlasSrv = UINT32_MAX;
     }
 
+    // ── Aerial Perspective Volume ────────────────────────────────────
+    if (m_apVolume.IsValid()) {
+        m_device->DestroyTexture(m_apVolume);
+        m_apVolume = RHITextureHandle{};
+    }
+
     // ── Transmittance LUT ────────────────────────────────────────────
     if (m_transmittanceLut.IsValid()) {
         m_device->DestroyTexture(m_transmittanceLut);
@@ -1182,6 +1221,10 @@ void SceneRenderer::Shutdown() {
 
     // ── SSGI cleanup ──────────────────────────────────────────────────
     m_ssgiRenderer.DestroyResources();
+
+    // ── SDF GI cleanup ───────────────────────────────────────────────
+    m_radianceCache.DestroyResources();
+    m_globalDistanceField.DestroyResources();
 
     // ── SSR cleanup ──────────────────────────────────────────────────
     DestroySsrResources();

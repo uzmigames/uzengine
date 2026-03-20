@@ -1,7 +1,7 @@
 /// UzEngine SH Irradiance — L2 Spherical Harmonics evaluation for sky lighting.
 ///
 /// Evaluates packed L2 SH coefficients at a surface normal to produce
-/// diffuse irradiance. Matches UE5 GetSkySHDiffuse() exactly.
+/// diffuse irradiance. Standard GetSkySHDiffuse() exactly.
 ///
 /// The 7-float4 coefficient array is produced by sh_projection.cpp on the CPU
 /// and uploaded as part of the per-frame constant buffer.
@@ -11,7 +11,7 @@
 
 /// Evaluates L2 Spherical Harmonics irradiance at a surface normal.
 ///
-/// The SH coefficients must be in UE5-compatible packed format (7 float4),
+/// The SH coefficients must be in reference implementations-compatible packed format (7 float4),
 /// with diffuse convolution (cosine lobe) already baked in.
 ///
 /// Reconstruction uses 3 dot products for L0+L1 (one per channel),

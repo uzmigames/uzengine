@@ -12,11 +12,10 @@
 /// # Allocation Strategy
 /// Simple per-frame reset: all tiles are freed at the start of each frame and
 /// reallocated from index 0. No persistence across frames — every shadowed
-/// light re-renders its shadow map each frame. This matches UE5's non-cached
+/// light re-renders its shadow map each frame. This matches reference's non-cached
 /// local light shadow behavior.
 ///
-/// @source UE5 ShadowSetup.cpp:5714-5730 — AllocateShadowDepthTargets for spot/point shadows
-/// @source UE5 ShadowRendering.h:449 — FProjectedShadowInfo atlas tile management
+/// AllocateShadowDepthTargets for spot/point shadows — atlas tile management
 ///
 /// # Thread Safety
 /// NOT thread-safe. Must be called from the render thread only.

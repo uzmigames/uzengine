@@ -76,6 +76,13 @@ struct AtmosphereFrameContext {
     // SH (owned by SceneRenderer)
     SHCoefficients*  skyIrradianceSH = nullptr;
 
+    // Aerial Perspective Volume (owned by SceneRenderer)
+    RHITextureHandle  apVolume;
+    uint32_t          apVolumeSrv = UINT32_MAX;
+    uint32_t          apVolumeUav = UINT32_MAX;
+    const float*      invViewProjData = nullptr;  ///< Pointer to 16 floats (row-major invViewProj).
+    const Vec3*       cameraPos = nullptr;         ///< Camera world position (cm).
+
     // GBuffer depth (for sky pass depth test)
     uint32_t          depthSrvIndex = UINT32_MAX;
     RHITextureHandle  depthTexture;

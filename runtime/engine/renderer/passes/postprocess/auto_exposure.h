@@ -46,17 +46,17 @@ class IRHIDevice;
 class IRHICommandList;
 class ShaderManager;
 
-/// Auto-exposure parameters matching UE5 Eye Adaptation defaults.
+/// Auto-exposure parameters (Eye Adaptation defaults).
 ///
 /// Dynamic per-frame parameters are passed via root constants (8 DWORDs).
 /// Adaptation speeds and percentile bounds are hardcoded in the average
 /// shader to stay within the root constant budget.
 struct AutoExposureSettings {
-    float exposureBias   = 0.0f;     ///< EV offset. 0=neutral, +1=2x brighter. @source UE5 Scene.cpp:204
-    float minBrightness  = 0.03f;   ///< Min avg luminance. @source UE5 Scene.cpp:196 — histogram method default
-    float maxBrightness  = 8.0f;    ///< Max avg luminance. @source UE5 Scene.cpp:197 — histogram method default
-    float histLogMin     = -10.0f;  ///< Log2 luminance range min (UE5: -10).
-    float histLogMax     = 20.0f;   ///< Log2 luminance range max (UE5: +20).
+    float exposureBias   = 0.0f;     ///< EV offset. 0=neutral, +1=2x brighter.
+    float minBrightness  = 0.03f;   ///< Min avg luminance (histogram method default).
+    float maxBrightness  = 8.0f;    ///< Max avg luminance (histogram method default).
+    float histLogMin     = -10.0f;  ///< Log2 luminance range min (-10).
+    float histLogMax     = 20.0f;   ///< Log2 luminance range max (+20).
     float manualExposure = 0.0f;   ///< When > 0, skip auto and use this fixed EV.
     bool  enabled        = true;   ///< Master toggle.
 };

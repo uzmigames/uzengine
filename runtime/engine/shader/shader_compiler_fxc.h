@@ -9,7 +9,7 @@
 ///
 /// # When to Use
 /// SM >= 6.0 → use ShaderCompiler (DXC). SM 5.0 → use this (FXC).
-/// This follows UE5's dual-compiler pattern: `DoesShaderModelRequireDXC()`.
+/// This follows the reference engine's dual-compiler pattern: `DoesShaderModelRequireDXC()`.
 ///
 /// # Thread Safety
 /// Each ShaderCompilerFXC instance owns its own DLL handle.

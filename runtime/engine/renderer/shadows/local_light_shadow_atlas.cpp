@@ -1,6 +1,6 @@
 /// UzEngine Local Light Shadow Atlas — Implementation.
 ///
-/// @source UE5 ShadowSetup.cpp:5714-5730 — AllocateShadowDepthTargets for local lights
+/// AllocateShadowDepthTargets for local lights — atlas tile allocation
 
 #include "local_light_shadow_atlas.h"
 

@@ -67,9 +67,9 @@ static_assert(sizeof(TransmittanceLutRootConstants) == 32,
 
 /// Ozone (Other Absorption) parameters for the transmittance LUT compute shader.
 ///
-/// @source UE5 SkyAtmosphereCommonData.h:38-42, SkyAtmosphereCommon.ush:316-318
+/// @ref implementation detail
 /// Bound at b2 as a root CBV. The tent distribution is converted to
-/// piecewise-linear coefficients on the CPU (same as UE5 TentToCoefficients).
+/// piecewise-linear coefficients on the CPU (same as reference TentToCoefficients).
 /// Padded to 256 bytes for D3D12 constant buffer alignment.
 struct TransmittanceLutOzoneCB {
     float absorptionR;       ///< Ozone absorption R (km^-1).

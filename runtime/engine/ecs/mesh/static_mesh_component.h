@@ -24,7 +24,7 @@ class MaterialInterface;
 /// Renders a static (non-skinned) mesh with per-slot materials.
 ///
 /// # Material System
-/// @source UE5 MeshComponent.h:31 — OverrideMaterials
+/// Per-slot material override system (sparse array, null = use mesh default).
 /// Each mesh can have multiple sections, each with its own material slot.
 /// `overrideMaterials` is a sparse array of `MaterialInterface*` pointers —
 /// null entries fall back to the mesh's default material, then to the legacy
@@ -84,7 +84,6 @@ public:
 
     /// Per-slot material overrides. Each entry corresponds to a mesh section.
     ///
-    /// @source UE5 MeshComponent.h:31 — OverrideMaterials
     /// Sparse array: null entries use legacy path-based fallback (albedoPath, etc.).
     /// Non-owning pointers — the caller is responsible for Material/MaterialInstance
     /// lifetime (typically static or scene-lifetime objects).
@@ -94,7 +93,6 @@ public:
 
     /// Returns the material for a specific slot.
     ///
-    /// @source UE5 MeshComponent.cpp:37-54 — GetMaterial(int32_t)
     /// Returns the override material if set, or nullptr (caller should use
     /// legacy path-based fallback).
     ///
@@ -134,7 +132,7 @@ public:
 
     /// LOD group defining discrete detail levels for this mesh.
     ///
-    /// @source UE5 StaticMeshResources.h — FStaticMeshRenderData::ScreenSize
+    /// Screen-size driven LOD selection thresholds.
     /// Default is a single LOD level (LOD 0) at full detail, meaning the
     /// LOD system is transparent for meshes that don't define multiple levels.
     ///
@@ -149,8 +147,7 @@ public:
 
     /// Bounding sphere radius in world-space centimeters.
     ///
-    /// @source UE5 PrimitiveComponent.h — Bounds.SphereRadius
-    /// Used for LOD screen size computation. 0 = use mesh default bounds
+    /// Bounding sphere for LOD screen-size computation. 0 = use mesh default bounds
     /// (derived from vertex extents during mesh loading). When non-zero,
     /// overrides the mesh-derived bounds for LOD selection only.
     float boundingSphereRadius = 0.0f;

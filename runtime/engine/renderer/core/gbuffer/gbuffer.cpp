@@ -146,8 +146,8 @@ bool GBuffer::Create(IRHIDevice* device, uint32_t w, uint32_t h) {
     });
 
     // Emissive — RGBA16Float HDR emissive color (RGB, A unused)
-    // @source UE5 BasePassPixelShader.usf:1541 — Color += Emissive
-    // UE5 writes emissive directly to SceneColor during base pass.
+    // In a forward renderer, emissive is added directly to scene color.
+    // writes emissive during the base pass.
     // In our deferred pipeline, we store it in a separate GBuffer RT
     // and add it during the deferred lighting pass.
     emissive = device->CreateTexture(RHITextureDesc{

@@ -242,7 +242,7 @@ public:
     /// Cross-backend constant buffer binding. DX12/Vulkan use the buffer's GPU
     /// address + offset. DX11 uses `UpdateSubresource` from `cpuData` into a
     /// scratch DEFAULT-usage buffer, then binds via `VSSetConstantBuffers`.
-    /// This follows the UE5 pattern of shadow-buffer + UpdateSubresource for DX11.
+    /// This follows the standard pattern of shadow-buffer + UpdateSubresource for DX11.
     ///
     /// # Arguments
     /// * `rootParamIndex` — Root parameter slot (maps to HLSL register `b<N>`).

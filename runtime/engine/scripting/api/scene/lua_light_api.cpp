@@ -550,7 +550,7 @@ static int SceneSetLightDiffuseScale(lua_State* L) {
 ///   falloff is used and `exponent` is ignored. When false, `exponent` drives
 ///   a power-curve falloff.
 /// - `exponent`: Float falloff exponent used when `use_inverse_squared` is false.
-///   UE5 default: 8.0.
+///   Default: 8.0.
 ///
 /// # Errors
 /// Logs a warning and no-ops if the entity has no point or spot light.

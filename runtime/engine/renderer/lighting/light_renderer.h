@@ -38,7 +38,6 @@ struct SpotLightShadowInfo {
 };
 
 /// Number of cubemap faces rendered per point light shadow (one per axis direction).
-/// @source UE5 ShadowRendering.h:35 — NumCubeShadowDepthSurfaces = 6
 static constexpr uint32_t kPointLightShadowFaces = 6;
 
 /// Per-point-light shadow info collected from ECS, used to build shadow passes.
@@ -61,18 +60,14 @@ struct PointLightShadowInfo {
 struct LightFrameData {
     Vec3  sunDir   = {0.5f, 0.3f, 0.8f}; ///< Normalized direction toward the sun.
     Vec3  sunColor = {3.0f, 2.85f, 2.7f}; ///< Sun color * intensity (linear HDR).
-    /// @source UE5 SceneRendering.cpp — no hardcoded ambient minimum; all ambient comes from SkyLight SH.
     Vec3  ambientColor = {0.0f, 0.0f, 0.0f}; ///< Ambient light color (zero unless populated by SkyLight SH).
-    float perLightShadowBias      = 0.5f; ///< Per-light shadow bias (UE5: ShadowBias).
-    float perLightShadowSlopeBias = 0.5f; ///< Per-light slope bias (UE5: ShadowSlopeBias).
-    float lightSourceAngleDeg     = 0.5357f; ///< Sun disk angular diameter in degrees (UE5: LightSourceAngle).
+    float perLightShadowBias      = 0.5f; ///< Per-light shadow bias.
+    float perLightShadowSlopeBias = 0.5f; ///< Per-light slope bias.
+    float lightSourceAngleDeg     = 0.5357f; ///< Sun disk angular diameter in degrees.
 
-    /// Far shadow cascade count (0 = disabled). @source UE5 DirectionalLightComponent.h:112
-    uint32_t farShadowCascadeCount = 0;
-    /// Far shadow max distance in cm. @source UE5 DirectionalLightComponent.cpp:1023
-    float farShadowDistance = 300000.0f;
-    /// LOD bias for far shadow cascades. @source UE5 DirectionalLightComponent.cpp:68
-    int32_t farShadowLodBias = 0;
+    uint32_t farShadowCascadeCount = 0;      ///< Far shadow cascade count (0 = disabled).
+    float farShadowDistance = 300000.0f;      ///< Far shadow max distance in cm.
+    int32_t farShadowLodBias = 0;             ///< LOD bias for far shadow cascades.
 
     CBAllocation lightingCBAlloc;          ///< LightingCB upload in CB ring.
 

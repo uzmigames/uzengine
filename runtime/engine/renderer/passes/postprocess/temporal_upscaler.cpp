@@ -4,7 +4,7 @@
 /// requested UpscalerType. Vendor-specific upscalers (FSR2, DLSS, XeSS)
 /// are not yet integrated; they fall back to TSR with a warning.
 ///
-/// @source UE5 TemporalUpscaler.h --- ITemporalUpscaler factory pattern
+/// @ref implementation detail
 
 #include "temporal_upscaler.h"
 #include "taa_upscaler.h"

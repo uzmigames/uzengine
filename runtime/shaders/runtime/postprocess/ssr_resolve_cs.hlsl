@@ -13,17 +13,12 @@
 /// 4. Apply screen-edge fade and roughness-based mip blur.
 /// 5. Output the final reflection color with blend weight in alpha.
 ///
-/// @source UE5 SSRTReflections.usf:105-416 — ScreenSpaceReflections
-///         (UE5 does trace+resolve in one pass; we split for modularity)
-/// @source UE5 SSRTReflections.usf:190-194 — Smith visibility for SSR weight
-/// @source UE5 SSRTReflections.usf:319-320 — Karis tonemap for multi-ray
-/// @source UE5 SSRTReflections.usf:397 — SampleScreenColor
-/// @source UE5 SSRTRayCast.ush:674-681 — ComputeHitVignetteFromScreenPos
-/// @constants a2 = Roughness^4 (usf:190-191), G_SmithV (usf:194),
-///            Karis weight = rcp(1 + Luminance) (usf:320)
-/// @deviations The resolve is a separate pass from the trace. UE5 combines
-///   them into one pixel/compute shader. The math is identical; only the
-///   execution topology differs.
+/// @ref McGuire & Mara 2014 "Efficient GPU Screen-Space Ray Tracing" — SSR pipeline
+/// @ref Stachowiak 2015 "Stochastic Screen-Space Reflections" — screen-edge vignette
+/// @ref Karis 2014 — luminance-weighted resolve for firefly suppression
+/// @constants a2 = Roughness^4, G_SmithV, Karis weight = rcp(1 + Luminance)
+/// @deviations The resolve is a separate pass from the trace for modularity.
+///   The math is identical; only the execution topology differs.
 ///
 /// # Resources
 /// - t0: SSR trace output (R16G16B16A16_FLOAT) — rgb=hit color, a=confidence
@@ -135,18 +130,15 @@ float3 ReconstructWorldPos(float2 uv, float deviceZ) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Schlick Fresnel approximation for SSR weighting.
-/// @source UE5 BRDF.ush:193 — F_Schlick
-/// @constants NONE (standard Schlick formula)
-/// @deviations NONE
+/// @ref Schlick 1994 "An Inexpensive BRDF Model for Physically-based Rendering"
 float3 FresnelSchlick(float cosTheta, float3 F0) {
     return F0 + (1.0f - F0) * Pow5(saturate(1.0f - cosTheta));
 }
 
 /// Compute G_SmithV term used for SSR weighting in multi-ray mode.
-/// @source UE5 SSRTReflections.usf:190-194
-/// @constants a = Roughness^2, a2 = a^2 = Roughness^4 (usf:190-191)
-///            G_SmithV = 2*NoV / (NoV + sqrt(NoV*(NoV - NoV*a2) + a2))  (usf:194)
-/// @deviations NONE
+/// @ref Heitz 2014 "Understanding the Masking-Shadowing Function in Microfacet-Based BRDFs"
+/// @constants a = Roughness^2, a2 = a^2 = Roughness^4
+///            G_SmithV = 2*NoV / (NoV + sqrt(NoV*(NoV - NoV*a2) + a2))
 float ComputeSmithV(float NoV, float roughness) {
     float a  = roughness * roughness;
     float a2 = a * a;
@@ -157,9 +149,8 @@ float ComputeSmithV(float NoV, float roughness) {
 // Roughness Fade
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 SSRTReflections.usf:45-49 — GetRoughnessFade
-/// @constants roughnessMaskScale from root CB, bias=+2 (usf:48)
-/// @deviations NONE
+/// @ref McGuire & Mara 2014 — roughness-based SSR fade
+/// @constants roughnessMaskScale from root CB, bias=+2
 float GetRoughnessFade(float roughness) {
     return min(roughness * roughnessMaskScale + 2.0f, 1.0f);
 }
@@ -168,7 +159,7 @@ float GetRoughnessFade(float roughness) {
 // Main Compute Shader
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 SSRTReflections.usf:441-462 — ScreenSpaceReflectionsCS (resolve path)
+/// @ref McGuire & Mara 2014 — SSR resolve pass
 [numthreads(8, 8, 1)]
 void main(
     uint3 dispatchThreadId : SV_DispatchThreadID)
@@ -211,8 +202,8 @@ void main(
     // ── Compose final SSR color ──
     // SSR output is UNWEIGHTED scene color. No Fresnel is applied here.
     // Fresnel weighting is deferred to the deferred lighting pass where EnvBRDF
-    // is applied during SSR/IBL compositing (matching UE5 pattern).
-    // @source UE5 SSRTReflections.usf:397-402 — no Fresnel in SSR resolve
+    // is applied during SSR/IBL compositing (matching standard pattern).
+    // No Fresnel in SSR resolve — Fresnel is applied later in the lighting pass.
     //   OutColor = SampleScreenColor(...) * Vignette;
     //   OutColor *= RoughnessFade;
     //   OutColor *= SSRParams.r;

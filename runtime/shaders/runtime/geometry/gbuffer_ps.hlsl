@@ -6,7 +6,7 @@
 /// SM6.6 (UZ_BINDLESS): samples PBR textures via ResourceDescriptorHeap[index].
 /// SM5 (!UZ_BINDLESS): samples PBR textures via register-bound textures t0-t5.
 ///
-/// # Render Targets (optimized UE5-style packed layout)
+/// # Render Targets (optimized engine-style packed layout)
 /// - SV_Target0: AlbedoAO     (R8G8B8A8_UNORM)  — rgb = base color (linear), a = AO
 /// - SV_Target1: NormalMatPbr  (R8G8B8A8_UNORM)  — rg = octahedral normal, b = metallic, a = roughness
 /// - SV_Target2: PositionWS    (R32G32B32A32_FLOAT) — xyz = world pos, w = 1
@@ -69,7 +69,7 @@ cbuffer PerFrameCB : register(b1) {
     float4   lightDir            : packoffset(c6);    // offset 96
     float4   lightColor          : packoffset(c7);    // offset 112
     float4   ambientColor        : packoffset(c8);    // offset 128
-    /// @source UE5 ViewUniformShaderParameters.h — MaterialTextureMipBias
+    /// MaterialTextureMipBias — global mip LOD bias for screen percentage compensation
     /// Global mip LOD bias for screen percentage compensation.
     /// 0 at 100%, negative when rendering below native resolution.
     float    mipBias             : packoffset(c30);   // offset 480
@@ -86,17 +86,17 @@ cbuffer PerObjectCB : register(b2) {
     uint     metallicIndex;
     uint     aoIndex;
     uint     emissiveIndex;
-    /// @source UE5 Material.h:1891 — OpacityMaskClipValue default 0.3333
+    /// OpacityMaskClipValue default 0.3333 — alpha test threshold for masked materials
     float    alphaClipThreshold; ///< Alpha test discard threshold for Masked blend mode.
     uint     twoSided;           ///< 0 = back-face cull, 1 = two-sided (informational, cull set in PSO).
     row_major float4x4 model;
     row_major float4x4 normalMatrix;
     // ── Emissive parameters (offset 160) ──
-    /// @source UE5 BasePassPixelShader.usf:1480 — GetMaterialEmissive(PixelMaterialInputs)
+    /// Emissive material output — encoded in GBuffer for deferred lighting
     float3   emissiveColor;      ///< Emissive tint color (linear RGB). (0,0,0) = no emission.
     float    emissiveIntensity;  ///< Emissive brightness multiplier. 0 = no emission. >1 drives bloom.
     // ── Material parameters (offset 176) ──
-    /// @source UE5 MaterialTemplate.ush — BaseColor output * tint, TexCoord * scale + offset
+    /// Material template: BaseColor * tint, TexCoord * scale + offset
     float3   baseColorTint;      ///< Albedo color multiplier (1,1,1 = unmodified).
     float    roughnessMultiplier; ///< Roughness texture multiplier (1 = unmodified).
     float    metallicMultiplier; ///< Metallic texture multiplier (1 = unmodified).
@@ -107,8 +107,8 @@ cbuffer PerObjectCB : register(b2) {
     float    matOpacity;         ///< Material opacity (1 = opaque).
 #ifdef UZ_POM
     // ── POM parameters (offset 224) ──
-    /// @source UE5 MaterialExpressionBumpOffset.h:28 — HeightRatio = 0.05f
-    /// @source UE5 ParallaxOcclusionMapping.uasset — MinSteps, MaxSteps, HeightScale
+    /// @ref Tatarchuk 2006 "Practical Parallax Occlusion Mapping" — HeightRatio = 0.05f
+    /// POM parameters: MinSteps, MaxSteps, HeightScale
     uint     heightmapIndex;     ///< Heightmap texture descriptor index (0 = no POM).
     float    pomScale;           ///< Displacement scale in UV space. Default 0.05. Range [0.01, 0.1].
     int      pomMinLayers;       ///< Minimum ray march steps (head-on view). Default 8.
@@ -121,7 +121,7 @@ cbuffer PerObjectCB : register(b2) {
     // blendMode at the same offset (252) as the C++ PerObjectCB layout.
     float    _pomPad[7];
 #endif
-    /// @source UE5 EngineTypes.h:256 — EBlendMode (BM_Opaque=0, BM_Masked=1, BM_Translucent=2, BM_Additive=3)
+    /// Blend mode enum: 0=Opaque, 1=Masked, 2=Translucent, 3=Additive
     uint     blendMode;          ///< Blend mode: 0=Opaque, 1=Masked, 2=Translucent, 3=Additive.
 };
 
@@ -129,9 +129,9 @@ cbuffer PerObjectCB : register(b2) {
 /// Material graph parameter slots (16 x float4 = 256 bytes).
 /// Populated by MaterialInstance runtime overrides — each float4 slot
 /// maps to an exposed parameter in the visual shader graph.
-/// @source UE5 MaterialTemplate.ush — Material.PreshaderBuffer
-/// @constants 16 slots (UE5 uses PreshaderBuffer with variable count)
-/// @deviations Fixed 16-slot count vs UE5 variable-length PreshaderBuffer
+/// Material constant buffer — per-material parameters (PreshaderBuffer equivalent)
+/// @constants 16 slots (reference uses PreshaderBuffer with variable count)
+/// @deviations Fixed 16-slot count vs reference variable-length PreshaderBuffer
 cbuffer MaterialParamsCB : register(b3) {
     float4 materialParams[16];
 };
@@ -180,7 +180,7 @@ GBufferOutput main(PSInput input) {
     // overrides set by MaterialInstance. Texture slots are accessed via
     // ResourceDescriptorHeap[texIndex_N] inside the generated body.
     //
-    // @source UE5 MaterialTemplate.ush — CalcMaterialParameters / GetMaterialXxx()
+    // Material parameter evaluation — compute all material outputs
     // @constants defaults: baseColor=(1,1,1), metallic=0, roughness=0.5, ao=1, emissive=(0,0,0), opacity=1
     // @deviations NONE
 
@@ -228,7 +228,7 @@ GBufferOutput main(PSInput input) {
     float  ao        = 1.0f;
 
     // ── UV transform (apply material tiling and offset) ──
-    // @source UE5 MaterialTemplate.ush — TexCoord * TextureScale + TextureOffset
+    // Texture coordinate transform: TexCoord * TextureScale + TextureOffset
     float2 uv = input.texcoord * uvScale + uvOffset;
 
 #ifdef UZ_POM
@@ -237,7 +237,7 @@ GBufferOutput main(PSInput input) {
     // texture sampling, so that albedo/normal/roughness/etc. read from
     // the correct displaced location.
     //
-    // @source UE5 ParallaxOcclusionMapping.uasset — UV offset applied
+    // @ref Tatarchuk 2006 — POM UV offset applied
     //         before all material texture reads in CalcPixelMaterialInputs.
     // @deviations NONE
 
@@ -255,7 +255,7 @@ GBufferOutput main(PSInput input) {
 
     // Compute tangent-space view direction.
     // CameraVector = normalize(cameraPos - surfacePos), pointing from surface to camera.
-    // @source UE5 MaterialExpressions.cpp:5830 — TransformVector(World, Tangent, CameraVector)
+    // World-to-tangent space camera vector transform for POM
     float3 viewDirWS = normalize(cameraPos.xyz - input.positionWS);
     float3 viewDirTS = normalize(mul(TBN_pom, viewDirWS));
 
@@ -335,7 +335,7 @@ GBufferOutput main(PSInput input) {
     // ── Sample PBR texture maps (index 0 = use default value) ──
     // SampleBias applies the global mipBias to compensate for screen percentage.
     // At 100% screen percentage, mipBias = 0 and SampleBias is identical to Sample.
-    // @source UE5 ViewUniformShaderParameters.h — MaterialTextureMipBias
+    // MaterialTextureMipBias — global LOD bias for screen percentage
 #ifdef UZ_BINDLESS
     if (albedoIndex > 0) {
         Texture2D<float4> tex = ResourceDescriptorHeap[albedoIndex];
@@ -380,7 +380,7 @@ GBufferOutput main(PSInput input) {
         float3 normalTS;
         normalTS.xy = normalSample.rg * 2.0f - 1.0f;
         // Apply normal intensity: 0 = flat (no normal map effect), 1 = full effect.
-        // @source UE5 Material.FlattenNormalMap — scales normalTS.xy by intensity
+        // Normal map intensity scaling — scales tangent-space XY by strength factor
         normalTS.xy *= normalIntensity;
         normalTS.z = sqrt(max(1.0f - dot(normalTS.xy, normalTS.xy), 0.0f));
         N = normalize(mul(normalTS, TBN));
@@ -399,7 +399,7 @@ GBufferOutput main(PSInput input) {
         float3 normalTS;
         normalTS.xy = normalSample.rg * 2.0f - 1.0f;
         // Apply normal intensity: 0 = flat (no normal map effect), 1 = full effect.
-        // @source UE5 Material.FlattenNormalMap — scales normalTS.xy by intensity
+        // Normal map intensity scaling — scales tangent-space XY by strength factor
         normalTS.xy *= normalIntensity;
         normalTS.z = sqrt(max(1.0f - dot(normalTS.xy, normalTS.xy), 0.0f));
         N = normalize(mul(normalTS, TBN));
@@ -410,14 +410,14 @@ GBufferOutput main(PSInput input) {
     // All multipliers default to 1.0, so existing rendering is unchanged
     // when no Material/MaterialInstance assigns overrides.
 
-    // @source UE5 MaterialTemplate.ush — BaseColor * BaseColorTint
+    // BaseColor * BaseColorTint — material base color output
     albedo *= baseColorTint;
 
-    // @source UE5 Material defaults — Roughness/Metallic outputs multiplied in graph
+    // Roughness/Metallic outputs multiplied by material parameter
     roughness *= roughnessMultiplier;
     metallic  *= metallicMultiplier;
 
-    // @source UE5 Material defaults — AO blended with strength
+    // AO blended with material AO strength parameter
     // ao_final = lerp(1.0, ao_sampled, aoIntensity)
     ao = lerp(1.0f, ao, aoIntensity);
 
@@ -430,9 +430,9 @@ GBufferOutput main(PSInput input) {
 #endif
 
     // ── Emissive: texture * color * intensity ──
-    // @source UE5 BasePassPixelShader.usf:1480 — Emissive = GetMaterialEmissive(PixelMaterialInputs)
-    // @source UE5 BasePassPixelShader.usf:1541 — Color += Emissive
-    // UE5 computes emissive in the material graph and adds it directly to SceneColor.
+    // Emissive material output: stored in GBuffer emissive channel
+    // Added to final lit color during deferred lighting
+    // computes emissive in the material graph and adds it directly to SceneColor.
     // In our deferred pipeline, we write it to a separate GBuffer RT (RGBA16Float)
     // and add it during the deferred lighting pass.
     // @constants emissiveColor default=(0,0,0), emissiveIntensity default=0 (no emission)
@@ -460,15 +460,15 @@ GBufferOutput main(PSInput input) {
 
     // ── Alpha test for Masked blend mode ──
     // When blendMode == 1 (Masked), compute effective opacity and discard
-    // fragments below the alpha clip threshold. This implements the UE5
+    // fragments below the alpha clip threshold. This implements the standard
     // "Masked" material blend mode in the deferred pipeline.
     //
     // The opacity scalar (matOpacity) is always available. For textured opacity,
     // an opacity texture can be sampled via opacityIndex (future extension —
     // currently the opacity value comes from the material scalar only).
     //
-    // @source UE5 BasePassPixelShader.usf:1510 — GetMaterialMask() calls clip(Opacity - OpacityMaskClipValue)
-    // @constants alphaClipThreshold default 0.3333 (UE5 Material.h:1891)
+    // Alpha masking: clip(Opacity - OpacityMaskClipValue) for masked blend mode
+    // @constants alphaClipThreshold default 0.3333 (reference Material.h:1891)
     // @deviations NONE
     if (blendMode == 1) {
 #ifdef UZ_MATERIAL_GRAPH

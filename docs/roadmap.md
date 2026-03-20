@@ -934,7 +934,7 @@ Phase 9: Shipping ────────────────────�
 |------|---------|-------------------|
 | GPU-driven rendering | Indirect draw, multi-draw-indirect | Draw calls independent of object count |
 | Nanite-style meshes | Virtual geometry, cluster LOD | Dense scenes efficient |
-| Software GI | Screen-space + surface cache + radiance cache | Indirect lighting without lightmaps |
+| Software GI | **Phase A done** (SSGI), **Phase B-E done** (Mesh SDF → GDF → Radiance Cache → Deferred integration). See `docs/specs/rendering/gi-system.md`. Remaining: probe visibility, disk caching, Cornell box visual test. | Indirect lighting without lightmaps |
 | Hardware RT | DXR reflections, shadows, AO | RT on RTX/RDNA2+ |
 | Memory budget | Streaming, pool tuning, VRAM tracking | Within target budget |
 

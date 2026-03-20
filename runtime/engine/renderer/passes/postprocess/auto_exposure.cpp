@@ -340,7 +340,7 @@ float AutoExposure::Execute(IRHICommandList* cmdList, uint32_t hdrSrvIndex,
 
     if (settings.manualExposure > 0.0f) {
         // Fixed manual exposure: treat manualExposure as target luminance
-        // UE5: exposure = 0.18 * pow(2, bias) / manualLuminance
+        // Manual exposure: 0.18 * pow(2, bias) / manualLuminance
         float biasLinear = std::pow(2.0f, settings.exposureBias);
         m_lastExposure = 0.18f * biasLinear / settings.manualExposure;
         return m_lastExposure;

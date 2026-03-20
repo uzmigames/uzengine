@@ -69,7 +69,7 @@ struct PerFrameCB {
     float exposure = 1.0f;                     ///< Exposure multiplier from auto-exposure (applied before tonemap).
 
     // ── Sky Irradiance SH (L2, 7 float4 = 112 bytes) ─────────────────────
-    // Matches UE5 SkyIrradianceEnvironmentMap[0..6].
+    // L2 spherical harmonics for sky irradiance (7 float4 = 112 bytes).
     // Evaluated per-pixel with GetSkySHDiffuse(Normal).
     // When all zeros, IBL falls back to cubemap sampling.
     Vec4 skyIrradianceSH[7] = {};               ///< L2 SH coefficients for sky diffuse irradiance.
@@ -96,40 +96,33 @@ struct PerFrameCB {
     float    apRayleighScale  = 1.0f;            ///< Artistic Rayleigh scattering multiplier.
     float    apMieScale       = 1.0f;            ///< Artistic Mie scattering multiplier.
 
-    // ── Film Tonemap parameters (UE5 parity) ─────────────────────────────
-    /// @source UE5 PostProcessSettings.h — default values for FilmToneMap curve
-    float    filmSlope      = 0.88f;             ///< Steepness of the linear (straight) segment.
-    float    filmToe        = 0.55f;             ///< Size of the toe region (dark rolloff).
-    float    filmShoulder   = 0.26f;             ///< Size of the shoulder region (highlight rolloff).
-    float    filmBlackClip  = 0.0f;              ///< Lifts black level (adds to min output).
-    float    filmWhiteClip  = 0.04f;             ///< Lowers white ceiling (subtracts from max output).
+    // ── ACES tone curve parameters ──────────────────────────────────────
+    /// Default artist tone curve parameters (ACES-style S-curve).
+    float    toneCurveSlope      = 0.88f;        ///< Steepness of the linear (straight) segment.
+    float    toneCurveToe        = 0.55f;        ///< Size of the toe region (dark rolloff).
+    float    toneCurveShoulder   = 0.26f;        ///< Size of the shoulder region (highlight rolloff).
+    float    toneCurveBlackClip  = 0.0f;         ///< Lifts black level (adds to min output).
+    float    toneCurveWhiteClip  = 0.04f;        ///< Lowers white ceiling (subtracts from max output).
 
     uint32_t gtaoSrvIndex    = UINT32_MAX;       ///< SRV index for GTAO filtered AO texture (UINT32_MAX = no GTAO).
     uint32_t brdfDebugMode   = 0;               ///< BRDF debug (0=off, 1=split-screen: left=old Lambertian+SchlickGGX, right=new Burley+SmithJoint).
 
-    // @source UE5 SceneRendering.cpp:1440 — SkyAtmosphereHeightFogContribution
     // Controls how much aerial perspective inscattering is reduced when height fog
     // is active, to prevent double-fogging (both AP and height fog adding haze).
     // 0 = AP unaffected by fog, 1 = AP inscattering fully replaced by fog.
     float    heightFogContribution = 0.0f;       ///< AP reduction factor when height fog is active (0=no reduction, 1=full).
 
-    // ── Post-process film effects (UE5 parity) ─────────────────────────
-    /// @source UE5 Scene.cpp:511 — FilmGrainIntensity default 0.0
-    float    filmGrainIntensity = 0.0f;         ///< Film grain intensity (0=off). UE5 default: 0.0.
-    /// @source UE5 Scene.cpp:505 — VignetteIntensity default 0.4
-    float    vignetteIntensity  = 0.4f;         ///< Vignette darkening intensity. UE5 default: 0.4.
-    /// @source UE5 Scene.cpp:419 — SceneFringeIntensity default 0.0
-    float    chromaAbIntensity  = 0.0f;         ///< Chromatic aberration / scene fringe intensity (0=off). UE5 default: 0.0.
+    // ── Post-process film effects ───────────────────────────────────────
+    float    filmGrainIntensity = 0.0f;         ///< Film grain intensity (0=off).
+    float    vignetteIntensity  = 0.4f;         ///< Vignette darkening intensity.
+    float    chromaAbIntensity  = 0.0f;         ///< Chromatic aberration / scene fringe intensity (0=off).
 
-    /// @source UE5 LightRendering.cpp:640 — ContactShadowLength default 0.0 (off)
-    /// @source UE5 DeferredLightingCommon.ush:172 — ContactShadowLength > 0 enables ray march
-    /// Screen-space contact shadow ray length. 0.0 = disabled (UE5 default).
+    /// Screen-space contact shadow ray length. 0.0 = disabled.
     /// Positive = screen-space fraction (0.02 = 2% of depth-scaled screen ray length).
-    float    contactShadowLength = 0.02f;        ///< TEST 2: contact shadows ON.
+    float    contactShadowLength = 0.02f;
 
     uint32_t ssrSrvIndex = UINT32_MAX;             ///< SRV index for resolved SSR texture (UINT32_MAX = no SSR).
 
-    /// @source UE5 ViewUniformShaderParameters.h — MaterialTextureMipBias
     /// Global mipmap LOD bias applied to all material texture samples.
     /// Computed as log2(screenPercentage / 100). At 100% = 0 (no bias).
     /// At 50% = -1.0 (shift down one mip to compensate for lower render resolution).
@@ -137,15 +130,30 @@ struct PerFrameCB {
     float    mipBias = 0.0f;
 
     // ── SSGI (Screen-Space Global Illumination) ────────────────────────
-    /// @source UE5 IndirectLightRendering.cpp:1454 — DiffuseIndirect composite
     uint32_t ssgiSrvIndex   = UINT32_MAX;          ///< SRV index for upsampled SSGI indirect diffuse (UINT32_MAX = disabled).
     uint32_t ssgiAOSrvIndex = UINT32_MAX;          ///< SRV index for SSGI ambient occlusion mask (UINT32_MAX = disabled).
     uint32_t ssgiEnabled    = 0;                   ///< 1 = SSGI active, 0 = disabled.
 
-    float    _pad2[4] = {};                        ///< Pad to 512 bytes.
+    // ── Radiance Cache (SDF-based GI) ─────────────────────────────────
+    uint32_t radianceCacheEnabled = 0;              ///< 1 = radiance cache GI active, 0 = disabled.
+    uint32_t rcProbeSHBufferSrv   = UINT32_MAX;     ///< SRV index for probe SH StructuredBuffer<float4>.
+    uint32_t rcProbesPerAxis      = 16;             ///< Probes per axis (16).
+    float    rcGridExtent         = 5000.0f;        ///< Half-size of the probe grid in world units (cm).
+    float    rcGridOriginX        = 0.0f;           ///< Probe grid origin X (minimum corner).
+    float    rcGridOriginY        = 0.0f;           ///< Probe grid origin Y.
+    float    rcGridOriginZ        = 0.0f;           ///< Probe grid origin Z.
+    float    rcGiIntensity       = 1.0f;            ///< GI intensity multiplier (default 1.0).
+
+    // ── Aerial Perspective Volume ─────────────────────────────────────
+    /// SRV index for the precomputed 32x32x16 RGBA16F 3D texture containing
+    /// per-voxel inscattering (RGB) + transmittance (A). Sampled in deferred
+    /// lighting to replace per-pixel AP ray march. UINT32_MAX = no volume.
+    uint32_t apVolumeSrvIndex = UINT32_MAX;
+
+    float    _pad2[59] = {};                        ///< Pad to 768 bytes.
 };
 
-static_assert(sizeof(PerFrameCB) == 512, "PerFrameCB must be 512 bytes (D3D12 CB alignment)");
+static_assert(sizeof(PerFrameCB) == 768, "PerFrameCB must be 768 bytes (D3D12 CB alignment)");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PerObjectCB — bound at b2 (root CBV, updated per draw call)
@@ -198,16 +206,13 @@ struct PerObjectCB {
     uint32_t metallicIndex;    ///< SRV heap index for metallic map (0 = 0.0 default)
     uint32_t aoIndex;          ///< SRV heap index for AO map (0 = 1.0 default)
     uint32_t emissiveIndex;    ///< SRV heap index for emissive map (0 = no emissive texture, use color only)
-    /// @source UE5 Material.h:1891 — OpacityMaskClipValue default 0.3333
     float    alphaClipThreshold = 0.3333f; ///< Alpha test threshold for Masked blend mode. Pixels with opacity below this are discarded.
     uint32_t twoSided = 0;    ///< 0 = back-face cull (default), 1 = disable culling (two-sided rendering).
     // ── Matrices after scalars (offset 32) ──
     Mat4     model;            ///< Object-to-world transform
     Mat4     normalMatrix;     ///< transpose(inverse(model)) — for lighting
     // ── Emissive material parameters (offset 160) ──
-    /// @source UE5 BasePassPixelShader.usf:1480 — GetMaterialEmissive(PixelMaterialInputs)
-    /// UE5 computes emissive as EmissiveColor * EmissiveIntensity in material graph.
-    /// We replicate this as emissiveColor * emissiveIntensity.
+    /// Emissive output = emissiveColor * emissiveIntensity.
     float    emissiveColorR  = 0.0f;  ///< Emissive tint color R (linear). Default 0 = no emission.
     float    emissiveColorG  = 0.0f;  ///< Emissive tint color G (linear).
     float    emissiveColorB  = 0.0f;  ///< Emissive tint color B (linear).
@@ -218,34 +223,25 @@ struct PerObjectCB {
     // Default values are neutral (multipliers=1, offsets=0) so existing
     // rendering is unchanged when no Material/MaterialInstance is assigned.
 
-    /// @source UE5 MaterialTemplate.ush — BaseColor output * BaseColor tint
     float    baseColorTintR   = 1.0f;  ///< Albedo color multiplier R. 1.0 = unmodified.
     float    baseColorTintG   = 1.0f;  ///< Albedo color multiplier G.
     float    baseColorTintB   = 1.0f;  ///< Albedo color multiplier B.
 
-    /// @source UE5 Material defaults — Roughness multiplied in material graph
     float    roughnessMultiplier = 1.0f; ///< Roughness texture multiplier. 1.0 = unmodified.
-
-    /// @source UE5 Material defaults — Metallic multiplied in material graph
     float    metallicMultiplier  = 1.0f; ///< Metallic texture multiplier. 1.0 = unmodified.
-
-    /// @source UE5 Material.FlattenNormalMap — controls normal map intensity
     float    normalIntensity     = 1.0f; ///< Normal map strength (0=flat, 1=full).
-
-    /// @source UE5 MaterialTemplate.ush — TexCoord * TextureScale + TextureOffset
     float    uvScaleX  = 1.0f;          ///< Texture tiling X. 1.0 = no tiling.
     float    uvScaleY  = 1.0f;          ///< Texture tiling Y.
     float    uvOffsetX = 0.0f;          ///< Texture offset X.
     float    uvOffsetY = 0.0f;          ///< Texture offset Y.
 
-    /// @source UE5 Material defaults — AO output lerped with strength
     float    aoIntensity = 1.0f;        ///< AO map strength. 1.0 = full AO effect.
 
     /// Overall material opacity. 1.0 = fully opaque.
     float    opacity     = 1.0f;        ///< Material opacity (1=opaque).
 
     // ── POM (Parallax Occlusion Mapping) parameters ─────────────────────
-    /// @source UE5 MaterialTemplate.ush — HeightRatio, MinSteps, MaxSteps
+
 
     float    displacementScale = 0.0f;  ///< POM height scale. 0 = POM disabled.
     uint32_t heightmapSrvIndex = 0;     ///< SRV index for heightmap texture (0 = none).
@@ -260,7 +256,6 @@ struct PerObjectCB {
     /// 1 = Masked (alpha test with discard, still deferred),
     /// 2 = Translucent (alpha blend, forward pass, sorted back-to-front),
     /// 3 = Additive (additive blend, forward pass, no sorting needed).
-    /// @source UE5 EngineTypes.h:256 — EBlendMode enum (BM_Opaque=0, BM_Masked=1, BM_Translucent=2, BM_Additive=3)
     uint32_t blendMode = 0;
 };
 
@@ -278,7 +273,7 @@ static constexpr uint32_t kMaxSpotLights = 16;
 
 /// Point light data for the deferred lighting pass.
 ///
-/// Each point light carries position, attenuation, color, and UE5-parity
+/// Each point light carries position, attenuation, color, and physically-based
 /// parameters (source radius for area approximation, falloff, per-light scales).
 /// Packed to 48 bytes (three float4s) for efficient GPU access.
 ///
@@ -307,7 +302,6 @@ struct PointLightData {
     /// Index into LocalShadowCB::shadows[] for this light's shadow data.
     /// For point lights, this is the base index — 6 consecutive entries (one per cubemap face).
     /// 0xFFFFFFFF = no shadow (light does not cast shadows).
-    /// @source UE5 ShadowRendering.h:449 — FProjectedShadowInfo per-light shadow reference
     uint32_t shadowIndex = UINT32_MAX;
     float    _pointPad[3] = {};  ///< Pad to 64 bytes (4 float4s).
 };
@@ -320,11 +314,8 @@ static_assert(sizeof(PointLightData) == 64, "PointLightData must be 64 bytes (fo
 /// Spot light data for the deferred lighting pass.
 ///
 /// Extends point light data with cone direction and angular attenuation.
-/// Uses UE5-parity SpotAngles packing: cosOuterAngle and invCosConeDifference
-/// are precomputed on the CPU.
-///
-/// @source UE5 SpotLightComponent.cpp:67 — SpotAngles = FVector2f(CosOuterCone, InvCosConeDifference)
-/// @source UE5 DynamicLightingCommon.ush:62 — SpotAttenuation = Square(saturate((dot(L,-Dir) - CosOuter) * InvDiff))
+/// Uses precomputed SpotAngles packing: cosOuterAngle and invCosConeDifference
+/// are computed on the CPU.
 ///
 /// Packed to 64 bytes (four float4s) for efficient GPU access.
 ///
@@ -347,16 +338,15 @@ struct SpotLightData {
     Vec3     position;              ///< World-space position of the light source.
     float    radius;                ///< Attenuation radius — light contribution falls to zero at this distance.
     Vec3     color;                 ///< Light color multiplied by intensity (linear HDR, not clamped).
-    float    cosOuterAngle;         ///< Cosine of the outer cone half-angle. @source UE5 SpotLightComponent.cpp:51
-    Vec3     direction;             ///< Normalised world-space cone direction. @source UE5 SpotLightComponent.cpp:65
-    float    invCosConeDifference;  ///< 1 / (cosInner - cosOuter). @source UE5 SpotLightComponent.cpp:54
+    float    cosOuterAngle;         ///< Cosine of the outer cone half-angle.
+    Vec3     direction;             ///< Normalised world-space cone direction.
+    float    invCosConeDifference;  ///< 1 / (cosInner - cosOuter).
     float    falloffExponent;       ///< Custom falloff exponent (used when inverse square is disabled).
     float    specularScale;         ///< Per-light specular highlight multiplier (0-1). Default: 1.0.
     float    diffuseScale;          ///< Per-light diffuse contribution multiplier (0-1). Default: 1.0.
     uint32_t flags;                 ///< Bit flags: bit 0 = useInverseSquaredFalloff.
     /// Index into LocalShadowCB::shadows[] for this light's shadow data.
     /// 0xFFFFFFFF = no shadow (light does not cast shadows).
-    /// @source UE5 ShadowRendering.h:449 — FProjectedShadowInfo per-light shadow reference
     uint32_t shadowIndex = UINT32_MAX;
     float    _spotPad[3] = {};      ///< Pad to 80 bytes (5 float4s).
 };
@@ -402,14 +392,12 @@ static constexpr uint32_t kMaxLocalLightShadows = 16;
 /// and the atlas UV rect for tile lookup. The `bias` field is applied as a
 /// depth offset before comparison.
 ///
-/// @source UE5 ShadowRendering.h:449 — FProjectedShadowInfo viewProj + atlas rect
-/// @source UE5 ShadowSetup.cpp:134 — per-light shadow bias (MinLightW = 0.1f)
 struct LocalLightShadowData {
     Mat4     viewProj;       ///< Light-space view-projection matrix (world -> clip).
     float    atlasOffsetX;   ///< UV offset X in atlas [0,1].
     float    atlasOffsetY;   ///< UV offset Y in atlas [0,1].
     float    atlasScale;     ///< UV scale (tile size / atlas size, e.g., 0.25 for 1024/4096).
-    float    bias;           ///< Shadow depth bias. @source UE5 ShadowSetup.cpp:134 — default 0.5.
+    float    bias;           ///< Shadow depth bias (default 0.5).
 };
 
 static_assert(sizeof(LocalLightShadowData) == 80, "LocalLightShadowData must be 80 bytes (Mat4 + 4 floats)");
@@ -423,7 +411,7 @@ static_assert(sizeof(LocalLightShadowData) == 80, "LocalLightShadowData must be 
 /// Contains per-cascade light-space view-projection matrices, split distances,
 /// per-cascade bias, fade parameters, and shadow atlas SRV index.
 /// Supports up to 8 cascades (4 main + 4 far shadow cascades).
-/// Bound at register `b4`. UE5 parity — all parameters match UE5 5.6 defaults.
+/// Bound at register `b4`.
 ///
 /// Padded to a 256-byte multiple as required by D3D12 constant buffer alignment.
 ///
@@ -445,12 +433,12 @@ struct ShadowDataCB {
     uint32_t shadowAtlasIndex;      ///< SRV heap index for shadow atlas depth texture (dynamic).
     uint32_t cascadeCount;          ///< Number of active cascades (1 to 8, main + far).
     float    shadowMapSize;         ///< Per-cascade resolution in texels (e.g., 2048).
-    float    receiverBias;          ///< Shadow receiver bias (UE5 default: 0.9).
+    float    receiverBias;          ///< Shadow receiver bias (default: 0.9).
     float    shadowFadeStart;       ///< World distance where last-cascade fade begins.
     float    shadowFadeEnd;         ///< World distance where shadows fully disappear.
     uint32_t filterMethod;          ///< 0=5x5 PCF (default), 1=Poisson 16-tap, 2=PCSS.
     float    tanLightSourceAngle;   ///< tan(sun disk angle) for PCSS penumbra estimation.
-    float    maxSoftKernelSize;     ///< Max PCSS kernel radius in texels (UE5 default: 40).
+    float    maxSoftKernelSize;     ///< Max PCSS kernel radius in texels (default: 40).
     uint32_t atlasColumns;          ///< Number of columns in the atlas grid (2, 3, or 4).
     uint32_t staticShadowAtlasIndex = UINT32_MAX; ///< SRV heap index for cached static shadow atlas. UINT32_MAX = no cache.
     uint32_t useShadowCache = 0;    ///< 0 = no cache (single atlas), 1 = composite static + dynamic.
@@ -464,8 +452,6 @@ struct ShadowDataCB {
     // Up to 16 local light shadows. Each entry stores the light-space viewProj
     // matrix and the atlas UV rect for shadow sampling.
     //
-    // @source UE5 ShadowRendering.h:449 — FProjectedShadowInfo per-light shadow info
-    // @source UE5 SpotLightComponent.cpp:119-138 — spot light shadow projection setup
     LocalLightShadowData localShadows[kMaxLocalLightShadows]; ///< Per-light shadow data (16 * 80 = 1280B).
     float    _pad3[64] = {};        ///< Pad to 2304 bytes (9 * 256).
 };
@@ -478,7 +464,7 @@ static_assert(sizeof(ShadowDataCB) == 2304, "ShadowDataCB must be 2304 bytes (25
 
 /// Sky atmosphere constant buffer for the sky rendering pass.
 ///
-/// Follows UE5 SkyAtmosphereComponent conventions: all distances in KILOMETERS.
+/// All distances in KILOMETERS, scattering coefficients in km^-1.
 /// Scattering coefficients are km^-1. Planet center is placed at
 /// (0, -bottomRadiusKm, 0) in sky-space so world Y=0 = sea level.
 ///
@@ -494,7 +480,7 @@ struct SkyAtmosphereCB {
     float bottomRadiusKm;       ///< Planet radius in km (center to sea level).
     float atmosphereHeightKm;   ///< Atmosphere thickness in km.
     float sunDiskIntensity;     ///< Multiplier for the sun disk brightness.
-    float multiScatteringFactor; ///< Multi-scattering approximation (0=single, 1=full). UE5 default: 1.0.
+    float multiScatteringFactor; ///< Multi-scattering approximation (0=single, 1=full). Default: 1.0.
     float rayleighScatteringScale; ///< Artistic multiplier for Rayleigh (default 1.0).
     float mieScatteringScale;   ///< Artistic multiplier for Mie scattering (default 1.0).
     float mieAbsorptionScale;   ///< Artistic multiplier for Mie absorption (default 1.0).
@@ -502,7 +488,6 @@ struct SkyAtmosphereCB {
     Vec4  skyLuminanceFactor;   ///< Per-channel sky brightness art direction (default 1,1,1,1).
 
     // ── Ozone (Other Absorption) ────────────────────────────────────────────
-    // @source UE5 SkyAtmosphereCommonData.h:38-42, SkyAtmosphereCommon.ush:316-318
     // Tent distribution for ozone density: two piecewise-linear segments.
     // DensityOzo = saturate(h < layerWidth ? linTerm0*h + constTerm0 : linTerm1*h + constTerm1)
 
@@ -575,21 +560,14 @@ struct HeightFogCB {
     Vec4  fogColor;             ///< xyz = fog color (linear), w = unused.
     float fogDensity;           ///< Exponential density factor.
     float fogHeightFalloff;     ///< Height falloff coefficient.
-    float fogBaseHeight;        ///< World-space base height (cm, UE5 parity).
+    float fogBaseHeight;        ///< World-space base height (cm).
     float fogMaxOpacity;        ///< Maximum fog opacity (0-1).
     float fogStartDistance;     ///< Minimum distance before fog begins.
     float fogCutoffDistance;    ///< Maximum fog distance. 0 = unlimited.
-    /// @source UE5 FogRendering.cpp:225 — MaxObserverHeight passed in ExponentialFogParameters.z
     float maxObserverHeight;    ///< Clamped max observer Z for shader-side compensation.
-    /// @source UE5 FogRendering.cpp:261 — ExponentialFogParameters3.x = raw density layer 1
     float rawDensity;           ///< Raw (un-precomputed) density for start distance recalculation.
 
     // ── Second fog layer (float4 = 16 bytes) ────────────────────────────
-    // @source UE5 FogRendering.cpp:257 — ExponentialFogParameters2
-    // .x = precomputed (density * pow(2, -falloff*(camZ-baseH)))
-    // .y = height falloff
-    // .z = raw density (for start distance recalculation)
-    // .w = base height (for start distance recalculation)
     float secondFogDensity;         ///< PRE-COMPUTED: second density * exp2(-falloff*(camZ-baseH)). 0 = disabled.
     float secondFogHeightFalloff;   ///< Second layer height falloff coefficient.
     float secondFogRawDensity;      ///< Raw (un-precomputed) second layer density for start distance recalc.
@@ -602,24 +580,20 @@ struct HeightFogCB {
     float _fogPad2[2] = {};     ///< Pad to 16-byte boundary.
 
     // ── Sky atmosphere injection (float4 + float4 = 32 bytes) ────────
-    /// @source UE5 HeightFogCommon.ush:174-180 — Sky ambient fog injection
-    /// @source UE5 FogRendering.cpp:85 — SkyAtmosphereAmbientContributionColorScale
-    Vec4  skyAtmContribColorScale = {1.f, 1.f, 1.f, 0.f}; ///< UE5: SkyAtmosphereAmbientContributionColorScale (default white).
-    float heightFogContribution = 1.0f;   ///< UE5: SkyAtmosphere.HeightFogContribution (0-1, default 1.0).
+    Vec4  skyAtmContribColorScale = {1.f, 1.f, 1.f, 0.f}; ///< Sky atmosphere ambient contribution color scale (default white).
+    float heightFogContribution = 1.0f;   ///< SkyAtmosphere height fog contribution (0-1, default 1.0).
     float skyLightColorR = 0.f;           ///< Sky light diffuse color R (from SH L0).
     float skyLightColorG = 0.f;           ///< Sky light diffuse color G (from SH L0).
     float skyLightColorB = 0.f;           ///< Sky light diffuse color B (from SH L0).
 
-    // ── Sun transmittance injection (UE5 SkyAtmosphere → HeightFog) ──
-    /// @source UE5 SceneRendering.cpp:1451 — AtmosphereLightIlluminanceOnGroundPostTransmittance
+    // ── Sun transmittance injection (SkyAtmosphere -> HeightFog) ───────
     /// Sun color * intensity * atmospheric transmittance at ground level toward the sun.
-    /// Used in HeightFogCommon.ush:319 for directional inscattering with sky atmosphere.
+    /// Used for directional inscattering with sky atmosphere.
     float sunIllumPostTransR = 0.f;       ///< Sun illuminance post-transmittance R.
     float sunIllumPostTransG = 0.f;       ///< Sun illuminance post-transmittance G.
     float sunIllumPostTransB = 0.f;       ///< Sun illuminance post-transmittance B.
     float sunIllumPostTransA = 0.f;       ///< 1.0 = has atmosphere sun light, 0.0 = none.
 
-    /// @source UE5 HeightFogCommon.ush:119 — InscatteringLightDirection
     /// Direction toward the sun for directional inscattering phase function.
     float sunDirX = 0.f;                  ///< Sun direction X (world-space, toward sun).
     float sunDirY = 0.f;                  ///< Sun direction Y.

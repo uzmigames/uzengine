@@ -106,7 +106,7 @@ struct Mat4 {
 
     /// Creates a left-handed orthographic projection matrix with reversed-Z (near→1, far→0).
     ///
-    /// Matches UE5 FReversedZOrthoMatrix (OrthoMatrix.h:65-82). Use for main-view
+    /// Standard FReversedZOrthoMatrix (OrthoMatrix.h:65-82). Use for main-view
     /// orthographic rendering (debug views, 2D overlays, UI) where reversed-Z is active.
     /// Shadow maps should use the standard Orthographic() instead.
     ///

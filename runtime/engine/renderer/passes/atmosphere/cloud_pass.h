@@ -10,9 +10,9 @@
 /// The final cloud output is a premultiplied-alpha RGBA16F texture at half display
 /// resolution, composited over the scene after deferred lighting and before tonemap.
 ///
-/// @source UE5 VolumetricCloudRendering.cpp:1664-1700 — CloudGlobalShaderParams
-/// @source UE5 VolumetricCloud.usf:840-1455 — MainCommon tracing loop
-/// @source UE5 VolumetricRenderTarget.usf:174-547 — Temporal reconstruction
+/// @ref CloudGlobalShaderParams
+/// @ref MainCommon tracing loop
+/// @ref Temporal reconstruction
 /// @source Schneider & Vos 2015 — Noise channel layout and density model
 
 #pragma once
@@ -37,7 +37,7 @@ class CBRingAllocator;
 /// All spatial values are in km unless noted. The caller is responsible for
 /// converting engine units (cm) to km before filling this struct.
 ///
-/// @source UE5 VolumetricCloudRendering.cpp:1664-1700 — parameter layout
+/// @ref parameter layout
 struct CloudPassInput {
     float    invViewProj[16];      ///< Current frame inverse view-projection matrix (column-major)
     float    prevViewProj[16];     ///< Previous frame view-projection matrix (for temporal reprojection)

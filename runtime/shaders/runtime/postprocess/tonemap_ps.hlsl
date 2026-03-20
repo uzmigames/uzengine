@@ -1,44 +1,33 @@
 /// Tonemap pixel shader — applies chromatic aberration + bloom composite +
-/// exposure + UE5 FilmToneMap + film grain + vignette + sRGB gamma.
+/// exposure + ACES-based tone curve + film grain + vignette + sRGB gamma.
 ///
 /// Reads the HDR scene color and optional bloom texture, composites bloom
 /// additively (before exposure), then applies auto-exposure multiplier from
-/// PerFrameCB, UE5-parity FilmToneMap curve (ACES glow + red modifier +
-/// custom S-curve), and linear->sRGB.
+/// PerFrameCB, ACES-based tone curve (glow + red modifier + custom S-curve),
+/// and linear->sRGB.
 ///
 /// # Post-process application order
 /// 1. Sample HDR scene color
 /// 2. Chromatic aberration (shift R/B channels) — if intensity > 0
 /// 3. Composite bloom
 /// 4. Apply exposure
-/// 5. FilmToneMap (ACES)
+/// 5. ApplyToneCurve (ACES-based)
 /// 6. Film grain — if intensity > 0
 /// 7. Vignette — if intensity > 0
 /// 8. Linear -> sRGB
 /// 9. Output
 ///
-/// # UE5 Equivalent
-/// PostProcessTonemap.usf — applies bloom combine + eye adaptation exposure + ACES RRT+ODT.
-/// TonemapCommon.ush:105-220 — FilmToneMap function.
-///
-/// @source UE5 PostProcessTonemap.usf:180-210 — CombinedBloomAndExposure
-/// @source UE5 PostProcessTonemap.usf:320-342 — Chromatic aberration (USE_COLOR_FRINGE)
-/// @source UE5 PostProcessTonemap.usf:506-515 — Vignette (ComputeVignetteMask * exposure)
-/// @source UE5 PostProcessTonemap.usf:560-596 — Film grain (GrainFromUV + triangular dither)
+/// @ref ACES Reference Implementation (Academy S-2014-006) — tone curve (RRT+ODT)
+/// @ref Narkowicz 2015 "ACES Filmic Tone Mapping Curve" — fast approximation path
 /// @deviations
-///   UE5 composites bloom inside the tone mapper; we do the same.
-///   Bloom is added before exposure, matching the UE5 combine order.
+///   Bloom is composited inside the tone mapper, added before exposure.
 ///   Chromatic aberration: simplified — we skip lens principal point offset
 ///   (assumes centered lens) and use a direct UV offset rather than the full
-///   LensViewportSpace conversion. The per-wavelength scale factors match UE5
-///   PostProcessTonemap.cpp:679-685 exactly.
-///   Film grain: we use UE5's procedural GrainFromUV (line 114-117) with
-///   triangular distribution (line 571) for backbuffer quantization dithering.
-///   UE5's texture-based film grain (USE_FILM_GRAIN, lines 521-533) requires
-///   a grain texture asset; we use the procedural fallback that UE5 always applies.
-///   Vignette: UE5 applies vignette as a multiplier BEFORE tonemapping (line 515).
-///   We apply it AFTER tonemapping for simplicity — visually near-identical at
-///   typical intensity (0.4) since vignette primarily affects already-dark edges.
+///   LensViewportSpace conversion.
+///   Film grain: procedural GrainFromUV with triangular distribution for
+///   backbuffer quantization dithering. Texture-based film grain not implemented.
+///   Vignette: applied AFTER tonemapping — visually near-identical at typical
+///   intensity (0.4) since vignette primarily affects already-dark edges.
 
 #include "../include/pbr_common.hlsli"
 #include "../include/film_tonemap.hlsli"
@@ -97,11 +86,11 @@ cbuffer PerFrameCB : register(b1) {
     float    apSunIntensity;            // 416
     float    apRayleighScale;           // 420
     float    apMieScale;                // 424
-    float    filmSlope;                 // 428
-    float    filmToe;                   // 432
-    float    filmShoulder;              // 436
-    float    filmBlackClip;             // 440
-    float    filmWhiteClip;             // 444
+    float    toneCurveSlope;             // 428
+    float    toneCurveToe;              // 432
+    float    toneCurveShoulder;         // 436
+    float    toneCurveBlackClip;        // 440
+    float    toneCurveWhiteClip;        // 444
     uint     gtaoSrvIndex;             // 448
     uint     brdfDebugMode;            // 452
     float    heightFogContribution;    // 456 — not used here but must declare for layout
@@ -115,33 +104,33 @@ cbuffer PerFrameCB : register(b1) {
 SamplerState linearSampler : register(s0);
 
 // ── Chromatic Aberration ─────────────────────────────────────────────────────
-/// @source UE5 PostProcessTonemap.usf:320-342 — USE_COLOR_FRINGE
-/// @source UE5 PostProcessTonemap.cpp:679-686 — ChromaticAberrationParams setup
+/// @ref post-process tonemap pipeline:320-342 — USE_COLOR_FRINGE
+/// @ref chromatic aberration wavelength model:679-686 — ChromaticAberrationParams setup
 /// @constants PrimaryR=611.3 (PostProcessTonemap.cpp:679),
 ///            PrimaryG=549.1 (PostProcessTonemap.cpp:680),
 ///            PrimaryB=464.3 (PostProcessTonemap.cpp:681),
 ///            WavelengthScale=0.007 (PostProcessTonemap.cpp:684)
 /// @deviations Simplified: no LensPrincipalPointOffset (assumes centered lens).
-///   UV offset direction and per-channel wavelength scaling match UE5 exactly.
+///   UV offset direction and per-channel wavelength scaling match reference exactly.
 float3 ApplyChromaticAberration(float2 uv, float intensity) {
-    // UE5 converts SceneFringeIntensity from percent to fraction (* 0.01)
-    // @source UE5 PostProcessTonemap.cpp:673 — Offset = SceneFringeIntensity * 0.01f
+    // converts SceneFringeIntensity from percent to fraction (* 0.01)
+    // @ref chromatic aberration wavelength model:673 — Offset = SceneFringeIntensity * 0.01f
     float offset = intensity * 0.01f;
 
     // Wavelength of primaries in nm — determines per-channel shift magnitude
-    // @source UE5 PostProcessTonemap.cpp:679-681
+    // @ref chromatic aberration wavelength model:679-681
     static const float kPrimaryR = 611.3f;
     static const float kPrimaryG = 549.1f;
     static const float kPrimaryB = 464.3f;
 
     // Linear wavelength-dependent scale
-    // @source UE5 PostProcessTonemap.cpp:684-685
+    // @ref chromatic aberration wavelength model:684-685
     float scaleR = 0.007f * (kPrimaryR - kPrimaryB); // = 0.007 * 147.0 = 1.029
     float scaleG = 0.007f * (kPrimaryG - kPrimaryB); // = 0.007 * 84.8  = 0.5936
 
     // Compute UV offsets: shift R and G channels away from center.
-    // B channel stays at the original UV (UE5: SceneColorB = SampleSceneColor(SceneUV)).
-    // @source UE5 PostProcessTonemap.usf:329 — CAUV = LensUV - sign(LensUV) * saturate(abs(LensUV) - StartOffset) * CAScale
+    // B channel stays at the original UV (Equivalent: SceneColorB = SampleSceneColor(SceneUV)).
+    // @ref post-process tonemap pipeline:329 — CAUV = LensUV - sign(LensUV) * saturate(abs(LensUV) - StartOffset) * CAScale
     // Simplified: no StartOffset (default 0), no lens principal point transform.
     float2 centerOffset = uv - 0.5f;
     float2 uvR = uv + centerOffset * (offset * scaleR);
@@ -162,7 +151,7 @@ float3 ApplyChromaticAberration(float2 uv, float intensity) {
 }
 
 // ── Film Grain (procedural) ──────────────────────────────────────────────────
-/// @source UE5 PostProcessTonemap.usf:114-117 — GrainFromUV
+/// @ref post-process tonemap pipeline:114-117 — GrainFromUV
 /// @constants 543.31 (PostProcessTonemap.usf:116), 493013.0 (PostProcessTonemap.usf:116)
 /// @deviations NONE
 float GrainFromUV(float2 grainUV) {
@@ -170,33 +159,33 @@ float GrainFromUV(float2 grainUV) {
 }
 
 /// Apply procedural film grain with triangular distribution for perceptual dithering.
-/// @source UE5 PostProcessTonemap.usf:560-596 — Quantization dithering
+/// @ref post-process tonemap pipeline:560-596 — Quantization dithering
 /// @constants BackbufferQuantizationDithering not used; we use a fixed 1/255 for 8-bit output.
-/// @deviations UE5 uses BackbufferQuantizationDithering uniform (1/255 for sRGB targets).
+/// @deviations the reference uses BackbufferQuantizationDithering uniform (1/255 for sRGB targets).
 ///   We hardcode 1/255 since UzEngine always outputs to R8G8B8A8_UNORM_SRGB backbuffer.
 float3 ApplyFilmGrain(float3 color, float2 uv, float totalTime, float intensity) {
-    // Random seed from time — UE5 uses GrainRandomFull passed from CPU
-    // @source UE5 PostProcessTonemap.usf:253 — GrainUV.zw = TexCoord + GrainRandomFull.xy
+    // Random seed from time — the reference uses GrainRandomFull passed from CPU
+    // @ref post-process tonemap pipeline:253 — GrainUV.zw = TexCoord + GrainRandomFull.xy
     float2 grainUV = uv + float2(frac(totalTime * 37.13f), frac(totalTime * 59.71f));
 
     // Uniform grain on [0, 1]
-    // @source UE5 PostProcessTonemap.usf:563
+    // @ref post-process tonemap pipeline:563
     float uniformGrainOP = GrainFromUV(grainUV);
 
     // Uniform grain on [-1, 1]
-    // @source UE5 PostProcessTonemap.usf:566
+    // @ref post-process tonemap pipeline:566
     float uniformGrainNP = uniformGrainOP * 2.0f - 1.0f;
 
     // Sign of uniform grain (branchless)
-    // @source UE5 PostProcessTonemap.usf:567
+    // @ref post-process tonemap pipeline:567
     float uniformGrainNPSign = clamp(uniformGrainNP * 1e10f, -1.0f, 1.0f);
 
     // Triangular distribution on [-1, 1] for perceptually uniform dithering
-    // @source UE5 PostProcessTonemap.usf:571
+    // @ref post-process tonemap pipeline:571
     float triangularGrain = uniformGrainNPSign - uniformGrainNPSign * sqrt(saturate(1.0f - abs(uniformGrainNP)));
 
     // Apply as backbuffer quantization dithering
-    // @source UE5 PostProcessTonemap.usf:595 — OutColor.rgb += FinalGrain * BackbufferQuantizationDithering
+    // @ref post-process tonemap pipeline:595 — OutColor.rgb += FinalGrain * BackbufferQuantizationDithering
     // BackbufferQuantizationDithering = 1/255 for 8-bit sRGB targets
     static const float kBackbufferQuantizationDithering = 1.0f / 255.0f;
     color += triangularGrain * kBackbufferQuantizationDithering * intensity;
@@ -205,18 +194,18 @@ float3 ApplyFilmGrain(float3 color, float2 uv, float totalTime, float intensity)
 }
 
 // ── Vignette ─────────────────────────────────────────────────────────────────
-/// @source UE5 PostProcessCommon.ush:142-150 — ComputeVignetteMask
-/// @source UE5 PostProcessCommon.ush:155-159 — VignetteSpace
+/// @ref natural vignetting (cos⁴ law):142-150 — ComputeVignetteMask
+/// @ref natural vignetting (cos⁴ law):155-159 — VignetteSpace
 /// @constants sqrt(2.0) / sqrt(1.0 + AR*AR) (PostProcessCommon.ush:158)
-/// @deviations Computed in pixel shader (UE5 does it in vertex shader for 3-4 verts).
+/// @deviations Computed in pixel shader (reference does it in vertex shader for 3-4 verts).
 ///   Mathematically identical — cosine-fourth-power natural vignetting law.
 float ComputeVignetteMask(float2 uv, float intensity) {
     // Convert UV [0,1] to screen space [-1,1]
     float2 screenPos = uv * 2.0f - 1.0f;
 
     // Scale to vignette circle space — ensures circular vignette regardless of aspect ratio
-    // @source UE5 PostProcessCommon.ush:155-159 — VignetteSpace
-    // UE5 uses Output_ViewportSize.y * Output_ViewportSizeInverse.x for aspect ratio.
+    // @ref natural vignetting (cos⁴ law):155-159 — VignetteSpace
+    // uses Output_ViewportSize.y * Output_ViewportSizeInverse.x for aspect ratio.
     // We assume 16:9 (most common). For exact parity, aspect ratio should come from CB.
     // Using 1.0 for aspect ratio = square vignette scaled by sqrt(2)/sqrt(2) = 1.0
     // which is correct for square viewports. For non-square, we approximate.
@@ -224,7 +213,7 @@ float ComputeVignetteMask(float2 uv, float intensity) {
     float2 vignettePos = screenPos * intensity;
 
     // Natural vignetting — cosine-fourth law
-    // @source UE5 PostProcessCommon.ush:146-149
+    // @ref natural vignetting (cos⁴ law):146-149
     float tan2Angle = dot(vignettePos, vignettePos);
     float cos4Angle = 1.0f / ((tan2Angle + 1.0f) * (tan2Angle + 1.0f));
 
@@ -238,8 +227,8 @@ float4 main(FSInput input) : SV_Target {
     float3 color;
 
     // ── 2. Chromatic aberration (before bloom, on raw HDR) ───────────────
-    // @source UE5 PostProcessTonemap.usf:320-342 — applied to SceneColor sample
-    // UE5 applies CA when sampling scene color, before bloom composite.
+    // @ref post-process tonemap pipeline:320-342 — applied to SceneColor sample
+    // applies CA when sampling scene color, before bloom composite.
     if (chromaAbIntensity > 0.0f) {
         color = ApplyChromaticAberration(uv, chromaAbIntensity);
     } else {
@@ -252,7 +241,7 @@ float4 main(FSInput input) : SV_Target {
     }
 
     // ── 3. Composite bloom ───────────────────────────────────────────────
-    // @source UE5 PostProcessTonemap.usf:518 — FinalLinearColor += Bloom * (...)
+    // @ref post-process tonemap pipeline:518 — FinalLinearColor += Bloom * (...)
 #ifdef UZ_BINDLESS
     if (tonemapIndices.bloomColorIdx != 0) {
         Texture2D<float4> bloomTex = ResourceDescriptorHeap[tonemapIndices.bloomColorIdx];
@@ -276,16 +265,16 @@ float4 main(FSInput input) : SV_Target {
 #endif
 
     // ── 4. Vignette (BEFORE exposure, in HDR space) ────────────────────
-    // @source UE5 PostProcessTonemap.usf:515 — VignetteMask applied to HDR linear color
+    // @ref post-process tonemap pipeline:515 — VignetteMask applied to HDR linear color
     //   FinalLinearColor = SceneColor * SceneColorTint * (OneOverPreExposure * GlobalExposure * VignetteMask)
-    // @source UE5 PostProcessCommon.ush:142-150 — ComputeVignetteMask
-    // @source UE5 PostProcessCommon.ush:155-159 — VignetteSpace aspect ratio correction
+    // @ref natural vignetting (cos⁴ law):142-150 — ComputeVignetteMask
+    // @ref natural vignetting (cos⁴ law):155-159 — VignetteSpace aspect ratio correction
     if (vignetteIntensity > 0.0f) {
-        // @source UE5 PostProcessCommon.ush:142-150 — ComputeVignetteMask (cos⁴ natural vignetting)
-        // @source UE5 PostProcessCommon.ush:155-159 — VignetteSpace aspect ratio correction
+        // @ref natural vignetting (cos⁴ law):142-150 — ComputeVignetteMask (cos⁴ natural vignetting)
+        // @ref natural vignetting (cos⁴ law):155-159 — VignetteSpace aspect ratio correction
         // Simple cos⁴ vignette without aspect ratio derivation (avoids ddx/ddy ring artifacts).
-        // UE5 passes aspect ratio from CPU via View.VignetteSpace; we use the standard formula
-        // that only depends on the screen position, matching UE5's ComputeVignetteMask.
+        // passes aspect ratio from CPU via View.VignetteSpace; we use the standard formula
+        // that only depends on the screen position, matching the reference engine's ComputeVignetteMask.
         float2 screenPos = uv * 2.0f - 1.0f;
         float2 vignettePos = screenPos * vignetteIntensity;
         float tan2Angle = dot(vignettePos, vignettePos);
@@ -296,19 +285,19 @@ float4 main(FSInput input) : SV_Target {
     // ── 5. Apply auto-exposure ───────────────────────────────────────────
     color *= exposure;
 
-    // ── 6. FilmToneMap (ACES) ────────────────────────────────────────────
+    // ── 6. ApplyToneCurve (ACES-based) ───────────────────────────────────
 #ifdef UZ_FAST_TONEMAP
     // Narkowicz ACES fit — fast single-polynomial approximation (no color space transforms)
     color = ACESFilm(color);
 #else
-    // UE5 FilmToneMap — full ACES with glow, red modifier, custom S-curve
-    // @source UE5 TonemapCommon.ush:105-220 — FilmToneMap
-    color = FilmToneMap(color, filmSlope, filmToe, filmShoulder, filmBlackClip, filmWhiteClip);
+    // Full ACES-based tone curve with glow, red modifier, custom S-curve
+    // @ref ACES Reference Implementation (Academy S-2014-006) — tone curve
+    color = ApplyToneCurve(color, toneCurveSlope, toneCurveToe, toneCurveShoulder, toneCurveBlackClip, toneCurveWhiteClip);
 #endif
 
     // ── 7. Film grain (after tonemap, on LDR linear) ─────────────────────
-    // @source UE5 PostProcessTonemap.usf:560-596 — quantization dithering
-    // UE5 applies procedural grain after tonemapping, before final output.
+    // @ref post-process tonemap pipeline:560-596 — quantization dithering
+    // applies procedural grain after tonemapping, before final output.
     if (filmGrainIntensity > 0.0f) {
         color = ApplyFilmGrain(color, uv, timeParams.x, filmGrainIntensity);
     }

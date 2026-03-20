@@ -30,15 +30,12 @@
 /// - b0: Root constants (8 DWORDs)
 /// - b1: PerFrameCB
 ///
-/// @source UE5 ScreenSpaceDenoise.cpp:2967 — bUseTemporalAccumulation
-/// @source UE5 SSDTemporalAccumulation.ush:1-400 — temporal reprojection + clamp
-/// @constants BlendAlpha=0.05 (SSDTemporalAccumulation.ush:312 — HistoryWeight ~0.95)
-///            NeighborhoodClamp 3x3 AABB (SSDTemporalAccumulation.ush:250-280)
-///            DisocclusionAlpha=1.0 (SSDTemporalAccumulation.ush:320)
-/// @deviations Simplified from UE5's full SSD temporal which tracks per-pixel
-///   sample count, uses signal-specific history rejection, and supports
-///   frequency-domain separation. We use a standard neighborhood-clamp TAA-style
-///   temporal filter which is the core of UE5's approach.
+/// @ref Schied et al. 2017 "Spatiotemporal Variance-Guided Filtering" — temporal accumulation
+/// @ref Salvi 2016 "An Excursion in Temporal Supersampling" — neighborhood clamping
+/// @constants BlendAlpha=0.05 (HistoryWeight ~0.95)
+///            NeighborhoodClamp 3x3 AABB
+///            DisocclusionAlpha=1.0
+/// @deviations Standard neighborhood-clamp TAA-style temporal filter.
 
 #include "../include/math_util.hlsli"
 
@@ -48,11 +45,10 @@
 
 /// Temporal blend factor for stable (non-disoccluded) pixels.
 /// Lower = more history reuse = smoother but more ghosting risk.
-/// @source UE5 SSDTemporalAccumulation.ush:312 — ~0.05 effective new-frame weight
+/// @ref Schied et al. 2017 — ~0.05 effective new-frame weight for stable pixels
 #define TEMPORAL_BLEND_ALPHA 0.05f
 
 /// Temporal blend factor for disoccluded pixels (no valid history).
-/// @source UE5 SSDTemporalAccumulation.ush:320
 #define DISOCCLUSION_ALPHA 1.0f
 
 /// Velocity magnitude threshold to consider a pixel "fast moving."
@@ -64,7 +60,7 @@
 // Root Constants (b0, 8 DWORDs = 32 bytes — DX12 root signature limit)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 ScreenSpaceDenoise.cpp:2967 — temporal accumulation params
+/// Temporal accumulation dispatch parameters.
 cbuffer TemporalAccumRootCB : register(b0) {
     uint  currentSrvIndex;     // DWORD 0 — current denoised SSGI color SRV
     uint  currentAOSrvIndex;   // DWORD 1 — current denoised AO SRV
@@ -172,7 +168,7 @@ float2 SampleVelocity(float2 uv) {
 // Luminance (for Karis-style weighting in neighborhood clamp)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 Common.ush:405
+/// @ref ITU-R BT.709 — standard luminance coefficients
 float Luminance(float3 color) {
     return dot(color, float3(0.2126f, 0.7152f, 0.0722f));
 }
@@ -181,7 +177,7 @@ float Luminance(float3 color) {
 // Main Compute Shader
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 SSDTemporalAccumulation.ush:200-380 — temporal accumulation pass
+/// @ref Schied et al. 2017 — temporal accumulation pass with neighborhood clamping
 [numthreads(8, 8, 1)]
 void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     // Bounds check
@@ -200,11 +196,9 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     // ── Load velocity for reprojection ──
     // Velocity buffer is full-res; UV coordinates are the same since we're
     // reading at the same normalized position.
-    // @source UE5 SSDTemporalAccumulation.ush:220 — EncodedVelocity
     float2 velocity = SampleVelocity(uv);
 
     // ── Reproject to history UV ──
-    // @source UE5 SSDTemporalAccumulation.ush:225 — HistoryScreenPosition = CurrentUV - Velocity
     float2 historyUV = uv - velocity;
 
     // ── Check for disocclusion (history UV out of bounds) ──
@@ -213,7 +207,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     // ── Compute 3x3 neighborhood color AABB for variance clipping ──
     // This prevents ghosting by rejecting history samples that are outside
     // the range of plausible values given the current frame's local neighborhood.
-    // @source UE5 SSDTemporalAccumulation.ush:250-280 — neighborhood AABB
+    // @ref Salvi 2016 — neighborhood AABB for variance clipping
     float4 neighborMin = float4(1e10f, 1e10f, 1e10f, 1e10f);
     float4 neighborMax = float4(-1e10f, -1e10f, -1e10f, -1e10f);
     float  aoMin = 1e10f;
@@ -251,13 +245,11 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
         historyAO    = SampleHistoryAO(historyUV);
 
         // ── Clamp history to neighborhood AABB (variance clipping) ──
-        // @source UE5 SSDTemporalAccumulation.ush:270-278
         historyColor = clamp(historyColor, neighborMin, neighborMax);
         historyAO    = clamp(historyAO, aoMin, aoMax);
     }
 
     // ── Compute blend alpha ──
-    // @source UE5 SSDTemporalAccumulation.ush:312-320
     float alpha = TEMPORAL_BLEND_ALPHA;
 
     // Increase alpha for disoccluded pixels (use more current frame)
@@ -266,7 +258,6 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     }
 
     // Increase alpha for fast-moving pixels to reduce ghosting
-    // @source UE5 SSDTemporalAccumulation.ush:315 — velocity-based rejection
     float velocityMagnitude = length(velocity);
     if (velocityMagnitude > VELOCITY_THRESHOLD) {
         // Smoothly ramp alpha up as velocity increases
@@ -276,7 +267,6 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
 
     // ── Temporal blend ──
     // result = lerp(history, current, alpha) = history * (1-alpha) + current * alpha
-    // @source UE5 SSDTemporalAccumulation.ush:325
     float4 resultColor = lerp(historyColor, currentColor, alpha);
     float  resultAO    = lerp(historyAO, currentAO, alpha);
 

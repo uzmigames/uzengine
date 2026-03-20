@@ -48,7 +48,7 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
         }
 
         // ── Resolve material for slot 0 ────────────────────────────────────
-        // @source UE5 MeshComponent.cpp:37-54 — GetMaterial(slotIndex)
+        // GetMaterial(slotIndex) — resolve material for slot 0
         // All texture paths and parameters come from the MaterialInterface.
         // If no material is assigned, the mesh renders with default fallback textures.
         MaterialInterface* const mat = meshComp.GetMaterial(0);
@@ -84,8 +84,7 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
         uint32_t meshId = meshComp.meshId;
 
         // ── LOD Selection ──────────────────────────────────────────────────
-        // @source UE5 StaticMeshSceneProxy.cpp:2661-2663 — GetLOD()
-        // @source UE5 SceneManagement.cpp:1034-1055 — ComputeStaticMeshLOD
+        // LOD selection — GetLOD() + ComputeStaticMeshLOD from screen size
         //
         // When multiple LOD levels are defined, compute the object's screen
         // size from its bounding sphere and camera distance, then select the
@@ -107,7 +106,7 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
                                        ? meshComp.boundingSphereRadius
                                        : 50.0f;
 
-            // @source UE5 SceneManagement.cpp:977 — ScreenMultiple from projection matrix
+            // ScreenMultiple from projection matrix — computes screen size
             const Mat4& projMatrix = m_camera->GetProjection();
             const float projM00 = projMatrix.m._11;
             const float projM11 = projMatrix.m._22;
@@ -137,7 +136,7 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
         cmd.meshId       = meshId;
 
         // Map ECS mobility to renderer-side EMobility for shadow cache filtering.
-        // Stationary is treated as Static for shadow caching (UE5 parity).
+        // Stationary is treated as Static for shadow caching (standard).
         switch (sceneComp.mobility) {
             case SceneComponent::Mobility::Static:
                 cmd.mobility = EMobility::Static;
@@ -223,6 +222,21 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
 
         outDrawList.Add(cmd);
         drawIndex++;
+    }
+
+    // ── Flush batched mesh uploads ───────────────────────────────────────
+    // All meshes loaded during this sync pass were deferred — submit all
+    // copy commands in a single GPU submission instead of one per mesh.
+    if (!m_deferredMeshUploads.empty()) {
+        FlushDeferredMeshUploads(m_device, cmdList, m_deferredMeshUploads);
+        UZ_LOG(Renderer, Info, "SyncWorldToDrawList: flushed {} deferred mesh uploads",
+               m_deferredMeshUploads.size());
+        m_deferredMeshUploads.clear();
+    }
+
+    // ── Batch SDF bake for queued meshes ─────────────────────────────────
+    if (!m_pendingSdfBakes.empty()) {
+        FlushSdfBakes(cmdList);
     }
 }
 

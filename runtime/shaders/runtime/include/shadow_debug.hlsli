@@ -1,4 +1,4 @@
-/// Buffer Visualization Overlay — UE5-style diagnostic grid.
+/// Buffer Visualization Overlay — engine-style diagnostic grid.
 ///
 /// Renders a 3x3 grid where each tile shows a different buffer.
 /// Each tile re-samples the G-Buffer at the remapped UV to show

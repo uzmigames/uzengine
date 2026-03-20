@@ -47,7 +47,7 @@ void FPSCameraController::Update(Camera& camera, const InputSystem& input, float
     Vec3 pos = camera.GetPosition();
     camera.LookAt(pos + forward, Vec3::Up());
 
-    // ── WASD movement — Fly camera (UE5 editor style) ─────────────────────
+    // ── WASD movement — Fly camera (reference editor style) ─────────────────────
     // W/S move along the camera's look direction (including pitch).
     // A/D strafe perpendicular to look direction on the horizontal plane.
     // Space/Ctrl move along world Z axis.

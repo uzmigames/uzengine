@@ -25,6 +25,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
+#include <deque>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -136,7 +137,7 @@ private:
     void WorkerLoop();
 
     std::vector<std::thread>              m_workers;
-    std::vector<std::string>              m_queue;      ///< Paths waiting to be decoded.
+    std::deque<std::string>               m_queue;      ///< Paths waiting to be decoded.
     std::vector<TextureDecodeResult>      m_completed;  ///< Decoded results ready for pickup.
     mutable std::mutex                    m_mutex;
     std::condition_variable               m_cv;

@@ -1,12 +1,9 @@
 /// UzEngine PostProcessVolume — spatial post-process parameter blending.
 ///
-/// Implements UE5-style PostProcessVolume system where multiple AABB volumes
+/// Implements PostProcessVolume system where multiple AABB volumes
 /// overlap and blend post-process settings based on camera position, priority,
 /// and blend radius.
 ///
-/// @source UE5 PostProcessVolume.h — APostProcessVolume
-/// @source UE5 Scene.cpp — FScene::AddPostProcessVolume
-/// @source UE5 PostProcessing.cpp — GetFinalPostProcessSettings
 
 #pragma once
 
@@ -63,133 +60,104 @@ enum class PostProcessOverride : uint32_t {
 // PostProcessSettings — all post-process effect parameters
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Contains all post-process effect parameters with defaults matching UE5.
+/// Contains all post-process effect parameters with standard defaults.
 ///
 /// Each field has a corresponding bit in `overrideFlags` (see PostProcessOverride).
 /// During volume blending, only fields with their override bit set participate
 /// in the lerp. Fields without the bit are passed through unchanged.
 ///
-/// @source UE5 Scene.cpp — FPostProcessSettings defaults
 struct PostProcessSettings {
     // ── Bloom ───────────────────────────────────────────────────────
     /// Overall bloom intensity multiplier.
-    /// @source UE5 Scene.cpp:508 — BloomIntensity default 0.675
     float bloomIntensity = 0.675f;
 
     /// Bloom brightness threshold. Pixels below this luminance do not bloom.
     /// -1.0 means use the engine default threshold.
-    /// @source UE5 Scene.cpp:509 — BloomThreshold default -1.0
     float bloomThreshold = -1.0f;
 
     // ── Auto-Exposure ───────────────────────────────────────────────
     /// Minimum average scene brightness for auto-exposure adaptation.
-    /// @source UE5 Scene.cpp:196 — AutoExposureMinBrightness default 0.03
     float autoExposureMinBrightness = 0.03f;
 
     /// Maximum average scene brightness for auto-exposure adaptation.
-    /// @source UE5 Scene.cpp:197 — AutoExposureMaxBrightness default 8.0
     float autoExposureMaxBrightness = 8.0f;
 
     /// Logarithmic exposure bias. 0 = no adjustment, 1 = 2x brighter, -1 = 2x darker.
-    /// @source UE5 Scene.cpp:215 — AutoExposureBias default 0.0
     float autoExposureBias = 0.0f;
 
     /// Speed at which exposure adapts when the scene gets brighter (EV/s).
-    /// @source UE5 Scene.cpp:213 — AutoExposureSpeedUp default 3.0
     float autoExposureSpeedUp = 3.0f;
 
     /// Speed at which exposure adapts when the scene gets darker (EV/s).
-    /// @source UE5 Scene.cpp:214 — AutoExposureSpeedDown default 1.0
     float autoExposureSpeedDown = 1.0f;
 
     // ── Depth of Field ──────────────────────────────────────────────
     /// Distance to the focal plane in centimeters. 0 = DoF disabled.
-    /// @source UE5 Scene.cpp:559 — DepthOfFieldFocalDistance default 0.0
     float depthOfFieldFocalDistance = 0.0f;
 
     /// Width of the in-focus region around the focal plane (cm).
-    /// @source UE5 Scene.cpp:579 — DepthOfFieldFocalRegion default 0.0
     float depthOfFieldFocalRegion = 0.0f;
 
     /// Width of the near blur transition region (cm).
-    /// @source UE5 Scene.cpp:580 — DepthOfFieldNearTransition default 300.0
     float depthOfFieldNearTransition = 300.0f;
 
     /// Width of the far blur transition region (cm).
-    /// @source UE5 Scene.cpp:581 — DepthOfFieldFarTransition default 500.0
     float depthOfFieldFarTransition = 500.0f;
 
     /// Simulated camera f-stop for cinematic DoF aperture size.
-    /// @source UE5 Scene.cpp:560 — DepthOfFieldFstop default 4.0
     float depthOfFieldFstop = 4.0f;
 
     // ── Motion Blur ─────────────────────────────────────────────────
     /// Strength of motion blur. 0 = disabled, 1 = full.
-    /// @source UE5 Scene.cpp:598 — MotionBlurAmount default 0.5
     float motionBlurAmount = 0.5f;
 
     /// Maximum blur distance in percent of screen width.
-    /// @source UE5 Scene.cpp:599 — MotionBlurMax default 5.0
     float motionBlurMax = 5.0f;
 
     /// Target framerate for motion blur scaling. Lower = more blur per velocity.
-    /// @source UE5 Scene.cpp:600 — MotionBlurTargetFPS default 30
     int motionBlurTargetFPS = 30;
 
     // ── Color Grading ───────────────────────────────────────────────
     /// White balance color temperature in Kelvin.
-    /// @source UE5 Scene.cpp:403 — WhiteTemp default 6500.0
     float whiteTemp = 6500.0f;
 
     /// White balance tint (green-magenta shift). 0 = neutral.
-    /// @source UE5 Scene.cpp:404 — WhiteTint default 0.0
     float whiteTint = 0.0f;
 
     /// ACES film tonemap slope (contrast in mid-tones).
-    /// @source UE5 Scene.cpp:478 — FilmSlope default 0.88
     float filmSlope = 0.88f;
 
     /// ACES film tonemap toe (dark region rolloff).
-    /// @source UE5 Scene.cpp:479 — FilmToe default 0.55
     float filmToe = 0.55f;
 
     /// ACES film tonemap shoulder (highlight compression).
-    /// @source UE5 Scene.cpp:480 — FilmShoulder default 0.26
     float filmShoulder = 0.26f;
 
     /// ACES film tonemap black clip (crush blacks below this).
-    /// @source UE5 Scene.cpp:481 — FilmBlackClip default 0.0
     float filmBlackClip = 0.0f;
 
     /// ACES film tonemap white clip (clip whites above this).
-    /// @source UE5 Scene.cpp:482 — FilmWhiteClip default 0.04
     float filmWhiteClip = 0.04f;
 
     // ── Vignette ────────────────────────────────────────────────────
     /// Screen-edge darkening intensity. 0 = disabled.
-    /// @source UE5 Scene.cpp:506 — VignetteIntensity default 0.4
     float vignetteIntensity = 0.4f;
 
     // ── SSAO ────────────────────────────────────────────────────────
     /// Intensity of ambient occlusion darkening.
-    /// @source UE5 Scene.cpp:500 — AmbientOcclusionIntensity default 1.0
     float ambientOcclusionIntensity = 1.0f;
 
     /// Sampling radius for ambient occlusion in centimeters.
-    /// @source UE5 Scene.cpp:501 — AmbientOcclusionRadius default 200.0
     float ambientOcclusionRadius = 200.0f;
 
     /// Power curve applied to AO result (higher = more contrast).
-    /// @source UE5 Scene.cpp:503 — AmbientOcclusionPower default 2.0
     float ambientOcclusionPower = 2.0f;
 
     // ── SSR ─────────────────────────────────────────────────────────
     /// Intensity of screen-space reflections (0-100 percent scale).
-    /// @source UE5 Scene.cpp:491 — ScreenSpaceReflectionIntensity default 100.0
     float screenSpaceReflectionIntensity = 100.0f;
 
     /// Quality of screen-space reflections (0-100 percent scale).
-    /// @source UE5 Scene.cpp:493 — ScreenSpaceReflectionQuality default 50.0
     float screenSpaceReflectionQuality = 50.0f;
 
     // ── Override flags ──────────────────────────────────────────────
@@ -229,7 +197,6 @@ struct PostProcessSettings {
     /// Integer fields snap to `other` when `alpha > 0.5`.
     /// Override flags are NOT lerped -- they are OR'd (any active override stays active).
     ///
-    /// @source UE5 PostProcessing.cpp — OverridePostProcessSettings lerp logic
     ///
     /// # Arguments
     /// * `other` -- Source settings to blend toward.
@@ -245,7 +212,6 @@ struct PostProcessSettings {
 /// cameras within or near it. Multiple volumes blend based on priority,
 /// distance, and weight.
 ///
-/// @source UE5 PostProcessVolume.h — APostProcessVolume
 struct PostProcessVolume {
     // ── Spatial bounds ──────────────────────────────────────────────
     /// AABB minimum corner in world space (centimeters).
@@ -260,17 +226,15 @@ struct PostProcessVolume {
 
     // ── Blending ────────────────────────────────────────────────────
     /// Volumes with higher priority are applied later and override lower ones.
-    /// Volumes with equal priority blend in insertion order (undefined in UE5).
+    /// Volumes with equal priority blend in insertion order (undefined, depends on insertion order).
     float priority = 0.0f;
 
     /// Distance in centimeters over which the volume fades in as the camera
     /// approaches from outside. 0 = hard cut (fully on when inside, fully off when outside).
-    /// @source UE5 PostProcessVolume.h — BlendRadius
     float blendRadius = 100.0f;
 
     /// Overall contribution weight multiplier in [0, 1].
     /// 0 = this volume has no effect. 1 = full contribution.
-    /// @source UE5 PostProcessVolume.h — BlendWeight
     float blendWeight = 1.0f;
 
     /// When false, this volume is skipped during blending.
@@ -292,8 +256,6 @@ struct PostProcessVolume {
 /// This is a frame-local helper -- it is NOT thread-safe. Call from the
 /// game thread or under external synchronization.
 ///
-/// @source UE5 PostProcessing.cpp — GetFinalPostProcessSettings
-/// @source UE5 Scene.cpp — FScene::AddPostProcessVolume
 class PostProcessVolumeManager {
 public:
     PostProcessVolumeManager() = default;
@@ -328,7 +290,7 @@ public:
 
     /// Computes the final blended PostProcessSettings for a camera at `cameraPosition`.
     ///
-    /// Algorithm (matches UE5 OverridePostProcessSettings):
+    /// Algorithm :
     /// 1. Start with default PostProcessSettings (all fields at engine defaults).
     /// 2. Collect all enabled volumes.
     /// 3. Sort by priority ascending (lowest priority first, highest last).
@@ -342,7 +304,6 @@ public:
     ///    c. If blend factor > 0, lerp current result toward this volume's settings.
     /// 5. Return the final blended result.
     ///
-    /// @source UE5 PostProcessing.cpp — OverridePostProcessSettings
     ///
     /// # Arguments
     /// * `cameraPosition` -- Camera world-space position (centimeters).

@@ -1,4 +1,4 @@
-/// @source UE5 HZB.usf:183-293 — HZBBuildCS
+/// @ref Screen-space hierarchical Z-buffer construction (HZB mip-chain downsample)
 /// @constants GROUP_TILE_SIZE=8 (HZB.usf:10), gather offset -0.25 (HZB.usf:29)
 /// @deviations Single-mip dispatch (no LDS multi-mip batch); uses Load instead of
 ///             GatherRed (explicit 4-tap for clarity and odd-dimension clamping);
@@ -40,8 +40,8 @@
 // ---------------------------------------------------------------------------
 
 /// Per-dispatch constants uploaded via root constants (32-bit root CBV at b0).
-/// @source UE5 HZB.usf:13-16 — DispatchThreadIdToBufferUV, InvSize, InputViewportMaxBound
-/// UE5 passes UV-space transforms; we pass integer dimensions directly since we
+/// @ref HZB construction —13-16 — DispatchThreadIdToBufferUV, InvSize, InputViewportMaxBound
+/// passes UV-space transforms; we pass integer dimensions directly since we
 /// use Load() instead of SampleLevel(), avoiding UV coordinate arithmetic.
 #ifdef UZ_BINDLESS
 cbuffer HiZConstants : register(b0)
@@ -79,16 +79,16 @@ RWTexture2D<float>  g_OutputDepth : register(u0);
 // Hi-Z Downsample Kernel
 // ---------------------------------------------------------------------------
 
-/// @source UE5 HZB.usf:183-231 — HZBBuildCS (single-mip path, DIM_MIP_LEVEL_COUNT==1)
-/// UE5 uses Gather4() which samples a 2x2 neighborhood via hardware gather.
+/// @ref HZB construction —183-231 — HZBBuildCS (single-mip path, DIM_MIP_LEVEL_COUNT==1)
+/// uses Gather4() which samples a 2x2 neighborhood via hardware gather.
 /// We use explicit Load() with 4 taps for two reasons:
 ///   1. Handles odd-dimension mips correctly by clamping each tap independently.
 ///   2. Input is a UAV re-bound as SRV with no sampler, so gather is unavailable
 ///      when the resource was just a UAV in the previous dispatch.
 ///
 /// The reduction operator is min() for all 4 samples.
-/// @source UE5 HZB.usf:211 — MinDeviceZ = min(min3(DeviceZ.x, DeviceZ.y, DeviceZ.z), DeviceZ.w)
-/// UE5 names this "FurthestDeviceZ" because in standard Z mapping (near=0, far=1),
+/// @ref HZB construction —211 — MinDeviceZ = min(min3(DeviceZ.x, DeviceZ.y, DeviceZ.z), DeviceZ.w)
+/// names this "FurthestDeviceZ" because in standard Z mapping (near=0, far=1),
 /// the furthest visible depth is the smallest number. In our reversed-Z setup
 /// (near=1, far=0), min() gives the CLOSEST depth -- which is the conservative
 /// choice for occlusion culling (if the closest depth in a tile is behind the
@@ -110,7 +110,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
     // block extends one pixel beyond the input. Clamping to (inputSize - 1)
     // duplicates the edge texel, which is conservative (it cannot introduce a
     // depth value that doesn't exist in the source).
-    /// @source UE5 HZB.usf:28 — "min(..., InputViewportMaxBound) because we don't
+    /// @ref HZB construction —28 — "min(..., InputViewportMaxBound) because we don't
     ///   want to sample outside of the viewport when the view size has odd dimensions"
     uint2 maxCoord = g_InputSize - uint2(1, 1);
 
@@ -136,7 +136,7 @@ void main(uint3 dtid : SV_DispatchThreadID)
 
     // Conservative reduction: min of all 4 samples.
     // Reversed-Z: min = closest to camera = most conservative for occlusion.
-    // @source UE5 HZB.usf:211 — min(min3(x,y,z), w)
+    // @ref HZB mip downsample —211 — min(min3(x,y,z), w)
     float minZ = min(min(z00, z10), min(z01, z11));
 
     g_OutputDepth[dtid.xy] = minZ;

@@ -25,15 +25,15 @@
 
 /// Smooth distance attenuation for point and spot lights.
 ///
-/// @source UE5 DeferredLightingCommon.ush:265 — GetLocalLightAttenuation
-/// @constants window = saturate(1 - (d/r)^4)^2 (DeferredLightingCommon.ush:265)
-/// @deviations Includes 1/(d^2+1) inverse-square term for forward path (UE5 applies this via pre-multiplied light intensity on desktop deferred, but mobile uses the same formula: DeferredLightingCommon.ush:271)
+/// @ref Karis 2013 "Real Shading in Unreal Engine 4" — inverse-square windowed attenuation
+/// @constants window = saturate(1 - (d/r)^4)^2
+/// @deviations Includes 1/(d^2+1) inverse-square term inline (matches mobile path)
 ///
-/// Uses UE5-style inverse-square falloff with a smooth window function that
+/// Uses engine-style inverse-square falloff with a smooth window function that
 /// reaches exactly zero at the light's range. This avoids popping artifacts
 /// when lights enter/exit the visible set.
 ///
-///   window = saturate(1 - (d/r)^4)^2    (UE5: Square(saturate(1 - Square(d^2 * invR^2))))
+///   window = saturate(1 - (d/r)^4)^2    (Equivalent: Square(saturate(1 - Square(d^2 * invR^2))))
 ///   atten  = window / (d^2 + 1)
 ///
 /// The +1 in the denominator prevents the singularity at d=0 and provides
@@ -90,8 +90,8 @@ float ComputeSpotFactor(float3 L, float3 spotDir, float innerCos, float outerCos
 
 /// Accumulates direct lighting from all active lights using Cook-Torrance BRDF.
 ///
-/// @source UE5 ShadingModels.ush:220 — DefaultLitBxDF
-/// @source UE5 ShadingEnergyConservationTemplate.ush:44-64 — ComputeFresnelEnergyTerms
+/// @ref Karis 2013 "Real Shading in Unreal Engine 4" — Cook-Torrance DefaultLit
+/// @ref Kulla & Conty 2017 + Turquin 2018 — multiscatter compensation
 ///
 /// Iterates over the light array, computes per-light direction and attenuation
 /// (distance + spot cone), evaluates the full Cook-Torrance BRDF with multiscatter
@@ -101,7 +101,7 @@ float ComputeSpotFactor(float3 L, float3 spotDir, float innerCos, float outerCos
 ///
 /// Energy compensation is computed ONCE per pixel (view-dependent only), then
 /// applied to every light's specular contribution inside the loop. This avoids
-/// redundant GGXEnergyLookup calls per light.
+/// redundant EnergyAlbedoFitGGX calls per light.
 ///
 /// # Parameters
 /// - positionWS:  fragment world-space position.
@@ -128,10 +128,10 @@ float3 AccumulateDirectLighting(
     float3 Lo = float3(0.0f, 0.0f, 0.0f);
 
     // Multiscatter energy compensation — computed ONCE per pixel (view-dependent only)
-    // @source UE5 ShadingEnergyConservationTemplate.ush:55
+    // @ref Kulla & Conty 2017 + Turquin 2018 Eq.16
     // @source Turquin 2018 Eq.16 — non-reciprocal Kulla-Conty multiscatter
     float roughness = sqrt(alpha);
-    float4 energyComp = ComputeEnergyCompensation(F0, roughness, NdotV);
+    float4 energyComp = MultiscatterCompensation(F0, roughness, NdotV);
 
     // Diffuse attenuation: (1 - specularAlbedoLuminance) * (1 - metallic)
     // Metals have no diffuse lobe; non-metals are attenuated by how much
@@ -170,8 +170,8 @@ float3 AccumulateDirectLighting(
         }
 
         // ── Per-light BRDF evaluation ──
-        // @source UE5 ShadingModels.ush:220 — D_GGX * Vis_SmithJointApprox * F_Schlick
-        // @source UE5 BRDF.ush:183 — Diffuse_Burley
+        // Cook-Torrance: D_GGX * VisibilitySmithGGX * F_Schlick
+        // Diffuse: DiffuseDisneyBurley (Burley 2012)
         float3 H     = normalize(V + L);
         float  NdotL = max(dot(N, L), 0.001f);
         float  NdotH = saturate(dot(N, H));
@@ -179,11 +179,11 @@ float3 AccumulateDirectLighting(
 
         // Cook-Torrance specular: D * Vis * F
         // D_GGX uses a2 = alpha = roughness^2
-        // Vis_SmithJointApprox uses a2 = Pow4(roughness) = alpha^2
-        // @source UE5 ShadingModels.ush:215 — float a2 = Pow4(Material.Roughness)
+        // VisibilitySmithGGX uses a2 = Pow4(roughness) = alpha^2
+        // alpha^2 convention per Walter 2007
         float  D   = DistributionGGX(NdotH, alpha);
-        float  Vis = Vis_SmithJointApprox(alpha * alpha, NdotV, NdotL);
-        /// @source UE5 BRDF.ush:382 — F90 micro-occlusion
+        float  Vis = VisibilitySmithGGX(alpha * alpha, NdotV, NdotL);
+        /// @ref Lagarde 2014 "Moving Frostbite to PBR" — F90 micro-occlusion
         float  F90_val = saturate(50.0f * F0.g);
         float3 F   = F0 + (F90_val - F0) * Pow5(1.0f - VdotH);
 
@@ -193,7 +193,7 @@ float3 AccumulateDirectLighting(
 
         // Disney Burley diffuse (roughness-dependent retroreflection)
         // kD already includes energy preservation and metallic attenuation
-        float3 diffuse = kD * DiffuseBurley(albedo, roughness, NdotV, NdotL, VdotH);
+        float3 diffuse = kD * DiffuseDisneyBurley(albedo, roughness, NdotV, NdotL, VdotH);
 
         Lo += (diffuse + specular) * light.color * NdotL * attenuation;
     }

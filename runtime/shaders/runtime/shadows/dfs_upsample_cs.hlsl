@@ -5,7 +5,7 @@
 /// at the output pixel. This preserves sharp shadow edges at geometry boundaries
 /// while smoothly interpolating in flat regions.
 ///
-/// UE5 implements this as a pixel shader (DistanceFieldShadowingUpsamplePS) that
+/// implements this as a pixel shader (DistanceFieldShadowingUpsamplePS) that
 /// calls UpsampleShadowFactors() from ShadowFactorsUpsampleCommon.ush. We
 /// implement the same algorithm as a compute shader since our DFS pipeline is
 /// entirely compute-based.
@@ -29,8 +29,8 @@
 /// # Thread Group
 /// [8, 8, 1] — one thread per full-res output pixel
 ///
-/// @source UE5 ShadowFactorsUpsampleCommon.ush:14-91 — UpsampleShadowFactors
-/// @source UE5 DistanceFieldShadowing.usf:823-838 — DistanceFieldShadowingUpsamplePS
+/// @ref Bilateral upsampling for shadow factors — depth-aware 2x2 interpolation
+/// @ref Wright 2015 "Dynamic Occlusion with SDFs" — DFS upsample pass
 /// @constants Epsilon=0.0001 (ShadowFactorsUpsampleCommon.ush:65)
 ///            BILATERAL_UPSAMPLE=1 (ShadowFactorsUpsampleCommon.ush:37)
 /// @deviations Compute shader instead of pixel shader. UV computation uses
@@ -42,7 +42,7 @@
 // Root Constants (b0, compute root signature)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 DistanceFieldShadowing.usf:815-821 — UpsamplePS parameters
+/// @ref Wright 2015 "DFS" — upsample:815-821 — UpsamplePS parameters
 /// @constants OneOverDownsampleFactor=0.5 for 2x downsample
 /// @deviations Combined into root constants cbuffer for compute dispatch
 cbuffer UpsampleParams : register(b0) {
@@ -71,7 +71,7 @@ SamplerState       g_PointSampler  : register(s0);  // Point sampler for explici
 // Bilateral Upsample
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Implements the bilateral upsample from UE5 ShadowFactorsUpsampleCommon.ush.
+/// Implements the bilateral upsample from reference ShadowFactorsUpsampleCommon.ush.
 ///
 /// The algorithm:
 /// 1. Find the 4 low-res texels covering this full-res pixel (2x2 neighborhood)
@@ -81,13 +81,13 @@ SamplerState       g_PointSampler  : register(s0);  // Point sampler for explici
 /// 5. Combine: finalWeight = bilinearWeight * depthWeight * validityMask
 /// 6. Normalize: result = dot(shadowFactors, finalWeights) / sum(finalWeights)
 ///
-/// The depth rejection (step 4) matches UE5's logic: a sample is valid if either
+/// The depth rejection (step 4) matches reference's logic: a sample is valid if either
 /// (a) its depth is within [MinDepth, MaxDepth], OR (b) it is actually shadowed
 /// (shadow < 1.0). This prevents unshadowed sky/distant pixels from bleeding
 /// white into valid shadow regions, while allowing shadowed pixels from heightfield
 /// traces that may be outside the standard range.
 ///
-/// @source UE5 ShadowFactorsUpsampleCommon.ush:38-91 — BILATERAL_UPSAMPLE path
+/// @ref Bilateral upsample —38-91 — BILATERAL_UPSAMPLE path
 /// @constants Epsilon=0.0001 (ShadowFactorsUpsampleCommon.ush:65)
 /// @deviations NONE — exact same bilateral math, just in compute form
 
@@ -99,17 +99,17 @@ void CSMain(uint3 DTid : SV_DispatchThreadID) {
     }
 
     // Compute full-res buffer UV (center of pixel)
-    /// @source UE5 ShadowFactorsUpsampleCommon.ush:27 — BufferUV = SvPositionToBufferUV(SVPos)
+    /// @ref Bilateral upsample —27 — BufferUV = SvPositionToBufferUV(SVPos)
     float2 fullResSize = float2(g_OutputWidth, g_OutputHeight);
     float2 bufferUV = (float2(DTid.xy) + 0.5f) / fullResSize;
 
     // Sample full-res scene depth and linearize
-    /// @source UE5 ShadowFactorsUpsampleCommon.ush:34 — SceneDepth = CalcSceneDepth(BufferUV)
+    /// @ref Bilateral upsample —34 — SceneDepth = CalcSceneDepth(BufferUV)
     float rawDepth = g_DepthBuffer.SampleLevel(g_PointSampler, bufferUV, 0).r;
     float sceneDepth = LinearizeDepthReversedZ(rawDepth, g_NearPlane, g_FarPlane);
 
     // Compute low-res buffer dimensions
-    /// @source UE5 ShadowFactorsUpsampleCommon.ush:39 — LowResBufferSize = floor(ViewSize * OneOverDownsampleFactor)
+    /// @ref Bilateral upsample —39 — LowResBufferSize = floor(ViewSize * OneOverDownsampleFactor)
     float2 lowResBufferSize = floor(fullResSize * g_OneOverDownsampleFactor);
     float2 lowResTexelSize = 1.0f / lowResBufferSize;
 
@@ -117,23 +117,23 @@ void CSMain(uint3 DTid : SV_DispatchThreadID) {
     float2 shadowFactorsUV = bufferUV;
 
     // Find the top-left corner of the 2x2 low-res neighborhood
-    /// @source UE5 ShadowFactorsUpsampleCommon.ush:45 — Corner00UVBase = floor(UV * LowResSize) / LowResSize
+    /// @ref Bilateral upsample —45 — Corner00UVBase = floor(UV * LowResSize) / LowResSize
     float2 corner00UVBase = floor(shadowFactorsUV * lowResBufferSize) / lowResBufferSize;
 
     // Compute bilinear weights: fractional position within the low-res texel
-    // UE5 offsets by half a full-res texel because rays are traced from the
+    // offsets by half a full-res texel because rays are traced from the
     // full-res texel at the top-left of each low-res tile.
-    /// @source UE5 ShadowFactorsUpsampleCommon.ush:48-49 — BilinearWeights calculation
+    /// @ref Bilateral upsample —48-49 — BilinearWeights calculation
     float2 fullResTexelSize = 1.0f / fullResSize;
     float2 corner00UV = corner00UVBase + 0.5f * fullResTexelSize;
     float2 bilinearWeights = saturate((shadowFactorsUV - corner00UV) * lowResBufferSize);
 
     // Sample the 4 low-res texels at their centers
-    /// @source UE5 ShadowFactorsUpsampleCommon.ush:52-57 — 4 texture samples
+    /// @ref Bilateral upsample —52-57 — 4 texture samples
     float2 corner00SampleUV = corner00UVBase + 0.5f * lowResTexelSize;
 
     // Clamp to maximum valid UV to prevent sampling beyond the shadow texture
-    // UE5 uses ShadowFactorsUVBilinearMax; we clamp to the last texel center
+    // uses ShadowFactorsUVBilinearMax; we clamp to the last texel center
     float2 uvMax = 1.0f - 0.5f * lowResTexelSize;
 
     float2 textureValues00 = g_HalfResShadow.SampleLevel(g_PointSampler, min(corner00SampleUV, uvMax), 0);
@@ -142,26 +142,26 @@ void CSMain(uint3 DTid : SV_DispatchThreadID) {
     float2 textureValues11 = g_HalfResShadow.SampleLevel(g_PointSampler, min(corner00SampleUV + lowResTexelSize, uvMax), 0);
 
     // Extract shadow factors and depths from the 4 samples
-    /// @source UE5 ShadowFactorsUpsampleCommon.ush:67-68 — ShadowFactors and CornerDepths
+    /// @ref Bilateral upsample —67-68 — ShadowFactors and CornerDepths
     float4 shadowFactors = float4(textureValues00.x, textureValues10.x, textureValues01.x, textureValues11.x);
     float4 cornerDepths  = abs(float4(textureValues00.y, textureValues10.y, textureValues01.y, textureValues11.y));
 
     // Compute bilinear spatial weights (standard 2x2 bilinear interpolation)
-    /// @source UE5 ShadowFactorsUpsampleCommon.ush:59-63 — CornerWeights
+    /// @ref Bilateral upsample —59-63 — CornerWeights
     float4 cornerWeights = float4(
         (1.0f - bilinearWeights.y) * (1.0f - bilinearWeights.x),
         (1.0f - bilinearWeights.y) * bilinearWeights.x,
         bilinearWeights.y * (1.0f - bilinearWeights.x),
         bilinearWeights.y * bilinearWeights.x);
 
-    /// @source UE5 ShadowFactorsUpsampleCommon.ush:65 — Epsilon = .0001f
+    /// @ref Bilateral upsample —65 — Epsilon = .0001f
     float epsilon = 0.0001f;
 
     // Depth validity: a corner is valid if its depth is within the DFS range
     // OR if it is actually shadowed (shadow < 1.0). This prevents unshadowed
     // sky pixels from contaminating shadow regions while allowing shadowed
     // pixels from heightfield traces outside the normal range.
-    /// @source UE5 ShadowFactorsUpsampleCommon.ush:72-76 — CornerDepthsValid
+    /// @ref Bilateral upsample —72-76 — CornerDepthsValid
     float4 minDepthVec = g_MinDepth.xxxx;
     float4 maxDepthVec = g_MaxDepth.xxxx;
     float4 cornerDepthsValid =
@@ -173,15 +173,15 @@ void CSMain(uint3 DTid : SV_DispatchThreadID) {
 
     // Depth proximity weights: inverse of absolute depth difference
     // Closer depths get higher weight — this is the bilateral filter kernel
-    /// @source UE5 ShadowFactorsUpsampleCommon.ush:77 — DepthWeights = 1/(|CornerDepths - SceneDepth| + Epsilon)
+    /// @ref Bilateral upsample —77 — DepthWeights = 1/(|CornerDepths - SceneDepth| + Epsilon)
     float4 depthWeights = 1.0f / (abs(cornerDepths - sceneDepth.xxxx) + epsilon);
 
     // Final weight = spatial bilinear * depth validity * depth proximity
-    /// @source UE5 ShadowFactorsUpsampleCommon.ush:78 — FinalWeights = CornerWeights * CornerDepthsValid * DepthWeights
+    /// @ref Bilateral upsample —78 — FinalWeights = CornerWeights * CornerDepthsValid * DepthWeights
     float4 finalWeights = cornerWeights * cornerDepthsValid * depthWeights;
 
     // Normalize and compute weighted shadow factor
-    /// @source UE5 ShadowFactorsUpsampleCommon.ush:79-87 — TotalWeight, InterpolatedResult
+    /// @ref Bilateral upsample —79-87 — TotalWeight, InterpolatedResult
     float totalWeight = dot(finalWeights, float4(1, 1, 1, 1));
 
     float interpolatedResult = 1.0f;

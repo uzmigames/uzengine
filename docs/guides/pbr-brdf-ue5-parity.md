@@ -67,7 +67,7 @@ float D_GGX(float NdotH, float alpha) {
 The Smith geometry function models microfacet shadowing and masking (self-occlusion at grazing angles):
 
 ```hlsl
-float Vis_SmithJointApprox(float NdotL, float NdotV, float alpha) {
+float VisibilitySmithGGX(float NdotL, float NdotV, float alpha) {
     float a2 = alpha * alpha;
     float vis_L = NdotV * sqrt(NdotL * (NdotL - NdotL * a2) + a2);
     float vis_V = NdotL * sqrt(NdotV * (NdotV - NdotV * a2) + a2);
@@ -81,7 +81,7 @@ float Vis_SmithJointApprox(float NdotL, float NdotV, float alpha) {
 
 **Interpretation**: Returns a visibility scalar (0–1) that attenuates the specular lobe as both light and view angles approach grazing. At grazing angles, microfacets occlude each other, reducing reflectance.
 
-**Source**: UE5 `BRDF.ush:101-113` — `Vis_SmithJointApprox`.
+**Source**: UE5 `BRDF.ush:101-113` — `VisibilitySmithGGX`.
 
 ### Specular Fresnel: Schlick Approximation
 
@@ -112,7 +112,7 @@ A critical correction for high-roughness surfaces: the Cook-Torrance BRDF loses 
 UE5 uses an analytic polynomial fit to approximate the energy correction:
 
 ```hlsl
-float GGXEnergyLookup(float NdotV, float roughness) {
+float EnergyAlbedoFitGGX(float NdotV, float roughness) {
     // Polynomial approximation of GGX energy integral
     // (derived from tabulated lookup in UE5)
     float r = saturate(roughness);
@@ -123,7 +123,7 @@ float GGXEnergyLookup(float NdotV, float roughness) {
 
 **Purpose**: Returns a per-pixel energy correction scalar that modulates the specular contribution to prevent under-darkening at grazing angles.
 
-**Source**: UE5 `BRDF.ush:206-216` — `GGXEnergyLookup`.
+**Source**: UE5 `BRDF.ush:206-216` — `EnergyAlbedoFitGGX`.
 
 ### Per-Pixel Compensation (Not Per-Light)
 
@@ -132,7 +132,7 @@ float GGXEnergyLookup(float NdotV, float roughness) {
 ```hlsl
 // In deferred_lighting_ps.hlsl:
 float3 specular_light = computeSpecularLighting(...);  // Sum over all lights
-float energyCompensation = GGXEnergyLookup(NdotV, roughness);
+float energyCompensation = EnergyAlbedoFitGGX(NdotV, roughness);
 specular_light *= (1.0 + energyCompensation);  // Boost high-grazing angles
 ```
 
@@ -208,7 +208,7 @@ float3 BRDF(float3 baseColor, float metallic, float roughness,
     // Specular (GGX + Smith + Schlick)
     float alpha = roughness * roughness;
     float D = D_GGX(NdotH, alpha);
-    float Vis = Vis_SmithJointApprox(NdotL, NdotV, alpha);
+    float Vis = VisibilitySmithGGX(NdotL, NdotV, alpha);
     float3 specular = D * Vis * F;
 
     return diffuse + specular;
@@ -243,7 +243,7 @@ lighting *= energyCompensationFactor;  // Per-pixel, not per-light
 
 ## Key Takeaways
 
-- **Exact UE5 Formula Parity**: D_GGX, Vis_SmithJointApprox, FresnelSchlick, Diffuse_Burley are bit-for-bit compatible.
+- **Exact UE5 Formula Parity**: D_GGX, VisibilitySmithGGX, FresnelSchlick, Diffuse_Burley are bit-for-bit compatible.
 - **Roughness Squaring**: Perceptual roughness is squared before use in microfacet functions.
 - **Energy Compensation**: Per-pixel (based on NdotV), not per-light. Critical for high-roughness metals.
 - **Metal vs Dielectric**: F0 and diffuse term are lerped by metallic parameter.
@@ -253,7 +253,7 @@ lighting *= energyCompensationFactor;  // Per-pixel, not per-light
 
 - UE5 `BRDF.ush` — Complete BRDF implementation
 - UE5 `DeferredShadingCommon.ush:400-430` — Metal/non-metal shading
-- UE5 `BRDF.ush:206-216` — `GGXEnergyLookup` analytic fit
+- UE5 `BRDF.ush:206-216` — `EnergyAlbedoFitGGX` analytic fit
 - Burley 2012 — "Physically-Based Shading at Disney" (SIGGRAPH)
 - Walter et al. 2007 — "Microfacet Models for Refraction through Rough Surfaces"
 - Kulla & Conty 2017 — "Revisiting Physically Based Shading for Game Engines"

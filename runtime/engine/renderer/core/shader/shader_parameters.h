@@ -1,4 +1,4 @@
-/// UzEngine Shader Parameter System — UE5-style metadata-driven CB and resource binding.
+/// UzEngine Shader Parameter System — engine-style metadata-driven CB and resource binding.
 ///
 /// Provides a reflection system for shader parameter structs. Each struct declares
 /// which members are scalar data (copied into a constant buffer) and which are
@@ -6,7 +6,7 @@
 /// uses this metadata to automatically upload CB data and bind resources per-pass.
 ///
 /// # Design
-/// Follows UE5's `SHADER_PARAMETER` macro pattern adapted for UzEngine:
+/// Follows industry-standard's `SHADER_PARAMETER` macro pattern adapted for UzEngine:
 /// - Scalar members are laid out first in the struct (contiguous, memcpy'd to CB).
 /// - Resource handles follow the scalar section (not copied to CB).
 /// - A static `GetMetadata()` method returns compile-time-generated descriptors.

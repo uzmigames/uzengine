@@ -32,68 +32,57 @@ namespace uz {
 /// fog density along the view ray, and blends the fog color over the scene.
 struct HeightFogComponent {
     /// Fog inscattering luminance in linear space.
-    /// @source UE5 ExponentialHeightFogComponent.cpp:68 — FogInscatteringLuminance = black
-    /// Modern UE5 (post-SkyAtmosphere) defaults to black; color comes from sky injection.
+    /// FogInscatteringLuminance default = black
     Vec3 color = {0.0f, 0.0f, 0.0f};
 
     /// Base fog density factor. Higher = thicker fog. Typical range: 0.001 to 0.1.
-    /// UE5 default: 0.02 (FogDensity).
     float density = 0.02f;
 
     /// Height falloff coefficient. Controls how quickly fog thins with altitude.
     /// Higher = fog concentrated closer to baseHeight. Typical: 0.2 to 2.0.
-    /// UE5 default: 0.2 (FogHeightFalloff).
     float heightFalloff = 0.2f;
 
     /// World-space height at which fog density is at its maximum (cm).
     float baseHeight = 0.f;
 
     /// Maximum fog opacity (0 to 1). Prevents fog from fully obscuring distant objects.
-    /// UE5 default: 1.0 (FogMaxOpacity).
     float maxOpacity = 1.0f;
 
     /// Minimum distance from camera before fog begins. Objects closer are fog-free.
-    /// UE5: StartDistance. Default: 0 (UE5), we use 10 for cleaner near-camera.
     float startDistance = 0.f;
 
     /// Maximum fog distance. Beyond this, fog contribution is zero.
-    /// UE5: FogCutoffDistance. 0 = unlimited. Default: 0.
     float fogCutoffDistance = 0.f;
 
-    // ── Second Fog Layer (UE5 parity) ─────────────────────────────────────
+    // ── Second Fog Layer ─────────────────────────────────────
 
     /// Second fog layer density. 0 = disabled (single layer only).
-    /// UE5: SecondFogData.FogDensity. Allows two fog layers at different heights.
     float secondFogDensity = 0.f;
 
     /// Second fog layer height falloff coefficient.
-    /// UE5: SecondFogData.FogHeightFalloff. Default: 0.2.
     float secondFogHeightFalloff = 0.2f;
 
-    /// Second fog layer base height in world units (cm, UE5 parity).
-    /// UE5: SecondFogData.FogBaseHeight. Default: 0.
+    /// Second fog layer base height in world units (cm).
     float secondFogBaseHeight = 0.f;
 
     // ── Directional Inscattering (sun-facing fog glow) ────────────────────
 
     /// Color of the directional inscattering (sun-facing fog glow).
-    /// @source UE5 ExponentialHeightFogComponent.cpp:75 — DirectionalInscatteringLuminance = black
-    /// Modern UE5 defaults to black (disabled).
+    /// DirectionalInscatteringLuminance default = black
     Vec3 directionalInscatteringColor = {0.0f, 0.0f, 0.0f};
 
     /// Exponent controlling the tightness of the directional inscattering cone.
-    /// Higher = tighter sun halo. UE5: DirectionalInscatteringExponent. Default: 4.
-    /// @source UE5 ExponentialHeightFogComponent.cpp — DirectionalInscatteringExponent=4
+    /// Higher = tighter sun halo.
+    /// DirectionalInscatteringExponent default = 4
     float directionalInscatteringExponent = 4.0f;
 
     /// Start distance for directional inscattering (cm from camera).
-    /// @source UE5 ExponentialHeightFogComponent.cpp:73 — default 10000.0 cm
+    /// default 10000.0 cm
     float directionalInscatteringStartDistance = 10000.f;
 
     // ── Volumetric Fog (placeholder — Phase 3+ implementation) ────────────
 
     /// Enable volumetric fog (requires compute-based froxel grid — P3+).
-    /// UE5: bEnableVolumetricFog. Default: false.
     bool enableVolumetricFog = false;
 
     // ── Control ───────────────────────────────────────────────────────────

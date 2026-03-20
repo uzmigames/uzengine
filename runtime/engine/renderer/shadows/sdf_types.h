@@ -17,7 +17,7 @@
 /// The quantization range depends on `MeshSdfAsset::voxelSize` — each step
 /// represents `voxelSize / 128.0` cm of signed distance.
 ///
-/// # UE5 Reference
+/// # Reference
 /// - DistanceFieldAtlas.h:34-50 — brick layout, sparse storage
 /// - DistanceFieldLightingShared.h:69-76 — per-object GPU data struct
 
@@ -45,7 +45,7 @@ namespace uz {
 /// The actual signed distance in world units is:
 /// `(float(data[i]) - 128.0f) * (voxelSize / 128.0f)`
 ///
-/// # UE5 Reference
+/// # Reference
 /// DistanceFieldAtlas.h:34-50 — brick dimensions and quantization scheme.
 struct SdfBrick {
     static constexpr uint32_t kSize       = 8;     ///< Voxels per dimension.
@@ -98,7 +98,7 @@ struct MeshSdfAsset {
     /// Each 2x2x2 block of parent-MIP voxels is reduced to 1 voxel via
     /// minimum absolute distance (preserves the nearest surface).
     ///
-    /// @source UE5 DistanceFieldAtlas.h — MIP chain for LOD tracing
+    /// MIP chain for LOD tracing in distance field atlas
     static constexpr uint32_t kMaxMipLevels = 3;
 
     struct MipLevel {
@@ -151,7 +151,7 @@ struct MeshSdfAsset {
 /// World-space AABB is precomputed on CPU each frame to avoid per-pixel
 /// matrix-AABB transform in the tile culling shader.
 ///
-/// # UE5 Reference
+/// # Reference
 /// DistanceFieldLightingShared.h:69-76 — FDFObjectData struct.
 struct SdfObjectGpuData {
     // ── Row 0-3: 4x4 world-to-local transform (64 bytes) ──
@@ -181,11 +181,11 @@ struct SdfObjectGpuData {
 
     // ── Row 9: indirection offset + MIP count + padding (16 bytes) ──
     /// Offset into the global indirection buffer where this object's indirection
-    /// table starts. Analogous to UE5 FDFAssetData.IndirectionTableOffset.
-    /// @source UE5 DistanceFieldLightingShared.ush:83 — IndirectionTableOffset
+    /// table starts. Analogous to reference FDFAssetData.IndirectionTableOffset.
+    /// IndirectionTableOffset — index into global indirection buffer
     uint32_t indirectionOffset = 0;
     /// Number of available MIP levels (1-3). MIP 0 is finest resolution.
-    /// @source UE5 DistanceFieldLightingShared.ush:77 — NumMips
+    /// NumMips — number of available MIP levels for this SDF object
     uint32_t numMips = 1;
     float    pad3 = 0.0f;               ///< Pad to float4 boundary.
     float    pad4 = 0.0f;               ///< Pad to float4 boundary.

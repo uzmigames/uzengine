@@ -40,6 +40,7 @@ The rendering pipeline system is split across multiple documents covering archit
 | [25-hdr-pipeline.md](25-hdr-pipeline.md) | **Done (1.3)** | **HDR rendering, auto-exposure (histogram + percentile filter), ACES tonemap, manual EV override** | **Exposure control & color grading** |
 | [26-height-fog.md](26-height-fog.md) | **Done (1.3)** | **Height-based exponential fog, two layers, directional inscattering (sun halo), artist parameters** | **Atmospheric depth & distance** |
 | [27-sky-atmosphere.md](27-sky-atmosphere.md) | **Done (1.3)** | **Physical sky (Hillaire 2020), Rayleigh/Mie scattering, transmittance LUT, SkyAtmosphereComponent** | **Realistic sky rendering** |
+| [30-scene-loading.md](30-scene-loading.md) | **Done (Phase 0-2.36.0)** | **Mesh upload batching, texture trickle-loading, deferred SDF baking, PSO pre-warming** | **Scene load optimization** |
 
 ## Quick Navigation
 

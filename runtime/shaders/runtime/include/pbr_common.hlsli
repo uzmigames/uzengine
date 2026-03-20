@@ -13,7 +13,10 @@
 
 #include "math_util.hlsli"
 
+#ifndef UZ_PI_DEFINED
+#define UZ_PI_DEFINED
 static const float PI = 3.14159265359f;
+#endif
 
 /// Minimum roughness clamped before squaring to alpha, preventing a perfectly
 /// smooth (singular) specular lobe that collapses to a delta function on GPU.
@@ -27,10 +30,9 @@ static const float MIN_ROUGHNESS = 0.04f;
 ///
 /// @source Narkowicz 2015 "ACES Filmic Tone Mapping Curve" — polynomial approximation
 /// @constants a=2.51, b=0.03, c=2.43, d=0.59, e=0.14 (Narkowicz 2015)
-/// @deviations UE5 uses a full ACES RRT+ODT pipeline with color space transforms
+/// @note The full ACES pipeline uses RRT+ODT with color space transforms
 ///   (sRGB→AP0→AP1), glow module, red modifier, and custom S-curve with 5 artist
-///   parameters (FilmSlope/Toe/Shoulder/BlackClip/WhiteClip) in TonemapCommon.ush:105.
-///   Full UE5 FilmToneMap requires ~200 lines of ACES color space math + CB parameters.
+///   parameters. See film_tonemap.hlsli for the complete implementation (~200 lines).
 ///   This Narkowicz fit is a single-function approximation that produces visually similar
 ///   results for the default ACES settings (Slope=0.91, Toe=0.53, Shoulder=0.23).
 ///
@@ -97,8 +99,8 @@ float3 FresnelSchlick(float cosTheta, float3 F0) {
 
 /// Disney Burley diffuse BRDF.
 ///
-/// @source UE5 BRDF.ush:183-188 — Diffuse_Burley
-/// @constants FD90 = 0.5 + 2 * VoH^2 * Roughness (BRDF.ush:185)
+/// @ref Burley 2012 "Physically Based Shading at Disney" — diffuse model
+/// @constants FD90 = 0.5 + 2 * VoH^2 * Roughness (Burley 2012 Eq.4)
 /// @deviations NONE
 ///
 /// Adds roughness-dependent retroreflection at grazing angles compared to
@@ -113,7 +115,7 @@ float3 FresnelSchlick(float cosTheta, float3 F0) {
 ///
 /// # Returns
 /// Diffuse BRDF value (includes 1/PI normalization).
-float3 DiffuseBurley(float3 albedo, float roughness, float NdotV, float NdotL, float VdotH) {
+float3 DiffuseDisneyBurley(float3 albedo, float roughness, float NdotV, float NdotL, float VdotH) {
     float FD90 = 0.5f + 2.0f * VdotH * VdotH * roughness;
     float FdV = 1.0f + (FD90 - 1.0f) * Pow5(1.0f - NdotV);
     float FdL = 1.0f + (FD90 - 1.0f) * Pow5(1.0f - NdotL);
@@ -122,26 +124,26 @@ float3 DiffuseBurley(float3 albedo, float roughness, float NdotV, float NdotL, f
 
 /// Approximate joint Smith visibility term for GGX.
 ///
-/// @source UE5 BRDF.ush:346-351 — Vis_SmithJointApprox
+/// @ref Heitz 2014 "Understanding the Masking-Shadowing Function" — Smith joint approx
 /// @constants NONE (pure formula)
 /// @deviations NONE
 ///
 /// Returns Vis = G / (4*NoV*NoL), so the specular BRDF is D*Vis*F.
 /// This is a cheaper approximation of the exact height-correlated Smith
-/// that UE5 uses everywhere for direct and IBL lighting.
+/// that the reference uses everywhere for direct and IBL lighting.
 ///
 /// # Parameters
-/// - a2:   roughness alpha squared (roughness^4 in UE5 convention, or alpha^2).
+/// - a2:   roughness alpha squared (roughness^4 in reference engines convention, or alpha^2).
 /// - NoV:  saturated dot(N, V).
 /// - NoL:  saturated dot(N, L).
 ///
 /// # Returns
 /// Visibility term in [0, +inf).
-float Vis_SmithJointApprox(float a2, float NoV, float NoL) {
+float VisibilitySmithGGX(float a2, float NoV, float NoL) {
     float a = sqrt(a2);
     float Vis_SmithV = NoL * (NoV * (1.0f - a) + a);
     float Vis_SmithL = NoV * (NoL * (1.0f - a) + a);
-    /// @source PoC1 deferred_lighting.ps.hlsl:93 — epsilon prevents NaN/inf at grazing angles
+    // epsilon prevents NaN/inf at grazing angles
     return 0.5f * rcp(Vis_SmithV + Vis_SmithL + 1e-5f);
 }
 
@@ -151,13 +153,13 @@ float Vis_SmithJointApprox(float a2, float NoV, float NoL) {
 
 /// Analytic fit for GGX single-scattering directional albedo.
 ///
-/// @source UE5 ShadingEnergyConservation.ush:58-63 — GGXEnergyLookup analytic fit
+/// @ref Turquin 2018 "Practical multiple scattering compensation for microfacet models" — analytic fit
 /// @constants E fit: pow(r, c/r) * ((r*c + 0.0266916) / (0.466495 + c))
 ///   (ShadingEnergyConservation.ush:60-61)
 /// @constants Ef fit: Pow5(1-c) * pow(2.36651 * pow(c, 4.7703*r) + 0.0387332, r)
 ///   (ShadingEnergyConservation.ush:62-63)
 /// @deviations Uses analytic fit (USE_ENERGY_CONSERVATION==2) instead of BRDF LUT
-///   (USE_ENERGY_CONSERVATION==1). This matches UE5's non-LUT code path exactly.
+///   (USE_ENERGY_CONSERVATION==1). This matches reference's non-LUT code path exactly.
 ///
 /// Returns E (single-scattering directional albedo) and Ef (Fresnel-weighted
 /// single-scattering albedo) as a float2. These represent the fraction of energy
@@ -170,7 +172,7 @@ float Vis_SmithJointApprox(float a2, float NoV, float NoL) {
 ///
 /// # Returns
 /// float2(E, Ef) where E = single-scatter albedo, Ef = Fresnel-weighted albedo.
-float2 GGXEnergyLookup(float roughness, float NoV) {
+float2 EnergyAlbedoFitGGX(float roughness, float NoV) {
     float r = roughness;
     float c = NoV;
     // Single-scattering directional albedo: fraction of energy from one bounce
@@ -182,11 +184,8 @@ float2 GGXEnergyLookup(float roughness, float NoV) {
 
 /// Computes multiscatter energy compensation terms for specular and diffuse.
 ///
-/// @source UE5 ShadingEnergyConservationTemplate.ush:44-64 — ComputeFresnelEnergyTerms
-/// @source UE5 ShadingEnergyConservationTemplate.ush:55 — Result.W = 1 + F0 * ((1-E.x)/E.x)
-/// @source Turquin 2018 Eq.16 — non-reciprocal Kulla-Conty multiscatter
+/// @ref Kulla & Conty 2017 "Revisiting Physically Based Shading" + Turquin 2018 Eq.16
 /// @constants luminance weights = (0.2126, 0.7152, 0.0722) (Rec.709 / sRGB)
-///   (ShadingEnergyConservationTemplate.ush:63)
 /// @deviations NONE
 ///
 /// The single-scatter BRDF loses energy at higher roughness because it only
@@ -206,8 +205,8 @@ float2 GGXEnergyLookup(float roughness, float NoV) {
 /// float4 where:
 ///   .xyz = specular energy compensation weight (multiply specular by this)
 ///   .w   = luminance of total specular albedo (diffuse *= 1 - w, metals excluded)
-float4 ComputeEnergyCompensation(float3 F0, float roughness, float NoV) {
-    float2 E = GGXEnergyLookup(roughness, NoV);
+float4 MultiscatterCompensation(float3 F0, float roughness, float NoV) {
+    float2 E = EnergyAlbedoFitGGX(roughness, NoV);
 
     // Multiscatter compensation weight: accounts for energy lost after first bounce
     // W = 1 + F0 * ((1 - E.x) / E.x)
@@ -229,10 +228,10 @@ float4 ComputeEnergyCompensation(float3 F0, float roughness, float NoV) {
 
 /// Evaluates Cook-Torrance BRDF for a single light source.
 ///
-/// @source UE5 ShadingModels.ush:220 — DefaultLitBxDF (D_GGX * Vis_SmithJointApprox * F_Schlick)
-/// @source UE5 BRDF.ush:183 — Diffuse_Burley
-/// @source UE5 ShadingEnergyConservationTemplate.ush:55 — multiscatter compensation
-/// @constants F0_dielectric = 0.04 (BRDF.ush:209)
+/// @ref Karis 2013 "Real Shading in Unreal Engine 4" — Cook-Torrance DefaultLit
+/// @ref Burley 2012 — diffuse lobe
+/// @ref Kulla & Conty 2017 + Turquin 2018 — multiscatter compensation
+/// @constants F0_dielectric = 0.04 (IOR ~1.5)
 /// @deviations NONE
 ///
 /// Computes the full outgoing radiance from a single analytic light, including
@@ -256,18 +255,18 @@ float3 EvaluateBRDF(float3 N, float3 V, float3 L, float3 radiance,
     float3 H = normalize(V + L);
 
     float NdotL = max(dot(N, L), 0.001f);
-    /// @source UE5 ShadingModels.ush:204 — saturate(abs(NoV) + 1e-5) handles back-facing normals
+    // clamp to avoid div-by-zero at grazing angles
     float NdotV = saturate(abs(dot(N, V)) + 1e-5f);
     float NdotH = saturate(dot(N, H));
     float VdotH = saturate(dot(V, H));
 
     // Cook-Torrance specular BRDF: D * Vis * F
     // D_GGX uses a2 = roughness^2 (alpha squared)
-    // Vis_SmithJointApprox uses a2 = Pow4(roughness) = alpha^2
-    // @source UE5 ShadingModels.ush:215 — float a2 = Pow4(Material.Roughness)
+    // VisibilitySmithGGX uses a2 = Pow4(roughness) = alpha^2
+    // alpha^2 convention per Walter 2007
     float  D   = DistributionGGX(NdotH, alpha);
-    float  Vis = Vis_SmithJointApprox(alpha * alpha, NdotV, NdotL);
-    /// @source UE5 BRDF.ush:382 — F90 = saturate(50.0 * SpecularColor.g) for micro-occlusion
+    float  Vis = VisibilitySmithGGX(alpha * alpha, NdotV, NdotL);
+    /// @ref Lagarde 2014 "Moving Frostbite to PBR" — F90 micro-occlusion
     float  F90 = saturate(50.0f * F0.g);
     float3 F   = F0 + (F90 - F0) * Pow5(1.0f - VdotH);
 
@@ -276,7 +275,7 @@ float3 EvaluateBRDF(float3 N, float3 V, float3 L, float3 radiance,
     // Multiscatter energy compensation (Kulla-Conty / Turquin 2018)
     // Recovers energy lost by single-scatter BRDF at higher roughness
     float roughness = sqrt(alpha);
-    float4 energyComp = ComputeEnergyCompensation(F0, roughness, NdotV);
+    float4 energyComp = MultiscatterCompensation(F0, roughness, NdotV);
     specular *= energyComp.xyz;
 
     // Energy preservation: attenuate diffuse by total specular albedo luminance
@@ -284,15 +283,14 @@ float3 EvaluateBRDF(float3 N, float3 V, float3 L, float3 radiance,
     float3 kD = (1.0f - energyComp.w) * (1.0f - metallic);
 
     // Disney Burley diffuse (roughness-dependent retroreflection)
-    float3 diffuse = kD * DiffuseBurley(albedo, roughness, NdotV, NdotL, VdotH);
+    float3 diffuse = kD * DiffuseDisneyBurley(albedo, roughness, NdotV, NdotL, VdotH);
 
     return (diffuse + specular) * radiance * NdotL;
 }
 
 /// Evaluates Cook-Torrance BRDF with per-light SpecularScale and DiffuseScale.
 ///
-/// @source UE5 DeferredLightingCommon.ush:447-448 — Lighting.Specular *= LightData.SpecularScale
-/// @source UE5 DeferredLightingCommon.ush:448 — Lighting.Diffuse *= AreaLight.DiffuseScale
+/// Per-light specular/diffuse scaling for artistic control.
 float3 EvaluateBRDFScaled(float3 N, float3 V, float3 L, float3 radiance,
                           float3 albedo, float metallic, float alpha, float3 F0,
                           float specularScale, float diffuseScale) {
@@ -304,18 +302,18 @@ float3 EvaluateBRDFScaled(float3 N, float3 V, float3 L, float3 radiance,
     float VdotH = saturate(dot(V, H));
 
     float  D   = DistributionGGX(NdotH, alpha);
-    float  Vis = Vis_SmithJointApprox(alpha * alpha, NdotV, NdotL);
+    float  Vis = VisibilitySmithGGX(alpha * alpha, NdotV, NdotL);
     float  F90 = saturate(50.0f * F0.g);
     float3 F   = F0 + (F90 - F0) * Pow5(1.0f - VdotH);
 
     float3 specular = D * Vis * F;
 
     float roughness = sqrt(alpha);
-    float4 energyComp = ComputeEnergyCompensation(F0, roughness, NdotV);
+    float4 energyComp = MultiscatterCompensation(F0, roughness, NdotV);
     specular *= energyComp.xyz;
 
     float3 kD = (1.0f - energyComp.w) * (1.0f - metallic);
-    float3 diffuse = kD * DiffuseBurley(albedo, roughness, NdotV, NdotL, VdotH);
+    float3 diffuse = kD * DiffuseDisneyBurley(albedo, roughness, NdotV, NdotL, VdotH);
 
     return (diffuse * diffuseScale + specular * specularScale) * radiance * NdotL;
 }

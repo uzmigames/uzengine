@@ -1,12 +1,22 @@
-# Git Safety
+# Git safety — explicit allow-list, forbidden destructive operations
 
-## ABSOLUTELY FORBIDDEN
-- `git stash` (any subcommand) — destroyed hours of work on 2026-03-13
-- `git checkout <branch>` / `git switch` / `git checkout -b` — multiple tabs share working tree
-- `git push --force` to main/master
-- `git reset --hard` without user confirmation
+# Git Safety Rules
 
-## What To Do Instead
-- Commit first: `git commit -m "wip: ..."` before dangerous operations
-- Use `git diff` to compare without switching branches
-- Ask the user to switch branches manually
+## Allowed (always safe)
+- `git status`, `git diff`, `git log`, `git blame`
+- `git add <files>`, `git commit` (after quality checks)
+
+## Forbidden (require explicit user authorization)
+- `git stash` — hidden state gets forgotten
+- `git rebase` — rewrites history
+- `git reset --hard` — destroys uncommitted changes
+- `git checkout -- .` / `git restore .` — discards all changes
+- `git revert` — creates unexpected commits
+- `git cherry-pick` — can cause conflicts
+- `git merge` — requires human judgment
+- `git branch -D` — permanent branch deletion
+- `git push --force` — NEVER on main/master
+- `git clean -f` — permanently deletes untracked files
+- `git checkout <branch>` / `git switch` — breaks concurrent AI sessions
+
+Multiple AI sessions may share the same working tree. Branch switching or destructive operations affect ALL concurrent sessions.

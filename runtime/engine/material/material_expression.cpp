@@ -2,7 +2,7 @@
 ///
 /// Implements the Create() factory that sets up correct pins per expression
 /// type, and pin search helpers. Each expression type has a well-defined
-/// set of inputs and outputs matching UE5 material expression semantics.
+/// set of inputs and outputs matching reference material expression semantics.
 
 #include "material_expression.h"
 

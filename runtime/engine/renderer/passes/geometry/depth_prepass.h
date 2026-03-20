@@ -24,7 +24,7 @@
 /// - Single viewport covering the full render target.
 /// - No cascade iteration, no atlas tiling.
 ///
-/// @source UE5 DepthRendering.cpp — FDepthPassMeshProcessor / RenderPrePass
+/// @ref FDepthPassMeshProcessor / RenderPrePass
 
 #pragma once
 

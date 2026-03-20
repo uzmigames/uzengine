@@ -93,7 +93,7 @@ cbuffer PerFrameCB : register(b1) {
     float    exposure;           ///< Exposure multiplier from auto-exposure (applied before tonemap).
 
     // ── Sky Irradiance SH (L2, 7 float4 = 112 bytes) ──
-    // Matches UE5 SkyIrradianceEnvironmentMap[0..6].
+    // Standard SkyIrradianceEnvironmentMap[0..6].
     float4   skyIrradianceSH[7]; ///< L2 SH coefficients for sky diffuse irradiance.
     uint     shadowDebugMode;    ///< Shadow debug visualization (0=off, 1-8=debug view).
 
@@ -121,7 +121,7 @@ cbuffer PerFrameCB : register(b1) {
     uint     gtaoSrvIndex;       ///< SRV index for GTAO filtered AO (0xFFFFFFFF = no GTAO).
     uint     brdfDebugMode;     ///< BRDF debug (0=off, 1=split-screen: left=old, right=new).
 
-    /// @source UE5 SceneRendering.cpp:1440 — SkyAtmosphereHeightFogContribution
+    /// Reduces AP inscattering when height fog is active to prevent double-fogging.
     /// Reduces AP inscattering when height fog is active to prevent double-fogging.
     /// 0 = AP unaffected, 1 = AP inscattering fully suppressed (height fog handles haze).
     float    heightFogContribution;
@@ -131,8 +131,8 @@ cbuffer PerFrameCB : register(b1) {
     float    vignetteIntensity;   ///< Vignette intensity (consumed by film_effects_ps).
     float    chromaAbIntensity;   ///< Chromatic aberration intensity (consumed by film_effects_ps).
 
-    /// @source UE5 LightRendering.cpp:640 — ContactShadowLength default 0.0 (off)
-    /// @source UE5 DeferredLightingCommon.ush:172 — ContactShadowLength > 0 enables ray march
+    /// Screen-space contact shadow ray length. 0.0 = disabled.
+    /// Positive = screen-space fraction (0.02 = 2% of depth-scaled screen ray).
     /// Screen-space contact shadow ray length. 0.0 = disabled.
     /// Positive = screen-space fraction (0.02 = 2% of depth-scaled screen ray).
     float    contactShadowLength;
@@ -141,12 +141,27 @@ cbuffer PerFrameCB : register(b1) {
     float    mipBias;            ///< Global mipmap LOD bias for screen percentage compensation.
 
     // ── SSGI (Screen-Space Global Illumination) ────────────────────────
-    /// @source UE5 IndirectLightRendering.cpp:1454 — DiffuseIndirect composite
+    /// SRV index for upsampled SSGI indirect diffuse (0xFFFFFFFF = disabled).
     uint     ssgiSrvIndex;       ///< SRV index for upsampled SSGI indirect diffuse (0xFFFFFFFF = disabled).
     uint     ssgiAOSrvIndex;     ///< SRV index for SSGI ambient occlusion mask (0xFFFFFFFF = disabled).
     uint     ssgiEnabled;        ///< 1 = SSGI active, 0 = disabled.
 
-    float    _framePad2[4];      ///< Padding to 512 bytes.
+    // ── Radiance Cache (SDF-based GI) ─────────────────────────────────
+    /// Radiance cache probe interpolation for SDF-based GI.
+    uint     radianceCacheEnabled; ///< 1 = radiance cache GI active, 0 = disabled.
+    uint     rcProbeSHBufferSrv;   ///< SRV index for probe SH StructuredBuffer<float4>.
+    uint     rcProbesPerAxis;      ///< Probes per axis (16).
+    float    rcGridExtent;         ///< Half-size of the probe grid in world units (cm).
+    float    rcGridOriginX;        ///< Probe grid origin X (minimum corner).
+    float    rcGridOriginY;        ///< Probe grid origin Y.
+    float    rcGridOriginZ;        ///< Probe grid origin Z.
+    float    rcGiIntensity;       ///< GI intensity multiplier (default 1.0).
+
+    // ── Aerial Perspective Volume ────────────────────────────────────
+    /// @ref Hillaire 2020 "A Scalable and Production Ready Sky and Atmosphere" — AP volume
+    uint     apVolumeSrvIndex;    ///< SRV for precomputed 32x32x16 AP 3D volume (0xFFFFFFFF = none).
+
+    float    _framePad2[59];       ///< Padding to 768 bytes.
 };
 
 /// Single point light for the deferred lighting pass (64 bytes = four float4s).
@@ -169,8 +184,8 @@ struct PointLight {
 /// Single spot light for the deferred lighting pass (80 bytes = five float4s).
 /// Must match C++ SpotLightData struct exactly.
 ///
-/// @source UE5 DynamicLightingCommon.ush:58-66 — SpotAttenuation, SpotAttenuationMask
-/// @source UE5 SpotLightComponent.cpp:67 — SpotAngles = (CosOuterCone, InvCosConeDifference)
+/// Spot light struct: cone angles, falloff, shadow index.
+/// SpotAngles = (CosOuterCone, InvCosConeDifference).
 struct SpotLight {
     float3 position;              ///< World-space position.
     float  radius;                ///< Attenuation radius.
@@ -207,7 +222,7 @@ cbuffer LightingCB : register(b2) {
 
 /// Cascaded shadow map parameters — must match C++ ShadowDataCB struct exactly.
 /// Supports up to 8 cascades (4 main + 4 far shadow cascades).
-/// UE5 parity: per-cascade bias, fade starts, receiver bias, distance fade.
+/// standard: per-cascade bias, fade starts, receiver bias, distance fade.
 /// Shadow data CB — MUST match C++ ShadowDataCB layout exactly.
 /// HLSL cbuffer packing: float arrays use float4 pairs to match C++ tight packing.
 /// C++ float[8] = 32 bytes contiguous. HLSL float[8] = 128 bytes (16B per element).
@@ -221,7 +236,7 @@ cbuffer ShadowDataCB : register(b4) {
     uint     shadowAtlasIndex;               ///< SRV heap index for shadow depth atlas (dynamic).
     uint     cascadeCount;                   ///< Number of active cascades (1-8, main + far).
     float    shadowMapSize;                  ///< Per-cascade resolution in texels.
-    float    receiverBias;                   ///< Shadow receiver bias (UE5 default: 0.9).
+    float    receiverBias;                   ///< Shadow receiver bias (Default: 0.9).
     float    shadowFadeStart;                ///< World distance where last-cascade fade begins.
     float    shadowFadeEnd;                  ///< World distance where shadows fully disappear.
     uint     filterMethod;                   ///< 0=5x5 PCF, 1=Poisson 16-tap, 2=PCSS.
@@ -244,7 +259,7 @@ cbuffer ShadowDataCB : register(b4) {
     // localShadowData[i*5 + 0..3] = viewProj rows 0-3
     // localShadowData[i*5 + 4]    = (atlasOffsetX, atlasOffsetY, atlasScale, bias)
     //
-    // @source UE5 ShadowRendering.h:449 — FProjectedShadowInfo per-light shadow data
+    // Per-light shadow data (viewProj + atlas params)
     float4   localShadowData[80];            ///< 16 shadows * 5 float4s each = 80 float4s (1280 bytes).
     float4   _localShadowPad[16];            ///< Pad to 2304 total bytes (9 * 256).
 };
@@ -278,7 +293,7 @@ Texture2D<float4>  transmittanceLutTex : register(t8); ///< Transmittance LUT (2
 Texture2D<float>   gtaoTexture : register(t9); ///< GTAO filtered AO (R8_UNORM).
 
 /// SM5 emissive G-Buffer at t10.
-/// @source UE5 BasePassPixelShader.usf:1541 — Color += Emissive
+/// SM5 emissive G-Buffer (additive self-illumination).
 Texture2D<float4>  gbufferEmissive : register(t10); ///< HDR emissive color (R16G16B16A16_FLOAT).
 
 /// SM5 local light shadow atlas at t11.
@@ -352,7 +367,7 @@ float3 FresnelSchlickRoughness(float cosTheta, float3 F0, float roughness) {
 /// that bounces multiple times within occluded crevices. This polynomial
 /// fit compensates by lifting the AO term toward the surface color.
 ///
-/// @source UE5 DeferredShadingCommon.ush:1220-1226 — AOMultiBounce
+/// @ref Jimenez et al. 2016 "Practical Realtime Strategies for Accurate Indirect Occlusion"
 /// @constants a = 2.0404 * BaseColor - 0.3324 (ush:1222)
 ///            b = -4.7951 * BaseColor + 0.6417 (ush:1223)
 ///            c = 2.7552 * BaseColor + 0.6903 (ush:1224)
@@ -371,12 +386,12 @@ float3 AOMultiBounce(float ao, float3 baseColor) {
 
 /// Returns the spot cone angular attenuation factor.
 ///
-/// Uses UE5's squared smooth-step falloff from full intensity inside the
+/// Uses the reference engine's squared smooth-step falloff from full intensity inside the
 /// inner cone to zero at the outer cone edge.
 ///
-/// @source UE5 DynamicLightingCommon.ush:58-65 — SpotAttenuationMask + SpotAttenuation
-/// @constants SpotAngles.x = CosOuterCone (DynamicLightingCommon.ush:56)
-///            SpotAngles.y = InvCosConeDifference (DynamicLightingCommon.ush:56)
+/// Squared smooth-step spot cone falloff.
+/// @constants SpotAngles.x = CosOuterCone
+///            SpotAngles.y = InvCosConeDifference
 /// @deviations NONE
 ///
 /// # Parameters
@@ -388,11 +403,11 @@ float3 AOMultiBounce(float ao, float3 baseColor) {
 /// [0, 1] attenuation factor: 1 inside inner cone, 0 outside outer cone.
 float SpotAttenuation(float3 L, float3 spotDir, float2 spotAngles)
 {
-    // @source UE5 DynamicLightingCommon.ush:60
+    // saturate((dot(L, -SpotDirection) - SpotAngles.x) * SpotAngles.y)
     // saturate((dot(L, -SpotDirection) - SpotAngles.x) * SpotAngles.y)
     float ConeAngleFalloff = saturate((dot(L, -spotDir) - spotAngles.x) * spotAngles.y);
 
-    // @source UE5 DynamicLightingCommon.ush:64
+    // Square the linear ramp for smoother visual falloff
     // Square the linear ramp for a smoother visual falloff
     return ConeAngleFalloff * ConeAngleFalloff;
 }
@@ -421,7 +436,7 @@ float3 DiffuseLambertOld(float3 albedo) {
 /// Uses the Schlick approximation to Smith's masking function with a
 /// remapped roughness parameter (k = alpha/2). This is the older visibility
 /// formulation that does NOT correlate the masking and shadowing terms
-/// (uncorrelated Smith). The newer Vis_SmithJointApprox (height-correlated)
+/// (uncorrelated Smith). The newer VisibilitySmithGGX (height-correlated)
 /// provides better energy conservation at grazing angles.
 ///
 /// # Parameters
@@ -448,10 +463,9 @@ float Vis_SchlickGGXOld(float NdotV, float NdotL, float a2) {
 /// transforms to atlas UV space, and performs a single hardware PCF sample
 /// using the comparison sampler.
 ///
-/// @source UE5 ShadowRendering.h:449 — FProjectedShadowInfo atlas tile sampling
-/// @source UE5 ShadowProjectionPixelShader.usf:66-89 — WholeScene shadow projection
+/// Atlas tile sampling for local light shadows.
 /// @constants atlasParams.x = atlasOffsetX, .y = atlasOffsetY, .z = atlasScale, .w = bias
-/// @deviations NONE — single-tap PCF (same as UE5 default for local light shadows)
+/// @deviations NONE — single-tap PCF
 ///
 /// # Parameters
 /// - worldPos:     world-space fragment position.
@@ -516,9 +530,9 @@ float SampleLocalLightShadow(float3 worldPos, uint shadowIdx)
 ///
 /// Face indices: +X=0, -X=1, +Y=2, -Y=3, +Z=4, -Z=5.
 ///
-/// @source UE5 ShadowProjectionCommon.ush:132-147 — CalcCubemapVectorAndFaceIndex
-/// @constants Face indices: +X=0,-X=1,+Y=2,-Y=3,+Z=4,-Z=5 (ShadowProjectionCommon.ush:138-146)
-/// @deviations NONE — identical face selection logic
+/// Selects cubemap face by dominant axis component.
+/// @constants Face indices: +X=0,-X=1,+Y=2,-Y=3,+Z=4,-Z=5
+/// @deviations NONE
 ///
 /// # Parameters
 /// - dir: unnormalised direction vector (e.g., light-to-pixel or pixel-to-light).
@@ -527,12 +541,12 @@ float SampleLocalLightShadow(float3 worldPos, uint shadowIdx)
 /// Cubemap face index [0-5].
 uint SelectCubeFace(float3 dir)
 {
-    // @source UE5 ShadowProjectionCommon.ush:133 — AbsLightVector = abs(WorldSampleToLightVec)
+    // AbsLightVector = abs(WorldSampleToLightVec)
     float3 absDir = abs(dir);
-    // @source UE5 ShadowProjectionCommon.ush:134 — MaxCoordinate = max(abs.x, max(abs.y, abs.z))
+    // MaxCoordinate = max(abs.x, max(abs.y, abs.z))
     float maxCoord = max(absDir.x, max(absDir.y, absDir.z));
 
-    // @source UE5 ShadowProjectionCommon.ush:136-147 — if/else chain on MaxCoordinate
+    // if/else chain on MaxCoordinate to select face
     if (maxCoord == absDir.x)
     {
         return absDir.x == dir.x ? 0 : 1;
@@ -554,11 +568,10 @@ uint SelectCubeFace(float3 dir)
 /// correct face based on the light-to-pixel direction, then projects
 /// through that face's view-projection matrix and samples the atlas.
 ///
-/// @source UE5 ShadowProjectionCommon.ush:150-200 — CubemapHardwarePCF
-/// @constants Face selection (ShadowProjectionCommon.ush:172-187), projection (ush:190)
-/// @deviations Atlas-based sampling instead of TextureCube — UE5 uses a TextureCube for
-///   point light shadows while UzEngine stores 6 face tiles in the 2D shadow atlas.
-///   The face selection and depth comparison logic are identical.
+/// Point light cubemap shadow via atlas face tiles.
+/// @constants Face selection per SelectCubeFace, projection through per-face VP matrix.
+/// @deviations Atlas-based 2D sampling instead of TextureCube — face selection
+///   and depth comparison logic are identical.
 ///
 /// # Parameters
 /// - worldPos:      world-space position of the shaded pixel.
@@ -570,15 +583,15 @@ uint SelectCubeFace(float3 dir)
 /// Shadow factor [0, 1]: 1.0 = fully lit, 0.0 = fully shadowed.
 float SamplePointLightShadow(float3 worldPos, float3 lightPos, float lightInvRadius, uint shadowBaseIdx)
 {
-    // @source UE5 ShadowProjectionCommon.ush:157 — WorldSampleToLightVec = LightPos - WorldPos
+    // WorldSampleToLightVec = LightPos - WorldPos
     float3 worldSampleToLightVec = lightPos - worldPos;
     float dist = length(worldSampleToLightVec);
 
-    // @source UE5 ShadowProjectionCommon.ush:162 — skip pixels outside light influence
+    // Skip pixels outside light influence
     if (dist * lightInvRadius >= 1.0f)
         return 1.0f;
 
-    // @source UE5 ShadowProjectionCommon.ush:172-187 — face selection on pixel-to-light vector
+    // Face selection on pixel-to-light vector
     uint face = SelectCubeFace(worldSampleToLightVec);
     uint shadowIdx = shadowBaseIdx + face;
 
@@ -598,8 +611,8 @@ float SamplePointLightShadow(float3 worldPos, float3 lightPos, float lightInvRad
     // Build view-projection matrix from rows
     float4x4 lightViewProj = float4x4(row0, row1, row2, row3);
 
-    // @source UE5 ShadowProjectionCommon.ush:190 — mul(float4(-WorldSampleToLightVec, 1), VP[face])
-    // UE5 uses -WorldSampleToLightVec (light-to-pixel direction) as input to the face VP matrix.
+    // Project world position through per-face VP matrix
+    // uses -WorldSampleToLightVec (light-to-pixel direction) as input to the face VP matrix.
     // Our localShadowData stores face VP matrices that expect world-space input directly,
     // so we project the world position through the face VP matrix (same as spot lights).
     float4 lightClip = mul(float4(worldPos, 1.0f), lightViewProj);
@@ -620,12 +633,12 @@ float SamplePointLightShadow(float3 worldPos, float3 lightPos, float lightInvRad
     shadowUV = shadowUV * atlasScale + atlasOffset;
 
     // Apply depth bias
-    // @source UE5 ShadowProjectionCommon.ush:194 — ShadowDepthBias = -(DepthBias + SlopeDepthBias) / w
+    // Apply depth bias to avoid self-shadowing artifacts
     float bias = atlasParams.w;
     float compareDepth = lightNdc.z - bias * 0.001f;
 
     // Sample shadow atlas with hardware PCF comparison
-    // @source UE5 ShadowProjectionCommon.ush:200 — SampleCmpLevelZero (SHADOW_QUALITY <= 2)
+    // Single-tap hardware PCF comparison
 #ifdef UZ_BINDLESS
     Texture2D<float> localAtlas = ResourceDescriptorHeap[localShadowAtlasIndex];
     return localAtlas.SampleCmpLevelZero(shadowSampler, shadowUV, compareDepth);
@@ -783,7 +796,7 @@ float4 main(FSInput input) : SV_Target {
     // ── Contact shadows ──
     // Screen-space ray march along light direction for fine-detail shadows
     // at object contact points that CSM resolution cannot capture.
-    // @source UE5 DeferredLightingCommon.ush:193-223 — ApplyContactShadowWithShadowTerms
+    // Screen-space contact shadow ray march along light direction
     // Contact shadow multiplies with CSM shadow (min compositing).
     {
 #ifdef UZ_BINDLESS
@@ -802,14 +815,14 @@ float4 main(FSInput input) : SV_Target {
             csDepthTex,
             linearSampler);
 
-        /// @source UE5 DeferredLightingCommon.ush:221-222 — SurfaceShadow *= ContactShadow
+        // Multiply contact shadow with CSM shadow (min compositing)
         shadow *= contactShadow;
     }
 
     // ── BRDF debug split-screen ──
     // When brdfDebugMode == 1, the left half of the screen uses the old BRDF
     // (Lambertian diffuse + Schlick-GGX) and the right half uses the current
-    // BRDF (Burley diffuse + SmithJointApprox + multiscatter). This allows
+    // BRDF (Disney Burley diffuse + VisibilitySmithGGX + multiscatter). This allows
     // direct visual comparison of the BRDF upgrade.
     // Use the original (pre-grid-remap) texcoord for the split test.
     bool useOldBRDF = (brdfDebugMode == 1 && input.texcoord.x < 0.5f);
@@ -842,7 +855,7 @@ float4 main(FSInput input) : SV_Target {
 
         float3 L_point = lightVec / dist; // normalise
 
-        // Attenuation: inverse square (UE5 default) or custom exponent
+        // Attenuation: inverse square (reference default) or custom exponent
         float attenuation;
         bool useInvSq = (pointLights[i].flags & LIGHT_FLAG_INVERSE_SQUARED) != 0;
         float distOverRadius = dist / radius;
@@ -854,7 +867,7 @@ float4 main(FSInput input) : SV_Target {
             float windowing  = saturate(1.0f - distRatio4);
             attenuation      = (windowing * windowing) / (dist * dist + 1.0f);
         } else {
-            // Custom falloff exponent (non-physical, UE5 legacy)
+            // Custom falloff exponent (non-physical, reference legacy)
             attenuation = pow(saturate(1.0f - distOverRadius), pointLights[i].falloffExponent);
         }
 
@@ -862,7 +875,7 @@ float4 main(FSInput input) : SV_Target {
         // If this point light casts shadows (shadowIndex != 0xFFFFFFFF),
         // sample the local shadow atlas using cubemap face selection and
         // multiply attenuation by the shadow factor.
-        // @source UE5 ShadowProjectionCommon.ush:150-200 — CubemapHardwarePCF
+        // Point light cubemap shadow via atlas face tiles
         float pointShadow = 1.0f;
         if (pointLights[i].shadowIndex != 0xFFFFFFFF
             && localShadowAtlasIndex != 0xFFFFFFFF
@@ -876,7 +889,7 @@ float4 main(FSInput input) : SV_Target {
         if (attenuation <= 0.0f)
             continue;
 
-        /// @source UE5 DeferredLightingCommon.ush:447-448 — SpecularScale/DiffuseScale
+        // Per-light specular/diffuse scaling
         float3 radiance = pointLights[i].color * attenuation;
         float pSpecScale = pointLights[i].specularScale;
         float pDiffScale = pointLights[i].diffuseScale;
@@ -893,8 +906,8 @@ float4 main(FSInput input) : SV_Target {
     }
 
     // ── Spot lights ──
-    // @source UE5 DeferredLightingCommon.ush:251-283 — GetLocalLightAttenuation (distance + spot cone)
-    // @source UE5 DynamicLightingCommon.ush:58-66 — SpotAttenuation
+    // Spot lights: distance attenuation + cone falloff
+    // @ref Karis 2013 — inverse-square windowed attenuation + squared smooth-step cone
     for (uint si = 0; si < spotLightCount; ++si) {
         float3 lightVec  = spotLights[si].position - worldPos;
         float  dist      = length(lightVec);
@@ -907,7 +920,7 @@ float4 main(FSInput input) : SV_Target {
         float3 L_spot = lightVec / dist; // normalise
 
         // Distance attenuation: same as point lights
-        // @source UE5 DeferredLightingCommon.ush:263-265 — inverse squared windowing
+        // Inverse squared windowing: saturate(1 - (d/r)^4)^2 / (d^2 + 1)
         float distAttenuation;
         bool useInvSq = (spotLights[si].flags & LIGHT_FLAG_INVERSE_SQUARED) != 0;
         float distOverRadius = dist / radius;
@@ -921,7 +934,7 @@ float4 main(FSInput input) : SV_Target {
         }
 
         // Cone attenuation: squared smooth-step falloff
-        // @source UE5 DeferredLightingCommon.ush:282 — LightMask *= SpotAttenuation(...)
+        // Cone attenuation: squared smooth-step falloff
         float2 spotAngles = float2(spotLights[si].cosOuterAngle, spotLights[si].invCosConeDifference);
         float coneAtten = SpotAttenuation(L_spot, spotLights[si].direction, spotAngles);
 
@@ -935,7 +948,7 @@ float4 main(FSInput input) : SV_Target {
         // ── Spot light shadow sampling ──────────────────────────────
         // If this spot light casts shadows (shadowIndex != 0xFFFFFFFF),
         // sample the local shadow atlas and multiply attenuation by the shadow factor.
-        // @source UE5 ShadowProjectionPixelShader.usf:66-89 — WholeScene shadow projection
+        // Spot light shadow: project through light VP, sample atlas tile
         float spotShadow = 1.0f;
         if (spotLights[si].shadowIndex != 0xFFFFFFFF
             && localShadowAtlasIndex != 0xFFFFFFFF
@@ -948,7 +961,7 @@ float4 main(FSInput input) : SV_Target {
         if (attenuation <= 0.0f)
             continue;
 
-        /// @source UE5 DeferredLightingCommon.ush:447-448 — SpecularScale/DiffuseScale
+        // Per-light specular/diffuse scaling
         float3 radiance = spotLights[si].color * attenuation;
         float sSpecScale = spotLights[si].specularScale;
         float sDiffScale = spotLights[si].diffuseScale;
@@ -968,7 +981,7 @@ float4 main(FSInput input) : SV_Target {
     float3 ambient;
 
     if (irradianceSrvIndex != 0xFFFFFFFF) {
-        // Diffuse IBL via L2 Spherical Harmonics (UE5 parity)
+        // Diffuse IBL via L2 Spherical Harmonics (standard)
         // SH is much higher quality than 32x32 cubemap sampling
         float3 irradiance = GetSkySHDiffuse(N, skyIrradianceSH);
 
@@ -995,8 +1008,8 @@ float4 main(FSInput input) : SV_Target {
 #endif
 
         // ── SSR + IBL compositing ──
-        // @source UE5 ReflectionEnvironmentPixelShader.usf:247-249
-        // UE5 pattern: blend SSR and IBL BEFORE applying EnvBRDF.
+        // Blend SSR and IBL BEFORE applying EnvBRDF (split-sum pattern)
+        // standard pattern: blend SSR and IBL BEFORE applying EnvBRDF.
         // SSR outputs unweighted scene color; IBL outputs unweighted prefiltered color.
         // EnvBRDF (F0 * AB.x + F90 * AB.y) is applied ONCE to the combined result.
         float3 combinedSpecular = prefilteredColor;
@@ -1016,8 +1029,8 @@ float4 main(FSInput input) : SV_Target {
         }
 
         // Apply EnvBRDF (split-sum Fresnel integration) to combined reflection
-        // @source UE5 BRDF.ush:382 — F90 micro-occlusion for EnvBRDF bias term
-        /// @source UE5 EnvBRDFApprox — saturate(50*F0.g) for AB.y
+        // @ref Lagarde 2014 — F90 micro-occlusion for EnvBRDF bias term
+        // saturate(50*F0.g) for AB.y
         float F90_ibl = saturate(50.0f * F0.g);
         float3 specularIBL = combinedSpecular * (F0 * envBRDF.x + F90_ibl * envBRDF.y);
 
@@ -1035,7 +1048,7 @@ float4 main(FSInput input) : SV_Target {
         float specOcc = saturate(pow(NdotV + ao, exp2(-16.0f * roughness - 1.0f)) - 1.0f + ao);
 
         // ── SSGI compositing ──────────────────────────────────────────
-        // @source UE5 IndirectLightRendering.cpp:1454-1457
+        // SSGI indirect diffuse compositing
         // When SSGI is active, add screen-space indirect diffuse bounce to
         // the SH-based IBL diffuse. The SSGI output already includes the
         // bouncing surface's albedo and lighting, so we apply the RECEIVING
@@ -1058,6 +1071,82 @@ float4 main(FSInput input) : SV_Target {
 #endif
         }
 
+        // ── Radiance Cache blending ──────────────────────────────────
+        // Radiance cache probe trilinear interpolation for SDF-based GI
+        // When radiance cache is active, blend probe-based GI with SH IBL.
+        // Use distance from probe grid center to control blend weight:
+        // probes provide better GI in the near/mid field, SH IBL covers far field.
+        [branch]
+        if (radianceCacheEnabled != 0 && rcProbeSHBufferSrv != 0xFFFFFFFF) {
+#ifdef UZ_BINDLESS
+            StructuredBuffer<float4> probeSH = ResourceDescriptorHeap[rcProbeSHBufferSrv];
+            float3 rcGridOrigin = float3(rcGridOriginX, rcGridOriginY, rcGridOriginZ);
+
+            // Compute fractional grid coordinates
+            float probeSpacing = (rcGridExtent * 2.0f) / float(rcProbesPerAxis);
+            float3 localPos = (worldPos - rcGridOrigin) / probeSpacing - 0.5f;
+            float3 maxCoord = float3(rcProbesPerAxis - 1, rcProbesPerAxis - 1, rcProbesPerAxis - 1);
+            localPos = clamp(localPos, 0.0f, maxCoord);
+
+            uint3 cell = uint3(floor(localPos));
+            float3 frac3 = localPos - float3(cell);
+            uint3 cellMax = min(cell + 1, uint3(rcProbesPerAxis - 1, rcProbesPerAxis - 1, rcProbesPerAxis - 1));
+
+            // Trilinear interpolation of probe SH at 8 corner probes
+            float3 rcIrradiance = (float3)0;
+            for (uint dz = 0; dz < 2; dz++) {
+                float wz = (dz == 0) ? (1.0f - frac3.z) : frac3.z;
+                uint pz = (dz == 0) ? cell.z : cellMax.z;
+                for (uint dy = 0; dy < 2; dy++) {
+                    float wy = (dy == 0) ? (1.0f - frac3.y) : frac3.y;
+                    uint py = (dy == 0) ? cell.y : cellMax.y;
+                    for (uint dx = 0; dx < 2; dx++) {
+                        float wx = (dx == 0) ? (1.0f - frac3.x) : frac3.x;
+                        uint px = (dx == 0) ? cell.x : cellMax.x;
+                        float weight = wx * wy * wz;
+                        if (weight <= 0.0f) continue;
+
+                        uint probeIdx = pz * rcProbesPerAxis * rcProbesPerAxis
+                                      + py * rcProbesPerAxis + px;
+                        uint base = probeIdx * 7;
+
+                        // Evaluate L0+L1 SH with cosine lobe convolution for irradiance.
+                        // Raw SH stores radiance coefficients. To get irradiance (integral
+                        // of radiance * cos(theta) over hemisphere), apply ZH convolution:
+                        //   L0 band: multiply by PI (A0 = π)
+                        //   L1 band: multiply by 2π/3 (A1 = 2π/3)
+                        // @ref Sloan "Stupid Spherical Harmonics Tricks" — cosine lobe convolution factors
+                        // @source "Stupid Spherical Harmonics Tricks" — Sloan, Table 1
+                        float4 rSH = probeSH[base + 0];
+                        float4 gSH = probeSH[base + 1];
+                        float4 bSH = probeSH[base + 2];
+                        // nDir: L0 basis = 1.0 (scaled by A0=π), L1 basis = N.xyz (scaled by A1=2π/3)
+                        static const float kA0 = 3.14159265f;       // π
+                        static const float kA1 = 2.09439510f;       // 2π/3
+                        float4 nDir = float4(kA0, kA1 * N.x, kA1 * N.z, kA1 * N.y);
+                        float3 probeIrr = max(float3(dot(rSH, nDir), dot(gSH, nDir), dot(bSH, nDir)), 0.0f);
+                        rcIrradiance += probeIrr * weight;
+                    }
+                }
+            }
+
+            // Weight = 1.0 inside the probe grid, fading to 0.0 at the boundary.
+            // Uses per-axis box distance so the entire grid interior gets full GI,
+            // with a smooth fade only in the last 10% near each face.
+            float3 rcGridCenter = rcGridOrigin + float3(rcGridExtent, rcGridExtent, rcGridExtent);
+            float3 rcLocalPos = abs(worldPos - rcGridCenter) / rcGridExtent;
+            // Per-axis fade: 1.0 when inside 90% of the grid, fades to 0 at the edge
+            float fadeX = saturate((1.0f - rcLocalPos.x) * 10.0f);
+            float fadeY = saturate((1.0f - rcLocalPos.y) * 10.0f);
+            float fadeZ = saturate((1.0f - rcLocalPos.z) * 10.0f);
+            float rcWeight = fadeX * fadeY * fadeZ;
+
+            float3 rcDiffuse = kD * albedo * rcIrradiance * rcGiIntensity;
+            float3 combined = max(diffuseIBL, rcDiffuse);
+            diffuseIBL = lerp(diffuseIBL, combined, rcWeight);
+#endif
+        }
+
         float3 skyLightTint = float3(skyLightColorR, skyLightColorG, skyLightColorB);
         float3 diffuseAO = (gtaoSrvIndex != 0xFFFFFFFF) ? AOMultiBounce(ao, albedo) : float3(ao, ao, ao);
         ambient = (diffuseIBL * diffuseAO + specularIBL * specOcc) * skyLightIntensity * skyLightTint;
@@ -1076,9 +1165,9 @@ float4 main(FSInput input) : SV_Target {
     }
 
     // ── Emissive ──
-    // @source UE5 BasePassPixelShader.usf:1541 — Color += Emissive
-    // @source UE5 BasePassPixelShader.usf:2370 — clamp to MaterialMaxEmissiveValue
-    // UE5 adds emissive directly to SceneColor in the base pass. In our deferred
+    // Emissive: pure self-illumination, bypasses all lighting.
+    // HDR values > 1.0 expected and drive bloom post-process.
+    // adds emissive directly to SceneColor in the base pass. In our deferred
     // pipeline, emissive was written to GBuffer RT3 (RGBA16Float) and is read here.
     // Emissive bypasses all lighting — it is pure self-illumination.
     // HDR values > 1.0 are expected and will drive the bloom post-process.
@@ -1097,60 +1186,68 @@ float4 main(FSInput input) : SV_Target {
     float3 color = ambient + Lo + emissiveContrib;
 
     // ── Aerial Perspective ──
-    // Per-pixel ray-march through the atmosphere from camera to pixel.
-    // Adds distance-dependent inscattered luminance and applies transmittance
-    // to simulate atmospheric haze on distant geometry.
-    // @source UE5 SkyAtmosphereCommon.ush:42 — GetAerialPerspectiveLuminanceTransmittance
-    // @source UE5 SkyAtmosphere.usf:1466 — RenderCameraAerialPerspectiveVolumeCS
-    if (aerialPerspectiveEnabled != 0 && transmittanceLutSrvIndex != 0xFFFFFFFF) {
-        float3 apRayleighBeta3 = float3(apRayleighBetaX, apRayleighBetaY, apRayleighBetaZ);
+    // @ref Hillaire 2020 "A Scalable and Production Ready Sky and Atmosphere"
+    // Aerial perspective: inscattering + transmittance from precomputed 3D volume or ray march
+    //
+    // When the precomputed AP volume is available (apVolumeSrvIndex != 0xFFFFFFFF),
+    // sample the 32x32x16 3D texture for inscattering + transmittance. This replaces
+    // the per-pixel 8-step ray march with a single trilinear texture fetch.
+    //
+    // When the volume is not available, fall back to per-pixel ray march.
+    if (aerialPerspectiveEnabled != 0) {
+        float4 ap = float4(0, 0, 0, 1);
 
-        // Fetch transmittance LUT
 #ifdef UZ_BINDLESS
-        Texture2D<float4> apTransLut = ResourceDescriptorHeap[transmittanceLutSrvIndex];
-#else
-        Texture2D<float4> apTransLut = transmittanceLutTex;
+        [branch]
+        if (apVolumeSrvIndex != 0xFFFFFFFF) {
+            // ── AP Volume path (standard) ──────────────────────────────
+            // @ref Hillaire 2020 — AP volume lookup with squared depth distribution
+            Texture3D<float4> apVolume = ResourceDescriptorHeap[apVolumeSrvIndex];
+
+            // Screen UV from pixel position
+            float2 apScreenUV = input.texcoord;
+
+            // Linearize depth: world distance from camera to pixel (km)
+            float linearDepthKm = viewDepth * 0.00001f; // cm → km
+
+            // Squared depth distribution for better near-field precision
+            // Forward: normalizedSlice = ((z+0.5)/16)^2, depth = normalizedSlice * totalDepthKm
+            // Inverse: normalizedSlice = sqrt(depth / totalDepthKm), w = normalizedSlice
+            float totalDepthKm = 100.0f; // Must match compute shader
+            float depthSlices  = 16.0f;  // Must match compute shader
+            float linearW = saturate(linearDepthKm / totalDepthKm);
+            float nonLinW = sqrt(linearW); // Inverse of squared distribution
+
+            float3 uvw = float3(apScreenUV, nonLinW);
+            ap = apVolume.SampleLevel(linearSampler, uvw, 0);
+
+            // Near-fade: avoid AP artifacts at near plane
+            // Fade out AP for very close pixels to avoid artifacts at near plane.
+            // uses AerialPerspectiveStartDepthKm (typically 0.0001 km = 10 cm).
+            float fadeWeight = saturate(linearDepthKm * 10000.0f); // 0→1 over first 0.0001 km
+            ap.rgb *= fadeWeight;
+            ap.a    = lerp(1.0f, ap.a, fadeWeight);
+        } else
 #endif
+        if (transmittanceLutSrvIndex != 0xFFFFFFFF) {
+            // ── Per-pixel ray march fallback ─────────────────────────────
+            float3 apRayleighBeta3 = float3(apRayleighBetaX, apRayleighBetaY, apRayleighBetaZ);
+#ifdef UZ_BINDLESS
+            Texture2D<float4> apTransLut = ResourceDescriptorHeap[transmittanceLutSrvIndex];
+#else
+            Texture2D<float4> apTransLut = transmittanceLutTex;
+#endif
+            float3 apSunDir = normalize(lightDir.xyz);
+            ap = ComputeAerialPerspective(
+                worldPos, cameraPos.xyz, apSunDir, apSunIntensity,
+                apBottomRadiusKm, apTopRadiusKm, apRayleighBeta3,
+                apRayleighScaleH, apMieBeta, apMieScaleH, apMieAnisotropy,
+                apRayleighScale, apMieScale, apTransLut, linearSampler);
+        }
 
-        // Sun direction reused from the directional light
-        float3 apSunDir = normalize(lightDir.xyz);
-
-        float4 ap = ComputeAerialPerspective(
-            worldPos,
-            cameraPos.xyz,
-            apSunDir,
-            apSunIntensity,
-            apBottomRadiusKm,
-            apTopRadiusKm,
-            apRayleighBeta3,
-            apRayleighScaleH,
-            apMieBeta,
-            apMieScaleH,
-            apMieAnisotropy,
-            apRayleighScale,
-            apMieScale,
-            apTransLut,
-            linearSampler);
-
-        /// Apply aerial perspective: transmittance dims the scene, inscattering
-        /// adds atmospheric glow/haze.
-        /// @source UE5 SkyAtmosphereCommon.ush:107-108 — standard AP compositing
+        // Standard AP compositing: finalColor = sceneColor * transmittance + inscattering
         ///   finalColor = sceneColor * transmittance + inscattering
-        ///
-        /// @source UE5 HeightFogCommon.ush:175 — heightFogContribution (0..1) controls
-        ///   how much sky atmosphere color is injected into height fog inscattering.
-        ///   When heightFogContribution=1.0, the height fog pass handles ALL atmospheric
-        ///   haze (via skyLightColor injection). AP would double-count this, so both AP
-        ///   transmittance and inscattering must be skipped.
-        /// @source UE5 SkyAtmosphere.usf:1631-1638 — AP volume accounts for fog internally
-        ///   UE5 precomputes AP in a 3D volume that already factors in fog contribution.
-        ///   UzEngine runs fog as a separate post-deferred pass, so we disable AP entirely
-        ///   when height fog takes full responsibility (heightFogContribution=1.0).
-        /// @deviations UE5 blends AP and fog inside the AP volume computation. UzEngine
-        ///   uses a binary switch: AP active when no fog contribution, fog handles haze
-        ///   when heightFogContribution > 0. Partial contribution (0 < hfc < 1) lerps.
-        float hfc = heightFogContribution;
-        color = color * lerp(ap.a, 1.0f, hfc) + ap.rgb * (1.0f - hfc);
+        color = color * ap.a + ap.rgb;
     }
 
     // ── Buffer Visualization Grid — tile dispatch ──

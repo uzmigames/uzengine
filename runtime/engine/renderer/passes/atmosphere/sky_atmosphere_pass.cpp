@@ -67,7 +67,7 @@ void AddSkyAtmospherePass(rg::RgBuilder& builder, const SkyAtmospherePassDesc& d
                     desc.depthSrvIndex,
                     desc.transmittanceLutSrvIndex,
                     desc.multiScatterLutSrvIndex,
-                    0
+                    desc.apVolumeSrvIndex
                 };
                 cmd->SetRootConstants(kSlotRootConstants, indices, 4);
             } else {

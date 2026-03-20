@@ -5,9 +5,9 @@
 /// each frame. The cloud output (half-res RGBA16F) is composited by a
 /// subsequent pass before tonemapping.
 ///
-/// @source UE5 VolumetricCloudRendering.cpp:1664-1700 — CloudGlobalShaderParams
-/// @source UE5 VolumetricCloud.usf:840-1455 — MainCommon tracing loop
-/// @source UE5 VolumetricRenderTarget.usf:174-547 — Temporal reconstruction
+/// @ref CloudGlobalShaderParams
+/// @ref MainCommon tracing loop
+/// @ref Temporal reconstruction
 
 #include "cloud_pass.h"
 

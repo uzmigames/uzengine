@@ -4,7 +4,7 @@
 /// These control ray march step count, max shadow distance, tile culling size,
 /// and self-shadow prevention bias.
 ///
-/// # UE5 Reference
+/// # Reference
 /// - DistanceFieldShadowing.cpp — ray march loop, tile culling
 /// - DirectionalLightComponent.cpp:1018 — max DFS distance (51200 cm = 512m)
 /// - DistanceFieldLightingShared.h — object culling tile size
@@ -25,7 +25,7 @@ namespace uz {
 /// compute shader, improving shadow accuracy at the cost of GPU time.
 /// Approximate timings are for a 1080p half-res trace on an RTX 3070.
 ///
-/// # UE5 Reference
+/// # Reference
 /// DistanceFieldShadowing.cpp — step count per quality level.
 enum class DfsQuality : uint8_t {
     Off    = 0,   ///< Disabled (0 steps, 0 cost).
@@ -59,9 +59,9 @@ enum class DfsQuality : uint8_t {
 ///
 /// Controls whether DFS is active, the maximum shadow distance, ray march quality,
 /// resolution mode, object culling tile size, and self-shadow bias. All distance
-/// values are in centimeters (UE5 parity: 1 unit = 1 cm).
+/// values are in centimeters (standard: 1 unit = 1 cm).
 ///
-/// Default values match UE5 5.6 defaults:
+/// Default values match reference 5.6 defaults:
 /// - distance: 51200 cm (512m) — DirectionalLightComponent.cpp:1018
 /// - tileWorldSize: 200 cm — DistanceFieldShadowing.cpp tile culling grid
 /// - selfShadowBias: 2 cm — prevents surface acne from SDF quantization noise

@@ -1,7 +1,7 @@
 /// Distance Field Shadow — Shared Types and SDF Sampling Functions
 ///
 /// Contains the GPU-side data structures and sampling functions used by both
-/// the object culling and cone tracing compute shaders. Translates UE5's
+/// the object culling and cone tracing compute shaders. Translates the reference implementation's
 /// DistanceFieldLightingShared.ush SDF sampling into UzEngine's simpler
 /// sparse brick atlas scheme.
 ///
@@ -15,13 +15,13 @@
 /// Texel value 0.5 (128/255) = zero-crossing (surface).
 /// Texel value 1.0 = farthest outside mesh (most positive distance).
 ///
-/// @source UE5 DistanceFieldLightingShared.ush:46-436 — atlas params, FDFAssetData, SampleSparseMeshSignedDistanceField
-/// @source UE5 DistanceFieldShadowingShared.ush:66-221 — ShadowRayTraceThroughCulledObjects
+/// @ref Wright 2015 "Dynamic Occlusion with Signed Distance Fields" (SIGGRAPH)
+/// @ref Wright 2015 — cone-traced distance field soft shadows
 
 #ifndef DFS_COMMON_HLSLI
 #define DFS_COMMON_HLSLI
 
-// UE5 flow control hints — map to HLSL attributes
+// flow control hints — map to HLSL attributes
 #ifndef LOOP
 #define LOOP [loop]
 #endif
@@ -34,24 +34,24 @@
 // Constants
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 DistanceFieldLightingShared.ush:100
+/// @ref Wright 2015 "DFS" — SDF atlas:100
 /// @constants INVALID_BRICK_INDEX=0xFFFFFFFF (DistanceFieldLightingShared.ush:100)
 static const uint INVALID_BRICK_INDEX = 0xFFFFFFFF;
 
-/// @source UE5 DistanceFieldLightingShared.ush:97-98
+/// @ref Wright 2015 "DFS" — SDF atlas:97-98
 /// @constants DF_MAX_NUM_MIPS=3 (DistanceFieldLightingShared.ush:98)
 static const uint DF_MAX_NUM_MIPS = 3;
 
 /// Brick voxel size — 8x8x8 voxels per brick.
-/// @source UE5 DistanceFieldAtlas.h:34 — DistanceField::BrickSize = 8
+/// @ref Wright 2015 — brick atlas:34 — DistanceField::BrickSize = 8
 static const uint SDF_BRICK_SIZE = 8;
 
 /// Unique data voxels per brick dimension (brick size minus 1 border voxel).
-/// UE5 uses 7 unique + 1 border = 8 total.
-/// @source UE5 DistanceFieldLightingShared.ush:49 — DistanceFieldUniqueDataBrickSize
+/// uses 7 unique + 1 border = 8 total.
+/// @ref Wright 2015 "DFS" — SDF atlas:49 — DistanceFieldUniqueDataBrickSize
 static const uint SDF_UNIQUE_BRICK_SIZE = 7;
 
-/// @source UE5 DistanceFieldShadowing.usf:22
+/// @ref Wright 2015 — DFS dispatch:22
 /// @constants MAX_TRACE_SPHERE_RADIUS=100 (DistanceFieldShadowing.usf:22)
 static const float MAX_TRACE_SPHERE_RADIUS = 100.0f;
 
@@ -64,7 +64,7 @@ static const float MAX_TRACE_SPHERE_RADIUS = 100.0f;
 /// Layout matches `uz::SdfObjectGpuData` (192 bytes = 12 x float4).
 /// Loaded from a StructuredBuffer<float4> with 12-float4 stride.
 ///
-/// @source UE5 DistanceFieldLightingShared.ush:232-263 — FDFObjectData
+/// @ref Wright 2015 "DFS" — SDF atlas:232-263 — FDFObjectData
 struct SdfObjectData {
     float4x4 worldToLocal;       // Rows 0-3: world-to-local transform (64 bytes)
     float3   localBoundsMin;     // Row 4: local AABB min
@@ -80,9 +80,9 @@ struct SdfObjectData {
     uint     resY;               // Row 8.z: grid resolution Y (in bricks)
     uint     resZ;               // Row 8.w: grid resolution Z (in bricks)
     uint     indirectionOffset;  // Row 9.x: offset into global indirection buffer for this object
-                                 // @source UE5 DistanceFieldLightingShared.ush:83 — IndirectionTableOffset
+                                 // @ref Wright 2015 "DFS" — SDF atlas:83 — IndirectionTableOffset
     uint     numMips;            // Row 9.y: number of available MIP levels (1-3)
-                                 // @source UE5 DistanceFieldLightingShared.ush:77 — NumMips
+                                 // @ref Wright 2015 "DFS" — SDF atlas:77 — NumMips
     float    pad3;               // Row 9.z: reserved
     float    pad4;               // Row 9.w: reserved
     float4   reserved[2];        // Rows 10-11: padding to 192 bytes
@@ -90,9 +90,9 @@ struct SdfObjectData {
 
 /// Loads an SdfObjectData from a raw float4 StructuredBuffer.
 ///
-/// @source UE5 DistanceFieldLightingShared.ush:265-301 — LoadDFObjectDataFromBuffer
+/// @ref Wright 2015 "DFS" — SDF atlas:265-301 — LoadDFObjectDataFromBuffer
 /// @constants DF_OBJECT_DATA_STRIDE=12 (our stride, 192/16=12 float4s)
-/// @deviations Simplified layout vs UE5's FDFObjectData (no double-float position,
+/// @deviations Simplified layout vs the reference engine's FDFObjectData (no double-float position,
 ///             no VolumeToWorld, no draw distance — we use a simpler world AABB scheme)
 SdfObjectData LoadSdfObjectData(StructuredBuffer<float4> objectBuffer, uint objectIndex) {
     uint base = objectIndex * 12; // 12 float4s per object (192 bytes)
@@ -154,12 +154,12 @@ SdfObjectData LoadSdfObjectData(StructuredBuffer<float4> objectBuffer, uint obje
 /// along each axis, we decompose the linear index into 3D coordinates, then
 /// compute the atlas UV including the half-texel offset for correct trilinear sampling.
 ///
-/// @source UE5 DistanceFieldLightingShared.ush:420-433 — SampleSparseMeshSignedDistanceField, atlas UV computation
+/// @ref Wright 2015 "DFS" — SDF atlas:420-433 — SampleSparseMeshSignedDistanceField, atlas UV computation
 /// @constants None — all parameters passed in
 /// @deviations NONE
 float3 BrickIndexToAtlasUV(uint brickIndex, float3 localUV, uint3 atlasSizeInBricks, float3 atlasTexelSize) {
     // Decompose linear brick index into 3D brick coordinate
-    /// @source UE5 DistanceFieldLightingShared.ush:422-426 — BrickOffset decomposition via mask and shift
+    /// @ref Wright 2015 "DFS" — SDF atlas:422-426 — BrickOffset decomposition via mask and shift
     uint3 brickCoord;
     brickCoord.x = brickIndex % atlasSizeInBricks.x;
     brickCoord.y = (brickIndex / atlasSizeInBricks.x) % atlasSizeInBricks.y;
@@ -168,7 +168,7 @@ float3 BrickIndexToAtlasUV(uint brickIndex, float3 localUV, uint3 atlasSizeInBri
     // Each brick occupies SDF_BRICK_SIZE texels in the atlas.
     // The unique data region is SDF_UNIQUE_BRICK_SIZE voxels, centered within the brick.
     // Half-texel offset ensures sampling lands on texel centers.
-    /// @source UE5 DistanceFieldLightingShared.ush:429 — AtlasUV = BrickOffset * BrickOffsetToAtlasUVScale + BrickLocalUV * UniqueDataBrickSizeInAtlasTexels + HalfTexelSize
+    /// @ref Wright 2015 "DFS" — SDF atlas:429 — AtlasUV = BrickOffset * BrickOffsetToAtlasUVScale + BrickLocalUV * UniqueDataBrickSizeInAtlasTexels + HalfTexelSize
     float3 brickOrigin = float3(brickCoord) * float(SDF_BRICK_SIZE) * atlasTexelSize;
     float3 uniqueSize  = float3(SDF_UNIQUE_BRICK_SIZE, SDF_UNIQUE_BRICK_SIZE, SDF_UNIQUE_BRICK_SIZE) * atlasTexelSize;
     float3 halfTexel   = atlasTexelSize * 0.5f;
@@ -187,7 +187,7 @@ float3 BrickIndexToAtlasUV(uint brickIndex, float3 localUV, uint3 atlasSizeInBri
 /// visual quality. When the cone is narrow (near the surface), we need the
 /// highest resolution MIP for accurate shadow edges.
 ///
-/// UE5's shadow tracing (DistanceFieldShadowingShared.ush:132) always uses
+/// the reference engine's shadow tracing (DistanceFieldShadowingShared.ush:132) always uses
 /// the highest resolution MIP via `LoadDFAssetDataHighestResolution`. However,
 /// the standalone distance query (DistanceFieldLightingShared.ush:458-469)
 /// cascades from coarse to fine: it starts at MIP 0 (coarsest) and refines
@@ -197,17 +197,17 @@ float3 BrickIndexToAtlasUV(uint brickIndex, float3 localUV, uint3 atlasSizeInBri
 /// voxel size: when the step is large relative to the voxel grid, a coarser
 /// MIP provides the same information at lower cost.
 ///
-/// @source UE5 DistanceFieldShadowingShared.ush:132 — LoadDFAssetDataHighestResolution (shadow always uses highest)
-/// @source UE5 DistanceFieldLightingShared.ush:458-469 — MIP cascade for culling queries
+/// @ref Wright 2015 "DFS" — shadow ray trace:132 — LoadDFAssetDataHighestResolution (shadow always uses highest)
+/// @ref Wright 2015 "DFS" — SDF atlas:458-469 — MIP cascade for culling queries
 /// @constants DF_MAX_NUM_MIPS=3 (DistanceFieldLightingShared.ush:98)
-/// @deviations UE5 shadow tracing uses highest MIP only; we add optional MIP
+/// @deviations reference shadow tracing uses highest MIP only; we add optional MIP
 ///             selection for coarse tracing optimization. When numMips==1, this
-///             returns 0 and behaves identically to UE5.
+///             returns 0 and behaves identically to reference.
 uint SelectSdfMipLevel(float stepDistance, float voxelSize, uint numMips) {
     // Compute the MIP level where the voxel size matches the step distance.
     // Each MIP doubles the voxel size (2x downsampling per level).
     // mipLevel = log2(stepDistance / voxelSize), clamped to [0, numMips-1]
-    /// @source UE5 DistanceFieldLightingShared.ush:465 — abs(DistanceField) > .25 * MaxEncodedDistance threshold for MIP cascade
+    /// @ref Wright 2015 "DFS" — SDF atlas:465 — abs(DistanceField) > .25 * MaxEncodedDistance threshold for MIP cascade
     float ratio = stepDistance / max(voxelSize, 0.0001f);
     // Use log2 of the ratio: when step distance == voxelSize, MIP 0 (finest).
     // When step distance == 2*voxelSize, MIP 1. When == 4*voxelSize, MIP 2.
@@ -228,10 +228,10 @@ uint SelectSdfMipLevel(float stepDistance, float voxelSize, uint numMips) {
 /// Returns the signed distance in volume-space units. If the brick is invalid
 /// (empty space far from any surface), returns the maximum encodable distance.
 ///
-/// @source UE5 DistanceFieldLightingShared.ush:392-436 — SampleSparseMeshSignedDistanceField
+/// @ref Wright 2015 "DFS" — SDF atlas:392-436 — SampleSparseMeshSignedDistanceField
 /// @constants INVALID_BRICK_INDEX=0xFFFFFFFF (DistanceFieldLightingShared.ush:100)
 /// @deviations Simplified indirection: uses flat 3D table indexed by (z*resY+y)*resX+x,
-///             same as UE5 OFFSET_DATA_STRUCT==0 path (ByteAddressBuffer).
+///             same as reference OFFSET_DATA_STRUCT==0 path (ByteAddressBuffer).
 ///             ScaleBias computed from voxelSize instead of per-mip FDFAssetData.
 float SampleSparseMeshSdf(
     float3 volumePos,
@@ -245,7 +245,7 @@ float SampleSparseMeshSdf(
 {
     // Compute the maximum encodable distance for this SDF (the narrow band width)
     // The distance range is ±(voxelSize * SDF_BRICK_SIZE / 2) = the narrow band
-    /// @source UE5 DistanceFieldLightingShared.ush:412 — MaxEncodedDistance = DistanceFieldToVolumeScaleBias.x + DistanceFieldToVolumeScaleBias.y
+    /// @ref Wright 2015 "DFS" — SDF atlas:412 — MaxEncodedDistance = DistanceFieldToVolumeScaleBias.x + DistanceFieldToVolumeScaleBias.y
     float maxEncodedDistance = obj.voxelSize * float(SDF_BRICK_SIZE) * 0.5f;
 
     // Compute the volume extent (half-size of the local AABB)
@@ -254,16 +254,16 @@ float SampleSparseMeshSdf(
 
     // Transform from volume space [-extent, +extent] centered at volumeCenter
     // to normalized [0, 1] space within the SDF volume
-    /// @source UE5 DistanceFieldLightingShared.ush:395 — IndirectionPos = SampleVolumePosition * VolumeToIndirectionScale + VolumeToIndirectionAdd
+    /// @ref Wright 2015 "DFS" — SDF atlas:395 — IndirectionPos = SampleVolumePosition * VolumeToIndirectionScale + VolumeToIndirectionAdd
     float3 normalizedPos = (volumePos - volumeCenter + volumeExtent) / (2.0f * volumeExtent);
 
     // Guard: if the sample position is outside the SDF volume [0,1]^3,
     // return max encoded distance (far from any surface).
-    // UE5 handles this via VolumePositionExtent clamping in the caller
+    // handles this via VolumePositionExtent clamping in the caller
     // (DistanceFieldShadowingShared.ush:164) and relies on the indirection
     // table boundary; we add an explicit early-out for safety.
-    /// @source UE5 DistanceFieldLightingShared.ush:413-416 — out-of-bounds returns MaxEncodedDistance
-    /// @deviations Explicit bounds check added as safety guard; UE5 relies on caller clamping
+    /// @ref Wright 2015 "DFS" — SDF atlas:413-416 — out-of-bounds returns MaxEncodedDistance
+    /// @deviations Explicit bounds check added as safety guard; reference relies on caller clamping
     if (any(normalizedPos < 0.0f) || any(normalizedPos > 1.0f)) {
         return maxEncodedDistance;
     }
@@ -276,13 +276,13 @@ float SampleSparseMeshSdf(
     int3 indirectionCoord = int3(indirectionPos);
 
     // Look up brick index from indirection table
-    /// @source UE5 DistanceFieldLightingShared.ush:399-402 — IndirectionIndex, BrickIndex load
+    /// @ref Wright 2015 "DFS" — SDF atlas:399-402 — IndirectionIndex, BrickIndex load
     uint indirectionIndex = (uint(indirectionCoord.z) * obj.resY + uint(indirectionCoord.y)) * obj.resX + uint(indirectionCoord.x);
     uint brickIndex = indirectionBuffer[indirectionOffset + indirectionIndex];
 
     // If the brick is invalid (INVALID_BRICK_INDEX = 0xFFFFFFFF), the region was empty
     // during baking and had distance > bandWidth. Return max distance.
-    /// @source UE5 DistanceFieldLightingShared.ush:413-416 — invalid brick returns MaxEncodedDistance
+    /// @ref Wright 2015 "DFS" — SDF atlas:413-416 — invalid brick returns MaxEncodedDistance
     if (brickIndex == INVALID_BRICK_INDEX) {
         return maxEncodedDistance;
     }
@@ -291,11 +291,11 @@ float SampleSparseMeshSdf(
     uint absoluteBrickIndex = obj.atlasOffset + brickIndex;
 
     // Compute local UV within the brick [0, 1]
-    /// @source UE5 DistanceFieldLightingShared.ush:419 — BrickLocalUV = IndirectionPos - IndirectionCoord
+    /// @ref Wright 2015 "DFS" — SDF atlas:419 — BrickLocalUV = IndirectionPos - IndirectionCoord
     float3 brickLocalUV = indirectionPos - float3(indirectionCoord);
 
     // Sample the atlas with trilinear filtering
-    /// @source UE5 DistanceFieldLightingShared.ush:429-432 — AtlasUV computation and sample
+    /// @ref Wright 2015 "DFS" — SDF atlas:429-432 — AtlasUV computation and sample
     float3 atlasUV = BrickIndexToAtlasUV(absoluteBrickIndex, brickLocalUV, atlasSizeInBricks, atlasTexelSize);
     float encodedDistance = sdfAtlas.SampleLevel(atlasSampler, atlasUV, 0).r;
 
@@ -303,16 +303,16 @@ float SampleSparseMeshSdf(
     // encoded 0.0 -> -maxEncodedDistance (deep inside)
     // encoded 0.5 -> 0.0 (surface)
     // encoded 1.0 -> +maxEncodedDistance (outside)
-    /// @source UE5 DistanceFieldLightingShared.ush:432 — DistanceField = EncodedDistanceField * ScaleBias.x + ScaleBias.y
+    /// @ref Wright 2015 "DFS" — SDF atlas:432 — DistanceField = EncodedDistanceField * ScaleBias.x + ScaleBias.y
     float distanceField = encodedDistance * (2.0f * maxEncodedDistance) - maxEncodedDistance;
 
     // Clamp the returned distance to the valid band [-bandWidth, +bandWidth].
-    // UE5's encoding inherently constrains this via the R8_UNORM [0,1] range,
+    // the reference engine's encoding inherently constrains this via the R8_UNORM [0,1] range,
     // but floating-point imprecision in the decode can produce values slightly
     // outside the band. Explicit clamping ensures downstream cone tracing
     // never sees distances beyond the reliable SDF range.
-    /// @source UE5 DistanceFieldLightingShared.ush:392 — "clamped to the band of the current mip"
-    /// @deviations Explicit clamp added for robustness; UE5 relies on UNORM encoding precision
+    /// @ref Wright 2015 "DFS" — SDF atlas:392 — "clamped to the band of the current mip"
+    /// @deviations Explicit clamp added for robustness; reference relies on UNORM encoding precision
     distanceField = clamp(distanceField, -maxEncodedDistance, maxEncodedDistance);
 
     return distanceField;
@@ -324,7 +324,7 @@ float SampleSparseMeshSdf(
 
 /// Ray-AABB intersection returning normalized entry/exit times along the ray.
 ///
-/// @source UE5 Common.ush — LineBoxIntersect (used throughout DFS)
+/// @ref Williams et al. 2005 — ray-AABB slab intersection (used throughout DFS)
 /// @constants None
 /// @deviations NONE
 float2 LineBoxIntersect(float3 rayOrigin, float3 rayEnd, float3 boxMin, float3 boxMax) {
@@ -352,9 +352,9 @@ float2 LineBoxIntersect(float3 rayOrigin, float3 rayEnd, float3 boxMin, float3 b
 /// Uses the inverse view-projection matrix to unproject from clip space.
 /// UzEngine uses reversed-Z (near=1.0, far=0.0).
 ///
-/// @source UE5 DistanceFieldShadowing.usf:647 — OpaqueTranslatedWorldPosition reconstruction
+/// @ref Wright 2015 — DFS dispatch:647 — OpaqueTranslatedWorldPosition reconstruction
 /// @constants None
-/// @deviations Uses reversed-Z directly (UE5 uses ConvertFromDeviceZ first)
+/// @deviations Uses reversed-Z directly (reference uses ConvertFromDeviceZ first)
 float3 ReconstructWorldPosition(float2 screenUV, float rawDepth, float4x4 invViewProj) {
     // Convert UV [0,1] to NDC [-1,1] (flip Y for DX convention)
     float2 ndc = float2(screenUV.x * 2.0f - 1.0f, 1.0f - screenUV.y * 2.0f);

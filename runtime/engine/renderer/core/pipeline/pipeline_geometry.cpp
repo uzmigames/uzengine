@@ -148,7 +148,7 @@ RHIPipelineHandle PipelineLibrary::GetGBufferMasked(bool bindless) {
     //
     // Note: [earlydepthstencil] is stripped when the compiler detects `discard`
     // in the shader, so depth is correctly written only for surviving fragments.
-    // @source UE5 BasePassRendering.cpp — FBasePassMeshProcessor selects CullMode::None for masked+two-sided
+    // Two-sided rendering for masked materials: disable back-face culling.
     RHIGraphicsPipelineDesc desc{};
     desc.vertexShader  = m_meshVS;
     desc.pixelShader   = m_gbufferPS;
@@ -210,7 +210,7 @@ RHIPipelineHandle PipelineLibrary::GetTranslucent(bool bindless) {
     // They are rendered after the deferred lighting pass into the HDR scene color
     // target with alpha blending, reading depth but not writing to it.
     //
-    // @source UE5 TranslucentRendering.cpp:418 — SrcAlpha/InvSrcAlpha blend, no depth write
+    // SrcAlpha/InvSrcAlpha blend, no depth write for translucent.
     RHIGraphicsPipelineDesc desc{};
     desc.vertexShader  = m_meshVS;
     desc.pixelShader   = m_meshPS;
@@ -275,7 +275,7 @@ RHIPipelineHandle PipelineLibrary::GetAdditive(bool bindless) {
     // Used for particle effects, laser beams, glow effects, etc.
     // No sorting required since the blend operation is commutative.
     //
-    // @source UE5 TranslucentRendering.cpp:425 — One/One blend for BM_Additive
+    // One/One additive blend for additive materials.
     RHIGraphicsPipelineDesc desc{};
     desc.vertexShader  = m_meshVS;
     desc.pixelShader   = m_meshPS;
@@ -453,7 +453,7 @@ RHIPipelineHandle PipelineLibrary::GetDepthPrepass(bool bindless) {
     desc.rasterizer.frontCounterClockwise = false;
     // No depth bias — unlike the shadow pass, the depth prepass writes to the
     // GBuffer depth and does not need bias to prevent self-shadowing.
-    /// @source UE5 DepthRendering.cpp — FDepthPassMeshProcessor uses no depth bias
+    /// Depth prepass uses no depth bias (unlike shadow depth).
     desc.rasterizer.slopeScaledDepthBias  = 0.0f;
     desc.rasterizer.depthBias             = 0.0f;
     desc.depthStencil.depthEnable         = true;

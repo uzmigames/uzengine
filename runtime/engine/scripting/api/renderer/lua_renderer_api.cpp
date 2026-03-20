@@ -220,9 +220,9 @@ static int RendererGetDebugView(lua_State* L) {
 /// uz.renderer.set_shadow_cache(enabled)
 ///
 /// Enables or disables shadow caching at runtime.
-/// Equivalent to UE5's `r.Shadow.CacheEnabled` CVar.
+/// Equivalent to the reference engine's `r.Shadow.CacheEnabled` CVar.
 ///
-/// @source UE5 ShadowSetup.cpp:393-398
+/// @ref Engel 2006 "Cascaded Shadow Maps" — shadow cache toggle
 ///
 /// # Arguments
 /// * `enabled` (boolean) — True to enable shadow caching.

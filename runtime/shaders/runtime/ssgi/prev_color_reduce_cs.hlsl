@@ -14,13 +14,12 @@
 /// - b0: Root constants (8 DWORDs)
 /// - b1: PerFrameCB
 ///
-/// @source UE5 SSRTPrevFrameReduction.usf:1-130 — ReduceCS
-/// @source UE5 ScreenSpaceRayTracing.cpp:745-800 — SetupPrevSceneColorReduction
-/// @constants Karis weight = rcp(1 + Luminance(color)) (SSRTPrevFrameReduction.usf:56)
-///            Luminance = (0.2126, 0.7152, 0.0722) (Common.ush:405)
-/// @deviations NONE — single mip 0 generation only; additional mips deferred to
-///   future single-pass downsampler. UE5 generates 5 mips via SPD in one dispatch;
-///   we generate mip 0 here (sufficient for initial SSGI trace with SampleLevel).
+/// @ref Stachowiak 2015 "Stochastic Screen-Space Reflections" — previous frame reduction
+/// @ref Karis 2014 — luminance weighting for firefly suppression during downsample
+/// @constants Karis weight = rcp(1 + Luminance(color))
+///            Luminance = (0.2126, 0.7152, 0.0722) per ITU-R BT.709
+/// @deviations Single mip 0 generation only; additional mips deferred to
+///   future single-pass downsampler.
 
 #include "../include/math_util.hlsli"
 
@@ -28,7 +27,7 @@
 // Root Constants (b0, 8 DWORDs = 32 bytes)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 ScreenSpaceRayTracing.cpp:745-800 — PrevSceneColorReduction setup
+/// Previous frame color reduction dispatch parameters.
 cbuffer PrevColorReduceRootCB : register(b0) {
     uint  prevColorSrvIndex;   // DWORD 0 — full-res prev scene color SRV (bindless)
     uint  outputMip0UavIndex;  // DWORD 1 — half-res mip 0 UAV (bindless)
@@ -78,9 +77,7 @@ SamplerState linearSampler : register(s0);
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// Rec. 709 luminance.
-/// @source UE5 Common.ush:405 — Luminance(float3 LinearColor)
-/// @constants (0.2126, 0.7152, 0.0722)
-/// @deviations NONE
+/// @ref ITU-R BT.709 — standard luminance coefficients (0.2126, 0.7152, 0.0722)
 float Luminance(float3 color) {
     return dot(color, float3(0.2126f, 0.7152f, 0.0722f));
 }
@@ -88,16 +85,12 @@ float Luminance(float3 color) {
 /// Karis luminance weight for firefly suppression.
 /// Weights bright pixels less to prevent single bright texels from
 /// dominating the downsampled result.
-/// @source UE5 SSRTPrevFrameReduction.usf:56 — Weight = rcp(1 + Luminance)
-/// @constants rcp(1 + L)
-/// @deviations NONE
+/// @ref Karis 2014 — Weight = rcp(1 + Luminance)
 float KarisWeight(float3 color) {
     return rcp(1.0f + Luminance(color));
 }
 
-/// Sanitize HDR color — clamp NaN/negative to zero.
-/// @source UE5 SSRTRayCast.ush:733 — OutColor.rgb = -min(-OutColor.rgb, 0.0)
-/// @deviations NONE
+/// Sanitize HDR color — clamp NaN/negative to zero (standard NaN-safe clamp pattern).
 float3 SanitizeColor(float3 c) {
     return -min(-c, 0.0f);
 }
@@ -120,7 +113,7 @@ float3 SamplePrevColor(float2 uv) {
 // Main Compute Shader — Mip 0 (half-res from full-res)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// @source UE5 SSRTPrevFrameReduction.usf:40-90 — ReduceCS
+/// @ref Stachowiak 2015 — previous frame color reduction
 /// Each thread produces one half-res texel by averaging the 2x2 block from
 /// full-res with Karis luminance weighting for firefly suppression.
 [numthreads(8, 8, 1)]
@@ -136,7 +129,7 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
 
     // Compute UV coordinates for the center of each of the 4 full-res texels
     // in the 2x2 block corresponding to this half-res texel.
-    // @source UE5 SSRTPrevFrameReduction.usf:48-55 — 2x2 gather
+    // 2x2 gather from full-res to half-res
     float2 invFullSize = 1.0f / float2((float)fullWidth, (float)fullHeight);
 
     // Base full-res pixel coordinate (top-left of the 2x2 block)
@@ -154,7 +147,6 @@ void main(uint3 dispatchThreadId : SV_DispatchThreadID) {
     float3 c11 = SamplePrevColor(uv11);
 
     // Karis-weighted average — suppresses fireflies from bright HDR pixels.
-    // @source UE5 SSRTPrevFrameReduction.usf:56-64
     // weight_i = 1 / (1 + Luminance(color_i))
     // result = sum(color_i * weight_i) / sum(weight_i)
     float w00 = KarisWeight(c00);
