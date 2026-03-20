@@ -987,6 +987,45 @@ All passes are **NOT thread-safe**. Register passes from the render thread only.
 
 ---
 
+## Global Illumination Passes
+
+Two compute passes execute after SSGI and before SSR/deferred lighting (in `frame_lighting.cpp`), guarded by `m_sdfGiEnabled`:
+
+### GDF Composite Pass
+
+**Header**: `runtime/engine/renderer/gi/global_distance_field.h`
+**Shader**: `runtime/shaders/runtime/gi/global_sdf_composite_cs.hlsl`
+
+Composites per-mesh SDFs into a 4-cascade global distance field. Each cascade is a 64^3 R16F 3D texture. Dispatched per dirty cascade (camera movement triggers recomposite).
+
+| Cascade | Extent (cm) | Voxel Size (cm) |
+|---------|------------|-----------------|
+| 0 | 2,500 | ~39 |
+| 1 | 10,000 | ~156 |
+| 2 | 40,000 | ~625 |
+| 3 | 160,000 | ~2,500 |
+
+### Radiance Cache Trace Pass
+
+**Header**: `runtime/engine/renderer/gi/radiance_cache.h`
+**Shader**: `runtime/shaders/runtime/gi/radiance_cache_trace_cs.hlsl`
+
+Updates 4096 irradiance probes (16^3 grid). Each probe traces 32 Fibonacci spiral rays via sphere marching against the GDF. Results stored as L2 SH (7 float4s per probe) with EMA temporal blend (alpha=0.05).
+
+### Mesh SDF Bake (on mesh load)
+
+**Shader**: `runtime/shaders/runtime/gi/mesh_sdf_bake_cs.hlsl`
+
+GPU compute bake triggered during `LoadMesh()`. Brute-force closest-triangle with pseudo-normal sign at 32^3 resolution. Output: R16F 3D texture per mesh, accessed via bindless SRV.
+
+### Deferred Lighting Integration
+
+The radiance cache is sampled in `deferred_lighting_ps.hlsl` via `SampleRadianceCache()` (trilinear probe interpolation + L0+L1 SH evaluation). Distance-based blend with sky SH IBL at grid boundary. Controlled by `rcGiIntensity` in PerFrameCB.
+
+Full specification: [docs/specs/rendering/gi-system.md](../../specs/rendering/gi-system.md)
+
+---
+
 ## Related Documentation
 
 - [Render Graph](04-render-graph.md) — Pass registration and resource management

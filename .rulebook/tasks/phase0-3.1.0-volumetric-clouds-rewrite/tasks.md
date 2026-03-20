@@ -1,0 +1,70 @@
+## Phase 1: Adaptive Stepping + Blue Noise Jitter
+- [ ] 1.1 Generate or integrate STBN 3D blue noise texture (128x128x64 R8_UNORM). Compute shader or embedded asset.
+- [ ] 1.2 Add new CB fields to `cloud_raymarch_cs.hlsl`: `minStepSize`, `maxStepSize`, `perspectiveStepScale`, `stbnSrvIndex`.
+- [ ] 1.3 Replace uniform step loop with adaptive perspective-scaled stepping: `stepT *= perspectiveStepScale` each iteration, clamped to `[minStepSize, maxStepSize]`.
+- [ ] 1.4 Add blue noise jitter: initial ray offset `t += stepT * stbn[pixel % 128, frame % 64] * 2.0`.
+- [ ] 1.5 Add empty space skipping: when `density <= 0`, enlarge step toward `maxStepSize` based on mip level.
+- [ ] 1.6 Add MIP level computation: `mipLevel = log2(max(1, startTexelsPerPixel + rayDistance * 1e-5))` for LOD on texture samples.
+- [ ] 1.7 Update `VolumetricCloudsComponent` with new parameters (minStepSize=0.01, maxStepSize=0.5, perspectiveStepScale=1.006).
+- [ ] 1.8 Update `CloudPass` C++ to create STBN texture, bind SRV, pack new CB fields.
+- [ ] 1.9 Build + visual verification: capture screenshots at multiple camera positions, verify no banding.
+
+## Phase 2: Multi-Scattering Octaves
+- [ ] 2.1 Implement `EvaluateMultiScattering()` function in `cloud_raymarch_cs.hlsl`: 8-octave loop with attenuation factors a=0.5, b=0.5, c=0.5 per octave (Oz/Kulla 2017).
+- [ ] 2.2 Replace ambient hack (`ambientColor * ambientMultiplier * saturate(0.3 + h)`) with octave multi-scatter + sky irradiance term.
+- [ ] 2.3 Add sky irradiance gradient: `skyIrradiance * (1/4PI) * heightFraction * skyLightScale`.
+- [ ] 2.4 Add optional powder effect: `radiance *= 1 - powderScale * exp(-extinction * powderExponent)`. New CB fields: `powderScale` (default 0.0 = off), `powderExponent` (default 2.0).
+- [ ] 2.5 Optional: implement Draine phase function as `#define ACCURATE_PHASE_FUNCTION` compile path. gHG=0.988, gD=0.556, alpha=22.0, weight=0.482.
+- [ ] 2.6 Update component with `powderScale`, `powderExponent`, `multiScatterOctaves` (default 8) parameters.
+- [ ] 2.7 Build + visual verification: compare before/after, verify silver linings on cloud edges, brighter interiors.
+
+## Phase 3: Quarter-Res Bayer Temporal Upscale
+- [ ] 3.1 Change ray march resolution from half-res to quarter-res in `CloudPass::OnResize()`.
+- [ ] 3.2 Implement 4x4 Bayer matrix selection in `cloud_raymarch_cs.hlsl`: only trace pixel where `bayerMatrix[pixel.x % 4][pixel.y % 4] == frameCount % 16`.
+- [ ] 3.3 Rewrite `cloud_temporal_cs.hlsl` to full-resolution resolve: current-frame pixels pass through, others reproject + variance clip.
+- [ ] 3.4 Implement variance clipping: 3x3 neighborhood mean/stddev in YCoCg space, clip history to `mean ± gamma * stddev`.
+- [ ] 3.5 Add closest-depth velocity dilation: 3x3 search for closest fragment, use its velocity for reprojection.
+- [ ] 3.6 Add cloud front depth output from ray march (transmittance-weighted average depth) for better reprojection.
+- [ ] 3.7 Update ping-pong to work with quarter-res input + full-res output history.
+- [ ] 3.8 Build + visual verification: verify no ghosting, clean temporal convergence, measure frame time improvement.
+
+## Phase 4: Beer Shadow Maps (BSM)
+- [ ] 4.1 Create `cloud_shadow_cs.hlsl`: orthographic ray march from sun direction, output RGBA16F BSM (frontDepth, meanExtinction, maxOpticalDepth, tailOpticalDepth).
+- [ ] 4.2 Implement cascade frustum splitting (1-3 cascades, configurable) with practical split lambda.
+- [ ] 4.3 Create `cloud_shadow_resolve_cs.hlsl`: per-cascade temporal AA with variance clipping.
+- [ ] 4.4 Implement BSM sampling function: `SampleCloudShadow(worldPos, sunDir)` → `exp(-opticalDepth)`.
+- [ ] 4.5 Add Vogel disk 16-tap PCF for cloud shadow sampling with sun-angle-dependent filter radius.
+- [ ] 4.6 Integrate BSM sampling into `deferred_lighting_ps.hlsl`: `sunShadow *= SampleCloudShadow(worldPos, sunDir)`.
+- [ ] 4.7 Integrate BSM sampling into `cloud_raymarch_cs.hlsl` for improved self-shadow (replace current light march).
+- [ ] 4.8 Update `CloudPass` C++ to manage cascade textures, VP matrices, temporal history per cascade.
+- [ ] 4.9 Add component parameters: `shadowCascadeCount` (default 2), `shadowResolution` (default 512), `shadowDistance` (default 50 km).
+- [ ] 4.10 Build + visual verification: verify ground shadows from clouds, no shadow pop/shimmer.
+
+## Phase 5: Aerial Perspective on Clouds
+- [ ] 5.1 Compute transmittance-weighted average cloud depth in ray march output (new output channel or packed into alpha).
+- [ ] 5.2 Sample transmittance LUT from camera to cloud depth using existing Bruneton atmosphere system.
+- [ ] 5.3 Apply `cloudRadiance = cloudRadiance * atmTransmittance + atmInscatter * (1 - cloudTransmittance)`.
+- [ ] 5.4 Build + visual verification: verify distant clouds fade to blue/haze correctly.
+
+## Phase 6: Multi-Layer + Density Profiles
+- [ ] 6.1 Extend `VolumetricCloudsComponent` with `CloudLayer` sub-struct array (up to 4 layers). Per layer: channel, altitude, height, densityScale, shapeAmount, detailAmount, weatherExponent, shapeAlteringBias, densityProfile(exp,exp,linear,constant).
+- [ ] 6.2 Update weather map to use RGBA channels (one per layer). Support artist-authored weather texture path.
+- [ ] 6.3 Implement per-layer density profile evaluation: `expTerm * exp(exponent * h) + linearTerm * h + constantTerm`.
+- [ ] 6.4 Wire `cloudType` parameter to height-density gradient (stratus=flat, cumulus=towering profiles).
+- [ ] 6.5 Implement layer interval skipping: skip ray segments between layers where no clouds exist.
+- [ ] 6.6 Update CB packing to support per-layer float4 arrays.
+- [ ] 6.7 Build + visual verification: verify multiple distinct cloud layers at different altitudes.
+
+## Phase 7: Wire Dead Parameters + Cleanup
+- [ ] 7.1 Wire `tracingMaxDistanceKm` to shader: clamp ray march `tExit = min(tExit, tracingMaxDistKm)`.
+- [ ] 7.2 Wire `cloudType` to height gradient (if not done in 6.4).
+- [ ] 7.3 Remove hardcoded constants: parameterize `kSkyLightCloudBottomVisibility`, UV scale factors, height gradient ramp ranges, shadow march distance.
+- [ ] 7.4 Update `docs/references.md` with new cloud-related paper references.
+- [ ] 7.5 Update `docs/specs/rendering/atmosphere.md` cloud section.
+
+## Testing
+- [ ] 8.1 Visual test: screenshot at default camera — no banding, silver linings, ground shadows visible.
+- [ ] 8.2 Visual test: screenshot from above clouds — correct top-down appearance.
+- [ ] 8.3 Visual test: screenshot at sunset angle — correct phase function glow toward sun.
+- [ ] 8.4 Performance test: measure frame time before/after Bayer temporal upscale at 1080p.
+- [ ] 8.5 Temporal stability test: capture 60-frame sequence, verify no ghosting or flickering.

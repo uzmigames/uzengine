@@ -18,9 +18,11 @@
 #pragma once
 
 #include "rhi_types.h"
+#include "upload_context.h"
 #include "gi/mesh_sdf_baker.h"
 
 #include <cstdint>
+#include <vector>
 
 namespace uz {
 
@@ -60,6 +62,33 @@ struct GPUMesh {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// DeferredMeshUpload — Holds a GPUMesh and its staging buffers pending flush
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Holds a fully-populated `GPUMesh` alongside the `UploadContext` whose
+/// staging buffers are still alive. The GPU copy commands have been recorded
+/// on a command list but NOT yet executed — call `FlushDeferredMeshUploads()`
+/// to execute all pending copies in a single GPU submission.
+///
+/// Move-only — the `UploadContext` contains a `std::vector` of staging handles.
+struct DeferredMeshUpload {
+    GPUMesh       mesh;     ///< Populated mesh metadata (vertex/index count, formats, SRV index).
+    UploadContext upload;   ///< Staging buffers kept alive until flush.
+
+    /// Constructs a deferred upload bound to the given device for staging
+    /// buffer creation.
+    ///
+    /// # Arguments
+    /// * `device` - RHI device for staging buffer allocation. Must not be null.
+    explicit DeferredMeshUpload(IRHIDevice* device) : upload(device) {}
+
+    DeferredMeshUpload(const DeferredMeshUpload&)            = delete;
+    DeferredMeshUpload& operator=(const DeferredMeshUpload&) = delete;
+    DeferredMeshUpload(DeferredMeshUpload&&)                 = default;
+    DeferredMeshUpload& operator=(DeferredMeshUpload&&)      = default;
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Upload / Destroy
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -91,6 +120,56 @@ struct GPUMesh {
 /// - Buffer creation failure
 /// - Upload failure
 [[nodiscard]] GPUMesh UploadMesh(IRHIDevice* device, IRHICommandList* cmdList, const Mesh& mesh);
+
+/// Uploads a CPU-side `Mesh` to GPU default-heap buffers WITHOUT executing
+/// the command list or waiting for the GPU.
+///
+/// Records copy commands on `cmdList` (which must already be in recording
+/// state) and returns a `DeferredMeshUpload` that keeps the staging buffers
+/// alive. The command list is NOT ended, executed, or waited on — the caller
+/// must batch multiple deferred uploads and then call
+/// `FlushDeferredMeshUploads()` once to submit them all in a single GPU
+/// submission, avoiding per-mesh GPU stalls during scene loading.
+///
+/// All metadata fields (`vertexCount`, `indexCount`, `indexFormat`,
+/// `vbSrvIndex`) are populated immediately since they don't require GPU
+/// completion.
+///
+/// # Arguments
+/// * `device`  - RHI device for buffer creation. Must not be null.
+/// * `cmdList` - Command list in recording state. NOT ended by this function.
+/// * `mesh`    - CPU mesh data to upload. Must pass `Mesh::IsValid()`.
+///
+/// # Returns
+/// A populated `DeferredMeshUpload` on success. On failure, the returned
+/// `DeferredMeshUpload::mesh.IsValid()` returns false — no GPU resources are
+/// leaked.
+///
+/// # Errors
+/// Logs `Renderer::Error` on null arguments, invalid mesh, or buffer
+/// creation/upload failure.
+[[nodiscard]] DeferredMeshUpload UploadMeshDeferred(IRHIDevice* device, IRHICommandList* cmdList, const Mesh& mesh);
+
+/// Executes all pending deferred mesh uploads in a single GPU submission.
+///
+/// Ends the command list, executes it, waits for GPU idle, releases all
+/// staging buffers from every `DeferredMeshUpload`, then re-begins the
+/// command list so the caller can continue recording.
+///
+/// After this call, all `DeferredMeshUpload::mesh` instances are safe to use
+/// for rendering and the staging buffers have been freed.
+///
+/// # Arguments
+/// * `device`  - RHI device for WaitIdle. Must not be null.
+/// * `cmdList` - Command list with pending copy commands. Will be ended,
+///   executed, waited on, and re-begun.
+/// * `uploads` - Vector of deferred uploads whose staging buffers will be
+///   released. May be empty (still submits/restarts the command list).
+///
+/// # Errors
+/// Logs `Renderer::Error` if device or command list is null.
+void FlushDeferredMeshUploads(IRHIDevice* device, IRHICommandList* cmdList,
+                              std::vector<DeferredMeshUpload>& uploads);
 
 /// Destroys GPU buffers owned by a `GPUMesh` and resets it to default state.
 ///

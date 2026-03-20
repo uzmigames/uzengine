@@ -133,6 +133,106 @@ GPUMesh UploadMesh(IRHIDevice* device, IRHICommandList* cmdList, const Mesh& mes
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// UploadMeshDeferred
+// ─────────────────────────────────────────────────────────────────────────────
+
+DeferredMeshUpload UploadMeshDeferred(IRHIDevice* device, IRHICommandList* cmdList, const Mesh& mesh) {
+    DeferredMeshUpload result(device);
+
+    if (!device || !cmdList) {
+        UZ_LOG(Renderer, Error, "UploadMeshDeferred: null device or command list");
+        return result;
+    }
+
+    if (!mesh.IsValid()) {
+        UZ_LOG(Renderer, Error, "UploadMeshDeferred: invalid mesh (failed IsValid check)");
+        return result;
+    }
+
+    // -- Create vertex buffer --
+    const RHIBufferDesc vbDesc = MakeVertexBufferDesc(device, mesh);
+    result.mesh.vertexBuffer = device->CreateBuffer(vbDesc);
+    if (!result.mesh.vertexBuffer.IsValid()) {
+        UZ_LOG(Renderer, Error, "UploadMeshDeferred: failed to create vertex buffer ({} bytes)", vbDesc.sizeBytes);
+        return result;
+    }
+
+    // -- Create index buffer (optional) --
+    const bool hasIndices = mesh.GetIndexCount() > 0;
+    if (hasIndices) {
+        const RHIBufferDesc ibDesc = MakeIndexBufferDesc(mesh);
+        result.mesh.indexBuffer = device->CreateBuffer(ibDesc);
+        if (!result.mesh.indexBuffer.IsValid()) {
+            UZ_LOG(Renderer, Error, "UploadMeshDeferred: failed to create index buffer ({} bytes)", ibDesc.sizeBytes);
+            SafeDestroyBuffer(device, result.mesh.vertexBuffer);
+            return result;
+        }
+    }
+
+    // -- Upload via staging buffers (commands recorded, NOT executed) --
+    if (!result.upload.UploadBuffer(cmdList, result.mesh.vertexBuffer, mesh.vertexData.data(), mesh.GetVertexDataSize())) {
+        UZ_LOG(Renderer, Error, "UploadMeshDeferred: failed to upload vertex data ({} bytes)", mesh.GetVertexDataSize());
+        SafeDestroyBuffer(device, result.mesh.vertexBuffer);
+        SafeDestroyBuffer(device, result.mesh.indexBuffer);
+        return result;
+    }
+
+    if (hasIndices) {
+        if (!result.upload.UploadBuffer(cmdList, result.mesh.indexBuffer, mesh.indexData.data(), mesh.GetIndexDataSize())) {
+            UZ_LOG(Renderer, Error, "UploadMeshDeferred: failed to upload index data ({} bytes)", mesh.GetIndexDataSize());
+            SafeDestroyBuffer(device, result.mesh.vertexBuffer);
+            SafeDestroyBuffer(device, result.mesh.indexBuffer);
+            return result;
+        }
+    }
+
+    // -- Populate metadata (no GPU completion needed) --
+    result.mesh.vertexCount = mesh.GetVertexCount();
+    result.mesh.indexCount  = mesh.GetIndexCount();
+    result.mesh.indexFormat  = (mesh.header.indexFormat == MeshIndexFormat::UInt16)
+                                  ? RHIIndexFormat::Uint16
+                                  : RHIIndexFormat::Uint32;
+
+    // -- Bindless SRV index --
+    if (device->IsBindless()) {
+        result.mesh.vbSrvIndex = device->GetBufferSRVIndex(result.mesh.vertexBuffer);
+    }
+
+    UZ_LOG(Renderer, Info, "UploadMeshDeferred: queued {} vertices, {} indices (bindless SRV={})",
+           result.mesh.vertexCount, result.mesh.indexCount,
+           result.mesh.vbSrvIndex != UINT32_MAX ? static_cast<int>(result.mesh.vbSrvIndex) : -1);
+
+    return result;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FlushDeferredMeshUploads
+// ─────────────────────────────────────────────────────────────────────────────
+
+void FlushDeferredMeshUploads(IRHIDevice* device, IRHICommandList* cmdList,
+                              std::vector<DeferredMeshUpload>& uploads) {
+    if (!device || !cmdList) {
+        UZ_LOG(Renderer, Error, "FlushDeferredMeshUploads: null device or command list");
+        return;
+    }
+
+    // Single GPU submission for all batched copy commands.
+    cmdList->End();
+    cmdList->Execute();
+    device->WaitIdle();
+
+    // All copies are complete — safe to release staging buffers.
+    for (auto& upload : uploads) {
+        upload.upload.ReleaseStaging();
+    }
+
+    // Resume recording so the caller can continue using the command list.
+    cmdList->Begin();
+
+    UZ_LOG(Renderer, Info, "FlushDeferredMeshUploads: flushed {} deferred mesh uploads", uploads.size());
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // DestroyGPUMesh
 // ─────────────────────────────────────────────────────────────────────────────
 

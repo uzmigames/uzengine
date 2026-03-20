@@ -1,0 +1,9 @@
+.{
+    .name = .cornell_box_demo,
+    .version = "0.1.0",
+    .fingerprint = 0xef853be4459f844a,
+    .dependencies = .{
+        .uz_demo_common = .{ .path = "../common" },
+    },
+    .paths = .{"build.zig"},
+}

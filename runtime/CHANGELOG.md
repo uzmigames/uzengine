@@ -2,6 +2,31 @@
 
 > **Repository**: https://github.com/uzmigames/uzengine
 
+## [0.2.39] — 2026-03-20
+
+### Scene Load Optimization — 25s → <0.5s (250x speedup)
+
+**Batched mesh uploads** (`runtime/engine/renderer/mesh/gpu_mesh.cpp`):
+- `UploadMeshDeferred()` records copy commands without GPU flush. `FlushDeferredMeshUploads()` submits all pending mesh copies in a single `WaitIdle()`. Eliminates N serial GPU stalls per scene (was 10+ for PBR test scene).
+- `DeferredMeshUpload` struct holds `GPUMesh` + `UploadContext` staging buffers until batch flush. Move-only to track staging ownership.
+
+**Non-blocking texture loading** (`runtime/engine/renderer/scene/scene_assets.cpp`):
+- Removed blocking `while(PendingCount > 0) { sleep(1ms) }` loop in `FlushPendingLoads()`. Async-decoded textures now trickle-upload per frame — scene renders immediately with fallback textures, real textures pop in over 2-3 frames.
+
+**Deferred SDF bake** (`runtime/engine/renderer/scene/scene_assets.cpp`):
+- `PendingSdfBake` struct holds CPU mesh data for deferred GPU compute bake. `FlushSdfBakes()` batches all mesh SDF dispatches into one command list after mesh uploads complete.
+- SDF bake removed from `LoadMesh()` critical path — no more per-mesh lazy shader compile + GPU compute during scene loading.
+
+**PSO pre-warm at startup** (`runtime/engine/renderer/core/pipeline/pipeline_lifecycle.cpp`):
+- Extended `PipelineLibrary::WarmupAll()` from ~25 to 43 pipelines — added atmosphere LUTs, tonemap, color grading, TAA/TSR, DoF, instanced variants, SSGI (5 passes), GDF composite, mesh SDF bake, radiance cache, CAS sharpen.
+- `WarmupAll()` called during `SceneRenderer::Init()` before any scene loading. All 43 PSOs compiled from shader cache in ~80ms (was lazy: 20-35 DXC invocations stalling first frame).
+
+**Measured results** (PBR test scene, RTX 4090, warm shader cache):
+- Init to render loop: ~123ms (was 25-30s)
+- First frame: renders immediately at 215+ FPS
+- Mesh upload stalls: 1 WaitIdle (was 10+)
+- Lazy shader compiles during first frame: 0 (was 20-35)
+
 ## [0.2.38] — 2026-03-18
 
 ### Temporal Upscaling System — ITemporalUpscaler, TSR, Dynamic Resolution

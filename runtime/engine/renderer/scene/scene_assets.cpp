@@ -1,30 +1,31 @@
 /// UzEngine Scene Renderer — Asset loading (LoadMesh, LoadTexture, Queue*, DestroyAssets).
 ///
+/// Mesh loading uses deferred uploads: `UploadMeshDeferred()` records copy
+/// commands on the command list but does NOT execute/WaitIdle. Staging buffers
+/// are kept alive in `m_deferredMeshUploads`. A single `FlushDeferredMeshUploads()`
+/// call at the end of the sync pass executes all copies in one GPU submission.
+///
 /// Texture loading uses a two-phase async pipeline:
 ///   1. Submit phase: `LoadTexture()` / `QueueTextureLoad()` reserve a slot in
 ///      m_textures and submit the path to the AsyncTextureDecoder for background
 ///      CPU decode (stbi_load on worker threads).
-///   2. Flush phase: `FlushPendingLoads()` polls completed decodes and batch-
-///      uploads all decoded pixels to the GPU in a single command list submission
-///      (one WaitIdle for the entire batch instead of one per texture).
-///
-/// This provides a 2-4x speedup for scenes with many textures (e.g., 45 textures
-/// for 9 PBR materials) by overlapping CPU decode work across 2 worker threads
-/// and batching GPU uploads.
+///   2. Flush phase: `FlushPendingLoads()` polls completed decodes (non-blocking)
+///      and uploads whatever is ready this frame. Remaining in-flight decodes are
+///      picked up on subsequent frames, spreading upload cost across frames.
 
 #include "scene_renderer.h"
 
 #include "async_texture_decoder.h"
 #include "mesh.h"
 #include "gpu_mesh.h"
-#include "gi/mesh_sdf_baker.h"
-#include "pipeline_library.h"
 #include "texture_loader.h"
 #include "upload_context.h"
 #include "vfs.h"
 #include "rhi.h"
 #include "log.h"
 #include "profiler.h"
+#include "gi/mesh_sdf_baker.h"
+#include "pipeline_library.h"
 
 #include <chrono>
 #include <thread>
@@ -36,7 +37,7 @@
 namespace uz {
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Asset Loading — Meshes (unchanged, synchronous)
+// Asset Loading — Meshes (deferred upload, flushed in batch)
 // ─────────────────────────────────────────────────────────────────────────────
 
 uint32_t SceneRenderer::LoadMesh(const std::string& path, IVFS* vfs,
@@ -73,56 +74,35 @@ uint32_t SceneRenderer::LoadMesh(const std::string& path, IVFS* vfs,
         return UINT32_MAX;
     }
 
-    GPUMesh gpuMesh = UploadMesh(m_device, cmdList, cpuMesh);
-    if (!gpuMesh.IsValid()) {
+    DeferredMeshUpload deferred = UploadMeshDeferred(m_device, cmdList, cpuMesh);
+    if (!deferred.mesh.IsValid()) {
         UZ_LOG(Renderer, Error, "SceneRenderer: failed to upload mesh: '{}'", path);
         return UINT32_MAX;
     }
 
-    // ── Bake mesh SDF for GI system (Global Distance Field composite) ────
-    // Extract vertex positions and indices from the CPU mesh for the SDF baker.
-    // Position is the first 3 floats at each vertex (Vertex::position = Vec3).
-    // The baker produces a dense R16F 3D texture for sphere-march GI tracing.
+    const auto index = static_cast<uint32_t>(m_meshes.size());
+    m_meshes.push_back(deferred.mesh);  // copy handles (GPUMesh is trivially copyable)
+    m_meshMap[path] = index;
+    m_deferredMeshUploads.push_back(std::move(deferred));  // move staging ownership
+
+    // ── Queue SDF bake for GI system (deferred — runs after mesh upload flush) ──
+    // Only standard-format meshes with valid geometry are eligible for SDF baking.
+    // Read counts/stride from the header BEFORE moving the vectors (header is not moved).
     if (cpuMesh.header.vertexFormat == MeshVertexFormat::Standard
         && cpuMesh.GetVertexCount() > 0 && cpuMesh.GetIndexCount() >= 3)
     {
-        const auto* positions = reinterpret_cast<const float*>(cpuMesh.vertexData.data());
-        const uint32_t vertexStride = cpuMesh.header.vertexStride;
-        const auto* indices = reinterpret_cast<const uint32_t*>(cpuMesh.indexData.data());
-
-        // GPU bake: dispatch compute shader for mesh SDF generation.
-        // Falls back to CPU bake if the pipeline isn't available.
-        auto bakePipeline = m_pipelines->GetMeshSdfBake();
-        if (bakePipeline.IsValid()) {
-            gpuMesh.sdf = MeshSdfBaker::BakeMeshGPU(
-                m_device, cmdList, bakePipeline,
-                positions, cpuMesh.GetVertexCount(), vertexStride,
-                indices, cpuMesh.GetIndexCount(), 32);
-            if (gpuMesh.sdf.valid) {
-                // Defer tri buffer destruction until GPU finishes this command list
-                if (gpuMesh.sdf.pendingTriBuffer.IsValid()) {
-                    m_deferredDestroyBuffers.push_back(gpuMesh.sdf.pendingTriBuffer);
-                    gpuMesh.sdf.pendingTriBuffer = RHIBufferHandle{};
-                }
-                UZ_LOG(Renderer, Info,
-                       "SceneRenderer: GPU-baked mesh SDF '{}' (res={}, SRV={})",
-                       path, 32, gpuMesh.sdf.srvIndex);
-            }
-        }
-
-        if (!gpuMesh.sdf.valid) {
-            UZ_LOG(Renderer, Warning,
-                   "SceneRenderer: SDF bake failed for '{}' ({} verts, {} indices)",
-                   path, cpuMesh.GetVertexCount(), cpuMesh.GetIndexCount());
-        }
+        PendingSdfBake sdfBake;
+        sdfBake.meshIndex    = index;
+        sdfBake.vertexCount  = cpuMesh.GetVertexCount();
+        sdfBake.vertexStride = cpuMesh.header.vertexStride;
+        sdfBake.indexCount   = cpuMesh.GetIndexCount();
+        sdfBake.vertexData   = std::move(cpuMesh.vertexData);
+        sdfBake.indexData    = std::move(cpuMesh.indexData);
+        m_pendingSdfBakes.push_back(std::move(sdfBake));
     }
 
-    const auto index = static_cast<uint32_t>(m_meshes.size());
-    m_meshes.push_back(gpuMesh);
-    m_meshMap[path] = index;
-
     UZ_LOG(Renderer, Info, "SceneRenderer: loaded mesh '{}' (id={}, {} vertices, {} indices)",
-           path, index, gpuMesh.vertexCount, gpuMesh.indexCount);
+           path, index, m_meshes[index].vertexCount, m_meshes[index].indexCount);
     return index;
 }
 
@@ -253,7 +233,7 @@ std::string SceneRenderer::GetTexturePath(uint32_t textureId) const {
 void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {
     UZ_PROFILE_FUNCTION();
 
-    // ── Flush pending mesh uploads (synchronous) ──────────────────────
+    // ── Flush pending mesh uploads (deferred — batched into single submission) ──
     for (const std::string& path : m_pendingMeshPaths) {
         const uint32_t slotIndex = m_meshMap.at(path);
         Mesh cpuMesh = uz::LoadMesh(path);
@@ -261,42 +241,45 @@ void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {
             UZ_LOG(Renderer, Error, "SceneRenderer: failed to load queued mesh '{}'", path);
             continue;
         }
-        GPUMesh gpuMesh = UploadMesh(m_device, cmdList, cpuMesh);
-        if (!gpuMesh.IsValid()) {
+        DeferredMeshUpload deferred = UploadMeshDeferred(m_device, cmdList, cpuMesh);
+        if (!deferred.mesh.IsValid()) {
             UZ_LOG(Renderer, Error, "SceneRenderer: failed to upload queued mesh '{}'", path);
             continue;
         }
 
-        // Bake mesh SDF for GI system (same logic as LoadMesh).
+        m_meshes[slotIndex] = deferred.mesh;  // copy handles into slot
+        m_deferredMeshUploads.push_back(std::move(deferred));  // move staging ownership
+
+        // Queue SDF bake for the Lua-path loaded mesh (same logic as LoadMesh).
         if (cpuMesh.header.vertexFormat == MeshVertexFormat::Standard
             && cpuMesh.GetVertexCount() > 0 && cpuMesh.GetIndexCount() >= 3)
         {
-            const auto* positions = reinterpret_cast<const float*>(cpuMesh.vertexData.data());
-            const auto* indices = reinterpret_cast<const uint32_t*>(cpuMesh.indexData.data());
-
-            auto bakePipeline2 = m_pipelines->GetMeshSdfBake();
-            if (bakePipeline2.IsValid()) {
-                gpuMesh.sdf = MeshSdfBaker::BakeMeshGPU(
-                    m_device, cmdList, bakePipeline2,
-                    positions, cpuMesh.GetVertexCount(), cpuMesh.header.vertexStride,
-                    indices, cpuMesh.GetIndexCount(), 32);
-                if (gpuMesh.sdf.valid && gpuMesh.sdf.pendingTriBuffer.IsValid()) {
-                    m_deferredDestroyBuffers.push_back(gpuMesh.sdf.pendingTriBuffer);
-                    gpuMesh.sdf.pendingTriBuffer = RHIBufferHandle{};
-                }
-            }
-            if (!gpuMesh.sdf.valid) {
-                UZ_LOG(Renderer, Warning,
-                       "SceneRenderer: GPU SDF bake failed for '{}'", path);
-            }
+            PendingSdfBake sdfBake;
+            sdfBake.meshIndex    = slotIndex;
+            sdfBake.vertexCount  = cpuMesh.GetVertexCount();
+            sdfBake.vertexStride = cpuMesh.header.vertexStride;
+            sdfBake.indexCount   = cpuMesh.GetIndexCount();
+            sdfBake.vertexData   = std::move(cpuMesh.vertexData);
+            sdfBake.indexData    = std::move(cpuMesh.indexData);
+            m_pendingSdfBakes.push_back(std::move(sdfBake));
         }
 
-        m_meshes[slotIndex] = gpuMesh;
         UZ_LOG(Renderer, Info,
             "SceneRenderer: flushed mesh '{}' (id={}, {} verts, {} indices)",
-            path, slotIndex, gpuMesh.vertexCount, gpuMesh.indexCount);
+            path, slotIndex, m_meshes[slotIndex].vertexCount, m_meshes[slotIndex].indexCount);
     }
     m_pendingMeshPaths.clear();
+
+    // ── Batch-flush deferred mesh uploads in a single GPU submission ──────
+    if (!m_deferredMeshUploads.empty()) {
+        FlushDeferredMeshUploads(m_device, cmdList, m_deferredMeshUploads);
+        m_deferredMeshUploads.clear();
+    }
+
+    // ── Batch SDF bake for queued meshes ─────────────────────────────────
+    if (!m_pendingSdfBakes.empty()) {
+        FlushSdfBakes(cmdList);
+    }
 
     // ── Flush pending synchronous texture uploads (fallback path) ───────
     // Only used if m_asyncDecoder was not available when QueueTextureLoad
@@ -322,25 +305,17 @@ void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {
     // GPU upload cost across multiple frames instead of one large stall.
     if (!m_asyncDecoder) return;
 
-    // Poll completed decodes. If there are still in-flight decodes, wait for
-    // ALL to complete so we can do a single batch GPU upload + single WaitIdle.
+    // Poll completed decodes (non-blocking). Whatever is ready gets uploaded
+    // this frame; remaining in-flight decodes are picked up next frame.
     {
         auto newlyDecoded = m_asyncDecoder->PollCompleted();
         for (auto& d : newlyDecoded) {
             m_deferredDecoded.push_back(std::move(d));
         }
 
-        // If textures are still being decoded, block until all finish.
-        // This ensures a single batch upload instead of per-frame trickle.
-        while (m_asyncDecoder->PendingCount() > 0) {
-            auto more = m_asyncDecoder->PollCompleted();
-            for (auto& d : more) {
-                m_deferredDecoded.push_back(std::move(d));
-            }
-            if (m_asyncDecoder->PendingCount() > 0) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            }
-        }
+        // Non-blocking: upload whatever is ready this frame. Remaining
+        // in-flight decodes will be picked up on the next FlushPendingLoads()
+        // call, spreading GPU upload cost across frames instead of stalling.
     }
 
     if (m_deferredDecoded.empty()) return;
@@ -441,6 +416,64 @@ bool SceneRenderer::IsSceneFullyLoaded() const {
     if (m_asyncDecoder && m_asyncDecoder->PendingCount() > 0) return false;
     // Must have rendered at least 2 frames (for pipeline creation + first dispatch)
     return true;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FlushSdfBakes — batch GPU SDF bake for all pending meshes
+// ─────────────────────────────────────────────────────────────────────────────
+
+void SceneRenderer::FlushSdfBakes(IRHICommandList* cmdList) {
+    if (m_pendingSdfBakes.empty()) return;
+
+    auto bakePipeline = m_pipelines->GetMeshSdfBake();
+    if (!bakePipeline.IsValid()) {
+        UZ_LOG(Renderer, Warning,
+               "SceneRenderer: SDF bake pipeline not available — skipping {} pending bakes",
+               m_pendingSdfBakes.size());
+        m_pendingSdfBakes.clear();
+        return;
+    }
+
+    UZ_LOG(Renderer, Info, "SceneRenderer: batch SDF bake — {} meshes",
+           m_pendingSdfBakes.size());
+
+    for (auto& bake : m_pendingSdfBakes) {
+        if (bake.meshIndex >= static_cast<uint32_t>(m_meshes.size())) continue;
+
+        const auto* positions = reinterpret_cast<const float*>(bake.vertexData.data());
+        const auto* indices   = reinterpret_cast<const uint32_t*>(bake.indexData.data());
+
+        MeshSDF sdf = MeshSdfBaker::BakeMeshGPU(
+            m_device, cmdList, bakePipeline,
+            positions, bake.vertexCount, bake.vertexStride,
+            indices, bake.indexCount, 32);
+
+        if (sdf.valid) {
+            // Defer destruction of the temporary triangle upload buffer until the
+            // GPU finishes the command list that references it.
+            if (sdf.pendingTriBuffer.IsValid()) {
+                m_deferredDestroyBuffers.push_back(sdf.pendingTriBuffer);
+                sdf.pendingTriBuffer = RHIBufferHandle{};
+            }
+            m_meshes[bake.meshIndex].sdf = sdf;
+            UZ_LOG(Renderer, Info,
+                   "SceneRenderer: GPU-baked mesh SDF (meshIdx={}, res={}, SRV={})",
+                   bake.meshIndex, 32, sdf.srvIndex);
+        } else {
+            UZ_LOG(Renderer, Warning,
+                   "SceneRenderer: SDF bake failed for meshIdx={} ({} verts, {} indices)",
+                   bake.meshIndex, bake.vertexCount, bake.indexCount);
+        }
+    }
+
+    // All SDF dispatches are on the command list — flush once and wait for GPU.
+    cmdList->End();
+    cmdList->Execute();
+    m_device->WaitIdle();
+    cmdList->Begin();
+
+    m_pendingSdfBakes.clear();
+    UZ_LOG(Renderer, Info, "SceneRenderer: SDF batch bake complete");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

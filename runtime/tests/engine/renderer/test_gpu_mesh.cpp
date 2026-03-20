@@ -290,3 +290,127 @@ TEST(RHIBufferHandle, DifferentGeneration_CompareNotEqual) {
     RHIBufferHandle b{1u, 2u};
     EXPECT_NE(a, b);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DeferredMeshUpload — struct traits and default state
+// ─────────────────────────────────────────────────────────────────────────────
+
+#include <type_traits>
+
+/// DeferredMeshUpload must be move-constructible so uploads can be stored in a
+/// std::vector without copying UploadContext's staging buffer handles.
+static_assert(std::is_move_constructible_v<DeferredMeshUpload>,
+    "DeferredMeshUpload must be move-constructible");
+
+/// DeferredMeshUpload must NOT be copy-constructible — the UploadContext holds
+/// GPU staging handles that must not be duplicated.
+static_assert(!std::is_copy_constructible_v<DeferredMeshUpload>,
+    "DeferredMeshUpload must not be copy-constructible");
+
+/// DeferredMeshUpload must be move-assignable so it can be used with
+/// std::vector resize and element replacement.
+static_assert(std::is_move_assignable_v<DeferredMeshUpload>,
+    "DeferredMeshUpload must be move-assignable");
+
+/// DeferredMeshUpload must NOT be copy-assignable for the same reason it is
+/// not copy-constructible.
+static_assert(!std::is_copy_assignable_v<DeferredMeshUpload>,
+    "DeferredMeshUpload must not be copy-assignable");
+
+/// UploadMeshDeferred with a null device returns a DeferredMeshUpload whose
+/// mesh is invalid — no GPU resources were created.
+TEST(UploadMeshDeferred, NullDevice_NullCmdList_MeshIsInvalid) {
+    Mesh emptyMesh{};
+    DeferredMeshUpload result = UploadMeshDeferred(nullptr, nullptr, emptyMesh);
+
+    EXPECT_FALSE(result.mesh.IsValid())
+        << "UploadMeshDeferred with null device must return a DeferredMeshUpload "
+           "whose mesh.IsValid() is false";
+}
+
+/// UploadMeshDeferred with null device must return invalid vertex buffer handle.
+TEST(UploadMeshDeferred, NullDevice_VertexBuffer_IsInvalid) {
+    Mesh emptyMesh{};
+    DeferredMeshUpload result = UploadMeshDeferred(nullptr, nullptr, emptyMesh);
+
+    EXPECT_FALSE(result.mesh.vertexBuffer.IsValid())
+        << "DeferredMeshUpload returned from null-device call must have "
+           "invalid vertex buffer";
+}
+
+/// UploadMeshDeferred with null device must return invalid index buffer handle.
+TEST(UploadMeshDeferred, NullDevice_IndexBuffer_IsInvalid) {
+    Mesh emptyMesh{};
+    DeferredMeshUpload result = UploadMeshDeferred(nullptr, nullptr, emptyMesh);
+
+    EXPECT_FALSE(result.mesh.indexBuffer.IsValid())
+        << "DeferredMeshUpload returned from null-device call must have "
+           "invalid index buffer";
+}
+
+/// UploadMeshDeferred with null device must return zero vertexCount.
+TEST(UploadMeshDeferred, NullDevice_VertexCount_IsZero) {
+    Mesh emptyMesh{};
+    DeferredMeshUpload result = UploadMeshDeferred(nullptr, nullptr, emptyMesh);
+
+    EXPECT_EQ(result.mesh.vertexCount, 0u)
+        << "DeferredMeshUpload returned from null-device call must have "
+           "zero vertexCount";
+}
+
+/// UploadMeshDeferred with null device must return zero indexCount.
+TEST(UploadMeshDeferred, NullDevice_IndexCount_IsZero) {
+    Mesh emptyMesh{};
+    DeferredMeshUpload result = UploadMeshDeferred(nullptr, nullptr, emptyMesh);
+
+    EXPECT_EQ(result.mesh.indexCount, 0u)
+        << "DeferredMeshUpload returned from null-device call must have "
+           "zero indexCount";
+}
+
+/// UploadMeshDeferred must not crash when called repeatedly with null arguments.
+/// Verifies the null guard is stateless and tolerates repeated calls.
+TEST(UploadMeshDeferred, NullDevice_CalledMultipleTimes_DoesNotCrash) {
+    Mesh emptyMesh{};
+    EXPECT_NO_FATAL_FAILURE({
+        for (int i = 0; i < 5; ++i) {
+            DeferredMeshUpload r = UploadMeshDeferred(nullptr, nullptr, emptyMesh);
+            (void)r;
+        }
+    });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FlushDeferredMeshUploads — null-safety
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// FlushDeferredMeshUploads with empty uploads vector and null device must not
+/// crash — the null guard must fire before any GPU submission is attempted.
+TEST(FlushDeferredMeshUploads, NullDevice_EmptyVector_DoesNotCrash) {
+    std::vector<DeferredMeshUpload> uploads;
+    EXPECT_NO_FATAL_FAILURE({
+        FlushDeferredMeshUploads(nullptr, nullptr, uploads);
+    });
+}
+
+/// FlushDeferredMeshUploads with null device and null cmdList must leave the
+/// uploads vector unmodified (still empty on entry, still empty on exit).
+TEST(FlushDeferredMeshUploads, NullDevice_EmptyVector_VectorUnchanged) {
+    std::vector<DeferredMeshUpload> uploads;
+    FlushDeferredMeshUploads(nullptr, nullptr, uploads);
+
+    EXPECT_TRUE(uploads.empty())
+        << "FlushDeferredMeshUploads must not modify the uploads vector "
+           "when called with null device";
+}
+
+/// FlushDeferredMeshUploads must not crash when called multiple times with a
+/// null device and empty vector — verifies no internal state is corrupted.
+TEST(FlushDeferredMeshUploads, NullDevice_CalledMultipleTimes_DoesNotCrash) {
+    std::vector<DeferredMeshUpload> uploads;
+    EXPECT_NO_FATAL_FAILURE({
+        for (int i = 0; i < 3; ++i) {
+            FlushDeferredMeshUploads(nullptr, nullptr, uploads);
+        }
+    });
+}

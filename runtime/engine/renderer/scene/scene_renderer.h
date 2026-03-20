@@ -807,6 +807,27 @@ private:
     /// Flushed at the start of each frame after the previous frame's fence.
     std::vector<RHIBufferHandle> m_deferredDestroyBuffers;
 
+    /// Pending deferred mesh uploads accumulated during SyncWorldToDrawList.
+    /// Flushed in a single GPU submission at the end of the sync pass.
+    std::vector<DeferredMeshUpload> m_deferredMeshUploads;
+
+    // ── Deferred SDF Baking ─────────────────────────────────────────────────
+
+    /// Pending SDF bake request — holds CPU mesh data and mesh index for
+    /// deferred batch bake after all mesh uploads are flushed.
+    struct PendingSdfBake {
+        uint32_t meshIndex;                 ///< Index into m_meshes to receive the baked SDF.
+        std::vector<uint8_t> vertexData;    ///< CPU vertex bytes (moved from Mesh).
+        uint32_t vertexCount;               ///< Number of vertices.
+        uint32_t vertexStride;              ///< Byte stride between vertices.
+        std::vector<uint8_t> indexData;     ///< CPU index bytes (moved from Mesh).
+        uint32_t indexCount;                ///< Number of indices.
+    };
+
+    /// Pending SDF bakes accumulated during mesh loading.
+    /// Flushed in a single batch after mesh uploads complete.
+    std::vector<PendingSdfBake> m_pendingSdfBakes;
+
     // ── Loaded Assets ──────────────────────────────────────────────────────
 
     std::vector<GPUMesh> m_meshes;
@@ -867,6 +888,20 @@ private:
     ///
     /// Requires a command list in recording state for GPU uploads.
     void FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs);
+
+    /// Batch-bakes all pending mesh SDFs in a single GPU submission.
+    ///
+    /// Called after `FlushDeferredMeshUploads()` completes so mesh vertex/index
+    /// data is on the GPU and the command list is in recording state.
+    ///
+    /// Each bake dispatches the mesh_sdf_bake_cs compute shader via
+    /// `MeshSdfBaker::BakeMeshGPU`. The resulting `MeshSDF` is stored in the
+    /// corresponding `m_meshes[meshIndex].sdf`. Temporary triangle upload
+    /// buffers are deferred for destruction after the GPU finishes.
+    ///
+    /// # Arguments
+    /// * `cmdList` — Command list in recording state.
+    void FlushSdfBakes(IRHICommandList* cmdList);
 
     /// Creates the shadow atlas depth texture.
     // Shadow atlas creation moved to ShadowAtlas::Init()

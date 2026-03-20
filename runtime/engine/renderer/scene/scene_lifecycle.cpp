@@ -80,6 +80,13 @@ bool SceneRenderer::Init(IRHIDevice* device, PlatformWindow* window,
         return false;
     }
 
+    // ── Pre-warm all pipelines eagerly ──────────────────────────────────
+    // Compile all standard shaders now to avoid lazy DXC invocations during
+    // the first rendered frame. This eliminates 20-35 cold shader compiles
+    // that would otherwise stall the render thread on first use.
+    const uint32_t warmedPipelines = m_pipelines->WarmupAll();
+    UZ_LOG(Renderer, Info, "SceneRenderer: pre-warmed {} pipelines at startup", warmedPipelines);
+
     // ── CB Ring Allocator ───────────────────────────────────────────────
     m_cbRing = std::make_unique<CBRingAllocator>();
     m_cbRing->Init(device, kCBRingFrames, kCBRingBytesPerFrame);

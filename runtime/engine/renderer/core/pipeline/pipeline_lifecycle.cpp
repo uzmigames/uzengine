@@ -342,6 +342,43 @@ uint32_t PipelineLibrary::WarmupAll() {
     warmup(GetMotionBlurTileMax(), "MotionBlurTileMax");
     warmup(GetMotionBlurNeighborMax(), "MotionBlurNeighborMax");
     warmup(GetFxaa(), "FXAA");
+    warmup(GetCasSharpen(), "CAS_Sharpen");
+
+    // ── Atmosphere / LUT pipelines ──────────────────────────────────────
+    warmup(GetMultiScatterLut(), "MultiScatterLUT");
+    warmup(GetAerialPerspectiveVolume(), "AerialPerspectiveVolume");
+
+    // ── Tonemap / Color grading ─────────────────────────────────────────
+    warmup(GetTonemap(), "Tonemap");
+    warmup(GetColorGradingLut(), "ColorGradingLUT");
+
+    // ── TAA / TSR ───────────────────────────────────────────────────────
+    warmup(GetTaaResolve(), "TAA_Resolve");
+    warmup(GetTsrDilateVelocity(), "TSR_DilateVelocity");
+    warmup(GetTsrRejectShading(), "TSR_RejectShading");
+    warmup(GetTsrUpdateHistory(), "TSR_UpdateHistory");
+
+    // ── DoF ─────────────────────────────────────────────────────────────
+    warmup(GetDofSetup(), "DoF_Setup");
+    warmup(GetDofBlur(), "DoF_Blur");
+
+    // ── Instanced variants ──────────────────────────────────────────────
+    warmup(GetGBufferInstanced(), "GBuffer_Instanced");
+    warmup(GetShadowDepthInstanced(), "ShadowDepth_Instanced");
+    warmup(GetDepthPrepassInstanced(), "DepthPrepass_Instanced");
+
+    // ── Fullscreen debug ────────────────────────────────────────────────
+    warmup(GetVisFullscreen(), "Vis_Fullscreen");
+
+    // ── GI pipelines (SSGI + GDF + Radiance Cache + SDF) ────────────────
+    warmup(GetSsgiPrevColorReduce(), "SSGI_PrevColorReduce");
+    warmup(GetSsgiTrace(), "SSGI_Trace");
+    warmup(GetSsgiSpatialDenoise(), "SSGI_SpatialDenoise");
+    warmup(GetSsgiTemporalAccum(), "SSGI_TemporalAccum");
+    warmup(GetSsgiBilateralUpsample(), "SSGI_BilateralUpsample");
+    warmup(GetGdfComposite(), "GDF_Composite");
+    warmup(GetMeshSdfBake(), "MeshSDF_Bake");
+    warmup(GetRadianceCacheTrace(), "RadianceCache_Trace");
 
     // SM5 variants if device is bindless (need both paths)
     if (bindless) {

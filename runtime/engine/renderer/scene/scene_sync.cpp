@@ -223,6 +223,21 @@ void SceneRenderer::SyncWorldToDrawList(World* world, IVFS* vfs,
         outDrawList.Add(cmd);
         drawIndex++;
     }
+
+    // ── Flush batched mesh uploads ───────────────────────────────────────
+    // All meshes loaded during this sync pass were deferred — submit all
+    // copy commands in a single GPU submission instead of one per mesh.
+    if (!m_deferredMeshUploads.empty()) {
+        FlushDeferredMeshUploads(m_device, cmdList, m_deferredMeshUploads);
+        UZ_LOG(Renderer, Info, "SyncWorldToDrawList: flushed {} deferred mesh uploads",
+               m_deferredMeshUploads.size());
+        m_deferredMeshUploads.clear();
+    }
+
+    // ── Batch SDF bake for queued meshes ─────────────────────────────────
+    if (!m_pendingSdfBakes.empty()) {
+        FlushSdfBakes(cmdList);
+    }
 }
 
 } // namespace uz

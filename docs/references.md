@@ -583,3 +583,65 @@ See [Ramamoorthi & Hanrahan 2001](#ramamoorthi--hanrahan-2001--sh-irradiance) in
 - **URL**: https://developer.download.nvidia.com/assets/gamedev/files/sdk/11/FXAA_WhitePaper.pdf
 - **Used in**: `fxaa_ps.hlsl`
 - **Key contribution**: Single-pass morphological edge AA using luminance gradients.
+
+---
+
+## 25. Volumetric Clouds (Advanced)
+
+### Oz & Kulla 2017 — Multi-Scattering Octaves
+- **Title**: "Production Volume Rendering"
+- **Authors**: Frank Oz, Christopher Kulla (Pixar)
+- **Venue**: SIGGRAPH 2017 Course: Production Volume Rendering
+- **Used in**: `cloud_raymarch_cs.hlsl` (multi-scattering octave loop — planned Phase 2)
+- **Key contribution**: Iterative multi-scattering approximation: each octave attenuates scattering (0.5x), extinction (0.5x), and phase eccentricity (0.5x). Produces bright silver linings and luminous cloud interiors.
+
+### Bowles 2017 — Structured Volume Sampling
+- **Title**: "Structured Volume Sampling" (volsample)
+- **Authors**: Huw Bowles
+- **Venue**: 2017
+- **URL**: https://github.com/huwb/volsample
+- **Used in**: `cloud_shadow_cs.hlsl` (planned Phase 4 — BSM shadow pass)
+- **Key contribution**: Icosahedron-aligned plane intersections for temporally stable volume sampling at low resolution. Eliminates flickering in cloud shadow maps.
+
+### Wrenninge et al. 2013 — Beer Shadow Maps
+- **Title**: "Oz: The Great and Volumetric"
+- **Authors**: Magnus Wrenninge, Nafees Bin Zafar, et al. (Sony Pictures Imageworks)
+- **Venue**: SIGGRAPH 2013 Talk
+- **Used in**: `cloud_shadow_cs.hlsl` (planned Phase 4 — BSM encoding)
+- **Key contribution**: 4-channel shadow map encoding (frontDepth, meanExtinction, maxOpticalDepth, tailOpticalDepth) for efficient cloud shadow lookup.
+
+### Peters 2019 — Spatio-Temporal Blue Noise
+- **Title**: "Spatio-Temporal Blue Noise"
+- **Authors**: Christoph Peters
+- **Venue**: 2019
+- **URL**: https://christophpeters.de/stbn
+- **Used in**: `cloud_raymarch_cs.hlsl` (planned Phase 1 — jitter), STBN 3D texture (128x128x64 R8)
+- **Key contribution**: Blue noise 3D textures providing better perceptual noise distribution than white noise for temporal accumulation. Indexed by `pixel.xy % 128, frame % 64`.
+
+### NVIDIA 2018 — Draine Approximate Mie Phase Function
+- **Title**: "Approximate Mie Scattering for Large Particles"
+- **Authors**: NVIDIA (based on Draine 2003)
+- **Used in**: `cloud_raymarch_cs.hlsl` (planned Phase 2 — optional Draine phase function)
+- **Key contribution**: Numerically fitted Mie phase function for cloud droplets (d=10 large particles): gHG=0.988, gD=0.556, alpha=22.0, weight=0.482. More physically accurate than dual-lobe Henyey-Greenstein.
+
+---
+
+## 26. Open-Source Reference Implementations
+
+### takram/three-geospatial — Atmosphere
+- **Title**: "@takram/three-atmosphere"
+- **Authors**: Shota Matsuda, Takram Design Engineering
+- **License**: MIT (shaders: BSD-3-Clause from Bruneton reference)
+- **URL**: https://github.com/takram-design-engineering/three-geospatial/tree/main/packages/atmosphere
+- **Analysis**: `docs/analysis/rendering/three-geospatial-atmosphere-comparison.md`
+- **Used as reference for**: Bruneton 2017 full 4D scattering LUT precomputation, irradiance LUT, runtime sky rendering via LUT lookup (no per-pixel march), CPU-side transmittance sampling for sun color.
+- **Note**: MIT/BSD-3 licensed. Key insight: full 3D scattering LUT eliminates per-pixel sky march (256x128x32 RGBA16F, ~4MB VRAM, precomputed once). UzEngine reimplements techniques independently in DX12/HLSL.
+
+### takram/three-geospatial — Volumetric Clouds
+- **Title**: "@takram/three-clouds"
+- **Authors**: Takram Design Engineering
+- **License**: MIT
+- **URL**: https://github.com/takram-design-engineering/three-geospatial/tree/main/packages/clouds
+- **Analysis**: `docs/analysis/rendering/three-geospatial-clouds-adaptation.md`
+- **Used as reference for**: Adaptive stepping, multi-scattering octaves, Beer Shadow Maps, Bayer temporal upscale, aerial perspective on clouds, multi-layer cloud system.
+- **Note**: MIT-licensed. UzEngine reimplements techniques independently in DX12/HLSL compute shaders; no code is copied.
