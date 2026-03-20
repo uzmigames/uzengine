@@ -185,7 +185,8 @@ namespace {
 /// Returns empty vector on failure.
 [[nodiscard]] std::vector<uint8_t> ReadbackTextureToRGBA8(
     IRHIDevice* device, IRHICommandList* cmdList,
-    const RegisteredTarget& target)
+    const RegisteredTarget& target,
+    RHIBufferHandle sharedReadbackBuffer, uint64_t sharedBufferSize)
 {
     std::vector<uint8_t> pixels;
 
@@ -201,22 +202,12 @@ namespace {
     const uint32_t rowPitch = ((target.width * bytesPerTexel + 255) & ~255u);
     const uint64_t totalBytes = static_cast<uint64_t>(rowPitch) * target.height;
 
-    // Cap at 64MB to avoid excessive memory use during dumps.
-    if (totalBytes > 64u * 1024u * 1024u) {
+    // Skip if target exceeds the shared readback buffer size.
+    if (totalBytes > sharedBufferSize) {
         return pixels;
     }
 
-    RHIBufferDesc readbackDesc{};
-    readbackDesc.sizeBytes = totalBytes;
-    readbackDesc.stride    = bytesPerTexel;
-    readbackDesc.usage     = RHIBufferUsage::CopyDst;
-    readbackDesc.memory    = RHIMemoryType::Readback;
-    readbackDesc.debugName = "PassInspector_Dump";
-
-    RHIBufferHandle readbackBuffer = device->CreateBuffer(readbackDesc);
-    if (!readbackBuffer.IsValid()) {
-        return pixels;
-    }
+    RHIBufferHandle readbackBuffer = sharedReadbackBuffer;
 
     // Record barrier + copy + restore barrier.
     cmdList->Begin();
@@ -240,7 +231,6 @@ namespace {
 
     void* mapped = device->MapBuffer(readbackBuffer);
     if (!mapped) {
-        device->DestroyBuffer(readbackBuffer);
         return pixels;
     }
 
@@ -290,7 +280,7 @@ namespace {
     }
 
     device->UnmapBuffer(readbackBuffer);
-    device->DestroyBuffer(readbackBuffer);
+    // Buffer is shared — caller owns lifetime.
 
     return pixels;
 }
@@ -735,6 +725,21 @@ void PassInspector::ExecuteDump(IRHIDevice* device, IRHICommandList* cmdList,
     UZ_LOG(PassInspector, Info, "PassInspector: dumping {} targets to '{}'",
            m_targets.size(), dumpDir);
 
+    // Create a single shared readback buffer large enough for the biggest target.
+    // Reusing one buffer avoids VRAM exhaustion from rapid sequential allocations.
+    constexpr uint64_t kMaxReadbackSize = 1920u * 1080u * 8u; // RGBA16F @ 1080p = ~16MB
+    RHIBufferDesc rbDesc{};
+    rbDesc.sizeBytes = kMaxReadbackSize;
+    rbDesc.stride    = 1;
+    rbDesc.usage     = RHIBufferUsage::CopyDst;
+    rbDesc.memory    = RHIMemoryType::Readback;
+    rbDesc.debugName = "PassInspector_SharedReadback";
+    RHIBufferHandle sharedReadback = device->CreateBuffer(rbDesc);
+    if (!sharedReadback.IsValid()) {
+        UZ_LOG(PassInspector, Error, "PassInspector: failed to create shared readback buffer");
+        return;
+    }
+
     std::vector<std::string> filenames;
     filenames.reserve(m_targets.size());
 
@@ -749,11 +754,14 @@ void PassInspector::ExecuteDump(IRHIDevice* device, IRHICommandList* cmdList,
         fnStream << safeName << ".png";
         const std::string filename = fnStream.str();
 
-        // Readback the texture to RGBA8.
-        auto pixels = ReadbackTextureToRGBA8(device, cmdList, target);
+        // Readback the texture to RGBA8 using the shared buffer.
+        auto pixels = ReadbackTextureToRGBA8(device, cmdList, target, sharedReadback, kMaxReadbackSize);
         if (pixels.empty()) {
-            UZ_LOG(PassInspector, Warning, "PassInspector: dump skipped '{}' (readback failed or depth format)",
-                   target.name);
+            const RHITextureDesc td = device->GetTextureDesc(target.texture);
+            UZ_LOG(PassInspector, Warning,
+                   "PassInspector: dump skipped '{}' (readback failed — fmt={}, {}x{}, depth={}, bpp={}, ch={})",
+                   target.name, static_cast<int>(td.format), target.width, target.height,
+                   IsDepthFormat(td.format), BytesPerTexel(td.format), ChannelCount(td.format));
             continue;
         }
 
@@ -775,6 +783,9 @@ void PassInspector::ExecuteDump(IRHIDevice* device, IRHICommandList* cmdList,
             UZ_LOG(PassInspector, Warning, "PassInspector: failed to write '{}'", fullPath);
         }
     }
+
+    // Release the shared readback buffer.
+    device->DestroyBuffer(sharedReadback);
 
     // Generate INDEX.html for browser-based viewing.
     GenerateIndexHtml(dumpDir, filenames, frameNumber);

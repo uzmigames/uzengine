@@ -58,8 +58,7 @@ void SceneRenderer::RenderFrame(IRHICommandList* cmdList, IRHISwapChain* swapCha
     // no GPU TDR risk. Weather/raymarch/temporal run as lightweight 2D
     // compute dispatches on a dedicated command list to isolate barrier
     // state from the render graph.
-    // Cloud dispatch disabled while debugging pass inspector dump crash.
-    m_pendingCloudDispatch = false;
+    m_pendingCloudDispatch = false; // Cloud disabled — focusing on inspector
 
     // ── Register render graph passes in pipeline order ──────────────────
     RegisterShadowPasses(rgBuilder, ctx);
