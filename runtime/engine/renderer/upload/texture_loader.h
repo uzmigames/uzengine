@@ -208,6 +208,46 @@ public:
         uint32_t height,
         const char* debugName,
         class UploadContext* outUpload);
+
+    /// Uploads pre-decoded RGBA8 pixels with a pre-computed mip chain to a GPU
+    /// texture WITHOUT flushing the command list or waiting for GPU idle.
+    ///
+    /// Unlike `UploadPixelsDeferred`, this variant skips CPU mip generation
+    /// entirely — the caller provides pre-computed mip data (e.g., from
+    /// `AsyncTextureDecoder` worker threads). This eliminates redundant main-thread
+    /// mip computation when the async decoder has already generated the chain.
+    ///
+    /// # Arguments
+    /// * `device` — RHI device for resource creation. Must not be null.
+    /// * `cmdList` — Command list in recording state. Must not be null.
+    /// * `pixels` — RGBA8 mip 0 pixel data (width * height * 4 bytes). Must not be null.
+    ///   Ownership is NOT transferred.
+    /// * `width` — Mip 0 width in texels. Must be > 0.
+    /// * `height` — Mip 0 height in texels. Must be > 0.
+    /// * `debugName` — Label for GPU debug tools. May be null.
+    /// * `outUpload` — UploadContext to accumulate staging buffers. Must not be null.
+    /// * `mipData` — Array of pre-computed mip pixel pointers (mip 1, mip 2, ...).
+    ///   Each pointer is RGBA8 data for that mip level. Array length = mipCount - 1.
+    ///   Must not be null if mipCount > 1.
+    /// * `mipWidths` — Array of mip widths corresponding to mipData entries.
+    /// * `mipHeights` — Array of mip heights corresponding to mipData entries.
+    /// * `mipCount` — Total number of mip levels including mip 0. Must be >= 1.
+    ///
+    /// # Returns
+    /// `TextureLoadResult` with a valid handle and SRV index on success.
+    /// Returns default (invalid) result on failure.
+    [[nodiscard]] static TextureLoadResult UploadPixelsWithMipsDeferred(
+        IRHIDevice* device,
+        IRHICommandList* cmdList,
+        unsigned char* pixels,
+        uint32_t width,
+        uint32_t height,
+        const char* debugName,
+        class UploadContext* outUpload,
+        uint8_t* const* mipData,
+        const uint32_t* mipWidths,
+        const uint32_t* mipHeights,
+        uint16_t mipCount);
 };
 
 } // namespace uz

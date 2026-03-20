@@ -1,7 +1,7 @@
 .{
     .name = .cornell_box_demo,
     .version = "0.1.0",
-    .fingerprint = 0xef853be4459f844a,
+    .fingerprint = 0xdc9b6c2684a4fee5,
     .dependencies = .{
         .uz_demo_common = .{ .path = "../common" },
     },

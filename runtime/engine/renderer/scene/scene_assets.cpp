@@ -27,6 +27,7 @@
 #include "gi/mesh_sdf_baker.h"
 #include "pipeline_library.h"
 
+#include <algorithm>
 #include <chrono>
 #include <thread>
 
@@ -35,6 +36,11 @@
 #include <string>
 
 namespace uz {
+
+/// Maximum textures to upload per frame. Spreads GPU upload cost across
+/// multiple frames instead of one large stall. Remaining decoded textures
+/// are kept in m_deferredDecoded for the next frame.
+static constexpr uint32_t kMaxTextureUploadsPerFrame = 8;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Asset Loading — Meshes (deferred upload, flushed in batch)
@@ -320,7 +326,9 @@ void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {
 
     if (m_deferredDecoded.empty()) return;
 
-    const uint32_t toProcess = static_cast<uint32_t>(m_deferredDecoded.size());
+    const uint32_t toProcess = std::min(
+        static_cast<uint32_t>(m_deferredDecoded.size()),
+        kMaxTextureUploadsPerFrame);
 
     UZ_LOG(Renderer, Debug, "SceneRenderer: uploading {}/{} decoded textures this frame",
            toProcess, m_deferredDecoded.size());
@@ -356,9 +364,23 @@ void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {
             continue;
         }
 
-        TextureLoadResult result = TextureLoader::UploadPixelsDeferred(
-            m_device, cmdList, d.pixels, d.width, d.height,
-            d.path.c_str(), &batchUpload);
+        TextureLoadResult result;
+        if (!d.mipData.empty() && d.mipCount > 1) {
+            // Use pre-computed mip chain from worker — skip main-thread mip gen
+            UZ_LOG(Renderer, Debug,
+                   "SceneRenderer: using pre-computed mips for '{}' ({} mips)",
+                   d.path, d.mipCount);
+            result = TextureLoader::UploadPixelsWithMipsDeferred(
+                m_device, cmdList, d.pixels, d.width, d.height,
+                d.path.c_str(), &batchUpload,
+                d.mipData.data(), d.mipWidths.data(), d.mipHeights.data(),
+                d.mipCount);
+        } else {
+            // Fallback: no pre-computed mips, generate on main thread
+            result = TextureLoader::UploadPixelsDeferred(
+                m_device, cmdList, d.pixels, d.width, d.height,
+                d.path.c_str(), &batchUpload);
+        }
 
         stbi_image_free(d.pixels);
         d.pixels = nullptr;

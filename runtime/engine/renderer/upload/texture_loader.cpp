@@ -302,6 +302,98 @@ static TextureLoadResult UploadPixelsCore(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// UploadPixelsWithMipsCore — upload pre-computed mip chain (no mip generation)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Creates a GPU texture and uploads a pre-computed mip chain directly,
+/// bypassing CPU box filter mip generation entirely. The caller provides
+/// mip 0 pixels and an array of pre-generated mip level data.
+///
+/// This is the performance-critical path for async-decoded textures where
+/// worker threads have already computed the full mip chain. Using this
+/// avoids redundant main-thread mip computation.
+///
+/// Records upload commands and a CopyDst -> ShaderResource barrier on the
+/// provided command list. Does NOT flush the command list.
+static TextureLoadResult UploadPixelsWithMipsCore(
+    IRHIDevice* device,
+    IRHICommandList* cmdList,
+    unsigned char* pixels,
+    uint32_t width,
+    uint32_t height,
+    const char* debugName,
+    UploadContext& upload,
+    uint8_t* const* mipData,
+    const uint32_t* mipWidths,
+    const uint32_t* mipHeights,
+    uint16_t mipCount)
+{
+    UZ_PROFILE_FUNCTION();
+
+    constexpr uint32_t kBpp = 4; // RGBA8 = 4 bytes per texel
+
+    // Create GPU texture with the caller-specified mip count
+    RHITextureDesc desc{};
+    desc.width = width;
+    desc.height = height;
+    desc.mipLevels = mipCount;
+    desc.format = RHIFormat::RGBA8Unorm;
+    desc.usage = RHITextureUsage::ShaderResource | RHITextureUsage::CopyDst;
+    desc.debugName = debugName;
+
+    RHITextureHandle texture = device->CreateTexture(desc);
+    if (!texture.IsValid()) {
+        UZ_LOG(Renderer, Error,
+               "TextureLoader: failed to create GPU texture: name='{}', {}x{}, {} mips",
+               debugName ? debugName : "unknown", width, height, mipCount);
+        return {};
+    }
+
+    // Upload mip 0 (original pixels)
+    const uint64_t mip0DataSize = static_cast<uint64_t>(width) * height * kBpp;
+    if (!upload.UploadTexture(cmdList, texture, pixels, mip0DataSize, 0)) {
+        UZ_LOG(Renderer, Error, "TextureLoader: mip 0 upload failed: name='{}', {}x{}",
+               debugName ? debugName : "unknown", width, height);
+        device->DestroyTexture(texture);
+        return {};
+    }
+
+    // Upload pre-computed mip levels directly — no CPU box filter needed.
+    // mipData[i] corresponds to mip level (i + 1).
+    for (uint16_t mip = 1; mip < mipCount; ++mip) {
+        const uint16_t idx = mip - 1;
+        const uint32_t mipW = mipWidths[idx];
+        const uint32_t mipH = mipHeights[idx];
+        const uint64_t mipDataSize = static_cast<uint64_t>(mipW) * mipH * kBpp;
+
+        if (!upload.UploadTexture(cmdList, texture, mipData[idx], mipDataSize, mip)) {
+            UZ_LOG(Renderer, Warning,
+                   "TextureLoader: mip {} upload failed: name='{}', {}x{} — "
+                   "texture will have incomplete mip chain",
+                   mip, debugName ? debugName : "unknown", mipW, mipH);
+            break;
+        }
+    }
+
+    // Transition from CopyDst to ShaderResource
+    RHIBarrierDesc barrier{};
+    barrier.texture = texture;
+    barrier.stateBefore = RHIResourceState::CopyDst;
+    barrier.stateAfter = RHIResourceState::ShaderResource;
+    cmdList->ResourceBarrier(&barrier, 1);
+
+    // Build result
+    TextureLoadResult result{};
+    result.handle = texture;
+    result.srvIndex = device->GetTextureSRVIndex(texture);
+    result.width = width;
+    result.height = height;
+    result.mipLevels = mipCount;
+
+    return result;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // TextureLoader::UploadPixels — synchronous upload (flushes + waits)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -355,6 +447,46 @@ TextureLoadResult TextureLoader::UploadPixelsDeferred(
 
     return UploadPixelsCore(device, cmdList, pixels, width, height,
                             debugName, *outUpload);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TextureLoader::UploadPixelsWithMipsDeferred — batched upload with pre-computed mips
+// ─────────────────────────────────────────────────────────────────────────────
+
+TextureLoadResult TextureLoader::UploadPixelsWithMipsDeferred(
+    IRHIDevice* device,
+    IRHICommandList* cmdList,
+    unsigned char* pixels,
+    uint32_t width,
+    uint32_t height,
+    const char* debugName,
+    UploadContext* outUpload,
+    uint8_t* const* mipData,
+    const uint32_t* mipWidths,
+    const uint32_t* mipHeights,
+    uint16_t mipCount)
+{
+    if (!device || !cmdList || !pixels || !outUpload) {
+        UZ_LOG(Renderer, Error, "TextureLoader::UploadPixelsWithMipsDeferred: null argument");
+        return {};
+    }
+
+    if (mipCount < 1) {
+        UZ_LOG(Renderer, Error, "TextureLoader::UploadPixelsWithMipsDeferred: mipCount must be >= 1");
+        return {};
+    }
+
+    // Validate mip data pointers when mipCount > 1 (mip 0 is in `pixels`)
+    if (mipCount > 1 && (!mipData || !mipWidths || !mipHeights)) {
+        UZ_LOG(Renderer, Error,
+               "TextureLoader::UploadPixelsWithMipsDeferred: null mip arrays with mipCount={}",
+               mipCount);
+        return {};
+    }
+
+    return UploadPixelsWithMipsCore(device, cmdList, pixels, width, height,
+                                     debugName, *outUpload,
+                                     mipData, mipWidths, mipHeights, mipCount);
 }
 
 } // namespace uz

@@ -42,7 +42,7 @@ ApplicationConfig CornellBoxDemo::Configure() {
     // Box center is at (0, 0, 250). Camera looks along +Y into the box.
     cfg.cameraPositionX =   0.f;
     cfg.cameraPositionY = -500.f;
-    cfg.cameraPositionZ = 250.f;
+    cfg.cameraPositionZ = 100.f;
     cfg.cameraYawDeg    = -270.f;   // Facing +Y direction
     cfg.cameraPitchDeg  =   0.f;
     cfg.renderPath      = RenderPath::Deferred;
