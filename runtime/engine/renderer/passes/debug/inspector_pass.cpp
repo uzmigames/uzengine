@@ -694,7 +694,7 @@ void PassInspector::RequestDump(uint32_t frame) {
 
 bool PassInspector::IsDumpPending(uint32_t currentFrame) const noexcept {
     if (m_dumpNextFrame) return true;
-    return m_dumpFrame != UINT32_MAX && m_dumpFrame == currentFrame;
+    return m_dumpFrame != UINT32_MAX && currentFrame >= m_dumpFrame;
 }
 
 void PassInspector::ClearDumpRequest() {

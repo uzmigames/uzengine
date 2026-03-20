@@ -501,18 +501,23 @@ void SceneRenderer::FlushPendingLoads(IRHICommandList* cmdList, IVFS* vfs) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 bool SceneRenderer::IsSceneFullyLoaded() const {
-    // Pending mesh/texture queues must be empty
     if (!m_pendingMeshPaths.empty()) return false;
     if (!m_pendingProceduralMeshes.empty()) return false;
     if (!m_pendingTexturePaths.empty()) return false;
-    // Async texture decoder must have no in-flight decodes
     if (m_asyncDecoder && m_asyncDecoder->PendingCount() > 0) return false;
-    // Deferred decoded textures still waiting for GPU upload
     if (!m_deferredDecoded.empty()) return false;
-    // Unflushed texture batch still pending WaitIdle
     if (m_textureBatchCount > 0) return false;
-    // Must have rendered at least 2 frames (for pipeline creation + first dispatch)
     return true;
+}
+
+bool SceneRenderer::IsSceneFullyLoadedDebug() const {
+    UZ_LOG(Renderer, Debug,
+           "IsSceneFullyLoaded: meshPaths={}, procMeshes={}, texPaths={}, asyncPending={}, deferred={}, batch={}",
+           m_pendingMeshPaths.size(), m_pendingProceduralMeshes.size(),
+           m_pendingTexturePaths.size(),
+           m_asyncDecoder ? m_asyncDecoder->PendingCount() : 0,
+           m_deferredDecoded.size(), m_textureBatchCount);
+    return IsSceneFullyLoaded();
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -127,6 +127,7 @@ public:
     /// Returns true when all meshes, textures, and async decodes are complete.
     /// Used to gate screenshots — never capture before the scene is fully loaded.
     [[nodiscard]] bool IsSceneFullyLoaded() const;
+    [[nodiscard]] bool IsSceneFullyLoadedDebug() const;
 
     /// Initializes all rendering infrastructure.
     ///

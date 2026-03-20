@@ -104,12 +104,8 @@ int Application::Run(int argc, char** argv) {
         m_renderer->GetPassInspector().SetValidationEnabled(true);
         UZ_LOG(App, Info, "Pass inspector validation enabled");
     }
-    if (m_passDumpFrame != UINT32_MAX) {
-        m_renderer->GetPassInspector().RequestDump(m_passDumpFrame);
-        UZ_LOG(App, Info, "Pass inspector dump scheduled for frame {}", m_passDumpFrame);
-        if (m_config.maxFrames == 0) {
-            m_config.maxFrames = m_passDumpFrame + 3;
-        }
+    if (m_passDumpRequested) {
+        UZ_LOG(App, Info, "Pass inspector dump requested — will execute when scene is fully loaded");
     }
     if (!m_passToggle.empty()) {
         m_renderer->GetPassInspector().TogglePass(m_passToggle);
@@ -298,11 +294,15 @@ int Application::Run(int argc, char** argv) {
         m_frameFences[allocFrame]->Signal(m_globalFenceValue);
 
         // ── Pass dump (after present, stalls GPU to read back all targets) ──
-        if (m_renderer && m_renderer->GetPassInspector().IsDumpPending(m_frameIndex)) {
+        // Wait for scene to be fully loaded (all textures decoded + uploaded)
+        // ── Pass dump — waits for scene fully loaded, then dumps + exits ──
+        if (m_passDumpRequested && m_renderer && m_frameIndex >= 2
+            && m_renderer->IsSceneFullyLoadedDebug()) {
             m_device->WaitIdle();
             m_renderer->GetPassInspector().ExecuteDump(
                 m_device.get(), m_cmdList, m_frameIndex, ".screenshots");
-            m_renderer->GetPassInspector().ClearDumpRequest();
+            m_passDumpRequested = false;
+            m_config.maxFrames = m_frameIndex + 3;
         }
 
         m_frameIndex++;
@@ -488,8 +488,8 @@ void Application::ParseArgs(int argc, char* argv[]) {
             m_visTarget = argv[++i];
         } else if (std::strcmp(argv[i], "--pass-validate") == 0) {
             m_passValidate = true;
-        } else if (std::strcmp(argv[i], "--pass-dump") == 0 && i + 1 < argc) {
-            m_passDumpFrame = static_cast<uint32_t>(std::atoi(argv[++i]));
+        } else if (std::strcmp(argv[i], "--pass-dump") == 0) {
+            m_passDumpRequested = true;
         } else if (std::strcmp(argv[i], "--pass-toggle") == 0 && i + 1 < argc) {
             m_passToggle = argv[++i];
         } else if (std::strcmp(argv[i], "--pass-compare") == 0 && i + 1 < argc) {
